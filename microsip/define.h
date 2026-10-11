@@ -96,3 +96,4 @@
 
 #define _GLOBAL_DIALER_CALL_COLOR RGB(76, 217, 100)
 #define _GLOBAL_DIALER_END_COLOR RGB(255, 59, 48)
+#include "..\starsonic\define_override.h"

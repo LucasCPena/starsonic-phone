@@ -72,6 +72,9 @@ jobs:
           if ('${{ github.ref }}' -match '^refs/tags/v(\d+\.\d+\.\d+(-rc\.[1-9]\d*)?)$') { $version = $Matches[1] }
           .\build\Build-App.ps1 -WorkDir work -Version $version -Channel estavel -ProfilesFile branding\servidores.ini -OutDir out
 
+      - name: Verificação de marca
+        run: python build\check_branding.py --repo . --exe out\StarsonicPhone.exe
+
       - name: Teste de abrir e fechar
         run: .\tests\smoke\Test-StartStop.ps1 -AppDir out
 

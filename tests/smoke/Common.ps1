@@ -2,6 +2,57 @@
 # Uso: . (Join-Path $PSScriptRoot 'Common.ps1')
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
+if (-not ('StarsonicWin32' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class StarsonicWin32 {
+    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+    [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassNameW(IntPtr hWnd, StringBuilder name, int max);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowTextW(IntPtr hWnd, StringBuilder text, int max);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+    [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr hWnd, uint command);
+}
+'@
+}
+
+# Janelas de primeiro nivel (visiveis ou nao) do processo, com classe e titulo.
+function Get-TopLevelWindows {
+    param([Parameter(Mandatory = $true)][int]$ProcessId)
+    $found = New-Object System.Collections.ArrayList
+    $callback = [StarsonicWin32+EnumWindowsProc]{
+        param([IntPtr]$hWnd, [IntPtr]$lParam)
+        [uint32]$owner = 0
+        [StarsonicWin32]::GetWindowThreadProcessId($hWnd, [ref]$owner) | Out-Null
+        if ($owner -eq $ProcessId -and [StarsonicWin32]::GetWindow($hWnd, 4) -eq [IntPtr]::Zero) {
+            $class = New-Object System.Text.StringBuilder 256
+            $title = New-Object System.Text.StringBuilder 512
+            [StarsonicWin32]::GetClassNameW($hWnd, $class, 256) | Out-Null
+            [StarsonicWin32]::GetWindowTextW($hWnd, $title, 512) | Out-Null
+            [void]$found.Add([pscustomobject]@{ Handle = $hWnd; ClassName = $class.ToString(); Title = $title.ToString() })
+        }
+        return $true
+    }
+    [StarsonicWin32]::EnumWindows($callback, [IntPtr]::Zero) | Out-Null
+    return $found
+}
+
+# Primeira janela de primeiro nivel do processo com a classe pedida, esperando ate $TimeoutSeconds.
+function Find-WindowByClass {
+    param(
+        [Parameter(Mandatory = $true)][int]$ProcessId,
+        [Parameter(Mandatory = $true)][string]$ClassName,
+        [int]$TimeoutSeconds = 15
+    )
+    $holder = @{ Window = $null }
+    Wait-Until -TimeoutSeconds $TimeoutSeconds -Condition {
+        $holder.Window = Get-TopLevelWindows -ProcessId $ProcessId | Where-Object { $_.ClassName -eq $ClassName } | Select-Object -First 1
+        return ($null -ne $holder.Window)
+    } | Out-Null
+    return $holder.Window
+}
 
 # Copia a pasta do app para uma pasta temporaria nova, para o INI e os logs do teste nao sujarem a saida.
 function New-AppCopy {
