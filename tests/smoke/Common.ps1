@@ -20,6 +20,29 @@ public static class StarsonicWin32 {
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] public static extern uint GetPrivateProfileStringW(string section, string key, string fallback, StringBuilder value, int size, string file);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr SendMessageTimeoutW(IntPtr hWnd, uint msg, IntPtr wParam, StringBuilder lParam, uint flags, uint timeout, out IntPtr result);
     [DllImport("user32.dll")] public static extern IntPtr GetDlgItem(IntPtr dialog, int id);
+    [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
+    [DllImport("user32.dll")] public static extern int GetMenuItemCount(IntPtr menu);
+    [DllImport("user32.dll")] public static extern uint GetMenuItemID(IntPtr menu, int position);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetMenuStringW(IntPtr menu, uint item, StringBuilder text, int max, uint flags);
+    [DllImport("user32.dll", EntryPoint = "SendMessageTimeoutW")] public static extern IntPtr SendMessageTimeoutPtr(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam, uint flags, uint timeout, out IntPtr result);
+    // Menu aberto numa janela #32768 (MN_GETHMENU).
+    public static IntPtr MenuOf(IntPtr menuWindow) {
+        IntPtr menu;
+        SendMessageTimeoutPtr(menuWindow, 0x01E1, IntPtr.Zero, IntPtr.Zero, 0x0002, 2000, out menu);
+        return menu;
+    }
+    public static string MenuText(IntPtr menu, int position) {
+        StringBuilder text = new StringBuilder(512);
+        GetMenuStringW(menu, (uint)position, text, text.Capacity, 0x0400);
+        return text.ToString();
+    }
+    public static void PostCommand(IntPtr window, uint id) {
+        PostMessageW(window, 0x0111, new IntPtr(id & 0xFFFF), IntPtr.Zero);
+    }
+    public static void CancelMode(IntPtr window) {
+        PostMessageW(window, 0x001F, IntPtr.Zero, IntPtr.Zero);
+    }
+    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr SendMessageTimeoutW(IntPtr hWnd, uint msg, IntPtr wParam, string lParam, uint flags, uint timeout, out IntPtr result);
     [DllImport("user32.dll")] public static extern bool PostMessageW(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
     // Troca o texto de um controle de outro processo (WM_SETTEXT).
@@ -351,4 +374,49 @@ function Get-Text {
         }
     }
     return $builder.ToString()
+}
+
+# Abre o menu principal (botao IDC_MAIN_MENU), procura o item cujo texto (sem o atalho) satisfaz
+# $Match e o aciona: fecha o menu e manda o WM_COMMAND do item para a janela principal, como o
+# TrackPopupMenu faria. Devolve $true se achou; em falha, $script:MenuItemsSeen lista os itens.
+function Invoke-MainMenuItem {
+    param(
+        [Parameter(Mandatory = $true)][IntPtr]$MainWindow,
+        [Parameter(Mandatory = $true)][scriptblock]$Match,
+        [int]$TimeoutSeconds = 10
+    )
+    [uint32]$processId = 0
+    [StarsonicWin32]::GetWindowThreadProcessId($MainWindow, [ref]$processId) | Out-Null
+    [StarsonicWin32]::ClickButton($MainWindow, 1001)
+    $holder = @{ Id = $null; Seen = @(); MenuWindow = [IntPtr]::Zero }
+    $found = Wait-Until -TimeoutSeconds $TimeoutSeconds -Condition {
+        foreach ($window in @(Get-TopLevelWindows -ProcessId $processId -IncludeOwned | Where-Object { $_.ClassName -eq '#32768' })) {
+            $holder.MenuWindow = $window.Handle
+            $menu = [StarsonicWin32]::MenuOf($window.Handle)
+            if ($menu -eq [IntPtr]::Zero) {
+                continue
+            }
+            $holder.Seen = @()
+            for ($i = 0; $i -lt [StarsonicWin32]::GetMenuItemCount($menu); $i++) {
+                $text = ([StarsonicWin32]::MenuText($menu, $i) -split "`t")[0]
+                $id = [StarsonicWin32]::GetMenuItemID($menu, $i)
+                $holder.Seen += "'$text' [$id]"
+                if ($text -and (& $Match $text $id)) {
+                    $holder.Id = $id
+                    return $true
+                }
+            }
+        }
+        return $false
+    }
+    $script:MenuItemsSeen = @($holder.Seen)
+    [StarsonicWin32]::CancelMode($MainWindow)
+    Wait-Until -TimeoutSeconds 5 -Condition {
+        @(Get-TopLevelWindows -ProcessId $processId -IncludeOwned | Where-Object { $_.ClassName -eq '#32768' -and [StarsonicWin32]::IsWindowVisible($_.Handle) }).Count -eq 0
+    } | Out-Null
+    if (-not $found) {
+        return $false
+    }
+    [StarsonicWin32]::PostCommand($MainWindow, [uint32]$holder.Id)
+    return $true
 }

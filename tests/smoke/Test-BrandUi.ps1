@@ -12,7 +12,6 @@ Set-StrictMode -Version 2
 $IDC_STARSONIC_BAND = 41200
 $IDC_SS_ABOUT_VERSION = 41022
 $IDC_SS_ABOUT_LICENSE = 41024
-$IDC_MAIN_MENU = 1001
 $IDOK = 1
 
 $copy = New-AppCopy -AppDir (Resolve-Path $AppDir).Path
@@ -42,27 +41,10 @@ try {
         Fail 'A faixa da marca esta sem texto de status.'
     }
 
-    # Menu principal -> "Sobre o Starsonic Phone" (UI Automation no menu suspenso).
-    Invoke-DialogButton -Dialog $main.Handle -Id $IDC_MAIN_MENU
-    $root = [System.Windows.Automation.AutomationElement]::RootElement
-    $menuCondition = New-Object System.Windows.Automation.PropertyCondition(
-        [System.Windows.Automation.AutomationElement]::ClassNameProperty, '#32768')
-    $itemCondition = New-Object System.Windows.Automation.PropertyCondition(
-        [System.Windows.Automation.AutomationElement]::NameProperty, 'Sobre o Starsonic Phone')
-    $holder = @{ Item = $null }
-    $found = Wait-Until -TimeoutSeconds 10 -Condition {
-        foreach ($menu in $root.FindAll([System.Windows.Automation.TreeScope]::Children, $menuCondition)) {
-            $holder.Item = $menu.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $itemCondition)
-            if ($holder.Item) {
-                return $true
-            }
-        }
-        return $false
+    # Menu principal -> "Sobre o Starsonic Phone".
+    if (-not (Invoke-MainMenuItem -MainWindow $main.Handle -Match { param($text, $id) $text -eq 'Sobre o Starsonic Phone' })) {
+        Fail ('Item "Sobre o Starsonic Phone" nao apareceu no menu principal. Itens: ' + ($script:MenuItemsSeen -join ', '))
     }
-    if (-not $found) {
-        Fail 'Item "Sobre o Starsonic Phone" nao apareceu no menu principal.'
-    }
-    $holder.Item.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
 
     $about = Find-WindowByTitle -ProcessId $process.Id -Title 'Sobre o Starsonic Phone' -TimeoutSeconds 10
     if (-not $about) {
