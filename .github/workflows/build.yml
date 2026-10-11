@@ -84,6 +84,9 @@ jobs:
       - name: Teste das travas na inicialização
         run: .\tests\smoke\Test-Policy.ps1 -AppDir out-ci
 
+      - name: Teste da tela Entrar (registrador SIP falso)
+        run: .\tests\smoke\Test-Login.ps1 -AppDir out-ci
+
       - name: Publicar o executável
         uses: actions/upload-artifact@v4
         with:

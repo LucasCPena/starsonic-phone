@@ -150,6 +150,7 @@ LRESULT CmainDlg::onRegState2(WPARAM wParam, LPARAM lParam)
         headerError = *str;
         delete str;
     }
+    starsonic::OnRegistrationState(this, code);
 
     if (code == 200) {
         Subscribe();
@@ -2269,6 +2270,7 @@ LRESULT CmainDlg::OnCreated(WPARAM wParam, LPARAM lParam)
         RegisterShellHookWindow(m_hWnd);
     }
 
+    starsonic::OnMainWindowCreated(this);
     return 0;
 }
 
@@ -2339,29 +2341,13 @@ void CmainDlg::SwitchDND(int state, bool update)
 
 void CmainDlg::OnMenuAccountAdd()
 {
-    if (!accountDlg) {
-        accountDlg = new AccountDlg(this);
-    }
-    else {
-        accountDlg->SetForegroundWindow();
-    }
-    if (accountDlg) {
-        accountDlg->Load(-1);
-    }
+    starsonic::ShowLogin(this, -1, false);
 }
 
 void CmainDlg::OnMenuAccountEdit(UINT nID)
 {
-    if (!accountDlg) {
-        accountDlg = new AccountDlg(this);
-    }
-    else {
-        accountDlg->SetForegroundWindow();
-    }
-    if (accountDlg) {
-        int id = accountSettings.accountId > 0 ? accountSettings.accountId : nID - ID_ACCOUNT_EDIT_RANGE + 1;
-        accountDlg->Load(id ? id : -1);
-    }
+    int id = accountSettings.accountId > 0 ? accountSettings.accountId : nID - ID_ACCOUNT_EDIT_RANGE + 1;
+    starsonic::ShowLogin(this, id ? id : -1, false);
 }
 void CmainDlg::OnMenuAccountChange(UINT nID)
 {
@@ -2997,23 +2983,7 @@ void CmainDlg::OnSessionChange(UINT nSessionState, UINT nId)
 
 LRESULT CmainDlg::OnAccount(WPARAM wParam, LPARAM lParam)
 {
-    if (!accountDlg) {
-        accountDlg = new AccountDlg(this);
-    }
-    else {
-        accountDlg->SetForegroundWindow();
-    }
-    if (accountDlg) {
-        accountDlg->Load(accountSettings.accountId ? accountSettings.accountId : -1);
-        if (wParam && accountDlg) {
-            CEdit* edit = (CEdit*)accountDlg->GetDlgItem(IDC_EDIT_PASSWORD);
-            if (edit) {
-                edit->SetFocus();
-                int nLength = edit->GetWindowTextLength();
-                edit->SetSel(nLength, nLength);
-            }
-        }
-    }
+    starsonic::ShowLogin(this, accountSettings.accountId ? accountSettings.accountId : -1, wParam != 0);
     return 0;
 }
 

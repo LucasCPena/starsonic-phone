@@ -1,7 +1,35 @@
 // Starsonic Phone: recursos proprios (so ASCII). Os textos acentuados das janelas sao
-// definidos em tempo de execucao. resource_paths.h e gerado por build/Build-App.ps1
-// em starsonic\generated.
+// definidos em tempo de execucao. build_info.h e resource_paths.h sao gerados por
+// build/Build-App.ps1 em starsonic\generated.
+#include <winres.h>
 #include "StarsonicIds.h"
+#include "build_info.h"
 #include "resource_paths.h"
 
 IDR_STARSONIC_SERVERS RCDATA STARSONIC_SERVERS_FILE
+
+#if STARSONIC_HAS_LOGOS
+IDR_STARSONIC_LOGO_BAND RCDATA STARSONIC_LOGO_BAND_FILE
+IDR_STARSONIC_LOGO_LOGIN RCDATA STARSONIC_LOGO_LOGIN_FILE
+#endif
+
+LANGUAGE LANG_NEUTRAL, SUBLANG_NEUTRAL
+
+IDD_STARSONIC_LOGIN DIALOGEX 0, 0, 180, 190
+STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+EXSTYLE WS_EX_APPWINDOW
+CAPTION "Starsonic Phone"
+FONT 8, "Microsoft Sans Serif", 400, 0, 0x0
+BEGIN
+    CONTROL         "", IDC_SS_LOGO, "Static", SS_OWNERDRAW, 10, 8, 160, 28
+    LTEXT           "Servidor", IDC_STATIC, 10, 44, 160, 8
+    COMBOBOX        IDC_SS_SERVER, 10, 54, 160, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Ramal", IDC_STATIC, 10, 74, 160, 8
+    EDITTEXT        IDC_SS_RAMAL, 10, 84, 160, 14, ES_AUTOHSCROLL
+    LTEXT           "Senha", IDC_STATIC, 10, 104, 160, 8
+    EDITTEXT        IDC_SS_SENHA, 10, 114, 160, 14, ES_PASSWORD | ES_AUTOHSCROLL
+    LTEXT           "", IDC_SS_MESSAGE, 10, 132, 160, 16
+    DEFPUSHBUTTON   "Entrar", IDC_SS_ENTRAR, 10, 150, 160, 16
+    CONTROL         "<a>Remover conta</a>", IDC_SS_REMOVE, "SysLink", WS_TABSTOP, 10, 172, 80, 10
+    LTEXT           "Precisa de ajuda?", IDC_SS_HELP, 90, 172, 80, 10
+END

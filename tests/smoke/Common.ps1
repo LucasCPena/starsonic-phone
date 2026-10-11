@@ -19,6 +19,18 @@ public static class StarsonicWin32 {
     [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr hWnd, uint command);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] public static extern uint GetPrivateProfileStringW(string section, string key, string fallback, StringBuilder value, int size, string file);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr SendMessageTimeoutW(IntPtr hWnd, uint msg, IntPtr wParam, StringBuilder lParam, uint flags, uint timeout, out IntPtr result);
+    [DllImport("user32.dll")] public static extern IntPtr GetDlgItem(IntPtr dialog, int id);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr SendMessageTimeoutW(IntPtr hWnd, uint msg, IntPtr wParam, string lParam, uint flags, uint timeout, out IntPtr result);
+    [DllImport("user32.dll")] public static extern bool PostMessageW(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+    // Troca o texto de um controle de outro processo (WM_SETTEXT).
+    public static void SetControlText(IntPtr hWnd, string text) {
+        IntPtr ignored;
+        SendMessageTimeoutW(hWnd, 0x000C, IntPtr.Zero, text, 0x0002, 5000, out ignored);
+    }
+    // Clique num botao do dialogo: WM_COMMAND/BN_CLICKED postado (nao bloqueia o teste).
+    public static void ClickButton(IntPtr dialog, int id) {
+        PostMessageW(dialog, 0x0111, new IntPtr(id & 0xFFFF), GetDlgItem(dialog, id));
+    }
     // Texto de um controle de outro processo (GetWindowText so devolve legendas).
     public static string ControlText(IntPtr hWnd) {
         StringBuilder text = new StringBuilder(4096);
@@ -283,4 +295,60 @@ function Get-HangReport {
     $lines = @($windows | ForEach-Object { "${Label}: $($_.Line)" })
     $lines += @(Get-StackReport -ProcessId $ProcessId -ThreadIds $threads -SymbolDir $SymbolDir | ForEach-Object { "${Label} pilha: $_" })
     return $lines
+}
+
+# Janela de primeiro nivel (com dono ou nao) do processo cujo titulo e $Title.
+function Find-WindowByTitle {
+    param(
+        [Parameter(Mandatory = $true)][int]$ProcessId,
+        [Parameter(Mandatory = $true)][string]$Title,
+        [int]$TimeoutSeconds = 15
+    )
+    $holder = @{ Window = $null }
+    Wait-Until -TimeoutSeconds $TimeoutSeconds -Condition {
+        $holder.Window = Get-TopLevelWindows -ProcessId $ProcessId -IncludeOwned |
+            Where-Object { $_.Title -eq $Title -and [StarsonicWin32]::IsWindowVisible($_.Handle) } |
+            Select-Object -First 1
+        return ($null -ne $holder.Window)
+    } | Out-Null
+    return $holder.Window
+}
+
+function Get-ControlText {
+    param(
+        [Parameter(Mandatory = $true)][IntPtr]$Dialog,
+        [Parameter(Mandatory = $true)][int]$Id
+    )
+    return [StarsonicWin32]::ControlText([StarsonicWin32]::GetDlgItem($Dialog, $Id))
+}
+
+function Set-ControlText {
+    param(
+        [Parameter(Mandatory = $true)][IntPtr]$Dialog,
+        [Parameter(Mandatory = $true)][int]$Id,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Text
+    )
+    [StarsonicWin32]::SetControlText([StarsonicWin32]::GetDlgItem($Dialog, $Id), $Text)
+}
+
+function Invoke-DialogButton {
+    param(
+        [Parameter(Mandatory = $true)][IntPtr]$Dialog,
+        [Parameter(Mandatory = $true)][int]$Id
+    )
+    [StarsonicWin32]::ClickButton($Dialog, $Id)
+}
+
+# Texto com caracteres fora do ASCII a partir de codigos (os .ps1 sao so ASCII).
+function Get-Text {
+    param([Parameter(Mandatory = $true)][object[]]$Parts)
+    $builder = New-Object System.Text.StringBuilder
+    foreach ($part in $Parts) {
+        if ($part -is [int]) {
+            [void]$builder.Append([char]$part)
+        } else {
+            [void]$builder.Append([string]$part)
+        }
+    }
+    return $builder.ToString()
 }
