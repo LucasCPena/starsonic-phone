@@ -64,12 +64,12 @@ bool ParseInt(const std::wstring& text, int lowest, int highest, int* out) {
 }
 
 std::wstring InvalidValue(const std::wstring& key, const std::wstring& value, const std::wstring& options) {
-    return L"valor inválido para " + Quoted(key) + L": " + Quoted(value) +
-           L" (opções: " + options + L")";
+    return L"valor inv\u00e1lido para " + Quoted(key) + L": " + Quoted(value) +
+           L" (op\u00e7\u00f5es: " + options + L")";
 }
 
 std::wstring EmptyValue(const std::wstring& key) {
-    return L"a chave " + Quoted(key) + L" está vazia";
+    return L"a chave " + Quoted(key) + L" est\u00e1 vazia";
 }
 
 enum class Section { None, Global, Server };
@@ -97,7 +97,7 @@ public:
         }
         if (!CloseServer()) return result_;
         if (profiles_.servers.empty()) {
-            Fail(0, L"o arquivo não define nenhum servidor");
+            Fail(0, L"o arquivo n\u00e3o define nenhum servidor");
             return result_;
         }
         *out = profiles_;
@@ -122,13 +122,13 @@ private:
         if (text[0] == L'[') return OpenSection(line, text);
         const size_t equals = text.find(L'=');
         if (equals == std::wstring::npos) {
-            return Fail(line, L"linha inválida " + Quoted(text) + L" (esperado chave=valor)");
+            return Fail(line, L"linha inv\u00e1lida " + Quoted(text) + L" (esperado chave=valor)");
         }
         const std::wstring key = Trim(text.substr(0, equals));
         const std::wstring value = Trim(text.substr(equals + 1));
         switch (section_) {
             case Section::None:
-                return Fail(line, L"a chave " + Quoted(key) + L" aparece antes de qualquer seção");
+                return Fail(line, L"a chave " + Quoted(key) + L" aparece antes de qualquer se\u00e7\u00e3o");
             case Section::Global:
                 return GlobalKey(line, key, value);
             case Section::Server:
@@ -140,15 +140,15 @@ private:
     bool OpenSection(int line, const std::wstring& text) {
         if (!CloseServer()) return false;
         if (text.size() < 2 || text[text.size() - 1] != L']') {
-            return Fail(line, L"cabeçalho de seção inválido: " + Quoted(text));
+            return Fail(line, L"cabe\u00e7alho de se\u00e7\u00e3o inv\u00e1lido: " + Quoted(text));
         }
         const std::wstring id = text.substr(1, text.size() - 2);
         if (!IsValidId(id)) {
-            return Fail(line, L"seção inválida [" + id +
-                                  L"]: o id só pode ter letras minúsculas, números, \"-\" e \"_\"");
+            return Fail(line, L"se\u00e7\u00e3o inv\u00e1lida [" + id +
+                                  L"]: o id s\u00f3 pode ter letras min\u00fasculas, n\u00fameros, \"-\" e \"_\"");
         }
         if (!seenSections_.insert(id).second) {
-            return Fail(line, L"seção repetida: [" + id + L"]");
+            return Fail(line, L"se\u00e7\u00e3o repetida: [" + id + L"]");
         }
         if (id == L"geral") {
             section_ = Section::Global;
@@ -171,7 +171,7 @@ private:
         else if (!draft_.hasTransport) missing = L"transporte";
         if (missing) {
             return Fail(draft_.headerLine, L"o servidor [" + draft_.profile.id +
-                                               L"] não tem a chave obrigatória " + Quoted(missing));
+                                               L"] n\u00e3o tem a chave obrigat\u00f3ria " + Quoted(missing));
         }
         if (draft_.profile.domain.empty()) draft_.profile.domain = draft_.profile.host;
         profiles_.servers.push_back(draft_.profile);
@@ -199,7 +199,7 @@ private:
 
     bool ParseCodecs(int line, const std::wstring& value, std::vector<std::wstring>* out) {
         const std::wstring options = L"opus, G722, PCMA, PCMU ou G729";
-        if (value.empty()) return Fail(line, EmptyValue(L"codecs") + L" (opções: " + options + L")");
+        if (value.empty()) return Fail(line, EmptyValue(L"codecs") + L" (op\u00e7\u00f5es: " + options + L")");
         std::vector<std::wstring> codecs;
         size_t start = 0;
         for (;;) {
@@ -209,7 +209,7 @@ private:
             if (item.empty()) return Fail(line, L"item vazio na lista " + Quoted(L"codecs"));
             const wchar_t* canonical = CanonicalCodec(item);
             if (!canonical) {
-                return Fail(line, L"codec desconhecido " + Quoted(item) + L" (opções: " + options + L")");
+                return Fail(line, L"codec desconhecido " + Quoted(item) + L" (op\u00e7\u00f5es: " + options + L")");
             }
             codecs.push_back(canonical);
             if (comma == std::wstring::npos) break;
@@ -243,14 +243,14 @@ private:
         }
         if (key == L"porta") {
             if (!ParseInt(value, 1, 65535, &server.port)) {
-                return Fail(line, L"a chave \"porta\" precisa ser um número de 1 a 65535: " + Quoted(value));
+                return Fail(line, L"a chave \"porta\" precisa ser um n\u00famero de 1 a 65535: " + Quoted(value));
             }
             draft_.hasPort = true;
             return true;
         }
         if (key == L"keepalive") {
             if (!ParseInt(value, 1, 3600, &server.keepAliveSeconds)) {
-                return Fail(line, L"a chave \"keepalive\" precisa ser um número de 1 a 3600 (segundos): " +
+                return Fail(line, L"a chave \"keepalive\" precisa ser um n\u00famero de 1 a 3600 (segundos): " +
                                       Quoted(value));
             }
             return true;

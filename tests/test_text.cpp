@@ -23,13 +23,13 @@ TEST_CASE("Trim keeps inner blanks and empties a blank-only text") {
 }
 
 TEST_CASE("Utf8ToWide decodes 3- and 4-byte sequences") {
-    CHECK(Utf8ToWide("\xE2\x82\xAC") == std::wstring(L"€"));
+    CHECK(Utf8ToWide("\xE2\x82\xAC") == std::wstring(L"\u20ac"));
     CHECK(Utf8ToWide("\xF0\x9F\x98\x80") == std::wstring(L"\U0001F600"));
 }
 
 TEST_CASE("Utf8ToWide replaces truncated, overlong, surrogate and out-of-range sequences") {
-    CHECK(Utf8ToWide("\xE2\x82" "a") == std::wstring(L"�a"));
-    CHECK(Utf8ToWide("\xC0\xAF") == std::wstring(L"��"));
-    CHECK(Utf8ToWide("\xED\xA0\x80") == std::wstring(L"���"));
-    CHECK(Utf8ToWide("\xF4\x90\x80\x80") == std::wstring(L"����"));
+    CHECK(Utf8ToWide("\xE2\x82" "a") == std::wstring(L"\ufffda"));
+    CHECK(Utf8ToWide("\xC0\xAF") == std::wstring(L"\ufffd\ufffd"));
+    CHECK(Utf8ToWide("\xED\xA0\x80") == std::wstring(L"\ufffd\ufffd\ufffd"));
+    CHECK(Utf8ToWide("\xF4\x90\x80\x80") == std::wstring(L"\ufffd\ufffd\ufffd\ufffd"));
 }
