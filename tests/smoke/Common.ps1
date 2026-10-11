@@ -18,6 +18,14 @@ public static class StarsonicWin32 {
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
     [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr hWnd, uint command);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] public static extern uint GetPrivateProfileStringW(string section, string key, string fallback, StringBuilder value, int size, string file);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr SendMessageTimeoutW(IntPtr hWnd, uint msg, IntPtr wParam, StringBuilder lParam, uint flags, uint timeout, out IntPtr result);
+    // Texto de um controle de outro processo (GetWindowText so devolve legendas).
+    public static string ControlText(IntPtr hWnd) {
+        StringBuilder text = new StringBuilder(4096);
+        IntPtr ignored;
+        SendMessageTimeoutW(hWnd, 0x000D, new IntPtr(text.Capacity), text, 0x0002, 1000, out ignored);
+        return text.ToString();
+    }
 }
 '@
 }
@@ -112,13 +120,12 @@ function Stop-App {
     $closed = Wait-Until -TimeoutSeconds $TimeoutSeconds -Condition { $Process.HasExited }
     $helperCode = if ($helperExited) { $helper.ExitCode } else { 'ainda rodando' }
     $script:StopAppDetails = @("processo /exit: terminou=$helperExited em ${helperSeconds}s, codigo=$helperCode")
-    if (-not $helperExited) {
-        $script:StopAppDetails += @(Get-WindowReport -ProcessId $helper.Id | ForEach-Object { "/exit: $_" })
-        $script:StopAppDetails += @(Get-MainThreadStack -ProcessId $helper.Id -SymbolDir (Split-Path -Parent $Exe) | ForEach-Object { "/exit pilha: $_" })
-        Stop-Process -Id $helper.Id -Force -ErrorAction SilentlyContinue
-    }
     if (-not $closed) {
-        $script:StopAppDetails += @(Get-MainThreadStack -ProcessId $Process.Id -SymbolDir (Split-Path -Parent $Exe) | ForEach-Object { "app pilha: $_" })
+        $script:StopAppDetails += @(Get-HangReport -ProcessId $Process.Id -Label 'app' -SymbolDir (Split-Path -Parent $Exe))
+    }
+    if (-not $helperExited) {
+        $script:StopAppDetails += @(Get-HangReport -ProcessId $helper.Id -Label '/exit' -SymbolDir (Split-Path -Parent $Exe))
+        Stop-Process -Id $helper.Id -Force -ErrorAction SilentlyContinue
     }
     return $closed
 }
@@ -184,38 +191,54 @@ function Write-IniFile {
     [System.IO.File]::WriteAllText($Path, (($Lines -join "`r`n") + "`r`n"), [System.Text.Encoding]::Unicode)
 }
 
-# Resumo das janelas do processo (classe, titulo, visibilidade e textos dos controles),
-# para diagnosticar falhas no CI (ex.: caixa de mensagem inesperada).
+# Resumo das janelas do processo (classe, titulo, thread, visibilidade e textos dos controles),
+# para diagnosticar falhas no CI (ex.: caixa de mensagem inesperada). So as visiveis, a menos que
+# -All seja passado.
 function Get-WindowReport {
-    param([Parameter(Mandatory = $true)][int]$ProcessId)
+    param(
+        [Parameter(Mandatory = $true)][int]$ProcessId,
+        [switch]$All
+    )
     $report = New-Object System.Collections.ArrayList
     foreach ($window in @(Get-TopLevelWindows -ProcessId $ProcessId -IncludeOwned)) {
+        $visible = [StarsonicWin32]::IsWindowVisible($window.Handle)
+        if (-not $visible -and -not $All) {
+            continue
+        }
         $texts = New-Object System.Collections.ArrayList
         $callback = [StarsonicWin32+EnumWindowsProc]{
             param([IntPtr]$hWnd, [IntPtr]$lParam)
             $class = New-Object System.Text.StringBuilder 256
-            $title = New-Object System.Text.StringBuilder 1024
             [StarsonicWin32]::GetClassNameW($hWnd, $class, 256) | Out-Null
-            [StarsonicWin32]::GetWindowTextW($hWnd, $title, 1024) | Out-Null
-            if ($title.Length -gt 0) {
-                [void]$texts.Add("$($class.ToString()): $($title.ToString())")
+            $text = [StarsonicWin32]::ControlText($hWnd)
+            if ($text.Length -gt 0) {
+                [void]$texts.Add("$($class.ToString()): $($text -replace '\s+', ' ')")
             }
             return $true
         }
         [StarsonicWin32]::EnumChildWindows($window.Handle, $callback, [IntPtr]::Zero) | Out-Null
-        $visible = if ([StarsonicWin32]::IsWindowVisible($window.Handle)) { 'visivel' } else { 'oculta' }
-        $hung = if ([StarsonicWin32]::IsHungAppWindow($window.Handle)) { ', TRAVADA' } else { '' }
-        [void]$report.Add("[$($window.ClassName)] '$($window.Title)' ($visible$hung) { $($texts -join ' | ') }")
+        [uint32]$ignored = 0
+        $thread = [StarsonicWin32]::GetWindowThreadProcessId($window.Handle, [ref]$ignored)
+        $state = if ($visible) { 'visivel' } else { 'oculta' }
+        if ([StarsonicWin32]::IsHungAppWindow($window.Handle)) {
+            $state += ', TRAVADA'
+        }
+        [void]$report.Add([pscustomobject]@{
+                ThreadId = $thread
+                ClassName = $window.ClassName
+                Line = "[$($window.ClassName)] '$($window.Title)' (thread $thread, $state) { $($texts -join ' | ') }"
+            })
     }
     return $report
 }
 
-# Pilha da thread principal (cdb nao invasivo), para diagnosticar travamentos no CI.
-function Get-MainThreadStack {
+# Pilhas (cdb nao invasivo) da thread principal e das threads pedidas, para travamentos no CI.
+function Get-StackReport {
     param(
         [Parameter(Mandatory = $true)][int]$ProcessId,
+        [uint32[]]$ThreadIds = @(),
         [string]$SymbolDir = '',
-        [int]$Frames = 30
+        [int]$Frames = 18
     )
     $kits = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\Debuggers'
     $cdb = @((Join-Path $kits 'x86\cdb.exe'), (Join-Path $kits 'x64\cdb.exe')) | Where-Object { Test-Path $_ } | Select-Object -First 1
@@ -226,16 +249,34 @@ function Get-MainThreadStack {
     if ($SymbolDir) {
         $symbols = "$symbols;$SymbolDir"
     }
+    $commands = @(".echo == thread principal", "~0 kc $Frames")
+    foreach ($id in ($ThreadIds | Select-Object -Unique)) {
+        $commands += ".echo == thread $id"
+        $commands += ("~~[0x{0:x}] kc $Frames" -f $id)
+    }
+    $commands += 'q'
     $previous = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        $output = & $cdb -pv -p $ProcessId -y $symbols -c "~0 kc $Frames; q" 2>&1 | ForEach-Object { "$_" }
+        $output = & $cdb -pv -p $ProcessId -y $symbols -c ($commands -join '; ') 2>&1 | ForEach-Object { "$_" }
     } finally {
         $ErrorActionPreference = $previous
     }
-    $stack = @($output | Where-Object { $_ -match '^[0-9a-f]{2} ' })
-    if ($stack.Count -eq 0) {
-        return @($output | Select-Object -Last 15)
-    }
-    return $stack
+    return @($output | Where-Object {
+            ($_ -like '== thread*') -or ($_ -match '!' -and $_ -notmatch 'NatVis|\*\*\*|^quit')
+        })
+}
+
+# Diagnostico completo de um processo que deveria ter fechado.
+function Get-HangReport {
+    param(
+        [Parameter(Mandatory = $true)][int]$ProcessId,
+        [string]$Label = 'app',
+        [string]$SymbolDir = ''
+    )
+    $windows = @(Get-WindowReport -ProcessId $ProcessId)
+    $threads = @($windows | Where-Object { $_.ClassName -eq '#32770' } | ForEach-Object { $_.ThreadId })
+    $lines = @($windows | ForEach-Object { "${Label}: $($_.Line)" })
+    $lines += @(Get-StackReport -ProcessId $ProcessId -ThreadIds $threads -SymbolDir $SymbolDir | ForEach-Object { "${Label} pilha: $_" })
+    return $lines
 }
