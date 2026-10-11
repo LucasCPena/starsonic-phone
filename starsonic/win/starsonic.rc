@@ -33,3 +33,15 @@ BEGIN
     CONTROL         "<a>Remover conta</a>", IDC_SS_REMOVE, "SysLink", WS_TABSTOP, 10, 172, 80, 10
     LTEXT           "Precisa de ajuda?", IDC_SS_HELP, 90, 172, 80, 10
 END
+
+IDD_STARSONIC_ABOUT DIALOGEX 0, 0, 220, 132
+STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Starsonic Phone"
+FONT 8, "Microsoft Sans Serif", 400, 0, 0x0
+BEGIN
+    CONTROL         "", IDC_SS_ABOUT_LOGO, "Static", SS_OWNERDRAW, 10, 8, 200, 28
+    LTEXT           "", IDC_SS_ABOUT_VERSION, 10, 44, 200, 10
+    CONTROL         "", IDC_SS_ABOUT_LINKS, "SysLink", WS_TABSTOP, 10, 60, 200, 10
+    CONTROL         "", IDC_SS_ABOUT_LICENSE, "SysLink", WS_TABSTOP, 10, 76, 200, 26
+    DEFPUSHBUTTON   "Fechar", IDOK, 160, 110, 50, 14
+END

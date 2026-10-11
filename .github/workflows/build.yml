@@ -78,6 +78,9 @@ jobs:
       - name: Teste de abrir e fechar
         run: .\tests\smoke\Test-StartStop.ps1 -AppDir out
 
+      - name: Teste da faixa e da tela Sobre
+        run: .\tests\smoke\Test-BrandUi.ps1 -AppDir out
+
       - name: Compilar a versão de teste (perfil de CI)
         run: .\build\Build-App.ps1 -WorkDir work -Version 0.0.0 -Channel estavel -ProfilesFile tests\fixtures\servidores-ci.ini -OutDir out-ci
 

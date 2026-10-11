@@ -40,7 +40,7 @@ CImage* LoadPng(UINT resourceId) {
     return result;
 }
 
-void DrawName(CDC* dc, const CRect& area, COLORREF textColor) {
+void DrawName(CDC* dc, const CRect& area, COLORREF textColor, bool alignLeft) {
     CFont font;
     LOGFONT lf = {};
     lf.lfHeight = -(std::max)(10, area.Height() * 3 / 5);
@@ -52,7 +52,8 @@ void DrawName(CDC* dc, const CRect& area, COLORREF textColor) {
     const int oldMode = dc->SetBkMode(TRANSPARENT);
     const COLORREF oldColor = dc->SetTextColor(textColor);
     CRect rect(area);
-    dc->DrawText(L"Starsonic", &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    const UINT horizontal = alignLeft ? DT_LEFT : DT_CENTER;
+    dc->DrawText(L"Starsonic", &rect, horizontal | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     dc->SetTextColor(oldColor);
     dc->SetBkMode(oldMode);
     dc->SelectObject(old);
@@ -60,10 +61,10 @@ void DrawName(CDC* dc, const CRect& area, COLORREF textColor) {
 
 }  // namespace
 
-void DrawLogo(CDC* dc, const CRect& area, UINT pngResourceId, COLORREF textColor) {
+void DrawLogo(CDC* dc, const CRect& area, UINT pngResourceId, COLORREF textColor, bool alignLeft) {
     CImage* image = LoadPng(pngResourceId);
     if (!image || image->GetWidth() <= 0 || image->GetHeight() <= 0) {
-        DrawName(dc, area, textColor);
+        DrawName(dc, area, textColor, alignLeft);
         return;
     }
     // Encaixa mantendo a proporcao, centralizado.
@@ -71,7 +72,7 @@ void DrawLogo(CDC* dc, const CRect& area, UINT pngResourceId, COLORREF textColor
                              static_cast<double>(area.Height()) / image->GetHeight());
     const int width = static_cast<int>(image->GetWidth() * scale);
     const int height = static_cast<int>(image->GetHeight() * scale);
-    const int left = area.left + (area.Width() - width) / 2;
+    const int left = alignLeft ? area.left : area.left + (area.Width() - width) / 2;
     const int top = area.top + (area.Height() - height) / 2;
     const int oldMode = dc->SetStretchBltMode(HALFTONE);
     image->Draw(dc->GetSafeHdc(), left, top, width, height);

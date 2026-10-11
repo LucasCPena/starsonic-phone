@@ -3,6 +3,7 @@
 #include <windows.h>
 
 class CmainDlg;
+class CMenu;
 class CStarsonicLoginDlg;
 
 namespace starsonic {
@@ -23,6 +24,16 @@ void OnMainWindowCreated(CmainDlg* main);
 
 // Chamado pela propria tela Entrar ao ser destruida.
 void OnLoginDialogDestroyed(CStarsonicLoginDlg* dialog);
+
+// E6 (OnInitDialog, logo depois de CBaseDialog::OnInitDialog): faixa da marca no topo da janela.
+void InstallBrandBand(CmainDlg* main);
+
+// E10 (UpdateWindowText): status da faixa = texto da barra + rotulo da conta ativa.
+void OnStatusText(CmainDlg* main, const CString& text);
+
+// E11: item "Sobre o Starsonic Phone" no menu principal (ID_CUSTOM_RANGE) e sua acao.
+void AddMenuItems(CMenu* menu);
+void OnCustomMenu(CmainDlg* main, UINT id);
 
 // E12: substituem o verificador de versao do MicroSIP (que consultava update.microsip.org).
 // O atualizador da Starsonic entra na Task 14; ate la, nao ha verificacao.

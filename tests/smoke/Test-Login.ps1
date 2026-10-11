@@ -92,6 +92,15 @@ try {
             Fail "[$($item[0])] $($item[1]) = '$actual' (esperado '$($item[2])')."
         }
     }
+    $main = Find-WindowByClass -ProcessId $process.Id -ClassName 'Starsonic Phone' -TimeoutSeconds 5
+    $band = [StarsonicWin32]::GetDlgItem($main.Handle, 41200)
+    $bandOk = Wait-Until -TimeoutSeconds 10 -Condition {
+        $text = [StarsonicWin32]::ControlText($band)
+        return ($text.Contains('2001') -and $text.Contains('Servidor local (CI)'))
+    }
+    if (-not $bandOk) {
+        Fail "Faixa da marca depois de entrar: '$([StarsonicWin32]::ControlText($band))'."
+    }
     $userAgent = if (Test-Path $userAgentLog) { (Get-Content -Raw $userAgentLog).Trim() } else { '' }
     if ($userAgent -ne 'Starsonic Phone/0.0.0') {
         Fail "User-Agent recebido pelo servidor: '$userAgent' (esperado 'Starsonic Phone/0.0.0')."

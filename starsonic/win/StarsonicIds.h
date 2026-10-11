@@ -18,5 +18,15 @@
 #define IDC_SS_REMOVE 41017
 #define IDC_SS_HELP 41018
 
+/* Faixa da marca */
+#define IDC_STARSONIC_BAND 41200
+
+/* Tela Sobre */
+#define IDD_STARSONIC_ABOUT 41020
+#define IDC_SS_ABOUT_LOGO 41021
+#define IDC_SS_ABOUT_VERSION 41022
+#define IDC_SS_ABOUT_LINKS 41023
+#define IDC_SS_ABOUT_LICENSE 41024
+
 /* Timers */
 #define IDT_STARSONIC_LOGIN 41301

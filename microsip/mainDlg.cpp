@@ -2013,6 +2013,7 @@ int CmainDlg::OnCreate(LPCREATESTRUCT lpCreateStruct)
 BOOL CmainDlg::OnInitDialog()
 {
     CBaseDialog::OnInitDialog();
+    starsonic::InstallBrandBand(this);
 
     messagesDlg = new MessagesDlg(this);
 
@@ -2398,6 +2399,7 @@ void CmainDlg::OnMenuAccountLocalEdit()
 
 void CmainDlg::OnMenuCustomRange(UINT nID)
 {
+    starsonic::OnCustomMenu(this, nID);
 }
 
 void CmainDlg::OnMenuSettings()
@@ -2690,6 +2692,7 @@ void CmainDlg::MainPopupMenu(bool isMenuButton)
         tracker->AppendMenu(MF_SEPARATOR);
         separator = true;
     }
+    starsonic::AddMenuItems(tracker);
     str = Translate(_T("Help"));
     str.AppendFormat(_T("\tv%s"), _T(_GLOBAL_VERSION));
     tracker->AppendMenu(MF_STRING, ID_MENU_HELP, str);
@@ -4230,6 +4233,7 @@ void CmainDlg::UpdateWindowText(CString text, int icon, bool afterRegister)
 #endif
 
     m_bar.SetPaneText(0, str);
+    starsonic::OnStatusText(this, str);
 
     if (icon != -1) {
         HICON hIcon = (HICON)LoadImage(
