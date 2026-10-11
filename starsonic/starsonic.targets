@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Starsonic Phone: importado no fim de microsip/microsip.vcxproj (edicao E3). -->
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <!-- Build-App.ps1 tambem passa /p:TargetName na linha de comando, para valer desde o inicio da avaliacao. -->
+    <TargetName>StarsonicPhone</TargetName>
+    <StarsonicVcpkgRoot Condition="'$(StarsonicVcpkgRoot)'==''">$(MSBuildThisFileDirectory)..\..\vcpkg\installed\x86-windows-static</StarsonicVcpkgRoot>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(StarsonicVcpkgRoot)\include;$(MSBuildThisFileDirectory);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <AdditionalLibraryDirectories>$(StarsonicVcpkgRoot)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>opus.lib;bcg729.lib;libssl.lib;libcrypto.lib;crypt32.lib;ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+</Project>

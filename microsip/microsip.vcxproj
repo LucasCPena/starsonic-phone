@@ -535,4 +535,5 @@
       <UserProperties RESOURCE_FILE="main.rc" />
     </VisualStudio>
   </ProjectExtensions>
+  <Import Project="..\starsonic\starsonic.targets" />
 </Project>

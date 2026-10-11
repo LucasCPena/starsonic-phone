@@ -68,6 +68,18 @@ class CheckSourceTextTest(unittest.TestCase):
         self.write("branding/branding.h", '#define STARSONIC_COMPANY "Starsonic"\n// ç\n')
         self.assertEqual(len(self.problems()), 1)
 
+    def test_powershell_scripts_must_be_fully_ascii(self):
+        self.write("build/Build-App.ps1", "Write-Host 'ok'\n# coment\u00e1rio\n")
+        self.write("tests/smoke/Common.ps1", "Write-Host 'ok'\n")
+        found = self.problems()
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0][0], "build/Build-App.ps1")
+        self.assertEqual(found[0][1], 2)
+
+    def test_build_headers_must_be_fully_ascii(self):
+        self.write("build/config_site.h", "/* configura\u00e7\u00e3o */\n")
+        self.assertEqual(len(self.problems()), 2)
+
     def test_third_party_and_generated_are_ignored(self):
         self.write("starsonic/third_party/doctest/doctest.h", 'auto t = L"ç";\n')
         self.write("starsonic/generated/build_info.h", 'auto t = L"ç";\n')

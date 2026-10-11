@@ -7,8 +7,9 @@ acento dentro de um literal vira lixo na tela. Por isso:
 - em starsonic/ e tests/ (*.cpp, *.h), caractere fora do ASCII dentro de um
   literal precisa ser escrito como escape (barra invertida + u + 4 dígitos);
   comentários podem ter acentos;
-- starsonic/**/*.rc e branding/branding.h precisam ser só ASCII (o compilador
-  de recursos também os lê).
+- starsonic/**/*.rc, branding/branding.h, build/*.h, build/*.ps1 e
+  tests/smoke/*.ps1 precisam ser só ASCII (o compilador de recursos e o
+  Windows PowerShell 5.1 leem esses arquivos na página de código do Windows).
 
 Uso: check_source_text.py [--fix] [raiz]
 --fix troca os caracteres dos literais largos (L"...", u"...", U"...") pelos
@@ -129,6 +130,12 @@ def _ascii_only_files(root):
     branding = root / "branding" / "branding.h"
     if branding.is_file():
         yield branding
+    # O Windows PowerShell 5.1 lê .ps1 sem BOM na página de código do Windows.
+    for directory, pattern in (("build", "*.ps1"), ("build", "*.h"), ("tests/smoke", "*.ps1")):
+        base = root / directory
+        if base.is_dir():
+            for path in sorted(base.glob(pattern)):
+                yield path
 
 
 def _read(path):

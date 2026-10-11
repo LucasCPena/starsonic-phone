@@ -1,0 +1,83 @@
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  core-tests:
+    name: Testes do núcleo (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Testes C++ (doctest)
+        run: |
+          cmake -S tests -B build-tests
+          cmake --build build-tests -j 4
+          ctest --test-dir build-tests --output-on-failure
+
+      - name: Testes dos scripts
+        run: |
+          if [ -d tests/python ]; then python3 -m unittest discover -s tests/python -v; fi
+          python3 build/check_source_text.py
+
+  windows:
+    name: Windows (Win32, Release)
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restaurar dependências
+        id: deps-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            work/pjproject
+            work/vcpkg
+          key: deps-v1-${{ hashFiles('build/deps.lock', 'build/config_site.h', 'build/Build-Deps.ps1') }}
+
+      - name: Compilar dependências (pjproject e vcpkg)
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        run: .\build\Build-Deps.ps1 -WorkDir work
+
+      - name: Guardar dependências
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            work/pjproject
+            work/vcpkg
+          key: ${{ steps.deps-cache.outputs.cache-primary-key }}
+
+      - name: Testes do núcleo (Windows)
+        run: |
+          cmake -S tests -B build-tests-win -A Win32
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          cmake --build build-tests-win --config Release
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          ctest --test-dir build-tests-win -C Release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Compilar o Starsonic Phone
+        run: |
+          $version = '0.0.0'
+          if ('${{ github.ref }}' -match '^refs/tags/v(\d+\.\d+\.\d+(-rc\.[1-9]\d*)?)$') { $version = $Matches[1] }
+          .\build\Build-App.ps1 -WorkDir work -Version $version -Channel estavel -ProfilesFile branding\servidores.ini -OutDir out
+
+      - name: Teste de abrir e fechar
+        run: .\tests\smoke\Test-StartStop.ps1 -AppDir out
+
+      - name: Publicar o executável
+        uses: actions/upload-artifact@v4
+        with:
+          name: StarsonicPhone-${{ github.sha }}
+          path: out/
+          if-no-files-found: error

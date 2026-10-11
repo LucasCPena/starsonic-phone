@@ -1,0 +1,22 @@
+{
+  "pjproject": {
+    "repo": "https://github.com/pjsip/pjproject",
+    "tag": "2.17",
+    "commit": "5a457451fa2712ba18e12b01738e8ff3af2b26fd",
+    "configuration": "Release-Static",
+    "platform": "Win32"
+  },
+  "vcpkg": {
+    "repo": "https://github.com/microsoft/vcpkg",
+    "commit": "e456309491fd875487bf02b8a0dca76c1b1b00cc",
+    "triplet": "x86-windows-static",
+    "ports": ["openssl", "opus", "bcg729", "sqlite3", "sqlitecpp"],
+    "versions": {
+      "openssl": "3.6.5#1",
+      "opus": "1.6.1",
+      "bcg729": "1.1.2",
+      "sqlite3": "3.53.4#2",
+      "sqlitecpp": "3.3.3"
+    }
+  }
+}

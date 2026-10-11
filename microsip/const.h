@@ -25,3 +25,4 @@
 #define _GLOBAL_VIDEO
 #define _GLOBAL_NAME "MicroSIP"
 #define _GLOBAL_COMPANY "www.microsip.org"
+#include "..\starsonic\branding_override.h"
