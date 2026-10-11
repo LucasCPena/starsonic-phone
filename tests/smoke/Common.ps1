@@ -10,10 +10,13 @@ using System.Text;
 public static class StarsonicWin32 {
     public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
     [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+    [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr parent, EnumWindowsProc callback, IntPtr lParam);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassNameW(IntPtr hWnd, StringBuilder name, int max);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowTextW(IntPtr hWnd, StringBuilder text, int max);
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
     [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr hWnd, uint command);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] public static extern uint GetPrivateProfileStringW(string section, string key, string fallback, StringBuilder value, int size, string file);
 }
 '@
 }
@@ -98,9 +101,14 @@ function Stop-App {
         [Parameter(Mandatory = $true)][System.Diagnostics.Process]$Process,
         [int]$TimeoutSeconds = 15
     )
+    $started = Get-Date
     $helper = Start-Process -FilePath $Exe -ArgumentList '/exit' -WorkingDirectory (Split-Path -Parent $Exe) -PassThru
-    $helper.WaitForExit($TimeoutSeconds * 1000) | Out-Null
-    return (Wait-Until -TimeoutSeconds $TimeoutSeconds -Condition { $Process.HasExited })
+    $helperExited = $helper.WaitForExit($TimeoutSeconds * 1000)
+    $helperSeconds = [int]((Get-Date) - $started).TotalSeconds
+    $closed = Wait-Until -TimeoutSeconds $TimeoutSeconds -Condition { $Process.HasExited }
+    $helperCode = if ($helperExited) { $helper.ExitCode } else { 'ainda rodando' }
+    $script:StopAppDetails = "processo /exit: terminou=$helperExited em ${helperSeconds}s, codigo=$helperCode"
+    return $closed
 }
 
 # Janela de primeiro nivel do processo (opcionalmente com o titulo $Name).
@@ -141,4 +149,50 @@ function Find-ById {
         return ($null -ne $holder.Control)
     } | Out-Null
     return $holder.Control
+}
+
+# Le um valor de um INI (ANSI ou UTF-16, como o MicroSIP grava).
+function Read-IniValue {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Section,
+        [Parameter(Mandatory = $true)][string]$Key
+    )
+    $buffer = New-Object System.Text.StringBuilder 4096
+    [StarsonicWin32]::GetPrivateProfileStringW($Section, $Key, '', $buffer, 4096, $Path) | Out-Null
+    return $buffer.ToString()
+}
+
+# Grava um INI em UTF-16LE com BOM (o formato que o MicroSIP usa).
+function Write-IniFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string[]]$Lines
+    )
+    [System.IO.File]::WriteAllText($Path, (($Lines -join "`r`n") + "`r`n"), [System.Text.Encoding]::Unicode)
+}
+
+# Resumo das janelas do processo (classe, titulo, visibilidade e textos dos controles),
+# para diagnosticar falhas no CI (ex.: caixa de mensagem inesperada).
+function Get-WindowReport {
+    param([Parameter(Mandatory = $true)][int]$ProcessId)
+    $report = New-Object System.Collections.ArrayList
+    foreach ($window in @(Get-TopLevelWindows -ProcessId $ProcessId)) {
+        $texts = New-Object System.Collections.ArrayList
+        $callback = [StarsonicWin32+EnumWindowsProc]{
+            param([IntPtr]$hWnd, [IntPtr]$lParam)
+            $class = New-Object System.Text.StringBuilder 256
+            $title = New-Object System.Text.StringBuilder 1024
+            [StarsonicWin32]::GetClassNameW($hWnd, $class, 256) | Out-Null
+            [StarsonicWin32]::GetWindowTextW($hWnd, $title, 1024) | Out-Null
+            if ($title.Length -gt 0) {
+                [void]$texts.Add("$($class.ToString()): $($title.ToString())")
+            }
+            return $true
+        }
+        [StarsonicWin32]::EnumChildWindows($window.Handle, $callback, [IntPtr]::Zero) | Out-Null
+        $visible = if ([StarsonicWin32]::IsWindowVisible($window.Handle)) { 'visivel' } else { 'oculta' }
+        [void]$report.Add("[$($window.ClassName)] '$($window.Title)' ($visible) { $($texts -join ' | ') }")
+    }
+    return $report
 }

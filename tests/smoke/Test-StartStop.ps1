@@ -38,7 +38,9 @@ if (-not $window.Title.StartsWith('Starsonic Phone')) {
 Write-Host "Janela principal: [$($window.ClassName)] '$($window.Title)'"
 
 if (-not (Stop-App -Exe $exe -Process $process -TimeoutSeconds 15)) {
+    $windows = @(Get-WindowReport -ProcessId $process.Id)
     Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+    Write-CiError -Title 'Test-StartStop: janelas abertas' -Lines (@($script:StopAppDetails) + $windows)
     throw 'O app nao fechou em 15 s depois de /exit.'
 }
 Write-Host 'OK: o app abriu e fechou com /exit.'
