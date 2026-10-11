@@ -1,6 +1,36 @@
 # Funcoes comuns dos scripts de build (Windows PowerShell 5.1).
 # Uso: . (Join-Path $PSScriptRoot 'BuildCommon.ps1')
 
+# No GitHub Actions, mostra linhas como anotacoes de erro (visiveis pela API, mesmo sem acesso ao log).
+# O Actions aceita ate 10 anotacoes de erro por passo; as linhas sao agrupadas.
+function Write-CiError {
+    param(
+        [Parameter(Mandatory = $true)][string]$Title,
+        [string[]]$Lines = @()
+    )
+    if ($env:GITHUB_ACTIONS -ne 'true') {
+        return
+    }
+    $escape = { param([string]$text) $text.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A') }
+    $titleText = (& $escape $Title).Replace(':', '%3A').Replace(',', '%2C')
+    $prefix = $env:GITHUB_WORKSPACE
+    $clean = @($Lines | ForEach-Object {
+            $line = "$_"
+            if ($prefix) { $line = $line.Replace($prefix + '\', '') }
+            if ($line.Length -gt 400) { $line = $line.Substring(0, 400) + '...' }
+            $line
+        })
+    if ($clean.Count -eq 0) {
+        $clean = @($Title)
+    }
+    $chunk = 6
+    for ($start = 0; $start -lt $clean.Count -and $start -lt 9 * $chunk; $start += $chunk) {
+        $end = [Math]::Min($start + $chunk, $clean.Count) - 1
+        $message = & $escape (($clean[$start..$end]) -join "`n")
+        Write-Host "::error title=${titleText}::${message}"
+    }
+}
+
 # Roda um programa externo, mostra a saida (stdout e stderr) e falha se o codigo de saida nao for 0.
 # No PowerShell 5.1, stderr de programa externo com $ErrorActionPreference = 'Stop' vira erro fatal;
 # por isso a preferencia e trocada so durante a chamada.
@@ -9,15 +39,25 @@ function Invoke-Native {
         [Parameter(Mandatory = $true)][string]$File,
         [string[]]$Arguments = @()
     )
+    $lines = New-Object System.Collections.Generic.List[string]
     $previous = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        & $File @Arguments 2>&1 | ForEach-Object { "$_" }
+        & $File @Arguments 2>&1 | ForEach-Object {
+            $line = "$_"
+            $lines.Add($line)
+            $line
+        }
         $code = $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $previous
     }
     if ($code -ne 0) {
+        $errors = @($lines | Where-Object { $_ -match '(?i)(\berror\b|\bfatal\b)\s*[A-Z]*\d*\s*:' } | Select-Object -Unique)
+        if ($errors.Count -eq 0) {
+            $errors = @($lines | Select-Object -Last 30)
+        }
+        Write-CiError -Title "Falhou: $(Split-Path -Leaf $File) (codigo $code)" -Lines $errors
         throw "Falhou (codigo $code): $File $($Arguments -join ' ')"
     }
 }

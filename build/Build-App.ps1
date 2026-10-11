@@ -11,6 +11,10 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2
 . (Join-Path $PSScriptRoot 'BuildCommon.ps1')
+trap {
+    Write-CiError -Title 'Build-App' -Lines @($_.Exception.Message)
+    break
+}
 $repoRoot = Split-Path -Parent $PSScriptRoot
 
 if ($Version -notmatch '^(\d+)\.(\d+)\.(\d+)(-rc\.([1-9]\d*))?$') {

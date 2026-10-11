@@ -6,6 +6,11 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2
 . (Join-Path $PSScriptRoot 'Common.ps1')
+. (Join-Path $PSScriptRoot '..\..\build\BuildCommon.ps1')
+trap {
+    Write-CiError -Title 'Test-StartStop' -Lines @($_.Exception.Message)
+    break
+}
 
 $copy = New-AppCopy -AppDir (Resolve-Path $AppDir).Path
 $exe = Join-Path $copy 'StarsonicPhone.exe'
