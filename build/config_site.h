@@ -7,3 +7,6 @@
 #define PJMEDIA_HAS_OPUS_CODEC   1
 #define PJMEDIA_HAS_BCG729       1
 #define PJMEDIA_HAS_WEBRTC_AEC   1
+
+/* Compatibilidade: o MicroSIP 3.22.16 usa o nome antigo do limite de dispositivos de audio. */
+#define PJMEDIA_AUD_MAX_DEVS     PJMEDIA_AUD_DEV_MAX_DEVS
