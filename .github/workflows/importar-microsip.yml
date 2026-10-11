@@ -1,0 +1,95 @@
+name: importar-microsip
+
+# Importa uma versão oficial do MicroSIP para o ramo upstream (código em microsip/, sons e
+# tradução pt-BR do pacote Lite em microsip-dist/) e abre um PR upstream -> main.
+on:
+  workflow_dispatch:
+    inputs:
+      versao:
+        description: "Versão do MicroSIP, por exemplo 3.22.16"
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  importar:
+    name: Importar o MicroSIP ${{ inputs.versao }}
+    runs-on: ubuntu-latest
+    env:
+      VERSAO: ${{ inputs.versao }}
+    steps:
+      - name: Conferir a versão
+        run: |
+          if ! printf '%s' "$VERSAO" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::versão inválida: $VERSAO (use X.Y.Z)"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: upstream
+          fetch-depth: 0
+
+      - name: Baixar e extrair os pacotes oficiais
+        run: |
+          pacotes="$RUNNER_TEMP/pacotes"
+          mkdir -p "$pacotes"
+          curl -fL --retry 3 -o "$pacotes/src.7z" "https://www.microsip.org/download/MicroSIP-$VERSAO-src.7z"
+          curl -fL --retry 3 -o "$pacotes/lite.zip" "https://www.microsip.org/download/MicroSIP-Lite-$VERSAO.zip"
+          sha256sum "$pacotes/src.7z" "$pacotes/lite.zip"
+          7z x -y -o"$pacotes/src" "$pacotes/src.7z" > /dev/null
+          7z x -y -o"$pacotes/lite" "$pacotes/lite.zip" > /dev/null
+
+      - name: Atualizar microsip/ e microsip-dist/
+        run: |
+          pacotes="$RUNNER_TEMP/pacotes"
+          projeto=$(find "$pacotes/src" -name microsip.vcxproj -print -quit)
+          if [ -z "$projeto" ]; then
+            echo "::error::microsip.vcxproj não encontrado no pacote de código"
+            exit 1
+          fi
+          mkdir -p microsip
+          rsync -a --delete "$(dirname "$projeto")/" microsip/
+          rm -rf microsip-dist
+          mkdir -p microsip-dist
+          find "$pacotes/lite" -type f -iname '*.wav' -exec cp {} microsip-dist/ \;
+          traducao=$(find "$pacotes/lite" -type f -iname 'langpack_portuguesebr.txt' -print -quit)
+          if [ -n "$traducao" ]; then
+            cp "$traducao" microsip-dist/langpack_portuguesebr.txt
+          else
+            echo "::warning::o pacote Lite não traz langpack_portuguesebr.txt"
+          fi
+          ls -l microsip-dist
+
+      - name: Commit, tag e push no upstream
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A microsip microsip-dist
+          if git diff --cached --quiet; then
+            echo "Nada mudou no upstream."
+          else
+            git commit -m "MicroSIP $VERSAO"
+          fi
+          if ! git rev-parse -q --verify "refs/tags/microsip-$VERSAO" > /dev/null; then
+            git tag "microsip-$VERSAO"
+          fi
+          git push origin upstream "refs/tags/microsip-$VERSAO"
+
+      - name: Abrir o PR upstream -> main
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          aberto=$(gh pr list --base main --head upstream --state open --json number --jq '.[].number')
+          if [ -n "$aberto" ]; then
+            echo "PR já aberto: #$aberto"
+          elif git merge-base --is-ancestor upstream origin/main 2> /dev/null; then
+            echo "main já tem este upstream."
+          else
+            gh pr create --base main --head upstream --title "MicroSIP $VERSAO" \
+              --body "Importação do MicroSIP $VERSAO: código oficial em \`microsip/\` e sons/tradução do pacote Lite em \`microsip-dist/\`." \
+              || echo "::warning::não foi possível abrir o PR (ative 'Allow GitHub Actions to create and approve pull requests' ou abra em https://github.com/${{ github.repository }}/compare/main...upstream)"
+          fi
