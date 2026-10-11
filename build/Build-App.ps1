@@ -102,6 +102,10 @@ if (-not $exe) {
 # 5. Saida
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 Copy-Item -Path $exe.FullName -Destination (Join-Path $OutDir 'StarsonicPhone.exe') -Force
+$pdb = [System.IO.Path]::ChangeExtension($exe.FullName, '.pdb')
+if (Test-Path $pdb) {
+    Copy-Item -Path $pdb -Destination (Join-Path $OutDir 'StarsonicPhone.pdb') -Force
+}
 $dist = Join-Path $repoRoot 'microsip-dist'
 if (Test-Path $dist) {
     Get-ChildItem -Path $dist -Filter '*.wav' | Copy-Item -Destination $OutDir -Force

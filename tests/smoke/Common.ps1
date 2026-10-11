@@ -12,6 +12,7 @@ public static class StarsonicWin32 {
     [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
     [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr parent, EnumWindowsProc callback, IntPtr lParam);
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool IsHungAppWindow(IntPtr hWnd);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassNameW(IntPtr hWnd, StringBuilder name, int max);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowTextW(IntPtr hWnd, StringBuilder text, int max);
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
@@ -23,13 +24,16 @@ public static class StarsonicWin32 {
 
 # Janelas de primeiro nivel (visiveis ou nao) do processo, com classe e titulo.
 function Get-TopLevelWindows {
-    param([Parameter(Mandatory = $true)][int]$ProcessId)
+    param(
+        [Parameter(Mandatory = $true)][int]$ProcessId,
+        [switch]$IncludeOwned
+    )
     $found = New-Object System.Collections.ArrayList
     $callback = [StarsonicWin32+EnumWindowsProc]{
         param([IntPtr]$hWnd, [IntPtr]$lParam)
         [uint32]$owner = 0
         [StarsonicWin32]::GetWindowThreadProcessId($hWnd, [ref]$owner) | Out-Null
-        if ($owner -eq $ProcessId -and [StarsonicWin32]::GetWindow($hWnd, 4) -eq [IntPtr]::Zero) {
+        if ($owner -eq $ProcessId -and ($IncludeOwned -or [StarsonicWin32]::GetWindow($hWnd, 4) -eq [IntPtr]::Zero)) {
             $class = New-Object System.Text.StringBuilder 256
             $title = New-Object System.Text.StringBuilder 512
             [StarsonicWin32]::GetClassNameW($hWnd, $class, 256) | Out-Null
@@ -110,7 +114,11 @@ function Stop-App {
     $script:StopAppDetails = @("processo /exit: terminou=$helperExited em ${helperSeconds}s, codigo=$helperCode")
     if (-not $helperExited) {
         $script:StopAppDetails += @(Get-WindowReport -ProcessId $helper.Id | ForEach-Object { "/exit: $_" })
+        $script:StopAppDetails += @(Get-MainThreadStack -ProcessId $helper.Id -SymbolDir (Split-Path -Parent $Exe) | ForEach-Object { "/exit pilha: $_" })
         Stop-Process -Id $helper.Id -Force -ErrorAction SilentlyContinue
+    }
+    if (-not $closed) {
+        $script:StopAppDetails += @(Get-MainThreadStack -ProcessId $Process.Id -SymbolDir (Split-Path -Parent $Exe) | ForEach-Object { "app pilha: $_" })
     }
     return $closed
 }
@@ -181,7 +189,7 @@ function Write-IniFile {
 function Get-WindowReport {
     param([Parameter(Mandatory = $true)][int]$ProcessId)
     $report = New-Object System.Collections.ArrayList
-    foreach ($window in @(Get-TopLevelWindows -ProcessId $ProcessId)) {
+    foreach ($window in @(Get-TopLevelWindows -ProcessId $ProcessId -IncludeOwned)) {
         $texts = New-Object System.Collections.ArrayList
         $callback = [StarsonicWin32+EnumWindowsProc]{
             param([IntPtr]$hWnd, [IntPtr]$lParam)
@@ -196,7 +204,38 @@ function Get-WindowReport {
         }
         [StarsonicWin32]::EnumChildWindows($window.Handle, $callback, [IntPtr]::Zero) | Out-Null
         $visible = if ([StarsonicWin32]::IsWindowVisible($window.Handle)) { 'visivel' } else { 'oculta' }
-        [void]$report.Add("[$($window.ClassName)] '$($window.Title)' ($visible) { $($texts -join ' | ') }")
+        $hung = if ([StarsonicWin32]::IsHungAppWindow($window.Handle)) { ', TRAVADA' } else { '' }
+        [void]$report.Add("[$($window.ClassName)] '$($window.Title)' ($visible$hung) { $($texts -join ' | ') }")
     }
     return $report
+}
+
+# Pilha da thread principal (cdb nao invasivo), para diagnosticar travamentos no CI.
+function Get-MainThreadStack {
+    param(
+        [Parameter(Mandatory = $true)][int]$ProcessId,
+        [string]$SymbolDir = '',
+        [int]$Frames = 30
+    )
+    $kits = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\Debuggers'
+    $cdb = @((Join-Path $kits 'x86\cdb.exe'), (Join-Path $kits 'x64\cdb.exe')) | Where-Object { Test-Path $_ } | Select-Object -First 1
+    if (-not $cdb) {
+        return @('cdb nao encontrado')
+    }
+    $symbols = "srv*$(Join-Path $env:TEMP 'symbols')*https://msdl.microsoft.com/download/symbols"
+    if ($SymbolDir) {
+        $symbols = "$symbols;$SymbolDir"
+    }
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $output = & $cdb -pv -p $ProcessId -y $symbols -c "~0 kc $Frames; q" 2>&1 | ForEach-Object { "$_" }
+    } finally {
+        $ErrorActionPreference = $previous
+    }
+    $stack = @($output | Where-Object { $_ -match '^[0-9a-f]{2} ' })
+    if ($stack.Count -eq 0) {
+        return @($output | Select-Object -Last 15)
+    }
+    return $stack
 }
