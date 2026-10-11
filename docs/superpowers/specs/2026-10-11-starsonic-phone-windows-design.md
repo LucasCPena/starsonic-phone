@@ -10,7 +10,7 @@
 > 3. **Licença do binário: GNU GPL v3.** MicroSIP e PJSIP são "GPL v2 ou posterior", mas o OpenSSL 3 (Apache 2.0) e o bcg729 (G.729, GPL v3) só são compatíveis com a v3.
 > 4. Não existe opção de idioma nas Configurações: o MicroSIP carrega o arquivo de idioma que estiver ao lado do executável. O app é instalado só com o pt-BR.
 > 5. O cliente HTTP do MicroSIP ignora erros de certificado; o atualizador usa um cliente próprio, com validação.
-> 6. Item novo M10 (relatórios de falha), a confirmar com a Starsonic.
+> 6. Item novo M10 (relatórios de falha), aprovado junto com a licença GPL v3 em 11/10/2026.
 
 ## 1. Contexto
 
@@ -48,7 +48,7 @@ Este subprojeto cria o **Starsonic Phone para Windows**: um fork do [MicroSIP](h
 | M7 | Travas | Campos de conta e rede e a verificação de atualizações ficam travados e somem da tela de Configurações |
 | M8 | Instalação | Instalador próprio, por usuário, sem privilégio de administrador; pasta e configurações próprias |
 | M9 | Atualização | Aviso no app e "baixar e instalar" com um clique, a partir dos releases do GitHub |
-| M10 | Relatórios de falha | **A confirmar:** não enviar para `crash-report2.microsip.org`; o arquivo de diagnóstico continua sendo gravado no PC |
+| M10 | Relatórios de falha | Não enviar para `crash-report2.microsip.org`; o arquivo de diagnóstico continua sendo gravado no PC (aprovado em 11/10/2026) |
 
 **Continua como no MicroSIP:** várias contas configuradas com uma ativa por vez (troca pelo menu), conta Local, discador, histórico, contatos, transferência, espera, DTMF, encaminhamento, atendimento automático, não perturbe, atalhos, log, exportar/importar, o mecanismo de tradução, o tratamento de links de discagem (registrado com o nome Starsonic Phone), a arquitetura do executável (Win32), os sons e o prazo de validade embutido (o app avisa 1,5 e 2 anos após o build e para de abrir após 2,5 anos — contados a partir do build da Starsonic). Qualquer opção não citada nesta especificação também continua como no MicroSIP.
 

@@ -514,7 +514,7 @@ void OnUpdateMessage(CmainDlg* main, WPARAM wParam, bool manual);   // E12
 
 ### Task 15: Relatórios de falha (M10)
 
-> Execute somente se a Starsonic aprovar o M10. Se não aprovar, pule a E5 e, no Step 2, deixe `crash-report2.microsip.org` na lista permitida.
+> M10 aprovado pela Starsonic em 11/10/2026.
 
 **Files:**
 - Modify: `starsonic/define_override.h`, `microsip/microsip.cpp` (E5), `build/check_branding.py`, `tests/python/test_check_branding.py`
