@@ -180,7 +180,7 @@ Continuam visíveis: idioma, dispositivos de áudio, toque, iniciar com o Window
 
 ### 8.4 Tela Sobre
 
-Logo; "Starsonic Phone <versão> (baseado no MicroSIP <versão upstream>)"; site, WhatsApp e telefone da Starsonic; e a linha "Baseado no MicroSIP — software livre sob a GNU GPL v2 — código-fonte: <URL do repositório>".
+Logo; "Starsonic Phone <versão> (baseado no MicroSIP <versão upstream>)"; site, WhatsApp e telefone da Starsonic; e a linha "Baseado no MicroSIP — software livre sob a GNU GPL v2 — código-fonte: https://github.com/{conta}/starsonic-phone".
 
 ### 8.5 Textos e marca
 
@@ -213,7 +213,7 @@ Entrada: versão do MicroSIP (ex.: `3.22.16`). Baixa `MicroSIP-<versão>-src.7z`
   - `StarsonicPhone-X.Y.Z-setup.exe`;
   - `versao.json`, com o SHA-256 calculado no próprio workflow;
   - `StarsonicPhone-X.Y.Z-codigo-fonte-completo.zip` — o repositório mais o código-fonte de todas as dependências usadas no build.
-- Tag `vX.Y.Z-rc.N` → build com a URL de teste (seção 7.3), publicado como pre-release `vX.Y.Z-rc.N` e copiado para o pre-release fixo `canal-teste`.
+- Tag `vX.Y.Z-rc.N` → build com a URL de teste (seção 7.3), publicado como pre-release `vX.Y.Z-rc.N`. O instalador e o `versao.json` dessa versão também são publicados no pre-release fixo `canal-teste`, substituindo os anteriores.
 
 ### 9.4 Versões
 
@@ -223,7 +223,7 @@ Entrada: versão do MicroSIP (ex.: `3.22.16`). Baixa `MicroSIP-<versão>-src.7z`
 ### 9.5 Instalador (NSIS)
 
 - Por usuário (`RequestExecutionLevel user`), em `%LOCALAPPDATA%\Starsonic Phone\`.
-- Atalho no menu Iniciar; atalho na área de trabalho opcional.
+- Atalho no menu Iniciar; atalho na área de trabalho como opção do instalador, marcada por padrão. Na atualização silenciosa, os atalhos existentes são mantidos.
 - Desinstalador registrado em "Aplicativos instalados" (chave em HKCU).
 - Modo silencioso (`/S`), usado pelas atualizações: espera o app fechar, atualiza, preserva as configurações e reabre o app.
 - Nome, ícone e logo da Starsonic.
@@ -261,9 +261,9 @@ Depois que a conta está registrada, quedas e reconexões seguem o comportamento
 - **Unitários**, escritos antes do código (TDD), com doctest:
   - `ServerProfiles`: leitura válida, campo obrigatório ausente, id duplicado, valor fora das opções, e o `servidores.ini` real de `branding/`;
   - `AccountPolicy`: montagem da conta, sobrescrita dos campos travados, servidor desconhecido;
-  - `RegistrationErrors`: cada linha de registro da tabela 11.1;
+  - `RegistrationErrors`: cada uma das cinco primeiras linhas da tabela 11.1 (as situações de registro);
   - `UpdateManifest`: comparação de versões, JSON inválido, campos ausentes;
-  - verificação de SHA-256.
+  - `Updater`: verificação de SHA-256 de um arquivo (igual e diferente).
 - **Varredura de marca:** reprova o build se "MicroSIP" aparecer em recursos (.rc), traduções ou textos do instalador, exceto na linha de atribuição da tela Sobre e nos avisos de licença.
 - **Instalador:** instalação e desinstalação silenciosas no runner, conferindo arquivos, atalhos e chaves de registro.
 
