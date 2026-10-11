@@ -2,6 +2,7 @@
 // Pontos de entrada chamados pelas edicoes E1-E13 no codigo do MicroSIP.
 #include <windows.h>
 
+class CDialog;
 class CmainDlg;
 class CMenu;
 class CStarsonicLoginDlg;
@@ -34,6 +35,9 @@ void OnStatusText(CmainDlg* main, const CString& text);
 // E11: item "Sobre o Starsonic Phone" no menu principal (ID_CUSTOM_RANGE) e sua acao.
 void AddMenuItems(CMenu* menu);
 void OnCustomMenu(CmainDlg* main, UINT id);
+
+// E13 (fim de SettingsDlg::OnInitDialog): esconde os campos travados pelo perfil e fecha os buracos.
+void FilterSettings(CDialog* settingsDlg);
 
 // E12: substituem o verificador de versao do MicroSIP (que consultava update.microsip.org).
 // O atualizador da Starsonic entra na Task 14; ate la, nao ha verificacao.

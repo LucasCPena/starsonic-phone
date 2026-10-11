@@ -25,6 +25,7 @@
 #include "global.h"
 #include "Preview.h"
 #include "langpack.h"
+#include "..\starsonic\win\Hooks.h"
 
 static CString defaultActionItems[] = {
 _T(""),
@@ -406,6 +407,7 @@ BOOL SettingsDlg::OnInitDialog()
         }
     }
 
+    starsonic::FilterSettings(this);
     return TRUE;
 }
 
