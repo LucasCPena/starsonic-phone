@@ -78,15 +78,19 @@ function New-AppCopy {
     return $target
 }
 
+# Inicia o exe com a linha de comando exata (sem shell): o MicroSIP compara "/exit" ao pe da letra,
+# e o Start-Process deixava um espaco a mais no fim dos argumentos.
 function Start-App {
     param(
         [Parameter(Mandatory = $true)][string]$Exe,
-        [string[]]$Arguments = @()
+        [string]$Arguments = ''
     )
-    if ($Arguments.Count -gt 0) {
-        return Start-Process -FilePath $Exe -ArgumentList $Arguments -WorkingDirectory (Split-Path -Parent $Exe) -PassThru
-    }
-    return Start-Process -FilePath $Exe -WorkingDirectory (Split-Path -Parent $Exe) -PassThru
+    $info = New-Object System.Diagnostics.ProcessStartInfo
+    $info.FileName = $Exe
+    $info.Arguments = $Arguments
+    $info.WorkingDirectory = Split-Path -Parent $Exe
+    $info.UseShellExecute = $false
+    return [System.Diagnostics.Process]::Start($info)
 }
 
 # Repete $Condition ate ela devolver verdadeiro ou o tempo acabar.
@@ -114,7 +118,7 @@ function Stop-App {
         [int]$TimeoutSeconds = 15
     )
     $started = Get-Date
-    $helper = Start-Process -FilePath $Exe -ArgumentList '/exit' -WorkingDirectory (Split-Path -Parent $Exe) -PassThru
+    $helper = Start-App -Exe $Exe -Arguments '/exit'
     $helperExited = $helper.WaitForExit($TimeoutSeconds * 1000)
     $helperSeconds = [int]((Get-Date) - $started).TotalSeconds
     $closed = Wait-Until -TimeoutSeconds $TimeoutSeconds -Condition { $Process.HasExited }
