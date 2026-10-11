@@ -15,6 +15,7 @@ depois de "Copyright (c) 2011-2025, " (aviso de copyright do recurso de versão)
 Uso: check_branding.py --repo <pasta> [--exe <arquivo>]   (código 0 = ok, 1 = problemas)
 """
 import argparse
+import os
 import pathlib
 import sys
 
@@ -182,6 +183,10 @@ def main(argv):
         found += find_exe_problems(exe)
     for relative, number, snippet in found:
         print("%s:%d: %s" % (relative, number, snippet))
+    if found and os.environ.get("GITHUB_ACTIONS") == "true":
+        for relative, number, snippet in found[:10]:
+            text = ("%s:%d: %s" % (relative, number, snippet)).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+            print("::error title=marca::" + text)
     if found:
         print("marca: %d texto(s) visivel(is) com %s" % (len(found), NAME))
         return 1

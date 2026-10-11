@@ -133,17 +133,19 @@ function Get-CommitTimestamp {
     return [long]([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())
 }
 
-# Grava as linhas (ASCII, CRLF) so se o arquivo nao existir ou tiver outro conteudo.
+# Grava as linhas (CRLF; ASCII ou UTF-8 sem BOM) so se o arquivo nao existir ou tiver outro conteudo.
 function Set-ContentIfChanged {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
-        [Parameter(Mandatory = $true)][string[]]$Lines
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Lines,
+        [ValidateSet('ASCII', 'UTF8')][string]$Encoding = 'ASCII'
     )
     $text = ($Lines -join "`r`n") + "`r`n"
-    if ((Test-Path $Path) -and ([System.IO.File]::ReadAllText($Path) -ceq $text)) {
+    $writer = if ($Encoding -eq 'UTF8') { New-Object System.Text.UTF8Encoding($false) } else { [System.Text.Encoding]::ASCII }
+    if ((Test-Path $Path) -and ([System.IO.File]::ReadAllText($Path, $writer) -ceq $text)) {
         return
     }
-    [System.IO.File]::WriteAllText($Path, $text, [System.Text.Encoding]::ASCII)
+    [System.IO.File]::WriteAllText($Path, $text, $writer)
 }
 
 # Copia so se o destino nao existir ou tiver outro conteudo.

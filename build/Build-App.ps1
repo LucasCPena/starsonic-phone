@@ -72,7 +72,19 @@ foreach ($logo in $logoBand, $logoLogin) {
         Remove-Item -Path $target -Force
     }
 }
-Copy-IfChanged -Source $ProfilesFile -Destination (Join-Path $generated 'servidores.ini')
+# O perfil vai para o executavel sem comentarios (mesma regra do leitor: tudo depois do primeiro ';').
+$profileLines = foreach ($line in [System.IO.File]::ReadAllLines($ProfilesFile, (New-Object System.Text.UTF8Encoding($false)))) {
+    $text = $line.TrimStart([char]0xFEFF)
+    $cut = $text.IndexOf(';')
+    if ($cut -ge 0) {
+        $text = $text.Substring(0, $cut)
+    }
+    $text = $text.Trim()
+    if ($text -and -not $text.StartsWith('#')) {
+        $text
+    }
+}
+Set-ContentIfChanged -Path (Join-Path $generated 'servidores.ini') -Lines @($profileLines) -Encoding UTF8
 $timestamp = Get-CommitTimestamp -RepoRoot $repoRoot
 $channelTest = if ($Channel -eq 'teste') { 1 } else { 0 }
 $logos = if ($hasLogos) { 1 } else { 0 }
