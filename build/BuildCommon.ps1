@@ -132,3 +132,31 @@ function Get-CommitTimestamp {
     }
     return [long]([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())
 }
+
+# Grava as linhas (ASCII, CRLF) so se o arquivo nao existir ou tiver outro conteudo.
+function Set-ContentIfChanged {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string[]]$Lines
+    )
+    $text = ($Lines -join "`r`n") + "`r`n"
+    if ((Test-Path $Path) -and ([System.IO.File]::ReadAllText($Path) -ceq $text)) {
+        return
+    }
+    [System.IO.File]::WriteAllText($Path, $text, [System.Text.Encoding]::ASCII)
+}
+
+# Copia so se o destino nao existir ou tiver outro conteudo.
+function Copy-IfChanged {
+    param(
+        [Parameter(Mandatory = $true)][string]$Source,
+        [Parameter(Mandatory = $true)][string]$Destination
+    )
+    if (Test-Path $Destination) {
+        $same = (Get-FileHash -Algorithm SHA256 $Source).Hash -eq (Get-FileHash -Algorithm SHA256 $Destination).Hash
+        if ($same) {
+            return
+        }
+    }
+    Copy-Item -Path $Source -Destination $Destination -Force
+}

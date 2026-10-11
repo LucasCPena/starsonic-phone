@@ -24,6 +24,7 @@
 #include "define.h"
 #include "settings.h"
 #include "langpack.h"
+#include "..\starsonic\win\Hooks.h"
 
 #include "Strsafe.h"
 
@@ -634,6 +635,7 @@ BOOL CmicrosipApp::InitInstance()
     try {
         CString strCommandLine = theApp.m_lpCmdLine;
         accountSettings.Init();
+        starsonic::OnSettingsLoaded();
 
         SetUnhandledExceptionFilter(ExceptionFilter);
 

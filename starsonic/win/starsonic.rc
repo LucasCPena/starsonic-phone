@@ -1,0 +1,7 @@
+// Starsonic Phone: recursos proprios (so ASCII). Os textos acentuados das janelas sao
+// definidos em tempo de execucao. resource_paths.h e gerado por build/Build-App.ps1
+// em starsonic\generated.
+#include "StarsonicIds.h"
+#include "resource_paths.h"
+
+IDR_STARSONIC_SERVERS RCDATA STARSONIC_SERVERS_FILE

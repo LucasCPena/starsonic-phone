@@ -78,6 +78,12 @@ jobs:
       - name: Teste de abrir e fechar
         run: .\tests\smoke\Test-StartStop.ps1 -AppDir out
 
+      - name: Compilar a versão de teste (perfil de CI)
+        run: .\build\Build-App.ps1 -WorkDir work -Version 0.0.0 -Channel estavel -ProfilesFile tests\fixtures\servidores-ci.ini -OutDir out-ci
+
+      - name: Teste das travas na inicialização
+        run: .\tests\smoke\Test-Policy.ps1 -AppDir out-ci
+
       - name: Publicar o executável
         uses: actions/upload-artifact@v4
         with:

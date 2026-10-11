@@ -5,14 +5,32 @@
     <!-- Build-App.ps1 tambem passa /p:TargetName na linha de comando, para valer desde o inicio da avaliacao. -->
     <TargetName>StarsonicPhone</TargetName>
     <StarsonicVcpkgRoot Condition="'$(StarsonicVcpkgRoot)'==''">$(MSBuildThisFileDirectory)..\..\vcpkg\installed\x86-windows-static</StarsonicVcpkgRoot>
+    <StarsonicDir>$(MSBuildThisFileDirectory)</StarsonicDir>
   </PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile>
-      <AdditionalIncludeDirectories>$(StarsonicVcpkgRoot)\include;$(MSBuildThisFileDirectory);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(StarsonicVcpkgRoot)\include;$(StarsonicDir);$(StarsonicDir)core;$(StarsonicDir)win;$(StarsonicDir)third_party;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
+    <ResourceCompile>
+      <AdditionalIncludeDirectories>$(StarsonicDir)win;$(StarsonicDir)generated;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
     <Link>
       <AdditionalLibraryDirectories>$(StarsonicVcpkgRoot)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>opus.lib;bcg729.lib;libssl.lib;libcrypto.lib;crypt32.lib;ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
+  <ItemGroup>
+    <!-- Nucleo: C++14 puro, sem cabecalho pre-compilado. -->
+    <ClCompile Include="$(StarsonicDir)core\*.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <ObjectFileName>$(IntDir)starsonic\core\</ObjectFileName>
+    </ClCompile>
+    <!-- Integracao com o MicroSIP: usa o stdafx.h do projeto. -->
+    <ClCompile Include="$(StarsonicDir)win\*.cpp">
+      <PrecompiledHeader>Use</PrecompiledHeader>
+      <PrecompiledHeaderFile>stdafx.h</PrecompiledHeaderFile>
+      <ObjectFileName>$(IntDir)starsonic\win\</ObjectFileName>
+    </ClCompile>
+    <ResourceCompile Include="$(StarsonicDir)win\starsonic.rc" />
+  </ItemGroup>
 </Project>

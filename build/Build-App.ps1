@@ -40,7 +40,8 @@ if (-not (Test-Path (Join-Path $pj 'lib\libpjproject-i386-Win32-vc14-Release-Sta
 foreach ($name in 'microsip', 'starsonic', 'branding') {
     $source = Join-Path $repoRoot $name
     if (Test-Path $source) {
-        Sync-Directory -Source $source -Destination (Join-Path $pj $name) -ExcludeDirs @('Release', 'Debug')
+        # generated\ fica fora do espelho: so muda quando o conteudo muda, para nao recompilar tudo.
+        Sync-Directory -Source $source -Destination (Join-Path $pj $name) -ExcludeDirs @('Release', 'Debug', 'generated')
     }
 }
 
@@ -57,19 +58,25 @@ if (Test-Path $overlay) {
     }
 }
 
-# 3. Arquivos gerados
+# 3. Arquivos gerados (reescritos so quando o conteudo muda)
 $generated = Join-Path $pj 'starsonic\generated'
 New-Item -ItemType Directory -Force -Path $generated | Out-Null
 $logoBand = Join-Path $repoRoot 'branding\logo-faixa.png'
 $logoLogin = Join-Path $repoRoot 'branding\logo-entrar.png'
 $hasLogos = (Test-Path $logoBand) -and (Test-Path $logoLogin)
-if ($hasLogos) {
-    Copy-Item -Path $logoBand, $logoLogin -Destination $generated -Force
+foreach ($logo in $logoBand, $logoLogin) {
+    $target = Join-Path $generated (Split-Path -Leaf $logo)
+    if ($hasLogos) {
+        Copy-IfChanged -Source $logo -Destination $target
+    } elseif (Test-Path $target) {
+        Remove-Item -Path $target -Force
+    }
 }
+Copy-IfChanged -Source $ProfilesFile -Destination (Join-Path $generated 'servidores.ini')
 $timestamp = Get-CommitTimestamp -RepoRoot $repoRoot
 $channelTest = if ($Channel -eq 'teste') { 1 } else { 0 }
 $logos = if ($hasLogos) { 1 } else { 0 }
-$buildInfo = @(
+Set-ContentIfChanged -Path (Join-Path $generated 'build_info.h') -Lines @(
     '/* Gerado por build/Build-App.ps1. Nao edite. */',
     '#ifndef STARSONIC_BUILD_INFO_H',
     '#define STARSONIC_BUILD_INFO_H',
@@ -80,8 +87,18 @@ $buildInfo = @(
     "#define STARSONIC_HAS_LOGOS $logos",
     '#endif'
 )
-Set-Content -Path (Join-Path $generated 'build_info.h') -Value $buildInfo -Encoding Ascii
-Copy-Item -Path $ProfilesFile -Destination (Join-Path $generated 'servidores.ini') -Force
+# Caminhos absolutos para os recursos de starsonic.rc (o compilador de recursos nao resolve
+# caminhos relativos ao .rc de forma confiavel).
+$rcPath = { param([string]$name) '"' + (Join-Path $generated $name).Replace('\', '\\') + '"' }
+Set-ContentIfChanged -Path (Join-Path $generated 'resource_paths.h') -Lines @(
+    '/* Gerado por build/Build-App.ps1. Nao edite. */',
+    '#ifndef STARSONIC_RESOURCE_PATHS_H',
+    '#define STARSONIC_RESOURCE_PATHS_H',
+    "#define STARSONIC_SERVERS_FILE $(& $rcPath 'servidores.ini')",
+    "#define STARSONIC_LOGO_BAND_FILE $(& $rcPath 'logo-faixa.png')",
+    "#define STARSONIC_LOGO_LOGIN_FILE $(& $rcPath 'logo-entrar.png')",
+    '#endif'
+)
 Write-Host "versao $Version ($versionComma), canal $Channel, perfis $ProfilesFile"
 
 # 4. Compilacao (TargetName vai na linha de comando para valer desde o inicio da avaliacao do projeto)
