@@ -33,4 +33,11 @@
     </ClCompile>
     <ResourceCompile Include="$(StarsonicDir)win\starsonic.rc" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- Win32 puro, sem MFC (tambem compilados nos testes): o stdafx.h do MicroSIP traz o
+         wininet.h (afxinet.h), que nao convive com o winhttp.h. -->
+    <ClCompile Update="$(StarsonicDir)win\Sha256.cpp;$(StarsonicDir)win\Http.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+  </ItemGroup>
 </Project>

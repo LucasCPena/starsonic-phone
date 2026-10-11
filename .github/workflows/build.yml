@@ -59,12 +59,11 @@ jobs:
 
       - name: Testes do núcleo (Windows)
         run: |
-          cmake -S tests -B build-tests-win -A Win32
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-          cmake --build build-tests-win --config Release
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-          ctest --test-dir build-tests-win -C Release --output-on-failure
-          if ($LASTEXITCODE -ne 0) { exit 1 }
+          # Invoke-Native publica as linhas de erro (compilador e doctest) como anotações.
+          . .\build\BuildCommon.ps1
+          Invoke-Native cmake @('-S', 'tests', '-B', 'build-tests-win', '-A', 'Win32')
+          Invoke-Native cmake @('--build', 'build-tests-win', '--config', 'Release')
+          Invoke-Native ctest @('--test-dir', 'build-tests-win', '-C', 'Release', '--output-on-failure')
 
       - name: Compilar o Starsonic Phone
         run: |

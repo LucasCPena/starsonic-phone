@@ -25,7 +25,12 @@ else()
 endif()
 
 if(WIN32)
-  # Testes que dependem de APIs do Windows (Task 14).
+  # Testes que dependem de APIs do Windows (so os arquivos Win32 puros de starsonic/win, sem MFC).
+  target_sources(starsonic_tests PRIVATE
+    ${STARSONIC_DIR}/win/Sha256.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/win/test_sha256.cpp)
+  target_include_directories(starsonic_tests PRIVATE ${STARSONIC_DIR}/win)
+  target_link_libraries(starsonic_tests PRIVATE bcrypt)
 endif()
 
 enable_testing()
