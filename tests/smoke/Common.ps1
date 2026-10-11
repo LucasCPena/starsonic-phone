@@ -107,7 +107,11 @@ function Stop-App {
     $helperSeconds = [int]((Get-Date) - $started).TotalSeconds
     $closed = Wait-Until -TimeoutSeconds $TimeoutSeconds -Condition { $Process.HasExited }
     $helperCode = if ($helperExited) { $helper.ExitCode } else { 'ainda rodando' }
-    $script:StopAppDetails = "processo /exit: terminou=$helperExited em ${helperSeconds}s, codigo=$helperCode"
+    $script:StopAppDetails = @("processo /exit: terminou=$helperExited em ${helperSeconds}s, codigo=$helperCode")
+    if (-not $helperExited) {
+        $script:StopAppDetails += @(Get-WindowReport -ProcessId $helper.Id | ForEach-Object { "/exit: $_" })
+        Stop-Process -Id $helper.Id -Force -ErrorAction SilentlyContinue
+    }
     return $closed
 }
 
