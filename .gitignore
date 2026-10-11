@@ -1,0 +1,6 @@
+/work/
+/build-tests/
+/out*/
+/dist/
+starsonic/generated/
+__pycache__/
