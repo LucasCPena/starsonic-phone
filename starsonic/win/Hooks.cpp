@@ -35,4 +35,10 @@ void OnSettingsLoaded() {
     }
 }
 
+void CheckUpdates(CmainDlg* /*main*/) {
+}
+
+void OnUpdateMessage(CmainDlg* /*main*/, WPARAM /*wParam*/, bool /*userAsked*/) {
+}
+
 }  // namespace starsonic

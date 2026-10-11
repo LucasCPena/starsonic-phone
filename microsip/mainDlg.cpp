@@ -30,6 +30,7 @@
 #include "json.h"
 #include "Markup.h"
 #include "langpack.h"
+#include "..\starsonic\win\Hooks.h"
 #include "jumplist.h"
 #include "atlenc.h"
 #include "Hid.h"
@@ -5865,81 +5866,12 @@ void CmainDlg::OnCheckUpdates()
 
 void CmainDlg::CheckUpdates()
 {
-    CString url;
-    url = _T("http://update.microsip.org/softphone-update.txt");
-    url.AppendFormat(_T("?version=%s&client=%s&lang=%s&type=%s"),
-        _T(_GLOBAL_VERSION),
-        CString(urlencode(MSIP::Utf8EncodeUni(CString(
-            _T(_GLOBAL_NAME_VISIBLE)
-        )))),
-        CString(urlencode(MSIP::Utf8EncodeUni(CString(langPack.language)))),
-        accountSettings.isPortable ? _T("portable") : _T("exe"));
-#ifndef _GLOBAL_VIDEO
-    url.Append(_T("&lite=1"));
-#endif
-    URLGetAsync(url, m_hWnd, UM_UPDATE_CHECKER_LOADED);
+    starsonic::CheckUpdates(this);
 }
 
 LRESULT CmainDlg::OnUpdateCheckerLoaded(WPARAM wParam, LPARAM lParam)
 {
-    bool found = false;
-    URLGetAsyncData* response = (URLGetAsyncData*)wParam;
-    if (response->statusCode == 200) {
-        if (!response->body.IsEmpty() && response->body.Left(4) == "http") {
-            int pos = response->body.Find("\n");
-            if (pos > 0) {
-                CStringA url = response->body.Left(pos);
-                url.Trim();
-                bool allowed = false;
-                DWORD dwServiceType;
-                CString strServer;
-                CString strObject;
-                INTERNET_PORT nPort;
-                if (AfxParseURL(CString(url), dwServiceType, strServer, strObject, nPort) && dwServiceType == AFX_INET_SERVICE_HTTPS && strServer.Right(13) == _T(".microsip.org")) {
-                    allowed = true;
-                }
-                int pos1 = response->body.Find("\n", pos + 1);
-                if (allowed && pos1 > pos) {
-                    CStringA version = response->body.Mid(pos, pos1 - pos);
-                    version.Trim();
-                    CString info = MSIP::Utf8DecodeUni(response->body.Mid(pos1 + 1));
-                    info.Trim();
-                    CStringA our = _GLOBAL_VERSION;
-                    int count = version.Replace(".", ".");
-                    if (count < 4) {
-                        int i = count;
-                        while (i < 3) {
-                            version.Append(".0");
-                            i++;
-                        }
-                        count = our.Replace(".", ".");
-                        i = count;
-                        while (i < 3) {
-                            our.Append(".0");
-                            i++;
-                        }
-                        unsigned long ia = inet_addr(version.GetString());
-                        if (ia != -1 && htonl(ia) > htonl(inet_addr(our.GetString()))) {
-                            CString caption;
-                            caption.Format(_T("%s %s"), _T(_GLOBAL_NAME_VISIBLE), Translate(_T("Update Available")));
-                            CString message = Translate(_T("Do you want to update now?"));
-                            if (!info.IsEmpty()) {
-                                message.AppendFormat(_T("\r\n\r\n%s"), info);
-                            }
-                            found = true;
-                            if (::MessageBox(this->m_hWnd, message, caption, MB_YESNO | MB_ICONQUESTION) == IDYES) {
-                                MSIP::OpenURL(MSIP::Utf8DecodeUni(url));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    delete response;
-    if (updateCheckerShow && !found) {
-        MessageBox(_T("No new version found"), _T(""), MB_ICONINFORMATION);
-    }
+    starsonic::OnUpdateMessage(this, wParam, updateCheckerShow);
     updateCheckerShow = false;
     return 0;
 }
