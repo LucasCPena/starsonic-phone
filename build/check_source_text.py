@@ -9,7 +9,9 @@ acento dentro de um literal vira lixo na tela. Por isso:
   comentários podem ter acentos;
 - starsonic/**/*.rc, branding/branding.h, build/*.h, build/*.ps1 e
   tests/smoke/*.ps1 precisam ser só ASCII (o compilador de recursos e o
-  Windows PowerShell 5.1 leem esses arquivos na página de código do Windows).
+  Windows PowerShell 5.1 leem esses arquivos na página de código do Windows);
+- branding/langpack_*.txt com acentos precisa começar com o BOM do UTF-8 (sem
+  ele, o MicroSIP lê a tradução na página de código do Windows).
 
 Uso: check_source_text.py [--fix] [raiz]
 --fix troca os caracteres dos literais largos (L"...", u"...", U"...") pelos
@@ -145,10 +147,24 @@ def _read(path):
         return None, "arquivo não está em UTF-8"
 
 
+def _langpack_problems(root):
+    """A tradução com acentos precisa começar com o BOM do UTF-8: sem ele, o MicroSIP
+    (lib/langpack.cpp) lê o arquivo na página de código do Windows e os acentos viram lixo."""
+    found = []
+    branding = root / "branding"
+    if branding.is_dir():
+        for path in sorted(branding.glob("langpack_*.txt")):
+            data = path.read_bytes()
+            if not data.startswith(b"\xef\xbb\xbf") and any(byte > 0x7F for byte in data):
+                found.append((path.relative_to(root).as_posix(), 1,
+                              "tradução com acentos sem o BOM do UTF-8 (o MicroSIP leria como ANSI)"))
+    return found
+
+
 def find_problems(root):
     """Lista de (caminho relativo, linha, mensagem)."""
     root = pathlib.Path(root)
-    found = []
+    found = _langpack_problems(root)
     ascii_only = set(_ascii_only_files(root))
     for path in sorted(set(_cpp_files(root)) | ascii_only):
         relative = path.relative_to(root).as_posix()

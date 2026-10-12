@@ -46,6 +46,11 @@ try {
     if (-not (Invoke-MainMenuItem -MainWindow $main.Handle -Match { param($text, $id) $text -eq 'Sobre o Starsonic Phone' })) {
         Fail ('Item "Sobre o Starsonic Phone" nao apareceu no menu principal. Itens: ' + ($script:MenuItemsSeen -join ', '))
     }
+    # Traducao lida como UTF-8: o item de Configuracoes aparece com os acentos certos.
+    $settingsText = Get-Text @('Configura', 0x00E7, 0x00F5, 'es')
+    if (-not @($script:MenuItemsSeen | Where-Object { $_.StartsWith("'" + $settingsText + "'") })) {
+        Fail ('Item de Configuracoes com acentos nao apareceu no menu principal. Itens: ' + ($script:MenuItemsSeen -join ', '))
+    }
 
     $about = Find-WindowByTitle -ProcessId $process.Id -Title 'Sobre o Starsonic Phone' -TimeoutSeconds 10
     if (-not $about) {

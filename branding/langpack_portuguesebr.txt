@@ -1,4 +1,4 @@
-Language Pack
+﻿Language Pack
 Last-Modified-Using: http://www.microsip.org/translation
 Language: PortugueseBR
 Locale: 0x416

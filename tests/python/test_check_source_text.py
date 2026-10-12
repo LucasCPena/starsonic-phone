@@ -85,6 +85,23 @@ class CheckSourceTextTest(unittest.TestCase):
         self.write("starsonic/generated/build_info.h", 'auto t = L"ç";\n')
         self.assertEqual(self.problems(), [])
 
+    def test_langpack_with_accents_needs_utf8_bom(self):
+        # O MicroSIP só lê a tradução como UTF-8 quando ela começa com BOM; sem ele, usa a página
+        # de código do Windows e os acentos viram lixo na tela.
+        path = self.root / "branding" / "langpack_portuguesebr.txt"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        body = "Language Pack\r\n[Settings]\r\nConfigurações\r\n".encode("utf-8")
+        path.write_bytes(body)
+        found = self.problems()
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0][0], "branding/langpack_portuguesebr.txt")
+        path.write_bytes(b"\xef\xbb\xbf" + body)
+        self.assertEqual(self.problems(), [])
+
+    def test_ascii_langpack_needs_no_bom(self):
+        self.write("branding/langpack_english.txt", "Language Pack\r\n[Call]\r\nCall\r\n")
+        self.assertEqual(self.problems(), [])
+
     def test_repository_sources_follow_the_rule(self):
         found = check_source_text.find_problems(ROOT)
         self.assertEqual(found, [], "\n".join("%s:%d: %s" % item for item in found))
