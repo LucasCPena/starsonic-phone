@@ -1,7 +1,8 @@
 # Teste de fumaca da marca na interface: faixa superior com status e tela Sobre pelo menu principal.
-# Uso: .\tests\smoke\Test-BrandUi.ps1 -AppDir out
+# Uso: .\tests\smoke\Test-BrandUi.ps1 -AppDir out [-Version 0.0.0]   (versao com que o app foi compilado)
 param(
-    [string]$AppDir = 'out'
+    [string]$AppDir = 'out',
+    [string]$Version = '0.0.0'
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2
@@ -51,7 +52,7 @@ try {
         Fail 'A tela Sobre nao abriu.'
     }
     $version = Get-ControlText -Dialog $about.Handle -Id $IDC_SS_ABOUT_VERSION
-    if ($version -ne 'Starsonic Phone 0.0.0 (baseado no MicroSIP 3.22.16)') {
+    if ($version -ne "Starsonic Phone $Version (baseado no MicroSIP 3.22.16)") {
         Fail "Versao na tela Sobre: '$version'."
     }
     $license = Get-ControlText -Dialog $about.Handle -Id $IDC_SS_ABOUT_LICENSE

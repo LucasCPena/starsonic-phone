@@ -101,7 +101,7 @@ jobs:
         run: .\tests\smoke\Test-StartStop.ps1 -AppDir out
 
       - name: Teste da faixa e da tela Sobre
-        run: .\tests\smoke\Test-BrandUi.ps1 -AppDir out
+        run: .\tests\smoke\Test-BrandUi.ps1 -AppDir out -Version $env:STARSONIC_VERSION
 
       - name: Teste da tela de Configurações
         run: .\tests\smoke\Test-Settings.ps1 -AppDir out
