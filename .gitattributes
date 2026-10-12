@@ -1,2 +1,3 @@
 microsip/** -text
 microsip-dist/** -text
+branding/langpack_*.txt -text
