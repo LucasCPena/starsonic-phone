@@ -2,8 +2,19 @@ name: build
 
 on:
   push:
+    branches: ['**']   # tags v* passam pelo release.yml, que chama este workflow
   pull_request:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      version:
+        description: "Versão (X.Y.Z ou X.Y.Z-rc.N); vazio = da tag, ou 0.0.0"
+        type: string
+        default: ''
+      channel:
+        description: "Canal de atualização (estavel ou teste); vazio = teste para -rc.N, senão estavel"
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -66,14 +77,22 @@ jobs:
           Invoke-Native ctest @('--test-dir', 'build-tests-win', '-C', 'Release', '--output-on-failure')
 
       - name: Versão
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_CHANNEL: ${{ inputs.channel }}
         run: |
-          $version = '0.0.0'
-          if ('${{ github.ref }}' -match '^refs/tags/v(\d+\.\d+\.\d+(-rc\.[1-9]\d*)?)$') { $version = $Matches[1] }
-          [System.IO.File]::AppendAllText($env:GITHUB_ENV, "STARSONIC_VERSION=$version`n")
-          Write-Host "versao: $version"
+          $version = $env:INPUT_VERSION
+          if (-not $version) {
+            $version = '0.0.0'
+            if ('${{ github.ref }}' -match '^refs/tags/v(\d+\.\d+\.\d+(-rc\.[1-9]\d*)?)$') { $version = $Matches[1] }
+          }
+          $channel = $env:INPUT_CHANNEL
+          if (-not $channel) { $channel = if ($version -match '-rc\.') { 'teste' } else { 'estavel' } }
+          [System.IO.File]::AppendAllText($env:GITHUB_ENV, "STARSONIC_VERSION=$version`nSTARSONIC_CHANNEL=$channel`n")
+          Write-Host "versao: $version (canal $channel)"
 
       - name: Compilar o Starsonic Phone
-        run: .\build\Build-App.ps1 -WorkDir work -Version $env:STARSONIC_VERSION -Channel estavel -ProfilesFile branding\servidores.ini -OutDir out
+        run: .\build\Build-App.ps1 -WorkDir work -Version $env:STARSONIC_VERSION -Channel $env:STARSONIC_CHANNEL -ProfilesFile branding\servidores.ini -OutDir out
 
       - name: Verificação de marca
         run: python build\check_branding.py --repo . --exe out\StarsonicPhone.exe
@@ -108,6 +127,10 @@ jobs:
 
       - name: Teste do instalador
         run: .\tests\smoke\Test-Installer.ps1 -Setup "dist\StarsonicPhone-$($env:STARSONIC_VERSION)-setup.exe" -AppDir out -Version $env:STARSONIC_VERSION
+
+      - name: Código-fonte completo (versões)
+        if: inputs.version
+        run: .\build\Make-SourceBundle.ps1 -Version $env:STARSONIC_VERSION -WorkDir work -OutDir dist
 
       - name: Publicar o executável
         uses: actions/upload-artifact@v4

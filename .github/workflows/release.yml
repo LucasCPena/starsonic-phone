@@ -1,0 +1,131 @@
+name: release
+
+# Publica uma versão (spec 9.3): tag vX.Y.Z → release estável; vX.Y.Z-rc.N → pre-release, também
+# publicada no pre-release fixo canal-teste. Também pode ser disparado à mão (Actions → release →
+# Run workflow) com a versão: a tag v<versão> é criada no commit escolhido.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      versao:
+        description: "Versão a publicar (ex.: 1.0.0 ou 1.0.0-rc.1)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  preparar:
+    name: Versão e portão de entradas
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.versao.outputs.version }}
+      channel: ${{ steps.versao.outputs.channel }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Versão e canal
+        id: versao
+        env:
+          INPUT_VERSION: ${{ inputs.versao }}
+        run: |
+          if [ -n "$INPUT_VERSION" ]; then version="$INPUT_VERSION"; else version="${GITHUB_REF_NAME#v}"; fi
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[1-9][0-9]*)?$'; then
+            echo "::error title=versao::versão inválida: $version (use X.Y.Z ou X.Y.Z-rc.N)"
+            exit 1
+          fi
+          case "$version" in *-rc.*) channel=teste ;; *) channel=estavel ;; esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          echo "Versão $version, canal $channel"
+
+      - name: Repositório do app
+        run: |
+          # O app procura atualizações em github.com/<STARSONIC_GITHUB_ACCOUNT>/starsonic-phone.
+          account=$(tr -d '\r' < branding/branding.h | sed -n 's/^#define STARSONIC_GITHUB_ACCOUNT "\(.*\)"$/\1/p')
+          expected="$account/starsonic-phone"
+          if [ "${expected,,}" != "${GITHUB_REPOSITORY,,}" ]; then
+            echo "::error title=conta::branding.h aponta para $expected, mas o release seria publicado em $GITHUB_REPOSITORY: o app não acharia as atualizações"
+            exit 1
+          fi
+
+      - name: Versão ainda não publicada
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "v${{ steps.versao.outputs.version }}" > /dev/null 2>&1; then
+            echo "::error title=versao::o release v${{ steps.versao.outputs.version }} já existe"
+            exit 1
+          fi
+
+      - name: Portão de entradas (versão estável)
+        if: steps.versao.outputs.channel == 'estavel'
+        run: |
+          python3 build/check_release_inputs.py --repo .
+          notas="notas/v${{ steps.versao.outputs.version }}.txt"
+          if [ ! -s "$notas" ]; then
+            echo "::error title=notas::falta $notas (texto curto mostrado no aviso de atualização)"
+            exit 1
+          fi
+
+  build:
+    name: Build
+    needs: preparar
+    uses: ./.github/workflows/build.yml
+    with:
+      version: ${{ needs.preparar.outputs.version }}
+      channel: ${{ needs.preparar.outputs.channel }}
+
+  publicar:
+    name: Publicar
+    needs: [preparar, build]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.preparar.outputs.version }}
+      CHANNEL: ${{ needs.preparar.outputs.channel }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: StarsonicPhone-setup-${{ github.sha }}
+          path: dist
+
+      - name: versao.json
+        run: |
+          setup="dist/StarsonicPhone-$VERSION-setup.exe"
+          test -f "$setup"
+          test -f "dist/StarsonicPhone-$VERSION-codigo-fonte-completo.zip"
+          sha=$(sha256sum "$setup" | cut -d' ' -f1)
+          url="https://github.com/$GITHUB_REPOSITORY/releases/download/v$VERSION/StarsonicPhone-$VERSION-setup.exe"
+          notas="notas/v$VERSION.txt"
+          extra=()
+          if [ -f "$notas" ]; then extra=(--notes-file "$notas"); fi
+          python3 build/make_manifest.py --version "$VERSION" --installer-url "$url" --sha256 "$sha" "${extra[@]}" --out dist/versao.json
+          cat dist/versao.json
+
+      - name: Release v${{ needs.preparar.outputs.version }}
+        run: |
+          flags=()
+          if [ "$CHANNEL" = teste ]; then flags+=(--prerelease); fi
+          notas="notas/v$VERSION.txt"
+          if [ -f "$notas" ]; then flags+=(--notes-file "$notas"); else flags+=(--notes "Starsonic Phone $VERSION"); fi
+          gh release create "v$VERSION" --target "$GITHUB_SHA" --title "Starsonic Phone $VERSION" "${flags[@]}" \
+            "dist/StarsonicPhone-$VERSION-setup.exe" dist/versao.json "dist/StarsonicPhone-$VERSION-codigo-fonte-completo.zip"
+
+      - name: Canal de teste
+        if: needs.preparar.outputs.channel == 'teste'
+        run: |
+          if ! gh release view canal-teste > /dev/null 2>&1; then
+            gh release create canal-teste --target "$GITHUB_SHA" --prerelease --title "Canal de teste" \
+              --notes "Versões candidatas (rc) do Starsonic Phone, para teste. O instalador e o versao.json daqui são sempre os da última rc."
+          fi
+          # Substitui os anteriores: o instalador de outra rc sai antes do upload.
+          gh release view canal-teste --json assets --jq '.assets[].name' | while read -r asset; do
+            if [ "$asset" != "StarsonicPhone-$VERSION-setup.exe" ] && [ "$asset" != versao.json ]; then
+              gh release delete-asset canal-teste "$asset" -y
+            fi
+          done
+          gh release upload canal-teste "dist/StarsonicPhone-$VERSION-setup.exe" dist/versao.json --clobber
