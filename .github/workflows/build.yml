@@ -4,7 +4,16 @@ on:
   push:
     branches: ['**']   # tags v* passam pelo release.yml, que chama este workflow
   pull_request:
-  workflow_dispatch:
+  workflow_dispatch:   # com versão: build de versão completo (com o código-fonte), sem publicar
+    inputs:
+      version:
+        description: "Versão (X.Y.Z ou X.Y.Z-rc.N); vazio = 0.0.0"
+        type: string
+        default: ''
+      channel:
+        description: "Canal de atualização (estavel ou teste); vazio = teste para -rc.N, senão estavel"
+        type: string
+        default: ''
   workflow_call:
     inputs:
       version:

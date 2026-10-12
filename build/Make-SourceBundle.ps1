@@ -99,6 +99,12 @@ try {
         }
     }
     Get-ChildItem -Path $downloads -File -Recurse | Where-Object { $_.Extension -eq '.part' } | Remove-Item -Force
+    # Ferramentas que o vcpkg baixa para rodar as receitas (binarios, nao codigo das bibliotecas).
+    $toolPatterns = @('cmake-*', 'ninja-*', 'PowerShell-*', '7z*', 'nuget*', 'python-*', 'strawberry-perl-*',
+        'nasm-*', 'msys2-*', 'meson-*', 'pkgconf-*', 'gperf-*', 'jom*')
+    foreach ($pattern in $toolPatterns) {
+        Get-ChildItem -Path $downloads -File -Filter $pattern | Remove-Item -Force
+    }
     $archives = @(Get-ChildItem -Path $downloads -File -Recurse)
     if ($archives.Count -eq 0) {
         throw 'O vcpkg nao baixou nenhum pacote de codigo-fonte.'
@@ -119,7 +125,8 @@ try {
         "$pjDir/   PJSIP $($lock.pjproject.tag), commit $($lock.pjproject.commit)",
         "                   ($($lock.pjproject.repo)), configuracao $($lock.pjproject.configuration) $($lock.pjproject.platform).",
         'vcpkg-downloads/   codigo-fonte das bibliotecas como o vcpkg baixa:',
-        "                   $versions.",
+        "                   $versions",
+        "                   ($(($archives | ForEach-Object { $_.Name } | Sort-Object) -join ', ')).",
         "vcpkg-ports/       receitas do vcpkg (commit $($lock.vcpkg.commit), triplet $($lock.vcpkg.triplet)):",
         "                   $($installedPorts -join ', ').",
         '',
