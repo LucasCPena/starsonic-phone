@@ -65,11 +65,15 @@ jobs:
           Invoke-Native cmake @('--build', 'build-tests-win', '--config', 'Release')
           Invoke-Native ctest @('--test-dir', 'build-tests-win', '-C', 'Release', '--output-on-failure')
 
-      - name: Compilar o Starsonic Phone
+      - name: Versão
         run: |
           $version = '0.0.0'
           if ('${{ github.ref }}' -match '^refs/tags/v(\d+\.\d+\.\d+(-rc\.[1-9]\d*)?)$') { $version = $Matches[1] }
-          .\build\Build-App.ps1 -WorkDir work -Version $version -Channel estavel -ProfilesFile branding\servidores.ini -OutDir out
+          [System.IO.File]::AppendAllText($env:GITHUB_ENV, "STARSONIC_VERSION=$version`n")
+          Write-Host "versao: $version"
+
+      - name: Compilar o Starsonic Phone
+        run: .\build\Build-App.ps1 -WorkDir work -Version $env:STARSONIC_VERSION -Channel estavel -ProfilesFile branding\servidores.ini -OutDir out
 
       - name: Verificação de marca
         run: python build\check_branding.py --repo . --exe out\StarsonicPhone.exe
@@ -92,9 +96,29 @@ jobs:
       - name: Teste da tela Entrar (registrador SIP falso)
         run: .\tests\smoke\Test-Login.ps1 -AppDir out-ci
 
+      - name: NSIS
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\NSIS\makensis.exe")) {
+            choco install nsis --version=3.10 -y --no-progress
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+          }
+
+      - name: Gerar o instalador
+        run: .\build\Build-Installer.ps1 -Version $env:STARSONIC_VERSION -AppDir out -OutDir dist
+
+      - name: Teste do instalador
+        run: .\tests\smoke\Test-Installer.ps1 -Setup "dist\StarsonicPhone-$($env:STARSONIC_VERSION)-setup.exe" -AppDir out -Version $env:STARSONIC_VERSION
+
       - name: Publicar o executável
         uses: actions/upload-artifact@v4
         with:
           name: StarsonicPhone-${{ github.sha }}
           path: out/
+          if-no-files-found: error
+
+      - name: Publicar o instalador
+        uses: actions/upload-artifact@v4
+        with:
+          name: StarsonicPhone-setup-${{ github.sha }}
+          path: dist/
           if-no-files-found: error
