@@ -3921,6 +3921,7 @@ void CmainDlg::PJAccountAdd()
     if (!accountSettings.accountId) {
         return;
     }
+    starsonic::EnforceActiveAccount();
     if (accountSettings.account.username.IsEmpty()
         ) {
         OnAccount(0, 0);

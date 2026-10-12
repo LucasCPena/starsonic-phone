@@ -1,5 +1,5 @@
 #pragma once
-// Pontos de entrada chamados pelas edicoes E1-E13 no codigo do MicroSIP.
+// Pontos de entrada chamados pelas edicoes E1-E14 no codigo do MicroSIP.
 #include <windows.h>
 
 class CDialog;
@@ -10,8 +10,13 @@ class CStarsonicLoginDlg;
 namespace starsonic {
 
 // E4 (microsip.cpp, logo depois de accountSettings.Init()): reaplica os perfis embutidos
-// em todas as contas e trava as configuracoes globais.
+// em todas as contas e trava as configuracoes globais (nada em /reset, /resetnoask e /exit).
 void OnSettingsLoaded();
+
+// E14 (inicio de PJAccountAdd, depois de conferir accountId): reaplica o perfil, na memoria, a
+// conta que vai registrar — cobre a importacao, a troca de conta pelo menu e o /account:N com o
+// app aberto. Servidor desconhecido: a conta fica vazia e o MicroSIP abre a tela Entrar.
+void EnforceActiveAccount();
 
 // E8: Contas > Adicionar/Editar e o OnAccount do MicroSIP abrem a tela Entrar.
 // Com a tela ja aberta, so a traz para a frente.
