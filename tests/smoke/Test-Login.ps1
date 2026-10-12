@@ -11,6 +11,10 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2
 . (Join-Path $PSScriptRoot 'Common.ps1')
 . (Join-Path $PSScriptRoot '..\..\build\BuildCommon.ps1')
+trap {
+    Write-CiError -Title 'Test-Login' -Lines @($_.Exception.Message, $_.InvocationInfo.PositionMessage)
+    break
+}
 
 # Ids de starsonic\win\StarsonicIds.h
 $IDC_SS_SERVER = 41012
