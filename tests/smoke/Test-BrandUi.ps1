@@ -51,9 +51,11 @@ try {
     if (-not $about) {
         Fail 'A tela Sobre nao abriu.'
     }
-    $version = Get-ControlText -Dialog $about.Handle -Id $IDC_SS_ABOUT_VERSION
-    if ($version -ne "Starsonic Phone $Version (baseado no MicroSIP 3.22.16)") {
-        Fail "Versao na tela Sobre: '$version'."
+    # (Variaveis do PowerShell nao diferenciam maiusculas: $aboutText, para nao sobrescrever $Version.)
+    $aboutText = Get-ControlText -Dialog $about.Handle -Id $IDC_SS_ABOUT_VERSION
+    $expectedText = "Starsonic Phone $Version (baseado no MicroSIP 3.22.16)"
+    if ($aboutText -ne $expectedText) {
+        Fail "Versao na tela Sobre: '$aboutText' (esperado '$expectedText')."
     }
     $license = Get-ControlText -Dialog $about.Handle -Id $IDC_SS_ABOUT_LICENSE
     if (-not $license.Contains('GNU GPL v3')) {
