@@ -204,8 +204,12 @@ TEST_CASE("CI fixture profile is valid") {
     const std::string bytes = ReadFileBytes(STARSONIC_REPO_DIR "/tests/fixtures/servidores-ci.ini");
     Profiles profiles;
     REQUIRE(ParseProfiles(Utf8ToWide(StripUtf8Bom(bytes)), &profiles).ok);
-    REQUIRE(profiles.servers.size() == 1);
+    REQUIRE(profiles.servers.size() == 2);
     CHECK(profiles.servers[0].id == L"local");
     CHECK(profiles.servers[0].host == L"127.0.0.1");
+    // Servidor TLS em que o registrador falso responde texto puro (falha de TLS no Test-Login).
+    CHECK(profiles.servers[1].id == L"tls");
+    CHECK(profiles.servers[1].transport == Transport::Tls);
+    CHECK(profiles.servers[1].port == 5071);
     CHECK(profiles.global.dtmf == DtmfMethod::Rfc2833);
 }

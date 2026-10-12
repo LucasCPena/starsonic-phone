@@ -1,6 +1,7 @@
 #pragma once
 // Monta e trava as contas e as configurações globais a partir dos perfis de servidor.
 #include <string>
+#include <vector>
 
 #include "ServerProfiles.h"
 
@@ -37,5 +38,15 @@ bool EnforceAccount(AccountFields* account, const Profiles& profiles);
 
 // Codecs, STUN e DTMF do perfil; portas automáticas, rport ligado e verificação diária.
 void EnforceGlobal(GlobalFields* globals, const GlobalProfile& profile);
+
+// Números n >= 1 das seções [Account<n>] entre os nomes de seção de um INI (sem diferenciar
+// maiúsculas, sem zeros à esquerda, até 9 dígitos), em ordem crescente e sem repetição: as
+// contas que o MicroSIP carregaria com AccountLoad(n), inclusive depois de um buraco.
+std::vector<int> AccountSectionNumbers(const std::vector<std::wstring>& sectionNames);
+
+// false nas linhas de comando em que o MicroSIP não carrega as configurações ou só repassa um
+// comando e sai (/reset, /resetnoask, /exit, comparadas ao pé da letra, como ele faz): reaplicar
+// o perfil e salvar ali gravaria valores vazios por cima das configurações.
+bool ShouldEnforceAtStartup(const std::wstring& commandLine);
 
 }  // namespace starsonic

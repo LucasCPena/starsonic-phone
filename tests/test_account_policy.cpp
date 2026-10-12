@@ -218,3 +218,30 @@ TEST_CASE("EnforceGlobal disables STUN when the profile has none") {
     CHECK(globals.stun == L"");
     CHECK_FALSE(globals.enableStun);
 }
+
+TEST_CASE("AccountSectionNumbers lists every [Account<n>] the MicroSIP would load") {
+    const std::vector<std::wstring> names = {
+        L"Global", L"Settings", L"Account1", L"account3", L"ACCOUNT10", L"Account0", L"Account01",
+        L"Account2x", L"Account", L"Account-1", L"Account 5", L"Account1234567890", L"Account4"};
+    const std::vector<int> expected = {1, 3, 4, 10};
+    CHECK(AccountSectionNumbers(names) == expected);
+}
+
+TEST_CASE("AccountSectionNumbers sorts and drops repeated sections") {
+    const std::vector<std::wstring> names = {L"Account7", L"account2", L"ACCOUNT2", L"Account7"};
+    const std::vector<int> expected = {2, 7};
+    CHECK(AccountSectionNumbers(names) == expected);
+    CHECK(AccountSectionNumbers(std::vector<std::wstring>()).empty());
+}
+
+TEST_CASE("ShouldEnforceAtStartup skips the command lines where settings are not loaded") {
+    CHECK_FALSE(ShouldEnforceAtStartup(L"/reset"));
+    CHECK_FALSE(ShouldEnforceAtStartup(L"/resetnoask"));
+    CHECK_FALSE(ShouldEnforceAtStartup(L"/exit"));
+    CHECK(ShouldEnforceAtStartup(L""));
+    CHECK(ShouldEnforceAtStartup(L"/minimized"));
+    CHECK(ShouldEnforceAtStartup(L"sip:2001"));
+    // O MicroSIP compara a linha inteira, ao pe da letra.
+    CHECK(ShouldEnforceAtStartup(L"/reset "));
+    CHECK(ShouldEnforceAtStartup(L"/RESET"));
+}

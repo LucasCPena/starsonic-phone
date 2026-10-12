@@ -50,6 +50,12 @@ public static class StarsonicWin32 {
         IntPtr ignored;
         SendMessageTimeoutW(hWnd, 0x000C, IntPtr.Zero, text, 0x0002, 5000, out ignored);
     }
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] public static extern bool WritePrivateProfileStringW(string section, string key, string value, string file);
+    // Escolhe o item de uma lista suspensa de outro processo (CB_SETCURSEL).
+    public static void SelectComboItem(IntPtr combo, int index) {
+        IntPtr ignored;
+        SendMessageTimeoutPtr(combo, 0x014E, new IntPtr(index), IntPtr.Zero, 0x0002, 5000, out ignored);
+    }
     // Clique num botao do dialogo: WM_COMMAND/BN_CLICKED postado (nao bloqueia o teste).
     public static void ClickButton(IntPtr dialog, int id) {
         PostMessageW(dialog, 0x0111, new IntPtr(id & 0xFFFF), GetDlgItem(dialog, id));
@@ -228,6 +234,19 @@ function Read-IniValue {
     $buffer = New-Object System.Text.StringBuilder 4096
     [StarsonicWin32]::GetPrivateProfileStringW($Section, $Key, '', $buffer, 4096, $Path) | Out-Null
     return $buffer.ToString()
+}
+
+# Grava um valor num INI existente (WritePrivateProfileString, como o MicroSIP).
+function Write-IniValue {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Section,
+        [Parameter(Mandatory = $true)][string]$Key,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Value
+    )
+    if (-not [StarsonicWin32]::WritePrivateProfileStringW($Section, $Key, $Value, $Path)) {
+        throw "Nao foi possivel gravar [$Section] $Key em $Path"
+    }
 }
 
 # Grava um INI em UTF-16LE com BOM (o formato que o MicroSIP usa).

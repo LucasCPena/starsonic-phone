@@ -1,5 +1,7 @@
 #include "AccountPolicy.h"
 
+#include <algorithm>
+
 #include "Text.h"
 
 namespace starsonic {
@@ -85,6 +87,44 @@ void EnforceGlobal(GlobalFields* globals, const GlobalProfile& profile) {
     globals->rtpPortMax = 0;
     globals->rport = true;
     globals->updatesInterval = L"daily";
+}
+
+std::vector<int> AccountSectionNumbers(const std::vector<std::wstring>& sectionNames) {
+    static const wchar_t kPrefix[] = L"account";
+    const size_t prefixLength = sizeof(kPrefix) / sizeof(kPrefix[0]) - 1;
+    std::vector<int> numbers;
+    for (const std::wstring& name : sectionNames) {
+        if (name.size() <= prefixLength || name.size() > prefixLength + 9) {
+            continue;
+        }
+        bool prefixMatches = true;
+        for (size_t i = 0; i < prefixLength && prefixMatches; ++i) {
+            const wchar_t ch = name[i];
+            const wchar_t lower = (ch >= L'A' && ch <= L'Z') ? static_cast<wchar_t>(ch - L'A' + L'a') : ch;
+            prefixMatches = lower == kPrefix[i];
+        }
+        if (!prefixMatches || name[prefixLength] == L'0') {
+            continue;   // "Account01" não é a seção que o MicroSIP lê para a conta 1
+        }
+        int number = 0;
+        bool digits = true;
+        for (size_t i = prefixLength; i < name.size() && digits; ++i) {
+            digits = name[i] >= L'0' && name[i] <= L'9';
+            if (digits) {
+                number = number * 10 + (name[i] - L'0');
+            }
+        }
+        if (digits && number >= 1) {
+            numbers.push_back(number);
+        }
+    }
+    std::sort(numbers.begin(), numbers.end());
+    numbers.erase(std::unique(numbers.begin(), numbers.end()), numbers.end());
+    return numbers;
+}
+
+bool ShouldEnforceAtStartup(const std::wstring& commandLine) {
+    return commandLine != L"/reset" && commandLine != L"/resetnoask" && commandLine != L"/exit";
 }
 
 }  // namespace starsonic

@@ -101,30 +101,41 @@ jobs:
           Write-Host "versao: $version (canal $channel)"
 
       - name: Compilar o Starsonic Phone
+        id: app
         run: .\build\Build-App.ps1 -WorkDir work -Version $env:STARSONIC_VERSION -Channel $env:STARSONIC_CHANNEL -ProfilesFile branding\servidores.ini -OutDir out
 
       - name: Verificação de marca
+        if: ${{ !cancelled() && steps.app.outcome == 'success' }}
         run: python build\check_branding.py --repo . --exe out\StarsonicPhone.exe
 
       - name: Teste de abrir e fechar
+        if: ${{ !cancelled() && steps.app.outcome == 'success' }}
         run: .\tests\smoke\Test-StartStop.ps1 -AppDir out
 
       - name: Teste da faixa e da tela Sobre
+        if: ${{ !cancelled() && steps.app.outcome == 'success' }}
         run: .\tests\smoke\Test-BrandUi.ps1 -AppDir out -Version $env:STARSONIC_VERSION
 
       - name: Teste da tela de Configurações
+        if: ${{ !cancelled() && steps.app.outcome == 'success' }}
         run: .\tests\smoke\Test-Settings.ps1 -AppDir out
 
       - name: Compilar a versão de teste (perfil de CI)
+        id: app-ci
+        if: ${{ !cancelled() && steps.app.outcome == 'success' }}
         run: .\build\Build-App.ps1 -WorkDir work -Version 0.0.0 -Channel estavel -ProfilesFile tests\fixtures\servidores-ci.ini -OutDir out-ci
 
       - name: Teste das travas na inicialização
+        if: ${{ !cancelled() && steps.app-ci.outcome == 'success' }}
         run: .\tests\smoke\Test-Policy.ps1 -AppDir out-ci
 
       - name: Teste da tela Entrar (registrador SIP falso)
+        if: ${{ !cancelled() && steps.app-ci.outcome == 'success' }}
         run: .\tests\smoke\Test-Login.ps1 -AppDir out-ci
 
       - name: NSIS
+        id: nsis
+        if: ${{ !cancelled() && steps.app.outcome == 'success' }}
         run: |
           if (-not (Test-Path "${env:ProgramFiles(x86)}\NSIS\makensis.exe")) {
             choco install nsis --version=3.10 -y --no-progress
@@ -132,9 +143,12 @@ jobs:
           }
 
       - name: Gerar o instalador
+        id: installer
+        if: ${{ !cancelled() && steps.nsis.outcome == 'success' }}
         run: .\build\Build-Installer.ps1 -Version $env:STARSONIC_VERSION -AppDir out -OutDir dist
 
       - name: Teste do instalador
+        if: ${{ !cancelled() && steps.installer.outcome == 'success' }}
         run: .\tests\smoke\Test-Installer.ps1 -Setup "dist\StarsonicPhone-$($env:STARSONIC_VERSION)-setup.exe" -AppDir out -Version $env:STARSONIC_VERSION
 
       - name: Código-fonte completo (versões)
