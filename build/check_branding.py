@@ -12,6 +12,10 @@ Só "MicroSIP" exato conta (maiúsculas importam). Uma ocorrência é aceita qua
 depois de "Copyright (c) 2011-2025, " (aviso de copyright do recurso de versão) ou de
 "Baseado no "/"baseado no " (atribuição da tela Sobre).
 
+No executável, também reprova endereços do MicroSIP ("microsip.org", sem diferenciar
+maiúsculas) fora do aviso "MicroSIP (www.microsip.org)" do copyright (M10: o app não fala
+com os servidores do MicroSIP).
+
 Uso: check_branding.py --repo <pasta> [--exe <arquivo>]   (código 0 = ok, 1 = problemas)
 """
 import argparse
@@ -21,6 +25,8 @@ import sys
 
 NAME = "MicroSIP"
 ALLOWED_PREFIXES = ("Copyright (c) 2011-2025, ", "Baseado no ", "baseado no ")
+HOST = "microsip.org"
+ALLOWED_HOST_TEXT = "MicroSIP (www.microsip.org)"   # aviso de copyright do recurso de versão
 SKIPPED_PARTS = {"third_party", "generated"}
 BS = chr(92)  # barra invertida
 
@@ -173,6 +179,37 @@ def find_exe_problems(exe):
     return [(path.name, offset, snippet) for offset, snippet in sorted(found)]
 
 
+def _exe_host_occurrences(data, encode, label):
+    pattern = encode(HOST)
+    allowed = encode(ALLOWED_HOST_TEXT)
+    allowed_offset = len(encode(ALLOWED_HOST_TEXT[:ALLOWED_HOST_TEXT.lower().index(HOST)]))
+    lowered = data.lower()   # só letras ASCII mudam, também dentro do UTF-16LE
+    unit = len(encode("a"))
+    bad = []
+    start = 0
+    while True:
+        index = lowered.find(pattern, start)
+        if index < 0:
+            return bad
+        begin = index - allowed_offset
+        if begin < 0 or data[begin:begin + len(allowed)] != allowed:
+            context = data[max(0, index - 32 * unit):index + len(pattern)]
+            text = context.decode("utf-16-le" if label == "UTF-16LE" else "latin-1", errors="replace")
+            bad.append((index, "%s: %s" % (label, _snippet(text.replace("\x00", " ")))))
+        start = index + len(pattern)
+
+
+def find_exe_host_problems(exe):
+    """Endereços do MicroSIP (microsip.org, sem diferenciar maiúsculas) no executável, fora do
+    aviso de copyright: o app não pode falar com os servidores do MicroSIP (atualização,
+    relatório de falha). Lista de (nome do arquivo, posição em bytes, trecho)."""
+    path = pathlib.Path(exe)
+    data = path.read_bytes()
+    found = _exe_host_occurrences(data, lambda text: text.encode("ascii"), "ASCII")
+    found += _exe_host_occurrences(data, lambda text: text.encode("utf-16-le"), "UTF-16LE")
+    return [(path.name, offset, snippet) for offset, snippet in sorted(found)]
+
+
 def main(argv):
     parser = argparse.ArgumentParser(description="Procura MicroSIP em textos visíveis.")
     parser.add_argument("--repo", default=str(pathlib.Path(__file__).resolve().parent.parent))
@@ -181,6 +218,7 @@ def main(argv):
     found = find_problems(args.repo)
     for exe in args.exe:
         found += find_exe_problems(exe)
+        found += find_exe_host_problems(exe)
     for relative, number, snippet in found:
         print("%s:%d: %s" % (relative, number, snippet))
     if found and os.environ.get("GITHUB_ACTIONS") == "true":

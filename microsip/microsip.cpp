@@ -446,7 +446,7 @@ LONG WINAPI ExceptionFilter(EXCEPTION_POINTERS* ExceptionInfo)
                 sendCrashReport = false;
             }
         }
-        if (!blockDump) {
+        if (!blockDump && STARSONIC_CRASH_UPLOAD) {
             CInternetSession session;
             try {
                 CString readData;

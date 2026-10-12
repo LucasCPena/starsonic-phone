@@ -16,6 +16,9 @@
 #undef _GLOBAL_HELP_WEBSITE
 #define _GLOBAL_HELP_WEBSITE STARSONIC_URL_SUPPORT
 
+/* M10: relatorios de falha ficam so no PC (sem envio para crash-report2.microsip.org; edicao E5). */
+#define STARSONIC_CRASH_UPLOAD 0
+
 /* Botao Ligar na cor da marca. */
 #undef _GLOBAL_DIALER_CALL_COLOR
 #define _GLOBAL_DIALER_CALL_COLOR STARSONIC_BRAND_COLOR

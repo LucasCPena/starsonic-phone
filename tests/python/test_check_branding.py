@@ -94,6 +94,24 @@ class CheckBrandingTest(unittest.TestCase):
         exe = self.write("out/case.exe", b"update.microsip.org\x00" + "MICROSIP".encode("utf-16-le"))
         self.assertEqual(check_branding.find_exe_problems(exe), [])
 
+    def test_exe_must_not_contact_microsip_hosts(self):
+        copyright_ = "Copyright (c) 2011-2025, MicroSIP (www.microsip.org). All rights reserved."
+        good = b"\x00" + copyright_.encode("utf-16-le") + b"\x00\x00" + copyright_.encode("ascii") + b"\x00"
+        exe = self.write("out/good.exe", good)
+        self.assertEqual(check_branding.find_exe_host_problems(exe), [])
+        for host in ("crash-report2.microsip.org", "update.microsip.org", "WWW.MICROSIP.ORG"):
+            for encoded in (host.encode("ascii"), host.encode("utf-16-le")):
+                exe = self.write("out/bad.exe", good + b"\x00" + encoded + b"\x00")
+                found = check_branding.find_exe_host_problems(exe)
+                self.assertEqual(len(found), 1, (host, encoded))
+                self.assertIn(host.lower(), found[0][2].lower())
+
+    def test_main_reports_microsip_hosts_in_exe(self):
+        exe = self.write("out/app.exe", b"\x00crash-report2.microsip.org\x00")
+        self.assertEqual(check_branding.main(["--repo", str(self.repo), "--exe", str(exe)]), 1)
+        exe = self.write("out/app.exe", b"\x00Copyright (c) 2011-2025, MicroSIP (www.microsip.org)\x00")
+        self.assertEqual(check_branding.main(["--repo", str(self.repo), "--exe", str(exe)]), 0)
+
     def test_main_returns_one_and_lists_problems(self):
         self.write("microsip/res/menu.rc2", 'MENUITEM "Sobre o MicroSIP", 1\r\n')
         self.assertEqual(check_branding.main(["--repo", str(self.repo)]), 1)
