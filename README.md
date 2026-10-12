@@ -8,7 +8,7 @@ O que o projeto faz e por quê está na [especificação de design](docs/superpo
 
 | Pasta | Conteúdo |
 |-------|----------|
-| `microsip/` | Código do MicroSIP 3.22.16, idêntico ao oficial exceto pelas edições E1–E13 (tabela no plano), todas de poucas linhas e chamando `starsonic/` |
+| `microsip/` | Código do MicroSIP 3.22.16, idêntico ao oficial exceto pelas edições E1–E14 (tabela no plano), todas de poucas linhas e chamando `starsonic/` |
 | `microsip-dist/` | Sons do pacote oficial MicroSIP Lite |
 | `starsonic/core/` | Lógica nova em C++14 puro (perfis, travas, tela Entrar, mensagens de erro, arquivo de versão), testada no Linux e no Windows |
 | `starsonic/win/` | Integração com o MicroSIP (MFC): tela Entrar, faixa da marca, Sobre, Configurações enxutas, atualizador |
@@ -52,12 +52,14 @@ As versões seguem `X.Y.Z` (estável) e `X.Y.Z-rc.N` (candidata, para teste). Qu
 
 Cada release traz `StarsonicPhone-<versão>-setup.exe`, `versao.json` (com o SHA-256 do instalador, conferido pelo app antes de instalar) e `StarsonicPhone-<versão>-codigo-fonte-completo.zip`, que cumpre a GPL: o repositório, o pjproject e o código-fonte das bibliotecas do vcpkg.
 
-O app procura atualizações em `github.com/<STARSONIC_GITHUB_ACCOUNT>/starsonic-phone` (em `branding/branding.h`) e só aceita instaladores desse endereço; o workflow recusa publicar em outro repositório. Antes de mudar o repositório de conta, lembre que as versões já instaladas continuam procurando no endereço antigo.
+O app procura atualizações em `github.com/<STARSONIC_GITHUB_ACCOUNT>/starsonic-phone` (em `branding/branding.h`) e só aceita instaladores que comecem com esse mesmo endereço, letra por letra; o workflow recusa publicar em outro repositório.
+
+**Não transfira o repositório para outra conta sem preparar a mudança.** O GitHub redireciona o endereço antigo, então as versões já instaladas ainda acham o `versao.json` novo. Mas o instalador dele aponta para a conta nova, e essas versões recusam o instalador para sempre. Antes da transferência, é preciso publicar uma versão-ponte que aceite os dois endereços e esperar os clientes atualizarem; isso exige uma mudança no código (`starsonic/win/Updater.cpp`).
 
 ## Como trazer uma versão nova do MicroSIP
 
 1. No GitHub, Actions → importar-microsip → Run workflow, com a versão (ex.: `3.22.17`). O workflow baixa os pacotes oficiais, atualiza `microsip/` e `microsip-dist/` no ramo `upstream`, cria a tag `microsip-<versão>` e abre um PR de `upstream` para `main`.
-2. Resolva os conflitos só nas edições E1–E13 (tabela no plano), mantendo cada uma como está descrita, e confira o build verde no PR.
+2. Resolva os conflitos só nas edições E1–E14 (tabela no plano), mantendo cada uma como está descrita, e confira o build verde no PR.
 3. Faça o merge com merge commit (não squash): é assim que o workflow sabe, na próxima importação, que a versão já entrou.
 
 ## Segurança

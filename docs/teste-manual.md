@@ -65,13 +65,15 @@ Versão testada: `__________`  Data: `__________`  Quem testou: `__________`
 
 Use duas versões candidatas seguidas, por exemplo `v0.0.1-rc.1` e `v0.0.1-rc.2` (ou `vX.Y.Z-rc.N` e `rc.N+1`). As rc procuram atualização no pre-release fixo `canal-teste`, que o workflow `release` sobrescreve a cada rc.
 
+O app procura atualização quando abre (e a cada 24 h aberto). O X da janela só esconde o app na bandeja: para fechar e abrir de novo, use **Menu → Sair** e depois o atalho.
+
 | # | Passo | Resultado esperado | W10 | W11 |
 |---|-------|--------------------|-----|-----|
 | 7.1 | Instale a rc anterior e entre com um ramal. | Sobre mostra a rc anterior. | ☐ | ☐ |
 | 7.2 | Publique a rc seguinte (tag `v…-rc.N+1` ou Actions → release → Run workflow). Espere o workflow terminar. | O release da rc nova e o `canal-teste` têm o instalador e o `versao.json` novos. | ☐ | ☐ |
-| 7.3 | Faça uma chamada e, com ela em andamento, feche e abra o app pelo atalho para ele procurar atualização. Responda "Sim" ao aviso. | Aviso "Nova versão do Starsonic Phone disponível (<rc nova>). Atualizar agora?" com as notas. Com a chamada em andamento: "Termine a chamada para atualizar." e nada muda. | ☐ | ☐ |
-| 7.4 | Sem chamada, feche e abra o app de novo e responda "Sim". | "Baixando atualização…" na barra de status; o app fecha, atualiza sem perguntar nada e abre sozinho. Sobre mostra a rc nova; a conta, as configurações e os atalhos continuam como estavam. | ☐ | ☐ |
-| 7.5 | Sem internet, feche e abra o app. | Nenhum aviso de atualização nem de erro. | ☐ | ☐ |
+| 7.3 | Menu → Sair e abra o app. Com o aviso aberto (sem responder), receba uma chamada de outro telefone e atenda; com ela em andamento, responda "Sim". | Aviso "Nova versão do Starsonic Phone disponível (<rc nova>). Atualizar agora?" com as notas. Com a chamada em andamento: "Termine a chamada para atualizar." e nada muda. | ☐ | ☐ |
+| 7.4 | Encerre a chamada, Menu → Sair, abra o app de novo e responda "Sim". | "Baixando atualização…" na barra de status; o app fecha, atualiza sem perguntar nada e abre sozinho. Sobre mostra a rc nova; a conta, as configurações e os atalhos continuam como estavam, e o app **conecta sem pedir a senha de novo**. | ☐ | ☐ |
+| 7.5 | Sem internet, Menu → Sair e abra o app. | Nenhum aviso de atualização nem de erro. | ☐ | ☐ |
 
 ## 8. Desinstalação
 

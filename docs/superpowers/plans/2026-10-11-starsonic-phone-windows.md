@@ -4,7 +4,7 @@
 
 **Goal:** Fork do MicroSIP 3.22.16 com a marca Starsonic, tela Entrar com servidores embutidos, configurações travadas, atualizador e instalador por usuário, compilado e publicado pelo GitHub Actions.
 
-**Architecture:** O ramo `upstream` guarda o MicroSIP intacto; o `main` soma edições de poucas linhas no código do MicroSIP (E1–E13), todas chamando `starsonic/`. A lógica nova fica em `starsonic/core` (C++14 puro, testado no Linux e no Windows); a integração MFC fica em `starsonic/win`. O build monta o pjproject 2.17 e as dependências do vcpkg numa pasta de trabalho e compila o projeto do MicroSIP dentro dela.
+**Architecture:** O ramo `upstream` guarda o MicroSIP intacto; o `main` soma edições de poucas linhas no código do MicroSIP (E1–E14), todas chamando `starsonic/`. A lógica nova fica em `starsonic/core` (C++14 puro, testado no Linux e no Windows); a integração MFC fica em `starsonic/win`. O build monta o pjproject 2.17 e as dependências do vcpkg numa pasta de trabalho e compila o projeto do MicroSIP dentro dela.
 
 **Tech Stack:** C++14 (MSVC v143, MFC estático, `/MT`), PJSIP 2.17, vcpkg (OpenSSL 3.6.5, Opus 1.6.1, bcg729 1.1.2, SQLite 3.53.4, SQLiteCpp 3.3.3), doctest 2.4.11, nlohmann/json 3.11.3, CMake + Ninja/MSBuild, Python 3 (scripts e registrador SIP falso), Windows PowerShell 5.1 (build e UI Automation), NSIS 3.10, GitHub Actions (`windows-2022`, `ubuntu-latest`).
 
@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Base: MicroSIP 3.22.16. No ramo `upstream`, `microsip/` é o pacote `MicroSIP-3.22.16-src.7z` sem alteração e `microsip-dist/` traz os sons (e a tradução pt-BR, se houver) do pacote `MicroSIP-Lite-3.22.16.zip`.
-- Código do MicroSIP: só as edições E1–E13 da tabela abaixo. Qualquer outra edição em `microsip/` → pare e pergunte ao usuário (regra do projeto: nada fora do padrão sem aprovação).
+- Código do MicroSIP: só as edições E1–E14 da tabela abaixo. Qualquer outra edição em `microsip/` → pare e pergunte ao usuário (regra do projeto: nada fora do padrão sem aprovação).
 - `.gitattributes`: `microsip/** -text` e `microsip-dist/** -text` — os arquivos do MicroSIP são CRLF e precisam ficar idênticos byte a byte.
 - Nome visível `Starsonic Phone`; executável `StarsonicPhone.exe`; empresa `Starsonic`; classe de janela `Starsonic Phone`.
 - Versão `X.Y.Z` ou `X.Y.Z-rc.N`, vinda da tag git (`vX.Y.Z`); build sem tag usa `0.0.0`.
@@ -56,7 +56,7 @@
 ## Estrutura de arquivos
 
 ```
-microsip/                 MicroSIP (upstream) + edições E1–E13
+microsip/                 MicroSIP (upstream) + edições E1–E14
 microsip-dist/            sons .wav e tradução do pacote Lite (upstream)
 starsonic/
   branding_override.h     incluído no fim de microsip/const.h (E1): nome, versão, sem vídeo
@@ -94,6 +94,7 @@ docs/                     spec, plano, build-notes.md, teste-manual.md
 | E11 | `microsip/mainDlg.cpp` | `MainPopupMenu`, antes de `str = Translate(_T("Help"));`; corpo de `OnMenuCustomRange` | `starsonic::AddMenuItems(tracker);`; `starsonic::OnCustomMenu(this, nID);` | 12 |
 | E12 | `microsip/mainDlg.cpp` | corpos de `CheckUpdates` e `OnUpdateCheckerLoaded` | `starsonic::CheckUpdates(this);`; `starsonic::OnUpdateMessage(this, wParam, updateCheckerShow); updateCheckerShow = false; return 0;` | 14 |
 | E13 | `microsip/SettingsDlg.cpp` | após os includes; fim de `OnInitDialog`, antes do `return` | `#include "..\starsonic\win\Hooks.h"`; `starsonic::FilterSettings(this);` | 13 |
+| E14 | `microsip/mainDlg.cpp` | `PJAccountAdd`, logo depois de `if (!accountSettings.accountId) { return; }` | `starsonic::EnforceActiveAccount();` (aprovada pelo usuário em 12/10/2026, na revisão final) | Final |
 
 A Task 11 também acrescenta `#include "..\starsonic\win\Hooks.h"` em `mainDlg.cpp`, após `#include "stdafx.h"`. Edições em arquivos CRLF mantêm CRLF.
 
