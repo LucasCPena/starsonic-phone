@@ -46,4 +46,5 @@ private:
     int prevId_ = 0;          // conta ativa antes de Entrar (volta se falhar)
     Account prevAccount_;
     bool messageIsError_ = false;
+    unsigned long tlsFailuresAtStart_ = 0;   // TlsFailureCount() no comeco da tentativa
 };

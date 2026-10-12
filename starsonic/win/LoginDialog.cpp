@@ -7,6 +7,7 @@
 #include "Logo.h"
 #include "ProfilesStore.h"
 #include "StarsonicIds.h"
+#include "TlsWatch.h"
 #include "generated/build_info.h"
 #include "lib/MSIP.h"
 #include "mainDlg.h"
@@ -17,8 +18,6 @@ namespace {
 const UINT kLoginTimeoutMs = 15000;
 const COLORREF kErrorColor = RGB(0xD3, 0x2F, 0x2F);
 const COLORREF kNeutralColor = RGB(0x80, 0x80, 0x80);
-// Faixa dos erros de TLS do pjlib (pj/errno.h; a constante PJ_SSL_ERRNO_START e privada do ssl_sock_ossl.c).
-const pj_status_t kSslErrnoStart = PJ_ERRNO_START_USER + PJ_ERRNO_SPACE_SIZE * 6;
 
 std::wstring Wide(const CString& text) {
     return std::wstring(text.GetString(), static_cast<size_t>(text.GetLength()));
@@ -183,6 +182,8 @@ void CStarsonicLoginDlg::OnClickedEntrar() {
     SetFieldsEnabled(false);
     ShowMessage(L"Conectando\u2026", false);
     SetTimer(IDT_STARSONIC_LOGIN, kLoginTimeoutMs, NULL);
+    WatchTlsFailures();
+    tlsFailuresAtStart_ = TlsFailureCount();
     main_->PJAccountAdd();
 }
 
@@ -197,8 +198,8 @@ void CStarsonicLoginDlg::OnRegistrationState(int sipCode) {
     if (static_cast<int>(info.status) != sipCode) {
         return;   // resultado de outra conta (ex.: a anterior), ainda na fila
     }
-    const bool tlsFailure = info.reg_last_err >= kSslErrnoStart &&
-                            info.reg_last_err < kSslErrnoStart + PJ_ERRNO_SPACE_SIZE;
+    // Falha de TLS no handshake chega como 503 com reg_last_err = PJ_SUCCESS: vale o contador.
+    const bool tlsFailure = IsTlsError(info.reg_last_err) || TlsFailureCount() != tlsFailuresAtStart_;
     Apply(flow_.OnRegistration(sipCode, tlsFailure));
 }
 
