@@ -105,12 +105,21 @@ function Find-WindowByClass {
 }
 
 # Copia a pasta do app para uma pasta temporaria nova, para o INI e os logs do teste nao sujarem a saida.
+# O INI da copia ja vem com Get-NoUpdateCheckIni.
 function New-AppCopy {
     param([Parameter(Mandatory = $true)][string]$AppDir)
     $target = Join-Path ([System.IO.Path]::GetTempPath()) ('starsonic-smoke-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Force -Path $target | Out-Null
     Copy-Item -Path (Join-Path $AppDir '*') -Destination $target -Recurse -Force
+    Write-IniFile -Path (Join-Path $target 'StarsonicPhone.ini') -Lines @(Get-NoUpdateCheckIni)
     return $target
+}
+
+# Linhas de INI com a ultima verificacao de atualizacao feita agora. O MicroSIP so verifica na
+# abertura quando a ultima tem mais de 24 h; sem isso, o app consultaria o GitHub e, com uma versao
+# publicada maior que a do build de CI (0.0.0), abriria o aviso de atualizacao no meio do teste.
+function Get-NoUpdateCheckIni {
+    return @('[Global]', "checkUpdatesTime=$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())")
 }
 
 # Inicia o exe com a linha de comando exata (sem shell): o MicroSIP compara "/exit" ao pe da letra,

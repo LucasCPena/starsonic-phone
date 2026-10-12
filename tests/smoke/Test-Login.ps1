@@ -19,8 +19,8 @@ $IDC_SS_ENTRAR = 41016
 
 $copy = New-AppCopy -AppDir (Resolve-Path $AppDir).Path
 $exe = Join-Path $copy 'StarsonicPhone.exe'
+# A copia comeca sem contas: o INI so tem a secao [Global] de New-AppCopy.
 $ini = Join-Path $copy 'StarsonicPhone.ini'
-Remove-Item -Path $ini -ErrorAction SilentlyContinue
 $userAgentLog = Join-Path $copy 'user-agent.txt'
 
 $registrarInfo = New-Object System.Diagnostics.ProcessStartInfo

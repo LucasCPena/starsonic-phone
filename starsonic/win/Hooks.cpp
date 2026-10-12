@@ -5,11 +5,15 @@
 #include "AccountPolicy.h"
 #include "LoginDialog.h"
 #include "ProfilesStore.h"
+#include "StarsonicIds.h"
+#include "Updater.h"
 #include "lib/MSIP.h"
 #include "mainDlg.h"
 #include "settings.h"
 
 namespace {
+
+const UINT kUpdateIntervalMs = 24u * 60u * 60u * 1000u;
 
 CStarsonicLoginDlg* g_loginDlg = nullptr;
 
@@ -62,6 +66,8 @@ void OnRegistrationState(CmainDlg* /*main*/, int sipCode) {
 }
 
 void OnMainWindowCreated(CmainDlg* main) {
+    // A cada 24 h com o app aberto; a verificacao da abertura segue a regra do MicroSIP.
+    ::SetTimer(main->m_hWnd, IDT_STARSONIC_UPDATES, kUpdateIntervalMs, UpdateTimerProc);
     if (accountSettings.accountId == 0) {
         ShowLogin(main, -1, false);
     }
@@ -71,12 +77,6 @@ void OnLoginDialogDestroyed(CStarsonicLoginDlg* dialog) {
     if (g_loginDlg == dialog) {
         g_loginDlg = nullptr;
     }
-}
-
-void CheckUpdates(CmainDlg* /*main*/) {
-}
-
-void OnUpdateMessage(CmainDlg* /*main*/, WPARAM /*wParam*/, bool /*userAsked*/) {
 }
 
 }  // namespace starsonic

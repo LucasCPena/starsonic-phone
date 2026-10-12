@@ -16,7 +16,7 @@ trap {
 $copy = New-AppCopy -AppDir (Resolve-Path $AppDir).Path
 $exe = Join-Path $copy 'StarsonicPhone.exe'
 $ini = Join-Path $copy 'StarsonicPhone.ini'
-Write-IniFile -Path $ini -Lines @(
+Write-IniFile -Path $ini -Lines (@(Get-NoUpdateCheckIni) + @(
     '[Settings]',
     'accountId=1',
     'audioCodecs=G729/8000/1',
@@ -33,7 +33,7 @@ Write-IniFile -Path $ini -Lines @(
     'server=x:5060',
     'domain=x',
     'username=2002'
-)
+))
 
 $process = Start-App -Exe $exe
 Start-Sleep -Seconds 5

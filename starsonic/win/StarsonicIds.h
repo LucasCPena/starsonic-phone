@@ -30,3 +30,4 @@
 
 /* Timers */
 #define IDT_STARSONIC_LOGIN 41301
+#define IDT_STARSONIC_UPDATES 41302

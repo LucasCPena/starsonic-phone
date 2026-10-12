@@ -40,7 +40,8 @@ void OnCustomMenu(CmainDlg* main, UINT id);
 void FilterSettings(CDialog* settingsDlg);
 
 // E12: substituem o verificador de versao do MicroSIP (que consultava update.microsip.org).
-// O atualizador da Starsonic entra na Task 14; ate la, nao ha verificacao.
+// Implementados em Updater.cpp: versao.json dos releases do GitHub (spec 7.3). OnUpdateMessage
+// recebe as respostas das threads do atualizador pela UM_UPDATE_CHECKER_LOADED e as apaga.
 void CheckUpdates(CmainDlg* main);
 void OnUpdateMessage(CmainDlg* main, WPARAM wParam, bool userAsked);
 
