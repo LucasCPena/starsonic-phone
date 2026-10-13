@@ -1,0 +1,46 @@
+name: capturas
+
+# Fotos das telas do app publicado (instalador, tela Entrar, janela principal e Sobre, nos modos
+# claro e escuro), para apresentacoes e manuais. Roda a cada push neste ramo e grava as fotos em
+# capturas/, no proprio ramo.
+on:
+  push:
+    branches: [capturas-manual]
+    paths-ignore: ['capturas/**']
+
+permissions:
+  contents: write
+
+jobs:
+  capturas:
+    name: Capturas das telas
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Baixar o instalador publicado
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download v0.0.1-rc.3 --repo $env:GITHUB_REPOSITORY --pattern '*-setup.exe' --dir dist
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Get-ChildItem dist
+
+      - name: Capturas
+        run: |
+          $setup = (Get-ChildItem dist\*-setup.exe | Select-Object -First 1).FullName
+          .\tests\smoke\Capture-Screens.ps1 -Setup $setup -OutDir capturas
+
+      - name: Gravar as capturas no ramo
+        if: ${{ !cancelled() }}
+        run: |
+          if (-not (Test-Path capturas)) { exit 0 }
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add capturas
+          git commit -m 'capturas das telas'
+          if ($LASTEXITCODE -ne 0) { exit 0 }
+          git push origin HEAD:capturas-manual
