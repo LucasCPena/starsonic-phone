@@ -1,7 +1,8 @@
 # Teste de fumaca da tela Entrar contra o registrador SIP falso (tests\smoke\fake_registrar.py), no
 # build normal: o endereco do servidor (127.0.0.1) e digitado, e a porta (5060) e o transporte (UDP)
 # vem do perfil embutido (branding\perfil.ini). Depois de entrar: Editar mostra o endereco da conta,
-# e uma conta adulterada no INI, ativada pelo menu, registra pelo perfil (E14).
+# e uma conta adulterada no INI, ativada pelo menu, registra pelo perfil (E14); por fim, a conta ativa
+# passa a TCP e ganha um nome (revisao 1.4), e o registrador falso recebe o registro por TCP.
 # Se o perfil mudar de porta ou de transporte, ajuste as fases 6 e 8; o registrador falso so fala UDP.
 # Uso: .\tests\smoke\Test-Login.ps1 -AppDir out [-Version 0.0.0]   (versao com que o app foi compilado)
 param(
@@ -25,6 +26,8 @@ $IDC_SS_SENHA = 41014
 $IDC_SS_MESSAGE = 41015
 $IDC_SS_ENTRAR = 41016
 $IDC_SS_SERVER_LABEL = 41019
+$IDC_SS_PROTOCOL = 41031
+$IDC_SS_NAME = 41033
 $IDC_STARSONIC_BAND = 41200
 # Ids de microsip\resource.h
 $ID_ACCOUNT_CHANGE_RANGE = 40000
@@ -36,10 +39,11 @@ $exe = Join-Path $copy 'StarsonicPhone.exe'
 # A copia comeca sem contas: o INI so tem a secao [Global] de New-AppCopy.
 $ini = Join-Path $copy 'StarsonicPhone.ini'
 $userAgentLog = Join-Path $copy 'user-agent.txt'
+$transportLog = Join-Path $copy 'transport.txt'
 
 $registrarInfo = New-Object System.Diagnostics.ProcessStartInfo
 $registrarInfo.FileName = $Python
-$registrarInfo.Arguments = "`"$(Join-Path $PSScriptRoot 'fake_registrar.py')`" --user 2001,2002 --password senha-certa --log `"$userAgentLog`""
+$registrarInfo.Arguments = "`"$(Join-Path $PSScriptRoot 'fake_registrar.py')`" --user 2001,2002 --password senha-certa --log `"$userAgentLog`" --transport-log `"$transportLog`""
 $registrarInfo.UseShellExecute = $false
 $registrar = [System.Diagnostics.Process]::Start($registrarInfo)
 $process = $null
@@ -92,6 +96,11 @@ try {
     $expectedLabel = Get-Text @('Servidor (endere', 0x00E7, 'o ou IP)')
     if ($label -ne $expectedLabel) {
         Fail "Rotulo do campo Servidor: '$label' (esperado '$expectedLabel')."
+    }
+    $protocol = Get-ControlText -Dialog $dialog -Id $IDC_SS_PROTOCOL
+    $name = Get-ControlText -Dialog $dialog -Id $IDC_SS_NAME
+    if ($protocol -cne 'UDP' -or $name -ne '') {
+        Fail "Primeiro acesso com protocolo '$protocol' e nome '$name' (esperado 'UDP' e vazio)."
     }
 
     # 2. Servidor vazio.
@@ -167,6 +176,11 @@ try {
             if ($editServer -cne '127.0.0.1' -or $editRamal -cne '2001') {
                 $problems += "Editar Conta mostrou servidor '$editServer' e ramal '$editRamal' (esperado '127.0.0.1' e '2001')."
             }
+            $editProtocol = Get-ControlText -Dialog $edit.Handle -Id $IDC_SS_PROTOCOL
+            $editName = Get-ControlText -Dialog $edit.Handle -Id $IDC_SS_NAME
+            if ($editProtocol -cne 'UDP' -or $editName -ne '') {
+                $problems += "Editar Conta mostrou protocolo '$editProtocol' e nome '$editName' (esperado 'UDP' e vazio)."
+            }
             Invoke-DialogButton -Dialog $edit.Handle -Id $IDCANCEL
             if (-not (Wait-Until -TimeoutSeconds 5 -Condition { -not [StarsonicWin32]::IsWindowVisible($edit.Handle) })) {
                 Fail 'A tela Entrar aberta por Editar Conta nao fechou com Cancelar.'
@@ -206,6 +220,60 @@ try {
     if (-not $enforced) {
         $problems += "Faixa depois de ativar a conta adulterada: '$([StarsonicWin32]::ControlText($band))' (esperado conectado pelo perfil)."
     }
+
+    # 9. Editar a conta ativa (2): protocolo TCP e nome da conta. Registra por TCP no registrador
+    # falso; o nome vai para o INI e para a faixa e volta preenchido no Editar seguinte.
+    $accountName = Get-Text @('PA 2 - Recep', 0x00E7, 0x00E3, 'o')
+    if (-not (Invoke-MainMenuItem -MainWindow $main.Handle -Match $isEdit)) {
+        $problems += ('Item "Editar Conta" nao apareceu no menu principal (fase 9). Itens: ' + ($script:MenuItemsSeen -join ', '))
+    } else {
+        $edit = Find-WindowByTitle -ProcessId $process.Id -Title $title -TimeoutSeconds 10
+        if (-not $edit) {
+            $problems += 'A tela Entrar nao abriu pelo menu Editar Conta (fase 9).'
+        } else {
+            [StarsonicWin32]::SelectComboItem([StarsonicWin32]::GetDlgItem($edit.Handle, $IDC_SS_PROTOCOL), 1)
+            Set-ControlText -Dialog $edit.Handle -Id $IDC_SS_NAME -Text $accountName
+            Set-ControlText -Dialog $edit.Handle -Id $IDC_SS_SENHA -Text 'senha-certa'
+            Invoke-DialogButton -Dialog $edit.Handle -Id $IDC_SS_ENTRAR
+            if (-not (Wait-Until -TimeoutSeconds 25 -Condition { -not [StarsonicWin32]::IsWindowVisible($edit.Handle) })) {
+                $problems += "A tela Entrar nao fechou com TCP e nome (fase 9): '$(Get-ControlText -Dialog $edit.Handle -Id $IDC_SS_MESSAGE)'."
+            } else {
+                foreach ($item in @(@('transport', 'tcp'), @('label', $accountName))) {
+                    $actual = Read-IniValue -Path $ini -Section 'Account2' -Key $item[0]
+                    if ($actual -cne $item[1]) {
+                        $problems += "[Account2] $($item[0]) = '$actual' (esperado '$($item[1])')."
+                    }
+                }
+                $named = Wait-Until -TimeoutSeconds 10 -Condition {
+                    $text = [StarsonicWin32]::ControlText($band)
+                    return ($text.Contains('Conectado') -and $text.Contains('PA 2 - Recep'))
+                }
+                if (-not $named) {
+                    $problems += "Faixa depois do TCP com nome: '$([StarsonicWin32]::ControlText($band))'."
+                }
+                $transport = if (Test-Path $transportLog) { (Get-Content -Raw $transportLog).Trim() } else { '' }
+                if ($transport -ne 'tcp') {
+                    $problems += "Protocolo do ultimo registro aceito pelo servidor: '$transport' (esperado 'tcp')."
+                }
+                if (-not (Invoke-MainMenuItem -MainWindow $main.Handle -Match $isEdit)) {
+                    $problems += 'Item "Editar Conta" sumiu do menu depois do TCP (fase 9).'
+                } else {
+                    $again = Find-WindowByTitle -ProcessId $process.Id -Title $title -TimeoutSeconds 10
+                    if (-not $again) {
+                        $problems += 'A tela Entrar nao abriu no segundo Editar Conta (fase 9).'
+                    } else {
+                        $againProtocol = Get-ControlText -Dialog $again.Handle -Id $IDC_SS_PROTOCOL
+                        $againName = Get-ControlText -Dialog $again.Handle -Id $IDC_SS_NAME
+                        if ($againProtocol -cne 'TCP' -or $againName -cne $accountName) {
+                            $problems += "Editar depois do TCP mostrou protocolo '$againProtocol' e nome '$againName'."
+                        }
+                        Invoke-DialogButton -Dialog $again.Handle -Id $IDCANCEL
+                        Wait-Until -TimeoutSeconds 5 -Condition { -not [StarsonicWin32]::IsWindowVisible($again.Handle) } | Out-Null
+                    }
+                }
+            }
+        }
+    }
     if ($problems.Count -gt 0) {
         Fail ($problems -join ' | ')
     }
@@ -213,7 +281,7 @@ try {
     if (-not (Stop-App -Exe $exe -Process $process -TimeoutSeconds 15)) {
         Fail ("O app nao fechou com /exit. " + ($script:StopAppDetails -join ' | '))
     }
-    Write-Host 'OK: tela Entrar validou servidor e ramal, mostrou o erro de senha e registrou com a senha certa; Editar mostrou o endereco; conta adulterada ativada pelo menu registrou pelo perfil.'
+    Write-Host 'OK: tela Entrar validou servidor e ramal, mostrou o erro de senha e registrou com a senha certa; Editar mostrou o endereco; conta adulterada ativada pelo menu registrou pelo perfil; a conta passou a TCP com nome, registrou por TCP e o nome apareceu na faixa e no Editar.'
 } finally {
     if ($process -and -not $process.HasExited) {
         Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
