@@ -2,6 +2,7 @@
 # build normal: o endereco do servidor (127.0.0.1) e digitado, e a porta (5060) e o transporte (UDP)
 # vem do perfil embutido (branding\perfil.ini). Depois de entrar: Editar mostra o endereco da conta,
 # e uma conta adulterada no INI, ativada pelo menu, registra pelo perfil (E14).
+# Se o perfil mudar de porta ou de transporte, ajuste as fases 6 e 8; o registrador falso so fala UDP.
 # Uso: .\tests\smoke\Test-Login.ps1 -AppDir out [-Version 0.0.0]   (versao com que o app foi compilado)
 param(
     [string]$AppDir = 'out',

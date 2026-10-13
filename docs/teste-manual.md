@@ -45,7 +45,8 @@ Versão testada: `__________`  Data: `__________`  Quem testou: `__________`
 | 4.1 | Menu → Contas → Adicionar Conta… e entre com um ramal do outro servidor, digitando o endereço dele. | Abre a tela Entrar com o campo Servidor vazio; a conta nova fica ativa depois de conectar. | ☐ | ☐ |
 | 4.2 | Troque a conta ativa pelo menu. | A faixa mostra o ramal e o endereço da conta escolhida, "Conectado". | ☐ | ☐ |
 | 4.3 | Edite uma conta (Menu → Editar Conta) e use "Remover conta" até não sobrar nenhuma. | A tela Entrar abre com o endereço e o ramal da conta; depois da última remoção, volta a tela Entrar vazia. | ☐ | ☐ |
-| 4.4 | Com o app fechado, edite `%APPDATA%\Starsonic Phone\StarsonicPhone.ini`: numa conta, troque o `transport` para `tcp` e a porta do `server` para `5999` (ex.: `server=starcloud1-starsonic.com.br:5999`); noutra, ponha um espaço no meio do endereço do `server`. Abra o app. | A primeira conta volta à porta 5060 e ao UDP do perfil, com o mesmo endereço, e conecta. A segunda fica vazia e, se era a ativa, o app abre a tela Entrar. | ☐ | ☐ |
+| 4.4 | Com duas contas, a primeira ativa, feche o app (Menu → Sair) e edite `%APPDATA%\Starsonic Phone\StarsonicPhone.ini`: na primeira conta, troque o `transport` para `tcp` e a porta do `server` para `5999` (ex.: `server=starcloud1-starsonic.com.br:5999`); na segunda, ponha um espaço no meio do endereço do `server`. Abra o app. | A primeira conta conecta de novo pela porta 5060 e por UDP, com o mesmo endereço. A segunda fica vazia e some do menu de contas. | ☐ | ☐ |
+| 4.5 | Feche o app, ponha um espaço no meio do endereço do `server` da conta ativa e abra o app. | O app abre a tela Entrar, sem mensagem. | ☐ | ☐ |
 
 ## 5. Marca, Configurações e suporte
 
@@ -90,7 +91,7 @@ O app procura atualização quando abre (e a cada 24 h aberto). O X da janela s�
 |--------------------|---------------------------|---------------|
 | Instalar, digitar o servidor, o ramal e a senha e ligar sem ver outro campo técnico | `Test-Installer.ps1`, `Test-Login.ps1` (registrador SIP falso), `Test-Settings.ps1` | 1, 2, 3 |
 | "MicroSIP" só na atribuição da tela Sobre e nos avisos de copyright e licença | `check_branding.py` (recursos, tradução, instalador, código novo e o próprio exe), `Test-BrandUi.ps1` | 5.1, 5.2 |
-| Configurações de conta e rede travadas (menos o endereço do servidor), pela interface e pelo arquivo | testes do núcleo (`AccountPolicy`), `Test-Policy.ps1` (INI adulterado), `Test-Settings.ps1` | 4.4, 5.3 |
+| Configurações de conta e rede travadas (menos o endereço do servidor), pela interface e pelo arquivo | testes do núcleo (`AccountPolicy`), `Test-Policy.ps1` (INI adulterado), `Test-Settings.ps1` | 4.4, 4.5, 5.3 |
 | Versão nova chega como aviso e instala com um clique, sem senha de administrador | testes do núcleo (`UpdateManifest`), SHA-256 no Windows, `Test-Installer.ps1` (atualização silenciosa reabre o app) | 7 |
 | Suporte identifica app e versão pela tela Sobre e pelo User-Agent | `Test-BrandUi.ps1` (versão), `Test-Login.ps1` (User-Agent recebido pelo servidor) | 5.2, 5.4 |
 | Código-fonte completo junto do instalador | workflow `release` (instalador, `versao.json` e código-fonte completo em cada release) | 7.2 |

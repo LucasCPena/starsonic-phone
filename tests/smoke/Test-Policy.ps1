@@ -53,7 +53,7 @@ if (-not (Stop-App -Exe $exe -Process $process -TimeoutSeconds 15)) {
     throw 'O app nao fechou em 15 s depois de /exit.'
 }
 
-# Codecs do branding\perfil.ini.
+# Valores do branding\perfil.ini (porta 5060, UDP e estes codecs): se o perfil mudar, ajuste aqui.
 $profileCodecs = 'G722/16000/1 PCMA/8000/1 PCMU/8000/1'
 $expected = @(
     # O endereco fica (normalizado); porta, dominio, transporte e rotulo voltam ao perfil.

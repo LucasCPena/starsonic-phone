@@ -40,6 +40,8 @@ python3 build/check_source_text.py
 python3 build/check_branding.py --repo .
 ```
 
+Os testes de fumaça da tela Entrar e das travas (`tests/smoke/Test-Login.ps1` e `Test-Policy.ps1`) conferem os valores do `branding/perfil.ini` (porta 5060, UDP e codecs) contra um registrador SIP falso que só fala UDP. Ao mudar o transporte, a porta ou os codecs do perfil, ajuste esses dois testes; para TCP ou TLS, o `tests/smoke/fake_registrar.py` também precisa falar o transporte novo.
+
 Detalhes e ajustes do build: [docs/build-notes.md](docs/build-notes.md).
 
 ## Como lançar uma versão

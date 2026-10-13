@@ -1,7 +1,7 @@
 # Starsonic Phone para Windows — especificação de design
 
 - **Data:** 11/10/2026
-- **Status:** revisão 1.2 (13/10/2026) em aprovação; a revisão 1.1 foi aprovada em 11/10/2026
+- **Status:** aprovada — revisão 1.2 em 13/10/2026 (a revisão 1.1 foi aprovada em 11/10/2026)
 - **Subprojeto:** 1 de 2 — o 2º é o app de celular (iOS e Android), com especificação própria
 
 > **Revisão 1.2 — servidor digitado na tela Entrar** (decisão do responsável em 13/10/2026: a Starsonic tem muitos clientes, cada um em um de dois servidores):
@@ -289,7 +289,7 @@ Depois que a conta está registrada, quedas e reconexões seguem o comportamento
 - **Unitários** do `starsonic/core`, escritos antes do código (TDD), com doctest — rodam no Linux e no Windows.
 - **Varredura de marca:** reprova o build se "MicroSIP" aparecer em textos visíveis — recursos (.rc/.rc2), tradução pt-BR, textos do instalador e textos do código novo —, exceto na linha de atribuição da tela Sobre e no aviso de copyright do recurso de versão.
 - **Instalador:** instalação e desinstalação silenciosas no runner, conferindo arquivos, atalhos e chaves de registro.
-- **Fumaça da interface**, no mesmo build que vai para o instalador: o app abre e fecha; no primeiro acesso aparece a tela Entrar com o campo Servidor vazio; com um registrador SIP falso local (endereço `127.0.0.1` digitado), endereço inválido e ramal inválido são recusados, senha errada mostra "Ramal ou senha incorretos." e senha certa conecta; uma conta adulterada no INI registra pelo perfil; a tela Sobre mostra versão e licença; as Configurações não mostram os campos travados. Enquanto o perfil usar UDP, a mensagem de falha de TLS só é coberta pelos testes unitários; se o perfil passar para TLS, o teste manual passa a cobri-la.
+- **Fumaça da interface**, no mesmo build que vai para o instalador: o app abre e fecha; no primeiro acesso aparece a tela Entrar com o campo Servidor vazio; com um registrador SIP falso local (endereço `127.0.0.1` digitado), endereço inválido e ramal inválido são recusados, senha errada mostra "Ramal ou senha incorretos." e senha certa conecta; uma conta adulterada no INI registra pelo perfil; a tela Sobre mostra versão e licença; as Configurações não mostram os campos travados. Enquanto o perfil usar UDP, a mensagem de falha de TLS só é coberta pelos testes unitários; se o perfil passar para TLS, o teste manual passa a cobri-la. Os testes de fumaça conferem os valores do perfil real (porta 5060, UDP e codecs) contra um registrador falso que só fala UDP: trocar o transporte, a porta ou os codecs do `perfil.ini` exige ajustar `Test-Login.ps1` e `Test-Policy.ps1` e, para TCP ou TLS, ensinar o `fake_registrar.py` a falar esse transporte.
 
 ### 11.3 Teste manual (checklist em `docs/teste-manual.md`, antes de cada versão estável)
 
@@ -324,7 +324,7 @@ Em Windows 10 e Windows 11, com um ramal de teste em cada servidor da Starsonic 
 | Sem assinatura, a integridade das atualizações depende só da conta do GitHub (arquivo de versão e instalador no mesmo lugar) | Conta do GitHub com verificação em duas etapas; acesso de escrita ao repositório restrito |
 | A plataforma do fornecedor filtrar o User-Agent | Testado em cada servidor; se filtrar, volta o User-Agent do MicroSIP |
 | Com o endereço digitado, o app funciona com qualquer servidor SIP, não só os da Starsonic | Aceito na revisão 1.2: a marca e as travas técnicas continuam, e o suporte informa o endereço certo a cada cliente |
-| Com UDP, a chave do SRTP opcional vai sem proteção na sinalização: quem capturar a sinalização consegue decifrar a chamada | Aceito na revisão 1.2; trocar para `transporte=tls` (porta 5061) no `perfil.ini` resolve com uma versão nova, sem mudar o código |
+| Com UDP, a chave do SRTP opcional vai sem proteção na sinalização: quem capturar a sinalização consegue decifrar a chamada | Aceito na revisão 1.2; trocar para `transporte=tls` (porta 5061) no `perfil.ini` resolve com uma versão nova, sem mudar o código do app; os testes de fumaça precisam acompanhar a troca (seção 11.2) |
 | Proteção contra força bruta nos servidores | É do fornecedor da plataforma; confirmar com ele |
 | Repositório migrar da conta pessoal para uma organização | O GitHub redireciona os links antigos; nunca recriar um repositório com o mesmo nome na conta antiga |
 | O tema e os ganchos conflitarem com versões novas do MicroSIP | Edições no código do MicroSIP limitadas à lista do plano, cada uma de poucas linhas, chamando `starsonic/` |
