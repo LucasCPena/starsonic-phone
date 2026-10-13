@@ -34,6 +34,21 @@ public static class StarsonicShots {
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowTextW(IntPtr hWnd, StringBuilder text, int max);
     [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr hWnd, int attribute, out RECT rect, int size);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindowExW(IntPtr parent, IntPtr after, string className, string title);
+    [DllImport("user32.dll")] static extern IntPtr SendMessageW(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")] static extern IntPtr GetDlgItem(IntPtr dialog, int id);
+
+    // Digita no campo (ou no campo de texto de uma caixa de combinacao) letra por letra, como o
+    // teclado faria, para o app receber as notificacoes de mudanca.
+    public static void Type(IntPtr control, string text) {
+        IntPtr edit = FindWindowExW(control, IntPtr.Zero, "Edit", null);
+        if (edit == IntPtr.Zero) edit = control;
+        foreach (char c in text) SendMessageW(edit, 0x0102, new IntPtr(c), new IntPtr(1));   // WM_CHAR
+    }
+    // Poe o foco no botao $id do dialogo (tira o retangulo de foco dos links).
+    public static void FocusButton(IntPtr dialog, int id) {
+        SendMessageW(dialog, 0x0028, GetDlgItem(dialog, id), new IntPtr(1));   // WM_NEXTDLGCTL
+    }
 
     // Salva a janela como o DWM a mostra (PrintWindow), cortada na moldura visivel. Devolve o
     // tamanho salvo ("LxA") ou o motivo da falha.
@@ -90,6 +105,8 @@ $IDC_SS_ENTRAR = 41016
 $IDC_STARSONIC_BAND = 41200
 $IDC_NUMBER = 1078
 $ID_ACCOUNT_EDIT_RANGE = 40100
+$ID_SETTINGS = 32789
+$IDC_SETTINGS_RINGTONE = 1003
 $IDOK = 1
 $IDCANCEL = 2
 $SERVER = 'starcloud1-starsonic.com.br'
@@ -193,15 +210,35 @@ try {
     Wait-Until -TimeoutSeconds 20 -Condition { ([StarsonicWin32]::ControlText($band)).StartsWith('Conectado') } | Out-Null
     $number = [StarsonicShots]::ChildById($main.Handle, $IDC_NUMBER)
     if ($number -ne [IntPtr]::Zero) {
-        [StarsonicWin32]::SetControlText($number, '2002')
+        [StarsonicShots]::Type($number, '2002')
     }
     [StarsonicShots]::Front($main.Handle)
     Save-Window $main.Handle '07-principal'
     if (Invoke-MainMenuItem -MainWindow $main.Handle -Match { param($text, $id) $text -eq 'Sobre o Starsonic Phone' }) {
         $about = Find-WindowByTitle -ProcessId $app.Id -Title 'Sobre o Starsonic Phone' -TimeoutSeconds 10
         if ($about) {
+            [StarsonicShots]::FocusButton($about.Handle, $IDOK)
             Save-Window $about.Handle '08-sobre'
             Invoke-DialogButton -Dialog $about.Handle -Id $IDOK
+        }
+    }
+    # Configuracoes (sem as opcoes tecnicas travadas).
+    if (Invoke-MainMenuItem -MainWindow $main.Handle -Match { param($text, $id) $id -eq $ID_SETTINGS }) {
+        $settings = @{ Dialog = [IntPtr]::Zero }
+        $found = Wait-Until -TimeoutSeconds 10 -Condition {
+            foreach ($window in @(Get-TopLevelWindows -ProcessId $app.Id -IncludeOwned)) {
+                if ([StarsonicWin32]::IsWindowVisible($window.Handle) -and
+                    [StarsonicWin32]::GetDlgItem($window.Handle, $IDC_SETTINGS_RINGTONE) -ne [IntPtr]::Zero) {
+                    $settings.Dialog = $window.Handle
+                    return $true
+                }
+            }
+            return $false
+        }
+        if ($found) {
+            [StarsonicShots]::FocusButton($settings.Dialog, $IDCANCEL)
+            Save-Window $settings.Dialog '11-configuracoes'
+            Invoke-DialogButton -Dialog $settings.Dialog -Id $IDCANCEL
         }
     }
 
@@ -218,7 +255,7 @@ try {
     Wait-Until -TimeoutSeconds 20 -Condition { ([StarsonicWin32]::ControlText($band)).StartsWith('Conectado') } | Out-Null
     $number = [StarsonicShots]::ChildById($main.Handle, $IDC_NUMBER)
     if ($number -ne [IntPtr]::Zero) {
-        [StarsonicWin32]::SetControlText($number, '2002')
+        [StarsonicShots]::Type($number, '2002')
     }
     [StarsonicShots]::Front($main.Handle)
     Save-Window $main.Handle '09-principal-escuro'

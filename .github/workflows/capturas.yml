@@ -21,11 +21,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Baixar o instalador publicado
+      - name: Baixar o instalador da versao mais nova
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release download v0.0.1-rc.3 --repo $env:GITHUB_REPOSITORY --pattern '*-setup.exe' --dir dist
+          $tag = gh release list --repo $env:GITHUB_REPOSITORY --limit 30 --json tagName --jq '[.[] | select(.tagName | startswith("v"))][0].tagName'
+          if ($LASTEXITCODE -ne 0 -or -not $tag) { exit 1 }
+          Write-Host "versao: $tag"
+          gh release download $tag --repo $env:GITHUB_REPOSITORY --pattern '*-setup.exe' --dir dist
           if ($LASTEXITCODE -ne 0) { exit 1 }
           Get-ChildItem dist
 
