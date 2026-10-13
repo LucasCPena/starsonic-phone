@@ -1,0 +1,10 @@
+01-instalador-boas-vindas.png 499x388
+02-instalador-componentes.png 499x388
+03-instalador-fim.png 499x388
+04-entrar.png 272x360
+05-entrar-senha-errada.png 272x360
+06-entrar-preenchida.png 272x360
+07-principal.png 245x494
+08-sobre.png 332x266
+09-principal-escuro.png 245x494
+10-entrar-escuro.png 272x360
