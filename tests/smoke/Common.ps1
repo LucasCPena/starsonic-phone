@@ -71,6 +71,67 @@ public static class StarsonicWin32 {
 '@
 }
 
+if (-not ('StarsonicPixels' -as [type])) {
+    Add-Type -ReferencedAssemblies System.Drawing -TypeDefinition @'
+using System;
+using System.Drawing;
+using System.Drawing.Imaging;
+using System.Runtime.InteropServices;
+public static class StarsonicPixels {
+    [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
+    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+    [DllImport("user32.dll")] static extern bool PrintWindow(IntPtr hWnd, IntPtr hdc, uint flags);
+    static bool Near(Color c, int r, int g, int b, int tolerance) {
+        int dr = c.R - r, dg = c.G - g, db = c.B - b;
+        return dr * dr + dg * dg + db * db <= tolerance * tolerance;
+    }
+    // Captura a janela de primeiro nivel 'top' como o DWM a mostra (PrintWindow) e conta, na area
+    // do controle 'child' entre as fracoes horizontais [fromX, toX), os pixels a ate 'tolerance' da
+    // cor (r, g, b). Devolve { iguais, total, nao_pretos } (nao_pretos = 0: captura vazia).
+    public static int[] Count(IntPtr top, IntPtr child, int r, int g, int b, int tolerance, double fromX, double toX) {
+        RECT wr, cr;
+        GetWindowRect(top, out wr);
+        GetWindowRect(child, out cr);
+        int w = wr.Right - wr.Left, h = wr.Bottom - wr.Top;
+        if (w <= 0 || h <= 0) return new int[] { 0, 0, 0 };
+        using (Bitmap bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb)) {
+            using (Graphics gr = Graphics.FromImage(bmp)) {
+                IntPtr hdc = gr.GetHdc();
+                PrintWindow(top, hdc, 2);   // PW_RENDERFULLCONTENT
+                gr.ReleaseHdc(hdc);
+            }
+            int x0 = cr.Left - wr.Left, y0 = cr.Top - wr.Top, cw = cr.Right - cr.Left, ch = cr.Bottom - cr.Top;
+            int from = Math.Max(0, x0 + (int)(cw * fromX)), to = Math.Min(w, x0 + (int)(cw * toX));
+            int same = 0, total = 0, lit = 0;
+            for (int y = Math.Max(0, y0); y < Math.Min(h, y0 + ch); y++) {
+                for (int x = from; x < to; x++) {
+                    Color c = bmp.GetPixel(x, y);
+                    total++;
+                    if (c.R + c.G + c.B > 30) lit++;
+                    if (Near(c, r, g, b, tolerance)) same++;
+                }
+            }
+            return new int[] { same, total, lit };
+        }
+    }
+    // Pixels do icone do executavel (o que o Explorer mostra, 32x32) a ate 'tolerance' da cor.
+    public static int IconCount(string exe, int r, int g, int b, int tolerance) {
+        using (Icon icon = Icon.ExtractAssociatedIcon(exe))
+        using (Bitmap bmp = icon.ToBitmap()) {
+            int same = 0;
+            for (int y = 0; y < bmp.Height; y++) {
+                for (int x = 0; x < bmp.Width; x++) {
+                    Color c = bmp.GetPixel(x, y);
+                    if (c.A > 128 && Near(c, r, g, b, tolerance)) same++;
+                }
+            }
+            return same;
+        }
+    }
+}
+'@
+}
+
 # Janelas de primeiro nivel (visiveis ou nao) do processo, com classe e titulo.
 function Get-TopLevelWindows {
     param(
