@@ -1,6 +1,6 @@
 # Teste manual do Starsonic Phone (Windows)
 
-Faça este roteiro antes de cada versão estável (spec §11.3), com a versão candidata (`vX.Y.Z-rc.N`). Use um PC com **Windows 10** e outro com **Windows 11**, e um ramal de teste em cada servidor do perfil. Ramais e senhas de teste ficam fora do repositório.
+Faça este roteiro antes de cada versão estável (spec §11.3), com a versão candidata (`vX.Y.Z-rc.N`). Use um PC com **Windows 10** e outro com **Windows 11**, e um ramal de teste em cada servidor da Starsonic (`starcloud-starsonic.com.br` e `starcloud1-starsonic.com.br`). Ramais e senhas de teste ficam fora do repositório.
 
 Marque cada linha nas colunas W10 e W11. Se algo não sair como o esperado, anote a versão, o passo e o que apareceu (de preferência com print).
 
@@ -19,12 +19,14 @@ Versão testada: `__________`  Data: `__________`  Quem testou: `__________`
 
 | # | Passo | Resultado esperado | W10 | W11 |
 |---|-------|--------------------|-----|-----|
-| 2.1 | Olhe a tela Entrar. | Logo, lista de servidores do perfil, Ramal, Senha e "Precisa de ajuda? (11) 5060-3000". Nenhum campo técnico (porta, proxy, transporte etc.). | ☐ | ☐ |
-| 2.2 | Digite o ramal com `@`, `:` ou espaço no meio (ex.: `20 01`). | "Digite só o número do ramal." | ☐ | ☐ |
-| 2.3 | Ramal certo com a senha errada. | "Ramal ou senha incorretos." e a tela continua aberta. | ☐ | ☐ |
-| 2.4 | Ramal de um servidor escolhendo outro servidor da lista. | Uma mensagem de erro da tabela 11.1 da spec (em geral "Ramal ou senha incorretos." ou "Ramal não encontrado neste servidor."). Nada de código técnico além do "(código n)" previsto. | ☐ | ☐ |
-| 2.5 | Com o Wi-Fi/cabo desligado, tente entrar. | "Não foi possível falar com o servidor. Verifique sua internet." | ☐ | ☐ |
-| 2.6 | Internet de volta, ramal e senha certos. | A tela fecha. A faixa no topo mostra "Conectado" e "<ramal> · <servidor>". | ☐ | ☐ |
+| 2.1 | Olhe a tela Entrar. | Logo, campo "Servidor (endereço ou IP)" vazio, Ramal, Senha e "Precisa de ajuda? (11) 5060-3000". Nenhum outro campo técnico (porta, proxy, transporte etc.). | ☐ | ☐ |
+| 2.2 | Clique em Entrar com o campo Servidor vazio; depois digite o endereço com a porta (ex.: `starcloud1-starsonic.com.br:5060`). | Primeiro "Digite o endereço do servidor."; com a porta, "Digite só o endereço do servidor, como starcloud1-starsonic.com.br." | ☐ | ☐ |
+| 2.3 | Digite o ramal com `@`, `:` ou espaço no meio (ex.: `20 01`). | "Digite só o número do ramal." | ☐ | ☐ |
+| 2.4 | Ramal certo com a senha errada. | "Ramal ou senha incorretos." e a tela continua aberta. | ☐ | ☐ |
+| 2.5 | Ramal de um servidor com o endereço do outro servidor. | Uma mensagem de erro da tabela 11.1 da spec (em geral "Ramal ou senha incorretos." ou "Ramal não encontrado neste servidor."). Nada de código técnico além do "(código n)" previsto. | ☐ | ☐ |
+| 2.6 | Endereço que não existe (ex.: `starcloud9-starsonic.com.br`). | "Não foi possível falar com o servidor. Confira o endereço e a sua internet." | ☐ | ☐ |
+| 2.7 | Com o Wi-Fi/cabo desligado, tente entrar. | "Não foi possível falar com o servidor. Confira o endereço e a sua internet." | ☐ | ☐ |
+| 2.8 | Internet de volta: endereço certo, mas com espaços nas pontas e letras maiúsculas (ex.: ` Starcloud1-Starsonic.com.br `), ramal e senha certos. | A tela fecha. A faixa no topo mostra "Conectado" e "<ramal> · <endereço>", com o endereço em minúsculas e sem os espaços. | ☐ | ☐ |
 
 ## 3. Chamadas
 
@@ -40,10 +42,10 @@ Versão testada: `__________`  Data: `__________`  Quem testou: `__________`
 
 | # | Passo | Resultado esperado | W10 | W11 |
 |---|-------|--------------------|-----|-----|
-| 4.1 | Menu → Contas → Adicionar Conta… e entre com um ramal de outro servidor. | Abre a tela Entrar; a conta nova fica ativa depois de conectar. | ☐ | ☐ |
-| 4.2 | Troque a conta ativa pelo menu. | A faixa mostra o ramal e o servidor da conta escolhida, "Conectado". | ☐ | ☐ |
-| 4.3 | Edite uma conta e use "Remover conta" até não sobrar nenhuma. | Depois da última, volta a tela Entrar. | ☐ | ☐ |
-| 4.4 | Com o app fechado, edite `%APPDATA%\Starsonic Phone\StarsonicPhone.ini` e troque o `server` ou o `transport` de uma conta; abra o app. | O app desfaz a mudança (volta ao que o perfil manda) ou, se o servidor da conta não existir mais, pede para entrar de novo: "O servidor desta conta mudou. Entre novamente." | ☐ | ☐ |
+| 4.1 | Menu → Contas → Adicionar Conta… e entre com um ramal do outro servidor, digitando o endereço dele. | Abre a tela Entrar com o campo Servidor vazio; a conta nova fica ativa depois de conectar. | ☐ | ☐ |
+| 4.2 | Troque a conta ativa pelo menu. | A faixa mostra o ramal e o endereço da conta escolhida, "Conectado". | ☐ | ☐ |
+| 4.3 | Edite uma conta (Menu → Editar Conta) e use "Remover conta" até não sobrar nenhuma. | A tela Entrar abre com o endereço e o ramal da conta; depois da última remoção, volta a tela Entrar vazia. | ☐ | ☐ |
+| 4.4 | Com o app fechado, edite `%APPDATA%\Starsonic Phone\StarsonicPhone.ini`: numa conta, troque o `transport` para `tcp` e a porta do `server` para `5999` (ex.: `server=starcloud1-starsonic.com.br:5999`); noutra, ponha um espaço no meio do endereço do `server`. Abra o app. | A primeira conta volta à porta 5060 e ao UDP do perfil, com o mesmo endereço, e conecta. A segunda fica vazia e, se era a ativa, o app abre a tela Entrar. | ☐ | ☐ |
 
 ## 5. Marca, Configurações e suporte
 
@@ -86,9 +88,9 @@ O app procura atualização quando abre (e a cada 24 h aberto). O X da janela s�
 
 | Critério (spec §3) | Automático (a cada build) | Neste roteiro |
 |--------------------|---------------------------|---------------|
-| Instalar, escolher o servidor, digitar ramal e senha e ligar sem ver campo técnico | `Test-Installer.ps1`, `Test-Login.ps1` (registrador SIP falso), `Test-Settings.ps1` | 1, 2, 3 |
+| Instalar, digitar o servidor, o ramal e a senha e ligar sem ver outro campo técnico | `Test-Installer.ps1`, `Test-Login.ps1` (registrador SIP falso), `Test-Settings.ps1` | 1, 2, 3 |
 | "MicroSIP" só na atribuição da tela Sobre e nos avisos de copyright e licença | `check_branding.py` (recursos, tradução, instalador, código novo e o próprio exe), `Test-BrandUi.ps1` | 5.1, 5.2 |
-| Configurações de conta e rede travadas, pela interface e pelo arquivo | testes do núcleo (`AccountPolicy`), `Test-Policy.ps1` (INI adulterado), `Test-Settings.ps1` | 4.4, 5.3 |
+| Configurações de conta e rede travadas (menos o endereço do servidor), pela interface e pelo arquivo | testes do núcleo (`AccountPolicy`), `Test-Policy.ps1` (INI adulterado), `Test-Settings.ps1` | 4.4, 5.3 |
 | Versão nova chega como aviso e instala com um clique, sem senha de administrador | testes do núcleo (`UpdateManifest`), SHA-256 no Windows, `Test-Installer.ps1` (atualização silenciosa reabre o app) | 7 |
 | Suporte identifica app e versão pela tela Sobre e pelo User-Agent | `Test-BrandUi.ps1` (versão), `Test-Login.ps1` (User-Agent recebido pelo servidor) | 5.2, 5.4 |
 | Código-fonte completo junto do instalador | workflow `release` (instalador, `versao.json` e código-fonte completo em cada release) | 7.2 |

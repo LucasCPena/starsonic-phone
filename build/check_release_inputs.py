@@ -4,7 +4,6 @@
 Lista o que falta e devolve 1 quando:
 - branding/branding.h ainda tem a conta provisória "definir-conta" ou
   STARSONIC_BRAND_IS_PLACEHOLDER 1 (cores provisórias);
-- branding/servidores.ini ainda tem endereço de exemplo (.invalid) fora dos comentários;
 - falta algum dos arquivos de REQUIRED_FILES (ícones, logos, tradução e imagem do instalador).
 
 Uso: check_release_inputs.py --repo <pasta>   (código 0 = tudo pronto, 1 = falta algo)
@@ -46,13 +45,6 @@ def find_missing(repo):
             missing.append("branding/branding.h: conta do GitHub provisoria (definir-conta)")
         if PLACEHOLDER_RE.search(header):
             missing.append("branding/branding.h: cores provisorias (STARSONIC_BRAND_IS_PLACEHOLDER 1)")
-    servers = _read(root / "branding" / "servidores.ini")
-    if servers is None:
-        missing.append("branding/servidores.ini: ausente")
-    else:
-        for number, line in enumerate(servers.splitlines(), start=1):
-            if ".invalid" in line.split(";", 1)[0]:
-                missing.append("branding/servidores.ini:%d: endereco de exemplo (.invalid)" % number)
     for relative in REQUIRED_FILES:
         if not (root / relative).is_file():
             missing.append("%s: ausente" % relative)

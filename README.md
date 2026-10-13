@@ -1,8 +1,8 @@
 # Starsonic Phone para Windows
 
-Softphone da Starsonic para os clientes do PABX em Nuvem: um fork do [MicroSIP](https://www.microsip.org) 3.22.16 com a marca Starsonic, tela Entrar com os servidores embutidos, configurações de conta e rede travadas, atualização com um clique e instalador por usuário (sem senha de administrador). Licença GNU GPL v3.
+Softphone da Starsonic para os clientes do PABX em Nuvem: um fork do [MicroSIP](https://www.microsip.org) 3.22.16 com a marca Starsonic, tela Entrar com o endereço do servidor digitado, configurações técnicas de conta e rede travadas, atualização com um clique e instalador por usuário (sem senha de administrador). Licença GNU GPL v3.
 
-O que o projeto faz e por quê está na [especificação de design](docs/superpowers/specs/2026-10-11-starsonic-phone-windows-design.md); como foi construído, no [plano de implementação](docs/superpowers/plans/2026-10-11-starsonic-phone-windows.md).
+O que o projeto faz e por quê está na [especificação de design](docs/superpowers/specs/2026-10-11-starsonic-phone-windows-design.md); como foi construído, no [plano de implementação](docs/superpowers/plans/2026-10-11-starsonic-phone-windows.md) e no [plano da revisão 1.2](docs/superpowers/plans/2026-10-13-servidor-digitado.md) (servidor digitado).
 
 ## Organização
 
@@ -12,7 +12,7 @@ O que o projeto faz e por quê está na [especificação de design](docs/superpo
 | `microsip-dist/` | Sons do pacote oficial MicroSIP Lite |
 | `starsonic/core/` | Lógica nova em C++14 puro (perfis, travas, tela Entrar, mensagens de erro, arquivo de versão), testada no Linux e no Windows |
 | `starsonic/win/` | Integração com o MicroSIP (MFC): tela Entrar, faixa da marca, Sobre, Configurações enxutas, atualizador |
-| `branding/` | Nome, URLs, cores, servidores (`servidores.ini`), tradução pt-BR e, quando chegarem, ícones (`overlay/`), logos e imagem do instalador (`installer/`) |
+| `branding/` | Nome, URLs, cores, perfil das contas (`perfil.ini`: porta, transporte, SRTP, codecs e DTMF), tradução pt-BR e, quando chegarem, ícones (`overlay/`), logos e imagem do instalador (`installer/`) |
 | `installer/` | Script do instalador (NSIS) |
 | `build/` | Scripts de build, verificação e publicação |
 | `tests/` | Testes do núcleo (doctest), dos scripts (Python) e de fumaça no Windows (`smoke/`) |
@@ -48,7 +48,7 @@ As versões seguem `X.Y.Z` (estável) e `X.Y.Z-rc.N` (candidata, para teste). Qu
 
 1. **Candidata:** crie a tag `vX.Y.Z-rc.N` no commit desejado (ou, no GitHub, Actions → release → Run workflow, com a versão). O workflow compila com o canal de teste, publica o pre-release `vX.Y.Z-rc.N` e atualiza o pre-release fixo `canal-teste`, de onde as rc instaladas recebem a atualização.
 2. **Teste manual:** siga o [roteiro](docs/teste-manual.md), inclusive a atualização de uma rc para a seguinte.
-3. **Estável:** escreva `notas/vX.Y.Z.txt` (texto curto mostrado no aviso de atualização) e crie a tag `vX.Y.Z`. O workflow só publica se o portão de entradas passar: `python3 build/check_release_inputs.py --repo .` lista o que ainda é provisório (cores, servidores de exemplo, ícones, logos, tradução, imagem do instalador).
+3. **Estável:** escreva `notas/vX.Y.Z.txt` (texto curto mostrado no aviso de atualização) e crie a tag `vX.Y.Z`. O workflow só publica se o portão de entradas passar: `python3 build/check_release_inputs.py --repo .` lista o que ainda é provisório (cores, ícones, logos, tradução, imagem do instalador).
 
 Cada release traz `StarsonicPhone-<versão>-setup.exe`, `versao.json` (com o SHA-256 do instalador, conferido pelo app antes de instalar) e `StarsonicPhone-<versão>-codigo-fonte-completo.zip`, que cumpre a GPL: o repositório, o pjproject e o código-fonte das bibliotecas do vcpkg.
 

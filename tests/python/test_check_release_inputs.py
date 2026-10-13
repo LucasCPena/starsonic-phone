@@ -13,10 +13,6 @@ BRANDING_H = (
     "#define STARSONIC_BRAND_COLOR RGB(0x12,0x34,0x56)\n"
     "#define STARSONIC_BRAND_IS_PLACEHOLDER 0\n"
 )
-SERVERS = (
-    "[geral]\r\ncodecs=G722,PCMA\r\n"
-    "[sp1]                     ; id do servidor\r\nnome=Servidor 1\r\nendereco=sip1.starsonic.com.br\r\n"
-)
 
 
 class CheckReleaseInputsTest(unittest.TestCase):
@@ -24,7 +20,6 @@ class CheckReleaseInputsTest(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.repo = pathlib.Path(self._tmp.name)
         self.write("branding/branding.h", BRANDING_H)
-        self.write("branding/servidores.ini", SERVERS)
         for relative in check_release_inputs.REQUIRED_FILES:
             self.write(relative, b"x")
 
@@ -74,13 +69,11 @@ class CheckReleaseInputsTest(unittest.TestCase):
         self.assertEqual(len(found), 1)
         self.assertIn("STARSONIC_BRAND_IS_PLACEHOLDER", found[0])
 
-    def test_example_server_address_fails_but_comment_does_not(self):
-        self.write("branding/servidores.ini", SERVERS + "; exemplo: sip1.exemplo.invalid\r\n")
+    def test_profile_needs_no_starsonic_input(self):
+        # Desde a revisão 1.2 o endereço do servidor é digitado: o perfil não traz endereço a conferir.
+        self.write("branding/perfil.ini", "[conta]\r\nporta=5060\r\ntransporte=udp\r\n")
+        self.assertFalse((self.repo / "branding" / "servidores.ini").exists())
         self.assertEqual(self.missing(), [])
-        self.write("branding/servidores.ini", SERVERS.replace("sip1.starsonic.com.br", "sip1.exemplo.invalid"))
-        found = self.missing()
-        self.assertEqual(len(found), 1)
-        self.assertIn(".invalid", found[0])
 
     def test_main_lists_what_is_missing(self):
         (self.repo / "branding/logo-faixa.png").unlink()
