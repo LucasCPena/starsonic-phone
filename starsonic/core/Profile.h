@@ -6,11 +6,12 @@
 
 namespace starsonic {
 
-enum class Transport { Udp, Tcp, Tls };
+enum class Transport { Udp, Tcp };   // o TLS saiu na revisão 1.4 (spec 6.3)
 enum class SrtpMode { Disabled, Optional, Mandatory };
 enum class DtmfMethod { Auto = 0, Inband = 1, Rfc2833 = 2, SipInfo = 3 };   // valores = DTMFMethod do MicroSIP
 
-// Seção [conta]: o que toda conta recebe, além do endereço, do ramal e da senha.
+// Seção [conta]: o que toda conta recebe, além do endereço, do ramal e da senha. transport é o
+// protocolo padrão da tela Entrar; cada conta guarda o seu (UDP ou TCP).
 struct AccountProfile {
     int port = 0;
     Transport transport = Transport::Udp;

@@ -207,8 +207,7 @@ private:
             const std::wstring lower = AsciiLower(value);
             if (lower == L"udp") account.transport = Transport::Udp;
             else if (lower == L"tcp") account.transport = Transport::Tcp;
-            else if (lower == L"tls") account.transport = Transport::Tls;
-            else return Fail(line, InvalidValue(key, value, L"udp, tcp ou tls"));
+            else return Fail(line, InvalidValue(key, value, L"udp ou tcp"));
             hasTransport_ = true;
             return true;
         }

@@ -61,10 +61,10 @@ TEST_CASE("parses BOM, CRLF and comments") {
     Profile profile;
     const std::wstring text = Utf8ToWide(StripUtf8Bom(
         "\xEF\xBB\xBF; comentario\r\n[conta] ; vale para todas as contas\r\n"
-        "porta=5061 ; padrao\r\ntransporte=TLS\r\n"));
+        "porta=5061 ; padrao\r\ntransporte=TCP\r\n"));
     REQUIRE(ParseProfile(text, &profile).ok);
     CHECK(profile.account.port == 5061);
-    CHECK(profile.account.transport == Transport::Tls);
+    CHECK(profile.account.transport == Transport::Tcp);
 }
 
 TEST_CASE("parses every optional conta key") {
@@ -149,6 +149,7 @@ TEST_CASE("rejects invalid files") {
     CHECK(Rejects(L"[conta]\nporta=0\ntransporte=udp\n"));
     CHECK(Rejects(L"[conta]\nporta=50a\ntransporte=udp\n"));
     CHECK(Rejects(L"[conta]\nporta=5060\ntransporte=sctp\n"));
+    CHECK(Rejects(L"[conta]\nporta=5061\ntransporte=tls\n"));         // TLS saiu na revisao 1.4
     CHECK(Rejects(base + L"keepalive=0\n"));
     CHECK(Rejects(base + L"keepalive=3601\n"));
     CHECK(Rejects(base + L"srtp=sim\n"));

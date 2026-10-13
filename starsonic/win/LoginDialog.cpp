@@ -171,7 +171,9 @@ void CStarsonicLoginDlg::OnClickedEntrar() {
     flow_.Start();
     main_->PJAccountDelete(true);
     accountSettings.accountId = targetId_;
-    FromFields(starsonic::BuildAccount(LoadedProfile().account, address, ramal, Wide(senha)), &accountSettings.account);
+    FromFields(starsonic::BuildAccount(LoadedProfile().account, address, ramal, Wide(senha),
+                                       LoadedProfile().account.transport, L""),
+               &accountSettings.account);
     main_->OnAccountChanged();
     main_->InitUI();
     SetFieldsEnabled(false);

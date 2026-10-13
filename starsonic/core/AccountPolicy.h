@@ -39,15 +39,32 @@ ServerCheck ValidateServerAddress(const std::wstring& raw, std::wstring* normali
 // Endereço guardado no campo server de uma conta: o texto sem o ":<1 a 5 dígitos>" do fim.
 std::wstring AddressFromServer(const std::wstring& server);
 
-// Conta nova: perfil + endereço do servidor (já validado) + ramal (usuário SIP e nome de
-// exibição) + senha. server = <endereço>:<porta>, domínio = <endereço>, rótulo = <ramal> · <endereço>.
+// Nome da conta (spec 7.1, revisão 1.4): opcional; vai só no rótulo (menu de contas e faixa).
+const size_t kMaxAccountNameLength = 40;
+
+// Apara espaços e tabs das pontas e guarda até kMaxAccountNameLength unidades UTF-16, sem partir
+// um par substituto no corte.
+std::wstring NormalizeAccountName(const std::wstring& raw);
+
+// Nome guardado no rótulo de uma conta: "" quando o rótulo é vazio ou automático (<ramal> ·
+// <endereço>, com ramal e endereço válidos); senão, o rótulo normalizado.
+std::wstring AccountNameFromLabel(const std::wstring& label);
+
+// Protocolo guardado no campo transport de uma conta: udp ou tcp (sem diferenciar maiúsculas,
+// aparado); qualquer outro valor devolve fallback.
+Transport TransportFromName(const std::wstring& name, Transport fallback);
+
+// Conta nova: perfil + endereço do servidor (já validado) + protocolo + ramal (usuário SIP e nome
+// de exibição) + senha + nome da conta. server = <endereço>:<porta>, domínio = <endereço>,
+// rótulo = o nome (normalizado) ou, sem nome, <ramal> · <endereço>.
 AccountFields BuildAccount(const AccountProfile& profile, const std::wstring& address, const std::wstring& ramal,
-                           const std::wstring& senha);
+                           const std::wstring& senha, Transport transport, const std::wstring& accountName);
 
 // Reaplica o perfil: o endereço vem do campo server (sem a porta, normalizado por
-// ValidateServerAddress) e tudo fica travado, menos username, authId, password e displayName.
-// Devolve false quando o endereço está vazio ou é inválido; nesse caso a conta é esvaziada
-// (usuário, senha, servidor, domínio e proxy).
+// ValidateServerAddress), o protocolo do campo transport (UDP ou TCP; outro valor volta ao padrão
+// do perfil) e o nome do rótulo (AccountNameFromLabel); o resto fica travado, menos username,
+// authId, password e displayName. Devolve false quando o endereço está vazio ou é inválido; nesse
+// caso a conta é esvaziada (usuário, senha, servidor, domínio e proxy).
 bool EnforceAccount(AccountFields* account, const AccountProfile& profile);
 
 // Codecs, STUN e DTMF do perfil; portas automáticas, rport ligado e verificação diária.

@@ -10,7 +10,7 @@ namespace {
 AccountProfile TestProfile() {
     AccountProfile profile;
     profile.port = 5080;
-    profile.transport = Transport::Tls;
+    profile.transport = Transport::Tcp;
     profile.proxy = L"";
     profile.srtp = SrtpMode::Optional;
     profile.keepAliveSeconds = 30;
@@ -132,7 +132,7 @@ TEST_CASE("AddressFromServer drops only a numeric port") {
 }
 
 TEST_CASE("BuildAccount fills locked fields from profile and address") {
-    const AccountFields account = BuildAccount(TestProfile(), L"h", L"2001", L"x");
+    const AccountFields account = BuildAccount(TestProfile(), L"h", L"2001", L"x", Transport::Tcp, L"");
     CHECK(account.label == L"2001 \u00b7 h");
     CHECK(account.server == L"h:5080");
     CHECK(account.proxy == L"");
@@ -141,7 +141,7 @@ TEST_CASE("BuildAccount fills locked fields from profile and address") {
     CHECK(account.authId == L"");
     CHECK(account.password == L"x");
     CHECK(account.displayName == L"2001");
-    CHECK(account.transport == L"tls");
+    CHECK(account.transport == L"tcp");
     CHECK(account.srtp == L"optional");
     CHECK(account.keepAlive == 30);
     CHECK(account.registerRefresh == 300);
@@ -161,25 +161,24 @@ TEST_CASE("BuildAccount maps every transport, srtp mode and the proxy") {
     profile.transport = Transport::Udp;
     profile.srtp = SrtpMode::Disabled;
     profile.proxy = L"p.invalid:5070";
-    AccountFields account = BuildAccount(profile, L"h", L"1", L"p");
+    AccountFields account = BuildAccount(profile, L"h", L"1", L"p", profile.transport, L"");
     CHECK(account.transport == L"udp");
     CHECK(account.srtp == L"");
     CHECK(account.proxy == L"p.invalid:5070");
     profile.transport = Transport::Tcp;
     profile.srtp = SrtpMode::Mandatory;
-    account = BuildAccount(profile, L"h", L"1", L"p");
+    account = BuildAccount(profile, L"h", L"1", L"p", profile.transport, L"");
     CHECK(account.transport == L"tcp");
     CHECK(account.srtp == L"mandatory");
 }
 
 TEST_CASE("EnforceAccount restores tampered fields") {
-    AccountFields account = BuildAccount(TestProfile(), L"h", L"2001", L"x");
+    AccountFields account = BuildAccount(TestProfile(), L"h", L"2001", L"x", Transport::Tcp, L"");
     const AccountFields expected = account;
-    account.label = L"outro";
     account.server = L"h:1";
     account.proxy = L"evil-proxy:1";
     account.domain = L"evil";
-    account.transport = L"udp";
+    account.transport = L"tls";
     account.srtp = L"";
     account.publicAddr = L"1.2.3.4";
     account.dialingPrefix = L"0";
@@ -197,7 +196,7 @@ TEST_CASE("EnforceAccount restores tampered fields") {
 }
 
 TEST_CASE("EnforceAccount keeps the account address, normalized") {
-    AccountFields account = BuildAccount(TestProfile(), L"h", L"2001", L"x");
+    AccountFields account = BuildAccount(TestProfile(), L"h", L"2001", L"x", Transport::Tcp, L"");
     account.server = L"Novo.Host:5999";
     account.domain = L"outro";
     CHECK(EnforceAccount(&account, TestProfile()));
@@ -207,7 +206,7 @@ TEST_CASE("EnforceAccount keeps the account address, normalized") {
 }
 
 TEST_CASE("EnforceAccount keeps the fields the user owns") {
-    AccountFields account = BuildAccount(TestProfile(), L"h", L"2001", L"x");
+    AccountFields account = BuildAccount(TestProfile(), L"h", L"2001", L"x", Transport::Tcp, L"");
     account.username = L"2002";
     account.authId = L"auth-2002";
     account.password = L"y";
@@ -224,7 +223,7 @@ TEST_CASE("EnforceAccount empties accounts with an empty or invalid address") {
     const std::wstring servers[] = {L"", L":5060", L"bad host:5060", L"[::1]:5060", L"h:abc"};
     for (const std::wstring& server : servers) {
         CAPTURE(server);
-        AccountFields account = BuildAccount(TestProfile(), L"h", L"2001", L"x");
+        AccountFields account = BuildAccount(TestProfile(), L"h", L"2001", L"x", Transport::Tcp, L"");
         account.server = server;
         account.proxy = L"p.invalid";
         CHECK_FALSE(EnforceAccount(&account, TestProfile()));
@@ -234,6 +233,75 @@ TEST_CASE("EnforceAccount empties accounts with an empty or invalid address") {
         CHECK(account.domain == L"");
         CHECK(account.proxy == L"");
     }
+}
+
+TEST_CASE("NormalizeAccountName trims and keeps up to 40 characters") {
+    CHECK(NormalizeAccountName(L"  PA 3 - Recep\u00e7\u00e3o\t") == L"PA 3 - Recep\u00e7\u00e3o");
+    CHECK(NormalizeAccountName(L"   ") == L"");
+    CHECK(NormalizeAccountName(std::wstring(45, L'a')) == std::wstring(40, L'a'));
+}
+
+TEST_CASE("NormalizeAccountName never splits a surrogate pair") {
+    const std::wstring name = std::wstring(39, L'a') + std::wstring{wchar_t(0xD83D), wchar_t(0xDE00)};
+    CHECK(NormalizeAccountName(name) == std::wstring(39, L'a'));
+}
+
+TEST_CASE("AccountNameFromLabel treats the automatic label as no name") {
+    CHECK(AccountNameFromLabel(L"") == L"");
+    CHECK(AccountNameFromLabel(L"2001 \u00b7 h") == L"");
+    CHECK(AccountNameFromLabel(L"2002 \u00b7 novo.host") == L"");
+    CHECK(AccountNameFromLabel(L"PA 3 - Recep\u00e7\u00e3o") == L"PA 3 - Recep\u00e7\u00e3o");
+    CHECK(AccountNameFromLabel(L"PA 3 \u00b7 sala 2") == L"PA 3 \u00b7 sala 2");
+    CHECK(AccountNameFromLabel(L"  Vendas  ") == L"Vendas");
+}
+
+TEST_CASE("TransportFromName accepts only udp and tcp") {
+    CHECK(TransportFromName(L"udp", Transport::Tcp) == Transport::Udp);
+    CHECK(TransportFromName(L" TCP ", Transport::Udp) == Transport::Tcp);
+    CHECK(TransportFromName(L"tls", Transport::Udp) == Transport::Udp);
+    CHECK(TransportFromName(L"", Transport::Tcp) == Transport::Tcp);
+}
+
+TEST_CASE("BuildAccount uses the chosen protocol and the account name") {
+    const AccountFields account = BuildAccount(TestProfile(), L"h", L"2001", L"x", Transport::Udp, L" PA 3 ");
+    CHECK(account.transport == L"udp");
+    CHECK(account.label == L"PA 3");
+    CHECK(account.displayName == L"2001");
+}
+
+TEST_CASE("EnforceAccount keeps the protocol and the name of each account") {
+    AccountFields account = BuildAccount(TestProfile(), L"h", L"2001", L"x", Transport::Udp, L"PA 3 - Recep\u00e7\u00e3o");
+    CHECK(EnforceAccount(&account, TestProfile()));
+    CHECK(account.transport == L"udp");
+    CHECK(account.label == L"PA 3 - Recep\u00e7\u00e3o");
+}
+
+TEST_CASE("EnforceAccount resets unknown protocols to the profile default") {
+    const std::wstring transports[] = {L"tls", L"sctp", L""};
+    for (const std::wstring& transport : transports) {
+        CAPTURE(transport);
+        AccountFields account = BuildAccount(TestProfile(), L"h", L"2001", L"x", Transport::Udp, L"");
+        account.transport = transport;
+        CHECK(EnforceAccount(&account, TestProfile()));
+        CHECK(account.transport == L"tcp");
+    }
+}
+
+TEST_CASE("EnforceAccount cuts long names") {
+    AccountFields account = BuildAccount(TestProfile(), L"h", L"2001", L"x", Transport::Tcp, L"");
+    account.label = std::wstring(50, L'n');
+    CHECK(EnforceAccount(&account, TestProfile()));
+    CHECK(account.label == std::wstring(40, L'n'));
+}
+
+TEST_CASE("EnforceAccount keeps accounts saved before revision 1.4") {
+    AccountProfile profile = TestProfile();
+    profile.transport = Transport::Udp;
+    AccountFields account = BuildAccount(profile, L"h", L"2001", L"x", Transport::Udp, L"");
+    const AccountFields expected = account;
+    CHECK(EnforceAccount(&account, profile));
+    CheckSameAccount(account, expected);
+    CHECK(account.label == L"2001 \u00b7 h");
 }
 
 TEST_CASE("EnforceGlobal writes locked globals") {

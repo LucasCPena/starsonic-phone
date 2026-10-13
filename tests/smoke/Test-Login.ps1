@@ -175,18 +175,19 @@ try {
     }
 
     # 8. Conta adulterada no INI com o app aberto, ativada pelo menu: o perfil vale antes de
-    # registrar (E14). Porta e transporte errados; o registrador aceita 2001 e 2002 com a mesma
-    # senha. A faixa so mostra "2002" e "Conectado" depois que a conta 2 registrar por UDP na 5060.
+    # registrar (E14). Porta errada e protocolo invalido (tls volta a UDP, o padrao do perfil); o
+    # registrador aceita 2001 e 2002 com a mesma senha. A faixa so mostra "2002" e "Conectado" depois
+    # que a conta 2 registrar por UDP na 5060; o rotulo automatico e refeito com o endereco atual.
     $password = Read-IniValue -Path $ini -Section 'Account1' -Key 'password'
     Write-IniValue -Path $ini -Section 'Settings' -Key 'accountId' -Value '1'
     $tampered = @(
-        @('label', 'adulterada'),
+        @('label', (Get-Text @('2002 ', 0x00B7, ' evil.example'))),
         @('server', '127.0.0.1:5999'),
         @('domain', 'evil.example'),
         @('username', '2002'),
         @('password', $password),
         @('rememberPassword', '1'),
-        @('transport', 'tcp')
+        @('transport', 'tls')
     )
     foreach ($pair in $tampered) {
         Write-IniValue -Path $ini -Section 'Account2' -Key $pair[0] -Value $pair[1]

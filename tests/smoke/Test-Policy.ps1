@@ -24,11 +24,11 @@ Write-IniFile -Path $ini -Lines (@(Get-NoUpdateCheckIni) + @(
     'STUN=evil.example',
     'enableSTUN=1',
     '[Account1]',
-    'label=adulterada',
+    ('label=' + (Get-Text @('2001 ', 0x00B7, ' old.example'))),
     'server=EVIL.example:5999',
     'domain=other.example',
     'username=2001',
-    'transport=tcp',
+    'transport=tls',
     '[Account2]',
     'server=bad host:5060',
     'domain=x',
@@ -39,6 +39,7 @@ Write-IniFile -Path $ini -Lines (@(Get-NoUpdateCheckIni) + @(
     'domain=sip1.exemplo.invalid',
     'username=2004',
     'transport=tcp',
+    'label=PA 4 - Vendas',
     'starsonicServer=sp1'
 ))
 
@@ -53,10 +54,13 @@ if (-not (Stop-App -Exe $exe -Process $process -TimeoutSeconds 15)) {
     throw 'O app nao fechou em 15 s depois de /exit.'
 }
 
-# Valores do branding\perfil.ini (porta 5060, UDP e estes codecs): se o perfil mudar, ajuste aqui.
+# Valores do branding\perfil.ini (porta 5060, UDP como padrao e estes codecs): se o perfil mudar, ajuste aqui.
+# Cada conta fica com o protocolo (UDP ou TCP) e o nome que tem; outro protocolo volta ao padrao do perfil,
+# e um rotulo '<ramal> . <endereco>' e refeito com o endereco atual (spec 7.2).
 $profileCodecs = 'G722/16000/1 PCMA/8000/1 PCMU/8000/1'
 $expected = @(
-    # O endereco fica (normalizado); porta, dominio, transporte e rotulo voltam ao perfil.
+    # O endereco fica (normalizado); porta e dominio voltam ao perfil, o TLS volta a UDP e o rotulo
+    # automatico e refeito com o endereco atual.
     @('Account1', 'server', 'evil.example:5060'),
     @('Account1', 'domain', 'evil.example'),
     @('Account1', 'transport', 'udp'),
@@ -67,8 +71,10 @@ $expected = @(
     @('Account2', 'server', ''),
     # Sem [Account3]: a conta 4 tambem passa pelo perfil (o MicroSIP carrega qualquer numero), e a
     # chave antiga starsonicServer nao atrapalha.
+    # TCP e o nome da conta ficam.
     @('Account4', 'server', 'sip1.exemplo.invalid:5060'),
-    @('Account4', 'transport', 'udp'),
+    @('Account4', 'transport', 'tcp'),
+    @('Account4', 'label', 'PA 4 - Vendas'),
     @('Account4', 'username', '2004'),
     @('Settings', 'audioCodecs', $profileCodecs),
     @('Settings', 'enableSTUN', '0'),

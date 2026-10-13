@@ -9,13 +9,14 @@ namespace {
 
 const int kRegisterRefreshSeconds = 300;
 
+const wchar_t kLabelSeparator[] = L" \u00b7 ";
+
 const wchar_t* TransportName(Transport transport) {
-    switch (transport) {
-        case Transport::Udp: return L"udp";
-        case Transport::Tcp: return L"tcp";
-        case Transport::Tls: return L"tls";
-    }
-    return L"udp";
+    return transport == Transport::Tcp ? L"tcp" : L"udp";
+}
+
+bool IsHighSurrogate(wchar_t ch) {
+    return ch >= 0xD800 && ch <= 0xDBFF;
 }
 
 const wchar_t* SrtpName(SrtpMode srtp) {
@@ -86,17 +87,50 @@ std::wstring AddressFromServer(const std::wstring& server) {
     return server.substr(0, colon);
 }
 
+std::wstring NormalizeAccountName(const std::wstring& raw) {
+    std::wstring name = Trim(raw);
+    if (name.size() > kMaxAccountNameLength) {
+        size_t keep = kMaxAccountNameLength;
+        if (IsHighSurrogate(name[keep - 1])) --keep;
+        name.resize(keep);
+    }
+    return name;
+}
+
+std::wstring AccountNameFromLabel(const std::wstring& label) {
+    const std::wstring trimmed = Trim(label);
+    const std::wstring separator = kLabelSeparator;
+    const size_t at = trimmed.find(separator);
+    if (at != std::wstring::npos &&
+        ValidateRamal(trimmed.substr(0, at), nullptr) == RamalCheck::Ok &&
+        ValidateServerAddress(trimmed.substr(at + separator.size()), nullptr) == ServerCheck::Ok) {
+        return L"";
+    }
+    return NormalizeAccountName(trimmed);
+}
+
+Transport TransportFromName(const std::wstring& name, Transport fallback) {
+    std::wstring lower = Trim(name);
+    for (wchar_t& ch : lower) {
+        if (ch >= L'A' && ch <= L'Z') ch = static_cast<wchar_t>(ch - L'A' + L'a');
+    }
+    if (lower == L"udp") return Transport::Udp;
+    if (lower == L"tcp") return Transport::Tcp;
+    return fallback;
+}
+
 AccountFields BuildAccount(const AccountProfile& profile, const std::wstring& address, const std::wstring& ramal,
-                           const std::wstring& senha) {
+                           const std::wstring& senha, Transport transport, const std::wstring& accountName) {
     AccountFields account;
-    account.label = ramal + L" \u00b7 " + address;
+    const std::wstring name = NormalizeAccountName(accountName);
+    account.label = name.empty() ? ramal + kLabelSeparator + address : name;
     account.server = address + L":" + std::to_wstring(profile.port);
     account.proxy = profile.proxy;
     account.domain = address;
     account.username = ramal;
     account.password = senha;
     account.displayName = ramal;
-    account.transport = TransportName(profile.transport);
+    account.transport = TransportName(transport);
     account.srtp = SrtpName(profile.srtp);
     account.registerRefresh = kRegisterRefreshSeconds;
     account.keepAlive = profile.keepAliveSeconds;
@@ -113,7 +147,9 @@ bool EnforceAccount(AccountFields* account, const AccountProfile& profile) {
         account->proxy.clear();
         return false;
     }
-    AccountFields locked = BuildAccount(profile, address, account->username, account->password);
+    AccountFields locked = BuildAccount(profile, address, account->username, account->password,
+                                        TransportFromName(account->transport, profile.transport),
+                                        AccountNameFromLabel(account->label));
     locked.authId = account->authId;
     locked.displayName = account->displayName;
     *account = locked;
