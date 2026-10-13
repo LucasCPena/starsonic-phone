@@ -52,6 +52,8 @@ ShowUninstDetails hide
 !define MUI_FINISHPAGE_RUN_TEXT "Abrir o Starsonic Phone"
 
 !insertmacro MUI_PAGE_WELCOME
+; Descricao embaixo da lista, para os nomes das opcoes caberem inteiros.
+!define MUI_COMPONENTSPAGE_SMALLDESC
 !insertmacro MUI_PAGE_COMPONENTS
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH

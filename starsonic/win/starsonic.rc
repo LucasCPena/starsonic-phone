@@ -15,8 +15,10 @@ IDR_STARSONIC_LOGO_LOGIN RCDATA STARSONIC_LOGO_LOGIN_FILE
 
 LANGUAGE LANG_NEUTRAL, SUBLANG_NEUTRAL
 
-// Area do logo com a proporcao do logo-entrar.png (cerca de 3,7 vezes mais larga que alta).
-IDD_STARSONIC_LOGIN DIALOGEX 0, 0, 180, 202
+// Area do logo com a proporcao do logo-entrar.png (cerca de 3,7 vezes mais larga que alta). A linha
+// de ajuda (com o telefone do suporte) ocupa a largura toda, no rodape; "Remover conta" so aparece
+// na edicao de uma conta.
+IDD_STARSONIC_LOGIN DIALOGEX 0, 0, 180, 214
 STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
 EXSTYLE WS_EX_APPWINDOW
 CAPTION "Starsonic Phone"
@@ -31,8 +33,8 @@ BEGIN
     EDITTEXT        IDC_SS_SENHA, 10, 126, 160, 14, ES_PASSWORD | ES_AUTOHSCROLL
     LTEXT           "", IDC_SS_MESSAGE, 10, 144, 160, 16
     DEFPUSHBUTTON   "Entrar", IDC_SS_ENTRAR, 10, 162, 160, 16
-    CONTROL         "<a>Remover conta</a>", IDC_SS_REMOVE, "SysLink", WS_TABSTOP, 10, 184, 80, 10
-    LTEXT           "Precisa de ajuda?", IDC_SS_HELP, 90, 184, 80, 10
+    CONTROL         "<a>Remover conta</a>", IDC_SS_REMOVE, "SysLink", WS_TABSTOP, 10, 182, 160, 10
+    CTEXT           "Precisa de ajuda?", IDC_SS_HELP, 10, 196, 160, 10
 END
 
 // Mesma area de logo da tela Entrar, centralizada.
