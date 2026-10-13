@@ -12,7 +12,7 @@ O que o projeto faz e por quê está na [especificação de design](docs/superpo
 | `microsip-dist/` | Sons do pacote oficial MicroSIP Lite |
 | `starsonic/core/` | Lógica nova em C++14 puro (perfis, travas, tela Entrar, mensagens de erro, arquivo de versão), testada no Linux e no Windows |
 | `starsonic/win/` | Integração com o MicroSIP (MFC): tela Entrar, faixa da marca, Sobre, Configurações enxutas, atualizador |
-| `branding/` | Nome, URLs, cores, perfil das contas (`perfil.ini`: porta, transporte, SRTP, codecs e DTMF), tradução pt-BR, ícones (`overlay/`), logos, imagem do instalador (`installer/`) e, em `fontes/`, o logo original e o script que gera os ícones e logos |
+| `branding/` | Nome, URLs, cores, perfil das contas (`perfil.ini`: porta, protocolo padrão, SRTP, codecs e DTMF), tradução pt-BR, ícones (`overlay/`), logos, imagem do instalador (`installer/`) e, em `fontes/`, o logo original e o script que gera os ícones e logos |
 | `installer/` | Script do instalador (NSIS) |
 | `build/` | Scripts de build, verificação e publicação |
 | `tests/` | Testes do núcleo (doctest), dos scripts (Python) e de fumaça no Windows (`smoke/`) |
@@ -40,7 +40,7 @@ python3 build/check_source_text.py
 python3 build/check_branding.py --repo .
 ```
 
-Os testes de fumaça da tela Entrar e das travas (`tests/smoke/Test-Login.ps1` e `Test-Policy.ps1`) conferem os valores do `branding/perfil.ini` (porta 5060, UDP e codecs) contra um registrador SIP falso que só fala UDP. Ao mudar o transporte, a porta ou os codecs do perfil, ajuste esses dois testes; para TCP ou TLS, o `tests/smoke/fake_registrar.py` também precisa falar o transporte novo.
+Os testes de fumaça da tela Entrar e das travas (`tests/smoke/Test-Login.ps1` e `Test-Policy.ps1`) conferem os valores do `branding/perfil.ini` (porta 5060, UDP como protocolo padrão e codecs) contra um registrador SIP falso que fala UDP e TCP (`tests/smoke/fake_registrar.py`). Ao mudar a porta, o protocolo padrão ou os codecs do perfil, ajuste esses dois testes.
 
 Detalhes e ajustes do build: [docs/build-notes.md](docs/build-notes.md).
 

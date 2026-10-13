@@ -1,7 +1,7 @@
 # Starsonic Phone para Windows — especificação de design
 
 - **Data:** 11/10/2026
-- **Status:** revisão 1.4 (13/10/2026) em aprovação; as revisões 1.3, 1.2 e 1.1 foram aprovadas (13/10, 13/10 e 11/10/2026)
+- **Status:** aprovada — revisão 1.4 em 13/10/2026 (as revisões 1.3, 1.2 e 1.1 também foram aprovadas, em 13/10, 13/10 e 11/10/2026)
 - **Subprojeto:** 1 de 2 — o 2º é o app de celular (iOS e Android), com especificação própria
 
 > **Revisão 1.4 — protocolo e nome em cada conta** (decisões do responsável em 13/10/2026: alguns clientes vão usar TCP e outros UDP; um cliente tem várias PAs no mesmo computador e precisa identificar cada uma):
@@ -50,7 +50,7 @@ Este subprojeto cria o **Starsonic Phone para Windows**: um fork do [MicroSIP](h
 
 ## 3. Critérios de sucesso
 
-- Um usuário sem conhecimento técnico instala o app, digita o servidor que a Starsonic informou, o ramal e a senha e completa uma ligação sem ver nenhum outro campo técnico.
+- Um usuário sem conhecimento técnico instala o app, digita o servidor que a Starsonic informou, o ramal e a senha e completa uma ligação sem mexer em nenhum outro campo técnico (o Protocolo já vem marcado com o padrão do perfil).
 - Nenhum texto, ícone ou janela mostra "MicroSIP", exceto a atribuição na tela Sobre e os avisos de copyright e licença.
 - O usuário não consegue alterar as configurações de conta e rede além do endereço do servidor, do protocolo (UDP ou TCP) e do nome da conta — nem pela interface, nem editando o arquivo de configuração.
 - Uma versão nova chega como aviso no app e é instalada com um clique, sem pedir senha de administrador.

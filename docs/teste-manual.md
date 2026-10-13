@@ -19,7 +19,7 @@ Versão testada: `__________`  Data: `__________`  Quem testou: `__________`
 
 | # | Passo | Resultado esperado | W10 | W11 |
 |---|-------|--------------------|-----|-----|
-| 2.1 | Olhe a tela Entrar. | Logo, campo "Servidor (endereço ou IP)" vazio, Ramal, Senha e "Precisa de ajuda? (11) 5060-3000". Nenhum outro campo técnico (porta, proxy, transporte etc.). | ☐ | ☐ |
+| 2.1 | Olhe a tela Entrar. | Logo, campo "Servidor (endereço ou IP)" vazio com o "Protocolo" ao lado (UDP marcado), Ramal, Senha, "Nome da conta (opcional)" e "Precisa de ajuda? (11) 5060-3000". Nenhum outro campo técnico (porta, proxy, codecs etc.). | ☐ | ☐ |
 | 2.2 | Clique em Entrar com o campo Servidor vazio; depois digite o endereço com a porta (ex.: `starcloud1-starsonic.com.br:5060`). | Primeiro "Digite o endereço do servidor."; com a porta, "Digite só o endereço do servidor, como starcloud1-starsonic.com.br." | ☐ | ☐ |
 | 2.3 | Digite o ramal com `@`, `:` ou espaço no meio (ex.: `20 01`). | "Digite só o número do ramal." | ☐ | ☐ |
 | 2.4 | Ramal certo com a senha errada. | "Ramal ou senha incorretos." e a tela continua aberta. | ☐ | ☐ |
@@ -27,6 +27,7 @@ Versão testada: `__________`  Data: `__________`  Quem testou: `__________`
 | 2.6 | Endereço que não existe (ex.: `starcloud9-starsonic.com.br`). | "Não foi possível falar com o servidor. Confira o endereço e a sua internet." | ☐ | ☐ |
 | 2.7 | Com o Wi-Fi/cabo desligado, tente entrar. | "Não foi possível falar com o servidor. Confira o endereço e a sua internet." | ☐ | ☐ |
 | 2.8 | Internet de volta: endereço certo, mas com espaços nas pontas e letras maiúsculas (ex.: ` Starcloud1-Starsonic.com.br `), ramal e senha certos. | A tela fecha. A faixa no topo mostra "Conectado" e "<ramal> · <endereço>", com o endereço em minúsculas e sem os espaços. | ☐ | ☐ |
+| 2.9 | Num cliente que usa TCP, escolha "TCP" no Protocolo e entre com um ramal desse cliente. Depois, Menu → Editar Conta. | A tela fecha e a faixa mostra "Conectado". No Editar, o Protocolo aparece como TCP. | ☐ | ☐ |
 
 ## 3. Chamadas
 
@@ -45,8 +46,9 @@ Versão testada: `__________`  Data: `__________`  Quem testou: `__________`
 | 4.1 | Menu → Contas → Adicionar Conta… e entre com um ramal do outro servidor, digitando o endereço dele. | Abre a tela Entrar com o campo Servidor vazio; a conta nova fica ativa depois de conectar. | ☐ | ☐ |
 | 4.2 | Troque a conta ativa pelo menu. | A faixa mostra o ramal e o endereço da conta escolhida, "Conectado". | ☐ | ☐ |
 | 4.3 | Edite uma conta (Menu → Editar Conta) e use "Remover conta" até não sobrar nenhuma. | A tela Entrar abre com o endereço e o ramal da conta; depois da última remoção, volta a tela Entrar vazia. | ☐ | ☐ |
-| 4.4 | Com duas contas, a primeira ativa, feche o app (Menu → Sair) e edite `%APPDATA%\Starsonic Phone\StarsonicPhone.ini`: na primeira conta, troque o `transport` para `tcp` e a porta do `server` para `5999` (ex.: `server=starcloud1-starsonic.com.br:5999`); na segunda, ponha um espaço no meio do endereço do `server`. Abra o app. | A primeira conta conecta de novo pela porta 5060 e por UDP, com o mesmo endereço. A segunda fica vazia e some do menu de contas. | ☐ | ☐ |
+| 4.4 | Com duas contas, a primeira ativa, feche o app (Menu → Sair) e edite `%APPDATA%\Starsonic Phone\StarsonicPhone.ini`: na primeira conta, troque o `transport` para `tls` e a porta do `server` para `5999` (ex.: `server=starcloud1-starsonic.com.br:5999`); na segunda, ponha um espaço no meio do endereço do `server`. Abra o app. | A primeira conta conecta de novo pela porta 5060 e por UDP, com o mesmo endereço. A segunda fica vazia e some do menu de contas. | ☐ | ☐ |
 | 4.5 | Feche o app, ponha um espaço no meio do endereço do `server` da conta ativa e abra o app. | O app abre a tela Entrar, sem mensagem. | ☐ | ☐ |
+| 4.6 | Dê nome a duas contas em Editar Conta (ex.: `PA 1 - Recepção` e `PA 2 - Vendas`) e troque a conta ativa pelo menu. Ligue de uma delas para outro ramal. | Os nomes aparecem no menu de contas e na faixa ("Conectado · PA 1 - Recepção"). Quem recebe a ligação continua vendo o ramal, não o nome. Uma conta sem nome continua como "<ramal> · <endereço>". | ☐ | ☐ |
 
 ## 5. Marca, Configurações e suporte
 
@@ -91,9 +93,9 @@ O app procura atualização quando abre (e a cada 24 h aberto). O X da janela s�
 
 | Critério (spec §3) | Automático (a cada build) | Neste roteiro |
 |--------------------|---------------------------|---------------|
-| Instalar, digitar o servidor, o ramal e a senha e ligar sem ver outro campo técnico | `Test-Installer.ps1`, `Test-Login.ps1` (registrador SIP falso), `Test-Settings.ps1` | 1, 2, 3 |
+| Instalar, digitar o servidor, o ramal e a senha e ligar sem mexer em outro campo técnico (o Protocolo já vem marcado) | `Test-Installer.ps1`, `Test-Login.ps1` (registrador SIP falso), `Test-Settings.ps1` | 1, 2, 3 |
 | "MicroSIP" só na atribuição da tela Sobre e nos avisos de copyright e licença | `check_branding.py` (recursos, tradução, instalador, código novo e o próprio exe), `Test-BrandUi.ps1` | 5.1, 5.2 |
-| Configurações de conta e rede travadas (menos o endereço do servidor), pela interface e pelo arquivo | testes do núcleo (`AccountPolicy`), `Test-Policy.ps1` (INI adulterado), `Test-Settings.ps1` | 4.4, 4.5, 5.3 |
+| Configurações de conta e rede travadas (menos o endereço do servidor, o protocolo e o nome da conta), pela interface e pelo arquivo | testes do núcleo (`AccountPolicy`), `Test-Policy.ps1` (INI adulterado), `Test-Settings.ps1` | 4.4, 4.5, 5.3 |
 | Versão nova chega como aviso e instala com um clique, sem senha de administrador | testes do núcleo (`UpdateManifest`), SHA-256 no Windows, `Test-Installer.ps1` (atualização silenciosa reabre o app) | 7 |
 | Suporte identifica app e versão pela tela Sobre e pelo User-Agent | `Test-BrandUi.ps1` (versão), `Test-Login.ps1` (User-Agent recebido pelo servidor) | 5.2, 5.4 |
 | Código-fonte completo junto do instalador | workflow `release` (instalador, `versao.json` e código-fonte completo em cada release) | 7.2 |
