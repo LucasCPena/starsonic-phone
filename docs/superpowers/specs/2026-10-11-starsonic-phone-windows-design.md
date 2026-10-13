@@ -1,8 +1,16 @@
 # Starsonic Phone para Windows — especificação de design
 
 - **Data:** 11/10/2026
-- **Status:** aprovada — revisão 1.2 em 13/10/2026 (a revisão 1.1 foi aprovada em 11/10/2026)
+- **Status:** aprovada — revisão 1.3 em 13/10/2026 (as revisões 1.2 e 1.1 também foram aprovadas, em 13/10 e 11/10/2026)
 - **Subprojeto:** 1 de 2 — o 2º é o app de celular (iOS e Android), com especificação própria
+
+> **Revisão 1.3 — identidade visual** (escolhas do responsável em 13/10/2026, a partir do logo da Starsonic, o mesmo do topo do site):
+> 1. Cores tiradas do logo: azul **#383881** (cor da marca: faixa superior e botões Ligar e Entrar, com texto branco) e ciano **#3DB1CC** (detalhes dos logos e do ícone).
+> 2. O logo não tem símbolo quadrado; o ícone foi desenhado: círculo azul com um fone branco e um anel ciano. Na bandeja, cinza quando sem conexão e com um selo vermelho quando há chamada perdida.
+> 3. Faixa superior: a palavra "starsonic" em branco e ciano. Telas Entrar e Sobre: o logo original num cartão branco, legível no tema claro e no escuro; a área do logo nessas telas passa a 160x40 DLU, na proporção do cartão.
+> 4. Instalador: imagem de boas-vindas azul com o logo.
+> 5. O app reduz os logos com o GDI+ (filtro bicúbico e alfa pré-multiplicado), no código da Starsonic; nada muda no código do MicroSIP.
+> 6. Ícones, logos e imagem do instalador são gerados por `branding/fontes/gerar_marca.py` a partir do logo original, guardado em `branding/fontes/logo-starsonic.png`.
 
 > **Revisão 1.2 — servidor digitado na tela Entrar** (decisão do responsável em 13/10/2026: a Starsonic tem muitos clientes, cada um em um de dois servidores):
 > 1. A tela Entrar troca a lista de servidores por um campo de texto: o endereço do servidor (nome ou IP) é digitado, como no MicroSIP. O app deixa de trazer uma lista de servidores (M3) e o endereço deixa de ser travado.
@@ -85,7 +93,7 @@ Pastas do `main`, além das do `upstream`:
 
 | Pasta | Conteúdo |
 |-------|----------|
-| `branding/` | Marca e dados da Starsonic: `branding.h` (nome, URLs, cores, conta do GitHub), `perfil.ini`, tradução pt-BR revisada, ícones e logos |
+| `branding/` | Marca e dados da Starsonic: `branding.h` (nome, URLs, cores, conta do GitHub), `perfil.ini`, tradução pt-BR revisada, ícones, logos, imagem do instalador e, em `fontes/`, o logo original e o script que gera os demais arquivos da marca |
 | `starsonic/core/` | Lógica nova em C++17 sem MFC nem Windows — testável no Linux e no Windows |
 | `starsonic/win/` | Integração com a interface do MicroSIP (MFC) |
 | `tests/` | Testes unitários do `core` e testes de fumaça da interface |
@@ -289,7 +297,7 @@ Depois que a conta está registrada, quedas e reconexões seguem o comportamento
 - **Unitários** do `starsonic/core`, escritos antes do código (TDD), com doctest — rodam no Linux e no Windows.
 - **Varredura de marca:** reprova o build se "MicroSIP" aparecer em textos visíveis — recursos (.rc/.rc2), tradução pt-BR, textos do instalador e textos do código novo —, exceto na linha de atribuição da tela Sobre e no aviso de copyright do recurso de versão.
 - **Instalador:** instalação e desinstalação silenciosas no runner, conferindo arquivos, atalhos e chaves de registro.
-- **Fumaça da interface**, no mesmo build que vai para o instalador: o app abre e fecha; no primeiro acesso aparece a tela Entrar com o campo Servidor vazio; com um registrador SIP falso local (endereço `127.0.0.1` digitado), endereço inválido e ramal inválido são recusados, senha errada mostra "Ramal ou senha incorretos." e senha certa conecta; uma conta adulterada no INI registra pelo perfil; a tela Sobre mostra versão e licença; as Configurações não mostram os campos travados. Enquanto o perfil usar UDP, a mensagem de falha de TLS só é coberta pelos testes unitários; se o perfil passar para TLS, o teste manual passa a cobri-la. Os testes de fumaça conferem os valores do perfil real (porta 5060, UDP e codecs) contra um registrador falso que só fala UDP: trocar o transporte, a porta ou os codecs do `perfil.ini` exige ajustar `Test-Login.ps1` e `Test-Policy.ps1` e, para TCP ou TLS, ensinar o `fake_registrar.py` a falar esse transporte.
+- **Fumaça da interface**, no mesmo build que vai para o instalador: o app abre e fecha; no primeiro acesso aparece a tela Entrar com o campo Servidor vazio; com um registrador SIP falso local (endereço `127.0.0.1` digitado), endereço inválido e ramal inválido são recusados, senha errada mostra "Ramal ou senha incorretos." e senha certa conecta; uma conta adulterada no INI registra pelo perfil; a tela Sobre mostra versão e licença; as Configurações não mostram os campos travados. Enquanto o perfil usar UDP, a mensagem de falha de TLS só é coberta pelos testes unitários; se o perfil passar para TLS, o teste manual passa a cobri-la. A marca também é conferida: o formato dos ícones, dos logos e da imagem do instalador (teste Python) e, nos pixels da tela, o azul da faixa, o ciano dos logos, o logo da faixa reduzido sem serrilhado, a proporção das áreas do logo nas telas Entrar e Sobre e o azul no ícone do executável (`Test-BrandUi.ps1`). Os testes de fumaça conferem os valores do perfil real (porta 5060, UDP e codecs) contra um registrador falso que só fala UDP: trocar o transporte, a porta ou os codecs do `perfil.ini` exige ajustar `Test-Login.ps1` e `Test-Policy.ps1` e, para TCP ou TLS, ensinar o `fake_registrar.py` a falar esse transporte.
 
 ### 11.3 Teste manual (checklist em `docs/teste-manual.md`, antes de cada versão estável)
 
@@ -309,8 +317,8 @@ Em Windows 10 e Windows 11, com um ramal de teste em cada servidor da Starsonic 
 | Item | Para quê |
 |------|----------|
 | Usuário do GitHub dono do repositório (e o GitHub conectado à sessão do Claude) | `STARSONIC_GITHUB_ACCOUNT`; publicar o repositório e rodar o build |
-| Logo em alta resolução (SVG ou PNG com 1024 px ou mais) e símbolo quadrado | Tela Entrar, faixa superior, Sobre, instalador e ícones de 16 a 256 px |
-| Cores oficiais em hex: cor principal e cor do texto sobre ela | Tema (M5) |
+| Logo em alta resolução (SVG ou PNG com 1024 px ou mais) e símbolo quadrado — logo recebido em 13/10/2026 (PNG de 2560 px); o símbolo foi desenhado a partir dele (revisão 1.3) | Tela Entrar, faixa superior, Sobre, instalador e ícones de 16 a 256 px |
+| Cores oficiais em hex: cor principal e cor do texto sobre ela — tiradas do logo em 13/10/2026 (revisão 1.3) | Tema (M5) |
 | Porta, transporte, proxy, criptografia e keepalive das contas; STUN, codecs e DTMF — recebidos em 13/10/2026 (seção 6.3) | `perfil.ini` |
 | Um ramal de teste por servidor (fica fora do repositório) | Testes manuais |
 | Tradução pt-BR do MicroSIP, se o pacote "Lite" não a trouxer (exportada em microsip.org/translation) | Idioma do app |
@@ -331,6 +339,5 @@ Em Windows 10 e Windows 11, com um ramal de teste em cada servidor da Starsonic 
 
 ## 14. Próximos passos
 
-1. Plano de implementação da revisão 1.2 (skill writing-plans); o da revisão 1.1 já foi executado.
-2. Versão candidata nova para o teste manual (seção 11.3).
-3. Depois do Windows: brainstorming do subprojeto 2 (celular).
+1. Teste manual (seção 11.3) com a versão candidata 0.0.1-rc.3, a primeira com a identidade visual.
+2. Depois do Windows: brainstorming do subprojeto 2 (celular).

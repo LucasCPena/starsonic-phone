@@ -11,7 +11,7 @@ Versão testada: `__________`  Data: `__________`  Quem testou: `__________`
 | # | Passo | Resultado esperado | W10 | W11 |
 |---|-------|--------------------|-----|-----|
 | 1.1 | No Edge ou no Chrome, baixe `StarsonicPhone-<versão>-setup.exe` da página do release no GitHub e abra. | O Windows avisa que o editor é desconhecido (o instalador ainda não é assinado). Em "Mais informações", aparece "Executar assim mesmo". | ☐ | ☐ |
-| 1.2 | Siga o instalador. | Tudo em português, **sem pedir senha de administrador**. A tela de componentes traz "Atalho na área de trabalho" e "Iniciar com o Windows", os dois marcados. A tela final tem "Abrir o Starsonic Phone". | ☐ | ☐ |
+| 1.2 | Siga o instalador. | Tudo em português, **sem pedir senha de administrador**. As telas de boas-vindas e final têm a faixa azul com o logo da Starsonic. A tela de componentes traz "Atalho na área de trabalho" e "Iniciar com o Windows", os dois marcados. A tela final tem "Abrir o Starsonic Phone". | ☐ | ☐ |
 | 1.3 | Termine com "Abrir o Starsonic Phone" marcado. | O app abre na tela Entrar. Há atalho no menu Iniciar e na área de trabalho. | ☐ | ☐ |
 | 1.4 | Abra Configurações do Windows → Aplicativos instalados. | "Starsonic Phone", editor "Starsonic", com a versão testada. | ☐ | ☐ |
 
@@ -56,6 +56,8 @@ Versão testada: `__________`  Data: `__________`  Quem testou: `__________`
 | 5.2 | Menu → Sobre o Starsonic Phone. | "Starsonic Phone <versão> (baseado no MicroSIP 3.22.16)", links do site e do WhatsApp, o telefone de suporte e a linha da licença GPL v3 com o link do código-fonte. | ☐ | ☐ |
 | 5.3 | Menu → Configurações. | Não aparecem codecs, portas, rport, STUN, DTMF nem a frequência de verificação de atualizações, e não sobram buracos na tela. | ☐ | ☐ |
 | 5.4 | No PABX (ou com o fornecedor), confira o User-Agent do registro. | `Starsonic Phone/<versão>`, e o servidor aceita o registro. | ☐ | ☐ |
+| 5.5 | Olhe o ícone na barra de tarefas, no menu Iniciar e na área do relógio. Depois desligue a internet; com ela de volta, deixe uma chamada tocar sem atender. | Círculo azul com um fone branco e um anel ciano. Na área do relógio, o ícone fica cinza sem conexão e ganha um selo vermelho depois da chamada perdida. | ☐ | ☐ |
+| 5.6 | Olhe a faixa do topo e as telas Entrar e Sobre, com o Windows no modo claro e no escuro (Configurações → Personalização → Cores → modo do aplicativo). | Faixa azul com "starsonic" em branco e ciano, sem bordas serrilhadas. Nas telas Entrar e Sobre, o logo completo num cartão branco, legível nos dois modos. | ☐ | ☐ |
 
 ## 6. Convivência com o MicroSIP
 

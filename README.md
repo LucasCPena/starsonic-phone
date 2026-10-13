@@ -12,7 +12,7 @@ O que o projeto faz e por quê está na [especificação de design](docs/superpo
 | `microsip-dist/` | Sons do pacote oficial MicroSIP Lite |
 | `starsonic/core/` | Lógica nova em C++14 puro (perfis, travas, tela Entrar, mensagens de erro, arquivo de versão), testada no Linux e no Windows |
 | `starsonic/win/` | Integração com o MicroSIP (MFC): tela Entrar, faixa da marca, Sobre, Configurações enxutas, atualizador |
-| `branding/` | Nome, URLs, cores, perfil das contas (`perfil.ini`: porta, transporte, SRTP, codecs e DTMF), tradução pt-BR e, quando chegarem, ícones (`overlay/`), logos e imagem do instalador (`installer/`) |
+| `branding/` | Nome, URLs, cores, perfil das contas (`perfil.ini`: porta, transporte, SRTP, codecs e DTMF), tradução pt-BR, ícones (`overlay/`), logos, imagem do instalador (`installer/`) e, em `fontes/`, o logo original e o script que gera os ícones e logos |
 | `installer/` | Script do instalador (NSIS) |
 | `build/` | Scripts de build, verificação e publicação |
 | `tests/` | Testes do núcleo (doctest), dos scripts (Python) e de fumaça no Windows (`smoke/`) |
@@ -57,6 +57,14 @@ Cada release traz `StarsonicPhone-<versão>-setup.exe`, `versao.json` (com o SHA
 O app procura atualizações em `github.com/<STARSONIC_GITHUB_ACCOUNT>/starsonic-phone` (em `branding/branding.h`) e só aceita instaladores que comecem com esse mesmo endereço, letra por letra; o workflow recusa publicar em outro repositório.
 
 **Não transfira o repositório para outra conta sem preparar a mudança.** O GitHub redireciona o endereço antigo, então as versões já instaladas ainda acham o `versao.json` novo. Mas o instalador dele aponta para a conta nova, e essas versões recusam o instalador para sempre. Antes da transferência, é preciso publicar uma versão-ponte que aceite os dois endereços e esperar os clientes atualizarem; isso exige uma mudança no código (`starsonic/win/Updater.cpp`).
+
+## Como mudar o logo ou os ícones
+
+Ícones, logos e imagem do instalador saem de `branding/fontes/gerar_marca.py`, a partir do logo original (`branding/fontes/logo-starsonic.png`). O desenho do ícone e as cores (azul `#383881` e ciano `#3DB1CC`) estão no próprio script.
+
+1. Troque o logo ou ajuste o script.
+2. Rode `python3 branding/fontes/gerar_marca.py`. Ele precisa de Python 3 com Pillow, numpy, scipy e Playwright (com o Chromium), que não fazem parte do build.
+3. Faça o commit dos arquivos gerados. Se a cor principal mudar, mude também `STARSONIC_BRAND_COLOR` em `branding/branding.h` e as cores conferidas em `tests/smoke/Test-BrandUi.ps1`.
 
 ## Como trazer uma versão nova do MicroSIP
 
