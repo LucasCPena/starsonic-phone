@@ -15,33 +15,35 @@ IDR_STARSONIC_LOGO_LOGIN RCDATA STARSONIC_LOGO_LOGIN_FILE
 
 LANGUAGE LANG_NEUTRAL, SUBLANG_NEUTRAL
 
-IDD_STARSONIC_LOGIN DIALOGEX 0, 0, 180, 190
+// Area do logo com a proporcao do logo-entrar.png (cerca de 3,7 vezes mais larga que alta).
+IDD_STARSONIC_LOGIN DIALOGEX 0, 0, 180, 202
 STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
 EXSTYLE WS_EX_APPWINDOW
 CAPTION "Starsonic Phone"
 FONT 8, "Microsoft Sans Serif", 400, 0, 0x0
 BEGIN
-    CONTROL         "", IDC_SS_LOGO, "Static", SS_OWNERDRAW, 10, 8, 160, 28
-    LTEXT           "Servidor", IDC_SS_SERVER_LABEL, 10, 44, 160, 8
-    EDITTEXT        IDC_SS_SERVER, 10, 54, 160, 14, ES_AUTOHSCROLL
-    LTEXT           "Ramal", IDC_STATIC, 10, 74, 160, 8
-    EDITTEXT        IDC_SS_RAMAL, 10, 84, 160, 14, ES_AUTOHSCROLL
-    LTEXT           "Senha", IDC_STATIC, 10, 104, 160, 8
-    EDITTEXT        IDC_SS_SENHA, 10, 114, 160, 14, ES_PASSWORD | ES_AUTOHSCROLL
-    LTEXT           "", IDC_SS_MESSAGE, 10, 132, 160, 16
-    DEFPUSHBUTTON   "Entrar", IDC_SS_ENTRAR, 10, 150, 160, 16
-    CONTROL         "<a>Remover conta</a>", IDC_SS_REMOVE, "SysLink", WS_TABSTOP, 10, 172, 80, 10
-    LTEXT           "Precisa de ajuda?", IDC_SS_HELP, 90, 172, 80, 10
+    CONTROL         "", IDC_SS_LOGO, "Static", SS_OWNERDRAW, 10, 8, 160, 40
+    LTEXT           "Servidor", IDC_SS_SERVER_LABEL, 10, 56, 160, 8
+    EDITTEXT        IDC_SS_SERVER, 10, 66, 160, 14, ES_AUTOHSCROLL
+    LTEXT           "Ramal", IDC_STATIC, 10, 86, 160, 8
+    EDITTEXT        IDC_SS_RAMAL, 10, 96, 160, 14, ES_AUTOHSCROLL
+    LTEXT           "Senha", IDC_STATIC, 10, 116, 160, 8
+    EDITTEXT        IDC_SS_SENHA, 10, 126, 160, 14, ES_PASSWORD | ES_AUTOHSCROLL
+    LTEXT           "", IDC_SS_MESSAGE, 10, 144, 160, 16
+    DEFPUSHBUTTON   "Entrar", IDC_SS_ENTRAR, 10, 162, 160, 16
+    CONTROL         "<a>Remover conta</a>", IDC_SS_REMOVE, "SysLink", WS_TABSTOP, 10, 184, 80, 10
+    LTEXT           "Precisa de ajuda?", IDC_SS_HELP, 90, 184, 80, 10
 END
 
-IDD_STARSONIC_ABOUT DIALOGEX 0, 0, 220, 132
+// Mesma area de logo da tela Entrar, centralizada.
+IDD_STARSONIC_ABOUT DIALOGEX 0, 0, 220, 144
 STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Starsonic Phone"
 FONT 8, "Microsoft Sans Serif", 400, 0, 0x0
 BEGIN
-    CONTROL         "", IDC_SS_ABOUT_LOGO, "Static", SS_OWNERDRAW, 10, 8, 200, 28
-    LTEXT           "", IDC_SS_ABOUT_VERSION, 10, 44, 200, 10
-    CONTROL         "", IDC_SS_ABOUT_LINKS, "SysLink", WS_TABSTOP, 10, 60, 200, 10
-    CONTROL         "", IDC_SS_ABOUT_LICENSE, "SysLink", WS_TABSTOP, 10, 76, 200, 26
-    DEFPUSHBUTTON   "Fechar", IDOK, 160, 110, 50, 14
+    CONTROL         "", IDC_SS_ABOUT_LOGO, "Static", SS_OWNERDRAW, 30, 8, 160, 40
+    LTEXT           "", IDC_SS_ABOUT_VERSION, 10, 56, 200, 10
+    CONTROL         "", IDC_SS_ABOUT_LINKS, "SysLink", WS_TABSTOP, 10, 72, 200, 10
+    CONTROL         "", IDC_SS_ABOUT_LICENSE, "SysLink", WS_TABSTOP, 10, 88, 200, 26
+    DEFPUSHBUTTON   "Fechar", IDOK, 160, 122, 50, 14
 END

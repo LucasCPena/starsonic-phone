@@ -1,43 +1,71 @@
 #include "stdafx.h"
 #include "Logo.h"
 
-#include <atlimage.h>
+#include <gdiplus.h>
 #include <shlwapi.h>
 
 #include <algorithm>
 #include <map>
-#include <memory>
 
 #pragma comment(lib, "shlwapi.lib")
 #pragma comment(lib, "gdiplus.lib")
 
 namespace {
 
-// Imagens ja carregadas, por id de recurso (nullptr = recurso ausente ou invalido).
-CImage* LoadPng(UINT resourceId) {
-    static std::map<UINT, std::unique_ptr<CImage>> cache;
+// O GDI+ fica ligado ate o fim do processo.
+bool StartGdiplus() {
+    static const bool started = [] {
+        ULONG_PTR token = 0;
+        Gdiplus::GdiplusStartupInput input;
+        return Gdiplus::GdiplusStartup(&token, &input, NULL) == Gdiplus::Ok;
+    }();
+    return started;
+}
+
+// Decodifica o PNG numa copia em memoria (alfa pre-multiplicado), sem depender do stream.
+Gdiplus::Bitmap* Decode(IStream* stream) {
+    Gdiplus::Bitmap decoded(stream, FALSE);
+    if (decoded.GetLastStatus() != Gdiplus::Ok || decoded.GetWidth() == 0 || decoded.GetHeight() == 0) {
+        return nullptr;
+    }
+    const INT width = static_cast<INT>(decoded.GetWidth());
+    const INT height = static_cast<INT>(decoded.GetHeight());
+    Gdiplus::Bitmap* copy = new Gdiplus::Bitmap(width, height, PixelFormat32bppPARGB);
+    Gdiplus::Status status = copy->GetLastStatus();
+    if (status == Gdiplus::Ok) {
+        Gdiplus::Graphics graphics(copy);
+        graphics.SetCompositingMode(Gdiplus::CompositingModeSourceCopy);
+        status = graphics.DrawImage(&decoded, 0, 0, width, height);
+    }
+    if (status != Gdiplus::Ok) {
+        delete copy;
+        return nullptr;
+    }
+    return copy;
+}
+
+// Imagens ja carregadas, por id de recurso (nullptr = recurso ausente ou invalido). Ficam na memoria
+// ate o fim do processo, de proposito: liberadas depois do fim do GDI+, derrubariam o app.
+Gdiplus::Bitmap* LoadPng(UINT resourceId) {
+    static std::map<UINT, Gdiplus::Bitmap*> cache;
     auto found = cache.find(resourceId);
     if (found != cache.end()) {
-        return found->second.get();
+        return found->second;
     }
-    std::unique_ptr<CImage> image;
+    Gdiplus::Bitmap* image = nullptr;
     HMODULE module = GetModuleHandle(NULL);
     HRSRC info = resourceId ? FindResource(module, MAKEINTRESOURCE(resourceId), RT_RCDATA) : NULL;
     HGLOBAL handle = info ? LoadResource(module, info) : NULL;
     const BYTE* data = handle ? static_cast<const BYTE*>(LockResource(handle)) : nullptr;
-    if (data) {
+    if (data && StartGdiplus()) {
         IStream* stream = SHCreateMemStream(data, SizeofResource(module, info));
         if (stream) {
-            image.reset(new CImage());
-            if (FAILED(image->Load(stream))) {
-                image.reset();
-            }
+            image = Decode(stream);
             stream->Release();
         }
     }
-    CImage* result = image.get();
-    cache[resourceId] = std::move(image);
-    return result;
+    cache[resourceId] = image;
+    return image;
 }
 
 void DrawName(CDC* dc, const CRect& area, COLORREF textColor, bool alignLeft) {
@@ -62,19 +90,28 @@ void DrawName(CDC* dc, const CRect& area, COLORREF textColor, bool alignLeft) {
 }  // namespace
 
 void DrawLogo(CDC* dc, const CRect& area, UINT pngResourceId, COLORREF textColor, bool alignLeft) {
-    CImage* image = LoadPng(pngResourceId);
-    if (!image || image->GetWidth() <= 0 || image->GetHeight() <= 0) {
+    Gdiplus::Bitmap* image = LoadPng(pngResourceId);
+    if (!image || area.Width() <= 0 || area.Height() <= 0) {
         DrawName(dc, area, textColor, alignLeft);
         return;
     }
-    // Encaixa mantendo a proporcao, centralizado.
-    const double scale = (std::min)(static_cast<double>(area.Width()) / image->GetWidth(),
-                             static_cast<double>(area.Height()) / image->GetHeight());
-    const int width = static_cast<int>(image->GetWidth() * scale);
-    const int height = static_cast<int>(image->GetHeight() * scale);
-    const int left = alignLeft ? area.left : area.left + (area.Width() - width) / 2;
-    const int top = area.top + (area.Height() - height) / 2;
-    const int oldMode = dc->SetStretchBltMode(HALFTONE);
-    image->Draw(dc->GetSafeHdc(), left, top, width, height);
-    dc->SetStretchBltMode(oldMode);
+    // Encaixa mantendo a proporcao, centralizado (ou encostado na esquerda).
+    const INT imageWidth = static_cast<INT>(image->GetWidth());
+    const INT imageHeight = static_cast<INT>(image->GetHeight());
+    const double scale = (std::min)(static_cast<double>(area.Width()) / imageWidth,
+                                    static_cast<double>(area.Height()) / imageHeight);
+    const INT width = (std::max)(1, static_cast<INT>(imageWidth * scale + 0.5));
+    const INT height = (std::max)(1, static_cast<INT>(imageHeight * scale + 0.5));
+    const INT left = alignLeft ? area.left : area.left + (area.Width() - width) / 2;
+    const INT top = area.top + (area.Height() - height) / 2;
+    // Reducao com filtro e alfa pre-multiplicado: bordas suaves, sem o serrilhado e o halo claro do
+    // AlphaBlend. TileFlipXY evita que as beiradas da imagem saiam esmaecidas.
+    Gdiplus::Graphics graphics(dc->GetSafeHdc());
+    graphics.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+    graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHighQuality);
+    graphics.SetCompositingQuality(Gdiplus::CompositingQualityHighQuality);
+    Gdiplus::ImageAttributes attributes;
+    attributes.SetWrapMode(Gdiplus::WrapModeTileFlipXY);
+    graphics.DrawImage(image, Gdiplus::Rect(left, top, width, height), 0, 0, imageWidth, imageHeight,
+                       Gdiplus::UnitPixel, &attributes);
 }

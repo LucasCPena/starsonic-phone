@@ -11,7 +11,8 @@
 #define STARSONIC_PHONE_SUPPORT "(11) 5060-3000"
 #define STARSONIC_UPSTREAM_VERSION "3.22.16"
 
-/* Cores provisorias ate a Starsonic enviar as oficiais (spec 12). */
-#define STARSONIC_BRAND_COLOR RGB(0x1F,0x4E,0x9C)
+/* Azul do logo da Starsonic (recebido em 13/10/2026; o ciano do logo e #3DB1CC). Faixa superior,
+   botoes Ligar e Entrar. Os icones e logos sao gerados por branding/fontes/gerar_marca.py. */
+#define STARSONIC_BRAND_COLOR RGB(0x38,0x38,0x81)
 #define STARSONIC_BRAND_TEXT_COLOR RGB(0xFF,0xFF,0xFF)
-#define STARSONIC_BRAND_IS_PLACEHOLDER 1
+#define STARSONIC_BRAND_IS_PLACEHOLDER 0
