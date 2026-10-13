@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
-"""Registrador SIP falso para os testes de fumaça (só UDP, só REGISTER com Digest MD5 sem qop).
+"""Registrador SIP falso para os testes de fumaça (UDP e TCP, só REGISTER com Digest MD5 sem qop).
 
 - REGISTER sem Authorization -> 401 com WWW-Authenticate: Digest realm="ci", nonce, algorithm=MD5
 - REGISTER com Authorization -> 200 OK (Expires e Contact ecoados) se usuário e senha conferem,
   senão 403
 - OPTIONS e outros pedidos -> 200 OK; ACK -> nada
-- grava o último User-Agent de REGISTER no arquivo de --log
+- grava o último User-Agent de REGISTER no arquivo de --log e o protocolo (udp ou tcp) do último
+  REGISTER aceito no arquivo de --transport-log
+- escuta UDP e TCP no mesmo endereço e porta; em TCP, a resposta volta na mesma conexão
 
 Uso: fake_registrar.py [--host 127.0.0.1] [--port 5060] --user 2001[,2002...] --password senha-certa
-                       [--log ua.txt]   (os usuários da lista têm a mesma senha)
+                       [--log ua.txt] [--transport-log transporte.txt]
+                       (os usuários da lista têm a mesma senha)
 """
 import argparse
 import hashlib
@@ -16,7 +19,9 @@ import pathlib
 import re
 import secrets
 import socket
+import socketserver
 import sys
+import threading
 
 COMPACT = {"v": "via", "f": "from", "t": "to", "i": "call-id", "m": "contact", "l": "content-length"}
 REASONS = {200: "OK", 401: "Unauthorized", 403: "Forbidden"}
@@ -70,15 +75,16 @@ def _digest_params(value):
 
 
 class Registrar:
-    def __init__(self, user, password, realm="ci", log_path=None):
+    def __init__(self, user, password, realm="ci", log_path=None, transport_log_path=None):
         self.users = set(user.split(","))   # "2001,2002": todos com a mesma senha
         self.password = password
         self.realm = realm
         self.log_path = pathlib.Path(log_path) if log_path else None
+        self.transport_log_path = pathlib.Path(transport_log_path) if transport_log_path else None
         self.nonces = set()
 
-    def handle(self, data, source):
-        """Resposta (bytes) para um pacote vindo de source=(ip, porta), ou None."""
+    def handle(self, data, source, transport="udp"):
+        """Resposta (bytes) para uma mensagem vinda de source=(ip, porta) por transport, ou None."""
         parsed = _parse(data)
         if not parsed:
             return None
@@ -104,6 +110,8 @@ class Registrar:
               and params.get("response", "").lower() == expected)
         if not ok:
             return self._response(403, headers, source)
+        if self.transport_log_path:
+            self.transport_log_path.write_text(transport + "\n", encoding="utf-8")
         expires = (_values(headers, "expires") or ["300"])[-1]
         extra = [("Expires", expires)]
         extra += [("Contact", contact + ";expires=" + expires) for contact in _values(headers, "contact")]
@@ -128,6 +136,63 @@ class Registrar:
         return "\r\n".join(lines).encode("utf-8")
 
 
+def split_messages(buffer):
+    """Mensagens SIP completas de um fluxo TCP, separadas pelo Content-Length (ou l:), e o resto.
+
+    Os \r\n soltos entre mensagens (pings de keepalive) são descartados.
+    """
+    messages = []
+    while True:
+        buffer = buffer.lstrip(b"\r\n")
+        end = buffer.find(b"\r\n\r\n")
+        if end < 0:
+            return messages, buffer
+        length = 0
+        for line in buffer[:end].decode("utf-8", "replace").split("\r\n")[1:]:
+            name, sep, value = line.partition(":")
+            if sep and name.strip().lower() in ("content-length", "l"):
+                try:
+                    length = int(value.strip())
+                except ValueError:
+                    length = 0
+        total = end + 4 + length
+        if len(buffer) < total:
+            return messages, buffer
+        messages.append(buffer[:total])
+        buffer = buffer[total:]
+
+
+class _SipTcpHandler(socketserver.BaseRequestHandler):
+    def handle(self):
+        buffer = b""
+        while True:
+            try:
+                chunk = self.request.recv(65535)
+            except OSError:
+                return
+            if not chunk:
+                return
+            messages, buffer = split_messages(buffer + chunk)
+            for message in messages:
+                response = self.server.registrar.handle(message, self.client_address, transport="tcp")
+                if response:
+                    self.request.sendall(response)
+
+
+class _SipTcpServer(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+
+def start_tcp_server(registrar, host, port):
+    """Lado TCP do registrador, numa thread; cada conexão tem a sua. Devolve o servidor
+    (server_address traz a porta usada; porta 0 = o sistema escolhe)."""
+    server = _SipTcpServer((host, port), _SipTcpHandler)
+    server.registrar = registrar
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
 def main(argv):
     parser = argparse.ArgumentParser(description="Registrador SIP falso para testes.")
     parser.add_argument("--host", default="127.0.0.1")
@@ -135,11 +200,13 @@ def main(argv):
     parser.add_argument("--user", required=True)
     parser.add_argument("--password", required=True)
     parser.add_argument("--log")
+    parser.add_argument("--transport-log")
     args = parser.parse_args(argv)
-    registrar = Registrar(args.user, args.password, log_path=args.log)
+    registrar = Registrar(args.user, args.password, log_path=args.log, transport_log_path=args.transport_log)
+    start_tcp_server(registrar, args.host, args.port)
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind((args.host, args.port))
-    print("registrador falso em %s:%d" % (args.host, args.port), flush=True)
+    print("registrador falso em %s:%d (UDP e TCP)" % (args.host, args.port), flush=True)
     while True:
         data, source = sock.recvfrom(65535)
         response = registrar.handle(data, source)

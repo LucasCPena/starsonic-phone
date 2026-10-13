@@ -1,5 +1,6 @@
 import pathlib
 import re
+import socket
 import sys
 import tempfile
 import unittest
@@ -125,6 +126,49 @@ class FakeRegistrarTest(unittest.TestCase):
 
     def test_garbage_is_ignored(self):
         self.assertIsNone(self.registrar.handle(b"\x00\x01ruido", CLIENT))
+
+    def test_split_messages_keeps_partial_tail(self):
+        first, second, third = register(), register(user_agent="B"), register(user_agent="C")
+        messages, rest = fake_registrar.split_messages(first + second + third[:40])
+        self.assertEqual(messages, [first, second])
+        self.assertEqual(rest, third[:40])
+
+    def test_split_messages_skips_keepalive_pings(self):
+        messages, rest = fake_registrar.split_messages(b"\r\n\r\n" + register())
+        self.assertEqual(messages, [register()])
+        self.assertEqual(rest, b"")
+
+    def test_split_messages_uses_compact_content_length(self):
+        message = register().replace(b"Content-Length:  0", b"l: 4") + b"abcd"
+        messages, rest = fake_registrar.split_messages(message + b"OPT")
+        self.assertEqual(messages, [message])
+        self.assertEqual(rest, b"OPT")
+
+    def test_transport_log_records_tcp_registration(self):
+        transport_log = pathlib.Path(self._tmp.name) / "transport.txt"
+        registrar = fake_registrar.Registrar(user="2001", password="senha-certa", transport_log_path=transport_log)
+        _, headers = parse(registrar.handle(register(), CLIENT, transport="tcp"))
+        challenge = headers["www-authenticate"][0]
+        status, _ = parse(registrar.handle(register(authorization(challenge, "senha-certa")), CLIENT, transport="tcp"))
+        self.assertEqual(status, "SIP/2.0 200 OK")
+        self.assertEqual(transport_log.read_text(encoding="utf-8"), "tcp\n")
+
+    def test_tcp_server_answers_register_on_the_same_connection(self):
+        registrar = fake_registrar.Registrar(user="2001", password="senha-certa")
+        server = fake_registrar.start_tcp_server(registrar, "127.0.0.1", 0)
+        try:
+            with socket.create_connection(("127.0.0.1", server.server_address[1]), timeout=5) as conn:
+                conn.sendall(register())
+                data = b""
+                while b"\r\n\r\n" not in data:
+                    chunk = conn.recv(4096)
+                    if not chunk:
+                        break
+                    data += chunk
+            self.assertTrue(data.startswith(b"SIP/2.0 401"), data[:40])
+        finally:
+            server.shutdown()
+            server.server_close()
 
 
 if __name__ == "__main__":
