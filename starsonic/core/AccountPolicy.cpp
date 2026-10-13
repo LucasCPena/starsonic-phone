@@ -75,26 +75,37 @@ ServerCheck ValidateServerAddress(const std::wstring& raw, std::wstring* normali
     return ServerCheck::Ok;
 }
 
-AccountFields BuildAccount(const ServerProfile& server, const std::wstring& ramal, const std::wstring& senha) {
+std::wstring AddressFromServer(const std::wstring& server) {
+    const size_t colon = server.rfind(L':');
+    if (colon == std::wstring::npos) return server;
+    const size_t digits = server.size() - colon - 1;
+    if (digits < 1 || digits > 5) return server;
+    for (size_t i = colon + 1; i < server.size(); ++i) {
+        if (server[i] < L'0' || server[i] > L'9') return server;
+    }
+    return server.substr(0, colon);
+}
+
+AccountFields BuildAccount(const AccountProfile& profile, const std::wstring& address, const std::wstring& ramal,
+                           const std::wstring& senha) {
     AccountFields account;
-    account.serverId = server.id;
-    account.label = ramal + L" \u00b7 " + server.name;
-    account.server = server.host + L":" + std::to_wstring(server.port);
-    account.proxy = server.proxy;
-    account.domain = server.domain;
+    account.label = ramal + L" \u00b7 " + address;
+    account.server = address + L":" + std::to_wstring(profile.port);
+    account.proxy = profile.proxy;
+    account.domain = address;
     account.username = ramal;
     account.password = senha;
     account.displayName = ramal;
-    account.transport = TransportName(server.transport);
-    account.srtp = SrtpName(server.srtp);
+    account.transport = TransportName(profile.transport);
+    account.srtp = SrtpName(profile.srtp);
     account.registerRefresh = kRegisterRefreshSeconds;
-    account.keepAlive = server.keepAliveSeconds;
+    account.keepAlive = profile.keepAliveSeconds;
     return account;
 }
 
-bool EnforceAccount(AccountFields* account, const Profiles& profiles) {
-    const ServerProfile* server = FindServer(profiles, account->serverId);
-    if (!server) {
+bool EnforceAccount(AccountFields* account, const AccountProfile& profile) {
+    std::wstring address;
+    if (ValidateServerAddress(AddressFromServer(account->server), &address) != ServerCheck::Ok) {
         account->username.clear();
         account->password.clear();
         account->server.clear();
@@ -102,7 +113,7 @@ bool EnforceAccount(AccountFields* account, const Profiles& profiles) {
         account->proxy.clear();
         return false;
     }
-    AccountFields locked = BuildAccount(*server, account->username, account->password);
+    AccountFields locked = BuildAccount(profile, address, account->username, account->password);
     locked.authId = account->authId;
     locked.displayName = account->displayName;
     *account = locked;

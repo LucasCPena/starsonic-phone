@@ -7,28 +7,17 @@ using namespace starsonic;
 
 namespace {
 
-ServerProfile TestServer() {
-    ServerProfile server;
-    server.id = L"sp1";
-    server.name = L"Servidor 1";
-    server.host = L"h";
-    server.domain = L"h";
-    server.port = 5080;
-    server.transport = Transport::Tls;
-    server.proxy = L"";
-    server.srtp = SrtpMode::Optional;
-    server.keepAliveSeconds = 30;
-    return server;
-}
-
-Profiles TestProfiles() {
-    Profiles profiles;
-    profiles.servers.push_back(TestServer());
-    return profiles;
+AccountProfile TestProfile() {
+    AccountProfile profile;
+    profile.port = 5080;
+    profile.transport = Transport::Tls;
+    profile.proxy = L"";
+    profile.srtp = SrtpMode::Optional;
+    profile.keepAliveSeconds = 30;
+    return profile;
 }
 
 void CheckSameAccount(const AccountFields& actual, const AccountFields& expected) {
-    CHECK(actual.serverId == expected.serverId);
     CHECK(actual.label == expected.label);
     CHECK(actual.server == expected.server);
     CHECK(actual.proxy == expected.proxy);
@@ -132,10 +121,19 @@ TEST_CASE("ValidateServerAddress rejects malformed labels and lengths") {
     CHECK(normalized == longest);
 }
 
-TEST_CASE("BuildAccount fills locked fields from profile") {
-    const AccountFields account = BuildAccount(TestServer(), L"2001", L"x");
-    CHECK(account.serverId == L"sp1");
-    CHECK(account.label == L"2001 \u00b7 Servidor 1");
+TEST_CASE("AddressFromServer drops only a numeric port") {
+    CHECK(AddressFromServer(L"h:5060") == L"h");
+    CHECK(AddressFromServer(L"h") == L"h");
+    CHECK(AddressFromServer(L"h:abc") == L"h:abc");
+    CHECK(AddressFromServer(L"h:") == L"h:");
+    CHECK(AddressFromServer(L"[::1]:5060") == L"[::1]");
+    CHECK(AddressFromServer(L"h:123456") == L"h:123456");
+    CHECK(AddressFromServer(L"") == L"");
+}
+
+TEST_CASE("BuildAccount fills locked fields from profile and address") {
+    const AccountFields account = BuildAccount(TestProfile(), L"h", L"2001", L"x");
+    CHECK(account.label == L"2001 \u00b7 h");
     CHECK(account.server == L"h:5080");
     CHECK(account.proxy == L"");
     CHECK(account.domain == L"h");
@@ -159,26 +157,26 @@ TEST_CASE("BuildAccount fills locked fields from profile") {
 }
 
 TEST_CASE("BuildAccount maps every transport, srtp mode and the proxy") {
-    ServerProfile server = TestServer();
-    server.transport = Transport::Udp;
-    server.srtp = SrtpMode::Disabled;
-    server.proxy = L"p.invalid:5070";
-    AccountFields account = BuildAccount(server, L"1", L"p");
+    AccountProfile profile = TestProfile();
+    profile.transport = Transport::Udp;
+    profile.srtp = SrtpMode::Disabled;
+    profile.proxy = L"p.invalid:5070";
+    AccountFields account = BuildAccount(profile, L"h", L"1", L"p");
     CHECK(account.transport == L"udp");
     CHECK(account.srtp == L"");
     CHECK(account.proxy == L"p.invalid:5070");
-    server.transport = Transport::Tcp;
-    server.srtp = SrtpMode::Mandatory;
-    account = BuildAccount(server, L"1", L"p");
+    profile.transport = Transport::Tcp;
+    profile.srtp = SrtpMode::Mandatory;
+    account = BuildAccount(profile, L"h", L"1", L"p");
     CHECK(account.transport == L"tcp");
     CHECK(account.srtp == L"mandatory");
 }
 
 TEST_CASE("EnforceAccount restores tampered fields") {
-    AccountFields account = BuildAccount(TestServer(), L"2001", L"x");
+    AccountFields account = BuildAccount(TestProfile(), L"h", L"2001", L"x");
     const AccountFields expected = account;
     account.label = L"outro";
-    account.server = L"evil:1";
+    account.server = L"h:1";
     account.proxy = L"evil-proxy:1";
     account.domain = L"evil";
     account.transport = L"udp";
@@ -194,46 +192,47 @@ TEST_CASE("EnforceAccount restores tampered fields") {
     account.ice = true;
     account.allowRewrite = true;
     account.disableSessionTimer = true;
-    CHECK(EnforceAccount(&account, TestProfiles()));
+    CHECK(EnforceAccount(&account, TestProfile()));
     CheckSameAccount(account, expected);
 }
 
+TEST_CASE("EnforceAccount keeps the account address, normalized") {
+    AccountFields account = BuildAccount(TestProfile(), L"h", L"2001", L"x");
+    account.server = L"Novo.Host:5999";
+    account.domain = L"outro";
+    CHECK(EnforceAccount(&account, TestProfile()));
+    CHECK(account.server == L"novo.host:5080");
+    CHECK(account.domain == L"novo.host");
+    CHECK(account.label == L"2001 \u00b7 novo.host");
+}
+
 TEST_CASE("EnforceAccount keeps the fields the user owns") {
-    AccountFields account = BuildAccount(TestServer(), L"2001", L"x");
+    AccountFields account = BuildAccount(TestProfile(), L"h", L"2001", L"x");
     account.username = L"2002";
     account.authId = L"auth-2002";
     account.password = L"y";
     account.displayName = L"Recep\u00e7\u00e3o";
-    CHECK(EnforceAccount(&account, TestProfiles()));
+    CHECK(EnforceAccount(&account, TestProfile()));
     CHECK(account.username == L"2002");
     CHECK(account.authId == L"auth-2002");
     CHECK(account.password == L"y");
     CHECK(account.displayName == L"Recep\u00e7\u00e3o");
-    CHECK(account.label == L"2002 \u00b7 Servidor 1");
+    CHECK(account.label == L"2002 \u00b7 h");
 }
 
-TEST_CASE("EnforceAccount relabels after profile rename") {
-    AccountFields account = BuildAccount(TestServer(), L"2001", L"x");
-    Profiles profiles = TestProfiles();
-    profiles.servers[0].name = L"Novo";
-    CHECK(EnforceAccount(&account, profiles));
-    CHECK(account.label == L"2001 \u00b7 Novo");
-}
-
-TEST_CASE("account without server id is unknown and cleared") {
-    const std::wstring ids[] = {L"", L"sumiu"};
-    for (const std::wstring& id : ids) {
-        CAPTURE(id);
-        AccountFields account = BuildAccount(TestServer(), L"2001", L"x");
-        account.serverId = id;
+TEST_CASE("EnforceAccount empties accounts with an empty or invalid address") {
+    const std::wstring servers[] = {L"", L":5060", L"bad host:5060", L"[::1]:5060", L"h:abc"};
+    for (const std::wstring& server : servers) {
+        CAPTURE(server);
+        AccountFields account = BuildAccount(TestProfile(), L"h", L"2001", L"x");
+        account.server = server;
         account.proxy = L"p.invalid";
-        CHECK_FALSE(EnforceAccount(&account, TestProfiles()));
+        CHECK_FALSE(EnforceAccount(&account, TestProfile()));
         CHECK(account.username == L"");
         CHECK(account.password == L"");
         CHECK(account.server == L"");
         CHECK(account.domain == L"");
         CHECK(account.proxy == L"");
-        CHECK(account.serverId == id);
     }
 }
 

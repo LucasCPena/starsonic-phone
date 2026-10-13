@@ -1,6 +1,4 @@
-#include "ServerProfiles.h"
-
-#include <set>
+#include "Profile.h"
 
 #include "Text.h"
 
@@ -40,16 +38,6 @@ std::wstring Quoted(const std::wstring& text) {
     return L"\"" + text + L"\"";
 }
 
-bool IsValidId(const std::wstring& id) {
-    if (id.empty()) return false;
-    for (wchar_t ch : id) {
-        const bool allowed = (ch >= L'a' && ch <= L'z') || (ch >= L'0' && ch <= L'9') ||
-                             ch == L'_' || ch == L'-';
-        if (!allowed) return false;
-    }
-    return true;
-}
-
 // Aceita só dígitos e um valor dentro de [lowest, highest].
 bool ParseInt(const std::wstring& text, int lowest, int highest, int* out) {
     if (text.empty() || text.size() > 9) return false;
@@ -64,28 +52,18 @@ bool ParseInt(const std::wstring& text, int lowest, int highest, int* out) {
 }
 
 std::wstring InvalidValue(const std::wstring& key, const std::wstring& value, const std::wstring& options) {
-    return L"valor inv\u00e1lido para " + Quoted(key) + L": " + Quoted(value) +
-           L" (op\u00e7\u00f5es: " + options + L")";
+    return L"valor inv\u00e1lido para " + Quoted(key) + L": " + Quoted(value) + L" (op\u00e7\u00f5es: " + options + L")";
 }
 
 std::wstring EmptyValue(const std::wstring& key) {
     return L"a chave " + Quoted(key) + L" est\u00e1 vazia";
 }
 
-enum class Section { None, Global, Server };
-
-struct ServerDraft {
-    ServerProfile profile;
-    int headerLine = 0;
-    bool hasName = false;
-    bool hasHost = false;
-    bool hasPort = false;
-    bool hasTransport = false;
-};
+enum class Section { None, Global, Account };
 
 class Parser {
 public:
-    ParseResult Run(const std::wstring& text, Profiles* out) {
+    ParseResult Run(const std::wstring& text, Profile* out) {
         int line = 0;
         size_t start = 0;
         while (start <= text.size()) {
@@ -95,12 +73,18 @@ public:
             if (!HandleLine(line, text.substr(start, end - start))) return result_;
             start = end + 1;
         }
-        if (!CloseServer()) return result_;
-        if (profiles_.servers.empty()) {
-            Fail(0, L"o arquivo n\u00e3o define nenhum servidor");
+        if (!seenAccount_) {
+            Fail(0, L"o arquivo n\u00e3o tem a se\u00e7\u00e3o [conta]");
             return result_;
         }
-        *out = profiles_;
+        const wchar_t* missing = nullptr;
+        if (!hasPort_) missing = L"porta";
+        else if (!hasTransport_) missing = L"transporte";
+        if (missing) {
+            Fail(accountLine_, L"a se\u00e7\u00e3o [conta] n\u00e3o tem a chave obrigat\u00f3ria " + Quoted(missing));
+            return result_;
+        }
+        *out = profile_;
         result_.ok = true;
         return result_;
     }
@@ -131,55 +115,35 @@ private:
                 return Fail(line, L"a chave " + Quoted(key) + L" aparece antes de qualquer se\u00e7\u00e3o");
             case Section::Global:
                 return GlobalKey(line, key, value);
-            case Section::Server:
-                return ServerKey(line, key, value);
+            case Section::Account:
+                return AccountKey(line, key, value);
         }
         return true;
     }
 
     bool OpenSection(int line, const std::wstring& text) {
-        if (!CloseServer()) return false;
         if (text.size() < 2 || text[text.size() - 1] != L']') {
             return Fail(line, L"cabe\u00e7alho de se\u00e7\u00e3o inv\u00e1lido: " + Quoted(text));
         }
-        const std::wstring id = text.substr(1, text.size() - 2);
-        if (!IsValidId(id)) {
-            return Fail(line, L"se\u00e7\u00e3o inv\u00e1lida [" + id +
-                                  L"]: o id s\u00f3 pode ter letras min\u00fasculas, n\u00fameros, \"-\" e \"_\"");
-        }
-        if (!seenSections_.insert(id).second) {
-            return Fail(line, L"se\u00e7\u00e3o repetida: [" + id + L"]");
-        }
-        if (id == L"geral") {
+        const std::wstring name = text.substr(1, text.size() - 2);
+        if (name == L"geral") {
+            if (seenGlobal_) return Fail(line, L"se\u00e7\u00e3o repetida: [geral]");
+            seenGlobal_ = true;
             section_ = Section::Global;
             return true;
         }
-        section_ = Section::Server;
-        draft_ = ServerDraft();
-        draft_.profile.id = id;
-        draft_.headerLine = line;
-        return true;
-    }
-
-    bool CloseServer() {
-        if (section_ != Section::Server) return true;
-        section_ = Section::None;
-        const wchar_t* missing = nullptr;
-        if (!draft_.hasName) missing = L"nome";
-        else if (!draft_.hasHost) missing = L"endereco";
-        else if (!draft_.hasPort) missing = L"porta";
-        else if (!draft_.hasTransport) missing = L"transporte";
-        if (missing) {
-            return Fail(draft_.headerLine, L"o servidor [" + draft_.profile.id +
-                                               L"] n\u00e3o tem a chave obrigat\u00f3ria " + Quoted(missing));
+        if (name == L"conta") {
+            if (seenAccount_) return Fail(line, L"se\u00e7\u00e3o repetida: [conta]");
+            seenAccount_ = true;
+            accountLine_ = line;
+            section_ = Section::Account;
+            return true;
         }
-        if (draft_.profile.domain.empty()) draft_.profile.domain = draft_.profile.host;
-        profiles_.servers.push_back(draft_.profile);
-        return true;
+        return Fail(line, L"se\u00e7\u00e3o desconhecida [" + name + L"] (use [geral] e [conta])");
     }
 
     bool GlobalKey(int line, const std::wstring& key, const std::wstring& value) {
-        GlobalProfile& global = profiles_.global;
+        GlobalProfile& global = profile_.global;
         if (key == L"stun") {
             global.stun = value;
             return true;
@@ -219,37 +183,21 @@ private:
         return true;
     }
 
-    bool ServerKey(int line, const std::wstring& key, const std::wstring& value) {
-        ServerProfile& server = draft_.profile;
-        if (key == L"nome") {
-            if (value.empty()) return Fail(line, EmptyValue(key));
-            server.name = value;
-            draft_.hasName = true;
-            return true;
-        }
-        if (key == L"endereco") {
-            if (value.empty()) return Fail(line, EmptyValue(key));
-            server.host = value;
-            draft_.hasHost = true;
-            return true;
-        }
-        if (key == L"dominio") {
-            server.domain = value;   // vazio = igual ao endereço
-            return true;
-        }
+    bool AccountKey(int line, const std::wstring& key, const std::wstring& value) {
+        AccountProfile& account = profile_.account;
         if (key == L"proxy") {
-            server.proxy = value;
+            account.proxy = value;
             return true;
         }
         if (key == L"porta") {
-            if (!ParseInt(value, 1, 65535, &server.port)) {
+            if (!ParseInt(value, 1, 65535, &account.port)) {
                 return Fail(line, L"a chave \"porta\" precisa ser um n\u00famero de 1 a 65535: " + Quoted(value));
             }
-            draft_.hasPort = true;
+            hasPort_ = true;
             return true;
         }
         if (key == L"keepalive") {
-            if (!ParseInt(value, 1, 3600, &server.keepAliveSeconds)) {
+            if (!ParseInt(value, 1, 3600, &account.keepAliveSeconds)) {
                 return Fail(line, L"a chave \"keepalive\" precisa ser um n\u00famero de 1 a 3600 (segundos): " +
                                       Quoted(value));
             }
@@ -257,43 +205,39 @@ private:
         }
         if (key == L"transporte") {
             const std::wstring lower = AsciiLower(value);
-            if (lower == L"udp") server.transport = Transport::Udp;
-            else if (lower == L"tcp") server.transport = Transport::Tcp;
-            else if (lower == L"tls") server.transport = Transport::Tls;
+            if (lower == L"udp") account.transport = Transport::Udp;
+            else if (lower == L"tcp") account.transport = Transport::Tcp;
+            else if (lower == L"tls") account.transport = Transport::Tls;
             else return Fail(line, InvalidValue(key, value, L"udp, tcp ou tls"));
-            draft_.hasTransport = true;
+            hasTransport_ = true;
             return true;
         }
         if (key == L"srtp") {
             const std::wstring lower = AsciiLower(value);
-            if (lower == L"desativado") server.srtp = SrtpMode::Disabled;
-            else if (lower == L"opcional") server.srtp = SrtpMode::Optional;
-            else if (lower == L"obrigatorio") server.srtp = SrtpMode::Mandatory;
+            if (lower == L"desativado") account.srtp = SrtpMode::Disabled;
+            else if (lower == L"opcional") account.srtp = SrtpMode::Optional;
+            else if (lower == L"obrigatorio") account.srtp = SrtpMode::Mandatory;
             else return Fail(line, InvalidValue(key, value, L"desativado, opcional ou obrigatorio"));
             return true;
         }
-        return Fail(line, L"chave desconhecida " + Quoted(key) + L" em [" + server.id + L"]");
+        return Fail(line, L"chave desconhecida " + Quoted(key) + L" em [conta]");
     }
 
-    Profiles profiles_;
+    Profile profile_;
     ParseResult result_;
     Section section_ = Section::None;
-    ServerDraft draft_;
-    std::set<std::wstring> seenSections_;
+    bool seenGlobal_ = false;
+    bool seenAccount_ = false;
+    int accountLine_ = 0;
+    bool hasPort_ = false;
+    bool hasTransport_ = false;
 };
 
 }  // namespace
 
-ParseResult ParseProfiles(const std::wstring& text, Profiles* out) {
+ParseResult ParseProfile(const std::wstring& text, Profile* out) {
     Parser parser;
     return parser.Run(text, out);
-}
-
-const ServerProfile* FindServer(const Profiles& profiles, const std::wstring& id) {
-    for (const ServerProfile& server : profiles.servers) {
-        if (server.id == id) return &server;
-    }
-    return nullptr;
 }
 
 std::wstring CodecsToMicrosip(const std::vector<std::wstring>& codecs) {
