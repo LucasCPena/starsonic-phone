@@ -407,6 +407,8 @@ function Get-Text {
 # Abre o menu principal (botao IDC_MAIN_MENU), procura o item cujo texto (sem o atalho) satisfaz
 # $Match e o aciona: fecha o menu e manda o WM_COMMAND do item para a janela principal, como o
 # TrackPopupMenu faria. Devolve $true se achou; em falha, $script:MenuItemsSeen lista os itens.
+# Ate 3 cliques, enquanto o menu nem aparecer: logo depois de abrir, a tela Entrar pode roubar o
+# foco e fechar o menu antes de ele ser lido (run do commit a700391).
 function Invoke-MainMenuItem {
     param(
         [Parameter(Mandatory = $true)][IntPtr]$MainWindow,
@@ -415,33 +417,36 @@ function Invoke-MainMenuItem {
     )
     [uint32]$processId = 0
     [StarsonicWin32]::GetWindowThreadProcessId($MainWindow, [ref]$processId) | Out-Null
-    [StarsonicWin32]::ClickButton($MainWindow, 1001)
-    $holder = @{ Id = $null; Seen = @(); MenuWindow = [IntPtr]::Zero }
-    $found = Wait-Until -TimeoutSeconds $TimeoutSeconds -Condition {
-        foreach ($window in @(Get-TopLevelWindows -ProcessId $processId -IncludeOwned | Where-Object { $_.ClassName -eq '#32768' })) {
-            $holder.MenuWindow = $window.Handle
-            $menu = [StarsonicWin32]::MenuOf($window.Handle)
-            if ($menu -eq [IntPtr]::Zero) {
-                continue
-            }
-            $holder.Seen = @()
-            for ($i = 0; $i -lt [StarsonicWin32]::GetMenuItemCount($menu); $i++) {
-                $text = ([StarsonicWin32]::MenuText($menu, $i) -split "`t")[0]
-                $id = [StarsonicWin32]::GetMenuItemID($menu, $i)
-                $holder.Seen += "'$text' [$id]"
-                if ($text -and (& $Match $text $id)) {
-                    $holder.Id = $id
-                    return $true
+    $attemptSeconds = [int][Math]::Ceiling($TimeoutSeconds / 3)
+    $holder = @{ Id = $null; Seen = @() }
+    $found = $false
+    for ($attempt = 1; $attempt -le 3 -and -not $found -and $holder.Seen.Count -eq 0; $attempt++) {
+        [StarsonicWin32]::ClickButton($MainWindow, 1001)
+        $found = Wait-Until -TimeoutSeconds $attemptSeconds -Condition {
+            foreach ($window in @(Get-TopLevelWindows -ProcessId $processId -IncludeOwned | Where-Object { $_.ClassName -eq '#32768' })) {
+                $menu = [StarsonicWin32]::MenuOf($window.Handle)
+                if ($menu -eq [IntPtr]::Zero) {
+                    continue
+                }
+                $holder.Seen = @()
+                for ($i = 0; $i -lt [StarsonicWin32]::GetMenuItemCount($menu); $i++) {
+                    $text = ([StarsonicWin32]::MenuText($menu, $i) -split "`t")[0]
+                    $id = [StarsonicWin32]::GetMenuItemID($menu, $i)
+                    $holder.Seen += "'$text' [$id]"
+                    if ($text -and (& $Match $text $id)) {
+                        $holder.Id = $id
+                        return $true
+                    }
                 }
             }
+            return $false
         }
-        return $false
+        [StarsonicWin32]::CancelMode($MainWindow)
+        Wait-Until -TimeoutSeconds 5 -Condition {
+            @(Get-TopLevelWindows -ProcessId $processId -IncludeOwned | Where-Object { $_.ClassName -eq '#32768' -and [StarsonicWin32]::IsWindowVisible($_.Handle) }).Count -eq 0
+        } | Out-Null
     }
     $script:MenuItemsSeen = @($holder.Seen)
-    [StarsonicWin32]::CancelMode($MainWindow)
-    Wait-Until -TimeoutSeconds 5 -Condition {
-        @(Get-TopLevelWindows -ProcessId $processId -IncludeOwned | Where-Object { $_.ClassName -eq '#32768' -and [StarsonicWin32]::IsWindowVisible($_.Handle) }).Count -eq 0
-    } | Out-Null
     if (-not $found) {
         return $false
     }

@@ -6,11 +6,9 @@
   senão 403
 - OPTIONS e outros pedidos -> 200 OK; ACK -> nada
 - grava o último User-Agent de REGISTER no arquivo de --log
-- com --not-tls-port, também aceita conexões TCP nessa porta e responde texto puro ao
-  ClientHello: um cliente TLS falha no handshake (teste da mensagem de falha de TLS)
 
 Uso: fake_registrar.py [--host 127.0.0.1] [--port 5060] --user 2001[,2002...] --password senha-certa
-                       [--log ua.txt] [--not-tls-port 5071]   (os usuários da lista têm a mesma senha)
+                       [--log ua.txt]   (os usuários da lista têm a mesma senha)
 """
 import argparse
 import hashlib
@@ -19,9 +17,6 @@ import re
 import secrets
 import socket
 import sys
-import threading
-
-NOT_TLS_REPLY = b"SIP/2.0 400 Not TLS\r\n\r\n"
 
 COMPACT = {"v": "via", "f": "from", "t": "to", "i": "call-id", "m": "contact", "l": "content-length"}
 REASONS = {200: "OK", 401: "Unauthorized", 403: "Forbidden"}
@@ -133,30 +128,6 @@ class Registrar:
         return "\r\n".join(lines).encode("utf-8")
 
 
-def not_tls_listener(host, port):
-    """Socket TCP que finge ser um servidor TLS (veja serve_not_tls)."""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.bind((host, port))
-    sock.listen(8)
-    return sock
-
-
-def serve_not_tls(sock):
-    """Para cada conexão: lê o começo do ClientHello, responde texto puro e fecha."""
-    while True:
-        try:
-            conn, _ = sock.accept()
-        except OSError:
-            return
-        with conn:
-            conn.settimeout(5)
-            try:
-                conn.recv(4096)
-                conn.sendall(NOT_TLS_REPLY)
-            except OSError:
-                pass
-
-
 def main(argv):
     parser = argparse.ArgumentParser(description="Registrador SIP falso para testes.")
     parser.add_argument("--host", default="127.0.0.1")
@@ -164,12 +135,7 @@ def main(argv):
     parser.add_argument("--user", required=True)
     parser.add_argument("--password", required=True)
     parser.add_argument("--log")
-    parser.add_argument("--not-tls-port", type=int)
     args = parser.parse_args(argv)
-    if args.not_tls_port:
-        listener = not_tls_listener(args.host, args.not_tls_port)
-        threading.Thread(target=serve_not_tls, args=(listener,), daemon=True).start()
-        print("TCP sem TLS em %s:%d" % (args.host, args.not_tls_port), flush=True)
     registrar = Registrar(args.user, args.password, log_path=args.log)
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind((args.host, args.port))

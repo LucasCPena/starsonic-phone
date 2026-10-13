@@ -120,18 +120,13 @@ jobs:
         if: ${{ !cancelled() && steps.app.outcome == 'success' }}
         run: .\tests\smoke\Test-Settings.ps1 -AppDir out
 
-      - name: Compilar a versão de teste (perfil de CI)
-        id: app-ci
-        if: ${{ !cancelled() && steps.app.outcome == 'success' }}
-        run: .\build\Build-App.ps1 -WorkDir work -Version 0.0.0 -Channel estavel -ProfilesFile tests\fixtures\servidores-ci.ini -OutDir out-ci
-
       - name: Teste das travas na inicialização
-        if: ${{ !cancelled() && steps.app-ci.outcome == 'success' }}
-        run: .\tests\smoke\Test-Policy.ps1 -AppDir out-ci
+        if: ${{ !cancelled() && steps.app.outcome == 'success' }}
+        run: .\tests\smoke\Test-Policy.ps1 -AppDir out
 
       - name: Teste da tela Entrar (registrador SIP falso)
-        if: ${{ !cancelled() && steps.app-ci.outcome == 'success' }}
-        run: .\tests\smoke\Test-Login.ps1 -AppDir out-ci
+        if: ${{ !cancelled() && steps.app.outcome == 'success' }}
+        run: .\tests\smoke\Test-Login.ps1 -AppDir out -Version $env:STARSONIC_VERSION
 
       - name: NSIS
         id: nsis

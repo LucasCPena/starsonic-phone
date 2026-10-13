@@ -1,9 +1,7 @@
 import pathlib
 import re
-import socket
 import sys
 import tempfile
-import threading
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -127,26 +125,6 @@ class FakeRegistrarTest(unittest.TestCase):
 
     def test_garbage_is_ignored(self):
         self.assertIsNone(self.registrar.handle(b"\x00\x01ruido", CLIENT))
-
-
-class NotTlsListenerTest(unittest.TestCase):
-    def test_answers_plain_text_to_a_tls_client_hello_and_closes(self):
-        server = fake_registrar.not_tls_listener("127.0.0.1", 0)
-        port = server.getsockname()[1]
-        threading.Thread(target=fake_registrar.serve_not_tls, args=(server,), daemon=True).start()
-        try:
-            with socket.create_connection(("127.0.0.1", port), timeout=5) as client:
-                client.sendall(b"\x16\x03\x01\x00\x05hello")   # começo de um ClientHello
-                data = b""
-                while True:
-                    chunk = client.recv(1024)
-                    if not chunk:
-                        break
-                    data += chunk
-        finally:
-            server.close()
-        self.assertEqual(data, fake_registrar.NOT_TLS_REPLY)
-        self.assertFalse(data.startswith(b"\x16"))   # não é um registro TLS: o handshake falha
 
 
 if __name__ == "__main__":

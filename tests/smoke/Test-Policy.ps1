@@ -1,9 +1,9 @@
-# Teste de fumaca: na inicializacao o app reaplica os perfis embutidos em todas as contas (mesmo com
-# buraco na numeracao) e trava as globais; /reset respondido com "Nao" nao muda nada.
-# Usa o build de CI (perfil tests\fixtures\servidores-ci.ini, servidor "local" em 127.0.0.1:5060).
-# Uso: .\tests\smoke\Test-Policy.ps1 -AppDir out-ci
+# Teste de fumaca: na inicializacao o app reaplica o perfil embutido (branding\perfil.ini: porta 5060,
+# UDP) em todas as contas, mesmo com buraco na numeracao, mantendo o endereco de cada uma; esvazia a
+# conta com endereco invalido e trava as globais. /reset respondido com "Nao" nao muda nada.
+# Uso: .\tests\smoke\Test-Policy.ps1 -AppDir out
 param(
-    [string]$AppDir = 'out-ci'
+    [string]$AppDir = 'out'
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2
@@ -25,22 +25,21 @@ Write-IniFile -Path $ini -Lines (@(Get-NoUpdateCheckIni) + @(
     'enableSTUN=1',
     '[Account1]',
     'label=adulterada',
-    'server=evil.example:5060',
-    'domain=evil.example',
+    'server=EVIL.example:5999',
+    'domain=other.example',
     'username=2001',
     'transport=tcp',
-    'starsonicServer=local',
     '[Account2]',
-    'server=x:5060',
+    'server=bad host:5060',
     'domain=x',
     'username=2002',
+    # Sem [Account3]. A conta 4 e como a rc.1 gravava: com o id do servidor (starsonicServer).
     '[Account4]',
-    'label=adulterada',
-    'server=evil.example:5060',
-    'domain=evil.example',
+    'server=sip1.exemplo.invalid:5060',
+    'domain=sip1.exemplo.invalid',
     'username=2004',
     'transport=tcp',
-    'starsonicServer=local'
+    'starsonicServer=sp1'
 ))
 
 $process = Start-App -Exe $exe
@@ -54,16 +53,24 @@ if (-not (Stop-App -Exe $exe -Process $process -TimeoutSeconds 15)) {
     throw 'O app nao fechou em 15 s depois de /exit.'
 }
 
+# Codecs do branding\perfil.ini.
+$profileCodecs = 'G722/16000/1 PCMA/8000/1 PCMU/8000/1'
 $expected = @(
-    @('Account1', 'server', '127.0.0.1:5060'),
+    # O endereco fica (normalizado); porta, dominio, transporte e rotulo voltam ao perfil.
+    @('Account1', 'server', 'evil.example:5060'),
+    @('Account1', 'domain', 'evil.example'),
     @('Account1', 'transport', 'udp'),
     @('Account1', 'username', '2001'),
+    @('Account1', 'label', (Get-Text @('2001 ', 0x00B7, ' evil.example'))),
+    # Endereco invalido: conta esvaziada.
     @('Account2', 'username', ''),
-    # Sem [Account3]: a conta 4 tambem passa pelo perfil (o MicroSIP carrega qualquer numero).
-    @('Account4', 'server', '127.0.0.1:5060'),
+    @('Account2', 'server', ''),
+    # Sem [Account3]: a conta 4 tambem passa pelo perfil (o MicroSIP carrega qualquer numero), e a
+    # chave antiga starsonicServer nao atrapalha.
+    @('Account4', 'server', 'sip1.exemplo.invalid:5060'),
     @('Account4', 'transport', 'udp'),
     @('Account4', 'username', '2004'),
-    @('Settings', 'audioCodecs', 'PCMA/8000/1 PCMU/8000/1'),
+    @('Settings', 'audioCodecs', $profileCodecs),
     @('Settings', 'enableSTUN', '0'),
     @('Settings', 'updatesInterval', 'daily')
 )
@@ -102,7 +109,7 @@ try {
 }
 $kept = @(
     @('Settings', 'volumeRing', '37'),
-    @('Settings', 'audioCodecs', 'PCMA/8000/1 PCMU/8000/1'),
+    @('Settings', 'audioCodecs', $profileCodecs),
     @('Settings', 'accountId', '1'),
     @('Account1', 'username', '2001')
 )
