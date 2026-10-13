@@ -25,8 +25,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = gh release list --repo $env:GITHUB_REPOSITORY --limit 30 --json tagName --jq '[.[] | select(.tagName | startswith("v"))][0].tagName'
-          if ($LASTEXITCODE -ne 0 -or -not $tag) { exit 1 }
+          # (sem aspas duplas no filtro: o PowerShell 5.1 as tira dos argumentos de programas externos)
+          $tags = gh release list --repo $env:GITHUB_REPOSITORY --limit 30 --json tagName --jq '.[].tagName'
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $tag = @($tags | Where-Object { $_ -like 'v*' })[0]
+          if (-not $tag) { exit 1 }
           Write-Host "versao: $tag"
           gh release download $tag --repo $env:GITHUB_REPOSITORY --pattern '*-setup.exe' --dir dist
           if ($LASTEXITCODE -ne 0) { exit 1 }
