@@ -85,26 +85,37 @@ public static class StarsonicPixels {
         int dr = c.R - r, dg = c.G - g, db = c.B - b;
         return dr * dr + dg * dg + db * db <= tolerance * tolerance;
     }
-    // Captura a janela de primeiro nivel 'top' como o DWM a mostra (PrintWindow) e conta, na area
-    // do controle 'child' entre as fracoes horizontais [fromX, toX), os pixels a ate 'tolerance' da
-    // cor (r, g, b). Devolve { iguais, total, nao_pretos } (nao_pretos = 0: captura vazia).
-    public static int[] Count(IntPtr top, IntPtr child, int r, int g, int b, int tolerance, double fromX, double toX) {
+    // Captura a janela de primeiro nivel 'top' como o DWM a mostra (PrintWindow); 'area' recebe a
+    // parte do controle 'child' entre as fracoes horizontais [fromX, toX). null: janela sem tamanho.
+    static Bitmap Capture(IntPtr top, IntPtr child, double fromX, double toX, out Rectangle area) {
         RECT wr, cr;
         GetWindowRect(top, out wr);
         GetWindowRect(child, out cr);
         int w = wr.Right - wr.Left, h = wr.Bottom - wr.Top;
-        if (w <= 0 || h <= 0) return new int[] { 0, 0, 0 };
-        using (Bitmap bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb)) {
-            using (Graphics gr = Graphics.FromImage(bmp)) {
-                IntPtr hdc = gr.GetHdc();
-                PrintWindow(top, hdc, 2);   // PW_RENDERFULLCONTENT
-                gr.ReleaseHdc(hdc);
-            }
-            int x0 = cr.Left - wr.Left, y0 = cr.Top - wr.Top, cw = cr.Right - cr.Left, ch = cr.Bottom - cr.Top;
-            int from = Math.Max(0, x0 + (int)(cw * fromX)), to = Math.Min(w, x0 + (int)(cw * toX));
+        area = Rectangle.Empty;
+        if (w <= 0 || h <= 0) return null;
+        Bitmap bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb);
+        using (Graphics gr = Graphics.FromImage(bmp)) {
+            IntPtr hdc = gr.GetHdc();
+            PrintWindow(top, hdc, 2);   // PW_RENDERFULLCONTENT
+            gr.ReleaseHdc(hdc);
+        }
+        int x0 = cr.Left - wr.Left, y0 = cr.Top - wr.Top, cw = cr.Right - cr.Left, ch = cr.Bottom - cr.Top;
+        int from = Math.Max(0, x0 + (int)(cw * fromX)), to = Math.Min(w, x0 + (int)(cw * toX));
+        int top0 = Math.Max(0, y0), bottom = Math.Min(h, y0 + ch);
+        area = Rectangle.FromLTRB(from, top0, Math.Max(from, to), Math.Max(top0, bottom));
+        return bmp;
+    }
+    // Conta, nessa area, os pixels a ate 'tolerance' da cor (r, g, b).
+    // Devolve { iguais, total, nao_pretos } (nao_pretos = 0: captura vazia).
+    public static int[] Count(IntPtr top, IntPtr child, int r, int g, int b, int tolerance, double fromX, double toX) {
+        Rectangle area;
+        Bitmap captured = Capture(top, child, fromX, toX, out area);
+        if (captured == null) return new int[] { 0, 0, 0 };
+        using (Bitmap bmp = captured) {
             int same = 0, total = 0, lit = 0;
-            for (int y = Math.Max(0, y0); y < Math.Min(h, y0 + ch); y++) {
-                for (int x = from; x < to; x++) {
+            for (int y = area.Top; y < area.Bottom; y++) {
+                for (int x = area.Left; x < area.Right; x++) {
                     Color c = bmp.GetPixel(x, y);
                     total++;
                     if (c.R + c.G + c.B > 30) lit++;
@@ -112,6 +123,28 @@ public static class StarsonicPixels {
                 }
             }
             return new int[] { same, total, lit };
+        }
+    }
+    // Bordas suavizadas: conta, nessa area, os pixels que sao uma mistura das cores 0 e 1 (a fracao
+    // da cor 1 entre tLo e tHi, a ate 'tolerance' da reta entre as duas cores).
+    public static int Blend(IntPtr top, IntPtr child, int r0, int g0, int b0, int r1, int g1, int b1,
+                            int tolerance, double tLo, double tHi, double fromX, double toX) {
+        Rectangle area;
+        Bitmap captured = Capture(top, child, fromX, toX, out area);
+        if (captured == null) return 0;
+        using (Bitmap bmp = captured) {
+            double dr = r1 - r0, dg = g1 - g0, db = b1 - b0, length2 = dr * dr + dg * dg + db * db;
+            int found = 0;
+            for (int y = area.Top; y < area.Bottom; y++) {
+                for (int x = area.Left; x < area.Right; x++) {
+                    Color c = bmp.GetPixel(x, y);
+                    double pr = c.R - r0, pg = c.G - g0, pb = c.B - b0;
+                    double t = (pr * dr + pg * dg + pb * db) / length2;
+                    double er = pr - t * dr, eg = pg - t * dg, eb = pb - t * db;
+                    if (t >= tLo && t <= tHi && er * er + eg * eg + eb * eb <= tolerance * tolerance) found++;
+                }
+            }
+            return found;
         }
     }
     // Pixels do icone do executavel (o que o Explorer mostra, 32x32) a ate 'tolerance' da cor.

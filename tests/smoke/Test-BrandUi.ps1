@@ -1,5 +1,6 @@
 # Teste de fumaca da marca na interface: faixa superior com status e tela Sobre pelo menu principal;
-# cores e logos da Starsonic conferidos nos pixels da tela (azul #383881 e ciano #3DB1CC) e no icone.
+# cores e logos da Starsonic conferidos nos pixels da tela (azul #383881 e ciano #3DB1CC) e no icone;
+# logo da faixa reduzido com suavizacao; areas dos logos das telas Entrar e Sobre na proporcao do logo.
 # Uso: .\tests\smoke\Test-BrandUi.ps1 -AppDir out [-Version 0.0.0]   (versao com que o app foi compilado)
 param(
     [string]$AppDir = 'out',
@@ -44,6 +45,19 @@ function Wait-Pixels {
     return $holder.Last
 }
 
+# Area do logo com a proporcao de logo-entrar.png (3,4 a 4,0 vezes mais larga que alta), para o
+# cartao ocupar a area toda. Devolve o problema ou $null.
+function Test-LogoArea([IntPtr]$Logo, [string]$Screen) {
+    $rect = New-Object StarsonicWin32+RECT
+    [StarsonicWin32]::GetWindowRect($Logo, [ref]$rect) | Out-Null
+    $width = $rect.Right - $rect.Left
+    $height = $rect.Bottom - $rect.Top
+    if ($height -le 0 -or $width -lt $height * 3.4 -or $width -gt $height * 4.0) {
+        return "Area do logo da tela $Screen com $width x $height pixels (esperado 3,4 a 4,0 vezes mais larga que alta)."
+    }
+    return $null
+}
+
 try {
     $process = Start-App -Exe $exe
     $main = Find-WindowByClass -ProcessId $process.Id -ClassName 'Starsonic Phone' -TimeoutSeconds 20
@@ -70,12 +84,22 @@ try {
     if ($bandCyan[0] -lt 20) {
         $visual += "Logo da faixa sem o ciano Starsonic: $($bandCyan[0]) pixels."
     }
+    # Logo reduzido com qualidade: as bordas do "star" branco saem em tons entre o azul e o branco
+    # (reduzido sem suavizar, so ha pixels azuis ou brancos).
+    $bandSoft = [StarsonicPixels]::Blend($main.Handle, $band, $NAVY[0], $NAVY[1], $NAVY[2], 0xFF, 0xFF, 0xFF, 24, 0.2, 0.8, 0.0, 0.4)
+    if ($bandSoft -lt 60) {
+        $visual += "Logo da faixa serrilhado: $bandSoft pixels de borda suave."
+    }
     $loginTitle = Get-Text @('Starsonic Phone ', 0x2014, ' Entrar')
     $login = Find-WindowByTitle -ProcessId $process.Id -Title $loginTitle -TimeoutSeconds 20
     if (-not $login) {
         $visual += 'A tela Entrar nao abriu na inicializacao.'
     } else {
         $loginLogo = [StarsonicWin32]::GetDlgItem($login.Handle, $IDC_SS_LOGO)
+        $loginArea = Test-LogoArea -Logo $loginLogo -Screen 'Entrar'
+        if ($loginArea) {
+            $visual += $loginArea
+        }
         $loginCyan = Wait-Pixels -Top $login.Handle -Child $loginLogo -Rgb $CYAN -Tolerance 40 -FromX 0.0 -ToX 1.0 -Minimum 20
         if ($loginCyan[0] -lt 20) {
             $visual += "Logo da tela Entrar sem o ciano Starsonic: $($loginCyan[0]) pixels."
@@ -111,6 +135,10 @@ try {
         Fail "Licenca na tela Sobre: '$license'."
     }
     $aboutLogo = [StarsonicWin32]::GetDlgItem($about.Handle, $IDC_SS_ABOUT_LOGO)
+    $aboutArea = Test-LogoArea -Logo $aboutLogo -Screen 'Sobre'
+    if ($aboutArea) {
+        $visual += $aboutArea
+    }
     $aboutCyan = Wait-Pixels -Top $about.Handle -Child $aboutLogo -Rgb $CYAN -Tolerance 40 -FromX 0.0 -ToX 1.0 -Minimum 20
     if ($aboutCyan[0] -lt 20) {
         $visual += "Logo da tela Sobre sem o ciano Starsonic: $($aboutCyan[0]) pixels."
@@ -126,7 +154,7 @@ try {
     if (-not (Stop-App -Exe $exe -Process $process -TimeoutSeconds 15)) {
         Fail ("O app nao fechou com /exit. " + ($script:StopAppDetails -join ' | '))
     }
-    Write-Host 'OK: faixa da marca com status, cores e logo; tela Entrar e Sobre com o logo; icone do app; Sobre com versao e licenca.'
+    Write-Host 'OK: faixa da marca com status, cores e logo suave; tela Entrar e Sobre com o logo na area certa; icone do app; Sobre com versao e licenca.'
 } finally {
     if ($process -and -not $process.HasExited) {
         Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
