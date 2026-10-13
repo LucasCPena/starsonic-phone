@@ -77,6 +77,7 @@ using System;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
+using System.Text;
 public static class StarsonicPixels {
     [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
@@ -146,6 +147,29 @@ public static class StarsonicPixels {
             }
             return found;
         }
+    }
+    [StructLayout(LayoutKind.Sequential)] struct SIZE { public int cx, cy; }
+    [DllImport("user32.dll")] static extern IntPtr GetDC(IntPtr hWnd);
+    [DllImport("user32.dll")] static extern int ReleaseDC(IntPtr hWnd, IntPtr hdc);
+    [DllImport("user32.dll")] static extern bool GetClientRect(IntPtr hWnd, out RECT rect);
+    [DllImport("user32.dll")] static extern IntPtr SendMessageW(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowTextW(IntPtr hWnd, StringBuilder text, int max);
+    [DllImport("gdi32.dll")] static extern IntPtr SelectObject(IntPtr hdc, IntPtr obj);
+    [DllImport("gdi32.dll", CharSet = CharSet.Unicode)] static extern bool GetTextExtentPoint32W(IntPtr hdc, string text, int length, out SIZE size);
+    // Texto do controle numa linha, com a fonte dele: { largura do texto, largura do controle } em pixels.
+    public static int[] TextFit(IntPtr control) {
+        StringBuilder text = new StringBuilder(512);
+        GetWindowTextW(control, text, text.Capacity);
+        IntPtr font = SendMessageW(control, 0x31, IntPtr.Zero, IntPtr.Zero);   // WM_GETFONT
+        IntPtr hdc = GetDC(control);
+        IntPtr old = SelectObject(hdc, font);
+        SIZE size;
+        GetTextExtentPoint32W(hdc, text.ToString(), text.Length, out size);
+        SelectObject(hdc, old);
+        ReleaseDC(control, hdc);
+        RECT client;
+        GetClientRect(control, out client);
+        return new int[] { size.cx, client.Right - client.Left };
     }
     // Pixels do icone do executavel (o que o Explorer mostra, 32x32) a ate 'tolerance' da cor.
     public static int IconCount(string exe, int r, int g, int b, int tolerance) {

@@ -1,6 +1,7 @@
 # Teste de fumaca da marca na interface: faixa superior com status e tela Sobre pelo menu principal;
 # cores e logos da Starsonic conferidos nos pixels da tela (azul #383881 e ciano #3DB1CC) e no icone;
-# logo da faixa reduzido com suavizacao; areas dos logos das telas Entrar e Sobre na proporcao do logo.
+# logo da faixa reduzido com suavizacao; areas dos logos das telas Entrar e Sobre na proporcao do logo;
+# linha de ajuda da tela Entrar inteira.
 # Uso: .\tests\smoke\Test-BrandUi.ps1 -AppDir out [-Version 0.0.0]   (versao com que o app foi compilado)
 param(
     [string]$AppDir = 'out',
@@ -16,6 +17,7 @@ $IDC_STARSONIC_BAND = 41200
 $IDC_SS_ABOUT_VERSION = 41022
 $IDC_SS_ABOUT_LICENSE = 41024
 $IDC_SS_LOGO = 41011
+$IDC_SS_HELP = 41018
 $IDC_SS_ABOUT_LOGO = 41021
 $NAVY = @(0x38, 0x38, 0x81)
 $CYAN = @(0x3D, 0xB1, 0xCC)
@@ -103,6 +105,13 @@ try {
         $loginCyan = Wait-Pixels -Top $login.Handle -Child $loginLogo -Rgb $CYAN -Tolerance 40 -FromX 0.0 -ToX 1.0 -Minimum 20
         if ($loginCyan[0] -lt 20) {
             $visual += "Logo da tela Entrar sem o ciano Starsonic: $($loginCyan[0]) pixels."
+        }
+        # A linha de ajuda cabe inteira numa linha (com o telefone do suporte).
+        $help = [StarsonicWin32]::GetDlgItem($login.Handle, $IDC_SS_HELP)
+        $helpText = [StarsonicWin32]::ControlText($help)
+        $helpFit = [StarsonicPixels]::TextFit($help)
+        if (-not $helpText.EndsWith('5060-3000') -or $helpFit[0] -gt $helpFit[1]) {
+            $visual += "Linha de ajuda da tela Entrar cortada: '$helpText' precisa de $($helpFit[0]) pixels e tem $($helpFit[1])."
         }
     }
     $iconNavy = [StarsonicPixels]::IconCount($exe, $NAVY[0], $NAVY[1], $NAVY[2], 24)
