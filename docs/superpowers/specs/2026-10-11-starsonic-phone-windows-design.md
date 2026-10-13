@@ -1,8 +1,16 @@
 # Starsonic Phone para Windows — especificação de design
 
 - **Data:** 11/10/2026
-- **Status:** aprovada (revisão 1.1 com correções após a leitura do código do MicroSIP 3.22.16)
+- **Status:** revisão 1.2 (13/10/2026) em aprovação; a revisão 1.1 foi aprovada em 11/10/2026
 - **Subprojeto:** 1 de 2 — o 2º é o app de celular (iOS e Android), com especificação própria
+
+> **Revisão 1.2 — servidor digitado na tela Entrar** (decisão do responsável em 13/10/2026: a Starsonic tem muitos clientes, cada um em um de dois servidores):
+> 1. A tela Entrar troca a lista de servidores por um campo de texto: o endereço do servidor (nome ou IP) é digitado, como no MicroSIP. O app deixa de trazer uma lista de servidores (M3) e o endereço deixa de ser travado.
+> 2. `branding/servidores.ini` vira `branding/perfil.ini`, com a seção `[geral]` e uma seção `[conta]` que vale para todas as contas: UDP na porta 5060, sem proxy, SRTP opcional e keepalive de 15 s; sem STUN, codecs G722, PCMA e PCMU e DTMF RFC 2833.
+> 3. As travas continuam ao abrir o app e ao ativar uma conta; da pessoa ficam só o endereço do servidor, o ramal e a senha. Conta com endereço vazio ou fora da regra é esvaziada, e a mensagem "O servidor desta conta mudou" sai.
+> 4. Mensagens novas para o endereço; a mensagem de falha de rede passa a pedir para conferir o endereço.
+> 5. Os testes de fumaça digitam 127.0.0.1 no build normal; saem o build separado de CI e a fase de TLS do teste de fumaça.
+> 6. Riscos novos: o app funciona com qualquer servidor SIP; com UDP, a chave do SRTP vai sem proteção.
 
 > **Revisão 1.1 — o que mudou e por quê** (fatos encontrados no código-fonte):
 > 1. O MicroSIP mantém **uma conta ativa por vez**; "várias contas" significa várias configuradas, trocadas pelo menu.
@@ -16,21 +24,21 @@
 
 A Starsonic (TI, telefonia e segurança para empresas em São Paulo, desde 1996) vende o **PABX em Nuvem**. Ele roda sobre a plataforma SIP de um fornecedor terceiro, distribuída em alguns servidores; cada cliente fica em um deles.
 
-Este subprojeto cria o **Starsonic Phone para Windows**: um fork do [MicroSIP](https://www.microsip.org) 3.22.16 — softphone open source para Windows, em C/C++ com MFC sobre a pilha PJSIP — com a marca da Starsonic, servidores embutidos e configurações travadas.
+Este subprojeto cria o **Starsonic Phone para Windows**: um fork do [MicroSIP](https://www.microsip.org) 3.22.16 — softphone open source para Windows, em C/C++ com MFC sobre a pilha PJSIP — com a marca da Starsonic e configurações técnicas embutidas e travadas; o endereço do servidor é digitado na tela Entrar.
 
 ## 2. Objetivos
 
 1. **Marca própria** — o cliente vê Starsonic, nunca MicroSIP.
-2. **Configuração fácil** — o usuário escolhe o servidor, digita ramal e senha e liga.
+2. **Configuração fácil** — o usuário digita o servidor, o ramal e a senha e liga.
 3. **Controle e suporte** — configurações técnicas padronizadas e travadas; atualizações controladas pela Starsonic.
 
 **Regra do projeto:** o comportamento padrão é o do MicroSIP. Qualquer mudança além das listadas na seção 4 precisa de aprovação prévia.
 
 ## 3. Critérios de sucesso
 
-- Um usuário sem conhecimento técnico instala o app, escolhe o servidor, digita ramal e senha e completa uma ligação sem ver nenhum campo técnico.
+- Um usuário sem conhecimento técnico instala o app, digita o servidor que a Starsonic informou, o ramal e a senha e completa uma ligação sem ver nenhum outro campo técnico.
 - Nenhum texto, ícone ou janela mostra "MicroSIP", exceto a atribuição na tela Sobre e os avisos de copyright e licença.
-- O usuário não consegue alterar as configurações de conta e rede — nem pela interface, nem editando o arquivo de configuração.
+- O usuário não consegue alterar as configurações de conta e rede além do endereço do servidor — nem pela interface, nem editando o arquivo de configuração.
 - Uma versão nova chega como aviso no app e é instalada com um clique, sem pedir senha de administrador.
 - O suporte identifica o app e a versão pela tela Sobre e pelo User-Agent SIP.
 - Cada versão publicada cumpre a GPL: o código-fonte completo fica disponível junto do instalador.
@@ -40,12 +48,12 @@ Este subprojeto cria o **Starsonic Phone para Windows**: um fork do [MicroSIP](h
 | # | Mudança | Decisão |
 |---|---------|---------|
 | M1 | Edição | Somente áudio (a edição "Lite" do MicroSIP, sem vídeo) |
-| M2 | Acesso | Tela **Entrar** (servidor + ramal + senha) no lugar da janela de conta padrão; a mesma tela serve para adicionar e editar contas. A conta "Local" (ligação por IP) continua com a janela original |
-| M3 | Servidores | Perfis de servidor embutidos no app; mudar a lista exige versão nova |
+| M2 | Acesso | Tela **Entrar** (servidor digitado + ramal + senha) no lugar da janela de conta padrão; a mesma tela serve para adicionar e editar contas. A conta "Local" (ligação por IP) continua com a janela original |
+| M3 | Perfil | Um perfil embutido no app vale para todas as contas (porta, transporte, proxy, SRTP e keepalive), junto com STUN, codecs e DTMF; o endereço do servidor é digitado na tela Entrar (revisão 1.2; antes, lista de servidores embutida) |
 | M4 | Marca | Nome **Starsonic Phone**, ícones, logo, textos, links de menu e tela Sobre próprios; versão própria a partir de 1.0.0 |
 | M5 | Tema | Faixa superior (logo + status) e botões **Ligar** e **Entrar** na cor da marca; o resto da interface continua nativo |
 | M6 | User-Agent | `Starsonic Phone/<versão>` no lugar de `MicroSIP/<versão>` |
-| M7 | Travas | Campos de conta e rede e a verificação de atualizações ficam travados e somem da tela de Configurações |
+| M7 | Travas | Campos de conta e rede e a verificação de atualizações ficam travados e somem da tela de Configurações; da pessoa ficam só o endereço do servidor, o ramal e a senha |
 | M8 | Instalação | Instalador próprio, por usuário, sem privilégio de administrador; pasta e configurações próprias |
 | M9 | Atualização | Aviso no app e "baixar e instalar" com um clique, a partir dos releases do GitHub |
 | M10 | Relatórios de falha | Não enviar para `crash-report2.microsip.org`; o arquivo de diagnóstico continua sendo gravado no PC (aprovado em 11/10/2026) |
@@ -57,7 +65,7 @@ Este subprojeto cria o **Starsonic Phone para Windows**: um fork do [MicroSIP](h
 - Recursos que o MicroSIP não tem (integrações com WhatsApp, IA, CRM etc.).
 - Vídeo.
 - Assinatura de código do instalador — fica para quando a Starsonic comprar o certificado (ver seção 13).
-- Lista de servidores baixada da internet e provisionamento remoto.
+- Perfil baixado da internet e provisionamento remoto.
 - Tema completo da interface — só os três elementos de M5.
 - App de celular (subprojeto 2).
 - Windows anterior ao 10.
@@ -77,7 +85,7 @@ Pastas do `main`, além das do `upstream`:
 
 | Pasta | Conteúdo |
 |-------|----------|
-| `branding/` | Marca e dados da Starsonic: `branding.h` (nome, URLs, cores, conta do GitHub), `servidores.ini`, tradução pt-BR revisada, ícones e logos |
+| `branding/` | Marca e dados da Starsonic: `branding.h` (nome, URLs, cores, conta do GitHub), `perfil.ini`, tradução pt-BR revisada, ícones e logos |
 | `starsonic/core/` | Lógica nova em C++17 sem MFC nem Windows — testável no Linux e no Windows |
 | `starsonic/win/` | Integração com a interface do MicroSIP (MFC) |
 | `tests/` | Testes unitários do `core` e testes de fumaça da interface |
@@ -92,8 +100,8 @@ Pastas do `main`, além das do `upstream`:
 
 | Módulo | Responsabilidade | Depende de |
 |--------|------------------|------------|
-| `ServerProfiles` (core) | Lê `servidores.ini` e devolve a seção `[geral]` e os perfis; busca por id | — |
-| `AccountPolicy` (core) | Valida o ramal; monta contas a partir de perfil + credenciais; reaplica o perfil sobre contas existentes e as configurações globais travadas | `ServerProfiles` |
+| `Profile` (core) | Lê `perfil.ini` e devolve as seções `[geral]` e `[conta]` | — |
+| `AccountPolicy` (core) | Valida o endereço do servidor e o ramal; monta contas a partir do perfil + endereço + credenciais; reaplica o perfil sobre contas existentes e as configurações globais travadas | `Profile` |
 | `RegistrationErrors` (core) | Traduz o código SIP ou a falha de TLS do registro em mensagem pt-BR | — |
 | `LoginFlow` (core) | Máquina de estados da tela Entrar: enviar, resultado do registro, tempo esgotado | `RegistrationErrors` |
 | `UpdateManifest` (core) | Interpreta `versao.json` e compara versões | — |
@@ -103,7 +111,7 @@ Pastas do `main`, além das do `upstream`:
 | `SettingsFilter` (win) | Esconde os campos travados e aplica `LayoutCollapse` | `LayoutCollapse` |
 | `Updater` (win) | Verificação, download com validação de certificado, SHA-256 e instalação silenciosa | `UpdateManifest` |
 
-### 6.3 Perfis de servidor (`branding/servidores.ini`)
+### 6.3 Perfil (`branding/perfil.ini`)
 
 ```ini
 [geral]                   ; vale para todas as contas (no MicroSIP, STUN, codecs e DTMF são globais)
@@ -111,23 +119,20 @@ stun=                     ; vazio = sem STUN
 codecs=G722,PCMA,PCMU     ; ordem de preferência; opções: opus, G722, PCMA, PCMU, G729
 dtmf=rfc2833              ; auto | inband | rfc2833 | info
 
-[sp1]                     ; id do servidor: gravado em cada conta, nunca muda depois de publicado
-nome=Servidor 1
-endereco=sip1.exemplo.invalid
-dominio=                  ; vazio = igual ao endereço
+[conta]                   ; vale para toda conta; o endereço do servidor é digitado na tela Entrar
 porta=5060
 transporte=udp            ; udp | tcp | tls
 proxy=                    ; vazio = sem proxy
-srtp=desativado           ; desativado | opcional | obrigatorio
+srtp=opcional             ; desativado | opcional | obrigatorio
 keepalive=15              ; segundos
 ```
 
-Os valores acima só ilustram o formato; os reais vêm do fornecedor da plataforma (seção 12). Regras: ids só com letras minúsculas, números, `-` e `_`; id duplicado, chave desconhecida, campo obrigatório ausente (`nome`, `endereco`, `porta`, `transporte`) ou valor fora das opções invalida o arquivo — e o build falha, porque os testes leem o arquivo real de `branding/`.
+São os valores reais, informados pela Starsonic em 13/10/2026. Os servidores da Starsonic hoje são `starcloud-starsonic.com.br` e `starcloud1-starsonic.com.br` (cada cliente usa um deles) e não ficam no app: o suporte informa o endereço a cada cliente. Regras: o arquivo só tem as seções `[geral]` (opcional; sem ela valem os padrões do MicroSIP) e `[conta]` (obrigatória); seção desconhecida ou repetida, chave desconhecida (inclusive as antigas `nome`, `endereco` e `dominio`), campo obrigatório ausente (`porta`, `transporte`) ou valor fora das opções invalida o arquivo — e o build falha, porque os testes leem o arquivo real de `branding/`.
 
 ### 6.4 Arquivos no PC do usuário
 
 - Programa: `%LOCALAPPDATA%\Starsonic Phone\` (`StarsonicPhone.exe`, sons, tradução, `Uninstall.exe`) — o mesmo esquema por usuário do instalador do MicroSIP.
-- Configurações: `%APPDATA%\Starsonic Phone\StarsonicPhone.ini`, no formato do MicroSIP, com a chave `starsonicServer` (id do servidor) em cada conta. A senha é guardada como o MicroSIP já guarda.
+- Configurações: `%APPDATA%\Starsonic Phone\StarsonicPhone.ini`, no formato do MicroSIP. O endereço do servidor fica nos campos de servidor (`<endereço>:<porta>`) e domínio da conta, como no MicroSIP; a chave `starsonicServer` das contas gravadas antes da revisão 1.2 é ignorada. A senha é guardada como o MicroSIP já guarda.
 - Instância única e classe de janela próprias, sem conflito com um MicroSIP instalado no mesmo PC.
 
 ## 7. Fluxos
@@ -135,17 +140,21 @@ Os valores acima só ilustram o formato; os reais vêm do fornecedor da platafor
 ### 7.1 Entrar, adicionar e editar conta
 
 1. Sem conta ativa, o app abre a tela Entrar ao iniciar. A mesma tela abre em Contas → Adicionar e Contas → Editar (com servidor e ramal preenchidos) e quando o servidor recusa a senha.
-2. O usuário escolhe o servidor (o primeiro da lista vem selecionado), digita ramal e senha e clica Entrar. Ramal vazio ou com espaço, `@` ou `:` é recusado na hora ("Digite só o número do ramal.").
-3. `AccountPolicy` monta a conta: perfil do servidor + ramal (usuário SIP e nome de exibição) + senha.
+2. O usuário digita o endereço do servidor, o ramal e a senha e clica Entrar. O campo Servidor começa vazio, menos em Editar. O app apara espaços e tabs das pontas do endereço e o passa para minúsculas. O endereço vale se tiver até 253 caracteres, em partes separadas por ponto, cada uma com 1 a 63 letras (a–z), dígitos ou hífens e sem hífen nas pontas — o que inclui IPs como `200.100.50.10` (IPv6 não é aceito). Os campos são conferidos nesta ordem, na hora:
+   - servidor vazio → "Digite o endereço do servidor.";
+   - servidor fora da regra (espaço, porta, `@`, `/`, acento etc.) → "Digite só o endereço do servidor, como starcloud1-starsonic.com.br.";
+   - ramal vazio ou com espaço, `@` ou `:` → "Digite só o número do ramal.";
+   - senha vazia → "Digite a senha."
+3. `AccountPolicy` monta a conta: perfil + endereço (servidor `<endereço>:<porta>` e domínio `<endereço>`) + ramal (usuário SIP e nome de exibição) + senha. O rótulo da conta, usado no menu de contas e na faixa superior, é `<ramal> · <endereço>`.
 4. A conta candidata vira a conta ativa e o app espera o resultado do registro por até 15 s.
-5. Registrou → a conta é gravada no INI, a tela fecha e a faixa superior mostra "Conectado · <ramal> · <servidor>".
+5. Registrou → a conta é gravada no INI, a tela fecha e a faixa superior mostra "Conectado · <ramal> · <endereço>".
    Falhou ou esgotou o tempo → a conta não é gravada, a conta ativa anterior volta (se havia) e a tela continua aberta com a mensagem de `RegistrationErrors`. Resultados que chegam depois do tempo esgotado são ignorados.
 6. Remover a última conta volta à tela Entrar.
 
 ### 7.2 Inicialização
 
 1. O app lê o INI.
-2. `AccountPolicy` reaplica o perfil em cada conta e as configurações globais travadas. Conta com servidor desconhecido fica desativada; se era a ativa, o app abre a tela Entrar com o aviso "O servidor desta conta mudou. Entre novamente."
+2. `AccountPolicy` reaplica o perfil em cada conta e as configurações globais travadas. O endereço de cada conta é o do seu campo de servidor, sem a porta; a conta volta a ter servidor `<endereço>:<porta do perfil>`, domínio `<endereço>` e rótulo `<ramal> · <endereço>`. Com endereço vazio ou fora da regra de 7.1, a conta é esvaziada (usuário, senha, servidor, domínio e proxy) e, se era a ativa, o app abre a tela Entrar. O perfil também é reaplicado quando uma conta é ativada com o app aberto (troca pelo menu, importação, `/account:N`), antes de registrar.
 3. A conta ativa é registrada; daí em diante vale o comportamento padrão do MicroSIP.
 
 ### 7.3 Atualização
@@ -179,11 +188,11 @@ Os valores acima só ilustram o formato; os reais vêm do fornecedor da platafor
 
 ### 8.1 Tela Entrar
 
-Logo; campos Servidor (lista suspensa), Ramal e Senha; botão Entrar na cor da marca; linha "Precisa de ajuda? (11) 5060-3000". Mensagens de erro aparecem abaixo da senha, em vermelho. Na edição de uma conta existente aparece também o link "Remover conta".
+Logo; campos "Servidor (endereço ou IP)" (texto livre), Ramal e Senha; botão Entrar na cor da marca; linha "Precisa de ajuda? (11) 5060-3000". Mensagens de erro aparecem abaixo da senha, em vermelho. Na edição de uma conta existente aparece também o link "Remover conta".
 
 ### 8.2 Janela principal
 
-Igual à do MicroSIP, com as duas diferenças de M5: faixa superior na cor da marca com o logo e a linha de status da conta ativa ("Conectado · 2001 · Servidor 1"), e botão Ligar na cor da marca.
+Igual à do MicroSIP, com as duas diferenças de M5: faixa superior na cor da marca com o logo e a linha de status da conta ativa ("Conectado · 2001 · starcloud1-starsonic.com.br", cortada com "…" quando não cabe), e botão Ligar na cor da marca.
 
 ### 8.3 Configurações
 
@@ -261,12 +270,13 @@ Entrada: versão do MicroSIP (ex.: `3.22.16`). Baixa `MicroSIP-<versão>-src.7z`
 |----------|--------------------|
 | SIP 401, 403 ou 407 no registro | Ramal ou senha incorretos. |
 | SIP 404 | Ramal não encontrado neste servidor. |
-| Tempo esgotado, SIP 408 ou 5xx, sem resposta, falha de DNS ou de rede | Não foi possível falar com o servidor. Verifique sua internet. |
+| Tempo esgotado, SIP 408 ou 5xx, sem resposta, falha de DNS ou de rede | Não foi possível falar com o servidor. Confira o endereço e a sua internet. |
 | Falha de TLS | Não foi possível estabelecer uma conexão segura com o servidor. |
 | Outros códigos | Não foi possível entrar (código <n>). Fale com o suporte da Starsonic. |
+| Servidor vazio | Digite o endereço do servidor. |
+| Servidor fora da regra de 7.1 (espaço, porta, `@`, `/`, acento etc.) | Digite só o endereço do servidor, como starcloud1-starsonic.com.br. |
 | Ramal vazio ou com espaço, `@` ou `:` | Digite só o número do ramal. |
 | Senha vazia | Digite a senha. |
-| Conta com servidor removido da lista | O servidor desta conta mudou. Entre novamente. |
 | Atualizar com chamada em andamento | Termine a chamada para atualizar. |
 | Download da atualização falhou ou SHA-256 diferente | Não foi possível baixar a atualização. Tentaremos de novo mais tarde. |
 | Sem internet ao verificar atualização | Nada; nova tentativa no próximo ciclo e registro no log |
@@ -279,14 +289,14 @@ Depois que a conta está registrada, quedas e reconexões seguem o comportamento
 - **Unitários** do `starsonic/core`, escritos antes do código (TDD), com doctest — rodam no Linux e no Windows.
 - **Varredura de marca:** reprova o build se "MicroSIP" aparecer em textos visíveis — recursos (.rc/.rc2), tradução pt-BR, textos do instalador e textos do código novo —, exceto na linha de atribuição da tela Sobre e no aviso de copyright do recurso de versão.
 - **Instalador:** instalação e desinstalação silenciosas no runner, conferindo arquivos, atalhos e chaves de registro.
-- **Fumaça da interface** (UI Automation): o app abre e fecha; no primeiro acesso aparece a tela Entrar com os servidores do perfil; com um registrador SIP falso local, senha certa conecta e senha errada mostra "Ramal ou senha incorretos."; a tela Sobre mostra versão e licença; as Configurações não mostram os campos travados.
+- **Fumaça da interface**, no mesmo build que vai para o instalador: o app abre e fecha; no primeiro acesso aparece a tela Entrar com o campo Servidor vazio; com um registrador SIP falso local (endereço `127.0.0.1` digitado), endereço inválido e ramal inválido são recusados, senha errada mostra "Ramal ou senha incorretos." e senha certa conecta; uma conta adulterada no INI registra pelo perfil; a tela Sobre mostra versão e licença; as Configurações não mostram os campos travados. Enquanto o perfil usar UDP, a mensagem de falha de TLS só é coberta pelos testes unitários; se o perfil passar para TLS, o teste manual passa a cobri-la.
 
 ### 11.3 Teste manual (checklist em `docs/teste-manual.md`, antes de cada versão estável)
 
-Em Windows 10 e Windows 11, com um ramal de teste em cada servidor:
+Em Windows 10 e Windows 11, com um ramal de teste em cada servidor da Starsonic (`starcloud-starsonic.com.br` e `starcloud1-starsonic.com.br`):
 
 - Instalar a partir do download pelo navegador (com o alerta esperado por falta de assinatura).
-- Entrar com senha certa, senha errada e servidor errado.
+- Entrar com senha certa, senha errada e endereço de servidor errado, nos dois servidores.
 - Ligar, receber, colocar em espera, transferir e enviar DTMF numa URA.
 - Duas contas configuradas; trocar a ativa pelo menu; remover a última conta volta à tela Entrar.
 - Conferir que "MicroSIP" não aparece, a tela Sobre e que o servidor aceita o User-Agent.
@@ -301,7 +311,7 @@ Em Windows 10 e Windows 11, com um ramal de teste em cada servidor:
 | Usuário do GitHub dono do repositório (e o GitHub conectado à sessão do Claude) | `STARSONIC_GITHUB_ACCOUNT`; publicar o repositório e rodar o build |
 | Logo em alta resolução (SVG ou PNG com 1024 px ou mais) e símbolo quadrado | Tela Entrar, faixa superior, Sobre, instalador e ícones de 16 a 256 px |
 | Cores oficiais em hex: cor principal e cor do texto sobre ela | Tema (M5) |
-| Por servidor: nome amigável, endereço, porta, transporte, proxy, criptografia; e, para todos, STUN, codecs e DTMF recomendados pelo fornecedor | `servidores.ini` |
+| Porta, transporte, proxy, criptografia e keepalive das contas; STUN, codecs e DTMF — recebidos em 13/10/2026 (seção 6.3) | `perfil.ini` |
 | Um ramal de teste por servidor (fica fora do repositório) | Testes manuais |
 | Tradução pt-BR do MicroSIP, se o pacote "Lite" não a trouxer (exportada em microsip.org/translation) | Idioma do app |
 
@@ -313,11 +323,14 @@ Em Windows 10 e Windows 11, com um ramal de teste em cada servidor:
 | Sem assinatura, o Windows mostra o alerta de "editor desconhecido" ao instalar pelo navegador | Aceito nesta fase; com o certificado, a assinatura entra como um passo novo no workflow `release` |
 | Sem assinatura, a integridade das atualizações depende só da conta do GitHub (arquivo de versão e instalador no mesmo lugar) | Conta do GitHub com verificação em duas etapas; acesso de escrita ao repositório restrito |
 | A plataforma do fornecedor filtrar o User-Agent | Testado em cada servidor; se filtrar, volta o User-Agent do MicroSIP |
-| Endereços dos servidores ficam públicos no repositório (já estariam no executável) | Proteção contra força bruta nos servidores é do fornecedor; confirmar com ele |
+| Com o endereço digitado, o app funciona com qualquer servidor SIP, não só os da Starsonic | Aceito na revisão 1.2: a marca e as travas técnicas continuam, e o suporte informa o endereço certo a cada cliente |
+| Com UDP, a chave do SRTP opcional vai sem proteção na sinalização: quem capturar a sinalização consegue decifrar a chamada | Aceito na revisão 1.2; trocar para `transporte=tls` (porta 5061) no `perfil.ini` resolve com uma versão nova, sem mudar o código |
+| Proteção contra força bruta nos servidores | É do fornecedor da plataforma; confirmar com ele |
 | Repositório migrar da conta pessoal para uma organização | O GitHub redireciona os links antigos; nunca recriar um repositório com o mesmo nome na conta antiga |
 | O tema e os ganchos conflitarem com versões novas do MicroSIP | Edições no código do MicroSIP limitadas à lista do plano, cada uma de poucas linhas, chamando `starsonic/` |
 
 ## 14. Próximos passos
 
-1. Plano de implementação (skill writing-plans).
-2. Depois do Windows: brainstorming do subprojeto 2 (celular).
+1. Plano de implementação da revisão 1.2 (skill writing-plans); o da revisão 1.1 já foi executado.
+2. Versão candidata nova para o teste manual (seção 11.3).
+3. Depois do Windows: brainstorming do subprojeto 2 (celular).
