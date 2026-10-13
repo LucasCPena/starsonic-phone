@@ -102,7 +102,7 @@ jobs:
 
       - name: Compilar o Starsonic Phone
         id: app
-        run: .\build\Build-App.ps1 -WorkDir work -Version $env:STARSONIC_VERSION -Channel $env:STARSONIC_CHANNEL -ProfilesFile branding\servidores.ini -OutDir out
+        run: .\build\Build-App.ps1 -WorkDir work -Version $env:STARSONIC_VERSION -Channel $env:STARSONIC_CHANNEL -ProfileFile branding\perfil.ini -OutDir out
 
       - name: Verificação de marca
         if: ${{ !cancelled() && steps.app.outcome == 'success' }}

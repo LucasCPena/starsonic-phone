@@ -9,13 +9,14 @@ class CStarsonicLoginDlg;
 
 namespace starsonic {
 
-// E4 (microsip.cpp, logo depois de accountSettings.Init()): reaplica os perfis embutidos
-// em todas as contas e trava as configuracoes globais (nada em /reset, /resetnoask e /exit).
+// E4 (microsip.cpp, logo depois de accountSettings.Init()): reaplica o perfil embutido em todas
+// as contas, cada uma com o proprio endereco do servidor, e trava as configuracoes globais (nada
+// em /reset, /resetnoask e /exit).
 void OnSettingsLoaded();
 
 // E14 (inicio de PJAccountAdd, depois de conferir accountId): reaplica o perfil, na memoria, a
 // conta que vai registrar — cobre a importacao, a troca de conta pelo menu e o /account:N com o
-// app aberto. Servidor desconhecido: a conta fica vazia e o MicroSIP abre a tela Entrar.
+// app aberto. Endereco vazio ou invalido: a conta fica vazia e o MicroSIP abre a tela Entrar.
 void EnforceActiveAccount();
 
 // E8: Contas > Adicionar/Editar e o OnAccount do MicroSIP abrem a tela Entrar.

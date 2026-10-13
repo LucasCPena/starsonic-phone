@@ -42,7 +42,6 @@ private:
     starsonic::LoginFlow flow_;
     int accountId_ = -1;      // conta editada; -1 = nova
     int targetId_ = 0;        // conta sendo registrada
-    CString targetServerId_;
     int prevId_ = 0;          // conta ativa antes de Entrar (volta se falhar)
     Account prevAccount_;
     bool messageIsError_ = false;

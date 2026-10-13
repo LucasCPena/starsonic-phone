@@ -1,5 +1,5 @@
 #include "stdafx.h"
-#include "ProfilesStore.h"
+#include "ProfileStore.h"
 
 #include <string>
 
@@ -8,9 +8,9 @@
 
 namespace {
 
-std::string ReadServersResource() {
+std::string ReadProfileResource() {
     HMODULE module = GetModuleHandle(NULL);
-    HRSRC info = FindResource(module, MAKEINTRESOURCE(IDR_STARSONIC_SERVERS), RT_RCDATA);
+    HRSRC info = FindResource(module, MAKEINTRESOURCE(IDR_STARSONIC_PROFILE), RT_RCDATA);
     if (!info) {
         return std::string();
     }
@@ -24,20 +24,19 @@ std::string ReadServersResource() {
 
 }  // namespace
 
-const starsonic::Profiles& LoadedProfiles() {
-    static starsonic::Profiles profiles;
+const starsonic::Profile& LoadedProfile() {
+    static starsonic::Profile profile;
     static bool loaded = false;
     if (!loaded) {
         loaded = true;
-        const std::wstring text = starsonic::Utf8ToWide(starsonic::StripUtf8Bom(ReadServersResource()));
-        const starsonic::ParseResult result = starsonic::ParseProfiles(text, &profiles);
+        const std::wstring text = starsonic::Utf8ToWide(starsonic::StripUtf8Bom(ReadProfileResource()));
+        const starsonic::ParseResult result = starsonic::ParseProfile(text, &profile);
         if (!result.ok) {
             CString message;
-            message.Format(L"Arquivo de servidores inv\u00e1lido (linha %d): %s", result.errorLine,
-                           result.errorMessage.c_str());
+            message.Format(L"Perfil inv\u00e1lido (linha %d): %s", result.errorLine, result.errorMessage.c_str());
             AfxMessageBox(message, MB_ICONERROR | MB_OK);
             ExitProcess(1);
         }
     }
-    return profiles;
+    return profile;
 }

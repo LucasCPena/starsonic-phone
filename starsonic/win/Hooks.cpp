@@ -7,7 +7,7 @@
 #include "AccountAdapter.h"
 #include "AccountPolicy.h"
 #include "LoginDialog.h"
-#include "ProfilesStore.h"
+#include "ProfileStore.h"
 #include "StarsonicIds.h"
 #include "Updater.h"
 #include "lib/MSIP.h"
@@ -58,19 +58,20 @@ void OnSettingsLoaded() {
     if (!ShouldEnforceAtStartup(std::wstring(AfxGetApp()->m_lpCmdLine))) {
         return;
     }
-    const Profiles& profiles = LoadedProfiles();
+    const Profile& profile = LoadedProfile();
     // Todas as secoes [Account<n>] do INI, inclusive depois de um buraco na numeracao (o MicroSIP
-    // carrega qualquer accountId) e as que ele nao carrega (dominio vazio).
+    // carrega qualquer accountId) e as que ele nao carrega (dominio vazio). Cada conta fica com o
+    // proprio endereco do servidor; o resto vem do perfil.
     for (int i : AccountSectionNumbers(IniSectionNames(accountSettings.iniFile))) {
         Account account;
         accountSettings.AccountLoad(i, &account);
-        AccountFields fields = ToFields(account, ReadServerId(i));
-        EnforceAccount(&fields, profiles);
+        AccountFields fields = ToFields(account);
+        EnforceAccount(&fields, profile.account);
         FromFields(fields, &account);
         accountSettings.AccountSave(i, &account);
     }
     GlobalFields globals = GlobalsFrom(accountSettings);
-    EnforceGlobal(&globals, profiles.global);
+    EnforceGlobal(&globals, profile.global);
     GlobalsTo(globals, &accountSettings);
     accountSettings.SettingsSave();
     if (accountSettings.accountId > 0) {
@@ -79,16 +80,15 @@ void OnSettingsLoaded() {
 }
 
 void EnforceActiveAccount() {
-    // A tela Entrar montou a conta pelo perfil e so grava o servidor dela se o registro der certo.
+    // A tela Entrar acabou de montar a conta pelo perfil e so a grava se o registro der certo.
     if (g_loginDlg && g_loginDlg->IsPending()) {
         return;
     }
-    const int id = accountSettings.accountId;
-    if (id <= 0) {
+    if (accountSettings.accountId <= 0) {
         return;
     }
-    AccountFields fields = ToFields(accountSettings.account, ReadServerId(id));
-    EnforceAccount(&fields, LoadedProfiles());
+    AccountFields fields = ToFields(accountSettings.account);
+    EnforceAccount(&fields, LoadedProfile().account);
     FromFields(fields, &accountSettings.account);
 }
 

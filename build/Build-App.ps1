@@ -1,11 +1,11 @@
 # Compila o Starsonic Phone dentro de <WorkDir>\pjproject (preparado por Build-Deps.ps1).
-# Uso: .\build\Build-App.ps1 -WorkDir work -Version 1.0.0 -Channel estavel -ProfilesFile branding\servidores.ini -OutDir out
+# Uso: .\build\Build-App.ps1 -WorkDir work -Version 1.0.0 -Channel estavel -ProfileFile branding\perfil.ini -OutDir out
 # Saida em <OutDir>: StarsonicPhone.exe, sons .wav e a traducao pt-BR (quando existirem).
 param(
     [Parameter(Mandatory = $true)][string]$WorkDir,
     [Parameter(Mandatory = $true)][string]$Version,
     [ValidateSet('estavel', 'teste')][string]$Channel = 'estavel',
-    [Parameter(Mandatory = $true)][string]$ProfilesFile,
+    [Parameter(Mandatory = $true)][string]$ProfileFile,
     [Parameter(Mandatory = $true)][string]$OutDir
 )
 $ErrorActionPreference = 'Stop'
@@ -30,7 +30,7 @@ foreach ($part in $parts) {
 $versionComma = $parts -join ','
 
 $WorkDir = (Resolve-Path $WorkDir).Path
-$ProfilesFile = (Resolve-Path $ProfilesFile).Path
+$ProfileFile = (Resolve-Path $ProfileFile).Path
 $pj = Join-Path $WorkDir 'pjproject'
 if (-not (Test-Path (Join-Path $pj 'lib\libpjproject-i386-Win32-vc14-Release-Static.lib'))) {
     throw "Dependencias ausentes em $WorkDir. Rode antes: .\build\Build-Deps.ps1 -WorkDir $WorkDir"
@@ -73,7 +73,7 @@ foreach ($logo in $logoBand, $logoLogin) {
     }
 }
 # O perfil vai para o executavel sem comentarios (mesma regra do leitor: tudo depois do primeiro ';').
-$profileLines = foreach ($line in [System.IO.File]::ReadAllLines($ProfilesFile, (New-Object System.Text.UTF8Encoding($false)))) {
+$profileLines = foreach ($line in [System.IO.File]::ReadAllLines($ProfileFile, (New-Object System.Text.UTF8Encoding($false)))) {
     $text = $line.TrimStart([char]0xFEFF)
     $cut = $text.IndexOf(';')
     if ($cut -ge 0) {
@@ -84,7 +84,7 @@ $profileLines = foreach ($line in [System.IO.File]::ReadAllLines($ProfilesFile, 
         $text
     }
 }
-Set-ContentIfChanged -Path (Join-Path $generated 'servidores.ini') -Lines @($profileLines) -Encoding UTF8
+Set-ContentIfChanged -Path (Join-Path $generated 'perfil.ini') -Lines @($profileLines) -Encoding UTF8
 $timestamp = Get-CommitTimestamp -RepoRoot $repoRoot
 $channelTest = if ($Channel -eq 'teste') { 1 } else { 0 }
 $logos = if ($hasLogos) { 1 } else { 0 }
@@ -106,12 +106,12 @@ Set-ContentIfChanged -Path (Join-Path $generated 'resource_paths.h') -Lines @(
     '/* Gerado por build/Build-App.ps1. Nao edite. */',
     '#ifndef STARSONIC_RESOURCE_PATHS_H',
     '#define STARSONIC_RESOURCE_PATHS_H',
-    "#define STARSONIC_SERVERS_FILE $(& $rcPath 'servidores.ini')",
+    "#define STARSONIC_PROFILE_FILE $(& $rcPath 'perfil.ini')",
     "#define STARSONIC_LOGO_BAND_FILE $(& $rcPath 'logo-faixa.png')",
     "#define STARSONIC_LOGO_LOGIN_FILE $(& $rcPath 'logo-entrar.png')",
     '#endif'
 )
-Write-Host "versao $Version ($versionComma), canal $Channel, perfis $ProfilesFile"
+Write-Host "versao $Version ($versionComma), canal $Channel, perfil $ProfileFile"
 
 # 4. Compilacao (TargetName vai na linha de comando para valer desde o inicio da avaliacao do projeto)
 . (Join-Path $PSScriptRoot 'VsEnv.ps1')

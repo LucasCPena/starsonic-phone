@@ -8,7 +8,7 @@ Pré-requisitos: Visual Studio 2022 com "Desenvolvimento para desktop com C++" e
 
 ```powershell
 .\build\Build-Deps.ps1 -WorkDir work      # pjproject 2.17 + vcpkg (uma vez; demora)
-.\build\Build-App.ps1 -WorkDir work -Version 0.0.0 -Channel estavel -ProfilesFile branding\servidores.ini -OutDir out
+.\build\Build-App.ps1 -WorkDir work -Version 0.0.0 -Channel estavel -ProfileFile branding\perfil.ini -OutDir out
 .\tests\smoke\Test-StartStop.ps1 -AppDir out
 ```
 

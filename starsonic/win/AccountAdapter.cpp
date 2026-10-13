@@ -6,23 +6,14 @@
 
 namespace {
 
-const wchar_t kServerIdKey[] = L"starsonicServer";
-
 std::wstring Wide(const CString& text) {
     return std::wstring(text.GetString(), static_cast<size_t>(text.GetLength()));
 }
 
-CString AccountSection(int accountId) {
-    CString section;
-    section.Format(L"Account%d", accountId);
-    return section;
-}
-
 }  // namespace
 
-starsonic::AccountFields ToFields(const Account& account, const CString& serverId) {
+starsonic::AccountFields ToFields(const Account& account) {
     starsonic::AccountFields fields;
-    fields.serverId = Wide(serverId);
     fields.label = Wide(account.label);
     fields.server = Wide(account.server);
     fields.proxy = Wide(account.proxy);
@@ -71,17 +62,6 @@ void FromFields(const starsonic::AccountFields& fields, Account* account) {
     account->disableSessionTimer = fields.disableSessionTimer;
     // O AccountSave do MicroSIP so grava usuario e senha com rememberPassword ligado.
     account->rememberPassword = !fields.username.empty();
-}
-
-CString ReadServerId(int accountId) {
-    wchar_t buffer[256] = {0};
-    GetPrivateProfileString(AccountSection(accountId), kServerIdKey, L"", buffer, 256, accountSettings.iniFile);
-    return CString(buffer);
-}
-
-void WriteServerId(int accountId, const CString& serverId) {
-    WritePrivateProfileString(AccountSection(accountId), kServerIdKey,
-                              serverId.IsEmpty() ? NULL : serverId.GetString(), accountSettings.iniFile);
 }
 
 starsonic::GlobalFields GlobalsFrom(const AccountSettings& settings) {

@@ -3,7 +3,7 @@
 #pragma once
 
 /* Recursos */
-#define IDR_STARSONIC_SERVERS 41000
+#define IDR_STARSONIC_PROFILE 41000
 #define IDR_STARSONIC_LOGO_BAND 41101
 #define IDR_STARSONIC_LOGO_LOGIN 41102
 
@@ -17,6 +17,7 @@
 #define IDC_SS_ENTRAR 41016
 #define IDC_SS_REMOVE 41017
 #define IDC_SS_HELP 41018
+#define IDC_SS_SERVER_LABEL 41019
 
 /* Faixa da marca */
 #define IDC_STARSONIC_BAND 41200

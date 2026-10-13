@@ -5,7 +5,7 @@
 #include "AccountPolicy.h"
 #include "Hooks.h"
 #include "Logo.h"
-#include "ProfilesStore.h"
+#include "ProfileStore.h"
 #include "StarsonicIds.h"
 #include "TlsWatch.h"
 #include "generated/build_info.h"
@@ -69,11 +69,7 @@ BOOL CStarsonicLoginDlg::OnInitDialog() {
     entrar_.m_TextColor = STARSONIC_BRAND_TEXT_COLOR;
     entrar_.EnableWindow(TRUE);
 
-    CComboBox* servers = static_cast<CComboBox*>(GetDlgItem(IDC_SS_SERVER));
-    for (const starsonic::ServerProfile& server : LoadedProfiles().servers) {
-        servers->AddString(server.name.c_str());
-    }
-    servers->SetCurSel(0);
+    SetDlgItemText(IDC_SS_SERVER_LABEL, L"Servidor (endere\u00e7o ou IP)");
     return TRUE;
 }
 
@@ -93,38 +89,32 @@ void CStarsonicLoginDlg::Load(int accountId, bool focusPassword) {
         return;
     }
     accountId_ = accountId;
-    const std::vector<starsonic::ServerProfile>& servers = LoadedProfiles().servers;
-    int index = 0;
+    CString server;
     CString ramal;
-    CString message;
     if (accountId > 0) {
         Account stored;
         accountSettings.AccountLoad(accountId, &stored);
+        server = starsonic::AddressFromServer(Wide(stored.server)).c_str();
         ramal = stored.username;
-        const std::wstring serverId = Wide(ReadServerId(accountId));
-        int found = -1;
-        for (size_t i = 0; i < servers.size(); ++i) {
-            if (servers[i].id == serverId) {
-                found = static_cast<int>(i);
-                break;
-            }
-        }
-        if (found >= 0) {
-            index = found;
-        } else {
-            message = L"O servidor desta conta mudou. Entre novamente.";
-        }
     }
-    static_cast<CComboBox*>(GetDlgItem(IDC_SS_SERVER))->SetCurSel(index);
+    SetDlgItemText(IDC_SS_SERVER, server);
     SetDlgItemText(IDC_SS_RAMAL, ramal);
     SetDlgItemText(IDC_SS_SENHA, L"");
-    ShowMessage(message, true);
+    ShowMessage(L"", true);
     GetDlgItem(IDC_SS_REMOVE)->ShowWindow(accountId > 0 ? SW_SHOW : SW_HIDE);
     SetFieldsEnabled(true);
     ShowWindow(SW_SHOW);
     SetForegroundWindow();
-    const bool password = focusPassword || !ramal.IsEmpty();
-    GotoDlgCtrl(GetDlgItem(password ? IDC_SS_SENHA : IDC_SS_RAMAL));
+    // Senha quando o servidor a recusou; senao, o primeiro campo vazio.
+    int focus = IDC_SS_SENHA;
+    if (!focusPassword) {
+        if (server.IsEmpty()) {
+            focus = IDC_SS_SERVER;
+        } else if (ramal.IsEmpty()) {
+            focus = IDC_SS_RAMAL;
+        }
+    }
+    GotoDlgCtrl(GetDlgItem(focus));
 }
 
 void CStarsonicLoginDlg::OnOK() {
@@ -146,6 +136,18 @@ void CStarsonicLoginDlg::OnClickedEntrar() {
     if (IsPending()) {
         return;
     }
+    CString serverText;
+    GetDlgItemText(IDC_SS_SERVER, serverText);
+    std::wstring address;
+    const starsonic::ServerCheck serverCheck = starsonic::ValidateServerAddress(Wide(serverText), &address);
+    if (serverCheck != starsonic::ServerCheck::Ok) {
+        ShowMessage(serverCheck == starsonic::ServerCheck::Empty
+                        ? L"Digite o endere\u00e7o do servidor."
+                        : L"Digite s\u00f3 o endere\u00e7o do servidor, como starcloud1-starsonic.com.br.",
+                    true);
+        GotoDlgCtrl(GetDlgItem(IDC_SS_SERVER));
+        return;
+    }
     CString ramalText;
     GetDlgItemText(IDC_SS_RAMAL, ramalText);
     std::wstring ramal;
@@ -161,22 +163,15 @@ void CStarsonicLoginDlg::OnClickedEntrar() {
         GotoDlgCtrl(GetDlgItem(IDC_SS_SENHA));
         return;
     }
-    const std::vector<starsonic::ServerProfile>& servers = LoadedProfiles().servers;
-    int index = static_cast<CComboBox*>(GetDlgItem(IDC_SS_SERVER))->GetCurSel();
-    if (index < 0 || index >= static_cast<int>(servers.size())) {
-        index = 0;
-    }
-    const starsonic::ServerProfile& server = servers[index];
 
     prevId_ = accountSettings.accountId;
     prevAccount_ = accountSettings.account;
     targetId_ = accountId_ > 0 ? accountId_ : FirstFreeAccountId();
-    targetServerId_ = server.id.c_str();
 
     flow_.Start();
     main_->PJAccountDelete(true);
     accountSettings.accountId = targetId_;
-    FromFields(starsonic::BuildAccount(server, ramal, Wide(senha)), &accountSettings.account);
+    FromFields(starsonic::BuildAccount(LoadedProfile().account, address, ramal, Wide(senha)), &accountSettings.account);
     main_->OnAccountChanged();
     main_->InitUI();
     SetFieldsEnabled(false);
@@ -216,7 +211,6 @@ void CStarsonicLoginDlg::Apply(const starsonic::LoginOutcome& outcome) {
     if (outcome.commit) {
         KillTimer(IDT_STARSONIC_LOGIN);
         accountSettings.AccountSave(targetId_, &accountSettings.account);
-        WriteServerId(targetId_, targetServerId_);
         accountSettings.SettingsSave();
         main_->OnAccountChanged();
         DestroyWindow();
@@ -251,8 +245,7 @@ void CStarsonicLoginDlg::OnClickedRemove(NMHDR* /*header*/, LRESULT* result) {
 }
 
 void CStarsonicLoginDlg::RemoveAccount() {
-    // Como em AccountDlg::OnNMClickSyslinkDelete: as contas seguintes descem uma posicao,
-    // levando junto o servidor (starsonicServer).
+    // Como em AccountDlg::OnNMClickSyslinkDelete: as contas seguintes descem uma posicao.
     const int removed = accountId_;
     int last = removed;
     for (;;) {
@@ -264,7 +257,6 @@ void CStarsonicLoginDlg::RemoveAccount() {
         Account moved;
         accountSettings.AccountLoad(last + 1, &moved);
         accountSettings.AccountSave(last, &moved);
-        WriteServerId(last, ReadServerId(last + 1));
         ++last;
     }
     accountSettings.AccountDelete(last);
