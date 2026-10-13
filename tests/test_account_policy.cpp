@@ -79,6 +79,59 @@ TEST_CASE("ValidateRamal rejects addresses, inner blanks and control characters"
     CHECK(ValidateRamal(std::wstring(L"20") + wchar_t(0x7F) + L"01", &normalized) == RamalCheck::Invalid);
 }
 
+TEST_CASE("ValidateServerAddress accepts host names and IPv4") {
+    const std::wstring valid[] = {L"starcloud1-starsonic.com.br", L"200.100.50.10", L"localhost", L"a", L"x-1.b2"};
+    for (const std::wstring& address : valid) {
+        CAPTURE(address);
+        std::wstring normalized;
+        CHECK(ValidateServerAddress(address, &normalized) == ServerCheck::Ok);
+        CHECK(normalized == address);
+    }
+}
+
+TEST_CASE("ValidateServerAddress trims and lowercases") {
+    std::wstring normalized;
+    CHECK(ValidateServerAddress(L" Starcloud-Starsonic.COM.br\t", &normalized) == ServerCheck::Ok);
+    CHECK(normalized == L"starcloud-starsonic.com.br");
+}
+
+TEST_CASE("ValidateServerAddress reports empty input") {
+    std::wstring normalized = L"antes";
+    CHECK(ValidateServerAddress(L"", &normalized) == ServerCheck::Empty);
+    CHECK(ValidateServerAddress(L"   ", &normalized) == ServerCheck::Empty);
+    CHECK(ValidateServerAddress(L"\t", &normalized) == ServerCheck::Empty);
+    CHECK(normalized == L"antes");
+}
+
+TEST_CASE("ValidateServerAddress rejects ports, users, schemes and other characters") {
+    const std::wstring invalid[] = {L"host:5060",      L"2001@host",      L"sip:host",         L"http://host",
+                                    L"host/x",         L"star cloud.com", L"star_cloud.com",   L"stars\u00f4nic.com.br",
+                                    L"[::1]",          L"fe80::1"};
+    for (const std::wstring& address : invalid) {
+        CAPTURE(address);
+        std::wstring normalized = L"antes";
+        CHECK(ValidateServerAddress(address, &normalized) == ServerCheck::Invalid);
+        CHECK(normalized == L"antes");
+    }
+}
+
+TEST_CASE("ValidateServerAddress rejects malformed labels and lengths") {
+    const std::wstring a63(63, L'a');
+    // 3 partes de 63 + 1 parte de 61 + 3 pontos = 253 caracteres (o maximo).
+    const std::wstring longest = a63 + L"." + a63 + L"." + a63 + L"." + std::wstring(61, L'a');
+    const std::wstring malformed[] = {L"-host.com", L"host-.com", L"host..com", L".host.com", L"host.com.",
+                                      std::wstring(64, L'a') + L".com", longest + L"a"};
+    for (const std::wstring& address : malformed) {
+        CAPTURE(address);
+        CHECK(ValidateServerAddress(address, nullptr) == ServerCheck::Invalid);
+    }
+    std::wstring normalized;
+    CHECK(ValidateServerAddress(a63 + L".com", &normalized) == ServerCheck::Ok);
+    REQUIRE(longest.size() == 253);
+    CHECK(ValidateServerAddress(longest, &normalized) == ServerCheck::Ok);
+    CHECK(normalized == longest);
+}
+
 TEST_CASE("BuildAccount fills locked fields from profile") {
     const AccountFields account = BuildAccount(TestServer(), L"2001", L"x");
     CHECK(account.serverId == L"sp1");

@@ -31,6 +31,14 @@ bool IsForbiddenInRamal(wchar_t ch) {
     return ch == L'@' || ch == L':' || ch == L' ' || ch == L'\t' || ch < 0x20 || (ch >= 0x7F && ch <= 0x9F);
 }
 
+// Endereço do servidor (spec 7.1): nome de host em minúsculas, com IPv4 incluído.
+const size_t kMaxAddressLength = 253;
+const size_t kMaxLabelLength = 63;
+
+bool IsLabelChar(wchar_t ch) {
+    return (ch >= L'a' && ch <= L'z') || (ch >= L'0' && ch <= L'9') || ch == L'-';
+}
+
 }  // namespace
 
 RamalCheck ValidateRamal(const std::wstring& raw, std::wstring* normalized) {
@@ -41,6 +49,30 @@ RamalCheck ValidateRamal(const std::wstring& raw, std::wstring* normalized) {
     }
     if (normalized) *normalized = ramal;
     return RamalCheck::Ok;
+}
+
+ServerCheck ValidateServerAddress(const std::wstring& raw, std::wstring* normalized) {
+    std::wstring address = Trim(raw);
+    if (address.empty()) return ServerCheck::Empty;
+    for (wchar_t& ch : address) {
+        if (ch >= L'A' && ch <= L'Z') ch = static_cast<wchar_t>(ch - L'A' + L'a');
+    }
+    if (address.size() > kMaxAddressLength) return ServerCheck::Invalid;
+    size_t start = 0;
+    for (;;) {
+        const size_t dot = address.find(L'.', start);
+        const size_t end = (dot == std::wstring::npos) ? address.size() : dot;
+        const size_t length = end - start;
+        if (length == 0 || length > kMaxLabelLength) return ServerCheck::Invalid;
+        if (address[start] == L'-' || address[end - 1] == L'-') return ServerCheck::Invalid;
+        for (size_t i = start; i < end; ++i) {
+            if (!IsLabelChar(address[i])) return ServerCheck::Invalid;
+        }
+        if (dot == std::wstring::npos) break;
+        start = dot + 1;
+    }
+    if (normalized) *normalized = address;
+    return ServerCheck::Ok;
 }
 
 AccountFields BuildAccount(const ServerProfile& server, const std::wstring& ramal, const std::wstring& senha) {

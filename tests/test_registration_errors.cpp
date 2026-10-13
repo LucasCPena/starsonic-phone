@@ -6,7 +6,7 @@ using namespace starsonic;
 namespace {
 const std::wstring kWrongPassword = L"Ramal ou senha incorretos.";
 const std::wstring kNotFound = L"Ramal n\u00e3o encontrado neste servidor.";
-const std::wstring kNoServer = L"N\u00e3o foi poss\u00edvel falar com o servidor. Verifique sua internet.";
+const std::wstring kNoServer = L"N\u00e3o foi poss\u00edvel falar com o servidor. Confira o endere\u00e7o e a sua internet.";
 const std::wstring kTls = L"N\u00e3o foi poss\u00edvel estabelecer uma conex\u00e3o segura com o servidor.";
 }  // namespace
 

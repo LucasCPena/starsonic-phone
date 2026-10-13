@@ -28,6 +28,14 @@ enum class RamalCheck { Ok, Empty, Invalid };
 // *normalized só é escrito quando o resultado é Ok.
 RamalCheck ValidateRamal(const std::wstring& raw, std::wstring* normalized);
 
+enum class ServerCheck { Ok, Empty, Invalid };
+
+// Endereço do servidor digitado na tela Entrar (spec 7.1): apara espaços e tabs das pontas e passa
+// A-Z para minúsculas; vale um nome de até 253 caracteres, em partes separadas por ponto, cada uma
+// com 1 a 63 letras a-z, dígitos ou hífens, sem hífen nas pontas (o que inclui IPv4; IPv6 não).
+// *normalized só é escrito quando o resultado é Ok.
+ServerCheck ValidateServerAddress(const std::wstring& raw, std::wstring* normalized);
+
 // Conta nova: perfil do servidor + ramal (usuário SIP e nome de exibição) + senha.
 AccountFields BuildAccount(const ServerProfile& server, const std::wstring& ramal, const std::wstring& senha);
 

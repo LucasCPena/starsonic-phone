@@ -70,7 +70,7 @@ TEST_CASE("timeout rolls back with the server message") {
     const LoginOutcome outcome = flow.OnTimeout();
     CHECK_FALSE(outcome.commit);
     CHECK(outcome.rollback);
-    CHECK(outcome.message == L"N\u00e3o foi poss\u00edvel falar com o servidor. Verifique sua internet.");
+    CHECK(outcome.message == L"N\u00e3o foi poss\u00edvel falar com o servidor. Confira o endere\u00e7o e a sua internet.");
     CHECK(flow.State() == LoginState::Idle);
 }
 
