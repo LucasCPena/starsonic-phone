@@ -15,26 +15,31 @@ IDR_STARSONIC_LOGO_LOGIN RCDATA STARSONIC_LOGO_LOGIN_FILE
 
 LANGUAGE LANG_NEUTRAL, SUBLANG_NEUTRAL
 
-// Area do logo com a proporcao do logo-entrar.png (cerca de 3,7 vezes mais larga que alta). A linha
-// de ajuda (com o telefone do suporte) ocupa a largura toda, no rodape; "Remover conta" so aparece
-// na edicao de uma conta.
-IDD_STARSONIC_LOGIN DIALOGEX 0, 0, 180, 214
+// Area do logo com a proporcao do logo-entrar.png (cerca de 3,7 vezes mais larga que alta). O
+// Protocolo (UDP ou TCP) fica ao lado do Servidor e o Nome da conta, opcional, depois da Senha
+// (revisao 1.4). A linha de ajuda (com o telefone do suporte) ocupa a largura toda, no rodape;
+// "Remover conta" so aparece na edicao de uma conta.
+IDD_STARSONIC_LOGIN DIALOGEX 0, 0, 180, 244
 STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
 EXSTYLE WS_EX_APPWINDOW
 CAPTION "Starsonic Phone"
 FONT 8, "Microsoft Sans Serif", 400, 0, 0x0
 BEGIN
     CONTROL         "", IDC_SS_LOGO, "Static", SS_OWNERDRAW, 10, 8, 160, 40
-    LTEXT           "Servidor", IDC_SS_SERVER_LABEL, 10, 56, 160, 8
-    EDITTEXT        IDC_SS_SERVER, 10, 66, 160, 14, ES_AUTOHSCROLL
+    LTEXT           "Servidor", IDC_SS_SERVER_LABEL, 10, 56, 112, 8
+    EDITTEXT        IDC_SS_SERVER, 10, 66, 112, 14, ES_AUTOHSCROLL
+    LTEXT           "Protocolo", IDC_SS_PROTOCOL_LABEL, 126, 56, 44, 8
+    COMBOBOX        IDC_SS_PROTOCOL, 126, 66, 44, 40, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
     LTEXT           "Ramal", IDC_STATIC, 10, 86, 160, 8
     EDITTEXT        IDC_SS_RAMAL, 10, 96, 160, 14, ES_AUTOHSCROLL
     LTEXT           "Senha", IDC_STATIC, 10, 116, 160, 8
     EDITTEXT        IDC_SS_SENHA, 10, 126, 160, 14, ES_PASSWORD | ES_AUTOHSCROLL
-    LTEXT           "", IDC_SS_MESSAGE, 10, 144, 160, 16
-    DEFPUSHBUTTON   "Entrar", IDC_SS_ENTRAR, 10, 162, 160, 16
-    CONTROL         "<a>Remover conta</a>", IDC_SS_REMOVE, "SysLink", WS_TABSTOP, 10, 182, 160, 10
-    CTEXT           "Precisa de ajuda?", IDC_SS_HELP, 10, 196, 160, 10
+    LTEXT           "Nome da conta (opcional)", IDC_SS_NAME_LABEL, 10, 146, 160, 8
+    EDITTEXT        IDC_SS_NAME, 10, 156, 160, 14, ES_AUTOHSCROLL
+    LTEXT           "", IDC_SS_MESSAGE, 10, 174, 160, 16
+    DEFPUSHBUTTON   "Entrar", IDC_SS_ENTRAR, 10, 194, 160, 16
+    CONTROL         "<a>Remover conta</a>", IDC_SS_REMOVE, "SysLink", WS_TABSTOP, 10, 214, 160, 10
+    CTEXT           "Precisa de ajuda?", IDC_SS_HELP, 10, 228, 160, 10
 END
 
 // Mesma area de logo da tela Entrar, centralizada.

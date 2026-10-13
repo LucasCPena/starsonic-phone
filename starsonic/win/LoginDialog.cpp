@@ -23,6 +23,15 @@ std::wstring Wide(const CString& text) {
     return std::wstring(text.GetString(), static_cast<size_t>(text.GetLength()));
 }
 
+// Lista do campo Protocolo: 0 = UDP, 1 = TCP (spec 8.1, revisao 1.4).
+int ProtocolIndex(starsonic::Transport transport) {
+    return transport == starsonic::Transport::Tcp ? 1 : 0;
+}
+
+starsonic::Transport ProtocolAt(int index) {
+    return index == 1 ? starsonic::Transport::Tcp : starsonic::Transport::Udp;
+}
+
 UINT LoginLogoResource() {
 #if STARSONIC_HAS_LOGOS
     return IDR_STARSONIC_LOGO_LOGIN;
@@ -70,6 +79,12 @@ BOOL CStarsonicLoginDlg::OnInitDialog() {
     entrar_.EnableWindow(TRUE);
 
     SetDlgItemText(IDC_SS_SERVER_LABEL, L"Servidor (endere\u00e7o ou IP)");
+    SetDlgItemText(IDC_SS_PROTOCOL_LABEL, L"Protocolo");
+    SetDlgItemText(IDC_SS_NAME_LABEL, L"Nome da conta (opcional)");
+    CComboBox* protocol = static_cast<CComboBox*>(GetDlgItem(IDC_SS_PROTOCOL));
+    protocol->AddString(L"UDP");
+    protocol->AddString(L"TCP");
+    SendDlgItemMessage(IDC_SS_NAME, EM_LIMITTEXT, starsonic::kMaxAccountNameLength, 0);
     return TRUE;
 }
 
@@ -91,15 +106,21 @@ void CStarsonicLoginDlg::Load(int accountId, bool focusPassword) {
     accountId_ = accountId;
     CString server;
     CString ramal;
+    CString name;
+    starsonic::Transport transport = LoadedProfile().account.transport;
     if (accountId > 0) {
         Account stored;
         accountSettings.AccountLoad(accountId, &stored);
         server = starsonic::AddressFromServer(Wide(stored.server)).c_str();
         ramal = stored.username;
+        name = starsonic::AccountNameFromLabel(Wide(stored.label)).c_str();
+        transport = starsonic::TransportFromName(Wide(stored.transport), transport);
     }
     SetDlgItemText(IDC_SS_SERVER, server);
+    static_cast<CComboBox*>(GetDlgItem(IDC_SS_PROTOCOL))->SetCurSel(ProtocolIndex(transport));
     SetDlgItemText(IDC_SS_RAMAL, ramal);
     SetDlgItemText(IDC_SS_SENHA, L"");
+    SetDlgItemText(IDC_SS_NAME, name);
     ShowMessage(L"", true);
     GetDlgItem(IDC_SS_REMOVE)->ShowWindow(accountId > 0 ? SW_SHOW : SW_HIDE);
     SetFieldsEnabled(true);
@@ -171,8 +192,11 @@ void CStarsonicLoginDlg::OnClickedEntrar() {
     flow_.Start();
     main_->PJAccountDelete(true);
     accountSettings.accountId = targetId_;
-    FromFields(starsonic::BuildAccount(LoadedProfile().account, address, ramal, Wide(senha),
-                                       LoadedProfile().account.transport, L""),
+    const starsonic::Transport transport =
+        ProtocolAt(static_cast<CComboBox*>(GetDlgItem(IDC_SS_PROTOCOL))->GetCurSel());
+    CString name;
+    GetDlgItemText(IDC_SS_NAME, name);
+    FromFields(starsonic::BuildAccount(LoadedProfile().account, address, ramal, Wide(senha), transport, Wide(name)),
                &accountSettings.account);
     main_->OnAccountChanged();
     main_->InitUI();
@@ -311,6 +335,8 @@ void CStarsonicLoginDlg::SetFieldsEnabled(bool enabled) {
     GetDlgItem(IDC_SS_SERVER)->EnableWindow(enabled);
     GetDlgItem(IDC_SS_RAMAL)->EnableWindow(enabled);
     GetDlgItem(IDC_SS_SENHA)->EnableWindow(enabled);
+    GetDlgItem(IDC_SS_PROTOCOL)->EnableWindow(enabled);
+    GetDlgItem(IDC_SS_NAME)->EnableWindow(enabled);
     GetDlgItem(IDC_SS_REMOVE)->EnableWindow(enabled);
     entrar_.EnableWindow(enabled);
 }
