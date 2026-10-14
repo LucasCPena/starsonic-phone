@@ -26,7 +26,9 @@ val starsonicAbis = starsonicProperty("starsonic.abis", "arm64-v8a,armeabi-v7a,x
 
 android {
     namespace = "br.com.starsonic.phone"
-    compileSdk = 36
+    // O Compose do BOM 2026.09.00 (1.12) exige compilar contra o 37. Isso só muda as APIs visíveis na
+    // compilação; o comportamento do app segue o targetSdk 36.
+    compileSdk = 37
     ndkVersion = libs.versions.ndk.get()
 
     defaultConfig {
