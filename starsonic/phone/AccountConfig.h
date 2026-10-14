@@ -1,6 +1,7 @@
 #pragma once
 // Da conta do núcleo (AccountFields, montada por BuildAccount) para o que o pjsua2 recebe, e dos
-// codecs do perfil para os nomes do pjsua (spec 6.3). Sem PJSIP aqui: tudo em texto UTF-8 e números.
+// codecs e do STUN do perfil para o que o pjsua espera (spec 6.3). Sem PJSIP aqui: tudo em texto
+// UTF-8 e números.
 #include <string>
 #include <vector>
 
@@ -26,5 +27,10 @@ PjAccountSettings ToPjAccount(const AccountFields& account);
 // Os nomes do pjsua (id do codec: nome/taxa/canais) na ordem do perfil, pela mesma tabela de
 // CodecsToMicrosip; nomes fora da tabela ficam de fora. Não olha o que o build do PJSIP traz.
 std::vector<std::string> CodecIds(const std::vector<std::wstring>& profileCodecs);
+
+// Os servidores STUN do perfil (stun= em [geral]; vazio = sem STUN), como o MicroSIP os lê
+// (mainDlg.cpp): lista separada por vírgula ou ponto e vírgula, sem os espaços das pontas, sem itens
+// vazios e com no máximo 8, o tamanho da lista do pjsua. Cada item é host[:porta], em UTF-8.
+std::vector<std::string> StunServers(const std::wstring& profileStun);
 
 }  // namespace starsonic

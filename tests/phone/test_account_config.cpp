@@ -98,3 +98,37 @@ TEST_CASE("CodecIds skips names that are not in the table") {
     CHECK(CodecIds({L"speex", L"PCMU"}) == expected);
     CHECK(CodecIds({}).empty());
 }
+
+TEST_CASE("StunServers is empty when the profile has no STUN") {
+    CHECK(StunServers(L"").empty());
+    CHECK(StunServers(L"   ").empty());
+    CHECK(StunServers(L" , ;; ,").empty());
+}
+
+TEST_CASE("StunServers takes the server of the profile as it is") {
+    const std::vector<std::string> plain = {"stun.example.org"};
+    CHECK(StunServers(L"stun.example.org") == plain);
+    const std::vector<std::string> withPort = {"stun.example.org:19302"};
+    CHECK(StunServers(L"stun.example.org:19302") == withPort);
+    const std::vector<std::string> address = {"10.0.0.1:3478"};
+    CHECK(StunServers(L"10.0.0.1:3478") == address);
+}
+
+TEST_CASE("StunServers splits the list like MicroSIP does") {
+    // mainDlg.cpp: separa por ; ou , tira os espacos das pontas e ignora os itens vazios.
+    const std::vector<std::string> expected = {"a.example", "b.example:3479", "c.example"};
+    CHECK(StunServers(L"a.example,b.example:3479,c.example") == expected);
+    CHECK(StunServers(L" a.example , b.example:3479 ;\tc.example ") == expected);
+    CHECK(StunServers(L",a.example,,b.example:3479;;c.example,") == expected);
+}
+
+TEST_CASE("StunServers keeps at most eight servers, the size of the pjsua list") {
+    const std::vector<std::string> expected = {"s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8"};
+    CHECK(StunServers(L"s1,s2,s3,s4,s5,s6,s7,s8,s9,s10") == expected);
+    CHECK(StunServers(L"s1,s2,s3,s4,s5,s6,s7,s8") == expected);
+}
+
+TEST_CASE("StunServers sends UTF-8") {
+    const std::vector<std::string> expected = {"stun.caf\xc3\xa9.example"};
+    CHECK(StunServers(L"stun.caf\u00e9.example") == expected);
+}

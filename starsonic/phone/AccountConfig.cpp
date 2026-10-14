@@ -6,6 +6,9 @@
 namespace starsonic {
 namespace {
 
+// pjsua_config.stun_srv tem 8 lugares; o MicroSIP também para no oitavo.
+const size_t kMaxStunServers = 8;
+
 int SrtpUse(const std::wstring& srtp) {
     if (srtp == L"optional") return 1;
     if (srtp == L"mandatory") return 2;
@@ -38,6 +41,19 @@ std::vector<std::string> CodecIds(const std::vector<std::wstring>& profileCodecs
         if (!id.empty()) ids.push_back(WideToUtf8(id));
     }
     return ids;
+}
+
+std::vector<std::string> StunServers(const std::wstring& profileStun) {
+    std::vector<std::string> servers;
+    size_t start = 0;
+    while (start <= profileStun.size() && servers.size() < kMaxStunServers) {
+        size_t end = profileStun.find_first_of(L";,", start);
+        if (end == std::wstring::npos) end = profileStun.size();
+        const std::wstring item = Trim(profileStun.substr(start, end - start));
+        if (!item.empty()) servers.push_back(WideToUtf8(item));
+        start = end + 1;
+    }
+    return servers;
 }
 
 }  // namespace starsonic

@@ -50,7 +50,9 @@ class SipEngine {
 public:
     // O pjsua tem estado global: só um motor por processo (um segundo Create devolve nullptr até o
     // primeiro ser destruído). Em caso de erro devolve nullptr e escreve o motivo em *error (se não
-    // for nullptr).
+    // for nullptr). Com stun= no perfil o pjsua testa os servidores aqui dentro, como no MicroSIP: cada
+    // um que não responde atrasa o Create em cerca de 8 s antes de ser ignorado (chame fora da thread
+    // principal).
     static std::unique_ptr<SipEngine> Create(const EngineConfig& config, EngineListener* listener, std::string* error);
 
     // Desregistra a conta (sem avisar o listener) e destrói o pjsua; demora cerca de 1 s.

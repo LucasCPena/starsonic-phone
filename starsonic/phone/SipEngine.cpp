@@ -230,6 +230,9 @@ public:
             pj::EpConfig ep;
             ep.uaConfig.userAgent = config_.userAgent;
             ep.uaConfig.threadCnt = 1;
+            // STUN do perfil (spec 6.3), global como no MicroSIP; vazio = sem STUN. As contas seguem o
+            // global (sipStunUse e mediaStunUse ficam no padrão).
+            ep.uaConfig.stunServer = StunServers(config_.profile.global.stun);
             ep.medConfig.ecTailLen = 0;   // o eco fica com o do aparelho
             ep.logConfig.level = static_cast<unsigned>(config_.logLevel);
             // O pjsua só entrega ao writer as linhas até o consoleLevel; com um writer o PJSIP não

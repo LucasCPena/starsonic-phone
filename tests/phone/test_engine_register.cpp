@@ -1,5 +1,6 @@
 #include "test_support.h"
 #include "registrar_fixture.h"
+#include "stun_fixture.h"
 
 #include <chrono>
 #include <memory>
@@ -14,6 +15,7 @@
 
 using namespace starsonic;
 using phone_test::FakeRegistrar;
+using phone_test::FakeStunServer;
 using phone_test::RecordingListener;
 using phone_test::RegistrationEvent;
 
@@ -150,6 +152,30 @@ TEST_CASE("SipEngine skips the profile codecs that the build lacks") {
     const std::vector<std::string> expected = {"PCMU/8000/1", "PCMA/8000/1"};
     CHECK(engine->ActiveCodecs() == expected);
     CHECK(Contains(listener.LogTail(), "G729/8000/1"));
+}
+
+TEST_CASE("SipEngine uses the STUN server of the profile") {
+    FakeStunServer stun;
+    RecordingListener listener;
+    INFO(listener.LogTail());
+    Profile profile = LoadProfile();
+    profile.global.stun = Utf8ToWide("127.0.0.1:" + std::to_string(stun.port()));
+    std::unique_ptr<SipEngine> engine = StartEngine(&listener, profile);
+
+    CHECK(stun.Requests() > 0);
+    // O endereço que o STUN devolveu e o que o transporte UDP passa a anunciar.
+    CHECK(Contains(listener.LogTail(), std::string("SIP UDP socket reachable at ") + FakeStunServer::MappedAddress()));
+}
+
+TEST_CASE("SipEngine uses no STUN when the profile leaves stun empty") {
+    RecordingListener listener;
+    INFO(listener.LogTail());
+    const Profile profile = LoadProfile();
+    REQUIRE(profile.global.stun.empty());   // branding/perfil.ini: stun= vazio
+    std::unique_ptr<SipEngine> engine = StartEngine(&listener, profile);
+
+    // Sem servidor o pjsua nao escreve nada de STUN ao iniciar; com um, logo diz "Trying STUN server".
+    CHECK_FALSE(Contains(listener.LogTail(), "STUN"));
 }
 
 TEST_CASE("SipEngine registers again after HandleIpChange") {
