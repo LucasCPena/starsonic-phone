@@ -13,10 +13,6 @@ on:
         description: "ABIs a compilar (teste)"
         type: string
         default: 'arm64-v8a armeabi-v7a x86_64'
-      make_all:
-        description: "make inteiro em vez de make lib (teste)"
-        type: string
-        default: 'nao'
 
 permissions:
   contents: write
@@ -55,15 +51,13 @@ jobs:
         shell: bash
         env:
           ABIS_TESTE: ${{ inputs.abis }}
-          MAKE_ALL: ${{ inputs.make_all }}
         run: |
           sed -i "s/^ABIS=.*/ABIS=($ABIS_TESTE)/" build/android/build-deps.sh
-          if [ "$MAKE_ALL" = "sim" ]; then sed -i 's/make -j"\$JOBS" lib/make -j"$JOBS"/' build/android/build-deps.sh; fi
           grep -n -E '^ABIS=|make -j' build/android/build-deps.sh
           bash build/android/build-deps.sh android-deps work/android-deps 2>&1 | tee -a "$RUNNER_TEMP/ci.log"
 
       - name: Guardar o PJSIP, o Opus e o Oboe
-        if: steps.deps-cache.outputs.cache-hit != 'true' && inputs.abis == 'arm64-v8a armeabi-v7a x86_64' && inputs.make_all != 'sim'
+        if: steps.deps-cache.outputs.cache-hit != 'true' && inputs.abis == 'arm64-v8a armeabi-v7a x86_64'
         uses: actions/cache/save@v4
         with:
           path: android-deps
@@ -72,7 +66,7 @@ jobs:
       # Também com o cache: a chave não inclui o elf_align.py.
       - name: Conferir o alinhamento de 16 KB do Oboe
         shell: bash
-        run: python3 -I build/android/elf_align.py android-deps/oboe/prefab/modules/oboe/libs/*/liboboe.so 2>&1 | tee -a "$RUNNER_TEMP/ci.log"
+        run: python3 -I build/android/elf_align.py android-deps/oboe/prefab/modules/oboe/libs/android.{arm64-v8a,armeabi-v7a,x86_64}/liboboe.so 2>&1 | tee -a "$RUNNER_TEMP/ci.log"
 
       - name: Publicar as dependências
         uses: actions/upload-artifact@v4
@@ -88,12 +82,21 @@ jobs:
           {
             echo; echo "########## conteudo de android-deps"
             ls -la android-deps 2>&1
-            for d in android-deps/*/; do echo "--- $d"; (cd "$d" && find . -maxdepth 2 | sort | head -80); done
-            echo; echo "---- tamanhos"; du -sh android-deps/* 2>&1
-            echo; echo "---- lib por ABI"
-            for d in android-deps/arm64-v8a android-deps/armeabi-v7a android-deps/x86_64; do echo "-- $d"; ls -la "$d/lib" 2>&1; cat "$d/pjproject.cflags" 2>&1; done
-            echo; echo "---- libpjproject.pc"
-            cat android-deps/arm64-v8a/lib/pkgconfig/libpjproject.pc 2>&1
+            for d in android-deps/*/; do
+              echo "--- $d: $(find "$d" -type f | wc -l) arquivos, $(du -sh "$d" | cut -f1)"
+            done
+            for d in android-deps/arm64-v8a android-deps/armeabi-v7a android-deps/x86_64; do
+              [ -d "$d" ] || continue
+              echo; echo "-- $d"
+              echo "include: $(find "$d/include" -type f | wc -l) arquivos; $(ls "$d/include" | tr '\n' ' ')"
+              ls -l "$d/lib" "$d/lib/pkgconfig" 2>&1
+              echo "pjproject.cflags:"; cat "$d/pjproject.cflags" 2>&1
+              cmp -s build/android/config_site.h "$d/include/pj/config_site.h" && echo "config_site.h = o de build/android"
+            done
+            echo; echo "---- oboe"
+            find android-deps/oboe -maxdepth 4 | sort | head -60
+            echo; echo "---- libpjproject.pc (armeabi-v7a)"
+            cat android-deps/armeabi-v7a/lib/pkgconfig/libpjproject.pc 2>&1 | cut -c1-600
           } 2>&1 | tee -a "$RUNNER_TEMP/ci.log"
 
       # Os logs do Actions nao baixam do sandbox; o log vai para um branch que se busca com git.

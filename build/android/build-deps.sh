@@ -193,6 +193,9 @@ build_pjproject() {   # build_pjproject ABI  -> $OUT/ABI
         cd "$PJ"
         # O configure-android junta o CFLAGS, o LDFLAGS... do ambiente aos que tira do ndk-build.
         unset CC CXX CPP AR RANLIB CFLAGS CXXFLAGS CPPFLAGS LDFLAGS LIBS
+        # Ele descarta os -O do ndk-build, e o configure só põe o -O2 padrão quando o CFLAGS chega
+        # vazio (aqui não chega): sem este -O2 o PJSIP sairia sem otimização.
+        export CFLAGS="-O2"
         export APP_PLATFORM="$PLATFORM" TARGET_ABI="$abi"
         logged "pjproject-$abi-configure" ./configure-android --use-ndk-cflags \
             --prefix="$prefix" --with-oboe="$OUT/oboe" --with-opus="$opus" \
@@ -207,15 +210,15 @@ build_pjproject() {   # build_pjproject ABI  -> $OUT/ABI
         if grep -q "unrecognized options" "$configure_log"; then
             fail "$abi: o configure não reconheceu alguma opção: $(grep "unrecognized options" "$configure_log")"
         fi
+        grep -q -E '^ CFLAGS = .* -O2 ' "$configure_log" ||
+            fail "$abi: o CFLAGS do configure-android não tem -O2: $(grep -E '^ CFLAGS = ' "$configure_log")"
         grep -q "Checking sound device backend... Oboe" "$configure_log" ||
             fail "$abi: o configure não ligou o backend de som Oboe: $(grep -i -E "oboe|sound device backend" "$configure_log" | tr '\n' ' ')"
         grep -q "OPUS library found, OPUS support enabled" "$configure_log" ||
             fail "$abi: o configure não achou o Opus em $opus: $(grep -i "opus" "$configure_log" | tr '\n' ' ')"
 
         logged "pjproject-$abi-dep" make dep
-        # Só as bibliotecas (make lib): o make inteiro também liga os programas de teste e de exemplo,
-        # que não vão para o app. O que `make install` instala é o mesmo.
-        logged "pjproject-$abi-make" make -j"$JOBS" lib
+        logged "pjproject-$abi-make" make -j"$JOBS"
         logged "pjproject-$abi-install" make install
         logged "pjproject-$abi-distclean" make distclean
     )
@@ -229,7 +232,9 @@ build_pjproject() {   # build_pjproject ABI  -> $OUT/ABI
 verify_abi() {   # verify_abi ABI
     local abi="$1" prefix="$OUT/$1" symbols="$WORK/symbols-$1.txt" pjsua2
     pjsua2=("$prefix"/lib/libpjsua2-*.a)
-    [ "${#pjsua2[@]}" -eq 1 ] && [ -f "${pjsua2[0]}" ] || fail "$abi: esperava um libpjsua2-*.a em $prefix/lib"
+    if [ "${#pjsua2[@]}" -ne 1 ] || [ ! -f "${pjsua2[0]}" ]; then
+        fail "$abi: esperava um libpjsua2-*.a em $prefix/lib"
+    fi
     for file in lib/libopus.a include/opus/opus.h include/pj/config_site.h; do
         [ -f "$prefix/$file" ] || fail "$abi: falta $prefix/$file"
     done
