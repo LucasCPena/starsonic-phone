@@ -18,5 +18,30 @@
       "sqlite3": "3.53.4#2",
       "sqlitecpp": "3.3.3"
     }
+  },
+  "android": {
+    "pjproject": {
+      "repo": "https://github.com/pjsip/pjproject",
+      "tag": "2.17",
+      "commit": "5a457451fa2712ba18e12b01738e8ff3af2b26fd"
+    },
+    "opus": {
+      "repo": "https://github.com/xiph/opus",
+      "tag": "v1.6.1",
+      "commit": "22244de5a79bd1d6d623c32e72bf1954b56235be"
+    },
+    "oboe": {
+      "version": "1.11.0",
+      "aar": "https://dl.google.com/dl/android/maven2/com/google/oboe/oboe/1.11.0/oboe-1.11.0.aar",
+      "sha256": "316f31ce92f07725a41556cb1ec0790b348e36b55791df9e5e44976e1f652c30",
+      "repo": "https://github.com/google/oboe",
+      "commit": "b115f47593969fd67a21e9f63640ffef749b5067"
+    },
+    "ndk": "30.0.16248370",
+    "agp": "9.4.0",
+    "gradle": "9.6.0",
+    "composeCompilerPlugin": "2.4.21",
+    "composeBom": "2026.09.00",
+    "jdk": "17"
   }
 }

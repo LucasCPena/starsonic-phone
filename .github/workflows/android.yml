@@ -1,6 +1,7 @@
 name: android
 
-# SONDA TEMPORARIA (branch t4-probe): coleta fatos do ambiente de CI. Nao vai para o main.
+# VERSAO DE TESTE (branch t4-probe): so workflow_dispatch; o job e o do main com o log publicado em um
+# branch (os logs do Actions nao baixam do sandbox). Nao vai para o main.
 on:
   workflow_dispatch:
     inputs:
@@ -8,20 +9,92 @@ on:
         description: "nao usado"
         type: string
         default: ''
+      abis:
+        description: "ABIs a compilar (teste)"
+        type: string
+        default: 'arm64-v8a armeabi-v7a x86_64'
+      make_all:
+        description: "make inteiro em vez de make lib (teste)"
+        type: string
+        default: 'nao'
 
 permissions:
   contents: write
 
 jobs:
-  probe:
-    name: Sonda
+  deps-android:
+    name: Dependências (Android)
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
-      - name: Sonda
-        run: bash probe.sh 2>&1 | tee "$RUNNER_TEMP/ci.log"
+      - name: Restaurar o PJSIP, o Opus e o Oboe
+        id: deps-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: android-deps
+          key: android-deps-v1-${{ hashFiles('build/deps.lock', 'build/android/build-deps.sh', 'build/android/config_site.h') }}
+
+      - name: shellcheck (teste)
+        shell: bash
+        run: |
+          shellcheck --version | head -2
+          shellcheck -x build/android/build-deps.sh build/linux/build-pjproject.sh 2>&1 | tee -a "$RUNNER_TEMP/ci.log" || true
+
+      # O NDK do deps.lock já vem na imagem do runner; o sdkmanager só baixa se faltar.
+      - name: Instalar o NDK
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        run: |
+          ndk="$(python3 -I -c 'import json; print(json.load(open("build/deps.lock", encoding="utf-8"))["android"]["ndk"])')"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$ndk"
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/$ndk" >> "$GITHUB_ENV"
+
+      - name: Compilar o PJSIP, o Opus e o Oboe
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        shell: bash
+        env:
+          ABIS_TESTE: ${{ inputs.abis }}
+          MAKE_ALL: ${{ inputs.make_all }}
+        run: |
+          sed -i "s/^ABIS=.*/ABIS=($ABIS_TESTE)/" build/android/build-deps.sh
+          if [ "$MAKE_ALL" = "sim" ]; then sed -i 's/make -j"\$JOBS" lib/make -j"$JOBS"/' build/android/build-deps.sh; fi
+          grep -n -E '^ABIS=|make -j' build/android/build-deps.sh
+          bash build/android/build-deps.sh android-deps work/android-deps 2>&1 | tee -a "$RUNNER_TEMP/ci.log"
+
+      - name: Guardar o PJSIP, o Opus e o Oboe
+        if: steps.deps-cache.outputs.cache-hit != 'true' && inputs.abis == 'arm64-v8a armeabi-v7a x86_64' && inputs.make_all != 'sim'
+        uses: actions/cache/save@v4
+        with:
+          path: android-deps
+          key: ${{ steps.deps-cache.outputs.cache-primary-key }}
+
+      # Também com o cache: a chave não inclui o elf_align.py.
+      - name: Conferir o alinhamento de 16 KB do Oboe
+        shell: bash
+        run: python3 -I build/android/elf_align.py android-deps/oboe/prefab/modules/oboe/libs/*/liboboe.so 2>&1 | tee -a "$RUNNER_TEMP/ci.log"
+
+      - name: Publicar as dependências
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-deps
+          path: android-deps
+          if-no-files-found: error
+
+      - name: Conteudo do artefato (teste)
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo; echo "########## conteudo de android-deps"
+            ls -la android-deps 2>&1
+            for d in android-deps/*/; do echo "--- $d"; (cd "$d" && find . -maxdepth 2 | sort | head -80); done
+            echo; echo "---- tamanhos"; du -sh android-deps/* 2>&1
+            echo; echo "---- lib por ABI"
+            for d in android-deps/arm64-v8a android-deps/armeabi-v7a android-deps/x86_64; do echo "-- $d"; ls -la "$d/lib" 2>&1; cat "$d/pjproject.cflags" 2>&1; done
+            echo; echo "---- libpjproject.pc"
+            cat android-deps/arm64-v8a/lib/pkgconfig/libpjproject.pc 2>&1
+          } 2>&1 | tee -a "$RUNNER_TEMP/ci.log"
 
       # Os logs do Actions nao baixam do sandbox; o log vai para um branch que se busca com git.
       - name: Publicar o log (branch t4-logs-<run>)
@@ -32,8 +105,11 @@ jobs:
           mkdir -p "$RUNNER_TEMP/logs" && cd "$RUNNER_TEMP/logs"
           cp "$RUNNER_TEMP/ci.log" ci.log 2>/dev/null || echo "sem log" > ci.log
           gzip -9 -f ci.log
+          # logs por etapa do script e config.log do pjproject (se ainda existirem)
+          tar czf steps.tgz -C "$GITHUB_WORKSPACE/work/android-deps" logs 2>/dev/null || true
+          tar czf pjconfig.tgz -C "$GITHUB_WORKSPACE/work/android-deps/pjproject" config.log config.status 2>/dev/null || true
           git init -q -b logs
-          git add ci.log.gz
+          git add .
           git -c user.name=ci -c user.email=ci@example.invalid commit -q -m "log do run $GITHUB_RUN_ID [skip ci]"
           git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "logs:refs/heads/t4-logs-${GITHUB_RUN_ID}"
           echo "log publicado em t4-logs-${GITHUB_RUN_ID}"
