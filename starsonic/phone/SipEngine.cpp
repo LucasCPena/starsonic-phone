@@ -148,6 +148,8 @@ public:
         try {
             setRegistration(false);
         } catch (const pj::Error& error) {
+            // PJ_EINVALIDOP: a conta já não tem registro (o último pedido falhou), nada a retirar.
+            if (error.status == PJ_EINVALIDOP) return true;
             Log(3, "nao foi possivel retirar o registro: " + error.info());
             return false;
         }

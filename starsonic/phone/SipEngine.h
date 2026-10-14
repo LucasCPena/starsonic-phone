@@ -11,9 +11,10 @@ namespace starsonic {
 
 enum class CallState { Incoming = 0, Calling = 1, Early = 2, Connecting = 3, Confirmed = 4, Disconnected = 5 };
 
-// Os eventos chegam em threads do PJSIP, não na que chamou o motor, e o motor segura travas internas
-// enquanto avisa: nenhum método daqui pode chamar o motor de volta. A implementação precisa durar
-// mais que o motor (o destrutor ainda manda linhas de log).
+// Os eventos chegam em threads do PJSIP e, às vezes, na própria thread que chamou o motor, dentro da
+// chamada (Create, SetAccount, Reregister, HandleIpChange, RemoveAccount e ~SipEngine). O motor segura
+// travas internas enquanto avisa: nenhum método daqui pode chamar o motor de volta. A implementação
+// precisa durar mais que o motor (o destrutor ainda manda linhas de log).
 class EngineListener {
 public:
     virtual ~EngineListener() {}
