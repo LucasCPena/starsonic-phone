@@ -20,13 +20,27 @@ WORKDIR="$(cd "$1" && pwd)"
 PREFIX="$(cd "$2" && pwd)"
 JOBS="$(nproc 2>/dev/null || echo 2)"
 
-# Repositório e commit do pjproject: os mesmos do Windows.
+# Valor de build/deps.lock pelo caminho de chaves. Ex.: lock_value pjproject commit
 lock_value() {
-    python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["pjproject"][sys.argv[2]])' \
-        "$ROOT/build/deps.lock" "$1"
+    python3 -I -c 'import json, sys
+node = json.load(open(sys.argv[1], encoding="utf-8"))
+for key in sys.argv[2:]:
+    node = node[key]
+print(node)' "$ROOT/build/deps.lock" "$@"
 }
-PJ_REPO="$(lock_value repo)"
-PJ_COMMIT="$(lock_value commit)"
+
+# Repositório e commit do pjproject: os mesmos do Windows.
+PJ_REPO="$(lock_value pjproject repo)"
+PJ_COMMIT="$(lock_value pjproject commit)"
+
+# O APK leva o pjproject de android.pjproject: se os dois commits divergirem, estes testes
+# passariam por um PJSIP que não vai no app.
+ANDROID_PJ_COMMIT="$(lock_value android pjproject commit)"
+if [ "$PJ_COMMIT" != "$ANDROID_PJ_COMMIT" ]; then
+    echo "pjproject: build/deps.lock diverge: pjproject.commit=$PJ_COMMIT," \
+        "android.pjproject.commit=$ANDROID_PJ_COMMIT (têm de ser o mesmo commit)" >&2
+    exit 1
+fi
 
 # Busca só o commit fixado (sem o histórico), a menos que o WORKDIR já esteja nele.
 current=""

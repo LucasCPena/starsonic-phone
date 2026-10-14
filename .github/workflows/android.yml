@@ -1,7 +1,8 @@
 name: android
 
 # App Android (etapa 1). Por enquanto só o motor de ligações, testado no Linux contra o registrador
-# falso de tests/smoke; o APK entra nas próximas tarefas.
+# falso de tests/smoke, e as dependências nativas (PJSIP, Opus e Oboe) compiladas para o Android;
+# o APK entra nas próximas tarefas.
 on:
   push:
     branches: ['**']   # tags v* passam pelo release.yml
@@ -11,8 +12,10 @@ on:
       - 'tests/phone/**'
       - 'tests/smoke/fake_registrar.py'
       - 'tests/python/**'
+      - 'tests/test_support.h'
       - 'build/android/**'
       - 'build/linux/**'
+      - 'build/deps.lock'
       - 'branding/**'
       - '.github/workflows/android*.yml'
   pull_request:
@@ -22,8 +25,10 @@ on:
       - 'tests/phone/**'
       - 'tests/smoke/fake_registrar.py'
       - 'tests/python/**'
+      - 'tests/test_support.h'
       - 'build/android/**'
       - 'build/linux/**'
+      - 'build/deps.lock'
       - 'branding/**'
       - '.github/workflows/android*.yml'
   workflow_dispatch:
@@ -78,3 +83,47 @@ jobs:
           cmake -S tests/phone -B build-phone -DPJPROJECT_PREFIX="$PWD/pj-linux"
           cmake --build build-phone -j 4
           ctest --test-dir build-phone --output-on-failure
+
+  deps-android:
+    name: Dependências (Android)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restaurar o PJSIP, o Opus e o Oboe
+        id: deps-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: android-deps
+          key: android-deps-v1-${{ hashFiles('build/deps.lock', 'build/android/build-deps.sh', 'build/android/config_site.h') }}
+
+      # O NDK do deps.lock já vem na imagem do runner; o sdkmanager só baixa se faltar.
+      - name: Instalar o NDK
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        run: |
+          ndk="$(python3 -I -c 'import json; print(json.load(open("build/deps.lock", encoding="utf-8"))["android"]["ndk"])')"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$ndk"
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/$ndk" >> "$GITHUB_ENV"
+
+      - name: Compilar o PJSIP, o Opus e o Oboe
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        run: bash build/android/build-deps.sh android-deps work/android-deps
+
+      - name: Guardar o PJSIP, o Opus e o Oboe
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: android-deps
+          key: ${{ steps.deps-cache.outputs.cache-primary-key }}
+
+      # Também com o cache: a chave não inclui o elf_align.py.
+      - name: Conferir o alinhamento de 16 KB do Oboe
+        run: python3 -I build/android/elf_align.py android-deps/oboe/prefab/modules/oboe/libs/android.{arm64-v8a,armeabi-v7a,x86_64}/liboboe.so
+
+      - name: Publicar as dependências
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-deps
+          path: android-deps
+          if-no-files-found: error
