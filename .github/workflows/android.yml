@@ -238,6 +238,38 @@ jobs:
           arch: x86_64
           script: bash build/android/run-emulator-tests.sh "$APK" "$TEST_APK" br.com.starsonic.phone.NativeLoadTest
 
+      # TEMPORÁRIO (Task 5, conferência única): release sem assinatura com as três ABIs (R8 e ARM).
+      - name: Release com as três ABIs (conferência única)
+        if: ${{ !cancelled() && steps.gradle.outcome == 'success' }}
+        run: |
+          note() { local t="$2"; t="${t//'%'/'%25'}"; echo "::$1 title=Release 3 ABIs::${t//$'\n'/'%0A'}"; }
+          log="$RUNNER_TEMP/release.log"
+          status=0
+          gradle -p android assembleRelease -Pstarsonic.deps="$PWD/android-deps" 2>&1 | tee "$log" || status=$?
+          if [ "$status" -ne 0 ]; then
+            note error "$(awk '/^\* What went wrong:/ { on = 1 } /^\* Try:/ { on = 0 } on && n < 40 { print substr($0, 1, 300); n++ }' "$log")"
+            note error "$(awk '/^e: |error:|CMake Error|FAILED:|undefined symbol|Missing class|R8:/ && n < 30 { print substr($0, 1, 300); n++ }' "$log")"
+            exit "$status"
+          fi
+          set +e +o pipefail   # daqui em diante só se junta o relatório (grep sem achar nada não é erro)
+          release=android/app/build/outputs/apk/release/app-release-unsigned.apk
+          nm="$ANDROID_HOME/ndk/30.0.16248370/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+          out="$RUNNER_TEMP/release"; mkdir -p "$out"; unzip -q -o "$release" -d "$out"
+          report="tamanho: $(stat -c %s "$release") bytes (debug x86_64: $(stat -c %s "$APK"))"
+          report+=$'\n'"bibliotecas: $(cd "$out" && find lib -name '*.so' | sort | tr '\n' ' ')"
+          report+=$'\n'"alinhamento: $(python3 -I build/android/elf_align.py "$out"/lib/*/*.so 2>&1 | grep -c '^ok:') de $(find "$out/lib" -name '*.so' | wc -l) ok"
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            report+=$'\n'"$abi exporta: $("$nm" -D --defined-only "$out/lib/$abi/libstarsonic.so" | awk '{print $3}' | tr '\n' ' ')"
+          done
+          report+=$'\n'"dex com Lorg/pjsip/PjAudioDevInfo;: $(cat "$out"/classes*.dex | grep -a -c 'Lorg/pjsip/PjAudioDevInfo;' || true)"
+          report+=$'\n'"dex com validateServer: $(cat "$out"/classes*.dex | grep -a -c 'validateServer' || true)"
+          report+=$'\n'"MicroSIP no release: $(grep -a -r -l 'MicroSIP' "$out" | wc -l) arquivo(s); Microsip: $(grep -a -r -l 'Microsip' "$out" | wc -l)"
+          mkdir -p "$RUNNER_TEMP/debug"; unzip -q -o "$APK" -d "$RUNNER_TEMP/debug"
+          report+=$'\n'"MicroSIP no debug: $(grep -a -r -l 'MicroSIP' "$RUNNER_TEMP/debug" | wc -l) arquivo(s); Microsip: $(grep -a -r -l 'Microsip' "$RUNNER_TEMP/debug" | wc -l)"
+          report+=$'\n'"symtab na libstarsonic.so do debug: $(readelf -S "$RUNNER_TEMP/debug/lib/x86_64/libstarsonic.so" | grep -c '\.symtab' || true)"
+          echo "$report"
+          note notice "$report"
+
       - name: Publicar o APK de debug
         if: ${{ !cancelled() && steps.gradle.outcome == 'success' }}
         uses: actions/upload-artifact@v4
