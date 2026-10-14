@@ -48,6 +48,45 @@ class AndroidKeyTest(unittest.TestCase):
             self.assertEqual(android[field], windows[field], field)
 
 
+class AndroidConfigSiteTest(unittest.TestCase):
+    """build/android/config_site.h: o PJSIP que vai no APK é de produção (o do teste no Linux tem assert)."""
+
+    def setUp(self):
+        text = (ROOT / "build" / "android" / "config_site.h").read_text(encoding="utf-8")
+        self.lines = text.splitlines()
+
+    def macro_state(self, macro):
+        """(valor, linha) em que o macro fica depois de ler os #undef e #define em ordem; valor None se indefinido."""
+        state = (None, None)
+        for number, line in enumerate(self.lines, start=1):
+            if re.match(r"\s*#\s*undef\s+%s\b" % macro, line):
+                state = (None, number)
+            define = re.match(r"\s*#\s*define\s+%s\b[ \t]*(\S*)" % macro, line)
+            if define:
+                state = (define.group(1), number)
+        return state
+
+    def test_asserts_are_off(self):
+        # Com PJ_DEBUG 1 o PJ_ASSERT_RETURN chama assert(): um call id velho vindo da ponte derrubaria o app
+        # inteiro, com o serviço em primeiro plano, em vez de virar um pj::Error que a ponte captura.
+        value, _ = self.macro_state("PJ_DEBUG")
+        self.assertEqual(value, "0", "build/android/config_site.h deve deixar PJ_DEBUG em 0")
+
+    def test_the_override_comes_after_the_android_sample(self):
+        # O exemplo do Android é incluído no começo; o que a Starsonic muda tem de vir depois dele.
+        include = next(number for number, line in enumerate(self.lines, start=1)
+                       if re.match(r"\s*#\s*include\s+<pj/config_site_sample\.h>", line))
+        _, line = self.macro_state("PJ_DEBUG")
+        self.assertIsNotNone(line, "PJ_DEBUG não é definido")
+        self.assertGreater(line, include)
+
+    def test_the_linux_test_build_keeps_its_asserts(self):
+        # Os testes do motor no Linux contam com os assert do PJSIP: só o Android vira produção.
+        for name in ("config_site.h", "build-pjproject.sh"):
+            text = (ROOT / "build" / "linux" / name).read_text(encoding="utf-8")
+            self.assertNotRegex(text, r"PJ_DEBUG|NDEBUG", "build/linux/" + name)
+
+
 class BuildPjprojectGuardTest(unittest.TestCase):
     """build/linux/build-pjproject.sh nao pode testar um pjproject diferente do que vai no APK."""
 

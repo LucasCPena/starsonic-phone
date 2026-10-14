@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Compila para o Android as dependências nativas do app: o pjproject (com o Oboe e o Opus), o Opus e o
-# AAR do Oboe, nas três ABIs. As versões estão em build/deps.lock (chave "android").
+# AAR do Oboe, nas três ABIs. As versões estão em build/deps.lock (chave "android"). É um build de
+# produção, como o do Windows: otimizado (-O2) e sem assert() (-DNDEBUG e PJ_DEBUG 0 em config_site.h).
 #
 # Uso: ANDROID_NDK_ROOT=<NDK do deps.lock> build/android/build-deps.sh OUT [WORKDIR]
 #   OUT      pasta de saída (android-deps no CI), que o app Android consome:
@@ -193,9 +194,11 @@ build_pjproject() {   # build_pjproject ABI  -> $OUT/ABI
         cd "$PJ"
         # O configure-android junta o CFLAGS, o LDFLAGS... do ambiente aos que tira do ndk-build.
         unset CC CXX CPP AR RANLIB CFLAGS CXXFLAGS CPPFLAGS LDFLAGS LIBS
-        # Ele descarta os -O do ndk-build, e o configure só põe o -O2 padrão quando o CFLAGS chega
-        # vazio (aqui não chega): sem este -O2 o PJSIP sairia sem otimização.
-        export CFLAGS="-O2"
+        # Ele descarta os -O e o -DNDEBUG do ndk-build, mas deixa passar o que vem no CFLAGS. O configure
+        # só põe o -O2 padrão quando o CFLAGS chega vazio (aqui não chega): sem este -O2 o PJSIP sairia
+        # sem otimização. O -DNDEBUG faz do PJSIP um build de produção, como o do Windows: tira os assert()
+        # puros do PJLIB e do WebRTC (os do PJ_ASSERT_RETURN saem com o PJ_DEBUG 0 do config_site.h).
+        export CFLAGS="-O2 -DNDEBUG"
         export APP_PLATFORM="$PLATFORM" TARGET_ABI="$abi"
         logged "pjproject-$abi-configure" ./configure-android --use-ndk-cflags \
             --prefix="$prefix" --with-oboe="$OUT/oboe" --with-opus="$opus" \
@@ -210,8 +213,10 @@ build_pjproject() {   # build_pjproject ABI  -> $OUT/ABI
         if grep -q "unrecognized options" "$configure_log"; then
             fail "$abi: o configure não reconheceu alguma opção: $(grep "unrecognized options" "$configure_log")"
         fi
-        grep -q -E '^ CFLAGS = .* -O2 ' "$configure_log" ||
-            fail "$abi: o CFLAGS do configure-android não tem -O2: $(grep -E '^ CFLAGS = ' "$configure_log")"
+        for flag in -O2 -DNDEBUG; do
+            grep -q -E "^ CFLAGS = .* $flag " "$configure_log" ||
+                fail "$abi: o CFLAGS do configure-android não tem $flag: $(grep -E '^ CFLAGS = ' "$configure_log")"
+        done
         grep -q "Checking sound device backend... Oboe" "$configure_log" ||
             fail "$abi: o configure não ligou o backend de som Oboe: $(grep -i -E "oboe|sound device backend" "$configure_log" | tr '\n' ' ')"
         grep -q "OPUS library found, OPUS support enabled" "$configure_log" ||
@@ -230,7 +235,7 @@ build_pjproject() {   # build_pjproject ABI  -> $OUT/ABI
 
 # Confere o que saiu da ABI. Cada falha aqui seria um erro de link (ou de som) só no app.
 verify_abi() {   # verify_abi ABI
-    local abi="$1" prefix="$OUT/$1" symbols="$WORK/symbols-$1.txt" pjsua2
+    local abi="$1" prefix="$OUT/$1" symbols="$WORK/symbols-$1.txt" undefined="$WORK/undefined-$1.txt" pjsua2
     pjsua2=("$prefix"/lib/libpjsua2-*.a)
     if [ "${#pjsua2[@]}" -ne 1 ] || [ ! -f "${pjsua2[0]}" ]; then
         fail "$abi: esperava um libpjsua2-*.a em $prefix/lib"
@@ -252,7 +257,19 @@ verify_abi() {   # verify_abi ABI
     if grep -q ' T JNI_OnLoad$' "$symbols"; then
         fail "$abi: o PJLIB define o JNI_OnLoad, que é da ponte do app (PJ_JNI_HAS_JNI_ONLOAD deve ser 0)"
     fi
-    ok "$abi: $(basename "${pjsua2[0]}"), libopus.a, Oboe, Opus, WebRTC AEC e sem JNI_OnLoad no PJLIB ($(du -sh "$prefix" | cut -f1))"
+
+    # Build de produção: nenhuma biblioteca pode ficar com o assert() da bionic, que vira uma chamada a
+    # __assert2 (a __assert, em C89) e derrubaria o app inteiro. O -DNDEBUG e o PJ_DEBUG 0 tiram todos.
+    # O pj_pool_alloc, que várias bibliotecas usam de fora, mostra que o llvm-nm listou os símbolos
+    # indefinidos: sem ele uma listagem vazia faria a conferência passar sem ver nada.
+    "${NM[0]}" --undefined-only --print-file-name "$prefix"/lib/*.a > "$undefined" ||
+        fail "$abi: o llvm-nm falhou ao listar os símbolos indefinidos de $prefix/lib"
+    grep -q ' U pj_pool_alloc$' "$undefined" ||
+        fail "$abi: o llvm-nm não listou os símbolos indefinidos das bibliotecas (a conferência dos assert ficaria vazia)"
+    if grep -q -E ' U __assert2?$' "$undefined"; then
+        fail "$abi: as bibliotecas ainda chamam assert() (__assert2 ou __assert), e o build deve ser de produção (-DNDEBUG, PJ_DEBUG 0): $(grep -E ' U __assert2?$' "$undefined" | head -n 5 | tr '\n' ' ')"
+    fi
+    ok "$abi: $(basename "${pjsua2[0]}"), libopus.a, Oboe, Opus, WebRTC AEC, sem JNI_OnLoad no PJLIB e sem assert() ($(du -sh "$prefix" | cut -f1))"
 }
 
 # ---------------------------------------------------------------------------------------------
