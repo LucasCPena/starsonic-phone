@@ -1,7 +1,7 @@
 # Starsonic Phone para Android — especificação de design
 
 - **Data:** 14/10/2026
-- **Status:** em revisão — aguarda a aprovação do responsável
+- **Status:** aprovada pelo responsável em 14/10/2026, com os itens novos da revisão (diagnóstico, uma ligação por vez, transferência direta, Ligar em verde, avisos de ligação não completada, reconexão a partir do primeiro desbloqueio, Opus sem G.729, Sair mantém os Recentes, botão de mostrar a senha)
 - **Subprojeto:** 2 de 2 (app de celular), **etapa 1: Android, APK de teste**. O aviso do servidor (push), a Play Store e o iPhone vêm em etapas seguintes, cada uma com especificação própria.
 - **Base:** a especificação do Windows (`2026-10-11-starsonic-phone-windows-design.md`, revisão 1.4), de onde vêm as regras da tela Entrar, o perfil e as mensagens de erro.
 
