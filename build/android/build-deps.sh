@@ -9,7 +9,7 @@
 #              OUT/<abi>/pjproject.cflags   saída de `pkg-config --cflags libpjproject`
 #              OUT/oboe/                    o AAR do Oboe aberto (prefab/modules/oboe/...)
 #   WORKDIR  onde os fontes são buscados e compilados (reaproveitado se existir); sem ele, uma pasta
-#            temporária apagada no fim.
+#            temporária, apagada no fim se tudo deu certo (com erro ela fica, com os logs).
 # Precisa de git, curl, unzip, cmake, make, pkg-config e python3, além do NDK.
 set -euo pipefail
 
@@ -120,11 +120,6 @@ for tool in git curl unzip cmake make pkg-config python3; do
     command -v "$tool" >/dev/null || fail "falta o programa $tool"
 done
 
-# O configure-android repassa os argumentos ao configure sem aspas: espaço em OUT ou WORKDIR quebraria.
-case "$OUT$WORK" in
-    *[[:space:]]*) fail "OUT ($OUT) e WORKDIR ($WORK) não podem ter espaços" ;;
-esac
-
 if [ -z "${ANDROID_NDK_ROOT:-}" ] || [ ! -f "$ANDROID_NDK_ROOT/source.properties" ]; then
     fail "ANDROID_NDK_ROOT tem de apontar para o NDK $NDK_VERSION (vazio, ou sem source.properties)"
 fi
@@ -133,6 +128,11 @@ if [ "$NDK_FOUND" != "$NDK_VERSION" ]; then
     fail "o NDK em $ANDROID_NDK_ROOT é o $NDK_FOUND; build/deps.lock pede o $NDK_VERSION"
 fi
 export ANDROID_NDK_ROOT
+
+# O configure-android repassa caminhos ao configure sem aspas: um espaço neles quebraria o build.
+case "$OUT$WORK$ANDROID_NDK_ROOT" in
+    *[[:space:]]*) fail "OUT ($OUT), WORKDIR ($WORK) e ANDROID_NDK_ROOT ($ANDROID_NDK_ROOT) não podem ter espaços" ;;
+esac
 
 NM=("$ANDROID_NDK_ROOT"/toolchains/llvm/prebuilt/*/bin/llvm-nm)
 [ -x "${NM[0]}" ] || fail "llvm-nm não encontrado no NDK $ANDROID_NDK_ROOT"
@@ -144,7 +144,7 @@ echo "saída: $OUT; trabalho: $WORK"
 # Fontes e Oboe
 
 echo; echo "== Oboe $OBOE_VERSION"
-curl -fsSL --retry 3 --retry-delay 5 -o "$WORK/oboe.aar" "$OBOE_AAR"
+curl -fsSL --retry 3 --retry-delay 5 -o "$WORK/oboe.aar" "$OBOE_AAR" || fail "não consegui baixar $OBOE_AAR"
 OBOE_FOUND="$(sha256sum "$WORK/oboe.aar" | cut -d' ' -f1)"
 [ "$OBOE_FOUND" = "$OBOE_SHA256" ] || fail "o AAR do Oboe tem SHA-256 $OBOE_FOUND; build/deps.lock pede $OBOE_SHA256"
 rm -rf "$OUT/oboe"
