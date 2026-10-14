@@ -197,16 +197,18 @@ jobs:
           tools="$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -n 1)"
           badging="$RUNNER_TEMP/badging.txt"
           "${tools}aapt2" dump badging "$APK" > "$badging" || fail "o aapt2 de $tools não leu o $APK"
-          for expected in "package: name='br.com.starsonic.phone'" "application-label:'Starsonic Phone'" \
-              "sdkVersion:'28'" "targetSdkVersion:'36'"; do
-            grep -qF "$expected" "$badging" || fail "o aapt2 dump badging não tem $expected"
-          done
-          grep -Eq "^launchable-activity: .*label='Starsonic'( |$)" "$badging" ||
-            fail "a activity de entrada não tem label='Starsonic'"
-          lines="$(grep -E '^(package|sdkVersion|targetSdkVersion|application-label|launchable-activity|native-code):' "$badging")"
+          lines="$(grep -E '^(package|(min)?[sS]dkVersion|targetSdkVersion|application-label|launchable-activity|native-code):' "$badging" || true)"
           echo "$lines"
           lines="${lines//'%'/'%25'}"
-          echo "::notice title=aapt2 dump badging::${lines//$'\n'/'%0A'}"
+          echo "::notice title=aapt2 dump badging ($(basename "$tools"))::${lines//$'\n'/'%0A'}"
+          for expected in "package: name='br.com.starsonic.phone'" "application-label:'Starsonic Phone'" \
+              "targetSdkVersion:'36'"; do
+            grep -qF "$expected" "$badging" || fail "o aapt2 dump badging não tem $expected"
+          done
+          # O aapt escrevia sdkVersion; o aapt2 escreve minSdkVersion.
+          grep -Eq "^(sdkVersion|minSdkVersion):'28'$" "$badging" || fail "o aapt2 dump badging não tem sdkVersion:'28'"
+          grep -Eq "^launchable-activity: .*label='Starsonic'( |$)" "$badging" ||
+            fail "a activity de entrada não tem label='Starsonic'"
           # As bibliotecas nativas: as três, alinhadas a 16 KB, e a libstarsonic.so só com o JNI à mostra.
           libs="$RUNNER_TEMP/apk/lib/x86_64"
           unzip -q -o "$APK" 'lib/*' -d "$RUNNER_TEMP/apk" || fail "o APK não traz bibliotecas nativas"
