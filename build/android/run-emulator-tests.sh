@@ -85,7 +85,8 @@ if grep -Eq '^OK \([1-9][0-9]* tests?\)$' "$report"; then
 fi
 
 # Falhou: o relatório das falhas (ou o fim da saída) e as falhas do app no logcat viram anotações.
-failures="$(sed -n '/^There w[a-z]* [0-9]* failure/,/^FAILURES!!!/p' "$report" | head -n 60)"
+# Sem `| head`: no Actions o SIGPIPE vem ignorado, e quem escreve num pipe fechado sai com erro.
+failures="$(awk '/^There w[a-z]* [0-9]* failure/ { on = 1 } on && n < 60 { print; n++ } /^FAILURES!!!/ { on = 0 }' "$report")"
 [ -n "$failures" ] || failures="$(tail -n 40 "$report")"
 annotate error "Testes no emulador: $CLASS" "$failures"
 crashes="$(adb logcat -d -v brief 'AndroidRuntime:E' 'DEBUG:F' 'libc:F' '*:S' 2>/dev/null | tail -n 60 || true)"

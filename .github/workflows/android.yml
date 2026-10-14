@@ -168,7 +168,8 @@ jobs:
           cache-provider: basic
 
       # Só a ABI do emulador, para o build ficar curto. Se falhar, o que deu errado vira anotação (o log
-      # do Actions nem sempre chega a quem acompanha o run pela API).
+      # do Actions nem sempre chega a quem acompanha o run pela API). Sem `| head` nos cortes: no Actions
+      # o SIGPIPE vem ignorado, e quem escreve num pipe fechado sai com erro (o sed, com 4).
       - name: Compilar o APK e os testes
         id: gradle
         run: |
@@ -182,8 +183,8 @@ jobs:
               text="${text//'%'/'%25'}"; text="${text//$'\r'/}"; text="${text//$'\n'/'%0A'}"
               echo "::error title=$1::$text"
             }
-            wrong="$(sed -n '/^\* What went wrong:/,/^\* Try:/p' "$log" | head -n 40 | cut -c 1-400)"
-            errors="$(grep -E '^e: |error:|CMake Error|FAILED:' "$log" | head -n 30 | cut -c 1-400 || true)"
+            wrong="$(awk '/^\* What went wrong:/ { on = 1 } /^\* Try:/ { on = 0 } on && n < 40 { print substr($0, 1, 300); n++ }' "$log")"
+            errors="$(awk '/^e: |error:|CMake Error|FAILED:|undefined symbol/ && n < 30 { print substr($0, 1, 300); n++ }' "$log")"
             if [ -n "$wrong" ]; then annotate "Gradle: o que deu errado" "$wrong"; fi
             if [ -n "$errors" ]; then annotate "Gradle: erros" "$errors"; fi
             if [ -z "$wrong$errors" ]; then annotate "Gradle" "$(tail -n 40 "$log")"; fi

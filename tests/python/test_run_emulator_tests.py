@@ -83,8 +83,11 @@ class RunEmulatorTestsTest(unittest.TestCase):
 
     def run_script(self, output, *extra, **env):
         self.output.write_text(output, encoding="utf-8")
+        # Como no GitHub Actions (o runner é Node): o script roda com o SIGPIPE ignorado, e quem escreve
+        # num pipe já fechado recebe EPIPE em vez de morrer calado.
         result = subprocess.run(["bash", str(SCRIPT), "app.apk", "testes.apk", CLASS, *extra],
-                                capture_output=True, text=True, env=dict(self.env, **env), timeout=60)
+                                capture_output=True, text=True, env=dict(self.env, **env), timeout=60,
+                                restore_signals=False)
         calls = self.log.read_text(encoding="utf-8").splitlines() if self.log.exists() else []
         return result, calls
 
@@ -153,6 +156,16 @@ class RunEmulatorTestsTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 1)
                 self.assertIn("não instalou %s" % apk, result.stderr)
                 self.assertEqual(self.instrument_calls(calls), [])
+
+    def test_a_long_failure_report_is_annotated_too(self):
+        # Mais de 64 KB de falhas (o tamanho do pipe): o relatório é cortado sem quebrar o script.
+        trace = "".join("\tat br.com.starsonic.phone.Frame%d(NativeLoadTest.kt:%d)\n" % (i, i) for i in range(3000))
+        result, _calls = self.run_script(FAILED.replace("\tat org.junit", trace + "\tat org.junit"),
+                                         GITHUB_ACTIONS="true")
+        self.assertEqual(result.returncode, 1, result.stderr)
+        annotations = [line for line in result.stdout.splitlines() if line.startswith("::error ")]
+        self.assertEqual(len(annotations), 2, result.stderr)
+        self.assertLessEqual(annotations[0].count("%0A"), 60)
 
     def test_failures_and_crashes_become_annotations_in_github_actions(self):
         result, _calls = self.run_script(FAILED, GITHUB_ACTIONS="true")
