@@ -257,7 +257,8 @@ jobs:
           out="$RUNNER_TEMP/release"; mkdir -p "$out"; unzip -q -o "$release" -d "$out"
           report="tamanho: $(stat -c %s "$release") bytes (debug x86_64: $(stat -c %s "$APK"))"
           report+=$'\n'"bibliotecas: $(cd "$out" && find lib -name '*.so' | sort | tr '\n' ' ')"
-          report+=$'\n'"alinhamento: $(python3 -I build/android/elf_align.py "$out"/lib/*/*.so 2>&1 | grep -c '^ok:') de $(find "$out/lib" -name '*.so' | wc -l) ok"
+          report+=$'\n'"alinhamento: $(python3 -I build/android/elf_align.py "$out"/lib/*/*.so 2>&1 | sed "s#$out/##" | sed 's/(16 KB ou mais)//')"
+          report+=$'\n'"graphics.path vem de: $(find ~/.gradle/caches -name '*graphics-path*.aar' 2>/dev/null | sed 's#.*/files-2.1/##' | tr '\n' ' ')"
           for abi in arm64-v8a armeabi-v7a x86_64; do
             report+=$'\n'"$abi exporta: $("$nm" -D --defined-only "$out/lib/$abi/libstarsonic.so" | awk '{print $3}' | tr '\n' ' ')"
           done
