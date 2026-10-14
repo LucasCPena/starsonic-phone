@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- O app segue o modo claro ou escuro do celular (values-night); a faixa e o logo não mudam. -->
+    <style name="Theme.Starsonic" parent="android:Theme.Material.Light.NoActionBar" />
+
+    <!-- Tela de abertura: fundo azul com o ícone; depois, o tema do app. -->
+    <style name="Theme.Starsonic.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/starsonic_blue</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+        <item name="postSplashScreenTheme">@style/Theme.Starsonic</item>
+    </style>
+</resources>

@@ -1,0 +1,8 @@
+/* Simbolos que a libstarsonic.so exporta: so os que a JVM procura (ver CMakeLists.txt). */
+{
+  global:
+    JNI_OnLoad;
+    Java_*;
+  local:
+    *;
+};

@@ -48,6 +48,32 @@ class AndroidKeyTest(unittest.TestCase):
             self.assertEqual(android[field], windows[field], field)
 
 
+class AndroidGradleCatalogTest(unittest.TestCase):
+    """android/gradle/libs.versions.toml usa as versões do deps.lock (o Gradle não lê o deps.lock)."""
+
+    def test_catalog_versions_are_the_locked_ones(self):
+        import tomllib
+
+        catalog = tomllib.loads((ROOT / "android" / "gradle" / "libs.versions.toml").read_text(encoding="utf-8"))
+        android = json.loads(LOCK.read_text(encoding="utf-8"))["android"]
+        versions = catalog["versions"]
+        self.assertEqual(versions["agp"], android["agp"])
+        self.assertEqual(versions["kotlin"], android["composeCompilerPlugin"])
+        self.assertEqual(versions["composeBom"], android["composeBom"])
+        self.assertEqual(versions["oboe"], android["oboe"]["version"])
+        self.assertEqual(versions["ndk"], android["ndk"])
+        # E quem usa cada versão aponta para ela.
+        refs = {
+            ("plugins", "android-application"): "agp",
+            ("plugins", "kotlin-android"): "kotlin",
+            ("plugins", "kotlin-compose"): "kotlin",
+            ("libraries", "androidx-compose-bom"): "composeBom",
+            ("libraries", "oboe"): "oboe",
+        }
+        for (table, name), ref in refs.items():
+            self.assertEqual(catalog[table][name]["version"]["ref"], ref, name)
+
+
 class AndroidConfigSiteTest(unittest.TestCase):
     """build/android/config_site.h: o PJSIP que vai no APK é de produção (o do teste no Linux tem assert)."""
 

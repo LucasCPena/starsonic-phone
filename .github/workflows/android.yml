@@ -1,8 +1,8 @@
 name: android
 
-# App Android (etapa 1). Por enquanto só o motor de ligações, testado no Linux contra o registrador
-# falso de tests/smoke, e as dependências nativas (PJSIP, Opus e Oboe) compiladas para o Android;
-# o APK entra nas próximas tarefas.
+# App Android (etapa 1): o motor de ligações, testado no Linux contra o registrador falso de
+# tests/smoke; as dependências nativas (PJSIP, Opus e Oboe) compiladas para o Android; e o APK de debug,
+# conferido e testado num emulador.
 on:
   push:
     branches: ['**']   # tags v* passam pelo release.yml
@@ -86,7 +86,9 @@ jobs:
 
   deps-android:
     name: Dependências (Android)
-    runs-on: ubuntu-latest
+    # Os jobs do Android contam com o SDK do Android da imagem do Ubuntu 24.04 (o ubuntu-latest passa
+    # para o Ubuntu 26 em 19/10/2026).
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
@@ -126,4 +128,117 @@ jobs:
         with:
           name: android-deps
           path: android-deps
+          if-no-files-found: error
+
+  apk:
+    name: APK e emulador
+    needs: deps-android
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      APK: android/app/build/outputs/apk/debug/app-debug.apk
+      TEST_APK: android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Baixar as dependências nativas
+        uses: actions/download-artifact@v4
+        with:
+          name: android-deps
+          path: android-deps
+
+      - name: Versões do JDK e do Gradle
+        id: lock
+        run: |
+          lock() { python3 -I -c 'import json, sys; print(json.load(open("build/deps.lock", encoding="utf-8"))["android"][sys.argv[1]])' "$1"; }
+          echo "jdk=$(lock jdk)" >> "$GITHUB_OUTPUT"
+          echo "gradle=$(lock gradle)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: ${{ steps.lock.outputs.jdk }}
+
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: ${{ steps.lock.outputs.gradle }}
+          cache-provider: basic
+
+      # Só a ABI do emulador, para o build ficar curto. Se falhar, o que deu errado vira anotação (o log
+      # do Actions nem sempre chega a quem acompanha o run pela API).
+      - name: Compilar o APK e os testes
+        id: gradle
+        run: |
+          log="$RUNNER_TEMP/gradle.log"
+          status=0
+          gradle -p android testDebugUnitTest assembleDebug assembleDebugAndroidTest \
+            -Pstarsonic.deps="$PWD/android-deps" -Pstarsonic.abis=x86_64 2>&1 | tee "$log" || status=$?
+          if [ "$status" -ne 0 ]; then
+            annotate() {
+              local text="$2"
+              text="${text//'%'/'%25'}"; text="${text//$'\r'/}"; text="${text//$'\n'/'%0A'}"
+              echo "::error title=$1::$text"
+            }
+            wrong="$(sed -n '/^\* What went wrong:/,/^\* Try:/p' "$log" | head -n 40 | cut -c 1-400)"
+            errors="$(grep -E '^e: |error:|CMake Error|FAILED:' "$log" | head -n 30 | cut -c 1-400 || true)"
+            if [ -n "$wrong" ]; then annotate "Gradle: o que deu errado" "$wrong"; fi
+            if [ -n "$errors" ]; then annotate "Gradle: erros" "$errors"; fi
+            if [ -z "$wrong$errors" ]; then annotate "Gradle" "$(tail -n 40 "$log")"; fi
+          fi
+          exit "$status"
+
+      - name: Conferir o APK
+        run: |
+          fail() { echo "::error title=APK::$1"; exit 1; }
+          tools="$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -n 1)"
+          badging="$RUNNER_TEMP/badging.txt"
+          "${tools}aapt2" dump badging "$APK" > "$badging" || fail "o aapt2 de $tools não leu o $APK"
+          for expected in "package: name='br.com.starsonic.phone'" "application-label:'Starsonic Phone'" \
+              "sdkVersion:'28'" "targetSdkVersion:'36'"; do
+            grep -qF "$expected" "$badging" || fail "o aapt2 dump badging não tem $expected"
+          done
+          grep -Eq "^launchable-activity: .*label='Starsonic'( |$)" "$badging" ||
+            fail "a activity de entrada não tem label='Starsonic'"
+          lines="$(grep -E '^(package|sdkVersion|targetSdkVersion|application-label|launchable-activity|native-code):' "$badging")"
+          echo "$lines"
+          lines="${lines//'%'/'%25'}"
+          echo "::notice title=aapt2 dump badging::${lines//$'\n'/'%0A'}"
+          # As bibliotecas nativas: as três, alinhadas a 16 KB, e a libstarsonic.so só com o JNI à mostra.
+          libs="$RUNNER_TEMP/apk/lib/x86_64"
+          unzip -q -o "$APK" 'lib/*' -d "$RUNNER_TEMP/apk" || fail "o APK não traz bibliotecas nativas"
+          for lib in libstarsonic.so liboboe.so libc++_shared.so; do
+            [ -f "$libs/$lib" ] || fail "o APK não traz lib/x86_64/$lib"
+          done
+          python3 -I build/android/elf_align.py "$libs"/*.so || fail "biblioteca sem o alinhamento de 16 KB"
+          exported="$(nm -D --defined-only "$libs/libstarsonic.so" | awk '{print $3}' | grep -Ev '^(JNI_OnLoad|Java_br_com_starsonic_phone_[A-Za-z0-9_]+)$' || true)"
+          [ -z "$exported" ] || fail "a libstarsonic.so exporta mais que o JNI: ${exported//$'\n'/ }"
+          # O perfil vai sem os comentários (como no Windows).
+          unzip -p "$APK" assets/perfil.ini > "$RUNNER_TEMP/perfil.ini" || fail "o APK não traz assets/perfil.ini"
+          grep -q '^\[conta\]$' "$RUNNER_TEMP/perfil.ini" || fail "assets/perfil.ini sem a seção [conta]"
+          if grep -q ';' "$RUNNER_TEMP/perfil.ini"; then fail "assets/perfil.ini com comentários"; fi
+
+      # Regra do udev do reactivecircus/android-emulator-runner: o emulador usa o KVM do runner.
+      - name: Ativar o KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Testes no emulador
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          script: bash build/android/run-emulator-tests.sh "$APK" "$TEST_APK" br.com.starsonic.phone.NativeLoadTest
+
+      - name: Publicar o APK de debug
+        if: ${{ !cancelled() && steps.gradle.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: StarsonicPhone-android-debug-${{ github.sha }}
+          path: ${{ env.APK }}
           if-no-files-found: error

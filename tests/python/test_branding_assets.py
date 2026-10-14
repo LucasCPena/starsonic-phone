@@ -6,9 +6,12 @@ Os arquivos são gerados por branding/fontes/gerar_marca.py; o teste só lê cab
 import pathlib
 import struct
 import unittest
+import xml.etree.ElementTree as ElementTree
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 ICONS = ROOT / "branding" / "overlay" / "microsip" / "res"
+ANDROID_RES = ROOT / "android" / "app" / "src" / "main" / "res"
+ANDROID_NS = "{http://schemas.android.com/apk/res/android}"
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
@@ -39,6 +42,20 @@ def png_header(path):
     if not data.startswith(PNG_SIGNATURE) or data[12:16] != b"IHDR":
         raise ValueError("%s não é um .png" % path)
     return struct.unpack_from(">IIBB", data, 16)
+
+
+def vector_colors(path):
+    """Cores (fillColor e strokeColor, em maiúsculas) de um vetor do Android; ValueError se não for <vector>."""
+    root = ElementTree.parse(path).getroot()
+    if root.tag != "vector":
+        raise ValueError("%s não é um <vector> (é <%s>)" % (path, root.tag))
+    colors = set()
+    for element in root.iter():
+        for attribute in ("fillColor", "strokeColor"):
+            value = element.get(ANDROID_NS + attribute)
+            if value:
+                colors.add(value.upper())
+    return colors
 
 
 class BrandingAssetsTest(unittest.TestCase):
@@ -82,6 +99,38 @@ class BrandingAssetsTest(unittest.TestCase):
         width, height, _planes, bits = struct.unpack_from("<iiHH", data, 18)
         self.assertEqual((width, abs(height)), (164, 314))
         self.assertEqual(bits, 24)
+
+
+class AndroidBrandingTest(unittest.TestCase):
+    """Ícone adaptável (fundo, primeiro plano e monocromático), ícone da notificação e logos do app Android."""
+
+    def drawable(self, name):
+        return ANDROID_RES / "drawable" / (name + ".xml")
+
+    def test_icon_layers_and_notification_icon_are_vectors(self):
+        for name in ("ic_launcher_foreground", "ic_launcher_background", "ic_launcher_monochrome",
+                     "ic_stat_starsonic"):
+            with self.subTest(name=name):
+                self.assertTrue(self.drawable(name).is_file(), "falta %s" % self.drawable(name))
+                vector_colors(self.drawable(name))
+
+    def test_background_is_starsonic_blue(self):
+        self.assertIn("#383881", vector_colors(self.drawable("ic_launcher_background")))
+
+    def test_foreground_has_the_cyan_ring_and_the_white_handset(self):
+        self.assertLessEqual({"#3DB1CC", "#FFFFFF"}, vector_colors(self.drawable("ic_launcher_foreground")))
+
+    def test_notification_icon_is_white_only(self):
+        self.assertEqual(vector_colors(self.drawable("ic_stat_starsonic")), {"#FFFFFF"})
+
+    def test_logos_are_copies_of_the_branding_ones(self):
+        # Nome de recurso do Android não aceita hífen: logo-faixa.png vira logo_faixa.png.
+        for source, copy in (("logo-faixa.png", "logo_faixa.png"), ("logo-entrar.png", "logo_entrar.png")):
+            with self.subTest(copy=copy):
+                target = ANDROID_RES / "drawable-nodpi" / copy
+                self.assertTrue(target.is_file(), "falta %s" % target)
+                self.assertEqual(target.read_bytes(), (ROOT / "branding" / source).read_bytes(),
+                                 "%s difere de branding/%s (rode gerar_marca.py)" % (copy, source))
 
 
 if __name__ == "__main__":

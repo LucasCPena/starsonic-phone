@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Cores da marca (as mesmas do Windows, branding/branding.h). -->
+    <color name="starsonic_blue">#383881</color>
+    <color name="starsonic_cyan">#3DB1CC</color>
+</resources>

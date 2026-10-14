@@ -4,3 +4,4 @@
 /dist/
 starsonic/generated/
 __pycache__/
+/android-deps/

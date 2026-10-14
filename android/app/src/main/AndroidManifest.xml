@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Sem backup na nuvem: a conta, a senha e os Recentes só ficam no celular (spec 6.4). -->
+    <application
+        android:name=".App"
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:theme="@style/Theme.Starsonic">
+
+        <!-- O nome embaixo do ícone é "Starsonic"; no resto, "Starsonic Phone". -->
+        <activity
+            android:name=".main.MainActivity"
+            android:exported="true"
+            android:label="@string/launcher_name"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.Starsonic.Splash">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>

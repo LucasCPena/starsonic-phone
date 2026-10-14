@@ -9,6 +9,11 @@ Saídas:
 - branding/logo-faixa.png                         palavra "starsonic" branca e ciano, para a faixa azul
 - branding/logo-entrar.png                        logo original num cartão branco (telas Entrar e Sobre)
 - branding/installer/boas-vindas.bmp              imagem da tela de boas-vindas do instalador (164x314)
+- android/app/src/main/res/drawable/ic_launcher_background.xml   ícone adaptável do Android: fundo azul
+- android/app/src/main/res/drawable/ic_launcher_foreground.xml   ícone adaptável: o símbolo do Windows
+- android/app/src/main/res/drawable/ic_launcher_monochrome.xml   ícone temático (Android 13+): anel e fone
+- android/app/src/main/res/drawable/ic_stat_starsonic.xml        ícone da notificação: anel e fone brancos
+- android/app/src/main/res/drawable-nodpi/logo_faixa.png e logo_entrar.png   cópias dos logos acima
 
 Precisa de Python 3 com Pillow, numpy, scipy e Playwright (com o Chromium instalado), que não
 fazem parte do build: rode à mão quando mudar o logo ou o desenho do ícone.
@@ -16,6 +21,7 @@ Uso: python3 branding/fontes/gerar_marca.py
 """
 import io
 import pathlib
+import shutil
 import struct
 
 import numpy as np
@@ -26,6 +32,7 @@ from scipy import ndimage
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "branding" / "fontes" / "logo-starsonic.png"
 ICONS = ROOT / "branding" / "overlay" / "microsip" / "res"
+ANDROID_RES = ROOT / "android" / "app" / "src" / "main" / "res"
 
 NAVY = (0x38, 0x38, 0x81)      # azul Starsonic (STARSONIC_BRAND_COLOR)
 CYAN = (0x3D, 0xB1, 0xCC)      # ciano Starsonic
@@ -43,24 +50,43 @@ def hex_color(rgb):
     return "#%02X%02X%02X" % rgb
 
 
-# ---- Ícones (SVG desenhado aqui, renderizado pelo Chromium em cada tamanho) ----
+# ---- Geometria do símbolo, num quadro de 100 x 100 (a mesma no Windows e no Android) ----
 
-HANDSET = """
-  <g transform="translate(50 50) scale(0.6) translate(-53 -48)" fill="#FFFFFF">
-    <path d="M 24 20 A 56 56 0 0 0 80 76" fill="none" stroke="#FFFFFF" stroke-width="15"/>
-    <rect x="14" y="8" width="33" height="24" rx="8" transform="rotate(6 30 20)"/>
-    <rect x="68" y="53" width="24" height="33" rx="8" transform="rotate(-6 80 70)"/>
-  </g>"""
+CIRCLE = (50, 50, 41)                                 # círculo azul: centro e raio
+RING = ("M 12.5 72 A 43.5 43.5 0 1 1 90 69", 9)       # anel por cima (lembra a curva do logo): caminho e espessura
+HANDSET_PIVOT = (53, 48)                              # o fone é desenhado em torno deste ponto, que vai para o
+HANDSET_SCALE = 0.6                                   # centro do círculo, reduzido a 60%
+HANDSET_CORD = ("M 24 20 A 56 56 0 0 0 80 76", 15)    # o arco entre as duas pontas: caminho e espessura
+HANDSET_ENDS = [                                      # as pontas: (x, y, largura, altura, raio), (giro, cx, cy)
+    ((14, 8, 33, 24, 8), (6, 30, 20)),
+    ((68, 53, 24, 33, 8), (-6, 80, 70)),
+]
+
+
+# ---- Ícones do Windows (SVG desenhado aqui, renderizado pelo Chromium em cada tamanho) ----
+
+def handset_svg():
+    lines = [
+        "",
+        '  <g transform="translate(%g %g) scale(%g) translate(%g %g)" fill="#FFFFFF">'
+        % (CIRCLE[0], CIRCLE[1], HANDSET_SCALE, -HANDSET_PIVOT[0], -HANDSET_PIVOT[1]),
+        '    <path d="%s" fill="none" stroke="#FFFFFF" stroke-width="%g"/>' % HANDSET_CORD,
+    ]
+    for (x, y, width, height, radius), (angle, cx, cy) in HANDSET_ENDS:
+        lines.append('    <rect x="%g" y="%g" width="%g" height="%g" rx="%g" transform="rotate(%g %g %g)"/>'
+                     % (x, y, width, height, radius, angle, cx, cy))
+    lines.append("  </g>")
+    return "\n".join(lines)
 
 
 def icon_svg(circle, ring, badge=False):
     """Círculo azul com o fone branco e um anel ciano por cima (lembra a curva do logo)."""
     parts = [
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">',
-        '<circle cx="50" cy="50" r="41" fill="%s"/>' % hex_color(circle),
-        '<path d="M 12.5 72 A 43.5 43.5 0 1 1 90 69" fill="none" stroke="%s" stroke-width="9" '
-        'stroke-linecap="round"/>' % hex_color(ring),
-        HANDSET,
+        '<circle cx="%g" cy="%g" r="%g" fill="%s"/>' % (CIRCLE + (hex_color(circle),)),
+        '<path d="%s" fill="none" stroke="%s" stroke-width="%g" stroke-linecap="round"/>'
+        % (RING[0], hex_color(ring), RING[1]),
+        handset_svg(),
     ]
     if badge:
         parts.append('<circle cx="78" cy="22" r="19" fill="%s" stroke="#FFFFFF" stroke-width="5"/>' % RED)
@@ -189,10 +215,112 @@ def make_logos():
     welcome.convert("RGB").save(target)
 
 
+# ---- Android (VectorDrawable com a geometria acima; o sistema desenha em qualquer tamanho) ----
+
+# Ícone adaptável: camadas de 108 dp, das quais a máscara do celular mostra no máximo o miolo de 72 dp e,
+# com certeza, só o círculo de 66 dp do centro (a zona segura). O anel vai até 48,8 do centro no quadro
+# de 100; com 0,66 ele fica a 32,2 dp do centro, dentro da zona segura.
+ADAPTIVE_DP, ADAPTIVE_SCALE = 108, 0.66
+# Notificação: 24 dp, com o desenho nos 20 dp do meio (2 dp de margem, como pede o Material).
+STATUS_DP, STATUS_SCALE = 24, 0.2
+
+VECTOR_HEADER = """<?xml version="1.0" encoding="utf-8"?>
+<!-- Gerado por branding/fontes/gerar_marca.py (a geometria do ícone do Windows). Não edite à mão. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="%(size)ddp"
+    android:height="%(size)ddp"
+    android:viewportWidth="%(size)d"
+    android:viewportHeight="%(size)d">"""
+
+
+def circle_path(cx, cy, radius):
+    return "M %g %g A %g %g 0 1 0 %g %g A %g %g 0 1 0 %g %g Z" % (
+        cx - radius, cy, radius, radius, cx + radius, cy, radius, radius, cx - radius, cy)
+
+
+def rounded_rect_path(x, y, width, height, radius):
+    """O <rect rx> do SVG como caminho (o VectorDrawable só desenha caminhos)."""
+    right, bottom = x + width, y + height
+    return ("M %g %g H %g A %g %g 0 0 1 %g %g V %g A %g %g 0 0 1 %g %g "
+            "H %g A %g %g 0 0 1 %g %g V %g A %g %g 0 0 1 %g %g Z" % (
+                x + radius, y, right - radius, radius, radius, right, y + radius,
+                bottom - radius, radius, radius, right - radius, bottom,
+                x + radius, radius, radius, x, bottom - radius,
+                y + radius, radius, radius, x + radius, y))
+
+
+def symbol_vector(size, scale, ring, handset, circle=None):
+    """O símbolo (círculo opcional, anel e fone) no centro de um quadro de size dp, na escala pedida.
+
+    Os grupos repetem as transformações do SVG: o VectorDrawable aplica em cada grupo
+    (p - pivô) * escala, girado, + pivô + deslocamento.
+    """
+    offset = size / 2 - CIRCLE[0] * scale
+    pivot_x, pivot_y = HANDSET_PIVOT
+    lines = [
+        VECTOR_HEADER % {"size": size},
+        '    <group android:scaleX="%g" android:scaleY="%g" android:translateX="%g" android:translateY="%g">'
+        % (scale, scale, offset, offset),
+    ]
+    if circle is not None:
+        lines.append('        <path android:fillColor="%s" android:pathData="%s"/>'
+                     % (hex_color(circle), circle_path(*CIRCLE)))
+    lines += [
+        '        <path android:strokeColor="%s" android:strokeWidth="%g" android:strokeLineCap="round" '
+        'android:pathData="%s"/>' % (hex_color(ring), RING[1], RING[0]),
+        # translate(50 50) scale(0.6) translate(-53 -48) do SVG = pivô no (53, 48), escala 0,6 e o pivô
+        # levado ao centro do círculo.
+        '        <group android:pivotX="%g" android:pivotY="%g" android:scaleX="%g" android:scaleY="%g" '
+        'android:translateX="%g" android:translateY="%g">'
+        % (pivot_x, pivot_y, HANDSET_SCALE, HANDSET_SCALE, CIRCLE[0] - pivot_x, CIRCLE[1] - pivot_y),
+        '            <path android:strokeColor="%s" android:strokeWidth="%g" android:pathData="%s"/>'
+        % (hex_color(handset), HANDSET_CORD[1], HANDSET_CORD[0]),
+    ]
+    for (x, y, width, height, radius), (angle, cx, cy) in HANDSET_ENDS:
+        lines += [
+            '            <group android:pivotX="%g" android:pivotY="%g" android:rotation="%g">' % (cx, cy, angle),
+            '                <path android:fillColor="%s" android:pathData="%s"/>'
+            % (hex_color(handset), rounded_rect_path(x, y, width, height, radius)),
+            "            </group>",
+        ]
+    lines += ["        </group>", "    </group>", "</vector>", ""]
+    return "\n".join(lines)
+
+
+def background_vector(size, color):
+    return "\n".join([
+        VECTOR_HEADER % {"size": size},
+        '    <path android:fillColor="%s" android:pathData="M 0 0 H %d V %d H 0 Z"/>' % (hex_color(color), size, size),
+        "</vector>",
+        "",
+    ])
+
+
+def make_android():
+    drawables = {
+        # Fundo azul inteiro (a máscara do celular recorta a forma); por cima, o símbolo do Windows.
+        "ic_launcher_background": background_vector(ADAPTIVE_DP, NAVY),
+        "ic_launcher_foreground": symbol_vector(ADAPTIVE_DP, ADAPTIVE_SCALE, CYAN, WHITE, circle=NAVY),
+        # Ícone temático e notificação: o Android usa só a transparência e pinta com a cor dele.
+        "ic_launcher_monochrome": symbol_vector(ADAPTIVE_DP, ADAPTIVE_SCALE, WHITE, WHITE),
+        "ic_stat_starsonic": symbol_vector(STATUS_DP, STATUS_SCALE, WHITE, WHITE),
+    }
+    folder = ANDROID_RES / "drawable"
+    folder.mkdir(parents=True, exist_ok=True)
+    for name, text in drawables.items():
+        (folder / (name + ".xml")).write_text(text, encoding="utf-8", newline="\n")
+    # Nome de recurso do Android não aceita hífen.
+    logos = ANDROID_RES / "drawable-nodpi"
+    logos.mkdir(parents=True, exist_ok=True)
+    for name in ("logo-faixa.png", "logo-entrar.png"):
+        shutil.copyfile(ROOT / "branding" / name, logos / name.replace("-", "_"))
+
+
 def main():
     make_icons()
     make_logos()
-    print("ok: ícones, logos e imagem do instalador gerados")
+    make_android()
+    print("ok: ícones, logos, imagem do instalador e marca do Android gerados")
 
 
 if __name__ == "__main__":
