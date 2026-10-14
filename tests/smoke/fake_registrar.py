@@ -12,7 +12,8 @@ controle, ligações. Só biblioteca padrão do Python 3.
 
 Ligações (sem autenticação para INVITE, re-INVITE, REFER, BYE e CANCEL):
 - INVITE do telefone: o usuário da Request-URI decide. 486, 404 e 480 -> essa resposta; outro ->
-  100, 180 e 200 com SDP (PCMU, PCMA e telefone-event, os que a oferta trouxer, na porta 40000).
+  100, 180 e 200 com SDP na porta 40000: um codec de áudio (o primeiro PCMU ou PCMA da oferta) e o
+  telephone-event/8000 da oferta, no payload type e com o fmtp que ela deu (sem a=rtpmap, o 101).
   Retransmissão do mesmo INVITE (UDP) repete a última resposta, sem ligação nova.
 - re-INVITE -> 200 com a direção espelhada (sendonly <-> recvonly); REFER -> 202 e um NOTIFY com
   SIP/2.0 200 OK (sipfrag); BYE e CANCEL -> 200
@@ -52,8 +53,10 @@ REASONS = {100: "Trying", 180: "Ringing", 200: "OK", 202: "Accepted", 401: "Unau
            404: "Not Found", 480: "Temporarily Unavailable", 486: "Busy Here", 487: "Request Terminated"}
 CALLER = '"Cliente Teste" <sip:3001@ci>'
 MEDIA_PORT = 40000   # nada escuta aqui: só a sinalização é de verdade
-RTPMAP = {"0": "0 PCMU/8000", "8": "8 PCMA/8000", "101": "101 telephone-event/8000"}
+RTPMAP = {"0": "PCMU/8000", "8": "PCMA/8000", "101": "telephone-event/8000"}   # o INVITE do RING oferece os três
+FMTP = {"101": "0-16"}
 AUDIO_CODECS = ("0", "8")   # PCMU e PCMA: o INVITE do RING oferece os dois, a resposta a um INVITE escolhe um
+TELEPHONE_EVENT = "telephone-event/8000"
 DIRECTIONS = ("sendrecv", "sendonly", "recvonly", "inactive")
 MIRROR = {"sendrecv": "sendrecv", "sendonly": "recvonly", "recvonly": "sendonly", "inactive": "inactive"}
 
@@ -145,7 +148,8 @@ def _branch_of(via):
 
 
 def _sdp_offer(body):
-    """(formatos do primeiro m=audio, direção): sendrecv se o SDP não disser outra."""
+    """(formatos do primeiro m=audio, direção, rtpmap, fmtp): direção sendrecv se o SDP não disser
+    outra; rtpmap e fmtp são os a= desse trecho, por payload type."""
     sections = [[]]   # o primeiro trecho é o do SDP todo (antes de qualquer m=); cada m= abre outro
     for line in body.splitlines():
         if line.startswith("m="):
@@ -156,7 +160,28 @@ def _sdp_offer(body):
     for line in sections[0] + audio:   # a direção do trecho de áudio vale mais que a do SDP todo
         if line[:2] == "a=" and line[2:] in DIRECTIONS:
             direction = line[2:]
-    return (audio[0].split()[3:] if audio else []), direction
+    rtpmap, fmtp = {}, {}
+    for line in audio[1:]:
+        for prefix, table in (("a=rtpmap:", rtpmap), ("a=fmtp:", fmtp)):
+            if line.startswith(prefix):
+                payload, _, value = line[len(prefix):].partition(" ")
+                table[payload] = value.strip()
+    return (audio[0].split()[3:] if audio else []), direction, rtpmap, fmtp
+
+
+def _telephone_event(formats, rtpmap, fmtp):
+    """(payload type, fmtp) do telephone-event/8000 da oferta, ou None. O PJSIP oferece um por taxa de
+    relógio (120, 121...); o de 8000 Hz é o que vai com o PCMU e o PCMA. Sem a=rtpmap, o 101 vale como
+    telephone-event, como no INVITE do RING."""
+    for payload in formats:
+        if rtpmap.get(payload, "").lower() == TELEPHONE_EVENT or (payload == "101" and payload not in rtpmap):
+            return payload, fmtp.get(payload, FMTP["101"])
+    return None
+
+
+def _ours(payloads):
+    """Os formatos do registrador para _sdp: (payload type, rtpmap, fmtp ou None)."""
+    return [(payload, RTPMAP[payload], FMTP.get(payload)) for payload in payloads]
 
 
 def _request(method, uri, transport, hostport, branch, headers, body=""):
@@ -346,14 +371,14 @@ class Registrar:
         sock = peer.conn if peer.transport == "tcp" else self.udp
         return "%s:%d" % (hostport, sock.getsockname()[1] if sock else 5060)
 
-    def _sdp(self, hostport, payloads, direction):
+    def _sdp(self, hostport, formats, direction):
+        """SDP de áudio com formats = [(payload type, rtpmap, fmtp ou None)], nessa ordem."""
         self.sdp_version += 1   # cada SDP novo do diálogo sobe a versão do o=
         host = _media_host(hostport)
         lines = ["v=0", "o=- 1 %d IN IP4 %s" % (self.sdp_version, host), "s=ci", "c=IN IP4 " + host, "t=0 0",
-                 "m=audio %d RTP/AVP %s" % (MEDIA_PORT, " ".join(payloads))]
-        lines += ["a=rtpmap:" + RTPMAP[payload] for payload in payloads]
-        if "101" in payloads:
-            lines.append("a=fmtp:101 0-16")
+                 "m=audio %d RTP/AVP %s" % (MEDIA_PORT, " ".join(payload for payload, _, _ in formats))]
+        lines += ["a=rtpmap:%s %s" % (payload, rtpmap) for payload, rtpmap, _ in formats]
+        lines += ["a=fmtp:%s %s" % (payload, fmtp) for payload, _, fmtp in formats if fmtp]
         lines.append("a=" + direction)
         return "\r\n".join(lines) + "\r\n"
 
@@ -364,10 +389,11 @@ class Registrar:
         if key in self.answers:   # retransmissão do UDP: nada de ligação nova, só a última resposta de novo
             return self.answers[key]
         alvo = _uri_user(msg.uri)
-        payloads, direction = _sdp_offer(msg.body)
+        offer = _sdp_offer(msg.body)
+        direction = offer[1]   # (formatos, direção, rtpmap, fmtp)
         if ";tag=" in msg.first("to"):   # re-INVITE: o diálogo já existe
             self._log("reinv-in %s %s" % (alvo, direction))
-            replies = [self._accept(msg, peer, payloads, MIRROR[direction])]
+            replies = [self._accept(msg, peer, offer, MIRROR[direction])]
         else:
             refusal = {"486": 486, "404": 404, "480": 480}.get(alvo)
             if refusal:
@@ -375,20 +401,24 @@ class Registrar:
             else:
                 replies = [self._response(100, msg.headers, peer.address),
                            self._response(180, msg.headers, peer.address),
-                           self._accept(msg, peer, payloads, "sendrecv")]
+                           self._accept(msg, peer, offer, "sendrecv")]
             self._log("inv-in %s %d" % (alvo, refusal or 200))
         self.answers[key] = replies[-1:]
         return replies
 
-    def _accept(self, msg, peer, payloads, direction):
+    def _accept(self, msg, peer, offer, direction):
         """200 a um INVITE: SDP com um codec de áudio só, o primeiro que a oferta trouxe (PCMU ou PCMA), e o
-        telefone-event se ele veio. Com dois codecs na resposta o PJSUA manda um re-INVITE para travar o
-        codec (lock_codec), e o LOG ganharia reinv-in que ninguém pediu."""
+        telephone-event/8000 se ela o trouxe, no payload type dela. Com dois codecs na resposta o PJSUA manda
+        um re-INVITE para travar o codec (lock_codec), e o LOG ganharia reinv-in que ninguém pediu."""
+        payloads, _, rtpmap, fmtp = offer
         audio = next((payload for payload in payloads if payload in AUDIO_CODECS), None)
         if audio:
-            answer = [audio, "101"] if "101" in payloads else [audio]
+            answer = _ours([audio])
+            event = _telephone_event(payloads, rtpmap, fmtp)
+            if event:
+                answer.append((event[0], TELEPHONE_EVENT, event[1]))
         else:   # a oferta não traz PCMU nem PCMA: como antes, os formatos nossos que ela trouxe, ou os três
-            answer = [payload for payload in RTPMAP if payload in payloads] or list(RTPMAP)
+            answer = _ours([payload for payload in RTPMAP if payload in payloads] or list(RTPMAP))
         extra = [("Contact", "<%s>" % msg.uri), ("Content-Type", "application/sdp")]   # a URI com que nos acharam
         return self._response(200, msg.headers, peer.address, extra, self._sdp(_uri_host(msg.uri), answer, direction))
 
@@ -446,7 +476,7 @@ class Registrar:
         ours = "sip:3001@%s%s" % (call.server, ";transport=tcp" if contact.peer.transport == "tcp" else "")
         headers = [("From", call.local), ("To", call.remote), ("Call-ID", call.call_id), ("CSeq", "1 INVITE"),
                    ("Contact", "<%s>" % ours), ("Content-Type", "application/sdp")]
-        offer = self._sdp(call.server, list(RTPMAP), "sendrecv")
+        offer = self._sdp(call.server, _ours(list(RTPMAP)), "sendrecv")
         self.calls.append(call)   # antes de mandar: a resposta pode chegar antes de este método voltar
         if not self._send(contact.peer, _request("INVITE", contact.uri, contact.peer.transport, call.server,
                                                  call.branch, headers, offer)):

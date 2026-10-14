@@ -561,6 +561,44 @@ class CallsTest(unittest.TestCase):
                 phone.receive()   # 180
                 self.assertIn("m=audio 40000 RTP/AVP %s\r\n" % answered, phone.receive()[2])
 
+    def test_answer_echoes_the_telephone_event_payload_type_of_the_offer(self):
+        # O PJSIP 2.17 oferece um telephone-event por taxa de relogio (120, 121, 122...). O de 8000 Hz e o
+        # que acompanha o PCMU e o PCMA; sem ele na resposta o PJSIP nao manda DTMF por RFC 2833.
+        phone = self.phone()
+        offers = (
+            ("9 8 0 120 121", ["120 telephone-event/16000", "121 telephone-event/8000"], ["120 0-16", "121 0-16"],
+             "8 121", "121 telephone-event/8000", "121 0-16"),
+            ("96 97 98 0 8 9 120 121 122",
+             ["0 PCMU/8000", "120 telephone-event/16000", "121 telephone-event/8000", "122 telephone-event/32000"],
+             ["120 0-16", "121 0-15", "122 0-16"],
+             "0 121", "121 telephone-event/8000", "121 0-15"),
+            ("8 110", ["110 TELEPHONE-EVENT/8000"], [], "8 110", "110 telephone-event/8000", "110 0-16"),
+        )
+        for number, (formats, rtpmaps, fmtps, answered, rtpmap, fmtp) in enumerate(offers):
+            with self.subTest(formats):
+                offer = ("v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=phone\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\n"
+                         "m=audio 4000 RTP/AVP %s\r\n" % formats
+                         + "".join("a=rtpmap:%s\r\n" % line for line in rtpmaps)
+                         + "".join("a=fmtp:%s\r\n" % line for line in fmtps) + "a=sendrecv\r\n")
+                phone.send(phone_request("INVITE", "sip:2002@ci", call_id="call-event-%d" % number,
+                                         extra=[SDP_TYPE], body=offer))
+                phone.receive()   # 100
+                phone.receive()   # 180
+                start, headers, body = phone.receive()
+                self.assertIn("m=audio 40000 RTP/AVP %s\r\n" % answered, body)
+                self.assertIn("a=rtpmap:%s\r\n" % rtpmap, body)
+                self.assertIn("a=fmtp:%s\r\n" % fmtp, body)
+                self.assertEqual(body.lower().count("telephone-event"), 1, body)
+                # O re-INVITE (Espera) recebe a mesma escolha.
+                tag = re.search(r";tag=(\S+)", headers["to"][0]).group(1)
+                phone.send(phone_request("ACK", "sip:2002@ci", to_tag=tag, call_id="call-event-%d" % number))
+                phone.send(phone_request("INVITE", "sip:2002@ci", cseq=2, to_tag=tag, call_id="call-event-%d" % number,
+                                         extra=[SDP_TYPE], body=offer.replace("a=sendrecv", "a=sendonly")))
+                body = phone.receive()[2]
+                self.assertIn("m=audio 40000 RTP/AVP %s\r\n" % answered, body)
+                self.assertIn("a=fmtp:%s\r\n" % fmtp, body)
+                self.assertIn("a=recvonly\r\n", body)
+
     def test_invite_retransmission_gets_the_last_response_not_a_second_call(self):
         phone = self.phone()
         self.invite(phone, "2002")
