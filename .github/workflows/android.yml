@@ -1,6 +1,6 @@
 name: android
 
-# SONDA TEMPORARIA (branch t4-probe): so coleta fatos do ambiente de CI. Nao vai para o main.
+# SONDA TEMPORARIA (branch t4-probe): coleta fatos do ambiente de CI. Nao vai para o main.
 on:
   workflow_dispatch:
     inputs:
@@ -10,79 +10,31 @@ on:
         default: ''
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   probe:
     name: Sonda
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
 
-      - name: Ferramentas e variaveis
-        run: |
-          uname -a; nproc; free -g | head -2; df -h . | tail -1
-          for t in cmake ninja make pkg-config jq unzip curl git python3 java sha256sum; do
-            printf '%-12s ' "$t"; (command -v "$t" && "$t" --version 2>&1 | head -1) || echo "AUSENTE"
-          done
-          echo "ANDROID_HOME=${ANDROID_HOME:-} ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-}"
-          echo "ANDROID_NDK_ROOT=${ANDROID_NDK_ROOT:-} ANDROID_NDK=${ANDROID_NDK:-} ANDROID_NDK_HOME=${ANDROID_NDK_HOME:-} ANDROID_NDK_LATEST_HOME=${ANDROID_NDK_LATEST_HOME:-}"
-          echo "JAVA_HOME=${JAVA_HOME:-}"
-          ls "$ANDROID_HOME" "$ANDROID_HOME/ndk" "$ANDROID_HOME/cmdline-tools" 2>&1 | head -40
-          echo "sdkmanager: $(command -v sdkmanager || echo 'fora do PATH')"
-          ls "$ANDROID_HOME/cmdline-tools/latest/bin" 2>&1 | head
-          cat /etc/os-release | head -3
+      - name: Sonda
+        run: bash probe.sh 2>&1 | tee "$RUNNER_TEMP/ci.log"
 
-      - name: NDKs que o sdkmanager oferece
+      # Os logs do Actions nao baixam do sandbox; o log vai para um branch que se busca com git.
+      - name: Publicar o log (branch t4-logs-<run>)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          "$SDKM" --list 2>&1 | grep -i -E "ndk" | head -40
-          echo "--- 30.0.16248370 ?"
-          "$SDKM" --list 2>&1 | grep -F "30.0.16248370" || echo "NAO ENCONTRADO"
-
-      - name: Instalar o NDK
-        run: |
-          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          time ("$SDKM" --install "ndk;30.0.16248370" 2>&1 | tail -15)
-          ls "$ANDROID_HOME/ndk"
-
-      - name: Estrutura do NDK
-        run: |
-          NDK="$ANDROID_HOME/ndk/30.0.16248370"
-          cat "$NDK/source.properties"
-          ls "$NDK"
-          echo "--- platforms.json"; head -c 600 "$NDK/meta/platforms.json"; echo
-          ls -la "$NDK/ndk-build" "$NDK/build/ndk-build" "$NDK/build/cmake/android.toolchain.cmake" 2>&1
-          ls "$NDK/toolchains/llvm/prebuilt/"
-          ls "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin" | grep -E "^(clang|clang\+\+|llvm-ar|llvm-nm|llvm-ranlib|llvm-readelf|ld|ld.lld|aarch64.*clang|armv7a.*clang|x86_64.*clang)" | head -40
-          "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" --version | head -2
-          ls "$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/" | grep -E "c\+\+|libc\.|liblog|libOpenSLES" | head
-
-      - name: AAR do Oboe
-        run: |
-          mkdir -p "$RUNNER_TEMP/oboe" && cd "$RUNNER_TEMP/oboe"
-          URL="https://dl.google.com/dl/android/maven2/com/google/oboe/oboe/1.11.0/oboe-1.11.0.aar"
-          curl -fsSL --retry 3 -o oboe.aar "$URL"
-          ls -la oboe.aar; sha256sum oboe.aar
-          for ext in sha256 sha1 md5 sha512; do
-            printf 'sidecar .%s: ' "$ext"; curl -fsSL "$URL.$ext" 2>&1 | head -c 200 || echo "(nao existe)"; echo
-          done
-          mkdir x && cd x && unzip -q ../oboe.aar && find . -type f | sort | head -80
-          echo "--- prefab.json"; cat prefab/prefab.json 2>&1 | head -20
-          echo "--- module.json"; cat prefab/modules/oboe/module.json 2>&1 | head -20
-          for d in prefab/modules/oboe/libs/*/; do echo "--- $d"; cat "$d/abi.json" 2>&1; echo; done
-          echo "--- alinhamento de todos os liboboe.so do AAR"
-          python3 -I "$GITHUB_WORKSPACE/build/android/elf_align.py" prefab/modules/oboe/libs/*/liboboe.so || true
-          echo "--- readelf NEEDED"; for so in prefab/modules/oboe/libs/*/liboboe.so; do echo "$so"; "$ANDROID_HOME/ndk/30.0.16248370/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf" -d "$so" | grep -E "NEEDED|SONAME"; done
-
-      - name: ndk-build -n do exemplo do pjproject (o que configure-android le)
-        run: |
-          NDK="$ANDROID_HOME/ndk/30.0.16248370"
-          mkdir -p "$RUNNER_TEMP/pj" && cd "$RUNNER_TEMP/pj"
-          git init -q && git fetch -q --depth 1 https://github.com/pjsip/pjproject 5a457451fa2712ba18e12b01738e8ff3af2b26fd && git checkout -q --detach FETCH_HEAD
-          cat pjsip-apps/src/samples/android_sample/jni/Application.mk
-          for abi in arm64-v8a armeabi-v7a x86_64; do
-            echo "=================== $abi"
-            "$NDK/ndk-build" -n -C pjsip-apps/src/samples/android_sample APP_PLATFORM=android-28 APP_ABI=$abi 2>&1 | head -60
-          done
+          mkdir -p "$RUNNER_TEMP/logs" && cd "$RUNNER_TEMP/logs"
+          cp "$RUNNER_TEMP/ci.log" ci.log 2>/dev/null || echo "sem log" > ci.log
+          gzip -9 -f ci.log
+          git init -q -b logs
+          git add ci.log.gz
+          git -c user.name=ci -c user.email=ci@example.invalid commit -q -m "log do run $GITHUB_RUN_ID [skip ci]"
+          git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "logs:refs/heads/t4-logs-${GITHUB_RUN_ID}"
+          echo "log publicado em t4-logs-${GITHUB_RUN_ID}"
+          echo "::notice title=log::branch t4-logs-${GITHUB_RUN_ID}"
