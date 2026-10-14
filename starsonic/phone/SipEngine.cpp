@@ -4,37 +4,35 @@
 #include <sys/socket.h>
 
 #include <algorithm>
-#include <atomic>
 #include <cctype>
-#include <chrono>
-#include <condition_variable>
+#include <exception>
 #include <mutex>
+#include <string>
 
 #include "AccountConfig.h"
 #include "AccountPolicy.h"
+#include "EngineAccount.h"
+#include "EngineCall.h"
+#include "EngineEndpoint.h"
+#include "EngineEvents.h"
+#include "EngineLog.h"
 #include "Text.h"
 
 namespace starsonic {
 namespace {
 
-const char kLogSender[] = "SipEngine";
 const char kThreadName[] = "starsonic-caller";
 // Quanto o motor espera o servidor confirmar a saída de uma conta antes de seguir sem a resposta.
 const int kUnregisterWaitMs = 3000;
+// Quanto o motor espera uma ligação desligada acabar antes de seguir (conta saindo ou motor acabando).
+const int kCallEndWaitMs = 2000;
 // Quanto o motor espera o pjsua refazer os transportes depois de uma troca de rede (leva alguns ms).
 const int kIpChangeWaitMs = 2000;
+const int kDefaultSipPort = 5060;
 
 // O pjsua tem estado global: um motor por processo.
 std::mutex g_aliveMutex;
 bool g_alive = false;
-
-// Linha do motor no mesmo log do PJSIP (mesmo formato, mesmo filtro de nível, mesmo OnLog).
-void Log(int level, const std::string& text) {
-    try {
-        pj::Endpoint::instance().utilLogWrite(level, kLogSender, text);
-    } catch (...) {
-    }
-}
 
 bool SameCodecId(const std::string& a, const std::string& b) {
     return a.size() == b.size() &&
@@ -43,181 +41,31 @@ bool SameCodecId(const std::string& a, const std::string& b) {
            });
 }
 
-// Entrega uma linha do PJSIP ao listener, sem o fim de linha.
-void ForwardLog(EngineListener* listener, int level, std::string line) {
-    while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.pop_back();
-    try {
-        listener->OnLog(level, line);
-    } catch (...) {   // o PJSIP é C: nenhuma exceção volta para ele
-    }
-}
-
-// O writer do pjsua2. O Endpoint é dono do objeto e o apaga no libDestroy.
-class LogForwarder : public pj::LogWriter {
-public:
-    explicit LogForwarder(EngineListener* listener) : listener_(listener) {}
-
-    void write(const pj::LogEntry& entry) override { ForwardLog(listener_, entry.level, entry.msg); }
-
-private:
-    EngineListener* listener_;
-};
-
-// O writer só entra no libInit, e o libCreate já escreve linhas: sem isto elas iriam para o terminal.
-// Até lá o PJLIB entrega as linhas a EarlyLog, com o mesmo filtro de nível do writer. Só o Create
-// mexe nestas variáveis, com g_aliveMutex.
-std::atomic<EngineListener*> g_earlyListener{nullptr};
-std::atomic<int> g_earlyLevel{0};
-
-void EarlyLog(int level, const char* data, int length) {
-    EngineListener* listener = g_earlyListener.load();
-    if (listener && level <= g_earlyLevel.load() && data && length > 0) {
-        ForwardLog(listener, level, std::string(data, static_cast<size_t>(length)));
-    }
-}
-
-class EarlyLogScope {
-public:
-    EarlyLogScope(EngineListener* listener, int maxLevel) {
-        g_earlyLevel = maxLevel;
-        g_earlyListener = listener;
-        pj_log_set_log_func(&EarlyLog);
-    }
-    ~EarlyLogScope() { g_earlyListener = nullptr; }
-
-    EarlyLogScope(const EarlyLogScope&) = delete;
-    EarlyLogScope& operator=(const EarlyLogScope&) = delete;
-};
-
-// O Endpoint do pjsua2 mais o aviso de quando a troca de rede termina.
-class EngineEndpoint : public pj::Endpoint {
-public:
-    // Chamar antes de handleIpChange: o fim da troca anterior não vale para a próxima.
-    void ExpectIpChange() {
-        std::lock_guard<std::mutex> lock(mutex_);
-        ipChangeDone_ = false;
-    }
-
-    // true: o pjsua refez os transportes e acabou de tratar as contas (ou nem havia conta).
-    bool WaitIpChange(int timeoutMs) {
-        std::unique_lock<std::mutex> lock(mutex_);
-        return changed_.wait_for(lock, std::chrono::milliseconds(timeoutMs), [this] { return ipChangeDone_; });
-    }
-
-    // Chamado numa thread do PJSIP (ou na de handleIpChange), com a trava do pjsua; nada aqui pode
-    // chamar o motor.
-    void onIpChangeProgress(pj::OnIpChangeProgressParam& param) override {
-        if (param.op != PJSUA_IP_CHANGE_OP_COMPLETED) return;
-        try {
-            std::lock_guard<std::mutex> lock(mutex_);
-            ipChangeDone_ = true;
-            changed_.notify_all();
-        } catch (...) {   // o PJSIP é C: nenhuma exceção volta para ele
-        }
-    }
-
-private:
-    std::mutex mutex_;
-    std::condition_variable changed_;
-    bool ipChangeDone_ = false;
-};
-
-// A conta do pjsua2: repassa cada resposta do registro ao listener e deixa quem retira o registro
-// esperar pela resposta do servidor.
-class EngineAccount : public pj::Account {
-public:
-    explicit EngineAccount(EngineListener* listener) : listener_(listener) {}
-
-    // Daqui em diante nenhuma resposta de registro vai ao listener (conta trocada ou motor
-    // destruído: um 200 sem registro ativo seria lido como o resultado da conta nova).
-    void Silence() { silent_ = true; }
-
-    // Retira o registro e espera até timeoutMs pela resposta do servidor. false: o tempo acabou ou o
-    // PJSIP recusou o pedido. Sem registro (a conta nem chegou a registrar), não há o que esperar.
-    bool Unregister(int timeoutMs) {
-        try {
-            if (!getInfo().regIsConfigured) return true;
-        } catch (const pj::Error&) {
-            return false;
-        }
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            unregistering_ = true;
-            unregistered_ = false;
-        }
-        try {
-            setRegistration(false);
-        } catch (const pj::Error& error) {
-            // PJ_EINVALIDOP: a conta já não tem registro (o último pedido falhou), nada a retirar.
-            if (error.status == PJ_EINVALIDOP) return true;
-            Log(3, "nao foi possivel retirar o registro: " + error.info());
-            return false;
-        }
-        std::unique_lock<std::mutex> lock(mutex_);
-        return changed_.wait_for(lock, std::chrono::milliseconds(timeoutMs), [this] { return unregistered_; });
-    }
-
-    // Chamado numa thread do PJSIP, com a trava do pjsua; nada aqui pode chamar o motor.
-    void onRegState(pj::OnRegStateParam& param) override {
-        try {
-            bool active = param.code / 100 == 2 && param.expiration > 0;
-            try {
-                active = getInfo().regIsActive;
-            } catch (const pj::Error&) {
-            }
-            if (!silent_) listener_->OnRegistration(static_cast<int>(param.code), active);
-            if (!active) {
-                std::lock_guard<std::mutex> lock(mutex_);
-                if (unregistering_) {
-                    unregistered_ = true;
-                    changed_.notify_all();
-                }
-            }
-        } catch (...) {   // o PJSIP é C: nenhuma exceção volta para ele
-        }
-    }
-
-private:
-    EngineListener* listener_;
-    std::atomic<bool> silent_{false};
-    std::mutex mutex_;
-    std::condition_variable changed_;
-    bool unregistering_ = false;
-    bool unregistered_ = false;
-};
-
-pj::AccountConfig MakeAccountConfig(const PjAccountSettings& settings, pj::TransportId transportId) {
-    pj::AccountConfig config;
-    config.idUri = settings.idUri;
-    config.regConfig.registrarUri = settings.registrarUri;
-    config.regConfig.timeoutSec = static_cast<unsigned>(settings.regTimeoutSec);
-    if (!settings.proxyUri.empty()) config.sipConfig.proxies.push_back(settings.proxyUri);
-    config.sipConfig.authCreds.push_back(pj::AuthCredInfo("digest", "*", settings.authUser, 0, settings.authPassword));
-    config.sipConfig.transportId = transportId;
-    // Como o MicroSIP: nada de reescrever Contact, Via ou SDP, sem ICE e SRTP sem exigir sinalização
-    // segura (o perfil usa UDP e TCP).
-    config.natConfig.udpKaIntervalSec = static_cast<unsigned>(settings.udpKeepAliveSec);
-    config.natConfig.contactRewriteUse = 0;
-    config.natConfig.viaRewriteUse = 0;
-    config.natConfig.sdpNatRewriteUse = 0;
-    config.natConfig.iceEnabled = false;
-    config.mediaConfig.srtpUse = static_cast<pjmedia_srtp_use>(settings.srtpUse);
-    config.mediaConfig.srtpSecureSignaling = 0;
-    return config;
-}
-
 }  // namespace
 
+// Travas: apiMutex_ põe um método público por vez e nunca é presa nos callbacks do PJSIP; a tabela de
+// ligações, as contas e a fila de eventos têm travas próprias, curtas, que nunca ficam presas enquanto o
+// listener é avisado (os eventos saem pela fila).
 class SipEngine::Impl {
 public:
-    Impl(const EngineConfig& config, EngineListener* listener) : config_(config), listener_(listener) {}
+    Impl(const EngineConfig& config, EngineListener* listener)
+        : config_(config), listener_(listener), events_(listener), calls_(&events_, config.profile.global.dtmf) {}
 
     ~Impl() {
+        // Daqui em diante nenhuma ligação nova e nenhum evento (o destrutor não avisa o listener).
+        calls_.Close();
+        events_.Stop();
         if (!endpoint_) return;
         if (RegisterThread()) {
             std::lock_guard<std::mutex> lock(apiMutex_);
-            RetireAccount(true);
+            if (account_) {
+                RetireAccount();
+            } else if (!calls_.End(kCallEndWaitMs)) {
+                Log(2, "a ligacao nao terminou a tempo; o PJSIP a encerra ao sair");
+            }
         }
+        // Um objeto de ligação que ainda exista se apaga no fim dela, que o libDestroy provoca; depois
+        // do libDestroy nenhum pode ser apagado (o destrutor do pj::Call mexe no pjsua).
         Shutdown();
     }
 
@@ -253,6 +101,9 @@ public:
             tcpId_ = endpoint_->transportCreate(PJSIP_TRANSPORT_TCP, transport);
             endpoint_->libStart();
             if (config_.nullAudio) endpoint_->audDevManager().setNullDev();
+            // O pjsua2 cria o objeto do microfone e do alto-falante no primeiro uso, sem trava: aqui,
+            // antes de qualquer ligação, ele nasce numa thread só.
+            endpoint_->audDevManager().getCaptureDevMedia();
             ConfigureCodecs();
             return true;
         } catch (const pj::Error& failure) {
@@ -269,12 +120,12 @@ public:
             Log(2, "conta recusada: endereco ou ramal vazio");
             return false;
         }
-        RetireAccount(true);
+        RetireAccount();
         const AccountFields fields = BuildAccount(config_.profile.account, input.address, input.ramal, input.senha,
                                                   input.transport, L"");
         const PjAccountSettings settings = ToPjAccount(fields);
         const pj::AccountConfig config = MakeAccountConfig(settings, settings.transport == "tcp" ? tcpId_ : udpId_);
-        std::unique_ptr<EngineAccount> account(new EngineAccount(listener_));
+        std::unique_ptr<EngineAccount> account(new EngineAccount(&events_, &calls_));
         try {
             account->create(config, true);
         } catch (const pj::Error& failure) {
@@ -282,13 +133,16 @@ public:
             return false;
         }
         account_ = std::move(account);
+        callHost_ = CallHost(fields.domain, config_.profile.account.port);
         return true;
     }
 
     void RemoveAccount() {
         std::lock_guard<std::mutex> lock(apiMutex_);
-        if (!RegisterThread()) return;
-        RetireAccount(false);
+        if (!RegisterThread() || !account_) return;
+        RetireAccount();
+        // A saída da conta, com ou sem a confirmação do servidor (o log diz qual).
+        events_.Post([](EngineListener& listener) { listener.OnRegistration(200, false); });
     }
 
     void Reregister() {
@@ -331,6 +185,60 @@ public:
         return ids;
     }
 
+    int MakeCall(const std::string& number) {
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        if (!RegisterThread()) return -1;
+        if (!account_ || number.empty()) {
+            Log(2, account_ ? "ligacao recusada: numero vazio" : "ligacao recusada: nao ha conta");
+            return -1;
+        }
+        return calls_.Make(*account_, CallUri(number));
+    }
+
+    bool Answer(int callId) {
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        return RegisterThread() && calls_.Answer(callId);
+    }
+
+    bool Reject(int callId) {
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        return RegisterThread() && calls_.Reject(callId);
+    }
+
+    bool Hangup(int callId) {
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        return RegisterThread() && calls_.Hangup(callId);
+    }
+
+    bool SetHold(int callId, bool hold) {
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        return RegisterThread() && calls_.SetHold(callId, hold);
+    }
+
+    void SetMute(bool muted) {
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        if (!RegisterThread()) return;
+        try {
+            // O que a ponte de áudio recebe do microfone: zero é mudo.
+            endpoint_->audDevManager().getCaptureDevMedia().adjustTxLevel(muted ? 0.0f : 1.0f);
+        } catch (const pj::Error& failure) {
+            Log(1, "mudo: " + failure.info());
+        }
+    }
+
+    bool SendDtmf(int callId, const std::string& digits) {
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        return RegisterThread() && calls_.SendDtmf(callId, digits);
+    }
+
+    bool Transfer(int callId, const std::string& number) {
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        if (!RegisterThread() || !account_ || number.empty()) return false;
+        return calls_.Transfer(callId, CallUri(number));
+    }
+
+    bool HasCall() { return calls_.HasCall(); }
+
 private:
     // O PJLIB só aceita chamadas de threads que ele conhece.
     bool RegisterThread() {
@@ -340,6 +248,18 @@ private:
         } catch (const pj::Error&) {
             return false;
         }
+    }
+
+    // sip:<número>@<domínio da conta>. O transporte é o da conta (UDP ou TCP), que o pjsua usa
+    // sozinho: a conta está presa a ele.
+    std::string CallUri(const std::string& number) const { return "sip:" + number + "@" + callHost_; }
+
+    // O domínio da conta e, se o perfil não usa a porta padrão do SIP, a porta: a ligação vai ao mesmo
+    // servidor e porta do registro (com a 5060 do perfil, sip:<número>@<domínio>, como no MicroSIP).
+    static std::string CallHost(const std::wstring& domain, int port) {
+        std::string host = WideToUtf8(domain);
+        if (port > 0 && port != kDefaultSipPort) host += ":" + std::to_string(port);
+        return host;
     }
 
     // Todos os codecs desligados, menos os do perfil, do mais para o menos preferido.
@@ -359,13 +279,29 @@ private:
         }
     }
 
-    // Retira o registro da conta atual (esperando o servidor, até um limite) e a apaga. silent: o
-    // listener não recebe a resposta do servidor.
-    void RetireAccount(bool silent) {
+    // Desliga a ligação, tira a conta do servidor (esperando a resposta, até um limite) e a apaga.
+    // Nenhuma resposta de registro desta conta vira evento daqui em diante.
+    void RetireAccount() {
         if (!account_) return;
-        if (silent) account_->Silence();
-        if (!account_->Unregister(kUnregisterWaitMs)) Log(2, "o servidor nao confirmou a saida da conta");
+        account_->Retire();
+        if (!calls_.End(kCallEndWaitMs)) Log(2, "a ligacao nao terminou a tempo; a conta sai assim mesmo");
+        switch (account_->Unregister(kUnregisterWaitMs)) {
+            case EngineAccount::Exit::Confirmed:
+                Log(3, "a conta saiu do servidor");
+                break;
+            case EngineAccount::Exit::NothingToRemove:
+                Log(3, "a conta nao estava registrada: nada a retirar do servidor");
+                break;
+            case EngineAccount::Exit::NoAnswer:
+                Log(2, "sem resposta do servidor: a conta sai sem a confirmacao dele");
+                break;
+        }
+        // Tira a conta do pjsua com o objeto ainda inteiro: depois disso nenhum resultado de REGISTER
+        // atrasado chega a ele. Só o reset() faria isso dentro do ~Account, com os campos do
+        // EngineAccount já desmontados.
+        account_->shutdown();
         account_.reset();
+        callHost_.clear();
     }
 
     void RefreshRegistration() {
@@ -388,11 +324,14 @@ private:
 
     EngineConfig config_;
     EngineListener* listener_;
+    EventQueue events_;   // antes da tabela e das contas, que avisam por ela
+    CallTable calls_;
     std::unique_ptr<EngineEndpoint> endpoint_;
     pj::TransportId udpId_ = -1;
     pj::TransportId tcpId_ = -1;
-    std::mutex apiMutex_;   // um método público por vez; nunca segurada nos callbacks do PJSIP
+    std::mutex apiMutex_;   // um método público por vez; nunca presa nos callbacks do PJSIP
     std::unique_ptr<EngineAccount> account_;
+    std::string callHost_;   // <domínio>[:<porta>] da conta (UTF-8), para as URIs das ligações
 };
 
 SipEngine::SipEngine(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
@@ -417,7 +356,13 @@ std::unique_ptr<SipEngine> SipEngine::Create(const EngineConfig& config, EngineL
         reason = "ja existe um motor neste processo";
         return nullptr;
     }
-    std::unique_ptr<Impl> impl(new Impl(config, listener));
+    std::unique_ptr<Impl> impl;
+    try {
+        impl.reset(new Impl(config, listener));
+    } catch (const std::exception& failure) {   // a thread dos eventos não nasceu
+        reason = std::string("nao foi possivel iniciar o motor: ") + failure.what();
+        return nullptr;
+    }
     if (!impl->Start(&reason)) return nullptr;
     std::unique_ptr<SipEngine> engine(new SipEngine(std::move(impl)));
     g_alive = true;
@@ -433,5 +378,23 @@ void SipEngine::Reregister() { impl_->Reregister(); }
 void SipEngine::HandleIpChange() { impl_->HandleIpChange(); }
 
 std::vector<std::string> SipEngine::ActiveCodecs() const { return impl_->ActiveCodecs(); }
+
+int SipEngine::MakeCall(const std::string& number) { return impl_->MakeCall(number); }
+
+bool SipEngine::Answer(int callId) { return impl_->Answer(callId); }
+
+bool SipEngine::Reject(int callId) { return impl_->Reject(callId); }
+
+bool SipEngine::Hangup(int callId) { return impl_->Hangup(callId); }
+
+bool SipEngine::SetHold(int callId, bool hold) { return impl_->SetHold(callId, hold); }
+
+void SipEngine::SetMute(bool muted) { impl_->SetMute(muted); }
+
+bool SipEngine::SendDtmf(int callId, const std::string& digits) { return impl_->SendDtmf(callId, digits); }
+
+bool SipEngine::Transfer(int callId, const std::string& number) { return impl_->Transfer(callId, number); }
+
+bool SipEngine::HasCall() const { return impl_->HasCall(); }
 
 }  // namespace starsonic

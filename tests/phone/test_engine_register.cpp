@@ -1,5 +1,5 @@
-#include "test_support.h"
-#include "registrar_fixture.h"
+#include "engine_fixture.h"
+#include "relay_fixture.h"
 #include "stun_fixture.h"
 
 #include <chrono>
@@ -14,51 +14,20 @@
 #include "Text.h"
 
 using namespace starsonic;
+using phone_test::ConfigFor;
+using phone_test::Contains;
+using phone_test::DelayedUdpRelay;
 using phone_test::FakeRegistrar;
 using phone_test::FakeStunServer;
+using phone_test::Input;
+using phone_test::kUserAgent;
+using phone_test::kWaitSeconds;
+using phone_test::LoadProfile;
 using phone_test::RecordingListener;
 using phone_test::RegistrationEvent;
+using phone_test::StartEngine;
 
 namespace {
-
-const char kUserAgent[] = "Starsonic Phone Android/0.0.0-test";
-const int kWaitSeconds = 10;
-
-// branding/perfil.ini, o mesmo arquivo que vai no APK; port > 0 troca a porta do servidor (o
-// registrador falso sobe numa porta livre).
-Profile LoadProfile(int port = 0) {
-    const std::string bytes = phone_test::ReadText(STARSONIC_REPO_DIR "/branding/perfil.ini");
-    Profile profile;
-    const ParseResult result = ParseProfile(Utf8ToWide(StripUtf8Bom(bytes)), &profile);
-    REQUIRE_MESSAGE(result.ok, "branding/perfil.ini nao passou no ParseProfile");
-    if (port > 0) profile.account.port = port;
-    return profile;
-}
-
-EngineConfig ConfigFor(const Profile& profile) {
-    EngineConfig config;
-    config.userAgent = kUserAgent;
-    config.profile = profile;
-    config.nullAudio = true;
-    return config;
-}
-
-std::unique_ptr<SipEngine> StartEngine(RecordingListener* listener, const Profile& profile) {
-    std::string error;
-    std::unique_ptr<SipEngine> engine = SipEngine::Create(ConfigFor(profile), listener, &error);
-    REQUIRE_MESSAGE(engine != nullptr, error);
-    return engine;
-}
-
-AccountInput Input(Transport transport, const std::wstring& ramal = L"2001",
-                   const std::wstring& senha = L"senha") {
-    AccountInput input;
-    input.address = L"127.0.0.1";
-    input.transport = transport;
-    input.ramal = ramal;
-    input.senha = senha;
-    return input;
-}
 
 // O primeiro registro que falhou sem resposta do servidor (503 ou 408); 0 se ainda nao houve.
 int FindServerFailure(const std::vector<RegistrationEvent>& events) {
@@ -66,10 +35,6 @@ int FindServerFailure(const std::vector<RegistrationEvent>& events) {
         if (!event.active && (event.code == 503 || event.code == 408)) return event.code;
     }
     return 0;
-}
-
-bool Contains(const std::string& text, const std::string& part) {
-    return text.find(part) != std::string::npos;
 }
 
 }  // namespace
@@ -171,7 +136,7 @@ TEST_CASE("SipEngine uses no STUN when the profile leaves stun empty") {
     RecordingListener listener;
     INFO(listener.LogTail());
     const Profile profile = LoadProfile();
-    REQUIRE(profile.global.stun.empty());   // branding/perfil.ini: stun= vazio
+    REQUIRE(profile.global.stun.empty());   // como no branding/perfil.ini de hoje (stun= vazio)
     std::unique_ptr<SipEngine> engine = StartEngine(&listener, profile);
 
     // Sem servidor o pjsua nao escreve nada de STUN ao iniciar; com um, logo diz "Trying STUN server".
@@ -236,6 +201,52 @@ TEST_CASE("RemoveAccount unregisters") {
     REQUIRE(listener.WaitFor(RecordingListener::Reached(200, true, 1), kWaitSeconds));
     engine->RemoveAccount();
     CHECK(listener.WaitFor(RecordingListener::Reached(200, false, 1), kWaitSeconds));
+    // O servidor tirou o contato: o RING não tem para onde ir.
+    CHECK(registrar.Control("RING 2001") == std::vector<std::string>{"ERR no-contact"});
+    CHECK_FALSE(RecordingListener::Reached(200, false, 2)(listener.Registrations()));
+}
+
+TEST_CASE("RemoveAccount waits for a REGISTER in flight and then leaves the server") {
+    bool renewal = false;
+    SUBCASE("the first REGISTER") { renewal = false; }
+    SUBCASE("a renewal") { renewal = true; }
+
+    FakeRegistrar registrar("senha");
+    DelayedUdpRelay relay(registrar.port(), 150);   // cada pacote leva 150 ms em cada sentido
+    RecordingListener listener;
+    INFO(listener.LogTail());
+    std::unique_ptr<SipEngine> engine = StartEngine(&listener, LoadProfile(relay.port()));
+
+    REQUIRE(engine->SetAccount(Input(Transport::Udp)));
+    if (renewal) {
+        REQUIRE(listener.WaitFor(RecordingListener::Reached(200, true, 1), kWaitSeconds));
+        engine->Reregister();
+    }
+    // O REGISTER ainda está no retransmissor: o PJSIP recusa o pedido de saída (PJSIP_EBUSY).
+    engine->RemoveAccount();
+
+    CHECK(Contains(listener.LogTail(), "REGISTER em andamento"));
+    CHECK(listener.WaitFor(RecordingListener::Reached(200, false, 1), kWaitSeconds));
+    // O REGISTER chegou ao servidor e a saída veio depois dele: sem contato, o RING não tem destino.
+    CHECK(registrar.Control("REGISTERS 2001") == std::vector<std::string>{renewal ? "2" : "1"});
+    CHECK(registrar.Control("RING 2001") == std::vector<std::string>{"ERR no-contact"});
+    CHECK_FALSE(RecordingListener::Reached(200, false, 2)(listener.Registrations()));
+}
+
+TEST_CASE("RemoveAccount reports that the account left even without an answer from the server") {
+    FakeRegistrar registrar("senha");
+    DelayedUdpRelay relay(registrar.port(), 60000);   // nada volta durante o teste
+    RecordingListener listener;
+    INFO(listener.LogTail());
+    std::unique_ptr<SipEngine> engine = StartEngine(&listener, LoadProfile(relay.port()));
+
+    REQUIRE(engine->SetAccount(Input(Transport::Udp)));
+    const auto start = std::chrono::steady_clock::now();
+    engine->RemoveAccount();
+    CHECK(std::chrono::steady_clock::now() - start < std::chrono::seconds(5));   // espera limitada (~3 s)
+    CHECK(listener.WaitFor(RecordingListener::Reached(200, false, 1), kWaitSeconds));
+    CHECK(listener.Registrations().size() == 1);
+    CHECK(Contains(listener.LogTail(), "sem resposta do servidor"));
 }
 
 TEST_CASE("SetAccount replaces the account and only reports the new one") {

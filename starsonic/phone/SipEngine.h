@@ -1,6 +1,7 @@
 #pragma once
-// Motor de ligações sobre o PJSIP 2.17 (pjsua2), spec 6.2: monta a conta do perfil, registra e avisa
-// os eventos por EngineListener. Sem nada de Android; este cabeçalho também não inclui o PJSIP.
+// Motor de ligações sobre o PJSIP 2.17 (pjsua2), spec 6.2: monta a conta do perfil, registra, faz e
+// recebe ligações e avisa os eventos por EngineListener. Sem nada de Android; este cabeçalho também
+// não inclui o PJSIP.
 #include <memory>
 #include <string>
 #include <vector>
@@ -11,20 +12,30 @@ namespace starsonic {
 
 enum class CallState { Incoming = 0, Calling = 1, Early = 2, Connecting = 3, Confirmed = 4, Disconnected = 5 };
 
-// Os eventos chegam em threads do PJSIP e, às vezes, na própria thread que chamou o motor, dentro da
-// chamada (Create, SetAccount, Reregister, HandleIpChange, RemoveAccount e ~SipEngine). O motor segura
-// travas internas enquanto avisa: nenhum método daqui pode chamar o motor de volta. A implementação
-// precisa durar mais que o motor (o destrutor ainda manda linhas de log).
+// Os eventos (OnRegistration, OnIncomingCall, OnRejectedBusy e OnCallState) chegam numa thread do
+// próprio motor, um de cada vez e na ordem em que aconteceram, sem nenhuma trava do motor ou do
+// PJSIP presa: o listener pode chamar o motor (só não pode destruí-lo). Um evento pode chegar antes
+// de o método que o provocou voltar. Do começo de ~SipEngine em diante nenhum evento é entregue (o
+// destrutor espera o que estiver com o listener terminar).
+// OnLog é diferente: chega na hora, na thread que escreveu a linha (uma do PJSIP ou a que chamou o
+// motor), às vezes com travas do motor ou do PJSIP presas; ele não pode chamar o motor nem esperar
+// por outra thread. A implementação precisa durar mais que o motor (o destrutor ainda manda linhas
+// de log).
 class EngineListener {
 public:
     virtual ~EngineListener() {}
 
     // Cada resposta do registro: o código SIP e se a conta ficou registrada. (200, true) = registrou
-    // ou renovou; (200, false) = a conta saiu (RemoveAccount); 4xx a 6xx = falhou; sem resposta do
-    // servidor, 503 (conexão recusada ou rede fora) ou 408 (tempo esgotado).
+    // ou renovou; (200, false) = a conta saiu (RemoveAccount; não é um registro); 4xx a 6xx = falhou;
+    // sem resposta do servidor, 503 (conexão recusada ou rede fora) ou 408 (tempo esgotado).
     virtual void OnRegistration(int sipCode, bool active) = 0;
+    // Chegou uma ligação, que toca (o motor responde 180 sozinho). remoteUser é o usuário do From (o
+    // número de quem liga) e remoteName, o nome de exibição (pode ser vazio), em UTF-8.
     virtual void OnIncomingCall(int callId, const std::string& remoteUser, const std::string& remoteName) = 0;
+    // Chegou uma ligação com outra em andamento: o motor respondeu 486 (Ocupado) sozinho.
     virtual void OnRejectedBusy(const std::string& remoteUser, const std::string& remoteName) = 0;
+    // A ligação callId mudou de estado; sipCode é o último código SIP dela (no Disconnected, o do fim,
+    // para CallEndMessage). Disconnected é o último evento de cada ligação.
     virtual void OnCallState(int callId, CallState state, int sipCode) = 0;
     // level como no PJSIP: 1 erro, 2 aviso, 3 informação, 4 detalhe. Sem senhas.
     virtual void OnLog(int level, const std::string& line) = 0;
@@ -39,13 +50,14 @@ struct EngineConfig {
 
 struct AccountInput {
     std::wstring address;     // já validado (ValidateServerAddress)
-    Transport transport;
+    Transport transport = Transport::Udp;
     std::wstring ramal;       // já validado (ValidateRamal)
     std::wstring senha;
 };
 
 // Todo método público registra a thread que chama no PJLIB antes de usar o PJSIP, então pode ser
-// chamado de qualquer thread. Chamadas ao mesmo tempo esperam uma pela outra.
+// chamado de qualquer thread. Chamadas ao mesmo tempo esperam uma pela outra (menos HasCall, que
+// nunca espera). Uma ligação por vez: a que chega com outra em andamento recebe 486.
 class SipEngine {
 public:
     // O pjsua tem estado global: só um motor por processo (um segundo Create devolve nullptr até o
@@ -55,19 +67,22 @@ public:
     // principal).
     static std::unique_ptr<SipEngine> Create(const EngineConfig& config, EngineListener* listener, std::string* error);
 
-    // Desregistra a conta (sem avisar o listener) e destrói o pjsua; demora cerca de 1 s.
+    // Desliga a ligação e desregistra a conta, sem avisar o listener, e destrói o pjsua; demora cerca
+    // de 1 s (mais até ~5 s se o servidor não responde). Não pode ser chamado de dentro de um evento.
     ~SipEngine();
 
     SipEngine(const SipEngine&) = delete;
     SipEngine& operator=(const SipEngine&) = delete;
 
     // Troca a conta e registra; o resultado chega por OnRegistration. A conta anterior sai do
-    // servidor sem aviso ao listener. false: dados vazios ou o PJSIP recusou a conta (não há conta).
-    // Espera até ~3 s pela saída da conta anterior.
+    // servidor sem aviso ao listener (uma ligação em andamento é desligada, com o Disconnected de
+    // sempre). false: dados vazios ou o PJSIP recusou a conta (não há conta). Espera até ~5 s pela
+    // saída da conta anterior.
     bool SetAccount(const AccountInput& input);
 
-    // Retira o registro e apaga a conta; o servidor responde por OnRegistration(200, false). Espera
-    // até ~3 s por essa resposta.
+    // Desliga a ligação, retira o registro e apaga a conta; no fim chega OnRegistration(200, false),
+    // uma vez. Com um REGISTER ainda a caminho, espera a resposta dele e só então pede a saída. Espera
+    // até ~3 s pelo servidor; sem resposta, a conta sai assim mesmo (o log diz). Sem conta, nada.
     void RemoveAccount();
 
     // Renova o registro agora.
@@ -80,6 +95,38 @@ public:
 
     // Os codecs ligados (prioridade acima de zero), do mais para o menos preferido.
     std::vector<std::string> ActiveCodecs() const;
+
+    // Liga para sip:<número>@<domínio da conta> (number em UTF-8, já sem separadores; ver
+    // NormalizeDialString). Se a porta do perfil não é a 5060, a URI leva a porta (o servidor do
+    // registro): sip:<número>@<domínio>:<porta>. Devolve o id da ligação, que os eventos dela trazem,
+    // ou -1 (sem conta, número vazio, já há uma ligação ou o PJSIP recusou; nesse caso nenhum evento
+    // dela chega). Os eventos podem chegar antes de MakeCall voltar.
+    int MakeCall(const std::string& number);
+
+    // Atende (200) ou recusa com Ocupado (486) a ligação recebida que está tocando.
+    bool Answer(int callId);
+    bool Reject(int callId);
+
+    // Desliga a ligação em qualquer estado (CANCEL, recusa ou BYE); o fim chega por OnCallState.
+    bool Hangup(int callId);
+
+    // true põe em espera (re-INVITE com sendonly); false retoma (re-INVITE com sendrecv). Se outra
+    // renegociação da ligação ainda está em andamento, espera até ~2 s que ela termine.
+    bool SetHold(int callId, bool hold);
+
+    // Microfone mudo ou não, para a ligação de agora e as próximas (até trocar de novo).
+    void SetMute(bool muted);
+
+    // Manda os dígitos (0-9, *, #, A-D) pelo método DTMF do perfil: info por SIP INFO; rfc2833, auto
+    // e inband por RFC 2833.
+    bool SendDtmf(int callId, const std::string& digits);
+
+    // Transfere (REFER) para sip:<número>@<domínio da conta> (com a porta, como em MakeCall); quando o
+    // outro lado avisa que deu certo (NOTIFY com 2xx), o motor desliga a ligação.
+    bool Transfer(int callId, const std::string& number);
+
+    // Há uma ligação (tocando, chamando ou em andamento), do começo até o Disconnected dela.
+    bool HasCall() const;
 
 private:
     class Impl;
