@@ -37,4 +37,17 @@ struct StringMaker<std::vector<std::wstring>> {
         return String(out.c_str());
     }
 };
+
+template <>
+struct StringMaker<std::vector<std::string>> {
+    static String convert(const std::vector<std::string>& items) {
+        std::string out = "{";
+        for (size_t i = 0; i < items.size(); ++i) {
+            if (i) out += ", ";
+            out += "\"" + items[i] + "\"";
+        }
+        out += "}";
+        return String(out.c_str());
+    }
+};
 }  // namespace doctest

@@ -11,6 +11,10 @@ std::string StripUtf8Bom(const std::string& bytes);
 // (Windows) os caracteres fora do plano básico viram pares substitutos.
 std::wstring Utf8ToWide(const std::string& utf8);
 
+// Codifica em UTF-8. Aceita wchar_t de 16 bits (Windows: o par substituto vira um caractere) e de
+// 32 bits (Linux, Android). Cada unidade inválida (substituto solto, acima de U+10FFFF) vira U+FFFD.
+std::string WideToUtf8(const std::wstring& text);
+
 // Remove espaços e tabs das duas pontas.
 std::wstring Trim(const std::wstring& text);
 

@@ -1,5 +1,7 @@
 #include "Text.h"
 
+#include <type_traits>
+
 namespace starsonic {
 
 std::string StripUtf8Bom(const std::string& bytes) {
@@ -81,6 +83,60 @@ std::wstring Utf8ToWide(const std::string& utf8) {
         // Inválida: um U+FFFD e a leitura recomeça no byte que quebrou a sequência.
         AppendCodePoint(&out, valid ? code : kReplacementChar);
         i = j;
+    }
+    return out;
+}
+
+namespace {
+
+void AppendUtf8(std::string* out, unsigned long code) {
+    if (code < 0x80) {
+        out->push_back(static_cast<char>(code));
+    } else if (code < 0x800) {
+        out->push_back(static_cast<char>(0xC0 | (code >> 6)));
+        out->push_back(static_cast<char>(0x80 | (code & 0x3F)));
+    } else if (code < 0x10000) {
+        out->push_back(static_cast<char>(0xE0 | (code >> 12)));
+        out->push_back(static_cast<char>(0x80 | ((code >> 6) & 0x3F)));
+        out->push_back(static_cast<char>(0x80 | (code & 0x3F)));
+    } else {
+        out->push_back(static_cast<char>(0xF0 | (code >> 18)));
+        out->push_back(static_cast<char>(0x80 | ((code >> 12) & 0x3F)));
+        out->push_back(static_cast<char>(0x80 | ((code >> 6) & 0x3F)));
+        out->push_back(static_cast<char>(0x80 | (code & 0x3F)));
+    }
+}
+
+// A unidade como número sem sinal: um wchar_t negativo (32 bits com sinal) vira um valor enorme,
+// que cai na faixa inválida acima de U+10FFFF.
+unsigned long UnitValue(wchar_t unit) {
+    return static_cast<unsigned long>(static_cast<std::make_unsigned<wchar_t>::type>(unit));
+}
+
+bool IsHighSurrogate(unsigned long unit) {
+    return unit >= 0xD800 && unit <= 0xDBFF;
+}
+
+bool IsLowSurrogate(unsigned long unit) {
+    return unit >= 0xDC00 && unit <= 0xDFFF;
+}
+
+}  // namespace
+
+std::string WideToUtf8(const std::wstring& text) {
+    std::string out;
+    out.reserve(text.size());
+    const size_t size = text.size();
+    for (size_t i = 0; i < size; ++i) {
+        unsigned long code = UnitValue(text[i]);
+        // Com wchar_t de 16 bits os caracteres fora do plano básico chegam como um par substituto.
+        if (sizeof(wchar_t) == 2 && IsHighSurrogate(code) && i + 1 < size && IsLowSurrogate(UnitValue(text[i + 1]))) {
+            code = 0x10000 + ((code - 0xD800) << 10) + (UnitValue(text[i + 1]) - 0xDC00);
+            ++i;
+        } else if (IsHighSurrogate(code) || IsLowSurrogate(code) || code > 0x10FFFF) {
+            code = kReplacementChar;
+        }
+        AppendUtf8(&out, code);
     }
     return out;
 }

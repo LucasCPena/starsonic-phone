@@ -1,0 +1,80 @@
+name: android
+
+# App Android (etapa 1). Por enquanto só o motor de ligações, testado no Linux contra o registrador
+# falso de tests/smoke; o APK entra nas próximas tarefas.
+on:
+  push:
+    branches: ['**']   # tags v* passam pelo release.yml
+    paths:
+      - 'android/**'
+      - 'starsonic/**'
+      - 'tests/phone/**'
+      - 'tests/smoke/fake_registrar.py'
+      - 'tests/python/**'
+      - 'build/android/**'
+      - 'build/linux/**'
+      - 'branding/**'
+      - '.github/workflows/android*.yml'
+  pull_request:
+    paths:
+      - 'android/**'
+      - 'starsonic/**'
+      - 'tests/phone/**'
+      - 'tests/smoke/fake_registrar.py'
+      - 'tests/python/**'
+      - 'build/android/**'
+      - 'build/linux/**'
+      - 'branding/**'
+      - '.github/workflows/android*.yml'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Versão (X.Y.Z ou X.Y.Z-rc.N); vazio = 0.0.0"
+        type: string
+        default: ''
+  workflow_call:
+    inputs:
+      version:
+        description: "Versão (X.Y.Z ou X.Y.Z-rc.N); vazio = da tag, ou 0.0.0"
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  phone-linux:
+    name: Motor de ligações (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # O libuuid é preciso para compilar o pjproject e também para ligar os testes.
+      - name: Dependências do sistema
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y uuid-dev
+
+      - name: Restaurar o pjproject
+        id: pj-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: pj-linux
+          key: pj-linux-v1-${{ hashFiles('build/deps.lock', 'build/linux/**') }}
+
+      - name: Compilar o pjproject
+        if: steps.pj-cache.outputs.cache-hit != 'true'
+        run: bash build/linux/build-pjproject.sh work/pjproject-linux pj-linux
+
+      - name: Guardar o pjproject
+        if: steps.pj-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: pj-linux
+          key: ${{ steps.pj-cache.outputs.cache-primary-key }}
+
+      - name: Testes do motor (pjsua2 contra o registrador falso)
+        run: |
+          cmake -S tests/phone -B build-phone -DPJPROJECT_PREFIX="$PWD/pj-linux"
+          cmake --build build-phone -j 4
+          ctest --test-dir build-phone --output-on-failure
