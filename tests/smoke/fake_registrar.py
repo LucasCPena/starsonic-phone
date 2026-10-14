@@ -53,6 +53,7 @@ REASONS = {100: "Trying", 180: "Ringing", 200: "OK", 202: "Accepted", 401: "Unau
 CALLER = '"Cliente Teste" <sip:3001@ci>'
 MEDIA_PORT = 40000   # nada escuta aqui: só a sinalização é de verdade
 RTPMAP = {"0": "0 PCMU/8000", "8": "8 PCMA/8000", "101": "101 telephone-event/8000"}
+AUDIO_CODECS = ("0", "8")   # PCMU e PCMA: o INVITE do RING oferece os dois, a resposta a um INVITE escolhe um
 DIRECTIONS = ("sendrecv", "sendonly", "recvonly", "inactive")
 MIRROR = {"sendrecv": "sendrecv", "sendonly": "recvonly", "recvonly": "sendonly", "inactive": "inactive"}
 
@@ -221,7 +222,7 @@ class Registrar:
         self.registers = {}      # ramal -> REGISTER aceitos com Expires > 0
         self.calls = []          # as ligações do RING
         self.answers = {}        # INVITE já respondido (Call-ID, CSeq, branch) -> respostas a repetir
-        self.notifies = {}       # Call-ID -> CSeq do último NOTIFY mandado
+        self.cseqs = {}          # Call-ID de diálogo aberto pelo telefone -> CSeq do último pedido que mandamos nele
         self.events = []         # o registro de ligações (LOG)
         self.sdp_version = 0
 
@@ -380,22 +381,43 @@ class Registrar:
         return replies
 
     def _accept(self, msg, peer, payloads, direction):
-        """200 a um INVITE: SDP com os codecs que a oferta trouxe (de PCMU, PCMA e telefone-event)."""
-        payloads = [payload for payload in RTPMAP if payload in payloads] or list(RTPMAP)
+        """200 a um INVITE: SDP com um codec de áudio só, o primeiro que a oferta trouxe (PCMU ou PCMA), e o
+        telefone-event se ele veio. Com dois codecs na resposta o PJSUA manda um re-INVITE para travar o
+        codec (lock_codec), e o LOG ganharia reinv-in que ninguém pediu."""
+        audio = next((payload for payload in payloads if payload in AUDIO_CODECS), None)
+        if audio:
+            answer = [audio, "101"] if "101" in payloads else [audio]
+        else:   # a oferta não traz PCMU nem PCMA: como antes, os formatos nossos que ela trouxe, ou os três
+            answer = [payload for payload in RTPMAP if payload in payloads] or list(RTPMAP)
         extra = [("Contact", "<%s>" % msg.uri), ("Content-Type", "application/sdp")]   # a URI com que nos acharam
-        return self._response(200, msg.headers, peer.address, extra, self._sdp(_uri_host(msg.uri), payloads, direction))
+        return self._response(200, msg.headers, peer.address, extra, self._sdp(_uri_host(msg.uri), answer, direction))
 
     def _on_refer(self, msg, peer):
         self._log("refer-in %s %s" % (_uri_user(msg.uri), _uri_user(_uri_of(msg.first("refer-to")))))
         return [self._response(202, msg.headers, peer.address), self._notify(msg, peer)]
 
+    def _call_of(self, call_id):
+        """A ligação do RING com esse Call-ID, ou None se o diálogo é de uma ligação do telefone."""
+        return next((call for call in reversed(self.calls) if call.call_id == call_id), None)
+
+    def _next_cseq(self, call_id):
+        """O CSeq do próximo pedido nosso num diálogo em andamento. O PJSIP responde 500 "Invalid CSeq" a
+        qualquer pedido com CSeq <= ao último que recebeu no diálogo; por isso, numa ligação do RING (o
+        INVITE usou o 1 e o BYE usa o seguinte ao último pedido) a conta é a da própria ligação. Num diálogo
+        aberto pelo telefone, o nosso primeiro pedido leva o 1."""
+        call = self._call_of(call_id)
+        if call:
+            call.cseq += 1
+            return call.cseq
+        self.cseqs[call_id] = self.cseqs.get(call_id, 0) + 1
+        return self.cseqs[call_id]
+
     def _notify(self, refer, peer):
         """O NOTIFY que fecha a assinatura do REFER dizendo que a transferência deu certo (sipfrag)."""
         call_id = refer.first("call-id")
-        self.notifies[call_id] = self.notifies.get(call_id, 0) + 1
         local = refer.first("to")   # no diálogo, o To do REFER é a nossa ponta, já com a tag
         headers = [("From", local if ";tag=" in local else local + ";tag=ci"), ("To", refer.first("from")),
-                   ("Call-ID", call_id), ("CSeq", "%d NOTIFY" % self.notifies[call_id]),
+                   ("Call-ID", call_id), ("CSeq", "%d NOTIFY" % self._next_cseq(call_id)),
                    ("Contact", "<%s>" % refer.uri), ("Event", "refer;id=" + refer.first("cseq").split()[0]),
                    ("Subscription-State", "terminated;reason=noresource"),
                    ("Content-Type", "message/sipfrag;version=2.0")]
@@ -459,8 +481,7 @@ class Registrar:
 
     def _on_response(self, msg, peer):
         """Resposta do telefone a um pedido do registrador (INVITE, CANCEL, BYE, NOTIFY)."""
-        call_id, cseq = msg.first("call-id"), msg.first("cseq").split()
-        call = next((call for call in reversed(self.calls) if call.call_id == call_id), None)
+        call, cseq = self._call_of(msg.first("call-id")), msg.first("cseq").split()
         if not call or len(cseq) != 2:
             return []
         if cseq[1] == "INVITE":

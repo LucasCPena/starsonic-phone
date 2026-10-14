@@ -465,6 +465,26 @@ class CallsTest(unittest.TestCase):
         self.assertEqual(bye["call-id"], first["call-id"])
         self.assertEqual(self.log(), ["inv-out 2001 200", "ack-sent 2001", "inv-out 2001 486"])
 
+    def test_refer_inside_a_ring_call_numbers_the_notify_between_the_invite_and_the_bye(self):
+        phone = self.registered()
+        invite = self.answered_call(phone)   # o INVITE do RING usou o CSeq 1
+        registrar_tag = re.search(r";tag=(\S+)", invite["from"][0]).group(1)
+        phone.send(phone_request("REFER", invite["contact"][0].strip("<>"), to_tag=registrar_tag,
+                                 call_id=invite["call-id"][0], extra=["Refer-To: <sip:2003@ci>"]))
+        self.assertEqual(phone.receive()[0], "SIP/2.0 202 Accepted")
+        start, notify, _ = phone.receive()
+        self.assertTrue(start.startswith("NOTIFY "), start)
+        self.assertEqual(notify["call-id"], invite["call-id"])
+        notify_cseq = int(notify["cseq"][0].split()[0])
+        # O PJSIP responde 500 "Invalid CSeq" a quem manda CSeq <= ao do INVITE que abriu o dialogo.
+        self.assertGreater(notify_cseq, 1)
+        phone.send(phone_response(notify, 200, "OK"))
+        self.assertEqual(self.command("HANGUP 2001"), ["OK"])
+        start, bye, _ = phone.receive()
+        self.assertTrue(start.startswith("BYE "), start)
+        self.assertGreater(int(bye["cseq"][0].split()[0]), notify_cseq)   # e o BYE que vem depois tambem
+        self.assertEqual(self.log(), ["inv-out 2001 200", "ack-sent 2001", "refer-in 3001 2003"])
+
     def test_ring_after_the_tcp_connection_closes_errors(self):
         phone = self.registered("tcp")
         phone.close()
@@ -513,9 +533,13 @@ class CallsTest(unittest.TestCase):
         self.assertEqual(start, "SIP/2.0 200 OK")
         self.assertEqual(headers["content-type"], ["application/sdp"])
         self.assertEqual(headers["contact"], ["<sip:2002@ci>"])   # a mesma URI com que o telefone nos achou
-        self.assertIn("m=audio 40000 RTP/AVP 0 8 101\r\n", body)   # sem o 97 que so o telefone oferecia
+        # Um codec de audio so (o primeiro da oferta) e o telefone-event: com dois codecs na resposta o PJSUA
+        # manda um re-INVITE para travar o codec, e o LOG ganharia reinv-in que ninguem pediu.
+        self.assertIn("m=audio 40000 RTP/AVP 0 101\r\n", body)
+        self.assertIn("a=rtpmap:0 PCMU/8000\r\n", body)
         self.assertIn("a=rtpmap:101 telephone-event/8000\r\n", body)
         self.assertIn("a=sendrecv\r\n", body)
+        self.assertNotIn("PCMA", body)
         self.assertNotIn("speex", body)
         tag = re.search(r";tag=(\S+)", headers["to"][0]).group(1)
         phone.send(phone_request("ACK", "sip:2002@ci", to_tag=tag))
@@ -523,6 +547,19 @@ class CallsTest(unittest.TestCase):
         start, headers, _ = phone.receive()
         self.assertEqual((start, headers["cseq"]), ("SIP/2.0 200 OK", ["2 BYE"]))
         self.assertEqual(self.log(), ["inv-in 2002 200", "bye-in 2002"])
+
+    def test_answer_has_the_first_offered_audio_codec_and_telephone_event_if_offered(self):
+        phone = self.phone()
+        offers = (("0 8 97 101", "0 101"), ("8 0 101", "8 101"), ("97 8 0", "8"), ("0 8", "0"), ("101 8 0", "8 101"))
+        for number, (formats, answered) in enumerate(offers):
+            with self.subTest(formats):
+                offer = ("v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=phone\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\n"
+                         "m=audio 4000 RTP/AVP %s\r\n" % formats)
+                phone.send(phone_request("INVITE", "sip:2002@ci", call_id="call-offer-%d" % number,
+                                         extra=[SDP_TYPE], body=offer))
+                phone.receive()   # 100
+                phone.receive()   # 180
+                self.assertIn("m=audio 40000 RTP/AVP %s\r\n" % answered, phone.receive()[2])
 
     def test_invite_retransmission_gets_the_last_response_not_a_second_call(self):
         phone = self.phone()
@@ -577,6 +614,18 @@ class CallsTest(unittest.TestCase):
         self.assertRegex(notify["cseq"][0], r"^\d+ NOTIFY$")
         phone.send(phone_response(notify, 200, "OK"))
         self.assertEqual(self.log(), ["inv-in 2002 200", "refer-in 2002 2003"])
+
+    def test_second_refer_in_a_phone_call_gets_the_next_notify_cseq(self):
+        phone = self.phone()
+        tag = self.established_call(phone)
+        for refer_cseq, notify_cseq in ((2, 1), (3, 2)):   # o dialogo e do telefone: o 1o pedido nosso nele leva o 1
+            phone.send(phone_request("REFER", "sip:2002@ci", cseq=refer_cseq, to_tag=tag,
+                                     extra=["Refer-To: <sip:2003@ci>"]))
+            self.assertEqual(phone.receive()[0], "SIP/2.0 202 Accepted")
+            _, notify, _ = phone.receive()
+            self.assertEqual(notify["cseq"], ["%d NOTIFY" % notify_cseq])
+            phone.send(phone_response(notify, 200, "OK"))
+        self.assertEqual(self.log(), ["inv-in 2002 200", "refer-in 2002 2003", "refer-in 2002 2003"])
 
     def test_cancel_from_the_phone_is_answered_and_logged(self):
         phone = self.phone()
