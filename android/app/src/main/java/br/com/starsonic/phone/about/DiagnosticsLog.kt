@@ -154,8 +154,9 @@ class DiagnosticsLog(
         private const val NEWLINE = '\n'.code.toByte()
         private val STAMP: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS").withZone(ZoneId.systemDefault())
 
-        // A resposta Digest (Authorization e Proxy-Authorization das mensagens SIP).
-        private val DIGEST_RESPONSE = Regex("""(\bresponse\s*=\s*)"[^"]*"""", RegexOption.IGNORE_CASE)
+        // A resposta Digest (Authorization e Proxy-Authorization das mensagens SIP), até a aspa que a fecha ou até o
+        // fim da linha: uma linha cortada no limite pode terminar no meio dela.
+        private val DIGEST_RESPONSE = Regex("""(\bresponse\s*=\s*)"[^"\n]*"?""", RegexOption.IGNORE_CASE)
 
         private fun hideDigest(line: String): String =
             if (line.contains("response", ignoreCase = true)) DIGEST_RESPONSE.replace(line, "$1\"…\"") else line

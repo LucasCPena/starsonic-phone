@@ -21,7 +21,8 @@ interface PasswordSeal {
 /**
  * Cifra a senha da conta com AES-GCM e uma chave do Android Keystore (alias starsonic-senha), que não sai do
  * celular (spec 6.4). O texto cifrado é Base64 de: o tamanho do IV (1 byte), o IV e a senha cifrada com a tag.
- * A senha gravada que não abre vai a [log] (o motivo, nunca a senha).
+ * A senha gravada que não abre vai a [log] (o motivo, nunca a senha). [keyStore] abre o Keystore (os testes na JVM,
+ * que não têm o do Android, passam outro).
  */
 class PasswordCipher(
     private val alias: String = ALIAS,
@@ -60,11 +61,7 @@ class PasswordCipher(
     @Synchronized
     private fun key(): SecretKey = existingKey() ?: newKey()
 
-    private fun existingKey(): SecretKey? {
-        val keyStore = KeyStore.getInstance(KEYSTORE)
-        keyStore.load(null)
-        return keyStore.getKey(alias, null) as? SecretKey
-    }
+    private fun existingKey(): SecretKey? = keyStore().getKey(alias, null) as? SecretKey
 
     private fun newKey(): SecretKey {
         val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, KEYSTORE)

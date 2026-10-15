@@ -31,9 +31,11 @@ data class LoginState(
 /**
  * A tela Entrar (spec 7.1). [submit] confere o servidor, o ramal e a senha, nessa ordem (os avisos do
  * servidor e do ramal vêm do núcleo), registra a conta e espera o resultado por até 15 s com o LoginFlow do
- * núcleo. Registrou: a conta é gravada e a tela acaba ([LoginState.done]). Falhou ou o tempo acabou: nada é
- * gravado, a conta anterior volta ao motor (sem ela, a tentada sai) e o aviso aparece. Se o Keystore ou o disco
- * falham ao gravar, a tentativa é desfeita do mesmo jeito, com o aviso [SAVE_FAILED] (o motivo vai a [log]).
+ * núcleo. Registrou: a conta é gravada, [onSaved] fica sabendo (mesmo que a tela já tenha saído, como no voltar
+ * entre a resposta do servidor e o fim da gravação) e a tela acaba ([LoginState.done]). Falhou ou o tempo
+ * acabou: nada é gravado, a conta anterior volta ao motor (sem ela, a tentada sai) e o aviso aparece. Se o
+ * Keystore ou o disco falham ao gravar, a tentativa é desfeita do mesmo jeito, com o aviso [SAVE_FAILED] (o
+ * motivo vai a [log]).
  *
  * Só vale o resultado da conta tentada: o motor dá um id a cada conta, e um resultado de outra (a anterior,
  * que ainda estava na fila ou voltou depois de uma falha) é ignorado.
@@ -92,8 +94,11 @@ class LoginViewModel(
 
     fun onSenhaChange(value: String) = mutableState.update { it.copy(senha = value) }
 
-    /** Um aviso de fora da tela. Esboço: não faz nada. */
-    fun showMessage(text: String) {}
+    /**
+     * Um aviso de fora da tela: a senha recusada pelo servidor com o Editar já aberto. Enquanto uma tentativa espera o
+     * servidor, quem decide o aviso é o resultado dela.
+     */
+    fun showMessage(text: String) = mutableState.update { if (it.loading) it else it.copy(message = text) }
 
     /**
      * Confere os campos e registra a conta. Espera o motor aceitar a conta (até alguns segundos com uma conta
@@ -195,8 +200,9 @@ class LoginViewModel(
         restore(outcome.message)
     }
 
-    // Em [background]: grava a conta que registrou, e a tela acaba. Se o Keystore ou o disco falham, a tentativa é
-    // desfeita como uma falha do registro, com um aviso curto, e a tela fica pronta para outra.
+    // Em [background]: grava a conta que registrou, avisa [onSaved] (com a tela aberta ou não) e a tela acaba. Se o
+    // Keystore ou o disco falham, a tentativa é desfeita como uma falha do registro, com um aviso curto, e a tela fica
+    // pronta para outra.
     private fun save(tried: Attempt?) {
         if (tried != null) {
             try {
@@ -212,6 +218,7 @@ class LoginViewModel(
                 restore(SAVE_FAILED)
                 return
             }
+            onSaved(tried.account)
         }
         mutableState.update { it.copy(loading = false, done = true) }
     }

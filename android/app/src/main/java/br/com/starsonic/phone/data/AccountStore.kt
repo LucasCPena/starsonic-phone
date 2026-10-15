@@ -19,7 +19,10 @@ interface AccountStore {
     /** A conta gravada, ou null (sem conta, ou a senha não pôde ser decifrada). */
     fun load(): Account?
 
-    /** Grava a conta (Keystore e disco: nunca na thread principal). Lança exceção se o Keystore ou o disco falham. */
+    /**
+     * Grava a conta (Keystore e disco: nunca na thread principal). Lança exceção se o Keystore ou o disco falham, e aí
+     * a conta anterior continua sendo a gravada (quem lê depois acha ela, ou nenhuma).
+     */
     fun save(account: Account)
 
     /** Apaga a conta e a senha: quem lê depois já não acha a conta. Não espera o disco. */
@@ -50,19 +53,34 @@ class PreferencesAccountStore(
 
     override fun save(account: Account) {
         val sealed = cipher.encrypt(account.senha)   // antes de mexer no arquivo: o Keystore pode falhar
+        val before = KEYS.associateWith { preferences.getString(it, null) }
         val written = preferences.edit()
             .putString(KEY_ADDRESS, account.address)
             .putString(KEY_TRANSPORT, if (account.transport == Transport.TCP) TCP else UDP)
             .putString(KEY_RAMAL, account.ramal)
             .putString(KEY_SENHA, sealed)
             .commit()   // no disco antes de a tela Entrar acabar
-        if (!written) throw IOException("a conta não foi gravada no disco")
+        if (!written) {
+            // O commit() muda a memória antes de gravar o disco, e a falha do disco não a desfaz: sem isto, quem lê
+            // depois (o serviço, a activity recriada) acharia a conta que não foi gravada.
+            putBack(before)
+            throw IOException("a conta não foi gravada no disco")
+        }
     }
 
     // Na memória na hora e no disco logo depois (apply): serve na thread principal (Sair), e uma gravação que vem
     // depois (o próximo Entrar) vai ao disco depois desta.
     override fun clear() {
         preferences.edit().clear().apply()
+    }
+
+    // Devolve à memória os valores de antes de um save que falhou (e manda gravá-los, sem esperar o disco).
+    private fun putBack(values: Map<String, String?>) {
+        val editor = preferences.edit()
+        for ((key, value) in values) {
+            if (value == null) editor.remove(key) else editor.putString(key, value)
+        }
+        editor.apply()
     }
 
     private companion object {
@@ -73,5 +91,6 @@ class PreferencesAccountStore(
         const val KEY_SENHA = "senha-cifrada"
         const val UDP = "udp"
         const val TCP = "tcp"
+        val KEYS = listOf(KEY_ADDRESS, KEY_TRANSPORT, KEY_RAMAL, KEY_SENHA)
     }
 }

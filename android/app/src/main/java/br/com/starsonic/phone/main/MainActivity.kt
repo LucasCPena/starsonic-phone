@@ -82,8 +82,9 @@ import kotlinx.coroutines.withContext
  * - Sobre, com os links, a licença e o "Enviar diagnóstico".
  * - O servidor recusou a senha da conta gravada (401, 403 ou 407 fora de uma tentativa da tela Entrar;
  *   [br.com.starsonic.phone.service.Connection.refusal]): com o app na frente, o Editar abre com "Ramal ou senha
- *   incorretos."; com o app em segundo plano, a notificação fixa já mostra o aviso, e a próxima abertura vai para o
- *   Editar. Uma vez por recusa: quem sai do Editar não volta para ele até uma recusa nova.
+ *   incorretos." (com uma ligação em andamento, depois que ela acaba; com o Editar já aberto, o aviso aparece nele);
+ *   com o app em segundo plano, a notificação fixa já mostra o aviso, e a próxima abertura vai para o Editar. Uma vez
+ *   por recusa: quem sai do Editar não volta para ele até uma recusa nova.
  *
  * A conta gravada é lida fora da thread principal (Keystore e disco), com a tela de abertura na frente. Com a
  * conta, a activity inicia o [SipService] ao abrir e a cada volta ao app (com a conta já no motor, ele não
@@ -156,11 +157,14 @@ class MainActivity : ComponentActivity() {
             }
         }
         // A senha recusada pelo servidor, só com o app na frente: na volta ao app, a recusa que chegou enquanto ele
-        // estava em segundo plano.
+        // estava em segundo plano; com uma ligação, quando ela acaba.
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                app.connection.refusal.combine(snapshotFlow { screen }) { refusal, shown -> refusal to shown }
-                    .collect { (refusal, shown) -> if (refusal != null && shown != null) onRefusal(refusal, shown) }
+                combine(app.connection.refusal, snapshotFlow { screen }, app.calls.state) { refusal, shown, call ->
+                    Triple(refusal, shown, call != null)
+                }.collect { (refusal, shown, inCall) ->
+                    if (refusal != null && shown != null) onRefusal(refusal, shown, inCall)
+                }
             }
         }
         setContent {
@@ -237,8 +241,8 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * O Editar: a tela Entrar com a conta gravada (lida fora da thread principal) e o aviso [editMessage]. No fim, o
-     * serviço começa de novo para segurar a conta nova.
+     * O Editar: a tela Entrar com a conta gravada (lida fora da thread principal) e o aviso [editMessage]. Gravada a
+     * conta nova, o serviço começa de novo para segurar a conta nova ([editModel]).
      */
     @Composable
     private fun EditScreen() {
@@ -258,10 +262,8 @@ class MainActivity : ComponentActivity() {
             }
             return
         }
+        // O serviço já começou quando a conta nova foi gravada (onSaved, em editModel).
         Login(shown) {
-            app.note("Editar conta: a conta nova foi gravada")
-            // Obrigatório: o serviço só troca a conta que segura quando começa (adota a nova, que já está no motor).
-            SipService.start(this)
             endLogin()
             screen = Screen.MAIN
         }
@@ -398,15 +400,22 @@ class MainActivity : ComponentActivity() {
     }
 
     // A senha recusada pelo servidor (com o app na frente): o Editar com o aviso, uma vez por recusa.
-    private fun onRefusal(refusal: Refusal, shown: Screen) {
+    private fun onRefusal(refusal: Refusal, shown: Screen, inCall: Boolean) {
         when (shown) {
             Screen.MAIN, Screen.ABOUT -> {
+                if (inCall) return   // com uma ligação em andamento, o Editar espera ela acabar
                 app.connection.refusalSeen(refusal)
                 app.note("o servidor recusou a senha: a tela Entrar (Editar)")
                 openEdit(refusal.message)
             }
-            // Já numa tela Entrar: ela mesma é a resposta.
-            Screen.ENTRAR, Screen.EDIT -> app.connection.refusalSeen(refusal)
+            Screen.EDIT -> {
+                // O Editar já aberto ganha o aviso (o modelo ainda vai nascer, ou já está aqui).
+                val model = logins.current
+                if (model != null) model.showMessage(refusal.message) else editMessage = refusal.message
+                app.connection.refusalSeen(refusal)
+            }
+            // A tela Entrar de uma conta nova não tem conta gravada para recusar.
+            Screen.ENTRAR -> app.connection.refusalSeen(refusal)
             // Depois da tela Permissões, na tela principal.
             Screen.PERMISSIONS -> Unit
         }
@@ -427,12 +436,20 @@ class MainActivity : ComponentActivity() {
     // A tela Permissões aparece se falta alguma permissão, ou num celular com o passo a passo do fabricante.
     private fun needsPermissions(): Boolean = Grants.read(this).missing.isNotEmpty() || deviceGuide() != Guide.GENERIC
 
-    // O modelo do Editar, com a conta gravada [saved] e o aviso de agora.
-    private fun editModel(saved: Account): LoginViewModel =
-        LoginViewModel(
-            app.core, app.gateway, app.store, app.clock, previous = saved, defaultTransport = saved.transport,
-            message = editMessage, log = app::warn,
+    // O modelo do Editar, com a conta gravada [saved] e o aviso de agora. Gravada a conta nova, o serviço começa de novo
+    // (obrigatório: ele só troca a conta que segura quando começa, e fica com a nova, que já está no motor), mesmo que a
+    // pessoa já tenha saído da tela entre a resposta do servidor e o fim da gravação.
+    private fun editModel(saved: Account): LoginViewModel {
+        val process = app   // o modelo sobrevive à activity: ele guarda o App, nunca a activity
+        return LoginViewModel(
+            process.core, process.gateway, process.store, process.clock, previous = saved,
+            defaultTransport = saved.transport, message = editMessage, log = process::warn,
+            onSaved = {
+                process.note("Editar conta: a conta nova foi gravada")
+                SipService.start(process)
+            },
         )
+    }
 
     // O modelo da tela Entrar de agora (o que já existe, ou um novo), ligado aos resultados do registro.
     private fun loginModel(create: () -> LoginViewModel): LoginViewModel {
