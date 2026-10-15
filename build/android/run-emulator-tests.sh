@@ -57,9 +57,18 @@ grant() {   # grant PERMISSÃO
     fi
 }
 
+install() {   # install APK: o motivo do adb vai junto na falha
+    local output
+    if output="$(adb install -r -t "$1" 2>&1)"; then
+        echo "$output"
+    else
+        fail "não instalou $1: $output"
+    fi
+}
+
 adb wait-for-device
-adb install -r -t "$APK" || fail "não instalou $APK"
-adb install -r -t "$TEST_APK" || fail "não instalou $TEST_APK"
+install "$APK"
+install "$TEST_APK"
 
 grant android.permission.RECORD_AUDIO
 grant android.permission.POST_NOTIFICATIONS

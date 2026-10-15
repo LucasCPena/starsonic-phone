@@ -155,6 +155,8 @@ class RunEmulatorTestsTest(unittest.TestCase):
                 result, calls = self.run_script(PASSED, FAKE_INSTALL_FAILS=apk)
                 self.assertEqual(result.returncode, 1)
                 self.assertIn("não instalou %s" % apk, result.stderr)
+                # O motivo do adb vai junto (o log do Actions nem sempre chega a quem acompanha o run).
+                self.assertIn("INSTALL_FAILED_INSUFFICIENT_STORAGE", result.stderr)
                 self.assertEqual(self.instrument_calls(calls), [])
 
     def test_a_long_failure_report_is_annotated_too(self):
