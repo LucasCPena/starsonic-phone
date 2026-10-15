@@ -1,7 +1,7 @@
 # Starsonic Phone para Android — especificação de design
 
 - **Data:** 14/10/2026
-- **Status:** aprovada pelo responsável em 14/10/2026, com os itens novos da revisão (diagnóstico, uma ligação por vez, transferência direta, Ligar em verde, avisos de ligação não completada, reconexão a partir do primeiro desbloqueio, Opus sem G.729, Sair mantém os Recentes, botão de mostrar a senha); revisão de 15/10/2026: processador acordado com a conta conectada (decisão 6)
+- **Status:** aprovada pelo responsável em 14/10/2026, com os itens novos da revisão (diagnóstico, uma ligação por vez, transferência direta, Ligar em verde, avisos de ligação não completada, reconexão a partir do primeiro desbloqueio, Opus sem G.729, Sair mantém os Recentes, botão de mostrar a senha); revisão de 15/10/2026: processador acordado com a conta conectada (decisão 6), confirmação do Sair e aviso ao ligar com uma ligação do celular em andamento
 - **Subprojeto:** 2 de 2 (app de celular), **etapa 1: Android, APK de teste**. O aviso do servidor (push), a Play Store e o iPhone vêm em etapas seguintes, cada uma com especificação própria.
 - **Base:** a especificação do Windows (`2026-10-11-starsonic-phone-windows-design.md`, revisão 1.4), de onde vêm as regras da tela Entrar, o perfil e as mensagens de erro.
 
@@ -126,7 +126,7 @@ Tudo fica no armazenamento privado do app: a conta, a senha (cifrada com uma cha
 3. O app registra a conta e espera o resultado por até 15 s, com o `LoginFlow` do núcleo. Registrou → a conta é gravada e abre o Teclado. Falhou ou esgotou o tempo → nada é gravado, a conta anterior volta (em Editar) e a mensagem aparece na tela.
 4. Depois do primeiro Entrar, o app pede as permissões (tela Permissões). Sem notificações, microfone, tela cheia ou isenção de bateria, a faixa mostra o aviso da seção 11.1 com um botão para os ajustes do Android.
 5. Editar conta abre a tela Entrar com servidor, protocolo e ramal preenchidos e a senha vazia.
-6. Sair da conta desregistra, apaga a conta e a senha e volta à tela Entrar; os Recentes ficam.
+6. Sair da conta pede confirmação ("Sair da conta?" — "Este celular deixa de receber as ligações do ramal. Para entrar de novo, você vai precisar da senha.", com Cancelar e Sair), desregistra, apaga a conta e a senha e volta à tela Entrar; os Recentes ficam.
 7. Se o servidor recusar a senha mais tarde (401, 403 ou 407 ao renovar o registro), o app abre a tela Entrar com "Ramal ou senha incorretos."
 
 ### 7.2 Conectado em segundo plano
@@ -222,6 +222,7 @@ Tela Entrar e registro: as mesmas da tabela 11.1 do Windows, menos a de TLS. Nov
 |----------|--------------------|
 | Sem rede | "Sem internet" no status |
 | Ligar sem estar conectado | Sem conexão com o servidor. Tente de novo em instantes. |
+| Ligar com uma ligação do celular (operadora) em andamento: o Android não deixa | Termine a ligação do celular para ligar pelo ramal. (por 2 s) |
 | Ligação recusada: 486 ou 600 | Ocupado |
 | Ligação recusada: 404, 484 ou 604 | Número não encontrado |
 | Ligação recusada: 408 ou 480 | Não atendeu |

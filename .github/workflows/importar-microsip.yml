@@ -16,7 +16,7 @@ permissions:
 jobs:
   importar:
     name: Importar o MicroSIP ${{ inputs.versao }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04   # fixo: o ubuntu-latest vira Ubuntu 26 em 19/10/2026
     env:
       VERSAO: ${{ inputs.versao }}
     steps:

@@ -18,7 +18,7 @@ permissions:
 jobs:
   preparar:
     name: Versão e portão de entradas
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04   # fixo: o ubuntu-latest vira Ubuntu 26 em 19/10/2026
     outputs:
       version: ${{ steps.versao.outputs.version }}
       channel: ${{ steps.versao.outputs.channel }}
@@ -80,7 +80,7 @@ jobs:
   publicar:
     name: Publicar
     needs: [preparar, build]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04   # fixo: o ubuntu-latest vira Ubuntu 26 em 19/10/2026
     env:
       VERSION: ${{ needs.preparar.outputs.version }}
       CHANNEL: ${{ needs.preparar.outputs.channel }}
