@@ -167,16 +167,19 @@ jobs:
           gradle-version: ${{ steps.lock.outputs.gradle }}
           cache-provider: basic
 
-      # Só a ABI do emulador, para o build ficar curto. Se falhar, o que deu errado vira anotação (o log
-      # do Actions nem sempre chega a quem acompanha o run pela API). Sem `| head` nos cortes: no Actions
-      # o SIGPIPE vem ignorado, e quem escreve num pipe fechado sai com erro (o sed, com 4).
-      - name: Compilar o APK e os testes
+      # Só a ABI do emulador, para o build ficar curto. Com --continue, um teste na JVM que falha não impede
+      # os APKs (e os testes do emulador ainda rodam: a saída apks diz se eles existem). O que deu errado vira
+      # anotação (o log do Actions nem sempre chega a quem acompanha o run pela API), inclusive cada teste
+      # na JVM que falhou. Sem `| head` nos cortes: no Actions o SIGPIPE vem ignorado, e quem escreve num pipe
+      # fechado sai com erro (o sed, com 4).
+      - name: Compilar o APK e rodar os testes na JVM
         id: gradle
         run: |
           log="$RUNNER_TEMP/gradle.log"
           status=0
-          gradle -p android testDebugUnitTest assembleDebug assembleDebugAndroidTest \
+          gradle -p android --continue testDebugUnitTest assembleDebug assembleDebugAndroidTest \
             -Pstarsonic.deps="$PWD/android-deps" -Pstarsonic.abis=x86_64 2>&1 | tee "$log" || status=$?
+          if [ -f "$APK" ] && [ -f "$TEST_APK" ]; then echo "apks=true" >> "$GITHUB_OUTPUT"; fi
           if [ "$status" -ne 0 ]; then
             annotate() {
               local text="$2"
@@ -188,10 +191,25 @@ jobs:
             if [ -n "$wrong" ]; then annotate "Gradle: o que deu errado" "$wrong"; fi
             if [ -n "$errors" ]; then annotate "Gradle: erros" "$errors"; fi
             if [ -z "$wrong$errors" ]; then annotate "Gradle" "$(tail -n 40 "$log")"; fi
+            python3 -I - <<'EOF'
+          import glob
+          import xml.etree.ElementTree as ET
+
+          def escape(text):
+              return text.replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+
+          for path in sorted(glob.glob("android/app/build/test-results/testDebugUnitTest/*.xml")):
+              for case in ET.parse(path).getroot().iter("testcase"):
+                  for problem in case.findall("failure") + case.findall("error"):
+                      text = (problem.get("message") or problem.text or "").strip()[:1500]
+                      title = "Teste na JVM " + case.get("classname", "").rsplit(".", 1)[-1]
+                      print("::error title=%s::%s%%0A%s" % (title, escape(case.get("name", "")), escape(text)))
+          EOF
           fi
           exit "$status"
 
       - name: Conferir o APK
+        if: ${{ !cancelled() && steps.gradle.outputs.apks == 'true' }}
         run: |
           fail() { echo "::error title=APK::$1"; exit 1; }
           tools="$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -n 1)"
@@ -223,23 +241,59 @@ jobs:
           grep -q '^\[conta\]$' "$RUNNER_TEMP/perfil.ini" || fail "assets/perfil.ini sem a seção [conta]"
           if grep -q ';' "$RUNNER_TEMP/perfil.ini"; then fail "assets/perfil.ini com comentários"; fi
 
+      # O registrador falso no runner, para o LoginScreenTest: o emulador o vê em 10.0.2.2. A 5060 é a porta
+      # do branding/perfil.ini; a de controle (5070) troca a senha no teste da senha com acento. Ele fica
+      # rodando nos passos seguintes.
+      - name: Registrador falso
+        if: ${{ !cancelled() && steps.gradle.outputs.apks == 'true' }}
+        run: |
+          nohup python3 -I tests/smoke/fake_registrar.py --host 0.0.0.0 --port 5060 --user 2001 \
+            --password senha-certa --log "$RUNNER_TEMP/ua.txt" --transport-log "$RUNNER_TEMP/transporte.txt" \
+            --control-port 5070 > "$RUNNER_TEMP/registrador.log" 2>&1 &
+          for _ in $(seq 50); do
+            if grep -q 'controle em' "$RUNNER_TEMP/registrador.log"; then exit 0; fi
+            sleep 0.2
+          done
+          echo "::error title=Registrador falso::não subiu: $(tr '\n' ' ' < "$RUNNER_TEMP/registrador.log")"
+          exit 1
+
       # Regra do udev do reactivecircus/android-emulator-runner: o emulador usa o KVM do runner.
       - name: Ativar o KVM
+        if: ${{ !cancelled() && steps.gradle.outputs.apks == 'true' }}
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      # Cada linha do script roda à parte; a primeira que falha encerra o passo.
       - name: Testes no emulador
+        id: emulador
+        if: ${{ !cancelled() && steps.gradle.outputs.apks == 'true' }}
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 34
           target: google_apis
           arch: x86_64
-          script: bash build/android/run-emulator-tests.sh "$APK" "$TEST_APK" br.com.starsonic.phone.NativeLoadTest
+          script: |
+            bash build/android/run-emulator-tests.sh "$APK" "$TEST_APK" br.com.starsonic.phone.NativeLoadTest
+            bash build/android/run-emulator-tests.sh "$APK" "$TEST_APK" br.com.starsonic.phone.LoginScreenTest -e registrar 10.0.2.2 -e porta 5070 -e senha senha-certa
+
+      # O registrador guarda o User-Agent do último REGISTER e o protocolo do último REGISTER aceito; o
+      # LoginScreenTest termina os registros aceitos com o da senha com acento, por TCP.
+      - name: Conferir o User-Agent e o protocolo
+        if: ${{ !cancelled() && steps.emulador.outcome == 'success' }}
+        run: |
+          fail() { echo "::error title=Registrador falso::$1"; exit 1; }
+          version="$(sed -n "s/^package: .* versionName='\([^']*\)'.*/\1/p" "$RUNNER_TEMP/badging.txt")"
+          expected="Starsonic Phone Android/$version"
+          ua="$(cat "$RUNNER_TEMP/ua.txt" 2>/dev/null || true)"
+          [ "$ua" = "$expected" ] || fail "User-Agent do último REGISTER: '$ua' (esperado '$expected')"
+          transport="$(cat "$RUNNER_TEMP/transporte.txt" 2>/dev/null || true)"
+          [ "$transport" = "tcp" ] || fail "protocolo do último REGISTER aceito: '$transport' (esperado 'tcp')"
+          echo "::notice title=Registrador falso::User-Agent '$ua'; o último REGISTER aceito veio por $transport"
 
       - name: Publicar o APK de debug
-        if: ${{ !cancelled() && steps.gradle.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.gradle.outputs.apks == 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: StarsonicPhone-android-debug-${{ github.sha }}
