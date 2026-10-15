@@ -1,8 +1,10 @@
 name: android
 
 # App Android (etapa 1): o motor de ligações, testado no Linux contra o registrador falso de
-# tests/smoke; as dependências nativas (PJSIP, Opus e Oboe) compiladas para o Android; e o APK de debug,
-# conferido e testado num emulador.
+# tests/smoke; as dependências nativas (PJSIP, Opus e Oboe) compiladas para o Android; o APK de debug,
+# conferido e testado num emulador; e o APK de publicação (as três ABIs, com o R8), assinado e conferido.
+# O android-release.yml chama este workflow com a versão e os segredos da chave para publicar; à mão (Actions →
+# android → Run workflow), com a versão, é o ensaio de uma versão: tudo, também o código-fonte completo, sem publicar.
 on:
   push:
     branches: ['**']   # tags v* passam pelo release.yml
@@ -34,20 +36,46 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Versão (X.Y.Z ou X.Y.Z-rc.N); vazio = 0.0.0"
+        description: "Versão (X.Y.Z ou X.Y.Z-rc.N); vazio = 0.0.0. Com a versão, também o código-fonte completo"
         type: string
         default: ''
   workflow_call:
     inputs:
       version:
-        description: "Versão (X.Y.Z ou X.Y.Z-rc.N); vazio = da tag, ou 0.0.0"
+        description: "Versão (X.Y.Z ou X.Y.Z-rc.N); vazio = 0.0.0"
         type: string
         default: ''
+      publicar:
+        description: "true = o APK de publicação precisa da chave dos segredos e fica guardado para o android-release"
+        type: boolean
+        default: false
+    # A chave de assinatura (spec 9.5): o .jks em base64, a senha do arquivo, o alias e a senha da chave.
+    secrets:
+      ANDROID_KEYSTORE_BASE64:
+        required: false
+      ANDROID_KEYSTORE_PASSWORD:
+        required: false
+      ANDROID_KEY_ALIAS:
+        required: false
+      ANDROID_KEY_PASSWORD:
+        required: false
 
 permissions:
   contents: read
 
 jobs:
+  # O build.yml (Windows) também roda estes testes, mas não num push só do Android (o paths-ignore dele).
+  scripts:
+    name: Testes dos scripts
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Testes dos scripts (Python) e literais em ASCII
+        run: |
+          python3 -m unittest discover -s tests/python
+          python3 build/check_source_text.py
+
   phone-linux:
     name: Motor de ligações (Linux)
     # Fixo, como os outros jobs do Android: o ubuntu-latest vira Ubuntu 26 em 19/10/2026.
@@ -151,12 +179,21 @@ jobs:
           name: android-deps
           path: android-deps
 
-      - name: Versões do JDK e do Gradle
+      # A versão do app: a pedida (android-release.yml ou à mão) ou 0.0.0; o versionCode sai dela (spec 9.4).
+      - name: Versões do JDK, do Gradle, do NDK e do app
         id: lock
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           lock() { python3 -I -c 'import json, sys; print(json.load(open("build/deps.lock", encoding="utf-8"))["android"][sys.argv[1]])' "$1"; }
           echo "jdk=$(lock jdk)" >> "$GITHUB_OUTPUT"
           echo "gradle=$(lock gradle)" >> "$GITHUB_OUTPUT"
+          echo "ndk=$(lock ndk)" >> "$GITHUB_OUTPUT"
+          version="${INPUT_VERSION:-0.0.0}"
+          code="$(python3 -I build/android/version_code.py "$version" 2>&1)" || { echo "::error title=Versão::$code"; exit 1; }
+          echo "STARSONIC_VERSION=$version" >> "$GITHUB_ENV"
+          echo "STARSONIC_VERSION_CODE=$code" >> "$GITHUB_ENV"
+          echo "versão $version (versionCode $code)"
 
       - uses: actions/setup-java@v5
         with:
@@ -179,7 +216,8 @@ jobs:
           log="$RUNNER_TEMP/gradle.log"
           status=0
           gradle -p android --continue testDebugUnitTest assembleDebug assembleDebugAndroidTest \
-            -Pstarsonic.deps="$PWD/android-deps" -Pstarsonic.abis=x86_64 2>&1 | tee "$log" || status=$?
+            -Pstarsonic.deps="$PWD/android-deps" -Pstarsonic.abis=x86_64 \
+            -Pstarsonic.version="$STARSONIC_VERSION" -Pstarsonic.versionCode="$STARSONIC_VERSION_CODE" 2>&1 | tee "$log" || status=$?
           if [ -f "$APK" ] && [ -f "$TEST_APK" ]; then echo "apks=true" >> "$GITHUB_OUTPUT"; fi
           if [ "$status" -ne 0 ]; then
             annotate() {
@@ -209,38 +247,22 @@ jobs:
           fi
           exit "$status"
 
+      # O check_apk.py (spec 11.2), na ABI do emulador: as três bibliotecas alinhadas a 16 KB, a libstarsonic.so só com o
+      # JNI à mostra (o llvm-nm do NDK), nenhum "MicroSIP", o perfil sem comentários, o aapt2 dump badging (pacote,
+      # versão, minSdkVersion:'28', targetSdkVersion:'36', os nomes) e a assinatura, com a chave de debug que o Gradle
+      # criou neste computador. O APK de publicação passa pelo mesmo script no job release, com mais conferências.
       - name: Conferir o APK
         if: ${{ !cancelled() && steps.gradle.outputs.apks == 'true' }}
         run: |
-          fail() { echo "::error title=APK::$1"; exit 1; }
           tools="$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -n 1)"
-          badging="$RUNNER_TEMP/badging.txt"
-          "${tools}aapt2" dump badging "$APK" > "$badging" || fail "o aapt2 de $tools não leu o $APK"
-          lines="$(grep -E '^(package|(min)?[sS]dkVersion|targetSdkVersion|application-label|launchable-activity|native-code):' "$badging" || true)"
-          echo "$lines"
-          lines="${lines//'%'/'%25'}"
-          echo "::notice title=aapt2 dump badging ($(basename "$tools"))::${lines//$'\n'/'%0A'}"
-          for expected in "package: name='br.com.starsonic.phone'" "application-label:'Starsonic Phone'" \
-              "targetSdkVersion:'36'"; do
-            grep -qF "$expected" "$badging" || fail "o aapt2 dump badging não tem $expected"
-          done
-          # O aapt escrevia sdkVersion; o aapt2 escreve minSdkVersion.
-          grep -Eq "^(sdkVersion|minSdkVersion):'28'$" "$badging" || fail "o aapt2 dump badging não tem sdkVersion:'28'"
-          grep -Eq "^launchable-activity: .*label='Starsonic'( |$)" "$badging" ||
-            fail "a activity de entrada não tem label='Starsonic'"
-          # As bibliotecas nativas: as três, alinhadas a 16 KB, e a libstarsonic.so só com o JNI à mostra.
-          libs="$RUNNER_TEMP/apk/lib/x86_64"
-          unzip -q -o "$APK" 'lib/*' -d "$RUNNER_TEMP/apk" || fail "o APK não traz bibliotecas nativas"
-          for lib in libstarsonic.so liboboe.so libc++_shared.so; do
-            [ -f "$libs/$lib" ] || fail "o APK não traz lib/x86_64/$lib"
-          done
-          python3 -I build/android/elf_align.py "$libs"/*.so || fail "biblioteca sem o alinhamento de 16 KB"
-          exported="$(nm -D --defined-only "$libs/libstarsonic.so" | awk '{print $3}' | grep -Ev '^(JNI_OnLoad|Java_br_com_starsonic_phone_[A-Za-z0-9_]+)$' || true)"
-          [ -z "$exported" ] || fail "a libstarsonic.so exporta mais que o JNI: ${exported//$'\n'/ }"
-          # O perfil vai sem os comentários (como no Windows).
-          unzip -p "$APK" assets/perfil.ini > "$RUNNER_TEMP/perfil.ini" || fail "o APK não traz assets/perfil.ini"
-          grep -q '^\[conta\]$' "$RUNNER_TEMP/perfil.ini" || fail "assets/perfil.ini sem a seção [conta]"
-          if grep -q ';' "$RUNNER_TEMP/perfil.ini"; then fail "assets/perfil.ini com comentários"; fi
+          nm=("$ANDROID_HOME/ndk/${{ steps.lock.outputs.ndk }}"/toolchains/llvm/prebuilt/*/bin/llvm-nm)
+          keystore="${ANDROID_USER_HOME:-$HOME/.android}/debug.keystore"
+          if [ ! -f "$keystore" ]; then echo "::error title=APK::não achei a chave de debug do Gradle em $keystore"; exit 1; fi
+          keytool -exportcert -keystore "$keystore" -alias androiddebugkey -storepass android | sha256sum | cut -d' ' -f1 \
+            > "$RUNNER_TEMP/debug.sha256"
+          echo "build-tools $(basename "$tools"); chave de debug $(cat "$RUNNER_TEMP/debug.sha256")"
+          python3 -I build/android/check_apk.py "$APK" --version "$STARSONIC_VERSION" --abis x86_64 \
+            --cert-sha256 "$RUNNER_TEMP/debug.sha256" --aapt2 "${tools}aapt2" --apksigner "${tools}apksigner" --nm "${nm[0]}"
 
       # O registrador falso no runner, para o LoginScreenTest, o ServiceTest, o CallFlowTest, o AboutAndAccountTest
       # e o UpdatePromptTest: o emulador o vê em 10.0.2.2. A 5060 é a porta do branding/perfil.ini; a de controle
@@ -303,8 +325,8 @@ jobs:
         if: ${{ !cancelled() && steps.emulador.outcome == 'success' }}
         run: |
           fail() { echo "::error title=Registrador falso::$1"; exit 1; }
-          version="$(sed -n "s/^package: .* versionName='\([^']*\)'.*/\1/p" "$RUNNER_TEMP/badging.txt")"
-          expected="Starsonic Phone Android/$version"
+          # O check_apk.py conferiu que o versionName do APK é esta versão.
+          expected="Starsonic Phone Android/$STARSONIC_VERSION"
           ua="$(cat "$RUNNER_TEMP/ua.txt" 2>/dev/null || true)"
           [ "$ua" = "$expected" ] || fail "User-Agent do último REGISTER: '$ua' (esperado '$expected')"
           transport="$(cat "$RUNNER_TEMP/transporte.txt" 2>/dev/null || true)"
@@ -317,4 +339,155 @@ jobs:
         with:
           name: StarsonicPhone-android-debug-${{ github.sha }}
           path: ${{ env.APK }}
+          if-no-files-found: error
+
+  # O APK de publicação: as três ABIs, com o R8, assinado e conferido pelo check_apk.py, também no dex (o que o código
+  # nativo e o Android acham pelo nome tem de estar lá com o nome de sempre). A chave é a dos segredos ANDROID_* (spec
+  # 9.5), conferida contra o build/android/signing-cert.sha256. Sem os segredos (um fork, ou antes de eles existirem),
+  # uma chave de ensaio criada aqui assina o APK só para as conferências, e esse APK não é guardado; a publicação
+  # (publicar) não aceita a de ensaio. Com a versão, sai também o código-fonte completo; com a versão e a chave de
+  # verdade, o APK e o código-fonte ficam guardados (artefato) para o android-release.yml.
+  release:
+    name: APK de publicação (três ABIs)
+    needs: deps-android
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    env:
+      RELEASE_APK: android/app/build/outputs/apk/release/app-release.apk
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Baixar as dependências nativas
+        uses: actions/download-artifact@v4
+        with:
+          name: android-deps
+          path: android-deps
+
+      - name: Versões do JDK, do Gradle, do NDK e do app
+        id: lock
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          lock() { python3 -I -c 'import json, sys; print(json.load(open("build/deps.lock", encoding="utf-8"))["android"][sys.argv[1]])' "$1"; }
+          echo "jdk=$(lock jdk)" >> "$GITHUB_OUTPUT"
+          echo "gradle=$(lock gradle)" >> "$GITHUB_OUTPUT"
+          echo "ndk=$(lock ndk)" >> "$GITHUB_OUTPUT"
+          version="${INPUT_VERSION:-0.0.0}"
+          code="$(python3 -I build/android/version_code.py "$version" 2>&1)" || { echo "::error title=Versão::$code"; exit 1; }
+          echo "STARSONIC_VERSION=$version" >> "$GITHUB_ENV"
+          echo "STARSONIC_VERSION_CODE=$code" >> "$GITHUB_ENV"
+          echo "versão $version (versionCode $code)"
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: ${{ steps.lock.outputs.jdk }}
+
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: ${{ steps.lock.outputs.gradle }}
+          cache-provider: basic
+
+      # Os segredos só passam por aqui e pelo passo do Gradle (pelo ambiente; nunca na linha de comando nem no log).
+      - name: Chave de assinatura
+        id: chave
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          PUBLICAR: ${{ inputs.publicar }}
+        run: |
+          dir="$RUNNER_TEMP/chave"
+          mkdir -p "$dir"
+          chmod 700 "$dir"
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            missing=()
+            for name in KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+              [ -n "${!name}" ] || missing+=("ANDROID_$name")
+            done
+            if [ "${#missing[@]}" -gt 0 ]; then
+              echo "::error title=Chave::faltam os segredos ${missing[*]}"
+              exit 1
+            fi
+            printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$dir/starsonic.jks"
+            sha="$(keytool -exportcert -keystore "$dir/starsonic.jks" -alias "$KEY_ALIAS" -storepass:env KEYSTORE_PASSWORD |
+              sha256sum | cut -d' ' -f1)"
+            expected="$(tr -d ' :\r\n' < build/android/signing-cert.sha256 | tr 'A-F' 'a-f')"
+            if [ "$sha" != "$expected" ]; then
+              echo "::error title=Chave::a chave dos segredos tem o certificado $sha, e não o de build/android/signing-cert.sha256 ($expected)"
+              exit 1
+            fi
+            { echo "real=true"; echo "keystore=$dir/starsonic.jks"; echo "cert=build/android/signing-cert.sha256"; } >> "$GITHUB_OUTPUT"
+            echo "::notice title=Chave::a chave de assinatura dos segredos (certificado SHA-256 $sha)"
+          else
+            if [ "$PUBLICAR" = "true" ]; then
+              echo "::error title=Chave::sem o segredo ANDROID_KEYSTORE_BASE64 não há publicação (README, seção Android)"
+              exit 1
+            fi
+            keytool -genkeypair -keystore "$dir/ensaio.jks" -alias ensaio -keyalg RSA -keysize 2048 -validity 2 \
+              -dname "CN=Ensaio do Starsonic Phone" -storepass ensaio -keypass ensaio
+            keytool -exportcert -keystore "$dir/ensaio.jks" -alias ensaio -storepass ensaio | sha256sum | cut -d' ' -f1 \
+              > "$dir/ensaio.sha256"
+            { echo "real=false"; echo "keystore=$dir/ensaio.jks"; echo "cert=$dir/ensaio.sha256"; } >> "$GITHUB_OUTPUT"
+            echo "::notice title=Chave::sem os segredos ANDROID_*: o APK de publicação vai assinado com uma chave de ensaio criada aqui, só para as conferências, e não é guardado"
+          fi
+
+      - name: Compilar o APK de publicação
+        env:
+          STARSONIC_KEYSTORE_FILE: ${{ steps.chave.outputs.keystore }}
+          STARSONIC_KEYSTORE_PASSWORD: ${{ steps.chave.outputs.real == 'true' && secrets.ANDROID_KEYSTORE_PASSWORD || 'ensaio' }}
+          STARSONIC_KEY_ALIAS: ${{ steps.chave.outputs.real == 'true' && secrets.ANDROID_KEY_ALIAS || 'ensaio' }}
+          STARSONIC_KEY_PASSWORD: ${{ steps.chave.outputs.real == 'true' && secrets.ANDROID_KEY_PASSWORD || 'ensaio' }}
+        run: |
+          log="$RUNNER_TEMP/gradle-release.log"
+          status=0
+          gradle -p android assembleRelease -Pstarsonic.deps="$PWD/android-deps" \
+            -Pstarsonic.version="$STARSONIC_VERSION" -Pstarsonic.versionCode="$STARSONIC_VERSION_CODE" 2>&1 | tee "$log" || status=$?
+          if [ "$status" -ne 0 ]; then
+            annotate() {
+              local text="$2"
+              text="${text//'%'/'%25'}"; text="${text//$'\r'/}"; text="${text//$'\n'/'%0A'}"
+              echo "::error title=$1::$text"
+            }
+            wrong="$(awk '/^\* What went wrong:/ { on = 1 } /^\* Try:/ { on = 0 } on && n < 40 { print substr($0, 1, 300); n++ }' "$log")"
+            errors="$(awk '/^e: |error:|ERROR:|CMake Error|FAILED:|undefined symbol|Missing class|R8:/ && n < 30 { print substr($0, 1, 300); n++ }' "$log")"
+            if [ -n "$wrong" ]; then annotate "Gradle (release): o que deu errado" "$wrong"; fi
+            if [ -n "$errors" ]; then annotate "Gradle (release): erros" "$errors"; fi
+            if [ -z "$wrong$errors" ]; then annotate "Gradle (release)" "$(tail -n 40 "$log")"; fi
+            # O lint do release (lintVitalRelease) escreve os achados num relatório, fora do log.
+            find android/app/build -path '*lint*' -name '*.txt' -size +0 2>/dev/null | while read -r report; do
+              annotate "Lint (release): ${report##*/}" "$(awk 'n < 40 { print substr($0, 1, 300); n++ }' "$report")"
+            done || true
+            exit "$status"
+          fi
+          mkdir -p dist
+          cp "$RELEASE_APK" "dist/StarsonicPhone-android-$STARSONIC_VERSION.apk"
+
+      # O dexdump e o llvm-nm conferem o R8 (as regras do EngineSink, do PjAudioDevInfo, do atualizador e os nomes dos
+      # natives da ponte, em cada ABI).
+      - name: Conferir o APK de publicação
+        run: |
+          apk="dist/StarsonicPhone-android-$STARSONIC_VERSION.apk"
+          tools="$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -n 1)"
+          nm=("$ANDROID_HOME/ndk/${{ steps.lock.outputs.ndk }}"/toolchains/llvm/prebuilt/*/bin/llvm-nm)
+          echo "build-tools $(basename "$tools")"
+          python3 -I build/android/check_apk.py "$apk" --version "$STARSONIC_VERSION" --release \
+            --cert-sha256 "${{ steps.chave.outputs.cert }}" --aapt2 "${tools}aapt2" --apksigner "${tools}apksigner" \
+            --nm "${nm[0]}" --dexdump "${tools}dexdump"
+          echo "::notice title=APK de publicação::$(basename "$apk"): $(stat -c %s "$apk") bytes, SHA-256 $(sha256sum "$apk" | cut -d' ' -f1)"
+
+      - name: Código-fonte completo
+        if: inputs.version
+        run: bash build/android/make_source_bundle.sh "$STARSONIC_VERSION" dist
+
+      - name: Guardar o APK assinado e o código-fonte
+        if: inputs.version && steps.chave.outputs.real == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: StarsonicPhone-android-${{ inputs.version }}-${{ github.sha }}
+          path: dist/
           if-no-files-found: error

@@ -24,6 +24,20 @@ val starsonicDeps: String = repoRoot.resolve(starsonicProperty("starsonic.deps",
 val starsonicAbis = starsonicProperty("starsonic.abis", "arm64-v8a,armeabi-v7a,x86_64")
     .split(',').map { it.trim() }.filter { it.isNotEmpty() }
 
+// A assinatura do APK de publicação (spec 9.5), pelas variáveis de ambiente STARSONIC_KEYSTORE_FILE (o .jks, caminho
+// absoluto ou relativo à raiz do repositório), STARSONIC_KEYSTORE_PASSWORD, STARSONIC_KEY_ALIAS e
+// STARSONIC_KEY_PASSWORD; o workflow android as tira dos segredos ANDROID_* do GitHub. Sem nenhuma delas, o release
+// sai sem assinatura (app-release-unsigned.apk); com só algumas, o build para.
+val signingVariables = listOf(
+    "STARSONIC_KEYSTORE_FILE", "STARSONIC_KEYSTORE_PASSWORD", "STARSONIC_KEY_ALIAS", "STARSONIC_KEY_PASSWORD",
+)
+val releaseSigning: Map<String, String> = signingVariables.mapNotNull { name ->
+    providers.environmentVariable(name).orNull?.takeIf { it.isNotEmpty() }?.let { name to it }
+}.toMap()
+if (releaseSigning.isNotEmpty() && releaseSigning.size < signingVariables.size) {
+    error("assinatura do release: falta(m) ${signingVariables.filterNot { it in releaseSigning }.joinToString()}")
+}
+
 android {
     namespace = "br.com.starsonic.phone"
     // O Compose do BOM 2026.09.00 (1.12) exige compilar contra o 37. Isso só muda as APIs visíveis na
@@ -49,10 +63,24 @@ android {
         }
     }
 
+    signingConfigs {
+        if (releaseSigning.isNotEmpty()) {
+            create("release") {
+                storeFile = repoRoot.resolve(releaseSigning.getValue("STARSONIC_KEYSTORE_FILE"))
+                storePassword = releaseSigning.getValue("STARSONIC_KEYSTORE_PASSWORD")
+                keyAlias = releaseSigning.getValue("STARSONIC_KEY_ALIAS")
+                keyPassword = releaseSigning.getValue("STARSONIC_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            if (releaseSigning.isNotEmpty()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 

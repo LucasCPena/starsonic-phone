@@ -3,6 +3,15 @@ name: build
 on:
   push:
     branches: ['**']   # tags v* passam pelo release.yml, que chama este workflow
+    # Um push que só mexe no Android não compila o Windows (o workflow android cuida dele, inclusive dos testes
+    # em Python); se mexer em mais alguma coisa, roda.
+    paths-ignore:
+      - 'android/**'
+      - 'starsonic/phone/**'
+      - 'tests/phone/**'
+      - 'build/android/**'
+      - 'build/linux/**'
+      - '.github/workflows/android*.yml'
   pull_request:
   workflow_dispatch:   # com versão: build de versão completo (com o código-fonte), sem publicar
     inputs:

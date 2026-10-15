@@ -1,0 +1,196 @@
+name: android-release
+
+# Publica uma versão do app Android (spec 9.3). Tag android-vX.Y.Z-rc.N → pre-release, também publicada no pre-release
+# fixo canal-teste-android, de onde as rc instaladas recebem a atualização; tag android-vX.Y.Z → release, também
+# publicada no release fixo canal-android. Nenhum release do Android vira o "latest" do GitHub (--latest=false): o
+# Windows acha o versao.json dele pelo latest, e no fim o workflow confere que o latest continua sendo do Windows.
+# Também pode ser disparado à mão (Actions → android-release → Run workflow) com a versão: a tag android-v<versão> é
+# criada no commit escolhido. O build e os testes são os do android.yml, com a chave dos segredos ANDROID_*.
+on:
+  push:
+    tags: ['android-v*']
+  workflow_dispatch:
+    inputs:
+      versao:
+        description: "Versão a publicar (ex.: 0.1.0 ou 0.1.0-rc.1)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  preparar:
+    name: Versão, repositório e chave
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.versao.outputs.version }}
+      channel: ${{ steps.versao.outputs.channel }}
+      releases: ${{ steps.repositorio.outputs.releases }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # O mesmo formato que o app aceita (X.Y.Z ou X.Y.Z-rc.N) e que cabe no versionCode (spec 9.4).
+      - name: Versão e canal
+        id: versao
+        env:
+          INPUT_VERSION: ${{ inputs.versao }}
+        run: |
+          if [ -n "$INPUT_VERSION" ]; then version="$INPUT_VERSION"; else version="${GITHUB_REF_NAME#android-v}"; fi
+          if ! code="$(python3 -I build/android/version_code.py "$version" 2>&1)"; then
+            echo "::error title=versao::$code"
+            exit 1
+          fi
+          case "$version" in *-rc.*) channel=teste ;; *) channel=estavel ;; esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          echo "Versão $version (versionCode $code), canal $channel"
+
+      # O app procura as atualizações e só aceita os APKs de github.com/<conta>/starsonic-phone, endereço fixo no
+      # UpdateDecider.kt; o versao-android.json leva esse mesmo endereço, letra por letra.
+      - name: Repositório do app
+        id: repositorio
+        run: |
+          releases="$(sed -n 's#^ *private const val RELEASES = "\(https://github.com/[^"]*/releases/download/\)"$#\1#p' \
+            android/app/src/main/java/br/com/starsonic/phone/update/UpdateDecider.kt)"
+          repo="${releases#https://github.com/}"
+          repo="${repo%/releases/download/}"
+          if [ -z "$releases" ] || [ "${repo,,}" != "${GITHUB_REPOSITORY,,}" ]; then
+            echo "::error title=conta::o app procura as atualizações em '$repo', mas o release seria publicado em $GITHUB_REPOSITORY"
+            exit 1
+          fi
+          echo "releases=$releases" >> "$GITHUB_OUTPUT"
+
+      - name: Versão ainda não publicada
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "android-v${{ steps.versao.outputs.version }}" > /dev/null 2>&1; then
+            echo "::error title=versao::o release android-v${{ steps.versao.outputs.version }} já existe"
+            exit 1
+          fi
+
+      # Sem a chave de verdade, nenhuma atualização instalaria por cima (spec 9.5): nada é publicado.
+      - name: Segredos da chave de assinatura
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          missing=()
+          for name in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            [ -n "${!name}" ] || missing+=("ANDROID_$name")
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error title=chave::faltam os segredos ${missing[*]} (README, seção Android)"
+            exit 1
+          fi
+
+      - name: Notas (versão estável)
+        if: steps.versao.outputs.channel == 'estavel'
+        run: |
+          notas="notas/android-v${{ steps.versao.outputs.version }}.txt"
+          if [ ! -s "$notas" ]; then
+            echo "::error title=notas::falta $notas (texto curto mostrado no aviso de atualização)"
+            exit 1
+          fi
+
+  build:
+    name: Build
+    needs: preparar
+    uses: ./.github/workflows/android.yml
+    with:
+      version: ${{ needs.preparar.outputs.version }}
+      publicar: true
+    secrets:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+
+  publicar:
+    name: Publicar
+    needs: [preparar, build]
+    runs-on: ubuntu-24.04
+    env:
+      VERSION: ${{ needs.preparar.outputs.version }}
+      CHANNEL: ${{ needs.preparar.outputs.channel }}
+      RELEASES: ${{ needs.preparar.outputs.releases }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: StarsonicPhone-android-${{ needs.preparar.outputs.version }}-${{ github.sha }}
+          path: dist
+
+      # De novo, no que vai ser publicado: a versão, as três ABIs, os 16 KB, nenhum MicroSIP e a chave de verdade.
+      - name: Conferir o APK
+        run: |
+          test -f "dist/StarsonicPhone-android-$VERSION-codigo-fonte-completo.zip"
+          tools="$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -n 1)"
+          python3 -I build/android/check_apk.py "dist/StarsonicPhone-android-$VERSION.apk" --version "$VERSION" --release \
+            --cert-sha256 build/android/signing-cert.sha256 --aapt2 "${tools}aapt2" --apksigner "${tools}apksigner"
+
+      - name: versao-android.json
+        run: |
+          apk="dist/StarsonicPhone-android-$VERSION.apk"
+          sha=$(sha256sum "$apk" | cut -d' ' -f1)
+          url="${RELEASES}android-v$VERSION/StarsonicPhone-android-$VERSION.apk"
+          notas="notas/android-v$VERSION.txt"
+          extra=()
+          if [ -f "$notas" ]; then extra=(--notes-file "$notas"); fi
+          python3 build/make_manifest.py --version "$VERSION" --installer-url "$url" --sha256 "$sha" "${extra[@]}" \
+            --out dist/versao-android.json
+          cat dist/versao-android.json
+
+      - name: Release android-v${{ needs.preparar.outputs.version }}
+        run: |
+          flags=(--latest=false)
+          if [ "$CHANNEL" = teste ]; then flags+=(--prerelease); fi
+          notas="notas/android-v$VERSION.txt"
+          if [ -f "$notas" ]; then flags+=(--notes-file "$notas"); else flags+=(--notes "Starsonic Phone para Android $VERSION"); fi
+          gh release create "android-v$VERSION" --target "$GITHUB_SHA" --title "Starsonic Phone para Android $VERSION" \
+            "${flags[@]}" "dist/StarsonicPhone-android-$VERSION.apk" dist/versao-android.json \
+            "dist/StarsonicPhone-android-$VERSION-codigo-fonte-completo.zip"
+
+      # O canal da versão recebe o APK e o versao-android.json dela, no lugar dos anteriores.
+      - name: Canal
+        run: |
+          if [ "$CHANNEL" = teste ]; then
+            canal=canal-teste-android
+            create=(--prerelease --title "Canal de teste (Android)" --notes "Versões candidatas (rc) do Starsonic Phone para Android, para teste. O APK e o versao-android.json daqui são sempre os da última rc.")
+          else
+            canal=canal-android
+            create=(--title "Canal estável (Android)" --notes "A versão estável do Starsonic Phone para Android. O APK e o versao-android.json daqui são sempre os da última versão estável.")
+          fi
+          if ! gh release view "$canal" > /dev/null 2>&1; then
+            gh release create "$canal" --target "$GITHUB_SHA" --latest=false "${create[@]}"
+          fi
+          gh release view "$canal" --json assets --jq '.assets[].name' | while read -r asset; do
+            if [ "$asset" != "StarsonicPhone-android-$VERSION.apk" ] && [ "$asset" != versao-android.json ]; then
+              gh release delete-asset "$canal" "$asset" -y
+            fi
+          done
+          gh release upload "$canal" "dist/StarsonicPhone-android-$VERSION.apk" dist/versao-android.json --clobber
+
+      # O latest precisa continuar sendo do Windows (tag v...). Sem versão estável do Windows, não há latest (404): aí
+      # basta que nenhum release do Android tenha virado o latest.
+      - name: O latest continua sendo do Windows
+        if: ${{ !cancelled() }}
+        run: |
+          if latest="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name 2> "$RUNNER_TEMP/latest.txt")"; then
+            case "$latest" in
+              v*) echo "::notice title=latest::o latest continua $latest (Windows)" ;;
+              *)
+                echo "::error title=latest::o latest virou $latest, e o Windows deixaria de achar o versao.json dele: marque o último release estável do Windows como latest (Edit → Set as the latest release)"
+                exit 1
+                ;;
+            esac
+          elif grep -q "HTTP 404" "$RUNNER_TEMP/latest.txt"; then
+            echo "::notice title=latest::nenhum release é o latest (o Windows ainda não tem versão estável); nenhum do Android virou o latest"
+          else
+            echo "::error title=latest::não consegui ler o latest: $(cat "$RUNNER_TEMP/latest.txt")"
+            exit 1
+          fi
