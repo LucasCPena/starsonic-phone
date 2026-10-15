@@ -166,6 +166,9 @@ class IncomingCallNotifier(private val context: Context) : CallNotifier {
         /** O canal das perdidas. */
         const val CHANNEL_MISSED = "perdidas"
 
+        /** O canal da recebida silenciada pelo volume (stub do fix round 2: ainda não usado). */
+        const val CHANNEL_SILENCED = "ligacoes-silenciadas"
+
         const val ACTION_DECLINE = "br.com.starsonic.phone.action.RECUSAR"
 
         private const val CHANNEL_CALLS_NAME = "Ligações"

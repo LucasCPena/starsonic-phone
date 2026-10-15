@@ -259,6 +259,9 @@ class CallManager(
         if (current.incoming && current.phase == CallPhase.RINGING && !current.ending) current.id else NO_ID
     }
 
+    /** A recebida que toca (stub do fix round 2: a implementação vem no verde). */
+    fun ringing(): IncomingRequest? = null
+
     /** Há uma feita esperando o Telecom (ele pergunta antes de criar a Connection dela). */
     fun isDialing(): Boolean = synchronized(lock) {
         val current = call ?: return false

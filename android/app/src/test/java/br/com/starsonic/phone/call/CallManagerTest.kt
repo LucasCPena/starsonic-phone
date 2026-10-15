@@ -64,12 +64,12 @@ class CallManagerTest {
         assertEquals(CallUi("3001", "Cliente Teste", incoming = true, phase = CallPhase.RINGING), calls.state.value)
         assertTrue(gateway.rejects.isEmpty())
         assertTrue(recents.list().isEmpty())
-        // O Telecom pergunta antes de criar a Connection.
+        // O Telecom pergunta antes de criar a Connection (sem esperar o estado publicado).
         assertTrue(calls.isRinging(1))
-        assertEquals(1, calls.ringingId())
+        assertEquals(IncomingRequest(1, "3001", "Cliente Teste"), calls.ringing())
         calls.answer()
         assertFalse(calls.isRinging(1))
-        assertEquals(CallManager.NO_ID, calls.ringingId())
+        assertNull(calls.ringing())
     }
 
     @Test
@@ -433,6 +433,21 @@ class CallManagerTest {
         calls.dial("2002")
         scope.cancel()
         assertEquals(emptyList<String>(), heldDuring)
+    }
+
+    @Test
+    fun `hanging up an outgoing call that took another call's event hangs up the call from makeCall`() {
+        // O evento de outra ligação foi tomado pela feita, e a pessoa desligou antes de o makeCall voltar.
+        gateway.duringMakeCall = {
+            calls.onCallState(7, CallState.CALLING, 0)
+            calls.hangup()
+        }
+        val id = dialOut("2002")
+        assertTrue("a ligação do makeCall sai: ${gateway.hangups}", id in gateway.hangups)
+        assertTrue("a outra também: ${gateway.hangups}", 7 in gateway.hangups)
+        assertNull(calls.state.value)
+        calls.onCallState(id, CallState.DISCONNECTED, 487)
+        assertEquals(id to EndCause.LOCAL, telecom.disconnected.last())
     }
 
     // Outra thread tenta usar o CallManager por até 1 s: true se não conseguiu (a trava estava presa).

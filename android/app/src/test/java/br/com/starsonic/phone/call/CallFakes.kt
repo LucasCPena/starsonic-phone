@@ -10,8 +10,9 @@ import br.com.starsonic.phone.engine.Transport
 
 /**
  * O núcleo falso, com marcadores no lugar das regras (as de verdade são testadas no núcleo e no NativeLoadTest):
- * o aviso de fim é "fim <código>", e nada para os códigos sem aviso (0, 200 e 487, o contrato do CoreRules); o
- * número a discar vem de [DIAL], e o que não está lá fica como veio.
+ * o aviso de fim é "fim <código>" de 400 a 699, e nada para o 487 e para tudo fora de 400 a 699, como no contrato
+ * do CallEndMessage (starsonic/core/CallMessages.h); o número a discar vem de [DIAL], e o que não está lá fica
+ * como veio.
  */
 internal class CallCore : CoreRules {
     override fun validateServer(raw: String): Pair<Check, String> = Check.OK to raw
@@ -20,7 +21,7 @@ internal class CallCore : CoreRules {
 
     override fun registrationMessage(code: Int) = ""
 
-    override fun callEndMessage(code: Int): String = if (code == 0 || code == 200 || code == 487) "" else "fim $code"
+    override fun callEndMessage(code: Int): String = if (code in 400..699 && code != 487) "fim $code" else ""
 
     override fun normalizeDialString(raw: String): String = DIAL[raw] ?: raw
 

@@ -33,6 +33,7 @@ import java.util.regex.Pattern
 import org.junit.After
 import org.junit.AfterClass
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.FixMethodOrder
@@ -76,7 +77,7 @@ class CallFlowTest {
         app.recents.clear()
         // Uma notificação de ligação que sobrou de um teste que falhou não engana o próximo.
         val notifications = app.getSystemService(NotificationManager::class.java)
-        notifications.activeNotifications.filter { it.notification.channelId == "ligacoes" }
+        notifications.activeNotifications.filter { it.notification.channelId in CALL_CHANNELS }
             .forEach { notifications.cancel(it.tag, it.id) }
         app.store.save(Account(emulator.registrar, Transport.TCP, "2001", emulator.senha))
         scenario = ActivityScenario.launch(MainActivity::class.java)
@@ -208,13 +209,8 @@ class CallFlowTest {
 
     @Test
     fun dialFromRecentsWithoutRegistrationShowsTheMessage() {
-        // A conta com a senha errada: o servidor recusa o registro, e o app fica sem conexão.
-        scenario?.close()
-        emulator.startClean()
         app.recents.add(Recent("2002", "", CallKind.FEITA, System.currentTimeMillis(), 0))
-        app.store.save(Account(emulator.registrar, Transport.TCP, "2001", "senha-errada"))
-        scenario = ActivityScenario.launch(MainActivity::class.java)
-        emulator.waitForText("Ramal ou senha incorretos.")
+        openWithoutRegistration()
         compose.onNodeWithTag("aba-recentes").performClick()
         emulator.waitUntil("a linha do Recentes") { emulator.showsTag("recente") }
         compose.onAllNodesWithTag("recente").onFirst().performClick()
@@ -224,16 +220,21 @@ class CallFlowTest {
 
     @Test
     fun silenceKeepsTheIncomingNotificationWithoutTheRing() {
-        // O volume apertado durante o toque (Telecom: onSilence): a notificação fica, sem o toque que se repete.
+        // O volume apertado durante o toque (Telecom: onSilence): a notificação fica, sem o toque que se repete, e
+        // continua no alto da tela (com o celular em uso).
         val id = fakeCallId()
         app.notifier.showIncoming(id, "3001", "Cliente Teste")
         emulator.waitUntil("a notificação de ligação que toca", details = ::notifications) {
             callNotification()?.let { it.flags and Notification.FLAG_INSISTENT != 0 } == true
         }
+        val answer = By.pkg(SYSTEM_UI).text(Pattern.compile("Atender", Pattern.CASE_INSENSITIVE))
+        assertNotNull("a ligação no alto da tela; na tela: ${visibleTexts()}", device.wait(Until.findObject(answer), 10_000))
         app.notifier.silence(id)
         emulator.waitUntil("a notificação de ligação sem o toque", details = ::notifications) {
             callNotification()?.let { it.flags and Notification.FLAG_INSISTENT == 0 } == true
         }
+        Thread.sleep(2_000)
+        assertNotNull("a ligação continua no alto da tela; na tela: ${visibleTexts()}", device.findObject(answer))
         app.notifier.dismiss(id)   // sem o stopRinging de um id falso, que esconderia as ligações de verdade seguintes
         emulator.waitUntil("a notificação sair", details = ::notifications) { callNotification() == null }
     }
@@ -258,6 +259,27 @@ class CallFlowTest {
         emulator.waitForText("Nenhuma ligação ainda.")
         scenario!!.recreate()
         emulator.waitForText("Nenhuma ligação ainda.")
+    }
+
+    @Test
+    fun theMessageDoesNotMoveTheKeypad() {
+        // O aviso aparece e some (2 s) sem empurrar o teclado embaixo do dedo.
+        openWithoutRegistration()
+        compose.onNodeWithTag("tecla-2").performScrollTo().performClick()
+        compose.onNodeWithTag("ligar").performScrollTo()
+        val before = compose.onNodeWithTag("tecla-1").fetchSemanticsNode().boundsInRoot
+        compose.onNodeWithTag("ligar").performClick()
+        emulator.waitForText("Sem conexão com o servidor. Tente de novo em instantes.")
+        assertEquals("o teclado no lugar", before, compose.onNodeWithTag("tecla-1").fetchSemanticsNode().boundsInRoot)
+    }
+
+    // O app aberto com a conta de senha errada: o servidor recusa o registro, e o app fica sem conexão.
+    private fun openWithoutRegistration() {
+        scenario?.close()
+        emulator.startClean()
+        app.store.save(Account(emulator.registrar, Transport.TCP, "2001", "senha-errada"))
+        scenario = ActivityScenario.launch(MainActivity::class.java)
+        emulator.waitForText("Ramal ou senha incorretos.")
     }
 
     // Disca no Teclado do app (na frente) e toca Ligar.
@@ -307,10 +329,10 @@ class CallFlowTest {
         return condition()
     }
 
-    // A notificação de ligação do app (canal "ligacoes"), ou null.
+    // A notificação de ligação do app (canal "ligacoes", ou o da ligação silenciada), ou null.
     private fun callNotification(): Notification? =
         app.getSystemService(NotificationManager::class.java).activeNotifications
-            .firstOrNull { it.notification.channelId == "ligacoes" }?.notification
+            .firstOrNull { it.notification.channelId in CALL_CHANNELS }?.notification
 
     // A ligação do app e as notificações dele (canal/título/tipo de ligação), para as falhas.
     private fun notifications(): String {
@@ -330,6 +352,7 @@ class CallFlowTest {
 
     companion object {
         private const val SYSTEM_UI = "com.android.systemui"
+        private val CALL_CHANNELS = setOf(IncomingCallNotifier.CHANNEL_CALLS, IncomingCallNotifier.CHANNEL_SILENCED)
 
         // Os toques repetidos nos botões da notificação, por botão, e os ids das notificações de teste.
         private val repeatedTaps = mutableMapOf("Atender" to 0, "Recusar" to 0)
