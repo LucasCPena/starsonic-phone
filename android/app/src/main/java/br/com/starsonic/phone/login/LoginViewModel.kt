@@ -37,23 +37,23 @@ data class LoginState(
  * Só vale o resultado da conta tentada: o motor dá um id a cada conta, e um resultado de outra (a anterior,
  * que ainda estava na fila ou voltou depois de uma falha) é ignorado.
  *
- * Com uma conta gravada, é a tela de Editar: servidor, protocolo e ramal preenchidos e a senha vazia.
+ * Com uma conta gravada ([previous]), é a tela de Editar: servidor, protocolo e ramal preenchidos e a senha
+ * vazia. A conta gravada vem de quem cria o modelo, já lida fora da thread principal (Keystore e disco).
  *
  * Threads: [submit] espera o motor aceitar a conta e não pode rodar na thread principal; os resultados
- * chegam por [onRegistration] (na thread dos eventos do motor) e o fim do tempo, na thread do relógio.
+ * chegam por [onRegistration] (na thread dos eventos do motor) e o fim do tempo, na thread do relógio. A volta
+ * à conta anterior depois do fim do tempo ou da saída da tela espera o motor: roda em [background].
  */
 class LoginViewModel(
     private val core: CoreRules,
     private val gateway: SipGateway,
     private val store: AccountStore,
     private val clock: Clock,
-    @Suppress("UNUSED_PARAMETER") previous: Account?,
+    private val previous: Account?,
     defaultTransport: Transport = Transport.UDP,
     newFlow: (CoreRules) -> LoginFlow = ::LoginFlowHandle,
-    @Suppress("UNUSED_PARAMETER") background: Executor = Executor { it.run() },
+    private val background: Executor = Executor { task -> thread(name = "starsonic-entrar") { task.run() } },
 ) : ViewModel() {
-    private val previous: Account? = store.load()
-
     private val mutableState = MutableStateFlow(
         previous?.let { LoginState(server = it.address, transport = it.transport, ramal = it.ramal) }
             ?: LoginState(transport = defaultTransport),
@@ -107,10 +107,14 @@ class LoginViewModel(
         val outcome = synchronized(lock) {
             flow.onTimeout().also { flow.close() }
         } ?: return
-        thread(name = "starsonic-entrar") { finish(outcome) }
+        background.execute { finish(outcome) }
     }
 
-    private fun onTimeout() = finish(synchronized(lock) { flow.onTimeout() })
+    // Na thread do relógio: o desfecho sai dela, porque a volta à conta anterior espera o motor.
+    private fun onTimeout() {
+        val outcome = synchronized(lock) { flow.onTimeout() } ?: return
+        background.execute { finish(outcome) }
+    }
 
     // Com a trava: confere os campos, na ordem, e começa a tentativa (ou null).
     private fun begin(): Attempt? {

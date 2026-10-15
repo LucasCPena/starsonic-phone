@@ -8,76 +8,49 @@ import br.com.starsonic.phone.core.DeviceClock
 import br.com.starsonic.phone.core.NativeCoreRules
 import br.com.starsonic.phone.data.AccountStore
 import br.com.starsonic.phone.data.PreferencesAccountStore
-import br.com.starsonic.phone.engine.EngineEvents
 import br.com.starsonic.phone.engine.NativeSipGateway
 import br.com.starsonic.phone.engine.SipGateway
 import br.com.starsonic.phone.engine.Transport
-import kotlin.concurrent.thread
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-
-/** O último resultado do registro da conta: o código SIP e se ela ficou registrada. */
-data class Registration(val code: Int, val active: Boolean)
+import br.com.starsonic.phone.service.Connection
 
 /**
- * O aplicativo (android:name do manifesto): o que vive com o processo. Por enquanto ele também sobe o motor
- * e registra a conta gravada; a Task 7 leva isso para o serviço em primeiro plano.
+ * O aplicativo (android:name do manifesto): o que vive com o processo. Ele não sobe o motor nem registra
+ * nada: com conta gravada, quem registra é o SipService (Android 12+ não deixa iniciar o serviço em primeiro
+ * plano daqui, com o app em segundo plano). Tudo aqui nasce sob demanda, e o que lê o disco ou o Keystore
+ * nunca na thread principal.
  */
 class App : Application() {
     val core: CoreRules
         get() = NativeCoreRules
 
-    /** O motor de ligações (um por processo). */
-    val gateway: SipGateway by lazy { NativeSipGateway() }
+    /**
+     * A conexão com o servidor: o motor de ligações (um por processo, que sobe na primeira vez que alguém
+     * precisa dele), a conta que está nele e o status da faixa e da notificação.
+     */
+    val connection: Connection by lazy {
+        Connection(::NativeSipGateway, core, "$USER_AGENT/${BuildConfig.VERSION_NAME}", { profileText }, ::log)
+    }
+
+    /** O motor para quem troca a conta (a tela Entrar e os testes): a própria conexão, que anota a conta. */
+    val gateway: SipGateway
+        get() = connection
 
     /** A conta gravada no celular. */
     val store: AccountStore by lazy { PreferencesAccountStore(this) }
 
     val clock: Clock by lazy { DeviceClock() }
 
-    /** O perfil das contas (branding/perfil.ini, que vai nos assets sem os comentários). */
+    /** O perfil das contas (branding/perfil.ini, que vai nos assets sem os comentários). Lê o disco. */
     val profileText: String by lazy { assets.open("perfil.ini").use { String(it.readBytes(), Charsets.UTF_8) } }
 
-    /** O protocolo da tela Entrar numa conta nova: o padrão do perfil. */
+    /** O protocolo da tela Entrar numa conta nova: o padrão do perfil. Lê o disco e o núcleo (JNI). */
     val defaultTransport: Transport by lazy {
         if (Native.profileTransport(profileText) == "tcp") Transport.TCP else Transport.UDP
     }
 
-    private val mutableRegistration = MutableStateFlow<Registration?>(null)
-
-    /** O último resultado do registro (para a faixa). */
-    val registration: StateFlow<Registration?> = mutableRegistration
-
-    /** Quem espera o resultado do registro na tela Entrar (null fora dela): código, ativa e id da conta. */
-    @Volatile
-    var loginEvents: ((Int, Boolean, Int) -> Unit)? = null
-
-    private val events = object : EngineEvents {
-        override fun onRegistration(code: Int, active: Boolean, accountId: Int) {
-            mutableRegistration.value = Registration(code, active)
-            loginEvents?.invoke(code, active, accountId)
-        }
-
-        override fun onIncomingCall(callId: Int, remoteUser: String, remoteName: String) {}
-
-        override fun onRejectedBusy(remoteUser: String, remoteName: String) {}
-
-        override fun onCallState(callId: Int, state: Int, code: Int) {}
-
-        override fun onLog(level: Int, line: String) {
-            // Só no build de debug, para o logcat (e para os testes no emulador mostrarem o motor quando falham).
-            if (BuildConfig.DEBUG) Log.println(logPriority(level), LOG_TAG, line)
-        }
-    }
-
-    override fun onCreate() {
-        super.onCreate()
-        // O motor sobe fora da thread principal (pode levar alguns segundos); a conta gravada registra.
-        thread(name = "starsonic-inicio") {
-            if (gateway.start("$USER_AGENT/${BuildConfig.VERSION_NAME}", profileText, events)) {
-                store.load()?.let { gateway.setAccount(it.address, it.transport, it.ramal, it.senha) }
-            }
-        }
+    // As linhas do motor vão ao logcat só no build de debug (os testes no emulador mostram o motor quando falham).
+    private fun log(level: Int, line: String) {
+        if (BuildConfig.DEBUG) Log.println(logPriority(level), LOG_TAG, line)
     }
 
     private companion object {

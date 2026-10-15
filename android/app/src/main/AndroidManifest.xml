@@ -1,8 +1,29 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- O motor de ligações fala SIP com o servidor. -->
+    <!-- O motor de ligações fala SIP com o servidor e refaz o registro quando a rede muda. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- O áudio das ligações. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- A notificação fixa e a das ligações (Android 13+ pede à pessoa). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- O serviço em primeiro plano: specialUse para manter o registro; phoneCall e microphone durante a ligação. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- As ligações pelo Telecom do Android (modo self-managed) e a tela cheia com o celular bloqueado. -->
+    <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <!-- O serviço volta depois de ligar o celular. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- O sensor de proximidade durante a ligação. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- O pedido para ficar fora da otimização de bateria (a tela Permissões e a faixa de avisos). -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.VIBRATE" />
 
     <!-- Sem backup na nuvem: a conta, a senha e os Recentes só ficam no celular (spec 6.4). -->
     <application
@@ -24,6 +45,26 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Mantém o ramal registrado, com a notificação fixa (spec 6.2 e 7.2). -->
+        <service
+            android:name=".service.SipService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse|phoneCall|microphone">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Manter o ramal SIP registrado para receber ligações" />
+        </service>
+
+        <!-- Liga o serviço depois de ligar o celular e de atualizar o app (o sistema manda os dois avisos). -->
+        <receiver
+            android:name=".service.BootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

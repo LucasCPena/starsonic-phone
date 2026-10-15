@@ -83,7 +83,10 @@ number "$now"
 [ "$now" = "$before" ] || fail "o ramal $RAMAL registrou sem o BOOT_COMPLETED (REGISTER aceitos: $before -> $now)"
 
 adb logcat -c || true
-adb shell am broadcast -a android.intent.action.BOOT_COMPLETED -p "$PACKAGE" || fail "am broadcast BOOT_COMPLETED"
+# --include-stopped-packages: o fim do am instrument força a parada do app (com um celular de verdade, o
+# boot chega ao app que não foi parado à força).
+adb shell am broadcast -a android.intent.action.BOOT_COMPLETED --include-stopped-packages -p "$PACKAGE" ||
+    fail "am broadcast BOOT_COMPLETED"
 for second in $(seq "$WAIT"); do
     sleep 1
     now="$(registers)"

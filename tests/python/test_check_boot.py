@@ -13,7 +13,8 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "build" / "android" / "check-boot.sh"
 STOP = "shell am stopservice -n br.com.starsonic.phone/.service.SipService"
-BROADCAST = "shell am broadcast -a android.intent.action.BOOT_COMPLETED -p br.com.starsonic.phone"
+BROADCAST = ("shell am broadcast -a android.intent.action.BOOT_COMPLETED --include-stopped-packages "
+             "-p br.com.starsonic.phone")
 
 # Cada chamada vai para FAKE_ADB_LOG (uma linha). "id -u" responde 0 a partir da chamada FAKE_ROOT_AFTER
 # (nunca, com 0); com FAKE_RECEIVER=1, o broadcast faz o app registrar (a contagem em FAKE_COUNT sobe).
