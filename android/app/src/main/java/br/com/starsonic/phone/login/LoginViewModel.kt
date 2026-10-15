@@ -44,8 +44,9 @@ data class LoginState(
  *
  * Threads: [submit] espera o motor aceitar a conta e não pode rodar na thread principal; os resultados
  * chegam por [onRegistration] (na thread dos eventos do motor) e o fim do tempo, na thread do relógio. A
- * gravação da conta (Keystore e disco) e a volta à conta anterior (depois de uma falha, do fim do tempo ou da
- * saída da tela; espera o motor) rodam em [background], nunca na thread dos eventos do motor nem na do relógio.
+ * gravação da conta (Keystore e disco) roda em [background], fora da thread dos eventos do motor. A volta à
+ * conta anterior espera o motor: depois do fim do tempo ou da saída da tela, roda em [background]; depois de uma
+ * falha do registro, na thread de quem trouxe o resultado.
  */
 class LoginViewModel(
     private val core: CoreRules,
