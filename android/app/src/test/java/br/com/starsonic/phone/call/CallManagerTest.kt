@@ -342,10 +342,21 @@ class CallManagerTest {
         calls.onTelecomFailed(CallManager.NO_ID)
         assertNull(calls.state.value)
         assertEquals(listOf(CallManager.NO_ID to EndCause.ERROR), telecom.disconnected)
-        assertEquals("", calls.endMessage.value)
         calls.onOutgoingReady()   // atrasado
         assertTrue(gateway.made.isEmpty())
         assertEquals(CallKind.FEITA, recents.list().single().kind)
+    }
+
+    @Test
+    fun `Telecom refusing the outgoing call shows the message for 2 seconds`() {
+        // O Android não deixa ligar (uma ligação do celular em andamento): o aviso na tela de chamada e acima das abas.
+        assertTrue(calls.dial("2002"))
+        calls.onTelecomFailed(CallManager.NO_ID)
+        assertEquals("Termine a ligação do celular para ligar pelo ramal.", calls.endMessage.value)
+        clock.advance(1_999)
+        assertEquals("Termine a ligação do celular para ligar pelo ramal.", calls.endMessage.value)
+        clock.advance(1)
+        assertEquals("", calls.endMessage.value)
     }
 
     @Test
