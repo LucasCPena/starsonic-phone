@@ -1,16 +1,17 @@
 # Starsonic Phone para Android — especificação de design
 
 - **Data:** 14/10/2026
-- **Status:** aprovada pelo responsável em 14/10/2026, com os itens novos da revisão (diagnóstico, uma ligação por vez, transferência direta, Ligar em verde, avisos de ligação não completada, reconexão a partir do primeiro desbloqueio, Opus sem G.729, Sair mantém os Recentes, botão de mostrar a senha)
+- **Status:** aprovada pelo responsável em 14/10/2026, com os itens novos da revisão (diagnóstico, uma ligação por vez, transferência direta, Ligar em verde, avisos de ligação não completada, reconexão a partir do primeiro desbloqueio, Opus sem G.729, Sair mantém os Recentes, botão de mostrar a senha); revisão de 15/10/2026: processador acordado com a conta conectada (decisão 6)
 - **Subprojeto:** 2 de 2 (app de celular), **etapa 1: Android, APK de teste**. O aviso do servidor (push), a Play Store e o iPhone vêm em etapas seguintes, cada uma com especificação própria.
 - **Base:** a especificação do Windows (`2026-10-11-starsonic-phone-windows-design.md`, revisão 1.4), de onde vêm as regras da tela Entrar, o perfil e as mensagens de erro.
 
-> **Decisões do responsável** (13 e 14/10/2026):
+> **Decisões do responsável** (13 a 15/10/2026):
 > 1. O app de celular é para quem precisa receber as ligações do ramal a qualquer hora, com o celular no bolso e o app fechado (ex.: vendedor ou técnico na rua).
 > 2. Android e iPhone; até 300 usuários no primeiro ano, começando com menos; primeira versão em poucas semanas.
 > 3. Caminho escolhido: **app próprio com o motor de ligações do MicroSIP (PJSIP)**, começando pelo **Android**, distribuído como **APK de teste** pelo GitHub. Descartados: app pronto de marca branca (mensalidade), adaptar o Linphone e adaptar o baresip.
 > 4. Desenho aprovado em 5 partes: o que a primeira versão faz; como toca com o app fechado; a marca; instalação e atualização; testes.
 > 5. O cadastro de desenvolvedor no Google e a Play Store ficam para depois do primeiro APK.
+> 6. (15/10/2026) Com a conta conectada, o app mantém o processador do celular acordado (a tela apaga normalmente), para a renovação do registro e o keep-alive não pararem com o celular no bolso; o consumo de bateria é medido no teste manual (seção 7.2, item 6).
 
 ## 1. Contexto
 
@@ -135,6 +136,7 @@ Tudo fica no armazenamento privado do app: a conta, a senha (cifrada com uma cha
 3. Na troca de rede (Wi-Fi ↔ 4G, ou uma rede nova), o motor refaz o transporte e o registro sozinho. Uma ligação em andamento pode cair nessa troca (aceito na etapa 1).
 4. Sem internet, o status mostra "Sem internet", e o motor tenta de novo quando a rede volta.
 5. O app pede ao Android para ficar fora da otimização de bateria; sem isso, a faixa lembra o pedido. Em Xiaomi e Samsung, um passo a passo mostra os ajustes do fabricante.
+6. Com a tela apagada, o Android põe o processador para dormir, mesmo com o serviço em primeiro plano, e aí a renovação do registro e o keep-alive param. Por isso, enquanto o serviço está com a conta e há rede, o app mantém o processador acordado (a tela apaga normalmente); sem rede, ou depois de Sair, ele deixa o processador dormir. Depende da isenção de bateria (item 5): sem ela, o Android ignora o pedido no modo de economia. O consumo entra na medição de bateria do teste manual (decisão 6).
 
 ### 7.3 Ligação recebida
 
@@ -271,8 +273,8 @@ Em pelo menos duas marcas (ex.: Samsung e Motorola; Xiaomi, se houver), no Wi-Fi
 
 | Risco | Mitigação |
 |-------|-----------|
-| O Android ou o fabricante parar o app em segundo plano e a ligação não tocar | Serviço em primeiro plano, isenção de bateria, passo a passo por fabricante e o teste de 1 hora parado; o push da etapa 2 resolve de vez |
-| Bateria alta com o keep-alive UDP de 15 s | Medir no teste manual; se ficar alto, avaliar o TCP para quem usa celular ou um keep-alive próprio do celular no perfil (decisão do responsável) |
+| O Android ou o fabricante parar o app em segundo plano e a ligação não tocar | Serviço em primeiro plano, processador acordado com a conta conectada (7.2, item 6), isenção de bateria, passo a passo por fabricante e o teste de 1 hora parado; o push da etapa 2 resolve de vez |
+| Bateria alta com o keep-alive UDP de 15 s e o processador acordado | Medir no teste manual; se ficar alto, avaliar o TCP para quem usa celular ou um keep-alive próprio do celular no perfil (decisão do responsável) |
 | Eco ou áudio ruim em alguns aparelhos; Bluetooth | Cancelamento de eco do aparelho e do PJSIP; teste em duas marcas ou mais |
 | Ligação cair na troca Wi-Fi ↔ 4G | Aceito na etapa 1; o registro volta sozinho |
 | Verificação de desenvolvedores do Google: desde 30/09/2026, no Brasil, só para apps de lojas participantes; o APK baixado direto ainda não é afetado, mas passa a ser em 2027 | Cadastrar a Starsonic e o app antes da regra global (decisão 5); o D-U-N-S pode levar até 28 dias |
