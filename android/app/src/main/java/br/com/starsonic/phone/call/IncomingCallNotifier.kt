@@ -83,7 +83,7 @@ class IncomingCallNotifier(private val context: Context) : CallNotifier {
             shownCall = number
             shownName = name
             shownAddress = address
-            post(incoming(callId, ring = true), "recebida $callId")
+            post(callId, ring = true, "recebida $callId")
         }
     }
 
