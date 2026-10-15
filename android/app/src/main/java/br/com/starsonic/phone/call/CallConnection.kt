@@ -69,6 +69,12 @@ class CallConnection(
         app.notifier.showIncoming(callId, number, name)
     }
 
+    // Android 10+: o volume apertado durante o toque. A notificação fica, sem o toque.
+    override fun onSilence() {
+        CallLog.i { "Telecom: silenciar $callId" }
+        app.notifier.silence(callId)
+    }
+
     override fun onAnswer() {
         CallLog.i { "Telecom: atender $callId" }
         app.calls.answer()

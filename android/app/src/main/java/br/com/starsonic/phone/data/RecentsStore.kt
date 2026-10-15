@@ -1,6 +1,7 @@
 package br.com.starsonic.phone.data
 
 import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -74,14 +75,18 @@ class RecentsStore(location: () -> File) {
         }
     }
 
-    // Grava num arquivo ao lado e troca de uma vez: uma gravação cortada no meio não estraga a lista.
+    // Grava num arquivo ao lado, no disco de verdade (fsync), e troca de uma vez: uma gravação cortada no meio, ou o
+    // celular desligando logo depois, não estraga a lista.
     private fun write(recents: List<Recent>) {
         val array = JSONArray()
         recents.forEach { array.put(toJson(it)) }
         val temporary = File(file.path + ".tmp")
         try {
             file.parentFile?.mkdirs()
-            temporary.writeText(array.toString(), Charsets.UTF_8)
+            FileOutputStream(temporary).use { out ->
+                out.write(array.toString().toByteArray(Charsets.UTF_8))
+                out.fd.sync()
+            }
             if (!temporary.renameTo(file)) {
                 file.delete()
                 temporary.renameTo(file)

@@ -37,8 +37,10 @@ public:
     virtual void OnIncomingCall(int callId, const std::string& remoteUser, const std::string& remoteName) = 0;
     // Chegou uma ligação com outra em andamento: o motor respondeu 486 (Ocupado) sozinho.
     virtual void OnRejectedBusy(const std::string& remoteUser, const std::string& remoteName) = 0;
-    // A ligação callId mudou de estado; sipCode é o último código SIP dela (no Disconnected, o do fim,
-    // para CallEndMessage). Disconnected é o último evento de cada ligação.
+    // A ligação callId mudou de estado; sipCode é o último código SIP dela. No Disconnected, é o do fim: numa
+    // ligação encerrada aqui, a resposta daqui (486 no Reject, 603 no Hangup de uma recebida que toca, 487 na
+    // feita cancelada), e não a do outro lado; por isso o CallEndMessage só vale para as feitas (e só para as que
+    // não foram atendidas). Disconnected é o último evento de cada ligação.
     virtual void OnCallState(int callId, CallState state, int sipCode) = 0;
     // level como no PJSIP: 1 erro, 2 aviso, 3 informação, 4 detalhe. Sem senhas.
     virtual void OnLog(int level, const std::string& line) = 0;
@@ -130,7 +132,9 @@ public:
     // outro lado avisa que deu certo (NOTIFY com 2xx), o motor desliga a ligação.
     bool Transfer(int callId, const std::string& number);
 
-    // Há uma ligação (tocando, chamando ou em andamento), do começo até o Disconnected dela.
+    // Há uma ligação (tocando, chamando ou em andamento), até ela acabar no motor. Fica falso antes de o
+    // OnCallState(Disconnected) dela chegar ao listener (que vem pela fila dos eventos): quem acompanha a ligação
+    // pelos eventos não usa o HasCall logo depois de uma ação.
     bool HasCall() const;
 
 private:

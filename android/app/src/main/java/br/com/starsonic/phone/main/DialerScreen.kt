@@ -1,7 +1,6 @@
 package br.com.starsonic.phone.main
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -42,11 +41,11 @@ internal val KEYS = listOf(listOf("1", "2", "3"), listOf("4", "5", "6"), listOf(
 
 /**
  * O Teclado (spec 4.1): o número digitado (com o apagar), as teclas 0–9, * e # e o Ligar. [onDial] liga e diz
- * se ligou (sem registro, não liga, e o aviso aparece em [message]); ligou, o número sai do campo. Rola em
+ * se ligou (sem registro, não liga, e a tela principal mostra o aviso); ligou, o número sai do campo. Rola em
  * telas baixas (o tamanho da letra segue o do celular).
  */
 @Composable
-fun DialerScreen(message: String, onDial: (String) -> Boolean) {
+fun DialerScreen(onDial: (String) -> Boolean) {
     var number by rememberSaveable { mutableStateOf("") }
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 8.dp),
@@ -69,17 +68,6 @@ fun DialerScreen(message: String, onDial: (String) -> Boolean) {
                 modifier = Modifier.testTag("apagar"),
             ) {
                 Icon(painterResource(R.drawable.ic_apagar), contentDescription = ERASE)
-            }
-        }
-        Box(Modifier.height(20.dp), contentAlignment = Alignment.Center) {
-            if (message.isNotEmpty()) {
-                Text(
-                    message,
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodyMedium,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.testTag("aviso-ligacao"),
-                )
             }
         }
         Keypad(onKey = { number += it })

@@ -103,7 +103,8 @@ class CallActivity : ComponentActivity() {
         val callId = intent.getIntExtra(EXTRA_CALL_ID, CallManager.NO_ID)
         val ringing = app.calls.isRinging(callId)
         CallLog.i { "tela de chamada: atender $callId (tocando: $ringing)" }
-        if (ringing) app.calls.answer()
+        // A notificação de uma ligação que já não toca (de um processo que morreu) sai.
+        if (ringing) app.calls.answer() else app.notifier.dismiss(callId)
     }
 
     private fun proximityLock(): PowerManager.WakeLock? {

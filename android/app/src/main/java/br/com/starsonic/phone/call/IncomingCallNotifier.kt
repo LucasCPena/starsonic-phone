@@ -26,13 +26,18 @@ import br.com.starsonic.phone.main.MainActivity
  * - "perdidas" ("Ligações perdidas", importância padrão): "Ligação perdida de <número>"; tocar abre o Recentes.
  *
  * A notificação da recebida só aparece se a ligação ainda toca: um pedido do Telecom que chega depois de ela
- * parar (atendida pelo Bluetooth, desistência) não a põe de volta. Qualquer thread.
+ * parar (atendida pelo Bluetooth, desistência) não a põe de volta. Um processo novo não tem ligação: o notificador
+ * que nasce tira a notificação que ficou de um processo que morreu com a ligação tocando, e o Atender e o Recusar
+ * de uma ligação que já não toca também a tiram ([dismiss]). O volume apertado durante o toque ([silence]) a deixa
+ * sem som. Qualquer thread.
  */
 class IncomingCallNotifier(private val context: Context) : CallNotifier {
     private val manager = context.getSystemService(NotificationManager::class.java)
     private val lock = Any()
     private var stoppedUpTo = 0   // as ligações com id até este já pararam de tocar
     private var shownId = 0       // a ligação da notificação que está lá
+    private var shownCall = ""    // ...o número...
+    private var shownName = ""    // ...e o nome
 
     init {
         val ringtone = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
@@ -48,6 +53,9 @@ class IncomingCallNotifier(private val context: Context) : CallNotifier {
         }
         val missed = NotificationChannel(CHANNEL_MISSED, CHANNEL_MISSED_NAME, NotificationManager.IMPORTANCE_DEFAULT)
         manager.createNotificationChannels(listOf(calls, missed))
+        // Um processo novo não tem ligação: a notificação que ficou de um processo que morreu (com o toque que se
+        // repete) sai.
+        manager.cancel(INCOMING_ID)
     }
 
     /** A notificação da recebida [callId] (o Telecom pede: onShowIncomingCallUi), se ela ainda toca. */
@@ -58,13 +66,38 @@ class IncomingCallNotifier(private val context: Context) : CallNotifier {
                 return
             }
             shownId = callId
-            manager.notify(INCOMING_ID, incoming(callId, number, name))
+            shownCall = number
+            shownName = name
+            manager.notify(INCOMING_ID, incoming(callId, number, name, ring = true))
             CallLog.i { "notificação: recebida $callId" }
         }
     }
 
-    /** O volume apertado durante o toque (stub do fix round 1: a implementação vem no verde). */
-    fun silence(callId: Int) {}
+    /**
+     * O volume apertado durante o toque (Telecom: onSilence, Android 10+): a notificação da recebida [callId], que
+     * ainda toca, volta sem o toque e a vibração. Atualizar não para o toque que se repete: ela sai e volta.
+     */
+    fun silence(callId: Int) {
+        synchronized(lock) {
+            if (callId != shownId || callId <= stoppedUpTo) return
+            manager.cancel(INCOMING_ID)
+            manager.notify(INCOMING_ID, incoming(callId, shownCall, shownName, ring = false))
+            CallLog.i { "notificação: recebida $callId sem o toque" }
+        }
+    }
+
+    /**
+     * O Atender ou o Recusar de uma notificação cuja ligação [callId] já não toca (de um processo que morreu, ou
+     * atrasada): ela sai, a não ser que seja de outra ligação que toca agora. Não mexe nas próximas ligações (os
+     * ids de um processo novo recomeçam do 1).
+     */
+    fun dismiss(callId: Int) {
+        synchronized(lock) {
+            if (shownId != 0 && shownId != callId && shownId > stoppedUpTo) return
+            manager.cancel(INCOMING_ID)
+            CallLog.i { "notificação: a recebida $callId já não toca" }
+        }
+    }
 
     override fun stopRinging(callId: Int) {
         synchronized(lock) {
@@ -94,7 +127,8 @@ class IncomingCallNotifier(private val context: Context) : CallNotifier {
         manager.notify(text, MISSED_ID, notification)
     }
 
-    private fun incoming(callId: Int, number: String, name: String): Notification {
+    // A notificação da recebida; [ring] = o toque e a vibração do canal, repetidos até ela sair.
+    private fun incoming(callId: Int, number: String, name: String, ring: Boolean): Notification {
         val screen = CallActivity.intent(context).putExtra(CallActivity.EXTRA_CALL_ID, callId)
         val fullScreen = PendingIntent.getActivity(context, REQUEST_SCREEN, screen, IMMUTABLE_UPDATE)
         val answer = PendingIntent.getActivity(
@@ -120,8 +154,9 @@ class IncomingCallNotifier(private val context: Context) : CallNotifier {
             .setContentIntent(fullScreen)
             .setFullScreenIntent(fullScreen, true)
             .setStyle(NotificationCompat.CallStyle.forIncomingCall(caller, decline, answer))
+            .setSilent(!ring)
             .build()
-            .apply { flags = flags or Notification.FLAG_INSISTENT }
+            .apply { if (ring) flags = flags or Notification.FLAG_INSISTENT }
     }
 
     companion object {
@@ -154,6 +189,6 @@ class CallActionReceiver : BroadcastReceiver() {
         val callId = intent.getIntExtra(CallActivity.EXTRA_CALL_ID, CallManager.NO_ID)
         val ringing = calls.isRinging(callId)
         CallLog.i { "notificação: recusar $callId (tocando: $ringing)" }
-        if (ringing) calls.reject()
+        if (ringing) calls.reject() else (context.applicationContext as App).notifier.dismiss(callId)
     }
 }

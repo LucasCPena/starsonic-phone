@@ -92,7 +92,9 @@ object EndCause {
  * Threads: os eventos chegam na thread dos eventos do motor; os toques da tela e do Telecom, na principal. Nada
  * aqui espera o motor, a não ser o makeCall, que roda em [background] (como as gravações dos Recentes, que leem
  * e gravam o disco). A trava guarda o estado e nunca fica presa numa chamada ao motor, ao Telecom, às
- * notificações ou ao disco: elas saem depois, na ordem em que foram decididas.
+ * notificações ou ao disco, nem na entrega de [state] e [endMessage]: tudo sai depois, na ordem em que foi
+ * decidido. Os coletores que rodam na hora (Dispatchers.Main.immediate na thread principal) rodam sem a trava,
+ * e um deles pode chamar o CallManager de volta.
  */
 class CallManager(
     private val gateway: SipGateway,
@@ -128,6 +130,8 @@ class CallManager(
     private var maxSeenId = 0          // o maior id de ligação do motor já visto
     private var endTimer: Scheduled? = null
     private var endToken = 0
+    private val publications = ArrayDeque<() -> Unit>()   // as entregas em [state] e [endMessage], na ordem
+    private var delivering = false                         // uma thread está entregando as publicações
 
     @Volatile
     private var loggedOut = false
@@ -145,11 +149,11 @@ class CallManager(
     val endMessage: StateFlow<String> = mutableEndMessage
 
     override fun onIncoming(callId: Int, number: String, name: String) {
-        if (loggedOut) return
-        val permitted = telecom.incomingPermitted()   // fora da trava: pergunta ao Android
+        val permitted = !loggedOut && telecom.incomingPermitted()   // fora da trava: pergunta ao Android
         act { effects ->
-            if (loggedOut) return@act
+            // Antes de olhar o loggedOut: o fim de uma ligação ignorada depois de Sair nunca é tomado por uma feita.
             maxSeenId = maxOf(maxSeenId, callId)
+            if (loggedOut) return@act
             if (call != null || !permitted) {
                 // Uma ligação por vez, do ramal ou da operadora: ocupado, e a ligação entra como perdida.
                 effects += { gateway.reject(callId) }
@@ -170,14 +174,15 @@ class CallManager(
 
     override fun onCallState(callId: Int, state: Int, code: Int) {
         act { effects ->
-            if (loggedOut) return@act
-            val current = call ?: return@act
-            if (current.id != callId) {
-                // A feita sem id (o makeCall ainda não voltou): o primeiro evento de uma ligação nova é dela.
-                val adopt = !current.incoming && current.id == NO_ID && current.dialRequested && callId > maxSeenId
-                if (!adopt) return@act
-                adopt(current, callId, effects)
+            val current = call
+            // A feita sem id (o makeCall ainda não voltou): o primeiro evento de uma ligação nova é dela.
+            val adoptable = current != null && !current.incoming && current.id == NO_ID && current.dialRequested &&
+                callId > maxSeenId
+            if (loggedOut || current == null || (current.id != callId && !adoptable)) {
+                maxSeenId = maxOf(maxSeenId, callId)   // de outra ligação (ou depois de Sair): fica lembrado
+                return@act
             }
+            if (current.id != callId) adopt(current, callId, effects)
             when (state) {
                 CallState.CONFIRMED -> if (current.activeSince == 0L) {
                     current.activeSince = clock.nowMillis()
@@ -197,7 +202,7 @@ class CallManager(
     fun dial(raw: String): Boolean {
         if (raw.isBlank()) return false
         if (!registered()) {
-            synchronized(lock) { showEndMessage(NO_CONNECTION) }
+            act { showEndMessage(NO_CONNECTION) }
             return false
         }
         val number = core.normalizeDialString(raw)
@@ -380,17 +385,27 @@ class CallManager(
         synchronized(lock) { loggedOut = false }
     }
 
-    // Em [background]: o makeCall da feita [dialed] voltou com [id] (-1: não ligou).
+    // Em [background]: o makeCall da feita [dialed] voltou com [id] (-1: não ligou). O id do makeCall vale mais
+    // que o de um evento tomado antes dele (de outra ligação, que então sai).
     private fun onDialed(dialed: Call, id: Int) {
         act { effects ->
             if (call !== dialed) {
-                // Ela já acabou (o fim chegou antes do makeCall voltar), ou a conta saiu: o que ficou no motor sai.
-                if (dialed.abandoned && id > 0) effects += { gateway.hangup(id) }
+                // Ela já acabou: a conta saiu, ou um fim chegou antes de o makeCall voltar. Se o fim era de outra
+                // ligação (o id tomado não é o do makeCall), a do motor ficou sem dono: sai também.
+                if (id > 0 && (dialed.abandoned || dialed.id != id)) effects += { gateway.hangup(id) }
                 return@act
             }
             when {
                 id <= 0 -> end(dialed, 0, effects, cause = if (dialed.localHangup) EndCause.LOCAL else EndCause.ERROR)
                 dialed.id == NO_ID -> adopt(dialed, id, effects)
+                dialed.id != id -> {
+                    val other = dialed.id
+                    dialed.id = NO_ID
+                    dialed.phase = CallPhase.DIALING   // o que veio da outra não vale
+                    dialed.activeSince = 0L
+                    adopt(dialed, id, effects)
+                    effects += { gateway.hangup(other) }
+                }
             }
             publish()
         }
@@ -437,12 +452,14 @@ class CallManager(
             effects += { notifier.stopRinging(id) }
         } else {
             kind = CallKind.FEITA
-            // O código de uma ligação desligada aqui é a resposta daqui: nada a avisar.
-            val message = if (current.localHangup || quiet) "" else core.callEndMessage(code)
+            // O aviso é só da feita que não completou: o código de uma desligada aqui é a resposta daqui, e uma
+            // atendida que caiu (ex.: 408 depois de uma troca de rede) completou.
+            val message = if (current.localHangup || quiet || received) "" else core.callEndMessage(code)
             endCause = cause ?: when {
                 message.isNotEmpty() && (code == 486 || code == 600) -> EndCause.BUSY
                 message.isNotEmpty() -> EndCause.ERROR
                 current.localHangup -> EndCause.LOCAL
+                code in 400..699 -> EndCause.ERROR   // atendida que caiu
                 else -> EndCause.REMOTE
             }
             if (message.isNotEmpty()) showEndMessage(message)
@@ -463,11 +480,34 @@ class CallManager(
         effects += { background.execute { recents.add(recent) } }
     }
 
-    // Com a trava.
+    // Com a trava: o estado de agora vai à fila das publicações (entregue depois de soltar a trava, em [deliver]).
     private fun publish() {
-        val current = call?.takeIf { !it.ending }
-        mutableState.value = current?.let {
+        val ui = call?.takeIf { !it.ending }?.let {
             CallUi(it.number, it.name, it.incoming, it.phase, it.activeSince, it.held, it.muted)
+        }
+        publications.addLast { mutableState.value = ui }
+    }
+
+    // Com a trava: o aviso vai à fila das publicações.
+    private fun publishEndMessage(text: String) {
+        publications.addLast { mutableEndMessage.value = text }
+    }
+
+    // Sem a trava: entrega as publicações na ordem em que foram decididas, uma thread por vez. Quem chega com outra
+    // thread entregando deixa as suas na fila, e ela as entrega também; um coletor que chama o CallManager de volta
+    // (na mesma thread) põe as dele na fila, e elas saem depois da que está saindo.
+    private fun deliver() {
+        while (true) {
+            val next = synchronized(lock) {
+                if (delivering || publications.isEmpty()) return
+                delivering = true
+                publications.removeFirst()
+            }
+            try {
+                next()
+            } finally {
+                synchronized(lock) { delivering = false }
+            }
         }
     }
 
@@ -475,11 +515,11 @@ class CallManager(
     private fun showEndMessage(text: String) {
         endTimer?.cancel()
         val token = ++endToken
-        mutableEndMessage.value = text
+        publishEndMessage(text)
         endTimer = clock.schedule(END_MESSAGE_MILLIS) {
-            synchronized(lock) {
+            act {
                 if (endToken == token) {
-                    mutableEndMessage.value = ""
+                    publishEndMessage("")
                     endTimer = null
                 }
             }
@@ -491,16 +531,21 @@ class CallManager(
         endTimer?.cancel()
         endTimer = null
         endToken++
-        mutableEndMessage.value = ""
+        publishEndMessage("")
     }
 
-    // Decide com a trava e faz o resto (motor, Telecom, notificações, disco) depois de soltá-la, na ordem.
+    // Decide com a trava e faz o resto (motor, Telecom, notificações, disco) depois de soltá-la, na ordem; por
+    // último, entrega o estado e o aviso.
     private inline fun act(block: (MutableList<() -> Unit>) -> Unit) {
         val effects = ArrayList<() -> Unit>()
         try {
             synchronized(lock) { block(effects) }
         } finally {
-            effects.forEach { it() }
+            try {
+                effects.forEach { it() }
+            } finally {
+                deliver()
+            }
         }
     }
 

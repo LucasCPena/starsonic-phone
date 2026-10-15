@@ -33,6 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.ViewModel
@@ -41,6 +42,7 @@ import androidx.lifecycle.lifecycleScope
 import br.com.starsonic.phone.App
 import br.com.starsonic.phone.R
 import br.com.starsonic.phone.call.CallActivity
+import br.com.starsonic.phone.call.CallPhase
 import br.com.starsonic.phone.data.Account
 import br.com.starsonic.phone.engine.Transport
 import br.com.starsonic.phone.login.LoginScreen
@@ -89,7 +91,8 @@ class MainActivity : ComponentActivity() {
         // A faixa é azul nos dois modos: ícones claros na barra de status, que fica por cima dela.
         enableEdgeToEdge(statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT))
         super.onCreate(savedInstanceState)
-        if (savedInstanceState == null && intent?.action == ACTION_RECENTS) tab = TAB_RECENTS
+        // A aba escolhida sobrevive a uma recriação (girar não acontece: retrato; mas o tema e o idioma, sim).
+        tab = savedInstanceState?.getInt(STATE_TAB, TAB_KEYPAD) ?: if (intent?.action == ACTION_RECENTS) TAB_RECENTS else TAB_KEYPAD
         lifecycleScope.launch {
             val read = withContext(Dispatchers.IO) {
                 val account = app.store.load()
@@ -131,6 +134,11 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         if (intent.action == ACTION_RECENTS) tab = TAB_RECENTS
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putInt(STATE_TAB, tab)
     }
 
     override fun onStart() {
@@ -175,11 +183,14 @@ class MainActivity : ComponentActivity() {
         Column(Modifier.fillMaxSize()) {
             Band(status = status.band)
             if (banner != null) WarningBanner(banner)
-            if (call != null) ReturnToCall()
+            // A recebida que ainda toca tem a notificação dela; a faixa é para a ligação atendida ou feita.
+            if (call?.let { it.phase != CallPhase.RINGING } == true) ReturnToCall()
+            // O aviso de discar sem registro (ou de uma feita que não completou), para as duas abas.
+            if (message.isNotEmpty()) CallMessage(message)
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 when (tab) {
                     TAB_RECENTS -> RecentsScreen(app.recents, onDial = { dial(it) })
-                    else -> DialerScreen(message, onDial = ::dial)
+                    else -> DialerScreen(onDial = ::dial)
                 }
             }
             NavigationBar(Modifier.navigationBarsPadding()) {
@@ -199,6 +210,21 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    // O aviso das ligações (spec 7.4 e 11.1), por 2 s, acima das abas.
+    @Composable
+    private fun CallMessage(message: String) {
+        Text(
+            message,
+            color = MaterialTheme.colorScheme.error,
+            style = MaterialTheme.typography.bodyMedium,
+            textAlign = TextAlign.Center,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .testTag("aviso-ligacao"),
+        )
     }
 
     // A faixa verde da ligação em andamento: tocar volta à tela de chamada.
@@ -238,6 +264,7 @@ class MainActivity : ComponentActivity() {
         /** A notificação de ligação perdida: abre o app no Recentes. */
         const val ACTION_RECENTS = "br.com.starsonic.phone.action.RECENTES"
 
+        private const val STATE_TAB = "aba"
         private const val TAB_KEYPAD = 0
         private const val TAB_RECENTS = 1
         private const val KEYPAD = "Teclado"

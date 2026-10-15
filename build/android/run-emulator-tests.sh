@@ -86,6 +86,13 @@ report="$(mktemp)"
 echo "+ adb shell $command"
 adb shell "$command" | tr -d '\r' | tee "$report" || true
 
+# As notas dos testes (linhas "Nota do teste: ...", que um teste manda pelo sendStatus: o que não é falha, mas
+# não pode passar calado, como os toques repetidos) viram uma anotação, com sucesso ou com falha.
+notes="$(grep -E '^Nota do teste: ' "$report" || true)"
+if [ -n "$notes" ]; then
+    annotate notice "Notas dos testes: $CLASS" "$notes"
+fi
+
 # Passou: o resumo do JUnit diz "OK (N tests)" com N >= 1 (com falha, ele diz "FAILURES!!!"). Se o
 # processo cai no meio, o resumo não sai (o am mostra só INSTRUMENTATION_RESULT: shortMsg=Process crashed.).
 if grep -Eq '^OK \([1-9][0-9]* tests?\)$' "$report"; then

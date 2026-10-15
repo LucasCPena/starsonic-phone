@@ -234,7 +234,7 @@ class CallFlowTest {
         emulator.waitUntil("a notificação de ligação sem o toque", details = ::notifications) {
             callNotification()?.let { it.flags and Notification.FLAG_INSISTENT == 0 } == true
         }
-        app.notifier.stopRinging(id)
+        app.notifier.dismiss(id)   // sem o stopRinging de um id falso, que esconderia as ligações de verdade seguintes
         emulator.waitUntil("a notificação sair", details = ::notifications) { callNotification() == null }
     }
 
