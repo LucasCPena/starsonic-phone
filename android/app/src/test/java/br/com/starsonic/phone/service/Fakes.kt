@@ -48,6 +48,10 @@ internal class FakeEngine : SipGateway {
     @Volatile
     var ipChanges = 0
 
+    /** Quantas renovações do registro foram pedidas ([reregister]). */
+    @Volatile
+    var reregisters = 0
+
     @Volatile
     private var events: EngineEvents? = null
 
@@ -107,7 +111,9 @@ internal class FakeEngine : SipGateway {
         pendingRemovals.incrementAndGet()
     }
 
-    override fun reregister() {}
+    override fun reregister() {
+        reregisters++
+    }
 
     override fun handleIpChange() {
         ipChanges++
@@ -131,3 +137,32 @@ internal class FakeEngine : SipGateway {
 
     override fun hasCall() = false
 }
+
+/** O wake lock falso: anota se está preso e quantas vezes foi pego e solto. */
+internal class FakeCpuLock : CpuLock {
+    var held = false
+    var acquires = 0
+    var releases = 0
+
+    override fun acquire() {
+        held = true
+        acquires++
+    }
+
+    override fun release() {
+        held = false
+        releases++
+    }
+}
+
+/**
+ * As falhas do registro que o pjsua repete sozinho (pjsua_acc.c, regc_cb): 408, 480, 500, 502, 503, 504 e os 6xx. O
+ * motor dá 408 e 503 também quando o servidor não responde ou o transporte cai.
+ */
+internal val RETRIED_FAILURES = listOf(408, 480, 500, 502, 503, 504, 600, 603, 604, 606)
+
+/**
+ * As recusas do registro que o pjsua não repete: a senha recusada (401, 403 e 407), os outros 4xx (404, 420...), os 3xx
+ * e os 5xx fora da lista dele (501, 505...).
+ */
+internal val NOT_RETRIED_FAILURES = listOf(401, 403, 407, 404, 400, 420, 302, 501, 505)

@@ -417,6 +417,174 @@ class ConnectionTest {
     }
 
     @Test
+    fun `adopting the account again renews now a failed registration the engine only retries later`() {
+        // A renovação falhou numa falha que o pjsua repete sozinho, mas a próxima tentativa dele pode estar a até 300 s
+        // (reg_retry_interval), e a rede padrão não mudou (o NetworkMonitor não faz nada). A volta ao app inicia o
+        // serviço, que adota a conta que já está no motor (KEPT): a renovação vai agora, e o status fica em
+        // "Conectando…" até a resposta.
+        connection.claim(service)
+        connection.adopt(service, account)
+        engine.registration(200, true)
+        for ((asked, code) in RETRIED_FAILURES.withIndex()) {
+            engine.registration(code, false)
+            assertEquals("$code", Adoption.KEPT, connection.adopt(service, account))
+            assertEquals("$code: a renovação, agora", asked + 1, engine.reregisters)
+            assertEquals("$code", connecting, connection.status.value)
+            engine.registration(200, true)
+            assertEquals("$code", connected, connection.status.value)
+        }
+        assertEquals("nenhuma conta nova no motor", 1, engine.accounts.size)
+    }
+
+    @Test
+    fun `the renewal of an adoption is asked once until the answer`() {
+        // A abertura do app inicia o serviço duas vezes (onCreate e onStart): o segundo início acha o REGISTER a
+        // caminho.
+        connection.claim(service)
+        connection.adopt(service, account)
+        engine.registration(503, false)
+        assertEquals(Adoption.KEPT, connection.adopt(service, account))
+        assertEquals(Adoption.KEPT, connection.adopt(service, account))
+        assertEquals(1, engine.reregisters)
+    }
+
+    @Test
+    fun `adopting a registered account again sends no REGISTER`() {
+        connection.claim(service)
+        connection.adopt(service, account)
+        engine.registration(200, true)
+        assertEquals(Adoption.KEPT, connection.adopt(service, account))
+        // Sem resposta ainda (um REGISTER a caminho, depois de uma troca de rede): nada a mais também.
+        connection.handleIpChange()
+        assertEquals(Adoption.KEPT, connection.adopt(service, account))
+        assertEquals(0, engine.reregisters)
+        assertEquals(1, engine.accounts.size)
+    }
+
+    @Test
+    fun `adopting the account again after a refusal the engine does not retry sends no REGISTER`() {
+        // A senha recusada (401, 403 e 407) já leva ao Editar; as outras recusas o pjsua também não repete.
+        connection.claim(service)
+        connection.adopt(service, account)
+        for (code in NOT_RETRIED_FAILURES) {
+            engine.registration(code, false)
+            assertEquals("$code", Adoption.KEPT, connection.adopt(service, account))
+        }
+        assertEquals(0, engine.reregisters)
+        assertEquals(1, engine.accounts.size)
+    }
+
+    @Test
+    fun `without a network the failed registration waits for the network to come back`() {
+        // Sem rede, o pedido não iria; na volta dela, o NetworkMonitor refaz o registro (handleIpChange).
+        connection.claim(service)
+        connection.adopt(service, account)
+        engine.registration(408, false)
+        connection.setOnline(service, false)
+        assertEquals(Adoption.KEPT, connection.adopt(service, account))
+        assertEquals(0, engine.reregisters)
+    }
+
+    @Test
+    fun `the service hears when its account has nothing left to renew`() {
+        // Spec 7.2, item 6: depois de uma recusa que o pjsua não repete, nada acontece sozinho, e o serviço deixa o
+        // processador dormir. Volta a valer com um resultado que vale (2xx, ou uma falha que o pjsua repete), com um
+        // REGISTER novo a caminho (a troca de rede) e com outra conta (o Editar).
+        val heard = mutableListOf<Boolean>()
+        connection.claim(service) { heard += it }
+        connection.adopt(service, account)
+        engine.registration(200, true)
+        assertEquals("registrada: nada muda", listOf<Boolean>(), heard)
+        engine.registration(401, false)   // a renovação: a senha recusada
+        assertEquals(listOf(false), heard)
+        connection.handleIpChange()   // a rede mudou: um REGISTER novo a caminho
+        assertEquals(listOf(false, true), heard)
+        engine.registration(403, false)
+        engine.registration(200, true)   // a senha voltou a valer no servidor
+        assertEquals(listOf(false, true, false, true), heard)
+        engine.registration(503, false)   // o pjsua repete: continua
+        engine.registration(404, false)
+        assertEquals(listOf(false, true, false, true, false), heard)
+        connection.adopt(service, account.copy(senha = "nova"))   // o Editar gravou outra senha
+        assertEquals(listOf(false, true, false, true, false, true), heard)
+    }
+
+    @Test
+    fun `only a failure the engine does not retry leaves nothing to renew`() {
+        var renewing = true
+        connection.claim(service) { renewing = it }
+        connection.adopt(service, account)
+        for (code in RETRIED_FAILURES + listOf(200)) {
+            engine.registration(code, code == 200)
+            assertTrue("$code", renewing)
+        }
+        for (code in NOT_RETRIED_FAILURES) {
+            engine.registration(code, false)
+            assertFalse("$code", renewing)
+            engine.registration(200, true)
+            assertTrue("$code e depois 200", renewing)
+        }
+    }
+
+    @Test
+    fun `a refusal of a login attempt is not the service's`() {
+        val heard = mutableListOf<Boolean>()
+        connection.claim(service) { heard += it }
+        connection.adopt(service, account)
+        engine.registration(200, true)
+        val attempt = login(account.copy(senha = "errada"))   // o Editar, com a senha errada
+        engine.registration(403, false, attempt)
+        engine.registration(403, false, attempt + 1)   // de uma conta que não está no motor
+        assertEquals(listOf<Boolean>(), heard)
+    }
+
+    @Test
+    fun `a stopped service hears nothing and the next one starts with something to renew`() {
+        val first = mutableListOf<Boolean>()
+        connection.claim(service) { first += it }
+        connection.adopt(service, account)
+        engine.registration(401, false)
+        connection.release(service)   // Sair
+        connection.awaitChanges()
+        engine.flush()
+        assertEquals(listOf(false), first)
+        // O próximo Entrar: um serviço novo, que começa acordado (o padrão) e ouve só as mudanças da conta dele.
+        val next = Any()
+        val second = mutableListOf<Boolean>()
+        connection.claim(next) { second += it }
+        assertEquals(Adoption.REGISTERED, connection.adopt(next, account))
+        engine.registration(200, true)
+        assertEquals(listOf<Boolean>(), second)
+        engine.registration(407, false)
+        assertEquals(listOf(false), second)
+        assertEquals(listOf(false), first)
+    }
+
+    @Test
+    fun `the processor sleeps with a password refused for good and wakes with the next result that counts`() {
+        // A conexão e o processador acordado juntos, como no SipService (spec 7.2, item 6).
+        val cpu = FakeCpuLock()
+        val keepAwake = KeepAwake(cpu)
+        connection.claim(service, keepAwake::setRenewing)
+        keepAwake.setAccount(true)
+        keepAwake.setAdoption(connection.adopt(service, account))
+        engine.registration(200, true)
+        assertTrue(cpu.held)
+        engine.registration(401, false)   // a renovação: a senha recusada, que o pjsua não repete
+        assertFalse("nada a renovar: o processador dorme", cpu.held)
+        connection.handleIpChange()   // a rede mudou: o REGISTER novo vai com o processador acordado
+        assertTrue(cpu.held)
+        engine.registration(401, false)
+        assertFalse(cpu.held)
+        engine.registration(200, true)   // a senha voltou a valer no servidor (o próximo REGISTER)
+        assertTrue(cpu.held)
+        engine.registration(408, false)   // o pjsua repete: acordado, para a nova tentativa acontecer
+        assertTrue(cpu.held)
+        assertEquals(3, cpu.acquires)
+        assertEquals(2, cpu.releases)
+    }
+
+    @Test
     fun `the login screen gets every registration result`() {
         val seen = mutableListOf<Triple<Int, Boolean, Int>>()
         connection.loginEvents = { code, active, id -> seen += Triple(code, active, id) }

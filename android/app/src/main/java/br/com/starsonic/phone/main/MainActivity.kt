@@ -96,7 +96,8 @@ import kotlinx.coroutines.withContext
  *
  * A conta gravada é lida fora da thread principal (Keystore e disco), com a tela de abertura na frente. Com a
  * conta, a activity inicia o [SipService] ao abrir e a cada volta ao app (com a conta já no motor, ele não
- * registra de novo); o fim do Entrar e o do Editar também o iniciam. O modelo da tela Entrar de agora fica em
+ * registra de novo, a não ser que a última renovação tenha falhado numa falha que o motor só repetiria mais tarde:
+ * aí ela vai na hora); o fim do Entrar e o do Editar também o iniciam. O modelo da tela Entrar de agora fica em
  * [LoginSessions] (sobrevive às recriações) e sai com a tela.
  */
 class MainActivity : ComponentActivity() {
@@ -221,7 +222,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
-        // A cada volta ao app com a conta gravada: se o Android fechou o serviço, ele volta.
+        // A cada volta ao app com a conta gravada: se o Android fechou o serviço, ele volta; e um registro que falhou
+        // numa falha que o motor só repetiria mais tarde (até 300 s) é renovado na hora (Connection.adopt).
         if (signedIn) SipService.start(this)
         // Ao abrir: o canal de atualização, se a última verificação tem mais de 24 h (fora da thread principal).
         app.updater.onScreen(true)

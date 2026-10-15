@@ -122,6 +122,23 @@ class Emulator(private val compose: ComposeTestRule) {
     /** Os REGISTER aceitos do ramal 2001 com Expires > 0. */
     fun registers(): Int = control("REGISTERS 2001").toInt()
 
+    /**
+     * O wake lock da conexão ([SipService.WAKE_LOCK_TAG]) está preso agora: ele aparece na seção "Wake Locks" do
+     * dumpsys power (o histórico, mais embaixo, guarda os antigos e não conta), como no build/android/check-boot.sh.
+     */
+    fun connectionWakeLockHeld(): Boolean {
+        val tag = "'${SipService.WAKE_LOCK_TAG}'"
+        var section = false
+        for (line in shell("dumpsys power")) {
+            when {
+                line.trim().startsWith("Wake Locks: size=") -> section = true
+                section && line.isBlank() -> section = false
+                section && tag in line -> return true
+            }
+        }
+        return false
+    }
+
     /** O título da notificação fixa do app (canal "conexao"), ou null se ela não está lá. */
     fun connectionNotificationTitle(): String? =
         app.getSystemService(NotificationManager::class.java).activeNotifications

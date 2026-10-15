@@ -136,7 +136,7 @@ Tudo fica no armazenamento privado do app: a conta, a senha (cifrada com uma cha
 3. Na troca de rede (Wi-Fi ↔ 4G, ou uma rede nova), o motor refaz o transporte e o registro sozinho. Uma ligação em andamento pode cair nessa troca (aceito na etapa 1).
 4. Sem internet, o status mostra "Sem internet", e o motor tenta de novo quando a rede volta.
 5. O app pede ao Android para ficar fora da otimização de bateria; sem isso, a faixa lembra o pedido. Em Xiaomi e Samsung, um passo a passo mostra os ajustes do fabricante.
-6. Com a tela apagada, o Android põe o processador para dormir, mesmo com o serviço em primeiro plano, e aí a renovação do registro e o keep-alive param. Por isso, enquanto o serviço está com a conta e há rede, o app mantém o processador acordado (a tela apaga normalmente); sem rede, ou depois de Sair, ele deixa o processador dormir. Depende da isenção de bateria (item 5): sem ela, o Android ignora o pedido no modo de economia. O consumo entra na medição de bateria do teste manual (decisão 6).
+6. Com a tela apagada, o Android põe o processador para dormir, mesmo com o serviço em primeiro plano, e aí a renovação do registro e o keep-alive param. Por isso, enquanto o serviço está com a conta e há rede, o app mantém o processador acordado (a tela apaga normalmente); sem rede, depois de uma recusa do servidor que o motor não tenta de novo (a senha recusada, por exemplo: nada a renovar até a rede mudar, a conta mudar ou o próximo Entrar), ou depois de Sair, ele deixa o processador dormir. Depende da isenção de bateria (item 5): sem ela, o Android ignora o pedido no modo de economia. O consumo entra na medição de bateria do teste manual (decisão 6).
 
 ### 7.3 Ligação recebida
 

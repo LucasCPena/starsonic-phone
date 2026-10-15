@@ -216,6 +216,31 @@ class AboutAndAccountTest {
     }
 
     @Test
+    fun passwordRefusedLetsTheProcessorSleepUntilTheAccountRegistersAgain() {
+        // Conectado, o processador fica acordado (spec 7.2, item 6). Com o celular no bolso (o app em segundo plano), a
+        // renovação leva a senha recusada, que o motor não tenta de novo: nada a renovar, e o processador dorme.
+        emulator.waitUntil("o processador acordado com a conta conectada") { emulator.connectionWakeLockHeld() }
+        device.pressHome()
+        assertEquals("resposta a PASSWORD", "OK", emulator.control("PASSWORD outra"))
+        try {
+            assertTrue("o serviço de pé", SipService.reregister())
+            emulator.waitUntil("o aviso na notificação fixa") {
+                emulator.connectionNotificationTitle() == "Ramal ou senha incorretos."
+            }
+            emulator.waitUntil("o processador solto depois da senha recusada") { !emulator.connectionWakeLockHeld() }
+            assertTrue("o serviço continua de pé", SipService.running)
+        } finally {
+            assertEquals("resposta a PASSWORD", "OK", emulator.control("PASSWORD ${emulator.senha}"))
+        }
+        // A senha volta a valer no servidor: o próximo registro (aqui, a renovação pedida à mão) acorda o processador.
+        assertTrue("o serviço de pé", SipService.reregister())
+        emulator.waitUntil("a notificação \"Conectado (ramal 2001)\"") {
+            emulator.connectionNotificationTitle() == "Conectado (ramal 2001)"
+        }
+        emulator.waitUntil("o processador acordado de novo") { emulator.connectionWakeLockHeld() }
+    }
+
+    @Test
     fun passwordRefusedWithTheEditorOpenShowsTheMessage() {
         openMenu("Editar conta")
         emulator.waitUntil("o Editar") { emulator.showsTag("entrar") }

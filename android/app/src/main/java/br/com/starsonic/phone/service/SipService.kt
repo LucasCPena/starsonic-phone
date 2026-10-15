@@ -50,13 +50,17 @@ import kotlinx.coroutines.launch
  *   quando a ligação muda e a cada início do serviço (a tela de chamada o inicia ao aparecer, com o app na
  *   frente); se o Android recusa, o serviço fica como estava e a ligação segue.
  * - Numa thread própria ("starsonic-servico"), lê a conta gravada (Keystore e disco), sobe o motor (uma vez
- *   por processo) e segura a conta ([Connection.adopt]): a que a tela Entrar acabou de registrar fica, sem
- *   outro REGISTER. Sem conta gravada, sai na hora.
+ *   por processo) e segura a conta ([Connection.adopt]): a que já está no motor (a que a tela Entrar acabou de
+ *   registrar, ou a de um início anterior) fica, sem outro REGISTER. Só se a última renovação dela falhou numa falha
+ *   que o pjsua repete sozinho, mas até 300 s depois (408, 503 e as outras de [Connection]), a renovação vai na hora,
+ *   com rede: abrir o app tenta de novo. Sem conta gravada, sai na hora.
  * - Parar ([stop], o Sair) tira a conta do motor ([Connection.release]); o motor fica de pé.
  * - O [NetworkMonitor] refaz o registro nas trocas de rede e marca "Sem internet".
  * - Com a conta gravada e com rede, segura o processador acordado ([KeepAwake], wake lock parcial
  *   "starsonic:conexao"; spec 7.2, item 6): com a tela apagada, a renovação do registro e o keep-alive não
- *   param. Sem rede, ou depois de parar, solta.
+ *   param. Sem rede, ou depois de parar, solta. Solta também depois de uma recusa do registro que o pjsua não repete
+ *   (a senha recusada, 404...): nada a renovar até a rede mudar, o serviço adotar outra conta ou o próximo Entrar (a
+ *   conexão avisa na hora: [Connection.claim]).
  * - Se o servidor recusa a senha (401, 403 ou 407 ao renovar), a notificação mostra o aviso do núcleo (o status), a
  *   conta continua gravada e o serviço continua de pé; o app, na frente, abre a tela Entrar ([Connection.refusal]).
  */
@@ -79,9 +83,11 @@ class SipService : Service() {
         super.onCreate()
         running = true
         current = app.connection
-        app.connection.claim(this)
         worker = Executors.newSingleThreadExecutor { task -> Thread(task, "starsonic-servico") }
         keepAwake = KeepAwake(cpuLock())
+        // Na hora, na thread que mudou o estado: depois de uma recusa que o pjsua não repete, o processador dorme; com
+        // um REGISTER novo a caminho (a troca de rede, outra conta), acorda antes de o motor mandá-lo.
+        app.connection.claim(this, keepAwake::setRenewing)
         // Na hora, dentro do aviso do Android: na volta da rede, o processador fica acordado antes de o motor
         // registrar de novo.
         monitor = NetworkMonitor(app.connection) { online ->
@@ -137,7 +143,8 @@ class SipService : Service() {
 
     // Na thread do serviço: a conta gravada, o motor e a rede. A conta lida aqui pode ficar velha (a tela Entrar
     // grava outra logo depois): a conexão não a põe por cima de uma conta da tela Entrar, e o início do serviço
-    // que vem depois do Entrar lê a nova.
+    // que vem depois do Entrar lê a nova. Cada início (a volta ao app) também renova na hora a conta que está no motor
+    // com uma falha que o pjsua só repetiria mais tarde (Connection.adopt).
     private fun connect(startId: Int) {
         val account = app.store.load()
         if (account == null) {
@@ -165,7 +172,7 @@ class SipService : Service() {
             .apply { setReferenceCounted(false) }
         return object : CpuLock {
             // Sem prazo, de propósito: fica preso enquanto a conta está conectada (decisão 6 da spec) e sai
-            // pelo KeepAwake (sem rede, ou quando o serviço para).
+            // pelo KeepAwake (sem rede, numa recusa que o pjsua não repete, ou quando o serviço para).
             @SuppressLint("WakelockTimeout")
             override fun acquire() = wakeLock.acquire()
 

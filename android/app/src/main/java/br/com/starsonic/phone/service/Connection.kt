@@ -15,7 +15,11 @@ import kotlinx.coroutines.flow.StateFlow
 
 /** O que [Connection.adopt] fez com a conta gravada. */
 enum class Adoption {
-    /** O motor já estava com ela (a tela Entrar acabou de registrá-la ou a pôs de volta): o mesmo id, sem REGISTER. */
+    /**
+     * O motor já estava com ela (a tela Entrar acabou de registrá-la ou a pôs de volta): o mesmo id, sem REGISTER. Só
+     * se a última renovação dela falhou numa falha que o pjsua repete mais tarde, e há rede, a renovação vai agora (ver
+     * [Connection.adopt]).
+     */
     KEPT,
 
     /** O motor estava vazio, ou com a conta que o próprio serviço tinha posto: o serviço registrou a gravada. */
@@ -51,10 +55,14 @@ class Refusal(val message: String)
  *   o serviço ou a tela Entrar (todo [setAccount] de fora é da tela Entrar: a tentativa ou a volta à anterior).
  * - Com conta gravada, quem manda é o [SipService]: ele se apresenta ao começar ([claim]), segura a conta
  *   gravada ([adopt]) e a solta ao parar ([release]: a conta sai do motor).
- *   - [adopt]: se o motor já está com a conta gravada (pelos campos), fica o mesmo id, sem REGISTER. Se o
- *     motor está vazio, ou com a conta que o próprio serviço pôs, registra a gravada. Se está com uma conta
- *     que a tela Entrar pôs, não mexe ([Adoption.WAITING]): é uma tentativa, do setAccount dela até o desfecho
- *     (ou o resultado dela antes de o serviço reler a conta gravada).
+ *   - [adopt]: se o motor já está com a conta gravada (pelos campos), fica o mesmo id, sem REGISTER. A exceção é
+ *     a renovação que falhou numa falha que o pjsua repete sozinho (408, 480, 500, 502, 503, 504 e os 6xx: a próxima
+ *     tentativa dele pode estar a até 300 s, e uma rede que volta sem trocar a rede padrão não avisa o
+ *     [NetworkMonitor]): com rede, a renovação vai agora, e o status fica em "Conectando…" até a resposta. A volta
+ *     ao app inicia o serviço, então abrir o app tenta de novo. Se o motor está vazio, ou com a conta que o próprio
+ *     serviço pôs, registra a gravada. Se está com uma conta que a tela Entrar pôs, não mexe
+ *     ([Adoption.WAITING]): é uma tentativa, do setAccount dela até o desfecho (ou o resultado dela antes de o
+ *     serviço reler a conta gravada).
  *   - Depois do desfecho de uma tentativa: no commit, o app inicia o serviço, que relê a conta gravada e adota a
  *     nova, que já está no motor (mesmo id, sem REGISTER). No rollback, a tela põe a anterior de volta, e o
  *     status a segue pelos campos; se a tela deixa o motor vazio, o serviço registra a conta gravada.
@@ -64,6 +72,11 @@ class Refusal(val message: String)
  * - [refusal]: o servidor recusou a senha da conta do serviço (401, 403 ou 407 num resultado dela, pelo mesmo id
  *   do status; o de uma tentativa da tela Entrar com outra conta não conta). Fica até o app mostrar ([refusalSeen]),
  *   o serviço passar a segurar outra conta ou parar; a próxima recusa marca de novo.
+ * - O serviço ouve ([claim]) se a conta dele tem um registro a manter (spec 7.2, item 6): registrada, à espera de uma
+ *   resposta, ou numa falha que o pjsua repete sozinho. Depois de uma recusa que ele não repete (a senha recusada,
+ *   404 e os outros 4xx, 3xx, 501...), nada acontece sozinho, e o serviço deixa o processador dormir ([KeepAwake]).
+ *   Volta a valer com um resultado que vale (2xx, ou uma falha que o pjsua repete), com um REGISTER novo a caminho
+ *   (a troca de rede: [handleIpChange]) e com outra conta (o Editar); o próximo Entrar é outro serviço.
  * - Os avisos de ligação do motor vão às ligações ([calls], o CallManager), na thread dos eventos.
  *
  * Threads e travas (ninguém espera em círculo):
@@ -73,7 +86,9 @@ class Refusal(val message: String)
  *   quem vem depois, e uma limpeza nunca tira a conta de uma troca seguinte. [setAccount] e [adopt] esperam a
  *   vez e o motor (nunca na thread principal); [removeAccount] e [release] só põem na fila.
  * - Travas: startLock guarda só a subida do motor; lock guarda o estado, é curto e nunca fica preso numa
- *   chamada ao motor, ao log ou à tela Entrar. Ninguém pega o startLock com o lock na mão.
+ *   chamada ao motor, ao log ou à tela Entrar. Ninguém pega o startLock com o lock na mão. O ouvinte do serviço
+ *   ([claim]) roda com o lock na mão, para os avisos irem na ordem das mudanças: ele só pega ou solta o wake lock
+ *   (a trava do [KeepAwake], que nunca pega o lock) e não chama a conexão.
  * - Quem espera quem: quem chama → a thread das trocas → a thread do motor ("starsonic-motor"). A thread das
  *   trocas nunca espera a dos eventos nem a principal; a do motor não espera ninguém. A dos eventos
  *   ("starsonic-eventos") só pega o lock para anotar um resultado; sem trava nenhuma, ela pode esperar a das
@@ -147,6 +162,8 @@ class Connection(
     private var owner: Any? = null               // o serviço de pé
     private var owned: Account? = null           // a conta gravada que ele segura
     private var online = true
+    private var onRenewing: (Boolean) -> Unit = {}   // o ouvinte dele ([claim])...
+    private var renewing = true                  // ...e o que ele ouviu por último
 
     private val events = object : EngineEvents {
         override fun onRegistration(code: Int, active: Boolean, accountId: Int) {
@@ -191,9 +208,19 @@ class Connection(
         }
     }
 
-    /** O serviço [owner] começou: só ele pode segurar a conta gravada daqui em diante. */
-    fun claim(owner: Any) {
-        synchronized(lock) { this.owner = owner }
+    /**
+     * O serviço [owner] começou: só ele pode segurar a conta gravada daqui em diante. [onRenewing] ouve se a conta
+     * dele tem um registro a manter (ver [Connection]): false depois de uma recusa que o pjsua não repete; true de
+     * novo com um resultado que vale, um REGISTER novo a caminho ou outra conta. Começa em true, e só as mudanças
+     * chegam, na hora, na thread que mudou o estado e com a trava da conexão na mão: o ouvinte não chama a conexão.
+     */
+    fun claim(owner: Any, onRenewing: (Boolean) -> Unit = {}) {
+        synchronized(lock) {
+            this.owner = owner
+            this.onRenewing = onRenewing
+            renewing = true
+            publish()
+        }
     }
 
     /**
@@ -201,17 +228,29 @@ class Connection(
      * trocas de conta e o motor: nunca na thread principal.
      */
     fun adopt(owner: Any, account: Account): Adoption = inOrder {
+        var renew = false
         val decided = synchronized(lock) {
             if (this.owner !== owner) return@inOrder Adoption.STOPPED
             if (owned != account) mutableRefusal.value = null   // a recusa era da senha antiga
             owned = account
+            val id = currentIdOf(account)
+            // A conta já está no motor, e a última renovação falhou numa falha que o pjsua só repete mais tarde: com
+            // rede, ela vai agora. Até a resposta, o status fica em "Conectando…", e um início logo depois (a
+            // abertura do app inicia o serviço duas vezes) acha o REGISTER a caminho e não pede outro.
+            if (id > 0 && online && results[id]?.let { retried(it.code) } == true) {
+                results.remove(id)
+                renew = true
+            }
             publish()
             when {
-                currentIdOf(account) > 0 -> Adoption.KEPT
+                id > 0 -> Adoption.KEPT
                 engineAccountId > removedUpTo && engineSetter == Setter.LOGIN -> Adoption.WAITING
                 else -> null
             }
         }
+        // Na ordem das trocas: o motor renova a conta decidida aqui (o pjsua_acc_set_registration cancela a nova
+        // tentativa que o pjsua tinha marcado; com um REGISTER já a caminho, o pedido não faz nada).
+        if (renew) engine?.reregister()
         decided ?: register(owner, account)
     }
 
@@ -223,6 +262,8 @@ class Connection(
             this.owner = null
             owned = null
             online = true
+            onRenewing = {}
+            renewing = true
             mutableRefusal.value = null
             publish()
             account
@@ -280,7 +321,11 @@ class Connection(
         engine?.reregister()
     }
 
-    /** A rede mudou: o registro da conta é refeito, e o status fica em "Conectando…" até a resposta. */
+    /**
+     * A rede mudou: o registro da conta é refeito, e o status fica em "Conectando…" até a resposta. O REGISTER a
+     * caminho é um registro a manter: depois de uma recusa, o ouvinte do serviço ([claim]) ouve antes de o motor
+     * mandá-lo.
+     */
     override fun handleIpChange() {
         synchronized(lock) {
             if (engineAccountId > removedUpTo) results.remove(engineAccountId)
@@ -414,12 +459,18 @@ class Connection(
     private fun currentIdOf(account: Account): Int =
         if (engineAccountId > removedUpTo && engineAccount == account) engineAccountId else 0
 
-    // Com a trava: o status da conta do serviço (só os resultados do id dela no motor).
+    // Com a trava: o status da conta do serviço (só os resultados do id dela no motor) e, se mudou, se ela tem um
+    // registro a manter (o ouvinte do serviço): sem resposta ainda, registrada ou numa falha que o pjsua repete.
     private fun publish() {
         val account = owned
         val result = if (account != null) results[currentIdOf(account)] else null
         mutableStatus.value = StatusModel.from(result?.code, result?.active ?: false, online, account?.ramal.orEmpty(), core)
         mutableRegistered.value = online && result != null && result.code in 200..299 && result.active
+        val renewing = result == null || result.code in 100..299 || retried(result.code)
+        if (renewing != this.renewing) {
+            this.renewing = renewing
+            onRenewing(renewing)
+        }
     }
 
     // Com a trava: os resultados das contas mais antigas saem (o da conta do motor fica).
@@ -435,5 +486,15 @@ class Connection(
 
         /** As respostas do servidor que recusam a senha (as do aviso "Ramal ou senha incorretos." do núcleo). */
         val REFUSED_PASSWORD = setOf(401, 403, 407)
+
+        /**
+         * As falhas do registro que o pjsua repete sozinho, além dos 6xx (pjsua_acc.c, regc_cb, com o
+         * reg_retry_interval de 300 s): a primeira nova tentativa vai em até 10 s, e as seguintes a cada 300 s. O motor
+         * dá 408 e 503 também quando o servidor não responde ou o transporte cai. As outras falhas (401, 403 e 407, 404
+         * e os outros 4xx, 3xx, 501, 505...) ele não repete.
+         */
+        val RETRIED = setOf(408, 480, 500, 502, 503, 504)
+
+        fun retried(code: Int): Boolean = code in RETRIED || code in 600..699
     }
 }
