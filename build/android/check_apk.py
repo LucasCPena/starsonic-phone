@@ -101,7 +101,9 @@ _MEMBER_RE = re.compile(r"#\d+\s*:\s*\(in .+\)$")
 _NAME_RE = re.compile(r"name\s*:\s*'(.*)'$")
 _TYPE_RE = re.compile(r"type\s*:\s*'(.*)'$")
 _ACCESS_RE = re.compile(r"access\s*:\s*0x([0-9a-fA-F]+)")
-_SIGNER_RE = re.compile(r"^Signer #(\d+) certificate SHA-256 digest: ([0-9a-fA-F:]+)\s*$", re.MULTILINE)
+# "Signer #1 certificate SHA-256 digest: ..." (apksigner antigo) ou "V2 Signer: certificate SHA-256 digest: ..." (um
+# por esquema de assinatura, nas build-tools 37).
+_SIGNER_RE = re.compile(r"^(.*?)\s*:?\s*certificate SHA-256 digest: ([0-9a-fA-F:]+)\s*$", re.MULTILINE)
 
 
 def _tail(text, lines=12, limit=1500):
@@ -264,8 +266,13 @@ def read_expected_sha256(path):
 
 
 def check_certificate(text, expected):
-    """O `apksigner verify --print-certs`: um assinante só, com o certificado esperado."""
-    digests = [re.sub(":", "", match.group(2)).lower() for match in _SIGNER_RE.finditer(text)]
+    """O `apksigner verify --print-certs`: um certificado só (o mesmo em todos os esquemas), o esperado. O carimbo de
+    origem (Source Stamp), quando há, não é quem assina o app."""
+    digests = []
+    for match in _SIGNER_RE.finditer(text):
+        digest = re.sub(":", "", match.group(2)).lower()
+        if "Source Stamp" not in match.group(1) and digest not in digests:
+            digests.append(digest)
     if not digests:
         return ["o apksigner não mostrou o certificado do APK (%s)" % (_tail(text) or "saída vazia")]
     if len(digests) > 1:

@@ -413,6 +413,22 @@ class CertificateTest(unittest.TestCase):
         self.assertTrue(check_apk.check_certificate("", CERT))
         self.assertTrue(check_apk.check_certificate("DOES NOT VERIFY\nERROR: Missing META-INF/MANIFEST.MF\n", CERT))
 
+    def test_the_signers_of_each_scheme_of_newer_apksigners(self):
+        # O apksigner das build-tools 37 escreve o assinante de cada esquema ("V2 Signer: ..."); o mesmo certificado
+        # em dois esquemas é um assinante só. O carimbo de origem (Source Stamp) não é quem assina o app.
+        def scheme(name, sha):
+            return ("%s: certificate DN: CN=Starsonic Phone, O=Starsonic, L=Sao Paulo, ST=SP, C=BR\n"
+                    "%s: certificate SHA-256 digest: %s\n%s: certificate SHA-1 digest: %s\n"
+                    % (name, name, sha, name, "5b" * 20))
+        self.assertEqual(check_apk.check_certificate(scheme("V2 Signer", CERT), CERT), [])
+        self.assertEqual(check_apk.check_certificate(scheme("V2 Signer", CERT) + scheme("V3 Signer", CERT), CERT), [])
+        self.assertEqual(check_apk.check_certificate(scheme("V2 Signer", CERT) +
+                                                     scheme("Source Stamp Signer", OTHER_CERT), CERT), [])
+        errors = check_apk.check_certificate(scheme("V2 Signer", OTHER_CERT), CERT)
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn(OTHER_CERT, errors[0])
+        self.assertTrue(check_apk.check_certificate(scheme("V2 Signer", CERT) + scheme("V3 Signer", OTHER_CERT), CERT))
+
     def test_the_expected_file_may_have_colons_and_capitals(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = pathlib.Path(tmp) / "cert.sha256"
