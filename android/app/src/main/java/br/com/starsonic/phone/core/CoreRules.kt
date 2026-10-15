@@ -4,6 +4,12 @@ package br.com.starsonic.phone.core
 enum class Check { OK, EMPTY, INVALID }
 
 /**
+ * O versao-android.json que o núcleo aceitou (ParseManifest, spec 7.7): a versão (X.Y.Z ou X.Y.Z-rc.N), o endereço do
+ * APK (dentro do endereço permitido), o SHA-256 dele em minúsculas e as notas (até 500 caracteres e "…").
+ */
+data class Manifest(val versionText: String, val installerUrl: String, val sha256: String, val notes: String)
+
+/**
  * As regras e os textos do núcleo em C++ (starsonic/core), os mesmos do Windows. No app, [NativeCoreRules];
  * nos testes na JVM, uma falsa.
  */
@@ -22,4 +28,18 @@ interface CoreRules {
 
     /** NormalizeDialString: o número a discar, sem espaços, traços, pontos e parênteses. */
     fun normalizeDialString(raw: String): String
+
+    /**
+     * ParseManifest: o versao-android.json, se ele vale (JSON; versão; APK começando com [allowedPrefix] e, depois dele,
+     * só com letras, dígitos, '.', '_', '-' e '/', sem ".."; SHA-256 com 64 dígitos hexadecimais). Senão, null, e o motivo
+     * (em ASCII, para o log) vai para [onError].
+     */
+    fun parseManifest(json: String, allowedPrefix: String, onError: (String) -> Unit = {}): Manifest?
+
+    /**
+     * CompareVersions de duas versões em texto (ParseVersion: X.Y.Z ou X.Y.Z-rc.N): negativo se [a] vem antes de [b], 0 se
+     * são iguais, positivo se [a] vem depois; a final vem depois de qualquer rc dela. Um texto que não é versão não tem
+     * ordem: dá 0, como se fossem iguais (o atualizador não oferece nada).
+     */
+    fun compareVersions(a: String, b: String): Int
 }

@@ -8,6 +8,7 @@ import br.com.starsonic.phone.core.Clock
 import br.com.starsonic.phone.core.CoreRules
 import br.com.starsonic.phone.core.LoginFlow
 import br.com.starsonic.phone.core.LoginFlowHandle
+import br.com.starsonic.phone.core.Manifest
 import br.com.starsonic.phone.core.Scheduled
 import br.com.starsonic.phone.data.Account
 import br.com.starsonic.phone.data.AccountStore
@@ -382,6 +383,10 @@ private class FakeCore : CoreRules {
     override fun callEndMessage(code: Int) = "fim $code"
 
     override fun normalizeDialString(raw: String) = raw
+
+    override fun parseManifest(json: String, allowedPrefix: String, onError: (String) -> Unit): Manifest? = null
+
+    override fun compareVersions(a: String, b: String) = 0
 }
 
 /** O LoginFlow falso, com as regras do LoginFlow do núcleo e os avisos do núcleo falso. */

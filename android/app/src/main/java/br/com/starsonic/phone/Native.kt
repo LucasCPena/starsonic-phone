@@ -26,4 +26,13 @@ object Native {
 
     /** O protocolo padrão do perfil (o texto do perfil.ini), o do campo Protocolo: "udp", "tcp" ou "" (perfil inválido). */
     external fun profileTransport(profileText: String): String
+
+    /**
+     * ParseManifest com o endereço permitido do APK: [motivo, versão, APK, SHA-256, notas]. O motivo (em ASCII, para o
+     * log) é "" quando o arquivo vale; quando não vale, os outros quatro ficam vazios.
+     */
+    external fun parseManifest(json: String, allowedPrefix: String): Array<String>
+
+    /** CompareVersions de duas versões em texto (ParseVersion): -1, 0 ou 1; 0 se alguma não é versão. */
+    external fun compareVersions(a: String, b: String): Int
 }

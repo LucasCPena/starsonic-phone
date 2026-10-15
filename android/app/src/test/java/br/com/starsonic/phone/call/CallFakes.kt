@@ -3,6 +3,7 @@ package br.com.starsonic.phone.call
 import br.com.starsonic.phone.core.Check
 import br.com.starsonic.phone.core.Clock
 import br.com.starsonic.phone.core.CoreRules
+import br.com.starsonic.phone.core.Manifest
 import br.com.starsonic.phone.core.Scheduled
 import br.com.starsonic.phone.engine.EngineEvents
 import br.com.starsonic.phone.engine.SipGateway
@@ -24,6 +25,10 @@ internal class CallCore : CoreRules {
     override fun callEndMessage(code: Int): String = if (code in 400..699 && code != 487) "fim $code" else ""
 
     override fun normalizeDialString(raw: String): String = DIAL[raw] ?: raw
+
+    override fun parseManifest(json: String, allowedPrefix: String, onError: (String) -> Unit): Manifest? = null
+
+    override fun compareVersions(a: String, b: String) = 0
 
     companion object {
         /** O exemplo do brief e o número da transferência dos testes. */

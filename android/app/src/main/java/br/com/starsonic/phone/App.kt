@@ -20,6 +20,10 @@ import br.com.starsonic.phone.engine.NativeSipGateway
 import br.com.starsonic.phone.engine.SipGateway
 import br.com.starsonic.phone.engine.Transport
 import br.com.starsonic.phone.service.Connection
+import br.com.starsonic.phone.update.AndroidInstaller
+import br.com.starsonic.phone.update.HttpUpdateNetwork
+import br.com.starsonic.phone.update.PreferencesUpdateStore
+import br.com.starsonic.phone.update.Updater
 import java.io.File
 
 /**
@@ -85,6 +89,24 @@ class App : Application() {
 
     /** O perfil das contas (branding/perfil.ini, que vai nos assets sem os comentários). Lê o disco. */
     val profileText: String by lazy { assets.open("perfil.ini").use { String(it.readBytes(), Charsets.UTF_8) } }
+
+    /** O atualizador (esboço). */
+    val updater: Updater by lazy {
+        Updater(
+            core = core,
+            network = HttpUpdateNetwork("$USER_AGENT/${BuildConfig.VERSION_NAME}"),
+            installer = updateInstaller,
+            store = PreferencesUpdateStore(this),
+            installedVersion = BuildConfig.VERSION_NAME,
+            inCall = { calls.state.value != null },
+            cacheDir = { cacheDir },
+            channel = null,
+            testChannels = BuildConfig.DEBUG,
+        )
+    }
+
+    /** A instalação pelo Android (esboço). */
+    val updateInstaller: AndroidInstaller by lazy { AndroidInstaller(this) }
 
     /** O protocolo da tela Entrar numa conta nova: o padrão do perfil. Lê o disco e o núcleo (JNI). */
     val defaultTransport: Transport by lazy {

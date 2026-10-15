@@ -10,6 +10,10 @@ namespace {
 const std::string P = "https://github.com/acme/starsonic-phone/releases/download/";
 const std::string kSha = "ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789";
 
+// O endereço permitido do APK no app Android (spec 7.7): os assets das tags android-v*.
+const std::string kAndroidPrefix = "https://github.com/LucasCPena/starsonic-phone/releases/download/android-v";
+const std::string kAndroidReleases = "https://github.com/LucasCPena/starsonic-phone/releases/download/";
+
 // Valores em JSON cru; vazio = campo ausente.
 struct Fields {
     std::string versao = "\"1.0.1\"";
@@ -172,6 +176,40 @@ TEST_CASE("ParseManifest rejects untrusted or malformed manifests") {
     CHECK(Rejects("{\"versao\":"));
     CHECK(Rejects("[1,2]"));
     CHECK(Rejects(""));
+}
+
+TEST_CASE("ParseManifest accepts the Android installer prefix") {
+    Fields fields;
+    fields.versao = "\"0.1.0-rc.2\"";
+    fields.instalador = "\"" + kAndroidPrefix + "0.1.0-rc.2/StarsonicPhone-android-0.1.0-rc.2.apk\"";
+    Manifest manifest;
+    std::string error = "antes";
+    REQUIRE(ParseManifest(ToJson(fields), kAndroidPrefix, &manifest, &error));
+    CHECK(error == "");
+    CHECK(manifest.versionText == "0.1.0-rc.2");
+    CHECK(manifest.version.minor == 1);
+    CHECK(manifest.version.rc == 2);
+    CHECK(manifest.installerUrl ==
+          kAndroidReleases + "android-v0.1.0-rc.2/StarsonicPhone-android-0.1.0-rc.2.apk");
+    CHECK(manifest.sha256 == "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789");
+}
+
+TEST_CASE("ParseManifest rejects a Windows installer for the Android prefix") {
+    Fields fields;
+    fields.instalador = "\"" + kAndroidReleases + "v1.0.1/StarsonicPhone-1.0.1-setup.exe\"";
+    Manifest manifest;
+    std::string error;
+    CHECK_FALSE(ParseManifest(ToJson(fields), kAndroidPrefix, &manifest, &error));
+    CHECK(error.find("instalador") != std::string::npos);
+
+    // Nem o APK de outra conta, nem por HTTP, nem saindo da pasta da tag.
+    fields.instalador = "\"https://github.com/outra/starsonic-phone/releases/download/android-v0.1.0/x.apk\"";
+    CHECK_FALSE(ParseManifest(ToJson(fields), kAndroidPrefix, &manifest, nullptr));
+    fields.instalador = "\"http://github.com/LucasCPena/starsonic-phone/releases/download/android-v0.1.0/x.apk\"";
+    CHECK_FALSE(ParseManifest(ToJson(fields), kAndroidPrefix, &manifest, nullptr));
+    fields.instalador = "\"" + kAndroidPrefix + "0.1.0/../../v1.0.1/StarsonicPhone-1.0.1-setup.exe\"";
+    CHECK_FALSE(ParseManifest(ToJson(fields), kAndroidPrefix, &manifest, nullptr));
+    CHECK(manifest.installerUrl.empty());
 }
 
 TEST_CASE("failed manifest leaves output untouched") {

@@ -2,10 +2,12 @@ package br.com.starsonic.phone
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import br.com.starsonic.phone.core.LoginFlowHandle
+import br.com.starsonic.phone.core.Manifest
 import br.com.starsonic.phone.core.NativeCoreRules
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -84,6 +86,44 @@ class NativeLoadTest {
         assertEquals("udp", Native.profileTransport("[conta]\nporta=5060\ntransporte=udp\n"))
         assertEquals("tcp", Native.profileTransport("[conta]\nporta=5060\ntransporte=tcp\n"))
         assertEquals("", Native.profileTransport("[conta]\ntransporte=tcp\n"))   // sem a porta: perfil inválido
+    }
+
+    @Test
+    fun manifestIsReadByTheCore() {
+        val prefix = "https://github.com/LucasCPena/starsonic-phone/releases/download/android-v"
+        val apk = "${prefix}0.1.0-rc.2/StarsonicPhone-android-0.1.0-rc.2.apk"
+        val emoji = String(Character.toChars(0x1F600))
+        val notes = "Correção de áudio $emoji"
+        val json = """{"versao":"0.1.0-rc.2","instalador":"$apk","sha256":"${"AB".repeat(32)}","notas":"$notes"}"""
+        assertArrayEquals(arrayOf("", "0.1.0-rc.2", apk, "ab".repeat(32), notes), Native.parseManifest(json, prefix))
+        assertEquals(Manifest("0.1.0-rc.2", apk, "ab".repeat(32), notes), NativeCoreRules.parseManifest(json, prefix))
+
+        // Fora do endereço permitido (o instalador do Windows) ou um JSON que não vale: null, com o motivo do núcleo.
+        val reasons = mutableListOf<String>()
+        val windows = json.replace("android-v0.1.0-rc.2/StarsonicPhone-android-0.1.0-rc.2.apk", "v1.0.1/StarsonicPhone-1.0.1-setup.exe")
+        assertNull(NativeCoreRules.parseManifest(windows, prefix) { reasons += it })
+        assertNull(NativeCoreRules.parseManifest("{", prefix) { reasons += it })
+        assertEquals(2, reasons.size)
+        assertTrue(reasons[0], reasons[0].startsWith("versao.json: instalador fora do endereco permitido"))
+        assertEquals("versao.json: JSON invalido", reasons[1])
+        assertArrayEquals(arrayOf("versao.json: JSON invalido", "", "", "", ""), Native.parseManifest("{", prefix))
+
+        // As notas passam de 500 caracteres: o núcleo corta e põe "…".
+        val long = NativeCoreRules.parseManifest(json.replace(notes, "a".repeat(600)), prefix)
+        assertEquals("a".repeat(500) + "…", long?.notes)
+    }
+
+    @Test
+    fun versionsAreComparedByTheCore() {
+        assertTrue(NativeCoreRules.compareVersions("0.1.1", "0.1.0") > 0)
+        assertTrue(NativeCoreRules.compareVersions("0.1.0", "0.1.1") < 0)
+        assertTrue(NativeCoreRules.compareVersions("0.1.0", "0.1.0-rc.9") > 0)
+        assertTrue(NativeCoreRules.compareVersions("0.1.0-rc.1", "0.1.0-rc.2") < 0)
+        assertTrue(NativeCoreRules.compareVersions("9.9.9", "0.0.0") > 0)
+        assertEquals(0, NativeCoreRules.compareVersions("0.1.0-rc.2", "0.1.0-rc.2"))
+        // Um texto que não é versão não tem ordem: 0, e nada é oferecido.
+        assertEquals(0, NativeCoreRules.compareVersions("9.9.9", "dev"))
+        assertEquals(0, NativeCoreRules.compareVersions("", "0.1.0"))
     }
 
     @Test

@@ -242,8 +242,8 @@ jobs:
           grep -q '^\[conta\]$' "$RUNNER_TEMP/perfil.ini" || fail "assets/perfil.ini sem a seção [conta]"
           if grep -q ';' "$RUNNER_TEMP/perfil.ini"; then fail "assets/perfil.ini com comentários"; fi
 
-      # O registrador falso no runner, para o LoginScreenTest, o ServiceTest, o CallFlowTest e o
-      # AboutAndAccountTest: o emulador o vê em 10.0.2.2. A 5060 é a porta do branding/perfil.ini; a de controle
+      # O registrador falso no runner, para o LoginScreenTest, o ServiceTest, o CallFlowTest, o AboutAndAccountTest
+      # e o UpdatePromptTest: o emulador o vê em 10.0.2.2. A 5060 é a porta do branding/perfil.ini; a de controle
       # (5070) troca a senha (no teste da senha com acento e nos da senha trocada no servidor), conta os REGISTER
       # de cada ramal, liga para o ramal (RING), desliga (HANGUP) e mostra o registro de ligações (LOG). Ele fica
       # rodando nos passos seguintes.
@@ -271,11 +271,12 @@ jobs:
       # Cada linha do script roda à parte; a primeira que falha encerra o passo. O ServiceTest deixa a conta
       # gravada; o check-boot.sh para o app à força e confere que o BOOT_COMPLETED (com o adb como root)
       # registra o ramal de novo e segura o processador acordado (o wake lock "starsonic:conexao"). Depois, o
-      # CallFlowTest e, por último, o AboutAndAccountTest (menu, Sobre, diagnóstico, Editar e Sair): cada um
-      # começa parando o serviço que a reinstalação (MY_PACKAGE_REPLACED) iniciou com a conta gravada e registra
-      # a dele por TCP. Antes de tudo, o set-locale.sh põe o emulador em pt-BR (com o adb como root, e o Android
-      # reinicia): os botões da notificação de ligação (Atender e Recusar) são do Android, no idioma do celular,
-      # como nos clientes.
+      # CallFlowTest, o AboutAndAccountTest (menu, Sobre, diagnóstico, Editar e Sair) e, por último, o
+      # UpdatePromptTest (o atualizador, com o canal de teste que o run-update-test.sh serve neste computador por um
+      # `python3 -m http.server`, de pé só durante a classe): cada um começa parando o serviço que a reinstalação
+      # (MY_PACKAGE_REPLACED) iniciou com a conta gravada e registra a dele por TCP. Antes de tudo, o set-locale.sh
+      # põe o emulador em pt-BR (com o adb como root, e o Android reinicia): os botões da notificação de ligação
+      # (Atender e Recusar) são do Android, no idioma do celular, como nos clientes.
       - name: Testes no emulador
         id: emulador
         if: ${{ !cancelled() && steps.gradle.outputs.apks == 'true' }}
@@ -292,10 +293,12 @@ jobs:
             bash build/android/check-boot.sh 5070 2001
             bash build/android/run-emulator-tests.sh "$APK" "$TEST_APK" br.com.starsonic.phone.CallFlowTest -e registrar 10.0.2.2 -e porta 5070 -e senha senha-certa
             bash build/android/run-emulator-tests.sh "$APK" "$TEST_APK" br.com.starsonic.phone.AboutAndAccountTest -e registrar 10.0.2.2 -e porta 5070 -e senha senha-certa
+            bash build/android/run-update-test.sh "$APK" "$TEST_APK" -e registrar 10.0.2.2 -e porta 5070 -e senha senha-certa
 
       # O registrador guarda o User-Agent do último REGISTER e o protocolo do último REGISTER aceito. O
       # LoginScreenTest termina os registros aceitos com o da senha com acento, por TCP; o ServiceTest, o
-      # BOOT_COMPLETED, o CallFlowTest e o AboutAndAccountTest, depois dele, também terminam por TCP.
+      # BOOT_COMPLETED, o CallFlowTest, o AboutAndAccountTest e o UpdatePromptTest, depois dele, também terminam
+      # por TCP.
       - name: Conferir o User-Agent e o protocolo
         if: ${{ !cancelled() && steps.emulador.outcome == 'success' }}
         run: |

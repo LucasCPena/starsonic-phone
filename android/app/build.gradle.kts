@@ -115,6 +115,7 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.core.splashscreen)
+    implementation(libs.androidx.work.runtime)
     implementation(libs.oboe)
 
     testImplementation(libs.junit)

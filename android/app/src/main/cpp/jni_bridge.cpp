@@ -1,6 +1,7 @@
 // Ponte JNI do app Android: liga o Kotlin ao núcleo e ao motor de ligações em C++.
 // - br.com.starsonic.phone.Native: as funções do núcleo que as telas usam (validar o servidor e o ramal,
-//   os textos do registro e do fim da ligação, o número a discar e o protocolo padrão do perfil).
+//   os textos do registro e do fim da ligação, o número a discar e o protocolo padrão do perfil) e as do
+//   atualizador (o versao-android.json e a ordem das versões).
 // - br.com.starsonic.phone.core.LoginFlowHandle: o LoginFlow do núcleo (a espera da tela Entrar).
 // - br.com.starsonic.phone.engine.NativeSipGateway: o SipEngine. O gateway chama o motor sempre da mesma
 //   thread dele; os avisos do motor voltam por um EngineSink (ver JniListener).
@@ -28,6 +29,7 @@
 #include "RegistrationErrors.h"
 #include "SipEngine.h"
 #include "Text.h"
+#include "UpdateManifest.h"
 
 namespace {
 
@@ -161,6 +163,22 @@ jobjectArray CheckResult(JNIEnv* env, Check check, const std::wstring& text) {
     if (value == nullptr) return nullptr;
     env->SetObjectArrayElement(result, 1, value);
     env->DeleteLocalRef(value);
+    return result;
+}
+
+// Um String[] com os textos, na ordem. nullptr com exceção pendente.
+jobjectArray StringArray(JNIEnv* env, const std::vector<std::wstring>& texts) {
+    jclass stringClass = env->FindClass("java/lang/String");
+    if (stringClass == nullptr) return nullptr;
+    jobjectArray result = env->NewObjectArray(static_cast<jsize>(texts.size()), stringClass, nullptr);
+    env->DeleteLocalRef(stringClass);
+    if (result == nullptr) return nullptr;
+    for (size_t i = 0; i < texts.size(); ++i) {
+        jstring value = ToJava(env, texts[i]);
+        if (value == nullptr) return nullptr;
+        env->SetObjectArrayElement(result, static_cast<jsize>(i), value);
+        env->DeleteLocalRef(value);
+    }
     return result;
 }
 
@@ -352,6 +370,35 @@ JNIEXPORT jstring JNICALL Java_br_com_starsonic_phone_Native_profileTransport(JN
     starsonic::Profile profile;
     if (!starsonic::ParseProfile(ToWide(env, profileText), &profile).ok) return ToJava(env, L"");
     return ToJava(env, profile.account.transport == starsonic::Transport::Tcp ? L"tcp" : L"udp");
+}
+
+// ParseManifest (o versao-android.json, spec 7.7) com o endereço permitido do APK: [motivo, versão, APK, SHA-256,
+// notas]. O motivo (em ASCII, para o log) é "" quando o arquivo vale; quando não vale, os outros ficam vazios. O
+// JSON chega em UTF-16 e vai ao núcleo em UTF-8; as notas voltam com os pares substitutos refeitos.
+JNIEXPORT jobjectArray JNICALL Java_br_com_starsonic_phone_Native_parseManifest(JNIEnv* env, jobject /* native */,
+                                                                                jstring json, jstring allowedPrefix) {
+    starsonic::Manifest manifest;
+    std::string error;
+    const bool ok = starsonic::ParseManifest(starsonic::WideToUtf8(ToWide(env, json)),
+                                             starsonic::WideToUtf8(ToWide(env, allowedPrefix)), &manifest, &error);
+    if (!ok) {
+        return StringArray(env, {starsonic::Utf8ToWide(error.empty() ? "versao.json: invalido" : error), L"", L"", L"", L""});
+    }
+    return StringArray(env, {L"", starsonic::Utf8ToWide(manifest.versionText), starsonic::Utf8ToWide(manifest.installerUrl),
+                             starsonic::Utf8ToWide(manifest.sha256), manifest.notes});
+}
+
+// CompareVersions de duas versões em texto (ParseVersion): -1, 0 ou 1. Um texto que não é versão não tem ordem: 0,
+// como se fossem iguais (o atualizador não oferece nada).
+JNIEXPORT jint JNICALL Java_br_com_starsonic_phone_Native_compareVersions(JNIEnv* env, jobject /* native */, jstring a,
+                                                                         jstring b) {
+    starsonic::Version first;
+    starsonic::Version second;
+    if (!starsonic::ParseVersion(starsonic::WideToUtf8(ToWide(env, a)), &first) ||
+        !starsonic::ParseVersion(starsonic::WideToUtf8(ToWide(env, b)), &second)) {
+        return 0;
+    }
+    return static_cast<jint>(starsonic::CompareVersions(first, second));
 }
 
 // O LoginFlow do núcleo (LoginFlowHandle): criado aqui e solto por nativeRelease; quem usa sincroniza as

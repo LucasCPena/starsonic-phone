@@ -2,6 +2,7 @@ package br.com.starsonic.phone.service
 
 import br.com.starsonic.phone.core.Check
 import br.com.starsonic.phone.core.CoreRules
+import br.com.starsonic.phone.core.Manifest
 import br.com.starsonic.phone.data.Account
 import br.com.starsonic.phone.engine.EngineEvents
 import br.com.starsonic.phone.engine.SipGateway
@@ -24,6 +25,10 @@ internal class FakeCore : CoreRules {
     override fun callEndMessage(code: Int) = ""
 
     override fun normalizeDialString(raw: String) = raw
+
+    override fun parseManifest(json: String, allowedPrefix: String, onError: (String) -> Unit): Manifest? = null
+
+    override fun compareVersions(a: String, b: String) = 0
 }
 
 /**
