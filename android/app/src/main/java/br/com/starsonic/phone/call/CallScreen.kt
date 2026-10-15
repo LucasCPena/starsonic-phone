@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
@@ -264,43 +265,48 @@ private fun TransferPanel(onCancel: () -> Unit, onTransfer: (String) -> Unit) {
     }
 }
 
-// Um botão redondo de ligar ou desligar, com o nome embaixo.
+// Um botão redondo de ligar ou desligar, com o nome embaixo (o toque vale nos dois).
 @Composable
 private fun RoundAction(icon: Int, label: String, color: Color, tag: String, onClick: () -> Unit) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(
-            Modifier
-                .size(72.dp)
-                .clip(CircleShape)
-                .background(color)
-                .clickable(onClickLabel = label, onClick = onClick)
-                .testTag(tag),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(painterResource(icon), contentDescription = label, tint = Color.White, modifier = Modifier.size(32.dp))
+    Column(
+        Modifier
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick)
+            .padding(8.dp)
+            .testTag(tag),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(Modifier.size(72.dp).clip(CircleShape).background(color), contentAlignment = Alignment.Center) {
+            Icon(painterResource(icon), contentDescription = null, tint = Color.White, modifier = Modifier.size(32.dp))
         }
         Spacer(Modifier.height(8.dp))
         Text(label, color = Color.White, style = MaterialTheme.typography.labelLarge)
     }
 }
 
-// Um botão da ligação: aceso ([on]) em branco, apagado transparente.
+// Um botão da ligação, com o nome embaixo (o toque vale nos dois): aceso ([on]) em branco, apagado transparente.
 @Composable
 private fun Toggle(icon: Int, label: String, on: Boolean, enabled: Boolean, tag: String, onClick: () -> Unit) {
     val alpha = if (enabled) 1f else 0.4f
-    Column(Modifier.width(80.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+    Column(
+        Modifier
+            .width(80.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(vertical = 4.dp)
+            .testTag(tag),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
         Box(
             Modifier
-                .size(64.dp)
+                .size(56.dp)
                 .clip(CircleShape)
-                .background(if (on) Color.White else Color.White.copy(alpha = 0.15f * alpha))
-                .clickable(enabled = enabled, onClickLabel = label, onClick = onClick)
-                .testTag(tag),
+                .background(if (on) Color.White else Color.White.copy(alpha = 0.15f * alpha)),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
                 painterResource(icon),
-                contentDescription = label,
+                contentDescription = null,
                 tint = if (on) StarsonicBlue else Color.White.copy(alpha = alpha),
             )
         }

@@ -3,6 +3,7 @@ package br.com.starsonic.phone
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import androidx.compose.ui.test.junit4.ComposeTestRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.printToString
@@ -42,7 +43,21 @@ class Emulator(private val compose: ComposeTestRule) {
 
     /** Espera o texto aparecer numa tela do app. */
     fun waitForText(text: String, timeoutMillis: Long = 20_000) =
-        waitUntil("\"$text\" na tela", timeoutMillis) { compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty() }
+        waitUntil("\"$text\" na tela", timeoutMillis) { showsText(text) }
+
+    /** Uma tela do app na frente mostra o texto (com o app em segundo plano, nenhuma mostra). */
+    fun showsText(text: String): Boolean = shows { compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty() }
+
+    /** Uma tela do app na frente tem o elemento com a etiqueta [tag]. */
+    fun showsTag(tag: String): Boolean = shows { compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty() }
+
+    // Sem nenhuma tela do Compose na frente (o app em segundo plano), o Compose lança IllegalStateException.
+    private fun shows(found: () -> Boolean): Boolean =
+        try {
+            found()
+        } catch (e: IllegalStateException) {
+            false
+        }
 
     /** Espera a condição; se ela não vem, a falha traz o fim do log do motor e a tela (e [details], se houver). */
     fun waitUntil(what: String, timeoutMillis: Long = 20_000, details: () -> String = { "" }, condition: () -> Boolean) {
@@ -53,7 +68,7 @@ class Emulator(private val compose: ComposeTestRule) {
         }
         val extra = details().let { if (it.isEmpty()) "" else "\n$it" }
         throw AssertionError(
-            "Sem $what em ${timeoutMillis / 1000} s.$extra\nMotor:\n${engineLog()}\nLigações:\n${callLogcat()}\nTela:\n${screen()}",
+            "Sem $what em ${timeoutMillis / 1000} s.$extra\nLigações:\n${callLogcat()}\nMotor:\n${engineLog()}\nTela:\n${screen()}",
         )
     }
 
@@ -66,7 +81,7 @@ class Emulator(private val compose: ComposeTestRule) {
         }
 
     /** As últimas linhas do motor no logcat (o app as escreve com a tag StarsonicMotor nos builds de debug). */
-    fun engineLog(): String = logcat("StarsonicMotor:I", 15)
+    fun engineLog(): String = logcat("StarsonicMotor:I", 12)
 
     /**
      * As últimas linhas do caminho das ligações (StarsonicLigacao, nos builds de debug) e os avisos do Telecom e
@@ -78,7 +93,9 @@ class Emulator(private val compose: ComposeTestRule) {
         val output = InstrumentationRegistry.getInstrumentation().uiAutomation
             .executeShellCommand("logcat -d -v brief -s $filter")
         val read = ParcelFileDescriptor.AutoCloseInputStream(output).bufferedReader().use { it.readLines() }
-        return read.filter { !it.startsWith("-----") }.takeLast(lines).joinToString("\n") { it.take(200) }
+        return read.filter { !it.startsWith("-----") && "Cannot find conference" !in it }
+            .takeLast(lines)
+            .joinToString("\n") { it.take(200) }
     }
 
     /** Um comando na porta de controle do registrador falso (ex.: PASSWORD <senha>, RING 2001): a resposta. */

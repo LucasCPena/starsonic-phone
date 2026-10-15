@@ -4,7 +4,6 @@ import android.app.Notification
 import android.app.NotificationManager
 import android.os.Build
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
-import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -52,6 +51,11 @@ class CallFlowTest {
 
     @Before
     fun connect() {
+        // A tela acesa e sem bloqueio, como num celular em uso: a ligação aparece no alto da tela (sem a tela
+        // cheia, que o Android usa com a tela apagada ou bloqueada).
+        device.wakeUp()
+        device.executeShellCommand("svc power stayon true")
+        device.executeShellCommand("wm dismiss-keyguard")
         emulator.startClean()
         app.store.save(Account(emulator.registrar, Transport.TCP, "2001", emulator.senha))
         scenario = ActivityScenario.launch(MainActivity::class.java)
@@ -78,13 +82,13 @@ class CallFlowTest {
         emulator.waitUntil("a ligação atendida") { app.calls.state.value?.phase == CallPhase.ACTIVE }
         emulator.waitUntil("o toque parar", details = ::notifications) { callNotification() == null }
         assertEquals("OK", emulator.control("HANGUP 2001"))
-        emulator.waitUntil("a tela de chamada sair") { compose.onAllNodesWithTag("chamada").fetchSemanticsNodes().isEmpty() }
+        emulator.waitUntil("a tela de chamada sair") { !emulator.showsTag("chamada") }
         emulator.waitUntil("a recebida no Recentes") { app.recents.list().firstOrNull()?.kind == CallKind.RECEBIDA }
         assertEquals("3001", app.recents.list().first().number)
         // No app: a aba Recentes mostra a recebida.
         scenario?.close()
         scenario = ActivityScenario.launch(MainActivity::class.java)
-        emulator.waitUntil("a aba Recentes") { compose.onAllNodesWithTag("aba-recentes").fetchSemanticsNodes().isNotEmpty() }
+        emulator.waitUntil("a aba Recentes") { emulator.showsTag("aba-recentes") }
         compose.onNodeWithTag("aba-recentes").performClick()
         emulator.waitForText("Recebida")
     }
@@ -94,7 +98,7 @@ class CallFlowTest {
         val before = emulator.callLog().size
         dial("2002")
         emulator.waitUntil("a ligação atendida") { app.calls.state.value?.phase == CallPhase.ACTIVE }
-        emulator.waitUntil("o botão Espera") { compose.onAllNodesWithTag("espera").fetchSemanticsNodes().isNotEmpty() }
+        emulator.waitUntil("o botão Espera") { emulator.showsTag("espera") }
         compose.onNodeWithTag("espera").performClick()
         waitForLog(before, "reinv-in 2002 sendonly")
         compose.onNodeWithTag("transferir").performClick()
@@ -145,7 +149,7 @@ class CallFlowTest {
 
     // Disca no Teclado do app (na frente) e toca Ligar.
     private fun dial(number: String) {
-        emulator.waitUntil("o Teclado") { compose.onAllNodesWithTag("ligar").fetchSemanticsNodes().isNotEmpty() }
+        emulator.waitUntil("o Teclado") { emulator.showsTag("ligar") }
         for (digit in number) compose.onNodeWithTag("tecla-$digit").performScrollTo().performClick()
         compose.onNodeWithTag("ligar").performScrollTo().performClick()
     }
@@ -155,9 +159,10 @@ class CallFlowTest {
             line in emulator.callLog().drop(before)
         }
 
-    // Um botão da notificação de ligação (do Android: no alto da tela, ou na gaveta de notificações).
+    // Um botão da notificação de ligação (do Android, que desenha a notificação: no alto da tela, ou na gaveta de
+    // notificações).
     private fun tapSystemButton(label: String) {
-        val text = By.text(Pattern.compile(Pattern.quote(label), Pattern.CASE_INSENSITIVE))
+        val text = By.pkg(SYSTEM_UI).text(Pattern.compile(Pattern.quote(label), Pattern.CASE_INSENSITIVE))
         var button = device.wait(Until.findObject(text), 10_000)
         if (button == null) {
             device.openNotification()
@@ -184,5 +189,9 @@ class CallFlowTest {
     }
 
     private fun visibleTexts(): List<String> =
-        device.findObjects(By.text(Pattern.compile(".+"))).mapNotNull { it.text }.take(40)
+        device.findObjects(By.text(Pattern.compile(".+"))).mapNotNull { "${it.applicationPackage}:${it.text}" }.take(40)
+
+    private companion object {
+        const val SYSTEM_UI = "com.android.systemui"
+    }
 }
