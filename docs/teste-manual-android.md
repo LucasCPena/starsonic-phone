@@ -52,7 +52,7 @@ Faça cada linha no Wi-Fi e no 4G. A conta fica conectada com o processador acor
 | 3.11 | Deixe uma ligação tocar até o outro lado desistir. | Notificação "Ligação perdida de <número>" e a ligação no Recentes como perdida. | ☐ | ☐ | ☐ | ☐ |
 | 3.12 | Recuse uma ligação. | Quem liga ouve ocupado; a ligação entra no Recentes como perdida. | ☐ | ☐ | ☐ | ☐ |
 | 3.13 | No Recentes, toque numa ligação. | Liga de volta. O Recentes mostra número, data, hora e duração, das mais novas para as mais antigas. | ☐ | ☐ | ☐ | ☐ |
-| 3.14 | No Teclado, cole um número com formatação (ex.: `+55 (11) 5060-3000`) e ligue. | Disca só o que importa (sem espaços, traços, pontos e parênteses). | ☐ | ☐ | ☐ | ☐ |
+| 3.14 | Durante uma ligação, toque em "Transferir" e digite outro ramal do mesmo PABX com separadores (ex.: para o 2003, `20.03`, `20-03` ou `(20) 03`; dá para colar também). Toque em "Transferir". | A ligação passa para o ramal digitado: o app manda só o que importa (sem espaços, traços, pontos e parênteses). Se o PABX do teste não aceitar transferência, anote e pule. | ☐ | ☐ | ☐ | ☐ |
 | 3.15 | Ligue para um ramal ocupado, para um número que não existe e para um que não atende. | A tela de chamada mostra por 2 s "Ocupado", "Número não encontrado" ou "Não atendeu" (outros códigos: "Não foi possível completar a ligação (código <n>)."). | ☐ | ☐ | ☐ | ☐ |
 | 3.16 | Android 14 ou mais novo: com a tela apagada, atenda uma ligação pelo botão do fone Bluetooth, sem abrir a tela de chamada. | Anote se o outro lado ouve (o Android pode recusar o microfone com o app em segundo plano). | ☐ | ☐ | ☐ | ☐ |
 
@@ -96,21 +96,21 @@ A ordem dos passos importa, por causa da regra das 24 h:
 - Ao abrir, o app só confere o canal se a última verificação tem mais de 24 h. A primeira abertura depois de instalar sempre confere.
 - A verificação conta (e o aviso só volta 24 h depois) quando o canal responde sem versão nova, quando a pessoa toca em "Agora não" (ou fecha o aviso) e quando toca em "Atualizar" com uma ligação em andamento ou com o download começando.
 - Por isso, publique a rc seguinte **antes** de instalar a anterior: aberta com o canal ainda na anterior, ela só veria o aviso 24 h depois.
-- Cada vez que o roteiro pede o aviso de novo, desinstale o app e instale a rc anterior outra vez. Isso zera a verificação, mas também apaga a conta (entre de novo) e tira a permissão de instalar apps (o primeiro "Atualizar" depois disso leva de novo ao ajuste do Android).
+- Cada vez que o roteiro pede o aviso de novo, desinstale o app e instale a rc anterior outra vez. Isso zera a verificação, mas também apaga a conta (entre de novo), tira as permissões do app (depois de entrar, siga a tela Permissões de novo: sem a de notificações, por exemplo, a notificação do 7.11 não sai) e tira a permissão de instalar apps (o primeiro "Atualizar" depois disso leva de novo ao ajuste do Android).
 
 | # | Passo | Resultado esperado | A1 | A2 |
 |---|-------|--------------------|----|----|
 | 7.1 | Publique a rc seguinte (tag `android-v…-rc.N+1`, ou Actions → android-release → Run workflow) e espere o workflow terminar. | O release da rc nova e o `canal-teste-android` têm o APK e o `versao-android.json` dela. | ☐ | ☐ |
 | 7.2 | Desinstale o app (se estiver instalado) e instale a rc anterior pelo link da página dela (`…/releases/tag/android-v…-rc.N`). Abra, entre com o ramal e siga a tela Permissões. | Na tela principal, o aviso "Nova versão do Starsonic Phone disponível (<rc nova>). Atualizar agora?", com as notas, "Atualizar" e "Agora não". | ☐ | ☐ |
 | 7.3 | Toque em "Agora não". Tire o app da lista de apps recentes e abra de novo. | O aviso sai e não volta (só 24 h depois). Menu → Sobre mostra a rc anterior. | ☐ | ☐ |
-| 7.4 | Desinstale o app, instale a rc anterior de novo, abra e entre. Com o aviso na tela, receba uma ligação no ramal e atenda; com ela em andamento, volte ao app pelo ícone e toque em "Atualizar". Depois, desligue. | O aviso aparece de novo depois da reinstalação. Com a ligação: "Termine a chamada para atualizar." e nada mais acontece; depois da ligação, o aviso não volta. | ☐ | ☐ |
-| 7.5 | Desinstale o app, instale a rc anterior de novo, abra e entre. Toque em "Atualizar". | O Android abre "Instalar apps desconhecidos" do Starsonic Phone (a reinstalação tirou a permissão). | ☐ | ☐ |
+| 7.4 | Desinstale o app, instale a rc anterior de novo, abra, entre e siga a tela Permissões. Com o aviso na tela, receba uma ligação no ramal e atenda; com ela em andamento, volte ao app pelo ícone e toque em "Atualizar". Depois, desligue. | O aviso aparece de novo depois da reinstalação. Com a ligação: "Termine a chamada para atualizar." e nada mais acontece; depois da ligação, o aviso não volta. | ☐ | ☐ |
+| 7.5 | Desinstale o app, instale a rc anterior de novo, abra, entre e siga a tela Permissões. Toque em "Atualizar". | O Android abre "Instalar apps desconhecidos" do Starsonic Phone (a reinstalação tirou a permissão). | ☐ | ☐ |
 | 7.6 | Permita. No Android 11 ou mais novo, o app fecha: abra-o de novo. No Android 9 ou 10, volte ao app. | O aviso continua (no Android 11 ou mais novo, ele volta quando o app abre). | ☐ | ☐ |
 | 7.7 | Ligue o modo avião e toque em "Atualizar". Depois, desligue o modo avião. | "Não foi possível baixar a atualização. Tentaremos de novo mais tarde.", e o app continua funcionando. O aviso não volta. | ☐ | ☐ |
-| 7.8 | Desinstale o app, instale a rc anterior de novo, abra e entre. Toque em "Atualizar", permita a instalação de apps (como em 7.5 e 7.6) e, com o aviso de volta, toque em "Atualizar" de novo. | "Baixando atualização…" e depois a confirmação do Android; confirme a atualização. | ☐ | ☐ |
+| 7.8 | Desinstale o app, instale a rc anterior de novo, abra, entre e siga a tela Permissões. Toque em "Atualizar", permita a instalação de apps (como em 7.5 e 7.6) e, com o aviso de volta, toque em "Atualizar" de novo. | "Baixando atualização…" e depois a confirmação do Android; confirme a atualização. | ☐ | ☐ |
 | 7.9 | Sem abrir o app, ligue para o ramal. Depois, abra o app e o Menu → Sobre. | A notificação fixa voltou sozinha depois da atualização, e a ligação toca. O Sobre mostra a rc nova; a conta continua lá, sem pedir a senha. | ☐ | ☐ |
 | 7.10 | Menu → Sobre → Enviar diagnóstico. | As linhas "atualização:" estão no arquivo, sem endereços assinados (nada de `X-Amz-` ou `token=`). | ☐ | ☐ |
-| 7.11 | (Opcional) Desinstale o app, instale a rc anterior de novo, abra e entre; sem responder ao aviso, saia do app (botão de início) e espere mais de 24 h. | A notificação "Atualizações" com a pergunta; tocar nela abre o app com o aviso. | ☐ | ☐ |
+| 7.11 | (Opcional) Desinstale o app, instale a rc anterior de novo, abra, entre e siga a tela Permissões (a de notificações é a que importa aqui); sem responder ao aviso, saia do app (botão de início) e espere mais de 24 h. | A notificação "Atualizações" com a pergunta; tocar nela abre o app com o aviso. | ☐ | ☐ |
 | 7.12 | (Quando houver versão estável) Com uma versão estável instalada (ex.: `0.1.0`), publique uma rc. | Nenhum aviso: a versão estável só olha o `canal-android`. | ☐ | ☐ |
 
 ## 8. Bateria
