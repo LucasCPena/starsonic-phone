@@ -1,5 +1,6 @@
 package br.com.starsonic.phone.service
 
+import br.com.starsonic.phone.call.CallEvents
 import br.com.starsonic.phone.core.CoreRules
 import br.com.starsonic.phone.data.Account
 import br.com.starsonic.phone.engine.EngineEvents
@@ -52,6 +53,8 @@ enum class Adoption {
  *     status a segue pelos campos; se a tela deixa o motor vazio, o serviço registra a conta gravada.
  * - O [status] usa só os resultados do registro da conta do serviço, pelo id dela no motor. O último
  *   resultado de cada conta fica guardado, então o serviço que adota a conta já mostra o resultado dela.
+ *   [registered] diz o mesmo para quem liga: a conta do serviço registrada e com rede.
+ * - Os avisos de ligação do motor vão às ligações ([calls], o CallManager), na thread dos eventos.
  *
  * Threads e travas (ninguém espera em círculo):
  * - As trocas de conta ([setAccount], [removeAccount], [adopt] e a saída do [release]) vão em ordem, uma de
@@ -72,6 +75,7 @@ class Connection(
     private val userAgent: String,
     private val profileText: () -> String,
     private val log: (Int, String) -> Unit = { _, _ -> },
+    private val calls: () -> CallEvents? = { null },
 ) : SipGateway {
     /** O último resultado do registro de uma conta: o código SIP e se ela ficou registrada. */
     private data class Registration(val code: Int, val active: Boolean)
@@ -83,6 +87,11 @@ class Connection(
 
     /** O status da conta do serviço: a faixa e a notificação fixa ("Conectando…" sem o serviço). */
     val status: StateFlow<Status> = mutableStatus
+
+    private val mutableRegistered = MutableStateFlow(false)
+
+    /** A conta do serviço está registrada e há rede ("Conectado"): só assim o app liga (spec 7.4). */
+    val registered: StateFlow<Boolean> = mutableRegistered
 
     /** Quem espera o resultado do registro na tela Entrar (null fora dela): código, ativa e id da conta. */
     @Volatile
@@ -131,12 +140,17 @@ class Connection(
             loginEvents?.invoke(code, active, accountId)
         }
 
-        // As ligações entram na Task 8.
-        override fun onIncomingCall(callId: Int, remoteUser: String, remoteName: String) {}
+        override fun onIncomingCall(callId: Int, remoteUser: String, remoteName: String) {
+            calls()?.onIncoming(callId, remoteUser, remoteName)
+        }
 
-        override fun onRejectedBusy(remoteUser: String, remoteName: String) {}
+        override fun onRejectedBusy(remoteUser: String, remoteName: String) {
+            calls()?.onRejectedBusy(remoteUser, remoteName)
+        }
 
-        override fun onCallState(callId: Int, state: Int, code: Int) {}
+        override fun onCallState(callId: Int, state: Int, code: Int) {
+            calls()?.onCallState(callId, state, code)
+        }
 
         override fun onLog(level: Int, line: String) = log(level, line)
     }
@@ -379,6 +393,7 @@ class Connection(
         val account = owned
         val result = if (account != null) results[currentIdOf(account)] else null
         mutableStatus.value = StatusModel.from(result?.code, result?.active ?: false, online, account?.ramal.orEmpty(), core)
+        mutableRegistered.value = online && result != null && result.code in 200..299 && result.active
     }
 
     // Com a trava: os resultados das contas mais antigas saem (o da conta do motor fica).

@@ -68,6 +68,9 @@ internal class FakeEngine : SipGateway {
         events!!.onRegistration(code, active, id)
     }
 
+    /** Os avisos de ligação do motor, à mão. */
+    fun callEvents(): EngineEvents = events!!
+
     /** O motor termina as saídas de conta pedidas, na ordem. */
     fun flush() {
         while (pendingRemovals.getAndUpdate { if (it > 0) it - 1 else 0 } > 0) {

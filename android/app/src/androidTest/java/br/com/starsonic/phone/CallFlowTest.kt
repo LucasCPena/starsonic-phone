@@ -7,6 +7,7 @@ import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -145,8 +146,8 @@ class CallFlowTest {
     // Disca no Teclado do app (na frente) e toca Ligar.
     private fun dial(number: String) {
         emulator.waitUntil("o Teclado") { compose.onAllNodesWithTag("ligar").fetchSemanticsNodes().isNotEmpty() }
-        for (digit in number) compose.onNodeWithTag("tecla-$digit").performClick()
-        compose.onNodeWithTag("ligar").performClick()
+        for (digit in number) compose.onNodeWithTag("tecla-$digit").performScrollTo().performClick()
+        compose.onNodeWithTag("ligar").performScrollTo().performClick()
     }
 
     private fun waitForLog(before: Int, line: String) =

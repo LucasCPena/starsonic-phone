@@ -1,5 +1,6 @@
 package br.com.starsonic.phone.service
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
@@ -8,6 +9,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.Handler
@@ -40,8 +42,11 @@ import kotlinx.coroutines.launch
  * - Começa por [start] (ACTION_START): no fim do Entrar, ao abrir o app com a conta gravada, depois de ligar
  *   o celular e de atualizar o app ([BootReceiver]). O sistema também o recria sozinho depois de fechar o
  *   processo (START_STICKY, com a intent nula), e aí ele faz o mesmo.
- * - Entra em primeiro plano só como specialUse (Android 14+); phoneCall e microphone entram só durante uma
- *   ligação (Task 8).
+ * - Entra em primeiro plano só como specialUse (Android 14+). Durante uma ligação que usa o microfone (a feita
+ *   desde o Ligar; a recebida depois de atendida), acrescenta phoneCall e microphone; no fim, volta a só
+ *   specialUse. O Android 14+ não deixa acrescentar o microphone com o app em segundo plano: a troca acontece
+ *   quando a ligação muda e a cada início do serviço (a tela de chamada o inicia ao aparecer, com o app na
+ *   frente); se o Android recusa, o serviço fica como estava e a ligação segue.
  * - Numa thread própria ("starsonic-servico"), lê a conta gravada (Keystore e disco), sobe o motor (uma vez
  *   por processo) e segura a conta ([Connection.adopt]): a que a tela Entrar acabou de registrar fica, sem
  *   outro REGISTER. Sem conta gravada, sai na hora.
@@ -61,6 +66,7 @@ class SipService : Service() {
     private lateinit var keepAwake: KeepAwake
     private lateinit var monitor: NetworkMonitor
     private var notifications: Job? = null   // só na thread principal
+    private var inCall = false               // os tipos da ligação estão no serviço (só na thread principal)
     private var monitoring = false           // só na thread do serviço
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -95,6 +101,12 @@ class SipService : Service() {
             notifications = scope.launch {
                 app.connection.status.map { it.notificationTitle }.distinctUntilChanged().collect { title ->
                     getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification(title))
+                }
+            }
+            // Os tipos da ligação entram e saem com ela.
+            scope.launch {
+                app.calls.state.map { it?.usesMicrophone == true }.distinctUntilChanged().collect { call ->
+                    if (call != inCall) enterForeground()
                 }
             }
         }
@@ -151,23 +163,44 @@ class SipService : Service() {
         }
     }
 
-    private fun enterForeground(): Boolean =
-        try {
-            val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-            } else {
-                0
+    // Na thread principal: entra (ou continua) em primeiro plano com os tipos de agora. Com uma ligação, tenta
+    // os tipos dela, do mais completo ao só specialUse; false se nem esse o Android aceitou.
+    private fun enterForeground(): Boolean {
+        val call = app.calls.state.value?.usesMicrophone == true
+        for (type in foregroundTypes(call)) {
+            try {
+                ServiceCompat.startForeground(this, NOTIFICATION_ID, notification(app.connection.status.value.notificationTitle), type)
+                inCall = call && type != foregroundTypes(false).single()
+                return true
+            } catch (e: IllegalStateException) {
+                // ForegroundServiceStartNotAllowedException: recriado em segundo plano sem poder (Android 12+).
+                Log.w(TAG, "o serviço não entrou em primeiro plano (tipos $type)", e)
+            } catch (e: SecurityException) {
+                // O microfone com o app em segundo plano (Android 14+), ou uma permissão que falta.
+                Log.w(TAG, "o serviço não entrou em primeiro plano (tipos $type)", e)
             }
-            ServiceCompat.startForeground(this, NOTIFICATION_ID, notification(app.connection.status.value.notificationTitle), type)
-            true
-        } catch (e: IllegalStateException) {
-            // ForegroundServiceStartNotAllowedException: recriado em segundo plano sem poder (Android 12+).
-            Log.w(TAG, "o serviço não entrou em primeiro plano", e)
-            false
-        } catch (e: SecurityException) {
-            Log.w(TAG, "o serviço não entrou em primeiro plano", e)
-            false
         }
+        return false
+    }
+
+    // Os tipos a tentar, em ordem: com a ligação, phoneCall e microphone (só com a permissão do microfone), depois
+    // só phoneCall; por último, os de sempre (specialUse no Android 14+; nenhum antes).
+    private fun foregroundTypes(call: Boolean): List<Int> {
+        val base = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+        } else {
+            0
+        }
+        if (!call || Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return listOf(base)
+        val phoneCall = base or ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL
+        val microphone = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+            checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        return if (microphone) {
+            listOf(phoneCall or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE, phoneCall, base)
+        } else {
+            listOf(phoneCall, base)
+        }
+    }
 
     private fun notification(title: String): Notification {
         val open = PendingIntent.getActivity(

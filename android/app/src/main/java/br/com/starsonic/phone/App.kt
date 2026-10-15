@@ -2,9 +2,9 @@ package br.com.starsonic.phone
 
 import android.app.Application
 import android.util.Log
+import br.com.starsonic.phone.call.AndroidTelecom
 import br.com.starsonic.phone.call.CallManager
-import br.com.starsonic.phone.call.CallNotifier
-import br.com.starsonic.phone.call.TelecomAdapter
+import br.com.starsonic.phone.call.IncomingCallNotifier
 import br.com.starsonic.phone.core.Clock
 import br.com.starsonic.phone.core.CoreRules
 import br.com.starsonic.phone.core.DeviceClock
@@ -21,10 +21,15 @@ import java.io.File
 /**
  * O aplicativo (android:name do manifesto): o que vive com o processo. Ele não sobe o motor nem registra
  * nada: com conta gravada, quem registra é o SipService (Android 12+ não deixa iniciar o serviço em primeiro
- * plano daqui, com o app em segundo plano). Tudo aqui nasce sob demanda, e o que lê o disco ou o Keystore
- * nunca na thread principal.
+ * plano daqui, com o app em segundo plano). Ao começar, só registra a conta self-managed "Starsonic Phone" no
+ * Telecom do Android. Tudo aqui nasce sob demanda, e o que lê o disco ou o Keystore nunca na thread principal.
  */
 class App : Application() {
+    override fun onCreate() {
+        super.onCreate()
+        telecom.register()
+    }
+
     val core: CoreRules
         get() = NativeCoreRules
 
@@ -33,7 +38,7 @@ class App : Application() {
      * precisa dele), a conta que está nele e o status da faixa e da notificação.
      */
     val connection: Connection by lazy {
-        Connection(::NativeSipGateway, core, "$USER_AGENT/${BuildConfig.VERSION_NAME}", { profileText }, ::log)
+        Connection(::NativeSipGateway, core, "$USER_AGENT/${BuildConfig.VERSION_NAME}", { profileText }, ::log, { calls })
     }
 
     /** O motor para quem troca a conta (a tela Entrar e os testes): a própria conexão, que anota a conta. */
@@ -45,28 +50,21 @@ class App : Application() {
 
     val clock: Clock by lazy { DeviceClock() }
 
-    /** Os Recentes (stub da Task 8: a ligação com o Telecom vem no GREEN). */
-    val recents: RecentsStore by lazy { RecentsStore(File(filesDir, "recentes.json")) }
+    /** Os Recentes (o arquivo só é procurado no primeiro uso, fora da thread principal). */
+    val recents: RecentsStore by lazy { RecentsStore { File(filesDir, "recentes.json") } }
 
-    /** As ligações (stub da Task 8). */
+    /** O Telecom do Android: a conta self-managed, a Connection da ligação e as rotas de áudio. */
+    val telecom: AndroidTelecom by lazy { AndroidTelecom(this) }
+
+    /** As notificações das ligações (a recebida e as perdidas). */
+    val notifier: IncomingCallNotifier by lazy { IncomingCallNotifier(this) }
+
+    /**
+     * As ligações: os avisos do motor chegam pela conexão; só liga com a conta do serviço registrada
+     * ([Connection.registered]).
+     */
     val calls: CallManager by lazy {
-        val telecom = object : TelecomAdapter {
-            override fun incomingPermitted() = false
-
-            override fun addIncoming(callId: Int, number: String, name: String) {}
-
-            override fun placeOutgoing(number: String) {}
-
-            override fun setActive(callId: Int) {}
-
-            override fun disconnect(callId: Int, cause: Int) {}
-        }
-        val notifier = object : CallNotifier {
-            override fun showMissed(text: String) {}
-
-            override fun stopRinging(callId: Int) {}
-        }
-        CallManager(connection, telecom, recents, notifier, core, clock, { false })
+        CallManager(connection, telecom, recents, notifier, core, clock, { connection.registered.value })
     }
 
     /** O perfil das contas (branding/perfil.ini, que vai nos assets sem os comentários). Lê o disco. */

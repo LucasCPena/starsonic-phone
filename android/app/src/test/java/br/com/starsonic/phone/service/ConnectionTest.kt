@@ -1,11 +1,13 @@
 package br.com.starsonic.phone.service
 
+import br.com.starsonic.phone.call.CallEvents
 import br.com.starsonic.phone.data.Account
 import br.com.starsonic.phone.engine.Transport
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -26,6 +28,48 @@ class ConnectionTest {
     // A tela Entrar registra uma conta (a tentativa, ou a anterior de volta depois de uma falha).
     private fun login(account: Account): Int =
         connection.setAccount(account.address, account.transport, account.ramal, account.senha)
+
+    @Test
+    fun `registered follows the service account and the network`() {
+        connection.claim(service)
+        connection.adopt(service, account)
+        assertFalse("sem resposta ainda", connection.registered.value)
+        engine.registration(200, true)
+        assertTrue(connection.registered.value)
+        connection.setOnline(service, false)
+        assertFalse("sem rede", connection.registered.value)
+        connection.setOnline(service, true)
+        assertTrue(connection.registered.value)
+        engine.registration(403, false)
+        assertFalse(connection.registered.value)
+        engine.registration(200, true)
+        connection.release(service)
+        assertFalse("o serviço parou", connection.registered.value)
+    }
+
+    @Test
+    fun `call events go to the calls`() {
+        val seen = mutableListOf<String>()
+        val calls = object : CallEvents {
+            override fun onIncoming(callId: Int, number: String, name: String) {
+                seen += "incoming $callId $number $name"
+            }
+
+            override fun onRejectedBusy(number: String, name: String) {
+                seen += "busy $number $name"
+            }
+
+            override fun onCallState(callId: Int, state: Int, code: Int) {
+                seen += "state $callId $state $code"
+            }
+        }
+        val withCalls = Connection({ engine }, FakeCore(), "Starsonic Phone Android/0.0.0", { "[conta]" }, calls = { calls })
+        assertTrue(withCalls.ensureStarted())
+        engine.callEvents().onIncomingCall(1, "3001", "Cliente Teste")
+        engine.callEvents().onRejectedBusy("3002", "")
+        engine.callEvents().onCallState(1, 4, 200)
+        assertEquals(listOf("incoming 1 3001 Cliente Teste", "busy 3002 ", "state 1 4 200"), seen)
+    }
 
     @Test
     fun `the engine starts once per process`() {

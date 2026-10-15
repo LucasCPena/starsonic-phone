@@ -46,6 +46,35 @@
             </intent-filter>
         </activity>
 
+        <!-- A tela de chamada: por cima da tela bloqueada, acendendo a tela (a notificação de ligação a abre em
+             tela cheia); numa tarefa própria, fora dos Recentes do Android. -->
+        <activity
+            android:name=".call.CallActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:screenOrientation="portrait"
+            android:showWhenLocked="true"
+            android:taskAffinity="br.com.starsonic.phone.chamada"
+            android:theme="@style/Theme.Starsonic"
+            android:turnScreenOn="true"
+            android:windowSoftInputMode="adjustResize" />
+
+        <!-- As ligações no Telecom do Android, modo self-managed (spec 6.2): só o Telecom se liga a ele. -->
+        <service
+            android:name=".call.CallConnectionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_TELECOM_CONNECTION_SERVICE">
+            <intent-filter>
+                <action android:name="android.telecom.ConnectionService" />
+            </intent-filter>
+        </service>
+
+        <!-- O Recusar da notificação de ligação. -->
+        <receiver
+            android:name=".call.CallActionReceiver"
+            android:exported="false" />
+
         <!-- Mantém o ramal registrado, com a notificação fixa (spec 6.2 e 7.2). -->
         <service
             android:name=".service.SipService"
