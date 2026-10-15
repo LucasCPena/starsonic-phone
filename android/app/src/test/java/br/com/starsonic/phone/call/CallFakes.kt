@@ -8,7 +8,11 @@ import br.com.starsonic.phone.engine.EngineEvents
 import br.com.starsonic.phone.engine.SipGateway
 import br.com.starsonic.phone.engine.Transport
 
-/** O núcleo falso: o CallEndMessage e o NormalizeDialString com as regras do núcleo (CallMessages.cpp). */
+/**
+ * O núcleo falso, com marcadores no lugar das regras (as de verdade são testadas no núcleo e no NativeLoadTest):
+ * o aviso de fim é "fim <código>", e nada para os códigos sem aviso (0, 200 e 487, o contrato do CoreRules); o
+ * número a discar vem de [DIAL], e o que não está lá fica como veio.
+ */
 internal class CallCore : CoreRules {
     override fun validateServer(raw: String): Pair<Check, String> = Check.OK to raw
 
@@ -16,25 +20,13 @@ internal class CallCore : CoreRules {
 
     override fun registrationMessage(code: Int) = ""
 
-    override fun callEndMessage(code: Int): String = when (code) {
-        486, 600 -> "Ocupado"
-        404, 484, 604 -> "Número não encontrado"
-        408, 480 -> "Não atendeu"
-        487 -> ""
-        in 400..699 -> "Não foi possível completar a ligação (código $code)."
-        else -> ""
-    }
+    override fun callEndMessage(code: Int): String = if (code == 0 || code == 200 || code == 487) "" else "fim $code"
 
-    override fun normalizeDialString(raw: String): String {
-        val number = StringBuilder()
-        for (ch in raw) {
-            when (ch) {
-                ' ', '\t', '-', '.', '(', ')' -> {}
-                '+' -> if (number.isEmpty()) number.append(ch)
-                else -> number.append(ch)
-            }
-        }
-        return number.toString()
+    override fun normalizeDialString(raw: String): String = DIAL[raw] ?: raw
+
+    companion object {
+        /** O exemplo do brief e o número da transferência dos testes. */
+        val DIAL = mapOf("+55 (11) 5060-3000" to "+551150603000", " 20-03 " to "2003")
     }
 }
 

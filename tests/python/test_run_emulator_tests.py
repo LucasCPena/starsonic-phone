@@ -159,6 +159,22 @@ class RunEmulatorTestsTest(unittest.TestCase):
                 self.assertIn("INSTALL_FAILED_INSUFFICIENT_STORAGE", result.stderr)
                 self.assertEqual(self.instrument_calls(calls), [])
 
+    def test_notes_from_the_tests_become_a_notice(self):
+        # Um teste conta algo que não é falha (ex.: toques repetidos) numa linha "Nota do teste:"; com sucesso ou
+        # falha, ela vira uma anotação à parte (o log do Actions nem sempre chega a quem acompanha o run).
+        note = "Nota do teste: CallFlowTest: toques repetidos nos botões da notificação: 1 (Atender 1, Recusar 0)"
+        for output in (PASSED, FAILED):
+            with self.subTest(passed=output is PASSED):
+                result, _calls = self.run_script(note + "\n" + output, GITHUB_ACTIONS="true")
+                notes = [line for line in result.stdout.splitlines() if line.startswith("::notice title=Notas dos testes")]
+                self.assertEqual(len(notes), 1, result.stdout)
+                self.assertIn(CLASS, notes[0])
+                self.assertIn(note, notes[0])
+
+    def test_no_notes_no_notice(self):
+        result, _calls = self.run_script(PASSED, GITHUB_ACTIONS="true")
+        self.assertNotIn("::notice title=Notas dos testes", result.stdout)
+
     def test_a_long_failure_report_is_annotated_too(self):
         # Mais de 64 KB de falhas (o tamanho do pipe): o relatório é cortado sem quebrar o script.
         trace = "".join("\tat br.com.starsonic.phone.Frame%d(NativeLoadTest.kt:%d)\n" % (i, i) for i in range(3000))

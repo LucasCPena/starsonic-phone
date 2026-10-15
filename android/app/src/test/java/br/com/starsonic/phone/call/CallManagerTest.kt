@@ -6,6 +6,11 @@ import br.com.starsonic.phone.data.RecentsStore
 import br.com.starsonic.phone.engine.CallState
 import java.io.File
 import java.util.concurrent.Executor
+import kotlin.concurrent.thread
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -180,12 +185,12 @@ class CallManagerTest {
         val id = dialOut("486")
         calls.onCallState(id, CallState.CALLING, 0)
         calls.onCallState(id, CallState.DISCONNECTED, 486)
-        assertEquals("Ocupado", calls.endMessage.value)
+        assertEquals("o aviso do núcleo para o 486 (Ocupado)", "fim 486", calls.endMessage.value)
         assertNull(calls.state.value)
         assertEquals(listOf(id to EndCause.BUSY), telecom.disconnected)
         assertEquals(listOf(Recent("486", "", CallKind.FEITA, start, 0)), recents.list())
         clock.advance(1_999)
-        assertEquals("Ocupado", calls.endMessage.value)
+        assertEquals("fim 486", calls.endMessage.value)
         clock.advance(1)
         assertEquals("", calls.endMessage.value)
     }
@@ -209,7 +214,7 @@ class CallManagerTest {
             calls.onCallState(next, CallState.DISCONNECTED, 404)
         }
         val next = dialOut("9999")
-        assertEquals("Número não encontrado", calls.endMessage.value)
+        assertEquals("fim 404", calls.endMessage.value)
         assertNull(calls.state.value)
         assertEquals(next to EndCause.ERROR, telecom.disconnected.last())
         assertTrue("uma ligação nova depois", calls.dial("2002"))
@@ -312,5 +317,128 @@ class CallManagerTest {
         calls.onLogin()   // o próximo Entrar
         calls.onIncoming(4, "3004", "")
         assertEquals(Triple(4, "3004", ""), telecom.incoming.last())
+    }
+
+    @Test
+    fun `Telecom refusing the incoming call rejects it busy and notifies the missed call`() {
+        ring(1)
+        calls.onTelecomFailed(2)   // de outra ligação: nada
+        assertTrue(gateway.rejects.isEmpty())
+        calls.onTelecomFailed(1)
+        assertEquals(listOf(1), gateway.rejects)
+        assertTrue("o toque para", 1 in notifier.stopped)
+        assertNull(calls.state.value)
+        calls.onTelecomFailed(1)   // repetido: nada
+        assertEquals(1, gateway.rejects.size)
+        calls.onCallState(1, CallState.DISCONNECTED, 486)
+        assertEquals(CallKind.PERDIDA, recents.list().single().kind)
+        assertEquals("a pessoa não viu a ligação", listOf("Ligação perdida de 3001"), notifier.missed)
+        assertEquals(listOf(1 to EndCause.REJECTED), telecom.disconnected)
+    }
+
+    @Test
+    fun `Telecom refusing the outgoing call ends it without dialing`() {
+        assertTrue(calls.dial("2002"))
+        calls.onTelecomFailed(CallManager.NO_ID)
+        assertNull(calls.state.value)
+        assertEquals(listOf(CallManager.NO_ID to EndCause.ERROR), telecom.disconnected)
+        assertEquals("", calls.endMessage.value)
+        calls.onOutgoingReady()   // atrasado
+        assertTrue(gateway.made.isEmpty())
+        assertEquals(CallKind.FEITA, recents.list().single().kind)
+    }
+
+    @Test
+    fun `hanging up while makeCall is on the way hangs up the call it returns`() {
+        gateway.duringMakeCall = { calls.hangup() }   // o makeCall ainda não voltou: a feita não tem id
+        val id = dialOut("2002")
+        assertEquals(listOf(id), gateway.hangups)
+        assertNull(calls.state.value)
+        calls.onCallState(id, CallState.DISCONNECTED, 487)
+        assertEquals(listOf(id to EndCause.LOCAL), telecom.disconnected)
+        assertEquals("", calls.endMessage.value)
+    }
+
+    @Test
+    fun `logout while makeCall is on the way hangs up the call it returns`() {
+        gateway.duringMakeCall = { calls.onLogout() }
+        val id = dialOut("2002")
+        assertEquals("a ligação que ficou no motor sai", listOf(id), gateway.hangups)
+        assertNull(calls.state.value)
+        assertEquals(listOf(CallManager.NO_ID to EndCause.LOCAL), telecom.disconnected)
+    }
+
+    @Test
+    fun `an answered outgoing call that drops shows no message`() {
+        val id = dialOut("2002")
+        calls.onCallState(id, CallState.CONFIRMED, 200)
+        clock.advance(30_000)
+        calls.onCallState(id, CallState.DISCONNECTED, 408)   // caiu depois da conversa (ex.: troca de rede)
+        assertEquals("", calls.endMessage.value)
+        assertEquals(id to EndCause.ERROR, telecom.disconnected.last())
+        assertEquals(30, recents.list().single().durationSec)
+    }
+
+    @Test
+    fun `a call ignored after logout is not taken for the outgoing call after login`() {
+        calls.onLogout()
+        calls.onIncoming(5, "3005", "")   // ignorada: a conta saiu
+        calls.onLogin()
+        gateway.duringMakeCall = { id ->
+            calls.onCallState(5, CallState.DISCONNECTED, 480)   // o fim dela chega com a feita esperando o id
+            calls.onCallState(id, CallState.CALLING, 0)
+        }
+        val id = dialOut("2002")
+        assertEquals(CallPhase.DIALING, calls.state.value?.phase)
+        assertEquals("", calls.endMessage.value)
+        calls.onCallState(id, CallState.CONFIRMED, 200)
+        assertEquals(CallPhase.ACTIVE, calls.state.value?.phase)
+    }
+
+    @Test
+    fun `the id from makeCall wins over an event of another call taken before it`() {
+        gateway.duringMakeCall = { calls.onCallState(7, CallState.CALLING, 0) }   // de uma ligação nunca vista
+        val id = dialOut("2002")
+        assertEquals(10, id)
+        assertEquals("a outra sai", listOf(7), gateway.hangups)
+        calls.onCallState(7, CallState.CONFIRMED, 200)   // não é dela
+        assertEquals(CallPhase.DIALING, calls.state.value?.phase)
+        calls.onCallState(id, CallState.CONFIRMED, 200)
+        assertEquals(CallPhase.ACTIVE, calls.state.value?.phase)
+        assertEquals(listOf(id), telecom.active)
+    }
+
+    @Test
+    fun `an end of another call taken before makeCall returns does not leave the call in the engine`() {
+        gateway.duringMakeCall = { calls.onCallState(7, CallState.DISCONNECTED, 404) }
+        val id = dialOut("2002")
+        assertNull(calls.state.value)
+        assertEquals("a ligação do motor, sem dono, sai", listOf(id), gateway.hangups)
+    }
+
+    @Test
+    fun `state collectors run without the CallManager lock`() {
+        // Coletores que rodam na hora, na thread de quem publica (como os de Dispatchers.Main.immediate na
+        // thread principal): se a publicação fosse com a trava presa, outra thread não conseguiria usar o
+        // CallManager enquanto eles rodam.
+        val heldDuring = mutableListOf<String>()
+        val scope = CoroutineScope(Dispatchers.Unconfined)
+        scope.launch { calls.state.collect { if (it != null && lockedOut()) heldDuring += "estado ${it.phase}" } }
+        scope.launch { calls.endMessage.collect { if (it.isNotEmpty() && lockedOut()) heldDuring += "aviso $it" } }
+        calls.onIncoming(1, "3001", "")
+        calls.answer()
+        calls.onCallState(1, CallState.CONFIRMED, 200)
+        calls.onCallState(1, CallState.DISCONNECTED, 200)
+        registered = false
+        calls.dial("2002")
+        scope.cancel()
+        assertEquals(emptyList<String>(), heldDuring)
+    }
+
+    // Outra thread tenta usar o CallManager por até 1 s: true se não conseguiu (a trava estava presa).
+    private fun lockedOut(): Boolean {
+        val other = thread { calls.isRinging(1) }
+        other.join(1_000)
+        return other.isAlive
     }
 }

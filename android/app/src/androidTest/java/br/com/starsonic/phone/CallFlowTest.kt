@@ -1,10 +1,15 @@
 package br.com.starsonic.phone
 
+import android.app.Instrumentation
 import android.app.Notification
 import android.app.NotificationManager
+import android.content.Intent
 import android.os.Build
+import android.os.Bundle
 import android.os.SystemClock
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -15,14 +20,20 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
+import br.com.starsonic.phone.call.CallActionReceiver
+import br.com.starsonic.phone.call.CallActivity
 import br.com.starsonic.phone.call.CallPhase
+import br.com.starsonic.phone.call.IncomingCallNotifier
 import br.com.starsonic.phone.data.Account
 import br.com.starsonic.phone.data.CallKind
+import br.com.starsonic.phone.data.Recent
 import br.com.starsonic.phone.engine.Transport
 import br.com.starsonic.phone.main.MainActivity
 import java.util.regex.Pattern
 import org.junit.After
+import org.junit.AfterClass
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.FixMethodOrder
 import org.junit.Rule
@@ -37,7 +48,11 @@ import org.junit.runners.MethodSorters
  *
  * Cada teste começa com a conta gravada por TCP (o CI confere que o último REGISTER aceito veio por TCP) e o
  * app aberto, que inicia o serviço; as recebidas tocam com o app em segundo plano (UiDevice.pressHome). Os
- * botões da notificação de ligação são do Android: o CI sobe o emulador em pt-BR (Atender e Recusar).
+ * botões da notificação de ligação são do Android: o CI sobe o emulador em pt-BR (Atender e Recusar). O Recentes
+ * começa vazio em cada teste.
+ *
+ * No fim, uma "Nota do teste" na saída do am instrument conta os toques repetidos nos botões da notificação
+ * (o run-emulator-tests.sh a mostra numa anotação).
  */
 @RunWith(AndroidJUnit4::class)
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
@@ -58,6 +73,11 @@ class CallFlowTest {
         device.executeShellCommand("svc power stayon true")
         device.executeShellCommand("wm dismiss-keyguard")
         emulator.startClean()
+        app.recents.clear()
+        // Uma notificação de ligação que sobrou de um teste que falhou não engana o próximo.
+        val notifications = app.getSystemService(NotificationManager::class.java)
+        notifications.activeNotifications.filter { it.notification.channelId == "ligacoes" }
+            .forEach { notifications.cancel(it.tag, it.id) }
         app.store.save(Account(emulator.registrar, Transport.TCP, "2001", emulator.senha))
         scenario = ActivityScenario.launch(MainActivity::class.java)
         emulator.waitForText("Conectado · 2001")
@@ -140,12 +160,104 @@ class CallFlowTest {
         tapSystemButton("Atender") { answered() }
         emulator.waitUntil("a ligação atendida") { app.calls.state.value?.phase == CallPhase.ACTIVE }
         val before = emulator.callLog().size
+        val recents = app.recents.list().size
         assertEquals("OK", emulator.control("RING 2001"))
         waitForLog(before, "inv-out 2001 486")
-        emulator.waitUntil("a perdida no Recentes") { app.recents.list().firstOrNull()?.kind == CallKind.PERDIDA }
+        emulator.waitUntil("a segunda como perdida no Recentes") {
+            val list = app.recents.list()
+            list.size == recents + 1 && list.first().kind == CallKind.PERDIDA
+        }
         assertEquals("a primeira segue", CallPhase.ACTIVE, app.calls.state.value?.phase)
         assertEquals("OK", emulator.control("HANGUP 2001"))
         emulator.waitUntil("a primeira acabar") { app.calls.state.value == null }
+    }
+
+    @Test
+    fun aNewNotifierRemovesAStuckIncomingNotification() {
+        // O processo morreu com a recebida tocando: a notificação (com o toque) ficou. Num processo novo não há
+        // ligação, e o notificador que nasce a tira.
+        val id = fakeCallId()
+        app.notifier.showIncoming(id, "3001", "Cliente Teste")
+        emulator.waitUntil("a notificação de ligação", details = ::notifications) { callNotification() != null }
+        IncomingCallNotifier(app)
+        emulator.waitUntil("a notificação presa sair", details = ::notifications) { callNotification() == null }
+    }
+
+    @Test
+    fun answerOfACallThatIsNotRingingRemovesTheNotification() {
+        val id = fakeCallId()
+        app.notifier.showIncoming(id, "3001", "Cliente Teste")
+        emulator.waitUntil("a notificação de ligação", details = ::notifications) { callNotification() != null }
+        app.startActivity(CallActivity.intent(app).setAction(CallActivity.ACTION_ANSWER).putExtra(CallActivity.EXTRA_CALL_ID, id))
+        emulator.waitUntil("a notificação presa sair", details = ::notifications) { callNotification() == null }
+        assertNull("nada foi atendido", app.calls.state.value)
+    }
+
+    @Test
+    fun declineOfACallThatIsNotRingingRemovesTheNotification() {
+        val id = fakeCallId()
+        app.notifier.showIncoming(id, "3001", "Cliente Teste")
+        emulator.waitUntil("a notificação de ligação", details = ::notifications) { callNotification() != null }
+        app.sendBroadcast(
+            Intent(app, CallActionReceiver::class.java)
+                .setAction(IncomingCallNotifier.ACTION_DECLINE)
+                .putExtra(CallActivity.EXTRA_CALL_ID, id),
+        )
+        emulator.waitUntil("a notificação presa sair", details = ::notifications) { callNotification() == null }
+    }
+
+    @Test
+    fun dialFromRecentsWithoutRegistrationShowsTheMessage() {
+        // A conta com a senha errada: o servidor recusa o registro, e o app fica sem conexão.
+        scenario?.close()
+        emulator.startClean()
+        app.recents.add(Recent("2002", "", CallKind.FEITA, System.currentTimeMillis(), 0))
+        app.store.save(Account(emulator.registrar, Transport.TCP, "2001", "senha-errada"))
+        scenario = ActivityScenario.launch(MainActivity::class.java)
+        emulator.waitForText("Ramal ou senha incorretos.")
+        compose.onNodeWithTag("aba-recentes").performClick()
+        emulator.waitUntil("a linha do Recentes") { emulator.showsTag("recente") }
+        compose.onAllNodesWithTag("recente").onFirst().performClick()
+        emulator.waitForText("Sem conexão com o servidor. Tente de novo em instantes.")
+        assertNull("nada foi discado", app.calls.state.value)
+    }
+
+    @Test
+    fun silenceKeepsTheIncomingNotificationWithoutTheRing() {
+        // O volume apertado durante o toque (Telecom: onSilence): a notificação fica, sem o toque que se repete.
+        val id = fakeCallId()
+        app.notifier.showIncoming(id, "3001", "Cliente Teste")
+        emulator.waitUntil("a notificação de ligação que toca", details = ::notifications) {
+            callNotification()?.let { it.flags and Notification.FLAG_INSISTENT != 0 } == true
+        }
+        app.notifier.silence(id)
+        emulator.waitUntil("a notificação de ligação sem o toque", details = ::notifications) {
+            callNotification()?.let { it.flags and Notification.FLAG_INSISTENT == 0 } == true
+        }
+        app.notifier.stopRinging(id)
+        emulator.waitUntil("a notificação sair", details = ::notifications) { callNotification() == null }
+    }
+
+    @Test
+    fun theCallBarWaitsForTheAnswer() {
+        // Com o app na frente: enquanto a recebida toca, nada de "Ligação em andamento"; atendida, a faixa aparece.
+        assertEquals("OK", emulator.control("RING 2001"))
+        emulator.waitUntil("a ligação tocando") { app.calls.state.value?.phase == CallPhase.RINGING }
+        Thread.sleep(1_000)
+        assertEquals("a faixa da ligação enquanto toca", false, emulator.showsTag("voltar-ligacao"))
+        app.calls.answer()
+        emulator.waitUntil("a ligação atendida") { app.calls.state.value?.phase == CallPhase.ACTIVE }
+        emulator.waitUntil("a faixa da ligação") { emulator.showsTag("voltar-ligacao") }
+        assertEquals("OK", emulator.control("HANGUP 2001"))
+        emulator.waitUntil("a ligação acabar") { app.calls.state.value == null }
+    }
+
+    @Test
+    fun theChosenTabSurvivesRecreation() {
+        compose.onNodeWithTag("aba-recentes").performClick()
+        emulator.waitForText("Nenhuma ligação ainda.")
+        scenario!!.recreate()
+        emulator.waitForText("Nenhuma ligação ainda.")
     }
 
     // Disca no Teclado do app (na frente) e toca Ligar.
@@ -177,6 +289,7 @@ class CallFlowTest {
             device.waitForIdle()
             found.click()
             if (within(5_000, took)) return
+            repeatedTaps[label] = (repeatedTaps[label] ?: 0) + 1
         }
         throw AssertionError("O botão $label da notificação não respondeu a 3 toques.\nNa tela: ${visibleTexts()}\n${notifications()}")
     }
@@ -212,7 +325,25 @@ class CallFlowTest {
     private fun visibleTexts(): List<String> =
         device.findObjects(By.text(Pattern.compile(".+"))).mapNotNull { "${it.applicationPackage}:${it.text}" }.take(40)
 
-    private companion object {
-        const val SYSTEM_UI = "com.android.systemui"
+    // Um id de ligação que o motor nunca deu (as notificações de teste sem ligação), sempre maior que o anterior.
+    private fun fakeCallId(): Int = ++lastFakeId
+
+    companion object {
+        private const val SYSTEM_UI = "com.android.systemui"
+
+        // Os toques repetidos nos botões da notificação, por botão, e os ids das notificações de teste.
+        private val repeatedTaps = mutableMapOf("Atender" to 0, "Recusar" to 0)
+        private var lastFakeId = 1_000
+
+        /** Conta os toques repetidos na saída do am instrument (o run-emulator-tests.sh a mostra numa anotação). */
+        @AfterClass
+        @JvmStatic
+        fun reportRepeatedTaps() {
+            val total = repeatedTaps.values.sum()
+            val each = repeatedTaps.entries.joinToString { "${it.key} ${it.value}" }
+            val note = "Nota do teste: CallFlowTest: toques repetidos nos botões da notificação: $total ($each)"
+            InstrumentationRegistry.getInstrumentation()
+                .sendStatus(0, Bundle().apply { putString(Instrumentation.REPORT_KEY_STREAMRESULT, "\n$note\n") })
+        }
     }
 }

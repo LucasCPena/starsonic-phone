@@ -63,6 +63,9 @@ class IncomingCallNotifier(private val context: Context) : CallNotifier {
         }
     }
 
+    /** O volume apertado durante o toque (stub do fix round 1: a implementação vem no verde). */
+    fun silence(callId: Int) {}
+
     override fun stopRinging(callId: Int) {
         synchronized(lock) {
             stoppedUpTo = maxOf(stoppedUpTo, callId)
