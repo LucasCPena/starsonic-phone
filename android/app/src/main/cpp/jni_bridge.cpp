@@ -85,9 +85,10 @@ const char* CheckName(Check check) {
     return "invalid";
 }
 
-// [ok|empty|invalid, normalizado]; o normalizado só vem quando é ok. nullptr com exceção pendente.
+// [ok|empty|invalid, texto]: o valor normalizado quando é ok, senão o aviso da tela Entrar. nullptr com
+// exceção pendente.
 template <typename Check>
-jobjectArray CheckResult(JNIEnv* env, Check check, const std::wstring& normalized) {
+jobjectArray CheckResult(JNIEnv* env, Check check, const std::wstring& text) {
     jclass stringClass = env->FindClass("java/lang/String");
     if (stringClass == nullptr) return nullptr;
     jobjectArray result = env->NewObjectArray(2, stringClass, nullptr);
@@ -97,7 +98,7 @@ jobjectArray CheckResult(JNIEnv* env, Check check, const std::wstring& normalize
     if (name == nullptr) return nullptr;
     env->SetObjectArrayElement(result, 0, name);
     env->DeleteLocalRef(name);
-    jstring value = ToJava(env, check == Check::Ok ? normalized : std::wstring());
+    jstring value = ToJava(env, text);
     if (value == nullptr) return nullptr;
     env->SetObjectArrayElement(result, 1, value);
     env->DeleteLocalRef(value);
@@ -122,14 +123,15 @@ JNIEXPORT jobjectArray JNICALL Java_br_com_starsonic_phone_Native_validateServer
                                                                                  jstring raw) {
     std::wstring normalized;
     const starsonic::ServerCheck check = starsonic::ValidateServerAddress(ToWide(env, raw), &normalized);
-    return CheckResult(env, check, normalized);
+    return CheckResult(env, check,
+                       check == starsonic::ServerCheck::Ok ? normalized : starsonic::ServerCheckMessage(check));
 }
 
 JNIEXPORT jobjectArray JNICALL Java_br_com_starsonic_phone_Native_validateRamal(JNIEnv* env, jobject /* native */,
                                                                                 jstring raw) {
     std::wstring normalized;
     const starsonic::RamalCheck check = starsonic::ValidateRamal(ToWide(env, raw), &normalized);
-    return CheckResult(env, check, normalized);
+    return CheckResult(env, check, check == starsonic::RamalCheck::Ok ? normalized : starsonic::RamalCheckMessage(check));
 }
 
 JNIEXPORT jstring JNICALL Java_br_com_starsonic_phone_Native_registrationMessage(JNIEnv* env, jobject /* native */,

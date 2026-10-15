@@ -76,6 +76,22 @@ ServerCheck ValidateServerAddress(const std::wstring& raw, std::wstring* normali
     return ServerCheck::Ok;
 }
 
+std::wstring ServerCheckMessage(ServerCheck check) {
+    switch (check) {
+        case ServerCheck::Ok:
+            return L"";
+        case ServerCheck::Empty:
+            return L"Digite o endere\u00e7o do servidor.";
+        case ServerCheck::Invalid:
+            break;
+    }
+    return L"Digite s\u00f3 o endere\u00e7o do servidor, como starcloud1-starsonic.com.br.";
+}
+
+std::wstring RamalCheckMessage(RamalCheck check) {
+    return check == RamalCheck::Ok ? L"" : L"Digite s\u00f3 o n\u00famero do ramal.";
+}
+
 std::wstring AddressFromServer(const std::wstring& server) {
     const size_t colon = server.rfind(L':');
     if (colon == std::wstring::npos) return server;

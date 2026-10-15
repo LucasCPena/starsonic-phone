@@ -94,7 +94,7 @@ abstract class PerfilSemComentarios : DefaultTask() {
     @TaskAction
     fun gerar() {
         val linhas = perfil.get().asFile.readLines(Charsets.UTF_8).mapNotNull { linha ->
-            linha.removePrefix("﻿").substringBefore(';').trim().takeIf { it.isNotEmpty() && !it.startsWith("#") }
+            linha.removePrefix("\uFEFF").substringBefore(';').trim().takeIf { it.isNotEmpty() && !it.startsWith("#") }
         }
         saida.get().file("perfil.ini").asFile.writeText(linhas.joinToString("\n", postfix = "\n"), Charsets.UTF_8)
     }

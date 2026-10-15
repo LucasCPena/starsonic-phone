@@ -15,13 +15,18 @@ class NativeLoadTest {
             arrayOf("ok", "starcloud1-starsonic.com.br"),
             Native.validateServer(" Starcloud1-Starsonic.com.br "),
         )
-        assertArrayEquals(arrayOf("invalid", ""), Native.validateServer("servidor:5060"))
+        assertArrayEquals(
+            arrayOf("invalid", "Digite só o endereço do servidor, como starcloud1-starsonic.com.br."),
+            Native.validateServer("servidor:5060"),
+        )
+        assertArrayEquals(arrayOf("empty", "Digite o endereço do servidor."), Native.validateServer(" "))
     }
 
     @Test
     fun validateRamalTrims() {
         assertArrayEquals(arrayOf("ok", "2001"), Native.validateRamal(" 2001 "))
-        assertArrayEquals(arrayOf("empty", ""), Native.validateRamal("  "))
+        assertArrayEquals(arrayOf("empty", "Digite só o número do ramal."), Native.validateRamal("  "))
+        assertArrayEquals(arrayOf("invalid", "Digite só o número do ramal."), Native.validateRamal("20 01"))
     }
 
     @Test

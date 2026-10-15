@@ -85,6 +85,17 @@ class CheckSourceTextTest(unittest.TestCase):
         self.write("starsonic/generated/build_info.h", 'auto t = L"ç";\n')
         self.assertEqual(self.problems(), [])
 
+    def test_android_native_sources_are_checked(self):
+        self.write("android/app/src/main/cpp/jni_bridge.cpp", 'int x;\nauto t = L"ação";\n')
+        found = self.problems()
+        self.assertEqual([(path, line) for path, line, _ in found],
+                         [("android/app/src/main/cpp/jni_bridge.cpp", 2)] * 2)
+
+    def test_android_build_outputs_are_ignored(self):
+        self.write("android/app/.cxx/Debug/x86_64/CMakeFiles/gerado.cpp", 'auto t = L"ç";\n')
+        self.write("android/app/build/intermediates/cxx/gerado.h", 'auto t = L"ç";\n')
+        self.assertEqual(self.problems(), [])
+
     def test_langpack_with_accents_needs_utf8_bom(self):
         # O MicroSIP só lê a tradução como UTF-8 quando ela começa com BOM; sem ele, usa a página
         # de código do Windows e os acentos viram lixo na tela.

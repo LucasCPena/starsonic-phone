@@ -36,6 +36,11 @@ enum class ServerCheck { Ok, Empty, Invalid };
 // *normalized só é escrito quando o resultado é Ok.
 ServerCheck ValidateServerAddress(const std::wstring& raw, std::wstring* normalized);
 
+// Avisos da tela Entrar (tabela 11.1 do Windows) para o resultado de ValidateServerAddress e de
+// ValidateRamal; L"" quando é Ok. Os mesmos textos no Windows e no Android.
+std::wstring ServerCheckMessage(ServerCheck check);
+std::wstring RamalCheckMessage(RamalCheck check);
+
 // Endereço guardado no campo server de uma conta: o texto sem o ":<1 a 5 dígitos>" do fim.
 std::wstring AddressFromServer(const std::wstring& server);
 

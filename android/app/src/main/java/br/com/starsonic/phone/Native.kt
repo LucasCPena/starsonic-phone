@@ -9,10 +9,10 @@ object Native {
         System.loadLibrary("starsonic")
     }
 
-    /** ValidateServerAddress: [ok|empty|invalid, endereço normalizado (vazio quando não é ok)]. */
+    /** ValidateServerAddress: [ok, endereço normalizado] ou [empty|invalid, aviso da tela Entrar]. */
     external fun validateServer(raw: String): Array<String>
 
-    /** ValidateRamal: [ok|empty|invalid, ramal normalizado (vazio quando não é ok)]. */
+    /** ValidateRamal: [ok, ramal normalizado] ou [empty|invalid, aviso da tela Entrar]. */
     external fun validateRamal(raw: String): Array<String>
 
     /** RegistrationMessage (sem TLS no Android): o aviso de uma falha do registro; "" para 100 a 299. */

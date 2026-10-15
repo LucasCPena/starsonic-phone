@@ -121,6 +121,19 @@ TEST_CASE("ValidateServerAddress rejects malformed labels and lengths") {
     CHECK(normalized == longest);
 }
 
+TEST_CASE("ServerCheckMessage gives the Entrar text of each result") {
+    CHECK(ServerCheckMessage(ServerCheck::Ok).empty());
+    CHECK(ServerCheckMessage(ServerCheck::Empty) == L"Digite o endere\u00e7o do servidor.");
+    CHECK(ServerCheckMessage(ServerCheck::Invalid) ==
+          L"Digite s\u00f3 o endere\u00e7o do servidor, como starcloud1-starsonic.com.br.");
+}
+
+TEST_CASE("RamalCheckMessage gives the Entrar text of each result") {
+    CHECK(RamalCheckMessage(RamalCheck::Ok).empty());
+    CHECK(RamalCheckMessage(RamalCheck::Empty) == L"Digite s\u00f3 o n\u00famero do ramal.");
+    CHECK(RamalCheckMessage(RamalCheck::Invalid) == L"Digite s\u00f3 o n\u00famero do ramal.");
+}
+
 TEST_CASE("AddressFromServer drops only a numeric port") {
     CHECK(AddressFromServer(L"h:5060") == L"h");
     CHECK(AddressFromServer(L"h") == L"h");

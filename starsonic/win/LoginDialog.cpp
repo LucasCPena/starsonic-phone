@@ -162,18 +162,16 @@ void CStarsonicLoginDlg::OnClickedEntrar() {
     std::wstring address;
     const starsonic::ServerCheck serverCheck = starsonic::ValidateServerAddress(Wide(serverText), &address);
     if (serverCheck != starsonic::ServerCheck::Ok) {
-        ShowMessage(serverCheck == starsonic::ServerCheck::Empty
-                        ? L"Digite o endere\u00e7o do servidor."
-                        : L"Digite s\u00f3 o endere\u00e7o do servidor, como starcloud1-starsonic.com.br.",
-                    true);
+        ShowMessage(starsonic::ServerCheckMessage(serverCheck).c_str(), true);
         GotoDlgCtrl(GetDlgItem(IDC_SS_SERVER));
         return;
     }
     CString ramalText;
     GetDlgItemText(IDC_SS_RAMAL, ramalText);
     std::wstring ramal;
-    if (starsonic::ValidateRamal(Wide(ramalText), &ramal) != starsonic::RamalCheck::Ok) {
-        ShowMessage(L"Digite s\u00f3 o n\u00famero do ramal.", true);
+    const starsonic::RamalCheck ramalCheck = starsonic::ValidateRamal(Wide(ramalText), &ramal);
+    if (ramalCheck != starsonic::RamalCheck::Ok) {
+        ShowMessage(starsonic::RamalCheckMessage(ramalCheck).c_str(), true);
         GotoDlgCtrl(GetDlgItem(IDC_SS_RAMAL));
         return;
     }

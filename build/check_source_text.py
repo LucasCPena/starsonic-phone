@@ -4,9 +4,10 @@
 O compilador da Microsoft lê fonte sem BOM na página de código do Windows; um
 acento dentro de um literal vira lixo na tela. Por isso:
 
-- em starsonic/ e tests/ (*.cpp, *.h), caractere fora do ASCII dentro de um
-  literal precisa ser escrito como escape (barra invertida + u + 4 dígitos);
-  comentários podem ter acentos;
+- em starsonic/, tests/ e android/ (*.cpp, *.h), caractere fora do ASCII
+  dentro de um literal precisa ser escrito como escape (barra invertida + u +
+  4 dígitos); comentários podem ter acentos; as saídas de build (build/, .cxx/)
+  ficam de fora;
 - starsonic/**/*.rc, branding/branding.h, build/*.h, build/*.ps1 e
   tests/smoke/*.ps1 precisam ser só ASCII (o compilador de recursos e o
   Windows PowerShell 5.1 leem esses arquivos na página de código do Windows);
@@ -21,9 +22,10 @@ import pathlib
 import sys
 
 BS = chr(92)  # barra invertida
-CPP_DIRS = ("starsonic", "tests")
+CPP_DIRS = ("starsonic", "tests", "android")
 CPP_SUFFIXES = (".cpp", ".h", ".hpp")
-SKIPPED_PARTS = {"third_party", "generated"}
+# Código de terceiros, gerado, e as saídas de build (o Gradle e o CMake do app escrevem em build/ e .cxx/).
+SKIPPED_PARTS = {"third_party", "generated", "build", ".cxx"}
 FIXABLE_PREFIXES = {"L", "u", "U", "u8"}
 
 
