@@ -65,18 +65,22 @@ class CallConnection(
     }
 
     override fun onShowIncomingCallUi() {
+        CallLog.i("Telecom: mostrar a recebida $callId")
         app.notifier.showIncoming(callId, number, name)
     }
 
     override fun onAnswer() {
+        CallLog.i("Telecom: atender $callId")
         app.calls.answer()
     }
 
     override fun onReject() {
+        CallLog.i("Telecom: recusar $callId")
         app.calls.reject()
     }
 
     override fun onDisconnect() {
+        CallLog.i("Telecom: desligar $callId")
         app.calls.hangup()
     }
 

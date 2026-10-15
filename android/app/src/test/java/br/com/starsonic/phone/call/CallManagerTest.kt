@@ -59,6 +59,12 @@ class CallManagerTest {
         assertEquals(CallUi("3001", "Cliente Teste", incoming = true, phase = CallPhase.RINGING), calls.state.value)
         assertTrue(gateway.rejects.isEmpty())
         assertTrue(recents.list().isEmpty())
+        // O Telecom pergunta antes de criar a Connection.
+        assertTrue(calls.isRinging(1))
+        assertEquals(1, calls.ringingId())
+        calls.answer()
+        assertFalse(calls.isRinging(1))
+        assertEquals(CallManager.NO_ID, calls.ringingId())
     }
 
     @Test

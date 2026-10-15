@@ -52,7 +52,9 @@ class Emulator(private val compose: ComposeTestRule) {
             Thread.sleep(100)
         }
         val extra = details().let { if (it.isEmpty()) "" else "\n$it" }
-        throw AssertionError("Sem $what em ${timeoutMillis / 1000} s.$extra\nMotor:\n${engineLog()}\nTela:\n${screen()}")
+        throw AssertionError(
+            "Sem $what em ${timeoutMillis / 1000} s.$extra\nMotor:\n${engineLog()}\nLigações:\n${callLogcat()}\nTela:\n${screen()}",
+        )
     }
 
     /** As primeiras linhas da árvore da tela do app (ou o motivo de não haver uma). */
@@ -64,11 +66,19 @@ class Emulator(private val compose: ComposeTestRule) {
         }
 
     /** As últimas linhas do motor no logcat (o app as escreve com a tag StarsonicMotor nos builds de debug). */
-    fun engineLog(): String {
+    fun engineLog(): String = logcat("StarsonicMotor:I", 15)
+
+    /**
+     * As últimas linhas do caminho das ligações (StarsonicLigacao, nos builds de debug) e os avisos do Telecom e
+     * das notificações do Android.
+     */
+    fun callLogcat(): String = logcat("StarsonicLigacao:V TelecomFramework:W NotificationService:W", 20)
+
+    private fun logcat(filter: String, lines: Int): String {
         val output = InstrumentationRegistry.getInstrumentation().uiAutomation
-            .executeShellCommand("logcat -d -v brief -s StarsonicMotor:I")
-        val lines = ParcelFileDescriptor.AutoCloseInputStream(output).bufferedReader().use { it.readLines() }
-        return lines.takeLast(20).joinToString("\n") { it.take(240) }
+            .executeShellCommand("logcat -d -v brief -s $filter")
+        val read = ParcelFileDescriptor.AutoCloseInputStream(output).bufferedReader().use { it.readLines() }
+        return read.filter { !it.startsWith("-----") }.takeLast(lines).joinToString("\n") { it.take(200) }
     }
 
     /** Um comando na porta de controle do registrador falso (ex.: PASSWORD <senha>, RING 2001): a resposta. */

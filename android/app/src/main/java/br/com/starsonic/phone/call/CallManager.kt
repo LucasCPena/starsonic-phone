@@ -248,6 +248,12 @@ class CallManager(
         current.incoming && current.id == callId && current.phase == CallPhase.RINGING && !current.ending
     }
 
+    /** O id da recebida que toca, ou [NO_ID]. */
+    fun ringingId(): Int = synchronized(lock) {
+        val current = call ?: return NO_ID
+        if (current.incoming && current.phase == CallPhase.RINGING && !current.ending) current.id else NO_ID
+    }
+
     /** Há uma feita esperando o Telecom (ele pergunta antes de criar a Connection dela). */
     fun isDialing(): Boolean = synchronized(lock) {
         val current = call ?: return false

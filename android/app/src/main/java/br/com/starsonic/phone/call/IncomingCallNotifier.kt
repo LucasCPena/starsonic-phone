@@ -53,9 +53,13 @@ class IncomingCallNotifier(private val context: Context) : CallNotifier {
     /** A notificação da recebida [callId] (o Telecom pede: onShowIncomingCallUi), se ela ainda toca. */
     fun showIncoming(callId: Int, number: String, name: String) {
         synchronized(lock) {
-            if (callId <= stoppedUpTo) return
+            if (callId <= stoppedUpTo) {
+                CallLog.i("notificação: a recebida $callId já parou de tocar")
+                return
+            }
             shownId = callId
             manager.notify(INCOMING_ID, incoming(callId, number, name))
+            CallLog.i("notificação: recebida $callId")
         }
     }
 

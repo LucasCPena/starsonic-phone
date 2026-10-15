@@ -173,12 +173,15 @@ class CallFlowTest {
         app.getSystemService(NotificationManager::class.java).activeNotifications
             .firstOrNull { it.notification.channelId == "ligacoes" }?.notification
 
-    private fun notifications(): String =
-        app.getSystemService(NotificationManager::class.java).activeNotifications.joinToString(prefix = "notificações: ") {
+    // A ligação do app e as notificações dele (canal/título/tipo de ligação), para as falhas.
+    private fun notifications(): String {
+        val shown = app.getSystemService(NotificationManager::class.java).activeNotifications.joinToString {
             val extras = it.notification.extras
             "${it.notification.channelId}/${extras.getCharSequence(Notification.EXTRA_TITLE)}" +
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) "/${extras.getInt(Notification.EXTRA_CALL_TYPE)}" else ""
         }
+        return "ligação: ${app.calls.state.value}; notificações: $shown"
+    }
 
     private fun visibleTexts(): List<String> =
         device.findObjects(By.text(Pattern.compile(".+"))).mapNotNull { it.text }.take(40)

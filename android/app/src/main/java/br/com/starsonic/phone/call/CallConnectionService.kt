@@ -29,23 +29,31 @@ class CallConnectionService : ConnectionService() {
 
     override fun onCreateIncomingConnection(manager: PhoneAccountHandle?, request: ConnectionRequest): Connection {
         val extras = request.extras ?: Bundle.EMPTY
-        val callId = extras.getInt(AndroidTelecom.EXTRA_CALL_ID, CallManager.NO_ID)
-        if (!app.calls.isRinging(callId)) return Connection.createFailedConnection(DisconnectCause(DisconnectCause.MISSED))
-        val number = extras.getString(AndroidTelecom.EXTRA_NUMBER).orEmpty()
-        val name = extras.getString(AndroidTelecom.EXTRA_NAME).orEmpty()
+        // Uma ligação por vez: sem o id nos extras, é a recebida que toca agora.
+        val callId = extras.getInt(AndroidTelecom.EXTRA_CALL_ID, CallManager.NO_ID).takeIf { it != CallManager.NO_ID }
+            ?: app.calls.ringingId()
+        val ringing = app.calls.isRinging(callId)
+        CallLog.i("Telecom: criar a recebida $callId (tocando: $ringing)")
+        if (!ringing) return Connection.createFailedConnection(DisconnectCause(DisconnectCause.MISSED))
+        val shown = app.calls.state.value
+        val number = extras.getString(AndroidTelecom.EXTRA_NUMBER) ?: shown?.number.orEmpty()
+        val name = extras.getString(AndroidTelecom.EXTRA_NAME) ?: shown?.name.orEmpty()
         return app.telecom.created(CallConnection(app, incoming = true, callId, number, name))
     }
 
     override fun onCreateIncomingConnectionFailed(manager: PhoneAccountHandle?, request: ConnectionRequest) {
         // O Android não deixou (uma ligação da operadora começou): ocupado, e a perdida é avisada.
         val callId = request.extras?.getInt(AndroidTelecom.EXTRA_CALL_ID, CallManager.NO_ID) ?: CallManager.NO_ID
+        CallLog.w("Telecom: a recebida $callId não foi criada")
         app.calls.onTelecomFailed(callId)
     }
 
     override fun onCreateOutgoingConnection(manager: PhoneAccountHandle?, request: ConnectionRequest): Connection {
         if (!app.telecom.takeOutgoing() || !app.calls.isDialing()) {
+            CallLog.i("Telecom: a feita já não é esperada")
             return Connection.createFailedConnection(DisconnectCause(DisconnectCause.LOCAL))
         }
+        CallLog.i("Telecom: criar a feita")
         val number = request.address?.schemeSpecificPart.orEmpty()
         val connection = app.telecom.created(CallConnection(app, incoming = false, CallManager.NO_ID, number, ""))
         app.calls.onOutgoingReady()   // o motor liga (numa thread própria)
@@ -53,6 +61,7 @@ class CallConnectionService : ConnectionService() {
     }
 
     override fun onCreateOutgoingConnectionFailed(manager: PhoneAccountHandle?, request: ConnectionRequest) {
+        CallLog.w("Telecom: a feita não foi criada")
         app.telecom.takeOutgoing()
         app.calls.onTelecomFailed(CallManager.NO_ID)
     }
@@ -90,6 +99,7 @@ class AndroidTelecom(private val app: App) : TelecomAdapter {
             .build()
         try {
             telecom.registerPhoneAccount(account)
+            CallLog.i("Telecom: conta registrada (ativa: ${telecom.getPhoneAccount(handle)?.isEnabled})")
         } catch (e: RuntimeException) {
             Log.w(TAG, "a conta do Telecom não foi registrada", e)
         }
@@ -99,7 +109,9 @@ class AndroidTelecom(private val app: App) : TelecomAdapter {
         try {
             // Uma ligação da operadora tocando ou em andamento põe o áudio do celular nesses modos.
             val carrierCall = audio.mode == AudioManager.MODE_IN_CALL || audio.mode == AudioManager.MODE_RINGTONE
-            telecom.isIncomingCallPermitted(handle) && !carrierCall
+            val permitted = telecom.isIncomingCallPermitted(handle)
+            CallLog.i("Telecom: recebida permitida $permitted, modo do áudio ${audio.mode}")
+            permitted && !carrierCall
         } catch (e: RuntimeException) {
             Log.w(TAG, "o Telecom não respondeu se a ligação pode entrar", e)
             true
@@ -117,6 +129,7 @@ class AndroidTelecom(private val app: App) : TelecomAdapter {
         }
         try {
             telecom.addNewIncomingCall(handle, extras)
+            CallLog.i("Telecom: recebida $callId entregue")
         } catch (e: RuntimeException) {
             Log.w(TAG, "o Telecom recusou a ligação recebida", e)
             app.calls.onTelecomFailed(callId)
