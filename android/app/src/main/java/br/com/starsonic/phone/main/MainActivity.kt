@@ -242,7 +242,8 @@ class MainActivity : ComponentActivity() {
      */
     @Composable
     private fun EditScreen() {
-        var model by remember { mutableStateOf(logins.current) }
+        // O modelo que já existe (uma recriação da activity) volta a ouvir os resultados do registro.
+        var model by remember { mutableStateOf(logins.current?.let { current -> loginModel { current } }) }
         val shown = model
         if (shown == null) {
             LaunchedEffect(Unit) {

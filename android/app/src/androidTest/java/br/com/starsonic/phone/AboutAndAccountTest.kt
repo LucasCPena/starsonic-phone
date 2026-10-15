@@ -255,14 +255,12 @@ class AboutAndAccountTest {
     private fun editableText(tag: String): String =
         compose.onNodeWithTag(tag).fetchSemanticsNode().config.getOrNull(SemanticsProperties.EditableText)?.text.orEmpty()
 
-    // O último pedido com [action] que o app mandou (o Espresso-Intents guarda todos); o compartilhar sai de uma
-    // coroutine, depois de o arquivo ser lido fora da thread principal.
+    // O último pedido com [action] que o app mandou (o Espresso-Intents guarda todos e os lê na thread principal); o
+    // compartilhar sai de uma coroutine, depois de o arquivo ser lido fora da thread principal.
     private fun sentIntent(action: String): Intent {
         var found: Intent? = null
         emulator.waitUntil("o pedido $action", 10_000) {
-            InstrumentationRegistry.getInstrumentation().runOnMainSync {
-                found = Intents.getIntents().lastOrNull { it.action == action }
-            }
+            found = Intents.getIntents().lastOrNull { it.action == action }
             found != null
         }
         return found!!
