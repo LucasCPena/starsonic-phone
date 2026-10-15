@@ -1,5 +1,8 @@
 package br.com.starsonic.phone.login
 
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.ViewModelStore
 import br.com.starsonic.phone.core.Check
 import br.com.starsonic.phone.core.Clock
 import br.com.starsonic.phone.core.CoreRules
@@ -285,6 +288,58 @@ class LoginViewModelTest {
         assertFalse(model.state.value.done)
         assertEquals(AccountCall("sip.exemplo.com.br", Transport.TCP, "2001", "antiga"), gateway.accounts.last())
         assertEquals(previous, store.account)
+    }
+
+    @Test
+    fun `a message from outside shows unless an attempt is waiting for the server`() {
+        // A senha recusada pelo servidor com o Editar já aberto.
+        store.account = Account("sip.exemplo.com.br", Transport.TCP, "2001", "antiga")
+        val model = model()
+        model.showMessage("Ramal ou senha incorretos.")
+        assertEquals("Ramal ou senha incorretos.", model.state.value.message)
+        // Com uma tentativa esperando o servidor, quem decide o aviso é o resultado dela.
+        model.onSenhaChange("nova")
+        model.submit()
+        model.showMessage("Ramal ou senha incorretos.")
+        assertEquals("", model.state.value.message)
+        assertTrue(model.state.value.loading)
+    }
+
+    @Test
+    fun `an account saved after the screen left still reaches whoever waits for it`() {
+        // Voltar no Editar entre o 200 e o fim da gravação: a tela sai, mas a conta nova é gravada, e o serviço
+        // (onSaved) precisa saber dela.
+        val previous = Account("sip.exemplo.com.br", Transport.TCP, "2001", "antiga")
+        store.account = previous
+        val queued = mutableListOf<Runnable>()
+        val saved = mutableListOf<Account>()
+        val models = ViewModelStore()
+        val factory = object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(modelClass: Class<T>): T = LoginViewModel(
+                core, gateway, store, clock, previous = previous, newFlow = ::FakeFlow,
+                background = Executor { queued += it }, onSaved = { saved += it },
+            ) as T
+        }
+        val model = ViewModelProvider(models, factory)[LoginViewModel::class.java]
+        model.onSenhaChange("nova")
+        model.submit()
+        model.onRegistration(200, true, gateway.lastId)
+        models.clear()   // a pessoa voltou: a tela saiu
+        queued.toList().forEach { it.run() }
+        assertEquals(listOf(previous.copy(senha = "nova")), saved)
+        assertEquals(previous.copy(senha = "nova"), store.account)
+    }
+
+    @Test
+    fun `a save that fails does not reach whoever waits for it`() {
+        val saved = mutableListOf<Account>()
+        store.failure = IOException("sem espaço no disco")
+        val model = LoginViewModel(core, gateway, store, clock, previous = null, newFlow = ::FakeFlow, onSaved = { saved += it })
+        model.fill("sip.exemplo.com.br", "2001", "senha-certa")
+        model.submit()
+        model.onRegistration(200, true, gateway.lastId)
+        assertTrue(saved.isEmpty())
     }
 
     @Test

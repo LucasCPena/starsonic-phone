@@ -91,13 +91,26 @@ class Emulator(private val compose: ComposeTestRule) {
      */
     fun callLogcat(): String = logcat("StarsonicLigacao:V TelecomFramework:W NotificationService:W", 20)
 
-    private fun logcat(filter: String, lines: Int): String {
-        val output = InstrumentationRegistry.getInstrumentation().uiAutomation
-            .executeShellCommand("logcat -d -v brief -s $filter")
-        val read = ParcelFileDescriptor.AutoCloseInputStream(output).bufferedReader().use { it.readLines() }
-        return read.filter { !it.startsWith("-----") && "Cannot find conference" !in it }
+    /** Alguma linha do motor no logcat (desde o último [clearLogcat]) tem [text]. */
+    fun engineLogHas(text: String): Boolean = logcatLines("StarsonicMotor:I").any { text in it }
+
+    /** Limpa o logcat: uma linha que aparece depois é nova. */
+    fun clearLogcat() {
+        shell("logcat -c")
+    }
+
+    private fun logcat(filter: String, lines: Int): String =
+        logcatLines(filter).filter { "Cannot find conference" !in it }
             .takeLast(lines)
             .joinToString("\n") { it.take(200) }
+
+    private fun logcatLines(filter: String): List<String> =
+        shell("logcat -d -v brief -s $filter").filter { !it.startsWith("-----") }
+
+    // Um comando no shell do aparelho; a saída, linha a linha (lida até o fim: o comando acabou).
+    private fun shell(command: String): List<String> {
+        val output = InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(command)
+        return ParcelFileDescriptor.AutoCloseInputStream(output).bufferedReader().use { it.readLines() }
     }
 
     /** Um comando na porta de controle do registrador falso (ex.: PASSWORD <senha>, RING 2001): a resposta. */

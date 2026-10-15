@@ -1,6 +1,7 @@
 package br.com.starsonic.phone.data
 
 import android.content.Context
+import android.content.SharedPreferences
 import br.com.starsonic.phone.engine.Transport
 import java.io.IOException
 
@@ -31,10 +32,12 @@ interface AccountStore {
  * transferência para outro celular.
  */
 class PreferencesAccountStore(
-    context: Context,
-    private val cipher: PasswordCipher = PasswordCipher(),
+    private val preferences: SharedPreferences,
+    private val cipher: PasswordSeal = PasswordCipher(),
 ) : AccountStore {
-    private val preferences = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+    /** A conta no arquivo "conta" do app. */
+    constructor(context: Context, cipher: PasswordSeal = PasswordCipher()) :
+        this(context.getSharedPreferences(FILE, Context.MODE_PRIVATE), cipher)
 
     override fun load(): Account? {
         val address = preferences.getString(KEY_ADDRESS, null) ?: return null

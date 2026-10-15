@@ -59,6 +59,7 @@ class LoginViewModel(
     private val newFlow: (CoreRules) -> LoginFlow = ::LoginFlowHandle,
     private val background: Executor = Executor { task -> thread(name = "starsonic-entrar") { task.run() } },
     private val log: (String) -> Unit = {},
+    private val onSaved: (Account) -> Unit = {},
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(
         previous?.let { LoginState(server = it.address, transport = it.transport, ramal = it.ramal, message = message) }
@@ -90,6 +91,9 @@ class LoginViewModel(
     fun onRamalChange(value: String) = mutableState.update { it.copy(ramal = value) }
 
     fun onSenhaChange(value: String) = mutableState.update { it.copy(senha = value) }
+
+    /** Um aviso de fora da tela. Esboço: não faz nada. */
+    fun showMessage(text: String) {}
 
     /**
      * Confere os campos e registra a conta. Espera o motor aceitar a conta (até alguns segundos com uma conta

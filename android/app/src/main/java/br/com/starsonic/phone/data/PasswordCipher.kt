@@ -9,14 +9,27 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
+/** Cifra e decifra a senha gravada: no app, o [PasswordCipher]. */
+interface PasswordSeal {
+    /** A senha cifrada. Lança exceção se a cifra falha. */
+    fun encrypt(senha: String): String
+
+    /** A senha, ou null se o texto não abre. */
+    fun decrypt(text: String): String?
+}
+
 /**
  * Cifra a senha da conta com AES-GCM e uma chave do Android Keystore (alias starsonic-senha), que não sai do
  * celular (spec 6.4). O texto cifrado é Base64 de: o tamanho do IV (1 byte), o IV e a senha cifrada com a tag.
  * A senha gravada que não abre vai a [log] (o motivo, nunca a senha).
  */
-class PasswordCipher(private val alias: String = ALIAS, private val log: (String) -> Unit = {}) {
+class PasswordCipher(
+    private val alias: String = ALIAS,
+    private val log: (String) -> Unit = {},
+    private val keyStore: () -> KeyStore = { KeyStore.getInstance(KEYSTORE).apply { load(null) } },
+) : PasswordSeal {
     /** A senha cifrada. Lança exceção se o Keystore falha. */
-    fun encrypt(senha: String): String {
+    override fun encrypt(senha: String): String {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, key())   // o Keystore escolhe o IV
         val iv = cipher.iv
@@ -25,7 +38,7 @@ class PasswordCipher(private val alias: String = ALIAS, private val log: (String
     }
 
     /** A senha, ou null se o texto não abre (a chave sumiu do Keystore ou o dado está estragado). */
-    fun decrypt(text: String): String? {
+    override fun decrypt(text: String): String? {
         return try {
             val key = existingKey()
             if (key == null) {

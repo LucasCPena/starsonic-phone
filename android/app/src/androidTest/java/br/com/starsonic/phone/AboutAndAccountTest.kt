@@ -172,6 +172,28 @@ class AboutAndAccountTest {
     }
 
     @Test
+    fun passwordRefusedDuringACallWaitsForTheCallToEnd() {
+        assertEquals("OK", emulator.control("RING 2001"))
+        emulator.waitUntil("a ligação tocando") { app.calls.state.value?.phase == CallPhase.RINGING }
+        app.calls.answer()
+        emulator.waitUntil("a ligação atendida") { app.calls.state.value?.phase == CallPhase.ACTIVE }
+        assertEquals("resposta a PASSWORD", "OK", emulator.control("PASSWORD outra"))
+        try {
+            assertTrue("o serviço de pé", SipService.reregister())
+            // A faixa mostra o aviso, mas a tela Entrar espera a ligação acabar.
+            emulator.waitForText("Ramal ou senha incorretos.")
+            Thread.sleep(2_000)
+            assertFalse("a tela Entrar no meio da ligação", emulator.showsTag("entrar"))
+            assertEquals("OK", emulator.control("HANGUP 2001"))
+            emulator.waitUntil("a ligação acabar") { app.calls.state.value == null }
+            emulator.waitUntil("a tela Entrar com o aviso") { emulator.showsTag("entrar") && emulator.showsTag("aviso") }
+            compose.onNodeWithTag("aviso").assert(hasText("Ramal ou senha incorretos."))
+        } finally {
+            assertEquals("resposta a PASSWORD", "OK", emulator.control("PASSWORD ${emulator.senha}"))
+        }
+    }
+
+    @Test
     fun passwordRefusedInTheBackgroundOpensEntrarOnTheNextOpening() {
         device.pressHome()
         assertEquals("resposta a PASSWORD", "OK", emulator.control("PASSWORD outra"))
@@ -187,6 +209,21 @@ class AboutAndAccountTest {
             val open = app.packageManager.getLaunchIntentForPackage(app.packageName)!!.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             app.startActivity(open)
             emulator.waitUntil("a tela Entrar com o aviso") { emulator.showsTag("entrar") && emulator.showsTag("aviso") }
+            compose.onNodeWithTag("aviso").assert(hasText("Ramal ou senha incorretos."))
+        } finally {
+            assertEquals("resposta a PASSWORD", "OK", emulator.control("PASSWORD ${emulator.senha}"))
+        }
+    }
+
+    @Test
+    fun passwordRefusedWithTheEditorOpenShowsTheMessage() {
+        openMenu("Editar conta")
+        emulator.waitUntil("o Editar") { emulator.showsTag("entrar") }
+        assertFalse("o Editar do menu abre sem aviso", emulator.showsTag("aviso"))
+        assertEquals("resposta a PASSWORD", "OK", emulator.control("PASSWORD outra"))
+        try {
+            assertTrue("o serviço de pé", SipService.reregister())
+            emulator.waitUntil("o aviso no Editar aberto") { emulator.showsTag("aviso") }
             compose.onNodeWithTag("aviso").assert(hasText("Ramal ou senha incorretos."))
         } finally {
             assertEquals("resposta a PASSWORD", "OK", emulator.control("PASSWORD ${emulator.senha}"))
@@ -210,6 +247,7 @@ class AboutAndAccountTest {
         assertTrue("o log do motor está no arquivo", "REGISTER" in text)
         assertFalse("a senha do teste não está no arquivo", emulator.senha in text)
         assertFalse("nem a resposta Digest do REGISTER", DIGEST_RESPONSE.containsMatchIn(text))
+        assertTrue("o REGISTER com o Authorization chegou, com a resposta escondida", "response=\"…\"" in text)
     }
 
     @Test
@@ -235,6 +273,7 @@ class AboutAndAccountTest {
     fun signOutReturnsToEntrarAndKeepsTheRecents() {
         app.recents.add(Recent("2002", "", CallKind.FEITA, System.currentTimeMillis(), 0))
         val recents = app.recents.list()
+        emulator.clearLogcat()   // a confirmação do desregistro que o motor escreve depois daqui é a do Sair
         openMenu("Sair da conta")
         compose.onNodeWithTag("sair-confirmar").performClick()
         emulator.waitUntil("a tela Entrar") { emulator.showsTag("entrar") }
@@ -243,6 +282,10 @@ class AboutAndAccountTest {
         emulator.waitUntil("a notificação fixa sair") { emulator.connectionNotificationTitle() == null }
         assertNull("a conta e a senha saíram", app.store.load())
         assertEquals("os Recentes ficam", recents, app.recents.list())
+        // Desregistrou (spec 7.1.6): o servidor confirmou o REGISTER com Expires 0, e o registrador já não tem o
+        // contato do ramal (o RING não tem para onde ligar).
+        emulator.waitUntil("o servidor confirmar a saída da conta") { emulator.engineLogHas(UNREGISTERED) }
+        assertEquals("o contato do ramal no registrador", "ERR no-contact", emulator.control("RING 2001"))
     }
 
     // Abre o menu da faixa (⋮) e toca no item.
@@ -284,6 +327,8 @@ class AboutAndAccountTest {
     }
 
     private companion object {
+        // A linha do motor quando o servidor confirma a saída da conta (SipEngine.cpp, RetireAccount).
+        const val UNREGISTERED = "a conta saiu do servidor"
         val DIGEST_RESPONSE = Regex("""response="[0-9a-f]{32}"""")
         val LIVE_STAGES = listOf(
             Stage.PRE_ON_CREATE, Stage.CREATED, Stage.STARTED, Stage.RESUMED, Stage.PAUSED, Stage.STOPPED, Stage.RESTARTED,

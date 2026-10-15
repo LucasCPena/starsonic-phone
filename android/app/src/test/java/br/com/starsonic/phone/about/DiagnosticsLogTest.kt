@@ -75,6 +75,18 @@ class DiagnosticsLogTest {
     }
 
     @Test
+    fun `a long line cut inside the digest response leaves none of it in the file`() {
+        // A linha passa do limite de 4000 caracteres, e o corte cai dentro da resposta: sobram 10 dígitos dela.
+        val start = "Authorization: Digest username=\"2001\", response=\""
+        val line = "x".repeat(4_000 - start.length - 10) + start + "0123456789abcdef0123456789abcdef\", algorithm=MD5"
+        val log = DiagnosticsLog(folder.root)
+        log.append(line)
+        val text = log.file().readText()
+        assertFalse(text, "0123456789" in text)
+        assertTrue(text, "username=\"2001\"" in text)
+    }
+
+    @Test
     fun `the file of an empty log exists to be shared`() {
         assertTrue(DiagnosticsLog(folder.root).file().exists())
     }
