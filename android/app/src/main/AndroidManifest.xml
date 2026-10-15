@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- O motor de ligações fala SIP com o servidor. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <!-- Sem backup na nuvem: a conta, a senha e os Recentes só ficam no celular (spec 6.4). -->
     <application
         android:name=".App"

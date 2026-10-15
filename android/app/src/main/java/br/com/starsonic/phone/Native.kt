@@ -23,4 +23,7 @@ object Native {
 
     /** NormalizeDialString: o número a discar, sem espaços, traços, pontos e parênteses. */
     external fun normalizeDialString(raw: String): String
+
+    /** O protocolo padrão do perfil (o texto do perfil.ini), o do campo Protocolo: "udp", "tcp" ou "" (perfil inválido). */
+    external fun profileTransport(profileText: String): String
 }

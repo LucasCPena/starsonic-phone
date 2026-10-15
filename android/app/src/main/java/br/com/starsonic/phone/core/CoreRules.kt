@@ -24,14 +24,42 @@ interface CoreRules {
     fun normalizeDialString(raw: String): String
 }
 
-/** O LoginFlow do núcleo para a tela Entrar. */
+/**
+ * O LoginFlow do núcleo (starsonic/core/LoginFlow.cpp) para a tela Entrar: a mesma espera pelo resultado do
+ * registro, com os avisos do núcleo pelo [CoreRules] (o Android não tem TLS). Quem usa sincroniza as chamadas.
+ */
 class LoginFlowHandle(private val core: CoreRules) {
     /** commit: registrou (gravar a conta e sair); rollback: falhou (voltar à conta anterior e avisar). */
     data class Outcome(val commit: Boolean, val rollback: Boolean, val message: String)
 
-    fun start() {}
+    private enum class State { IDLE, PENDING, DONE }
 
-    fun onRegistration(code: Int): Outcome? = null
+    private var state = State.IDLE
 
-    fun onTimeout(): Outcome? = null
+    /** Começa a esperar (do estado inicial ou depois de uma falha; nos outros, nada). */
+    fun start() {
+        if (state == State.IDLE) state = State.PENDING
+    }
+
+    /** Só vale esperando: 100 a 199 continua esperando (null), 200 a 299 confirma, o resto desfaz. */
+    fun onRegistration(code: Int): Outcome? {
+        if (state != State.PENDING || code in 100..199) return null
+        if (code in 200..299) {
+            state = State.DONE
+            return Outcome(commit = true, rollback = false, message = "")
+        }
+        state = State.IDLE
+        return Outcome(commit = false, rollback = true, message = core.registrationMessage(code))
+    }
+
+    /** O tempo acabou: desfaz com o aviso de "sem resposta" (código 0); o que chegar depois é ignorado. */
+    fun onTimeout(): Outcome? {
+        if (state != State.PENDING) return null
+        state = State.IDLE
+        return Outcome(commit = false, rollback = true, message = core.registrationMessage(NO_ANSWER))
+    }
+
+    private companion object {
+        const val NO_ANSWER = 0
+    }
 }

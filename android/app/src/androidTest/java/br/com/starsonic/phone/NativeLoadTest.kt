@@ -41,6 +41,13 @@ class NativeLoadTest {
     }
 
     @Test
+    fun profileTransportComesFromTheProfile() {
+        assertEquals("udp", Native.profileTransport("[conta]\nporta=5060\ntransporte=udp\n"))
+        assertEquals("tcp", Native.profileTransport("[conta]\nporta=5060\ntransporte=tcp\n"))
+        assertEquals("", Native.profileTransport("[conta]\ntransporte=tcp\n"))   // sem a porta: perfil inválido
+    }
+
+    @Test
     fun textCrossesTheBridgeUnchanged() {
         // UTF-16 do Java -> wchar_t de 32 bits -> UTF-16, com um caractere fora do plano básico (par substituto).
         val emoji = String(Character.toChars(0x1F600))

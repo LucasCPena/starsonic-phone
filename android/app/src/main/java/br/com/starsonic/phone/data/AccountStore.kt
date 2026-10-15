@@ -23,11 +23,45 @@ interface AccountStore {
     fun clear()
 }
 
-/** A conta no armazenamento privado do app. */
-class PreferencesAccountStore(context: Context) : AccountStore {
-    override fun load(): Account? = null
+/**
+ * A conta no armazenamento privado do app (SharedPreferences "conta"), com a senha cifrada pelo
+ * [PasswordCipher]. Desinstalar o app apaga tudo; o manifesto não deixa a conta ir para o backup.
+ */
+class PreferencesAccountStore(
+    context: Context,
+    private val cipher: PasswordCipher = PasswordCipher(),
+) : AccountStore {
+    private val preferences = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
 
-    override fun save(account: Account) {}
+    override fun load(): Account? {
+        val address = preferences.getString(KEY_ADDRESS, null) ?: return null
+        val ramal = preferences.getString(KEY_RAMAL, null) ?: return null
+        val transport = if (preferences.getString(KEY_TRANSPORT, null) == TCP) Transport.TCP else Transport.UDP
+        val sealed = preferences.getString(KEY_SENHA, null) ?: return null
+        val senha = cipher.decrypt(sealed) ?: return null
+        return Account(address, transport, ramal, senha)
+    }
 
-    override fun clear() {}
+    override fun save(account: Account) {
+        preferences.edit()
+            .putString(KEY_ADDRESS, account.address)
+            .putString(KEY_TRANSPORT, if (account.transport == Transport.TCP) TCP else UDP)
+            .putString(KEY_RAMAL, account.ramal)
+            .putString(KEY_SENHA, cipher.encrypt(account.senha))
+            .commit()   // no disco antes de a tela Entrar acabar
+    }
+
+    override fun clear() {
+        preferences.edit().clear().commit()
+    }
+
+    private companion object {
+        const val FILE = "conta"
+        const val KEY_ADDRESS = "servidor"
+        const val KEY_TRANSPORT = "protocolo"
+        const val KEY_RAMAL = "ramal"
+        const val KEY_SENHA = "senha-cifrada"
+        const val UDP = "udp"
+        const val TCP = "tcp"
+    }
 }
