@@ -89,7 +89,7 @@ class MainActivity : ComponentActivity() {
     private class LoginModelFactory(private val app: App) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            LoginViewModel(app.core, app.gateway, app.store, app.clock, app.defaultTransport) as T
+            LoginViewModel(app.core, app.gateway, app.store, app.clock, previous = null, defaultTransport = app.defaultTransport) as T
     }
 }
 

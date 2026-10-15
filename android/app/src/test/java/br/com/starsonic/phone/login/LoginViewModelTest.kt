@@ -11,6 +11,7 @@ import br.com.starsonic.phone.data.AccountStore
 import br.com.starsonic.phone.engine.EngineEvents
 import br.com.starsonic.phone.engine.SipGateway
 import br.com.starsonic.phone.engine.Transport
+import java.util.concurrent.Executor
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -27,7 +28,10 @@ class LoginViewModelTest {
     private val store = FakeStore()
     private val clock = FakeClock()
 
-    private fun model() = LoginViewModel(core, gateway, store, clock, newFlow = ::FakeFlow)
+    // A conta gravada vem de quem cria o modelo (no app, lida fora da thread principal); a volta à conta
+    // anterior depois do fim do tempo roda em [background] (aqui, na hora).
+    private fun model(background: Executor = Executor { it.run() }) =
+        LoginViewModel(core, gateway, store, clock, previous = store.load(), newFlow = ::FakeFlow, background = background)
 
     private fun LoginViewModel.fill(server: String, ramal: String, senha: String, transport: Transport = Transport.UDP) {
         onServerChange(server)
@@ -112,6 +116,35 @@ class LoginViewModelTest {
         assertNull(store.account)
         assertFalse(model.state.value.done)
         assertEquals("registro 0", model.state.value.message)
+    }
+
+    @Test
+    fun `the timeout rollback leaves the clock thread`() {
+        // A volta à conta anterior espera o motor (setAccount): não pode prender a thread do relógio.
+        val queued = mutableListOf<Runnable>()
+        val model = model(background = Executor { queued += it })
+        model.fill("sip.exemplo.com.br", "2001", "senha-certa")
+        model.submit()
+        clock.advance(15_000)
+        assertEquals(0, gateway.removals)
+        assertTrue(model.state.value.loading)
+        assertEquals(1, queued.size)
+        queued.single().run()
+        assertEquals(1, gateway.removals)
+        assertEquals("registro 0", model.state.value.message)
+        assertFalse(model.state.value.loading)
+    }
+
+    @Test
+    fun `the saved account comes from the caller and is not read again`() {
+        // O modelo nasce na thread principal: a conta gravada (Keystore e disco) já vem lida.
+        val saved = Account("sip.exemplo.com.br", Transport.TCP, "2001", "antiga")
+        store.account = saved
+        val model = LoginViewModel(core, gateway, store, clock, previous = saved, newFlow = ::FakeFlow)
+        assertEquals(0, store.loads)
+        assertEquals("sip.exemplo.com.br", model.state.value.server)
+        assertEquals(Transport.TCP, model.state.value.transport)
+        assertEquals("2001", model.state.value.ramal)
     }
 
     @Test
@@ -308,8 +341,12 @@ private class FakeGateway : SipGateway {
 
 private class FakeStore(var account: Account? = null) : AccountStore {
     var saves = 0
+    var loads = 0
 
-    override fun load() = account
+    override fun load(): Account? {
+        loads++
+        return account
+    }
 
     override fun save(account: Account) {
         this.account = account

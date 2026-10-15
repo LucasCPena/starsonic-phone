@@ -241,9 +241,9 @@ jobs:
           grep -q '^\[conta\]$' "$RUNNER_TEMP/perfil.ini" || fail "assets/perfil.ini sem a seção [conta]"
           if grep -q ';' "$RUNNER_TEMP/perfil.ini"; then fail "assets/perfil.ini com comentários"; fi
 
-      # O registrador falso no runner, para o LoginScreenTest: o emulador o vê em 10.0.2.2. A 5060 é a porta
-      # do branding/perfil.ini; a de controle (5070) troca a senha no teste da senha com acento. Ele fica
-      # rodando nos passos seguintes.
+      # O registrador falso no runner, para o LoginScreenTest e o ServiceTest: o emulador o vê em 10.0.2.2. A
+      # 5060 é a porta do branding/perfil.ini; a de controle (5070) troca a senha no teste da senha com acento
+      # e conta os REGISTER de cada ramal. Ele fica rodando nos passos seguintes.
       - name: Registrador falso
         if: ${{ !cancelled() && steps.gradle.outputs.apks == 'true' }}
         run: |
@@ -265,7 +265,8 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      # Cada linha do script roda à parte; a primeira que falha encerra o passo.
+      # Cada linha do script roda à parte; a primeira que falha encerra o passo. O ServiceTest deixa a conta
+      # gravada, e o check-boot.sh confere que o BOOT_COMPLETED (com o adb como root) registra o ramal de novo.
       - name: Testes no emulador
         id: emulador
         if: ${{ !cancelled() && steps.gradle.outputs.apks == 'true' }}
@@ -277,9 +278,12 @@ jobs:
           script: |
             bash build/android/run-emulator-tests.sh "$APK" "$TEST_APK" br.com.starsonic.phone.NativeLoadTest
             bash build/android/run-emulator-tests.sh "$APK" "$TEST_APK" br.com.starsonic.phone.LoginScreenTest -e registrar 10.0.2.2 -e porta 5070 -e senha senha-certa
+            bash build/android/run-emulator-tests.sh "$APK" "$TEST_APK" br.com.starsonic.phone.ServiceTest -e registrar 10.0.2.2 -e porta 5070 -e senha senha-certa
+            bash build/android/check-boot.sh 5070 2001
 
-      # O registrador guarda o User-Agent do último REGISTER e o protocolo do último REGISTER aceito; o
-      # LoginScreenTest termina os registros aceitos com o da senha com acento, por TCP.
+      # O registrador guarda o User-Agent do último REGISTER e o protocolo do último REGISTER aceito. O
+      # LoginScreenTest termina os registros aceitos com o da senha com acento, por TCP; o ServiceTest e o
+      # BOOT_COMPLETED, depois dele, também registram por TCP.
       - name: Conferir o User-Agent e o protocolo
         if: ${{ !cancelled() && steps.emulador.outcome == 'success' }}
         run: |

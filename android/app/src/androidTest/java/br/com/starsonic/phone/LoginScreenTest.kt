@@ -3,6 +3,7 @@ package br.com.starsonic.phone
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -18,6 +19,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import br.com.starsonic.phone.data.Account
 import br.com.starsonic.phone.engine.Transport
 import br.com.starsonic.phone.main.MainActivity
+import br.com.starsonic.phone.service.SipService
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
@@ -37,7 +39,10 @@ import org.junit.runners.MethodSorters
  * registrar (o endereço do registrador), porta (a porta de controle dele) e senha (a senha que ele aceita).
  *
  * Os testes rodam em ordem alfabética, e o último REGISTER que o registrador aceita é o do teste da senha
- * com acento, por TCP: o CI confere depois o User-Agent e que o protocolo desse registro foi o TCP.
+ * com acento, por TCP: o CI confere no fim o User-Agent e que o protocolo do último registro foi o TCP (o
+ * ServiceTest e a conferência do BOOT_COMPLETED, que vêm depois, também registram por TCP).
+ *
+ * Depois de um Entrar, o app inicia o SipService, que fica com a conta: cada teste começa parando o serviço.
  */
 @RunWith(AndroidJUnit4::class)
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
@@ -54,10 +59,15 @@ class LoginScreenTest {
 
     @Before
     fun openEntrar() {
-        // Sem conta gravada o app abre na tela Entrar; a conta de um teste anterior sai do motor.
+        // Sem conta gravada o app abre na tela Entrar. O serviço de um teste anterior para (a conta dele sai
+        // do motor), e a conta gravada e a que ainda estiver no motor saem.
+        SipService.stop(app)
+        waitUntil("o serviço parar") { !SipService.running }
         app.store.clear()
         app.gateway.removeAccount()
         scenario = ActivityScenario.launch(MainActivity::class.java)
+        // A tela aparece depois de o app ler a conta gravada, fora da thread principal.
+        waitUntil("a tela Entrar") { compose.onAllNodesWithTag("entrar").fetchSemanticsNodes().isNotEmpty() }
     }
 
     @After
@@ -155,6 +165,16 @@ class LoginScreenTest {
             Thread.sleep(100)
         }
         throw AssertionError("\"$text\" não apareceu em ${timeoutMillis / 1000} s.\nMotor:\n${engineLog()}\nTela:\n${screen()}")
+    }
+
+    /** Espera a condição (até 20 s); se ela não vem, a falha traz o fim do log do motor e a tela. */
+    private fun waitUntil(what: String, condition: () -> Boolean) {
+        val deadline = SystemClock.uptimeMillis() + 20_000
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (condition()) return
+            Thread.sleep(100)
+        }
+        throw AssertionError("Sem $what em 20 s.\nMotor:\n${engineLog()}\nTela:\n${screen()}")
     }
 
     private fun screen(): String =

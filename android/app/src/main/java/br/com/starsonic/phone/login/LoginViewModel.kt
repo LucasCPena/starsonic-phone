@@ -11,6 +11,7 @@ import br.com.starsonic.phone.data.Account
 import br.com.starsonic.phone.data.AccountStore
 import br.com.starsonic.phone.engine.SipGateway
 import br.com.starsonic.phone.engine.Transport
+import java.util.concurrent.Executor
 import kotlin.concurrent.thread
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -46,8 +47,10 @@ class LoginViewModel(
     private val gateway: SipGateway,
     private val store: AccountStore,
     private val clock: Clock,
+    @Suppress("UNUSED_PARAMETER") previous: Account?,
     defaultTransport: Transport = Transport.UDP,
     newFlow: (CoreRules) -> LoginFlow = ::LoginFlowHandle,
+    @Suppress("UNUSED_PARAMETER") background: Executor = Executor { it.run() },
 ) : ViewModel() {
     private val previous: Account? = store.load()
 
