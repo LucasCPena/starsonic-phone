@@ -136,9 +136,23 @@ class ConnectionTest {
         connection.claim(service)
         connection.adopt(service, account)
         engine.registration(200, true)
-        connection.setOnline(false)
+        connection.setOnline(service, false)
         assertEquals(Status("Sem internet", "Sem internet"), connection.status.value)
-        connection.setOnline(true)
+        connection.setOnline(service, true)
+        assertEquals(connected, connection.status.value)
+    }
+
+    @Test
+    fun `the network of a stopped service does not count`() {
+        // O aviso da rede de um serviço que já parou chega atrasado: o próximo serviço não fica "Sem internet".
+        connection.claim(service)
+        connection.adopt(service, account)
+        connection.release(service)
+        connection.setOnline(service, false)
+        val next = Any()
+        connection.claim(next)
+        connection.adopt(next, account)
+        engine.registration(200, true)
         assertEquals(connected, connection.status.value)
     }
 

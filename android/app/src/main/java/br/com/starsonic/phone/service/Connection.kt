@@ -138,9 +138,13 @@ class Connection(
         if (remove) engine?.removeAccount()
     }
 
-    /** Há rede ([NetworkMonitor.online]); sem ela, o status é "Sem internet". */
-    fun setOnline(online: Boolean) {
+    /**
+     * O serviço [owner] diz se há rede ([NetworkMonitor.online]); sem ela, o status é "Sem internet". O aviso
+     * de um serviço que já parou (atrasado) não conta.
+     */
+    fun setOnline(owner: Any, online: Boolean) {
         synchronized(lock) {
+            if (this.owner !== owner) return
             this.online = online
             publish()
         }

@@ -113,7 +113,7 @@ class SipService : Service() {
         if (!monitoring) {
             monitoring = true
             monitor.start(this)
-            scope.launch(Dispatchers.Default) { monitor.online.collect { app.connection.setOnline(it) } }
+            scope.launch(Dispatchers.Default) { monitor.online.collect { app.connection.setOnline(this@SipService, it) } }
         }
     }
 

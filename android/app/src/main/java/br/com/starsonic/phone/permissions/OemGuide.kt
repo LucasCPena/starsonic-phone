@@ -9,7 +9,7 @@ import java.util.Locale
  */
 enum class Guide(val title: String, val steps: List<String>) {
     XIAOMI(
-        "No Xiaomi, libere também o app nos ajustes:",
+        "Nos celulares Xiaomi, Redmi e POCO, libere também o app nos ajustes:",
         listOf(
             "Toque em Abrir ajustes.",
             "Ative Início automático.",
@@ -17,7 +17,7 @@ enum class Guide(val title: String, val steps: List<String>) {
         ),
     ),
     SAMSUNG(
-        "No Samsung, libere também o app nos ajustes:",
+        "Nos celulares Samsung, libere também o app nos ajustes:",
         listOf(
             "Toque em Abrir ajustes.",
             "Toque em Bateria.",
