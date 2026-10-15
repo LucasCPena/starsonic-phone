@@ -66,7 +66,7 @@ class CallConnection(
 
     override fun onShowIncomingCallUi() {
         CallLog.i { "Telecom: mostrar a recebida $callId" }
-        app.notifier.showIncoming(callId, number, name)
+        app.notifier.showIncoming(callId, number, name, address?.schemeSpecificPart.orEmpty())
     }
 
     // Android 10+: o volume apertado durante o toque. A notificação fica, sem o toque.

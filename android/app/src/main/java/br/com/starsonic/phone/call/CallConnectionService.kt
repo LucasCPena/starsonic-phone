@@ -28,20 +28,16 @@ class CallConnectionService : ConnectionService() {
         get() = application as App
 
     override fun onCreateIncomingConnection(manager: PhoneAccountHandle?, request: ConnectionRequest): Connection {
-        val extras = request.extras ?: Bundle.EMPTY
-        val callId = incomingId(request)
-        val ringing = app.calls.isRinging(callId)
-        CallLog.i { "Telecom: criar a recebida $callId (tocando: $ringing)" }
+        val call = incoming(request)
+        val ringing = app.calls.isRinging(call.callId)
+        CallLog.i { "Telecom: criar a recebida ${call.callId} (tocando: $ringing)" }
         if (!ringing) return Connection.createFailedConnection(DisconnectCause(DisconnectCause.MISSED))
-        val shown = app.calls.state.value
-        val number = extras.getString(AndroidTelecom.EXTRA_NUMBER) ?: shown?.number.orEmpty()
-        val name = extras.getString(AndroidTelecom.EXTRA_NAME) ?: shown?.name.orEmpty()
-        return app.telecom.created(CallConnection(app, incoming = true, callId, number, name))
+        return app.telecom.created(CallConnection(app, incoming = true, call.callId, call.number, call.name))
     }
 
     override fun onCreateIncomingConnectionFailed(manager: PhoneAccountHandle?, request: ConnectionRequest) {
         // O Android não deixou (uma ligação da operadora começou): ocupado, e a perdida é avisada.
-        val callId = incomingId(request)
+        val callId = incoming(request).callId
         CallLog.w { "Telecom: a recebida $callId não foi criada" }
         app.calls.onTelecomFailed(callId)
     }
@@ -64,10 +60,24 @@ class CallConnectionService : ConnectionService() {
         app.calls.onTelecomFailed(CallManager.NO_ID)
     }
 
-    // O id (no motor) da recebida do pedido; sem ele nos extras, a que toca agora (uma ligação por vez).
-    private fun incomingId(request: ConnectionRequest): Int =
-        request.extras?.getInt(AndroidTelecom.EXTRA_CALL_ID, CallManager.NO_ID)?.takeIf { it != CallManager.NO_ID }
-            ?: app.calls.ringingId()
+    // A recebida do pedido: os extras que o app mandou vêm aninhados (ver IncomingExtras).
+    private fun incoming(request: ConnectionRequest): IncomingRequest {
+        val top = request.extras
+        val nested = top?.getBundle(TelecomManager.EXTRA_INCOMING_CALL_EXTRAS)
+        return IncomingExtras.read(
+            nested = nested?.let(::BundleExtras),
+            top = top?.let(::BundleExtras),
+            ringing = app.calls.ringing(),
+            address = request.address?.schemeSpecificPart.orEmpty(),
+        )
+    }
+}
+
+/** Os [Extras] de um android.os.Bundle. */
+private class BundleExtras(private val bundle: Bundle) : Extras {
+    override fun int(key: String): Int? = if (bundle.containsKey(key)) bundle.getInt(key) else null
+
+    override fun string(key: String): String? = bundle.getString(key)
 }
 
 /**
@@ -121,10 +131,11 @@ class AndroidTelecom(private val app: App) : TelecomAdapter {
         }
 
     override fun addIncoming(callId: Int, number: String, name: String) {
+        // O Telecom devolve este pacote inteiro como os extras do pedido (onCreateIncomingConnection).
         val call = Bundle().apply {
-            putInt(EXTRA_CALL_ID, callId)
-            putString(EXTRA_NUMBER, number)
-            putString(EXTRA_NAME, name)
+            putInt(IncomingExtras.CALL_ID, callId)
+            putString(IncomingExtras.NUMBER, number)
+            putString(IncomingExtras.NAME, name)
         }
         val extras = Bundle().apply {
             putBundle(TelecomManager.EXTRA_INCOMING_CALL_EXTRAS, call)
@@ -202,10 +213,6 @@ class AndroidTelecom(private val app: App) : TelecomAdapter {
     }
 
     companion object {
-        const val EXTRA_CALL_ID = "br.com.starsonic.phone.extra.LIGACAO"
-        const val EXTRA_NUMBER = "br.com.starsonic.phone.extra.NUMERO"
-        const val EXTRA_NAME = "br.com.starsonic.phone.extra.NOME"
-
         private const val ACCOUNT_ID = "starsonic"
         private const val ACCOUNT_LABEL = "Starsonic Phone"
         private const val TAG = "StarsonicTelecom"

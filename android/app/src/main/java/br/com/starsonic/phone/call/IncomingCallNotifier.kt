@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.media.AudioAttributes
 import android.media.RingtoneManager
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.Person
 import br.com.starsonic.phone.App
@@ -23,6 +24,9 @@ import br.com.starsonic.phone.main.MainActivity
  *   (RingtoneManager.TYPE_RINGTONE, como toque de chamada) e vibra, pelo próprio canal: o Android o sujeita ao
  *   silencioso, ao vibrar e ao Não perturbe. Ele se repete (FLAG_INSISTENT) até a notificação sair
  *   ([stopRinging]).
+ * - "ligacoes-silenciadas" ("Ligações silenciadas", importância alta, sem som e sem vibração): a recebida depois
+ *   do volume apertado durante o toque ([silence]). A notificação é atualizada no lugar, nesse canal: o Android
+ *   para o toque e a vibração que se repetem, e ela continua no alto da tela.
  * - "perdidas" ("Ligações perdidas", importância padrão): "Ligação perdida de <número>"; tocar abre o Recentes.
  *
  * A notificação da recebida só aparece se a ligação ainda toca: um pedido do Telecom que chega depois de ela
@@ -37,7 +41,8 @@ class IncomingCallNotifier(private val context: Context) : CallNotifier {
     private var stoppedUpTo = 0   // as ligações com id até este já pararam de tocar
     private var shownId = 0       // a ligação da notificação que está lá
     private var shownCall = ""    // ...o número...
-    private var shownName = ""    // ...e o nome
+    private var shownName = ""    // ...o nome...
+    private var shownAddress = "" // ...e o endereço
 
     init {
         val ringtone = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
@@ -51,15 +56,24 @@ class IncomingCallNotifier(private val context: Context) : CallNotifier {
             vibrationPattern = VIBRATION
             lockscreenVisibility = Notification.VISIBILITY_PUBLIC
         }
+        val silenced = NotificationChannel(CHANNEL_SILENCED, CHANNEL_SILENCED_NAME, NotificationManager.IMPORTANCE_HIGH).apply {
+            setSound(null, null)
+            enableVibration(false)
+            lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+        }
         val missed = NotificationChannel(CHANNEL_MISSED, CHANNEL_MISSED_NAME, NotificationManager.IMPORTANCE_DEFAULT)
-        manager.createNotificationChannels(listOf(calls, missed))
+        manager.createNotificationChannels(listOf(calls, silenced, missed))
         // Um processo novo não tem ligação: a notificação que ficou de um processo que morreu (com o toque que se
         // repete) sai.
         manager.cancel(INCOMING_ID)
     }
 
-    /** A notificação da recebida [callId] (o Telecom pede: onShowIncomingCallUi), se ela ainda toca. */
-    fun showIncoming(callId: Int, number: String, name: String) {
+    /**
+     * A notificação da recebida [callId] (o Telecom pede: onShowIncomingCallUi), se ela ainda toca. [address] é o
+     * endereço da ligação no Telecom: o nome de quem liga, sem nome nem número. Uma falha do Android ao mostrá-la
+     * vai ao log e não derruba a ligação.
+     */
+    fun showIncoming(callId: Int, number: String, name: String, address: String = "") {
         synchronized(lock) {
             if (callId <= stoppedUpTo) {
                 CallLog.i { "notificação: a recebida $callId já parou de tocar" }
@@ -68,21 +82,21 @@ class IncomingCallNotifier(private val context: Context) : CallNotifier {
             shownId = callId
             shownCall = number
             shownName = name
-            manager.notify(INCOMING_ID, incoming(callId, number, name, ring = true))
-            CallLog.i { "notificação: recebida $callId" }
+            shownAddress = address
+            post(incoming(callId, ring = true), "recebida $callId")
         }
     }
 
     /**
      * O volume apertado durante o toque (Telecom: onSilence, Android 10+): a notificação da recebida [callId], que
-     * ainda toca, volta sem o toque e a vibração. Atualizar não para o toque que se repete: ela sai e volta.
+     * ainda toca, é atualizada no lugar (o mesmo id), no canal sem som e sem vibração e sem alertar de novo. O
+     * Android para o toque e a vibração que se repetem (o canal novo não tem nenhum dos dois), e ela continua no
+     * alto da tela.
      */
     fun silence(callId: Int) {
         synchronized(lock) {
             if (callId != shownId || callId <= stoppedUpTo) return
-            manager.cancel(INCOMING_ID)
-            manager.notify(INCOMING_ID, incoming(callId, shownCall, shownName, ring = false))
-            CallLog.i { "notificação: recebida $callId sem o toque" }
+            post(callId, ring = false, "recebida $callId sem o toque")
         }
     }
 
@@ -127,8 +141,20 @@ class IncomingCallNotifier(private val context: Context) : CallNotifier {
         manager.notify(text, MISSED_ID, notification)
     }
 
-    // A notificação da recebida; [ring] = o toque e a vibração do canal, repetidos até ela sair.
-    private fun incoming(callId: Int, number: String, name: String, ring: Boolean): Notification {
+    // Com a trava: mostra ou atualiza a notificação da recebida; uma falha do Android vai ao log (a ligação segue).
+    private fun post(callId: Int, ring: Boolean, what: String) {
+        try {
+            manager.notify(INCOMING_ID, incoming(callId, ring))
+            CallLog.i { "notificação: $what" }
+        } catch (e: RuntimeException) {
+            Log.w(TAG, "a notificação da $what não foi mostrada", e)
+        }
+    }
+
+    // Com a trava: a notificação da recebida [callId] mostrada (shownCall, shownName e shownAddress). Tocando
+    // ([ring]): o canal "ligacoes", com o toque e a vibração repetidos até ela sair. Silenciada: o canal sem som,
+    // sem alertar de novo.
+    private fun incoming(callId: Int, ring: Boolean): Notification {
         val screen = CallActivity.intent(context).putExtra(CallActivity.EXTRA_CALL_ID, callId)
         val fullScreen = PendingIntent.getActivity(context, REQUEST_SCREEN, screen, IMMUTABLE_UPDATE)
         val answer = PendingIntent.getActivity(
@@ -143,10 +169,14 @@ class IncomingCallNotifier(private val context: Context) : CallNotifier {
             Intent(context, CallActionReceiver::class.java).setAction(ACTION_DECLINE).putExtra(CallActivity.EXTRA_CALL_ID, callId),
             IMMUTABLE_UPDATE,
         )
-        val caller = Person.Builder().setName(name.ifEmpty { number }).setImportant(true).build()
-        return NotificationCompat.Builder(context, CHANNEL_CALLS)
+        // O CallStyle não aceita uma pessoa sem nome: o nome, o número, o endereço ou "Número desconhecido".
+        val caller = Person.Builder()
+            .setName(IncomingExtras.callerName(shownName, shownCall, shownAddress))
+            .setImportant(true)
+            .build()
+        return NotificationCompat.Builder(context, if (ring) CHANNEL_CALLS else CHANNEL_SILENCED)
             .setSmallIcon(R.drawable.ic_stat_starsonic)
-            .setContentText(if (name.isEmpty()) null else number)
+            .setContentText(if (shownName.isBlank()) null else shownCall)
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
@@ -154,7 +184,7 @@ class IncomingCallNotifier(private val context: Context) : CallNotifier {
             .setContentIntent(fullScreen)
             .setFullScreenIntent(fullScreen, true)
             .setStyle(NotificationCompat.CallStyle.forIncomingCall(caller, decline, answer))
-            .setSilent(!ring)
+            .setOnlyAlertOnce(!ring)
             .build()
             .apply { if (ring) flags = flags or Notification.FLAG_INSISTENT }
     }
@@ -166,13 +196,15 @@ class IncomingCallNotifier(private val context: Context) : CallNotifier {
         /** O canal das perdidas. */
         const val CHANNEL_MISSED = "perdidas"
 
-        /** O canal da recebida silenciada pelo volume (stub do fix round 2: ainda não usado). */
+        /** O canal da recebida silenciada pelo volume (sem som e sem vibração). */
         const val CHANNEL_SILENCED = "ligacoes-silenciadas"
 
         const val ACTION_DECLINE = "br.com.starsonic.phone.action.RECUSAR"
 
         private const val CHANNEL_CALLS_NAME = "Ligações"
         private const val CHANNEL_MISSED_NAME = "Ligações perdidas"
+        private const val CHANNEL_SILENCED_NAME = "Ligações silenciadas"
+        private const val TAG = "StarsonicNotificacao"
         private const val INCOMING_ID = 2   // a notificação fixa do serviço é a 1
         private const val MISSED_ID = 3
         private const val REQUEST_SCREEN = 1

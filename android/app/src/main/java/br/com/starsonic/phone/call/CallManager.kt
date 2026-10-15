@@ -253,14 +253,18 @@ class CallManager(
         current.incoming && current.id == callId && current.phase == CallPhase.RINGING && !current.ending
     }
 
-    /** O id da recebida que toca, ou [NO_ID]. */
-    fun ringingId(): Int = synchronized(lock) {
-        val current = call ?: return NO_ID
-        if (current.incoming && current.phase == CallPhase.RINGING && !current.ending) current.id else NO_ID
+    /**
+     * A recebida que toca agora (o id, o número e o nome), ou null. Vem do estado do CallManager, e não de [state]:
+     * o Telecom pode pedir a Connection antes de o estado ser publicado.
+     */
+    fun ringing(): IncomingRequest? = synchronized(lock) {
+        val current = call ?: return null
+        if (current.incoming && current.phase == CallPhase.RINGING && !current.ending) {
+            IncomingRequest(current.id, current.number, current.name)
+        } else {
+            null
+        }
     }
-
-    /** A recebida que toca (stub do fix round 2: a implementação vem no verde). */
-    fun ringing(): IncomingRequest? = null
 
     /** Há uma feita esperando o Telecom (ele pergunta antes de criar a Connection dela). */
     fun isDialing(): Boolean = synchronized(lock) {
@@ -406,6 +410,8 @@ class CallManager(
                     dialed.id = NO_ID
                     dialed.phase = CallPhase.DIALING   // o que veio da outra não vale
                     dialed.activeSince = 0L
+                    // Desligada enquanto tinha o id da outra: o pedido vale para esta (o adopt a desliga).
+                    if (dialed.localHangup) dialed.hangupWhenDialed = true
                     adopt(dialed, id, effects)
                     effects += { gateway.hangup(other) }
                 }

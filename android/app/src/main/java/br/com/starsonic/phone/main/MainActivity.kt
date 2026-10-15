@@ -34,6 +34,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.ViewModel
@@ -185,8 +186,8 @@ class MainActivity : ComponentActivity() {
             if (banner != null) WarningBanner(banner)
             // A recebida que ainda toca tem a notificação dela; a faixa é para a ligação atendida ou feita.
             if (call?.let { it.phase != CallPhase.RINGING } == true) ReturnToCall()
-            // O aviso de discar sem registro (ou de uma feita que não completou), para as duas abas.
-            if (message.isNotEmpty()) CallMessage(message)
+            // O aviso de discar sem registro (ou de uma feita que não completou), para as duas abas, numa vaga fixa.
+            CallMessage(message)
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 when (tab) {
                     TAB_RECENTS -> RecentsScreen(app.recents, onDial = { dial(it) })
@@ -212,7 +213,8 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // O aviso das ligações (spec 7.4 e 11.1), por 2 s, acima das abas.
+    // O aviso das ligações (spec 7.4 e 11.1), por 2 s, acima das abas. A vaga (duas linhas, no tamanho da letra
+    // do celular) fica sempre: o aviso aparece e some sem empurrar o teclado e a lista embaixo do dedo.
     @Composable
     private fun CallMessage(message: String) {
         Text(
@@ -220,6 +222,9 @@ class MainActivity : ComponentActivity() {
             color = MaterialTheme.colorScheme.error,
             style = MaterialTheme.typography.bodyMedium,
             textAlign = TextAlign.Center,
+            minLines = 2,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 8.dp)
@@ -243,7 +248,7 @@ class MainActivity : ComponentActivity() {
         )
     }
 
-    // Liga (do Teclado ou do Recentes) e abre a tela de chamada; sem registro, o aviso aparece no Teclado.
+    // Liga (do Teclado ou do Recentes) e abre a tela de chamada; sem registro, o aviso aparece acima das abas.
     private fun dial(number: String): Boolean {
         val dialed = app.calls.dial(number)
         if (dialed) startActivity(CallActivity.intent(this))
