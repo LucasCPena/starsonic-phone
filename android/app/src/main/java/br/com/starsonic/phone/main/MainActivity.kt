@@ -63,6 +63,9 @@ import br.com.starsonic.phone.permissions.WarningBanner
 import br.com.starsonic.phone.permissions.deviceGuide
 import br.com.starsonic.phone.service.Refusal
 import br.com.starsonic.phone.service.SipService
+import br.com.starsonic.phone.update.UpdateDialog
+import br.com.starsonic.phone.update.UpdateNotification
+import br.com.starsonic.phone.update.UpdateUi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
@@ -85,6 +88,9 @@ import kotlinx.coroutines.withContext
  *   incorretos." (com uma ligação em andamento, depois que ela acaba; com o Editar já aberto, o aviso aparece nele);
  *   com o app em segundo plano, a notificação fixa já mostra o aviso, e a próxima abertura vai para o Editar. Uma vez
  *   por recusa: quem sai do Editar não volta para ele até uma recusa nova.
+ * - A atualização (spec 7.6): cada abertura (onStart) confere o canal, se a última verificação tem mais de 24 h
+ *   ([br.com.starsonic.phone.update.Updater]), e o aviso aparece sobre a tela principal (UpdateDialog); a confirmação
+ *   do instalador do Android abre daqui, com o app na frente.
  *
  * A conta gravada é lida fora da thread principal (Keystore e disco), com a tela de abertura na frente. Com a
  * conta, a activity inicia o [SipService] ao abrir e a cada volta ao app (com a conta já no motor, ele não
@@ -167,6 +173,12 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+        // A confirmação do instalador do Android (a atualização baixada e conferida), aberta com o app na frente.
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                app.updateInstaller.confirmation.collect { confirm -> if (confirm != null) openInstaller(confirm) }
+            }
+        }
         setContent {
             StarsonicTheme {
                 Surface(Modifier.fillMaxSize()) {
@@ -206,6 +218,14 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         // A cada volta ao app com a conta gravada: se o Android fechou o serviço, ele volta.
         if (signedIn) SipService.start(this)
+        // Ao abrir: o canal de atualização, se a última verificação tem mais de 24 h (fora da thread principal).
+        app.updater.onScreen(true)
+        app.updater.checkSoon()
+    }
+
+    override fun onStop() {
+        app.updater.onScreen(false)
+        super.onStop()
     }
 
     override fun onResume() {
@@ -285,6 +305,7 @@ class MainActivity : ComponentActivity() {
         val banner = remember(resumes) { Grants.read(this@MainActivity).banner }
         val call by app.calls.state.collectAsState()
         val message by app.calls.endMessage.collectAsState()
+        val update by app.updater.ui.collectAsState()
         var confirmingSignOut by rememberSaveable { mutableStateOf(false) }
         Column(Modifier.fillMaxSize()) {
             Band(status = status.band) {
@@ -330,6 +351,12 @@ class MainActivity : ComponentActivity() {
                 },
                 onDismiss = { confirmingSignOut = false },
             )
+        }
+        // O aviso de atualização (versão nova, download, ligação em andamento, falha). Com o aviso da versão nova na
+        // tela, a notificação dela sai.
+        update?.let { shown ->
+            if (shown is UpdateUi.Offer) LaunchedEffect(shown) { UpdateNotification.cancel(this@MainActivity) }
+            UpdateDialog(shown, onUpdate = app.updater::accept, onDismiss = app.updater::dismiss)
         }
     }
 
@@ -430,6 +457,19 @@ class MainActivity : ComponentActivity() {
             } catch (e: ActivityNotFoundException) {
                 // Nenhum app para receber: nada a fazer.
             }
+        }
+    }
+
+    // A confirmação do Android para instalar a versão nova (a pessoa toca em "Atualizar" lá), se outra tela do app não a
+    // pegou antes; sai da fila mesmo se não abrir.
+    private fun openInstaller(confirm: Intent) {
+        if (!app.updateInstaller.takeConfirmation(confirm)) return
+        try {
+            startActivity(confirm)
+        } catch (e: ActivityNotFoundException) {
+            app.note("atualização: a confirmação do Android não abriu")
+        } catch (e: SecurityException) {
+            app.note("atualização: a confirmação do Android não abriu")
         }
     }
 

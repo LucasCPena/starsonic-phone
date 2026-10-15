@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Só no build de debug (src/debug): HTTP sem TLS só para 10.0.2.2, o computador do emulador, onde o CI serve o canal
+     de teste do atualizador. Todo o resto continua como no release: só HTTPS, com as autoridades do sistema. -->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">10.0.2.2</domain>
+    </domain-config>
+</network-security-config>

@@ -23,6 +23,8 @@ import br.com.starsonic.phone.service.Connection
 import br.com.starsonic.phone.update.AndroidInstaller
 import br.com.starsonic.phone.update.HttpUpdateNetwork
 import br.com.starsonic.phone.update.PreferencesUpdateStore
+import br.com.starsonic.phone.update.UpdateChannel
+import br.com.starsonic.phone.update.UpdateWorker
 import br.com.starsonic.phone.update.Updater
 import java.io.File
 
@@ -30,8 +32,9 @@ import java.io.File
  * O aplicativo (android:name do manifesto): o que vive com o processo. Ele não sobe o motor nem registra
  * nada: com conta gravada, quem registra é o SipService (Android 12+ não deixa iniciar o serviço em primeiro
  * plano daqui, com o app em segundo plano). Ao começar, liga o caminho das ligações ao log de diagnóstico, anota
- * no log a versão e o aparelho e registra a conta self-managed "Starsonic Phone" no Telecom do Android. Tudo aqui
- * nasce sob demanda, e o que lê o disco ou o Keystore nunca na thread principal.
+ * no log a versão e o aparelho, registra a conta self-managed "Starsonic Phone" no Telecom do Android e agenda a
+ * verificação de atualização de 24 h (a que já está agendada fica). Tudo aqui nasce sob demanda, e o que lê o disco
+ * ou o Keystore nunca na thread principal.
  */
 class App : Application() {
     override fun onCreate() {
@@ -42,6 +45,7 @@ class App : Application() {
                 "(API ${Build.VERSION.SDK_INT}), ${Build.MANUFACTURER} ${Build.MODEL}",
         )
         telecom.register()
+        UpdateWorker.schedule(this)
     }
 
     val core: CoreRules
@@ -90,7 +94,11 @@ class App : Application() {
     /** O perfil das contas (branding/perfil.ini, que vai nos assets sem os comentários). Lê o disco. */
     val profileText: String by lazy { assets.open("perfil.ini").use { String(it.readBytes(), Charsets.UTF_8) } }
 
-    /** O atualizador (esboço). */
+    /**
+     * O atualizador (spec 7.6): o canal da versão instalada (o de teste para as -rc), com o APK das tags android-v.
+     * Ligação em andamento: qualquer ligação do app (tocando, chamando ou atendida). No build de debug não há canal (um
+     * APK de release, de outra assinatura, nem o atualizaria): só o canal de teste dos testes do emulador.
+     */
     val updater: Updater by lazy {
         Updater(
             core = core,
@@ -100,13 +108,14 @@ class App : Application() {
             installedVersion = BuildConfig.VERSION_NAME,
             inCall = { calls.state.value != null },
             cacheDir = { cacheDir },
-            channel = null,
+            channel = if (BuildConfig.DEBUG) null else UpdateChannel.of(BuildConfig.VERSION_NAME),
             testChannels = BuildConfig.DEBUG,
+            log = { line -> note("atualização: $line") },
         )
     }
 
-    /** A instalação pelo Android (esboço). */
-    val updateInstaller: AndroidInstaller by lazy { AndroidInstaller(this) }
+    /** A instalação pelo Android: a permissão de instalar apps e a sessão do PackageInstaller. */
+    val updateInstaller: AndroidInstaller by lazy { AndroidInstaller(this) { line -> note("atualização: $line") } }
 
     /** O protocolo da tela Entrar numa conta nova: o padrão do perfil. Lê o disco e o núcleo (JNI). */
     val defaultTransport: Transport by lazy {
