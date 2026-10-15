@@ -15,6 +15,7 @@ import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import java.util.concurrent.FutureTask
 import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -47,6 +48,9 @@ interface UpdateNetwork {
     fun open(url: String): InputStream
 }
 
+/** O pacote e o versionCode de um APK, ou do app instalado. */
+data class ApkInfo(val packageName: String, val versionCode: Long)
+
 /** A instalação pelo Android: no app, o [AndroidInstaller]; nos testes, uma falsa. */
 interface UpdateInstaller {
     /** O Android deixa o app instalar apps (PackageManager.canRequestPackageInstalls). */
@@ -55,9 +59,21 @@ interface UpdateInstaller {
     /** Abre o ajuste do Android em que a pessoa deixa o app instalar apps. */
     fun askPermission()
 
+    /** O pacote e o versionCode do APK [apk] (esboço). */
+    fun archive(apk: File): ApkInfo?
+
+    /** O pacote e o versionCode do app instalado (esboço). */
+    fun installedApp(): ApkInfo
+
     /** Entrega o APK conferido ao instalador do Android (uma sessão do PackageInstaller). IOException se não deu. */
     fun install(apk: File)
 }
+
+/** Por que o APK não serve (esboço). */
+fun apkProblem(archive: ApkInfo?, installed: ApkInfo): String? = null
+
+/** A confirmação segurada durante as ligações (esboço). */
+fun <T> heldDuringCalls(pending: Flow<T?>, inCall: Flow<Boolean>): Flow<T?> = pending
 
 /** Onde fica a hora da última verificação: no app, o [PreferencesUpdateStore]. */
 interface UpdateStore {

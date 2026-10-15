@@ -2,9 +2,13 @@ package br.com.starsonic.phone.update
 
 import java.io.File
 import java.util.concurrent.Executor
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -129,13 +133,38 @@ class UpdaterTest {
     }
 
     @Test
-    fun `a session that cannot be opened deletes the APK and shows the message`() {
+    fun `a session that cannot be opened deletes the APK and only goes to the log`() {
         val updater = updater()
         offered(updater)
         installer.fails = true
         updater.accept()
-        assertEquals(UpdateUi.Notice(DOWNLOAD_FAILED), updater.ui.value)
+        // Como no Windows (11.1): uma falha do instalador não mostra nada; o Baixando atualização… fecha.
+        assertNull(updater.ui.value)
         assertFalse(downloaded().exists())
+        assertTrue(log.toString(), log.any { "sem espaço para a sessão" in it })
+    }
+
+    @Test
+    fun `the APK must be this app and newer than the installed one`() {
+        val installed = ApkInfo("br.com.starsonic.phone", 10001)
+        assertNull(apkProblem(ApkInfo("br.com.starsonic.phone", 10002), installed))
+        // O mesmo versionCode (o Android reinstalaria), um mais velho (o Android recusa), outro app, ou nem um APK.
+        assertNotNull(apkProblem(ApkInfo("br.com.starsonic.phone", 10001), installed))
+        assertNotNull(apkProblem(ApkInfo("br.com.starsonic.phone", 10000), installed))
+        assertNotNull(apkProblem(ApkInfo("br.com.outro.app", 99999), installed))
+        assertNotNull(apkProblem(null, installed))
+    }
+
+    @Test
+    fun `an APK that is not newer than the installed one only goes to the log`() {
+        val updater = updater()
+        offered(updater)
+        installer.archive = ApkInfo("br.com.starsonic.phone", 1)   // o mesmo versionCode do instalado
+        updater.accept()
+        assertTrue("nada foi para o instalador", installer.installed.isEmpty())
+        assertNull("como uma falha do instalador: nada aparece", updater.ui.value)
+        assertFalse(downloaded().exists())
+        assertTrue(log.toString(), log.any { "versionCode" in it })
     }
 
     @Test
@@ -223,14 +252,88 @@ class UpdaterTest {
     }
 
     @Test
-    fun `an offer not answered yet is not fetched again and is not counted`() {
+    fun `an offer on the screen holds the check until it is answered`() {
         val updater = updater()
+        updater.onScreen(true)
         offered(updater)
         now += 25 * 60 * 60 * 1000
         updater.checkSoon()
+        assertEquals("a verificação de 24 h também espera", Decision.NONE, updater.checkNow())
         assertEquals("nenhum pedido a mais", 1, network.fetched.size)
-        // Sem resposta (o processo morreu com o aviso aberto), a próxima abertura confere de novo.
+        // Sem resposta, a verificação não conta: o processo pode morrer com o aviso aberto.
         assertEquals(0L, store.lastCheckMillis)
+    }
+
+    @Test
+    fun `off the screen an offer not answered does not hold the check and is replaced`() {
+        val updater = updater()
+        offered(updater)   // a verificação achou a versão com o app em segundo plano (a notificação foi arrastada)
+        network.texts[CHANNEL.url] = manifestJson("0.1.2", apkUrl("0.1.2"), sha256(APK))
+        now += 25 * 60 * 60 * 1000
+        val decision = updater.checkNow()
+        assertEquals("o canal pedido de novo", 2, network.fetched.size)
+        assertTrue("a notificação de novo (UpdateWorker): $decision", decision is Decision.PROMPT)
+        assertEquals("0.1.2", (updater.ui.value as UpdateUi.Offer).manifest.versionText)
+    }
+
+    @Test
+    fun `a notice leaves with the last screen and an offer stays`() {
+        val updater = updater()
+        updater.onScreen(true)
+        offered(updater)
+        updater.onScreen(false)
+        assertTrue("a versão nova espera a volta", updater.ui.value is UpdateUi.Offer)
+        updater.onScreen(true)
+        inCall = true
+        updater.accept()
+        assertEquals(UpdateUi.Notice("Termine a chamada para atualizar."), updater.ui.value)
+        updater.onScreen(true)   // duas telas (a abertura pela notificação pode criar outra)
+        updater.onScreen(false)
+        assertTrue("uma tela ainda mostra o aviso", updater.ui.value is UpdateUi.Notice)
+        updater.onScreen(false)
+        assertNull("sem tela, o aviso não fica para depois", updater.ui.value)
+    }
+
+    @Test
+    fun `a download in progress holds the check`() {
+        val updater = updater()
+        offered(updater)
+        var during: Decision? = null
+        network.duringDownload = {
+            now += 25 * 60 * 60 * 1000
+            during = updater.checkNow()   // a verificação de 24 h no meio do download, com o app fora da tela
+        }
+        updater.accept()
+        assertEquals(Decision.NONE, during)
+        assertEquals("nenhum pedido ao canal durante o download", 1, network.fetched.size)
+        assertEquals(1, installer.installed.size)
+    }
+
+    @Test
+    fun `the 24-hour check of the worker does not wait for the last check`() {
+        val updater = updater()
+        network.texts[CHANNEL.url] = manifestJson("0.1.0", "${UpdateDecider.INSTALLER_PREFIX}0.1.0/a.apk", sha256(APK))
+        updater.checkSoon()   // a abertura: nada novo, e a verificação conta
+        assertEquals(now, store.lastCheckMillis)
+        network.texts[CHANNEL.url] = manifestJson("0.1.1", APK_URL, sha256(APK))
+        now += 60 * 60 * 1000
+        updater.checkSoon()   // a abertura 1 h depois espera as 24 h
+        assertEquals(1, network.fetched.size)
+        // O worker, como o timer do Windows, confere na hora.
+        assertTrue(updater.checkNow() is Decision.PROMPT)
+        assertEquals(2, network.fetched.size)
+    }
+
+    @Test
+    fun `the installer confirmation waits for the call to end`() = runBlocking {
+        val confirmation = MutableStateFlow<String?>("confirmar")
+        val call = MutableStateFlow(true)
+        val held = heldDuringCalls(confirmation, call)
+        assertNull("com a ligação, nada", held.first())
+        call.value = false
+        assertEquals("confirmar", held.first())
+        confirmation.value = null
+        assertNull(held.first())
     }
 
     @Test

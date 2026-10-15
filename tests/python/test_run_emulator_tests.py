@@ -14,7 +14,8 @@ SCRIPT = ROOT / "build" / "android" / "run-emulator-tests.sh"
 CLASS = "br.com.starsonic.phone.NativeLoadTest"
 RUNNER = "br.com.starsonic.phone.test/androidx.test.runner.AndroidJUnitRunner"
 
-# Cada chamada vai para FAKE_ADB_LOG (uma linha); "am instrument" responde com FAKE_INSTRUMENT_OUTPUT.
+# Cada chamada vai para FAKE_ADB_LOG (uma linha); "am instrument" responde com FAKE_INSTRUMENT_OUTPUT; o processo do app
+# está de pé (pidof) nas primeiras FAKE_ALIVE_FOR consultas.
 FAKE_ADB = textwrap.dedent("""\
     #!/usr/bin/env bash
     printf '%s\\n' "$*" >> "$FAKE_ADB_LOG"
@@ -37,6 +38,9 @@ FAKE_ADB = textwrap.dedent("""\
                     exit 255
                 fi;;
             "am instrument"*) cat "$FAKE_INSTRUMENT_OUTPUT";;
+            "pidof "*)
+                calls=$(grep -c '^shell pidof' "$FAKE_ADB_LOG")
+                if [ "$calls" -le "${FAKE_ALIVE_FOR:-0}" ]; then echo 4242; else exit 1; fi;;
         esac
     fi
     if [ "$1" = logcat ] && [ "$2" = -d ]; then
@@ -127,6 +131,29 @@ class RunEmulatorTestsTest(unittest.TestCase):
         self.assertGreater(instrument, calls.index(allow))
         self.assertGreater(instrument, calls.index(deny))
         self.assertGreater(calls.index(allow), calls.index("install -r -t app.apk"))
+
+    def test_with_app_ops_the_tests_wait_for_the_app_to_exit(self):
+        # O Android fecha o app depois que o appops volta (killUid assíncrono): os testes só começam com ele fora, ou o
+        # fim dele pegaria o processo dos testes.
+        result, calls = self.run_script(PASSED, APPOPS="REQUEST_INSTALL_PACKAGES:allow", FAKE_ALIVE_FOR="3")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        pidofs = [index for index, call in enumerate(calls) if call == "shell pidof br.com.starsonic.phone"]
+        self.assertEqual(len(pidofs), 4, calls)   # 3 vezes de pé, e na 4a já fora
+        self.assertGreater(pidofs[0], calls.index("shell appops set br.com.starsonic.phone REQUEST_INSTALL_PACKAGES allow"))
+        self.assertGreater(calls.index(self.instrument_calls(calls)[0]), pidofs[-1])
+
+    def test_without_app_ops_the_tests_do_not_wait(self):
+        result, calls = self.run_script(PASSED, FAKE_ALIVE_FOR="3")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([call for call in calls if call.startswith("shell pidof")], [])
+
+    def test_an_app_that_stays_up_does_not_block_the_tests(self):
+        # A mudança não fechou o app (o modo já era esse): depois da espera (APP_EXIT_WAIT s), os testes começam.
+        result, calls = self.run_script(PASSED, APPOPS="REQUEST_INSTALL_PACKAGES:allow", FAKE_ALIVE_FOR="1000",
+                                        APP_EXIT_WAIT="1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.instrument_calls(calls)), 1)
+        self.assertIn("continua de pé", result.stdout)
 
     def test_a_malformed_app_op_stops_before_installing(self):
         result, calls = self.run_script(PASSED, APPOPS="REQUEST_INSTALL_PACKAGES")

@@ -10,6 +10,7 @@ import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.NetworkType
+import androidx.work.Operation
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
@@ -37,12 +38,12 @@ class UpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         const val NAME = "atualizacao"
 
         /** Agenda a verificação de 24 h (a cada começo do processo: a que já está agendada fica, KEEP). */
-        fun schedule(context: Context) {
+        fun schedule(context: Context): Operation {
             val request = PeriodicWorkRequestBuilder<UpdateWorker>(24, TimeUnit.HOURS)
                 .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
                 .setInitialDelay(24, TimeUnit.HOURS)
                 .build()
-            WorkManager.getInstance(context).enqueueUniquePeriodicWork(NAME, ExistingPeriodicWorkPolicy.KEEP, request)
+            return WorkManager.getInstance(context).enqueueUniquePeriodicWork(NAME, ExistingPeriodicWorkPolicy.KEEP, request)
         }
 
         /**

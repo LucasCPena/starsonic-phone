@@ -50,6 +50,12 @@ class AndroidInstaller(private val context: Context, private val log: (String) -
         }
     }
 
+    // Esboço.
+    override fun archive(apk: File): ApkInfo? = null
+
+    // Esboço.
+    override fun installedApp(): ApkInfo = ApkInfo(context.packageName, 0)
+
     // Na thread do atualizador: copia o APK para uma sessão nova (só deste pacote) e a entrega ao Android.
     override fun install(apk: File) {
         val packageInstaller = context.packageManager.packageInstaller

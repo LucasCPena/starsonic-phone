@@ -130,11 +130,16 @@ internal class FakeNetwork : UpdateNetwork {
     }
 }
 
-/** A instalação falsa: guarda o conteúdo de cada APK entregue (lido na hora: o atualizador o apaga depois). */
+/**
+ * A instalação falsa: guarda o conteúdo de cada APK entregue (lido na hora: o atualizador o apaga depois). O APK baixado
+ * diz ser [archive] (por padrão, este app e mais novo que o instalado, [app]).
+ */
 internal class FakeInstaller : UpdateInstaller {
     var allowed = true
     var asked = 0
     var fails = false
+    var app = ApkInfo("br.com.starsonic.phone", 1)
+    var archive: ApkInfo? = ApkInfo("br.com.starsonic.phone", 2)
     val installed = mutableListOf<ByteArray>()
 
     override fun allowed() = allowed
@@ -142,6 +147,10 @@ internal class FakeInstaller : UpdateInstaller {
     override fun askPermission() {
         asked++
     }
+
+    override fun archive(apk: File): ApkInfo? = archive
+
+    override fun installedApp(): ApkInfo = app
 
     override fun install(apk: File) {
         if (fails) throw IOException("sem espaço para a sessão")

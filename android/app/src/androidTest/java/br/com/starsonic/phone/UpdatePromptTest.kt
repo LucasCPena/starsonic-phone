@@ -22,7 +22,9 @@ import androidx.test.runner.lifecycle.Stage
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
+import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.NetworkType
+import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import br.com.starsonic.phone.call.CallPhase
@@ -119,6 +121,20 @@ class UpdatePromptTest {
         assertEquals(Lifecycle.State.RESUMED, scenario!!.state)
         emulator.waitForText("Conectado · 2001")
         assertNull("nenhuma confirmação do instalador do Android", app.updateInstaller.confirmation.value)
+    }
+
+    @Test
+    fun aScheduleLeftByAnOlderVersionIsUpdated() {
+        val work = WorkManager.getInstance(app)
+        // O agendamento de uma versão antiga do app: a cada 48 h, sem exigir rede.
+        val old = PeriodicWorkRequestBuilder<UpdateWorker>(48, TimeUnit.HOURS).setInitialDelay(48, TimeUnit.HOURS).build()
+        work.enqueueUniquePeriodicWork(UpdateWorker.NAME, ExistingPeriodicWorkPolicy.CANCEL_AND_REENQUEUE, old).result.get()
+        // O começo do processo da versão nova agenda de novo, e o agendamento passa a ser o desta versão.
+        UpdateWorker.schedule(app).result.get()
+        val works = work.getWorkInfosForUniqueWork(UpdateWorker.NAME).get()
+        assertEquals("um trabalho único: $works", 1, works.size)
+        assertEquals("a cada 24 h", TimeUnit.HOURS.toMillis(24), works.single().periodicityInfo?.repeatIntervalMillis)
+        assertEquals("com rede", NetworkType.CONNECTED, works.single().constraints.requiredNetworkType)
     }
 
     @Test

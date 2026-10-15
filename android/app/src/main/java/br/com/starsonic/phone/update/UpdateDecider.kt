@@ -60,6 +60,9 @@ class UpdateDecider(
         return Decision.PROMPT(published)
     }
 
+    /** A decisão sem a regra das 24 h (esboço). */
+    fun evaluate(installed: String, json: String?, inCall: Boolean): Decision = Decision.NONE
+
     companion object {
         /** O prazo entre duas verificações (spec 7.6.1). */
         const val CHECK_INTERVAL_MILLIS = 24L * 60 * 60 * 1000

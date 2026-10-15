@@ -95,6 +95,17 @@ class UpdateDeciderTest {
     }
 
     @Test
+    fun `the check of the worker has no 24-hour rule`() {
+        // O worker já roda a cada 24 h, como o timer do Windows: decide com o canal, sem a hora da última verificação.
+        val json = manifestJson("0.1.1", apkUrl("0.1.1"), SHA)
+        assertEquals(Decision.PROMPT(Manifest("0.1.1", apkUrl("0.1.1"), SHA, "Correções.")), decider.evaluate("0.1.0", json, inCall = false))
+        assertEquals(Decision.BLOCKED_BY_CALL, decider.evaluate("0.1.0", json, inCall = true))
+        assertEquals(Decision.NONE, decider.evaluate("0.1.1", json, inCall = false))
+        assertEquals("o canal sem resposta", Decision.NONE, decider.evaluate("0.1.0", null, inCall = false))
+        assertEquals(Decision.NONE, decider.evaluate("0.1.0", "{", inCall = false))
+    }
+
+    @Test
     fun `the channel follows the installed version`() {
         val releases = "https://github.com/LucasCPena/starsonic-phone/releases/download/"
         assertEquals("${releases}canal-teste-android/versao-android.json", UpdateDecider.channelUrl("0.1.0-rc.1"))

@@ -13,7 +13,8 @@
 #
 # APPOPS (no ambiente, opcional): "OP:MODO OP:MODO..." (ex.: REQUEST_INSTALL_PACKAGES:allow), postos com o
 # appops antes dos testes. Serve para o que não pode mudar com os testes rodando: o Android 11+ fecha o app
-# (e, com ele, os testes) quando a permissão de instalar apps muda.
+# (e, com ele, os testes) quando a permissão de instalar apps muda. Com APPOPS, os testes esperam o processo do
+# app sair (até APP_EXIT_WAIT segundos, 10).
 # Código: 0 = todos os testes passaram; 1 = algum falhou, nenhum rodou ou algo não instalou; 2 = uso.
 set -euo pipefail
 
@@ -90,6 +91,22 @@ adb shell dumpsys deviceidle whitelist "+$PACKAGE" || fail "dumpsys deviceidle w
 for op in "${app_ops[@]}"; do
     adb shell appops set "$PACKAGE" "${op%%:*}" "${op#*:}" || fail "appops set $PACKAGE ${op%%:*} ${op#*:}"
 done
+# O Android fecha o app quando a permissão de instalar apps muda (killUid), depois que o appops volta: os testes só
+# começam com o processo do app fora (o MY_PACKAGE_REPLACED da instalação o abre), ou o fim dele pegaria o processo dos
+# testes. Se ele continua de pé depois de APP_EXIT_WAIT segundos (10), a mudança não o fecha (o modo já era esse).
+if [ "${#app_ops[@]}" -gt 0 ]; then
+    alive=1
+    for _ in $(seq $(( ${APP_EXIT_WAIT:-10} * 5 ))); do
+        if ! adb shell pidof "$PACKAGE" > /dev/null 2>&1; then
+            alive=0
+            break
+        fi
+        sleep 0.2
+    done
+    if [ "$alive" = 1 ]; then
+        echo "o app continua de pé depois do appops; os testes começam assim mesmo"
+    fi
+fi
 
 command="am instrument -w -e class $(quote "$CLASS")"
 for arg in "$@"; do
