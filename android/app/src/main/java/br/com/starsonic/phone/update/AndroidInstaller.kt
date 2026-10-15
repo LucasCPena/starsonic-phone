@@ -22,7 +22,8 @@ import kotlinx.coroutines.flow.StateFlow
 
 /**
  * A instalação pelo Android (spec 7.6.5): a permissão de instalar apps (o "Instalar apps desconhecidos" do app, que a
- * pessoa dá na primeira vez) e uma sessão do PackageInstaller com o APK conferido. O Android responde pelo
+ * pessoa dá na primeira vez), o pacote e o versionCode do APK e do app (o atualizador confere antes da sessão: ver
+ * apkProblem) e uma sessão do PackageInstaller com o APK conferido. O Android responde pelo
  * [UpdateStatusReceiver]: a confirmação (STATUS_PENDING_USER_ACTION) espera em [confirmation] até uma tela do app
  * abri-la, com o app na frente (a MainActivity, que a tira daqui com [takeConfirmation]); a pessoa toca em "Atualizar"
  * e o Android troca o app (o serviço volta pelo MY_PACKAGE_REPLACED). As falhas do Android (a pessoa cancelou, um APK
@@ -50,11 +51,14 @@ class AndroidInstaller(private val context: Context, private val log: (String) -
         }
     }
 
-    // Esboço.
-    override fun archive(apk: File): ApkInfo? = null
+    // Na thread do atualizador (lê o APK). A forma com flags inteiras vale em todas as versões (a outra é do Android 13+).
+    @Suppress("DEPRECATION")
+    override fun archive(apk: File): ApkInfo? =
+        context.packageManager.getPackageArchiveInfo(apk.path, 0)?.let { ApkInfo(it.packageName, it.longVersionCode) }
 
-    // Esboço.
-    override fun installedApp(): ApkInfo = ApkInfo(context.packageName, 0)
+    @Suppress("DEPRECATION")
+    override fun installedApp(): ApkInfo =
+        context.packageManager.getPackageInfo(context.packageName, 0).let { ApkInfo(it.packageName, it.longVersionCode) }
 
     // Na thread do atualizador: copia o APK para uma sessão nova (só deste pacote) e a entrega ao Android.
     override fun install(apk: File) {

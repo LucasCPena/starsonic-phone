@@ -66,8 +66,10 @@ import br.com.starsonic.phone.service.SipService
 import br.com.starsonic.phone.update.UpdateDialog
 import br.com.starsonic.phone.update.UpdateNotification
 import br.com.starsonic.phone.update.UpdateUi
+import br.com.starsonic.phone.update.heldDuringCalls
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -90,7 +92,7 @@ import kotlinx.coroutines.withContext
  *   por recusa: quem sai do Editar não volta para ele até uma recusa nova.
  * - A atualização (spec 7.6): cada abertura (onStart) confere o canal, se a última verificação tem mais de 24 h
  *   ([br.com.starsonic.phone.update.Updater]), e o aviso aparece sobre a tela principal (UpdateDialog); a confirmação
- *   do instalador do Android abre daqui, com o app na frente.
+ *   do instalador do Android abre daqui, com o app na frente e sem uma ligação (com uma, quando ela acaba).
  *
  * A conta gravada é lida fora da thread principal (Keystore e disco), com a tela de abertura na frente. Com a
  * conta, a activity inicia o [SipService] ao abrir e a cada volta ao app (com a conta já no motor, ele não
@@ -173,10 +175,13 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        // A confirmação do instalador do Android (a atualização baixada e conferida), aberta com o app na frente.
+        // A confirmação do instalador do Android (a atualização baixada e conferida), aberta com o app na frente e sem uma
+        // ligação: por cima dela, o "Atualizar" do Android a derrubaria (spec 7.6.3); quando ela acaba, a confirmação vem.
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                app.updateInstaller.confirmation.collect { confirm -> if (confirm != null) openInstaller(confirm) }
+                heldDuringCalls(app.updateInstaller.confirmation, app.calls.state.map { it != null }).collect { confirm ->
+                    if (confirm != null) openInstaller(confirm)
+                }
             }
         }
         setContent {

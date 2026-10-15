@@ -18,6 +18,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 
 /** O canal de atualização: o endereço do versao-android.json e o começo obrigatório do endereço do APK. */
 data class UpdateChannel(val url: String, val installerPrefix: String) {
@@ -59,21 +60,35 @@ interface UpdateInstaller {
     /** Abre o ajuste do Android em que a pessoa deixa o app instalar apps. */
     fun askPermission()
 
-    /** O pacote e o versionCode do APK [apk] (esboço). */
+    /** O pacote e o versionCode do APK [apk] (PackageManager.getPackageArchiveInfo); null se não é um APK. */
     fun archive(apk: File): ApkInfo?
 
-    /** O pacote e o versionCode do app instalado (esboço). */
+    /** O pacote e o versionCode do app instalado. */
     fun installedApp(): ApkInfo
 
     /** Entrega o APK conferido ao instalador do Android (uma sessão do PackageInstaller). IOException se não deu. */
     fun install(apk: File)
 }
 
-/** Por que o APK não serve (esboço). */
-fun apkProblem(archive: ApkInfo?, installed: ApkInfo): String? = null
+/**
+ * Por que o APK baixado não serve para atualizar o app (null: serve). Ele precisa ser deste app ([installed]) e ter o
+ * versionCode maior que o instalado: com o mesmo, o Android reinstalaria a versão de agora; com um menor, recusaria o
+ * downgrade. Seria um engano na publicação, e ele voltaria a cada verificação.
+ */
+fun apkProblem(archive: ApkInfo?, installed: ApkInfo): String? = when {
+    archive == null -> "o arquivo baixado não é um APK"
+    archive.packageName != installed.packageName -> "o APK é de outro app (${archive.packageName})"
+    archive.versionCode <= installed.versionCode ->
+        "o APK não é mais novo que o app (versionCode ${archive.versionCode}; o instalado tem ${installed.versionCode})"
+    else -> null
+}
 
-/** A confirmação segurada durante as ligações (esboço). */
-fun <T> heldDuringCalls(pending: Flow<T?>, inCall: Flow<Boolean>): Flow<T?> = pending
+/**
+ * [pending] (a confirmação do instalador do Android) segurado enquanto há uma ligação ([inCall]): a confirmação não
+ * aparece por cima de uma ligação, onde o "Atualizar" a derrubaria (spec 7.6.3); quando a ligação acaba, ela aparece.
+ */
+fun <T> heldDuringCalls(pending: Flow<T?>, inCall: Flow<Boolean>): Flow<T?> =
+    combine(pending, inCall) { item, call -> if (call) null else item }
 
 /** Onde fica a hora da última verificação: no app, o [PreferencesUpdateStore]. */
 interface UpdateStore {
@@ -83,19 +98,22 @@ interface UpdateStore {
 
 /**
  * O atualizador (spec 7.6): confere o canal ao abrir o app ([checkSoon]: se a última verificação tem mais de 24 h) e a
- * cada 24 h ([checkNow], pelo UpdateWorker), mostra o aviso ([ui]) e, com o Atualizar ([accept]), baixa o APK para
- * cacheDir/update.apk, confere o SHA-256 e o entrega ao instalador do Android.
+ * cada 24 h ([checkNow], pelo UpdateWorker, sem a regra das 24 h), mostra o aviso ([ui]) e, com o Atualizar
+ * ([accept]), baixa o APK para cacheDir/update.apk, confere o SHA-256 e o entrega ao instalador do Android.
  *
  * - A hora da verificação ([UpdateStore]) conta quando o canal respondeu sem versão nova, ou quando a pessoa responde
  *   ao aviso (Agora não, Atualizar, ou o aviso da ligação). Um aviso que ninguém respondeu (o processo morreu, o app
- *   estava em segundo plano, a pessoa foi ao ajuste de instalar apps) volta na próxima abertura. Enquanto um aviso
- *   espera resposta, o canal não é pedido de novo.
- * - Versão nova com uma ligação em andamento: "Termine a chamada para atualizar.", só com o app na tela ([visible]); em
- *   segundo plano, nada, e a próxima abertura confere de novo. Atualizar durante uma ligação: o mesmo aviso, e nada
- *   mais acontece até a próxima verificação (24 h). Uma ligação que começa durante o download também para a
- *   instalação.
+ *   estava em segundo plano, a pessoa foi ao ajuste de instalar apps) volta na próxima abertura.
+ * - Só o download e um aviso na tela ([visible]) seguram a verificação. Fora da tela, uma versão nova sem resposta (a
+ *   notificação arrastada, ou bloqueada) não segura: a verificação de 24 h pede o canal de novo e troca o aviso. Um
+ *   aviso com OK (a ligação, a falha) sai com a última tela.
+ * - Versão nova com uma ligação em andamento: "Termine a chamada para atualizar.", só com o app na tela; em segundo
+ *   plano, nada, e a próxima abertura confere de novo. Atualizar durante uma ligação: o mesmo aviso, e nada mais
+ *   acontece até a próxima verificação (24 h). Uma ligação que começa durante o download também para a instalação.
  * - Sem a permissão de instalar apps, o Atualizar abre o ajuste do Android e o aviso continua (de volta, Atualizar de
- *   novo). Download que falha, cortado ou com o SHA-256 diferente: o arquivo sai e aparece [DOWNLOAD_FAILED].
+ *   novo). Download que falha, cortado ou com o SHA-256 diferente: o arquivo sai e aparece [DOWNLOAD_FAILED]. Uma falha
+ *   do instalador (um APK de outro app ou que não é mais novo, [apkProblem]; a sessão que não abre) não mostra nada,
+ *   como no Windows (11.1): o erro vai ao diagnóstico, e o "Baixando atualização…" fecha.
  * - Sem canal ([channel] null: o build de debug, que um APK de release, de outra assinatura, nem atualizaria), nada é
  *   conferido; os testes do emulador põem um canal de teste ([useTestChannel], só com [testChannels]: o debug).
  *
@@ -136,16 +154,28 @@ class Updater(
         later { apk().delete() }
     }
 
-    /** Uma tela do app apareceu ([shown]) ou saiu: o onStart e o onStop da MainActivity. */
+    /**
+     * Uma tela do app apareceu ([shown]) ou saiu: o onStart e o onStop da MainActivity. Quando a última sai, um aviso com
+     * OK (a ligação, uma falha) sai junto: ele não fica para depois. A versão nova fica, para a volta.
+     */
     fun onScreen(shown: Boolean) {
-        if (shown) screens.incrementAndGet() else screens.decrementAndGet()
+        if (shown) {
+            screens.incrementAndGet()
+            return
+        }
+        if (screens.decrementAndGet() > 0) return
+        val waiting = mutableUi.value
+        if (waiting is UpdateUi.Notice) mutableUi.compareAndSet(waiting, null)
     }
 
     /** A verificação de ao abrir (o onStart da tela): o canal, se a última verificação tem mais de 24 h. */
-    fun checkSoon() = later { checkChannel() }
+    fun checkSoon() = later { checkChannel(opening = true) }
 
-    /** A verificação de 24 h (o UpdateWorker): espera e devolve a decisão. Nunca na thread principal. */
-    fun checkNow(): Decision = FutureTask { checkChannel() }.also(background::execute).get()
+    /**
+     * A verificação de 24 h (o UpdateWorker), sem a regra das 24 h (ela já roda a cada 24 h, como o timer do Windows):
+     * espera e devolve a decisão. Nunca na thread principal.
+     */
+    fun checkNow(): Decision = FutureTask { checkChannel(opening = false) }.also(background::execute).get()
 
     /** "Atualizar" no aviso de versão nova; o que acontece depois aparece em [ui]. */
     fun accept() {
@@ -179,19 +209,24 @@ class Updater(
         }.also(background::execute).get()
     }
 
-    // Na thread do atualizador: confere o canal (UpdateDecider.decide) e põe o aviso em [ui].
-    private fun checkChannel(): Decision {
+    // Na thread do atualizador: confere o canal e põe o aviso em [ui]. A abertura ([opening]) segue a regra das 24 h
+    // (UpdateDecider.decide); a verificação de 24 h, não (evaluate).
+    private fun checkChannel(opening: Boolean): Decision {
         val channel = channel ?: return Decision.NONE
-        if (mutableUi.value != null) return Decision.NONE   // um aviso espera resposta, ou um download segue
+        // Só o download e um aviso na tela seguram a verificação. Fora da tela, um aviso sem resposta (a notificação
+        // arrastada, ou bloqueada) não segura: ele sai, e a verificação diz o que vale agora.
+        val waiting = mutableUi.value
+        if (waiting == UpdateUi.Downloading || (waiting != null && visible)) return Decision.NONE
+        if (waiting != null) mutableUi.compareAndSet(waiting, null)
         val now = nowMillis()
         var answered = false
-        val decision = UpdateDecider(core, channel.installerPrefix, log).decide(
-            installedVersion,
-            { fetch(channel.url)?.also { answered = true } },
-            store.lastCheckMillis,
-            now,
-            inCall(),
-        )
+        val fetchChannel = { fetch(channel.url)?.also { answered = true } }
+        val decider = UpdateDecider(core, channel.installerPrefix, log)
+        val decision = if (opening) {
+            decider.decide(installedVersion, fetchChannel, store.lastCheckMillis, now, inCall())
+        } else {
+            decider.evaluate(installedVersion, fetchChannel(), inCall())
+        }
         when (decision) {
             Decision.NONE -> if (answered) store.lastCheckMillis = now
             is Decision.PROMPT -> mutableUi.value = UpdateUi.Offer(decision.manifest)
@@ -242,13 +277,19 @@ class Updater(
                 mutableUi.value = UpdateUi.Notice(UpdateDecider.CALL_MESSAGE)
                 return
             }
-            installer.install(apk)
-            log("a versão $version foi entregue ao instalador do Android")
-            mutableUi.compareAndSet(UpdateUi.Downloading, null)
+            val problem = apkProblem(installer.archive(apk), installer.installedApp())
+            if (problem != null) {
+                log("o APK da versão $version não serve: $problem")
+            } else {
+                installer.install(apk)
+                log("a versão $version foi entregue ao instalador do Android")
+            }
         } catch (e: Exception) {
             log("o instalador do Android não recebeu a versão $version: ${reason(e)}")
-            mutableUi.value = UpdateUi.Notice(DOWNLOAD_FAILED)
         } finally {
+            // Entregue ou não, o Baixando atualização… fecha. Uma falha do instalador (o APK que não serve, a sessão que
+            // não abre) não mostra nada, como no Windows (11.1): o erro vai ao diagnóstico.
+            mutableUi.compareAndSet(UpdateUi.Downloading, null)
             apk.delete()   // a sessão do Android já tem a cópia dela
         }
     }
@@ -305,7 +346,7 @@ class Updater(
     }
 
     companion object {
-        /** O aviso de download que falhou, cortado ou com o SHA-256 diferente (spec 7.6.4 e 11.1). */
+        /** O aviso de download que falhou, cortado ou com o SHA-256 diferente (spec 7.6.4 e 11.1); só do download. */
         const val DOWNLOAD_FAILED = "Não foi possível baixar a atualização. Tentaremos de novo mais tarde."
 
         /** O APK baixado, na pasta de cache do app (cacheDir). */

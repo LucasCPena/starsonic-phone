@@ -24,8 +24,9 @@ import kotlinx.coroutines.withContext
 
 /**
  * A verificação de 24 h (spec 7.6.1): um trabalho periódico e único do WorkManager ([NAME]), a cada 24 h, com rede; a
- * primeira, 24 h depois de agendar (a abertura do app confere antes). Versão nova com o app em segundo plano: a
- * notificação ([UpdateNotification]), cujo toque abre o app com o aviso; com o app na tela, o aviso aparece direto.
+ * primeira, 24 h depois de agendar (a abertura do app confere antes). Ela decide sem a regra das 24 h da abertura (já
+ * roda a cada 24 h, como o timer do Windows). Versão nova com o app em segundo plano: a notificação
+ * ([UpdateNotification]), a cada rodada, cujo toque abre o app com o aviso; com o app na tela, o aviso aparece direto.
  */
 class UpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
@@ -37,13 +38,16 @@ class UpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         /** O nome único do trabalho no WorkManager. */
         const val NAME = "atualizacao"
 
-        /** Agenda a verificação de 24 h (a cada começo do processo: a que já está agendada fica, KEEP). */
+        /**
+         * Agenda a verificação de 24 h, a cada começo do processo. Um agendamento que já existe passa a ser este (UPDATE:
+         * o de uma versão anterior do app ganha o intervalo e as condições de agora, sem recomeçar a contagem).
+         */
         fun schedule(context: Context): Operation {
             val request = PeriodicWorkRequestBuilder<UpdateWorker>(24, TimeUnit.HOURS)
                 .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
                 .setInitialDelay(24, TimeUnit.HOURS)
                 .build()
-            return WorkManager.getInstance(context).enqueueUniquePeriodicWork(NAME, ExistingPeriodicWorkPolicy.KEEP, request)
+            return WorkManager.getInstance(context).enqueueUniquePeriodicWork(NAME, ExistingPeriodicWorkPolicy.UPDATE, request)
         }
 
         /**

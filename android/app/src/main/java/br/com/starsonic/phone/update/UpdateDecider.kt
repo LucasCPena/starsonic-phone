@@ -6,8 +6,9 @@ import br.com.starsonic.phone.core.Manifest
 /** O que fazer depois de conferir o canal de atualização (spec 7.6). */
 sealed interface Decision {
     /**
-     * Nada a oferecer: conferido há menos de 24 h (sem pedir o canal), canal sem resposta, versao-android.json que não
-     * vale (JSON, versão, APK fora do endereço permitido, SHA-256), ou versão igual ou menor que a instalada.
+     * Nada a oferecer: conferido há menos de 24 h (na abertura do app, sem pedir o canal), canal sem resposta,
+     * versao-android.json que não vale (JSON, versão, APK fora do endereço permitido, SHA-256), ou versão igual ou menor
+     * que a instalada.
      */
     data object NONE : Decision
 
@@ -38,14 +39,22 @@ class UpdateDecider(
     private val log: (String) -> Unit = {},
 ) {
     /**
-     * Confere o canal para a versão [installed]. Menos de 24 h depois da última verificação ([lastCheckMillis]; 0 =
-     * nunca), [NONE][Decision.NONE] sem buscar: [manifest] (o texto do versao-android.json, ou null se o canal não
-     * respondeu) só é chamado quando passou o prazo. Uma verificação "no futuro" (o relógio do celular voltou) não
-     * segura as próximas.
+     * A verificação de ao abrir o app: o canal para a versão [installed]. Menos de 24 h depois da última verificação
+     * ([lastCheckMillis]; 0 = nunca), [NONE][Decision.NONE] sem buscar: [manifest] (o texto do versao-android.json, ou
+     * null se o canal não respondeu) só é chamado quando passou o prazo. Uma verificação "no futuro" (o relógio do
+     * celular voltou) não segura as próximas.
      */
     fun decide(installed: String, manifest: () -> String?, lastCheckMillis: Long, nowMillis: Long, inCall: Boolean): Decision {
         if (checkedRecently(lastCheckMillis, nowMillis)) return Decision.NONE
-        val json = manifest() ?: return Decision.NONE
+        return evaluate(installed, manifest(), inCall)
+    }
+
+    /**
+     * O que fazer com o versao-android.json [json] (null: o canal não respondeu) para a versão [installed], sem a regra
+     * das 24 h: a verificação de 24 h, que já roda a cada 24 h (como o timer do Windows), decide só com o canal.
+     */
+    fun evaluate(installed: String, json: String?, inCall: Boolean): Decision {
+        if (json == null) return Decision.NONE
         val published = core.parseManifest(json, allowedPrefix) { reason -> log("o canal não vale: $reason") }
             ?: return Decision.NONE
         if (core.compareVersions(published.versionText, installed) <= 0) {
@@ -59,9 +68,6 @@ class UpdateDecider(
         log("versão nova ${published.versionText} (instalada $installed)")
         return Decision.PROMPT(published)
     }
-
-    /** A decisão sem a regra das 24 h (esboço). */
-    fun evaluate(installed: String, json: String?, inCall: Boolean): Decision = Decision.NONE
 
     companion object {
         /** O prazo entre duas verificações (spec 7.6.1). */
