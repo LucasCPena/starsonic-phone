@@ -29,9 +29,7 @@ class CallConnectionService : ConnectionService() {
 
     override fun onCreateIncomingConnection(manager: PhoneAccountHandle?, request: ConnectionRequest): Connection {
         val extras = request.extras ?: Bundle.EMPTY
-        // Uma ligação por vez: sem o id nos extras, é a recebida que toca agora.
-        val callId = extras.getInt(AndroidTelecom.EXTRA_CALL_ID, CallManager.NO_ID).takeIf { it != CallManager.NO_ID }
-            ?: app.calls.ringingId()
+        val callId = incomingId(request)
         val ringing = app.calls.isRinging(callId)
         CallLog.i { "Telecom: criar a recebida $callId (tocando: $ringing)" }
         if (!ringing) return Connection.createFailedConnection(DisconnectCause(DisconnectCause.MISSED))
@@ -43,7 +41,7 @@ class CallConnectionService : ConnectionService() {
 
     override fun onCreateIncomingConnectionFailed(manager: PhoneAccountHandle?, request: ConnectionRequest) {
         // O Android não deixou (uma ligação da operadora começou): ocupado, e a perdida é avisada.
-        val callId = request.extras?.getInt(AndroidTelecom.EXTRA_CALL_ID, CallManager.NO_ID) ?: CallManager.NO_ID
+        val callId = incomingId(request)
         CallLog.w { "Telecom: a recebida $callId não foi criada" }
         app.calls.onTelecomFailed(callId)
     }
@@ -65,6 +63,11 @@ class CallConnectionService : ConnectionService() {
         app.telecom.takeOutgoing()
         app.calls.onTelecomFailed(CallManager.NO_ID)
     }
+
+    // O id (no motor) da recebida do pedido; sem ele nos extras, a que toca agora (uma ligação por vez).
+    private fun incomingId(request: ConnectionRequest): Int =
+        request.extras?.getInt(AndroidTelecom.EXTRA_CALL_ID, CallManager.NO_ID)?.takeIf { it != CallManager.NO_ID }
+            ?: app.calls.ringingId()
 }
 
 /**
