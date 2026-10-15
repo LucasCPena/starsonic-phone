@@ -54,8 +54,9 @@ import org.junit.runners.MethodSorters
  * deixa o HTTP sem TLS só para 10.0.2.2 (o network security config de src/debug).
  *
  * Cada teste começa com a conta gravada por TCP (o CI confere que o último REGISTER aceito veio por TCP), o canal de
- * teste nunca conferido, o app podendo instalar apps (appops REQUEST_INSTALL_PACKAGES) e o app aberto e conectado: a
- * abertura confere o canal (a última verificação tem mais de 24 h) e mostra o aviso.
+ * teste nunca conferido e o app aberto e conectado: a abertura confere o canal (a última verificação tem mais de 24 h)
+ * e mostra o aviso. A permissão de instalar apps vem de fora, antes dos testes (o run-update-test.sh roda a classe com
+ * ela e, depois, só o teste sem ela): o Android 11+ fecha o app, e os testes com ele, quando ela muda.
  */
 @RunWith(AndroidJUnit4::class)
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
@@ -82,7 +83,6 @@ class UpdatePromptTest {
         emulator.startClean()
         app.store.save(Account(emulator.registrar, Transport.TCP, "2001", emulator.senha))
         app.updater.useTestChannel(channelUrl, installerPrefix)
-        allowInstallingApps("allow")
         scenario = ActivityScenario.launch(MainActivity::class.java)
         emulator.waitForText("Conectado · 2001")
         Intents.init()
@@ -97,7 +97,6 @@ class UpdatePromptTest {
             emulator.control("HANGUP 2001")
             app.calls.hangup()
         }
-        allowInstallingApps("default")
         notifications.cancelAll()
         scenario?.close()
         // A abertura pela notificação pode criar outra MainActivity, fora do ActivityScenario: ela sai também.
@@ -106,6 +105,7 @@ class UpdatePromptTest {
 
     @Test
     fun aNewVersionIsOfferedAndAFailedDownloadKeepsTheAppOpen() {
+        assertTrue("o app pode instalar apps (o run-update-test.sh deixa)", app.packageManager.canRequestPackageInstalls())
         emulator.waitForText(QUESTION)
         emulator.waitForText(NOTES)
         compose.onNodeWithTag("atualizar").performClick()
@@ -177,7 +177,7 @@ class UpdatePromptTest {
 
     @Test
     fun withoutPermissionToInstallAppsUpdateOpensTheAndroidSetting() {
-        allowInstallingApps("deny")
+        assertFalse("o app não pode instalar apps (o run-update-test.sh nega)", app.packageManager.canRequestPackageInstalls())
         // O ajuste não abre de verdade: o pedido fica no lugar.
         intending(hasAction(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES))
             .respondWith(Instrumentation.ActivityResult(Activity.RESULT_OK, null))
@@ -192,11 +192,6 @@ class UpdatePromptTest {
 
     // O APK baixado (cacheDir/update.apk).
     private fun downloaded() = File(app.cacheDir, "update.apk")
-
-    // A permissão de instalar apps (o "Instalar apps desconhecidos" do app): allow, deny ou default.
-    private fun allowInstallingApps(mode: String) {
-        device.executeShellCommand("appops set ${app.packageName} REQUEST_INSTALL_PACKAGES $mode")
-    }
 
     // A notificação de versão nova (canal "atualizacao"), ou null.
     private fun updateNotification(): Notification? =

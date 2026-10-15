@@ -4,13 +4,16 @@
 # confere; a classe roda pelo run-emulator-tests.sh, e o servidor sai no fim, passe ou falhe. O emulador vê este
 # computador em 10.0.2.2, e o app de debug só deixa o HTTP sem TLS para esse endereço.
 #
+# A classe roda em duas vezes, porque o Android 11+ fecha o app (e os testes com ele) quando a permissão de instalar
+# apps muda: primeiro, com a permissão, todos os testes menos o sem ela; depois, sem a permissão, só esse.
+#
 # Uso: build/android/run-update-test.sh APK TEST_APK [ARGS...]
 #   APK, TEST_APK  como no run-emulator-tests.sh
 #   ARGS           vão para o `am instrument` depois do canal e do prefixo (ex.: -e registrar 10.0.2.2 -e porta 5070)
 #
 # Pelo ambiente: UPDATE_CHANNEL_PORT, a porta do servidor (padrão 8000), e RUN_EMULATOR_TESTS, o script que roda a
 # classe (padrão: o run-emulator-tests.sh ao lado; os testes em tests/python põem um falso).
-# Código: o do run-emulator-tests.sh (0 = a classe passou); 1 se o servidor não subiu; 2 = uso.
+# Código: 0 se as duas vezes passaram; 1 se alguma falhou (as duas rodam) ou se o servidor não subiu; 2 = uso.
 set -euo pipefail
 
 if [ "$#" -lt 2 ]; then
@@ -24,6 +27,8 @@ shift 2
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PORT="${UPDATE_CHANNEL_PORT:-8000}"
 RUNNER="${RUN_EMULATOR_TESTS:-$HERE/run-emulator-tests.sh}"
+CLASS=br.com.starsonic.phone.UpdatePromptTest
+WITHOUT_PERMISSION="$CLASS#withoutPermissionToInstallAppsUpdateOpensTheAndroidSetting"
 VERSION=9.9.9
 BASE="http://10.0.2.2:$PORT/"
 APK_NAME="StarsonicPhone-android-$VERSION.apk"
@@ -68,7 +73,10 @@ if [ "$ready" != 1 ]; then
     exit 1
 fi
 
+channel_args=(-e canal "${BASE}versao-android.json" -e prefixo "$BASE")
 status=0
-bash "$RUNNER" "$APK" "$TEST_APK" br.com.starsonic.phone.UpdatePromptTest \
-    -e canal "${BASE}versao-android.json" -e prefixo "$BASE" "$@" || status=$?
+APPOPS="REQUEST_INSTALL_PACKAGES:allow" bash "$RUNNER" "$APK" "$TEST_APK" "$CLASS" -e notClass "$WITHOUT_PERMISSION" \
+    "${channel_args[@]}" "$@" || status=1
+APPOPS="REQUEST_INSTALL_PACKAGES:deny" bash "$RUNNER" "$APK" "$TEST_APK" "$WITHOUT_PERMISSION" \
+    "${channel_args[@]}" "$@" || status=1
 exit "$status"

@@ -10,6 +10,10 @@
 # Instala os dois APKs e concede o que o app pediria à pessoa: o microfone e as notificações (só as que
 # o manifesto pede; o pm recusa as outras), a tela cheia e a saída da otimização de bateria. O
 # `am instrument` sai com 0 mesmo quando um teste falha, então o resultado vem do relatório dele.
+#
+# APPOPS (no ambiente, opcional): "OP:MODO OP:MODO..." (ex.: REQUEST_INSTALL_PACKAGES:allow), postos com o
+# appops antes dos testes. Serve para o que não pode mudar com os testes rodando: o Android 11+ fecha o app
+# (e, com ele, os testes) quando a permissão de instalar apps muda.
 # Código: 0 = todos os testes passaram; 1 = algum falhou, nenhum rodou ou algo não instalou; 2 = uso.
 set -euo pipefail
 
@@ -24,6 +28,15 @@ APK="$1"
 TEST_APK="$2"
 CLASS="$3"
 shift 3
+
+app_ops=()
+for op in ${APPOPS:-}; do
+    if [[ ! "$op" =~ ^[A-Z_]+:[a-z]+$ ]]; then
+        echo "APPOPS inválido: '$op' (use OP:MODO, como REQUEST_INSTALL_PACKAGES:allow)" >&2
+        exit 2
+    fi
+    app_ops+=("$op")
+done
 
 # Anotação do GitHub Actions (aparece no resumo do run e pela API, onde o log nem sempre chega).
 annotate() {   # annotate notice|error TÍTULO TEXTO
@@ -74,6 +87,9 @@ grant android.permission.RECORD_AUDIO
 grant android.permission.POST_NOTIFICATIONS
 adb shell appops set "$PACKAGE" USE_FULL_SCREEN_INTENT allow || fail "appops set $PACKAGE USE_FULL_SCREEN_INTENT allow"
 adb shell dumpsys deviceidle whitelist "+$PACKAGE" || fail "dumpsys deviceidle whitelist +$PACKAGE"
+for op in "${app_ops[@]}"; do
+    adb shell appops set "$PACKAGE" "${op%%:*}" "${op#*:}" || fail "appops set $PACKAGE ${op%%:*} ${op#*:}"
+done
 
 command="am instrument -w -e class $(quote "$CLASS")"
 for arg in "$@"; do

@@ -115,6 +115,25 @@ class RunEmulatorTestsTest(unittest.TestCase):
         self.assertGreater(calls.index(self.instrument_calls(calls)[0]),
                            calls.index("shell dumpsys deviceidle whitelist +br.com.starsonic.phone"))
 
+    def test_app_ops_from_the_environment_are_set_before_the_tests(self):
+        # O Android 11+ fecha o app quando a permissão de instalar apps muda: o teste não pode mudá-la rodando.
+        result, calls = self.run_script(PASSED, APPOPS="REQUEST_INSTALL_PACKAGES:allow SYSTEM_ALERT_WINDOW:deny")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        allow = "shell appops set br.com.starsonic.phone REQUEST_INSTALL_PACKAGES allow"
+        deny = "shell appops set br.com.starsonic.phone SYSTEM_ALERT_WINDOW deny"
+        self.assertIn(allow, calls)
+        self.assertIn(deny, calls)
+        instrument = calls.index(self.instrument_calls(calls)[0])
+        self.assertGreater(instrument, calls.index(allow))
+        self.assertGreater(instrument, calls.index(deny))
+        self.assertGreater(calls.index(allow), calls.index("install -r -t app.apk"))
+
+    def test_a_malformed_app_op_stops_before_installing(self):
+        result, calls = self.run_script(PASSED, APPOPS="REQUEST_INSTALL_PACKAGES")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("APPOPS", result.stderr)
+        self.assertEqual(calls, [])
+
     def test_extra_arguments_reach_am_instrument_quoted_for_the_device_shell(self):
         result, calls = self.run_script(PASSED, "-e", "registrar", "10.0.2.2", "-e", "senha", "it's #1")
         self.assertEqual(result.returncode, 0, result.stderr)
