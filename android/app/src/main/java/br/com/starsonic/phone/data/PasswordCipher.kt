@@ -12,8 +12,10 @@ import javax.crypto.spec.GCMParameterSpec
 /**
  * Cifra a senha da conta com AES-GCM e uma chave do Android Keystore (alias starsonic-senha), que não sai do
  * celular (spec 6.4). O texto cifrado é Base64 de: o tamanho do IV (1 byte), o IV e a senha cifrada com a tag.
+ * A senha gravada que não abre vai a [log] (o motivo, nunca a senha).
  */
 class PasswordCipher(private val alias: String = ALIAS, private val log: (String) -> Unit = {}) {
+    /** A senha cifrada. Lança exceção se o Keystore falha. */
     fun encrypt(senha: String): String {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, key())   // o Keystore escolhe o IV
@@ -25,13 +27,18 @@ class PasswordCipher(private val alias: String = ALIAS, private val log: (String
     /** A senha, ou null se o texto não abre (a chave sumiu do Keystore ou o dado está estragado). */
     fun decrypt(text: String): String? {
         return try {
-            val key = existingKey() ?: return null
+            val key = existingKey()
+            if (key == null) {
+                log("a senha gravada não abre: a chave dela não está no Keystore")
+                return null
+            }
             val bytes = Base64.getDecoder().decode(text)
             val ivSize = bytes[0].toInt()
             val cipher = Cipher.getInstance(TRANSFORMATION)
             cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(TAG_BITS, bytes, 1, ivSize))
             String(cipher.doFinal(bytes, 1 + ivSize, bytes.size - 1 - ivSize), Charsets.UTF_8)
         } catch (e: Exception) {
+            log("a senha gravada não abre: $e")
             null
         }
     }

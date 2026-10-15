@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- O que o FileProvider do app (AndroidManifest.xml) entrega a outro app: só a pasta do log de diagnóstico
+     (files/diagnostico), e só pelo "Enviar diagnóstico", com a permissão de leitura daquele envio. -->
+<paths>
+    <files-path name="diagnostico" path="diagnostico/" />
+</paths>

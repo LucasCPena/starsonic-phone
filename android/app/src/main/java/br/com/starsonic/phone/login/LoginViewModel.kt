@@ -32,17 +32,20 @@ data class LoginState(
  * A tela Entrar (spec 7.1). [submit] confere o servidor, o ramal e a senha, nessa ordem (os avisos do
  * servidor e do ramal vêm do núcleo), registra a conta e espera o resultado por até 15 s com o LoginFlow do
  * núcleo. Registrou: a conta é gravada e a tela acaba ([LoginState.done]). Falhou ou o tempo acabou: nada é
- * gravado, a conta anterior volta ao motor (sem ela, a tentada sai) e o aviso aparece.
+ * gravado, a conta anterior volta ao motor (sem ela, a tentada sai) e o aviso aparece. Se o Keystore ou o disco
+ * falham ao gravar, a tentativa é desfeita do mesmo jeito, com o aviso [SAVE_FAILED] (o motivo vai a [log]).
  *
  * Só vale o resultado da conta tentada: o motor dá um id a cada conta, e um resultado de outra (a anterior,
  * que ainda estava na fila ou voltou depois de uma falha) é ignorado.
  *
  * Com uma conta gravada ([previous]), é a tela de Editar: servidor, protocolo e ramal preenchidos e a senha
- * vazia. A conta gravada vem de quem cria o modelo, já lida fora da thread principal (Keystore e disco).
+ * vazia, com o aviso [message] (o da senha recusada pelo servidor, quando é ela que abre a tela). A conta gravada
+ * vem de quem cria o modelo, já lida fora da thread principal (Keystore e disco).
  *
  * Threads: [submit] espera o motor aceitar a conta e não pode rodar na thread principal; os resultados
- * chegam por [onRegistration] (na thread dos eventos do motor) e o fim do tempo, na thread do relógio. A volta
- * à conta anterior depois do fim do tempo ou da saída da tela espera o motor: roda em [background].
+ * chegam por [onRegistration] (na thread dos eventos do motor) e o fim do tempo, na thread do relógio. A
+ * gravação da conta (Keystore e disco) e a volta à conta anterior (depois de uma falha, do fim do tempo ou da
+ * saída da tela; espera o motor) rodam em [background], nunca na thread dos eventos do motor nem na do relógio.
  */
 class LoginViewModel(
     private val core: CoreRules,
@@ -52,13 +55,13 @@ class LoginViewModel(
     private val previous: Account?,
     defaultTransport: Transport = Transport.UDP,
     message: String = "",
-    newFlow: (CoreRules) -> LoginFlow = ::LoginFlowHandle,
+    private val newFlow: (CoreRules) -> LoginFlow = ::LoginFlowHandle,
     private val background: Executor = Executor { task -> thread(name = "starsonic-entrar") { task.run() } },
     private val log: (String) -> Unit = {},
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(
-        previous?.let { LoginState(server = it.address, transport = it.transport, ramal = it.ramal) }
-            ?: LoginState(transport = defaultTransport),
+        previous?.let { LoginState(server = it.address, transport = it.transport, ramal = it.ramal, message = message) }
+            ?: LoginState(transport = defaultTransport, message = message),
     )
 
     val state: StateFlow<LoginState> = mutableState
@@ -73,10 +76,11 @@ class LoginViewModel(
     // A trava guarda o LoginFlow, a tentativa, o id da conta do motor e o aviso de fim do tempo; nunca fica
     // presa numa chamada ao motor nem ao armazenamento.
     private val lock = Any()
-    private val flow = newFlow(core)
+    private var flow = newFlow(core)
     private var attempt: Attempt? = null
     private var currentAccountId = 0   // a conta que este modelo pôs no motor: a tentada, ou a que voltou
     private var timeout: Scheduled? = null
+    private var cleared = false        // a tela saiu (onCleared): nenhum LoginFlow novo
 
     fun onServerChange(value: String) = mutableState.update { it.copy(server = value) }
 
@@ -107,6 +111,7 @@ class LoginViewModel(
         // Sair da tela no meio da tentativa a desfaz, como no Windows; fora da thread principal, porque o
         // motor pode levar alguns segundos para voltar à conta anterior.
         val outcome = synchronized(lock) {
+            cleared = true
             flow.onTimeout().also { flow.close() }
         } ?: return
         background.execute { finish(outcome) }
@@ -168,8 +173,8 @@ class LoginViewModel(
         return if (accountId == currentAccountId) flow.onRegistration(code) else null
     }
 
-    // O desfecho da tentativa (o LoginFlow dá um só por tentativa; null = nada a fazer). A tela continua
-    // esperando (loading) até o motor voltar à conta anterior, então nenhuma tentativa nova passa à frente.
+    // O desfecho da tentativa (o LoginFlow dá um só por tentativa; null = nada a fazer): grava a conta, ou volta à
+    // anterior.
     private fun finish(outcome: LoginFlowHandle.Outcome?) {
         if (outcome == null) return
         val tried = synchronized(lock) {
@@ -178,10 +183,37 @@ class LoginViewModel(
             attempt.also { attempt = null }
         }
         if (outcome.commit) {
-            if (tried != null) store.save(tried.account)
-            mutableState.update { it.copy(loading = false, done = true) }
+            // O desfecho costuma chegar na thread dos eventos do motor: o Keystore e o disco ficam para outra.
+            background.execute { save(tried) }
             return
         }
+        restore(outcome.message)
+    }
+
+    // Em [background]: grava a conta que registrou, e a tela acaba. Se o Keystore ou o disco falham, a tentativa é
+    // desfeita como uma falha do registro, com um aviso curto, e a tela fica pronta para outra.
+    private fun save(tried: Attempt?) {
+        if (tried != null) {
+            try {
+                store.save(tried.account)
+            } catch (e: Exception) {
+                log("a conta não foi gravada: $e")
+                // O LoginFlow do núcleo fica confirmado depois de um commit: a próxima tentativa precisa de outro.
+                val fresh = newFlow(core)
+                val stale = synchronized(lock) {
+                    if (cleared) fresh else flow.also { flow = fresh }
+                }
+                stale.close()
+                restore(SAVE_FAILED)
+                return
+            }
+        }
+        mutableState.update { it.copy(loading = false, done = true) }
+    }
+
+    // Desfaz a tentativa: a conta anterior volta ao motor (sem ela, a tentada sai), e o aviso aparece. A tela
+    // continua esperando (loading) até o motor voltar à conta anterior, então nenhuma tentativa nova passa à frente.
+    private fun restore(message: String) {
         val restored = if (previous != null) {
             gateway.setAccount(previous.address, previous.transport, previous.ramal, previous.senha)
         } else {
@@ -189,12 +221,15 @@ class LoginViewModel(
             0
         }
         synchronized(lock) { currentAccountId = restored }
-        mutableState.update { it.copy(message = outcome.message, loading = false) }
+        mutableState.update { it.copy(message = message, loading = false) }
     }
 
     private companion object {
         const val LOGIN_TIMEOUT_MILLIS = 15_000L
         const val NO_ANSWER = 0
         const val EMPTY_PASSWORD = "Digite a senha."
+
+        /** A conta registrou, mas o Keystore ou o disco não a gravaram. */
+        const val SAVE_FAILED = "Não foi possível gravar a conta. Tente de novo."
     }
 }

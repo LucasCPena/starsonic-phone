@@ -34,7 +34,11 @@ enum class Adoption {
     STOPPED,
 }
 
-/** O servidor recusou a senha da conta gravada (spec 7.1.7). Esboço. */
+/**
+ * O servidor recusou a senha da conta gravada (spec 7.1.7: 401, 403 ou 407 num registro dela, como na renovação),
+ * com o aviso do núcleo ([message]). Cada recusa é um objeto novo: o app marca como vista a que mostrou
+ * ([Connection.refusalSeen]), sem esconder uma mais nova.
+ */
 class Refusal(val message: String)
 
 /**
@@ -57,6 +61,9 @@ class Refusal(val message: String)
  * - O [status] usa só os resultados do registro da conta do serviço, pelo id dela no motor. O último
  *   resultado de cada conta fica guardado, então o serviço que adota a conta já mostra o resultado dela.
  *   [registered] diz o mesmo para quem liga: a conta do serviço registrada e com rede.
+ * - [refusal]: o servidor recusou a senha da conta do serviço (401, 403 ou 407 num resultado dela, pelo mesmo id
+ *   do status; o de uma tentativa da tela Entrar com outra conta não conta). Fica até o app mostrar ([refusalSeen]),
+ *   o serviço passar a segurar outra conta ou parar; a próxima recusa marca de novo.
  * - Os avisos de ligação do motor vão às ligações ([calls], o CallManager), na thread dos eventos.
  *
  * Threads e travas (ninguém espera em círculo):
@@ -98,11 +105,13 @@ class Connection(
 
     private val mutableRefusal = MutableStateFlow<Refusal?>(null)
 
-    /** A recusa da senha da conta gravada que o app ainda não mostrou. Esboço: nunca muda. */
+    /** A recusa da senha da conta do serviço que o app ainda não mostrou (null: nenhuma). */
     val refusal: StateFlow<Refusal?> = mutableRefusal
 
-    /** O app mostrou a recusa [seen]. Esboço. */
-    fun refusalSeen(seen: Refusal) {}
+    /** O app mostrou a recusa [seen] (a tela Entrar do Editar, com o aviso): ela sai, se nenhuma mais nova chegou. */
+    fun refusalSeen(seen: Refusal) {
+        mutableRefusal.compareAndSet(seen, null)
+    }
 
     /** Quem espera o resultado do registro na tela Entrar (null fora dela): código, ativa e id da conta. */
     @Volatile
@@ -147,6 +156,10 @@ class Connection(
                 results[accountId] = Registration(code, active)
                 forgetOldResults()
                 publish()
+                val account = owned
+                if (account != null && code in REFUSED_PASSWORD && accountId == currentIdOf(account)) {
+                    mutableRefusal.value = Refusal(core.registrationMessage(code))
+                }
             }
             loginEvents?.invoke(code, active, accountId)
         }
@@ -190,6 +203,7 @@ class Connection(
     fun adopt(owner: Any, account: Account): Adoption = inOrder {
         val decided = synchronized(lock) {
             if (this.owner !== owner) return@inOrder Adoption.STOPPED
+            if (owned != account) mutableRefusal.value = null   // a recusa era da senha antiga
             owned = account
             publish()
             when {
@@ -209,6 +223,7 @@ class Connection(
             this.owner = null
             owned = null
             online = true
+            mutableRefusal.value = null
             publish()
             account
         } ?: return
@@ -417,5 +432,8 @@ class Connection(
 
     private companion object {
         const val KEPT_RESULTS = 8
+
+        /** As respostas do servidor que recusam a senha (as do aviso "Ramal ou senha incorretos." do núcleo). */
+        val REFUSED_PASSWORD = setOf(401, 403, 407)
     }
 }

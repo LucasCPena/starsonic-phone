@@ -2,6 +2,7 @@ package br.com.starsonic.phone.data
 
 import android.content.Context
 import br.com.starsonic.phone.engine.Transport
+import java.io.IOException
 
 /**
  * A conta do celular: o endereço do servidor e o ramal já normalizados pelo núcleo, o protocolo e a senha
@@ -17,15 +18,17 @@ interface AccountStore {
     /** A conta gravada, ou null (sem conta, ou a senha não pôde ser decifrada). */
     fun load(): Account?
 
+    /** Grava a conta (Keystore e disco: nunca na thread principal). Lança exceção se o Keystore ou o disco falham. */
     fun save(account: Account)
 
-    /** Apaga a conta e a senha. */
+    /** Apaga a conta e a senha: quem lê depois já não acha a conta. Não espera o disco. */
     fun clear()
 }
 
 /**
  * A conta no armazenamento privado do app (SharedPreferences "conta"), com a senha cifrada pelo
- * [PasswordCipher]. Desinstalar o app apaga tudo; o manifesto não deixa a conta ir para o backup.
+ * [PasswordCipher]. Desinstalar o app apaga tudo; o manifesto deixa os dados do app fora do backup na nuvem e da
+ * transferência para outro celular.
  */
 class PreferencesAccountStore(
     context: Context,
@@ -43,16 +46,20 @@ class PreferencesAccountStore(
     }
 
     override fun save(account: Account) {
-        preferences.edit()
+        val sealed = cipher.encrypt(account.senha)   // antes de mexer no arquivo: o Keystore pode falhar
+        val written = preferences.edit()
             .putString(KEY_ADDRESS, account.address)
             .putString(KEY_TRANSPORT, if (account.transport == Transport.TCP) TCP else UDP)
             .putString(KEY_RAMAL, account.ramal)
-            .putString(KEY_SENHA, cipher.encrypt(account.senha))
+            .putString(KEY_SENHA, sealed)
             .commit()   // no disco antes de a tela Entrar acabar
+        if (!written) throw IOException("a conta não foi gravada no disco")
     }
 
+    // Na memória na hora e no disco logo depois (apply): serve na thread principal (Sair), e uma gravação que vem
+    // depois (o próximo Entrar) vai ao disco depois desta.
     override fun clear() {
-        preferences.edit().clear().commit()
+        preferences.edit().clear().apply()
     }
 
     private companion object {

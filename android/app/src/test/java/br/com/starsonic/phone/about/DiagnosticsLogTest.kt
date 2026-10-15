@@ -50,9 +50,13 @@ class DiagnosticsLogTest {
         disk.countDown()
         val file = log.file()
         val kept = numbers(file)
-        assertTrue("algumas linhas não couberam: ${kept.size}", kept.size in 16 until 100)
-        assertEquals("as primeiras, em ordem", (0 until kept.size).toList(), kept)
-        assertTrue("o aviso das descartadas", file.readText().contains("${100 - kept.size} linhas do log descartadas"))
+        assertTrue("algumas linhas não couberam: ${kept.size}", kept.size < 100)
+        // Cabem as 16 primeiras; depois, a linha que chega com a fila cheia sai (a fila esvazia quando a thread do
+        // log pega um bloco, e as seguintes voltam a caber).
+        assertEquals("as primeiras couberam", (0 until 16).toList(), kept.take(16))
+        assertEquals("em ordem, sem repetir", kept.distinct().sorted(), kept)
+        val dropped = DROPPED.findAll(file.readText()).sumOf { it.groupValues[1].toInt() }
+        assertEquals("o aviso conta as descartadas", 100 - kept.size, dropped)
     }
 
     @Test
@@ -77,5 +81,6 @@ class DiagnosticsLogTest {
 
     private companion object {
         val NUMBER = Regex("""linha (\d{6})""")
+        val DROPPED = Regex("""(\d+) linhas do log descartadas""")
     }
 }

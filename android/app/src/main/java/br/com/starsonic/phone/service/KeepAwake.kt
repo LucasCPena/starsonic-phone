@@ -31,8 +31,13 @@ class KeepAwake(private val lock: CpuLock) {
     /** O serviço está (ou não) com a conta gravada. */
     fun setAccount(has: Boolean) = update { account = has }
 
-    /** O que a conexão fez com a conta gravada. Esboço: como antes, solta na recusa. */
-    fun setAdoption(adoption: Adoption) = setAccount(adoption != Adoption.STOPPED && adoption != Adoption.REFUSED)
+    /**
+     * O que a conexão fez com a conta gravada ([Connection.adopt]). Só o serviço que parou no meio
+     * ([Adoption.STOPPED]) fica sem ela. Recusada pelo motor ([Adoption.REFUSED]), a conta continua com o serviço, e a
+     * conexão pode registrá-la depois sozinha, sem avisar o serviço (quando uma tentativa da tela Entrar deixa o
+     * motor vazio): o processador fica acordado, para essa conta não ficar registrada com ele dormindo.
+     */
+    fun setAdoption(adoption: Adoption) = setAccount(adoption != Adoption.STOPPED)
 
     /** Há (ou não) rede. */
     fun setOnline(online: Boolean) = update { this.online = online }

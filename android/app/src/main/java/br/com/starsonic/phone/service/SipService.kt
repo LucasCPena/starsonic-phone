@@ -16,6 +16,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -25,6 +26,7 @@ import br.com.starsonic.phone.R
 import br.com.starsonic.phone.main.MainActivity
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -50,11 +52,13 @@ import kotlinx.coroutines.launch
  * - Numa thread própria ("starsonic-servico"), lê a conta gravada (Keystore e disco), sobe o motor (uma vez
  *   por processo) e segura a conta ([Connection.adopt]): a que a tela Entrar acabou de registrar fica, sem
  *   outro REGISTER. Sem conta gravada, sai na hora.
- * - Parar ([stop]) tira a conta do motor ([Connection.release]); o motor fica de pé.
+ * - Parar ([stop], o Sair) tira a conta do motor ([Connection.release]); o motor fica de pé.
  * - O [NetworkMonitor] refaz o registro nas trocas de rede e marca "Sem internet".
  * - Com a conta gravada e com rede, segura o processador acordado ([KeepAwake], wake lock parcial
  *   "starsonic:conexao"; spec 7.2, item 6): com a tela apagada, a renovação do registro e o keep-alive não
  *   param. Sem rede, ou depois de parar, solta.
+ * - Se o servidor recusa a senha (401, 403 ou 407 ao renovar), a notificação mostra o aviso do núcleo (o status), a
+ *   conta continua gravada e o serviço continua de pé; o app, na frente, abre a tela Entrar ([Connection.refusal]).
  */
 class SipService : Service() {
     private val app: App
@@ -74,6 +78,7 @@ class SipService : Service() {
     override fun onCreate() {
         super.onCreate()
         running = true
+        current = app.connection
         app.connection.claim(this)
         worker = Executors.newSingleThreadExecutor { task -> Thread(task, "starsonic-servico") }
         keepAwake = KeepAwake(cpuLock())
@@ -93,7 +98,11 @@ class SipService : Service() {
         // ACTION_START. Quem começa com startForegroundService precisa entrar em primeiro plano já, mesmo que
         // saia em seguida (sem conta gravada).
         startCommands++
-        if (!enterForeground()) {
+        val foreground = enterForeground()
+        // Este pedido chegou (e o serviço entrou em primeiro plano, ou o Android não deixou): um stop() que esperava
+        // por ele já pode parar o serviço.
+        if (intent?.action == ACTION_START) pendingStarts.decrementAndGet()
+        if (!foreground) {
             stopSelf(startId)
             return START_NOT_STICKY
         }
@@ -121,6 +130,7 @@ class SipService : Service() {
         worker.execute { monitor.stop() }   // na mesma thread que o ligou, depois dele
         worker.shutdown()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        current = null
         running = false
         super.onDestroy()
     }
@@ -136,11 +146,11 @@ class SipService : Service() {
             main.post { stopSelf(startId) }
             return
         }
-        // O processador fica acordado já no registro (que a adoção pode fazer); se o serviço não ficou com a
-        // conta, solta.
+        // O processador fica acordado já no registro (que a adoção pode fazer); só o serviço que parou no meio solta
+        // (recusada pelo motor, a conta continua do serviço: ver KeepAwake.setAdoption).
         keepAwake.setAccount(true)
         val adoption = app.connection.adopt(this, account)
-        if (adoption == Adoption.STOPPED || adoption == Adoption.REFUSED) keepAwake.setAccount(false)
+        keepAwake.setAdoption(adoption)
         if (adoption == Adoption.STOPPED) return
         if (!monitoring) {
             monitoring = true
@@ -249,32 +259,64 @@ class SipService : Service() {
         var startCommands = 0
             private set
 
+        // A conexão do serviço de pé (de onCreate a onDestroy), para o reregister().
+        @Volatile
+        private var current: Connection? = null
+
+        // Os pedidos de início que o Android aceitou e que ainda não chegaram ao serviço (cada um, ao chegar, põe o
+        // serviço em primeiro plano).
+        private val pendingStarts = AtomicInteger()
+        private val mainThread = Handler(Looper.getMainLooper())
+
         /**
          * Inicia o serviço em primeiro plano. false se o Android não deixa agora (Android 12+, com o app em
          * segundo plano e sem uma das exceções, como a isenção de bateria ou o BOOT_COMPLETED).
          */
-        fun start(context: Context): Boolean =
-            try {
+        fun start(context: Context): Boolean {
+            pendingStarts.incrementAndGet()
+            return try {
                 ContextCompat.startForegroundService(context, Intent(context, SipService::class.java).setAction(ACTION_START))
                 true
             } catch (e: IllegalStateException) {
+                pendingStarts.decrementAndGet()
                 Log.w(TAG, "o serviço não pôde começar", e)
                 false
             } catch (e: SecurityException) {
+                pendingStarts.decrementAndGet()
                 Log.w(TAG, "o serviço não pôde começar", e)
                 false
             }
-
-        /** Renova agora o registro da conta do serviço. Esboço: não faz nada. */
-        fun reregister(): Boolean = false
+        }
 
         /**
-         * Para o serviço: a conta sai do motor (Sair, na Task 9). Chame depois de o serviço ter começado (o
-         * Android derruba o app que para um serviço iniciado com startForegroundService antes de ele entrar em
-         * primeiro plano).
+         * Renova agora o registro da conta do serviço, como a renovação de cada 300 s (os testes: a senha trocada no
+         * servidor). false se o serviço não está de pé. Qualquer thread; o resultado chega pelo status.
+         */
+        fun reregister(): Boolean {
+            val connection = current ?: return false
+            connection.reregister()
+            return true
+        }
+
+        /**
+         * Para o serviço (Sair): a conta sai do motor ([Connection.release]). O Android derruba o app que para um
+         * serviço iniciado com startForegroundService antes de ele entrar em primeiro plano: com um início que
+         * ainda não chegou ao serviço, a parada espera ele chegar (na thread principal, por até alguns segundos).
+         * Qualquer thread; volta na hora.
          */
         fun stop(context: Context) {
+            stopWhenStarted(context.applicationContext, SystemClock.uptimeMillis() + STOP_WAIT_MILLIS)
+        }
+
+        private fun stopWhenStarted(context: Context, deadline: Long) {
+            if (pendingStarts.get() > 0 && SystemClock.uptimeMillis() < deadline) {
+                mainThread.postDelayed({ stopWhenStarted(context, deadline) }, STOP_RETRY_MILLIS)
+                return
+            }
             context.stopService(Intent(context, SipService::class.java))
         }
+
+        private const val STOP_WAIT_MILLIS = 10_000L
+        private const val STOP_RETRY_MILLIS = 50L
     }
 }
