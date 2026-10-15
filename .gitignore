@@ -5,3 +5,8 @@
 starsonic/generated/
 __pycache__/
 /android-deps/
+# Chaves de assinatura do Android: nunca no repositório (spec 9.5; o SHA-256 do certificado fica em
+# build/android/signing-cert.sha256).
+*.jks
+*.keystore
+*.p12

@@ -49,22 +49,20 @@ on:
         description: "true = o APK de publicação precisa da chave dos segredos e fica guardado para o android-release"
         type: boolean
         default: false
-    # A chave de assinatura (spec 9.5): o .jks em base64, a senha do arquivo, o alias e a senha da chave.
+    # A chave de assinatura (spec 9.5): o .jks em base64 e a senha dele. O alias (starsonic) não é segredo, e a senha da
+    # chave é a do arquivo (PKCS12).
     secrets:
       ANDROID_KEYSTORE_BASE64:
         required: false
       ANDROID_KEYSTORE_PASSWORD:
-        required: false
-      ANDROID_KEY_ALIAS:
-        required: false
-      ANDROID_KEY_PASSWORD:
         required: false
 
 permissions:
   contents: read
 
 jobs:
-  # O build.yml (Windows) também roda estes testes, mas não num push só do Android (o paths-ignore dele).
+  # O build.yml (Windows) também roda estes testes, mas não num push só do Android (o paths-ignore dele). Sem o
+  # GITHUB_ACTIONS: os scripts que os testes fazem falhar de propósito anotariam erros falsos num job verde.
   scripts:
     name: Testes dos scripts
     runs-on: ubuntu-24.04
@@ -73,7 +71,7 @@ jobs:
 
       - name: Testes dos scripts (Python) e literais em ASCII
         run: |
-          python3 -m unittest discover -s tests/python
+          env -u GITHUB_ACTIONS python3 -m unittest discover -s tests/python
           python3 build/check_source_text.py
 
   phone-linux:
@@ -343,10 +341,10 @@ jobs:
 
   # O APK de publicação: as três ABIs, com o R8, assinado e conferido pelo check_apk.py, também no dex (o que o código
   # nativo e o Android acham pelo nome tem de estar lá com o nome de sempre). A chave é a dos segredos ANDROID_* (spec
-  # 9.5), conferida contra o build/android/signing-cert.sha256. Sem os segredos (um fork, ou antes de eles existirem),
-  # uma chave de ensaio criada aqui assina o APK só para as conferências, e esse APK não é guardado; a publicação
-  # (publicar) não aceita a de ensaio. Com a versão, sai também o código-fonte completo; com a versão e a chave de
-  # verdade, o APK e o código-fonte ficam guardados (artefato) para o android-release.yml.
+  # 9.5), conferida contra o build/android/signing-cert.sha256, e só vale no main e nas tags android-v*. Em outro branch,
+  # num PR ou sem os segredos, uma chave de ensaio criada aqui assina o APK só para as conferências, e esse APK não é
+  # guardado; a publicação (publicar) não aceita a de ensaio. Com a versão, sai também o código-fonte completo; com a
+  # versão e a chave de verdade, o APK e o código-fonte ficam guardados (artefato) para o android-release.yml.
   release:
     name: APK de publicação (três ABIs)
     needs: deps-android
@@ -391,59 +389,62 @@ jobs:
           gradle-version: ${{ steps.lock.outputs.gradle }}
           cache-provider: basic
 
-      # Os segredos só passam por aqui e pelo passo do Gradle (pelo ambiente; nunca na linha de comando nem no log). O
-      # GitHub esconde nos logs deste job o valor de cada segredo, inclusive o do alias ("starsonic"); por isso o .jks
-      # decodificado não leva esse nome.
+      # Os segredos só passam por aqui e pelo passo do Gradle (pelo ambiente; nunca na linha de comando nem no log), e só
+      # no main e nas tags android-v*. O alias (starsonic) não é segredo, e a senha da chave é a do arquivo (PKCS12). O
+      # SHA-256 esperado fica fora da pasta da chave, que sai logo depois do build.
       - name: Chave de assinatura
         id: chave
         env:
-          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          KEYSTORE_BASE64: ${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/android-v')) && secrets.ANDROID_KEYSTORE_BASE64 || '' }}
+          KEYSTORE_PASSWORD: ${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/android-v')) && secrets.ANDROID_KEYSTORE_PASSWORD || '' }}
           PUBLICAR: ${{ inputs.publicar }}
         run: |
           dir="$RUNNER_TEMP/chave"
           mkdir -p "$dir"
           chmod 700 "$dir"
           if [ -n "$KEYSTORE_BASE64" ]; then
-            missing=()
-            for name in KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
-              [ -n "${!name}" ] || missing+=("ANDROID_$name")
-            done
-            if [ "${#missing[@]}" -gt 0 ]; then
-              echo "::error title=Chave::faltam os segredos ${missing[*]}"
+            if [ -z "$KEYSTORE_PASSWORD" ]; then
+              echo "::error title=Chave::falta o segredo ANDROID_KEYSTORE_PASSWORD"
               exit 1
             fi
-            printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$dir/publicacao.jks"
-            sha="$(keytool -exportcert -keystore "$dir/publicacao.jks" -alias "$KEY_ALIAS" -storepass:env KEYSTORE_PASSWORD |
-              sha256sum | cut -d' ' -f1)"
+            # Um segredo colado pode vir com quebras de linha, CR ou espaços.
+            if ! printf '%s' "$KEYSTORE_BASE64" | tr -d '[:space:]' | base64 -d > "$dir/starsonic.jks" 2> "$dir/base64.txt"; then
+              echo "::error title=Chave::o segredo ANDROID_KEYSTORE_BASE64 não é um base64 válido: $(tr '\n' ' ' < "$dir/base64.txt")"
+              exit 1
+            fi
+            # O keytool escreve os erros na saída padrão: o certificado vai para um arquivo, e a saída, para a anotação.
+            if ! keytool -exportcert -keystore "$dir/starsonic.jks" -alias starsonic -storepass:env KEYSTORE_PASSWORD \
+                -file "$dir/certificado.der" > "$dir/keytool.txt" 2>&1; then
+              echo "::error title=Chave::o keytool não abriu a chave dos segredos (o base64 ou a senha?): $(grep -v 'Picked up' "$dir/keytool.txt" | tr '\n' ' ')"
+              exit 1
+            fi
+            sha="$(sha256sum "$dir/certificado.der" | cut -d' ' -f1)"
             expected="$(tr -d ' :\r\n' < build/android/signing-cert.sha256 | tr 'A-F' 'a-f')"
             if [ "$sha" != "$expected" ]; then
               echo "::error title=Chave::a chave dos segredos tem o certificado $sha, e não o de build/android/signing-cert.sha256 ($expected)"
               exit 1
             fi
-            { echo "real=true"; echo "keystore=$dir/publicacao.jks"; echo "cert=build/android/signing-cert.sha256"; } >> "$GITHUB_OUTPUT"
+            { echo "real=true"; echo "keystore=$dir/starsonic.jks"; echo "alias=starsonic"; echo "cert=build/android/signing-cert.sha256"; } >> "$GITHUB_OUTPUT"
             echo "::notice title=Chave::a chave de assinatura dos segredos (certificado SHA-256 $sha)"
           else
             if [ "$PUBLICAR" = "true" ]; then
-              echo "::error title=Chave::sem o segredo ANDROID_KEYSTORE_BASE64 não há publicação (README, seção Android)"
+              echo "::error title=Chave::a publicação precisa do segredo ANDROID_KEYSTORE_BASE64 e só sai do main ou de uma tag android-v* (este run: $GITHUB_REF; README, seção Android)"
               exit 1
             fi
             keytool -genkeypair -keystore "$dir/ensaio.jks" -alias ensaio -keyalg RSA -keysize 2048 -validity 2 \
               -dname "CN=Ensaio do Starsonic Phone" -storepass ensaio -keypass ensaio
             keytool -exportcert -keystore "$dir/ensaio.jks" -alias ensaio -storepass ensaio | sha256sum | cut -d' ' -f1 \
-              > "$dir/ensaio.sha256"
-            { echo "real=false"; echo "keystore=$dir/ensaio.jks"; echo "cert=$dir/ensaio.sha256"; } >> "$GITHUB_OUTPUT"
-            echo "::notice title=Chave::sem os segredos ANDROID_*: o APK de publicação vai assinado com uma chave de ensaio criada aqui, só para as conferências, e não é guardado"
+              > "$RUNNER_TEMP/ensaio.sha256"
+            { echo "real=false"; echo "keystore=$dir/ensaio.jks"; echo "alias=ensaio"; echo "cert=$RUNNER_TEMP/ensaio.sha256"; } >> "$GITHUB_OUTPUT"
+            echo "::notice title=Chave::sem os segredos ANDROID_* (ou fora do main e das tags android-v*): o APK de publicação vai assinado com uma chave de ensaio criada aqui, só para as conferências, e não é guardado"
           fi
 
       - name: Compilar o APK de publicação
         env:
           STARSONIC_KEYSTORE_FILE: ${{ steps.chave.outputs.keystore }}
           STARSONIC_KEYSTORE_PASSWORD: ${{ steps.chave.outputs.real == 'true' && secrets.ANDROID_KEYSTORE_PASSWORD || 'ensaio' }}
-          STARSONIC_KEY_ALIAS: ${{ steps.chave.outputs.real == 'true' && secrets.ANDROID_KEY_ALIAS || 'ensaio' }}
-          STARSONIC_KEY_PASSWORD: ${{ steps.chave.outputs.real == 'true' && secrets.ANDROID_KEY_PASSWORD || 'ensaio' }}
+          STARSONIC_KEY_ALIAS: ${{ steps.chave.outputs.alias }}
+          STARSONIC_KEY_PASSWORD: ${{ steps.chave.outputs.real == 'true' && secrets.ANDROID_KEYSTORE_PASSWORD || 'ensaio' }}
         run: |
           log="$RUNNER_TEMP/gradle-release.log"
           status=0
@@ -468,6 +469,14 @@ jobs:
           fi
           mkdir -p dist
           cp "$RELEASE_APK" "dist/StarsonicPhone-android-$STARSONIC_VERSION.apk"
+
+      # Passe ou falhe o build, a chave decodificada sai do disco e o daemon do Gradle (que guarda o ambiente, com a
+      # senha) para.
+      - name: Apagar a chave
+        if: always()
+        run: |
+          gradle --stop > /dev/null 2>&1 || true
+          rm -rf "$RUNNER_TEMP/chave"
 
       # O dexdump e o llvm-nm conferem o R8 (as regras do EngineSink, do PjAudioDevInfo, do atualizador e os nomes dos
       # natives da ponte, em cada ABI).

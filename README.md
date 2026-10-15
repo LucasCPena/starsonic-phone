@@ -116,7 +116,9 @@ O Android tem numeração própria, começando em `0.1.0-rc.1`: `X.Y.Z` (estáve
 3. **Teste manual:** siga o [roteiro](docs/teste-manual-android.md), inclusive a atualização de uma rc para a seguinte.
 4. **Estável:** escreva `notas/android-vX.Y.Z.txt` (texto curto mostrado no aviso de atualização) e crie a tag `android-vX.Y.Z`. O workflow publica o release e atualiza o release fixo `canal-android`, de onde as versões estáveis recebem a atualização.
 
-Cada release traz `StarsonicPhone-android-<versão>.apk`, `versao-android.json` (com o SHA-256 do APK, conferido pelo app antes de instalar) e `StarsonicPhone-android-<versão>-codigo-fonte-completo.zip`, que cumpre a GPL: o repositório, o pjproject, o Opus e o Oboe.
+Cada release traz `StarsonicPhone-android-<versão>.apk`, `versao-android.json` (com o SHA-256 do APK, conferido pelo app antes de instalar) e `StarsonicPhone-android-<versão>-codigo-fonte-completo.zip`, que cumpre a GPL: o repositório, o pjproject, o Opus e o Oboe. As notas dos canais apontam para o release da versão, onde está o código-fonte.
+
+Uma publicação roda por vez. O canal só troca por uma versão igual ou mais nova que a dele. Se o job `publicar` falhar no meio (por exemplo, no canal, depois de criar o release), use **Re-run failed jobs** no run: o release que já existe recebe os arquivos de novo, desde que a tag seja do mesmo commit. Um disparo à mão com uma versão cuja tag já existe em outro commit para logo no começo.
 
 **O "latest" do GitHub é do Windows.** O Windows acha o `versao.json` dele pelo release marcado como latest. Os releases do Android saem sempre com `--latest=false`, e no fim o workflow confere que o latest continua sendo uma tag `v…` do Windows (ou que ainda não há latest, enquanto o Windows não tiver versão estável). Não marque um release do Android, nem o `canal-android`, como latest.
 
@@ -126,9 +128,11 @@ O app procura atualizações em `github.com/LucasCPena/starsonic-phone` (fixo em
 
 Todo APK publicado sai assinado com a mesma chave (spec 9.5). Com outra chave, a versão nova não instala por cima da anterior (cada pessoa teria de desinstalar e instalar de novo), e a mesma chave serve depois para o cadastro no Google e para a Play Store.
 
-- A chave (`starsonic-android.jks`, alias `starsonic`) e a senha **nunca vão para o repositório**. Ficam com o responsável, numa cópia de segurança fora do GitHub, e nos segredos do repositório (Settings → Secrets and variables → Actions): `ANDROID_KEYSTORE_BASE64` (o `.jks` em base64, numa linha só: `base64 -w 0 starsonic-android.jks`), `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` e `ANDROID_KEY_PASSWORD`.
+- A chave (`starsonic-android.jks`) e a senha **nunca vão para o repositório** (o `.gitignore` recusa `*.jks`, `*.keystore` e `*.p12`). Ficam com o responsável, numa cópia de segurança fora do GitHub, e em dois segredos do repositório (Settings → Secrets and variables → Actions): `ANDROID_KEYSTORE_BASE64` (o `.jks` em base64, numa linha só: `base64 -w 0 starsonic-android.jks`) e `ANDROID_KEYSTORE_PASSWORD` (a senha do arquivo).
+- O alias da chave (`starsonic`) não é segredo e fica fixo no workflow; a senha da chave é a do arquivo (o `.jks` é PKCS12).
+- A chave de verdade só é usada nos builds do `main` e das tags `android-v*`. Depois do build, passe ou falhe, um passo apaga a chave decodificada e para o daemon do Gradle.
 - No repositório fica só o SHA-256 do certificado, em `build/android/signing-cert.sha256`. O workflow confere que a chave dos segredos é essa e que o APK saiu assinado com ela.
-- Sem os segredos, o `android.yml` assina o APK de publicação com uma chave de ensaio, criada na hora só para as conferências (esse APK não é guardado), e o `android-release` não publica.
+- Sem os segredos, ou em outro branch, o `android.yml` assina o APK de publicação com uma chave de ensaio, criada na hora só para as conferências (esse APK não é guardado), e o `android-release` não publica.
 - Se a chave vazar ou se perder, não publique e fale com o responsável: trocar a chave obriga quem já instalou a desinstalar e instalar de novo.
 
 ## Segurança

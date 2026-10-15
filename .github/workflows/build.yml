@@ -50,9 +50,11 @@ jobs:
           cmake --build build-tests -j 4
           ctest --test-dir build-tests --output-on-failure
 
+      # Os testes rodam sem o GITHUB_ACTIONS: os scripts que eles fazem falhar de propósito anotariam erros falsos num
+      # job verde.
       - name: Testes dos scripts
         run: |
-          if [ -d tests/python ]; then python3 -m unittest discover -s tests/python -v; fi
+          if [ -d tests/python ]; then env -u GITHUB_ACTIONS python3 -m unittest discover -s tests/python -v; fi
           python3 build/check_source_text.py
 
   windows:

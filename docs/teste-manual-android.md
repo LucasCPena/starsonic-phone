@@ -89,21 +89,28 @@ Faça cada linha no Wi-Fi e no 4G. A conta fica conectada com o processador acor
 
 ## 7. Atualização de uma versão de teste para a seguinte
 
-Use duas rc seguidas, por exemplo `android-v0.1.0-rc.1` e `android-v0.1.0-rc.2`. As rc procuram atualização no pre-release fixo `canal-teste-android`, que o workflow `android-release` atualiza a cada rc. O app confere o canal ao abrir (a primeira abertura depois de instalar sempre confere; depois, só 24 h depois da última verificação) e a cada 24 h em segundo plano. Faça num Android 11 ou mais novo e, se houver, num Android 9 ou 10.
+Use duas rc seguidas: a anterior, já publicada (ex.: `android-v0.1.0-rc.1`), e a seguinte (ex.: `android-v0.1.0-rc.2`). As rc procuram atualização no pre-release fixo `canal-teste-android`, que o workflow `android-release` atualiza a cada rc. Faça num Android 11 ou mais novo e, se houver, num Android 9 ou 10.
+
+A ordem dos passos importa, por causa da regra das 24 h:
+
+- Ao abrir, o app só confere o canal se a última verificação tem mais de 24 h. A primeira abertura depois de instalar sempre confere.
+- A verificação conta (e o aviso só volta 24 h depois) quando o canal responde sem versão nova, quando a pessoa toca em "Agora não" (ou fecha o aviso) e quando toca em "Atualizar" com uma ligação em andamento ou com o download começando.
+- Por isso, publique a rc seguinte **antes** de instalar a anterior: aberta com o canal ainda na anterior, ela só veria o aviso 24 h depois.
+- Cada vez que o roteiro pede o aviso de novo, desinstale o app e instale a rc anterior outra vez. Isso zera a verificação, mas também apaga a conta (entre de novo) e tira a permissão de instalar apps (o primeiro "Atualizar" depois disso leva de novo ao ajuste do Android).
 
 | # | Passo | Resultado esperado | A1 | A2 |
 |---|-------|--------------------|----|----|
-| 7.1 | Instale a rc anterior pelo link (seção 1), entre e confira "Conectado". | Menu → Sobre mostra a rc anterior. | ☐ | ☐ |
-| 7.2 | Publique a rc seguinte (tag `android-v…-rc.N+1`, ou Actions → android-release → Run workflow) e espere o workflow terminar. | O release da rc nova e o `canal-teste-android` têm o APK e o `versao-android.json` novos. | ☐ | ☐ |
-| 7.3 | Abra o app. | Aviso "Nova versão do Starsonic Phone disponível (<rc nova>). Atualizar agora?", com as notas, "Atualizar" e "Agora não". | ☐ | ☐ |
-| 7.4 | Toque em "Agora não" e abra o app de novo. | O aviso não volta (só 24 h depois). Para seguir, desinstale, instale a rc anterior de novo e entre. | ☐ | ☐ |
-| 7.5 | Com uma ligação em andamento, toque em "Atualizar". | "Termine a chamada para atualizar." e nada mais acontece. | ☐ | ☐ |
-| 7.6 | Sem ligação, toque em "Atualizar" (primeira vez). | O Android abre "Instalar apps desconhecidos" do Starsonic Phone: permita. No Android 11 ou mais novo, o app fecha ao permitir; abra-o de novo, e o aviso volta. | ☐ | ☐ |
-| 7.7 | Toque em "Atualizar" de novo. | "Baixando atualização…" e depois a confirmação do Android; confirme a atualização. | ☐ | ☐ |
-| 7.8 | Sem abrir o app, ligue para o ramal. Depois, abra o Sobre. | A notificação fixa voltou sozinha, e a ligação toca. O Sobre mostra a rc nova; a conta continua lá, sem pedir a senha. | ☐ | ☐ |
-| 7.9 | Com o aviso de uma versão nova na tela, toque em "Atualizar" e ligue o modo avião logo em seguida. | "Não foi possível baixar a atualização. Tentaremos de novo mais tarde." e o app continua funcionando. | ☐ | ☐ |
-| 7.10 | (Opcional) Deixe o app em segundo plano por mais de 24 h depois de publicar uma rc nova. | A notificação de "Atualizações" com a pergunta; tocar nela abre o app com o aviso. | ☐ | ☐ |
-| 7.11 | Menu → Sobre → Enviar diagnóstico. | As linhas "atualização:" estão no arquivo, sem endereços assinados (nada de `X-Amz-` ou `token=`). | ☐ | ☐ |
+| 7.1 | Publique a rc seguinte (tag `android-v…-rc.N+1`, ou Actions → android-release → Run workflow) e espere o workflow terminar. | O release da rc nova e o `canal-teste-android` têm o APK e o `versao-android.json` dela. | ☐ | ☐ |
+| 7.2 | Desinstale o app (se estiver instalado) e instale a rc anterior pelo link da página dela (`…/releases/tag/android-v…-rc.N`). Abra, entre com o ramal e siga a tela Permissões. | Na tela principal, o aviso "Nova versão do Starsonic Phone disponível (<rc nova>). Atualizar agora?", com as notas, "Atualizar" e "Agora não". | ☐ | ☐ |
+| 7.3 | Toque em "Agora não". Tire o app da lista de apps recentes e abra de novo. | O aviso sai e não volta (só 24 h depois). Menu → Sobre mostra a rc anterior. | ☐ | ☐ |
+| 7.4 | Desinstale o app, instale a rc anterior de novo, abra e entre. Com o aviso na tela, receba uma ligação no ramal e atenda; com ela em andamento, volte ao app pelo ícone e toque em "Atualizar". Depois, desligue. | O aviso aparece de novo depois da reinstalação. Com a ligação: "Termine a chamada para atualizar." e nada mais acontece; depois da ligação, o aviso não volta. | ☐ | ☐ |
+| 7.5 | Desinstale o app, instale a rc anterior de novo, abra e entre. Toque em "Atualizar". | O Android abre "Instalar apps desconhecidos" do Starsonic Phone (a reinstalação tirou a permissão). | ☐ | ☐ |
+| 7.6 | Permita. No Android 11 ou mais novo, o app fecha: abra-o de novo. No Android 9 ou 10, volte ao app. | O aviso continua (no Android 11 ou mais novo, ele volta quando o app abre). | ☐ | ☐ |
+| 7.7 | Ligue o modo avião e toque em "Atualizar". Depois, desligue o modo avião. | "Não foi possível baixar a atualização. Tentaremos de novo mais tarde.", e o app continua funcionando. O aviso não volta. | ☐ | ☐ |
+| 7.8 | Desinstale o app, instale a rc anterior de novo, abra e entre. Toque em "Atualizar", permita a instalação de apps (como em 7.5 e 7.6) e, com o aviso de volta, toque em "Atualizar" de novo. | "Baixando atualização…" e depois a confirmação do Android; confirme a atualização. | ☐ | ☐ |
+| 7.9 | Sem abrir o app, ligue para o ramal. Depois, abra o app e o Menu → Sobre. | A notificação fixa voltou sozinha depois da atualização, e a ligação toca. O Sobre mostra a rc nova; a conta continua lá, sem pedir a senha. | ☐ | ☐ |
+| 7.10 | Menu → Sobre → Enviar diagnóstico. | As linhas "atualização:" estão no arquivo, sem endereços assinados (nada de `X-Amz-` ou `token=`). | ☐ | ☐ |
+| 7.11 | (Opcional) Desinstale o app, instale a rc anterior de novo, abra e entre; sem responder ao aviso, saia do app (botão de início) e espere mais de 24 h. | A notificação "Atualizações" com a pergunta; tocar nela abre o app com o aviso. | ☐ | ☐ |
 | 7.12 | (Quando houver versão estável) Com uma versão estável instalada (ex.: `0.1.0`), publique uma rc. | Nenhum aviso: a versão estável só olha o `canal-android`. | ☐ | ☐ |
 
 ## 8. Bateria
@@ -145,4 +152,4 @@ Use duas rc seguidas, por exemplo `android-v0.1.0-rc.1` e `android-v0.1.0-rc.2`.
 | Nada técnico além do servidor, do protocolo, do ramal e da senha | testes do núcleo (perfil e conta montada a partir dele), `LoginScreenTest` | 2.1 |
 | Uma versão de teste nova chega como aviso e instala com a confirmação do Android | `UpdateDeciderTest` e `UpdaterTest` (JVM), `UpdatePromptTest` (emulador) | 7 |
 | Consumo de bateria num dia em espera, medido e aprovado | — | 8 |
-| Código-fonte completo junto de cada APK publicado | workflow `android-release` (APK, `versao-android.json` e código-fonte completo em cada release) | 7.2 |
+| Código-fonte completo junto de cada APK publicado | workflow `android-release` (APK, `versao-android.json` e código-fonte completo em cada release) | 7.1 |
