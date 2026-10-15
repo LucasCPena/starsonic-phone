@@ -391,7 +391,9 @@ jobs:
           gradle-version: ${{ steps.lock.outputs.gradle }}
           cache-provider: basic
 
-      # Os segredos só passam por aqui e pelo passo do Gradle (pelo ambiente; nunca na linha de comando nem no log).
+      # Os segredos só passam por aqui e pelo passo do Gradle (pelo ambiente; nunca na linha de comando nem no log). O
+      # GitHub esconde nos logs deste job o valor de cada segredo, inclusive o do alias ("starsonic"); por isso o .jks
+      # decodificado não leva esse nome.
       - name: Chave de assinatura
         id: chave
         env:
@@ -413,15 +415,15 @@ jobs:
               echo "::error title=Chave::faltam os segredos ${missing[*]}"
               exit 1
             fi
-            printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$dir/starsonic.jks"
-            sha="$(keytool -exportcert -keystore "$dir/starsonic.jks" -alias "$KEY_ALIAS" -storepass:env KEYSTORE_PASSWORD |
+            printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$dir/publicacao.jks"
+            sha="$(keytool -exportcert -keystore "$dir/publicacao.jks" -alias "$KEY_ALIAS" -storepass:env KEYSTORE_PASSWORD |
               sha256sum | cut -d' ' -f1)"
             expected="$(tr -d ' :\r\n' < build/android/signing-cert.sha256 | tr 'A-F' 'a-f')"
             if [ "$sha" != "$expected" ]; then
               echo "::error title=Chave::a chave dos segredos tem o certificado $sha, e não o de build/android/signing-cert.sha256 ($expected)"
               exit 1
             fi
-            { echo "real=true"; echo "keystore=$dir/starsonic.jks"; echo "cert=build/android/signing-cert.sha256"; } >> "$GITHUB_OUTPUT"
+            { echo "real=true"; echo "keystore=$dir/publicacao.jks"; echo "cert=build/android/signing-cert.sha256"; } >> "$GITHUB_OUTPUT"
             echo "::notice title=Chave::a chave de assinatura dos segredos (certificado SHA-256 $sha)"
           else
             if [ "$PUBLICAR" = "true" ]; then

@@ -25,7 +25,6 @@ jobs:
     outputs:
       version: ${{ steps.versao.outputs.version }}
       channel: ${{ steps.versao.outputs.channel }}
-      releases: ${{ steps.repositorio.outputs.releases }}
     steps:
       - uses: actions/checkout@v4
 
@@ -46,9 +45,9 @@ jobs:
           echo "Versão $version (versionCode $code), canal $channel"
 
       # O app procura as atualizações e só aceita os APKs de github.com/<conta>/starsonic-phone, endereço fixo no
-      # UpdateDecider.kt; o versao-android.json leva esse mesmo endereço, letra por letra.
+      # UpdateDecider.kt; o versao-android.json leva esse mesmo endereço, letra por letra (o job publicar o lê de novo:
+      # uma saída deste job com "starsonic", o valor do segredo ANDROID_KEY_ALIAS, seria descartada pelo GitHub).
       - name: Repositório do app
-        id: repositorio
         run: |
           releases="$(sed -n 's#^ *private const val RELEASES = "\(https://github.com/[^"]*/releases/download/\)"$#\1#p' \
             android/app/src/main/java/br/com/starsonic/phone/update/UpdateDecider.kt)"
@@ -58,7 +57,6 @@ jobs:
             echo "::error title=conta::o app procura as atualizações em '$repo', mas o release seria publicado em $GITHUB_REPOSITORY"
             exit 1
           fi
-          echo "releases=$releases" >> "$GITHUB_OUTPUT"
 
       - name: Versão ainda não publicada
         env:
@@ -115,7 +113,6 @@ jobs:
     env:
       VERSION: ${{ needs.preparar.outputs.version }}
       CHANNEL: ${{ needs.preparar.outputs.channel }}
-      RELEASES: ${{ needs.preparar.outputs.releases }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
@@ -133,11 +130,15 @@ jobs:
           python3 -I build/android/check_apk.py "dist/StarsonicPhone-android-$VERSION.apk" --version "$VERSION" --release \
             --cert-sha256 build/android/signing-cert.sha256 --aapt2 "${tools}aapt2" --apksigner "${tools}apksigner"
 
+      # O endereço do APK começa com o prefixo que o app aceita (UpdateDecider.kt), conferido no job preparar.
       - name: versao-android.json
         run: |
+          releases="$(sed -n 's#^ *private const val RELEASES = "\(https://github.com/[^"]*/releases/download/\)"$#\1#p' \
+            android/app/src/main/java/br/com/starsonic/phone/update/UpdateDecider.kt)"
+          test -n "$releases"
           apk="dist/StarsonicPhone-android-$VERSION.apk"
           sha=$(sha256sum "$apk" | cut -d' ' -f1)
-          url="${RELEASES}android-v$VERSION/StarsonicPhone-android-$VERSION.apk"
+          url="${releases}android-v$VERSION/StarsonicPhone-android-$VERSION.apk"
           notas="notas/android-v$VERSION.txt"
           extra=()
           if [ -f "$notas" ]; then extra=(--notes-file "$notas"); fi
