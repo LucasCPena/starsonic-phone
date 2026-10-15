@@ -2,16 +2,21 @@ package br.com.starsonic.phone
 
 import android.app.Application
 import android.util.Log
+import br.com.starsonic.phone.call.CallManager
+import br.com.starsonic.phone.call.CallNotifier
+import br.com.starsonic.phone.call.TelecomAdapter
 import br.com.starsonic.phone.core.Clock
 import br.com.starsonic.phone.core.CoreRules
 import br.com.starsonic.phone.core.DeviceClock
 import br.com.starsonic.phone.core.NativeCoreRules
 import br.com.starsonic.phone.data.AccountStore
 import br.com.starsonic.phone.data.PreferencesAccountStore
+import br.com.starsonic.phone.data.RecentsStore
 import br.com.starsonic.phone.engine.NativeSipGateway
 import br.com.starsonic.phone.engine.SipGateway
 import br.com.starsonic.phone.engine.Transport
 import br.com.starsonic.phone.service.Connection
+import java.io.File
 
 /**
  * O aplicativo (android:name do manifesto): o que vive com o processo. Ele não sobe o motor nem registra
@@ -39,6 +44,30 @@ class App : Application() {
     val store: AccountStore by lazy { PreferencesAccountStore(this) }
 
     val clock: Clock by lazy { DeviceClock() }
+
+    /** Os Recentes (stub da Task 8: a ligação com o Telecom vem no GREEN). */
+    val recents: RecentsStore by lazy { RecentsStore(File(filesDir, "recentes.json")) }
+
+    /** As ligações (stub da Task 8). */
+    val calls: CallManager by lazy {
+        val telecom = object : TelecomAdapter {
+            override fun incomingPermitted() = false
+
+            override fun addIncoming(callId: Int, number: String, name: String) {}
+
+            override fun placeOutgoing(number: String) {}
+
+            override fun setActive(callId: Int) {}
+
+            override fun disconnect(callId: Int, cause: Int) {}
+        }
+        val notifier = object : CallNotifier {
+            override fun showMissed(text: String) {}
+
+            override fun stopRinging(callId: Int) {}
+        }
+        CallManager(connection, telecom, recents, notifier, core, clock, { false })
+    }
 
     /** O perfil das contas (branding/perfil.ini, que vai nos assets sem os comentários). Lê o disco. */
     val profileText: String by lazy { assets.open("perfil.ini").use { String(it.readBytes(), Charsets.UTF_8) } }
