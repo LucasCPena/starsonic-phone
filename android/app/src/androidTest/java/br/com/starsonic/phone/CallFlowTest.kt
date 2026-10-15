@@ -329,16 +329,20 @@ class CallFlowTest {
         return condition()
     }
 
-    // A notificação de ligação do app (canal "ligacoes", ou o da ligação silenciada), ou null.
+    // A notificação de ligação do app (canal "ligacoes", ou o da ligação silenciada), ou null. O resumo que o
+    // Android cria sozinho ao agrupar as notificações do app (sem título, no canal de uma delas) não conta.
     private fun callNotification(): Notification? =
         app.getSystemService(NotificationManager::class.java).activeNotifications
-            .firstOrNull { it.notification.channelId in CALL_CHANNELS }?.notification
+            .firstOrNull {
+                it.notification.channelId in CALL_CHANNELS && it.notification.flags and Notification.FLAG_GROUP_SUMMARY == 0
+            }?.notification
 
     // A ligação do app e as notificações dele (canal/título/tipo de ligação), para as falhas.
     private fun notifications(): String {
         val shown = app.getSystemService(NotificationManager::class.java).activeNotifications.joinToString {
             val extras = it.notification.extras
-            "${it.notification.channelId}/${extras.getCharSequence(Notification.EXTRA_TITLE)}" +
+            val summary = if (it.notification.flags and Notification.FLAG_GROUP_SUMMARY != 0) "(resumo)" else ""
+            "${it.notification.channelId}$summary/${extras.getCharSequence(Notification.EXTRA_TITLE)}" +
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) "/${extras.getInt(Notification.EXTRA_CALL_TYPE)}" else ""
         }
         return "ligação: ${app.calls.state.value}; notificações: $shown"
