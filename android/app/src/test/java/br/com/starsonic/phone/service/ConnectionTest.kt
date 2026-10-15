@@ -2,14 +2,17 @@ package br.com.starsonic.phone.service
 
 import br.com.starsonic.phone.data.Account
 import br.com.starsonic.phone.engine.Transport
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import kotlin.concurrent.thread
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
  * A conexão do processo: um motor só, a conta que o serviço segura (a que a tela Entrar registrou fica, com o
- * mesmo id) e o status, que só usa os resultados do registro dessa conta.
+ * mesmo id) e o status, que só usa os resultados do registro dessa conta. As trocas de conta vão em ordem,
+ * numa thread da conexão; o motor falso, como o de verdade, tira uma conta só quando chega a vez do pedido.
  */
 class ConnectionTest {
     private val engine = FakeEngine()
@@ -20,6 +23,7 @@ class ConnectionTest {
     private val connected = Status("Conectado · 2001", "Conectado (ramal 2001)")
     private val connecting = Status("Conectando…", "Conectando…")
 
+    // A tela Entrar registra uma conta (a tentativa, ou a anterior de volta depois de uma falha).
     private fun login(account: Account): Int =
         connection.setAccount(account.address, account.transport, account.ramal, account.senha)
 
@@ -38,7 +42,7 @@ class ConnectionTest {
         engine.registration(200, true, id)
         connection.claim(service)
         assertEquals(connecting, connection.status.value)
-        assertTrue(connection.adopt(service, account))
+        assertEquals(Adoption.KEPT, connection.adopt(service, account))
         assertEquals(1, engine.accounts.size)   // nenhum setAccount a mais
         assertEquals(connected, connection.status.value)   // o último resultado da conta já vale
     }
@@ -46,7 +50,7 @@ class ConnectionTest {
     @Test
     fun `the service registers the saved account when the engine does not have it`() {
         connection.claim(service)
-        assertTrue(connection.adopt(service, account))
+        assertEquals(Adoption.REGISTERED, connection.adopt(service, account))
         assertEquals(listOf(account), engine.accounts)
         assertEquals(connecting, connection.status.value)
         engine.registration(200, true)
@@ -54,10 +58,10 @@ class ConnectionTest {
     }
 
     @Test
-    fun `another account in the engine is replaced by the saved one`() {
-        login(account.copy(senha = "outra"))   // uma tentativa com outra senha ainda está no motor
+    fun `the service replaces the account it put itself when the saved account changes`() {
         connection.claim(service)
-        assertTrue(connection.adopt(service, account))
+        connection.adopt(service, account.copy(senha = "antiga"))
+        assertEquals(Adoption.REGISTERED, connection.adopt(service, account))
         assertEquals(account, engine.accounts.last())
         assertEquals(2, engine.accounts.size)
     }
@@ -66,14 +70,15 @@ class ConnectionTest {
     fun `a result that arrives before setAccount returns counts`() {
         connection.claim(service)
         engine.duringSetAccount = { id -> engine.registration(200, true, id) }
-        assertTrue(connection.adopt(service, account))
+        assertEquals(Adoption.REGISTERED, connection.adopt(service, account))
         assertEquals(connected, connection.status.value)
     }
 
     @Test
     fun `results of another account do not change the status`() {
-        val previous = login(account.copy(senha = "antiga"))   // uma conta anterior, que o serviço troca
         connection.claim(service)
+        connection.adopt(service, account.copy(senha = "antiga"))   // uma conta anterior, que o serviço troca
+        val previous = engine.lastId
         connection.adopt(service, account)
         engine.registration(200, true)
         val id = engine.lastId
@@ -101,25 +106,169 @@ class ConnectionTest {
     }
 
     @Test
+    fun `a service start during a login attempt keeps the attempt and then adopts the new account`() {
+        // Editar: o serviço segura a conta gravada, e a tela Entrar tenta outra senha. No meio, o serviço
+        // começa de novo (volta ao app, tela acesa, recriação): a conta tentada fica no motor.
+        connection.claim(service)
+        connection.adopt(service, account)
+        engine.registration(200, true)
+        val newer = account.copy(senha = "nova")
+        val attempt = login(newer)
+        assertEquals(Adoption.WAITING, connection.adopt(service, account))
+        assertEquals(listOf(account, newer), engine.accounts)
+        assertEquals(connecting, connection.status.value)
+        // O servidor aceita a tentada, a tela grava a nova (commit) e inicia o serviço, que lê a nova.
+        engine.registration(200, true, attempt)
+        assertEquals(Adoption.KEPT, connection.adopt(service, newer))
+        assertEquals(connected, connection.status.value)
+        assertEquals(2, engine.accounts.size)   // nenhum REGISTER a mais
+    }
+
+    @Test
+    fun `a service start during a login attempt keeps the attempt and then follows the rollback`() {
+        connection.claim(service)
+        connection.adopt(service, account)
+        engine.registration(200, true)
+        val attempt = login(account.copy(senha = "errada"))
+        assertEquals(Adoption.WAITING, connection.adopt(service, account))
+        // O servidor recusa a tentada, e a tela põe a conta gravada de volta (outro id).
+        engine.registration(403, false, attempt)
+        val restored = login(account)
+        engine.registration(200, true, restored)
+        assertEquals(connected, connection.status.value)
+        assertEquals(3, engine.accounts.size)   // a gravada, a tentada e a de volta: nada do serviço
+        assertEquals(Adoption.KEPT, connection.adopt(service, account))   // um início depois: nada a mais
+        assertEquals(3, engine.accounts.size)
+    }
+
+    @Test
+    fun `a service start while the attempt is still registering waits for it`() {
+        connection.claim(service)
+        connection.adopt(service, account)
+        engine.registration(200, true)
+        val inEngine = CountDownLatch(1)
+        val proceed = CountDownLatch(1)
+        engine.duringSetAccount = {
+            inEngine.countDown()
+            proceed.await(5, TimeUnit.SECONDS)
+        }
+        val newer = account.copy(senha = "nova")
+        val attempt = thread { login(newer) }   // a tentativa ainda está no motor
+        assertTrue(inEngine.await(5, TimeUnit.SECONDS))
+        engine.duringSetAccount = null
+        var adoption: Adoption? = null
+        val start = thread { adoption = connection.adopt(service, account) }
+        start.join(300)
+        val waited = start.isAlive
+        proceed.countDown()
+        attempt.join(5_000)
+        start.join(5_000)
+        assertTrue("o início do serviço espera a troca de conta da tentativa", waited)
+        assertEquals(Adoption.WAITING, adoption)
+        assertEquals(listOf(account, newer), engine.accounts)
+    }
+
+    @Test
+    fun `a connect that read the old account before the save does not put it back`() {
+        connection.claim(service)
+        connection.adopt(service, account)
+        engine.registration(200, true)
+        val newer = account.copy(senha = "nova")
+        val attempt = login(newer)
+        engine.registration(200, true, attempt)   // o servidor aceita, e a tela grava a nova
+        // Um início do serviço que leu a conta antiga antes de a tela gravar a nova chega agora.
+        assertEquals(Adoption.WAITING, connection.adopt(service, account))
+        assertEquals(listOf(account, newer), engine.accounts)
+        // O início seguinte lê a nova: fica com ela, com o mesmo id.
+        assertEquals(Adoption.KEPT, connection.adopt(service, newer))
+        assertEquals(connected, connection.status.value)
+        assertEquals(2, engine.accounts.size)
+    }
+
+    @Test
+    fun `a waiting service registers the saved account when the attempt leaves the engine empty`() {
+        connection.claim(service)
+        connection.adopt(service, account)
+        login(account.copy(senha = "nova"))
+        assertEquals(Adoption.WAITING, connection.adopt(service, account))
+        connection.removeAccount()   // a tentativa desfeita sem conta anterior no motor
+        connection.awaitChanges()
+        assertEquals(account, engine.accounts.last())
+        assertEquals(3, engine.accounts.size)
+    }
+
+    @Test
     fun `stopping the service removes its account`() {
         connection.claim(service)
         connection.adopt(service, account)
         engine.registration(200, true)
         connection.release(service)
+        connection.awaitChanges()
         assertEquals(1, engine.removals)
         assertEquals(connecting, connection.status.value)
         // O próximo serviço registra de novo: a conta já não está no motor.
         val next = Any()
         connection.claim(next)
-        assertTrue(connection.adopt(next, account))
+        assertEquals(Adoption.REGISTERED, connection.adopt(next, account))
         assertEquals(2, engine.accounts.size)
+    }
+
+    @Test
+    fun `stopping and starting the service right away registers the account again`() {
+        // O motor tira a conta só quando chega a vez do pedido: o serviço que começa logo depois não pode
+        // contar com a conta que está saindo.
+        connection.claim(service)
+        connection.adopt(service, account)
+        engine.registration(200, true)
+        connection.release(service)
+        val next = Any()
+        connection.claim(next)
+        assertEquals(Adoption.REGISTERED, connection.adopt(next, account))
+        engine.flush()
+        engine.registration(200, true)
+        assertEquals(connected, connection.status.value)
+        assertEquals(2, engine.accounts.size)
+        assertEquals(1, engine.removals)
+        assertEquals(engine.lastId, engine.current)
     }
 
     @Test
     fun `a service that stopped while registering does not leave the account`() {
         connection.claim(service)
         engine.duringSetAccount = { connection.release(service) }   // o serviço para no meio do registro
-        assertFalse(connection.adopt(service, account))
+        assertEquals(Adoption.STOPPED, connection.adopt(service, account))
+        connection.awaitChanges()
+        engine.flush()
+        assertEquals(1, engine.removals)
+        assertEquals(0, engine.current)
+    }
+
+    @Test
+    fun `the cleanup of a service that stopped while registering keeps the next account`() {
+        // O serviço para no meio do registro e, na mesma hora, a tela Entrar registra outra conta: a limpeza da
+        // conta do serviço vai antes da troca da tela, e a conta da tela fica no motor.
+        connection.claim(service)
+        val newer = account.copy(senha = "nova")
+        val entered = CountDownLatch(1)
+        val proceed = CountDownLatch(1)
+        var attempt: Thread? = null
+        engine.duringSetAccount = { id ->
+            if (id == 1) {
+                connection.release(service)
+                attempt = thread { login(newer) }
+                entered.await(1, TimeUnit.SECONDS)   // sem a ordem das trocas, a da tela entraria aqui
+            } else {
+                entered.countDown()
+                proceed.await(5, TimeUnit.SECONDS)
+            }
+        }
+        assertEquals(Adoption.STOPPED, connection.adopt(service, account))
+        proceed.countDown()
+        attempt!!.join(5_000)
+        connection.awaitChanges()
+        engine.flush()
+        assertEquals(newer, engine.accounts.last())
+        assertEquals("a conta da tela Entrar fica no motor", engine.lastId, engine.current)
         assertEquals(1, engine.removals)
     }
 
@@ -127,7 +276,7 @@ class ConnectionTest {
     fun `a stopped service does not adopt`() {
         connection.claim(service)
         connection.release(service)
-        assertFalse(connection.adopt(service, account))
+        assertEquals(Adoption.STOPPED, connection.adopt(service, account))
         assertTrue(engine.accounts.isEmpty())
     }
 
@@ -175,6 +324,8 @@ class ConnectionTest {
         val id = login(account)
         engine.registration(403, false, id)
         connection.removeAccount()
+        connection.awaitChanges()
+        engine.flush()
         assertEquals(listOf(Triple(403, false, id), Triple(200, false, id)), seen)
     }
 }

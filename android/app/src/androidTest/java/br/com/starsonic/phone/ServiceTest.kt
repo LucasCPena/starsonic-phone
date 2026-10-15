@@ -41,8 +41,9 @@ import org.junit.runners.MethodSorters
  * visto em 10.0.2.2; argumentos registrar, porta e senha, como no LoginScreenTest). Os registros vão por TCP,
  * como o último do LoginScreenTest: o CI confere no fim que o último REGISTER aceito veio por TCP.
  *
- * Os testes rodam em ordem alfabética, e o último deixa a conta gravada e o serviço de pé: o CI confere em
- * seguida que o BOOT_COMPLETED registra a conta de novo (build/android/check-boot.sh).
+ * Os testes rodam em ordem alfabética, e o último deixa a conta gravada. O CI para o app à força em seguida e
+ * confere que o BOOT_COMPLETED registra a conta de novo e segura o processador acordado
+ * (build/android/check-boot.sh).
  */
 @RunWith(AndroidJUnit4::class)
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
@@ -96,12 +97,14 @@ class ServiceTest {
     @Test
     fun savedAccountStartsTheServiceOnOpen() {
         // Com a conta gravada (como depois de um Entrar) e o serviço parado, abrir o app inicia o serviço, que
-        // registra a conta. A conta e o serviço ficam de pé para a conferência do BOOT_COMPLETED.
+        // registra a conta uma vez só (a abertura e a volta ao app iniciam o serviço; o segundo início não
+        // registra de novo). A conta fica gravada para a conferência do BOOT_COMPLETED.
         app.store.save(Account(registrar, Transport.TCP, "2001", senha))
         val before = registers()
         scenario = ActivityScenario.launch(MainActivity::class.java)
         waitForText("Conectado · 2001")
         waitUntil("a notificação \"Conectado (ramal 2001)\"") { notificationTitle() == "Conectado (ramal 2001)" }
+        Thread.sleep(3_000)
         assertEquals("REGISTER aceitos do ramal 2001", before + 1, registers())
     }
 

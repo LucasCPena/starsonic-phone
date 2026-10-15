@@ -5,8 +5,33 @@ import br.com.starsonic.phone.data.Account
 import br.com.starsonic.phone.engine.EngineEvents
 import br.com.starsonic.phone.engine.SipGateway
 import br.com.starsonic.phone.engine.Transport
+import java.util.concurrent.Callable
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+
+/** O que [Connection.adopt] fez com a conta gravada. */
+enum class Adoption {
+    /** O motor já estava com ela (a tela Entrar acabou de registrá-la ou a pôs de volta): o mesmo id, sem REGISTER. */
+    KEPT,
+
+    /** O motor estava vazio, ou com a conta que o próprio serviço tinha posto: o serviço registrou a gravada. */
+    REGISTERED,
+
+    /**
+     * A tela Entrar está com o motor (uma tentativa, do setAccount dela até o desfecho): nada muda. O status
+     * segue a conta gravada pelos campos; depois do desfecho, o serviço fica com a conta certa (ver [Connection]).
+     */
+    WAITING,
+
+    /** O motor recusou a conta, ou não subiu. */
+    REFUSED,
+
+    /** O serviço já tinha parado: nada fica no motor. */
+    STOPPED,
+}
 
 /**
  * A conexão do processo com o servidor (spec 7.2): o motor de ligações, a conta que está nele e o status da
@@ -14,17 +39,32 @@ import kotlinx.coroutines.flow.StateFlow
  * de conta) e fica de pé.
  *
  * - Toda troca de conta passa por aqui: a conexão é o [SipGateway] da tela Entrar, do [SipService] e do
- *   [NetworkMonitor], e sabe qual conta está no motor e com que id (o que o setAccount devolve; a saída de
- *   uma conta chega pelo (200, false) do removeAccount, com o id dela).
+ *   [NetworkMonitor]. Ela sabe qual conta está no motor, com que id (o que o setAccount devolve) e quem a pôs:
+ *   o serviço ou a tela Entrar (todo [setAccount] de fora é da tela Entrar: a tentativa ou a volta à anterior).
  * - Com conta gravada, quem manda é o [SipService]: ele se apresenta ao começar ([claim]), segura a conta
- *   gravada ([adopt]: se o motor já está com ela, como depois do Entrar, fica o mesmo id, sem outro
- *   REGISTER; senão, registra) e a solta ao parar ([release]: a conta sai do motor).
+ *   gravada ([adopt]) e a solta ao parar ([release]: a conta sai do motor).
+ *   - [adopt]: se o motor já está com a conta gravada (pelos campos), fica o mesmo id, sem REGISTER. Se o
+ *     motor está vazio, ou com a conta que o próprio serviço pôs, registra a gravada. Se está com uma conta
+ *     que a tela Entrar pôs, não mexe ([Adoption.WAITING]): é uma tentativa, do setAccount dela até o desfecho
+ *     (ou o resultado dela antes de o serviço reler a conta gravada).
+ *   - Depois do desfecho de uma tentativa: no commit, o app inicia o serviço, que relê a conta gravada e adota a
+ *     nova, que já está no motor (mesmo id, sem REGISTER). No rollback, a tela põe a anterior de volta, e o
+ *     status a segue pelos campos; se a tela deixa o motor vazio, o serviço registra a conta gravada.
  * - O [status] usa só os resultados do registro da conta do serviço, pelo id dela no motor. O último
  *   resultado de cada conta fica guardado, então o serviço que adota a conta já mostra o resultado dela.
  *
- * Threads: [ensureStarted], [setAccount], [adopt], [makeCall] e [hasCall] esperam o motor (nunca na thread
- * principal); o resto só põe um pedido na fila do motor ou mexe no estado. Os eventos do motor chegam na
- * thread dele ("starsonic-eventos"). A trava nunca fica presa numa chamada ao motor.
+ * Threads e travas (ninguém espera em círculo):
+ * - As trocas de conta ([setAccount], [removeAccount], [adopt] e a saída do [release]) vão em ordem, uma de
+ *   cada vez, na thread "starsonic-conta". A decisão (com a trava de estado) e o pedido ao motor ficam na mesma
+ *   troca, então o motor recebe os pedidos na ordem em que a conexão decidiu: uma conta que sai já sai para
+ *   quem vem depois, e uma limpeza nunca tira a conta de uma troca seguinte. [setAccount] e [adopt] esperam a
+ *   vez e o motor (nunca na thread principal); [removeAccount] e [release] só põem na fila.
+ * - Travas: startLock guarda só a subida do motor; lock guarda o estado, é curto e nunca fica preso numa
+ *   chamada ao motor, ao log ou à tela Entrar. Ninguém pega o startLock com o lock na mão.
+ * - Quem espera quem: quem chama → a thread das trocas → a thread do motor ("starsonic-motor"). A thread das
+ *   trocas nunca espera a dos eventos nem a principal; a do motor não espera ninguém. A dos eventos
+ *   ("starsonic-eventos") só pega o lock para anotar um resultado; sem trava nenhuma, ela pode esperar a das
+ *   trocas (a volta à conta anterior da tela Entrar).
  */
 class Connection(
     private val newEngine: () -> SipGateway,
@@ -36,6 +76,9 @@ class Connection(
     /** O último resultado do registro de uma conta: o código SIP e se ela ficou registrada. */
     private data class Registration(val code: Int, val active: Boolean)
 
+    /** Quem pôs no motor a conta que está nele. */
+    private enum class Setter { SERVICE, LOGIN }
+
     private val mutableStatus = MutableStateFlow(StatusModel.from(null, false, true, "", core))
 
     /** O status da conta do serviço: a faixa e a notificação fixa ("Conectando…" sem o serviço). */
@@ -44,6 +87,17 @@ class Connection(
     /** Quem espera o resultado do registro na tela Entrar (null fora dela): código, ativa e id da conta. */
     @Volatile
     var loginEvents: ((Int, Boolean, Int) -> Unit)? = null
+
+    // A thread das trocas de conta.
+    @Volatile
+    private var changeThread: Thread? = null
+
+    private val changes: ExecutorService = Executors.newSingleThreadExecutor { task ->
+        Thread(task, "starsonic-conta").also {
+            it.isDaemon = true
+            changeThread = it
+        }
+    }
 
     // O motor nasce na primeira subida: carregar a biblioteca nativa lê o disco (nunca na thread principal).
     private val startLock = Any()
@@ -57,8 +111,9 @@ class Connection(
     // A trava guarda o resto.
     private val lock = Any()
     private var engineAccount: Account? = null   // a conta do último setAccount aceito...
-    private var engineAccountId = 0              // ...e o id dela (cada conta nova recebe um maior)
-    private var removedUpTo = 0                  // o maior id que já saiu do motor
+    private var engineAccountId = 0              // ...o id dela (cada conta nova recebe um maior)...
+    private var engineSetter = Setter.LOGIN      // ...e quem a pôs
+    private var removedUpTo = 0                  // o maior id que já saiu do motor (ou cuja saída já foi pedida)
     private val results = HashMap<Int, Registration>()   // o último resultado de cada conta recente
     private var owner: Any? = null               // o serviço de pé
     private var owned: Account? = null           // a conta gravada que ele segura
@@ -104,38 +159,39 @@ class Connection(
     }
 
     /**
-     * O serviço [owner] segura a conta gravada [account]: se o motor já está com ela, fica o mesmo id (sem
-     * outro REGISTER); senão, registra. false se o serviço já parou (nada fica no motor) ou o motor não aceitou
-     * a conta. Espera o motor: nunca na thread principal.
+     * O serviço [owner] segura a conta gravada [account] (ver a regra em [Connection]). Espera a vez entre as
+     * trocas de conta e o motor: nunca na thread principal.
      */
-    fun adopt(owner: Any, account: Account): Boolean {
-        val register = synchronized(lock) {
-            if (this.owner !== owner) return false
+    fun adopt(owner: Any, account: Account): Adoption = inOrder {
+        val decided = synchronized(lock) {
+            if (this.owner !== owner) return@inOrder Adoption.STOPPED
             owned = account
             publish()
-            currentIdOf(account) == 0
+            when {
+                currentIdOf(account) > 0 -> Adoption.KEPT
+                engineAccountId > removedUpTo && engineSetter == Setter.LOGIN -> Adoption.WAITING
+                else -> null
+            }
         }
-        if (!register) return true
-        val id = setAccount(account.address, account.transport, account.ramal, account.senha)
-        val orphan = synchronized(lock) {
-            id > 0 && id == engineAccountId && id > removedUpTo && (this.owner !== owner || owned != account)
-        }
-        if (orphan) engine?.removeAccount()   // o serviço parou enquanto registrava: a conta não fica no motor
-        return id > 0 && !orphan
+        decided ?: register(owner, account)
     }
 
-    /** O serviço [owner] parou: a conta dele sai do motor, e o status volta a "Conectando…". */
+    /** O serviço [owner] parou: a conta dele sai do motor (na ordem das trocas), e o status volta a "Conectando…". */
     fun release(owner: Any) {
-        val remove = synchronized(lock) {
+        val account = synchronized(lock) {
             if (this.owner !== owner) return
             val account = owned
             this.owner = null
             owned = null
             online = true
             publish()
-            account != null && currentIdOf(account) > 0
+            account
+        } ?: return
+        later {
+            // Só se o motor ainda está com ela (pelos campos): com uma tentativa da tela Entrar no motor, nada sai.
+            val inEngine = synchronized(lock) { currentIdOf(account) > 0 }
+            if (inEngine) removeFromEngine()
         }
-        if (remove) engine?.removeAccount()
     }
 
     /**
@@ -150,6 +206,11 @@ class Connection(
         }
     }
 
+    /** Espera as trocas de conta pedidas até aqui (para os testes). */
+    internal fun awaitChanges() {
+        inOrder {}
+    }
+
     /** A conexão sobe o motor sozinha ([ensureStarted]), com o User-Agent e o perfil dela. */
     override fun start(userAgent: String, profileText: String, events: EngineEvents): Boolean =
         throw UnsupportedOperationException("o motor sobe pela Connection.ensureStarted()")
@@ -159,26 +220,20 @@ class Connection(
         throw UnsupportedOperationException("o motor fica de pé enquanto o processo vive")
     }
 
-    /** Troca a conta e registra (sobe o motor antes, se preciso); a conexão anota a conta e o id dela. */
-    override fun setAccount(address: String, transport: Transport, ramal: String, senha: String): Int {
-        if (!ensureStarted()) return 0
-        val id = engine?.setAccount(address, transport, ramal, senha) ?: 0
-        synchronized(lock) {
-            if (id > engineAccountId) {
-                engineAccount = Account(address, transport, ramal, senha)
-                engineAccountId = id
-            } else if (id == 0) {
-                // O motor recusou a conta: a anterior pode já ter saído (SipEngine::SetAccount).
-                removedUpTo = maxOf(removedUpTo, engineAccountId)
-            }
-            publish()
-        }
-        return id
+    /**
+     * A tela Entrar troca a conta e registra (a tentativa, ou a anterior de volta depois de uma falha); sobe o
+     * motor antes, se preciso. Espera a vez entre as trocas de conta e o motor.
+     */
+    override fun setAccount(address: String, transport: Transport, ramal: String, senha: String): Int = inOrder {
+        val id = setInEngine(Account(address, transport, ramal, senha), Setter.LOGIN)
+        resumeOwned()
+        id
     }
 
-    /** Tira a conta do motor; o (200, false) que chega no fim diz à conexão que ela saiu. */
-    override fun removeAccount() {
-        engine?.removeAccount()
+    /** Tira a conta do motor, na ordem das trocas; o (200, false) chega no fim. Só põe na fila. */
+    override fun removeAccount() = later {
+        removeFromEngine()
+        resumeOwned()
     }
 
     override fun reregister() {
@@ -225,6 +280,95 @@ class Connection(
     }
 
     override fun hasCall(): Boolean = engine?.hasCall() ?: false
+
+    // Na thread das trocas: põe [account] no motor (sobe o motor antes, se preciso) e anota quem a pôs.
+    private fun setInEngine(account: Account, setter: Setter): Int {
+        val id = if (ensureStarted()) {
+            engine?.setAccount(account.address, account.transport, account.ramal, account.senha) ?: 0
+        } else {
+            0
+        }
+        synchronized(lock) {
+            if (id > engineAccountId) {
+                engineAccount = account
+                engineAccountId = id
+                engineSetter = setter
+            } else if (id == 0) {
+                // O motor recusou a conta: a anterior pode já ter saído (SipEngine::SetAccount).
+                removedUpTo = maxOf(removedUpTo, engineAccountId)
+            }
+            publish()
+        }
+        return id
+    }
+
+    // Na thread das trocas: tira do motor a conta que está nele. A decisão vale na hora: o motor tira exatamente
+    // esta (os pedidos vão na ordem das trocas), e a troca seguinte já a vê fora.
+    private fun removeFromEngine() {
+        synchronized(lock) {
+            removedUpTo = maxOf(removedUpTo, engineAccountId)
+            publish()
+        }
+        engine?.removeAccount()
+    }
+
+    // Na thread das trocas: o serviço [owner] registra a conta gravada; se ele parou enquanto isso, a conta sai
+    // antes de qualquer outra troca.
+    private fun register(owner: Any, account: Account): Adoption {
+        val id = setInEngine(account, Setter.SERVICE)
+        val stopped = synchronized(lock) { this.owner !== owner || owned != account }
+        if (id > 0 && stopped) removeFromEngine()
+        return when {
+            stopped -> Adoption.STOPPED
+            id > 0 -> Adoption.REGISTERED
+            else -> Adoption.REFUSED
+        }
+    }
+
+    // Na thread das trocas, depois de uma troca da tela Entrar: se ela deixou o motor vazio (uma tentativa
+    // desfeita sem uma conta anterior para pôr de volta) e o serviço segura a conta gravada, ele a registra.
+    private fun resumeOwned() {
+        val holder: Any
+        val account: Account
+        synchronized(lock) {
+            holder = owner ?: return
+            account = owned ?: return
+            if (engineAccountId > removedUpTo) return
+        }
+        register(holder, account)
+    }
+
+    // Roda [change] na thread das trocas, depois das que já foram pedidas, e espera. Na própria thread das
+    // trocas, roda na hora. Uma interrupção não corta a troca: fica para depois.
+    private fun <T> inOrder(change: () -> T): T {
+        if (Thread.currentThread() === changeThread) return change()
+        val result = changes.submit(Callable { change() })
+        var interrupted = false
+        try {
+            while (true) {
+                try {
+                    return result.get()
+                } catch (e: InterruptedException) {
+                    interrupted = true
+                } catch (e: ExecutionException) {
+                    throw e.cause ?: e
+                }
+            }
+        } finally {
+            if (interrupted) Thread.currentThread().interrupt()
+        }
+    }
+
+    // Põe [change] na fila das trocas e volta.
+    private fun later(change: () -> Unit) {
+        changes.execute {
+            try {
+                change()
+            } catch (e: RuntimeException) {
+                log(1, "troca de conta: $e")
+            }
+        }
+    }
 
     // Com a trava: o id da [account] no motor, ou 0 se o motor não está com ela.
     private fun currentIdOf(account: Account): Int =

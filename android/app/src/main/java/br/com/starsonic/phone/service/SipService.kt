@@ -1,5 +1,6 @@
 package br.com.starsonic.phone.service
 
+import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -12,6 +13,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -45,6 +47,9 @@ import kotlinx.coroutines.launch
  *   outro REGISTER. Sem conta gravada, sai na hora.
  * - Parar ([stop]) tira a conta do motor ([Connection.release]); o motor fica de pé.
  * - O [NetworkMonitor] refaz o registro nas trocas de rede e marca "Sem internet".
+ * - Com a conta gravada e com rede, segura o processador acordado ([KeepAwake], wake lock parcial
+ *   "starsonic:conexao"; spec 7.2, item 6): com a tela apagada, a renovação do registro e o keep-alive não
+ *   param. Sem rede, ou depois de parar, solta.
  */
 class SipService : Service() {
     private val app: App
@@ -53,6 +58,7 @@ class SipService : Service() {
     private val main = Handler(Looper.getMainLooper())
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private lateinit var worker: ExecutorService
+    private lateinit var keepAwake: KeepAwake
     private lateinit var monitor: NetworkMonitor
     private var notifications: Job? = null   // só na thread principal
     private var monitoring = false           // só na thread do serviço
@@ -64,7 +70,13 @@ class SipService : Service() {
         running = true
         app.connection.claim(this)
         worker = Executors.newSingleThreadExecutor { task -> Thread(task, "starsonic-servico") }
-        monitor = NetworkMonitor(app.connection)
+        keepAwake = KeepAwake(cpuLock())
+        // Na hora, dentro do aviso do Android: na volta da rede, o processador fica acordado antes de o motor
+        // registrar de novo.
+        monitor = NetworkMonitor(app.connection) { online ->
+            keepAwake.setOnline(online)
+            app.connection.setOnline(this, online)
+        }
         getSystemService(NotificationManager::class.java).createNotificationChannel(
             NotificationChannel(CHANNEL_ID, CHANNEL_NAME, NotificationManager.IMPORTANCE_LOW).apply { setShowBadge(false) },
         )
@@ -92,6 +104,7 @@ class SipService : Service() {
 
     override fun onDestroy() {
         scope.cancel()   // nenhuma notificação depois daqui
+        keepAwake.close()   // o processador volta a dormir (de vez para este serviço)
         app.connection.release(this)
         worker.execute { monitor.stop() }   // na mesma thread que o ligou, depois dele
         worker.shutdown()
@@ -100,7 +113,9 @@ class SipService : Service() {
         super.onDestroy()
     }
 
-    // Na thread do serviço: a conta gravada, o motor e a rede.
+    // Na thread do serviço: a conta gravada, o motor e a rede. A conta lida aqui pode ficar velha (a tela Entrar
+    // grava outra logo depois): a conexão não a põe por cima de uma conta da tela Entrar, e o início do serviço
+    // que vem depois do Entrar lê a nova.
     private fun connect(startId: Int) {
         val account = app.store.load()
         if (account == null) {
@@ -109,11 +124,30 @@ class SipService : Service() {
             main.post { stopSelf(startId) }
             return
         }
-        if (!app.connection.adopt(this, account)) return
+        // O processador fica acordado já no registro (que a adoção pode fazer); se o serviço não ficou com a
+        // conta, solta.
+        keepAwake.setAccount(true)
+        val adoption = app.connection.adopt(this, account)
+        if (adoption == Adoption.STOPPED || adoption == Adoption.REFUSED) keepAwake.setAccount(false)
+        if (adoption == Adoption.STOPPED) return
         if (!monitoring) {
             monitoring = true
-            monitor.start(this)
-            scope.launch(Dispatchers.Default) { monitor.online.collect { app.connection.setOnline(this@SipService, it) } }
+            monitor.start(this)   // o começo já diz se há rede (Connection e KeepAwake)
+        }
+    }
+
+    // O wake lock parcial da conexão, sem contagem (pegar duas vezes é pegar uma).
+    private fun cpuLock(): CpuLock {
+        val wakeLock = getSystemService(PowerManager::class.java)
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKE_LOCK_TAG)
+            .apply { setReferenceCounted(false) }
+        return object : CpuLock {
+            // Sem prazo, de propósito: fica preso enquanto a conta está conectada (decisão 6 da spec) e sai
+            // pelo KeepAwake (sem rede, ou quando o serviço para).
+            @SuppressLint("WakelockTimeout")
+            override fun acquire() = wakeLock.acquire()
+
+            override fun release() = wakeLock.release()
         }
     }
 
@@ -168,6 +202,9 @@ class SipService : Service() {
         private const val CHANNEL_NAME = "Conexão"
         private const val NOTIFICATION_ID = 1
         private const val TAG = "SipService"
+
+        /** A etiqueta do wake lock da conexão (aparece no dumpsys power; o CI confere). */
+        const val WAKE_LOCK_TAG = "starsonic:conexao"
 
         /** O serviço está de pé (de onCreate a onDestroy). */
         @Volatile

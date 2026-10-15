@@ -266,7 +266,8 @@ jobs:
           sudo udevadm trigger --name-match=kvm
 
       # Cada linha do script roda à parte; a primeira que falha encerra o passo. O ServiceTest deixa a conta
-      # gravada, e o check-boot.sh confere que o BOOT_COMPLETED (com o adb como root) registra o ramal de novo.
+      # gravada; o check-boot.sh para o app à força e confere que o BOOT_COMPLETED (com o adb como root)
+      # registra o ramal de novo e segura o processador acordado (o wake lock "starsonic:conexao").
       - name: Testes no emulador
         id: emulador
         if: ${{ !cancelled() && steps.gradle.outputs.apks == 'true' }}

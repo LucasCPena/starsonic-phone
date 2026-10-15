@@ -10,13 +10,14 @@ import kotlinx.coroutines.flow.StateFlow
 /**
  * A rede padrão do celular (spec 7.2): quando ela muda (Wi-Fi ↔ 4G, ou uma rede nova depois de ficar sem
  * nenhuma), o motor refaz os transportes e o registro ([SipGateway.handleIpChange], que só põe na fila);
- * sem rede, [online] fica false (o status mostra "Sem internet").
+ * sem rede, [online] fica false (o status mostra "Sem internet"). [onOnline] ouve o mesmo na hora, dentro do
+ * aviso do Android: no começo ([begin]) e a cada mudança.
  *
  * [start] liga o monitor ao Android (ConnectivityManager.registerDefaultNetworkCallback); [begin],
  * [onAvailable] e [onLost] são os avisos dele, abertos para os testes (a rede é qualquer objeto: no app, o
  * android.net.Network). Os avisos do Android chegam numa thread dele, nunca na principal.
  */
-class NetworkMonitor(private val gateway: SipGateway) {
+class NetworkMonitor(private val gateway: SipGateway, private val onOnline: (Boolean) -> Unit = {}) {
     private val mutableOnline = MutableStateFlow(true)
 
     /** Há rede (false: "Sem internet"). */
@@ -34,16 +35,23 @@ class NetworkMonitor(private val gateway: SipGateway) {
             this.network = network
             mutableOnline.value = network != null
         }
+        onOnline(network != null)
     }
 
-    /** A rede padrão passou a ser [network]: outra que a de antes (ou a volta da rede) refaz o registro. */
+    /**
+     * A rede padrão passou a ser [network]: outra que a de antes (ou a volta da rede) refaz o registro. Na volta
+     * da rede, [onOnline] vem antes: o serviço segura o processador antes de o motor pôr o registro na fila.
+     */
     fun onAvailable(network: Any) {
+        var cameBack = false
         val changed = synchronized(lock) {
             val changed = network != this.network
+            cameBack = !mutableOnline.value
             this.network = network
             mutableOnline.value = true
             changed
         }
+        if (cameBack) onOnline(true)
         if (changed) gateway.handleIpChange()
     }
 
@@ -54,6 +62,7 @@ class NetworkMonitor(private val gateway: SipGateway) {
             this.network = null
             mutableOnline.value = false
         }
+        onOnline(false)
     }
 
     /** Passa a ouvir a rede padrão do celular (precisa de ACCESS_NETWORK_STATE). */
