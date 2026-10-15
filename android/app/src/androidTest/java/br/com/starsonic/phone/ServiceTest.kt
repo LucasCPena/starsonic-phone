@@ -97,8 +97,8 @@ class ServiceTest {
     @Test
     fun savedAccountStartsTheServiceOnOpen() {
         // Com a conta gravada (como depois de um Entrar) e o serviço parado, abrir o app inicia o serviço, que
-        // registra a conta uma vez só (a abertura e a volta ao app iniciam o serviço; o segundo início não
-        // registra de novo). A conta fica gravada para a conferência do BOOT_COMPLETED.
+        // registra a conta uma vez só: 3 s depois, nenhum REGISTER a mais. A conta fica gravada para a
+        // conferência do BOOT_COMPLETED.
         app.store.save(Account(registrar, Transport.TCP, "2001", senha))
         val before = registers()
         scenario = ActivityScenario.launch(MainActivity::class.java)
