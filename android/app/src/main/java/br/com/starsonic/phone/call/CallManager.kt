@@ -86,7 +86,8 @@ object EndCause {
  *   nada é discado. Senão o Telecom cria a Connection ([TelecomAdapter.placeOutgoing]) e, quando ele avisa
  *   ([onOutgoingReady]), o motor liga. O id da ligação no motor vem do makeCall, mas os eventos dela podem
  *   chegar antes: o primeiro evento de uma ligação nova (id maior que todos os já vistos) é da feita. Se ela não
- *   completa, o aviso do núcleo (CallEndMessage) fica em [endMessage] por 2 s.
+ *   completa, o aviso do núcleo (CallEndMessage) fica em [endMessage] por 2 s; se o Android não deixa ligar (o
+ *   Telecom recusa: uma ligação do celular em andamento), o aviso [CARRIER_CALL].
  * - Depois de [onLogout] (Sair), os eventos do motor são ignorados até o próximo Entrar ([onLogin]).
  *
  * Threads: os eventos chegam na thread dos eventos do motor; os toques da tela e do Telecom, na principal. Nada
@@ -230,7 +231,8 @@ class CallManager(
 
     /**
      * O Telecom não criou a Connection: a recebida [callId] recebe ocupado (e a perdida é avisada); a feita
-     * ([NO_ID]) acaba sem discar.
+     * ([NO_ID]) acaba sem discar, com o aviso [CARRIER_CALL] por 2 s (o Android não deixa ligar, como com uma
+     * ligação do celular em andamento).
      */
     fun onTelecomFailed(callId: Int) {
         act { effects ->
@@ -242,6 +244,7 @@ class CallManager(
                 reject(current, effects)
             } else if (callId == NO_ID && !current.dialRequested) {
                 end(current, 0, effects, cause = EndCause.ERROR)
+                showEndMessage(CARRIER_CALL)
             }
             publish()
         }
@@ -566,6 +569,9 @@ class CallManager(
 
         /** O aviso de discar sem registro (spec 7.4 e 11.1). */
         const val NO_CONNECTION = "Sem conexão com o servidor. Tente de novo em instantes."
+
+        /** O aviso de quando o Android não deixa ligar: uma ligação do celular (da operadora) em andamento (spec 11.1). */
+        const val CARRIER_CALL = "Termine a ligação do celular para ligar pelo ramal."
 
         private const val END_MESSAGE_MILLIS = 2_000L
     }
