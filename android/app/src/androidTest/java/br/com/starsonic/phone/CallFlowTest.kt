@@ -3,6 +3,7 @@ package br.com.starsonic.phone
 import android.app.Notification
 import android.app.NotificationManager
 import android.os.Build
+import android.os.SystemClock
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
@@ -77,7 +78,7 @@ class CallFlowTest {
         device.pressHome()
         assertEquals("OK", emulator.control("RING 2001"))
         emulator.waitUntil("a notificação de ligação", details = ::notifications) { callNotification() != null }
-        tapSystemButton("Atender")
+        tapSystemButton("Atender") { answered() }
         emulator.waitForText("3001")   // a tela de chamada
         emulator.waitUntil("a ligação atendida") { app.calls.state.value?.phase == CallPhase.ACTIVE }
         emulator.waitUntil("o toque parar", details = ::notifications) { callNotification() == null }
@@ -124,7 +125,7 @@ class CallFlowTest {
         val before = emulator.callLog().size
         assertEquals("OK", emulator.control("RING 2001"))
         emulator.waitUntil("a notificação de ligação", details = ::notifications) { callNotification() != null }
-        tapSystemButton("Recusar")
+        tapSystemButton("Recusar") { callNotification() == null }
         waitForLog(before, "inv-out 2001 486")
         emulator.waitUntil("a perdida no Recentes") { app.recents.list().firstOrNull()?.kind == CallKind.PERDIDA }
         assertEquals("3001", app.recents.list().first().number)
@@ -136,7 +137,7 @@ class CallFlowTest {
         device.pressHome()
         assertEquals("OK", emulator.control("RING 2001"))
         emulator.waitUntil("a notificação de ligação", details = ::notifications) { callNotification() != null }
-        tapSystemButton("Atender")
+        tapSystemButton("Atender") { answered() }
         emulator.waitUntil("a ligação atendida") { app.calls.state.value?.phase == CallPhase.ACTIVE }
         val before = emulator.callLog().size
         assertEquals("OK", emulator.control("RING 2001"))
@@ -160,17 +161,37 @@ class CallFlowTest {
         }
 
     // Um botão da notificação de ligação (do Android, que desenha a notificação: no alto da tela, ou na gaveta de
-    // notificações).
-    private fun tapSystemButton(label: String) {
+    // notificações). A notificação que acabou de aparecer ainda desliza para o lugar, e um toque nesse meio pode
+    // não pegar: o toque se repete (até 3) enquanto [took] não vale.
+    private fun tapSystemButton(label: String, took: () -> Boolean) {
         val text = By.pkg(SYSTEM_UI).text(Pattern.compile(Pattern.quote(label), Pattern.CASE_INSENSITIVE))
-        var button = device.wait(Until.findObject(text), 10_000)
-        if (button == null) {
-            device.openNotification()
-            button = device.wait(Until.findObject(text), 10_000)
+        repeat(3) {
+            var button = device.wait(Until.findObject(text), 10_000)
+            if (button == null) {
+                device.openNotification()
+                button = device.wait(Until.findObject(text), 10_000)
+            }
+            if (button == null && within(5_000, took)) return   // o toque anterior pegou, só demorou
+            val found = button
+                ?: throw AssertionError("Sem o botão $label da notificação.\nNa tela: ${visibleTexts()}\n${notifications()}")
+            device.waitForIdle()
+            found.click()
+            if (within(5_000, took)) return
         }
-        val found = button
-            ?: throw AssertionError("Sem o botão $label da notificação.\nNa tela: ${visibleTexts()}\n${notifications()}")
-        found.click()
+        throw AssertionError("O botão $label da notificação não respondeu a 3 toques.\nNa tela: ${visibleTexts()}\n${notifications()}")
+    }
+
+    // A recebida foi atendida (a pessoa tocou Atender: o app espera o motor confirmar, ou já confirmou).
+    private fun answered(): Boolean =
+        app.calls.state.value?.phase.let { it == CallPhase.CONNECTING || it == CallPhase.ACTIVE }
+
+    private fun within(millis: Long, condition: () -> Boolean): Boolean {
+        val deadline = SystemClock.uptimeMillis() + millis
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (condition()) return true
+            Thread.sleep(100)
+        }
+        return condition()
     }
 
     // A notificação de ligação do app (canal "ligacoes"), ou null.

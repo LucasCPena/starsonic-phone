@@ -54,12 +54,12 @@ class IncomingCallNotifier(private val context: Context) : CallNotifier {
     fun showIncoming(callId: Int, number: String, name: String) {
         synchronized(lock) {
             if (callId <= stoppedUpTo) {
-                CallLog.i("notificação: a recebida $callId já parou de tocar")
+                CallLog.i { "notificação: a recebida $callId já parou de tocar" }
                 return
             }
             shownId = callId
             manager.notify(INCOMING_ID, incoming(callId, number, name))
-            CallLog.i("notificação: recebida $callId")
+            CallLog.i { "notificação: recebida $callId" }
         }
     }
 
@@ -148,6 +148,9 @@ class CallActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != IncomingCallNotifier.ACTION_DECLINE) return
         val calls = (context.applicationContext as App).calls
-        if (calls.isRinging(intent.getIntExtra(CallActivity.EXTRA_CALL_ID, CallManager.NO_ID))) calls.reject()
+        val callId = intent.getIntExtra(CallActivity.EXTRA_CALL_ID, CallManager.NO_ID)
+        val ringing = calls.isRinging(callId)
+        CallLog.i { "notificação: recusar $callId (tocando: $ringing)" }
+        if (ringing) calls.reject()
     }
 }

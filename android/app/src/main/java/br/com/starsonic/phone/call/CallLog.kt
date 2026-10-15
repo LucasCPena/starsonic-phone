@@ -10,11 +10,12 @@ import br.com.starsonic.phone.BuildConfig
 internal object CallLog {
     const val TAG = "StarsonicLigacao"
 
-    fun i(line: String) {
-        if (BuildConfig.DEBUG) Log.i(TAG, line)
+    /** A linha só é montada no build de debug. */
+    inline fun i(line: () -> String) {
+        if (BuildConfig.DEBUG) Log.i(TAG, line())
     }
 
-    fun w(line: String, error: Throwable? = null) {
-        if (BuildConfig.DEBUG) Log.w(TAG, line, error)
+    inline fun w(line: () -> String) {
+        if (BuildConfig.DEBUG) Log.w(TAG, line())
     }
 }

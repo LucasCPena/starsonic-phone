@@ -101,7 +101,9 @@ class CallActivity : ComponentActivity() {
     private fun handle(intent: Intent?) {
         if (intent?.action != ACTION_ANSWER) return
         val callId = intent.getIntExtra(EXTRA_CALL_ID, CallManager.NO_ID)
-        if (app.calls.isRinging(callId)) app.calls.answer()
+        val ringing = app.calls.isRinging(callId)
+        CallLog.i { "tela de chamada: atender $callId (tocando: $ringing)" }
+        if (ringing) app.calls.answer()
     }
 
     private fun proximityLock(): PowerManager.WakeLock? {
