@@ -147,6 +147,8 @@ class UpdatePromptTest {
         // A verificação de 24 h (o que o UpdateWorker roda), com o canal de teste ainda não conferido.
         app.updater.useTestChannel(channelUrl, installerPrefix)
         assertTrue(UpdateWorker.check(app) is Decision.PROMPT)
+        // O notify() do Android é assíncrono: a notificação entra nas activeNotifications um pouco depois.
+        emulator.waitUntil("a notificação da versão nova") { updateNotification() != null }
         val shown = updateNotification()
         assertNotNull("a notificação da versão nova", shown)
         assertEquals(QUESTION, shown!!.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString())
