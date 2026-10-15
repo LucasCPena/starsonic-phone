@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import br.com.starsonic.phone.core.Check
 import br.com.starsonic.phone.core.Clock
 import br.com.starsonic.phone.core.CoreRules
+import br.com.starsonic.phone.core.LoginFlow
 import br.com.starsonic.phone.core.LoginFlowHandle
 import br.com.starsonic.phone.core.Scheduled
 import br.com.starsonic.phone.data.Account
@@ -32,6 +33,9 @@ data class LoginState(
  * núcleo. Registrou: a conta é gravada e a tela acaba ([LoginState.done]). Falhou ou o tempo acabou: nada é
  * gravado, a conta anterior volta ao motor (sem ela, a tentada sai) e o aviso aparece.
  *
+ * Só vale o resultado da conta tentada: o motor dá um id a cada conta, e um resultado de outra (a anterior,
+ * que ainda estava na fila ou voltou depois de uma falha) é ignorado.
+ *
  * Com uma conta gravada, é a tela de Editar: servidor, protocolo e ramal preenchidos e a senha vazia.
  *
  * Threads: [submit] espera o motor aceitar a conta e não pode rodar na thread principal; os resultados
@@ -43,6 +47,7 @@ class LoginViewModel(
     private val store: AccountStore,
     private val clock: Clock,
     defaultTransport: Transport = Transport.UDP,
+    newFlow: (CoreRules) -> LoginFlow = ::LoginFlowHandle,
 ) : ViewModel() {
     private val previous: Account? = store.load()
 
@@ -53,11 +58,19 @@ class LoginViewModel(
 
     val state: StateFlow<LoginState> = mutableState
 
-    // A trava guarda o LoginFlow, a conta tentada e o aviso de fim do tempo; nunca fica presa numa chamada
-    // ao motor nem ao armazenamento.
+    // Uma tentativa: a conta e o id que o motor deu a ela (0 até o setAccount voltar). Os resultados que
+    // chegam antes do id (o motor pode avisar antes de o setAccount voltar) esperam em early.
+    private class Attempt(val account: Account) {
+        var accountId = 0
+        val early = mutableListOf<Pair<Int, Int>>()   // (código, id da conta)
+    }
+
+    // A trava guarda o LoginFlow, a tentativa, o id da conta do motor e o aviso de fim do tempo; nunca fica
+    // presa numa chamada ao motor nem ao armazenamento.
     private val lock = Any()
-    private val flow = LoginFlowHandle(core)
-    private var attempt: Account? = null
+    private val flow = newFlow(core)
+    private var attempt: Attempt? = null
+    private var currentAccountId = 0   // a conta que este modelo pôs no motor: a tentada, ou a que voltou
     private var timeout: Scheduled? = null
 
     fun onServerChange(value: String) = mutableState.update { it.copy(server = value) }
@@ -73,29 +86,31 @@ class LoginViewModel(
      * anterior saindo): chame fora da thread principal. Enquanto espera o resultado, não faz nada.
      */
     fun submit() {
-        val account = synchronized(lock) { begin() } ?: return
-        if (!gateway.setAccount(account.address, account.transport, account.ramal, account.senha)) {
-            finish(synchronized(lock) { flow.onRegistration(NO_ANSWER) })   // o motor recusou: nada vai chegar
-        }
+        val tried = synchronized(lock) { begin() } ?: return
+        val account = tried.account
+        val accountId = gateway.setAccount(account.address, account.transport, account.ramal, account.senha)
+        finish(synchronized(lock) { accepted(tried, accountId) })
     }
 
-    /** O resultado do registro ([br.com.starsonic.phone.engine.EngineEvents.onRegistration]). */
-    fun onRegistration(code: Int, active: Boolean) {
+    /** O resultado do registro de uma conta ([br.com.starsonic.phone.engine.EngineEvents.onRegistration]). */
+    fun onRegistration(code: Int, active: Boolean, accountId: Int) {
         if (code in 200..299 && !active) return   // (200, false): uma conta saiu do servidor, não registrou
-        finish(synchronized(lock) { flow.onRegistration(code) })
+        finish(synchronized(lock) { result(code, accountId) })
     }
 
     override fun onCleared() {
         // Sair da tela no meio da tentativa a desfaz, como no Windows; fora da thread principal, porque o
         // motor pode levar alguns segundos para voltar à conta anterior.
-        val outcome = synchronized(lock) { flow.onTimeout() } ?: return
+        val outcome = synchronized(lock) {
+            flow.onTimeout().also { flow.close() }
+        } ?: return
         thread(name = "starsonic-entrar") { finish(outcome) }
     }
 
     private fun onTimeout() = finish(synchronized(lock) { flow.onTimeout() })
 
-    // Com a trava: confere os campos, na ordem, e começa a tentativa. A conta a registrar, ou null.
-    private fun begin(): Account? {
+    // Com a trava: confere os campos, na ordem, e começa a tentativa (ou null).
+    private fun begin(): Attempt? {
         val fields = mutableState.value
         if (fields.loading || fields.done) return null
         val (serverCheck, server) = core.validateServer(fields.server)
@@ -103,17 +118,45 @@ class LoginViewModel(
         val (ramalCheck, ramal) = core.validateRamal(fields.ramal)
         if (ramalCheck != Check.OK) return refuse(ramal)
         if (fields.senha.isEmpty()) return refuse(EMPTY_PASSWORD)
-        val account = Account(server, fields.transport, ramal, fields.senha)
-        attempt = account
+        val tried = Attempt(Account(server, fields.transport, ramal, fields.senha))
+        attempt = tried
         flow.start()
         mutableState.update { it.copy(message = "", loading = true) }
         timeout = clock.schedule(LOGIN_TIMEOUT_MILLIS) { onTimeout() }
-        return account
+        return tried
     }
 
-    private fun refuse(message: String): Account? {
+    private fun refuse(message: String): Attempt? {
         mutableState.update { it.copy(message = message) }
         return null
+    }
+
+    // Com a trava: o motor deu o id da conta tentada (0: recusou a conta, e nada vai chegar). Os resultados
+    // que chegaram antes do id valem agora, na ordem, se forem dela.
+    private fun accepted(tried: Attempt, accountId: Int): LoginFlowHandle.Outcome? {
+        if (attempt !== tried) return null   // a tentativa já acabou (o tempo esgotou)
+        if (accountId == 0) return flow.onRegistration(NO_ANSWER)
+        tried.accountId = accountId
+        currentAccountId = accountId
+        val early = tried.early.toList()
+        tried.early.clear()
+        for ((code, id) in early) {
+            if (id != accountId) continue
+            val outcome = flow.onRegistration(code)
+            if (outcome != null) return outcome
+        }
+        return null
+    }
+
+    // Com a trava: um resultado de registro. Só vale o da conta deste modelo; enquanto o id da conta tentada
+    // não chegou, o resultado espera.
+    private fun result(code: Int, accountId: Int): LoginFlowHandle.Outcome? {
+        val tried = attempt
+        if (tried != null && tried.accountId == 0) {
+            tried.early += code to accountId
+            return null
+        }
+        return if (accountId == currentAccountId) flow.onRegistration(code) else null
     }
 
     // O desfecho da tentativa (o LoginFlow dá um só por tentativa; null = nada a fazer). A tela continua
@@ -126,15 +169,17 @@ class LoginViewModel(
             attempt.also { attempt = null }
         }
         if (outcome.commit) {
-            if (tried != null) store.save(tried)
+            if (tried != null) store.save(tried.account)
             mutableState.update { it.copy(loading = false, done = true) }
             return
         }
-        if (previous != null) {
+        val restored = if (previous != null) {
             gateway.setAccount(previous.address, previous.transport, previous.ramal, previous.senha)
         } else {
             gateway.removeAccount()
+            0
         }
+        synchronized(lock) { currentAccountId = restored }
         mutableState.update { it.copy(message = outcome.message, loading = false) }
     }
 

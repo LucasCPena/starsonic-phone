@@ -264,15 +264,44 @@ TEST_CASE("SetAccount replaces the account and only reports the new one") {
     CHECK_FALSE(RecordingListener::Reached(200, false, 1)(listener.Registrations()));
 }
 
+TEST_CASE("SetAccount returns increasing account ids that the registration events carry") {
+    FakeRegistrar registrar("senha");
+    RecordingListener listener;
+    INFO(listener.LogTail());
+    std::unique_ptr<SipEngine> engine = StartEngine(&listener, LoadProfile(registrar.port()));
+
+    const int first = engine->SetAccount(Input(Transport::Udp, L"2001"));
+    REQUIRE(first > 0);
+    REQUIRE(listener.WaitFor(RecordingListener::Reached(200, true, 1), kWaitSeconds));
+    engine->Reregister();
+    REQUIRE(listener.WaitFor(RecordingListener::Reached(200, true, 2), kWaitSeconds));
+    const int second = engine->SetAccount(Input(Transport::Tcp, L"2002"));
+    CHECK(second > first);
+    REQUIRE(listener.WaitFor(RecordingListener::Reached(200, true, 3), kWaitSeconds));
+    engine->RemoveAccount();
+    REQUIRE(listener.WaitFor(RecordingListener::Reached(200, false, 1), kWaitSeconds));
+    const int third = engine->SetAccount(Input(Transport::Udp, L"2001", L"errada"));
+    CHECK(third > second);
+    REQUIRE(listener.WaitFor(RecordingListener::Reached(403, false, 1), kWaitSeconds));
+
+    const std::vector<RegistrationEvent> events = listener.Registrations();
+    REQUIRE(events.size() == 5);
+    CHECK(events[0].accountId == first);    // o registro
+    CHECK(events[1].accountId == first);    // a renovação
+    CHECK(events[2].accountId == second);   // a conta que entrou no lugar
+    CHECK(events[3].accountId == second);   // a saída (200, false): o id da conta que saiu
+    CHECK(events[4].accountId == third);    // a recusa da conta seguinte
+}
+
 TEST_CASE("SetAccount refuses an account without address or extension") {
     RecordingListener listener;
     INFO(listener.LogTail());
     std::unique_ptr<SipEngine> engine = StartEngine(&listener, LoadProfile());
 
-    CHECK_FALSE(engine->SetAccount(Input(Transport::Udp, L"")));
+    CHECK(engine->SetAccount(Input(Transport::Udp, L"")) == 0);
     AccountInput noAddress = Input(Transport::Udp);
     noAddress.address.clear();
-    CHECK_FALSE(engine->SetAccount(noAddress));
+    CHECK(engine->SetAccount(noAddress) == 0);
     CHECK(listener.Registrations().empty());
 }
 

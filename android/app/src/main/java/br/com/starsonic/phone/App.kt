@@ -48,14 +48,14 @@ class App : Application() {
     /** O último resultado do registro (para a faixa). */
     val registration: StateFlow<Registration?> = mutableRegistration
 
-    /** Quem espera o resultado do registro na tela Entrar (null fora dela). */
+    /** Quem espera o resultado do registro na tela Entrar (null fora dela): código, ativa e id da conta. */
     @Volatile
-    var loginEvents: ((Int, Boolean) -> Unit)? = null
+    var loginEvents: ((Int, Boolean, Int) -> Unit)? = null
 
     private val events = object : EngineEvents {
-        override fun onRegistration(code: Int, active: Boolean) {
+        override fun onRegistration(code: Int, active: Boolean, accountId: Int) {
             mutableRegistration.value = Registration(code, active)
-            loginEvents?.invoke(code, active)
+            loginEvents?.invoke(code, active, accountId)
         }
 
         override fun onIncomingCall(callId: Int, remoteUser: String, remoteName: String) {}

@@ -9,7 +9,7 @@
 # A ponte JNI (src/main/cpp/jni_bridge.cpp) entrega os avisos do motor chamando estes métodos pelo nome:
 # o R8 não vê esse uso e não pode apagá-los nem renomeá-los.
 -keepclassmembers class br.com.starsonic.phone.engine.EngineSink {
-    public void onRegistration(int, boolean);
+    public void onRegistration(int, boolean, int);
     public void onIncomingCall(int, java.lang.String, java.lang.String);
     public void onRejectedBusy(java.lang.String, java.lang.String);
     public void onCallState(int, int, int);

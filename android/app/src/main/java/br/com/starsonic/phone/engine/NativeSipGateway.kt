@@ -63,8 +63,8 @@ class NativeSipGateway : SipGateway {
         }
     }
 
-    override fun setAccount(address: String, transport: Transport, ramal: String, senha: String): Boolean = call {
-        engine != 0L && nativeSetAccount(engine, address, transport == Transport.TCP, ramal, senha)
+    override fun setAccount(address: String, transport: Transport, ramal: String, senha: String): Int = call {
+        if (engine != 0L) nativeSetAccount(engine, address, transport == Transport.TCP, ramal, senha) else 0
     }
 
     override fun removeAccount() = post { if (engine != 0L) nativeRemoveAccount(engine) }
@@ -120,7 +120,7 @@ class NativeSipGateway : SipGateway {
 
     private external fun nativeStop(handle: Long)
 
-    private external fun nativeSetAccount(handle: Long, address: String, tcp: Boolean, ramal: String, senha: String): Boolean
+    private external fun nativeSetAccount(handle: Long, address: String, tcp: Boolean, ramal: String, senha: String): Int
 
     private external fun nativeRemoveAccount(handle: Long)
 
@@ -164,7 +164,8 @@ class EngineSink(private val events: EngineEvents, private val delivery: Executo
         closed = true
     }
 
-    fun onRegistration(code: Int, active: Boolean) = deliver { events.onRegistration(code, active) }
+    fun onRegistration(code: Int, active: Boolean, accountId: Int) =
+        deliver { events.onRegistration(code, active, accountId) }
 
     fun onIncomingCall(callId: Int, remoteUser: String, remoteName: String) =
         deliver { events.onIncomingCall(callId, remoteUser, remoteName) }

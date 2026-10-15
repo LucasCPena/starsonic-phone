@@ -247,6 +247,7 @@ private:
 struct RegistrationEvent {
     int code;
     bool active;
+    int accountId;
 };
 
 inline const char* StateName(starsonic::CallState state) {
@@ -270,9 +271,9 @@ class RecordingListener : public starsonic::EngineListener {
 public:
     using CallCondition = std::function<bool(const std::vector<CallEvent>&)>;
 
-    void OnRegistration(int sipCode, bool active) override {
+    void OnRegistration(int sipCode, bool active, int accountId) override {
         std::lock_guard<std::mutex> lock(mutex_);
-        registrations_.push_back({sipCode, active});
+        registrations_.push_back({sipCode, active, accountId});
         changed_.notify_all();
     }
     void OnIncomingCall(int callId, const std::string& user, const std::string& name) override {

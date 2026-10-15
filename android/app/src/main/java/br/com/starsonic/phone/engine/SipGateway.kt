@@ -20,10 +20,12 @@ object CallState {
  */
 interface EngineEvents {
     /**
-     * Cada resposta do registro: (200, true) registrou ou renovou; (200, false) a conta saiu
-     * ([SipGateway.removeAccount]; não é um registro); 4xx a 6xx falhou; sem resposta do servidor, 503 ou 408.
+     * Cada resposta do registro, com o id da conta ([SipGateway.setAccount]): (200, true) registrou ou
+     * renovou; (200, false) a conta saiu ([SipGateway.removeAccount], com o id da que saiu; não é um
+     * registro); 4xx a 6xx falhou; sem resposta do servidor, 503 ou 408. Uma resposta de uma conta anterior
+     * ainda pode chegar depois da troca, com o id dela: quem espera o resultado de uma conta confere o id.
      */
-    fun onRegistration(code: Int, active: Boolean)
+    fun onRegistration(code: Int, active: Boolean, accountId: Int)
 
     /** Chegou uma ligação, que toca: o número de quem liga e o nome de exibição (pode ser vazio). */
     fun onIncomingCall(callId: Int, remoteUser: String, remoteName: String)
@@ -51,10 +53,13 @@ interface SipGateway {
     /** Desliga a ligação, tira a conta do servidor e desliga o motor. Daqui em diante, nenhum evento. */
     fun stop()
 
-    /** Troca a conta e registra (o resultado chega por onRegistration); false: o motor recusou a conta. */
-    fun setAccount(address: String, transport: Transport, ramal: String, senha: String): Boolean
+    /**
+     * Troca a conta e registra. Devolve o id da conta (> 0, maior que o de todas as anteriores), que vem em
+     * cada onRegistration dela; 0: o motor recusou a conta (não há conta, e nada chega).
+     */
+    fun setAccount(address: String, transport: Transport, ramal: String, senha: String): Int
 
-    /** Tira a conta do servidor e do motor; no fim chega onRegistration(200, false). */
+    /** Tira a conta do servidor e do motor; no fim chega onRegistration(200, false, <id da conta que saiu>). */
     fun removeAccount()
 
     /** Renova o registro agora. */

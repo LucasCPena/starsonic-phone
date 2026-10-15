@@ -113,36 +113,39 @@ public:
         return false;
     }
 
-    bool SetAccount(const AccountInput& input) {
+    int SetAccount(const AccountInput& input) {
         std::lock_guard<std::mutex> lock(apiMutex_);
-        if (!RegisterThread()) return false;
+        if (!RegisterThread()) return 0;
         if (input.address.empty() || input.ramal.empty()) {
             Log(2, "conta recusada: endereco ou ramal vazio");
-            return false;
+            return 0;
         }
         RetireAccount();
         const AccountFields fields = BuildAccount(config_.profile.account, input.address, input.ramal, input.senha,
                                                   input.transport, L"");
         const PjAccountSettings settings = ToPjAccount(fields);
         const pj::AccountConfig config = MakeAccountConfig(settings, settings.transport == "tcp" ? tcpId_ : udpId_);
-        std::unique_ptr<EngineAccount> account(new EngineAccount(&events_, &calls_));
+        // O id vem antes do create(): uma resposta que chegue durante ele já sai com o id da conta.
+        const int accountId = ++lastAccountId_;
+        std::unique_ptr<EngineAccount> account(new EngineAccount(&events_, &calls_, accountId));
         try {
             account->create(config, true);
         } catch (const pj::Error& failure) {
             Log(1, "o PJSIP recusou a conta " + settings.idUri + ": " + failure.info());
-            return false;
+            return 0;
         }
         account_ = std::move(account);
         callHost_ = CallHost(fields.domain, config_.profile.account.port);
-        return true;
+        return accountId;
     }
 
     void RemoveAccount() {
         std::lock_guard<std::mutex> lock(apiMutex_);
         if (!RegisterThread() || !account_) return;
+        const int accountId = account_->Id();
         RetireAccount();
         // A saída da conta, com ou sem a confirmação do servidor (o log diz qual).
-        events_.Post([](EngineListener& listener) { listener.OnRegistration(200, false); });
+        events_.Post([accountId](EngineListener& listener) { listener.OnRegistration(200, false, accountId); });
     }
 
     void Reregister() {
@@ -331,6 +334,7 @@ private:
     pj::TransportId tcpId_ = -1;
     std::mutex apiMutex_;   // um método público por vez; nunca presa nos callbacks do PJSIP
     std::unique_ptr<EngineAccount> account_;
+    int lastAccountId_ = 0;   // o id da última conta criada (com a apiMutex_)
     std::string callHost_;   // <domínio>[:<porta>] da conta (UTF-8), para as URIs das ligações
 };
 
@@ -369,7 +373,7 @@ std::unique_ptr<SipEngine> SipEngine::Create(const EngineConfig& config, EngineL
     return engine;
 }
 
-bool SipEngine::SetAccount(const AccountInput& input) { return impl_->SetAccount(input); }
+int SipEngine::SetAccount(const AccountInput& input) { return impl_->SetAccount(input); }
 
 void SipEngine::RemoveAccount() { impl_->RemoveAccount(); }
 

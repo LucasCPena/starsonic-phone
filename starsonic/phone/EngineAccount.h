@@ -20,7 +20,10 @@ pj::AccountConfig MakeAccountConfig(const PjAccountSettings& settings, pj::Trans
 // Os callbacks chegam numa thread do PJSIP (ou na que chamou o PJSIP), com a trava do pjsua.
 class EngineAccount : public pj::Account {
 public:
-    EngineAccount(EventQueue* events, CallTable* calls);
+    // id: o que SetAccount devolve; vai em cada OnRegistration desta conta.
+    EngineAccount(EventQueue* events, CallTable* calls, int id);
+
+    int Id() const { return id_; }
 
     // A conta vai sair: daqui em diante nenhuma resposta de registro vira evento (um 200 sem registro
     // seria lido como o resultado da conta nova) e as ligações que chegam são recusadas (480).
@@ -40,6 +43,7 @@ public:
 private:
     EventQueue* events_;
     CallTable* calls_;
+    const int id_;
     std::atomic<bool> retired_{false};
     std::mutex mutex_;
     std::condition_variable changed_;

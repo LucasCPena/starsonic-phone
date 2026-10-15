@@ -25,10 +25,13 @@ class EngineListener {
 public:
     virtual ~EngineListener() {}
 
-    // Cada resposta do registro: o código SIP e se a conta ficou registrada. (200, true) = registrou
-    // ou renovou; (200, false) = a conta saiu (RemoveAccount; não é um registro); 4xx a 6xx = falhou;
-    // sem resposta do servidor, 503 (conexão recusada ou rede fora) ou 408 (tempo esgotado).
-    virtual void OnRegistration(int sipCode, bool active) = 0;
+    // Cada resposta do registro: o código SIP, se a conta ficou registrada e o id da conta (o que
+    // SetAccount devolveu). (200, true) = registrou ou renovou; (200, false) = a conta saiu
+    // (RemoveAccount, com o id da conta que saiu; não é um registro); 4xx a 6xx = falhou; sem resposta
+    // do servidor, 503 (conexão recusada ou rede fora) ou 408 (tempo esgotado). Uma resposta de uma
+    // conta anterior que ainda estava na fila chega com o id dela: quem espera o resultado de uma conta
+    // confere o id.
+    virtual void OnRegistration(int sipCode, bool active, int accountId) = 0;
     // Chegou uma ligação, que toca (o motor responde 180 sozinho). remoteUser é o usuário do From (o
     // número de quem liga) e remoteName, o nome de exibição (pode ser vazio), em UTF-8.
     virtual void OnIncomingCall(int callId, const std::string& remoteUser, const std::string& remoteName) = 0;
@@ -74,15 +77,17 @@ public:
     SipEngine(const SipEngine&) = delete;
     SipEngine& operator=(const SipEngine&) = delete;
 
-    // Troca a conta e registra; o resultado chega por OnRegistration. A conta anterior sai do
-    // servidor sem aviso ao listener (uma ligação em andamento é desligada, com o Disconnected de
-    // sempre). false: dados vazios ou o PJSIP recusou a conta (não há conta). Espera até ~5 s pela
-    // saída da conta anterior.
-    bool SetAccount(const AccountInput& input);
+    // Troca a conta e registra; o resultado chega por OnRegistration com o id que SetAccount devolve
+    // (> 0, e cada conta nova recebe um maior que o das anteriores). A conta anterior sai do servidor
+    // sem aviso ao listener (uma ligação em andamento é desligada, com o Disconnected de sempre). 0:
+    // dados vazios ou o PJSIP recusou a conta (não há conta). Espera até ~5 s pela saída da conta
+    // anterior.
+    int SetAccount(const AccountInput& input);
 
-    // Desliga a ligação, retira o registro e apaga a conta; no fim chega OnRegistration(200, false),
-    // uma vez. Com um REGISTER ainda a caminho, espera a resposta dele e só então pede a saída. Espera
-    // até ~3 s pelo servidor; sem resposta, a conta sai assim mesmo (o log diz). Sem conta, nada.
+    // Desliga a ligação, retira o registro e apaga a conta; no fim chega OnRegistration(200, false,
+    // <id da conta que saiu>), uma vez. Com um REGISTER ainda a caminho, espera a resposta dele e só
+    // então pede a saída. Espera até ~3 s pelo servidor; sem resposta, a conta sai assim mesmo (o log
+    // diz). Sem conta, nada.
     void RemoveAccount();
 
     // Renova o registro agora.

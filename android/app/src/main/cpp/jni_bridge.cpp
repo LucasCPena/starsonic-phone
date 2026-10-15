@@ -1,6 +1,7 @@
 // Ponte JNI do app Android: liga o Kotlin ao núcleo e ao motor de ligações em C++.
 // - br.com.starsonic.phone.Native: as funções do núcleo que as telas usam (validar o servidor e o ramal,
 //   os textos do registro e do fim da ligação, o número a discar e o protocolo padrão do perfil).
+// - br.com.starsonic.phone.core.LoginFlowHandle: o LoginFlow do núcleo (a espera da tela Entrar).
 // - br.com.starsonic.phone.engine.NativeSipGateway: o SipEngine. O gateway chama o motor sempre da mesma
 //   thread dele; os avisos do motor voltam por um EngineSink (ver JniListener).
 //
@@ -15,12 +16,14 @@
 
 #include <cstdint>
 #include <memory>
+#include <new>
 #include <string>
 #include <type_traits>
 #include <vector>
 
 #include "AccountPolicy.h"
 #include "CallMessages.h"
+#include "LoginFlow.h"
 #include "Profile.h"
 #include "RegistrationErrors.h"
 #include "SipEngine.h"
@@ -190,7 +193,7 @@ public:
     bool Init(JNIEnv* env, jobject sink) {
         jclass type = env->GetObjectClass(sink);
         if (type == nullptr) return false;
-        onRegistration_ = env->GetMethodID(type, "onRegistration", "(IZ)V");
+        onRegistration_ = env->GetMethodID(type, "onRegistration", "(IZI)V");
         if (onRegistration_ != nullptr) {
             onIncomingCall_ = env->GetMethodID(type, "onIncomingCall", "(ILjava/lang/String;Ljava/lang/String;)V");
         }
@@ -211,9 +214,10 @@ public:
         sink_ = nullptr;
     }
 
-    void OnRegistration(int sipCode, bool active) override {
+    void OnRegistration(int sipCode, bool active, int accountId) override {
         Deliver(kEventThreadName, [&](JNIEnv* env) {
-            env->CallVoidMethod(sink_, onRegistration_, static_cast<jint>(sipCode), active ? JNI_TRUE : JNI_FALSE);
+            env->CallVoidMethod(sink_, onRegistration_, static_cast<jint>(sipCode), active ? JNI_TRUE : JNI_FALSE,
+                                static_cast<jint>(accountId));
         });
     }
 
@@ -286,6 +290,17 @@ EngineHolder* HolderOf(jlong handle) {
     return reinterpret_cast<EngineHolder*>(static_cast<intptr_t>(handle));
 }
 
+starsonic::LoginFlow* FlowOf(jlong handle) {
+    return reinterpret_cast<starsonic::LoginFlow*>(static_cast<intptr_t>(handle));
+}
+
+// O desfecho do LoginFlow para o Kotlin (LoginFlowHandle): 0 = nada a fazer, 1 = confirmou, 2 = desfez. O
+// aviso de cada falha o Kotlin pega no CoreRules.
+jint OutcomeKind(const starsonic::LoginOutcome& outcome) {
+    if (outcome.commit) return 1;
+    return outcome.rollback ? 2 : 0;
+}
+
 }  // namespace
 
 extern "C" {
@@ -339,6 +354,35 @@ JNIEXPORT jstring JNICALL Java_br_com_starsonic_phone_Native_profileTransport(JN
     return ToJava(env, profile.account.transport == starsonic::Transport::Tcp ? L"tcp" : L"udp");
 }
 
+// O LoginFlow do núcleo (LoginFlowHandle): criado aqui e solto por nativeRelease; quem usa sincroniza as
+// chamadas. 0 se faltou memória.
+JNIEXPORT jlong JNICALL Java_br_com_starsonic_phone_core_LoginFlowHandle_nativeCreate(JNIEnv* /* env */,
+                                                                                   jobject /* flow */) {
+    return static_cast<jlong>(reinterpret_cast<intptr_t>(new (std::nothrow) starsonic::LoginFlow()));
+}
+
+JNIEXPORT void JNICALL Java_br_com_starsonic_phone_core_LoginFlowHandle_nativeStart(JNIEnv* /* env */,
+                                                                                  jobject /* flow */, jlong handle) {
+    FlowOf(handle)->Start();
+}
+
+JNIEXPORT jint JNICALL Java_br_com_starsonic_phone_core_LoginFlowHandle_nativeOnRegistration(JNIEnv* /* env */,
+                                                                                           jobject /* flow */,
+                                                                                           jlong handle, jint code) {
+    return OutcomeKind(FlowOf(handle)->OnRegistration(code, false));   // o Android não tem TLS
+}
+
+JNIEXPORT jint JNICALL Java_br_com_starsonic_phone_core_LoginFlowHandle_nativeOnTimeout(JNIEnv* /* env */,
+                                                                                      jobject /* flow */,
+                                                                                      jlong handle) {
+    return OutcomeKind(FlowOf(handle)->OnTimeout());
+}
+
+JNIEXPORT void JNICALL Java_br_com_starsonic_phone_core_LoginFlowHandle_nativeRelease(JNIEnv* /* env */,
+                                                                                    jobject /* flow */, jlong handle) {
+    delete FlowOf(handle);
+}
+
 // O motor (NativeSipGateway). Todas estas funções são chamadas da thread do gateway, uma de cada vez; o
 // handle é o EngineHolder que nativeStart devolveu, até nativeStop.
 
@@ -384,16 +428,17 @@ JNIEXPORT void JNICALL Java_br_com_starsonic_phone_engine_NativeSipGateway_nativ
     delete holder;
 }
 
-JNIEXPORT jboolean JNICALL Java_br_com_starsonic_phone_engine_NativeSipGateway_nativeSetAccount(
+// O id da conta (o que os avisos de registro dela trazem), ou 0 se o motor a recusou.
+JNIEXPORT jint JNICALL Java_br_com_starsonic_phone_engine_NativeSipGateway_nativeSetAccount(
     JNIEnv* env, jobject /* gateway */, jlong handle, jstring address, jboolean tcp, jstring ramal, jstring senha) {
     starsonic::AccountInput input;
     input.address = ToWide(env, address);
     input.transport = tcp ? starsonic::Transport::Tcp : starsonic::Transport::Udp;
     input.ramal = ToWide(env, ramal);
     input.senha = ToWide(env, senha);
-    const bool accepted = HolderOf(handle)->engine->SetAccount(input);
+    const int accountId = HolderOf(handle)->engine->SetAccount(input);
     DropPendingException(env);
-    return accepted ? JNI_TRUE : JNI_FALSE;
+    return static_cast<jint>(accountId);
 }
 
 JNIEXPORT void JNICALL Java_br_com_starsonic_phone_engine_NativeSipGateway_nativeRemoveAccount(JNIEnv* env,

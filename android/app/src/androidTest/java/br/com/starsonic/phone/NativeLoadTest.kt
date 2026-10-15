@@ -1,8 +1,11 @@
 package br.com.starsonic.phone
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import br.com.starsonic.phone.core.LoginFlowHandle
+import br.com.starsonic.phone.core.NativeCoreRules
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -38,6 +41,42 @@ class NativeLoadTest {
     fun callEndMessageComesFromTheCore() {
         assertEquals("Ocupado", Native.callEndMessage(486))
         assertEquals("Número não encontrado", Native.callEndMessage(404))
+    }
+
+    @Test
+    fun loginFlowFollowsTheCore() {
+        val confirmed = LoginFlowHandle(NativeCoreRules)
+        try {
+            assertNull(confirmed.onRegistration(200))   // antes de começar a esperar, nada vale
+            confirmed.start()
+            assertNull(confirmed.onRegistration(100))   // 1xx: continua esperando
+            assertEquals(LoginFlowHandle.Outcome(commit = true, rollback = false, message = ""), confirmed.onRegistration(200))
+            assertNull(confirmed.onRegistration(403))   // depois de confirmar, nada mais vale
+            assertNull(confirmed.onTimeout())
+        } finally {
+            confirmed.close()
+        }
+
+        val failed = LoginFlowHandle(NativeCoreRules)
+        failed.start()
+        assertEquals(
+            LoginFlowHandle.Outcome(commit = false, rollback = true, message = "Ramal ou senha incorretos."),
+            failed.onRegistration(403),
+        )
+        assertNull(failed.onTimeout())   // a falha já encerrou a espera
+        failed.start()                   // uma tentativa nova depois da falha
+        assertEquals(
+            LoginFlowHandle.Outcome(
+                commit = false,
+                rollback = true,
+                message = "Não foi possível falar com o servidor. Confira o endereço e a sua internet.",
+            ),
+            failed.onTimeout(),
+        )
+        assertNull(failed.onRegistration(200))   // o resultado que chega depois do tempo é ignorado
+        failed.close()
+        failed.start()
+        assertNull(failed.onRegistration(200))   // depois do close, nada vale (e nada quebra)
     }
 
     @Test

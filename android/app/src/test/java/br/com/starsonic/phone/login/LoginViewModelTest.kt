@@ -3,6 +3,8 @@ package br.com.starsonic.phone.login
 import br.com.starsonic.phone.core.Check
 import br.com.starsonic.phone.core.Clock
 import br.com.starsonic.phone.core.CoreRules
+import br.com.starsonic.phone.core.LoginFlow
+import br.com.starsonic.phone.core.LoginFlowHandle
 import br.com.starsonic.phone.core.Scheduled
 import br.com.starsonic.phone.data.Account
 import br.com.starsonic.phone.data.AccountStore
@@ -15,14 +17,17 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** A tela Entrar na JVM, com o núcleo, o motor, o armazenamento e o relógio falsos. */
+/**
+ * A tela Entrar na JVM, com o núcleo, o motor, o armazenamento, o relógio e o LoginFlow falsos (o LoginFlow
+ * de verdade, pela ponte, é testado no núcleo e no NativeLoadTest).
+ */
 class LoginViewModelTest {
     private val core = FakeCore()
     private val gateway = FakeGateway()
     private val store = FakeStore()
     private val clock = FakeClock()
 
-    private fun model() = LoginViewModel(core, gateway, store, clock)
+    private fun model() = LoginViewModel(core, gateway, store, clock, newFlow = ::FakeFlow)
 
     private fun LoginViewModel.fill(server: String, ramal: String, senha: String, transport: Transport = Transport.UDP) {
         onServerChange(server)
@@ -62,12 +67,14 @@ class LoginViewModelTest {
         assertEquals("", model.state.value.message)
         model.submit()   // um segundo toque enquanto espera não registra de novo
         assertEquals(listOf(AccountCall("sip.exemplo.com.br", Transport.TCP, "2001", "senha-certa")), gateway.accounts)
-        // A saída de uma conta (200 sem registro) e as respostas provisórias não contam.
-        model.onRegistration(200, false)
-        model.onRegistration(100, false)
+        val id = gateway.lastId
+        // A saída de uma conta (200 sem registro), as respostas provisórias e as de outra conta não contam.
+        model.onRegistration(200, false, id)
+        model.onRegistration(100, false, id)
+        model.onRegistration(200, true, id + 1)
         assertTrue(model.state.value.loading)
         assertNull(store.account)
-        model.onRegistration(200, true)
+        model.onRegistration(200, true, id)
         assertEquals(Account("sip.exemplo.com.br", Transport.TCP, "2001", "senha-certa"), store.account)
         assertTrue(model.state.value.done)
         assertFalse(model.state.value.loading)
@@ -79,13 +86,13 @@ class LoginViewModelTest {
         val model = model()
         model.fill("sip.exemplo.com.br", "2001", "errada")
         model.submit()
-        model.onRegistration(403, false)
+        model.onRegistration(403, false, gateway.lastId)
         assertEquals("registro 403", model.state.value.message)
         assertFalse(model.state.value.loading)
         assertFalse(model.state.value.done)
         assertNull(store.account)
         assertEquals(1, gateway.removals)   // a conta tentada sai do motor
-        model.onRegistration(200, true)    // um resultado atrasado não muda nada
+        model.onRegistration(200, true, gateway.lastId)   // um resultado atrasado não muda nada
         assertNull(store.account)
         assertFalse(model.state.value.done)
     }
@@ -101,7 +108,7 @@ class LoginViewModelTest {
         assertEquals("registro 0", model.state.value.message)
         assertFalse(model.state.value.loading)
         assertEquals(1, gateway.removals)
-        model.onRegistration(200, true)    // chegou depois do tempo: ignorado
+        model.onRegistration(200, true, gateway.lastId)   // chegou depois do tempo: ignorado
         assertNull(store.account)
         assertFalse(model.state.value.done)
         assertEquals("registro 0", model.state.value.message)
@@ -118,6 +125,17 @@ class LoginViewModelTest {
         assertNull(store.account)
         clock.advance(15_000)   // o tempo de espera já foi desmarcado
         assertEquals(1, gateway.removals)
+    }
+
+    @Test
+    fun `a result that arrives before setAccount returns still counts`() {
+        val model = model()
+        // O motor avisa o registro antes de o setAccount voltar com o id.
+        gateway.duringSetAccount = { id -> model.onRegistration(200, true, id) }
+        model.fill("sip.exemplo.com.br", "2001", "senha-certa")
+        model.submit()
+        assertTrue(model.state.value.done)
+        assertEquals(Account("sip.exemplo.com.br", Transport.UDP, "2001", "senha-certa"), store.account)
     }
 
     @Test
@@ -139,13 +157,44 @@ class LoginViewModelTest {
         model.onSenhaChange("nova")
         model.submit()
         assertEquals(AccountCall("sip.exemplo.com.br", Transport.TCP, "2001", "nova"), gateway.accounts.last())
-        model.onRegistration(403, false)
+        model.onRegistration(403, false, gateway.lastId)
         assertEquals("registro 403", model.state.value.message)
         assertEquals(AccountCall("sip.exemplo.com.br", Transport.TCP, "2001", "antiga"), gateway.accounts.last())
         assertEquals(2, gateway.accounts.size)
         assertEquals(0, gateway.removals)
         assertEquals(previous, store.account)
         assertEquals(0, store.saves)
+    }
+
+    @Test
+    fun `a late result of the previous account does not commit the next attempt`() {
+        val previous = Account("sip.exemplo.com.br", Transport.TCP, "2001", "antiga")
+        store.account = previous
+        val model = model()
+        // Tentativa 1: o servidor recusa, e a conta anterior volta ao motor (com um id novo).
+        model.onSenhaChange("errada-1")
+        model.submit()
+        model.onRegistration(403, false, gateway.lastId)
+        val restored = gateway.lastId
+        assertFalse(model.state.value.loading)
+        // Tentativa 2: o registro da conta que voltou ainda estava a caminho. A resposta dele chega antes de
+        // o setAccount da tentativa 2 voltar e também depois; nenhuma das duas é da tentativa 2.
+        model.onSenhaChange("errada-2")
+        gateway.duringSetAccount = { model.onRegistration(200, true, restored) }
+        model.submit()
+        gateway.duringSetAccount = null
+        val attempt2 = gateway.lastId
+        model.onRegistration(200, true, restored)
+        assertTrue(model.state.value.loading)
+        assertFalse(model.state.value.done)
+        assertEquals(previous, store.account)
+        // A resposta da própria tentativa 2.
+        model.onRegistration(403, false, attempt2)
+        assertEquals("registro 403", model.state.value.message)
+        assertFalse(model.state.value.done)
+        assertEquals(previous, store.account)
+        assertEquals(0, store.saves)
+        assertEquals(AccountCall("sip.exemplo.com.br", Transport.TCP, "2001", "antiga"), gateway.accounts.last())
     }
 }
 
@@ -176,21 +225,58 @@ private class FakeCore : CoreRules {
     override fun normalizeDialString(raw: String) = raw
 }
 
+/** O LoginFlow falso, com as regras do LoginFlow do núcleo e os avisos do núcleo falso. */
+private class FakeFlow(private val core: CoreRules) : LoginFlow {
+    private var waiting = false
+    private var done = false
+
+    override fun start() {
+        if (!waiting && !done) waiting = true
+    }
+
+    override fun onRegistration(code: Int): LoginFlowHandle.Outcome? {
+        if (!waiting || code in 100..199) return null
+        waiting = false
+        if (code in 200..299) {
+            done = true
+            return LoginFlowHandle.Outcome(commit = true, rollback = false, message = "")
+        }
+        return LoginFlowHandle.Outcome(commit = false, rollback = true, message = core.registrationMessage(code))
+    }
+
+    override fun onTimeout(): LoginFlowHandle.Outcome? {
+        if (!waiting) return null
+        waiting = false
+        return LoginFlowHandle.Outcome(commit = false, rollback = true, message = core.registrationMessage(0))
+    }
+
+    override fun close() {
+        waiting = false
+    }
+}
+
 private data class AccountCall(val address: String, val transport: Transport, val ramal: String, val senha: String)
 
-/** O motor falso: guarda as contas pedidas e as saídas. */
+/** O motor falso: guarda as contas pedidas (cada uma recebe um id, 1, 2, 3...) e as saídas. */
 private class FakeGateway : SipGateway {
     val accounts = mutableListOf<AccountCall>()
     var removals = 0
     var accepts = true
+    var lastId = 0
+
+    /** Roda dentro do setAccount, antes de ele voltar com o id (um aviso do motor que chega antes). */
+    var duringSetAccount: ((Int) -> Unit)? = null
 
     override fun start(userAgent: String, profileText: String, events: EngineEvents) = true
 
     override fun stop() {}
 
-    override fun setAccount(address: String, transport: Transport, ramal: String, senha: String): Boolean {
+    override fun setAccount(address: String, transport: Transport, ramal: String, senha: String): Int {
         accounts += AccountCall(address, transport, ramal, senha)
-        return accepts
+        if (!accepts) return 0
+        val id = ++lastId
+        duringSetAccount?.invoke(id)
+        return id
     }
 
     override fun removeAccount() {

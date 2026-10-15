@@ -29,7 +29,7 @@ pj::AccountConfig MakeAccountConfig(const PjAccountSettings& settings, pj::Trans
     return config;
 }
 
-EngineAccount::EngineAccount(EventQueue* events, CallTable* calls) : events_(events), calls_(calls) {}
+EngineAccount::EngineAccount(EventQueue* events, CallTable* calls, int id) : events_(events), calls_(calls), id_(id) {}
 
 void EngineAccount::Retire() { retired_ = true; }
 
@@ -82,7 +82,8 @@ void EngineAccount::onRegState(pj::OnRegStateParam& param) {
         }
         if (!retired_) {
             const int code = static_cast<int>(param.code);
-            events_->Post([code, active](EngineListener& listener) { listener.OnRegistration(code, active); });
+            const int id = id_;
+            events_->Post([code, active, id](EngineListener& listener) { listener.OnRegistration(code, active, id); });
         }
         {
             std::lock_guard<std::mutex> lock(mutex_);

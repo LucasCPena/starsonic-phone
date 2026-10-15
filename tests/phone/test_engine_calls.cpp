@@ -299,7 +299,7 @@ TEST_CASE("the engine works from a thread other than the one that created it") {
     bool confirmed = false;
     bool hungUp = false;
     std::thread other([&] {
-        accountSet = engine->SetAccount(Input(Transport::Udp));
+        accountSet = engine->SetAccount(Input(Transport::Udp)) > 0;
         registered = listener.WaitFor(RecordingListener::Reached(200, true, 1), kWaitSeconds);
         codecs = engine->ActiveCodecs();
         id = engine->MakeCall("2002");
