@@ -265,6 +265,9 @@ class SipService : Service() {
                 false
             }
 
+        /** Renova agora o registro da conta do serviço. Esboço: não faz nada. */
+        fun reregister(): Boolean = false
+
         /**
          * Para o serviço: a conta sai do motor (Sair, na Task 9). Chame depois de o serviço ter começado (o
          * Android derruba o app que para um serviço iniciado com startForegroundService antes de ele entrar em

@@ -8,6 +8,9 @@ import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -359,6 +362,58 @@ class ConnectionTest {
         assertEquals(connecting, connection.status.value)
         engine.registration(200, true)
         assertEquals(connected, connection.status.value)
+    }
+
+    @Test
+    fun `a password refused by the server is flagged once per failure`() {
+        connection.claim(service)
+        connection.adopt(service, account)
+        engine.registration(200, true)
+        assertNull(connection.refusal.value)
+        engine.registration(403, false)   // a renovação: o servidor recusou a senha gravada
+        val first = connection.refusal.value
+        assertEquals("Ramal ou senha incorretos.", first?.message)
+        connection.refusalSeen(first!!)
+        assertNull("o app mostrou a recusa", connection.refusal.value)
+        engine.registration(401, false)   // uma falha nova
+        val second = connection.refusal.value
+        assertNotNull(second)
+        engine.registration(407, false)   // outra, antes de o app mostrar a anterior
+        val third = connection.refusal.value
+        connection.refusalSeen(second!!)   // mostrar uma antiga não esconde a nova
+        assertSame(third, connection.refusal.value)
+    }
+
+    @Test
+    fun `only the saved account refused by the server is a refusal`() {
+        // A primeira tela Entrar, sem o serviço: a recusa é da tentativa, e a própria tela mostra o aviso.
+        val first = login(account)
+        engine.registration(403, false, first)
+        assertNull(connection.refusal.value)
+        // Outras falhas da conta do serviço não são a senha recusada.
+        connection.claim(service)
+        connection.adopt(service, account)
+        engine.registration(503, false)
+        engine.registration(408, false)
+        assertNull(connection.refusal.value)
+        // Uma tentativa do Editar com outra senha, recusada: o aviso também é da tela Entrar.
+        val attempt = login(account.copy(senha = "nova"))
+        engine.registration(403, false, attempt)
+        assertNull(connection.refusal.value)
+    }
+
+    @Test
+    fun `the refusal leaves when the service holds another account or stops`() {
+        connection.claim(service)
+        connection.adopt(service, account)
+        engine.registration(403, false)
+        assertNotNull(connection.refusal.value)
+        connection.adopt(service, account.copy(senha = "nova"))   // o Editar gravou outra senha
+        assertNull(connection.refusal.value)
+        engine.registration(403, false)
+        assertNotNull(connection.refusal.value)
+        connection.release(service)   // Sair
+        assertNull(connection.refusal.value)
     }
 
     @Test

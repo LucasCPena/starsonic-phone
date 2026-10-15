@@ -273,13 +273,15 @@ class CallFlowTest {
         assertEquals("o teclado no lugar", before, compose.onNodeWithTag("tecla-1").fetchSemanticsNode().boundsInRoot)
     }
 
-    // O app aberto com a conta de senha errada: o servidor recusa o registro, e o app fica sem conexão.
+    // O app aberto com uma conta que nunca registra: o servidor em 127.0.0.1, o próprio emulador, onde nada escuta a
+    // porta do SIP. (Com a senha errada, o app iria para a tela Entrar: a senha recusada pelo servidor, spec 7.1.7.)
     private fun openWithoutRegistration() {
         scenario?.close()
         emulator.startClean()
-        app.store.save(Account(emulator.registrar, Transport.TCP, "2001", "senha-errada"))
+        app.store.save(Account("127.0.0.1", Transport.TCP, "2001", emulator.senha))
         scenario = ActivityScenario.launch(MainActivity::class.java)
-        emulator.waitForText("Ramal ou senha incorretos.")
+        emulator.waitUntil("a tela principal sem registro") { emulator.showsTag("aba-teclado") }
+        assertEquals("sem registro", false, app.connection.registered.value)
     }
 
     // Disca no Teclado do app (na frente) e toca Ligar.

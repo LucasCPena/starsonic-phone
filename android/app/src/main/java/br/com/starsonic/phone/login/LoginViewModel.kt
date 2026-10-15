@@ -51,8 +51,10 @@ class LoginViewModel(
     private val clock: Clock,
     private val previous: Account?,
     defaultTransport: Transport = Transport.UDP,
+    message: String = "",
     newFlow: (CoreRules) -> LoginFlow = ::LoginFlowHandle,
     private val background: Executor = Executor { task -> thread(name = "starsonic-entrar") { task.run() } },
+    private val log: (String) -> Unit = {},
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(
         previous?.let { LoginState(server = it.address, transport = it.transport, ramal = it.ramal) }

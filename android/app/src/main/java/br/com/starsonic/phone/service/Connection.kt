@@ -34,6 +34,9 @@ enum class Adoption {
     STOPPED,
 }
 
+/** O servidor recusou a senha da conta gravada (spec 7.1.7). Esboço. */
+class Refusal(val message: String)
+
 /**
  * A conexão do processo com o servidor (spec 7.2): o motor de ligações, a conta que está nele e o status da
  * faixa e da notificação fixa. Um motor por processo: ele sobe uma vez ([ensureStarted], ou na primeira troca
@@ -92,6 +95,14 @@ class Connection(
 
     /** A conta do serviço está registrada e há rede ("Conectado"): só assim o app liga (spec 7.4). */
     val registered: StateFlow<Boolean> = mutableRegistered
+
+    private val mutableRefusal = MutableStateFlow<Refusal?>(null)
+
+    /** A recusa da senha da conta gravada que o app ainda não mostrou. Esboço: nunca muda. */
+    val refusal: StateFlow<Refusal?> = mutableRefusal
+
+    /** O app mostrou a recusa [seen]. Esboço. */
+    fun refusalSeen(seen: Refusal) {}
 
     /** Quem espera o resultado do registro na tela Entrar (null fora dela): código, ativa e id da conta. */
     @Volatile

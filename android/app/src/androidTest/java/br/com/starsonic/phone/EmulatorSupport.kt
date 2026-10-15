@@ -1,5 +1,7 @@
 package br.com.starsonic.phone
 
+import android.app.Notification
+import android.app.NotificationManager
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import androidx.compose.ui.test.junit4.ComposeTestRule
@@ -106,6 +108,12 @@ class Emulator(private val compose: ComposeTestRule) {
 
     /** Os REGISTER aceitos do ramal 2001 com Expires > 0. */
     fun registers(): Int = control("REGISTERS 2001").toInt()
+
+    /** O título da notificação fixa do app (canal "conexao"), ou null se ela não está lá. */
+    fun connectionNotificationTitle(): String? =
+        app.getSystemService(NotificationManager::class.java).activeNotifications
+            .firstOrNull { it.notification.channelId == SipService.CHANNEL_ID }
+            ?.notification?.extras?.getCharSequence(Notification.EXTRA_TITLE)?.toString()
 
     private fun controlLines(command: String, multiLine: Boolean): List<String> =
         Socket(registrar, controlPort).use { socket ->

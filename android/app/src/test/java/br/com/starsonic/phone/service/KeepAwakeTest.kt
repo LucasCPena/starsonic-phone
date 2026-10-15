@@ -73,6 +73,20 @@ class KeepAwakeTest {
     }
 
     @Test
+    fun `a refused account keeps the processor awake and a stopped service does not`() {
+        // Recusada (o motor não aceitou a conta, ou não subiu), a conta continua com o serviço, e a conexão pode
+        // registrá-la depois sozinha (Connection.resumeOwned) sem avisar o serviço: o processador fica acordado.
+        keepAwake.setAccount(true)
+        keepAwake.setAdoption(Adoption.REFUSED)
+        assertTrue(lock.held)
+        keepAwake.setAdoption(Adoption.KEPT)
+        assertTrue(lock.held)
+        assertEquals(1, lock.acquires)
+        keepAwake.setAdoption(Adoption.STOPPED)   // o serviço parou no meio
+        assertFalse(lock.held)
+    }
+
+    @Test
     fun `after the service stops the processor sleeps for good`() {
         keepAwake.setAccount(true)
         keepAwake.close()

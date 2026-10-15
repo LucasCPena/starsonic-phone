@@ -31,6 +31,9 @@ class KeepAwake(private val lock: CpuLock) {
     /** O serviço está (ou não) com a conta gravada. */
     fun setAccount(has: Boolean) = update { account = has }
 
+    /** O que a conexão fez com a conta gravada. Esboço: como antes, solta na recusa. */
+    fun setAdoption(adoption: Adoption) = setAccount(adoption != Adoption.STOPPED && adoption != Adoption.REFUSED)
+
     /** Há (ou não) rede. */
     fun setOnline(online: Boolean) = update { this.online = online }
 

@@ -13,7 +13,7 @@ import javax.crypto.spec.GCMParameterSpec
  * Cifra a senha da conta com AES-GCM e uma chave do Android Keystore (alias starsonic-senha), que não sai do
  * celular (spec 6.4). O texto cifrado é Base64 de: o tamanho do IV (1 byte), o IV e a senha cifrada com a tag.
  */
-class PasswordCipher(private val alias: String = ALIAS) {
+class PasswordCipher(private val alias: String = ALIAS, private val log: (String) -> Unit = {}) {
     fun encrypt(senha: String): String {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, key())   // o Keystore escolhe o IV

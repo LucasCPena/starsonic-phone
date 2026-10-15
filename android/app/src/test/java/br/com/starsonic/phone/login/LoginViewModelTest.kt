@@ -11,6 +11,8 @@ import br.com.starsonic.phone.data.AccountStore
 import br.com.starsonic.phone.engine.EngineEvents
 import br.com.starsonic.phone.engine.SipGateway
 import br.com.starsonic.phone.engine.Transport
+import java.io.IOException
+import java.security.GeneralSecurityException
 import java.util.concurrent.Executor
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -28,10 +30,10 @@ class LoginViewModelTest {
     private val store = FakeStore()
     private val clock = FakeClock()
 
-    // A conta gravada vem de quem cria o modelo (no app, lida fora da thread principal); a volta à conta
-    // anterior depois do fim do tempo roda em [background] (aqui, na hora).
-    private fun model(background: Executor = Executor { it.run() }) =
-        LoginViewModel(core, gateway, store, clock, previous = store.load(), newFlow = ::FakeFlow, background = background)
+    // A conta gravada vem de quem cria o modelo (no app, lida fora da thread principal); a gravação da conta e a
+    // volta à conta anterior depois do fim do tempo rodam em [background] (aqui, na hora).
+    private fun model(background: Executor = Executor { it.run() }, log: (String) -> Unit = {}) =
+        LoginViewModel(core, gateway, store, clock, previous = store.load(), newFlow = ::FakeFlow, background = background, log = log)
 
     private fun LoginViewModel.fill(server: String, ramal: String, senha: String, transport: Transport = Transport.UDP) {
         onServerChange(server)
@@ -229,6 +231,75 @@ class LoginViewModelTest {
         assertEquals(0, store.saves)
         assertEquals(AccountCall("sip.exemplo.com.br", Transport.TCP, "2001", "antiga"), gateway.accounts.last())
     }
+
+    @Test
+    fun `the account is saved in the background and not on the engine events thread`() {
+        // O registro chega na thread dos eventos do motor; o Keystore e o disco ficam para outra thread.
+        val queued = mutableListOf<Runnable>()
+        val model = model(background = Executor { queued += it })
+        model.fill("sip.exemplo.com.br", "2001", "senha-certa")
+        model.submit()
+        model.onRegistration(200, true, gateway.lastId)
+        assertEquals(0, store.saves)
+        assertTrue(model.state.value.loading)
+        assertFalse(model.state.value.done)
+        queued.single().run()
+        assertEquals(Account("sip.exemplo.com.br", Transport.UDP, "2001", "senha-certa"), store.account)
+        assertTrue(model.state.value.done)
+        assertFalse(model.state.value.loading)
+    }
+
+    @Test
+    fun `a save that fails undoes the attempt with a short message and the next attempt works`() {
+        val lines = mutableListOf<String>()
+        store.failure = IOException("sem espaço no disco")
+        val model = model(log = { lines += it })
+        model.fill("sip.exemplo.com.br", "2001", "senha-certa")
+        model.submit()
+        model.onRegistration(200, true, gateway.lastId)
+        assertEquals("Não foi possível gravar a conta. Tente de novo.", model.state.value.message)
+        assertFalse(model.state.value.loading)
+        assertFalse(model.state.value.done)
+        assertNull(store.account)
+        assertEquals("a conta tentada sai do motor", 1, gateway.removals)
+        assertEquals("o motivo vai ao log", 1, lines.size)
+        assertFalse("sem a senha no log", lines.single().contains("senha-certa"))
+        // O disco volta, e a próxima tentativa grava.
+        store.failure = null
+        model.submit()
+        model.onRegistration(200, true, gateway.lastId)
+        assertTrue(model.state.value.done)
+        assertEquals(Account("sip.exemplo.com.br", Transport.UDP, "2001", "senha-certa"), store.account)
+    }
+
+    @Test
+    fun `an edit whose save fails puts the previous account back`() {
+        val previous = Account("sip.exemplo.com.br", Transport.TCP, "2001", "antiga")
+        store.account = previous
+        store.failure = GeneralSecurityException("o Keystore não cifrou")
+        val model = model()
+        model.onSenhaChange("nova")
+        model.submit()
+        model.onRegistration(200, true, gateway.lastId)
+        assertEquals("Não foi possível gravar a conta. Tente de novo.", model.state.value.message)
+        assertFalse(model.state.value.done)
+        assertEquals(AccountCall("sip.exemplo.com.br", Transport.TCP, "2001", "antiga"), gateway.accounts.last())
+        assertEquals(previous, store.account)
+    }
+
+    @Test
+    fun `edit opened by a password refused by the server shows the message`() {
+        val saved = Account("sip.exemplo.com.br", Transport.TCP, "2001", "antiga")
+        val model = LoginViewModel(
+            core, gateway, store, clock, previous = saved, message = "Ramal ou senha incorretos.", newFlow = ::FakeFlow,
+        )
+        val state = model.state.value
+        assertEquals("Ramal ou senha incorretos.", state.message)
+        assertEquals("sip.exemplo.com.br", state.server)
+        assertEquals(Transport.TCP, state.transport)
+        assertEquals("2001", state.ramal)
+        assertEquals("", state.senha)
+    }
 }
 
 /** O núcleo falso: os avisos dizem de onde vieram, para o teste ver que a tela usa os do núcleo. */
@@ -343,12 +414,16 @@ private class FakeStore(var account: Account? = null) : AccountStore {
     var saves = 0
     var loads = 0
 
+    /** A falha do Keystore ou do disco na próxima gravação (null: grava). */
+    var failure: Exception? = null
+
     override fun load(): Account? {
         loads++
         return account
     }
 
     override fun save(account: Account) {
+        failure?.let { throw it }
         this.account = account
         saves++
     }
