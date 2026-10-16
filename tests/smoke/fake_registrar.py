@@ -15,8 +15,10 @@ Ligações (sem autenticação para INVITE, re-INVITE, REFER, BYE e CANCEL):
   100, 180 e 200 com SDP na porta 40000: um codec de áudio (o primeiro PCMU ou PCMA da oferta) e o
   telephone-event/8000 da oferta, no payload type e com o fmtp que ela deu (sem a=rtpmap, o 101).
   Retransmissão do mesmo INVITE (UDP) repete a última resposta, sem ligação nova.
-- re-INVITE -> 200 com a direção espelhada (sendonly <-> recvonly); REFER -> 202 e um NOTIFY com
-  SIP/2.0 200 OK (sipfrag); BYE e CANCEL -> 200
+- re-INVITE -> 200 com a direção espelhada (sendonly <-> recvonly); BYE e CANCEL -> 200
+- REFER -> 202 e um NOTIFY com SIP/2.0 200 OK (sipfrag), ou o que REFER_REPLY e REFER_NOTIFY mandarem
+  (resposta com código >= 300: nenhum NOTIFY). Um Refer-To com Replaces (RFC 3891) vai para o registro
+  de ligações com replaces=known ou replaces=unknown; o registrador não faz mais nada com ele
 - o registrador também liga (RING) e desliga (HANGUP): o INVITE vai ao contato do último REGISTER
   aceito do ramal, pelo mesmo transporte (UDP: o endereço de origem do REGISTER; TCP: a mesma conexão)
 
@@ -25,12 +27,16 @@ Porta de controle (--control-port N, TCP no mesmo --host; um comando por linha, 
   HANGUP <ramal>     BYE na ligação atendida, CANCEL se ainda toca     -> OK | ERR no-call
   PASSWORD <senha>   troca a senha aceita                              -> OK
   REGISTERS <ramal>  REGISTER aceitos com Expires > 0                  -> <n>
+  REFER_REPLY <cod>  o código da resposta ao REFER (padrão 202)        -> OK
+  REFER_NOTIFY <cod> o código do sipfrag do NOTIFY (padrão 200)        -> OK
+  RESET              REFER_REPLY e REFER_NOTIFY voltam ao padrão       -> OK
   LOG                o registro de ligações, uma linha cada, e END
-  (comando desconhecido ou sem argumento -> ERR bad-command)
+  (comando desconhecido, sem argumento ou com código que não é de 100 a 699 -> ERR bad-command)
 Registro de ligações (só em memória): inv-out <ramal> <código final>, ack-sent <ramal>,
   bye-out <ramal> <código>, bye-in <alvo>, cancel-in <alvo>, inv-in <alvo> <código>,
   reinv-in <alvo> <sendonly|sendrecv|inactive|recvonly>, refer-in <alvo> <ramal de destino>
-  (<alvo> = usuário da Request-URI do pedido que o telefone mandou)
+  [replaces=known|unknown] (<alvo> = usuário da Request-URI do pedido que o telefone mandou; known =
+  o Call-ID do Replaces é de uma ligação que o telefone fez ao registrador ou que o RING fez)
 
 Uso: fake_registrar.py [--host 127.0.0.1] [--port 5060] --user 2001[,2002...] --password senha-certa
                        [--log ua.txt] [--transport-log transporte.txt] [--control-port 5070]
@@ -46,11 +52,15 @@ import socketserver
 import sys
 import threading
 import traceback
+import urllib.parse
 
 COMPACT = {"v": "via", "f": "from", "t": "to", "i": "call-id", "m": "contact", "l": "content-length",
            "r": "refer-to"}
 REASONS = {100: "Trying", 180: "Ringing", 200: "OK", 202: "Accepted", 401: "Unauthorized", 403: "Forbidden",
-           404: "Not Found", 480: "Temporarily Unavailable", 486: "Busy Here", 487: "Request Terminated"}
+           404: "Not Found", 480: "Temporarily Unavailable", 486: "Busy Here", 487: "Request Terminated",
+           603: "Decline"}
+SIPFRAG_PHRASES = {200: "OK", 486: "Busy Here", 603: "Decline"}   # a frase do sipfrag do NOTIFY; outro código: "Error"
+STATUS_CODE = re.compile(r"[1-6][0-9]{2}")   # o que REFER_REPLY e REFER_NOTIFY aceitam
 CALLER = '"Cliente Teste" <sip:3001@ci>'
 MEDIA_PORT = 40000   # nada escuta aqui: só a sinalização é de verdade
 RTPMAP = {"0": "PCMU/8000", "8": "PCMA/8000", "101": "telephone-event/8000"}   # o INVITE do RING oferece os três
@@ -119,6 +129,17 @@ def _uri_of(value):
     """A URI de um Contact, To, From ou Refer-To: a que está entre < > ou, sem elas, até o primeiro ';'."""
     match = re.search(r"<([^>]*)>", value)
     return match.group(1) if match else value.split(";")[0].strip()
+
+
+def _replaces_call_id(refer_to):
+    """O Call-ID do Replaces de um Refer-To, ou None se ele não traz um. O Replaces (RFC 3891) vai como
+    cabeçalho da URI (?Replaces=...), com o ; e o = escapados (%3B, %3D): o Call-ID é o que vem antes do
+    primeiro ; depois de desescapar."""
+    for item in _uri_of(refer_to).partition("?")[2].split("&"):
+        name, _, value = item.partition("=")
+        if name.lower() == "replaces":
+            return urllib.parse.unquote(value).split(";")[0]
+    return None
 
 
 def _uri_user(uri):
@@ -250,6 +271,11 @@ class Registrar:
         self.cseqs = {}          # Call-ID de diálogo aberto pelo telefone -> CSeq do último pedido que mandamos nele
         self.events = []         # o registro de ligações (LOG)
         self.sdp_version = 0
+        self._reset_refer()
+
+    def _reset_refer(self):
+        """Os padrões do REFER do telefone: resposta 202 e sipfrag 200 (REFER_REPLY, REFER_NOTIFY, RESET)."""
+        self.refer_reply, self.refer_notify = 202, 200
 
     def handle(self, data, source, transport="udp", conn=None):
         """Primeira resposta (bytes) para uma mensagem vinda de source=(ip, porta) por transport, ou None."""
@@ -423,8 +449,18 @@ class Registrar:
         return self._response(200, msg.headers, peer.address, extra, self._sdp(_uri_host(msg.uri), answer, direction))
 
     def _on_refer(self, msg, peer):
-        self._log("refer-in %s %s" % (_uri_user(msg.uri), _uri_user(_uri_of(msg.first("refer-to")))))
-        return [self._response(202, msg.headers, peer.address), self._notify(msg, peer)]
+        refer_to = msg.first("refer-to")
+        replaces = _replaces_call_id(refer_to)
+        suffix = "" if replaces is None else " replaces=" + ("known" if self._known_dialog(replaces) else "unknown")
+        self._log("refer-in %s %s%s" % (_uri_user(msg.uri), _uri_user(_uri_of(refer_to)), suffix))
+        replies = [self._response(self.refer_reply, msg.headers, peer.address)]
+        if self.refer_reply < 300:   # recusado o REFER, não há assinatura e nada de NOTIFY
+            replies.append(self._notify(msg, peer))
+        return replies
+
+    def _known_dialog(self, call_id):
+        """Se o diálogo é de uma ligação que o telefone fez ao registrador (INVITE respondido) ou que o RING fez."""
+        return self._call_of(call_id) is not None or any(key[0] == call_id for key in self.answers)
 
     def _call_of(self, call_id):
         """A ligação do RING com esse Call-ID, ou None se o diálogo é de uma ligação do telefone."""
@@ -443,7 +479,8 @@ class Registrar:
         return self.cseqs[call_id]
 
     def _notify(self, refer, peer):
-        """O NOTIFY que fecha a assinatura do REFER dizendo que a transferência deu certo (sipfrag)."""
+        """O NOTIFY que fecha a assinatura do REFER com o resultado da transferência (sipfrag): o código de
+        REFER_NOTIFY, 200 por padrão."""
         call_id = refer.first("call-id")
         local = refer.first("to")   # no diálogo, o To do REFER é a nossa ponta, já com a tag
         headers = [("From", local if ";tag=" in local else local + ";tag=ci"), ("To", refer.first("from")),
@@ -453,7 +490,7 @@ class Registrar:
                    ("Content-Type", "message/sipfrag;version=2.0")]
         target = _uri_of(refer.first("contact")) or refer.uri
         return _request("NOTIFY", target, peer.transport, self._hostport(refer.uri, peer), _branch(), headers,
-                        "SIP/2.0 200 OK\r\n")
+                        "SIP/2.0 %d %s\r\n" % (self.refer_notify, SIPFRAG_PHRASES.get(self.refer_notify, "Error")))
 
     def _on_bye(self, msg, peer):
         self._log("bye-in " + _uri_user(msg.uri))
@@ -562,6 +599,15 @@ class Registrar:
                 return ["OK"]
             if name == "REGISTERS" and ramal:
                 return [str(self.registers.get(ramal, 0))]
+            if name == "REFER_REPLY" and STATUS_CODE.fullmatch(ramal):
+                self.refer_reply = int(ramal)
+                return ["OK"]
+            if name == "REFER_NOTIFY" and STATUS_CODE.fullmatch(ramal):
+                self.refer_notify = int(ramal)
+                return ["OK"]
+            if name == "RESET" and not ramal:
+                self._reset_refer()
+                return ["OK"]
             if name == "LOG" and not ramal:
                 return self.events + ["END"]
         return ["ERR bad-command"]
@@ -646,8 +692,8 @@ def start_tcp_server(registrar, host, port):
 
 
 def start_control_server(registrar, host, port):
-    """Porta de controle (RING, HANGUP, PASSWORD, REGISTERS, LOG), numa thread. Mesma forma de
-    start_tcp_server."""
+    """Porta de controle (RING, HANGUP, PASSWORD, REGISTERS, REFER_REPLY, REFER_NOTIFY, RESET, LOG), numa
+    thread. Mesma forma de start_tcp_server."""
     return _start_tcp(_ControlHandler, registrar, host, port)
 
 

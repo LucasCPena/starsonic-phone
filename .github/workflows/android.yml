@@ -111,6 +111,9 @@ jobs:
           cmake --build build-phone -j 4
           ctest --test-dir build-phone --output-on-failure
 
+      - name: Testes do registrador falso (Python)
+        run: python3 -m unittest tests/smoke/test_fake_registrar.py
+
   deps-android:
     name: Dependências (Android)
     # Os jobs do Android contam com o SDK do Android da imagem do Ubuntu 24.04 (o ubuntu-latest passa
