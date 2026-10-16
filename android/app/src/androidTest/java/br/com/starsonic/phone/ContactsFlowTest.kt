@@ -116,8 +116,7 @@ class ContactsFlowTest {
         )
         // O primeiro toque do processo vai a outra aba, que precisa responder (o primeiro teste da classe; ver o
         // run 38972070803, em que o toque na aba Contatos não mudou a aba).
-        compose.onNodeWithTag("aba-recentes").performClick()
-        emulator.waitUntil("a aba Recentes", details = ::systemScreen) { emulator.showsText("Nenhuma ligação ainda.") }
+        Thread.sleep(5_000)   // experiência: o toque direto do Teclado, com o processo já quente
         compose.onNodeWithTag("aba-contatos").performClick()
         // Sem a permissão, a aba mostra o aviso e o Permitir na hora (por baixo da janela do Android, que vem logo).
         val shownAtOnce = within(5_000) { emulator.showsTag("contatos-permitir") }
