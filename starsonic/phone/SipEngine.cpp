@@ -213,6 +213,11 @@ public:
         return RegisterThread() && calls_.Hangup(callId);
     }
 
+    bool Activate(int callId) {
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        return RegisterThread() && calls_.Activate(callId);
+    }
+
     bool SetHold(int callId, bool hold) {
         std::lock_guard<std::mutex> lock(apiMutex_);
         return RegisterThread() && calls_.SetHold(callId, hold);
@@ -240,7 +245,13 @@ public:
         return calls_.Transfer(callId, CallUri(number));
     }
 
-    bool HasCall() { return calls_.HasCall(); }
+    int CallCount() { return calls_.CallCount(); }
+
+    std::vector<int> AudioLinks(int callId) {
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        if (!RegisterThread()) return std::vector<int>();
+        return calls_.AudioLinks(callId);
+    }
 
 private:
     // O PJLIB só aceita chamadas de threads que ele conhece.
@@ -282,7 +293,7 @@ private:
         }
     }
 
-    // Desliga a ligação, tira a conta do servidor (esperando a resposta, até um limite) e a apaga.
+    // Desliga as ligações, tira a conta do servidor (esperando a resposta, até um limite) e a apaga.
     // Nenhuma resposta de registro desta conta vira evento daqui em diante.
     void RetireAccount() {
         if (!account_) return;
@@ -391,6 +402,8 @@ bool SipEngine::Reject(int callId) { return impl_->Reject(callId); }
 
 bool SipEngine::Hangup(int callId) { return impl_->Hangup(callId); }
 
+bool SipEngine::Activate(int callId) { return impl_->Activate(callId); }
+
 bool SipEngine::SetHold(int callId, bool hold) { return impl_->SetHold(callId, hold); }
 
 void SipEngine::SetMute(bool muted) { impl_->SetMute(muted); }
@@ -399,6 +412,10 @@ bool SipEngine::SendDtmf(int callId, const std::string& digits) { return impl_->
 
 bool SipEngine::Transfer(int callId, const std::string& number) { return impl_->Transfer(callId, number); }
 
-bool SipEngine::HasCall() const { return impl_->HasCall(); }
+int SipEngine::CallCount() const { return impl_->CallCount(); }
+
+bool SipEngine::HasCall() const { return impl_->CallCount() > 0; }
+
+std::vector<int> SipEngine::AudioLinks(int callId) const { return impl_->AudioLinks(callId); }
 
 }  // namespace starsonic

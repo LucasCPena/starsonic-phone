@@ -1,6 +1,6 @@
 #pragma once
 // As ligações do motor (internas). EngineCall é a ligação do pjsua2, que recebe os callbacks do
-// PJSIP; CallTable guarda a ligação de agora (uma por vez) e faz o que a API pede a ela.
+// PJSIP; CallTable guarda as ligações (até duas, uma delas a ativa) e faz o que a API pede a elas.
 //
 // Vida de um EngineCall: a tabela cria o objeto (MakeCall ou ligação que chega) e ele se apaga no
 // próprio último callback, o do fim da ligação, quando o pjsua2 já o desligou da ligação do PJSIP
@@ -38,6 +38,8 @@ private:
     CallTable* table_;
 };
 
+// Só a ligação ativa fica ligada ao dispositivo de som; a outra fica em espera (re-INVITE sendonly)
+// ou, se ainda não foi atendida, sem som.
 class CallTable {
 public:
     CallTable(EventQueue* events, DtmfMethod dtmf);
@@ -48,6 +50,8 @@ public:
     // Do PJSIP. Incoming vem de EngineAccount::onIncomingCall; accepting = false recusa com 480.
     void Incoming(pj::Account& account, int pjsuaId, bool accepting);
     void StateChanged(EngineCall* call, CallState state, int sipCode);
+    // A mídia da ligação mudou: o dispositivo de som fica com ela só se ela é a ativa.
+    void MediaChanged(EngineCall* call);
     // O fim da ligação: o último evento dela e o fim do objeto (delete).
     void Ended(EngineCall* call, int sipCode);
 
@@ -56,33 +60,59 @@ public:
     bool Answer(int callId);
     bool Reject(int callId);
     bool Hangup(int callId);
+    bool Activate(int callId);
     bool SetHold(int callId, bool hold);
     bool SendDtmf(int callId, const std::string& digits);
     bool Transfer(int callId, const std::string& uri);
-    bool HasCall();
+    std::vector<int> AudioLinks(int callId);
+    int CallCount();
 
-    // Desliga a ligação de agora e espera até timeoutMs que o objeto dela suma. false: não sumiu.
+    // Desliga as ligações e espera até timeoutMs que os objetos delas sumam. false: não sumiram.
     bool End(int timeoutMs);
     // Daqui em diante nenhuma ligação nova (o motor está saindo): MakeCall dá -1 e as que chegam, 480.
     void Close();
 
 private:
-    // O id no pjsua da ligação callId, se ela é a de agora; senão PJSUA_INVALID_ID.
+    // Uma vaga da tabela; livre com callId 0.
+    struct Slot {
+        EngineCall* call = nullptr;
+        int callId = 0;                   // o id para o listener
+        int pjsuaId = PJSUA_INVALID_ID;   // o id no pjsua (numa ligação feita, só depois do makeCall)
+        bool held = false;                // posta em espera por aqui
+        bool confirmed = false;           // já chegou ao Confirmed
+    };
+
+    // Com mutex_ preso. A vaga de callId (ou de call), ou nullptr.
+    Slot* Find(int callId);
+    Slot* Find(const EngineCall* call);
+    // Com mutex_ preso. Uma vaga livre, ou nullptr; a outra vaga, se está ocupada, ou nullptr.
+    Slot* FreeSlot();
+    Slot* Other(const Slot* slot);
+    // O id no pjsua da ligação callId, se ela está na tabela; senão PJSUA_INVALID_ID.
     int PjsuaId(int callId);
+    // callId vira a ativa: a outra, confirmada e fora da espera, vai para a espera, e o dispositivo de
+    // som fica só com callId.
+    void Focus(int callId);
+    // Põe em espera (re-INVITE sendonly) ou retoma (sendrecv), esperando a renegociação anterior.
+    bool Renegotiate(int callId, bool hold);
     // Com mutex_ preso: o evento sai na hora ou, durante o makeCall de Make, espera em held_.
-    void Emit(EventQueue::Event event);
+    void Emit(int callId, EventQueue::Event event);
+
+    struct HeldEvent {
+        int callId;
+        EventQueue::Event event;
+    };
 
     EventQueue* events_;
     const DtmfMethod dtmf_;
     std::mutex mutex_;
     std::condition_variable gone_;
-    EngineCall* call_ = nullptr;      // a ligação de agora
-    int callId_ = 0;                  // o id dela para o listener (0: nenhuma)
-    int pjsuaId_ = PJSUA_INVALID_ID;  // o id dela no pjsua
+    Slot slots_[2];
+    int activeId_ = 0;                // a ligação ativa (0: nenhuma)
     int alive_ = 0;                   // objetos EngineCall que ainda não se apagaram
     int nextId_ = 1;
     bool dialing_ = false;            // Make está dentro do makeCall: os eventos esperam em held_
-    std::vector<EventQueue::Event> held_;
+    std::vector<HeldEvent> held_;
     bool closed_ = false;
 };
 

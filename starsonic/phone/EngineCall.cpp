@@ -1,5 +1,6 @@
 #include "EngineCall.h"
 
+#include <algorithm>
 #include <chrono>
 #include <thread>
 #include <utility>
@@ -65,6 +66,42 @@ bool ToCallState(pjsip_inv_state state, CallState* out) {
 
 std::string StatusText(pj_status_t status) { return pj::Endpoint::instance().utilStrError(status); }
 
+// A porta 0 da ponte de áudio: o microfone e o alto-falante (o dispositivo de som).
+const pjsua_conf_port_id kSoundDevice = 0;
+
+// A porta port da ponte transmite para a porta sink.
+bool Transmits(pjsua_conf_port_id port, pjsua_conf_port_id sink) {
+    pjsua_conf_port_info info;
+    if (pjsua_conf_get_port_info(port, &info) != PJ_SUCCESS) return false;
+    return std::find(info.listeners, info.listeners + info.listener_cnt, sink) != info.listeners + info.listener_cnt;
+}
+
+// Liga ou desliga o áudio da ligação pjsuaId do dispositivo de som, nos dois sentidos. Como o
+// MicroSIP: com linked, a mídia ativa (ou em espera do outro lado) fala e ouve pelo aparelho; em
+// espera daqui ou sem mídia, fica fora do som. A ponte aplica a mudança no tique seguinte do relógio.
+void RouteAudio(int pjsuaId, bool linked) {
+    pjsua_call_info info;
+    if (pjsuaId == PJSUA_INVALID_ID || pjsua_call_get_info(pjsuaId, &info) != PJ_SUCCESS) return;
+    for (unsigned index = 0; index < info.media_cnt; ++index) {
+        const pjsua_call_media_info& media = info.media[index];
+        if (media.type != PJMEDIA_TYPE_AUDIO) continue;
+        const pjsua_conf_port_id port = media.stream.aud.conf_slot;
+        if (port == PJSUA_INVALID_ID) continue;
+        const bool on = linked && (media.status == PJSUA_CALL_MEDIA_ACTIVE ||
+                                   media.status == PJSUA_CALL_MEDIA_REMOTE_HOLD);
+        if (on == Transmits(port, kSoundDevice)) continue;   // já está como deve
+        pj_status_t status;
+        if (on) {
+            status = pjsua_conf_connect(kSoundDevice, port);
+            if (status == PJ_SUCCESS) status = pjsua_conf_connect(port, kSoundDevice);
+        } else {
+            status = pjsua_conf_disconnect(kSoundDevice, port);
+            if (status == PJ_SUCCESS) status = pjsua_conf_disconnect(port, kSoundDevice);
+        }
+        if (status != PJ_SUCCESS) Log(2, "audio da ligacao: " + StatusText(status));
+    }
+}
+
 }  // namespace
 
 EngineCall::EngineCall(pj::Account& account, int pjsuaId, CallTable* table) : pj::Call(account, pjsuaId), table_(table) {}
@@ -87,26 +124,7 @@ void EngineCall::onCallState(pj::OnCallStateParam&) {
 
 void EngineCall::onCallMediaState(pj::OnCallMediaStateParam&) {
     try {
-        const pj::CallInfo info = getInfo();
-        pj::AudDevManager& devices = pj::Endpoint::instance().audDevManager();
-        for (unsigned index = 0; index < info.media.size(); ++index) {
-            const pj::CallMediaInfo& media = info.media[index];
-            if (media.type != PJMEDIA_TYPE_AUDIO) continue;
-            try {
-                pj::AudioMedia audio = getAudioMedia(static_cast<int>(index));
-                // Como o MicroSIP: ativa (ou em espera do outro lado), a ligação fala e ouve pelo
-                // aparelho; em espera daqui ou sem mídia, fica fora do som.
-                if (media.status == PJSUA_CALL_MEDIA_ACTIVE || media.status == PJSUA_CALL_MEDIA_REMOTE_HOLD) {
-                    devices.getCaptureDevMedia().startTransmit(audio);
-                    audio.startTransmit(devices.getPlaybackDevMedia());
-                } else {
-                    devices.getCaptureDevMedia().stopTransmit(audio);
-                    audio.stopTransmit(devices.getPlaybackDevMedia());
-                }
-            } catch (const pj::Error& failure) {
-                Log(2, "audio da ligacao: " + failure.info());
-            }
-        }
+        table_->MediaChanged(this);
     } catch (...) {   // o PJSIP é C: nenhuma exceção volta para ele
     }
 }
@@ -125,8 +143,8 @@ void EngineCall::onCallTransferStatus(pj::OnCallTransferStatusParam& param) {
 }
 
 void EngineCall::onCallTransferRequest(pj::OnCallTransferRequestParam& param) {
-    // Aceitar faria o pjsua abrir outra ligação presa a este objeto (uma segunda ligação, fora da
-    // tabela, que ficaria com o objeto depois de ele se apagar). Uma ligação por vez: recusa.
+    // Aceitar faria o pjsua abrir outra ligação presa a este objeto (uma ligação fora da tabela, que
+    // ficaria com o objeto depois de ele se apagar): recusa.
     param.statusCode = PJSIP_SC_DECLINE;
     Log(2, "pedido de transferencia recebido e recusado (603)");
 }
@@ -146,19 +164,24 @@ void CallTable::Incoming(pj::Account& account, int pjsuaId, bool accepting) {
     bool busy = false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (accepting && !closed_ && callId_ == 0) {
+        // Toca sem ligação nenhuma ou com uma só, já confirmada (a segunda ligação).
+        Slot* slot = FreeSlot();
+        const Slot* other = slot ? Other(slot) : nullptr;
+        if (accepting && !closed_ && slot && (!other || other->confirmed)) {
             callId = nextId_++;
-            call_ = new EngineCall(account, pjsuaId, this);   // daqui em diante os callbacks vão a ele
-            callId_ = callId;
-            pjsuaId_ = pjsuaId;
+            slot->call = new EngineCall(account, pjsuaId, this);   // daqui em diante os callbacks vão a ele
+            slot->callId = callId;
+            slot->pjsuaId = pjsuaId;
             ++alive_;
-            Emit([callId, party](EngineListener& listener) { listener.OnIncomingCall(callId, party.user, party.name); });
+            Emit(callId, [callId, party](EngineListener& listener) {
+                listener.OnIncomingCall(callId, party.user, party.name);
+            });
         } else {
             busy = accepting && !closed_;
         }
     }
     if (callId == 0) {
-        // Outra ligação em andamento: 486. A conta ou o motor saindo: 480.
+        // Duas ligações, ou uma que ainda não foi confirmada: 486. A conta ou o motor saindo: 480.
         const unsigned code = busy ? PJSIP_SC_BUSY_HERE : PJSIP_SC_TEMPORARILY_UNAVAILABLE;
         Log(3, "ligacao de " + party.user + " recusada (" + std::to_string(code) + ")");
         pjsua_call_hangup(pjsuaId, code, nullptr, nullptr);
@@ -174,20 +197,34 @@ void CallTable::Incoming(pj::Account& account, int pjsuaId, bool accepting) {
 
 void CallTable::StateChanged(EngineCall* call, CallState state, int sipCode) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (call != call_) return;
-    const int callId = callId_;
-    Emit([callId, state, sipCode](EngineListener& listener) { listener.OnCallState(callId, state, sipCode); });
+    Slot* slot = Find(call);
+    if (!slot) return;
+    if (state == CallState::Confirmed) slot->confirmed = true;
+    const int callId = slot->callId;
+    Emit(callId, [callId, state, sipCode](EngineListener& listener) { listener.OnCallState(callId, state, sipCode); });
+}
+
+void CallTable::MediaChanged(EngineCall* call) {
+    bool active;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const Slot* slot = Find(call);
+        active = slot && slot->callId == activeId_;
+    }
+    // O id vem do objeto: numa ligação feita, a vaga só recebe o id no pjsua depois do makeCall.
+    RouteAudio(call->getId(), active);
 }
 
 void CallTable::Ended(EngineCall* call, int sipCode) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (call == call_) {
-            const int callId = callId_;
-            call_ = nullptr;
-            callId_ = 0;
-            pjsuaId_ = PJSUA_INVALID_ID;
-            Emit([callId, sipCode](EngineListener& listener) {
+        Slot* slot = Find(call);
+        if (slot) {
+            const int callId = slot->callId;
+            *slot = Slot();
+            // A outra não volta sozinha: quem a retoma é o app, pelo Activate.
+            if (activeId_ == callId) activeId_ = 0;
+            Emit(callId, [callId, sipCode](EngineListener& listener) {
                 listener.OnCallState(callId, CallState::Disconnected, sipCode);
             });
         }
@@ -205,16 +242,25 @@ int CallTable::Make(pj::Account& account, const std::string& uri) {
     int callId = 0;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (closed_ || callId_ != 0) {
-            Log(2, "ligacao para " + uri + (closed_ ? " recusada: o motor esta saindo" : " recusada: ja ha uma ligacao"));
+        Slot* slot = FreeSlot();
+        const Slot* other = slot ? Other(slot) : nullptr;
+        if (closed_ || !slot || (other && !other->confirmed)) {
+            const char* reason = closed_ ? "o motor esta saindo" : !slot ? "ja ha duas ligacoes"
+                                                                          : "a outra ligacao nao foi confirmada";
+            Log(2, "ligacao para " + uri + " recusada: " + reason);
             return -1;
         }
+        // A vaga fica com a nova desde já: uma ligação que chegue agora recebe 486.
         callId = nextId_++;
         call = new EngineCall(account, PJSUA_INVALID_ID, this);
-        call_ = call;
-        callId_ = callId;
-        pjsuaId_ = PJSUA_INVALID_ID;
+        slot->call = call;
+        slot->callId = callId;
         ++alive_;
+    }
+    // A outra, se há, vai para a espera antes de a nova sair, e fica nela mesmo se a nova não sai.
+    Focus(callId);
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
         dialing_ = true;
     }
     bool made = true;
@@ -228,19 +274,24 @@ int CallTable::Make(pj::Account& account, const std::string& uri) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         dialing_ = false;
-        std::vector<EventQueue::Event> held;
+        std::vector<HeldEvent> held;
         held.swap(held_);
+        // Com a vaga ainda na tabela, Ended não apagou o objeto (ele limpa a vaga antes). Pelo id, e
+        // não pelo endereço: um objeto novo pode nascer onde estava um que se apagou.
+        Slot* slot = Find(callId);
         if (made) {
-            // Enquanto a trava está presa, Ended não apagou o objeto (ele limpa call_ antes).
-            if (call_ == call) pjsuaId_ = call->getId();
-            for (EventQueue::Event& event : held) events_->Post(std::move(event));
-        } else if (call_ == call) {   // sem callback de fim: o objeto é nosso para apagar
-            call_ = nullptr;
-            callId_ = 0;
+            if (slot) slot->pjsuaId = call->getId();
+        } else if (slot) {   // sem callback de fim: o objeto é nosso para apagar
+            *slot = Slot();
+            if (activeId_ == callId) activeId_ = 0;
             unused = true;
         }
-        // Se o makeCall falhou depois de um callback de fim, Ended já apagou o objeto; os eventos que
-        // ficaram em held_ somem com ele: MakeCall devolve -1 sem evento nenhum.
+        // Se o makeCall falhou depois de um callback de fim, Ended já apagou o objeto; os eventos dela
+        // que ficaram em held_ somem com ele: MakeCall devolve -1 sem evento nenhum. Os da outra
+        // ligação seguem.
+        for (HeldEvent& entry : held) {
+            if (made || entry.callId != callId) events_->Post(std::move(entry.event));
+        }
     }
     if (unused) {
         delete call;
@@ -256,7 +307,10 @@ int CallTable::Make(pj::Account& account, const std::string& uri) {
 bool CallTable::Answer(int callId) {
     const int pjsuaId = PjsuaId(callId);
     if (pjsuaId == PJSUA_INVALID_ID) return false;
-    return pjsua_call_answer2(pjsuaId, nullptr, PJSIP_SC_OK, nullptr, nullptr) == PJ_SUCCESS;
+    // Atende primeiro: se o 200 não sai, nada muda na outra.
+    if (pjsua_call_answer2(pjsuaId, nullptr, PJSIP_SC_OK, nullptr, nullptr) != PJ_SUCCESS) return false;
+    Focus(callId);
+    return true;
 }
 
 bool CallTable::Reject(int callId) {
@@ -271,27 +325,27 @@ bool CallTable::Hangup(int callId) {
     return pjsua_call_hangup(pjsuaId, 0, nullptr, nullptr) == PJ_SUCCESS;
 }
 
-bool CallTable::SetHold(int callId, bool hold) {
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(kRenegotiationWaitMs);
-    for (;;) {
-        const int pjsuaId = PjsuaId(callId);
-        if (pjsuaId == PJSUA_INVALID_ID) return false;
-        pj_status_t status;
-        if (hold) {
-            status = pjsua_call_set_hold(pjsuaId, nullptr);
-        } else {
-            pjsua_call_setting setting;
-            pjsua_call_setting_default(&setting);
-            setting.flag |= PJSUA_CALL_UNHOLD;
-            status = pjsua_call_reinvite2(pjsuaId, &setting, nullptr);
-        }
-        // PJ_EINVALIDOP: o re-INVITE anterior ainda não terminou (o PJSIP só aceita um por vez).
-        if (status != PJ_EINVALIDOP || std::chrono::steady_clock::now() >= deadline) {
-            if (status != PJ_SUCCESS) Log(2, std::string(hold ? "espera: " : "retomar: ") + StatusText(status));
-            return status == PJ_SUCCESS;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+bool CallTable::Activate(int callId) {
+    bool resume;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const Slot* slot = Find(callId);
+        if (!slot || !slot->confirmed) return false;
+        resume = slot->held;
     }
+    Focus(callId);
+    return !resume || Renegotiate(callId, false);
+}
+
+bool CallTable::SetHold(int callId, bool hold) {
+    if (!hold) return Activate(callId);   // retomar é tornar a ativa
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const Slot* slot = Find(callId);
+        if (!slot || !slot->confirmed) return false;
+        if (slot->held) return true;
+    }
+    return Renegotiate(callId, true);
 }
 
 bool CallTable::SendDtmf(int callId, const std::string& digits) {
@@ -318,19 +372,56 @@ bool CallTable::Transfer(int callId, const std::string& uri) {
     return status == PJ_SUCCESS;
 }
 
-bool CallTable::HasCall() {
+std::vector<int> CallTable::AudioLinks(int callId) {
+    std::vector<int> links;
+    int pjsuaId;
+    int otherId = 0;
+    int otherPjsuaId = PJSUA_INVALID_ID;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const Slot* slot = Find(callId);
+        if (!slot) return links;
+        pjsuaId = slot->pjsuaId;
+        const Slot* other = Other(slot);
+        if (other) {
+            otherId = other->callId;
+            otherPjsuaId = other->pjsuaId;
+        }
+    }
+    if (pjsuaId == PJSUA_INVALID_ID) return links;
+    const pjsua_conf_port_id port = pjsua_call_get_conf_port(pjsuaId);
+    pjsua_conf_port_info info;
+    if (port == PJSUA_INVALID_ID || pjsua_conf_get_port_info(port, &info) != PJ_SUCCESS) return links;
+    const pjsua_conf_port_id otherPort =
+        otherPjsuaId == PJSUA_INVALID_ID ? PJSUA_INVALID_ID : pjsua_call_get_conf_port(otherPjsuaId);
+    for (unsigned index = 0; index < info.listener_cnt; ++index) {
+        const pjsua_conf_port_id sink = info.listeners[index];
+        if (sink == kSoundDevice) {
+            links.push_back(0);
+        } else if (otherPort != PJSUA_INVALID_ID && sink == otherPort) {
+            links.push_back(otherId);
+        }
+    }
+    return links;
+}
+
+int CallTable::CallCount() {
     std::lock_guard<std::mutex> lock(mutex_);
-    return callId_ != 0;
+    int count = 0;
+    for (const Slot& slot : slots_) count += slot.callId != 0 ? 1 : 0;
+    return count;
 }
 
 bool CallTable::End(int timeoutMs) {
-    int pjsuaId;
+    std::vector<int> pjsuaIds;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (alive_ == 0) return true;
-        pjsuaId = pjsuaId_;
+        for (const Slot& slot : slots_) {
+            if (slot.pjsuaId != PJSUA_INVALID_ID) pjsuaIds.push_back(slot.pjsuaId);
+        }
     }
-    if (pjsuaId != PJSUA_INVALID_ID) pjsua_call_hangup(pjsuaId, 0, nullptr, nullptr);
+    for (const int pjsuaId : pjsuaIds) pjsua_call_hangup(pjsuaId, 0, nullptr, nullptr);
     std::unique_lock<std::mutex> lock(mutex_);
     return gone_.wait_for(lock, std::chrono::milliseconds(timeoutMs), [this] { return alive_ == 0; });
 }
@@ -340,15 +431,98 @@ void CallTable::Close() {
     closed_ = true;
 }
 
-int CallTable::PjsuaId(int callId) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return callId != 0 && callId == callId_ ? pjsuaId_ : PJSUA_INVALID_ID;
+CallTable::Slot* CallTable::Find(int callId) {
+    if (callId == 0) return nullptr;
+    for (Slot& slot : slots_) {
+        if (slot.callId == callId) return &slot;
+    }
+    return nullptr;
 }
 
-void CallTable::Emit(EventQueue::Event event) {
+CallTable::Slot* CallTable::Find(const EngineCall* call) {
+    if (!call) return nullptr;
+    for (Slot& slot : slots_) {
+        if (slot.call == call) return &slot;
+    }
+    return nullptr;
+}
+
+CallTable::Slot* CallTable::FreeSlot() {
+    for (Slot& slot : slots_) {
+        if (slot.callId == 0) return &slot;
+    }
+    return nullptr;
+}
+
+CallTable::Slot* CallTable::Other(const Slot* slot) {
+    Slot* other = slot == &slots_[0] ? &slots_[1] : &slots_[0];
+    return other->callId != 0 ? other : nullptr;
+}
+
+int CallTable::PjsuaId(int callId) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const Slot* slot = Find(callId);
+    return slot ? slot->pjsuaId : PJSUA_INVALID_ID;
+}
+
+void CallTable::Focus(int callId) {
+    int pjsuaId;
+    int otherId = 0;
+    int otherPjsuaId = PJSUA_INVALID_ID;
+    bool holdOther = false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const Slot* slot = Find(callId);
+        if (!slot) return;
+        activeId_ = callId;
+        pjsuaId = slot->pjsuaId;
+        const Slot* other = Other(slot);
+        if (other) {
+            otherId = other->callId;
+            otherPjsuaId = other->pjsuaId;
+            holdOther = other->confirmed && !other->held;
+        }
+    }
+    // A outra sai do som na hora; a espera dela (re-INVITE) vem em seguida.
+    RouteAudio(otherPjsuaId, false);
+    if (holdOther) Renegotiate(otherId, true);
+    // Com a mídia já ativa, o som vem agora; senão, quando ela ficar ativa (MediaChanged).
+    RouteAudio(pjsuaId, true);
+}
+
+bool CallTable::Renegotiate(int callId, bool hold) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(kRenegotiationWaitMs);
+    for (;;) {
+        const int pjsuaId = PjsuaId(callId);
+        if (pjsuaId == PJSUA_INVALID_ID) return false;
+        pj_status_t status;
+        if (hold) {
+            status = pjsua_call_set_hold(pjsuaId, nullptr);
+        } else {
+            pjsua_call_setting setting;
+            pjsua_call_setting_default(&setting);
+            setting.flag |= PJSUA_CALL_UNHOLD;
+            status = pjsua_call_reinvite2(pjsuaId, &setting, nullptr);
+        }
+        // PJ_EINVALIDOP: o re-INVITE anterior ainda não terminou (o PJSIP só aceita um por vez).
+        if (status != PJ_EINVALIDOP || std::chrono::steady_clock::now() >= deadline) {
+            if (status != PJ_SUCCESS) {
+                Log(2, std::string(hold ? "espera: " : "retomar: ") + StatusText(status));
+                return false;
+            }
+            std::lock_guard<std::mutex> lock(mutex_);
+            Slot* slot = Find(callId);
+            if (slot) slot->held = hold;
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+}
+
+void CallTable::Emit(int callId, EventQueue::Event event) {
     try {
         if (dialing_) {
-            held_.push_back(std::move(event));
+            held_.push_back(HeldEvent{callId, std::move(event)});
         } else {
             events_->Post(std::move(event));
         }
