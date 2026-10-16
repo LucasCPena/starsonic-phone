@@ -6,6 +6,8 @@ import android.app.NotificationManager
 import android.app.Person
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Looper
+import android.os.Process
 import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
@@ -232,10 +234,14 @@ class ContactsFlowTest {
         }
         val activities = emulator.shell("dumpsys activity activities")
             .filter { "ResumedActivity" in it || "mFocusedApp" in it }.joinToString("\n") { it.trim() }
+        // As linhas do processo do app (o dos testes) e as do ActivityTaskManager e do PermissionController.
+        val pid = "(%5d)".format(Process.myPid())
         val log = emulator.shell("logcat -d -v brief").filter { line ->
-            LOG_TAGS.any { it in line } || line.startsWith("E/") || line.startsWith("W/System.err")
+            pid in line || LOG_TAGS.any { it in line }
         }.takeLast(60).joinToString("\n") { it.take(240) }
-        return "Na frente: ${device.currentPackageName}; $focus\nNa tela: $texts\nActivities:\n$activities\nLogcat:\n$log"
+        val main = Looper.getMainLooper().thread.stackTrace.take(30).joinToString("\n  ")
+        return "Na frente: ${device.currentPackageName}; $focus\nNa tela: $texts\nActivities:\n$activities\n" +
+            "Thread principal:\n  $main\nLogcat:\n$log"
     }
 
     private fun notifications(): String =
@@ -252,7 +258,7 @@ class ContactsFlowTest {
         private const val PHONES = "content://com.android.contacts/data/phones"
         private const val NAME_TYPE = "vnd.android.cursor.item/name"
         private const val PHONE_TYPE = "vnd.android.cursor.item/phone_v2"
-        private val LOG_TAGS = listOf("ActivityTaskManager", "Permission", "AndroidRuntime", "TestRunner", "Compose")
+        private val LOG_TAGS = listOf("ActivityTaskManager", "PermissionController", "GrantPermissions", "AndroidRuntime")
         private val DENY_ID = Pattern.compile(".*:id/permission_deny(_and_dont_ask_again)?_button")
         private val DENY_TEXT =
             Pattern.compile("Não permitir|Don.t allow", Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE)
