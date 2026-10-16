@@ -72,6 +72,7 @@ data class CallUi(
     val second: SecondUi? = null,
     val conference: Boolean = false,
     val consult: ConsultUi? = null,
+    val conferenceSinceMillis: Long = 0,
 ) {
     /**
      * A ligação usa o microfone: a feita desde o começo (a pessoa ligou com o app na frente) e a recebida depois
@@ -550,6 +551,11 @@ class CallManager(
             }
         }
     }
+
+    // A conferência (Task 10): ainda nada.
+    fun join() {}
+
+    fun split() {}
 
     /** Sair: as ligações de agora acabam, e daqui em diante os eventos do motor são ignorados (até [onLogin]). */
     fun onLogout() {

@@ -43,9 +43,11 @@ internal class CallCore : CoreRules {
 /**
  * O motor falso das ligações: anota os pedidos. makeCall devolve [nextCallId] (e o próximo sobe); [duringMakeCall]
  * roda dentro dele, antes de ele voltar (um evento do motor que chega antes). callCount() devolve [callCount], que o
- * teste ajusta.
+ * teste ajusta. [order] guarda, na ordem, os pedidos que mexem no som das duas: "join 10 1", "split 1 10", "hold 1
+ * true" e "activate 1".
  */
 internal class CallGateway : SipGateway {
+    val order = mutableListOf<String>()
     val made = mutableListOf<String>()
     val answers = mutableListOf<Int>()
     val rejects = mutableListOf<Int>()
@@ -101,10 +103,12 @@ internal class CallGateway : SipGateway {
 
     override fun setHold(id: Int, hold: Boolean) {
         holds += id to hold
+        order += "hold $id $hold"
     }
 
     override fun activate(id: Int) {
         activated += id
+        order += "activate $id"
     }
 
     override fun setMute(mute: Boolean) {
@@ -125,10 +129,12 @@ internal class CallGateway : SipGateway {
 
     override fun join(id: Int, otherId: Int) {
         joined += id to otherId
+        order += "join $id $otherId"
     }
 
     override fun split(id: Int, otherId: Int) {
         split += id to otherId
+        order += "split $id $otherId"
     }
 
     override fun hasCall() = false
@@ -138,7 +144,9 @@ internal class CallGateway : SipGateway {
 
 /**
  * O Telecom falso: anota o que o CallManager pediu, na ordem; [held], [active] e [disconnected] com o id de cada
- * pedido (o fim, com o motivo).
+ * pedido (o fim, com o motivo); [joined] com as conferências pedidas (a ativa e a outra) e [splits] com quantas vezes
+ * ela saiu. [order] guarda, na ordem, os pedidos que mexem no estado das Connections: "join 10 1", "split", "hold 1",
+ * "active 1" e "disconnect 1".
  */
 internal class FakeTelecom : TelecomAdapter {
     var permitted = true
@@ -147,6 +155,9 @@ internal class FakeTelecom : TelecomAdapter {
     val held = mutableListOf<Int>()
     val active = mutableListOf<Int>()
     val disconnected = mutableListOf<Pair<Int, Int>>()
+    val joined = mutableListOf<Pair<Int, Int>>()
+    var splits = 0
+    val order = mutableListOf<String>()
 
     override fun incomingPermitted() = permitted
 
@@ -160,14 +171,27 @@ internal class FakeTelecom : TelecomAdapter {
 
     override fun setOnHold(callId: Int) {
         held += callId
+        order += "hold $callId"
     }
 
     override fun setActive(callId: Int) {
         active += callId
+        order += "active $callId"
     }
 
     override fun disconnect(callId: Int, cause: Int) {
         disconnected += callId to cause
+        order += "disconnect $callId"
+    }
+
+    override fun joinConference(callIdA: Int, callIdB: Int) {
+        joined += callIdA to callIdB
+        order += "join $callIdA $callIdB"
+    }
+
+    override fun splitConference() {
+        splits++
+        order += "split"
     }
 }
 

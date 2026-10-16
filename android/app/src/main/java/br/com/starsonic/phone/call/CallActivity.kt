@@ -61,6 +61,8 @@ class CallActivity : ComponentActivity() {
             consult = calls::consult,
             completeTransfer = calls::completeTransfer,
             cancelConsult = calls::cancelConsult,
+            join = calls::join,
+            split = calls::split,
             dial = calls::dial,
             route = telecom::setRoute,
         )

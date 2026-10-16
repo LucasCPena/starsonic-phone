@@ -23,4 +23,8 @@ interface TelecomAdapter {
 
     /** A ligação acabou; cause é um android.telecom.DisconnectCause ([EndCause]). */
     fun disconnect(callId: Int, cause: Int)
+
+    fun joinConference(callIdA: Int, callIdB: Int)
+
+    fun splitConference()
 }

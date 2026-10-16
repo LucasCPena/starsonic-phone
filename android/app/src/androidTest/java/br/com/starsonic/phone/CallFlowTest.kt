@@ -4,6 +4,7 @@ import android.app.Instrumentation
 import android.app.Notification
 import android.app.NotificationManager
 import android.content.Intent
+import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
@@ -336,6 +337,48 @@ class CallFlowTest {
     }
 
     @Test
+    fun conferenceJoinsTwoCallsAndSplits() {
+        val first = answerOnTheCallScreen()
+        var before = emulator.callLog().size
+        compose.onNodeWithTag("nova-ligacao").performClick()
+        compose.onNodeWithTag("nova-numero").performTextInput("2002")
+        compose.onNodeWithTag("nova-ligar").performClick()
+        waitForLog(before, "inv-in 2002 200")
+        emulator.waitUntil("a nova ligação em cima, com a primeira em espera") { activeWith(held = first) }
+        val second = app.calls.state.value!!.id
+        // Juntar: o motor retoma a primeira (o 3001 das ligações do RING), e a tela vira a Conferência.
+        before = emulator.callLog().size
+        compose.onNodeWithTag("juntar").performClick()
+        waitForLog(before, "reinv-in 3001 sendrecv")
+        emulator.waitUntil("a Conferência") { showsTagWithText("conferencia", "Conferência") }
+        assertEquals(true, app.calls.state.value?.conference)
+        assertEquals("os dois na tela", true, emulator.showsText("Cliente Teste") && emulator.showsText("2002"))
+        assertEquals("sem o cartão da em espera", false, emulator.showsTag("cartao-espera"))
+        noteTheTelecomConference()
+        // Separar: a última que entrou (a feita) vai para a espera, e a primeira volta ao cartão de cima.
+        before = emulator.callLog().size
+        compose.onNodeWithTag("separar").performClick()
+        waitForLog(before, "reinv-in 2002 sendonly")
+        emulator.waitUntil("o cartão da em espera") { showsTagWithText("cartao-espera", "Em espera") }
+        emulator.waitUntil("a primeira em cima, com a feita em espera") {
+            activeWith(held = second) && app.calls.state.value?.id == first
+        }
+        assertEquals("sem a Conferência", false, emulator.showsTag("conferencia"))
+        // Juntar de novo e Desligar: o telefone desliga as duas.
+        before = emulator.callLog().size
+        compose.onNodeWithTag("juntar").performClick()
+        waitForLog(before, "reinv-in 2002 sendrecv")
+        emulator.waitUntil("a Conferência de novo") { showsTagWithText("conferencia", "Conferência") }
+        compose.onNodeWithTag("desligar").performClick()
+        waitForLog(before, "bye-in 3001")
+        waitForLog(before, "bye-in 2002")
+        emulator.waitUntil("as ligações acabarem") { app.calls.state.value == null }
+        emulator.waitUntil("as duas no Recentes", details = { "Recentes: ${app.recents.list()}" }) {
+            app.recents.list().map { it.number to it.kind }.toSet() == setOf("3001" to CallKind.RECEBIDA, "2002" to CallKind.FEITA)
+        }
+    }
+
+    @Test
     fun aNewNotifierRemovesAStuckIncomingNotification() {
         // O processo morreu com a recebida tocando: a notificação (com o toque) ficou. Num processo novo não há
         // ligação, e o notificador que nasce a tira.
@@ -487,6 +530,16 @@ class CallFlowTest {
         emulator.waitUntil("o cartão do cliente") { showsTagWithText("cartao-espera", "Em espera · transferência") }
     }
 
+    // A conferência no Telecom do Android (o risco 1 da spec da 0.2: a Conference num serviço self-managed): o modo do
+    // áudio (3: MODE_IN_COMMUNICATION, o das ligações pela internet), o app na frente e a linha dela no dumpsys telecom
+    // (a que tem as duas como filhas) vão numa nota do teste, no fim.
+    private fun noteTheTelecomConference() {
+        val mode = app.getSystemService(AudioManager::class.java).mode
+        val telecom = device.executeShellCommand("dumpsys telecom").lines()
+            .filter { "childs(2)" in it }.distinct().take(2).joinToString(" | ") { it.trim().take(400) }
+        conferenceNote = "modo do áudio $mode, na frente ${device.currentPackageName}; Telecom: ${telecom.ifEmpty { "(sem a linha)" }}"
+    }
+
     // A notificação da chamada em espera: no canal sem som, sem a tela cheia e sem o toque que se repete.
     private fun waitingNotification(): Boolean =
         callNotification()?.let {
@@ -589,13 +642,20 @@ class CallFlowTest {
         private val repeatedTaps = mutableMapOf("Atender" to 0, "Recusar" to 0)
         private var lastFakeId = 1_000
 
-        /** Conta os toques repetidos na saída do am instrument (o run-emulator-tests.sh a mostra numa anotação). */
+        // A conferência no Telecom, como o conferenceJoinsTwoCallsAndSplits a viu (null: ele não chegou lá).
+        private var conferenceNote: String? = null
+
+        /**
+         * Conta os toques repetidos e conta como a conferência ficou no Telecom, na saída do am instrument (o
+         * run-emulator-tests.sh mostra as notas numa anotação).
+         */
         @AfterClass
         @JvmStatic
         fun reportRepeatedTaps() {
             val total = repeatedTaps.values.sum()
             val each = repeatedTaps.entries.joinToString { "${it.key} ${it.value}" }
-            val note = "Nota do teste: CallFlowTest: toques repetidos nos botões da notificação: $total ($each)"
+            var note = "Nota do teste: CallFlowTest: toques repetidos nos botões da notificação: $total ($each)"
+            conferenceNote?.let { note += "\nNota do teste: CallFlowTest: a conferência: $it" }
             InstrumentationRegistry.getInstrumentation()
                 .sendStatus(0, Bundle().apply { putString(Instrumentation.REPORT_KEY_STREAMRESULT, "\n$note\n") })
         }

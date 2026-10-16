@@ -186,6 +186,11 @@ class AndroidTelecom(private val app: App) : TelecomAdapter {
         }
     }
 
+    // A conferência (Task 10): ainda nada.
+    override fun joinConference(callIdA: Int, callIdB: Int) {}
+
+    override fun splitConference() {}
+
     /**
      * Leva o áudio das ligações para [route] (CallAudioState.ROUTE_*): a rota é uma só no Telecom, e qualquer
      * Connection a pede. Na thread principal.

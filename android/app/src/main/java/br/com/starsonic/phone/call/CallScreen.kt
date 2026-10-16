@@ -75,6 +75,8 @@ class CallActions(
     val consult: (String) -> Boolean,
     val completeTransfer: () -> Unit,
     val cancelConsult: () -> Unit,
+    val join: () -> Unit,
+    val split: () -> Unit,
     val dial: (String) -> Boolean,
     val route: (Int) -> Unit,
 )
