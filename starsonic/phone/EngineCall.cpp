@@ -131,13 +131,12 @@ void EngineCall::onCallMediaState(pj::OnCallMediaStateParam&) {
 
 void EngineCall::onCallTransferStatus(pj::OnCallTransferStatusParam& param) {
     try {
-        if (param.statusCode / 100 != 2) return;
-        // O outro lado avisou que a transferência deu certo (NOTIFY 2xx): esta ligação acabou, como no
-        // MicroSIP. O 202 do REFER chega aqui como 100.
-        param.cont = false;
-        const int pjsuaId = getId();
-        Log(3, "transferencia aceita (" + std::to_string(param.statusCode) + "): desligando a ligacao");
-        pjsua_call_hangup(pjsuaId, 0, nullptr, nullptr);   // pode apagar este objeto: nada depois daqui
+        const int code = static_cast<int>(param.statusCode);
+        // O resultado é o NOTIFY com 2xx ou o último aviso da assinatura: o NOTIFY final ou a resposta
+        // ao REFER fora de 2xx. O 202 do REFER chega aqui como 100, e os NOTIFY de andamento com 1xx.
+        if (code / 100 != 2 && !param.finalNotify) return;
+        param.cont = false;   // um aviso por pedido: o resto da assinatura não interessa
+        table_->Transferred(this, code);   // com 2xx pode apagar este objeto: nada depois daqui
     } catch (...) {   // o PJSIP é C: nenhuma exceção volta para ele
     }
 }
@@ -235,6 +234,34 @@ void CallTable::Ended(EngineCall* call, int sipCode) {
         --alive_;
     }
     gone_.notify_all();
+}
+
+void CallTable::Transferred(EngineCall* call, int sipCode) {
+    int pjsuaId = PJSUA_INVALID_ID;
+    int targetPjsuaId = PJSUA_INVALID_ID;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        Slot* slot = Find(call);
+        if (!slot) return;
+        const int callId = slot->callId;
+        const Slot* target = Find(slot->transferTarget);
+        slot->transferTarget = 0;
+        Emit(callId, [callId, sipCode](EngineListener& listener) { listener.OnTransfer(callId, sipCode); });
+        if (sipCode / 100 == 2) {
+            pjsuaId = slot->pjsuaId;
+            if (target) targetPjsuaId = target->pjsuaId;
+        }
+    }
+    if (sipCode / 100 != 2) {   // as ligações seguem como estavam
+        Log(2, "a transferencia nao deu certo (" + std::to_string(sipCode) + ")");
+        return;
+    }
+    // Deu certo: esta ligação acabou, como no MicroSIP, e na consulta a do colega também (o outro lado
+    // ligou um ao outro). Os fins chegam pelos callbacks de sempre, depois do aviso.
+    Log(3, "transferencia aceita (" + std::to_string(sipCode) + "): desligando " +
+               (targetPjsuaId != PJSUA_INVALID_ID ? "as ligacoes" : "a ligacao"));
+    if (pjsuaId != PJSUA_INVALID_ID) pjsua_call_hangup(pjsuaId, 0, nullptr, nullptr);   // pode apagar call
+    if (targetPjsuaId != PJSUA_INVALID_ID) pjsua_call_hangup(targetPjsuaId, 0, nullptr, nullptr);
 }
 
 int CallTable::Make(pj::Account& account, const std::string& uri) {
@@ -370,6 +397,31 @@ bool CallTable::Transfer(int callId, const std::string& uri) {
     const pj_status_t status = pjsua_call_xfer(pjsuaId, &destination, nullptr);
     if (status != PJ_SUCCESS) Log(2, "transferencia para " + uri + ": " + StatusText(status));
     return status == PJ_SUCCESS;
+}
+
+bool CallTable::TransferAttended(int callId, int targetCallId) {
+    int pjsuaId;
+    int targetPjsuaId;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        Slot* slot = Find(callId);
+        const Slot* target = Find(targetCallId);
+        if (callId == targetCallId || !slot || !target || !slot->confirmed || !target->confirmed) return false;
+        pjsuaId = slot->pjsuaId;
+        targetPjsuaId = target->pjsuaId;
+        if (pjsuaId == PJSUA_INVALID_ID || targetPjsuaId == PJSUA_INVALID_ID) return false;
+        // Antes do REFER: o resultado pode chegar antes de o pjsua voltar.
+        slot->transferTarget = targetCallId;
+    }
+    // O mesmo que pj::Call::xferReplaces, pelos ids: o Refer-To é o colega com o diálogo dele (Replaces) e
+    // o Require: replaces.
+    const pj_status_t status = pjsua_call_xfer_replaces(pjsuaId, targetPjsuaId, 0, nullptr);
+    if (status == PJ_SUCCESS) return true;
+    Log(2, "transferencia com consulta: " + StatusText(status));
+    std::lock_guard<std::mutex> lock(mutex_);
+    Slot* slot = Find(callId);
+    if (slot && slot->transferTarget == targetCallId) slot->transferTarget = 0;
+    return false;
 }
 
 std::vector<int> CallTable::AudioLinks(int callId) {

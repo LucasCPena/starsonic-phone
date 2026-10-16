@@ -245,6 +245,11 @@ public:
         return calls_.Transfer(callId, CallUri(number));
     }
 
+    bool TransferAttended(int callId, int targetCallId) {
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        return RegisterThread() && calls_.TransferAttended(callId, targetCallId);
+    }
+
     int CallCount() { return calls_.CallCount(); }
 
     std::vector<int> AudioLinks(int callId) {
@@ -411,6 +416,10 @@ void SipEngine::SetMute(bool muted) { impl_->SetMute(muted); }
 bool SipEngine::SendDtmf(int callId, const std::string& digits) { return impl_->SendDtmf(callId, digits); }
 
 bool SipEngine::Transfer(int callId, const std::string& number) { return impl_->Transfer(callId, number); }
+
+bool SipEngine::TransferAttended(int callId, int targetCallId) {
+    return impl_->TransferAttended(callId, targetCallId);
+}
 
 int SipEngine::CallCount() const { return impl_->CallCount(); }
 

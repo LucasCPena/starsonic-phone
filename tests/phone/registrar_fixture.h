@@ -255,14 +255,14 @@ inline const char* StateName(starsonic::CallState state) {
     return kNames[static_cast<int>(state)];
 }
 
-// OnIncomingCall, OnRejectedBusy ou OnCallState, como chegou.
+// OnIncomingCall, OnRejectedBusy, OnCallState ou OnTransfer, como chegou.
 struct CallEvent {
-    enum Kind { Incoming, Busy, State };
+    enum Kind { Incoming, Busy, State, Transfer };
     Kind kind;
-    int callId;                     // Incoming e State
+    int callId;                     // Incoming, State e Transfer
     std::string user, name;         // Incoming e Busy
     starsonic::CallState state;     // State
-    int code;                       // State
+    int code;                       // State e Transfer
 };
 
 // Guarda os eventos do motor (chegam na thread de eventos do motor; OnLog, em qualquer thread) e
@@ -294,6 +294,11 @@ public:
     void OnCallState(int callId, starsonic::CallState state, int sipCode) override {
         std::lock_guard<std::mutex> lock(mutex_);
         calls_.push_back({CallEvent::State, callId, "", "", state, sipCode});
+        changed_.notify_all();
+    }
+    void OnTransfer(int callId, int sipCode) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        calls_.push_back({CallEvent::Transfer, callId, "", "", starsonic::CallState::Incoming, sipCode});
         changed_.notify_all();
     }
     void OnLog(int, const std::string& line) override {
@@ -362,6 +367,8 @@ public:
                 text += "incoming(" + std::to_string(event.callId) + "," + event.user + "," + event.name + "); ";
             } else if (event.kind == CallEvent::Busy) {
                 text += "busy(" + event.user + "," + event.name + "); ";
+            } else if (event.kind == CallEvent::Transfer) {
+                text += "transfer(" + std::to_string(event.callId) + "," + std::to_string(event.code) + "); ";
             } else {
                 text += "state(" + std::to_string(event.callId) + "," + StateName(event.state) + "," +
                         std::to_string(event.code) + "); ";

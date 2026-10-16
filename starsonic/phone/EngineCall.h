@@ -54,6 +54,9 @@ public:
     void MediaChanged(EngineCall* call);
     // O fim da ligação: o último evento dela e o fim do objeto (delete).
     void Ended(EngineCall* call, int sipCode);
+    // O resultado de uma transferência pedida em call: o aviso e, com 2xx, o fim dela (e o do colega,
+    // na consulta). Pode apagar call: quem chama não mexe nele depois.
+    void Transferred(EngineCall* call, int sipCode);
 
     // Da API: thread registrada no PJLIB, um pedido por vez (o motor serializa). uri é a URI SIP inteira.
     int Make(pj::Account& account, const std::string& uri);
@@ -64,6 +67,7 @@ public:
     bool SetHold(int callId, bool hold);
     bool SendDtmf(int callId, const std::string& digits);
     bool Transfer(int callId, const std::string& uri);
+    bool TransferAttended(int callId, int targetCallId);
     std::vector<int> AudioLinks(int callId);
     int CallCount();
 
@@ -80,6 +84,7 @@ private:
         int pjsuaId = PJSUA_INVALID_ID;   // o id no pjsua (numa ligação feita, só depois do makeCall)
         bool held = false;                // posta em espera por aqui
         bool confirmed = false;           // já chegou ao Confirmed
+        int transferTarget = 0;           // o colega (callId) da transferência com consulta em andamento
     };
 
     // Com mutex_ preso. A vaga de callId (ou de call), ou nullptr.

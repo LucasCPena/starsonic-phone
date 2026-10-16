@@ -12,9 +12,9 @@ namespace starsonic {
 
 enum class CallState { Incoming = 0, Calling = 1, Early = 2, Connecting = 3, Confirmed = 4, Disconnected = 5 };
 
-// Os eventos (OnRegistration, OnIncomingCall, OnRejectedBusy e OnCallState) chegam numa thread do
-// próprio motor, um de cada vez e na ordem em que aconteceram, sem nenhuma trava do motor ou do
-// PJSIP presa: o listener pode chamar o motor (só não pode destruí-lo). Um evento pode chegar antes
+// Os eventos (OnRegistration, OnIncomingCall, OnRejectedBusy, OnCallState e OnTransfer) chegam numa
+// thread do próprio motor, um de cada vez e na ordem em que aconteceram, sem nenhuma trava do motor ou
+// do PJSIP presa: o listener pode chamar o motor (só não pode destruí-lo). Um evento pode chegar antes
 // de o método que o provocou voltar. Do começo de ~SipEngine em diante nenhum evento é entregue (o
 // destrutor espera o que estiver com o listener terminar).
 // OnLog é diferente: chega na hora, na thread que escreveu a linha (uma do PJSIP ou a que chamou o
@@ -44,6 +44,12 @@ public:
     // feita cancelada), e não a do outro lado; por isso o CallEndMessage só vale para as feitas (e só para as que
     // não foram atendidas). Disconnected é o último evento de cada ligação.
     virtual void OnCallState(int callId, CallState state, int sipCode) = 0;
+    // O resultado de Transfer ou de TransferAttended na ligação callId, uma vez por pedido aceito (o
+    // método devolveu true): o código do NOTIFY (sipfrag) quando o REFER foi aceito (202), senão o da
+    // resposta ao REFER. Com 2xx o motor desliga a ligação (e, na consulta, também a do colega) logo
+    // depois, com os Disconnected de sempre; fora de 2xx nada mais muda. Não chega se a ligação acaba
+    // antes do resultado. Vazio por padrão.
+    virtual void OnTransfer(int /*callId*/, int /*sipCode*/) {}
     // level como no PJSIP: 1 erro, 2 aviso, 3 informação, 4 detalhe. Sem senhas.
     virtual void OnLog(int level, const std::string& line) = 0;
 };
@@ -141,9 +147,16 @@ public:
     // e inband por RFC 2833.
     bool SendDtmf(int callId, const std::string& digits);
 
-    // Transfere (REFER) para sip:<número>@<domínio da conta> (com a porta, como em MakeCall); quando o
-    // outro lado avisa que deu certo (NOTIFY com 2xx), o motor desliga a ligação.
+    // Transfere (REFER) para sip:<número>@<domínio da conta> (com a porta, como em MakeCall). O resultado
+    // chega por OnTransfer; quando o outro lado avisa que deu certo (NOTIFY com 2xx), o motor desliga a
+    // ligação.
     bool Transfer(int callId, const std::string& number);
+
+    // A transferência com consulta: REFER com Replaces na ligação callId (o cliente, normalmente em
+    // espera) apontando para a ligação targetCallId (o colega, normalmente a ativa), para o outro lado
+    // ligar um ao outro. O resultado chega por OnTransfer(callId, ...); com 2xx o motor desliga as duas.
+    // false: id desconhecido, ligação não confirmada, ids iguais ou o PJSIP recusou (sem OnTransfer).
+    bool TransferAttended(int callId, int targetCallId);
 
     // Quantas ligações há (tocando, chamando ou em andamento: 0, 1 ou 2), contando cada uma até ela
     // acabar no motor. A conta cai antes de o OnCallState(Disconnected) dela chegar ao listener (que vem
