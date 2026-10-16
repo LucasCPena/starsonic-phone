@@ -18,6 +18,9 @@ interface TelecomAdapter {
     /** A ligação foi atendida (dos dois lados). */
     fun setActive(callId: Int)
 
+    /** A ligação foi para a espera. */
+    fun setOnHold(callId: Int)
+
     /** A ligação acabou; cause é um android.telecom.DisconnectCause ([EndCause]). */
     fun disconnect(callId: Int, cause: Int)
 }

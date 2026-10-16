@@ -136,11 +136,15 @@ internal class CallGateway : SipGateway {
     override fun callCount() = callCount
 }
 
-/** O Telecom falso: anota o que o CallManager pediu. */
+/**
+ * O Telecom falso: anota o que o CallManager pediu, na ordem; [held], [active] e [disconnected] com o id de cada
+ * pedido (o fim, com o motivo).
+ */
 internal class FakeTelecom : TelecomAdapter {
     var permitted = true
     val incoming = mutableListOf<Triple<Int, String, String>>()
     val placed = mutableListOf<String>()
+    val held = mutableListOf<Int>()
     val active = mutableListOf<Int>()
     val disconnected = mutableListOf<Pair<Int, Int>>()
 
@@ -152,6 +156,10 @@ internal class FakeTelecom : TelecomAdapter {
 
     override fun placeOutgoing(number: String) {
         placed += number
+    }
+
+    override fun setOnHold(callId: Int) {
+        held += callId
     }
 
     override fun setActive(callId: Int) {

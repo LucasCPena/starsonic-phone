@@ -20,8 +20,9 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 
 /**
- * As ligações na JVM (spec 7.3 a 7.5), com o motor, o Telecom, as notificações e o relógio falsos e os
- * Recentes de verdade numa pasta temporária. O makeCall roda na hora (no app, numa thread própria).
+ * As ligações na JVM (spec 7.3 a 7.5; as duas ligações da 0.2, spec 7.1 e 7.2), com o motor, o Telecom, as
+ * notificações e o relógio falsos e os Recentes de verdade numa pasta temporária. O makeCall roda na hora (no app,
+ * numa thread própria).
  */
 class CallManagerTest {
     @get:Rule
@@ -61,7 +62,7 @@ class CallManagerTest {
     fun `incoming call while idle goes to Telecom`() {
         calls.onIncoming(1, "3001", "Cliente Teste")
         assertEquals(listOf(Triple(1, "3001", "Cliente Teste")), telecom.incoming)
-        assertEquals(CallUi("3001", "Cliente Teste", incoming = true, phase = CallPhase.RINGING), calls.state.value)
+        assertEquals(CallUi(1, "3001", "Cliente Teste", incoming = true, phase = CallPhase.RINGING), calls.state.value)
         assertTrue(gateway.rejects.isEmpty())
         assertTrue(recents.list().isEmpty())
         // O Telecom pergunta antes de criar a Connection (sem esperar o estado publicado).
@@ -70,21 +71,6 @@ class CallManagerTest {
         calls.answer()
         assertFalse(calls.isRinging(1))
         assertNull(calls.ringing())
-    }
-
-    @Test
-    fun `incoming call during another call is rejected busy and missed`() {
-        ring(1)
-        answerCall(1)
-        calls.onIncoming(2, "3002", "")
-        assertEquals(listOf(2), gateway.rejects)
-        assertEquals("só a primeira vai ao Telecom", 1, telecom.incoming.size)
-        assertEquals(Recent("3002", "", CallKind.PERDIDA, clock.nowMillis(), 0), recents.list().single())
-        assertEquals(listOf("Ligação perdida de 3002"), notifier.missed)
-        assertEquals("a primeira segue", CallPhase.ACTIVE, calls.state.value?.phase)
-        calls.onCallState(2, CallState.DISCONNECTED, 486)   // o fim da recusada não mexe na primeira
-        assertEquals(CallPhase.ACTIVE, calls.state.value?.phase)
-        assertEquals(1, recents.list().size)
     }
 
     @Test
@@ -171,7 +157,10 @@ class CallManagerTest {
     fun `dial normalizes the number`() {
         assertTrue(calls.dial("+55 (11) 5060-3000"))
         assertEquals(listOf("+551150603000"), telecom.placed)
-        assertEquals(CallUi("+551150603000", "", incoming = false, phase = CallPhase.DIALING), calls.state.value)
+        assertEquals(
+            CallUi(CallManager.NO_ID, "+551150603000", "", incoming = false, phase = CallPhase.DIALING),
+            calls.state.value,
+        )
         assertTrue("o motor liga quando o Telecom cria a Connection", gateway.made.isEmpty())
         calls.onOutgoingReady()
         assertEquals(listOf("+551150603000"), gateway.made)
@@ -459,6 +448,412 @@ class CallManagerTest {
         assertNull(calls.state.value)
         calls.onCallState(id, CallState.DISCONNECTED, 487)
         assertEquals(id to EndCause.LOCAL, telecom.disconnected.last())
+    }
+
+    // Duas ligações (spec da 0.2, 7.1 e 7.2): até duas, uma ativa; a outra toca, chama ou fica em espera.
+
+    @Test
+    fun `a second incoming call rings while one is active`() {
+        val start = clock.nowMillis()
+        ring(1)
+        answerCall(1)
+        clock.advance(10_000)
+        ring(2, "3002", "Fulano")
+        assertEquals(listOf(Triple(1, "3001", "Cliente Teste"), Triple(2, "3002", "Fulano")), telecom.incoming)
+        assertTrue("a segunda toca, sem ocupado", gateway.rejects.isEmpty())
+        val first = CallUi(1, "3001", "Cliente Teste", incoming = true, phase = CallPhase.ACTIVE, activeSinceMillis = start)
+        assertEquals(first.copy(second = SecondUi(2, "3002", "Fulano", SecondKind.RINGING)), calls.state.value)
+        assertTrue(calls.isRinging(2))
+        assertEquals(IncomingRequest(2, "3002", "Fulano"), calls.ringing())
+        assertTrue("a primeira fica com o som até atender", telecom.held.isEmpty() && gateway.activated.isEmpty())
+        // Recusar: ocupado na segunda, perdida sem a notificação, e a primeira segue.
+        calls.reject()
+        assertEquals(listOf(2), gateway.rejects)
+        assertTrue("o toque da segunda para", 2 in notifier.stopped)
+        assertEquals("a faixa sai na hora", first, calls.state.value)
+        calls.onCallState(2, CallState.DISCONNECTED, 486)
+        assertEquals(listOf(2 to EndCause.REJECTED), telecom.disconnected)
+        assertTrue(notifier.missed.isEmpty())
+        assertEquals(first, calls.state.value)
+        // Com a primeira em espera, outra também toca; quem ligou desiste: perdida, com a notificação.
+        calls.hold(true)
+        assertEquals(listOf(1), telecom.held)
+        clock.advance(1_000)
+        ring(3, "3003", "")
+        assertEquals(first.copy(held = true, second = SecondUi(3, "3003", "", SecondKind.RINGING)), calls.state.value)
+        calls.onCallState(3, CallState.DISCONNECTED, 487)
+        assertEquals(listOf("Ligação perdida de 3003"), notifier.missed)
+        assertEquals(listOf(2 to EndCause.REJECTED, 3 to EndCause.MISSED), telecom.disconnected)
+        assertEquals(first.copy(held = true), calls.state.value)
+        assertTrue("a em espera não volta sozinha", gateway.activated.isEmpty())
+        assertEquals(
+            listOf(
+                Recent("3003", "", CallKind.PERDIDA, start + 11_000, 0),
+                Recent("3002", "Fulano", CallKind.PERDIDA, start + 10_000, 0),
+            ),
+            recents.list(),
+        )
+    }
+
+    @Test
+    fun `answering the second call holds the first`() {
+        val start = clock.nowMillis()
+        ring(1)
+        answerCall(1)
+        clock.advance(10_000)
+        ring(2, "3002", "Fulano")
+        clock.advance(2_000)
+        calls.answer()
+        assertEquals(listOf(1, 2), gateway.answers)
+        assertTrue("o toque da segunda para", 2 in notifier.stopped)
+        assertEquals("o Telecom põe a primeira em espera", listOf(1), telecom.held)
+        assertTrue("o motor põe a primeira em espera no answer", gateway.holds.isEmpty() && gateway.activated.isEmpty())
+        val held = SecondUi(1, "3001", "Cliente Teste", SecondKind.HELD)
+        assertEquals(
+            CallUi(2, "3002", "Fulano", incoming = true, phase = CallPhase.CONNECTING, second = held),
+            calls.state.value,
+        )
+        assertFalse(calls.isRinging(2))
+        assertNull(calls.ringing())
+        calls.onCallState(2, CallState.CONNECTING, 200)
+        calls.onCallState(2, CallState.CONFIRMED, 200)
+        assertEquals(listOf(1, 2), telecom.active)
+        assertEquals(
+            CallUi(
+                2, "3002", "Fulano", incoming = true, phase = CallPhase.ACTIVE, activeSinceMillis = start + 12_000,
+                second = held,
+            ),
+            calls.state.value,
+        )
+        // As duas acabam do outro lado, cada uma com a sua duração.
+        clock.advance(30_000)
+        calls.onCallState(1, CallState.DISCONNECTED, 200)
+        clock.advance(5_000)
+        calls.onCallState(2, CallState.DISCONNECTED, 200)
+        assertNull(calls.state.value)
+        assertEquals(listOf(1 to EndCause.REMOTE, 2 to EndCause.REMOTE), telecom.disconnected)
+        assertEquals(
+            listOf(
+                Recent("3002", "Fulano", CallKind.RECEBIDA, start + 10_000, 35),
+                Recent("3001", "Cliente Teste", CallKind.RECEBIDA, start, 42),
+            ),
+            recents.list(),
+        )
+    }
+
+    @Test
+    fun `a second incoming call while dialing is rejected busy`() {
+        val id = dialOut("2002")
+        calls.onCallState(id, CallState.CALLING, 0)
+        calls.onIncoming(id + 1, "3002", "")
+        assertEquals(listOf(id + 1), gateway.rejects)
+        assertTrue("não vai ao Telecom", telecom.incoming.isEmpty())
+        assertEquals(listOf(Recent("3002", "", CallKind.PERDIDA, clock.nowMillis(), 0)), recents.list())
+        assertEquals(listOf("Ligação perdida de 3002"), notifier.missed)
+        assertEquals(CallUi(id, "2002", "", incoming = false, phase = CallPhase.DIALING), calls.state.value)
+        calls.onCallState(id + 1, CallState.DISCONNECTED, 486)   // o fim da recusada não mexe na feita
+        assertEquals(CallPhase.DIALING, calls.state.value?.phase)
+        calls.onCallState(id, CallState.CONFIRMED, 200)
+        assertEquals(
+            CallUi(id, "2002", "", incoming = false, phase = CallPhase.ACTIVE, activeSinceMillis = clock.nowMillis()),
+            calls.state.value,
+        )
+        assertEquals(listOf(id), telecom.active)
+        assertTrue(telecom.held.isEmpty() && telecom.disconnected.isEmpty())
+        assertEquals(1, recents.list().size)
+    }
+
+    @Test
+    fun `a second incoming call not permitted by Telecom is rejected busy`() {
+        val start = clock.nowMillis()
+        ring(1)
+        answerCall(1)
+        telecom.permitted = false   // uma ligação da operadora tocando
+        calls.onIncoming(2, "3002", "Fulano")
+        assertEquals(listOf(2), gateway.rejects)
+        assertEquals("só a primeira vai ao Telecom", 1, telecom.incoming.size)
+        assertEquals(listOf(Recent("3002", "Fulano", CallKind.PERDIDA, start, 0)), recents.list())
+        assertEquals(listOf("Ligação perdida de 3002"), notifier.missed)
+        assertEquals(
+            CallUi(1, "3001", "Cliente Teste", incoming = true, phase = CallPhase.ACTIVE, activeSinceMillis = start),
+            calls.state.value,
+        )
+        assertTrue(telecom.held.isEmpty() && gateway.activated.isEmpty())
+    }
+
+    @Test
+    fun `a third incoming call is rejected busy`() {
+        val start = clock.nowMillis()
+        ring(1)
+        answerCall(1)
+        ring(2, "3002", "Fulano")
+        answerCall(2)
+        clock.advance(1_000)
+        calls.onIncoming(3, "3003", "")
+        assertEquals(listOf(3), gateway.rejects)
+        assertEquals("só as duas primeiras vão ao Telecom", listOf(1, 2), telecom.incoming.map { it.first })
+        assertEquals(listOf(Recent("3003", "", CallKind.PERDIDA, start + 1_000, 0)), recents.list())
+        assertEquals(listOf("Ligação perdida de 3003"), notifier.missed)
+        val both = CallUi(
+            2, "3002", "Fulano", incoming = true, phase = CallPhase.ACTIVE, activeSinceMillis = start,
+            second = SecondUi(1, "3001", "Cliente Teste", SecondKind.HELD),
+        )
+        assertEquals(both, calls.state.value)
+        calls.onCallState(3, CallState.DISCONNECTED, 486)   // o fim da recusada não mexe nas duas
+        assertEquals(both, calls.state.value)
+        assertTrue(telecom.disconnected.isEmpty())
+        assertEquals(1, recents.list().size)
+    }
+
+    @Test
+    fun `Alternar swaps the active call`() {
+        val start = clock.nowMillis()
+        ring(1)
+        answerCall(1)
+        clock.advance(10_000)
+        ring(2, "3002", "")
+        calls.activate()   // a segunda ainda toca: nada
+        assertTrue(gateway.activated.isEmpty())
+        answerCall(2)
+        calls.activate()
+        assertEquals(listOf(1), gateway.activated)
+        assertEquals(listOf(1, 2), telecom.held)
+        assertEquals(listOf(1, 2, 1), telecom.active)
+        val first = CallUi(
+            1, "3001", "Cliente Teste", incoming = true, phase = CallPhase.ACTIVE, activeSinceMillis = start,
+            second = SecondUi(2, "3002", "", SecondKind.HELD),
+        )
+        assertEquals(first, calls.state.value)
+        calls.activate()
+        assertEquals(listOf(1, 2), gateway.activated)
+        assertEquals(listOf(1, 2, 1), telecom.held)
+        assertEquals(listOf(1, 2, 1, 2), telecom.active)
+        assertEquals(
+            CallUi(
+                2, "3002", "", incoming = true, phase = CallPhase.ACTIVE, activeSinceMillis = start + 10_000,
+                second = SecondUi(1, "3001", "Cliente Teste", SecondKind.HELD),
+            ),
+            calls.state.value,
+        )
+        // Com duas, a Espera da ativa é o Alternar (o motor troca as duas; nada de setHold).
+        calls.hold()
+        assertEquals(listOf(1, 2, 1), gateway.activated)
+        assertTrue(gateway.holds.isEmpty())
+        assertEquals(first, calls.state.value)
+        // Os pedidos do Telecom: a espera da ativa troca, a da que já está em espera não muda nada, e a retomada da
+        // em espera troca.
+        calls.holdFromTelecom(1)
+        assertEquals(2, calls.state.value?.id)
+        calls.holdFromTelecom(1)
+        assertEquals(listOf(1, 2, 1, 2), gateway.activated)
+        calls.activateFromTelecom(1)
+        assertEquals(listOf(1, 2, 1, 2, 1), gateway.activated)
+        assertEquals(first, calls.state.value)
+        // A em espera (sem nome) cai, e a ativa acaba depois: cada uma com a sua duração.
+        clock.advance(20_000)
+        calls.onCallState(2, CallState.DISCONNECTED, 200)
+        assertEquals("3002 desligou", calls.endMessage.value)
+        clock.advance(10_000)
+        calls.onCallState(1, CallState.DISCONNECTED, 200)
+        assertNull(calls.state.value)
+        assertEquals(
+            listOf(
+                Recent("3002", "", CallKind.RECEBIDA, start + 10_000, 20),
+                Recent("3001", "Cliente Teste", CallKind.RECEBIDA, start, 40),
+            ),
+            recents.list(),
+        )
+    }
+
+    @Test
+    fun `hanging up the active call resumes the held one`() {
+        val start = clock.nowMillis()
+        ring(1)
+        answerCall(1)
+        clock.advance(10_000)
+        ring(2, "3002", "Fulano")
+        answerCall(2)
+        clock.advance(20_000)
+        calls.hangup()
+        assertEquals("desliga a ativa", listOf(2), gateway.hangups)
+        assertTrue("a outra volta quando o fim chega", gateway.activated.isEmpty())
+        val first = CallUi(1, "3001", "Cliente Teste", incoming = true, phase = CallPhase.ACTIVE, activeSinceMillis = start)
+        assertEquals("até lá, a tela mostra a em espera", first.copy(held = true), calls.state.value)
+        calls.onCallState(2, CallState.DISCONNECTED, 200)
+        assertEquals(listOf(1), gateway.activated)
+        assertEquals(listOf(1, 2, 1), telecom.active)
+        assertEquals(listOf(1), telecom.held)
+        assertEquals(listOf(2 to EndCause.LOCAL), telecom.disconnected)
+        assertEquals("a outra voltou sozinha", first, calls.state.value)
+        assertEquals("", calls.endMessage.value)
+        clock.advance(5_000)
+        calls.hangup()
+        assertEquals(listOf(2, 1), gateway.hangups)
+        assertNull(calls.state.value)
+        calls.onCallState(1, CallState.DISCONNECTED, 200)
+        assertEquals(listOf(2 to EndCause.LOCAL, 1 to EndCause.LOCAL), telecom.disconnected)
+        assertEquals("nada mais volta", listOf(1), gateway.activated)
+        assertEquals(
+            listOf(
+                Recent("3002", "Fulano", CallKind.RECEBIDA, start + 10_000, 20),
+                Recent("3001", "Cliente Teste", CallKind.RECEBIDA, start, 35),
+            ),
+            recents.list(),
+        )
+    }
+
+    @Test
+    fun `the held call dropping shows the message and keeps the active one`() {
+        val start = clock.nowMillis()
+        ring(1)
+        answerCall(1)
+        clock.advance(10_000)
+        ring(2, "3002", "")
+        answerCall(2)
+        clock.advance(20_000)
+        calls.onCallState(1, CallState.DISCONNECTED, 200)   // a em espera desligou do outro lado
+        assertEquals("o nome que a central mandou", "Cliente Teste desligou", calls.endMessage.value)
+        assertEquals(
+            CallUi(2, "3002", "", incoming = true, phase = CallPhase.ACTIVE, activeSinceMillis = start + 10_000),
+            calls.state.value,
+        )
+        assertEquals(listOf(1 to EndCause.REMOTE), telecom.disconnected)
+        assertTrue("a ativa continua como estava", gateway.activated.isEmpty() && gateway.hangups.isEmpty())
+        assertEquals(listOf(1, 2), telecom.active)
+        clock.advance(1_999)
+        assertEquals("Cliente Teste desligou", calls.endMessage.value)
+        clock.advance(1)
+        assertEquals("", calls.endMessage.value)
+        clock.advance(13_000)
+        calls.onCallState(2, CallState.DISCONNECTED, 200)
+        assertNull(calls.state.value)
+        assertEquals("", calls.endMessage.value)
+        assertEquals(
+            listOf(
+                Recent("3002", "", CallKind.RECEBIDA, start + 10_000, 35),
+                Recent("3001", "Cliente Teste", CallKind.RECEBIDA, start, 30),
+            ),
+            recents.list(),
+        )
+    }
+
+    @Test
+    fun `dialing during an active call holds it and places the second`() {
+        val start = clock.nowMillis()
+        ring(1)
+        assertFalse("com uma ligação que ainda toca, não", calls.dial("2002"))
+        answerCall(1)
+        clock.advance(10_000)
+        assertTrue(calls.dial("2002"))
+        assertEquals(listOf(1), telecom.held)
+        assertEquals(listOf("2002"), telecom.placed)
+        assertTrue("o motor põe a primeira em espera no makeCall", gateway.holds.isEmpty() && gateway.made.isEmpty())
+        val held = SecondUi(1, "3001", "Cliente Teste", SecondKind.HELD)
+        assertEquals(
+            CallUi(CallManager.NO_ID, "2002", "", incoming = false, phase = CallPhase.DIALING, second = held),
+            calls.state.value,
+        )
+        assertFalse("com duas, nenhuma outra", calls.dial("2003"))
+        assertTrue(calls.isDialing())
+        calls.onOutgoingReady()
+        val id = gateway.nextCallId - 1
+        assertEquals(listOf("2002"), gateway.made)
+        calls.onCallState(id, CallState.CALLING, 0)
+        assertEquals(id, calls.state.value?.id)
+        calls.onCallState(id, CallState.CONFIRMED, 200)
+        assertEquals(listOf(1, id), telecom.active)
+        assertEquals(
+            CallUi(
+                id, "2002", "", incoming = false, phase = CallPhase.ACTIVE, activeSinceMillis = start + 10_000,
+                second = held,
+            ),
+            calls.state.value,
+        )
+        // O outro lado da feita desliga: a primeira volta sozinha.
+        clock.advance(20_000)
+        calls.onCallState(id, CallState.DISCONNECTED, 200)
+        assertEquals(listOf(1), gateway.activated)
+        assertEquals(listOf(1, id, 1), telecom.active)
+        assertEquals(listOf(id to EndCause.REMOTE), telecom.disconnected)
+        assertEquals(
+            CallUi(1, "3001", "Cliente Teste", incoming = true, phase = CallPhase.ACTIVE, activeSinceMillis = start),
+            calls.state.value,
+        )
+        assertEquals("", calls.endMessage.value)
+        clock.advance(5_000)
+        calls.onCallState(1, CallState.DISCONNECTED, 200)
+        assertNull(calls.state.value)
+        assertEquals(
+            listOf(
+                Recent("2002", "", CallKind.FEITA, start + 10_000, 20),
+                Recent("3001", "Cliente Teste", CallKind.RECEBIDA, start, 35),
+            ),
+            recents.list(),
+        )
+    }
+
+    @Test
+    fun `disconnecting the held call from Telecom ends only that call`() {
+        val start = clock.nowMillis()
+        ring(1)
+        answerCall(1)
+        clock.advance(10_000)
+        ring(2, "3002", "Fulano")
+        answerCall(2)
+        clock.advance(20_000)
+        calls.hangup(1)   // o Telecom desligou a Connection da em espera (onDisconnect)
+        assertEquals(listOf(1), gateway.hangups)
+        val second = CallUi(
+            2, "3002", "Fulano", incoming = true, phase = CallPhase.ACTIVE, activeSinceMillis = start + 10_000,
+        )
+        assertEquals("o cartão da em espera sai na hora", second, calls.state.value)
+        calls.onCallState(1, CallState.DISCONNECTED, 200)
+        assertEquals(listOf(1 to EndCause.LOCAL), telecom.disconnected)
+        assertEquals("desligada aqui: sem aviso", "", calls.endMessage.value)
+        assertTrue("a ativa continua como estava", gateway.activated.isEmpty())
+        assertEquals(listOf(1, 2), telecom.active)
+        assertEquals(second, calls.state.value)
+        clock.advance(5_000)
+        calls.hangup(2)
+        assertEquals(listOf(1, 2), gateway.hangups)
+        assertNull(calls.state.value)
+        calls.onCallState(2, CallState.DISCONNECTED, 200)
+        assertEquals(listOf(1 to EndCause.LOCAL, 2 to EndCause.LOCAL), telecom.disconnected)
+        assertEquals(
+            listOf(
+                Recent("3002", "Fulano", CallKind.RECEBIDA, start + 10_000, 25),
+                Recent("3001", "Cliente Teste", CallKind.RECEBIDA, start, 30),
+            ),
+            recents.list(),
+        )
+    }
+
+    @Test
+    fun `logout with two calls hangs up both`() {
+        val start = clock.nowMillis()
+        ring(1)
+        answerCall(1)
+        clock.advance(10_000)
+        ring(2, "3002", "Fulano")
+        answerCall(2)
+        clock.advance(20_000)
+        calls.onLogout()
+        assertEquals(listOf(1, 2), gateway.hangups)
+        assertEquals(listOf(1 to EndCause.LOCAL, 2 to EndCause.LOCAL), telecom.disconnected)
+        assertTrue("nenhuma volta", gateway.activated.isEmpty())
+        assertNull(calls.state.value)
+        assertEquals("", calls.endMessage.value)
+        calls.onCallState(2, CallState.DISCONNECTED, 200)   // os fins que chegam depois são ignorados
+        calls.onCallState(1, CallState.DISCONNECTED, 200)
+        assertEquals(2, telecom.disconnected.size)
+        assertTrue(notifier.missed.isEmpty())
+        assertEquals(
+            listOf(
+                Recent("3002", "Fulano", CallKind.RECEBIDA, start + 10_000, 20),
+                Recent("3001", "Cliente Teste", CallKind.RECEBIDA, start, 30),
+            ),
+            recents.list(),
+        )
     }
 
     // Outra thread tenta usar o CallManager por até 1 s: true se não conseguiu (a trava estava presa).

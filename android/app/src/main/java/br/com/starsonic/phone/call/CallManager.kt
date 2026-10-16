@@ -46,8 +46,18 @@ enum class CallPhase {
     ACTIVE,
 }
 
-/** O que a tela de chamada mostra. */
+/**
+ * O que a tela de chamada mostra: a ligação ativa (a de cima) e, com duas, a outra em [second].
+ *
+ * - [id]: o id da ligação no motor ([CallManager.NO_ID]: a feita antes de o motor dar o dela).
+ * - [name]: o nome de exibição que a central mandou (pode ser vazio).
+ * - [muted]: o mudo do microfone, que vale para as duas ligações.
+ * - [second]: a outra ligação (tocando, chamando ou em espera); null com uma só.
+ * - [conference]: as duas em conferência (spec da 0.2, 7.4); ainda sempre false.
+ * - [consult]: a transferência com consulta em andamento (spec da 0.2, 7.3); ainda sempre null.
+ */
 data class CallUi(
+    val id: Int,
     val number: String,
     val name: String,
     val incoming: Boolean,
@@ -55,6 +65,9 @@ data class CallUi(
     val activeSinceMillis: Long = 0,
     val held: Boolean = false,
     val muted: Boolean = false,
+    val second: SecondUi? = null,
+    val conference: Boolean = false,
+    val consult: ConsultUi? = null,
 ) {
     /**
      * A ligação usa o microfone: a feita desde o começo (a pessoa ligou com o app na frente) e a recebida depois
@@ -63,6 +76,27 @@ data class CallUi(
     val usesMicrophone: Boolean
         get() = !incoming || phase == CallPhase.CONNECTING || phase == CallPhase.ACTIVE
 }
+
+/** A outra de duas ligações, para o cartão de baixo (ou a faixa da que toca): o id no motor, o número e o nome. */
+data class SecondUi(val id: Int, val number: String, val name: String, val kind: SecondKind)
+
+/** Em que pé está a outra de duas ligações. */
+enum class SecondKind {
+    /** Recebida, tocando (a faixa "Ligação de <nome ou número>"). */
+    RINGING,
+
+    /** Feita, chamando. */
+    DIALING,
+
+    /** Em espera. */
+    HELD,
+
+    /** Com o som junto da ativa: só na conferência. */
+    ACTIVE,
+}
+
+/** A consulta (spec da 0.2, 7.3): o id do colega e se ele é a ativa (o cliente, então, em espera). */
+data class ConsultUi(val colleagueId: Int, val colleagueActive: Boolean)
 
 /** Os motivos do fim de uma ligação para o Telecom (os valores de android.telecom.DisconnectCause). */
 object EndCause {
@@ -321,6 +355,18 @@ class CallManager(
         }
     }
 
+    /** Desliga a ligação [callId] (o pedido do Telecom). Ainda uma ligação por vez: é o [hangup]. */
+    fun hangup(callId: Int) = hangup()
+
+    /** Alternar. Ainda uma ligação por vez: nada. */
+    fun activate() = Unit
+
+    /** O Telecom pede a espera da ligação [callId]. Ainda uma ligação por vez: é o [hold]. */
+    fun holdFromTelecom(callId: Int) = hold(true)
+
+    /** O Telecom pede a retomada da ligação [callId]. Ainda uma ligação por vez: é o [hold]. */
+    fun activateFromTelecom(callId: Int) = hold(false)
+
     /** Põe em espera ou retoma a ligação em andamento (null: troca). */
     fun hold(on: Boolean? = null) {
         act { effects ->
@@ -495,7 +541,7 @@ class CallManager(
     // Com a trava: o estado de agora vai à fila das publicações (entregue depois de soltar a trava, em [deliver]).
     private fun publish() {
         val ui = call?.takeIf { !it.ending }?.let {
-            CallUi(it.number, it.name, it.incoming, it.phase, it.activeSince, it.held, it.muted)
+            CallUi(it.id, it.number, it.name, it.incoming, it.phase, it.activeSince, it.held, it.muted)
         }
         publications.addLast { mutableState.value = ui }
     }

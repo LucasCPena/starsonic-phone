@@ -166,6 +166,10 @@ class AndroidTelecom(private val app: App) : TelecomAdapter {
         main.post { connectionFor(callId)?.setActive() }
     }
 
+    override fun setOnHold(callId: Int) {
+        main.post { connectionFor(callId)?.setOnHold() }
+    }
+
     override fun disconnect(callId: Int, cause: Int) {
         if (callId == CallManager.NO_ID) synchronized(lock) { outgoingPending = false }
         main.post {
