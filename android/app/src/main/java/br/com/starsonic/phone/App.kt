@@ -80,8 +80,11 @@ class App : Application() {
     /** O Telecom do Android: a conta self-managed, a Connection da ligação e as rotas de áudio. */
     val telecom: AndroidTelecom by lazy { AndroidTelecom(this) }
 
-    /** As notificações das ligações (a recebida e as perdidas). */
-    val notifier: IncomingCallNotifier by lazy { IncomingCallNotifier(this) }
+    /**
+     * As notificações das ligações (a recebida e as perdidas). A chamada em espera confere a ligação da tela de chamada
+     * (que só é lida com uma ligação tocando, depois de as ligações existirem).
+     */
+    val notifier: IncomingCallNotifier by lazy { IncomingCallNotifier(this) { calls.state.value } }
 
     /**
      * As ligações: os avisos do motor chegam pela conexão; só liga com a conta do serviço registrada

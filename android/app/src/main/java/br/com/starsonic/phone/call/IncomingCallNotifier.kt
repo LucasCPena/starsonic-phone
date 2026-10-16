@@ -13,6 +13,7 @@ import android.media.RingtoneManager
 import android.media.ToneGenerator
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.util.Log
@@ -40,7 +41,9 @@ import br.com.starsonic.phone.main.MainActivity
  * cheia, e o app toca o bipe de chamada em espera no som da ligação (ToneGenerator, TONE_SUP_CALL_WAITING) a cada
  * 3 s, com a vibração curta a cada bipe, até ela parar de tocar ([stopRinging]) ou o volume ser apertado ([silence]).
  * Sem a tela cheia, o Android não aceita o estilo de ligação (CallStyle): ela é uma notificação comum de ligação,
- * "Ligação de <nome ou número>", com Recusar e Atender.
+ * "Ligação de <nome ou número>", com Recusar e Atender. Se a outra ligação acaba com ela tocando, ela passa a tocar
+ * como uma primeira ligação (o toque do celular e a tela cheia): o bipe confere a cada segundo a ligação da tela de
+ * chamada ([screenCall], o estado do CallManager).
  *
  * A notificação da recebida só aparece se a ligação ainda toca: um pedido do Telecom que chega depois de ela
  * parar (atendida pelo Bluetooth, desistência) não a põe de volta. Um processo novo não tem ligação: o notificador
@@ -48,7 +51,10 @@ import br.com.starsonic.phone.main.MainActivity
  * de uma ligação que já não toca também a tiram ([dismiss]). O volume apertado durante o toque ([silence]) a deixa
  * sem som. Qualquer thread.
  */
-class IncomingCallNotifier(private val context: Context) : CallNotifier {
+class IncomingCallNotifier(
+    private val context: Context,
+    private val screenCall: () -> CallUi? = { null },
+) : CallNotifier {
     private val manager = context.getSystemService(NotificationManager::class.java)
     private val lock = Any()
     private var stoppedUpTo = 0   // as ligações com id até este já pararam de tocar
@@ -66,18 +72,29 @@ class IncomingCallNotifier(private val context: Context) : CallNotifier {
         .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
         .build()
     private var tone: ToneGenerator? = null   // o do bipe; só na thread principal
+    private var lastBeepAt = 0L               // quando o último bipe tocou (0: nenhum ainda); só na thread principal
 
-    // Na thread principal: um bipe e a vibração curta, e o próximo daqui a 3 s, enquanto a chamada em espera toca. Um
-    // por vez: o próximo pendente (de um começo anterior) sai.
+    // Na thread principal, a cada segundo enquanto a chamada em espera toca: se ela ficou sozinha na tela de chamada
+    // (a outra acabou), ela passa a tocar como uma primeira ligação ([ringAlone]); senão, a cada 3 s, um bipe e a
+    // vibração curta. Um por vez: o próximo pendente (de um começo anterior) sai.
     private val beep = object : Runnable {
         @Suppress("DEPRECATION")   // o vibrate com AudioAttributes ainda vale (o com VibrationAttributes é do Android 13+)
         override fun run() {
             main.removeCallbacks(this)
-            if (synchronized(lock) { beepingId } == 0) return
-            val generator = tone ?: newTone()?.also { tone = it }
-            generator?.startTone(ToneGenerator.TONE_SUP_CALL_WAITING, BEEP_MILLIS)
-            vibrator?.vibrate(VibrationEffect.createWaveform(VIBRATION, -1), ringing)
-            main.postDelayed(this, BEEP_EVERY_MILLIS)
+            val id = synchronized(lock) { beepingId }
+            if (id == 0) return
+            if (screenCall()?.let { it.id == id && it.phase == CallPhase.RINGING } == true) {
+                ringAlone(id)
+                return
+            }
+            val now = SystemClock.uptimeMillis()
+            if (lastBeepAt == 0L || now - lastBeepAt >= BEEP_EVERY_MILLIS) {
+                lastBeepAt = now
+                val generator = tone ?: newTone()?.also { tone = it }
+                generator?.startTone(ToneGenerator.TONE_SUP_CALL_WAITING, BEEP_MILLIS)
+                vibrator?.vibrate(VibrationEffect.createWaveform(VIBRATION, -1), ringing)
+            }
+            main.postDelayed(this, CHECK_EVERY_MILLIS)
         }
     }
 
@@ -88,6 +105,7 @@ class IncomingCallNotifier(private val context: Context) : CallNotifier {
         tone?.stopTone()
         tone?.release()
         tone = null
+        lastBeepAt = 0L
         vibrator?.cancel()
     }
 
@@ -207,6 +225,20 @@ class IncomingCallNotifier(private val context: Context) : CallNotifier {
         CallLog.i { "notificação: o bipe da chamada em espera parou" }
     }
 
+    // Na thread principal: a chamada em espera [id] ficou sozinha, ainda tocando (a outra ligação acabou): o bipe para
+    // e ela toca como uma primeira ligação (canal "ligacoes", o toque do celular, a tela cheia e o CallStyle). A
+    // notificação sai e volta nova: o Android só abre a tela cheia (com o celular bloqueado ou a tela apagada) de uma
+    // notificação nova, e não de uma atualizada.
+    private fun ringAlone(id: Int) {
+        synchronized(lock) {
+            if (beepingId != id || shownId != id || id <= stoppedUpTo) return
+            shownWaiting = false
+            stopBeep()
+            manager.cancel(INCOMING_ID)
+            post(id, ring = true, "recebida $id, agora sem outra ligação")
+        }
+    }
+
     // Na thread principal: o ToneGenerator do bipe, no som da ligação; null se o Android não deu um (vai ao log).
     private fun newTone(): ToneGenerator? =
         try {
@@ -298,6 +330,7 @@ class IncomingCallNotifier(private val context: Context) : CallNotifier {
         private const val BEEP_VOLUME = 80             // do ToneGenerator (0 a 100), sobre o volume da ligação
         private const val BEEP_MILLIS = 1_000          // um bipe de chamada em espera (o par de toques, no padrão CEPT)
         private const val BEEP_EVERY_MILLIS = 3_000L
+        private const val CHECK_EVERY_MILLIS = 1_000L    // a conferência de que a outra ligação ainda está de pé
     }
 }
 

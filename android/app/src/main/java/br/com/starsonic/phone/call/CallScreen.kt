@@ -32,6 +32,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -95,11 +96,25 @@ fun CallScreen(call: CallUi?, endMessage: String, routes: AudioRoutes, actions: 
     var transferOpen by rememberSaveable { mutableStateOf(false) }
     var newCallOpen by rememberSaveable { mutableStateOf(false) }
     var digits by rememberSaveable { mutableStateOf("") }
+    // O teclado e o Transferir abertos são da ligação de cima (a de [panelsOf]): quando ela troca (a segunda atendida,
+    // Alternar, a volta da em espera), eles fecham e os dígitos saem, sem nunca aparecer para a outra. O id fica
+    // guardado como o resto, para a rotação não fechar nada.
+    var panelsOf by rememberSaveable { mutableIntStateOf(call?.id ?: CallManager.NO_ID) }
+    val sameCall = call?.id == panelsOf
+    LaunchedEffect(call?.id) {
+        val id = call?.id ?: return@LaunchedEffect
+        if (id != panelsOf) {
+            panelsOf = id
+            keypadOpen = false
+            transferOpen = false
+            digits = ""
+        }
+    }
     // O teclado e a transferência só valem com a ligação em andamento; a Nova ligação, com ela sozinha.
     val active = call?.phase == CallPhase.ACTIVE
     val alone = active && call?.second == null
-    val keypad = keypadOpen && active
-    val transfer = transferOpen && active
+    val keypad = keypadOpen && active && sameCall
+    val transfer = transferOpen && active && sameCall
     val newCall = newCallOpen && alone
     // A Nova ligação fechada por outra ligação (a segunda que chega) não volta sozinha quando ela sai.
     LaunchedEffect(alone) { if (!alone) newCallOpen = false }
