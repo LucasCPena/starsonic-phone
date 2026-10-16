@@ -1,9 +1,10 @@
 package br.com.starsonic.phone.call
 
 /**
- * O Telecom do Android (modo self-managed) visto pelo [CallManager]: uma Connection por ligação, até duas. A feita só
- * ganha o id do motor depois do makeCall, então [setActive], [setOnHold] e [disconnect] com um id que nenhuma
- * Connection tem (ou com [CallManager.NO_ID]) valem para a feita que ainda não tem id (só há uma por vez).
+ * O Telecom do Android (modo self-managed) visto pelo [CallManager]: uma Connection por ligação, até duas, e a
+ * conferência das duas. A feita só ganha o id do motor depois do makeCall, então [setActive], [setOnHold] e
+ * [disconnect] com um id que nenhuma Connection tem (ou com [CallManager.NO_ID]) valem para a feita que ainda não tem
+ * id (só há uma por vez).
  */
 interface TelecomAdapter {
     /** O Android deixa entrar uma ligação agora (false: uma ligação da operadora em andamento). */
@@ -24,7 +25,15 @@ interface TelecomAdapter {
     /** A ligação acabou; cause é um android.telecom.DisconnectCause ([EndCause]). */
     fun disconnect(callId: Int, cause: Int)
 
+    /**
+     * As ligações [callIdA] (a ativa) e [callIdB] estão em conferência (o Juntar): as Connections das duas viram filhas
+     * de uma conferência do Telecom, ativa.
+     */
     fun joinConference(callIdA: Int, callIdB: Int)
 
+    /**
+     * A conferência acabou (Separar, uma das duas saiu, Sair): ela sai do Telecom, e as Connections ficam soltas, como
+     * estavam (o CallManager diz depois qual fica em espera e qual é a ativa, ou as encerra). Sem conferência, nada.
+     */
     fun splitConference()
 }

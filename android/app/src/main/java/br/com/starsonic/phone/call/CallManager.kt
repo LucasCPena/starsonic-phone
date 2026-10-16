@@ -55,8 +55,10 @@ enum class CallPhase {
  * - [id]: o id da ligação no motor ([CallManager.NO_ID]: a feita antes de o motor dar o dela).
  * - [name]: o nome de exibição que a central mandou (pode ser vazio).
  * - [muted]: o mudo do microfone, que vale para as duas ligações.
- * - [second]: a outra ligação (tocando ou em espera); null com uma só. A feita que chama é sempre a ativa.
- * - [conference]: as duas em conferência (spec da 0.2, 7.4); ainda sempre false.
+ * - [second]: a outra ligação (tocando, em espera ou, na conferência, junto desta); null com uma só. A feita que
+ *   chama é sempre a ativa.
+ * - [conference]: as duas em conferência (spec da 0.2, 7.4), com as duas de pé: esta e a [second] (com
+ *   [SecondKind.ACTIVE]) se ouvem e têm o som; [conferenceSinceMillis] é quando o Juntar foi pedido (0 fora dela).
  * - [consult]: a transferência com consulta em andamento (spec da 0.2, 7.3), com as duas ligações dela de pé (o
  *   cliente e o colega são esta e a [second]); null sem consulta.
  */
@@ -145,10 +147,18 @@ object EndCause {
  *   direta ([transfer]) recusada mostra o mesmo [TRANSFER_REFUSED]. Uma ligação tem no máximo um pedido de
  *   transferência esperando o resultado: com ele, nem Consultar nem outro Transferir agora nela; na consulta, o
  *   Transferir agora não vale (a transferência é o Concluir), e só o resultado do Concluir é da consulta.
+ * - Conferência (spec da 0.2, 7.4): Juntar ([join]), com as duas em andamento, sem consulta e sem transferência
+ *   esperando o resultado, liga as duas entre si no motor (a em espera é retomada) e no Telecom (uma Conference com as
+ *   duas Connections). Separar ([split]) põe em espera a última que entrou, e a outra fica a ativa. Desligar
+ *   ([hangup]) desliga as duas, e Sair também; o desligar do Telecom numa Connection ([hangup] com o id) tira só
+ *   aquela. A que acaba do outro lado deixa a outra como uma ligação normal, com o aviso "<nome ou número>
+ *   desligou": o motor já a deixa com o som, e o Telecom a ativa. Na conferência não há Espera, Alternar,
+ *   Transferir nem Nova ligação; o mudo vale para as duas, e o teclado manda os dígitos na de cima.
  * - O Telecom acompanha cada espera e retomada ([TelecomAdapter.setOnHold], [TelecomAdapter.setActive]); os pedidos
  *   dele chegam por [holdFromTelecom], [activateFromTelecom] e [hangup] com o id da ligação. A espera que ele pede
  *   (uma ligação da operadora atendida) nunca troca: com duas, as duas ficam em espera, sem som, até ele pedir a
- *   retomada de uma.
+ *   retomada de uma. Na conferência, ela a desfaz antes (o motor nunca põe em espera uma ligação da conferência):
+ *   como o Separar, e a que fica vai para a espera também.
  * - Depois de [onLogout] (Sair), os eventos do motor são ignorados até o próximo Entrar ([onLogin]).
  *
  * Threads: os eventos chegam na thread dos eventos do motor; os toques da tela e do Telecom, na principal. Nada
@@ -199,6 +209,8 @@ class CallManager(
     private val calls = ArrayList<Call>(2)   // as ligações de agora (até duas), na ordem em que começaram
     private var active: Call? = null          // a ativa, uma de [calls]: a do som e a de cima na tela (null: nenhuma)
     private var consulting: Consult? = null   // a consulta em andamento (null: nenhuma); sai com o fim de uma das duas
+    private var conference = false            // as duas de [calls] em conferência; sai com o Separar ou o fim de uma
+    private var conferenceSince = 0L          // quando o Juntar foi pedido (a tela conta o tempo desde ele)
     private var muted = false                 // o mudo do microfone (o do motor vale para as duas); sai com a última
     private var maxSeenId = 0                 // o maior id de ligação do motor já visto
     private var endTimer: Scheduled? = null
@@ -383,10 +395,18 @@ class CallManager(
 
     /**
      * Desliga a ativa: a feita que chama é cancelada, e a recebida que toca (só ela), recusada. Com a ativa já saindo
-     * (um segundo toque antes do fim dela), nada: a outra só sai pelo [hangup] com o id dela.
+     * (um segundo toque antes do fim dela), nada: a outra só sai pelo [hangup] com o id dela. Na conferência, desliga
+     * as duas (as que ainda não estão saindo), e nenhuma volta sozinha.
      */
     fun hangup() {
         act { effects ->
+            if (conference) {
+                val members = calls.filter { !it.ending }
+                if (members.isEmpty()) return@act
+                for (member in members) hangup(member, effects)
+                publish()
+                return@act
+            }
             val current = active?.takeIf { !it.ending } ?: return@act
             hangup(current, effects)
             publish()
@@ -395,7 +415,8 @@ class CallManager(
 
     /**
      * Desliga a ligação [callId], a ativa ou a outra (o pedido do Telecom para a Connection dela); a outra acaba sem
-     * mexer na ativa. [NO_ID] é a feita mais nova (a Connection dela ainda não sabe o id do motor).
+     * mexer na ativa. [NO_ID] é a feita mais nova (a Connection dela ainda não sabe o id do motor). Na conferência, só
+     * ela sai, e a outra fica como uma ligação normal quando o fim dela chega.
      */
     fun hangup(callId: Int) {
         act { effects ->
@@ -410,9 +431,13 @@ class CallManager(
         }
     }
 
-    /** Alternar: com as duas ligações em andamento, a outra vira a ativa e a ativa vai para a espera. */
+    /**
+     * Alternar: com as duas ligações em andamento, a outra vira a ativa e a ativa vai para a espera. Na conferência,
+     * nada (o Separar é o [split]).
+     */
     fun activate() {
         act { effects ->
+            if (conference) return@act
             val current = active ?: return@act
             val other = otherThan(current) ?: return@act
             swap(current, other, effects)
@@ -421,10 +446,10 @@ class CallManager(
 
     /**
      * Põe em espera ou retoma a ligação ativa (null: troca). Com as duas em andamento, a espera da ativa é o Alternar
-     * ([activate]): a outra volta.
+     * ([activate]): a outra volta. Na conferência, nada.
      */
     fun hold(on: Boolean? = null) {
-        act { effects -> holdActive(on, effects) }
+        act { effects -> if (!conference) holdActive(on, effects) }
     }
 
     /**
@@ -433,9 +458,22 @@ class CallManager(
      * Alternar daria o som à outra, e o Telecom tiraria o da ligação da operadora). A tela continua com ela em cima,
      * em espera. A que já está em espera fica como está. Até a retomada (pelo Telecom ou pela pessoa), ela não volta
      * sozinha quando outra acaba.
+     *
+     * Na conferência, o pedido chega pela Conference do Telecom (CallConference, com o id de uma das duas) ou pela
+     * Connection de uma delas: o motor nunca põe em espera uma ligação da conferência (ela ficaria meio desfeita nele),
+     * então primeiro ela é desfeita como no Separar ([split]: a última que entrou vai para a espera), e depois a que
+     * fica vai para a espera também, como acima. Com uma das duas saindo, nada (o fim dela desfaz a conferência).
      */
     fun holdFromTelecom(callId: Int) {
         act { effects ->
+            if (conference) {
+                val (first, last) = members() ?: return@act
+                if (first.id != callId && last.id != callId) return@act
+                separate(first, last, effects)
+                setHeld(first, true, effects)
+                first.heldByTelecom = true
+                return@act
+            }
             val current = talking()?.takeIf { it.id == callId } ?: return@act
             if (!current.held) setHeld(current, true, effects)
             current.heldByTelecom = true
@@ -485,15 +523,15 @@ class CallManager(
     /**
      * Transfere a ligação ativa, em andamento, para [raw] (sem consulta; spec 4.2): a ligação acaba quando o PABX
      * aceitar (o motor a desliga); se ele recusar ([onTransfer]), o aviso [TRANSFER_REFUSED]. false se não há o que
-     * transferir: sem a ativa em andamento, com outra transferência dela esperando o resultado, ou na consulta (lá, a
-     * transferência é o [completeTransfer]).
+     * transferir: sem a ativa em andamento, com outra transferência dela esperando o resultado, na consulta (lá, a
+     * transferência é o [completeTransfer]) ou na conferência.
      */
     fun transfer(raw: String): Boolean {
         val number = core.normalizeDialString(raw)
         if (number.isEmpty()) return false
         act { effects ->
             val current = talking() ?: return false
-            if (consulting != null || current.transferPending != null) return false
+            if (consulting != null || conference || current.transferPending != null) return false
             current.transferPending = Transfer.DIRECT
             val id = current.id
             effects += { gateway.transfer(id, number) }
@@ -552,10 +590,45 @@ class CallManager(
         }
     }
 
-    // A conferência (Task 10): ainda nada.
-    fun join() {}
+    /**
+     * Juntar (spec da 0.2, 7.4): com as duas ligações em andamento (a ativa e a outra, em espera), sem consulta, sem
+     * uma transferência de uma delas esperando o resultado e fora de uma conferência, o motor retoma a em espera e liga
+     * as duas entre si e ao som ([SipGateway.join]), e o Telecom as põe numa Conference
+     * ([TelecomAdapter.joinConference]). As duas ficam fora da espera, e a tela mostra a conferência desde agora.
+     */
+    fun join() {
+        act { effects ->
+            if (conference || consulting != null) return@act
+            val current = talking() ?: return@act
+            val other = otherThan(current)?.takeIf { it.phase == CallPhase.ACTIVE } ?: return@act
+            if (current.transferPending != null || other.transferPending != null) return@act
+            conference = true
+            conferenceSince = clock.nowMillis()
+            for (member in listOf(current, other)) {
+                member.held = false
+                member.heldByTelecom = false
+            }
+            publish()
+            val id = current.id
+            val otherId = other.id
+            effects += { gateway.join(id, otherId) }
+            effects += { telecom.joinConference(id, otherId) }
+        }
+    }
 
-    fun split() {}
+    /**
+     * Separar (spec da 0.2, 7.4): a última que entrou vai para a espera, e a outra fica a ativa, em cima (o motor desfaz
+     * as ligações entre as duas: [SipGateway.split]); a Conference sai do Telecom, e as Connections voltam a mostrar a
+     * espera e a ativa. Fora da conferência, ou com uma das duas saindo, nada.
+     */
+    fun split() {
+        act { effects ->
+            val (first, last) = members() ?: return@act
+            separate(first, last, effects)
+            val id = first.id
+            effects += { telecom.setActive(id) }
+        }
+    }
 
     /** Sair: as ligações de agora acabam, e daqui em diante os eventos do motor são ignorados (até [onLogin]). */
     fun onLogout() {
@@ -706,14 +779,14 @@ class CallManager(
     }
 
     // Com a trava: a ligação [current] acabou com o código [code]: Recentes, notificação, aviso e Telecom. Se era a
-    // ativa, a outra (se há) passa a ser; em andamento (em espera), ela volta sozinha: o motor a retoma e o Telecom a
-    // ativa. Mas não se a ativa também estava em espera (as duas, pelo Telecom), nem se o Telecom pôs a outra em
-    // espera: o som é de outra ligação (a da operadora), e a outra espera o pedido de retomada dele. A outra que cai
-    // do outro lado, já em andamento e com a ativa continuando, deixa o aviso "<nome ou número> desligou". Com ela,
-    // a consulta acaba ([leaveConsult]).
+    // ativa, a outra (se há) passa a ser, e volta sozinha ([resumeNext]). A outra que cai do outro lado, já em
+    // andamento e com a ativa continuando, deixa o aviso "<nome ou número> desligou", como uma das duas da conferência
+    // (qualquer uma). Com ela, a consulta ([leaveConsult]) e a conferência ([leaveConference]) acabam; a outra da
+    // conferência fica como uma ligação normal ([stayAfterConference]).
     private fun end(current: Call, code: Int, effects: MutableList<() -> Unit>, cause: Int? = null, quiet: Boolean = false) {
         val wasActive = current === active
         val colleague = leaveConsult(current)
+        val fromConference = leaveConference(effects)
         calls.remove(current)
         if (wasActive) active = calls.firstOrNull()
         val id = current.id
@@ -750,7 +823,7 @@ class CallManager(
                 showEndMessage(if (colleague) "${current.name.ifEmpty { current.number }}: $message" else message)
             }
         }
-        if (!wasActive && received && !current.localHangup && !quiet && calls.any { !it.ending }) {
+        if ((!wasActive || fromConference) && received && !current.localHangup && !quiet && calls.any { !it.ending }) {
             showEndMessage("${current.name.ifEmpty { current.number }} desligou")
         }
         if (muted && calls.isEmpty()) {
@@ -759,14 +832,67 @@ class CallManager(
         }
         record(Recent(current.number, current.name, kind, current.startMillis, duration), effects)
         effects += { telecom.disconnect(id, endCause) }
-        val next = active
-        val resumes = wasActive && !current.held && !loggedOut
-        if (resumes && next != null && next.phase == CallPhase.ACTIVE && !next.ending && !next.heldByTelecom) {
-            next.held = false
-            val nextId = next.id
-            effects += { gateway.activate(nextId) }
-            effects += { telecom.setActive(nextId) }
+        when {
+            fromConference -> stayAfterConference(effects)
+            wasActive && !current.held -> resumeNext(effects)
         }
+    }
+
+    // Com a trava: a ativa acabou (e não estava em espera): a outra, a ativa agora, em andamento (em espera), volta
+    // sozinha: o motor a retoma e o Telecom a ativa. Mas não se o Telecom a pôs em espera (o som é de outra ligação, a
+    // da operadora, e ela espera o pedido de retomada dele), nem depois de Sair. (Com a ativa também em espera, as duas
+    // pelo Telecom, nada volta: o [end] nem chama.)
+    private fun resumeNext(effects: MutableList<() -> Unit>) {
+        val next = active ?: return
+        if (loggedOut || next.phase != CallPhase.ACTIVE || next.ending || next.heldByTelecom) return
+        next.held = false
+        val id = next.id
+        effects += { gateway.activate(id) }
+        effects += { telecom.setActive(id) }
+    }
+
+    // Com a trava: uma ligação da conferência acabou (do outro lado, desligada aqui ou com Sair); a conferência acaba
+    // aí: a Conference sai do Telecom antes de a Connection dela acabar. true se havia conferência.
+    private fun leaveConference(effects: MutableList<() -> Unit>): Boolean {
+        if (!conference) return false
+        conference = false
+        conferenceSince = 0L
+        effects += { telecom.splitConference() }
+        return true
+    }
+
+    // Com a trava: a outra da conferência que acabou (a ativa agora) segue como uma ligação normal: o motor já a deixa
+    // com o som (nada de activate), e o Telecom a ativa. Não se ela também está saindo (Desligar), nem depois de Sair.
+    private fun stayAfterConference(effects: MutableList<() -> Unit>) {
+        val next = active ?: return
+        if (loggedOut || next.phase != CallPhase.ACTIVE || next.ending) return
+        next.held = false
+        val id = next.id
+        effects += { telecom.setActive(id) }
+    }
+
+    // Com a trava: o Separar das duas da conferência: ela acaba, [last] (a última que entrou) vai para a espera e
+    // [first] fica a ativa, em cima. O motor desfaz as ligações entre as duas e põe [last] em espera (o split); a
+    // Conference sai do Telecom antes de a Connection de [last] mostrar a espera (quem chama decide a de [first]).
+    private fun separate(first: Call, last: Call, effects: MutableList<() -> Unit>) {
+        conference = false
+        conferenceSince = 0L
+        active = first
+        first.held = false
+        last.held = true
+        publish()
+        val firstId = first.id
+        val lastId = last.id
+        effects += { gateway.split(firstId, lastId) }
+        effects += { telecom.splitConference() }
+        effects += { telecom.setOnHold(lastId) }
+    }
+
+    // Com a trava: as duas da conferência, na ordem em que entraram (a primeira e a última), com as duas de pé; null
+    // fora da conferência ou com uma delas saindo.
+    private fun members(): Pair<Call, Call>? {
+        if (!conference || calls.size != 2 || calls.any { it.ending }) return null
+        return calls[0] to calls[1]
     }
 
     // Com a trava: [current] acabou; se era da consulta, ela acaba aí (o cliente volta pela volta sozinha do [end], e o
@@ -813,13 +939,21 @@ class CallManager(
     private fun waitingForTelecom(): Call? = calls.firstOrNull { !it.incoming && !it.dialRequested && !it.ending }
 
     // Com a trava: o estado de agora vai à fila das publicações (entregue depois de soltar a trava, em [deliver]): a
-    // ligação da tela e, com duas, a outra e a consulta.
+    // ligação da tela e, com duas, a outra, a consulta e a conferência (só com as duas de pé: com uma saindo, a tela já
+    // mostra a outra sozinha).
     private fun publish() {
         val ui = shown()?.let { main ->
-            val other = otherThan(main)?.let { SecondUi(it.id, it.number, it.name, secondKind(it)) }
+            val other = otherThan(main)
+            val together = conference && other != null
+            val second = other?.let {
+                SecondUi(it.id, it.number, it.name, if (together) SecondKind.ACTIVE else secondKind(it))
+            }
             CallUi(
                 main.id, main.number, main.name, main.incoming, main.phase, main.activeSince, main.held, muted,
-                second = other, consult = consultUi(),
+                second = second,
+                conference = together,
+                consult = consultUi(),
+                conferenceSinceMillis = if (together) conferenceSince else 0,
             )
         }
         publications.addLast { mutableState.value = ui }
@@ -830,7 +964,7 @@ class CallManager(
         consulting?.takeIf { !it.client.ending && !it.colleague.ending }
             ?.let { ConsultUi(it.colleague.id, colleagueActive = it.colleague === active) }
 
-    // A outra de duas, para a tela: tocando ou em espera (a feita que chama é sempre a ativa).
+    // A outra de duas, fora da conferência, para a tela: tocando ou em espera (a feita que chama é sempre a ativa).
     private fun secondKind(call: Call) = if (call.phase == CallPhase.RINGING) SecondKind.RINGING else SecondKind.HELD
 
     // Com a trava: o aviso vai à fila das publicações.

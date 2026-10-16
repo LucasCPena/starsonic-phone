@@ -59,9 +59,10 @@ import kotlinx.coroutines.delay
 
 /**
  * O que a tela de chamada pede (ao CallManager e ao Telecom). Atender e Recusar valem para a recebida que toca (a
- * única, ou a segunda na faixa); Desligar, Espera, Teclado e Transferir (o Transferir agora), para a ativa; [activate]
- * é o Alternar, e [dial] faz a Nova ligação (false: não ligou). [consult] é o Consultar (false: não ligou), e
- * [completeTransfer] e [cancelConsult], o Concluir transferência e o Cancelar da consulta.
+ * única, ou a segunda na faixa); Desligar, Espera, Teclado e Transferir (o Transferir agora), para a ativa (na
+ * conferência, Desligar desliga as duas); [activate] é o Alternar, e [dial] faz a Nova ligação (false: não ligou).
+ * [consult] é o Consultar (false: não ligou), e [completeTransfer] e [cancelConsult], o Concluir transferência e o
+ * Cancelar da consulta. [join] e [split] são o Juntar e o Separar da conferência.
  */
 class CallActions(
     val answer: () -> Unit,
@@ -97,6 +98,10 @@ class CallActions(
  * cima e o cliente no cartão "Em espera · transferência" (depois do Alternar, o cliente em cima e o colega "Em
  * espera"), com Concluir transferência (com o colega já atendido), Alternar e Cancelar no lugar de Espera,
  * Transferir e Nova ligação.
+ *
+ * Com as duas em andamento (sem consulta), Juntar faz a conferência (spec da 0.2, 7.4): o título "Conferência", os
+ * dois nomes (ou números) e o tempo desde o Juntar, com Mudo, Teclado, o áudio, Separar e Desligar (as duas); Separar
+ * volta aos dois cartões, com a última que entrou em espera.
  */
 @Composable
 fun CallScreen(call: CallUi?, endMessage: String, routes: AudioRoutes, actions: CallActions) {
@@ -143,7 +148,12 @@ fun CallScreen(call: CallUi?, endMessage: String, routes: AudioRoutes, actions: 
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         if (other?.kind == SecondKind.RINGING) SecondCallBar(other, actions)
-        Header(shown, call, endMessage, if (keypad) digits else "")
+        val conference = call?.takeIf { it.conference }
+        if (conference != null) {
+            ConferenceHeader(conference, endMessage, if (keypad) digits else "")
+        } else {
+            Header(shown, call, endMessage, if (keypad) digits else "")
+        }
         // Na consulta com o colega em cima, o cartão de baixo é o cliente.
         val heldLabel = if (call?.consult?.colleagueActive == true) ON_HOLD_TRANSFER else ON_HOLD
         if (other?.kind == SecondKind.HELD) HeldCard(other, heldLabel)
@@ -258,6 +268,42 @@ private fun Header(shown: CallUi?, call: CallUi?, endMessage: String, digits: St
     }
 }
 
+// A conferência: o título "Conferência", os dois nomes (ou números) e o tempo desde o Juntar (ou os dígitos do
+// teclado); com o aviso de 2 s embaixo, como no [Header].
+@Composable
+private fun ConferenceHeader(call: CallUi, endMessage: String, digits: String) {
+    Column(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            CONFERENCE,
+            color = Color.White,
+            style = MaterialTheme.typography.headlineMedium,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.testTag("conferencia"),
+        )
+        Spacer(Modifier.height(8.dp))
+        val parties = listOfNotNull(call.name.ifEmpty { call.number }, call.second?.let { it.name.ifEmpty { it.number } })
+        for (party in parties) {
+            Text(party, color = Color.White, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
+        }
+        Spacer(Modifier.height(8.dp))
+        if (digits.isNotEmpty()) {
+            Text(digits, color = Color.White, style = MaterialTheme.typography.titleLarge)
+        } else {
+            Text(elapsed(call.conferenceSinceMillis), color = StarsonicCyan, style = MaterialTheme.typography.titleMedium)
+        }
+        if (endMessage.isNotEmpty()) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                endMessage,
+                color = Color.White,
+                style = MaterialTheme.typography.bodyLarge,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.testTag("aviso-ligacao"),
+            )
+        }
+    }
+}
+
 // A faixa da segunda ligação, que toca: "Ligação de <nome ou número>", com Recusar (em vermelho) e Atender (em
 // verde), como a notificação. Os dois valem para ela (o CallManager atende ou recusa a que toca).
 @Composable
@@ -331,21 +377,28 @@ private fun status(call: CallUi): String = when (call.phase) {
     CallPhase.DIALING -> CALLING
     CallPhase.CONNECTING -> CONNECTING
     CallPhase.ACTIVE -> {
-        var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
-        LaunchedEffect(call.activeSinceMillis) {
-            while (true) {
-                now = System.currentTimeMillis()
-                delay(1_000)
-            }
-        }
-        val time = duration(((now - call.activeSinceMillis) / 1000).toInt().coerceAtLeast(0))
+        val time = elapsed(call.activeSinceMillis)
         if (call.held) "$time · $ON_HOLD" else time
     }
 }
 
+// O tempo desde [sinceMillis], que anda a cada segundo.
+@Composable
+private fun elapsed(sinceMillis: Long): String {
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(sinceMillis) {
+        while (true) {
+            now = System.currentTimeMillis()
+            delay(1_000)
+        }
+    }
+    return duration(((now - sinceMillis) / 1000).toInt().coerceAtLeast(0))
+}
+
 // Os botões da ligação: Mudo, Teclado e o áudio; Espera (ou Retomar), Transferir e a Nova ligação (com uma ligação
-// só, em andamento) ou, com duas, Alternar (com as duas em andamento: a feita que chama ainda não alterna). Na
-// consulta: Concluir transferência e Alternar (com o colega já atendido) e Cancelar.
+// só, em andamento) ou, com duas, Alternar e Juntar (com as duas em andamento: a feita que chama ainda não alterna nem
+// junta). Na consulta: Concluir transferência e Alternar (com o colega já atendido) e Cancelar. Na conferência, só
+// Separar.
 @Composable
 private fun Controls(
     call: CallUi,
@@ -382,21 +435,26 @@ private fun Controls(
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
             val both = active && other?.kind == SecondKind.HELD   // as duas em andamento
-            if (call.consult != null) {
+            if (call.conference) {
+                Toggle(R.drawable.ic_separar, SPLIT, false, true, "separar", actions.split)
+            } else if (call.consult != null) {
                 Toggle(
                     104.dp, R.drawable.ic_concluir, COMPLETE_TRANSFER, false, both, "concluir-transferencia",
                     actions.completeTransfer,
                 )
                 Toggle(R.drawable.ic_alternar, SWAP, false, both, "alternar", actions.activate)
                 Toggle(R.drawable.ic_desligar, CANCEL, false, true, "cancelar-consulta", actions.cancelConsult)
+            } else if (other != null && other.kind != SecondKind.RINGING) {
+                // Quatro botões: um pouco mais estreitos, para caber nos celulares de 320 dp.
+                val hold = if (call.held) RESUME else HOLD
+                Toggle(TWO_CALLS_WIDTH, R.drawable.ic_espera, hold, call.held, active, "espera", actions.hold)
+                Toggle(TWO_CALLS_WIDTH, R.drawable.ic_transferir, TRANSFER, false, active, "transferir", onTransfer)
+                Toggle(TWO_CALLS_WIDTH, R.drawable.ic_alternar, SWAP, false, both, "alternar", actions.activate)
+                Toggle(TWO_CALLS_WIDTH, R.drawable.ic_juntar, JOIN, false, both, "juntar", actions.join)
             } else {
                 Toggle(R.drawable.ic_espera, if (call.held) RESUME else HOLD, call.held, active, "espera", actions.hold)
                 Toggle(R.drawable.ic_transferir, TRANSFER, false, active, "transferir", onTransfer)
-                if (other != null && other.kind != SecondKind.RINGING) {
-                    Toggle(R.drawable.ic_alternar, SWAP, false, both, "alternar", actions.activate)
-                } else {
-                    Toggle(R.drawable.ic_nova_ligacao, NEW_CALL, false, active && other == null, "nova-ligacao", onNewCall)
-                }
+                Toggle(R.drawable.ic_nova_ligacao, NEW_CALL, false, active && other == null, "nova-ligacao", onNewCall)
             }
         }
     }
@@ -535,6 +593,9 @@ private const val TRANSFER_NOW = "Transferir agora"
 private const val CONSULT = "Consultar"
 private const val COMPLETE_TRANSFER = "Concluir transferência"
 private const val SWAP = "Alternar"
+private const val JOIN = "Juntar"
+private const val SPLIT = "Separar"
+private const val CONFERENCE = "Conferência"
 private const val NEW_CALL = "Nova ligação"
 private const val DIAL = "Ligar"
 private const val CALL_FROM = "Ligação de"
@@ -548,3 +609,6 @@ private const val ON_HOLD_TRANSFER = "Em espera · transferência"
 
 // O cinza de "Em espera" no cartão da outra ligação, sobre o azul da tela.
 private val HeldGray = Color.White.copy(alpha = 0.6f)
+
+// A largura dos botões da fileira de duas ligações (Espera, Transferir, Alternar e Juntar).
+private val TWO_CALLS_WIDTH = 72.dp
