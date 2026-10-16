@@ -1,5 +1,7 @@
 package br.com.starsonic.phone.call
 
+import br.com.starsonic.phone.contacts.Contact
+import br.com.starsonic.phone.contacts.FakeContactsSource
 import br.com.starsonic.phone.data.CallKind
 import br.com.starsonic.phone.data.Recent
 import br.com.starsonic.phone.data.RecentsStore
@@ -34,8 +36,12 @@ class CallManagerTest {
     private val clock = CallClock()
     private var registered = true
     private val recents by lazy { RecentsStore(File(folder.root, "recentes.json")) }
+    private val contacts = FakeContactsSource()
     private val calls by lazy {
-        CallManager(gateway, telecom, recents, notifier, CallCore(), clock, { registered }, Executor { it.run() })
+        CallManager(
+            gateway, telecom, recents, notifier, CallCore(), clock, { registered }, contacts, { raw -> raw },
+            Executor { it.run() },
+        )
     }
 
     // Uma ligação chega e toca (o motor responde 180 sozinho).
@@ -1720,6 +1726,59 @@ class CallManagerTest {
         assertTrue(calls.state.value!!.conference)
         assertEquals(listOf(1, id, 1, id), telecom.active)
         assertEquals("a outra fica HOLDING para o Telecom", listOf(1, id, id, 1), telecom.held)
+    }
+
+    @Test
+    fun `the phone contact names the calls, the messages and Telecom, and the Recents keep the server name`() {
+        contacts.contacts += Contact("Maria Silva", listOf("3001"))
+        contacts.contacts += Contact("João Souza", listOf("3002"))
+        val start = clock.nowMillis()
+        ring(1, "3001", "Cliente Teste")
+        assertEquals(
+            "o Telecom (a notificação) recebe o nome do contato",
+            Triple(1, "3001", "Maria Silva"),
+            telecom.incoming.single(),
+        )
+        assertEquals(IncomingRequest(1, "3001", "Maria Silva"), calls.ringing())
+        answerCall(1)
+        // A segunda, de outro contato: a faixa e, atendida, o cartão de cima; a primeira no cartão "Em espera".
+        ring(2, "3002", "Fulano")
+        assertEquals(SecondUi(2, "3002", "João Souza", SecondKind.RINGING), calls.state.value?.second)
+        answerCall(2)
+        assertEquals("João Souza", calls.state.value?.name)
+        assertEquals(SecondUi(1, "3001", "Maria Silva", SecondKind.HELD), calls.state.value?.second)
+        // A em espera cai do outro lado: o aviso com o nome do contato.
+        calls.onCallState(1, CallState.DISCONNECTED, 200)
+        assertEquals("Maria Silva desligou", calls.endMessage.value)
+        assertEquals(Recent("3001", "Cliente Teste", CallKind.RECEBIDA, start, 0), recents.list().single())
+        assertEquals("cada número procurado uma vez, quando a ligação chegou", listOf("3001", "3002"), contacts.lookups)
+    }
+
+    @Test
+    fun `a missed call from a phone contact names the contact`() {
+        contacts.contacts += Contact("Maria Silva", listOf("3001"))
+        ring(1, "3001", "Cliente Teste")
+        calls.onCallState(1, CallState.DISCONNECTED, 487)
+        calls.onRejectedBusy("3001", "Cliente Teste")
+        calls.onRejectedBusy("3005", "Fulano")
+        assertEquals(
+            listOf("Ligação perdida de Maria Silva", "Ligação perdida de Maria Silva", "Ligação perdida de 3005"),
+            notifier.missed,
+        )
+        assertEquals(listOf("Cliente Teste", "Cliente Teste", "Fulano"), recents.list().map { it.name })
+    }
+
+    @Test
+    fun `an outgoing call shows the phone contact name`() {
+        contacts.contacts += Contact("Maria Silva", listOf("3001"))
+        val id = dialOut("3001")
+        assertEquals("Maria Silva", calls.state.value?.name)
+        calls.onCallState(id, CallState.CONFIRMED, 200)
+        assertEquals("Maria Silva", calls.state.value?.name)
+        calls.hangup()
+        calls.onCallState(id, CallState.DISCONNECTED, 200)
+        assertEquals("os Recentes guardam o nome que a central mandou (nenhum)", "", recents.list().single().name)
+        assertEquals(listOf("3001"), contacts.lookups)
     }
 
     // Outra thread tenta usar o CallManager por até 1 s: true se não conseguiu (a trava estava presa).

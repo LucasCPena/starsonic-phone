@@ -10,7 +10,8 @@
 - O perfil (assets/perfil.ini) com a seção [conta] e sem comentários.
 - `aapt2 dump badging`: o pacote; versionName e versionCode da versão (version_code.py); minSdkVersion:'28' (o aapt
   antigo escrevia sdkVersion); targetSdkVersion:'36'; application-label:'Starsonic Phone'; a activity de entrada com
-  label='Starsonic'; e a permissão de instalar apps (o atualizador).
+  label='Starsonic'; e as permissões (uses-permission) exatamente as de PERMISSIONS, nem uma a mais nem uma a menos
+  (entre elas a de instalar apps, do atualizador, e a dos contatos da 0.2).
 - `apksigner verify --print-certs`: a assinatura vale e tem um assinante só, com o certificado do SHA-256 de
   --cert-sha256 (build/android/signing-cert.sha256 na publicação).
 - Com --release (o APK de publicação): sem application-debuggable, e o manifesto (`aapt2 dump xmltree`) sem
@@ -49,7 +50,31 @@ APP_LABEL = "Starsonic Phone"
 LAUNCHER_LABEL = "Starsonic"
 MIN_SDK = "28"
 TARGET_SDK = "36"
-INSTALL_PERMISSION = "android.permission.REQUEST_INSTALL_PACKAGES"
+# As permissões que o APK pede (uses-permission), todas: as do manifesto do app
+# (android/app/src/main/AndroidManifest.xml) e a que o androidx.core acrescenta (a dos receptores registrados no código,
+# que só o próprio app tem). A 0.2 só acrescenta a dos contatos (READ_CONTACTS, spec da 0.2, 11.2); uma permissão nova
+# de uma biblioteca também aparece aqui.
+PERMISSIONS = frozenset((
+    "android.permission.INTERNET",
+    "android.permission.ACCESS_NETWORK_STATE",
+    "android.permission.RECORD_AUDIO",
+    "android.permission.MODIFY_AUDIO_SETTINGS",
+    "android.permission.POST_NOTIFICATIONS",
+    "android.permission.FOREGROUND_SERVICE",
+    "android.permission.FOREGROUND_SERVICE_SPECIAL_USE",
+    "android.permission.FOREGROUND_SERVICE_PHONE_CALL",
+    "android.permission.FOREGROUND_SERVICE_MICROPHONE",
+    "android.permission.MANAGE_OWN_CALLS",
+    "android.permission.USE_FULL_SCREEN_INTENT",
+    "android.permission.RECEIVE_BOOT_COMPLETED",
+    "android.permission.WAKE_LOCK",
+    "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
+    "android.permission.VIBRATE",
+    "android.permission.REQUEST_INSTALL_PACKAGES",   # o atualizador (spec 7.6.5)
+    "android.permission.READ_CONTACTS",              # a aba Contatos e o nome nas ligações (0.2)
+    "br.com.starsonic.phone.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",   # do androidx.core
+))
+_PERMISSION_RE = re.compile(r"^uses-permission(?:-sdk-\d+)?: name='([^']*)'")
 FORBIDDEN = "MicroSIP"
 NEEDLES = (FORBIDDEN.encode("utf-8"), FORBIDDEN.encode("utf-16-le"))
 PROFILE = "assets/perfil.ini"
@@ -211,7 +236,7 @@ def check_profile(apk):
 
 
 def check_badging(text, version, release):
-    """O `aapt2 dump badging`: pacote, versão, SDKs, nomes, a permissão do atualizador e, no release, sem debuggable."""
+    """O `aapt2 dump badging`: pacote, versão, SDKs, nomes, as permissões e, no release, sem debuggable."""
     lines = [line.rstrip() for line in text.splitlines()]
     package = next((line for line in lines if line.startswith("package:")), None)
     if package is None:
@@ -239,8 +264,13 @@ def check_badging(text, version, release):
         if label is None or label.group(1) != LAUNCHER_LABEL:
             errors.append("a activity de entrada tem label='%s' (esperado label='%s', o nome embaixo do ícone)"
                           % (label.group(1) if label else "", LAUNCHER_LABEL))
-    if not any(line.startswith("uses-permission: name='%s'" % INSTALL_PERMISSION) for line in lines):
-        errors.append("o APK não pede a permissão %s (o atualizador precisa dela)" % INSTALL_PERMISSION)
+    requested = {match.group(1) for match in map(_PERMISSION_RE.match, lines) if match}
+    missing = sorted(PERMISSIONS - requested)
+    extra = sorted(requested - PERMISSIONS)
+    if missing or extra:
+        parts = (["falta(m) %s" % ", ".join(missing)] if missing else []) + \
+                (["sobra(m) %s (permissão nova: só com a lista do check_apk.py)" % ", ".join(extra)] if extra else [])
+        errors.append("as permissões do APK (uses-permission) não são as esperadas: %s" % "; ".join(parts))
     if release and "application-debuggable" in lines:
         errors.append("o APK de publicação está marcado como application-debuggable")
     return errors

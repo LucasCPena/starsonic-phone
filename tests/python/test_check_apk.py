@@ -77,7 +77,23 @@ BADGING = textwrap.dedent("""\
     minSdkVersion:'28'
     targetSdkVersion:'36'
     uses-permission: name='android.permission.INTERNET'
+    uses-permission: name='android.permission.ACCESS_NETWORK_STATE'
+    uses-permission: name='android.permission.RECORD_AUDIO'
+    uses-permission: name='android.permission.MODIFY_AUDIO_SETTINGS'
+    uses-permission: name='android.permission.POST_NOTIFICATIONS'
+    uses-permission: name='android.permission.FOREGROUND_SERVICE'
+    uses-permission: name='android.permission.FOREGROUND_SERVICE_SPECIAL_USE'
+    uses-permission: name='android.permission.FOREGROUND_SERVICE_PHONE_CALL'
+    uses-permission: name='android.permission.FOREGROUND_SERVICE_MICROPHONE'
+    uses-permission: name='android.permission.MANAGE_OWN_CALLS'
+    uses-permission: name='android.permission.USE_FULL_SCREEN_INTENT'
+    uses-permission: name='android.permission.RECEIVE_BOOT_COMPLETED'
+    uses-permission: name='android.permission.WAKE_LOCK'
+    uses-permission: name='android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS'
+    uses-permission: name='android.permission.VIBRATE'
     uses-permission: name='android.permission.REQUEST_INSTALL_PACKAGES'
+    uses-permission: name='android.permission.READ_CONTACTS'
+    uses-permission: name='br.com.starsonic.phone.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION'
     application-label:'Starsonic Phone'
     application-icon-160:'res/mipmap-anydpi-v26/ic_launcher.xml'
     application: label='Starsonic Phone' icon='res/mipmap-anydpi-v26/ic_launcher.xml'
@@ -363,6 +379,30 @@ class BadgingTest(unittest.TestCase):
                 errors = check_apk.check_badging(text, VERSION, release=True)
                 self.assertEqual(len(errors), 1, errors)
                 self.assertIn(expected, errors[0])
+
+    def test_the_permissions_are_exactly_the_expected_ones(self):
+        without_contacts = BADGING.replace("uses-permission: name='android.permission.READ_CONTACTS'\n", "")
+        errors = check_apk.check_badging(without_contacts, VERSION, release=True)
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("falta(m) android.permission.READ_CONTACTS", errors[0])
+        extra = BADGING.replace("application-label:", "uses-permission: name='android.permission.READ_CALL_LOG'\n"
+                                "uses-permission-sdk-23: name='android.permission.CAMERA'\napplication-label:")
+        errors = check_apk.check_badging(extra, VERSION, release=True)
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("sobra(m) android.permission.CAMERA, android.permission.READ_CALL_LOG", errors[0])
+        both = without_contacts.replace("application-label:", "uses-permission: name='android.permission.CAMERA'\n"
+                                        "application-label:")
+        errors = check_apk.check_badging(both, VERSION, release=True)
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("falta(m) android.permission.READ_CONTACTS; sobra(m) android.permission.CAMERA", errors[0])
+
+    def test_permission_attributes_and_implied_permissions(self):
+        # O maxSdkVersion não muda o nome, e as permissões que o aapt deduz (uses-implied-permission) não são pedidas.
+        text = BADGING.replace("name='android.permission.VIBRATE'",
+                               "name='android.permission.VIBRATE' maxSdkVersion='40'")
+        text = text.replace("application-label:", "uses-implied-permission: name='android.permission.READ_CALL_LOG' "
+                            "reason='targetSdkVersion < 16 and requested READ_CONTACTS'\napplication-label:")
+        self.assertEqual(check_apk.check_badging(text, VERSION, release=True), [])
 
     def test_the_launcher_activity_must_be_there(self):
         text = "".join(line for line in BADGING.splitlines(True) if not line.startswith("launchable-activity"))

@@ -107,8 +107,11 @@ class Emulator(private val compose: ComposeTestRule) {
     private fun logcatLines(filter: String): List<String> =
         shell("logcat -d -v brief -s $filter").filter { !it.startsWith("-----") }
 
-    // Um comando no shell do aparelho; a saída, linha a linha (lida até o fim: o comando acabou).
-    private fun shell(command: String): List<String> {
+    /**
+     * Um comando no shell do aparelho (com o usuário shell, que pode, por exemplo, gravar na agenda); a saída, linha a
+     * linha (lida até o fim: o comando acabou). O comando é separado nos espaços, sem um shell: nada de aspas.
+     */
+    fun shell(command: String): List<String> {
         val output = InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(command)
         return ParcelFileDescriptor.AutoCloseInputStream(output).bufferedReader().use { it.readLines() }
     }

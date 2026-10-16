@@ -8,6 +8,8 @@ import br.com.starsonic.phone.call.AndroidTelecom
 import br.com.starsonic.phone.call.CallLog
 import br.com.starsonic.phone.call.CallManager
 import br.com.starsonic.phone.call.IncomingCallNotifier
+import br.com.starsonic.phone.contacts.AndroidContactsSource
+import br.com.starsonic.phone.contacts.ContactsSource
 import br.com.starsonic.phone.core.Clock
 import br.com.starsonic.phone.core.CoreRules
 import br.com.starsonic.phone.core.DeviceClock
@@ -88,11 +90,34 @@ class App : Application() {
 
     /**
      * As ligações: os avisos do motor chegam pela conexão; só liga com a conta do serviço registrada
-     * ([Connection.registered]).
+     * ([Connection.registered]). O nome de cada ligação vem da agenda do celular quando o número está nela.
      */
     val calls: CallManager by lazy {
-        CallManager(connection, telecom, recents, notifier, core, clock, { connection.registered.value })
+        CallManager(
+            connection, telecom, recents, notifier, core, clock, { connection.registered.value }, contacts, dialRule,
+        )
     }
+
+    /** A agenda do celular (só para ler: nada dela fica no app). */
+    val contacts: ContactsSource by lazy { AndroidContactsSource(this) }
+
+    // O ddi e o prefixo externo do perfil, para os números dos contatos. Lê o disco (o perfil) na primeira vez.
+    private val contactDial: Pair<String, String> by lazy { core.profileDial(profileText) }
+
+    /**
+     * O número de um contato do celular como ele é discado (spec da 0.2, 4.2): ContactDialString com o ddi e o prefixo
+     * externo do perfil ("" se não sobra número). O perfil é lido na primeira vez ([contactDialProfile]).
+     */
+    val dialRule: (String) -> String = { raw ->
+        val (ddi, prefix) = contactDial
+        core.contactDialString(raw, ddi, prefix)
+    }
+
+    /**
+     * O ddi e o prefixo externo do perfil da [dialRule]. Lê o disco na primeira vez: a abertura do app o chama fora da
+     * thread principal, e a regra (que roda num toque) já o encontra lido.
+     */
+    fun contactDialProfile(): Pair<String, String> = contactDial
 
     /** O perfil das contas (branding/perfil.ini, que vai nos assets sem os comentários). Lê o disco. */
     val profileText: String by lazy { assets.open("perfil.ini").use { String(it.readBytes(), Charsets.UTF_8) } }

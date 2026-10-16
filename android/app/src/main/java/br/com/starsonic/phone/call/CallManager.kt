@@ -1,5 +1,6 @@
 package br.com.starsonic.phone.call
 
+import br.com.starsonic.phone.contacts.ContactsSource
 import br.com.starsonic.phone.core.Clock
 import br.com.starsonic.phone.core.CoreRules
 import br.com.starsonic.phone.core.Scheduled
@@ -179,6 +180,8 @@ class CallManager(
     private val core: CoreRules,
     private val clock: Clock,
     private val registered: () -> Boolean,
+    private val contacts: ContactsSource,
+    private val dialRule: (String) -> String,
     private val background: Executor = Executors.newSingleThreadExecutor { task ->
         Thread(task, "starsonic-ligacao").apply { isDaemon = true }
     },
@@ -292,6 +295,8 @@ class CallManager(
      * andamento, duas, depois de Sair, ou sem registro (aí [endMessage] mostra "Sem conexão…").
      */
     fun dial(raw: String): Boolean = place(raw, consult = false)
+
+    fun dialContact(number: String): Boolean = dial(number)
 
     /**
      * O Consultar (spec da 0.2, 7.3): liga para o colega [raw] como a Nova ligação do [dial], com a ligação em

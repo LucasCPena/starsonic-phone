@@ -13,6 +13,7 @@ on:
       - 'starsonic/**'
       - 'tests/phone/**'
       - 'tests/smoke/fake_registrar.py'
+      - 'tests/smoke/test_fake_registrar.py'
       - 'tests/python/**'
       - 'tests/test_support.h'
       - 'build/android/**'
@@ -26,6 +27,7 @@ on:
       - 'starsonic/**'
       - 'tests/phone/**'
       - 'tests/smoke/fake_registrar.py'
+      - 'tests/smoke/test_fake_registrar.py'
       - 'tests/python/**'
       - 'tests/test_support.h'
       - 'build/android/**'
@@ -316,6 +318,7 @@ jobs:
             bash build/android/check-boot.sh 5070 2001
             bash build/android/run-emulator-tests.sh "$APK" "$TEST_APK" br.com.starsonic.phone.CallFlowTest -e registrar 10.0.2.2 -e porta 5070 -e senha senha-certa
             bash build/android/run-emulator-tests.sh "$APK" "$TEST_APK" br.com.starsonic.phone.AboutAndAccountTest -e registrar 10.0.2.2 -e porta 5070 -e senha senha-certa
+            bash build/android/run-emulator-tests.sh "$APK" "$TEST_APK" br.com.starsonic.phone.ContactsFlowTest -e registrar 10.0.2.2 -e porta 5070 -e senha senha-certa
             bash build/android/run-update-test.sh "$APK" "$TEST_APK" -e registrar 10.0.2.2 -e porta 5070 -e senha senha-certa
 
       # O registrador guarda o User-Agent do último REGISTER e o protocolo do último REGISTER aceito. O
