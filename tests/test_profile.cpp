@@ -97,6 +97,53 @@ TEST_CASE("codecs are trimmed and normalized to the canonical spelling") {
     CHECK(profile.global.codecs == codecs);
 }
 
+TEST_CASE("ParseProfile reads ddi and prefixo_externo") {
+    Profile profile;
+    REQUIRE(ParseProfile(base + L"ddi=351\nprefixo_externo=0\n", &profile).ok);
+    CHECK(profile.account.ddi == L"351");
+    CHECK(profile.account.externalPrefix == L"0");
+    REQUIRE(ParseProfile(base + L"ddi=55\nprefixo_externo=0\n", &profile).ok);
+    CHECK(profile.account.ddi == L"55");
+    CHECK(profile.account.externalPrefix == L"0");
+
+    REQUIRE(ParseProfile(base, &profile).ok);   // sem as chaves: ddi do Brasil, sem prefixo
+    CHECK(profile.account.ddi == L"55");
+    CHECK(profile.account.externalPrefix == L"");
+
+    REQUIRE(ParseProfile(base + L"prefixo_externo= ; sem prefixo\n", &profile).ok);
+    CHECK(profile.account.externalPrefix == L"");
+    REQUIRE(ParseProfile(base + L"prefixo_externo=0*#9\n", &profile).ok);
+    CHECK(profile.account.externalPrefix == L"0*#9");
+    REQUIRE(ParseProfile(base + L"prefixo_externo=0*\n", &profile).ok);
+    CHECK(profile.account.externalPrefix == L"0*");
+
+    const ParseResult bad = ParseProfile(base + L"ddi=abc\n", &profile);
+    CHECK_FALSE(bad.ok);
+    CHECK(bad.errorLine == 4);
+}
+
+TEST_CASE("ParseProfile rejects an invalid ddi or prefixo_externo with the line") {
+    Profile profile;
+    ParseResult result = ParseProfile(base + L"ddi=abc\n", &profile);
+    CHECK_FALSE(result.ok);
+    CHECK(result.errorLine == 4);
+    CHECK(Contains(result.errorMessage, L"ddi"));
+    CHECK(Contains(result.errorMessage, L"abc"));
+    CHECK(Rejects(base + L"ddi=\n"));
+    CHECK(Rejects(base + L"ddi=1234\n"));
+    CHECK(Rejects(base + L"ddi=+55\n"));
+    CHECK(Rejects(base + L"ddi=5 5\n"));
+
+    result = ParseProfile(base + L"prefixo_externo=0a\n", &profile);
+    CHECK_FALSE(result.ok);
+    CHECK(result.errorLine == 4);
+    CHECK(Contains(result.errorMessage, L"prefixo_externo"));
+    CHECK(Contains(result.errorMessage, L"0a"));
+    CHECK(Rejects(base + L"prefixo_externo=+0\n"));
+    CHECK(Rejects(base + L"prefixo_externo=0 1\n"));
+    CHECK(Rejects(L"[geral]\nddi=55\n" + base));   // ddi é chave de [conta]
+}
+
 TEST_CASE("empty optional values keep their defaults") {
     Profile profile;
     REQUIRE(ParseProfile(L"[geral]\nstun=   ; vazio\n" + base + L"proxy= ; sem proxy\n", &profile).ok);

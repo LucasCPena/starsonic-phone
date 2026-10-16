@@ -48,3 +48,13 @@ TEST_CASE("NormalizeDialString keeps one leading plus and the other characters")
     CHECK(NormalizeDialString(L"(0xx11) 2001") == L"0xx112001");
     CHECK(NormalizeDialString(L"") == L"");
 }
+
+TEST_CASE("ContactDialString strips the DDI and adds the prefix to long numbers") {
+    CHECK(ContactDialString(L"+55 (11) 5060-3000", L"55", L"0") == L"01150603000");
+    CHECK(ContactDialString(L"(11) 5060-3000", L"55", L"0") == L"01150603000");
+    CHECK(ContactDialString(L"2001", L"55", L"0") == L"2001");
+    CHECK(ContactDialString(L"+1 650 555 0100", L"55", L"0") == L"+16505550100");
+    CHECK(ContactDialString(L"+55 11 5060-3000", L"55", L"") == L"1150603000");
+    // O DDI não bate: o número fica como está, sem prefixo.
+    CHECK(ContactDialString(L"+551150603000", L"1", L"0") == L"+551150603000");
+}

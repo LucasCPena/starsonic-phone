@@ -48,4 +48,19 @@ std::wstring NormalizeDialString(const std::wstring& raw) {
     return number;
 }
 
+std::wstring ContactDialString(const std::wstring& raw, const std::wstring& ddi, const std::wstring& prefix) {
+    std::wstring number = NormalizeDialString(raw);
+    if (!number.empty() && number[0] == L'+') {
+        const std::wstring plusDdi = L"+" + ddi;
+        // Outro DDI (ou ddi vazio): o número é de fora e vai como veio, sem prefixo.
+        if (ddi.empty() || number.compare(0, plusDdi.size(), plusDdi) != 0) return number;
+        number.erase(0, plusDdi.size());
+    }
+    size_t digits = 0;
+    for (const wchar_t ch : number) {
+        if (ch >= L'0' && ch <= L'9') ++digits;
+    }
+    return digits > 6 ? prefix + number : number;
+}
+
 }  // namespace starsonic

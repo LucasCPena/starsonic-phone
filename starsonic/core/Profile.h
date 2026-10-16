@@ -18,6 +18,8 @@ struct AccountProfile {
     std::wstring proxy;
     SrtpMode srtp = SrtpMode::Disabled;
     int keepAliveSeconds = 15;
+    std::wstring ddi = L"55";            // DDI dos contatos do aparelho: "+55" sai do número
+    std::wstring externalPrefix;         // prefixo para sair da central, nos números com mais de 6 dígitos
 };
 
 // Seção [geral]. Sem ela, valem os padrões do MicroSIP.

@@ -51,6 +51,11 @@ bool ParseInt(const std::wstring& text, int lowest, int highest, int* out) {
     return true;
 }
 
+// Vale para o texto vazio também: quem chama confere o tamanho quando o vazio não serve.
+bool OnlyChars(const std::wstring& text, const wchar_t* allowed) {
+    return text.find_first_not_of(allowed) == std::wstring::npos;
+}
+
 std::wstring InvalidValue(const std::wstring& key, const std::wstring& value, const std::wstring& options) {
     return L"valor inv\u00e1lido para " + Quoted(key) + L": " + Quoted(value) + L" (op\u00e7\u00f5es: " + options + L")";
 }
@@ -217,6 +222,20 @@ private:
             else if (lower == L"opcional") account.srtp = SrtpMode::Optional;
             else if (lower == L"obrigatorio") account.srtp = SrtpMode::Mandatory;
             else return Fail(line, InvalidValue(key, value, L"desativado, opcional ou obrigatorio"));
+            return true;
+        }
+        if (key == L"ddi") {
+            if (value.empty() || value.size() > 3 || !OnlyChars(value, L"0123456789")) {
+                return Fail(line, L"a chave \"ddi\" precisa ter de 1 a 3 d\u00edgitos: " + Quoted(value));
+            }
+            account.ddi = value;
+            return true;
+        }
+        if (key == L"prefixo_externo") {
+            if (!OnlyChars(value, L"0123456789*#")) {
+                return Fail(line, L"a chave \"prefixo_externo\" aceita s\u00f3 d\u00edgitos, * e #: " + Quoted(value));
+            }
+            account.externalPrefix = value;
             return true;
         }
         return Fail(line, L"chave desconhecida " + Quoted(key) + L" em [conta]");

@@ -14,4 +14,10 @@ std::wstring CallEndMessage(int sipCode);
 // caractere que sobra. Os outros caracteres ficam como vieram.
 std::wstring NormalizeDialString(const std::wstring& raw);
 
+// O número de um contato do aparelho, pronto para discar: NormalizeDialString primeiro; um '+'
+// seguido do ddi (ex.: "+55") sai; qualquer outro número com '+' (DDI diferente, ou ddi vazio) fica
+// como está, sem prefixo; o prefixo (ex.: "0", para sair da central) entra na frente só quando o
+// que sobra tem mais de 6 dígitos, para não afetar ramais e números curtos.
+std::wstring ContactDialString(const std::wstring& raw, const std::wstring& ddi, const std::wstring& prefix);
+
 }  // namespace starsonic
