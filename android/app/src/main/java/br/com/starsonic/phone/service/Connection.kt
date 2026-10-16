@@ -193,9 +193,9 @@ class Connection(
             calls()?.onCallState(callId, state, code)
         }
 
-        // As ligações (o CallManager) ainda não ouvem o resultado das transferências: a que dá certo acaba com o
-        // DISCONNECTED de sempre, e o motor escreve o resultado no log.
-        override fun onTransfer(callId: Int, code: Int) {}
+        override fun onTransfer(callId: Int, code: Int) {
+            calls()?.onTransfer(callId, code)
+        }
 
         override fun onLog(level: Int, line: String) = log(level, line)
     }

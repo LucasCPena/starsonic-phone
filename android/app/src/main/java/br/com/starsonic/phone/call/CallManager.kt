@@ -57,7 +57,8 @@ enum class CallPhase {
  * - [muted]: o mudo do microfone, que vale para as duas ligações.
  * - [second]: a outra ligação (tocando ou em espera); null com uma só. A feita que chama é sempre a ativa.
  * - [conference]: as duas em conferência (spec da 0.2, 7.4); ainda sempre false.
- * - [consult]: a transferência com consulta em andamento (spec da 0.2, 7.3); ainda sempre null.
+ * - [consult]: a transferência com consulta em andamento (spec da 0.2, 7.3), com as duas ligações dela de pé (o
+ *   cliente e o colega são esta e a [second]); null sem consulta.
  */
 data class CallUi(
     val id: Int,
@@ -95,7 +96,10 @@ enum class SecondKind {
     ACTIVE,
 }
 
-/** A consulta (spec da 0.2, 7.3): o id do colega e se ele é a ativa (o cliente, então, em espera). */
+/**
+ * A consulta (spec da 0.2, 7.3): o id do colega ([CallManager.NO_ID] até o motor dar o dele) e se ele é a ativa (o
+ * cliente, então, em espera: "Em espera · transferência").
+ */
 data class ConsultUi(val colleagueId: Int, val colleagueActive: Boolean)
 
 /** Os motivos do fim de uma ligação para o Telecom (os valores de android.telecom.DisconnectCause). */
@@ -129,6 +133,15 @@ object EndCause {
  *   ([activate]) troca as duas. Quando a ativa acaba (desligada aqui ou do outro lado), a em espera volta sozinha: o
  *   motor a retoma e o Telecom a ativa. A em espera que cai do outro lado sai com o aviso "<nome ou número> desligou"
  *   por 2 s, e a ativa continua.
+ * - Transferência com consulta (spec da 0.2, 7.3): o Consultar ([consult]) é a Nova ligação marcada: a que estava em
+ *   andamento é o cliente, e a feita, o colega. Concluir ([completeTransfer], só com o colega atendido, de qualquer
+ *   dos dois lados) pede ao motor o REFER com Replaces do cliente para o colega, uma vez até o resultado
+ *   ([onTransfer]): com 2xx o motor desliga as duas, que saem como desligadas aqui (sem aviso, nem a volta sozinha
+ *   do cliente) e entram no Recentes como feita e recebida; com outro código, o aviso [TRANSFER_REFUSED] por 2 s, e
+ *   as duas continuam. Cancelar ([cancelConsult]) desliga o colega, e o cliente volta sozinho. O colega que não
+ *   atende (não completou) traz o cliente de volta, com o aviso "<nome ou número do colega>: <CallEndMessage>"; o
+ *   cliente que desliga deixa o colega como uma ligação normal ("<nome ou número> desligou"). A transferência
+ *   direta ([transfer]) recusada mostra o mesmo [TRANSFER_REFUSED].
  * - O Telecom acompanha cada espera e retomada ([TelecomAdapter.setOnHold], [TelecomAdapter.setActive]); os pedidos
  *   dele chegam por [holdFromTelecom], [activateFromTelecom] e [hangup] com o id da ligação. A espera que ele pede
  *   (uma ligação da operadora atendida) nunca troca: com duas, as duas ficam em espera, sem som, até ele pedir a
@@ -171,9 +184,16 @@ class CallManager(
         var heldByTelecom = false      // o Telecom a pôs em espera (uma ligação da operadora): nada a retoma sozinho
     }
 
+    // A consulta de agora: o cliente (o que vai ser transferido) e o colega (a feita pelo Consultar), os dois em
+    // [calls]. Só com a trava.
+    private class Consult(val client: Call, val colleague: Call) {
+        var requested = false   // o Concluir foi pedido, e o resultado (onTransfer) ainda não chegou
+    }
+
     private val lock = Any()
     private val calls = ArrayList<Call>(2)   // as ligações de agora (até duas), na ordem em que começaram
     private var active: Call? = null          // a ativa, uma de [calls]: a do som e a de cima na tela (null: nenhuma)
+    private var consulting: Consult? = null   // a consulta em andamento (null: nenhuma); sai com o fim de uma das duas
     private var muted = false                 // o mudo do microfone (o do motor vale para as duas); sai com a última
     private var maxSeenId = 0                 // o maior id de ligação do motor já visto
     private var endTimer: Scheduled? = null
@@ -191,8 +211,9 @@ class CallManager(
     val state: StateFlow<CallUi?> = mutableState
 
     /**
-     * O aviso de uma feita que não completou (CallEndMessage: Ocupado, Número não encontrado...), de discar sem
-     * registro ou da ligação em espera que caiu ("<nome ou número> desligou"), por 2 s; "" fora disso.
+     * O aviso de uma feita que não completou (CallEndMessage: Ocupado, Número não encontrado...; o do colega da
+     * consulta com o nome ou o número dele na frente), de discar sem registro, da ligação em espera que caiu ("<nome
+     * ou número> desligou") ou da transferência recusada ([TRANSFER_REFUSED]), por 2 s; "" fora disso.
      */
     val endMessage: StateFlow<String> = mutableEndMessage
 
@@ -250,7 +271,17 @@ class CallManager(
      * para a espera e a feita é a ativa). false se não ligou: número vazio, uma ligação que ainda não está em
      * andamento, duas, depois de Sair, ou sem registro (aí [endMessage] mostra "Sem conexão…").
      */
-    fun dial(raw: String): Boolean {
+    fun dial(raw: String): Boolean = place(raw, consult = false)
+
+    /**
+     * O Consultar (spec da 0.2, 7.3): liga para o colega [raw] como a Nova ligação do [dial], com a ligação em
+     * andamento (o cliente, que vai para a espera), e as duas ficam marcadas como a consulta ([CallUi.consult]).
+     * false se não ligou: sem uma ligação em andamento, e nos casos do [dial].
+     */
+    fun consult(raw: String): Boolean = place(raw, consult = true)
+
+    // A feita do [dial] e do [consult] (com [consult], só com uma ligação em andamento, que vira o cliente).
+    private fun place(raw: String, consult: Boolean): Boolean {
         if (raw.isBlank()) return false
         if (!registered()) {
             act { showEndMessage(NO_CONNECTION) }
@@ -262,11 +293,13 @@ class CallManager(
             if (loggedOut) return false
             val other = calls.singleOrNull()
             if (calls.isNotEmpty() && (other == null || other.phase != CallPhase.ACTIVE || other.ending)) return false
+            if (consult && other == null) return false
             clearEndMessage()
             val dialed = Call(incoming = false, number, "", clock.nowMillis())
             calls += dialed
             active = dialed
             if (other != null) heldByEngine(other, effects)   // o motor a põe em espera no makeCall
+            if (consult && other != null) consulting = Consult(client = other, colleague = dialed)
             publish()
             effects += { telecom.placeOutgoing(number) }
         }
@@ -445,7 +478,8 @@ class CallManager(
 
     /**
      * Transfere a ligação ativa, em andamento, para [raw] (sem consulta; spec 4.2): a ligação acaba quando o PABX
-     * aceitar. false se não há o que transferir.
+     * aceitar (o motor a desliga); se ele recusar ([onTransfer]), o aviso [TRANSFER_REFUSED]. false se não há o que
+     * transferir.
      */
     fun transfer(raw: String): Boolean {
         val number = core.normalizeDialString(raw)
@@ -458,14 +492,56 @@ class CallManager(
         return true
     }
 
-    // A consulta (Task 9): ainda nada.
-    override fun onTransfer(callId: Int, code: Int) {}
+    /**
+     * Concluir transferência: com o colega atendido (as duas em andamento, com qualquer uma ativa), o motor manda o
+     * REFER com Replaces do cliente para o colega. Um pedido por vez: outro toque antes do resultado ([onTransfer])
+     * não faz nada.
+     */
+    fun completeTransfer() {
+        act { effects ->
+            val pair = consulting ?: return@act
+            val client = pair.client
+            val colleague = pair.colleague
+            val confirmed = client.phase == CallPhase.ACTIVE && colleague.phase == CallPhase.ACTIVE
+            if (pair.requested || !confirmed || client.ending || colleague.ending) return@act
+            pair.requested = true
+            val clientId = client.id
+            val colleagueId = colleague.id
+            effects += { gateway.transferAttended(clientId, colleagueId) }
+        }
+    }
 
-    fun consult(raw: String): Boolean = false
+    /** Cancelar a consulta: o colega sai (como no [hangup]), e o cliente volta sozinho quando o fim dele chega. */
+    fun cancelConsult() {
+        act { effects ->
+            val colleague = consulting?.colleague?.takeIf { !it.ending } ?: return@act
+            hangup(colleague, effects)
+            publish()
+        }
+    }
 
-    fun completeTransfer() {}
-
-    fun cancelConsult() {}
+    /**
+     * O resultado da transferência pedida na ligação [callId] (a direta, ou a com consulta, no cliente). 2xx: o
+     * motor desliga a ligação (e o colega, na consulta) logo depois, e os fins chegam por ele; na consulta, as duas
+     * saem já, como desligadas aqui. Outro código: o aviso [TRANSFER_REFUSED] por 2 s, e as ligações continuam como
+     * estavam (o Concluir vale de novo).
+     */
+    override fun onTransfer(callId: Int, code: Int) {
+        act {
+            val current = if (loggedOut) null else calls.firstOrNull { it.id == callId && !it.ending }
+            if (current == null) return@act
+            val pair = consulting?.takeIf { it.client === current }
+            pair?.requested = false
+            when {
+                code !in 200..299 -> showEndMessage(TRANSFER_REFUSED)
+                pair != null -> {
+                    transferred(pair.client)
+                    transferred(pair.colleague)
+                    publish()
+                }
+            }
+        }
+    }
 
     /** Sair: as ligações de agora acabam, e daqui em diante os eventos do motor são ignorados (até [onLogin]). */
     fun onLogout() {
@@ -619,9 +695,11 @@ class CallManager(
     // ativa, a outra (se há) passa a ser; em andamento (em espera), ela volta sozinha: o motor a retoma e o Telecom a
     // ativa. Mas não se a ativa também estava em espera (as duas, pelo Telecom), nem se o Telecom pôs a outra em
     // espera: o som é de outra ligação (a da operadora), e a outra espera o pedido de retomada dele. A outra que cai
-    // do outro lado, já em andamento e com a ativa continuando, deixa o aviso "<nome ou número> desligou".
+    // do outro lado, já em andamento e com a ativa continuando, deixa o aviso "<nome ou número> desligou". Com ela,
+    // a consulta acaba ([leaveConsult]).
     private fun end(current: Call, code: Int, effects: MutableList<() -> Unit>, cause: Int? = null, quiet: Boolean = false) {
         val wasActive = current === active
+        val colleague = leaveConsult(current)
         calls.remove(current)
         if (wasActive) active = calls.firstOrNull()
         val id = current.id
@@ -653,7 +731,10 @@ class CallManager(
                 code in 400..699 -> EndCause.ERROR   // atendida que caiu
                 else -> EndCause.REMOTE
             }
-            if (message.isNotEmpty()) showEndMessage(message)
+            // O colega da consulta que não atendeu: "<nome ou número>: <motivo>" (o cliente já volta, abaixo).
+            if (message.isNotEmpty()) {
+                showEndMessage(if (colleague) "${current.name.ifEmpty { current.number }}: $message" else message)
+            }
         }
         if (!wasActive && received && !current.localHangup && !quiet && calls.any { !it.ending }) {
             showEndMessage("${current.name.ifEmpty { current.number }} desligou")
@@ -672,6 +753,23 @@ class CallManager(
             effects += { gateway.activate(nextId) }
             effects += { telecom.setActive(nextId) }
         }
+    }
+
+    // Com a trava: [current] acabou; se era da consulta, ela acaba aí (o cliente volta pela volta sozinha do [end], e o
+    // colega que fica é uma ligação normal). true se [current] era o colega: o aviso de fim dele leva o nome ou o
+    // número na frente.
+    private fun leaveConsult(current: Call): Boolean {
+        val pair = consulting ?: return false
+        if (current !== pair.client && current !== pair.colleague) return false
+        consulting = null
+        return current === pair.colleague
+    }
+
+    // Com a trava: a central aceitou a transferência de [current], que o motor desliga: ela sai como desligada aqui
+    // (a tela já não a mostra), sem o aviso "desligou" e sem a volta sozinha da outra.
+    private fun transferred(current: Call) {
+        current.localHangup = true
+        current.ending = true
     }
 
     // Com a trava: uma perdida que a pessoa não viu (ocupado): Recentes e notificação.
@@ -701,17 +799,22 @@ class CallManager(
     private fun waitingForTelecom(): Call? = calls.firstOrNull { !it.incoming && !it.dialRequested && !it.ending }
 
     // Com a trava: o estado de agora vai à fila das publicações (entregue depois de soltar a trava, em [deliver]): a
-    // ligação da tela e, com duas, a outra.
+    // ligação da tela e, com duas, a outra e a consulta.
     private fun publish() {
         val ui = shown()?.let { main ->
             val other = otherThan(main)?.let { SecondUi(it.id, it.number, it.name, secondKind(it)) }
             CallUi(
                 main.id, main.number, main.name, main.incoming, main.phase, main.activeSince, main.held, muted,
-                second = other,
+                second = other, consult = consultUi(),
             )
         }
         publications.addLast { mutableState.value = ui }
     }
+
+    // Com a trava: a consulta para a tela, só com as duas de pé (com uma saindo, a tela já mostra a outra sozinha).
+    private fun consultUi(): ConsultUi? =
+        consulting?.takeIf { !it.client.ending && !it.colleague.ending }
+            ?.let { ConsultUi(it.colleague.id, colleagueActive = it.colleague === active) }
 
     // A outra de duas, para a tela: tocando ou em espera (a feita que chama é sempre a ativa).
     private fun secondKind(call: Call) = if (call.phase == CallPhase.RINGING) SecondKind.RINGING else SecondKind.HELD
@@ -788,6 +891,9 @@ class CallManager(
 
         /** O aviso de quando o Android não deixa ligar: uma ligação do celular (da operadora) em andamento (spec 11.1). */
         const val CARRIER_CALL = "Termine a ligação do celular para ligar pelo ramal."
+
+        /** O aviso da transferência (direta ou com consulta) que o servidor recusou (spec da 0.2, 11.1). */
+        const val TRANSFER_REFUSED = "O servidor não aceitou a transferência."
 
         private const val END_MESSAGE_MILLIS = 2_000L
     }

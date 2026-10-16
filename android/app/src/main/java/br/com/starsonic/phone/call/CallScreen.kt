@@ -46,6 +46,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import br.com.starsonic.phone.R
 import br.com.starsonic.phone.main.CallGreen
@@ -58,8 +59,9 @@ import kotlinx.coroutines.delay
 
 /**
  * O que a tela de chamada pede (ao CallManager e ao Telecom). Atender e Recusar valem para a recebida que toca (a
- * única, ou a segunda na faixa); Desligar, Espera, Teclado e Transferir, para a ativa; [activate] é o Alternar, e
- * [dial] faz a Nova ligação (false: não ligou).
+ * única, ou a segunda na faixa); Desligar, Espera, Teclado e Transferir (o Transferir agora), para a ativa; [activate]
+ * é o Alternar, e [dial] faz a Nova ligação (false: não ligou). [consult] é o Consultar (false: não ligou), e
+ * [completeTransfer] e [cancelConsult], o Concluir transferência e o Cancelar da consulta.
  */
 class CallActions(
     val answer: () -> Unit,
@@ -88,6 +90,11 @@ class CallActions(
  * Com duas ligações: a ativa em cima, e a outra no cartão "Em espera" embaixo, com Alternar no lugar da Nova
  * ligação; a segunda que chega toca na faixa "Ligação de <nome ou número>" no alto, com Recusar e Atender. Desligar
  * desliga a ativa (a em espera volta sozinha).
+ *
+ * Transferir abre o número com Consultar e Transferir agora (a direta). Na consulta (spec da 0.2, 7.3), o colega em
+ * cima e o cliente no cartão "Em espera · transferência" (depois do Alternar, o cliente em cima e o colega "Em
+ * espera"), com Concluir transferência (com o colega já atendido), Alternar e Cancelar no lugar de Espera,
+ * Transferir e Nova ligação.
  */
 @Composable
 fun CallScreen(call: CallUi?, endMessage: String, routes: AudioRoutes, actions: CallActions) {
@@ -135,7 +142,9 @@ fun CallScreen(call: CallUi?, endMessage: String, routes: AudioRoutes, actions: 
     ) {
         if (other?.kind == SecondKind.RINGING) SecondCallBar(other, actions)
         Header(shown, call, endMessage, if (keypad) digits else "")
-        if (other?.kind == SecondKind.HELD) HeldCard(other)
+        // Na consulta com o colega em cima, o cartão de baixo é o cliente.
+        val heldLabel = if (call?.consult?.colleagueActive == true) ON_HOLD_TRANSFER else ON_HOLD
+        if (other?.kind == SecondKind.HELD) HeldCard(other, heldLabel)
         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
             when {
                 call == null -> {}
@@ -151,19 +160,24 @@ fun CallScreen(call: CallUi?, endMessage: String, routes: AudioRoutes, actions: 
                 )
                 transfer -> NumberPanel(
                     title = TRANSFER_TO,
-                    confirm = TRANSFER,
                     tagPrefix = "transferir",
-                    confirmTag = "transferir-confirmar",
                     onCancel = { transferOpen = false },
-                    onConfirm = { number -> if (actions.transfer(number)) transferOpen = false },
+                    choices = listOf(
+                        PanelChoice(CONSULT, R.drawable.ic_consultar, "transferir-consultar") { number ->
+                            if (actions.consult(number)) transferOpen = false
+                        },
+                        PanelChoice(TRANSFER_NOW, R.drawable.ic_transferir_agora, "transferir-agora") { number ->
+                            if (actions.transfer(number)) transferOpen = false
+                        },
+                    ),
                 )
                 newCall -> NumberPanel(
                     title = NEW_CALL,
-                    confirm = DIAL,
                     tagPrefix = "nova",
-                    confirmTag = "nova-ligar",
                     onCancel = { newCallOpen = false },
-                    onConfirm = { number -> if (actions.dial(number)) newCallOpen = false },
+                    choices = listOf(
+                        PanelChoice(DIAL, null, "nova-ligar") { number -> if (actions.dial(number)) newCallOpen = false },
+                    ),
                 )
                 else -> Controls(
                     call,
@@ -280,9 +294,10 @@ private fun BarButton(icon: Int, label: String, color: Color, tag: String, onCli
     }
 }
 
-// O cartão da outra de duas ligações, embaixo da ativa: o nome (ou o número) e "Em espera", em cinza.
+// O cartão da outra de duas ligações, embaixo da ativa: o nome (ou o número) e [label] ("Em espera", ou "Em espera ·
+// transferência" para o cliente da consulta), em cinza.
 @Composable
-private fun HeldCard(held: SecondUi) {
+private fun HeldCard(held: SecondUi, label: String) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -300,7 +315,7 @@ private fun HeldCard(held: SecondUi) {
             }
         }
         Spacer(Modifier.width(12.dp))
-        Text(ON_HOLD, color = HeldGray, style = MaterialTheme.typography.labelLarge)
+        Text(label, color = HeldGray, style = MaterialTheme.typography.labelLarge)
     }
 }
 
@@ -324,7 +339,8 @@ private fun status(call: CallUi): String = when (call.phase) {
 }
 
 // Os botões da ligação: Mudo, Teclado e o áudio; Espera (ou Retomar), Transferir e a Nova ligação (com uma ligação
-// só, em andamento) ou, com duas, Alternar (com as duas em andamento: a feita que chama ainda não alterna).
+// só, em andamento) ou, com duas, Alternar (com as duas em andamento: a feita que chama ainda não alterna). Na
+// consulta: Concluir transferência e Alternar (com o colega já atendido) e Cancelar.
 @Composable
 private fun Controls(
     call: CallUi,
@@ -360,28 +376,35 @@ private fun Controls(
             }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-            Toggle(R.drawable.ic_espera, if (call.held) RESUME else HOLD, call.held, active, "espera", actions.hold)
-            Toggle(R.drawable.ic_transferir, TRANSFER, false, active, "transferir", onTransfer)
-            if (other != null && other.kind != SecondKind.RINGING) {
-                Toggle(R.drawable.ic_alternar, SWAP, false, active && other.kind == SecondKind.HELD, "alternar", actions.activate)
+            val both = active && other?.kind == SecondKind.HELD   // as duas em andamento
+            if (call.consult != null) {
+                Toggle(
+                    104.dp, R.drawable.ic_concluir, COMPLETE_TRANSFER, false, both, "concluir-transferencia",
+                    actions.completeTransfer,
+                )
+                Toggle(R.drawable.ic_alternar, SWAP, false, both, "alternar", actions.activate)
+                Toggle(R.drawable.ic_desligar, CANCEL, false, true, "cancelar-consulta", actions.cancelConsult)
             } else {
-                Toggle(R.drawable.ic_nova_ligacao, NEW_CALL, false, active && other == null, "nova-ligacao", onNewCall)
+                Toggle(R.drawable.ic_espera, if (call.held) RESUME else HOLD, call.held, active, "espera", actions.hold)
+                Toggle(R.drawable.ic_transferir, TRANSFER, false, active, "transferir", onTransfer)
+                if (other != null && other.kind != SecondKind.RINGING) {
+                    Toggle(R.drawable.ic_alternar, SWAP, false, both, "alternar", actions.activate)
+                } else {
+                    Toggle(R.drawable.ic_nova_ligacao, NEW_CALL, false, active && other == null, "nova-ligacao", onNewCall)
+                }
             }
         }
     }
 }
 
-// Um número, com [confirm] e Cancelar: para onde a ligação vai (Transferir) ou para quem ligar (Nova ligação). As
-// etiquetas: <tagPrefix>-numero, <tagPrefix>-cancelar e [confirmTag].
+// Um botão do [NumberPanel]: o nome, o ícone (null: nenhum), a etiqueta e o que ele faz com o número.
+private class PanelChoice(val label: String, val icon: Int?, val tag: String, val onPick: (String) -> Unit)
+
+// Um número, com os botões [choices] (lado a lado) e Cancelar embaixo: para onde a ligação vai (Transferir: Consultar
+// ou Transferir agora) ou para quem ligar (Nova ligação). Com um botão só, o Concluído do teclado é ele. As
+// etiquetas: <tagPrefix>-numero, <tagPrefix>-cancelar e a de cada botão.
 @Composable
-private fun NumberPanel(
-    title: String,
-    confirm: String,
-    tagPrefix: String,
-    confirmTag: String,
-    onCancel: () -> Unit,
-    onConfirm: (String) -> Unit,
-) {
+private fun NumberPanel(title: String, tagPrefix: String, onCancel: () -> Unit, choices: List<PanelChoice>) {
     var number by rememberSaveable { mutableStateOf("") }
     val colors = OutlinedTextFieldDefaults.colors(
         focusedTextColor = Color.White,
@@ -401,21 +424,29 @@ private fun NumberPanel(
             singleLine = true,
             colors = colors,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-            keyboardActions = KeyboardActions(onDone = { onConfirm(number) }),
+            // Com mais de um botão, o Concluído só fecha o teclado (a pessoa escolhe o botão).
+            keyboardActions = choices.singleOrNull()?.let { only -> KeyboardActions(onDone = { only.onPick(number) }) }
+                ?: KeyboardActions.Default,
             modifier = Modifier.fillMaxWidth().testTag("$tagPrefix-numero"),
         )
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-            TextButton(onClick = onCancel, modifier = Modifier.testTag("$tagPrefix-cancelar")) {
-                Text(CANCEL, color = Color.White)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            for (choice in choices) {
+                Button(
+                    onClick = { choice.onPick(number) },
+                    enabled = number.isNotBlank(),
+                    colors = ButtonDefaults.buttonColors(containerColor = StarsonicCyan, contentColor = Color.White),
+                    modifier = Modifier.weight(1f).testTag(choice.tag),
+                ) {
+                    if (choice.icon != null) {
+                        Icon(painterResource(choice.icon), contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    Text(choice.label, textAlign = TextAlign.Center)
+                }
             }
-            Button(
-                onClick = { onConfirm(number) },
-                enabled = number.isNotBlank(),
-                colors = ButtonDefaults.buttonColors(containerColor = StarsonicCyan, contentColor = Color.White),
-                modifier = Modifier.testTag(confirmTag),
-            ) {
-                Text(confirm)
-            }
+        }
+        TextButton(onClick = onCancel, modifier = Modifier.testTag("$tagPrefix-cancelar")) {
+            Text(CANCEL, color = Color.White)
         }
     }
 }
@@ -442,10 +473,16 @@ private fun RoundAction(icon: Int, label: String, color: Color, tag: String, onC
 // Um botão da ligação, com o nome embaixo (o toque vale nos dois): aceso ([on]) em branco, apagado transparente.
 @Composable
 private fun Toggle(icon: Int, label: String, on: Boolean, enabled: Boolean, tag: String, onClick: () -> Unit) {
+    Toggle(80.dp, icon, label, on, enabled, tag, onClick)
+}
+
+// O mesmo, na largura [width]: um nome comprido (Concluir transferência) pede uma maior, para quebrar entre as palavras.
+@Composable
+private fun Toggle(width: Dp, icon: Int, label: String, on: Boolean, enabled: Boolean, tag: String, onClick: () -> Unit) {
     val alpha = if (enabled) 1f else 0.4f
     Column(
         Modifier
-            .width(80.dp)
+            .width(width)
             .clip(RoundedCornerShape(16.dp))
             .clickable(enabled = enabled, onClick = onClick)
             .padding(vertical = 4.dp)
@@ -482,6 +519,9 @@ private const val HOLD = "Espera"
 private const val RESUME = "Retomar"
 private const val TRANSFER = "Transferir"
 private const val TRANSFER_TO = "Transferir para"
+private const val TRANSFER_NOW = "Transferir agora"
+private const val CONSULT = "Consultar"
+private const val COMPLETE_TRANSFER = "Concluir transferência"
 private const val SWAP = "Alternar"
 private const val NEW_CALL = "Nova ligação"
 private const val DIAL = "Ligar"
@@ -492,6 +532,7 @@ private const val INCOMING = "Ligação recebida"
 private const val CALLING = "Chamando…"
 private const val CONNECTING = "Conectando…"
 private const val ON_HOLD = "Em espera"
+private const val ON_HOLD_TRANSFER = "Em espera · transferência"
 
 // O cinza de "Em espera" no cartão da outra ligação, sobre o azul da tela.
 private val HeldGray = Color.White.copy(alpha = 0.6f)
