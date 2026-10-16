@@ -164,21 +164,20 @@ class CallFlowTest {
     @Test
     fun secondCallRingsAsABarAndIsAnswered() {
         val first = answerOnTheCallScreen()
+        // O Transferir aberto na primeira é dela: não reabre sozinho na segunda, depois de atendida (abaixo).
+        compose.onNodeWithTag("transferir").performClick()
+        emulator.waitUntil("o número do Transferir") { emulator.showsTag("transferir-numero") }
         var before = emulator.callLog().size
         assertEquals("OK", emulator.control("RING 2001"))
         emulator.waitUntil("a faixa da segunda ligação") { showsTagWithText("segunda-ligacao", "Ligação de Cliente Teste") }
         // A chamada em espera: a notificação no canal sem som, sem a tela cheia e sem o toque que se repete (o app
         // bipa no som da ligação).
-        emulator.waitUntil("a notificação da chamada em espera", details = ::notifications) {
-            callNotification()?.let {
-                it.channelId == IncomingCallNotifier.CHANNEL_SILENCED && it.fullScreenIntent == null &&
-                    it.flags and Notification.FLAG_INSISTENT == 0
-            } == true
-        }
+        emulator.waitUntil("a notificação da chamada em espera", details = ::notifications) { waitingNotification() }
         compose.onNodeWithTag("atender-segunda").performClick()
         emulator.waitUntil("a segunda atendida, com a primeira em espera") { activeWith(held = first) }
         emulator.waitUntil("o cartão da em espera") { showsTagWithText("cartao-espera", "Em espera") }
         assertEquals("a faixa sai", false, emulator.showsTag("segunda-ligacao"))
+        assertEquals("o Transferir da primeira na segunda", false, emulator.showsTag("transferir-numero"))
         emulator.waitUntil("a notificação da chamada em espera sair", details = ::notifications) { callNotification() == null }
         waitForLog(before, "reinv-in 3001 sendonly")   // a primeira em espera
         val second = app.calls.state.value!!.id
@@ -197,6 +196,36 @@ class CallFlowTest {
         assertEquals(CallPhase.ACTIVE, app.calls.state.value?.phase)
         assertEquals("OK", emulator.control("HANGUP 2001"))
         emulator.waitUntil("a primeira acabar") { app.calls.state.value == null }
+    }
+
+    @Test
+    fun theSecondCallRingsFullyWhenTheFirstEnds() {
+        val first = answerOnTheCallScreen()
+        val before = emulator.callLog().size
+        assertEquals("OK", emulator.control("RING 2001"))
+        emulator.waitUntil("a faixa da segunda ligação") { showsTagWithText("segunda-ligacao", "Ligação de Cliente Teste") }
+        emulator.waitUntil("a notificação da chamada em espera", details = ::notifications) { waitingNotification() }
+        // A primeira acaba com a segunda tocando: o Desligar da tela desliga a ativa, a primeira (o HANGUP do
+        // registrador derrubaria a segunda, a última que ele fez).
+        compose.onNodeWithTag("desligar").performClick()
+        waitForLog(before, "bye-in 3001")
+        emulator.waitUntil("a segunda tocando sozinha") {
+            app.calls.state.value?.let { it.id != first && it.phase == CallPhase.RINGING && it.second == null } == true
+        }
+        // Ela passa a tocar como uma primeira ligação: o canal com o toque, a tela cheia e o toque que se repete.
+        emulator.waitUntil("a notificação de ligação com o toque e a tela cheia", details = ::notifications) {
+            callNotification()?.let {
+                it.channelId == IncomingCallNotifier.CHANNEL_CALLS && it.fullScreenIntent != null &&
+                    it.flags and Notification.FLAG_INSISTENT != 0
+            } == true
+        }
+        emulator.waitUntil("o Atender da tela de chamada") { emulator.showsTag("atender") }
+        assertEquals("sem a faixa", false, emulator.showsTag("segunda-ligacao"))
+        // Recusar: ocupado, e o toque para.
+        compose.onNodeWithTag("recusar").performClick()
+        waitForLog(before, "inv-out 2001 486")
+        emulator.waitUntil("a ligação acabar") { app.calls.state.value == null }
+        emulator.waitUntil("o toque parar", details = ::notifications) { callNotification() == null }
     }
 
     @Test
@@ -392,6 +421,13 @@ class CallFlowTest {
         emulator.waitUntil("o cartão da em espera") { showsTagWithText("cartao-espera", "Em espera") }
         return first to app.calls.state.value!!.id
     }
+
+    // A notificação da chamada em espera: no canal sem som, sem a tela cheia e sem o toque que se repete.
+    private fun waitingNotification(): Boolean =
+        callNotification()?.let {
+            it.channelId == IncomingCallNotifier.CHANNEL_SILENCED && it.fullScreenIntent == null &&
+                it.flags and Notification.FLAG_INSISTENT == 0
+        } == true
 
     // A ligação de cima em andamento, e a ligação [held] em espera no cartão de baixo.
     private fun activeWith(held: Int): Boolean =
