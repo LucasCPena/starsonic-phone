@@ -530,14 +530,20 @@ class CallFlowTest {
         emulator.waitUntil("o cartão do cliente") { showsTagWithText("cartao-espera", "Em espera · transferência") }
     }
 
-    // A conferência no Telecom do Android (o risco 1 da spec da 0.2: a Conference num serviço self-managed): o modo do
-    // áudio (3: MODE_IN_COMMUNICATION, o das ligações pela internet), o app na frente e a linha dela no dumpsys telecom
-    // (a que tem as duas como filhas) vão numa nota do teste, no fim.
+    // A conferência no Telecom do Android (o risco 1 da spec da 0.2: a Conference num serviço self-managed) vai numa
+    // nota do teste, no fim: o modo do áudio logo e 3 s depois (3: MODE_IN_COMMUNICATION, o das ligações pela
+    // internet), o app na frente, a linha dela no dumpsys telecom (a que tem as duas como filhas: prop com self_mng se
+    // ele a vê como self-managed), os InCallServices que o Telecom ligou e os apps com notificações.
     private fun noteTheTelecomConference() {
-        val mode = app.getSystemService(AudioManager::class.java).mode
-        val telecom = device.executeShellCommand("dumpsys telecom").lines()
-            .filter { "childs(2)" in it }.distinct().take(2).joinToString(" | ") { it.trim().take(400) }
-        conferenceNote = "modo do áudio $mode, na frente ${device.currentPackageName}; Telecom: ${telecom.ifEmpty { "(sem a linha)" }}"
+        val audio = app.getSystemService(AudioManager::class.java)
+        val mode = audio.mode
+        Thread.sleep(3_000)
+        val dump = device.executeShellCommand("dumpsys telecom").lines()
+        val conference = dump.filter { "childs(2)" in it }.distinct().take(2).joinToString(" | ") { it.trim().take(400) }
+        val inCall = dump.filter { "InCall" in it }.flatMap { COMPONENT.findAll(it).map { found -> found.value } }.distinct()
+        val notifying = PACKAGE.findAll(device.executeShellCommand("dumpsys notification")).map { it.groupValues[1] }.toSet()
+        conferenceNote = "modo do áudio $mode e ${audio.mode} 3 s depois, na frente ${device.currentPackageName}; " +
+            "Telecom: ${conference.ifEmpty { "(sem a linha)" }}; InCallServices: $inCall; notificações de: $notifying"
     }
 
     // A notificação da chamada em espera: no canal sem som, sem a tela cheia e sem o toque que se repete.
@@ -642,8 +648,11 @@ class CallFlowTest {
         private val repeatedTaps = mutableMapOf("Atender" to 0, "Recusar" to 0)
         private var lastFakeId = 1_000
 
-        // A conferência no Telecom, como o conferenceJoinsTwoCallsAndSplits a viu (null: ele não chegou lá).
+        // A conferência no Telecom, como o conferenceJoinsTwoCallsAndSplits a viu (null: ele não chegou lá), e o que
+        // a nota tira dos dumpsys: os componentes (pacote/classe) e o pacote de cada notificação.
         private var conferenceNote: String? = null
+        private val COMPONENT = Regex("ComponentInfo\\{[^}]+\\}")
+        private val PACKAGE = Regex("NotificationRecord\\([^)]*?pkg=([\\w.]+)")
 
         /**
          * Conta os toques repetidos e conta como a conferência ficou no Telecom, na saída do am instrument (o
