@@ -165,6 +165,7 @@ class CallManager(
         var abandoned = false          // a conta saiu (Sair) com ela de pé
         var activeSince = 0L           // quando os dois lados atenderam (0: ainda não)
         var held = false               // em espera: pela pessoa, ou a outra de duas
+        var heldByTelecom = false      // o Telecom a pôs em espera (uma ligação da operadora): nada a retoma sozinho
     }
 
     private val lock = Any()
@@ -339,12 +340,12 @@ class CallManager(
     }
 
     /**
-     * Desliga a ligação da tela: a ativa (ou a outra, se a ativa já está saindo). A feita que chama é cancelada, e a
-     * recebida que toca, recusada.
+     * Desliga a ativa: a feita que chama é cancelada, e a recebida que toca (só ela), recusada. Com a ativa já saindo
+     * (um segundo toque antes do fim dela), nada: a outra só sai pelo [hangup] com o id dela.
      */
     fun hangup() {
         act { effects ->
-            val current = shown() ?: return@act
+            val current = active?.takeIf { !it.ending } ?: return@act
             hangup(current, effects)
             publish()
         }
@@ -388,12 +389,14 @@ class CallManager(
      * O Telecom pede a espera da ligação [callId] (o onHold da Connection dela: uma ligação da operadora atendida, por
      * exemplo). A ativa vai para a espera sem trocar, também com duas: as duas ficam em espera e nenhuma tem o som (o
      * Alternar daria o som à outra, e o Telecom tiraria o da ligação da operadora). A tela continua com ela em cima,
-     * em espera. A que já está em espera fica como está.
+     * em espera. A que já está em espera fica como está. Até a retomada (pelo Telecom ou pela pessoa), ela não volta
+     * sozinha quando outra acaba.
      */
     fun holdFromTelecom(callId: Int) {
         act { effects ->
             val current = talking()?.takeIf { it.id == callId } ?: return@act
             if (!current.held) setHeld(current, true, effects)
+            current.heldByTelecom = true
         }
     }
 
@@ -559,6 +562,7 @@ class CallManager(
     // Com a trava: põe [current] em espera ([target] true) ou a retoma, sem mexer na outra; o Telecom acompanha.
     private fun setHeld(current: Call, target: Boolean, effects: MutableList<() -> Unit>) {
         current.held = target
+        if (!target) current.heldByTelecom = false
         publish()
         val id = current.id
         effects += { gateway.setHold(id, target) }
@@ -568,6 +572,7 @@ class CallManager(
     // Com a trava: com as duas em espera, [to] volta e vira a ativa (o motor a ativa); a outra fica em espera.
     private fun resume(to: Call, effects: MutableList<() -> Unit>) {
         to.held = false
+        to.heldByTelecom = false
         active = to
         publish()
         val id = to.id
@@ -581,6 +586,7 @@ class CallManager(
         if (from.ending || from.phase != CallPhase.ACTIVE || to.phase != CallPhase.ACTIVE) return
         from.held = true
         to.held = false
+        to.heldByTelecom = false
         active = to
         publish()
         val fromId = from.id
@@ -599,9 +605,9 @@ class CallManager(
 
     // Com a trava: a ligação [current] acabou com o código [code]: Recentes, notificação, aviso e Telecom. Se era a
     // ativa, a outra (se há) passa a ser; em andamento (em espera), ela volta sozinha: o motor a retoma e o Telecom a
-    // ativa. Mas não se a ativa também estava em espera (as duas, pelo Telecom): o som é de outra ligação (a da
-    // operadora), e a outra espera o pedido de retomada dele. A outra que cai do outro lado, já em andamento, deixa o
-    // aviso "<nome ou número> desligou".
+    // ativa. Mas não se a ativa também estava em espera (as duas, pelo Telecom), nem se o Telecom pôs a outra em
+    // espera: o som é de outra ligação (a da operadora), e a outra espera o pedido de retomada dele. A outra que cai
+    // do outro lado, já em andamento e com a ativa continuando, deixa o aviso "<nome ou número> desligou".
     private fun end(current: Call, code: Int, effects: MutableList<() -> Unit>, cause: Int? = null, quiet: Boolean = false) {
         val wasActive = current === active
         calls.remove(current)
@@ -637,7 +643,7 @@ class CallManager(
             }
             if (message.isNotEmpty()) showEndMessage(message)
         }
-        if (!wasActive && received && !current.localHangup && !quiet && calls.isNotEmpty()) {
+        if (!wasActive && received && !current.localHangup && !quiet && calls.any { !it.ending }) {
             showEndMessage("${current.name.ifEmpty { current.number }} desligou")
         }
         if (muted && calls.isEmpty()) {
@@ -648,7 +654,7 @@ class CallManager(
         effects += { telecom.disconnect(id, endCause) }
         val next = active
         val resumes = wasActive && !current.held && !loggedOut
-        if (resumes && next != null && next.phase == CallPhase.ACTIVE && !next.ending) {
+        if (resumes && next != null && next.phase == CallPhase.ACTIVE && !next.ending && !next.heldByTelecom) {
             next.held = false
             val nextId = next.id
             effects += { gateway.activate(nextId) }
