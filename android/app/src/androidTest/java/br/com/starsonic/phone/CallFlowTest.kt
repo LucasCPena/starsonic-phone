@@ -7,6 +7,9 @@ import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
+import androidx.compose.ui.test.hasAnyDescendant
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onFirst
@@ -24,6 +27,7 @@ import br.com.starsonic.phone.call.CallActionReceiver
 import br.com.starsonic.phone.call.CallActivity
 import br.com.starsonic.phone.call.CallPhase
 import br.com.starsonic.phone.call.IncomingCallNotifier
+import br.com.starsonic.phone.call.SecondKind
 import br.com.starsonic.phone.data.Account
 import br.com.starsonic.phone.data.CallKind
 import br.com.starsonic.phone.data.Recent
@@ -37,7 +41,6 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.FixMethodOrder
-import org.junit.Ignore
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -46,7 +49,10 @@ import org.junit.runners.MethodSorters
 /**
  * As ligações no emulador (spec 7.3 a 7.5 e 11.2), com o motor de verdade e o registrador falso do CI (ver
  * [Emulator]): ele liga para o ramal 2001 (RING, de "Cliente Teste" <sip:3001@ci>), desliga (HANGUP) e anota
- * o que o telefone mandou (LOG); ligações para 486 recebem Ocupado, e para outro número são atendidas.
+ * o que o telefone mandou (LOG); ligações para 486 recebem Ocupado, e para outro número são atendidas. Cada RING é
+ * uma ligação nova (dois RING, duas ligações), e o HANGUP desliga a última que ele fez que ainda está de pé. Nas
+ * ligações do RING, o LOG anota os pedidos do telefone com o 3001 (reinv-in 3001 sendonly, bye-in 3001); nas que o
+ * telefone faz, com o número discado (inv-in 2002 200).
  *
  * Cada teste começa com a conta gravada por TCP (o CI confere que o último REGISTER aceito veio por TCP) e o
  * app aberto, que inicia o serviço; as recebidas tocam com o app em segundo plano (UiDevice.pressHome). Os
@@ -87,9 +93,10 @@ class CallFlowTest {
 
     @After
     fun close() {
-        // Uma ligação que sobrou de um teste que falhou acaba aqui (a do registrador, e a do app).
+        // As ligações que sobraram de um teste que falhou (até duas) acabam aqui: as do registrador, e as do app.
         if (app.calls.state.value != null) {
-            emulator.control("HANGUP 2001")
+            repeat(2) { emulator.control("HANGUP 2001") }
+            app.calls.state.value?.second?.let { app.calls.hangup(it.id) }
             app.calls.hangup()
         }
         scenario?.close()
@@ -155,22 +162,97 @@ class CallFlowTest {
     }
 
     @Test
-    @Ignore("a segunda ligação toca desde a Task 7; o teste vira thirdCallDuringTwoCallsGetsBusy na Task 8")
-    fun secondCallDuringACallGetsBusy() {
-        device.pressHome()
+    fun secondCallRingsAsABarAndIsAnswered() {
+        val first = answerOnTheCallScreen()
+        var before = emulator.callLog().size
         assertEquals("OK", emulator.control("RING 2001"))
-        emulator.waitUntil("a notificação de ligação", details = ::notifications) { callNotification() != null }
-        tapSystemButton("Atender") { answered() }
-        emulator.waitUntil("a ligação atendida") { app.calls.state.value?.phase == CallPhase.ACTIVE }
+        emulator.waitUntil("a faixa da segunda ligação") { showsTagWithText("segunda-ligacao", "Ligação de Cliente Teste") }
+        // A chamada em espera: a notificação no canal sem som, sem a tela cheia e sem o toque que se repete (o app
+        // bipa no som da ligação).
+        emulator.waitUntil("a notificação da chamada em espera", details = ::notifications) {
+            callNotification()?.let {
+                it.channelId == IncomingCallNotifier.CHANNEL_SILENCED && it.fullScreenIntent == null &&
+                    it.flags and Notification.FLAG_INSISTENT == 0
+            } == true
+        }
+        compose.onNodeWithTag("atender-segunda").performClick()
+        emulator.waitUntil("a segunda atendida, com a primeira em espera") { activeWith(held = first) }
+        emulator.waitUntil("o cartão da em espera") { showsTagWithText("cartao-espera", "Em espera") }
+        assertEquals("a faixa sai", false, emulator.showsTag("segunda-ligacao"))
+        emulator.waitUntil("a notificação da chamada em espera sair", details = ::notifications) { callNotification() == null }
+        waitForLog(before, "reinv-in 3001 sendonly")   // a primeira em espera
+        val second = app.calls.state.value!!.id
+        // Alternar: a primeira volta para o cartão de cima (o motor a retoma), e a segunda vai para a espera.
+        before = emulator.callLog().size
+        compose.onNodeWithTag("alternar").performClick()
+        emulator.waitUntil("a primeira no cartão de cima") { activeWith(held = second) && app.calls.state.value?.id == first }
+        waitForLog(before, "reinv-in 3001 sendrecv")
+        assertEquals("o cartão da em espera continua", true, showsTagWithText("cartao-espera", "Em espera"))
+        // O registrador desliga a última que ele fez (a segunda, agora em espera): a tela volta a uma ligação.
+        assertEquals("OK", emulator.control("HANGUP 2001"))
+        emulator.waitForText("Cliente Teste desligou")
+        emulator.waitUntil("a tela com uma ligação só") {
+            app.calls.state.value?.let { it.id == first && it.second == null } == true && !emulator.showsTag("cartao-espera")
+        }
+        assertEquals(CallPhase.ACTIVE, app.calls.state.value?.phase)
+        assertEquals("OK", emulator.control("HANGUP 2001"))
+        emulator.waitUntil("a primeira acabar") { app.calls.state.value == null }
+    }
+
+    @Test
+    fun hangingUpTheActiveCallResumesTheHeldOne() {
+        val (first, _) = twoCalls()
+        val before = emulator.callLog().size
+        compose.onNodeWithTag("desligar").performClick()
+        waitForLog(before, "bye-in 3001")
+        // A em espera volta sozinha: o motor a retoma (sendrecv), e a tela mostra uma ligação só.
+        waitForLog(before, "reinv-in 3001 sendrecv")
+        emulator.waitUntil("a primeira de volta, sozinha") {
+            app.calls.state.value?.let { it.id == first && it.second == null && !it.held && it.phase == CallPhase.ACTIVE } == true
+        }
+        emulator.waitUntil("o cartão da em espera sumir") { !emulator.showsTag("cartao-espera") }
+        assertEquals("OK", emulator.control("HANGUP 2001"))
+        emulator.waitUntil("a primeira acabar") { app.calls.state.value == null }
+    }
+
+    @Test
+    fun thirdCallDuringTwoCallsGetsBusy() {
+        val (first, second) = twoCalls()
         val before = emulator.callLog().size
         val recents = app.recents.list().size
         assertEquals("OK", emulator.control("RING 2001"))
         waitForLog(before, "inv-out 2001 486")
-        emulator.waitUntil("a segunda como perdida no Recentes") {
+        emulator.waitUntil("a terceira como perdida no Recentes") {
             val list = app.recents.list()
             list.size == recents + 1 && list.first().kind == CallKind.PERDIDA
         }
-        assertEquals("a primeira segue", CallPhase.ACTIVE, app.calls.state.value?.phase)
+        assertEquals("as duas seguem", true, activeWith(held = first) && app.calls.state.value?.id == second)
+        assertEquals("sem a faixa", false, emulator.showsTag("segunda-ligacao"))
+        // O registrador desliga as duas (a segunda primeiro: a primeira volta sozinha, e depois sai).
+        assertEquals("OK", emulator.control("HANGUP 2001"))
+        emulator.waitUntil("a primeira de volta") { app.calls.state.value?.let { it.id == first && it.second == null } == true }
+        assertEquals("OK", emulator.control("HANGUP 2001"))
+        emulator.waitUntil("as ligações acabarem") { app.calls.state.value == null }
+    }
+
+    @Test
+    fun newCallFromTheCallScreenHoldsTheFirst() {
+        val first = answerOnTheCallScreen()
+        val before = emulator.callLog().size
+        compose.onNodeWithTag("nova-ligacao").performClick()
+        compose.onNodeWithTag("nova-numero").performTextInput("2002")
+        compose.onNodeWithTag("nova-ligar").performClick()
+        // O motor põe a primeira em espera no makeCall e liga para o 2002 (o registrador atende).
+        waitForLog(before, "reinv-in 3001 sendonly")
+        waitForLog(before, "inv-in 2002 200")
+        emulator.waitUntil("a nova ligação em cima, com a primeira em espera") { activeWith(held = first) }
+        emulator.waitUntil("o cartão da em espera") { showsTagWithText("cartao-espera", "Em espera") }
+        assertEquals("2002", app.calls.state.value?.number)
+        // Desligar a nova: a primeira volta sozinha; depois o registrador a desliga.
+        compose.onNodeWithTag("desligar").performClick()
+        emulator.waitUntil("a primeira de volta, sozinha") {
+            app.calls.state.value?.let { it.id == first && it.second == null } == true
+        }
         assertEquals("OK", emulator.control("HANGUP 2001"))
         emulator.waitUntil("a primeira acabar") { app.calls.state.value == null }
     }
@@ -285,6 +367,46 @@ class CallFlowTest {
         emulator.waitUntil("a tela principal sem registro") { emulator.showsTag("aba-teclado") }
         assertEquals("sem registro", false, app.connection.registered.value)
     }
+
+    // O registrador liga e a ligação é atendida no Atender da tela de chamada (aberta com o app na frente, como pelo
+    // toque na notificação): o id dela.
+    private fun answerOnTheCallScreen(): Int {
+        assertEquals("OK", emulator.control("RING 2001"))
+        emulator.waitUntil("a ligação tocando") { app.calls.state.value?.phase == CallPhase.RINGING }
+        app.startActivity(CallActivity.intent(app))
+        emulator.waitUntil("o Atender da tela de chamada") { emulator.showsTag("atender") }
+        compose.onNodeWithTag("atender").performClick()
+        emulator.waitUntil("a ligação atendida") { app.calls.state.value?.phase == CallPhase.ACTIVE }
+        emulator.waitUntil("o toque parar", details = ::notifications) { callNotification() == null }
+        return app.calls.state.value!!.id
+    }
+
+    // Duas ligações do registrador: a primeira atendida na tela de chamada, e a segunda pela faixa, com a primeira em
+    // espera. Os ids: a primeira e a segunda.
+    private fun twoCalls(): Pair<Int, Int> {
+        val first = answerOnTheCallScreen()
+        assertEquals("OK", emulator.control("RING 2001"))
+        emulator.waitUntil("a faixa da segunda ligação") { showsTagWithText("segunda-ligacao", "Ligação de Cliente Teste") }
+        compose.onNodeWithTag("atender-segunda").performClick()
+        emulator.waitUntil("a segunda atendida, com a primeira em espera") { activeWith(held = first) }
+        emulator.waitUntil("o cartão da em espera") { showsTagWithText("cartao-espera", "Em espera") }
+        return first to app.calls.state.value!!.id
+    }
+
+    // A ligação de cima em andamento, e a ligação [held] em espera no cartão de baixo.
+    private fun activeWith(held: Int): Boolean =
+        app.calls.state.value?.let {
+            it.phase == CallPhase.ACTIVE && it.id != held && it.second?.id == held && it.second?.kind == SecondKind.HELD
+        } == true
+
+    // Uma tela do app na frente tem o elemento [tag] com o texto [text] (nele ou dentro dele).
+    private fun showsTagWithText(tag: String, text: String): Boolean =
+        try {
+            compose.onAllNodes(hasTestTag(tag) and (hasText(text) or hasAnyDescendant(hasText(text))), useUnmergedTree = true)
+                .fetchSemanticsNodes().isNotEmpty()
+        } catch (e: IllegalStateException) {
+            false   // sem nenhuma tela do Compose na frente
+        }
 
     // Disca no Teclado do app (na frente) e toca Ligar.
     private fun dial(number: String) {
