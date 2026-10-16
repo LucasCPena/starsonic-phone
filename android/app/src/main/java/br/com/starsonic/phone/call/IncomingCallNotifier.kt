@@ -34,7 +34,11 @@ import br.com.starsonic.phone.main.MainActivity
  * - "ligacoes-silenciadas" ("Ligações silenciadas", importância alta, sem som e sem vibração): a recebida depois
  *   do volume apertado durante o toque ([silence]). A notificação é atualizada no lugar, nesse canal: o Android
  *   para o toque e a vibração que se repetem, e ela continua no alto da tela.
- * - "perdidas" ("Ligações perdidas", importância padrão): "Ligação perdida de <número>"; tocar abre o Recentes.
+ * - "perdidas" ("Ligações perdidas", importância padrão): "Ligação perdida de <nome do contato ou número>"; tocar abre
+ *   o Recentes.
+ *
+ * O nome de quem liga chega já resolvido pelo CallManager (pelo Telecom, nos extras da recebida): o do contato do
+ * celular com o número, se há (spec da 0.2, 7.5), senão o que a central mandou.
  *
  * A chamada em espera (spec da 0.2, 7.1: a recebida com outra ligação em andamento) não toca o toque do celular, para
  * não cobrir a conversa: a notificação vai ao canal "ligacoes-silenciadas" (no alto da tela, sem som), sem a tela
@@ -130,10 +134,11 @@ class IncomingCallNotifier(
     }
 
     /**
-     * A notificação da recebida [callId] (o Telecom pede: onShowIncomingCallUi), se ela ainda toca. [address] é o
-     * endereço da ligação no Telecom: o nome de quem liga, sem nome nem número. Com [waiting] (outra ligação em
-     * andamento), a chamada em espera: sem o toque nem a tela cheia, com o bipe e a vibração curta a cada 3 s. Uma
-     * falha do Android ao mostrá-la vai ao log e não derruba a ligação.
+     * A notificação da recebida [callId] (o Telecom pede: onShowIncomingCallUi), se ela ainda toca, com o [name] já
+     * resolvido (o do contato do celular, ou o da central; vazio: o número). [address] é o endereço da ligação no
+     * Telecom: o nome de quem liga, sem nome nem número. Com [waiting] (outra ligação em andamento), a chamada em
+     * espera: sem o toque nem a tela cheia, com o bipe e a vibração curta a cada 3 s. Uma falha do Android ao mostrá-la
+     * vai ao log e não derruba a ligação.
      */
     fun showIncoming(callId: Int, number: String, name: String, address: String = "", waiting: Boolean = false) {
         synchronized(lock) {

@@ -49,6 +49,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import br.com.starsonic.phone.R
+import br.com.starsonic.phone.contacts.Contact
+import br.com.starsonic.phone.contacts.ContactSuggestions
+import br.com.starsonic.phone.contacts.rememberSuggestions
 import br.com.starsonic.phone.main.CallGreen
 import br.com.starsonic.phone.main.CallRed
 import br.com.starsonic.phone.main.Keypad
@@ -62,7 +65,9 @@ import kotlinx.coroutines.delay
  * única, ou a segunda na faixa); Desligar, Espera, Teclado e Transferir (o Transferir agora), para a ativa (na
  * conferência, Desligar desliga as duas); [activate] é o Alternar, e [dial] faz a Nova ligação (false: não ligou).
  * [consult] é o Consultar (false: não ligou), e [completeTransfer] e [cancelConsult], o Concluir transferência e o
- * Cancelar da consulta. [join] e [split] são o Juntar e o Separar da conferência.
+ * Cancelar da consulta. [join] e [split] são o Juntar e o Separar da conferência. [suggest] e [contactNumber] dão as
+ * sugestões dos contatos no número do Transferir e da Nova ligação (a busca da agenda e a regra dos números dos
+ * contatos, como no Teclado).
  */
 class CallActions(
     val answer: () -> Unit,
@@ -80,6 +85,8 @@ class CallActions(
     val split: () -> Unit,
     val dial: (String) -> Boolean,
     val route: (Int) -> Unit,
+    val suggest: (String) -> List<Contact>,
+    val contactNumber: (String) -> String,
 )
 
 /**
@@ -94,7 +101,9 @@ class CallActions(
  * ligação; a segunda que chega toca na faixa "Ligação de <nome ou número>" no alto, com Recusar e Atender. Desligar
  * desliga a ativa (a em espera volta sozinha).
  *
- * Transferir abre o número com Consultar e Transferir agora (a direta). Na consulta (spec da 0.2, 7.3), o colega em
+ * O nome é o do contato do celular quando o número está na agenda (spec da 0.2, 7.5: o CallManager o resolve), senão
+ * o que a central mandou. Transferir abre o número com Consultar e Transferir agora (a direta), e o número do Transferir
+ * e o da Nova ligação têm as sugestões dos contatos, como o Teclado. Na consulta (spec da 0.2, 7.3), o colega em
  * cima e o cliente no cartão "Em espera · transferência" (depois do Alternar, o cliente em cima e o colega "Em
  * espera"), com Concluir transferência (com o colega já atendido), Alternar e Cancelar no lugar de Espera,
  * Transferir e Nova ligação.
@@ -173,6 +182,7 @@ fun CallScreen(call: CallUi?, endMessage: String, routes: AudioRoutes, actions: 
                 transfer -> NumberPanel(
                     title = TRANSFER_TO,
                     tagPrefix = "transferir",
+                    actions = actions,
                     onCancel = { transferOpen = false },
                     choices = listOf(
                         // O Consultar é a segunda ligação: com duas, não.
@@ -189,6 +199,7 @@ fun CallScreen(call: CallUi?, endMessage: String, routes: AudioRoutes, actions: 
                 newCall -> NumberPanel(
                     title = NEW_CALL,
                     tagPrefix = "nova",
+                    actions = actions,
                     onCancel = { newCallOpen = false },
                     choices = listOf(
                         PanelChoice(DIAL, null, "nova-ligar") { number -> if (actions.dial(number)) newCallOpen = false },
@@ -470,12 +481,20 @@ private class PanelChoice(
     val onPick: (String) -> Unit,
 )
 
-// Um número, com os botões [choices] (lado a lado) e Cancelar embaixo: para onde a ligação vai (Transferir: Consultar
-// ou Transferir agora) ou para quem ligar (Nova ligação). Com um botão só, o Concluído do teclado é ele. As
-// etiquetas: <tagPrefix>-numero, <tagPrefix>-cancelar e a de cada botão.
+// Um número, com as sugestões dos contatos embaixo (um toque preenche o número como ele é discado:
+// [CallActions.suggest] e [CallActions.contactNumber]), os botões [choices] (lado a lado) e Cancelar embaixo: para onde
+// a ligação vai (Transferir: Consultar ou Transferir agora) ou para quem ligar (Nova ligação). Com um botão só, o
+// Concluído do teclado é ele. As etiquetas: <tagPrefix>-numero, <tagPrefix>-cancelar, sugestao-<nome> e a de cada botão.
 @Composable
-private fun NumberPanel(title: String, tagPrefix: String, onCancel: () -> Unit, choices: List<PanelChoice>) {
+private fun NumberPanel(
+    title: String,
+    tagPrefix: String,
+    actions: CallActions,
+    onCancel: () -> Unit,
+    choices: List<PanelChoice>,
+) {
     var number by rememberSaveable { mutableStateOf("") }
+    val suggestions = rememberSuggestions(number, actions.suggest, actions.contactNumber)
     val colors = OutlinedTextFieldDefaults.colors(
         focusedTextColor = Color.White,
         unfocusedTextColor = Color.White,
@@ -487,18 +506,22 @@ private fun NumberPanel(title: String, tagPrefix: String, onCancel: () -> Unit, 
     )
     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Text(title, color = Color.White, style = MaterialTheme.typography.titleMedium)
-        OutlinedTextField(
-            value = number,
-            onValueChange = { number = it },
-            label = { Text(NUMBER) },
-            singleLine = true,
-            colors = colors,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-            // Com mais de um botão, o Concluído só fecha o teclado (a pessoa escolhe o botão).
-            keyboardActions = choices.singleOrNull()?.let { only -> KeyboardActions(onDone = { only.onPick(number) }) }
-                ?: KeyboardActions.Default,
-            modifier = Modifier.fillMaxWidth().testTag("$tagPrefix-numero"),
-        )
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            OutlinedTextField(
+                value = number,
+                onValueChange = { number = it },
+                label = { Text(NUMBER) },
+                singleLine = true,
+                colors = colors,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                // Com mais de um botão, o Concluído só fecha o teclado (a pessoa escolhe o botão).
+                keyboardActions = choices.singleOrNull()
+                    ?.let { only -> KeyboardActions(onDone = { only.onPick(number) }) }
+                    ?: KeyboardActions.Default,
+                modifier = Modifier.fillMaxWidth().testTag("$tagPrefix-numero"),
+            )
+            ContactSuggestions(suggestions, Color.White, onPick = { number = it })
+        }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             for (choice in choices) {
                 Button(

@@ -1,5 +1,9 @@
 package br.com.starsonic.phone.contacts
 
+import java.text.Collator
+import java.text.Normalizer
+import java.util.Locale
+
 /** Um contato da agenda do celular: o nome e os números, como estão gravados (sem números repetidos). */
 data class Contact(val name: String, val numbers: List<String>)
 
@@ -27,4 +31,24 @@ interface ContactsSource {
  * alfabética (a do português). Com [text] (sem os espaços das pontas), os que têm o texto no nome (sem diferença de
  * maiúsculas e acentos) ou, num texto sem letras, os que têm um número com os dígitos dele; "" dá todos.
  */
-fun searchContacts(all: List<Contact>, text: String): List<Contact> = all
+fun searchContacts(all: List<Contact>, text: String): List<Contact> {
+    // A ordem alfabética do português (os acentos só desempatam); um Collator por busca (ele não é para várias threads).
+    val alphabetical = Collator.getInstance(Locale.forLanguageTag("pt-BR")).apply { strength = Collator.SECONDARY }
+    val listed = all.filter { it.numbers.isNotEmpty() }.sortedWith(compareBy(alphabetical) { it.name })
+    val wanted = text.trim()
+    if (wanted.isEmpty()) return listed
+    val name = fold(wanted)
+    val digits = digitsOf(wanted).takeIf { wanted.none(Char::isLetter) }.orEmpty()
+    return listed.filter { contact ->
+        name in fold(contact.name) || (digits.isNotEmpty() && contact.numbers.any { digits in digitsOf(it) })
+    }
+}
+
+/** Só os dígitos de [text] (um número sem os separadores, o "+", o "*" e o "#"). */
+fun digitsOf(text: String): String = text.filter(Char::isDigit)
+
+// O texto sem maiúsculas e sem acentos, para comparar nomes ("João" e "joao" são iguais).
+private fun fold(text: String): String =
+    Normalizer.normalize(text, Normalizer.Form.NFD).replace(MARKS, "").lowercase(Locale.ROOT)
+
+private val MARKS = Regex("\\p{Mn}+")

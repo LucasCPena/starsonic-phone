@@ -27,6 +27,10 @@
     <!-- A atualização pelo app (spec 7.6.5): o APK conferido vai ao instalador do Android, e na primeira vez a pessoa
          permite que o Starsonic Phone instale apps. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Os contatos do celular (spec da 0.2, 7.5), só para ler: a aba Contatos, o nome nas ligações e nos Recentes e as
+         sugestões do Teclado. A permissão é pedida na primeira abertura da aba Contatos; nada da agenda sai do celular
+         nem fica guardado no app. -->
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
 
     <!-- Sem backup na nuvem e sem a transferência para outro celular: a conta, a senha, os Recentes e o log de
          diagnóstico só ficam neste celular (spec 6.4; as regras do Android 12 ou mais novo em

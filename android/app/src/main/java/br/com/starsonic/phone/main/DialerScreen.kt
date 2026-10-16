@@ -35,18 +35,27 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import br.com.starsonic.phone.R
+import br.com.starsonic.phone.contacts.Contact
+import br.com.starsonic.phone.contacts.ContactSuggestions
+import br.com.starsonic.phone.contacts.rememberSuggestions
 
 /** As teclas do Teclado e do teclado da ligação (DTMF), em linhas. */
 internal val KEYS = listOf(listOf("1", "2", "3"), listOf("4", "5", "6"), listOf("7", "8", "9"), listOf("*", "0", "#"))
 
 /**
- * O Teclado (spec 4.1): o número digitado (com o apagar), as teclas 0–9, * e # e o Ligar. [onDial] liga e diz
- * se ligou (sem registro, não liga, e a tela principal mostra o aviso); ligou, o número sai do campo. Rola em
- * telas baixas (o tamanho da letra segue o do celular).
+ * O Teclado (spec 4.1): o número digitado (com o apagar), as sugestões dos contatos, as teclas 0–9, * e # e o Ligar.
+ * [onDial] liga e diz se ligou (sem registro, não liga, e a tela principal mostra o aviso); ligou, o número sai do
+ * campo. Rola em telas baixas (o tamanho da letra segue o do celular).
+ *
+ * As sugestões (spec da 0.2, 4.1): ao digitar, até três contatos do celular com um número que tem os dígitos digitados
+ * ([suggest], a busca da agenda, chamada fora da thread principal), com o nome e o número; um toque preenche o campo
+ * com o número como ele é discado ([contactNumber], a regra dos números dos contatos: o que vai à central aparece no
+ * campo, e o Ligar disca como um número digitado).
  */
 @Composable
-fun DialerScreen(onDial: (String) -> Boolean) {
+fun DialerScreen(onDial: (String) -> Boolean, suggest: (String) -> List<Contact>, contactNumber: (String) -> String) {
     var number by rememberSaveable { mutableStateOf("") }
+    val suggestions = rememberSuggestions(number, suggest, contactNumber)
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -70,6 +79,7 @@ fun DialerScreen(onDial: (String) -> Boolean) {
                 Icon(painterResource(R.drawable.ic_apagar), contentDescription = ERASE)
             }
         }
+        ContactSuggestions(suggestions, MaterialTheme.colorScheme.onSurface, onPick = { number = it })
         Keypad(onKey = { number += it })
         Button(
             onClick = { if (onDial(number)) number = "" },

@@ -52,6 +52,7 @@ import br.com.starsonic.phone.about.AboutScreen
 import br.com.starsonic.phone.about.SEND_DIAGNOSTICS
 import br.com.starsonic.phone.call.CallActivity
 import br.com.starsonic.phone.call.CallPhase
+import br.com.starsonic.phone.contacts.ContactsScreen
 import br.com.starsonic.phone.data.Account
 import br.com.starsonic.phone.engine.Transport
 import br.com.starsonic.phone.login.LoginScreen
@@ -77,8 +78,9 @@ import kotlinx.coroutines.withContext
  * As telas do app (spec 4.1 e 7.1):
  * - Sem conta gravada, a tela Entrar. Depois de um Entrar que começou sem conta (o primeiro, ou o de depois de
  *   Sair), a tela Permissões, se falta alguma coisa.
- * - Com conta, a tela principal: a faixa com o status e o menu (⋮), a faixa de avisos e as abas Teclado e Recentes,
- *   com a volta para a ligação em andamento. A notificação de ligação perdida abre o Recentes ([ACTION_RECENTS]).
+ * - Com conta, a tela principal: a faixa com o status e o menu (⋮), a faixa de avisos e as abas Teclado, Recentes e
+ *   Contatos (a agenda do celular, spec da 0.2, 7.5), com a volta para a ligação em andamento. A notificação de ligação
+ *   perdida abre o Recentes ([ACTION_RECENTS]).
  * - Editar conta: a tela Entrar com servidor, protocolo e ramal preenchidos e a senha vazia (nunca a tela
  *   Permissões depois). Registrou: a conta nova é gravada e o serviço começa de novo, porque ele só troca a conta que
  *   segura quando começa (fica com a nova, que já está no motor, sem outro REGISTER). Falhou: a conta anterior volta.
@@ -141,6 +143,7 @@ class MainActivity : ComponentActivity() {
         editMessage = savedInstanceState?.getString(STATE_EDIT_MESSAGE).orEmpty()
         lifecycleScope.launch {
             val (account, transport) = withContext(Dispatchers.IO) {
+                app.contactDialProfile()   // o perfil da regra dos números dos contatos, lido aqui, e não num toque
                 val account = app.store.load()
                 account to (if (account == null) app.defaultTransport else account.transport)
             }
@@ -329,8 +332,9 @@ class MainActivity : ComponentActivity() {
             CallMessage(message)
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 when (tab) {
-                    TAB_RECENTS -> RecentsScreen(app.recents, onDial = { dial(it) })
-                    else -> DialerScreen(onDial = ::dial)
+                    TAB_RECENTS -> RecentsScreen(app.recents, app.contacts, onDial = { dial(it) })
+                    TAB_CONTACTS -> ContactsScreen(app.contacts, onCall = { dialContact(it) })
+                    else -> DialerScreen(onDial = ::dial, suggest = app.contacts::search, contactNumber = app.dialRule)
                 }
             }
             NavigationBar(Modifier.navigationBarsPadding()) {
@@ -347,6 +351,13 @@ class MainActivity : ComponentActivity() {
                     icon = { Icon(painterResource(R.drawable.ic_recentes), contentDescription = null) },
                     label = { Text(RECENTS) },
                     modifier = Modifier.testTag("aba-recentes"),
+                )
+                NavigationBarItem(
+                    selected = tab == TAB_CONTACTS,
+                    onClick = { tab = TAB_CONTACTS },
+                    icon = { Icon(painterResource(R.drawable.ic_contatos), contentDescription = null) },
+                    label = { Text(CONTACTS) },
+                    modifier = Modifier.testTag("aba-contatos"),
                 )
             }
         }
@@ -406,6 +417,11 @@ class MainActivity : ComponentActivity() {
         val dialed = app.calls.dial(number)
         if (dialed) startActivity(CallActivity.intent(this))
         return dialed
+    }
+
+    // Liga para o número de um contato (a aba Contatos: a regra dos números dos contatos) como o [dial].
+    private fun dialContact(number: String) {
+        if (app.calls.dialContact(number)) startActivity(CallActivity.intent(this))
     }
 
     // O Editar, com o aviso [message] ("" no do menu); um modelo novo, com a conta gravada de agora.
@@ -521,8 +537,10 @@ class MainActivity : ComponentActivity() {
         private const val STATE_EDIT_MESSAGE = "aviso-editar"
         private const val TAB_KEYPAD = 0
         private const val TAB_RECENTS = 1
+        private const val TAB_CONTACTS = 2
         private const val KEYPAD = "Teclado"
         private const val RECENTS = "Recentes"
+        private const val CONTACTS = "Contatos"
         private const val RETURN_TO_CALL = "Ligação em andamento. Toque para voltar."
     }
 }

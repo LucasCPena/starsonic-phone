@@ -65,6 +65,8 @@ class CallActivity : ComponentActivity() {
             split = calls::split,
             dial = calls::dial,
             route = telecom::setRoute,
+            suggest = app.contacts::search,
+            contactNumber = app.dialRule,
         )
         setContent {
             StarsonicTheme {

@@ -29,6 +29,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import br.com.starsonic.phone.R
+import br.com.starsonic.phone.contacts.ContactsSource
 import br.com.starsonic.phone.data.CallKind
 import br.com.starsonic.phone.data.Recent
 import br.com.starsonic.phone.data.RecentsStore
@@ -42,13 +43,24 @@ import kotlinx.coroutines.withContext
  * O Recentes (spec 4.1): as ligações feitas, recebidas e perdidas, das mais novas para as mais antigas, com o
  * número (e o nome), o tipo, a data, a hora e a duração; tocar numa delas liga de volta ([onDial]). A lista
  * é lida do disco fora da thread principal, de novo a cada mudança.
+ *
+ * O nome (spec da 0.2, 7.5): o do contato do celular com o número ([ContactsSource.lookup], procurado na hora de
+ * mostrar, na mesma leitura, uma vez por número), senão o que a central mandou (o que os Recentes guardam), senão o
+ * número.
  */
 @Composable
-fun RecentsScreen(store: RecentsStore, onDial: (String) -> Unit) {
+fun RecentsScreen(store: RecentsStore, contacts: ContactsSource, onDial: (String) -> Unit) {
     val version by store.version.collectAsState()
-    var recents by remember { mutableStateOf<List<Recent>?>(null) }
+    var recents by remember { mutableStateOf<List<Pair<Recent, String>>?>(null) }
     LaunchedEffect(version) {
-        recents = withContext(Dispatchers.IO) { store.list() }
+        recents = withContext(Dispatchers.IO) {
+            val names = HashMap<String, String?>()
+            store.list().map { recent ->
+                val contact = if (recent.number in names) names[recent.number] else contacts.lookup(recent.number)
+                names[recent.number] = contact
+                recent to (contact ?: recent.name)
+            }
+        }
     }
     val shown = recents ?: return
     if (shown.isEmpty()) {
@@ -58,15 +70,16 @@ fun RecentsScreen(store: RecentsStore, onDial: (String) -> Unit) {
         return
     }
     LazyColumn(Modifier.fillMaxSize()) {
-        items(shown) { recent ->
-            RecentRow(recent, onClick = { onDial(recent.number) })
+        items(shown) { (recent, name) ->
+            RecentRow(recent, name, onClick = { onDial(recent.number) })
             HorizontalDivider()
         }
     }
 }
 
+// Uma ligação do Recentes, com o nome [name] (o do contato ou o da central; vazio: só o número).
 @Composable
-private fun RecentRow(recent: Recent, onClick: () -> Unit) {
+private fun RecentRow(recent: Recent, name: String, onClick: () -> Unit) {
     val (icon, tint) = when (recent.kind) {
         CallKind.FEITA -> R.drawable.ic_feita to StarsonicCyan
         CallKind.RECEBIDA -> R.drawable.ic_recebida to CallGreen
@@ -84,12 +97,12 @@ private fun RecentRow(recent: Recent, onClick: () -> Unit) {
         Icon(painterResource(icon), contentDescription = null, tint = tint)
         Column(Modifier.weight(1f)) {
             Text(
-                recent.name.ifEmpty { recent.number },
+                name.ifEmpty { recent.number },
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = if (recent.kind == CallKind.PERDIDA) CallRed else Color.Unspecified,
             )
-            if (recent.name.isNotEmpty()) Text(recent.number, style = MaterialTheme.typography.bodyMedium)
+            if (name.isNotEmpty()) Text(recent.number, style = MaterialTheme.typography.bodyMedium)
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(kindLabel(recent.kind), style = MaterialTheme.typography.bodySmall)
                 Text("·", style = MaterialTheme.typography.bodySmall)

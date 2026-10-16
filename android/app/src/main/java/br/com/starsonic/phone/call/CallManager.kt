@@ -28,7 +28,7 @@ interface CallEvents {
 
 /** As notificações que o [CallManager] pede (a da ligação recebida nasce no Telecom: IncomingCallNotifier). */
 interface CallNotifier {
-    /** "Ligação perdida de <número>" (canal "perdidas"). */
+    /** "Ligação perdida de <nome do contato do celular ou número>" (canal "perdidas"). */
     fun showMissed(text: String)
 
     /** A ligação [callId] parou de tocar (atendida, recusada, desistência): a notificação dela sai e o toque para. */
@@ -54,7 +54,8 @@ enum class CallPhase {
  * O que a tela de chamada mostra: a ligação ativa (a de cima) e, com duas, a outra em [second].
  *
  * - [id]: o id da ligação no motor ([CallManager.NO_ID]: a feita antes de o motor dar o dela).
- * - [name]: o nome de exibição que a central mandou (pode ser vazio).
+ * - [name]: o nome mostrado: o do contato do celular com o número, se o número está na agenda (procurado quando a
+ *   ligação começou), senão o nome de exibição que a central mandou (pode ser vazio).
  * - [muted]: o mudo do microfone, que vale para as duas ligações.
  * - [second]: a outra ligação (tocando, em espera ou, na conferência, junto desta); null com uma só. A feita que
  *   chama é sempre a ativa.
@@ -85,7 +86,10 @@ data class CallUi(
         get() = !incoming || phase == CallPhase.CONNECTING || phase == CallPhase.ACTIVE
 }
 
-/** A outra de duas ligações, para o cartão de baixo (ou a faixa da que toca): o id no motor, o número e o nome. */
+/**
+ * A outra de duas ligações, para o cartão de baixo (ou a faixa da que toca): o id no motor, o número e o nome (o do
+ * contato do celular, ou o da central, como em [CallUi.name]).
+ */
 data class SecondUi(val id: Int, val number: String, val name: String, val kind: SecondKind)
 
 /** Em que pé está a outra de duas ligações. */
@@ -163,14 +167,21 @@ object EndCause {
  *   (uma ligação da operadora atendida) nunca troca: com duas, as duas ficam em espera, sem som, até ele pedir a
  *   retomada de uma. Na conferência, ela a desfaz antes (o motor nunca põe em espera uma ligação da conferência):
  *   como o Separar, e a que fica vai para a espera também.
+ * - Os contatos do celular (spec da 0.2, 7.5): o nome de cada ligação é o do contato com o número dela
+ *   ([ContactsSource.lookup]), procurado uma vez quando ela começa (a recebida antes de ir à tela e ao Telecom, que leva
+ *   o nome para a notificação; a feita logo depois de começar), senão o que a central mandou. Ele vale na tela, na
+ *   faixa da segunda, nos avisos ("<nome ou número> desligou") e na notificação de perdida; os Recentes guardam o nome
+ *   da central (a tela deles procura o contato na hora de mostrar). [dialContact] liga para o número de um contato pela
+ *   regra dos números dos contatos ([dialRule]).
  * - Depois de [onLogout] (Sair), os eventos do motor são ignorados até o próximo Entrar ([onLogin]).
  *
  * Threads: os eventos chegam na thread dos eventos do motor; os toques da tela e do Telecom, na principal. Nada
  * aqui espera o motor, a não ser o makeCall, que roda em [background] (como as gravações dos Recentes, que leem
- * e gravam o disco). A trava guarda o estado e nunca fica presa numa chamada ao motor, ao Telecom, às
- * notificações ou ao disco, nem na entrega de [state] e [endMessage]: tudo sai depois, na ordem em que foi
- * decidido. Os coletores que rodam na hora (Dispatchers.Main.immediate na thread principal) rodam sem a trava,
- * e um deles pode chamar o CallManager de volta.
+ * e gravam o disco, e a procura do contato da feita). A procura do contato da recebida (e da ocupada) lê a agenda na
+ * thread dos eventos do motor, antes da trava; nenhuma roda na thread principal. A trava guarda o estado e nunca fica
+ * presa numa chamada ao motor, ao Telecom, às notificações, à agenda ou ao disco, nem na entrega de [state] e
+ * [endMessage]: tudo sai depois, na ordem em que foi decidido. Os coletores que rodam na hora
+ * (Dispatchers.Main.immediate na thread principal) rodam sem a trava, e um deles pode chamar o CallManager de volta.
  */
 class CallManager(
     private val gateway: SipGateway,
@@ -186,8 +197,19 @@ class CallManager(
         Thread(task, "starsonic-ligacao").apply { isDaemon = true }
     },
 ) : CallEvents {
-    // Uma das ligações de agora. Só com a trava.
-    private class Call(val incoming: Boolean, val number: String, val name: String, val startMillis: Long) {
+    // Uma das ligações de agora: [name] é o nome que a central mandou (o dos Recentes), e [contact], o do contato do
+    // celular com o número dela (procurado uma vez, quando ela começa). Só com a trava.
+    private class Call(
+        val incoming: Boolean,
+        val number: String,
+        val name: String,
+        val startMillis: Long,
+        var contact: String? = null,
+    ) {
+        // O nome mostrado (tela, faixa, avisos e notificação): o do contato, se há; senão, o da central.
+        val displayName: String
+            get() = contact ?: name
+
         var id = NO_ID                 // o id no motor (a feita só o ganha com o makeCall ou o primeiro evento)
         var phase = if (incoming) CallPhase.RINGING else CallPhase.DIALING
         var dialRequested = false      // feita: o makeCall já foi pedido
@@ -242,6 +264,7 @@ class CallManager(
 
     override fun onIncoming(callId: Int, number: String, name: String) {
         val permitted = !loggedOut && telecom.incomingPermitted()   // fora da trava: pergunta ao Android
+        val contact = if (loggedOut) null else contacts.lookup(number)   // fora da trava: lê a agenda
         act { effects ->
             // Antes de olhar o loggedOut: o fim de uma ligação ignorada depois de Sair nunca é tomado por uma feita.
             maxSeenId = maxOf(maxSeenId, callId)
@@ -252,20 +275,22 @@ class CallManager(
             if (!fits || !permitted) {
                 // Ocupado, e a ligação entra como perdida.
                 effects += { gateway.reject(callId) }
-                missed(Recent(number, name, CallKind.PERDIDA, clock.nowMillis(), 0), effects)
+                missed(Recent(number, name, CallKind.PERDIDA, clock.nowMillis(), 0), contact, effects)
                 return@act
             }
-            val incoming = Call(incoming = true, number, name, clock.nowMillis()).also { it.id = callId }
+            val incoming = Call(incoming = true, number, name, clock.nowMillis(), contact).also { it.id = callId }
             calls += incoming
             if (active == null) active = incoming
             publish()
-            effects += { telecom.addIncoming(callId, number, name) }
+            val shownName = incoming.displayName
+            effects += { telecom.addIncoming(callId, number, shownName) }
         }
     }
 
     override fun onRejectedBusy(number: String, name: String) {
+        val contact = if (loggedOut) null else contacts.lookup(number)   // fora da trava: lê a agenda
         act { effects ->
-            if (!loggedOut) missed(Recent(number, name, CallKind.PERDIDA, clock.nowMillis(), 0), effects)
+            if (!loggedOut) missed(Recent(number, name, CallKind.PERDIDA, clock.nowMillis(), 0), contact, effects)
         }
     }
 
@@ -296,7 +321,15 @@ class CallManager(
      */
     fun dial(raw: String): Boolean = place(raw, consult = false)
 
-    fun dialContact(number: String): Boolean = dial(number)
+    /**
+     * Liga para [number], um número de um contato do celular (a aba Contatos), como o [dial], depois da regra dos
+     * números dos contatos ([dialRule]: o "+<ddi>" sai e o prefixo externo entra na frente de um número externo; spec da
+     * 0.2, 4.2). false se não ligou: a regra não deu número, e nos casos do [dial].
+     */
+    fun dialContact(number: String): Boolean {
+        val dialed = dialRule(number)
+        return dialed.isNotEmpty() && dial(dialed)
+    }
 
     /**
      * O Consultar (spec da 0.2, 7.3): liga para o colega [raw] como a Nova ligação do [dial], com a ligação em
@@ -328,8 +361,19 @@ class CallManager(
             if (consult && other != null) consulting = Consult(client = other, colleague = dialed)
             publish()
             effects += { telecom.placeOutgoing(number) }
+            effects += { background.execute { findContact(dialed) } }
         }
         return true
+    }
+
+    // Em [background] (nunca na thread principal, de onde vem o [dial]): o nome do contato do celular com o número da
+    // feita [dialed], procurado uma vez; achado, a tela passa a mostrá-lo.
+    private fun findContact(dialed: Call) {
+        val found = contacts.lookup(dialed.number) ?: return
+        act {
+            dialed.contact = found
+            if (calls.any { it === dialed }) publish()
+        }
     }
 
     /** O Telecom criou a Connection da feita: o motor liga (o makeCall roda em [background]). */
@@ -370,7 +414,7 @@ class CallManager(
      * CallManager, e não de [state]: o Telecom pode pedir a Connection antes de o estado ser publicado.
      */
     fun ringing(): IncomingRequest? = synchronized(lock) {
-        ringingCall()?.let { IncomingRequest(it.id, it.number, it.name) }
+        ringingCall()?.let { IncomingRequest(it.id, it.number, it.displayName) }
     }
 
     /** Há uma feita esperando o Telecom (ele pergunta antes de criar a Connection dela). */
@@ -813,7 +857,10 @@ class CallManager(
             }
             // A perdida que a pessoa não viu (desistência, ou o Telecom não deixou) ganha a notificação.
             val unseen = !current.answered && (!current.rejected || current.notifyMissed)
-            if (!received && unseen && !quiet) effects += { notifier.showMissed(missedText(current.number, current.name)) }
+            if (!received && unseen && !quiet) {
+                val text = missedText(current.number, current.name, current.contact)
+                effects += { notifier.showMissed(text) }
+            }
             effects += { notifier.stopRinging(id) }
         } else {
             kind = CallKind.FEITA
@@ -829,11 +876,11 @@ class CallManager(
             }
             // O colega da consulta que não atendeu: "<nome ou número>: <motivo>" (o cliente já volta, abaixo).
             if (message.isNotEmpty()) {
-                showEndMessage(if (colleague) "${current.name.ifEmpty { current.number }}: $message" else message)
+                showEndMessage(if (colleague) "${current.displayName.ifEmpty { current.number }}: $message" else message)
             }
         }
         if ((!wasActive || fromConference) && received && !current.localHangup && !quiet && calls.any { !it.ending }) {
-            showEndMessage("${current.name.ifEmpty { current.number }} desligou")
+            showEndMessage("${current.displayName.ifEmpty { current.number }} desligou")
         }
         if (muted && calls.isEmpty()) {
             muted = false
@@ -923,9 +970,10 @@ class CallManager(
     }
 
     // Com a trava: uma perdida que a pessoa não viu (ocupado): Recentes e notificação.
-    private fun missed(recent: Recent, effects: MutableList<() -> Unit>) {
+    private fun missed(recent: Recent, contact: String?, effects: MutableList<() -> Unit>) {
         record(recent, effects)
-        effects += { notifier.showMissed(missedText(recent.number, recent.name)) }
+        val text = missedText(recent.number, recent.name, contact)
+        effects += { notifier.showMissed(text) }
     }
 
     // Os Recentes leem e gravam o disco: em [background], na ordem.
@@ -956,10 +1004,10 @@ class CallManager(
             val other = otherThan(main)
             val together = conference && other != null
             val second = other?.let {
-                SecondUi(it.id, it.number, it.name, if (together) SecondKind.ACTIVE else secondKind(it))
+                SecondUi(it.id, it.number, it.displayName, if (together) SecondKind.ACTIVE else secondKind(it))
             }
             CallUi(
-                main.id, main.number, main.name, main.incoming, main.phase, main.activeSince, main.held, muted,
+                main.id, main.number, main.displayName, main.incoming, main.phase, main.activeSince, main.held, muted,
                 second = second,
                 conference = together,
                 consult = consultUi(),
@@ -1038,7 +1086,9 @@ class CallManager(
         }
     }
 
-    private fun missedText(number: String, name: String) = "Ligação perdida de ${number.ifEmpty { name }}"
+    // "Ligação perdida de <nome do contato do celular, ou o número (ou, sem número, o nome da central)>".
+    private fun missedText(number: String, name: String, contact: String?) =
+        "Ligação perdida de ${contact ?: number.ifEmpty { name }}"
 
     companion object {
         /** O id de uma feita antes de o motor dar o dela. */
