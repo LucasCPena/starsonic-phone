@@ -481,10 +481,10 @@ private class PanelChoice(
     val onPick: (String) -> Unit,
 )
 
-// Um número, com as sugestões dos contatos embaixo (um toque preenche o número como ele é discado:
-// [CallActions.suggest] e [CallActions.contactNumber]), os botões [choices] (lado a lado) e Cancelar embaixo: para onde
-// a ligação vai (Transferir: Consultar ou Transferir agora) ou para quem ligar (Nova ligação). Com um botão só, o
-// Concluído do teclado é ele. As etiquetas: <tagPrefix>-numero, <tagPrefix>-cancelar, sugestao-<nome> e a de cada botão.
+// Um número, com os botões [choices] (lado a lado), as sugestões dos contatos (um toque preenche o número como ele é
+// discado: [CallActions.suggest] e [CallActions.contactNumber]) e Cancelar embaixo: para onde a ligação vai (Transferir:
+// Consultar ou Transferir agora) ou para quem ligar (Nova ligação). Com um botão só, o Concluído do teclado é ele. As
+// etiquetas: <tagPrefix>-numero, <tagPrefix>-cancelar, sugestao-<nome> e a de cada botão.
 @Composable
 private fun NumberPanel(
     title: String,
@@ -506,22 +506,19 @@ private fun NumberPanel(
     )
     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Text(title, color = Color.White, style = MaterialTheme.typography.titleMedium)
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            OutlinedTextField(
-                value = number,
-                onValueChange = { number = it },
-                label = { Text(NUMBER) },
-                singleLine = true,
-                colors = colors,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-                // Com mais de um botão, o Concluído só fecha o teclado (a pessoa escolhe o botão).
-                keyboardActions = choices.singleOrNull()
-                    ?.let { only -> KeyboardActions(onDone = { only.onPick(number) }) }
-                    ?: KeyboardActions.Default,
-                modifier = Modifier.fillMaxWidth().testTag("$tagPrefix-numero"),
-            )
-            ContactSuggestions(suggestions, Color.White, onPick = { number = it })
-        }
+        OutlinedTextField(
+            value = number,
+            onValueChange = { number = it },
+            label = { Text(NUMBER) },
+            singleLine = true,
+            colors = colors,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+            // Com mais de um botão, o Concluído só fecha o teclado (a pessoa escolhe o botão).
+            keyboardActions = choices.singleOrNull()
+                ?.let { only -> KeyboardActions(onDone = { only.onPick(number) }) }
+                ?: KeyboardActions.Default,
+            modifier = Modifier.fillMaxWidth().testTag("$tagPrefix-numero"),
+        )
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             for (choice in choices) {
                 Button(
@@ -538,6 +535,9 @@ private fun NumberPanel(
                 }
             }
         }
+        // As sugestões só ocupam lugar quando há alguma, e embaixo dos botões: com o teclado do Android aberto, a tela
+        // de chamada tem pouco espaço, e os botões nunca saem do lugar nem encolhem por causa delas.
+        if (suggestions.isNotEmpty()) ContactSuggestions(suggestions, Color.White, onPick = { number = it })
         TextButton(onClick = onCancel, modifier = Modifier.testTag("$tagPrefix-cancelar")) {
             Text(CANCEL, color = Color.White)
         }

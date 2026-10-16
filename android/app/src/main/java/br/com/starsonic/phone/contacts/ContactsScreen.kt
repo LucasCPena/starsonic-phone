@@ -240,7 +240,7 @@ internal fun rememberSuggestions(
 
 /**
  * As sugestões do Teclado e do número da tela de chamada, lado a lado numa faixa de altura fixa (no tamanho da letra do
- * celular) que fica mesmo vazia: elas aparecem e somem sem empurrar o teclado embaixo do dedo. Cada uma (tag
+ * celular). O Teclado a deixa mesmo vazia: elas aparecem e somem sem empurrar o teclado embaixo do dedo. Cada uma (tag
  * sugestao-<nome>) mostra o nome e o número, em [color], e encolhe (com "…") para as três caberem; o toque passa o
  * número como é discado a [onPick].
  */
