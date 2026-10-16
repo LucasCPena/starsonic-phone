@@ -346,6 +346,7 @@ class CallFlowTest {
         waitForLog(before, "inv-in 2002 200")
         emulator.waitUntil("a nova ligação em cima, com a primeira em espera") { activeWith(held = first) }
         val second = app.calls.state.value!!.id
+        val alone = telecomState()
         // Juntar: o motor retoma a primeira (o 3001 das ligações do RING), e a tela vira a Conferência.
         before = emulator.callLog().size
         compose.onNodeWithTag("juntar").performClick()
@@ -354,7 +355,7 @@ class CallFlowTest {
         assertEquals(true, app.calls.state.value?.conference)
         assertEquals("os dois na tela", true, emulator.showsText("Cliente Teste") && emulator.showsText("2002"))
         assertEquals("sem o cartão da em espera", false, emulator.showsTag("cartao-espera"))
-        noteTheTelecomConference()
+        noteTheTelecomConference(alone)
         // Separar: a última que entrou (a feita) vai para a espera, e a primeira volta ao cartão de cima.
         before = emulator.callLog().size
         compose.onNodeWithTag("separar").performClick()
@@ -533,17 +534,24 @@ class CallFlowTest {
     // A conferência no Telecom do Android (o risco 1 da spec da 0.2: a Conference num serviço self-managed) vai numa
     // nota do teste, no fim: o modo do áudio logo e 3 s depois (3: MODE_IN_COMMUNICATION, o das ligações pela
     // internet), o app na frente, a linha dela no dumpsys telecom (a que tem as duas como filhas: prop com self_mng se
-    // ele a vê como self-managed), os InCallServices que o Telecom ligou e os apps com notificações.
-    private fun noteTheTelecomConference() {
+    // ele a vê como self-managed) e o [telecomState] dela e o de antes do Juntar ([before], com as duas soltas).
+    private fun noteTheTelecomConference(before: String) {
         val audio = app.getSystemService(AudioManager::class.java)
         val mode = audio.mode
         Thread.sleep(3_000)
-        val dump = device.executeShellCommand("dumpsys telecom").lines()
-        val conference = dump.filter { "childs(2)" in it }.distinct().take(2).joinToString(" | ") { it.trim().take(400) }
-        val inCall = dump.filter { "InCall" in it }.flatMap { COMPONENT.findAll(it).map { found -> found.value } }.distinct()
-        val notifying = PACKAGE.findAll(device.executeShellCommand("dumpsys notification")).map { it.groupValues[1] }.toSet()
+        val conference = device.executeShellCommand("dumpsys telecom").lines()
+            .filter { "childs(2)" in it }.distinct().take(2).joinToString(" | ") { it.trim().take(400) }
         conferenceNote = "modo do áudio $mode e ${audio.mode} 3 s depois, na frente ${device.currentPackageName}; " +
-            "Telecom: ${conference.ifEmpty { "(sem a linha)" }}; InCallServices: $inCall; notificações de: $notifying"
+            "Telecom: ${conference.ifEmpty { "(sem a linha)" }}; na conferência, ${telecomState()}; antes, $before"
+    }
+
+    // Os pacotes dos InCallServices que o Telecom ligou (as linhas do dumpsys telecom com eles) e os dos apps com
+    // notificações.
+    private fun telecomState(): String {
+        val inCall = device.executeShellCommand("dumpsys telecom").lines().filter { "InCall" in it }
+            .flatMap { line -> COMPONENT.findAll(line).map { it.groupValues[1] } }.toSet()
+        val notifying = PACKAGE.findAll(device.executeShellCommand("dumpsys notification")).map { it.groupValues[1] }.toSet()
+        return "InCallServices de $inCall, notificações de $notifying"
     }
 
     // A notificação da chamada em espera: no canal sem som, sem a tela cheia e sem o toque que se repete.
@@ -649,9 +657,9 @@ class CallFlowTest {
         private var lastFakeId = 1_000
 
         // A conferência no Telecom, como o conferenceJoinsTwoCallsAndSplits a viu (null: ele não chegou lá), e o que
-        // a nota tira dos dumpsys: os componentes (pacote/classe) e o pacote de cada notificação.
+        // a nota tira dos dumpsys: o pacote de cada componente e o de cada notificação.
         private var conferenceNote: String? = null
-        private val COMPONENT = Regex("ComponentInfo\\{[^}]+\\}")
+        private val COMPONENT = Regex("ComponentInfo\\{([\\w.]+)/[^}]*\\}")
         private val PACKAGE = Regex("NotificationRecord\\([^)]*?pkg=([\\w.]+)")
 
         /**
