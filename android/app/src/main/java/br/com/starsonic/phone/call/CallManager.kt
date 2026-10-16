@@ -141,7 +141,9 @@ object EndCause {
  *   as duas continuam. Cancelar ([cancelConsult]) desliga o colega, e o cliente volta sozinho. O colega que não
  *   atende (não completou) traz o cliente de volta, com o aviso "<nome ou número do colega>: <CallEndMessage>"; o
  *   cliente que desliga deixa o colega como uma ligação normal ("<nome ou número> desligou"). A transferência
- *   direta ([transfer]) recusada mostra o mesmo [TRANSFER_REFUSED].
+ *   direta ([transfer]) recusada mostra o mesmo [TRANSFER_REFUSED]. Uma ligação tem no máximo um pedido de
+ *   transferência esperando o resultado: com ele, nem Consultar nem outro Transferir agora nela; na consulta, o
+ *   Transferir agora não vale (a transferência é o Concluir), e só o resultado do Concluir é da consulta.
  * - O Telecom acompanha cada espera e retomada ([TelecomAdapter.setOnHold], [TelecomAdapter.setActive]); os pedidos
  *   dele chegam por [holdFromTelecom], [activateFromTelecom] e [hangup] com o id da ligação. A espera que ele pede
  *   (uma ligação da operadora atendida) nunca troca: com duas, as duas ficam em espera, sem som, até ele pedir a
@@ -182,13 +184,15 @@ class CallManager(
         var activeSince = 0L           // quando os dois lados atenderam (0: ainda não)
         var held = false               // em espera: pela pessoa, ou a outra de duas
         var heldByTelecom = false      // o Telecom a pôs em espera (uma ligação da operadora): nada a retoma sozinho
+        var transferPending: Transfer? = null   // a transferência pedida nela, até o resultado (onTransfer)
     }
+
+    // Que transferência uma ligação pediu: a direta (Transferir agora) ou a com consulta (o Concluir, no cliente).
+    private enum class Transfer { DIRECT, ATTENDED }
 
     // A consulta de agora: o cliente (o que vai ser transferido) e o colega (a feita pelo Consultar), os dois em
     // [calls]. Só com a trava.
-    private class Consult(val client: Call, val colleague: Call) {
-        var requested = false   // o Concluir foi pedido, e o resultado (onTransfer) ainda não chegou
-    }
+    private class Consult(val client: Call, val colleague: Call)
 
     private val lock = Any()
     private val calls = ArrayList<Call>(2)   // as ligações de agora (até duas), na ordem em que começaram
@@ -276,7 +280,8 @@ class CallManager(
     /**
      * O Consultar (spec da 0.2, 7.3): liga para o colega [raw] como a Nova ligação do [dial], com a ligação em
      * andamento (o cliente, que vai para a espera), e as duas ficam marcadas como a consulta ([CallUi.consult]).
-     * false se não ligou: sem uma ligação em andamento, e nos casos do [dial].
+     * false se não ligou: sem uma ligação em andamento, com uma transferência dela esperando o resultado (o 2xx da
+     * direta desligaria o cliente e deixaria o colega), e nos casos do [dial].
      */
     fun consult(raw: String): Boolean = place(raw, consult = true)
 
@@ -293,7 +298,7 @@ class CallManager(
             if (loggedOut) return false
             val other = calls.singleOrNull()
             if (calls.isNotEmpty() && (other == null || other.phase != CallPhase.ACTIVE || other.ending)) return false
-            if (consult && other == null) return false
+            if (consult && (other == null || other.transferPending != null)) return false
             clearEndMessage()
             val dialed = Call(incoming = false, number, "", clock.nowMillis())
             calls += dialed
@@ -479,13 +484,16 @@ class CallManager(
     /**
      * Transfere a ligação ativa, em andamento, para [raw] (sem consulta; spec 4.2): a ligação acaba quando o PABX
      * aceitar (o motor a desliga); se ele recusar ([onTransfer]), o aviso [TRANSFER_REFUSED]. false se não há o que
-     * transferir.
+     * transferir: sem a ativa em andamento, com outra transferência dela esperando o resultado, ou na consulta (lá, a
+     * transferência é o [completeTransfer]).
      */
     fun transfer(raw: String): Boolean {
         val number = core.normalizeDialString(raw)
         if (number.isEmpty()) return false
         act { effects ->
             val current = talking() ?: return false
+            if (consulting != null || current.transferPending != null) return false
+            current.transferPending = Transfer.DIRECT
             val id = current.id
             effects += { gateway.transfer(id, number) }
         }
@@ -503,8 +511,8 @@ class CallManager(
             val client = pair.client
             val colleague = pair.colleague
             val confirmed = client.phase == CallPhase.ACTIVE && colleague.phase == CallPhase.ACTIVE
-            if (pair.requested || !confirmed || client.ending || colleague.ending) return@act
-            pair.requested = true
+            if (client.transferPending != null || !confirmed || client.ending || colleague.ending) return@act
+            client.transferPending = Transfer.ATTENDED
             val clientId = client.id
             val colleagueId = colleague.id
             effects += { gateway.transferAttended(clientId, colleagueId) }
@@ -521,17 +529,17 @@ class CallManager(
     }
 
     /**
-     * O resultado da transferência pedida na ligação [callId] (a direta, ou a com consulta, no cliente). 2xx: o
-     * motor desliga a ligação (e o colega, na consulta) logo depois, e os fins chegam por ele; na consulta, as duas
-     * saem já, como desligadas aqui. Outro código: o aviso [TRANSFER_REFUSED] por 2 s, e as ligações continuam como
-     * estavam (o Concluir vale de novo).
+     * O resultado da transferência pedida na ligação [callId] (a direta, ou a com consulta, no cliente); sem um
+     * pedido dela esperando, nada. 2xx: o motor desliga a ligação (e o colega, só no Concluir) logo depois, e os fins
+     * chegam por ele; no Concluir, as duas saem já, como desligadas aqui. Outro código: o aviso [TRANSFER_REFUSED] por
+     * 2 s, e as ligações continuam como estavam (o pedido vale de novo).
      */
     override fun onTransfer(callId: Int, code: Int) {
         act {
             val current = if (loggedOut) null else calls.firstOrNull { it.id == callId && !it.ending }
-            if (current == null) return@act
-            val pair = consulting?.takeIf { it.client === current }
-            pair?.requested = false
+            val pending = current?.transferPending ?: return@act
+            current.transferPending = null
+            val pair = consulting?.takeIf { pending == Transfer.ATTENDED && it.client === current }
             when {
                 code !in 200..299 -> showEndMessage(TRANSFER_REFUSED)
                 pair != null -> {

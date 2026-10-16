@@ -1330,6 +1330,43 @@ class CallManagerTest {
         assertEquals(CallKind.FEITA, recents.list().single().kind)
     }
 
+    @Test
+    fun `a direct transfer waiting for its result refuses Consultar, and a consult refuses the direct transfer`() {
+        ring(1)
+        answerCall(1)
+        assertTrue(calls.transfer("2003"))
+        // O REFER espera o NOTIFY final (o destino ainda não atendeu): nem Consultar nem outro Transferir agora nela.
+        assertFalse(calls.consult("2002"))
+        assertFalse(calls.transfer("2004"))
+        assertTrue("nada discado", telecom.placed.isEmpty() && gateway.made.isEmpty())
+        assertEquals(listOf(1 to "2003"), gateway.transfers)
+        assertNull(calls.state.value?.consult)
+        // A central aceitou: o motor desliga só ela, e nada fica de pé escondido.
+        calls.onTransfer(1, 200)
+        calls.onCallState(1, CallState.DISCONNECTED, 200)
+        assertNull(calls.state.value)
+        assertTrue(gateway.hangups.isEmpty())
+        assertTrue("uma ligação nova depois", calls.dial("2005"))
+        calls.hangup()
+        // Na consulta, a transferência é o Concluir: o Transferir agora não vale, de nenhum dos lados.
+        ring(2, "3002", "")
+        answerCall(2)
+        val id = consultOut("2002")
+        calls.onCallState(id, CallState.CONFIRMED, 200)
+        assertFalse(calls.transfer("2004"))
+        calls.activate()
+        assertFalse(calls.transfer("2004"))
+        assertEquals(listOf(1 to "2003"), gateway.transfers)
+        // Um 2xx no cliente sem o Concluir pedido não é da consulta: as duas continuam.
+        calls.onTransfer(2, 200)
+        assertEquals(ConsultUi(id, colleagueActive = false), calls.state.value?.consult)
+        assertEquals(SecondUi(id, "2002", "", SecondKind.HELD), calls.state.value?.second)
+        calls.completeTransfer()
+        assertEquals(listOf(2 to id), gateway.attended)
+        calls.onTransfer(2, 200)
+        assertNull("o Concluir pedido: as duas saem", calls.state.value)
+    }
+
     // Outra thread tenta usar o CallManager por até 1 s: true se não conseguiu (a trava estava presa).
     private fun lockedOut(): Boolean {
         val other = thread { calls.isRinging(1) }

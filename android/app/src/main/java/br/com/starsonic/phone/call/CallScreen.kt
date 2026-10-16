@@ -163,7 +163,10 @@ fun CallScreen(call: CallUi?, endMessage: String, routes: AudioRoutes, actions: 
                     tagPrefix = "transferir",
                     onCancel = { transferOpen = false },
                     choices = listOf(
-                        PanelChoice(CONSULT, R.drawable.ic_consultar, "transferir-consultar") { number ->
+                        // O Consultar é a segunda ligação: com duas, não.
+                        PanelChoice(
+                            CONSULT, R.drawable.ic_consultar, "transferir-consultar", enabled = call.second == null,
+                        ) { number ->
                             if (actions.consult(number)) transferOpen = false
                         },
                         PanelChoice(TRANSFER_NOW, R.drawable.ic_transferir_agora, "transferir-agora") { number ->
@@ -397,8 +400,15 @@ private fun Controls(
     }
 }
 
-// Um botão do [NumberPanel]: o nome, o ícone (null: nenhum), a etiqueta e o que ele faz com o número.
-private class PanelChoice(val label: String, val icon: Int?, val tag: String, val onPick: (String) -> Unit)
+// Um botão do [NumberPanel]: o nome, o ícone (null: nenhum), a etiqueta, se vale agora (além de um número digitado)
+// e o que ele faz com o número.
+private class PanelChoice(
+    val label: String,
+    val icon: Int?,
+    val tag: String,
+    val enabled: Boolean = true,
+    val onPick: (String) -> Unit,
+)
 
 // Um número, com os botões [choices] (lado a lado) e Cancelar embaixo: para onde a ligação vai (Transferir: Consultar
 // ou Transferir agora) ou para quem ligar (Nova ligação). Com um botão só, o Concluído do teclado é ele. As
@@ -433,7 +443,7 @@ private fun NumberPanel(title: String, tagPrefix: String, onCancel: () -> Unit, 
             for (choice in choices) {
                 Button(
                     onClick = { choice.onPick(number) },
-                    enabled = number.isNotBlank(),
+                    enabled = choice.enabled && number.isNotBlank(),
                     colors = ButtonDefaults.buttonColors(containerColor = StarsonicCyan, contentColor = Color.White),
                     modifier = Modifier.weight(1f).testTag(choice.tag),
                 ) {
