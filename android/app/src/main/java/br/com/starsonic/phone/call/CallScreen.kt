@@ -70,6 +70,9 @@ class CallActions(
     val activate: () -> Unit,
     val dtmf: (String) -> Unit,
     val transfer: (String) -> Boolean,
+    val consult: (String) -> Boolean,
+    val completeTransfer: () -> Unit,
+    val cancelConsult: () -> Unit,
     val dial: (String) -> Boolean,
     val route: (Int) -> Unit,
 )

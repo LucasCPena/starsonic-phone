@@ -58,6 +58,14 @@ class CallManagerTest {
         return gateway.nextCallId - 1
     }
 
+    // O Consultar para [raw] (com o cliente em andamento): o Telecom cria a Connection do colega e o motor liga (o id
+    // do colega no motor).
+    private fun consultOut(raw: String): Int {
+        assertTrue(calls.consult(raw))
+        calls.onOutgoingReady()
+        return gateway.nextCallId - 1
+    }
+
     @Test
     fun `incoming call while idle goes to Telecom`() {
         calls.onIncoming(1, "3001", "Cliente Teste")
@@ -1048,6 +1056,278 @@ class CallManagerTest {
             ),
             recents.list(),
         )
+    }
+
+    // A transferência com consulta (spec da 0.2, 7.3): o cliente (a recebida 1) em espera e o colega (a feita pelo
+    // Consultar) a ativa; Concluir, Cancelar, o colega que não atende e o cliente que desliga. E o resultado da direta.
+
+    @Test
+    fun `Consultar holds the client and dials the colleague`() {
+        val start = clock.nowMillis()
+        assertFalse("sem ligação, nada a consultar", calls.consult("2002"))
+        ring(1)
+        assertFalse("com a recebida tocando, não", calls.consult("2002"))
+        answerCall(1)
+        clock.advance(10_000)
+        assertFalse(calls.consult(""))
+        assertTrue(calls.consult("2002"))
+        assertEquals("o Telecom põe o cliente em espera", listOf(1), telecom.held)
+        assertEquals(listOf("2002"), telecom.placed)
+        assertTrue("o motor põe o cliente em espera no makeCall", gateway.holds.isEmpty() && gateway.made.isEmpty())
+        val client = SecondUi(1, "3001", "Cliente Teste", SecondKind.HELD)
+        assertEquals(
+            CallUi(
+                CallManager.NO_ID, "2002", "", incoming = false, phase = CallPhase.DIALING, second = client,
+                consult = ConsultUi(CallManager.NO_ID, colleagueActive = true),
+            ),
+            calls.state.value,
+        )
+        assertFalse("com duas, nenhuma outra", calls.consult("2003"))
+        assertFalse(calls.dial("2003"))
+        calls.onOutgoingReady()
+        val id = gateway.nextCallId - 1
+        assertEquals(listOf("2002"), gateway.made)
+        calls.onCallState(id, CallState.CALLING, 0)
+        assertEquals(ConsultUi(id, colleagueActive = true), calls.state.value?.consult)
+        // Chamando: nem Concluir nem Alternar.
+        calls.completeTransfer()
+        calls.activate()
+        assertTrue(gateway.attended.isEmpty() && gateway.activated.isEmpty())
+        calls.onCallState(id, CallState.CONFIRMED, 200)
+        assertEquals(listOf(1, id), telecom.active)
+        assertEquals(
+            CallUi(
+                id, "2002", "", incoming = false, phase = CallPhase.ACTIVE, activeSinceMillis = start + 10_000,
+                second = client, consult = ConsultUi(id, colleagueActive = true),
+            ),
+            calls.state.value,
+        )
+        // Alternar: a pessoa fala com o cliente de novo, e o colega fica em espera (a consulta continua).
+        calls.activate()
+        assertEquals(listOf(1), gateway.activated)
+        assertEquals(
+            CallUi(
+                1, "3001", "Cliente Teste", incoming = true, phase = CallPhase.ACTIVE, activeSinceMillis = start,
+                second = SecondUi(id, "2002", "", SecondKind.HELD), consult = ConsultUi(id, colleagueActive = false),
+            ),
+            calls.state.value,
+        )
+        assertTrue("nada sai", gateway.hangups.isEmpty() && telecom.disconnected.isEmpty())
+    }
+
+    @Test
+    fun `Concluir transferência sends the attended transfer and both calls end`() {
+        val start = clock.nowMillis()
+        ring(1)
+        answerCall(1)
+        clock.advance(10_000)
+        val id = consultOut("2002")
+        calls.onCallState(id, CallState.CONFIRMED, 200)
+        clock.advance(20_000)
+        calls.completeTransfer()
+        assertEquals("o cliente para o colega", listOf(1 to id), gateway.attended)
+        calls.completeTransfer()   // o segundo toque, antes do resultado: nada
+        assertEquals(1, gateway.attended.size)
+        // A central aceitou: o motor desliga as duas (os fins chegam por ele), e a tela de chamada fecha.
+        calls.onTransfer(1, 200)
+        assertNull(calls.state.value)
+        assertEquals("", calls.endMessage.value)
+        assertTrue("o motor é quem desliga", gateway.hangups.isEmpty())
+        calls.onCallState(1, CallState.DISCONNECTED, 200)
+        calls.onCallState(id, CallState.DISCONNECTED, 200)
+        assertEquals("sem aviso", "", calls.endMessage.value)
+        assertTrue("nada volta", gateway.activated.isEmpty())
+        assertNull(calls.state.value)
+        assertEquals(listOf(1 to EndCause.LOCAL, id to EndCause.LOCAL), telecom.disconnected)
+        assertTrue(notifier.missed.isEmpty())
+        assertEquals(
+            listOf(
+                Recent("2002", "", CallKind.FEITA, start + 10_000, 20),
+                Recent("3001", "Cliente Teste", CallKind.RECEBIDA, start, 30),
+            ),
+            recents.list(),
+        )
+    }
+
+    @Test
+    fun `a refused attended transfer shows the message and keeps both calls`() {
+        val start = clock.nowMillis()
+        ring(1)
+        answerCall(1)
+        clock.advance(10_000)
+        val id = consultOut("2002")
+        calls.onCallState(id, CallState.CONFIRMED, 200)
+        calls.completeTransfer()
+        val both = CallUi(
+            id, "2002", "", incoming = false, phase = CallPhase.ACTIVE, activeSinceMillis = start + 10_000,
+            second = SecondUi(1, "3001", "Cliente Teste", SecondKind.HELD), consult = ConsultUi(id, colleagueActive = true),
+        )
+        calls.onTransfer(1, 603)   // o REFER recusado
+        assertEquals("O servidor não aceitou a transferência.", calls.endMessage.value)
+        assertEquals("as duas continuam como estavam", both, calls.state.value)
+        assertTrue(gateway.hangups.isEmpty() && gateway.activated.isEmpty() && telecom.disconnected.isEmpty())
+        clock.advance(1_999)
+        assertEquals("O servidor não aceitou a transferência.", calls.endMessage.value)
+        clock.advance(1)
+        assertEquals("", calls.endMessage.value)
+        // De novo, do lado do cliente (Alternar): Concluir vale com qualquer um dos dois ativo.
+        calls.activate()
+        calls.completeTransfer()
+        assertEquals(listOf(1 to id, 1 to id), gateway.attended)
+        calls.onTransfer(1, 486)   // o NOTIFY com erro
+        assertEquals("O servidor não aceitou a transferência.", calls.endMessage.value)
+        assertEquals(1, calls.state.value?.id)
+        assertEquals(ConsultUi(id, colleagueActive = false), calls.state.value?.consult)
+        assertTrue(gateway.hangups.isEmpty() && telecom.disconnected.isEmpty())
+        assertTrue(recents.list().isEmpty())
+    }
+
+    @Test
+    fun `Cancelar ends the colleague and resumes the client`() {
+        val start = clock.nowMillis()
+        ring(1)
+        answerCall(1)
+        clock.advance(10_000)
+        val id = consultOut("2002")
+        calls.onCallState(id, CallState.CALLING, 0)
+        calls.cancelConsult()
+        assertEquals("o colega sai", listOf(id), gateway.hangups)
+        assertTrue("o cliente volta quando o fim chega", gateway.activated.isEmpty())
+        val client = CallUi(1, "3001", "Cliente Teste", incoming = true, phase = CallPhase.ACTIVE, activeSinceMillis = start)
+        assertEquals("até lá, o cliente em espera, sem a consulta", client.copy(held = true), calls.state.value)
+        calls.cancelConsult()   // repetido: nada
+        assertEquals(listOf(id), gateway.hangups)
+        calls.onCallState(id, CallState.DISCONNECTED, 487)
+        assertEquals(listOf(1), gateway.activated)
+        assertEquals(listOf(1, 1), telecom.active)
+        assertEquals(listOf(id to EndCause.LOCAL), telecom.disconnected)
+        assertEquals("o cliente voltou sozinho", client, calls.state.value)
+        assertEquals("cancelada aqui: sem aviso", "", calls.endMessage.value)
+        // Com o colega atendido e o cliente de volta pelo Alternar: o colega (em espera) sai, e o cliente segue.
+        clock.advance(5_000)
+        val next = consultOut("2003")
+        calls.onCallState(next, CallState.CONFIRMED, 200)
+        calls.activate()
+        assertEquals(listOf(1, 1), gateway.activated)
+        clock.advance(5_000)
+        calls.cancelConsult()
+        assertEquals(listOf(id, next), gateway.hangups)
+        assertEquals(client, calls.state.value)
+        calls.onCallState(next, CallState.DISCONNECTED, 200)
+        assertEquals("o cliente já estava com o som", listOf(1, 1), gateway.activated)
+        assertEquals("", calls.endMessage.value)
+        assertEquals(client, calls.state.value)
+        // O Telecom pôs o cliente em espera (uma ligação da operadora): o Cancelar não o retoma.
+        calls.holdFromTelecom(1)
+        val third = consultOut("2004")
+        calls.cancelConsult()
+        calls.onCallState(third, CallState.DISCONNECTED, 487)
+        assertEquals("nada volta: o som é da operadora", listOf(1, 1), gateway.activated)
+        assertEquals(client.copy(held = true), calls.state.value)
+        assertEquals(
+            listOf(
+                Recent("2004", "", CallKind.FEITA, start + 20_000, 0),
+                Recent("2003", "", CallKind.FEITA, start + 15_000, 5),
+                Recent("2002", "", CallKind.FEITA, start + 10_000, 0),
+            ),
+            recents.list(),
+        )
+    }
+
+    @Test
+    fun `the colleague not answering resumes the client with the message`() {
+        val start = clock.nowMillis()
+        ring(1)
+        answerCall(1)
+        clock.advance(10_000)
+        val id = consultOut("2002")
+        calls.onCallState(id, CallState.CALLING, 0)
+        clock.advance(30_000)
+        calls.onCallState(id, CallState.DISCONNECTED, 480)
+        assertEquals("o motivo do núcleo, com o número do colega", "2002: fim 480", calls.endMessage.value)
+        assertEquals("o cliente volta sozinho", listOf(1), gateway.activated)
+        assertEquals(listOf(1, 1), telecom.active)
+        assertEquals(listOf(id to EndCause.ERROR), telecom.disconnected)
+        val client = CallUi(1, "3001", "Cliente Teste", incoming = true, phase = CallPhase.ACTIVE, activeSinceMillis = start)
+        assertEquals(client, calls.state.value)
+        clock.advance(1_999)
+        assertEquals("2002: fim 480", calls.endMessage.value)
+        clock.advance(1)
+        assertEquals("", calls.endMessage.value)
+        calls.completeTransfer()   // sem consulta: nada
+        assertTrue(gateway.attended.isEmpty())
+        // Outra consulta, e o colega está ocupado.
+        val next = consultOut("2003")
+        calls.onCallState(next, CallState.DISCONNECTED, 486)
+        assertEquals("2003: fim 486", calls.endMessage.value)
+        assertEquals(next to EndCause.BUSY, telecom.disconnected.last())
+        assertEquals(listOf(1, 1), gateway.activated)
+        assertEquals(client, calls.state.value)
+        assertEquals(
+            listOf(
+                Recent("2003", "", CallKind.FEITA, start + 42_000, 0),
+                Recent("2002", "", CallKind.FEITA, start + 10_000, 0),
+            ),
+            recents.list(),
+        )
+    }
+
+    @Test
+    fun `the client hanging up during the consult leaves a normal call with the colleague`() {
+        val start = clock.nowMillis()
+        ring(1)
+        answerCall(1)
+        clock.advance(10_000)
+        val id = consultOut("2002")
+        calls.onCallState(id, CallState.CONFIRMED, 200)
+        clock.advance(20_000)
+        calls.onCallState(1, CallState.DISCONNECTED, 200)   // o cliente, em espera, desligou
+        assertEquals("Cliente Teste desligou", calls.endMessage.value)
+        val colleague = CallUi(id, "2002", "", incoming = false, phase = CallPhase.ACTIVE, activeSinceMillis = start + 10_000)
+        assertEquals("uma ligação normal, sem o rótulo", colleague, calls.state.value)
+        assertEquals(listOf(1 to EndCause.REMOTE), telecom.disconnected)
+        assertTrue("o colega continua como estava", gateway.activated.isEmpty() && gateway.hangups.isEmpty())
+        calls.completeTransfer()   // sem consulta: nada
+        calls.cancelConsult()
+        assertTrue(gateway.attended.isEmpty() && gateway.hangups.isEmpty())
+        clock.advance(5_000)
+        calls.hangup()
+        assertEquals(listOf(id), gateway.hangups)
+        calls.onCallState(id, CallState.DISCONNECTED, 200)
+        assertNull(calls.state.value)
+        assertEquals(
+            listOf(
+                Recent("2002", "", CallKind.FEITA, start + 10_000, 25),
+                Recent("3001", "Cliente Teste", CallKind.RECEBIDA, start, 30),
+            ),
+            recents.list(),
+        )
+    }
+
+    @Test
+    fun `a refused direct transfer shows the message`() {
+        val id = dialOut("2002")
+        calls.onCallState(id, CallState.CONFIRMED, 200)
+        val call = calls.state.value
+        assertTrue(calls.transfer("2003"))
+        assertEquals(listOf(id to "2003"), gateway.transfers)
+        calls.onTransfer(id, 603)
+        assertEquals("O servidor não aceitou a transferência.", calls.endMessage.value)
+        assertEquals("a ligação continua", call, calls.state.value)
+        assertTrue(gateway.hangups.isEmpty() && telecom.disconnected.isEmpty())
+        clock.advance(2_000)
+        assertEquals("", calls.endMessage.value)
+        calls.onTransfer(99, 603)   // de outra ligação: nada
+        assertEquals("", calls.endMessage.value)
+        // De novo, e o servidor aceita: nada, até o fim que o motor manda.
+        assertTrue(calls.transfer("2003"))
+        calls.onTransfer(id, 200)
+        assertEquals("", calls.endMessage.value)
+        assertEquals(call, calls.state.value)
+        calls.onCallState(id, CallState.DISCONNECTED, 200)
+        assertNull(calls.state.value)
+        assertEquals("", calls.endMessage.value)
+        assertEquals(CallKind.FEITA, recents.list().single().kind)
     }
 
     // Outra thread tenta usar o CallManager por até 1 s: true se não conseguiu (a trava estava presa).

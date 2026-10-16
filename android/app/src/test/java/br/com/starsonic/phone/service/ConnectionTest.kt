@@ -65,13 +65,18 @@ class ConnectionTest {
             override fun onCallState(callId: Int, state: Int, code: Int) {
                 seen += "state $callId $state $code"
             }
+
+            override fun onTransfer(callId: Int, code: Int) {
+                seen += "transfer $callId $code"
+            }
         }
         val withCalls = Connection({ engine }, FakeCore(), "Starsonic Phone Android/0.0.0", { "[conta]" }, calls = { calls })
         assertTrue(withCalls.ensureStarted())
         engine.callEvents().onIncomingCall(1, "3001", "Cliente Teste")
         engine.callEvents().onRejectedBusy("3002", "")
         engine.callEvents().onCallState(1, 4, 200)
-        assertEquals(listOf("incoming 1 3001 Cliente Teste", "busy 3002 ", "state 1 4 200"), seen)
+        engine.callEvents().onTransfer(1, 603)
+        assertEquals(listOf("incoming 1 3001 Cliente Teste", "busy 3002 ", "state 1 4 200", "transfer 1 603"), seen)
     }
 
     @Test

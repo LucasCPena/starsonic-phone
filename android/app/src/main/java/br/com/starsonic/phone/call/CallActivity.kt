@@ -58,6 +58,9 @@ class CallActivity : ComponentActivity() {
             activate = calls::activate,
             dtmf = calls::dtmf,
             transfer = calls::transfer,
+            consult = calls::consult,
+            completeTransfer = calls::completeTransfer,
+            cancelConsult = calls::cancelConsult,
             dial = calls::dial,
             route = telecom::setRoute,
         )

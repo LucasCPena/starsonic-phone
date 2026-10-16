@@ -20,6 +20,9 @@ interface CallEvents {
     fun onRejectedBusy(number: String, name: String)
 
     fun onCallState(callId: Int, state: Int, code: Int)
+
+    /** O resultado de uma transferência (a direta ou a com consulta) pedida na ligação [callId]: o código SIP. */
+    fun onTransfer(callId: Int, code: Int)
 }
 
 /** As notificações que o [CallManager] pede (a da ligação recebida nasce no Telecom: IncomingCallNotifier). */
@@ -454,6 +457,15 @@ class CallManager(
         }
         return true
     }
+
+    // A consulta (Task 9): ainda nada.
+    override fun onTransfer(callId: Int, code: Int) {}
+
+    fun consult(raw: String): Boolean = false
+
+    fun completeTransfer() {}
+
+    fun cancelConsult() {}
 
     /** Sair: as ligações de agora acabam, e daqui em diante os eventos do motor são ignorados (até [onLogin]). */
     fun onLogout() {

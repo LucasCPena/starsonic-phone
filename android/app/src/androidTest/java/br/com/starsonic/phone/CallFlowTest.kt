@@ -52,7 +52,9 @@ import org.junit.runners.MethodSorters
  * o que o telefone mandou (LOG); ligações para 486 recebem Ocupado, e para outro número são atendidas. Cada RING é
  * uma ligação nova (dois RING, duas ligações), e o HANGUP desliga a última que ele fez que ainda está de pé. Nas
  * ligações do RING, o LOG anota os pedidos do telefone com o 3001 (reinv-in 3001 sendonly, bye-in 3001); nas que o
- * telefone faz, com o número discado (inv-in 2002 200).
+ * telefone faz, com o número discado (inv-in 2002 200). O REFER do telefone recebe 202 e um NOTIFY 200 (refer-in
+ * <alvo> <destino>, com replaces=known no REFER com Replaces de um diálogo que ele conhece), ou o que REFER_REPLY e
+ * REFER_NOTIFY pedirem até o RESET.
  *
  * Cada teste começa com a conta gravada por TCP (o CI confere que o último REGISTER aceito veio por TCP) e o
  * app aberto, que inicia o serviço; as recebidas tocam com o app em segundo plano (UiDevice.pressHome). Os
@@ -133,7 +135,7 @@ class CallFlowTest {
         waitForLog(before, "reinv-in 2002 sendonly")
         compose.onNodeWithTag("transferir").performClick()
         compose.onNodeWithTag("transferir-numero").performTextInput("2003")
-        compose.onNodeWithTag("transferir-confirmar").performClick()
+        compose.onNodeWithTag("transferir-agora").performClick()
         waitForLog(before, "refer-in 2002 2003")
         // O registrador aceita a transferência (NOTIFY 200), e a ligação acaba.
         emulator.waitUntil("a ligação acabar depois da transferência") { app.calls.state.value == null }
@@ -287,6 +289,53 @@ class CallFlowTest {
     }
 
     @Test
+    fun attendedTransferCompletesAndEndsBothCalls() {
+        val client = answerOnTheCallScreen()
+        val before = emulator.callLog().size
+        consultOnTheCallScreen("2003", client)
+        compose.onNodeWithTag("concluir-transferencia").performClick()
+        // O REFER com Replaces vai na ligação do cliente (o 3001 das ligações do RING), apontando para o colega.
+        waitForLog(before, "refer-in 3001 2003 replaces=known")
+        // O registrador aceita (NOTIFY 200), e o motor desliga as duas: a tela de chamada fecha.
+        emulator.waitUntil("a tela de chamada fechar") { app.calls.state.value == null && !emulator.showsTag("chamada") }
+        waitForLog(before, "bye-in 3001")
+        waitForLog(before, "bye-in 2003")
+        emulator.waitUntil("as duas no Recentes", details = { "Recentes: ${app.recents.list()}" }) {
+            app.recents.list().map { it.number to it.kind }.toSet() == setOf("3001" to CallKind.RECEBIDA, "2003" to CallKind.FEITA)
+        }
+    }
+
+    @Test
+    fun attendedTransferRefusedKeepsBothCalls() {
+        val client = answerOnTheCallScreen()
+        try {
+            assertEquals("OK", emulator.control("REFER_REPLY 603"))
+            val before = emulator.callLog().size
+            consultOnTheCallScreen("2003", client)
+            val colleague = app.calls.state.value!!.id
+            compose.onNodeWithTag("concluir-transferencia").performClick()
+            waitForLog(before, "refer-in 3001 2003 replaces=known")
+            emulator.waitUntil("o aviso da recusa") {
+                showsTagWithText("aviso-ligacao", "O servidor não aceitou a transferência.")
+            }
+            assertEquals("as duas continuam", true, activeWith(held = client) && app.calls.state.value?.id == colleague)
+            assertEquals("a consulta continua", true, showsTagWithText("cartao-espera", "Em espera · transferência"))
+            assertEquals("nenhum BYE", emptyList<String>(), emulator.callLog().drop(before).filter { it.startsWith("bye-in") })
+            // Cancelar: o colega sai, e o cliente volta sozinho.
+            compose.onNodeWithTag("cancelar-consulta").performClick()
+            waitForLog(before, "bye-in 2003")
+            waitForLog(before, "reinv-in 3001 sendrecv")
+            emulator.waitUntil("o cliente de volta, sozinho") {
+                app.calls.state.value?.let { it.id == client && it.second == null && !it.held && it.consult == null } == true
+            }
+            assertEquals("OK", emulator.control("HANGUP 2001"))
+            emulator.waitUntil("o cliente acabar") { app.calls.state.value == null }
+        } finally {
+            emulator.control("RESET")
+        }
+    }
+
+    @Test
     fun aNewNotifierRemovesAStuckIncomingNotification() {
         // O processo morreu com a recebida tocando: a notificação (com o toque) ficou. Num processo novo não há
         // ligação, e o notificador que nasce a tira.
@@ -420,6 +469,22 @@ class CallFlowTest {
         emulator.waitUntil("a segunda atendida, com a primeira em espera") { activeWith(held = first) }
         emulator.waitUntil("o cartão da em espera") { showsTagWithText("cartao-espera", "Em espera") }
         return first to app.calls.state.value!!.id
+    }
+
+    // Na tela de chamada, com o cliente [client] em andamento: Transferir, o número [number] e Consultar. O motor põe o
+    // cliente em espera e liga para o colega, que o registrador atende: o colega em cima e o cliente no cartão "Em
+    // espera · transferência".
+    private fun consultOnTheCallScreen(number: String, client: Int) {
+        val before = emulator.callLog().size
+        compose.onNodeWithTag("transferir").performClick()
+        compose.onNodeWithTag("transferir-numero").performTextInput(number)
+        compose.onNodeWithTag("transferir-consultar").performClick()
+        waitForLog(before, "reinv-in 3001 sendonly")
+        waitForLog(before, "inv-in $number 200")
+        emulator.waitUntil("o colega em cima, com o cliente em espera") {
+            activeWith(held = client) && app.calls.state.value?.consult?.colleagueActive == true
+        }
+        emulator.waitUntil("o cartão do cliente") { showsTagWithText("cartao-espera", "Em espera · transferência") }
     }
 
     // A notificação da chamada em espera: no canal sem som, sem a tela cheia e sem o toque que se repete.
