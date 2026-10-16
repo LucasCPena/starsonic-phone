@@ -52,7 +52,7 @@ enum class CallPhase {
  * - [id]: o id da ligação no motor ([CallManager.NO_ID]: a feita antes de o motor dar o dela).
  * - [name]: o nome de exibição que a central mandou (pode ser vazio).
  * - [muted]: o mudo do microfone, que vale para as duas ligações.
- * - [second]: a outra ligação (tocando, chamando ou em espera); null com uma só.
+ * - [second]: a outra ligação (tocando ou em espera); null com uma só. A feita que chama é sempre a ativa.
  * - [conference]: as duas em conferência (spec da 0.2, 7.4); ainda sempre false.
  * - [consult]: a transferência com consulta em andamento (spec da 0.2, 7.3); ainda sempre null.
  */
@@ -84,9 +84,6 @@ data class SecondUi(val id: Int, val number: String, val name: String, val kind:
 enum class SecondKind {
     /** Recebida, tocando (a faixa "Ligação de <nome ou número>"). */
     RINGING,
-
-    /** Feita, chamando. */
-    DIALING,
 
     /** Em espera. */
     HELD,
@@ -125,12 +122,14 @@ object EndCause {
  *   chegar antes: o primeiro evento de uma ligação nova (id maior que todos os já vistos) é da feita (só há uma
  *   feita esperando o id). Se ela não completa, o aviso do núcleo (CallEndMessage) fica em [endMessage] por 2 s; se
  *   o Android não deixa ligar (o Telecom recusa: uma ligação do celular em andamento), o aviso [CARRIER_CALL].
- * - Duas ligações: a ativa é a do som (no motor) e a de cima na tela; a outra toca, chama ou está em espera.
- *   Alternar ([activate]) troca as duas. Quando a ativa acaba (desligada aqui ou do outro lado), a em espera volta
- *   sozinha: o motor a retoma e o Telecom a ativa. A em espera que cai do outro lado sai com o aviso "<nome ou
- *   número> desligou" por 2 s, e a ativa continua.
+ * - Duas ligações: a ativa é a do som (no motor) e a de cima na tela; a outra toca ou está em espera. Alternar
+ *   ([activate]) troca as duas. Quando a ativa acaba (desligada aqui ou do outro lado), a em espera volta sozinha: o
+ *   motor a retoma e o Telecom a ativa. A em espera que cai do outro lado sai com o aviso "<nome ou número> desligou"
+ *   por 2 s, e a ativa continua.
  * - O Telecom acompanha cada espera e retomada ([TelecomAdapter.setOnHold], [TelecomAdapter.setActive]); os pedidos
- *   dele chegam por [holdFromTelecom], [activateFromTelecom] e [hangup] com o id da ligação.
+ *   dele chegam por [holdFromTelecom], [activateFromTelecom] e [hangup] com o id da ligação. A espera que ele pede
+ *   (uma ligação da operadora atendida) nunca troca: com duas, as duas ficam em espera, sem som, até ele pedir a
+ *   retomada de uma.
  * - Depois de [onLogout] (Sair), os eventos do motor são ignorados até o próximo Entrar ([onLogin]).
  *
  * Threads: os eventos chegam na thread dos eventos do motor; os toques da tela e do Telecom, na principal. Nada
@@ -386,25 +385,32 @@ class CallManager(
     }
 
     /**
-     * O Telecom pede a espera da ligação [callId] (o onHold da Connection dela). A ativa vai para a espera (com as
-     * duas em andamento, é o Alternar); a que já está em espera fica como está.
+     * O Telecom pede a espera da ligação [callId] (o onHold da Connection dela: uma ligação da operadora atendida, por
+     * exemplo). A ativa vai para a espera sem trocar, também com duas: as duas ficam em espera e nenhuma tem o som (o
+     * Alternar daria o som à outra, e o Telecom tiraria o da ligação da operadora). A tela continua com ela em cima,
+     * em espera. A que já está em espera fica como está.
      */
     fun holdFromTelecom(callId: Int) {
-        act { effects -> if (active?.id == callId) holdActive(true, effects) }
+        act { effects ->
+            val current = talking()?.takeIf { it.id == callId } ?: return@act
+            if (!current.held) setHeld(current, true, effects)
+        }
     }
 
     /**
-     * O Telecom pede a retomada da ligação [callId] (o onUnhold da Connection dela): ela vira a ativa. A em espera
-     * de duas é o Alternar; a ligação só é retomada.
+     * O Telecom pede a retomada da ligação [callId] (o onUnhold da Connection dela: a ligação da operadora acabou, por
+     * exemplo). Com as duas em espera, só ela volta (o motor a ativa) e vira a ativa; a outra continua em espera. Com a
+     * outra com o som, é o Alternar. A ligação só é retomada, como no [hold].
      */
     fun activateFromTelecom(callId: Int) {
         act { effects ->
-            val current = active ?: return@act
-            if (current.id == callId) {
-                holdActive(false, effects)
-            } else {
-                val other = otherThan(current)?.takeIf { it.id == callId } ?: return@act
-                swap(current, other, effects)
+            val target = calls.firstOrNull { it.id == callId && it.phase == CallPhase.ACTIVE && !it.ending }
+            if (target == null || !target.held) return@act
+            val other = otherThan(target)?.takeIf { it.phase == CallPhase.ACTIVE }
+            when {
+                other == null -> if (target === active) setHeld(target, false, effects)
+                other === active && !other.held -> swap(other, target, effects)
+                else -> resume(target, effects)
             }
         }
     }
@@ -547,11 +553,26 @@ class CallManager(
             swap(current, other, effects)
             return
         }
+        setHeld(current, target, effects)
+    }
+
+    // Com a trava: põe [current] em espera ([target] true) ou a retoma, sem mexer na outra; o Telecom acompanha.
+    private fun setHeld(current: Call, target: Boolean, effects: MutableList<() -> Unit>) {
         current.held = target
         publish()
         val id = current.id
         effects += { gateway.setHold(id, target) }
         effects += { if (target) telecom.setOnHold(id) else telecom.setActive(id) }
+    }
+
+    // Com a trava: com as duas em espera, [to] volta e vira a ativa (o motor a ativa); a outra fica em espera.
+    private fun resume(to: Call, effects: MutableList<() -> Unit>) {
+        to.held = false
+        active = to
+        publish()
+        val id = to.id
+        effects += { gateway.activate(id) }
+        effects += { telecom.setActive(id) }
     }
 
     // Com a trava: o Alternar, de [from] (a ativa) para [to] (a outra), só com as duas em andamento. O motor troca
@@ -578,7 +599,9 @@ class CallManager(
 
     // Com a trava: a ligação [current] acabou com o código [code]: Recentes, notificação, aviso e Telecom. Se era a
     // ativa, a outra (se há) passa a ser; em andamento (em espera), ela volta sozinha: o motor a retoma e o Telecom a
-    // ativa. A outra que cai do outro lado, já em andamento, deixa o aviso "<nome ou número> desligou".
+    // ativa. Mas não se a ativa também estava em espera (as duas, pelo Telecom): o som é de outra ligação (a da
+    // operadora), e a outra espera o pedido de retomada dele. A outra que cai do outro lado, já em andamento, deixa o
+    // aviso "<nome ou número> desligou".
     private fun end(current: Call, code: Int, effects: MutableList<() -> Unit>, cause: Int? = null, quiet: Boolean = false) {
         val wasActive = current === active
         calls.remove(current)
@@ -624,7 +647,8 @@ class CallManager(
         record(Recent(current.number, current.name, kind, current.startMillis, duration), effects)
         effects += { telecom.disconnect(id, endCause) }
         val next = active
-        if (wasActive && next != null && next.phase == CallPhase.ACTIVE && !next.ending && !loggedOut) {
+        val resumes = wasActive && !current.held && !loggedOut
+        if (resumes && next != null && next.phase == CallPhase.ACTIVE && !next.ending) {
             next.held = false
             val nextId = next.id
             effects += { gateway.activate(nextId) }
@@ -671,12 +695,8 @@ class CallManager(
         publications.addLast { mutableState.value = ui }
     }
 
-    // A outra de duas, para a tela: tocando, chamando ou (em andamento) em espera.
-    private fun secondKind(call: Call) = when (call.phase) {
-        CallPhase.RINGING -> SecondKind.RINGING
-        CallPhase.DIALING -> SecondKind.DIALING
-        else -> SecondKind.HELD
-    }
+    // A outra de duas, para a tela: tocando ou em espera (a feita que chama é sempre a ativa).
+    private fun secondKind(call: Call) = if (call.phase == CallPhase.RINGING) SecondKind.RINGING else SecondKind.HELD
 
     // Com a trava: o aviso vai à fila das publicações.
     private fun publishEndMessage(text: String) {
