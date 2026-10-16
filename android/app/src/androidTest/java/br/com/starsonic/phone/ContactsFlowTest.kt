@@ -237,11 +237,13 @@ class ContactsFlowTest {
         // As linhas do processo do app (o dos testes) e as do ActivityTaskManager e do PermissionController.
         val pid = "(%5d)".format(Process.myPid())
         val log = emulator.shell("logcat -d -v brief").filter { line ->
-            pid in line || LOG_TAGS.any { it in line }
+            (pid in line && "StarsonicMotor" !in line) || LOG_TAGS.any { it in line }
         }.takeLast(60).joinToString("\n") { it.take(240) }
         val main = Looper.getMainLooper().thread.stackTrace.take(30).joinToString("\n  ")
+        // Um erro na composição ou num efeito fica guardado pelo Compose dos testes (e a tela para): ele sai aqui.
+        val composeError = runCatching { compose.waitForIdle() }.exceptionOrNull()?.stackTraceToString()?.take(3000)
         return "Na frente: ${device.currentPackageName}; $focus\nNa tela: $texts\nActivities:\n$activities\n" +
-            "Thread principal:\n  $main\nLogcat:\n$log"
+            "Erro do Compose: $composeError\nThread principal:\n  $main\nLogcat:\n$log"
     }
 
     private fun notifications(): String =
@@ -258,7 +260,9 @@ class ContactsFlowTest {
         private const val PHONES = "content://com.android.contacts/data/phones"
         private const val NAME_TYPE = "vnd.android.cursor.item/name"
         private const val PHONE_TYPE = "vnd.android.cursor.item/phone_v2"
-        private val LOG_TAGS = listOf("ActivityTaskManager", "PermissionController", "GrantPermissions", "AndroidRuntime")
+        private val LOG_TAGS = listOf(
+            "ActivityTaskManager", "PermissionController", "GrantPermissions", "AndroidRuntime", "StarsonicContatos",
+        )
         private val DENY_ID = Pattern.compile(".*:id/permission_deny(_and_dont_ask_again)?_button")
         private val DENY_TEXT =
             Pattern.compile("Não permitir|Don.t allow", Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE)

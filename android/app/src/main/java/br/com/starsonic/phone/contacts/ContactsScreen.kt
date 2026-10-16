@@ -8,7 +8,9 @@ import android.content.ContextWrapper
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -87,7 +89,7 @@ fun ContactsScreen(source: ContactsSource, onCall: (String) -> Unit) {
     LaunchedEffect(Unit) {
         if (!granted && !askedThisProcess) {
             askedThisProcess = true
-            request.launch(READ_CONTACTS)
+            request.ask()
         }
     }
     if (!granted) {
@@ -97,7 +99,7 @@ fun ContactsScreen(source: ContactsSource, onCall: (String) -> Unit) {
                     openAppSettings(activity)
                 } else {
                     askedThisProcess = true
-                    request.launch(READ_CONTACTS)
+                    request.ask()
                 }
             },
         )
@@ -283,6 +285,16 @@ internal fun ContactSuggestions(suggestions: List<Suggestion>, color: Color, onP
 // A permissão já foi pedida neste processo (a primeira abertura da aba pede uma vez). Só na thread principal.
 private var askedThisProcess = false
 
+// Pede a permissão de contatos pela janela do Android. Um Android sem a janela (ou que recusa abri-la) deixa o app sem a
+// permissão, com o aviso e o Permitir; o motivo vai ao logcat.
+private fun ActivityResultLauncher<String>.ask() {
+    try {
+        launch(READ_CONTACTS)
+    } catch (e: RuntimeException) {
+        Log.w(TAG, "a janela da permissão de contatos não abriu", e)
+    }
+}
+
 // Negada de vez: o Android já não mostra a janela (sem a explicação depois de um pedido negado).
 private fun Activity.refusedForGood(): Boolean = !shouldShowRequestPermissionRationale(READ_CONTACTS)
 
@@ -308,6 +320,7 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
 }
 
 private const val READ_CONTACTS = Manifest.permission.READ_CONTACTS
+private const val TAG = "StarsonicContatos"
 private const val MAX_SUGGESTIONS = 3
 private const val SEARCH = "Buscar contato"
 private const val EMPTY = "Nenhum contato com número no celular."
