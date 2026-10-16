@@ -42,10 +42,10 @@ data class AudioRoutes(
  * Uma ligação no Telecom do Android, modo self-managed (spec 6.2): os pedidos dele (atender, recusar, desligar, pôr
  * em espera e retomar, mostrar a notificação de ligação) vão ao [CallManager], para esta ligação; as rotas de áudio
  * vão ao [AndroidTelecom]. Até duas, como no CallManager. A feita nasce sem o id do motor ([CallManager.NO_ID]) e o
- * ganha quando o CallManager a ativa, a põe em espera ou a encerra. Na conferência, ela é filha da [CallConference]
- * (a quem vão os pedidos dela); um pedido que ainda chegue aqui vale só para esta ligação, como sempre (desligar: só
- * ela sai, e a outra fica como uma ligação normal), e o CallManager trata a espera de uma das duas como a da
- * conferência. Os avisos do Telecom chegam na thread principal.
+ * ganha quando o CallManager a ativa, a põe em espera ou a encerra. Na conferência (o plano B da spec da 0.2: sem
+ * Conference no Telecom), a de cima fica ACTIVE e a outra HOLDING só para o Telecom; a espera que ele pede desfaz a
+ * conferência e põe as duas em espera, e desligar desliga só esta (o Desligar da tela é o que desliga as duas). Os
+ * avisos do Telecom chegam na thread principal.
  */
 class CallConnection(
     private val app: App,
@@ -60,11 +60,9 @@ class CallConnection(
     init {
         // A espera pelo Telecom: ele sabe qual das duas está em espera (o CallManager o avisa), e os pedidos de espera
         // e de retomada dele (onHold e onUnhold) vão ao CallManager, que decide com o motor. O mudo é só do motor (a
-        // tela de chamada). Na conferência, o Telecom pode separar esta (o onSeparate da CallConference) ou desligar
-        // só ela (o onDisconnect daqui).
+        // tela de chamada).
         connectionProperties = PROPERTY_SELF_MANAGED
-        connectionCapabilities = CAPABILITY_HOLD or CAPABILITY_SUPPORT_HOLD or
-            CAPABILITY_SEPARATE_FROM_CONFERENCE or CAPABILITY_DISCONNECT_FROM_CONFERENCE
+        connectionCapabilities = CAPABILITY_HOLD or CAPABILITY_SUPPORT_HOLD
         audioModeIsVoip = true
         setAddress(Uri.fromParts(PhoneAccount.SCHEME_SIP, number, null), TelecomManager.PRESENTATION_ALLOWED)
         if (name.isNotEmpty()) setCallerDisplayName(name, TelecomManager.PRESENTATION_ALLOWED)

@@ -6,7 +6,6 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.telecom.Conferenceable
 import android.telecom.Connection
 import android.telecom.ConnectionRequest
 import android.telecom.ConnectionService
@@ -21,23 +20,12 @@ import kotlinx.coroutines.flow.StateFlow
 
 /**
  * O serviço que o Telecom do Android chama para criar as ligações do app (self-managed). A recebida só nasce
- * se ainda toca, e a feita só se o CallManager ainda espera por ela; senão, uma Connection que já falhou. Enquanto o
- * Telecom o mantém (com as ligações de pé), o [AndroidTelecom] o usa para pôr a conferência no Telecom.
+ * se ainda toca, e a feita só se o CallManager ainda espera por ela; senão, uma Connection que já falhou.
  * Roda na thread principal.
  */
 class CallConnectionService : ConnectionService() {
     private val app: App
         get() = application as App
-
-    override fun onCreate() {
-        super.onCreate()
-        app.telecom.attach(this)
-    }
-
-    override fun onDestroy() {
-        app.telecom.detach(this)
-        super.onDestroy()
-    }
 
     override fun onCreateIncomingConnection(manager: PhoneAccountHandle?, request: ConnectionRequest): Connection {
         val call = incoming(request)
@@ -94,17 +82,17 @@ private class BundleExtras(private val bundle: Bundle) : Extras {
 
 /**
  * O [TelecomAdapter] do app: a conta "Starsonic Phone" self-managed no Telecom ([register]), as Connections das
- * ligações de agora (até duas, como no CallManager), a conferência das duas ([CallConference]) e as rotas de áudio
- * ([routes], [setRoute]), que o Telecom decide para todas.
+ * ligações de agora (até duas, como no CallManager) e as rotas de áudio ([routes], [setRoute]), que o Telecom
+ * decide para todas.
  *
- * Os pedidos do CallManager chegam de qualquer thread; o que mexe nas Connections e na conferência vai para a thread
- * principal, onde o Telecom também as chama, na ordem dos pedidos.
+ * Os pedidos do CallManager chegam de qualquer thread; o que mexe nas Connections vai para a thread principal,
+ * onde o Telecom também as chama, na ordem dos pedidos.
  *
- * A conferência: as duas Connections viram filhas de uma Conference do Telecom, que o serviço
- * ([CallConnectionService.addConference]) entrega a ele. Enquanto elas são filhas, o estado delas fica como estava
- * (a ativa e a em espera): o setActive de uma filha faria o Telecom pôr a conferência em espera (a ligação da frente,
- * para ele), e a espera voltaria ao CallManager como um pedido dele. Quando ela sai, as Connections voltam a ser
- * ligações soltas, e o CallManager diz qual é a ativa.
+ * A conferência segue o plano B da spec da 0.2 (risco 1): nenhuma Conference no Telecom. Uma Conference de um serviço
+ * self-managed perde a propriedade self-managed no Telecom (no emulador do Android 14: prop=[] e voip=false), e o
+ * Telefone do sistema passa a mostrá-la como uma ligação dele, com a notificação dele; o app não pode deixar nada do
+ * Telefone do sistema aparecer. Então as duas Connections ficam soltas: a de cima (a ativa) ACTIVE e a outra HOLDING
+ * só para o Telecom, enquanto o motor as mantém juntas, com o som.
  */
 class AndroidTelecom(private val app: App) : TelecomAdapter {
     private val telecom = app.getSystemService(TelecomManager::class.java)
@@ -117,11 +105,6 @@ class AndroidTelecom(private val app: App) : TelecomAdapter {
     private val lock = Any()
     private val connections = ArrayList<CallConnection>(MAX_CONNECTIONS)   // as de agora, na ordem em que nasceram
     private var outgoingPending = false   // placeOutgoing pedido, o Telecom ainda não criou a Connection
-
-    // Só na thread principal: o serviço que o Telecom mantém (null: nenhum agora) e a conferência de agora (null:
-    // nenhuma).
-    private var service: CallConnectionService? = null
-    private var conference: CallConference? = null
 
     private val mutableRoutes = MutableStateFlow(AudioRoutes())
 
@@ -195,12 +178,22 @@ class AndroidTelecom(private val app: App) : TelecomAdapter {
         main.post { connectionFor(callId)?.setOnHold() }
     }
 
+    // A conferência (plano B): a outra fica HOLDING para o Telecom (ela já está, desde que foi para a espera; isto é
+    // só a garantia), e a de cima continua ACTIVE.
+    override fun joinConference(callIdA: Int, callIdB: Int) {
+        CallLog.i { "Telecom: conferência de $callIdA e $callIdB ($callIdB em espera só para o Telecom)" }
+        setOnHold(callIdB)
+    }
+
+    // Sem Conference, nada a desfazer: o CallManager diz em seguida qual fica em espera e qual é a ativa (ou as encerra).
+    override fun splitConference() {
+        CallLog.i { "Telecom: a conferência acabou" }
+    }
+
     override fun disconnect(callId: Int, cause: Int) {
         if (callId == CallManager.NO_ID) synchronized(lock) { outgoingPending = false }
         main.post {
             val ended = connectionFor(callId) ?: return@post
-            // Uma filha não sai sozinha: a conferência sai antes (o CallManager já a tira; isto é só a garantia).
-            if (conference?.connections?.contains(ended) == true) dissolve()
             val last = synchronized(lock) {
                 connections.removeAll { it === ended }
                 connections.isEmpty()
@@ -209,38 +202,6 @@ class AndroidTelecom(private val app: App) : TelecomAdapter {
             ended.destroy()
             if (last) mutableRoutes.value = AudioRoutes()
         }
-    }
-
-    override fun joinConference(callIdA: Int, callIdB: Int) {
-        main.post {
-            val first = synchronized(lock) { connections.firstOrNull { it.callId == callIdA } }
-            val second = synchronized(lock) { connections.firstOrNull { it.callId == callIdB } }
-            val service = service
-            if (first == null || second == null || first === second || service == null) {
-                CallLog.w {
-                    "Telecom: sem a conferência de $callIdA e $callIdB (Connections: ${first != null} e " +
-                        "${second != null}, serviço: ${service != null})"
-                }
-                return@post
-            }
-            dissolve()   // uma que tenha sobrado
-            val joined = CallConference(app, handle)
-            joined.addConnection(first)
-            joined.addConnection(second)
-            joined.setActive()
-            try {
-                service.addConference(joined)
-                conference = joined
-                CallLog.i { "Telecom: conferência de $callIdA e $callIdB" }
-            } catch (e: RuntimeException) {
-                Log.w(TAG, "o Telecom recusou a conferência", e)
-                joined.destroy()
-            }
-        }
-    }
-
-    override fun splitConference() {
-        main.post { dissolve() }
     }
 
     /**
@@ -269,28 +230,9 @@ class AndroidTelecom(private val app: App) : TelecomAdapter {
     // Na thread principal: o Telecom vai criar a feita; true se ela ainda é esperada (e deixa de ser).
     internal fun takeOutgoing(): Boolean = synchronized(lock) { outgoingPending.also { outgoingPending = false } }
 
-    // Na thread principal: as rotas mudaram, vistas de uma das Connections de agora ou da conferência (o Telecom as
-    // manda à ligação da frente: a conferência, quando há uma; são as mesmas para todas).
-    internal fun onRoutes(from: Conferenceable, routes: AudioRoutes) {
-        if (from === conference || synchronized(lock) { connections.any { it === from } }) mutableRoutes.value = routes
-    }
-
-    // Na thread principal: o Telecom criou (ou recriou) o serviço das ligações, e o destruiu.
-    internal fun attach(created: CallConnectionService) {
-        service = created
-    }
-
-    internal fun detach(destroyed: CallConnectionService) {
-        if (service === destroyed) service = null
-    }
-
-    // Na thread principal: a conferência sai do Telecom (o destroy tira as filhas antes e a dá por desligada); as
-    // Connections ficam como estavam, soltas.
-    private fun dissolve() {
-        val ended = conference ?: return
-        conference = null
-        ended.destroy()
-        CallLog.i { "Telecom: a conferência saiu" }
+    // Na thread principal: as rotas de uma das Connections de agora mudaram (são as mesmas para todas).
+    internal fun onRoutes(from: CallConnection, routes: AudioRoutes) {
+        if (synchronized(lock) { connections.any { it === from } }) mutableRoutes.value = routes
     }
 
     // Com a trava ou não: a Connection da ligação [callId]; se nenhuma tem esse id, é o da feita que ainda não tem

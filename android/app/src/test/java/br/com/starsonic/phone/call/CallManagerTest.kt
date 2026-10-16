@@ -1398,8 +1398,9 @@ class CallManagerTest {
         assertEquals("a ativa e a outra", listOf(id to 1), gateway.joined)
         assertEquals(listOf(id to 1), telecom.joined)
         assertTrue("o motor retoma a em espera no join", gateway.activated.isEmpty() && gateway.holds.isEmpty())
-        assertEquals("só os do CONFIRMED: as Connections vão para a Conference", listOf(1, id), telecom.active)
-        assertEquals(listOf(1), telecom.held)
+        // Para o Telecom (o plano B, sem Conference), a de cima continua ACTIVE e a outra HOLDING, como estavam.
+        assertEquals("só os do CONFIRMED", listOf(1, id), telecom.active)
+        assertEquals("a outra em espera desde a Nova ligação", listOf(1), telecom.held)
         val conference = CallUi(
             id, "2002", "", incoming = false, phase = CallPhase.ACTIVE, activeSinceMillis = start + 10_000,
             second = SecondUi(1, "3001", "Cliente Teste", SecondKind.ACTIVE), conference = true,
@@ -1449,7 +1450,7 @@ class CallManagerTest {
         assertEquals("o split põe a outra em espera no motor", listOf("join $id 1", "split 1 $id"), gateway.order)
         assertEquals(1, telecom.splits)
         assertEquals(
-            "a Conference sai antes das esperas",
+            "o fim da conferência antes das esperas: a feita HOLDING e a primeira ACTIVE",
             listOf("join $id 1", "split", "hold $id", "active 1"), telecom.order.takeLast(4),
         )
         val first = CallUi(
@@ -1491,10 +1492,10 @@ class CallManagerTest {
         calls.hangup()
         assertEquals("as duas saem", listOf(1, id), gateway.hangups)
         assertNull("a tela sai na hora", calls.state.value)
-        calls.hangup()   // o segundo toque (ou o onDisconnect da Conference), antes dos fins: nada
+        calls.hangup()   // o segundo toque, antes dos fins: nada
         assertEquals(2, gateway.hangups.size)
         calls.onCallState(id, CallState.DISCONNECTED, 200)
-        assertEquals("a Conference sai do Telecom com o primeiro fim", 1, telecom.splits)
+        assertEquals("o Telecom sabe do fim da conferência no primeiro fim", 1, telecom.splits)
         assertEquals(listOf(id to EndCause.LOCAL), telecom.disconnected)
         assertTrue("nada volta", gateway.activated.isEmpty())
         assertNull(calls.state.value)
@@ -1672,7 +1673,7 @@ class CallManagerTest {
         calls.join()
         calls.holdFromTelecom(99)   // de outra ligação: nada
         assertTrue(gateway.split.isEmpty() && gateway.holds.isEmpty())
-        // Uma ligação da operadora atendida: o Telecom pede a espera da Conference (com o id de uma das duas).
+        // Uma ligação da operadora atendida: o Telecom pede a espera da de cima (a ACTIVE para ele).
         calls.holdFromTelecom(id)
         assertEquals(
             "primeiro o Separar, depois a espera da que fica: nunca o setHold na conferência",
@@ -1692,6 +1693,33 @@ class CallManagerTest {
         assertEquals(listOf(1), gateway.activated)
         assertEquals("active 1", telecom.order.last())
         assertEquals(bothHeld.copy(held = false), calls.state.value)
+    }
+
+    @Test
+    fun `Juntar is refused while Telecom holds a call`() {
+        val id = twoCalls()
+        calls.holdFromTelecom(id)   // uma ligação da operadora atendida: as duas em espera, a de cima pelo Telecom
+        calls.join()
+        assertTrue(
+            "juntar retomaria as duas e tiraria o som da operadora",
+            gateway.joined.isEmpty() && telecom.joined.isEmpty(),
+        )
+        assertFalse(calls.state.value!!.conference)
+        // A pessoa volta para a outra (Alternar): a de baixo, ainda segurada pelo Telecom, também não deixa.
+        calls.activate()
+        assertEquals(1, calls.state.value?.id)
+        calls.join()
+        assertTrue(gateway.joined.isEmpty() && telecom.joined.isEmpty())
+        assertEquals(listOf("hold $id true", "activate 1"), gateway.order)
+        // A da operadora acabou: o Telecom retoma a dele (o Alternar, com a outra com o som), e o Juntar vale.
+        calls.activateFromTelecom(id)
+        assertEquals(id, calls.state.value?.id)
+        calls.join()
+        assertEquals(listOf(id to 1), gateway.joined)
+        assertEquals(listOf(id to 1), telecom.joined)
+        assertTrue(calls.state.value!!.conference)
+        assertEquals(listOf(1, id, 1, id), telecom.active)
+        assertEquals("a outra fica HOLDING para o Telecom", listOf(1, id, id, 1), telecom.held)
     }
 
     // Outra thread tenta usar o CallManager por até 1 s: true se não conseguiu (a trava estava presa).
