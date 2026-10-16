@@ -30,6 +30,19 @@ interface CoreRules {
     fun normalizeDialString(raw: String): String
 
     /**
+     * ContactDialString: o número de um contato do aparelho, pronto para discar (NormalizeDialString primeiro). O
+     * "+<[ddi]>" sai; qualquer outro número com '+' (outro DDI, ou [ddi] vazio) fica como está, sem prefixo; o [prefix]
+     * (o prefixo externo, para sair da central) entra na frente só quando sobram mais de 6 dígitos.
+     */
+    fun contactDialString(raw: String, ddi: String, prefix: String): String
+
+    /**
+     * O ddi e o prefixo externo do perfil (o texto do perfil.ini, as chaves ddi e prefixo_externo de [conta]); ("", "")
+     * se o perfil não vale.
+     */
+    fun profileDial(profileText: String): Pair<String, String>
+
+    /**
      * ParseManifest: o versao-android.json, se ele vale (JSON; versão; APK começando com [allowedPrefix] e, depois dele,
      * só com letras, dígitos, '.', '_', '-' e '/', sem ".."; SHA-256 com 64 dígitos hexadecimais). Senão, null, e o motivo
      * (em ASCII, para o log) vai para [onError].

@@ -26,6 +26,10 @@ internal class FakeCore : CoreRules {
 
     override fun normalizeDialString(raw: String) = raw
 
+    override fun contactDialString(raw: String, ddi: String, prefix: String) = raw
+
+    override fun profileDial(profileText: String) = "55" to ""
+
     override fun parseManifest(json: String, allowedPrefix: String, onError: (String) -> Unit): Manifest? = null
 
     override fun compareVersions(a: String, b: String) = 0

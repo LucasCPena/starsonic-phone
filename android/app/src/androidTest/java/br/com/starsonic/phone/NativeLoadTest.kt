@@ -1,5 +1,6 @@
 package br.com.starsonic.phone
 
+import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import br.com.starsonic.phone.core.LoginFlowHandle
 import br.com.starsonic.phone.core.Manifest
@@ -86,6 +87,21 @@ class NativeLoadTest {
         assertEquals("udp", Native.profileTransport("[conta]\nporta=5060\ntransporte=udp\n"))
         assertEquals("tcp", Native.profileTransport("[conta]\nporta=5060\ntransporte=tcp\n"))
         assertEquals("", Native.profileTransport("[conta]\ntransporte=tcp\n"))   // sem a porta: perfil inválido
+    }
+
+    @Test
+    fun contactDialStringComesFromTheCore() {
+        // O número de um contato do aparelho: o +55 sai, e o prefixo externo entra na frente (mais de 6 dígitos).
+        assertEquals("01150603000", Native.contactDialString("+55 (11) 5060-3000", "55", "0"))
+        assertEquals("01150603000", NativeCoreRules.contactDialString("+55 (11) 5060-3000", "55", "0"))
+        assertEquals("2003", Native.contactDialString("20-03", "55", "0"))   // ramal: sem o prefixo
+
+        // O ddi e o prefixo externo do perfil do APK (branding/perfil.ini, nos assets): 55 e nenhum.
+        val profile = ApplicationProvider.getApplicationContext<App>().profileText
+        assertArrayEquals(arrayOf("55", ""), Native.profileDial(profile))
+        assertEquals("55" to "", NativeCoreRules.profileDial(profile))
+        assertArrayEquals(arrayOf("351", "0"), Native.profileDial("[conta]\nporta=5060\nddi=351\nprefixo_externo=0\n"))
+        assertArrayEquals(arrayOf("", ""), Native.profileDial("[conta]\nddi=55\n"))   // sem a porta: perfil inválido
     }
 
     @Test

@@ -28,6 +28,16 @@ object Native {
     external fun profileTransport(profileText: String): String
 
     /**
+     * ContactDialString: o número de um contato do aparelho, pronto para discar, com o [ddi] e o [prefix] (o prefixo
+     * externo) do perfil: o "+<ddi>" sai; outro número com '+' fica como está; o prefixo entra na frente só com mais de
+     * 6 dígitos.
+     */
+    external fun contactDialString(raw: String, ddi: String, prefix: String): String
+
+    /** O ddi e o prefixo externo do perfil (o texto do perfil.ini): [ddi, prefixo_externo]; ["", ""] (perfil inválido). */
+    external fun profileDial(profileText: String): Array<String>
+
+    /**
      * ParseManifest com o endereço permitido do APK: [motivo, versão, APK, SHA-256, notas]. O motivo (em ASCII, para o
      * log) é "" quando o arquivo vale; quando não vale, os outros quatro ficam vazios.
      */

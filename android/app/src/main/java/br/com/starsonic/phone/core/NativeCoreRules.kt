@@ -14,6 +14,14 @@ object NativeCoreRules : CoreRules {
 
     override fun normalizeDialString(raw: String): String = Native.normalizeDialString(raw)
 
+    override fun contactDialString(raw: String, ddi: String, prefix: String): String =
+        Native.contactDialString(raw, ddi, prefix)
+
+    override fun profileDial(profileText: String): Pair<String, String> {
+        val (ddi, prefix) = Native.profileDial(profileText)
+        return ddi to prefix
+    }
+
     override fun parseManifest(json: String, allowedPrefix: String, onError: (String) -> Unit): Manifest? {
         val (error, version, installer, sha256, notes) = Native.parseManifest(json, allowedPrefix)
         if (error.isNotEmpty()) {
