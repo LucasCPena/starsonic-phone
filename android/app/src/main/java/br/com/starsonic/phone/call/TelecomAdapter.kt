@@ -1,9 +1,9 @@
 package br.com.starsonic.phone.call
 
 /**
- * O Telecom do Android (modo self-managed) visto pelo [CallManager]. Uma ligação por vez: a feita só ganha o
- * id do motor depois do makeCall, então [setActive] e [disconnect] com [CallManager.NO_ID] valem para a feita
- * que ainda não tem id.
+ * O Telecom do Android (modo self-managed) visto pelo [CallManager]: uma Connection por ligação, até duas. A feita só
+ * ganha o id do motor depois do makeCall, então [setActive], [setOnHold] e [disconnect] com um id que nenhuma
+ * Connection tem (ou com [CallManager.NO_ID]) valem para a feita que ainda não tem id (só há uma por vez).
  */
 interface TelecomAdapter {
     /** O Android deixa entrar uma ligação agora (false: uma ligação da operadora em andamento). */
@@ -15,10 +15,10 @@ interface TelecomAdapter {
     /** Pede ao Android para ligar pela conta do app; quando ele cria a Connection, o motor liga. */
     fun placeOutgoing(number: String)
 
-    /** A ligação foi atendida (dos dois lados). */
+    /** A ligação foi atendida (dos dois lados), ou voltou da espera: ela é a ativa. */
     fun setActive(callId: Int)
 
-    /** A ligação foi para a espera. */
+    /** A ligação foi para a espera (a outra vai ser a ativa, ou a pessoa a pôs em espera). */
     fun setOnHold(callId: Int)
 
     /** A ligação acabou; cause é um android.telecom.DisconnectCause ([EndCause]). */

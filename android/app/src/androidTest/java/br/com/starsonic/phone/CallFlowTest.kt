@@ -37,6 +37,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.FixMethodOrder
+import org.junit.Ignore
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -154,6 +155,7 @@ class CallFlowTest {
     }
 
     @Test
+    @Ignore("a segunda ligação toca desde a Task 7; o teste vira thirdCallDuringTwoCallsGetsBusy na Task 8")
     fun secondCallDuringACallGetsBusy() {
         device.pressHome()
         assertEquals("OK", emulator.control("RING 2001"))

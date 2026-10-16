@@ -81,11 +81,12 @@ private class BundleExtras(private val bundle: Bundle) : Extras {
 }
 
 /**
- * O [TelecomAdapter] do app: a conta "Starsonic Phone" self-managed no Telecom ([register]), a Connection da
- * ligação de agora (uma por vez) e as rotas de áudio dela ([routes], [setRoute]).
+ * O [TelecomAdapter] do app: a conta "Starsonic Phone" self-managed no Telecom ([register]), as Connections das
+ * ligações de agora (até duas, como no CallManager) e as rotas de áudio ([routes], [setRoute]), que o Telecom
+ * decide para todas.
  *
- * Os pedidos do CallManager chegam de qualquer thread; o que mexe na Connection vai para a thread principal,
- * onde o Telecom também a chama.
+ * Os pedidos do CallManager chegam de qualquer thread; o que mexe nas Connections vai para a thread principal,
+ * onde o Telecom também as chama, na ordem dos pedidos.
  */
 class AndroidTelecom(private val app: App) : TelecomAdapter {
     private val telecom = app.getSystemService(TelecomManager::class.java)
@@ -96,12 +97,12 @@ class AndroidTelecom(private val app: App) : TelecomAdapter {
     val handle = PhoneAccountHandle(ComponentName(app, CallConnectionService::class.java), ACCOUNT_ID)
 
     private val lock = Any()
-    private var connection: CallConnection? = null   // a ligação de agora no Telecom
-    private var outgoingPending = false              // placeOutgoing pedido, o Telecom ainda não criou a Connection
+    private val connections = ArrayList<CallConnection>(MAX_CONNECTIONS)   // as de agora, na ordem em que nasceram
+    private var outgoingPending = false   // placeOutgoing pedido, o Telecom ainda não criou a Connection
 
     private val mutableRoutes = MutableStateFlow(AudioRoutes())
 
-    /** As rotas de áudio da ligação de agora. */
+    /** As rotas de áudio das ligações de agora. */
     val routes: StateFlow<AudioRoutes> = mutableRoutes
 
     /** Registra (ou atualiza) a conta self-managed "Starsonic Phone" no Telecom. */
@@ -131,7 +132,8 @@ class AndroidTelecom(private val app: App) : TelecomAdapter {
         }
 
     override fun addIncoming(callId: Int, number: String, name: String) {
-        // O Telecom devolve este pacote inteiro como os extras do pedido (onCreateIncomingConnection).
+        // O Telecom devolve este pacote inteiro como os extras do pedido (onCreateIncomingConnection). Com outra
+        // ligação em andamento, o caminho é o mesmo: a segunda ganha a Connection dela.
         val call = Bundle().apply {
             putInt(IncomingExtras.CALL_ID, callId)
             putString(IncomingExtras.NUMBER, number)
@@ -173,27 +175,36 @@ class AndroidTelecom(private val app: App) : TelecomAdapter {
     override fun disconnect(callId: Int, cause: Int) {
         if (callId == CallManager.NO_ID) synchronized(lock) { outgoingPending = false }
         main.post {
-            val ended = synchronized(lock) {
-                connectionFor(callId)?.also { connection = null }
-            } ?: return@post
+            val ended = connectionFor(callId) ?: return@post
+            val last = synchronized(lock) {
+                connections.removeAll { it === ended }
+                connections.isEmpty()
+            }
             ended.setDisconnected(DisconnectCause(cause))
             ended.destroy()
-            mutableRoutes.value = AudioRoutes()
+            if (last) mutableRoutes.value = AudioRoutes()
         }
     }
 
-    /** Leva o áudio da ligação para [route] (CallAudioState.ROUTE_*). Na thread principal. */
+    /**
+     * Leva o áudio das ligações para [route] (CallAudioState.ROUTE_*): a rota é uma só no Telecom, e qualquer
+     * Connection a pede. Na thread principal.
+     */
     @Suppress("DEPRECATION")   // setAudioRoute ainda vale no Android 14+ (a API nova pede o CallEndpoint)
     fun setRoute(route: Int) {
-        synchronized(lock) { connection }?.setAudioRoute(route)
+        synchronized(lock) { connections.lastOrNull() }?.setAudioRoute(route)
     }
 
-    // Na thread principal: o Telecom criou a Connection; ela passa a ser a ligação de agora.
+    // Na thread principal: o Telecom criou a Connection; ela passa a ser uma das ligações de agora. Uma terceira
+    // seria uma que sobrou (o CallManager nunca tem três): a mais velha sai.
     internal fun created(created: CallConnection): CallConnection {
-        val old = synchronized(lock) { connection.also { connection = created } }
-        if (old != null && old !== created) {
-            old.setDisconnected(DisconnectCause(DisconnectCause.LOCAL))
-            old.destroy()
+        val stale = synchronized(lock) {
+            connections += created
+            if (connections.size > MAX_CONNECTIONS) connections.removeAt(0) else null
+        }
+        if (stale != null) {
+            stale.setDisconnected(DisconnectCause(DisconnectCause.LOCAL))
+            stale.destroy()
         }
         return created
     }
@@ -201,22 +212,20 @@ class AndroidTelecom(private val app: App) : TelecomAdapter {
     // Na thread principal: o Telecom vai criar a feita; true se ela ainda é esperada (e deixa de ser).
     internal fun takeOutgoing(): Boolean = synchronized(lock) { outgoingPending.also { outgoingPending = false } }
 
-    // Na thread principal: as rotas da Connection de agora mudaram.
+    // Na thread principal: as rotas de uma das Connections de agora mudaram (são as mesmas para todas).
     internal fun onRoutes(from: CallConnection, routes: AudioRoutes) {
-        if (synchronized(lock) { connection === from }) mutableRoutes.value = routes
+        if (synchronized(lock) { connections.any { it === from } }) mutableRoutes.value = routes
     }
 
-    // Com a trava ou não: a Connection da ligação [callId]; a feita sem id ganha o dela aqui.
+    // Com a trava ou não: a Connection da ligação [callId]; se nenhuma tem esse id, é o da feita que ainda não tem
+    // id (só há uma por vez), que o ganha aqui.
     private fun connectionFor(callId: Int): CallConnection? = synchronized(lock) {
-        val current = connection ?: return null
-        when {
-            current.callId == callId -> current
-            !current.incoming && current.callId == CallManager.NO_ID -> current.also { it.callId = callId }
-            else -> null
-        }
+        connections.firstOrNull { it.callId == callId }
+            ?: connections.firstOrNull { !it.incoming && it.callId == CallManager.NO_ID }?.also { it.callId = callId }
     }
 
     companion object {
+        private const val MAX_CONNECTIONS = 2
         private const val ACCOUNT_ID = "starsonic"
         private const val ACCOUNT_LABEL = "Starsonic Phone"
         private const val TAG = "StarsonicTelecom"

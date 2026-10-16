@@ -109,19 +109,28 @@ object EndCause {
 }
 
 /**
- * As ligações do app (spec 7.3 a 7.5), uma por vez (spec 4.2), entre o motor ([gateway]), o Telecom do Android
- * ([telecom]), os Recentes e as notificações.
+ * As ligações do app (spec 7.3 a 7.5), até duas, uma delas a ativa (spec da 0.2, 4.2, 7.1 e 7.2), entre o motor
+ * ([gateway]), o Telecom do Android ([telecom]), os Recentes e as notificações.
  *
- * - Recebida ([onIncoming]): sem outra ligação e com o Telecom deixando, vai ao Telecom, que mostra a
- *   notificação de ligação; com outra (do ramal ou da operadora), ocupado (486) e perdida no Recentes, com a
- *   notificação "Ligação perdida de <número>". Atender, Recusar (486, perdida sem notificação) e a desistência de
- *   quem ligou (perdida, com a notificação).
+ * - Recebida ([onIncoming]): sem ligação, ou com uma só e já em andamento (em espera ou não: a recebida é a outra,
+ *   [CallUi.second] tocando), e com o Telecom deixando, vai ao Telecom, que mostra a notificação de ligação. Com
+ *   uma que ainda não está em andamento (tocando, atendendo, chamando), com duas, ou sem o Telecom deixar (uma
+ *   ligação da operadora), ocupado (486) e perdida no Recentes, com a notificação "Ligação perdida de <número>".
+ *   Atender (a outra vai para a espera, que o motor põe no answer), Recusar (486, perdida sem notificação) e a
+ *   desistência de quem ligou (perdida, com a notificação).
  * - Feita ([dial]): o número sem separadores (núcleo); sem registro ([registered]), o aviso "Sem conexão…" e
- *   nada é discado. Senão o Telecom cria a Connection ([TelecomAdapter.placeOutgoing]) e, quando ele avisa
- *   ([onOutgoingReady]), o motor liga. O id da ligação no motor vem do makeCall, mas os eventos dela podem
- *   chegar antes: o primeiro evento de uma ligação nova (id maior que todos os já vistos) é da feita. Se ela não
- *   completa, o aviso do núcleo (CallEndMessage) fica em [endMessage] por 2 s; se o Android não deixa ligar (o
- *   Telecom recusa: uma ligação do celular em andamento), o aviso [CARRIER_CALL].
+ *   nada é discado. Com uma ligação em andamento, a feita é a Nova ligação: a outra vai para a espera (o motor a põe
+ *   no makeCall) e a feita é a ativa. O Telecom cria a Connection ([TelecomAdapter.placeOutgoing]) e, quando ele
+ *   avisa ([onOutgoingReady]), o motor liga. O id da ligação no motor vem do makeCall, mas os eventos dela podem
+ *   chegar antes: o primeiro evento de uma ligação nova (id maior que todos os já vistos) é da feita (só há uma
+ *   feita esperando o id). Se ela não completa, o aviso do núcleo (CallEndMessage) fica em [endMessage] por 2 s; se
+ *   o Android não deixa ligar (o Telecom recusa: uma ligação do celular em andamento), o aviso [CARRIER_CALL].
+ * - Duas ligações: a ativa é a do som (no motor) e a de cima na tela; a outra toca, chama ou está em espera.
+ *   Alternar ([activate]) troca as duas. Quando a ativa acaba (desligada aqui ou do outro lado), a em espera volta
+ *   sozinha: o motor a retoma e o Telecom a ativa. A em espera que cai do outro lado sai com o aviso "<nome ou
+ *   número> desligou" por 2 s, e a ativa continua.
+ * - O Telecom acompanha cada espera e retomada ([TelecomAdapter.setOnHold], [TelecomAdapter.setActive]); os pedidos
+ *   dele chegam por [holdFromTelecom], [activateFromTelecom] e [hangup] com o id da ligação.
  * - Depois de [onLogout] (Sair), os eventos do motor são ignorados até o próximo Entrar ([onLogin]).
  *
  * Threads: os eventos chegam na thread dos eventos do motor; os toques da tela e do Telecom, na principal. Nada
@@ -143,7 +152,7 @@ class CallManager(
         Thread(task, "starsonic-ligacao").apply { isDaemon = true }
     },
 ) : CallEvents {
-    // A ligação de agora. Só com a trava.
+    // Uma das ligações de agora. Só com a trava.
     private class Call(val incoming: Boolean, val number: String, val name: String, val startMillis: Long) {
         var id = NO_ID                 // o id no motor (a feita só o ganha com o makeCall ou o primeiro evento)
         var phase = if (incoming) CallPhase.RINGING else CallPhase.DIALING
@@ -156,13 +165,14 @@ class CallManager(
         var ending = false             // pedida a saída: a tela já não a mostra
         var abandoned = false          // a conta saiu (Sair) com ela de pé
         var activeSince = 0L           // quando os dois lados atenderam (0: ainda não)
-        var held = false
-        var muted = false
+        var held = false               // em espera: pela pessoa, ou a outra de duas
     }
 
     private val lock = Any()
-    private var call: Call? = null
-    private var maxSeenId = 0          // o maior id de ligação do motor já visto
+    private val calls = ArrayList<Call>(2)   // as ligações de agora (até duas), na ordem em que começaram
+    private var active: Call? = null          // a ativa, uma de [calls]: a do som e a de cima na tela (null: nenhuma)
+    private var muted = false                 // o mudo do microfone (o do motor vale para as duas); sai com a última
+    private var maxSeenId = 0                 // o maior id de ligação do motor já visto
     private var endTimer: Scheduled? = null
     private var endToken = 0
     private val publications = ArrayDeque<() -> Unit>()   // as entregas em [state] e [endMessage], na ordem
@@ -174,12 +184,12 @@ class CallManager(
     private val mutableState = MutableStateFlow<CallUi?>(null)
     private val mutableEndMessage = MutableStateFlow("")
 
-    /** A ligação para a tela de chamada (null: nenhuma, ou a que está saindo). */
+    /** A ligação para a tela de chamada, com a outra de duas (null: nenhuma, ou só a que está saindo). */
     val state: StateFlow<CallUi?> = mutableState
 
     /**
-     * O aviso de uma feita que não completou (CallEndMessage: Ocupado, Número não encontrado...) ou de discar sem
-     * registro, por 2 s; "" fora disso.
+     * O aviso de uma feita que não completou (CallEndMessage: Ocupado, Número não encontrado...), de discar sem
+     * registro ou da ligação em espera que caiu ("<nome ou número> desligou"), por 2 s; "" fora disso.
      */
     val endMessage: StateFlow<String> = mutableEndMessage
 
@@ -189,13 +199,18 @@ class CallManager(
             // Antes de olhar o loggedOut: o fim de uma ligação ignorada depois de Sair nunca é tomado por uma feita.
             maxSeenId = maxOf(maxSeenId, callId)
             if (loggedOut) return@act
-            if (call != null || !permitted) {
-                // Uma ligação por vez, do ramal ou da operadora: ocupado, e a ligação entra como perdida.
+            // Até duas, e a segunda só com a outra em andamento (como no motor); a da operadora não deixa nenhuma.
+            val other = calls.singleOrNull()
+            val fits = calls.isEmpty() || (other != null && other.phase == CallPhase.ACTIVE && !other.ending)
+            if (!fits || !permitted) {
+                // Ocupado, e a ligação entra como perdida.
                 effects += { gateway.reject(callId) }
                 missed(Recent(number, name, CallKind.PERDIDA, clock.nowMillis(), 0), effects)
                 return@act
             }
-            call = Call(incoming = true, number, name, clock.nowMillis()).also { it.id = callId }
+            val incoming = Call(incoming = true, number, name, clock.nowMillis()).also { it.id = callId }
+            calls += incoming
+            if (active == null) active = incoming
             publish()
             effects += { telecom.addIncoming(callId, number, name) }
         }
@@ -209,11 +224,8 @@ class CallManager(
 
     override fun onCallState(callId: Int, state: Int, code: Int) {
         act { effects ->
-            val current = call
-            // A feita sem id (o makeCall ainda não voltou): o primeiro evento de uma ligação nova é dela.
-            val adoptable = current != null && !current.incoming && current.id == NO_ID && current.dialRequested &&
-                callId > maxSeenId
-            if (loggedOut || current == null || (current.id != callId && !adoptable)) {
+            val current = if (loggedOut) null else ownerOf(callId)
+            if (current == null) {
                 maxSeenId = maxOf(maxSeenId, callId)   // de outra ligação (ou depois de Sair): fica lembrado
                 return@act
             }
@@ -231,8 +243,9 @@ class CallManager(
     }
 
     /**
-     * Liga para [raw] (o número como foi digitado). false se não ligou: número vazio, outra ligação, depois de
-     * Sair, ou sem registro (aí [endMessage] mostra "Sem conexão…").
+     * Liga para [raw] (o número como foi digitado): sem ligação, ou com uma em andamento (a Nova ligação: ela vai
+     * para a espera e a feita é a ativa). false se não ligou: número vazio, uma ligação que ainda não está em
+     * andamento, duas, depois de Sair, ou sem registro (aí [endMessage] mostra "Sem conexão…").
      */
     fun dial(raw: String): Boolean {
         if (raw.isBlank()) return false
@@ -243,9 +256,14 @@ class CallManager(
         val number = core.normalizeDialString(raw)
         if (number.isEmpty()) return false
         act { effects ->
-            if (loggedOut || call != null) return false
+            if (loggedOut) return false
+            val other = calls.singleOrNull()
+            if (calls.isNotEmpty() && (other == null || other.phase != CallPhase.ACTIVE || other.ending)) return false
             clearEndMessage()
-            call = Call(incoming = false, number, "", clock.nowMillis())
+            val dialed = Call(incoming = false, number, "", clock.nowMillis())
+            calls += dialed
+            active = dialed
+            if (other != null) heldByEngine(other, effects)   // o motor a põe em espera no makeCall
             publish()
             effects += { telecom.placeOutgoing(number) }
         }
@@ -255,10 +273,9 @@ class CallManager(
     /** O Telecom criou a Connection da feita: o motor liga (o makeCall roda em [background]). */
     fun onOutgoingReady() {
         val dialed = synchronized(lock) {
-            val current = call ?: return
-            if (current.incoming || current.dialRequested || current.ending) return
-            current.dialRequested = true
-            current
+            val waiting = waitingForTelecom() ?: return
+            waiting.dialRequested = true
+            waiting
         }
         background.execute { onDialed(dialed, gateway.makeCall(dialed.number)) }
     }
@@ -270,163 +287,171 @@ class CallManager(
      */
     fun onTelecomFailed(callId: Int) {
         act { effects ->
-            val current = call ?: return@act
-            if (current.ending) return@act
-            if (current.incoming) {
-                if (current.id != callId || current.phase != CallPhase.RINGING) return@act
-                current.notifyMissed = true
-                reject(current, effects)
-            } else if (callId == NO_ID && !current.dialRequested) {
-                end(current, 0, effects, cause = EndCause.ERROR)
+            if (callId == NO_ID) {
+                val dialed = waitingForTelecom() ?: return@act
+                end(dialed, 0, effects, cause = EndCause.ERROR)
                 showEndMessage(CARRIER_CALL)
+            } else {
+                val ringing = ringingCall()?.takeIf { it.id == callId } ?: return@act
+                ringing.notifyMissed = true
+                reject(ringing, effects)
             }
             publish()
         }
     }
 
     /** A recebida [callId] ainda toca (o Telecom pergunta antes de criar a Connection dela). */
-    fun isRinging(callId: Int): Boolean = synchronized(lock) {
-        val current = call ?: return false
-        current.incoming && current.id == callId && current.phase == CallPhase.RINGING && !current.ending
-    }
+    fun isRinging(callId: Int): Boolean = synchronized(lock) { ringingCall()?.id == callId }
 
     /**
-     * A recebida que toca agora (o id, o número e o nome), ou null. Vem do estado do CallManager, e não de [state]:
-     * o Telecom pode pedir a Connection antes de o estado ser publicado.
+     * A recebida que toca agora (o id, o número e o nome), ou null; só uma toca por vez. Vem do estado do
+     * CallManager, e não de [state]: o Telecom pode pedir a Connection antes de o estado ser publicado.
      */
     fun ringing(): IncomingRequest? = synchronized(lock) {
-        val current = call ?: return null
-        if (current.incoming && current.phase == CallPhase.RINGING && !current.ending) {
-            IncomingRequest(current.id, current.number, current.name)
-        } else {
-            null
-        }
+        ringingCall()?.let { IncomingRequest(it.id, it.number, it.name) }
     }
 
     /** Há uma feita esperando o Telecom (ele pergunta antes de criar a Connection dela). */
-    fun isDialing(): Boolean = synchronized(lock) {
-        val current = call ?: return false
-        !current.incoming && !current.dialRequested && !current.ending
-    }
+    fun isDialing(): Boolean = synchronized(lock) { waitingForTelecom() != null }
 
-    /** Atende a recebida que toca. */
+    /** Atende a recebida que toca; a outra ligação, se há, vai para a espera (o motor a põe no answer). */
     fun answer() {
         act { effects ->
-            val current = call ?: return@act
-            if (!current.incoming || current.phase != CallPhase.RINGING || current.ending) return@act
-            current.answered = true
-            current.phase = CallPhase.CONNECTING
-            publish()
-            val id = current.id
+            val ringing = ringingCall() ?: return@act
+            ringing.answered = true
+            ringing.phase = CallPhase.CONNECTING
+            val other = otherThan(ringing)
+            active = ringing
+            val id = ringing.id
             effects += { notifier.stopRinging(id) }
             effects += { gateway.answer(id) }
+            if (other != null) heldByEngine(other, effects)
+            publish()
         }
     }
 
     /** Recusa a recebida que toca: ocupado (486), e ela entra no Recentes como perdida. */
     fun reject() {
         act { effects ->
-            val current = call ?: return@act
-            if (!current.incoming || current.phase != CallPhase.RINGING || current.ending) return@act
-            reject(current, effects)
+            val ringing = ringingCall() ?: return@act
+            reject(ringing, effects)
             publish()
         }
     }
 
-    /** Desliga (ou cancela a feita que chama; a recebida que toca é recusada). */
+    /**
+     * Desliga a ligação da tela: a ativa (ou a outra, se a ativa já está saindo). A feita que chama é cancelada, e a
+     * recebida que toca, recusada.
+     */
     fun hangup() {
         act { effects ->
-            val current = call ?: return@act
-            if (current.ending) return@act
-            if (current.incoming && current.phase == CallPhase.RINGING) {
-                reject(current, effects)
-                publish()
-                return@act
-            }
-            current.localHangup = true
-            current.ending = true
-            val id = current.id
-            when {
-                id != NO_ID -> effects += { gateway.hangup(id) }
-                current.dialRequested -> current.hangupWhenDialed = true
-                else -> end(current, 0, effects)   // o Telecom ainda não criou a Connection: nada foi discado
-            }
+            val current = shown() ?: return@act
+            hangup(current, effects)
             publish()
         }
     }
 
-    /** Desliga a ligação [callId] (o pedido do Telecom). Ainda uma ligação por vez: é o [hangup]. */
-    fun hangup(callId: Int) = hangup()
-
-    /** Alternar. Ainda uma ligação por vez: nada. */
-    fun activate() = Unit
-
-    /** O Telecom pede a espera da ligação [callId]. Ainda uma ligação por vez: é o [hold]. */
-    fun holdFromTelecom(callId: Int) = hold(true)
-
-    /** O Telecom pede a retomada da ligação [callId]. Ainda uma ligação por vez: é o [hold]. */
-    fun activateFromTelecom(callId: Int) = hold(false)
-
-    /** Põe em espera ou retoma a ligação em andamento (null: troca). */
-    fun hold(on: Boolean? = null) {
+    /**
+     * Desliga a ligação [callId], a ativa ou a outra (o pedido do Telecom para a Connection dela); a outra acaba sem
+     * mexer na ativa. [NO_ID] é a feita mais nova (a Connection dela ainda não sabe o id do motor).
+     */
+    fun hangup(callId: Int) {
         act { effects ->
-            val current = call ?: return@act
-            if (current.phase != CallPhase.ACTIVE || current.ending) return@act
-            val target = on ?: !current.held
-            if (target == current.held) return@act
-            current.held = target
+            val current = if (callId == NO_ID) {
+                calls.lastOrNull { !it.incoming }
+            } else {
+                calls.firstOrNull { it.id == callId }
+            }
+            if (current == null || current.ending) return@act
+            hangup(current, effects)
             publish()
-            val id = current.id
-            effects += { gateway.setHold(id, target) }
         }
     }
 
-    /** Liga ou desliga o mudo da ligação (null: troca); ele sai no fim dela. */
+    /** Alternar: com as duas ligações em andamento, a outra vira a ativa e a ativa vai para a espera. */
+    fun activate() {
+        act { effects ->
+            val current = active ?: return@act
+            val other = otherThan(current) ?: return@act
+            swap(current, other, effects)
+        }
+    }
+
+    /**
+     * Põe em espera ou retoma a ligação ativa (null: troca). Com as duas em andamento, a espera da ativa é o Alternar
+     * ([activate]): a outra volta.
+     */
+    fun hold(on: Boolean? = null) {
+        act { effects -> holdActive(on, effects) }
+    }
+
+    /**
+     * O Telecom pede a espera da ligação [callId] (o onHold da Connection dela). A ativa vai para a espera (com as
+     * duas em andamento, é o Alternar); a que já está em espera fica como está.
+     */
+    fun holdFromTelecom(callId: Int) {
+        act { effects -> if (active?.id == callId) holdActive(true, effects) }
+    }
+
+    /**
+     * O Telecom pede a retomada da ligação [callId] (o onUnhold da Connection dela): ela vira a ativa. A em espera
+     * de duas é o Alternar; a ligação só é retomada.
+     */
+    fun activateFromTelecom(callId: Int) {
+        act { effects ->
+            val current = active ?: return@act
+            if (current.id == callId) {
+                holdActive(false, effects)
+            } else {
+                val other = otherThan(current)?.takeIf { it.id == callId } ?: return@act
+                swap(current, other, effects)
+            }
+        }
+    }
+
+    /** Liga ou desliga o mudo do microfone (null: troca); ele vale para as duas ligações e sai no fim da última. */
     fun mute(on: Boolean? = null) {
         act { effects ->
-            val current = call ?: return@act
-            if (current.ending || current.phase == CallPhase.RINGING) return@act
-            val target = on ?: !current.muted
-            if (target == current.muted) return@act
-            current.muted = target
+            val current = shown() ?: return@act
+            if (current.phase == CallPhase.RINGING) return@act
+            val target = on ?: !muted
+            if (target == muted) return@act
+            muted = target
             publish()
             effects += { gateway.setMute(target) }
         }
     }
 
-    /** Manda os dígitos (DTMF) na ligação em andamento. */
+    /** Manda os dígitos (DTMF) na ligação ativa, em andamento. */
     fun dtmf(digits: String) {
         act { effects ->
-            val current = call ?: return@act
-            if (current.phase != CallPhase.ACTIVE || current.ending) return@act
+            val current = talking() ?: return@act
             val id = current.id
             effects += { gateway.sendDtmf(id, digits) }
         }
     }
 
     /**
-     * Transfere a ligação em andamento para [raw] (sem consulta; spec 4.2): a ligação acaba quando o PABX aceitar.
-     * false se não há o que transferir.
+     * Transfere a ligação ativa, em andamento, para [raw] (sem consulta; spec 4.2): a ligação acaba quando o PABX
+     * aceitar. false se não há o que transferir.
      */
     fun transfer(raw: String): Boolean {
         val number = core.normalizeDialString(raw)
         if (number.isEmpty()) return false
         act { effects ->
-            val current = call ?: return false
-            if (current.phase != CallPhase.ACTIVE || current.ending) return false
+            val current = talking() ?: return false
             val id = current.id
             effects += { gateway.transfer(id, number) }
         }
         return true
     }
 
-    /** Sair: a ligação de agora acaba, e daqui em diante os eventos do motor são ignorados (até [onLogin]). */
+    /** Sair: as ligações de agora acabam, e daqui em diante os eventos do motor são ignorados (até [onLogin]). */
     fun onLogout() {
         act { effects ->
             loggedOut = true
             clearEndMessage()
-            val current = call
-            if (current != null) {
+            for (current in calls.toList()) {
                 current.abandoned = true
                 val id = current.id
                 if (id != NO_ID) effects += { gateway.hangup(id) }
@@ -445,7 +470,7 @@ class CallManager(
     // que o de um evento tomado antes dele (de outra ligação, que então sai).
     private fun onDialed(dialed: Call, id: Int) {
         act { effects ->
-            if (call !== dialed) {
+            if (calls.none { it === dialed }) {
                 // Ela já acabou: a conta saiu, ou um fim chegou antes de o makeCall voltar. Se o fim era de outra
                 // ligação (o id tomado não é o do makeCall), a do motor ficou sem dono: sai também.
                 if (id > 0 && (dialed.abandoned || dialed.id != id)) effects += { gateway.hangup(id) }
@@ -469,6 +494,12 @@ class CallManager(
         }
     }
 
+    // Com a trava: a ligação do evento de [callId]: a que tem o id, ou a feita sem id (o makeCall ainda não voltou),
+    // se o id é de uma ligação nova; null: de outra ligação.
+    private fun ownerOf(callId: Int): Call? =
+        calls.firstOrNull { it.id == callId }
+            ?: calls.firstOrNull { !it.incoming && it.id == NO_ID && it.dialRequested }?.takeIf { callId > maxSeenId }
+
     // Com a trava: a feita [current] ganha o id [id] do motor.
     private fun adopt(current: Call, id: Int, effects: MutableList<() -> Unit>) {
         current.id = id
@@ -488,9 +519,70 @@ class CallManager(
         effects += { gateway.reject(id) }
     }
 
-    // Com a trava: a ligação [current] acabou com o código [code]: Recentes, notificação, aviso e Telecom.
+    // Com a trava: desliga [current]. A recebida que toca é recusada; a feita sem id é desligada quando o id chegar,
+    // e a que o Telecom ainda não criou acaba aqui.
+    private fun hangup(current: Call, effects: MutableList<() -> Unit>) {
+        if (current.incoming && current.phase == CallPhase.RINGING) {
+            reject(current, effects)
+            return
+        }
+        current.localHangup = true
+        current.ending = true
+        val id = current.id
+        when {
+            id != NO_ID -> effects += { gateway.hangup(id) }
+            current.dialRequested -> current.hangupWhenDialed = true
+            else -> end(current, 0, effects)   // o Telecom ainda não criou a Connection: nada foi discado
+        }
+    }
+
+    // Com a trava: a espera ([on] true) ou a retomada da ativa em andamento (null: troca). Com as duas em andamento,
+    // a espera da ativa é o Alternar.
+    private fun holdActive(on: Boolean?, effects: MutableList<() -> Unit>) {
+        val current = talking() ?: return
+        val target = on ?: !current.held
+        if (target == current.held) return
+        val other = otherThan(current)
+        if (target && other != null && other.phase == CallPhase.ACTIVE) {
+            swap(current, other, effects)
+            return
+        }
+        current.held = target
+        publish()
+        val id = current.id
+        effects += { gateway.setHold(id, target) }
+        effects += { if (target) telecom.setOnHold(id) else telecom.setActive(id) }
+    }
+
+    // Com a trava: o Alternar, de [from] (a ativa) para [to] (a outra), só com as duas em andamento. O motor troca
+    // (a ativa vai para a espera e a outra é retomada), e o Telecom acompanha.
+    private fun swap(from: Call, to: Call, effects: MutableList<() -> Unit>) {
+        if (from.ending || from.phase != CallPhase.ACTIVE || to.phase != CallPhase.ACTIVE) return
+        from.held = true
+        to.held = false
+        active = to
+        publish()
+        val fromId = from.id
+        val toId = to.id
+        effects += { gateway.activate(toId) }
+        effects += { telecom.setOnHold(fromId) }
+        effects += { telecom.setActive(toId) }
+    }
+
+    // Com a trava: [other] vai para a espera pelo motor (no answer ou no makeCall de outra); o Telecom acompanha.
+    private fun heldByEngine(other: Call, effects: MutableList<() -> Unit>) {
+        other.held = true
+        val id = other.id
+        effects += { telecom.setOnHold(id) }
+    }
+
+    // Com a trava: a ligação [current] acabou com o código [code]: Recentes, notificação, aviso e Telecom. Se era a
+    // ativa, a outra (se há) passa a ser; em andamento (em espera), ela volta sozinha: o motor a retoma e o Telecom a
+    // ativa. A outra que cai do outro lado, já em andamento, deixa o aviso "<nome ou número> desligou".
     private fun end(current: Call, code: Int, effects: MutableList<() -> Unit>, cause: Int? = null, quiet: Boolean = false) {
-        call = null
+        val wasActive = current === active
+        calls.remove(current)
+        if (wasActive) active = calls.firstOrNull()
         val id = current.id
         val received = current.activeSince > 0
         val duration = if (received) ((clock.nowMillis() - current.activeSince) / 1000).toInt() else 0
@@ -522,9 +614,22 @@ class CallManager(
             }
             if (message.isNotEmpty()) showEndMessage(message)
         }
-        if (current.muted) effects += { gateway.setMute(false) }
+        if (!wasActive && received && !current.localHangup && !quiet && calls.isNotEmpty()) {
+            showEndMessage("${current.name.ifEmpty { current.number }} desligou")
+        }
+        if (muted && calls.isEmpty()) {
+            muted = false
+            effects += { gateway.setMute(false) }
+        }
         record(Recent(current.number, current.name, kind, current.startMillis, duration), effects)
         effects += { telecom.disconnect(id, endCause) }
+        val next = active
+        if (wasActive && next != null && next.phase == CallPhase.ACTIVE && !next.ending && !loggedOut) {
+            next.held = false
+            val nextId = next.id
+            effects += { gateway.activate(nextId) }
+            effects += { telecom.setActive(nextId) }
+        }
     }
 
     // Com a trava: uma perdida que a pessoa não viu (ocupado): Recentes e notificação.
@@ -538,12 +643,39 @@ class CallManager(
         effects += { background.execute { recents.add(recent) } }
     }
 
-    // Com a trava: o estado de agora vai à fila das publicações (entregue depois de soltar a trava, em [deliver]).
+    // Com a trava: a ligação da tela: a ativa, ou a outra enquanto a ativa sai (null: nenhuma).
+    private fun shown(): Call? = active?.takeIf { !it.ending } ?: calls.firstOrNull { !it.ending }
+
+    // Com a trava: a ativa, se está em andamento (os dois lados atenderam) e não está saindo.
+    private fun talking(): Call? = active?.takeIf { it.phase == CallPhase.ACTIVE && !it.ending }
+
+    // Com a trava: a outra ligação que não [call] (null: não há, ou ela está saindo).
+    private fun otherThan(call: Call): Call? = calls.firstOrNull { it !== call && !it.ending }
+
+    // Com a trava: a recebida que toca (só uma toca por vez).
+    private fun ringingCall(): Call? = calls.firstOrNull { it.incoming && it.phase == CallPhase.RINGING && !it.ending }
+
+    // Com a trava: a feita que espera o Telecom criar a Connection dela (só há uma).
+    private fun waitingForTelecom(): Call? = calls.firstOrNull { !it.incoming && !it.dialRequested && !it.ending }
+
+    // Com a trava: o estado de agora vai à fila das publicações (entregue depois de soltar a trava, em [deliver]): a
+    // ligação da tela e, com duas, a outra.
     private fun publish() {
-        val ui = call?.takeIf { !it.ending }?.let {
-            CallUi(it.id, it.number, it.name, it.incoming, it.phase, it.activeSince, it.held, it.muted)
+        val ui = shown()?.let { main ->
+            val other = otherThan(main)?.let { SecondUi(it.id, it.number, it.name, secondKind(it)) }
+            CallUi(
+                main.id, main.number, main.name, main.incoming, main.phase, main.activeSince, main.held, muted,
+                second = other,
+            )
         }
         publications.addLast { mutableState.value = ui }
+    }
+
+    // A outra de duas, para a tela: tocando, chamando ou (em andamento) em espera.
+    private fun secondKind(call: Call) = when (call.phase) {
+        CallPhase.RINGING -> SecondKind.RINGING
+        CallPhase.DIALING -> SecondKind.DIALING
+        else -> SecondKind.HELD
     }
 
     // Com a trava: o aviso vai à fila das publicações.

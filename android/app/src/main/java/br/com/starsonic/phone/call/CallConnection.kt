@@ -39,10 +39,10 @@ data class AudioRoutes(
 }
 
 /**
- * A ligação no Telecom do Android, modo self-managed (spec 6.2): os pedidos dele (atender, recusar, desligar,
- * mostrar a notificação de ligação) vão ao [CallManager]; as rotas de áudio vão ao [AndroidTelecom]. Uma por
- * vez. A feita nasce sem o id do motor ([CallManager.NO_ID]) e o ganha quando o CallManager a ativa ou encerra.
- * Os avisos do Telecom chegam na thread principal.
+ * Uma ligação no Telecom do Android, modo self-managed (spec 6.2): os pedidos dele (atender, recusar, desligar, pôr
+ * em espera e retomar, mostrar a notificação de ligação) vão ao [CallManager], para esta ligação; as rotas de áudio
+ * vão ao [AndroidTelecom]. Até duas, como no CallManager. A feita nasce sem o id do motor ([CallManager.NO_ID]) e o
+ * ganha quando o CallManager a ativa, a põe em espera ou a encerra. Os avisos do Telecom chegam na thread principal.
  */
 class CallConnection(
     private val app: App,
@@ -55,9 +55,11 @@ class CallConnection(
     var callId: Int = callId
 
     init {
-        // Sem espera nem mudo pelo Telecom: os dois são do motor (a tela de chamada). Uma ligação da operadora
-        // atendida no meio desta a encerra (onDisconnect): uma ligação por vez (spec 4.2).
+        // A espera pelo Telecom: ele sabe qual das duas está em espera (o CallManager o avisa), e os pedidos de espera
+        // e de retomada dele (onHold e onUnhold) vão ao CallManager, que decide com o motor. O mudo é só do motor (a
+        // tela de chamada).
         connectionProperties = PROPERTY_SELF_MANAGED
+        connectionCapabilities = CAPABILITY_HOLD or CAPABILITY_SUPPORT_HOLD
         audioModeIsVoip = true
         setAddress(Uri.fromParts(PhoneAccount.SCHEME_SIP, number, null), TelecomManager.PRESENTATION_ALLOWED)
         if (name.isNotEmpty()) setCallerDisplayName(name, TelecomManager.PRESENTATION_ALLOWED)
@@ -85,13 +87,25 @@ class CallConnection(
         app.calls.reject()
     }
 
+    // A pessoa ou o Android (uma ligação da operadora atendida, por exemplo) pede a espera desta.
+    override fun onHold() {
+        CallLog.i { "Telecom: espera $callId" }
+        app.calls.holdFromTelecom(callId)
+    }
+
+    override fun onUnhold() {
+        CallLog.i { "Telecom: retomar $callId" }
+        app.calls.activateFromTelecom(callId)
+    }
+
+    // Desliga esta ligação (a ativa ou a em espera); a outra segue.
     override fun onDisconnect() {
         CallLog.i { "Telecom: desligar $callId" }
-        app.calls.hangup()
+        app.calls.hangup(callId)
     }
 
     override fun onAbort() {
-        app.calls.hangup()
+        app.calls.hangup(callId)
     }
 
     @Deprecated("Telecom ainda manda as rotas por aqui (a API nova, CallEndpoint, é só do Android 14+)")
