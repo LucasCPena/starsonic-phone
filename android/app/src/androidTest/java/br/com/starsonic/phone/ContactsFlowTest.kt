@@ -115,12 +115,15 @@ class ContactsFlowTest {
         // Um "não perguntar de novo" que tenha ficado faria o Android negar sem a janela.
         emulator.shell("pm clear-permission-flags $PACKAGE ${Manifest.permission.READ_CONTACTS} user-set user-fixed")
         compose.onNodeWithTag("aba-contatos").performClick()
-        // A primeira abertura da aba pede a permissão pela janela do Android, e a pessoa nega.
-        val deny = device.wait(Until.findObject(By.res(Pattern.compile(".*:id/permission_deny_button"))), 10_000)
-            ?: device.wait(Until.findObject(By.text(DENY_TEXT)), 5_000)
-            ?: throw AssertionError("Sem a janela da permissão dos contatos.\nTela: ${emulator.screen()}")
-        deny.click()
-        emulator.waitUntil("o Permitir") { emulator.showsTag("contatos-permitir") }
+        // A primeira abertura da aba pede a permissão pela janela do Android (do PermissionController), e a pessoa
+        // nega: o "Não permitir", ou, se o botão não for achado, o voltar (que também fecha a janela sem a permissão).
+        emulator.waitUntil("a janela da permissão dos contatos", details = ::systemScreen) {
+            device.currentPackageName.orEmpty().contains("permissioncontroller")
+        }
+        val deny = device.wait(Until.findObject(By.res(DENY_ID)), 3_000)
+            ?: device.wait(Until.findObject(By.text(DENY_TEXT)), 2_000)
+        if (deny != null) deny.click() else device.pressBack()
+        emulator.waitUntil("o Permitir", details = ::systemScreen) { emulator.showsTag("contatos-permitir") }
         assertTrue(emulator.showsText("Permita o acesso aos contatos para ligar pelo nome."))
         assertFalse("a busca sem a permissão", emulator.showsTag("contatos-busca"))
     }
@@ -224,6 +227,15 @@ class ContactsFlowTest {
             ?.notification?.extras?.getParcelable<Person>(Notification.EXTRA_CALL_PERSON)?.name?.toString()
     }
 
+    // O que o Android mostra agora (o app na frente, a janela com o foco e os textos e ids à vista), para as falhas.
+    private fun systemScreen(): String {
+        val focus = emulator.shell("dumpsys window").filter { "mCurrentFocus" in it }.joinToString { it.trim() }
+        val texts = device.findObjects(By.text(Pattern.compile(".+"))).take(30).joinToString {
+            "${it.applicationPackage}:${it.resourceName}:${it.text}"
+        }
+        return "Na frente: ${device.currentPackageName}; $focus\nNa tela: $texts"
+    }
+
     private fun notifications(): String =
         app.getSystemService(NotificationManager::class.java).activeNotifications.joinToString {
             "${it.notification.channelId}/${it.notification.extras.getCharSequence(Notification.EXTRA_TITLE)}"
@@ -238,7 +250,9 @@ class ContactsFlowTest {
         private const val PHONES = "content://com.android.contacts/data/phones"
         private const val NAME_TYPE = "vnd.android.cursor.item/name"
         private const val PHONE_TYPE = "vnd.android.cursor.item/phone_v2"
-        private val DENY_TEXT = Pattern.compile("Não permitir|Don.t allow", Pattern.CASE_INSENSITIVE)
+        private val DENY_ID = Pattern.compile(".*:id/permission_deny(_and_dont_ask_again)?_button")
+        private val DENY_TEXT =
+            Pattern.compile("Não permitir|Don.t allow", Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE)
         private val ROW = Regex("""_id=(\d+), display_name=(.*)$""")
     }
 }
