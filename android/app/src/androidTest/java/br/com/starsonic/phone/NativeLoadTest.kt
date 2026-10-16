@@ -100,8 +100,9 @@ class NativeLoadTest {
         val profile = ApplicationProvider.getApplicationContext<App>().profileText
         assertArrayEquals(arrayOf("55", ""), Native.profileDial(profile))
         assertEquals("55" to "", NativeCoreRules.profileDial(profile))
-        assertArrayEquals(arrayOf("351", "0"), Native.profileDial("[conta]\nporta=5060\nddi=351\nprefixo_externo=0\n"))
-        assertArrayEquals(arrayOf("", ""), Native.profileDial("[conta]\nddi=55\n"))   // sem a porta: perfil inválido
+        val other = "[conta]\nporta=5060\ntransporte=udp\nddi=351\nprefixo_externo=0\n"
+        assertArrayEquals(arrayOf("351", "0"), Native.profileDial(other))
+        assertArrayEquals(arrayOf("", ""), Native.profileDial("[conta]\ntransporte=udp\nddi=55\n"))   // sem a porta: inválido
     }
 
     @Test
