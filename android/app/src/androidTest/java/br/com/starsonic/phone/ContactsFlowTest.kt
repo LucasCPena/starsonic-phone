@@ -8,6 +8,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Looper
 import android.os.Process
+import android.os.SystemClock
 import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
@@ -113,10 +114,16 @@ class ContactsFlowTest {
                 "este teste precisa ser o primeiro da classe (ver a ordem no começo do ContactsFlowTest)",
             app.checkSelfPermission(Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED,
         )
+        // O primeiro toque do processo vai a outra aba, que precisa responder (o primeiro teste da classe; ver o
+        // run 38972070803, em que o toque na aba Contatos não mudou a aba).
+        compose.onNodeWithTag("aba-recentes").performClick()
+        emulator.waitUntil("a aba Recentes", details = ::systemScreen) { emulator.showsText("Nenhuma ligação ainda.") }
         compose.onNodeWithTag("aba-contatos").performClick()
+        // Sem a permissão, a aba mostra o aviso e o Permitir na hora (por baixo da janela do Android, que vem logo).
+        val shownAtOnce = within(5_000) { emulator.showsTag("contatos-permitir") }
         // A primeira abertura da aba pede a permissão pela janela do Android (do PermissionController), e a pessoa
         // nega: o "Não permitir", ou, se o botão não for achado, o voltar (que também fecha a janela sem a permissão).
-        emulator.waitUntil("a janela da permissão dos contatos", details = ::systemScreen) {
+        emulator.waitUntil("a janela da permissão dos contatos", details = { "Permitir na hora: $shownAtOnce\n" + systemScreen() }) {
             device.currentPackageName.orEmpty().contains("permissioncontroller")
         }
         val deny = device.wait(Until.findObject(By.res(DENY_ID)), 3_000)
@@ -202,6 +209,15 @@ class ContactsFlowTest {
         emulator.shell("content query --uri $RAW_CONTACTS --projection _id:display_name").mapNotNull { line ->
             ROW.find(line)?.let { it.groupValues[1].toLong() to it.groupValues[2] }
         }.toMap()
+
+    private fun within(millis: Long, condition: () -> Boolean): Boolean {
+        val deadline = SystemClock.uptimeMillis() + millis
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (condition()) return true
+            Thread.sleep(100)
+        }
+        return condition()
+    }
 
     // Uma tela do app na frente tem o elemento [tag] com o texto [text] (nele ou dentro dele), como no CallFlowTest.
     private fun showsTagWithText(tag: String, text: String): Boolean =
