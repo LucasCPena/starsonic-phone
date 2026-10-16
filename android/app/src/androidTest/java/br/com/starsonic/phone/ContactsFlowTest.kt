@@ -111,14 +111,6 @@ class ContactsFlowTest {
                 "este teste precisa ser o primeiro da classe (ver a ordem no começo do ContactsFlowTest)",
             app.checkSelfPermission(Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED,
         )
-        // O pm revoke (e a limpeza de um "não perguntar de novo" que tenha ficado, com o qual o Android negaria sem a
-        // janela) com a tela do app fechada, e ela aberta de novo depois: com ela aberta, os toques dos testes deixavam
-        // de chegar nela (run 38964537897: o toque na aba não mudou a aba, e o Compose já não achava a tela).
-        scenario?.close()
-        emulator.shell("pm revoke $PACKAGE ${Manifest.permission.READ_CONTACTS}")
-        emulator.shell("pm clear-permission-flags $PACKAGE ${Manifest.permission.READ_CONTACTS} user-set user-fixed")
-        scenario = ActivityScenario.launch(MainActivity::class.java)
-        emulator.waitUntil("a aba Contatos", details = ::systemScreen) { emulator.showsTag("aba-contatos") }
         compose.onNodeWithTag("aba-contatos").performClick()
         // A primeira abertura da aba pede a permissão pela janela do Android (do PermissionController), e a pessoa
         // nega: o "Não permitir", ou, se o botão não for achado, o voltar (que também fecha a janela sem a permissão).
@@ -240,10 +232,9 @@ class ContactsFlowTest {
         }
         val activities = emulator.shell("dumpsys activity activities")
             .filter { "ResumedActivity" in it || "mFocusedApp" in it }.joinToString("\n") { it.trim() }
-        val log = emulator.shell(
-            "logcat -d -v brief -t 60 ActivityTaskManager:I PermissionControllerServiceImpl:V GrantPermissionsActivity:V " +
-                "GrantPermissionsViewModel:V AndroidRuntime:E ActivityManager:W WindowManager:W *:S",
-        ).joinToString("\n") { it.take(220) }
+        val log = emulator.shell("logcat -d -v brief").filter { line ->
+            LOG_TAGS.any { it in line } || line.startsWith("E/") || line.startsWith("W/System.err")
+        }.takeLast(60).joinToString("\n") { it.take(240) }
         return "Na frente: ${device.currentPackageName}; $focus\nNa tela: $texts\nActivities:\n$activities\nLogcat:\n$log"
     }
 
@@ -261,6 +252,7 @@ class ContactsFlowTest {
         private const val PHONES = "content://com.android.contacts/data/phones"
         private const val NAME_TYPE = "vnd.android.cursor.item/name"
         private const val PHONE_TYPE = "vnd.android.cursor.item/phone_v2"
+        private val LOG_TAGS = listOf("ActivityTaskManager", "Permission", "AndroidRuntime", "TestRunner", "Compose")
         private val DENY_ID = Pattern.compile(".*:id/permission_deny(_and_dont_ask_again)?_button")
         private val DENY_TEXT =
             Pattern.compile("Não permitir|Don.t allow", Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE)
