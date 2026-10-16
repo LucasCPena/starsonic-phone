@@ -71,7 +71,8 @@ struct AccountInput {
 // Todo método público registra a thread que chama no PJLIB antes de usar o PJSIP, então pode ser
 // chamado de qualquer thread. Chamadas ao mesmo tempo esperam uma pela outra (menos HasCall e
 // CallCount, que nunca esperam). Até duas ligações, uma delas a ativa: só a ativa fica ligada ao
-// dispositivo de som, e a outra fica em espera (re-INVITE sendonly). A terceira que chega recebe 486.
+// dispositivo de som, e a outra fica em espera (re-INVITE sendonly). Na conferência (Join) as duas
+// ficam com o som e ligadas entre si. A terceira que chega recebe 486.
 class SipEngine {
 public:
     // O pjsua tem estado global: só um motor por processo (um segundo Create devolve nullptr até o
@@ -127,20 +128,36 @@ public:
     bool Reject(int callId);
 
     // Desliga a ligação em qualquer estado (CANCEL, recusa ou BYE); o fim chega por OnCallState. A
-    // outra ligação não volta sozinha: ela segue em espera até um Activate.
+    // outra ligação não volta sozinha: ela segue em espera até um Activate. Na conferência, a outra
+    // segue como a ativa, com o som.
     bool Hangup(int callId);
 
     // callId vira a ativa: a outra (confirmada e fora da espera) vai para a espera, callId é retomada
     // (re-INVITE com sendrecv) se estava em espera, e só ela fica ligada ao dispositivo de som. Já
-    // ativa, nada muda. false: id desconhecido ou ligação ainda não confirmada.
+    // ativa, nada muda. Na conferência, é o Split(callId, a outra). false: id desconhecido ou ligação
+    // ainda não confirmada.
     bool Activate(int callId);
+
+    // A conferência a três, na mesa de áudio daqui (a central não fica sabendo): retoma a que está em
+    // espera (re-INVITE com sendrecv) e liga as duas ao dispositivo de som e entre si. Nenhuma fica
+    // sendo a ativa: o Activate de uma delas desfaz a conferência. Se uma das duas acaba, a outra segue
+    // como a ativa, com o som. Já em conferência, nada muda. false (a conferência não começa): id
+    // desconhecido, ids iguais, ligação não confirmada, transferência com consulta em andamento
+    // (TransferAttended sem resultado ainda) ou o PJSIP recusou a retomada.
+    bool Join(int callId, int otherId);
+
+    // Desfaz a conferência: as duas deixam de se ouvir, otherId vai para a espera (re-INVITE com
+    // sendonly) e callId fica a ativa, com o som. Fora da conferência, é o Activate(callId). false: id
+    // desconhecido, ids iguais ou ligação não confirmada.
+    bool Split(int callId, int otherId);
 
     // true põe callId em espera (re-INVITE com sendonly; já em espera, nada muda); false é o Activate
     // (a outra ligação, se ativa, vai para a espera). Se outra renegociação da ligação ainda está em
     // andamento, espera até ~2 s que ela termine. false: id desconhecido ou ligação não confirmada.
     bool SetHold(int callId, bool hold);
 
-    // Microfone mudo ou não, para a ligação de agora e as próximas (até trocar de novo).
+    // Microfone mudo ou não, para a ligação de agora e as próximas (até trocar de novo); na
+    // conferência, para as duas.
     void SetMute(bool muted);
 
     // Manda os dígitos (0-9, *, #, A-D) pelo método DTMF do perfil: info por SIP INFO; rfc2833, auto
@@ -165,9 +182,9 @@ public:
     int CallCount() const;
     bool HasCall() const;
 
-    // Para onde o áudio de callId vai na ponte de áudio: 0 é o dispositivo de som; outro número, o id
-    // da outra ligação. Vazio em espera, sem mídia ou com id desconhecido. A ponte aplica as mudanças
-    // no tique seguinte do relógio dela (cerca de 20 ms).
+    // Para onde o áudio de callId vai na ponte de áudio, sem ordem: 0 é o dispositivo de som; outro
+    // número, o id da outra ligação (na conferência: 0 e a outra). Vazio em espera, sem mídia ou com id
+    // desconhecido. A ponte aplica as mudanças no tique seguinte do relógio dela (cerca de 20 ms).
     std::vector<int> AudioLinks(int callId) const;
 
 private:

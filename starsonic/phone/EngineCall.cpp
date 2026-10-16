@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <iterator>
 #include <thread>
 #include <utility>
 
@@ -76,30 +77,20 @@ bool Transmits(pjsua_conf_port_id port, pjsua_conf_port_id sink) {
     return std::find(info.listeners, info.listeners + info.listener_cnt, sink) != info.listeners + info.listener_cnt;
 }
 
-// Liga ou desliga o áudio da ligação pjsuaId do dispositivo de som, nos dois sentidos. Como o
-// MicroSIP: com linked, a mídia ativa (ou em espera do outro lado) fala e ouve pelo aparelho; em
-// espera daqui ou sem mídia, fica fora do som. A ponte aplica a mudança no tique seguinte do relógio.
-void RouteAudio(int pjsuaId, bool linked) {
+// A porta na ponte do áudio da ligação pjsuaId (PJSUA_INVALID_ID se não há) e, em *usable, se ela
+// pode ficar ligada. Como o MicroSIP: a mídia ativa (ou em espera do outro lado) fala e ouve; em
+// espera daqui ou sem mídia, fica fora do som.
+pjsua_conf_port_id AudioPort(int pjsuaId, bool* usable) {
+    *usable = false;
     pjsua_call_info info;
-    if (pjsuaId == PJSUA_INVALID_ID || pjsua_call_get_info(pjsuaId, &info) != PJ_SUCCESS) return;
+    if (pjsuaId == PJSUA_INVALID_ID || pjsua_call_get_info(pjsuaId, &info) != PJ_SUCCESS) return PJSUA_INVALID_ID;
     for (unsigned index = 0; index < info.media_cnt; ++index) {
         const pjsua_call_media_info& media = info.media[index];
-        if (media.type != PJMEDIA_TYPE_AUDIO) continue;
-        const pjsua_conf_port_id port = media.stream.aud.conf_slot;
-        if (port == PJSUA_INVALID_ID) continue;
-        const bool on = linked && (media.status == PJSUA_CALL_MEDIA_ACTIVE ||
-                                   media.status == PJSUA_CALL_MEDIA_REMOTE_HOLD);
-        if (on == Transmits(port, kSoundDevice)) continue;   // já está como deve
-        pj_status_t status;
-        if (on) {
-            status = pjsua_conf_connect(kSoundDevice, port);
-            if (status == PJ_SUCCESS) status = pjsua_conf_connect(port, kSoundDevice);
-        } else {
-            status = pjsua_conf_disconnect(kSoundDevice, port);
-            if (status == PJ_SUCCESS) status = pjsua_conf_disconnect(port, kSoundDevice);
-        }
-        if (status != PJ_SUCCESS) Log(2, "audio da ligacao: " + StatusText(status));
+        if (media.type != PJMEDIA_TYPE_AUDIO || media.stream.aud.conf_slot == PJSUA_INVALID_ID) continue;
+        *usable = media.status == PJSUA_CALL_MEDIA_ACTIVE || media.status == PJSUA_CALL_MEDIA_REMOTE_HOLD;
+        return media.stream.aud.conf_slot;
     }
+    return PJSUA_INVALID_ID;
 }
 
 }  // namespace
@@ -204,14 +195,14 @@ void CallTable::StateChanged(EngineCall* call, CallState state, int sipCode) {
 }
 
 void CallTable::MediaChanged(EngineCall* call) {
-    bool active;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        const Slot* slot = Find(call);
-        active = slot && slot->callId == activeId_;
+        Slot* slot = Find(call);
+        if (!slot) return;
+        // O id vem do objeto: numa ligação feita, a mídia pode chegar antes de o makeCall voltar.
+        slot->pjsuaId = call->getId();
     }
-    // O id vem do objeto: numa ligação feita, a vaga só recebe o id no pjsua depois do makeCall.
-    RouteAudio(call->getId(), active);
+    Route();
 }
 
 void CallTable::Ended(EngineCall* call, int sipCode) {
@@ -221,8 +212,15 @@ void CallTable::Ended(EngineCall* call, int sipCode) {
         if (slot) {
             const int callId = slot->callId;
             *slot = Slot();
-            // A outra não volta sozinha: quem a retoma é o app, pelo Activate.
-            if (activeId_ == callId) activeId_ = 0;
+            if (conference_) {
+                // Uma saiu da conferência: a outra vira a ativa, já com o som (a ligação entre as duas
+                // some com a porta da que acabou).
+                conference_ = false;
+                const Slot* other = Other(slot);
+                activeId_ = other ? other->callId : 0;
+            } else if (activeId_ == callId) {
+                activeId_ = 0;   // a outra não volta sozinha: quem a retoma é o app, pelo Activate
+            }
             Emit(callId, [callId, sipCode](EngineListener& listener) {
                 listener.OnCallState(callId, CallState::Disconnected, sipCode);
             });
@@ -360,7 +358,7 @@ bool CallTable::Activate(int callId) {
         if (!slot || !slot->confirmed) return false;
         resume = slot->held;
     }
-    Focus(callId);
+    Focus(callId);   // na conferência, a desfaz: é o Split(callId, a outra)
     return !resume || Renegotiate(callId, false);
 }
 
@@ -422,6 +420,45 @@ bool CallTable::TransferAttended(int callId, int targetCallId) {
     Slot* slot = Find(callId);
     if (slot && slot->transferTarget == targetCallId) slot->transferTarget = 0;
     return false;
+}
+
+bool CallTable::Join(int callId, int otherId) {
+    bool resume;
+    bool resumeOther;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const Slot* slot = Find(callId);
+        const Slot* other = Find(otherId);
+        if (callId == otherId || !slot || !other || !slot->confirmed || !other->confirmed) return false;
+        // Com uma consulta em andamento, primeiro ela termina (concluída ou cancelada).
+        if (slot->transferTarget != 0 || other->transferTarget != 0) return false;
+        if (conference_) return true;
+        resume = slot->held;
+        resumeOther = other->held;
+    }
+    // Retoma a que está em espera (as duas, se as duas estão); se o PJSIP recusa, nada muda.
+    if (resume && !Renegotiate(callId, false)) return false;
+    if (resumeOther && !Renegotiate(otherId, false)) return false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!Find(callId) || !Find(otherId)) return false;   // uma acabou no meio
+        conference_ = true;
+        activeId_ = 0;
+    }
+    // A retomada liga a que estava em espera quando a mídia dela voltar (MediaChanged).
+    Route();
+    return true;
+}
+
+bool CallTable::Split(int callId, int otherId) {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const Slot* slot = Find(callId);
+        const Slot* other = Find(otherId);
+        if (callId == otherId || !slot || !other || !slot->confirmed || !other->confirmed) return false;
+    }
+    // As duas são as da tabela: callId ativa, a outra (otherId) em espera.
+    return Activate(callId);
 }
 
 std::vector<int> CallTable::AudioLinks(int callId) {
@@ -518,28 +555,75 @@ int CallTable::PjsuaId(int callId) {
 }
 
 void CallTable::Focus(int callId) {
-    int pjsuaId;
     int otherId = 0;
-    int otherPjsuaId = PJSUA_INVALID_ID;
     bool holdOther = false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         const Slot* slot = Find(callId);
         if (!slot) return;
         activeId_ = callId;
-        pjsuaId = slot->pjsuaId;
+        conference_ = false;
         const Slot* other = Other(slot);
         if (other) {
             otherId = other->callId;
-            otherPjsuaId = other->pjsuaId;
             holdOther = other->confirmed && !other->held;
         }
     }
-    // A outra sai do som na hora; a espera dela (re-INVITE) vem em seguida.
-    RouteAudio(otherPjsuaId, false);
+    // A outra sai do som na hora e callId entra (com a mídia já ativa; senão, quando ela ficar ativa:
+    // MediaChanged); a espera da outra (re-INVITE) vem em seguida.
+    Route();
     if (holdOther) Renegotiate(otherId, true);
-    // Com a mídia já ativa, o som vem agora; senão, quando ela ficar ativa (MediaChanged).
-    RouteAudio(pjsuaId, true);
+}
+
+void CallTable::Route() {
+    std::lock_guard<std::mutex> routeLock(routeMutex_);
+    int pjsuaIds[2];
+    bool sound[2];
+    bool conference;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (int index = 0; index < 2; ++index) {
+            const Slot& slot = slots_[index];
+            pjsuaIds[index] = slot.pjsuaId;
+            sound[index] = slot.callId != 0 && (conference_ || slot.callId == activeId_);
+        }
+        conference = conference_;
+    }
+    pjsua_conf_port_id ports[2];
+    bool usable[2];
+    for (int index = 0; index < 2; ++index) {
+        ports[index] = AudioPort(pjsuaIds[index], &usable[index]);
+        if (ports[index] == PJSUA_INVALID_ID) continue;
+        const bool on = sound[index] && usable[index];
+        Link(kSoundDevice, ports[index], on);
+        Link(ports[index], kSoundDevice, on);
+    }
+    if (ports[0] != PJSUA_INVALID_ID && ports[1] != PJSUA_INVALID_ID) {
+        const bool on = conference && usable[0] && usable[1];
+        Link(ports[0], ports[1], on);
+        Link(ports[1], ports[0], on);
+    }
+    // Os pedidos de portas que já não são das ligações saem da conta: a mesa desfaz as ligações de uma
+    // porta quando a tira (mídia recriada ou ligação acabada), e o número dela pode voltar noutra.
+    const auto ours = [&ports](int port) { return port == kSoundDevice || port == ports[0] || port == ports[1]; };
+    for (auto it = linksAsked_.begin(); it != linksAsked_.end();) {
+        it = ours(it->first) && ours(it->second) ? std::next(it) : linksAsked_.erase(it);
+    }
+}
+
+void CallTable::Link(int source, int sink, bool on) {
+    const std::pair<int, int> link(source, sink);
+    const bool asked = linksAsked_.count(link) != 0;
+    // Pula só quando o último pedido e o estado aplicado já são o que se quer. O estado aplicado sozinho
+    // não basta: um pedido ainda na fila da mesa não aparece nele, e o pedido que o desfaz seria pulado.
+    if (asked == on && Transmits(source, sink) == on) return;
+    const pj_status_t status = on ? pjsua_conf_connect(source, sink) : pjsua_conf_disconnect(source, sink);
+    if (on) {
+        linksAsked_.insert(link);
+    } else {
+        linksAsked_.erase(link);
+    }
+    if (status != PJ_SUCCESS) Log(2, "audio da ligacao: " + StatusText(status));
 }
 
 bool CallTable::Renegotiate(int callId, bool hold) {

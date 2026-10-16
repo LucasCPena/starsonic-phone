@@ -250,6 +250,16 @@ public:
         return RegisterThread() && calls_.TransferAttended(callId, targetCallId);
     }
 
+    bool Join(int callId, int otherId) {
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        return RegisterThread() && calls_.Join(callId, otherId);
+    }
+
+    bool Split(int callId, int otherId) {
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        return RegisterThread() && calls_.Split(callId, otherId);
+    }
+
     int CallCount() { return calls_.CallCount(); }
 
     std::vector<int> AudioLinks(int callId) {
@@ -420,6 +430,10 @@ bool SipEngine::Transfer(int callId, const std::string& number) { return impl_->
 bool SipEngine::TransferAttended(int callId, int targetCallId) {
     return impl_->TransferAttended(callId, targetCallId);
 }
+
+bool SipEngine::Join(int callId, int otherId) { return impl_->Join(callId, otherId); }
+
+bool SipEngine::Split(int callId, int otherId) { return impl_->Split(callId, otherId); }
 
 int SipEngine::CallCount() const { return impl_->CallCount(); }
 
