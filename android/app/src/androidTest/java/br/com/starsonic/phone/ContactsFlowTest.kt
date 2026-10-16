@@ -238,7 +238,13 @@ class ContactsFlowTest {
         val texts = device.findObjects(By.text(Pattern.compile(".+"))).take(30).joinToString {
             "${it.applicationPackage}:${it.resourceName}:${it.text}"
         }
-        return "Na frente: ${device.currentPackageName}; $focus\nNa tela: $texts"
+        val activities = emulator.shell("dumpsys activity activities")
+            .filter { "ResumedActivity" in it || "mFocusedApp" in it }.joinToString("\n") { it.trim() }
+        val log = emulator.shell(
+            "logcat -d -v brief -t 60 ActivityTaskManager:I PermissionControllerServiceImpl:V GrantPermissionsActivity:V " +
+                "GrantPermissionsViewModel:V AndroidRuntime:E ActivityManager:W WindowManager:W *:S",
+        ).joinToString("\n") { it.take(220) }
+        return "Na frente: ${device.currentPackageName}; $focus\nNa tela: $texts\nActivities:\n$activities\nLogcat:\n$log"
     }
 
     private fun notifications(): String =
