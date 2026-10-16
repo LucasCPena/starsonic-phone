@@ -81,6 +81,7 @@ KEPT = (
     (_SINK, "onIncomingCall", "(ILjava/lang/String;Ljava/lang/String;)V", None),
     (_SINK, "onRejectedBusy", "(Ljava/lang/String;Ljava/lang/String;)V", None),
     (_SINK, "onCallState", "(III)V", None),
+    (_SINK, "onTransfer", "(II)V", None),
     (_SINK, "onLog", "(ILjava/lang/String;)V", None),
     # O Android acha cada função da ponte pelo nome da classe e do método (Java_<classe>_<método>); as do atualizador
     # (Task 10) e uma de cada uma das outras classes com natives.

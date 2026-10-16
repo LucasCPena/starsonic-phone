@@ -133,13 +133,23 @@ internal class FakeEngine : SipGateway {
 
     override fun setHold(id: Int, hold: Boolean) {}
 
+    override fun activate(id: Int) {}
+
     override fun setMute(mute: Boolean) {}
 
     override fun sendDtmf(id: Int, digits: String) {}
 
     override fun transfer(id: Int, number: String) {}
 
+    override fun transferAttended(id: Int, targetId: Int) {}
+
+    override fun join(id: Int, otherId: Int) {}
+
+    override fun split(id: Int, otherId: Int) {}
+
     override fun hasCall() = false
+
+    override fun callCount() = 0
 }
 
 /** O wake lock falso: anota se está preso e quantas vezes foi pego e solto. */

@@ -193,6 +193,10 @@ class Connection(
             calls()?.onCallState(callId, state, code)
         }
 
+        // As ligações (o CallManager) ainda não ouvem o resultado das transferências: a que dá certo acaba com o
+        // DISCONNECTED de sempre, e o motor escreve o resultado no log.
+        override fun onTransfer(callId: Int, code: Int) {}
+
         override fun onLog(level: Int, line: String) = log(level, line)
     }
 
@@ -352,6 +356,10 @@ class Connection(
         engine?.setHold(id, hold)
     }
 
+    override fun activate(id: Int) {
+        engine?.activate(id)
+    }
+
     override fun setMute(mute: Boolean) {
         engine?.setMute(mute)
     }
@@ -364,7 +372,21 @@ class Connection(
         engine?.transfer(id, number)
     }
 
+    override fun transferAttended(id: Int, targetId: Int) {
+        engine?.transferAttended(id, targetId)
+    }
+
+    override fun join(id: Int, otherId: Int) {
+        engine?.join(id, otherId)
+    }
+
+    override fun split(id: Int, otherId: Int) {
+        engine?.split(id, otherId)
+    }
+
     override fun hasCall(): Boolean = engine?.hasCall() ?: false
+
+    override fun callCount(): Int = engine?.callCount() ?: 0
 
     // Na thread das trocas: põe [account] no motor (sobe o motor antes, se preciso) e anota quem a pôs.
     private fun setInEngine(account: Account, setter: Setter): Int {

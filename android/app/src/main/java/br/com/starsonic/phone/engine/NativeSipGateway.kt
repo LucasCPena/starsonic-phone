@@ -83,13 +83,24 @@ class NativeSipGateway : SipGateway {
 
     override fun setHold(id: Int, hold: Boolean) = post { if (engine != 0L) nativeSetHold(engine, id, hold) }
 
+    override fun activate(id: Int) = post { if (engine != 0L) nativeActivate(engine, id) }
+
     override fun setMute(mute: Boolean) = post { if (engine != 0L) nativeSetMute(engine, mute) }
 
     override fun sendDtmf(id: Int, digits: String) = post { if (engine != 0L) nativeSendDtmf(engine, id, digits) }
 
     override fun transfer(id: Int, number: String) = post { if (engine != 0L) nativeTransfer(engine, id, number) }
 
+    override fun transferAttended(id: Int, targetId: Int) =
+        post { if (engine != 0L) nativeTransferAttended(engine, id, targetId) }
+
+    override fun join(id: Int, otherId: Int) = post { if (engine != 0L) nativeJoin(engine, id, otherId) }
+
+    override fun split(id: Int, otherId: Int) = post { if (engine != 0L) nativeSplit(engine, id, otherId) }
+
     override fun hasCall(): Boolean = call { engine != 0L && nativeHasCall(engine) }
+
+    override fun callCount(): Int = call { if (engine != 0L) nativeCallCount(engine) else 0 }
 
     /** Põe o pedido na fila do motor e volta. */
     private fun post(task: () -> Unit) {
@@ -138,13 +149,23 @@ class NativeSipGateway : SipGateway {
 
     private external fun nativeSetHold(handle: Long, callId: Int, hold: Boolean)
 
+    private external fun nativeActivate(handle: Long, callId: Int)
+
     private external fun nativeSetMute(handle: Long, mute: Boolean)
 
     private external fun nativeSendDtmf(handle: Long, callId: Int, digits: String)
 
     private external fun nativeTransfer(handle: Long, callId: Int, number: String)
 
+    private external fun nativeTransferAttended(handle: Long, callId: Int, targetCallId: Int)
+
+    private external fun nativeJoin(handle: Long, callId: Int, otherId: Int)
+
+    private external fun nativeSplit(handle: Long, callId: Int, otherId: Int)
+
     private external fun nativeHasCall(handle: Long): Boolean
+
+    private external fun nativeCallCount(handle: Long): Int
 
     init {
         System.loadLibrary("starsonic")   // a segunda carga não faz nada
@@ -173,6 +194,8 @@ class EngineSink(private val events: EngineEvents, private val delivery: Executo
     fun onRejectedBusy(remoteUser: String, remoteName: String) = deliver { events.onRejectedBusy(remoteUser, remoteName) }
 
     fun onCallState(callId: Int, state: Int, code: Int) = deliver { events.onCallState(callId, state, code) }
+
+    fun onTransfer(callId: Int, code: Int) = deliver { events.onTransfer(callId, code) }
 
     fun onLog(level: Int, line: String) {
         delivery.execute(Runnable { events.onLog(level, line) })

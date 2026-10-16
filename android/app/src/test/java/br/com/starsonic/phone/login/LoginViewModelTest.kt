@@ -465,13 +465,23 @@ private class FakeGateway : SipGateway {
 
     override fun setHold(id: Int, hold: Boolean) {}
 
+    override fun activate(id: Int) {}
+
     override fun setMute(mute: Boolean) {}
 
     override fun sendDtmf(id: Int, digits: String) {}
 
     override fun transfer(id: Int, number: String) {}
 
+    override fun transferAttended(id: Int, targetId: Int) {}
+
+    override fun join(id: Int, otherId: Int) {}
+
+    override fun split(id: Int, otherId: Int) {}
+
     override fun hasCall() = false
+
+    override fun callCount() = 0
 }
 
 private class FakeStore(var account: Account? = null) : AccountStore {

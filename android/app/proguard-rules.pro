@@ -13,5 +13,6 @@
     public void onIncomingCall(int, java.lang.String, java.lang.String);
     public void onRejectedBusy(java.lang.String, java.lang.String);
     public void onCallState(int, int, int);
+    public void onTransfer(int, int);
     public void onLog(int, java.lang.String);
 }

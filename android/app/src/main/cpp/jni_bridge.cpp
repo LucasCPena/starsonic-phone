@@ -1,7 +1,8 @@
 // Ponte JNI do app Android: liga o Kotlin ao núcleo e ao motor de ligações em C++.
 // - br.com.starsonic.phone.Native: as funções do núcleo que as telas usam (validar o servidor e o ramal,
-//   os textos do registro e do fim da ligação, o número a discar e o protocolo padrão do perfil) e as do
-//   atualizador (o versao-android.json e a ordem das versões).
+//   os textos do registro e do fim da ligação, o número a discar, o número dos contatos do aparelho e, do
+//   perfil, o protocolo padrão, o ddi e o prefixo externo) e as do atualizador (o versao-android.json e a
+//   ordem das versões).
 // - br.com.starsonic.phone.core.LoginFlowHandle: o LoginFlow do núcleo (a espera da tela Entrar).
 // - br.com.starsonic.phone.engine.NativeSipGateway: o SipEngine. O gateway chama o motor sempre da mesma
 //   thread dele; os avisos do motor voltam por um EngineSink (ver JniListener).
@@ -219,7 +220,8 @@ public:
             onRejectedBusy_ = env->GetMethodID(type, "onRejectedBusy", "(Ljava/lang/String;Ljava/lang/String;)V");
         }
         if (onRejectedBusy_ != nullptr) onCallState_ = env->GetMethodID(type, "onCallState", "(III)V");
-        if (onCallState_ != nullptr) onLog_ = env->GetMethodID(type, "onLog", "(ILjava/lang/String;)V");
+        if (onCallState_ != nullptr) onTransfer_ = env->GetMethodID(type, "onTransfer", "(II)V");
+        if (onTransfer_ != nullptr) onLog_ = env->GetMethodID(type, "onLog", "(ILjava/lang/String;)V");
         env->DeleteLocalRef(type);
         if (onLog_ == nullptr) return false;
         sink_ = env->NewGlobalRef(sink);
@@ -266,6 +268,12 @@ public:
         });
     }
 
+    void OnTransfer(int callId, int sipCode) override {
+        Deliver(kEventThreadName, [&](JNIEnv* env) {
+            env->CallVoidMethod(sink_, onTransfer_, static_cast<jint>(callId), static_cast<jint>(sipCode));
+        });
+    }
+
     void OnLog(int level, const std::string& line) override {
         Deliver(kLogThreadName, [&](JNIEnv* env) {
             LocalString text(env, line);
@@ -295,6 +303,7 @@ private:
     jmethodID onIncomingCall_ = nullptr;
     jmethodID onRejectedBusy_ = nullptr;
     jmethodID onCallState_ = nullptr;
+    jmethodID onTransfer_ = nullptr;
     jmethodID onLog_ = nullptr;
 };
 
@@ -370,6 +379,22 @@ JNIEXPORT jstring JNICALL Java_br_com_starsonic_phone_Native_profileTransport(JN
     starsonic::Profile profile;
     if (!starsonic::ParseProfile(ToWide(env, profileText), &profile).ok) return ToJava(env, L"");
     return ToJava(env, profile.account.transport == starsonic::Transport::Tcp ? L"tcp" : L"udp");
+}
+
+// ContactDialString: o número de um contato do aparelho, pronto para discar, com o ddi e o prefixo externo do perfil.
+JNIEXPORT jstring JNICALL Java_br_com_starsonic_phone_Native_contactDialString(JNIEnv* env, jobject /* native */,
+                                                                               jstring raw, jstring ddi,
+                                                                               jstring prefix) {
+    return ToJava(env, starsonic::ContactDialString(ToWide(env, raw), ToWide(env, ddi), ToWide(env, prefix)));
+}
+
+// O ddi e o prefixo externo do perfil (as chaves ddi e prefixo_externo de [conta]): [ddi, prefixo]; ["", ""] se o
+// perfil não vale.
+JNIEXPORT jobjectArray JNICALL Java_br_com_starsonic_phone_Native_profileDial(JNIEnv* env, jobject /* native */,
+                                                                              jstring profileText) {
+    starsonic::Profile profile;
+    if (!starsonic::ParseProfile(ToWide(env, profileText), &profile).ok) return StringArray(env, {L"", L""});
+    return StringArray(env, {profile.account.ddi, profile.account.externalPrefix});
 }
 
 // ParseManifest (o versao-android.json, spec 7.7) com o endereço permitido do APK: [motivo, versão, APK, SHA-256,
@@ -546,6 +571,13 @@ JNIEXPORT void JNICALL Java_br_com_starsonic_phone_engine_NativeSipGateway_nativ
     DropPendingException(env);
 }
 
+JNIEXPORT void JNICALL Java_br_com_starsonic_phone_engine_NativeSipGateway_nativeActivate(JNIEnv* env,
+                                                                                          jobject /* gateway */,
+                                                                                          jlong handle, jint callId) {
+    HolderOf(handle)->engine->Activate(callId);
+    DropPendingException(env);
+}
+
 JNIEXPORT void JNICALL Java_br_com_starsonic_phone_engine_NativeSipGateway_nativeSetMute(JNIEnv* env,
                                                                                          jobject /* gateway */,
                                                                                          jlong handle, jboolean mute) {
@@ -569,10 +601,38 @@ JNIEXPORT void JNICALL Java_br_com_starsonic_phone_engine_NativeSipGateway_nativ
     DropPendingException(env);
 }
 
+JNIEXPORT void JNICALL Java_br_com_starsonic_phone_engine_NativeSipGateway_nativeTransferAttended(
+    JNIEnv* env, jobject /* gateway */, jlong handle, jint callId, jint targetCallId) {
+    HolderOf(handle)->engine->TransferAttended(callId, targetCallId);
+    DropPendingException(env);
+}
+
+JNIEXPORT void JNICALL Java_br_com_starsonic_phone_engine_NativeSipGateway_nativeJoin(JNIEnv* env,
+                                                                                      jobject /* gateway */,
+                                                                                      jlong handle, jint callId,
+                                                                                      jint otherId) {
+    HolderOf(handle)->engine->Join(callId, otherId);
+    DropPendingException(env);
+}
+
+JNIEXPORT void JNICALL Java_br_com_starsonic_phone_engine_NativeSipGateway_nativeSplit(JNIEnv* env,
+                                                                                       jobject /* gateway */,
+                                                                                       jlong handle, jint callId,
+                                                                                       jint otherId) {
+    HolderOf(handle)->engine->Split(callId, otherId);
+    DropPendingException(env);
+}
+
 JNIEXPORT jboolean JNICALL Java_br_com_starsonic_phone_engine_NativeSipGateway_nativeHasCall(JNIEnv* /* env */,
                                                                                              jobject /* gateway */,
                                                                                              jlong handle) {
     return HolderOf(handle)->engine->HasCall() ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jint JNICALL Java_br_com_starsonic_phone_engine_NativeSipGateway_nativeCallCount(JNIEnv* /* env */,
+                                                                                           jobject /* gateway */,
+                                                                                           jlong handle) {
+    return static_cast<jint>(HolderOf(handle)->engine->CallCount());
 }
 
 }  // extern "C"

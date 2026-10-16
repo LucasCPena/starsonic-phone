@@ -42,7 +42,8 @@ internal class CallCore : CoreRules {
 
 /**
  * O motor falso das ligações: anota os pedidos. makeCall devolve [nextCallId] (e o próximo sobe); [duringMakeCall]
- * roda dentro dele, antes de ele voltar (um evento do motor que chega antes).
+ * roda dentro dele, antes de ele voltar (um evento do motor que chega antes). callCount() devolve [callCount], que o
+ * teste ajusta.
  */
 internal class CallGateway : SipGateway {
     val made = mutableListOf<String>()
@@ -50,9 +51,18 @@ internal class CallGateway : SipGateway {
     val rejects = mutableListOf<Int>()
     val hangups = mutableListOf<Int>()
     val holds = mutableListOf<Pair<Int, Boolean>>()
+    val activated = mutableListOf<Int>()
     val mutes = mutableListOf<Boolean>()
     val dtmfs = mutableListOf<Pair<Int, String>>()
     val transfers = mutableListOf<Pair<Int, String>>()
+
+    /** As transferências com consulta: (o cliente, o colega). */
+    val attended = mutableListOf<Pair<Int, Int>>()
+
+    /** As conferências pedidas e as desfeitas: (id, otherId), na ordem dos argumentos. */
+    val joined = mutableListOf<Pair<Int, Int>>()
+    val split = mutableListOf<Pair<Int, Int>>()
+    var callCount = 0
     var nextCallId = 10
     var refuse = false
     var duringMakeCall: ((Int) -> Unit)? = null
@@ -93,6 +103,10 @@ internal class CallGateway : SipGateway {
         holds += id to hold
     }
 
+    override fun activate(id: Int) {
+        activated += id
+    }
+
     override fun setMute(mute: Boolean) {
         mutes += mute
     }
@@ -105,7 +119,21 @@ internal class CallGateway : SipGateway {
         transfers += id to number
     }
 
+    override fun transferAttended(id: Int, targetId: Int) {
+        attended += id to targetId
+    }
+
+    override fun join(id: Int, otherId: Int) {
+        joined += id to otherId
+    }
+
+    override fun split(id: Int, otherId: Int) {
+        split += id to otherId
+    }
+
     override fun hasCall() = false
+
+    override fun callCount() = callCount
 }
 
 /** O Telecom falso: anota o que o CallManager pediu. */

@@ -167,6 +167,7 @@ def dex_classes():
             ("Virtual methods", "onIncomingCall", "(ILjava/lang/String;Ljava/lang/String;)V", PUBLIC | FINAL),
             ("Virtual methods", "onRejectedBusy", "(Ljava/lang/String;Ljava/lang/String;)V", PUBLIC | FINAL),
             ("Virtual methods", "onCallState", "(III)V", PUBLIC | FINAL),
+            ("Virtual methods", "onTransfer", "(II)V", PUBLIC | FINAL),
             ("Virtual methods", "onLog", "(ILjava/lang/String;)V", PUBLIC | FINAL),
         ],
         WORKER: [("Direct methods", "<init>", WORKER_INIT, PUBLIC | CONSTRUCTOR)],
