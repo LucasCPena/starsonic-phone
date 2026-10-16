@@ -111,9 +111,14 @@ class ContactsFlowTest {
                 "este teste precisa ser o primeiro da classe (ver a ordem no começo do ContactsFlowTest)",
             app.checkSelfPermission(Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED,
         )
+        // O pm revoke (e a limpeza de um "não perguntar de novo" que tenha ficado, com o qual o Android negaria sem a
+        // janela) com a tela do app fechada, e ela aberta de novo depois: com ela aberta, os toques dos testes deixavam
+        // de chegar nela (run 38964537897: o toque na aba não mudou a aba, e o Compose já não achava a tela).
+        scenario?.close()
         emulator.shell("pm revoke $PACKAGE ${Manifest.permission.READ_CONTACTS}")
-        // Um "não perguntar de novo" que tenha ficado faria o Android negar sem a janela.
         emulator.shell("pm clear-permission-flags $PACKAGE ${Manifest.permission.READ_CONTACTS} user-set user-fixed")
+        scenario = ActivityScenario.launch(MainActivity::class.java)
+        emulator.waitUntil("a aba Contatos", details = ::systemScreen) { emulator.showsTag("aba-contatos") }
         compose.onNodeWithTag("aba-contatos").performClick()
         // A primeira abertura da aba pede a permissão pela janela do Android (do PermissionController), e a pessoa
         // nega: o "Não permitir", ou, se o botão não for achado, o voltar (que também fecha a janela sem a permissão).
