@@ -66,9 +66,12 @@ class CallConnection(
         if (incoming) setRinging() else setDialing()
     }
 
+    // Com outra ligação em andamento (a de cima na tela de chamada), esta é a chamada em espera: a notificação sem o
+    // toque nem a tela cheia, e o bipe no som da ligação.
     override fun onShowIncomingCallUi() {
-        CallLog.i { "Telecom: mostrar a recebida $callId" }
-        app.notifier.showIncoming(callId, number, name, address?.schemeSpecificPart.orEmpty())
+        val waiting = app.calls.state.value?.phase == CallPhase.ACTIVE
+        CallLog.i { "Telecom: mostrar a recebida $callId (chamada em espera: $waiting)" }
+        app.notifier.showIncoming(callId, number, name, address?.schemeSpecificPart.orEmpty(), waiting)
     }
 
     // Android 10+: o volume apertado durante o toque. A notificação fica, sem o toque.

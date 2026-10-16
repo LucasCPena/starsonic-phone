@@ -55,8 +55,10 @@ class CallActivity : ComponentActivity() {
             hangup = calls::hangup,
             mute = { calls.mute() },
             hold = { calls.hold() },
+            activate = calls::activate,
             dtmf = calls::dtmf,
             transfer = calls::transfer,
+            dial = calls::dial,
             route = telecom::setRoute,
         )
         setContent {

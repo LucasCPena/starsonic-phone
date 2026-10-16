@@ -8,7 +8,13 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.media.AudioAttributes
+import android.media.AudioManager
 import android.media.RingtoneManager
+import android.media.ToneGenerator
+import android.os.Handler
+import android.os.Looper
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.Person
@@ -29,6 +35,13 @@ import br.com.starsonic.phone.main.MainActivity
  *   para o toque e a vibração que se repetem, e ela continua no alto da tela.
  * - "perdidas" ("Ligações perdidas", importância padrão): "Ligação perdida de <número>"; tocar abre o Recentes.
  *
+ * A chamada em espera (spec da 0.2, 7.1: a recebida com outra ligação em andamento) não toca o toque do celular, para
+ * não cobrir a conversa: a notificação vai ao canal "ligacoes-silenciadas" (no alto da tela, sem som), sem a tela
+ * cheia, e o app toca o bipe de chamada em espera no som da ligação (ToneGenerator, TONE_SUP_CALL_WAITING) a cada
+ * 3 s, com a vibração curta a cada bipe, até ela parar de tocar ([stopRinging]) ou o volume ser apertado ([silence]).
+ * Sem a tela cheia, o Android não aceita o estilo de ligação (CallStyle): ela é uma notificação comum de ligação,
+ * "Ligação de <nome ou número>", com Recusar e Atender.
+ *
  * A notificação da recebida só aparece se a ligação ainda toca: um pedido do Telecom que chega depois de ela
  * parar (atendida pelo Bluetooth, desistência) não a põe de volta. Um processo novo não tem ligação: o notificador
  * que nasce tira a notificação que ficou de um processo que morreu com a ligação tocando, e o Atender e o Recusar
@@ -43,13 +56,43 @@ class IncomingCallNotifier(private val context: Context) : CallNotifier {
     private var shownCall = ""    // ...o número...
     private var shownName = ""    // ...o nome...
     private var shownAddress = "" // ...e o endereço
+    private var shownWaiting = false // ...e se é a chamada em espera
+    private var beepingId = 0     // a chamada em espera que bipa (0: nenhuma)
+
+    private val main = Handler(Looper.getMainLooper())
+    private val vibrator: Vibrator? = context.getSystemService(Vibrator::class.java)
+    private val ringing = AudioAttributes.Builder()
+        .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+        .build()
+    private var tone: ToneGenerator? = null   // o do bipe; só na thread principal
+
+    // Na thread principal: um bipe e a vibração curta, e o próximo daqui a 3 s, enquanto a chamada em espera toca. Um
+    // por vez: o próximo pendente (de um começo anterior) sai.
+    private val beep = object : Runnable {
+        @Suppress("DEPRECATION")   // o vibrate com AudioAttributes ainda vale (o com VibrationAttributes é do Android 13+)
+        override fun run() {
+            main.removeCallbacks(this)
+            if (synchronized(lock) { beepingId } == 0) return
+            val generator = tone ?: newTone()?.also { tone = it }
+            generator?.startTone(ToneGenerator.TONE_SUP_CALL_WAITING, BEEP_MILLIS)
+            vibrator?.vibrate(VibrationEffect.createWaveform(VIBRATION, -1), ringing)
+            main.postDelayed(this, BEEP_EVERY_MILLIS)
+        }
+    }
+
+    // Na thread principal: sem chamada em espera tocando, o bipe para e o ToneGenerator é liberado.
+    private val quiet = Runnable {
+        if (synchronized(lock) { beepingId } != 0) return@Runnable
+        main.removeCallbacks(beep)
+        tone?.stopTone()
+        tone?.release()
+        tone = null
+        vibrator?.cancel()
+    }
 
     init {
         val ringtone = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
-        val ringing = AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
-            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-            .build()
         val calls = NotificationChannel(CHANNEL_CALLS, CHANNEL_CALLS_NAME, NotificationManager.IMPORTANCE_HIGH).apply {
             setSound(ringtone, ringing)
             enableVibration(true)
@@ -70,10 +113,11 @@ class IncomingCallNotifier(private val context: Context) : CallNotifier {
 
     /**
      * A notificação da recebida [callId] (o Telecom pede: onShowIncomingCallUi), se ela ainda toca. [address] é o
-     * endereço da ligação no Telecom: o nome de quem liga, sem nome nem número. Uma falha do Android ao mostrá-la
-     * vai ao log e não derruba a ligação.
+     * endereço da ligação no Telecom: o nome de quem liga, sem nome nem número. Com [waiting] (outra ligação em
+     * andamento), a chamada em espera: sem o toque nem a tela cheia, com o bipe e a vibração curta a cada 3 s. Uma
+     * falha do Android ao mostrá-la vai ao log e não derruba a ligação.
      */
-    fun showIncoming(callId: Int, number: String, name: String, address: String = "") {
+    fun showIncoming(callId: Int, number: String, name: String, address: String = "", waiting: Boolean = false) {
         synchronized(lock) {
             if (callId <= stoppedUpTo) {
                 CallLog.i { "notificação: a recebida $callId já parou de tocar" }
@@ -83,7 +127,14 @@ class IncomingCallNotifier(private val context: Context) : CallNotifier {
             shownCall = number
             shownName = name
             shownAddress = address
-            post(callId, ring = true, "recebida $callId")
+            shownWaiting = waiting
+            if (waiting) {
+                post(callId, ring = false, "chamada em espera $callId")
+                beepingId = callId
+                main.post(beep)
+            } else {
+                post(callId, ring = true, "recebida $callId")
+            }
         }
     }
 
@@ -91,11 +142,17 @@ class IncomingCallNotifier(private val context: Context) : CallNotifier {
      * O volume apertado durante o toque (Telecom: onSilence, Android 10+): a notificação da recebida [callId], que
      * ainda toca, é atualizada no lugar (o mesmo id), no canal sem som e sem vibração e sem alertar de novo. O
      * Android para o toque e a vibração que se repetem (o canal novo não tem nenhum dos dois), e ela continua no
-     * alto da tela.
+     * alto da tela. Na chamada em espera, que já está nesse canal, só o bipe (e a vibração dele) para.
      */
     fun silence(callId: Int) {
         synchronized(lock) {
             if (callId != shownId || callId <= stoppedUpTo) return
+            if (shownWaiting) {
+                // A chamada em espera já está no canal sem som: só o bipe para.
+                if (beepingId == callId) stopBeep()
+                CallLog.i { "notificação: chamada em espera $callId sem o bipe" }
+                return
+            }
             post(callId, ring = false, "recebida $callId sem o toque")
         }
     }
@@ -109,6 +166,7 @@ class IncomingCallNotifier(private val context: Context) : CallNotifier {
         synchronized(lock) {
             if (shownId != 0 && shownId != callId && shownId > stoppedUpTo) return
             manager.cancel(INCOMING_ID)
+            if (beepingId != 0) stopBeep()
             CallLog.i { "notificação: a recebida $callId já não toca" }
         }
     }
@@ -117,6 +175,7 @@ class IncomingCallNotifier(private val context: Context) : CallNotifier {
         synchronized(lock) {
             stoppedUpTo = maxOf(stoppedUpTo, callId)
             if (shownId <= stoppedUpTo) manager.cancel(INCOMING_ID)
+            if (beepingId != 0 && beepingId <= stoppedUpTo) stopBeep()
         }
     }
 
@@ -141,6 +200,22 @@ class IncomingCallNotifier(private val context: Context) : CallNotifier {
         manager.notify(text, MISSED_ID, notification)
     }
 
+    // Com a trava: o bipe da chamada em espera para (na thread principal).
+    private fun stopBeep() {
+        beepingId = 0
+        main.post(quiet)
+        CallLog.i { "notificação: o bipe da chamada em espera parou" }
+    }
+
+    // Na thread principal: o ToneGenerator do bipe, no som da ligação; null se o Android não deu um (vai ao log).
+    private fun newTone(): ToneGenerator? =
+        try {
+            ToneGenerator(AudioManager.STREAM_VOICE_CALL, BEEP_VOLUME)
+        } catch (e: RuntimeException) {
+            Log.w(TAG, "o bipe da chamada em espera não tocou", e)
+            null
+        }
+
     // Com a trava: mostra ou atualiza a notificação da recebida; uma falha do Android vai ao log (a ligação segue).
     private fun post(callId: Int, ring: Boolean, what: String) {
         try {
@@ -151,9 +226,10 @@ class IncomingCallNotifier(private val context: Context) : CallNotifier {
         }
     }
 
-    // Com a trava: a notificação da recebida [callId] mostrada (shownCall, shownName e shownAddress). Tocando
-    // ([ring]): o canal "ligacoes", com o toque e a vibração repetidos até ela sair. Silenciada: o canal sem som,
-    // sem alertar de novo.
+    // Com a trava: a notificação da recebida [callId] mostrada (shownCall, shownName, shownAddress e shownWaiting).
+    // Tocando ([ring]): o canal "ligacoes", com o toque e a vibração repetidos até ela sair. Silenciada: o canal sem
+    // som, sem alertar de novo. A chamada em espera: no canal sem som, sem a tela cheia e, por isso, sem o CallStyle
+    // (o Android o recusa sem a tela cheia fora de um serviço em primeiro plano): Recusar e Atender como ações.
     private fun incoming(callId: Int, ring: Boolean): Notification {
         val screen = CallActivity.intent(context).putExtra(CallActivity.EXTRA_CALL_ID, callId)
         val fullScreen = PendingIntent.getActivity(context, REQUEST_SCREEN, screen, IMMUTABLE_UPDATE)
@@ -170,11 +246,8 @@ class IncomingCallNotifier(private val context: Context) : CallNotifier {
             IMMUTABLE_UPDATE,
         )
         // O CallStyle não aceita uma pessoa sem nome: o nome, o número, o endereço ou "Número desconhecido".
-        val caller = Person.Builder()
-            .setName(IncomingExtras.callerName(shownName, shownCall, shownAddress))
-            .setImportant(true)
-            .build()
-        return NotificationCompat.Builder(context, if (ring) CHANNEL_CALLS else CHANNEL_SILENCED)
+        val callerName = IncomingExtras.callerName(shownName, shownCall, shownAddress)
+        val builder = NotificationCompat.Builder(context, if (ring) CHANNEL_CALLS else CHANNEL_SILENCED)
             .setSmallIcon(R.drawable.ic_stat_starsonic)
             .setContentText(if (shownName.isBlank()) null else shownCall)
             .setCategory(NotificationCompat.CATEGORY_CALL)
@@ -182,11 +255,17 @@ class IncomingCallNotifier(private val context: Context) : CallNotifier {
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setOngoing(true)
             .setContentIntent(fullScreen)
-            .setFullScreenIntent(fullScreen, true)
-            .setStyle(NotificationCompat.CallStyle.forIncomingCall(caller, decline, answer))
             .setOnlyAlertOnce(!ring)
-            .build()
-            .apply { if (ring) flags = flags or Notification.FLAG_INSISTENT }
+        if (shownWaiting) {
+            builder.setContentTitle("$CALL_FROM $callerName")
+                .addAction(R.drawable.ic_desligar, REJECT, decline)
+                .addAction(R.drawable.ic_ligar, ANSWER, answer)
+        } else {
+            val caller = Person.Builder().setName(callerName).setImportant(true).build()
+            builder.setFullScreenIntent(fullScreen, true)
+                .setStyle(NotificationCompat.CallStyle.forIncomingCall(caller, decline, answer))
+        }
+        return builder.build().apply { if (ring) flags = flags or Notification.FLAG_INSISTENT }
     }
 
     companion object {
@@ -213,6 +292,12 @@ class IncomingCallNotifier(private val context: Context) : CallNotifier {
         private const val REQUEST_RECENTS = 4
         private const val IMMUTABLE_UPDATE = PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         private val VIBRATION = longArrayOf(0, 1_000, 1_000)
+        private const val CALL_FROM = "Ligação de"
+        private const val ANSWER = "Atender"
+        private const val REJECT = "Recusar"
+        private const val BEEP_VOLUME = 80             // do ToneGenerator (0 a 100), sobre o volume da ligação
+        private const val BEEP_MILLIS = 1_000          // um bipe de chamada em espera (o par de toques, no padrão CEPT)
+        private const val BEEP_EVERY_MILLIS = 3_000L
     }
 }
 
