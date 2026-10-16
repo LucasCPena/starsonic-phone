@@ -6,9 +6,7 @@ import android.app.NotificationManager
 import android.app.Person
 import android.content.pm.PackageManager
 import android.os.Build
-import android.os.Looper
 import android.os.Process
-import android.os.SystemClock
 import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
@@ -114,16 +112,17 @@ class ContactsFlowTest {
                 "este teste precisa ser o primeiro da classe (ver a ordem no começo do ContactsFlowTest)",
             app.checkSelfPermission(Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED,
         )
-        // O primeiro toque do processo vai a outra aba, que precisa responder (o primeiro teste da classe; ver o
-        // run 38972070803, em que o toque na aba Contatos não mudou a aba).
-        compose.onNodeWithTag("aba-recentes").performClick()
-        emulator.waitUntil("a aba Recentes", details = ::systemScreen) { emulator.showsText("Nenhuma ligação ainda.") }
+        emulator.shell("pm revoke $PACKAGE ${Manifest.permission.READ_CONTACTS}")
+        // Um "não perguntar de novo" que tenha ficado faria o Android negar sem a janela.
+        emulator.shell("pm clear-permission-flags $PACKAGE ${Manifest.permission.READ_CONTACTS} user-set user-fixed")
         compose.onNodeWithTag("aba-contatos").performClick()
-        // Sem a permissão, a aba mostra o aviso e o Permitir na hora (por baixo da janela do Android, que vem logo).
-        val shownAtOnce = within(5_000) { emulator.showsTag("contatos-permitir") }
+        // O Compose dos testes só recompõe a tela (e roda o efeito que pede a permissão) quando o teste espera por ele, e
+        // a espera da janela, abaixo, é do UiAutomator: sem esta, a aba nem chegava a abrir (runs 38962952999 a
+        // 38972070803).
+        compose.waitForIdle()
         // A primeira abertura da aba pede a permissão pela janela do Android (do PermissionController), e a pessoa
         // nega: o "Não permitir", ou, se o botão não for achado, o voltar (que também fecha a janela sem a permissão).
-        emulator.waitUntil("a janela da permissão dos contatos", details = { "Permitir na hora: $shownAtOnce\n" + systemScreen() }) {
+        emulator.waitUntil("a janela da permissão dos contatos", details = ::systemScreen) {
             device.currentPackageName.orEmpty().contains("permissioncontroller")
         }
         val deny = device.wait(Until.findObject(By.res(DENY_ID)), 3_000)
@@ -210,15 +209,6 @@ class ContactsFlowTest {
             ROW.find(line)?.let { it.groupValues[1].toLong() to it.groupValues[2] }
         }.toMap()
 
-    private fun within(millis: Long, condition: () -> Boolean): Boolean {
-        val deadline = SystemClock.uptimeMillis() + millis
-        while (SystemClock.uptimeMillis() < deadline) {
-            if (condition()) return true
-            Thread.sleep(100)
-        }
-        return condition()
-    }
-
     // Uma tela do app na frente tem o elemento [tag] com o texto [text] (nele ou dentro dele), como no CallFlowTest.
     private fun showsTagWithText(tag: String, text: String): Boolean =
         try {
@@ -242,7 +232,8 @@ class ContactsFlowTest {
             ?.notification?.extras?.getParcelable<Person>(Notification.EXTRA_CALL_PERSON)?.name?.toString()
     }
 
-    // O que o Android mostra agora (o app na frente, a janela com o foco e os textos e ids à vista), para as falhas.
+    // O que o Android mostra agora, para as falhas: o app e a janela com o foco, os textos à vista (com os ids), a activity
+    // na frente e o logcat do app e do pedido da permissão.
     private fun systemScreen(): String {
         val focus = emulator.shell("dumpsys window").filter { "mCurrentFocus" in it }.joinToString { it.trim() }
         val texts = device.findObjects(By.text(Pattern.compile(".+"))).take(30).joinToString {
@@ -255,11 +246,7 @@ class ContactsFlowTest {
         val log = emulator.shell("logcat -d -v brief").filter { line ->
             (pid in line && "StarsonicMotor" !in line) || LOG_TAGS.any { it in line }
         }.takeLast(60).joinToString("\n") { it.take(240) }
-        val main = Looper.getMainLooper().thread.stackTrace.take(30).joinToString("\n  ")
-        // Um erro na composição ou num efeito fica guardado pelo Compose dos testes (e a tela para): ele sai aqui.
-        val composeError = runCatching { compose.waitForIdle() }.exceptionOrNull()?.stackTraceToString()?.take(3000)
-        return "Na frente: ${device.currentPackageName}; $focus\nNa tela: $texts\nActivities:\n$activities\n" +
-            "Erro do Compose: $composeError\nThread principal:\n  $main\nLogcat:\n$log"
+        return "Na frente: ${device.currentPackageName}; $focus\nNa tela: $texts\nActivities:\n$activities\nLogcat:\n$log"
     }
 
     private fun notifications(): String =
