@@ -44,8 +44,8 @@ data class AudioRoutes(
  * vão ao [AndroidTelecom]. Até duas, como no CallManager. A feita nasce sem o id do motor ([CallManager.NO_ID]) e o
  * ganha quando o CallManager a ativa, a põe em espera ou a encerra. Na conferência (o plano B da spec da 0.2: sem
  * Conference no Telecom), a de cima fica ACTIVE e a outra HOLDING só para o Telecom; a espera que ele pede desfaz a
- * conferência e põe as duas em espera, e desligar desliga só esta (o Desligar da tela é o que desliga as duas). Os
- * avisos do Telecom chegam na thread principal.
+ * conferência e põe as duas em espera, e desligar qualquer uma desliga as duas, como o Desligar da tela. Os avisos do
+ * Telecom chegam na thread principal.
  */
 class CallConnection(
     private val app: App,
@@ -104,7 +104,7 @@ class CallConnection(
         app.calls.activateFromTelecom(callId)
     }
 
-    // Desliga esta ligação (a ativa ou a em espera); a outra segue.
+    // Desliga esta ligação (a ativa ou a em espera), e a outra segue; na conferência, as duas saem.
     override fun onDisconnect() {
         CallLog.i { "Telecom: desligar $callId" }
         app.calls.hangup(callId)
