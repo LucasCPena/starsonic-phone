@@ -1,7 +1,7 @@
 # Starsonic Phone para Android 0.2 (ramal completo) — especificação de design
 
 - **Data:** 16/10/2026
-- **Status:** aprovada pelo responsável em 16/10/2026, em quatro partes apresentadas no chat (segunda ligação, transferência com consulta, conferência a três e contatos do celular)
+- **Status:** implementada em 18/10/2026 (`android-v0.2.0-rc.1`; o que saiu diferente do texto está na seção 15). Aprovada pelo responsável em 16/10/2026, em quatro partes apresentadas no chat (segunda ligação, transferência com consulta, conferência a três e contatos do celular)
 - **Subprojeto:** 2 de 2 (app de celular), **versão 0.2: Android, "ramal completo"**. Vem do mapa da próxima versão (documento "Starsonic Phone: mapa da próxima versão do app", 16/10/2026): a 0.2 faz o que depende só do app; a 0.3 (QR code e Google Play), a 0.4 (push) e a 1.0 (iPhone) têm especificações próprias.
 - **Base:** a especificação da etapa 1 (`2026-10-14-starsonic-phone-android-design.md`), que continua valendo em tudo o que esta não muda.
 
@@ -39,7 +39,7 @@ A central da Starsonic aceita a transferência com consulta: numa captura de 16/
 
 | Tela | O que muda |
 |------|-----------|
-| Chamada | Com uma segunda ligação chegando, a faixa "Ligação de <nome ou número>" em cima, com Atender e Recusar. Com duas ligações, dois cartões: a ativa (nome ou número e o tempo) e a outra, marcada "Em espera" (ou "Em espera · transferência" durante a consulta), e os botões Alternar e Nova ligação. Na conferência, o título "Conferência" com os dois nomes ou números e o tempo, e os botões Mudo, Teclado, Viva-voz (ou a escolha de áudio), Separar e Desligar. |
+| Chamada | Com uma segunda ligação chegando, a faixa "Ligação de <nome ou número>" em cima, com Atender e Recusar. Com duas ligações, dois cartões: a ativa (nome ou número e o tempo) e a outra, marcada "Em espera" (ou "Em espera · transferência" durante a consulta), e os botões Espera, Transferir, Alternar e Juntar (Nova ligação só com uma ligação: não há uma terceira). Na conferência, o título "Conferência" com os dois nomes ou números e o tempo, e os botões Mudo, Teclado, Viva-voz (ou a escolha de áudio), Separar e Desligar. |
 | Transferir | Abre o campo do número (com a busca nos contatos) e dois botões: Consultar e Transferir agora (a transferência direta da etapa 1). |
 | Consulta | A tela de chamada com o colega ativo e o cliente "Em espera · transferência", e os botões Concluir transferência, Alternar e Cancelar. |
 | Contatos | Aba nova, ao lado de Teclado e Recentes: campo de busca em cima e a lista dos contatos do celular (nome e números). Sem a permissão: o aviso "Permita o acesso aos contatos para ligar pelo nome." com o botão Permitir. |
@@ -224,3 +224,20 @@ Entram, com dois ramais de teste além do do celular (seção 12):
 
 1. Plano de implementação desta spec (`writing-plans`), com as tarefas na ordem: motor (segunda ligação e `Activate`), app (dois cartões e Alternar), consulta no motor e no app, conferência no motor e no app, contatos, testes no emulador, roteiro manual e a `android-v0.2.0-rc.1`.
 2. Depois da 0.2: a spec da 0.3 (QR code e Google Play), com as entradas do documento das lojas.
+
+## 15. Como ficou (divergências da implementação, 18/10/2026)
+
+O plano `2026-10-16-android-0-2-ramal-completo.md` implementou esta spec em 12 tarefas (`android-v0.2.0-rc.1`). O que saiu diferente do texto acima, com o motivo, na ordem em que foi decidido:
+
+1. **Conferência no Telecom pelo plano B (6.2 e 13).** A `Conference` self-managed funciona no emulador, mas o Telecom tira dela o `PROPERTY_SELF_MANAGED` e o app Telefone do sistema posta uma notificação durante a conferência (fere a marca própria). Ficaram as duas Connections, a ativa `ACTIVE` e a outra `HOLDING` só para o Telecom, com o motor juntando as duas na mesa. A notificação "Conferência" do sistema não existe; a tela mostra "Conferência" e a notificação fixa continua "Conectado…".
+2. **Desligar pelo fone Bluetooth (ou kit do carro) na conferência encerra as duas** (7.4, decisão 4): com o plano B o pedido chega pela Connection de uma das duas, e o app desliga as duas, como o Desligar da tela.
+3. **Ligação da operadora com uma ou duas ligações do ramal (4.2):** em vez de a ligação do ramal terminar (etapa 1), as Connections têm `CAPABILITY_HOLD` e o Telecom a põe em espera; com duas, as duas ficam em espera e nenhuma volta sozinha até a pessoa (Alternar, Retomar) ou o Telecom retomar uma. Juntar fica recusado enquanto o Telecom protege a ligação da operadora.
+4. **Alternar desabilitado enquanto o colega chama (7.3, item 3):** o motor só alterna entre ligações confirmadas; Cancelar cobre o caso. O mesmo vale para a segunda ligação feita por Nova ligação enquanto chama.
+5. **Consultar desabilitado com duas ligações (7.3, item 1):** a consulta é a segunda ligação, e não há uma terceira.
+6. **A segunda ligação fora da tela (6.2, `IncomingCallNotifier`):** notificação simples, sem tela cheia, com o bipe de chamada em espera; se a primeira acaba com a segunda ainda tocando, a segunda passa a tocar como uma ligação normal (toque e tela cheia).
+7. **O toque numa sugestão de contato preenche o número já pela regra da 4.2** (sem o "+55", com o prefixo), não o número como está na agenda.
+8. **A notificação "Ligação perdida de …" mostra o contato do celular ou o número (7.5, item 4),** sem o nome que a central mandou no meio da cadeia, como na etapa 1. Alinhar à cadeia nome do contato → nome da central → número antes da estável.
+9. **4.1, tela Chamada:** com duas ligações os botões são Espera, Transferir, Alternar e Juntar; Nova ligação só aparece com uma ligação (não há uma terceira). O texto da tabela foi corrigido.
+10. **Perfil (6.3):** `ddi=55` e `prefixo_externo=` (vazio) em `branding/perfil.ini`, como a decisão 5; a confirmação do prefixo continua pendente com a Starsonic (seção 12).
+
+Pendências anotadas para a estável (0.2.0), fora as acima: a extração de parte do `CallManager` (1100 linhas) em unidades puras; um `NOTIFY 100 Trying` no registrador falso; os casos de "número já com o prefixo" e da fronteira de 6 dígitos no teste do `ContactDialString`; a notificação de espera que duplica a faixa com a tela de chamada na frente; a leitura da agenda a cada tecla na busca.

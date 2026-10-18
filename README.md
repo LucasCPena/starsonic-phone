@@ -76,6 +76,8 @@ O app procura atualizações em `github.com/<STARSONIC_GITHUB_ACCOUNT>/starsonic
 
 O app para Android (etapa 1: APK de teste, baixado do GitHub) é escrito do zero em Kotlin com Jetpack Compose, sobre o mesmo PJSIP 2.17 e o mesmo núcleo (`starsonic/core`) do Windows. O que ele faz e por quê está na [especificação](docs/superpowers/specs/2026-10-14-starsonic-phone-android-design.md); como foi construído, no [plano](docs/superpowers/plans/2026-10-14-android-etapa-1.md).
 
+A 0.2 ("ramal completo") acrescenta a segunda ligação (atender, alternar, a em espera volta sozinha ao desligar a ativa), a transferência com consulta, a conferência a três (feita no celular, na mesa de áudio do PJSIP) e os contatos do celular (a aba Contatos, as sugestões ao digitar e o nome do contato nas ligações; os contatos são lidos na hora e nunca saem do aparelho — [o que mudou para a LGPD](docs/privacidade-android-0.2.md)). Está na [especificação da 0.2](docs/superpowers/specs/2026-10-16-starsonic-phone-android-0.2-design.md) e no [plano](docs/superpowers/plans/2026-10-16-android-0-2-ramal-completo.md). O perfil (`branding/perfil.ini`) ganhou `ddi` e `prefixo_externo` na `[conta]`, para os números dos contatos (o `+55` sai; um prefixo de linha externa, se a central exigir, entra na frente dos números com mais de 6 dígitos).
+
 ### Organização
 
 | Pasta | Conteúdo |
@@ -85,7 +87,8 @@ O app para Android (etapa 1: APK de teste, baixado do GitHub) é escrito do zero
 | `tests/phone/` | Testes do motor no Linux, contra o registrador SIP falso (`tests/smoke/fake_registrar.py`) |
 | `build/android/` | PJSIP, Opus e Oboe para o Android (`build-deps.sh`), `versionCode` (`version_code.py`), conferência do APK (`check_apk.py`), código-fonte completo (`make_source_bundle.sh`), os scripts dos testes no emulador e o SHA-256 do certificado da chave (`signing-cert.sha256`) |
 | `build/linux/` | pjproject para o Linux (os testes do motor) |
-| `docs/teste-manual-android.md` | Roteiro do teste manual |
+| `docs/teste-manual-android.md` | Roteiro do teste manual (as seções 11 a 15 são da 0.2) |
+| `docs/privacidade-android-0.2.md` | O que mudou para a LGPD na 0.2 (os contatos do celular) |
 
 ### Como compilar
 

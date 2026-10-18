@@ -1,6 +1,6 @@
 # Teste manual do Starsonic Phone (Android)
 
-Faça este roteiro antes de cada versão estável (spec §11.3), com a versão candidata (`android-vX.Y.Z-rc.N`). Use pelo menos dois celulares de marcas diferentes (ex.: Samsung e Motorola; um Xiaomi, se houver), com o Android 9 ou mais novo (de preferência um deles com o Android 14 ou mais novo), e dois ramais de teste: um num servidor por UDP e outro num servidor por TCP. Ramais e senhas de teste ficam fora do repositório. Para as ligações, tenha à mão outro telefone (o outro ramal, o Starsonic Phone no PC ou um celular comum).
+Faça este roteiro antes de cada versão estável (spec §11.3), com a versão candidata (`android-vX.Y.Z-rc.N`). Use pelo menos dois celulares de marcas diferentes (ex.: Samsung e Motorola; um Xiaomi, se houver), com o Android 9 ou mais novo (de preferência um deles com o Android 14 ou mais novo), e dois ramais de teste: um num servidor por UDP e outro num servidor por TCP. Para as seções 11 a 15 (a 0.2), mais dois ramais de teste na mesma central do ramal do celular (veja a seção 11). Ramais e senhas de teste ficam fora do repositório. Para as ligações, tenha à mão outro telefone (o outro ramal, o Starsonic Phone no PC ou um celular comum).
 
 Marque cada linha nas colunas A1 e A2 (um celular em cada); na seção 3, faça cada linha no Wi-Fi e no 4G (desligue o Wi-Fi para o 4G). Se algo não sair como o esperado, anote a versão, o celular, o passo e o que apareceu (de preferência com um print da tela) e mande o diagnóstico (Menu → Sobre → Enviar diagnóstico).
 
@@ -40,7 +40,7 @@ Faça cada linha no Wi-Fi e no 4G. A conta fica conectada com o processador acor
 | # | Passo | Resultado esperado | A1 Wi-Fi | A1 4G | A2 Wi-Fi | A2 4G |
 |---|-------|--------------------|----------|-------|----------|-------|
 | 3.1 | Com o app aberto, ligue pelo Teclado para outro ramal e para um número externo. | Chama, completa e o áudio passa nos dois sentidos. O botão Ligar é verde. A tela apaga ao encostar no rosto e volta ao afastar. | ☐ | ☐ | ☐ | ☐ |
-| 3.2 | Com o app aberto, receba uma ligação. | Toca e mostra o número (e o nome, se o PABX mandar), com "Recusar" em vermelho e "Atender" em verde. Atende, e o áudio passa. | ☐ | ☐ | ☐ | ☐ |
+| 3.2 | Com o app aberto, receba uma ligação. | Toca e mostra o nome do contato do celular, ou o número (e o nome, se o PABX mandar), com "Recusar" em vermelho e "Atender" em verde. Atende, e o áudio passa. | ☐ | ☐ | ☐ | ☐ |
 | 3.3 | Saia do app (botão de início), use o celular e receba uma ligação. | A notificação de ligação aparece no alto da tela, com "Atender" e "Recusar"; atender abre a tela de chamada. | ☐ | ☐ | ☐ | ☐ |
 | 3.4 | Tire o app da lista de apps recentes e receba uma ligação. | Toca do mesmo jeito; a notificação fixa continua. | ☐ | ☐ | ☐ | ☐ |
 | 3.5 | Com a tela bloqueada, e depois com a tela apagada, receba uma ligação. | Tela cheia por cima da tela bloqueada, com "Atender" e "Recusar"; atende sem desbloquear. | ☐ | ☐ | ☐ | ☐ |
@@ -49,7 +49,7 @@ Faça cada linha no Wi-Fi e no 4G. A conta fica conectada com o processador acor
 | 3.8 | Receba uma ligação com o celular no modo normal, no vibrar, no silencioso e no Não perturbe. | Toca e vibra conforme o modo do celular, como uma ligação comum. | ☐ | ☐ | ☐ | ☐ |
 | 3.9 | Com uma ligação tocando, aperte o botão de volume. | O toque para, e o aviso no alto da tela continua. | ☐ | ☐ | ☐ | ☐ |
 | 3.10 | Com uma ligação tocando, abra a cortina de notificações. | Anote se o toque para. | ☐ | ☐ | ☐ | ☐ |
-| 3.11 | Deixe uma ligação tocar até o outro lado desistir. | Notificação "Ligação perdida de <número>" e a ligação no Recentes como perdida. | ☐ | ☐ | ☐ | ☐ |
+| 3.11 | Deixe uma ligação tocar até o outro lado desistir. | Notificação "Ligação perdida de <contato ou número>" e a ligação no Recentes como perdida. | ☐ | ☐ | ☐ | ☐ |
 | 3.12 | Recuse uma ligação. | Quem liga ouve ocupado; a ligação entra no Recentes como perdida. | ☐ | ☐ | ☐ | ☐ |
 | 3.13 | No Recentes, toque numa ligação. | Liga de volta. O Recentes mostra número, data, hora e duração, das mais novas para as mais antigas. | ☐ | ☐ | ☐ | ☐ |
 | 3.14 | Durante uma ligação, toque em "Transferir" e digite outro ramal do mesmo PABX com separadores (ex.: para o 2003, `20.03`, `20-03` ou `(20) 03`; dá para colar também). Toque em "Transferir". | A ligação passa para o ramal digitado: o app manda só o que importa (sem espaços, traços, pontos e parênteses). Se o PABX do teste não aceitar transferência, anote e pule. | ☐ | ☐ | ☐ | ☐ |
@@ -76,15 +76,17 @@ Faça cada linha no Wi-Fi e no 4G. A conta fica conectada com o processador acor
 | 5.5 | Ligue para uma URA e use o Teclado da ligação. | A URA reconhece as teclas. | ☐ | ☐ |
 | 5.6 | Desligar. | A ligação termina e entra no Recentes com a duração. | ☐ | ☐ |
 
-## 6. Uma ligação por vez e as ligações do celular
+## 6. Duas ligações por vez e as ligações do celular
+
+A partir da 0.2 o ramal recebe uma segunda ligação (seção 11); a terceira ouve ocupado. Com uma ligação do celular (da operadora) em andamento, o ramal continua dando ocupado.
 
 | # | Passo | Resultado esperado | A1 | A2 |
 |---|-------|--------------------|----|----|
-| 6.1 | Durante uma ligação do ramal, ligue de novo para o ramal de outro telefone. | Quem liga ouve ocupado; a segunda entra no Recentes como perdida, e a primeira continua. | ☐ | ☐ |
+| 6.1 | Durante uma ligação do ramal, ligue para o ramal de outro telefone. | Toca como segunda ligação (a faixa, seção 11); a primeira continua. Com duas ligações já no celular, a terceira ouve ocupado (11.12). | ☐ | ☐ |
 | 6.2 | Durante uma ligação do celular (da operadora), ligue para o ramal. | Quem liga ouve ocupado; a ligação entra no Recentes como perdida. | ☐ | ☐ |
 | 6.3 | Durante uma ligação do ramal, receba uma ligação do celular. | Anote o que acontece. | ☐ | ☐ |
 | 6.4 | Com uma ligação do ramal tocando, receba uma ligação do celular. | Anote o que acontece. | ☐ | ☐ |
-| 6.5 | Atenda a ligação do celular durante uma do ramal. | A do ramal termina (aceito na etapa 1). | ☐ | ☐ |
+| 6.5 | Atenda a ligação do celular durante uma do ramal. | A do ramal vai para a espera ("Em espera"; o outro lado ouve a espera) e continua. Quando a do celular acaba: anote se ela volta sozinha ou se precisa de Retomar (15.4). | ☐ | ☐ |
 | 6.6 | Com uma ligação do celular em andamento, tente ligar pelo app. | "Termine a ligação do celular para ligar pelo ramal." por 2 s, e o app não liga. | ☐ | ☐ |
 
 ## 7. Atualização de uma versão de teste para a seguinte
@@ -141,6 +143,87 @@ A ordem dos passos importa, por causa da regra das 24 h:
 | 10.2 | Use o app com o celular no modo claro e no escuro. | O app segue o modo do celular; a faixa azul com "starsonic" em branco e ciano e o logo da tela Entrar não mudam. Ligar e Atender em verde; Recusar e Desligar em vermelho. | ☐ | ☐ |
 | 10.3 | Com os ícones temáticos ligados (Android 13 ou mais novo), olhe o ícone na tela inicial; olhe também o ícone da notificação fixa. | O ícone temático (de uma cor só) e o da notificação (só branco) aparecem completos. | ☐ | ☐ |
 
+## 11. Segunda ligação (0.2)
+
+Para as seções 11 a 15, mais dois ramais de teste na mesma central do ramal do celular, cada um num telefone à mão (o Starsonic Phone no PC, um ATA ou outro celular): um faz de **cliente** e o outro de **colega**. Antes de começar, confirme com a Starsonic que a central entrega uma segunda ligação a um ramal que já está numa ligação (o limite de chamadas do ramal precisa ser 2 ou mais); se a central der ocupado na segunda, nada desta seção é do app — anote e peça o ajuste na central.
+
+| # | Passo | Resultado esperado | A1 | A2 |
+|---|-------|--------------------|----|----|
+| 11.1 | Com o app aberto, numa ligação com o cliente, receba a ligação do colega. | A faixa "Ligação de <nome ou número>" no alto da tela de chamada, com Atender e Recusar; em vez do toque, um bipe curto repetido (chamada em espera) e a vibração. A conversa com o cliente continua. | ☐ | ☐ |
+| 11.2 | Toque em Atender na faixa. | O colega vira a ligação de cima (com o tempo); o cliente fica no cartão de baixo, "Em espera", e ouve a espera. Os botões passam a ser Mudo, Teclado, Viva-voz, Espera, Transferir, Alternar e Juntar; Nova ligação não aparece com duas ligações. | ☐ | ☐ |
+| 11.3 | Toque em Alternar, duas vezes. | Os cartões trocam de lugar; quem está em cima tem o som e o outro ouve a espera. | ☐ | ☐ |
+| 11.4 | Toque em Desligar com o colega em cima. | A ligação do colega acaba e a do cliente volta sozinha: o cartão "Em espera" some, o cliente fica em cima e o áudio volta sem tocar em nada. | ☐ | ☐ |
+| 11.5 | Numa ligação, receba a segunda e toque em Recusar na faixa. | O colega ouve ocupado; a ligação entra no Recentes como perdida, sem notificação; a do cliente continua sem mudança. | ☐ | ☐ |
+| 11.6 | Numa ligação, receba a segunda e deixe o colega desistir. | A faixa some; notificação "Ligação perdida de <contato ou número>" e a ligação no Recentes como perdida. | ☐ | ☐ |
+| 11.7 | Saia do app (botão de início) numa ligação e receba a segunda. | A notificação de ligação aparece no alto (sem tela cheia, porque já há uma ligação), com o bipe de chamada em espera; Atender abre a tela de chamada com os dois cartões. | ☐ | ☐ |
+| 11.8 | Numa ligação, receba a segunda e, com ela ainda tocando, o cliente desliga. | A segunda passa a tocar como uma ligação normal (toque completo e, com o app fora da tela, a tela cheia). | ☐ | ☐ |
+| 11.9 | Numa ligação com o cliente, toque em Nova ligação, digite o ramal do colega (ou toque numa sugestão de contato) e toque em Ligar. | O cliente vai para a espera ("Em espera"); o teclado abre com as sugestões de contatos ao digitar; o cartão de cima mostra "Chamando…" até o colega atender. Enquanto chama, Alternar fica desabilitado. | ☐ | ☐ |
+| 11.10 | Com as duas em andamento, o cliente (o de baixo, em espera) desliga. | O cartão de baixo some com "<nome ou número> desligou" por 2 s; a ligação de cima continua. | ☐ | ☐ |
+| 11.11 | Com as duas em andamento, o colega (o de cima, ativo) desliga. | A ligação de cima acaba e a de baixo volta sozinha, com o áudio. | ☐ | ☐ |
+| 11.12 | Com as duas em andamento, ligue para o ramal de um terceiro telefone. | O terceiro ouve ocupado; a ligação entra no Recentes como perdida e as duas continuam. | ☐ | ☐ |
+| 11.13 | Com uma ligação só, em espera (botão Espera), receba a segunda. | A faixa aparece e Atender funciona: a nova fica em cima, a outra continua em espera. | ☐ | ☐ |
+| 11.14 | Com uma ligação chamando (antes de o outro lado atender), receba uma ligação. | Quem liga ouve ocupado e a ligação entra no Recentes como perdida; a que chama continua. | ☐ | ☐ |
+
+## 12. Transferência com consulta (0.2)
+
+| # | Passo | Resultado esperado | A1 | A2 |
+|---|-------|--------------------|----|----|
+| 12.1 | Numa ligação com o cliente, toque em Transferir. | O campo do número com a busca nos contatos e os botões Consultar e Transferir agora. | ☐ | ☐ |
+| 12.2 | Digite o ramal do colega e toque em Consultar. | O cliente vai para o cartão de baixo, "Em espera · transferência", e ouve a espera; o colega chama em cima ("Chamando…"); os botões são Cancelar e Alternar (Alternar desabilitado até o colega atender). | ☐ | ☐ |
+| 12.3 | O colega atende. Fale com ele e toque em Concluir transferência. | Com o colega em cima, os botões são Concluir transferência, Alternar e Cancelar. Ao concluir, as duas ligações saem do celular e a tela de chamada fecha; na central (ou nos dois telefones), o cliente e o colega ficam falando entre si. Anote se "<nome ou número> desligou" piscar por um instante antes de a tela fechar (depende da ordem em que a central desliga as duas; o resultado final tem de ser o mesmo). | ☐ | ☐ |
+| 12.4 | Repita a consulta e toque em Alternar com o colega em cima; depois, Concluir transferência com o cliente em cima. | Alternar volta a falar com o cliente (o colega fica "Em espera"); Concluir funciona de qualquer um dos dois lados. | ☐ | ☐ |
+| 12.5 | Repita a consulta e toque em Cancelar com o colega em linha. | A ligação do colega acaba e o cliente volta sozinho, sem o rótulo de transferência. | ☐ | ☐ |
+| 12.6 | Repita a consulta e deixe o colega não atender (ou recuse no telefone dele). | O app volta ao cliente sozinho e mostra "<nome ou número do colega>: Não atendeu" (ou "Ocupado") por 2 s. | ☐ | ☐ |
+| 12.7 | Repita a consulta e, com o colega em linha, o cliente desliga. | A consulta vira uma ligação normal com o colega: o rótulo sai, "<nome ou número> desligou" por 2 s, e a conversa com o colega continua. | ☐ | ☐ |
+| 12.8 | Transferir → Transferir agora para um ramal que exista; depois, para um que não exista (ou que a central recuse). | O primeiro passa como na etapa 1 (a ligação sai do celular). O segundo: "O servidor não aceitou a transferência." por 2 s e a ligação continua. | ☐ | ☐ |
+| 12.9 | Com duas ligações em andamento (sem consulta), toque em Transferir. | Só Transferir agora: Consultar fica desabilitado (já há duas ligações). | ☐ | ☐ |
+| 12.10 | Repita a consulta e, com o colega chamando (sem atender), toque em Cancelar. | O colega para de chamar e o cliente volta sozinho. | ☐ | ☐ |
+
+## 13. Conferência (0.2)
+
+| # | Passo | Resultado esperado | A1 | A2 |
+|---|-------|--------------------|----|----|
+| 13.1 | Com o cliente e o colega em andamento (um em espera), toque em Juntar. | A tela vira "Conferência", com os dois nomes ou números e o tempo desde o Juntar; os três se ouvem. Os botões: Mudo, Teclado, Viva-voz, Separar e Desligar. | ☐ | ☐ |
+| 13.2 | Fale os três por um minuto. Toque em Mudo e fale. | Ninguém ouve o celular enquanto está no mudo; os outros dois continuam se ouvindo. | ☐ | ☐ |
+| 13.3 | Toque em Separar. | A tela volta aos dois cartões: a última ligação que entrou fica "Em espera" e a outra em cima, com o som. Juntar de novo refaz a conferência. | ☐ | ☐ |
+| 13.4 | Na conferência, o colega desliga. | "<nome ou número> desligou" por 2 s e a ligação com o cliente continua como uma ligação normal, com o som. | ☐ | ☐ |
+| 13.5 | Na conferência, toque em Desligar. | As duas ligações acabam (os dois telefones ouvem o fim) e a tela de chamada fecha; as duas entram no Recentes com a duração. | ☐ | ☐ |
+| 13.6 | Na conferência, use o Teclado da ligação numa URA (um dos dois é uma URA). | Anote o que acontece: as teclas vão só para a ligação de cima. | ☐ | ☐ |
+| 13.7 | Durante uma consulta (seção 12), procure o botão Juntar. | Não aparece: antes, Cancelar ou Concluir transferência. | ☐ | ☐ |
+| 13.8 | Na conferência, olhe a notificação na gaveta. | A notificação fixa continua "Conectado (ramal <ramal>)"; nenhuma notificação do app Telefone do celular aparece por causa da conferência. | ☐ | ☐ |
+
+## 14. Contatos (0.2)
+
+Antes: grave no celular um contato com o número de um ramal de teste (sem DDD), um com um número externo com DDD (ex.: `(11) 5060-3000`) e um com o mesmo número externo com "+55" (ex.: `+55 11 5060-3000`), e um contato com dois números.
+
+| # | Passo | Resultado esperado | A1 | A2 |
+|---|-------|--------------------|----|----|
+| 14.1 | Abra a aba Contatos pela primeira vez e negue a permissão. | A janela do Android pede a permissão de contatos. Negada: o aviso "Permita o acesso aos contatos para ligar pelo nome." com o botão Permitir. Teclado e Recentes continuam funcionando só com números. | ☐ | ☐ |
+| 14.2 | Toque em Permitir e conceda. (Se o Android não perguntar mais, o botão abre os ajustes do app: conceda lá e volte.) | A lista dos contatos do celular em ordem alfabética, com nome e números, e o campo "Buscar contato" em cima. | ☐ | ☐ |
+| 14.3 | Busque por parte do nome e por parte do número. | A lista filtra nos dois casos. | ☐ | ☐ |
+| 14.4 | Toque no contato do ramal de teste. | Liga para o ramal, sem prefixo (número curto). | ☐ | ☐ |
+| 14.5 | Toque no contato externo com DDD e, depois, no com "+55". | Os dois ligam para o mesmo número: o "+55" sai e fica DDD + número (e o prefixo de linha externa na frente, se a central da Starsonic exigir e ele estiver no perfil). Confira na central o número discado. | ☐ | ☐ |
+| 14.6 | Toque no contato com dois números. | A escolha do número; cada um liga. | ☐ | ☐ |
+| 14.7 | Receba uma ligação do ramal gravado como contato, com o app na frente e com o app fora da tela; deixe uma tocar até perder. | O nome do contato (no lugar do número) na tela de chamada, na notificação de ligação, na notificação "Ligação perdida de <contato>" e no Recentes. | ☐ | ☐ |
+| 14.8 | No Teclado, digite os primeiros dígitos do número de um contato. | Até três sugestões (nome e número) abaixo do número; um toque preenche o número já pronto para discar (sem o "+55"). | ☐ | ☐ |
+| 14.9 | Numa ligação, receba a segunda do ramal gravado como contato. | A faixa "Ligação de <nome do contato>". | ☐ | ☐ |
+| 14.10 | Nas configurações do Android, tire a permissão de contatos e volte ao app. | A aba Contatos mostra o aviso e o botão de novo; o resto do app segue; os Recentes voltam a mostrar os números. | ☐ | ☐ |
+| 14.11 | Menu → Sobre → Enviar diagnóstico depois de usar os contatos. | Nenhum nome da agenda no arquivo (os números das ligações aparecem, como na etapa 1). | ☐ | ☐ |
+
+## 15. Fone Bluetooth, viva-voz, ligações do celular, bateria e dados (0.2)
+
+Repita as seções 11 a 13 com um fone Bluetooth conectado e, depois, no viva-voz. Além disso:
+
+| # | Passo | Resultado esperado | A1 | A2 |
+|---|-------|--------------------|----|----|
+| 15.1 | Na conferência, aperte o botão de desligar do fone Bluetooth. | As duas ligações acabam (como o Desligar da tela): nenhum dos dois continua na linha. | ☐ | ☐ |
+| 15.2 | Com duas ligações em andamento, use o comando de alternar do fone ou do kit do carro (segurar o botão, ou "trocar chamada"). | Os cartões trocam de lugar e o som passa para a outra ligação. Depois, Desligar a de cima: a outra volta sozinha. | ☐ | ☐ |
+| 15.3 | Com duas ligações em andamento, receba e atenda uma ligação do celular (da operadora). Desligue a do celular. Toque em Alternar e depois em Juntar. | Durante a ligação do celular, as duas do ramal ficam em espera (os dois ouvem a espera) e nenhuma volta sozinha. Depois dela: Alternar dá o som a uma delas, e Juntar faz a conferência normalmente. | ☐ | ☐ |
+| 15.4 | Numa ligação do ramal, atenda uma ligação do celular; desligue a do celular. | A do ramal vai para "Em espera" e continua. Quando a do celular acaba: anote se ela volta sozinha ou se precisa de Retomar; o áudio volta ao retomar. | ☐ | ☐ |
+| 15.5 | Com duas ligações no celular e uma ligação do celular tocando, recuse a do celular. | As duas do ramal continuam como estavam. | ☐ | ☐ |
+| 15.6 | Faça uma conferência de 10 minutos no 4G, com o celular carregado e a tela apagada a maior parte do tempo. Anote a carga e os dados do app antes e depois (Configurações → Bateria e → Uso de dados). | A1: `____` % e `____` MB em 10 min. A2: `____` % e `____` MB. O responsável aprova. | ☐ | ☐ |
+| 15.7 | No viva-voz, na conferência, troque para "Celular" e para o fone Bluetooth pela escolha de áudio. | O áudio dos dois sai por onde foi escolhido. | ☐ | ☐ |
+
 ## Onde cada critério de sucesso é verificado
 
 | Critério (spec §3) | Automático (a cada build) | Neste roteiro |
@@ -153,3 +236,14 @@ A ordem dos passos importa, por causa da regra das 24 h:
 | Uma versão de teste nova chega como aviso e instala com a confirmação do Android | `UpdateDeciderTest` e `UpdaterTest` (JVM), `UpdatePromptTest` (emulador) | 7 |
 | Consumo de bateria num dia em espera, medido e aprovado | — | 8 |
 | Código-fonte completo junto de cada APK publicado | workflow `android-release` (APK, `versao-android.json` e código-fonte completo em cada release) | 7.1 |
+
+### Critérios da 0.2 (spec da 0.2, §3)
+
+| Critério | Automático (a cada build) | Neste roteiro |
+|----------|---------------------------|---------------|
+| Numa ligação, a segunda toca na tela de chamada, é atendida (a primeira vai para a espera), a pessoa alterna, e ao desligar a ativa a outra volta sozinha | `test_engine_calls` (motor, segunda ligação e `Activate`), `CallManagerTest` (JVM), `CallFlowTest` (emulador) | 11 |
+| Transferência com consulta: concluir (as duas saem), cancelar, o colega não atende | `test_engine_calls` (REFER com Replaces, NOTIFY 200 e 603), `CallManagerTest`, `CallFlowTest` | 12 |
+| Conferência: juntar, separar, desligar; um sai e a ligação continua com o outro | `test_engine_calls` (`Join`/`Split` na mesa), `CallManagerTest`, `CallFlowTest` | 13 |
+| Contatos do celular: a aba, ligar pelo nome, o nome na ligação recebida, na tela, na notificação e nos Recentes; sem a permissão, só números | `ContactsTest` e `CallManagerTest` (JVM), `ContactsFlowTest` (emulador), `test_call_messages` (`ContactDialString`), `check_apk.py` (`READ_CONTACTS` e nenhuma outra permissão nova) | 14 |
+| A terceira ligação recebe ocupado; uma ligação da operadora em andamento continua bloqueando | `test_engine_calls` (486), `CallManagerTest` | 6, 11.12, 15 |
+| Tudo acima com fone Bluetooth e viva-voz; bateria e dados numa conferência de 10 minutos | — | 15 |
