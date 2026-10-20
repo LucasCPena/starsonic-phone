@@ -62,6 +62,25 @@ TEST_CASE("SipEngine registers over TCP") {
     CHECK(registrar.TransportUsed() == "tcp");
 }
 
+TEST_CASE("SipEngine registers on the port of [portas] for that server, over UDP and TCP") {
+    FakeRegistrar registrar("senha");
+    RecordingListener listener;
+    INFO(listener.LogTail());
+    Profile profile = LoadProfile(registrar.port());
+    const int wrongPort = registrar.port() == 5999 ? 5998 : 5999;   // ninguem atende nela
+    profile.account.port = wrongPort;
+    profile.account.serverPorts.clear();
+    profile.account.serverPorts.push_back(ServerPort{Input(Transport::Udp).address, registrar.port()});
+    std::unique_ptr<SipEngine> engine = StartEngine(&listener, profile);
+
+    REQUIRE(engine->SetAccount(Input(Transport::Udp)));
+    CHECK(listener.WaitFor(RecordingListener::Reached(200, true, 1), kWaitSeconds));
+    CHECK(registrar.TransportUsed() == "udp");
+    REQUIRE(engine->SetAccount(Input(Transport::Tcp)));
+    CHECK(listener.WaitFor(RecordingListener::Reached(200, true, 2), kWaitSeconds));
+    CHECK(registrar.TransportUsed() == "tcp");
+}
+
 TEST_CASE("SipEngine reports a wrong password") {
     FakeRegistrar registrar("senha");
     RecordingListener listener;

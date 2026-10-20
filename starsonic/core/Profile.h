@@ -10,10 +10,19 @@ enum class Transport { Udp, Tcp };   // o TLS saiu na revisão 1.4 (spec 6.3)
 enum class SrtpMode { Disabled, Optional, Mandatory };
 enum class DtmfMethod { Auto = 0, Inband = 1, Rfc2833 = 2, SipInfo = 3 };   // valores = DTMFMethod do MicroSIP
 
+// Uma linha da seção [portas]: o servidor (endereço normalizado, como na tela Entrar) que usa uma porta
+// diferente da [conta] (UDP e TCP).
+struct ServerPort {
+    std::wstring address;
+    int port = 0;
+};
+
 // Seção [conta]: o que toda conta recebe, além do endereço, do ramal e da senha. transport é o
-// protocolo padrão da tela Entrar; cada conta guarda o seu (UDP ou TCP).
+// protocolo padrão da tela Entrar; cada conta guarda o seu (UDP ou TCP). port é a porta de todo
+// servidor fora de serverPorts (a seção [portas], opcional).
 struct AccountProfile {
     int port = 0;
+    std::vector<ServerPort> serverPorts;
     Transport transport = Transport::Udp;
     std::wstring proxy;
     SrtpMode srtp = SrtpMode::Disabled;
@@ -41,7 +50,8 @@ struct ParseResult {
     std::wstring errorMessage;   // pt-BR, cita a seção, a chave ou o valor
 };
 
-// Só as seções [geral] (opcional) e [conta] (obrigatória). Em caso de erro, *out não é alterado.
+// Só as seções [geral] (opcional), [conta] (obrigatória) e [portas] (opcional). Em caso de erro, *out não é
+// alterado.
 ParseResult ParseProfile(const std::wstring& text, Profile* out);
 // Nomes normalizados (opus, G722, PCMA, PCMU, G729) → lista de codecs do MicroSIP.
 std::wstring CodecsToMicrosip(const std::vector<std::wstring>& codecs);

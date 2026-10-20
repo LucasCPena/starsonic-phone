@@ -135,12 +135,19 @@ Transport TransportFromName(const std::wstring& name, Transport fallback) {
     return fallback;
 }
 
+int PortForServer(const AccountProfile& profile, const std::wstring& address) {
+    for (const ServerPort& entry : profile.serverPorts) {
+        if (entry.address == address) return entry.port;
+    }
+    return profile.port;
+}
+
 AccountFields BuildAccount(const AccountProfile& profile, const std::wstring& address, const std::wstring& ramal,
                            const std::wstring& senha, Transport transport, const std::wstring& accountName) {
     AccountFields account;
     const std::wstring name = NormalizeAccountName(accountName);
     account.label = name.empty() ? ramal + kLabelSeparator + address : name;
-    account.server = address + L":" + std::to_wstring(profile.port);
+    account.server = address + L":" + std::to_wstring(PortForServer(profile, address));
     account.proxy = profile.proxy;
     account.domain = address;
     account.username = ramal;

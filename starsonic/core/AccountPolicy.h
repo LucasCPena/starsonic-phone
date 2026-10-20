@@ -59,8 +59,12 @@ std::wstring AccountNameFromLabel(const std::wstring& label);
 // aparado); qualquer outro valor devolve fallback.
 Transport TransportFromName(const std::wstring& name, Transport fallback);
 
+// A porta do servidor [address] (já validado): a da seção [portas] do perfil para esse endereço exato,
+// senão a da [conta]. Vale para UDP e TCP.
+int PortForServer(const AccountProfile& profile, const std::wstring& address);
+
 // Conta nova: perfil + endereço do servidor (já validado) + protocolo + ramal (usuário SIP e nome
-// de exibição) + senha + nome da conta. server = <endereço>:<porta>, domínio = <endereço>,
+// de exibição) + senha + nome da conta. server = <endereço>:<porta> (PortForServer), domínio = <endereço>,
 // rótulo = o nome (normalizado) ou, sem nome, <ramal> · <endereço>.
 AccountFields BuildAccount(const AccountProfile& profile, const std::wstring& address, const std::wstring& ramal,
                            const std::wstring& senha, Transport transport, const std::wstring& accountName);

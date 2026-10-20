@@ -135,7 +135,7 @@ public:
             return 0;
         }
         account_ = std::move(account);
-        callHost_ = CallHost(fields.domain, config_.profile.account.port);
+        callHost_ = CallHost(fields.domain, PortForServer(config_.profile.account, fields.domain));
         return accountId;
     }
 

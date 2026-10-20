@@ -1,8 +1,14 @@
 # Starsonic Phone para Windows — especificação de design
 
 - **Data:** 11/10/2026
-- **Status:** aprovada — revisão 1.4 em 13/10/2026 (as revisões 1.3, 1.2 e 1.1 também foram aprovadas, em 13/10, 13/10 e 11/10/2026)
+- **Status:** aprovada — revisão 1.5 em 20/10/2026 (as revisões 1.4, 1.3, 1.2 e 1.1 também foram aprovadas, em 13/10, 13/10, 13/10 e 11/10/2026)
 - **Subprojeto:** 1 de 2 — o 2º é o app de celular (iOS e Android), com especificação própria
+
+> **Revisão 1.5 — porta por servidor** (decisão do responsável em 20/10/2026: o servidor novo `starcloud1-starsonic.com.br` atende na porta 35060, em UDP e TCP; o `starcloud-starsonic.com.br` continua na 5060, e o app não registrava no starcloud1 porque usava a 5060 em todo servidor):
+> 1. O `perfil.ini` ganha a seção opcional `[portas]`, uma linha `<endereço do servidor>=<porta>` por servidor com porta própria. O endereço segue a regra da tela Entrar (minúsculas, sem porta); servidor repetido, endereço inválido ou porta fora de 1 a 65535 invalidam o arquivo.
+> 2. A conta usa a porta da `[portas]` para o seu servidor exato e a `porta` de `[conta]` para os demais, nos dois protocolos. Quem usa o app continua digitando só o endereço: nada técnico novo na tela Entrar.
+> 3. As travas remontam toda conta gravada pelo perfil ao abrir o app, então uma conta do starcloud1 gravada antes passa para a 35060 sem entrar de novo.
+> 4. A regra fica no núcleo (`PortForServer`) e vale também para o motor do Android, que recebe a mudança na próxima versão dele.
 
 > **Revisão 1.4 — protocolo e nome em cada conta** (decisões do responsável em 13/10/2026: alguns clientes vão usar TCP e outros UDP; um cliente tem várias PAs no mesmo computador e precisa identificar cada uma):
 > 1. A tela Entrar ganha o campo **Protocolo** (UDP ou TCP), ao lado do Servidor. Vem marcado o padrão do perfil (`transporte`) em contas novas e o da conta em Editar. Cada conta guarda o seu; as travas mantêm UDP ou TCP e voltam qualquer outro valor ao padrão do perfil.
@@ -114,7 +120,7 @@ Pastas do `main`, além das do `upstream`:
 
 | Módulo | Responsabilidade | Depende de |
 |--------|------------------|------------|
-| `Profile` (core) | Lê `perfil.ini` e devolve as seções `[geral]` e `[conta]` | — |
+| `Profile` (core) | Lê `perfil.ini` e devolve as seções `[geral]`, `[conta]` e `[portas]` | — |
 | `AccountPolicy` (core) | Valida o endereço do servidor e o ramal; monta contas a partir do perfil + endereço + credenciais; reaplica o perfil sobre contas existentes e as configurações globais travadas | `Profile` |
 | `RegistrationErrors` (core) | Traduz o código SIP ou a falha de TLS do registro em mensagem pt-BR | — |
 | `LoginFlow` (core) | Máquina de estados da tela Entrar: enviar, resultado do registro, tempo esgotado | `RegistrationErrors` |
@@ -139,9 +145,12 @@ transporte=udp            ; udp | tcp (padrão do campo Protocolo da tela Entrar
 proxy=                    ; vazio = sem proxy
 srtp=opcional             ; desativado | opcional | obrigatorio
 keepalive=15              ; segundos
+
+[portas]                  ; servidores com porta própria (UDP e TCP); os outros usam a porta de [conta]
+starcloud1-starsonic.com.br=35060
 ```
 
-São os valores reais, informados pela Starsonic em 13/10/2026. `transporte` é o protocolo que a tela Entrar traz marcado em contas novas; cada conta guarda o seu (UDP ou TCP), e a `porta` vale para os dois. Os servidores da Starsonic hoje são `starcloud-starsonic.com.br` e `starcloud1-starsonic.com.br` (cada cliente usa um deles) e não ficam no app: o suporte informa o endereço a cada cliente. Regras: o arquivo só tem as seções `[geral]` (opcional; sem ela valem os padrões do MicroSIP) e `[conta]` (obrigatória); seção desconhecida ou repetida, chave desconhecida (inclusive as antigas `nome`, `endereco` e `dominio`), campo obrigatório ausente (`porta`, `transporte`) ou valor fora das opções (inclusive `transporte=tls`, desde a revisão 1.4) invalida o arquivo — e o build falha, porque os testes leem o arquivo real de `branding/`.
+São os valores reais, informados pela Starsonic em 13/10/2026. `transporte` é o protocolo que a tela Entrar traz marcado em contas novas; cada conta guarda o seu (UDP ou TCP), e a `porta` vale para os dois (com a do servidor em `[portas]`, se ele estiver lá: revisão 1.5). Os servidores da Starsonic hoje são `starcloud-starsonic.com.br` e `starcloud1-starsonic.com.br` (cada cliente usa um deles) e não ficam no app: o suporte informa o endereço a cada cliente. Regras: o arquivo só tem as seções `[geral]` (opcional; sem ela valem os padrões do MicroSIP), `[conta]` (obrigatória) e `[portas]` (opcional); seção desconhecida ou repetida, chave desconhecida (inclusive as antigas `nome`, `endereco` e `dominio`), campo obrigatório ausente (`porta`, `transporte`) ou valor fora das opções (inclusive `transporte=tls`, desde a revisão 1.4) invalida o arquivo — e o build falha, porque os testes leem o arquivo real de `branding/`.
 
 ### 6.4 Arquivos no PC do usuário
 

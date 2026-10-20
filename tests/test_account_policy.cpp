@@ -218,6 +218,34 @@ TEST_CASE("EnforceAccount keeps the account address, normalized") {
     CHECK(account.label == L"2001 \u00b7 novo.host");
 }
 
+TEST_CASE("BuildAccount uses the port of [portas] for that server and the default for the others") {
+    AccountProfile profile = TestProfile();
+    profile.serverPorts.push_back(ServerPort{L"starcloud1-starsonic.com.br", 35060});
+    CHECK(BuildAccount(profile, L"starcloud1-starsonic.com.br", L"2001", L"x", Transport::Udp, L"").server ==
+          L"starcloud1-starsonic.com.br:35060");
+    CHECK(BuildAccount(profile, L"starcloud1-starsonic.com.br", L"2001", L"x", Transport::Tcp, L"").server ==
+          L"starcloud1-starsonic.com.br:35060");
+    const AccountFields other = BuildAccount(profile, L"starcloud-starsonic.com.br", L"2001", L"x", Transport::Udp, L"");
+    CHECK(other.server == L"starcloud-starsonic.com.br:5080");
+    CHECK(other.domain == L"starcloud-starsonic.com.br");
+    CHECK(PortForServer(profile, L"starcloud1-starsonic.com.br") == 35060);
+    CHECK(PortForServer(profile, L"starcloud-starsonic.com.br") == 5080);
+    CHECK(PortForServer(profile, L"sub.starcloud1-starsonic.com.br") == 5080);   // so o nome exato
+}
+
+TEST_CASE("EnforceAccount moves a saved account to the port of [portas]") {
+    AccountFields account = BuildAccount(TestProfile(), L"starcloud1-starsonic.com.br", L"2001", L"x",
+                                         Transport::Udp, L"");
+    CHECK(account.server == L"starcloud1-starsonic.com.br:5080");   // gravada antes da tabela
+    AccountProfile profile = TestProfile();
+    profile.serverPorts.push_back(ServerPort{L"starcloud1-starsonic.com.br", 35060});
+    CHECK(EnforceAccount(&account, profile));
+    CHECK(account.server == L"starcloud1-starsonic.com.br:35060");
+    CHECK(account.domain == L"starcloud1-starsonic.com.br");
+    CHECK(account.username == L"2001");
+    CHECK(account.password == L"x");
+}
+
 TEST_CASE("EnforceAccount keeps the fields the user owns") {
     AccountFields account = BuildAccount(TestProfile(), L"h", L"2001", L"x", Transport::Tcp, L"");
     account.username = L"2002";

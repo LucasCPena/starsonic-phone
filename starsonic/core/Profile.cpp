@@ -1,5 +1,6 @@
 #include "Profile.h"
 
+#include "AccountPolicy.h"
 #include "Text.h"
 
 namespace starsonic {
@@ -64,7 +65,7 @@ std::wstring EmptyValue(const std::wstring& key) {
     return L"a chave " + Quoted(key) + L" est\u00e1 vazia";
 }
 
-enum class Section { None, Global, Account };
+enum class Section { None, Global, Account, Ports };
 
 class Parser {
 public:
@@ -122,6 +123,8 @@ private:
                 return GlobalKey(line, key, value);
             case Section::Account:
                 return AccountKey(line, key, value);
+            case Section::Ports:
+                return PortsKey(line, key, value);
         }
         return true;
     }
@@ -144,7 +147,13 @@ private:
             section_ = Section::Account;
             return true;
         }
-        return Fail(line, L"se\u00e7\u00e3o desconhecida [" + name + L"] (use [geral] e [conta])");
+        if (name == L"portas") {
+            if (seenPorts_) return Fail(line, L"se\u00e7\u00e3o repetida: [portas]");
+            seenPorts_ = true;
+            section_ = Section::Ports;
+            return true;
+        }
+        return Fail(line, L"se\u00e7\u00e3o desconhecida [" + name + L"] (use [geral], [conta] e [portas])");
     }
 
     bool GlobalKey(int line, const std::wstring& key, const std::wstring& value) {
@@ -241,11 +250,34 @@ private:
         return Fail(line, L"chave desconhecida " + Quoted(key) + L" em [conta]");
     }
 
+    // [portas]: <endereço do servidor>=<porta>, um por linha; o endereço como na tela Entrar (sem porta).
+    bool PortsKey(int line, const std::wstring& key, const std::wstring& value) {
+        std::wstring address;
+        if (ValidateServerAddress(key, &address) != ServerCheck::Ok) {
+            return Fail(line, L"endere\u00e7o de servidor inv\u00e1lido em [portas]: " + Quoted(key) +
+                                  L" (s\u00f3 o endere\u00e7o, como starcloud1-starsonic.com.br)");
+        }
+        for (const ServerPort& entry : profile_.account.serverPorts) {
+            if (entry.address == address) {
+                return Fail(line, L"servidor repetido em [portas]: " + Quoted(address));
+            }
+        }
+        ServerPort entry;
+        entry.address = address;
+        if (!ParseInt(value, 1, 65535, &entry.port)) {
+            return Fail(line, L"a porta de " + Quoted(address) + L" em [portas] precisa ser um n\u00famero de 1 a 65535: " +
+                                  Quoted(value));
+        }
+        profile_.account.serverPorts.push_back(entry);
+        return true;
+    }
+
     Profile profile_;
     ParseResult result_;
     Section section_ = Section::None;
     bool seenGlobal_ = false;
     bool seenAccount_ = false;
+    bool seenPorts_ = false;
     int accountLine_ = 0;
     bool hasPort_ = false;
     bool hasTransport_ = false;

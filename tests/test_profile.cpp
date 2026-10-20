@@ -144,6 +144,44 @@ TEST_CASE("ParseProfile rejects an invalid ddi or prefixo_externo with the line"
     CHECK(Rejects(L"[geral]\nddi=55\n" + base));   // ddi é chave de [conta]
 }
 
+TEST_CASE("ParseProfile reads the per-server ports of [portas]") {
+    Profile profile;
+    const ParseResult result = ParseProfile(
+        base + L"[portas]\nStarcloud1-Starsonic.com.br = 35060 ; com comentario\noutro.exemplo.invalid=5080\n", &profile);
+    REQUIRE(result.ok);
+    CHECK(profile.account.port == 5060);
+    REQUIRE(profile.account.serverPorts.size() == 2);
+    CHECK(profile.account.serverPorts[0].address == L"starcloud1-starsonic.com.br");
+    CHECK(profile.account.serverPorts[0].port == 35060);
+    CHECK(profile.account.serverPorts[1].address == L"outro.exemplo.invalid");
+    CHECK(profile.account.serverPorts[1].port == 5080);
+}
+
+TEST_CASE("[portas] may come before [conta] and may be empty") {
+    Profile profile;
+    REQUIRE(ParseProfile(L"[portas]\nsip.exemplo.invalid=5070\n" + base, &profile).ok);
+    REQUIRE(profile.account.serverPorts.size() == 1);
+    CHECK(profile.account.serverPorts[0].port == 5070);
+    REQUIRE(ParseProfile(base + L"[portas]\n", &profile).ok);
+    CHECK(profile.account.serverPorts.empty());
+}
+
+TEST_CASE("ParseProfile rejects an invalid [portas] entry with the line") {
+    Profile profile;
+    ParseResult result = ParseProfile(base + L"[portas]\nsip.exemplo.invalid=70000\n", &profile);
+    CHECK_FALSE(result.ok);
+    CHECK(result.errorLine == 5);
+    CHECK(Contains(result.errorMessage, L"sip.exemplo.invalid"));
+    CHECK(Rejects(base + L"[portas]\nsip.exemplo.invalid=0\n"));
+    CHECK(Rejects(base + L"[portas]\nsip.exemplo.invalid=\n"));
+    CHECK(Rejects(base + L"[portas]\nsip.exemplo.invalid=50a\n"));
+    CHECK(Rejects(base + L"[portas]\nsip.exemplo.invalid:5060=5070\n"));   // so o endereco, sem porta
+    CHECK(Rejects(base + L"[portas]\nsip_invalido=5070\n"));                // endereco invalido
+    CHECK(Rejects(base + L"[portas]\n=5070\n"));                            // endereco vazio
+    CHECK(Rejects(base + L"[portas]\nsip.exemplo.invalid=5070\nSIP.exemplo.invalid=5080\n"));   // repetido
+    CHECK(Rejects(base + L"[portas]\n[portas]\n"));                         // secao repetida
+}
+
 TEST_CASE("empty optional values keep their defaults") {
     Profile profile;
     REQUIRE(ParseProfile(L"[geral]\nstun=   ; vazio\n" + base + L"proxy= ; sem proxy\n", &profile).ok);
@@ -225,4 +263,8 @@ TEST_CASE("real branding file is valid") {
     Profile profile;
     const ParseResult result = ParseProfile(Utf8ToWide(StripUtf8Bom(bytes)), &profile);
     CHECK_MESSAGE(result.ok, "linha " << result.errorLine << ": " << doctest::toString(result.errorMessage));
+    CHECK(profile.account.port == 5060);
+    REQUIRE(profile.account.serverPorts.size() == 1);
+    CHECK(profile.account.serverPorts[0].address == L"starcloud1-starsonic.com.br");
+    CHECK(profile.account.serverPorts[0].port == 35060);
 }
