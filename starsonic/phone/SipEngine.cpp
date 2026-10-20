@@ -28,7 +28,6 @@ const int kUnregisterWaitMs = 3000;
 const int kCallEndWaitMs = 2000;
 // Quanto o motor espera o pjsua refazer os transportes depois de uma troca de rede (leva alguns ms).
 const int kIpChangeWaitMs = 2000;
-const int kDefaultSipPort = 5060;
 
 // O pjsua tem estado global: um motor por processo.
 std::mutex g_aliveMutex;
@@ -135,7 +134,7 @@ public:
             return 0;
         }
         account_ = std::move(account);
-        callHost_ = CallHost(fields.domain, PortForServer(config_.profile.account, fields.domain));
+        callHost_ = WideToUtf8(fields.domain);   // o domínio já leva a porta fora da 5060 (BuildAccount)
         return accountId;
     }
 
@@ -282,14 +281,6 @@ private:
     // sip:<número>@<domínio da conta>. O transporte é o da conta (UDP ou TCP), que o pjsua usa
     // sozinho: a conta está presa a ele.
     std::string CallUri(const std::string& number) const { return "sip:" + number + "@" + callHost_; }
-
-    // O domínio da conta e, se o perfil não usa a porta padrão do SIP, a porta: a ligação vai ao mesmo
-    // servidor e porta do registro (com a 5060 do perfil, sip:<número>@<domínio>, como no MicroSIP).
-    static std::string CallHost(const std::wstring& domain, int port) {
-        std::string host = WideToUtf8(domain);
-        if (port > 0 && port != kDefaultSipPort) host += ":" + std::to_string(port);
-        return host;
-    }
 
     // Todos os codecs desligados, menos os do perfil, do mais para o menos preferido.
     void ConfigureCodecs() {

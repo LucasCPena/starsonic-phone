@@ -149,7 +149,7 @@ TEST_CASE("BuildAccount fills locked fields from profile and address") {
     CHECK(account.label == L"2001 \u00b7 h");
     CHECK(account.server == L"h:5080");
     CHECK(account.proxy == L"");
-    CHECK(account.domain == L"h");
+    CHECK(account.domain == L"h:5080");   // a porta nao e a 5060: vai no dominio (as ligacoes usam ele)
     CHECK(account.username == L"2001");
     CHECK(account.authId == L"");
     CHECK(account.password == L"x");
@@ -214,7 +214,7 @@ TEST_CASE("EnforceAccount keeps the account address, normalized") {
     account.domain = L"outro";
     CHECK(EnforceAccount(&account, TestProfile()));
     CHECK(account.server == L"novo.host:5080");
-    CHECK(account.domain == L"novo.host");
+    CHECK(account.domain == L"novo.host:5080");
     CHECK(account.label == L"2001 \u00b7 novo.host");
 }
 
@@ -227,10 +227,33 @@ TEST_CASE("BuildAccount uses the port of [portas] for that server and the defaul
           L"starcloud1-starsonic.com.br:35060");
     const AccountFields other = BuildAccount(profile, L"starcloud-starsonic.com.br", L"2001", L"x", Transport::Udp, L"");
     CHECK(other.server == L"starcloud-starsonic.com.br:5080");
-    CHECK(other.domain == L"starcloud-starsonic.com.br");
+    CHECK(other.domain == L"starcloud-starsonic.com.br:5080");
     CHECK(PortForServer(profile, L"starcloud1-starsonic.com.br") == 35060);
     CHECK(PortForServer(profile, L"starcloud-starsonic.com.br") == 5080);
     CHECK(PortForServer(profile, L"sub.starcloud1-starsonic.com.br") == 5080);   // so o nome exato
+}
+
+TEST_CASE("BuildAccount puts the port in the domain only when it is not the SIP default 5060") {
+    AccountProfile profile = TestProfile();
+    profile.port = 5060;
+    profile.serverPorts.push_back(ServerPort{L"starcloud1-starsonic.com.br", 35060});
+    const AccountFields novo = BuildAccount(profile, L"starcloud1-starsonic.com.br", L"2001", L"x", Transport::Udp, L"");
+    CHECK(novo.server == L"starcloud1-starsonic.com.br:35060");
+    CHECK(novo.domain == L"starcloud1-starsonic.com.br:35060");
+    CHECK(novo.label == L"2001 \u00b7 starcloud1-starsonic.com.br");
+    const AccountFields antigo = BuildAccount(profile, L"starcloud-starsonic.com.br", L"2001", L"x", Transport::Tcp, L"");
+    CHECK(antigo.server == L"starcloud-starsonic.com.br:5060");
+    CHECK(antigo.domain == L"starcloud-starsonic.com.br");
+}
+
+TEST_CASE("EnforceAccount puts the port back in the domain of a saved account") {
+    AccountProfile profile = TestProfile();
+    profile.port = 5060;
+    profile.serverPorts.push_back(ServerPort{L"starcloud1-starsonic.com.br", 35060});
+    AccountFields account = BuildAccount(profile, L"starcloud1-starsonic.com.br", L"2001", L"x", Transport::Udp, L"");
+    account.domain = L"starcloud1-starsonic.com.br";   // gravada pela rc.6: sem a porta
+    CHECK(EnforceAccount(&account, profile));
+    CHECK(account.domain == L"starcloud1-starsonic.com.br:35060");
 }
 
 TEST_CASE("EnforceAccount moves a saved account to the port of [portas]") {
@@ -241,7 +264,7 @@ TEST_CASE("EnforceAccount moves a saved account to the port of [portas]") {
     profile.serverPorts.push_back(ServerPort{L"starcloud1-starsonic.com.br", 35060});
     CHECK(EnforceAccount(&account, profile));
     CHECK(account.server == L"starcloud1-starsonic.com.br:35060");
-    CHECK(account.domain == L"starcloud1-starsonic.com.br");
+    CHECK(account.domain == L"starcloud1-starsonic.com.br:35060");   // a ligacao sai pela 35060 tambem
     CHECK(account.username == L"2001");
     CHECK(account.password == L"x");
 }

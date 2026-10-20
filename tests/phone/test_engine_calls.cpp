@@ -859,6 +859,21 @@ TEST_CASE("MakeCall dials sip:<number>@<domain> with the default port of the pro
     CHECK(engine->Hangup(id));
 }
 
+TEST_CASE("MakeCall dials sip:<number>@<domain>:<port> with the port of [portas]") {
+    RecordingListener listener;
+    INFO(listener.LogTail());
+    Profile profile = LoadProfile();
+    profile.account.serverPorts.clear();
+    profile.account.serverPorts.push_back(ServerPort{L"127.0.0.1", 35060});
+    std::unique_ptr<SipEngine> engine = StartEngine(&listener, profile);
+    REQUIRE(engine->SetAccount(Input(Transport::Udp)));   // ninguem responde em 127.0.0.1:35060: tanto faz
+
+    const int id = engine->MakeCall("2002");
+    REQUIRE(id >= 0);
+    CHECK(Contains(listener.LogTail(), "INVITE sip:2002@127.0.0.1:35060 SIP/2.0"));
+    CHECK(engine->Hangup(id));
+}
+
 TEST_CASE("MakeCall needs an account") {
     RecordingListener listener;
     std::unique_ptr<SipEngine> engine = StartEngine(&listener, LoadProfile());

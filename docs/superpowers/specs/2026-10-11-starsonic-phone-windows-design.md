@@ -8,6 +8,7 @@
 > 1. O `perfil.ini` ganha a seção opcional `[portas]`, uma linha `<endereço do servidor>=<porta>` por servidor com porta própria. O endereço segue a regra da tela Entrar (minúsculas, sem porta); servidor repetido, endereço inválido ou porta fora de 1 a 65535 invalidam o arquivo.
 > 2. A conta usa a porta da `[portas]` para o seu servidor exato e a `porta` de `[conta]` para os demais, nos dois protocolos. Quem usa o app continua digitando só o endereço: nada técnico novo na tela Entrar.
 > 3. As travas remontam toda conta gravada pelo perfil ao abrir o app, então uma conta do starcloud1 gravada antes passa para a 35060 sem entrar de novo.
+> 3a. As ligações também saem pela porta do servidor (corrigido na rc.7: na rc.6 só o registro usava a 35060). O MicroSIP e o motor ligam para `sip:<número>@<domínio>`, então o domínio da conta passa a ser `<endereço>:<porta>` quando a porta não é a 5060 (`starcloud1-starsonic.com.br:35060`) e continua só o endereço na 5060. O Recentes do MicroSIP compara os domínios sem a porta, para um número recebido continuar aparecendo só como o número e o "ligar de volta" sair pela porta certa.
 > 4. A regra fica no núcleo (`PortForServer`) e vale também para o motor do Android, que recebe a mudança na próxima versão dele.
 
 > **Revisão 1.4 — protocolo e nome em cada conta** (decisões do responsável em 13/10/2026: alguns clientes vão usar TCP e outros UDP; um cliente tem várias PAs no mesmo computador e precisa identificar cada uma):

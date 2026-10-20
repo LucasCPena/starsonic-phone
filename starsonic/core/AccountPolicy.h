@@ -63,8 +63,12 @@ Transport TransportFromName(const std::wstring& name, Transport fallback);
 // senão a da [conta]. Vale para UDP e TCP.
 int PortForServer(const AccountProfile& profile, const std::wstring& address);
 
+// A porta padrão do SIP: com ela, o domínio da conta fica sem porta.
+const int kDefaultSipPort = 5060;
+
 // Conta nova: perfil + endereço do servidor (já validado) + protocolo + ramal (usuário SIP e nome
-// de exibição) + senha + nome da conta. server = <endereço>:<porta> (PortForServer), domínio = <endereço>,
+// de exibição) + senha + nome da conta. server = <endereço>:<porta> (PortForServer), domínio = <endereço>
+// (com :<porta> quando ela não é a 5060: as ligações vão a sip:<número>@<domínio>),
 // rótulo = o nome (normalizado) ou, sem nome, <ramal> · <endereço>.
 AccountFields BuildAccount(const AccountProfile& profile, const std::wstring& address, const std::wstring& ramal,
                            const std::wstring& senha, Transport transport, const std::wstring& accountName);

@@ -147,9 +147,12 @@ AccountFields BuildAccount(const AccountProfile& profile, const std::wstring& ad
     AccountFields account;
     const std::wstring name = NormalizeAccountName(accountName);
     account.label = name.empty() ? ramal + kLabelSeparator + address : name;
-    account.server = address + L":" + std::to_wstring(PortForServer(profile, address));
+    const int port = PortForServer(profile, address);
+    account.server = address + L":" + std::to_wstring(port);
     account.proxy = profile.proxy;
-    account.domain = address;
+    // As ligações vão a sip:<número>@<domínio> (MicroSIP e o motor): fora da 5060, o domínio leva a porta,
+    // para a ligação sair pela mesma porta do registro.
+    account.domain = port == kDefaultSipPort ? address : address + L":" + std::to_wstring(port);
     account.username = ramal;
     account.password = senha;
     account.displayName = ramal;

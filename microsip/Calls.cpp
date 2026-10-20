@@ -540,7 +540,8 @@ void Calls::Add(pj_str_t id, CString address, CString name, CString commands, in
                 numberLocal = numberLocal.Mid(accountSettings.account.dialingPrefix.GetLength());
             }
         }
-        if (sipuri.suffix.IsEmpty() && (get_account_domain() == sipuri.domain || sipuri.domain.IsEmpty())) {
+        // Starsonic: o dominio da conta leva a porta fora da 5060 (starcloud1:35060); quem liga vem sem ela.
+        if (sipuri.suffix.IsEmpty() && (MSIP::RemovePort(get_account_domain()).CompareNoCase(MSIP::RemovePort(sipuri.domain)) == 0 || sipuri.domain.IsEmpty())) {
             numberLocalSuffix.Append(commands);
         }
         else {
