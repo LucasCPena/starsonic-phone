@@ -7,8 +7,6 @@ on:
     # em Python); se mexer em mais alguma coisa, roda.
     paths-ignore:
       - 'android/**'
-      - 'starsonic/phone/**'
-      - 'tests/phone/**'
       - 'build/android/**'
       - 'build/linux/**'
       - '.github/workflows/android*.yml'
@@ -49,6 +47,12 @@ jobs:
           cmake -S tests -B build-tests
           cmake --build build-tests -j 4
           ctest --test-dir build-tests --output-on-failure
+
+      - name: Testes C++ do app de PC (doctest)
+        run: |
+          cmake -S tests/desktop -B build-desktop-tests
+          cmake --build build-desktop-tests -j 4
+          ctest --test-dir build-desktop-tests --output-on-failure
 
       # Os testes rodam sem o GITHUB_ACTIONS: os scripts que eles fazem falhar de propósito anotariam erros falsos num
       # job verde.

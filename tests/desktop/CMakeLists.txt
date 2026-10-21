@@ -1,0 +1,32 @@
+cmake_minimum_required(VERSION 3.16)
+project(starsonic_desktop_tests CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+# Os testes das lojas do app de PC (starsonic/desktop): so C++ portatil, sem pjproject. O CallController.h
+# (starsonic/phone) entra so pelo tipo Recent.
+#   cmake -S tests/desktop -B <build> && cmake --build <build> && <build>/desktop_tests
+set(STARSONIC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../starsonic)
+
+file(GLOB STARSONIC_CORE_SOURCES CONFIGURE_DEPENDS ${STARSONIC_DIR}/core/*.cpp)
+file(GLOB STARSONIC_DESKTOP_SOURCES CONFIGURE_DEPENDS ${STARSONIC_DIR}/desktop/*.cpp)
+file(GLOB DESKTOP_TEST_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/test_*.cpp)
+
+add_executable(desktop_tests main.cpp ${DESKTOP_TEST_SOURCES} ${STARSONIC_CORE_SOURCES} ${STARSONIC_DESKTOP_SOURCES})
+target_include_directories(desktop_tests PRIVATE
+  ${STARSONIC_DIR}/core
+  ${STARSONIC_DIR}/desktop
+  ${STARSONIC_DIR}/phone
+  ${STARSONIC_DIR}/third_party
+  ${CMAKE_CURRENT_SOURCE_DIR}/..)
+
+if(MSVC)
+  target_compile_options(desktop_tests PRIVATE /W4 /EHsc)
+else()
+  target_compile_options(desktop_tests PRIVATE -Wall -Wextra)
+endif()
+
+enable_testing()
+add_test(NAME desktop_tests COMMAND desktop_tests)
