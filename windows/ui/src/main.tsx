@@ -83,6 +83,16 @@ function App() {
 
   const mudarNumero = useCallback((update: (atual: string) => string) => setNumero(update), []);
 
+  if (!bridge.available) {
+    return (
+      <div class="win">
+        <TitleBar send={send} />
+        <p class="fatal" role="alert">
+          Não foi possível iniciar a interface. Reinstale o Starsonic Phone.
+        </p>
+      </div>
+    );
+  }
   if (reinstalar) {
     return (
       <div class="win">

@@ -1,8 +1,8 @@
 // A ponte falsa: um "C++ de mentira" para abrir a interface num navegador comum e nos testes (Playwright).
-// Responde ao `ready` com o estado do cenário (tests/fake-scenarios.ts) e imita as respostas mais simples do
+// Responde ao `ready` com o estado do cenário (src/fake-scenarios.ts) e imita as respostas mais simples do
 // DesktopApp. Guarda cada comando em window.__comandos; window.__fake.push(msg) manda uma mensagem à interface.
 // As regras de verdade (validações, ligações) são do C++: aqui só o bastante para as telas reagirem.
-import { createScenario, type FakeView } from '../tests/fake-scenarios';
+import { createScenario, type FakeView } from './fake-scenarios';
 import type { WebviewLike } from './bridge';
 import type { AppState, Contact, IncomingMessage } from './state';
 
@@ -28,8 +28,10 @@ function sortContacts(list: Contact[]): Contact[] {
   return [...list].sort((a, b) => fold(a.nome).localeCompare(fold(b.nome)));
 }
 
-export function createFakeWebview(name: string): { webview: WebviewLike; view: FakeView | undefined } {
-  const scenario = createScenario(name) ?? createScenario('principal')!;
+/** `null` para um cenário que não existe (a interface mostra o erro, não um cenário qualquer). */
+export function createFakeWebview(name: string): { webview: WebviewLike; view: FakeView | undefined } | null {
+  const scenario = createScenario(name);
+  if (!scenario) return null;
   let state: AppState = structuredClone(scenario.state);
   const listeners = new Set<Listener>();
   const sent: Array<Record<string, unknown>> = [];

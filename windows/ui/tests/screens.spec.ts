@@ -113,6 +113,33 @@ for (const tema of ['light', 'dark'] as const) {
       await esperarComando(page, { cmd: 'openExternal', url: 'tel:+551150603000' });
     });
 
+    test('Entrar asks again for the password of a migrated account', async ({ page }) => {
+      await abrir(page, 'entrar-pede-senha');
+      await verTextos(page, ['Digite a senha de novo para continuar.']);
+      await expect(page.getByLabel('Servidor (endereço ou IP)')).toHaveValue('starcloud1-starsonic.com.br');
+      await expect(page.getByRole('radio', { name: 'TCP' })).toBeChecked();
+      await expect(page.getByLabel('Ramal', { exact: true })).toHaveValue('2001');
+      await expect(page.getByLabel('Nome da conta (opcional)')).toHaveValue('Recepção');
+      const senha = page.getByLabel('Senha', { exact: true });
+      await expect(senha).toHaveValue('');
+      await expect(senha).toBeFocused();
+      await expect(senha).toHaveAccessibleDescription('Digite a senha de novo para continuar.');
+      await semViolacoesSerias(page);
+      await capturar(page, 'entrar-pede-senha', tema);
+
+      await page.keyboard.type('nova-senha');
+      await page.getByRole('button', { name: 'Entrar' }).click();
+      await esperarComando(page, {
+        cmd: 'login',
+        servidor: 'starcloud1-starsonic.com.br',
+        protocolo: 'tcp',
+        ramal: '2001',
+        senha: 'nova-senha',
+        nome: 'Recepção',
+        contaId: '7d1e0c55a9b34f20',
+      });
+    });
+
     test('Teclado dials what is typed on the keys and on the keyboard', async ({ page }) => {
       await abrir(page, 'principal');
       await verTextos(page, [
@@ -443,6 +470,21 @@ test.describe('ponte e janela', () => {
     await page.getByRole('button', { name: 'Menu' }).click();
     await page.getByRole('menuitem', { name: 'Sobre' }).click();
     await expect(page.getByRole('heading', { name: 'Sobre' })).toBeVisible();
+  });
+
+  test('without the webview and without ?fake the interface shows an error and sends nothing', async ({ page }) => {
+    await page.goto('/index.html');
+    await expect(page.getByRole('alert')).toHaveText('Não foi possível iniciar a interface. Reinstale o Starsonic Phone.');
+    await expect(page.locator('body[data-pronto]')).toHaveCount(0);
+    // Nada dos cenários de exemplo: nem conta, nem contatos, nem as telas.
+    for (const texto of ['Conectado', 'Recepção', 'Ana Souza', 'Ligar', 'Teclado', 'Entrar']) {
+      await expect(page.getByText(texto)).toHaveCount(0);
+    }
+    expect(await page.evaluate(() => (window as unknown as { __comandos?: unknown }).__comandos)).toBeUndefined();
+    // Um cenário que não existe também não cai num cenário qualquer.
+    await page.goto('/index.html?fake=nao-existe');
+    await expect(page.getByRole('alert')).toHaveText('Não foi possível iniciar a interface. Reinstale o Starsonic Phone.');
+    await expect(page.getByText('Conectado')).toHaveCount(0);
   });
 
   test('the main screen follows a theme change without reloading', async ({ page }) => {

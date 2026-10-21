@@ -1,6 +1,6 @@
 // Os cenários da ponte falsa (?fake=<nome>): o estado que o "C++ de mentira" manda no `ready`.
 // Os dados imitam as telas do canvas. As datas são relativas ao momento em que a página abre (Hoje, Ontem).
-import type { AppState, RingKind } from '../src/state';
+import type { AppState, RingKind } from './state';
 
 /** A tela em que a interface abre (só na ponte falsa; o app real sempre abre no Teclado). */
 export type FakeView = 'teclado' | 'recentes' | 'contatos' | 'configuracoes' | 'sobre';
@@ -101,6 +101,25 @@ export function createScenario(nome: string): Scenario | undefined {
           erro: 'Ramal ou senha incorretos.',
         }),
       };
+    case 'entrar-pede-senha': {
+      // A conta veio da rc.7 sem a senha (não decifrou): os campos vêm preenchidos e só falta a senha.
+      const migrada = { id: '7d1e0c55a9b34f20', nome: 'Recepção', ramal: '2001', servidor: 'starcloud1-starsonic.com.br', protocolo: 'tcp' } as const;
+      return {
+        state: {
+          ...semConta({
+            servidor: migrada.servidor,
+            protocolo: migrada.protocolo,
+            ramal: migrada.ramal,
+            nome: migrada.nome,
+            erro: 'Digite a senha de novo para continuar.',
+            ocupado: false,
+            pedeSenha: true,
+            contaId: migrada.id,
+          }),
+          contas: [{ ...migrada, emUso: true }],
+        },
+      };
+    }
     case 'principal':
       return { state: principal() };
     case 'recentes':
@@ -124,6 +143,7 @@ export function createScenario(nome: string): Scenario | undefined {
 export const SCENARIO_NAMES = [
   'entrar',
   'entrar-erro',
+  'entrar-pede-senha',
   'principal',
   'recentes',
   'contatos',
