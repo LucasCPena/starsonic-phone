@@ -46,6 +46,31 @@ function Show-Log {
     Write-Host '--- fim do diagnostico.log ---'
 }
 
+# A pasta do WebView2 do app (%LOCALAPPDATA%\Starsonic Phone\WebView2) e a mesma da instalacao do app antigo: a que
+# este teste cria sai no fim (o Test-Installer.ps1, depois, confere que a desinstalacao nao deixa nada nela).
+$appLocal = Join-Path $env:LOCALAPPDATA 'Starsonic Phone'
+$webviewData = Join-Path $appLocal 'WebView2'
+$hadAppLocal = Test-Path $appLocal
+$hadWebviewData = Test-Path $webviewData
+
+function Remove-WebViewData {
+    if ($hadWebviewData) {
+        return
+    }
+    # Os processos do WebView2 saem logo depois do app; ate la, os arquivos ficam presos.
+    $removed = Wait-Until -TimeoutSeconds 20 -IntervalMilliseconds 500 -Condition {
+        if (Test-Path $webviewData) {
+            Remove-Item -Path $webviewData -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        return -not (Test-Path $webviewData)
+    }
+    if (-not $removed) {
+        Write-Warning "A pasta $webviewData nao saiu."
+    } elseif (-not $hadAppLocal -and (Test-Path $appLocal) -and -not (Get-ChildItem -Path $appLocal -Force)) {
+        Remove-Item -Path $appLocal -Force -ErrorAction SilentlyContinue
+    }
+}
+
 $data = Join-Path ([System.IO.Path]::GetTempPath()) ('starsonic-novo-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $data | Out-Null
 $log = Join-Path $data 'diagnostico.log'
@@ -113,6 +138,7 @@ try {
         Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
     }
     Show-Log -Path $log
+    Remove-WebViewData
 }
 
 if ($failures.Count -gt 0) {

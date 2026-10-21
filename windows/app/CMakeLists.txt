@@ -61,10 +61,24 @@ function(rc_path out file)
   string(REPLACE "\\" "\\\\" native "${native}")
   set(${out} "\"${native}\"" PARENT_SCOPE)
 endfunction()
-rc_path(STARSONIC_ICON_PATH ${REPO_DIR}/branding/overlay/microsip/res/microsip.ico)
-rc_path(STARSONIC_PROFILE_PATH ${REPO_DIR}/branding/perfil.ini)
-rc_path(STARSONIC_MANIFEST_PATH ${CMAKE_CURRENT_SOURCE_DIR}/res/app.manifest)
 set(GENERATED_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
+
+# O perfil vai para o executavel sem os comentarios, como no Build-App.ps1 (a mesma regra do leitor: tudo depois do
+# primeiro ';' sai; as linhas com '#' no comeco tambem). Os comentarios citam o app antigo, que nao pode aparecer no
+# executavel (build/check_branding.py).
+set(PROFILE_SOURCE ${REPO_DIR}/branding/perfil.ini)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${PROFILE_SOURCE})
+file(READ ${PROFILE_SOURCE} profile_text)
+string(REPLACE "\r" "" profile_text "${profile_text}")
+string(REGEX REPLACE ";[^\n]*" "" profile_text "${profile_text}")
+string(REGEX REPLACE "(^|\n)[ \t]*#[^\n]*" "\\1" profile_text "${profile_text}")
+string(REGEX REPLACE "[ \t]+\n" "\n" profile_text "${profile_text}")
+string(REGEX REPLACE "\n\n+" "\n" profile_text "${profile_text}")
+file(WRITE ${GENERATED_DIR}/perfil.ini "${profile_text}")
+
+rc_path(STARSONIC_ICON_PATH ${REPO_DIR}/branding/overlay/microsip/res/microsip.ico)
+rc_path(STARSONIC_PROFILE_PATH ${GENERATED_DIR}/perfil.ini)
+rc_path(STARSONIC_MANIFEST_PATH ${CMAKE_CURRENT_SOURCE_DIR}/res/app.manifest)
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/res/app_build.h.in ${GENERATED_DIR}/app_build.h @ONLY)
 
 file(GLOB APP_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
