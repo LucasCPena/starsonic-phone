@@ -63,6 +63,60 @@ jobs:
           if [ -d tests/python ]; then env -u GITHUB_ACTIONS python3 -m unittest discover -s tests/python -v; fi
           python3 build/check_source_text.py
 
+  # A interface do app novo (windows/ui): o build do esbuild e as telas no Chromium do Playwright, contra a ponte
+  # falsa. As capturas de cada tela nos dois temas vão como artefato; o dist/ vai para o executável (Task 11).
+  ui:
+    name: Interface (Playwright, Linux)
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: windows/ui
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: windows/ui/package-lock.json
+
+      - name: Dependências (npm ci)
+        run: npm ci
+
+      - name: Build (tsc e esbuild)
+        run: npm run build
+
+      - name: Chromium do Playwright
+        run: npx playwright install chromium --with-deps
+
+      - name: Testes das telas (Playwright)
+        run: npx playwright test
+
+      - name: Publicar as capturas
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: capturas-interface
+          path: windows/ui/test-results/capturas/
+          if-no-files-found: warn
+
+      - name: Publicar o relatório do Playwright
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: relatorio-playwright
+          path: |
+            windows/ui/playwright-report/
+            windows/ui/test-results/saida/
+          if-no-files-found: ignore
+
+      - name: Publicar a interface empacotada
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-dist
+          path: windows/ui/dist/
+          if-no-files-found: error
+
   windows:
     name: Windows (Win32, Release)
     runs-on: windows-2022

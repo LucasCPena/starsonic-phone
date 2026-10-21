@@ -1,0 +1,568 @@
+// As telas fora da ligação (Entrar, Teclado, Recentes, Contatos, Configurações e Sobre) contra a ponte falsa,
+// nos temas claro e escuro: os textos exatos, os comandos que saem, o axe e uma captura por tela e tema.
+import { test, expect, type Page } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
+import { mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const DIST = fileURLToPath(new URL('../dist/', import.meta.url));
+const CAPTURAS = fileURLToPath(new URL('../test-results/capturas/', import.meta.url));
+
+type Comando = Record<string, unknown>;
+
+async function abrir(page: Page, cenario: string): Promise<void> {
+  await page.goto(`/index.html?fake=${cenario}`);
+  await expect(page.locator('body[data-pronto]')).toHaveCount(1);
+}
+
+async function comandos(page: Page): Promise<Comando[]> {
+  return page.evaluate(() => (window as unknown as { __comandos: Comando[] }).__comandos);
+}
+
+async function esperarComando(page: Page, esperado: Comando): Promise<void> {
+  await expect.poll(() => comandos(page)).toContainEqual({ v: 1, ...esperado });
+}
+
+async function empurrar(page: Page, mensagem: unknown): Promise<void> {
+  await page.evaluate((m) => (window as unknown as { __fake: { push(m: unknown): void } }).__fake.push(m), mensagem);
+}
+
+async function verTextos(page: Page, textos: string[]): Promise<void> {
+  for (const texto of textos) {
+    await expect(page.getByText(texto, { exact: true }).first(), texto).toBeVisible();
+  }
+}
+
+async function semViolacoesSerias(page: Page): Promise<void> {
+  const resultado = await new AxeBuilder({ page }).analyze();
+  const serias = resultado.violations
+    .filter((v) => v.impact === 'serious' || v.impact === 'critical')
+    .map((v) => ({ regra: v.id, impacto: v.impact, onde: v.nodes.map((n) => n.target.join(' ')) }));
+  expect(serias, JSON.stringify(serias, null, 2)).toEqual([]);
+}
+
+async function capturar(page: Page, nome: string, tema: string): Promise<void> {
+  mkdirSync(CAPTURAS, { recursive: true });
+  await page.evaluate(() => document.fonts.ready);
+  // O ponteiro na barra de título: nenhum botão em hover na captura.
+  await page.mouse.move(200, 10);
+  await page.screenshot({ path: join(CAPTURAS, `${nome}-${tema}.png`) });
+}
+
+for (const tema of ['light', 'dark'] as const) {
+  test.describe(`tema ${tema}`, () => {
+    test.use({ colorScheme: tema });
+
+    test('Entrar shows the exact texts and sends login with the fields', async ({ page }) => {
+      await abrir(page, 'entrar');
+      await verTextos(page, [
+        'Starsonic Phone',
+        'Ramal no computador',
+        'Entre com o seu ramal',
+        'Servidor (endereço ou IP)',
+        'Protocolo',
+        'UDP',
+        'TCP',
+        'Ramal',
+        'Senha',
+        'Nome da conta (opcional)',
+        'Entrar',
+        '(11) 5060-3000',
+      ]);
+      await expect(page.getByText('Precisa de ajuda?')).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Fechar' })).toBeVisible();
+      await semViolacoesSerias(page);
+      await capturar(page, 'entrar', tema);
+
+      await page.getByLabel('Servidor (endereço ou IP)').fill('starcloud1-starsonic.com.br');
+      await page.getByRole('radio', { name: 'TCP' }).check();
+      await page.getByLabel('Ramal', { exact: true }).fill('2001');
+      await page.getByLabel('Senha', { exact: true }).fill('segredo');
+      await page.getByRole('button', { name: 'Mostrar a senha' }).click();
+      await expect(page.getByLabel('Senha', { exact: true })).toHaveAttribute('type', 'text');
+      await page.getByLabel('Nome da conta (opcional)').fill('Recepção');
+      await page.getByRole('button', { name: 'Entrar' }).click();
+      await esperarComando(page, {
+        cmd: 'login',
+        servidor: 'starcloud1-starsonic.com.br',
+        protocolo: 'tcp',
+        ramal: '2001',
+        senha: 'segredo',
+        nome: 'Recepção',
+      });
+      // O C++ falso registra: "Conectando…" e depois a tela principal.
+      await expect(page.getByRole('button', { name: 'Conectando…' })).toBeDisabled();
+      await expect(page.getByRole('navigation', { name: 'Seções' })).toBeVisible();
+    });
+
+    test('Entrar shows the error under the password and keeps the fields', async ({ page }) => {
+      await abrir(page, 'entrar-erro');
+      await verTextos(page, ['Ramal ou senha incorretos.']);
+      await expect(page.getByLabel('Servidor (endereço ou IP)')).toHaveValue('starcloud1-starsonic.com.br');
+      await expect(page.getByLabel('Ramal', { exact: true })).toHaveValue('2001');
+      await expect(page.getByLabel('Nome da conta (opcional)')).toHaveValue('Recepção');
+      const senha = page.getByLabel('Senha', { exact: true });
+      await expect(senha).toHaveValue('');
+      await expect(senha).toHaveAttribute('aria-invalid', 'true');
+      await expect(senha).toHaveAccessibleDescription('Ramal ou senha incorretos.');
+      await semViolacoesSerias(page);
+      await capturar(page, 'entrar-erro', tema);
+
+      await page.getByRole('link', { name: '(11) 5060-3000' }).click();
+      await esperarComando(page, { cmd: 'openExternal', url: 'tel:+551150603000' });
+    });
+
+    test('Teclado dials what is typed on the keys and on the keyboard', async ({ page }) => {
+      await abrir(page, 'principal');
+      await verTextos(page, [
+        'Starsonic Phone',
+        'Recepção · 2001',
+        'Conectado · starcloud1-starsonic.com.br',
+        'Não perturbe',
+        'Atender automático',
+        'Teclado',
+        'Recentes',
+        'Contatos',
+        'Ligar',
+      ]);
+      const numero = page.getByRole('textbox', { name: 'Número' });
+      for (const tecla of ['2', '0', '0', '3']) {
+        await page.getByRole('button', { name: tecla, exact: true }).click();
+      }
+      await expect(numero).toHaveValue('2003');
+      await expect(page.getByRole('button', { name: /Ana Souza/ })).toBeVisible();
+      await verTextos(page, ['Contato · 2003']);
+      await semViolacoesSerias(page);
+      await capturar(page, 'teclado', tema);
+
+      await page.keyboard.press('Enter');
+      await esperarComando(page, { cmd: 'dial', numero: '2003' });
+
+      // Esc limpa; o teclado físico digita com o foco fora do campo (num botão do teclado).
+      await page.keyboard.press('Escape');
+      await expect(numero).toHaveValue('');
+      await page.keyboard.type('2004');
+      await expect(numero).toHaveValue('2004');
+      await page.keyboard.press('Backspace');
+      await page.keyboard.type('5');
+      await expect(numero).toHaveValue('2005');
+      await page.getByRole('button', { name: 'Apagar' }).click();
+      await expect(numero).toHaveValue('200');
+      await numero.focus();
+      await page.keyboard.type('3');
+      await expect(numero).toHaveValue('2003');
+      const antes = (await comandos(page)).filter((c) => c.cmd === 'dial').length;
+      await page.keyboard.press('Enter');
+      await expect.poll(async () => (await comandos(page)).filter((c) => c.cmd === 'dial').length).toBe(antes + 1);
+
+      // A sugestão liga para o contato (com a regra dos contatos).
+      await page.getByRole('button', { name: /Ana Souza/ }).click();
+      await esperarComando(page, { cmd: 'dial', numero: '2003', contato: true });
+      await page.getByRole('button', { name: 'Ligar', exact: true }).click();
+      expect((await comandos(page)).filter((c) => c.cmd === 'dial').length).toBe(antes + 3);
+    });
+
+    test('Ctrl+1, 2 and 3 switch the tab', async ({ page }) => {
+      await abrir(page, 'principal');
+      const nav = page.getByRole('navigation', { name: 'Seções' });
+      await page.keyboard.press('Control+2');
+      await expect(nav.getByRole('button', { name: 'Recentes' })).toHaveAttribute('aria-current', 'page');
+      await expect(page.getByRole('button', { name: 'Todas' })).toBeVisible();
+      await esperarComando(page, { cmd: 'viewRecents' });
+      await page.keyboard.press('Control+3');
+      await expect(nav.getByRole('button', { name: 'Contatos' })).toHaveAttribute('aria-current', 'page');
+      await page.keyboard.press('Control+1');
+      await expect(nav.getByRole('button', { name: 'Teclado' })).toHaveAttribute('aria-current', 'page');
+      await nav.getByRole('button', { name: 'Recentes' }).click();
+      await expect(page.getByRole('button', { name: 'Todas' })).toBeVisible();
+    });
+
+    test('the header sends Não perturbe, Atender automático, the window and the account commands', async ({ page }) => {
+      await abrir(page, 'principal');
+      const dnd = page.getByRole('button', { name: 'Não perturbe' });
+      await expect(dnd).toHaveAttribute('aria-pressed', 'false');
+      await dnd.click();
+      await esperarComando(page, { cmd: 'setDnd', on: true });
+      await expect(dnd).toHaveAttribute('aria-pressed', 'true');
+      await page.getByRole('button', { name: 'Atender automático' }).click();
+      await esperarComando(page, { cmd: 'setAutoAnswer', on: true });
+
+      await page.getByRole('button', { name: 'Minimizar' }).click();
+      await esperarComando(page, { cmd: 'minimize' });
+      await page.getByRole('button', { name: 'Fechar para a bandeja' }).click();
+      await esperarComando(page, { cmd: 'closeToTray' });
+
+      await page.getByRole('button', { name: /Trocar de conta/ }).click();
+      await expect(page.getByRole('menuitemradio', { name: /Recepção · 2001/ })).toHaveAttribute('aria-checked', 'true');
+      await semViolacoesSerias(page);
+      await capturar(page, 'contas', tema);
+      await page.getByRole('menuitemradio', { name: /Caixa 2 · 2015/ }).click();
+      await esperarComando(page, { cmd: 'selectAccount', contaId: '41aa07c3d2e95b18' });
+      await expect(page.getByText('Caixa 2 · 2015', { exact: true })).toBeVisible();
+
+      await page.getByRole('button', { name: 'Menu' }).click();
+      await verTextos(page, ['Configurações', 'Sobre', 'Sair']);
+      await page.keyboard.press('Escape');
+      await expect(page.getByRole('menu')).toHaveCount(0);
+      await page.getByRole('button', { name: 'Menu' }).click();
+      await page.getByRole('menuitem', { name: 'Sair' }).click();
+      await esperarComando(page, { cmd: 'quit' });
+    });
+
+    test('Não perturbe on turns off', async ({ page }) => {
+      await abrir(page, 'nao-perturbe');
+      const dnd = page.getByRole('button', { name: 'Não perturbe' });
+      await expect(dnd).toHaveAttribute('aria-pressed', 'true');
+      await semViolacoesSerias(page);
+      await capturar(page, 'nao-perturbe', tema);
+      await dnd.click();
+      await esperarComando(page, { cmd: 'setDnd', on: false });
+    });
+
+    test('Recentes groups by day, filters the missed calls and saves a contact', async ({ page }) => {
+      await abrir(page, 'recentes');
+      await esperarComando(page, { cmd: 'viewRecents' });
+      await verTextos(page, [
+        'Todas',
+        'Perdidas · 2',
+        'Hoje',
+        'Ontem',
+        'Ana Souza',
+        'Perdida · 14:32',
+        '1150603000',
+        'Feita · 11:05 · 4 min 18 s',
+        'Financeiro',
+        'Recebida · 09:47 · 1 min 02 s',
+        '3001',
+        'Perdida · 17:58',
+        'Carlos Lima',
+        'Feita · 16:20 · 12 min 40 s',
+      ]);
+      await semViolacoesSerias(page);
+      await capturar(page, 'recentes', tema);
+
+      await page.getByRole('button', { name: 'Ligar para Ana Souza' }).click();
+      await esperarComando(page, { cmd: 'dial', numero: '2003' });
+
+      await page.getByRole('button', { name: 'Perdidas · 2' }).click();
+      await expect(page.getByRole('button', { name: 'Perdidas · 2' })).toHaveAttribute('aria-pressed', 'true');
+      await expect(page.getByText('Carlos Lima')).toHaveCount(0);
+      await expect(page.getByText('3001', { exact: true })).toBeVisible();
+
+      await page.getByRole('button', { name: /^3001/ }).click();
+      await expect(page.getByRole('button', { name: 'Ligar', exact: true })).toBeVisible();
+      await page.getByRole('button', { name: 'Salvar contato' }).click();
+      await expect(page.getByRole('heading', { name: 'Novo contato' })).toBeVisible();
+      await expect(page.getByLabel('Número')).toHaveValue('3001');
+      await page.getByLabel('Nome', { exact: true }).fill('Paula Reis');
+      await page.getByRole('button', { name: 'Salvar contato' }).click();
+      await esperarComando(page, { cmd: 'saveContact', nome: 'Paula Reis', numero: '3001', observacao: '' });
+      await expect(page.getByRole('button', { name: 'Todas' })).toBeVisible();
+    });
+
+    test('Contatos searches, dials, adds, edits and removes', async ({ page }) => {
+      await abrir(page, 'contatos');
+      await expect(page.getByRole('searchbox', { name: 'Buscar contato' })).toHaveAttribute('placeholder', 'Buscar contato');
+      await verTextos(page, [
+        'A',
+        'Ana Souza',
+        'Ramal 2003 · Comercial',
+        'Atendimento Starsonic',
+        '(11) 5060-3000',
+        'C',
+        'Carlos Lima',
+        'Ramal 2007 · Suporte',
+        'F',
+        'Financeiro',
+        'Ramal 2010',
+      ]);
+      await expect(page.getByRole('button', { name: 'Atender automático' })).toHaveAttribute('aria-pressed', 'true');
+      await semViolacoesSerias(page);
+      await capturar(page, 'contatos', tema);
+
+      await page.getByRole('button', { name: /^Ana Souza/ }).click();
+      await esperarComando(page, { cmd: 'dial', numero: '2003', contato: true });
+      await page.getByRole('button', { name: 'Ligar para Carlos Lima' }).click();
+      await esperarComando(page, { cmd: 'dial', numero: '2007', contato: true });
+
+      await page.getByRole('searchbox', { name: 'Buscar contato' }).fill('car');
+      await expect(page.getByText('Carlos Lima')).toBeVisible();
+      await expect(page.getByText('Ana Souza')).toHaveCount(0);
+      await page.getByRole('searchbox', { name: 'Buscar contato' }).fill('5060');
+      await expect(page.getByText('Atendimento Starsonic')).toBeVisible();
+      await expect(page.getByText('Carlos Lima')).toHaveCount(0);
+      await page.getByRole('searchbox', { name: 'Buscar contato' }).fill('');
+
+      await page.getByRole('button', { name: 'Novo contato' }).click();
+      await expect(page.getByRole('heading', { name: 'Novo contato' })).toBeVisible();
+      await verTextos(page, ['Nome', 'Número', 'Observação (opcional)']);
+      await semViolacoesSerias(page);
+      await capturar(page, 'contato-novo', tema);
+      await page.getByLabel('Nome', { exact: true }).fill('Ana Souza');
+      await page.getByLabel('Número').fill('(11) 98888-7777');
+      await page.getByLabel('Observação (opcional)').fill('cliente');
+      await page.getByRole('button', { name: 'Salvar contato' }).click();
+      await esperarComando(page, { cmd: 'saveContact', nome: 'Ana Souza', numero: '(11) 98888-7777', observacao: 'cliente' });
+      await expect(page.getByRole('searchbox', { name: 'Buscar contato' })).toBeVisible();
+
+      await page.getByRole('button', { name: 'Mais opções para Carlos Lima' }).click();
+      await page.getByRole('menuitem', { name: 'Editar' }).click();
+      await expect(page.getByRole('heading', { name: 'Editar contato' })).toBeVisible();
+      await expect(page.getByLabel('Número')).toHaveValue('2007');
+      await page.getByLabel('Observação (opcional)').fill('');
+      await page.getByRole('button', { name: 'Salvar contato' }).click();
+      await esperarComando(page, { cmd: 'saveContact', id: 'b7c8d9e0f1a20344', nome: 'Carlos Lima', numero: '2007', observacao: '' });
+
+      await page.getByRole('button', { name: 'Mais opções para Financeiro' }).click();
+      await page.getByRole('menuitem', { name: 'Remover' }).click();
+      const dialogo = page.getByRole('dialog');
+      await expect(dialogo).toContainText('Financeiro');
+      await dialogo.getByRole('button', { name: 'Cancelar' }).click();
+      await expect(page.getByRole('dialog')).toHaveCount(0);
+      expect((await comandos(page)).some((c) => c.cmd === 'removeContact')).toBe(false);
+      await page.getByRole('button', { name: 'Mais opções para Financeiro' }).click();
+      await page.getByRole('menuitem', { name: 'Remover' }).click();
+      await page.getByRole('dialog').getByRole('button', { name: 'Remover' }).click();
+      await esperarComando(page, { cmd: 'removeContact', id: 'd4e5f6a7b8c90122' });
+    });
+
+    test('Configurações shows accounts, audio and calls and sends the settings', async ({ page }) => {
+      await abrir(page, 'configuracoes');
+      await verTextos(page, [
+        'Configurações',
+        'Contas',
+        'Recepção · 2001',
+        'starcloud1-starsonic.com.br · UDP · em uso',
+        'Caixa 2 · 2015',
+        'starcloud-starsonic.com.br · TCP',
+        'Adicionar conta',
+        'Áudio',
+        'Microfone',
+        'Alto-falante',
+        'Toque',
+        'Ligações',
+        'Atender automaticamente',
+        'Depois de 3 segundos tocando',
+        'Iniciar com o Windows',
+      ]);
+      await expect(page.getByLabel('Alto-falante')).toHaveValue('Fone Bluetooth');
+      await expect(page.getByLabel('Alto-falante').locator('option:checked')).toHaveText('Fone Bluetooth (desconectado)');
+      await expect(page.getByLabel('Microfone')).toHaveValue('Headset USB');
+      await semViolacoesSerias(page);
+      await capturar(page, 'configuracoes', tema);
+
+      await page.getByRole('switch', { name: 'Atender automaticamente' }).click();
+      await esperarComando(page, { cmd: 'setAutoAnswer', on: true });
+      await page.getByLabel('Tempo para atender').selectOption('5');
+      await esperarComando(page, { cmd: 'setAutoAnswer', on: true, segundos: 5 });
+      await verTextos(page, ['Depois de 5 segundos tocando']);
+      const iniciar = page.getByRole('switch', { name: 'Iniciar com o Windows' });
+      await expect(iniciar).toHaveAttribute('aria-checked', 'true');
+      await iniciar.click();
+      await esperarComando(page, { cmd: 'setSetting', chave: 'iniciarComWindows', valor: false });
+      await page.getByLabel('Microfone').selectOption({ label: 'Microfone (Realtek)' });
+      await esperarComando(page, { cmd: 'setAudio', microfone: 'Microfone (Realtek)' });
+      await page.getByLabel('Alto-falante').selectOption('');
+      await esperarComando(page, { cmd: 'setAudio', altoFalante: '' });
+
+      // Editar a conta: a tela Entrar preenchida, a senha vazia, o contaId de volta no login.
+      await page.getByRole('button', { name: 'Editar a conta Caixa 2' }).click();
+      await expect(page.getByRole('heading', { name: 'Editar conta' })).toBeVisible();
+      await expect(page.getByLabel('Servidor (endereço ou IP)')).toHaveValue('starcloud-starsonic.com.br');
+      await expect(page.getByRole('radio', { name: 'TCP' })).toBeChecked();
+      await expect(page.getByLabel('Ramal', { exact: true })).toHaveValue('2015');
+      await expect(page.getByLabel('Nome da conta (opcional)')).toHaveValue('Caixa 2');
+      await semViolacoesSerias(page);
+      await capturar(page, 'conta-editar', tema);
+      await page.getByRole('button', { name: 'Entrar' }).click();
+      await esperarComando(page, {
+        cmd: 'login',
+        servidor: 'starcloud-starsonic.com.br',
+        protocolo: 'tcp',
+        ramal: '2015',
+        senha: '',
+        nome: 'Caixa 2',
+        contaId: '41aa07c3d2e95b18',
+      });
+      // O C++ falso registra: o formulário fecha sozinho e volta às Configurações.
+      await expect(page.getByRole('heading', { name: 'Configurações' })).toBeVisible();
+
+      await page.getByRole('button', { name: 'Adicionar conta' }).click();
+      await expect(page.getByRole('heading', { name: 'Adicionar conta' })).toBeVisible();
+      await expect(page.getByLabel('Servidor (endereço ou IP)')).toHaveValue('');
+      await page.getByRole('button', { name: 'Voltar' }).click();
+      await page.getByRole('button', { name: 'Voltar' }).click();
+      await expect(page.getByRole('textbox', { name: 'Número' })).toBeVisible();
+    });
+
+    test('Sobre shows the version, the license and the links', async ({ page }) => {
+      await abrir(page, 'sobre');
+      await verTextos(page, [
+        'Sobre',
+        'Starsonic Phone 0.1.0-rc.1',
+        'Licença GPL v3 · usa o PJSIP (GPL v2 ou posterior) e o Opus (BSD)',
+        'starsonic.com.br',
+        '(11) 5060-3000',
+        'Também no WhatsApp · seg. a sex., 8h às 18h',
+        'Código-fonte',
+        'github.com/LucasCPena/starsonic-phone',
+        'Enviar diagnóstico',
+      ]);
+      const logo = page.getByRole('img', { name: 'Starsonic soluções de voz e dados' });
+      const esperado = tema === 'dark' ? 'starsonic-logo-negativo.png' : 'starsonic-logo-principal.png';
+      await expect.poll(() => logo.evaluate((img: HTMLImageElement) => img.currentSrc)).toContain(esperado);
+      expect(await logo.evaluate((img: HTMLImageElement) => img.getBoundingClientRect().width)).toBeGreaterThanOrEqual(160);
+      await semViolacoesSerias(page);
+      await capturar(page, 'sobre', tema);
+
+      await page.getByRole('button', { name: 'Enviar diagnóstico' }).click();
+      await esperarComando(page, { cmd: 'sendDiagnostics' });
+      await page.getByRole('button', { name: 'Abrir starsonic.com.br' }).click();
+      await esperarComando(page, { cmd: 'openExternal', url: 'https://starsonic.com.br' });
+      await page.getByRole('button', { name: 'Abrir o WhatsApp' }).click();
+      await esperarComando(page, { cmd: 'openExternal', url: 'https://wa.me/551150603000' });
+      await page.getByRole('button', { name: 'Abrir o código-fonte' }).click();
+      await esperarComando(page, { cmd: 'openExternal', url: 'https://github.com/LucasCPena/starsonic-phone' });
+      await page.getByRole('button', { name: 'Voltar' }).click();
+      await expect(page.getByRole('textbox', { name: 'Número' })).toBeVisible();
+    });
+  });
+}
+
+test.describe('ponte e janela', () => {
+  test('the interface sends ready first and opens Configurações and Sobre from the menu', async ({ page }) => {
+    await abrir(page, 'principal');
+    expect((await comandos(page))[0]).toEqual({ v: 1, cmd: 'ready' });
+    await page.getByRole('button', { name: 'Menu' }).click();
+    await page.getByRole('menuitem', { name: 'Configurações' }).click();
+    await expect(page.getByRole('heading', { name: 'Configurações' })).toBeVisible();
+    await page.getByRole('button', { name: 'Voltar' }).click();
+    await page.getByRole('button', { name: 'Menu' }).click();
+    await page.getByRole('menuitem', { name: 'Sobre' }).click();
+    await expect(page.getByRole('heading', { name: 'Sobre' })).toBeVisible();
+  });
+
+  test('the main screen follows a theme change without reloading', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'light' });
+    await abrir(page, 'principal');
+    const fundo = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+    expect(await fundo()).toBe('rgb(255, 255, 255)'); // #ffffff
+    await page.getByRole('button', { name: '2', exact: true }).click();
+    await page.emulateMedia({ colorScheme: 'dark' });
+    expect(await fundo()).toBe('rgb(10, 19, 48)'); // #0a1330
+    // Sem recarregar: o número digitado continua.
+    await expect(page.getByRole('textbox', { name: 'Número' })).toHaveValue('2');
+    await page.emulateMedia({ colorScheme: 'light' });
+    expect(await fundo()).toBe('rgb(255, 255, 255)');
+  });
+
+  test('the bundle loads nothing from the network', async ({ page, baseURL }) => {
+    const pedidos: string[] = [];
+    page.on('request', (r) => pedidos.push(r.url()));
+    for (const cenario of ['entrar', 'principal', 'recentes', 'contatos', 'configuracoes', 'sobre']) {
+      await abrir(page, cenario);
+      await page.evaluate(() => document.fonts.ready);
+    }
+    const origem = new URL(baseURL!).origin;
+    expect(pedidos.filter((u) => !u.startsWith(origem + '/') && !u.startsWith('data:'))).toEqual([]);
+    // A fonte e os logos vêm do próprio app.
+    expect(pedidos.some((u) => u.endsWith('/assets/PlusJakartaSans-Variable.woff2'))).toBe(true);
+    expect(await page.evaluate(() => document.fonts.check('700 16px "Plus Jakarta Sans"'))).toBe(true);
+
+    // Nenhum endereço de rede nos arquivos que a página lê, além dos links que o openExternal abre no
+    // navegador e dos nomes de espaço do SVG (identificadores, não pedidos).
+    const permitidos = new Set([
+      'https://starsonic.com.br',
+      'https://wa.me/551150603000',
+      'https://github.com/LucasCPena/starsonic-phone',
+      'http://www.w3.org/2000/svg',
+      'http://www.w3.org/1999/xlink',
+      'http://www.w3.org/1999/xhtml',
+      'http://www.w3.org/1998/Math/MathML',
+    ]);
+    const arquivos: string[] = [];
+    const visitar = (pasta: string) => {
+      for (const nome of readdirSync(pasta)) {
+        const caminho = join(pasta, nome);
+        if (statSync(caminho).isDirectory()) visitar(caminho);
+        else if (/\.(html|js|css)$/.test(nome)) arquivos.push(caminho);
+      }
+    };
+    visitar(DIST);
+    expect(arquivos.map((a) => a.slice(DIST.length)).sort()).toEqual(expect.arrayContaining(['app.css', 'app.js', 'index.html']));
+    const encontrados = arquivos.flatMap((a) => readFileSync(a, 'utf8').match(/https?:\/\/[^\s"'`)<>\\]*/g) ?? []);
+    expect(encontrados.filter((u) => !permitidos.has(u))).toEqual([]);
+    const html = readFileSync(join(DIST, 'index.html'), 'utf8');
+    expect(html).not.toMatch(/(src|href)=["']?(https?:)?\/\//);
+  });
+
+  test('a toast shows for 2 seconds', async ({ page }) => {
+    await abrir(page, 'principal');
+    await empurrar(page, { v: 1, type: 'toast', texto: 'A troca de conta fica para o fim da ligação.' });
+    const aviso = page.getByRole('status').filter({ hasText: 'A troca de conta fica para o fim da ligação.' });
+    await expect(aviso).toBeVisible();
+    await empurrar(page, { v: 1, type: 'toast', texto: 'Sem conexão com o servidor. Tente de novo em instantes.' });
+    await expect(page.getByText('A troca de conta fica para o fim da ligação.')).toHaveCount(0);
+    await expect(page.getByText('Sem conexão com o servidor. Tente de novo em instantes.')).toBeVisible();
+    await expect(page.getByText('Sem conexão com o servidor. Tente de novo em instantes.')).toHaveCount(0, { timeout: 3500 });
+  });
+
+  test('a message of another version asks to reinstall', async ({ page }) => {
+    await abrir(page, 'principal');
+    await empurrar(page, { v: 2, type: 'toast', texto: 'x' });
+    await expect(page.getByText('Reinstale o Starsonic Phone.')).toBeVisible();
+    await expect(page.getByText('x', { exact: true })).toHaveCount(0);
+  });
+
+  test('a dial link fills the keypad each time tecladoVez changes', async ({ page }) => {
+    await abrir(page, 'recentes');
+    const estado = await page.evaluate(() => (window as unknown as { __fake: { state(): unknown } }).__fake.state());
+    await empurrar(page, { v: 1, type: 'state', state: { ...(estado as object), teclado: '2004', tecladoVez: 1 } });
+    await expect(page.getByRole('textbox', { name: 'Número' })).toHaveValue('2004');
+    await page.getByRole('button', { name: 'Apagar' }).click();
+    await empurrar(page, { v: 1, type: 'state', state: { ...(estado as object), teclado: '2004', tecladoVez: 1, perdidas: 0 } });
+    await expect(page.getByRole('textbox', { name: 'Número' })).toHaveValue('200');
+    await empurrar(page, { v: 1, type: 'state', state: { ...(estado as object), teclado: '2004', tecladoVez: 2 } });
+    await expect(page.getByRole('textbox', { name: 'Número' })).toHaveValue('2004');
+    expect((await comandos(page)).some((c) => c.cmd === 'dial')).toBe(false);
+  });
+
+  test('the account line shows the registration state', async ({ page }) => {
+    await abrir(page, 'principal');
+    const estado = (await page.evaluate(() => (window as unknown as { __fake: { state(): unknown } }).__fake.state())) as {
+      conta: Record<string, unknown>;
+    };
+    await empurrar(page, {
+      v: 1,
+      type: 'state',
+      state: { ...estado, conta: { ...estado.conta, status: 'erro', texto: 'Ramal ou senha incorretos.' } },
+    });
+    await expect(page.getByText('Ramal ou senha incorretos.')).toBeVisible();
+    await empurrar(page, { v: 1, type: 'state', state: { ...estado, conta: { ...estado.conta, nome: '', status: 'sem_conexao', texto: '' } } });
+    await expect(page.getByText('2001', { exact: true })).toBeVisible();
+    await expect(page.getByText('Sem conexão', { exact: true })).toBeVisible();
+  });
+
+  test('focus is visible with a 3 px ring', async ({ page }) => {
+    await abrir(page, 'principal');
+    // Tab até uma tecla do Teclado (antes vêm a barra de título e o cabeçalho).
+    for (let i = 0; i < 30; i++) {
+      await page.keyboard.press('Tab');
+      if (await page.evaluate(() => document.activeElement?.classList.contains('key'))) break;
+    }
+    const anel = await page.evaluate(() => {
+      const el = document.activeElement as HTMLElement;
+      const s = getComputedStyle(el);
+      return { largura: s.outlineWidth, estilo: s.outlineStyle, afastamento: s.outlineOffset };
+    });
+    expect(anel).toEqual({ largura: '3px', estilo: 'solid', afastamento: '2px' });
+  });
+
+  test('animations are off with prefers-reduced-motion', async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await abrir(page, 'principal');
+    const duracao = await page.getByRole('button', { name: 'Ligar', exact: true }).evaluate((el) => getComputedStyle(el).transitionDuration);
+    expect(parseFloat(duracao)).toBeLessThan(0.001);
+  });
+});

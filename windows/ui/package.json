@@ -1,0 +1,24 @@
+{
+  "name": "starsonic-phone-ui",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Interface do Starsonic Phone para Windows (WebView2)",
+  "license": "GPL-3.0-only",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p .",
+    "build": "tsc --noEmit -p . && node build.mjs",
+    "test": "playwright test"
+  },
+  "dependencies": {
+    "preact": "10.29.8"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.11.3",
+    "@playwright/test": "1.56.1",
+    "@types/node": "22.20.5",
+    "esbuild": "0.28.2",
+    "playwright-core": "1.56.1",
+    "typescript": "5.9.3"
+  }
+}
