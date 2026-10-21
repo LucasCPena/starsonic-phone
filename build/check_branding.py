@@ -7,16 +7,19 @@ Onde procura (spec 11.2):
 - instalador: installer/*.nsi|*.nsh (fora dos comentários);
 - literais de texto do código novo: starsonic/**/*.cpp|*.h e branding/branding.h;
 - no executável (--exe): texto ASCII e UTF-16LE.
+- no app novo (spec da W1, 11.2), sem nenhuma exceção: o StarsonicPhone.exe novo (--app-novo), cada
+  arquivo da pasta ui (--ui) e o instalador novo (--instalador), em ASCII/UTF-8 e UTF-16LE.
 
-Só "MicroSIP" exato conta (maiúsculas importam). Uma ocorrência é aceita quando vem logo
-depois de "Copyright (c) 2011-2025, " (aviso de copyright do recurso de versão) ou de
-"Baseado no "/"baseado no " (atribuição da tela Sobre).
+Só "MicroSIP" exato conta (maiúsculas importam). No app antigo, uma ocorrência é aceita quando vem
+logo depois de "Copyright (c) 2011-2025, " (aviso de copyright do recurso de versão) ou de
+"Baseado no "/"baseado no " (atribuição da tela Sobre); no app novo, nenhuma.
 
 No executável, também reprova endereços do MicroSIP ("microsip.org", sem diferenciar
 maiúsculas) fora do aviso "MicroSIP (www.microsip.org)" do copyright (M10: o app não fala
 com os servidores do MicroSIP).
 
-Uso: check_branding.py --repo <pasta> [--exe <arquivo>]   (código 0 = ok, 1 = problemas)
+Uso: check_branding.py --repo <pasta> [--exe <arquivo>] [--app-novo <exe>] [--ui <pasta>] [--instalador <exe>]
+     (código 0 = ok, 1 = problemas)
 """
 import argparse
 import os
@@ -210,15 +213,65 @@ def find_exe_host_problems(exe):
     return [(path.name, offset, snippet) for offset, snippet in sorted(found)]
 
 
+def _strict_occurrences(data, encode, label):
+    """Todas as posições de NAME (exato) e de HOST (sem diferenciar maiúsculas) em data."""
+    unit = len(encode("a"))
+    bad = []
+    for pattern, haystack in ((encode(NAME), data), (encode(HOST), data.lower())):
+        start = 0
+        while True:
+            index = haystack.find(pattern, start)
+            if index < 0:
+                break
+            context = data[max(0, index - 32 * unit):index + len(pattern)]
+            text = context.decode("utf-16-le" if label == "UTF-16LE" else "latin-1", errors="replace")
+            bad.append((index, "%s: %s" % (label, _snippet(text.replace("\x00", " ")))))
+            start = index + len(pattern)
+    return bad
+
+
+def _strict_bytes(data):
+    found = _strict_occurrences(data, lambda text: text.encode("ascii"), "ASCII")
+    found += _strict_occurrences(data, lambda text: text.encode("utf-16-le"), "UTF-16LE")
+    return sorted(found)
+
+
+def find_strict_problems(path):
+    """O app novo e o instalador novo: nenhum "MicroSIP" nem "microsip.org", sem exceção (nem o copyright
+    nem o "Baseado no" do app antigo). Lista de (nome do arquivo, posição em bytes, trecho)."""
+    path = pathlib.Path(path)
+    return [(path.name, offset, snippet) for offset, snippet in _strict_bytes(path.read_bytes())]
+
+
+def find_ui_problems(folder):
+    """Cada arquivo da pasta ui\\ do app novo (HTML, JavaScript, CSS, imagens e fonte), como bytes: o texto em
+    UTF-8 e em UTF-16LE. Lista de (ui/<caminho>, posição em bytes, trecho); a pasta que falta também é um problema."""
+    folder = pathlib.Path(folder)
+    if not folder.is_dir():
+        return [(folder.name or str(folder), 0, "a pasta da interface nao existe: %s" % folder)]
+    found = []
+    for path in sorted(item for item in folder.rglob("*") if item.is_file()):
+        relative = pathlib.PurePosixPath(folder.name, path.relative_to(folder).as_posix()).as_posix()
+        found.extend((relative, offset, snippet) for offset, snippet in _strict_bytes(path.read_bytes()))
+    return found
+
+
 def main(argv):
     parser = argparse.ArgumentParser(description="Procura MicroSIP em textos visíveis.")
     parser.add_argument("--repo", default=str(pathlib.Path(__file__).resolve().parent.parent))
     parser.add_argument("--exe", action="append", default=[])
+    parser.add_argument("--app-novo", action="append", default=[], help="StarsonicPhone.exe do app novo (sem exceções)")
+    parser.add_argument("--ui", action="append", default=[], help="pasta ui\\ do app novo (sem exceções)")
+    parser.add_argument("--instalador", action="append", default=[], help="instalador novo (sem exceções)")
     args = parser.parse_args(argv)
     found = find_problems(args.repo)
     for exe in args.exe:
         found += find_exe_problems(exe)
         found += find_exe_host_problems(exe)
+    for exe in args.app_novo + args.instalador:
+        found += find_strict_problems(exe)
+    for folder in args.ui:
+        found += find_ui_problems(folder)
     for relative, number, snippet in found:
         print("%s:%d: %s" % (relative, number, snippet))
     if found and os.environ.get("GITHUB_ACTIONS") == "true":

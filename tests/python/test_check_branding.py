@@ -118,6 +118,49 @@ class CheckBrandingTest(unittest.TestCase):
         self.write("microsip/res/menu.rc2", 'MENUITEM "Sobre o Starsonic Phone", 1\r\n')
         self.assertEqual(check_branding.main(["--repo", str(self.repo)]), 0)
 
+    # O app novo (spec da W1, 11.2): nenhum "MicroSIP" no StarsonicPhone.exe novo, na pasta ui\ nem no instalador
+    # novo, nem com o copyright ou o "Baseado no" que o app antigo podia ter.
+    def test_new_app_exe_allows_no_microsip_at_all(self):
+        exe = self.write("out-novo/StarsonicPhone.exe",
+                         b"\x00Starsonic Phone\x00" + "Starsonic Phone/0.1.0".encode("utf-16-le") + b"\x00\x00")
+        self.assertEqual(check_branding.find_strict_problems(exe), [])
+        for text in ("Copyright (c) 2011-2025, MicroSIP (www.microsip.org)", "Baseado no MicroSIP", "MicroSIP"):
+            for encoded in (text.encode("ascii"), text.encode("utf-16-le")):
+                exe = self.write("out-novo/StarsonicPhone.exe", b"\x00" + encoded + b"\x00\x00")
+                found = check_branding.find_strict_problems(exe)
+                self.assertTrue(found, (text, encoded))
+                self.assertEqual({item[0] for item in found}, {"StarsonicPhone.exe"})
+
+    def test_new_app_exe_rejects_microsip_hosts_in_any_case(self):
+        for host in ("update.microsip.org", "WWW.MICROSIP.ORG"):
+            exe = self.write("out-novo/StarsonicPhone.exe", b"\x00" + host.encode("utf-16-le") + b"\x00\x00")
+            self.assertEqual(len(check_branding.find_strict_problems(exe)), 1, host)
+
+    def test_ui_folder_is_checked_file_by_file(self):
+        ui = self.repo / "out-novo" / "ui"
+        self.write("out-novo/ui/index.html", "<!doctype html><title>Starsonic Phone</title>")
+        self.write("out-novo/ui/assets/logo.png", b"\x89PNG\r\n\x1a\n\x00\x00")
+        self.assertEqual(check_branding.find_ui_problems(ui), [])
+        self.write("out-novo/ui/app.js", 'const sobre = "Baseado no MicroSIP";\n')
+        self.write("out-novo/ui/assets/fonte.woff2", b"\x00" + "MicroSIP".encode("utf-16-le") + b"\x00")
+        found = sorted(item[0] for item in check_branding.find_ui_problems(ui))
+        self.assertEqual(found, ["ui/app.js", "ui/assets/fonte.woff2"])
+
+    def test_missing_ui_folder_is_a_problem(self):
+        found = check_branding.find_ui_problems(self.repo / "sem-ui")
+        self.assertEqual(len(found), 1)
+        self.assertIn("pasta", found[0][2])
+
+    def test_main_checks_the_new_app_the_ui_and_the_installer(self):
+        exe = self.write("out-novo/StarsonicPhone.exe", b"\x00Starsonic Phone\x00")
+        self.write("out-novo/ui/index.html", "<title>Starsonic Phone</title>")
+        setup = self.write("dist/StarsonicPhone-0.0.0-setup.exe", b"\x00" + "Starsonic Phone".encode("utf-16-le"))
+        args = ["--repo", str(self.repo), "--app-novo", str(exe), "--ui", str(self.repo / "out-novo" / "ui"),
+                "--instalador", str(setup)]
+        self.assertEqual(check_branding.main(args), 0)
+        self.write("dist/StarsonicPhone-0.0.0-setup.exe", b"\x00" + "Desinstalar o MicroSIP".encode("utf-16-le"))
+        self.assertEqual(check_branding.main(args), 1)
+
     def test_repository_has_no_visible_microsip(self):
         found = check_branding.find_problems(ROOT)
         self.assertEqual(found, [], "\n".join("%s:%d: %s" % item for item in found))
