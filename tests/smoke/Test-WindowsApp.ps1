@@ -163,11 +163,13 @@ try {
     # curta, e o app fecha sozinho depois.
     if ($failures.Count -eq 0) {
         $process = Start-App -Exe $exe -Arguments "--dados `"$data`""
-        # A interface desta abertura (o log tem as linhas da anterior antes do ultimo "abrindo").
+        # A interface desta abertura: o log ja tem as linhas da anterior, entao so o que vem depois do segundo
+        # "abrindo" conta (antes de a abertura nova escrever o dela, o ultimo "abrindo" ainda e o da anterior).
         $ready = Wait-Until -TimeoutSeconds 15 -Condition {
             $text = Read-Log -Path $log
-            $start = $text.LastIndexOf(' abrindo')
-            $process.HasExited -or ($start -ge 0 -and $text.Substring($start).Contains('interface pronta'))
+            $first = $text.IndexOf(' abrindo')
+            $second = if ($first -ge 0) { $text.IndexOf(' abrindo', $first + 1) } else { -1 }
+            $process.HasExited -or ($second -ge 0 -and $text.Substring($second).Contains('interface pronta'))
         }
         $window = $null
         if (-not $process.HasExited) {
