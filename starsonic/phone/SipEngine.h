@@ -54,6 +54,15 @@ public:
     virtual void OnLog(int level, const std::string& line) = 0;
 };
 
+// Um dispositivo de som do sistema (a lista do PJSIP). id é o que SetAudioDevices recebe; capture é
+// um microfone (tem entrada) e playback, um alto-falante (tem saída); o mesmo dispositivo pode ser os dois.
+struct AudioDevice {
+    int id = -1;
+    std::string name;   // UTF-8
+    bool capture = false;
+    bool playback = false;
+};
+
 struct EngineConfig {
     std::string userAgent;
     Profile profile;
@@ -181,6 +190,16 @@ public:
     // de uma ação. HasCall é CallCount() > 0.
     int CallCount() const;
     bool HasCall() const;
+
+    // Os dispositivos de som que o PJSIP enxerga, na ordem dele (o id é a posição na lista). Com nullAudio,
+    // mais um no fim: o dispositivo nulo ("Null Audio", id -2). Vazio se o PJSIP falha ao listar.
+    std::vector<AudioDevice> AudioDevices() const;
+
+    // Escolhe o microfone e o alto-falante, para a ligação de agora e as próximas. -1 é o padrão do
+    // sistema. Um id que não existe (ou que não serve para o papel: um alto-falante como microfone)
+    // põe o padrão no lugar dele e devolve false; com os dois ids bons, devolve true. Com nullAudio o
+    // motor fica no dispositivo nulo (só confere os ids). O mudo (SetMute) continua valendo.
+    bool SetAudioDevices(int captureId, int playbackId);
 
     // Para onde o áudio de callId vai na ponte de áudio, sem ordem: 0 é o dispositivo de som; outro
     // número, o id da outra ligação (na conferência: 0 e a outra). Vazio em espera, sem mídia ou com id

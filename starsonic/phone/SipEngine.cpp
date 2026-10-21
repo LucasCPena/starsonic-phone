@@ -26,6 +26,8 @@ const char kThreadName[] = "starsonic-caller";
 const int kUnregisterWaitMs = 3000;
 // Quanto o motor espera uma ligação desligada acabar antes de seguir (conta saindo ou motor acabando).
 const int kCallEndWaitMs = 2000;
+const int kNullAudioDevice = -2;   // PJSUA_SND_NULL_DEV: o id do dispositivo nulo, que o PJSIP não lista
+const int kDefaultAudioDevice = -1;   // o padrão do sistema (PJMEDIA_AUD_DEFAULT_CAPTURE_DEV e ..._PLAYBACK_DEV)
 // Quanto o motor espera o pjsua refazer os transportes depois de uma troca de rede (leva alguns ms).
 const int kIpChangeWaitMs = 2000;
 
@@ -233,6 +235,34 @@ public:
         }
     }
 
+    std::vector<AudioDevice> AudioDevices() {
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        if (!RegisterThread()) return std::vector<AudioDevice>();
+        return ListAudioDevices();
+    }
+
+    bool SetAudioDevices(int captureId, int playbackId) {
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        if (!RegisterThread()) return false;
+        try {
+            const std::vector<AudioDevice> devices = ListAudioDevices();
+            const bool captureOk = IsAudioDevice(devices, captureId, true);
+            const bool playbackOk = IsAudioDevice(devices, playbackId, false);
+            if (!captureOk) Log(2, "microfone " + std::to_string(captureId) + " desconhecido; usando o padrao");
+            if (!playbackOk) Log(2, "alto-falante " + std::to_string(playbackId) + " desconhecido; usando o padrao");
+            // Com nullAudio o motor fica no dispositivo nulo: trocar o dispositivo o tiraria dele.
+            if (!config_.nullAudio) {
+                pj::AudDevManager& manager = endpoint_->audDevManager();
+                manager.setCaptureDev(captureOk ? captureId : PJMEDIA_AUD_DEFAULT_CAPTURE_DEV);
+                manager.setPlaybackDev(playbackOk ? playbackId : PJMEDIA_AUD_DEFAULT_PLAYBACK_DEV);
+            }
+            return captureOk && playbackOk;
+        } catch (const pj::Error& failure) {
+            Log(1, "escolha dos dispositivos de som: " + failure.info());
+            return false;
+        }
+    }
+
     bool SendDtmf(int callId, const std::string& digits) {
         std::lock_guard<std::mutex> lock(apiMutex_);
         return RegisterThread() && calls_.SendDtmf(callId, digits);
@@ -268,6 +298,43 @@ public:
     }
 
 private:
+    // Os dispositivos do PJSIP (o id é a posição na lista) e, com nullAudio, mais o dispositivo nulo, que o
+    // PJSIP não lista (sem som no sistema, como nos testes, a lista dele é vazia). Vazio se o PJSIP falha.
+    std::vector<AudioDevice> ListAudioDevices() {
+        std::vector<AudioDevice> devices;
+        try {
+            const pj::AudioDevInfoVector2& infos = endpoint_->audDevManager().enumDev2();
+            for (size_t i = 0; i < infos.size(); ++i) {
+                AudioDevice device;
+                device.id = static_cast<int>(i);
+                device.name = infos[i].name;
+                device.capture = infos[i].inputCount > 0;
+                device.playback = infos[i].outputCount > 0;
+                devices.push_back(device);
+            }
+        } catch (const pj::Error& failure) {
+            Log(1, "dispositivos de som: " + failure.info());
+        }
+        if (config_.nullAudio) {
+            AudioDevice device;
+            device.id = kNullAudioDevice;
+            device.name = "Null Audio";
+            device.capture = true;
+            device.playback = true;
+            devices.push_back(device);
+        }
+        return devices;
+    }
+
+    // -1 é o padrão do sistema; outro id precisa estar na lista e servir ao papel (microfone ou alto-falante).
+    static bool IsAudioDevice(const std::vector<AudioDevice>& devices, int id, bool capture) {
+        if (id == kDefaultAudioDevice) return true;
+        for (const AudioDevice& device : devices) {
+            if (device.id == id) return capture ? device.capture : device.playback;
+        }
+        return false;
+    }
+
     // O PJLIB só aceita chamadas de threads que ele conhece.
     bool RegisterThread() {
         try {
@@ -413,6 +480,12 @@ bool SipEngine::Activate(int callId) { return impl_->Activate(callId); }
 bool SipEngine::SetHold(int callId, bool hold) { return impl_->SetHold(callId, hold); }
 
 void SipEngine::SetMute(bool muted) { impl_->SetMute(muted); }
+
+std::vector<AudioDevice> SipEngine::AudioDevices() const { return impl_->AudioDevices(); }
+
+bool SipEngine::SetAudioDevices(int captureId, int playbackId) {
+    return impl_->SetAudioDevices(captureId, playbackId);
+}
 
 bool SipEngine::SendDtmf(int callId, const std::string& digits) { return impl_->SendDtmf(callId, digits); }
 
