@@ -27,6 +27,13 @@ class BrowserArgumentsTest(unittest.TestCase):
         self.assertIn("--remote-debugging-port=9333", windows_smoke.browser_arguments(scale=True))
 
 
+class TestProfileTest(unittest.TestCase):
+    def test_the_test_profile_points_to_the_fake_registrar_by_udp(self):
+        lines = windows_smoke.TEST_PROFILE.split("\r\n")
+        for line in ("[geral]", "stun=", "[conta]", "porta=5060", "transporte=udp", "srtp=desativado"):
+            self.assertIn(line, lines)
+
+
 class LogicalSizeTest(unittest.TestCase):
     def test_physical_pixels_become_logical_by_the_window_dpi(self):
         self.assertEqual(windows_smoke.logical_size(400, 720, 96), (400, 720))

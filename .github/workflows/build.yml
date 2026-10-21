@@ -244,7 +244,8 @@ jobs:
         if: ${{ !cancelled() && steps.app-novo.outcome == 'success' }}
         run: .\tests\smoke\Test-WindowsApp.ps1 -AppDir out-novo
 
-      - name: Compilar o app novo (build de teste, com o STARSONIC_PERFIL)
+      - name: Compilar o app novo (build de teste, com o STARSONIC_PERFIL e o STARSONIC_SOM_NULO)
+        id: app-novo-teste
         if: ${{ !cancelled() && steps.ui-dist.outcome == 'success' }}
         run: .\build\Build-Windows.ps1 -WorkDir work -Version $env:STARSONIC_VERSION -Channel $env:STARSONIC_CHANNEL -OutDir out-novo-teste -TestHooks
 
@@ -268,7 +269,14 @@ jobs:
         run: python build\check_branding.py --repo . --app-novo out-novo\StarsonicPhone.exe --ui out-novo\ui --instalador "dist\StarsonicPhone-$($env:STARSONIC_VERSION)-setup.exe"
 
       # A fumaça do app instalado (numa pasta temporária) pelo CDP do WebView2, com ligações de verdade no registrador
-      # falso; as capturas vão no artefato capturas-windows.
+      # falso; as capturas vão no artefato capturas-windows. O runner não tem placa de som, e sem nenhum dispositivo o
+      # PJSIP não liga (PJMEDIA_EAUD_NODEFDEV): a fumaça instala o mesmo instalador gerado com o build de teste, cujo
+      # exe aceita o perfil de teste (STARSONIC_PERFIL) e o dispositivo nulo (STARSONIC_SOM_NULO).
+      - name: Gerar o instalador do build de teste
+        id: installer-teste
+        if: ${{ !cancelled() && steps.nsis.outcome == 'success' && steps.app-novo-teste.outcome == 'success' }}
+        run: .\build\Build-Installer.ps1 -Version $env:STARSONIC_VERSION -AppDir out-novo-teste -OutDir dist-teste -WorkDir work
+
       - name: Dependências da fumaça do app novo (Playwright para Python)
         id: fumaca-deps
         if: ${{ !cancelled() && steps.installer.outcome == 'success' }}
@@ -277,8 +285,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - name: Fumaça do app novo instalado (CDP, ligações no registrador falso)
-        if: ${{ !cancelled() && steps.fumaca-deps.outcome == 'success' }}
-        run: .\tests\smoke\Test-InstalledApp.ps1 -Setup "dist\StarsonicPhone-$($env:STARSONIC_VERSION)-setup.exe" -Capturas capturas-windows
+        if: ${{ !cancelled() && steps.fumaca-deps.outcome == 'success' && steps.installer-teste.outcome == 'success' }}
+        run: .\tests\smoke\Test-InstalledApp.ps1 -Setup "dist-teste\StarsonicPhone-$($env:STARSONIC_VERSION)-setup.exe" -Capturas capturas-windows
 
       - name: Teste do instalador
         if: ${{ !cancelled() && steps.installer.outcome == 'success' }}

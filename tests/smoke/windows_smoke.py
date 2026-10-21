@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Teste de fumaça do app novo instalado no Windows (spec da W1, 11.2), pelo DevTools (CDP) do WebView2.
 
-Fumaça (padrão), contra o StarsonicPhone.exe instalado:
+Fumaça (padrão), contra o StarsonicPhone.exe instalado do build de teste (STARSONIC_TEST_HOOKS; o mesmo instalador):
 1. sobe o registrador falso (tests/smoke/fake_registrar.py, UDP e TCP na 5060, ramal 2001);
 2. abre o app com WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333 (e o
-   --autoplay-policy do próprio app, que a variável substitui) e "--dados <pasta nova>", e liga o Playwright pelo CDP;
-3. entra no registrador falso por UDP (servidor 127.0.0.1, ramal 2001; a porta 5060 e o UDP vêm do perfil embutido,
-   o perfil de teste do registrador falso) e confere "Conectado · 127.0.0.1"; captura janela-principal.png;
+   --autoplay-policy do próprio app, que a variável substitui), o perfil de teste (STARSONIC_PERFIL: o registrador
+   falso na 5060 por UDP), o dispositivo de som nulo (STARSONIC_SOM_NULO: o runner não tem placa de som) e
+   "--dados <pasta nova>", e liga o Playwright pelo CDP;
+3. entra no registrador falso por UDP (servidor 127.0.0.1, ramal 2001) e confere "Conectado · 127.0.0.1"; captura
+   janela-principal.png;
 4. liga para 2002, confere "Em ligação" e o 200 no registrador; captura ligacao.png; desliga (o BYE chega);
 5. minimiza a janela, o registrador manda um RING: confere o aviso (a janela "Starsonic Phone Aviso" visível, com
    "Cliente Teste") e que a janela em primeiro plano não muda só por ele aparecer; captura aviso.png; atende pelo
@@ -55,6 +57,13 @@ SENHA = "senha-certa"
 DESTINO = "2002"
 CALLER_NAME = "Cliente Teste"   # o RING do registrador falso
 CONNECTED = "Conectado · " + SERVER
+# O perfil de teste (STARSONIC_PERFIL, só no build de teste): o registrador falso na 5060 por UDP, sem STUN e sem
+# SRTP, com os codecs que ele responde. STARSONIC_SOM_NULO: o dispositivo nulo do PJSIP (o runner não tem placa de som).
+TEST_PROFILE = "\r\n".join([
+    "[geral]", "stun=", "codecs=PCMU,PCMA", "dtmf=rfc2833", "",
+    "[conta]", "porta=5060", "transporte=udp", "proxy=", "srtp=desativado", "keepalive=15", "ddi=55",
+    "prefixo_externo=", "",
+])
 IN_CALL = "Em ligação"
 
 
@@ -284,6 +293,8 @@ class App:
         self.exe = pathlib.Path(exe)
         environment = dict(os.environ)
         environment["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = browser_arguments(scale)
+        environment["STARSONIC_PERFIL"] = TEST_PROFILE
+        environment["STARSONIC_SOM_NULO"] = "1"
         log("abrindo %s --dados %s (%s)" % (self.exe, data_dir, environment["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"]))
         self.process = subprocess.Popen([str(self.exe), "--dados", str(data_dir)], env=environment,
                                         cwd=str(self.exe.parent))

@@ -10,7 +10,8 @@
 // Com o app ja aberto, uma abertura nova so entrega os argumentos dela ao aberto (SingleInstance) e sai com o codigo 0:
 // o link vai para o Teclado, o --sair fecha o app, e sem nada a janela vem para a frente.
 // No build de teste (STARSONIC_TEST_HOOKS), a variavel STARSONIC_PERFIL troca o perfil embutido pelo texto dela (um
-// perfil que aponta para o registrador falso).
+// perfil que aponta para o registrador falso), e a STARSONIC_SOM_NULO poe o motor no dispositivo nulo do PJSIP (o
+// runner do CI nao tem placa de som, e sem nenhum dispositivo o PJSIP nao faz nem atende ligacoes).
 #include <windows.h>
 
 #include <objbase.h>
@@ -217,6 +218,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     EngineConfig engineConfig;
     engineConfig.userAgent = std::string("Starsonic Phone/") + STARSONIC_VERSION;
     engineConfig.profile = profile;
+#if STARSONIC_TEST_HOOKS
+    if (GetEnvironmentVariableW(L"STARSONIC_SOM_NULO", nullptr, 0) > 1) {
+        engineConfig.nullAudio = true;
+        log("som: o dispositivo nulo (STARSONIC_SOM_NULO, build de teste)");
+    }
+#endif
     EngineHost engine(engineConfig, log);
 
     // A posicao gravada da janela (o DesktopApp le o config.json de novo na abertura dele).
