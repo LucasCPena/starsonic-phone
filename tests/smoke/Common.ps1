@@ -571,3 +571,101 @@ function Invoke-MainMenuItem {
     [StarsonicWin32]::PostCommand($MainWindow, [uint32]$holder.Id)
     return $true
 }
+
+if (-not ('StarsonicCapture' -as [type])) {
+    Add-Type -ReferencedAssemblies System.Drawing -TypeDefinition @'
+using System;
+using System.Drawing;
+using System.Drawing.Imaging;
+using System.Runtime.InteropServices;
+public static class StarsonicCapture {
+    [StructLayout(LayoutKind.Sequential)] struct RECT { public int Left, Top, Right, Bottom; }
+    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+    [DllImport("user32.dll")] static extern bool PrintWindow(IntPtr hWnd, IntPtr hdc, uint flags);
+    // A janela como o DWM a mostra (PrintWindow com PW_RENDERFULLCONTENT), num PNG. Falso: janela sem tamanho.
+    public static bool Save(IntPtr window, string path) {
+        RECT r;
+        GetWindowRect(window, out r);
+        int w = r.Right - r.Left, h = r.Bottom - r.Top;
+        if (w <= 0 || h <= 0) return false;
+        using (Bitmap bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb)) {
+            using (Graphics g = Graphics.FromImage(bmp)) {
+                IntPtr hdc = g.GetHdc();
+                PrintWindow(window, hdc, 2);
+                g.ReleaseHdc(hdc);
+            }
+            bmp.Save(path, ImageFormat.Png);
+        }
+        return true;
+    }
+}
+'@
+}
+
+# Salva a captura de uma janela de primeiro nivel em PNG (cria a pasta).
+function Save-WindowCapture {
+    param(
+        [Parameter(Mandatory = $true)][IntPtr]$Window,
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+    $folder = Split-Path -Parent $Path
+    if ($folder) {
+        New-Item -ItemType Directory -Force -Path $folder | Out-Null
+    }
+    if ([StarsonicCapture]::Save($Window, $Path)) {
+        Write-Host "captura: $Path"
+    } else {
+        Write-Warning "Sem captura de $Path (janela sem tamanho)."
+    }
+}
+
+# Controle descendente de $Parent com a classe e o texto pedidos (ou $null).
+function Find-ChildWindow {
+    param(
+        [Parameter(Mandatory = $true)][IntPtr]$Parent,
+        [Parameter(Mandatory = $true)][string]$ClassName,
+        [Parameter(Mandatory = $true)][string]$Text
+    )
+    $holder = @{ Found = [IntPtr]::Zero }
+    $callback = [StarsonicWin32+EnumWindowsProc]{
+        param([IntPtr]$hWnd, [IntPtr]$lParam)
+        $class = New-Object System.Text.StringBuilder 256
+        [StarsonicWin32]::GetClassNameW($hWnd, $class, 256) | Out-Null
+        if ($class.ToString() -eq $ClassName -and ([StarsonicWin32]::ControlText($hWnd) -replace '&', '') -eq $Text -and
+            [StarsonicWin32]::IsWindowVisible($hWnd)) {
+            $holder.Found = $hWnd
+            return $false
+        }
+        return $true
+    }
+    [StarsonicWin32]::EnumChildWindows($Parent, $callback, [IntPtr]::Zero) | Out-Null
+    if ($holder.Found -eq [IntPtr]::Zero) {
+        return $null
+    }
+    return $holder.Found
+}
+
+# Estado de uma caixa de selecao de outro processo (BM_GETCHECK): 1 = marcada.
+function Get-CheckState {
+    param([Parameter(Mandatory = $true)][IntPtr]$Control)
+    $state = [IntPtr]::Zero
+    [StarsonicWin32]::SendMessageTimeoutPtr($Control, 0x00F0, [IntPtr]::Zero, [IntPtr]::Zero, 0x0002, 5000, [ref]$state) | Out-Null
+    return $state.ToInt32()
+}
+
+# Clique numa caixa de selecao ou botao de outro processo (BM_CLICK).
+function Invoke-ControlClick {
+    param([Parameter(Mandatory = $true)][IntPtr]$Control)
+    $ignored = [IntPtr]::Zero
+    [StarsonicWin32]::SendMessageTimeoutPtr($Control, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero, 0x0002, 5000, [ref]$ignored) | Out-Null
+}
+
+# Marca (1) ou desmarca (0) uma caixa de selecao de outro processo (BM_SETCHECK).
+function Set-CheckState {
+    param(
+        [Parameter(Mandatory = $true)][IntPtr]$Control,
+        [Parameter(Mandatory = $true)][int]$State
+    )
+    $ignored = [IntPtr]::Zero
+    [StarsonicWin32]::SendMessageTimeoutPtr($Control, 0x00F1, [IntPtr]$State, [IntPtr]::Zero, 0x0002, 5000, [ref]$ignored) | Out-Null
+}

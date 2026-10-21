@@ -93,6 +93,21 @@ jobs:
           name: StarsonicPhone-setup-${{ github.sha }}
           path: dist
 
+      # O instalador publicado é o do app novo (W1): o StarsonicPhone.exe com a pasta ui\ e o bootstrapper do
+      # WebView2 dentro, sem "MicroSIP" (o mesmo nome de arquivo e o mesmo versao.json de sempre).
+      - name: Instalador do app novo
+        run: |
+          setup="dist/StarsonicPhone-$VERSION-setup.exe"
+          if ! command -v 7z > /dev/null; then sudo apt-get install -y 7zip; fi
+          listing=$(7z l "$setup")
+          for entry in 'StarsonicPhone.exe' 'ui/index.html' 'ui/aviso.html' '$PLUGINSDIR/MicrosoftEdgeWebview2Setup.exe'; do
+            if ! printf '%s\n' "$listing" | grep -qF -- "$entry"; then
+              echo "::error title=instalador::$setup sem $entry: não é o instalador do app novo"
+              exit 1
+            fi
+          done
+          python3 build/check_branding.py --repo . --instalador "$setup"
+
       - name: versao.json
         run: |
           setup="dist/StarsonicPhone-$VERSION-setup.exe"

@@ -57,6 +57,19 @@ class WebView2KeyTest(unittest.TestCase):
         self.assertRegex(webview2["sha256"], HEX64)
 
 
+class WebView2BootstrapperKeyTest(unittest.TestCase):
+    """O bootstrapper Evergreen do WebView2 que vai dentro do instalador novo (Build-Installer.ps1): o endereco fixo
+    na Microsoft, a versao do arquivo e o SHA-256 conferido."""
+
+    def test_bootstrapper_key_has_what_the_build_script_reads(self):
+        bootstrapper = json.loads(LOCK.read_text(encoding="utf-8"))["webview2Bootstrapper"]
+        self.assertRegex(bootstrapper["version"], r"\A\d+\.\d+\.\d+\.\d+\Z")
+        self.assertRegex(bootstrapper["sha256"], HEX64)
+        self.assertRegex(bootstrapper["url"],
+                         r"\Ahttps://msedge\.sf\.dl\.delivery\.mp\.microsoft\.com/filestreamingservice/files/"
+                         r"[0-9a-f-]{36}/MicrosoftEdgeWebview2Setup\.exe\Z")
+
+
 class AndroidGradleCatalogTest(unittest.TestCase):
     """android/gradle/libs.versions.toml usa as versões do deps.lock (o Gradle não lê o deps.lock)."""
 

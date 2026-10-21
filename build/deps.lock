@@ -23,6 +23,11 @@
     "version": "1.0.4258.31",
     "sha256": "56f7f4b8bf9aee4b8efefbbdd4f67d5f74ebd1b100ed0806da71bf76af481aa9"
   },
+  "webview2Bootstrapper": {
+    "version": "1.3.299.15",
+    "url": "https://msedge.sf.dl.delivery.mp.microsoft.com/filestreamingservice/files/ed55121c-0243-4978-b7e7-56505b5b96ff/MicrosoftEdgeWebview2Setup.exe",
+    "sha256": "f414de01c4680f0bb0694d1ea7803c6968f3a81bf6bad01b89bfc65dce14c2a2"
+  },
   "android": {
     "pjproject": {
       "repo": "https://github.com/pjsip/pjproject",

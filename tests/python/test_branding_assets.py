@@ -101,6 +101,58 @@ class BrandingAssetsTest(unittest.TestCase):
         self.assertEqual(bits, 24)
 
 
+def bmp_image(path):
+    """(largura, altura, bits, pixel(x, y) -> (r, g, b)) de um BMP sem compressão de 24 bits."""
+    data = path.read_bytes()
+    if data[:2] != b"BM":
+        raise ValueError("%s não é um BMP" % path)
+    offset = struct.unpack_from("<I", data, 10)[0]
+    width, height, _planes, bits, compression = struct.unpack_from("<iiHHI", data, 18)
+    stride = (width * bits // 8 + 3) & ~3
+
+    def pixel(x, y):
+        row = (abs(height) - 1 - y) if height > 0 else y   # altura positiva: as linhas de baixo para cima
+        start = offset + row * stride + x * 3
+        blue, green, red = data[start:start + 3]
+        return (red, green, blue)
+
+    if compression != 0:
+        raise ValueError("%s comprimido" % path)
+    return width, abs(height), bits, pixel
+
+
+def near_color(actual, expected, tolerance):
+    return all(abs(a - e) <= tolerance for a, e in zip(actual, expected))
+
+
+class InstallerBitmapsTest(unittest.TestCase):
+    """As páginas do instalador novo (spec da W1, canvas Instalador): a lateral de 164x314 e o cabeçalho de 150x57
+    no gradient-hero (#070b18 -> #0a1330 -> #0c2671, 150 graus), com o logo negativo e a frase, gerados por
+    branding/fontes/gerar_instalador.py."""
+
+    def test_side_bitmap_is_164x314_in_the_hero_gradient(self):
+        width, height, bits, pixel = bmp_image(ROOT / "branding" / "installer" / "lateral.bmp")
+        self.assertEqual((width, height, bits), (164, 314, 24))
+        # O canto de cima à esquerda é o começo do gradiente (navy-950) e o de baixo à direita, o fim (blue).
+        self.assertTrue(near_color(pixel(0, 0), (0x07, 0x0B, 0x18), 12), pixel(0, 0))
+        self.assertTrue(near_color(pixel(163, 313), (0x0C, 0x26, 0x71), 40), pixel(163, 313))
+        # O logo e a frase: pixels brancos e ciano (#00c2cb) na lateral.
+        pixels = [pixel(x, y) for y in range(height) for x in range(width)]
+        white = sum(1 for p in pixels if near_color(p, (255, 255, 255), 40))
+        cyan = sum(1 for p in pixels if near_color(p, (0x00, 0xC2, 0xCB), 50))
+        self.assertGreater(white, 300)
+        self.assertGreater(cyan, 150)
+
+    def test_header_bitmap_is_150x57_with_the_logo(self):
+        width, height, bits, pixel = bmp_image(ROOT / "branding" / "installer" / "cabecalho.bmp")
+        self.assertEqual((width, height, bits), (150, 57, 24))
+        pixels = [pixel(x, y) for y in range(height) for x in range(width)]
+        dark = sum(1 for p in pixels if sum(p) < 200)
+        white = sum(1 for p in pixels if near_color(p, (255, 255, 255), 40))
+        self.assertGreater(dark, len(pixels) // 2)
+        self.assertGreater(white, 100)
+
+
 class AndroidBrandingTest(unittest.TestCase):
     """Ícone adaptável (fundo, primeiro plano e monocromático), ícone da notificação e logos do app Android."""
 

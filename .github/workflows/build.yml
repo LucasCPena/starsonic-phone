@@ -21,6 +21,10 @@ on:
         description: "Canal de atualização (estavel ou teste); vazio = teste para -rc.N, senão estavel"
         type: string
         default: ''
+      ensaio-atualizacao:
+        description: "Ensaio da atualização: instala a v0.0.1-rc.7 do release, com conta e contato, e o instalador novo por cima"
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       version:
@@ -218,8 +222,7 @@ jobs:
         if: ${{ !cancelled() && steps.app.outcome == 'success' }}
         run: .\tests\smoke\Test-Login.ps1 -AppDir out -Version $env:STARSONIC_VERSION
 
-      # O app novo (windows/app: o WebView2 com a interface do job ui e o motor do Android). Ainda não vai no
-      # instalador (Task 13).
+      # O app novo (windows/app: o WebView2 com a interface do job ui e o motor do Android), o que vai no instalador.
       - name: Baixar a interface empacotada
         id: ui-dist
         if: ${{ !cancelled() }}
@@ -247,43 +250,45 @@ jobs:
 
       - name: NSIS
         id: nsis
-        if: ${{ !cancelled() && steps.app.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.app-novo.outcome == 'success' }}
         run: |
           if (-not (Test-Path "${env:ProgramFiles(x86)}\NSIS\makensis.exe")) {
             choco install nsis --version=3.10 -y --no-progress
             if ($LASTEXITCODE -ne 0) { exit 1 }
           }
 
+      # O instalador do app novo (Task 13): o exe e a pasta ui\ do out-novo, com o bootstrapper do WebView2.
       - name: Gerar o instalador
         id: installer
         if: ${{ !cancelled() && steps.nsis.outcome == 'success' }}
-        run: .\build\Build-Installer.ps1 -Version $env:STARSONIC_VERSION -AppDir out -OutDir dist
+        run: .\build\Build-Installer.ps1 -Version $env:STARSONIC_VERSION -AppDir out-novo -OutDir dist -WorkDir work
 
-      - name: Teste do instalador
+      - name: Verificação de marca (app novo, interface e instalador)
         if: ${{ !cancelled() && steps.installer.outcome == 'success' }}
-        run: .\tests\smoke\Test-Installer.ps1 -Setup "dist\StarsonicPhone-$($env:STARSONIC_VERSION)-setup.exe" -AppDir out -Version $env:STARSONIC_VERSION
+        run: python build\check_branding.py --repo . --app-novo out-novo\StarsonicPhone.exe --ui out-novo\ui --instalador "dist\StarsonicPhone-$($env:STARSONIC_VERSION)-setup.exe"
 
-      # O app novo instalado (Task 13): o instalador do out-novo, instalado em silêncio numa pasta temporária, e a
-      # fumaça pelo CDP do WebView2 com ligações de verdade no registrador falso; as capturas vão como artefato.
+      # A fumaça do app instalado (numa pasta temporária) pelo CDP do WebView2, com ligações de verdade no registrador
+      # falso; as capturas vão no artefato capturas-windows.
       - name: Dependências da fumaça do app novo (Playwright para Python)
         id: fumaca-deps
-        if: ${{ !cancelled() && steps.app-novo.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.installer.outcome == 'success' }}
         run: |
           python -m pip install --disable-pip-version-check --no-input -r tests\smoke\requirements-windows.txt
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
-      - name: Gerar o instalador do app novo
-        id: installer-novo
-        if: ${{ !cancelled() && steps.app-novo.outcome == 'success' && steps.nsis.outcome == 'success' }}
-        run: .\build\Build-Installer.ps1 -Version $env:STARSONIC_VERSION -AppDir out-novo -OutDir dist-novo
-
-      - name: Verificação de marca (app novo, interface e instalador)
-        if: ${{ !cancelled() && steps.installer-novo.outcome == 'success' }}
-        run: python build\check_branding.py --repo . --app-novo out-novo\StarsonicPhone.exe --ui out-novo\ui --instalador "dist-novo\StarsonicPhone-$($env:STARSONIC_VERSION)-setup.exe"
-
       - name: Fumaça do app novo instalado (CDP, ligações no registrador falso)
-        if: ${{ !cancelled() && steps.installer-novo.outcome == 'success' && steps.fumaca-deps.outcome == 'success' }}
-        run: .\tests\smoke\Test-InstalledApp.ps1 -Setup "dist-novo\StarsonicPhone-$($env:STARSONIC_VERSION)-setup.exe" -Capturas capturas-windows
+        if: ${{ !cancelled() && steps.fumaca-deps.outcome == 'success' }}
+        run: .\tests\smoke\Test-InstalledApp.ps1 -Setup "dist\StarsonicPhone-$($env:STARSONIC_VERSION)-setup.exe" -Capturas capturas-windows
+
+      - name: Teste do instalador
+        if: ${{ !cancelled() && steps.installer.outcome == 'success' }}
+        run: .\tests\smoke\Test-Installer.ps1 -Setup "dist\StarsonicPhone-$($env:STARSONIC_VERSION)-setup.exe" -AppDir out-novo -Version $env:STARSONIC_VERSION -Capturas capturas-windows
+
+      # Só à mão (workflow_dispatch com ensaio-atualizacao): a v0.0.1-rc.7 do release com uma conta (gravada pela
+      # tela Entrar dela) e um contato, e o instalador novo por cima, com a rc.7 aberta.
+      - name: Ensaio da atualização da rc.7
+        if: ${{ !cancelled() && steps.fumaca-deps.outcome == 'success' && inputs['ensaio-atualizacao'] }}
+        run: .\tests\smoke\Test-UpdateFromRc7.ps1 -Setup "dist\StarsonicPhone-$($env:STARSONIC_VERSION)-setup.exe" -Capturas capturas-windows
 
       - name: Publicar as capturas do Windows
         if: ${{ !cancelled() }}
