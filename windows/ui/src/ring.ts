@@ -120,7 +120,9 @@ export function createRinger(options: RingOptions = {}): Ringer {
     clearTimeout: (id) => window.clearTimeout(id),
   };
 
-  let current: { tipo: RingKind; ctx: RingAudioContext; osc: OscillatorNode; timer: number } | null = null;
+  // sinkId: a saída em que o toque de agora está ("" = o padrão). As mesmas saídas de novo (o efeito do estado que
+  // chega depois de o toque começar) não mexem nele.
+  let current: { tipo: RingKind; ctx: RingAudioContext; osc: OscillatorNode; timer: number; sinkId: string } | null = null;
   // Cada pedido ganha uma vez: um setSinkId que demora não liga um toque que já foi trocado ou parado.
   let vez = 0;
 
@@ -176,7 +178,8 @@ export function createRinger(options: RingOptions = {}): Ringer {
       return; // Sem WebAudio: nada a tocar (a ligação aparece do mesmo jeito).
     }
     void (async () => {
-      await trocarSaida(ctx, await saidaDo(tipo, saidas));
+      const sinkId = await saidaDo(tipo, saidas);
+      await trocarSaida(ctx, sinkId);
       if (minhaVez !== vez) {
         void ctx.close().catch(() => {});
         return;
@@ -198,7 +201,7 @@ export function createRinger(options: RingOptions = {}): Ringer {
         gain.gain.linearRampToValueAtTime(0, t + cadencia.on);
         if (current) current.timer = clock.setTimeout(tocar, cadencia.periodMs);
       };
-      current = { tipo, ctx, osc, timer: 0 };
+      current = { tipo, ctx, osc, timer: 0, sinkId };
       tocar();
     })();
   };
@@ -211,8 +214,10 @@ export function createRinger(options: RingOptions = {}): Ringer {
       if (!atual) return;
       void (async () => {
         const sinkId = await saidaDo(atual.tipo, saidas);
-        // O toque trocou ou parou enquanto a lista das saídas vinha: nada a fazer neste.
-        if (current === atual) await trocarSaida(atual.ctx, sinkId, true);
+        // O toque trocou ou parou enquanto a lista das saídas vinha: nada a fazer neste. A mesma saída: nada também.
+        if (current !== atual || atual.sinkId === sinkId) return;
+        atual.sinkId = sinkId;
+        await trocarSaida(atual.ctx, sinkId, true);
       })();
     },
   };
