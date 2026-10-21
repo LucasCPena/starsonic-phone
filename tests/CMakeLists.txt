@@ -35,3 +35,8 @@ endif()
 
 enable_testing()
 add_test(NAME starsonic_tests COMMAND starsonic_tests)
+
+if(WIN32)
+  # A senha da rc.7: o lado original do teste precisa do MFC, num executavel proprio (win/legacy_crypto).
+  add_subdirectory(win/legacy_crypto)
+endif()
