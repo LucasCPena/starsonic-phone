@@ -25,8 +25,9 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <ObjectFileName>$(IntDir)starsonic\core\</ObjectFileName>
     </ClCompile>
-    <!-- Integracao com o MicroSIP: usa o stdafx.h do projeto. -->
-    <ClCompile Include="$(StarsonicDir)win\*.cpp">
+    <!-- Integracao com o MicroSIP: usa o stdafx.h do projeto. O LegacyCrypto.cpp (C++17, a migracao da rc.7) e do
+         app novo, nao deste. -->
+    <ClCompile Include="$(StarsonicDir)win\*.cpp" Exclude="$(StarsonicDir)win\LegacyCrypto.cpp">
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>stdafx.h</PrecompiledHeaderFile>
       <ObjectFileName>$(IntDir)starsonic\win\</ObjectFileName>
