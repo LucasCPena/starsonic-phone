@@ -82,6 +82,22 @@ function Invoke-Setup([string]$File, [string]$Arguments) {
     }
 }
 
+# Um comando na porta de controle do registrador falso (a primeira linha da resposta).
+function Invoke-RegistrarCommand([int]$Port, [string]$Line) {
+    $client = New-Object System.Net.Sockets.TcpClient('127.0.0.1', $Port)
+    try {
+        $stream = $client.GetStream()
+        $writer = New-Object System.IO.StreamWriter($stream)
+        $writer.NewLine = "`n"
+        $writer.WriteLine($Line)
+        $writer.Flush()
+        $reader = New-Object System.IO.StreamReader($stream)
+        return $reader.ReadLine()
+    } finally {
+        $client.Close()
+    }
+}
+
 $registrar = $null
 $failed = $null
 try {
@@ -162,6 +178,9 @@ try {
         throw "A rc.7 nao gravou a conta com a senha cifrada (ramal '$username', senha com $($password.Length) caracteres)."
     }
     Write-Host "rc.7 conectada: [Account1] 2001 @ $(Read-IniValue -Path $ini -Section 'Account1' -Key 'server'), senha cifrada pela rc.7 ($($password.Length) caracteres)."
+    Save-WindowCapture -Window $main.Handle -Path (Join-Path $Capturas 'ensaio-rc7.png')
+    # Os REGISTER da rc.7 no registrador falso: o app novo tem de mandar outro.
+    $registersBefore = [int](Invoke-RegistrarCommand -Port $ControlPort -Line 'REGISTERS 2001')
     # O "Iniciar com o Windows" que a rc.7 grava (o app novo o refaz com --bandeja na abertura).
     Set-ItemProperty -Path $runKey -Name 'Starsonic Phone' -Value "`"$exe`" /minimized"
     $sounds = @(Get-ChildItem -Path $installDir -Filter '*.wav' | ForEach-Object { $_.Name })
@@ -186,7 +205,7 @@ try {
         throw "Sobrou da rc.7: $(($left | ForEach-Object { $_.Name }) -join ', ')"
     }
 
-    & $Python (Join-Path $PSScriptRoot 'windows_smoke.py') --ensaio --exe $exe --controle $ControlPort --contato $Contact --capturas $Capturas
+    & $Python (Join-Path $PSScriptRoot 'windows_smoke.py') --ensaio --exe $exe --controle $ControlPort --contato $Contact --registros-antes $registersBefore --capturas $Capturas
     if ($LASTEXITCODE -ne 0) {
         throw "O app novo nao abriu conectado com o contato da rc.7 (codigo $LASTEXITCODE)."
     }

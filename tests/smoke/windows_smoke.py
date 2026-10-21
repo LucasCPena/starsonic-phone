@@ -512,8 +512,11 @@ def run_rehearsal(args, result):
             page = find_page(browser, "/index.html", 60, lambda ms: time.sleep(ms / 1000.0))
             page.get_by_text(CONNECTED).first.wait_for(timeout=60000)
             log("o app novo abriu '%s' com a conta da rc.7" % CONNECTED)
-            if registrar.command("REGISTERS " + RAMAL) == ["0"]:
-                raise SmokeFailure("o registrador nao recebeu o registro do app novo")
+            # O registro do app novo (os de antes, args.registros_antes, são da rc.7).
+            if not wait_for(lambda: int(registrar.command("REGISTERS " + RAMAL)[0]) > args.registros_antes, 30,
+                            pump=page.wait_for_timeout):
+                raise SmokeFailure("o registrador nao recebeu o registro do app novo (so os %d da rc.7)"
+                                   % args.registros_antes)
             screenshot(page, capturas, "ensaio-conectado.png", result)
             page.locator("nav.nav button", has_text="Contatos").click()
             page.get_by_text(args.contato, exact=True).first.wait_for(timeout=20000)
@@ -547,6 +550,8 @@ def main(argv):
     parser.add_argument("--python", default=sys.executable, help="o Python que roda o registrador falso")
     parser.add_argument("--ensaio", action="store_true", help="o ensaio da atualizacao da rc.7 (app ja aberto)")
     parser.add_argument("--contato", default="Ana Ensaio", help="no ensaio: o contato que veio da rc.7")
+    parser.add_argument("--registros-antes", type=int, default=0,
+                        help="no ensaio: quantos REGISTER do ramal o registrador aceitou antes do app novo (os da rc.7)")
     args = parser.parse_args(argv)
     for stream in (sys.stdout, sys.stderr):
         try:
