@@ -107,7 +107,7 @@ StarsonicPhone.exe (Win32 em C++17, sem MFC)
 ### 6.3 Motor (`starsonic/phone/SipEngine`)
 
 - Uma função nova: `SetAudioDevices(captureId, playbackId)` e `AudioDevices()` (a lista com id e nome), pelo `AudDevManager` do pjsua2. Sem ela, usa os padrões do Windows.
-- Nada mais muda no motor. O build do Windows compila o mesmo código, com o pjproject para Windows do `Build-Deps.ps1` (com o Opus e o dispositivo de áudio WASAPI).
+- Nada mais muda no motor. O build do Windows compila o mesmo código, com o pjproject para Windows do `Build-Deps.ps1` (com o Opus e o áudio WMME, o padrão do pjproject no Win32: o `wasapi_dev` do pjproject 2.17 é só para WinRT/Windows Phone e lista um único dispositivo "default"). Revisão 1.6: o WMME corta o nome do dispositivo em 31 caracteres; a interface casa o nome com o rótulo do WebView2 também por prefixo.
 
 ### 6.4 Interface (`starsonic/win/ui`)
 
@@ -236,7 +236,7 @@ As da spec do Windows (11.1) e da 0.2 do Android (11.1), mais:
 | Windows 10 sem WebView2 e sem internet na instalação | O instalador avisa (seção 11.1). O bootstrapper da Microsoft é pequeno e o instalador offline completo fica como alternativa, se o teste mostrar que é preciso. |
 | Migração da senha falhar em algum PC (a chave do MicroSIP depende da `CryptoAPI`) | A conta vem sem a senha e a tela Entrar pede só ela (seção 7.1). |
 | O controlador em C++ divergir do Kotlin do Android | Os mesmos testes portados um a um. Uma divergência achada depois vira teste nos dois. |
-| Comportamento de áudio do WASAPI diferente do Android (eco, dispositivo trocado no meio da ligação) | O teste manual com headset USB e alto-falante. O cancelamento de eco do PJSIP fica ligado, como no MicroSIP. |
+| Comportamento de áudio do WMME diferente do Android (eco, dispositivo trocado no meio da ligação; nomes cortados em 31 caracteres) | O teste manual com headset USB e alto-falante, conferindo no `diagnostico.log` os nomes do motor e os rótulos do WebView2. O cancelamento de eco do PJSIP fica ligado, como no MicroSIP. |
 | O aviso do canto não aparecer por cima em tela cheia (apresentação, jogo) | Aceito na W1: a ligação toca e o ícone da bandeja pisca. Anotado para depois se incomodar. |
 | A rc.7 instalada não aceitar o instalador novo (mudança grande de tamanho ou de nome) | Mesmo nome de arquivo e mesmas regras do `versao.json`. O ensaio da atualização de uma rc.7 para a 0.1.0-rc.1 faz parte do teste manual. |
 
