@@ -58,7 +58,7 @@ public:
 // um microfone (tem entrada) e playback, um alto-falante (tem saída); o mesmo dispositivo pode ser os dois.
 struct AudioDevice {
     int id = -1;
-    std::string name;   // UTF-8
+    std::string name;   // UTF-8 (no Windows, convertido da página ANSI que o PJSIP usa; ver AudioDeviceName.h)
     bool capture = false;
     bool playback = false;
 };

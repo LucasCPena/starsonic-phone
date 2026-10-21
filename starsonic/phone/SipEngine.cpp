@@ -11,6 +11,7 @@
 
 #include "AccountConfig.h"
 #include "AccountPolicy.h"
+#include "AudioDeviceName.h"
 #include "EngineAccount.h"
 #include "EngineCall.h"
 #include "EngineEndpoint.h"
@@ -307,7 +308,7 @@ private:
             for (size_t i = 0; i < infos.size(); ++i) {
                 AudioDevice device;
                 device.id = static_cast<int>(i);
-                device.name = infos[i].name;
+                device.name = DeviceNameToUtf8(infos[i].name);
                 device.capture = infos[i].inputCount > 0;
                 device.playback = infos[i].outputCount > 0;
                 devices.push_back(device);

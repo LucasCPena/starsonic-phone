@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "AudioDeviceName.h"
 #include "Profile.h"
 #include "SipEngine.h"
 
@@ -52,4 +53,14 @@ TEST_CASE("SetAudioDevices accepts the defaults and refuses an unknown device") 
     REQUIRE(callId >= 0);
     REQUIRE(engine->Answer(callId));
     CHECK(listener.WaitForCalls(RecordingListener::StateReached(callId, CallState::Confirmed), kWaitSeconds));
+}
+
+TEST_CASE("DeviceNameToUtf8 keeps ASCII names and, outside Windows, every byte") {
+    CHECK(DeviceNameToUtf8("") == "");
+    CHECK(DeviceNameToUtf8("Microfone (USB Audio)") == "Microfone (USB Audio)");
+#ifndef _WIN32
+    // Fora do Windows o PJSIP ja devolve UTF-8: "Alto-falantes (Realtek) \xC3\x81udio" passa sem mudar.
+    const std::string utf8 = std::string("Alto-falantes (Realtek) ") + "\xC3\x81" + "udio";
+    CHECK(DeviceNameToUtf8(utf8) == utf8);
+#endif
 }
