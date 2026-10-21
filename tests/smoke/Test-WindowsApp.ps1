@@ -1,5 +1,5 @@
 # Teste de fumaca do app novo (windows/app, Tasks 11 e 12): o "StarsonicPhone.exe --dados <pasta nova>" abre a janela
-# de classe "Starsonic Phone" com o WebView2; em ate 15 s a interface carrega e manda o ready (o diagnostico.log tem a
+# de classe "Starsonic Phone" com o WebView2; em ate 30 s a interface carrega e manda o ready (o diagnostico.log tem a
 # linha "interface pronta"); uma segunda abertura com um link ("StarsonicPhone.exe tel:2003") entrega o link ao app
 # aberto (instancia unica: o diagnostico.log tem "link recebido") e sai com o codigo 0; o "StarsonicPhone.exe
 # --sair" manda o Sair para o app aberto (pela mesma instancia unica), que fecha em ate 15 s; e, aberto de novo, o
@@ -81,13 +81,14 @@ $log = Join-Path $data 'diagnostico.log'
 $process = Start-App -Exe $exe -Arguments "--dados `"$data`""
 $failures = New-Object System.Collections.Generic.List[string]
 try {
-    $ready = Wait-Until -TimeoutSeconds 15 -Condition {
+    # 30 s: a primeira abertura do WebView2 no runner (o perfil frio) ja levou ~14 s.
+    $ready = Wait-Until -TimeoutSeconds 30 -Condition {
         $process.HasExited -or ((Read-Log -Path $log).Contains('interface pronta'))
     }
     if ($process.HasExited) {
         $failures.Add("O app fechou sozinho (codigo $($process.ExitCode)).")
     } elseif (-not $ready -or -not (Read-Log -Path $log).Contains('interface pronta')) {
-        $failures.Add("O diagnostico.log nao tem 'interface pronta' depois de 15 s.")
+        $failures.Add("O diagnostico.log nao tem 'interface pronta' depois de 30 s.")
     } else {
         Write-Host 'A interface carregou (interface pronta).'
     }

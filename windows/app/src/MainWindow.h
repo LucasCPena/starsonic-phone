@@ -100,6 +100,7 @@ private:
     ShellStatus status_;
     bool active_ = false;        // a janela e a ativa (na frente)
     bool trayLogged_ = false;
+    bool noticeStarted_ = false;   // o WebView do aviso ja abriu (depois da primeira mensagem da interface)
     bool quitting_ = false;
 
     std::mutex mutex_;

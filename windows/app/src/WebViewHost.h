@@ -37,7 +37,6 @@ public:
         std::function<void(const std::string& json)> message;   // um comando da interface (o JSON, UTF-8)
         std::function<void(const std::string& line)> log;
         std::function<void(HRESULT error)> failed;              // o WebView2 nao abriu (sem o runtime, por exemplo)
-        std::function<void()> ready;                            // o WebView abriu e comecou a carregar a pagina
     };
 
     struct Options {
@@ -69,7 +68,7 @@ public:
     void Close();
 
     bool Ready() const { return webview_ != nullptr; }
-    // O ambiente (depois do ready), para outro WebViewHost.
+    // O ambiente (depois de o WebView abrir), para outro WebViewHost.
     Microsoft::WRL::ComPtr<ICoreWebView2Environment> Environment() const { return environment_; }
 
 private:

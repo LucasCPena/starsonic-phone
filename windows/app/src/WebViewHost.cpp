@@ -281,7 +281,6 @@ void WebViewHost::Configure() {
 
     const HRESULT navigated = webview_->Navigate(options_.startPage.c_str());
     if (FAILED(navigated)) Log("a interface nao abriu: " + Hex(navigated));
-    if (callbacks_.ready) callbacks_.ready();
 }
 
 void WebViewHost::Resize(const RECT& bounds) {

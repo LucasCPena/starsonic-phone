@@ -96,13 +96,18 @@ bool MainWindow::Create(HINSTANCE instance, const Options& options, Callbacks ca
 
     WebViewHost::Callbacks webCallbacks;
     webCallbacks.message = [this](const std::string& json) {
+        // O WebView do aviso abre depois que a interface principal carregou (a primeira mensagem dela e o ready): os
+        // dois juntos atrasavam a primeira abertura, com o perfil do WebView2 ainda frio.
+        if (!noticeStarted_) {
+            noticeStarted_ = true;
+            StartNotice();
+        }
         if (callbacks_.command) callbacks_.command(json);
     };
     webCallbacks.log = [this](const std::string& line) { Log(line); };
     webCallbacks.failed = [this](HRESULT error) {
         if (callbacks_.webViewFailed) callbacks_.webViewFailed(error);
     };
-    webCallbacks.ready = [this] { StartNotice(); };
     webview_.reset(new WebViewHost(window_, std::move(webCallbacks)));
     WebViewHost::Options webOptions;
     webOptions.userDataFolder = options.userDataFolder;
