@@ -3,7 +3,7 @@
 // (fake_call_engine.h). O MakeCall roda na hora, dentro do Dial. Sem o Telecom: o que era dele (a
 // ligação da operadora, a espera pedida por ele, a Connection que falha) não existe no Windows.
 // Uma ligação (Task 2 da W1) e duas: a segunda que toca, Alternar, a volta sozinha, a em espera que cai
-// e a Nova ligação (Task 3).
+// e a Nova ligação (Task 3); a transferência com consulta e a conferência (Task 4).
 #include "doctest/doctest.h"
 
 #include <algorithm>
@@ -104,6 +104,33 @@ CallSnapshot Two(const CallView& top, const CallView& second, CallSnapshot::Seco
     return snapshot;
 }
 
+// A mesma ligação, em espera.
+CallView Held(CallView view) {
+    view.held = true;
+    return view;
+}
+
+// O snapshot na consulta (colleagueActive: o colega é a de cima).
+CallSnapshot Consulting(CallSnapshot snapshot, bool colleagueActive) {
+    snapshot.consulting = true;
+    snapshot.colleagueActive = colleagueActive;
+    return snapshot;
+}
+
+// As duas em conferência desde sinceMs: nenhuma em espera.
+CallSnapshot Conference(const CallView& top, const CallView& second, int64_t sinceMs) {
+    CallSnapshot snapshot = Two(top, second, CallSnapshot::Held);
+    snapshot.conference = true;
+    snapshot.conferenceSinceMs = sinceMs;
+    return snapshot;
+}
+
+// O snapshot com o aviso de agora.
+CallSnapshot WithMessage(CallSnapshot snapshot, const std::string& message) {
+    snapshot.endMessage = message;
+    return snapshot;
+}
+
 // "<nome ou número> desligou".
 std::string HungUp(const std::string& who) { return who + " desligou"; }
 
@@ -111,6 +138,8 @@ using Rings = std::vector<RingKind>;
 using Holds = std::vector<std::pair<int, bool>>;
 using Pairs = std::vector<std::pair<int, std::string>>;
 using Ints = std::vector<int>;
+using IntPairs = std::vector<std::pair<int, int>>;
+using Recents = std::vector<Recent>;
 using Strings = std::vector<std::string>;
 
 // O controlador com os falsos; registered é o que o predicado do registro devolve.
@@ -140,6 +169,23 @@ struct Fixture {
     int DialOut(const std::string& raw) {
         REQUIRE(calls.Dial(raw));
         return engine.nextCallId - 1;
+    }
+
+    // O Consultar para raw, com o cliente em andamento: o MakeCall do colega já roda (o id do colega).
+    int ConsultOut(const std::string& raw) {
+        REQUIRE(calls.Consult(raw));
+        return engine.nextCallId - 1;
+    }
+
+    // Duas ligações em andamento: a recebida 1 ("Cliente Teste"), em espera, e a feita para 2002, a
+    // ativa, atendida 10 s depois da primeira (o id dela no motor).
+    int TwoCalls() {
+        Ring(1);
+        AnswerCall(1);
+        time.Advance(10000);
+        const int id = DialOut("2002");
+        calls.OnCallState(id, CallState::Confirmed, 200);
+        return id;
     }
 
     CallSnapshot State() const { return listener.State(); }
@@ -1117,7 +1163,602 @@ TEST_CASE_FIXTURE(Fixture, "logout after Alternar resumes nothing") {
     CHECK(engine.activated == Ints{1});
     calls.OnLogout();
     CHECK(engine.hangups == Ints{1, 2});
-    CHECK_MESSAGE(engine.activated == Ints{1}, "nenhuma volta");
+    CHECK_MESSAGE((engine.activated == Ints{1}), "nenhuma volta");
     CHECK_FALSE(Top().has_value());
     CHECK(listener.recents.size() == 2);
+}
+
+// A transferência com consulta (spec da 0.2, 7.3): o cliente (a recebida 1) em espera e o colega (a feita pelo
+// Consultar) a ativa; Concluir, Cancelar, o colega que não atende e o cliente que desliga. E o resultado da direta.
+
+TEST_CASE_FIXTURE(Fixture, "Consultar holds the client and dials the colleague") {
+    const int64_t start = time.NowMs();
+    CHECK_FALSE_MESSAGE(calls.Consult("2002"), "sem ligacao, nada a consultar");
+    Ring(1);
+    CHECK_FALSE_MESSAGE(calls.Consult("2002"), "com a recebida tocando, nao");
+    AnswerCall(1);
+    time.Advance(10000);
+    CHECK_FALSE(calls.Consult(""));
+    CHECK_FALSE(calls.Consult(" - "));
+    registered = false;
+    CHECK_FALSE(calls.Consult("2002"));
+    CHECK_MESSAGE(Message() == U8(kNoConnection), "como no Dial");
+    registered = true;
+    CHECK(engine.made.empty());
+    const CallView client = Held(View(1, "3001", "Cliente Teste", true, CallView::Active, start));
+    // Dentro do MakeCall: a tela já tem o colega em cima, sem o id do motor, e o cliente em espera.
+    std::vector<CallSnapshot> seenDuringMakeCall;
+    bool otherPlaced = true;
+    engine.duringMakeCall = [&](int) {
+        seenDuringMakeCall = listener.snapshots;
+        otherPlaced = calls.Consult("2003") || calls.Dial("2003");
+    };
+    CHECK(calls.Consult("2002"));
+    CHECK(engine.made == Strings{"2002"});
+    CHECK_MESSAGE((engine.holds.empty() && engine.activated.empty()), "o motor poe o cliente em espera no MakeCall");
+    REQUIRE_FALSE(seenDuringMakeCall.empty());
+    CHECK(seenDuringMakeCall.back() ==
+          Consulting(Two(View(CallController::kNoId, "2002", "", false, CallView::Dialing), client, CallSnapshot::Held),
+                     true));
+    CHECK_FALSE_MESSAGE(otherPlaced, "com duas, nenhuma outra");
+    engine.duringMakeCall = nullptr;
+    CHECK_FALSE(calls.Consult("2003"));
+    CHECK_FALSE(calls.Dial("2003"));
+    CHECK(engine.made == Strings{"2002"});
+    const int id = engine.nextCallId - 1;
+    calls.OnCallState(id, CallState::Calling, 0);
+    CHECK(State() == Consulting(Two(View(id, "2002", "", false, CallView::Dialing), client, CallSnapshot::Held), true));
+    // Chamando: nem Concluir nem Alternar.
+    calls.CompleteTransfer();
+    calls.Swap();
+    CHECK(engine.attended.empty());
+    CHECK(engine.activated.empty());
+    calls.OnCallState(id, CallState::Confirmed, 200);
+    const CallView colleague = View(id, "2002", "", false, CallView::Active, start + 10000);
+    CHECK(State() == Consulting(Two(colleague, client, CallSnapshot::Held), true));
+    // Alternar: a pessoa fala com o cliente de novo, e o colega fica em espera (a consulta continua).
+    calls.Swap();
+    CHECK(engine.activated == Ints{1});
+    CHECK(State() == Consulting(Two(View(1, "3001", "Cliente Teste", true, CallView::Active, start), Held(colleague),
+                                    CallSnapshot::Held),
+                                false));
+    CHECK_MESSAGE(engine.hangups.empty(), "nada sai");
+    CHECK(listener.recents.empty());
+}
+
+TEST_CASE_FIXTURE(Fixture, "Concluir transferencia sends the attended transfer and both calls end") {
+    const int64_t start = time.NowMs();
+    Ring(1);
+    AnswerCall(1);
+    time.Advance(10000);
+    const int id = ConsultOut("2002");
+    calls.OnCallState(id, CallState::Confirmed, 200);
+    time.Advance(20000);
+    calls.CompleteTransfer();
+    CHECK_MESSAGE((engine.attended == IntPairs{{1, id}}), "o cliente para o colega");
+    calls.CompleteTransfer();   // o segundo clique, antes do resultado: nada
+    CHECK(engine.attended.size() == 1);
+    // A central aceitou: o motor desliga as duas (os fins chegam por ele), e a tela de chamada fecha.
+    calls.OnTransfer(1, 200);
+    CHECK_FALSE(Top().has_value());
+    CHECK(Message() == "");
+    CHECK_MESSAGE(engine.hangups.empty(), "o motor e quem desliga");
+    calls.OnCallState(1, CallState::Disconnected, 200);   // o BYE do cliente primeiro
+    CHECK_FALSE(Top().has_value());
+    calls.OnCallState(id, CallState::Disconnected, 200);
+    CHECK_MESSAGE(Message() == "", "sem aviso");
+    CHECK_MESSAGE(engine.activated.empty(), "nada volta");
+    CHECK(State() == CallSnapshot());
+    CHECK(listener.missed.empty());
+    CHECK(time.Pending() == 0);
+    CHECK(listener.recents == Recents{MakeRecent("3001", "Cliente Teste", Recent::Incoming, start, 30000),
+                                      MakeRecent("2002", "", Recent::Outgoing, start + 10000, 20000)});
+    CHECK_MESSAGE(calls.Dial("2003"), "uma ligacao nova depois");
+}
+
+TEST_CASE_FIXTURE(Fixture, "Concluir transferencia ends both calls when the colleague's BYE comes first") {
+    const int64_t start = time.NowMs();
+    Ring(1);
+    AnswerCall(1);
+    time.Advance(10000);
+    const int id = ConsultOut("2002");
+    calls.OnCallState(id, CallState::Confirmed, 200);
+    time.Advance(20000);
+    calls.CompleteTransfer();
+    calls.OnTransfer(1, 202);
+    CHECK_FALSE(Top().has_value());
+    // O colega (a ativa) sai primeiro: o cliente, já saindo, não volta sozinho.
+    calls.OnCallState(id, CallState::Disconnected, 200);
+    CHECK_MESSAGE(engine.activated.empty(), "o cliente nao volta");
+    CHECK_FALSE(Top().has_value());
+    calls.OnCallState(1, CallState::Disconnected, 200);
+    CHECK(engine.activated.empty());
+    CHECK(engine.hangups.empty());
+    CHECK(State() == CallSnapshot());
+    CHECK(listener.recents == Recents{MakeRecent("2002", "", Recent::Outgoing, start + 10000, 20000),
+                                      MakeRecent("3001", "Cliente Teste", Recent::Incoming, start, 30000)});
+}
+
+TEST_CASE_FIXTURE(Fixture, "a refused attended transfer shows the message and keeps both calls") {
+    const int64_t start = time.NowMs();
+    Ring(1);
+    AnswerCall(1);
+    time.Advance(10000);
+    const int id = ConsultOut("2002");
+    calls.OnCallState(id, CallState::Confirmed, 200);
+    calls.CompleteTransfer();
+    const CallSnapshot both =
+        Consulting(Two(View(id, "2002", "", false, CallView::Active, start + 10000),
+                       Held(View(1, "3001", "Cliente Teste", true, CallView::Active, start)), CallSnapshot::Held),
+                   true);
+    CHECK(State() == both);
+    calls.OnTransfer(1, 603);   // o REFER recusado
+    CHECK(Message() == U8(kTransferRefused));
+    CHECK_MESSAGE(State() == WithMessage(both, U8(kTransferRefused)), "as duas continuam como estavam");
+    CHECK(engine.hangups.empty());
+    CHECK(engine.activated.empty());
+    time.Advance(1999);
+    CHECK(Message() == U8(kTransferRefused));
+    time.Advance(1);
+    CHECK(Message() == "");
+    // De novo, do lado do cliente (Alternar): Concluir vale com qualquer um dos dois ativo.
+    calls.Swap();
+    calls.CompleteTransfer();
+    CHECK(engine.attended == IntPairs{{1, id}, {1, id}});
+    calls.OnTransfer(1, 486);   // o NOTIFY com erro
+    CHECK(Message() == U8(kTransferRefused));
+    CHECK(Top()->id == 1);
+    CHECK(State().consulting);
+    CHECK_FALSE(State().colleagueActive);
+    CHECK(engine.hangups.empty());
+    CHECK(listener.recents.empty());
+}
+
+TEST_CASE_FIXTURE(Fixture, "the colleague ending before the attended transfer is accepted frees the client for a new transfer") {
+    const int64_t start = time.NowMs();
+    Ring(1);
+    AnswerCall(1);
+    const int id = ConsultOut("2002");
+    calls.OnCallState(id, CallState::Confirmed, 200);
+    calls.CompleteTransfer();
+    CHECK(engine.attended == IntPairs{{1, id}});
+    // O colega desliga junto com o clique em Concluir: o motor recusa o REFER (o colega já não está), e o
+    // resultado nunca chega. O cliente volta sozinho, e pode ser transferido de novo.
+    calls.OnCallState(id, CallState::Disconnected, 200);
+    CHECK(engine.activated == Ints{1});
+    CHECK(State() == One(View(1, "3001", "Cliente Teste", true, CallView::Active, start)));
+    CHECK(calls.Transfer("2003"));
+    CHECK(engine.transfers == Pairs{{1, "2003"}});
+}
+
+TEST_CASE_FIXTURE(Fixture, "Cancelar ends the colleague and resumes the client") {
+    const int64_t start = time.NowMs();
+    Ring(1);
+    AnswerCall(1);
+    time.Advance(10000);
+    const int id = ConsultOut("2002");
+    calls.OnCallState(id, CallState::Calling, 0);
+    calls.CancelConsult();
+    CHECK_MESSAGE((engine.hangups == Ints{id}), "o colega sai");
+    CHECK_MESSAGE(engine.activated.empty(), "o cliente volta quando o fim chega");
+    const CallView client = View(1, "3001", "Cliente Teste", true, CallView::Active, start);
+    CHECK_MESSAGE(State() == One(Held(client)), "ate la, o cliente em espera, sem a consulta");
+    calls.CancelConsult();   // repetido: nada
+    CHECK(engine.hangups == Ints{id});
+    calls.OnCallState(id, CallState::Disconnected, 487);
+    CHECK(engine.activated == Ints{1});
+    CHECK_MESSAGE(State() == One(client), "o cliente voltou sozinho");
+    CHECK_MESSAGE(Message() == "", "cancelada aqui: sem aviso");
+    // Com o colega atendido e o cliente de volta pelo Alternar: o colega (em espera) sai, e o cliente segue.
+    time.Advance(5000);
+    const int next = ConsultOut("2003");
+    calls.OnCallState(next, CallState::Confirmed, 200);
+    calls.Swap();
+    CHECK(engine.activated == Ints{1, 1});
+    time.Advance(5000);
+    calls.CancelConsult();
+    CHECK(engine.hangups == Ints{id, next});
+    CHECK(State() == One(client));
+    calls.OnCallState(next, CallState::Disconnected, 200);
+    CHECK_MESSAGE((engine.activated == Ints{1, 1}), "o cliente ja estava com o som");
+    CHECK(Message() == "");
+    CHECK(State() == One(client));
+    // Cancelar com o MakeCall do colega a caminho: o colega sai quando o id chega.
+    engine.duringMakeCall = [this](int) { calls.CancelConsult(); };
+    const int third = ConsultOut("2004");
+    engine.duringMakeCall = nullptr;
+    CHECK(engine.hangups == Ints{id, next, third});
+    calls.OnCallState(third, CallState::Disconnected, 487);
+    CHECK(engine.activated == Ints{1, 1, 1});
+    CHECK(State() == One(client));
+    CHECK(listener.recents == Recents{MakeRecent("2002", "", Recent::Outgoing, start + 10000, 0),
+                                      MakeRecent("2003", "", Recent::Outgoing, start + 15000, 5000),
+                                      MakeRecent("2004", "", Recent::Outgoing, start + 20000, 0)});
+}
+
+TEST_CASE_FIXTURE(Fixture, "the colleague not answering resumes the client with the message") {
+    const int64_t start = time.NowMs();
+    contacts.names["2003"] = "Maria Silva";
+    Ring(1);
+    AnswerCall(1);
+    time.Advance(10000);
+    const int id = ConsultOut("2002");
+    calls.OnCallState(id, CallState::Calling, 0);
+    time.Advance(30000);
+    calls.OnCallState(id, CallState::Disconnected, 480);
+    CHECK_MESSAGE(Message() == "2002: " + EndMessage(480), "o motivo do nucleo, com o numero do colega");
+    CHECK_MESSAGE((engine.activated == Ints{1}), "o cliente volta sozinho");
+    const CallView client = View(1, "3001", "Cliente Teste", true, CallView::Active, start);
+    CHECK(State() == WithMessage(One(client), "2002: " + EndMessage(480)));
+    time.Advance(1999);
+    CHECK(Message() == "2002: " + EndMessage(480));
+    time.Advance(1);
+    CHECK(Message() == "");
+    calls.CompleteTransfer();   // sem consulta: nada
+    CHECK(engine.attended.empty());
+    // Outra consulta, e o colega (um contato) está ocupado.
+    const int next = ConsultOut("2003");
+    calls.OnCallState(next, CallState::Disconnected, 486);
+    CHECK_MESSAGE(Message() == "Maria Silva: Ocupado", "o nome do contato do colega");
+    CHECK(engine.activated == Ints{1, 1});
+    CHECK(State().top == client);
+    CHECK(listener.recents == Recents{MakeRecent("2002", "", Recent::Outgoing, start + 10000, 0),
+                                      MakeRecent("2003", "", Recent::Outgoing, start + 42000, 0)});
+}
+
+TEST_CASE_FIXTURE(Fixture, "the client hanging up during the consult leaves a normal call with the colleague") {
+    const int64_t start = time.NowMs();
+    Ring(1);
+    AnswerCall(1);
+    time.Advance(10000);
+    const int id = ConsultOut("2002");
+    calls.OnCallState(id, CallState::Confirmed, 200);
+    time.Advance(20000);
+    calls.OnCallState(1, CallState::Disconnected, 200);   // o cliente, em espera, desligou
+    CHECK(Message() == HungUp("Cliente Teste"));
+    const CallView colleague = View(id, "2002", "", false, CallView::Active, start + 10000);
+    CHECK_MESSAGE(State() == WithMessage(One(colleague), HungUp("Cliente Teste")),
+                  "uma ligacao normal, sem a consulta");
+    CHECK_MESSAGE((engine.activated.empty() && engine.hangups.empty()), "o colega continua como estava");
+    calls.CompleteTransfer();   // sem consulta: nada
+    calls.CancelConsult();
+    CHECK(engine.attended.empty());
+    CHECK(engine.hangups.empty());
+    time.Advance(5000);
+    calls.Hangup();
+    CHECK(engine.hangups == Ints{id});
+    calls.OnCallState(id, CallState::Disconnected, 200);
+    CHECK_FALSE(Top().has_value());
+    CHECK(listener.recents == Recents{MakeRecent("3001", "Cliente Teste", Recent::Incoming, start, 30000),
+                                      MakeRecent("2002", "", Recent::Outgoing, start + 10000, 25000)});
+}
+
+TEST_CASE_FIXTURE(Fixture, "a direct transfer waiting for its result refuses Consultar, and a consult refuses the direct transfer") {
+    Ring(1);
+    AnswerCall(1);
+    CHECK(calls.Transfer("2003"));
+    // O REFER espera o NOTIFY final (o destino ainda não atendeu): nem Consultar nem outro Transferir agora.
+    CHECK_FALSE(calls.Consult("2002"));
+    CHECK_FALSE(calls.Transfer("2004"));
+    CHECK_MESSAGE(engine.made.empty(), "nada discado");
+    CHECK(engine.transfers == Pairs{{1, "2003"}});
+    CHECK_FALSE(State().consulting);
+    // A central aceitou: o motor desliga só ela, e nada fica de pé escondido.
+    calls.OnTransfer(1, 200);
+    calls.OnCallState(1, CallState::Disconnected, 200);
+    CHECK_FALSE(Top().has_value());
+    CHECK(engine.hangups.empty());
+    const int dialed = DialOut("2005");   // uma ligação nova depois
+    calls.Hangup();
+    calls.OnCallState(dialed, CallState::Disconnected, 487);
+    // Na consulta, a transferência é o Concluir: o Transferir agora não vale, de nenhum dos lados.
+    Ring(2, "3002", "");
+    AnswerCall(2);
+    const int id = ConsultOut("2002");
+    calls.OnCallState(id, CallState::Confirmed, 200);
+    CHECK_FALSE(calls.Transfer("2004"));
+    calls.Swap();
+    CHECK_FALSE(calls.Transfer("2004"));
+    CHECK(engine.transfers == Pairs{{1, "2003"}});
+    // Um 2xx no cliente sem o Concluir pedido não é da consulta: as duas continuam.
+    calls.OnTransfer(2, 200);
+    CHECK(State().consulting);
+    CHECK_FALSE(State().colleagueActive);
+    CHECK(State().second == View(id, "2002", "", false, CallView::Active, time.NowMs(), true));
+    calls.CompleteTransfer();
+    CHECK(engine.attended == IntPairs{{2, id}});
+    calls.OnTransfer(2, 200);
+    CHECK_FALSE_MESSAGE(Top().has_value(), "o Concluir pedido: as duas saem");
+}
+
+TEST_CASE_FIXTURE(Fixture, "an attended transfer the engine refuses at once shows the message and can be asked again") {
+    Ring(1);
+    AnswerCall(1);
+    const int id = ConsultOut("2002");
+    calls.OnCallState(id, CallState::Confirmed, 200);
+    const CallSnapshot both = State();
+    REQUIRE(both.consulting);
+    // O motor devolve false (sem OnTransfer): o pedido não fica esperando um resultado que nunca vem.
+    engine.refuseTransfers = true;
+    calls.CompleteTransfer();
+    CHECK(engine.attended == IntPairs{{1, id}});
+    CHECK(Message() == U8(kTransferRefused));
+    CHECK_MESSAGE(State() == WithMessage(both, U8(kTransferRefused)), "as duas continuam como estavam");
+    CHECK(engine.hangups.empty());
+    engine.refuseTransfers = false;
+    calls.CompleteTransfer();
+    CHECK_MESSAGE((engine.attended == IntPairs{{1, id}, {1, id}}), "o pedido vale de novo");
+    calls.OnTransfer(1, 200);
+    CHECK_FALSE(Top().has_value());
+}
+
+TEST_CASE_FIXTURE(Fixture, "a direct transfer the engine refuses at once shows the message and can be asked again") {
+    const int id = DialOut("2002");
+    calls.OnCallState(id, CallState::Confirmed, 200);
+    const std::optional<CallView> call = Top();
+    engine.refuseTransfers = true;
+    CHECK_FALSE_MESSAGE(calls.Transfer("2003"), "o motor recusou na hora");
+    CHECK(engine.transfers == Pairs{{id, "2003"}});
+    CHECK(Message() == U8(kTransferRefused));
+    CHECK(Top() == call);
+    engine.refuseTransfers = false;
+    CHECK_MESSAGE(calls.Consult("2004"), "sem pedido esperando, o Consultar vale");
+    calls.CancelConsult();
+    calls.OnCallState(engine.nextCallId - 1, CallState::Disconnected, 487);
+    CHECK(calls.Transfer("2003"));
+    CHECK(engine.transfers == Pairs{{id, "2003"}, {id, "2003"}});
+}
+
+// A conferência (spec da 0.2, 7.4): as duas ligações juntas na mesa de áudio do motor, Separar, Desligar
+// para as duas, uma que sai e Sair.
+
+TEST_CASE_FIXTURE(Fixture, "Juntar joins both calls into a conference") {
+    const int64_t start = time.NowMs();
+    Ring(1);
+    calls.Join();   // tocando: nada
+    AnswerCall(1);
+    calls.Join();   // uma só: nada
+    time.Advance(10000);
+    const int id = DialOut("2002");
+    calls.Join();   // a feita ainda chama: nada
+    CHECK(engine.joined.empty());
+    calls.OnCallState(id, CallState::Confirmed, 200);
+    time.Advance(5000);
+    calls.Join();
+    CHECK_MESSAGE((engine.joined == IntPairs{{id, 1}}), "a ativa e a outra");
+    CHECK_MESSAGE((engine.activated.empty() && engine.holds.empty()), "o motor retoma a em espera no Join");
+    const CallSnapshot conference = Conference(View(id, "2002", "", false, CallView::Active, start + 10000),
+                                               View(1, "3001", "Cliente Teste", true, CallView::Active, start),
+                                               start + 15000);
+    CHECK(State() == conference);
+    calls.Join();   // já em conferência: nada
+    CHECK(engine.joined.size() == 1);
+    // Na conferência, nem Espera, nem Alternar, nem Transferir, nem Consultar, nem Nova ligação.
+    calls.Hold(std::nullopt);
+    calls.Hold(true);
+    calls.Swap();
+    CHECK_FALSE(calls.Transfer("2003"));
+    CHECK_FALSE(calls.Consult("2003"));
+    CHECK_FALSE(calls.Dial("2003"));
+    CHECK(engine.holds.empty());
+    CHECK(engine.activated.empty());
+    CHECK(engine.transfers.empty());
+    CHECK(engine.made == Strings{"2002"});
+    CHECK(State() == conference);
+    // O mudo vale para as duas, e o teclado manda na de cima.
+    calls.Mute(std::nullopt);
+    CHECK(engine.mutes == std::vector<bool>{true});
+    calls.Dtmf("1");
+    CHECK(engine.dtmfs == Pairs{{id, "1"}});
+    CallSnapshot muted = conference;
+    muted.muted = true;
+    CHECK(State() == muted);
+    // Uma terceira recebe ocupado, e a conferência segue.
+    calls.OnIncomingCall(id + 1, "3003", "");
+    CHECK(engine.rejects == Ints{id + 1});
+    calls.OnCallState(id + 1, CallState::Disconnected, 486);
+    CHECK(State() == muted);
+    CHECK(listener.recents == Recents{MakeRecent("3003", "", Recent::Missed, start + 15000, 0)});
+    CHECK(engine.hangups.empty());
+    CHECK(engine.split.empty());
+}
+
+TEST_CASE_FIXTURE(Fixture, "Separar holds the last call again") {
+    const int64_t start = time.NowMs();
+    const int id = TwoCalls();
+    calls.Split();   // sem conferência: nada
+    CHECK(engine.split.empty());
+    calls.Join();   // com a feita em cima
+    time.Advance(5000);
+    calls.Split();
+    // A última que entrou (a feita) vai para a espera, e a primeira fica a ativa, em cima.
+    CHECK(engine.split == IntPairs{{1, id}});
+    CHECK_MESSAGE((engine.order == Strings{"join " + std::to_string(id) + " 1", "split 1 " + std::to_string(id)}),
+                  "o Split poe a outra em espera no motor");
+    const CallView first = View(1, "3001", "Cliente Teste", true, CallView::Active, start);
+    const CallView last = View(id, "2002", "", false, CallView::Active, start + 10000);
+    CHECK(State() == Two(first, Held(last), CallSnapshot::Held));
+    calls.Split();   // repetido: nada
+    CHECK(engine.split.size() == 1);
+    // Juntar de novo, agora com a primeira em cima: Separar põe de novo a feita (a última que entrou) em espera.
+    calls.Join();
+    CHECK(engine.joined == IntPairs{{id, 1}, {1, id}});
+    CHECK(State() == Conference(first, last, start + 15000));
+    calls.Split();
+    CHECK(engine.split == IntPairs{{1, id}, {1, id}});
+    CHECK(State() == Two(first, Held(last), CallSnapshot::Held));
+    // Separadas, o Alternar vale de novo.
+    calls.Swap();
+    CHECK(engine.activated == Ints{id});
+    CHECK(Top()->id == id);
+    CHECK(engine.holds.empty());
+    CHECK(engine.hangups.empty());
+}
+
+TEST_CASE_FIXTURE(Fixture, "hanging up a conference ends both calls") {
+    const int64_t start = time.NowMs();
+    const int id = TwoCalls();
+    calls.Join();
+    time.Advance(20000);
+    calls.Hangup();
+    CHECK_MESSAGE((engine.hangups == Ints{1, id}), "as duas saem");
+    CHECK_FALSE_MESSAGE(Top().has_value(), "a tela sai na hora");
+    calls.Hangup();   // o segundo clique, antes dos fins: nada
+    calls.Hangup(1);
+    calls.Hangup(id);
+    CHECK(engine.hangups.size() == 2);
+    calls.OnCallState(id, CallState::Disconnected, 200);
+    CHECK_MESSAGE(engine.activated.empty(), "nada volta");
+    CHECK_FALSE(Top().has_value());
+    calls.OnCallState(1, CallState::Disconnected, 200);
+    CHECK(engine.activated.empty());
+    CHECK(engine.holds.empty());
+    CHECK_MESSAGE(Message() == "", "desligadas aqui: sem aviso");
+    CHECK(State() == CallSnapshot());
+    CHECK(listener.recents == Recents{MakeRecent("2002", "", Recent::Outgoing, start + 10000, 20000),
+                                      MakeRecent("3001", "Cliente Teste", Recent::Incoming, start, 30000)});
+    CHECK_MESSAGE(calls.Dial("2003"), "uma ligacao nova depois");
+    CHECK_FALSE(State().conference);
+}
+
+namespace {
+
+// A conferência do TwoCalls (a feita em cima), e o Desligar com o id de uma das duas (top: a de cima): as
+// duas saem, como no Desligar da tela, e nenhuma fica com o som.
+struct ConferenceLeg : Fixture {
+    void HangUpLeg(bool top) {
+        const int64_t start = time.NowMs();
+        const int id = TwoCalls();
+        calls.Join();
+        time.Advance(20000);
+        const int leg = top ? id : 1;
+        const int other = top ? 1 : id;
+        calls.Hangup(leg);
+        CHECK_MESSAGE((engine.hangups == Ints{1, id}), "as duas saem");
+        CHECK_FALSE_MESSAGE(Top().has_value(), "a tela sai na hora");
+        calls.Hangup(other);   // o Desligar da outra, antes dos fins: nada
+        CHECK(engine.hangups.size() == 2);
+        calls.OnCallState(leg, CallState::Disconnected, 200);
+        CHECK_FALSE(Top().has_value());
+        CHECK_MESSAGE((engine.activated.empty() && engine.holds.empty()), "a outra nao volta");
+        calls.OnCallState(other, CallState::Disconnected, 200);
+        CHECK(State() == CallSnapshot());
+        CHECK(engine.activated.empty());
+        CHECK_MESSAGE(Message() == "", "desligadas aqui: sem aviso");
+        const Recent outgoing = MakeRecent("2002", "", Recent::Outgoing, start + 10000, 20000);
+        const Recent incoming = MakeRecent("3001", "Cliente Teste", Recent::Incoming, start, 30000);
+        CHECK(listener.recents == (top ? Recents{outgoing, incoming} : Recents{incoming, outgoing}));
+    }
+};
+
+}  // namespace
+
+TEST_CASE_FIXTURE(ConferenceLeg, "disconnecting the top call of a conference by its id ends both calls") {
+    HangUpLeg(true);
+}
+
+TEST_CASE_FIXTURE(ConferenceLeg, "disconnecting the other call of a conference by its id ends both calls") {
+    HangUpLeg(false);
+}
+
+TEST_CASE_FIXTURE(Fixture, "a party leaving the conference leaves a normal call") {
+    const int64_t start = time.NowMs();
+    const int id = TwoCalls();
+    calls.Join();
+    time.Advance(20000);
+    // O cliente (o de baixo) desliga: a conferência vira uma ligação normal com o colega.
+    calls.OnCallState(1, CallState::Disconnected, 200);
+    CHECK(Message() == HungUp("Cliente Teste"));
+    const CallView colleague = View(id, "2002", "", false, CallView::Active, start + 10000);
+    CHECK(State() == WithMessage(One(colleague), HungUp("Cliente Teste")));
+    CHECK_MESSAGE((engine.activated.empty() && engine.holds.empty() && engine.hangups.empty()),
+                  "o motor ja a deixa com o som: nada de Activate");
+    time.Advance(1999);
+    CHECK(Message() == HungUp("Cliente Teste"));
+    time.Advance(1);
+    CHECK(Message() == "");
+    // Uma ligação normal: Separar não faz nada, e a Espera é a de sempre.
+    calls.Split();
+    CHECK(engine.split.empty());
+    calls.Hold(std::nullopt);
+    calls.Hold(std::nullopt);
+    CHECK(engine.holds == Holds{{id, true}, {id, false}});
+    CHECK(State() == One(colleague));
+    // De novo com uma segunda, e quem sai é a de cima: a outra fica, também sem Activate.
+    time.Advance(5000);
+    Ring(2, "3002", "Fulano");
+    AnswerCall(2);
+    calls.Join();
+    CHECK(engine.joined == IntPairs{{id, 1}, {2, id}});
+    time.Advance(10000);
+    calls.OnCallState(2, CallState::Disconnected, 200);
+    CHECK_MESSAGE(Message() == HungUp("Fulano"), "qualquer uma da conferencia que cai deixa o aviso");
+    CHECK(State() == WithMessage(One(colleague), HungUp("Fulano")));
+    CHECK(engine.activated.empty());
+    time.Advance(7000);
+    calls.Hangup();
+    CHECK(engine.hangups == Ints{id});
+    calls.OnCallState(id, CallState::Disconnected, 200);
+    CHECK_FALSE(Top().has_value());
+    CHECK(listener.recents == Recents{MakeRecent("3001", "Cliente Teste", Recent::Incoming, start, 30000),
+                                      MakeRecent("3002", "Fulano", Recent::Incoming, start + 37000, 10000),
+                                      MakeRecent("2002", "", Recent::Outgoing, start + 10000, 44000)});
+}
+
+TEST_CASE_FIXTURE(Fixture, "logout during a conference ends both calls") {
+    const int64_t start = time.NowMs();
+    const int id = TwoCalls();
+    calls.Join();
+    calls.Mute(std::nullopt);
+    time.Advance(20000);
+    calls.OnLogout();
+    CHECK(engine.hangups == Ints{1, id});
+    CHECK_MESSAGE(engine.activated.empty(), "nenhuma volta");
+    CHECK_MESSAGE((engine.mutes == std::vector<bool>{true, false}), "o mudo sai");
+    CHECK(State() == CallSnapshot());
+    calls.OnCallState(1, CallState::Disconnected, 200);   // os fins que chegam depois são ignorados
+    calls.OnCallState(id, CallState::Disconnected, 200);
+    CHECK(listener.missed.empty());
+    CHECK(listener.recents == Recents{MakeRecent("3001", "Cliente Teste", Recent::Incoming, start, 30000),
+                                      MakeRecent("2002", "", Recent::Outgoing, start + 10000, 20000)});
+    // A conferência não passa para o próximo Entrar: a ligação nova é uma só.
+    calls.OnLogin();
+    Ring(15, "3005", "");
+    AnswerCall(15);
+    CHECK(State() == One(View(15, "3005", "", true, CallView::Active, start + 30000)));
+}
+
+TEST_CASE_FIXTURE(Fixture, "Juntar during a consult is not offered") {
+    Ring(1);
+    AnswerCall(1);
+    const int id = ConsultOut("2002");
+    calls.OnCallState(id, CallState::Confirmed, 200);
+    const CallSnapshot consult = State();
+    CHECK(consult.consulting);
+    CHECK(consult.colleagueActive);
+    calls.Join();
+    CHECK(State() == consult);
+    calls.Swap();   // do lado do cliente, também não
+    const CallSnapshot client = State();
+    calls.Join();
+    CHECK(engine.joined.empty());
+    CHECK(State() == client);
+    CHECK(client.consulting);
+    CHECK_FALSE(client.colleagueActive);
+    CHECK_FALSE(client.conference);
+    // Nem com uma transferência esperando o resultado, em qualquer das duas.
+    calls.CancelConsult();
+    calls.OnCallState(id, CallState::Disconnected, 200);
+    Ring(12, "3002", "");
+    AnswerCall(12);
+    CHECK_FALSE_MESSAGE(calls.Consult("2004"), "com duas em andamento, nenhum Consultar");
+    CHECK(calls.Transfer("2003"));   // a direta da ativa (12), esperando o NOTIFY
+    calls.Join();
+    calls.Swap();   // a 12, com o pedido, vai para a espera
+    calls.Join();
+    CHECK(engine.joined.empty());
+    calls.OnTransfer(12, 603);   // recusada: as duas continuam, e o Juntar vale
+    calls.Join();
+    CHECK(engine.joined == IntPairs{{1, 12}});
+    CHECK(State().conference);
 }

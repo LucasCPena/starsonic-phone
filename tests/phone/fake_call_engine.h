@@ -18,8 +18,9 @@ namespace phone_test {
 
 // O motor falso: anota os pedidos. MakeCall devolve nextCallId (e o próximo sobe), ou -1 com refuse;
 // duringMakeCall roda dentro dele, antes de ele voltar (um evento do motor que chega antes). CallCount
-// devolve callCount, que o teste ajusta. order guarda, na ordem, os pedidos que mexem no som das duas:
-// "join 10 1", "split 1 10", "hold 1 true" e "activate 1".
+// devolve callCount, que o teste ajusta. Com refuseTransfers, Transfer e TransferAttended anotam o pedido e
+// devolvem false (o motor recusou na hora: nenhum OnTransfer vem). order guarda, na ordem, os pedidos que
+// mexem no som das duas: "join 10 1", "split 1 10", "hold 1 true" e "activate 1".
 class FakeCallEngine : public starsonic::CallEngine {
 public:
     std::vector<std::string> order;
@@ -38,6 +39,7 @@ public:
     int callCount = 0;
     int nextCallId = 10;
     bool refuse = false;
+    bool refuseTransfers = false;
     std::function<void(int)> duringMakeCall;
 
     int MakeCall(const std::string& number) override {
@@ -86,11 +88,11 @@ public:
     }
     bool Transfer(int callId, const std::string& number) override {
         transfers.emplace_back(callId, number);
-        return true;
+        return !refuseTransfers;
     }
     bool TransferAttended(int callId, int targetCallId) override {
         attended.emplace_back(callId, targetCallId);
-        return true;
+        return !refuseTransfers;
     }
     int CallCount() const override { return callCount; }
 };
@@ -210,9 +212,11 @@ inline std::ostream& operator<<(std::ostream& out, const std::optional<CallView>
 
 inline std::ostream& operator<<(std::ostream& out, const CallSnapshot& s) {
     static const char* const kKinds[] = {"None", "Ringing", "Held"};
-    return out << "{top " << s.top << ", second " << s.second << " (" << kKinds[s.secondKind] << ")"
-               << (s.muted ? ", muted" : "") << (s.conference ? ", conference" : "")
-               << (s.consulting ? ", consulting" : "") << ", message '" << s.endMessage << "'}";
+    out << "{top " << s.top << ", second " << s.second << " (" << kKinds[s.secondKind] << ")"
+        << (s.muted ? ", muted" : "");
+    if (s.conference) out << ", conference since " << s.conferenceSinceMs;
+    if (s.consulting) out << ", consulting" << (s.colleagueActive ? " (colleague active)" : " (client active)");
+    return out << ", message '" << s.endMessage << "'}";
 }
 
 inline std::ostream& operator<<(std::ostream& out, const Recent& r) {

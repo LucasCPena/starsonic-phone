@@ -17,9 +17,13 @@
 //   decididas, uma thread por vez e sem a trava: quem chega com outra thread entregando deixa as suas
 //   na fila, e ela as entrega também. O ouvinte pode chamar o controlador de volta (na mesma thread ou
 //   em outra); o que essa chamada publica sai depois do aviso que está saindo. Só no Dial as publicações
-//   saem antes do efeito, logo antes do MakeCall: a tela mostra a feita (e o Desligar dela) enquanto ele
-//   demora. Nos outros (o Answer, o Hold, o Swap, a volta sozinha) elas saem depois dos pedidos ao motor:
-//   um pedido que o ouvinte faz de volta nunca chega ao motor antes do pedido que o provocou.
+//   saem antes do efeito, logo antes do MakeCall (também no Consult): a tela mostra a feita (e o Desligar
+//   dela) enquanto ele demora. Nos outros (o Answer, o Hold, o Swap, o Join, o Split, a volta sozinha)
+//   elas saem depois dos pedidos ao motor: um pedido que o ouvinte faz de volta nunca chega ao motor antes
+//   do pedido que o provocou.
+// - Um efeito pode voltar à trava depois do motor (outra decisão, com os efeitos e as publicações dela): o
+//   MakeCall que voltou com o id, e o Transfer ou o TransferAttended que o motor recusou na hora (o pedido
+//   deixa de esperar o resultado).
 // - Os eventos do motor também pedem coisas ao motor, na thread de eventos dele (que deixa): o Activate da
 //   volta sozinha (o fim da ativa), o Hangup de uma feita desligada antes do id, o mudo que sai.
 // - Exceção: o Clock e o Scheduler são chamados com a trava presa (a hora de agora; o Schedule e o Cancel
@@ -60,9 +64,15 @@ struct CallView {
 
 // O que a tela de chamada mostra: a de cima (top, a ativa) e, com duas, a outra (second: tocando ou em
 // espera, em secondKind); nenhuma: top vazio. muted: o mudo do microfone (vale para as duas).
-// conference, conferenceSinceMs, consulting e colleagueActive: a conferência e a consulta (Task 4).
+// conference: as duas em conferência (só com as duas de pé): top e second se ouvem e têm o som, nenhuma
+// em espera (held false nas duas; secondKind fica Held, e a tela olha o conference); conferenceSinceMs é
+// quando o Juntar foi pedido (0 fora dela). consulting: a transferência com consulta, com as duas de pé (o
+// cliente e o colega são top e second); colleagueActive: o colega é a de cima (o cliente, então, em espera:
+// "Em espera · transferência"). Fora da consulta, os dois false.
 // endMessage: o aviso de agora, por 2 s ("" fora disso): o de uma feita que não completou (o
-// CallEndMessage do núcleo), o de discar sem registro e o da transferência recusada.
+// CallEndMessage do núcleo; o do colega da consulta com o nome ou o número dele na frente: "<nome ou
+// número>: <motivo>"), o de discar sem registro, o da em espera que caiu ("<nome ou número> desligou") e o
+// da transferência recusada.
 struct CallSnapshot {
     std::optional<CallView> top;
     std::optional<CallView> second;
@@ -137,8 +147,7 @@ public:
     virtual std::optional<std::string> NameFor(const std::string& number) = 0;
 };
 
-// As ligações do app, até duas, uma delas a ativa (a consulta, a conferência e o Não perturbe nas Tasks 4
-// e 5).
+// As ligações do app, até duas, uma delas a ativa (o Não perturbe na Task 5).
 // - Recebida (OnIncomingCall): sem ligação, toca (OnRing(Full)); com uma só e já em andamento (em espera
 //   ou não), toca como a segunda (second com secondKind Ringing, OnRing(Waiting)), e a outra fica com o
 //   som até a pessoa atender. Com uma que ainda não está em andamento (tocando, atendendo, chamando) ou
@@ -155,6 +164,25 @@ public:
 //   em espera. Swap (Alternar) troca as duas. Quando a ativa acaba (desligada aqui ou do outro lado), a em
 //   espera volta sozinha (o motor a retoma: Activate). A em espera que cai do outro lado sai com o aviso
 //   "<nome ou número> desligou" por 2 s, e a ativa continua.
+// - Transferência com consulta (spec da 0.2, 7.3): o Consult é a Nova ligação marcada: a que estava em
+//   andamento é o cliente, e a feita, o colega. CompleteTransfer (só com o colega atendido, com qualquer
+//   dos dois ativo) pede ao motor o REFER com Replaces do cliente para o colega, uma vez até o resultado
+//   (OnTransfer): com 2xx o motor desliga as duas, que saem como desligadas aqui (sem aviso, nem a volta
+//   sozinha do cliente); com outro código, ou se o motor recusa na hora, o aviso "O servidor não aceitou a
+//   transferência." por 2 s, e as duas continuam. CancelConsult desliga o colega, e o cliente volta
+//   sozinho. O colega que não atende traz o cliente de volta, com o aviso "<nome ou número do colega>:
+//   <CallEndMessage>"; o cliente que desliga deixa o colega como uma ligação normal ("<nome ou número>
+//   desligou"); o colega que acaba com o Concluir esperando leva o pedido junto (o cliente pode ser
+//   transferido de novo). Uma ligação tem no máximo um pedido de transferência esperando o resultado: com
+//   ele, nem Consult nem outro Transfer nela; na consulta, o Transfer não vale (a transferência é o
+//   CompleteTransfer).
+// - Conferência (spec da 0.2, 7.4): Join, com as duas em andamento, sem consulta e sem transferência
+//   esperando o resultado, liga as duas entre si no motor (que retoma a em espera). Split põe em espera a
+//   última que entrou, e a outra fica a ativa. Hangup, com ou sem o id de qualquer uma, desliga as duas
+//   (o Desligar para todos), e o Sair também; nenhuma volta sozinha. A que acaba do outro lado deixa a
+//   outra como uma ligação normal, com o aviso "<nome ou número> desligou" (o motor já a deixa com o som).
+//   Na conferência não há Hold, Swap, Transfer, Consult nem Nova ligação; o mudo vale para as duas, e o
+//   Dtmf vai na de cima.
 // - Depois de OnLogout (Sair), os eventos do motor são ignorados até o próximo OnLogin (Entrar).
 class CallController {
 public:
@@ -192,17 +220,19 @@ public:
     // Recusa a recebida que toca: ocupado (486), e ela entra nos Recentes como perdida.
     void Reject();
     // Desliga a ativa: a feita que chama é cancelada, e a recebida que toca (só ela), recusada. Com a ativa
-    // já saindo (um segundo clique antes do fim dela), nada: a outra só sai pelo Hangup com o id dela.
+    // já saindo (um segundo clique antes do fim dela), nada: a outra só sai pelo Hangup com o id dela. Na
+    // conferência, desliga as duas (as que ainda não estão saindo), e nenhuma volta sozinha.
     void Hangup();
     // Desliga a ligação callId, a ativa ou a outra (o Desligar do cartão dela); a outra acaba sem mexer na
     // ativa. kNoId é a feita mais nova (o cartão dela antes de o MakeCall dar o id). Já saindo, ou nenhuma
-    // com o id, nada.
+    // com o id, nada. Na conferência, o id de qualquer uma das duas desliga as duas, como o Hangup().
     void Hangup(int callId);
     // Alternar: com as duas ligações em andamento, a outra vira a ativa (o motor a retoma: Activate) e a
-    // ativa vai para a espera. Sem as duas em andamento (uma só, ou a outra ainda toca), nada.
+    // ativa vai para a espera. Sem as duas em andamento (uma só, ou a outra ainda toca), ou na conferência
+    // (o Separar é o Split), nada. Na consulta, troca o cliente e o colega (a consulta continua).
     void Swap();
     // Põe em espera (true) ou retoma (false) a ligação ativa em andamento; sem valor, troca. Com as duas em
-    // andamento, a espera da ativa é o Swap (a outra volta).
+    // andamento, a espera da ativa é o Swap (a outra volta). Na conferência, nada.
     void Hold(std::optional<bool> on);
     // Liga (true) ou desliga (false) o mudo do microfone; sem valor, troca. Não com a recebida tocando.
     // Ele sai no fim da última ligação.
@@ -211,9 +241,32 @@ public:
     void Dtmf(const std::string& digits);
     // Transfere a ligação ativa em andamento para raw (sem consulta): a ligação acaba quando a central
     // aceita (o motor a desliga); se ela recusa (OnTransfer fora de 2xx), o aviso "O servidor não aceitou a
-    // transferência." por 2 s. false se não há o que transferir: sem a ativa em andamento, número vazio ou
-    // outro pedido dela esperando o resultado.
+    // transferência." por 2 s. false se não transferiu: sem a ativa em andamento, número vazio, outro pedido
+    // dela esperando o resultado, na consulta (lá, a transferência é o CompleteTransfer), na conferência, ou
+    // o motor recusou na hora (Transfer devolveu false: o mesmo aviso, e o pedido vale de novo).
     bool Transfer(const std::string& raw);
+    // Consultar: liga para o colega raw como a Nova ligação do Dial, com a ligação em andamento (o cliente,
+    // que vai para a espera), e as duas ficam marcadas como a consulta (consulting). false se não ligou:
+    // sem uma ligação em andamento, com uma transferência dela esperando o resultado (o 2xx da direta
+    // desligaria o cliente e deixaria o colega), e nos casos do Dial (também o aviso sem registro).
+    bool Consult(const std::string& raw);
+    // Concluir transferência: com o colega atendido (as duas em andamento, com qualquer uma ativa), o motor
+    // manda o REFER com Replaces do cliente para o colega (TransferAttended). Um pedido por vez: outro
+    // clique antes do resultado (OnTransfer) não faz nada. Se o colega acaba antes do resultado, ou se o
+    // motor recusa na hora (TransferAttended devolveu false; aí com o aviso), o pedido sai, e o Concluir
+    // vale de novo. Fora da consulta, nada.
+    void CompleteTransfer();
+    // Cancelar a consulta: o colega sai (como no Hangup), e o cliente volta sozinho quando o fim dele chega
+    // (se o colega era a ativa). Fora da consulta, ou com o colega já saindo, nada.
+    void CancelConsult();
+    // Juntar: com as duas ligações em andamento (a ativa e a outra, em espera), sem consulta, sem uma
+    // transferência de uma delas esperando o resultado e fora de uma conferência, o motor retoma a em espera
+    // e liga as duas entre si e ao som (Join). As duas ficam fora da espera, e a tela mostra a conferência
+    // desde agora. Senão, nada.
+    void Join();
+    // Separar: a última que entrou vai para a espera, e a outra fica a ativa, em cima (o motor desfaz as
+    // ligações entre as duas: Split). Fora da conferência, ou com uma das duas saindo, nada.
+    void Split();
     // Sair: as ligações de agora acabam (o motor as desliga), e daqui em diante os eventos do motor são
     // ignorados, até OnLogin.
     void OnLogout();
@@ -222,7 +275,9 @@ public:
 
 private:
     struct Call;
-    enum class TransferKind { None, Direct };   // o pedido de transferência esperando o resultado (Task 4: a com consulta)
+    // O pedido de transferência esperando o resultado: a direta (Transfer) ou a com consulta (o
+    // CompleteTransfer, no cliente).
+    enum class TransferKind { None, Direct, Attended };
     using Effects = std::vector<std::function<void()>>;
     using CallPtr = std::shared_ptr<Call>;
 
@@ -231,14 +286,23 @@ private:
     void Act(Decide&& decide);
     void Deliver();
 
+    bool Place(const std::string& raw, bool consult);
+
     // Com a trava.
     void OnDialed(const CallPtr& dialed, int id, Effects& effects);
+    void OnTransferRefusedAtOnce(const CallPtr& call, int request);
     CallPtr OwnerOf(int callId) const;
     void Adopt(const CallPtr& call, int id, Effects& effects);
     void RejectCall(const CallPtr& call, Effects& effects);
     void HangupCall(const CallPtr& call, Effects& effects);
+    void HangupConference(Effects& effects);
     void SwapCalls(const CallPtr& from, const CallPtr& to, Effects& effects);
     void ResumeNext(Effects& effects);
+    void StayAfterConference();
+    void Separate(const CallPtr& first, const CallPtr& last, Effects& effects);
+    bool Members(CallPtr& first, CallPtr& last) const;
+    bool LeaveConsult(const CallPtr& call);
+    bool LeaveConference();
     void End(const CallPtr& call, int sipCode, Effects& effects, bool quiet = false);
     void RecordMissed(const Recent& recent, const std::optional<std::string>& contact);
     void Record(const Recent& recent);
@@ -262,6 +326,10 @@ private:
     std::mutex mutex_;
     std::vector<CallPtr> calls_;   // as ligações de agora (até duas), na ordem em que começaram
     CallPtr active_;               // a ativa, uma de calls_: a do som e a de cima na tela (nullptr: nenhuma)
+    CallPtr client_;               // na consulta, o cliente (o que vai ser transferido), uma de calls_
+    CallPtr colleague_;            // na consulta, o colega (a feita pelo Consult); os dois nullptr sem consulta
+    bool conference_ = false;      // as duas de calls_ em conferência; sai com o Split ou o fim de uma
+    int64_t conferenceSince_ = 0;  // quando o Join foi pedido (a tela conta o tempo desde ele)
     bool muted_ = false;           // o mudo do microfone (vale para as duas); sai com a última
     int maxSeenId_ = 0;            // o maior id de ligação do motor já visto
     std::string endMessage_;       // o aviso de agora ("" fora dele)
