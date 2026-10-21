@@ -16,7 +16,9 @@
 //   voltar, e o controlador os reconhece). Por último, as publicações saem, na ordem em que foram
 //   decididas, uma thread por vez e sem a trava: quem chega com outra thread entregando deixa as suas
 //   na fila, e ela as entrega também. O ouvinte pode chamar o controlador de volta (na mesma thread ou
-//   em outra); o que essa chamada publica sai depois do aviso que está saindo.
+//   em outra); o que essa chamada publica sai depois do aviso que está saindo. Só no Dial as publicações
+//   saem antes do efeito, logo antes do MakeCall: a tela mostra a feita (e o Desligar dela) enquanto ele
+//   demora.
 // - Exceção: o Clock e o Scheduler são chamados com a trava presa (a hora de agora; o Schedule e o Cancel
 //   do aviso de fim, como no Kotlin). O Scheduler não pode rodar a tarefa dentro do Schedule nem esperar,
 //   no Cancel, uma tarefa que já está rodando.

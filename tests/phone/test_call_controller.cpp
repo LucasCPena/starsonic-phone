@@ -215,9 +215,13 @@ TEST_CASE_FIXTURE(Fixture, "dial normalizes the number") {
     CHECK_FALSE(calls.Dial("   "));
     CHECK_FALSE_MESSAGE(calls.Dial("-()."), "sem nada depois de tirar os separadores");
     CHECK(listener.snapshots.empty());
+    // A tela já tem a feita, sem o id do motor, antes de o MakeCall voltar; depois, com ele.
+    std::vector<CallSnapshot> seenDuringMakeCall;
+    engine.duringMakeCall = [&](int) { seenDuringMakeCall = listener.snapshots; };
     CHECK(calls.Dial("+55 (11) 5060-3000"));
     CHECK(engine.made == Strings{"+551150603000"});
-    // Publicada antes de o MakeCall voltar, sem o id do motor; depois, com ele.
+    REQUIRE(seenDuringMakeCall.size() == 1);
+    CHECK(seenDuringMakeCall[0].top == View(CallController::kNoId, "+551150603000", "", false, CallView::Dialing));
     REQUIRE(listener.snapshots.size() == 2);
     CHECK(listener.snapshots[0].top ==
           View(CallController::kNoId, "+551150603000", "", false, CallView::Dialing));
@@ -409,6 +413,23 @@ TEST_CASE_FIXTURE(Fixture, "an outgoing call hung up here shows no message whate
     calls.OnCallState(id, CallState::Disconnected, 603);   // a resposta daqui, não a do outro lado
     CHECK(Message() == "");
     CHECK(time.Pending() == 0);
+}
+
+TEST_CASE_FIXTURE(Fixture, "Desligar on the call screen while makeCall is on the way hangs up the call it returns") {
+    // O MakeCall demora (o motor ocupado): a tela já mostra a feita, e a pessoa toca Desligar nela.
+    std::vector<CallSnapshot> seen;
+    engine.duringMakeCall = [&](int) {
+        seen = listener.snapshots;
+        if (!seen.empty() && seen.back().top && seen.back().top->phase == CallView::Dialing) calls.Hangup();
+    };
+    const int id = DialOut("2002");
+    REQUIRE(seen.size() == 1);
+    CHECK(seen[0].top == View(CallController::kNoId, "2002", "", false, CallView::Dialing));
+    CHECK(engine.hangups == Ints{id});
+    CHECK_FALSE(Top().has_value());
+    calls.OnCallState(id, CallState::Disconnected, 487);
+    CHECK(Message() == "");
+    CHECK(listener.recents.size() == 1);
 }
 
 TEST_CASE_FIXTURE(Fixture, "logout while makeCall is on the way hangs up the call it returns") {

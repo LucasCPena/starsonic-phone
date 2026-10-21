@@ -219,8 +219,10 @@ bool CallController::Dial(const std::string& raw) {
         calls_.push_back(dialed);
         active_ = dialed;
         Publish();
-        // Depois da trava: o motor liga, e os eventos da ligação podem chegar antes de o MakeCall voltar.
+        // Depois da trava: o motor liga, e os eventos da ligação podem chegar antes de o MakeCall voltar. A
+        // tela recebe a feita antes (o MakeCall pode demorar, e o Desligar dela já vale: hangupWhenDialed).
         effects.push_back([this, dialed, number] {
+            Deliver();
             const int id = engine_.MakeCall(number);
             Act([&](Effects& more) { OnDialed(dialed, id, more); });
         });
