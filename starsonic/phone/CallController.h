@@ -18,7 +18,10 @@
 //   na fila, e ela as entrega também. O ouvinte pode chamar o controlador de volta (na mesma thread ou
 //   em outra); o que essa chamada publica sai depois do aviso que está saindo. Só no Dial as publicações
 //   saem antes do efeito, logo antes do MakeCall: a tela mostra a feita (e o Desligar dela) enquanto ele
-//   demora.
+//   demora. Nos outros (o Answer, o Hold, o Swap, a volta sozinha) elas saem depois dos pedidos ao motor:
+//   um pedido que o ouvinte faz de volta nunca chega ao motor antes do pedido que o provocou.
+// - Os eventos do motor também pedem coisas ao motor, na thread de eventos dele (que deixa): o Activate da
+//   volta sozinha (o fim da ativa), o Hangup de uma feita desligada antes do id, o mudo que sai.
 // - Exceção: o Clock e o Scheduler são chamados com a trava presa (a hora de agora; o Schedule e o Cancel
 //   do aviso de fim, como no Kotlin). O Scheduler não pode rodar a tarefa dentro do Schedule nem esperar,
 //   no Cancel, uma tarefa que já está rodando.
@@ -90,7 +93,8 @@ inline bool operator!=(const CallView& a, const CallView& b) { return !(a == b);
 inline bool operator!=(const CallSnapshot& a, const CallSnapshot& b) { return !(a == b); }
 inline bool operator!=(const Recent& a, const Recent& b) { return !(a == b); }
 
-// O toque: Full é o de uma recebida sem outra ligação; Waiting, o bipe da segunda (Task 3); Stop, nenhum.
+// O toque: Full é o de uma recebida sem outra ligação; Waiting, o bipe da segunda (a recebida que toca com
+// outra em andamento); Stop, nenhum.
 enum class RingKind { Full, Waiting, Stop };
 
 // O que o controlador avisa, sempre sem a trava, na ordem, uma thread por vez (ver acima). Os textos
@@ -133,16 +137,24 @@ public:
     virtual std::optional<std::string> NameFor(const std::string& number) = 0;
 };
 
-// As ligações do app, até duas, uma delas a ativa (Task 2: uma; a segunda, a consulta, a conferência e o
-// Não perturbe nas Tasks 3 a 5).
-// - Recebida (OnIncomingCall): sem ligação, toca (OnRing(Full)); com uma, ocupado (486) e perdida nos
-//   Recentes, com o aviso de perdida. Atender, Recusar (486, perdida sem o aviso) e a desistência de quem
-//   ligou (perdida, com o aviso).
+// As ligações do app, até duas, uma delas a ativa (a consulta, a conferência e o Não perturbe nas Tasks 4
+// e 5).
+// - Recebida (OnIncomingCall): sem ligação, toca (OnRing(Full)); com uma só e já em andamento (em espera
+//   ou não), toca como a segunda (second com secondKind Ringing, OnRing(Waiting)), e a outra fica com o
+//   som até a pessoa atender. Com uma que ainda não está em andamento (tocando, atendendo, chamando) ou
+//   com duas, ocupado (486) e perdida nos Recentes, com o aviso de perdida. Atender (a outra vai para a
+//   espera, que o motor põe no Answer), Recusar (486, perdida sem o aviso) e a desistência de quem ligou
+//   (perdida, com o aviso).
 // - Feita (Dial): o número sem separadores (núcleo, NormalizeDialString); sem registro (o predicado
-//   registered), o aviso "Sem conexão com o servidor. Tente de novo em instantes." e nada é discado. O id
-//   da ligação vem do MakeCall, mas os eventos dela podem chegar antes: o primeiro evento de uma ligação
-//   nova (id maior que todos os já vistos) é da feita. Se ela não completa, o aviso do núcleo
-//   (CallEndMessage) fica em endMessage por 2 s.
+//   registered), o aviso "Sem conexão com o servidor. Tente de novo em instantes." e nada é discado. Com
+//   uma ligação em andamento, a feita é a Nova ligação: a outra vai para a espera (o motor a põe no
+//   MakeCall) e a feita é a ativa, em cima. O id da ligação vem do MakeCall, mas os eventos dela podem
+//   chegar antes: o primeiro evento de uma ligação nova (id maior que todos os já vistos) é da feita. Se
+//   ela não completa, o aviso do núcleo (CallEndMessage) fica em endMessage por 2 s.
+// - Duas ligações: a ativa é a do som (no motor) e a de cima na tela (top); a outra (second) toca ou está
+//   em espera. Swap (Alternar) troca as duas. Quando a ativa acaba (desligada aqui ou do outro lado), a em
+//   espera volta sozinha (o motor a retoma: Activate). A em espera que cai do outro lado sai com o aviso
+//   "<nome ou número> desligou" por 2 s, e a ativa continua.
 // - Depois de OnLogout (Sair), os eventos do motor são ignorados até o próximo OnLogin (Entrar).
 class CallController {
 public:
@@ -166,20 +178,31 @@ public:
     void OnCallState(int callId, CallState state, int sipCode);
     void OnTransfer(int callId, int sipCode);
 
-    // Liga para raw (o número como foi digitado, UTF-8). false se não ligou: número vazio (também depois
-    // de tirar os separadores), outra ligação, depois de Sair, ou sem registro (aí o aviso). O MakeCall
-    // roda aqui dentro; se ele não liga, a ligação acaba (nos Recentes como feita).
+    // Liga para raw (o número como foi digitado, UTF-8): sem ligação, ou com uma em andamento (a Nova
+    // ligação: ela vai para a espera e a feita é a ativa). false se não ligou: número vazio (também depois
+    // de tirar os separadores), uma ligação que ainda não está em andamento, duas, depois de Sair, ou sem
+    // registro (aí o aviso). O MakeCall roda aqui dentro; se ele não liga, a ligação acaba (nos Recentes
+    // como feita) e a outra, se há, volta sozinha.
     bool Dial(const std::string& raw);
     // Liga para number, um número de um contato, como o Dial, depois da regra dos contatos (dialRule).
     // false se a regra não deu número, e nos casos do Dial.
     bool DialContact(const std::string& number);
-    // Atende a recebida que toca.
+    // Atende a recebida que toca; a outra ligação, se há, vai para a espera (o motor a põe no Answer).
     void Answer();
     // Recusa a recebida que toca: ocupado (486), e ela entra nos Recentes como perdida.
     void Reject();
-    // Desliga a ativa: a feita que chama é cancelada, e a recebida que toca, recusada. Já saindo, nada.
+    // Desliga a ativa: a feita que chama é cancelada, e a recebida que toca (só ela), recusada. Com a ativa
+    // já saindo (um segundo clique antes do fim dela), nada: a outra só sai pelo Hangup com o id dela.
     void Hangup();
-    // Põe em espera (true) ou retoma (false) a ligação ativa em andamento; sem valor, troca.
+    // Desliga a ligação callId, a ativa ou a outra (o Desligar do cartão dela); a outra acaba sem mexer na
+    // ativa. kNoId é a feita mais nova (o cartão dela antes de o MakeCall dar o id). Já saindo, ou nenhuma
+    // com o id, nada.
+    void Hangup(int callId);
+    // Alternar: com as duas ligações em andamento, a outra vira a ativa (o motor a retoma: Activate) e a
+    // ativa vai para a espera. Sem as duas em andamento (uma só, ou a outra ainda toca), nada.
+    void Swap();
+    // Põe em espera (true) ou retoma (false) a ligação ativa em andamento; sem valor, troca. Com as duas em
+    // andamento, a espera da ativa é o Swap (a outra volta).
     void Hold(std::optional<bool> on);
     // Liga (true) ou desliga (false) o mudo do microfone; sem valor, troca. Não com a recebida tocando.
     // Ele sai no fim da última ligação.
@@ -214,6 +237,8 @@ private:
     void Adopt(const CallPtr& call, int id, Effects& effects);
     void RejectCall(const CallPtr& call, Effects& effects);
     void HangupCall(const CallPtr& call, Effects& effects);
+    void SwapCalls(const CallPtr& from, const CallPtr& to, Effects& effects);
+    void ResumeNext(Effects& effects);
     void End(const CallPtr& call, int sipCode, Effects& effects, bool quiet = false);
     void RecordMissed(const Recent& recent, const std::optional<std::string>& contact);
     void Record(const Recent& recent);

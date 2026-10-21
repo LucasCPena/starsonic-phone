@@ -2,7 +2,8 @@
 // (android/.../call/CallManagerTest.kt), com o motor, o ouvinte, o relógio e os contatos falsos
 // (fake_call_engine.h). O MakeCall roda na hora, dentro do Dial. Sem o Telecom: o que era dele (a
 // ligação da operadora, a espera pedida por ele, a Connection que falha) não existe no Windows.
-// Esta parte: uma ligação (Task 2 da W1).
+// Uma ligação (Task 2 da W1) e duas: a segunda que toca, Alternar, a volta sozinha, a em espera que cai
+// e a Nova ligação (Task 3).
 #include "doctest/doctest.h"
 
 #include <algorithm>
@@ -87,6 +88,24 @@ Recent MakeRecent(const std::string& number, const std::string& name, Recent::Ki
     recent.durationMs = durationMs;
     return recent;
 }
+
+// O que a tela mostra com uma ligação (top) ou com duas (top e second, tocando ou em espera).
+CallSnapshot One(const CallView& top) {
+    CallSnapshot snapshot;
+    snapshot.top = top;
+    return snapshot;
+}
+
+CallSnapshot Two(const CallView& top, const CallView& second, CallSnapshot::SecondKind kind) {
+    CallSnapshot snapshot;
+    snapshot.top = top;
+    snapshot.second = second;
+    snapshot.secondKind = kind;
+    return snapshot;
+}
+
+// "<nome ou número> desligou".
+std::string HungUp(const std::string& who) { return who + " desligou"; }
 
 using Rings = std::vector<RingKind>;
 using Holds = std::vector<std::pair<int, bool>>;
@@ -640,16 +659,27 @@ TEST_CASE("DialContact dials the number from the contact rule") {
     CHECK(engine.made.size() == 1);
 }
 
-TEST_CASE_FIXTURE(Fixture, "the phone contact names an incoming call, and the Recents keep the server name") {
+TEST_CASE_FIXTURE(Fixture, "the phone contact names the calls and the messages, and the Recents keep the server name") {
     contacts.names["3001"] = "Maria Silva";
+    contacts.names["3002"] = U8(L"Jo\u00e3o Souza");
     const int64_t start = time.NowMs();
     Ring(1, "3001", "Cliente Teste");
     CHECK(Top() == View(1, "3001", "Maria Silva", true, CallView::Ringing));
     AnswerCall(1);
     CHECK(Top()->name == "Maria Silva");
+    // A segunda, de outro contato: a faixa e, atendida, o cartão de cima; a primeira no cartão "Em espera".
+    Ring(2, "3002", "Fulano");
+    CHECK(State().second == View(2, "3002", U8(L"Jo\u00e3o Souza"), true, CallView::Ringing));
+    CHECK(State().secondKind == CallSnapshot::Ringing);
+    AnswerCall(2);
+    CHECK(Top()->name == U8(L"Jo\u00e3o Souza"));
+    CHECK(State().second == View(1, "3001", "Maria Silva", true, CallView::Active, start, true));
+    CHECK(State().secondKind == CallSnapshot::Held);
+    // A em espera cai do outro lado: o aviso com o nome do contato.
     calls.OnCallState(1, CallState::Disconnected, 200);
+    CHECK(Message() == HungUp("Maria Silva"));
     CHECK(listener.recents == std::vector<Recent>{MakeRecent("3001", "Cliente Teste", Recent::Incoming, start, 0)});
-    CHECK_MESSAGE(contacts.lookups == Strings{"3001"}, "procurado uma vez, quando a ligacao chegou");
+    CHECK_MESSAGE((contacts.lookups == Strings{"3001", "3002"}), "cada numero procurado uma vez, quando a ligacao chegou");
 }
 
 TEST_CASE_FIXTURE(Fixture, "a missed call from a phone contact names the contact") {
@@ -678,4 +708,416 @@ TEST_CASE_FIXTURE(Fixture, "an outgoing call shows the phone contact name") {
     REQUIRE(listener.recents.size() == 1);
     CHECK_MESSAGE(listener.recents[0].name == "", "os Recentes guardam o nome que a central mandou (nenhum)");
     CHECK(contacts.lookups == Strings{"3001"});
+}
+
+// Duas ligações (spec da 0.2, 7.1 e 7.2): até duas, uma ativa; a outra toca, chama ou fica em espera.
+
+TEST_CASE_FIXTURE(Fixture, "a second incoming call rings while one is active") {
+    const int64_t start = time.NowMs();
+    Ring(1);
+    AnswerCall(1);
+    time.Advance(10000);
+    Ring(2, "3002", "Fulano");
+    CHECK_MESSAGE(engine.rejects.empty(), "a segunda toca, sem ocupado");
+    const CallView first = View(1, "3001", "Cliente Teste", true, CallView::Active, start);
+    CHECK(State() == Two(first, View(2, "3002", "Fulano", true, CallView::Ringing), CallSnapshot::Ringing));
+    CHECK(listener.Ring() == RingKind::Waiting);
+    CHECK_MESSAGE((engine.holds.empty() && engine.activated.empty()), "a primeira fica com o som ate atender");
+    // Recusar: ocupado na segunda, perdida sem o aviso, e a primeira segue.
+    calls.Reject();
+    CHECK(engine.rejects == Ints{2});
+    CHECK_MESSAGE(listener.Ring() == RingKind::Stop, "o toque da segunda para");
+    CHECK_MESSAGE(State() == One(first), "a faixa sai na hora");
+    calls.OnCallState(2, CallState::Disconnected, 486);
+    CHECK(listener.missed.empty());
+    CHECK(State() == One(first));
+    // Com a primeira em espera, outra também toca; quem ligou desiste: perdida, com o aviso.
+    calls.Hold(true);
+    CHECK(engine.holds == Holds{{1, true}});
+    time.Advance(1000);
+    Ring(3, "3003", "");
+    CallView firstHeld = first;
+    firstHeld.held = true;
+    CHECK(State() == Two(firstHeld, View(3, "3003", "", true, CallView::Ringing), CallSnapshot::Ringing));
+    calls.OnCallState(3, CallState::Disconnected, 487);
+    CHECK(listener.missed == Strings{Missed("3003")});
+    CHECK(State() == One(firstHeld));
+    CHECK_MESSAGE(engine.activated.empty(), "a em espera nao volta sozinha");
+    CHECK(Message() == "");
+    CHECK(listener.recents == std::vector<Recent>{MakeRecent("3002", "Fulano", Recent::Missed, start + 10000, 0),
+                                                  MakeRecent("3003", "", Recent::Missed, start + 11000, 0)});
+}
+
+TEST_CASE_FIXTURE(Fixture, "answering the second call holds the first") {
+    const int64_t start = time.NowMs();
+    Ring(1);
+    AnswerCall(1);
+    time.Advance(10000);
+    Ring(2, "3002", "Fulano");
+    time.Advance(2000);
+    calls.Answer();
+    CHECK(engine.answers == Ints{1, 2});
+    CHECK_MESSAGE(listener.Ring() == RingKind::Stop, "o toque da segunda para");
+    CHECK_MESSAGE((engine.holds.empty() && engine.activated.empty()), "o motor poe a primeira em espera no Answer");
+    const CallView held = View(1, "3001", "Cliente Teste", true, CallView::Active, start, true);
+    CHECK(State() == Two(View(2, "3002", "Fulano", true, CallView::Active, 0), held, CallSnapshot::Held));
+    calls.OnCallState(2, CallState::Connecting, 200);
+    calls.OnCallState(2, CallState::Confirmed, 200);
+    CHECK(State() ==
+          Two(View(2, "3002", "Fulano", true, CallView::Active, start + 12000), held, CallSnapshot::Held));
+    // As duas acabam do outro lado, cada uma com a sua duração.
+    time.Advance(30000);
+    calls.OnCallState(1, CallState::Disconnected, 200);
+    time.Advance(5000);
+    calls.OnCallState(2, CallState::Disconnected, 200);
+    CHECK_FALSE(Top().has_value());
+    CHECK(listener.recents ==
+          std::vector<Recent>{MakeRecent("3001", "Cliente Teste", Recent::Incoming, start, 42000),
+                              MakeRecent("3002", "Fulano", Recent::Incoming, start + 10000, 35000)});
+}
+
+TEST_CASE_FIXTURE(Fixture, "a third incoming call is rejected busy") {
+    const int64_t start = time.NowMs();
+    Ring(1);
+    AnswerCall(1);
+    Ring(2, "3002", "Fulano");
+    AnswerCall(2);
+    time.Advance(1000);
+    calls.OnIncomingCall(3, "3003", "");
+    CHECK(engine.rejects == Ints{3});
+    CHECK_MESSAGE((listener.rings == Rings{RingKind::Full, RingKind::Stop, RingKind::Waiting, RingKind::Stop}),
+                  "so as duas primeiras tocam");
+    CHECK(listener.recents == std::vector<Recent>{MakeRecent("3003", "", Recent::Missed, start + 1000, 0)});
+    CHECK(listener.missed == Strings{Missed("3003")});
+    const CallSnapshot both = Two(View(2, "3002", "Fulano", true, CallView::Active, start),
+                                  View(1, "3001", "Cliente Teste", true, CallView::Active, start, true),
+                                  CallSnapshot::Held);
+    CHECK(State() == both);
+    calls.OnCallState(3, CallState::Disconnected, 486);   // o fim da recusada não mexe nas duas
+    CHECK(State() == both);
+    CHECK(listener.recents.size() == 1);
+}
+
+TEST_CASE_FIXTURE(Fixture, "Alternar swaps the active call") {
+    const int64_t start = time.NowMs();
+    Ring(1);
+    AnswerCall(1);
+    time.Advance(10000);
+    Ring(2, "3002", "");
+    calls.Swap();   // a segunda ainda toca: nada
+    CHECK(engine.activated.empty());
+    AnswerCall(2);
+    calls.Swap();
+    CHECK(engine.activated == Ints{1});
+    const CallSnapshot first = Two(View(1, "3001", "Cliente Teste", true, CallView::Active, start),
+                                   View(2, "3002", "", true, CallView::Active, start + 10000, true),
+                                   CallSnapshot::Held);
+    CHECK(State() == first);
+    calls.Swap();
+    CHECK(engine.activated == Ints{1, 2});
+    CHECK(State() == Two(View(2, "3002", "", true, CallView::Active, start + 10000),
+                         View(1, "3001", "Cliente Teste", true, CallView::Active, start, true), CallSnapshot::Held));
+    // Com duas, a Espera da ativa é o Alternar (o motor troca as duas; nada de SetHold).
+    calls.Hold(std::nullopt);
+    CHECK(engine.activated == Ints{1, 2, 1});
+    CHECK(engine.holds.empty());
+    CHECK(State() == first);
+    calls.Hold(false);   // a ativa não está em espera: nada
+    CHECK(engine.activated == Ints{1, 2, 1});
+    CHECK(engine.holds.empty());
+    // A em espera (sem nome) cai, e a ativa acaba depois: cada uma com a sua duração.
+    time.Advance(20000);
+    calls.OnCallState(2, CallState::Disconnected, 200);
+    CHECK(Message() == HungUp("3002"));
+    CHECK(State().top == View(1, "3001", "Cliente Teste", true, CallView::Active, start));
+    CHECK_FALSE(State().second.has_value());
+    calls.Swap();   // uma só: nada
+    CHECK(engine.activated == Ints{1, 2, 1});
+    time.Advance(10000);
+    calls.OnCallState(1, CallState::Disconnected, 200);
+    CHECK_FALSE(Top().has_value());
+    CHECK(listener.recents ==
+          std::vector<Recent>{MakeRecent("3002", "", Recent::Incoming, start + 10000, 20000),
+                              MakeRecent("3001", "Cliente Teste", Recent::Incoming, start, 40000)});
+}
+
+TEST_CASE_FIXTURE(Fixture, "hanging up the active call resumes the held one") {
+    const int64_t start = time.NowMs();
+    Ring(1);
+    AnswerCall(1);
+    time.Advance(10000);
+    Ring(2, "3002", "Fulano");
+    AnswerCall(2);
+    time.Advance(20000);
+    calls.Hangup();
+    CHECK_MESSAGE(engine.hangups == Ints{2}, "desliga a ativa");
+    CHECK_MESSAGE(engine.activated.empty(), "a outra volta quando o fim chega");
+    const CallView first = View(1, "3001", "Cliente Teste", true, CallView::Active, start);
+    CallView firstHeld = first;
+    firstHeld.held = true;
+    CHECK_MESSAGE(State() == One(firstHeld), "ate la, a tela mostra a em espera");
+    calls.OnCallState(2, CallState::Disconnected, 200);
+    CHECK(engine.activated == Ints{1});
+    CHECK_MESSAGE(State() == One(first), "a outra voltou sozinha");
+    CHECK(Message() == "");
+    time.Advance(5000);
+    calls.Hangup();
+    CHECK(engine.hangups == Ints{2, 1});
+    CHECK_FALSE(Top().has_value());
+    calls.OnCallState(1, CallState::Disconnected, 200);
+    CHECK_MESSAGE(engine.activated == Ints{1}, "nada mais volta");
+    CHECK(listener.recents ==
+          std::vector<Recent>{MakeRecent("3002", "Fulano", Recent::Incoming, start + 10000, 20000),
+                              MakeRecent("3001", "Cliente Teste", Recent::Incoming, start, 35000)});
+}
+
+TEST_CASE_FIXTURE(Fixture, "the held call dropping shows the message and keeps the active one") {
+    const int64_t start = time.NowMs();
+    Ring(1);
+    AnswerCall(1);
+    time.Advance(10000);
+    Ring(2, "3002", "");
+    AnswerCall(2);
+    time.Advance(20000);
+    calls.OnCallState(1, CallState::Disconnected, 200);   // a em espera desligou do outro lado
+    CHECK_MESSAGE(Message() == HungUp("Cliente Teste"), "o nome que a central mandou");
+    const CallView second = View(2, "3002", "", true, CallView::Active, start + 10000);
+    CHECK(State().top == second);
+    CHECK_FALSE(State().second.has_value());
+    CHECK_MESSAGE((engine.activated.empty() && engine.hangups.empty()), "a ativa continua como estava");
+    time.Advance(1999);
+    CHECK(Message() == HungUp("Cliente Teste"));
+    time.Advance(1);
+    CHECK(Message() == "");
+    CHECK(State() == One(second));
+    time.Advance(13000);
+    calls.OnCallState(2, CallState::Disconnected, 200);
+    CHECK_FALSE(Top().has_value());
+    CHECK(Message() == "");
+    CHECK(listener.recents ==
+          std::vector<Recent>{MakeRecent("3001", "Cliente Teste", Recent::Incoming, start, 30000),
+                              MakeRecent("3002", "", Recent::Incoming, start + 10000, 35000)});
+}
+
+TEST_CASE_FIXTURE(Fixture, "dialing during an active call holds it and places the second") {
+    const int64_t start = time.NowMs();
+    Ring(1);
+    CHECK_FALSE_MESSAGE(calls.Dial("2002"), "com uma ligacao que ainda toca, nao");
+    AnswerCall(1);
+    time.Advance(10000);
+    const CallView held = View(1, "3001", "Cliente Teste", true, CallView::Active, start, true);
+    // Dentro do MakeCall: a tela já tem a feita em cima, sem o id do motor, e a primeira em espera.
+    std::vector<CallSnapshot> seenDuringMakeCall;
+    bool thirdDialed = true;
+    engine.duringMakeCall = [&](int) {
+        seenDuringMakeCall = listener.snapshots;
+        thirdDialed = calls.Dial("2003");
+    };
+    CHECK(calls.Dial("2002"));
+    CHECK(engine.made == Strings{"2002"});
+    CHECK_MESSAGE((engine.holds.empty() && engine.activated.empty()), "o motor poe a primeira em espera no MakeCall");
+    REQUIRE_FALSE(seenDuringMakeCall.empty());
+    CHECK(seenDuringMakeCall.back() ==
+          Two(View(CallController::kNoId, "2002", "", false, CallView::Dialing), held, CallSnapshot::Held));
+    CHECK_FALSE_MESSAGE(thirdDialed, "com duas, nenhuma outra");
+    engine.duringMakeCall = nullptr;
+    CHECK_FALSE(calls.Dial("2003"));
+    CHECK(engine.made == Strings{"2002"});
+    const int id = engine.nextCallId - 1;
+    CHECK(State() == Two(View(id, "2002", "", false, CallView::Dialing), held, CallSnapshot::Held));
+    calls.OnCallState(id, CallState::Calling, 0);
+    calls.OnCallState(id, CallState::Confirmed, 200);
+    CHECK(State() == Two(View(id, "2002", "", false, CallView::Active, start + 10000), held, CallSnapshot::Held));
+    // O outro lado da feita desliga: a primeira volta sozinha.
+    time.Advance(20000);
+    calls.OnCallState(id, CallState::Disconnected, 200);
+    CHECK(engine.activated == Ints{1});
+    CHECK(State() == One(View(1, "3001", "Cliente Teste", true, CallView::Active, start)));
+    CHECK(Message() == "");
+    time.Advance(5000);
+    calls.OnCallState(1, CallState::Disconnected, 200);
+    CHECK_FALSE(Top().has_value());
+    CHECK(listener.recents ==
+          std::vector<Recent>{MakeRecent("2002", "", Recent::Outgoing, start + 10000, 20000),
+                              MakeRecent("3001", "Cliente Teste", Recent::Incoming, start, 35000)});
+}
+
+TEST_CASE_FIXTURE(Fixture, "a failed second dial resumes the first call") {
+    const int64_t start = time.NowMs();
+    Ring(1);
+    AnswerCall(1);
+    // O motor pôs a primeira em espera e não ligou a nova: a primeira volta sozinha.
+    engine.refuse = true;
+    CHECK(calls.Dial("2002"));
+    CHECK(engine.activated == Ints{1});
+    CHECK(State() == One(View(1, "3001", "Cliente Teste", true, CallView::Active, start)));
+    REQUIRE(listener.recents.size() == 1);
+    CHECK(listener.recents[0] == MakeRecent("2002", "", Recent::Outgoing, start, 0));
+    // Uma feita que não completou (Ocupado): o aviso, e a primeira volta também.
+    engine.refuse = false;
+    const int id = DialOut("2003");
+    calls.OnCallState(id, CallState::Disconnected, 486);
+    CHECK(Message() == "Ocupado");
+    CHECK(engine.activated == Ints{1, 1});
+    CHECK(State().top == View(1, "3001", "Cliente Teste", true, CallView::Active, start));
+}
+
+TEST_CASE_FIXTURE(Fixture, "disconnecting the held call by its id ends only that call") {
+    const int64_t start = time.NowMs();
+    Ring(1);
+    AnswerCall(1);
+    time.Advance(10000);
+    Ring(2, "3002", "Fulano");
+    AnswerCall(2);
+    time.Advance(20000);
+    calls.Hangup(1);   // o Desligar do cartão da em espera
+    CHECK(engine.hangups == Ints{1});
+    const CallView second = View(2, "3002", "Fulano", true, CallView::Active, start + 10000);
+    CHECK_MESSAGE(State() == One(second), "o cartao da em espera sai na hora");
+    calls.Hangup(1);   // já saindo: nada
+    calls.Hangup(99);   // nenhuma: nada
+    CHECK(engine.hangups == Ints{1});
+    calls.OnCallState(1, CallState::Disconnected, 200);
+    CHECK_MESSAGE(Message() == "", "desligada aqui: sem aviso");
+    CHECK_MESSAGE(engine.activated.empty(), "a ativa continua como estava");
+    CHECK(State() == One(second));
+    time.Advance(5000);
+    calls.Hangup(2);
+    CHECK(engine.hangups == Ints{1, 2});
+    CHECK_FALSE(Top().has_value());
+    calls.OnCallState(2, CallState::Disconnected, 200);
+    CHECK(engine.activated.empty());
+    CHECK(listener.recents ==
+          std::vector<Recent>{MakeRecent("3001", "Cliente Teste", Recent::Incoming, start, 30000),
+                              MakeRecent("3002", "Fulano", Recent::Incoming, start + 10000, 25000)});
+}
+
+TEST_CASE_FIXTURE(Fixture, "Hangup with kNoId ends the call being dialed, and the held one returns") {
+    const int64_t start = time.NowMs();
+    Ring(1);
+    AnswerCall(1);
+    // O MakeCall ainda não voltou: o cartão da feita só tem o kNoId.
+    engine.duringMakeCall = [this](int) { calls.Hangup(CallController::kNoId); };
+    const int id = DialOut("2002");
+    CHECK_MESSAGE(engine.hangups == Ints{id}, "desligada quando o id chega");
+    CHECK(State() == One(View(1, "3001", "Cliente Teste", true, CallView::Active, start, true)));
+    calls.OnCallState(id, CallState::Disconnected, 487);
+    CHECK(Message() == "");
+    CHECK(engine.activated == Ints{1});
+    CHECK(State() == One(View(1, "3001", "Cliente Teste", true, CallView::Active, start)));
+    // Uma ligação só, recebida: Hangup(kNoId) é a feita mais nova, e não há nenhuma.
+    calls.Hangup(CallController::kNoId);
+    CHECK(engine.hangups == Ints{id});
+}
+
+TEST_CASE_FIXTURE(Fixture, "a second Desligar while the active call is ending does nothing") {
+    const int64_t start = time.NowMs();
+    Ring(1);
+    AnswerCall(1);
+    time.Advance(10000);
+    Ring(2, "3002", "Fulano");
+    AnswerCall(2);
+    time.Advance(20000);
+    calls.Hangup();
+    calls.Hangup();    // o segundo clique, antes de o fim da ativa chegar
+    calls.Hangup(2);   // e o Desligar com o id da mesma
+    CHECK_MESSAGE(engine.hangups == Ints{2}, "a em espera nao sai");
+    const CallView first = View(1, "3001", "Cliente Teste", true, CallView::Active, start);
+    CallView firstHeld = first;
+    firstHeld.held = true;
+    CHECK(State() == One(firstHeld));
+    calls.OnCallState(2, CallState::Disconnected, 200);
+    CHECK(engine.activated == Ints{1});
+    CHECK(State() == One(first));
+    // Com outra tocando: o segundo clique não a recusa.
+    Ring(3, "3003", "");
+    calls.Hangup();
+    calls.Hangup();
+    CHECK(engine.hangups == Ints{2, 1});
+    CHECK_MESSAGE(engine.rejects.empty(), "a que toca nao e recusada");
+    const CallSnapshot ringing = One(View(3, "3003", "", true, CallView::Ringing));
+    CHECK(State() == ringing);
+    CHECK(listener.Ring() == RingKind::Full);
+    calls.OnCallState(1, CallState::Disconnected, 200);
+    CHECK_MESSAGE(engine.activated == Ints{1}, "nada volta: a outra toca");
+    CHECK(State() == ringing);
+    CHECK(listener.recents ==
+          std::vector<Recent>{MakeRecent("3002", "Fulano", Recent::Incoming, start + 10000, 20000),
+                              MakeRecent("3001", "Cliente Teste", Recent::Incoming, start, 30000)});
+}
+
+TEST_CASE_FIXTURE(Fixture, "the held call dropping while the active one is ending shows no message") {
+    Ring(1);
+    AnswerCall(1);
+    Ring(2, "3002", "Fulano");
+    AnswerCall(2);
+    calls.Hangup();   // a ativa sai
+    calls.OnCallState(1, CallState::Disconnected, 200);   // a em espera cai do outro lado antes do fim da ativa
+    CHECK_MESSAGE(Message() == "", "nenhuma continua: sem aviso");
+    CHECK_FALSE(Top().has_value());
+    calls.OnCallState(2, CallState::Disconnected, 200);
+    CHECK(engine.activated.empty());
+    CHECK(listener.recents.size() == 2);
+    CHECK(time.Pending() == 0);
+}
+
+TEST_CASE_FIXTURE(Fixture, "logout with two calls hangs up both") {
+    const int64_t start = time.NowMs();
+    Ring(1);
+    AnswerCall(1);
+    time.Advance(10000);
+    Ring(2, "3002", "Fulano");
+    AnswerCall(2);
+    time.Advance(20000);
+    calls.OnLogout();
+    CHECK(engine.hangups == Ints{1, 2});
+    CHECK_MESSAGE(engine.activated.empty(), "nenhuma volta");
+    CHECK_FALSE(Top().has_value());
+    CHECK(Message() == "");
+    calls.OnCallState(2, CallState::Disconnected, 200);   // os fins que chegam depois são ignorados
+    calls.OnCallState(1, CallState::Disconnected, 200);
+    CHECK(listener.missed.empty());
+    CHECK(Message() == "");
+    CHECK(listener.recents ==
+          std::vector<Recent>{MakeRecent("3001", "Cliente Teste", Recent::Incoming, start, 30000),
+                              MakeRecent("3002", "Fulano", Recent::Incoming, start + 10000, 20000)});
+}
+
+TEST_CASE_FIXTURE(Fixture, "the second call rings the waiting beep, not the full ring") {
+    Ring(1);
+    CHECK(listener.rings == Rings{RingKind::Full});
+    AnswerCall(1);
+    Ring(2, "3002", "");
+    CHECK_MESSAGE(listener.Ring() == RingKind::Waiting, "com outra em andamento, o bipe");
+    calls.OnCallState(2, CallState::Disconnected, 487);   // quem ligou desistiu
+    CHECK(listener.Ring() == RingKind::Stop);
+    Ring(3, "3003", "");
+    CHECK(listener.Ring() == RingKind::Waiting);
+    calls.OnCallState(1, CallState::Disconnected, 200);   // a primeira acaba com a segunda tocando
+    CHECK_MESSAGE(listener.Ring() == RingKind::Full, "sozinha, ela toca o toque completo");
+    AnswerCall(3);
+    CHECK(listener.Ring() == RingKind::Stop);
+    Ring(4, "3004", "");
+    CHECK(listener.Ring() == RingKind::Waiting);
+    calls.Hangup();   // a ativa sai com a outra tocando
+    CHECK(listener.Ring() == RingKind::Full);
+    calls.Reject();
+    CHECK(listener.rings == Rings{RingKind::Full, RingKind::Stop, RingKind::Waiting, RingKind::Stop,
+                                  RingKind::Waiting, RingKind::Full, RingKind::Stop, RingKind::Waiting,
+                                  RingKind::Full, RingKind::Stop});
+}
+
+TEST_CASE_FIXTURE(Fixture, "logout after Alternar resumes nothing") {
+    // A ativa é a primeira da lista: o fim dela no Sair não traz a outra de volta.
+    Ring(1);
+    AnswerCall(1);
+    Ring(2, "3002", "");
+    AnswerCall(2);
+    calls.Swap();
+    CHECK(engine.activated == Ints{1});
+    calls.OnLogout();
+    CHECK(engine.hangups == Ints{1, 2});
+    CHECK_MESSAGE(engine.activated == Ints{1}, "nenhuma volta");
+    CHECK_FALSE(Top().has_value());
+    CHECK(listener.recents.size() == 2);
 }

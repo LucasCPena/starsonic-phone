@@ -100,7 +100,7 @@ struct CallController::Call {
     bool ending = false;             // pedida a saída: a tela já não a mostra
     bool abandoned = false;          // a conta saiu (Sair) com ela de pé
     int64_t activeSince = 0;         // quando os dois lados atenderam (0: ainda não)
-    bool held = false;               // em espera
+    bool held = false;               // em espera: pela pessoa, ou a outra de duas
     TransferKind transferPending = TransferKind::None;   // a transferência pedida nela, até o resultado
 };
 
@@ -145,8 +145,10 @@ void CallController::OnIncomingCall(int callId, const std::string& remoteUser, c
         // Antes de olhar o loggedOut_: o fim de uma ligação ignorada depois de Sair nunca é tomado por uma feita.
         maxSeenId_ = std::max(maxSeenId_, callId);
         if (loggedOut_) return;
-        // Só sem nenhuma ligação (a segunda, com a outra em andamento, vem na Task 3).
-        if (!calls_.empty()) {
+        // Até duas, e a segunda só com a outra em andamento (como no motor).
+        const CallPtr other = calls_.size() == 1 ? calls_.front() : nullptr;
+        const bool fits = calls_.empty() || (other && other->phase == Call::Phase::Active && !other->ending);
+        if (!fits) {
             // Ocupado, e a ligação entra como perdida.
             effects.push_back([this, callId] { engine_.Reject(callId); });
             RecordMissed(MakeRecent(remoteUser, remoteName, Recent::Missed, clock_.NowMs(), 0), contact);
@@ -212,12 +214,15 @@ bool CallController::Dial(const std::string& raw) {
     if (!loggedOut_) contact = contacts_.NameFor(number);   // sem a trava: pode ler o disco
     bool placed = false;
     Act([&](Effects& effects) {
-        // Só sem nenhuma ligação (a Nova ligação, com uma em andamento, vem na Task 3).
-        if (loggedOut_ || !calls_.empty()) return;
+        if (loggedOut_) return;
+        // Sem ligação, ou com uma só em andamento (a Nova ligação).
+        const CallPtr other = calls_.size() == 1 ? calls_.front() : nullptr;
+        if (!calls_.empty() && (!other || other->phase != Call::Phase::Active || other->ending)) return;
         ClearEndMessage();
         auto dialed = std::make_shared<Call>(false, number, std::string(), clock_.NowMs(), contact);
         calls_.push_back(dialed);
         active_ = dialed;
+        if (other) other->held = true;   // o motor a põe em espera no MakeCall
         Publish();
         // Depois da trava: o motor liga, e os eventos da ligação podem chegar antes de o MakeCall voltar. A
         // tela recebe a feita antes (o MakeCall pode demorar, e o Desligar dela já vale: hangupWhenDialed).
@@ -242,7 +247,9 @@ void CallController::Answer() {
         if (!ringing) return;
         ringing->answered = true;
         ringing->phase = Call::Phase::Connecting;
+        const CallPtr other = OtherThan(ringing);
         active_ = ringing;
+        if (other) other->held = true;   // o motor a põe em espera no Answer
         const int id = ringing->id;
         effects.push_back([this, id] { engine_.Answer(id); });
         Publish();
@@ -266,13 +273,45 @@ void CallController::Hangup() {
     });
 }
 
+void CallController::Hangup(int callId) {
+    Act([&](Effects& effects) {
+        CallPtr current;
+        if (callId == kNoId) {
+            // A feita mais nova (o cartão dela ainda pode estar sem o id do motor).
+            for (const CallPtr& call : calls_) {
+                if (!call->incoming) current = call;
+            }
+        } else {
+            const auto it = std::find_if(calls_.begin(), calls_.end(),
+                                         [callId](const CallPtr& c) { return c->id == callId; });
+            if (it != calls_.end()) current = *it;
+        }
+        if (!current || current->ending) return;
+        HangupCall(current, effects);
+        Publish();
+    });
+}
+
+void CallController::Swap() {
+    Act([this](Effects& effects) {
+        if (!active_) return;
+        const CallPtr other = OtherThan(active_);
+        if (other) SwapCalls(active_, other, effects);
+    });
+}
+
 void CallController::Hold(std::optional<bool> on) {
     Act([&](Effects& effects) {
         const CallPtr current = Talking();
         if (!current) return;
         const bool target = on ? *on : !current->held;
         if (target == current->held) return;
-        // (Task 3: com a outra em andamento, a espera da ativa é o Alternar.)
+        // Com a outra em andamento, a espera da ativa é o Alternar (a outra volta).
+        const CallPtr other = OtherThan(current);
+        if (target && other && other->phase == Call::Phase::Active) {
+            SwapCalls(current, other, effects);
+            return;
+        }
         current->held = target;
         Publish();
         const int id = current->id;
@@ -431,8 +470,32 @@ void CallController::HangupCall(const CallPtr& call, Effects& effects) {
     }
 }
 
+// Com a trava: o Alternar, de from (a ativa) para to (a outra), só com as duas em andamento. O motor troca
+// (Activate: a ativa vai para a espera e a outra é retomada).
+void CallController::SwapCalls(const CallPtr& from, const CallPtr& to, Effects& effects) {
+    if (from->ending || from->phase != Call::Phase::Active || to->phase != Call::Phase::Active) return;
+    from->held = true;
+    to->held = false;
+    active_ = to;
+    Publish();
+    const int id = to->id;
+    effects.push_back([this, id] { engine_.Activate(id); });
+}
+
+// Com a trava: a ativa acabou (e não estava em espera): a outra, a ativa agora, se está em andamento, volta
+// sozinha (o motor a retoma). Nada depois de Sair, nem com ela tocando ou saindo.
+void CallController::ResumeNext(Effects& effects) {
+    const CallPtr next = active_;
+    if (!next || loggedOut_ || next->phase != Call::Phase::Active || next->ending) return;
+    next->held = false;
+    const int id = next->id;
+    effects.push_back([this, id] { engine_.Activate(id); });
+}
+
 // Com a trava: a ligação call acabou com o código sipCode: Recentes, o aviso de perdida e o aviso de fim.
-// quiet (Sair): sem avisos. Se era a ativa, a outra (se há) passa a ser (Task 3: e volta sozinha).
+// quiet (Sair): sem avisos. Se era a ativa, a outra (se há) passa a ser, e volta sozinha (ResumeNext). A
+// outra que cai do outro lado, já em andamento e com a ativa continuando, deixa o aviso "<nome ou número>
+// desligou".
 void CallController::End(const CallPtr& call, int sipCode, Effects& effects, bool quiet) {
     const bool wasActive = call == active_;
     calls_.erase(std::remove(calls_.begin(), calls_.end(), call), calls_.end());
@@ -457,11 +520,18 @@ void CallController::End(const CallPtr& call, int sipCode, Effects& effects, boo
             if (!message.empty()) ShowEndMessage(message);
         }
     }
+    const bool othersStay =
+        std::any_of(calls_.begin(), calls_.end(), [](const CallPtr& c) { return !c->ending; });
+    if (!wasActive && received && !call->localHangup && !quiet && othersStay) {
+        const std::string& shown = call->DisplayName();
+        ShowEndMessage((shown.empty() ? call->number : shown) + " desligou");
+    }
     if (muted_ && calls_.empty()) {
         muted_ = false;
         effects.push_back([this] { engine_.SetMute(false); });
     }
     Record(MakeRecent(call->number, call->name, kind, call->startMs, durationMs));
+    if (wasActive && !call->held) ResumeNext(effects);
 }
 
 // Com a trava: uma perdida que a pessoa não viu (ocupado): Recentes e o aviso.
