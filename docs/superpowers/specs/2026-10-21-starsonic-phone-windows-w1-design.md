@@ -137,13 +137,13 @@ Os arquivos são gravados de forma atômica (arquivo temporário + `MoveFileEx`)
 
 ### 7.1 Primeira abertura e migração da rc.7
 
-1. Sem `contas.json` e com `StarsonicPhone.ini` (o arquivo do MicroSIP) na pasta, o app migra:
+1. Sem nenhuma conta no `contas.json` e com `StarsonicPhone.ini` (o arquivo do MicroSIP) na pasta, o app migra:
    - As contas `[Account1]` a `[AccountN]` viram contas: servidor (o endereço do `server`, sem a porta), protocolo, ramal, nome e a senha. A senha é decifrada pela rotina do MicroSIP (`IniDecrypt`, copiada com o aviso da GPL) e cifrada de novo com DPAPI. A conta em uso (`accountId`) continua em uso.
-   - O `Contacts.xml` vira `contatos.json` (nome e número; a observação, quando houver).
-   - Os registros de ligação do MicroSIP viram `recentes.json`.
+   - O `Contacts.xml` vira `contatos.json` (nome e número; a observação, quando houver). É nele que o MicroSIP 3.22 guarda a agenda: o `contacts.db` que ele também cria fica sem tabela nenhuma e não é lido.
+   - O histórico de ligações do MicroSIP, no `call_log.db` (SQLite, aberto somente para leitura), vira `recentes.json`: as 500 mais novas, com o tipo (feita, recebida, perdida; a atendida em outro aparelho entra como recebida), a data e a duração.
 2. Os arquivos antigos ficam, renomeados com `.migrado` no fim. Voltar para a rc.7 é renomear de volta.
 3. Uma conta cuja senha não decifra entra sem a senha. Ao abrir, a tela Entrar vem preenchida, pedindo só a senha, com o aviso "Digite a senha de novo para continuar.".
-4. Um arquivo ilegível é pulado, e a linha vai ao diagnóstico. A migração nunca impede o app de abrir.
+4. Um arquivo ilegível é pulado, e a linha vai ao diagnóstico. A migração nunca impede o app de abrir. Os contatos e o histórico que não deu para ler (o `call_log.db` travado pela rc.7 ainda aberta, o `Contacts.xml` estragado) ficam com o nome de antes e anotados no `contas.json` (`migracao_pendente`): a próxima abertura tenta de novo, sem mexer nas contas já migradas.
 5. Sem nenhuma conta, o app abre na tela Entrar.
 
 ### 7.2 Ligações
@@ -210,7 +210,7 @@ As da spec do Windows (11.1) e da 0.2 do Android (11.1), mais:
 
 - **Controlador (Linux):** os casos do `CallManagerTest.kt` da 0.2 portados, mais os de Não perturbe, Atender automático e troca de conta, contra um motor falso.
 - **Motor (Linux):** os de hoje, mais `SetAudioDevices` e `AudioDevices` com o dispositivo nulo.
-- **Lojas e migração (Linux, onde não dependem do Windows; Windows no CI, onde dependem):** um `StarsonicPhone.ini` e um `Contacts.xml` gerados pelo MicroSIP de verdade viram contas e contatos com a senha certa; o arquivo corrompido é pulado; o DPAPI cifra e decifra (só no Windows).
+- **Lojas e migração (Linux, onde não dependem do Windows; Windows no CI, onde dependem):** um `StarsonicPhone.ini` (UTF-16LE), um `Contacts.xml` e um `call_log.db` (SQLite) no formato do MicroSIP 3.22 viram contas, contatos e recentes; o arquivo corrompido ou o banco travado fica para a próxima abertura; a senha cifrada pelo `IniEncrypt` original (com o `CCrypto` do MicroSIP, só no Windows) decifra certa; o DPAPI cifra e decifra (só no Windows).
 - **Interface (Playwright no Chromium, Linux):** cada tela do canvas com uma ponte falsa, nos temas claro e escuro. Confere que os comandos saem certos e que o estado aparece; as capturas de tela vão como artefato do build. Tem também uma checagem de acessibilidade (axe) sem erros sérios.
 - **Windows (`windows-latest`):** o app compila, o instalador é gerado e o teste de fumaça roda: o app abre com o WebView2, entra no registrador falso, faz uma ligação e tira a captura da janela real.
 - Continuam o `check_source_text.py`, os testes do núcleo e a conferência de "MicroSIP" no instalador e no executável.

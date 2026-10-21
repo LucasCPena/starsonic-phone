@@ -5,6 +5,7 @@
 // Formato (todos): um objeto {"versao": 1, "<lista>": [...]} (as configuracoes: o objeto com as chaves). Chaves em
 // portugues, como no disco do Android.
 // - contas.json:   {"versao":1,"contas":[{"id","servidor","protocolo":"udp"|"tcp","ramal","senha_protegida","nome","em_uso"}]}
+//                  e, enquanto falta algo da migracao da rc.7, "migracao_pendente": ["contatos","recentes"]
 // - contatos.json: {"versao":1,"contatos":[{"id","nome","numero","observacao"}]}
 // - recentes.json: {"versao":1,"recentes":[{"numero","nome","tipo":"feita"|"recebida"|"perdida","inicio","duracao"}]}
 //   (inicio: ms desde 1970; duracao: em MILISSEGUNDOS, ao contrario do Android, que grava segundos)
@@ -59,13 +60,17 @@ public:
     std::string LastSavedId() const;                     // o id da ultima conta gravada com sucesso
     bool Remove(const std::string& id);                  // false se nao existe ou o disco falhou
     bool SetActive(const std::string& id);               // false se nao existe ou o disco falhou
+    // O que ainda falta migrar da rc.7 ("contatos", "recentes"; LegacyImport). Vazio: nada.
+    std::vector<std::string> PendingMigration() const;
+    bool SetPendingMigration(std::vector<std::string> pending);   // false se o disco falhou: nada muda
 
 private:
     struct Entry {
         SavedAccount account;
         std::string sealed;   // senha_protegida como esta no disco (guardada para as outras contas nao a perderem)
     };
-    bool Write(const std::vector<Entry>& entries, const std::string& active) const;
+    bool Write(const std::vector<Entry>& entries, const std::string& active,
+               const std::vector<std::string>& pending) const;
 
     FileSystem& files_;
     SecretCipher& cipher_;
@@ -74,6 +79,7 @@ private:
     std::vector<Entry> entries_;
     std::string activeId_;
     std::string lastSavedId_;
+    std::vector<std::string> pending_;
 };
 
 struct Contact {
@@ -91,6 +97,9 @@ public:
     std::vector<Contact> All() const;                          // por nome, sem acento e sem caixa
     // Inclui ou substitui (pelo id; vazio = id novo). Exige nome e numero (depois do Trim e do NormalizeDialString).
     bool Save(Contact contact);
+    // Inclui varios de uma vez, cada um com um id novo, numa gravacao so; os que o Save recusaria ficam de fora.
+    // false se o disco falhou: nada muda.
+    bool AddAll(std::vector<Contact> contacts);
     bool Remove(const std::string& id);
     // Os contatos cujo nome (sem acento e sem caixa) ou numero contem o texto; na ordem de All. Texto vazio: todos.
     std::vector<Contact> Search(const std::wstring& text) const;
@@ -115,6 +124,9 @@ public:
     bool Load();
     // Anota a ligacao; ficam as 500 de inicio mais novo. A lista na memoria muda mesmo que o disco falhe (false).
     bool Add(const Recent& recent);
+    // Anota varias de uma vez, numa gravacao so (ficam as 500 mais novas). Ao contrario do Add, se o disco falha a
+    // lista na memoria tambem nao muda (false).
+    bool AddAll(const std::vector<Recent>& recents);
     std::vector<Recent> All() const;                 // a mais nova primeiro
     // Quantas perdidas comecaram depois de sinceMs (a ultima vez que a tela Recentes foi vista).
     int MissedCount(int64_t sinceMs) const;

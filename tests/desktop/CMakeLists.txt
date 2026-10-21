@@ -14,6 +14,9 @@ file(GLOB STARSONIC_CORE_SOURCES CONFIGURE_DEPENDS ${STARSONIC_DIR}/core/*.cpp)
 file(GLOB STARSONIC_DESKTOP_SOURCES CONFIGURE_DEPENDS ${STARSONIC_DIR}/desktop/*.cpp)
 file(GLOB DESKTOP_TEST_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/test_*.cpp)
 
+# A migracao da rc.7 le o call_log.db do MicroSIP: no Linux o libsqlite3-dev; no Windows, o do vcpkg.
+find_package(SQLite3 REQUIRED)
+
 add_executable(desktop_tests main.cpp ${DESKTOP_TEST_SOURCES} ${STARSONIC_CORE_SOURCES} ${STARSONIC_DESKTOP_SOURCES})
 target_include_directories(desktop_tests PRIVATE
   ${STARSONIC_DIR}/core
@@ -21,6 +24,8 @@ target_include_directories(desktop_tests PRIVATE
   ${STARSONIC_DIR}/phone
   ${STARSONIC_DIR}/third_party
   ${CMAKE_CURRENT_SOURCE_DIR}/..)
+
+target_link_libraries(desktop_tests PRIVATE SQLite::SQLite3)
 
 if(MSVC)
   target_compile_options(desktop_tests PRIVATE /W4 /EHsc)

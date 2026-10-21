@@ -152,6 +152,7 @@ bool AccountsStore::Load() {
     std::lock_guard<std::mutex> lock(mutex_);
     entries_.clear();
     activeId_.clear();
+    pending_.clear();
     Json root;
     const ReadResult result = ReadRoot(files_, path_, root);
     if (result == ReadResult::Missing) return true;
@@ -181,6 +182,14 @@ bool AccountsStore::Load() {
         if (activeId_.empty() && GetBool(item, "em_uso", false)) activeId_ = entry.account.id;
         entries_.push_back(std::move(entry));
     }
+    const auto pending = root.find("migracao_pendente");
+    if (pending != root.end() && pending->is_array()) {
+        for (const Json& item : *pending) {
+            if (item.is_string() && std::find(pending_.begin(), pending_.end(), item.get<std::string>()) == pending_.end()) {
+                pending_.push_back(item.get<std::string>());
+            }
+        }
+    }
     return true;
 }
 
@@ -204,7 +213,8 @@ std::string AccountsStore::LastSavedId() const {
     return lastSavedId_;
 }
 
-bool AccountsStore::Write(const std::vector<Entry>& entries, const std::string& active) const {
+bool AccountsStore::Write(const std::vector<Entry>& entries, const std::string& active,
+                          const std::vector<std::string>& pending) const {
     Json root = NewRoot();
     Json list = Json::array();
     for (const Entry& entry : entries) {
@@ -220,6 +230,7 @@ bool AccountsStore::Write(const std::vector<Entry>& entries, const std::string& 
         list.push_back(std::move(item));
     }
     root["contas"] = std::move(list);
+    if (!pending.empty()) root["migracao_pendente"] = pending;
     return WriteRoot(files_, path_, root);
 }
 
@@ -244,7 +255,7 @@ bool AccountsStore::Save(SavedAccount account) {
     } else {
         updated.push_back(entry);
     }
-    if (!Write(updated, activeId_)) return false;
+    if (!Write(updated, activeId_, pending_)) return false;
     entries_ = std::move(updated);
     lastSavedId_ = account.id;
     return true;
@@ -259,7 +270,7 @@ bool AccountsStore::Remove(const std::string& id) {
     if (existing == updated.end()) return false;
     updated.erase(existing);
     const std::string active = activeId_ == id ? std::string() : activeId_;
-    if (!Write(updated, active)) return false;
+    if (!Write(updated, active, pending_)) return false;
     entries_ = std::move(updated);
     activeId_ = active;
     return true;
@@ -271,8 +282,20 @@ bool AccountsStore::SetActive(const std::string& id) {
         return other.account.id == id;
     });
     if (!exists) return false;
-    if (!Write(entries_, id)) return false;
+    if (!Write(entries_, id, pending_)) return false;
     activeId_ = id;
+    return true;
+}
+
+std::vector<std::string> AccountsStore::PendingMigration() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return pending_;
+}
+
+bool AccountsStore::SetPendingMigration(std::vector<std::string> pending) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!Write(entries_, activeId_, pending)) return false;
+    pending_ = std::move(pending);
     return true;
 }
 
@@ -362,6 +385,21 @@ bool ContactsStore::Save(Contact contact) {
         *existing = contact;
     } else {
         updated.push_back(contact);
+    }
+    if (!Write(updated)) return false;
+    contacts_ = std::move(updated);
+    return true;
+}
+
+bool ContactsStore::AddAll(std::vector<Contact> contacts) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<Contact> updated = contacts_;
+    for (Contact& contact : contacts) {
+        contact.name = Trim(contact.name);
+        contact.number = ToUtf8(Trim(Utf8ToWide(contact.number)));
+        if (contact.name.empty() || NormalizedNumber(contact.number).empty()) continue;
+        contact.id = NewStoreId();
+        updated.push_back(std::move(contact));
     }
     if (!Write(updated)) return false;
     contacts_ = std::move(updated);
@@ -479,6 +517,20 @@ bool RecentsStore::Add(const Recent& recent) {
     recents_.insert(position, recent);
     if (recents_.size() > kMax) recents_.resize(kMax);
     return Write();
+}
+
+bool RecentsStore::AddAll(const std::vector<Recent>& recents) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<Recent> previous = recents_;
+    for (const Recent& recent : recents) {
+        const auto position = std::find_if(recents_.begin(), recents_.end(),
+                                           [&](const Recent& other) { return other.startMs < recent.startMs; });
+        recents_.insert(position, recent);
+    }
+    if (recents_.size() > kMax) recents_.resize(kMax);
+    if (Write()) return true;
+    recents_ = std::move(previous);
+    return false;
 }
 
 std::vector<Recent> RecentsStore::All() const {

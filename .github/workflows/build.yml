@@ -50,6 +50,8 @@ jobs:
 
       - name: Testes C++ do app de PC (doctest)
         run: |
+          # A migração da rc.7 lê o call_log.db (SQLite) do MicroSIP.
+          sudo apt-get install -y libsqlite3-dev
           cmake -S tests/desktop -B build-desktop-tests
           cmake --build build-desktop-tests -j 4
           ctest --test-dir build-desktop-tests --output-on-failure
