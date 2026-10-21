@@ -147,7 +147,7 @@
 - Create: `starsonic/desktop/LegacyImport.h`, `starsonic/desktop/LegacyImport.cpp` (portável: o `.ini`, os bancos SQLite e a regra), `starsonic/win/LegacyCrypto.h`, `starsonic/win/LegacyCrypto.cpp` (Windows: a rotina `IniDecrypt` do MicroSIP reescrita sobre a CryptoAPI pura, sem MFC, com o aviso de copyright do MicroSIP)
 - Test: `tests/desktop/test_legacy_import.cpp`; `tests/win/test_legacy_crypto.cpp` (Windows, no job `windows`: cifra com o `MFC::CCrypto` original de `microsip/lib/Crypto.cpp` e decifra com o novo; e o inverso não é preciso)
 - Modify: `tests/desktop/CMakeLists.txt` (linka o SQLite 3: no Linux `libsqlite3-dev`, instalado no job; no Windows, o do vcpkg)
-- Modify: `docs/superpowers/specs/2026-10-21-starsonic-phone-windows-w1-design.md` (7.1 e 11.2: os contatos e o histórico da rc.7 estão em `contacts.db` e `call_log.db`, SQLite, não em `Contacts.xml`)
+- Modify: `docs/superpowers/specs/2026-10-21-starsonic-phone-windows-w1-design.md` (7.1 e 11.2: o histórico da rc.7 está no `call_log.db` (SQLite); os contatos continuam no `Contacts.xml` — o MicroSIP 3.22 não grava a tabela do `contacts.db`; corrigido na Task 7, Ruling 9 do ledger)
 
 **Interfaces:**
 - Consumes: `AccountsStore`, `ContactsStore`, `RecentsStore` (Task 6); `AddressFromServer`, `ValidateServerAddress`, `TransportFromName` (núcleo).
