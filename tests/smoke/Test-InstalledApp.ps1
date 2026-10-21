@@ -34,13 +34,26 @@ function Stop-InstalledApp {
     }
 }
 
+# Roda o instalador e espera so ele (o Start-Process -Wait esperaria tambem o app que o /S reabre).
+function Invoke-Setup([string]$File, [string]$Arguments) {
+    $info = New-Object System.Diagnostics.ProcessStartInfo
+    $info.FileName = $File
+    $info.Arguments = $Arguments
+    $info.UseShellExecute = $false
+    $process = [System.Diagnostics.Process]::Start($info)
+    if (-not $process.WaitForExit(180000)) {
+        Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+        throw "$(Split-Path -Leaf $File) $Arguments nao terminou em 180 s."
+    }
+    if ($process.ExitCode -ne 0) {
+        throw "$(Split-Path -Leaf $File) $Arguments terminou com o codigo $($process.ExitCode)."
+    }
+}
+
 $failed = $null
 try {
     # /D= vem por ultimo e sem aspas (regra do NSIS).
-    $process = Start-Process -FilePath $Setup -ArgumentList @('/S', "/D=$installDir") -Wait -PassThru
-    if ($process.ExitCode -ne 0) {
-        throw "O instalador terminou com o codigo $($process.ExitCode)."
-    }
+    Invoke-Setup -File $Setup -Arguments "/S /D=$installDir"
     if (-not (Test-Path $exe)) {
         throw "O instalador nao pos o StarsonicPhone.exe em $installDir."
     }
@@ -56,7 +69,11 @@ try {
     Stop-InstalledApp
     $uninstaller = Join-Path $installDir 'Uninstall.exe'
     if (Test-Path $uninstaller) {
-        Start-Process -FilePath $uninstaller -ArgumentList @('/S') -Wait | Out-Null
+        try {
+            Invoke-Setup -File $uninstaller -Arguments '/S'
+        } catch {
+            Write-Warning $_.Exception.Message
+        }
         # O desinstalador do NSIS se copia para a pasta temporaria e continua de la: espera o fim.
         if (-not (Wait-Until -TimeoutSeconds 60 -Condition { -not (Test-Path $uninstallKey) })) {
             Write-Warning 'A desinstalacao da fumaca nao terminou em 60 s.'
