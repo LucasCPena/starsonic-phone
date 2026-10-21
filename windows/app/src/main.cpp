@@ -201,6 +201,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     config.version = STARSONIC_VERSION;
     config.decrypt = [](const std::wstring& encrypted) { return LegacyDecrypt(encrypted); };
 
+    // O Iniciar com o Windows: o registro vale mais que o config.json (o instalador pode nao ter gravado o Run, a rc.7
+    // podia estar sem, a pessoa pode ter tirado no Gerenciador de Tarefas). Ligado, o valor e regravado com o caminho
+    // e o --bandeja de agora (o exe que mudou de lugar, o "/minimized" da rc.7).
+    const std::wstring exePath = ExePath();
+    const bool autostart = ObserveAutostart();
+    config.observedStartWithWindows = autostart;
+    if (autostart && !SetAutostart(true, exePath)) log("iniciar com o Windows: o valor do Run nao foi regravado");
+
     WinFiles files;
     DpapiCipher cipher;
     SystemClock clock;
@@ -225,7 +233,6 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
 
     // O gancho quit ja rodou (o DesktopApp encerrou as ligacoes): o logoff do Windows espera por ele.
     const HANDLE quitDone = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    const std::wstring exePath = ExePath();
 
     DesktopHooks hooks;
     hooks.post = [&window](const std::string& json) { window.PostToWeb(json); };

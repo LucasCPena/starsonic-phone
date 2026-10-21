@@ -224,7 +224,7 @@ O Entrar (spec do Windows, 7.1 e 11.1):
 | `audio.microfone`, `audio.altoFalante` | texto | O nome escolhido (`""`: o padrão do Windows). Pode não estar na lista (ver `desconectados`). |
 | `audio.toque` | texto | O `deviceId` do toque, da interface (`""`: o padrão). |
 | `audio.desconectados` | lista de texto | Os nomes escolhidos que não estão conectados agora: a ligação usa o padrão do Windows, e a interface mostra o nome com "(desconectado)" ao lado. A escolha fica gravada e volta a valer quando o dispositivo volta. |
-| `iniciarComWindows` | booleano | Configurações → Geral. |
+| `iniciarComWindows` | booleano | Configurações → Geral. Na abertura vale o que o Windows tem (o valor `Starsonic Phone` no `HKCU\...\Run`, e não desligado no Gerenciador de Tarefas), não o `config.json`: o executável lê o registro e o `DesktopApp` grava o que viu, sem o gancho. |
 | `versao` | texto | A versão do app (o Sobre). |
 | `teclado` | texto | O número que um link `tel:`/`sip:`/`callto:` pôs no Teclado (o app nunca liga sozinho por um link). |
 | `tecladoVez` | inteiro | Sobe a cada link (começa em 0). A interface põe `teclado` no Teclado (e vai para a aba Teclado) quando `tecladoVez` muda, também com o mesmo número de antes; com uma ligação em andamento, a ligação não muda. |

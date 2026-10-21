@@ -87,6 +87,10 @@ struct DesktopConfig {
     Profile profile;                 // o perfil embutido (ParseProfile): o protocolo padrao, o ddi e o prefixo
     std::string version;             // a versao do app (versao, no estado)
     LegacyDecryptFunction decrypt;   // a senha da rc.7 (LegacyDecrypt); vazio: as contas migram sem senha
+    // O Iniciar com o Windows que o executavel viu no registro na abertura (o valor do Run, e nao desligado no
+    // Gerenciador de Tarefas). O registro vale mais que o config.json: na abertura, a configuracao passa a ser esta
+    // (gravada no config.json e no estado), sem o gancho setStartWithWindows. Nada: vale o config.json.
+    std::optional<bool> observedStartWithWindows;
 };
 
 // O que o executavel faz pelo DesktopApp. Todos chamados na thread de comandos, menos o log (ver acima). Um vazio

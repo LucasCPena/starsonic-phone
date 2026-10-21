@@ -125,9 +125,11 @@ struct Harness {
 
     Harness() { Make(); }
 
+    std::optional<bool> observedAutostart;   // o que o executavel viu no registro (nada: nao viu)
     void Make() {
         DesktopConfig config;
         config.paths = Paths();
+        config.observedStartWithWindows = observedAutostart;
         config.version = "0.1.0-rc.1";
         config.decrypt = ToyDecrypt;
         DesktopHooks hooks;
@@ -879,6 +881,34 @@ TEST_CASE("a notice from the host becomes a toast") {
     h.app->Notify("Termine a chamada para atualizar.");
     h.Run();
     CHECK(h.Toasts() == std::vector<std::string>{"Termine a chamada para atualizar."});
+}
+
+TEST_CASE("the start with windows seen in the registry wins over the saved setting, without the hook") {
+    // O padrao do config.json e ligado; o Run do Windows sem o valor (o instalador nao gravou, a rc.7 estava sem,
+    // desligado no Gerenciador de Tarefas): vale o desligado, gravado, e a interface mostra desligado.
+    Harness h;
+    h.observedAutostart = false;
+    h.Make();
+    h.Start();
+    CHECK(h.State()["iniciarComWindows"] == false);
+    CHECK(h.File("dados/config.json")["iniciar_com_windows"] == false);
+    CHECK(h.host.empty());   // so o que a pessoa muda vai ao registro
+
+    // O contrario: gravado desligado, o registro ligado.
+    h.observedAutostart = true;
+    h.Restart();
+    CHECK(h.State()["iniciarComWindows"] == true);
+    CHECK(h.File("dados/config.json")["iniciar_com_windows"] == true);
+    CHECK(h.host.empty());
+
+    // Sem o que o executavel viu (os testes, outra plataforma): vale o gravado.
+    h.observedAutostart.reset();
+    h.Send(R"({"v":1,"cmd":"setSetting","chave":"iniciarComWindows","valor":false})");
+    CHECK(h.host == std::vector<std::string>{"autostart off"});
+    h.host.clear();
+    h.Restart();
+    CHECK(h.State()["iniciarComWindows"] == false);
+    CHECK(h.host.empty());
 }
 
 TEST_CASE("commands run on the command thread, never on the caller") {

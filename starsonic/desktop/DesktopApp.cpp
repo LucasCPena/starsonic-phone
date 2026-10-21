@@ -421,6 +421,15 @@ void DesktopApp::Initialize() {
         Log("migracao da rc.7: " + what + " pendentes (a proxima abertura tenta de novo)");
     }
 
+    // O registro vale mais que o config.json (o Run sem o valor, ou desligado no Gerenciador de Tarefas: o app nao
+    // abre com o Windows, e a chave nao pode mostrar ligado).
+    if (config_.observedStartWithWindows && settings_.Get().startWithWindows != *config_.observedStartWithWindows) {
+        Settings observed = settings_.Get();
+        observed.startWithWindows = *config_.observedStartWithWindows;
+        Log(std::string("iniciar com o Windows: o registro diz ") + (observed.startWithWindows ? "ligado" : "desligado"));
+        SaveSettings(observed);
+    }
+
     const Settings settings = settings_.Get();
     controller_->SetDoNotDisturb(settings.doNotDisturb);
     controller_->SetAutoAnswer(settings.autoAnswer, settings.autoAnswerSeconds * 1000);
