@@ -137,7 +137,7 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
             contas: [...outras, salva],
             conta: { id, nome, ramal, servidor, protocolo, status: 'conectado', texto: `Conectado · ${servidor}` },
           });
-        }, 400);
+        }, 1500);
         break;
       }
       default:

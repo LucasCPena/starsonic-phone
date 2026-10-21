@@ -354,6 +354,8 @@ for (const tema of ['light', 'dark'] as const) {
 
       await page.getByRole('switch', { name: 'Atender automaticamente' }).click();
       await esperarComando(page, { cmd: 'setAutoAnswer', on: true });
+      // O switch segue o estado: liga quando o C++ (falso) devolve o estado novo.
+      await expect(page.getByRole('switch', { name: 'Atender automaticamente' })).toHaveAttribute('aria-checked', 'true');
       await page.getByLabel('Tempo para atender').selectOption('5');
       await esperarComando(page, { cmd: 'setAutoAnswer', on: true, segundos: 5 });
       await verTextos(page, ['Depois de 5 segundos tocando']);

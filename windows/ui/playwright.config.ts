@@ -7,6 +7,8 @@ const PORTA = 4178;
 export default defineConfig({
   testDir: 'tests',
   outputDir: 'test-results/saida',
+  // As specs das telas rodam o axe duas vezes cada; folga para máquinas lentas.
+  timeout: 60_000,
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: 0,
