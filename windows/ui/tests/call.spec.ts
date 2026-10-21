@@ -12,6 +12,7 @@ import {
   esperarComando,
   estado,
   mudarEstado,
+  saidasFalsas,
   semViolacoesSerias,
   toques,
   verTextos,
@@ -399,6 +400,8 @@ test.describe('ligação e toque', () => {
     // Espera: o bipe de 0,2 s a cada 3 s.
     await mandar('espera');
     expect(await audio(page)).toHaveLength(2);
+    // O bipe procura antes a saída do alto-falante da ligação (enumerateDevices): começa logo depois.
+    await expect.poll(async () => (await audio(page))[1].oscillators[0]?.started).toBe(true);
     ctx = (await audio(page))[1];
     expect(ctx.oscillators[0]).toMatchObject({ frequency: 425, started: true, stopped: false });
     t = toques(ctx.gains[0]);
@@ -438,6 +441,59 @@ test.describe('ligação e toque', () => {
     await empurrar(page, { v: 1, type: 'ring', tipo: 'completo' });
     await expect.poll(async () => (await audio(page))[1]?.oscillators[0]?.started).toBe(true);
     expect((await audio(page))[1].sinkId).toBe('');
+  });
+
+  test('the waiting beep plays on the call speaker and the full ring on the Toque device', async ({ page }) => {
+    await audioFalso(page);
+    await saidasFalsas(page, [
+      { deviceId: 'default', label: 'Padrão - Alto-falantes (Realtek(R) Audio)' },
+      { deviceId: 'id-realtek', label: 'Alto-falantes (Realtek(R) Audio)' },
+      { deviceId: 'id-headset', label: 'Headset USB' },
+    ]);
+    await abrir(page, 'principal');
+    // O motor dá o nome cortado; o alto-falante da ligação casa com o rótulo da saída pelo começo.
+    await mudarEstado(page, (s) => ({ ...s, audio: { ...s.audio, toque: 'saida-toque-1', altoFalante: 'Alto-falantes (Realtek)' } }));
+    await expect.poll(async () => (await estado(page)).audio.altoFalante).toBe('Alto-falantes (Realtek)');
+
+    await empurrar(page, { v: 1, type: 'ring', tipo: 'espera' });
+    await expect.poll(async () => (await audio(page))[0]?.oscillators[0]?.started).toBe(true);
+    expect((await audio(page))[0].sinkId).toBe('id-realtek');
+    // Outro alto-falante com o bipe tocando: o próximo bipe já sai nele.
+    await mudarEstado(page, (s) => ({ ...s, audio: { ...s.audio, altoFalante: 'Headset USB' } }));
+    await expect.poll(async () => (await audio(page))[0].sinkId).toBe('id-headset');
+    // Do bipe para o toque completo: o completo continua no Toque.
+    await empurrar(page, { v: 1, type: 'ring', tipo: 'completo' });
+    await expect.poll(async () => (await audio(page))[1]?.oscillators[0]?.started).toBe(true);
+    expect((await audio(page))[1].sinks).toEqual(['saida-toque-1']);
+    await empurrar(page, { v: 1, type: 'ring', tipo: 'parar' });
+
+    // Sem saída com esse nome: o bipe toca no padrão (nenhum setSinkId), nunca mudo.
+    await mudarEstado(page, (s) => ({ ...s, audio: { ...s.audio, altoFalante: 'Fone Bluetooth' } }));
+    await expect.poll(async () => (await estado(page)).audio.altoFalante).toBe('Fone Bluetooth');
+    await empurrar(page, { v: 1, type: 'ring', tipo: 'espera' });
+    await expect.poll(async () => (await audio(page))[2]?.oscillators[0]?.started).toBe(true);
+    expect((await audio(page))[2].sinks).toEqual([]);
+    await empurrar(page, { v: 1, type: 'ring', tipo: 'parar' });
+
+    // O padrão do Windows (""): o bipe também no padrão.
+    await mudarEstado(page, (s) => ({ ...s, audio: { ...s.audio, altoFalante: '' } }));
+    await expect.poll(async () => (await estado(page)).audio.altoFalante).toBe('');
+    await empurrar(page, { v: 1, type: 'ring', tipo: 'espera' });
+    await expect.poll(async () => (await audio(page))[3]?.oscillators[0]?.started).toBe(true);
+    expect((await audio(page))[3].sinks).toEqual([]);
+  });
+
+  test('the waiting beep plays on the default when the outputs have no labels', async ({ page }) => {
+    await audioFalso(page);
+    // Sem a permissão de mídia o Chromium devolve as saídas sem rótulo.
+    await saidasFalsas(page, [
+      { deviceId: 'id-a', label: '' },
+      { deviceId: 'id-b', label: '' },
+    ]);
+    await abrir(page, 'principal');
+    await empurrar(page, { v: 1, type: 'ring', tipo: 'espera' });
+    await expect.poll(async () => (await audio(page))[0]?.oscillators[0]?.started).toBe(true);
+    expect((await audio(page))[0].sinks).toEqual([]);
   });
 
   test('the ring with the real AudioContext starts and stops without errors', async ({ page }) => {

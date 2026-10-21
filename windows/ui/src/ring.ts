@@ -2,10 +2,16 @@
 // - completo: 1 s ligado e 4 s desligado (uma recebida sem outra ligação);
 // - espera: um bipe de 0,2 s a cada 3 s (a segunda ligação, sem cobrir a conversa);
 // - parar: encerra na hora.
-// Toca no dispositivo de Toque das Configurações (`audio.toque`, um deviceId de saída) pelo AudioContext.setSinkId;
-// sem o id, sem o setSinkId, sem permissão ou com o dispositivo fora, toca no padrão. Só a janela principal toca
-// (o aviso do canto recebe as mesmas mensagens e fica quieto, para o toque não sair em dobro).
-// O relógio e o AudioContext são injetáveis (os testes usam um relógio falso e um contexto que grava o que acontece).
+// A saída (AudioContext.setSinkId):
+// - completo: o dispositivo de Toque das Configurações (`audio.toque`, um deviceId da própria interface);
+// - espera: o alto-falante da ligação (a pessoa já está falando e ouve por ele). O `audio.altoFalante` é o nome do
+//   motor, não um deviceId: a saída é a do `enumerateDevices` cujo rótulo é esse nome (ou começa com ele, ou ele
+//   com o rótulo: o motor corta os nomes longos) — `matchOutputDevice`.
+// Sem o id, sem nome, sem rótulos (sem a permissão de mídia), sem saída que case, sem o setSinkId ou com erro nele,
+// toca no padrão: nunca fica mudo. Só a janela principal toca (o aviso do canto recebe as mesmas mensagens e fica
+// quieto, para o toque não sair em dobro).
+// O relógio, o AudioContext e a lista das saídas são injetáveis (os testes usam um relógio falso e um contexto que
+// grava o que acontece).
 import type { RingKind } from './state';
 
 /** O pedaço do AudioContext que o toque usa. */
@@ -24,17 +30,67 @@ export interface RingClock {
   clearTimeout(id: number): void;
 }
 
+/** Uma saída de som do WebView2 (o `MediaDeviceInfo` de `audiooutput`). */
+export interface OutputDevice {
+  deviceId: string;
+  /** Vazio sem a permissão de mídia. */
+  label: string;
+}
+
+/** As escolhas de som do estado que o toque usa (do `audio`). */
+export interface RingOutputs {
+  /** O deviceId do Toque ("" = o padrão): o toque completo. */
+  toque: string;
+  /** O nome do alto-falante da ligação no motor ("" = o padrão do Windows): o bipe de espera. */
+  altoFalante: string;
+}
+
 export interface RingOptions {
   createContext?: () => RingAudioContext;
   clock?: RingClock;
+  /** As saídas de som de agora (o padrão: `navigator.mediaDevices.enumerateDevices()`, só as `audiooutput`). */
+  listOutputs?: () => Promise<OutputDevice[]>;
 }
 
 export interface Ringer {
-  /** O toque pedido pelo C++ (`completo`, `espera`, `parar`), no dispositivo `sinkId` ("" = o padrão). */
-  play(tipo: RingKind, sinkId: string): void;
-  /** O dispositivo de Toque mudou: o toque que está tocando passa para ele. */
-  setDevice(sinkId: string): void;
+  /** O toque pedido pelo C++ (`completo`, `espera`, `parar`), na saída que as escolhas de som pedem. */
+  play(tipo: RingKind, saidas: RingOutputs): void;
+  /** As escolhas mudaram: o toque que está tocando passa para a saída nova (o próximo toque já sai nela). */
+  setOutputs(saidas: RingOutputs): void;
   stop(): void;
+}
+
+function normalizar(texto: string): string {
+  return texto.trim().toLocaleLowerCase('pt-BR');
+}
+
+/** Sem o ")" do fim: um nome cortado que fechou o parêntese ("Alto-falantes (Realtek)") ainda é o começo de
+ *  "Alto-falantes (Realtek(R) Audio)". */
+function semFecho(texto: string): string {
+  return texto.endsWith(')') ? texto.slice(0, -1) : texto;
+}
+
+/**
+ * O deviceId da saída cujo rótulo é o nome do motor (`audio.altoFalante`): primeiro igual (sem caixa e sem os
+ * espaços das pontas), depois um que começa com o outro (o motor corta os nomes longos). "" (o padrão) sem nome,
+ * sem rótulos ou sem nenhuma que case.
+ */
+export function matchOutputDevice(nome: string, saidas: OutputDevice[]): string {
+  const alvo = normalizar(nome);
+  if (!alvo) return '';
+  const comRotulo = saidas.map((s) => ({ id: s.deviceId, rotulo: normalizar(s.label) })).filter((s) => s.rotulo !== '');
+  const igual = comRotulo.find((s) => s.rotulo === alvo);
+  if (igual) return igual.id;
+  const comeca = (longo: string, curto: string) => longo.startsWith(curto) || longo.startsWith(semFecho(curto));
+  const prefixo = comRotulo.find((s) => comeca(s.rotulo, alvo) || comeca(alvo, s.rotulo));
+  return prefixo?.id ?? '';
+}
+
+async function enumerateOutputs(): Promise<OutputDevice[]> {
+  const md = typeof navigator !== 'undefined' ? navigator.mediaDevices : undefined;
+  if (!md?.enumerateDevices) return [];
+  const lista = await md.enumerateDevices();
+  return lista.filter((d) => d.kind === 'audiooutput').map((d) => ({ deviceId: d.deviceId, label: d.label }));
 }
 
 export const RING_HZ = 425;
@@ -58,6 +114,7 @@ const RAMPA = 0.01;
 
 export function createRinger(options: RingOptions = {}): Ringer {
   const createContext = options.createContext ?? (() => new AudioContext() as unknown as RingAudioContext);
+  const listOutputs = options.listOutputs ?? enumerateOutputs;
   const clock: RingClock = options.clock ?? {
     setTimeout: (fn, ms) => window.setTimeout(fn, ms),
     clearTimeout: (id) => window.clearTimeout(id),
@@ -92,7 +149,18 @@ export function createRinger(options: RingOptions = {}): Ringer {
     }
   };
 
-  const play = (tipo: RingKind, sinkId: string) => {
+  /** O deviceId da saída do toque ("" = o padrão). Nunca falha: qualquer erro dá o padrão. */
+  const saidaDo = async (tipo: RingKind, saidas: RingOutputs): Promise<string> => {
+    if (tipo !== 'espera') return saidas.toque;
+    if (!saidas.altoFalante) return '';
+    try {
+      return matchOutputDevice(saidas.altoFalante, await listOutputs());
+    } catch {
+      return '';
+    }
+  };
+
+  const play = (tipo: RingKind, saidas: RingOutputs) => {
     if (tipo === 'parar') {
       stop();
       return;
@@ -108,7 +176,7 @@ export function createRinger(options: RingOptions = {}): Ringer {
       return; // Sem WebAudio: nada a tocar (a ligação aparece do mesmo jeito).
     }
     void (async () => {
-      await trocarSaida(ctx, sinkId);
+      await trocarSaida(ctx, await saidaDo(tipo, saidas));
       if (minhaVez !== vez) {
         void ctx.close().catch(() => {});
         return;
@@ -138,8 +206,14 @@ export function createRinger(options: RingOptions = {}): Ringer {
   return {
     play,
     stop,
-    setDevice(sinkId) {
-      if (current) void trocarSaida(current.ctx, sinkId, true);
+    setOutputs(saidas) {
+      const atual = current;
+      if (!atual) return;
+      void (async () => {
+        const sinkId = await saidaDo(atual.tipo, saidas);
+        // O toque trocou ou parou enquanto a lista das saídas vinha: nada a fazer neste.
+        if (current === atual) await trocarSaida(atual.ctx, sinkId, true);
+      })();
     },
   };
 }

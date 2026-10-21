@@ -67,6 +67,8 @@ export async function capturar(page: Page, nome: string, tema: string): Promise<
 /** O que o AudioContext falso guardou (um por toque). */
 export interface AudioGravado {
   sinkId: string;
+  /** Cada setSinkId que deu certo, na ordem. */
+  sinks: string[];
   closed: boolean;
   resumed: boolean;
   oscillators: Array<{ type: string; frequency: number; started: boolean; stopped: boolean }>;
@@ -99,7 +101,7 @@ export async function audioFalso(page: Page): Promise<void> {
     }
     class FakeAudioContext {
       private t0 = performance.now();
-      private rec = { sinkId: '', closed: false, resumed: false, oscillators: [] as unknown[], gains: [] as unknown[] };
+      private rec = { sinkId: '', sinks: [] as string[], closed: false, resumed: false, oscillators: [] as unknown[], gains: [] as unknown[] };
       state = 'running';
       destination = { connect() {}, disconnect() {} };
       constructor() {
@@ -150,6 +152,7 @@ export async function audioFalso(page: Page): Promise<void> {
       setSinkId(id: string) {
         if (w.__audioSinkFalha) return Promise.reject(new DOMException('sem permissão', 'NotAllowedError'));
         this.rec.sinkId = id;
+        this.rec.sinks.push(id);
         return Promise.resolve();
       }
       resume() {
@@ -177,4 +180,14 @@ export function toques(gains: Array<[string, number, number]>): { liga: number[]
     liga: rampas.filter(([, v]) => v > 0).map(([, , t]) => t),
     desliga: rampas.filter(([, v]) => v === 0).map(([, , t]) => t),
   };
+}
+
+/** As saídas de som que o `navigator.mediaDevices.enumerateDevices()` da página devolve (com os rótulos). */
+export async function saidasFalsas(page: Page, saidas: Array<{ deviceId: string; label: string }>): Promise<void> {
+  await page.addInitScript((lista) => {
+    const md = navigator.mediaDevices as unknown as Record<string, unknown> | undefined;
+    const devolver = async () =>
+      lista.map((d) => ({ ...d, kind: 'audiooutput', groupId: '', toJSON() { return this; } }));
+    if (md) Object.defineProperty(md, 'enumerateDevices', { value: devolver, configurable: true });
+  }, saidas);
 }

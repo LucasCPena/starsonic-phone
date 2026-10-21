@@ -262,9 +262,13 @@ de novo em instantes.`) não vem no estado: ele chega como um `toast`, uma vez, 
 - `{"v":1,"type":"toast","texto":"..."}`: a interface mostra o texto por 2 s (um novo toma o lugar do que está na
   tela). Vêm como toast: o aviso das ligações (acima), `Ligação perdida de <contato ou número>` (a perdida que a
   pessoa não viu) e `A troca de conta fica para o fim da ligação.`. Um toast não se repete no `ready`.
-- `{"v":1,"type":"ring","tipo":"completo"}`: o toque completo (uma recebida sem outra ligação); `"espera"`: o bipe da
-  segunda ligação; `"parar"`: nenhum. A interface toca no dispositivo `audio.toque` (spec da W1, Global Constraints:
-  425 Hz). Vem quando muda, e o atual vem de novo depois do estado, a cada `ready`.
+- `{"v":1,"type":"ring","tipo":"completo"}`: o toque completo (uma recebida sem outra ligação), no dispositivo
+  `audio.toque`; `"espera"`: o bipe da segunda ligação, no alto-falante da ligação — a saída do WebView2 cujo rótulo
+  é o nome `audio.altoFalante` (igual, ou um começando com o outro: o motor corta os nomes longos); `"parar"`:
+  nenhum. Sem o dispositivo (nome vazio, sem rótulos sem a permissão de mídia, nenhuma saída com esse nome, ou o
+  `setSinkId` falhou), a interface toca no padrão. 425 Hz (spec da W1, Global Constraints). Só a janela principal
+  toca (o aviso recebe as mesmas mensagens e não toca). Vem quando muda, e o atual vem de novo depois do estado, a
+  cada `ready`.
 
 ```json
 {"v":1,"type":"toast","texto":"A troca de conta fica para o fim da ligação."}

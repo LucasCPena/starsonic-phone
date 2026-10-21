@@ -41,8 +41,8 @@ function App() {
   const [reinstalar, setReinstalar] = useState(false);
   const [numero, setNumero] = useState('');
   const tecladoVez = useRef(0);
-  // O dispositivo de Toque de agora (o `ring` vem logo depois do estado).
-  const toque = useRef('');
+  // As saídas de som de agora (o `ring` vem logo depois do estado): o Toque e o alto-falante da ligação.
+  const saidas = useRef({ toque: '', altoFalante: '' });
 
   const send = useCallback<Send>((command) => bridge.send(command), []);
 
@@ -50,10 +50,10 @@ function App() {
     bridge.onVersionMismatch(() => setReinstalar(true));
     const parar = bridge.subscribe((msg) => {
       if (msg.type === 'state') {
-        toque.current = msg.state.audio.toque;
+        saidas.current = { toque: msg.state.audio.toque, altoFalante: msg.state.audio.altoFalante };
         setState(msg.state);
       } else if (msg.type === 'toast') setToast((t) => ({ texto: msg.texto, vez: (t?.vez ?? 0) + 1 }));
-      else if (msg.type === 'ring') ringer.play(msg.tipo, toque.current);
+      else if (msg.type === 'ring') ringer.play(msg.tipo, saidas.current);
     });
     bridge.send({ cmd: 'ready' });
     return parar;
@@ -71,10 +71,10 @@ function App() {
     setView({ kind: 'tab', tab: 'teclado' });
   }, [state?.tecladoVez]);
 
-  // O Toque trocado nas Configurações com o toque tocando passa para o dispositivo novo.
+  // O Toque ou o alto-falante trocado com o toque tocando: o toque passa para a saída nova.
   useEffect(() => {
-    if (state) ringer.setDevice(state.audio.toque);
-  }, [state?.audio.toque]);
+    if (state) ringer.setOutputs({ toque: state.audio.toque, altoFalante: state.audio.altoFalante });
+  }, [state?.audio.toque, state?.audio.altoFalante]);
 
   // A última ligação acabou: volta ao Teclado (spec da W1, 7.2).
   const emLigacao = state?.ligacao != null;
