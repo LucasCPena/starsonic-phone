@@ -4,11 +4,11 @@
 O compilador da Microsoft lê fonte sem BOM na página de código do Windows; um
 acento dentro de um literal vira lixo na tela. Por isso:
 
-- em starsonic/, tests/ e android/ (*.cpp, *.h), caractere fora do ASCII
+- em starsonic/, tests/, android/ e windows/ (*.cpp, *.h), caractere fora do ASCII
   dentro de um literal precisa ser escrito como escape (barra invertida + u +
   4 dígitos); comentários podem ter acentos; as saídas de build (build/, .cxx/)
-  ficam de fora;
-- starsonic/**/*.rc, branding/branding.h, build/*.h, build/*.ps1 e
+  e as dependências do npm (node_modules/) ficam de fora;
+- starsonic/**/*.rc, windows/app/res/*.rc, branding/branding.h, build/*.h, build/*.ps1 e
   tests/smoke/*.ps1 precisam ser só ASCII (o compilador de recursos e o
   Windows PowerShell 5.1 leem esses arquivos na página de código do Windows);
 - branding/langpack_*.txt com acentos precisa começar com o BOM do UTF-8 (sem
@@ -22,10 +22,10 @@ import pathlib
 import sys
 
 BS = chr(92)  # barra invertida
-CPP_DIRS = ("starsonic", "tests", "android")
+CPP_DIRS = ("starsonic", "tests", "android", "windows")
 CPP_SUFFIXES = (".cpp", ".h", ".hpp")
 # Código de terceiros, gerado, e as saídas de build (o Gradle e o CMake do app escrevem em build/ e .cxx/).
-SKIPPED_PARTS = {"third_party", "generated", "build", ".cxx"}
+SKIPPED_PARTS = {"third_party", "generated", "build", ".cxx", "node_modules"}
 FIXABLE_PREFIXES = {"L", "u", "U", "u8"}
 
 
@@ -131,6 +131,10 @@ def _ascii_only_files(root):
         for path in sorted(base.rglob("*.rc")):
             if not _is_skipped(path, root):
                 yield path
+    resources = root / "windows" / "app" / "res"
+    if resources.is_dir():
+        for path in sorted(resources.glob("*.rc")):
+            yield path
     branding = root / "branding" / "branding.h"
     if branding.is_file():
         yield branding

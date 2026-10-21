@@ -64,6 +64,15 @@ class CheckSourceTextTest(unittest.TestCase):
         self.assertEqual(len(found), 1)
         self.assertEqual(found[0][1], 1)
 
+    def test_windows_app_sources_are_checked_and_its_resources_must_be_ascii(self):
+        # O executavel novo (windows/app) segue a mesma regra; as dependencias do npm da interface ficam de fora.
+        self.write("windows/app/src/main.cpp", 'const char* t = "a\u00e7";\n// coment\u00e1rio\n')
+        self.write("windows/app/res/app.rc", '// recurso com acento: \u00e7\n')
+        self.write("windows/app/res/resource.h", '#define IDI_APP 101\n')
+        self.write("windows/ui/node_modules/pacote/x.h", 'const char* t = "\u00e7";\n')
+        found = sorted((path, line) for path, line, _ in self.problems())
+        self.assertEqual(found, [("windows/app/res/app.rc", 1), ("windows/app/src/main.cpp", 1)])
+
     def test_branding_header_must_be_fully_ascii(self):
         self.write("branding/branding.h", '#define STARSONIC_COMPANY "Starsonic"\n// ç\n')
         self.assertEqual(len(self.problems()), 1)

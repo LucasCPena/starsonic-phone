@@ -282,5 +282,8 @@ de novo em instantes.`) não vem no estado: ele chega como um `toast`, uma vez, 
   chamado da thread da janela (ele só lê o JSON e põe na fila).
 - Os links `tel:`/`sip:`/`callto:` (já lidos) vão a `DesktopApp::DialLink(numero)`, que só preenche `teclado` (e
   escreve `link recebido` no diagnóstico).
+- A posição da janela: depois de a pessoa mover a janela, o executável chama `DesktopApp::SaveWindowPosition(x, y)`
+  (o canto de cima, em pixels da tela), que grava `janela_x`/`janela_y` no `config.json` (só se mudou, e só depois
+  do `Start`). Na abertura, o executável lê a posição do `config.json` antes de criar a janela.
 - Ao fechar: `Shutdown()`, o `Stop()` do agendador, o motor destruído, o `DesktopApp` destruído (detalhes no
   `DesktopApp.h`).

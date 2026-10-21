@@ -1,0 +1,44 @@
+/* Os recursos do StarsonicPhone.exe: o icone, a versao, o manifesto (DPI por monitor v2 e Common Controls 6) e o
+   perfil embutido (branding/perfil.ini). So ASCII. Os caminhos e a versao vem do app_build.h, que o CMake gera
+   (windows/app/CMakeLists.txt). */
+#include <windows.h>
+
+#include "resource.h"
+#include "app_build.h"
+
+LANGUAGE LANG_PORTUGUESE, SUBLANG_PORTUGUESE_BRAZILIAN
+
+IDI_APP ICON STARSONIC_ICON_FILE
+
+IDR_PERFIL RCDATA STARSONIC_PROFILE_FILE
+
+CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST STARSONIC_MANIFEST_FILE
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION STARSONIC_VERSION_COMMA
+ PRODUCTVERSION STARSONIC_VERSION_COMMA
+ FILEFLAGSMASK 0x3fL
+ FILEFLAGS 0x0L
+ FILEOS VOS_NT_WINDOWS32
+ FILETYPE VFT_APP
+ FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "041604b0"
+        BEGIN
+            VALUE "CompanyName", "Starsonic"
+            VALUE "FileDescription", "Starsonic Phone"
+            VALUE "FileVersion", STARSONIC_VERSION
+            VALUE "InternalName", "StarsonicPhone"
+            VALUE "LegalCopyright", "Starsonic"
+            VALUE "OriginalFilename", "StarsonicPhone.exe"
+            VALUE "ProductName", "Starsonic Phone"
+            VALUE "ProductVersion", STARSONIC_VERSION
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x416, 1200
+    END
+END

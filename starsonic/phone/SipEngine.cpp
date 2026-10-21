@@ -1,7 +1,9 @@
 #include "SipEngine.h"
 
 #include <pjsua2.hpp>
-#include <sys/socket.h>
+#ifndef _WIN32
+#include <sys/socket.h>   // SO_REUSEPORT (no Windows o pjlib ja traz o winsock2.h)
+#endif
 
 #include <algorithm>
 #include <cctype>

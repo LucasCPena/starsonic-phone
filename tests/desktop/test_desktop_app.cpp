@@ -499,6 +499,39 @@ TEST_CASE("do not disturb survives a restart") {
     CHECK(h.engine.answers == std::vector<int>{8});
 }
 
+TEST_CASE("the window position is saved in config.json and kept by the other settings") {
+    Harness early;
+    // Antes da abertura (as configuracoes ainda nao foram lidas) nada e gravado: o config.json nao perde nada.
+    early.app->SaveWindowPosition(5, 5);
+    early.Run();
+    CHECK(early.files.files.count("dados/config.json") == 0);
+
+    Harness h;
+    h.Start();
+    h.app->SaveWindowPosition(-1200, 80);
+    h.Run();
+    CHECK(h.File("dados/config.json")["janela_x"] == -1200);
+    CHECK(h.File("dados/config.json")["janela_y"] == 80);
+
+    // Outra configuracao gravada depois mantem a posicao.
+    h.Send(R"({"v":1,"cmd":"setDnd","on":true})");
+    CHECK(h.File("dados/config.json")["janela_x"] == -1200);
+    CHECK(h.File("dados/config.json")["nao_perturbe"] == true);
+
+    // A mesma posicao de novo nao grava o disco.
+    const int writes = h.files.writeCount;
+    h.app->SaveWindowPosition(-1200, 80);
+    h.Run();
+    CHECK(h.files.writeCount == writes);
+
+    h.Restart();
+    SettingsStore store(h.files, Paths().settings);
+    REQUIRE(store.Load());
+    CHECK(store.Get().windowX == -1200);
+    CHECK(store.Get().windowY == 80);
+    CHECK(store.Get().doNotDisturb);
+}
+
 TEST_CASE("a dial link during a call only fills the keypad") {
     Harness h;
     h.StartRegistered();

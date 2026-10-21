@@ -120,6 +120,7 @@ jobs:
   windows:
     name: Windows (Win32, Release)
     runs-on: windows-2022
+    needs: ui   # o app novo leva a interface empacotada (o artefato ui-dist)
     defaults:
       run:
         shell: powershell
@@ -133,9 +134,10 @@ jobs:
           path: |
             work/pjproject
             work/vcpkg
+            work/webview2
           key: deps-v1-${{ hashFiles('build/deps.lock', 'build/config_site.h', 'build/Build-Deps.ps1') }}
 
-      - name: Compilar dependências (pjproject e vcpkg)
+      - name: Compilar dependências (pjproject, vcpkg e o SDK do WebView2)
         if: steps.deps-cache.outputs.cache-hit != 'true'
         run: .\build\Build-Deps.ps1 -WorkDir work
 
@@ -146,6 +148,7 @@ jobs:
           path: |
             work/pjproject
             work/vcpkg
+            work/webview2
           key: ${{ steps.deps-cache.outputs.cache-primary-key }}
 
       - name: Testes do núcleo (Windows)
@@ -209,6 +212,33 @@ jobs:
         if: ${{ !cancelled() && steps.app.outcome == 'success' }}
         run: .\tests\smoke\Test-Login.ps1 -AppDir out -Version $env:STARSONIC_VERSION
 
+      # O app novo (windows/app: o WebView2 com a interface do job ui e o motor do Android). Ainda não vai no
+      # instalador (Task 13).
+      - name: Baixar a interface empacotada
+        id: ui-dist
+        if: ${{ !cancelled() }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ui-dist
+          path: windows/ui/dist
+
+      - name: Compilar o app novo
+        id: app-novo
+        if: ${{ !cancelled() && steps.ui-dist.outcome == 'success' }}
+        run: .\build\Build-Windows.ps1 -WorkDir work -Version $env:STARSONIC_VERSION -Channel $env:STARSONIC_CHANNEL -OutDir out-novo
+
+      - name: Verificação de marca (app novo)
+        if: ${{ !cancelled() && steps.app-novo.outcome == 'success' }}
+        run: python build\check_branding.py --repo . --exe out-novo\StarsonicPhone.exe
+
+      - name: Teste do app novo (janela, interface pronta e --sair)
+        if: ${{ !cancelled() && steps.app-novo.outcome == 'success' }}
+        run: .\tests\smoke\Test-WindowsApp.ps1 -AppDir out-novo
+
+      - name: Compilar o app novo (build de teste, com o STARSONIC_PERFIL)
+        if: ${{ !cancelled() && steps.ui-dist.outcome == 'success' }}
+        run: .\build\Build-Windows.ps1 -WorkDir work -Version $env:STARSONIC_VERSION -Channel $env:STARSONIC_CHANNEL -OutDir out-novo-teste -TestHooks
+
       - name: NSIS
         id: nsis
         if: ${{ !cancelled() && steps.app.outcome == 'success' }}
@@ -236,6 +266,13 @@ jobs:
         with:
           name: StarsonicPhone-${{ github.sha }}
           path: out/
+          if-no-files-found: error
+
+      - name: Publicar o app novo
+        uses: actions/upload-artifact@v4
+        with:
+          name: StarsonicPhone-novo-${{ github.sha }}
+          path: out-novo/
           if-no-files-found: error
 
       - name: Publicar o instalador

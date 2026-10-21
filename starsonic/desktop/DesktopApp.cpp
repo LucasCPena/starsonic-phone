@@ -178,6 +178,17 @@ void DesktopApp::RefreshAudioDevices() {
     Post([this] { ApplyAudio(); });
 }
 
+void DesktopApp::SaveWindowPosition(int x, int y) {
+    Post([this, x, y] {
+        if (!started_) return;   // as configuracoes ainda nao foram lidas: gravar agora apagaria as do disco
+        Settings settings = settings_.Get();
+        if (settings.windowX == x && settings.windowY == y) return;
+        settings.windowX = x;
+        settings.windowY = y;
+        SaveSettings(settings);
+    });
+}
+
 void DesktopApp::Shutdown() {
     executor_->Stop();
 }

@@ -137,6 +137,9 @@ public:
     void DialLink(const std::string& number);
     // Os dispositivos de som mudaram (um headset entrou ou saiu): le a lista de novo e aplica a escolha gravada.
     void RefreshAudioDevices();
+    // A janela foi movida (o canto de cima, em pixels da tela): grava no config.json (so se mudou). Antes da abertura
+    // (Start), nada. So poe na fila.
+    void SaveWindowPosition(int x, int y);
     // A fila de comandos roda o que ja tinha e para; daqui em diante nada mais entra. Nunca de dentro de um gancho.
     void Shutdown();
 

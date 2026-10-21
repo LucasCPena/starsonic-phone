@@ -48,6 +48,15 @@ class AndroidKeyTest(unittest.TestCase):
             self.assertEqual(android[field], windows[field], field)
 
 
+class WebView2KeyTest(unittest.TestCase):
+    """O SDK do WebView2 do app novo (Build-Deps.ps1): a versao do NuGet e o SHA-256 do .nupkg conferido."""
+
+    def test_webview2_key_has_what_the_build_script_reads(self):
+        webview2 = json.loads(LOCK.read_text(encoding="utf-8"))["webview2"]
+        self.assertRegex(webview2["version"], r"\A\d+\.\d+\.\d+\.\d+\Z")
+        self.assertRegex(webview2["sha256"], HEX64)
+
+
 class AndroidGradleCatalogTest(unittest.TestCase):
     """android/gradle/libs.versions.toml usa as versões do deps.lock (o Gradle não lê o deps.lock)."""
 
