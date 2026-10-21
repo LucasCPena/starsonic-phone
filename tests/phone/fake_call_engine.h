@@ -134,10 +134,13 @@ public:
 };
 
 // O relógio e o agendador falsos: o tempo só anda com Advance, que roda na hora as tarefas vencidas
-// (a mais cedo primeiro; no mesmo instante, a agendada antes).
+// (a mais cedo primeiro; no mesmo instante, a agendada antes). Com lateCancel, o Cancel não tira nada: a
+// tarefa que já tinha saído da fila de um Scheduler de verdade e roda depois do Cancel.
 class FakeTime : public starsonic::Clock, public starsonic::Scheduler {
 public:
     explicit FakeTime(int64_t now = 1000000) : now_(now) {}
+
+    bool lateCancel = false;
 
     int64_t NowMs() override { return now_; }
 
@@ -148,6 +151,7 @@ public:
     }
 
     void Cancel(int id) override {
+        if (lateCancel) return;
         tasks_.erase(std::remove_if(tasks_.begin(), tasks_.end(), [id](const Task& t) { return t.id == id; }),
                      tasks_.end());
     }

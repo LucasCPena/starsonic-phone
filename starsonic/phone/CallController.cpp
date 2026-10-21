@@ -13,6 +13,9 @@ namespace {
 // Quanto tempo o aviso de fim fica na tela.
 constexpr int64_t kEndMessageMs = 2000;
 
+// O maior tempo do Atender automático (spec da W1, 7.3: de 0 a 30 s).
+constexpr int64_t kAutoAnswerMaxMs = 30000;
+
 // O aviso de discar sem registro.
 std::string NoConnectionText() {
     return WideToUtf8(L"Sem conex\u00e3o com o servidor. Tente de novo em instantes.");
@@ -121,16 +124,19 @@ CallController::CallController(CallEngine& engine, CallControllerListener& liste
 CallController::~CallController() {
     std::lock_guard<std::mutex> lock(mutex_);
     if (endTimer_ != 0) scheduler_.Cancel(endTimer_);
+    if (autoTimer_ != 0) scheduler_.Cancel(autoTimer_);
 }
 
 // Decide com a trava e faz o resto (o motor) depois de soltá-la, na ordem; por último, entrega as
-// publicações.
+// publicações. Uma decisão que deixa o controlador sem ligação põe os callbacks do WhenIdle na fila, depois
+// das publicações dela.
 template <typename Decide>
 void CallController::Act(Decide&& decide) {
     Effects effects;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         decide(effects);
+        QueueIdleCallbacks();
     }
     try {
         for (const auto& effect : effects) effect();
@@ -148,6 +154,12 @@ void CallController::OnIncomingCall(int callId, const std::string& remoteUser, c
         // Antes de olhar o loggedOut_: o fim de uma ligação ignorada depois de Sair nunca é tomado por uma feita.
         maxSeenId_ = std::max(maxSeenId_, callId);
         if (loggedOut_) return;
+        // Não perturbe: ocupado, e a ligação entra como perdida, sem tocar e sem o aviso.
+        if (doNotDisturb_) {
+            effects.push_back([this, callId] { engine_.Reject(callId); });
+            Record(MakeRecent(remoteUser, remoteName, Recent::Missed, clock_.NowMs(), 0));
+            return;
+        }
         // Até duas, e a segunda só com a outra em andamento (como no motor).
         const CallPtr other = calls_.size() == 1 ? calls_.front() : nullptr;
         const bool fits = calls_.empty() || (other && other->phase == Call::Phase::Active && !other->ending);
@@ -157,11 +169,14 @@ void CallController::OnIncomingCall(int callId, const std::string& remoteUser, c
             RecordMissed(MakeRecent(remoteUser, remoteName, Recent::Missed, clock_.NowMs(), 0), contact);
             return;
         }
+        const bool alone = calls_.empty();
         auto incoming = std::make_shared<Call>(true, remoteUser, remoteName, clock_.NowMs(), contact);
         incoming->id = callId;
         calls_.push_back(incoming);
         if (!active_) active_ = incoming;
         Publish();
+        // O Atender automático, só sem nenhuma outra ligação.
+        if (alone && autoAnswer_) StartAutoAnswer(incoming);
     });
 }
 
@@ -169,7 +184,14 @@ void CallController::OnRejectedBusy(const std::string& remoteUser, const std::st
     std::optional<std::string> contact;
     if (!loggedOut_) contact = contacts_.NameFor(remoteUser);
     Act([&](Effects&) {
-        if (!loggedOut_) RecordMissed(MakeRecent(remoteUser, remoteName, Recent::Missed, clock_.NowMs(), 0), contact);
+        if (loggedOut_) return;
+        const Recent missed = MakeRecent(remoteUser, remoteName, Recent::Missed, clock_.NowMs(), 0);
+        // No Não perturbe, sem o aviso.
+        if (doNotDisturb_) {
+            Record(missed);
+        } else {
+            RecordMissed(missed, contact);
+        }
     });
 }
 
@@ -272,15 +294,7 @@ bool CallController::DialContact(const std::string& number) {
 void CallController::Answer() {
     Act([this](Effects& effects) {
         const CallPtr ringing = RingingCall();
-        if (!ringing) return;
-        ringing->answered = true;
-        ringing->phase = Call::Phase::Connecting;
-        const CallPtr other = OtherThan(ringing);
-        active_ = ringing;
-        if (other) other->held = true;   // o motor a põe em espera no Answer
-        const int id = ringing->id;
-        effects.push_back([this, id] { engine_.Answer(id); });
-        Publish();
+        if (ringing) AnswerRinging(ringing, effects);
     });
 }
 
@@ -456,6 +470,7 @@ void CallController::OnLogout() {
     Act([this](Effects& effects) {
         loggedOut_ = true;
         ClearEndMessage();
+        CancelAutoAnswer();
         const std::vector<CallPtr> current = calls_;
         for (const CallPtr& call : current) {
             call->abandoned = true;
@@ -470,6 +485,32 @@ void CallController::OnLogout() {
 void CallController::OnLogin() {
     std::lock_guard<std::mutex> lock(mutex_);
     loggedOut_ = false;
+}
+
+void CallController::SetDoNotDisturb(bool on) {
+    Act([this, on](Effects&) {
+        doNotDisturb_ = on;
+        if (on) CancelAutoAnswer();   // vale mais que o Atender automático
+    });
+}
+
+void CallController::SetAutoAnswer(bool enabled, int delayMs) {
+    Act([this, enabled, delayMs](Effects&) {
+        autoAnswer_ = enabled;
+        autoAnswerMs_ = std::min<int64_t>(std::max<int64_t>(delayMs, 0), kAutoAnswerMaxMs);
+        if (!enabled) CancelAutoAnswer();
+    });
+}
+
+bool CallController::HasCalls() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return !calls_.empty();
+}
+
+void CallController::WhenIdle(std::function<void()> callback) {
+    if (!callback) return;
+    // O Act põe os callbacks na fila das publicações, se não há ligação.
+    Act([this, &callback](Effects&) { idleCallbacks_.push_back(std::move(callback)); });
 }
 
 void CallController::Deliver() {
@@ -555,6 +596,7 @@ void CallController::Adopt(const CallPtr& call, int id, Effects& effects) {
 
 // Com a trava: a recebida call recebe ocupado (486); o fim dela chega pelo motor.
 void CallController::RejectCall(const CallPtr& call, Effects& effects) {
+    if (call == autoCall_) CancelAutoAnswer();
     call->rejected = true;
     call->ending = true;
     const int id = call->id;
@@ -675,6 +717,7 @@ bool CallController::LeaveConference() {
 // conferência (LeaveConference) acabam; a outra da conferência fica como uma ligação normal
 // (StayAfterConference).
 void CallController::End(const CallPtr& call, int sipCode, Effects& effects, bool quiet) {
+    if (call == autoCall_) CancelAutoAnswer();
     const bool wasActive = call == active_;
     const bool colleague = LeaveConsult(call);
     const bool fromConference = LeaveConference();
@@ -753,6 +796,81 @@ void CallController::ClearEndMessage() {
     ++endToken_;
     endMessage_.clear();
     Publish();
+}
+
+// Com a trava: a pessoa (ou o Atender automático) atende a recebida ringing, que toca; a outra ligação, se
+// há, vai para a espera (o motor a põe no Answer).
+void CallController::AnswerRinging(const CallPtr& ringing, Effects& effects) {
+    if (ringing == autoCall_) CancelAutoAnswer();
+    ringing->answered = true;
+    ringing->phase = Call::Phase::Connecting;
+    const CallPtr other = OtherThan(ringing);
+    active_ = ringing;
+    if (other) other->held = true;   // o motor a põe em espera no Answer
+    const int id = ringing->id;
+    effects.push_back([this, id] { engine_.Answer(id); });
+    Publish();
+}
+
+// Com a trava: o Atender automático da recebida call, que chegou sem outra ligação: daqui a autoAnswerMs_, se
+// ela ainda toca sozinha. Cada cancelamento muda o autoToken_: uma tarefa que o Cancel não alcançou não atende.
+void CallController::StartAutoAnswer(const CallPtr& call) {
+    CancelAutoAnswer();
+    const int token = autoToken_;
+    autoCall_ = call;
+    autoTimer_ = scheduler_.Schedule(autoAnswerMs_, [this, token] {
+        Act([this, token](Effects& effects) {
+            if (autoToken_ != token) return;
+            const CallPtr call = autoCall_;
+            autoTimer_ = 0;
+            autoCall_ = nullptr;
+            if (loggedOut_ || doNotDisturb_ || !autoAnswer_ || !call || call != RingingCall() || OtherThan(call)) {
+                return;
+            }
+            AnswerRinging(call, effects);
+        });
+    });
+}
+
+// Com a trava: o Atender automático agendado (se há) não atende mais.
+void CallController::CancelAutoAnswer() {
+    if (autoTimer_ != 0) scheduler_.Cancel(autoTimer_);
+    autoTimer_ = 0;
+    autoCall_ = nullptr;
+    ++autoToken_;
+}
+
+// Com a trava: sem ligação, os callbacks do WhenIdle saem como uma publicação, depois das que já estão na
+// fila (uma entrega por vez: idleQueued_).
+void CallController::QueueIdleCallbacks() {
+    if (!calls_.empty() || idleCallbacks_.empty() || idleQueued_) return;
+    idleQueued_ = true;
+    publications_.push_back([this] { RunIdleCallbacks(); });
+}
+
+// Sem a trava (uma publicação): os callbacks do WhenIdle, um por vez, na ordem, cada um só sem ligação.
+// Um que liga deixa os seguintes na fila, até o fim dessa ligação (o Act os põe de novo nas publicações).
+void CallController::RunIdleCallbacks() {
+    for (;;) {
+        std::function<void()> next;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (!calls_.empty() || idleCallbacks_.empty()) {
+                idleQueued_ = false;
+                return;
+            }
+            next = std::move(idleCallbacks_.front());
+            idleCallbacks_.pop_front();
+        }
+        try {
+            next();
+        } catch (...) {
+            // Os que ficaram saem na próxima vez sem ligação (o fim de uma, ou outro WhenIdle sem ligação).
+            std::lock_guard<std::mutex> lock(mutex_);
+            idleQueued_ = false;
+            throw;
+        }
+    }
 }
 
 // Com a trava: o estado de agora e o toque vão à fila das publicações, se mudaram: a ligação da tela e,

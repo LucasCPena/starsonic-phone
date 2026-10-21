@@ -3,7 +3,8 @@
 // (fake_call_engine.h). O MakeCall roda na hora, dentro do Dial. Sem o Telecom: o que era dele (a
 // ligação da operadora, a espera pedida por ele, a Connection que falha) não existe no Windows.
 // Uma ligação (Task 2 da W1) e duas: a segunda que toca, Alternar, a volta sozinha, a em espera que cai
-// e a Nova ligação (Task 3); a transferência com consulta e a conferência (Task 4).
+// e a Nova ligação (Task 3); a transferência com consulta e a conferência (Task 4); o Não perturbe, o Atender
+// automático e a espera da troca de conta (Task 5).
 #include "doctest/doctest.h"
 
 #include <algorithm>
@@ -1761,4 +1762,328 @@ TEST_CASE_FIXTURE(Fixture, "Juntar during a consult is not offered") {
     calls.Join();
     CHECK(engine.joined == IntPairs{{1, 12}});
     CHECK(State().conference);
+}
+
+// Não perturbe, Atender automático e a espera da troca de conta (spec da W1, 7.3; Task 5): regras novas do
+// Windows, sem o Kotlin.
+
+TEST_CASE_FIXTURE(Fixture, "do not disturb rejects busy and records a missed call without ringing") {
+    calls.SetDoNotDisturb(true);
+    calls.OnIncomingCall(1, "3001", "Cliente Teste");
+    CHECK(engine.rejects == Ints{1});
+    CHECK_MESSAGE(std::find(listener.rings.begin(), listener.rings.end(), RingKind::Full) == listener.rings.end(),
+                  "nada toca");
+    CHECK(listener.rings.empty());
+    CHECK(listener.recents == Recents{MakeRecent("3001", "Cliente Teste", Recent::Missed, time.NowMs(), 0)});
+    CHECK_MESSAGE(listener.missed.empty(), "no Nao perturbe, a perdida so entra nos Recentes");
+    CHECK_FALSE(Top().has_value());
+    CHECK_FALSE(calls.HasCalls());
+    calls.OnCallState(1, CallState::Disconnected, 486);   // o fim da recusada: nada
+    CHECK(listener.recents.size() == 1);
+    CHECK(listener.snapshots.empty());
+}
+
+TEST_CASE_FIXTURE(Fixture, "outgoing calls work with do not disturb on") {
+    calls.SetDoNotDisturb(true);
+    const int id = DialOut("2003");
+    CHECK(engine.made == Strings{"2003"});
+    calls.OnCallState(id, CallState::Confirmed, 200);
+    CHECK(Top() == View(id, "2003", "", false, CallView::Active, time.NowMs()));
+    // Com a feita em andamento, a recebida também leva ocupado, sem o bipe e sem o aviso.
+    calls.OnIncomingCall(id + 1, "3002", "");
+    CHECK(engine.rejects == Ints{id + 1});
+    CHECK(listener.rings.empty());
+    CHECK(listener.missed.empty());
+    CHECK_FALSE(State().second.has_value());
+    CHECK(listener.recents == Recents{MakeRecent("3002", "", Recent::Missed, time.NowMs(), 0)});
+}
+
+TEST_CASE_FIXTURE(Fixture, "do not disturb gives no notice for a call the engine refused as busy, and off rings again") {
+    calls.SetDoNotDisturb(true);
+    calls.OnRejectedBusy("3003", "Fulano");
+    CHECK(listener.recents == Recents{MakeRecent("3003", "Fulano", Recent::Missed, time.NowMs(), 0)});
+    CHECK(listener.missed.empty());
+    calls.SetDoNotDisturb(false);
+    Ring(2, "3002", "");
+    CHECK(engine.rejects.empty());
+    CHECK(Top() == View(2, "3002", "", true, CallView::Ringing));
+    CHECK(listener.rings == Rings{RingKind::Full});
+}
+
+TEST_CASE_FIXTURE(Fixture, "auto answer answers after the delay") {
+    calls.SetAutoAnswer(true, 3000);
+    Ring(1);
+    CHECK(listener.rings == Rings{RingKind::Full});
+    time.Advance(2999);
+    CHECK(engine.answers.empty());
+    CHECK(Top() == View(1, "3001", "Cliente Teste", true, CallView::Ringing));
+    time.Advance(1);
+    CHECK(engine.answers == Ints{1});
+    CHECK(listener.Ring() == RingKind::Stop);
+    CHECK(Top() == View(1, "3001", "Cliente Teste", true, CallView::Active, 0));
+    calls.OnCallState(1, CallState::Confirmed, 200);
+    CHECK(Top() == View(1, "3001", "Cliente Teste", true, CallView::Active, time.NowMs()));
+    CHECK(time.Pending() == 0);
+    time.Advance(10000);
+    CHECK(engine.answers == Ints{1});
+}
+
+TEST_CASE_FIXTURE(Fixture, "auto answer does not answer a second call") {
+    calls.SetAutoAnswer(true, 3000);
+    Ring(1);
+    time.Advance(3000);
+    REQUIRE(engine.answers == Ints{1});
+    calls.OnCallState(1, CallState::Confirmed, 200);
+    Ring(2, "3002", "");
+    CHECK(time.Pending() == 0);
+    time.Advance(30000);
+    CHECK(engine.answers == Ints{1});
+    CHECK(listener.Ring() == RingKind::Waiting);
+    CHECK(State().secondKind == CallSnapshot::Ringing);
+    // Ela continua tocando sozinha quando a primeira acaba: o Atender automático vale só na chegada.
+    calls.OnCallState(1, CallState::Disconnected, 200);
+    CHECK(listener.Ring() == RingKind::Full);
+    time.Advance(30000);
+    CHECK(engine.answers == Ints{1});
+}
+
+TEST_CASE_FIXTURE(Fixture, "auto answer does not answer a call that arrives during an outgoing call") {
+    calls.SetAutoAnswer(true, 0);
+    const int id = DialOut("2002");
+    calls.OnCallState(id, CallState::Confirmed, 200);
+    Ring(id + 1, "3002", "");
+    time.Advance(30000);
+    CHECK(engine.answers.empty());
+    CHECK(listener.Ring() == RingKind::Waiting);
+}
+
+TEST_CASE_FIXTURE(Fixture, "auto answer is cancelled when the caller gives up") {
+    calls.SetAutoAnswer(true, 3000);
+    Ring(1);
+    time.Advance(1000);
+    calls.OnCallState(1, CallState::Disconnected, 487);
+    CHECK(time.Pending() == 0);
+    time.Advance(5000);
+    CHECK(engine.answers.empty());
+    CHECK(listener.missed == Strings{Missed("3001")});
+    // A próxima recebida conta o tempo dela desde a chegada.
+    Ring(2, "3002", "");
+    time.Advance(2999);
+    CHECK(engine.answers.empty());
+    time.Advance(1);
+    CHECK(engine.answers == Ints{2});
+}
+
+TEST_CASE_FIXTURE(Fixture, "auto answer is cancelled when the call is answered, rejected or hung up here") {
+    calls.SetAutoAnswer(true, 3000);
+    Ring(1);
+    time.Advance(1000);
+    calls.Answer();
+    CHECK(engine.answers == Ints{1});
+    CHECK_MESSAGE(time.Pending() == 0, "o Atender cancela a tarefa");
+    calls.OnCallState(1, CallState::Confirmed, 200);
+    calls.Hangup();
+    calls.OnCallState(1, CallState::Disconnected, 200);
+    Ring(2, "3002", "");
+    calls.Reject();
+    CHECK(engine.rejects == Ints{2});
+    CHECK(time.Pending() == 0);
+    time.Advance(5000);
+    calls.OnCallState(2, CallState::Disconnected, 486);
+    Ring(3, "3003", "");
+    calls.Hangup();   // o Desligar da tela com ela tocando: ocupado
+    CHECK(engine.rejects == Ints{2, 3});
+    CHECK(time.Pending() == 0);
+    time.Advance(5000);
+    CHECK(engine.answers == Ints{1});
+}
+
+TEST_CASE_FIXTURE(Fixture, "auto answer is cancelled on logout and when it is turned off") {
+    calls.SetAutoAnswer(true, 3000);
+    Ring(1);
+    calls.OnLogout();
+    CHECK(time.Pending() == 0);
+    time.Advance(5000);
+    CHECK(engine.answers.empty());
+    calls.OnLogin();
+    Ring(12, "3002", "");
+    time.Advance(1000);
+    calls.SetAutoAnswer(false, 3000);
+    CHECK(time.Pending() == 0);
+    time.Advance(5000);
+    CHECK(engine.answers.empty());
+    CHECK(listener.Ring() == RingKind::Full);
+    // Ligado de novo, ele vale para a próxima, não para a que já toca.
+    calls.SetAutoAnswer(true, 3000);
+    time.Advance(5000);
+    CHECK(engine.answers.empty());
+}
+
+TEST_CASE_FIXTURE(Fixture, "an auto answer task the Cancel did not reach answers nothing") {
+    time.lateCancel = true;   // a tarefa já saiu da fila do Scheduler quando o Cancel chega
+    calls.SetAutoAnswer(true, 3000);
+    Ring(1);
+    time.Advance(1000);
+    calls.OnCallState(1, CallState::Disconnected, 487);
+    time.Advance(1000);
+    Ring(2, "3002", "");
+    time.Advance(1000);   // a tarefa da primeira roda: não atende a segunda
+    CHECK(engine.answers.empty());
+    CHECK(listener.Ring() == RingKind::Full);
+    time.Advance(2000);   // a da segunda
+    CHECK(engine.answers == Ints{2});
+    calls.OnCallState(2, CallState::Confirmed, 200);
+    calls.Hangup();
+    calls.OnCallState(2, CallState::Disconnected, 200);
+    Ring(3, "3003", "");
+    calls.SetAutoAnswer(false, 3000);
+    calls.SetAutoAnswer(true, 3000);   // ligado de novo com a terceira tocando: a tarefa dela já não vale
+    time.Advance(5000);
+    CHECK(engine.answers == Ints{2});
+}
+
+TEST_CASE_FIXTURE(Fixture, "auto answer keeps the delay between 0 and 30 seconds") {
+    calls.SetAutoAnswer(true, 60000);
+    Ring(1);
+    time.Advance(29999);
+    CHECK(engine.answers.empty());
+    time.Advance(1);
+    CHECK(engine.answers == Ints{1});
+    calls.OnCallState(1, CallState::Disconnected, 200);
+    calls.SetAutoAnswer(true, -5);
+    Ring(2, "3002", "");
+    CHECK_MESSAGE(engine.answers == Ints{1}, "nem o 0 atende dentro do evento: o Scheduler nunca roda na hora");
+    time.Advance(0);
+    CHECK(engine.answers == Ints{1, 2});
+}
+
+TEST_CASE_FIXTURE(Fixture, "do not disturb wins over auto answer") {
+    calls.SetAutoAnswer(true, 3000);
+    calls.SetDoNotDisturb(true);
+    calls.OnIncomingCall(1, "3001", "Cliente Teste");
+    CHECK(engine.rejects == Ints{1});
+    CHECK(time.Pending() == 0);
+    time.Advance(5000);
+    CHECK(engine.answers.empty());
+    // O Não perturbe ligado com uma recebida tocando: ela continua tocando, mas não é atendida sozinha.
+    calls.SetDoNotDisturb(false);
+    Ring(2, "3002", "");
+    time.Advance(1000);
+    calls.SetDoNotDisturb(true);
+    CHECK(time.Pending() == 0);
+    time.Advance(5000);
+    CHECK(engine.answers.empty());
+    CHECK(Top() == View(2, "3002", "", true, CallView::Ringing));
+}
+
+TEST_CASE_FIXTURE(Fixture, "HasCalls follows the calls") {
+    CHECK_FALSE(calls.HasCalls());
+    Ring(1);
+    CHECK(calls.HasCalls());
+    AnswerCall(1);
+    calls.Hangup();
+    CHECK_MESSAGE(calls.HasCalls(), "saindo, ate o fim chegar");
+    calls.OnCallState(1, CallState::Disconnected, 200);
+    CHECK_FALSE(calls.HasCalls());
+    engine.duringMakeCall = [this](int) { CHECK_MESSAGE(calls.HasCalls(), "a feita, antes do id"); };
+    DialOut("2002");
+}
+
+TEST_CASE_FIXTURE(Fixture, "WhenIdle runs at once without a call") {
+    int runs = 0;
+    calls.WhenIdle([&] { ++runs; });
+    CHECK(runs == 1);
+    Ring(1);
+    calls.OnCallState(1, CallState::Disconnected, 487);
+    CHECK_MESSAGE(runs == 1, "uma vez so");
+}
+
+TEST_CASE_FIXTURE(Fixture, "WhenIdle runs after the last call ends") {
+    int runs = 0;
+    Ring(1);
+    AnswerCall(1);
+    calls.WhenIdle([&] {
+        ++runs;
+        CHECK_FALSE(calls.HasCalls());
+        CHECK_MESSAGE(!listener.State().top.has_value(), "a tela ja saiu da ligacao");
+        CHECK_MESSAGE(listener.recents.size() == 1, "e ela ja esta nos Recentes");
+    });
+    CHECK(runs == 0);
+    time.Advance(5000);
+    calls.OnCallState(1, CallState::Disconnected, 200);
+    CHECK(runs == 1);
+    Ring(2, "3002", "");
+    calls.OnCallState(2, CallState::Disconnected, 487);
+    CHECK_MESSAGE(runs == 1, "uma vez so");
+}
+
+TEST_CASE_FIXTURE(Fixture, "WhenIdle waits for both calls and runs each callback once, in order") {
+    Strings ran;
+    const int id = TwoCalls();
+    calls.WhenIdle([&] { ran.push_back("first"); });
+    calls.WhenIdle([&] { ran.push_back("second"); });
+    calls.Hangup();   // a ativa sai, e a em espera volta
+    calls.OnCallState(id, CallState::Disconnected, 200);
+    CHECK(ran.empty());
+    calls.OnCallState(1, CallState::Disconnected, 200);
+    CHECK(ran == Strings{"first", "second"});
+    calls.WhenIdle([&] { ran.push_back("third"); });
+    CHECK(ran == Strings{"first", "second", "third"});
+}
+
+TEST_CASE_FIXTURE(Fixture, "WhenIdle callbacks run on logout, after the calls are hung up") {
+    Strings ran;
+    const int id = TwoCalls();
+    calls.WhenIdle([&] { ran.push_back("first " + std::to_string(engine.hangups.size())); });
+    calls.WhenIdle([&] { ran.push_back("second"); });
+    calls.OnLogout();
+    CHECK(engine.hangups == Ints{1, id});
+    CHECK(ran == Strings{"first 2", "second"});
+    calls.OnCallState(1, CallState::Disconnected, 200);   // os fins que chegam depois são ignorados
+    calls.OnCallState(id, CallState::Disconnected, 200);
+    CHECK(ran.size() == 2);
+}
+
+TEST_CASE_FIXTURE(Fixture, "a WhenIdle callback that places a call makes the next one wait for it") {
+    Strings ran;
+    Ring(1);
+    AnswerCall(1);
+    calls.WhenIdle([&] {
+        ran.push_back("first");
+        calls.Dial("2002");   // o ouvinte pode chamar o controlador de volta
+    });
+    calls.WhenIdle([&] { ran.push_back("second"); });
+    calls.OnCallState(1, CallState::Disconnected, 200);
+    CHECK(ran == Strings{"first"});
+    REQUIRE(engine.made == Strings{"2002"});
+    CHECK(Top() == View(10, "2002", "", false, CallView::Dialing));
+    calls.OnCallState(10, CallState::Disconnected, 486);
+    CHECK(ran == Strings{"first", "second"});
+}
+
+TEST_CASE_FIXTURE(Fixture, "WhenIdle callbacks run without the CallController lock") {
+    // Como os avisos: outra thread usa o controlador por até 1 s dentro do callback.
+    std::vector<std::thread> others;
+    int heldDuring = 0;
+    int runs = 0;
+    const auto tryOther = [&] {
+        ++runs;
+        auto done = std::make_shared<std::promise<void>>();
+        std::future<void> finished = done->get_future();
+        others.emplace_back([this, done] {
+            calls.HasCalls();
+            done->set_value();
+        });
+        if (finished.wait_for(std::chrono::seconds(1)) != std::future_status::ready) ++heldDuring;
+    };
+    calls.WhenIdle(tryOther);   // na hora
+    Ring(1);
+    calls.WhenIdle(tryOther);   // depois do fim
+    calls.OnCallState(1, CallState::Disconnected, 487);
+    Ring(2, "3002", "");
+    calls.WhenIdle(tryOther);   // no Sair
+    calls.OnLogout();
+    for (std::thread& other : others) other.join();
+    CHECK(runs == 3);
+    CHECK(heldDuring == 0);
 }

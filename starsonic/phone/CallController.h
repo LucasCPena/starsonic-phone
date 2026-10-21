@@ -27,10 +27,13 @@
 // - Os eventos do motor também pedem coisas ao motor, na thread de eventos dele (que deixa): o Activate da
 //   volta sozinha (o fim da ativa), o Hangup de uma feita desligada antes do id, o mudo que sai.
 // - Exceção: o Clock e o Scheduler são chamados com a trava presa (a hora de agora; o Schedule e o Cancel
-//   do aviso de fim, como no Kotlin). O Scheduler não pode rodar a tarefa dentro do Schedule nem esperar,
-//   no Cancel, uma tarefa que já está rodando.
+//   do aviso de fim, como no Kotlin, e os do Atender automático). O Scheduler não pode rodar a tarefa dentro
+//   do Schedule nem esperar, no Cancel, uma tarefa que já está rodando (ver o Scheduler, abaixo).
+// - Os callbacks do WhenIdle saem como uma publicação (na fila dos avisos, sem a trava, depois dos avisos
+//   da decisão em que a última ligação acabou): podem chamar o controlador de volta e outras partes do app
+//   (a troca de conta).
 // - O dono destrói o controlador só quando nenhum evento do motor, comando ou tarefa do Scheduler pode
-//   mais chegar a ele (o destrutor cancela o aviso de fim agendado).
+//   mais chegar a ele (o destrutor cancela as tarefas agendadas: o aviso de fim e o Atender automático).
 #include <atomic>
 #include <cstdint>
 #include <deque>
@@ -130,9 +133,13 @@ public:
     virtual int64_t NowMs() = 0;
 };
 
-// Roda uma tarefa daqui a delayMs, em qualquer thread. Schedule devolve um id (> 0) para o Cancel, que
-// tira a tarefa se ela ainda não rodou. Chamado com a trava do controlador presa: Schedule nunca roda a
-// tarefa na hora, e Cancel nunca espera uma tarefa que já está rodando.
+// Roda uma tarefa daqui a delayMs (0: assim que der, nunca dentro do Schedule), em qualquer thread.
+// Schedule devolve um id (> 0) para o Cancel, que tira a tarefa se ela ainda não rodou. Chamado com a trava
+// do controlador presa: Schedule nunca roda a tarefa na hora, e Cancel nunca espera uma tarefa que já está
+// rodando. A tarefa chama o controlador de volta (e pega a trava dele): um Scheduler de verdade roda as
+// tarefas sem nenhuma trava que o Schedule ou o Cancel pegam (senão, a tarefa que espera a trava do
+// controlador e o Schedule chamado com ela presa esperam um pelo outro para sempre). Uma tarefa que o
+// Cancel não alcançou (já saiu da fila) pode rodar depois dele: o controlador a reconhece e não faz nada.
 class Scheduler {
 public:
     virtual ~Scheduler() {}
@@ -147,7 +154,7 @@ public:
     virtual std::optional<std::string> NameFor(const std::string& number) = 0;
 };
 
-// As ligações do app, até duas, uma delas a ativa (o Não perturbe na Task 5).
+// As ligações do app, até duas, uma delas a ativa.
 // - Recebida (OnIncomingCall): sem ligação, toca (OnRing(Full)); com uma só e já em andamento (em espera
 //   ou não), toca como a segunda (second com secondKind Ringing, OnRing(Waiting)), e a outra fica com o
 //   som até a pessoa atender. Com uma que ainda não está em andamento (tocando, atendendo, chamando) ou
@@ -183,6 +190,11 @@ public:
 //   outra como uma ligação normal, com o aviso "<nome ou número> desligou" (o motor já a deixa com o som).
 //   Na conferência não há Hold, Swap, Transfer, Consult nem Nova ligação; o mudo vale para as duas, e o
 //   Dtmf vai na de cima.
+// - Não perturbe e Atender automático (spec da W1, 7.3): com o Não perturbe, toda recebida leva ocupado
+//   (486), não toca e entra nos Recentes como perdida, sem o aviso de perdida; as feitas funcionam. O
+//   Atender automático atende, depois do tempo, a recebida que chega sem nenhuma outra ligação; com outra, a
+//   segunda toca como sempre. Com os dois ligados, vale o Não perturbe.
+// - WhenIdle (a troca de conta): roda o callback já, sem ligação, ou depois que a última acaba.
 // - Depois de OnLogout (Sair), os eventos do motor são ignorados até o próximo OnLogin (Entrar).
 class CallController {
 public:
@@ -272,6 +284,28 @@ public:
     void OnLogout();
     // O próximo Entrar depois de OnLogout: os eventos do motor voltam a valer.
     void OnLogin();
+    // Liga (true) ou desliga o Não perturbe: as recebidas que chegam daqui em diante levam ocupado (486), não
+    // tocam e entram nos Recentes como perdidas, sem o aviso de perdida (também as que o motor recusou
+    // sozinho, OnRejectedBusy). As feitas funcionam. A recebida que já toca continua tocando, mas o Atender
+    // automático dela é cancelado. Começa desligado.
+    void SetDoNotDisturb(bool on);
+    // Liga (enabled) ou desliga o Atender automático: a recebida que chega sem nenhuma outra ligação (nem
+    // saindo) é atendida delayMs depois de chegar (de 0 a 30 000: fora disso, o mais perto), se ainda toca
+    // sozinha. Ele se decide na chegada: a segunda, que chega com outra, toca normalmente (o bipe), também
+    // depois que a primeira acaba; e ligá-lo não atende a que já toca. Cancelado quando quem ligou desiste,
+    // quando ela é atendida, recusada ou desligada por qualquer caminho, no Sair, ao desligá-lo e ao ligar o
+    // Não perturbe (que vale mais). Começa desligado, com 3 000 ms.
+    void SetAutoAnswer(bool enabled, int delayMs);
+    // Há uma ligação (tocando, chamando, em andamento ou saindo, até o fim dela chegar do motor).
+    bool HasCalls() const;
+    // Roda callback quando não houver ligação (HasCalls false): já, se não há, ou depois que a última acaba
+    // (também a que o Sair encerra). Os pedidos na fila rodam uma vez cada, na ordem em que foram feitos; cada
+    // um só roda sem ligação, então um que liga (Dial) faz os seguintes esperarem o fim dessa ligação. Roda
+    // como uma publicação (ver acima): sem a trava, depois dos avisos que já estão na fila (o estado sem a
+    // ligação e os Recentes dela), uma thread por vez; "já" é antes de o WhenIdle voltar, a menos que outra
+    // thread esteja entregando avisos (aí ela o roda, logo depois dos dela) ou que o WhenIdle venha de dentro
+    // de um aviso (aí ele roda logo depois desse aviso).
+    void WhenIdle(std::function<void()> callback);
 
 private:
     struct Call;
@@ -309,6 +343,11 @@ private:
     void ShowEndMessage(const std::string& text);
     void ClearEndMessage();
     void Publish();
+    void AnswerRinging(const CallPtr& ringing, Effects& effects);
+    void StartAutoAnswer(const CallPtr& call);
+    void CancelAutoAnswer();
+    void QueueIdleCallbacks();
+    void RunIdleCallbacks();
     CallPtr Shown() const;
     CallPtr Talking() const;
     CallPtr OtherThan(const CallPtr& call) const;
@@ -323,7 +362,7 @@ private:
     const std::function<std::string(std::string)> dialRule_;
     const std::function<bool()> registered_;
 
-    std::mutex mutex_;
+    mutable std::mutex mutex_;
     std::vector<CallPtr> calls_;   // as ligações de agora (até duas), na ordem em que começaram
     CallPtr active_;               // a ativa, uma de calls_: a do som e a de cima na tela (nullptr: nenhuma)
     CallPtr client_;               // na consulta, o cliente (o que vai ser transferido), uma de calls_
@@ -340,6 +379,14 @@ private:
     std::deque<std::function<void()>> publications_;   // os avisos ao ouvinte, na ordem
     bool delivering_ = false;      // uma thread está entregando as publicações
     std::atomic<bool> loggedOut_{false};   // lido sem a trava antes de procurar o contato
+    bool doNotDisturb_ = false;    // o Não perturbe
+    bool autoAnswer_ = false;      // o Atender automático
+    int64_t autoAnswerMs_ = 3000;  // o tempo dele (de 0 a 30 000)
+    CallPtr autoCall_;             // a recebida que ele vai atender (nullptr: nenhuma)
+    int autoTimer_ = 0;            // a tarefa do Scheduler que a atende (0: nenhuma)
+    int autoToken_ = 0;            // muda a cada cancelamento: a tarefa antiga não atende
+    std::deque<std::function<void()>> idleCallbacks_;   // os do WhenIdle, na ordem
+    bool idleQueued_ = false;      // a entrega deles está na fila das publicações (ou rodando)
 };
 
 }  // namespace starsonic
