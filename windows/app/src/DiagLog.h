@@ -1,6 +1,8 @@
 #pragma once
 // O diagnostico.log (spec 6.6): as linhas do app e do motor, cada uma com a data e a hora locais
-// ("2026-10-21 19:30:00.123 <linha>"), sem senhas (quem escreve nunca manda uma: o DesktopApp e o motor ja tiram).
+// ("2026-10-21 19:30:00.123 <linha>"), sem senhas (quem escreve nunca manda uma: o DesktopApp e o motor ja tiram) e
+// sem o valor dos cabecalhos Authorization e Proxy-Authorization das mensagens SIP do motor (RedactSecrets: a
+// pessoa manda este arquivo ao suporte).
 // Passando de 1 MB, o arquivo vira diagnostico.log.1 (o .1 de antes sai) e um novo comeca.
 //
 // Write pode ser chamado de qualquer thread, tambem do OnLog do motor com as travas dele presas: so pega a trava

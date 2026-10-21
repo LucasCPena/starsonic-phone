@@ -1,4 +1,4 @@
-#include "stdafx.h"
+// Win32 puro (sem MFC e sem o cabecalho pre-compilado do app antigo: starsonic.targets): so o PJSIP.
 #include "TlsWatch.h"
 
 #include <atomic>
@@ -12,7 +12,7 @@ const pj_status_t kSslErrnoStart = PJ_ERRNO_START_USER + PJ_ERRNO_SPACE_SIZE * 6
 
 std::atomic<unsigned long> g_tlsFailures(0);
 
-// Aviso que estava ligado antes do nosso (o MicroSIP 3.22.16 nao liga nenhum); chamado em seguida.
+// Aviso que estava ligado antes do nosso (o app antigo nao liga nenhum); chamado em seguida.
 std::atomic<pjsip_tp_state_callback> g_previous(nullptr);
 
 // Roda nas threads do PJSIP.

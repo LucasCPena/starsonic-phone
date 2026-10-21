@@ -49,6 +49,8 @@ TEST_CASE("every command of the protocol parses into its command") {
         {"closeToTray", CommandKind::CloseToTray},
         {"quit", CommandKind::Quit},
         {"viewRecents", CommandKind::ViewRecents},
+        {"updateNow", CommandKind::UpdateNow},
+        {"updateLater", CommandKind::UpdateLater},
     };
     for (const Simple& s : simple) {
         const Command command = Parsed(std::string(R"({"v":1,"cmd":")") + s.name + "\"}");
@@ -402,6 +404,12 @@ TEST_CASE("the call serializes with the names of the snapshot and the second of 
     state.call = CallSnapshot();
     state.call.endMessage = "Ocupado";
     CHECK(Parse(StateMessage(state))["state"]["ligacao"].is_null());
+}
+
+TEST_CASE("the update message carries the version and the notes") {
+    CHECK(Parse(UpdateMessage("0.1.0-rc.2", "Corre\xc3\xa7\xc3\xb5" "es no aviso")) ==
+          json({{"v", 1}, {"type", "update"}, {"versao", "0.1.0-rc.2"}, {"notas", "Corre\xc3\xa7\xc3\xb5" "es no aviso"}}));
+    CHECK(Parse(UpdateMessage("0.1.0", "")) == json({{"v", 1}, {"type", "update"}, {"versao", "0.1.0"}, {"notas", ""}}));
 }
 
 TEST_CASE("toast and ring messages") {

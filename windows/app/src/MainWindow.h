@@ -7,6 +7,12 @@
 // A posicao: a gravada no config.json, se ela ainda cai num monitor; senao, o centro do monitor principal. Depois de
 // mover, a posicao nova vai para o config.json (callbacks.moved).
 //
+// A janela tambem cuida da bandeja (Tray) e do aviso de ligacao recebida (NoticeWindow), lendo o estado que vai para
+// a interface (ShellState): o "fechar" da barra esconde a janela na bandeja (o WebView continua rodando: o toque e
+// dele); com uma ligacao tocando e a janela fora da frente (escondida, minimizada ou atras de outra), o aviso aparece
+// no canto; o Atender do aviso traz a janela para a frente. O logoff ou o desligamento do Windows (WM_ENDSESSION)
+// chama callbacks.endSession, que faz o Sair com uma espera curta.
+//
 // Threads: Create, Show e as acoes rodam na thread da janela. PostToWeb e RunOnWindow podem ser chamados de qualquer
 // thread (a de comandos do DesktopApp): so poem na fila e avisam a janela com PostMessage (nunca SendMessage: a thread
 // de comandos nunca espera a janela). Os callbacks rodam na thread da janela e nao podem esperar a de comandos.
@@ -19,6 +25,9 @@
 #include <optional>
 #include <string>
 
+#include "NoticeWindow.h"
+#include "ShellState.h"
+#include "Tray.h"
 #include "WebViewHost.h"
 
 namespace starsonic {
@@ -38,8 +47,10 @@ public:
 
     struct Callbacks {
         std::function<void(const std::string& json)> command;   // um comando da interface (DesktopApp::HandleCommand)
+        std::function<void(const std::string& json)> noticeCommand;   // um comando da interface do aviso
         std::function<void(int x, int y)> moved;                 // a janela parou num lugar novo
-        std::function<void()> quitRequested;                     // o Windows pediu para fechar, ou o --sair
+        std::function<void()> quitRequested;                     // Alt+F4, o Sair da bandeja, o --sair
+        std::function<void()> endSession;                        // o Windows esta encerrando a sessao (logoff)
         std::function<void(const std::string& line)> log;
         std::function<void(HRESULT error)> webViewFailed;
     };
@@ -60,12 +71,11 @@ public:
 
     // Na thread da janela.
     void Minimize();
-    void CloseToTray();
+    void CloseToTray();     // esconde na bandeja
+    void BringToFront();    // da bandeja, minimizada ou atras de outra: na frente
+    void RequestQuit();     // o Sair (como o Alt+F4): o DesktopApp encerra e o gancho quit fecha a janela
     void Close();   // fecha de vez (depois do Sair): o WebView, a janela e o laco de mensagens
     void LogAudioOutputs();
-
-    // A mensagem que o "StarsonicPhone.exe --sair" manda para a janela aberta.
-    static UINT QuitMessage();
 
 private:
     static LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
@@ -74,12 +84,22 @@ private:
     void ApplyFrame();
     void DrainOutbox();
     void RunActions();
+    void StartNotice();
+    void RefreshNotice();
+    void OnTray(WPARAM wParam, LPARAM lParam);
     LRESULT HitTest(LPARAM lParam) const;
     void Log(const std::string& line) const;
 
     HWND window_ = nullptr;
+    HINSTANCE instance_ = nullptr;
+    Options options_;
     Callbacks callbacks_;
     std::unique_ptr<WebViewHost> webview_;
+    NoticeWindow notice_;
+    Tray tray_;
+    ShellStatus status_;
+    bool active_ = false;        // a janela e a ativa (na frente)
+    bool trayLogged_ = false;
     bool quitting_ = false;
 
     std::mutex mutex_;

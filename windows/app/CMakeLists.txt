@@ -76,7 +76,13 @@ string(REGEX REPLACE "[ \t]+\n" "\n" profile_text "${profile_text}")
 string(REGEX REPLACE "\n\n+" "\n" profile_text "${profile_text}")
 file(WRITE ${GENERATED_DIR}/perfil.ini "${profile_text}")
 
-rc_path(STARSONIC_ICON_PATH ${REPO_DIR}/branding/overlay/microsip/res/microsip.ico)
+# Os icones no estilo novo (windows/app/res/gerar-icones.mjs).
+rc_path(STARSONIC_ICON_PATH ${CMAKE_CURRENT_SOURCE_DIR}/res/app.ico)
+rc_path(STARSONIC_TRAY_CONNECTED_PATH ${CMAKE_CURRENT_SOURCE_DIR}/res/bandeja-conectado.ico)
+rc_path(STARSONIC_TRAY_OFFLINE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/res/bandeja-sem-conexao.ico)
+rc_path(STARSONIC_TRAY_DND_PATH ${CMAKE_CURRENT_SOURCE_DIR}/res/bandeja-nao-perturbe.ico)
+rc_path(STARSONIC_TRAY_MISSED_PATH ${CMAKE_CURRENT_SOURCE_DIR}/res/bandeja-perdida.ico)
+rc_path(STARSONIC_TRAY_RINGING_PATH ${CMAKE_CURRENT_SOURCE_DIR}/res/bandeja-tocando.ico)
 rc_path(STARSONIC_PROFILE_PATH ${GENERATED_DIR}/perfil.ini)
 rc_path(STARSONIC_MANIFEST_PATH ${CMAKE_CURRENT_SOURCE_DIR}/res/app.manifest)
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/res/app_build.h.in ${GENERATED_DIR}/app_build.h @ONLY)
@@ -87,9 +93,15 @@ file(GLOB DESKTOP_SOURCES CONFIGURE_DEPENDS ${STARSONIC_DIR}/desktop/*.cpp)
 # O motor inteiro (SipEngine, CallEngine, o controlador e o AudioDeviceName com o ramo do Windows).
 file(GLOB PHONE_SOURCES CONFIGURE_DEPENDS ${STARSONIC_DIR}/phone/*.cpp)
 
+# Do starsonic/win, so o que e Win32 puro (sem MFC): a senha da rc.7 e o atualizador (versao.json, HTTPS, SHA-256 e
+# o aviso de falha de TLS do PJSIP).
 add_executable(StarsonicPhone WIN32
   ${APP_SOURCES} ${CORE_SOURCES} ${DESKTOP_SOURCES} ${PHONE_SOURCES}
   ${STARSONIC_DIR}/win/LegacyCrypto.cpp
+  ${STARSONIC_DIR}/win/Updater.cpp
+  ${STARSONIC_DIR}/win/Http.cpp
+  ${STARSONIC_DIR}/win/Sha256.cpp
+  ${STARSONIC_DIR}/win/TlsWatch.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/res/app.rc)
 
 target_include_directories(StarsonicPhone PRIVATE
@@ -129,7 +141,7 @@ target_link_libraries(StarsonicPhone PRIVATE
   opus bcg729 libssl libcrypto sqlite3
   WebView2LoaderStatic
   ws2_32 iphlpapi winmm crypt32 advapi32 user32 gdi32 shell32 shlwapi ole32 oleaut32 uuid version
-  dwmapi shcore)
+  dwmapi shcore comctl32 winhttp)
 
 # O manifesto vem do app.rc (DPI por monitor v2 e Common Controls 6): o linker nao gera outro.
 target_link_options(StarsonicPhone PRIVATE /MANIFEST:NO)

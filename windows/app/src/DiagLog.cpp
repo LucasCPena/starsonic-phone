@@ -5,6 +5,8 @@
 #include <cstdio>
 #include <utility>
 
+#include "LogRedaction.h"
+
 namespace starsonic {
 
 namespace {
@@ -41,7 +43,8 @@ DiagLog::~DiagLog() {
 }
 
 void DiagLog::Write(const std::string& line) {
-    const std::string text = Stamp() + OneLine(line) + "\r\n";
+    // O valor do Authorization sai antes de as quebras virarem espaco (o RedactSecrets le linha por linha).
+    const std::string text = Stamp() + OneLine(RedactSecrets(line)) + "\r\n";
     std::lock_guard<std::mutex> lock(mutex_);
     if (size_ + static_cast<long long>(text.size()) > kMaxBytes) RotateLocked();
     if (!file_) OpenLocked();

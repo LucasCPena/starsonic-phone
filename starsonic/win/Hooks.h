@@ -46,8 +46,9 @@ void OnCustomMenu(CmainDlg* main, UINT id);
 void FilterSettings(CDialog* settingsDlg);
 
 // E12: substituem o verificador de versao do MicroSIP (que consultava update.microsip.org).
-// Implementados em Updater.cpp: versao.json dos releases do GitHub (spec 7.3). OnUpdateMessage
-// recebe as respostas das threads do atualizador pela UM_UPDATE_CHECKER_LOADED e as apaga.
+// O atualizador e o Updater.cpp (sem MFC, o mesmo do app novo); estes dois, em Hooks.cpp, sao o adaptador dele
+// para a janela do MicroSIP: versao.json dos releases do GitHub (spec 7.3). OnUpdateMessage recebe os passos das
+// threads do atualizador pela UM_UPDATE_CHECKER_LOADED, roda e apaga.
 void CheckUpdates(CmainDlg* main);
 void OnUpdateMessage(CmainDlg* main, WPARAM wParam, bool userAsked);
 

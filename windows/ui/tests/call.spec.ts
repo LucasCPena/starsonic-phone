@@ -509,6 +509,24 @@ test.describe('ligação e toque', () => {
     expect(erros).toEqual([]);
   });
 
+  test('the update question waits for the end of the call', async ({ page }) => {
+    await abrir(page, 'ligacao');
+    await empurrar(page, { v: 1, type: 'update', versao: '0.1.0-rc.2', notas: '' });
+    // Na ligação, nada cobre a tela (o C++ também não atualiza com uma ligação).
+    await page.waitForTimeout(200);
+    await expect(page.getByRole('dialog', { name: 'Atualização' })).toHaveCount(0);
+    await mudarEstado(page, (s) => ({ ...s, ligacao: null }));
+    await expect(page.getByRole('dialog', { name: 'Atualização' })).toBeVisible();
+  });
+
+  test('the notice ignores the update question', async ({ page }) => {
+    await abrirAviso(page, 'ligacao-segunda');
+    await empurrar(page, { v: 1, type: 'update', versao: '0.1.0-rc.2', notas: '' });
+    await page.waitForTimeout(200);
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(page.getByText('Carlos Lima')).toBeVisible();
+  });
+
   test('the notice shows the second call that rings and nothing without one', async ({ page }) => {
     await abrirAviso(page, 'ligacao-segunda');
     await verTextos(page, ['Ligação recebida · Recepção', 'Carlos Lima', 'Ramal 2007']);

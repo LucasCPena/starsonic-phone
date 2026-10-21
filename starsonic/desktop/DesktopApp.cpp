@@ -189,6 +189,22 @@ void DesktopApp::SaveWindowPosition(int x, int y) {
     });
 }
 
+void DesktopApp::OfferUpdate(const std::string& version, const std::string& notes) {
+    Post([this, version, notes] {
+        if (quitting_) {
+            if (hooks_.updateAnswer) hooks_.updateAnswer(false);
+            return;
+        }
+        updateOffer_ = UpdateOffer{version, notes};
+        Log("atualizacao: a versao " + version + " foi oferecida");
+        if (hooks_.post) hooks_.post(UpdateMessage(version, notes));
+    });
+}
+
+void DesktopApp::Notify(const std::string& text) {
+    Post([this, text] { Toast(text); });
+}
+
 void DesktopApp::Shutdown() {
     executor_->Stop();
 }
@@ -242,6 +258,7 @@ void DesktopApp::Execute(const Command& command) {
             Log("interface pronta");
             PublishState(/*force=*/true);
             if (hooks_.post) hooks_.post(RingMessage(ring_));
+            if (updateOffer_ && hooks_.post) hooks_.post(UpdateMessage(updateOffer_->version, updateOffer_->notes));
             break;
         case CommandKind::Login:
             HandleLogin(command);
@@ -366,6 +383,18 @@ void DesktopApp::Execute(const Command& command) {
         case CommandKind::ViewRecents:
             recentsSeenMs_ = clock_.NowMs();
             break;
+        case CommandKind::UpdateNow:
+        case CommandKind::UpdateLater: {
+            if (!updateOffer_) {
+                Log(std::string(CommandName(command.kind)) + " ignorado: nenhuma pergunta de atualizacao aberta");
+                break;
+            }
+            const bool now = command.kind == CommandKind::UpdateNow;
+            Log(std::string("atualizacao: ") + (now ? "atualizar agora" : "depois"));
+            updateOffer_.reset();
+            if (hooks_.updateAnswer) hooks_.updateAnswer(now);
+            break;
+        }
     }
 }
 
@@ -673,6 +702,10 @@ void DesktopApp::Quit() {
     loginTimer_ = 0;
     ++loginToken_;
     controller_->OnLogout();
+    if (updateOffer_) {
+        updateOffer_.reset();
+        if (hooks_.updateAnswer) hooks_.updateAnswer(false);
+    }
     if (hooks_.quit) hooks_.quit();
 }
 

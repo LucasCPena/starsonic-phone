@@ -5,6 +5,7 @@
 #include <cstdio>
 
 #include "Text.h"
+#include "WebPermissions.h"
 #include "WebView2EnvironmentOptions.h"
 #include "nlohmann/json.hpp"
 
@@ -20,7 +21,6 @@ namespace {
 
 // O toque da interface toca antes de qualquer clique (Task 10).
 const wchar_t kBrowserArguments[] = L"--autoplay-policy=no-user-gesture-required";
-const wchar_t kStartPage[] = L"https://app.starsonic.local/index.html";
 // O fundo antes de a interface pintar (o --navy-950 da interface): sem o clarao branco ao abrir.
 const COREWEBVIEW2_COLOR kBackground = {255, 0x07, 0x0b, 0x18};
 
@@ -44,10 +44,10 @@ std::string TakeString(LPWSTR text) {
     return out;
 }
 
-// A URL e do app: a origem exata seguida de "/" (nunca https://app.starsonic.local.outro.com).
-bool IsAppUrl(const std::string& url) {
-    const std::string origin = WideToUtf8(WebViewHost::kOrigin) + "/";
-    return url.compare(0, origin.size(), origin) == 0;
+WebPermission PermissionOf(COREWEBVIEW2_PERMISSION_KIND kind) {
+    if (kind == COREWEBVIEW2_PERMISSION_KIND_MICROPHONE) return WebPermission::Microphone;
+    if (kind == COREWEBVIEW2_PERMISSION_KIND_AUTOPLAY) return WebPermission::Autoplay;
+    return WebPermission::Other;
 }
 
 std::string Short(const std::string& text) { return text.size() > 160 ? text.substr(0, 160) + "..." : text; }
@@ -60,6 +60,11 @@ WebViewHost::~WebViewHost() { Close(); }
 
 bool WebViewHost::Create(const Options& options) {
     options_ = options;
+    if (options_.environment) {
+        // O ambiente de outro WebViewHost (o mesmo perfil): direto para o controlador.
+        OnEnvironment(S_OK, options_.environment.Get());
+        return !closed_;
+    }
     auto environmentOptions = Microsoft::WRL::Make<CoreWebView2EnvironmentOptions>();
     environmentOptions->put_AdditionalBrowserArguments(kBrowserArguments);
     const HRESULT result = CreateCoreWebView2EnvironmentWithOptions(
@@ -164,7 +169,8 @@ void WebViewHost::Configure() {
         return;
     }
 
-    // O microfone so para a origem do app (os rotulos dos dispositivos); o resto, negado.
+    // O microfone (os rotulos dos dispositivos) e a reproducao automatica (o toque) so para a origem do app; o resto,
+    // negado (WebPermissions.h).
     ComPtr<ICoreWebView2_13> webview13;
     ComPtr<ICoreWebView2Profile> profile;
     ComPtr<ICoreWebView2Profile4> profile4;
@@ -173,6 +179,11 @@ void WebViewHost::Configure() {
         profile4->SetPermissionState(COREWEBVIEW2_PERMISSION_KIND_MICROPHONE, kOrigin, COREWEBVIEW2_PERMISSION_STATE_ALLOW,
                                      Callback<ICoreWebView2SetPermissionStateCompletedHandler>([this](HRESULT error) -> HRESULT {
                                          if (FAILED(error)) Log("permissao do microfone nao gravada: " + Hex(error));
+                                         return S_OK;
+                                     }).Get());
+        profile4->SetPermissionState(COREWEBVIEW2_PERMISSION_KIND_AUTOPLAY, kOrigin, COREWEBVIEW2_PERMISSION_STATE_ALLOW,
+                                     Callback<ICoreWebView2SetPermissionStateCompletedHandler>([this](HRESULT error) -> HRESULT {
+                                         if (FAILED(error)) Log("permissao do toque nao gravada: " + Hex(error));
                                          return S_OK;
                                      }).Get());
     }
@@ -185,7 +196,7 @@ void WebViewHost::Configure() {
                 args->get_Uri(&uri);
                 args->get_PermissionKind(&kind);
                 const std::string url = TakeString(uri);
-                const bool allowed = kind == COREWEBVIEW2_PERMISSION_KIND_MICROPHONE && IsAppUrl(url);
+                const bool allowed = AllowWebPermission(PermissionOf(kind), url);
                 args->put_State(allowed ? COREWEBVIEW2_PERMISSION_STATE_ALLOW : COREWEBVIEW2_PERMISSION_STATE_DENY);
                 if (!allowed) Log("permissao negada: " + std::to_string(static_cast<int>(kind)) + " " + Short(url));
                 return S_OK;
@@ -268,8 +279,9 @@ void WebViewHost::Configure() {
             .Get(),
         &token);
 
-    const HRESULT navigated = webview_->Navigate(kStartPage);
+    const HRESULT navigated = webview_->Navigate(options_.startPage.c_str());
     if (FAILED(navigated)) Log("a interface nao abriu: " + Hex(navigated));
+    if (callbacks_.ready) callbacks_.ready();
 }
 
 void WebViewHost::Resize(const RECT& bounds) {

@@ -12,12 +12,14 @@ interface recebe o estado pronto e manda comandos. Uma interface que discorde do
 
 - Interface → C++: `window.chrome.webview.postMessage({v: 1, cmd: "<comando>", ...campos})`. Os campos ficam no
   mesmo objeto do `cmd`.
-- C++ → interface: três mensagens, sempre com `v: 1`:
+- C++ → interface: quatro mensagens, sempre com `v: 1`:
   - `{"v":1,"type":"state","state":{...}}` — o estado inteiro, a cada mudança (só quando muda);
   - `{"v":1,"type":"toast","texto":"..."}` — um aviso de 2 s;
-  - `{"v":1,"type":"ring","tipo":"completo"|"espera"|"parar"}` — o toque.
+  - `{"v":1,"type":"ring","tipo":"completo"|"espera"|"parar"}` — o toque;
+  - `{"v":1,"type":"update","versao":"...","notas":"..."}` — a pergunta da atualização (ver "Atualização").
 - Ao carregar (e a cada recarga), a interface manda `{"v":1,"cmd":"ready"}` e recebe o estado atual e o toque atual
-  (nesta ordem), também com uma ligação que já tocava antes de a página carregar.
+  (nesta ordem), também com uma ligação que já tocava antes de a página carregar, e depois a pergunta da atualização,
+  se há uma aberta.
 - Os textos são UTF-8. Os tempos são milissegundos desde 1970 (como o `Date.now()` do JavaScript).
 
 ## Versão
@@ -45,9 +47,11 @@ Regras para todos:
 |---|---|---|
 | `ready` | — | A interface carregou: o C++ manda o estado e o toque de agora. Vai ao diagnóstico como `interface pronta`. |
 | `minimize` | — | Minimiza a janela. |
-| `closeToTray` | — | O "fechar" da barra de título: a janela vai para a bandeja (o app continua recebendo ligações). |
+| `closeToTray` | — | O "fechar" da barra de título: a janela se esconde na bandeja (o app continua recebendo ligações: a interface continua rodando e toca; com uma ligação tocando, o aviso do canto aparece). |
 | `quit` | — | Sair: as ligações de agora acabam (e vão aos Recentes) e o app fecha. Uma troca de conta que esperava o fim da ligação não registra, mas a conta escolhida fica em uso na próxima abertura; um Entrar que esperava é descartado. |
-| `sendDiagnostics` | — | "Enviar diagnóstico": o app copia o `diagnostico.log` e abre a pasta dele. |
+| `sendDiagnostics` | — | "Enviar diagnóstico": o app copia o `diagnostico.log` (com o `.1` antes, se houver) para `%TEMP%\Starsonic Phone diagnostico <data e hora>.log` e abre o Explorer com a cópia selecionada, para a pessoa anexar no e-mail ou no WhatsApp. O `diagnostico.log` nunca tem senhas nem o valor dos cabeçalhos `Authorization` e `Proxy-Authorization` das mensagens SIP (`Authorization: <oculto>`). |
+| `updateNow` | — | A resposta "Atualizar agora" à pergunta da atualização aberta. Sem pergunta aberta: ignorado (linha no diagnóstico). |
+| `updateLater` | — | A resposta "Depois" (o botão ou o Esc). Sem pergunta aberta: ignorado. |
 | `openExternal` | `url` (texto) | Abre no navegador padrão. Só valem exatamente: `https://starsonic.com.br`, `https://starsonic.com.br/`, `https://wa.me/551150603000`, `tel:+551150603000` e `https://github.com/LucasCPena/starsonic-phone` (o código-fonte). Qualquer outro é recusado (linha no diagnóstico). |
 
 ```json
@@ -275,13 +279,47 @@ de novo em instantes.`) não vem no estado: ele chega como um `toast`, uma vez, 
 {"v":1,"type":"ring","tipo":"completo"}
 ```
 
+## Atualização
+
+O atualizador (o mesmo do app antigo: o `versao.json` do canal da build, o SHA-256 conferido) verifica um minuto
+depois de abrir e a cada 24 h. Achou uma versão mais nova:
+
+- `{"v":1,"type":"update","versao":"0.1.0-rc.2","notas":"..."}` — a interface mostra a pergunta "Nova versão do
+  Starsonic Phone disponível (<versao>). Atualizar agora?", com as `notas` (texto do `versao.json`, pode ter quebras
+  de linha; `""` sem notas) e os botões "Depois" e "Atualizar agora". Nunca por cima da tela da ligação: a pergunta
+  aparece quando a ligação acaba. Uma `update` nova com outra aberta toma o lugar dela. Vem de novo a cada `ready`
+  até a resposta. O aviso do canto ignora a mensagem.
+- A resposta é `updateNow` ou `updateLater`, uma vez. Com `updateNow` e uma ligação em andamento, o toast
+  `Termine a chamada para atualizar.` e nada é baixado (a próxima verificação pergunta de novo); sem ligação, o toast
+  `Baixando atualização…`, o download, a conferência do SHA-256 e o instalador; o app sai sozinho (como o `quit`).
+  Falhou o download: o toast `Não foi possível baixar a atualização. Tentaremos de novo mais tarde.`.
+- O `quit` com a pergunta aberta vale `updateLater`.
+
+```json
+{"v":1,"type":"update","versao":"0.1.0-rc.2","notas":"Correções no aviso de ligação."}
+{"v":1,"cmd":"updateNow"}
+{"v":1,"cmd":"updateLater"}
+```
+
 ## Para o executável (Tasks 11 e 12)
 
 - O `DesktopApp` roda tudo numa thread de comandos própria; `post` é chamado só nela, uma mensagem por vez, na
-  ordem: o executável repassa cada uma ao `PostWebMessageAsJson` (na thread da janela). `HandleCommand` pode ser
-  chamado da thread da janela (ele só lê o JSON e põe na fila).
-- Os links `tel:`/`sip:`/`callto:` (já lidos) vão a `DesktopApp::DialLink(numero)`, que só preenche `teclado` (e
-  escreve `link recebido` no diagnóstico).
+  ordem: o executável repassa cada uma ao `PostWebMessageAsJson` (na thread da janela), nas duas páginas: a janela
+  principal (`index.html`) e o aviso de ligação recebida (`aviso.html`, um segundo WebView2 com o mesmo ambiente).
+  Os comandos das duas vão ao mesmo `DesktopApp`; o `answer` do aviso também traz a janela principal para a frente.
+  `HandleCommand` pode ser chamado da thread da janela (ele só lê o JSON e põe na fila).
+- O executável lê o `state` que passa (sem perguntar ao `DesktopApp`): com uma recebida tocando (`top.phase`
+  `ringing`, ou `secondKind` `ringing` fora da conferência) e a janela fora da frente, o aviso aparece; o ícone da
+  bandeja segue `perdidas` (a perdida), `naoPerturbe` e `conta.status`, e pisca enquanto toca. O menu da bandeja
+  manda `setDnd` e `quit` como a interface.
+- Os links `tel:`/`sip:`/`callto:` (já lidos: `ParseLinkArgument`) vão a `DesktopApp::DialLink(numero)`, que só
+  preenche `teclado` (e escreve `link recebido` no diagnóstico). Com o app aberto, a segunda abertura entrega os
+  argumentos à primeira (instância única: o mutex `Local\StarsonicPhone` e `WM_COPYDATA`) e sai com o código 0; o
+  `--sair` vai pelo mesmo caminho.
+- A atualização: `DesktopApp::OfferUpdate(versao, notas)` manda a pergunta e guarda até a resposta; a resposta vai
+  ao gancho `updateAnswer(agora)`. `DesktopApp::Notify(texto)` manda um toast do executável.
+- O logoff ou o desligamento do Windows (`WM_ENDSESSION`) faz o mesmo `quit`, espera até 3 s pelo gancho `quit` e
+  roda o `Shutdown()` (os Recentes das ligações encerradas ficam gravados).
 - A posição da janela: depois de a pessoa mover a janela, o executável chama `DesktopApp::SaveWindowPosition(x, y)`
   (o canto de cima, em pixels da tela), que grava `janela_x`/`janela_y` no `config.json` (só se mudou, e só depois
   do `Start`). Na abertura, o executável lê a posição do `config.json` antes de criar a janela.

@@ -139,6 +139,7 @@ struct Harness {
         hooks.quit = [this] { host.push_back("quit"); };
         hooks.sendDiagnostics = [this] { host.push_back("sendDiagnostics"); };
         hooks.setStartWithWindows = [this](bool on) { host.push_back(on ? "autostart on" : "autostart off"); };
+        hooks.updateAnswer = [this](bool now) { host.push_back(now ? "update now" : "update later"); };
         auto executor = std::make_unique<QueueExecutor>();
         queue = executor.get();
         app = std::make_unique<DesktopApp>(config, hooks, engine, port, files, cipher, time, time, std::move(executor));
@@ -825,6 +826,59 @@ TEST_CASE("window, diagnostics and the start with windows go to the host") {
     CHECK(h.State()["iniciarComWindows"] == false);
     CHECK(h.File("dados/config.json")["iniciar_com_windows"] == false);
     CHECK(h.State()["versao"] == "0.1.0-rc.1");
+}
+
+TEST_CASE("an update offer reaches the interface, comes back on ready and is answered once") {
+    Harness h;
+    h.StartRegistered();
+    h.posts.clear();
+    h.app->OfferUpdate("0.1.0-rc.2", "Notas da vers\xc3\xa3o");
+    h.Run();
+    REQUIRE(h.Messages("update").size() == 1);
+    CHECK(h.Messages("update")[0] ==
+          json({{"v", 1}, {"type", "update"}, {"versao", "0.1.0-rc.2"}, {"notas", "Notas da vers\xc3\xa3o"}}));
+
+    // A interface recarregou (ou o aviso abriu): a pergunta volta depois do estado e do toque.
+    h.posts.clear();
+    h.Send(R"({"v":1,"cmd":"ready"})");
+    REQUIRE(h.posts.size() == 3);
+    CHECK(json::parse(h.posts[0])["type"] == "state");
+    CHECK(json::parse(h.posts[1])["type"] == "ring");
+    CHECK(json::parse(h.posts[2])["type"] == "update");
+
+    // Depois: a resposta vai ao executavel uma vez, e a pergunta nao volta mais.
+    h.Send(R"({"v":1,"cmd":"updateLater"})");
+    h.Send(R"({"v":1,"cmd":"updateNow"})");
+    CHECK(h.host == std::vector<std::string>{"update later"});
+    h.posts.clear();
+    h.Send(R"({"v":1,"cmd":"ready"})");
+    CHECK(h.Messages("update").empty());
+
+    // Uma nova pergunta, respondida com Atualizar agora.
+    h.app->OfferUpdate("0.1.0-rc.3", "");
+    h.Run();
+    h.Send(R"({"v":1,"cmd":"updateNow"})");
+    CHECK(h.host == std::vector<std::string>{"update later", "update now"});
+    // Sem pergunta aberta, uma resposta e ignorada.
+    h.Send(R"({"v":1,"cmd":"updateLater"})");
+    CHECK(h.host.size() == 2);
+}
+
+TEST_CASE("quitting with an update question open answers it as later") {
+    Harness h;
+    h.StartRegistered();
+    h.app->OfferUpdate("0.1.0-rc.2", "");
+    h.Run();
+    h.Send(R"({"v":1,"cmd":"quit"})");
+    CHECK(h.host == std::vector<std::string>{"update later", "quit"});
+}
+
+TEST_CASE("a notice from the host becomes a toast") {
+    Harness h;
+    h.Start();
+    h.app->Notify("Termine a chamada para atualizar.");
+    h.Run();
+    CHECK(h.Toasts() == std::vector<std::string>{"Termine a chamada para atualizar."});
 }
 
 TEST_CASE("commands run on the command thread, never on the caller") {

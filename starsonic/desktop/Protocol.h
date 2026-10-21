@@ -1,6 +1,7 @@
 #pragma once
 // O protocolo da ponte, versao 1, entre a interface (TypeScript, no WebView2) e o C++ do app de PC: os comandos que
-// a interface manda ({"v":1,"cmd":...}) e as mensagens que o C++ manda ({"v":1,"type":"state"|"toast"|"ring",...}).
+// a interface manda ({"v":1,"cmd":...}) e as mensagens que o C++ manda ({"v":1,"type":"state"|"toast"|"ring"|"update",
+// ...}).
 // O contrato, com cada campo e um exemplo, e o docs/ponte-windows.md: uma mudanca aqui muda o documento junto (e
 // o kBridgeVersion, se o formato deixa de ser compativel). Os textos sao UTF-8.
 #include <cstdint>
@@ -45,6 +46,8 @@ enum class CommandKind {
     CloseToTray,
     Quit,
     ViewRecents,
+    UpdateNow,     // a pergunta da atualizacao: "Atualizar agora"
+    UpdateLater,   // e "Depois"
 };
 
 // Um comando lido. So os campos do comando valem; os outros ficam vazios.
@@ -170,5 +173,8 @@ std::string StateMessage(const BridgeState& state);
 std::string ToastMessage(const std::string& text);
 // {"v":1,"type":"ring","tipo":"completo"|"espera"|"parar"}
 std::string RingMessage(RingKind kind);
+// {"v":1,"type":"update","versao":"...","notas":"..."}: a pergunta da atualizacao (a interface responde com updateNow
+// ou updateLater).
+std::string UpdateMessage(const std::string& version, const std::string& notes);
 
 }  // namespace starsonic

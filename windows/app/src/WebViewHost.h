@@ -5,8 +5,11 @@
 // interface arrastando a janela (app-region, IsNonClientRegionSupportEnabled) e a ponte: o postMessage da interface
 // vira um comando (o JSON) e o C++ responde com PostWebMessageAsJson.
 //
-// O microfone fica permitido so para a origem do app (os rotulos do enumerateDevices, que o Configuracoes compara com
-// os nomes do motor; a interface nunca captura som: o motor captura), e toda outra permissao e negada.
+// O microfone e a reproducao automatica ficam permitidos so para a origem do app (WebPermissions.h), e toda outra
+// permissao e negada.
+//
+// O aviso de ligacao recebida (NoticeWindow) tem o seu WebViewHost, com o mesmo ambiente (Options.environment: o
+// mesmo perfil e a mesma pasta de dados) e a pagina aviso.html.
 //
 // O toque toca na interface (WebAudio): o ambiente tem --autoplay-policy=no-user-gesture-required (sem ele o primeiro
 // toque, antes de um clique, pode sair mudo), e o WebView nunca e suspenso: nada de TrySuspend, e o IsVisible fica
@@ -34,12 +37,16 @@ public:
         std::function<void(const std::string& json)> message;   // um comando da interface (o JSON, UTF-8)
         std::function<void(const std::string& line)> log;
         std::function<void(HRESULT error)> failed;              // o WebView2 nao abriu (sem o runtime, por exemplo)
+        std::function<void()> ready;                            // o WebView abriu e comecou a carregar a pagina
     };
 
     struct Options {
         std::wstring userDataFolder;
         std::wstring uiFolder;   // a pasta com o index.html
         bool devTools = false;   // as ferramentas do desenvolvedor e o menu do botao direito (so no build de teste)
+        std::wstring startPage = L"https://app.starsonic.local/index.html";   // a pagina (do app) que abre
+        // O ambiente de outro WebViewHost (o do aviso usa o da janela principal); vazio: cria um em userDataFolder.
+        Microsoft::WRL::ComPtr<ICoreWebView2Environment> environment;
     };
 
     WebViewHost(HWND parent, Callbacks callbacks);
@@ -62,6 +69,8 @@ public:
     void Close();
 
     bool Ready() const { return webview_ != nullptr; }
+    // O ambiente (depois do ready), para outro WebViewHost.
+    Microsoft::WRL::ComPtr<ICoreWebView2Environment> Environment() const { return environment_; }
 
 private:
     HRESULT OnEnvironment(HRESULT result, ICoreWebView2Environment* environment);

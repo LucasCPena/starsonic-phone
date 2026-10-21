@@ -46,13 +46,10 @@ MainWindow::~MainWindow() {
     if (window_) DestroyWindow(window_);
 }
 
-UINT MainWindow::QuitMessage() {
-    static const UINT message = RegisterWindowMessageW(L"StarsonicPhone.Sair");
-    return message;
-}
-
 bool MainWindow::Create(HINSTANCE instance, const Options& options, Callbacks callbacks) {
     callbacks_ = std::move(callbacks);
+    instance_ = instance;
+    options_ = options;
     WNDCLASSEXW windowClass = {};
     windowClass.cbSize = sizeof(windowClass);
     windowClass.style = CS_HREDRAW | CS_VREDRAW;
@@ -86,6 +83,17 @@ bool MainWindow::Create(HINSTANCE instance, const Options& options, Callbacks ca
     Place(options.position);
     ApplyFrame();
 
+    // A bandeja (o estado chega com o primeiro estado da ponte) e o aviso (o WebView dele abre depois do principal).
+    if (!tray_.Create(window_, instance)) Log("a bandeja nao aceitou o icone (tenta de novo quando o Explorer voltar)");
+    NoticeWindow::Callbacks noticeCallbacks;
+    noticeCallbacks.command = [this](const std::string& json) {
+        // O Atender do aviso traz a janela para a frente, na ligacao (spec da W1, 7.2).
+        if (IsCommand(json, "answer")) BringToFront();
+        if (callbacks_.noticeCommand) callbacks_.noticeCommand(json);
+    };
+    noticeCallbacks.log = [this](const std::string& line) { Log(line); };
+    notice_.Create(instance, std::move(noticeCallbacks));
+
     WebViewHost::Callbacks webCallbacks;
     webCallbacks.message = [this](const std::string& json) {
         if (callbacks_.command) callbacks_.command(json);
@@ -94,6 +102,7 @@ bool MainWindow::Create(HINSTANCE instance, const Options& options, Callbacks ca
     webCallbacks.failed = [this](HRESULT error) {
         if (callbacks_.webViewFailed) callbacks_.webViewFailed(error);
     };
+    webCallbacks.ready = [this] { StartNotice(); };
     webview_.reset(new WebViewHost(window_, std::move(webCallbacks)));
     WebViewHost::Options webOptions;
     webOptions.userDataFolder = options.userDataFolder;
@@ -128,8 +137,68 @@ void MainWindow::Minimize() {
 }
 
 void MainWindow::CloseToTray() {
-    // A bandeja chega na Task 12; ate la o "fechar" da barra minimiza (o app continua recebendo ligacoes).
-    Minimize();
+    // O app continua recebendo ligacoes: o WebView continua rodando escondido (nunca suspenso, IsVisible TRUE), e o
+    // aviso do canto aparece quando uma toca.
+    if (!window_) return;
+    ShowWindow(window_, SW_HIDE);
+    if (!trayLogged_) {
+        trayLogged_ = true;
+        Log("janela na bandeja");
+    }
+    RefreshNotice();
+}
+
+void MainWindow::BringToFront() {
+    if (!window_) return;
+    if (!IsWindowVisible(window_)) ShowWindow(window_, SW_SHOW);
+    if (IsIconic(window_)) ShowWindow(window_, SW_RESTORE);
+    SetForegroundWindow(window_);
+    RefreshNotice();
+}
+
+void MainWindow::RequestQuit() {
+    if (window_) PostMessageW(window_, WM_CLOSE, 0, 0);
+}
+
+void MainWindow::StartNotice() {
+    if (!webview_) return;
+    WebViewHost::Options noticeOptions;
+    noticeOptions.userDataFolder = options_.userDataFolder;
+    noticeOptions.uiFolder = options_.uiFolder;
+    noticeOptions.devTools = options_.devTools;
+    noticeOptions.environment = webview_->Environment();
+    if (!noticeOptions.environment) return;
+    notice_.StartWebView(noticeOptions);
+}
+
+void MainWindow::RefreshNotice() {
+    if (!window_) return;
+    const bool inFront = IsWindowVisible(window_) && !IsIconic(window_) && active_;
+    if (status_.ringing && !inFront) {
+        notice_.Show(window_);
+    } else {
+        notice_.Hide();
+    }
+}
+
+void MainWindow::OnTray(WPARAM wParam, LPARAM lParam) {
+    switch (tray_.Handle(wParam, lParam)) {
+        case Tray::Choice::Open:
+            BringToFront();
+            break;
+        case Tray::Choice::ToggleDoNotDisturb:
+            if (callbacks_.command) {
+                callbacks_.command(status_.doNotDisturb ? "{\"v\":1,\"cmd\":\"setDnd\",\"on\":false}"
+                                                        : "{\"v\":1,\"cmd\":\"setDnd\",\"on\":true}");
+            }
+            break;
+        case Tray::Choice::Quit:
+            Log("pedido para sair (bandeja)");
+            RequestQuit();
+            break;
+        case Tray::Choice::None:
+            break;
+    }
 }
 
 void MainWindow::Close() {
@@ -193,8 +262,20 @@ void MainWindow::DrainOutbox() {
         std::lock_guard<std::mutex> lock(mutex_);
         pending.swap(outbox_);
     }
+    bool changed = false;
     for (const std::string& json : pending) {
         if (webview_) webview_->Post(json);
+        notice_.Post(json);
+        const std::optional<ShellStatus> status = ReadShellStatus(json);
+        if (status) {
+            status_ = *status;
+            changed = true;
+        }
+    }
+    if (changed) {
+        tray_.SetState(ChooseTrayIcon(status_), status_.doNotDisturb);
+        tray_.SetRinging(status_.ringing);
+        RefreshNotice();
     }
 }
 
@@ -245,10 +326,9 @@ LRESULT CALLBACK MainWindow::WindowProc(HWND window, UINT message, WPARAM wParam
 }
 
 LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
-    if (message == QuitMessage()) {
-        // O "--sair" de outra abertura: como o Sair da interface.
-        Log("pedido para sair (--sair)");
-        message = WM_CLOSE;
+    if (message == Tray::TaskbarCreatedMessage()) {
+        tray_.Recreate();   // o Explorer reiniciou: o icone volta
+        return 0;
     }
     switch (message) {
         case WM_NCCALCSIZE:
@@ -260,13 +340,24 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
         case WM_NCHITTEST:
             return HitTest(lParam);
         case WM_ACTIVATE:
-            if (LOWORD(wParam) != WA_INACTIVE && webview_) webview_->Focus();
+            active_ = LOWORD(wParam) != WA_INACTIVE;
+            if (active_ && webview_) webview_->Focus();
+            RefreshNotice();
             return 0;
         case WM_SIZE:
             if (wParam != SIZE_MINIMIZED && webview_) {
                 RECT client = {};
                 GetClientRect(window_, &client);
                 webview_->Resize(client);
+            }
+            RefreshNotice();
+            return 0;
+        case WM_QUERYENDSESSION:
+            return TRUE;   // o Windows pode encerrar: o Sair roda no WM_ENDSESSION
+        case WM_ENDSESSION:
+            if (wParam && callbacks_.endSession) {
+                Log("o Windows esta encerrando a sessao");
+                callbacks_.endSession();
             }
             return 0;
         case WM_MOVE:
@@ -294,10 +385,14 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
                 Close();
                 return 0;
             }
+            if (wParam == Tray::kBlinkTimer) {
+                tray_.Blink();
+                return 0;
+            }
             break;
         case WM_CLOSE:
-            // Alt+F4, o menu da janela, o Gerenciador de Tarefas ou o --sair: o Sair do app (as ligacoes acabam e vao
-            // aos Recentes; o DesktopApp chama o gancho quit, que fecha a janela).
+            // Alt+F4, o menu da janela, o Gerenciador de Tarefas, o Sair da bandeja ou o --sair: o Sair do app (as
+            // ligacoes acabam e vao aos Recentes; o DesktopApp chama o gancho quit, que fecha a janela).
             if (!quitting_) {
                 quitting_ = true;
                 SetTimer(window_, kQuitTimer, kQuitTimeoutMs, nullptr);
@@ -317,6 +412,8 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
             }
             KillTimer(window_, kMoveTimer);
             KillTimer(window_, kQuitTimer);
+            tray_.Remove();
+            notice_.Close();
             if (webview_) webview_->Close();
             PostQuitMessage(0);
             return 0;
@@ -328,6 +425,10 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
             }
             if (message == kActionsMessage) {
                 RunActions();
+                return 0;
+            }
+            if (message == Tray::kMessage) {
+                OnTray(wParam, lParam);
                 return 0;
             }
             break;

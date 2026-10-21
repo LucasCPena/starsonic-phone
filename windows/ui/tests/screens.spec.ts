@@ -54,6 +54,26 @@ for (const tema of ['light', 'dark'] as const) {
   test.describe(`tema ${tema}`, () => {
     test.use({ colorScheme: tema });
 
+    test('the update question shows the version and the notes and answers updateNow', async ({ page }) => {
+      await abrir(page, 'principal');
+      await empurrar(page, { v: 1, type: 'update', versao: '0.1.0-rc.2', notas: 'Correções no aviso de ligação.' });
+      const dialogo = page.getByRole('dialog', { name: 'Atualização' });
+      await expect(dialogo).toBeVisible();
+      await verTextos(page, [
+        'Atualização',
+        'Nova versão do Starsonic Phone disponível (0.1.0-rc.2). Atualizar agora?',
+        'Correções no aviso de ligação.',
+        'Depois',
+        'Atualizar agora',
+      ]);
+      await semViolacoesSerias(page);
+      await capturar(page, 'atualizacao', tema);
+      await dialogo.getByRole('button', { name: 'Atualizar agora' }).click();
+      await esperarComando(page, { cmd: 'updateNow' });
+      await expect(dialogo).toHaveCount(0);
+      expect((await comandos(page)).filter((c) => c.cmd === 'updateLater')).toEqual([]);
+    });
+
     test('Entrar shows the exact texts and sends login with the fields', async ({ page }) => {
       await abrir(page, 'entrar');
       await verTextos(page, [
@@ -550,6 +570,31 @@ test.describe('ponte e janela', () => {
     await expect(page.getByText('A troca de conta fica para o fim da ligação.')).toHaveCount(0);
     await expect(page.getByText('Sem conexão com o servidor. Tente de novo em instantes.')).toBeVisible();
     await expect(page.getByText('Sem conexão com o servidor. Tente de novo em instantes.')).toHaveCount(0, { timeout: 3500 });
+  });
+
+  test('the update question answers later with Depois or Esc, and a new one takes its place', async ({ page }) => {
+    await abrir(page, 'principal');
+    await empurrar(page, { v: 1, type: 'update', versao: '0.1.0-rc.2', notas: '' });
+    const dialogo = page.getByRole('dialog', { name: 'Atualização' });
+    await expect(dialogo).toBeVisible();
+    await dialogo.getByRole('button', { name: 'Depois' }).click();
+    await esperarComando(page, { cmd: 'updateLater' });
+    await expect(dialogo).toHaveCount(0);
+
+    // A pergunta de novo (o ready depois de recarregar): Esc tambem e "Depois".
+    await empurrar(page, { v: 1, type: 'update', versao: '0.1.0-rc.2', notas: '' });
+    await expect(dialogo).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(dialogo).toHaveCount(0);
+    await expect.poll(async () => (await comandos(page)).filter((c) => c.cmd === 'updateLater').length).toBe(2);
+
+    // Uma versao nova com a pergunta aberta: a nova toma o lugar.
+    await empurrar(page, { v: 1, type: 'update', versao: '0.1.0-rc.2', notas: '' });
+    await expect(page.getByText('Nova versão do Starsonic Phone disponível (0.1.0-rc.2). Atualizar agora?')).toBeVisible();
+    await empurrar(page, { v: 1, type: 'update', versao: '0.1.0-rc.3', notas: '' });
+    await expect(page.getByText('Nova versão do Starsonic Phone disponível (0.1.0-rc.3). Atualizar agora?')).toBeVisible();
+    await expect(dialogo).toHaveCount(1);
+    expect((await comandos(page)).filter((c) => c.cmd === 'updateLater')).toHaveLength(2);
   });
 
   test('a message of another version asks to reinstall', async ({ page }) => {

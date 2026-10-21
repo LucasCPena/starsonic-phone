@@ -35,9 +35,10 @@
     <ResourceCompile Include="$(StarsonicDir)win\starsonic.rc" />
   </ItemGroup>
   <ItemGroup>
-    <!-- Win32 puro, sem MFC (tambem compilados nos testes): o stdafx.h do MicroSIP traz o
-         wininet.h (afxinet.h), que nao convive com o winhttp.h. -->
-    <ClCompile Update="$(StarsonicDir)win\Sha256.cpp;$(StarsonicDir)win\Http.cpp">
+    <!-- Win32 puro, sem MFC (tambem compilados nos testes e no app novo, windows/app): o stdafx.h do MicroSIP traz o
+         wininet.h (afxinet.h), que nao convive com o winhttp.h. O adaptador do atualizador para o MicroSIP fica no
+         Hooks.cpp. -->
+    <ClCompile Update="$(StarsonicDir)win\Sha256.cpp;$(StarsonicDir)win\Http.cpp;$(StarsonicDir)win\Updater.cpp;$(StarsonicDir)win\TlsWatch.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
   </ItemGroup>

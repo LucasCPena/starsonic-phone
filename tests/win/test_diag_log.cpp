@@ -77,3 +77,32 @@ TEST_CASE("diagnostico.log stamps each line and rotates at 1 MB keeping one .1 c
     DeleteFileW(starsonic::Utf8ToWide(path + ".1").c_str());
     RemoveDirectoryW(starsonic::Utf8ToWide(folder).c_str());
 }
+
+TEST_CASE("diagnostico.log never keeps the Authorization digest of the engine messages") {
+    wchar_t base[MAX_PATH] = {};
+    GetTempPathW(MAX_PATH, base);
+    const std::string folder = starsonic::WideToUtf8(base) + "starsonic-log-auth-" +
+                               std::to_string(GetCurrentProcessId()) + "-" + std::to_string(GetTickCount64());
+    REQUIRE(starsonic::CreateFolderTree(starsonic::Utf8ToWide(folder)));
+    const std::string path = folder + "\\diagnostico.log";
+    WinFiles files;
+    {
+        DiagLog log(starsonic::Utf8ToWide(path));
+        // Como o motor escreve no nivel 4: a mensagem SIP inteira numa linha do OnLog.
+        log.Write("motor 4: .TX 612 bytes Request msg REGISTER/cseq=2 (tdta0x1) to UDP 1.2.3.4:5060:\r\n"
+                  "REGISTER sip:pbx.example.com SIP/2.0\r\n"
+                  "Authorization: Digest username=\"2001\", realm=\"asterisk\", nonce=\"6f1c\", "
+                  "response=\"0123456789abcdef0123456789abcdef\"\r\n"
+                  "Proxy-Authorization: Digest response=\"fedcba9876543210fedcba9876543210\"\r\n"
+                  "Content-Length:  0\r\n");
+    }
+    const std::optional<std::string> text = files.Read(path);
+    REQUIRE(text.has_value());
+    CHECK(text->find("0123456789abcdef0123456789abcdef") == std::string::npos);
+    CHECK(text->find("fedcba9876543210fedcba9876543210") == std::string::npos);
+    CHECK(text->find("nonce") == std::string::npos);
+    CHECK(text->find("Authorization: <oculto>  Proxy-Authorization: <oculto>  Content-Length:  0") != std::string::npos);
+    CHECK(text->find("REGISTER sip:pbx.example.com SIP/2.0") != std::string::npos);
+    DeleteFileW(starsonic::Utf8ToWide(path).c_str());
+    RemoveDirectoryW(starsonic::Utf8ToWide(folder).c_str());
+}

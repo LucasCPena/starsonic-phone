@@ -1,72 +1,83 @@
-#include "stdafx.h"
+// Win32 puro (sem MFC e sem o cabecalho pre-compilado do app antigo: starsonic.targets): compilado tambem no app novo.
 #include "Updater.h"
 
-#include <algorithm>
-#include <ctime>
-#include <exception>
-#include <memory>
-#include <thread>
+#include <shellapi.h>
 
-#include "Hooks.h"
+#include <algorithm>
+#include <atomic>
+#include <exception>
+#include <thread>
+#include <utility>
+
+#include "../../branding/branding.h"   // STARSONIC_REPO_URL
 #include "Http.h"
 #include "Sha256.h"
 #include "Text.h"
 #include "UpdateManifest.h"
-#include "generated/build_info.h"
-#include "global.h"
-#include "mainDlg.h"
-#include "resource.h"
-#include "settings.h"
+
+namespace starsonic {
+
+const wchar_t kUpdateLatestText[] = L"Voc\u00ea j\u00e1 est\u00e1 na vers\u00e3o mais recente.";
+const wchar_t kUpdateFinishCallText[] = L"Termine a chamada para atualizar.";
+const wchar_t kUpdateFailedText[] =
+    L"N\u00e3o foi poss\u00edvel baixar a atualiza\u00e7\u00e3o. Tentaremos de novo mais tarde.";
+const wchar_t kUpdateDownloadingText[] = L"Baixando atualiza\u00e7\u00e3o\u2026";
 
 namespace {
 
-const char kLogSender[] = "Updater";
-const wchar_t kTitle[] = L"Starsonic Phone";
 const size_t kManifestMaxBytes = 1024 * 1024;
 const size_t kInstallerMaxBytes = 150 * 1024 * 1024;
 
-// So os enderecos importam: identificam, em userData, qual das duas respostas chegou.
-char g_manifestTag;
-char g_installerTag;
+struct ManifestReply {
+    DWORD status = 0;
+    std::string body;
+    std::string failure;   // motivo da falha, em ASCII, para o log
+};
 
-// Aviso aberto ou download em andamento (so na thread da janela): novas verificacoes sao ignoradas.
-bool g_busy = false;
-
-// Resposta das threads de trabalho. Chega pela UM_UPDATE_CHECKER_LOADED (a mensagem do verificador
-// do MicroSIP) como URLGetAsyncData*: statusCode, body (versao.json) e userData (a etiqueta).
-struct UpdateResult : URLGetAsyncData {
-    std::string failure;          // motivo da falha, em ASCII, para o log
+struct InstallerReply {
+    DWORD status = 0;
+    std::string failure;
     std::string version;          // versao do instalador baixado
     std::wstring installerPath;   // instalador gravado e conferido; vazio se falhou
 };
 
-// Entrega a resposta a janela principal. Sem a janela, ninguem vai trata-la.
-void PostResult(HWND window, UpdateResult* result) {
-    URLGetAsyncData* data = result;
-    if (!::PostMessage(window, UM_UPDATE_CHECKER_LOADED, reinterpret_cast<WPARAM>(data), 0)) {
-        if (!result->installerPath.empty()) {
-            ::DeleteFileW(result->installerPath.c_str());
-        }
-        delete result;
-    }
-}
+}  // namespace
 
-void FetchManifest(HWND window, std::wstring url) {
-    try {
-        std::unique_ptr<UpdateResult> result(new UpdateResult());
-        result->userData = &g_manifestTag;
-        const HttpResponse response = HttpsGet(url, kManifestMaxBytes);
-        result->statusCode = response.status;
-        if (response.error) {
-            result->failure = "erro " + std::to_string(response.error);
-        } else {
-            result->body = CStringA(response.body.data(), static_cast<int>(response.body.size()));
-        }
-        PostResult(window, result.release());
-    } catch (const std::exception&) {
-        // Sem memoria: a proxima verificacao tenta de novo.
+struct Updater::Shared {
+    std::shared_ptr<UpdateUi> ui;
+    UpdaterOptions options;
+    // Aviso aberto ou download em andamento: novas verificacoes sao ignoradas.
+    std::atomic<bool> busy{false};
+
+    std::wstring UserAgent() const { return L"Starsonic Phone/" + Utf8ToWide(options.installedVersion); }
+
+    void Log(int level, const std::string& line) const {
+        if (options.log) options.log(level, "Atualizacao: " + line);
     }
-}
+
+    void Status(const std::wstring& text) const {
+        if (options.status) options.status(text);
+    }
+
+    // Roda o passo na thread de quem mostra (ou na hora). false: descartado.
+    bool Deliver(UpdateStep step) const {
+        if (!options.post) {
+            step(false);
+            return true;
+        }
+        return options.post(std::move(step));
+    }
+
+    // Volta a linha de status ao normal e libera novas verificacoes.
+    void EndUpdate() {
+        busy = false;
+        Status(std::wstring());
+    }
+};
+
+namespace {
+
+using SharedPtr = std::shared_ptr<Updater::Shared>;
 
 // %TEMP%\StarsonicPhone-<versao>-setup.exe; vazio se a pasta temporaria nao estiver disponivel.
 std::wstring InstallerPath(const std::string& version) {
@@ -75,7 +86,7 @@ std::wstring InstallerPath(const std::string& version) {
     if (length == 0 || length > MAX_PATH) {
         return std::wstring();
     }
-    return std::wstring(temp, length) + L"StarsonicPhone-" + starsonic::Utf8ToWide(version) + L"-setup.exe";
+    return std::wstring(temp, length) + L"StarsonicPhone-" + Utf8ToWide(version) + L"-setup.exe";
 }
 
 // Grava o instalador; devolve 0 ou o codigo do erro.
@@ -101,187 +112,161 @@ DWORD SaveInstaller(const std::string& bytes, const std::wstring& path) {
     return error;
 }
 
-void DownloadInstaller(HWND window, starsonic::Manifest manifest) {
-    std::unique_ptr<UpdateResult> result;
-    std::wstring path;
-    try {
-        result.reset(new UpdateResult());
-        result->userData = &g_installerTag;
-        result->version = manifest.versionText;
-        path = InstallerPath(manifest.versionText);
-        const HttpResponse response = HttpsGet(starsonic::Utf8ToWide(manifest.installerUrl), kInstallerMaxBytes);
-        result->statusCode = response.status;
-        DWORD saveError = 0;
-        if (path.empty()) {
-            result->failure = "pasta temporaria indisponivel";
-        } else if (response.error) {
-            result->failure = "erro " + std::to_string(response.error);
-        } else if (response.status != 200) {
-            result->failure = "HTTP " + std::to_string(response.status);
-        } else if (Sha256Hex(response.body) != manifest.sha256) {
-            result->failure = "SHA-256 diferente do versao.json";
-        } else if ((saveError = SaveInstaller(response.body, path)) != 0) {
-            result->failure = "gravacao falhou (erro " + std::to_string(saveError) + ")";
-        } else {
-            result->installerPath = path;
-        }
-    } catch (const std::exception&) {
-        if (result) {
-            result->installerPath.clear();
-            result->failure = "sem memoria";
-        }
-    }
-    if ((!result || result->installerPath.empty()) && !path.empty()) {
-        ::DeleteFileW(path.c_str());   // nao deixa instalador incompleto ou adulterado para tras
-    }
-    if (result) {
-        PostResult(window, result.release());
-    }
-}
-
-void ShowMessage(CmainDlg* main, const wchar_t* text, UINT icon) {
-    ::MessageBoxW(main->m_hWnd, text, kTitle, MB_OK | icon);
-}
-
-// Volta a linha de status ao estado da conta e libera novas verificacoes.
-void EndUpdate(CmainDlg* main) {
-    g_busy = false;
-    main->UpdateWindowText();
-}
-
-void OnManifest(CmainDlg* main, const UpdateResult& result, bool userAsked) {
-    if (g_busy) {
-        return;   // outra verificacao ja abriu o aviso ou o download
-    }
-    if (!result.failure.empty() || result.statusCode != 200) {
-        PJ_LOG(3, (kLogSender, "Atualizacao: versao.json indisponivel (HTTP %lu %s)", result.statusCode,
-                   result.failure.c_str()));
-        return;
-    }
-    starsonic::Manifest manifest;
-    std::string error;
-    const std::string body(result.body.GetString(), result.body.GetLength());
-    if (!starsonic::ParseManifest(body, InstallerUrlPrefix(), &manifest, &error)) {
-        PJ_LOG(2, (kLogSender, "Atualizacao: versao.json ignorado: %s", error.c_str()));
-        return;
-    }
-    starsonic::Version installed;
-    if (!starsonic::ParseVersion(STARSONIC_VERSION, &installed) ||
-        starsonic::CompareVersions(manifest.version, installed) <= 0) {
-        PJ_LOG(4, (kLogSender, "Atualizacao: nada novo (publicada %s, instalada %s)", manifest.versionText.c_str(),
-                   STARSONIC_VERSION));
-        if (userAsked) {
-            ShowMessage(main, L"Voc\u00ea j\u00e1 est\u00e1 na vers\u00e3o mais recente.", MB_ICONINFORMATION);
-        }
-        return;
-    }
-
-    g_busy = true;
-    CString question;
-    question.Format(L"Nova vers\u00e3o do Starsonic Phone dispon\u00edvel (%s). Atualizar agora?",
-                    CString(manifest.versionText.c_str()).GetString());
-    if (!manifest.notes.empty()) {
-        question += L"\r\n\r\n";
-        question += manifest.notes.c_str();
-    }
-    if (::MessageBoxW(main->m_hWnd, question, kTitle, MB_YESNO | MB_ICONQUESTION) != IDYES) {
-        g_busy = false;
-        return;
-    }
-    if (pjsua_call_get_count() > 0) {
-        g_busy = false;
-        ShowMessage(main, L"Termine a chamada para atualizar.", MB_ICONINFORMATION);
-        return;
-    }
-    main->UpdateWindowText(L"Baixando atualiza\u00e7\u00e3o\u2026", -1);
-    try {
-        std::thread(DownloadInstaller, main->m_hWnd, manifest).detach();
-    } catch (const std::exception&) {
-        PJ_LOG(2, (kLogSender, "Atualizacao: nao foi possivel iniciar o download"));
-        EndUpdate(main);
-        ShowMessage(main, L"N\u00e3o foi poss\u00edvel baixar a atualiza\u00e7\u00e3o. Tentaremos de novo mais tarde.", MB_ICONWARNING);
-    }
-}
-
-void OnInstaller(CmainDlg* main, const UpdateResult& result) {
+void OnInstaller(const SharedPtr& shared, const InstallerReply& result) {
+    UpdateUi& ui = *shared->ui;
     if (result.installerPath.empty()) {
-        PJ_LOG(2, (kLogSender, "Atualizacao: download da versao %s falhou: %s", result.version.c_str(),
-                   result.failure.c_str()));
-        EndUpdate(main);
-        ShowMessage(main, L"N\u00e3o foi poss\u00edvel baixar a atualiza\u00e7\u00e3o. Tentaremos de novo mais tarde.", MB_ICONWARNING);
+        shared->Log(2, "download da versao " + result.version + " falhou: " + result.failure);
+        shared->EndUpdate();
+        ui.Show(kUpdateFailedText);
         return;
     }
-    if (pjsua_call_get_count() > 0) {
+    if (ui.Busy()) {
         ::DeleteFileW(result.installerPath.c_str());
-        EndUpdate(main);
-        ShowMessage(main, L"Termine a chamada para atualizar.", MB_ICONINFORMATION);
+        shared->EndUpdate();
+        ui.Show(kUpdateFinishCallText);
         return;
     }
     const INT_PTR started = reinterpret_cast<INT_PTR>(
-        ::ShellExecuteW(main->m_hWnd, L"open", result.installerPath.c_str(), L"/S", NULL, SW_HIDE));
+        ::ShellExecuteW(shared->options.owner, L"open", result.installerPath.c_str(), L"/S", NULL, SW_HIDE));
     if (started <= 32) {
         // Spec: falha do instalador nao mostra nada; o app continua na versao atual.
-        PJ_LOG(1, (kLogSender, "Atualizacao: o instalador da versao %s nao abriu (codigo %d)", result.version.c_str(),
-                   static_cast<int>(started)));
+        shared->Log(1, "o instalador da versao " + result.version + " nao abriu (codigo " +
+                           std::to_string(static_cast<int>(started)) + ")");
         ::DeleteFileW(result.installerPath.c_str());
-        EndUpdate(main);
+        shared->EndUpdate();
         return;
     }
-    PJ_LOG(3, (kLogSender, "Atualizacao: instalador da versao %s iniciado; o app vai fechar", result.version.c_str()));
-    main->PostMessage(WM_COMMAND, ID_EXIT);   // g_busy fica ligado ate o fim
+    shared->Log(3, "instalador da versao " + result.version + " iniciado; o app vai fechar");
+    if (shared->options.quit) shared->options.quit();   // busy fica ligado ate o fim
+}
+
+void DownloadInstaller(SharedPtr shared, Manifest manifest) {
+    InstallerReply result;
+    std::wstring path;
+    try {
+        result.version = manifest.versionText;
+        path = InstallerPath(manifest.versionText);
+        const HttpResponse response =
+            HttpsGet(Utf8ToWide(manifest.installerUrl), kInstallerMaxBytes, shared->UserAgent());
+        result.status = response.status;
+        DWORD saveError = 0;
+        if (path.empty()) {
+            result.failure = "pasta temporaria indisponivel";
+        } else if (response.error) {
+            result.failure = "erro " + std::to_string(response.error);
+        } else if (response.status != 200) {
+            result.failure = "HTTP " + std::to_string(response.status);
+        } else if (Sha256Hex(response.body) != manifest.sha256) {
+            result.failure = "SHA-256 diferente do versao.json";
+        } else if ((saveError = SaveInstaller(response.body, path)) != 0) {
+            result.failure = "gravacao falhou (erro " + std::to_string(saveError) + ")";
+        } else {
+            result.installerPath = path;
+        }
+    } catch (const std::exception&) {
+        result.installerPath.clear();
+        result.failure = "sem memoria";
+    }
+    if (result.installerPath.empty() && !path.empty()) {
+        ::DeleteFileW(path.c_str());   // nao deixa instalador incompleto ou adulterado para tras
+    }
+    const std::wstring saved = result.installerPath;
+    bool delivered = false;
+    try {
+        delivered = shared->Deliver([shared, result](bool) { OnInstaller(shared, result); });
+    } catch (const std::exception&) {
+        delivered = false;
+    }
+    if (!delivered && !saved.empty()) ::DeleteFileW(saved.c_str());
+}
+
+void OnManifest(const SharedPtr& shared, const ManifestReply& result, bool userAsked) {
+    if (shared->busy) {
+        return;   // outra verificacao ja abriu o aviso ou o download
+    }
+    if (!result.failure.empty() || result.status != 200) {
+        shared->Log(3, "versao.json indisponivel (HTTP " + std::to_string(result.status) + " " + result.failure + ")");
+        return;
+    }
+    Manifest manifest;
+    std::string error;
+    if (!ParseManifest(result.body, InstallerUrlPrefix(), &manifest, &error)) {
+        shared->Log(2, "versao.json ignorado: " + error);
+        return;
+    }
+    UpdateUi& ui = *shared->ui;
+    Version installed;
+    if (!ParseVersion(shared->options.installedVersion, &installed) || CompareVersions(manifest.version, installed) <= 0) {
+        shared->Log(4, "nada novo (publicada " + manifest.versionText + ", instalada " +
+                           shared->options.installedVersion + ")");
+        if (userAsked) ui.Show(kUpdateLatestText);
+        return;
+    }
+
+    if (shared->busy.exchange(true)) return;
+    if (!ui.Ask(manifest.versionText, manifest.notes)) {
+        shared->busy = false;
+        return;
+    }
+    if (ui.Busy()) {
+        shared->busy = false;
+        ui.Show(kUpdateFinishCallText);
+        return;
+    }
+    shared->Status(kUpdateDownloadingText);
+    try {
+        std::thread(DownloadInstaller, shared, manifest).detach();
+    } catch (const std::exception&) {
+        shared->Log(2, "nao foi possivel iniciar o download");
+        shared->EndUpdate();
+        ui.Show(kUpdateFailedText);
+    }
+}
+
+void FetchManifest(SharedPtr shared) {
+    try {
+        ManifestReply result;
+        const HttpResponse response = HttpsGet(ManifestUrl(shared->options.testChannel), kManifestMaxBytes,
+                                               shared->UserAgent());
+        result.status = response.status;
+        if (response.error) {
+            result.failure = "erro " + std::to_string(response.error);
+        } else {
+            result.body = response.body;
+        }
+        shared->Deliver([shared, result](bool userAsked) { OnManifest(shared, result, userAsked); });
+    } catch (const std::exception&) {
+        // Sem memoria: a proxima verificacao tenta de novo.
+    }
 }
 
 }  // namespace
 
-std::wstring ManifestUrl() {
-#if STARSONIC_UPDATE_CHANNEL_TEST
-    return starsonic::Utf8ToWide(STARSONIC_REPO_URL "/releases/download/canal-teste/versao.json");
-#else
-    return starsonic::Utf8ToWide(STARSONIC_REPO_URL "/releases/latest/download/versao.json");
-#endif
+Updater::Updater(std::shared_ptr<UpdateUi> ui, UpdaterOptions options) : shared_(std::make_shared<Shared>()) {
+    shared_->ui = std::move(ui);
+    shared_->options = std::move(options);
+}
+
+Updater::~Updater() = default;
+
+void Updater::Check() {
+    if (shared_->busy) {
+        return;
+    }
+    try {
+        std::thread(FetchManifest, shared_).detach();
+    } catch (const std::exception&) {
+        shared_->Log(2, "nao foi possivel iniciar a verificacao");
+    }
+}
+
+std::wstring ManifestUrl(bool testChannel) {
+    if (testChannel) return Utf8ToWide(STARSONIC_REPO_URL "/releases/download/canal-teste/versao.json");
+    return Utf8ToWide(STARSONIC_REPO_URL "/releases/latest/download/versao.json");
 }
 
 std::string InstallerUrlPrefix() {
     return STARSONIC_REPO_URL "/releases/download/";
-}
-
-void CALLBACK UpdateTimerProc(HWND /*window*/, UINT /*message*/, UINT_PTR /*id*/, DWORD /*tickCount*/) {
-    if (!mainDlg) {
-        return;
-    }
-    mainDlg->CheckUpdates();
-    // Como na verificacao da abertura (OnCreated do MicroSIP).
-    accountSettings.checkUpdatesTime = static_cast<int>(time(NULL));
-}
-
-namespace starsonic {
-
-void CheckUpdates(CmainDlg* main) {
-    if (g_busy) {
-        return;
-    }
-    try {
-        std::thread(FetchManifest, main->m_hWnd, ManifestUrl()).detach();
-    } catch (const std::exception&) {
-        PJ_LOG(2, (kLogSender, "Atualizacao: nao foi possivel iniciar a verificacao"));
-    }
-}
-
-void OnUpdateMessage(CmainDlg* main, WPARAM wParam, bool userAsked) {
-    URLGetAsyncData* data = reinterpret_cast<URLGetAsyncData*>(wParam);
-    if (!data) {
-        return;
-    }
-    if (data->userData != &g_manifestTag && data->userData != &g_installerTag) {
-        delete data;   // nao veio do atualizador
-        return;
-    }
-    std::unique_ptr<UpdateResult> result(static_cast<UpdateResult*>(data));
-    if (result->userData == &g_manifestTag) {
-        OnManifest(main, *result, userAsked);
-    } else {
-        OnInstaller(main, *result);
-    }
 }
 
 }  // namespace starsonic

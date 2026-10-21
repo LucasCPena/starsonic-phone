@@ -100,6 +100,7 @@ struct DesktopHooks {
     std::function<void()> quit;                          // depois do Sair: o executavel fecha (ver acima)
     std::function<void()> sendDiagnostics;
     std::function<void(bool on)> setStartWithWindows;    // o Iniciar com o Windows (HKCU\...\Run)
+    std::function<void(bool now)> updateAnswer;          // a resposta a OfferUpdate (true: Atualizar agora)
 };
 
 // O app de PC. Responsavel por:
@@ -140,6 +141,12 @@ public:
     // A janela foi movida (o canto de cima, em pixels da tela): grava no config.json (so se mudou). Antes da abertura
     // (Start), nada. So poe na fila.
     void SaveWindowPosition(int x, int y);
+    // O atualizador achou uma versao nova: a interface pergunta ({"type":"update"}, de novo a cada ready ate a
+    // resposta), e a resposta (updateNow/updateLater) vai uma vez ao hooks.updateAnswer. Uma pergunta nova toma o
+    // lugar da que estava aberta. Saindo (quit), a aberta vale "Depois". So poe na fila.
+    void OfferUpdate(const std::string& version, const std::string& notes);
+    // Um aviso de 2 s do executavel (o toast: "Termine a chamada para atualizar."). So poe na fila.
+    void Notify(const std::string& text);
     // A fila de comandos roda o que ja tinha e para; daqui em diante nada mais entra. Nunca de dentro de um gancho.
     void Shutdown();
 
@@ -230,6 +237,11 @@ private:
     std::string keypad_;
     int keypadSeq_ = 0;
     std::string lastState_;
+    struct UpdateOffer {
+        std::string version;
+        std::string notes;
+    };
+    std::optional<UpdateOffer> updateOffer_;   // a pergunta da atualizacao, esperando a resposta
 
     std::unique_ptr<Executor> executor_;   // por ultimo: parado primeiro (no destrutor)
 };

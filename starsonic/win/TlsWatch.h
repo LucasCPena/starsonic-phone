@@ -5,7 +5,7 @@
 #include <pj/types.h>
 
 // Liga o aviso de estado de transporte do pjsua (on_transport_state). Chamar antes de cada
-// tentativa: o MicroSIP recria o pjsua quando as configuracoes mudam e o aviso se perde.
+// tentativa: o app antigo recria o pjsua quando as configuracoes mudam e o aviso se perde.
 void WatchTlsFailures();
 
 // Quantas desconexoes por erro de TLS ja foram vistas.

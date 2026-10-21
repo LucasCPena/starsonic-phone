@@ -5,6 +5,7 @@
 import { render } from 'preact';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { createBridge } from './bridge';
+import { Atualizacao } from './components/Atualizacao';
 import { BackBar } from './components/BackBar';
 import { Header } from './components/Header';
 import { Nav } from './components/Nav';
@@ -39,6 +40,8 @@ function App() {
   const [view, setView] = useState<View>(initialView);
   const [toast, setToast] = useState<{ texto: string; vez: number } | null>(null);
   const [reinstalar, setReinstalar] = useState(false);
+  // A pergunta da atualização aberta (o `update` do C++), até a resposta.
+  const [atualizacao, setAtualizacao] = useState<{ versao: string; notas: string; vez: number } | null>(null);
   const [numero, setNumero] = useState('');
   const tecladoVez = useRef(0);
   // As saídas de som de agora (o `ring` vem logo depois do estado): o Toque e o alto-falante da ligação.
@@ -54,6 +57,7 @@ function App() {
         setState(msg.state);
       } else if (msg.type === 'toast') setToast((t) => ({ texto: msg.texto, vez: (t?.vez ?? 0) + 1 }));
       else if (msg.type === 'ring') ringer.play(msg.tipo, saidas.current);
+      else if (msg.type === 'update') setAtualizacao((a) => ({ versao: msg.versao, notas: msg.notas, vez: (a?.vez ?? 0) + 1 }));
     });
     bridge.send({ cmd: 'ready' });
     return parar;
@@ -104,6 +108,10 @@ function App() {
   }, []);
 
   const mudarNumero = useCallback((update: (atual: string) => string) => setNumero(update), []);
+  const responderAtualizacao = useCallback((agora: boolean) => {
+    setAtualizacao(null);
+    bridge.send({ cmd: agora ? 'updateNow' : 'updateLater' });
+  }, []);
 
   if (!bridge.available) {
     return (
@@ -134,13 +142,22 @@ function App() {
   }
 
   const toastEl = <Toast texto={toast?.texto ?? null} vez={toast?.vez ?? 0} />;
+  // A pergunta da atualização nunca cobre a tela da ligação: aparece quando ela acaba.
+  const avisos = (
+    <>
+      {toastEl}
+      {atualizacao && !state.ligacao && (
+        <Atualizacao key={atualizacao.vez} versao={atualizacao.versao} notas={atualizacao.notas} onAnswer={responderAtualizacao} />
+      )}
+    </>
+  );
 
   if (state.tela === 'entrar') {
     return (
       <div class="win">
         <TitleBar send={send} closeLabel="Fechar" />
         <Entrar state={state} send={send} mode="entrar" />
-        {toastEl}
+        {avisos}
       </div>
     );
   }
@@ -202,7 +219,7 @@ function App() {
       <div class="win">
         <TitleBar send={send} />
         {conteudo}
-        {toastEl}
+        {avisos}
       </div>
     );
   }
@@ -233,7 +250,7 @@ function App() {
         )}
       </main>
       <Nav tab={tab} onSelect={(t) => setView({ kind: 'tab', tab: t })} />
-      {toastEl}
+      {avisos}
     </div>
   );
 }

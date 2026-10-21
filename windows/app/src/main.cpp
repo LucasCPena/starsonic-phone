@@ -4,7 +4,11 @@
 // Linha de comando:
 //   StarsonicPhone.exe                  abre o app (dados em %APPDATA%\Starsonic Phone)
 //   StarsonicPhone.exe --dados <pasta>  abre com outra pasta de dados (os testes)
+//   StarsonicPhone.exe --bandeja        abre escondido na bandeja (o Iniciar com o Windows; o /minimized da rc.7 tambem)
+//   StarsonicPhone.exe tel:2003         abre com o numero no Teclado (tambem sip: e callto:; nunca liga sozinho)
 //   StarsonicPhone.exe --sair           manda o Sair para o app aberto (codigo 0) e volta; 1 se nenhum esta aberto
+// Com o app ja aberto, uma abertura nova so entrega os argumentos dela ao aberto (SingleInstance) e sai com o codigo 0:
+// o link vai para o Teclado, o --sair fecha o app, e sem nada a janela vem para a frente.
 // No build de teste (STARSONIC_TEST_HOOKS), a variavel STARSONIC_PERFIL troca o perfil embutido pelo texto dela (um
 // perfil que aponta para o registrador falso).
 #include <windows.h>
@@ -19,19 +23,24 @@
 #include <string>
 #include <vector>
 
+#include "AppUpdater.h"
+#include "Autostart.h"
 #include "DesktopApp.h"
 #include "DiagLog.h"
+#include "Diagnostics.h"
 #include "DpapiCipher.h"
 #include "EngineHost.h"
 #include "LegacyCrypto.h"
+#include "Links.h"
 #include "MainWindow.h"
 #include "Profile.h"
+#include "ShellState.h"
+#include "SingleInstance.h"
 #include "Stores.h"
 #include "Text.h"
 #include "Threads.h"
 #include "WinFiles.h"
 #include "app_build.h"
-#include "nlohmann/json.hpp"
 #include "resource.h"
 
 using namespace starsonic;
@@ -41,28 +50,59 @@ namespace {
 const wchar_t kAppFolder[] = L"Starsonic Phone";
 const wchar_t kNoWebView[] = L"O Starsonic Phone precisa do WebView2 da Microsoft. Reinstale o Starsonic Phone.";
 const char kQuitCommand[] = "{\"v\":1,\"cmd\":\"quit\"}";
+// A verificacao de atualizacao: um minuto depois de abrir (a rede e o registro primeiro) e a cada 24 h.
+const unsigned long kFirstUpdateCheckMs = 60UL * 1000UL;
+const unsigned long kUpdateIntervalMs = 24UL * 60UL * 60UL * 1000UL;
+// O logoff do Windows: quanto o Sair espera o DesktopApp encerrar as ligacoes (os Recentes delas).
+const DWORD kEndSessionWaitMs = 3000;
 
 struct Arguments {
-    std::wstring dataFolder;   // "" = a pasta de sempre
-    bool quit = false;         // --sair
+    std::vector<std::wstring> raw;     // todos, sem o executavel (o que uma segunda abertura entrega a primeira)
+    std::wstring dataFolder;           // "" = a pasta de sempre
+    bool quit = false;                 // --sair
+    bool tray = false;                 // --bandeja (ou o /minimized da rc.7)
+    std::optional<std::string> link;   // o numero de um tel:/sip:/callto:
 };
 
-Arguments ParseArguments() {
+Arguments ParseArguments(const std::vector<std::wstring>& raw) {
     Arguments arguments;
-    int count = 0;
-    LPWSTR* list = CommandLineToArgvW(GetCommandLineW(), &count);
-    if (!list) return arguments;
-    for (int i = 1; i < count; ++i) {
-        const std::wstring item = list[i];
-        if (item == L"--dados" && i + 1 < count) {
-            arguments.dataFolder = list[++i];
+    arguments.raw = raw;
+    for (size_t i = 0; i < raw.size(); ++i) {
+        const std::wstring& item = raw[i];
+        if (item == L"--dados" && i + 1 < raw.size()) {
+            arguments.dataFolder = raw[++i];
         } else if (item == L"--sair") {
             arguments.quit = true;
+        } else if (item == L"--bandeja" || item == L"/minimized") {
+            arguments.tray = true;
+        } else if (!arguments.link) {
+            arguments.link = ParseLinkArgument(item);
         }
-        // Os links (tel:, sip:, callto:) e a segunda abertura chegam na Task 12.
     }
-    LocalFree(list);
     return arguments;
+}
+
+std::vector<std::wstring> CommandLineArguments() {
+    std::vector<std::wstring> out;
+    int count = 0;
+    LPWSTR* list = CommandLineToArgvW(GetCommandLineW(), &count);
+    if (!list) return out;
+    for (int i = 1; i < count; ++i) out.emplace_back(list[i]);
+    LocalFree(list);
+    return out;
+}
+
+std::wstring ExePath() {
+    std::wstring path(MAX_PATH, L'\0');
+    for (;;) {
+        const DWORD written = GetModuleFileNameW(nullptr, &path[0], static_cast<DWORD>(path.size()));
+        if (written == 0) return std::wstring();
+        if (written < path.size()) {
+            path.resize(written);
+            return path;
+        }
+        path.resize(path.size() * 2);
+    }
 }
 
 std::wstring KnownFolder(REFKNOWNFOLDERID id) {
@@ -84,16 +124,7 @@ std::wstring FullPath(const std::wstring& path) {
 }
 
 std::wstring ExeFolder() {
-    std::wstring path(MAX_PATH, L'\0');
-    for (;;) {
-        const DWORD written = GetModuleFileNameW(nullptr, &path[0], static_cast<DWORD>(path.size()));
-        if (written == 0) return L".";
-        if (written < path.size()) {
-            path.resize(written);
-            break;
-        }
-        path.resize(path.size() * 2);
-    }
+    const std::wstring path = ExePath();
     const size_t slash = path.find_last_of(L"\\/");
     return slash == std::wstring::npos ? L"." : path.substr(0, slash);
 }
@@ -118,36 +149,22 @@ std::string ProfileText(HINSTANCE instance) {
     return text;
 }
 
-// --sair: o Sair para a janela do app aberto.
-int SendQuit() {
-    const HWND window = FindWindowW(MainWindow::kClassName, nullptr);
-    if (!window) return 1;
-    return PostMessageW(window, MainWindow::QuitMessage(), 0, 0) ? 0 : 1;
-}
-
-bool IsReady(const std::string& json) {
-    const nlohmann::json parsed = nlohmann::json::parse(json, nullptr, /*allow_exceptions=*/false);
-    if (!parsed.is_object()) return false;
-    const auto found = parsed.find("cmd");
-    return found != parsed.end() && found->is_string() && found->get<std::string>() == "ready";
-}
-
 void OpenUrl(const std::string& url) {
     // O DesktopApp so deixa passar os links do Sobre e da ajuda (AllowedUrl).
     ShellExecuteW(nullptr, L"open", Utf8ToWide(url).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
 
-// "Enviar diagnostico": a pasta do diagnostico.log aberta, com ele selecionado (a copia e o envio chegam na Task 12).
-void ShowDiagnostics(const std::wstring& logPath) {
-    const std::wstring parameters = L"/select,\"" + logPath + L"\"";
-    ShellExecuteW(nullptr, L"open", L"explorer.exe", parameters.c_str(), nullptr, SW_SHOWNORMAL);
-}
-
 }  // namespace
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
-    const Arguments arguments = ParseArguments();
-    if (arguments.quit) return SendQuit();
+    const Arguments arguments = ParseArguments(CommandLineArguments());
+
+    // A instancia unica: com o app ja aberto, os argumentos vao para ele e esta abertura sai.
+    SingleInstance single;
+    const SingleInstance::Claim claim = single.Start(arguments.raw);
+    if (claim == SingleInstance::Claim::Delivered) return 0;
+    if (claim == SingleInstance::Claim::NotDelivered) return 1;   // o aberto nao respondeu: nunca dois apps
+    if (arguments.quit) return 1;                                 // --sair sem nenhum app aberto
 
     // A pasta de dados (spec 6.6) e o diagnostico.
     const bool customData = !arguments.dataFolder.empty();
@@ -176,7 +193,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     config.paths.contacts = data + "\\contatos.json";
     config.paths.recents = data + "\\recentes.json";
     config.paths.settings = data + "\\config.json";
-    // A rc.7 guardava tudo na mesma pasta (o %APPDATA%\Starsonic Phone do MicroSIP instalado).
+    // A rc.7 guardava tudo na mesma pasta (o %APPDATA%\Starsonic Phone do app antigo instalado).
     config.paths.legacy.ini = data + "\\StarsonicPhone.ini";
     config.paths.legacy.contactsXml = data + "\\Contacts.xml";
     config.paths.legacy.callsDb = data + "\\call_log.db";
@@ -204,6 +221,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     }
 
     MainWindow window;   // antes do DesktopApp: os ganchos dele chegam na janela ate o Shutdown
+    std::unique_ptr<AppUpdater> updater;   // criado depois do DesktopApp; Close() antes do Shutdown dele
+
+    // O gancho quit ja rodou (o DesktopApp encerrou as ligacoes): o logoff do Windows espera por ele.
+    const HANDLE quitDone = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    const std::wstring exePath = ExePath();
 
     DesktopHooks hooks;
     hooks.post = [&window](const std::string& json) { window.PostToWeb(json); };
@@ -211,26 +233,82 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     hooks.openUrl = [&window](const std::string& url) { window.RunOnWindow([url] { OpenUrl(url); }); };
     hooks.minimize = [&window] { window.RunOnWindow([&window] { window.Minimize(); }); };
     hooks.closeToTray = [&window] { window.RunOnWindow([&window] { window.CloseToTray(); }); };
-    hooks.quit = [&window] { window.RunOnWindow([&window] { window.Close(); }); };
-    hooks.sendDiagnostics = [&window, logPath] { window.RunOnWindow([logPath] { ShowDiagnostics(logPath); }); };
-    // O Iniciar com o Windows (HKCU\...\Run) chega na Task 12: por ora so fica gravado no config.json.
+    hooks.quit = [&window, quitDone] {
+        if (quitDone) SetEvent(quitDone);
+        window.RunOnWindow([&window] { window.Close(); });
+    };
+    // "Enviar diagnostico": a copia na thread de comandos (le o disco), o Explorer na da janela.
+    hooks.sendDiagnostics = [&window, &diag, logPath] {
+        diag.Write("enviar diagnostico: copiando o diagnostico.log");
+        SYSTEMTIME now = {};
+        GetLocalTime(&now);
+        const std::optional<std::wstring> copy = CopyDiagnostics(logPath, TempFolder(), now);
+        if (!copy) {
+            diag.Write("enviar diagnostico: a copia nao foi gravada; abrindo a pasta do diagnostico.log");
+            window.RunOnWindow([logPath] { ShowInExplorer(logPath); });
+            return;
+        }
+        diag.Write("enviar diagnostico: " + WideToUtf8(*copy));
+        const std::wstring path = *copy;
+        window.RunOnWindow([path] { ShowInExplorer(path); });
+    };
+    hooks.setStartWithWindows = [&diag, exePath](bool on) {
+        const bool ok = SetAutostart(on, exePath);
+        diag.Write(std::string("iniciar com o Windows: ") + (on ? "ligado" : "desligado") + (ok ? "" : " (o registro recusou)"));
+    };
+    hooks.updateAnswer = [&updater](bool now) {
+        if (updater) updater->Answer(now);
+    };
 
     DesktopApp app(config, hooks, engine, engine, files, cipher, clock, scheduler);
     engine.SetListener(&app);
     engine.Start();
     app.Start();
+    if (arguments.link) app.DialLink(*arguments.link);
+
+    AppUpdater::Hooks updateHooks;
+    updateHooks.offer = [&app](const std::string& version, const std::string& notes) { app.OfferUpdate(version, notes); };
+    updateHooks.busy = [&engine] { return engine.CallCount() > 0; };
+    updateHooks.notify = [&app](const std::string& text) { app.Notify(text); };
+    updateHooks.log = log;
+    updateHooks.quit = [&app] { app.HandleCommand(kQuitCommand); };
+    updater.reset(new AppUpdater(STARSONIC_VERSION, STARSONIC_UPDATE_CHANNEL_TEST != 0, updateHooks));
+
+    // As proximas aberturas (um link, o atalho de novo, o --sair) chegam aqui, na thread da janela, dentro do
+    // WM_COPYDATA: so poe o trabalho na fila e volta.
+    single.Listen(instance, [&app, &window, &diag](const std::vector<std::wstring>& raw) {
+        const Arguments next = ParseArguments(raw);
+        if (next.quit) {
+            diag.Write("pedido para sair (--sair)");
+            window.RunOnWindow([&window] { window.RequestQuit(); });
+            return;
+        }
+        if (next.link) app.DialLink(*next.link);
+        if (next.tray && !next.link) return;   // o Iniciar com o Windows com o app ja aberto: fica como esta
+        window.RunOnWindow([&window] { window.BringToFront(); });
+    });
 
     bool outputsLogged = false;
     MainWindow::Callbacks callbacks;
     callbacks.command = [&app, &window, &outputsLogged](const std::string& json) {
-        if (!outputsLogged && IsReady(json)) {
+        if (!outputsLogged && IsCommand(json, "ready")) {
             outputsLogged = true;
             window.LogAudioOutputs();   // os rotulos do WebView2, para comparar com os nomes do motor
         }
         app.HandleCommand(json);
     };
+    callbacks.noticeCommand = [&app](const std::string& json) { app.HandleCommand(json); };
     callbacks.moved = [&app](int x, int y) { app.SaveWindowPosition(x, y); };
     callbacks.quitRequested = [&app] { app.HandleCommand(kQuitCommand); };
+    // O logoff ou o desligamento: o mesmo Sair, esperando pouco (o Windows encerra o processo depois de o
+    // WM_ENDSESSION voltar). O Shutdown roda o que o Sair pos na fila (os Recentes das ligacoes encerradas).
+    callbacks.endSession = [&app, &updater, quitDone, log] {
+        if (updater) updater->Close();
+        app.HandleCommand(kQuitCommand);
+        const bool done = quitDone && WaitForSingleObject(quitDone, kEndSessionWaitMs) == WAIT_OBJECT_0;
+        app.Shutdown();
+        log(done ? "sessao do Windows encerrando: o Sair terminou" : "sessao do Windows encerrando: o Sair nao terminou a tempo");
+    };
     callbacks.log = log;
     callbacks.webViewFailed = [&app, &window](HRESULT) {
         window.RunOnWindow([&app] {
@@ -246,7 +324,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     options.position = position;
     int exitCode = 0;
     if (window.Create(instance, options, callbacks)) {
-        window.Show(SW_SHOWNORMAL);   // abrir na bandeja (o Iniciar com o Windows) chega na Task 12
+        if (arguments.tray) {
+            log("aberto na bandeja (--bandeja)");
+        } else {
+            window.Show(SW_SHOWNORMAL);
+        }
+        updater->Start(kFirstUpdateCheckMs, kUpdateIntervalMs);
         MSG message;
         while (GetMessageW(&message, nullptr, 0, 0) > 0) {
             TranslateMessage(&message);
@@ -259,10 +342,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     // Fechar (DesktopApp.h): a fila roda o que tinha (os Recentes das ligacoes que o Sair encerrou), o agendador
     // para, e o motor sai antes de o DesktopApp ser destruido.
     log("fechando");
+    updater->Close();
     app.Shutdown();
     scheduler.Stop();
     engine.Stop();
     log("fechado");
+    updater.reset();
+    if (quitDone) CloseHandle(quitDone);
     if (SUCCEEDED(com)) CoUninitialize();
     return exitCode;
 }

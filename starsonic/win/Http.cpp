@@ -1,13 +1,11 @@
-// Win32 puro (sem MFC): compilado sem o cabecalho pre-compilado do MicroSIP (starsonic.targets),
-// porque o stdafx.h dele traz o wininet.h, que nao convive com o winhttp.h.
+// Win32 puro (sem MFC): compilado sem o cabecalho pre-compilado do app antigo (starsonic.targets),
+// porque o stdafx.h dele traz o wininet.h, que nao convive com o winhttp.h. Tambem no app novo.
 #include "Http.h"
 
 #include <winhttp.h>
 
 #include <new>
 #include <vector>
-
-#include "generated/build_info.h"
 
 #pragma comment(lib, "winhttp.lib")
 
@@ -38,17 +36,8 @@ HttpResponse Failure(DWORD error, DWORD status = 0) {
     return response;
 }
 
-std::wstring UserAgent() {
-    std::wstring agent = L"Starsonic Phone/";
-    for (const char* p = STARSONIC_VERSION; *p; ++p) {
-        agent += static_cast<wchar_t>(static_cast<unsigned char>(*p));
-    }
-    return agent;
-}
-
 // Proxy automatico (Windows 8.1 em diante); nos sistemas mais antigos, o proxy padrao.
-HINTERNET OpenSession() {
-    const std::wstring agent = UserAgent();
+HINTERNET OpenSession(const std::wstring& agent) {
     HINTERNET session = WinHttpOpen(agent.c_str(), WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
                                     WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) {
@@ -58,7 +47,7 @@ HINTERNET OpenSession() {
     return session;
 }
 
-HttpResponse Get(const std::wstring& url, size_t maxBytes) {
+HttpResponse Get(const std::wstring& url, size_t maxBytes, const std::wstring& userAgent) {
     if (url.compare(0, 8, L"https://") != 0) {
         return Failure(ERROR_INVALID_PARAMETER);
     }
@@ -77,7 +66,7 @@ HttpResponse Get(const std::wstring& url, size_t maxBytes) {
     if (parts.lpszExtraInfo) path.append(parts.lpszExtraInfo, parts.dwExtraInfoLength);
     if (path.empty()) path = L"/";
 
-    Handle session(OpenSession());
+    Handle session(OpenSession(userAgent));
     if (!session) return Failure(GetLastError());
     WinHttpSetTimeouts(session.get(), kConnectTimeoutMs, kConnectTimeoutMs, kReadTimeoutMs, kReadTimeoutMs);
 
@@ -120,9 +109,9 @@ HttpResponse Get(const std::wstring& url, size_t maxBytes) {
 
 }  // namespace
 
-HttpResponse HttpsGet(const std::wstring& url, size_t maxBytes) {
+HttpResponse HttpsGet(const std::wstring& url, size_t maxBytes, const std::wstring& userAgent) {
     try {
-        return Get(url, maxBytes);
+        return Get(url, maxBytes, userAgent);
     } catch (const std::bad_alloc&) {
         // Processo de 32 bits: um corpo grande pode nao caber na memoria.
         return Failure(ERROR_NOT_ENOUGH_MEMORY);

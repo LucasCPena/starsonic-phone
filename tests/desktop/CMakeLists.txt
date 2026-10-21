@@ -44,7 +44,8 @@ endif()
 
 if(WIN32)
   # O disco, o cifrador e o diagnostico de verdade do executavel (windows/app/src): a gravacao atomica, o DPAPI, o
-  # diagnostico.log, os links tel:/sip:/callto: e a instancia unica.
+  # diagnostico.log, os links tel:/sip:/callto:, a instancia unica, o estado da bandeja e do aviso, as permissoes do
+  # WebView2, o Iniciar com o Windows e o Enviar diagnostico.
   set(WINDOWS_APP_SRC ${STARSONIC_DIR}/../windows/app/src)
   target_sources(desktop_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../win/test_dpapi_cipher.cpp
@@ -52,14 +53,21 @@ if(WIN32)
     ${CMAKE_CURRENT_SOURCE_DIR}/../win/test_diag_log.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../win/test_links.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../win/test_single_instance.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../win/test_shell_state.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../win/test_autostart.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../win/test_diagnostics.cpp
     ${WINDOWS_APP_SRC}/DpapiCipher.cpp
     ${WINDOWS_APP_SRC}/WinFiles.cpp
     ${WINDOWS_APP_SRC}/DiagLog.cpp
     ${WINDOWS_APP_SRC}/Links.cpp
-    ${WINDOWS_APP_SRC}/SingleInstance.cpp)
+    ${WINDOWS_APP_SRC}/SingleInstance.cpp
+    ${WINDOWS_APP_SRC}/ShellState.cpp
+    ${WINDOWS_APP_SRC}/WebPermissions.cpp
+    ${WINDOWS_APP_SRC}/Autostart.cpp
+    ${WINDOWS_APP_SRC}/Diagnostics.cpp)
   target_include_directories(desktop_tests PRIVATE ${WINDOWS_APP_SRC})
   target_compile_definitions(desktop_tests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
-  target_link_libraries(desktop_tests PRIVATE crypt32 user32)
+  target_link_libraries(desktop_tests PRIVATE crypt32 user32 advapi32 shell32)
 endif()
 
 enable_testing()

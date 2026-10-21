@@ -45,6 +45,8 @@ const Name kNames[] = {
     {CommandKind::CloseToTray, "closeToTray"},
     {CommandKind::Quit, "quit"},
     {CommandKind::ViewRecents, "viewRecents"},
+    {CommandKind::UpdateNow, "updateNow"},
+    {CommandKind::UpdateLater, "updateLater"},
 };
 
 // Le os campos de um comando, anotando o primeiro problema (um campo obrigatorio que falta ou um tipo errado).
@@ -327,6 +329,8 @@ std::optional<Command> ParseCommand(const std::string& text, std::string* error)
         case CommandKind::CloseToTray:
         case CommandKind::Quit:
         case CommandKind::ViewRecents:
+        case CommandKind::UpdateNow:
+        case CommandKind::UpdateLater:
             break;
     }
     if (!f.ok()) return Refuse(error, cmd + ": " + f.error());
@@ -381,6 +385,10 @@ std::string StateMessage(const BridgeState& state) {
 
 std::string ToastMessage(const std::string& text) {
     return Dump(Out{{"v", kBridgeVersion}, {"type", "toast"}, {"texto", text}});
+}
+
+std::string UpdateMessage(const std::string& version, const std::string& notes) {
+    return Dump(Out{{"v", kBridgeVersion}, {"type", "update"}, {"versao", version}, {"notas", notes}});
 }
 
 std::string RingMessage(RingKind kind) {

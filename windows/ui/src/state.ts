@@ -143,7 +143,8 @@ export interface AppState {
 export type IncomingMessage =
   | { v: number; type: 'state'; state: AppState }
   | { v: number; type: 'toast'; texto: string }
-  | { v: number; type: 'ring'; tipo: RingKind };
+  | { v: number; type: 'ring'; tipo: RingKind }
+  | { v: number; type: 'update'; versao: string; notas: string };
 
 /** Interface → C++ (sem o `v`, que a ponte acrescenta). */
 export type Command =
@@ -184,7 +185,9 @@ export type Command =
   | { cmd: 'setSetting'; chave: 'iniciarComWindows'; valor: boolean }
   | { cmd: 'saveContact'; id?: string; nome: string; numero: string; observacao?: string }
   | { cmd: 'removeContact'; id: string }
-  | { cmd: 'viewRecents' };
+  | { cmd: 'viewRecents' }
+  | { cmd: 'updateNow' }
+  | { cmd: 'updateLater' };
 
 /** Os únicos endereços que o openExternal aceita. */
 export const EXTERNAL_URLS = {
