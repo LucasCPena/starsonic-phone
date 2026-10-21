@@ -10,6 +10,8 @@ add_executable(legacy_crypto_tests
   ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../test_legacy_crypto.cpp
   ${MICROSIP_DIR}/lib/Crypto.cpp)
+# O LegacyDecrypt devolve std::optional (C++17, como o app novo); os outros testes daqui ficam no C++14.
+set_target_properties(legacy_crypto_tests PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 target_include_directories(legacy_crypto_tests PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}             # o stdafx.h minimo (antes de tudo: o Crypto.cpp inclui "stdafx.h")
   ${MICROSIP_DIR}/lib
