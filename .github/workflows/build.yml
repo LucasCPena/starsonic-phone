@@ -167,7 +167,8 @@ jobs:
           $vcpkgRoot = Join-Path (Resolve-Path work).Path 'vcpkg\installed\x86-windows-static'
           Invoke-Native cmake @('-S', 'tests/desktop', '-B', 'build-desktop-win', '-A', 'Win32', "-DCMAKE_PREFIX_PATH=$vcpkgRoot")
           Invoke-Native cmake @('--build', 'build-desktop-win', '--config', 'Release')
-          Invoke-Native ctest @('--test-dir', 'build-desktop-win', '-C', 'Release', '--output-on-failure')
+          # -V: o resumo do doctest (quantos casos rodaram) fica no log.
+          Invoke-Native ctest @('--test-dir', 'build-desktop-win', '-C', 'Release', '-V')
 
       - name: Versão
         env:
