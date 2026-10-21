@@ -7,12 +7,14 @@ interface Props {
   send: Send;
   /** "Fechar para a bandeja" (o padrão) ou "Fechar" (a tela Entrar, como no canvas). */
   closeLabel?: string;
+  /** O texto da barra ("Starsonic Phone · Recepção · 2001" na ligação); sem ele, "Starsonic Phone". */
+  title?: string;
 }
 
-export function TitleBar({ send, closeLabel = 'Fechar para a bandeja' }: Props) {
+export function TitleBar({ send, closeLabel = 'Fechar para a bandeja', title = 'Starsonic Phone' }: Props) {
   return (
     <div class="titlebar">
-      <span>Starsonic Phone</span>
+      <span class="titlebar-text">{title}</span>
       <div class="caption">
         <button type="button" aria-label="Minimizar" title="Minimizar" onClick={() => send({ cmd: 'minimize' })}>
           <IconMinimize />

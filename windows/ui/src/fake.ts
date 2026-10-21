@@ -4,7 +4,7 @@
 // As regras de verdade (validações, ligações) são do C++: aqui só o bastante para as telas reagirem.
 import { createScenario, type FakeView } from './fake-scenarios';
 import type { WebviewLike } from './bridge';
-import type { AppState, Contact, IncomingMessage } from './state';
+import type { AppState, CallCard, CallState, Contact, IncomingMessage, RingKind } from './state';
 
 type Listener = (event: { data: unknown }) => void;
 
@@ -59,7 +59,108 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
     state: () => structuredClone(state),
   };
 
+  const ring = (tipo: RingKind) => deliver({ v: 1, type: 'ring', tipo } satisfies IncomingMessage);
+  const setCall = (ligacao: CallState | null) => change({ ligacao });
+  let proximoId = 40;
+  /** A segunda ligação feita (Nova ligação ou Consultar): a de agora vai para a espera e a nova chama. */
+  const ligarDeNovo = (l: CallState, numero: string, consulta: boolean) => {
+    const contato = state.contatos.find((c) => c.numero === numero);
+    const nova: CallCard = { id: ++proximoId, number: numero, name: contato?.nome ?? '', incoming: false, phase: 'dialing', activeSinceMs: 0, held: false };
+    setCall({ ...l, top: nova, second: { ...l.top, held: true }, secondKind: 'held', consulting: consulta, colleagueActive: consulta });
+    // O outro lado atende logo depois.
+    setTimeout(() => {
+      const agora = state.ligacao;
+      if (agora?.top.id === nova.id && agora.top.phase === 'dialing') {
+        setCall({ ...agora, top: { ...agora.top, phase: 'active', activeSinceMs: Date.now() } });
+      }
+    }, 1500);
+  };
+  /** As ligações do C++ de mentira: só o bastante para a tela da ligação seguir os botões. */
+  const handleCall = (command: Record<string, unknown>): boolean => {
+    const l = state.ligacao;
+    switch (command.cmd) {
+      case 'answer':
+        if (l?.top.phase === 'ringing') {
+          setCall({ ...l, top: { ...l.top, phase: 'active', activeSinceMs: Date.now() } });
+          ring('parar');
+        } else if (l?.second && l.secondKind === 'ringing') {
+          setCall({ ...l, top: { ...l.second, phase: 'active', activeSinceMs: Date.now() }, second: { ...l.top, held: true }, secondKind: 'held' });
+          ring('parar');
+        }
+        return true;
+      case 'reject':
+        if (l?.top.phase === 'ringing') {
+          setCall(null);
+          ring('parar');
+        } else if (l?.second && l.secondKind === 'ringing') {
+          setCall({ ...l, second: null, secondKind: 'none' });
+          ring('parar');
+        }
+        return true;
+      case 'hangup': {
+        if (!l) return true;
+        const id = typeof command.id === 'number' ? command.id : l.top.id;
+        const semConsulta = { consulting: false, colleagueActive: false };
+        if (l.conference) setCall(null);
+        else if (l.top.id === id && l.second && l.secondKind === 'held') {
+          // A em espera volta sozinha.
+          setCall({ ...l, ...semConsulta, top: { ...l.second, held: false }, second: null, secondKind: 'none' });
+        } else if (l.top.id === id) setCall(null);
+        else if (l.second?.id === id) setCall({ ...l, ...semConsulta, second: null, secondKind: 'none' });
+        return true;
+      }
+      case 'hold':
+        if (l && !l.conference) setCall({ ...l, top: { ...l.top, held: typeof command.on === 'boolean' ? command.on : !l.top.held } });
+        return true;
+      case 'mute':
+        if (l) setCall({ ...l, muted: typeof command.on === 'boolean' ? command.on : !l.muted });
+        return true;
+      case 'swap':
+        if (l?.second && l.secondKind === 'held') {
+          setCall({
+            ...l,
+            top: { ...l.second, held: false },
+            second: { ...l.top, held: true },
+            colleagueActive: l.consulting ? !l.colleagueActive : false,
+          });
+        }
+        return true;
+      case 'join':
+        if (l?.second && l.secondKind === 'held' && !l.consulting) {
+          setCall({ ...l, top: { ...l.top, held: false }, second: { ...l.second, held: false }, secondKind: 'active', conference: true, conferenceSinceMs: Date.now() });
+        }
+        return true;
+      case 'split':
+        if (l?.conference && l.second) {
+          setCall({ ...l, second: { ...l.second, held: true }, secondKind: 'held', conference: false, conferenceSinceMs: 0 });
+        }
+        return true;
+      case 'consult':
+        if (l && !l.second) ligarDeNovo(l, String(command.numero ?? ''), true);
+        return true;
+      case 'cancelConsult':
+        if (l?.consulting && l.second) {
+          const cliente = l.colleagueActive ? l.second : l.top;
+          setCall({ ...l, top: { ...cliente, held: false }, second: null, secondKind: 'none', consulting: false, colleagueActive: false });
+        }
+        return true;
+      case 'completeTransfer':
+      case 'transfer':
+        if (l) setCall(null);
+        return true;
+      case 'dial':
+        // Com uma ligação, a Nova ligação; sem nenhuma, nada muda (as specs do Teclado só olham o comando).
+        if (l && !l.second) ligarDeNovo(l, String(command.numero ?? ''), false);
+        return true;
+      case 'dtmf':
+        return true;
+      default:
+        return false;
+    }
+  };
+
   const handle = (command: Record<string, unknown>) => {
+    if (handleCall(command)) return;
     switch (command.cmd) {
       case 'ready':
         publish();

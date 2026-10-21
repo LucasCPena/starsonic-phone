@@ -1,6 +1,7 @@
 // A janela principal: recebe o estado do C++ pela ponte e desenha a tela que ele pede (Entrar ou a principal, com
 // as abas Teclado, Recentes e Contatos, as Configurações, o Sobre e os formulários). Não decide nenhuma regra.
-// A tela da ligação, o aviso e o toque entram na Task 10 (o `ligacao` e o `ring`).
+// Com uma ligação (`ligacao`), a tela da ligação toma a janela; quando a última acaba, volta o Teclado. O `ring`
+// toca aqui (o aviso do canto, aviso.tsx, recebe as mesmas mensagens e não toca).
 import { render } from 'preact';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { createBridge } from './bridge';
@@ -13,13 +14,17 @@ import { Configuracoes } from './screens/Configuracoes';
 import { ContatoForm } from './screens/ContatoForm';
 import { Contatos } from './screens/Contatos';
 import { Entrar } from './screens/Entrar';
+import { Ligacao } from './screens/Ligacao';
 import { Recentes } from './screens/Recentes';
 import { Sobre } from './screens/Sobre';
 import { Teclado } from './screens/Teclado';
+import { createRinger } from './ring';
 import type { AppState } from './state';
+import { accountTitle } from './format';
 import type { Send, Tab, View } from './types';
 
 const bridge = createBridge();
+const ringer = createRinger();
 const TOAST_MS = 2000;
 const TECLA_ABA: Record<string, Tab> = { '1': 'teclado', '2': 'recentes', '3': 'contatos' };
 
@@ -36,15 +41,19 @@ function App() {
   const [reinstalar, setReinstalar] = useState(false);
   const [numero, setNumero] = useState('');
   const tecladoVez = useRef(0);
+  // O dispositivo de Toque de agora (o `ring` vem logo depois do estado).
+  const toque = useRef('');
 
   const send = useCallback<Send>((command) => bridge.send(command), []);
 
   useEffect(() => {
     bridge.onVersionMismatch(() => setReinstalar(true));
     const parar = bridge.subscribe((msg) => {
-      if (msg.type === 'state') setState(msg.state);
-      else if (msg.type === 'toast') setToast((t) => ({ texto: msg.texto, vez: (t?.vez ?? 0) + 1 }));
-      // msg.type === 'ring': o toque (Task 10).
+      if (msg.type === 'state') {
+        toque.current = msg.state.audio.toque;
+        setState(msg.state);
+      } else if (msg.type === 'toast') setToast((t) => ({ texto: msg.texto, vez: (t?.vez ?? 0) + 1 }));
+      else if (msg.type === 'ring') ringer.play(msg.tipo, toque.current);
     });
     bridge.send({ cmd: 'ready' });
     return parar;
@@ -61,6 +70,19 @@ function App() {
     setNumero(state.teclado);
     setView({ kind: 'tab', tab: 'teclado' });
   }, [state?.tecladoVez]);
+
+  // O Toque trocado nas Configurações com o toque tocando passa para o dispositivo novo.
+  useEffect(() => {
+    if (state) ringer.setDevice(state.audio.toque);
+  }, [state?.audio.toque]);
+
+  // A última ligação acabou: volta ao Teclado (spec da W1, 7.2).
+  const emLigacao = state?.ligacao != null;
+  const estavaEmLigacao = useRef(false);
+  useEffect(() => {
+    if (estavaEmLigacao.current && !emLigacao) setView({ kind: 'tab', tab: 'teclado' });
+    estavaEmLigacao.current = emLigacao;
+  }, [emLigacao]);
 
   useEffect(() => {
     if (!toast) return;
@@ -118,6 +140,16 @@ function App() {
       <div class="win">
         <TitleBar send={send} closeLabel="Fechar" />
         <Entrar state={state} send={send} mode="entrar" />
+        {toastEl}
+      </div>
+    );
+  }
+
+  if (state.ligacao) {
+    return (
+      <div class="win call">
+        <TitleBar send={send} title={state.conta ? `Starsonic Phone · ${accountTitle(state.conta)}` : undefined} />
+        <Ligacao state={state} ligacao={state.ligacao} send={send} />
         {toastEl}
       </div>
     );

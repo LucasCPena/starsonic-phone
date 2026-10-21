@@ -1,6 +1,6 @@
 // Os cenários da ponte falsa (?fake=<nome>): o estado que o "C++ de mentira" manda no `ready`.
 // Os dados imitam as telas do canvas. As datas são relativas ao momento em que a página abre (Hoje, Ontem).
-import type { AppState, RingKind } from './state';
+import type { AppState, CallCard, CallState, RingKind } from './state';
 
 /** A tela em que a interface abre (só na ponte falsa; o app real sempre abre no Teclado). */
 export type FakeView = 'teclado' | 'recentes' | 'contatos' | 'configuracoes' | 'sobre';
@@ -13,6 +13,7 @@ export interface Scenario {
 }
 
 const MINUTO = 60_000;
+const SEGUNDO = 1_000;
 
 /** ms desde 1970 de `diasAtras` dias atrás, às `hora`:`minuto` (hora local). */
 function quando(diasAtras: number, hora: number, minuto: number): number {
@@ -86,6 +87,103 @@ function semConta(entrar: AppState['entrar']): AppState {
   return { ...principal(), tela: 'entrar', entrar, conta: null, contas: [], recentes: [], perdidas: 0, contatos: [] };
 }
 
+/** Um cartão da ligação: em andamento e fora da espera, a não ser o que vier em `extra`. */
+function cartao(id: number, number: string, name: string, extra: Partial<CallCard> = {}): CallCard {
+  return { id, number, name, incoming: false, phase: 'active', activeSinceMs: 0, held: false, ...extra };
+}
+
+/** O `activeSinceMs` de uma ligação atendida há `haMs` ms. */
+function desde(haMs: number): number {
+  return Date.now() - haMs;
+}
+
+function ligacao(top: CallCard, extra: Partial<CallState> = {}): CallState {
+  return {
+    top,
+    second: null,
+    secondKind: 'none',
+    muted: false,
+    conference: false,
+    conferenceSinceMs: 0,
+    consulting: false,
+    colleagueActive: false,
+    ...extra,
+  };
+}
+
+const ANA = { id: 11, number: '2003', name: 'Ana Souza' } as const;
+const CARLOS = { id: 12, number: '2007', name: 'Carlos Lima' } as const;
+
+/** Os cenários da tela da ligação (o canvas: Chamada, Consulta, Conferência e Recebida). */
+function cenarioDeLigacao(nome: string): Scenario | undefined {
+  const comLigacao = (l: CallState): AppState => ({ ...principal(), ligacao: l });
+  switch (nome) {
+    case 'ligacao':
+      // Uma ligação com a Ana, há 3 min 12 s.
+      return { state: comLigacao(ligacao(cartao(ANA.id, ANA.number, ANA.name, { activeSinceMs: desde(3 * MINUTO + 12 * SEGUNDO) }))) };
+    case 'ligacao-segunda':
+      // O canvas "Chamada": com a Ana (no mudo) e o Carlos tocando na faixa, com o bipe de espera.
+      return {
+        state: comLigacao(
+          ligacao(cartao(ANA.id, ANA.number, ANA.name, { activeSinceMs: desde(3 * MINUTO + 12 * SEGUNDO) }), {
+            second: cartao(CARLOS.id, CARLOS.number, CARLOS.name, { incoming: true, phase: 'ringing' }),
+            secondKind: 'ringing',
+            muted: true,
+          }),
+        ),
+        ring: 'espera',
+      };
+    case 'duas-ligacoes':
+      // Duas em andamento: o Carlos em cima, a Ana em espera.
+      return {
+        state: comLigacao(
+          ligacao(cartao(CARLOS.id, CARLOS.number, CARLOS.name, { incoming: true, activeSinceMs: desde(41 * SEGUNDO) }), {
+            second: cartao(ANA.id, ANA.number, ANA.name, { activeSinceMs: desde(8 * MINUTO + 40 * SEGUNDO), held: true }),
+            secondKind: 'held',
+          }),
+        ),
+      };
+    case 'consulta':
+      // O canvas "Consulta": o colega (Carlos) em cima, a cliente (Ana) em espera para a transferência.
+      return {
+        state: comLigacao(
+          ligacao(cartao(CARLOS.id + 20, CARLOS.number, CARLOS.name, { activeSinceMs: desde(41 * SEGUNDO) }), {
+            second: cartao(ANA.id, ANA.number, ANA.name, { incoming: true, activeSinceMs: desde(8 * MINUTO + 40 * SEGUNDO), held: true }),
+            secondKind: 'held',
+            consulting: true,
+            colleagueActive: true,
+          }),
+        ),
+      };
+    case 'conferencia':
+      // O canvas "Conferência": as duas falando (a segunda vem "active"), há 6 min 27 s.
+      return {
+        state: comLigacao(
+          ligacao(cartao(ANA.id, ANA.number, ANA.name, { activeSinceMs: desde(9 * MINUTO) }), {
+            second: cartao(CARLOS.id, CARLOS.number, CARLOS.name, { activeSinceMs: desde(7 * MINUTO) }),
+            secondKind: 'active',
+            conference: true,
+            conferenceSinceMs: desde(6 * MINUTO + 27 * SEGUNDO),
+          }),
+        ),
+      };
+    case 'aviso':
+      // O aviso do canto (aviso.html): a Ana ligando, com o toque completo.
+      return {
+        state: comLigacao(ligacao(cartao(21, ANA.number, ANA.name, { incoming: true, phase: 'ringing' }))),
+        ring: 'completo',
+      };
+    case 'tocando-antes-de-carregar':
+      // A ligação já tocava quando a página carregou: o estado e o toque só chegam como resposta ao `ready`.
+      return {
+        state: comLigacao(ligacao(cartao(22, CARLOS.number, CARLOS.name, { incoming: true, phase: 'ringing' }))),
+        ring: 'completo',
+      };
+    default:
+      return undefined;
+  }
+}
+
 /** Monta o cenário na hora (as datas valem a partir de agora). `undefined` para um nome desconhecido. */
 export function createScenario(nome: string): Scenario | undefined {
   switch (nome) {
@@ -136,7 +234,7 @@ export function createScenario(nome: string): Scenario | undefined {
     case 'nao-perturbe':
       return { state: { ...principal(), naoPerturbe: true } };
     default:
-      return undefined;
+      return cenarioDeLigacao(nome);
   }
 }
 
@@ -150,4 +248,11 @@ export const SCENARIO_NAMES = [
   'configuracoes',
   'sobre',
   'nao-perturbe',
+  'ligacao',
+  'ligacao-segunda',
+  'duas-ligacoes',
+  'consulta',
+  'conferencia',
+  'aviso',
+  'tocando-antes-de-carregar',
 ] as const;

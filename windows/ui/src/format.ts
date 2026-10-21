@@ -94,3 +94,22 @@ export function autoAnswerLine(segundos: number): string {
   if (segundos <= 0) return 'Assim que tocar';
   return segundos === 1 ? 'Depois de 1 segundo tocando' : `Depois de ${segundos} segundos tocando`;
 }
+
+/** O tempo da ligação: "03:12"; com uma hora ou mais, "1:03:12". */
+export function callTimer(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const mm = String(Math.floor((total % 3600) / 60)).padStart(2, '0');
+  const ss = String(total % 60).padStart(2, '0');
+  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
+/** O nome (já resolvido pelo C++) ou, sem ele, o número. */
+export function nameOrNumber(card: { name: string; number: string }): string {
+  return card.name || card.number;
+}
+
+/** A primeira palavra do nome (ou o número): "Você, Ana e Carlos". */
+export function firstName(card: { name: string; number: string }): string {
+  return card.name.trim().split(/\s+/)[0] || card.number;
+}

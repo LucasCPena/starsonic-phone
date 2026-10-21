@@ -185,3 +185,64 @@ export const IconTrash = svg(
     <path d="M9 7V4h6v3" />
   </>,
 );
+
+// A tela da ligação (os do canvas: Chamada, Consulta e Conferência; Juntar desenhado no mesmo traço).
+export const IconMic = svg(
+  <>
+    <rect x="9" y="3" width="6" height="11" rx="3" />
+    <path d="M5 11a7 7 0 0 0 14 0" />
+    <path d="M12 18v3" />
+  </>,
+);
+export const IconMicOff = svg(
+  <>
+    <rect x="9" y="3" width="6" height="11" rx="3" />
+    <path d="M5 11a7 7 0 0 0 14 0" />
+    <path d="M12 18v3" />
+    <path d="M4 4l16 16" />
+  </>,
+);
+/** Áudio (o alto-falante com as duas ondas). */
+export const IconSpeaker = svg(
+  <>
+    <path d="M11 5L6 9H3v6h3l5 4V5z" />
+    <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+    <path d="M18.5 5.5a9 9 0 0 1 0 13" />
+  </>,
+);
+/** Falando (o cartão da conferência). */
+export const IconSpeaking = svg(
+  <>
+    <path d="M11 5L6 9H3v6h3l5 4V5z" />
+    <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+  </>,
+);
+export const IconPause = svg(<path d="M9 6v12M15 6v12" />);
+/** Alternar. */
+export const IconSwap = svg(
+  <>
+    <path d="M7 4L3 8l4 4" />
+    <path d="M3 8h14" />
+    <path d="M17 20l4-4-4-4" />
+    <path d="M21 16H7" />
+  </>,
+);
+/** Separar. */
+export const IconSplit = svg(
+  <>
+    <path d="M12 20v-8" />
+    <path d="M12 12L6 5" />
+    <path d="M12 12l6-7" />
+    <path d="M6 9V5h4" />
+    <path d="M18 9V5h-4" />
+  </>,
+);
+/** Juntar (o Separar ao contrário: as duas linhas se encontram). */
+export const IconMerge = svg(
+  <>
+    <path d="M12 4v8" />
+    <path d="M12 12l-6 7" />
+    <path d="M12 12l6 7" />
+    <path d="M8 7l4-4 4 4" />
+  </>,
+);

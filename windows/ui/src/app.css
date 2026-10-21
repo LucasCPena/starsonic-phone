@@ -298,3 +298,120 @@ button.link { border: 0; background: transparent; padding: 0; font-family: inher
 .popover-row { right: 46px; min-width: 170px; }
 .popover-baixo { top: calc(100% - 8px); }
 .popover-cima { bottom: calc(100% - 8px); }
+
+/* ---------------------------------------------------------------------------------------------------------
+   Tela da ligação e aviso de ligação recebida: sempre a seção escura da marca, nos dois temas (os tokens do
+   escuro valem dentro deles). As medidas são as do canvas (.call, .ctrl, .hang, .vcard, .tag). */
+.call, .aviso-doc {
+  color-scheme: dark;
+  --surface: var(--navy-900); --surface-alt: var(--blue); --card: rgba(255, 255, 255, 0.045);
+  --border: rgba(255, 255, 255, 0.1); --text-strong: var(--white); --text: var(--white); --text-muted: #b9c4e6;
+  --text-accent: var(--cyan); --icon: var(--cyan); --focus: var(--cyan);
+  --key: rgba(255, 255, 255, 0.07); --key-border: rgba(255, 255, 255, 0.14); --field: rgba(255, 255, 255, 0.06);
+  --outline: rgba(255, 255, 255, 0.28); --outline-text: var(--white); --accent-text: var(--cyan);
+  --pill-on-bg: var(--cyan); --pill-on-text: var(--on-cyan); --popover: var(--navy-800);
+  --field-invalid: rgba(214, 69, 69, 0.12); --shadow-panel: 0 34px 80px -30px rgba(0, 0, 0, 0.7);
+}
+.win.call { background: var(--gradient-hero); color: #ffffff; }
+.call::before, .aviso::before { content: ""; position: absolute; width: 520px; height: 520px; left: -300px; bottom: -280px; border-radius: 50%;
+  background: radial-gradient(circle, rgba(0, 194, 203, 0.22), rgba(0, 194, 203, 0) 62%); pointer-events: none; }
+.titlebar-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.call .titlebar { position: relative; z-index: 2; }
+.call .toast { bottom: auto; top: 44px; }
+
+.call-body { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; padding: 20px 22px 22px; gap: 14px; position: relative; z-index: 1; }
+.call .eyebrow { color: var(--cyan); }
+.who { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; max-width: 100%; margin-top: 4px; }
+.who-name { font-size: 26px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.12; max-width: 100%; overflow-wrap: anywhere; }
+.who-sub { font-size: 14px; color: #b9c4e6; }
+.timer { font-size: 17px; font-weight: 700; color: var(--cyan); letter-spacing: 0.02em; font-variant-numeric: tabular-nums; }
+.who-compact { gap: 4px; }
+.who-compact .who-name { font-size: 22px; }
+.who-conf .who-name { margin-top: 6px; }
+.dtmf { font-size: 20px; font-weight: 700; letter-spacing: 0.14em; color: #ffffff; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.avatar-lg { width: 92px; height: 92px; font-size: 32px; margin: 8px 0 4px; }
+
+.call-middle { flex: 1 1 auto; min-height: 0; width: 100%; display: flex; flex-direction: column; justify-content: flex-end; }
+.call-middle:has(.call-keys, .call-panel) { justify-content: center; }
+.ctrls { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 10px; width: 100%; }
+.ctrls-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px 4px; }
+.ctrl { display: flex; flex-direction: column; align-items: center; gap: 7px; border: 0; background: transparent; color: #ffffff; font: 600 12px/1.2 var(--font-sans); padding: 0; width: 100%; border-radius: 12px; }
+.ctrl-c { width: 58px; height: 58px; border-radius: 999px; background: rgba(255, 255, 255, 0.07); border: 1px solid rgba(255, 255, 255, 0.14); display: grid; place-items: center; transition: background var(--ease), border-color var(--ease); }
+.ctrl:not(:disabled):hover .ctrl-c { background: rgba(255, 255, 255, 0.13); }
+.ctrl-on .ctrl-c, .ctrl-on:not(:disabled):hover .ctrl-c { background: var(--cyan); border-color: var(--cyan); color: var(--on-cyan); }
+.ctrl:disabled, .ctrl-off { opacity: 0.45; }
+.ctrl:focus-visible { outline: none; }
+.ctrl:focus-visible .ctrl-c { outline: 3px solid var(--focus); outline-offset: 2px; }
+.ctrl-wrap { position: relative; display: flex; justify-content: center; min-width: 0; }
+.popover-audio { bottom: calc(100% + 6px); right: 0; min-width: 240px; max-width: 300px; }
+.menu-group { margin: 6px 12px 2px; font-size: 11px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-muted); }
+.check-slot { width: 16px; height: 16px; flex: none; display: inline-grid; place-items: center; }
+
+.call-actions { display: flex; align-items: flex-end; justify-content: center; gap: 72px; width: 100%; margin-top: 8px; }
+.call-actions-keys { justify-content: space-between; gap: 0; }
+.call-side { width: 80px; display: flex; justify-content: center; }
+.round-action { display: flex; flex-direction: column; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; color: #ffffff; }
+.hang { width: 66px; height: 66px; border-radius: 999px; background: var(--danger); color: #ffffff; display: grid; place-items: center; border: 0; padding: 0; transition: background var(--ease); }
+.hang:hover { background: #c23b3b; }
+.hang .ic, .ic-hang { transform: rotate(135deg); }
+.hang.answer { background: var(--cyan); color: var(--on-cyan); box-shadow: var(--shadow-cyan); }
+.hang.answer:hover { background: var(--cyan-d); }
+.hang.answer .ic { transform: none; }
+
+.vcard { width: 100%; display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 18px; background: rgba(255, 255, 255, 0.045); border: 1px solid rgba(255, 255, 255, 0.1); flex: none; }
+.vcard-on { background: rgba(0, 194, 203, 0.09); border-color: rgba(0, 194, 203, 0.5); }
+.vcard .row-title { color: #ffffff; }
+.vcard .row-sub { color: #b9c4e6; }
+.tag { display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 999px; font-size: 10.5px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase;
+  background: rgba(0, 194, 203, 0.14); color: var(--cyan); border: 1px solid rgba(0, 194, 203, 0.35); white-space: nowrap; flex: none; }
+.tag-below { align-self: flex-start; margin-top: 4px; }
+.round-sm { width: 40px; height: 40px; border-radius: 999px; border: 0; display: grid; place-items: center; padding: 0; flex: none; transition: background var(--ease); }
+.round-sm .ic { width: 18px; height: 18px; }
+.round-xs { width: 32px; height: 32px; }
+.round-xs .ic { width: 15px; height: 15px; }
+.round-danger { background: var(--danger); color: #ffffff; }
+.round-danger:hover { background: #c23b3b; }
+.round-cyan { background: var(--cyan); color: var(--on-cyan); }
+.round-cyan:hover { background: var(--cyan-d); }
+.conf-list { list-style: none; margin: 0; padding: 0; width: 100%; display: flex; flex-direction: column; gap: 10px; }
+.conf-ic { color: var(--cyan); }
+
+.call-keys { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: minmax(40px, 54px); gap: 10px; width: 100%; }
+.call-keys .key { height: auto; color: #ffffff; }
+.call-panel { width: 100%; display: flex; flex-direction: column; gap: 10px; }
+.call-panel-title { margin: 0; font-size: 15px; font-weight: 700; color: #ffffff; }
+.call-number { height: 52px; width: 100%; border-radius: 14px; background: var(--field); border: 1px solid rgba(255, 255, 255, 0.14); color: #ffffff;
+  font: 800 24px/1 var(--font-sans); letter-spacing: -0.01em; padding: 0 14px; transition: border-color var(--ease), box-shadow var(--ease); }
+.call-number::placeholder { color: #b9c4e6; opacity: 1; font-weight: 600; font-size: 16px; letter-spacing: 0; }
+.call-number:focus { border-color: var(--cyan); box-shadow: var(--focus-halo); }
+.call-suggest .ic { color: #b9c4e6; }
+.call-panel-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 4px; }
+.call-panel-actions > :only-child { grid-column: 1 / -1; }
+.btn-outline-dark { background: transparent; color: #ffffff; border: 1.5px solid rgba(255, 255, 255, 0.28); }
+.btn-outline-dark:not(:disabled):hover { border-color: var(--cyan); }
+.btn-ghost-dark { background: transparent; color: #ffffff; height: 40px; }
+.btn-ghost-dark:hover { background: rgba(255, 255, 255, 0.08); }
+.call .btn:disabled { opacity: 0.45; box-shadow: none; }
+.btn-cyan:disabled:hover { background: var(--cyan-d); }
+.consult-actions { width: 100%; display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+.btn-complete { height: 54px; }
+.consult-note { margin: 0; font-size: 12.5px; line-height: 1.45; color: #b9c4e6; text-align: center; }
+
+/* O aviso do canto (aviso.html): 380×168, sem rolagem. Os cantos arredondados são do Windows 11 (DWM). */
+html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: var(--navy-950); }
+#aviso { width: 100%; height: 100%; }
+.aviso { width: 100%; height: 100%; box-sizing: border-box; display: flex; flex-direction: column; gap: 14px; padding: 18px 18px 16px; position: relative; overflow: hidden;
+  background: var(--gradient-hero); color: #ffffff; border: 1px solid rgba(255, 255, 255, 0.12); font-family: var(--font-sans); }
+.aviso *, .aviso *::before, .aviso *::after { box-sizing: border-box; }
+.aviso-quem { display: flex; align-items: center; gap: 12px; position: relative; z-index: 1; min-width: 0; }
+.aviso-avatar { width: 46px; height: 46px; font-size: 16px; }
+.aviso-texto { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+.aviso .eyebrow { display: block; font-size: 11px; color: var(--cyan); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.aviso .eyebrow::before { display: inline-block; vertical-align: middle; margin: -2px 10px 0 0; }
+.aviso-nome { font-size: 18px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.aviso-sub { font-size: 13px; color: #b9c4e6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.aviso-botoes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; position: relative; z-index: 1; margin-top: auto; }
+.aviso .btn { height: 44px; }
+.aviso-recusar { background: rgba(214, 69, 69, 0.16); color: #ffffff; border: 1.5px solid var(--danger); }
+.aviso-recusar:hover { background: rgba(214, 69, 69, 0.3); }
+.aviso-erro { display: grid; place-items: center; text-align: center; font-size: 14px; font-weight: 700; }
