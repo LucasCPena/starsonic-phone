@@ -15,7 +15,12 @@ file(GLOB STARSONIC_CORE_SOURCES CONFIGURE_DEPENDS ${STARSONIC_DIR}/core/*.cpp)
 file(GLOB STARSONIC_DESKTOP_SOURCES CONFIGURE_DEPENDS ${STARSONIC_DIR}/desktop/*.cpp)
 file(GLOB DESKTOP_TEST_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/test_*.cpp)
 
-# A migracao da rc.7 le o call_log.db do MicroSIP: no Linux o libsqlite3-dev; no Windows, o do vcpkg.
+# A migracao da rc.7 le o call_log.db do MicroSIP: no Linux o libsqlite3-dev; no Windows, o do vcpkg
+# (x86-windows-static: -DCMAKE_PREFIX_PATH=<work>/vcpkg/installed/x86-windows-static), com o runtime estatico (/MT)
+# dele e do app.
+if(MSVC)
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
 find_package(SQLite3 REQUIRED)
 find_package(Threads REQUIRED)
 
@@ -35,6 +40,19 @@ if(MSVC)
   target_compile_options(desktop_tests PRIVATE /W4 /EHsc)
 else()
   target_compile_options(desktop_tests PRIVATE -Wall -Wextra)
+endif()
+
+if(WIN32)
+  # O disco e o cifrador de verdade do executavel (windows/app/src): a gravacao atomica e o DPAPI.
+  set(WINDOWS_APP_SRC ${STARSONIC_DIR}/../windows/app/src)
+  target_sources(desktop_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../win/test_dpapi_cipher.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../win/test_win_files.cpp
+    ${WINDOWS_APP_SRC}/DpapiCipher.cpp
+    ${WINDOWS_APP_SRC}/WinFiles.cpp)
+  target_include_directories(desktop_tests PRIVATE ${WINDOWS_APP_SRC})
+  target_compile_definitions(desktop_tests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+  target_link_libraries(desktop_tests PRIVATE crypt32)
 endif()
 
 enable_testing()

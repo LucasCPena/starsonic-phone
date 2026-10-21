@@ -156,6 +156,16 @@ jobs:
           Invoke-Native cmake @('--build', 'build-tests-win', '--config', 'Release')
           Invoke-Native ctest @('--test-dir', 'build-tests-win', '-C', 'Release', '--output-on-failure')
 
+      - name: Testes do app de PC (Windows)
+        run: |
+          # O núcleo do app de PC no MSVC (/W4, wchar_t de 16 bits), com o SQLite do vcpkg, mais o disco e o DPAPI de
+          # verdade do executável novo (tests/win).
+          . .\build\BuildCommon.ps1
+          $vcpkgRoot = Join-Path (Resolve-Path work).Path 'vcpkg\installed\x86-windows-static'
+          Invoke-Native cmake @('-S', 'tests/desktop', '-B', 'build-desktop-win', '-A', 'Win32', "-DCMAKE_PREFIX_PATH=$vcpkgRoot")
+          Invoke-Native cmake @('--build', 'build-desktop-win', '--config', 'Release')
+          Invoke-Native ctest @('--test-dir', 'build-desktop-win', '-C', 'Release', '--output-on-failure')
+
       - name: Versão
         env:
           INPUT_VERSION: ${{ inputs.version }}
