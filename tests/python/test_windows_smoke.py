@@ -41,7 +41,7 @@ class KeypadLayoutTest(unittest.TestCase):
     def layout(self, **changes):
         keys = [[20 + 120 * (i % 3), 300 + 50 * (i // 3), 113, 40] for i in range(12)]
         layout = {"viewport": [400, 640], "keys": keys, "middle": [20, 300, 360, 190], "middleScrolls": False,
-                  "call": [20, 500, 360, 56], "nav": [0, 565, 400, 75]}
+                  "call": [88, 500, 292, 56], "redial": [20, 500, 56, 56], "nav": [0, 565, 400, 75]}
         layout.update(changes)
         return layout
 
@@ -49,10 +49,29 @@ class KeypadLayoutTest(unittest.TestCase):
         windows_smoke.check_keypad_layout(self.layout(), "teste")
 
     def test_overlap_scroll_or_cut_fails(self):
-        for changes in ({"call": [20, 470, 360, 56]}, {"middleScrolls": True}, {"nav": [0, 600, 400, 75]},
-                        {"call": [20, 530, 360, 56]}):
+        for changes in ({"call": [88, 470, 292, 56]}, {"middleScrolls": True}, {"nav": [0, 600, 400, 75]},
+                        {"call": [88, 530, 292, 56]}, {"redial": [20, 530, 56, 56]}, {"redial": [60, 500, 56, 56]},
+                        {"redial": None}):
             with self.assertRaises(windows_smoke.SmokeFailure, msg=changes):
                 windows_smoke.check_keypad_layout(self.layout(**changes), "teste")
+
+
+class ResizeTest(unittest.TestCase):
+    def test_the_border_points_and_the_hit_codes_they_expect(self):
+        # A janela (x, y, largura, altura) com as bordas invisiveis de 8 px dos lados e embaixo, a area cliente na tela.
+        points = windows_smoke.border_points((92, 100, 416, 728), (100, 100, 400, 720))
+        self.assertEqual(points["canto de baixo a direita"], ((92 + 416 - 3, 100 + 728 - 3), 17))   # HTBOTTOMRIGHT
+        self.assertEqual(points["canto de baixo a esquerda"], ((92 + 2, 100 + 728 - 3), 16))         # HTBOTTOMLEFT
+        self.assertEqual(points["esquerda"], ((92 + 2, 100 + 364), 10))                               # HTLEFT
+        self.assertEqual(points["direita"], ((92 + 416 - 3, 100 + 364), 11))                          # HTRIGHT
+        self.assertEqual(points["baixo"], ((92 + 208, 100 + 728 - 3), 15))                            # HTBOTTOM
+        self.assertEqual(points["cima"], ((100 + 200, 100 + 1), 12))                                  # HTTOP, dentro da area cliente
+        self.assertEqual(set(windows_smoke.HIT_NAMES.values()) >= {"HTBOTTOMRIGHT", "HTCLIENT", "HTCAPTION"}, True)
+
+    def test_the_window_size_for_a_client_size_adds_the_frame(self):
+        # A borda e a diferenca entre a janela e a area cliente (fisicos); o tamanho pedido e logico.
+        self.assertEqual(windows_smoke.window_size_for((340, 560), 96, (16, 8)), (356, 568))
+        self.assertEqual(windows_smoke.window_size_for((300, 440), 144, (22, 11)), (472, 671))
 
 
 class TestProfileTest(unittest.TestCase):

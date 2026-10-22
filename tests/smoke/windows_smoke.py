@@ -25,8 +25,14 @@ Fumaça (padrão), contra o StarsonicPhone.exe instalado do build de teste (STAR
    ainda mostra o aviso, recusado pelo aviso;
 8. com STARSONIC_TRAVAR_SAIR (build de teste: o Sair trava a thread de comandos), o Sair do menu da interface fecha
    o app mesmo assim, em até 25 s ("fechamento forcado" no diagnostico.log, código 0), e o app abre de novo.
+6b. (rc.2) o tamanho da janela: o WM_NCHITTEST nas bordas e nos cantos de baixo responde HTLEFT, HTRIGHT, HTBOTTOM,
+   HTBOTTOMLEFT e HTBOTTOMRIGHT (e HTTOP na faixa de cima), e o canto de baixo a direita é da janela, não do WebView2
+   (WindowFromPoint); SetWindowPos para 340x560 e 300x440 (a área da interface): o layout Compacto e o Mínimo pelo CDP,
+   com o teclado, o Rediscar, o Ligar e a navegação inteiros, e as capturas janela-compacta.png e janela-minima.png;
+   abaixo de 300x440 a janela fica nos 300x440 (WM_GETMINMAXINFO); o 340x560 volta depois de fechar e abrir (o
+   config.json); e volta aos 400x720;
 Os itens 7 e 8 juntam o que falhou e reprovam no fim (um não esconde o outro).
-Na escala de 100%, a janela tem 400x720 lógicos. A escala de 150% de verdade (outro DPI) não dá para mudar no runner.
+Na escala de 100%, a área da interface tem 400x720 lógicos (as bordas invisíveis de redimensionar ficam fora dela). A escala de 150% de verdade (outro DPI) não dá para mudar no runner.
 
 Ensaio da atualização (--ensaio): o app já foi aberto pelo instalador (por cima da rc.7, com a variável do CDP no
 ambiente do instalador). Confere "Conectado · 127.0.0.1" (a conta e a senha que vieram da rc.7) e o contato na tela
@@ -98,6 +104,40 @@ def inside(box, area):
     x, y, width, height = box
     left, top, right, bottom = area
     return x >= left and y >= top and x + width <= right and y + height <= bottom
+
+
+# Os códigos do WM_NCHITTEST.
+HIT_NAMES = {1: "HTCLIENT", 2: "HTCAPTION", 10: "HTLEFT", 11: "HTRIGHT", 12: "HTTOP", 13: "HTTOPLEFT", 14: "HTTOPRIGHT",
+             15: "HTBOTTOM", 16: "HTBOTTOMLEFT", 17: "HTBOTTOMRIGHT", -1: "HTTRANSPARENT", 0: "HTNOWHERE"}
+
+
+def border_points(outer, client):
+    """Os pontos (da tela) das bordas e dos cantos e o código do WM_NCHITTEST esperado em cada um.
+
+    outer: a janela (x, y, largura, altura) do GetWindowRect, com as bordas invisíveis; client: a área cliente na tela.
+    Os lados e o pé ficam nas bordas invisíveis (fora da área cliente); o alto, na primeira linha da área cliente."""
+    x, y, width, height = outer
+    cx, cy, cwidth, _ = client
+    right = x + width - 3
+    bottom = y + height - 3
+    middle_y = y + height // 2
+    middle_x = x + width // 2
+    return {
+        "canto de baixo a direita": ((right, bottom), 17),
+        "canto de baixo a esquerda": ((x + 2, bottom), 16),
+        "esquerda": ((x + 2, middle_y), 10),
+        "direita": ((right, middle_y), 11),
+        "baixo": ((middle_x, bottom), 15),
+        "cima": ((cx + cwidth // 2, cy + 1), 12),
+    }
+
+
+def window_size_for(client_logical, dpi, frame):
+    """O tamanho da janela (físico, para o SetWindowPos) com a área da interface de client_logical pixels lógicos.
+
+    frame: quanto a janela tem a mais que a área cliente (largura, altura), em pixels físicos."""
+    width, height = client_logical
+    return (round(width * dpi / 96.0) + frame[0], round(height * dpi / 96.0) + frame[1])
 
 
 def logical_size(width, height, dpi):
@@ -237,6 +277,40 @@ class Win32:
         value = self.wintypes.RECT()
         self.user32.GetClientRect(hwnd, self.ctypes.byref(value))
         return (value.right - value.left, value.bottom - value.top)
+
+    def client_box(self, hwnd):
+        """A área cliente na tela: (x, y, largura, altura)."""
+        origin = self.wintypes.POINT(0, 0)
+        self.user32.ClientToScreen(hwnd, self.ctypes.byref(origin))
+        width, height = self.client(hwnd)
+        return (origin.x, origin.y, width, height)
+
+    def hit_test(self, hwnd, x, y):
+        """O WM_NCHITTEST da janela no ponto (x, y) da tela."""
+        result = self.ctypes.c_size_t()
+        lparam = ((y & 0xFFFF) << 16) | (x & 0xFFFF)
+        self.user32.SendMessageTimeoutW.argtypes = [self.wintypes.HWND, self.wintypes.UINT, self.wintypes.WPARAM,
+                                                    self.wintypes.LPARAM, self.wintypes.UINT, self.wintypes.UINT,
+                                                    self.ctypes.POINTER(self.ctypes.c_size_t)]
+        if not self.user32.SendMessageTimeoutW(hwnd, 0x0084, 0, lparam, 0x0002, 5000, self.ctypes.byref(result)):
+            return None
+        value = result.value & 0xFFFFFFFF
+        return value - (1 << 32) if value >= (1 << 31) else value
+
+    def window_from_point(self, x, y):
+        self.user32.WindowFromPoint.argtypes = [self.wintypes.POINT]
+        self.user32.WindowFromPoint.restype = self.wintypes.HWND
+        return self.user32.WindowFromPoint(self.wintypes.POINT(x, y)) or 0
+
+    def root(self, hwnd):
+        self.user32.GetAncestor.argtypes = [self.wintypes.HWND, self.wintypes.UINT]
+        self.user32.GetAncestor.restype = self.wintypes.HWND
+        return self.user32.GetAncestor(hwnd, 2) or 0   # GA_ROOT
+
+    def set_size(self, hwnd, width, height):
+        """SetWindowPos com o tamanho (físico) da janela inteira, sem mover."""
+        flags = 0x0002 | 0x0004 | 0x0010   # SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE
+        return bool(self.user32.SetWindowPos(hwnd, None, 0, 0, width, height, flags))
 
     def dpi(self, hwnd):
         return int(self.user32.GetDpiForWindow(hwnd))
@@ -431,7 +505,9 @@ def measure(win, hwnd, page):
         "posicao": [x, y],
         "cliente": list(client),
         "dpi": dpi,
-        "logicos": list(logical_size(width, height, dpi)),
+        # O tamanho da janela é o da área da interface (a área cliente): as bordas de redimensionar ficam fora dela.
+        "logicos": list(logical_size(client[0], client[1], dpi)),
+        "area_cliente": list(win.client_box(hwnd)),
         "devicePixelRatio": view["dpr"],
         "viewport": [view["w"], view["h"]],
     }
@@ -457,13 +533,15 @@ LAYOUT_SCRIPT = """() => {
     middle: box(middle),
     middleScrolls: middle.scrollHeight > middle.clientHeight + 0.5,
     call: box(document.querySelector('button.btn-call')),
+    redial: document.querySelector('button.btn-redial') ? box(document.querySelector('button.btn-redial')) : null,
+    layout: document.querySelector('.win').dataset.layout || null,
     nav: box(document.querySelector('nav.nav')),
   };
 }"""
 
 
 def check_keypad_layout(layout, label):
-    """As 12 teclas, o Ligar e a navegação inteiros na interface, nessa ordem, sem um cobrir o outro."""
+    """As 12 teclas, o Rediscar, o Ligar e a navegação inteiros na interface, nessa ordem, sem um cobrir o outro."""
     width, height = layout["viewport"]
 
     def visible(box):
@@ -475,13 +553,15 @@ def check_keypad_layout(layout, label):
         raise SmokeFailure("%s: as teclas nao estao inteiras na interface: %s" % (label, layout))
     if layout["middleScrolls"]:
         raise SmokeFailure("%s: as teclas so aparecem rolando: %s" % (label, layout))
-    for name in ("call", "nav"):
-        if not visible(layout[name]):
+    for name in ("call", "redial", "nav"):
+        if not layout.get(name) or not visible(layout[name]):
             raise SmokeFailure("%s: %s fora da interface: %s" % (label, name, layout))
     keys_bottom = max(key[1] + key[3] for key in keys)
-    call, nav = layout["call"], layout["nav"]
+    call, redial, nav = layout["call"], layout["redial"], layout["nav"]
     if keys_bottom > call[1] + 0.5 or call[1] + call[3] > nav[1] + 0.5:
         raise SmokeFailure("%s: o teclado, o Ligar e a navegacao se cobrem: %s" % (label, layout))
+    if keys_bottom > redial[1] + 0.5 or redial[1] + redial[3] > nav[1] + 0.5 or redial[0] + redial[2] > call[0] + 0.5:
+        raise SmokeFailure("%s: o Rediscar cobre o teclado, o Ligar ou a navegacao: %s" % (label, layout))
 
 
 def main_window(win, pid, timeout=30):
@@ -621,7 +701,7 @@ def run_smoke(args, result):
                 layout = page.evaluate(LAYOUT_SCRIPT)
                 result["area_curta"] = dict(info, area_de_trabalho=list(short), interface=layout)
                 log("area curta: %s" % info)
-                if not inside((info["posicao"][0], info["posicao"][1], info["janela"][0], info["janela"][1]), short):
+                if not inside(tuple(info["area_cliente"]), short):
                     raise SmokeFailure("a janela %s nao cabe na area de trabalho %s" % (info, short))
                 check_size(info, "area curta", (LOGICAL_SIZE[0], SHORT_HEIGHT))
                 check_keypad_layout(layout, "area curta")
@@ -644,8 +724,14 @@ def run_smoke(args, result):
             app = None
             log("OK: entrou, ligou, desligou, recebeu pelo aviso e coube na area de trabalho baixa")
 
-            # 7 e 8. A recuperação do WebView2, os dispositivos de som e o fechamento com o Sair travado.
+            # 6b. O tamanho da janela (rc.2).
             problems = []
+            run_resize(pw, win, exe, data_dir, capturas, result, problems)
+            if problems:
+                raise SmokeFailure("; ".join(problems))
+            log("OK: as bordas redimensionam, o Compacto e o Minimo cabem, o minimo segura e o tamanho volta")
+
+            # 7 e 8. A recuperação do WebView2, os dispositivos de som e o fechamento com o Sair travado.
             app = run_recovery(pw, win, exe, data_dir, registrar, capturas, result, problems)
             app = None
             if problems:
@@ -656,6 +742,110 @@ def run_smoke(args, result):
             app.kill()
         registrar.stop()
         show_log(data_dir / "diagnostico.log")
+
+
+def resize_to(win, hwnd, page, client_logical):
+    """Muda a janela para a área da interface de client_logical lógicos e espera o viewport seguir."""
+    x, y, width, height = win.rect(hwnd)
+    client = win.client(hwnd)
+    frame = (width - client[0], height - client[1])
+    target = window_size_for(client_logical, win.dpi(hwnd), frame)
+    if not win.set_size(hwnd, *target):
+        raise SmokeFailure("SetWindowPos %s recusado" % (target,))
+    wanted = list(client_logical)
+    wait_for(lambda: near(measure(win, hwnd, page)["viewport"], wanted), 10, pump=page.wait_for_timeout)
+    page.wait_for_timeout(700)   # o layout novo e o tamanho gravado (500 ms depois do último WM_SIZE)
+    return measure(win, hwnd, page)
+
+
+def run_resize(pw, win, exe, data_dir, capturas, result, problems):
+    """O item 6b: as bordas, os layouts Compacto e Mínimo, o mínimo e o tamanho gravado. Os problemas vão para
+    problems."""
+    sleep = lambda ms: time.sleep(ms / 1000.0)   # noqa: E731
+    resize = result.setdefault("tamanho", {})
+    app = App(exe, data_dir)
+    try:
+        browser = connect(pw)
+        page = find_page(browser, "/index.html", 60, sleep)
+        hwnd = main_window(win, app.process.pid)
+        page.get_by_text(CONNECTED).first.wait_for(timeout=40000)
+        page.wait_for_timeout(500)
+
+        # As bordas e os cantos: o WM_NCHITTEST e quem está no canto de baixo a direita.
+        outer = win.rect(hwnd)
+        client = win.client_box(hwnd)
+        hits = {}
+        for name, ((x, y), expected) in border_points(outer, client).items():
+            code = win.hit_test(hwnd, x, y)
+            hits[name] = HIT_NAMES.get(code, str(code))
+            if code != expected:
+                problems.append("WM_NCHITTEST %s (%d, %d): %s (esperado %s)"
+                                % (name, x, y, hits[name], HIT_NAMES[expected]))
+        corner = border_points(outer, client)["canto de baixo a direita"][0]
+        owner = win.window_from_point(*corner)
+        resize["bordas"] = dict(hits, janela=list(outer), area_cliente=list(client),
+                                canto_de_baixo_a_direita=win.describe(owner))
+        log("bordas: %s" % resize["bordas"])
+        if owner != hwnd:
+            problems.append("o canto de baixo a direita e de %s, nao da janela %s (o WebView2 engole a borda)"
+                            % (win.describe(owner), win.describe(hwnd)))
+
+        # O Compacto e o Mínimo.
+        for size, expected, name in (((340, 560), "compacto", "janela-compacta.png"),
+                                     ((300, 440), "minimo", "janela-minima.png")):
+            info = resize_to(win, hwnd, page, size)
+            layout = page.evaluate(LAYOUT_SCRIPT)
+            resize["%dx%d" % size] = dict(info, interface=layout)
+            log("%dx%d: %s, layout %s" % (size[0], size[1], info, layout.get("layout")))
+            if not near(info["logicos"], size):
+                problems.append("a janela pedida em %dx%d ficou com %s logicos" % (size[0], size[1], info["logicos"]))
+            if layout.get("layout") != expected:
+                problems.append("em %dx%d o layout e %s (esperado %s)" % (size[0], size[1], layout.get("layout"), expected))
+            try:
+                check_keypad_layout(layout, "%dx%d" % size)
+            except SmokeFailure as error:
+                problems.append(str(error))
+            screenshot(page, capturas, name, result)
+
+        # Abaixo do mínimo: a janela fica nos 300x440.
+        info = resize_to(win, hwnd, page, (200, 300))
+        resize["abaixo_do_minimo"] = info
+        log("pedido 200x300: %s" % info)
+        if not near(info["logicos"], (300, 440)):
+            problems.append("a janela foi abaixo do minimo de 300x440: %s logicos" % info["logicos"])
+
+        # O tamanho gravado volta depois de fechar e abrir.
+        resize_to(win, hwnd, page, (340, 560))
+        page.wait_for_timeout(1000)
+        browser.close()
+        app.quit()
+        app = None
+        if not wait_for(lambda: webview_processes() == 0, 40, interval=1):
+            problems.append("o WebView2 antes de abrir de novo nao saiu")
+        app = App(exe, data_dir)
+        browser = connect(pw)
+        page = find_page(browser, "/index.html", 60, sleep)
+        hwnd = main_window(win, app.process.pid)
+        page.get_by_text(CONNECTED).first.wait_for(timeout=40000)
+        page.wait_for_timeout(500)
+        info = measure(win, hwnd, page)
+        resize["depois_de_abrir_de_novo"] = info
+        log("aberto de novo: %s" % info)
+        if not near(info["logicos"], (340, 560)):
+            problems.append("o tamanho gravado (340x560) nao voltou: %s logicos" % info["logicos"])
+        # De volta ao padrão para o resto da fumaça.
+        info = resize_to(win, hwnd, page, LOGICAL_SIZE)
+        if not near(info["logicos"], LOGICAL_SIZE):
+            problems.append("a janela nao voltou aos 400x720: %s" % info["logicos"])
+        page.wait_for_timeout(1000)
+        browser.close()
+        app.quit()
+        app = None
+        if not wait_for(lambda: webview_processes() == 0, 40, interval=1):
+            problems.append("o WebView2 do teste do tamanho nao saiu")
+    finally:
+        if app:
+            app.kill()
 
 
 def read_log(data_dir):
