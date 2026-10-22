@@ -1,11 +1,20 @@
 #pragma once
 // A janela principal (spec 7.4): sem a moldura do Windows (a barra de titulo e a da interface, que arrasta a janela
-// pela regiao app-region e tem os botoes Minimizar e Fechar como comandos da ponte), 400x720 em 100% de escala,
-// acompanhando a escala de cada monitor (DPI por monitor v2), com a sombra e os cantos arredondados do Windows 11, e
-// o WebView2 ocupando a area inteira. A classe da janela e "Starsonic Phone".
+// pela regiao app-region e tem os botoes Minimizar e Fechar como comandos da ponte), acompanhando a escala de cada
+// monitor (DPI por monitor v2), com a sombra e os cantos arredondados do Windows 11, e o WebView2 ocupando a area
+// cliente inteira. A classe da janela e "Starsonic Phone".
 //
-// A posicao: a gravada no config.json, se ela ainda cai num monitor; senao, o centro do monitor principal. Depois de
-// mover, a posicao nova vai para o config.json (callbacks.moved).
+// O tamanho (rc.2): a janela muda de tamanho pela borda e pelo canto, como no MicroSIP. O WS_THICKFRAME da as bordas
+// de redimensionar; o WM_NCCALCSIZE tira so a barra do Windows e deixa as bordas invisiveis dos lados e de baixo fora
+// da area cliente (o WebView2 nao as cobre: o Windows responde HTLEFT, HTRIGHT, HTBOTTOM e os cantos de baixo); a
+// faixa de cima fica dentro da area cliente e o HitTest responde HTTOP nela. O tamanho e o da area cliente (a da
+// interface), em pixels logicos: 400x720 por padrao ou o gravado no config.json, nunca menor que 300x440
+// (WM_GETMINMAXINFO) nem maior que a area de trabalho (WindowFit); a mudanca de escala (WM_DPICHANGED) mantem o
+// tamanho logico; o tamanho que a pessoa escolhe vai para o config.json 500 ms depois do ultimo WM_SIZE
+// (callbacks.resized). As contas da propria janela (o encaixe na area de trabalho) nao contam como escolha.
+//
+// A posicao (o canto de cima a esquerda da area cliente): a gravada no config.json, se ela ainda cai num monitor;
+// senao, o centro do monitor principal. Depois de mover, a posicao nova vai para o config.json (callbacks.moved).
 //
 // A janela tambem cuida da bandeja (Tray) e do aviso de ligacao recebida (NoticeWindow), lendo o estado que vai para
 // a interface (ShellState): o "fechar" da barra esconde a janela na bandeja (o WebView continua rodando: o toque e
@@ -37,6 +46,7 @@
 #include "ShellState.h"
 #include "Tray.h"
 #include "WebViewHost.h"
+#include "WindowFit.h"
 
 namespace starsonic {
 
@@ -50,7 +60,8 @@ public:
         std::wstring userDataFolder;     // a do WebView2
         std::wstring uiFolder;           // a pasta da interface
         bool devTools = false;
-        std::optional<POINT> position;   // o canto de cima gravado (pixels da tela)
+        std::optional<POINT> position;   // o canto de cima da area cliente gravado (pixels da tela)
+        std::optional<WindowSize> size;  // o tamanho gravado da area cliente (pixels logicos)
         std::wstring version;            // a versao do app (vai na URL das paginas: ?v=<versao>)
     };
 
@@ -58,6 +69,7 @@ public:
         std::function<void(const std::string& json)> command;   // um comando da interface (DesktopApp::HandleCommand)
         std::function<void(const std::string& json)> noticeCommand;   // um comando da interface do aviso
         std::function<void(int x, int y)> moved;                 // a janela parou num lugar novo
+        std::function<void(int width, int height)> resized;      // a pessoa mudou o tamanho (logicos, da area cliente)
         std::function<void()> quitRequested;                     // Alt+F4, o Sair da bandeja, o --sair
         std::function<void()> endSession;                        // o Windows esta encerrando a sessao (logoff)
         std::function<void(const std::string& line)> log;
@@ -94,6 +106,10 @@ private:
     // Refaz o tamanho e a posicao no monitor e na escala de agora (a area de trabalho ou a resolucao mudaram).
     void Refit();
     void ApplyFrame();
+    // Poe a area cliente nesse lugar e tamanho (pixels fisicos), com as bordas invisiveis em volta.
+    void SetClientBox(const FitBox& box, UINT dpi);
+    FitBox ClientBox() const;   // a area cliente na tela
+    void OnMinMaxInfo(MINMAXINFO* info) const;
     void DrainOutbox();
     void RunActions();
     void StartNotice();
@@ -103,7 +119,7 @@ private:
     void RegisterAudioNotifications();
     void RefreshNotice();
     void OnTray(WPARAM wParam, LPARAM lParam);
-    LRESULT HitTest(LPARAM lParam) const;
+    LRESULT HitTest(WPARAM wParam, LPARAM lParam) const;
     void Log(const std::string& line) const;
 
     HWND window_ = nullptr;
@@ -118,6 +134,9 @@ private:
     bool trayLogged_ = false;
     bool noticeStarted_ = false;   // o WebView do aviso ja abriu (depois da primeira mensagem da interface)
     bool quitting_ = false;
+    WindowSize desired_;           // o tamanho escolhido (logico, da area cliente): o encaixe parte dele
+    bool placed_ = false;          // o Place ja rodou (antes, os WM_SIZE sao da criacao)
+    bool fitting_ = false;         // o SetWindowPos e da propria janela (o encaixe): o WM_SIZE nao e uma escolha
     WebViewHost::Callbacks webCallbacks_;
     WebViewHost::Options webOptions_;
     BrowserRestarts restarts_;     // o navegador que sai: refaz ou desiste (3 seguidas sem o ready)

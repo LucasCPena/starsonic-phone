@@ -213,13 +213,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
 #endif
     EngineHost engine(engineConfig, log);
 
-    // A posicao gravada da janela (o DesktopApp le o config.json de novo na abertura dele).
+    // A posicao e o tamanho gravados da janela (o DesktopApp le o config.json de novo na abertura dele).
     std::optional<POINT> position;
+    std::optional<WindowSize> windowSize;
     {
         SettingsStore stored(files, config.paths.settings);
         stored.Load();
         const Settings settings = stored.Get();
         if (settings.windowX != INT_MIN && settings.windowY != INT_MIN) position = POINT{settings.windowX, settings.windowY};
+        if (settings.windowW > 0 && settings.windowH > 0) windowSize = WindowSize{settings.windowW, settings.windowH};
     }
 
     MainWindow window;   // antes do DesktopApp: os ganchos dele chegam na janela ate o Shutdown
@@ -322,6 +324,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     // Um headset entrou ou saiu (a janela ja esperou 1 s sem outro aviso): o DesktopApp rele na thread de comandos.
     callbacks.devicesChanged = [&app] { app.RefreshAudioDevices(); };
     callbacks.moved = [&app](int x, int y) { app.SaveWindowPosition(x, y); };
+    callbacks.resized = [&app](int width, int height) { app.SaveWindowSize(width, height); };
     callbacks.quitRequested = [&app] { app.HandleCommand(kQuitCommand); };
     // O logoff ou o desligamento: o mesmo Sair, esperando pouco (o Windows encerra o processo depois de o
     // WM_ENDSESSION voltar). O Shutdown roda o que o Sair pos na fila (os Recentes das ligacoes encerradas).
@@ -345,6 +348,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     options.uiFolder = ExeFolder() + L"\\ui";
     options.devTools = STARSONIC_TEST_HOOKS != 0;
     options.position = position;
+    options.size = windowSize;
     options.version = Utf8ToWide(STARSONIC_VERSION);
     int exitCode = 0;
     if (window.Create(instance, options, callbacks)) {

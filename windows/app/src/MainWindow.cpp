@@ -5,6 +5,7 @@
 #include <shellscalingapi.h>
 #include <windowsx.h>
 
+#include <algorithm>
 #include <utility>
 
 #include "WindowFit.h"
@@ -23,6 +24,7 @@ const UINT_PTR kQuitTimer = 2;            // o Sair nao terminou a tempo: fecha 
 const UINT_PTR kRestartTimer = 3;         // o navegador do WebView2 saiu: abre de novo
 const UINT_PTR kUnresponsiveTimer = 4;    // a pagina nao responde: recarrega
 const UINT_PTR kDeviceTimer = 5;          // um dispositivo de som mudou: rele depois de 1 s sem outro aviso
+const UINT_PTR kSizeTimer = 6;            // a pessoa parou de mudar o tamanho: grava o tamanho
 const UINT kMoveDelayMs = 500;
 const UINT kQuitTimeoutMs = 10000;
 const UINT kRestartDelayMs = 1000;        // o navegador velho termina de sair antes do ambiente novo
@@ -58,6 +60,22 @@ UINT MonitorDpi(HMONITOR monitor) {
 }
 
 int Scale(int value, UINT dpi) { return MulDiv(value, static_cast<int>(dpi), 96); }
+
+// As bordas de redimensionar do Windows (as invisiveis, dos lados e de baixo), em pixels fisicos no DPI dado: o que o
+// WM_NCCALCSIZE deixa fora da area cliente.
+struct ResizeFrame {
+    int x = 0;
+    int y = 0;
+};
+
+ResizeFrame FrameFor(UINT dpi) {
+    if (dpi == 0) dpi = 96;
+    const int padded = GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
+    ResizeFrame frame;
+    frame.x = GetSystemMetricsForDpi(SM_CXSIZEFRAME, dpi) + padded;
+    frame.y = GetSystemMetricsForDpi(SM_CYSIZEFRAME, dpi) + padded;
+    return frame;
+}
 
 FitArea WorkArea(HMONITOR monitor) {
     MONITORINFO info = {};
@@ -99,9 +117,11 @@ bool MainWindow::Create(HINSTANCE instance, const Options& options, Callbacks ca
         return false;
     }
 
-    // Sem WS_THICKFRAME (o tamanho e fixo) e sem WS_MAXIMIZEBOX; o WS_CAPTION da a sombra, a animacao de minimizar e
-    // os cantos do Windows 11, e o WM_NCCALCSIZE tira a barra do Windows (a da interface fica no lugar).
-    const DWORD style = WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN;
+    // O WS_THICKFRAME da as bordas de redimensionar (rc.2), sem WS_MAXIMIZEBOX; o WS_CAPTION da a sombra, a animacao
+    // de minimizar e os cantos do Windows 11, e o WM_NCCALCSIZE tira a barra do Windows (a da interface fica no lugar)
+    // e deixa as bordas invisiveis fora da area cliente.
+    const DWORD style = WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_THICKFRAME | WS_CLIPCHILDREN;
+    desired_ = options.size.value_or(WindowSize{});
     window_ = CreateWindowExW(WS_EX_APPWINDOW, kClassName, L"Starsonic Phone", style, CW_USEDEFAULT, CW_USEDEFAULT,
                               kWidth, kHeight, nullptr, nullptr, instance, this);
     if (!window_) {
@@ -313,13 +333,18 @@ void MainWindow::Place(const std::optional<POINT>& position) {
         const POINT origin = {0, 0};
         monitor = MonitorFromPoint(origin, MONITOR_DEFAULTTOPRIMARY);
     }
-    // 400x720 logicos, a altura cortada na da area de trabalho, e a janela inteira dentro dela (WindowFit).
+    // O tamanho escolhido (400x720 logicos por padrao), nunca menor que 300x440, cortado na area de trabalho, e a
+    // janela inteira dentro dela (WindowFit).
     const UINT dpi = MonitorDpi(monitor);
-    const FitBox box = FitWindow(WorkArea(monitor), dpi, wanted);
-    SetWindowPos(window_, nullptr, box.x, box.y, box.width, box.height, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
-    if (box.height < Scale(kHeight, dpi)) {
-        Log("a janela ficou com " + std::to_string(MulDiv(box.height, 96, static_cast<int>(dpi))) +
-            " de altura (a area de trabalho e menor que 720)");
+    const FitBox box = FitWindow(WorkArea(monitor), dpi, wanted, desired_);
+    SetClientBox(box, dpi);
+    placed_ = true;
+    const int logicalWidth = ScaleFromDpi(box.width, dpi);
+    const int logicalHeight = ScaleFromDpi(box.height, dpi);
+    Log("janela de " + std::to_string(logicalWidth) + "x" + std::to_string(logicalHeight) + " logicos");
+    if (logicalHeight < desired_.height && logicalHeight > kMinWindowHeight) {
+        Log("a janela ficou com " + std::to_string(logicalHeight) + " de altura (a area de trabalho e menor que " +
+            std::to_string(desired_.height) + ")");
     }
     // O Windows pode ter posto a janela noutro monitor (outra escala): o tamanho segue a escala dela.
     const UINT actual = GetDpiForWindow(window_);
@@ -327,17 +352,52 @@ void MainWindow::Place(const std::optional<POINT>& position) {
 }
 
 void MainWindow::Refit() {
-    RECT rect = {};
-    if (!window_ || IsIconic(window_) || !GetWindowRect(window_, &rect)) return;
+    if (!window_ || IsIconic(window_)) return;
+    const FitBox current = ClientBox();
     const HMONITOR monitor = MonitorFromWindow(window_, MONITOR_DEFAULTTONEAREST);
     UINT dpi = GetDpiForWindow(window_);
     if (dpi == 0) dpi = MonitorDpi(monitor);
-    const FitBox box = FitWindow(WorkArea(monitor), dpi, WindowPosition{rect.left, rect.top});
-    if (box.x == rect.left && box.y == rect.top && box.width == rect.right - rect.left &&
-        box.height == rect.bottom - rect.top) {
-        return;
+    const FitBox box = FitWindow(WorkArea(monitor), dpi, WindowPosition{current.x, current.y}, desired_);
+    if (box.x == current.x && box.y == current.y && box.width == current.width && box.height == current.height) return;
+    SetClientBox(box, dpi);
+}
+
+FitBox MainWindow::ClientBox() const {
+    FitBox box;
+    RECT client = {};
+    POINT origin = {0, 0};
+    if (!window_ || !GetClientRect(window_, &client) || !ClientToScreen(window_, &origin)) return box;
+    box.x = origin.x;
+    box.y = origin.y;
+    box.width = client.right - client.left;
+    box.height = client.bottom - client.top;
+    return box;
+}
+
+void MainWindow::SetClientBox(const FitBox& box, UINT dpi) {
+    // A janela e a area cliente mais as bordas invisiveis dos lados e de baixo (o WM_NCCALCSIZE).
+    const ResizeFrame frame = FrameFor(dpi);
+    const bool wasFitting = fitting_;
+    fitting_ = true;
+    SetWindowPos(window_, nullptr, box.x - frame.x, box.y, box.width + 2 * frame.x, box.height + frame.y,
+                 SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    fitting_ = wasFitting;
+}
+
+void MainWindow::OnMinMaxInfo(MINMAXINFO* info) const {
+    // O minimo de 300x440 logicos da area cliente e o maximo da area de trabalho do monitor da janela.
+    UINT dpi = GetDpiForWindow(window_);
+    if (dpi == 0) dpi = 96;
+    const ResizeFrame frame = FrameFor(dpi);
+    const LONG minWidth = ScaleToDpi(kMinWindowWidth, dpi) + 2 * frame.x;
+    const LONG minHeight = ScaleToDpi(kMinWindowHeight, dpi) + frame.y;
+    info->ptMinTrackSize.x = minWidth;
+    info->ptMinTrackSize.y = minHeight;
+    const FitArea work = WorkArea(MonitorFromWindow(window_, MONITOR_DEFAULTTONEAREST));
+    if (work.right > work.left && work.bottom > work.top) {
+        info->ptMaxTrackSize.x = std::max(minWidth, static_cast<LONG>(work.right - work.left + 2 * frame.x));
+        info->ptMaxTrackSize.y = std::max(minHeight, static_cast<LONG>(work.bottom - work.top + frame.y));
     }
-    SetWindowPos(window_, nullptr, box.x, box.y, box.width, box.height, SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
 void MainWindow::ApplyFrame() {
@@ -381,15 +441,25 @@ void MainWindow::RunActions() {
     }
 }
 
-// Normalmente o WebView2 cobre a janela inteira e responde ele mesmo (a regiao app-region: drag da barra da
-// interface). Se ele deixa o clique passar (HTTRANSPARENT), ou antes de ele abrir, a faixa da barra de titulo (menos
-// os dois botoes) arrasta a janela.
-LRESULT MainWindow::HitTest(LPARAM lParam) const {
+// As bordas dos lados e de baixo ficam fora da area cliente (o WM_NCCALCSIZE): o Windows responde HTLEFT, HTRIGHT,
+// HTBOTTOM e os cantos de baixo, e o WebView2 (que so cobre a area cliente) nao as engole. Dentro da area cliente,
+// normalmente o WebView2 responde ele mesmo (a regiao app-region: drag da barra da interface); se ele deixa o clique
+// passar (HTTRANSPARENT), ou antes de ele abrir, a faixa de cima redimensiona (HTTOP e os cantos de cima) e o resto da
+// barra de titulo (menos os dois botoes) arrasta a janela.
+LRESULT MainWindow::HitTest(WPARAM wParam, LPARAM lParam) const {
+    const LRESULT frame = DefWindowProcW(window_, WM_NCHITTEST, wParam, lParam);
+    if (frame != HTCLIENT) return frame;
     POINT point = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
     ScreenToClient(window_, &point);
     const UINT dpi = GetDpiForWindow(window_);
     RECT client = {};
     GetClientRect(window_, &client);
+    const ResizeFrame border = FrameFor(dpi);
+    if (!IsZoomed(window_) && point.y >= 0 && point.y < border.y) {
+        if (point.x < 2 * border.x) return HTTOPLEFT;
+        if (point.x >= client.right - 2 * border.x) return HTTOPRIGHT;
+        return HTTOP;
+    }
     if (point.y >= 0 && point.y < Scale(kTitleBarHeight, dpi) && point.x >= 0 &&
         point.x < client.right - Scale(kCaptionButtonsWidth, dpi)) {
         return HTCAPTION;
@@ -423,13 +493,27 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
     }
     switch (message) {
         case WM_NCCALCSIZE:
-            if (wParam) return 0;   // a area cliente e a janela inteira
+            if (wParam) {
+                // Sem a barra do Windows (a da interface fica no lugar): a area cliente vai ate o alto da janela, e as
+                // bordas invisiveis de redimensionar dos lados e de baixo ficam fora dela.
+                NCCALCSIZE_PARAMS* params = reinterpret_cast<NCCALCSIZE_PARAMS*>(lParam);
+                const ResizeFrame frame = FrameFor(GetDpiForWindow(window_));
+                RECT& rect = params->rgrc[0];
+                rect.left += frame.x;
+                rect.right -= frame.x;
+                rect.bottom -= frame.y;
+                if (IsZoomed(window_)) rect.top += frame.y;
+                return 0;
+            }
             break;
+        case WM_GETMINMAXINFO:
+            OnMinMaxInfo(reinterpret_cast<MINMAXINFO*>(lParam));
+            return 0;
         case WM_NCACTIVATE:
             // Sem area nao cliente: nada a redesenhar (o -1 evita que o Windows pinte a moldura antiga).
             return DefWindowProcW(window_, message, wParam, -1);
         case WM_NCHITTEST:
-            return HitTest(lParam);
+            return HitTest(wParam, lParam);
         case WM_ACTIVATE:
             active_ = LOWORD(wParam) != WA_INACTIVE;
             if (active_ && webview_) webview_->Focus();
@@ -437,9 +521,17 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
             return 0;
         case WM_SIZE:
             if (wParam != SIZE_MINIMIZED && webview_) {
+                // O WebView2 acompanha cada passo do arrasto.
                 RECT client = {};
                 GetClientRect(window_, &client);
                 webview_->Resize(client);
+            }
+            if (wParam == SIZE_RESTORED && placed_ && !fitting_) {
+                // A pessoa (ou o Windows, num encaixe na borda da tela) escolheu um tamanho: e o novo ponto de partida,
+                // e vai para o config.json depois de 500 ms sem outro.
+                const UINT dpi = GetDpiForWindow(window_);
+                desired_ = WindowSize{ScaleFromDpi(LOWORD(lParam), dpi), ScaleFromDpi(HIWORD(lParam), dpi)};
+                SetTimer(window_, kSizeTimer, kMoveDelayMs, nullptr);
             }
             RefreshNotice();
             return 0;
@@ -455,13 +547,15 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
             if (!IsIconic(window_)) SetTimer(window_, kMoveTimer, kMoveDelayMs, nullptr);
             return 0;
         case WM_DPICHANGED: {
-            // A escala nova (ou outro monitor): 400x720 logicos na escala dela, a altura cortada na area de trabalho do
+            // A escala nova (ou outro monitor): o mesmo tamanho logico na escala dela, cortado na area de trabalho do
             // monitor do retangulo sugerido, a janela dentro dela.
             const RECT* suggested = reinterpret_cast<const RECT*>(lParam);
             const UINT dpi = LOWORD(wParam);
             const HMONITOR monitor = MonitorFromRect(suggested, MONITOR_DEFAULTTONEAREST);
-            const FitBox box = FitWindow(WorkArea(monitor), dpi, WindowPosition{suggested->left, suggested->top});
-            SetWindowPos(window_, nullptr, box.x, box.y, box.width, box.height, SWP_NOZORDER | SWP_NOACTIVATE);
+            const ResizeFrame frame = FrameFor(dpi);
+            const FitBox box =
+                FitWindow(WorkArea(monitor), dpi, WindowPosition{suggested->left + frame.x, suggested->top}, desired_);
+            SetClientBox(box, dpi);
             return 0;
         }
         case WM_DEVICECHANGE:
@@ -481,10 +575,16 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
         case WM_TIMER:
             if (wParam == kMoveTimer) {
                 KillTimer(window_, kMoveTimer);
-                RECT rect = {};
-                if (!IsIconic(window_) && GetWindowRect(window_, &rect) && callbacks_.moved) {
-                    callbacks_.moved(rect.left, rect.top);
+                // O canto de cima a esquerda da area cliente (o da interface; as bordas invisiveis ficam fora).
+                if (!IsIconic(window_) && callbacks_.moved) {
+                    const FitBox box = ClientBox();
+                    callbacks_.moved(box.x, box.y);
                 }
+                return 0;
+            }
+            if (wParam == kSizeTimer) {
+                KillTimer(window_, kSizeTimer);
+                if (callbacks_.resized) callbacks_.resized(desired_.width, desired_.height);
                 return 0;
             }
             if (wParam == kQuitTimer) {
@@ -536,6 +636,7 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
                 actions_.clear();
             }
             KillTimer(window_, kMoveTimer);
+            KillTimer(window_, kSizeTimer);
             KillTimer(window_, kQuitTimer);
             KillTimer(window_, kRestartTimer);
             KillTimer(window_, kUnresponsiveTimer);
