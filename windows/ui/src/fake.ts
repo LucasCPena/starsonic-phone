@@ -2,9 +2,27 @@
 // Responde ao `ready` com o estado do cenário (src/fake-scenarios.ts) e imita as respostas mais simples do
 // DesktopApp. Guarda cada comando em window.__comandos; window.__fake.push(msg) manda uma mensagem à interface.
 // As regras de verdade (validações, ligações) são do C++: aqui só o bastante para as telas reagirem.
-import { createScenario, type FakeView } from './fake-scenarios';
+import { createScenario, SERVIDORES_DO_PERFIL, type FakeView } from './fake-scenarios';
 import type { WebviewLike } from './bridge';
-import type { AppState, CallCard, CallState, Contact, IncomingMessage, RingKind } from './state';
+import type {
+  AdminServer,
+  AdminState,
+  AppState,
+  BlfState,
+  CallCard,
+  CallState,
+  Contact,
+  IncomingMessage,
+  RingKind,
+  Shortcut,
+  ShortcutAction,
+  UpdateChannel,
+} from './state';
+
+/** A senha que a área do administrador da ponte falsa aceita: só de teste (a de verdade nunca fica no repositório). */
+const SENHA_DE_TESTE = 'senha-de-teste';
+const ACOES: ShortcutAction[] = ['ligar', 'transferir', 'consulta', 'teclas'];
+const CODIGO_DE_PUXAR = /^(?:[0-9*#+]|\{ramal\})*$/;
 
 type Listener = (event: { data: unknown }) => void;
 
@@ -60,7 +78,45 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
   };
 
   const ring = (tipo: RingKind) => deliver({ v: 1, type: 'ring', tipo } satisfies IncomingMessage);
+  const toast = (texto: string) => deliver({ v: 1, type: 'toast', texto } satisfies IncomingMessage);
   const setCall = (ligacao: CallState | null) => change({ ligacao });
+
+  // A área do administrador do C++ de mentira: a senha de teste, a espera de 30 s depois de 5 erradas seguidas e o
+  // que a área guarda além do que a interface vê com ela fechada (o admin.json).
+  let erradas = 0;
+  let guardado: { puxar: boolean; codigoPuxar: string; servidores: AdminServer[]; canal: UpdateChannel } = {
+    puxar: false,
+    codigoPuxar: '',
+    servidores: structuredClone(SERVIDORES_DO_PERFIL),
+    canal: '',
+  };
+  const visivel = () => ({ naoPerturbe: state.admin.naoPerturbe, atenderAuto: state.admin.atenderAuto, blf: state.admin.blf });
+  const adminAberto = (): AdminState => ({ aberto: true, ...visivel(), ...guardado });
+  // O último BLF que o servidor deu a cada atalho (volta quando o administrador liga o BLF de novo).
+  const blfVisto = new Map<string, BlfState | null>(state.atalhos.map((a) => [a.id, a.estado]));
+  const estadoDoBlf = (a: Shortcut, blfDoAdmin: boolean): BlfState | null => (a.blf && blfDoAdmin ? (blfVisto.get(a.id) ?? 'desconectado') : null);
+
+  /** O que a loja dos atalhos do C++ recusa (o motivo vai num toast e nada é gravado). */
+  const recusaDoAtalho = (command: Record<string, unknown>): string => {
+    const editando = typeof command.id === 'string';
+    if (editando && !state.atalhos.some((a) => a.id === command.id)) return 'Esse atalho não existe mais.';
+    if (!editando && state.atalhos.length >= 8) return 'Você já tem 8 atalhos. Remova um para adicionar outro.';
+    if (String(command.nome ?? '').trim() === '') return 'Digite o nome do atalho.';
+    if (String(command.numero ?? '').trim() === '') return 'Digite o número do atalho.';
+    return '';
+  };
+
+  /** A tabela de portas como a loja do administrador grava (o endereço sem espaços e em minúsculas), ou o motivo da recusa. */
+  const servidoresGravados = (lista: unknown): AdminServer[] | string => {
+    const gravados: AdminServer[] = [];
+    for (const item of Array.isArray(lista) ? (lista as AdminServer[]) : []) {
+      const endereco = String(item.endereco ?? '').trim().toLowerCase();
+      if (!Number.isInteger(item.porta) || item.porta < 1 || item.porta > 65535) return 'A porta deve ficar entre 1 e 65535.';
+      if (gravados.some((s) => s.endereco === endereco)) return 'Esse servidor já está na lista.';
+      gravados.push({ endereco, porta: item.porta });
+    }
+    return gravados;
+  };
   let proximoId = 40;
   /** A segunda ligação feita (Nova ligação ou Consultar): a de agora vai para a espera e a nova chama. */
   const ligarDeNovo = (l: CallState, numero: string, consulta: boolean) => {
@@ -167,9 +223,12 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
         if (scenario.ring) deliver({ v: 1, type: 'ring', tipo: scenario.ring });
         break;
       case 'setDnd':
+        // Escondido pelo administrador, ligar é recusado (como no C++).
+        if (command.on === true && !state.admin.naoPerturbe) break;
         change({ naoPerturbe: command.on === true });
         break;
       case 'setAutoAnswer':
+        if (command.on === true && !state.admin.atenderAuto) break;
         change({
           atenderAutomatico: {
             on: command.on === true,
@@ -179,7 +238,94 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
         break;
       case 'setSetting':
         if (command.chave === 'iniciarComWindows') change({ iniciarComWindows: command.valor === true });
+        else if (command.chave === 'bipeFim') change({ config: { ...state.config, bipeFim: command.valor === true } });
         break;
+      case 'saveShortcut': {
+        if (!ACOES.includes(command.acao as ShortcutAction)) break;
+        const recusa = recusaDoAtalho(command);
+        if (recusa) {
+          toast(recusa);
+          break;
+        }
+        const id = typeof command.id === 'string' ? command.id : Math.random().toString(16).slice(2, 10) + Math.random().toString(16).slice(2, 10);
+        const atalho: Shortcut = {
+          id,
+          nome: String(command.nome).trim(),
+          numero: String(command.numero).trim(),
+          acao: command.acao as ShortcutAction,
+          blf: command.blf === true,
+          estado: null,
+        };
+        atalho.estado = estadoDoBlf(atalho, state.admin.blf);
+        const existe = state.atalhos.some((a) => a.id === id);
+        change({ atalhos: existe ? state.atalhos.map((a) => (a.id === id ? atalho : a)) : [...state.atalhos, atalho] });
+        break;
+      }
+      case 'removeShortcut':
+        change({ atalhos: state.atalhos.filter((a) => a.id !== command.id) });
+        break;
+      case 'useShortcut':
+        // O que o atalho faz (e o puxar ligação) é do C++: as specs só olham o comando.
+        break;
+      case 'adminLogin': {
+        const agora = Date.now();
+        const vez = state.entrarAdmin.vez + 1;
+        // Na espera depois de 5 erradas: recusado, também com a senha certa.
+        if (state.entrarAdmin.esperaAte !== 0 && agora < state.entrarAdmin.esperaAte) {
+          change({ entrarAdmin: { ...state.entrarAdmin, erro: 'Senha incorreta.', vez } });
+          break;
+        }
+        if (command.senha === SENHA_DE_TESTE) {
+          erradas = 0;
+          change({ admin: adminAberto(), entrarAdmin: { erro: '', esperaAte: 0, vez } });
+          break;
+        }
+        erradas += 1;
+        const espera = erradas >= 5;
+        if (espera) erradas = 0;
+        change({ entrarAdmin: { erro: 'Senha incorreta.', esperaAte: espera ? agora + 30_000 : 0, vez } });
+        break;
+      }
+      case 'adminLogout':
+        change({ admin: { aberto: false, ...visivel() } });
+        break;
+      case 'adminSet': {
+        if (!state.admin.aberto) break;
+        if (typeof command.canal === 'string' && !['', 'teste', 'estavel'].includes(command.canal)) {
+          toast('Escolha o canal Teste ou Estável.');
+          break;
+        }
+        if (typeof command.codigoPuxar === 'string' && !CODIGO_DE_PUXAR.test(command.codigoPuxar.trim())) {
+          toast('O código só pode ter dígitos, *, #, + e {ramal}.');
+          break;
+        }
+        let servidores = guardado.servidores;
+        if (command.servidores !== undefined) {
+          const gravados = servidoresGravados(command.servidores);
+          if (typeof gravados === 'string') {
+            toast(gravados);
+            break;
+          }
+          servidores = gravados;
+        }
+        const naoPerturbe = typeof command.naoPerturbe === 'boolean' ? command.naoPerturbe : state.admin.naoPerturbe;
+        const atenderAuto = typeof command.atenderAuto === 'boolean' ? command.atenderAuto : state.admin.atenderAuto;
+        const blf = typeof command.blf === 'boolean' ? command.blf : state.admin.blf;
+        guardado = {
+          puxar: typeof command.puxar === 'boolean' ? command.puxar : guardado.puxar,
+          codigoPuxar: typeof command.codigoPuxar === 'string' ? command.codigoPuxar.trim() : guardado.codigoPuxar,
+          servidores,
+          canal: typeof command.canal === 'string' ? (command.canal as UpdateChannel) : guardado.canal,
+        };
+        change({
+          admin: { aberto: true, naoPerturbe, atenderAuto, blf, ...guardado },
+          // Escondido, o botão fica desligado na hora (e mostrar de novo não liga de volta).
+          naoPerturbe: naoPerturbe ? state.naoPerturbe : false,
+          atenderAutomatico: atenderAuto ? state.atenderAutomatico : { ...state.atenderAutomatico, on: false },
+          atalhos: state.atalhos.map((a) => ({ ...a, estado: estadoDoBlf(a, blf) })),
+        });
+        break;
+      }
       case 'setAudio': {
         const audio = { ...state.audio };
         if (typeof command.microfone === 'string') audio.microfone = command.microfone;
@@ -198,7 +344,7 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
         if (!conta) break;
         change({
           contas: state.contas.map((c) => ({ ...c, emUso: c.id === conta.id })),
-          conta: { ...conta, status: 'conectado', texto: `Conectado · ${conta.servidor}` },
+          conta: { ...conta, status: 'conectado', texto: `Conectado · ${conta.servidor}`, internet: true },
         });
         break;
       }
@@ -247,7 +393,7 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
             tela: 'principal',
             entrar: { servidor: '', protocolo: 'udp', ramal: '', nome: '', erro: '', ocupado: false, pedeSenha: false, podeCancelar: false, contaId: '' },
             contas: [...outras, salva],
-            conta: { id, nome, ramal, servidor, protocolo, status: 'conectado', texto: `Conectado · ${servidor}` },
+            conta: { id, nome, ramal, servidor, protocolo, status: 'conectado', texto: `Conectado · ${servidor}`, internet: true },
           });
         }, 1500);
         break;

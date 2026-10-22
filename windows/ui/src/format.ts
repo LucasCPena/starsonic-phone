@@ -1,5 +1,5 @@
 // Como a interface escreve o que vem no estado (só apresentação: as regras ficam no C++).
-import type { CurrentAccount, RecentCall, RecentKind, SavedAccount } from './state';
+import type { BlfState, CallState, CurrentAccount, RecentCall, RecentKind, SavedAccount, Shortcut, ShortcutAction } from './state';
 
 /** "Recepção · 2001"; sem nome, só o ramal. */
 export function accountTitle(conta: Pick<CurrentAccount | SavedAccount, 'nome' | 'ramal'>): string {
@@ -21,7 +21,8 @@ export function accountStatusLine(conta: CurrentAccount): string {
 
 /** A bolinha da conta em uso (a mesma no cabeçalho, na barra da ligação e nas Configurações). */
 export interface AccountDot {
-  /** As classes da bolinha: verde conectado, vermelho em ligação, ciano conectando, cinza sem conexão e no erro. */
+  /** As classes da bolinha: verde conectado, vermelho em ligação e no Não perturbe, ciano conectando, cinza sem
+   *  internet, sem conexão e no erro. */
   dot: string;
   /** O texto ao lado (a bolinha nunca diz o estado sozinha). */
   texto: string;
@@ -29,20 +30,88 @@ export interface AccountDot {
   atencao: boolean;
 }
 
-/** Conectado e com uma ligação (tocando também): ocupado. */
-export function accountDot(conta: CurrentAccount, emLigacao: boolean): AccountDot {
+/**
+ * A tabela da rc.3 (spec 7), na ordem: vale a primeira linha que bate.
+ * 1. sem internet: cinza, "Sem internet · tentando de novo";
+ * 2. conectando: ciano, "Conectando…";
+ * 3. erro no cadastro: cinza com o triângulo, o texto do erro (e sem conexão, da rc.2: cinza, sem o triângulo);
+ * 4. em ligação (tocando também): vermelha, "Ocupado · em ligação";
+ * 5. Não perturbe ligado: vermelha, "Não perturbe · as ligações não tocam";
+ * 6. conectado: verde, "Conectado · <servidor>".
+ */
+export function accountDot(conta: CurrentAccount, emLigacao: boolean, naoPerturbe: boolean): AccountDot {
+  if (conta.internet === false) return { dot: 'dot dot-off', texto: 'Sem internet · tentando de novo', atencao: false };
   switch (conta.status) {
-    case 'conectado':
-      return emLigacao
-        ? { dot: 'dot dot-busy', texto: 'Ocupado · em ligação', atencao: false }
-        : { dot: 'dot dot-online', texto: accountStatusLine(conta), atencao: false };
     case 'conectando':
       return { dot: 'dot', texto: accountStatusLine(conta), atencao: false };
     case 'erro':
       return { dot: 'dot dot-off', texto: accountStatusLine(conta), atencao: true };
-    default:
+    case 'sem_conexao':
       return { dot: 'dot dot-off', texto: accountStatusLine(conta), atencao: false };
+    case 'conectado':
+      break;
   }
+  if (emLigacao) return { dot: 'dot dot-busy', texto: 'Ocupado · em ligação', atencao: false };
+  if (naoPerturbe) return { dot: 'dot dot-busy', texto: 'Não perturbe · as ligações não tocam', atencao: false };
+  return { dot: 'dot dot-online', texto: accountStatusLine(conta), atencao: false };
+}
+
+const ACAO_NA_ABA: Record<ShortcutAction, string> = {
+  ligar: 'Ligar',
+  transferir: 'Transferir',
+  consulta: 'Consulta',
+  teclas: 'Enviar teclas',
+};
+
+/** A linha do atalho na aba (o canvas): "Transferir · 2010". */
+export function shortcutLine(atalho: Pick<Shortcut, 'acao' | 'numero'>): string {
+  return `${ACAO_NA_ABA[atalho.acao]} · ${atalho.numero}`;
+}
+
+/** A linha do atalho no painel da ligação: o que ele faz durante a ligação (spec 3.2). */
+export function shortcutCallLine(atalho: Pick<Shortcut, 'acao' | 'numero'>): string {
+  switch (atalho.acao) {
+    case 'ligar':
+      return `Nova ligação para ${atalho.numero}`;
+    case 'transferir':
+      return `Transferir para ${atalho.numero}`;
+    case 'consulta':
+      return `Consulta com ${atalho.numero}`;
+    case 'teclas':
+      return `Enviar as teclas ${atalho.numero}`;
+  }
+}
+
+const PALAVRA_DO_BLF: Record<BlfState, string> = {
+  livre: 'Livre',
+  tocando: 'Tocando',
+  ocupado: 'Ocupado',
+  desconectado: 'Desconectado',
+};
+
+/** A palavra do BLF (sempre ao lado da bolinha). */
+export function blfWord(estado: BlfState): string {
+  return PALAVRA_DO_BLF[estado];
+}
+
+/**
+ * O atalho pode ser usado agora? Fora da ligação, todos menos Enviar teclas; com só uma recebida tocando (sem
+ * atender), nenhum (o C++ recusaria todos); com uma ligação de pé, todos (o resto é do C++).
+ */
+export function shortcutUsable(acao: ShortcutAction, ligacao: CallState | null): boolean {
+  if (!ligacao) return acao !== 'teclas';
+  return ligacao.top.phase !== 'ringing';
+}
+
+/** Parece um ramal (só dígitos, de 2 a 6): a chave do BLF vem ligada (com o BLF do administrador). */
+export function looksLikeExtension(numero: string): boolean {
+  return /^\d{2,6}$/.test(numero);
+}
+
+/** O texto cortado em `max` caracteres (pontos de código, como a loja do C++ conta: um emoji conta um). */
+export function limitCharacters(texto: string, max: number): string {
+  const pontos = [...texto];
+  return pontos.length > max ? pontos.slice(0, max).join('') : texto;
 }
 
 /** O começo do texto do estado, sem o " · <servidor>" (a faixa do layout Mínimo). */

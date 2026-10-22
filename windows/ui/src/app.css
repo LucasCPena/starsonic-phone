@@ -19,6 +19,8 @@
   /* O verde da bolinha "conectado" (rc.2). A marca não tem verde (o único é o do WhatsApp, reservado a ele): este é
      um pedido explícito do responsável (Lucas, 22/10/2026), decisão dele. Só a bolinha e a bandeja usam. */
   --status-online: #22c55e;
+  /* O contorno tracejado dos espaços vazios (rc.3: "Adicionar atalho", "Adicionar servidor"). */
+  --dashed: #d3d8e6;
   --surface: var(--white); --surface-alt: var(--soft); --card: var(--white); --border: var(--line);
   --text-strong: var(--blue); --text: var(--ink); --text-muted: var(--muted); --text-accent: var(--cyan-d);
   --icon: var(--blue); --icon-tile: rgba(0, 194, 203, 0.14); --focus: var(--blue);
@@ -57,6 +59,7 @@
     /* O danger-soft é um fundo claro: no escuro o campo inválido ganha um véu vermelho. */
     --field-invalid: rgba(214, 69, 69, 0.12);
     --shadow-panel: 0 34px 80px -30px rgba(0, 0, 0, 0.7);
+    --dashed: rgba(255, 255, 255, 0.28);
   }
 }
 
@@ -169,6 +172,8 @@ button { cursor: default; }
 .btn-cyan:disabled { background: var(--cyan-d); box-shadow: none; }
 .btn-blue { background: var(--blue); color: #ffffff; }
 .btn-blue:hover { background: var(--blue-2); }
+/* rc.3: travado (o Entrar da área do administrador sem a senha ou na espera). */
+.btn-blue:disabled, .btn-blue:disabled:hover { background: var(--blue); opacity: 0.45; }
 .btn-outline { background: transparent; color: var(--outline-text); border: 1.5px solid var(--outline); }
 .btn-outline:hover { border-color: var(--cyan); }
 .btn-danger { background: var(--danger); color: #ffffff; }
@@ -193,7 +198,7 @@ button { cursor: default; }
 .ghost:hover { background: var(--icon-tile); color: var(--text-strong); }
 
 /* Navegação de baixo */
-.nav { flex: none; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--border); padding: 8px 12px 10px; background: var(--surface);
+.nav { flex: none; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-top: 1px solid var(--border); padding: 8px 12px 10px; background: var(--surface);
   position: relative; padding-inline: max(12px, calc((100% - 480px) / 2)); }
 /* O desenho do canto de arrastar: a zona de redimensionar do canto de baixo à direita fica por cima dele. */
 .grip { position: absolute; right: 3px; bottom: 3px; width: 12px; height: 12px; fill: none; stroke: #b9c4e6; stroke-width: 1.5; stroke-linecap: round; pointer-events: none; }
@@ -406,7 +411,7 @@ button.link { border: 0; background: transparent; padding: 0; font-family: inher
 .call-middle:has(.call-keys, .call-panel) { justify-content: center; }
 .ctrls { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 10px; width: 100%; }
 .ctrls-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px 4px; }
-.ctrl { display: flex; flex-direction: column; align-items: center; gap: 7px; border: 0; background: transparent; color: #ffffff; font: 600 12px/1.2 var(--font-sans); padding: 0; width: 100%; border-radius: 12px; }
+.ctrl { display: flex; flex-direction: column; align-items: center; gap: 7px; border: 0; background: transparent; color: #ffffff; font: 600 12px/1.2 var(--font-sans); padding: 0; width: 100%; border-radius: 12px; text-align: center; }
 .ctrl-c { width: 58px; height: 58px; border-radius: 999px; background: rgba(255, 255, 255, 0.07); border: 1px solid rgba(255, 255, 255, 0.14); display: grid; place-items: center; transition: background var(--ease), border-color var(--ease); }
 .ctrl:not(:disabled):hover .ctrl-c { background: rgba(255, 255, 255, 0.13); }
 .ctrl-on .ctrl-c, .ctrl-on:not(:disabled):hover .ctrl-c { background: var(--cyan); border-color: var(--cyan); color: var(--on-cyan); }
@@ -623,3 +628,153 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .win[data-layout="compacto"] .resize-cima { right: 80px; }
 .win[data-layout="minimo"] .resize-cima { right: 72px; }
 .win[data-layout="compacto"] .account-status, .win[data-layout="minimo"] .account-status { margin-right: 8px; }
+
+/* ---------------------------------------------------------------------------------------------------------
+   rc.3: a aba Atalhos, a edição, o painel na ligação, a área do administrador e o bipe (o canvas "Starsonic
+   Phone Windows — atalhos, administrador e status", com os tokens de sempre). */
+
+/* No Compacto, a aba Atalhos só com o ícone (spec 3.1), alinhado aos ícones das outras (o lugar do rótulo fica). */
+.win[data-layout="compacto"] .tab-atalhos .tab-label { visibility: hidden; }
+
+/* A barra com a linha pequena em cima do título (a área do administrador) e o texto à direita ("3 de 8"). */
+.bar-titulos { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.bar .bar-eyebrow { color: var(--cyan); font-size: 11px; }
+.bar .bar-eyebrow::before { width: 20px; }
+.bar .h1 { min-width: 0; }
+.bar-extra { margin-left: auto; padding-right: 4px; font-size: 12.5px; font-weight: 600; color: #b9c4e6; white-space: nowrap; }
+
+/* Títulos e ajudas longos que quebram a linha (o bipe, as chaves do administrador). */
+.row-title.wrap, .row-sub.wrap { white-space: normal; overflow: visible; }
+
+/* A aba Atalhos: o título, "<n> de 8", a grade de duas colunas e a ajuda. */
+.atalhos { gap: 12px; padding-top: 16px; }
+.atalhos-topo { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex: none; }
+.atalhos-titulo { margin: 0; font-size: 18px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.2; color: var(--text-strong); }
+.atalhos-conta { font-size: 12.5px; font-weight: 600; color: var(--text-muted); white-space: nowrap; }
+.atalhos-grade { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; flex: none; }
+.atalho, .atalho-vazio { position: relative; min-width: 0; }
+.atalho-usar { width: 100%; height: 74px; display: flex; align-items: center; gap: 10px; padding: 0 10px 0 12px; border-radius: 18px;
+  border: 1px solid var(--key-border); background: var(--key); color: var(--text-strong); font-family: inherit; text-align: left;
+  transition: border-color var(--ease), background var(--ease); }
+.atalho-usar:not([aria-disabled="true"]):hover { border-color: var(--cyan); }
+.atalho-usar:not([aria-disabled="true"]):active { background: var(--icon-tile); }
+.atalho-usar[aria-disabled="true"] { opacity: 0.55; }
+.atalho-tile .ic { width: 18px; height: 18px; }
+.atalho-texto { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+/* O nome deixa o canto de cima à direita para o "Mais opções". */
+.atalho-nome { font-size: 14px; font-weight: 800; line-height: 1.25; padding-right: 22px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.atalho-detalhe { font-size: 12px; line-height: 1.35; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.atalho-mais { position: absolute; top: 5px; right: 5px; width: 26px; height: 26px; border-radius: 999px; border: 0; background: transparent;
+  color: var(--text-muted); display: grid; place-items: center; padding: 0; }
+.atalho-mais:hover, .atalho-mais[aria-expanded="true"] { background: var(--icon-tile); color: var(--text-strong); }
+.atalho-novo { width: 100%; height: 74px; display: flex; align-items: center; justify-content: center; gap: 8px; border-radius: 18px;
+  border: 1.5px dashed var(--dashed); background: transparent; color: var(--text-muted); font: 700 13px/1.2 var(--font-sans);
+  transition: border-color var(--ease), color var(--ease); }
+.atalho-novo:hover { border-color: var(--cyan); color: var(--text-strong); }
+.atalho-novo .ic { width: 18px; height: 18px; }
+.atalhos-ajuda { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--text-muted); flex: none; }
+.popover-atalho { right: 4px; min-width: 170px; }
+.popover-atalho.popover-baixo { top: 34px; }
+.popover-atalho.popover-cima { top: auto; bottom: calc(100% - 4px); }
+
+/* O BLF: a bolinha da cor do estado e a palavra sempre ao lado; Tocando pisca devagar. */
+.blf { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 700; line-height: 1.3; color: var(--text-strong);
+  white-space: nowrap; flex: none; }
+.blf-palavra { display: block; }
+.blf-dot { width: 8px; height: 8px; border-radius: 999px; flex: none; background: #b9c4e6; box-shadow: 0 0 0 3px rgba(185, 196, 230, 0.3); }
+.blf-livre .blf-dot { background: var(--status-online); box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.2); }
+.blf-tocando .blf-dot { background: var(--cyan); box-shadow: 0 0 0 3px rgba(0, 194, 203, 0.22); animation: blf-pisca 1s ease-in-out infinite alternate; }
+.blf-ocupado .blf-dot { background: var(--danger); box-shadow: 0 0 0 3px rgba(214, 69, 69, 0.22); }
+@keyframes blf-pisca { from { opacity: 1; } to { opacity: 0.25; } }
+@media (prefers-reduced-motion: reduce) {
+  .blf-tocando .blf-dot { animation: none; }
+}
+
+/* A aba Atalhos no Compacto e no Mínimo: cartões mais baixos; sem o ícone da ação (a ação está na linha de baixo),
+   para o nome e a palavra do BLF caberem. */
+.win[data-layout="compacto"] .atalhos { gap: 10px; padding-top: 12px; }
+.win[data-layout="compacto"] .atalhos-grade { gap: 8px; }
+.win[data-layout="compacto"] .atalho-usar, .win[data-layout="compacto"] .atalho-novo { height: 64px; border-radius: 16px; }
+.win[data-layout="minimo"] .atalhos { gap: 8px; }
+.win[data-layout="minimo"] .atalhos-titulo { font-size: 16px; }
+.win[data-layout="minimo"] .atalhos-grade { gap: 8px; }
+.win[data-layout="minimo"] .atalho-usar, .win[data-layout="minimo"] .atalho-novo { height: 60px; border-radius: 14px; }
+.win[data-layout="minimo"] .atalho-usar { padding: 0 8px 0 10px; }
+.win[data-layout="minimo"] .atalho-novo { gap: 6px; font-size: 12.5px; }
+.win[data-layout="compacto"] .atalho-tile, .win[data-layout="minimo"] .atalho-tile { display: none; }
+.win[data-layout="minimo"] .atalhos-ajuda { font-size: 12px; }
+
+/* A edição do atalho: as quatro ações em cartões de rádio, a chave do BLF e os botões embaixo. */
+.atalho-form { gap: 14px; }
+.acoes { gap: 8px; }
+.acoes-titulo { margin-bottom: 6px; }
+.acao { display: flex; align-items: center; gap: 12px; min-height: 50px; padding: 8px 14px; border-radius: 14px; border: 1.5px solid var(--border);
+  background: var(--surface); transition: border-color var(--ease), background var(--ease); }
+.acao:has(input:checked) { border-color: var(--cyan); background: rgba(0, 194, 203, 0.08); }
+.acao input { width: 18px; height: 18px; margin: 0; flex: none; accent-color: var(--pill-on-bg); }
+.acao-textos { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.acao-titulo { font-size: 14px; font-weight: 700; line-height: 1.3; color: var(--text-strong); }
+.acao-ajuda { font-size: 12px; line-height: 1.35; color: var(--text-muted); }
+.blf-opcao { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 8px 14px; border-radius: 14px; border: 1px solid var(--key-border);
+  background: var(--key); flex: none; }
+.blf-opcao > .blf-dot { width: 10px; height: 10px; background: var(--status-online); box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.2); }
+.blf-opcao-off > .blf-dot { background: #b9c4e6; box-shadow: 0 0 0 3px rgba(185, 196, 230, 0.3); }
+.switch:disabled { opacity: 0.45; }
+.form-actions-linha { flex-direction: row; margin-top: auto; }
+.form-actions-linha .btn { height: 48px; }
+.form-actions-linha .btn-block { flex: 1; width: auto; min-width: 0; }
+
+/* O painel Atalhos da tela da ligação (sempre escuro): no lugar dos controles, a lista rola dentro dele. */
+.call-middle:has(.atalhos-painel) { justify-content: stretch; }
+.atalhos-painel { flex: 1 1 auto; min-height: 0; width: 100%; display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: 22px;
+  background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.12); }
+.atalhos-painel-topo { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex: none; }
+.atalhos-painel-titulo { margin: 0; font-size: 15px; font-weight: 800; color: #ffffff; }
+.atalhos-fechar { background: rgba(255, 255, 255, 0.08); color: #ffffff; }
+.atalhos-fechar:hover { background: rgba(255, 255, 255, 0.16); }
+.atalhos-lista { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent; }
+.atalho-linha { flex: none; display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 6px 12px; border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12); background: rgba(255, 255, 255, 0.045); color: #ffffff; font-family: inherit; text-align: left;
+  transition: border-color var(--ease), background var(--ease); }
+.atalho-linha:not([aria-disabled="true"]):hover { border-color: var(--cyan); }
+.atalho-linha[aria-disabled="true"] { opacity: 0.45; }
+.atalho-linha .tile { width: 34px; height: 34px; border-radius: 11px; }
+.atalho-linha .row-title { font-size: 14px; color: #ffffff; }
+.atalho-linha .row-sub { font-size: 12px; color: #b9c4e6; }
+.atalho-linha .blf { font-size: 12px; color: #ffffff; }
+.atalho-linha .blf-dot { width: 9px; height: 9px; }
+.win.call[data-layout="minimo"] .atalhos-painel { padding: 10px; gap: 8px; border-radius: 16px; }
+.win.call[data-layout="minimo"] .atalhos-lista { gap: 6px; }
+.win.call[data-layout="minimo"] .atalho-linha { min-height: 44px; gap: 10px; padding: 4px 10px; }
+.win.call[data-layout="minimo"] .atalho-linha .tile { width: 28px; height: 28px; border-radius: 9px; }
+
+/* O diálogo da área do administrador (Ctrl + P): o cadeado, o título, a Senha e os dois botões do mesmo tamanho. */
+.dialog-adm { max-width: 352px; padding: 24px; border-radius: 24px; }
+.adm-form { display: flex; flex-direction: column; gap: 16px; }
+.adm-topo { display: flex; align-items: center; gap: 12px; }
+.adm-tile { width: 44px; height: 44px; border-radius: 14px; flex: none; display: grid; place-items: center; color: var(--icon);
+  background: linear-gradient(135deg, rgba(0, 194, 203, 0.15), rgba(12, 38, 113, 0.1)); }
+.adm-tile .ic { width: 22px; height: 22px; }
+.adm-titulos { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.dialog-adm h2 { margin: 0; }
+.dialog-adm .adm-titulos p { margin: 0; font-size: 12.5px; line-height: 1.4; }
+.dialog-adm p.field-error { margin: 2px 0 0; font-size: 13px; line-height: 1.35; color: var(--text); }
+.dialog-adm p.adm-espera { margin: 0; font-size: 13px; font-weight: 600; line-height: 1.4; color: var(--text-muted); }
+.adm-acoes .btn { flex: 1; height: 46px; padding: 0 14px; }
+
+/* A área do administrador (as seções como nas Configurações). */
+.adm { gap: 10px; padding-top: 16px; }
+.adm > .eyebrow:not(:first-child) { margin-top: 4px; }
+.adm-codigo { padding: 12px 0; }
+.help-campo { margin: 0; font-size: 12px; line-height: 1.45; color: var(--text-muted); }
+.adm-adicionar { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 14px 0 10px; border-radius: 999px;
+  border: 1.5px dashed var(--dashed); background: transparent; color: var(--text-strong); font: 700 12.5px/1 var(--font-sans);
+  transition: border-color var(--ease); }
+.adm-adicionar:hover { border-color: var(--cyan); }
+.srv-form { display: flex; flex-direction: column; gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.srv-campos { display: grid; grid-template-columns: minmax(0, 1fr) 96px; gap: 10px; }
+.srv-acoes { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.adm-canal { padding: 12px 0; }
+.adm-canal-titulo { margin-bottom: 8px; font-size: 14px; }
+.adm-sair { flex: none; margin-top: 4px; }

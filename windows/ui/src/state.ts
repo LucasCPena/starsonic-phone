@@ -9,7 +9,14 @@ export type AccountStatus = 'conectado' | 'conectando' | 'sem_conexao' | 'erro';
 export type RecentKind = 'feita' | 'recebida' | 'perdida';
 export type CallPhase = 'ringing' | 'dialing' | 'active';
 export type SecondKind = 'none' | 'ringing' | 'held' | 'active';
-export type RingKind = 'completo' | 'espera' | 'parar';
+/** `fim` (rc.3): o bipe do fim da ligação, uma vez (não muda o toque de agora e não volta no `ready`). */
+export type RingKind = 'completo' | 'espera' | 'parar' | 'fim';
+/** rc.3: o que o atalho faz (Ligar, Transferir, Transferir com consulta, Enviar teclas). */
+export type ShortcutAction = 'ligar' | 'transferir' | 'consulta' | 'teclas';
+/** rc.3: o BLF do ramal de um atalho. */
+export type BlfState = 'livre' | 'tocando' | 'ocupado' | 'desconectado';
+/** rc.3: o canal de atualização ("" = o do build). */
+export type UpdateChannel = 'teste' | 'estavel' | '';
 
 /** A tela Entrar (também Adicionar e Editar conta). A senha nunca vem. */
 export interface LoginForm {
@@ -40,6 +47,8 @@ export interface CurrentAccount {
   status: AccountStatus;
   /** A linha do cabeçalho; pode ser "" com sem_conexao. */
   texto: string;
+  /** (rc.3) O executável vê a internet (`true` até ele dizer o contrário). `false` vem antes de tudo na bolinha. */
+  internet: boolean;
 }
 
 export interface SavedAccount {
@@ -121,6 +130,49 @@ export interface AudioSettings {
   desconectados: string[];
 }
 
+/** (rc.3) Um atalho: até 8, na ordem em que foram incluídos. */
+export interface Shortcut {
+  id: string;
+  nome: string;
+  numero: string;
+  acao: ShortcutAction;
+  /** A chave "Mostrar se o ramal está livre" do atalho. */
+  blf: boolean;
+  /** O BLF do ramal; null sem o `blf` do atalho ou sem o BLF do administrador. */
+  estado: BlfState | null;
+}
+
+/** (rc.3) Um servidor da tabela de portas do administrador (UDP e TCP). */
+export interface AdminServer {
+  endereco: string;
+  porta: number;
+}
+
+/** O que a interface precisa da área do administrador também com ela fechada: esconder os botões e o BLF. */
+interface AdminVisible {
+  /** O botão Não perturbe aparece (false: escondido, e desligado). */
+  naoPerturbe: boolean;
+  /** O botão Atender automático aparece (false: escondido, e desligado). */
+  atenderAuto: boolean;
+  /** O BLF nos atalhos. */
+  blf: boolean;
+}
+
+/** (rc.3) A área do administrador: completa só com `aberto`. */
+export type AdminState =
+  | ({ aberto: false } & AdminVisible)
+  | ({ aberto: true; puxar: boolean; codigoPuxar: string; servidores: AdminServer[]; canal: UpdateChannel } & AdminVisible);
+
+/** (rc.3) O resultado do último adminLogin. */
+export interface AdminLoginResult {
+  /** "Senha incorreta." ou "" (o da última tentativa). */
+  erro: string;
+  /** Até quando (ms desde 1970) o adminLogin é recusado; 0 sem espera. */
+  esperaAte: number;
+  /** Sobe a cada adminLogin respondido: só quando ela muda o `erro` vale para a tentativa que a interface mandou. */
+  vez: number;
+}
+
 export interface AppState {
   tela: Screen;
   entrar: LoginForm;
@@ -139,6 +191,11 @@ export interface AppState {
   versao: string;
   teclado: string;
   tecladoVez: number;
+  /** (rc.3) */
+  atalhos: Shortcut[];
+  admin: AdminState;
+  entrarAdmin: AdminLoginResult;
+  config: { bipeFim: boolean };
 }
 
 /** C++ → interface. */
@@ -184,7 +241,7 @@ export type Command =
   | { cmd: 'setDnd'; on: boolean }
   | { cmd: 'setAutoAnswer'; on: boolean; segundos?: number }
   | { cmd: 'setAudio'; microfone?: string; altoFalante?: string; toque?: string }
-  | { cmd: 'setSetting'; chave: 'iniciarComWindows'; valor: boolean }
+  | { cmd: 'setSetting'; chave: 'iniciarComWindows' | 'bipeFim'; valor: boolean }
   | { cmd: 'saveContact'; id?: string; nome: string; numero: string; observacao?: string }
   | { cmd: 'removeContact'; id: string }
   | { cmd: 'viewRecents' }
@@ -192,7 +249,23 @@ export type Command =
   | { cmd: 'updateLater' }
   | { cmd: 'cancelLogin' }
   /** rc.2: a interface pegou uma zona de redimensionar (o C++ começa o redimensionar do Windows). */
-  | { cmd: 'resize'; borda: 'cima' | 'cima-esquerda' | 'cima-direita' | 'baixo-direita' };
+  | { cmd: 'resize'; borda: 'cima' | 'cima-esquerda' | 'cima-direita' | 'baixo-direita' }
+  /** rc.3: os atalhos (sem `id`, um novo) e a área do administrador. */
+  | { cmd: 'saveShortcut'; id?: string; nome: string; numero: string; acao: ShortcutAction; blf: boolean }
+  | { cmd: 'removeShortcut'; id: string }
+  | { cmd: 'useShortcut'; id: string }
+  | { cmd: 'adminLogin'; senha: string }
+  | { cmd: 'adminLogout' }
+  | {
+      cmd: 'adminSet';
+      naoPerturbe?: boolean;
+      atenderAuto?: boolean;
+      blf?: boolean;
+      puxar?: boolean;
+      codigoPuxar?: string;
+      servidores?: AdminServer[];
+      canal?: UpdateChannel;
+    };
 
 /** Os únicos endereços que o openExternal aceita (nenhum tel:: o app é o tratador dele). */
 export const EXTERNAL_URLS = {

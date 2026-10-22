@@ -1,0 +1,153 @@
+// A aba Atalhos (rc.3, spec 3): a grade de duas colunas com até 8 cartões, "<n> de 8" no alto e "Adicionar atalho" nos
+// espaços vazios. Cada cartão tem o ícone da ação, o nome, a ação e o número e o BLF (só com `estado`: a bolinha e a
+// palavra ao lado). O clique usa o atalho (useShortcut: o que ele faz, e o puxar ligação de um ramal tocando, são do
+// C++); o botão direito, ou o "Mais opções" (⋯) do cartão pelo teclado, abre a edição (Editar e Remover, que pede a
+// confirmação). Enviar teclas fica desativado fora da ligação (o C++ recusaria). Numa janela pequena, a grade rola
+// dentro do corpo da aba (a navegação fica inteira).
+import { useRef, useState } from 'preact/hooks';
+import { BlfBadge } from '../components/Blf';
+import { Confirm } from '../components/Confirm';
+import { Menu } from '../components/Menu';
+import { shortcutLine, shortcutUsable } from '../format';
+import { IconMore, IconPencil, IconPlus, IconTrash, ShortcutActionIcon } from '../icons';
+import type { CallState, Shortcut } from '../state';
+import type { Send } from '../types';
+
+/** Quantos atalhos cabem (a loja do C++ recusa o 9º). */
+export const MAX_ATALHOS = 8;
+
+interface Props {
+  atalhos: Shortcut[];
+  ligacao: CallState | null;
+  send: Send;
+  /** Adicionar atalho; `posicao` é o "<n> de 8" do formulário. */
+  onNew(posicao: number): void;
+  onEdit(atalho: Shortcut, posicao: number): void;
+}
+
+interface CartaoProps {
+  atalho: Shortcut;
+  usavel: boolean;
+  send: Send;
+  onEdit(): void;
+  onRemove(): void;
+}
+
+function Cartao({ atalho, usavel, send, onEdit, onRemove }: CartaoProps) {
+  const [menu, setMenu] = useState<'baixo' | 'cima' | null>(null);
+  const mais = useRef<HTMLButtonElement>(null);
+  const abrirMenu = () => {
+    if (menu) {
+      setMenu(null);
+      return;
+    }
+    // Perto do fim da janela, o menu abre para cima (não some atrás da navegação).
+    const r = mais.current!.getBoundingClientRect();
+    setMenu(r.bottom + 110 > window.innerHeight - 70 ? 'cima' : 'baixo');
+  };
+  return (
+    <li class="atalho">
+      {/* aria-disabled (e não disabled): o desativado continua recebendo o botão direito, que abre a edição. */}
+      <button
+        type="button"
+        class="atalho-usar"
+        aria-disabled={usavel ? undefined : 'true'}
+        onClick={() => usavel && send({ cmd: 'useShortcut', id: atalho.id })}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          onEdit();
+        }}
+      >
+        <span class="tile atalho-tile" aria-hidden="true">
+          <ShortcutActionIcon acao={atalho.acao} size="sm" />
+        </span>
+        <span class="atalho-texto">
+          <span class="atalho-nome">{atalho.nome}</span>
+          <span class="atalho-detalhe">{shortcutLine(atalho)}</span>
+          {atalho.estado !== null && <BlfBadge estado={atalho.estado} />}
+        </span>
+      </button>
+      <button
+        ref={mais}
+        type="button"
+        class="atalho-mais"
+        aria-label={`Mais opções para ${atalho.nome}`}
+        title="Mais opções"
+        aria-haspopup="menu"
+        aria-expanded={menu !== null}
+        onClick={abrirMenu}
+      >
+        <IconMore size="sm" />
+      </button>
+      {menu && (
+        <Menu label={`Opções de ${atalho.nome}`} anchor={mais} onClose={() => setMenu(null)} class={`popover-atalho popover-${menu}`}>
+          <button type="button" role="menuitem" class="menuitem" onClick={() => (setMenu(null), onEdit())}>
+            <IconPencil size="sm" />
+            Editar
+          </button>
+          <button type="button" role="menuitem" class="menuitem" onClick={() => (setMenu(null), onRemove())}>
+            <IconTrash size="sm" />
+            Remover
+          </button>
+        </Menu>
+      )}
+    </li>
+  );
+}
+
+/** A confirmação antes de remover um atalho (na aba e na edição). */
+export function RemoverAtalho({ atalho, onCancel, onConfirm }: { atalho: Shortcut; onCancel(): void; onConfirm(): void }) {
+  return (
+    <Confirm
+      title="Remover atalho"
+      message={`${atalho.nome} sai da lista de atalhos.`}
+      confirmLabel="Remover"
+      onCancel={onCancel}
+      onConfirm={onConfirm}
+    />
+  );
+}
+
+export function Atalhos({ atalhos, ligacao, send, onNew, onEdit }: Props) {
+  const [remover, setRemover] = useState<Shortcut | null>(null);
+  const vazios = Math.max(0, MAX_ATALHOS - atalhos.length);
+  return (
+    <div class="body scroll atalhos">
+      <div class="atalhos-topo">
+        <h1 class="atalhos-titulo">Atalhos</h1>
+        <span class="atalhos-conta">{`${atalhos.length} de ${MAX_ATALHOS}`}</span>
+      </div>
+      <ul class="atalhos-grade">
+        {atalhos.map((a, i) => (
+          <Cartao
+            key={a.id}
+            atalho={a}
+            usavel={shortcutUsable(a.acao, ligacao)}
+            send={send}
+            onEdit={() => onEdit(a, i + 1)}
+            onRemove={() => setRemover(a)}
+          />
+        ))}
+        {Array.from({ length: vazios }, (_, i) => (
+          <li class="atalho-vazio" key={`vazio-${i}`}>
+            <button type="button" class="atalho-novo" onClick={() => onNew(atalhos.length + 1)}>
+              <IconPlus size="sm" />
+              Adicionar atalho
+            </button>
+          </li>
+        ))}
+      </ul>
+      <p class="atalhos-ajuda">Clique para usar. Clique com o botão direito para editar. Num ramal tocando, o clique puxa a ligação.</p>
+      {remover && (
+        <RemoverAtalho
+          atalho={remover}
+          onCancel={() => setRemover(null)}
+          onConfirm={() => {
+            send({ cmd: 'removeShortcut', id: remover.id });
+            setRemover(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}

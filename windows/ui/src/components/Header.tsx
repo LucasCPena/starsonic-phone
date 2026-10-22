@@ -5,8 +5,10 @@
 //   do Menu, e a conta numa linha (a bolinha, o ramal e o estado com reticências);
 // - Mínimo: sem o logo, uma faixa de 44 px com a conta (a bolinha, o ramal e o estado), o Não perturbe e o Menu; o
 //   Atender automático fica nas Configurações.
-// A bolinha (accountDot): verde conectado, vermelho em ligação, ciano conectando, cinza sem conexão e no erro do
-// cadastro (com o triângulo de atenção); o texto do estado fica sempre ao lado.
+// A bolinha (accountDot, a tabela da rc.3): cinza sem internet, ciano conectando, cinza no erro do cadastro (com o
+// triângulo de atenção) e sem conexão, vermelho em ligação e no Não perturbe, verde conectado; o texto do estado fica
+// sempre ao lado. (rc.3) O administrador pode esconder o Não perturbe e o Atender automático (`admin`): escondidos,
+// eles somem em todos os layouts.
 import { useRef, useState } from 'preact/hooks';
 import { accountDot, accountTitle, statusWord } from '../format';
 import { IconCheck, IconChevronDown, IconDnd, IconExit, IconIncoming, IconInfo, IconMenu, IconPlus, IconSettings, IconWarning } from '../icons';
@@ -29,7 +31,9 @@ export function Header({ state, conta, send, navigate, current, layout }: Props)
   const menuRef = useRef<HTMLButtonElement>(null);
   const contaRef = useRef<HTMLButtonElement>(null);
   const fechar = () => setAberto(null);
-  const estado = accountDot(conta, state.ligacao !== null);
+  const estado = accountDot(conta, state.ligacao !== null, state.naoPerturbe);
+  const mostrarDnd = state.admin.naoPerturbe;
+  const mostrarAuto = state.admin.atenderAuto;
 
   const logo = <img class="logo" src="assets/starsonic-logo-negativo.png" width={160} height={49} alt="Starsonic soluções de voz e dados" />;
 
@@ -130,7 +134,7 @@ export function Header({ state, conta, send, navigate, current, layout }: Props)
     return (
       <header class="brand brand-strip">
         {contaEl}
-        {redondo('Não perturbe', state.naoPerturbe, IconDnd, dnd)}
+        {mostrarDnd && redondo('Não perturbe', state.naoPerturbe, IconDnd, dnd)}
         {menu}
       </header>
     );
@@ -143,8 +147,8 @@ export function Header({ state, conta, send, navigate, current, layout }: Props)
         <div class="brand-row">
           {logo}
           <div class="brand-actions">
-            {redondo('Não perturbe', state.naoPerturbe, IconDnd, dnd)}
-            {redondo('Atender automático', state.atenderAutomatico.on, IconIncoming, auto)}
+            {mostrarDnd && redondo('Não perturbe', state.naoPerturbe, IconDnd, dnd)}
+            {mostrarAuto && redondo('Atender automático', state.atenderAutomatico.on, IconIncoming, auto)}
             {menu}
           </div>
         </div>
@@ -161,16 +165,22 @@ export function Header({ state, conta, send, navigate, current, layout }: Props)
         {menu}
       </div>
       {contaEl}
-      <div class="toggles">
-        <button type="button" class={state.naoPerturbe ? 'chip chip-on' : 'chip'} aria-pressed={state.naoPerturbe} onClick={dnd}>
-          <IconDnd />
-          Não perturbe
-        </button>
-        <button type="button" class={state.atenderAutomatico.on ? 'chip chip-on' : 'chip'} aria-pressed={state.atenderAutomatico.on} onClick={auto}>
-          <IconIncoming />
-          Atender automático
-        </button>
-      </div>
+      {(mostrarDnd || mostrarAuto) && (
+        <div class="toggles">
+          {mostrarDnd && (
+            <button type="button" class={state.naoPerturbe ? 'chip chip-on' : 'chip'} aria-pressed={state.naoPerturbe} onClick={dnd}>
+              <IconDnd />
+              Não perturbe
+            </button>
+          )}
+          {mostrarAuto && (
+            <button type="button" class={state.atenderAutomatico.on ? 'chip chip-on' : 'chip'} aria-pressed={state.atenderAutomatico.on} onClick={auto}>
+              <IconIncoming />
+              Atender automático
+            </button>
+          )}
+        </div>
+      )}
     </header>
   );
 }

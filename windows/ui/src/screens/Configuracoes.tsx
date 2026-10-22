@@ -1,5 +1,6 @@
 // As Configurações: Contas (a lista, a em uso marcada, Editar e "Adicionar conta"), Áudio (Microfone, Alto-falante
-// e Toque) e Ligações (Atender automaticamente e o tempo, Iniciar com o Windows).
+// e Toque) e Ligações ((rc.3) o bipe do fim da ligação, Atender automaticamente e o tempo, Iniciar com o Windows). O
+// Atender automaticamente e o tempo somem quando o administrador esconde o Atender automático.
 import { useEffect, useState } from 'preact/hooks';
 import { BackBar } from '../components/BackBar';
 import { accountDot, accountTitle, autoAnswerLine } from '../format';
@@ -93,7 +94,7 @@ export function Configuracoes({ state, send, onBack, onEditAccount, onAddAccount
           {state.contas.map((c) => (
             <div class="set-row" key={c.id}>
               {/* A conta em uso: a bolinha do cabeçalho (verde conectado, ciano conectando, cinza sem conexão e no erro). */}
-              <span class={c.emUso && state.conta ? accountDot(state.conta, state.ligacao !== null).dot : 'dot dot-off'} aria-hidden="true" />
+              <span class={c.emUso && state.conta ? accountDot(state.conta, state.ligacao !== null, state.naoPerturbe).dot : 'dot dot-off'} aria-hidden="true" />
               <span class="row-main">
                 <span class="row-title">{accountTitle(c)}</span>
                 <span class="row-sub">{`${c.servidor} · ${c.protocolo.toUpperCase()}${c.emUso ? ' · em uso' : ''}`}</span>
@@ -158,34 +159,57 @@ export function Configuracoes({ state, send, onBack, onEditAccount, onAddAccount
         <div class="card">
           <div class="set-row">
             <span class="row-main">
-              <span class="row-title set-title" id="cfg-auto">
-                Atender automaticamente
+              <span class="row-title set-title wrap" id="cfg-bipe">
+                Bipe quando a ligação cai ou termina
               </span>
-              <span class="row-sub" id="cfg-auto-sub">
-                {autoAnswerLine(auto.segundos)}
+              <span class="row-sub wrap" id="cfg-bipe-sub">
+                Vem ligado. Um bipe curto no fone quando a outra pessoa desliga ou a ligação cai.
               </span>
             </span>
             <button
               type="button"
               class="switch"
               role="switch"
-              aria-checked={auto.on}
-              aria-labelledby="cfg-auto"
-              aria-describedby="cfg-auto-sub"
-              onClick={() => send({ cmd: 'setAutoAnswer', on: !auto.on })}
+              aria-checked={state.config.bipeFim}
+              aria-labelledby="cfg-bipe"
+              aria-describedby="cfg-bipe-sub"
+              onClick={() => send({ cmd: 'setSetting', chave: 'bipeFim', valor: !state.config.bipeFim })}
             />
           </div>
-          <div class="set-row">
-            <label class="row-main row-title set-title" for="cfg-tempo">
-              Tempo para atender
-            </label>
-            <Select
-              id="cfg-tempo"
-              value={String(auto.segundos)}
-              options={tempos.map((s) => ({ valor: String(s), texto: s === 0 ? 'Na hora' : `${s} s` }))}
-              onChange={(v) => send({ cmd: 'setAutoAnswer', on: auto.on, segundos: Number(v) })}
-            />
-          </div>
+          {state.admin.atenderAuto && (
+            <>
+              <div class="set-row">
+                <span class="row-main">
+                  <span class="row-title set-title" id="cfg-auto">
+                    Atender automaticamente
+                  </span>
+                  <span class="row-sub" id="cfg-auto-sub">
+                    {autoAnswerLine(auto.segundos)}
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  class="switch"
+                  role="switch"
+                  aria-checked={auto.on}
+                  aria-labelledby="cfg-auto"
+                  aria-describedby="cfg-auto-sub"
+                  onClick={() => send({ cmd: 'setAutoAnswer', on: !auto.on })}
+                />
+              </div>
+              <div class="set-row">
+                <label class="row-main row-title set-title" for="cfg-tempo">
+                  Tempo para atender
+                </label>
+                <Select
+                  id="cfg-tempo"
+                  value={String(auto.segundos)}
+                  options={tempos.map((s) => ({ valor: String(s), texto: s === 0 ? 'Na hora' : `${s} s` }))}
+                  onChange={(v) => send({ cmd: 'setAutoAnswer', on: auto.on, segundos: Number(v) })}
+                />
+              </div>
+            </>
+          )}
           <div class="set-row">
             <span class="row-main">
               <span class="row-title set-title" id="cfg-iniciar">

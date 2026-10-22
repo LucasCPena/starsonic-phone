@@ -42,6 +42,19 @@ export async function mudarEstado(page: Page, mudar: (s: Record<string, any>) =>
   await empurrar(page, { v: 1, type: 'state', state: mudar(await estado(page)) });
 }
 
+/** A senha que a ponte falsa aceita na área do administrador: só de teste (a de verdade nunca fica no repositório). */
+export const SENHA_ADMIN_TESTE = 'senha-de-teste';
+
+/** Abre a área do administrador pelo Ctrl + P, com a senha de teste. */
+export async function entrarNaAdmin(page: Page): Promise<void> {
+  await page.keyboard.press('Control+KeyP');
+  const dialogo = page.getByRole('dialog', { name: 'Área do administrador' });
+  await expect(dialogo).toBeVisible();
+  await dialogo.getByLabel('Senha', { exact: true }).fill(SENHA_ADMIN_TESTE);
+  await dialogo.getByRole('button', { name: 'Entrar', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Área do administrador', level: 1 })).toBeVisible();
+}
+
 export async function verTextos(page: Page, textos: string[]): Promise<void> {
   for (const texto of textos) {
     await expect(page.getByText(texto, { exact: true }).first(), texto).toBeVisible();

@@ -1,12 +1,14 @@
 // O toque, gerado na interface por WebAudio (sem arquivos de som): 425 Hz, como o tom de chamada.
 // - completo: 1 s ligado e 4 s desligado (uma recebida sem outra ligação);
 // - espera: um bipe de 0,2 s a cada 3 s (a segunda ligação, sem cobrir a conversa);
-// - parar: encerra na hora.
+// - parar: encerra na hora;
+// - fim (rc.3): o bipe do fim da ligação, 0,25 s duas vezes com 0,15 s de intervalo, uma vez só; ele não mexe no
+//   toque de agora (toca num contexto dele, que fecha sozinho depois).
 // A saída (AudioContext.setSinkId):
 // - completo: o dispositivo de Toque das Configurações (`audio.toque`, um deviceId da própria interface);
-// - espera: o alto-falante da ligação (a pessoa já está falando e ouve por ele). O `audio.altoFalante` é o nome do
-//   motor, não um deviceId: a saída é a do `enumerateDevices` cujo rótulo é esse nome (ou começa com ele, ou ele
-//   com o rótulo: o motor corta os nomes longos) — `matchOutputDevice`.
+// - espera e fim: o alto-falante da ligação (a pessoa está, ou estava, falando e ouve por ele). O `audio.altoFalante`
+//   é o nome do motor, não um deviceId: a saída é a do `enumerateDevices` cujo rótulo é esse nome (ou começa com ele,
+//   ou ele com o rótulo: o motor corta os nomes longos) — `matchOutputDevice`.
 // Sem o id, sem nome, sem rótulos (sem a permissão de mídia), sem saída que case, sem o setSinkId ou com erro nele,
 // toca no padrão: nunca fica mudo. Só a janela principal toca (o aviso do canto recebe as mesmas mensagens e fica
 // quieto, para o toque não sair em dobro).
@@ -53,7 +55,7 @@ export interface RingOptions {
 }
 
 export interface Ringer {
-  /** O toque pedido pelo C++ (`completo`, `espera`, `parar`), na saída que as escolhas de som pedem. */
+  /** O toque pedido pelo C++ (`completo`, `espera`, `parar`, `fim`), na saída que as escolhas de som pedem. */
   play(tipo: RingKind, saidas: RingOutputs): void;
   /** As escolhas mudaram: o toque que está tocando passa para a saída nova (o próximo toque já sai nela). */
   setOutputs(saidas: RingOutputs): void;
@@ -104,10 +106,13 @@ interface Cadence {
   level: number;
 }
 
-export const CADENCES: Record<Exclude<RingKind, 'parar'>, Cadence> = {
+export const CADENCES: Record<Exclude<RingKind, 'parar' | 'fim'>, Cadence> = {
   completo: { on: 1, periodMs: 5000, level: 0.3 },
   espera: { on: 0.2, periodMs: 3000, level: 0.18 },
 };
+
+/** O bipe do fim da ligação (spec 5 da rc.3): 0,25 s ligado, duas vezes, com 0,15 s entre os dois. */
+export const BIPE_FIM = { on: 0.25, gap: 0.15, vezes: 2, level: 0.18 };
 
 /** A subida e a descida de cada toque (evita o estalo no começo e no fim). */
 const RAMPA = 0.01;
@@ -153,7 +158,7 @@ export function createRinger(options: RingOptions = {}): Ringer {
 
   /** O deviceId da saída do toque ("" = o padrão). Nunca falha: qualquer erro dá o padrão. */
   const saidaDo = async (tipo: RingKind, saidas: RingOutputs): Promise<string> => {
-    if (tipo !== 'espera') return saidas.toque;
+    if (tipo === 'completo') return saidas.toque;
     if (!saidas.altoFalante) return '';
     try {
       return matchOutputDevice(saidas.altoFalante, await listOutputs());
@@ -162,7 +167,50 @@ export function createRinger(options: RingOptions = {}): Ringer {
     }
   };
 
+  /** O bipe do fim: um contexto só dele (o toque de agora continua como está), que fecha depois dos dois bipes. */
+  const bipeDoFim = (saidas: RingOutputs) => {
+    let ctx: RingAudioContext;
+    try {
+      ctx = createContext();
+    } catch {
+      return; // Sem WebAudio: nada a tocar.
+    }
+    void (async () => {
+      await trocarSaida(ctx, await saidaDo('fim', saidas));
+      void ctx.resume().catch(() => {});
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = RING_HZ;
+      gain.gain.value = 0;
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      const t0 = ctx.currentTime;
+      osc.start();
+      for (let i = 0; i < BIPE_FIM.vezes; i++) {
+        const t = t0 + i * (BIPE_FIM.on + BIPE_FIM.gap);
+        gain.gain.setValueAtTime(0, t);
+        gain.gain.linearRampToValueAtTime(BIPE_FIM.level, t + RAMPA);
+        gain.gain.setValueAtTime(BIPE_FIM.level, t + BIPE_FIM.on - RAMPA);
+        gain.gain.linearRampToValueAtTime(0, t + BIPE_FIM.on);
+      }
+      const duracao = BIPE_FIM.vezes * BIPE_FIM.on + (BIPE_FIM.vezes - 1) * BIPE_FIM.gap;
+      osc.stop(t0 + duracao + 0.05);
+      clock.setTimeout(
+        () => {
+          osc.disconnect();
+          void ctx.close().catch(() => {});
+        },
+        Math.ceil((duracao + 0.2) * 1000),
+      );
+    })();
+  };
+
   const play = (tipo: RingKind, saidas: RingOutputs) => {
+    if (tipo === 'fim') {
+      bipeDoFim(saidas);
+      return;
+    }
     if (tipo === 'parar') {
       stop();
       return;

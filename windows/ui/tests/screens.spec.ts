@@ -271,24 +271,36 @@ for (const tema of ['light', 'dark'] as const) {
       expect((await comandos(page)).filter((c) => c.cmd === 'dial').length).toBe(antes + 3);
     });
 
-    test('Ctrl+1, 2 and 3 switch the tab', async ({ page }) => {
+    test('Ctrl+1, 2, 3 and 4 switch the tab in the nav order', async ({ page }) => {
       await abrir(page, 'principal');
       const nav = page.getByRole('navigation', { name: 'Seções' });
+      // A ordem (rc.3): Teclado, Atalhos, Recentes, Contatos.
+      expect(await nav.locator('button.tab').evaluateAll((bs) => bs.map((b) => [b.getAttribute('aria-label'), b.getAttribute('aria-keyshortcuts')]))).toEqual([
+        ['Teclado', 'Control+1'],
+        ['Atalhos', 'Control+2'],
+        ['Recentes', 'Control+3'],
+        ['Contatos', 'Control+4'],
+      ]);
       await page.keyboard.press('Control+2');
+      await expect(nav.getByRole('button', { name: 'Atalhos' })).toHaveAttribute('aria-current', 'page');
+      await expect(page.getByRole('main', { name: 'Atalhos' })).toBeVisible();
+      await page.keyboard.press('Control+3');
       await expect(nav.getByRole('button', { name: 'Recentes' })).toHaveAttribute('aria-current', 'page');
       await expect(page.getByRole('button', { name: 'Todas' })).toBeVisible();
       await esperarComando(page, { cmd: 'viewRecents' });
-      await page.keyboard.press('Control+3');
+      await page.keyboard.press('Control+4');
       await expect(nav.getByRole('button', { name: 'Contatos' })).toHaveAttribute('aria-current', 'page');
       await page.keyboard.press('Control+1');
       await expect(nav.getByRole('button', { name: 'Teclado' })).toHaveAttribute('aria-current', 'page');
       await nav.getByRole('button', { name: 'Recentes' }).click();
       await expect(page.getByRole('button', { name: 'Todas' })).toBeVisible();
+      await nav.getByRole('button', { name: 'Atalhos' }).click();
+      await expect(page.getByRole('main', { name: 'Atalhos' })).toBeVisible();
     });
 
     test('the header sends Não perturbe, Atender automático, the window and the account commands', async ({ page }) => {
       await abrir(page, 'principal');
-      const dnd = page.getByRole('button', { name: 'Não perturbe' });
+      const dnd = page.getByRole('button', { name: 'Não perturbe', exact: true });
       await expect(dnd).toHaveAttribute('aria-pressed', 'false');
       await dnd.click();
       await esperarComando(page, { cmd: 'setDnd', on: true });
@@ -320,7 +332,7 @@ for (const tema of ['light', 'dark'] as const) {
 
     test('Não perturbe on turns off', async ({ page }) => {
       await abrir(page, 'nao-perturbe');
-      const dnd = page.getByRole('button', { name: 'Não perturbe' });
+      const dnd = page.getByRole('button', { name: 'Não perturbe', exact: true });
       await expect(dnd).toHaveAttribute('aria-pressed', 'true');
       await semViolacoesSerias(page);
       await capturar(page, 'nao-perturbe', tema);

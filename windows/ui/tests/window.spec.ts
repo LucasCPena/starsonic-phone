@@ -5,7 +5,7 @@
 // janela pode ter, com 0 a 3 sugestões de contatos; as sugestões ficam com o espaço que sobra, numa lista que rola
 // sozinha e mostra pelo menos uma.
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { abrir, capturar, empurrar, esperarComando, semViolacoesSerias } from './helpers';
+import { abrir, capturar, empurrar, entrarNaAdmin, esperarComando, semViolacoesSerias } from './helpers';
 
 interface Caixa {
   x: number;
@@ -51,6 +51,18 @@ async function conferirTeclado(page: Page, altura: number, sugestoes: number, la
   expect(ligar.y + ligar.height <= nav.y + 0.5, `o Ligar cobre a navegação: ${JSON.stringify({ ligar, nav })}`).toBe(true);
   expect(rediscar.y + rediscar.height <= nav.y + 0.5, `o Rediscar cobre a navegação: ${JSON.stringify({ rediscar, nav })}`).toBe(true);
   expect(rediscar.x + rediscar.width <= ligar.x + 0.5, `o Rediscar cobre o Ligar: ${JSON.stringify({ rediscar, ligar })}`).toBe(true);
+  // As quatro abas (rc.3) inteiras dentro da navegação, na ordem, sem uma cobrir a outra.
+  const abas = page.locator('nav.nav button.tab');
+  expect(await abas.evaluateAll((bs) => bs.map((b) => b.getAttribute('aria-label')))).toEqual(['Teclado', 'Atalhos', 'Recentes', 'Contatos']);
+  let fimDaAnterior = nav.x;
+  for (let i = 0; i < 4; i++) {
+    const aba = await caixa(abas.nth(i));
+    const naNav = aba.x >= nav.x - 0.5 && aba.x + aba.width <= nav.x + nav.width + 0.5 && aba.y >= nav.y - 0.5 && aba.y + aba.height <= nav.y + nav.height + 0.5;
+    expect(naNav && dentro(aba, altura, largura), `a aba ${i + 1} fora da navegação: ${JSON.stringify({ aba, nav })}`).toBe(true);
+    expect(aba.x >= fimDaAnterior - 0.5, `a aba ${i + 1} cobre a anterior`).toBe(true);
+    expect(aba.width, `a aba ${i + 1} estreita demais`).toBeGreaterThanOrEqual(44);
+    fimDaAnterior = aba.x + aba.width;
+  }
   // Nada horizontal rola: a página inteira cabe na largura da janela.
   const larguraDaPagina = await page.evaluate(() => document.scrollingElement!.scrollWidth);
   expect(larguraDaPagina, 'a página rola na horizontal').toBeLessThanOrEqual(largura);
@@ -285,9 +297,17 @@ test.describe('os três layouts', () => {
       expect(await altura(page.locator('button.btn-call'))).toBeCloseTo(46, 0);
       expect(await altura(page.locator('button.btn-redial'))).toBeCloseTo(46, 0);
       expect(await altura(page.locator('nav.nav'))).toBeCloseTo(52, 0);
-      const rotulo = page.locator('nav.nav .tab-label', { hasText: 'Recentes' });
-      await expect(rotulo).toBeVisible();
-      expect(await rotulo.evaluate((e) => getComputedStyle(e).fontSize)).toBe('11.5px');
+      for (const nome of ['Teclado', 'Recentes', 'Contatos']) {
+        const rotulo = page.locator('nav.nav .tab-label', { hasText: nome });
+        await expect(rotulo, nome).toBeVisible();
+        expect(await rotulo.evaluate((e) => getComputedStyle(e).fontSize), nome).toBe('11.5px');
+      }
+      // A aba Atalhos (rc.3, spec 3.1): no Compacto só com o ícone, na mesma linha dos ícones das outras.
+      const atalhos = page.getByRole('navigation', { name: 'Seções' }).getByRole('button', { name: 'Atalhos' });
+      await expect(atalhos).toHaveAttribute('aria-label', 'Atalhos');
+      await expect(atalhos.locator('.tab-label')).toBeHidden();
+      const icones = await page.locator('nav.nav .tab-pill').evaluateAll((ps) => ps.map((p) => p.getBoundingClientRect().top));
+      expect(Math.max(...icones) - Math.min(...icones)).toBeLessThanOrEqual(0.5);
     });
 
     test('the icon toggles send the commands and show the pressed state', async ({ page }) => {
@@ -332,10 +352,10 @@ test.describe('os três layouts', () => {
       // A navegação de 44 px, só os ícones, com o nome de cada aba.
       const nav = page.getByRole('navigation', { name: 'Seções' });
       expect(await altura(nav)).toBeCloseTo(44, 0);
-      for (const nome of ['Teclado', 'Recentes', 'Contatos']) {
+      for (const nome of ['Teclado', 'Atalhos', 'Recentes', 'Contatos']) {
         await expect(nav.getByRole('button', { name: nome })).toHaveAttribute('aria-label', nome);
+        await expect(nav.getByRole('button', { name: nome }).locator('.tab-label'), nome).toBeHidden();
       }
-      await expect(nav.locator('.tab-label').first()).toBeHidden();
       await nav.getByRole('button', { name: 'Recentes' }).click();
       await expect(nav.getByRole('button', { name: 'Recentes' })).toHaveAttribute('aria-current', 'page');
     });
@@ -462,6 +482,37 @@ const OUTRAS: Array<{ nome: string; cenario: string; preparar?: (page: Page) => 
     // O Rediscar do painel também fica inteiro e livre (até em 300×440).
     botoes: ['Desligar', 'Rediscar 1150603000', 'Ligar', 'Cancelar'],
   },
+  // rc.3: a aba Atalhos (a grade rola dentro do corpo), a edição, o painel na ligação e a área do administrador.
+  { nome: 'Atalhos', cenario: 'atalhos', botoes: [] },
+  {
+    nome: 'a edição do atalho',
+    cenario: 'atalhos',
+    preparar: async (page) => {
+      await page.getByRole('button', { name: 'Mais opções para Suporte' }).click();
+      await page.getByRole('menuitem', { name: 'Editar' }).click();
+      await expect(page.getByRole('heading', { name: 'Editar atalho' })).toBeVisible();
+    },
+    botoes: [],
+  },
+  {
+    nome: 'o painel de atalhos',
+    cenario: 'ligacao',
+    preparar: async (page) => {
+      await page.getByRole('button', { name: 'Atalhos', exact: true }).click();
+      await expect(page.getByRole('region', { name: 'Atalhos' })).toBeVisible();
+    },
+    botoes: ['Desligar', 'Fechar atalhos'],
+  },
+  {
+    nome: 'o diálogo do administrador',
+    cenario: 'principal',
+    preparar: async (page) => {
+      await page.keyboard.press('Control+KeyP');
+      await expect(page.getByRole('dialog', { name: 'Área do administrador' })).toBeVisible();
+    },
+    botoes: ['Cancelar', 'Entrar'],
+  },
+  { nome: 'a área do administrador', cenario: 'principal', preparar: entrarNaAdmin, botoes: [] },
 ];
 
 for (const [largura, alturaJanela] of [

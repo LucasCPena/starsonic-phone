@@ -231,3 +231,96 @@ test.describe('a bolinha de status', () => {
     }
   });
 });
+
+// rc.3 (spec 7): a bolinha segue a tabela de seis linhas, na ordem (vale a primeira que bate): sem internet (cinza,
+// "Sem internet · tentando de novo"), conectando (ciano), erro no cadastro (cinza com o triângulo), em ligação
+// (vermelha, "Ocupado · em ligação"), Não perturbe (vermelha, "Não perturbe · as ligações não tocam") e conectado
+// (verde).
+test.describe('a tabela da bolinha (rc.3)', () => {
+  const linhaDoCabecalho = (page: Page) => page.locator('header .account .account-sub');
+  const dotDoCabecalho = (page: Page) => page.locator('header .account .dot');
+  const triangulo = (page: Page) => page.locator('header .account').getByRole('img', { name: 'Atenção' });
+  const LIGACAO = {
+    top: { id: 31, number: '2003', name: 'Ana Souza', incoming: false, phase: 'active', activeSinceMs: Date.now(), held: false },
+    second: null,
+    secondKind: 'none',
+    muted: false,
+    conference: false,
+    conferenceSinceMs: 0,
+    consulting: false,
+    colleagueActive: false,
+  };
+  const CONECTADO = { status: 'conectado', texto: 'Conectado · starcloud1-starsonic.com.br' };
+  const CONECTANDO = { status: 'conectando', texto: 'Conectando…' };
+  const ERRO = { status: 'erro', texto: 'Ramal ou senha incorretos.' };
+
+  async function conferir(page: Page, texto: string, fundo: string, atencao: boolean): Promise<void> {
+    await expect(linhaDoCabecalho(page)).toHaveText(texto);
+    await expect.poll(async () => (await cor(dotDoCabecalho(page))).fundo, texto).toBe(fundo);
+    await expect(triangulo(page), texto).toHaveCount(atencao ? 1 : 0);
+  }
+
+  test('the account dot follows the six-row priority table', async ({ page }) => {
+    await abrir(page, 'principal');
+    // 6. Conectado: verde.
+    await conferir(page, 'Conectado · starcloud1-starsonic.com.br', VERDE, false);
+    // 5. Não perturbe: vermelha, acima do conectado.
+    await mudarEstado(page, (s) => ({ ...s, naoPerturbe: true }));
+    await conferir(page, 'Não perturbe · as ligações não tocam', VERMELHO, false);
+    expect((await cor(dotDoCabecalho(page))).halo).toContain('rgba(214, 69, 69, 0.28)');
+    // 4. Em ligação: vermelha "Ocupado · em ligação", acima do Não perturbe (na barra de título da ligação).
+    await mudarEstado(page, (s) => ({ ...s, naoPerturbe: true, ligacao: LIGACAO }));
+    const barra = page.locator('.titlebar .account-status');
+    await expect(barra).toContainText('Ocupado · em ligação');
+    expect((await cor(barra.locator('.dot'))).fundo).toBe(VERMELHO);
+    // 3. Erro no cadastro: cinza, acima da ligação e do Não perturbe (o texto do erro de hoje).
+    await mudarEstado(page, (s) => ({ ...s, conta: { ...s.conta, ...ERRO } }));
+    await expect(barra).toContainText('Ramal ou senha incorretos.');
+    expect((await cor(barra.locator('.dot'))).fundo).toBe(CINZA);
+    await mudarEstado(page, (s) => ({ ...s, ligacao: null }));
+    await conferir(page, 'Ramal ou senha incorretos.', CINZA, true);
+    // 2. Conectando: ciano, acima do Não perturbe (e da ligação).
+    await mudarEstado(page, (s) => ({ ...s, conta: { ...s.conta, ...CONECTANDO } }));
+    await conferir(page, 'Conectando…', CIANO, false);
+    await mudarEstado(page, (s) => ({ ...s, ligacao: LIGACAO }));
+    await expect(barra).toContainText('Conectando…');
+    expect((await cor(barra.locator('.dot'))).fundo).toBe(CIANO);
+    await mudarEstado(page, (s) => ({ ...s, ligacao: null }));
+    // 1. Sem internet: cinza "Sem internet · tentando de novo", acima de tudo (o status fica como estava).
+    for (const conta of [CONECTADO, CONECTANDO, ERRO]) {
+      await mudarEstado(page, (s) => ({ ...s, naoPerturbe: true, conta: { ...s.conta, ...conta, internet: false } }));
+      await conferir(page, 'Sem internet · tentando de novo', CINZA, false);
+    }
+    await mudarEstado(page, (s) => ({ ...s, conta: { ...s.conta, ...CONECTADO }, ligacao: LIGACAO }));
+    await expect(barra).toContainText('Sem internet · tentando de novo');
+    expect((await cor(barra.locator('.dot'))).fundo).toBe(CINZA);
+    // A internet voltou: registra de novo (conectando) e fica verde; o Não perturbe continua vermelho.
+    await mudarEstado(page, (s) => ({ ...s, ligacao: null, naoPerturbe: false, conta: { ...s.conta, ...CONECTANDO, internet: true } }));
+    await conferir(page, 'Conectando…', CIANO, false);
+    await mudarEstado(page, (s) => ({ ...s, conta: { ...s.conta, ...CONECTADO } }));
+    await conferir(page, 'Conectado · starcloud1-starsonic.com.br', VERDE, false);
+    await semViolacoesSerias(page);
+  });
+
+  test('the Mínimo strip shows the first part of the new texts', async ({ page }) => {
+    await page.setViewportSize({ width: 300, height: 440 });
+    await abrir(page, 'principal');
+    const faixa = page.locator('.brand-strip');
+    await mudarEstado(page, (s) => ({ ...s, naoPerturbe: true }));
+    await expect(faixa.locator('.account-sub')).toHaveText('Não perturbe');
+    expect((await cor(faixa.locator('.dot'))).fundo).toBe(VERMELHO);
+    await mudarEstado(page, (s) => ({ ...s, conta: { ...s.conta, internet: false } }));
+    await expect(faixa.locator('.account-sub')).toHaveText('Sem internet');
+    expect((await cor(faixa.locator('.dot'))).fundo).toBe(CINZA);
+  });
+
+  test('the Configurações accounts list follows the table too', async ({ page }) => {
+    await abrir(page, 'configuracoes');
+    const emUso = page.locator('.card .set-row').filter({ hasText: 'Recepção · 2001' }).locator('.dot');
+    expect((await cor(emUso)).fundo).toBe(VERDE);
+    await mudarEstado(page, (s) => ({ ...s, naoPerturbe: true }));
+    await expect.poll(async () => (await cor(emUso)).fundo).toBe(VERMELHO);
+    await mudarEstado(page, (s) => ({ ...s, conta: { ...s.conta, internet: false } }));
+    await expect.poll(async () => (await cor(emUso)).fundo).toBe(CINZA);
+  });
+});

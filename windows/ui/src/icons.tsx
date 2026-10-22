@@ -1,5 +1,6 @@
 // Os ícones do canvas: SVG de linha 24×24, traço 2, pontas arredondadas, currentColor (o traço vem do .ic).
 import type { ComponentChildren } from 'preact';
+import type { ShortcutAction } from './state';
 
 type Size = 'sm' | 'md' | 'lg';
 
@@ -253,6 +254,35 @@ export const IconRedial = svg(
     <path d="M3 4v5h5" />
   </>,
 );
+
+// rc.3 (o canvas "atalhos, administrador e status").
+/** A aba Atalhos (o raio). */
+export const IconBolt = svg(<path d="M13 2L4 14h7l-1 8 9-12h-7z" />);
+/** Transferir com consulta (as duas setas). */
+export const IconConsult = svg(<path d="M4 7h11M11 3l4 4-4 4M20 17H9M13 13l-4 4 4 4" />);
+/** Enviar teclas (os pontos do teclado). */
+export const IconDtmf = svg(<path d="M6 5h.01M12 5h.01M18 5h.01M6 11h.01M12 11h.01M18 11h.01M6 17h.01M12 17h.01M18 17h.01" />);
+/** O cadeado da área do administrador. */
+export const IconLock = svg(
+  <>
+    <rect x="4" y="10" width="16" height="11" rx="2" />
+    <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+  </>,
+);
+
+/** O ícone da ação de um atalho (o do canvas): na ligação, Ligar é a Nova ligação (o "+"). */
+export function ShortcutActionIcon({ acao, naLigacao, size }: { acao: ShortcutAction; naLigacao?: boolean; size?: Size }) {
+  switch (acao) {
+    case 'ligar':
+      return naLigacao ? <IconPlus size={size} /> : <IconPhone size={size} />;
+    case 'transferir':
+      return <IconArrowRight size={size} />;
+    case 'consulta':
+      return <IconConsult size={size} />;
+    case 'teclas':
+      return <IconDtmf size={size} />;
+  }
+}
 
 /** O triângulo de atenção do erro no cadastro (o do canvas "Bolinha de status": traço #ffb703, 18 px). */
 export function IconWarning() {

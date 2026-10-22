@@ -1,9 +1,27 @@
 // Os cenários da ponte falsa (?fake=<nome>): o estado que o "C++ de mentira" manda no `ready`.
 // Os dados imitam as telas do canvas. As datas são relativas ao momento em que a página abre (Hoje, Ontem).
-import type { AppState, CallCard, CallState, RingKind } from './state';
+import type { AdminServer, AppState, CallCard, CallState, RingKind, Shortcut } from './state';
 
 /** A tela em que a interface abre (só na ponte falsa; o app real sempre abre no Teclado). */
-export type FakeView = 'teclado' | 'recentes' | 'contatos' | 'configuracoes' | 'sobre';
+export type FakeView = 'teclado' | 'atalhos' | 'recentes' | 'contatos' | 'configuracoes' | 'sobre';
+
+/** Os servidores do perfil embutido (a lista do administrador sem o admin.json). */
+export const SERVIDORES_DO_PERFIL: AdminServer[] = [
+  { endereco: 'starcloud-starsonic.com.br', porta: 5060 },
+  { endereco: 'starcloud1-starsonic.com.br', porta: 35060 },
+];
+
+/** Os atalhos do canvas "Atalhos · aba nova" (o BLF ligado no administrador: livre, ocupado, tocando, desconectado). */
+function atalhosDoCanvas(): Shortcut[] {
+  return [
+    { id: '5a1c0e9b2f3d4c67', nome: 'Recepção', numero: '2000', acao: 'ligar', blf: true, estado: 'livre' },
+    { id: '0b2e7d4c1a9f3e58', nome: 'Financeiro', numero: '2010', acao: 'transferir', blf: true, estado: 'ocupado' },
+    { id: '7c3d9e1f5b2a4d60', nome: 'Suporte', numero: '2007', acao: 'consulta', blf: true, estado: 'tocando' },
+    { id: '3e8f0a6b9c1d2e47', nome: 'Comercial', numero: '2003', acao: 'ligar', blf: true, estado: 'desconectado' },
+    { id: '9d4a2b7e6f0c1a35', nome: 'Fila de espera', numero: '*88', acao: 'teclas', blf: false, estado: null },
+    { id: '6f1b8c3a0d5e7f92', nome: 'Celular plantão', numero: '11988887777', acao: 'ligar', blf: false, estado: null },
+  ];
+}
 
 export interface Scenario {
   state: AppState;
@@ -39,6 +57,7 @@ function principal(): AppState {
       protocolo: 'udp',
       status: 'conectado',
       texto: 'Conectado · starcloud1-starsonic.com.br',
+      internet: true,
     },
     contas: [
       { id: '9f3c2a71b0d84e55', nome: 'Recepção', ramal: '2001', servidor: 'starcloud1-starsonic.com.br', protocolo: 'udp', emUso: true },
@@ -80,6 +99,10 @@ function principal(): AppState {
     versao: '0.1.0-rc.1',
     teclado: '',
     tecladoVez: 0,
+    atalhos: atalhosDoCanvas(),
+    admin: { aberto: false, naoPerturbe: true, atenderAuto: true, blf: true },
+    entrarAdmin: { erro: '', esperaAte: 0, vez: 0 },
+    config: { bipeFim: true },
   };
 }
 
@@ -244,6 +267,8 @@ export function createScenario(nome: string): Scenario | undefined {
     }
     case 'principal':
       return { state: principal() };
+    case 'atalhos':
+      return { state: principal(), view: 'atalhos' };
     case 'recentes':
       return { state: principal(), view: 'recentes' };
     case 'contatos':
@@ -268,6 +293,7 @@ export const SCENARIO_NAMES = [
   'entrar-pede-senha',
   'troca-pede-senha',
   'principal',
+  'atalhos',
   'recentes',
   'contatos',
   'configuracoes',

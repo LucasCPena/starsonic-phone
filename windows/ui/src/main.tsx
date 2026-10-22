@@ -1,16 +1,23 @@
 // A janela principal: recebe o estado do C++ pela ponte e desenha a tela que ele pede (Entrar ou a principal, com
-// as abas Teclado, Recentes e Contatos, as Configurações, o Sobre e os formulários). Não decide nenhuma regra.
-// Com uma ligação (`ligacao`), a tela da ligação toma a janela; quando a última acaba, volta o Teclado. O `ring`
-// toca aqui (o aviso do canto, aviso.tsx, recebe as mesmas mensagens e não toca).
+// as abas Teclado, Atalhos, Recentes e Contatos, as Configurações, o Sobre, os formulários e a área do administrador).
+// Não decide nenhuma regra. Com uma ligação (`ligacao`), a tela da ligação toma a janela; quando a última acaba, volta
+// o Teclado. O `ring` toca aqui, também o bipe do fim da ligação (o aviso do canto, aviso.tsx, recebe as mesmas
+// mensagens e não toca). O Ctrl + P (rc.3) é só desta janela: abre o diálogo da área do administrador, um por vez e
+// nunca por cima da ligação ou de outro diálogo; com a área aberta, vai direto para ela. O app não imprime: o Ctrl + P
+// nunca chega ao imprimir do navegador.
 import { render } from 'preact';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { createBridge } from './bridge';
+import { AdminLogin } from './components/AdminLogin';
 import { Atualizacao } from './components/Atualizacao';
 import { BackBar } from './components/BackBar';
 import { Header } from './components/Header';
-import { Nav } from './components/Nav';
+import { Nav, TABS } from './components/Nav';
 import { TitleBar } from './components/TitleBar';
 import { Toast } from './components/Toast';
+import { Admin } from './screens/Admin';
+import { AtalhoForm } from './screens/AtalhoForm';
+import { Atalhos } from './screens/Atalhos';
 import { Configuracoes } from './screens/Configuracoes';
 import { ContatoForm } from './screens/ContatoForm';
 import { Contatos } from './screens/Contatos';
@@ -28,12 +35,18 @@ import type { Send, Tab, View } from './types';
 const bridge = createBridge();
 const ringer = createRinger();
 const TOAST_MS = 2000;
-const TECLA_ABA: Record<string, Tab> = { '1': 'teclado', '2': 'recentes', '3': 'contatos' };
+/** Ctrl+1 a 4: as abas na ordem da navegação. */
+const TECLA_ABA: Record<string, Tab> = Object.fromEntries(TABS.map((t, i) => [String(i + 1), t.tab]));
 
 function initialView(): View {
   const v = bridge.initialView;
   if (v === 'configuracoes' || v === 'sobre') return { kind: v };
   return { kind: 'tab', tab: v ?? 'teclado' };
+}
+
+/** A área do administrador por cima da tela de agora (Voltar volta para ela). */
+function comAdmin(v: View): View {
+  return v.kind === 'admin' ? v : { kind: 'admin', back: v };
 }
 
 function App() {
@@ -43,10 +56,15 @@ function App() {
   const [reinstalar, setReinstalar] = useState(false);
   // A pergunta da atualização aberta (o `update` do C++), até a resposta.
   const [atualizacao, setAtualizacao] = useState<{ versao: string; notas: string; vez: number } | null>(null);
+  // O diálogo da área do administrador (o Ctrl + P).
+  const [adminLogin, setAdminLogin] = useState(false);
   const [numero, setNumero] = useState('');
   const tecladoVez = useRef(0);
   // As saídas de som de agora (o `ring` vem logo depois do estado): o Toque e o alto-falante da ligação.
   const saidas = useRef({ toque: '', altoFalante: '' });
+  // O estado de agora para os atalhos de teclado (registrados uma vez).
+  const atual = useRef<AppState | null>(null);
+  atual.current = state;
 
   const send = useCallback<Send>((command) => bridge.send(command), []);
   const layout = useLayout();
@@ -82,13 +100,21 @@ function App() {
     if (state) ringer.setOutputs({ toque: state.audio.toque, altoFalante: state.audio.altoFalante });
   }, [state?.audio.toque, state?.audio.altoFalante]);
 
-  // A última ligação acabou: volta ao Teclado (spec da W1, 7.2).
+  // A última ligação acabou: volta ao Teclado (spec da W1, 7.2). Uma ligação que chega fecha o diálogo do
+  // administrador (ele não volta sozinho depois dela).
   const emLigacao = state?.ligacao != null;
   const estavaEmLigacao = useRef(false);
   useEffect(() => {
     if (estavaEmLigacao.current && !emLigacao) setView({ kind: 'tab', tab: 'teclado' });
+    if (emLigacao) setAdminLogin(false);
     estavaEmLigacao.current = emLigacao;
   }, [emLigacao]);
+
+  // A área do administrador fechou no C++ (Sair, 10 min sem uso, a janela fechou): a tela dela sai.
+  const adminAberto = state?.admin.aberto === true;
+  useEffect(() => {
+    if (state && !adminAberto && view.kind === 'admin') setView(view.back);
+  }, [adminAberto, view.kind, state !== null]);
 
   useEffect(() => {
     if (!toast) return;
@@ -96,10 +122,18 @@ function App() {
     return () => clearTimeout(t);
   }, [toast]);
 
-  // Ctrl+1, 2 e 3 trocam a aba.
+  // Ctrl+1 a 4 trocam a aba; Ctrl + P abre a área do administrador.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+      if (e.code === 'KeyP' || (e.key ?? '').toLowerCase() === 'p') {
+        e.preventDefault();
+        const s = atual.current;
+        if (!s || s.ligacao || document.querySelector('dialog[open]')) return;
+        if (s.admin.aberto) setView(comAdmin);
+        else setAdminLogin(true);
+        return;
+      }
       const aba = TECLA_ABA[e.key];
       if (!aba || document.querySelector('dialog[open]')) return;
       e.preventDefault();
@@ -113,6 +147,11 @@ function App() {
   const responderAtualizacao = useCallback((agora: boolean) => {
     setAtualizacao(null);
     bridge.send({ cmd: agora ? 'updateNow' : 'updateLater' });
+  }, []);
+  const fecharAdminLogin = useCallback(() => setAdminLogin(false), []);
+  const adminAbriu = useCallback(() => {
+    setAdminLogin(false);
+    setView(comAdmin);
   }, []);
 
   if (!bridge.available) {
@@ -144,13 +183,14 @@ function App() {
   }
 
   const toastEl = <Toast texto={toast?.texto ?? null} vez={toast?.vez ?? 0} />;
-  // A pergunta da atualização nunca cobre a tela da ligação: aparece quando ela acaba.
+  // A pergunta da atualização e o diálogo do administrador nunca cobrem a tela da ligação.
   const avisos = (
     <>
       {toastEl}
       {atualizacao && !state.ligacao && (
         <Atualizacao key={atualizacao.vez} versao={atualizacao.versao} notas={atualizacao.notas} onAnswer={responderAtualizacao} />
       )}
+      {adminLogin && !state.ligacao && <AdminLogin entrarAdmin={state.entrarAdmin} send={send} onCancel={fecharAdminLogin} onOpened={adminAbriu} />}
     </>
   );
 
@@ -172,10 +212,21 @@ function App() {
                   ? accountTitle(state.conta)
                   : state.conta.ramal
           }
-          status={state.conta ? accountDot(state.conta, true) : undefined}
+          status={state.conta ? accountDot(state.conta, true, state.naoPerturbe) : undefined}
         />
         <Ligacao state={state} ligacao={state.ligacao} send={send} />
         {toastEl}
+      </div>
+    );
+  }
+
+  // A área do administrador (aberta no C++), também por cima da tela Entrar (os servidores antes da primeira conta).
+  if (view.kind === 'admin' && state.admin.aberto) {
+    return (
+      <div class="win" data-layout={layout}>
+        <TitleBar send={send} title="Starsonic Phone · Administrador" />
+        <Admin admin={state.admin} send={send} onBack={() => setView(view.back)} onLeave={() => setView({ kind: 'tab', tab: 'teclado' })} />
+        {avisos}
       </div>
     );
   }
@@ -228,7 +279,20 @@ function App() {
     case 'contato':
       conteudo = <ContatoForm contato={view.contato} numero={view.numero} nome={view.nome} send={send} onClose={() => setView(view.back)} />;
       break;
+    case 'atalho':
+      conteudo = (
+        <AtalhoForm
+          key={view.atalho?.id ?? 'novo'}
+          atalho={view.atalho}
+          posicao={view.posicao}
+          blfDoAdmin={state.admin.blf}
+          send={send}
+          onClose={() => setView(view.back)}
+        />
+      );
+      break;
     case 'tab':
+    case 'admin':
       break;
   }
 
@@ -248,8 +312,17 @@ function App() {
     <div class="win" data-layout={layout}>
       <TitleBar send={send} />
       {conta && <Header state={state} conta={conta} send={send} navigate={setView} current={view} layout={layout} />}
-      <main class="main" aria-label={tab === 'teclado' ? 'Teclado' : tab === 'recentes' ? 'Recentes' : 'Contatos'}>
+      <main class="main" aria-label={TABS.find((t) => t.tab === tab)!.label}>
         {tab === 'teclado' && <Teclado numero={numero} setNumero={mudarNumero} contatos={state.contatos} recentes={state.recentes} send={send} />}
+        {tab === 'atalhos' && (
+          <Atalhos
+            atalhos={state.atalhos}
+            ligacao={state.ligacao}
+            send={send}
+            onNew={(posicao) => setView({ kind: 'atalho', posicao, back: view })}
+            onEdit={(atalho, posicao) => setView({ kind: 'atalho', atalho, posicao, back: view })}
+          />
+        )}
         {tab === 'recentes' && (
           <Recentes
             recentes={state.recentes}

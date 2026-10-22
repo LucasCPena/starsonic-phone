@@ -2,14 +2,18 @@
 // cartão "Em espera"), a consulta ("Consultando" e o cliente "Em espera · transferência") e a conferência.
 // A interface não decide nenhuma regra: o que aparece e o que fica travado vem só do `ligacao` do estado
 // (docs/ponte-windows.md). A conferência é olhada antes do `secondKind` (nela a segunda vem "active").
-// Teclado físico: os dígitos, * e # mandam DTMF só com o teclado da ligação aberto; Esc fecha o painel aberto.
+// Teclado físico: os dígitos, * e # mandam DTMF só com o teclado da ligação aberto; Esc fecha o teclado e o painel
+// Atalhos. (rc.3) O botão Atalhos (com uma ligação atendida, fora da consulta e da conferência) abre o painel com os
+// atalhos no lugar dos controles.
 import type { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
+import { AtalhosPainel } from '../components/AtalhosPainel';
 import { Menu } from '../components/Menu';
 import { Rediscar } from '../components/Rediscar';
 import { callTimer, contactNumberLine, digitsOnly, firstName, initials, nameOrNumber } from '../format';
 import {
   IconArrowRight,
+  IconBolt,
   IconCheck,
   IconClose,
   IconKeypad,
@@ -33,7 +37,7 @@ interface Props {
   send: Send;
 }
 
-type Painel = 'teclado' | 'transferir' | 'nova' | null;
+type Painel = 'teclado' | 'transferir' | 'nova' | 'atalhos' | null;
 
 const TECLAS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'];
 const PADRAO = 'Padrão do Windows';
@@ -234,6 +238,9 @@ export function Ligacao({ state, ligacao: l, send }: Props) {
   const [digitos, setDigitos] = useState('');
   const [audioAberto, setAudioAberto] = useState(false);
   const audioRef = useRef<HTMLButtonElement>(null);
+  // O botão Atalhos recebe o foco de volta quando o painel fecha pelo Fechar atalhos ou pelo Esc.
+  const atalhosRef = useRef<HTMLButtonElement>(null);
+  const [focarAtalhos, setFocarAtalhos] = useState(false);
   const painelDe = useRef(l.top.id);
   const top = l.top;
 
@@ -255,7 +262,9 @@ export function Ligacao({ state, ligacao: l, send }: Props) {
   const falando = confirmada(top);
   const ambas = outra !== null && falando && confirmada(outra);
 
-  // O painel só vale enquanto o estado deixa (a ligação que cai, a segunda que chega).
+  // O painel só vale enquanto o estado deixa (a ligação que cai, a segunda que chega). Os atalhos, só com uma ligação
+  // atendida (nunca com só uma recebida tocando), fora da consulta e da conferência, e com algum atalho.
+  const temAtalhos = state.atalhos.length > 0;
   const painel: Painel =
     painelPedido === 'teclado' && falando && !tocando && !consulta
       ? 'teclado'
@@ -263,7 +272,21 @@ export function Ligacao({ state, ligacao: l, send }: Props) {
         ? 'transferir'
         : painelPedido === 'nova' && falando && l.second === null
           ? 'nova'
-          : null;
+          : painelPedido === 'atalhos' && falando && !tocando && !consulta && !conferencia && temAtalhos
+            ? 'atalhos'
+            : null;
+
+  const fecharAtalhos = () => {
+    setPainel(null);
+    setFocarAtalhos(true);
+  };
+  const fecharAtalhosRef = useRef(fecharAtalhos);
+  fecharAtalhosRef.current = fecharAtalhos;
+  useEffect(() => {
+    if (!focarAtalhos || painel !== null) return;
+    setFocarAtalhos(false);
+    atalhosRef.current?.focus();
+  }, [focarAtalhos, painel]);
 
   const dtmf = (tecla: string) => {
     send({ cmd: 'dtmf', digitos: tecla });
@@ -279,6 +302,11 @@ export function Ligacao({ state, ligacao: l, send }: Props) {
       if (e.defaultPrevented || e.ctrlKey || e.altKey || e.metaKey) return;
       const alvo = e.target as HTMLElement;
       if (alvo.closest('input, textarea, select, [role="menu"], dialog')) return;
+      if (painelRef.current === 'atalhos' && e.key === 'Escape') {
+        e.preventDefault();
+        fecharAtalhosRef.current();
+        return;
+      }
       if (painelRef.current !== 'teclado') return;
       if (/^[0-9*#]$/.test(e.key)) {
         e.preventDefault();
@@ -424,10 +452,14 @@ export function Ligacao({ state, ligacao: l, send }: Props) {
   );
   const transferir = <Ctrl label="Transferir" icon={<IconArrowRight />} disabled={!falando} onClick={() => setPainel('transferir')} />;
   const alternar = <Ctrl label="Alternar" icon={<IconSwap />} disabled={!ambas} onClick={() => send({ cmd: 'swap' })} />;
+  // rc.3: o painel com os atalhos (atendida, como o Transferir; sem nenhum atalho, nada a abrir).
+  const atalhos = (
+    <Ctrl label="Atalhos" icon={<IconBolt />} disabled={!falando || !temAtalhos} ctrlRef={atalhosRef} onClick={() => setPainel('atalhos')} />
+  );
 
   // Os controles: na conferência, Mudo, Teclado e Separar; na consulta, Mudo, Alternar e Cancelar; com duas,
-  // Mudo, Teclado, Áudio, Espera, Transferir, Alternar e Juntar; com uma, Mudo, Teclado, Áudio, Espera,
-  // Transferir e Nova ligação.
+  // Mudo, Teclado, Áudio, Espera, Transferir, Alternar, Juntar e Atalhos; com uma, Mudo, Teclado, Áudio, Espera,
+  // Transferir, Nova ligação e Atalhos (as duas em quatro colunas).
   let controles;
   if (conferencia) {
     controles = (
@@ -455,6 +487,7 @@ export function Ligacao({ state, ligacao: l, send }: Props) {
         {transferir}
         {alternar}
         <Ctrl label="Juntar" icon={<IconMerge />} disabled={!ambas || l.consulting} onClick={() => send({ cmd: 'join' })} />
+        {atalhos}
       </>
     );
   } else {
@@ -466,6 +499,7 @@ export function Ligacao({ state, ligacao: l, send }: Props) {
         {espera}
         {transferir}
         <Ctrl label="Nova ligação" icon={<IconPlus />} disabled={!falando || l.second !== null} onClick={() => setPainel('nova')} />
+        {atalhos}
       </>
     );
   }
@@ -532,8 +566,11 @@ export function Ligacao({ state, ligacao: l, send }: Props) {
         )}
       />
     );
+  } else if (painel === 'atalhos') {
+    meio = <AtalhosPainel atalhos={state.atalhos} ligacao={l} send={send} onClose={fecharAtalhos} onUsed={() => setPainel(null)} />;
   } else {
-    const muitos = outra !== null && !consulta;
+    // Com uma ligação (7 controles) ou duas (8), quatro colunas; na consulta e na conferência, três.
+    const muitos = !conferencia && !consulta;
     meio = <div class={muitos ? 'ctrls ctrls-4' : 'ctrls'}>{controles}</div>;
   }
 
@@ -571,7 +608,7 @@ export function Ligacao({ state, ligacao: l, send }: Props) {
 
   // O painel de número (Transferir, Nova ligação) com um cartão em cima: na janela baixa, o bloco de quem fala sai
   // (app.css), para o painel caber entre o cartão e o Desligar.
-  const painelComCartao = alto !== null && (painel === 'transferir' || painel === 'nova');
+  const painelComCartao = alto !== null && (painel === 'transferir' || painel === 'nova' || painel === 'atalhos');
   return (
     <main class={painelComCartao ? 'call-body call-painel-cartao' : 'call-body'} aria-label={conferencia ? 'Conferência' : 'Ligação'}>
       {alto}
