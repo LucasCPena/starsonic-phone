@@ -349,8 +349,12 @@ Section "-Starsonic Phone" SecMain
     !insertmacro FailInstall "o app continua aberto" "Feche o Starsonic Phone e tente de novo."
   ${EndIf}
 
-  ; 3. Os arquivos: o exe e a pasta ui\ (vazia antes: um arquivo que a versao nova nao tem nao fica para tras).
-  RMDir /r "$INSTDIR\ui"
+  ; 3. Os arquivos: o exe e a pasta ui\ (vazia antes, se e do app: um arquivo que a versao nova nao tem nao fica para
+  ; tras; numa pasta escolhida sem o app, uma ui\ de outra coisa fica como esta).
+  ${If} ${FileExists} "$INSTDIR\${APP_EXE}"
+  ${OrIf} ${FileExists} "$INSTDIR\ui\index.html"
+    RMDir /r "$INSTDIR\ui"
+  ${EndIf}
   SetOutPath "$INSTDIR"
   SetOverwrite on
   ClearErrors
