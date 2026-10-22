@@ -261,6 +261,31 @@ void MainWindow::BringToFront() {
     RefreshNotice();
 }
 
+void MainWindow::StartResize(const std::string& edge) {
+    if (!window_) return;
+    LRESULT hit = HTNOWHERE;
+    if (edge == "cima") hit = HTTOP;
+    else if (edge == "cima-esquerda") hit = HTTOPLEFT;
+    else if (edge == "cima-direita") hit = HTTOPRIGHT;
+    else if (edge == "baixo-direita") hit = HTBOTTOMRIGHT;
+    if (hit == HTNOWHERE) return;
+    // O botao "esquerdo" e o principal (com os botoes trocados no Windows, o do lado direito).
+    const int button = GetSystemMetrics(SM_SWAPBUTTON) ? VK_RBUTTON : VK_LBUTTON;
+    const bool pressed = (GetAsyncKeyState(button) & 0x8000) != 0;
+    if (!pressed || IsZoomed(window_) || IsIconic(window_) || !IsWindowVisible(window_)) {
+        // Um clique rapido (o botao ja solto quando o comando chega) nao pode cair no redimensionar pelo teclado.
+        Log("redimensionar: " + edge + " (ignorado: " +
+            (!pressed ? "o botao ja foi solto" : IsZoomed(window_) ? "maximizada" : "minimizada ou escondida") + ")");
+        return;
+    }
+    Log("redimensionar: " + edge);
+    POINT cursor = {};
+    GetCursorPos(&cursor);
+    // O WebView2 pode estar com o mouse capturado: solta, e o Windows roda o redimensionar de sempre pela borda.
+    ReleaseCapture();
+    PostMessageW(window_, WM_NCLBUTTONDOWN, static_cast<WPARAM>(hit), MAKELPARAM(cursor.x, cursor.y));
+}
+
 void MainWindow::RequestQuit() {
     if (window_) PostMessageW(window_, WM_CLOSE, 0, 0);
 }

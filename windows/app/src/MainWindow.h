@@ -96,6 +96,10 @@ public:
     void CloseToTray();     // esconde na bandeja
     void BringToFront();    // da bandeja, minimizada ou atras de outra: na frente
     void RequestQuit();     // o Sair (como o Alt+F4): o DesktopApp encerra e o gancho quit fecha a janela
+    // O resize da interface (rc.2): a borda que o WebView2 cobre ("cima", "cima-esquerda", "cima-direita",
+    // "baixo-direita"). Com o botao esquerdo ainda apertado, comeca o redimensionar do Windows por ela (o
+    // WM_NCLBUTTONDOWN postado, que nunca espera); solto, maximizada ou minimizada, nada.
+    void StartResize(const std::string& edge);
     void Close();   // fecha de vez (depois do Sair): o WebView, a janela e o laco de mensagens
     void LogAudioOutputs();
 

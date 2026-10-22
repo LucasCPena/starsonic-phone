@@ -236,6 +236,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     hooks.openUrl = [&window](const std::string& url) { window.RunOnWindow([url] { OpenUrl(url); }); };
     hooks.minimize = [&window] { window.RunOnWindow([&window] { window.Minimize(); }); };
     hooks.closeToTray = [&window] { window.RunOnWindow([&window] { window.CloseToTray(); }); };
+    // O resize das zonas da interface: so poe na fila da janela (a thread de comandos nunca espera a janela).
+    hooks.resize = [&window](const std::string& edge) { window.RunOnWindow([&window, edge] { window.StartResize(edge); }); };
 #if STARSONIC_TEST_HOOKS
     // O build de teste: a thread de comandos trava no Sair (a fumaca confere o fechamento com limite).
     const bool hangOnQuit = GetEnvironmentVariableW(L"STARSONIC_TRAVAR_SAIR", nullptr, 0) > 1;
