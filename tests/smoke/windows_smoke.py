@@ -352,11 +352,21 @@ def cdp_ready():
         return None
 
 
+def page_url(page):
+    """A URL de agora da página. O Playwright só atualiza o page.url quando processa os eventos do CDP (o time.sleep
+    não processa): uma página pega no meio da navegação ficaria about:blank para sempre; o location.href pergunta à
+    página."""
+    try:
+        return page.evaluate("() => location.href")
+    except Exception:   # noqa: BLE001 - a página ainda carregando, ou caindo
+        return page.url
+
+
 def find_page(browser, suffix, timeout, pump):
     def look():
         for context in browser.contexts:
             for page in context.pages:
-                if page.url.split("?")[0].endswith(suffix):
+                if page.url.split("?")[0].endswith(suffix) or page_url(page).split("?")[0].endswith(suffix):
                     return page
         return None
 
