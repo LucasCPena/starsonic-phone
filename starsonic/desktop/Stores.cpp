@@ -555,6 +555,11 @@ namespace {
 
 void Clamp(Settings& settings) {
     settings.autoAnswerSeconds = std::max(0, std::min(SettingsStore::kMaxAutoAnswerSeconds, settings.autoAnswerSeconds));
+    // Um tamanho de janela que nao e positivo: sem tamanho guardado (o executavel abre no padrao).
+    if (settings.windowW <= 0 || settings.windowH <= 0) {
+        settings.windowW = 0;
+        settings.windowH = 0;
+    }
 }
 
 }  // namespace
@@ -576,6 +581,8 @@ bool SettingsStore::Load() {
     settings_.startWithWindows = GetBool(root, "iniciar_com_windows", defaults.startWithWindows);
     settings_.windowX = GetInt(root, "janela_x", defaults.windowX);
     settings_.windowY = GetInt(root, "janela_y", defaults.windowY);
+    settings_.windowW = GetInt(root, "janela_largura", defaults.windowW);
+    settings_.windowH = GetInt(root, "janela_altura", defaults.windowH);
     settings_.captureName = GetString(root, "microfone_nome");
     settings_.playbackName = GetString(root, "alto_falante_nome");
     Clamp(settings_);
@@ -600,6 +607,10 @@ bool SettingsStore::Save(Settings settings) {
     root["iniciar_com_windows"] = settings.startWithWindows;
     if (settings.windowX != INT_MIN) root["janela_x"] = settings.windowX;
     if (settings.windowY != INT_MIN) root["janela_y"] = settings.windowY;
+    if (settings.windowW > 0 && settings.windowH > 0) {
+        root["janela_largura"] = settings.windowW;
+        root["janela_altura"] = settings.windowH;
+    }
     root["microfone_nome"] = settings.captureName;
     root["alto_falante_nome"] = settings.playbackName;
     if (!WriteRoot(files_, path_, root)) return false;

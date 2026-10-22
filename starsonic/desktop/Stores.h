@@ -150,6 +150,8 @@ struct Settings {
     bool startWithWindows = true;
     int windowX = INT_MIN;     // INT_MIN: sem posicao guardada
     int windowY = INT_MIN;
+    int windowW = 0;           // o tamanho escolhido da janela, em pixels logicos (0: sem tamanho guardado)
+    int windowH = 0;
     std::string captureName;
     std::string playbackName;
 };

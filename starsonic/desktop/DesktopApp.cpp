@@ -193,6 +193,17 @@ void DesktopApp::SaveWindowPosition(int x, int y) {
     });
 }
 
+void DesktopApp::SaveWindowSize(int width, int height) {
+    Post([this, width, height] {
+        if (!started_ || width <= 0 || height <= 0) return;
+        Settings settings = settings_.Get();
+        if (settings.windowW == width && settings.windowH == height) return;
+        settings.windowW = width;
+        settings.windowH = height;
+        SaveSettings(settings);
+    });
+}
+
 void DesktopApp::OfferUpdate(const std::string& version, const std::string& notes) {
     Post([this, version, notes] {
         if (quitting_) {

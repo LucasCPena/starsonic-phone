@@ -151,6 +151,9 @@ public:
     // A janela foi movida (o canto de cima, em pixels da tela): grava no config.json (so se mudou). Antes da abertura
     // (Start), nada. So poe na fila.
     void SaveWindowPosition(int x, int y);
+    // A pessoa mudou o tamanho da janela (a area da interface, em pixels logicos): grava no config.json, ao lado da
+    // posicao (so se mudou; zero ou negativo: nada). Antes da abertura (Start), nada. So poe na fila.
+    void SaveWindowSize(int width, int height);
     // O atualizador achou uma versao nova: a interface pergunta ({"type":"update"}, de novo a cada ready ate a
     // resposta), e a resposta (updateNow/updateLater) vai uma vez ao hooks.updateAnswer. Uma pergunta nova toma o
     // lugar da que estava aberta. Saindo (quit), a aberta vale "Depois". So poe na fila.

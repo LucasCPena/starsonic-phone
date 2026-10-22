@@ -442,6 +442,8 @@ TEST_CASE("settings round trip and defaults") {
     CHECK(defaults.startWithWindows);
     CHECK(defaults.windowX == INT_MIN);
     CHECK(defaults.windowY == INT_MIN);
+    CHECK(defaults.windowW == 0);
+    CHECK(defaults.windowH == 0);
 
     Settings settings;
     settings.captureDevice = 2;
@@ -453,6 +455,8 @@ TEST_CASE("settings round trip and defaults") {
     settings.startWithWindows = false;
     settings.windowX = -1200;
     settings.windowY = 80;
+    settings.windowW = 340;
+    settings.windowH = 560;
     settings.captureName = "Microfone (USB)";
     settings.playbackName = "Alto-falantes \xc3\xa1";
     REQUIRE(empty.Save(settings));
@@ -469,31 +473,43 @@ TEST_CASE("settings round trip and defaults") {
     CHECK_FALSE(loaded.startWithWindows);
     CHECK(loaded.windowX == -1200);
     CHECK(loaded.windowY == 80);
+    CHECK(loaded.windowW == 340);
+    CHECK(loaded.windowH == 560);
+    CHECK(nlohmann::json::parse(files.files.at(kSettingsPath))["janela_largura"] == 340);
+    CHECK(nlohmann::json::parse(files.files.at(kSettingsPath))["janela_altura"] == 560);
     CHECK(loaded.captureName == "Microfone (USB)");
     CHECK(loaded.playbackName == "Alto-falantes \xc3\xa1");
 
     // Sem posicao de janela, as chaves nem vao ao disco.
     settings.windowX = INT_MIN;
     settings.windowY = INT_MIN;
+    settings.windowW = 0;
+    settings.windowH = 0;
     REQUIRE(reloaded.Save(settings));
     const nlohmann::json json = nlohmann::json::parse(files.files.at(kSettingsPath));
     CHECK(json["versao"] == 1);
     CHECK_FALSE(json.contains("janela_x"));
     CHECK_FALSE(json.contains("janela_y"));
+    CHECK_FALSE(json.contains("janela_largura"));
+    CHECK_FALSE(json.contains("janela_altura"));
     CHECK(json["nao_perturbe"] == true);
     SettingsStore again(files, kSettingsPath);
     REQUIRE(again.Load());
     CHECK(again.Get().windowX == INT_MIN);
+    CHECK(again.Get().windowW == 0);
 }
 
 TEST_CASE("settings: missing or mistyped keys keep the defaults") {
     MemoryFileSystem files;
-    files.files[kSettingsPath] = R"({"versao":1,"microfone":"x","atender_automatico":true,"janela_x":1.5})";
+    files.files[kSettingsPath] = R"({"versao":1,"microfone":"x","atender_automatico":true,"janela_x":1.5,"janela_largura":"340","janela_altura":-5})";
     SettingsStore store(files, kSettingsPath);
     REQUIRE(store.Load());
     CHECK(store.Get().captureDevice == -1);
     CHECK(store.Get().autoAnswer);
     CHECK(store.Get().windowX == INT_MIN);
+    // O tamanho da janela que nao e um inteiro positivo: sem tamanho guardado (o padrao).
+    CHECK(store.Get().windowW == 0);
+    CHECK(store.Get().windowH == 0);
     CHECK(store.Get().autoAnswerSeconds == 3);
 }
 

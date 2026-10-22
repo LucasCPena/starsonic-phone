@@ -547,6 +547,43 @@ TEST_CASE("the window position is saved in config.json and kept by the other set
     CHECK(store.Get().doNotDisturb);
 }
 
+TEST_CASE("the window size is saved in config.json next to the position and kept by the other settings") {
+    Harness early;
+    // Antes da abertura nada e gravado (o config.json do disco ainda nao foi lido).
+    early.app->SaveWindowSize(340, 560);
+    early.Run();
+    CHECK(early.files.files.count("dados/config.json") == 0);
+
+    Harness h;
+    h.Start();
+    h.app->SaveWindowPosition(120, 80);
+    h.app->SaveWindowSize(340, 560);
+    h.Run();
+    CHECK(h.File("dados/config.json")["janela_largura"] == 340);
+    CHECK(h.File("dados/config.json")["janela_altura"] == 560);
+    CHECK(h.File("dados/config.json")["janela_x"] == 120);
+
+    // Outra configuracao gravada depois mantem o tamanho.
+    h.Send(R"({"v":1,"cmd":"setDnd","on":true})");
+    CHECK(h.File("dados/config.json")["janela_largura"] == 340);
+    CHECK(h.File("dados/config.json")["nao_perturbe"] == true);
+
+    // O mesmo tamanho de novo nao grava o disco; um tamanho invalido (zero ou negativo) e ignorado.
+    const int writes = h.files.writeCount;
+    h.app->SaveWindowSize(340, 560);
+    h.app->SaveWindowSize(0, 560);
+    h.app->SaveWindowSize(340, -1);
+    h.Run();
+    CHECK(h.files.writeCount == writes);
+
+    h.Restart();
+    SettingsStore store(h.files, Paths().settings);
+    REQUIRE(store.Load());
+    CHECK(store.Get().windowW == 340);
+    CHECK(store.Get().windowH == 560);
+    CHECK(store.Get().windowX == 120);
+}
+
 TEST_CASE("a dial link during a call only fills the keypad") {
     Harness h;
     h.StartRegistered();
