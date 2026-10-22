@@ -36,9 +36,10 @@ target_include_directories(desktop_tests PRIVATE
 
 target_link_libraries(desktop_tests PRIVATE SQLite::SQLite3 Threads::Threads)
 
-# O tamanho e a posicao da janela principal do executavel (windows/app/src/WindowFit): conta portatil, testada tambem
-# no Linux.
-target_sources(desktop_tests PRIVATE ${STARSONIC_DIR}/../windows/app/src/WindowFit.cpp)
+# O tamanho e a posicao da janela principal do executavel (windows/app/src/WindowFit) e a linha de comando dele, com os
+# links tel:/sip:/callto: (windows/app/src/Links): C++ portatil, testado tambem no Linux.
+target_sources(desktop_tests PRIVATE ${STARSONIC_DIR}/../windows/app/src/WindowFit.cpp
+  ${STARSONIC_DIR}/../windows/app/src/Links.cpp)
 target_include_directories(desktop_tests PRIVATE ${STARSONIC_DIR}/../windows/app/src)
 
 if(MSVC)
@@ -64,7 +65,6 @@ if(WIN32)
     ${WINDOWS_APP_SRC}/DpapiCipher.cpp
     ${WINDOWS_APP_SRC}/WinFiles.cpp
     ${WINDOWS_APP_SRC}/DiagLog.cpp
-    ${WINDOWS_APP_SRC}/Links.cpp
     ${WINDOWS_APP_SRC}/SingleInstance.cpp
     ${WINDOWS_APP_SRC}/ShellState.cpp
     ${WINDOWS_APP_SRC}/WebPermissions.cpp

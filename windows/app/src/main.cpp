@@ -3,9 +3,10 @@
 //
 // Linha de comando:
 //   StarsonicPhone.exe                  abre o app (dados em %APPDATA%\Starsonic Phone)
-//   StarsonicPhone.exe --dados <pasta>  abre com outra pasta de dados (os testes)
+//   StarsonicPhone.exe --dados <pasta>  abre com outra pasta de dados (os testes; so como o primeiro argumento)
 //   StarsonicPhone.exe --bandeja        abre escondido na bandeja (o Iniciar com o Windows; o /minimized da rc.7 tambem)
-//   StarsonicPhone.exe tel:2003         abre com o numero no Teclado (tambem sip: e callto:; nunca liga sozinho)
+//   StarsonicPhone.exe --link tel:2003  abre com o numero no Teclado (tambem sip: e callto:; nunca liga sozinho); o
+//                                       registro dos links; tudo depois do --link e o link, e nenhuma opcao vale
 //   StarsonicPhone.exe --sair           manda o Sair para o app aberto (codigo 0) e volta; 1 se nenhum esta aberto
 // Com o app ja aberto, uma abertura nova so entrega os argumentos dela ao aberto (SingleInstance) e sai com o codigo 0:
 // o link vai para o Teclado, o --sair fecha o app, e sem nada a janela vem para a frente.
@@ -57,31 +58,6 @@ const unsigned long kUpdateIntervalMs = 24UL * 60UL * 60UL * 1000UL;
 // O logoff do Windows: quanto o Sair espera o DesktopApp encerrar as ligacoes (os Recentes delas).
 const DWORD kEndSessionWaitMs = 3000;
 
-struct Arguments {
-    std::vector<std::wstring> raw;     // todos, sem o executavel (o que uma segunda abertura entrega a primeira)
-    std::wstring dataFolder;           // "" = a pasta de sempre
-    bool quit = false;                 // --sair
-    bool tray = false;                 // --bandeja (ou o /minimized da rc.7)
-    std::optional<std::string> link;   // o numero de um tel:/sip:/callto:
-};
-
-Arguments ParseArguments(const std::vector<std::wstring>& raw) {
-    Arguments arguments;
-    arguments.raw = raw;
-    for (size_t i = 0; i < raw.size(); ++i) {
-        const std::wstring& item = raw[i];
-        if (item == L"--dados" && i + 1 < raw.size()) {
-            arguments.dataFolder = raw[++i];
-        } else if (item == L"--sair") {
-            arguments.quit = true;
-        } else if (item == L"--bandeja" || item == L"/minimized") {
-            arguments.tray = true;
-        } else if (!arguments.link) {
-            arguments.link = ParseLinkArgument(item);
-        }
-    }
-    return arguments;
-}
 
 std::vector<std::wstring> CommandLineArguments() {
     std::vector<std::wstring> out;
@@ -151,18 +127,20 @@ std::string ProfileText(HINSTANCE instance) {
 }
 
 void OpenUrl(const std::string& url) {
-    // O DesktopApp so deixa passar os links do Sobre e da ajuda (AllowedUrl).
+    // O DesktopApp so deixa passar os links do Sobre (AllowedUrl).
     ShellExecuteW(nullptr, L"open", Utf8ToWide(url).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
 
 }  // namespace
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
-    const Arguments arguments = ParseArguments(CommandLineArguments());
+    // Os links nunca carregam opcoes (ParseCommandLine, Links.h).
+    const std::vector<std::wstring> rawArguments = CommandLineArguments();
+    const CommandLine arguments = ParseCommandLine(rawArguments);
 
-    // A instancia unica: com o app ja aberto, os argumentos vao para ele e esta abertura sai.
+    // A instancia unica: com o app ja aberto, os argumentos vao para ele (que os le do mesmo jeito) e esta abertura sai.
     SingleInstance single;
-    const SingleInstance::Claim claim = single.Start(arguments.raw);
+    const SingleInstance::Claim claim = single.Start(rawArguments);
     if (claim == SingleInstance::Claim::Delivered) return 0;
     if (claim == SingleInstance::Claim::NotDelivered) return 1;   // o aberto nao respondeu: nunca dois apps
     if (arguments.quit) return 1;                                 // --sair sem nenhum app aberto
@@ -291,7 +269,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     // As proximas aberturas (um link, o atalho de novo, o --sair) chegam aqui, na thread da janela, dentro do
     // WM_COPYDATA: so poe o trabalho na fila e volta.
     single.Listen(instance, [&app, &window, &diag](const std::vector<std::wstring>& raw) {
-        const Arguments next = ParseArguments(raw);
+        const CommandLine next = ParseCommandLine(raw);
         if (next.quit) {
             diag.Write("pedido para sair (--sair)");
             window.RunOnWindow([&window] { window.RequestQuit(); });

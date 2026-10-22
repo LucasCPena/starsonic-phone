@@ -97,4 +97,39 @@ std::optional<std::string> ParseLinkArgument(const std::wstring& argument) {
     return number;
 }
 
+CommandLine ParseCommandLine(const std::vector<std::wstring>& raw) {
+    CommandLine arguments;
+    // "<exe>" --link "%1" (o registro dos links): tudo depois do --link e o link, e nada vale como opcao. Um lancador
+    // que nao escapa as aspas, ou que nao as poe, nunca injeta um --dados ou um --sair.
+    for (size_t i = 0; i < raw.size(); ++i) {
+        if (raw[i] != L"--link") continue;
+        std::wstring link;
+        for (size_t j = i + 1; j < raw.size(); ++j) link += (j > i + 1 ? L" " : L"") + raw[j];
+        arguments.link = ParseLinkArgument(link);
+        return arguments;
+    }
+    // Um argumento que e um link (o registro antigo, "<exe>" "%1"): so o link, sem as opcoes.
+    for (const std::wstring& item : raw) {
+        const std::optional<std::string> link = ParseLinkArgument(item);
+        if (link) {
+            arguments.link = link;
+            return arguments;
+        }
+    }
+    // O --dados (os testes) so como o primeiro argumento.
+    size_t i = 0;
+    if (raw.size() >= 2 && raw[0] == L"--dados") {
+        arguments.dataFolder = raw[1];
+        i = 2;
+    }
+    for (; i < raw.size(); ++i) {
+        if (raw[i] == L"--sair") {
+            arguments.quit = true;
+        } else if (raw[i] == L"--bandeja" || raw[i] == L"/minimized") {
+            arguments.tray = true;
+        }
+    }
+    return arguments;
+}
+
 }  // namespace starsonic

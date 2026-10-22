@@ -1,14 +1,31 @@
 // Os links tel:, sip: e callto: do app novo (windows/app/src/Links.h): o argumento que o Windows passa ao
 // StarsonicPhone.exe vira o numero do Teclado (spec da W1, 7.4). Entra no desktop_tests do job windows.
+#include <windows.h>
+
+#include <shellapi.h>
+
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "Links.h"
 #include "test_support.h"
 
+using starsonic::ParseCommandLine;
 using starsonic::ParseLinkArgument;
 
 namespace {
+
+// Os argumentos de uma linha de comando como o Windows os entrega ao app (sem o executavel).
+std::vector<std::wstring> Split(const std::wstring& commandLine) {
+    std::vector<std::wstring> out;
+    int count = 0;
+    LPWSTR* list = CommandLineToArgvW(commandLine.c_str(), &count);
+    REQUIRE(list != nullptr);
+    for (int i = 1; i < count; ++i) out.emplace_back(list[i]);
+    LocalFree(list);
+    return out;
+}
 
 std::string Number(const std::wstring& argument) {
     const std::optional<std::string> number = ParseLinkArgument(argument);
@@ -53,4 +70,25 @@ TEST_CASE("ParseLinkArgument maps tel, sip and callto to a number") {
     CHECK(Number(L"telefone:2003") == "(nada)");
     CHECK(Number(L"tel:2003%") == "(nada)");
     CHECK(Number(L"tel:2003%zz") == "(nada)");
+}
+
+TEST_CASE("the link command of the installer never carries options, as Windows splits it") {
+    // O registro: "<exe>" --link "%1". Um lancador que nao escapa as aspas poe o resto do link no %1.
+    const std::wstring exe = L"\"C:\\Usuarios\\teste\\StarsonicPhone.exe\" ";
+    starsonic::CommandLine line = ParseCommandLine(Split(exe + L"--link \"tel:2003\\\" --dados x\""));
+    CHECK(line.dataFolder.empty());
+    CHECK_FALSE(line.quit);
+    CHECK_FALSE(line.tray);
+    CHECK_FALSE(line.link.has_value());
+
+    line = ParseCommandLine(Split(exe + L"--link \"tel:2003\" --dados \\\\servidor\\pasta --sair"));
+    CHECK(line.dataFolder.empty());
+    CHECK_FALSE(line.quit);
+
+    line = ParseCommandLine(Split(exe + L"--link \"tel:+55 11 5060-3000\""));
+    REQUIRE(line.link.has_value());
+    CHECK(*line.link == "+551150603000");
+
+    line = ParseCommandLine(Split(exe + L"--dados \"C:\\dados de teste\""));
+    CHECK(line.dataFolder == L"C:\\dados de teste");
 }
