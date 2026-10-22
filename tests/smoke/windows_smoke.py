@@ -26,8 +26,10 @@ Fumaça (padrão), contra o StarsonicPhone.exe instalado do build de teste (STAR
 8. com STARSONIC_TRAVAR_SAIR (build de teste: o Sair trava a thread de comandos), o Sair do menu da interface fecha
    o app mesmo assim, em até 25 s ("fechamento forcado" no diagnostico.log, código 0), e o app abre de novo.
 6b. (rc.2) o tamanho da janela: o WM_NCHITTEST nas bordas e nos cantos de baixo responde HTLEFT, HTRIGHT, HTBOTTOM,
-   HTBOTTOMLEFT e HTBOTTOMRIGHT (e HTTOP na faixa de cima), e o canto de baixo a direita é da janela, não do WebView2
-   (WindowFromPoint); SetWindowPos para 340x560 e 300x440 (a área da interface): o layout Compacto e o Mínimo pelo CDP,
+   HTBOTTOMLEFT e HTBOTTOMRIGHT, e o canto de baixo a direita é da janela, não do WebView2 (WindowFromPoint); a faixa de
+   cima e o canto do desenho (zonas da interface, em cima do WebView2) redimensionam com um arrasto de verdade do mouse
+   (SendInput: o "resize" chega ao C++ e a janela muda de tamanho; se o SendInput não chegar à página no runner, um
+   mousedown pelo CDP na zona e o "redimensionar: <borda>" no diagnostico.log); SetWindowPos para 340x560 e 300x440 (a área da interface): o layout Compacto e o Mínimo pelo CDP,
    com o teclado, o Rediscar, o Ligar e a navegação inteiros, e as capturas janela-compacta.png e janela-minima.png;
    abaixo de 300x440 a janela fica nos 300x440 (WM_GETMINMAXINFO); o 340x560 volta depois de fechar e abrir (o
    config.json); e volta aos 400x720;
@@ -112,12 +114,12 @@ HIT_NAMES = {1: "HTCLIENT", 2: "HTCAPTION", 10: "HTLEFT", 11: "HTRIGHT", 12: "HT
 
 
 def border_points(outer, client):
-    """Os pontos (da tela) das bordas e dos cantos e o código do WM_NCHITTEST esperado em cada um.
+    """Os pontos (da tela) das bordas e dos cantos de baixo e o código do WM_NCHITTEST esperado em cada um.
 
     outer: a janela (x, y, largura, altura) do GetWindowRect, com as bordas invisíveis; client: a área cliente na tela.
-    Os lados e o pé ficam nas bordas invisíveis (fora da área cliente); o alto, na primeira linha da área cliente."""
+    Os lados e o pé ficam nas bordas invisíveis (fora da área cliente). A borda de cima fica dentro da área cliente,
+    em cima do WebView2: ela vale pela zona da interface (zone_points), conferida com um arrasto de verdade."""
     x, y, width, height = outer
-    cx, cy, cwidth, _ = client
     right = x + width - 3
     bottom = y + height - 3
     middle_y = y + height // 2
@@ -128,8 +130,19 @@ def border_points(outer, client):
         "esquerda": ((x + 2, middle_y), 10),
         "direita": ((right, middle_y), 11),
         "baixo": ((middle_x, bottom), 15),
-        "cima": ((cx + cwidth // 2, cy + 1), 12),
     }
+
+
+def zone_points(client):
+    """Os pontos (da tela) das zonas de redimensionar da interface: o meio da faixa de cima e o canto do desenho."""
+    cx, cy, cwidth, cheight = client
+    return {"cima": (cx + cwidth // 2, cy + 2), "baixo-direita": (cx + cwidth - 6, cy + cheight - 6)}
+
+
+def absolute_mouse(x, y, screen):
+    """O ponto (x, y) da tela nas coordenadas absolutas do SendInput (0 a 65535 na tela principal)."""
+    width, height = screen
+    return (round(x * 65535 / max(1, width - 1)), round(y * 65535 / max(1, height - 1)))
 
 
 def window_size_for(client_logical, dpi, frame):
@@ -306,6 +319,43 @@ class Win32:
         self.user32.GetAncestor.argtypes = [self.wintypes.HWND, self.wintypes.UINT]
         self.user32.GetAncestor.restype = self.wintypes.HWND
         return self.user32.GetAncestor(hwnd, 2) or 0   # GA_ROOT
+
+    def screen_size(self):
+        return (int(self.user32.GetSystemMetrics(0)), int(self.user32.GetSystemMetrics(1)))
+
+    def mouse(self, flags, x=None, y=None):
+        """Um evento do mouse pelo SendInput (MOUSEEVENTF_*); com (x, y), absoluto na tela."""
+        ctypes, wintypes = self.ctypes, self.wintypes
+
+        class MOUSEINPUT(ctypes.Structure):
+            _fields_ = [("dx", wintypes.LONG), ("dy", wintypes.LONG), ("mouseData", wintypes.DWORD),
+                        ("dwFlags", wintypes.DWORD), ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.c_size_t)]
+
+        class INPUT(ctypes.Structure):
+            _fields_ = [("type", wintypes.DWORD), ("mi", MOUSEINPUT)]
+
+        dx = dy = 0
+        if x is not None:
+            dx, dy = absolute_mouse(x, y, self.screen_size())
+            flags |= 0x0001 | 0x8000   # MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE
+        event = INPUT(0, MOUSEINPUT(dx, dy, 0, flags, 0, 0))   # INPUT_MOUSE
+        return int(self.user32.SendInput(1, ctypes.byref(event), ctypes.sizeof(INPUT)))
+
+    def drag(self, start, end, steps=10):
+        """Um arrasto de verdade com o botão esquerdo: aperta em start, anda até end e solta."""
+        sent = self.mouse(0, *start)
+        time.sleep(0.3)
+        sent += self.mouse(0x0002)   # MOUSEEVENTF_LEFTDOWN
+        time.sleep(0.6)               # o mousedown vai pela ponte até a janela, que começa o redimensionar
+        for step in range(1, steps + 1):
+            x = start[0] + (end[0] - start[0]) * step // steps
+            y = start[1] + (end[1] - start[1]) * step // steps
+            sent += self.mouse(0, x, y)
+            time.sleep(0.05)
+        time.sleep(0.3)
+        sent += self.mouse(0x0004)   # MOUSEEVENTF_LEFTUP
+        time.sleep(0.5)
+        return sent
 
     def set_size(self, hwnd, width, height):
         """SetWindowPos com o tamanho (físico) da janela inteira, sem mover."""
@@ -789,6 +839,48 @@ def resize_to(win, hwnd, page, client_logical):
     return measure(win, hwnd, page)
 
 
+def drag_zone(win, hwnd, page, data_dir, edge, delta, record, problems):
+    """Arrasta a zona `edge` da interface por `delta` pixels e confere que a janela mudou de tamanho.
+
+    Se o SendInput nem chega à página (nenhum "redimensionar: <borda>" no diagnóstico), o mousedown vai pelo CDP na
+    zona e só a chegada do "resize" ao C++ é conferida (o tamanho não muda sem o botão apertado de verdade)."""
+    client = win.client_box(hwnd)
+    start = zone_points(client)[edge]
+    end = (start[0] + delta[0], start[1] + delta[1])
+    owner = win.window_from_point(*start)
+    line = "redimensionar: %s" % edge
+    before = count_lines(read_log(data_dir), line)
+    sent = win.drag(start, end)
+    page.wait_for_timeout(500)
+    after = win.client_box(hwnd)
+    reached = count_lines(read_log(data_dir), line) > before
+    info = {"ponto": list(start), "janela_no_ponto": win.describe(owner), "da_janela": win.root(owner) == hwnd,
+            "sendinput": sent, "antes": list(client), "depois": list(after), "resize_chegou": reached}
+    record[edge] = info
+    log("arrasto %s: %s" % (edge, info))
+    if win.root(owner) != hwnd:
+        problems.append("o ponto da zona %s %s e de %s, nao da janela do app" % (edge, start, win.describe(owner)))
+    changed_width = abs(after[2] - client[2]) >= 20
+    changed_height = abs(after[3] - client[3]) >= 20
+    changed = changed_height if edge == "cima" else (changed_width and changed_height)
+    if reached:
+        if not changed:
+            problems.append("o arrasto na zona %s chegou ao C++ e a janela nao mudou de tamanho: %s -> %s"
+                            % (edge, client, after))
+        return
+    # O SendInput não chegou à página no runner: o mousedown pelo CDP.
+    zone = page.locator('[data-resize="%s"]' % edge)
+    box = zone.bounding_box()
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    page.mouse.down()
+    page.mouse.up()
+    arrived = wait_for(lambda: count_lines(read_log(data_dir), line) > before, 10, pump=page.wait_for_timeout)
+    info.update({"pelo_cdp": True, "resize_chegou_pelo_cdp": bool(arrived)})
+    log("arrasto %s: o SendInput nao chegou a pagina; pelo CDP: %s" % (edge, bool(arrived)))
+    if not arrived:
+        problems.append("o mousedown na zona %s nao mandou o resize ao C++ ('%s' no diagnostico.log)" % (edge, line))
+
+
 def run_resize(pw, win, exe, data_dir, capturas, result, problems):
     """O item 6b: as bordas, os layouts Compacto e Mínimo, o mínimo e o tamanho gravado. Os problemas vão para
     problems."""
@@ -820,6 +912,12 @@ def run_resize(pw, win, exe, data_dir, capturas, result, problems):
         if owner != hwnd:
             problems.append("o canto de baixo a direita e de %s, nao da janela %s (o WebView2 engole a borda)"
                             % (win.describe(owner), win.describe(hwnd)))
+
+        # A faixa de cima e o canto do desenho: zonas da interface, em cima do WebView2, com um arrasto de verdade.
+        resize["arrastos"] = {}
+        for edge, delta in (("cima", (0, 50)), ("baixo-direita", (-40, -40))):
+            drag_zone(win, hwnd, page, data_dir, edge, delta, resize["arrastos"], problems)
+        resize_to(win, hwnd, page, LOGICAL_SIZE)
 
         # O Compacto e o Mínimo.
         for size, expected, name in (((340, 560), "compacto", "janela-compacta.png"),

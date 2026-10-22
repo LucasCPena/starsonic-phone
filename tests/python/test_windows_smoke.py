@@ -65,8 +65,20 @@ class ResizeTest(unittest.TestCase):
         self.assertEqual(points["esquerda"], ((92 + 2, 100 + 364), 10))                               # HTLEFT
         self.assertEqual(points["direita"], ((92 + 416 - 3, 100 + 364), 11))                          # HTRIGHT
         self.assertEqual(points["baixo"], ((92 + 208, 100 + 728 - 3), 15))                            # HTBOTTOM
-        self.assertEqual(points["cima"], ((100 + 200, 100 + 1), 12))                                  # HTTOP, dentro da area cliente
+        # A borda de cima fica dentro da area cliente (o WebView2): ela e conferida com um arrasto de verdade.
+        self.assertNotIn("cima", points)
         self.assertEqual(set(windows_smoke.HIT_NAMES.values()) >= {"HTBOTTOMRIGHT", "HTCLIENT", "HTCAPTION"}, True)
+
+    def test_the_drag_points_are_on_the_interface_zones(self):
+        # A faixa de cima (5 px no alto da area cliente, no meio) e o canto de baixo a direita (16x16), na tela.
+        points = windows_smoke.zone_points((100, 50, 400, 720))
+        self.assertEqual(points["cima"], (300, 52))
+        self.assertEqual(points["baixo-direita"], (100 + 400 - 6, 50 + 720 - 6))
+
+    def test_absolute_mouse_coordinates_cover_the_screen(self):
+        self.assertEqual(windows_smoke.absolute_mouse(0, 0, (1024, 768)), (0, 0))
+        self.assertEqual(windows_smoke.absolute_mouse(1023, 767, (1024, 768)), (65535, 65535))
+        self.assertEqual(windows_smoke.absolute_mouse(512, 384, (1024, 768)), (32800, 32810))
 
     def test_the_window_size_for_a_client_size_adds_the_frame(self):
         # A borda e a diferenca entre a janela e a area cliente (fisicos); o tamanho pedido e logico.
