@@ -708,8 +708,8 @@ def run_smoke(args, result):
                 screenshot(page, capturas, "janela-principal-curta.png", result)
                 # A área de trabalho volta (o WM_SETTINGCHANGE): a janela volta aos 720.
                 win.set_work_area(original)
-                if not wait_for(lambda: near(logical_size(win.rect(hwnd)[2], win.rect(hwnd)[3], win.dpi(hwnd)),
-                                             LOGICAL_SIZE), 10, pump=page.wait_for_timeout):
+                if not wait_for(lambda: near(logical_size(*win.client(hwnd), win.dpi(hwnd)), LOGICAL_SIZE), 10,
+                                pump=page.wait_for_timeout):
                     raise SmokeFailure("a janela nao voltou aos 720 com a area de trabalho de volta: %s"
                                        % measure(win, hwnd, page))
                 page.wait_for_timeout(500)
