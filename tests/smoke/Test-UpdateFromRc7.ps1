@@ -190,6 +190,12 @@ try {
     Set-ItemProperty -Path $runKey -Name 'Starsonic Phone' -Value "`"$exe`" /minimized"
     $sounds = @(Get-ChildItem -Path $installDir -Filter '*.wav' | ForEach-Object { $_.Name })
     Write-Host "rc.7 instalada com $($sounds.Count) sons: $($sounds -join ', ')"
+    # Os logs que a rc.7 deixa na pasta (o do PJSIP, com tracos SIP, e o de um travamento): o instalador novo apaga.
+    foreach ($name in 'StarsonicPhone_log.txt', 'crash-dump_2026-10-01_10-00-00.dmp') {
+        if (-not (Test-Path (Join-Path $installDir $name))) {
+            Set-Content -Path (Join-Path $installDir $name) -Value 'REGISTER sip:2001@127.0.0.1' -Encoding Ascii
+        }
+    }
 
     # 4. O instalador novo por cima, em silencio, com a rc.7 aberta (como o atualizador da rc.7 faz). O app que ele
     # reabre herda a variavel do CDP do WebView2.
@@ -205,7 +211,8 @@ try {
     if (-not (Test-Path (Join-Path $installDir 'ui\index.html'))) {
         throw 'O instalador novo nao pos a pasta ui.'
     }
-    $left = @(Get-ChildItem -Path $installDir -File | Where-Object { $_.Extension -eq '.wav' -or $_.Name -like 'langpack_*' })
+    $left = @(Get-ChildItem -Path $installDir -File | Where-Object {
+            $_.Extension -eq '.wav' -or $_.Name -like 'langpack_*' -or $_.Name -eq 'StarsonicPhone_log.txt' -or $_.Name -like 'crash-dump_*' })
     if ($left.Count -gt 0) {
         throw "Sobrou da rc.7: $(($left | ForEach-Object { $_.Name }) -join ', ')"
     }
@@ -222,6 +229,13 @@ try {
     $run = Get-RegistryValue -Key $runKey -Name 'Starsonic Phone'
     if ($run -ne "`"$exe`" --bandeja") {
         throw "O Run depois da atualizacao: '$run' (esperado '`"$exe`" --bandeja')."
+    }
+    # Os links do app (os da rc.7 ou os do app novo): sempre com o --link.
+    foreach ($key in 'StarsonicPhone.Link', 'tel', 'sip', 'callto') {
+        $command = Get-RegistryValue -Key "HKCU:\Software\Classes\$key\shell\open\command" -Name '(default)'
+        if ($command -and $command.Contains($exe) -and $command -ne "`"$exe`" --link `"%1`"") {
+            throw "Depois da atualizacao, o link $key abre '$command' (esperado '`"$exe`" --link `"%1`"')."
+        }
     }
     Write-Host 'OK: a rc.7 com conta e contato atualizou para o app novo, que abriu Conectado com o contato.'
 } catch {

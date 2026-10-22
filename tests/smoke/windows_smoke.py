@@ -16,7 +16,16 @@ Fumaça (padrão), contra o StarsonicPhone.exe instalado do build de teste (STAR
 6. fecha com --sair, baixa a área de trabalho para 640 lógicos (SPI_SETWORKAREA; a de um notebook de 1920x1080 a 150%
    tem uns 672) e abre de novo: a janela fica inteira dentro da área de trabalho, com 400 de largura e a altura dela,
    e o teclado, o Ligar e a navegação ficam inteiros na interface, sem um cobrir o outro; captura
-   janela-principal-curta.png; a área de trabalho volta e a janela volta aos 720; fecha com --sair.
+   janela-principal-curta.png; a área de trabalho volta e a janela volta aos 720; fecha com --sair;
+7. abre de novo e confere que a página do app leva a versão na URL (index.html?v=..., aviso.html?v=...: o cache do
+   WebView2 nunca serve a interface de outra versão); manda WM_DEVICECHANGE (DBT_DEVNODES_CHANGED) três vezes seguidas
+   à janela: o motor relê os dispositivos de som uma vez só ("som: os dispositivos foram relidos" no diagnostico.log);
+   derruba a página (Page.crash do CDP) e depois o processo do navegador do WebView2 (o msedgewebview2.exe filho do
+   app): a cada vez a interface volta ("interface pronta" de novo; no navegador, "navegador reiniciado") e um RING
+   ainda mostra o aviso, recusado pelo aviso;
+8. com STARSONIC_TRAVAR_SAIR (build de teste: o Sair trava a thread de comandos), o Sair do menu da interface fecha
+   o app mesmo assim, em até 25 s ("fechamento forcado" no diagnostico.log, código 0), e o app abre de novo.
+Os itens 7 e 8 juntam o que falhou e reprovam no fim (um não esconde o outro).
 Na escala de 100%, a janela tem 400x720 lógicos. A escala de 150% de verdade (outro DPI) não dá para mudar no runner.
 
 Ensaio da atualização (--ensaio): o app já foi aberto pelo instalador (por cima da rc.7, com a variável do CDP no
@@ -244,6 +253,15 @@ class Win32:
     def minimize(self, hwnd):
         self.user32.ShowWindow(hwnd, 6)   # SW_MINIMIZE
 
+    def device_change(self, hwnd):
+        """WM_DEVICECHANGE com DBT_DEVNODES_CHANGED (o que o Windows manda quando um headset entra ou sai)."""
+        result = self.wintypes.DWORD()
+        self.user32.SendMessageTimeoutW.argtypes = [self.wintypes.HWND, self.wintypes.UINT, self.wintypes.WPARAM,
+                                                    self.wintypes.LPARAM, self.wintypes.UINT, self.wintypes.UINT,
+                                                    self.ctypes.POINTER(self.wintypes.DWORD)]
+        # SMTO_ABORTIFHUNG, 5 s.
+        return bool(self.user32.SendMessageTimeoutW(hwnd, 0x0219, 0x0007, 0, 0x0002, 5000, self.ctypes.byref(result)))
+
     def work_area(self):
         value = self.wintypes.RECT()
         self.user32.SystemParametersInfoW(0x0030, 0, self.ctypes.byref(value), 0)   # SPI_GETWORKAREA
@@ -283,6 +301,41 @@ def webview_processes():
         return 0
 
 
+def count_lines(text, phrase):
+    """Quantas linhas do diagnostico.log têm o texto."""
+    return sum(1 for line in text.splitlines() if phrase in line)
+
+
+def has_version_query(url):
+    """A página do app aberta com a versão na URL (index.html?v=<versão>)."""
+    query = url.split("#")[0].partition("?")[2]
+    return any(part.startswith("v=") and len(part) > 2 for part in query.split("&"))
+
+
+def browser_process(rows, app_pid):
+    """O processo do navegador do WebView2 do app: o msedgewebview2.exe filho dele, sem --type= (os outros são os da
+    página, da GPU...). rows: (pid, pid do pai, linha de comando)."""
+    for pid, parent, command in rows:
+        if parent == app_pid and "--type=" not in command:
+            return pid
+    return None
+
+
+def webview_process_rows():
+    """(pid, pid do pai, linha de comando) de cada msedgewebview2.exe do app."""
+    script = ("Get-CimInstance Win32_Process -Filter \"Name='msedgewebview2.exe'\" | Where-Object { "
+              "$_.CommandLine -like '*Starsonic Phone\\WebView2*' } | ForEach-Object { "
+              "'{0}|{1}|{2}' -f $_.ProcessId, $_.ParentProcessId, $_.CommandLine }")
+    output = subprocess.run(["powershell", "-NoProfile", "-Command", script], capture_output=True, text=True,
+                            timeout=60).stdout
+    rows = []
+    for line in output.splitlines():
+        parts = line.strip().split("|", 2)
+        if len(parts) == 3 and parts[0].isdigit() and parts[1].isdigit():
+            rows.append((int(parts[0]), int(parts[1]), parts[2]))
+    return rows
+
+
 def wait_app_gone(exe, timeout=40):
     """Fecha o app aberto (o que o instalador abriu, por exemplo) e espera o WebView2 dele sair: os argumentos da
     variável só valem para um WebView2 que ainda não está aberto."""
@@ -317,12 +370,13 @@ def find_page(browser, suffix, timeout, pump):
 class App:
     """O StarsonicPhone.exe aberto por este teste, com o CDP."""
 
-    def __init__(self, exe, data_dir):
+    def __init__(self, exe, data_dir, extra_environment=None):
         self.exe = pathlib.Path(exe)
         environment = dict(os.environ)
         environment["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = browser_arguments()
         environment["STARSONIC_PERFIL"] = TEST_PROFILE
         environment["STARSONIC_SOM_NULO"] = "1"
+        environment.update(extra_environment or {})
         log("abrindo %s --dados %s (%s)" % (self.exe, data_dir, environment["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"]))
         self.process = subprocess.Popen([str(self.exe), "--dados", str(data_dir)], env=environment,
                                         cwd=str(self.exe.parent))
@@ -579,11 +633,197 @@ def run_smoke(args, result):
             app.quit()
             app = None
             log("OK: entrou, ligou, desligou, recebeu pelo aviso e coube na area de trabalho baixa")
+
+            # 7 e 8. A recuperação do WebView2, os dispositivos de som e o fechamento com o Sair travado.
+            problems = []
+            app = run_recovery(pw, win, exe, data_dir, registrar, capturas, result, problems)
+            app = None
+            if problems:
+                raise SmokeFailure("; ".join(problems))
+            log("OK: versao na URL, dispositivos relidos, o WebView2 voltou duas vezes e o Sair travado fechou")
     finally:
         if app:
             app.kill()
         registrar.stop()
         show_log(data_dir / "diagnostico.log")
+
+
+def read_log(data_dir):
+    try:
+        return (pathlib.Path(data_dir) / "diagnostico.log").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def ring_and_reject(win, hwnd, browser, registrar, pump, label, problems):
+    """Um RING com a janela minimizada: o aviso aparece e o Recusar dele recusa (486). False se nao deu."""
+    notice_page = find_page(browser, "/aviso.html", 30, pump)
+    win.minimize(hwnd)
+    wait_for(lambda: win.minimized(hwnd), 10, pump=pump)
+    refused_before = count_events(registrar.events(), "inv-out %s 486" % RAMAL)
+    reply = registrar.command("RING " + RAMAL)
+    if reply != ["OK"]:
+        problems.append("%s: RING %s: %s" % (label, RAMAL, reply))
+        return False
+    notice = wait_for(lambda: next((h for h in win.windows(NOTICE_CLASS) if win.visible(h)), None), 20, pump=pump)
+    if not notice:
+        problems.append("%s: o aviso de ligacao recebida nao apareceu" % label)
+        return False
+    try:
+        notice_page.locator('[role="alertdialog"]').wait_for(timeout=15000)
+        notice_page.get_by_role("button", name="Recusar").click(timeout=10000)
+    except Exception as error:   # noqa: BLE001
+        problems.append("%s: o aviso nao recusou: %s" % (label, error))
+        return False
+    if not wait_for(lambda: count_events(registrar.events(), "inv-out %s 486" % RAMAL) > refused_before, 20, pump=pump):
+        problems.append("%s: o Recusar do aviso nao chegou ao registrador: %s" % (label, registrar.events()))
+        return False
+    wait_for(lambda: not win.visible(notice), 10, pump=pump)
+    log("%s: o RING mostrou o aviso e o Recusar dele recusou" % label)
+    return True
+
+
+def wait_interface_again(data_dir, ready_before, timeout):
+    """Espera o diagnostico.log ter mais um "interface pronta" que antes."""
+    return wait_for(lambda: count_lines(read_log(data_dir), "interface pronta") > ready_before, timeout, interval=0.5)
+
+
+def run_recovery(pw, win, exe, data_dir, registrar, capturas, result, problems):
+    """Os itens 7 e 8 da fumaça. Os problemas vão para problems; devolve None (o app já fechou)."""
+    sleep = lambda ms: time.sleep(ms / 1000.0)   # noqa: E731
+    recovery = result.setdefault("recuperacao", {})
+    app = App(exe, data_dir)
+    try:
+        browser = connect(pw)
+        page = find_page(browser, "/index.html", 60, sleep)
+        hwnd = main_window(win, app.process.pid)
+        page.get_by_text(CONNECTED).first.wait_for(timeout=40000)
+        notice_page = find_page(browser, "/aviso.html", 30, page.wait_for_timeout)
+        recovery["urls"] = [page.url, notice_page.url]
+        log("paginas: %s" % recovery["urls"])
+        for url in recovery["urls"]:
+            if not has_version_query(url):
+                problems.append("a pagina %s abriu sem a versao na URL (?v=)" % url)
+
+        # Os dispositivos de som: tres avisos seguidos viram uma releitura so, fora da thread da janela.
+        before = count_lines(read_log(data_dir), "som: os dispositivos foram relidos")
+        for _ in range(3):
+            if not win.device_change(hwnd):
+                problems.append("WM_DEVICECHANGE nao foi entregue a janela")
+            page.wait_for_timeout(200)
+        page.wait_for_timeout(3000)
+        rereads = count_lines(read_log(data_dir), "som: os dispositivos foram relidos") - before
+        recovery["releituras_de_som"] = rereads
+        log("WM_DEVICECHANGE x3: %d releitura(s) dos dispositivos de som" % rereads)
+        if rereads != 1:
+            problems.append("tres WM_DEVICECHANGE seguidos releram os dispositivos de som %d vez(es) (esperado 1)"
+                            % rereads)
+
+        # A pagina cai (o processo dela): ela volta e o aviso ainda aparece.
+        ready_before = count_lines(read_log(data_dir), "interface pronta")
+        try:
+            page.context.new_cdp_session(page).send("Page.crash")
+        except Exception as error:   # noqa: BLE001 - a sessao cai junto com a pagina
+            log("Page.crash: %s" % type(error).__name__)
+        if not wait_interface_again(data_dir, ready_before, 45):
+            problems.append("a interface nao voltou depois de a pagina cair (Page.crash)")
+        else:
+            # A pagina que caiu fica marcada no Playwright: liga de novo pelo CDP para ver a que voltou.
+            try:
+                browser.close()
+            except Exception:   # noqa: BLE001
+                pass
+            browser = connect(pw)
+            page = find_page(browser, "/index.html", 30, sleep)
+            page.get_by_text(CONNECTED).first.wait_for(timeout=30000)
+            recovery["pagina_caiu"] = ring_and_reject(win, hwnd, browser, registrar, page.wait_for_timeout,
+                                                      "depois do Page.crash", problems)
+
+        # O navegador do WebView2 sai (o processo morto): o app abre outro, e a interface e o aviso voltam.
+        rows = webview_process_rows()
+        pid = browser_process(rows, app.process.pid)
+        recovery["navegador"] = pid
+        if not pid:
+            problems.append("o processo do navegador do WebView2 do app nao foi achado: %s" % rows)
+        else:
+            ready_before = count_lines(read_log(data_dir), "interface pronta")
+            restarts_before = count_lines(read_log(data_dir), "navegador reiniciado")
+            try:
+                browser.close()
+            except Exception:   # noqa: BLE001
+                pass
+            subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True, timeout=30)
+            log("navegador do WebView2 (PID %d) encerrado" % pid)
+            back = wait_for(lambda: count_lines(read_log(data_dir), "navegador reiniciado") > restarts_before and
+                            count_lines(read_log(data_dir), "interface pronta") > ready_before, 60, interval=0.5)
+            if not back:
+                problems.append("a interface nao voltou depois de o navegador do WebView2 sair")
+            elif app.process.poll() is not None:
+                problems.append("o app fechou depois de o navegador do WebView2 sair (codigo %s)" % app.process.returncode)
+            else:
+                browser = connect(pw)
+                page = find_page(browser, "/index.html", 60, sleep)
+                page.get_by_text(CONNECTED).first.wait_for(timeout=40000)
+                if not has_version_query(page.url):
+                    problems.append("depois do navegador novo, a pagina abriu sem a versao na URL: %s" % page.url)
+                recovery["navegador_saiu"] = ring_and_reject(win, hwnd, browser, registrar, page.wait_for_timeout,
+                                                             "depois do navegador novo", problems)
+                screenshot(page, capturas, "navegador-reiniciado.png", result)
+        try:
+            browser.close()
+        except Exception:   # noqa: BLE001
+            pass
+        app.quit()
+        log("fechou com --sair")
+
+        # 8. O Sair do menu da interface com a thread de comandos travada: o app fecha mesmo assim.
+        if not wait_for(lambda: webview_processes() == 0, 40, interval=1):
+            problems.append("o WebView2 da abertura anterior nao saiu")
+        forced_before = count_lines(read_log(data_dir), "fechamento forcado")
+        app = App(exe, data_dir, {"STARSONIC_TRAVAR_SAIR": "1"})
+        browser = connect(pw)
+        page = find_page(browser, "/index.html", 60, sleep)
+        page.get_by_text(CONNECTED).first.wait_for(timeout=40000)
+        page.locator('button[aria-label="Menu"]').click()
+        page.get_by_role("menuitem", name="Sair").click()
+        started = time.monotonic()
+        try:
+            code = app.process.wait(40)
+        except subprocess.TimeoutExpired:
+            code = None
+        took = time.monotonic() - started
+        recovery["sair_travado"] = {"codigo": code, "segundos": round(took, 1)}
+        log("Sair com a thread de comandos travada: codigo %s em %.1f s" % (code, took))
+        try:
+            browser.close()
+        except Exception:   # noqa: BLE001
+            pass
+        if code is None:
+            problems.append("o app nao fechou 40 s depois do Sair com a thread de comandos travada")
+            app.kill()
+            app.process.wait(30)
+        else:
+            if code != 0:
+                problems.append("o Sair travado fechou com o codigo %s" % code)
+            if took > 25:
+                problems.append("o Sair travado levou %.1f s para fechar (limite 25)" % took)
+        if count_lines(read_log(data_dir), "fechamento forcado") <= forced_before:
+            problems.append("o diagnostico.log nao tem o 'fechamento forcado' do Sair travado")
+        # Abre de novo: o mutex saiu junto com o processo.
+        if not wait_for(lambda: webview_processes() == 0, 40, interval=1):
+            problems.append("o WebView2 do app travado nao saiu")
+        app = App(exe, data_dir)
+        browser = connect(pw)
+        page = find_page(browser, "/index.html", 60, sleep)
+        page.get_by_text(CONNECTED).first.wait_for(timeout=40000)
+        log("o app abriu de novo depois do Sair travado")
+        browser.close()
+        app.quit()
+        app = None
+    finally:
+        if app:
+            app.kill()
+    return None
 
 
 def run_rehearsal(args, result):

@@ -5,6 +5,9 @@
 # instalador.png e instalador-fim.png): as duas opcoes marcadas gravam o atalho e o Run com --bandeja, sem mexer no
 # desligado do Gerenciador de Tarefas; por cima, as opcoes vem como estao, e desmarcar o "Iniciar com o Windows" tira
 # o Run. Os links nao passam na frente do callto: de outro programa no HKLM. Desinstala no fim.
+# Os links abrem "<exe>" --link "%1" (um link nunca carrega opcoes), e a atualizacao troca o registro antigo
+# ("<exe>" "%1") pelo novo. A atualizacao esvazia a pasta ui\ (um ui\velho.js plantado sai) e apaga os logs da rc.7
+# (StarsonicPhone_log.txt, com tracos SIP, e crash-dump_*); a desinstalacao tambem.
 # Instala no perfil do usuario atual (feito para o CI). Uso:
 #   .\tests\smoke\Test-Installer.ps1 -Setup dist\StarsonicPhone-0.0.0-setup.exe -AppDir out-novo -Version 0.0.0
 #                                    [-Capturas capturas-windows]
@@ -37,7 +40,10 @@ $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $approvedKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run'
 $classes = 'HKCU:\Software\Classes'
 $runValue = "`"$exe`" --bandeja"
-$linkCommand = "`"$exe`" `"%1`""
+$linkCommand = "`"$exe`" --link `"%1`""
+$oldLinkCommand = "`"$exe`" `"%1`""
+$staleUi = Join-Path $installDir 'ui\velho.js'
+$rc7Logs = @('StarsonicPhone_log.txt', 'crash-dump_2026-10-01_10-00-00.dmp')
 
 if ((Test-Path $appKey) -and -not $Force) {
     throw 'Ja existe uma instalacao do Starsonic Phone neste usuario; use -Force para testar mesmo assim.'
@@ -54,6 +60,19 @@ function Get-InstalledApp {
             try { $path = $_.Path } catch { }
             $path -eq $exe
         })
+}
+
+# O que falhou e so reprova depois (Assert-NoPending): uma falha nao esconde a outra.
+$pending = New-Object System.Collections.Generic.List[string]
+function Add-Pending([string]$message) {
+    $script:pending.Add($message) | Out-Null
+    Write-Warning $message
+}
+
+function Plant-Rc7Logs {
+    foreach ($name in $rc7Logs) {
+        Set-Content -Path (Join-Path $installDir $name) -Value 'REGISTER sip:2001@pbx' -Encoding Ascii
+    }
 }
 
 function Fail([string]$message) {
@@ -139,7 +158,7 @@ function Test-Uninstall([string]$Label) {
     }
     foreach ($key in "$classes\StarsonicPhone.Link", "$classes\tel", "$classes\sip", "$classes\callto") {
         $command = Get-RegistryValue -Key "$key\shell\open\command" -Name '(default)'
-        if ($command -eq $linkCommand) {
+        if ($command -eq $linkCommand -or $command -eq $oldLinkCommand) {
             Fail "${Label}: o link $key continua apontando para o app."
         }
     }
@@ -231,7 +250,7 @@ $createdMachineCallto = $false
 function Get-OtherHandler([string]$Scheme) {
     foreach ($root in $classes, $machineClasses) {
         $command = Get-RegistryValue -Key "$root\$Scheme\shell\open\command" -Name '(default)'
-        if ($command -and $command -ne $linkCommand) {
+        if ($command -and $command -ne $linkCommand -and $command -ne $oldLinkCommand) {
             return $command
         }
     }
@@ -295,7 +314,7 @@ try {
     # Os links: o ProgID e as Capabilities sempre; a chave do esquema quando nao havia outra.
     $progid = Get-RegistryValue -Key "$classes\StarsonicPhone.Link\shell\open\command" -Name '(default)'
     if ($progid -ne $linkCommand) {
-        Fail "StarsonicPhone.Link abre '$progid' (esperado '$linkCommand')."
+        Add-Pending "StarsonicPhone.Link abre '$progid' (esperado '$linkCommand')."
     }
     foreach ($scheme in 'tel', 'sip', 'callto') {
         $association = Get-RegistryValue -Key "$appKey\Capabilities\URLAssociations" -Name $scheme
@@ -310,11 +329,11 @@ try {
     foreach ($scheme in 'tel', 'sip', 'callto') {
         $mine = Get-RegistryValue -Key "$classes\$scheme\shell\open\command" -Name '(default)'
         if ($others[$scheme]) {
-            if ($mine -eq $linkCommand) {
+            if ($mine -eq $linkCommand -or $mine -eq $oldLinkCommand) {
                 Fail "O instalador tomou o $($scheme): de outro programa ($($others[$scheme]))."
             }
         } elseif ($mine -ne $linkCommand) {
-            Fail "HKCU\Software\Classes\$scheme abre '$mine' (esperado '$linkCommand')."
+            Add-Pending "HKCU\Software\Classes\$scheme abre '$mine' (esperado '$linkCommand')."
         }
     }
     Write-Host ("Links: " + (($others.Keys | Sort-Object | ForEach-Object { "$($_)=" + $(if ($others[$_]) { "outro programa" } else { 'Starsonic Phone' }) }) -join ', '))
@@ -326,7 +345,15 @@ try {
     }
     Write-Host "App aberto pelo instalador: PID $($first.Id)."
 
-    # 2. Atualizacao: o mesmo instalador com o app aberto fecha o app (--sair), troca os arquivos e o reabre.
+    # 2. Atualizacao: o mesmo instalador com o app aberto fecha o app (--sair), troca os arquivos e o reabre. Antes,
+    # o que uma versao anterior deixa: um arquivo da interface que a nova nao tem, os logs da rc.7 e os links com o
+    # comando antigo ("<exe>" "%1").
+    Set-Content -Path $staleUi -Value '// de uma versao anterior' -Encoding Ascii
+    Plant-Rc7Logs
+    $owned = @("$classes\StarsonicPhone.Link") + @('tel', 'sip', 'callto' | Where-Object { -not $others[$_] } | ForEach-Object { "$classes\$_" })
+    foreach ($key in $owned) {
+        Set-ItemProperty -Path "$key\shell\open\command" -Name '(default)' -Value $oldLinkCommand
+    }
     Invoke-Setup -File $Setup -Arguments '/S'
     if (-not (Wait-Until -TimeoutSeconds 5 -Condition { $first.HasExited })) {
         Fail "O app anterior (PID $($first.Id)) continua aberto depois da atualizacao."
@@ -343,9 +370,28 @@ try {
         Fail "O app aberto nao criou a pasta do WebView2 ($webviewData): a desinstalacao nao seria testada."
     }
     Write-Host "App reaberto depois da atualizacao: PID $($second.Id)."
+    if (Test-Path $staleUi) {
+        Add-Pending 'A atualizacao deixou o ui\velho.js de uma versao anterior (a pasta ui\ nao foi esvaziada).'
+    }
+    foreach ($name in $rc7Logs) {
+        if (Test-Path (Join-Path $installDir $name)) {
+            Add-Pending "A atualizacao deixou o $name da rc.7 na pasta do app."
+        }
+    }
+    foreach ($key in $owned) {
+        $command = Get-RegistryValue -Key "$key\shell\open\command" -Name '(default)'
+        if ($command -ne $linkCommand) {
+            Add-Pending "Depois da atualizacao, $key abre '$command' (esperado '$linkCommand')."
+        }
+    }
+    if ($pending.Count -gt 0) {
+        Fail ("Instalacao e atualizacao: " + ($pending -join ' | '))
+    }
+    Write-Host 'OK: a atualizacao esvaziou a ui\, apagou os logs da rc.7 e trocou o comando dos links.'
 
     # 3. Desinstalacao em silencio, com o app aberto, o Iniciar com o Windows ligado (como o app grava) e desligado
-    # no Gerenciador de Tarefas: tudo sai, menos os dados.
+    # no Gerenciador de Tarefas: tudo sai, menos os dados (os logs da rc.7 tambem saem, e a pasta com eles).
+    Plant-Rc7Logs
     Set-ItemProperty -Path $runKey -Name 'Starsonic Phone' -Value $runValue
     New-Item -Path $approvedKey -Force | Out-Null
     New-ItemProperty -Path $approvedKey -Name 'Starsonic Phone' -PropertyType Binary -Value ([byte[]](3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)) -Force | Out-Null

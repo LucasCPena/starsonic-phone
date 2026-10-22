@@ -322,6 +322,15 @@ jobs:
         if: ${{ !cancelled() && steps.installer.outcome == 'success' }}
         run: .\tests\smoke\Test-Installer.ps1 -Setup "dist\StarsonicPhone-$($env:STARSONIC_VERSION)-setup.exe" -AppDir out-novo -Version $env:STARSONIC_VERSION -Capturas capturas-windows
 
+      # O pacote "código-fonte completo" (Make-SourceBundle.ps1) também nos builds sem versão: o zip tem o
+      # repositório, o pjproject, o código do vcpkg e os pacotes do npm que vão no ui\app.js (GPL v3, spec 10). Nas
+      # versões, o de verdade, mais abaixo.
+      - name: Teste do pacote de fontes
+        if: ${{ !cancelled() && !inputs.version }}
+        run: |
+          .\build\Make-SourceBundle.ps1 -Version $env:STARSONIC_VERSION -WorkDir work -OutDir fontes-teste
+          .\tests\smoke\Test-SourceBundle.ps1 -Zip "fontes-teste\StarsonicPhone-$($env:STARSONIC_VERSION)-codigo-fonte-completo.zip"
+
       # Só à mão (workflow_dispatch com ensaio-atualizacao): a v0.0.1-rc.7 do release com uma conta (gravada pela
       # tela Entrar dela) e um contato, e o instalador novo por cima, com a rc.7 aberta.
       - name: Ensaio da atualização da rc.7
@@ -338,7 +347,9 @@ jobs:
 
       - name: Código-fonte completo (versões)
         if: inputs.version
-        run: .\build\Make-SourceBundle.ps1 -Version $env:STARSONIC_VERSION -WorkDir work -OutDir dist
+        run: |
+          .\build\Make-SourceBundle.ps1 -Version $env:STARSONIC_VERSION -WorkDir work -OutDir dist
+          .\tests\smoke\Test-SourceBundle.ps1 -Zip "dist\StarsonicPhone-$($env:STARSONIC_VERSION)-codigo-fonte-completo.zip"
 
       - name: Publicar o executável
         uses: actions/upload-artifact@v4

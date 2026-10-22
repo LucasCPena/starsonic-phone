@@ -102,3 +102,28 @@ class RegistrarControlTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RecoveryHelpersTest(unittest.TestCase):
+    def test_count_lines_counts_the_lines_with_the_text(self):
+        text = "2026-10-22 interface pronta\n2026-10-22 navegador reiniciado\n2026-10-22 interface pronta\n"
+        self.assertEqual(windows_smoke.count_lines(text, "interface pronta"), 2)
+        self.assertEqual(windows_smoke.count_lines(text, "fechamento forcado"), 0)
+        self.assertEqual(windows_smoke.count_lines("", "interface pronta"), 0)
+
+    def test_the_page_carries_the_version(self):
+        self.assertTrue(windows_smoke.has_version_query("https://app.starsonic.local/index.html?v=0.1.0-rc.1"))
+        self.assertTrue(windows_smoke.has_version_query("https://app.starsonic.local/aviso.html?x=1&v=0.0.0#a"))
+        self.assertFalse(windows_smoke.has_version_query("https://app.starsonic.local/index.html"))
+        self.assertFalse(windows_smoke.has_version_query("https://app.starsonic.local/index.html?v="))
+        self.assertFalse(windows_smoke.has_version_query("https://app.starsonic.local/index.html?fake=principal"))
+
+    def test_the_browser_process_is_the_child_of_the_app_without_a_type(self):
+        rows = [
+            (300, 200, '"msedgewebview2.exe" --type=renderer --user-data-dir="C:\\x\\Starsonic Phone\\WebView2"'),
+            (200, 100, '"msedgewebview2.exe" --embedded-browser-webview=1 --user-data-dir="C:\\x\\Starsonic Phone\\WebView2"'),
+            (400, 200, '"msedgewebview2.exe" --type=gpu-process'),
+        ]
+        self.assertEqual(windows_smoke.browser_process(rows, 100), 200)
+        self.assertIsNone(windows_smoke.browser_process(rows, 999))
+        self.assertIsNone(windows_smoke.browser_process([], 100))
