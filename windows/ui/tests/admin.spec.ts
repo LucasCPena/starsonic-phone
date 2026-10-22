@@ -278,7 +278,9 @@ for (const tema of ['light', 'dark'] as const) {
         await expect(page.getByRole('button', { name: 'Atender automático', exact: true }), layout).toHaveCount(0);
         await expect(page.getByRole('button', { name: 'Menu' }), layout).toBeVisible();
       }
+      // De volta ao Normal (o layout troca depois do tamanho: o Menu muda de lugar).
       await page.setViewportSize({ width: 400, height: 720 });
+      await expect(page.locator('.win[data-layout="normal"]')).toHaveCount(1);
       // Nas Configurações, o Atender automaticamente e o tempo somem; o resto fica.
       await page.getByRole('button', { name: 'Menu' }).click();
       await page.getByRole('menuitem', { name: 'Configurações' }).click();
