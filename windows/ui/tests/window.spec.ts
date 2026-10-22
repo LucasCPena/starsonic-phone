@@ -76,7 +76,7 @@ async function conferirTeclado(page: Page, altura: number, sugestoes: number): P
   expect(area.y + area.height <= tecla1.y + 0.5, `as sugestões cobrem as teclas: ${JSON.stringify({ area, tecla1 })}`).toBe(true);
 }
 
-for (const altura of [720, 672, 640]) {
+for (const altura of [720, 719, 710, 701, 672, 640]) {
   test.describe(`a janela de 400×${altura}`, () => {
     test.use({ viewport: { width: 400, height: altura } });
 

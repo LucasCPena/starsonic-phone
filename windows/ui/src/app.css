@@ -304,9 +304,11 @@ button.link { border: 0; background: transparent; padding: 0; font-family: inher
 .teclado .key { height: auto; }
 .suggestions-compact .suggest { padding: 5px 10px; }
 .suggestions-compact .avatar { width: 28px; height: 28px; font-size: 11.5px; }
-/* Janela baixa (a área de trabalho de 1920×1080 a 150% tem uns 672 px): o cabeçalho, o número e os espaços apertam,
-   e a sugestão vira sempre a linha compacta. Depois das regras de cima, para valer sobre elas. */
-@media (max-height: 700px) {
+/* Janela baixa (qualquer altura abaixo dos 720: a janela é cortada na área de trabalho, e a de 1920×1080 a 150% tem
+   uns 672 px): o cabeçalho, o número e os espaços apertam, e a sugestão vira sempre a linha compacta. O limite é 719,5
+   e não 719: numa escala fracionária, a janela de 720 lógicos pode virar 719,x px de CSS e continua no layout normal.
+   Depois das regras de cima, para valer sobre elas. */
+@media (max-height: 719.5px) {
   .brand { padding: 10px 18px 12px; gap: 8px; }
   .body.teclado { gap: 8px; padding-top: 10px; padding-bottom: 10px; }
   .teclado .number { padding-bottom: 6px; }
