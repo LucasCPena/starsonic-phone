@@ -249,7 +249,6 @@ def find_strict_problems(path):
 
 
 NSIS_SIGNATURE = b"\xef\xbe\xad\xdeNullsoftInst"   # o firstheader do NSIS: 0xDEADBEEF e "NullsoftInst"
-NSIS_CHUNK = 1 << 16
 
 
 def _lzma_decoder(props):
@@ -261,14 +260,21 @@ def _lzma_decoder(props):
     dict_size = struct.unpack("<I", props[1:5])[0]
     if not 1 << 12 <= dict_size <= 1 << 30:
         raise ValueError("dicionario do LZMA invalido: %d" % dict_size)
-    return lzma.LZMADecompressor(format=lzma.FORMAT_RAW,
-                                 filters=[{"id": lzma.FILTER_LZMA1, "dict_size": dict_size, "lc": lc, "lp": lp,
-                                           "pb": pb}])
+    try:
+        return lzma.LZMADecompressor(format=lzma.FORMAT_RAW,
+                                     filters=[{"id": lzma.FILTER_LZMA1, "dict_size": dict_size, "lc": lc, "lp": lp,
+                                               "pb": pb}])
+    except lzma.LZMAError as error:
+        raise ValueError("propriedades do LZMA invalidas: %s" % error)
+
+
+NSIS_CRC_SIZE = 4   # o CRC32 do fim dos dados (o firstheader conta com ele)
 
 
 def _inflate_stream(data, kind):
-    """Descomprime um fluxo (lzma: com as 5 bytes de propriedades; zlib: deflate cru) até onde ele vai; o que vem
-    depois do fim (a assinatura, o CRC) fica de fora. ValueError se nada sair."""
+    """Descomprime um fluxo inteiro (lzma: com as 5 bytes de propriedades; zlib: deflate cru) até o fim marcado dele.
+    Devolve (o que saiu, o que sobrou depois do fim). ValueError se o decodificador acusa erro ou se o fluxo acaba
+    antes do fim (cortado ou estragado): nunca a parte que deu para ler."""
     if kind == "lzma":
         decoder = _lzma_decoder(data[:5])
         data = data[5:]
@@ -276,41 +282,70 @@ def _inflate_stream(data, kind):
     else:
         decoder = zlib.decompressobj(-15)
         errors = (zlib.error,)
-    out = []
-    for start in range(0, len(data), NSIS_CHUNK):
-        try:
-            out.append(decoder.decompress(data[start:start + NSIS_CHUNK]))
-        except errors:
-            break
-        if getattr(decoder, "eof", False):
-            break
-    result = b"".join(out)
-    if not result:
-        raise ValueError("o fluxo %s nao abriu" % kind)
-    return result
+    try:
+        out = decoder.decompress(data)
+    except errors as error:
+        raise ValueError("o fluxo %s esta estragado: %s" % (kind, error))
+    if not decoder.eof:
+        raise ValueError("o fluxo %s acaba antes do fim" % kind)
+    return out, decoder.unused_data
 
 
-def _nsis_blocks(data):
-    """Os blocos não sólidos: cada um com 4 bytes de tamanho (o bit de cima = comprimido)."""
+def _split_blocks(content, header_size):
+    """Os blocos de dentro (cada um com 4 bytes de tamanho): o primeiro é o cabeçalho, do tamanho que o firstheader
+    diz, e os blocos têm de terminar exatamente no fim do que saiu."""
+    pos = 0
+    first = True
+    while pos < len(content):
+        if pos + 4 > len(content):
+            raise ValueError("bloco cortado")
+        size = struct.unpack("<I", content[pos:pos + 4])[0]
+        if first and size != header_size:
+            raise ValueError("o cabecalho tem %d bytes, o firstheader diz %d" % (size, header_size))
+        first = False
+        pos += 4 + size
+    if first or pos != len(content):
+        raise ValueError("os blocos nao batem com o que saiu do fluxo")
+
+
+def _solid_content(body, header_size, kind):
+    content, rest = _inflate_stream(body, kind)
+    if len(rest) not in (0, NSIS_CRC_SIZE):
+        raise ValueError("sobram %d bytes depois do fluxo" % len(rest))
+    _split_blocks(content, header_size)
+    return content
+
+
+def _block_content(body, header_size):
+    """Os blocos não sólidos: cada um com 4 bytes de tamanho (o bit de cima = comprimido), até o fim dos dados."""
     out = []
     pos = 0
-    while pos + 4 <= len(data):
-        size = struct.unpack("<I", data[pos:pos + 4])[0]
-        compressed, size = size & 0x80000000, size & 0x7FFFFFFF
-        block = data[pos + 4:pos + 4 + size]
-        if size == 0 or len(block) < size:
+    end = len(body)
+    while pos < end:
+        if end - pos in (0, NSIS_CRC_SIZE) and out:
             break
+        if pos + 4 > end:
+            raise ValueError("bloco cortado")
+        size = struct.unpack("<I", body[pos:pos + 4])[0]
+        compressed, size = size & 0x80000000, size & 0x7FFFFFFF
+        block = body[pos + 4:pos + 4 + size]
+        if len(block) < size:
+            raise ValueError("bloco cortado")
         if compressed:
             for kind in ("lzma", "zlib"):
                 try:
-                    out.append(_inflate_stream(block, kind))
-                    break
+                    plain, rest = _inflate_stream(block, kind)
                 except ValueError:
                     continue
+                if not rest:
+                    break
             else:
                 raise ValueError("um bloco do instalador nao abriu")
         else:
-            out.append(block)
+            plain = block
+        if not out and len(plain) != header_size:
+            raise ValueError("o cabecalho tem %d bytes, o firstheader diz %d" % (len(plain), header_size))
+        out.append(plain)
         pos += 4 + size
     if not out:
         raise ValueError("nenhum bloco")
@@ -318,22 +353,25 @@ def _nsis_blocks(data):
 
 
 def nsis_content(data):
-    """O que está dentro de um instalador NSIS (o cabeçalho com os textos das páginas e os arquivos), descomprimido.
-    None se não é um instalador NSIS ou se ele não abre."""
+    """O que está dentro de um instalador NSIS (o cabeçalho com os textos das páginas e os arquivos), descomprimido
+    inteiro. None se não é um instalador NSIS ou se ele não abre até o fim: cortado (menor que o tamanho que o
+    firstheader diz), estragado (o decodificador acusa erro ou o fluxo acaba antes do fim) ou com os blocos de dentro
+    que não batem com os tamanhos do cabeçalho."""
     for offset in range(0, len(data) - 28, 512):
         if data[offset + 4:offset + 20] != NSIS_SIGNATURE:
             continue
         header_size, total = struct.unpack("<II", data[offset + 20:offset + 28])
-        body = data[offset + 28:offset + total] if 28 < total <= len(data) - offset else data[offset + 28:]
+        if total <= 28 or offset + total > len(data):
+            return None
+        body = data[offset + 28:offset + total]
         # Sólido (um fluxo com todos os blocos), não sólido (um por bloco) ou sem compressão.
-        for attempt in (lambda: _inflate_stream(body, "lzma"), lambda: _inflate_stream(body, "zlib"),
-                        lambda: _nsis_blocks(body)):
+        for attempt in (lambda: _solid_content(body, header_size, "lzma"),
+                        lambda: _solid_content(body, header_size, "zlib"),
+                        lambda: _block_content(body, header_size)):
             try:
-                content = attempt()
+                return attempt()
             except ValueError:
                 continue
-            if len(content) >= min(header_size, 4):
-                return content
         return None
     return None
 
@@ -346,7 +384,8 @@ def find_installer_problems(path):
     found = [(path.name, offset, snippet) for offset, snippet in _strict_bytes(data)]
     content = nsis_content(data)
     if content is None:
-        found.append((path.name, 0, "nao foi possivel abrir o instalador NSIS para ver os textos de dentro"))
+        found.append((path.name, 0, "nao deu para abrir o instalador NSIS inteiro (cortado, estragado ou de outro "
+                                    "formato): os textos de dentro nao foram vistos"))
         return found
     found += [(path.name, offset, "dentro do instalador: " + snippet) for offset, snippet in _strict_bytes(content)]
     return found

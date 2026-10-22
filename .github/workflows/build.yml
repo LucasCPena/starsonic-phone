@@ -284,13 +284,14 @@ jobs:
           path: work/webview2-bootstrapper
           key: ${{ steps.cache-keys.outputs.bootstrapper }}
 
-      # O check de marca abre o instalador (os textos ficam dentro do LZMA): um instalador de verdade, feito aqui pelo
-      # makensis com "MicroSIP" numa caixa de mensagem, tem de reprovar (no Linux o teste fica de fora sem o makensis).
+      # O check de marca abre o instalador inteiro (os textos ficam dentro do LZMA): um instalador de verdade, feito aqui
+      # pelo makensis com "MicroSIP" numa caixa de mensagem, reprova pelo que está dentro, e um limpo cortado, estragado
+      # no meio ou com lixo no fim reprova por não abrir (no Linux os testes ficam de fora sem o makensis).
       - name: Teste da verificação de marca com um instalador LZMA de verdade
         if: ${{ !cancelled() && steps.nsis.outcome == 'success' }}
         run: |
           $env:STARSONIC_MAKENSIS = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
-          python -m unittest -v tests.python.test_check_branding.CheckBrandingTest.test_a_real_lzma_installer_with_microsip_fails
+          python -m unittest -v -k test_real tests.python.test_check_branding
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - name: Verificação de marca (app novo, interface e instalador)

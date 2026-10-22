@@ -1,6 +1,7 @@
 import lzma
 import os
 import pathlib
+import random
 import shutil
 import struct
 import subprocess
@@ -230,19 +231,60 @@ class CheckBrandingTest(unittest.TestCase):
         self.write("out-novo/ui/app.js", 'const x = "microsip";\n')
         self.assertTrue(check_branding.find_ui_problems(ui))
 
+    # Um instalador estragado não passa como limpo: o LZMA tem de abrir até o fim e os blocos de dentro têm de bater com
+    # os tamanhos do cabeçalho (Rodada 2 da T13).
+    def assertUnreadable(self, data, label):
+        setup = self.write("dist/estragado.exe", data)
+        found = check_branding.find_installer_problems(setup)
+        self.assertTrue(any("abrir o instalador" in item[2] for item in found), (label, found))
+
+    def damaged(self, data):
+        """O instalador cortado ao meio, com 150 KB trocados no meio do fluxo e com lixo depois dos primeiros 70 KB do
+        fluxo (o tamanho do arquivo igual)."""
+        start = data.index(NSIS_SIGNATURE) + 24
+        noise = random.Random(13)
+        middle = start + (len(data) - start) // 3
+        corrupted = data[:middle] + noise.randbytes(150 * 1024) + data[middle + 150 * 1024:]
+        tail = start + 70 * 1024
+        garbage = data[:tail] + noise.randbytes(len(data) - tail)
+        return {"cortado": data[:len(data) // 2], "trocado no meio": corrupted, "lixo depois de 70 KB": garbage}
+
+    def test_a_damaged_installer_is_not_clean(self):
+        payload = "Starsonic Phone ".encode("utf-16-le") + random.Random(7).randbytes(600 * 1024)
+        for solid in (True, False):
+            data = fake_installer(payload, solid=solid)
+            self.assertEqual(check_branding.find_installer_problems(self.write("dist/bom.exe", data)), [], solid)
+            for label, broken in self.damaged(data).items():
+                self.assertUnreadable(broken, (solid, label))
+
+    def make_real_setup(self, name, text, payload=None):
+        lines = ["Unicode true", "SetCompressor /SOLID lzma", "RequestExecutionLevel user", 'Name "Teste"',
+                 'OutFile "${OUT}"', "Section", '  MessageBox MB_OK "${TEXTO}"']
+        if payload:
+            lines.append('  File "%s"' % payload)
+        script = self.write("instalador/%s.nsi" % name, "\r\n".join(lines + ["SectionEnd", ""]))
+        out = self.repo / "instalador" / (name + "-instalador.exe")
+        subprocess.run([makensis(), "-V1", "-DOUT=%s" % out, "-DTEXTO=%s" % text, str(script)], check=True)
+        self.assertNotIn("MicroSIP".encode("utf-16-le"), out.read_bytes())
+        return out
+
     @unittest.skipUnless(makensis(), "sem o makensis (o job windows do CI roda com ele)")
-    def test_a_real_lzma_installer_with_microsip_fails(self):
-        script = self.write("instalador/teste.nsi", "\r\n".join([
-            "Unicode true", "SetCompressor /SOLID lzma", "RequestExecutionLevel user", 'Name "Teste"',
-            'OutFile "${OUT}"', "Section", '  MessageBox MB_OK "${TEXTO}"', "SectionEnd", ""]))
-        results = {}
-        for name, text in (("ruim", "Desinstalar o MicroSIP"), ("bom", "Desinstalar o Starsonic Phone")):
-            out = self.repo / "instalador" / (name + "-instalador.exe")
-            subprocess.run([makensis(), "-V1", "-DOUT=%s" % out, "-DTEXTO=%s" % text, str(script)], check=True)
-            self.assertNotIn("MicroSIP".encode("utf-16-le"), out.read_bytes())
-            results[name] = check_branding.find_installer_problems(out)
-        self.assertTrue(results["ruim"])
-        self.assertEqual(results["bom"], [])
+    def test_real_lzma_installer_with_microsip_fails(self):
+        bad = check_branding.find_installer_problems(self.make_real_setup("ruim", "Desinstalar o MicroSIP"))
+        self.assertTrue(bad)
+        self.assertTrue(all(item[2].startswith("dentro do instalador: ") for item in bad), bad)
+        self.assertTrue(any("MicroSIP" in item[2] for item in bad), bad)
+        good = check_branding.find_installer_problems(self.make_real_setup("bom", "Desinstalar o Starsonic Phone"))
+        self.assertEqual(good, [])
+
+    @unittest.skipUnless(makensis(), "sem o makensis (o job windows do CI roda com ele)")
+    def test_real_lzma_installer_damaged_is_not_clean(self):
+        payload = self.write("instalador/carga.bin", random.Random(11).randbytes(600 * 1024))
+        setup = self.make_real_setup("carga", "Desinstalar o Starsonic Phone", payload)
+        data = setup.read_bytes()
+        self.assertEqual(check_branding.find_installer_problems(setup), [])
+        for label, broken in self.damaged(data).items():
+            self.assertUnreadable(broken, label)
 
     def test_repository_has_no_visible_microsip(self):
         found = check_branding.find_problems(ROOT)
