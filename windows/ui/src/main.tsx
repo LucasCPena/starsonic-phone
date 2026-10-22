@@ -159,9 +159,19 @@ function App() {
   if (state.ligacao) {
     return (
       <div class="win call" data-layout={layout}>
+        {/* No Compacto e no Mínimo, sem o "Starsonic Phone · ", para a conta caber ao lado do estado (no Mínimo, só o
+            ramal). */}
         <TitleBar
           send={send}
-          title={state.conta ? `Starsonic Phone · ${accountTitle(state.conta)}` : undefined}
+          title={
+            !state.conta
+              ? undefined
+              : layout === 'normal'
+                ? `Starsonic Phone · ${accountTitle(state.conta)}`
+                : layout === 'compacto'
+                  ? accountTitle(state.conta)
+                  : state.conta.ramal
+          }
           status={state.conta ? accountDot(state.conta, true) : undefined}
         />
         <Ligacao state={state} ligacao={state.ligacao} send={send} />

@@ -1,8 +1,9 @@
 // O Rediscar (a opção A do canvas "tamanho, rediscar e status"): o botão redondo de contorno à esquerda do Ligar, que
 // liga de novo para a feita mais nova dos Recentes, pelo mesmo comando do botão de ligar de uma linha dos Recentes.
 // O nome e o title: "Rediscar <nome ou número>" ("Rediscar" e travado sem nenhuma feita). No hover e no foco, o balão
-// do canvas: "Rediscar <número> · <nome>" (o title sai enquanto o balão aparece, para não aparecerem os dois).
-import { useState } from 'preact/hooks';
+// do canvas: "Rediscar <número> · <nome>" (o title sai enquanto o balão aparece, para não aparecerem os dois). O Esc
+// fecha o balão (WCAG 1.4.13), e ele só volta quando o ponteiro sai e entra de novo, ou o foco sai e volta.
+import { useEffect, useState } from 'preact/hooks';
 import { lastOutgoing } from '../format';
 import { IconRedial } from '../icons';
 import type { RecentCall } from '../state';
@@ -13,17 +14,24 @@ interface Props {
   onDial(numero: string): void;
   /** O id do balão (um por tela). */
   id: string;
-  class?: string;
 }
 
-export function Rediscar({ recentes, onDial, id, class: extra }: Props) {
+export function Rediscar({ recentes, onDial, id }: Props) {
   const [balao, setBalao] = useState(false);
   const feita = lastOutgoing(recentes);
   const rotulo = feita ? `Rediscar ${feita.nome || feita.numero}` : 'Rediscar';
   const dica = feita ? (feita.nome ? `Rediscar ${feita.numero} · ${feita.nome}` : `Rediscar ${feita.numero}`) : '';
   const mostrar = balao && feita !== null;
+  useEffect(() => {
+    if (!mostrar) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setBalao(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [mostrar]);
   return (
-    <span class={extra ? `redial-wrap ${extra}` : 'redial-wrap'}>
+    <span class="redial-wrap">
       <button
         type="button"
         class="btn-redial"

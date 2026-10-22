@@ -195,7 +195,7 @@ button { cursor: default; }
 /* Navegação de baixo */
 .nav { flex: none; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--border); padding: 8px 12px 10px; background: var(--surface);
   position: relative; padding-inline: max(12px, calc((100% - 480px) / 2)); }
-/* O canto de arrastar (só o desenho: quem redimensiona é a borda da janela do Windows, logo ali). */
+/* O desenho do canto de arrastar: a zona de redimensionar do canto de baixo à direita fica por cima dele. */
 .grip { position: absolute; right: 3px; bottom: 3px; width: 12px; height: 12px; fill: none; stroke: #b9c4e6; stroke-width: 1.5; stroke-linecap: round; pointer-events: none; }
 .tab { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; border: 0; background: transparent; color: var(--text-muted);
   font: 600 12px/1.2 var(--font-sans); padding: 4px 0; border-radius: 12px; }
@@ -608,3 +608,18 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .win.call[data-layout="minimo"] .consult-note { font-size: 12px; }
 /* O painel de número aberto numa janela pequena: o bloco de quem fala sai (o título do painel diz a ligação). */
 .win.call[data-layout="minimo"] .call-painel-cartao .who, .win.call[data-layout="compacto"] .call-painel-cartao .who { display: none; }
+
+/* As zonas de redimensionar (ResizeZones.tsx): fora da região de arrastar, por cima de tudo, com o cursor de cada borda.
+   A faixa de cima vai de um canto ao outro sem passar por cima dos botões da barra (2 × 44 px à direita). */
+.resize-zone { position: fixed; z-index: 40; -webkit-app-region: no-drag; app-region: no-drag; }
+.resize-cima { top: 0; left: 8px; right: 88px; height: 5px; cursor: ns-resize; }
+.resize-cima-esquerda { top: 0; left: 0; width: 8px; height: 8px; cursor: nwse-resize; }
+.resize-cima-direita { top: 0; right: 0; width: 8px; height: 5px; cursor: nesw-resize; }
+.resize-baixo-direita { right: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize; }
+/* A barra de título no Compacto e no Mínimo (o canvas): os botões de 40 e de 36 px; a faixa de cima acompanha. */
+.win[data-layout="compacto"] .titlebar, .win[data-layout="minimo"] .titlebar { padding-left: 12px; }
+.win[data-layout="compacto"] .caption button { width: 40px; }
+.win[data-layout="minimo"] .caption button { width: 36px; }
+.win[data-layout="compacto"] .resize-cima { right: 80px; }
+.win[data-layout="minimo"] .resize-cima { right: 72px; }
+.win[data-layout="compacto"] .account-status, .win[data-layout="minimo"] .account-status { margin-right: 8px; }

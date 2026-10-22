@@ -3,6 +3,7 @@
 // barra mostra também a bolinha da conta em uso ("Ocupado · em ligação" em vermelho: o cabeçalho fica escondido).
 import type { AccountDot } from '../format';
 import { IconClose, IconMinimize } from '../icons';
+import { ResizeZones } from './ResizeZones';
 import type { Send } from '../types';
 
 interface Props {
@@ -25,6 +26,8 @@ export function TitleBar({ send, closeLabel = 'Fechar para a bandeja', title = '
         </span>
       )}
       <span class="titlebar-text">{title}</span>
+      {/* As zonas de redimensionar da janela (a barra de título está em toda tela da janela principal). */}
+      <ResizeZones send={send} />
       <div class="caption">
         <button type="button" aria-label="Minimizar" title="Minimizar" onClick={() => send({ cmd: 'minimize' })}>
           <IconMinimize />

@@ -459,7 +459,8 @@ const OUTRAS: Array<{ nome: string; cenario: string; preparar?: (page: Page) => 
       await page.getByRole('button', { name: 'Nova ligação', exact: true }).click();
       await page.getByRole('textbox', { name: 'Número da nova ligação' }).fill('20');
     },
-    botoes: ['Desligar', 'Ligar', 'Cancelar'],
+    // O Rediscar do painel também fica inteiro e livre (até em 300×440).
+    botoes: ['Desligar', 'Rediscar 1150603000', 'Ligar', 'Cancelar'],
   },
 ];
 

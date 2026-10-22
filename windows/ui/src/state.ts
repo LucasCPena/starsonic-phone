@@ -190,7 +190,9 @@ export type Command =
   | { cmd: 'viewRecents' }
   | { cmd: 'updateNow' }
   | { cmd: 'updateLater' }
-  | { cmd: 'cancelLogin' };
+  | { cmd: 'cancelLogin' }
+  /** rc.2: a interface pegou uma zona de redimensionar (o C++ começa o redimensionar do Windows). */
+  | { cmd: 'resize'; borda: 'cima' | 'cima-esquerda' | 'cima-direita' | 'baixo-direita' };
 
 /** Os únicos endereços que o openExternal aceita (nenhum tel:: o app é o tratador dele). */
 export const EXTERNAL_URLS = {

@@ -523,7 +523,7 @@ export function Ligacao({ state, ligacao: l, send }: Props) {
         actions={(numero) => (
           // O Rediscar da Nova ligação: a feita mais nova, pelo mesmo caminho do Ligar do painel.
           <div class="call-row">
-            <Rediscar recentes={state.recentes} id="rediscar-nova" class="redial-dark" onDial={ligar} />
+            <Rediscar recentes={state.recentes} id="rediscar-nova" onDial={ligar} />
             <button type="button" class="btn btn-cyan btn-block" disabled={!numero} onClick={() => ligar(numero)}>
               <IconPhone size="sm" />
               Ligar
