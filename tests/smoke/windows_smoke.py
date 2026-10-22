@@ -744,6 +744,34 @@ def run_smoke(args, result):
         show_log(data_dir / "diagnostico.log")
 
 
+PAGE_STATE_SCRIPT = """() => ({
+  url: location.href,
+  viewport: [innerWidth, innerHeight],
+  dpr: devicePixelRatio,
+  layout: (document.querySelector('.win') || {dataset: {}}).dataset.layout || null,
+  pronto: document.body.dataset.pronto || null,
+  texto: (document.querySelector('header') || document.body).innerText.slice(0, 300),
+})"""
+
+
+def wait_connected(page, capturas, result, label, timeout=40000):
+    """Espera o "Conectado" na interface; sem ele, guarda o que a página mostrava (e uma captura) antes de falhar."""
+    try:
+        page.get_by_text(CONNECTED).first.wait_for(timeout=timeout)
+    except Exception:
+        try:
+            state = page.evaluate(PAGE_STATE_SCRIPT)
+        except Exception as error:   # noqa: BLE001
+            state = {"erro": str(error)}
+        result.setdefault("sem_conectado", {})[label] = state
+        log("%s: sem '%s' na interface: %s" % (label, CONNECTED, state))
+        try:
+            screenshot(page, capturas, "sem-conectado-%s.png" % label.replace(" ", "-"), result)
+        except Exception:   # noqa: BLE001
+            pass
+        raise
+
+
 def resize_to(win, hwnd, page, client_logical):
     """Muda a janela para a área da interface de client_logical lógicos e espera o viewport seguir."""
     x, y, width, height = win.rect(hwnd)
@@ -963,7 +991,7 @@ def run_recovery(pw, win, exe, data_dir, registrar, capturas, result, problems):
             else:
                 browser = connect(pw)
                 page = find_page(browser, "/index.html", 60, sleep)
-                page.get_by_text(CONNECTED).first.wait_for(timeout=40000)
+                wait_connected(page, capturas, result, "navegador novo")
                 if not has_version_query(page.url):
                     problems.append("depois do navegador novo, a pagina abriu sem a versao na URL: %s" % page.url)
                 recovery["navegador_saiu"] = ring_and_reject(win, hwnd, browser, registrar, page.wait_for_timeout,
