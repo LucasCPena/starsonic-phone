@@ -17,6 +17,7 @@ constexpr int kFormatVersion = 1;
 // As mensagens (UTF-8). Os escapes \x sao partidos em literais vizinhos onde a letra seguinte seria lida como digito
 // hexadecimal.
 const char kErrNameEmpty[] = "Digite o nome do atalho.";
+const char kErrNameControl[] = "O nome n\xc3\xa3o pode ter caracteres de controle.";
 const char kErrNameLong[] = "O nome pode ter at\xc3\xa9 24 caracteres.";
 const char kErrNumberEmpty[] = "Digite o n\xc3\xbamero do atalho.";
 const char kErrNumberInvalid[] = "O n\xc3\xbamero s\xc3\xb3 pode ter d\xc3\xadgitos, *, # e +.";
@@ -71,6 +72,10 @@ bool ValidActionValue(Atalho::Acao acao) {
 // Confere o nome e o numero (ja sem os espacos das pontas). "" = valido.
 const char* ValidateFields(const Atalho& atalho) {
     if (atalho.nome.empty()) return kErrNameEmpty;
+    // Nada abaixo de U+0020 (em UTF-8 esses sao os bytes abaixo de 0x20: os demais pontos de codigo nao os usam).
+    if (std::any_of(atalho.nome.begin(), atalho.nome.end(), [](char ch) { return static_cast<unsigned char>(ch) < 0x20; })) {
+        return kErrNameControl;
+    }
     if (CountCharacters(atalho.nome) > AtalhosStore::kMaxNameChars) return kErrNameLong;
     if (atalho.numero.empty()) return kErrNumberEmpty;
     if (!std::all_of(atalho.numero.begin(), atalho.numero.end(), IsDialChar)) return kErrNumberInvalid;

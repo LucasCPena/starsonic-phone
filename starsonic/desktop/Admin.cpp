@@ -1,5 +1,8 @@
 #include "Admin.h"
 
+#include <algorithm>
+
+#include "AccountPolicy.h"
 #include "Pbkdf2.h"
 #include "Text.h"
 #include "nlohmann/json.hpp"
@@ -46,17 +49,45 @@ std::string TrimAscii(const std::string& text) {
     return text.substr(first, last - first + 1);
 }
 
-// Os servidores que servem: com endereco (sem os espacos das pontas) e porta de 1 a 65535.
-std::vector<ServerPort> CleanServers(const std::vector<ServerPort>& servers) {
-    std::vector<ServerPort> clean;
-    for (const ServerPort& server : servers) {
-        ServerPort item;
-        item.address = Trim(server.address);
-        item.port = server.port;
-        if (item.address.empty() || item.port < 1 || item.port > 65535) continue;
-        clean.push_back(std::move(item));
+// As mensagens (UTF-8). Os escapes \x sao partidos em literais vizinhos onde a letra seguinte seria lida como digito
+// hexadecimal.
+const char kErrChannel[] = "Escolha o canal Teste ou Est\xc3\xa1vel.";
+const char kErrCode[] = "O c\xc3\xb3" "digo s\xc3\xb3 pode ter d\xc3\xadgitos, *, #, + e {ramal}.";
+const char kErrDuplicate[] = "Esse servidor j\xc3\xa1 est\xc3\xa1 na lista.";
+const char kErrPort[] = "A porta deve ficar entre 1 e 65535.";
+
+bool ValidChannel(const std::string& channel) {
+    return channel.empty() || channel == "teste" || channel == "estavel";
+}
+
+// O codigo de puxar: so digitos, * # + e o texto {ramal}.
+bool ValidPickupCode(const std::string& code) {
+    static const std::string kToken = "{ramal}";
+    for (size_t i = 0; i < code.size();) {
+        const char ch = code[i];
+        if ((ch >= '0' && ch <= '9') || ch == '*' || ch == '#' || ch == '+') {
+            ++i;
+        } else if (code.compare(i, kToken.size(), kToken) == 0) {
+            i += kToken.size();
+        } else {
+            return false;
+        }
     }
-    return clean;
+    return true;
+}
+
+bool ValidPort(int64_t port) { return port >= 1 && port <= 65535; }
+
+// Um servidor da lista: o endereco normalizado (sem espacos nas pontas, em minusculas) e a porta. Devolve a mensagem de
+// erro (UTF-8), ou "" se serve.
+std::string CheckServer(const ServerPort& server, ServerPort* normalized) {
+    std::wstring address;
+    const ServerCheck check = ValidateServerAddress(server.address, &address);
+    if (check != ServerCheck::Ok) return WideToUtf8(ServerCheckMessage(check));
+    if (!ValidPort(server.port)) return kErrPort;
+    normalized->address = std::move(address);
+    normalized->port = server.port;
+    return std::string();
 }
 
 }  // namespace
@@ -94,8 +125,10 @@ bool AdminStore::Load() {
     config_.mostrarAtenderAuto = GetBool(root, "mostrar_atender_automatico", defaults.mostrarAtenderAuto);
     config_.blf = GetBool(root, "blf", defaults.blf);
     config_.puxar = GetBool(root, "puxar", defaults.puxar);
-    config_.codigoPuxar = TrimAscii(GetString(root, "codigo_puxar"));
-    config_.canal = GetString(root, "canal");
+    const std::string code = TrimAscii(GetString(root, "codigo_puxar"));
+    config_.codigoPuxar = ValidPickupCode(code) ? code : std::string();
+    const std::string channel = GetString(root, "canal");
+    config_.canal = ValidChannel(channel) ? channel : std::string();
     const auto servers = root.find("servidores");
     if (servers != root.end() && servers->is_array()) {
         std::vector<ServerPort> list;
@@ -104,21 +137,41 @@ bool AdminStore::Load() {
             const auto port = item.find("porta");
             if (port == item.end() || !port->is_number_integer()) continue;
             const int64_t value = port->get<int64_t>();
-            if (value < 1 || value > 65535) continue;
+            if (!ValidPort(value)) continue;
             ServerPort server;
-            server.address = Trim(Utf8ToWide(GetString(item, "endereco")));
+            server.address = Utf8ToWide(GetString(item, "endereco"));
             server.port = static_cast<int>(value);
-            if (!server.address.empty()) list.push_back(std::move(server));
+            ServerPort normalized;
+            if (!CheckServer(server, &normalized).empty()) continue;
+            const bool duplicate = std::any_of(list.begin(), list.end(), [&](const ServerPort& other) {
+                return other.address == normalized.address;
+            });
+            if (!duplicate) list.push_back(std::move(normalized));
         }
         config_.servidores = std::move(list);
     }
     return true;
 }
 
-bool AdminStore::Save(const AdminConfig& requested) {
+bool AdminStore::Save(const AdminConfig& requested, std::string* error) {
+    const auto fail = [&](const std::string& message) {
+        if (error) *error = message;
+        return false;
+    };
     AdminConfig config = requested;
+    if (!ValidChannel(config.canal)) return fail(kErrChannel);
     config.codigoPuxar = TrimAscii(config.codigoPuxar);
-    config.servidores = CleanServers(config.servidores);
+    if (!ValidPickupCode(config.codigoPuxar)) return fail(kErrCode);
+    config.servidores.clear();
+    for (const ServerPort& server : requested.servidores) {
+        ServerPort normalized;
+        const std::string problem = CheckServer(server, &normalized);
+        if (!problem.empty()) return fail(problem);
+        const bool duplicate = std::any_of(config.servidores.begin(), config.servidores.end(),
+                                           [&](const ServerPort& other) { return other.address == normalized.address; });
+        if (duplicate) return fail(kErrDuplicate);
+        config.servidores.push_back(std::move(normalized));
+    }
 
     Json root = Json::object();
     root["versao"] = kFormatVersion;
@@ -139,9 +192,10 @@ bool AdminStore::Save(const AdminConfig& requested) {
 
     const std::optional<std::string> sealed =
         cipher_.Protect(root.dump(2, ' ', false, Json::error_handler_t::replace));
-    if (!sealed || sealed->empty()) return false;
-    if (!files_.WriteAtomic(path_, *sealed + "\n")) return false;
+    if (!sealed || sealed->empty()) return fail("N\xc3\xa3o foi poss\xc3\xadvel proteger as configura\xc3\xa7\xc3\xb5" "es.");
+    if (!files_.WriteAtomic(path_, *sealed + "\n")) return fail("N\xc3\xa3o foi poss\xc3\xadvel gravar as configura\xc3\xa7\xc3\xb5" "es.");
     config_ = std::move(config);
+    if (error) error->clear();
     return true;
 }
 
@@ -155,18 +209,23 @@ AdminHashParams EmbeddedAdminHash() {
     return params;
 }
 
-bool CheckAdminPassword(const std::string& typed) {
+bool CheckPasswordAgainst(const std::string& typed, const AdminHashParams& params) {
+    if (params.iterations == 0 || params.key.empty()) return false;
+    // O HMAC completa a chave com zeros ate o bloco: "senha" e "senha" + NUL dariam a mesma chave derivada. Uma senha
+    // digitada nao tem NUL, entao quem tem NUL nao e a senha.
+    if (typed.find('\0') != std::string::npos) return false;
     const std::vector<uint8_t> password(typed.begin(), typed.end());
-    const std::vector<uint8_t> salt(kSalt, kSalt + sizeof(kSalt));
-    const std::vector<uint8_t> derived = Pbkdf2HmacSha256(password, salt, kIterations, sizeof(kKey));
-    if (derived.size() != sizeof(kKey)) return false;
+    const std::vector<uint8_t> derived = Pbkdf2HmacSha256(password, params.salt, params.iterations, params.key.size());
+    if (derived.size() != params.key.size()) return false;
     // Tempo constante: junta as diferencas de todos os bytes, sem sair no primeiro.
     uint8_t difference = 0;
-    for (size_t i = 0; i < sizeof(kKey); ++i) {
-        difference = static_cast<uint8_t>(difference | (derived[i] ^ kKey[i]));
+    for (size_t i = 0; i < derived.size(); ++i) {
+        difference = static_cast<uint8_t>(difference | (derived[i] ^ params.key[i]));
     }
     return difference == 0;
 }
+
+bool CheckAdminPassword(const std::string& typed) { return CheckPasswordAgainst(typed, EmbeddedAdminHash()); }
 
 // ---------------------------------------------------------------- puxar
 

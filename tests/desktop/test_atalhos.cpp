@@ -71,6 +71,14 @@ TEST_CASE("atalhos store validates the name, the number and the action") {
     CHECK_FALSE(store.Save(Make(accents, "2007"), &error).empty());
     CHECK(store.Save(Make(accents + "\xc3\xa3", "2007"), &error).empty());
 
+    // Nada abaixo de U+0020 no nome (TAB, quebra de linha, ESC...).
+    for (const char* bad : {"A\tB", "A\nB", "A\x01" "B", "A\x1b" "B", "A\rB", "A\x1f"}) {
+        error.clear();
+        CHECK(store.Save(Make(bad, "2007"), &error).empty());
+        CHECK(error == "O nome n\xc3\xa3o pode ter caracteres de controle.");
+    }
+    CHECK_FALSE(store.Save(Make("Jos\xc3\xa9 da Silva", "2007"), &error).empty());   // espaco e acento valem
+
     CHECK(store.Save(Make("Fulano", ""), &error).empty());
     CHECK(error == "Digite o n\xc3\xbamero do atalho.");
     for (const char* bad : {"20 07", "20a7", "2007;", "\xc3\xa3"}) {
@@ -188,6 +196,7 @@ TEST_CASE("atalhos store loads what it can from a damaged file") {
     root["atalhos"].push_back({{"id", "d"}, {"nome", "X"}, {"numero", "2003"}, {"acao", "voar"}});          // acao ruim
     root["atalhos"].push_back({{"id", "a"}, {"nome", "Repetido"}, {"numero", "2004"}, {"acao", "ligar"}});  // id repetido
     root["atalhos"].push_back({{"nome", "SemId"}, {"numero", "2005"}, {"acao", "ligar"}});                   // sem id
+    root["atalhos"].push_back({{"id", "e"}, {"nome", "A\tB"}, {"numero", "2006"}, {"acao", "ligar"}});     // controle
     root["atalhos"].push_back(42);
     for (int i = 0; i < 9; ++i) {
         root["atalhos"].push_back({{"id", "n" + std::to_string(i)}, {"nome", "N"}, {"numero", "3"}, {"acao", "teclas"}});
