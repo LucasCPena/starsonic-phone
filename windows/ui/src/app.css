@@ -290,22 +290,35 @@ button.link { border: 0; background: transparent; padding: 0; font-family: inher
 
 /* A área entre o cabeçalho e a navegação */
 .main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-/* A janela é cortada na altura da área de trabalho: o teclado encolhe até as linhas de 40 px e não abaixo disso.
-   Mais baixa que isso (ou com as sugestões), as sugestões e as teclas rolam; o número e o Ligar ficam à vista. */
+/* O teclado é a função da tela: as 12 teclas e o Ligar ficam inteiros, sem rolar, em toda altura que a janela pode ter
+   (a janela é cortada na altura da área de trabalho; até 640 px). As teclas encolhem até as linhas de 40 px; as
+   sugestões de contatos ficam com o que sobra, numa lista que rola sozinha e mostra pelo menos uma linha (elas
+   encolhem primeiro: flex-shrink de 1000 contra 1 das teclas). Mais baixa que 640, a parte das teclas rola sem cobrir
+   o Ligar. */
 .teclado-meio { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 14px; overflow-y: auto;
   scrollbar-width: thin; }
-.teclado-meio > .suggestions { flex: none; }
-/* Numa janela baixa (a área de trabalho de 1920×1080 a 150% tem uns 672 px), os espaços do teclado apertam: as 12
-   teclas cabem inteiras até 400×640. */
-@media (max-height: 700px) {
-  .body.teclado { gap: 10px; padding-top: 14px; }
-  .teclado-meio { gap: 10px; }
-  .teclado .keys { gap: 8px; min-height: calc(4 * 40px + 3 * 8px); }
-}
+/* min-height: uma sugestão inteira (53 px; 47 px na lista compacta de 2 ou 3; 38 px na linha única da janela baixa). */
+.teclado-meio > .suggestions { flex: 0 1000 auto; min-height: 53px; overflow-y: auto; scrollbar-width: thin; }
+.teclado-meio > .suggestions-compact { min-height: 47px; }
 .teclado .keys { flex: 1 1 auto; min-height: calc(4 * 40px + 3 * 10px); grid-template-rows: repeat(4, minmax(40px, 54px)); align-content: start; }
 .teclado .key { height: auto; }
 .suggestions-compact .suggest { padding: 5px 10px; }
 .suggestions-compact .avatar { width: 28px; height: 28px; font-size: 11.5px; }
+/* Janela baixa (a área de trabalho de 1920×1080 a 150% tem uns 672 px): o cabeçalho, o número e os espaços apertam,
+   e a sugestão vira sempre a linha compacta. Depois das regras de cima, para valer sobre elas. */
+@media (max-height: 700px) {
+  .brand { padding: 10px 18px 12px; gap: 8px; }
+  .body.teclado { gap: 8px; padding-top: 10px; padding-bottom: 10px; }
+  .teclado .number { padding-bottom: 6px; }
+  .teclado .number-text { font-size: 26px; }
+  .teclado-meio { gap: 8px; }
+  .teclado .keys { gap: 6px; min-height: calc(4 * 40px + 3 * 6px); }
+  .teclado-meio > .suggestions, .teclado-meio > .suggestions-compact { gap: 4px; min-height: 38px; }
+  .suggestions .suggest { padding: 5px 10px; }
+  .suggestions .avatar { width: 28px; height: 28px; font-size: 11.5px; }
+  .suggestions .row-main { flex-direction: row; align-items: baseline; gap: 8px; }
+  .suggestions .row-title { flex: none; max-width: 60%; }
+}
 .popover-menu { top: calc(100% + 6px); right: 0; }
 .popover-contas { top: calc(100% + 6px); left: 0; right: 0; }
 .popover-row { right: 46px; min-width: 170px; }
