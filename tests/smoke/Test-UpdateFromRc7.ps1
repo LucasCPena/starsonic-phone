@@ -5,7 +5,7 @@
 # em silencio (/S, como o atualizador da rc.7 faz), e confere que o app novo abre "Conectado" no registrador falso
 # com o contato (tests\smoke\windows_smoke.py --ensaio, pelo CDP), que os arquivos da rc.7 viraram .migrado, que os
 # sons da rc.7 sairam da pasta e que o Run passou a --bandeja. No fim, desinstala.
-# Instala no perfil do usuario atual (feito para o CI). Uso:
+# Instala no perfil do usuario atual e apaga a pasta de dados dele: so roda no CI (GITHUB_ACTIONS=true). Uso:
 #   .\tests\smoke\Test-UpdateFromRc7.ps1 -Setup dist\StarsonicPhone-0.0.0-setup.exe -Capturas capturas-windows
 param(
     [Parameter(Mandatory = $true)][string]$Setup,
@@ -21,6 +21,11 @@ Set-StrictMode -Version 2
 trap {
     Write-CiError -Title 'Test-UpdateFromRc7' -Lines @($_.Exception.Message)
     break
+}
+
+# So no CI: o ensaio apaga %APPDATA%\Starsonic Phone (as contas e os contatos de quem roda) e instala no usuario.
+if ($env:GITHUB_ACTIONS -ne 'true') {
+    throw 'O ensaio da rc.7 so roda no CI (GITHUB_ACTIONS=true): ele apaga %APPDATA%\Starsonic Phone deste usuario.'
 }
 
 # Ids de starsonic\win\StarsonicIds.h na v0.0.1-rc.7 (a tela Entrar e a faixa).

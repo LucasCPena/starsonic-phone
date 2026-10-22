@@ -7,8 +7,10 @@ Onde procura (spec 11.2):
 - instalador: installer/*.nsi|*.nsh (fora dos comentários);
 - literais de texto do código novo: starsonic/**/*.cpp|*.h e branding/branding.h;
 - no executável (--exe): texto ASCII e UTF-16LE.
-- no app novo (spec da W1, 11.2), sem nenhuma exceção: o StarsonicPhone.exe novo (--app-novo), cada
-  arquivo da pasta ui (--ui) e o instalador novo (--instalador), em ASCII/UTF-8 e UTF-16LE.
+- no app novo (spec da W1, 11.2), sem nenhuma exceção e sem diferenciar maiúsculas: o StarsonicPhone.exe novo
+  (--app-novo), cada arquivo da pasta ui (--ui) e o instalador novo (--instalador), em ASCII/UTF-8 e UTF-16LE. O
+  instalador é aberto: o NSIS guarda os textos das páginas, as caixas de mensagem e os arquivos dentro do LZMA (o
+  SetCompressor /SOLID lzma), e o check procura no que está dentro; um instalador que não abre também reprova.
 
 Só "MicroSIP" exato conta (maiúsculas importam). No app antigo, uma ocorrência é aceita quando vem
 logo depois de "Copyright (c) 2011-2025, " (aviso de copyright do recurso de versão) ou de
@@ -22,9 +24,12 @@ Uso: check_branding.py --repo <pasta> [--exe <arquivo>] [--app-novo <exe>] [--ui
      (código 0 = ok, 1 = problemas)
 """
 import argparse
+import lzma
 import os
 import pathlib
+import struct
 import sys
+import zlib
 
 NAME = "MicroSIP"
 ALLOWED_PREFIXES = ("Copyright (c) 2011-2025, ", "Baseado no ", "baseado no ")
@@ -214,20 +219,20 @@ def find_exe_host_problems(exe):
 
 
 def _strict_occurrences(data, encode, label):
-    """Todas as posições de NAME (exato) e de HOST (sem diferenciar maiúsculas) em data."""
+    """Todas as posições de "microsip" (também o microsip.org) em data, sem diferenciar maiúsculas."""
     unit = len(encode("a"))
+    pattern = encode(NAME.lower())
+    lowered = data.lower()   # só letras ASCII mudam, também dentro do UTF-16LE
     bad = []
-    for pattern, haystack in ((encode(NAME), data), (encode(HOST), data.lower())):
-        start = 0
-        while True:
-            index = haystack.find(pattern, start)
-            if index < 0:
-                break
-            context = data[max(0, index - 32 * unit):index + len(pattern)]
-            text = context.decode("utf-16-le" if label == "UTF-16LE" else "latin-1", errors="replace")
-            bad.append((index, "%s: %s" % (label, _snippet(text.replace("\x00", " ")))))
-            start = index + len(pattern)
-    return bad
+    start = 0
+    while True:
+        index = lowered.find(pattern, start)
+        if index < 0:
+            return bad
+        context = data[max(0, index - 32 * unit):index + len(pattern)]
+        text = context.decode("utf-16-le" if label == "UTF-16LE" else "latin-1", errors="replace")
+        bad.append((index, "%s: %s" % (label, _snippet(text.replace("\x00", " ")))))
+        start = index + len(pattern)
 
 
 def _strict_bytes(data):
@@ -237,10 +242,114 @@ def _strict_bytes(data):
 
 
 def find_strict_problems(path):
-    """O app novo e o instalador novo: nenhum "MicroSIP" nem "microsip.org", sem exceção (nem o copyright
-    nem o "Baseado no" do app antigo). Lista de (nome do arquivo, posição em bytes, trecho)."""
+    """O app novo: nenhum "MicroSIP" (nem microsip.org), sem exceção (nem o copyright nem o "Baseado no" do app
+    antigo) e sem diferenciar maiúsculas. Lista de (nome do arquivo, posição em bytes, trecho)."""
     path = pathlib.Path(path)
     return [(path.name, offset, snippet) for offset, snippet in _strict_bytes(path.read_bytes())]
+
+
+NSIS_SIGNATURE = b"\xef\xbe\xad\xdeNullsoftInst"   # o firstheader do NSIS: 0xDEADBEEF e "NullsoftInst"
+NSIS_CHUNK = 1 << 16
+
+
+def _lzma_decoder(props):
+    """O decodificador do LZMA do NSIS: as 5 bytes de propriedades (lc/lp/pb e o dicionário), sem o tamanho."""
+    if len(props) < 5 or props[0] >= 9 * 5 * 5:
+        raise ValueError("propriedades do LZMA invalidas")
+    pb, rest = divmod(props[0], 45)
+    lp, lc = divmod(rest, 9)
+    dict_size = struct.unpack("<I", props[1:5])[0]
+    if not 1 << 12 <= dict_size <= 1 << 30:
+        raise ValueError("dicionario do LZMA invalido: %d" % dict_size)
+    return lzma.LZMADecompressor(format=lzma.FORMAT_RAW,
+                                 filters=[{"id": lzma.FILTER_LZMA1, "dict_size": dict_size, "lc": lc, "lp": lp,
+                                           "pb": pb}])
+
+
+def _inflate_stream(data, kind):
+    """Descomprime um fluxo (lzma: com as 5 bytes de propriedades; zlib: deflate cru) até onde ele vai; o que vem
+    depois do fim (a assinatura, o CRC) fica de fora. ValueError se nada sair."""
+    if kind == "lzma":
+        decoder = _lzma_decoder(data[:5])
+        data = data[5:]
+        errors = (lzma.LZMAError,)
+    else:
+        decoder = zlib.decompressobj(-15)
+        errors = (zlib.error,)
+    out = []
+    for start in range(0, len(data), NSIS_CHUNK):
+        try:
+            out.append(decoder.decompress(data[start:start + NSIS_CHUNK]))
+        except errors:
+            break
+        if getattr(decoder, "eof", False):
+            break
+    result = b"".join(out)
+    if not result:
+        raise ValueError("o fluxo %s nao abriu" % kind)
+    return result
+
+
+def _nsis_blocks(data):
+    """Os blocos não sólidos: cada um com 4 bytes de tamanho (o bit de cima = comprimido)."""
+    out = []
+    pos = 0
+    while pos + 4 <= len(data):
+        size = struct.unpack("<I", data[pos:pos + 4])[0]
+        compressed, size = size & 0x80000000, size & 0x7FFFFFFF
+        block = data[pos + 4:pos + 4 + size]
+        if size == 0 or len(block) < size:
+            break
+        if compressed:
+            for kind in ("lzma", "zlib"):
+                try:
+                    out.append(_inflate_stream(block, kind))
+                    break
+                except ValueError:
+                    continue
+            else:
+                raise ValueError("um bloco do instalador nao abriu")
+        else:
+            out.append(block)
+        pos += 4 + size
+    if not out:
+        raise ValueError("nenhum bloco")
+    return b"".join(out)
+
+
+def nsis_content(data):
+    """O que está dentro de um instalador NSIS (o cabeçalho com os textos das páginas e os arquivos), descomprimido.
+    None se não é um instalador NSIS ou se ele não abre."""
+    for offset in range(0, len(data) - 28, 512):
+        if data[offset + 4:offset + 20] != NSIS_SIGNATURE:
+            continue
+        header_size, total = struct.unpack("<II", data[offset + 20:offset + 28])
+        body = data[offset + 28:offset + total] if 28 < total <= len(data) - offset else data[offset + 28:]
+        # Sólido (um fluxo com todos os blocos), não sólido (um por bloco) ou sem compressão.
+        for attempt in (lambda: _inflate_stream(body, "lzma"), lambda: _inflate_stream(body, "zlib"),
+                        lambda: _nsis_blocks(body)):
+            try:
+                content = attempt()
+            except ValueError:
+                continue
+            if len(content) >= min(header_size, 4):
+                return content
+        return None
+    return None
+
+
+def find_installer_problems(path):
+    """O instalador novo: o arquivo como está e o que está dentro dele (descomprimido), sem exceção e sem diferenciar
+    maiúsculas. Um instalador que não abre também é um problema (o check não passa sem ver os textos)."""
+    path = pathlib.Path(path)
+    data = path.read_bytes()
+    found = [(path.name, offset, snippet) for offset, snippet in _strict_bytes(data)]
+    content = nsis_content(data)
+    if content is None:
+        found.append((path.name, 0, "nao foi possivel abrir o instalador NSIS para ver os textos de dentro"))
+        return found
+    found += [(path.name, offset, "dentro do instalador: " + snippet) for offset, snippet in _strict_bytes(content)]
+    return found
 
 
 def find_ui_problems(folder):
@@ -268,8 +377,10 @@ def main(argv):
     for exe in args.exe:
         found += find_exe_problems(exe)
         found += find_exe_host_problems(exe)
-    for exe in args.app_novo + args.instalador:
+    for exe in args.app_novo:
         found += find_strict_problems(exe)
+    for setup in args.instalador:
+        found += find_installer_problems(setup)
     for folder in args.ui:
         found += find_ui_problems(folder)
     for relative, number, snippet in found:

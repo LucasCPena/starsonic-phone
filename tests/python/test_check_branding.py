@@ -1,4 +1,9 @@
+import lzma
+import os
 import pathlib
+import shutil
+import struct
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -9,6 +14,34 @@ sys.path.insert(0, str(ROOT / "build"))
 import check_branding  # noqa: E402
 
 BS = chr(92)  # barra invertida
+NSIS_SIGNATURE = b"\xef\xbe\xad\xdeNullsoftInst"
+
+
+def lzma_raw(data):
+    """O LZMA do NSIS: as 5 bytes de propriedades e o fluxo, sem o tamanho de 8 bytes do formato .lzma."""
+    alone = lzma.compress(data, format=lzma.FORMAT_ALONE)
+    return alone[:5] + alone[13:]
+
+
+def fake_installer(content, solid=True, offset=1024):
+    """Um instalador NSIS como o makensis grava: o stub, o firstheader num múltiplo de 512 e os dados em LZMA (sólido:
+    um fluxo só com todos os blocos; não sólido: cada bloco com o tamanho e o bit de comprimido)."""
+    blocks = [b"cabecalho " + content, b"um arquivo"]
+    if solid:
+        plain = b"".join(struct.pack("<I", len(block)) + block for block in blocks)
+        body = lzma_raw(plain)
+    else:
+        body = b""
+        for block in blocks:
+            packed = lzma_raw(block)
+            body += struct.pack("<I", len(packed) | 0x80000000) + packed
+    header = struct.pack("<I", 0) + NSIS_SIGNATURE + struct.pack("<II", len(blocks[0]), 28 + len(body) + 4)
+    stub = b"MZ" + b"\x00" * (offset - 2)
+    return stub + header + body + b"\x00\x00\x00\x00"
+
+
+def makensis():
+    return os.environ.get("STARSONIC_MAKENSIS") or shutil.which("makensis")
 
 
 class CheckBrandingTest(unittest.TestCase):
@@ -154,12 +187,62 @@ class CheckBrandingTest(unittest.TestCase):
     def test_main_checks_the_new_app_the_ui_and_the_installer(self):
         exe = self.write("out-novo/StarsonicPhone.exe", b"\x00Starsonic Phone\x00")
         self.write("out-novo/ui/index.html", "<title>Starsonic Phone</title>")
-        setup = self.write("dist/StarsonicPhone-0.0.0-setup.exe", b"\x00" + "Starsonic Phone".encode("utf-16-le"))
+        setup = self.write("dist/StarsonicPhone-0.0.0-setup.exe", fake_installer("Starsonic Phone".encode("utf-16-le")))
         args = ["--repo", str(self.repo), "--app-novo", str(exe), "--ui", str(self.repo / "out-novo" / "ui"),
                 "--instalador", str(setup)]
         self.assertEqual(check_branding.main(args), 0)
-        self.write("dist/StarsonicPhone-0.0.0-setup.exe", b"\x00" + "Desinstalar o MicroSIP".encode("utf-16-le"))
+        self.write("dist/StarsonicPhone-0.0.0-setup.exe", fake_installer("Desinstalar o MicroSIP".encode("utf-16-le")))
         self.assertEqual(check_branding.main(args), 1)
+
+    # O instalador comprimido (Ruling da T13, Important 1): o texto das páginas e as caixas de mensagem ficam dentro do
+    # LZMA; o check abre o instalador e procura no que está dentro, sem diferenciar maiúsculas.
+    def test_compressed_installer_is_opened_and_checked(self):
+        utf16 = "Desinstalar o MicroSIP".encode("utf-16-le")
+        for solid in (True, False):
+            setup = self.write("dist/bad.exe", fake_installer(utf16, solid=solid))
+            self.assertNotIn(utf16, setup.read_bytes())   # o texto não aparece no arquivo como está
+            found = check_branding.find_installer_problems(setup)
+            self.assertTrue(found, solid)
+            self.assertTrue(any("dentro" in item[2] for item in found), found)
+            clean = self.write("dist/good.exe", fake_installer("Starsonic Phone".encode("utf-16-le"), solid=solid))
+            self.assertEqual(check_branding.find_installer_problems(clean), [], solid)
+
+    def test_installer_check_ignores_case(self):
+        for text in ("microsip", "MICROSIP", "Microsip.org"):
+            setup = self.write("dist/case.exe", fake_installer(text.encode("utf-16-le")))
+            self.assertTrue(check_branding.find_installer_problems(setup), text)
+
+    def test_an_installer_that_cannot_be_opened_is_a_problem(self):
+        setup = self.write("dist/strange.exe", b"MZ" + b"\x00" * 2000)
+        found = check_branding.find_installer_problems(setup)
+        self.assertEqual(len(found), 1)
+        self.assertIn("NSIS", found[0][2])
+        broken = bytearray(fake_installer(b"x"))
+        broken[1024 + 28:1024 + 33] = b"\xff\xff\xff\xff\xff"   # propriedades do LZMA impossíveis
+        setup = self.write("dist/broken.exe", bytes(broken))
+        self.assertTrue(check_branding.find_installer_problems(setup))
+
+    def test_strict_check_ignores_case(self):
+        for text in ("microsip", "MICROSIP"):
+            exe = self.write("out-novo/StarsonicPhone.exe", b"\x00" + text.encode("utf-16-le") + b"\x00")
+            self.assertTrue(check_branding.find_strict_problems(exe), text)
+        ui = self.repo / "out-novo" / "ui"
+        self.write("out-novo/ui/app.js", 'const x = "microsip";\n')
+        self.assertTrue(check_branding.find_ui_problems(ui))
+
+    @unittest.skipUnless(makensis(), "sem o makensis (o job windows do CI roda com ele)")
+    def test_a_real_lzma_installer_with_microsip_fails(self):
+        script = self.write("instalador/teste.nsi", "\r\n".join([
+            "Unicode true", "SetCompressor /SOLID lzma", "RequestExecutionLevel user", 'Name "Teste"',
+            'OutFile "${OUT}"', "Section", '  MessageBox MB_OK "${TEXTO}"', "SectionEnd", ""]))
+        results = {}
+        for name, text in (("ruim", "Desinstalar o MicroSIP"), ("bom", "Desinstalar o Starsonic Phone")):
+            out = self.repo / "instalador" / (name + "-instalador.exe")
+            subprocess.run([makensis(), "-V1", "-DOUT=%s" % out, "-DTEXTO=%s" % text, str(script)], check=True)
+            self.assertNotIn("MicroSIP".encode("utf-16-le"), out.read_bytes())
+            results[name] = check_branding.find_installer_problems(out)
+        self.assertTrue(results["ruim"])
+        self.assertEqual(results["bom"], [])
 
     def test_repository_has_no_visible_microsip(self):
         found = check_branding.find_problems(ROOT)

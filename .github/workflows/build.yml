@@ -136,6 +136,12 @@ jobs:
         with:
           python-version: '3.12'
 
+      # As chaves dos caches (build/cache_keys.py): a das dependências nativas não muda com o bootstrapper do WebView2,
+      # que tem um cache próprio (o build continua quando o endereço da Microsoft do deps.lock sai do ar).
+      - name: Chaves dos caches
+        id: cache-keys
+        run: python build\cache_keys.py --github-output $env:GITHUB_OUTPUT
+
       - name: Restaurar dependências
         id: deps-cache
         uses: actions/cache/restore@v4
@@ -144,7 +150,14 @@ jobs:
             work/pjproject
             work/vcpkg
             work/webview2
-          key: deps-v1-${{ hashFiles('build/deps.lock', 'build/config_site.h', 'build/Build-Deps.ps1') }}
+          key: ${{ steps.cache-keys.outputs.deps }}
+
+      - name: Restaurar o bootstrapper do WebView2
+        id: bootstrapper-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: work/webview2-bootstrapper
+          key: ${{ steps.cache-keys.outputs.bootstrapper }}
 
       - name: Compilar dependências (pjproject, vcpkg e o SDK do WebView2)
         if: steps.deps-cache.outputs.cache-hit != 'true'
@@ -263,6 +276,22 @@ jobs:
         id: installer
         if: ${{ !cancelled() && steps.nsis.outcome == 'success' }}
         run: .\build\Build-Installer.ps1 -Version $env:STARSONIC_VERSION -AppDir out-novo -OutDir dist -WorkDir work
+
+      - name: Guardar o bootstrapper do WebView2
+        if: ${{ !cancelled() && steps.installer.outcome == 'success' && steps.bootstrapper-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: work/webview2-bootstrapper
+          key: ${{ steps.cache-keys.outputs.bootstrapper }}
+
+      # O check de marca abre o instalador (os textos ficam dentro do LZMA): um instalador de verdade, feito aqui pelo
+      # makensis com "MicroSIP" numa caixa de mensagem, tem de reprovar (no Linux o teste fica de fora sem o makensis).
+      - name: Teste da verificação de marca com um instalador LZMA de verdade
+        if: ${{ !cancelled() && steps.nsis.outcome == 'success' }}
+        run: |
+          $env:STARSONIC_MAKENSIS = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          python -m unittest -v tests.python.test_check_branding.CheckBrandingTest.test_a_real_lzma_installer_with_microsip_fails
+          if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - name: Verificação de marca (app novo, interface e instalador)
         if: ${{ !cancelled() && steps.installer.outcome == 'success' }}
