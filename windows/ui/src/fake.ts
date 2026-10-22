@@ -218,6 +218,15 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
       case 'removeAccount':
         change({ contas: state.contas.filter((c) => c.id !== command.contaId) });
         break;
+      case 'cancelLogin':
+        // A troca para a conta sem senha sai: a conta em uso continua.
+        if (state.entrar.podeCancelar) {
+          change({
+            tela: 'principal',
+            entrar: { servidor: '', protocolo: 'udp', ramal: '', nome: '', erro: '', ocupado: false, pedeSenha: false, podeCancelar: false, contaId: '' },
+          });
+        }
+        break;
       case 'login': {
         const servidor = String(command.servidor ?? '');
         const ramal = String(command.ramal ?? '');
@@ -236,7 +245,7 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
           const outras = state.contas.filter((c) => c.id !== id).map((c) => ({ ...c, emUso: false }));
           change({
             tela: 'principal',
-            entrar: { servidor: '', protocolo: 'udp', ramal: '', nome: '', erro: '', ocupado: false, pedeSenha: false, contaId: '' },
+            entrar: { servidor: '', protocolo: 'udp', ramal: '', nome: '', erro: '', ocupado: false, pedeSenha: false, podeCancelar: false, contaId: '' },
             contas: [...outras, salva],
             conta: { id, nome, ramal, servidor, protocolo, status: 'conectado', texto: `Conectado · ${servidor}` },
           });

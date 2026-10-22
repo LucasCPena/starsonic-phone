@@ -23,6 +23,8 @@ export interface LoginForm {
   ocupado: boolean;
   /** A conta veio sem a senha: os campos vêm preenchidos e só falta a senha. */
   pedeSenha: boolean;
+  /** A senha de uma troca de conta: o Cancelar (cancelLogin) volta para a conta em uso. */
+  podeCancelar: boolean;
   /** A conta que a tela edita ("" = conta nova). */
   contaId: string;
 }
@@ -187,13 +189,13 @@ export type Command =
   | { cmd: 'removeContact'; id: string }
   | { cmd: 'viewRecents' }
   | { cmd: 'updateNow' }
-  | { cmd: 'updateLater' };
+  | { cmd: 'updateLater' }
+  | { cmd: 'cancelLogin' };
 
-/** Os únicos endereços que o openExternal aceita. */
+/** Os únicos endereços que o openExternal aceita (nenhum tel:: o app é o tratador dele). */
 export const EXTERNAL_URLS = {
   site: 'https://starsonic.com.br',
   whatsapp: 'https://wa.me/551150603000',
-  telefone: 'tel:+551150603000',
   codigo: 'https://github.com/LucasCPena/starsonic-phone',
 } as const;
 export type ExternalUrl = (typeof EXTERNAL_URLS)[keyof typeof EXTERNAL_URLS] | 'https://starsonic.com.br/';

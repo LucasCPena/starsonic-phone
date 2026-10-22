@@ -1,12 +1,13 @@
 // A tela Entrar (sem conta em uso, ou a conta em uso sem a senha) e o mesmo formulário em Adicionar e Editar conta.
 // As validações e as mensagens são do C++: a interface manda o `login` com os campos como estão e mostra
 // `entrar.erro` embaixo da senha. Com `entrar.ocupado`, "Conectando…" e os campos travados; o formulário de
-// Adicionar/Editar fecha quando `ocupado` passa de true para false sem erro.
+// Adicionar/Editar fecha quando `ocupado` passa de true para false sem erro. Com `entrar.podeCancelar` (a senha de
+// uma troca de conta), o Cancelar volta para a conta em uso (cancelLogin).
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { BackBar } from '../components/BackBar';
 import { Confirm } from '../components/Confirm';
 import { IconAlert, IconArrowRight, IconEye, IconEyeOff } from '../icons';
-import { EXTERNAL_URLS, type AppState, type Protocol, type SavedAccount } from '../state';
+import type { AppState, Protocol, SavedAccount } from '../state';
 import type { Send } from '../types';
 
 interface Props {
@@ -76,19 +77,11 @@ export function Entrar({ state, send, mode, conta, onClose }: Props) {
     });
   };
 
+  // O número da ajuda é texto, para ler ou copiar: o app é o tratador do tel: (o instalador o registra), e um link só
+  // encheria o Teclado escondido.
   const ajuda = (
     <p class="help">
-      Precisa de ajuda?{' '}
-      <a
-        class="link"
-        href={EXTERNAL_URLS.telefone}
-        onClick={(e) => {
-          e.preventDefault();
-          send({ cmd: 'openExternal', url: EXTERNAL_URLS.telefone });
-        }}
-      >
-        (11) 5060-3000
-      </a>
+      Precisa de ajuda? <span class="help-numero">(11) 5060-3000</span>
     </p>
   );
 
@@ -213,6 +206,11 @@ export function Entrar({ state, send, mode, conta, onClose }: Props) {
                 </>
               )}
             </button>
+            {mode === 'entrar' && entrar.podeCancelar && (
+              <button type="button" class="btn btn-outline btn-block" disabled={ocupado} onClick={() => send({ cmd: 'cancelLogin' })}>
+                Cancelar
+              </button>
+            )}
             {mode === 'editar' && conta && (
               <button
                 type="button"

@@ -245,6 +245,7 @@ label.set-title { flex: 1 0 auto; }
 .link:hover { text-decoration: underline; }
 button.link { border: 0; background: transparent; padding: 0; font-family: inherit; display: inline-flex; align-items: center; gap: 6px; font-size: 13.5px; border-radius: 6px; }
 .help { margin: 2px 0 0; text-align: center; font-size: 13.5px; color: var(--text-muted); }
+.help-numero { font-weight: 700; color: var(--text-strong); user-select: text; white-space: nowrap; }
 .form-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
 
 /* Menus (Menu, troca de conta, as opções de um contato) */
@@ -415,6 +416,11 @@ button.link { border: 0; background: transparent; padding: 0; font-family: inher
 .call-suggest .ic { color: #b9c4e6; }
 .call-panel-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 4px; }
 .call-panel-actions > :only-child { grid-column: 1 / -1; }
+/* Janela baixa, um cartão em cima (a outra em espera, a segunda que toca) e o painel de número aberto: o bloco de quem
+   fala sai, e o painel fica entre o cartão e o Desligar (o cartão e o título do painel dizem a ligação). */
+@media (max-height: 719.5px) {
+  .call-painel-cartao .who { display: none; }
+}
 .btn-outline-dark { background: transparent; color: #ffffff; border: 1.5px solid rgba(255, 255, 255, 0.28); }
 .btn-outline-dark:not(:disabled):hover { border-color: var(--cyan); }
 .btn-ghost-dark { background: transparent; color: #ffffff; height: 40px; }

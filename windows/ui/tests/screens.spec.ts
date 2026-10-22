@@ -2,7 +2,7 @@
 // nos temas claro e escuro: os textos exatos, os comandos que saem, o axe e uma captura por tela e tema.
 import { test, expect, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
-import { mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -129,8 +129,31 @@ for (const tema of ['light', 'dark'] as const) {
       await semViolacoesSerias(page);
       await capturar(page, 'entrar-erro', tema);
 
-      await page.getByRole('link', { name: '(11) 5060-3000' }).click();
-      await esperarComando(page, { cmd: 'openExternal', url: 'tel:+551150603000' });
+      // O número da ajuda é texto (o app é o tratador do tel:, e o link só encheria o Teclado escondido): selecionável,
+      // sem link e sem comando.
+      await expect(page.getByText('Precisa de ajuda? (11) 5060-3000', { exact: true })).toBeVisible();
+      await expect(page.getByRole('link', { name: '(11) 5060-3000' })).toHaveCount(0);
+      const numero = page.getByText('(11) 5060-3000', { exact: true });
+      expect(await numero.evaluate((e) => getComputedStyle(e).userSelect)).not.toBe('none');
+      await numero.click();
+      await page.waitForTimeout(300);
+      expect((await comandos(page)).filter((c) => c.cmd === 'openExternal')).toEqual([]);
+    });
+
+    test('a switch to an account without its password asks for it with Cancelar back to the account in use', async ({ page }) => {
+      await abrir(page, 'troca-pede-senha');
+      await verTextos(page, ['Digite a senha de novo para continuar.', 'Entrar', 'Cancelar']);
+      await expect(page.getByLabel('Servidor (endereço ou IP)')).toHaveValue('starcloud-starsonic.com.br');
+      await expect(page.getByLabel('Ramal', { exact: true })).toHaveValue('2015');
+      await expect(page.getByLabel('Senha', { exact: true })).toBeFocused();
+      await semViolacoesSerias(page);
+      await capturar(page, 'entrar-troca-pede-senha', tema);
+      await page.getByRole('button', { name: 'Cancelar' }).click();
+      await esperarComando(page, { cmd: 'cancelLogin' });
+      // O C++ falso volta para a conta em uso: a tela principal, com ela no cabeçalho.
+      await expect(page.getByRole('navigation', { name: 'Seções' })).toBeVisible();
+      await expect(page.getByText('Conectado · starcloud1-starsonic.com.br').first()).toBeVisible();
+      expect((await comandos(page)).filter((c) => c.cmd === 'login')).toEqual([]);
     });
 
     test('Entrar asks again for the password of a migrated account', async ({ page }) => {
@@ -365,6 +388,7 @@ for (const tema of ['light', 'dark'] as const) {
       await page.getByRole('menuitem', { name: 'Remover' }).click();
       const dialogo = page.getByRole('dialog');
       await expect(dialogo).toContainText('Financeiro');
+      await semViolacoesSerias(page);
       await dialogo.getByRole('button', { name: 'Cancelar' }).click();
       await expect(page.getByRole('dialog')).toHaveCount(0);
       expect((await comandos(page)).some((c) => c.cmd === 'removeContact')).toBe(false);
@@ -424,6 +448,12 @@ for (const tema of ['light', 'dark'] as const) {
       await expect(page.getByLabel('Nome da conta (opcional)')).toHaveValue('Caixa 2');
       await semViolacoesSerias(page);
       await capturar(page, 'conta-editar', tema);
+      await page.getByRole('button', { name: 'Remover' }).click();
+      const remover = page.getByRole('dialog', { name: 'Remover conta' });
+      await expect(remover).toBeVisible();
+      await semViolacoesSerias(page);
+      await remover.getByRole('button', { name: 'Cancelar' }).click();
+      await expect(remover).toHaveCount(0);
       await page.getByRole('button', { name: 'Entrar' }).click();
       await esperarComando(page, {
         cmd: 'login',
@@ -559,6 +589,31 @@ test.describe('ponte e janela', () => {
     expect(encontrados.filter((u) => !permitidos.has(u))).toEqual([]);
     const html = readFileSync(join(DIST, 'index.html'), 'utf8');
     expect(html).not.toMatch(/(src|href)=["']?(https?:)?\/\//);
+    // Nenhum tel: (o app é o tratador dele: o link só encheria o Teclado).
+    expect(arquivos.filter((a) => readFileSync(a, 'utf8').includes('tel:'))).toEqual([]);
+  });
+
+  test('the update question focuses Depois: an Enter meant for the keypad never starts the update', async ({ page }) => {
+    await abrir(page, 'principal');
+    const campo = page.getByRole('textbox', { name: 'Número' });
+    await campo.focus();
+    await page.keyboard.type('2003');
+    await empurrar(page, { v: 1, type: 'update', versao: '0.1.0-rc.2', notas: '' });
+    const dialogo = page.getByRole('dialog', { name: 'Atualização' });
+    await expect(dialogo).toBeVisible();
+    await expect(dialogo.getByRole('button', { name: 'Depois' })).toBeFocused();
+    await page.keyboard.press('Enter');
+    await esperarComando(page, { cmd: 'updateLater' });
+    expect((await comandos(page)).filter((c) => c.cmd === 'updateNow')).toEqual([]);
+    expect((await comandos(page)).filter((c) => c.cmd === 'dial')).toEqual([]);
+  });
+
+  test("the bundle ships Preact's MIT notice", async () => {
+    const aviso = join(DIST, 'assets', 'preact-LICENSE.txt');
+    expect(existsSync(aviso), aviso).toBe(true);
+    const texto = readFileSync(aviso, 'utf8');
+    expect(texto).toContain('The MIT License');
+    expect(texto).toContain('Jason Miller');
   });
 
   test('a toast shows for 2 seconds', async ({ page }) => {

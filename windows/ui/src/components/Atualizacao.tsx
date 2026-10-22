@@ -1,7 +1,8 @@
 // A pergunta da atualização (o {"type":"update"} do C++, docs/ponte-windows.md): um <dialog> modal com a versão e as
 // notas do versao.json. "Atualizar agora" manda updateNow; "Depois" (e o Esc) manda updateLater. O C++ confere a
 // ligação antes de baixar ("Termine a chamada para atualizar." vem como toast); a interface só não cobre a tela da
-// ligação com a pergunta (main.tsx).
+// ligação com a pergunta (main.tsx). O foco começa no "Depois" (como o Cancelar do Confirm): um Enter de quem ia
+// discar nunca fecha o app para instalar.
 import { useEffect, useRef } from 'preact/hooks';
 
 interface Props {
@@ -28,10 +29,10 @@ export function Atualizacao({ versao, notas, onAnswer }: Props) {
       <p id="update-text">Nova versão do Starsonic Phone disponível ({versao}). Atualizar agora?</p>
       {notas && <p class="dialog-notes">{notas}</p>}
       <div class="dialog-actions">
-        <button type="button" class="btn btn-outline mini" onClick={() => onAnswer(false)}>
+        <button type="button" class="btn btn-outline mini" autofocus onClick={() => onAnswer(false)}>
           Depois
         </button>
-        <button type="button" class="btn btn-cyan mini" autofocus onClick={() => onAnswer(true)}>
+        <button type="button" class="btn btn-cyan mini" onClick={() => onAnswer(true)}>
           Atualizar agora
         </button>
       </div>

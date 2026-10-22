@@ -99,6 +99,52 @@ for (const altura of [720, 719, 710, 701, 672, 640]) {
   });
 }
 
+// O painel Transferir com um cartão em cima (a outra em espera, ou a faixa da segunda que toca) e 0 a 2 sugestões:
+// nada transborda da parte do meio, o título não encosta no tempo e o Cancelar não encosta no Desligar.
+const TRANSFERIR: Array<[number, string]> = [
+  [0, ''],
+  [1, '2003'],
+  [2, '20'],
+];
+for (const altura of [720, 701, 672, 640]) {
+  test.describe(`o Transferir na janela de 400×${altura}`, () => {
+    test.use({ viewport: { width: 400, height: altura } });
+
+    for (const cenario of ['duas-ligacoes', 'ligacao-segunda']) {
+      for (const [quantas, digitos] of TRANSFERIR) {
+        test(`fits with a card on top (${cenario}) and ${quantas} suggestion(s)`, async ({ page }) => {
+          await abrir(page, cenario);
+          await page.getByRole('button', { name: 'Transferir', exact: true }).click();
+          const campo = page.getByRole('textbox', { name: 'Número para transferir' });
+          await expect(campo).toBeFocused();
+          if (digitos) await campo.fill(digitos);
+          await expect(page.locator('.call-panel .suggest')).toHaveCount(quantas);
+          const meio = page.locator('.call-middle');
+          const sobra = await meio.evaluate((e) => e.scrollHeight - e.clientHeight);
+          expect(sobra, 'o painel transborda da parte do meio').toBeLessThanOrEqual(0.5);
+          const area = await caixa(meio);
+          const painel = await caixa(page.locator('.call-panel'));
+          expect(contem(area, painel), `o painel sai da parte do meio: ${JSON.stringify({ area, painel })}`).toBe(true);
+          const quem = page.locator('.who');
+          if ((await quem.count()) > 0 && (await quem.isVisible())) {
+            const bloco = await caixa(quem);
+            expect(bloco.y + bloco.height <= painel.y + 0.5, `"Transferir para" encosta no tempo: ${JSON.stringify({ bloco, painel })}`).toBe(
+              true,
+            );
+          }
+          const cancelar = await caixa(page.locator('.call-panel').getByRole('button', { name: 'Cancelar' }));
+          const desligar = await caixa(page.getByRole('button', { name: 'Desligar', exact: true }));
+          expect(dentro(desligar, altura), `o Desligar fora da janela: ${JSON.stringify(desligar)}`).toBe(true);
+          expect(cancelar.y + cancelar.height <= desligar.y - 4, `o Cancelar encosta no Desligar: ${JSON.stringify({ cancelar, desligar })}`).toBe(
+            true,
+          );
+          if (altura === 640 && quantas === 2) await capturar(page, `transferir-${cenario}-${altura}`, 'escuro');
+        });
+      }
+    }
+  });
+}
+
 test.describe('a janela mais baixa que 640', () => {
   test.use({ viewport: { width: 400, height: 480 } });
 

@@ -559,8 +559,11 @@ export function Ligacao({ state, ligacao: l, send }: Props) {
     );
   }
 
+  // O painel de número (Transferir, Nova ligação) com um cartão em cima: na janela baixa, o bloco de quem fala sai
+  // (app.css), para o painel caber entre o cartão e o Desligar.
+  const painelComCartao = alto !== null && (painel === 'transferir' || painel === 'nova');
   return (
-    <main class="call-body" aria-label={conferencia ? 'Conferência' : 'Ligação'}>
+    <main class={painelComCartao ? 'call-body call-painel-cartao' : 'call-body'} aria-label={conferencia ? 'Conferência' : 'Ligação'}>
       {alto}
       {quem}
       <div class="call-middle">{meio}</div>

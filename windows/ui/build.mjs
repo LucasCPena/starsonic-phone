@@ -1,6 +1,7 @@
 // Empacota a interface em dist/ (o executável serve essa pasta pelo SetVirtualHostNameToFolderMapping).
 // src/main.tsx → dist/app.js; src/aviso.tsx → dist/aviso.js (o aviso de ligação, quando existe);
-// index.html, aviso.html, app.css, a fonte e os logos são copiados. Nada é baixado: tudo vai dentro do app.
+// index.html, aviso.html, app.css, a fonte, os logos e o aviso da licença do Preact são copiados. Nada é baixado:
+// tudo vai dentro do app.
 import { build } from 'esbuild';
 import { cpSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -47,4 +48,7 @@ for (const arquivo of [
 ]) {
   cpSync(join(raiz, 'assets', arquivo), join(dist, 'assets', arquivo));
 }
+// O aviso da licença MIT do Preact, que vai dentro do app.js (a licença pede o aviso junto das cópias), ao lado do
+// OFL.txt da fonte; o instalador leva a pasta ui\ inteira.
+cpSync(join(raiz, 'node_modules', 'preact', 'LICENSE'), join(dist, 'assets', 'preact-LICENSE.txt'));
 console.log(`dist/: ${entradas.map(([, s]) => s).join(', ')} e os arquivos estáticos`);

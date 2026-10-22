@@ -24,7 +24,7 @@ function quando(diasAtras: number, hora: number, minuto: number): number {
 }
 
 function entrarVazio(): AppState['entrar'] {
-  return { servidor: '', protocolo: 'udp', ramal: '', nome: '', erro: '', ocupado: false, pedeSenha: false, contaId: '' };
+  return { servidor: '', protocolo: 'udp', ramal: '', nome: '', erro: '', ocupado: false, pedeSenha: false, podeCancelar: false, contaId: '' };
 }
 
 function principal(): AppState {
@@ -212,9 +212,33 @@ export function createScenario(nome: string): Scenario | undefined {
             erro: 'Digite a senha de novo para continuar.',
             ocupado: false,
             pedeSenha: true,
+            podeCancelar: false,
             contaId: migrada.id,
           }),
           contas: [{ ...migrada, emUso: true }],
+        },
+      };
+    }
+    case 'troca-pede-senha': {
+      // A troca para a Caixa 2, que está sem a senha: a tela Entrar pede a senha dela, e a Recepção continua em uso
+      // (registrada) até o Entrar; o Cancelar volta para ela.
+      const state = principal();
+      const caixa = state.contas[1];
+      return {
+        state: {
+          ...state,
+          tela: 'entrar',
+          entrar: {
+            servidor: caixa.servidor,
+            protocolo: caixa.protocolo,
+            ramal: caixa.ramal,
+            nome: caixa.nome,
+            erro: 'Digite a senha de novo para continuar.',
+            ocupado: false,
+            pedeSenha: true,
+            podeCancelar: true,
+            contaId: caixa.id,
+          },
         },
       };
     }
@@ -242,6 +266,7 @@ export const SCENARIO_NAMES = [
   'entrar',
   'entrar-erro',
   'entrar-pede-senha',
+  'troca-pede-senha',
   'principal',
   'recentes',
   'contatos',

@@ -1,4 +1,5 @@
-// A confirmação antes de remover (um <dialog> modal: o foco fica nele e Esc cancela).
+// A confirmação antes de remover (um <dialog> modal: o foco fica nele e Esc cancela). O botão de confirmar é o azul
+// (o vermelho da marca é só do Desligar, do Recusar e da perdida, e o branco nele não chega a 4,5:1).
 import { useEffect, useRef } from 'preact/hooks';
 
 interface Props {
@@ -29,7 +30,7 @@ export function Confirm({ title, message, confirmLabel, onConfirm, onCancel }: P
         <button type="button" class="btn btn-outline mini" autofocus onClick={onCancel}>
           Cancelar
         </button>
-        <button type="button" class="btn btn-danger mini" onClick={onConfirm}>
+        <button type="button" class="btn btn-blue mini" onClick={onConfirm}>
           {confirmLabel}
         </button>
       </div>
