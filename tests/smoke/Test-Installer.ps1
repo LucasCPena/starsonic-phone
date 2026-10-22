@@ -2,8 +2,9 @@
 # atalho, o registro e os links tel:/sip:/callto:; roda o mesmo instalador com o app aberto (como na atualizacao: o
 # app fecha pelo --sair e reabre com outro PID); desinstala em silencio e confere o que sai (tambem a pasta do
 # WebView2) e o que fica (os dados). Depois, a instalacao pela tela (a pagina do canvas, com as capturas
-# instalador.png e instalador-fim.png): as duas opcoes marcadas gravam o atalho e o Run com --bandeja; por cima, as
-# opcoes vem como estao, e desmarcar o "Iniciar com o Windows" tira o Run. Desinstala no fim.
+# instalador.png e instalador-fim.png): as duas opcoes marcadas gravam o atalho e o Run com --bandeja, sem mexer no
+# desligado do Gerenciador de Tarefas; por cima, as opcoes vem como estao, e desmarcar o "Iniciar com o Windows" tira
+# o Run. Os links nao passam na frente do callto: de outro programa no HKLM. Desinstala no fim.
 # Instala no perfil do usuario atual (feito para o CI). Uso:
 #   .\tests\smoke\Test-Installer.ps1 -Setup dist\StarsonicPhone-0.0.0-setup.exe -AppDir out-novo -Version 0.0.0
 #                                    [-Capturas capturas-windows]
@@ -220,11 +221,43 @@ function Invoke-InteractiveSetup([int]$ExpectDesktop, [int]$ExpectStartup, [int]
 }
 
 $marker = Join-Path $dataDir 'teste-instalador.txt'
+# Um programa que registrou o callto: para a maquina toda (HKLM), como outro softphone ou o Teams: o instalador nao
+# pode passar na frente dele com uma chave no HKCU. O teste cria o dele, se o runner ainda nao tiver um.
+$machineClasses = 'HKLM:\Software\Classes'
+$otherHandler = '"C:\Outro Programa\outro.exe" "%1"'
+$createdMachineCallto = $false
+
+# O comando de um esquema registrado por outro programa (HKCU ou HKLM), ou $null.
+function Get-OtherHandler([string]$Scheme) {
+    foreach ($root in $classes, $machineClasses) {
+        $command = Get-RegistryValue -Key "$root\$Scheme\shell\open\command" -Name '(default)'
+        if ($command -and $command -ne $linkCommand) {
+            return $command
+        }
+    }
+    return $null
+}
+
 try {
     # Os dados do usuario (as contas, os contatos...) ficam na desinstalacao: este arquivo tem de sobrar.
     New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
     Set-Content -Path $marker -Value 'fica' -Encoding Ascii
-    $hadTel = Test-Path "$classes\tel"
+    if (-not (Test-Path "$machineClasses\callto")) {
+        try {
+            New-Item -Path "$machineClasses\callto\shell\open\command" -Force -ErrorAction Stop | Out-Null
+            Set-ItemProperty -Path "$machineClasses\callto\shell\open\command" -Name '(default)' -Value $otherHandler -ErrorAction Stop
+            $createdMachineCallto = $true
+        } catch {
+            Fail "O teste precisa criar HKLM\Software\Classes\callto (outro programa): $($_.Exception.Message)"
+        }
+    }
+    $others = @{}
+    foreach ($scheme in 'tel', 'sip', 'callto') {
+        $others[$scheme] = Get-OtherHandler $scheme
+    }
+    if (-not $others['callto']) {
+        Fail 'O callto: de outro programa no HKLM nao apareceu.'
+    }
 
     # 1. Primeira instalacao em silencio.
     Invoke-Setup -File $Setup -Arguments '/S'
@@ -273,12 +306,18 @@ try {
     if ((Get-RegistryValue -Key 'HKCU:\Software\RegisteredApplications' -Name 'Starsonic Phone') -ne 'Software\Starsonic Phone\Capabilities') {
         Fail 'O Starsonic Phone nao esta em RegisteredApplications.'
     }
-    if (-not $hadTel) {
-        $tel = Get-RegistryValue -Key "$classes\tel\shell\open\command" -Name '(default)'
-        if ($tel -ne $linkCommand) {
-            Fail "HKCU\Software\Classes\tel abre '$tel' (esperado '$linkCommand')."
+    # A chave do esquema no HKCU so quando nenhum outro programa tem o link (no HKCU ou no HKLM).
+    foreach ($scheme in 'tel', 'sip', 'callto') {
+        $mine = Get-RegistryValue -Key "$classes\$scheme\shell\open\command" -Name '(default)'
+        if ($others[$scheme]) {
+            if ($mine -eq $linkCommand) {
+                Fail "O instalador tomou o $($scheme): de outro programa ($($others[$scheme]))."
+            }
+        } elseif ($mine -ne $linkCommand) {
+            Fail "HKCU\Software\Classes\$scheme abre '$mine' (esperado '$linkCommand')."
         }
     }
+    Write-Host ("Links: " + (($others.Keys | Sort-Object | ForEach-Object { "$($_)=" + $(if ($others[$_]) { "outro programa" } else { 'Starsonic Phone' }) }) -join ', '))
     Write-Host "Instalado em $installDir ($($expected.Count) arquivos)."
 
     $first = Wait-InstalledApp
@@ -313,8 +352,16 @@ try {
     Test-Uninstall -Label 'desinstalacao silenciosa'
     Write-Host 'OK: instalacao, atualizacao e desinstalacao silenciosas.'
 
-    # 4. Pela tela, numa instalacao nova: as duas opcoes vem marcadas e gravam o atalho e o Run.
+    # 4. Pela tela, numa instalacao nova: as duas opcoes vem marcadas e gravam o atalho e o Run. O desligado do
+    # Gerenciador de Tarefas (StartupApproved\Run 03) fica: o instalador nao religa o que a pessoa desligou.
+    $disabled = [byte[]](3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+    New-Item -Path $approvedKey -Force | Out-Null
+    New-ItemProperty -Path $approvedKey -Name 'Starsonic Phone' -PropertyType Binary -Value $disabled -Force | Out-Null
     Invoke-InteractiveSetup -ExpectDesktop 1 -ExpectStartup 1 -Desktop 1 -Startup 1 -Capture 'instalador'
+    $approved = Get-RegistryValue -Key $approvedKey -Name 'Starsonic Phone'
+    if ($null -eq $approved -or $approved[0] -ne 3) {
+        Fail 'O instalador mexeu no Iniciar com o Windows desligado no Gerenciador de Tarefas (StartupApproved).'
+    }
     if (-not (Test-Path $desktop)) {
         Fail 'O Atalho na area de trabalho marcado nao criou o atalho.'
     }
@@ -343,4 +390,7 @@ try {
         Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
     }
     Remove-Item -Path $marker -Force -ErrorAction SilentlyContinue
+    if ($createdMachineCallto) {
+        Remove-Item -Path "$machineClasses\callto" -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }

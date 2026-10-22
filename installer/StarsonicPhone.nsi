@@ -281,14 +281,17 @@ Function ReopenApp
 FunctionEnd
 
 ; Um link tel:, sip: ou callto: abre o app com o numero no Teclado. O app aparece em Programas padrao (pelas
-; Capabilities); a chave do esquema em HKCU\Software\Classes so e gravada quando nao ha outra (nao toma o link de
-; outro programa) ou quando ja e a do Starsonic Phone.
+; Capabilities); a chave do esquema em HKCU\Software\Classes so e gravada quando nenhum outro programa tem o link,
+; nem por usuario (HKCU) nem para a maquina (HKLM: a do HKCU passaria na frente dela), ou quando ja e a do app.
 !macro RegisterLink SCHEME
   WriteRegStr HKCU "${REG_APP}\Capabilities\URLAssociations" "${SCHEME}" "${LINK_PROGID}"
-  ClearErrors
   ReadRegStr $0 HKCU "${REG_CLASSES}\${SCHEME}\shell\open\command" ""
-  ${If} ${Errors}
-  ${OrIf} $0 == ""
+  ReadRegStr $1 HKLM "Software\Classes\${SCHEME}\shell\open\command" ""
+  ${If} $1 == '"$INSTDIR\${APP_EXE}" "%1"'
+    StrCpy $1 ""
+  ${EndIf}
+  ${If} $1 == ""
+  ${AndIf} $0 == ""
   ${OrIf} $0 == '"$INSTDIR\${APP_EXE}" "%1"'
     WriteRegStr HKCU "${REG_CLASSES}\${SCHEME}" "" "URL:${SCHEME}"
     WriteRegStr HKCU "${REG_CLASSES}\${SCHEME}" "URL Protocol" ""
@@ -357,8 +360,8 @@ Section "-Starsonic Phone" SecMain
   ${EndIf}
 
   ; As duas opcoes da primeira pagina (fora do modo silencioso; a atualizacao nao mexe nelas). O "Iniciar com o
-  ; Windows" e so o valor do Run, como o app grava (ele le o registro ao abrir); marcado, tambem sai a chave do
-  ; Gerenciador de Tarefas que desligaria o valor.
+  ; Windows" e so o valor do Run, como o app grava (ele le o registro ao abrir). O desligado do Gerenciador de
+  ; Tarefas (StartupApproved\Run) fica como a pessoa deixou: so a chave do proprio app o muda.
   ${IfNot} ${Silent}
     ${If} $WantDesktop = 1
       CreateShortCut "$DESKTOP\${APP_NAME}.lnk" "$INSTDIR\${APP_EXE}"
@@ -367,7 +370,6 @@ Section "-Starsonic Phone" SecMain
     ${EndIf}
     ${If} $WantStartup = 1
       WriteRegStr HKCU "${REG_RUN}" "${APP_NAME}" '"$INSTDIR\${APP_EXE}" --bandeja'
-      DeleteRegValue HKCU "${REG_APPROVED}" "${APP_NAME}"
     ${Else}
       DeleteRegValue HKCU "${REG_RUN}" "${APP_NAME}"
     ${EndIf}
