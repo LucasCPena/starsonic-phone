@@ -28,10 +28,11 @@ std::string TransportName(Transport transport) { return transport == Transport::
 
 std::string NormalizedNumber(const std::string& number) { return U8(NormalizeDialString(Wide(number))); }
 
-// Os unicos links que a interface pode abrir fora do app (o Sobre e a ajuda da tela Entrar).
+// Os unicos links que a interface pode abrir fora do app (os do Sobre). O tel: fica de fora: o app e o tratador dele
+// (o instalador o registra), e o link so encheria o Teclado.
 bool AllowedUrl(const std::string& url) {
     static const char* const kAllowed[] = {"https://starsonic.com.br", STARSONIC_URL_SITE, STARSONIC_URL_SUPPORT,
-                                           "tel:+551150603000", STARSONIC_REPO_URL};
+                                           STARSONIC_REPO_URL};
     for (const char* allowed : kAllowed) {
         if (url == allowed) return true;
     }
@@ -175,7 +176,10 @@ void DesktopApp::DialLink(const std::string& number) {
 }
 
 void DesktopApp::RefreshAudioDevices() {
-    Post([this] { ApplyAudio(); });
+    Post([this] {
+        Log("som: os dispositivos foram relidos");
+        ApplyAudio();
+    });
 }
 
 void DesktopApp::SaveWindowPosition(int x, int y) {
@@ -395,6 +399,9 @@ void DesktopApp::Execute(const Command& command) {
             if (hooks_.updateAnswer) hooks_.updateAnswer(now);
             break;
         }
+        case CommandKind::CancelLogin:
+            CancelPasswordSwitch();
+            break;
     }
 }
 
@@ -541,6 +548,7 @@ void DesktopApp::ApplyLogin(const LoginOutcome& outcome) {
         engineStoreId_ = id;
         registration_ = 200;
         registered_ = true;
+        passwordSwitch_.clear();
         ResetLogin();
         return;
     }
@@ -578,6 +586,10 @@ void DesktopApp::SelectAccount(const std::string& id) {
     const std::optional<SavedAccount> active = accounts_.Active();
     if (active && active->id == id && engineStoreId_ == id) {
         pending_.reset();   // ja e ela: uma troca que esperava o fim da ligacao sai
+        if (!passwordSwitch_.empty()) {
+            passwordSwitch_.clear();   // e a que pedia a senha tambem
+            ResetLogin();
+        }
         return;
     }
     PendingChange change;
@@ -604,6 +616,10 @@ void DesktopApp::RemoveAccount(const std::string& id) {
         if (pending_->login) login_.busy = false;
         pending_.reset();
     }
+    if (!passwordSwitch_.empty() && (passwordSwitch_ == id || wasActive)) {
+        passwordSwitch_.clear();
+        ResetLogin();
+    }
     if (!accounts_.Remove(id)) {
         Log("contas.json: a conta nao foi removida");
         return;
@@ -621,15 +637,43 @@ void DesktopApp::RemoveAccount(const std::string& id) {
 void DesktopApp::SwitchTo(const std::string& id) {
     const std::optional<SavedAccount> target = FindAccount(accounts_, id);
     if (!target) return;
+    const std::optional<SavedAccount> current = accounts_.Active();
+    if (target->needsPassword && current && current->id != id && !current->needsPassword) {
+        // Sem a senha da escolhida, a em uso continua (registrada e gravada) ate o Entrar dela registrar; a tela
+        // Entrar pede a senha com o Cancelar, que volta para a em uso.
+        passwordSwitch_ = id;
+        ShowPasswordRequest(*target, /*keepEngine=*/true);
+        Log("troca de conta: a escolhida esta sem a senha; a em uso continua ate o Entrar");
+        return;
+    }
+    passwordSwitch_.clear();
     if (!accounts_.SetActive(id)) Log("contas.json: a troca de conta nao foi gravada");
     ResetLogin();
     ActivateStored(*target);
 }
 
+// O Cancelar da tela Entrar que pede a senha de uma troca: a conta em uso continua (ela nunca saiu do contas.json; se
+// um Entrar com a senha errada a tirou do motor, ela ja voltou a registrar).
+void DesktopApp::CancelPasswordSwitch() {
+    if (passwordSwitch_.empty()) {
+        Log("cancelLogin ignorado: nenhuma troca de conta pede a senha");
+        return;
+    }
+    if (loginRequest_ || (pending_ && pending_->login)) {
+        Log("cancelLogin ignorado: o Entrar espera o resultado");
+        return;
+    }
+    passwordSwitch_.clear();
+    ResetLogin();
+    const std::optional<SavedAccount> active = accounts_.Active();
+    if (active && !active->needsPassword && engineStoreId_ != active->id) ActivateStored(*active);
+    Log("troca de conta cancelada: a em uso continua");
+}
+
 // A conta gravada vai para o motor (a anterior sai); sem a senha, a tela Entrar pede so ela.
 void DesktopApp::ActivateStored(const SavedAccount& account) {
     if (account.needsPassword) {
-        ShowPasswordRequest(account);
+        ShowPasswordRequest(account, /*keepEngine=*/false);
         return;
     }
     registered_ = false;
@@ -643,8 +687,8 @@ void DesktopApp::ActivateStored(const SavedAccount& account) {
     }
 }
 
-void DesktopApp::ShowPasswordRequest(const SavedAccount& account) {
-    DropEngineAccount();
+void DesktopApp::ShowPasswordRequest(const SavedAccount& account, bool keepEngine) {
+    if (!keepEngine) DropEngineAccount();
     ResetLogin();
     login_.server = U8(account.address);
     login_.transport = TransportName(account.transport);
@@ -719,8 +763,10 @@ void DesktopApp::Quit() {
 }
 
 // A escolha gravada vale pelo nome (o id do motor e a posicao na lista, que muda quando um dispositivo entra ou
-// sai). Uma escolha que nao esta na lista usa o padrao do Windows e continua gravada.
+// sai). Uma escolha que nao esta na lista usa o padrao do Windows e continua gravada. O motor rele os dispositivos
+// antes (a lista dele e a da abertura ate reler: um headset que saiu continuaria nela, e um que entrou, fora).
 void DesktopApp::ApplyAudio() {
+    port_.RefreshAudioDevices();
     const Settings settings = settings_.Get();
     AudioView view;
     view.capture = settings.captureName;
@@ -779,8 +825,9 @@ void DesktopApp::PublishState(bool force) {
 BridgeState DesktopApp::BuildState() const {
     BridgeState state;
     const std::optional<SavedAccount> active = accounts_.Active();
-    state.mainScreen = active && !active->needsPassword;
+    state.mainScreen = active && !active->needsPassword && passwordSwitch_.empty();
     state.login = login_;
+    state.login.canCancel = !passwordSwitch_.empty();
     for (const SavedAccount& account : accounts_.All()) {
         AccountView view = ViewOf(account);
         view.inUse = active && account.id == active->id;

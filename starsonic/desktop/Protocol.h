@@ -48,6 +48,7 @@ enum class CommandKind {
     ViewRecents,
     UpdateNow,     // a pergunta da atualizacao: "Atualizar agora"
     UpdateLater,   // e "Depois"
+    CancelLogin,   // o Cancelar da tela Entrar que pede a senha de uma troca de conta
 };
 
 // Um comando lido. So os campos do comando valem; os outros ficam vazios.
@@ -102,6 +103,7 @@ struct LoginView {                  // entrar
     std::string error;              // erro ("" sem erro)
     bool busy = false;              // ocupado: esperando o resultado do registro (ou o fim da ligacao)
     bool needsPassword = false;     // pedeSenha: a conta veio sem senha (a migracao): so falta ela
+    bool canCancel = false;         // podeCancelar: a senha de uma troca de conta (o Cancelar volta para a em uso)
     std::string accountId;          // contaId: a conta que esta tela edita ("" = conta nova)
 };
 

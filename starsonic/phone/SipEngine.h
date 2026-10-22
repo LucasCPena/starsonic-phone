@@ -201,6 +201,12 @@ public:
     // motor fica no dispositivo nulo (só confere os ids). O mudo (SetMute) continua valendo.
     bool SetAudioDevices(int captureId, int playbackId);
 
+    // Rele os dispositivos de som do sistema (um headset entrou ou saiu): o PJSIP guarda a lista da abertura, e os
+    // ids dela ficam velhos. Como o MicroSIP: com o som aberto (uma ligacao), o motor passa ao dispositivo nulo,
+    // rele e volta aos mesmos dispositivos pelo nome (o que saiu fica no padrao do sistema); sem o som aberto, so
+    // rele e acerta os ids guardados. Os ids de AudioDevices mudam depois disto. Com nullAudio, so rele.
+    void RefreshAudioDevices();
+
     // Para onde o áudio de callId vai na ponte de áudio, sem ordem: 0 é o dispositivo de som; outro
     // número, o id da outra ligação (na conferência: 0 e a outra). Vazio em espera, sem mídia ou com id
     // desconhecido. A ponte aplica as mudanças no tique seguinte do relógio dela (cerca de 20 ms).

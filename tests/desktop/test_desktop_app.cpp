@@ -56,16 +56,28 @@ public:
     bool refuse = false;   // SetAccount devolve 0
     std::vector<AudioDevice> devices;
     std::vector<std::pair<int, int>> audio;
+    // O que o sistema tem agora: a lista do motor (devices) so muda para ela no RefreshAudioDevices (como o
+    // pjmedia, que guarda a lista da abertura). Nada: a lista do motor fica como esta.
+    std::optional<std::vector<AudioDevice>> system;
+    std::vector<std::string> audioCalls;   // "refresh", "list" e "set", na ordem
 
     int SetAccount(const AccountInput& input) override {
         accounts.push_back(input);
         return refuse ? 0 : nextId++;
     }
     void RemoveAccount() override { ++removes; }
-    std::vector<AudioDevice> AudioDevices() override { return devices; }
+    std::vector<AudioDevice> AudioDevices() override {
+        audioCalls.push_back("list");
+        return devices;
+    }
     bool SetAudioDevices(int captureId, int playbackId) override {
+        audioCalls.push_back("set");
         audio.emplace_back(captureId, playbackId);
         return true;
+    }
+    void RefreshAudioDevices() override {
+        audioCalls.push_back("refresh");
+        if (system) devices = *system;
     }
     int LastId() const { return nextId - 1; }
 };
@@ -608,21 +620,64 @@ TEST_CASE("a missing audio device falls back to the default and keeps the choice
     CHECK(h.State()["audio"]["microfone"] == "Headset USB");
 }
 
+TEST_CASE("a device change rereads the engine list before choosing, and a headset that left shows as disconnected") {
+    Harness h;
+    {
+        SettingsStore settings(h.files, Paths().settings);
+        Settings chosen;
+        chosen.captureName = "Headset USB";
+        chosen.playbackName = "Headset USB";
+        REQUIRE(settings.Save(chosen));
+    }
+    const std::vector<AudioDevice> withHeadset = {AudioDevice{0, "Microfone (Realtek)", true, false},
+                                                  AudioDevice{1, "Alto-falantes (Realtek)", false, true},
+                                                  AudioDevice{2, "Headset USB", true, true}};
+    h.port.devices = withHeadset;
+    h.Start();
+    CHECK(h.port.audio.back() == std::make_pair(2, 2));
+    CHECK(h.State()["audio"]["desconectados"] == json::array());
+
+    // O headset sai com o app aberto: o motor ainda lista o de antes ate reler os dispositivos.
+    h.port.system = std::vector<AudioDevice>{withHeadset[0], withHeadset[1]};
+    h.port.audioCalls.clear();
+    h.app->RefreshAudioDevices();
+    h.Run();
+    REQUIRE(h.port.audioCalls.size() >= 2);
+    CHECK(h.port.audioCalls[0] == "refresh");
+    CHECK(h.port.audioCalls[1] == "list");
+    CHECK(h.port.audio.back() == std::make_pair(-1, -1));
+    json audio = h.State()["audio"];
+    CHECK(audio["desconectados"] == json::array({"Headset USB"}));
+    CHECK(audio["microfones"] == json::array({json({{"id", 0}, {"nome", "Microfone (Realtek)"}})}));
+    CHECK(audio["microfone"] == "Headset USB");
+    CHECK(h.Logged("som: os dispositivos foram relidos"));
+
+    // Ele volta (noutra posicao da lista): a escolha gravada vale de novo, pelo nome.
+    h.port.system = std::vector<AudioDevice>{withHeadset[0], AudioDevice{1, "Headset USB", true, true},
+                                             AudioDevice{2, "Alto-falantes (Realtek)", false, true}};
+    h.app->RefreshAudioDevices();
+    h.Run();
+    CHECK(h.port.audio.back() == std::make_pair(1, 1));
+    CHECK(h.State()["audio"]["desconectados"] == json::array());
+}
+
 TEST_CASE("openExternal refuses other urls") {
     Harness h;
     h.Start();
     for (const char* url : {"https://example.com", "https://starsonic.com.br.evil.com", "javascript:alert(1)",
-                            "file:///C:/Windows", "tel:2003", "https://wa.me/5511999999999"}) {
+                            "file:///C:/Windows", "tel:2003", "https://wa.me/5511999999999",
+                            // O app e o tratador do tel: (o instalador o registra): o link so encheria o Teclado.
+                            "tel:+551150603000"}) {
         h.Send(std::string(R"({"v":1,"cmd":"openExternal","url":")") + url + "\"}");
     }
     CHECK(h.opened.empty());
     CHECK(h.Logged("openExternal"));
     for (const char* url : {"https://starsonic.com.br", "https://starsonic.com.br/", "https://wa.me/551150603000",
-                            "tel:+551150603000", "https://github.com/LucasCPena/starsonic-phone"}) {
+                            "https://github.com/LucasCPena/starsonic-phone"}) {
         h.Send(std::string(R"({"v":1,"cmd":"openExternal","url":")") + url + "\"}");
     }
     CHECK(h.opened == std::vector<std::string>{"https://starsonic.com.br", "https://starsonic.com.br/",
-                                               "https://wa.me/551150603000", "tel:+551150603000",
+                                               "https://wa.me/551150603000",
                                                "https://github.com/LucasCPena/starsonic-phone"});
 }
 
@@ -689,6 +744,105 @@ TEST_CASE("an account that came without its password asks for it on the login sc
     CHECK(h.State()["tela"] == "principal");
     CHECK(h.State()["entrar"]["pedeSenha"] == false);
     CHECK(h.State()["contas"].size() == 1);
+}
+
+namespace {
+
+// A conta em uso no contas.json ("" sem nenhuma).
+std::string ActiveInFile(const Harness& h) {
+    const json file = h.File("dados/contas.json");
+    for (const json& account : file["contas"]) {
+        if (account.value("em_uso", false)) return account["id"].get<std::string>();
+    }
+    return std::string();
+}
+
+}  // namespace
+
+TEST_CASE("switching to an account without its password keeps the working one, and Cancelar goes back to it") {
+    Harness h;
+    const std::string first = h.SeedAccount(L"pbx.example.com", L"2001", L"segredo", true, L"Recep");
+    const std::string second = h.SeedAccount(L"outro.example.com", L"3001", L"", false, L"Outra");
+    h.Start();
+    h.app->OnRegistration(200, true, h.port.LastId());
+    h.Run();
+    REQUIRE(h.State()["conta"]["status"] == "conectado");
+
+    h.Send(R"({"v":1,"cmd":"selectAccount","contaId":")" + second + R"("})");
+    json state = h.State();
+    CHECK(state["tela"] == "entrar");
+    CHECK(state["entrar"]["pedeSenha"] == true);
+    CHECK(state["entrar"]["podeCancelar"] == true);
+    CHECK(state["entrar"]["contaId"] == second);
+    CHECK(state["entrar"]["servidor"] == "outro.example.com");
+    CHECK(state["entrar"]["ramal"] == "3001");
+    CHECK(state["entrar"]["erro"] == "Digite a senha de novo para continuar.");
+    // A que funcionava continua em uso e registrada (no motor e no contas.json).
+    CHECK(state["conta"]["id"] == first);
+    CHECK(state["conta"]["status"] == "conectado");
+    CHECK(h.port.removes == 0);
+    CHECK(h.port.accounts.size() == 1);
+    CHECK(ActiveInFile(h) == first);
+
+    // Cancelar: volta para a que funcionava, sem registrar de novo.
+    h.Send(R"({"v":1,"cmd":"cancelLogin"})");
+    state = h.State();
+    CHECK(state["tela"] == "principal");
+    CHECK(state["entrar"]["podeCancelar"] == false);
+    CHECK(state["entrar"]["pedeSenha"] == false);
+    CHECK(state["entrar"]["contaId"] == "");
+    CHECK(state["conta"]["id"] == first);
+    CHECK(state["conta"]["status"] == "conectado");
+    CHECK(h.port.removes == 0);
+    CHECK(h.port.accounts.size() == 1);
+
+    // Sem cancelar, a proxima abertura tambem entra na que funcionava.
+    h.Send(R"({"v":1,"cmd":"selectAccount","contaId":")" + second + R"("})");
+    REQUIRE(h.State()["tela"] == "entrar");
+    h.Restart();
+    CHECK(h.State()["tela"] == "principal");
+    CHECK(h.State()["conta"]["id"] == first);
+    CHECK(h.State()["entrar"]["podeCancelar"] == false);
+    REQUIRE(h.port.accounts.size() == 2);
+    CHECK(h.port.accounts.back().ramal == L"2001");
+    CHECK(ActiveInFile(h) == first);
+}
+
+TEST_CASE("the password typed for a switch commits the new account, and a wrong one brings the working one back") {
+    Harness h;
+    const std::string first = h.SeedAccount(L"pbx.example.com", L"2001", L"segredo", true, L"Recep");
+    const std::string second = h.SeedAccount(L"outro.example.com", L"3001", L"", false, L"Outra");
+    h.Start();
+    h.app->OnRegistration(200, true, h.port.LastId());
+    h.Run();
+    h.Send(R"({"v":1,"cmd":"selectAccount","contaId":")" + second + R"("})");
+
+    // A senha errada: a que funcionava volta a registrar, e a tela continua pedindo a senha (com o Cancelar).
+    h.Send(R"({"v":1,"cmd":"login","servidor":"outro.example.com","protocolo":"udp","ramal":"3001","senha":"errada",)"
+           R"("nome":"Outra","contaId":")" + second + R"("})");
+    REQUIRE(h.port.accounts.size() == 2);
+    CHECK(h.port.accounts[1].ramal == L"3001");
+    h.app->OnRegistration(401, false, h.port.LastId());
+    h.Run();
+    REQUIRE(h.port.accounts.size() == 3);
+    CHECK(h.port.accounts[2].ramal == L"2001");
+    json state = h.State();
+    CHECK(state["tela"] == "entrar");
+    CHECK(state["entrar"]["erro"] == "Ramal ou senha incorretos.");
+    CHECK(state["entrar"]["podeCancelar"] == true);
+    CHECK(state["conta"]["id"] == first);
+    CHECK(ActiveInFile(h) == first);
+
+    // A certa: a conta nova fica em uso (e gravada).
+    h.Send(R"({"v":1,"cmd":"login","servidor":"outro.example.com","protocolo":"udp","ramal":"3001","senha":"certa",)"
+           R"("nome":"Outra","contaId":")" + second + R"("})");
+    h.app->OnRegistration(200, true, h.port.LastId());
+    h.Run();
+    state = h.State();
+    CHECK(state["tela"] == "principal");
+    CHECK(state["conta"]["id"] == second);
+    CHECK(state["entrar"]["podeCancelar"] == false);
+    CHECK(ActiveInFile(h) == second);
 }
 
 TEST_CASE("removing the account in use is refused during a call and hands over to another one") {

@@ -144,6 +144,7 @@ bool ImportAccounts(const std::vector<IniSection>& sections, const LegacyDecrypt
     std::vector<std::wstring> names;
     for (const IniSection& section : sections) names.push_back(section.name);
     std::string activeId;
+    std::string firstId;   // a primeira que migrou: a em uso quando a do accountId nao migrou
     for (int number : AccountSectionNumbers(names)) {
         const IniSection* section = FindSection(sections, L"Account" + std::to_wstring(number));
         SavedAccount account;
@@ -161,8 +162,12 @@ bool ImportAccounts(const std::vector<IniSection>& sections, const LegacyDecrypt
         if (!accounts.Save(account)) return false;
         ++result.accounts;
         if (account.senha.empty()) ++result.accountsWithoutPassword;
+        if (firstId.empty()) firstId = accounts.LastSavedId();
         if (number == activeNumber) activeId = accounts.LastSavedId();
     }
+    // A do accountId nao migrou (servidor ou ramal que nao servem, ou a conta local da rc.7): a primeira que migrou
+    // fica em uso, senao o app abriria na tela Entrar com as contas migradas.
+    if (activeId.empty()) activeId = firstId;
     return activeId.empty() || accounts.Active() || accounts.SetActive(activeId);
 }
 

@@ -266,6 +266,36 @@ public:
         }
     }
 
+    void RefreshAudioDevices() {
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        if (!RegisterThread()) return;
+        try {
+            pj::AudDevManager& manager = endpoint_->audDevManager();
+            if (config_.nullAudio) {
+                // O motor fica no dispositivo nulo: so a lista muda.
+                manager.refreshDevs();
+                Log(3, "dispositivos de som relidos (dispositivo nulo)");
+                return;
+            }
+            // Os nomes dos dispositivos de agora, na lista velha (o id e a posicao nela); -1 e o padrao.
+            const std::vector<AudioDevice> old = ListAudioDevices();
+            const std::string captureName = NameOf(old, manager.getCaptureDev());
+            const std::string playbackName = NameOf(old, manager.getPlaybackDev());
+            // Com o som aberto, o PJSIP nao pode reler debaixo dele (pjmedia_aud_dev_refresh): o nulo entra antes.
+            const bool active = manager.sndIsActive();
+            if (active) manager.setNullDev();
+            manager.refreshDevs();
+            const std::vector<AudioDevice> fresh = ListAudioDevices();
+            const int captureId = IdOf(fresh, captureName, true);
+            const int playbackId = IdOf(fresh, playbackName, false);
+            manager.setCaptureDev(captureId);
+            manager.setPlaybackDev(playbackId);
+            Log(3, "dispositivos de som relidos: " + std::to_string(fresh.size()) + (active ? " (com o som aberto)" : ""));
+        } catch (const pj::Error& failure) {
+            Log(1, "reler os dispositivos de som: " + failure.info());
+        }
+    }
+
     bool SendDtmf(int callId, const std::string& digits) {
         std::lock_guard<std::mutex> lock(apiMutex_);
         return RegisterThread() && calls_.SendDtmf(callId, digits);
@@ -327,6 +357,24 @@ private:
             devices.push_back(device);
         }
         return devices;
+    }
+
+    // O nome do dispositivo id na lista ("" para o padrão, o nulo ou um id que não está nela).
+    static std::string NameOf(const std::vector<AudioDevice>& devices, int id) {
+        if (id < 0) return std::string();
+        for (const AudioDevice& device : devices) {
+            if (device.id == id) return device.name;
+        }
+        return std::string();
+    }
+
+    // O id do dispositivo com esse nome que serve ao papel; -1 (o padrão) sem nome ou sem ele na lista.
+    static int IdOf(const std::vector<AudioDevice>& devices, const std::string& name, bool capture) {
+        if (name.empty()) return kDefaultAudioDevice;
+        for (const AudioDevice& device : devices) {
+            if (device.name == name && device.id >= 0 && (capture ? device.capture : device.playback)) return device.id;
+        }
+        return kDefaultAudioDevice;
     }
 
     // -1 é o padrão do sistema; outro id precisa estar na lista e servir ao papel (microfone ou alto-falante).
@@ -489,6 +537,8 @@ std::vector<AudioDevice> SipEngine::AudioDevices() const { return impl_->AudioDe
 bool SipEngine::SetAudioDevices(int captureId, int playbackId) {
     return impl_->SetAudioDevices(captureId, playbackId);
 }
+
+void SipEngine::RefreshAudioDevices() { impl_->RefreshAudioDevices(); }
 
 bool SipEngine::SendDtmf(int callId, const std::string& digits) { return impl_->SendDtmf(callId, digits); }
 

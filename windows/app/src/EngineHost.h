@@ -63,6 +63,7 @@ public:
     void RemoveAccount() override;
     std::vector<AudioDevice> AudioDevices() override;
     bool SetAudioDevices(int captureId, int playbackId) override;
+    void RefreshAudioDevices() override;
 
     // EngineListener (do SipEngine): repassados ao listener; o OnLog vai direto ao diagnostico.
     void OnRegistration(int sipCode, bool active, int accountId) override;

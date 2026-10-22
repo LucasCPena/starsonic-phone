@@ -570,8 +570,37 @@ TEST_CASE("accounts that cannot be used are skipped") {
     CHECK(result.accounts == 1);
     REQUIRE(stores.accounts.All().size() == 1);
     CHECK(stores.accounts.All()[0].ramal == L"3003");
-    CHECK_FALSE(stores.accounts.Active());   // a em uso (a 1) nao migrou: nenhuma em uso
+    // A em uso (a 1) nao migrou: a primeira que migrou fica em uso (senao o app abriria na tela Entrar).
+    REQUIRE(stores.accounts.Active());
+    CHECK(stores.accounts.Active()->ramal == L"3003");
     CHECK_FALSE(fixture.Exists(fixture.paths.ini));
+}
+
+TEST_CASE("an active account that did not migrate hands over to the first migrated one") {
+    SUBCASE("accountId points to a skipped account") {
+        Fixture fixture;
+        fixture.WriteIni(
+            L"[Settings]\r\naccountId=3\r\n"
+            L"[Account1]\r\nserver=pbx.example.com:5060\r\nusername=1001\r\npassword=cifrada:segredo\r\n"
+            L"[Account2]\r\nserver=outro.example.com\r\nusername=2002\r\npassword=cifrada:outra\r\n"
+            L"[Account3]\r\nserver=servidor invalido\r\nusername=3003\r\npassword=cifrada:x\r\n");
+        Stores stores(fixture);
+        CHECK(Import(fixture, stores).accounts == 2);
+        Stores reopened(fixture);
+        REQUIRE(reopened.accounts.Active());
+        CHECK(reopened.accounts.Active()->ramal == L"1001");
+    }
+    SUBCASE("accountId 0 with the local account on") {
+        Fixture fixture;
+        fixture.WriteIni(
+            L"[Settings]\r\naccountId=0\r\nenableLocalAccount=1\r\n"
+            L"[Account1]\r\nserver=pbx.example.com\r\nusername=1001\r\npassword=cifrada:segredo\r\n");
+        Stores stores(fixture);
+        CHECK(Import(fixture, stores).accounts == 1);
+        Stores reopened(fixture);
+        REQUIRE(reopened.accounts.Active());
+        CHECK(reopened.accounts.Active()->ramal == L"1001");
+    }
 }
 
 TEST_CASE("an ini with no account still migrates contacts and calls") {

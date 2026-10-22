@@ -64,3 +64,35 @@ TEST_CASE("DeviceNameToUtf8 keeps ASCII names and, outside Windows, every byte")
     CHECK(DeviceNameToUtf8(utf8) == utf8);
 #endif
 }
+
+TEST_CASE("RefreshAudioDevices rereads the devices and a call still completes after it") {
+    FakeRegistrar registrar("senha");
+    RecordingListener listener;
+    INFO(listener.LogTail());
+    INFO(registrar.LogText());
+    std::unique_ptr<SipEngine> engine = StartEngine(&listener, LoadProfile(registrar.port()));
+    REQUIRE(engine->SetAccount(Input(Transport::Udp)));
+    REQUIRE(listener.WaitFor(RecordingListener::Reached(200, true, 1), kWaitSeconds));
+
+    const std::vector<AudioDevice> before = engine->AudioDevices();
+    engine->RefreshAudioDevices();
+    CHECK(listener.LogTail().find("dispositivos de som relidos") != std::string::npos);
+    const std::vector<AudioDevice> after = engine->AudioDevices();
+    REQUIRE(after.size() == before.size());   // nada mudou no sistema: a mesma lista
+    for (size_t i = 0; i < after.size(); ++i) CHECK(after[i].name == before[i].name);
+    CHECK(engine->SetAudioDevices(-1, -1));
+
+    // Uma ligacao recebida e atendida depois de reler, e reler de novo com ela em andamento.
+    REQUIRE(registrar.Control("RING 2001") == std::vector<std::string>{"OK"});
+    REQUIRE(listener.WaitForCalls(RecordingListener::Count(CallEvent::Incoming, 1), kWaitSeconds));
+    int callId = -1;
+    for (const CallEvent& event : listener.Calls()) {
+        if (event.kind == CallEvent::Incoming) callId = event.callId;
+    }
+    REQUIRE(callId >= 0);
+    REQUIRE(engine->Answer(callId));
+    REQUIRE(listener.WaitForCalls(RecordingListener::StateReached(callId, CallState::Confirmed), kWaitSeconds));
+    engine->RefreshAudioDevices();
+    CHECK(engine->Hangup(callId));
+    CHECK(listener.WaitForCalls(RecordingListener::StateReached(callId, CallState::Disconnected), kWaitSeconds));
+}

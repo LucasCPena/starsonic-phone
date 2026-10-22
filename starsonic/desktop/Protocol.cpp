@@ -47,6 +47,7 @@ const Name kNames[] = {
     {CommandKind::ViewRecents, "viewRecents"},
     {CommandKind::UpdateNow, "updateNow"},
     {CommandKind::UpdateLater, "updateLater"},
+    {CommandKind::CancelLogin, "cancelLogin"},
 };
 
 // Le os campos de um comando, anotando o primeiro problema (um campo obrigatorio que falta ou um tipo errado).
@@ -331,6 +332,7 @@ std::optional<Command> ParseCommand(const std::string& text, std::string* error)
         case CommandKind::ViewRecents:
         case CommandKind::UpdateNow:
         case CommandKind::UpdateLater:
+        case CommandKind::CancelLogin:
             break;
     }
     if (!f.ok()) return Refuse(error, cmd + ": " + f.error());
@@ -343,7 +345,8 @@ std::string StateMessage(const BridgeState& state) {
     s["entrar"] = Out{{"servidor", state.login.server},     {"protocolo", state.login.transport},
                       {"ramal", state.login.ramal},         {"nome", state.login.name},
                       {"erro", state.login.error},          {"ocupado", state.login.busy},
-                      {"pedeSenha", state.login.needsPassword}, {"contaId", state.login.accountId}};
+                      {"pedeSenha", state.login.needsPassword}, {"podeCancelar", state.login.canCancel},
+                      {"contaId", state.login.accountId}};
     s["conta"] = state.account ? AccountJson(*state.account, /*current=*/true) : Out();
     Out accounts = Out::array();
     for (const AccountView& account : state.accounts) accounts.push_back(AccountJson(account, /*current=*/false));

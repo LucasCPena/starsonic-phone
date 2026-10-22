@@ -40,8 +40,8 @@ using LegacyDecryptFunction = std::function<std::optional<std::wstring>(const st
 
 // Migra o que a rc.7 deixou. As lojas ja devem estar carregadas (Load).
 // - Com o .ini e sem nenhuma conta na loja: as contas viram contas (o endereco do server sem a porta, o protocolo,
-//   o ramal, o nome do label quando nao e o rotulo automatico, a senha decifrada) e a do accountId fica em uso; os
-//   contatos e o historico sao lidos. Com contas na loja, o .ini nao e lido (a migracao ja aconteceu).
+//   o ramal, o nome do label quando nao e o rotulo automatico, a senha decifrada) e a do accountId fica em uso (se ela
+//   nao migrou, a primeira que migrou); os contatos e o historico sao lidos. Com contas na loja, o .ini nao e lido (a migracao ja aconteceu).
 // - Sem o .ini: so tenta de novo o que ficou pendente (contas.json, "migracao_pendente").
 // Os bancos sao abertos somente para leitura. Cada arquivo lido com sucesso e renomeado para <nome>.migrado (voltar
 // para a rc.7 e renomear de volta); o que nao deu para ler (travado, ilegivel) fica com o nome e vai para a

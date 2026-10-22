@@ -52,7 +52,7 @@ Regras para todos:
 | `sendDiagnostics` | — | "Enviar diagnóstico": o app copia o `diagnostico.log` (com o `.1` antes, se houver) para `%TEMP%\Starsonic Phone diagnostico <data e hora>.log` e abre o Explorer com a cópia selecionada, para a pessoa anexar no e-mail ou no WhatsApp. O `diagnostico.log` nunca tem senhas nem o valor dos cabeçalhos `Authorization` e `Proxy-Authorization` das mensagens SIP (`Authorization: <oculto>`). |
 | `updateNow` | — | A resposta "Atualizar agora" à pergunta da atualização aberta. Sem pergunta aberta: ignorado (linha no diagnóstico). |
 | `updateLater` | — | A resposta "Depois" (o botão ou o Esc). Sem pergunta aberta: ignorado. |
-| `openExternal` | `url` (texto) | Abre no navegador padrão. Só valem exatamente: `https://starsonic.com.br`, `https://starsonic.com.br/`, `https://wa.me/551150603000`, `tel:+551150603000` e `https://github.com/LucasCPena/starsonic-phone` (o código-fonte). Qualquer outro é recusado (linha no diagnóstico). |
+| `openExternal` | `url` (texto) | Abre no navegador padrão. Só valem exatamente: `https://starsonic.com.br`, `https://starsonic.com.br/`, `https://wa.me/551150603000` e `https://github.com/LucasCPena/starsonic-phone` (o código-fonte). Qualquer outro é recusado (linha no diagnóstico), também um `tel:`: o app é o tratador dele (o instalador o registra), e o link só encheria o Teclado. |
 
 ```json
 {"v":1,"cmd":"openExternal","url":"https://wa.me/551150603000"}
@@ -63,7 +63,8 @@ Regras para todos:
 | Comando | Campos | O que faz |
 |---|---|---|
 | `login` | `servidor` (texto), `protocolo` (`"udp"` \| `"tcp"`), `ramal` (texto), `senha` (texto), `nome` (texto, opcional), `contaId` (texto, opcional) | O botão Entrar (também em Adicionar conta e Editar). Ver "O Entrar", abaixo. |
-| `selectAccount` | `contaId` (texto) | Troca a conta em uso (o cabeçalho). Com uma ligação, a troca fica para o fim dela, com o toast `A troca de conta fica para o fim da ligação.`; uma nova escolha toma o lugar da que esperava; escolher a conta em uso cancela a que esperava. |
+| `selectAccount` | `contaId` (texto) | Troca a conta em uso (o cabeçalho). Com uma ligação, a troca fica para o fim dela, com o toast `A troca de conta fica para o fim da ligação.`; uma nova escolha toma o lugar da que esperava; escolher a conta em uso cancela a que esperava. Para uma conta sem a senha (`pedeSenha`), nada muda ainda: a conta em uso continua registrada e gravada, e `tela` vira `entrar` pedindo a senha da escolhida, com `entrar.podeCancelar` `true`; o `login` dela (com o `contaId`) faz a troca quando registra, e com a senha errada a conta em uso volta a registrar e a tela continua pedindo a senha. |
+| `cancelLogin` | — | O Cancelar da tela Entrar com `entrar.podeCancelar`: a troca sai e a conta em uso continua (`tela` `principal`). Sem uma troca pedindo a senha, ou com o Entrar dela esperando o resultado: ignorado (linha no diagnóstico). |
 | `removeAccount` | `contaId` (texto) | Remove a conta (a interface pede a confirmação antes). Não vale para a conta em uso com uma ligação (ignorado). A em uso removida dá a vez para a primeira das outras; sem nenhuma, a tela Entrar. |
 
 O Entrar (spec do Windows, 7.1 e 11.1):
@@ -91,6 +92,7 @@ O Entrar (spec do Windows, 7.1 e 11.1):
 {"v":1,"cmd":"login","servidor":"starcloud1-starsonic.com.br","protocolo":"tcp","ramal":"2001","senha":"","nome":"Recepção","contaId":"9f3c2a71b0d84e55"}
 {"v":1,"cmd":"selectAccount","contaId":"9f3c2a71b0d84e55"}
 {"v":1,"cmd":"removeAccount","contaId":"9f3c2a71b0d84e55"}
+{"v":1,"cmd":"cancelLogin"}
 ```
 
 ### Ligações
@@ -164,7 +166,8 @@ O Entrar (spec do Windows, 7.1 e 11.1):
 ```json
 {"v":1,"type":"state","state":{
   "tela":"principal",
-  "entrar":{"servidor":"","protocolo":"udp","ramal":"","nome":"","erro":"","ocupado":false,"pedeSenha":false,"contaId":""},
+  "entrar":{"servidor":"","protocolo":"udp","ramal":"","nome":"","erro":"","ocupado":false,"pedeSenha":false,
+            "podeCancelar":false,"contaId":""},
   "conta":{"id":"9f3c2a71b0d84e55","nome":"Recepção","ramal":"2001","servidor":"starcloud1-starsonic.com.br",
            "protocolo":"udp","status":"conectado","texto":"Conectado · starcloud1-starsonic.com.br"},
   "contas":[{"id":"9f3c2a71b0d84e55","nome":"Recepção","ramal":"2001","servidor":"starcloud1-starsonic.com.br",
@@ -193,13 +196,14 @@ O Entrar (spec do Windows, 7.1 e 11.1):
 
 | Campo | Tipo | Sentido |
 |---|---|---|
-| `tela` | `"entrar"` \| `"principal"` | `entrar` sem conta em uso, ou com a conta em uso sem senha (`entrar.pedeSenha`). Adicionar e Editar conta com o app em `principal` são uma navegação da interface: ela mostra o formulário e lê `entrar` do mesmo jeito. |
+| `tela` | `"entrar"` \| `"principal"` | `entrar` sem conta em uso, com a conta em uso sem senha (`entrar.pedeSenha`), ou na troca para uma conta sem senha (`entrar.podeCancelar`; a conta em uso continua em `conta`). Adicionar e Editar conta com o app em `principal` são uma navegação da interface: ela mostra o formulário e lê `entrar` do mesmo jeito. |
 | `entrar` | objeto | A tela Entrar. |
 | `entrar.servidor`, `entrar.ramal`, `entrar.nome` | texto | O que preencher nos campos: o que a pessoa digitou no último `login` (depois de uma mensagem), ou a conta que pede a senha. A senha nunca vem. |
 | `entrar.protocolo` | `"udp"` \| `"tcp"` | O protocolo do campo (sem nada digitado, o padrão do perfil). |
 | `entrar.erro` | texto | A mensagem embaixo da senha, em vermelho (`""`: nenhuma). Ver "O Entrar". Com `pedeSenha`: `Digite a senha de novo para continuar.`. |
 | `entrar.ocupado` | booleano | Esperando o registro (ou o fim da ligação): "Conectando…", campos e Entrar travados. |
 | `entrar.pedeSenha` | booleano | A conta veio sem a senha (a migração da rc.7, ou ela não decifra mais): os campos vêm preenchidos e só falta a senha. |
+| `entrar.podeCancelar` | booleano | A tela pede a senha de uma troca de conta (`selectAccount` de uma conta sem senha): a interface mostra o botão `Cancelar`, que manda `cancelLogin` e volta para a conta em uso. |
 | `entrar.contaId` | texto | A conta que a tela edita (vai de volta no `login`); `""` = conta nova. |
 | `conta` | objeto \| `null` | A conta em uso (o cabeçalho); `null` sem nenhuma. |
 | `conta.id`, `conta.nome`, `conta.ramal`, `conta.servidor` | texto | `nome` pode ser `""` (sem nome: a interface mostra o ramal). |

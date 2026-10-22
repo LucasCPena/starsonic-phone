@@ -63,7 +63,8 @@ namespace starsonic {
 
 // O registro da conta e os dispositivos de som do motor (o SipEngine de verdade, por um adaptador no executavel).
 // Os contratos sao os do SipEngine: SetAccount devolve o id que o OnRegistration traz (0: nao ha conta) e espera
-// ate ~5 s; SetAudioDevices com -1 e o padrao do Windows e devolve false se um id nao serve.
+// ate ~5 s; SetAudioDevices com -1 e o padrao do Windows e devolve false se um id nao serve; RefreshAudioDevices
+// rele a lista do sistema (os ids de AudioDevices mudam depois dele).
 class RegistrationPort {
 public:
     virtual ~RegistrationPort() = default;
@@ -71,6 +72,7 @@ public:
     virtual void RemoveAccount() = 0;
     virtual std::vector<AudioDevice> AudioDevices() = 0;
     virtual bool SetAudioDevices(int captureId, int playbackId) = 0;
+    virtual void RefreshAudioDevices() = 0;
 };
 
 // Os arquivos (caminhos UTF-8): os quatro da pasta de dados (spec 6.6) e os da rc.7 (LegacyImport.h).
@@ -113,7 +115,8 @@ struct DesktopHooks {
 //   Editar (contaId) com a senha vazia mantem a gravada. Uma conta sem senha (a migracao) abre a tela Entrar
 //   preenchida, com "Digite a senha de novo para continuar.".
 // - Contas: trocar (com uma ligacao, so no fim dela, com o aviso "A troca de conta fica para o fim da ligacao.";
-//   o Entrar tambem espera), remover (nao a em uso com uma ligacao; a em uso removida da a vez para a primeira das
+//   o Entrar tambem espera; para uma conta sem a senha, a tela Entrar pede a senha dela com o Cancelar, e a em uso
+//   continua registrada e gravada ate o Entrar registrar), remover (nao a em uso com uma ligacao; a em uso removida da a vez para a primeira das
 //   outras, ou a tela Entrar sem nenhuma).
 // - As ligacoes, pelo controlador; o Nao perturbe e o Atender automatico, gravados no config.json e repostos na
 //   abertura; Recentes (e as perdidas desde a ultima visita a eles), contatos e configuracoes.
@@ -140,7 +143,9 @@ public:
     void HandleCommand(const std::string& json);
     // O numero de um link tel:/sip:/callto: (ja lido): vai para o Teclado; nunca liga.
     void DialLink(const std::string& number);
-    // Os dispositivos de som mudaram (um headset entrou ou saiu): le a lista de novo e aplica a escolha gravada.
+    // Os dispositivos de som mudaram (um headset entrou ou saiu): o motor rele a lista do sistema
+    // (RegistrationPort::RefreshAudioDevices), e a escolha gravada vale de novo pelo nome (a que saiu fica no padrao,
+    // com "(desconectado)"; a que voltou, de novo em uso). So poe na fila.
     void RefreshAudioDevices();
     // A janela foi movida (o canto de cima, em pixels da tela): grava no config.json (so se mudou). Antes da abertura
     // (Start), nada. So poe na fila.
@@ -188,8 +193,10 @@ private:
     void SelectAccount(const std::string& id);
     void RemoveAccount(const std::string& id);
     void SwitchTo(const std::string& id);
+    void CancelPasswordSwitch();
     void ActivateStored(const SavedAccount& account);
-    void ShowPasswordRequest(const SavedAccount& account);
+    // keepEngine: a conta registrada continua no motor (a troca para uma conta sem a senha).
+    void ShowPasswordRequest(const SavedAccount& account, bool keepEngine);
     void DropEngineAccount();
     void ResetLogin();
     void WhenIdle(PendingChange change);
@@ -233,6 +240,9 @@ private:
     std::optional<int> registration_;   // o ultimo codigo do registro da conta de agora (nenhum: esperando)
     std::optional<PendingChange> pending_;
     int pendingToken_ = 0;
+    // A troca para uma conta sem a senha: a tela Entrar pede a senha dela (com o Cancelar), e a em uso continua
+    // registrada e gravada ate o Entrar registrar ("" nenhuma).
+    std::string passwordSwitch_;
     CallSnapshot call_;
     std::string lastEndMessage_;
     RingKind ring_ = RingKind::Stop;

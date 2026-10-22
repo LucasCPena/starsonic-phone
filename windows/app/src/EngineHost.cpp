@@ -150,6 +150,10 @@ bool EngineHost::SetAudioDevices(int captureId, int playbackId) {
     return engine && engine->SetAudioDevices(captureId, playbackId);
 }
 
+void EngineHost::RefreshAudioDevices() {
+    if (SipEngine* engine = Ready()) engine->RefreshAudioDevices();
+}
+
 void EngineHost::OnRegistration(int sipCode, bool active, int accountId) {
     if (EngineListener* listener = listener_.load()) listener->OnRegistration(sipCode, active, accountId);
 }

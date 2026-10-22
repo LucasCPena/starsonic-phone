@@ -51,6 +51,7 @@ TEST_CASE("every command of the protocol parses into its command") {
         {"viewRecents", CommandKind::ViewRecents},
         {"updateNow", CommandKind::UpdateNow},
         {"updateLater", CommandKind::UpdateLater},
+        {"cancelLogin", CommandKind::CancelLogin},
     };
     for (const Simple& s : simple) {
         const Command command = Parsed(std::string(R"({"v":1,"cmd":")") + s.name + "\"}");
@@ -223,7 +224,8 @@ TEST_CASE("the empty state serializes with every key") {
     }
     CHECK(s.size() == keys.size());
     CHECK(s["tela"] == "entrar");
-    for (const char* key : {"servidor", "protocolo", "ramal", "nome", "erro", "ocupado", "pedeSenha", "contaId"}) {
+    for (const char* key :
+         {"servidor", "protocolo", "ramal", "nome", "erro", "ocupado", "pedeSenha", "podeCancelar", "contaId"}) {
         INFO(key);
         CHECK(s["entrar"].contains(key));
     }
