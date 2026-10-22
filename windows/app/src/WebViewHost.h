@@ -37,13 +37,20 @@ public:
         std::function<void(const std::string& json)> message;   // um comando da interface (o JSON, UTF-8)
         std::function<void(const std::string& line)> log;
         std::function<void(HRESULT error)> failed;              // o WebView2 nao abriu (sem o runtime, por exemplo)
+        // O processo do navegador do WebView2 saiu (morto ou caido): este WebView morreu; o dono o refaz, fora do
+        // evento (um WebViewHost novo, com um ambiente novo).
+        std::function<void()> browserExited;
+        // A pagina nao responde (o processo dela travou): o dono recarrega (Reload) depois de um tempo.
+        std::function<void()> unresponsive;
     };
 
     struct Options {
         std::wstring userDataFolder;
         std::wstring uiFolder;   // a pasta com o index.html
         bool devTools = false;   // as ferramentas do desenvolvedor e o menu do botao direito (so no build de teste)
-        std::wstring startPage = L"https://app.starsonic.local/index.html";   // a pagina (do app) que abre
+        // A pagina (do app) que abre; a MainWindow e o aviso poem a versao do app na URL (?v=<versao>), para o cache do
+        // WebView2 nunca servir a interface de outra versao.
+        std::wstring startPage = L"https://app.starsonic.local/index.html";
         // O ambiente de outro WebViewHost (o do aviso usa o da janela principal); vazio: cria um em userDataFolder.
         Microsoft::WRL::ComPtr<ICoreWebView2Environment> environment;
     };
@@ -62,6 +69,8 @@ public:
     // inteiro com o ready quando carrega).
     void Post(const std::string& json);
     void Focus();
+    // Recarrega a pagina (a interface pede o estado de novo com o ready).
+    void Reload();
     // Escreve no diagnostico os rotulos das saidas de som que o WebView2 ve (enumerateDevices, audiooutput).
     void LogAudioOutputs();
     // Fecha o WebView (antes de a janela sumir).

@@ -272,8 +272,15 @@ void WebViewHost::Configure() {
                 COREWEBVIEW2_PROCESS_FAILED_KIND kind = COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED;
                 args->get_ProcessFailedKind(&kind);
                 Log("o WebView2 caiu (tipo " + std::to_string(static_cast<int>(kind)) + ")");
-                // A pagina caiu e o WebView continua: recarrega (a interface pede o estado de novo com o ready).
-                if (kind == COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED && webview_) webview_->Reload();
+                if (kind == COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED) {
+                    // A pagina caiu e o WebView continua: recarrega (a interface pede o estado de novo com o ready).
+                    if (webview_) webview_->Reload();
+                } else if (kind == COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_UNRESPONSIVE) {
+                    if (callbacks_.unresponsive) callbacks_.unresponsive();
+                } else if (kind == COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED) {
+                    // O navegador saiu: os WebViews dele morreram (o dono refaz, fora deste evento).
+                    if (callbacks_.browserExited) callbacks_.browserExited();
+                }
                 return S_OK;
             })
             .Get(),
@@ -291,6 +298,10 @@ void WebViewHost::Post(const std::string& json) {
     if (!webview_) return;
     const HRESULT result = webview_->PostWebMessageAsJson(Utf8ToWide(json).c_str());
     if (FAILED(result)) Log("mensagem para a interface nao saiu: " + Hex(result));
+}
+
+void WebViewHost::Reload() {
+    if (webview_) webview_->Reload();
 }
 
 void WebViewHost::Focus() {

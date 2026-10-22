@@ -1,5 +1,6 @@
 #include "MainWindow.h"
 
+#include <dbt.h>
 #include <dwmapi.h>
 #include <shellscalingapi.h>
 #include <windowsx.h>
@@ -19,8 +20,26 @@ const UINT kOutboxMessage = WM_APP + 1;   // ha mensagens para a interface na fi
 const UINT kActionsMessage = WM_APP + 2;  // ha acoes para a janela na fila
 const UINT_PTR kMoveTimer = 1;            // a janela parou de mover: grava a posicao
 const UINT_PTR kQuitTimer = 2;            // o Sair nao terminou a tempo: fecha assim mesmo
+const UINT_PTR kRestartTimer = 3;         // o navegador do WebView2 saiu: abre de novo
+const UINT_PTR kUnresponsiveTimer = 4;    // a pagina nao responde: recarrega
+const UINT_PTR kDeviceTimer = 5;          // um dispositivo de som mudou: rele depois de 1 s sem outro aviso
 const UINT kMoveDelayMs = 500;
 const UINT kQuitTimeoutMs = 10000;
+const UINT kRestartDelayMs = 1000;        // o navegador velho termina de sair antes do ambiente novo
+const int kRestartMaxAttempts = 5;
+const UINT kUnresponsiveGraceMs = 5000;
+const UINT kDeviceDelayMs = 1000;
+
+const wchar_t kMainPage[] = L"https://app.starsonic.local/index.html";
+const wchar_t kNoticePage[] = L"https://app.starsonic.local/aviso.html";
+
+// KSCATEGORY_AUDIO: as interfaces de audio (o headset USB ou Bluetooth que entra ou sai).
+const GUID kAudioInterfaces = {0x6994AD04, 0x93EF, 0x11D0, {0xA3, 0xCC, 0x00, 0xA0, 0xC9, 0x22, 0x31, 0x96}};
+
+// A pagina com a versao do app (o cache do WebView2 nunca serve a de outra versao).
+std::wstring Versioned(const wchar_t* page, const std::wstring& version) {
+    return version.empty() ? std::wstring(page) : std::wstring(page) + L"?v=" + version;
+}
 
 // A barra de titulo da interface (app.css: .titlebar com 32 px, dois botoes de 44 px a direita).
 const int kTitleBarHeight = 32;
@@ -108,27 +127,70 @@ bool MainWindow::Create(HINSTANCE instance, const Options& options, Callbacks ca
     noticeCallbacks.log = [this](const std::string& line) { Log(line); };
     notice_.Create(instance, std::move(noticeCallbacks));
 
-    WebViewHost::Callbacks webCallbacks;
-    webCallbacks.message = [this](const std::string& json) {
+    webCallbacks_.message = [this](const std::string& json) {
         // O WebView do aviso abre depois que a interface principal carregou (a primeira mensagem dela e o ready): os
         // dois juntos atrasavam a primeira abertura, com o perfil do WebView2 ainda frio.
         if (!noticeStarted_) {
             noticeStarted_ = true;
             StartNotice();
         }
+        if (restarting_) {
+            restarting_ = false;
+            restartAttempts_ = 0;
+            Log("navegador reiniciado: a interface voltou");
+        }
         if (callbacks_.command) callbacks_.command(json);
     };
-    webCallbacks.log = [this](const std::string& line) { Log(line); };
-    webCallbacks.failed = [this](HRESULT error) {
+    webCallbacks_.log = [this](const std::string& line) { Log(line); };
+    webCallbacks_.failed = [this](HRESULT error) {
+        // O navegador novo ainda nao abriu (o velho terminando de sair): tenta de novo, algumas vezes.
+        if (restarting_ && restartAttempts_ < kRestartMaxAttempts) {
+            if (window_) SetTimer(window_, kRestartTimer, kRestartDelayMs, nullptr);
+            return;
+        }
         if (callbacks_.webViewFailed) callbacks_.webViewFailed(error);
     };
-    webview_.reset(new WebViewHost(window_, std::move(webCallbacks)));
-    WebViewHost::Options webOptions;
-    webOptions.userDataFolder = options.userDataFolder;
-    webOptions.uiFolder = options.uiFolder;
-    webOptions.devTools = options.devTools;
-    webview_->Create(webOptions);
+    webCallbacks_.browserExited = [this] {
+        // Fora do evento do WebView que morreu: o timer o troca por um novo.
+        if (window_) SetTimer(window_, kRestartTimer, kRestartDelayMs, nullptr);
+    };
+    webCallbacks_.unresponsive = [this] {
+        if (window_) SetTimer(window_, kUnresponsiveTimer, kUnresponsiveGraceMs, nullptr);
+    };
+    webOptions_.userDataFolder = options.userDataFolder;
+    webOptions_.uiFolder = options.uiFolder;
+    webOptions_.devTools = options.devTools;
+    webOptions_.startPage = Versioned(kMainPage, options.version);
+    CreateWebView();
+    RegisterAudioNotifications();
     return true;
+}
+
+void MainWindow::CreateWebView() {
+    webview_.reset(new WebViewHost(window_, webCallbacks_));
+    webview_->Create(webOptions_);
+}
+
+// O navegador do WebView2 saiu: a janela e o aviso abrem de novo com um ambiente novo (o motor, o DesktopApp e as
+// ligacoes continuam; a interface nova pede o estado e o toque com o ready).
+void MainWindow::RestartWebView() {
+    ++restartAttempts_;
+    restarting_ = true;
+    Log("navegador reiniciado: abrindo o WebView2 de novo (tentativa " + std::to_string(restartAttempts_) + ")");
+    KillTimer(window_, kUnresponsiveTimer);
+    notice_.StopWebView();
+    noticeStarted_ = false;
+    if (webview_) webview_->Close();
+    CreateWebView();
+}
+
+void MainWindow::RegisterAudioNotifications() {
+    DEV_BROADCAST_DEVICEINTERFACE_W filter = {};
+    filter.dbcc_size = sizeof(filter);
+    filter.dbcc_devicetype = DBT_DEVTYP_DEVICEINTERFACE;
+    filter.dbcc_classguid = kAudioInterfaces;
+    audioNotify_ = RegisterDeviceNotificationW(window_, &filter, DEVICE_NOTIFY_WINDOW_HANDLE);
+    if (!audioNotify_) Log("som: o aviso de dispositivos de audio nao foi registrado: " + std::to_string(GetLastError()));
 }
 
 void MainWindow::Show(int showCommand) {
@@ -185,6 +247,7 @@ void MainWindow::StartNotice() {
     noticeOptions.userDataFolder = options_.userDataFolder;
     noticeOptions.uiFolder = options_.uiFolder;
     noticeOptions.devTools = options_.devTools;
+    noticeOptions.startPage = Versioned(kNoticePage, options_.version);
     noticeOptions.environment = webview_->Environment();
     if (!noticeOptions.environment) return;
     notice_.StartWebView(noticeOptions);
@@ -397,6 +460,12 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
             SetWindowPos(window_, nullptr, box.x, box.y, box.width, box.height, SWP_NOZORDER | SWP_NOACTIVATE);
             return 0;
         }
+        case WM_DEVICECHANGE:
+            // Um headset entrou ou saiu: o Windows manda varios avisos seguidos; a releitura vem 1 s depois do ultimo.
+            if (wParam == DBT_DEVNODES_CHANGED || wParam == DBT_DEVICEARRIVAL || wParam == DBT_DEVICEREMOVECOMPLETE) {
+                SetTimer(window_, kDeviceTimer, kDeviceDelayMs, nullptr);
+            }
+            return TRUE;
         case WM_SETTINGCHANGE:
             // A area de trabalho mudou (a barra de tarefas cresceu, mudou de lado ou deixou de se esconder).
             if (wParam == SPI_SETWORKAREA) Refit();
@@ -418,6 +487,23 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
                 KillTimer(window_, kQuitTimer);
                 Log("o Sair nao terminou em 10 s: a janela fecha assim mesmo");
                 Close();
+                return 0;
+            }
+            if (wParam == kRestartTimer) {
+                KillTimer(window_, kRestartTimer);
+                RestartWebView();
+                return 0;
+            }
+            if (wParam == kUnresponsiveTimer) {
+                KillTimer(window_, kUnresponsiveTimer);
+                Log("a interface nao respondeu: recarregando");
+                if (webview_) webview_->Reload();
+                return 0;
+            }
+            if (wParam == kDeviceTimer) {
+                KillTimer(window_, kDeviceTimer);
+                Log("som: um dispositivo mudou no Windows");
+                if (callbacks_.devicesChanged) callbacks_.devicesChanged();
                 return 0;
             }
             if (wParam == Tray::kBlinkTimer) {
@@ -447,6 +533,11 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
             }
             KillTimer(window_, kMoveTimer);
             KillTimer(window_, kQuitTimer);
+            KillTimer(window_, kRestartTimer);
+            KillTimer(window_, kUnresponsiveTimer);
+            KillTimer(window_, kDeviceTimer);
+            if (audioNotify_) UnregisterDeviceNotification(audioNotify_);
+            audioNotify_ = nullptr;
             tray_.Remove();
             notice_.Close();
             if (webview_) webview_->Close();

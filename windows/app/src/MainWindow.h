@@ -13,6 +13,13 @@
 // no canto; o Atender do aviso traz a janela para a frente. O logoff ou o desligamento do Windows (WM_ENDSESSION)
 // chama callbacks.endSession, que faz o Sair com uma espera curta.
 //
+// O WebView2: a pagina abre com a versao na URL (index.html?v=<versao>, e o aviso.html tambem); o navegador que sai
+// (morto ou caido) e refeito com um ambiente novo, a janela e o aviso ("navegador reiniciado" no diagnostico; o
+// motor e as ligacoes continuam); a pagina que nao responde recarrega depois de 5 s.
+//
+// Os dispositivos de som: o WM_DEVICECHANGE (DBT_DEVNODES_CHANGED, e a chegada e a saida de uma interface de audio)
+// espera 1 s sem outro e chama callbacks.devicesChanged (o DesktopApp rele os dispositivos na thread de comandos).
+//
 // Threads: Create, Show e as acoes rodam na thread da janela. PostToWeb e RunOnWindow podem ser chamados de qualquer
 // thread (a de comandos do DesktopApp): so poem na fila e avisam a janela com PostMessage (nunca SendMessage: a thread
 // de comandos nunca espera a janela). Os callbacks rodam na thread da janela e nao podem esperar a de comandos.
@@ -43,6 +50,7 @@ public:
         std::wstring uiFolder;           // a pasta da interface
         bool devTools = false;
         std::optional<POINT> position;   // o canto de cima gravado (pixels da tela)
+        std::wstring version;            // a versao do app (vai na URL das paginas: ?v=<versao>)
     };
 
     struct Callbacks {
@@ -53,6 +61,7 @@ public:
         std::function<void()> endSession;                        // o Windows esta encerrando a sessao (logoff)
         std::function<void(const std::string& line)> log;
         std::function<void(HRESULT error)> webViewFailed;
+        std::function<void()> devicesChanged;   // um dispositivo de som entrou ou saiu (1 s depois do ultimo aviso)
     };
 
     MainWindow() = default;
@@ -87,6 +96,10 @@ private:
     void DrainOutbox();
     void RunActions();
     void StartNotice();
+    // Cria o WebViewHost da janela principal (na abertura e quando o navegador sai).
+    void CreateWebView();
+    void RestartWebView();
+    void RegisterAudioNotifications();
     void RefreshNotice();
     void OnTray(WPARAM wParam, LPARAM lParam);
     LRESULT HitTest(LPARAM lParam) const;
@@ -104,6 +117,11 @@ private:
     bool trayLogged_ = false;
     bool noticeStarted_ = false;   // o WebView do aviso ja abriu (depois da primeira mensagem da interface)
     bool quitting_ = false;
+    WebViewHost::Callbacks webCallbacks_;
+    WebViewHost::Options webOptions_;
+    bool restarting_ = false;      // o navegador saiu e o WebView abre de novo (ate a pagina nova mandar o ready)
+    int restartAttempts_ = 0;
+    HDEVNOTIFY audioNotify_ = nullptr;
 
     std::mutex mutex_;
     HWND target_ = nullptr;   // a janela para o PostMessage das outras threads (nullptr: fechada)

@@ -40,8 +40,11 @@ public:
 
     // Cria a janela (escondida). false: nao deu.
     bool Create(HINSTANCE instance, Callbacks callbacks);
-    // Abre o WebView2 do aviso com o ambiente da janela principal (options.environment) e o aviso.html.
+    // Abre o WebView2 do aviso com o ambiente da janela principal (options.environment) e a pagina options.startPage
+    // (o aviso.html com a versao). Uma pagina que nao responde recarrega depois de um tempo.
     void StartWebView(const WebViewHost::Options& options);
+    // Fecha o WebView2 do aviso (o navegador saiu: a janela principal abre outro com o ambiente novo).
+    void StopWebView();
 
     void Post(const std::string& json);
     // Mostra (sem ativar) no canto do monitor de anchor (a janela principal), ou esconde.

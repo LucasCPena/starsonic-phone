@@ -608,6 +608,22 @@ test.describe('ponte e janela', () => {
     expect((await comandos(page)).filter((c) => c.cmd === 'dial')).toEqual([]);
   });
 
+  test('the pages load the script and the styles of their own build (no cached app.js of another version)', async () => {
+    for (const [pagina, script] of [
+      ['index.html', 'app.js'],
+      ['aviso.html', 'aviso.js'],
+    ]) {
+      const html = readFileSync(join(DIST, pagina), 'utf8');
+      for (const arquivo of [script, 'app.css']) {
+        const marca = html.match(new RegExp(`(?:src|href)="${arquivo.replace('.', '\\.')}\\?v=([0-9a-f]{12})"`));
+        expect(marca, `${pagina}: ${arquivo} sem ?v=<conteúdo>`).not.toBeNull();
+        const { createHash } = await import('node:crypto');
+        const esperado = createHash('sha256').update(readFileSync(join(DIST, arquivo))).digest('hex').slice(0, 12);
+        expect(marca![1], `${pagina}: ${arquivo}`).toBe(esperado);
+      }
+    }
+  });
+
   test("the bundle ships Preact's MIT notice", async () => {
     const aviso = join(DIST, 'assets', 'preact-LICENSE.txt');
     expect(existsSync(aviso), aviso).toBe(true);

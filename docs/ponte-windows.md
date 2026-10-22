@@ -327,5 +327,17 @@ depois de abrir e a cada 24 h. Achou uma versão mais nova:
 - A posição da janela: depois de a pessoa mover a janela, o executável chama `DesktopApp::SaveWindowPosition(x, y)`
   (o canto de cima, em pixels da tela), que grava `janela_x`/`janela_y` no `config.json` (só se mudou, e só depois
   do `Start`). Na abertura, o executável lê a posição do `config.json` antes de criar a janela.
+- Os dispositivos de som: o `WM_DEVICECHANGE` (`DBT_DEVNODES_CHANGED`, e a chegada e a saída de uma interface de
+  áudio) espera 1 s sem outro aviso e chama `DesktopApp::RefreshAudioDevices()`, que só põe na fila: o motor relê a
+  lista do sistema e a escolha gravada vale de novo pelo nome (`audio.desconectados`).
+- As páginas abrem com a versão do app na URL (`index.html?v=<versao>`, `aviso.html?v=<versao>`), e elas pedem o
+  `app.js`, o `aviso.js` e o `app.css` com o conteúdo na URL (`?v=<12 do SHA-256>`, do `build.mjs`): o cache do
+  WebView2 nunca serve a interface de outra versão.
+- O navegador do WebView2 que sai (morto ou caído) é refeito com um ambiente novo, a janela e o aviso
+  (`navegador reiniciado` no diagnóstico); a página que não responde recarrega depois de 5 s. As duas mandam o
+  `ready` de novo.
+- O `quit` da interface não vai direto ao `DesktopApp`: o executável o manda pelo mesmo caminho do Alt+F4, da
+  bandeja e do `--sair` (o `WM_CLOSE`, que fecha a janela no máximo 10 s depois).
 - Ao fechar: `Shutdown()`, o `Stop()` do agendador, o motor destruído, o `DesktopApp` destruído (detalhes no
-  `DesktopApp.h`).
+  `DesktopApp.h`). Depois de a janela fechar, isso tem 5 s: passou, `fechamento forcado` no diagnóstico e o processo
+  sai com o código 0.

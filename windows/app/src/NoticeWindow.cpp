@@ -11,7 +11,8 @@ const wchar_t NoticeWindow::kClassName[] = L"Starsonic Phone Aviso";
 
 namespace {
 
-const wchar_t kNoticePage[] = L"https://app.starsonic.local/aviso.html";
+const UINT_PTR kUnresponsiveTimer = 1;   // a pagina do aviso nao responde: recarrega
+const UINT kUnresponsiveGraceMs = 5000;
 const COLORREF kBackground = RGB(0x07, 0x0b, 0x18);   // o --navy-950 (o aviso e sempre escuro)
 const DWORD kCornerPreference = 33;                    // DWMWA_WINDOW_CORNER_PREFERENCE (Windows 11)
 const DWORD kCornerRound = 2;                          // DWMWCP_ROUND
@@ -61,10 +62,18 @@ void NoticeWindow::StartWebView(const WebViewHost::Options& options) {
     };
     callbacks.log = [this](const std::string& line) { Log("aviso: " + line); };
     callbacks.failed = [this](HRESULT) { Log("aviso: o WebView2 do aviso nao abriu (a ligacao aparece so na janela)"); };
+    // O navegador que sai e refeito pela janela principal (StopWebView e StartWebView de novo).
+    callbacks.unresponsive = [this] {
+        if (window_) SetTimer(window_, kUnresponsiveTimer, kUnresponsiveGraceMs, nullptr);
+    };
     webview_.reset(new WebViewHost(window_, std::move(callbacks)));
-    WebViewHost::Options noticeOptions = options;
-    noticeOptions.startPage = kNoticePage;
-    webview_->Create(noticeOptions);
+    webview_->Create(options);
+}
+
+void NoticeWindow::StopWebView() {
+    if (window_) KillTimer(window_, kUnresponsiveTimer);
+    if (webview_) webview_->Close();
+    webview_.reset();
 }
 
 void NoticeWindow::Post(const std::string& json) {
@@ -125,6 +134,14 @@ LRESULT CALLBACK NoticeWindow::WindowProc(HWND window, UINT message, WPARAM wPar
 
 LRESULT NoticeWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
     switch (message) {
+        case WM_TIMER:
+            if (wParam == kUnresponsiveTimer) {
+                KillTimer(window_, kUnresponsiveTimer);
+                Log("aviso: a pagina nao respondeu: recarregando");
+                if (webview_) webview_->Reload();
+                return 0;
+            }
+            break;
         case WM_MOUSEACTIVATE:
             // Um clique (no Atender, no Recusar) nao tira o foco de quem a pessoa estava usando.
             return MA_NOACTIVATE;

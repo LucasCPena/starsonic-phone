@@ -12,7 +12,13 @@
 // o link vai para o Teclado, o --sair fecha o app, e sem nada a janela vem para a frente.
 // No build de teste (STARSONIC_TEST_HOOKS), a variavel STARSONIC_PERFIL troca o perfil embutido pelo texto dela (um
 // perfil que aponta para o registrador falso), e a STARSONIC_SOM_NULO poe o motor no dispositivo nulo do PJSIP (o
-// runner do CI nao tem placa de som, e sem nenhum dispositivo o PJSIP nao faz nem atende ligacoes).
+// runner do CI nao tem placa de som, e sem nenhum dispositivo o PJSIP nao faz nem atende ligacoes), e a
+// STARSONIC_TRAVAR_SAIR trava a thread de comandos no Sair (a fumaca confere o fechamento com limite).
+//
+// Fechar: todo Sair (o da interface, o da bandeja, o --sair, o Alt+F4, o do atualizador) passa pelo WM_CLOSE da
+// janela, que fecha no maximo 10 s depois mesmo sem o DesktopApp terminar (Ruling 16); depois da janela, o fechamento
+// do DesktopApp e do motor tem 5 s: passou disso, "fechamento forcado" no diagnostico e o processo sai (codigo 0),
+// sem deixar um processo sem janela segurando a instancia unica.
 #include <windows.h>
 
 #include <objbase.h>
@@ -21,6 +27,7 @@
 
 #include <climits>
 #include <memory>
+#include <thread>
 #include <optional>
 #include <string>
 #include <vector>
@@ -57,6 +64,8 @@ const unsigned long kFirstUpdateCheckMs = 60UL * 1000UL;
 const unsigned long kUpdateIntervalMs = 24UL * 60UL * 60UL * 1000UL;
 // O logoff do Windows: quanto o Sair espera o DesktopApp encerrar as ligacoes (os Recentes delas).
 const DWORD kEndSessionWaitMs = 3000;
+// Depois de a janela fechar: quanto o DesktopApp e o motor tem para fechar antes de o processo sair assim mesmo.
+const DWORD kShutdownLimitMs = 5000;
 
 
 std::vector<std::wstring> CommandLineArguments() {
@@ -225,7 +234,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     hooks.openUrl = [&window](const std::string& url) { window.RunOnWindow([url] { OpenUrl(url); }); };
     hooks.minimize = [&window] { window.RunOnWindow([&window] { window.Minimize(); }); };
     hooks.closeToTray = [&window] { window.RunOnWindow([&window] { window.CloseToTray(); }); };
-    hooks.quit = [&window, quitDone] {
+#if STARSONIC_TEST_HOOKS
+    // O build de teste: a thread de comandos trava no Sair (a fumaca confere o fechamento com limite).
+    const bool hangOnQuit = GetEnvironmentVariableW(L"STARSONIC_TRAVAR_SAIR", nullptr, 0) > 1;
+    if (hangOnQuit) log("STARSONIC_TRAVAR_SAIR: o Sair trava a thread de comandos (build de teste)");
+#else
+    const bool hangOnQuit = false;
+#endif
+    hooks.quit = [&window, quitDone, hangOnQuit] {
+        if (hangOnQuit) Sleep(INFINITE);
         if (quitDone) SetEvent(quitDone);
         window.RunOnWindow([&window] { window.Close(); });
     };
@@ -263,7 +280,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     updateHooks.busy = [&engine] { return engine.CallCount() > 0; };
     updateHooks.notify = [&app](const std::string& text) { app.Notify(text); };
     updateHooks.log = log;
-    updateHooks.quit = [&app] { app.HandleCommand(kQuitCommand); };
+    updateHooks.quit = [&window] { window.RunOnWindow([&window] { window.RequestQuit(); }); };
     updater.reset(new AppUpdater(STARSONIC_VERSION, STARSONIC_UPDATE_CHANNEL_TEST != 0, updateHooks));
 
     // As proximas aberturas (um link, o atalho de novo, o --sair) chegam aqui, na thread da janela, dentro do
@@ -282,14 +299,28 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
 
     bool outputsLogged = false;
     MainWindow::Callbacks callbacks;
-    callbacks.command = [&app, &window, &outputsLogged](const std::string& json) {
+    callbacks.command = [&app, &window, &outputsLogged, &diag](const std::string& json) {
         if (!outputsLogged && IsCommand(json, "ready")) {
             outputsLogged = true;
             window.LogAudioOutputs();   // os rotulos do WebView2, para comparar com os nomes do motor
         }
+        if (IsCommand(json, "quit")) {
+            // O Sair da interface vai pelo mesmo caminho dos outros (o WM_CLOSE, com os limites do fechamento).
+            diag.Write("pedido para sair (interface)");
+            window.RequestQuit();
+            return;
+        }
         app.HandleCommand(json);
     };
-    callbacks.noticeCommand = [&app](const std::string& json) { app.HandleCommand(json); };
+    callbacks.noticeCommand = [&app, &window](const std::string& json) {
+        if (IsCommand(json, "quit")) {
+            window.RequestQuit();
+            return;
+        }
+        app.HandleCommand(json);
+    };
+    // Um headset entrou ou saiu (a janela ja esperou 1 s sem outro aviso): o DesktopApp rele na thread de comandos.
+    callbacks.devicesChanged = [&app] { app.RefreshAudioDevices(); };
     callbacks.moved = [&app](int x, int y) { app.SaveWindowPosition(x, y); };
     callbacks.quitRequested = [&app] { app.HandleCommand(kQuitCommand); };
     // O logoff ou o desligamento: o mesmo Sair, esperando pouco (o Windows encerra o processo depois de o
@@ -302,10 +333,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         log(done ? "sessao do Windows encerrando: o Sair terminou" : "sessao do Windows encerrando: o Sair nao terminou a tempo");
     };
     callbacks.log = log;
-    callbacks.webViewFailed = [&app, &window](HRESULT) {
-        window.RunOnWindow([&app] {
+    callbacks.webViewFailed = [&window](HRESULT) {
+        window.RunOnWindow([&window] {
             MessageBoxW(nullptr, kNoWebView, L"Starsonic Phone", MB_ICONERROR | MB_OK);
-            app.HandleCommand(kQuitCommand);
+            window.RequestQuit();
         });
     };
 
@@ -314,6 +345,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     options.uiFolder = ExeFolder() + L"\\ui";
     options.devTools = STARSONIC_TEST_HOOKS != 0;
     options.position = position;
+    options.version = Utf8ToWide(STARSONIC_VERSION);
     int exitCode = 0;
     if (window.Create(instance, options, callbacks)) {
         if (arguments.tray) {
@@ -333,11 +365,22 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
 
     // Fechar (DesktopApp.h): a fila roda o que tinha (os Recentes das ligacoes que o Sair encerrou), o agendador
     // para, e o motor sai antes de o DesktopApp ser destruido.
+    // Com limite: uma thread de comandos ou um motor travados nao deixam o processo aberto sem janela, segurando a
+    // instancia unica (toda abertura nova sairia com 1).
     log("fechando");
+    const HANDLE closed = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    std::thread watchdog([closed, &diag] {
+        if (!closed || WaitForSingleObject(closed, kShutdownLimitMs) == WAIT_OBJECT_0) return;
+        diag.Write("fechamento forcado: o app nao fechou em " + std::to_string(kShutdownLimitMs / 1000) + " s");
+        ExitProcess(0);
+    });
     updater->Close();
     app.Shutdown();
     scheduler.Stop();
     engine.Stop();
+    if (closed) SetEvent(closed);
+    watchdog.join();
+    if (closed) CloseHandle(closed);
     log("fechado");
     updater.reset();
     if (quitDone) CloseHandle(quitDone);

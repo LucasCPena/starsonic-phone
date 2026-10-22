@@ -3,7 +3,8 @@
 // index.html, aviso.html, app.css, a fonte, os logos e o aviso da licença do Preact são copiados. Nada é baixado:
 // tudo vai dentro do app.
 import { build } from 'esbuild';
-import { cpSync, existsSync, mkdirSync, rmSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -36,10 +37,19 @@ for (const [fonte, saida] of entradas) {
   });
 }
 
-for (const arquivo of ['index.html', 'aviso.html']) {
-  if (existsSync(join(raiz, arquivo))) cpSync(join(raiz, arquivo), join(dist, arquivo));
-}
 cpSync(join(raiz, 'src', 'app.css'), join(dist, 'app.css'));
+// As páginas pedem o script e os estilos com o conteúdo deles na URL (app.js?v=<12 do SHA-256>): o cache do WebView2
+// nunca junta a página de uma versão com o app.js de outra (o executável abre a página com a versão: ?v=<versão>).
+const marca = (arquivo) => createHash('sha256').update(readFileSync(join(dist, arquivo))).digest('hex').slice(0, 12);
+for (const arquivo of ['index.html', 'aviso.html']) {
+  if (!existsSync(join(raiz, arquivo))) continue;
+  let html = readFileSync(join(raiz, arquivo), 'utf8');
+  for (const recurso of ['app.js', 'aviso.js', 'app.css']) {
+    if (!existsSync(join(dist, recurso))) continue;
+    html = html.replace(new RegExp(`((?:src|href)=")${recurso.replace('.', '\\.')}"`, 'g'), `$1${recurso}?v=${marca(recurso)}"`);
+  }
+  writeFileSync(join(dist, arquivo), html);
+}
 for (const arquivo of [
   'PlusJakartaSans-Variable.woff2',
   'OFL.txt',
