@@ -20,6 +20,7 @@ const wchar_t kPasswordAgain[] = L"Digite a senha de novo para continuar.";
 const wchar_t kEmptyPassword[] = L"Digite a senha.";
 const wchar_t kConnecting[] = L"Conectando\u2026";
 const wchar_t kConnected[] = L"Conectado \u00b7 ";
+const char kWrongAdminPassword[] = "Senha incorreta.";
 
 std::string U8(const std::wstring& text) { return WideToUtf8(text); }
 std::wstring Wide(const std::string& text) { return Utf8ToWide(text); }
@@ -68,6 +69,54 @@ AccountView ViewOf(const SavedAccount& account) {
 
 std::optional<std::wstring> NoDecrypt(const std::wstring&) { return std::nullopt; }
 
+const char* ActionName(Atalho::Acao action) {
+    switch (action) {
+        case Atalho::Transferir:
+            return "transferir";
+        case Atalho::Consulta:
+            return "consulta";
+        case Atalho::Teclas:
+            return "teclas";
+        case Atalho::Ligar:
+            break;
+    }
+    return "ligar";
+}
+
+Atalho::Acao ActionOf(const std::string& name) {
+    if (name == "transferir") return Atalho::Transferir;
+    if (name == "consulta") return Atalho::Consulta;
+    if (name == "teclas") return Atalho::Teclas;
+    return Atalho::Ligar;   // o Protocol so deixa passar as quatro
+}
+
+const char* BlfName(BlfState state) {
+    switch (state) {
+        case BlfState::Free:
+            return "livre";
+        case BlfState::Ringing:
+            return "tocando";
+        case BlfState::Busy:
+            return "ocupado";
+        case BlfState::Unknown:
+            break;
+    }
+    return "desconectado";
+}
+
+template <typename Value>
+const Value* FindIn(const std::vector<std::pair<std::string, Value>>& list, const std::string& key) {
+    for (const auto& entry : list) {
+        if (entry.first == key) return &entry.second;
+    }
+    return nullptr;
+}
+
+AccountProfile WithServers(AccountProfile profile, const std::vector<ServerPort>& servers) {
+    profile.serverPorts = servers;
+    return profile;
+}
+
 }  // namespace
 
 // Os nomes dos contatos para o controlador (o ContactsStore tem a trava dele: qualquer thread).
@@ -92,6 +141,11 @@ public:
     void OnSnapshot(const CallSnapshot& snapshot) override {
         DesktopApp& app = app_;
         app.Post([&app, snapshot] {
+            // O bipe do fim (spec 5): a ultima ligacao acabou e uma das que acabaram foi atendida (uma vez, tambem
+            // quando duas acabam juntas). Nao para a recusada, a perdida e a que nao completou (sem activeSinceMs).
+            const CallSnapshot& before = app.call_;
+            const bool answeredEnded = !snapshot.top && ((before.top && before.top->activeSinceMs > 0) ||
+                                                         (before.second && before.second->activeSinceMs > 0));
             app.call_ = snapshot;
             // O aviso de 2 s (o fim de uma feita, "<nome> desligou", sem conexao, a transferencia recusada) vai como
             // toast quando aparece.
@@ -99,6 +153,9 @@ public:
                 app.Toast(snapshot.endMessage);
             }
             app.lastEndMessage_ = snapshot.endMessage;
+            if (answeredEnded && !app.quitting_ && app.settings_.Get().bipeFim && app.hooks_.post) {
+                app.hooks_.post(EndBeepMessage());
+            }
         });
     }
     void OnRecent(const Recent& recent) override {
@@ -137,12 +194,12 @@ DesktopApp::DesktopApp(DesktopConfig config, DesktopHooks hooks, CallEngine& eng
       recents_(files, config_.paths.recents),
       settings_(files, config_.paths.settings),
       names_(new Names(contacts_)),
-      listener_(new Listener(*this)) {
-    const std::wstring ddi = config_.profile.account.ddi;
-    const std::wstring prefix = config_.profile.account.externalPrefix;
+      listener_(new Listener(*this)),
+      atalhos_(files, config_.paths.atalhos),
+      admin_(files, cipher, config_.paths.admin, config_.profile) {
     controller_.reset(new CallController(
         engine, *listener_, clock, scheduler, *names_,
-        [ddi, prefix](std::string number) { return U8(ContactDialString(Wide(number), ddi, prefix)); },
+        [this](std::string number) { return DialRule(number); },
         [this] { return registered_.load(); }));
     executor_ = executor ? std::move(executor) : std::unique_ptr<Executor>(new SerialExecutor());
     ResetLogin();
@@ -151,6 +208,7 @@ DesktopApp::DesktopApp(DesktopConfig config, DesktopHooks hooks, CallEngine& eng
 DesktopApp::~DesktopApp() {
     Shutdown();
     if (loginTimer_ != 0) scheduler_.Cancel(loginTimer_);
+    if (adminTimer_ != 0) scheduler_.Cancel(adminTimer_);
 }
 
 void DesktopApp::Start() {
@@ -220,6 +278,10 @@ void DesktopApp::Notify(const std::string& text) {
     Post([this, text] { Toast(text); });
 }
 
+void DesktopApp::SetInternet(bool available) {
+    Post([this, available] { HandleInternet(available); });
+}
+
 void DesktopApp::Shutdown() {
     executor_->Stop();
 }
@@ -244,6 +306,12 @@ void DesktopApp::OnTransfer(int callId, int sipCode) {
     controller_->OnTransfer(callId, sipCode);
 }
 
+void DesktopApp::OnBlf(const std::string& number, BlfState state) {
+    // A vez das assinaturas de agora (na thread do motor): HandleBlf descarta o aviso de uma assinatura mais velha.
+    const int64_t generation = blfGeneration_.load();
+    Post([this, generation, number, state] { HandleBlf(generation, number, state); });
+}
+
 void DesktopApp::OnLog(int level, const std::string& line) {
     Log("motor " + std::to_string(level) + ": " + line);
 }
@@ -258,6 +326,7 @@ void DesktopApp::Post(std::function<void()> task) {
         } catch (...) {
             Log("erro na thread de comandos");
         }
+        UpdateBlf();
         PublishState(/*force=*/false);
     });
     if (!queued) Log("tarefa descartada: a fila de comandos ja parou");
@@ -268,6 +337,8 @@ void DesktopApp::Execute(const Command& command) {
         Log(std::string("comando ignorado depois do Sair: ") + CommandName(command.kind));
         return;
     }
+    // Qualquer comando com a area do administrador aberta recomeca os 10 min (o ready e a pagina que recarregou).
+    if (adminOpen_ && command.kind != CommandKind::Ready) TouchAdmin();
     switch (command.kind) {
         case CommandKind::Ready:
             Log("interface pronta");
@@ -335,6 +406,10 @@ void DesktopApp::Execute(const Command& command) {
             controller_->Split();
             break;
         case CommandKind::SetDnd: {
+            if (command.on.value_or(false) && !admin_.Get().mostrarNaoPerturbe) {
+                Log("setDnd recusado: o administrador escondeu o Nao perturbe");
+                break;
+            }
             Settings settings = settings_.Get();
             settings.doNotDisturb = command.on.value_or(false);
             controller_->SetDoNotDisturb(settings.doNotDisturb);
@@ -342,6 +417,10 @@ void DesktopApp::Execute(const Command& command) {
             break;
         }
         case CommandKind::SetAutoAnswer: {
+            if (command.on.value_or(false) && !admin_.Get().mostrarAtenderAuto) {
+                Log("setAutoAnswer recusado: o administrador escondeu o Atender automatico");
+                break;
+            }
             Settings settings = settings_.Get();
             settings.autoAnswer = command.on.value_or(false);
             if (command.seconds) {
@@ -373,8 +452,13 @@ void DesktopApp::Execute(const Command& command) {
             break;
         }
         case CommandKind::SetSetting: {
-            // So a chave iniciarComWindows chega aqui (ParseCommand).
+            // So as chaves iniciarComWindows e bipeFim chegam aqui (ParseCommand).
             Settings settings = settings_.Get();
+            if (command.key == "bipeFim") {
+                settings.bipeFim = command.value;
+                SaveSettings(settings);
+                break;
+            }
             settings.startWithWindows = command.value;
             SaveSettings(settings);
             if (hooks_.setStartWithWindows) hooks_.setStartWithWindows(command.value);
@@ -390,6 +474,7 @@ void DesktopApp::Execute(const Command& command) {
             if (hooks_.minimize) hooks_.minimize();
             break;
         case CommandKind::CloseToTray:
+            if (adminOpen_) CloseAdmin("a janela fechou");
             if (hooks_.closeToTray) hooks_.closeToTray();
             break;
         case CommandKind::Resize:
@@ -416,6 +501,24 @@ void DesktopApp::Execute(const Command& command) {
         case CommandKind::CancelLogin:
             CancelPasswordSwitch();
             break;
+        case CommandKind::SaveShortcut:
+            SaveShortcut(command);
+            break;
+        case CommandKind::RemoveShortcut:
+            if (!atalhos_.Remove(command.shortcutId)) Log("removeShortcut: o atalho nao foi removido");
+            break;
+        case CommandKind::UseShortcut:
+            UseShortcut(command.shortcutId);
+            break;
+        case CommandKind::AdminLogin:
+            AdminLogin(command.password);
+            break;
+        case CommandKind::AdminLogout:
+            if (adminOpen_) CloseAdmin("sair da area do administrador");
+            break;
+        case CommandKind::AdminSet:
+            AdminSet(command.admin);
+            break;
     }
 }
 
@@ -427,6 +530,8 @@ void DesktopApp::Initialize() {
     if (!contacts_.Load()) Log("contatos.json ilegivel: lido como vazio");
     if (!recents_.Load()) Log("recentes.json ilegivel: lido como vazio");
     if (!settings_.Load()) Log("config.json ilegivel: valem os padroes");
+    if (!atalhos_.Load()) Log("atalhos.json ilegivel: lido como vazio");
+    if (!admin_.Load()) Log("admin.json ilegivel: valem os padroes");
 
     const LegacyImportResult imported = ImportLegacy(config_.paths.legacy, config_.decrypt ? config_.decrypt : NoDecrypt,
                                                      accounts_, contacts_, recents_, files_);
@@ -451,9 +556,11 @@ void DesktopApp::Initialize() {
         SaveSettings(observed);
     }
 
+    ApplyAdminLimits();
     const Settings settings = settings_.Get();
     controller_->SetDoNotDisturb(settings.doNotDisturb);
     controller_->SetAutoAnswer(settings.autoAnswer, settings.autoAnswerSeconds * 1000);
+    if (hooks_.updateChannel) hooks_.updateChannel(admin_.Get().canal);
     recentsSeenMs_ = clock_.NowMs();
     ApplyAudio();
 
@@ -518,7 +625,7 @@ void DesktopApp::StartLogin(const LoginRequest& request) {
     loginRequest_ = request;
     login_.busy = true;
     registered_ = false;
-    const int id = port_.SetAccount(request.input);
+    const int id = RegisterInEngine(request.input);
     engineAccountId_ = id;
     engineStoreId_.clear();
     registration_.reset();
@@ -562,6 +669,7 @@ void DesktopApp::ApplyLogin(const LoginOutcome& outcome) {
         engineStoreId_ = id;
         registration_ = 200;
         registered_ = true;
+        blfForce_ = true;
         passwordSwitch_.clear();
         ResetLogin();
         return;
@@ -584,8 +692,10 @@ void DesktopApp::HandleRegistration(int sipCode, bool active, int accountId) {
         ApplyLogin(flow_.OnRegistration(sipCode, false));
         return;
     }
+    const bool was = registered_;
     registration_ = sipCode;
     registered_ = sipCode >= 200 && sipCode <= 299;
+    if (registered_ && !was) blfForce_ = true;   // registrou de novo: o BLF tambem (UpdateBlf)
 }
 
 void DesktopApp::SelectAccount(const std::string& id) {
@@ -691,7 +801,7 @@ void DesktopApp::ActivateStored(const SavedAccount& account) {
         return;
     }
     registered_ = false;
-    const int id = port_.SetAccount(InputOf(account));
+    const int id = RegisterInEngine(InputOf(account));
     engineAccountId_ = id;
     engineStoreId_ = account.id;
     registration_.reset();
@@ -728,11 +838,11 @@ void DesktopApp::ResetLogin() {
 
 // A troca de conta (ou o Entrar) roda sem ligacao: ja, ou no fim da ultima, com o aviso. Uma nova troca toma o
 // lugar da que esperava.
-void DesktopApp::WhenIdle(PendingChange change) {
+void DesktopApp::WhenIdle(PendingChange change, bool notice) {
     change.token = ++pendingToken_;
     const int token = change.token;
     pending_ = std::move(change);
-    if (controller_->HasCalls()) Toast(U8(kSwitchNotice));
+    if (notice && controller_->HasCalls()) Toast(U8(kSwitchNotice));
     // O callback roda na thread do motor, na do agendador ou aqui: so poe a troca na fila.
     controller_->WhenIdle([this, token] { Post([this, token] { RunPending(token); }); });
 }
@@ -748,6 +858,13 @@ void DesktopApp::RunPending(int token) {
     pending_.reset();
     if (change.login) {
         StartLogin(*change.login);
+    } else if (change.reRegister) {
+        // So se ela ainda e a do motor (uma troca, um Entrar ou a remocao no meio ja registraram com a lista nova).
+        const std::optional<SavedAccount> account = FindAccount(accounts_, change.switchTo);
+        if (account && engineStoreId_ == account->id && !loginRequest_) {
+            Log("servidores do administrador: a conta registra de novo com a porta nova");
+            ActivateStored(*account);
+        }
     } else {
         SwitchTo(change.switchTo);
     }
@@ -758,6 +875,7 @@ void DesktopApp::RunPending(int token) {
 // Entrar sem o Cancelar); um Entrar que esperava e descartado.
 void DesktopApp::Quit() {
     quitting_ = true;
+    if (adminOpen_) CloseAdmin("sair");
     const std::optional<SavedAccount> target =
         pending_ && !pending_->switchTo.empty() ? FindAccount(accounts_, pending_->switchTo) : std::nullopt;
     const std::optional<SavedAccount> current = accounts_.Active();
@@ -877,6 +995,7 @@ BridgeState DesktopApp::BuildState() const {
                 view.text = U8(RegistrationMessage(code, false));
             }
         }
+        view.internet = internet_;
         state.account = view;
     }
     const Settings settings = settings_.Get();
@@ -911,6 +1030,30 @@ BridgeState DesktopApp::BuildState() const {
     state.version = config_.version;
     state.keypad = keypad_;
     state.keypadSeq = keypadSeq_;
+
+    for (const Atalho& atalho : atalhos_.All()) {
+        ShortcutView view;
+        view.id = atalho.id;
+        view.name = atalho.nome;
+        view.number = atalho.numero;
+        view.action = ActionName(atalho.acao);
+        view.blf = atalho.blf;
+        view.state = ShortcutState(atalho);
+        state.shortcuts.push_back(view);
+    }
+    const AdminConfig& admin = admin_.Get();
+    state.admin.open = adminOpen_;
+    state.admin.showDoNotDisturb = admin.mostrarNaoPerturbe;
+    state.admin.showAutoAnswer = admin.mostrarAtenderAuto;
+    state.admin.blf = admin.blf;
+    state.admin.pickup = admin.puxar;
+    state.admin.pickupCode = admin.codigoPuxar;
+    for (const ServerPort& server : admin.servidores) {
+        state.admin.servers.push_back(ServerView{U8(server.address), server.port});
+    }
+    state.admin.channel = admin.canal;
+    state.adminLogin = adminLogin_;
+    state.endBeep = settings.bipeFim;
     return state;
 }
 
@@ -920,6 +1063,279 @@ void DesktopApp::Toast(const std::string& text) {
 
 void DesktopApp::Log(const std::string& line) const {
     if (hooks_.log) hooks_.log(line);
+}
+
+// A conta vai ao motor com a tabela de portas do administrador (Ruling 3: ela toma o lugar do [portas] do perfil).
+int DesktopApp::RegisterInEngine(AccountInput input) {
+    input.serverPorts = admin_.Get().servidores;
+    return port_.SetAccount(input);
+}
+
+// A regra dos numeros dos contatos (e dos atalhos): o +<ddi> sai e o prefixo de saida entra nos numeros longos.
+std::string DesktopApp::DialRule(const std::string& number) const {
+    return U8(ContactDialString(Wide(number), config_.profile.account.ddi, config_.profile.account.externalPrefix));
+}
+
+void DesktopApp::SaveShortcut(const Command& command) {
+    Atalho atalho;
+    atalho.id = command.shortcutId;
+    atalho.nome = command.name;
+    atalho.numero = command.number;
+    atalho.acao = ActionOf(command.action);
+    atalho.blf = command.blf;
+    std::string error;
+    if (!atalhos_.Save(atalho, &error).empty()) return;
+    Log("saveShortcut: o atalho nao foi gravado: " + error);
+    if (!error.empty()) Toast(error);
+}
+
+// O atalho (spec 3.2 e 4): o puxar ligacao num ramal tocando; senao a acao, fora ou durante a ligacao.
+void DesktopApp::UseShortcut(const std::string& id) {
+    const std::vector<Atalho>& all = atalhos_.All();
+    const auto found = std::find_if(all.begin(), all.end(), [&id](const Atalho& atalho) { return atalho.id == id; });
+    if (found == all.end()) {
+        Log("useShortcut: o atalho nao existe");
+        return;
+    }
+    const Atalho atalho = *found;
+    const AdminConfig& admin = admin_.Get();
+    const std::optional<std::string> blf = ShortcutState(atalho);
+    if (blf && *blf == BlfName(BlfState::Ringing) && admin.puxar && !admin.codigoPuxar.empty()) {
+        Log("useShortcut: puxar a ligacao");
+        controller_->Dial(PickupNumber(admin.codigoPuxar, atalho.numero));   // o codigo vai como esta, sem a regra
+        return;
+    }
+    const bool inCall = controller_->HasCalls();
+    switch (atalho.acao) {
+        case Atalho::Ligar:
+            controller_->DialContact(atalho.numero);
+            break;
+        case Atalho::Transferir:
+            if (inCall) {
+                if (!controller_->Transfer(DialRule(atalho.numero))) Log("useShortcut: a transferencia nao saiu");
+            } else {
+                controller_->DialContact(atalho.numero);
+            }
+            break;
+        case Atalho::Consulta:
+            if (inCall) {
+                if (!controller_->Consult(DialRule(atalho.numero))) Log("useShortcut: a consulta nao saiu");
+            } else {
+                controller_->DialContact(atalho.numero);
+            }
+            break;
+        case Atalho::Teclas:
+            if (!inCall) {
+                Log("useShortcut recusado: Enviar teclas sem ligacao");
+                break;
+            }
+            controller_->Dtmf(atalho.numero);
+            break;
+    }
+}
+
+// O estado do BLF do atalho: nada sem o BLF dele ou do administrador; desconectado ate o primeiro aviso (tambem sem
+// conta no motor).
+std::optional<std::string> DesktopApp::ShortcutState(const Atalho& atalho) const {
+    if (!atalho.blf || !admin_.Get().blf) return std::nullopt;
+    const BlfState* state = FindIn(blfStates_, atalho.numero);
+    return std::string(BlfName(state ? *state : BlfState::Unknown));
+}
+
+// Os numeros que o BLF acompanha, sem repetir, na ordem dos atalhos.
+std::vector<std::string> DesktopApp::BlfNumbers() const {
+    std::vector<std::string> numbers;
+    if (!admin_.Get().blf) return numbers;
+    for (const Atalho& atalho : atalhos_.All()) {
+        if (atalho.blf && std::find(numbers.begin(), numbers.end(), atalho.numero) == numbers.end()) {
+            numbers.push_back(atalho.numero);
+        }
+    }
+    return numbers;
+}
+
+// Depois de cada tarefa da fila: a lista do BLF no motor segue os atalhos, o administrador e a conta em uso. A conta
+// nova (ou nenhuma) comeca sem lista no motor (SetAccount e RemoveAccount a esvaziam) e sem estados.
+void DesktopApp::UpdateBlf() {
+    const bool live = engineAccountId_ != 0 && !loginRequest_;
+    if (!live || blfAccount_ != engineAccountId_) {
+        blfWatched_.clear();
+        blfAdded_.clear();
+        blfStates_.clear();
+        blfAccount_ = live ? engineAccountId_ : 0;
+    }
+    if (!live) {
+        blfForce_ = false;
+        return;
+    }
+    const std::vector<std::string> numbers = BlfNumbers();
+    const bool force = blfForce_ && !numbers.empty();
+    blfForce_ = false;
+    std::vector<std::string> sorted = numbers;   // a ordem nao importa ao motor
+    std::vector<std::string> watched = blfWatched_;
+    std::sort(sorted.begin(), sorted.end());
+    std::sort(watched.begin(), watched.end());
+    if (sorted == watched && !force) return;
+    // Os que sairam perdem o estado; os que entraram (tambem os que sairam e voltaram) ganham uma vez nova, e um aviso
+    // de antes dela nao vale (HandleBlf).
+    const auto listed = [&numbers](const std::string& number) {
+        return std::find(numbers.begin(), numbers.end(), number) != numbers.end();
+    };
+    blfStates_.erase(std::remove_if(blfStates_.begin(), blfStates_.end(),
+                                    [&listed](const std::pair<std::string, BlfState>& e) { return !listed(e.first); }),
+                     blfStates_.end());
+    blfAdded_.erase(std::remove_if(blfAdded_.begin(), blfAdded_.end(),
+                                   [&listed](const std::pair<std::string, int64_t>& e) { return !listed(e.first); }),
+                    blfAdded_.end());
+    const int64_t generation = blfGeneration_.load() + 1;
+    bool added = false;
+    for (const std::string& number : numbers) {
+        if (!FindIn(blfAdded_, number)) {
+            blfAdded_.emplace_back(number, generation);
+            added = true;
+        }
+    }
+    if (added) blfGeneration_.store(generation);   // antes do WatchBlf: os avisos das assinaturas novas ja levam esta
+    blfWatched_ = numbers;
+    Log("blf: " + std::to_string(numbers.size()) + " ramal(is) acompanhado(s)");
+    port_.WatchBlf(numbers);
+}
+
+void DesktopApp::HandleBlf(int64_t generation, const std::string& number, BlfState state) {
+    const int64_t* added = FindIn(blfAdded_, number);
+    if (!added || generation < *added) return;   // um ramal fora da lista, ou de uma assinatura que ja saiu
+    for (auto& entry : blfStates_) {
+        if (entry.first == number) {
+            entry.second = state;
+            return;
+        }
+    }
+    blfStates_.emplace_back(number, state);
+}
+
+// adminLogin (spec 6.1): a senha certa abre a area; 5 erradas seguidas, 30 s sem aceitar outra. A senha digitada nunca
+// vai ao diagnostico.
+void DesktopApp::AdminLogin(const std::string& typed) {
+    const int64_t now = clock_.NowMs();
+    if (adminLogin_.waitUntilMs != 0 && now < adminLogin_.waitUntilMs) {
+        adminLogin_.error = kWrongAdminPassword;
+        Log("adminLogin recusado: a espera depois de 5 senhas erradas");
+        return;
+    }
+    const bool right = config_.checkAdminPassword ? config_.checkAdminPassword(typed) : CheckAdminPassword(typed);
+    if (right) {
+        adminFailures_ = 0;
+        adminLogin_ = AdminLoginView();
+        adminOpen_ = true;
+        TouchAdmin();
+        Log("area do administrador aberta");
+        return;
+    }
+    adminLogin_.error = kWrongAdminPassword;
+    adminLogin_.waitUntilMs = 0;
+    if (++adminFailures_ >= kAdminMaxFailures) {
+        adminFailures_ = 0;
+        adminLogin_.waitUntilMs = now + kAdminLockMs;
+        Log("adminLogin: 5 senhas erradas seguidas; espera de 30 s");
+        return;
+    }
+    Log("adminLogin: senha incorreta");
+}
+
+void DesktopApp::AdminSet(const AdminChanges& changes) {
+    if (!adminOpen_) {
+        Log("adminSet recusado: a area do administrador esta fechada");
+        return;
+    }
+    const AdminConfig before = admin_.Get();
+    AdminConfig next = before;
+    if (changes.showDoNotDisturb) next.mostrarNaoPerturbe = *changes.showDoNotDisturb;
+    if (changes.showAutoAnswer) next.mostrarAtenderAuto = *changes.showAutoAnswer;
+    if (changes.blf) next.blf = *changes.blf;
+    if (changes.pickup) next.puxar = *changes.pickup;
+    if (changes.pickupCode) next.codigoPuxar = *changes.pickupCode;
+    if (changes.channel) next.canal = *changes.channel;
+    if (changes.servers) {
+        next.servidores.clear();
+        for (const ServerView& server : *changes.servers) {
+            next.servidores.push_back(ServerPort{Wide(server.address), server.port});
+        }
+    }
+    std::string error;
+    if (!admin_.Save(next, &error)) {
+        Log("adminSet: nada foi gravado: " + error);
+        if (!error.empty()) Toast(error);
+        return;
+    }
+    const AdminConfig& saved = admin_.Get();
+    ApplyAdminLimits();
+    if (saved.canal != before.canal && hooks_.updateChannel) hooks_.updateChannel(saved.canal);
+    // A porta do servidor da conta em uso mudou: ela registra de novo (no fim da ligacao, se ha uma). Uma troca ou um
+    // Entrar que espera ja vai com a lista nova.
+    if (engineStoreId_.empty() || loginRequest_ || pending_) return;
+    const std::optional<SavedAccount> account = FindAccount(accounts_, engineStoreId_);
+    if (!account) return;
+    const AccountProfile& profile = config_.profile.account;
+    if (PortForServer(WithServers(profile, before.servidores), account->address) ==
+        PortForServer(WithServers(profile, saved.servidores), account->address)) {
+        return;
+    }
+    PendingChange change;
+    change.switchTo = account->id;
+    change.reRegister = true;
+    WhenIdle(std::move(change), /*notice=*/false);
+}
+
+// Os 10 min sem comando recomecam.
+void DesktopApp::TouchAdmin() {
+    if (adminTimer_ != 0) scheduler_.Cancel(adminTimer_);
+    const int token = ++adminToken_;
+    adminTimer_ = scheduler_.Schedule(kAdminIdleMs, [this, token] {
+        Post([this, token] {
+            if (token != adminToken_ || !adminOpen_) return;
+            adminTimer_ = 0;
+            CloseAdmin("10 minutos sem uso");
+        });
+    });
+}
+
+void DesktopApp::CloseAdmin(const char* why) {
+    adminOpen_ = false;
+    if (adminTimer_ != 0) scheduler_.Cancel(adminTimer_);
+    adminTimer_ = 0;
+    ++adminToken_;
+    Log(std::string("area do administrador fechada: ") + why);
+}
+
+// O Nao perturbe e o Atender automatico escondidos pelo administrador ficam desligados (gravado no config.json).
+void DesktopApp::ApplyAdminLimits() {
+    const AdminConfig& admin = admin_.Get();
+    Settings settings = settings_.Get();
+    bool changed = false;
+    if (!admin.mostrarNaoPerturbe && settings.doNotDisturb) {
+        settings.doNotDisturb = false;
+        controller_->SetDoNotDisturb(false);
+        Log("o administrador escondeu o Nao perturbe: desligado");
+        changed = true;
+    }
+    if (!admin.mostrarAtenderAuto && settings.autoAnswer) {
+        settings.autoAnswer = false;
+        controller_->SetAutoAnswer(false, settings.autoAnswerSeconds * 1000);
+        Log("o administrador escondeu o Atender automatico: desligado");
+        changed = true;
+    }
+    if (changed) SaveSettings(settings);
+}
+
+// A internet (spec 8): sem ela, o registro para no motor e a ligacao nao sai (o aviso sem conexao); com ela de volta,
+// a conta registra de novo (Conectando, ate a resposta).
+void DesktopApp::HandleInternet(bool available) {
+    if (available == internet_) return;
+    internet_ = available;
+    Log(available ? "internet: voltou" : "internet: caiu");
+    port_.SetNetworkAvailable(available);
+    registered_ = false;
+    if (available && engineAccountId_ != 0 && !loginRequest_) registration_.reset();
 }
 
 }  // namespace starsonic

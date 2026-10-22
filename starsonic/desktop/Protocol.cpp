@@ -1,5 +1,7 @@
 #include "Protocol.h"
 
+#include <cstdint>
+
 #include "nlohmann/json.hpp"
 
 namespace starsonic {
@@ -49,6 +51,12 @@ const Name kNames[] = {
     {CommandKind::UpdateLater, "updateLater"},
     {CommandKind::CancelLogin, "cancelLogin"},
     {CommandKind::Resize, "resize"},
+    {CommandKind::SaveShortcut, "saveShortcut"},
+    {CommandKind::RemoveShortcut, "removeShortcut"},
+    {CommandKind::UseShortcut, "useShortcut"},
+    {CommandKind::AdminLogin, "adminLogin"},
+    {CommandKind::AdminLogout, "adminLogout"},
+    {CommandKind::AdminSet, "adminSet"},
 };
 
 // Le os campos de um comando, anotando o primeiro problema (um campo obrigatorio que falta ou um tipo errado).
@@ -91,6 +99,25 @@ public:
             return Wrong(key, "inteiro de 0 para cima");
         }
         *out = static_cast<int>(value->get<int64_t>());
+    }
+    // Uma lista de {endereco: texto, porta: inteiro} (a porta como veio, no intervalo de um int: a loja a confere).
+    void Servers(const char* key, std::optional<std::vector<ServerView>>* out) {
+        const Json* value = Find(key, false);
+        if (!value) return;
+        if (!value->is_array()) return Wrong(key, "lista");
+        std::vector<ServerView> servers;
+        for (const Json& item : *value) {
+            if (!item.is_object()) return Wrong(key, "lista de {endereco, porta}");
+            const auto address = item.find("endereco");
+            const auto port = item.find("porta");
+            if (address == item.end() || !address->is_string()) return Wrong(key, "lista com endereco (texto)");
+            if (port == item.end() || !port->is_number_integer() || port->get<int64_t>() < INT32_MIN ||
+                port->get<int64_t>() > INT32_MAX) {
+                return Wrong(key, "lista com porta (inteiro)");
+            }
+            servers.push_back(ServerView{address->get<std::string>(), static_cast<int>(port->get<int64_t>())});
+        }
+        *out = servers;
     }
     void Fail(const std::string& message) {
         if (ok()) error_ = message;
@@ -206,9 +233,28 @@ Out AccountJson(const AccountView& account, bool current) {
     if (current) {
         out["status"] = StatusName(account.status);
         out["texto"] = account.text;
+        out["internet"] = account.internet;
     } else {
         out["emUso"] = account.inUse;
     }
+    return out;
+}
+
+// Fechada, a area do administrador mostra so o que a interface precisa para esconder os botoes (spec 9).
+Out AdminJson(const AdminView& admin) {
+    Out out{{"aberto", admin.open},
+            {"naoPerturbe", admin.showDoNotDisturb},
+            {"atenderAuto", admin.showAutoAnswer},
+            {"blf", admin.blf}};
+    if (!admin.open) return out;
+    out["puxar"] = admin.pickup;
+    out["codigoPuxar"] = admin.pickupCode;
+    Out servers = Out::array();
+    for (const ServerView& server : admin.servers) {
+        servers.push_back(Out{{"endereco", server.address}, {"porta", server.port}});
+    }
+    out["servidores"] = servers;
+    out["canal"] = admin.channel;
     return out;
 }
 
@@ -312,7 +358,9 @@ std::optional<Command> ParseCommand(const std::string& text, std::string* error)
             break;
         case CommandKind::SetSetting:
             f.Text("chave", &command.key, true);
-            if (f.ok() && command.key != "iniciarComWindows") f.Fail("chave desconhecida: " + command.key.substr(0, 40));
+            if (f.ok() && command.key != "iniciarComWindows" && command.key != "bipeFim") {
+                f.Fail("chave desconhecida: " + command.key.substr(0, 40));
+            }
             f.Flag("valor", &command.value, true);
             break;
         case CommandKind::OpenExternal:
@@ -325,7 +373,35 @@ std::optional<Command> ParseCommand(const std::string& text, std::string* error)
                 f.Fail("borda desconhecida: " + command.edge.substr(0, 40));
             }
             break;
+        case CommandKind::SaveShortcut:
+            f.Text("id", &command.shortcutId, false);
+            f.Text("nome", &command.name, true);
+            f.Text("numero", &command.number, true);
+            f.Text("acao", &command.action, true);
+            f.Flag("blf", &command.blf, true);
+            if (f.ok() && command.action != "ligar" && command.action != "transferir" && command.action != "consulta" &&
+                command.action != "teclas") {
+                f.Fail("acao desconhecida: " + command.action.substr(0, 40));
+            }
+            break;
+        case CommandKind::RemoveShortcut:
+        case CommandKind::UseShortcut:
+            f.Text("id", &command.shortcutId, true);
+            break;
+        case CommandKind::AdminLogin:
+            f.Text("senha", &command.password, true);
+            break;
+        case CommandKind::AdminSet:
+            f.OptionalFlag("naoPerturbe", &command.admin.showDoNotDisturb, false);
+            f.OptionalFlag("atenderAuto", &command.admin.showAutoAnswer, false);
+            f.OptionalFlag("blf", &command.admin.blf, false);
+            f.OptionalFlag("puxar", &command.admin.pickup, false);
+            f.OptionalText("codigoPuxar", &command.admin.pickupCode);
+            f.Servers("servidores", &command.admin.servers);
+            f.OptionalText("canal", &command.admin.channel);
+            break;
         case CommandKind::Ready:
+        case CommandKind::AdminLogout:
         case CommandKind::Answer:
         case CommandKind::Reject:
         case CommandKind::CompleteTransfer:
@@ -391,6 +467,19 @@ std::string StateMessage(const BridgeState& state) {
     s["versao"] = state.version;
     s["teclado"] = state.keypad;
     s["tecladoVez"] = state.keypadSeq;
+    Out shortcuts = Out::array();
+    for (const ShortcutView& shortcut : state.shortcuts) {
+        shortcuts.push_back(Out{{"id", shortcut.id},
+                                {"nome", shortcut.name},
+                                {"numero", shortcut.number},
+                                {"acao", shortcut.action},
+                                {"blf", shortcut.blf},
+                                {"estado", shortcut.state ? Out(*shortcut.state) : Out()}});
+    }
+    s["atalhos"] = shortcuts;
+    s["admin"] = AdminJson(state.admin);
+    s["entrarAdmin"] = Out{{"erro", state.adminLogin.error}, {"esperaAte", state.adminLogin.waitUntilMs}};
+    s["config"] = Out{{"bipeFim", state.endBeep}};
     return Dump(Out{{"v", kBridgeVersion}, {"type", "state"}, {"state", s}});
 }
 
@@ -401,6 +490,8 @@ std::string ToastMessage(const std::string& text) {
 std::string UpdateMessage(const std::string& version, const std::string& notes) {
     return Dump(Out{{"v", kBridgeVersion}, {"type", "update"}, {"versao", version}, {"notas", notes}});
 }
+
+std::string EndBeepMessage() { return Dump(Out{{"v", kBridgeVersion}, {"type", "ring"}, {"tipo", "fim"}}); }
 
 std::string RingMessage(RingKind kind) {
     const char* name = "parar";

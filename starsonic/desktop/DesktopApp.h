@@ -16,7 +16,9 @@
 //   entre si. Com uma thread so, os comandos da interface chegam ao motor na ordem em que foram mandados (o
 //   SetAccount, que espera ate ~5 s, tambem roda nela).
 // - Os eventos de ligacao do motor (OnIncomingCall, OnRejectedBusy, OnCallState, OnTransfer) vao direto ao
-//   controlador, na thread de eventos do motor (o controlador tem a trava dele). O OnRegistration vai para a fila.
+//   controlador, na thread de eventos do motor (o controlador tem a trava dele). O OnRegistration e o OnBlf vao para
+//   a fila (o OnBlf leva a vez das assinaturas de quando chegou: um aviso de uma assinatura que ja saiu, da conta
+//   anterior ou de um ramal que saiu e voltou a lista, nao vale).
 // - Os avisos do controlador (o estado da ligacao, os Recentes, a perdida e o toque) chegam em qualquer thread (a do
 //   motor, a de comandos ou a do agendador), na ordem dele, e vao para a fila na mesma ordem.
 // - Os callbacks do WhenIdle (a troca de conta e o Entrar esperando o fim da ligacao) rodam na thread do motor, na
@@ -48,6 +50,8 @@
 #include <string>
 #include <vector>
 
+#include "Admin.h"
+#include "Atalhos.h"
 #include "CallController.h"
 #include "CallEngine.h"
 #include "Cipher.h"
@@ -65,7 +69,8 @@ namespace starsonic {
 // O registro da conta e os dispositivos de som do motor (o SipEngine de verdade, por um adaptador no executavel).
 // Os contratos sao os do SipEngine: SetAccount devolve o id que o OnRegistration traz (0: nao ha conta) e espera
 // ate ~5 s; SetAudioDevices com -1 e o padrao do Windows e devolve false se um id nao serve; RefreshAudioDevices
-// rele a lista do sistema (os ids de AudioDevices mudam depois dele).
+// rele a lista do sistema (os ids de AudioDevices mudam depois dele). WatchBlf e SetNetworkAvailable (rc.3) sao os do
+// SipEngine: a lista do BLF e da conta de agora (SetAccount e RemoveAccount a esvaziam).
 class RegistrationPort {
 public:
     virtual ~RegistrationPort() = default;
@@ -74,6 +79,8 @@ public:
     virtual std::vector<AudioDevice> AudioDevices() = 0;
     virtual bool SetAudioDevices(int captureId, int playbackId) = 0;
     virtual void RefreshAudioDevices() = 0;
+    virtual void WatchBlf(const std::vector<std::string>& numbers) = 0;
+    virtual void SetNetworkAvailable(bool available) = 0;
 };
 
 // Os arquivos (caminhos UTF-8): os quatro da pasta de dados (spec 6.6) e os da rc.7 (LegacyImport.h).
@@ -82,6 +89,8 @@ struct DesktopPaths {
     std::string contacts;   // contatos.json
     std::string recents;    // recentes.json
     std::string settings;   // config.json
+    std::string atalhos;    // atalhos.json (rc.3)
+    std::string admin;      // admin.json (rc.3; pelo cifrador)
     LegacyPaths legacy;
 };
 
@@ -94,6 +103,9 @@ struct DesktopConfig {
     // Gerenciador de Tarefas). O registro vale mais que o config.json: na abertura, a configuracao passa a ser esta
     // (gravada no config.json e no estado), sem o gancho setStartWithWindows. Nada: vale o config.json.
     std::optional<bool> observedStartWithWindows;
+    // A conferencia da senha do administrador (rc.3). Vazio: CheckAdminPassword (o resumo embutido). Os testes dao uma
+    // senha deles (nunca a de verdade).
+    std::function<bool(const std::string& typed)> checkAdminPassword;
 };
 
 // O que o executavel faz pelo DesktopApp. Todos chamados na thread de comandos, menos o log (ver acima). Um vazio
@@ -111,6 +123,9 @@ struct DesktopHooks {
     std::function<void()> sendDiagnostics;
     std::function<void(bool on)> setStartWithWindows;    // o Iniciar com o Windows (HKCU\...\Run)
     std::function<void(bool now)> updateAnswer;          // a resposta a OfferUpdate (true: Atualizar agora)
+    // O canal de atualizacao que vale (rc.3): "teste", "estavel" ou "" (o do build). Na abertura e quando o
+    // administrador muda o canal; vale a partir da proxima verificacao.
+    std::function<void(const std::string& channel)> updateChannel;
 };
 
 // O app de PC. Responsavel por:
@@ -126,10 +141,29 @@ struct DesktopHooks {
 //   abertura; Recentes (e as perdidas desde a ultima visita a eles), contatos e configuracoes.
 // - A abertura (Start): as lojas, a migracao da rc.7 e o registro da conta em uso.
 // - DialLink (o link tel:): so poe o numero no Teclado, nunca liga.
+// - rc.3 (spec 3 a 8):
+//   - Os atalhos (atalhos.json): saveShortcut, removeShortcut e useShortcut, com a acao da spec 3.2 pelos comandos de
+//     sempre do controlador e a regra dos contatos (DialContact; a transferencia e a consulta com o numero ja pela
+//     regra; Enviar teclas sem ligacao e recusado). Num atalho com o BLF tocando, com o puxar e o codigo do
+//     administrador, o useShortcut liga para o PickupNumber (pelo Dial, sem a regra), em vez da acao.
+//   - O BLF: assina (RegistrationPort::WatchBlf) os numeros dos atalhos com o BLF, se o administrador ligou o BLF, na
+//     conta em uso (registrada no motor, sem um Entrar esperando): de novo quando os atalhos, o administrador ou a
+//     conta mudam, e quando a conta volta a ficar registrada.
+//   - A area do administrador (admin.json): adminLogin (a senha; 5 erradas seguidas: 30 s de espera, so na memoria),
+//     adminSet (so com a area aberta), adminLogout; a area fecha sozinha depois de 10 min sem nenhum comando, e no
+//     closeToTray e no quit. O Nao perturbe e o Atender automatico escondidos ficam desligados (e o comando que os
+//     liga e recusado). Os servidores do administrador sao a tabela de portas da conta (AccountInput::serverPorts);
+//     a porta do servidor em uso mudou: a conta registra de novo (no fim da ligacao, se ha uma, sem aviso).
+//   - SetInternet: a internet que o host ve (RegistrationPort::SetNetworkAvailable; conta.internet).
+//   - O bipe do fim (ring fim): uma ligacao atendida acabou, nenhuma outra ficou e o bipeFim esta ligado.
 class DesktopApp : public EngineListener {
 public:
     // O tempo do Entrar (spec do Windows 7.1).
     static constexpr int64_t kLoginTimeoutMs = 15000;
+    // A area do administrador (spec 6.1): fecha depois de 10 min sem comando; 5 senhas erradas seguidas: 30 s.
+    static constexpr int64_t kAdminIdleMs = 10 * 60 * 1000;
+    static constexpr int64_t kAdminLockMs = 30000;
+    static constexpr int kAdminMaxFailures = 5;
 
     // executor: a fila de comandos (nullptr: um SerialExecutor; os testes dao uma que rodam na mao).
     DesktopApp(DesktopConfig config, DesktopHooks hooks, CallEngine& engine, RegistrationPort& port,
@@ -163,6 +197,10 @@ public:
     void OfferUpdate(const std::string& version, const std::string& notes);
     // Um aviso de 2 s do executavel (o toast: "Termine a chamada para atualizar."). So poe na fila.
     void Notify(const std::string& text);
+    // A internet que o host ve (o monitor de rede, rc.3): false para o registro no motor (SetNetworkAvailable) e mostra
+    // conta.internet false; true registra de novo. O mesmo valor de antes: nada. Antes de qualquer chamada, true. So
+    // poe na fila.
+    void SetInternet(bool available);
     // A fila de comandos roda o que ja tinha e para; daqui em diante nada mais entra. Nunca de dentro de um gancho.
     void Shutdown();
 
@@ -172,6 +210,7 @@ public:
     void OnRejectedBusy(const std::string& remoteUser, const std::string& remoteName) override;
     void OnCallState(int callId, CallState state, int sipCode) override;
     void OnTransfer(int callId, int sipCode) override;
+    void OnBlf(const std::string& number, BlfState state) override;
     void OnLog(int level, const std::string& line) override;
 
 private:
@@ -187,6 +226,7 @@ private:
         int token = 0;
         std::string switchTo;
         std::optional<LoginRequest> login;
+        bool reRegister = false;   // a conta em uso registra de novo (as portas do administrador mudaram)
     };
 
     // Na thread de comandos (todas abaixo).
@@ -206,7 +246,7 @@ private:
     void ShowPasswordRequest(const SavedAccount& account, bool keepEngine);
     void DropEngineAccount();
     void ResetLogin();
-    void WhenIdle(PendingChange change);
+    void WhenIdle(PendingChange change, bool notice = true);
     void RunPending(int token);
     void Quit();
     void ApplyAudio();
@@ -216,6 +256,21 @@ private:
     BridgeState BuildState() const;
     void Toast(const std::string& text);
     void Log(const std::string& line) const;
+    // rc.3
+    int RegisterInEngine(AccountInput input);
+    std::string DialRule(const std::string& number) const;
+    void SaveShortcut(const Command& command);
+    void UseShortcut(const std::string& id);
+    std::optional<std::string> ShortcutState(const Atalho& atalho) const;
+    std::vector<std::string> BlfNumbers() const;
+    void UpdateBlf();
+    void HandleBlf(int64_t generation, const std::string& number, BlfState state);
+    void AdminLogin(const std::string& typed);
+    void AdminSet(const AdminChanges& changes);
+    void TouchAdmin();
+    void CloseAdmin(const char* why);
+    void ApplyAdminLimits();
+    void HandleInternet(bool available);
 
     DesktopConfig config_;
     DesktopHooks hooks_;
@@ -263,6 +318,25 @@ private:
         std::string notes;
     };
     std::optional<UpdateOffer> updateOffer_;   // a pergunta da atualizacao, esperando a resposta
+
+    // rc.3 (so na thread de comandos, menos blfGeneration_).
+    AtalhosStore atalhos_;
+    AdminStore admin_;
+    bool internet_ = true;
+    // O BLF: a lista pedida ao motor (na conta blfAccount_), a vez em que cada numero entrou nela e o ultimo estado de
+    // cada numero. blfGeneration_ sobe antes de cada WatchBlf com um numero novo (o OnBlf, na thread do motor, le).
+    std::vector<std::string> blfWatched_;
+    int blfAccount_ = 0;
+    bool blfForce_ = false;   // a conta voltou a registrar: pede a lista de novo
+    std::atomic<int64_t> blfGeneration_{0};
+    std::vector<std::pair<std::string, int64_t>> blfAdded_;
+    std::vector<std::pair<std::string, BlfState>> blfStates_;
+    // A area do administrador.
+    bool adminOpen_ = false;
+    int adminTimer_ = 0;
+    int adminToken_ = 0;
+    int adminFailures_ = 0;   // as senhas erradas seguidas (so na memoria: abrir o app de novo zera)
+    AdminLoginView adminLogin_;
 
     std::unique_ptr<Executor> executor_;   // por ultimo: parado primeiro (no destrutor)
 };

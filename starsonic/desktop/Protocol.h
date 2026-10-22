@@ -50,12 +50,36 @@ enum class CommandKind {
     UpdateLater,   // e "Depois"
     CancelLogin,   // o Cancelar da tela Entrar que pede a senha de uma troca de conta
     Resize,        // rc.2: a interface pegou uma zona de redimensionar (a borda de cima, um canto)
+    SaveShortcut,     // rc.3: os atalhos
+    RemoveShortcut,
+    UseShortcut,
+    AdminLogin,       // rc.3: a area do administrador
+    AdminLogout,
+    AdminSet,
+};
+
+// Um servidor da lista do administrador (adminSet e o estado): o endereco (UTF-8) e a porta (UDP e TCP).
+struct ServerView {
+    std::string address;   // endereco
+    int port = 0;          // porta
+};
+
+// adminSet: so os campos que vieram (ausente: fica como esta).
+struct AdminChanges {
+    std::optional<bool> showDoNotDisturb;    // naoPerturbe: o botao Nao perturbe aparece
+    std::optional<bool> showAutoAnswer;      // atenderAuto: o Atender automatico aparece
+    std::optional<bool> blf;                 // blf: o BLF nos atalhos
+    std::optional<bool> pickup;              // puxar: puxar a ligacao pelo atalho
+    std::optional<std::string> pickupCode;   // codigoPuxar
+    std::optional<std::vector<ServerView>> servers;   // servidores (a lista inteira)
+    std::optional<std::string> channel;      // canal: "teste", "estavel" ou "" (o do build)
 };
 
 // Um comando lido. So os campos do comando valem; os outros ficam vazios.
 struct Command {
     CommandKind kind = CommandKind::Ready;
     // login: servidor, protocolo ("udp" | "tcp"), ramal, senha, nome (opcional) e contaId (opcional: "" = conta nova).
+    // adminLogin: a senha (em password).
     // selectAccount e removeAccount: contaId.
     std::string server;
     std::string transport;
@@ -81,13 +105,20 @@ struct Command {
     std::optional<std::string> capture;
     std::optional<std::string> playback;
     std::optional<std::string> ring;
-    // setSetting: so a chave "iniciarComWindows", com um valor booleano.
+    // setSetting: as chaves "iniciarComWindows" e "bipeFim" (rc.3), com um valor booleano.
     std::string key;
     bool value = false;
     // openExternal
     std::string url;
     // resize: "cima", "cima-esquerda", "cima-direita" ou "baixo-direita" (as zonas que o WebView2 cobre).
     std::string edge;
+    // saveShortcut: id (opcional: "" = atalho novo), nome (em name), numero (em number), acao ("ligar" | "transferir"
+    // | "consulta" | "teclas") e blf; removeShortcut e useShortcut: id.
+    std::string shortcutId;
+    std::string action;
+    bool blf = false;
+    // adminSet
+    AdminChanges admin;
 };
 
 // O comando do JSON, ou nada (com o motivo em *error, se error nao e nullptr): texto que nao e JSON, sem "v":1,
@@ -121,6 +152,33 @@ struct AccountView {                // conta e contas[]
     bool inUse = false;             // emUso (so em contas[])
     AccountStatus status = AccountStatus::Connecting;   // status (so em conta)
     std::string text;               // texto (so em conta)
+    bool internet = true;           // internet (so em conta; rc.3): o host ve a internet
+};
+
+struct ShortcutView {               // atalhos[] (rc.3)
+    std::string id;
+    std::string name;               // nome
+    std::string number;             // numero
+    std::string action = "ligar";   // acao: "ligar" | "transferir" | "consulta" | "teclas"
+    bool blf = false;
+    // estado: "livre" | "tocando" | "ocupado" | "desconectado"; nada (null) sem o BLF do atalho ou do administrador.
+    std::optional<std::string> state;
+};
+
+struct AdminView {                  // admin (rc.3): completo so com open
+    bool open = false;              // aberto
+    bool showDoNotDisturb = true;   // naoPerturbe: o botao aparece
+    bool showAutoAnswer = true;     // atenderAuto
+    bool blf = false;
+    bool pickup = false;            // puxar
+    std::string pickupCode;         // codigoPuxar
+    std::vector<ServerView> servers;   // servidores
+    std::string channel;            // canal ("" = o do build)
+};
+
+struct AdminLoginView {             // entrarAdmin (rc.3): o resultado da ultima tentativa
+    std::string error;              // erro ("" sem erro)
+    int64_t waitUntilMs = 0;        // esperaAte: ate quando o adminLogin e recusado (ms desde 1970; 0: nenhuma espera)
 };
 
 struct RecentView {                 // recentes[]
@@ -170,6 +228,10 @@ struct BridgeState {
     std::string version;                    // versao
     std::string keypad;                     // teclado: o numero posto por um link
     int keypadSeq = 0;                      // tecladoVez: sobe a cada link
+    std::vector<ShortcutView> shortcuts;    // atalhos (rc.3)
+    AdminView admin;                        // admin (rc.3)
+    AdminLoginView adminLogin;              // entrarAdmin (rc.3)
+    bool endBeep = true;                    // config.bipeFim (rc.3)
 };
 
 // {"v":1,"type":"state","state":{...}}
@@ -178,6 +240,9 @@ std::string StateMessage(const BridgeState& state);
 std::string ToastMessage(const std::string& text);
 // {"v":1,"type":"ring","tipo":"completo"|"espera"|"parar"}
 std::string RingMessage(RingKind kind);
+// {"v":1,"type":"ring","tipo":"fim"} (rc.3): o bipe do fim de uma ligacao atendida, uma vez (nao muda o toque de
+// agora e nao volta no ready).
+std::string EndBeepMessage();
 // {"v":1,"type":"update","versao":"...","notas":"..."}: a pergunta da atualizacao (a interface responde com updateNow
 // ou updateLater).
 std::string UpdateMessage(const std::string& version, const std::string& notes);

@@ -3,6 +3,7 @@
 // recebe ligações e avisa os eventos por EngineListener. Sem nada de Android; este cabeçalho também
 // não inclui o PJSIP.
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -85,6 +86,10 @@ struct AccountInput {
     Transport transport = Transport::Udp;
     std::wstring ramal;       // já validado (ValidateRamal)
     std::wstring senha;
+    // A tabela de portas por servidor que vale para esta conta no lugar do [portas] do perfil (a lista de
+    // servidores da área do administrador do app de PC); um servidor fora dela usa a porta da [conta]. Nada:
+    // vale o [portas] do perfil (o Android).
+    std::optional<std::vector<ServerPort>> serverPorts;
 };
 
 // Todo método público registra a thread que chama no PJLIB antes de usar o PJSIP, então pode ser

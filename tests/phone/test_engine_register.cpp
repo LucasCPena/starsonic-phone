@@ -81,6 +81,36 @@ TEST_CASE("SipEngine registers on the port of [portas] for that server, over UDP
     CHECK(registrar.TransportUsed() == "tcp");
 }
 
+TEST_CASE("SipEngine uses the server ports of the account input instead of the [portas] of the profile") {
+    // A lista de servidores do administrador do app de PC (AccountInput::serverPorts) toma o lugar do [portas].
+    FakeRegistrar registrar("senha");
+    RecordingListener listener;
+    INFO(listener.LogTail());
+    Profile profile = LoadProfile(registrar.port());
+    const int wrongPort = registrar.port() == 5999 ? 5998 : 5999;   // ninguem atende nela
+    profile.account.port = wrongPort;
+    profile.account.serverPorts.clear();
+    profile.account.serverPorts.push_back(ServerPort{Input(Transport::Udp).address, wrongPort});
+    std::unique_ptr<SipEngine> engine = StartEngine(&listener, profile);
+
+    AccountInput input = Input(Transport::Udp);
+    input.serverPorts = std::vector<ServerPort>{ServerPort{input.address, registrar.port()}};
+    REQUIRE(engine->SetAccount(input));
+    CHECK(listener.WaitFor(RecordingListener::Reached(200, true, 1), kWaitSeconds));
+
+    // Uma lista vazia tambem vale: o servidor fora dela usa a porta da [conta].
+    Profile byDefault = LoadProfile(registrar.port());
+    byDefault.account.serverPorts.clear();
+    byDefault.account.serverPorts.push_back(ServerPort{Input(Transport::Udp).address, wrongPort});
+    engine.reset();
+    RecordingListener second;
+    engine = StartEngine(&second, byDefault);
+    input.serverPorts = std::vector<ServerPort>();
+    REQUIRE(engine->SetAccount(input));
+    CHECK(second.WaitFor(RecordingListener::Reached(200, true, 1), kWaitSeconds));
+    engine.reset();   // antes do second (o motor escreve no listener ate o fim)
+}
+
 TEST_CASE("SipEngine reports a wrong password") {
     FakeRegistrar registrar("senha");
     RecordingListener listener;

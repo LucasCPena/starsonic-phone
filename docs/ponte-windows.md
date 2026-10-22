@@ -15,7 +15,8 @@ interface recebe o estado pronto e manda comandos. Uma interface que discorde do
 - C++ → interface: quatro mensagens, sempre com `v: 1`:
   - `{"v":1,"type":"state","state":{...}}` — o estado inteiro, a cada mudança (só quando muda);
   - `{"v":1,"type":"toast","texto":"..."}` — um aviso de 2 s;
-  - `{"v":1,"type":"ring","tipo":"completo"|"espera"|"parar"}` — o toque;
+  - `{"v":1,"type":"ring","tipo":"completo"|"espera"|"parar"|"fim"}` — o toque (`fim`, rc.3: o bipe do fim da
+    ligação, uma vez);
   - `{"v":1,"type":"update","versao":"...","notas":"..."}` — a pergunta da atualização (ver "Atualização").
 - Ao carregar (e a cada recarga), a interface manda `{"v":1,"cmd":"ready"}` e recebe o estado atual e o toque atual
   (nesta ordem), também com uma ligação que já tocava antes de a página carregar, e depois a pergunta da atualização,
@@ -132,16 +133,84 @@ O Entrar (spec do Windows, 7.1 e 11.1):
 
 | Comando | Campos | O que faz |
 |---|---|---|
-| `setDnd` | `on` (booleano) | Não perturbe (gravado no `config.json`: continua depois de fechar o app). Toda recebida leva ocupado, não toca e vai aos Recentes como perdida. |
-| `setAutoAnswer` | `on` (booleano), `segundos` (inteiro ≥ 0, opcional) | Atender automático e o tempo (de 0 a 30; acima de 30 vale 30; sem `segundos`, fica o de agora). Gravado no `config.json`. |
+| `setDnd` | `on` (booleano) | Não perturbe (gravado no `config.json`: continua depois de fechar o app). Toda recebida leva ocupado, não toca e vai aos Recentes como perdida. (rc.3) Com o botão escondido pelo administrador (`admin.naoPerturbe` `false`), `on: true` é recusado (linha no diagnóstico: `setDnd recusado`). |
+| `setAutoAnswer` | `on` (booleano), `segundos` (inteiro ≥ 0, opcional) | Atender automático e o tempo (de 0 a 30; acima de 30 vale 30; sem `segundos`, fica o de agora). Gravado no `config.json`. (rc.3) Com ele escondido pelo administrador (`admin.atenderAuto` `false`), `on: true` é recusado inteiro (linha no diagnóstico: `setAutoAnswer recusado`). |
 | `setAudio` | `microfone` (texto, opcional), `altoFalante` (texto, opcional), `toque` (texto, opcional) | A escolha de som. `microfone` e `altoFalante` são o **nome** do dispositivo (o `nome` de `audio.microfones`/`audio.altoFalantes`; `""` = o padrão do Windows). `toque` é o `deviceId` do dispositivo de saída da própria interface (o `setSinkId`; `""` = o padrão). O campo ausente fica como está. |
-| `setSetting` | `chave` (texto), `valor` | Só `chave: "iniciarComWindows"` com `valor` booleano. Outra chave: ignorado. |
+| `setSetting` | `chave` (texto), `valor` | `chave: "iniciarComWindows"` ou (rc.3) `chave: "bipeFim"` ("Bipe quando a ligação cai ou termina", em Configurações → Ligações; gravado no `config.json` como `bipe_fim`, ligado de fábrica), com `valor` booleano. Outra chave: ignorado. |
 
 ```json
 {"v":1,"cmd":"setDnd","on":true}
 {"v":1,"cmd":"setAutoAnswer","on":true,"segundos":5}
 {"v":1,"cmd":"setAudio","microfone":"Headset USB","altoFalante":"","toque":"default"}
 {"v":1,"cmd":"setSetting","chave":"iniciarComWindows","valor":false}
+{"v":1,"cmd":"setSetting","chave":"bipeFim","valor":false}
+```
+
+### Atalhos (rc.3)
+
+Até 8 atalhos, gravados no `atalhos.json` (por computador, os mesmos para todas as contas). Qualquer pessoa configura
+os atalhos (não precisa da área do administrador).
+
+| Comando | Campos | O que faz |
+|---|---|---|
+| `saveShortcut` | `id` (texto, opcional), `nome` (texto), `numero` (texto), `acao` (`"ligar"` \| `"transferir"` \| `"consulta"` \| `"teclas"`), `blf` (booleano) | Novo atalho (sem `id`) ou a edição de um. `blf` é a chave "Mostrar se o ramal está livre" (fica gravada mesmo com o BLF do administrador desligado; só vale com ele ligado). Recusado pela loja (o 9º atalho, nome vazio ou com mais de 24 caracteres, número vazio, com mais de 32 caracteres ou com algo além de dígitos, `*`, `#` e `+`, um `id` que não existe mais): nada é gravado e o motivo vem num toast (`Digite o nome do atalho.`, `Você já tem 8 atalhos. Remova um para adicionar outro.`, `Esse atalho não existe mais.` etc.). Outra `acao`: o comando é ignorado. |
+| `removeShortcut` | `id` (texto) | Remove o atalho (um que não existe: linha no diagnóstico). |
+| `useShortcut` | `id` (texto) | O clique no cartão (na aba Atalhos ou no painel da ligação). Ver abaixo. |
+
+O `useShortcut` (spec 3.2 e 4), com os comandos de sempre:
+
+| `acao` | Sem ligação | Com ligação |
+|---|---|---|
+| `ligar` | liga para o número | a Nova ligação (a atual vai para a espera), como o `dial` |
+| `transferir` | liga para o número | transfere direto, como o `transfer` |
+| `consulta` | liga para o número | consulta o número, como o `consult` |
+| `teclas` | recusado (linha no diagnóstico; a interface desativa o botão) | manda o número como DTMF, como o `dtmf` |
+
+- O número passa pela regra dos contatos (como `dial` com `contato: true`: o `+55` sai e o prefixo de saída entra
+  nos números longos), menos no `teclas`, que vai como está.
+- "Com ligação" é qualquer ligação de pé (também uma recebida que ainda toca: aí o controlador recusa como recusaria o
+  comando de sempre). Sem registro, o toast `Sem conexão com o servidor. Tente de novo em instantes.`, como no `dial`.
+- **Puxar ligação:** com `estado` `tocando`, o puxar ligado (`admin.puxar`) e um código (`admin.codigoPuxar` não
+  vazio), o atalho liga para o código, com cada `{ramal}` trocado pelo número do atalho (`**{ramal}` vira `**2007`;
+  `*8` vai como está), em vez da ação, pelo mesmo caminho do `dial` e sem a regra dos contatos. Com o código vazio,
+  ou fora de `tocando`, vale a ação.
+
+```json
+{"v":1,"cmd":"saveShortcut","nome":"Recepção","numero":"2007","acao":"transferir","blf":true}
+{"v":1,"cmd":"saveShortcut","id":"5a1c0e9b2f3d4c67","nome":"Menu","numero":"12#","acao":"teclas","blf":false}
+{"v":1,"cmd":"removeShortcut","id":"5a1c0e9b2f3d4c67"}
+{"v":1,"cmd":"useShortcut","id":"5a1c0e9b2f3d4c67"}
+```
+
+### Área do administrador (rc.3)
+
+A configuração fica no `admin.json`, protegido pelo DPAPI do usuário (como as senhas). A interface abre o diálogo
+"Área do administrador" com Ctrl + P; o C++ confere a senha (só um resumo PBKDF2-SHA256 fica no programa).
+
+| Comando | Campos | O que faz |
+|---|---|---|
+| `adminLogin` | `senha` (texto) | A senha certa abre a área (`admin.aberto` `true`, `entrarAdmin` vazio). A errada: `entrarAdmin.erro` `Senha incorreta.` (a interface limpa o campo). Na 5ª errada seguida, `entrarAdmin.esperaAte` traz até quando (agora + 30 s) todo `adminLogin` é recusado, também com a senha certa (o `erro` continua `Senha incorreta.`). Uma certa zera a conta. A conta das erradas fica só na memória (abrir o app de novo zera). A senha digitada nunca vai ao diagnóstico nem ao estado. Com a área já aberta, a senha certa só recomeça os 10 min. |
+| `adminLogout` | — | "Sair da área do administrador": `admin.aberto` `false`. |
+| `adminSet` | `naoPerturbe` (booleano, opcional), `atenderAuto` (booleano, opcional), `blf` (booleano, opcional), `puxar` (booleano, opcional), `codigoPuxar` (texto, opcional), `servidores` (lista de `{endereco: texto, porta: inteiro}`, opcional), `canal` (`"teste"` \| `"estavel"` \| `""`, opcional) | Muda só os campos que vieram (`servidores` troca a lista inteira) e grava o `admin.json`. Com a área fechada: ignorado (linha no diagnóstico: `adminSet recusado`). Recusado pela loja (um `canal` diferente desses, um código com algo além de dígitos, `*`, `#`, `+` e `{ramal}`, um servidor com o endereço fora da regra da tela Entrar, repetido ou com a porta fora de 1 a 65535): nada muda e o motivo vem num toast (`Escolha o canal Teste ou Estável.`, `Esse servidor já está na lista.`, `A porta deve ficar entre 1 e 65535.` etc.). |
+
+- A área fecha sozinha depois de 10 minutos sem nenhum comando da interface (qualquer comando, menos o `ready`,
+  recomeça a contagem), no `closeToTray` (a janela fechou para a bandeja) e no `quit`.
+- `naoPerturbe: false` esconde o botão Não perturbe e o desliga na hora (gravado no `config.json`; as ligações voltam
+  a tocar); `atenderAuto: false` faz o mesmo com o Atender automático. Mostrar de novo não liga de volta. A abertura
+  do app também desliga o que está escondido.
+- `blf` liga ou desliga o BLF de todos os atalhos (ver `atalhos[].estado`).
+- `servidores` é a tabela de portas da conta (UDP e TCP), no lugar da seção `[portas]` do `perfil.ini`; um servidor
+  fora dela usa a porta da `[conta]` (5060). Sem `admin.json`, a lista é a do perfil. Se a porta do servidor da conta
+  em uso muda, a conta registra de novo com a porta nova (com uma ligação, no fim dela, sem aviso); as próximas
+  contas (Entrar, troca de conta) já usam a lista.
+- `canal` é o canal de atualização: `"teste"` (o `canal-teste`), `"estavel"` (o release estável) ou `""` (o de
+  fábrica, o do build). Vale a partir da próxima verificação.
+
+```json
+{"v":1,"cmd":"adminLogin","senha":"..."}
+{"v":1,"cmd":"adminSet","naoPerturbe":false,"blf":true,"puxar":true,"codigoPuxar":"**{ramal}"}
+{"v":1,"cmd":"adminSet","servidores":[{"endereco":"starcloud1-starsonic.com.br","porta":35060}],"canal":"teste"}
+{"v":1,"cmd":"adminLogout"}
 ```
 
 ### Contatos e Recentes
@@ -170,7 +239,7 @@ O Entrar (spec do Windows, 7.1 e 11.1):
   "entrar":{"servidor":"","protocolo":"udp","ramal":"","nome":"","erro":"","ocupado":false,"pedeSenha":false,
             "podeCancelar":false,"contaId":""},
   "conta":{"id":"9f3c2a71b0d84e55","nome":"Recepção","ramal":"2001","servidor":"starcloud1-starsonic.com.br",
-           "protocolo":"udp","status":"conectado","texto":"Conectado · starcloud1-starsonic.com.br"},
+           "protocolo":"udp","status":"conectado","texto":"Conectado · starcloud1-starsonic.com.br","internet":true},
   "contas":[{"id":"9f3c2a71b0d84e55","nome":"Recepção","ramal":"2001","servidor":"starcloud1-starsonic.com.br",
              "protocolo":"udp","emUso":true}],
   "naoPerturbe":false,
@@ -189,7 +258,13 @@ O Entrar (spec do Windows, 7.1 e 11.1):
   "iniciarComWindows":true,
   "versao":"0.1.0-rc.1",
   "teclado":"",
-  "tecladoVez":0
+  "tecladoVez":0,
+  "atalhos":[{"id":"5a1c0e9b2f3d4c67","nome":"Recepção","numero":"2007","acao":"transferir","blf":true,
+              "estado":"tocando"},
+             {"id":"0b2e7d4c1a9f3e58","nome":"Menu","numero":"12#","acao":"teclas","blf":false,"estado":null}],
+  "admin":{"aberto":false,"naoPerturbe":true,"atenderAuto":true,"blf":true},
+  "entrarAdmin":{"erro":"","esperaAte":0},
+  "config":{"bipeFim":true}
 }}
 ```
 
@@ -211,8 +286,9 @@ O Entrar (spec do Windows, 7.1 e 11.1):
 | `conta.protocolo` | `"udp"` \| `"tcp"` | |
 | `conta.status` | `"conectado"` \| `"conectando"` \| `"sem_conexao"` \| `"erro"` | O registro: `conectando` (esperando a resposta, ou trocando de conta), `conectado`, `sem_conexao` (o servidor não responde, ou a conta não está registrada) e `erro` (o servidor recusou: senha, ramal). |
 | `conta.texto` | texto | A linha do cabeçalho: `Conectado · <servidor>`, `Conectando…`, ou a mensagem do registro (as de `entrar.erro`); pode ser `""` com `sem_conexao`. |
+| `conta.internet` | booleano | (rc.3) O executável vê a internet (`DesktopApp::SetInternet`; `true` até ele dizer o contrário). `false` vem antes de tudo na bolinha (cinza, `Sem internet · tentando de novo`): o motor para de tentar registrar, e o `status`/`texto` ficam como estavam. Quando volta, o motor registra de novo: `status` `conectando` e depois `conectado`. Uma ligação que caiu não é refeita. |
 | `contas` | lista | As contas gravadas, na ordem em que foram incluídas: `{id, nome, ramal, servidor, protocolo, emUso}` (`emUso`: booleano, a em uso). |
-| `naoPerturbe` | booleano | O botão Não perturbe. |
+| `naoPerturbe` | booleano | O botão Não perturbe (ligado ou não). Não confundir com `admin.naoPerturbe` (o botão aparece). |
 | `atenderAutomatico` | objeto | `{on: booleano, segundos: inteiro de 0 a 30}`. |
 | `ligacao` | objeto \| `null` | A tela da ligação (abaixo); `null` sem ligação. |
 | `recentes` | lista | As últimas 500 ligações, a mais nova primeiro: `{numero, nome, tipo, inicio, duracao, contatoId}`. |
@@ -233,6 +309,20 @@ O Entrar (spec do Windows, 7.1 e 11.1):
 | `versao` | texto | A versão do app (o Sobre). |
 | `teclado` | texto | O número que um link `tel:`/`sip:`/`callto:` pôs no Teclado (o app nunca liga sozinho por um link). |
 | `tecladoVez` | inteiro | Sobe a cada link (começa em 0). A interface põe `teclado` no Teclado (e vai para a aba Teclado) quando `tecladoVez` muda, também com o mesmo número de antes; com uma ligação em andamento, a ligação não muda. |
+| `atalhos` | lista | (rc.3) Os atalhos, na ordem em que foram incluídos (até 8): `{id, nome, numero, acao, blf, estado}`. |
+| `atalhos[].acao` | `"ligar"` \| `"transferir"` \| `"consulta"` \| `"teclas"` | Ligar, Transferir, Transferir com consulta, Enviar teclas. |
+| `atalhos[].blf` | booleano | A chave "Mostrar se o ramal está livre" do atalho. |
+| `atalhos[].estado` | `"livre"` \| `"tocando"` \| `"ocupado"` \| `"desconectado"` \| `null` | O BLF do ramal: `null` sem o `blf` do atalho ou com o BLF do administrador desligado (`admin.blf`); senão `desconectado` até o primeiro aviso do servidor (e com a assinatura recusada, vencida ou sem resposta, sem conta registrada, ou sem internet). Dois atalhos com o mesmo número têm o mesmo estado. O C++ assina só os atalhos com `blf`, com o `admin.blf` ligado, na conta em uso; de novo quando os atalhos, o administrador ou a conta mudam e quando a conta volta a registrar. |
+| `admin` | objeto | (rc.3) A área do administrador. Fechada (`aberto` `false`), só `{aberto, naoPerturbe, atenderAuto, blf}`, o que a interface precisa para esconder os botões e desativar a chave do BLF; aberta, também `puxar`, `codigoPuxar`, `servidores` e `canal`. |
+| `admin.aberto` | booleano | A área está aberta (a senha certa, há menos de 10 min sem comando). |
+| `admin.naoPerturbe`, `admin.atenderAuto` | booleano | Os botões Não perturbe e Atender automático aparecem (`false`: escondidos, e desligados; o Atender automático também some de Configurações e o atalho do Não perturbe some da bandeja). |
+| `admin.blf` | booleano | O BLF nos atalhos. `false`: a chave "Mostrar se o ramal está livre" fica desativada, com a ajuda `O administrador não ligou o BLF`. |
+| `admin.puxar`, `admin.codigoPuxar` | booleano, texto | "Puxar ligação pelo atalho" e o "Código para puxar a ligação" (com `{ramal}`). Só com `aberto`. |
+| `admin.servidores` | lista | `{endereco: texto, porta: inteiro}`: a tabela de portas (ver `adminSet`). Só com `aberto`. |
+| `admin.canal` | `"teste"` \| `"estavel"` \| `""` | O canal de atualização (`""`: o do build). Só com `aberto`. |
+| `entrarAdmin` | objeto | (rc.3) O resultado do último `adminLogin`: `{erro, esperaAte}`. `erro`: `Senha incorreta.` ou `""` (vale para a última tentativa: a interface só o mostra depois de mandar um `adminLogin`). `esperaAte`: até quando (ms desde 1970) o `adminLogin` é recusado depois de 5 senhas erradas seguidas (o diálogo espera até `Date.now() >= esperaAte`); `0` sem espera. |
+| `config` | objeto | (rc.3) Configurações novas: `{bipeFim}`. |
+| `config.bipeFim` | booleano | "Bipe quando a ligação cai ou termina" (`setSetting` `bipeFim`; ligado de fábrica). |
 
 ### `ligacao`
 
@@ -279,9 +369,18 @@ de novo em instantes.`) não vem no estado: ele chega como um `toast`, uma vez, 
   toca (o aviso recebe as mesmas mensagens e não toca). Vem quando muda, e o atual vem de novo depois do estado, a
   cada `ready`.
 
+- `{"v":1,"type":"ring","tipo":"fim"}` (rc.3): o bipe do fim da ligação, uma vez: 425 Hz por 0,25 s, duas vezes com
+  0,15 s de intervalo, no alto-falante da ligação (como o `espera`, nunca no `audio.toque`). Vem quando uma ligação
+  que foi atendida (teve `activeSinceMs`) acaba, por qualquer motivo (a outra pessoa desligou, a ligação caiu, também
+  pela internet, ou a própria pessoa desligou, transferiu ou saiu da conferência), nenhuma outra ligação ficou e
+  `config.bipeFim` está ligado. Duas que acabam juntas (a conferência) dão um bipe só. Não vem para a recusada, a
+  perdida ou a que não completou, nem quando a outra ligação continua. Não muda o toque de agora e não volta no
+  `ready`.
+
 ```json
 {"v":1,"type":"toast","texto":"A troca de conta fica para o fim da ligação."}
 {"v":1,"type":"ring","tipo":"completo"}
+{"v":1,"type":"ring","tipo":"fim"}
 ```
 
 ## Atualização
@@ -346,6 +445,18 @@ depois de abrir e a cada 24 h. Achou uma versão mais nova:
   `ready` de novo.
 - O `quit` da interface não vai direto ao `DesktopApp`: o executável o manda pelo mesmo caminho do Alt+F4, da
   bandeja e do `--sair` (o `WM_CLOSE`, que fecha a janela no máximo 10 s depois).
+- (rc.3) Os arquivos novos: `DesktopPaths.atalhos` (`atalhos.json`) e `DesktopPaths.admin` (`admin.json`, pelo
+  mesmo cifrador das senhas: o DPAPI), na pasta de dados.
+- (rc.3) O BLF e a rede vão pelo `RegistrationPort` (o `EngineHost`): `WatchBlf(numeros)` e
+  `SetNetworkAvailable(disponivel)`, os do `SipEngine`; o `OnBlf` do motor vai ao `DesktopApp::OnBlf` (que só põe na
+  fila). A conta vai ao motor com `AccountInput::serverPorts` (a lista do administrador, no lugar do `[portas]`).
+- (rc.3) A internet: o monitor de rede do executável chama `DesktopApp::SetInternet(disponivel)` (de qualquer thread;
+  só põe na fila). Repetir o mesmo valor não faz nada.
+- (rc.3) O gancho `updateChannel(canal)`: o canal de atualização que vale (`"teste"`, `"estavel"` ou `""` = o do
+  build), na abertura e quando o administrador muda o canal. Como os outros ganchos, roda na thread de comandos e só
+  põe o trabalho na fila do atualizador (nunca espera).
+- (rc.3) A área do administrador fecha no `closeToTray` e no `quit`; a bandeja segue `admin.naoPerturbe` (o atalho
+  do Não perturbe some quando ele está escondido) e `conta.internet`.
 - Ao fechar: `Shutdown()`, o `Stop()` do agendador, o motor destruído, o `DesktopApp` destruído (detalhes no
   `DesktopApp.h`). Depois de a janela fechar, isso tem 5 s: passou, `fechamento forcado` no diagnóstico e o processo
   sai com o código 0.

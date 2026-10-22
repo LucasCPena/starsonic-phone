@@ -181,6 +181,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     config.paths.contacts = data + "\\contatos.json";
     config.paths.recents = data + "\\recentes.json";
     config.paths.settings = data + "\\config.json";
+    config.paths.atalhos = data + "\\atalhos.json";
+    config.paths.admin = data + "\\admin.json";   // pelo DPAPI (o mesmo cifrador das senhas)
     // A rc.7 guardava tudo na mesma pasta (o %APPDATA%\Starsonic Phone do app antigo instalado).
     config.paths.legacy.ini = data + "\\StarsonicPhone.ini";
     config.paths.legacy.contactsXml = data + "\\Contacts.xml";

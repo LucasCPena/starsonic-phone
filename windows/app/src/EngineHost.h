@@ -64,6 +64,8 @@ public:
     std::vector<AudioDevice> AudioDevices() override;
     bool SetAudioDevices(int captureId, int playbackId) override;
     void RefreshAudioDevices() override;
+    void WatchBlf(const std::vector<std::string>& numbers) override;   // rc.3
+    void SetNetworkAvailable(bool available) override;                 // rc.3
 
     // EngineListener (do SipEngine): repassados ao listener; o OnLog vai direto ao diagnostico.
     void OnRegistration(int sipCode, bool active, int accountId) override;
@@ -71,6 +73,7 @@ public:
     void OnRejectedBusy(const std::string& remoteUser, const std::string& remoteName) override;
     void OnCallState(int callId, CallState state, int sipCode) override;
     void OnTransfer(int callId, int sipCode) override;
+    void OnBlf(const std::string& number, BlfState state) override;
     void OnLog(int level, const std::string& line) override;
 
 private:

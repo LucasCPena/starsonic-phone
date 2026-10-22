@@ -165,6 +165,77 @@ TEST_CASE("every command of the protocol parses into its command") {
         CHECK(c.kind == CommandKind::OpenExternal);
         CHECK(c.url == "https://starsonic.com.br");
     }
+    SUBCASE("shortcuts (rc.3)") {
+        Command c = Parsed(R"({"v":1,"cmd":"saveShortcut","nome":"Recep\u00e7\u00e3o","numero":"2007","acao":"consulta",)"
+                           R"("blf":true})");
+        CHECK(c.kind == CommandKind::SaveShortcut);
+        CHECK(std::string(CommandName(c.kind)) == "saveShortcut");
+        CHECK(c.shortcutId.empty());
+        CHECK(c.name == "Recep\xc3\xa7\xc3\xa3o");
+        CHECK(c.number == "2007");
+        CHECK(c.action == "consulta");
+        CHECK(c.blf);
+        for (const char* action : {"ligar", "transferir", "consulta", "teclas"}) {
+            c = Parsed(std::string(R"({"v":1,"cmd":"saveShortcut","id":"s1","nome":"A","numero":"1","acao":")") + action +
+                       R"(","blf":false})");
+            CHECK(c.shortcutId == "s1");
+            CHECK(c.action == action);
+            CHECK_FALSE(c.blf);
+        }
+        c = Parsed(R"({"v":1,"cmd":"removeShortcut","id":"s2"})");
+        CHECK(c.kind == CommandKind::RemoveShortcut);
+        CHECK(std::string(CommandName(c.kind)) == "removeShortcut");
+        CHECK(c.shortcutId == "s2");
+        c = Parsed(R"({"v":1,"cmd":"useShortcut","id":"s3"})");
+        CHECK(c.kind == CommandKind::UseShortcut);
+        CHECK(std::string(CommandName(c.kind)) == "useShortcut");
+        CHECK(c.shortcutId == "s3");
+    }
+    SUBCASE("admin (rc.3)") {
+        Command c = Parsed(R"({"v":1,"cmd":"adminLogin","senha":"x y"})");
+        CHECK(c.kind == CommandKind::AdminLogin);
+        CHECK(std::string(CommandName(c.kind)) == "adminLogin");
+        CHECK(c.password == "x y");
+        c = Parsed(R"({"v":1,"cmd":"adminLogout"})");
+        CHECK(c.kind == CommandKind::AdminLogout);
+        CHECK(std::string(CommandName(c.kind)) == "adminLogout");
+        c = Parsed(R"({"v":1,"cmd":"adminSet","naoPerturbe":false,"atenderAuto":true,"blf":true,"puxar":false,)"
+                   R"("codigoPuxar":"**{ramal}","servidores":[{"endereco":"pbx.example.com","porta":5070},)"
+                   R"({"endereco":"Starcloud1-starsonic.com.br","porta":0}],"canal":"teste"})");
+        CHECK(c.kind == CommandKind::AdminSet);
+        CHECK(std::string(CommandName(c.kind)) == "adminSet");
+        CHECK(c.admin.showDoNotDisturb == false);
+        CHECK(c.admin.showAutoAnswer == true);
+        CHECK(c.admin.blf == true);
+        CHECK(c.admin.pickup == false);
+        CHECK(c.admin.pickupCode == std::string("**{ramal}"));
+        CHECK(c.admin.channel == std::string("teste"));
+        REQUIRE(c.admin.servers.has_value());
+        REQUIRE(c.admin.servers->size() == 2);
+        CHECK(c.admin.servers->at(0).address == "pbx.example.com");
+        CHECK(c.admin.servers->at(0).port == 5070);
+        CHECK(c.admin.servers->at(1).address == "Starcloud1-starsonic.com.br");   // a loja normaliza e valida
+        CHECK(c.admin.servers->at(1).port == 0);
+        // So o que veio muda.
+        c = Parsed(R"({"v":1,"cmd":"adminSet","blf":true})");
+        CHECK(c.admin.blf == true);
+        CHECK_FALSE(c.admin.showDoNotDisturb.has_value());
+        CHECK_FALSE(c.admin.showAutoAnswer.has_value());
+        CHECK_FALSE(c.admin.pickup.has_value());
+        CHECK_FALSE(c.admin.pickupCode.has_value());
+        CHECK_FALSE(c.admin.servers.has_value());
+        CHECK_FALSE(c.admin.channel.has_value());
+        c = Parsed(R"({"v":1,"cmd":"adminSet","servidores":[],"canal":""})");
+        REQUIRE(c.admin.servers.has_value());
+        CHECK(c.admin.servers->empty());
+        CHECK(c.admin.channel == std::string(""));
+    }
+    SUBCASE("the end beep setting (rc.3)") {
+        Command c = Parsed(R"({"v":1,"cmd":"setSetting","chave":"bipeFim","valor":true})");
+        CHECK(c.kind == CommandKind::SetSetting);
+        CHECK(c.key == "bipeFim");
+        CHECK(c.value);
+    }
     SUBCASE("resize: the edge the interface grabbed (rc.2)") {
         for (const char* edge : {"cima", "cima-esquerda", "cima-direita", "baixo-direita"}) {
             const Command c = Parsed(std::string(R"({"v":1,"cmd":"resize","borda":")") + edge + "\"}");
@@ -217,6 +288,28 @@ TEST_CASE("version 2, an unknown command and a field of the wrong type parse int
     CHECK(Refused(R"({"v":1,"cmd":"resize","borda":1})"));
     CHECK(Refused(R"({"v":1,"cmd":"resize","borda":"esquerda"})"));
     CHECK(Refused(R"({"v":1,"cmd":"resize","borda":"baixo-esquerda"})"));
+    // rc.3
+    CHECK(Refused(R"({"v":1,"cmd":"saveShortcut","nome":"A","numero":"1","acao":"ligar"})"));
+    CHECK(Refused(R"({"v":1,"cmd":"saveShortcut","nome":"A","numero":"1","acao":"ligar","blf":"sim"})"));
+    CHECK(Refused(R"({"v":1,"cmd":"saveShortcut","nome":"A","numero":"1","acao":"discar","blf":false})"));
+    CHECK(Refused(R"({"v":1,"cmd":"saveShortcut","numero":"1","acao":"ligar","blf":false})"));
+    CHECK(Refused(R"({"v":1,"cmd":"saveShortcut","nome":"A","acao":"ligar","blf":false})"));
+    CHECK(Refused(R"({"v":1,"cmd":"saveShortcut","id":3,"nome":"A","numero":"1","acao":"ligar","blf":false})"));
+    CHECK(Refused(R"({"v":1,"cmd":"removeShortcut"})"));
+    CHECK(Refused(R"({"v":1,"cmd":"useShortcut","id":1})"));
+    CHECK(Refused(R"({"v":1,"cmd":"adminLogin"})"));
+    CHECK(Refused(R"({"v":1,"cmd":"adminLogin","senha":123})"));
+    CHECK(Refused(R"({"v":1,"cmd":"adminSet","blf":"sim"})"));
+    CHECK(Refused(R"({"v":1,"cmd":"adminSet","codigoPuxar":8})"));
+    CHECK(Refused(R"({"v":1,"cmd":"adminSet","canal":null})"));
+    CHECK(Refused(R"({"v":1,"cmd":"adminSet","servidores":{"endereco":"a","porta":1}})"));
+    CHECK(Refused(R"({"v":1,"cmd":"adminSet","servidores":["a"]})"));
+    CHECK(Refused(R"({"v":1,"cmd":"adminSet","servidores":[{"endereco":"a"}]})"));
+    CHECK(Refused(R"({"v":1,"cmd":"adminSet","servidores":[{"porta":5060}]})"));
+    CHECK(Refused(R"({"v":1,"cmd":"adminSet","servidores":[{"endereco":"a","porta":"5060"}]})"));
+    CHECK(Refused(R"({"v":1,"cmd":"adminSet","servidores":[{"endereco":"a","porta":50.5}]})"));
+    CHECK(Refused(R"({"v":1,"cmd":"adminSet","servidores":[{"endereco":"a","porta":99999999999}]})"));
+    CHECK(Refused(R"({"v":1,"cmd":"setSetting","chave":"bipeFim","valor":1})"));
     // Campos a mais nao atrapalham.
     CHECK_FALSE(Refused(R"({"v":1,"cmd":"answer","extra":true})"));
 }
@@ -229,7 +322,8 @@ TEST_CASE("the empty state serializes with every key") {
     const std::vector<std::string> keys = {"tela",      "entrar",     "conta",    "contas",
                                            "naoPerturbe", "atenderAutomatico", "ligacao", "recentes",
                                            "perdidas",  "contatos",   "audio",    "iniciarComWindows",
-                                           "versao",    "teclado",    "tecladoVez"};
+                                           "versao",    "teclado",    "tecladoVez", "atalhos",
+                                           "admin",     "entrarAdmin", "config"};
     for (const std::string& key : keys) {
         INFO(key);
         CHECK(s.contains(key));
@@ -259,6 +353,71 @@ TEST_CASE("the empty state serializes with every key") {
     CHECK(s["versao"] == "");
     CHECK(s["teclado"] == "");
     CHECK(s["tecladoVez"] == 0);
+    CHECK(s["atalhos"] == json::array());
+    CHECK(s["admin"] == json({{"aberto", false}, {"naoPerturbe", true}, {"atenderAuto", true}, {"blf", false}}));
+    CHECK(s["entrarAdmin"] == json({{"erro", ""}, {"esperaAte", 0}}));
+    CHECK(s["config"] == json({{"bipeFim", true}}));
+}
+
+TEST_CASE("the state serializes the shortcuts, the admin area, the internet and the end beep setting (rc.3)") {
+    BridgeState state;
+    AccountView account;
+    account.id = "a1";
+    account.internet = false;
+    state.account = account;
+    ShortcutView a;
+    a.id = "s1";
+    a.name = "Ana";
+    a.number = "2007";
+    a.action = "transferir";
+    a.blf = true;
+    a.state = "tocando";
+    ShortcutView b;
+    b.id = "s2";
+    b.name = "Menu";
+    b.number = "12#";
+    b.action = "teclas";
+    state.shortcuts = {a, b};
+    state.admin.showDoNotDisturb = false;
+    state.admin.blf = true;
+    state.admin.pickup = true;
+    state.admin.pickupCode = "**{ramal}";
+    state.admin.servers.push_back(ServerView{"starcloud1-starsonic.com.br", 35060});
+    state.admin.channel = "estavel";
+    state.adminLogin.error = "Senha incorreta.";
+    state.adminLogin.waitUntilMs = 1761062430000LL;
+    state.endBeep = false;
+
+    json s = Parse(StateMessage(state))["state"];
+    CHECK(s["conta"]["internet"] == false);
+    CHECK(s["atalhos"] == json::array({json({{"id", "s1"},
+                                             {"nome", "Ana"},
+                                             {"numero", "2007"},
+                                             {"acao", "transferir"},
+                                             {"blf", true},
+                                             {"estado", "tocando"}}),
+                                       json({{"id", "s2"},
+                                             {"nome", "Menu"},
+                                             {"numero", "12#"},
+                                             {"acao", "teclas"},
+                                             {"blf", false},
+                                             {"estado", nullptr}})}));
+    // Fechada, a area mostra so o que a interface precisa para esconder os botoes.
+    CHECK(s["admin"] == json({{"aberto", false}, {"naoPerturbe", false}, {"atenderAuto", true}, {"blf", true}}));
+    CHECK(s["entrarAdmin"] == json({{"erro", "Senha incorreta."}, {"esperaAte", 1761062430000LL}}));
+    CHECK(s["config"] == json({{"bipeFim", false}}));
+
+    state.admin.open = true;
+    s = Parse(StateMessage(state))["state"];
+    CHECK(s["admin"] == json({{"aberto", true},
+                              {"naoPerturbe", false},
+                              {"atenderAuto", true},
+                              {"blf", true},
+                              {"puxar", true},
+                              {"codigoPuxar", "**{ramal}"},
+                              {"servidores", json::array({json({{"endereco", "starcloud1-starsonic.com.br"},
+                                                                {"porta", 35060}})})},
+                              {"canal", "estavel"}}));
 }
 
 TEST_CASE("the state serializes the accounts, the recents, the contacts and the audio") {
@@ -304,7 +463,8 @@ TEST_CASE("the state serializes the accounts, the recents, the contacts and the 
                               {"servidor", "pbx.example.com"},
                               {"protocolo", "tcp"},
                               {"status", "conectado"},
-                              {"texto", "Conectado \xc2\xb7 pbx.example.com"}}));
+                              {"texto", "Conectado \xc2\xb7 pbx.example.com"},
+                              {"internet", true}}));
     CHECK(s["contas"][0] == json({{"id", "a1"},
                                   {"nome", "Recep"},
                                   {"ramal", "2001"},
@@ -432,6 +592,8 @@ TEST_CASE("toast and ring messages") {
     CHECK(Parse(RingMessage(RingKind::Full)) == json({{"v", 1}, {"type", "ring"}, {"tipo", "completo"}}));
     CHECK(Parse(RingMessage(RingKind::Waiting)) == json({{"v", 1}, {"type", "ring"}, {"tipo", "espera"}}));
     CHECK(Parse(RingMessage(RingKind::Stop)) == json({{"v", 1}, {"type", "ring"}, {"tipo", "parar"}}));
+    // rc.3: o bipe do fim da ligacao, uma vez.
+    CHECK(Parse(EndBeepMessage()) == json({{"v", 1}, {"type", "ring"}, {"tipo", "fim"}}));
     // Um nome da central com bytes que nao sao UTF-8 nao impede a mensagem.
     CHECK_NOTHROW(Parse(ToastMessage("Liga\xc3\xa7\xc3\xa3o perdida de \xff\xfe")));
 }

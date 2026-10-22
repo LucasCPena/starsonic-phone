@@ -11,6 +11,7 @@
 #include <utility>
 #include <vector>
 
+#include "AccountPolicy.h"
 #include "DesktopApp.h"
 #include "nlohmann/json.hpp"
 #include "phone/fake_call_engine.h"
@@ -61,11 +62,19 @@ public:
     std::optional<std::vector<AudioDevice>> system;
     std::vector<std::string> audioCalls;   // "refresh", "list" e "set", na ordem
 
+    std::function<void()> duringSetAccount;   // roda dentro do SetAccount (um evento do motor que chega antes da volta)
+
     int SetAccount(const AccountInput& input) override {
         accounts.push_back(input);
+        if (duringSetAccount) duringSetAccount();
         return refuse ? 0 : nextId++;
     }
     void RemoveAccount() override { ++removes; }
+    // O BLF (as listas pedidas, na ordem) e a rede (os valores pedidos, na ordem).
+    std::vector<std::vector<std::string>> watches;
+    std::vector<bool> network;
+    void WatchBlf(const std::vector<std::string>& numbers) override { watches.push_back(numbers); }
+    void SetNetworkAvailable(bool available) override { network.push_back(available); }
     std::vector<AudioDevice> AudioDevices() override {
         audioCalls.push_back("list");
         return devices;
@@ -116,6 +125,8 @@ DesktopPaths Paths() {
     paths.contacts = "dados/contatos.json";
     paths.recents = "dados/recentes.json";
     paths.settings = "dados/config.json";
+    paths.atalhos = "dados/atalhos.json";
+    paths.admin = "dados/admin.json";
     paths.legacy.ini = "rc7/StarsonicPhone.ini";
     paths.legacy.contactsXml = "rc7/Contacts.xml";
     paths.legacy.callsDb = "rc7/call_log.db";
@@ -133,6 +144,7 @@ struct Harness {
     std::vector<std::string> logs;
     std::vector<std::string> opened;
     std::vector<std::string> host;   // os outros ganchos, na ordem
+    std::vector<std::string> channels;   // o gancho updateChannel, na ordem
     std::unique_ptr<DesktopApp> app;
 
     Harness() { Make(); }
@@ -144,6 +156,10 @@ struct Harness {
         config.observedStartWithWindows = observedAutostart;
         config.version = "0.1.0-rc.1";
         config.decrypt = ToyDecrypt;
+        config.profile.account.port = 5060;
+        config.profile.account.serverPorts = {ServerPort{L"starcloud1-starsonic.com.br", 35060}};
+        // A senha do administrador dos testes (Ruling 6: nunca a de verdade).
+        config.checkAdminPassword = [](const std::string& typed) { return typed == "senha-de-teste"; };
         DesktopHooks hooks;
         hooks.post = [this](const std::string& message) { posts.push_back(message); };
         hooks.log = [this](const std::string& line) { logs.push_back(line); };
@@ -155,6 +171,7 @@ struct Harness {
         hooks.sendDiagnostics = [this] { host.push_back("sendDiagnostics"); };
         hooks.setStartWithWindows = [this](bool on) { host.push_back(on ? "autostart on" : "autostart off"); };
         hooks.updateAnswer = [this](bool now) { host.push_back(now ? "update now" : "update later"); };
+        hooks.updateChannel = [this](const std::string& channel) { channels.push_back(channel); };
         auto executor = std::make_unique<QueueExecutor>();
         queue = executor.get();
         app = std::make_unique<DesktopApp>(config, hooks, engine, port, files, cipher, time, time, std::move(executor));
@@ -1189,4 +1206,636 @@ TEST_CASE("commands run on the command thread, never on the caller") {
     // Depois do Shutdown, nada mais entra.
     app.HandleCommand(R"({"v":1,"cmd":"dial","numero":"2003"})");
     CHECK(engine.made.size() == 1);
+}
+
+// rc.3: os atalhos, o BLF, o puxar ligacao, a area do administrador, a internet e o bipe do fim (spec 3 a 8).
+namespace {
+
+const char* const kAdminLogin = R"({"v":1,"cmd":"adminLogin","senha":"senha-de-teste"})";
+const char* const kWrongAdmin = R"({"v":1,"cmd":"adminLogin","senha":"outra-senha"})";
+const char* const kWrongPassword = "Senha incorreta.";
+const char* const kNoConnection = "Sem conex\xc3\xa3o com o servidor. Tente de novo em instantes.";
+
+std::string SaveShortcut(const std::string& nome, const std::string& numero, const std::string& acao, bool blf,
+                         const std::string& id = "") {
+    std::string out = R"({"v":1,"cmd":"saveShortcut",)";
+    if (!id.empty()) out += R"("id":")" + id + R"(",)";
+    return out + R"("nome":")" + nome + R"(","numero":")" + numero + R"(","acao":")" + acao + R"(","blf":)" +
+           (blf ? "true" : "false") + "}";
+}
+
+std::string UseShortcut(const std::string& id) { return R"({"v":1,"cmd":"useShortcut","id":")" + id + R"("})"; }
+std::string RemoveShortcut(const std::string& id) {
+    return R"({"v":1,"cmd":"removeShortcut","id":")" + id + R"("})";
+}
+std::string AdminSet(const std::string& fields) { return R"({"v":1,"cmd":"adminSet",)" + fields + "}"; }
+
+// O atalho do estado com esse nome (o teste falha se nao ha).
+json ShortcutNamed(const Harness& h, const std::string& nome) {
+    const json state = h.State();
+    for (const json& atalho : state["atalhos"]) {
+        if (atalho["nome"] == nome) return atalho;
+    }
+    FAIL("sem o atalho " << nome);
+    return json();
+}
+std::string IdOf(const Harness& h, const std::string& nome) { return ShortcutNamed(h, nome)["id"]; }
+
+size_t EndBeeps(const Harness& h) {
+    size_t count = 0;
+    for (const json& ring : h.Messages("ring")) {
+        if (ring == json({{"v", 1}, {"type", "ring"}, {"tipo", "fim"}})) ++count;
+    }
+    return count;
+}
+
+}  // namespace
+
+TEST_CASE("useShortcut runs each action outside and during a call") {
+    Harness h;
+    h.StartRegistered();
+    h.Send(SaveShortcut("Ana", "2002", "ligar", false));
+    h.Send(SaveShortcut("Recep", "2003", "transferir", false));
+    h.Send(SaveShortcut("Bia", "2004", "consulta", false));
+    h.Send(SaveShortcut("Menu", "12#", "teclas", false));
+    h.Send(SaveShortcut("Fora", "+551150603000", "ligar", false));
+    const json atalhos = h.State()["atalhos"];
+    REQUIRE(atalhos.size() == 5);
+    CHECK(atalhos[0]["nome"] == "Ana");
+    CHECK(atalhos[0]["numero"] == "2002");
+    CHECK(atalhos[0]["acao"] == "ligar");
+    CHECK(atalhos[0]["blf"] == false);
+    CHECK(atalhos[0]["estado"].is_null());
+    CHECK_FALSE(atalhos[0]["id"].get<std::string>().empty());
+    CHECK(atalhos[1]["acao"] == "transferir");
+    CHECK(atalhos[2]["acao"] == "consulta");
+    CHECK(atalhos[3]["acao"] == "teclas");
+    CHECK(h.File("dados/atalhos.json")["atalhos"].size() == 5);
+
+    // Fora de ligacao: Ligar, Transferir e Consulta ligam para o numero, pela regra dos contatos; Enviar teclas nao.
+    h.Send(UseShortcut(IdOf(h, "Ana")));
+    CHECK(h.engine.made == std::vector<std::string>{"2002"});
+    h.app->OnCallState(10, CallState::Disconnected, 487);
+    h.Send(UseShortcut(IdOf(h, "Recep")));
+    CHECK(h.engine.made.back() == "2003");
+    h.app->OnCallState(11, CallState::Disconnected, 487);
+    h.Send(UseShortcut(IdOf(h, "Bia")));
+    CHECK(h.engine.made.back() == "2004");
+    h.app->OnCallState(12, CallState::Disconnected, 487);
+    h.Send(UseShortcut(IdOf(h, "Fora")));
+    CHECK(h.engine.made.back() == "1150603000");   // o +55 sai (a regra dos contatos do perfil)
+    h.app->OnCallState(13, CallState::Disconnected, 487);
+    h.Run();
+    h.Send(UseShortcut(IdOf(h, "Menu")));
+    CHECK(h.engine.made.size() == 4);
+    CHECK(h.engine.dtmfs.empty());
+    CHECK(h.Logged("useShortcut"));
+
+    // Durante a ligacao.
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2010"})");
+    h.app->OnCallState(14, CallState::Confirmed, 200);
+    h.Run();
+    h.Send(UseShortcut(IdOf(h, "Menu")));
+    CHECK(h.engine.dtmfs == std::vector<std::pair<int, std::string>>{{14, "12#"}});
+    // Transferir com consulta: consulta o numero.
+    h.Send(UseShortcut(IdOf(h, "Bia")));
+    CHECK(h.engine.made.back() == "2004");
+    CHECK(h.State()["ligacao"]["consulting"] == true);
+    h.Send(R"({"v":1,"cmd":"cancelConsult"})");
+    h.app->OnCallState(15, CallState::Disconnected, 200);
+    h.Run();
+    CHECK(h.State()["ligacao"]["second"].is_null());
+    // Ligar: a Nova ligacao (a atual fica em espera).
+    h.Send(UseShortcut(IdOf(h, "Ana")));
+    CHECK(h.engine.made.back() == "2002");
+    h.app->OnCallState(16, CallState::Confirmed, 200);
+    h.Run();
+    CHECK(h.State()["ligacao"]["second"]["id"] == 14);
+    h.Send(R"({"v":1,"cmd":"hangup","id":16})");
+    h.app->OnCallState(16, CallState::Disconnected, 200);
+    h.Run();
+    // Transferir: transfere direto.
+    h.Send(UseShortcut(IdOf(h, "Recep")));
+    CHECK(h.engine.transfers == std::vector<std::pair<int, std::string>>{{14, "2003"}});
+    CHECK(h.engine.made.size() == 7);
+
+    // Um atalho que nao existe: nada.
+    h.Send(UseShortcut("nao-existe"));
+    CHECK(h.engine.made.size() == 7);
+
+    // Editar e remover; o erro da loja vai como toast.
+    const std::string ana = IdOf(h, "Ana");
+    h.Send(SaveShortcut("Ana Souza", "2012", "consulta", false, ana));
+    CHECK(ShortcutNamed(h, "Ana Souza")["numero"] == "2012");
+    CHECK(h.State()["atalhos"].size() == 5);
+    h.Send(SaveShortcut("", "2012", "ligar", false));
+    CHECK(h.Toasts().back() == "Digite o nome do atalho.");
+    CHECK(h.State()["atalhos"].size() == 5);
+    h.Send(RemoveShortcut(ana));
+    CHECK(h.State()["atalhos"].size() == 4);
+    h.Restart();
+    CHECK(h.State()["atalhos"].size() == 4);
+}
+
+TEST_CASE("useShortcut on a ringing BLF with pickup dials the pickup code") {
+    Harness h;
+    h.StartRegistered();
+    h.Send(kAdminLogin);
+    h.Send(AdminSet(R"("blf":true,"puxar":true,"codigoPuxar":"**{ramal}")"));
+    h.Send(SaveShortcut("Ana", "2007", "transferir", true));
+    const std::string id = IdOf(h, "Ana");
+    CHECK(ShortcutNamed(h, "Ana")["estado"] == "desconectado");
+
+    h.app->OnBlf("2007", BlfState::Ringing);
+    h.Run();
+    CHECK(ShortcutNamed(h, "Ana")["estado"] == "tocando");
+    h.Send(UseShortcut(id));
+    CHECK(h.engine.made == std::vector<std::string>{"**2007"});
+    h.app->OnCallState(10, CallState::Disconnected, 200);
+    h.Run();
+
+    // Fora de tocando: a acao normal.
+    h.app->OnBlf("2007", BlfState::Busy);
+    h.Run();
+    CHECK(ShortcutNamed(h, "Ana")["estado"] == "ocupado");
+    h.Send(UseShortcut(id));
+    CHECK(h.engine.made.back() == "2007");
+    h.app->OnCallState(11, CallState::Disconnected, 487);
+    h.app->OnBlf("2007", BlfState::Free);
+    h.Run();
+    CHECK(ShortcutNamed(h, "Ana")["estado"] == "livre");
+
+    // Um codigo sem {ramal} vai como esta.
+    h.app->OnBlf("2007", BlfState::Ringing);
+    h.Send(AdminSet(R"("codigoPuxar":"*8")"));
+    h.Send(UseShortcut(id));
+    CHECK(h.engine.made.back() == "*8");
+    h.app->OnCallState(12, CallState::Disconnected, 200);
+    h.Run();
+
+    // Sem o puxar, ou com o codigo vazio: a acao normal.
+    h.Send(AdminSet(R"("puxar":false)"));
+    h.Send(UseShortcut(id));
+    CHECK(h.engine.made.back() == "2007");
+    h.app->OnCallState(13, CallState::Disconnected, 487);
+    h.Send(AdminSet(R"("puxar":true,"codigoPuxar":"")"));
+    h.Send(UseShortcut(id));
+    CHECK(h.engine.made.back() == "2007");
+    h.app->OnCallState(14, CallState::Disconnected, 487);
+    // Com o BLF do administrador desligado, o estado some e o atalho faz a acao normal.
+    h.Send(AdminSet(R"("blf":false,"codigoPuxar":"**{ramal}")"));
+    CHECK(ShortcutNamed(h, "Ana")["estado"].is_null());
+    h.Send(UseShortcut(id));
+    CHECK(h.engine.made.back() == "2007");
+    CHECK(h.engine.made.size() == 6);
+}
+
+TEST_CASE("blf follows the shortcut list and the account in use") {
+    Harness h;
+    h.SeedAccount(L"pbx.example.com", L"2001", L"segredo", true);
+    const std::string second = h.SeedAccount(L"outro.example.com", L"3001", L"outra", false);
+    h.Start();
+    h.app->OnRegistration(200, true, 1);
+    h.Run();
+    h.Send(SaveShortcut("A", "2007", "ligar", true));
+    h.Send(SaveShortcut("B", "2008", "ligar", false));
+    h.Send(SaveShortcut("C", "2007", "consulta", true));
+    // O BLF do administrador vem desligado: nada e assinado, e o estado e null.
+    CHECK(h.port.watches.empty());
+    CHECK(ShortcutNamed(h, "A")["estado"].is_null());
+
+    h.Send(kAdminLogin);
+    h.Send(AdminSet(R"("blf":true)"));
+    REQUIRE(h.port.watches.size() == 1);
+    CHECK(h.port.watches.back() == std::vector<std::string>{"2007"});
+    CHECK(ShortcutNamed(h, "A")["estado"] == "desconectado");
+    CHECK(ShortcutNamed(h, "B")["estado"].is_null());
+    h.app->OnBlf("2007", BlfState::Busy);
+    h.app->OnBlf("2008", BlfState::Busy);   // nao assinado: ignorado
+    h.Run();
+    CHECK(ShortcutNamed(h, "A")["estado"] == "ocupado");
+    CHECK(ShortcutNamed(h, "C")["estado"] == "ocupado");   // o mesmo numero
+
+    // O B passa a ter o BLF.
+    h.Send(SaveShortcut("B", "2008", "ligar", true, IdOf(h, "B")));
+    CHECK(h.port.watches.back() == std::vector<std::string>{"2007", "2008"});
+    CHECK(ShortcutNamed(h, "B")["estado"] == "desconectado");
+    // Sai o A: o C ainda tem o 2007, nada muda no motor.
+    h.Send(RemoveShortcut(IdOf(h, "A")));
+    CHECK(h.port.watches.size() == 2);
+    // Sai o C: o 2007 sai, e um aviso atrasado dele nao volta como estado de um atalho novo com o mesmo numero.
+    h.Send(RemoveShortcut(IdOf(h, "C")));
+    CHECK(h.port.watches.back() == std::vector<std::string>{"2008"});
+    h.app->OnBlf("2007", BlfState::Free);
+    h.Run();
+    h.Send(SaveShortcut("D", "2007", "ligar", true));
+    CHECK(h.port.watches.back() == std::vector<std::string>{"2008", "2007"});
+    CHECK(ShortcutNamed(h, "D")["estado"] == "desconectado");
+    h.app->OnBlf("2008", BlfState::Ringing);
+    h.Run();
+    CHECK(ShortcutNamed(h, "B")["estado"] == "tocando");
+
+    // Troca de conta: assina de novo na conta nova, do zero. Um aviso da conta que sai, entregue antes de o
+    // SetAccount voltar, nao vale.
+    const size_t before = h.port.watches.size();
+    h.port.duringSetAccount = [&h] { h.app->OnBlf("2008", BlfState::Busy); };
+    h.Send(R"({"v":1,"cmd":"selectAccount","contaId":")" + second + R"("})");
+    h.port.duringSetAccount = nullptr;
+    REQUIRE(h.port.accounts.size() == 2);
+    REQUIRE(h.port.watches.size() == before + 1);
+    CHECK(h.port.watches.back() == std::vector<std::string>{"2008", "2007"});
+    CHECK(ShortcutNamed(h, "B")["estado"] == "desconectado");
+
+    // A conta registra de novo: assina de novo (a lista e a mesma).
+    h.app->OnRegistration(200, true, 2);
+    h.Run();
+    CHECK(h.port.watches.size() == before + 2);
+    h.app->OnRegistration(200, true, 2);   // a renovacao nao muda nada
+    h.Run();
+    CHECK(h.port.watches.size() == before + 2);
+    h.app->OnRegistration(503, false, 2);
+    h.app->OnRegistration(200, true, 2);
+    h.Run();
+    CHECK(h.port.watches.size() == before + 3);
+
+    // O administrador desliga o BLF: a lista fica vazia e o estado some.
+    h.Send(AdminSet(R"("blf":false)"));
+    CHECK(h.port.watches.back().empty());
+    CHECK(ShortcutNamed(h, "B")["estado"].is_null());
+}
+
+TEST_CASE("hiding Nao perturbe forces it off") {
+    Harness h;
+    h.StartRegistered();
+    h.Send(R"({"v":1,"cmd":"setDnd","on":true})");
+    h.Send(R"({"v":1,"cmd":"setAutoAnswer","on":true,"segundos":5})");
+    CHECK(h.State()["naoPerturbe"] == true);
+
+    // Sem a area aberta, o adminSet e recusado.
+    h.Send(AdminSet(R"("naoPerturbe":false)"));
+    CHECK(h.State()["admin"]["naoPerturbe"] == true);
+    CHECK(h.State()["naoPerturbe"] == true);
+    CHECK(h.Logged("adminSet"));
+
+    h.Send(kAdminLogin);
+    h.Send(AdminSet(R"("naoPerturbe":false)"));
+    json state = h.State();
+    CHECK(state["admin"]["naoPerturbe"] == false);
+    CHECK(state["naoPerturbe"] == false);
+    CHECK(h.File("dados/config.json")["nao_perturbe"] == false);
+    // As ligacoes tocam de novo.
+    h.app->OnIncomingCall(7, "2002", "");
+    h.Run();
+    CHECK(h.engine.rejects.empty());
+    CHECK(h.Messages("ring").back()["tipo"] == "completo");
+    h.app->OnCallState(7, CallState::Disconnected, 487);
+    h.Run();
+    // Escondido, o setDnd que liga e recusado (o que desliga passa).
+    h.Send(R"({"v":1,"cmd":"setDnd","on":true})");
+    CHECK(h.State()["naoPerturbe"] == false);
+    CHECK(h.Logged("setDnd recusado"));
+
+    // O Atender automatico, do mesmo jeito.
+    CHECK(h.State()["atenderAutomatico"]["on"] == true);
+    h.Send(AdminSet(R"("atenderAuto":false)"));
+    CHECK(h.State()["atenderAutomatico"]["on"] == false);
+    CHECK(h.File("dados/config.json")["atender_automatico"] == false);
+    h.Send(R"({"v":1,"cmd":"setAutoAnswer","on":true})");
+    CHECK(h.State()["atenderAutomatico"]["on"] == false);
+    CHECK(h.Logged("setAutoAnswer recusado"));
+    h.app->OnIncomingCall(8, "2002", "");
+    h.Run();
+    h.time.Advance(10000);
+    h.Run();
+    CHECK(h.engine.answers.empty());
+    h.app->OnCallState(8, CallState::Disconnected, 487);
+    h.Run();
+
+    // Mostrar de novo nao liga de volta.
+    h.Send(AdminSet(R"("naoPerturbe":true)"));
+    CHECK(h.State()["naoPerturbe"] == false);
+    h.Send(R"({"v":1,"cmd":"setDnd","on":true})");
+    CHECK(h.State()["naoPerturbe"] == true);
+
+    // Gravado no admin.json: a proxima abertura tambem esconde (e desliga, mesmo com o config.json ligado).
+    h.Send(AdminSet(R"("naoPerturbe":false)"));
+    {
+        SettingsStore settings(h.files, Paths().settings);
+        REQUIRE(settings.Load());
+        Settings changed = settings.Get();
+        changed.doNotDisturb = true;
+        REQUIRE(settings.Save(changed));
+    }
+    h.Restart();
+    state = h.State();
+    CHECK(state["admin"] == json({{"aberto", false}, {"naoPerturbe", false}, {"atenderAuto", false}, {"blf", false}}));
+    CHECK(state["naoPerturbe"] == false);
+    CHECK(h.File("dados/config.json")["nao_perturbe"] == false);
+}
+
+TEST_CASE("admin commands need an open session and lock after five wrong passwords") {
+    Harness h;
+    h.Start();
+    CHECK(h.channels == std::vector<std::string>{""});   // o canal do build
+    json state = h.State();
+    CHECK(state["admin"] == json({{"aberto", false}, {"naoPerturbe", true}, {"atenderAuto", true}, {"blf", false}}));
+    CHECK(state["entrarAdmin"] == json({{"erro", ""}, {"esperaAte", 0}}));
+
+    h.Send(AdminSet(R"("blf":true)"));
+    CHECK(h.State()["admin"]["blf"] == false);
+    CHECK(h.files.files.count("dados/admin.json") == 0);
+
+    for (int i = 0; i < 4; ++i) h.Send(kWrongAdmin);
+    state = h.State();
+    CHECK(state["admin"]["aberto"] == false);
+    CHECK(state["entrarAdmin"] == json({{"erro", kWrongPassword}, {"esperaAte", 0}}));
+    h.Send(kWrongAdmin);
+    const int64_t until = h.time.NowMs() + 30000;
+    CHECK(h.State()["entrarAdmin"] == json({{"erro", kWrongPassword}, {"esperaAte", until}}));
+    // Na espera, nem a certa entra.
+    h.Send(kAdminLogin);
+    CHECK(h.State()["admin"]["aberto"] == false);
+    CHECK(h.State()["entrarAdmin"]["esperaAte"] == until);
+    h.time.Advance(29999);
+    h.Send(kAdminLogin);
+    CHECK(h.State()["admin"]["aberto"] == false);
+    h.time.Advance(1);
+    h.Send(kAdminLogin);
+    state = h.State();
+    CHECK(state["entrarAdmin"] == json({{"erro", ""}, {"esperaAte", 0}}));
+    CHECK(state["admin"] == json({{"aberto", true},
+                                  {"naoPerturbe", true},
+                                  {"atenderAuto", true},
+                                  {"blf", false},
+                                  {"puxar", false},
+                                  {"codigoPuxar", ""},
+                                  {"servidores", json::array({json({{"endereco", "starcloud1-starsonic.com.br"},
+                                                                    {"porta", 35060}})})},
+                                  {"canal", ""}}));
+
+    h.Send(AdminSet(R"("blf":true,"puxar":true,"codigoPuxar":"*8","canal":"estavel")"));
+    state = h.State();
+    CHECK(state["admin"]["blf"] == true);
+    CHECK(state["admin"]["puxar"] == true);
+    CHECK(state["admin"]["codigoPuxar"] == "*8");
+    CHECK(state["admin"]["canal"] == "estavel");
+    CHECK(h.channels == std::vector<std::string>{"", "estavel"});
+    REQUIRE(h.files.files.count("dados/admin.json") == 1);
+    CHECK(h.files.files["dados/admin.json"].compare(0, 4, "enc:") == 0);   // pelo cifrador
+    // Um valor que a loja recusa: nada muda, e o motivo vai como toast.
+    h.Send(AdminSet(R"("canal":"beta","blf":false)"));
+    CHECK(h.State()["admin"]["canal"] == "estavel");
+    CHECK(h.State()["admin"]["blf"] == true);
+    CHECK(h.Toasts().back() == "Escolha o canal Teste ou Est\xc3\xa1vel.");
+    CHECK(h.channels.size() == 2);
+
+    h.Send(R"({"v":1,"cmd":"adminLogout"})");
+    CHECK(h.State()["admin"] == json({{"aberto", false}, {"naoPerturbe", true}, {"atenderAuto", true}, {"blf", true}}));
+    h.Send(AdminSet(R"("puxar":false)"));
+    h.Send(kAdminLogin);
+    CHECK(h.State()["admin"]["puxar"] == true);
+
+    // A certa zera a conta dos erros seguidos.
+    h.Send(R"({"v":1,"cmd":"adminLogout"})");
+    for (int i = 0; i < 3; ++i) h.Send(kWrongAdmin);
+    h.Send(kAdminLogin);
+    h.Send(R"({"v":1,"cmd":"adminLogout"})");
+    for (int i = 0; i < 4; ++i) h.Send(kWrongAdmin);
+    CHECK(h.State()["entrarAdmin"]["esperaAte"] == 0);
+
+    // A senha digitada nunca vai ao diagnostico nem ao estado.
+    for (const std::string& line : h.logs) {
+        CHECK(line.find("senha-de-teste") == std::string::npos);
+        CHECK(line.find("outra-senha") == std::string::npos);
+    }
+    for (const std::string& post : h.posts) CHECK(post.find("senha-de-teste") == std::string::npos);
+    // O canal gravado vale na proxima abertura.
+    h.Restart();
+    CHECK(h.channels.back() == "estavel");
+}
+
+TEST_CASE("admin session closes after ten idle minutes") {
+    Harness h;
+    h.Start();
+    h.Send(kAdminLogin);
+    REQUIRE(h.State()["admin"]["aberto"] == true);
+    h.time.Advance(9 * 60000);
+    h.Run();
+    h.Send(AdminSet(R"("blf":true)"));   // um comando do administrador recomeca a contagem
+    h.time.Advance(9 * 60000);
+    h.Run();
+    CHECK(h.State()["admin"]["aberto"] == true);
+    h.Send(R"({"v":1,"cmd":"viewRecents"})");   // qualquer comando com a area aberta tambem
+    h.time.Advance(9 * 60000);
+    h.Run();
+    CHECK(h.State()["admin"]["aberto"] == true);
+    h.time.Advance(60000);
+    h.Run();
+    CHECK(h.State()["admin"] == json({{"aberto", false}, {"naoPerturbe", true}, {"atenderAuto", true}, {"blf", true}}));
+    h.Send(AdminSet(R"("blf":false)"));
+    CHECK(h.State()["admin"]["blf"] == true);
+
+    // Fechar a janela (para a bandeja) tambem fecha a area.
+    h.Send(kAdminLogin);
+    h.Send(R"({"v":1,"cmd":"closeToTray"})");
+    CHECK(h.State()["admin"]["aberto"] == false);
+}
+
+TEST_CASE("admin servers change the account port") {
+    Harness h;
+    h.SeedAccount(L"starcloud1-starsonic.com.br", L"2001", L"segredo", true);
+    h.Start();
+    REQUIRE(h.port.accounts.size() == 1);
+    // Sem admin.json: as portas do perfil.
+    REQUIRE(h.port.accounts[0].serverPorts.has_value());
+    REQUIRE(h.port.accounts[0].serverPorts->size() == 1);
+    CHECK(h.port.accounts[0].serverPorts->at(0).address == L"starcloud1-starsonic.com.br");
+    CHECK(h.port.accounts[0].serverPorts->at(0).port == 35060);
+    h.app->OnRegistration(200, true, 1);
+    h.Run();
+
+    h.Send(kAdminLogin);
+    h.Send(AdminSet(R"("servidores":[{"endereco":"starcloud1-starsonic.com.br","porta":5090},)"
+                    R"({"endereco":"pbx.example.com","porta":5070}])"));
+    // A porta do servidor em uso mudou: a conta registra de novo com ela.
+    REQUIRE(h.port.accounts.size() == 2);
+    const AccountInput& input = h.port.accounts[1];
+    REQUIRE(input.serverPorts.has_value());
+    AccountProfile profile;
+    profile.port = 5060;
+    profile.serverPorts = *input.serverPorts;
+    CHECK(BuildAccount(profile, input.address, input.ramal, input.senha, input.transport, L"").server ==
+          L"starcloud1-starsonic.com.br:5090");
+    CHECK(BuildAccount(profile, L"pbx.example.com", L"1", L"x", Transport::Udp, L"").server == L"pbx.example.com:5070");
+    CHECK(h.State()["admin"]["servidores"] ==
+          json::array({json({{"endereco", "starcloud1-starsonic.com.br"}, {"porta", 5090}}),
+                       json({{"endereco", "pbx.example.com"}, {"porta", 5070}})}));
+    h.app->OnRegistration(200, true, 2);
+    h.Run();
+
+    // Outro servidor muda: a conta em uso fica como esta.
+    h.Send(AdminSet(R"("servidores":[{"endereco":"starcloud1-starsonic.com.br","porta":5090}])"));
+    CHECK(h.port.accounts.size() == 2);
+
+    // Com uma ligacao, a conta registra de novo so no fim dela.
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2002"})");
+    h.app->OnCallState(10, CallState::Confirmed, 200);
+    h.Run();
+    h.Send(AdminSet(R"("servidores":[])"));   // sem a linha: a porta padrao do perfil
+    CHECK(h.port.accounts.size() == 2);
+    CHECK(h.port.removes == 0);
+    h.app->OnCallState(10, CallState::Disconnected, 200);
+    h.Run();
+    REQUIRE(h.port.accounts.size() == 3);
+    CHECK(h.port.accounts[2].serverPorts->empty());
+    CHECK(h.State()["conta"]["status"] == "conectando");
+
+    // Uma porta invalida e recusada (com o motivo), e nada muda.
+    h.Send(AdminSet(R"("servidores":[{"endereco":"pbx.example.com","porta":70000}])"));
+    CHECK(h.State()["admin"]["servidores"] == json::array());
+    CHECK(h.port.accounts.size() == 3);
+    CHECK_FALSE(h.Toasts().empty());
+
+    // O Entrar de uma conta nova tambem usa a lista do administrador.
+    h.Send(AdminSet(R"("servidores":[{"endereco":"pbx.example.com","porta":5070}])"));
+    h.Send(Login("pbx.example.com", "3001", "outra"));
+    REQUIRE(h.port.accounts.size() == 4);
+    REQUIRE(h.port.accounts[3].serverPorts->size() == 1);
+    CHECK(h.port.accounts[3].serverPorts->at(0).port == 5070);
+}
+
+TEST_CASE("internet loss mid-call drops to gray and beeps once") {
+    Harness h;
+    h.StartRegistered();
+    CHECK(h.State()["conta"]["internet"] == true);
+    h.app->SetInternet(true);   // sem mudanca: nada
+    h.Run();
+    CHECK(h.port.network.empty());
+
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2002"})");
+    h.app->OnCallState(10, CallState::Confirmed, 200);
+    h.Run();
+    h.app->SetInternet(false);
+    h.Run();
+    CHECK(h.port.network == std::vector<bool>{false});
+    CHECK(h.State()["conta"]["internet"] == false);
+    CHECK(EndBeeps(h) == 0);
+    // O motor encerra a ligacao que caiu: um bipe, e nada e discado de novo.
+    h.app->OnCallState(10, CallState::Disconnected, 408);
+    h.Run();
+    CHECK(EndBeeps(h) == 1);
+    CHECK(h.engine.made == std::vector<std::string>{"2002"});
+    CHECK(h.State()["ligacao"].is_null());
+    // Sem internet, o Ligar avisa que nao ha conexao.
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2003"})");
+    CHECK(h.engine.made.size() == 1);
+    CHECK(h.Toasts().back() == kNoConnection);
+    h.app->SetInternet(false);
+    h.Run();
+    CHECK(h.port.network.size() == 1);
+
+    // Volta: o motor registra de novo (Conectando, depois Conectado).
+    h.app->SetInternet(true);
+    h.Run();
+    CHECK(h.port.network == std::vector<bool>{false, true});
+    CHECK(h.State()["conta"]["internet"] == true);
+    CHECK(h.State()["conta"]["status"] == "conectando");
+    h.app->OnRegistration(200, true, h.port.LastId());
+    h.Run();
+    CHECK(h.State()["conta"]["status"] == "conectado");
+    CHECK(EndBeeps(h) == 1);
+}
+
+TEST_CASE("the end beep plays only for answered calls with no other call left") {
+    Harness h;
+    h.StartRegistered();
+    // A feita que nao completou, a recebida perdida e a recusada: nada.
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2002"})");
+    h.app->OnCallState(10, CallState::Disconnected, 486);
+    h.app->OnIncomingCall(20, "2003", "");
+    h.app->OnCallState(20, CallState::Disconnected, 487);
+    h.app->OnIncomingCall(21, "2003", "");
+    h.Run();
+    h.Send(R"({"v":1,"cmd":"reject"})");
+    h.app->OnCallState(21, CallState::Disconnected, 486);
+    h.Run();
+    CHECK(EndBeeps(h) == 0);
+
+    // A atendida acaba com a segunda tocando: nada; a segunda e perdida: nada.
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2002"})");
+    h.app->OnCallState(11, CallState::Confirmed, 200);
+    h.app->OnIncomingCall(22, "2004", "");
+    h.Run();
+    h.Send(R"({"v":1,"cmd":"hangup","id":11})");
+    h.app->OnCallState(11, CallState::Disconnected, 200);
+    h.Run();
+    CHECK(EndBeeps(h) == 0);
+    h.app->OnCallState(22, CallState::Disconnected, 487);
+    h.Run();
+    CHECK(EndBeeps(h) == 0);
+
+    // Duas atendidas: a primeira que acaba nao bipa (a outra continua); a ultima, sim.
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2002"})");
+    h.app->OnCallState(12, CallState::Confirmed, 200);
+    h.Run();
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2005"})");
+    h.app->OnCallState(13, CallState::Confirmed, 200);
+    h.Run();
+    h.app->OnCallState(13, CallState::Disconnected, 200);   // o outro lado desligou
+    h.Run();
+    CHECK(EndBeeps(h) == 0);
+    h.Send(R"({"v":1,"cmd":"hangup","id":12})");          // a propria pessoa desligou
+    h.app->OnCallState(12, CallState::Disconnected, 200);
+    h.Run();
+    CHECK(EndBeeps(h) == 1);
+
+    // A conferencia: as duas acabam juntas, um bipe so.
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2002"})");
+    h.app->OnCallState(14, CallState::Confirmed, 200);
+    h.Run();
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2005"})");
+    h.app->OnCallState(15, CallState::Confirmed, 200);
+    h.Run();
+    h.Send(R"({"v":1,"cmd":"join"})");
+    h.Send(R"({"v":1,"cmd":"hangup"})");
+    h.app->OnCallState(14, CallState::Disconnected, 200);
+    h.app->OnCallState(15, CallState::Disconnected, 200);
+    h.Run();
+    CHECK(EndBeeps(h) == 2);
+
+    // A recebida atendida tambem bipa; o bipe nao volta no ready.
+    h.app->OnIncomingCall(23, "2006", "");
+    h.Run();
+    h.Send(R"({"v":1,"cmd":"answer"})");
+    h.app->OnCallState(23, CallState::Confirmed, 200);
+    h.app->OnCallState(23, CallState::Disconnected, 200);
+    h.Run();
+    CHECK(EndBeeps(h) == 3);
+    h.Send(R"({"v":1,"cmd":"ready"})");
+    CHECK(EndBeeps(h) == 3);
+}
+
+TEST_CASE("bipeFim off silences the end beep") {
+    Harness h;
+    h.StartRegistered();
+    CHECK(h.State()["config"] == json({{"bipeFim", true}}));
+    h.Send(R"({"v":1,"cmd":"setSetting","chave":"bipeFim","valor":false})");
+    CHECK(h.State()["config"]["bipeFim"] == false);
+    CHECK(h.File("dados/config.json")["bipe_fim"] == false);
+    CHECK(h.host.empty());   // nao e o Iniciar com o Windows
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2002"})");
+    h.app->OnCallState(10, CallState::Confirmed, 200);
+    h.app->OnCallState(10, CallState::Disconnected, 200);
+    h.Run();
+    CHECK(EndBeeps(h) == 0);
+
+    h.Restart();
+    CHECK(h.State()["config"]["bipeFim"] == false);
+    h.Send(R"({"v":1,"cmd":"setSetting","chave":"bipeFim","valor":true})");
+    h.app->OnRegistration(200, true, h.port.LastId());
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2002"})");
+    h.app->OnCallState(11, CallState::Confirmed, 200);
+    h.app->OnCallState(11, CallState::Disconnected, 200);
+    h.Run();
+    CHECK(EndBeeps(h) == 1);
 }

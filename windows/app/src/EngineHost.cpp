@@ -154,6 +154,14 @@ void EngineHost::RefreshAudioDevices() {
     if (SipEngine* engine = Ready()) engine->RefreshAudioDevices();
 }
 
+void EngineHost::WatchBlf(const std::vector<std::string>& numbers) {
+    if (SipEngine* engine = Ready()) engine->WatchBlf(numbers);
+}
+
+void EngineHost::SetNetworkAvailable(bool available) {
+    if (SipEngine* engine = Ready()) engine->SetNetworkAvailable(available);
+}
+
 void EngineHost::OnRegistration(int sipCode, bool active, int accountId) {
     if (EngineListener* listener = listener_.load()) listener->OnRegistration(sipCode, active, accountId);
 }
@@ -172,6 +180,10 @@ void EngineHost::OnCallState(int callId, CallState state, int sipCode) {
 
 void EngineHost::OnTransfer(int callId, int sipCode) {
     if (EngineListener* listener = listener_.load()) listener->OnTransfer(callId, sipCode);
+}
+
+void EngineHost::OnBlf(const std::string& number, BlfState state) {
+    if (EngineListener* listener = listener_.load()) listener->OnBlf(number, state);
 }
 
 void EngineHost::OnLog(int level, const std::string& line) {

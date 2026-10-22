@@ -129,8 +129,10 @@ public:
             return 0;
         }
         RetireAccount();
-        const AccountFields fields = BuildAccount(config_.profile.account, input.address, input.ramal, input.senha,
-                                                  input.transport, L"");
+        AccountProfile profile = config_.profile.account;
+        if (input.serverPorts) profile.serverPorts = *input.serverPorts;
+        const AccountFields fields =
+            BuildAccount(profile, input.address, input.ramal, input.senha, input.transport, L"");
         const PjAccountSettings settings = ToPjAccount(fields);
         const pj::AccountConfig config = MakeAccountConfig(settings, settings.transport == "tcp" ? tcpId_ : udpId_);
         // O id vem antes do create(): uma resposta que chegue durante ele já sai com o id da conta.
