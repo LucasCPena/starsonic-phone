@@ -23,7 +23,7 @@ Seis mudanças pedidas pelo responsável:
 - O BLF dos atalhos é ligado ou desligado na área do administrador.
 - Os servidores starcloud-starsonic.com.br e starcloud1-starsonic.com.br já têm o BLF ligado.
 - O código para puxar a ligação depende do cliente, então é um campo da área do administrador.
-- A área do administrador abre com Ctrl + P e a senha `01422@Star`. Ela não tem mais itens além dos do canvas.
+- A área do administrador abre com Ctrl + P e a senha (a senha combinada com o responsável, que não fica no repositório). Ela não tem mais itens além dos do canvas.
 
 ## 3. Atalhos
 

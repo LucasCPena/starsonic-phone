@@ -43,7 +43,7 @@
   - The word always appears next to the dot.
 - **Beep:** 425 Hz, 0.25 s, twice with a 0.15 s gap. It plays on the call's Alto-falante device, only when an answered call ends and no other call is active. Setting `bipeFim`, default `true`.
 - **Admin password:**
-  - `01422@Star`, stored only as PBKDF2-SHA256 (100 000 iterations, 16-byte salt, 32-byte key).
+  - (a senha combinada com o responsável, que não fica no repositório), stored only as PBKDF2-SHA256 (100 000 iterations, 16-byte salt, 32-byte key).
   - After 5 wrong tries in a row, wait 30 s.
   - The session closes after 10 min idle, on "Sair da área do administrador", or when the window closes.
 - **Admin defaults:**
@@ -120,11 +120,11 @@
   - `class AdminStore { AdminStore(FileSystem&, SecretCipher&, std::string path, const Profile&); bool Load(); const AdminConfig& Get() const; bool Save(const AdminConfig&); }`. The file content goes through `SecretCipher::Protect`/`Unprotect`. A missing or unreadable file gives the defaults, with servers from `profile.serverPorts`.
   - `bool CheckAdminPassword(const std::string& typed)` compares against the embedded salt and key, with constant-time comparison.
   - `std::string PickupNumber(const std::string& code, const std::string& ramal)`.
-- Values: the salt and key in `Admin.cpp` are produced by a script `build/admin_hash.py` (check it in) from `01422@Star`. The plain password must not appear in the source; a branding or source check asserts that.
+- Values: the salt and key in `Admin.cpp` are produced by a script `build/admin_hash.py` (check it in) from (a senha combinada com o responsável, que não fica no repositório). The plain password must not appear in the source; a branding or source check asserts that.
 
 - [ ] **Step 1: write the failing tests.**
   - `pbkdf2 matches RFC 7914 / RFC 6070-style vectors for HMAC-SHA256`: use the published PBKDF2-HMAC-SHA256 vectors ("password"/"salt", c=1 and 4096, dkLen 32).
-  - `admin password accepts 01422@Star and rejects others`.
+  - `admin password accepts (a senha combinada) and rejects others`.
   - `the source tree never contains the admin password in plain text`: a Python test in `tests/python`.
   - `atalhos store caps at 8 and validates fields`.
   - `atalhos store round trips through atalhos.json`.
