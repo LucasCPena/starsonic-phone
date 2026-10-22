@@ -22,11 +22,20 @@ Ligações (sem autenticação para INVITE, re-INVITE, REFER, BYE e CANCEL):
 - o registrador também liga (RING) e desliga (HANGUP): o INVITE vai ao contato do último REGISTER
   aceito do ramal, pelo mesmo transporte (UDP: o endereço de origem do REGISTER; TCP: a mesma conexão)
 
+BLF (RFC 4235, sem autenticação): SUBSCRIBE com Event: dialog ao ramal da Request-URI -> 200 (Expires
+  ecoado, ou 600) e um NOTIFY application/dialog-info+xml com o estado de agora do ramal (sem diálogo
+  nenhum até o primeiro BLF: livre); com Expires: 0 -> 200 e o NOTIFY final (terminated). O comando BLF
+  muda o estado e manda um NOTIFY a cada assinatura do ramal. BLF <ramal> refuse: o próximo SUBSCRIBE leva
+  403 e as assinaturas abertas acabam (NOTIFY terminated;reason=rejected). SUBSCRIBE de outro evento ->
+  200 OK, como qualquer outro pedido. O NOTIFY vai ao Contact do SUBSCRIBE, pelo mesmo transporte.
+
 Porta de controle (--control-port N, TCP no mesmo --host; um comando por linha, resposta numa linha):
   RING <ramal>       INVITE de "Cliente Teste" <sip:3001@ci>          -> OK | ERR no-contact
   HANGUP <ramal>     BYE na ligação atendida, CANCEL se ainda toca     -> OK | ERR no-call
   PASSWORD <senha>   troca a senha aceita                              -> OK
   REGISTERS <ramal>  REGISTER aceitos com Expires > 0                  -> <n>
+  EXPIRES <s>        o tempo que o 200 do REGISTER concede (s >= 1; padrão: o Expires pedido) -> OK
+  BLF <ramal> <terminated|early|confirmed|refuse>  o estado do ramal para o BLF       -> OK
   REFER_REPLY <cod>  o código da resposta ao REFER (padrão 202)        -> OK
   REFER_NOTIFY <cod> o código do sipfrag do NOTIFY (padrão 200)        -> OK
   RESET              REFER_REPLY e REFER_NOTIFY voltam ao padrão       -> OK
@@ -35,8 +44,10 @@ Porta de controle (--control-port N, TCP no mesmo --host; um comando por linha, 
 Registro de ligações (só em memória): inv-out <ramal> <código final>, ack-sent <ramal>,
   bye-out <ramal> <código>, bye-in <alvo>, cancel-in <alvo>, inv-in <alvo> <código>,
   reinv-in <alvo> <sendonly|sendrecv|inactive|recvonly>, refer-in <alvo> <ramal de destino>
-  [replaces=known|unknown] (<alvo> = usuário da Request-URI do pedido que o telefone mandou; known =
-  o Call-ID do Replaces é de uma ligação que o telefone fez ao registrador ou que o RING fez)
+  [replaces=known|unknown], sub-in <alvo> <200|403> (SUBSCRIBE de dialog com Expires > 0, também a
+  renovação), unsub-in <alvo> (SUBSCRIBE de dialog com Expires: 0) (<alvo> = usuário da Request-URI do
+  pedido que o telefone mandou; known = o Call-ID do Replaces é de uma ligação que o telefone fez ao
+  registrador ou que o RING fez)
 
 Uso: fake_registrar.py [--host 127.0.0.1] [--port 5060] --user 2001[,2002...] --password senha-certa
                        [--log ua.txt] [--transport-log transporte.txt] [--control-port 5070]
@@ -69,6 +80,8 @@ AUDIO_CODECS = ("0", "8")   # PCMU e PCMA: o INVITE do RING oferece os dois, a r
 TELEPHONE_EVENT = "telephone-event/8000"
 DIRECTIONS = ("sendrecv", "sendonly", "recvonly", "inactive")
 MIRROR = {"sendrecv": "sendrecv", "sendonly": "recvonly", "recvonly": "sendonly", "inactive": "inactive"}
+BLF_STATES = ("terminated", "early", "confirmed", "refuse")   # o que o comando BLF aceita
+BLF_EXPIRES = 600   # o Expires do 200 a um SUBSCRIBE que não pede um
 
 
 def _md5(text):
@@ -253,6 +266,22 @@ class _Call:
         self.final = None                    # código da resposta final ao INVITE
 
 
+class _Subscription:
+    """Uma assinatura de BLF (SUBSCRIBE com Event: dialog) aberta pelo telefone."""
+
+    def __init__(self, ramal, peer, subscribe, hostport):
+        self.ramal, self.peer, self.server = ramal, peer, hostport   # server: como o telefone nos enxerga
+        self.call_id = subscribe.first("call-id")
+        to = subscribe.first("to")
+        self.local = to if ";tag=" in to else to + ";tag=ci"   # a mesma tag que o 200 levou (_response)
+        self.remote = subscribe.first("from")
+        self.target = _uri_of(subscribe.first("contact")) or subscribe.uri
+        self.contact = subscribe.uri   # o nosso Contact: a URI com que o telefone nos achou
+        self.entity = _uri_of(to)
+        self.expires = BLF_EXPIRES
+        self.version = 0               # o version do dialog-info, que sobe a cada NOTIFY
+
+
 class Registrar:
     def __init__(self, user, password, realm="ci", log_path=None, transport_log_path=None):
         self.users = set(user.split(","))   # "2001,2002": todos com a mesma senha
@@ -271,6 +300,9 @@ class Registrar:
         self.cseqs = {}          # Call-ID de diálogo aberto pelo telefone -> CSeq do último pedido que mandamos nele
         self.events = []         # o registro de ligações (LOG)
         self.sdp_version = 0
+        self.expires = None      # EXPIRES: o tempo que o 200 do REGISTER concede (None: o pedido)
+        self.blf = {}            # ramal -> estado do comando BLF (sem entrada: nenhum diálogo, livre)
+        self.subscriptions = {}  # Call-ID -> _Subscription (BLF)
         self._reset_refer()
 
     def _reset_refer(self):
@@ -304,7 +336,7 @@ class Registrar:
             if msg.method == "ACK":
                 return []
             handler = {"REGISTER": self._on_register, "INVITE": self._on_invite, "REFER": self._on_refer,
-                       "BYE": self._on_bye, "CANCEL": self._on_cancel}.get(msg.method)
+                       "BYE": self._on_bye, "CANCEL": self._on_cancel, "SUBSCRIBE": self._on_subscribe}.get(msg.method)
             if handler:
                 return handler(msg, peer)
             return [self._response(200, msg.headers, source)]
@@ -314,6 +346,8 @@ class Registrar:
         with self.lock:
             for ramal in [ramal for ramal, contact in self.contacts.items() if contact.peer.conn is conn]:
                 del self.contacts[ramal]
+            for call_id in [key for key, sub in self.subscriptions.items() if sub.peer.conn is conn]:
+                del self.subscriptions[call_id]
 
     def _on_register(self, msg, peer):
         headers, source = msg.headers, peer.address
@@ -338,6 +372,8 @@ class Registrar:
             self.transport_log_path.write_text(peer.transport + "\n", encoding="utf-8")
         expires = (_values(headers, "expires") or ["300"])[-1]
         self._bind(username, msg, peer, int(expires) if expires.isdigit() else 300)
+        if self.expires and expires != "0":   # EXPIRES: o registrador concede outro tempo (a saída continua 0)
+            expires = str(self.expires)
         extra = [("Expires", expires)]
         extra += [("Contact", contact + ";expires=" + expires) for contact in _values(headers, "contact")]
         return [self._response(200, headers, source, extra)]
@@ -503,6 +539,66 @@ class Registrar:
         self._log("cancel-in " + _uri_user(msg.uri))
         return [self._response(200, msg.headers, peer.address)]
 
+    # --- BLF: o telefone assina o estado de um ramal (SUBSCRIBE com Event: dialog) ---
+
+    def _on_subscribe(self, msg, peer):
+        if msg.first("event").split(";")[0].strip().lower() != "dialog":
+            return [self._response(200, msg.headers, peer.address)]   # como antes: qualquer pedido -> 200
+        alvo = _uri_user(msg.uri)
+        expires = msg.first("expires")
+        seconds = int(expires) if expires.isdigit() else BLF_EXPIRES
+        call_id = msg.first("call-id")
+        if seconds == 0:
+            self._log("unsub-in " + alvo)
+            sub = self.subscriptions.pop(call_id, None) or _Subscription(alvo, peer, msg, self._hostport(msg.uri, peer))
+            sub.peer = peer
+            return [self._response(200, msg.headers, peer.address, [("Expires", "0")]),
+                    self._blf_notify(sub, "terminated;reason=timeout")]
+        if self.blf.get(alvo) == "refuse":
+            self._log("sub-in %s 403" % alvo)
+            self.subscriptions.pop(call_id, None)
+            return [self._response(403, msg.headers, peer.address)]
+        self._log("sub-in %s 200" % alvo)
+        sub = self.subscriptions.get(call_id)
+        if not sub:
+            sub = _Subscription(alvo, peer, msg, self._hostport(msg.uri, peer))
+            self.subscriptions[call_id] = sub
+        sub.peer, sub.expires = peer, seconds
+        extra = [("Expires", str(seconds)), ("Contact", "<%s>" % sub.contact)]
+        return [self._response(200, msg.headers, peer.address, extra),
+                self._blf_notify(sub, "active;expires=%d" % seconds)]
+
+    def _blf_notify(self, sub, state):
+        """O NOTIFY com o dialog-info do ramal de agora (RFC 4235): sem <dialog> enquanto nenhum BLF o mudou."""
+        sub.version += 1
+        dialog = self.blf.get(sub.ramal)
+        lines = ['<?xml version="1.0"?>',
+                 '<dialog-info xmlns="urn:ietf:params:xml:ns:dialog-info" version="%d" state="full" entity="%s">'
+                 % (sub.version, sub.entity)]
+        if dialog and dialog != "refuse":
+            lines += ['<dialog id="ci-%s" direction="recipient">' % sub.ramal, "<state>%s</state>" % dialog,
+                      "</dialog>"]
+        lines.append("</dialog-info>")
+        headers = [("From", sub.local), ("To", sub.remote), ("Call-ID", sub.call_id),
+                   ("CSeq", "%d NOTIFY" % self._next_cseq(sub.call_id)), ("Contact", "<%s>" % sub.contact),
+                   ("Event", "dialog"), ("Subscription-State", state),
+                   ("Content-Type", "application/dialog-info+xml")]
+        return _request("NOTIFY", sub.target, sub.peer.transport, sub.server, _branch(), headers,
+                        "\r\n".join(lines) + "\r\n")
+
+    def _set_blf(self, ramal, state):
+        """BLF <ramal> <estado>: guarda o estado e avisa cada assinatura do ramal; refuse acaba com elas."""
+        self.blf[ramal] = state
+        for call_id, sub in list(self.subscriptions.items()):
+            if sub.ramal != ramal:
+                continue
+            if state == "refuse":
+                del self.subscriptions[call_id]
+                self._send(sub.peer, self._blf_notify(sub, "terminated;reason=rejected"))
+            else:
+                self._send(sub.peer, self._blf_notify(sub, "active;expires=%d" % sub.expires))
+        return "OK"
+
     # --- o registrador liga para o telefone (RING) e desliga (HANGUP) ---
 
     def _ring(self, ramal):
@@ -599,6 +695,12 @@ class Registrar:
                 return ["OK"]
             if name == "REGISTERS" and ramal:
                 return [str(self.registers.get(ramal, 0))]
+            if name == "EXPIRES" and ramal.isdigit() and int(ramal) > 0:
+                self.expires = int(ramal)
+                return ["OK"]
+            blf = argument.split(" ")
+            if name == "BLF" and len(blf) == 2 and blf[0] and blf[1] in BLF_STATES:
+                return [self._set_blf(blf[0], blf[1])]
             if name == "REFER_REPLY" and STATUS_CODE.fullmatch(ramal):
                 self.refer_reply = int(ramal)
                 return ["OK"]
@@ -692,8 +794,8 @@ def start_tcp_server(registrar, host, port):
 
 
 def start_control_server(registrar, host, port):
-    """Porta de controle (RING, HANGUP, PASSWORD, REGISTERS, REFER_REPLY, REFER_NOTIFY, RESET, LOG), numa
-    thread. Mesma forma de start_tcp_server."""
+    """Porta de controle (RING, HANGUP, PASSWORD, REGISTERS, EXPIRES, BLF, REFER_REPLY, REFER_NOTIFY, RESET,
+    LOG), numa thread. Mesma forma de start_tcp_server."""
     return _start_tcp(_ControlHandler, registrar, host, port)
 
 

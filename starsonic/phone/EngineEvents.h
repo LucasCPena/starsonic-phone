@@ -7,11 +7,19 @@
 #include <deque>
 #include <functional>
 #include <mutex>
+#include <string>
 #include <thread>
 
 #include "SipEngine.h"
 
 namespace starsonic {
+
+// O estado do BLF de um aviso do PJSIP sobre a assinatura do evento dialog. ended: a assinatura acabou
+// (recusada, vencida, sem resposta ou encerrada pelo servidor) -> Unknown. notified: já chegou um
+// dialog-info (sem ele, como no 200 do SUBSCRIBE, ainda não há o que dizer: devolve false). dialogState:
+// o <state> do primeiro <dialog> ("" sem diálogo): confirmed -> Busy; early, proceeding e trying ->
+// Ringing; terminated ou nenhum -> Free; outro -> Unknown. Sem diferença de maiúsculas.
+bool BlfFromDialogInfo(bool ended, bool notified, const std::string& dialogState, BlfState* state);
 
 class EventQueue {
 public:

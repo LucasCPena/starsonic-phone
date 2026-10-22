@@ -1,8 +1,31 @@
 #include "EngineEvents.h"
 
+#include <algorithm>
+#include <cctype>
 #include <utility>
 
 namespace starsonic {
+
+bool BlfFromDialogInfo(bool ended, bool notified, const std::string& dialogState, BlfState* state) {
+    if (ended) {
+        *state = BlfState::Unknown;
+        return true;
+    }
+    if (!notified) return false;
+    std::string name = dialogState;
+    std::transform(name.begin(), name.end(), name.begin(),
+                   [](char c) { return static_cast<char>(std::tolower(static_cast<unsigned char>(c))); });
+    if (name.empty() || name == "terminated") {
+        *state = BlfState::Free;
+    } else if (name == "confirmed") {
+        *state = BlfState::Busy;
+    } else if (name == "early" || name == "proceeding" || name == "trying") {
+        *state = BlfState::Ringing;
+    } else {
+        *state = BlfState::Unknown;
+    }
+    return true;
+}
 
 EventQueue::EventQueue(EngineListener* listener) : listener_(listener), thread_([this] { Run(); }) {}
 

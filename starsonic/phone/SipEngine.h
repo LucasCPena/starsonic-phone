@@ -12,7 +12,12 @@ namespace starsonic {
 
 enum class CallState { Incoming = 0, Calling = 1, Early = 2, Connecting = 3, Confirmed = 4, Disconnected = 5 };
 
-// Os eventos (OnRegistration, OnIncomingCall, OnRejectedBusy, OnCallState e OnTransfer) chegam numa
+// O estado de um ramal pelo BLF (WatchBlf): Free = livre (nenhum diálogo, ou terminated), Ringing = tocando
+// (early, proceeding ou trying), Busy = ocupado (confirmed), Unknown = sem estado (assinatura recusada,
+// vencida, sem resposta, encerrada pelo servidor, ou a rede fora).
+enum class BlfState { Free = 0, Ringing = 1, Busy = 2, Unknown = 3 };
+
+// Os eventos (OnRegistration, OnIncomingCall, OnRejectedBusy, OnCallState, OnTransfer e OnBlf) chegam numa
 // thread do próprio motor, um de cada vez e na ordem em que aconteceram, sem nenhuma trava do motor ou
 // do PJSIP presa: o listener pode chamar o motor (só não pode destruí-lo). Um evento pode chegar antes
 // de o método que o provocou voltar. Do começo de ~SipEngine em diante nenhum evento é entregue (o
@@ -50,6 +55,10 @@ public:
     // depois, com os Disconnected de sempre; fora de 2xx nada mais muda. Não chega se a ligação acaba
     // antes do resultado. Vazio por padrão.
     virtual void OnTransfer(int /*callId*/, int /*sipCode*/) {}
+    // O estado do ramal number (como veio em WatchBlf) mudou: só quando muda, sem repetir o mesmo estado
+    // seguido. Com SetNetworkAvailable(false), chega Unknown para cada ramal da lista. Um ramal que sai da
+    // lista (ou cuja conta sai) não avisa mais nada. Vazio por padrão.
+    virtual void OnBlf(const std::string& /*number*/, BlfState /*state*/) {}
     // level como no PJSIP: 1 erro, 2 aviso, 3 informação, 4 detalhe. Sem senhas.
     virtual void OnLog(int level, const std::string& line) = 0;
 };
@@ -111,13 +120,33 @@ public:
     // diz). Sem conta, nada.
     void RemoveAccount();
 
-    // Renova o registro agora.
+    // Renova o registro agora. Com a rede fora (SetNetworkAvailable(false)), nada.
     void Reregister();
 
     // A rede mudou: refaz os transportes e renova o registro (o resultado chega por OnRegistration).
     // O pjsua, com a reescrita do Contact desligada, não refaz o registro sozinho no UDP e só o faz
     // depois de 0 a 10 s no TCP; por isso o motor espera os transportes (até ~2 s) e registra de novo.
     void HandleIpChange();
+
+    // A internet caiu (false) ou voltou (true), pelo que o app enxerga da rede. false: o registro para (o
+    // motor pede a saída ao servidor, que sem rede não chega, e o PJSIP deixa de renovar e de tentar de
+    // novo), nenhuma resposta de registro vira evento, as assinaturas de BLF saem e cada ramal da lista
+    // avisa OnBlf(Unknown). A conta continua (as ligações em andamento seguem como estiverem) e uma
+    // SetAccount sem rede cria a conta sem registrar. Com um REGISTER a caminho, espera a resposta dele
+    // (até ~3 s). true: registra de novo na hora (o resultado chega por OnRegistration; com um pedido
+    // ainda a caminho, espera a resposta dele até ~2 s) e assina de novo os ramais da lista. Sem conta,
+    // só guarda o estado. Repetir o mesmo valor: false não faz nada; true registra de novo.
+    void SetNetworkAvailable(bool available);
+
+    // Os ramais (number em UTF-8, já sem separadores) cujo estado o motor acompanha na conta de agora, pelo
+    // SUBSCRIBE do evento dialog (RFC 4235, o BLF) a sip:<número>@<domínio da conta> (com a porta, como em
+    // MakeCall). Troca a lista inteira: quem entra é assinado, quem sai tem a assinatura retirada
+    // (SUBSCRIBE com Expires: 0), quem fica continua como está. Vazia: nenhum. Os estados chegam por OnBlf
+    // (o primeiro, quando o servidor manda o primeiro NOTIFY). Uma assinatura recusada ou encerrada pelo
+    // servidor avisa Unknown, e o PJSIP tenta de novo mais tarde (cerca de 5 min). A lista é da conta:
+    // SetAccount e RemoveAccount retiram as assinaturas e esvaziam a lista. Sem conta, nada. Sem rede, só
+    // guarda a lista (os novos avisam Unknown) e assina quando a rede volta.
+    void WatchBlf(const std::vector<std::string>& numbers);
 
     // Os codecs ligados (prioridade acima de zero), do mais para o menos preferido.
     std::vector<std::string> ActiveCodecs() const;

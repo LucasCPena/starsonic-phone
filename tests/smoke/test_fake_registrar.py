@@ -124,5 +124,140 @@ class FakeRegistrarReferTest(unittest.TestCase):
         self.assertEqual([reply.status or reply.method for reply in self.reply()], [202, "NOTIFY"])
 
 
+def subscribe(alvo, call_id="sub-2007", expires=None, event="dialog", cseq=1, to_tag=None):
+    """SUBSCRIBE do telefone ao estado do ramal `alvo` (BLF, RFC 4235)."""
+    extra = ["Event: " + event, "Accept: application/dialog-info+xml"]
+    if expires is not None:
+        extra.append("Expires: %d" % expires)
+    return phone_request("SUBSCRIBE", "sip:%s@ci" % alvo, call_id, extra, cseq=cseq, to_tag=to_tag)
+
+
+def register(registrar, nonce="nonce-1"):
+    """REGISTER de 2001 já com o Digest certo para a senha do registrador."""
+    registrar.nonces.add(nonce)
+    uri = "sip:127.0.0.1"
+    response = fake_registrar.digest_response("2001", "ci", registrar.password, "REGISTER", uri, nonce)
+    authorization = ('Digest username="2001", realm="ci", nonce="%s", uri="%s", response="%s", algorithm=MD5'
+                     % (nonce, uri, response))
+    return phone_request("REGISTER", uri, "reg-2001", ["Expires: 300", "Authorization: " + authorization])
+
+
+class FakeRegistrarBlfTest(unittest.TestCase):
+    def setUp(self):
+        self.registrar = fake_registrar.Registrar("2001", "senha-certa")
+        self.registrar.udp = RingSocket()
+
+    def log(self):
+        return self.registrar.command("LOG")[:-1]
+
+    def answer(self, message):
+        """As respostas (analisadas) do registrador a um pedido do telefone."""
+        return [fake_registrar._parse(data) for data in self.registrar.dispatch(
+            _raw(message), ("127.0.0.1", 5070))]
+
+    def sent(self):
+        """O que o registrador mandou por conta própria (os NOTIFY dos comandos BLF), analisado."""
+        return [fake_registrar._parse(data) for data, _ in self.registrar.udp.sent]
+
+    def test_subscribe_dialog_answers_200_and_notifies_no_dialog(self):
+        replies = self.answer(subscribe("2007", expires=600))
+        self.assertEqual([reply.status or reply.method for reply in replies], [200, "NOTIFY"])
+        response, notify = replies
+        self.assertEqual(response.first("expires"), "600")
+        self.assertIn(";tag=", response.first("to"))
+        self.assertEqual(notify.uri, "sip:2001@127.0.0.1:5070")   # o Contact do SUBSCRIBE
+        self.assertEqual(notify.first("event"), "dialog")
+        self.assertEqual(notify.first("subscription-state"), "active;expires=600")
+        self.assertEqual(notify.first("content-type"), "application/dialog-info+xml")
+        self.assertEqual(notify.first("call-id"), "sub-2007")
+        self.assertEqual(notify.first("from"), response.first("to"))   # a mesma tag do 200
+        self.assertEqual(notify.first("to"), "<sip:2001@ci>;tag=phone")
+        self.assertIn('entity="sip:2007@ci"', notify.body)
+        self.assertNotIn("<dialog ", notify.body)   # ninguém ligou ainda: nenhum diálogo, o ramal está livre
+        self.assertEqual(self.log(), ["sub-in 2007 200"])
+
+    def test_blf_command_notifies_each_state(self):
+        self.answer(subscribe("2007"))
+        cseqs = []
+        for state in ("early", "confirmed", "terminated"):
+            with self.subTest(state=state):
+                self.assertEqual(self.registrar.command("BLF 2007 " + state), ["OK"])
+                notify = self.sent()[-1]
+                self.assertEqual(notify.method, "NOTIFY")
+                self.assertIn("<state>%s</state>" % state, notify.body)
+                self.assertTrue(notify.first("subscription-state").startswith("active"))
+                cseqs.append(int(notify.first("cseq").split()[0]))
+        self.assertEqual(cseqs, sorted(set(cseqs)))   # o CSeq sobe a cada NOTIFY do diálogo
+        self.assertEqual(len(self.sent()), 3)
+
+    def test_blf_state_holds_for_a_new_subscription(self):
+        self.assertEqual(self.registrar.command("BLF 2007 confirmed"), ["OK"])   # ninguém assina ainda
+        self.assertEqual(self.sent(), [])
+        notify = self.answer(subscribe("2007"))[1]
+        self.assertIn("<state>confirmed</state>", notify.body)
+
+    def test_blf_refuse_rejects_new_subscriptions(self):
+        self.assertEqual(self.registrar.command("BLF 2007 refuse"), ["OK"])
+        replies = self.answer(subscribe("2007"))
+        self.assertEqual([reply.status for reply in replies], [403])   # nenhum NOTIFY
+        self.assertEqual(self.log(), ["sub-in 2007 403"])
+
+    def test_blf_refuse_ends_an_active_subscription(self):
+        self.answer(subscribe("2007"))
+        self.assertEqual(self.registrar.command("BLF 2007 refuse"), ["OK"])
+        notify = self.sent()[-1]
+        self.assertEqual(notify.first("subscription-state"), "terminated;reason=rejected")
+        self.registrar.command("BLF 2007 early")   # a assinatura acabou: nada mais vai ao telefone
+        self.assertEqual(len(self.sent()), 1)
+
+    def test_unsubscribe_ends_the_subscription(self):
+        self.answer(subscribe("2007"))
+        replies = self.answer(subscribe("2007", expires=0, cseq=2, to_tag="ci"))
+        self.assertEqual([reply.status or reply.method for reply in replies], [200, "NOTIFY"])
+        self.assertTrue(replies[1].first("subscription-state").startswith("terminated"))
+        self.assertEqual(self.log(), ["sub-in 2007 200", "unsub-in 2007"])
+        self.registrar.command("BLF 2007 early")
+        self.assertEqual(self.sent(), [])
+
+    def test_refresh_keeps_the_subscription(self):
+        self.answer(subscribe("2007"))
+        replies = self.answer(subscribe("2007", expires=600, cseq=2, to_tag="ci"))
+        self.assertEqual([reply.status or reply.method for reply in replies], [200, "NOTIFY"])
+        self.assertEqual(self.log(), ["sub-in 2007 200", "sub-in 2007 200"])
+        self.registrar.command("BLF 2007 early")
+        self.assertEqual(len(self.sent()), 1)   # uma assinatura só, não duas
+
+    def test_other_subscribe_events_keep_the_plain_200(self):
+        replies = self.answer(subscribe("2007", event="presence"))
+        self.assertEqual([reply.status for reply in replies], [200])
+        self.assertEqual(self.log(), [])
+
+    def test_blf_command_refuses_bad_arguments(self):
+        for command in ("BLF", "BLF 2007", "BLF 2007 ringing", "BLF 2007 early now", "BLF  early"):
+            with self.subTest(command=command):
+                self.assertEqual(self.registrar.command(command), ["ERR bad-command"])
+
+    def test_expires_command_sets_the_granted_registration_time(self):
+        response = self.answer(register(self.registrar))[0]
+        self.assertEqual(response.first("expires"), "300")   # o padrão: o que o telefone pediu
+        self.assertEqual(self.registrar.command("EXPIRES 2"), ["OK"])
+        response = self.answer(register(self.registrar, "nonce-2"))[0]
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.first("expires"), "2")
+        self.assertTrue(response.first("contact").endswith(";expires=2"))
+        self.assertEqual(self.registrar.command("REGISTERS 2001"), ["2"])
+        for command in ("EXPIRES", "EXPIRES 0", "EXPIRES abc"):
+            with self.subTest(command=command):
+                self.assertEqual(self.registrar.command(command), ["ERR bad-command"])
+
+
+def _raw(message):
+    """Os bytes de uma mensagem já analisada (o registrador as lê de novo em dispatch)."""
+    lines = ["%s %s SIP/2.0" % (message.method, message.uri)]
+    lines += ["%s: %s" % (name, value) for name, value in message.headers if name != "content-length"]
+    lines += ["Content-Length: %d" % len(message.body.encode("utf-8")), "", message.body]
+    return "\r\n".join(lines).encode("utf-8")
+
+
 if __name__ == "__main__":
     unittest.main()

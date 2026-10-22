@@ -255,6 +255,17 @@ inline const char* StateName(starsonic::CallState state) {
     return kNames[static_cast<int>(state)];
 }
 
+// OnBlf, como chegou.
+struct BlfEvent {
+    std::string number;
+    starsonic::BlfState state;
+};
+
+inline const char* BlfName(starsonic::BlfState state) {
+    static const char* const kNames[] = {"Free", "Ringing", "Busy", "Unknown"};
+    return kNames[static_cast<int>(state)];
+}
+
 // OnIncomingCall, OnRejectedBusy, OnCallState ou OnTransfer, como chegou.
 struct CallEvent {
     enum Kind { Incoming, Busy, State, Transfer };
@@ -301,6 +312,11 @@ public:
         calls_.push_back({CallEvent::Transfer, callId, "", "", starsonic::CallState::Incoming, sipCode});
         changed_.notify_all();
     }
+    void OnBlf(const std::string& number, starsonic::BlfState state) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        blfs_.push_back({number, state});
+        changed_.notify_all();
+    }
     void OnLog(int, const std::string& line) override {
         std::lock_guard<std::mutex> lock(mutex_);
         log_.push_back(line);
@@ -321,6 +337,39 @@ public:
     std::vector<CallEvent> Calls() const {
         std::lock_guard<std::mutex> lock(mutex_);
         return calls_;
+    }
+
+    std::vector<BlfEvent> Blfs() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return blfs_;
+    }
+
+    // Os estados de BLF que chegaram para o número, em ordem.
+    std::vector<starsonic::BlfState> BlfStates(const std::string& number) const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::vector<starsonic::BlfState> states;
+        for (const BlfEvent& event : blfs_) {
+            if (event.number == number) states.push_back(event.state);
+        }
+        return states;
+    }
+
+    // Espera até `seconds` pelo estado `state` como o último de BLF que chegou para o número.
+    bool WaitForBlf(const std::string& number, starsonic::BlfState state, int seconds) {
+        std::unique_lock<std::mutex> lock(mutex_);
+        return changed_.wait_for(lock, std::chrono::seconds(seconds), [&] {
+            for (auto it = blfs_.rbegin(); it != blfs_.rend(); ++it) {
+                if (it->number == number) return it->state == state;
+            }
+            return false;
+        });
+    }
+
+    // Os eventos de BLF numa linha só, para as mensagens dos testes.
+    std::string BlfText() const {
+        std::string text;
+        for (const BlfEvent& event : Blfs()) text += event.number + "=" + BlfName(event.state) + "; ";
+        return text;
     }
 
     // Quantos eventos (registros e ligações; o log não conta) chegaram até agora.
@@ -403,6 +452,7 @@ private:
     std::condition_variable changed_;
     std::vector<RegistrationEvent> registrations_;
     std::vector<CallEvent> calls_;
+    std::vector<BlfEvent> blfs_;
     std::function<void(int)> incomingHook_;
     std::deque<std::string> log_;
 };

@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cctype>
 #include <exception>
+#include <map>
 #include <mutex>
 #include <string>
 
@@ -33,6 +34,8 @@ const int kNullAudioDevice = -2;   // PJSUA_SND_NULL_DEV: o id do dispositivo nu
 const int kDefaultAudioDevice = -1;   // o padrão do sistema (PJMEDIA_AUD_DEFAULT_CAPTURE_DEV e ..._PLAYBACK_DEV)
 // Quanto o motor espera o pjsua refazer os transportes depois de uma troca de rede (leva alguns ms).
 const int kIpChangeWaitMs = 2000;
+// Quanto o motor espera um pedido de registro ainda a caminho antes de registrar de novo (a rede voltou).
+const int kRegisterWaitMs = 2000;
 
 // O pjsua tem estado global: um motor por processo.
 std::mutex g_aliveMutex;
@@ -133,7 +136,8 @@ public:
         const int accountId = ++lastAccountId_;
         std::unique_ptr<EngineAccount> account(new EngineAccount(&events_, &calls_, accountId));
         try {
-            account->create(config, true);
+            // Sem rede a conta nasce parada: registra quando SetNetworkAvailable(true) chegar.
+            account->Start(config, !networkAvailable_);
         } catch (const pj::Error& failure) {
             Log(1, "o PJSIP recusou a conta " + settings.idUri + ": " + failure.info());
             return 0;
@@ -155,6 +159,10 @@ public:
     void Reregister() {
         std::lock_guard<std::mutex> lock(apiMutex_);
         if (!RegisterThread() || !account_) return;
+        if (!networkAvailable_) {
+            Log(3, "renovar o registro: sem rede, nada a fazer");
+            return;
+        }
         RefreshRegistration();
     }
 
@@ -172,7 +180,82 @@ public:
         if (started && !endpoint_->WaitIpChange(kIpChangeWaitMs)) Log(2, "a troca de rede nao terminou a tempo");
         // Com o Contact sem reescrita o pjsua não refaz o registro por conta própria (UDP) ou só o faz
         // depois de 0 a 10 s (TCP). O MicroSIP também registra de novo à mão (mainDlg.cpp).
-        if (account_) RefreshRegistration();
+        if (account_ && networkAvailable_) RefreshRegistration();
+    }
+
+    void SetNetworkAvailable(bool available) {
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        if (!RegisterThread()) return;
+        if (!available) {
+            if (!networkAvailable_) return;
+            networkAvailable_ = false;
+            Log(3, "sem rede: o registro e o BLF param");
+            if (!account_) return;
+            DropBlf();
+            for (const std::string& number : blfNumbers_) PostBlf(number, BlfState::Unknown);
+            switch (account_->Pause(kUnregisterWaitMs)) {
+                case EngineAccount::Exit::Confirmed:
+                    Log(3, "sem rede: o registro saiu do servidor");
+                    break;
+                case EngineAccount::Exit::NothingToRemove:
+                    Log(3, "sem rede: a conta nao estava registrada");
+                    break;
+                case EngineAccount::Exit::NoAnswer:
+                    Log(3, "sem rede: o servidor nao confirmou a saida (o registro para assim mesmo)");
+                    break;
+            }
+            return;
+        }
+        const bool wasDown = !networkAvailable_;
+        networkAvailable_ = true;
+        if (!account_) return;
+        Log(3, wasDown ? "a rede voltou: registrando de novo" : "rede disponivel: renovando o registro");
+        if (wasDown) {
+            account_->Resume(kRegisterWaitMs);
+        } else {
+            account_->Register(kRegisterWaitMs);
+        }
+        for (const std::string& number : blfNumbers_) {
+            if (blfBuddies_.find(number) == blfBuddies_.end()) SubscribeBlf(number);
+        }
+    }
+
+    void WatchBlf(const std::vector<std::string>& numbers) {
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        if (!RegisterThread()) return;
+        if (!account_) {
+            if (!numbers.empty()) Log(2, "BLF sem conta: nada a assinar");
+            return;
+        }
+        // A lista nova, sem vazios nem repetidos, na ordem em que veio.
+        std::vector<std::string> wanted;
+        for (const std::string& number : numbers) {
+            if (number.empty() || std::find(wanted.begin(), wanted.end(), number) != wanted.end()) continue;
+            if (number.size() > kMaxBlfNumber) {
+                Log(2, "BLF: numero longo demais, ignorado");
+                continue;
+            }
+            wanted.push_back(number);
+        }
+        // Quem saiu da lista: o ~Buddy manda o SUBSCRIBE com Expires: 0.
+        for (auto it = blfBuddies_.begin(); it != blfBuddies_.end();) {
+            if (std::find(wanted.begin(), wanted.end(), it->first) == wanted.end()) {
+                it = blfBuddies_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        const std::vector<std::string> before = blfNumbers_;
+        blfNumbers_ = wanted;
+        for (const std::string& number : wanted) {
+            if (!networkAvailable_) {
+                if (std::find(before.begin(), before.end(), number) == before.end()) {
+                    PostBlf(number, BlfState::Unknown);
+                }
+            } else if (blfBuddies_.find(number) == blfBuddies_.end()) {
+                SubscribeBlf(number);
+            }
+        }
     }
 
     std::vector<std::string> ActiveCodecs() {
@@ -417,11 +500,38 @@ private:
         }
     }
 
+    // Assina o BLF do número na conta de agora; se o PJSIP recusa, o ramal fica Unknown.
+    void SubscribeBlf(const std::string& number) {
+        pj::BuddyConfig config;
+        config.uri = CallUri(number);
+        config.subscribe = false;
+        config.subscribe_dlg_event = true;
+        std::unique_ptr<BlfBuddy> buddy(new BlfBuddy(&events_, number));
+        try {
+            buddy->create(*account_, config);
+        } catch (const pj::Error& failure) {
+            Log(1, "BLF: o PJSIP recusou a assinatura de " + config.uri + ": " + failure.info());
+            PostBlf(number, BlfState::Unknown);
+            return;
+        }
+        blfBuddies_[number] = std::move(buddy);
+    }
+
+    // Retira as assinaturas de BLF (a lista fica). Os avisos delas param aqui.
+    void DropBlf() { blfBuddies_.clear(); }
+
+    void PostBlf(const std::string& number, BlfState state) {
+        events_.Post([number, state](EngineListener& listener) { listener.OnBlf(number, state); });
+    }
+
     // Desliga as ligações, tira a conta do servidor (esperando a resposta, até um limite) e a apaga.
-    // Nenhuma resposta de registro desta conta vira evento daqui em diante.
+    // Nenhuma resposta de registro desta conta vira evento daqui em diante. As assinaturas de BLF saem
+    // antes (o pjsua2 pede os buddies apagados antes da conta) e a lista delas se esvazia.
     void RetireAccount() {
         if (!account_) return;
         account_->Retire();
+        DropBlf();
+        blfNumbers_.clear();
         if (!calls_.End(kCallEndWaitMs)) Log(2, "a ligacao nao terminou a tempo; a conta sai assim mesmo");
         switch (account_->Unregister(kUnregisterWaitMs)) {
             case EngineAccount::Exit::Confirmed:
@@ -471,6 +581,11 @@ private:
     std::unique_ptr<EngineAccount> account_;
     int lastAccountId_ = 0;   // o id da última conta criada (com a apiMutex_)
     std::string callHost_;   // <domínio>[:<porta>] da conta (UTF-8), para as URIs das ligações
+    // Com a apiMutex_: a rede como o app a vê (SetNetworkAvailable), os ramais do BLF da conta e as
+    // assinaturas de agora (vazias sem rede). Os buddies saem antes da conta (RetireAccount).
+    bool networkAvailable_ = true;
+    std::vector<std::string> blfNumbers_;
+    std::map<std::string, std::unique_ptr<BlfBuddy>> blfBuddies_;
 };
 
 SipEngine::SipEngine(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
@@ -515,6 +630,10 @@ void SipEngine::RemoveAccount() { impl_->RemoveAccount(); }
 void SipEngine::Reregister() { impl_->Reregister(); }
 
 void SipEngine::HandleIpChange() { impl_->HandleIpChange(); }
+
+void SipEngine::SetNetworkAvailable(bool available) { impl_->SetNetworkAvailable(available); }
+
+void SipEngine::WatchBlf(const std::vector<std::string>& numbers) { impl_->WatchBlf(numbers); }
 
 std::vector<std::string> SipEngine::ActiveCodecs() const { return impl_->ActiveCodecs(); }
 
