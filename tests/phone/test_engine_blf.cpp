@@ -6,6 +6,7 @@
 #include <memory>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "EngineEvents.h"
@@ -61,27 +62,40 @@ const std::vector<std::string> kOk = {"OK"};
 
 }  // namespace
 
-TEST_CASE("BlfFromDialogInfo maps the dialog-info states") {
-    BlfState state = BlfState::Unknown;
-    CHECK_FALSE(BlfFromDialogInfo(false, false, "", &state));   // assinatura sem NOTIFY ainda: nada a dizer
-    CHECK(BlfFromDialogInfo(false, true, "", &state));
-    CHECK(state == BlfState::Free);   // nenhum diálogo
-    CHECK(BlfFromDialogInfo(false, true, "terminated", &state));
-    CHECK(state == BlfState::Free);
+TEST_CASE("BlfDialogs aggregates the dialogs of a dialog-info") {
+    using Dialogs = std::vector<std::pair<std::string, std::string>>;
+    BlfDialogs dialogs;
+    CHECK(dialogs.State() == BlfState::Free);   // nenhum diálogo
+
+    dialogs.Apply(true, Dialogs{{"a", "terminated"}});
+    CHECK(dialogs.State() == BlfState::Free);
     for (const char* ringing : {"early", "proceeding", "trying", "Early"}) {
         CAPTURE(ringing);
-        CHECK(BlfFromDialogInfo(false, true, ringing, &state));
-        CHECK(state == BlfState::Ringing);
+        dialogs.Apply(true, Dialogs{{"a", ringing}});
+        CHECK(dialogs.State() == BlfState::Ringing);
     }
-    CHECK(BlfFromDialogInfo(false, true, "confirmed", &state));
-    CHECK(state == BlfState::Busy);
-    CHECK(BlfFromDialogInfo(false, true, "outro", &state));
-    CHECK(state == BlfState::Unknown);
-    // A assinatura acabou (recusada, vencida, sem resposta ou encerrada pelo servidor).
-    CHECK(BlfFromDialogInfo(true, true, "confirmed", &state));
-    CHECK(state == BlfState::Unknown);
-    CHECK(BlfFromDialogInfo(true, false, "", &state));
-    CHECK(state == BlfState::Unknown);
+    dialogs.Apply(true, Dialogs{{"a", "confirmed"}});
+    CHECK(dialogs.State() == BlfState::Busy);
+    dialogs.Apply(true, Dialogs{{"a", "outro"}});   // um estado que a RFC 4235 não tem não conta
+    CHECK(dialogs.State() == BlfState::Free);
+
+    // Vários diálogos: tocando vale mais que ocupado, que vale mais que livre.
+    dialogs.Apply(true, Dialogs{{"a", "confirmed"}, {"b", "early"}});
+    CHECK(dialogs.State() == BlfState::Ringing);
+    dialogs.Apply(true, Dialogs{{"a", "terminated"}, {"b", "confirmed"}});
+    CHECK(dialogs.State() == BlfState::Busy);
+
+    // partial muda só os diálogos que vieram; full troca todos.
+    dialogs.Apply(true, Dialogs{{"a", "confirmed"}, {"b", "early"}});
+    dialogs.Apply(false, Dialogs{{"b", "terminated"}});
+    CHECK(dialogs.State() == BlfState::Busy);
+    dialogs.Apply(false, Dialogs{{"c", "early"}});
+    CHECK(dialogs.State() == BlfState::Ringing);
+    dialogs.Apply(true, Dialogs{});
+    CHECK(dialogs.State() == BlfState::Free);
+    dialogs.Apply(false, Dialogs{{"a", "confirmed"}});
+    dialogs.Clear();
+    CHECK(dialogs.State() == BlfState::Free);
 }
 
 TEST_CASE("WatchBlf subscribes and reports each state") {
@@ -250,4 +264,94 @@ TEST_CASE("SetNetworkAvailable brings the BLF subscriptions back") {
     CHECK(listener.WaitForBlf("2007", BlfState::Ringing, kWaitSeconds));
     CHECK(listener.WaitForBlf("2008", BlfState::Free, kWaitSeconds));
     CHECK(LogCount(registrar, "sub-in 2007 200") == 2);
+}
+
+TEST_CASE("WatchBlf aggregates several dialogs of the same extension") {
+    FakeRegistrar registrar("senha");
+    RecordingListener listener;
+    INFO(listener.LogTail());
+    INFO(listener.BlfText());
+    std::unique_ptr<SipEngine> engine = StartEngine(&listener, LoadProfile(registrar.port()));
+
+    REQUIRE(engine->SetAccount(Input(Transport::Udp)));
+    REQUIRE(listener.WaitFor(RecordingListener::Reached(200, true, 1), kWaitSeconds));
+    engine->WatchBlf({"2007"});
+    REQUIRE(listener.WaitForBlf("2007", BlfState::Free, kWaitSeconds));
+
+    // Uma ligação em andamento e outra tocando no mesmo ramal: tocando (dá para puxar).
+    REQUIRE(registrar.Control("BLF 2007 confirmed+early") == kOk);
+    CHECK(listener.WaitForBlf("2007", BlfState::Ringing, kWaitSeconds));
+    // Um NOTIFY partial encerra só a que tocava: a outra continua, ocupado.
+    REQUIRE(registrar.Control("BLF 2007 terminated@2") == kOk);
+    CHECK(listener.WaitForBlf("2007", BlfState::Busy, kWaitSeconds));
+    REQUIRE(registrar.Control("BLF 2007 terminated@1") == kOk);
+    CHECK(listener.WaitForBlf("2007", BlfState::Free, kWaitSeconds));
+
+    const std::vector<BlfState> expected = {BlfState::Free, BlfState::Ringing, BlfState::Busy, BlfState::Free};
+    CHECK(listener.BlfStates("2007") == expected);
+}
+
+TEST_CASE("SetNetworkAvailable true registers again after an unregister that was still on the way") {
+    FakeRegistrar registrar("senha");
+    RecordingListener listener;
+    INFO(listener.LogTail());
+    INFO(RegistrationsText(listener));
+    std::unique_ptr<SipEngine> engine = StartEngine(&listener, LoadProfile(registrar.port()));
+
+    REQUIRE(engine->SetAccount(Input(Transport::Udp)));
+    REQUIRE(listener.WaitFor(RecordingListener::Reached(200, true, 1), kWaitSeconds));
+
+    // Os pacotes somem: o pedido de saída fica sem resposta, e o UDP o repete (0,5 s, 1,5 s, 3,5 s, 7,5 s...).
+    REQUIRE(registrar.Control("DROP REGISTER on") == kOk);
+    const auto start = std::chrono::steady_clock::now();
+    engine->SetNetworkAvailable(false);   // espera a resposta da saída até ~3 s e segue sem ela
+    CHECK(std::chrono::steady_clock::now() - start < std::chrono::seconds(5));
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+
+    // A rede volta com a saída ainda a caminho: a repetição dela chega ao servidor e leva 200 (Expires: 0).
+    const size_t active = CountActive(listener.Registrations());
+    const size_t before = listener.Registrations().size();
+    REQUIRE(registrar.Control("DROP REGISTER off") == kOk);
+    engine->SetNetworkAvailable(true);
+    // O registro vai logo depois da resposta da saída, sem esperar a nova tentativa do PJSIP (5 min).
+    CHECK(listener.WaitFor(RecordingListener::Reached(200, true, active + 1), kWaitSeconds));
+    CHECK(registrar.Control("RING 2001") == kOk);
+    // A resposta da saída de antes não chega ao listener: a conta não "saiu".
+    const std::vector<phone_test::RegistrationEvent> events = listener.Registrations();
+    for (size_t i = before; i < events.size(); ++i) {
+        CAPTURE(i);
+        CHECK(events[i].active);
+    }
+}
+
+TEST_CASE("BLF comes back when the account registers again") {
+    FakeRegistrar registrar("senha");
+    RecordingListener listener;
+    INFO(listener.LogTail());
+    INFO(listener.BlfText());
+    INFO(RegistrationsText(listener));
+    std::unique_ptr<SipEngine> engine = StartEngine(&listener, LoadProfile(registrar.port()));
+
+    REQUIRE(engine->SetAccount(Input(Transport::Udp)));
+    REQUIRE(listener.WaitFor(RecordingListener::Reached(200, true, 1), kWaitSeconds));
+    engine->WatchBlf({"2007"});
+    REQUIRE(listener.WaitForBlf("2007", BlfState::Free, kWaitSeconds));
+
+    // Sem rede o servidor passa a recusar o BLF, e o REGISTER da volta se perde no começo.
+    engine->SetNetworkAvailable(false);
+    REQUIRE(listener.WaitForBlf("2007", BlfState::Unknown, kWaitSeconds));
+    REQUIRE(registrar.Control("BLF 2007 refuse") == kOk);
+    REQUIRE(registrar.Control("DROP REGISTER on") == kOk);
+    engine->SetNetworkAvailable(true);
+    // O SUBSCRIBE da volta é recusado (403): o ramal segue desconhecido.
+    REQUIRE(registrar.WaitForLog("sub-in 2007 403", kWaitSeconds));
+    CHECK(listener.BlfStates("2007").back() == BlfState::Unknown);
+
+    // O servidor volta a aceitar e o REGISTER passa: o BLF volta junto com o registro, sem esperar a nova
+    // tentativa do PJSIP (cerca de 5 min).
+    REQUIRE(registrar.Control("BLF 2007 early") == kOk);
+    REQUIRE(registrar.Control("DROP REGISTER off") == kOk);
+    CHECK(listener.WaitFor(RecordingListener::Reached(200, true, 2), kWaitSeconds));
+    CHECK(listener.WaitForBlf("2007", BlfState::Ringing, kWaitSeconds));
+    CHECK(LogCount(registrar, "sub-in 2007 200") == 2);   // a de antes da queda e a que voltou
 }

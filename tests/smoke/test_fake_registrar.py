@@ -237,6 +237,51 @@ class FakeRegistrarBlfTest(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(self.registrar.command(command), ["ERR bad-command"])
 
+    def test_blf_two_dialogs_go_in_one_full_notify(self):
+        self.answer(subscribe("2007"))
+        self.assertEqual(self.registrar.command("BLF 2007 confirmed+early"), ["OK"])
+        notify = self.sent()[-1]
+        self.assertIn('state="full"', notify.body)
+        self.assertIn('<dialog id="ci-2007-1" direction="recipient">\r\n<state>confirmed</state>', notify.body)
+        self.assertIn('<dialog id="ci-2007-2" direction="recipient">\r\n<state>early</state>', notify.body)
+
+    def test_blf_partial_update_changes_one_dialog(self):
+        self.answer(subscribe("2007"))
+        self.registrar.command("BLF 2007 confirmed+early")
+        self.assertEqual(self.registrar.command("BLF 2007 terminated@2"), ["OK"])
+        notify = self.sent()[-1]
+        self.assertIn('state="partial"', notify.body)
+        self.assertIn('<dialog id="ci-2007-2" direction="recipient">\r\n<state>terminated</state>', notify.body)
+        self.assertNotIn("ci-2007-1", notify.body)
+        # Uma assinatura nova recebe tudo de uma vez, com a mudança.
+        full = self.answer(subscribe("2007", call_id="sub-2007-b"))[1]
+        self.assertIn('state="full"', full.body)
+        self.assertIn("<state>confirmed</state>", full.body)
+        self.assertIn("<state>terminated</state>", full.body)
+
+    def test_blf_partial_update_needs_the_dialog(self):
+        self.assertEqual(self.registrar.command("BLF 2007 early@1"), ["ERR no-dialog"])
+        self.registrar.command("BLF 2007 confirmed")
+        self.assertEqual(self.registrar.command("BLF 2007 early@2"), ["ERR no-dialog"])
+        self.assertEqual(self.registrar.command("BLF 2007 early@1"), ["OK"])
+
+    def test_blf_dialog_lists_refuse_bad_arguments(self):
+        for command in ("BLF 2007 early+", "BLF 2007 +early", "BLF 2007 early+ringing", "BLF 2007 refuse+early",
+                        "BLF 2007 early@0", "BLF 2007 early@x", "BLF 2007 refuse@1", "BLF 2007 early+early@1"):
+            with self.subTest(command=command):
+                self.assertEqual(self.registrar.command(command), ["ERR bad-command"])
+
+    def test_drop_register_ignores_registers_while_on(self):
+        self.assertEqual(self.registrar.command("DROP REGISTER on"), ["OK"])
+        self.assertEqual(self.answer(register(self.registrar)), [])   # nenhuma resposta: como um pacote perdido
+        self.assertEqual(self.registrar.command("REGISTERS 2001"), ["0"])
+        self.assertEqual(self.answer(subscribe("2007"))[0].status, 200)   # o resto continua respondendo
+        self.assertEqual(self.registrar.command("DROP REGISTER off"), ["OK"])
+        self.assertEqual(self.answer(register(self.registrar, "nonce-2"))[0].status, 200)
+        for command in ("DROP", "DROP REGISTER", "DROP INVITE on", "DROP REGISTER maybe"):
+            with self.subTest(command=command):
+                self.assertEqual(self.registrar.command(command), ["ERR bad-command"])
+
     def test_expires_command_sets_the_granted_registration_time(self):
         response = self.answer(register(self.registrar))[0]
         self.assertEqual(response.first("expires"), "300")   # o padrão: o que o telefone pediu

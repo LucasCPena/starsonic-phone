@@ -34,8 +34,6 @@ const int kNullAudioDevice = -2;   // PJSUA_SND_NULL_DEV: o id do dispositivo nu
 const int kDefaultAudioDevice = -1;   // o padrão do sistema (PJMEDIA_AUD_DEFAULT_CAPTURE_DEV e ..._PLAYBACK_DEV)
 // Quanto o motor espera o pjsua refazer os transportes depois de uma troca de rede (leva alguns ms).
 const int kIpChangeWaitMs = 2000;
-// Quanto o motor espera um pedido de registro ainda a caminho antes de registrar de novo (a rede voltou).
-const int kRegisterWaitMs = 2000;
 
 // O pjsua tem estado global: um motor por processo.
 std::mutex g_aliveMutex;
@@ -104,6 +102,9 @@ public:
             // gerenciador ("Specified factory for creating transport is not found") até o motor acabar.
 #ifdef SO_REUSEPORT
             transport.sockOptParams.sockOpts.push_back(pj::SockOpt(SOL_SOCKET, SO_REUSEPORT, 1));
+            // O SockOpt aponta optVal para o próprio optValInt: a cópia do push_back ainda apontava para o
+            // temporário, que já saiu da pilha quando o transportCreate o lê.
+            transport.sockOptParams.sockOpts.back().setOptValInt(1);
 #endif
             tcpId_ = endpoint_->transportCreate(PJSIP_TRANSPORT_TCP, transport);
             endpoint_->libStart();
@@ -134,10 +135,14 @@ public:
         const pj::AccountConfig config = MakeAccountConfig(settings, settings.transport == "tcp" ? tcpId_ : udpId_);
         // O id vem antes do create(): uma resposta que chegue durante ele já sai com o id da conta.
         const int accountId = ++lastAccountId_;
-        std::unique_ptr<EngineAccount> account(new EngineAccount(&events_, &calls_, accountId));
+        std::unique_ptr<EngineAccount> account(new EngineAccount(&events_, &calls_, endpoint_.get(), accountId));
         try {
-            // Sem rede a conta nasce parada: registra quando SetNetworkAvailable(true) chegar.
-            account->Start(config, !networkAvailable_);
+            // Sem rede a conta nasce parada: registra quando SetNetworkAvailable(true) chegar. Cada vez que
+            // ela volta a ficar registrada, o BLF que tinha acabado é assinado de novo (na thread dos
+            // eventos, fora do callback do PJSIP).
+            account->Start(config, !networkAvailable_, [this, accountId] {
+                events_.Post([this, accountId](EngineListener&) { RetryBlf(accountId); });
+            });
         } catch (const pj::Error& failure) {
             Log(1, "o PJSIP recusou a conta " + settings.idUri + ": " + failure.info());
             return 0;
@@ -192,7 +197,7 @@ public:
             Log(3, "sem rede: o registro e o BLF param");
             if (!account_) return;
             DropBlf();
-            for (const std::string& number : blfNumbers_) PostBlf(number, BlfState::Unknown);
+            for (auto& entry : blf_) entry.second.track->SetUnknown(false);
             switch (account_->Pause(kUnregisterWaitMs)) {
                 case EngineAccount::Exit::Confirmed:
                     Log(3, "sem rede: o registro saiu do servidor");
@@ -211,12 +216,12 @@ public:
         if (!account_) return;
         Log(3, wasDown ? "a rede voltou: registrando de novo" : "rede disponivel: renovando o registro");
         if (wasDown) {
-            account_->Resume(kRegisterWaitMs);
+            account_->Resume();
         } else {
-            account_->Register(kRegisterWaitMs);
+            account_->Register();
         }
         for (const std::string& number : blfNumbers_) {
-            if (blfBuddies_.find(number) == blfBuddies_.end()) SubscribeBlf(number);
+            if (!blf_[number].buddy) SubscribeBlf(number);
         }
     }
 
@@ -237,22 +242,20 @@ public:
             }
             wanted.push_back(number);
         }
-        // Quem saiu da lista: o ~Buddy manda o SUBSCRIBE com Expires: 0.
-        for (auto it = blfBuddies_.begin(); it != blfBuddies_.end();) {
+        // Quem saiu da lista: o ~Buddy manda o SUBSCRIBE com Expires: 0 (o buddy sai antes do track).
+        for (auto it = blf_.begin(); it != blf_.end();) {
             if (std::find(wanted.begin(), wanted.end(), it->first) == wanted.end()) {
-                it = blfBuddies_.erase(it);
+                it = blf_.erase(it);
             } else {
                 ++it;
             }
         }
-        const std::vector<std::string> before = blfNumbers_;
         blfNumbers_ = wanted;
         for (const std::string& number : wanted) {
+            BlfEntry& entry = Entry(number);
             if (!networkAvailable_) {
-                if (std::find(before.begin(), before.end(), number) == before.end()) {
-                    PostBlf(number, BlfState::Unknown);
-                }
-            } else if (blfBuddies_.find(number) == blfBuddies_.end()) {
+                entry.track->SetUnknown(false);   // só avisa os que entraram (os outros já estão assim)
+            } else if (!entry.buddy) {
                 SubscribeBlf(number);
             }
         }
@@ -500,28 +503,54 @@ private:
         }
     }
 
-    // Assina o BLF do número na conta de agora; se o PJSIP recusa, o ramal fica Unknown.
+    // Um ramal do BLF: o que se sabe dele e a assinatura de agora (vazia sem rede ou se o PJSIP a recusou).
+    // O buddy é declarado depois: sai antes do track, que os avisos dele usam.
+    struct BlfEntry {
+        std::unique_ptr<BlfTrack> track;
+        std::unique_ptr<BlfBuddy> buddy;
+    };
+
+    BlfEntry& Entry(const std::string& number) {
+        BlfEntry& entry = blf_[number];
+        if (!entry.track) entry.track.reset(new BlfTrack(&events_, number));
+        return entry;
+    }
+
+    // Assina o BLF do número na conta de agora (a assinatura de antes, se havia, sai antes); se o PJSIP
+    // recusa, o ramal fica Unknown.
     void SubscribeBlf(const std::string& number) {
+        BlfEntry& entry = Entry(number);
+        entry.buddy.reset();
+        entry.track->Restart();
         pj::BuddyConfig config;
         config.uri = CallUri(number);
         config.subscribe = false;
         config.subscribe_dlg_event = true;
-        std::unique_ptr<BlfBuddy> buddy(new BlfBuddy(&events_, number));
+        std::unique_ptr<BlfBuddy> buddy(new BlfBuddy(entry.track.get()));
         try {
             buddy->create(*account_, config);
         } catch (const pj::Error& failure) {
             Log(1, "BLF: o PJSIP recusou a assinatura de " + config.uri + ": " + failure.info());
-            PostBlf(number, BlfState::Unknown);
+            entry.track->SetUnknown(true);
             return;
         }
-        blfBuddies_[number] = std::move(buddy);
+        entry.buddy = std::move(buddy);
     }
 
-    // Retira as assinaturas de BLF (a lista fica). Os avisos delas param aqui.
-    void DropBlf() { blfBuddies_.clear(); }
+    // Retira as assinaturas de BLF (a lista e o que se sabe de cada ramal ficam). Os avisos delas param aqui.
+    void DropBlf() {
+        for (auto& entry : blf_) entry.second.buddy.reset();
+    }
 
-    void PostBlf(const std::string& number, BlfState state) {
-        events_.Post([number, state](EngineListener& listener) { listener.OnBlf(number, state); });
+    // A conta accountId voltou a ficar registrada (thread dos eventos): assina de novo os ramais cuja
+    // assinatura acabou (recusada, vencida, sem resposta), sem esperar a nova tentativa do PJSIP (~5 min).
+    void RetryBlf(int accountId) {
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        if (!RegisterThread() || !account_ || account_->Id() != accountId || !networkAvailable_) return;
+        for (const std::string& number : blfNumbers_) {
+            BlfEntry& entry = Entry(number);
+            if (!entry.buddy || entry.track->Ended()) SubscribeBlf(number);
+        }
     }
 
     // Desliga as ligações, tira a conta do servidor (esperando a resposta, até um limite) e a apaga.
@@ -530,7 +559,7 @@ private:
     void RetireAccount() {
         if (!account_) return;
         account_->Retire();
-        DropBlf();
+        blf_.clear();   // cada buddy antes do track dele
         blfNumbers_.clear();
         if (!calls_.End(kCallEndWaitMs)) Log(2, "a ligacao nao terminou a tempo; a conta sai assim mesmo");
         switch (account_->Unregister(kUnregisterWaitMs)) {
@@ -581,11 +610,12 @@ private:
     std::unique_ptr<EngineAccount> account_;
     int lastAccountId_ = 0;   // o id da última conta criada (com a apiMutex_)
     std::string callHost_;   // <domínio>[:<porta>] da conta (UTF-8), para as URIs das ligações
-    // Com a apiMutex_: a rede como o app a vê (SetNetworkAvailable), os ramais do BLF da conta e as
-    // assinaturas de agora (vazias sem rede). Os buddies saem antes da conta (RetireAccount).
+    // Com a apiMutex_: a rede como o app a vê (SetNetworkAvailable), os ramais do BLF da conta, na ordem, e
+    // cada um com o que se sabe dele e a assinatura de agora (vazia sem rede). Saem antes da conta
+    // (RetireAccount).
     bool networkAvailable_ = true;
     std::vector<std::string> blfNumbers_;
-    std::map<std::string, std::unique_ptr<BlfBuddy>> blfBuddies_;
+    std::map<std::string, BlfEntry> blf_;
 };
 
 SipEngine::SipEngine(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}

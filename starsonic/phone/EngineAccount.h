@@ -6,10 +6,15 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <functional>
 #include <mutex>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "AccountConfig.h"
+#include "EngineEndpoint.h"
+#include "EngineEvents.h"
 
 namespace starsonic {
 
@@ -20,33 +25,42 @@ class EventQueue;
 pj::AccountConfig MakeAccountConfig(const PjAccountSettings& settings, pj::TransportId transportId);
 
 // Os callbacks chegam numa thread do PJSIP (ou na que chamou o PJSIP), com a trava do pjsua.
-class EngineAccount : public pj::Account {
+class EngineAccount : public pj::Account, public TimerTarget {
 public:
     enum class Exit { Confirmed, NothingToRemove, NoAnswer };
 
-    // id: o que SetAccount devolve; vai em cada OnRegistration desta conta.
-    EngineAccount(EventQueue* events, CallTable* calls, int id);
+    // id: o que SetAccount devolve; vai em cada OnRegistration desta conta. endpoint: o do motor, que dá os
+    // temporizadores da conta (dura mais que ela).
+    EngineAccount(EventQueue* events, CallTable* calls, EngineEndpoint* endpoint, int id);
+    ~EngineAccount() override;
 
     int Id() const { return id_; }
 
     // O create() do pjsua2 com a configuração da conta, que fica guardada para o Resume. paused: a rede está
-    // fora; a conta nasce sem registrar e parada (como depois de um Pause). Lança pj::Error como o create().
-    void Start(const pj::AccountConfig& config, bool paused);
+    // fora; a conta nasce sem registrar e parada (como depois de um Pause). onActive: chamado (numa thread do
+    // PJSIP, com a trava do pjsua; não pode chamar o PJSIP nem esperar) cada vez que a conta passa de sem
+    // registro a registrada, também na primeira vez. Lança pj::Error como o create().
+    void Start(const pj::AccountConfig& config, bool paused, std::function<void()> onActive);
 
     // A rede caiu: o PJSIP deixa de tentar de novo (o intervalo das novas tentativas vai a zero), nenhuma
     // resposta de registro vira evento e o registro sai do servidor (Unregister, com o mesmo prazo).
     Exit Pause(int timeoutMs);
 
     // A rede voltou: a configuração de antes volta, as respostas voltam a virar evento e a conta pede o
-    // registro (Register). false como em Register.
-    bool Resume(int timeoutMs);
+    // registro (Register).
+    void Resume();
 
-    // Pede o registro. Com um pedido ainda a caminho (PJSIP_EBUSY), espera a resposta dele e pede de novo,
-    // dentro de timeoutMs. false: o PJSIP recusou ou o pedido de antes não acabou no prazo (o log diz).
-    bool Register(int timeoutMs);
+    // Pede o registro agora. Com um pedido ainda a caminho (PJSIP_EBUSY: uma renovação, ou a saída de um
+    // Pause que ficou sem resposta), o registro vai logo depois da resposta dele, num temporizador; se essa
+    // resposta deixa a conta sem registro, ela não vira evento (é de antes do pedido). Não espera.
+    void Register();
+
+    // O registro adiado por Register (temporizador do EngineEndpoint).
+    void OnEngineTimer() override;
 
     // A conta vai sair: daqui em diante nenhuma resposta de registro vira evento (um 200 sem registro
-    // seria lido como o resultado da conta nova) e as ligações que chegam são recusadas (480).
+    // seria lido como o resultado da conta nova), as ligações que chegam são recusadas (480) e nenhum
+    // registro adiado sai.
     void Retire();
 
     // Retira o registro e espera a resposta do servidor até timeoutMs. Com um REGISTER ainda a
@@ -64,10 +78,18 @@ private:
 
     EventQueue* events_;
     CallTable* calls_;
+    EngineEndpoint* endpoint_;
     const int id_;
     pj::AccountConfig config_;   // a de Start (com a apiMutex_ do motor)
+    std::function<void()> onActive_;   // de Start, antes do create(): só lido nos callbacks
     std::atomic<bool> retired_{false};
     std::atomic<bool> paused_{false};   // a rede está fora: as respostas de registro não viram evento
+    // Register achou um pedido a caminho: wantRegistered_ = registrar logo depois da resposta dele (se ela
+    // deixa a conta sem registro); staleInactive_ = essa resposta, se deixa a conta sem registro, não vira
+    // evento. O regc do PJSIP tem um pedido por vez, então a próxima resposta é a dele.
+    std::atomic<bool> wantRegistered_{false};
+    std::atomic<bool> staleInactive_{false};
+    bool wasActive_ = false;   // a última resposta deixou a conta registrada (só nos callbacks, com a trava do pjsua)
     std::mutex mutex_;
     std::condition_variable changed_;
     unsigned results_ = 0;    // respostas de registro que chegaram (qualquer código)
@@ -78,22 +100,52 @@ private:
 // O tamanho máximo, em bytes, de um número de BLF (o app aceita até 32 caracteres).
 const size_t kMaxBlfNumber = 63;
 
-// A assinatura de BLF (o evento dialog) de um ramal numa conta: cada mudança de estado vira OnBlf, sem
-// repetir o mesmo estado seguido. O objeto sai antes da conta (o pjsua2 pede). O ~Buddy do pjsua2 só tira
-// o buddy do PJSIP (e espera, pela trava do diálogo, um aviso que ainda esteja em andamento) depois de os
-// campos desta classe já terem sido desmontados: por isso todos eles são de destruição trivial.
-class BlfBuddy : public pj::Buddy {
+// O que o motor sabe do BLF de um ramal: os diálogos dele e o último estado avisado. Dura mais que as
+// assinaturas (BlfBuddy) do ramal, que o usam nos callbacks; uma nova assinatura continua com ele. Qualquer
+// thread (trava própria, curta; nunca chama o PJSIP).
+class BlfTrack {
 public:
-    // number: até kMaxBlfNumber bytes (o resto é cortado).
-    BlfBuddy(EventQueue* events, const std::string& number);
+    BlfTrack(EventQueue* events, const std::string& number) : events_(events), number_(number) {}
 
-    // Numa thread do PJSIP, com a trava do diálogo da assinatura.
-    void onBuddyDlgEventState() override;
+    // Um NOTIFY com dialog-info chegou (thread do PJSIP): aplica os diálogos e avisa se o estado mudou.
+    void OnNotify(bool full, const std::vector<std::pair<std::string, std::string>>& dialogs);
+
+    // Sem estado (Unknown): a assinatura acabou (ended, thread do PJSIP), o PJSIP a recusou ou a rede
+    // caiu. Os diálogos se perdem.
+    void SetUnknown(bool ended);
+
+    // Uma nova assinatura começa (a de antes, se havia, já saiu).
+    void Restart();
+
+    // A assinatura acabou (recusada, vencida, sem resposta ou encerrada pelo servidor) ou nem começou, e
+    // nenhuma nova foi feita desde então.
+    bool Ended() const;
 
 private:
+    void Report(BlfState state);   // com mutex_
+
     EventQueue* events_;
-    char number_[kMaxBlfNumber + 1];
-    std::atomic<int> last_{-1};   // o último BlfState avisado (-1: nenhum)
+    const std::string number_;
+    mutable std::mutex mutex_;
+    BlfDialogs dialogs_;
+    int last_ = -1;       // o último BlfState avisado (-1: nenhum)
+    bool ended_ = false;
+};
+
+// A assinatura de BLF (o evento dialog) de um ramal numa conta. O objeto sai antes da conta (o pjsua2 pede)
+// e antes do BlfTrack dele. Os campos daqui são de destruição trivial: o ~Buddy do pjsua2 só tira o buddy
+// do PJSIP depois de o destrutor desta classe ter corrido, e um aviso já em andamento pode estar nela
+// nesse meio-tempo (o pjsua_buddy_del costuma esperá-lo pela trava do diálogo, mas não sempre).
+class BlfBuddy : public pj::Buddy {
+public:
+    explicit BlfBuddy(BlfTrack* track) : track_(track) {}
+
+    // Numa thread do PJSIP, com a trava do diálogo da assinatura: cada mudança da assinatura, com o NOTIFY
+    // que a trouxe (o PJSIP só guarda o primeiro <dialog>; aqui o corpo é lido inteiro).
+    void onBuddyEvSubDlgEventState(pj::OnBuddyEvSubStateParam& param) override;
+
+private:
+    BlfTrack* track_;
 };
 
 }  // namespace starsonic

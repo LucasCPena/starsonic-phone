@@ -7,19 +7,33 @@
 #include <deque>
 #include <functional>
 #include <mutex>
+#include <map>
 #include <string>
 #include <thread>
+#include <utility>
+#include <vector>
 
 #include "SipEngine.h"
 
 namespace starsonic {
 
-// O estado do BLF de um aviso do PJSIP sobre a assinatura do evento dialog. ended: a assinatura acabou
-// (recusada, vencida, sem resposta ou encerrada pelo servidor) -> Unknown. notified: já chegou um
-// dialog-info (sem ele, como no 200 do SUBSCRIBE, ainda não há o que dizer: devolve false). dialogState:
-// o <state> do primeiro <dialog> ("" sem diálogo): confirmed -> Busy; early, proceeding e trying ->
-// Ringing; terminated ou nenhum -> Free; outro -> Unknown. Sem diferença de maiúsculas.
-bool BlfFromDialogInfo(bool ended, bool notified, const std::string& dialogState, BlfState* state);
+// Os diálogos de um ramal no BLF, como os NOTIFY do evento dialog os contam (RFC 4235): um dialog-info
+// state="full" troca a lista inteira, um "partial" muda só os diálogos que trouxe; um diálogo terminated
+// sai da lista. Sem trava: quem usa cuida dela.
+class BlfDialogs {
+public:
+    // dialogs: (id, <state>) de cada <dialog>, na ordem do documento.
+    void Apply(bool full, const std::vector<std::pair<std::string, std::string>>& dialogs);
+    void Clear() { states_.clear(); }
+
+    // Tocando se algum diálogo está early, proceeding ou trying; senão ocupado se algum está confirmed;
+    // senão livre (nenhum diálogo, todos terminated ou num estado que a RFC 4235 não tem). Sem diferença de
+    // maiúsculas.
+    BlfState State() const;
+
+private:
+    std::map<std::string, std::string> states_;   // id -> estado (em minúsculas)
+};
 
 class EventQueue {
 public:

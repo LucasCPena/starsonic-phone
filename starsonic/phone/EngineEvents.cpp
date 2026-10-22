@@ -6,25 +6,37 @@
 
 namespace starsonic {
 
-bool BlfFromDialogInfo(bool ended, bool notified, const std::string& dialogState, BlfState* state) {
-    if (ended) {
-        *state = BlfState::Unknown;
-        return true;
-    }
-    if (!notified) return false;
-    std::string name = dialogState;
-    std::transform(name.begin(), name.end(), name.begin(),
+namespace {
+
+std::string Lower(std::string text) {
+    std::transform(text.begin(), text.end(), text.begin(),
                    [](char c) { return static_cast<char>(std::tolower(static_cast<unsigned char>(c))); });
-    if (name.empty() || name == "terminated") {
-        *state = BlfState::Free;
-    } else if (name == "confirmed") {
-        *state = BlfState::Busy;
-    } else if (name == "early" || name == "proceeding" || name == "trying") {
-        *state = BlfState::Ringing;
-    } else {
-        *state = BlfState::Unknown;
+    return text;
+}
+
+}  // namespace
+
+void BlfDialogs::Apply(bool full, const std::vector<std::pair<std::string, std::string>>& dialogs) {
+    if (full) states_.clear();
+    for (const std::pair<std::string, std::string>& dialog : dialogs) {
+        const std::string state = Lower(dialog.second);
+        if (state == "terminated") {
+            states_.erase(dialog.first);
+        } else {
+            states_[dialog.first] = state;
+        }
     }
-    return true;
+}
+
+BlfState BlfDialogs::State() const {
+    bool busy = false;
+    for (const auto& dialog : states_) {
+        if (dialog.second == "early" || dialog.second == "proceeding" || dialog.second == "trying") {
+            return BlfState::Ringing;
+        }
+        if (dialog.second == "confirmed") busy = true;
+    }
+    return busy ? BlfState::Busy : BlfState::Free;
 }
 
 EventQueue::EventQueue(EngineListener* listener) : listener_(listener), thread_([this] { Run(); }) {}

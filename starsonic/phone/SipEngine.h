@@ -12,9 +12,10 @@ namespace starsonic {
 
 enum class CallState { Incoming = 0, Calling = 1, Early = 2, Connecting = 3, Confirmed = 4, Disconnected = 5 };
 
-// O estado de um ramal pelo BLF (WatchBlf): Free = livre (nenhum diálogo, ou terminated), Ringing = tocando
-// (early, proceeding ou trying), Busy = ocupado (confirmed), Unknown = sem estado (assinatura recusada,
-// vencida, sem resposta, encerrada pelo servidor, ou a rede fora).
+// O estado de um ramal pelo BLF (WatchBlf), juntando os diálogos dele: Ringing = tocando (algum diálogo
+// early, proceeding ou trying), senão Busy = ocupado (algum confirmed), senão Free = livre (nenhum diálogo,
+// ou todos terminated); Unknown = sem estado (assinatura recusada, vencida, sem resposta, encerrada pelo
+// servidor, ou a rede fora).
 enum class BlfState { Free = 0, Ringing = 1, Busy = 2, Unknown = 3 };
 
 // Os eventos (OnRegistration, OnIncomingCall, OnRejectedBusy, OnCallState, OnTransfer e OnBlf) chegam numa
@@ -133,8 +134,9 @@ public:
     // novo), nenhuma resposta de registro vira evento, as assinaturas de BLF saem e cada ramal da lista
     // avisa OnBlf(Unknown). A conta continua (as ligações em andamento seguem como estiverem) e uma
     // SetAccount sem rede cria a conta sem registrar. Com um REGISTER a caminho, espera a resposta dele
-    // (até ~3 s). true: registra de novo na hora (o resultado chega por OnRegistration; com um pedido
-    // ainda a caminho, espera a resposta dele até ~2 s) e assina de novo os ramais da lista. Sem conta,
+    // (até ~3 s). true: registra de novo na hora (o resultado chega por OnRegistration; com um pedido ainda
+    // a caminho, como a saída de um false que ficou sem resposta, o registro vai logo depois da resposta
+    // dele, e essa resposta não vira evento) e assina de novo os ramais da lista. Não espera. Sem conta,
     // só guarda o estado. Repetir o mesmo valor: false não faz nada; true registra de novo.
     void SetNetworkAvailable(bool available);
 
@@ -142,8 +144,10 @@ public:
     // SUBSCRIBE do evento dialog (RFC 4235, o BLF) a sip:<número>@<domínio da conta> (com a porta, como em
     // MakeCall). Troca a lista inteira: quem entra é assinado, quem sai tem a assinatura retirada
     // (SUBSCRIBE com Expires: 0), quem fica continua como está. Vazia: nenhum. Os estados chegam por OnBlf
-    // (o primeiro, quando o servidor manda o primeiro NOTIFY). Uma assinatura recusada ou encerrada pelo
-    // servidor avisa Unknown, e o PJSIP tenta de novo mais tarde (cerca de 5 min). A lista é da conta:
+    // (o primeiro, quando o servidor manda o primeiro NOTIFY; os NOTIFY partial mudam só os diálogos que
+    // trazem). Uma assinatura recusada ou encerrada pelo servidor avisa Unknown; ela é feita de novo quando
+    // a conta volta a ficar registrada (depois de uma falha ou da rede voltar), e senão o PJSIP tenta de
+    // novo mais tarde (cerca de 5 min). A lista é da conta:
     // SetAccount e RemoveAccount retiram as assinaturas e esvaziam a lista. Sem conta, nada. Sem rede, só
     // guarda a lista (os novos avisam Unknown) e assina quando a rede volta.
     void WatchBlf(const std::vector<std::string>& numbers);
