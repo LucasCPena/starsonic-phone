@@ -349,6 +349,15 @@ O que mudou em relação ao texto acima durante a construção da 0.1.0-rc.1 (pl
 | As telas seguem o canvas nos dois temas, e nenhum "MicroSIP" | O Playwright (cada tela nos dois temas, as capturas e o axe), o `check_branding.py` (o exe, a pasta `ui\` e o instalador aberto por dentro) | A comparação com o canvas no WebView2 de verdade, a troca de tema com o app aberto, as escalas de 100%, 125% e 150% |
 | Tudo passa nos testes automáticos e no roteiro manual | Os workflows `build` e `android` verdes | O roteiro `docs/teste-manual.md` inteiro, pela Starsonic |
 
+### rc.2 (0.1.0-rc.2)
+
+O que entrou depois da rc.1, aprovado pelo responsável em 22/10/2026 no canvas "Starsonic Phone Windows — tamanho, rediscar e status" (a opção A do Rediscar e os três tamanhos).
+
+- **A janela muda de tamanho** pela borda e pelo canto (seção 7.4 deixa de ser "tamanho fixo"): o `WS_THICKFRAME`, um `WM_NCCALCSIZE` que tira só a barra do Windows e deixa as bordas invisíveis dos lados e de baixo fora da área cliente (o WebView2 não as cobre), e o `WM_GETMINMAXINFO` com o mínimo de 300×440 lógicos e o máximo da área de trabalho. O tamanho é o da área da interface, em pixels lógicos: 400×720 por padrão, o escolhido gravado no `config.json` (`janela_largura` e `janela_altura`, ao lado de `janela_x` e `janela_y`, que passam a ser o canto da área da interface), cortado na área de trabalho pelo `WindowFit` sem passar do mínimo; o `WM_DPICHANGED` mantém o tamanho lógico.
+- **Três layouts** na interface: Normal a partir de 380×640, Compacto a partir de 330×540 e Mínimo até 300×440 (os limites ficam onde cada um cabe com as 12 teclas, o Rediscar, o Ligar e a navegação inteiros, sem rolar, e uma sugestão de contato à vista: o Normal precisa de 640 de altura e o Compacto de uns 531). Numa janela larga, o corpo fica com no máximo 480 de largura, no meio. A regra do teclado sem rolar (antes, só de 720 até 640) vale agora em todo tamanho permitido.
+- **Rediscar** à esquerda do Ligar: liga para a feita mais nova dos Recentes pelo mesmo `dial` do botão da linha dos Recentes (sem mudança na ponte); também no painel Nova ligação, e não no teclado dos tons.
+- **A bolinha da conta**: verde conectado, vermelho "Ocupado · em ligação" com uma ligação (tocando também; durante a ligação, na barra de título, porque a tela da ligação esconde o cabeçalho), ciano conectando, cinza sem conexão e no erro do cadastro (este com o triângulo de atenção). O verde é o token novo `--status-online: #22c55e`: a marca não tem verde (o único é o do WhatsApp, reservado a ele), e este é um pedido explícito do responsável, decisão dele. A bandeja segue as mesmas cores: o conectado com o ponto verde e o ícone novo "em ligação" com o ponto vermelho enquanto existe uma ligação da conta conectada.
+
 ## 14. Próximos passos
 
 1. O plano de implementação desta spec (`writing-plans`), na ordem: motor (dispositivos de áudio) e controlador com os testes portados; lojas e migração; ponte e janela Win32 com o WebView2; interface (telas do canvas) com os testes do Playwright; aviso, bandeja e links; instalador e build; roteiro manual e a `0.1.0-rc.1`.
