@@ -20,10 +20,11 @@ struct ShellStatus {
 // O estado de uma mensagem {"v":1,"type":"state",...}; nada para as outras (toast, ring, update) e texto invalido.
 std::optional<ShellStatus> ReadShellStatus(const std::string& message);
 
-// Os icones da bandeja (spec da W1, 7.4).
+// Os icones da bandeja (spec da W1, 7.4; rc.2: o conectado com o ponto verde e o "em ligacao" com o vermelho).
 enum class TrayIcon { Connected, Offline, DoNotDisturb, Missed, InCall };
 
-// A ligacao perdida (que a pessoa ainda nao viu nos Recentes) primeiro, depois o Nao perturbe, depois a conexao.
+// Uma ligacao da conta conectada primeiro (enquanto ela existe, tocando tambem), depois a ligacao perdida (que a pessoa
+// ainda nao viu nos Recentes), depois o Nao perturbe, depois a conexao.
 TrayIcon ChooseTrayIcon(const ShellStatus& status);
 
 // O comando da ponte (o JSON da interface) e este? ("answer", "ready"...)

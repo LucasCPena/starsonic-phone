@@ -39,6 +39,8 @@ std::optional<ShellStatus> ReadShellStatus(const std::string& message) {
     if (state == parsed.end() || !state->is_object()) return std::nullopt;
     ShellStatus status;
     status.ringing = Ringing(*state);
+    const auto call = state->find("ligacao");
+    status.inCall = call != state->end() && call->is_object();
     status.doNotDisturb = Flag(*state, "naoPerturbe");
     const auto account = state->find("conta");
     if (account != state->end() && account->is_object()) {
@@ -51,6 +53,8 @@ std::optional<ShellStatus> ReadShellStatus(const std::string& message) {
 }
 
 TrayIcon ChooseTrayIcon(const ShellStatus& status) {
+    // Uma ligacao da conta conectada (tocando tambem): "em ligacao", o ponto vermelho (a bolinha da interface).
+    if (status.connected && status.inCall) return TrayIcon::InCall;
     if (status.missed > 0) return TrayIcon::Missed;
     if (status.doNotDisturb) return TrayIcon::DoNotDisturb;
     return status.connected ? TrayIcon::Connected : TrayIcon::Offline;

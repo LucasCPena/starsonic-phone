@@ -13,6 +13,7 @@ namespace starsonic {
 namespace {
 
 const UINT kIconId = 1;
+const int kRingingIndex = 5;   // depois dos icones de estado (TrayIcon)
 const UINT kBlinkMs = 600;
 const wchar_t kTip[] = L"Starsonic Phone";
 
@@ -28,6 +29,8 @@ int ResourceFor(int index) {
             return IDI_TRAY_DND;
         case 3:
             return IDI_TRAY_MISSED;
+        case 4:
+            return IDI_TRAY_INCALL;
         default:
             return IDI_TRAY_RINGING;
     }
@@ -61,7 +64,7 @@ void Tray::Recreate() {
 
 HICON Tray::IconFor(TrayIcon icon) {
     int index = static_cast<int>(icon);
-    if (ringing_ && blinkOn_) index = 4;
+    if (ringing_ && blinkOn_) index = kRingingIndex;
     if (!icons_[index]) {
         // O tamanho pequeno da escala de agora (16 px em 100%).
         if (FAILED(LoadIconMetric(instance_, MAKEINTRESOURCEW(ResourceFor(index)), LIM_SMALL, &icons_[index]))) {

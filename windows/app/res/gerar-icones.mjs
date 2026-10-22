@@ -1,10 +1,12 @@
 // Gera os ícones do app novo (windows/app/res/*.ico) no estilo da interface (design system "Starsonic"): o fone de
 // linha da interface (o IconPhone de windows/ui/src/icons.tsx, traço arredondado) em branco sobre um quadrado de
 // cantos arredondados com o gradient-brand (cyan #00c2cb para blue #0c2671, 135°), e os selos de estado em danger
-// (#d64545). Cada .ico tem 16, 20, 24, 32, 40, 48 e 256 px (PNG dentro do .ico, como o Windows aceita desde o Vista).
+// (#d64545). Na rc.2 a bandeja segue a bolinha da interface: o conectado ganha o ponto verde (--status-online #22c55e)
+// e o "em ligação" o ponto vermelho (danger), embaixo à direita. Cada .ico tem 16, 20, 24, 32, 40, 48 e 256 px (PNG dentro do .ico, como o Windows aceita desde o Vista).
 //
-// - app.ico           o ícone do executável e da janela (também o da bandeja conectado)
-// - bandeja-conectado.ico, bandeja-sem-conexao.ico (cinza), bandeja-nao-perturbe.ico (selo com o traço),
+// - app.ico           o ícone do executável e da janela (sem ponto)
+// - bandeja-conectado.ico (ponto verde), bandeja-em-ligacao.ico (ponto vermelho, enquanto existe uma ligação),
+//   bandeja-sem-conexao.ico (cinza), bandeja-nao-perturbe.ico (selo com o traço),
 //   bandeja-perdida.ico (selo vermelho no alto) e bandeja-tocando.ico (o fone escuro no ciano: a bandeja pisca
 //   entre ele e o de estado enquanto uma ligação toca)
 //
@@ -27,6 +29,7 @@ const SIZES = [16, 20, 24, 32, 40, 48, 256];
 const CYAN = '#00c2cb';
 const BLUE = '#0c2671';
 const DANGER = '#d64545';
+const ONLINE = '#22c55e';
 const ON_CYAN = '#03222a';
 const GREY_TOP = '#8a93a8';
 const GREY_BOTTOM = '#3a4256';
@@ -46,7 +49,7 @@ function svg(kind, px) {
   if (kind === 'sem-conexao') Object.assign(tile, { from: GREY_TOP, to: GREY_BOTTOM });
   if (kind === 'tocando') Object.assign(tile, { from: CYAN, to: CYAN, phone: ON_CYAN });
   // Os selos encolhem o fone um pouco para o canto deles ficar livre.
-  const badge = kind === 'nao-perturbe' || kind === 'perdida';
+  const badge = kind === 'nao-perturbe' || kind === 'perdida' || kind === 'conectado' || kind === 'em-ligacao';
   const offset = (64 - glyph) / 2;
   const phone = `<g transform="translate(${badge ? offset - 3 : offset} ${badge ? offset + 1 : offset}) scale(${glyph / 24})">
     <path d="${PHONE}" fill="none" stroke="${tile.phone}" stroke-width="${stroke}" stroke-linecap="round" stroke-linejoin="round"/>
@@ -56,6 +59,9 @@ function svg(kind, px) {
     // O selo embaixo à direita: o círculo vermelho com o traço branco (o "proibido" do Não perturbe).
     extra = `<circle cx="47" cy="47" r="15" fill="${DANGER}" stroke="#ffffff" stroke-width="4"/>
       <rect x="38" y="44" width="18" height="6" rx="3" fill="#ffffff"/>`;
+  } else if (kind === 'conectado' || kind === 'em-ligacao') {
+    // O ponto de estado embaixo à direita, com o contorno branco (a bolinha da interface).
+    extra = `<circle cx="48" cy="48" r="13" fill="${kind === 'conectado' ? ONLINE : DANGER}" stroke="#ffffff" stroke-width="4"/>`;
   } else if (kind === 'perdida') {
     extra = `<circle cx="48" cy="16" r="13" fill="${DANGER}" stroke="#ffffff" stroke-width="4"/>`;
   }
@@ -92,8 +98,9 @@ function ico(pngs) {
 }
 
 const ICONS = {
-  'app.ico': 'conectado',
+  'app.ico': 'app',
   'bandeja-conectado.ico': 'conectado',
+  'bandeja-em-ligacao.ico': 'em-ligacao',
   'bandeja-sem-conexao.ico': 'sem-conexao',
   'bandeja-nao-perturbe.ico': 'nao-perturbe',
   'bandeja-perdida.ico': 'perdida',

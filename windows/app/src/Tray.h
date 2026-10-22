@@ -1,6 +1,6 @@
 #pragma once
-// O icone da bandeja (spec da W1, 7.4): o estado (conectado, sem conexao, Nao perturbe, ligacao perdida: os icones
-// de windows/app/res), piscando enquanto uma ligacao toca (o aviso do canto pode nao aparecer por cima de uma tela
+// O icone da bandeja (spec da W1, 7.4): o estado (conectado com o ponto verde, em ligacao com o vermelho, sem conexao,
+// Nao perturbe, ligacao perdida: os icones de windows/app/res), piscando enquanto uma ligacao toca (o aviso do canto pode nao aparecer por cima de uma tela
 // cheia: spec 13), um clique mostra a janela e o menu tem Abrir, Nao perturbe (marcado quando ligado) e Sair.
 //
 // Tudo na thread da janela dona (a principal): os avisos do icone chegam nela como kMessage, e o pisca e um timer
@@ -53,7 +53,7 @@ private:
     bool doNotDisturb_ = false;
     bool ringing_ = false;
     bool blinkOn_ = false;
-    HICON icons_[5] = {};   // conectado, sem conexao, Nao perturbe, perdida, tocando
+    HICON icons_[6] = {};   // conectado, sem conexao, Nao perturbe, perdida, em ligacao, tocando
 };
 
 }  // namespace starsonic

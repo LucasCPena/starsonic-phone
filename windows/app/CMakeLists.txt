@@ -83,6 +83,7 @@ rc_path(STARSONIC_TRAY_OFFLINE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/res/bandeja-sem-
 rc_path(STARSONIC_TRAY_DND_PATH ${CMAKE_CURRENT_SOURCE_DIR}/res/bandeja-nao-perturbe.ico)
 rc_path(STARSONIC_TRAY_MISSED_PATH ${CMAKE_CURRENT_SOURCE_DIR}/res/bandeja-perdida.ico)
 rc_path(STARSONIC_TRAY_RINGING_PATH ${CMAKE_CURRENT_SOURCE_DIR}/res/bandeja-tocando.ico)
+rc_path(STARSONIC_TRAY_INCALL_PATH ${CMAKE_CURRENT_SOURCE_DIR}/res/bandeja-em-ligacao.ico)
 rc_path(STARSONIC_PROFILE_PATH ${GENERATED_DIR}/perfil.ini)
 rc_path(STARSONIC_MANIFEST_PATH ${CMAKE_CURRENT_SOURCE_DIR}/res/app.manifest)
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/res/app_build.h.in ${GENERATED_DIR}/app_build.h @ONLY)
