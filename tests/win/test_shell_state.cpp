@@ -62,6 +62,41 @@ TEST_CASE("the shell reads the ringing call, the connection, do not disturb and 
     CHECK(ChooseTrayIcon(*s) == TrayIcon::Missed);
 }
 
+TEST_CASE("a call on the connected account shows the in-call tray icon (red dot), ringing included") {
+    // Uma ligacao em andamento: "em ligacao", acima do Nao perturbe e da perdida (a bandeja segue a bolinha da
+    // interface: vermelho enquanto existe uma ligacao).
+    std::optional<ShellStatus> s = ReadShellStatus(State(
+        R"("conta":{"status":"conectado"},"naoPerturbe":true,"perdidas":2,)"
+        R"("ligacao":{"top":{"id":4,"phase":"active"},"second":null,"secondKind":"none","conference":false})"));
+    REQUIRE(s.has_value());
+    CHECK(s->inCall);
+    CHECK_FALSE(s->ringing);
+    CHECK(ChooseTrayIcon(*s) == TrayIcon::InCall);
+    // Tocando tambem e "em ligacao" (a bandeja pisca entre ele e o de tocando).
+    s = ReadShellStatus(State(std::string(kConnected) +
+                              R"(,"ligacao":{"top":{"id":4,"phase":"ringing"},"second":null,"secondKind":"none","conference":false})"));
+    REQUIRE(s.has_value());
+    CHECK(s->inCall);
+    CHECK(s->ringing);
+    CHECK(ChooseTrayIcon(*s) == TrayIcon::InCall);
+    // Uma feita chamando.
+    s = ReadShellStatus(State(std::string(kConnected) +
+                              R"(,"ligacao":{"top":{"id":0,"phase":"dialing"},"second":null,"secondKind":"none","conference":false})"));
+    REQUIRE(s.has_value());
+    CHECK(ChooseTrayIcon(*s) == TrayIcon::InCall);
+    // Sem ligacao: conectado de novo.
+    s = ReadShellStatus(State(std::string(kConnected) + R"(,"ligacao":null)"));
+    REQUIRE(s.has_value());
+    CHECK_FALSE(s->inCall);
+    CHECK(ChooseTrayIcon(*s) == TrayIcon::Connected);
+    // A ligacao com a conta sem conexao (o registro caiu no meio): a bandeja segue a conexao.
+    s = ReadShellStatus(State(R"("conta":{"status":"sem_conexao"},"naoPerturbe":false,"perdidas":0,)"
+                              R"("ligacao":{"top":{"id":4,"phase":"active"},"second":null,"secondKind":"none","conference":false})"));
+    REQUIRE(s.has_value());
+    CHECK(s->inCall);
+    CHECK(ChooseTrayIcon(*s) == TrayIcon::Offline);
+}
+
 TEST_CASE("the shell ignores the other messages and invalid text") {
     CHECK_FALSE(ReadShellStatus(R"({"v":1,"type":"toast","texto":"state"})").has_value());
     CHECK_FALSE(ReadShellStatus(R"({"v":1,"type":"ring","tipo":"completo"})").has_value());

@@ -12,6 +12,7 @@ namespace starsonic {
 struct ShellStatus {
     bool ringing = false;        // uma recebida tocando: a de cima, ou a segunda (fora da conferencia)
     bool connected = false;      // conta.status "conectado"
+    bool inCall = false;         // existe uma ligacao (ligacao nao nula: tocando, chamando ou em andamento)
     bool doNotDisturb = false;   // naoPerturbe
     int missed = 0;              // perdidas
 };
@@ -20,7 +21,7 @@ struct ShellStatus {
 std::optional<ShellStatus> ReadShellStatus(const std::string& message);
 
 // Os icones da bandeja (spec da W1, 7.4).
-enum class TrayIcon { Connected, Offline, DoNotDisturb, Missed };
+enum class TrayIcon { Connected, Offline, DoNotDisturb, Missed, InCall };
 
 // A ligacao perdida (que a pessoa ainda nao viu nos Recentes) primeiro, depois o Nao perturbe, depois a conexao.
 TrayIcon ChooseTrayIcon(const ShellStatus& status);
