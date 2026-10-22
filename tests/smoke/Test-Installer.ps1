@@ -4,7 +4,8 @@
 # WebView2) e o que fica (os dados). Depois, a instalacao pela tela (a pagina do canvas, com as capturas
 # instalador.png e instalador-fim.png): as duas opcoes marcadas gravam o atalho e o Run com --bandeja, sem mexer no
 # desligado do Gerenciador de Tarefas; por cima, as opcoes vem como estao, e desmarcar o "Iniciar com o Windows" tira
-# o Run. Os links nao passam na frente do callto: de outro programa no HKLM. Desinstala no fim.
+# o Run. Os links nao passam na frente do callto: de outro programa no HKLM. Desinstala no fim. Numa pasta escolhida
+# (/D=) sem o app, uma pasta ui\ de outra coisa fica.
 # Os links abrem "<exe>" --link "%1" (um link nunca carrega opcoes), e a atualizacao troca o registro antigo
 # ("<exe>" "%1") pelo novo. A atualizacao esvazia a pasta ui\ (um ui\velho.js plantado sai) e apaga os logs da rc.7
 # (StarsonicPhone_log.txt, com tracos SIP, e crash-dump_*); a desinstalacao tambem.
@@ -429,6 +430,49 @@ try {
     }
     Test-Uninstall -Label 'desinstalacao depois da instalacao pela tela'
     Write-Host 'OK: a instalacao pela tela grava as opcoes, e por cima elas vem como estao.'
+
+    # 6. Numa pasta escolhida (/D=) que ainda nao tem o app, uma pasta ui\ de outra coisa fica como estava: o
+    # instalador so esvazia a ui\ de uma instalacao do app.
+    # No CI, o RUNNER_TEMP (o %TEMP% do runner tem um nome curto, RUNNER~1, que o caminho dos processos nao usa).
+    $tempRoot = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { [System.IO.Path]::GetTempPath() }
+    $other = Join-Path $tempRoot ('starsonic-outra-pasta-' + [guid]::NewGuid().ToString('N'))
+    $keep = Join-Path $other 'ui\keep.txt'
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $keep) | Out-Null
+    Set-Content -Path $keep -Value 'de outro programa' -Encoding Ascii
+    try {
+        Invoke-Setup -File $Setup -Arguments "/S /D=$other"
+        $otherExe = Join-Path $other 'StarsonicPhone.exe'
+        if (-not (Test-Path (Join-Path $other 'ui\index.html'))) {
+            Fail "A instalacao em $other nao pos a interface."
+        }
+        if (-not (Test-Path $keep)) {
+            Fail "A instalacao numa pasta sem o app apagou a ui\keep.txt de outro programa ($other)."
+        }
+        foreach ($process in @(Get-Process -Name 'StarsonicPhone' -ErrorAction SilentlyContinue)) {
+            $path = $null
+            try { $path = $process.Path } catch { }
+            if ($path -eq $otherExe) {
+                Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            }
+        }
+        $otherUninstaller = Join-Path $other 'Uninstall.exe'
+        if (Test-Path $otherUninstaller) {
+            Invoke-Setup -File $otherUninstaller -Arguments '/S'
+            if (-not (Wait-Until -TimeoutSeconds 90 -Condition { -not (Test-Path $uninstallKey) })) {
+                Fail "A desinstalacao da pasta $other nao terminou em 90 s."
+            }
+        }
+    } finally {
+        foreach ($process in @(Get-Process -Name 'StarsonicPhone' -ErrorAction SilentlyContinue)) {
+            $path = $null
+            try { $path = $process.Path } catch { }
+            if ($path -and $path.StartsWith($other, [System.StringComparison]::OrdinalIgnoreCase)) {
+                Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            }
+        }
+        Remove-Item -Path $other -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    Write-Host 'OK: numa pasta sem o app, a ui\ de outra coisa ficou.'
 } finally {
     # Nunca deixa o app instalado aberto: os testes seguintes iniciam outras copias, e o app so aceita uma por
     # usuario.
