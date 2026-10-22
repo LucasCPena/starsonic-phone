@@ -28,6 +28,11 @@ async function empurrar(page: Page, mensagem: unknown): Promise<void> {
   await page.evaluate((m) => (window as unknown as { __fake: { push(m: unknown): void } }).__fake.push(m), mensagem);
 }
 
+async function mudarEstado(page: Page, mudar: (s: Record<string, any>) => Record<string, any>): Promise<void> {
+  const atual = await page.evaluate(() => (window as unknown as { __fake: { state(): Record<string, any> } }).__fake.state());
+  await empurrar(page, { v: 1, type: 'state', state: mudar(atual) });
+}
+
 async function verTextos(page: Page, textos: string[]): Promise<void> {
   for (const texto of textos) {
     await expect(page.getByText(texto, { exact: true }).first(), texto).toBeVisible();
@@ -154,6 +159,39 @@ for (const tema of ['light', 'dark'] as const) {
       await expect(page.getByRole('navigation', { name: 'Seções' })).toBeVisible();
       await expect(page.getByText('Conectado · starcloud1-starsonic.com.br').first()).toBeVisible();
       expect((await comandos(page)).filter((c) => c.cmd === 'login')).toEqual([]);
+    });
+
+    test('a call on the account in use shows over the password request of a switch, and Entrar comes back after it', async ({ page }) => {
+      await abrir(page, 'troca-pede-senha');
+      await expect(page.getByRole('button', { name: 'Cancelar' })).toBeVisible();
+      // A conta em uso continua registrada: uma ligação chega (mesmo com a tela ainda "entrar" no estado, a ligação
+      // vem antes).
+      await mudarEstado(page, (s) => ({
+        ...s,
+        ligacao: {
+          top: { id: 31, number: '2003', name: 'Ana Souza', incoming: true, phase: 'ringing', activeSinceMs: 0, held: false },
+          second: null,
+          secondKind: 'none',
+          muted: false,
+          conference: false,
+          conferenceSinceMs: 0,
+          consulting: false,
+          colleagueActive: false,
+        },
+      }));
+      const atender = page.getByRole('button', { name: 'Atender', exact: true });
+      await expect(atender).toBeVisible();
+      await expect(page.getByLabel('Senha', { exact: true })).toHaveCount(0);
+      await atender.click();
+      await esperarComando(page, { cmd: 'answer' });
+      const desligar = page.getByRole('button', { name: 'Desligar', exact: true });
+      await expect(desligar).toBeVisible();
+      await desligar.click();
+      await esperarComando(page, { cmd: 'hangup', id: 31 });
+      // A ligação acabou: a troca ainda pede a senha, com o Cancelar.
+      await expect(page.getByLabel('Senha', { exact: true })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Cancelar' })).toBeVisible();
+      await verTextos(page, ['Digite a senha de novo para continuar.']);
     });
 
     test('Entrar asks again for the password of a migrated account', async ({ page }) => {

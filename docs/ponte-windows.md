@@ -48,7 +48,7 @@ Regras para todos:
 | `ready` | — | A interface carregou: o C++ manda o estado e o toque de agora. Vai ao diagnóstico como `interface pronta`. |
 | `minimize` | — | Minimiza a janela. |
 | `closeToTray` | — | O "fechar" da barra de título: a janela se esconde na bandeja (o app continua recebendo ligações: a interface continua rodando e toca; com uma ligação tocando, o aviso do canto aparece). |
-| `quit` | — | Sair: as ligações de agora acabam (e vão aos Recentes) e o app fecha. Uma troca de conta que esperava o fim da ligação não registra, mas a conta escolhida fica em uso na próxima abertura; um Entrar que esperava é descartado. |
+| `quit` | — | Sair: as ligações de agora acabam (e vão aos Recentes) e o app fecha. Uma troca de conta que esperava o fim da ligação não registra, mas a conta escolhida fica em uso na próxima abertura (menos uma conta sem a senha: a em uso continua); um Entrar que esperava é descartado. |
 | `sendDiagnostics` | — | "Enviar diagnóstico": o app copia o `diagnostico.log` (com o `.1` antes, se houver) para `%TEMP%\Starsonic Phone diagnostico <data e hora>.log` e abre o Explorer com a cópia selecionada, para a pessoa anexar no e-mail ou no WhatsApp. O `diagnostico.log` nunca tem senhas nem o valor dos cabeçalhos `Authorization` e `Proxy-Authorization` das mensagens SIP (`Authorization: <oculto>`). |
 | `updateNow` | — | A resposta "Atualizar agora" à pergunta da atualização aberta. Sem pergunta aberta: ignorado (linha no diagnóstico). |
 | `updateLater` | — | A resposta "Depois" (o botão ou o Esc). Sem pergunta aberta: ignorado. |
@@ -196,7 +196,7 @@ O Entrar (spec do Windows, 7.1 e 11.1):
 
 | Campo | Tipo | Sentido |
 |---|---|---|
-| `tela` | `"entrar"` \| `"principal"` | `entrar` sem conta em uso, com a conta em uso sem senha (`entrar.pedeSenha`), ou na troca para uma conta sem senha (`entrar.podeCancelar`; a conta em uso continua em `conta`). Adicionar e Editar conta com o app em `principal` são uma navegação da interface: ela mostra o formulário e lê `entrar` do mesmo jeito. |
+| `tela` | `"entrar"` \| `"principal"` | `entrar` sem conta em uso, com a conta em uso sem senha (`entrar.pedeSenha`), ou na troca para uma conta sem senha (`entrar.podeCancelar`; a conta em uso continua em `conta`) — nesta, com uma ligação (`ligacao` não `null`, da conta que continua registrada) a `tela` é `principal`, e a Entrar volta quando a ligação acaba. A interface também desenha a ligação antes da Entrar. Adicionar e Editar conta com o app em `principal` são uma navegação da interface: ela mostra o formulário e lê `entrar` do mesmo jeito. |
 | `entrar` | objeto | A tela Entrar. |
 | `entrar.servidor`, `entrar.ramal`, `entrar.nome` | texto | O que preencher nos campos: o que a pessoa digitou no último `login` (depois de uma mensagem), ou a conta que pede a senha. A senha nunca vem. |
 | `entrar.protocolo` | `"udp"` \| `"tcp"` | O protocolo do campo (sem nada digitado, o padrão do perfil). |

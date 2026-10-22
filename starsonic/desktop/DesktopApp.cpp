@@ -740,10 +740,16 @@ void DesktopApp::RunPending(int token) {
 }
 
 // Sair: as ligacoes acabam (com os Recentes) e o executavel fecha. A troca de conta que esperava fica gravada para a
-// proxima abertura; um Entrar que esperava e descartado.
+// proxima abertura (menos para uma conta sem a senha: a em uso continua, senao a proxima abertura pararia na tela
+// Entrar sem o Cancelar); um Entrar que esperava e descartado.
 void DesktopApp::Quit() {
     quitting_ = true;
-    if (pending_ && !pending_->switchTo.empty()) {
+    const std::optional<SavedAccount> target =
+        pending_ && !pending_->switchTo.empty() ? FindAccount(accounts_, pending_->switchTo) : std::nullopt;
+    const std::optional<SavedAccount> current = accounts_.Active();
+    if (target && target->needsPassword && current && !current->needsPassword) {
+        Log("sair: a troca para a conta sem a senha nao fica gravada; a em uso continua");
+    } else if (target) {
         if (accounts_.SetActive(pending_->switchTo)) {
             Log("sair: a troca de conta fica para a proxima abertura");
         } else {
@@ -825,7 +831,9 @@ void DesktopApp::PublishState(bool force) {
 BridgeState DesktopApp::BuildState() const {
     BridgeState state;
     const std::optional<SavedAccount> active = accounts_.Active();
-    state.mainScreen = active && !active->needsPassword && passwordSwitch_.empty();
+    // A troca que pede a senha mostra a tela Entrar, menos com uma ligacao (da conta que continua registrada): a tela
+    // da ligacao vem antes, e a Entrar volta quando ela acaba.
+    state.mainScreen = active && !active->needsPassword && (passwordSwitch_.empty() || call_.top.has_value());
     state.login = login_;
     state.login.canCancel = !passwordSwitch_.empty();
     for (const SavedAccount& account : accounts_.All()) {

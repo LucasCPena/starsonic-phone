@@ -808,6 +808,57 @@ TEST_CASE("switching to an account without its password keeps the working one, a
     CHECK(ActiveInFile(h) == first);
 }
 
+TEST_CASE("a call on the working account shows over the password request of a switch, which comes back after it") {
+    Harness h;
+    const std::string first = h.SeedAccount(L"pbx.example.com", L"2001", L"segredo", true, L"Recep");
+    const std::string second = h.SeedAccount(L"outro.example.com", L"3001", L"", false, L"Outra");
+    h.Start();
+    h.app->OnRegistration(200, true, h.port.LastId());
+    h.Run();
+    h.Send(R"({"v":1,"cmd":"selectAccount","contaId":")" + second + R"("})");
+    REQUIRE(h.State()["tela"] == "entrar");
+
+    // Uma ligacao chega na conta que continua registrada: a tela da ligacao, nao a Entrar.
+    h.app->OnIncomingCall(7, "2002", "Fulano");
+    h.Run();
+    json state = h.State();
+    CHECK(state["tela"] == "principal");
+    REQUIRE_FALSE(state["ligacao"].is_null());
+    CHECK(state["ligacao"]["top"]["phase"] == "ringing");
+    CHECK(state["conta"]["id"] == first);
+    h.Send(R"({"v":1,"cmd":"answer"})");
+    h.app->OnCallState(7, CallState::Confirmed, 200);
+    h.Run();
+    CHECK(h.State()["tela"] == "principal");
+    CHECK(h.State()["ligacao"]["top"]["phase"] == "active");
+
+    // A ligacao acaba: a troca ainda pede a senha, com o Cancelar.
+    h.Send(R"({"v":1,"cmd":"hangup","id":7})");
+    h.app->OnCallState(7, CallState::Disconnected, 200);
+    h.Run();
+    state = h.State();
+    CHECK(state["ligacao"].is_null());
+    CHECK(state["tela"] == "entrar");
+    CHECK(state["entrar"]["podeCancelar"] == true);
+    CHECK(state["entrar"]["contaId"] == second);
+}
+
+TEST_CASE("quitting with a switch to an account without its password waiting for the call keeps the working one") {
+    Harness h;
+    const std::string first = h.SeedAccount(L"pbx.example.com", L"2001", L"segredo", true, L"Recep");
+    const std::string second = h.SeedAccount(L"outro.example.com", L"3001", L"", false, L"Outra");
+    h.Start();
+    h.app->OnRegistration(200, true, h.port.LastId());
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2002"})");
+    h.Send(R"({"v":1,"cmd":"selectAccount","contaId":")" + second + R"("})");
+    CHECK(h.Toasts().back() == kNotice);
+    h.Send(R"({"v":1,"cmd":"quit"})");
+    CHECK(ActiveInFile(h) == first);
+    h.Restart();
+    CHECK(h.State()["tela"] == "principal");
+    CHECK(h.State()["conta"]["id"] == first);
+}
+
 TEST_CASE("the password typed for a switch commits the new account, and a wrong one brings the working one back") {
     Harness h;
     const std::string first = h.SeedAccount(L"pbx.example.com", L"2001", L"segredo", true, L"Recep");

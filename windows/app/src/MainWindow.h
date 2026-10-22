@@ -32,6 +32,7 @@
 #include <optional>
 #include <string>
 
+#include "BrowserRestarts.h"
 #include "NoticeWindow.h"
 #include "ShellState.h"
 #include "Tray.h"
@@ -119,8 +120,7 @@ private:
     bool quitting_ = false;
     WebViewHost::Callbacks webCallbacks_;
     WebViewHost::Options webOptions_;
-    bool restarting_ = false;      // o navegador saiu e o WebView abre de novo (ate a pagina nova mandar o ready)
-    int restartAttempts_ = 0;
+    BrowserRestarts restarts_;     // o navegador que sai: refaz ou desiste (3 seguidas sem o ready)
     HDEVNOTIFY audioNotify_ = nullptr;
 
     std::mutex mutex_;

@@ -31,7 +31,8 @@
 //   controlador.
 // - Sair (o comando quit): as ligacoes acabam (OnLogout do controlador, com os Recentes delas), e depois disso os
 //   comandos sao ignorados. Uma troca de conta que esperava o fim da ligacao nao registra a conta (o app esta
-//   saindo), mas fica gravada como a em uso no contas.json: a proxima abertura entra nela. Um Entrar que esperava o
+//   saindo), mas fica gravada como a em uso no contas.json: a proxima abertura entra nela (menos uma conta sem a
+//   senha: a em uso continua). Um Entrar que esperava o
 //   fim da ligacao e descartado (a conta nunca registrou, entao nao e gravada).
 // - O log (hooks.log) e chamado de qualquer thread (tambem do OnLog do motor, com travas do motor presas): ele nao
 //   pode esperar a thread de comandos nem chamar o motor.

@@ -152,22 +152,24 @@ function App() {
     </>
   );
 
-  if (state.tela === 'entrar') {
-    return (
-      <div class="win">
-        <TitleBar send={send} closeLabel="Fechar" />
-        <Entrar state={state} send={send} mode="entrar" />
-        {avisos}
-      </div>
-    );
-  }
-
+  // A ligação vem antes de tudo, também da tela Entrar (a troca para uma conta sem a senha deixa a conta em uso
+  // registrada, e uma ligação dela precisa do Atender e do Desligar); a Entrar volta quando ela acaba.
   if (state.ligacao) {
     return (
       <div class="win call">
         <TitleBar send={send} title={state.conta ? `Starsonic Phone · ${accountTitle(state.conta)}` : undefined} />
         <Ligacao state={state} ligacao={state.ligacao} send={send} />
         {toastEl}
+      </div>
+    );
+  }
+
+  if (state.tela === 'entrar') {
+    return (
+      <div class="win">
+        <TitleBar send={send} closeLabel="Fechar" />
+        <Entrar state={state} send={send} mode="entrar" />
+        {avisos}
       </div>
     );
   }

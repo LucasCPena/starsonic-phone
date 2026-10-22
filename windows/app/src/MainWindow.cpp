@@ -26,7 +26,6 @@ const UINT_PTR kDeviceTimer = 5;          // um dispositivo de som mudou: rele d
 const UINT kMoveDelayMs = 500;
 const UINT kQuitTimeoutMs = 10000;
 const UINT kRestartDelayMs = 1000;        // o navegador velho termina de sair antes do ambiente novo
-const int kRestartMaxAttempts = 5;
 const UINT kUnresponsiveGraceMs = 5000;
 const UINT kDeviceDelayMs = 1000;
 
@@ -134,23 +133,30 @@ bool MainWindow::Create(HINSTANCE instance, const Options& options, Callbacks ca
             noticeStarted_ = true;
             StartNotice();
         }
-        if (restarting_) {
-            restarting_ = false;
-            restartAttempts_ = 0;
-            Log("navegador reiniciado: a interface voltou");
+        if (IsCommand(json, "ready")) {
+            if (restarts_.Restarting()) Log("navegador reiniciado: a interface voltou");
+            restarts_.OnReady();
         }
         if (callbacks_.command) callbacks_.command(json);
     };
     webCallbacks_.log = [this](const std::string& line) { Log(line); };
     webCallbacks_.failed = [this](HRESULT error) {
         // O navegador novo ainda nao abriu (o velho terminando de sair): tenta de novo, algumas vezes.
-        if (restarting_ && restartAttempts_ < kRestartMaxAttempts) {
+        if (restarts_.OnCreateFailed()) {
             if (window_) SetTimer(window_, kRestartTimer, kRestartDelayMs, nullptr);
             return;
         }
         if (callbacks_.webViewFailed) callbacks_.webViewFailed(error);
     };
     webCallbacks_.browserExited = [this] {
+        if (!restarts_.OnBrowserExited()) {
+            // Saiu de novo antes de a interface carregar, 3 vezes seguidas: a mensagem do WebView2 (spec 11.1).
+            Log("navegador reiniciado " + std::to_string(BrowserRestarts::kMaxWithoutReady) +
+                " vezes sem a interface carregar: desistindo");
+            if (window_) KillTimer(window_, kRestartTimer);
+            if (callbacks_.webViewFailed) callbacks_.webViewFailed(E_FAIL);
+            return;
+        }
         // Fora do evento do WebView que morreu: o timer o troca por um novo.
         if (window_) SetTimer(window_, kRestartTimer, kRestartDelayMs, nullptr);
     };
@@ -174,9 +180,7 @@ void MainWindow::CreateWebView() {
 // O navegador do WebView2 saiu: a janela e o aviso abrem de novo com um ambiente novo (o motor, o DesktopApp e as
 // ligacoes continuam; a interface nova pede o estado e o toque com o ready).
 void MainWindow::RestartWebView() {
-    ++restartAttempts_;
-    restarting_ = true;
-    Log("navegador reiniciado: abrindo o WebView2 de novo (tentativa " + std::to_string(restartAttempts_) + ")");
+    Log("navegador reiniciado: abrindo o WebView2 de novo");
     KillTimer(window_, kUnresponsiveTimer);
     notice_.StopWebView();
     noticeStarted_ = false;
