@@ -327,6 +327,9 @@ class Win32:
     def minimize(self, hwnd):
         self.user32.ShowWindow(hwnd, 6)   # SW_MINIMIZE
 
+    def restore(self, hwnd):
+        self.user32.ShowWindow(hwnd, 9)   # SW_RESTORE
+
     def device_change(self, hwnd):
         """WM_DEVICECHANGE com DBT_DEVNODES_CHANGED (o que o Windows manda quando um headset entra ou sai)."""
         result = self.wintypes.DWORD()
@@ -907,6 +910,10 @@ def ring_and_reject(win, hwnd, browser, registrar, pump, label, problems):
         problems.append("%s: o Recusar do aviso nao chegou ao registrador: %s" % (label, registrar.events()))
         return False
     wait_for(lambda: not win.visible(notice), 10, pump=pump)
+    # A janela volta do minimizado: o WebView2 que abrir depois (o navegador novo) pega o tamanho de verdade da área
+    # da interface, e não o da janela minimizada (com ele, a interface cairia no layout Mínimo).
+    win.restore(hwnd)
+    wait_for(lambda: not win.minimized(hwnd), 10, pump=pump)
     log("%s: o RING mostrou o aviso e o Recusar dele recusou" % label)
     return True
 
