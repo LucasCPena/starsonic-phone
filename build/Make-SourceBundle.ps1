@@ -1,8 +1,6 @@
 # Pacote "codigo-fonte completo" de uma versao (GPL v3, spec 10): este repositorio no commit da
 # versao, o pjproject no commit fixo, o codigo-fonte das bibliotecas como o vcpkg baixa (so o
-# download, sem compilar), as receitas do vcpkg dessas bibliotecas, os pacotes do npm que vao
-# dentro do ui\app.js (npm-packages\, as versoes do windows\ui\package-lock.json, com o
-# SHA-512 do lock conferido) e um LEIA-ME-FONTES.txt.
+# download, sem compilar), as receitas do vcpkg dessas bibliotecas e um LEIA-ME-FONTES.txt.
 # Precisa de <WorkDir> montado pelo Build-Deps.ps1 (ou restaurado do cache).
 # Uso: .\build\Make-SourceBundle.ps1 -Version 1.0.0 -WorkDir work -OutDir dist
 # Saida: <OutDir>\StarsonicPhone-<versao>-codigo-fonte-completo.zip
@@ -117,53 +115,7 @@ try {
     $installedPorts = @([regex]::Matches($listed.Output, '(?m)^([a-z0-9-]+)(\[[^\]]*\])?:') |
             ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
 
-    # 4. Os pacotes do npm que o esbuild junta no ui\app.js (os do package-lock.json fora do "dev": as
-    # ferramentas de build nao vao no app), como o registro do npm os guarda, conferidos pelo "integrity".
-    $npmDir = Join-Path $stage 'npm-packages'
-    New-Item -ItemType Directory -Force -Path $npmDir | Out-Null
-    $uiLock = Get-Content -Raw -Path (Join-Path $repoRoot 'windows\ui\package-lock.json') | ConvertFrom-Json
-    $npmPackages = @()
-    foreach ($property in $uiLock.packages.PSObject.Properties) {
-        $at = $property.Name.LastIndexOf('node_modules/')
-        if ($at -lt 0) {
-            continue
-        }
-        $entry = $property.Value
-        if ($entry.PSObject.Properties['dev'] -and $entry.dev) {
-            continue
-        }
-        $package = $property.Name.Substring($at + 'node_modules/'.Length)
-        if (-not $entry.PSObject.Properties['resolved'] -or -not $entry.PSObject.Properties['integrity'] -or
-            -not $entry.integrity.StartsWith('sha512-')) {
-            throw "package-lock.json: $package sem resolved ou integrity sha512"
-        }
-        # O nome do npm pack: @escopo/nome vira escopo-nome.
-        $file = Join-Path $npmDir ("{0}-{1}.tgz" -f $package.TrimStart('@').Replace('/', '-'), $entry.version)
-        $previousProgress = $ProgressPreference
-        $ProgressPreference = 'SilentlyContinue'
-        try {
-            Invoke-WebRequest -Uri $entry.resolved -OutFile $file -UseBasicParsing
-        } finally {
-            $ProgressPreference = $previousProgress
-        }
-        $sha = [System.Security.Cryptography.SHA512]::Create()
-        $stream = [System.IO.File]::OpenRead($file)
-        try {
-            $digest = [Convert]::ToBase64String($sha.ComputeHash($stream))
-        } finally {
-            $stream.Dispose()
-            $sha.Dispose()
-        }
-        if ($digest -ne $entry.integrity.Substring('sha512-'.Length)) {
-            throw "npm: $package $($entry.version) baixado de $($entry.resolved) nao bate com o integrity do package-lock.json"
-        }
-        $npmPackages += "$package $($entry.version)"
-    }
-    if ($npmPackages.Count -eq 0) {
-        throw 'O package-lock.json da interface nao tem nenhum pacote que vai no app.'
-    }
-
-    # 5. LEIA-ME e o pacote.
+    # 4. LEIA-ME e o pacote.
     $versions = @($ports | ForEach-Object { "$_ $($lock.vcpkg.versions.$_)" }) -join ', '
     $readme = @(
         "Starsonic Phone $Version - codigo-fonte completo (GNU GPL v3)",
@@ -177,10 +129,6 @@ try {
         "                   ($(($archives | ForEach-Object { $_.Name } | Sort-Object) -join ', ')).",
         "vcpkg-ports/       receitas do vcpkg (commit $($lock.vcpkg.commit), triplet $($lock.vcpkg.triplet)):",
         "                   $($installedPorts -join ', ').",
-        "npm-packages/      os pacotes do npm que vao dentro do ui\app.js: $($npmPackages -join ', ')",
-        '                   (os .tgz do registro do npm, nas versoes de windows/ui/package-lock.json). Sem internet:',
-        '                   extraia cada um em starsonic-phone/windows/ui/node_modules/<nome> (tar -xzf <arquivo>',
-        '                   --strip-components=1) e rode node build.mjs, com o esbuild e o TypeScript do lock.',
         '',
         'Como compilar: starsonic-phone\README.md e starsonic-phone\docs\build-notes.md.'
     )
@@ -193,7 +141,6 @@ try {
         Add-ZipEntries -Target $zip -SourceZip $repoZip
         Add-ZipEntries -Target $zip -SourceZip $pjZip
         Add-DirectoryFiles -Target $zip -Directory $downloads -Prefix "$name/vcpkg-downloads/"
-        Add-DirectoryFiles -Target $zip -Directory $npmDir -Prefix "$name/npm-packages/"
         foreach ($port in $installedPorts) {
             $portDir = Join-Path $vcpkg "ports\$port"
             if (Test-Path $portDir) {
@@ -206,4 +153,4 @@ try {
 } finally {
     Remove-Item -Path $stage -Recurse -Force -ErrorAction SilentlyContinue
 }
-Write-Host ("fontes: {0} ({1} bytes; {2} pacotes do vcpkg; do npm: {3})" -f $zipPath, (Get-Item $zipPath).Length, $archives.Count, ($npmPackages -join ', '))
+Write-Host ("fontes: {0} ({1} bytes; {2} pacotes do vcpkg)" -f $zipPath, (Get-Item $zipPath).Length, $archives.Count)

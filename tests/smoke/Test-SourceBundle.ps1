@@ -43,7 +43,8 @@ try {
     }
 
     # Os pacotes do lock que vao no app (fora do "dev"), cada um com o SHA-512 do integrity.
-    $lock = Get-Content -Raw -Path (Join-Path $repoRoot 'windows\ui\package-lock.json') | ConvertFrom-Json
+    # O ConvertFrom-Json do PowerShell 5.1 nao aceita a chave vazia do package-lock.json (o proprio pacote).
+    $lock = (Get-Content -Raw -Path (Join-Path $repoRoot 'windows\ui\package-lock.json')) -replace '"packages"\s*:\s*\{\s*""\s*:', '"packages": { "(raiz)":' | ConvertFrom-Json
     $wanted = 0
     foreach ($property in $lock.packages.PSObject.Properties) {
         $at = $property.Name.LastIndexOf('node_modules/')
