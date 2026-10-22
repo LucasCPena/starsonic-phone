@@ -61,7 +61,8 @@ for (const tema of ['light', 'dark'] as const) {
       await expect(balao).toHaveText('Rediscar 2003 · Ana Souza');
       await expect(rediscar).toHaveAccessibleDescription('Rediscar 2003 · Ana Souza');
       // A borda fica ciano no hover.
-      expect(await rediscar.evaluate((e) => getComputedStyle(e).borderTopColor)).toBe(CIANO);
+      // (com a transição de 160 ms: espera ela terminar).
+      await expect.poll(() => rediscar.evaluate((e) => getComputedStyle(e).borderTopColor)).toBe(CIANO);
       await semViolacoesSerias(page);
       await page.mouse.move(5, 5);
       await expect(balao).toHaveCount(0);
