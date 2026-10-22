@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "WindowFit.h"
 #include "resource.h"
 
 namespace starsonic {
@@ -39,6 +40,19 @@ UINT MonitorDpi(HMONITOR monitor) {
 }
 
 int Scale(int value, UINT dpi) { return MulDiv(value, static_cast<int>(dpi), 96); }
+
+FitArea WorkArea(HMONITOR monitor) {
+    MONITORINFO info = {};
+    info.cbSize = sizeof(info);
+    FitArea area;
+    if (monitor && GetMonitorInfoW(monitor, &info)) {
+        area.left = info.rcWork.left;
+        area.top = info.rcWork.top;
+        area.right = info.rcWork.right;
+        area.bottom = info.rcWork.bottom;
+    }
+    return area;
+}
 
 }  // namespace
 
@@ -215,43 +229,48 @@ void MainWindow::LogAudioOutputs() {
 }
 
 void MainWindow::Place(const std::optional<POINT>& position) {
-    UINT dpi = 96;
-    POINT topLeft = {0, 0};
-    bool placed = false;
+    HMONITOR monitor = nullptr;
+    std::optional<WindowPosition> wanted;
     if (position) {
         // A posicao gravada vale se um ponto da barra de titulo ainda cai num monitor (um monitor que saiu, ou a
         // resolucao que mudou, deixam a janela fora da tela).
         const POINT probe = {position->x + 100, position->y + 10};
-        const HMONITOR monitor = MonitorFromPoint(probe, MONITOR_DEFAULTTONULL);
+        monitor = MonitorFromPoint(probe, MONITOR_DEFAULTTONULL);
         if (monitor) {
-            dpi = MonitorDpi(monitor);
-            topLeft = *position;
-            placed = true;
+            wanted = WindowPosition{position->x, position->y};
         } else {
             Log("a posicao gravada da janela ficou fora da tela: ela volta para o monitor principal");
         }
     }
-    if (!placed) {
+    if (!monitor) {
         const POINT origin = {0, 0};
-        const HMONITOR primary = MonitorFromPoint(origin, MONITOR_DEFAULTTOPRIMARY);
-        MONITORINFO info = {};
-        info.cbSize = sizeof(info);
-        GetMonitorInfoW(primary, &info);
-        dpi = MonitorDpi(primary);
-        const RECT& work = info.rcWork;
-        topLeft.x = work.left + ((work.right - work.left) - Scale(kWidth, dpi)) / 2;
-        topLeft.y = work.top + ((work.bottom - work.top) - Scale(kHeight, dpi)) / 2;
-        if (topLeft.y < work.top) topLeft.y = work.top;
-        if (topLeft.x < work.left) topLeft.x = work.left;
+        monitor = MonitorFromPoint(origin, MONITOR_DEFAULTTOPRIMARY);
     }
-    const UINT flags = SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED;
-    SetWindowPos(window_, nullptr, topLeft.x, topLeft.y, Scale(kWidth, dpi), Scale(kHeight, dpi), flags);
+    // 400x720 logicos, a altura cortada na da area de trabalho, e a janela inteira dentro dela (WindowFit).
+    const UINT dpi = MonitorDpi(monitor);
+    const FitBox box = FitWindow(WorkArea(monitor), dpi, wanted);
+    SetWindowPos(window_, nullptr, box.x, box.y, box.width, box.height, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    if (box.height < Scale(kHeight, dpi)) {
+        Log("a janela ficou com " + std::to_string(MulDiv(box.height, 96, static_cast<int>(dpi))) +
+            " de altura (a area de trabalho e menor que 720)");
+    }
     // O Windows pode ter posto a janela noutro monitor (outra escala): o tamanho segue a escala dela.
     const UINT actual = GetDpiForWindow(window_);
-    if (actual != 0 && actual != dpi) {
-        SetWindowPos(window_, nullptr, 0, 0, Scale(kWidth, actual), Scale(kHeight, actual),
-                     SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOMOVE);
+    if (actual != 0 && actual != dpi) Refit();
+}
+
+void MainWindow::Refit() {
+    RECT rect = {};
+    if (!window_ || IsIconic(window_) || !GetWindowRect(window_, &rect)) return;
+    const HMONITOR monitor = MonitorFromWindow(window_, MONITOR_DEFAULTTONEAREST);
+    UINT dpi = GetDpiForWindow(window_);
+    if (dpi == 0) dpi = MonitorDpi(monitor);
+    const FitBox box = FitWindow(WorkArea(monitor), dpi, WindowPosition{rect.left, rect.top});
+    if (box.x == rect.left && box.y == rect.top && box.width == rect.right - rect.left &&
+        box.height == rect.bottom - rect.top) {
+        return;
     }
+    SetWindowPos(window_, nullptr, box.x, box.y, box.width, box.height, SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
 void MainWindow::ApplyFrame() {
@@ -369,12 +388,23 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
             if (!IsIconic(window_)) SetTimer(window_, kMoveTimer, kMoveDelayMs, nullptr);
             return 0;
         case WM_DPICHANGED: {
+            // A escala nova (ou outro monitor): 400x720 logicos na escala dela, a altura cortada na area de trabalho do
+            // monitor do retangulo sugerido, a janela dentro dela.
             const RECT* suggested = reinterpret_cast<const RECT*>(lParam);
             const UINT dpi = LOWORD(wParam);
-            SetWindowPos(window_, nullptr, suggested->left, suggested->top, Scale(kWidth, dpi), Scale(kHeight, dpi),
-                         SWP_NOZORDER | SWP_NOACTIVATE);
+            const HMONITOR monitor = MonitorFromRect(suggested, MONITOR_DEFAULTTONEAREST);
+            const FitBox box = FitWindow(WorkArea(monitor), dpi, WindowPosition{suggested->left, suggested->top});
+            SetWindowPos(window_, nullptr, box.x, box.y, box.width, box.height, SWP_NOZORDER | SWP_NOACTIVATE);
             return 0;
         }
+        case WM_SETTINGCHANGE:
+            // A area de trabalho mudou (a barra de tarefas cresceu, mudou de lado ou deixou de se esconder).
+            if (wParam == SPI_SETWORKAREA) Refit();
+            break;
+        case WM_DISPLAYCHANGE:
+            // A resolucao mudou.
+            Refit();
+            break;
         case WM_TIMER:
             if (wParam == kMoveTimer) {
                 KillTimer(window_, kMoveTimer);

@@ -36,6 +36,11 @@ target_include_directories(desktop_tests PRIVATE
 
 target_link_libraries(desktop_tests PRIVATE SQLite::SQLite3 Threads::Threads)
 
+# O tamanho e a posicao da janela principal do executavel (windows/app/src/WindowFit): conta portatil, testada tambem
+# no Linux.
+target_sources(desktop_tests PRIVATE ${STARSONIC_DIR}/../windows/app/src/WindowFit.cpp)
+target_include_directories(desktop_tests PRIVATE ${STARSONIC_DIR}/../windows/app/src)
+
 if(MSVC)
   target_compile_options(desktop_tests PRIVATE /W4 /EHsc)
 else()

@@ -103,29 +103,32 @@ export function Teclado({ numero, setNumero, contatos, send }: Props) {
           <IconBackspace size="lg" />
         </button>
       </div>
-      {sugestoes.length > 0 && (
-        <div class={sugestoes.length > 1 ? 'suggestions suggestions-compact' : 'suggestions'}>
-          {sugestoes.map((c) => (
-            <button type="button" key={c.id} class="suggest" onClick={() => send({ cmd: 'dial', numero: c.numero, contato: true })}>
-              <span class="avatar" aria-hidden="true">
-                {initials(c.nome)}
-              </span>
-              <span class="row-main">
-                <span class="row-title">{c.nome}</span>
-                <span class="row-sub">Contato · {c.numero}</span>
-              </span>
-              <IconArrowRight size="sm" class="muted" />
+      {/* As sugestões e as teclas: numa janela baixa, só esta parte rola (o número e o Ligar ficam à vista). */}
+      <div class="teclado-meio">
+        {sugestoes.length > 0 && (
+          <div class={sugestoes.length > 1 ? 'suggestions suggestions-compact' : 'suggestions'}>
+            {sugestoes.map((c) => (
+              <button type="button" key={c.id} class="suggest" onClick={() => send({ cmd: 'dial', numero: c.numero, contato: true })}>
+                <span class="avatar" aria-hidden="true">
+                  {initials(c.nome)}
+                </span>
+                <span class="row-main">
+                  <span class="row-title">{c.nome}</span>
+                  <span class="row-sub">Contato · {c.numero}</span>
+                </span>
+                <IconArrowRight size="sm" class="muted" />
+              </button>
+            ))}
+          </div>
+        )}
+        <div class="keys">
+          {KEYS.map(([tecla, letras]) => (
+            <button type="button" key={tecla} class="key" aria-label={tecla} onClick={() => setNumero((n) => n + tecla)}>
+              <b>{tecla}</b>
+              <small aria-hidden="true">{letras}</small>
             </button>
           ))}
         </div>
-      )}
-      <div class="keys">
-        {KEYS.map(([tecla, letras]) => (
-          <button type="button" key={tecla} class="key" aria-label={tecla} onClick={() => setNumero((n) => n + tecla)}>
-            <b>{tecla}</b>
-            <small aria-hidden="true">{letras}</small>
-          </button>
-        ))}
       </div>
       <button type="button" class="btn btn-cyan btn-call btn-block" onClick={ligar}>
         <IconPhone />

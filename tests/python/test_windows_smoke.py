@@ -22,9 +22,37 @@ class BrowserArgumentsTest(unittest.TestCase):
         self.assertEqual(windows_smoke.browser_arguments(),
                          "--remote-debugging-port=9333 --autoplay-policy=no-user-gesture-required")
 
-    def test_the_150_percent_run_forces_the_scale(self):
-        self.assertTrue(windows_smoke.browser_arguments(scale=True).endswith(" --force-device-scale-factor=1.5"))
-        self.assertIn("--remote-debugging-port=9333", windows_smoke.browser_arguments(scale=True))
+
+
+class WorkAreaTest(unittest.TestCase):
+    def test_the_short_work_area_keeps_the_top_and_cuts_the_height(self):
+        self.assertEqual(windows_smoke.short_work_area((0, 0, 1024, 728), 640, 96), (0, 0, 1024, 640))
+        self.assertEqual(windows_smoke.short_work_area((0, 40, 1920, 1080), 640, 144), (0, 40, 1920, 1000))
+        # Uma área que já é mais baixa fica como está.
+        self.assertEqual(windows_smoke.short_work_area((0, 0, 800, 560), 640, 96), (0, 0, 800, 560))
+
+    def test_inside_means_the_whole_window(self):
+        self.assertTrue(windows_smoke.inside((312, 0, 400, 640), (0, 0, 1024, 640)))
+        self.assertFalse(windows_smoke.inside((312, 4, 400, 720), (0, 0, 1024, 640)))
+        self.assertFalse(windows_smoke.inside((-1, 0, 400, 600), (0, 0, 1024, 640)))
+
+
+class KeypadLayoutTest(unittest.TestCase):
+    def layout(self, **changes):
+        keys = [[20 + 120 * (i % 3), 300 + 50 * (i // 3), 113, 40] for i in range(12)]
+        layout = {"viewport": [400, 640], "keys": keys, "middle": [20, 300, 360, 190], "middleScrolls": False,
+                  "call": [20, 500, 360, 56], "nav": [0, 565, 400, 75]}
+        layout.update(changes)
+        return layout
+
+    def test_a_keypad_that_fits_passes(self):
+        windows_smoke.check_keypad_layout(self.layout(), "teste")
+
+    def test_overlap_scroll_or_cut_fails(self):
+        for changes in ({"call": [20, 470, 360, 56]}, {"middleScrolls": True}, {"nav": [0, 600, 400, 75]},
+                        {"call": [20, 530, 360, 56]}):
+            with self.assertRaises(windows_smoke.SmokeFailure, msg=changes):
+                windows_smoke.check_keypad_layout(self.layout(**changes), "teste")
 
 
 class TestProfileTest(unittest.TestCase):

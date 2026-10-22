@@ -13,9 +13,11 @@ Fumaça (padrão), contra o StarsonicPhone.exe instalado do build de teste (STAR
 5. minimiza a janela, o registrador manda um RING: confere o aviso (a janela "Starsonic Phone Aviso" visível, com
    "Cliente Teste") e que a janela em primeiro plano não muda só por ele aparecer; captura aviso.png; atende pelo
    aviso (o 200 chega ao registrador, a janela principal volta e mostra "Em ligação") e desliga;
-6. fecha com --sair e abre de novo com --force-device-scale-factor=1.5: a janela continua com 400x720 lógicos, o
-   WebView2 desenha a 1,5 e a interface ocupa a janela inteira; captura janela-principal-150.png; fecha com --sair.
-Na escala de 100%, a janela também tem 400x720 lógicos.
+6. fecha com --sair, baixa a área de trabalho para 640 lógicos (SPI_SETWORKAREA; a de um notebook de 1920x1080 a 150%
+   tem uns 672) e abre de novo: a janela fica inteira dentro da área de trabalho, com 400 de largura e a altura dela,
+   e o teclado, o Ligar e a navegação ficam inteiros na interface, sem um cobrir o outro; captura
+   janela-principal-curta.png; a área de trabalho volta e a janela volta aos 720; fecha com --sair.
+Na escala de 100%, a janela tem 400x720 lógicos. A escala de 150% de verdade (outro DPI) não dá para mudar no runner.
 
 Ensaio da atualização (--ensaio): o app já foi aberto pelo instalador (por cima da rc.7, com a variável do CDP no
 ambiente do instalador). Confere "Conectado · 127.0.0.1" (a conta e a senha que vieram da rc.7) e o contato na tela
@@ -47,7 +49,7 @@ DEBUG_ARGUMENT = "--remote-debugging-port=%d" % CDP_PORT
 # A variável WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS toma o lugar dos argumentos que o app passa ao WebView2: o do
 # toque (windows/app/src/WebViewHost.cpp) vai junto, para o app rodar como roda sem a variável.
 APP_ARGUMENT = "--autoplay-policy=no-user-gesture-required"
-SCALE_ARGUMENT = "--force-device-scale-factor=1.5"
+SHORT_HEIGHT = 640   # a área de trabalho baixa da fumaça, em pixels lógicos
 WINDOW_CLASS = "Starsonic Phone"
 NOTICE_CLASS = "Starsonic Phone Aviso"
 LOGICAL_SIZE = (400, 720)
@@ -71,13 +73,22 @@ class SmokeFailure(Exception):
     pass
 
 
-def browser_arguments(scale=False):
-    """O valor de WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: o CDP na 9333, o argumento do app e, na rodada de 150%, a
-    escala forçada."""
-    parts = [DEBUG_ARGUMENT, APP_ARGUMENT]
-    if scale:
-        parts.append(SCALE_ARGUMENT)
-    return " ".join(parts)
+def browser_arguments():
+    """O valor de WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: o CDP na 9333 e o argumento do app."""
+    return " ".join([DEBUG_ARGUMENT, APP_ARGUMENT])
+
+
+def short_work_area(work, logical_height, dpi):
+    """A área de trabalho (left, top, right, bottom) com a altura cortada em logical_height pixels lógicos."""
+    left, top, right, bottom = work
+    return (left, top, right, min(bottom, top + round(logical_height * dpi / 96.0)))
+
+
+def inside(box, area):
+    """A janela (x, y, largura, altura) inteira dentro da área (left, top, right, bottom)."""
+    x, y, width, height = box
+    left, top, right, bottom = area
+    return x >= left and y >= top and x + width <= right and y + height <= bottom
 
 
 def logical_size(width, height, dpi):
@@ -233,6 +244,23 @@ class Win32:
     def minimize(self, hwnd):
         self.user32.ShowWindow(hwnd, 6)   # SW_MINIMIZE
 
+    def work_area(self):
+        value = self.wintypes.RECT()
+        self.user32.SystemParametersInfoW(0x0030, 0, self.ctypes.byref(value), 0)   # SPI_GETWORKAREA
+        return (value.left, value.top, value.right, value.bottom)
+
+    def set_work_area(self, area):
+        value = self.wintypes.RECT(*area)
+        # SPI_SETWORKAREA, com o WM_SETTINGCHANGE para as janelas abertas (SPIF_SENDCHANGE).
+        if not self.user32.SystemParametersInfoW(0x002F, 0, self.ctypes.byref(value), 0x0002):
+            raise SmokeFailure("SPI_SETWORKAREA %s recusado (erro %d)" % (area, self.ctypes.get_last_error()))
+
+    def system_dpi(self):
+        try:
+            return int(self.user32.GetDpiForSystem())
+        except AttributeError:
+            return 96
+
     def describe(self, hwnd):
         if not hwnd:
             return "nenhuma"
@@ -289,10 +317,10 @@ def find_page(browser, suffix, timeout, pump):
 class App:
     """O StarsonicPhone.exe aberto por este teste, com o CDP."""
 
-    def __init__(self, exe, data_dir, scale=False):
+    def __init__(self, exe, data_dir):
         self.exe = pathlib.Path(exe)
         environment = dict(os.environ)
-        environment["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = browser_arguments(scale)
+        environment["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = browser_arguments()
         environment["STARSONIC_PERFIL"] = TEST_PROFILE
         environment["STARSONIC_SOM_NULO"] = "1"
         log("abrindo %s --dados %s (%s)" % (self.exe, data_dir, environment["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"]))
@@ -345,16 +373,51 @@ def measure(win, hwnd, page):
     }
 
 
-def check_size(info, dpr, label):
-    if not near(info["logicos"], LOGICAL_SIZE):
+def check_size(info, label, logical=LOGICAL_SIZE):
+    if not near(info["logicos"], logical):
         raise SmokeFailure("%s: a janela tem %sx%s logicos (esperado %dx%d): %s"
-                           % (label, info["logicos"][0], info["logicos"][1], LOGICAL_SIZE[0], LOGICAL_SIZE[1], info))
-    if abs(info["devicePixelRatio"] - dpr) > 0.01:
-        raise SmokeFailure("%s: o WebView2 desenha a %s (esperado %s): %s" % (label, info["devicePixelRatio"], dpr, info))
+                           % (label, info["logicos"][0], info["logicos"][1], logical[0], logical[1], info))
     # A interface ocupa a janela inteira: o viewport, na escala do WebView2, é a área cliente (sem moldura).
     drawn = [round(value * info["devicePixelRatio"]) for value in info["viewport"]]
     if not near(drawn, info["cliente"], tolerance=2):
         raise SmokeFailure("%s: a interface (%s pixels) nao ocupa a janela (%s): %s" % (label, drawn, info["cliente"], info))
+
+
+LAYOUT_SCRIPT = """() => {
+  const box = (e) => { const r = e.getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; };
+  const keys = Array.from(document.querySelectorAll('.keys .key')).map(box);
+  const middle = document.querySelector('.teclado-meio');
+  return {
+    viewport: [innerWidth, innerHeight],
+    keys,
+    middle: box(middle),
+    middleScrolls: middle.scrollHeight > middle.clientHeight + 0.5,
+    call: box(document.querySelector('button.btn-call')),
+    nav: box(document.querySelector('nav.nav')),
+  };
+}"""
+
+
+def check_keypad_layout(layout, label):
+    """As 12 teclas, o Ligar e a navegação inteiros na interface, nessa ordem, sem um cobrir o outro."""
+    width, height = layout["viewport"]
+
+    def visible(box):
+        x, y, w, h = box
+        return x >= -0.5 and y >= -0.5 and x + w <= width + 0.5 and y + h <= height + 0.5
+
+    keys = layout["keys"]
+    if len(keys) != 12 or not all(visible(key) for key in keys):
+        raise SmokeFailure("%s: as teclas nao estao inteiras na interface: %s" % (label, layout))
+    if layout["middleScrolls"]:
+        raise SmokeFailure("%s: as teclas so aparecem rolando: %s" % (label, layout))
+    for name in ("call", "nav"):
+        if not visible(layout[name]):
+            raise SmokeFailure("%s: %s fora da interface: %s" % (label, name, layout))
+    keys_bottom = max(key[1] + key[3] for key in keys)
+    call, nav = layout["call"], layout["nav"]
+    if keys_bottom > call[1] + 0.5 or call[1] + call[3] > nav[1] + 0.5:
+        raise SmokeFailure("%s: o teclado, o Ligar e a navegacao se cobrem: %s" % (label, layout))
 
 
 def main_window(win, pid, timeout=30):
@@ -397,7 +460,8 @@ def run_smoke(args, result):
             info = measure(win, hwnd, page)
             result["escala_100"] = info
             log("100%%: %s" % info)
-            check_size(info, 1.0, "100%")
+            check_size(info, "100%")
+            check_keypad_layout(page.evaluate(LAYOUT_SCRIPT), "100%")
             screenshot(page, capturas, "janela-principal.png", result)
 
             # 2. Ligação feita para 2002.
@@ -475,23 +539,46 @@ def run_smoke(args, result):
             app.quit()
             log("fechou com --sair")
 
-            # 4. A escala de 150% (forçada no WebView2).
+            # 4. A área de trabalho baixa (a de 1920x1080 a 150% tem uns 672 lógicos; aqui, 640): a janela cabe nela.
             if not wait_for(lambda: webview_processes() == 0, 40, interval=1):
                 raise SmokeFailure("o WebView2 da primeira abertura nao saiu")
-            app = App(exe, data_dir, scale=True)
-            browser = connect(pw)
-            page = find_page(browser, "/index.html", 60, lambda ms: time.sleep(ms / 1000.0))
-            hwnd = main_window(win, app.process.pid)
-            page.get_by_text(CONNECTED).first.wait_for(timeout=40000)
-            info = measure(win, hwnd, page)
-            result["escala_150"] = info
-            log("150%%: %s" % info)
-            check_size(info, 1.5, "150%")
-            screenshot(page, capturas, "janela-principal-150.png", result)
+            original = win.work_area()
+            short = short_work_area(original, SHORT_HEIGHT, win.system_dpi())
+            try:
+                win.set_work_area(short)
+                log("area de trabalho %s -> %s" % (original, win.work_area()))
+                app = App(exe, data_dir)
+                browser = connect(pw)
+                page = find_page(browser, "/index.html", 60, lambda ms: time.sleep(ms / 1000.0))
+                hwnd = main_window(win, app.process.pid)
+                page.get_by_text(CONNECTED).first.wait_for(timeout=40000)
+                page.wait_for_timeout(500)
+                info = measure(win, hwnd, page)
+                layout = page.evaluate(LAYOUT_SCRIPT)
+                result["area_curta"] = dict(info, area_de_trabalho=list(short), interface=layout)
+                log("area curta: %s" % info)
+                if not inside((info["posicao"][0], info["posicao"][1], info["janela"][0], info["janela"][1]), short):
+                    raise SmokeFailure("a janela %s nao cabe na area de trabalho %s" % (info, short))
+                check_size(info, "area curta", (LOGICAL_SIZE[0], SHORT_HEIGHT))
+                check_keypad_layout(layout, "area curta")
+                screenshot(page, capturas, "janela-principal-curta.png", result)
+                # A área de trabalho volta (o WM_SETTINGCHANGE): a janela volta aos 720.
+                win.set_work_area(original)
+                if not wait_for(lambda: near(logical_size(win.rect(hwnd)[2], win.rect(hwnd)[3], win.dpi(hwnd)),
+                                             LOGICAL_SIZE), 10, pump=page.wait_for_timeout):
+                    raise SmokeFailure("a janela nao voltou aos 720 com a area de trabalho de volta: %s"
+                                       % measure(win, hwnd, page))
+                page.wait_for_timeout(500)
+                info = measure(win, hwnd, page)
+                result["area_restaurada"] = info
+                log("area de volta: %s" % info)
+                check_size(info, "area de volta")
+            finally:
+                win.set_work_area(original)
             browser.close()
             app.quit()
             app = None
-            log("OK: entrou, ligou, desligou, recebeu pelo aviso e abriu a 150%")
+            log("OK: entrou, ligou, desligou, recebeu pelo aviso e coube na area de trabalho baixa")
     finally:
         if app:
             app.kill()

@@ -35,7 +35,7 @@ namespace starsonic {
 class MainWindow {
 public:
     static const wchar_t kClassName[];   // "Starsonic Phone"
-    static constexpr int kWidth = 400;    // em pixels de 100% de escala
+    static constexpr int kWidth = 400;    // em pixels de 100% de escala (WindowFit: a altura cabe na area de trabalho)
     static constexpr int kHeight = 720;
 
     struct Options {
@@ -81,6 +81,8 @@ private:
     static LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
     LRESULT Handle(UINT message, WPARAM wParam, LPARAM lParam);
     void Place(const std::optional<POINT>& position);
+    // Refaz o tamanho e a posicao no monitor e na escala de agora (a area de trabalho ou a resolucao mudaram).
+    void Refit();
     void ApplyFrame();
     void DrainOutbox();
     void RunActions();

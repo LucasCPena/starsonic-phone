@@ -290,7 +290,19 @@ button.link { border: 0; background: transparent; padding: 0; font-family: inher
 
 /* A área entre o cabeçalho e a navegação */
 .main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.teclado .keys { flex: 1 1 auto; min-height: 0; grid-template-rows: repeat(4, minmax(40px, 54px)); align-content: start; }
+/* A janela é cortada na altura da área de trabalho: o teclado encolhe até as linhas de 40 px e não abaixo disso.
+   Mais baixa que isso (ou com as sugestões), as sugestões e as teclas rolam; o número e o Ligar ficam à vista. */
+.teclado-meio { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 14px; overflow-y: auto;
+  scrollbar-width: thin; }
+.teclado-meio > .suggestions { flex: none; }
+/* Numa janela baixa (a área de trabalho de 1920×1080 a 150% tem uns 672 px), os espaços do teclado apertam: as 12
+   teclas cabem inteiras até 400×640. */
+@media (max-height: 700px) {
+  .body.teclado { gap: 10px; padding-top: 14px; }
+  .teclado-meio { gap: 10px; }
+  .teclado .keys { gap: 8px; min-height: calc(4 * 40px + 3 * 8px); }
+}
+.teclado .keys { flex: 1 1 auto; min-height: calc(4 * 40px + 3 * 10px); grid-template-rows: repeat(4, minmax(40px, 54px)); align-content: start; }
 .teclado .key { height: auto; }
 .suggestions-compact .suggest { padding: 5px 10px; }
 .suggestions-compact .avatar { width: 28px; height: 28px; font-size: 11.5px; }
