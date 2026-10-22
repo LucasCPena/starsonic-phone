@@ -49,6 +49,7 @@ enum class CommandKind {
     UpdateNow,     // a pergunta da atualizacao: "Atualizar agora"
     UpdateLater,   // e "Depois"
     CancelLogin,   // o Cancelar da tela Entrar que pede a senha de uma troca de conta
+    Resize,        // rc.2: a interface pegou uma zona de redimensionar (a borda de cima, um canto)
 };
 
 // Um comando lido. So os campos do comando valem; os outros ficam vazios.
@@ -85,6 +86,8 @@ struct Command {
     bool value = false;
     // openExternal
     std::string url;
+    // resize: "cima", "cima-esquerda", "cima-direita" ou "baixo-direita" (as zonas que o WebView2 cobre).
+    std::string edge;
 };
 
 // O comando do JSON, ou nada (com o motivo em *error, se error nao e nullptr): texto que nao e JSON, sem "v":1,

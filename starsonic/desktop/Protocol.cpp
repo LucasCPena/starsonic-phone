@@ -48,6 +48,7 @@ const Name kNames[] = {
     {CommandKind::UpdateNow, "updateNow"},
     {CommandKind::UpdateLater, "updateLater"},
     {CommandKind::CancelLogin, "cancelLogin"},
+    {CommandKind::Resize, "resize"},
 };
 
 // Le os campos de um comando, anotando o primeiro problema (um campo obrigatorio que falta ou um tipo errado).
@@ -316,6 +317,13 @@ std::optional<Command> ParseCommand(const std::string& text, std::string* error)
             break;
         case CommandKind::OpenExternal:
             f.Text("url", &command.url, true);
+            break;
+        case CommandKind::Resize:
+            f.Text("borda", &command.edge, true);
+            if (f.ok() && command.edge != "cima" && command.edge != "cima-esquerda" && command.edge != "cima-direita" &&
+                command.edge != "baixo-direita") {
+                f.Fail("borda desconhecida: " + command.edge.substr(0, 40));
+            }
             break;
         case CommandKind::Ready:
         case CommandKind::Answer:

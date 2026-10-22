@@ -165,6 +165,14 @@ TEST_CASE("every command of the protocol parses into its command") {
         CHECK(c.kind == CommandKind::OpenExternal);
         CHECK(c.url == "https://starsonic.com.br");
     }
+    SUBCASE("resize: the edge the interface grabbed (rc.2)") {
+        for (const char* edge : {"cima", "cima-esquerda", "cima-direita", "baixo-direita"}) {
+            const Command c = Parsed(std::string(R"({"v":1,"cmd":"resize","borda":")") + edge + "\"}");
+            CHECK(c.kind == CommandKind::Resize);
+            CHECK(c.edge == edge);
+            CHECK(std::string(CommandName(c.kind)) == "resize");
+        }
+    }
 }
 
 TEST_CASE("version 2, an unknown command and a field of the wrong type parse into nothing") {
@@ -205,6 +213,10 @@ TEST_CASE("version 2, an unknown command and a field of the wrong type parse int
     CHECK(Refused(R"({"v":1,"cmd":"setSetting","chave":"naoPerturbe","valor":true})"));
     CHECK(Refused(R"({"v":1,"cmd":"openExternal"})"));
     CHECK(Refused(R"({"v":1,"cmd":"openExternal","url":["x"]})"));
+    CHECK(Refused(R"({"v":1,"cmd":"resize"})"));
+    CHECK(Refused(R"({"v":1,"cmd":"resize","borda":1})"));
+    CHECK(Refused(R"({"v":1,"cmd":"resize","borda":"esquerda"})"));
+    CHECK(Refused(R"({"v":1,"cmd":"resize","borda":"baixo-esquerda"})"));
     // Campos a mais nao atrapalham.
     CHECK_FALSE(Refused(R"({"v":1,"cmd":"answer","extra":true})"));
 }

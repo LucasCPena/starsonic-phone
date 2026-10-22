@@ -392,6 +392,9 @@ void DesktopApp::Execute(const Command& command) {
         case CommandKind::CloseToTray:
             if (hooks_.closeToTray) hooks_.closeToTray();
             break;
+        case CommandKind::Resize:
+            if (hooks_.resize) hooks_.resize(command.edge);
+            break;
         case CommandKind::Quit:
             Quit();
             break;

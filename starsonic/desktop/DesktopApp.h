@@ -104,6 +104,9 @@ struct DesktopHooks {
     std::function<void(const std::string& url)> openUrl;   // no navegador padrao (so os links permitidos)
     std::function<void()> minimize;
     std::function<void()> closeToTray;
+    // A interface pegou uma zona de redimensionar ("cima", "cima-esquerda", "cima-direita", "baixo-direita"): o
+    // executavel so poe na fila da janela (o redimensionar do Windows roda nela).
+    std::function<void(const std::string& edge)> resize;
     std::function<void()> quit;                          // depois do Sair: o executavel fecha (ver acima)
     std::function<void()> sendDiagnostics;
     std::function<void(bool on)> setStartWithWindows;    // o Iniciar com o Windows (HKCU\...\Run)

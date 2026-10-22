@@ -150,6 +150,7 @@ struct Harness {
         hooks.openUrl = [this](const std::string& url) { opened.push_back(url); };
         hooks.minimize = [this] { host.push_back("minimize"); };
         hooks.closeToTray = [this] { host.push_back("closeToTray"); };
+        hooks.resize = [this](const std::string& edge) { host.push_back("resize " + edge); };
         hooks.quit = [this] { host.push_back("quit"); };
         hooks.sendDiagnostics = [this] { host.push_back("sendDiagnostics"); };
         hooks.setStartWithWindows = [this](bool on) { host.push_back(on ? "autostart on" : "autostart off"); };
@@ -1066,7 +1067,12 @@ TEST_CASE("window, diagnostics and the start with windows go to the host") {
     h.Send(R"({"v":1,"cmd":"closeToTray"})");
     h.Send(R"({"v":1,"cmd":"sendDiagnostics"})");
     h.Send(R"({"v":1,"cmd":"setSetting","chave":"iniciarComWindows","valor":false})");
-    CHECK(h.host == std::vector<std::string>{"minimize", "closeToTray", "sendDiagnostics", "autostart off"});
+    // O redimensionar pelas zonas da interface (a borda de cima, os cantos de cima e o canto de baixo a direita).
+    h.Send(R"({"v":1,"cmd":"resize","borda":"cima"})");
+    h.Send(R"({"v":1,"cmd":"resize","borda":"baixo-direita"})");
+    h.Send(R"({"v":1,"cmd":"resize","borda":"meio"})");   // recusado: nada vai ao executavel
+    CHECK(h.host == std::vector<std::string>{"minimize", "closeToTray", "sendDiagnostics", "autostart off", "resize cima",
+                                             "resize baixo-direita"});
     CHECK(h.State()["iniciarComWindows"] == false);
     CHECK(h.File("dados/config.json")["iniciar_com_windows"] == false);
     CHECK(h.State()["versao"] == "0.1.0-rc.1");

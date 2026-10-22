@@ -48,6 +48,7 @@ Regras para todos:
 | `ready` | — | A interface carregou: o C++ manda o estado e o toque de agora. Vai ao diagnóstico como `interface pronta`. |
 | `minimize` | — | Minimiza a janela. |
 | `closeToTray` | — | O "fechar" da barra de título: a janela se esconde na bandeja (o app continua recebendo ligações: a interface continua rodando e toca; com uma ligação tocando, o aviso do canto aparece). |
+| `resize` | `borda` (texto: `cima`, `cima-esquerda`, `cima-direita` ou `baixo-direita`) | (rc.2) O botão esquerdo apertado numa zona de redimensionar da interface: a faixa de cima (5 px, sem passar por cima de Minimizar e Fechar), os cantos de cima e o canto de baixo à direita (16×16, em cima do desenho do canto). O WebView2 cobre essas bordas (as dos lados e a de baixo são do Windows, fora da área da interface): o executável começa o redimensionar do Windows por aquela borda, como se a pessoa tivesse pegado a borda da janela. Outra `borda` é recusada. Com o botão já solto quando o comando chega (um clique rápido), ou com a janela maximizada ou minimizada, nada acontece. Vai ao diagnóstico como `redimensionar: <borda>`. |
 | `quit` | — | Sair: as ligações de agora acabam (e vão aos Recentes) e o app fecha. Uma troca de conta que esperava o fim da ligação não registra, mas a conta escolhida fica em uso na próxima abertura (menos uma conta sem a senha: a em uso continua); um Entrar que esperava é descartado. |
 | `sendDiagnostics` | — | "Enviar diagnóstico": o app copia o `diagnostico.log` (com o `.1` antes, se houver) para `%TEMP%\Starsonic Phone diagnostico <data e hora>.log` e abre o Explorer com a cópia selecionada, para a pessoa anexar no e-mail ou no WhatsApp. O `diagnostico.log` nunca tem senhas nem o valor dos cabeçalhos `Authorization` e `Proxy-Authorization` das mensagens SIP (`Authorization: <oculto>`). |
 | `updateNow` | — | A resposta "Atualizar agora" à pergunta da atualização aberta. Sem pergunta aberta: ignorado (linha no diagnóstico). |
@@ -324,9 +325,16 @@ depois de abrir e a cada 24 h. Achou uma versão mais nova:
   ao gancho `updateAnswer(agora)`. `DesktopApp::Notify(texto)` manda um toast do executável.
 - O logoff ou o desligamento do Windows (`WM_ENDSESSION`) faz o mesmo `quit`, espera até 3 s pelo gancho `quit` e
   roda o `Shutdown()` (os Recentes das ligações encerradas ficam gravados).
-- A posição da janela: depois de a pessoa mover a janela, o executável chama `DesktopApp::SaveWindowPosition(x, y)`
-  (o canto de cima, em pixels da tela), que grava `janela_x`/`janela_y` no `config.json` (só se mudou, e só depois
-  do `Start`). Na abertura, o executável lê a posição do `config.json` antes de criar a janela.
+- A posição e o tamanho da janela: depois de a pessoa mover a janela, o executável chama
+  `DesktopApp::SaveWindowPosition(x, y)` (o canto de cima da área da interface, em pixels da tela), que grava
+  `janela_x`/`janela_y` no `config.json`; depois de ela mudar o tamanho, `DesktopApp::SaveWindowSize(largura, altura)`
+  (a área da interface, em pixels lógicos), que grava `janela_largura`/`janela_altura` (os dois só se mudou, e só
+  depois do `Start`). Na abertura, o executável lê a posição e o tamanho do `config.json` antes de criar a janela.
+- O `resize`: o `DesktopApp` chama o gancho `resize(borda)` na thread de comandos, e o executável só põe na fila da
+  janela (`RunOnWindow`, Ruling 6: a thread de comandos nunca espera a janela). Na thread da janela, com o botão
+  esquerdo ainda apertado e a janela nem maximizada nem minimizada, ele faz `ReleaseCapture()` e posta
+  `WM_NCLBUTTONDOWN` com `HTTOP`, `HTTOPLEFT`, `HTTOPRIGHT` ou `HTBOTTOMRIGHT` e o ponto do cursor: o Windows roda o
+  redimensionar de sempre (com o mínimo e o máximo do `WM_GETMINMAXINFO`), e a interface nunca espera.
 - Os dispositivos de som: o `WM_DEVICECHANGE` (`DBT_DEVNODES_CHANGED`, e a chegada e a saída de uma interface de
   áudio) espera 1 s sem outro aviso e chama `DesktopApp::RefreshAudioDevices()`, que só põe na fila: o motor relê a
   lista do sistema e a escolha gravada vale de novo pelo nome (`audio.desconectados`).
