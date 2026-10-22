@@ -1,5 +1,7 @@
 # Starsonic Phone para Windows — especificação de design
 
+> **Substituída** pela spec da W1 (`2026-10-21-starsonic-phone-windows-w1-design.md`) a partir da 0.1.0: o app do Windows deixa de ser o MicroSIP. Esta spec continua valendo para a série 0.0.1 e, onde a W1 não diverge, para a marca, o perfil, o atualizador e a publicação.
+
 - **Data:** 11/10/2026
 - **Status:** aprovada — revisão 1.5 em 20/10/2026 (as revisões 1.4, 1.3, 1.2 e 1.1 também foram aprovadas, em 13/10, 13/10, 13/10 e 11/10/2026)
 - **Subprojeto:** 1 de 2 — o 2º é o app de celular (iOS e Android), com especificação própria

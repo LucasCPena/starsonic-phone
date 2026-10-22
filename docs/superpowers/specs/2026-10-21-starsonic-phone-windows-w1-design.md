@@ -1,7 +1,7 @@
 # Starsonic Phone para Windows W1 (app novo) — especificação de design
 
 - **Data:** 21/10/2026
-- **Status:** desenho aprovado pelo responsável em 21/10/2026, no chat, em quatro partes (montagem, dados e migração, comportamento, testes e entrega), com o visual aprovado no canvas "Starsonic Phone Windows — telas da W1" (claude.ai, 17 telas). Esta spec aguarda a revisão escrita.
+- **Status:** implementada na 0.1.0-rc.1 (22/10/2026). O que mudou durante a construção está na seção "Como ficou", antes dos próximos passos. O desenho foi aprovado pelo responsável em 21/10/2026, no chat, em quatro partes (montagem, dados e migração, comportamento, testes e entrega), com o visual aprovado no canvas "Starsonic Phone Windows — telas da W1" (claude.ai, 17 telas).
 - **Subprojeto:** Windows, etapa **W1** de três: W1 o app novo no lugar do atual, W2 a gravação de chamadas e W3 os contatos com presença (BLF). W2 e W3 terão specs próprias.
 - **Base:** a spec do Windows (`2026-10-11-starsonic-phone-windows-design.md`, revisão 1.5) para a marca, o perfil, o atualizador e a publicação; a spec da 0.2 do Android (`2026-10-16-starsonic-phone-android-0.2-design.md`) para as regras das ligações. Esta spec substitui a do Windows onde as duas divergem.
 - **Identidade visual:** o design system "Starsonic" (claude.ai, criado a partir de starsonic.com.br) e o "Manual de identidade visual" v1.0 (outubro de 2026), com os mesmos valores.
@@ -239,6 +239,115 @@ As da spec do Windows (11.1) e da 0.2 do Android (11.1), mais:
 | Comportamento de áudio do WMME diferente do Android (eco, dispositivo trocado no meio da ligação; nomes cortados em 31 caracteres) | O teste manual com headset USB e alto-falante, conferindo no `diagnostico.log` os nomes do motor e os rótulos do WebView2. O cancelamento de eco do PJSIP fica ligado, como no MicroSIP. |
 | O aviso do canto não aparecer por cima em tela cheia (apresentação, jogo) | Aceito na W1: a ligação toca e o ícone da bandeja pisca. Anotado para depois se incomodar. |
 | A rc.7 instalada não aceitar o instalador novo (mudança grande de tamanho ou de nome) | Mesmo nome de arquivo e mesmas regras do `versao.json`. O ensaio da atualização de uma rc.7 para a 0.1.0-rc.1 faz parte do teste manual. |
+
+## Como ficou
+
+O que mudou em relação ao texto acima durante a construção da 0.1.0-rc.1 (plano `docs/superpowers/plans/2026-10-21-windows-w1-app-novo.md`), uma linha por item, com o motivo. As seções 6.3 (o WMME, revisão 1.6), 7.1 (o `Contacts.xml` e o `call_log.db`) e 13 (o risco do áudio) já foram corrigidas no texto. O contrato da ponte é o `docs/ponte-windows.md`, e o roteiro manual é o `docs/teste-manual.md`.
+
+### Decisões tomadas durante a construção
+
+1. Os testes do controlador entram como `call_controller_tests` no `tests/phone` e rodam no workflow `android`: o job do motor já roda o ctest dessa pasta.
+2. O `tests/desktop` usa o motor falso de `tests/phone` e compila o `CallController.cpp` sem o pjproject: assim o app de PC é testado no Linux sem o PJSIP.
+3. O `build.yml` deixou de ignorar `starsonic/phone/**` e `tests/phone/**`: o app de PC passou a depender do motor e do controlador.
+4. A pergunta da atualização entrou na ponte (`update`, `updateNow`, `updateLater`): no app novo, ela é da interface.
+5. O CMake nativo do Android passou para C++17, e nada mais mudou no Android: o controlador compartilhado usa `std::optional`.
+6. Os comandos da interface rodam numa thread de comandos própria, nunca na da janela: o controlador chama o motor na thread de quem chama (o Dial espera o MakeCall, a Espera leva até ~2 s), e a janela não pode congelar.
+7. Na conferência, a segunda ligação vem como `secondKind: "active"` na ponte, e a interface olha `conference` antes: o controlador guarda só {None, Ringing, Held}, como no plano.
+8. O nlohmann/json 3.11.3 que já estava em `starsonic/third_party` foi reaproveitado: é a mesma versão, com o mesmo SHA-256.
+9. Os contatos da rc.7 vêm do `Contacts.xml` e o histórico do `call_log.db`: o MicroSIP 3.22 não grava nenhuma tabela no `contacts.db`.
+10. O `starsonic.targets` tira o `LegacyCrypto.cpp` do build do app antigo: sem isso, o build da série 0.0.1 quebra em C++14.
+11. O `docs/ponte-windows.md` é o contrato da ponte, e a seção 6.1 fica como resumo: o comando é `login` (não `saveAccount`), o aviso traz `texto`, o toque traz `tipo: completo|espera|parar`, o estado usa nomes em português e a ligação usa os nomes do `CallSnapshot`.
+12. No tema claro, os rótulos em maiúsculas e os links ficam em `blue` (não em `cyan-d`), e o erro da tela Entrar fica em `ink`, com o ícone e a borda vermelhos: é o contraste de 4,5:1 da seção 6.4 (o axe reprova o `cyan-d` a 12 px).
+13. O bipe da segunda ligação sai no dispositivo de **Alto-falante** da ligação, e o toque completo continua no de Toque (seção 4.2): com headset, a pessoa está ouvindo no headset. A interface acha a saída do WebView2 pelo nome do motor, também por prefixo.
+14. O áudio do Windows é o WMME, não o WASAPI (revisão 1.6): o `wasapi_dev` do pjproject 2.17 é só para WinRT e lista um único "default". O WMME corta os nomes em 31 caracteres, e o casamento por prefixo cobre isso.
+15. Quatro achados da Task 11 foram corrigidos na Task 12, pelo efeito para a pessoa: o WebView2 não nega o autoplay (senão o toque podia sair mudo); um teste instável que pulava o job do Windows; o `Authorization` do REGISTER, que ia ao `diagnostico.log` e agora sai como `Authorization: <oculto>`; e a saída da sessão do Windows, que agora passa pelo Sair.
+16. Se o Sair não termina, a janela fecha 10 s depois do pedido: um Sair travado não pode prender o app aberto. Perde só os Recentes do instante. A correção final completou isso (veja "Correção final", item 8).
+17. O ensaio da rc.7 só roda no CI, porque apaga `%APPDATA%\Starsonic Phone`. O instalador não mexe no "Desabilitado" do Gerenciador de Tarefas, para não religar o que a pessoa desligou. O bootstrapper do WebView2 tem cache próprio, para um endereço da Microsoft que muda não derrubar o build e o release.
+18. A revisão final foi dividida em três revisores, um por área (núcleo, host e instalador, interface), porque um só não lê o diff inteiro. Isso é do processo e não muda o produto.
+19. As teclas nunca rolam. As sugestões de contato ficam só com a altura que sobra: numa lista com rolagem, ou numa linha compacta. O teclado é a função principal da tela, e a sugestão é um atalho.
+
+### Correção final (antes da rc.1)
+
+1. Trocar para uma conta sem a senha não larga a que funciona. A tela Entrar pede a senha com um "Cancelar" que volta para a conta em uso (o comando `cancelLogin` e o campo `entrar.podeCancelar` na ponte). Antes, a pessoa ficava sem conseguir ligar.
+2. Na migração, se a conta em uso da rc.7 não migrou (servidor ou ramal inválido, ou a conta local), fica em uso a primeira conta migrada. Antes, o app abria no Entrar com contas válidas.
+3. Na tela Entrar, "Precisa de ajuda? (11) 5060-3000" é texto, não link, e o `tel:` saiu da lista do `openExternal`. O app é o tratador do `tel:`, então o link só enchia o Teclado escondido.
+4. A pergunta da atualização começa com o foco no "Depois", como o Cancelar das confirmações. Antes, um Enter de quem ia discar fechava o app para instalar.
+5. Numa janela baixa, com um cartão em cima, os painéis Transferir e Nova ligação escondem o bloco de quem fala. Antes, o painel passava do espaço e encostava no Desligar.
+6. O aviso MIT do Preact vai junto, em `ui\assets\preact-LICENSE.txt`: é uma obrigação da licença.
+7. Os links registram `"<exe>" --link "%1"`, e tudo depois do `--link` é o link. Um link nunca carrega opções, e o `--dados <pasta>` só vale no começo da linha de comando, nunca junto de um link: um lançador que não escapa as aspas poderia injetar opções. A atualização troca o registro antigo pelo novo.
+8. O fechamento inteiro tem limite: 5 s depois de a janela fechar, o app sai com `ExitProcess`, também pelo Sair da interface (no log, `fechamento forçado`). Antes, um processo sem janela segurava a instância única, e o app não abria mais.
+9. A atualização esvazia a pasta `ui\` antes de copiar. As páginas abrem com `?v=<versão>`, e o `app.js`, o `aviso.js` e o `app.css` com o hash do conteúdo na URL. Sem isso, um arquivo velho ou o cache do WebView2 podia servir a interface de outra versão.
+10. A atualização e a desinstalação apagam o `StarsonicPhone_log.txt` e os `crash-dump_*` da rc.7, que podem ter traços SIP.
+11. Os dispositivos de som são relidos com o app aberto (spec 11.1). O executável trata o `WM_DEVICECHANGE` (`DBT_DEVNODES_CHANGED` e as interfaces de áudio) e espera 1 s sem outro aviso. O motor relê a lista e volta pelo nome aos que estavam em uso, e o app reaplica a escolha gravada. Não há `IMMNotificationClient`, então um fone Bluetooth que só muda de estado pode não avisar (fica no teste manual).
+12. Quando o processo do navegador do WebView2 sai, o app refaz o WebView2 dentro do próprio processo, em 1 s, com até 5 tentativas, e escreve `navegador reiniciado` no log. O motor, o registro e as ligações continuam. Uma página que não responde é recarregada 5 s depois.
+13. O botão de confirmar dos diálogos Remover é azul: o vermelho tinha contraste de 4,37:1 e ficava fora dos usos do vermelho da seção 4.2.
+14. O pacote de fontes do release leva os pacotes do npm que vão no `ui\app.js` (`npm-packages/`, conferidos pelo `integrity` do `package-lock.json`): é a GPL, seção 9.
+15. Na correção de acompanhamento, a ligação vence a tela Entrar sempre que existe: na troca para uma conta sem senha, a conta antiga continua registrada e pode receber. Também: o Sair não grava uma troca adiada para uma conta sem senha; o reinício do WebView2 antes de a interface ficar pronta tem limite; e o instalador só apaga a `ui\` de uma pasta que tem o app. A correção da troca tinha trazido essa regressão, e os outros três eram vizinhos baratos.
+
+### Outras diferenças do texto
+
+**Montagem**
+- As pastas mudaram: o executável está em `windows/app` e a interface em `windows/ui` (não em `starsonic/win/ui`). A ponte, as lojas e a migração estão em `starsonic/desktop` (não em `starsonic/win`), em C++ portátil: assim, tudo o que não é do Windows é testado no Linux.
+- A interface vai numa pasta `ui\` ao lado do exe, servida pelo `SetVirtualHostNameToFolderMapping`, e não como recurso do executável. O instalador troca a pasta inteira.
+- A pasta de dados do WebView2 é `%LOCALAPPDATA%\Starsonic Phone\WebView2`, dentro da pasta da instalação, e sai na desinstalação.
+- O WebView2 abre com `--autoplay-policy=no-user-gesture-required` e nunca é suspenso, porque o toque tem de sair antes de qualquer clique e com a janela escondida. Só a janela principal toca (o aviso não).
+- Sem o runtime do WebView2, o app mostra "O Starsonic Phone precisa do WebView2 da Microsoft. Reinstale o Starsonic Phone.". A spec não tinha esse texto.
+
+**Ponte**
+- Além dos comandos da seção 6.1, há `ready`, `cancelLogin` e `viewRecents` (que zera as perdidas). Há também os campos `dial.contato` (a regra de discagem dos contatos), `entrar.contaId`, `teclado`/`tecladoVez` (os links) e `recentes[].contatoId`.
+- As mensagens do fim da ligação ("Ocupado", "<nome> desligou"…) e "Ligação perdida de …" chegam como `toast` de 2 s, e não dentro do estado.
+
+**Ligações e contas**
+- O Atender automático se decide quando a ligação chega: ligá-lo com uma recebida tocando não atende essa ligação.
+- Ligar o Não perturbe com uma ligação tocando não derruba essa ligação (vale para as próximas) e cancela o Atender automático dela.
+- Uma transferência que o motor recusa na hora mostra "O servidor não aceitou a transferência." por 2 s, como uma recusa da central.
+- O Entrar durante uma ligação também espera o fim dela, como a troca de conta, porque registrar a conta nova derrubaria a ligação.
+- O Sair com uma troca de conta esperando grava a conta escolhida para a próxima abertura (exceto uma conta sem senha). Remover a conta em uso passa para a primeira das outras. A contagem de perdidas fica só na memória e zera ao abrir o app.
+- A tela da ligação segue a 0.2 onde o canvas não desenha. Nova ligação fica desabilitada com a segunda tocando. Com duas ligações, os sete controles ficam numa grade de 4 colunas, e o cartão "Em espera" tem um Desligar próprio. A consulta não tem Desligar, como no canvas. A Espera fica pressionada, em vez de virar "Retomar".
+
+**Som**
+- A escolha dos dispositivos vale pelo nome, porque o número que o PJSIP dá a cada dispositivo muda. Um escolhido que sumiu aparece como "(desconectado)", e o Toque como "Dispositivo escolhido (desconectado)".
+- Nos testes do Linux, que não têm som, o motor acrescenta um dispositivo "Null Audio".
+- O toque é gerado no WebView2, sem arquivo de som, em 425 Hz. O completo fica 1 s ligado a cada 5 s. O bipe de espera dura 0,2 s a cada 3 s.
+
+**Janela, aviso, bandeja e links**
+- A janela tem 400×720, mas a altura é cortada na da área de trabalho do monitor: num notebook de 1920×1080 a 150%, sobram uns 688 pixels lógicos. A interface cabe inteira até 400×640, porque as sugestões encolhem primeiro (decisão 19).
+- O aviso não desenha cantos arredondados na página: o Windows 11 arredonda a janela, e no Windows 10 ela é quadrada. Ele fica a 12 px da borda da área de trabalho, não tem dono e abre o WebView2 dele depois do da janela principal.
+- A bandeja tem um quinto ícone, "tocando", que pisca, para o caso da tela cheia (seção 13). A ordem é: perdida, depois Não perturbe, depois a conexão. O menu tem Abrir, Não perturbe e Sair.
+- A instância única usa uma janela só de mensagens. Se o app aberto não responde em 5 s, a segunda abertura sai. O `/minimized` que a rc.7 gravava vale como `--bandeja`.
+- Os links `tel:`, `sip:` e `callto:` são novos, porque o instalador da rc.7 não registrava nenhum (a seção 7.4 dizia "como hoje"). O app aparece em Aplicativos padrão, e a chave do esquema no HKCU só é gravada quando nenhum outro programa tem o link.
+- No "Iniciar com o Windows", o registro vale mais que o `config.json` ao abrir: o valor do Run e o "Desabilitado" do Gerenciador de Tarefas. Ligar no app apaga só o "Desabilitado" do próprio app.
+- Nas Configurações, "Iniciar com o Windows" fica no cartão Ligações, sem uma seção "Geral". O tempo do Atender automático é escolhido numa lista ("Na hora" e os segundos).
+
+**Instalador e build**
+- A página do canvas virou a primeira página do MUI2 (a lateral, o título, o aviso e as duas opções), e o progresso fica na página seguinte. A lateral diz "STARSONIC PHONE", sem o "1.0". O botão Instalar fica no cinza do Windows, porque o MUI2 não pinta o botão.
+- O instalador tem quatro textos novos: "O Starsonic Phone está instalado", "O Starsonic Phone foi instalado neste computador.", "Instalando o Starsonic Phone…" e "Ligações pelo seu ramal" (a descrição em Aplicativos padrão).
+- O bootstrapper do WebView2 vem do endereço fixo do arquivo, e não do `fwlink`, que muda de arquivo. O SHA-256 e a assinatura da Microsoft são conferidos. Qualquer falha dele dá a mensagem da seção 11.1.
+- O "Iniciar com o Windows" do instalador grava só o valor do Run (o `RunAtSystemStartup` do MicroSIP saiu). Desmarcar o atalho numa instalação por cima apaga o atalho.
+- O instalador do app antigo deixou de ser gerado, e o release confere que o instalador é o do app novo.
+- A fumaça roda no build de teste (`STARSONIC_TEST_HOOKS`), com o perfil de teste (`STARSONIC_PERFIL`) e o som nulo (`STARSONIC_SOM_NULO`), porque o runner não tem placa de som. O instalador de publicação passa pela conferência de marca, pelo `Test-Installer.ps1` e pelo ensaio.
+
+**Atualização e diagnóstico**
+- O app novo procura atualização 60 s depois de abrir e a cada 24 h. Ele não tem as regras de intervalo do MicroSIP.
+- A pergunta é um diálogo da interface ("Atualização", "Depois", "Atualizar agora") e nunca cobre a tela da ligação: aparece quando a ligação acaba. "Baixando atualização…" e os avisos do atualizador chegam como `toast`.
+- "Enviar diagnóstico" faz uma cópia do log em `%TEMP%`, com a data e a hora no nome e o `.1` da rotação junto, e abre o Explorer com ela selecionada.
+
+### A confirmar com o responsável
+
+- As regras de produto das listas acima que a spec não decidia: o Não perturbe e o Atender automático com uma ligação já tocando; o Entrar e a troca de conta que esperam o fim da ligação; o Sair com uma troca esperando; a conta que fica em uso depois de remover a em uso; e as perdidas que zeram ao abrir o app.
+- Os textos novos fora da spec e do canvas (os do instalador acima, o diálogo da atualização, os estados vazios, os formulários e os rótulos de leitor de tela) e as notas da versão (`notas/v0.1.0-rc.1.txt`).
+
+### Critérios de sucesso (seção 3)
+
+| Critério | Conferido a cada build | Fica para o teste manual |
+|----------|------------------------|--------------------------|
+| Instalar pelo link num Windows 10 e num Windows 11 limpos, entrar e fazer e receber ligações nos dois servidores | O instalador (silencioso e pela tela), a fumaça do app instalado (entra no registrador falso por UDP, liga, recebe e atende pelo aviso), a porta por servidor no núcleo | Os dois servidores de verdade, em UDP e TCP; o Windows 10 sem WebView2, com e sem internet; o Windows 11; o áudio |
+| A segunda ligação, alternar, transferir com consulta, conferência, separar, e a outra volta sozinha | `call_controller_tests` (os casos da 0.2 portados), `phone_tests` (o motor contra o registrador falso), o Playwright das telas de ligação | As ligações de verdade, com áudio, na central da Starsonic |
+| Minimizado ou na bandeja, a recebida aparece no aviso e toca no dispositivo escolhido | A fumaça (o aviso com a janela minimizada, sem roubar o primeiro plano, e o Atender dele), o Playwright do toque (o ritmo e o `setSinkId`), a bandeja e o aviso no `desktop_tests` | O som de verdade no dispositivo de Toque, o bipe no headset, o ritmo com a janela escondida, o foco com outro programa em uso |
+| Não perturbe, Atender automático e a troca entre duas contas | `call_controller_tests`, `desktop_tests` (a troca, a troca esperando, a conta sem senha com Cancelar), o Playwright | Com a central de verdade |
+| A rc.7 com duas contas e contatos atualiza e abre "Conectado" na conta em uso, com as contas, os contatos e os recentes | `desktop_tests` (o `.ini` UTF-16LE, o `Contacts.xml` e o `call_log.db`; a senha do `CCrypto` original no Windows); o ensaio pelo `workflow_dispatch` (a rc.7 de verdade com uma conta e um contato, o instalador por cima em silêncio, "Conectado", e o `.migrado` do `.ini` e do `Contacts.xml`) | As duas contas e a conta em uso; o `call_log.db` e os recentes; o atualizador da própria rc.7; a instalação por cima pela tela |
+| As telas seguem o canvas nos dois temas, e nenhum "MicroSIP" | O Playwright (cada tela nos dois temas, as capturas e o axe), o `check_branding.py` (o exe, a pasta `ui\` e o instalador aberto por dentro) | A comparação com o canvas no WebView2 de verdade, a troca de tema com o app aberto, as escalas de 100%, 125% e 150% |
+| Tudo passa nos testes automáticos e no roteiro manual | Os workflows `build` e `android` verdes | O roteiro `docs/teste-manual.md` inteiro, pela Starsonic |
 
 ## 14. Próximos passos
 

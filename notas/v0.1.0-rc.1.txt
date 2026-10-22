@@ -1,0 +1,4 @@
+Nova versão do Starsonic Phone para Windows, com a cara da Starsonic: telas novas, tema claro e escuro e o aviso de ligação no canto da tela.
+As suas contas, os contatos e as ligações recentes passam para a versão nova.
+Também chegam a segunda ligação, a transferência com consulta, a conferência, o Não perturbe e o Atender automático.
+Esta é uma versão de teste.
