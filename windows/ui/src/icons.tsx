@@ -246,3 +246,20 @@ export const IconMerge = svg(
     <path d="M8 7l4-4 4 4" />
   </>,
 );
+/** Rediscar (o rotate-ccw do canvas). */
+export const IconRedial = svg(
+  <>
+    <path d="M3 12a9 9 0 1 0 2.6-6.4" />
+    <path d="M3 4v5h5" />
+  </>,
+);
+
+/** O triângulo de atenção do erro no cadastro (o do canvas "Bolinha de status": traço #ffb703, 18 px). */
+export function IconWarning() {
+  return (
+    <svg class="ic ic-warn" viewBox="0 0 24 24" role="img" aria-label="Atenção" focusable="false">
+      <path d="M12 3l10 18H2z" />
+      <path d="M12 10v5M12 18v.5" />
+    </svg>
+  );
+}

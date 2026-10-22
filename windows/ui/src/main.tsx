@@ -21,7 +21,8 @@ import { Sobre } from './screens/Sobre';
 import { Teclado } from './screens/Teclado';
 import { createRinger } from './ring';
 import type { AppState } from './state';
-import { accountTitle } from './format';
+import { accountDot, accountTitle } from './format';
+import { useLayout } from './layout';
 import type { Send, Tab, View } from './types';
 
 const bridge = createBridge();
@@ -48,6 +49,7 @@ function App() {
   const saidas = useRef({ toque: '', altoFalante: '' });
 
   const send = useCallback<Send>((command) => bridge.send(command), []);
+  const layout = useLayout();
 
   useEffect(() => {
     bridge.onVersionMismatch(() => setReinstalar(true));
@@ -115,7 +117,7 @@ function App() {
 
   if (!bridge.available) {
     return (
-      <div class="win">
+      <div class="win" data-layout={layout}>
         <TitleBar send={send} />
         <p class="fatal" role="alert">
           Não foi possível iniciar a interface. Reinstale o Starsonic Phone.
@@ -125,7 +127,7 @@ function App() {
   }
   if (reinstalar) {
     return (
-      <div class="win">
+      <div class="win" data-layout={layout}>
         <TitleBar send={send} />
         <p class="fatal" role="alert">
           Reinstale o Starsonic Phone.
@@ -135,7 +137,7 @@ function App() {
   }
   if (!state) {
     return (
-      <div class="win">
+      <div class="win" data-layout={layout}>
         <TitleBar send={send} />
       </div>
     );
@@ -156,8 +158,12 @@ function App() {
   // registrada, e uma ligação dela precisa do Atender e do Desligar); a Entrar volta quando ela acaba.
   if (state.ligacao) {
     return (
-      <div class="win call">
-        <TitleBar send={send} title={state.conta ? `Starsonic Phone · ${accountTitle(state.conta)}` : undefined} />
+      <div class="win call" data-layout={layout}>
+        <TitleBar
+          send={send}
+          title={state.conta ? `Starsonic Phone · ${accountTitle(state.conta)}` : undefined}
+          status={state.conta ? accountDot(state.conta, true) : undefined}
+        />
         <Ligacao state={state} ligacao={state.ligacao} send={send} />
         {toastEl}
       </div>
@@ -166,7 +172,7 @@ function App() {
 
   if (state.tela === 'entrar') {
     return (
-      <div class="win">
+      <div class="win" data-layout={layout}>
         <TitleBar send={send} closeLabel="Fechar" />
         <Entrar state={state} send={send} mode="entrar" />
         {avisos}
@@ -218,7 +224,7 @@ function App() {
 
   if (conteudo) {
     return (
-      <div class="win">
+      <div class="win" data-layout={layout}>
         <TitleBar send={send} />
         {conteudo}
         {avisos}
@@ -229,11 +235,11 @@ function App() {
   const tab = view.kind === 'tab' ? view.tab : 'teclado';
   const conta = state.conta;
   return (
-    <div class="win">
+    <div class="win" data-layout={layout}>
       <TitleBar send={send} />
-      {conta && <Header state={state} conta={conta} send={send} navigate={setView} current={view} />}
+      {conta && <Header state={state} conta={conta} send={send} navigate={setView} current={view} layout={layout} />}
       <main class="main" aria-label={tab === 'teclado' ? 'Teclado' : tab === 'recentes' ? 'Recentes' : 'Contatos'}>
-        {tab === 'teclado' && <Teclado numero={numero} setNumero={mudarNumero} contatos={state.contatos} send={send} />}
+        {tab === 'teclado' && <Teclado numero={numero} setNumero={mudarNumero} contatos={state.contatos} recentes={state.recentes} send={send} />}
         {tab === 'recentes' && (
           <Recentes
             recentes={state.recentes}

@@ -1,4 +1,5 @@
-// A navegação de baixo: Teclado, Recentes e Contatos (Ctrl+1, 2 e 3).
+// A navegação de baixo: Teclado, Recentes e Contatos (Ctrl+1, 2 e 3). No layout Mínimo, só os ícones (o nome de
+// cada aba fica no aria-label).
 import { IconClock, IconContacts, IconKeypad } from '../icons';
 import type { Tab } from '../types';
 
@@ -21,6 +22,7 @@ export function Nav({ tab, onSelect }: Props) {
           type="button"
           key={t}
           class={t === tab ? 'tab tab-on' : 'tab'}
+          aria-label={label}
           aria-current={t === tab ? 'page' : undefined}
           aria-keyshortcuts={key}
           onClick={() => onSelect(t)}
@@ -28,9 +30,13 @@ export function Nav({ tab, onSelect }: Props) {
           <span class="tab-pill">
             <Icon />
           </span>
-          {label}
+          <span class="tab-label">{label}</span>
         </button>
       ))}
+      {/* O canto de arrastar o tamanho da janela (só o desenho: quem redimensiona é a borda do Windows). */}
+      <svg class="grip" viewBox="0 0 12 12" aria-hidden="true" focusable="false">
+        <path d="M11 3L3 11M11 7L7 11" />
+      </svg>
     </nav>
   );
 }

@@ -16,6 +16,9 @@
   --cyan: #00c2cb; --cyan-d: #00a5ad; --blue: #0c2671; --blue-2: #0a1e57; --ink: #0a0e1a; --muted: #5b6478;
   --line: #e7eaf2; --soft: #f5f7fb; --white: #ffffff; --navy-950: #070b18; --navy-900: #0a1330; --navy-850: #07143d;
   --navy-800: #0a1a4d; --on-cyan: #03222a; --danger: #d64545; --danger-soft: #fff6f6;
+  /* O verde da bolinha "conectado" (rc.2). A marca não tem verde (o único é o do WhatsApp, reservado a ele): este é
+     um pedido explícito do responsável (Lucas, 22/10/2026), decisão dele. Só a bolinha e a bandeja usam. */
+  --status-online: #22c55e;
   --surface: var(--white); --surface-alt: var(--soft); --card: var(--white); --border: var(--line);
   --text-strong: var(--blue); --text: var(--ink); --text-muted: var(--muted); --text-accent: var(--cyan-d);
   --icon: var(--blue); --icon-tile: rgba(0, 194, 203, 0.14); --focus: var(--blue);
@@ -102,7 +105,19 @@ button { cursor: default; }
 .account:hover, .account[aria-expanded="true"] { background: rgba(255, 255, 255, 0.1); }
 .dot { width: 9px; height: 9px; border-radius: 999px; background: var(--cyan); box-shadow: 0 0 0 4px rgba(0, 194, 203, 0.18); flex: none; }
 .dot-off { background: #b9c4e6; box-shadow: 0 0 0 4px rgba(185, 196, 230, 0.16); }
-.dot-err { background: var(--danger); box-shadow: 0 0 0 4px rgba(214, 69, 69, 0.2); }
+.dot-online { background: var(--status-online); box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.22); }
+.dot-busy { background: var(--danger); box-shadow: 0 0 0 4px rgba(214, 69, 69, 0.28); }
+/* O erro no cadastro: a bolinha cinza e o triângulo de atenção (o do canvas "Bolinha de status"). */
+.ic-warn { width: 18px; height: 18px; stroke: #ffb703; flex: none; }
+.account-wrap { position: relative; z-index: 2; }
+.menu-wrap { position: relative; flex: none; }
+.brand-actions { display: flex; align-items: center; gap: 6px; }
+/* Não perturbe e Atender automático no Compacto e no Mínimo: redondos, só o ícone. */
+.toggle { width: 32px; height: 32px; border-radius: 999px; border: 1px solid rgba(255, 255, 255, 0.28); background: transparent; color: #ffffff;
+  display: grid; place-items: center; padding: 0; flex: none; transition: background var(--ease), border-color var(--ease); }
+.toggle:hover { background: rgba(255, 255, 255, 0.08); }
+.toggle .ic { width: 15px; height: 15px; }
+.toggle-on, .toggle-on:hover { background: var(--cyan); border-color: var(--cyan); color: var(--on-cyan); }
 .account-text { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
 .account-name { font-size: 14px; font-weight: 700; line-height: 1.2; }
 .account-sub { font-size: 12px; font-weight: 500; color: #b9c4e6; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -118,7 +133,9 @@ button { cursor: default; }
 .bar .h1 { color: #ffffff; font-size: 19px; }
 
 /* Conteúdo */
-.body { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 18px 20px 14px; gap: 14px; overflow: hidden; }
+.body { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 18px 20px 14px; gap: 14px; overflow: hidden;
+  /* Numa janela larga, o conteúdo fica legível: no máximo 480 de largura, no meio (o cabeçalho vai de ponta a ponta). */
+  width: 100%; max-width: 480px; align-self: center; }
 .scroll { overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 .eyebrow { display: flex; align-items: center; gap: 10px; font-size: 12px; font-weight: 700; letter-spacing: 0.14em;
   text-transform: uppercase; color: var(--accent-text); margin: 0; }
@@ -157,14 +174,30 @@ button { cursor: default; }
 .btn-danger { background: var(--danger); color: #ffffff; }
 .btn-danger:hover { background: #c23b3b; }
 .btn-call { height: 56px; font-size: 16px; flex: none; }
+/* O Rediscar à esquerda do Ligar (a opção A do canvas): o círculo de contorno com o ícone azul. */
+.call-row { display: flex; align-items: center; gap: 12px; flex: none; width: 100%; }
+.call-row > .btn { flex: 1 1 auto; width: auto; min-width: 0; }
+.redial-wrap { position: relative; display: flex; flex: none; }
+.btn-redial { width: 56px; height: 56px; border-radius: 999px; border: 1.5px solid var(--outline); background: transparent; color: var(--icon);
+  display: grid; place-items: center; padding: 0; transition: border-color var(--ease), background var(--ease); }
+.btn-redial .ic { width: 22px; height: 22px; }
+.btn-redial:not(:disabled):hover, .btn-redial:focus-visible { border-color: var(--cyan); }
+.btn-redial:disabled { opacity: 0.45; }
+.redial-tip { position: absolute; left: -4px; bottom: calc(100% + 8px); z-index: 25; padding: 6px 10px; border-radius: 10px; background: var(--navy-900);
+  color: #ffffff; border: 1px solid rgba(255, 255, 255, 0.12); font: 600 12px/1.3 var(--font-sans); white-space: nowrap; pointer-events: none;
+  max-width: calc(100vw - 32px); overflow: hidden; text-overflow: ellipsis; box-shadow: var(--shadow-modal); }
+.ghost.apagar { width: 40px; height: 40px; }
 .btn-block { width: 100%; }
 .mini { height: 36px; padding: 0 14px; font-size: 13px; gap: 7px; }
 .ghost { width: 58px; height: 58px; border-radius: 999px; border: 0; background: transparent; color: var(--text-muted); display: grid; place-items: center; padding: 0; flex: none; transition: background var(--ease), color var(--ease); }
 .ghost:hover { background: var(--icon-tile); color: var(--text-strong); }
 
 /* Navegação de baixo */
-.nav { flex: none; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--border); padding: 8px 12px 10px; background: var(--surface); }
-.tab { display: flex; flex-direction: column; align-items: center; gap: 4px; border: 0; background: transparent; color: var(--text-muted);
+.nav { flex: none; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--border); padding: 8px 12px 10px; background: var(--surface);
+  position: relative; padding-inline: max(12px, calc((100% - 480px) / 2)); }
+/* O canto de arrastar (só o desenho: quem redimensiona é a borda da janela do Windows, logo ali). */
+.grip { position: absolute; right: 3px; bottom: 3px; width: 12px; height: 12px; fill: none; stroke: #b9c4e6; stroke-width: 1.5; stroke-linecap: round; pointer-events: none; }
+.tab { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; border: 0; background: transparent; color: var(--text-muted);
   font: 600 12px/1.2 var(--font-sans); padding: 4px 0; border-radius: 12px; }
 .tab-pill { width: 56px; height: 30px; border-radius: 999px; display: grid; place-items: center; transition: background var(--ease); }
 .tab:hover .tab-pill { background: var(--icon-tile); }
@@ -348,7 +381,8 @@ button.link { border: 0; background: transparent; padding: 0; font-family: inher
 .call .titlebar { position: relative; z-index: 2; }
 .call .toast { bottom: auto; top: 44px; }
 
-.call-body { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; padding: 20px 22px 22px; gap: 14px; position: relative; z-index: 1; }
+.call-body { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; padding: 20px 22px 22px; gap: 14px; position: relative; z-index: 1;
+  width: 100%; max-width: 480px; align-self: center; }
 .call .eyebrow { color: var(--cyan); }
 .who { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; max-width: 100%; margin-top: 4px; }
 .who-name { font-size: 26px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.12; max-width: 100%; overflow-wrap: anywhere; }
@@ -361,6 +395,14 @@ button.link { border: 0; background: transparent; padding: 0; font-family: inher
 .avatar-lg { width: 92px; height: 92px; font-size: 32px; margin: 8px 0 4px; }
 
 .call-middle { flex: 1 1 auto; min-height: 0; width: 100%; display: flex; flex-direction: column; justify-content: flex-end; }
+.call-panel .call-row { gap: 10px; }
+.call-panel .btn-redial { width: 46px; height: 46px; }
+.call-panel .btn-redial .ic { width: 20px; height: 20px; }
+/* A conta em uso na barra de título da ligação (o cabeçalho fica escondido): a bolinha e o estado. */
+.account-status { display: inline-flex; align-items: center; gap: 8px; flex: none; margin-right: 10px; color: #ffffff; font-weight: 600; white-space: nowrap; }
+.account-status .dot { width: 8px; height: 8px; box-shadow: 0 0 0 3px rgba(185, 196, 230, 0.16); }
+.account-status .dot-busy { box-shadow: 0 0 0 3px rgba(214, 69, 69, 0.28); }
+.titlebar .titlebar-text { flex: 1; }
 .call-middle:has(.call-keys, .call-panel) { justify-content: center; }
 .ctrls { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 10px; width: 100%; }
 .ctrls-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px 4px; }
@@ -407,7 +449,10 @@ button.link { border: 0; background: transparent; padding: 0; font-family: inher
 
 .call-keys { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: minmax(40px, 54px); gap: 10px; width: 100%; }
 .call-keys .key { height: auto; color: #ffffff; }
-.call-panel { width: 100%; display: flex; flex-direction: column; gap: 10px; }
+.call-panel { width: 100%; display: flex; flex-direction: column; gap: 10px; flex: 0 1 auto; min-height: 0; }
+.call-panel > * { flex: none; }
+/* As sugestões do painel ficam com o que sobra (encolhem antes de tudo e rolam sozinhas, mostrando pelo menos uma). */
+.call-panel > .call-suggestions { flex: 0 1000 auto; min-height: 38px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; scrollbar-width: thin; }
 .call-panel-title { margin: 0; font-size: 15px; font-weight: 700; color: #ffffff; }
 .call-number { height: 52px; width: 100%; border-radius: 14px; background: var(--field); border: 1px solid rgba(255, 255, 255, 0.14); color: #ffffff;
   font: 800 24px/1 var(--font-sans); letter-spacing: -0.01em; padding: 0 14px; transition: border-color var(--ease), box-shadow var(--ease); }
@@ -449,3 +494,117 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .aviso-recusar { background: rgba(214, 69, 69, 0.16); color: #ffffff; border: 1.5px solid var(--danger); }
 .aviso-recusar:hover { background: rgba(214, 69, 69, 0.3); }
 .aviso-erro { display: grid; place-items: center; text-align: center; font-size: 14px; font-weight: 700; }
+
+/* ---------------------------------------------------------------------------------------------------------
+   Os layouts Compacto e Mínimo (layout.ts põe o data-layout no .win; o canvas "tamanho, rediscar e status"). O
+   teclado continua a função da tela: as 12 teclas, o Rediscar, o Ligar e a navegação inteiros, sem rolar. */
+
+/* Compacto (abaixo de 380 de largura ou de 600 de altura; o canvas de 340×560). */
+.win[data-layout="compacto"] .brand { padding: 10px 14px 12px; gap: 9px; }
+.win[data-layout="compacto"] .logo { width: 118px; }
+.win[data-layout="compacto"] .icon-btn { width: 32px; height: 32px; }
+.win[data-layout="compacto"] .icon-btn .ic { width: 16px; height: 16px; }
+.win[data-layout="compacto"] .account { padding: 8px 12px; border-radius: 12px; gap: 10px; }
+.win[data-layout="compacto"] .account-text,
+.win[data-layout="minimo"] .account-text { flex-direction: row; align-items: baseline; gap: 8px; }
+.win[data-layout="compacto"] .account-name { flex: none; font-size: 14px; font-weight: 800; }
+.win[data-layout="compacto"] .account-sub { flex: 1; min-width: 0; font-size: 12px; }
+.win[data-layout="compacto"] .body.teclado { gap: 8px; padding: 10px 14px 12px; }
+.win[data-layout="compacto"] .teclado .number { gap: 6px; padding: 0 0 6px; }
+.win[data-layout="compacto"] .teclado .number-text { font-size: 24px; height: 32px; }
+.win[data-layout="compacto"] .ghost.apagar { width: 32px; height: 32px; }
+.win[data-layout="compacto"] .ghost.apagar .ic { width: 20px; height: 20px; }
+.win[data-layout="compacto"] .teclado-meio { gap: 8px; }
+.win[data-layout="compacto"] .teclado .keys { gap: 8px; grid-template-rows: repeat(4, minmax(38px, 44px)); min-height: calc(4 * 38px + 3 * 8px); }
+.win[data-layout="compacto"] .key { border-radius: 14px; }
+.win[data-layout="compacto"] .key b { font-size: 19px; }
+.win[data-layout="compacto"] .key small { font-size: 8.5px; letter-spacing: 0.12em; min-height: 10px; }
+.win[data-layout="compacto"] .call-row { gap: 10px; }
+.win[data-layout="compacto"] .btn-call { height: 46px; font-size: 15px; gap: 8px; }
+.win[data-layout="compacto"] .btn-call .ic { width: 18px; height: 18px; }
+.win[data-layout="compacto"] .btn-redial { width: 46px; height: 46px; }
+.win[data-layout="compacto"] .btn-redial .ic { width: 20px; height: 20px; }
+.win[data-layout="compacto"] .nav { height: 52px; padding-top: 4px; padding-bottom: 4px; }
+.win[data-layout="compacto"] .tab { gap: 2px; padding: 0; font-size: 11.5px; }
+.win[data-layout="compacto"] .tab-pill { width: 44px; height: 22px; }
+.win[data-layout="compacto"] .tab .ic { width: 16px; height: 16px; }
+
+/* Mínimo (abaixo de 330 de largura ou de 500 de altura; o canvas de 300×440): sem o logo, a faixa de 44 px. */
+.win[data-layout="minimo"] .brand-strip { height: 44px; flex-direction: row; align-items: center; gap: 8px; padding: 0 8px 0 12px; }
+.win[data-layout="minimo"] .account-wrap { flex: 1; min-width: 0; }
+.win[data-layout="minimo"] .account { height: 36px; padding: 0 6px 0 0; gap: 8px; border: 0; border-radius: 10px; background: transparent; }
+.win[data-layout="minimo"] .account:hover, .win[data-layout="minimo"] .account[aria-expanded="true"] { background: rgba(255, 255, 255, 0.06); }
+.win[data-layout="minimo"] .account-name { flex: none; font-size: 13.5px; font-weight: 800; }
+.win[data-layout="minimo"] .account-sub { flex: 1; min-width: 0; font-size: 12px; }
+.win[data-layout="minimo"] .toggle, .win[data-layout="minimo"] .icon-btn { width: 30px; height: 30px; }
+.win[data-layout="minimo"] .toggle .ic { width: 14px; height: 14px; }
+.win[data-layout="minimo"] .icon-btn .ic { width: 15px; height: 15px; }
+.win[data-layout="minimo"] .body.teclado { gap: 6px; padding: 8px 12px 10px; }
+.win[data-layout="minimo"] .teclado .number { gap: 4px; padding: 0 0 4px; }
+.win[data-layout="minimo"] .teclado .number-text { font-size: 20px; height: 30px; }
+.win[data-layout="minimo"] .teclado .number-text::placeholder { font-size: 15px; }
+.win[data-layout="minimo"] .ghost.apagar { width: 30px; height: 30px; }
+.win[data-layout="minimo"] .ghost.apagar .ic { width: 18px; height: 18px; }
+.win[data-layout="minimo"] .teclado-meio { gap: 6px; }
+.win[data-layout="minimo"] .teclado .keys { gap: 6px; grid-template-rows: repeat(4, minmax(34px, 38px)); min-height: calc(4 * 34px + 3 * 6px); }
+.win[data-layout="minimo"] .key { border-radius: 12px; }
+.win[data-layout="minimo"] .key b { font-size: 17px; }
+.win[data-layout="minimo"] .key small { display: none; }
+.win[data-layout="minimo"] .call-row { gap: 8px; }
+.win[data-layout="minimo"] .btn-call { height: 42px; font-size: 14.5px; gap: 8px; }
+.win[data-layout="minimo"] .btn-call .ic { width: 17px; height: 17px; }
+.win[data-layout="minimo"] .btn-redial { width: 42px; height: 42px; }
+.win[data-layout="minimo"] .btn-redial .ic { width: 18px; height: 18px; }
+.win[data-layout="minimo"] .nav { height: 44px; padding-top: 4px; padding-bottom: 4px; }
+.win[data-layout="minimo"] .tab { padding: 0; }
+.win[data-layout="minimo"] .tab-label { display: none; }
+.win[data-layout="minimo"] .tab-pill { width: 44px; height: 28px; }
+.win[data-layout="minimo"] .tab .ic { width: 19px; height: 19px; }
+.win[data-layout="minimo"] .tab-on .tab-pill .ic { width: 16px; height: 16px; }
+
+/* As outras telas no Compacto e no Mínimo: menos espaço em volta, o corpo rola dentro dele. */
+.win[data-layout="compacto"] .bar, .win[data-layout="minimo"] .bar { padding: 10px 12px; }
+.win[data-layout="compacto"] .body:not(.teclado), .win[data-layout="minimo"] .body:not(.teclado) { padding-left: 14px; padding-right: 14px; }
+.win[data-layout="minimo"] .body:not(.teclado) { padding-top: 12px; padding-bottom: 10px; }
+.win[data-layout="minimo"] .about { gap: 12px; }
+.win[data-layout="minimo"] .about-logo { width: 180px; }
+.win[data-layout="compacto"] .row-actions, .win[data-layout="minimo"] .row-actions { padding-left: 2px; flex-wrap: wrap; }
+.win[data-layout="minimo"] .select, .win[data-layout="minimo"] .select select { max-width: 150px; }
+.win[data-layout="compacto"] .select, .win[data-layout="compacto"] .select select { max-width: 180px; }
+
+/* A tela da ligação no Compacto e no Mínimo: o avatar, os controles e o Desligar menores. */
+.win.call[data-layout="compacto"] .call-body { padding: 14px 16px 16px; gap: 10px; }
+.win.call[data-layout="compacto"] .avatar-lg { width: 64px; height: 64px; font-size: 22px; margin: 4px 0 2px; }
+.win.call[data-layout="compacto"] .who-name { font-size: 22px; }
+.win.call[data-layout="compacto"] .ctrls { gap: 10px 6px; }
+.win.call[data-layout="compacto"] .ctrl-c { width: 50px; height: 50px; }
+.win.call[data-layout="compacto"] .hang { width: 60px; height: 60px; }
+.win.call[data-layout="compacto"] .call-actions { gap: 56px; margin-top: 4px; }
+.win.call[data-layout="minimo"] .call-body { padding: 10px 12px 12px; gap: 8px; }
+.win.call[data-layout="minimo"] .avatar-lg { display: none; }
+.win.call[data-layout="minimo"] .who { gap: 3px; margin-top: 0; }
+.win.call[data-layout="minimo"] .who-name { font-size: 20px; }
+.win.call[data-layout="minimo"] .who-sub { font-size: 13px; }
+.win.call[data-layout="minimo"] .timer { font-size: 15px; }
+.win.call[data-layout="minimo"] .ctrls { gap: 8px 4px; }
+.win.call[data-layout="minimo"] .ctrl { gap: 5px; font-size: 11px; }
+.win.call[data-layout="minimo"] .ctrl-c { width: 44px; height: 44px; }
+.win.call[data-layout="minimo"] .ctrl-c .ic { width: 18px; height: 18px; }
+.win.call[data-layout="minimo"] .hang { width: 54px; height: 54px; }
+.win.call[data-layout="minimo"] .round-action { gap: 5px; font-size: 11px; }
+.win.call[data-layout="minimo"] .call-actions { gap: 48px; margin-top: 2px; }
+.win.call[data-layout="minimo"] .vcard { padding: 8px 10px; gap: 10px; border-radius: 14px; }
+.win.call[data-layout="minimo"] .conf-list { gap: 6px; }
+.win.call[data-layout="minimo"] .call-panel { gap: 8px; }
+.win.call[data-layout="minimo"] .call-number { height: 44px; font-size: 20px; }
+.win.call[data-layout="minimo"] .call-panel .btn { height: 42px; }
+.win.call[data-layout="minimo"] .call-panel .btn-ghost-dark { height: 34px; }
+.win.call[data-layout="minimo"] .call-panel .btn-redial { width: 42px; height: 42px; }
+.win.call[data-layout="minimo"] .call-suggest { padding: 5px 10px; }
+.win.call[data-layout="minimo"] .call-suggest .avatar { width: 28px; height: 28px; font-size: 11.5px; }
+.win.call[data-layout="minimo"] .call-keys { gap: 6px; grid-auto-rows: minmax(34px, 44px); }
+.win.call[data-layout="minimo"] .btn-complete { height: 46px; }
+.win.call[data-layout="minimo"] .consult-actions { gap: 6px; margin-top: 4px; }
+.win.call[data-layout="minimo"] .consult-note { font-size: 12px; }
+/* O painel de número aberto numa janela pequena: o bloco de quem fala sai (o título do painel diz a ligação). */
+.win.call[data-layout="minimo"] .call-painel-cartao .who, .win.call[data-layout="compacto"] .call-painel-cartao .who { display: none; }

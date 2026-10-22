@@ -1,5 +1,5 @@
 // Como a interface escreve o que vem no estado (só apresentação: as regras ficam no C++).
-import type { CurrentAccount, RecentKind, SavedAccount } from './state';
+import type { CurrentAccount, RecentCall, RecentKind, SavedAccount } from './state';
 
 /** "Recepção · 2001"; sem nome, só o ramal. */
 export function accountTitle(conta: Pick<CurrentAccount | SavedAccount, 'nome' | 'ramal'>): string {
@@ -17,6 +17,42 @@ export function accountStatusLine(conta: CurrentAccount): string {
     default:
       return 'Sem conexão';
   }
+}
+
+/** A bolinha da conta em uso (a mesma no cabeçalho, na barra da ligação e nas Configurações). */
+export interface AccountDot {
+  /** As classes da bolinha: verde conectado, vermelho em ligação, ciano conectando, cinza sem conexão e no erro. */
+  dot: string;
+  /** O texto ao lado (a bolinha nunca diz o estado sozinha). */
+  texto: string;
+  /** O erro no cadastro: o triângulo de atenção ao lado. */
+  atencao: boolean;
+}
+
+/** Conectado e com uma ligação (tocando também): ocupado. */
+export function accountDot(conta: CurrentAccount, emLigacao: boolean): AccountDot {
+  switch (conta.status) {
+    case 'conectado':
+      return emLigacao
+        ? { dot: 'dot dot-busy', texto: 'Ocupado · em ligação', atencao: false }
+        : { dot: 'dot dot-online', texto: accountStatusLine(conta), atencao: false };
+    case 'conectando':
+      return { dot: 'dot', texto: accountStatusLine(conta), atencao: false };
+    case 'erro':
+      return { dot: 'dot dot-off', texto: accountStatusLine(conta), atencao: true };
+    default:
+      return { dot: 'dot dot-off', texto: accountStatusLine(conta), atencao: false };
+  }
+}
+
+/** O começo do texto do estado, sem o " · <servidor>" (a faixa do layout Mínimo). */
+export function statusWord(texto: string): string {
+  return texto.split(' · ')[0];
+}
+
+/** A ligação feita mais nova (o Rediscar); null se não tem nenhuma. */
+export function lastOutgoing(recentes: RecentCall[]): RecentCall | null {
+  return recentes.find((r) => r.tipo === 'feita') ?? null;
 }
 
 /** Minúsculas, sem acento: para a busca e os grupos. */

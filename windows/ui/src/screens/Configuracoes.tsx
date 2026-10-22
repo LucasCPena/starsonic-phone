@@ -2,7 +2,7 @@
 // e Toque) e Ligações (Atender automaticamente e o tempo, Iniciar com o Windows).
 import { useEffect, useState } from 'preact/hooks';
 import { BackBar } from '../components/BackBar';
-import { accountTitle, autoAnswerLine } from '../format';
+import { accountDot, accountTitle, autoAnswerLine } from '../format';
 import { IconChevronDown, IconPencil, IconPlus } from '../icons';
 import type { AppState, AudioDevice } from '../state';
 import type { Send } from '../types';
@@ -92,7 +92,8 @@ export function Configuracoes({ state, send, onBack, onEditAccount, onAddAccount
         <div class="card">
           {state.contas.map((c) => (
             <div class="set-row" key={c.id}>
-              <span class={c.emUso ? 'dot' : 'dot dot-off'} aria-hidden="true" />
+              {/* A conta em uso: a bolinha do cabeçalho (verde conectado, ciano conectando, cinza sem conexão e no erro). */}
+              <span class={c.emUso && state.conta ? accountDot(state.conta, state.ligacao !== null).dot : 'dot dot-off'} aria-hidden="true" />
               <span class="row-main">
                 <span class="row-title">{accountTitle(c)}</span>
                 <span class="row-sub">{`${c.servidor} · ${c.protocolo.toUpperCase()}${c.emUso ? ' · em uso' : ''}`}</span>

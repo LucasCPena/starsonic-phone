@@ -1,15 +1,18 @@
-// O Teclado: o número grande, Apagar, até três sugestões de contatos, o teclado 3×4 e Ligar.
+// O Teclado: o número grande, Apagar, até três sugestões de contatos, o teclado 3×4, o Rediscar e Ligar.
 // Teclado físico: números, * e # digitam; Backspace apaga; Esc limpa; Enter liga.
 import { useEffect, useRef } from 'preact/hooks';
 import { digitsOnly, initials } from '../format';
 import { IconArrowRight, IconBackspace, IconPhone } from '../icons';
-import type { Contact } from '../state';
+import { Rediscar } from '../components/Rediscar';
+import type { Contact, RecentCall } from '../state';
 import type { Send } from '../types';
 
 interface Props {
   numero: string;
   setNumero(update: (atual: string) => string): void;
   contatos: Contact[];
+  /** Para o Rediscar (a feita mais nova). */
+  recentes: RecentCall[];
   send: Send;
 }
 
@@ -30,7 +33,7 @@ const KEYS: Array<[string, string]> = [
 
 const PERMITIDOS = /[^0-9*#+]/g;
 
-export function Teclado({ numero, setNumero, contatos, send }: Props) {
+export function Teclado({ numero, setNumero, contatos, recentes, send }: Props) {
   const campo = useRef<HTMLInputElement>(null);
   const atual = useRef(numero);
   atual.current = numero;
@@ -99,7 +102,7 @@ export function Teclado({ numero, setNumero, contatos, send }: Props) {
             setNumero(() => valor);
           }}
         />
-        <button type="button" class="ghost" aria-label="Apagar" title="Apagar" style={{ width: '40px', height: '40px' }} onClick={apagar}>
+        <button type="button" class="ghost apagar" aria-label="Apagar" title="Apagar" onClick={apagar}>
           <IconBackspace size="lg" />
         </button>
       </div>
@@ -130,10 +133,14 @@ export function Teclado({ numero, setNumero, contatos, send }: Props) {
           ))}
         </div>
       </div>
-      <button type="button" class="btn btn-cyan btn-call btn-block" onClick={ligar}>
-        <IconPhone />
-        Ligar
-      </button>
+      <div class="call-row">
+        {/* O Rediscar liga como o botão de ligar de uma linha dos Recentes (o número, sem a regra dos contatos). */}
+        <Rediscar recentes={recentes} id="rediscar-teclado" onDial={(n) => send({ cmd: 'dial', numero: n })} />
+        <button type="button" class="btn btn-cyan btn-call btn-block" onClick={ligar}>
+          <IconPhone />
+          Ligar
+        </button>
+      </div>
     </div>
   );
 }

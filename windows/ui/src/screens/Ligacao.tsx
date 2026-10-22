@@ -6,6 +6,7 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { Menu } from '../components/Menu';
+import { Rediscar } from '../components/Rediscar';
 import { callTimer, contactNumberLine, digitsOnly, firstName, initials, nameOrNumber } from '../format';
 import {
   IconArrowRight,
@@ -202,18 +203,23 @@ function NumberPanel({ titulo, rotulo, contatos, onCancel, onContact, actions, o
           }
         }}
       />
-      {sugestoes.map((c) => (
-        <button type="button" key={c.id} class="suggest call-suggest" onClick={() => (onContact ? onContact(c) : setNumero(c.numero))}>
-          <span class="avatar" aria-hidden="true">
-            {initials(c.nome)}
-          </span>
-          <span class="row-main">
-            <span class="row-title">{c.nome}</span>
-            <span class="row-sub">Contato · {c.numero}</span>
-          </span>
-          <IconArrowRight size="sm" />
-        </button>
-      ))}
+      {/* As sugestões ficam com o espaço que sobra (numa janela pequena, uma lista que rola sozinha). */}
+      {sugestoes.length > 0 && (
+        <div class="call-suggestions">
+          {sugestoes.map((c) => (
+            <button type="button" key={c.id} class="suggest call-suggest" onClick={() => (onContact ? onContact(c) : setNumero(c.numero))}>
+              <span class="avatar" aria-hidden="true">
+                {initials(c.nome)}
+              </span>
+              <span class="row-main">
+                <span class="row-title">{c.nome}</span>
+                <span class="row-sub">Contato · {c.numero}</span>
+              </span>
+              <IconArrowRight size="sm" />
+            </button>
+          ))}
+        </div>
+      )}
       <div class="call-panel-actions">{actions(numero)}</div>
       <button type="button" class="btn btn-ghost-dark" onClick={onCancel}>
         Cancelar
@@ -515,10 +521,14 @@ export function Ligacao({ state, ligacao: l, send }: Props) {
         onContact={(c) => (setPainel(null), send({ cmd: 'dial', numero: c.numero, contato: true }))}
         onEnter={ligar}
         actions={(numero) => (
-          <button type="button" class="btn btn-cyan btn-block" disabled={!numero} onClick={() => ligar(numero)}>
-            <IconPhone size="sm" />
-            Ligar
-          </button>
+          // O Rediscar da Nova ligação: a feita mais nova, pelo mesmo caminho do Ligar do painel.
+          <div class="call-row">
+            <Rediscar recentes={state.recentes} id="rediscar-nova" class="redial-dark" onDial={ligar} />
+            <button type="button" class="btn btn-cyan btn-block" disabled={!numero} onClick={() => ligar(numero)}>
+              <IconPhone size="sm" />
+              Ligar
+            </button>
+          </div>
         )}
       />
     );
