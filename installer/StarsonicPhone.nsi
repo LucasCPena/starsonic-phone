@@ -44,6 +44,10 @@ RequestExecutionLevel user
 !define REG_UNINSTALL "Software\Microsoft\Windows\CurrentVersion\Uninstall\StarsonicPhone"
 !define REG_CLASSES "Software\Classes"
 !define LINK_PROGID "StarsonicPhone.Link"
+; O comando dos links: tudo depois do --link e o link (um lancador que nao escapa as aspas nunca injeta opcoes); o
+; antigo, das instalacoes de antes, e trocado pelo novo na atualizacao (e tambem e do app na desinstalacao).
+!define LINK_COMMAND '"$INSTDIR\${APP_EXE}" --link "%1"'
+!define OLD_LINK_COMMAND '"$INSTDIR\${APP_EXE}" "%1"'
 ; O WebView2 Runtime (Evergreen): instalado quando a chave do cliente dele tem um "pv" (a versao) que nao e vazio
 ; nem 0.0.0.0 (documentacao da Microsoft, "Detect if a WebView2 Runtime is already installed").
 !define WEBVIEW2_CLIENT "Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
@@ -282,29 +286,39 @@ FunctionEnd
 
 ; Um link tel:, sip: ou callto: abre o app com o numero no Teclado. O app aparece em Programas padrao (pelas
 ; Capabilities); a chave do esquema em HKCU\Software\Classes so e gravada quando nenhum outro programa tem o link,
-; nem por usuario (HKCU) nem para a maquina (HKLM: a do HKCU passaria na frente dela), ou quando ja e a do app.
+; nem por usuario (HKCU) nem para a maquina (HKLM: a do HKCU passaria na frente dela), ou quando ja e a do app (com o
+; comando novo ou o antigo, que vira o novo).
 !macro RegisterLink SCHEME
   WriteRegStr HKCU "${REG_APP}\Capabilities\URLAssociations" "${SCHEME}" "${LINK_PROGID}"
   ReadRegStr $0 HKCU "${REG_CLASSES}\${SCHEME}\shell\open\command" ""
   ReadRegStr $1 HKLM "Software\Classes\${SCHEME}\shell\open\command" ""
-  ${If} $1 == '"$INSTDIR\${APP_EXE}" "%1"'
+  ${If} $1 == '${LINK_COMMAND}'
+  ${OrIf} $1 == '${OLD_LINK_COMMAND}'
     StrCpy $1 ""
   ${EndIf}
   ${If} $1 == ""
   ${AndIf} $0 == ""
-  ${OrIf} $0 == '"$INSTDIR\${APP_EXE}" "%1"'
+  ${OrIf} $0 == '${LINK_COMMAND}'
+  ${OrIf} $0 == '${OLD_LINK_COMMAND}'
     WriteRegStr HKCU "${REG_CLASSES}\${SCHEME}" "" "URL:${SCHEME}"
     WriteRegStr HKCU "${REG_CLASSES}\${SCHEME}" "URL Protocol" ""
     WriteRegStr HKCU "${REG_CLASSES}\${SCHEME}\DefaultIcon" "" '"$INSTDIR\${APP_EXE}",0'
-    WriteRegStr HKCU "${REG_CLASSES}\${SCHEME}\shell\open\command" "" '"$INSTDIR\${APP_EXE}" "%1"'
+    WriteRegStr HKCU "${REG_CLASSES}\${SCHEME}\shell\open\command" "" '${LINK_COMMAND}'
   ${EndIf}
 !macroend
 
 !macro UnregisterLink SCHEME
   ReadRegStr $0 HKCU "${REG_CLASSES}\${SCHEME}\shell\open\command" ""
-  ${If} $0 == '"$INSTDIR\${APP_EXE}" "%1"'
+  ${If} $0 == '${LINK_COMMAND}'
+  ${OrIf} $0 == '${OLD_LINK_COMMAND}'
     DeleteRegKey HKCU "${REG_CLASSES}\${SCHEME}"
   ${EndIf}
+!macroend
+
+; Os logs que a rc.7 deixava na pasta do app: o do PJSIP (pode ter tracos SIP) e os de travamento.
+!macro DeleteRc7Logs
+  Delete "$INSTDIR\StarsonicPhone_log.txt"
+  Delete "$INSTDIR\crash-dump_*.*"
 !macroend
 
 Section "-Starsonic Phone" SecMain
@@ -335,7 +349,8 @@ Section "-Starsonic Phone" SecMain
     !insertmacro FailInstall "o app continua aberto" "Feche o Starsonic Phone e tente de novo."
   ${EndIf}
 
-  ; 3. Os arquivos: o exe e a pasta ui\.
+  ; 3. Os arquivos: o exe e a pasta ui\ (vazia antes: um arquivo que a versao nova nao tem nao fica para tras).
+  RMDir /r "$INSTDIR\ui"
   SetOutPath "$INSTDIR"
   SetOverwrite on
   ClearErrors
@@ -346,9 +361,10 @@ Section "-Starsonic Phone" SecMain
     !insertmacro FailInstall "falha ao copiar os arquivos" "Não foi possível copiar os arquivos do Starsonic Phone."
   ${EndIf}
 
-  ; 4. O que sobra da rc.7 e o app novo nao sobrescreve: os sons e a traducao do app antigo.
+  ; 4. O que sobra da rc.7 e o app novo nao sobrescreve: os sons, a traducao e os logs do app antigo.
   Delete "$INSTDIR\*.wav"
   Delete "$INSTDIR\langpack_*.txt"
+  !insertmacro DeleteRc7Logs
 
   ; A pasta da instalacao (a rc.7 tambem a lia daqui).
   WriteRegStr HKCU "${REG_APP}" "" "$INSTDIR"
@@ -379,7 +395,7 @@ Section "-Starsonic Phone" SecMain
   WriteRegStr HKCU "${REG_CLASSES}\${LINK_PROGID}" "" "Starsonic Phone"
   WriteRegStr HKCU "${REG_CLASSES}\${LINK_PROGID}" "URL Protocol" ""
   WriteRegStr HKCU "${REG_CLASSES}\${LINK_PROGID}\DefaultIcon" "" '"$INSTDIR\${APP_EXE}",0'
-  WriteRegStr HKCU "${REG_CLASSES}\${LINK_PROGID}\shell\open\command" "" '"$INSTDIR\${APP_EXE}" "%1"'
+  WriteRegStr HKCU "${REG_CLASSES}\${LINK_PROGID}\shell\open\command" "" '${LINK_COMMAND}'
   WriteRegStr HKCU "${REG_APP}\Capabilities" "ApplicationName" "${APP_NAME}"
   WriteRegStr HKCU "${REG_APP}\Capabilities" "ApplicationDescription" "Ligações pelo seu ramal"
   WriteRegStr HKCU "${REG_APP}\Capabilities" "ApplicationIcon" '"$INSTDIR\${APP_EXE}",0'
@@ -426,6 +442,7 @@ Section "Uninstall"
     Abort
   ${EndIf}
   !insertmacro StarsonicUninstallFiles
+  !insertmacro DeleteRc7Logs
   Delete "$INSTDIR\instalador.log"
   Delete "$INSTDIR\Uninstall.exe"
   ; A pasta de dados do WebView2: os processos do WebView2 saem logo depois do app; ate la, os arquivos ficam presos.
