@@ -154,6 +154,7 @@ struct Settings {
     int windowH = 0;
     std::string captureName;
     std::string playbackName;
+    bool bipeFim = true;       // o bipe quando uma ligacao atendida termina (config.json: bipe_fim)
 };
 
 class SettingsStore {

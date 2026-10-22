@@ -585,6 +585,7 @@ bool SettingsStore::Load() {
     settings_.windowH = GetInt(root, "janela_altura", defaults.windowH);
     settings_.captureName = GetString(root, "microfone_nome");
     settings_.playbackName = GetString(root, "alto_falante_nome");
+    settings_.bipeFim = GetBool(root, "bipe_fim", defaults.bipeFim);
     Clamp(settings_);
     return true;
 }
@@ -613,6 +614,7 @@ bool SettingsStore::Save(Settings settings) {
     }
     root["microfone_nome"] = settings.captureName;
     root["alto_falante_nome"] = settings.playbackName;
+    root["bipe_fim"] = settings.bipeFim;
     if (!WriteRoot(files_, path_, root)) return false;
     settings_ = settings;
     return true;
