@@ -355,7 +355,7 @@ TEST_CASE("the empty state serializes with every key") {
     CHECK(s["tecladoVez"] == 0);
     CHECK(s["atalhos"] == json::array());
     CHECK(s["admin"] == json({{"aberto", false}, {"naoPerturbe", true}, {"atenderAuto", true}, {"blf", false}}));
-    CHECK(s["entrarAdmin"] == json({{"erro", ""}, {"esperaAte", 0}}));
+    CHECK(s["entrarAdmin"] == json({{"erro", ""}, {"esperaAte", 0}, {"vez", 0}}));
     CHECK(s["config"] == json({{"bipeFim", true}}));
 }
 
@@ -386,6 +386,7 @@ TEST_CASE("the state serializes the shortcuts, the admin area, the internet and 
     state.admin.channel = "estavel";
     state.adminLogin.error = "Senha incorreta.";
     state.adminLogin.waitUntilMs = 1761062430000LL;
+    state.adminLogin.seq = 3;
     state.endBeep = false;
 
     json s = Parse(StateMessage(state))["state"];
@@ -404,7 +405,7 @@ TEST_CASE("the state serializes the shortcuts, the admin area, the internet and 
                                              {"estado", nullptr}})}));
     // Fechada, a area mostra so o que a interface precisa para esconder os botoes.
     CHECK(s["admin"] == json({{"aberto", false}, {"naoPerturbe", false}, {"atenderAuto", true}, {"blf", true}}));
-    CHECK(s["entrarAdmin"] == json({{"erro", "Senha incorreta."}, {"esperaAte", 1761062430000LL}}));
+    CHECK(s["entrarAdmin"] == json({{"erro", "Senha incorreta."}, {"esperaAte", 1761062430000LL}, {"vez", 3}}));
     CHECK(s["config"] == json({{"bipeFim", false}}));
 
     state.admin.open = true;

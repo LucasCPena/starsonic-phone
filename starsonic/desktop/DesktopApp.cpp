@@ -671,6 +671,7 @@ void DesktopApp::ApplyLogin(const LoginOutcome& outcome) {
         registered_ = true;
         blfForce_ = true;
         passwordSwitch_.clear();
+        if (reRegister_) ScheduleReRegister();   // a lista do administrador mudou enquanto o Entrar esperava
         ResetLogin();
         return;
     }
@@ -829,6 +830,7 @@ void DesktopApp::DropEngineAccount() {
     engineStoreId_.clear();
     registration_.reset();
     registered_ = false;
+    reRegister_ = false;
 }
 
 void DesktopApp::ResetLogin() {
@@ -838,11 +840,11 @@ void DesktopApp::ResetLogin() {
 
 // A troca de conta (ou o Entrar) roda sem ligacao: ja, ou no fim da ultima, com o aviso. Uma nova troca toma o
 // lugar da que esperava.
-void DesktopApp::WhenIdle(PendingChange change, bool notice) {
+void DesktopApp::WhenIdle(PendingChange change) {
     change.token = ++pendingToken_;
     const int token = change.token;
     pending_ = std::move(change);
-    if (notice && controller_->HasCalls()) Toast(U8(kSwitchNotice));
+    if (controller_->HasCalls()) Toast(U8(kSwitchNotice));
     // O callback roda na thread do motor, na do agendador ou aqui: so poe a troca na fila.
     controller_->WhenIdle([this, token] { Post([this, token] { RunPending(token); }); });
 }
@@ -858,13 +860,6 @@ void DesktopApp::RunPending(int token) {
     pending_.reset();
     if (change.login) {
         StartLogin(*change.login);
-    } else if (change.reRegister) {
-        // So se ela ainda e a do motor (uma troca, um Entrar ou a remocao no meio ja registraram com a lista nova).
-        const std::optional<SavedAccount> account = FindAccount(accounts_, change.switchTo);
-        if (account && engineStoreId_ == account->id && !loginRequest_) {
-            Log("servidores do administrador: a conta registra de novo com a porta nova");
-            ActivateStored(*account);
-        }
     } else {
         SwitchTo(change.switchTo);
     }
@@ -1068,6 +1063,9 @@ void DesktopApp::Log(const std::string& line) const {
 // A conta vai ao motor com a tabela de portas do administrador (Ruling 3: ela toma o lugar do [portas] do perfil).
 int DesktopApp::RegisterInEngine(AccountInput input) {
     input.serverPorts = admin_.Get().servidores;
+    engineAddress_ = input.address;
+    enginePorts_ = *input.serverPorts;
+    reRegister_ = false;   // a conta nova ja vai com a lista de agora
     return port_.SetAccount(input);
 }
 
@@ -1129,15 +1127,29 @@ void DesktopApp::UseShortcut(const std::string& id) {
                 Log("useShortcut recusado: Enviar teclas sem ligacao");
                 break;
             }
-            controller_->Dtmf(atalho.numero);
+            {
+                // O + nao e um digito DTMF: vao so 0-9, * e #.
+                std::string digits;
+                for (const char ch : atalho.numero) {
+                    if ((ch >= '0' && ch <= '9') || ch == '*' || ch == '#') digits.push_back(ch);
+                }
+                if (digits.empty()) {
+                    Log("useShortcut recusado: Enviar teclas sem digitos DTMF");
+                    break;
+                }
+                controller_->Dtmf(digits);
+            }
             break;
     }
 }
 
-// O estado do BLF do atalho: nada sem o BLF dele ou do administrador; desconectado ate o primeiro aviso (tambem sem
-// conta no motor).
+// O estado do BLF do atalho: nada sem o BLF dele ou do administrador; desconectado ate o primeiro aviso e sem a conta
+// registrada.
 std::optional<std::string> DesktopApp::ShortcutState(const Atalho& atalho) const {
     if (!atalho.blf || !admin_.Get().blf) return std::nullopt;
+    // Sem registro (caiu, sem internet, conectando), desconectado; o ultimo aviso do motor fica guardado e volta com o
+    // registro (o motor so avisa quando o estado muda).
+    if (!registered_) return std::string(BlfName(BlfState::Unknown));
     const BlfState* state = FindIn(blfStates_, atalho.numero);
     return std::string(BlfName(state ? *state : BlfState::Unknown));
 }
@@ -1216,6 +1228,7 @@ void DesktopApp::HandleBlf(int64_t generation, const std::string& number, BlfSta
 // adminLogin (spec 6.1): a senha certa abre a area; 5 erradas seguidas, 30 s sem aceitar outra. A senha digitada nunca
 // vai ao diagnostico.
 void DesktopApp::AdminLogin(const std::string& typed) {
+    ++adminLogin_.seq;   // toda tentativa tem resposta: a interface limpa o campo e mostra o erro quando a vez muda
     const int64_t now = clock_.NowMs();
     if (adminLogin_.waitUntilMs != 0 && now < adminLogin_.waitUntilMs) {
         adminLogin_.error = kWrongAdminPassword;
@@ -1225,7 +1238,9 @@ void DesktopApp::AdminLogin(const std::string& typed) {
     const bool right = config_.checkAdminPassword ? config_.checkAdminPassword(typed) : CheckAdminPassword(typed);
     if (right) {
         adminFailures_ = 0;
+        const int seq = adminLogin_.seq;
         adminLogin_ = AdminLoginView();
+        adminLogin_.seq = seq;
         adminOpen_ = true;
         TouchAdmin();
         Log("area do administrador aberta");
@@ -1270,20 +1285,40 @@ void DesktopApp::AdminSet(const AdminChanges& changes) {
     const AdminConfig& saved = admin_.Get();
     ApplyAdminLimits();
     if (saved.canal != before.canal && hooks_.updateChannel) hooks_.updateChannel(saved.canal);
-    // A porta do servidor da conta em uso mudou: ela registra de novo (no fim da ligacao, se ha uma). Uma troca ou um
-    // Entrar que espera ja vai com a lista nova.
-    if (engineStoreId_.empty() || loginRequest_ || pending_) return;
-    const std::optional<SavedAccount> account = FindAccount(accounts_, engineStoreId_);
-    if (!account) return;
+    // A porta do servidor da conta no motor mudou: ela registra de novo (no fim da ligacao, se ha uma).
+    if (EnginePortChanged() && !reRegister_) {
+        reRegister_ = true;
+        ScheduleReRegister();
+    }
+}
+
+// A porta que o motor usa para a conta dele nao e mais a da lista do administrador.
+bool DesktopApp::EnginePortChanged() const {
+    if (engineAccountId_ == 0) return false;
     const AccountProfile& profile = config_.profile.account;
-    if (PortForServer(WithServers(profile, before.servidores), account->address) ==
-        PortForServer(WithServers(profile, saved.servidores), account->address)) {
+    return PortForServer(WithServers(profile, enginePorts_), engineAddress_) !=
+           PortForServer(WithServers(profile, admin_.Get().servidores), engineAddress_);
+}
+
+void DesktopApp::ScheduleReRegister() {
+    // O callback roda na thread do motor, na do agendador ou aqui: so poe na fila.
+    controller_->WhenIdle([this] { Post([this] { RunReRegister(); }); });
+}
+
+// Sem ligacao: a conta do motor registra de novo com a porta nova. Um SetAccount no meio (uma troca, um Entrar, a
+// conta que voltou) ja levou a lista nova e tirou o pedido; com um Entrar esperando o registro, o fim dele decide.
+void DesktopApp::RunReRegister() {
+    if (!reRegister_ || quitting_ || loginRequest_) return;
+    if (controller_->HasCalls()) {
+        ScheduleReRegister();   // uma ligacao chegou no meio: espera o fim dela tambem
         return;
     }
-    PendingChange change;
-    change.switchTo = account->id;
-    change.reRegister = true;
-    WhenIdle(std::move(change), /*notice=*/false);
+    reRegister_ = false;
+    if (!EnginePortChanged()) return;
+    const std::optional<SavedAccount> account = FindAccount(accounts_, engineStoreId_);
+    if (!account || account->needsPassword) return;
+    Log("servidores do administrador: a conta registra de novo com a porta nova");
+    ActivateStored(*account);
 }
 
 // Os 10 min sem comando recomecam.

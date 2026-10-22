@@ -153,7 +153,8 @@ struct DesktopHooks {
 //     adminSet (so com a area aberta), adminLogout; a area fecha sozinha depois de 10 min sem nenhum comando, e no
 //     closeToTray e no quit. O Nao perturbe e o Atender automatico escondidos ficam desligados (e o comando que os
 //     liga e recusado). Os servidores do administrador sao a tabela de portas da conta (AccountInput::serverPorts);
-//     a porta do servidor em uso mudou: a conta registra de novo (no fim da ligacao, se ha uma, sem aviso).
+//     a porta do servidor em uso mudou: a conta registra de novo (no fim da ligacao, se ha uma, sem aviso; fora da
+//     troca de conta que espera: escolher a mesma conta nao o tira, e um SetAccount no meio ja leva a lista nova).
 //   - SetInternet: a internet que o host ve (RegistrationPort::SetNetworkAvailable; conta.internet).
 //   - O bipe do fim (ring fim): uma ligacao atendida acabou, nenhuma outra ficou e o bipeFim esta ligado.
 class DesktopApp : public EngineListener {
@@ -226,7 +227,6 @@ private:
         int token = 0;
         std::string switchTo;
         std::optional<LoginRequest> login;
-        bool reRegister = false;   // a conta em uso registra de novo (as portas do administrador mudaram)
     };
 
     // Na thread de comandos (todas abaixo).
@@ -246,7 +246,7 @@ private:
     void ShowPasswordRequest(const SavedAccount& account, bool keepEngine);
     void DropEngineAccount();
     void ResetLogin();
-    void WhenIdle(PendingChange change, bool notice = true);
+    void WhenIdle(PendingChange change);
     void RunPending(int token);
     void Quit();
     void ApplyAudio();
@@ -271,6 +271,9 @@ private:
     void CloseAdmin(const char* why);
     void ApplyAdminLimits();
     void HandleInternet(bool available);
+    void ScheduleReRegister();
+    void RunReRegister();
+    bool EnginePortChanged() const;
 
     DesktopConfig config_;
     DesktopHooks hooks_;
@@ -323,6 +326,11 @@ private:
     AtalhosStore atalhos_;
     AdminStore admin_;
     bool internet_ = true;
+    // O que foi ao motor no ultimo SetAccount (o endereco e a tabela de portas) e o registro de novo que espera o fim
+    // da ligacao porque a porta do administrador mudou (fora do pending_: uma troca de conta nao o apaga).
+    std::wstring engineAddress_;
+    std::vector<ServerPort> enginePorts_;
+    bool reRegister_ = false;
     // O BLF: a lista pedida ao motor (na conta blfAccount_), a vez em que cada numero entrou nela e o ultimo estado de
     // cada numero. blfGeneration_ sobe antes de cada WatchBlf com um numero novo (o OnBlf, na thread do motor, le).
     std::vector<std::string> blfWatched_;

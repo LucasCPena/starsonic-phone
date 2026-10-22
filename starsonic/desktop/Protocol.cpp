@@ -478,7 +478,8 @@ std::string StateMessage(const BridgeState& state) {
     }
     s["atalhos"] = shortcuts;
     s["admin"] = AdminJson(state.admin);
-    s["entrarAdmin"] = Out{{"erro", state.adminLogin.error}, {"esperaAte", state.adminLogin.waitUntilMs}};
+    s["entrarAdmin"] = Out{
+        {"erro", state.adminLogin.error}, {"esperaAte", state.adminLogin.waitUntilMs}, {"vez", state.adminLogin.seq}};
     s["config"] = Out{{"bipeFim", state.endBeep}};
     return Dump(Out{{"v", kBridgeVersion}, {"type", "state"}, {"state", s}});
 }

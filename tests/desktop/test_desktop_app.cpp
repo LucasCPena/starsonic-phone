@@ -1539,7 +1539,7 @@ TEST_CASE("admin commands need an open session and lock after five wrong passwor
     CHECK(h.channels == std::vector<std::string>{""});   // o canal do build
     json state = h.State();
     CHECK(state["admin"] == json({{"aberto", false}, {"naoPerturbe", true}, {"atenderAuto", true}, {"blf", false}}));
-    CHECK(state["entrarAdmin"] == json({{"erro", ""}, {"esperaAte", 0}}));
+    CHECK(state["entrarAdmin"] == json({{"erro", ""}, {"esperaAte", 0}, {"vez", 0}}));
 
     h.Send(AdminSet(R"("blf":true)"));
     CHECK(h.State()["admin"]["blf"] == false);
@@ -1548,10 +1548,10 @@ TEST_CASE("admin commands need an open session and lock after five wrong passwor
     for (int i = 0; i < 4; ++i) h.Send(kWrongAdmin);
     state = h.State();
     CHECK(state["admin"]["aberto"] == false);
-    CHECK(state["entrarAdmin"] == json({{"erro", kWrongPassword}, {"esperaAte", 0}}));
+    CHECK(state["entrarAdmin"] == json({{"erro", kWrongPassword}, {"esperaAte", 0}, {"vez", 4}}));
     h.Send(kWrongAdmin);
     const int64_t until = h.time.NowMs() + 30000;
-    CHECK(h.State()["entrarAdmin"] == json({{"erro", kWrongPassword}, {"esperaAte", until}}));
+    CHECK(h.State()["entrarAdmin"] == json({{"erro", kWrongPassword}, {"esperaAte", until}, {"vez", 5}}));
     // Na espera, nem a certa entra.
     h.Send(kAdminLogin);
     CHECK(h.State()["admin"]["aberto"] == false);
@@ -1562,7 +1562,7 @@ TEST_CASE("admin commands need an open session and lock after five wrong passwor
     h.time.Advance(1);
     h.Send(kAdminLogin);
     state = h.State();
-    CHECK(state["entrarAdmin"] == json({{"erro", ""}, {"esperaAte", 0}}));
+    CHECK(state["entrarAdmin"] == json({{"erro", ""}, {"esperaAte", 0}, {"vez", 8}}));
     CHECK(state["admin"] == json({{"aberto", true},
                                   {"naoPerturbe", true},
                                   {"atenderAuto", true},
@@ -1838,4 +1838,128 @@ TEST_CASE("bipeFim off silences the end beep") {
     h.app->OnCallState(11, CallState::Disconnected, 200);
     h.Run();
     CHECK(EndBeeps(h) == 1);
+}
+
+// Rodada de correcao 1 da Task 3.
+TEST_CASE("every answered adminLogin bumps entrarAdmin.vez and publishes the state") {
+    Harness h;
+    h.Start();
+    h.posts.clear();
+    h.Send(kWrongAdmin);
+    REQUIRE(h.Messages("state").size() == 1);
+    CHECK(h.State()["entrarAdmin"] == json({{"erro", kWrongPassword}, {"esperaAte", 0}, {"vez", 1}}));
+    // A segunda errada seguida: o mesmo erro, mas a vez sobe e o estado sai de novo (a interface limpa o campo).
+    h.Send(kWrongAdmin);
+    REQUIRE(h.Messages("state").size() == 2);
+    CHECK(h.State()["entrarAdmin"]["vez"] == 2);
+    for (int i = 0; i < 3; ++i) h.Send(kWrongAdmin);
+    const int64_t until = h.State()["entrarAdmin"]["esperaAte"];
+    CHECK(until > 0);
+    CHECK(h.State()["entrarAdmin"]["vez"] == 5);
+    // Na espera: recusada, e a vez sobe do mesmo jeito.
+    const size_t before = h.Messages("state").size();
+    h.Send(kAdminLogin);
+    CHECK(h.Messages("state").size() == before + 1);
+    CHECK(h.State()["entrarAdmin"] == json({{"erro", kWrongPassword}, {"esperaAte", until}, {"vez", 6}}));
+    CHECK(h.State()["admin"]["aberto"] == false);
+    h.time.Advance(30000);
+    h.Send(kAdminLogin);
+    CHECK(h.State()["entrarAdmin"] == json({{"erro", ""}, {"esperaAte", 0}, {"vez", 7}}));
+    CHECK(h.State()["admin"]["aberto"] == true);
+    // Com a area aberta, a certa de novo tambem responde.
+    h.Send(kAdminLogin);
+    CHECK(h.State()["entrarAdmin"]["vez"] == 8);
+}
+
+TEST_CASE("a port change during a call still re-registers at the end after selecting the same account") {
+    Harness h;
+    const std::string first = h.SeedAccount(L"starcloud1-starsonic.com.br", L"2001", L"segredo", true);
+    const std::string second = h.SeedAccount(L"outro.example.com", L"3001", L"outra", false);
+    h.Start();
+    h.app->OnRegistration(200, true, 1);
+    h.Send(kAdminLogin);
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2002"})");
+    h.app->OnCallState(10, CallState::Confirmed, 200);
+    h.Run();
+    h.Send(AdminSet(R"("servidores":[{"endereco":"starcloud1-starsonic.com.br","porta":5090}])"));
+    CHECK(h.port.accounts.size() == 1);
+    // Escolher a conta em uso (a que ja e) nao tira o registro novo que espera o fim da ligacao.
+    h.Send(R"({"v":1,"cmd":"selectAccount","contaId":")" + first + R"("})");
+    h.app->OnCallState(10, CallState::Disconnected, 200);
+    h.Run();
+    REQUIRE(h.port.accounts.size() == 2);
+    CHECK(h.port.accounts[1].address == L"starcloud1-starsonic.com.br");
+    REQUIRE(h.port.accounts[1].serverPorts->size() == 1);
+    CHECK(h.port.accounts[1].serverPorts->at(0).port == 5090);
+    h.app->OnRegistration(200, true, 2);
+    h.Run();
+
+    // Trocar para outra e voltar para ela durante a ligacao: no fim, a escolhida (a mesma) com a porta nova.
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2002"})");
+    h.app->OnCallState(11, CallState::Confirmed, 200);
+    h.Run();
+    h.Send(AdminSet(R"("servidores":[{"endereco":"starcloud1-starsonic.com.br","porta":5091}])"));
+    h.Send(R"({"v":1,"cmd":"selectAccount","contaId":")" + second + R"("})");
+    h.Send(R"({"v":1,"cmd":"selectAccount","contaId":")" + first + R"("})");
+    h.app->OnCallState(11, CallState::Disconnected, 200);
+    h.Run();
+    REQUIRE(h.port.accounts.size() == 3);
+    CHECK(h.port.accounts[2].address == L"starcloud1-starsonic.com.br");
+    CHECK(h.port.accounts[2].serverPorts->at(0).port == 5091);
+    h.app->OnRegistration(200, true, 3);
+    h.Run();
+
+    // Sair com o registro novo esperando: nao e uma troca de conta (nem o log, nem o contas.json).
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2002"})");
+    h.app->OnCallState(12, CallState::Confirmed, 200);
+    h.Run();
+    h.Send(AdminSet(R"("servidores":[])"));
+    h.Send(R"({"v":1,"cmd":"quit"})");
+    CHECK_FALSE(h.Logged("a troca de conta fica para a proxima abertura"));
+    CHECK(h.files.files.count("dados/contas.json") == 1);
+    CHECK(ActiveInFile(h) == first);
+    CHECK(h.port.accounts.size() == 3);
+}
+
+TEST_CASE("blf shows desconectado while the account is not registered and the last state when it is back") {
+    Harness h;
+    h.StartRegistered();
+    h.Send(kAdminLogin);
+    h.Send(AdminSet(R"("blf":true)"));
+    h.Send(SaveShortcut("Ana", "2007", "ligar", true));
+    h.app->OnBlf("2007", BlfState::Free);
+    h.Run();
+    CHECK(ShortcutNamed(h, "Ana")["estado"] == "livre");
+    h.posts.clear();
+    h.app->OnRegistration(503, false, h.port.LastId());
+    h.Run();
+    REQUIRE_FALSE(h.Messages("state").empty());
+    CHECK(ShortcutNamed(h, "Ana")["estado"] == "desconectado");
+    // Registrou de novo: o ultimo estado que o motor deu volta (ele so avisa quando muda), ate o proximo aviso.
+    h.app->OnRegistration(200, true, h.port.LastId());
+    h.Run();
+    CHECK(ShortcutNamed(h, "Ana")["estado"] == "livre");
+    h.app->OnBlf("2007", BlfState::Busy);
+    h.Run();
+    CHECK(ShortcutNamed(h, "Ana")["estado"] == "ocupado");
+    // Sem internet, tambem desconectado.
+    h.app->SetInternet(false);
+    h.Run();
+    CHECK(ShortcutNamed(h, "Ana")["estado"] == "desconectado");
+}
+
+TEST_CASE("Enviar teclas sends only the DTMF digits and refuses a number without any") {
+    Harness h;
+    h.StartRegistered();
+    h.Send(SaveShortcut("Menu", "+12#*", "teclas", false));
+    h.Send(SaveShortcut("Mais", "+", "teclas", false));
+    REQUIRE(h.State()["atalhos"].size() == 2);
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2002"})");
+    h.app->OnCallState(10, CallState::Confirmed, 200);
+    h.Run();
+    h.Send(UseShortcut(IdOf(h, "Menu")));
+    CHECK(h.engine.dtmfs == std::vector<std::pair<int, std::string>>{{10, "12#*"}});
+    h.Send(UseShortcut(IdOf(h, "Mais")));
+    CHECK(h.engine.dtmfs.size() == 1);
+    CHECK(h.Logged("useShortcut recusado: Enviar teclas sem digitos"));
 }

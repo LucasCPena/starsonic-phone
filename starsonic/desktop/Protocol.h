@@ -179,6 +179,7 @@ struct AdminView {                  // admin (rc.3): completo so com open
 struct AdminLoginView {             // entrarAdmin (rc.3): o resultado da ultima tentativa
     std::string error;              // erro ("" sem erro)
     int64_t waitUntilMs = 0;        // esperaAte: ate quando o adminLogin e recusado (ms desde 1970; 0: nenhuma espera)
+    int seq = 0;                    // vez: sobe a cada adminLogin respondido (a certa, a errada, a recusada na espera)
 };
 
 struct RecentView {                 // recentes[]

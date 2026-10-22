@@ -164,7 +164,7 @@ O `useShortcut` (spec 3.2 e 4), com os comandos de sempre:
 | `ligar` | liga para o número | a Nova ligação (a atual vai para a espera), como o `dial` |
 | `transferir` | liga para o número | transfere direto, como o `transfer` |
 | `consulta` | liga para o número | consulta o número, como o `consult` |
-| `teclas` | recusado (linha no diagnóstico; a interface desativa o botão) | manda o número como DTMF, como o `dtmf` |
+| `teclas` | recusado (linha no diagnóstico; a interface desativa o botão) | manda os dígitos DTMF do número (`0-9`, `*` e `#`; o `+` fica de fora), como o `dtmf`; sem nenhum, recusado (linha no diagnóstico) |
 
 - O número passa pela regra dos contatos (como `dial` com `contato: true`: o `+55` sai e o prefixo de saída entra
   nos números longos), menos no `teclas`, que vai como está.
@@ -189,7 +189,7 @@ A configuração fica no `admin.json`, protegido pelo DPAPI do usuário (como as
 
 | Comando | Campos | O que faz |
 |---|---|---|
-| `adminLogin` | `senha` (texto) | A senha certa abre a área (`admin.aberto` `true`, `entrarAdmin` vazio). A errada: `entrarAdmin.erro` `Senha incorreta.` (a interface limpa o campo). Na 5ª errada seguida, `entrarAdmin.esperaAte` traz até quando (agora + 30 s) todo `adminLogin` é recusado, também com a senha certa (o `erro` continua `Senha incorreta.`). Uma certa zera a conta. A conta das erradas fica só na memória (abrir o app de novo zera). A senha digitada nunca vai ao diagnóstico nem ao estado. Com a área já aberta, a senha certa só recomeça os 10 min. |
+| `adminLogin` | `senha` (texto) | Toda tentativa tem resposta: `entrarAdmin.vez` sobe. A senha certa abre a área (`admin.aberto` `true`, `entrarAdmin.erro` `""`, `esperaAte` `0`). A errada: `entrarAdmin.erro` `Senha incorreta.` (a interface limpa o campo). Na 5ª errada seguida, `entrarAdmin.esperaAte` traz até quando (agora + 30 s) todo `adminLogin` é recusado, também com a senha certa (o `erro` continua `Senha incorreta.`). Uma certa zera a conta. A conta das erradas fica só na memória (abrir o app de novo zera). A senha digitada nunca vai ao diagnóstico nem ao estado. Com a área já aberta, a senha certa só recomeça os 10 min. |
 | `adminLogout` | — | "Sair da área do administrador": `admin.aberto` `false`. |
 | `adminSet` | `naoPerturbe` (booleano, opcional), `atenderAuto` (booleano, opcional), `blf` (booleano, opcional), `puxar` (booleano, opcional), `codigoPuxar` (texto, opcional), `servidores` (lista de `{endereco: texto, porta: inteiro}`, opcional), `canal` (`"teste"` \| `"estavel"` \| `""`, opcional) | Muda só os campos que vieram (`servidores` troca a lista inteira) e grava o `admin.json`. Com a área fechada: ignorado (linha no diagnóstico: `adminSet recusado`). Recusado pela loja (um `canal` diferente desses, um código com algo além de dígitos, `*`, `#`, `+` e `{ramal}`, um servidor com o endereço fora da regra da tela Entrar, repetido ou com a porta fora de 1 a 65535): nada muda e o motivo vem num toast (`Escolha o canal Teste ou Estável.`, `Esse servidor já está na lista.`, `A porta deve ficar entre 1 e 65535.` etc.). |
 
@@ -201,7 +201,8 @@ A configuração fica no `admin.json`, protegido pelo DPAPI do usuário (como as
 - `blf` liga ou desliga o BLF de todos os atalhos (ver `atalhos[].estado`).
 - `servidores` é a tabela de portas da conta (UDP e TCP), no lugar da seção `[portas]` do `perfil.ini`; um servidor
   fora dela usa a porta da `[conta]` (5060). Sem `admin.json`, a lista é a do perfil. Se a porta do servidor da conta
-  em uso muda, a conta registra de novo com a porta nova (com uma ligação, no fim dela, sem aviso); as próximas
+  em uso muda, a conta registra de novo com a porta nova (com uma ligação, no fim dela, sem aviso; escolher a mesma
+  conta no meio não tira esse registro, e uma troca de conta no meio já registra com a lista nova); as próximas
   contas (Entrar, troca de conta) já usam a lista.
 - `canal` é o canal de atualização: `"teste"` (o `canal-teste`), `"estavel"` (o release estável) ou `""` (o de
   fábrica, o do build). Vale a partir da próxima verificação.
@@ -263,7 +264,7 @@ A configuração fica no `admin.json`, protegido pelo DPAPI do usuário (como as
               "estado":"tocando"},
              {"id":"0b2e7d4c1a9f3e58","nome":"Menu","numero":"12#","acao":"teclas","blf":false,"estado":null}],
   "admin":{"aberto":false,"naoPerturbe":true,"atenderAuto":true,"blf":true},
-  "entrarAdmin":{"erro":"","esperaAte":0},
+  "entrarAdmin":{"erro":"","esperaAte":0,"vez":0},
   "config":{"bipeFim":true}
 }}
 ```
@@ -312,7 +313,7 @@ A configuração fica no `admin.json`, protegido pelo DPAPI do usuário (como as
 | `atalhos` | lista | (rc.3) Os atalhos, na ordem em que foram incluídos (até 8): `{id, nome, numero, acao, blf, estado}`. |
 | `atalhos[].acao` | `"ligar"` \| `"transferir"` \| `"consulta"` \| `"teclas"` | Ligar, Transferir, Transferir com consulta, Enviar teclas. |
 | `atalhos[].blf` | booleano | A chave "Mostrar se o ramal está livre" do atalho. |
-| `atalhos[].estado` | `"livre"` \| `"tocando"` \| `"ocupado"` \| `"desconectado"` \| `null` | O BLF do ramal: `null` sem o `blf` do atalho ou com o BLF do administrador desligado (`admin.blf`); senão `desconectado` até o primeiro aviso do servidor (e com a assinatura recusada, vencida ou sem resposta, sem conta registrada, ou sem internet). Dois atalhos com o mesmo número têm o mesmo estado. O C++ assina só os atalhos com `blf`, com o `admin.blf` ligado, na conta em uso; de novo quando os atalhos, o administrador ou a conta mudam e quando a conta volta a registrar. |
+| `atalhos[].estado` | `"livre"` \| `"tocando"` \| `"ocupado"` \| `"desconectado"` \| `null` | O BLF do ramal: `null` sem o `blf` do atalho ou com o BLF do administrador desligado (`admin.blf`); senão `desconectado` até o primeiro aviso do servidor, com a assinatura recusada, vencida ou sem resposta, e enquanto a conta não está registrada (o registro caiu, sem internet, conectando); quando a conta registra de novo, volta o último estado que o servidor deu, até o próximo aviso. Dois atalhos com o mesmo número têm o mesmo estado. O C++ assina só os atalhos com `blf`, com o `admin.blf` ligado, na conta em uso; de novo quando os atalhos, o administrador ou a conta mudam e quando a conta volta a registrar. |
 | `admin` | objeto | (rc.3) A área do administrador. Fechada (`aberto` `false`), só `{aberto, naoPerturbe, atenderAuto, blf}`, o que a interface precisa para esconder os botões e desativar a chave do BLF; aberta, também `puxar`, `codigoPuxar`, `servidores` e `canal`. |
 | `admin.aberto` | booleano | A área está aberta (a senha certa, há menos de 10 min sem comando). |
 | `admin.naoPerturbe`, `admin.atenderAuto` | booleano | Os botões Não perturbe e Atender automático aparecem (`false`: escondidos, e desligados; o Atender automático também some de Configurações e o atalho do Não perturbe some da bandeja). |
@@ -320,7 +321,7 @@ A configuração fica no `admin.json`, protegido pelo DPAPI do usuário (como as
 | `admin.puxar`, `admin.codigoPuxar` | booleano, texto | "Puxar ligação pelo atalho" e o "Código para puxar a ligação" (com `{ramal}`). Só com `aberto`. |
 | `admin.servidores` | lista | `{endereco: texto, porta: inteiro}`: a tabela de portas (ver `adminSet`). Só com `aberto`. |
 | `admin.canal` | `"teste"` \| `"estavel"` \| `""` | O canal de atualização (`""`: o do build). Só com `aberto`. |
-| `entrarAdmin` | objeto | (rc.3) O resultado do último `adminLogin`: `{erro, esperaAte}`. `erro`: `Senha incorreta.` ou `""` (vale para a última tentativa: a interface só o mostra depois de mandar um `adminLogin`). `esperaAte`: até quando (ms desde 1970) o `adminLogin` é recusado depois de 5 senhas erradas seguidas (o diálogo espera até `Date.now() >= esperaAte`); `0` sem espera. |
+| `entrarAdmin` | objeto | (rc.3) O resultado do último `adminLogin`: `{erro, esperaAte, vez}`. `erro`: `Senha incorreta.` ou `""` (o da última tentativa). `esperaAte`: até quando (ms desde 1970) o `adminLogin` é recusado depois de 5 senhas erradas seguidas (o diálogo espera até `Date.now() >= esperaAte`); `0` sem espera. `vez`: sobe a cada `adminLogin` respondido (a senha certa, a errada e a recusada na espera; começa em 0), como o `tecladoVez`: duas erradas seguidas têm o mesmo `erro`, e só a `vez` diz que a segunda foi respondida. **Quando a `vez` muda**, a interface limpa o campo Senha e mostra o `erro` (nenhum: a área abriu); fora disso, o `erro` que está no estado é de uma tentativa velha e não aparece (por exemplo, ao abrir o diálogo de novo). |
 | `config` | objeto | (rc.3) Configurações novas: `{bipeFim}`. |
 | `config.bipeFim` | booleano | "Bipe quando a ligação cai ou termina" (`setSetting` `bipeFim`; ligado de fábrica). |
 
