@@ -167,7 +167,7 @@ O `useShortcut` (spec 3.2 e 4), com os comandos de sempre:
 | `teclas` | recusado (linha no diagnóstico; a interface desativa o botão) | manda os dígitos DTMF do número (`0-9`, `*` e `#`; o `+` fica de fora), como o `dtmf`; sem nenhum, recusado (linha no diagnóstico) |
 
 - O número passa pela regra dos contatos (como `dial` com `contato: true`: o `+55` sai e o prefixo de saída entra
-  nos números longos), menos no `teclas`, que vai como está.
+  nos números longos), menos no `teclas`, que não passa pela regra: vão só os dígitos DTMF (ver a tabela).
 - "Com ligação" é qualquer ligação de pé (também uma recebida que ainda toca: aí o controlador recusa como recusaria o
   comando de sempre). Sem registro, o toast `Sem conexão com o servidor. Tente de novo em instantes.`, como no `dial`.
 - **Puxar ligação:** com `estado` `tocando`, o puxar ligado (`admin.puxar`) e um código (`admin.codigoPuxar` não
