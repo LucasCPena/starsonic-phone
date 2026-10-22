@@ -1,0 +1,4 @@
+A janela do Starsonic Phone agora muda de tamanho: arraste a borda ou o canto, e o tamanho escolhido fica gravado.
+Novo botão Rediscar, ao lado do Ligar, para ligar de novo para o último número discado.
+A bolinha da conta fica verde quando conectada e vermelha durante uma ligação.
+Esta é uma versão de teste.
