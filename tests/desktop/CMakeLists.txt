@@ -37,11 +37,13 @@ target_include_directories(desktop_tests PRIVATE
 target_link_libraries(desktop_tests PRIVATE SQLite::SQLite3 Threads::Threads)
 
 # O tamanho e a posicao da janela principal do executavel (windows/app/src/WindowFit), a linha de comando dele, com os
-# links tel:/sip:/callto: (windows/app/src/Links), e o refazer do WebView2 (BrowserRestarts): C++ portatil, testado
+# links tel:/sip:/callto: (windows/app/src/Links), o refazer do WebView2 (BrowserRestarts), e (rc.3) a decisao do
+# monitor de rede (o teste em tests/win/test_network_monitor.cpp) e o canal de atualizacao: C++ portatil, testado
 # tambem no Linux.
 target_sources(desktop_tests PRIVATE ${STARSONIC_DIR}/../windows/app/src/WindowFit.cpp
   ${STARSONIC_DIR}/../windows/app/src/Links.cpp
-  ${STARSONIC_DIR}/../windows/app/src/BrowserRestarts.cpp)
+  ${STARSONIC_DIR}/../windows/app/src/BrowserRestarts.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../win/test_network_monitor.cpp)
 target_include_directories(desktop_tests PRIVATE ${STARSONIC_DIR}/../windows/app/src)
 
 if(MSVC)

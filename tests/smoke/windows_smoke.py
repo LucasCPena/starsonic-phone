@@ -33,7 +33,15 @@ Fumaça (padrão), contra o StarsonicPhone.exe instalado do build de teste (STAR
    com o teclado, o Rediscar, o Ligar e a navegação inteiros, e as capturas janela-compacta.png e janela-minima.png;
    abaixo de 300x440 a janela fica nos 300x440 (WM_GETMINMAXINFO); o 340x560 volta depois de fechar e abrir (o
    config.json); e volta aos 400x720;
-Os itens 7 e 8 juntam o que falhou e reprovam no fim (um não esconde o outro).
+9. (rc.3) abre de novo com a senha de teste do administrador (STARSONIC_SENHA_ADMIN_TESTE: só o build de teste a
+   aceita, e a senha de verdade nunca vai ao CI): o Ctrl + P pelo teclado de verdade, com a janela na frente, abre o
+   diálogo "Área do administrador" sem imprimir (o beforeprint da página não dispara); a senha de teste abre a área
+   (captura admin.png) e liga o BLF nos atalhos; um atalho para 2002 com o BLF mostra Livre, Ocupado com o
+   "BLF 2002 confirmed" do registrador falso (captura atalhos.png) e Livre de novo; com uma ligação tocando, o Ctrl + P
+   no aviso não abre nada nem imprime; o gancho de teste "--teste-internet off" deixa a bolinha cinza com
+   "Sem internet · tentando de novo" e a bandeja sem conexão ("bandeja: sem conexao" no diagnostico.log; captura
+   sem-internet.png), e o "--teste-internet on" mostra "Conectando…" e depois o verde ("bandeja: conectado").
+Os itens 7, 8 e 9 juntam o que falhou e reprovam no fim (um não esconde o outro).
 Na escala de 100%, a área da interface tem 400x720 lógicos (as bordas invisíveis de redimensionar ficam fora dela). A escala de 150% de verdade (outro DPI) não dá para mudar no runner.
 
 Ensaio da atualização (--ensaio): o app já foi aberto pelo instalador (por cima da rc.7, com a variável do CDP no
@@ -84,6 +92,18 @@ TEST_PROFILE = "\r\n".join([
     "prefixo_externo=", "",
 ])
 IN_CALL = "Em ligação"
+# rc.3. A área do administrador entra com uma senha descartável, que só o build de teste aceita no lugar da de verdade
+# (STARSONIC_SENHA_ADMIN_TESTE, Ruling 11): a senha de verdade nunca vai ao CI nem a este arquivo.
+ADMIN_PASSWORD_VARIABLE = "STARSONIC_SENHA_ADMIN_TESTE"
+TEST_ADMIN_PASSWORD = "fumaca-administrador-descartavel"
+SHORTCUT_NAME = "Ana Ramal"
+NO_INTERNET = "Sem internet · tentando de novo"
+CONNECTING = "Conectando…"
+# O gancho de teste da internet (só no build de teste): a instância única entrega "--teste-internet off|on" ao app
+# aberto, que força a visão do monitor de rede.
+INTERNET_HOOK = "--teste-internet"
+TRAY_OFFLINE = "bandeja: sem conexao"
+TRAY_CONNECTED = "bandeja: conectado"
 
 
 class SmokeFailure(Exception):
@@ -356,6 +376,39 @@ class Win32:
         sent += self.mouse(0x0004)   # MOUSEEVENTF_LEFTUP
         time.sleep(0.5)
         return sent
+
+    def keys(self, events):
+        """Teclas de verdade pelo SendInput: (código virtual, solta?) para cada evento. Devolve quantos entraram."""
+        ctypes, wintypes = self.ctypes, self.wintypes
+
+        class MOUSEINPUT(ctypes.Structure):
+            _fields_ = [("dx", wintypes.LONG), ("dy", wintypes.LONG), ("mouseData", wintypes.DWORD),
+                        ("dwFlags", wintypes.DWORD), ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.c_size_t)]
+
+        class KEYBDINPUT(ctypes.Structure):
+            _fields_ = [("wVk", wintypes.WORD), ("wScan", wintypes.WORD), ("dwFlags", wintypes.DWORD),
+                        ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.c_size_t)]
+
+        # O INPUT é uma união: o tamanho que o SendInput confere é o do maior (o do mouse).
+        class EVENT(ctypes.Union):
+            _fields_ = [("mi", MOUSEINPUT), ("ki", KEYBDINPUT)]
+
+        class INPUT(ctypes.Structure):
+            _fields_ = [("type", wintypes.DWORD), ("u", EVENT)]
+
+        sent = 0
+        for vk, up in events:
+            scan = int(self.user32.MapVirtualKeyW(vk, 0)) & 0xFFFF   # MAPVK_VK_TO_VSC
+            key = KEYBDINPUT(vk, scan, 0x0002 if up else 0, 0, 0)    # KEYEVENTF_KEYUP
+            event = INPUT(1, EVENT(ki=key))                           # INPUT_KEYBOARD
+            sent += int(self.user32.SendInput(1, ctypes.byref(event), ctypes.sizeof(INPUT)))
+            time.sleep(0.05)
+        return sent
+
+    def ctrl_key(self, letter):
+        """Ctrl + a letra, pelo teclado de verdade (na janela em primeiro plano)."""
+        vk = ord(letter.upper())
+        return self.keys([(0x11, False), (vk, False), (vk, True), (0x11, True)])   # VK_CONTROL
 
     def set_size(self, hwnd, width, height):
         """SetWindowPos com o tamanho (físico) da janela inteira, sem mover."""
@@ -790,6 +843,13 @@ def run_smoke(args, result):
             if problems:
                 raise SmokeFailure("; ".join(problems))
             log("OK: versao na URL, dispositivos relidos, o WebView2 voltou duas vezes e o Sair travado fechou")
+
+            # 9. (rc.3) O Ctrl + P, o administrador, o BLF de um atalho e a internet que cai e volta.
+            run_rc3(pw, win, exe, data_dir, registrar, capturas, result, problems)
+            if problems:
+                raise SmokeFailure("; ".join(problems))
+            log("OK: o Ctrl + P abriu o administrador sem imprimir, o BLF mostrou Livre e Ocupado, o aviso ignorou o "
+                "Ctrl + P e a bolinha ficou cinza sem internet e voltou ao verde")
     finally:
         if app:
             app.kill()
@@ -1157,6 +1217,288 @@ def run_recovery(pw, win, exe, data_dir, registrar, capturas, result, problems):
         if app:
             app.kill()
     return None
+
+
+# ---- rc.3: o Ctrl + P, a área do administrador, o BLF e a internet ----
+
+# Conta os beforeprint da página (o começo de uma impressão): o Ctrl + P nunca imprime (spec 6.1 da rc.3).
+PRINT_PROBE_SCRIPT = """() => {
+  if (window.__fumacaImpressoes === undefined) {
+    window.__fumacaImpressoes = 0;
+    window.addEventListener('beforeprint', () => { window.__fumacaImpressoes += 1; });
+  }
+  return window.__fumacaImpressoes;
+}"""
+
+# A linha do estado da conta no cabeçalho e as classes da bolinha.
+ACCOUNT_STATUS_SCRIPT = """() => {
+  const sub = document.querySelector('header button.account .account-sub');
+  const dot = document.querySelector('header button.account .dot');
+  return {texto: sub ? sub.textContent : null, bolinha: dot ? dot.className : null};
+}"""
+
+# Guarda cada texto que a linha do estado mostra daqui em diante (o "Conectando…" dura pouco no registrador falso).
+STATUS_HISTORY_SCRIPT = """() => {
+  const read = () => {
+    const sub = document.querySelector('header button.account .account-sub');
+    return sub ? sub.textContent : null;
+  };
+  window.__fumacaEstados = [read()];
+  new MutationObserver(() => {
+    const seen = window.__fumacaEstados;
+    const text = read();
+    if (text !== seen[seen.length - 1]) seen.push(text);
+  }).observe(document.body, {subtree: true, childList: true, characterData: true});
+  return window.__fumacaEstados;
+}"""
+
+
+def account_dot(status):
+    """A cor da bolinha da conta pelas classes dela (o accountDot da interface): "cinza" (dot-off), "verde"
+    (dot-online), "vermelha" (dot-busy), "ciano" (só dot: conectando) ou None (sem a bolinha)."""
+    names = ((status or {}).get("bolinha") or "").split()
+    if "dot-off" in names:
+        return "cinza"
+    if "dot-online" in names:
+        return "verde"
+    if "dot-busy" in names:
+        return "vermelha"
+    return "ciano" if "dot" in names else None
+
+
+def print_count(page, timeout=5000):
+    """Quantas impressões a página começou (o PRINT_PROBE_SCRIPT, que passa a contar na primeira vez); None se a página
+    não responde (presa numa impressão)."""
+    try:
+        page.wait_for_function("() => true", timeout=timeout)
+        return page.evaluate(PRINT_PROBE_SCRIPT)
+    except Exception:   # noqa: BLE001
+        return None
+
+
+def run_rc3(pw, win, exe, data_dir, registrar, capturas, result, problems):
+    """O item 9 (rc.3). Os problemas vão para problems (um passo que quebra não esconde os outros); o app fecha no fim."""
+    sleep = lambda ms: time.sleep(ms / 1000.0)   # noqa: E731
+    record = result.setdefault("rc3", {})
+    app = App(exe, data_dir, {ADMIN_PASSWORD_VARIABLE: TEST_ADMIN_PASSWORD})
+    try:
+        browser = connect(pw)
+        page = find_page(browser, "/index.html", 60, sleep)
+        hwnd = main_window(win, app.process.pid)
+        wait_connected(page, capturas, result, "rc3")
+        steps = (
+            ("Ctrl + P na janela principal", lambda: check_ctrl_p(win, exe, hwnd, page, record, problems)),
+            ("area do administrador", lambda: open_admin_with_blf(page, capturas, result, record, problems)),
+            ("BLF do atalho", lambda: check_blf_shortcut(page, registrar, capturas, result, record, problems)),
+            ("internet", lambda: check_internet_hook(exe, page, data_dir, capturas, result, record, problems)),
+            ("Ctrl + P no aviso", lambda: check_ctrl_p_notice(win, hwnd, browser, page, registrar, record, problems)),
+        )
+        for name, step in steps:
+            try:
+                step()
+            except Exception as error:   # noqa: BLE001
+                problems.append("%s: %s: %s" % (name, type(error).__name__, error))
+                log("%s quebrou: %s: %s" % (name, type(error).__name__, error))
+        try:
+            browser.close()
+        except Exception:   # noqa: BLE001
+            pass
+        app.quit()
+        app = None
+    finally:
+        if app:
+            app.kill()
+
+
+def check_ctrl_p(win, exe, hwnd, page, record, problems):
+    """O Ctrl + P na janela principal abre o diálogo "Área do administrador" e não imprime. Pelo teclado de verdade,
+    com a janela na frente (o caminho do WebView2 que imprimiria); se o runner não a deixar vir para a frente, pelo CDP."""
+    before = print_count(page)
+    # Uma abertura sem argumentos: a instância única traz a janela para a frente, com o direito de vir para a frente.
+    subprocess.run([str(exe)], timeout=30)
+    in_front = bool(wait_for(lambda: win.foreground() == hwnd, 10, pump=page.wait_for_timeout))
+    dialog = page.locator("dialog.dialog-adm[open]")
+    info = {"na_frente": in_front, "primeiro_plano": win.describe(win.foreground())}
+    opened = False
+    if in_front:
+        page.wait_for_timeout(500)   # o foco chega ao WebView2 (o WM_ACTIVATE)
+        info["sendinput"] = win.ctrl_key("P")
+        opened = bool(wait_for(lambda: dialog.count() > 0, 5, pump=page.wait_for_timeout))
+        info["pelo_teclado"] = opened
+        if not opened:
+            problems.append("o Ctrl + P do teclado de verdade, com a janela na frente, nao abriu a area do "
+                            "administrador: %s" % info)
+    if not opened:
+        page.keyboard.press("Control+KeyP")
+        opened = bool(wait_for(lambda: dialog.count() > 0, 5, pump=page.wait_for_timeout))
+        info["pelo_cdp"] = opened
+    page.wait_for_timeout(1000)   # uma impressão começaria aqui
+    info["impressoes"] = print_count(page)
+    record["ctrl_p"] = info
+    log("Ctrl + P na janela principal: %s" % info)
+    if not opened:
+        problems.append("o Ctrl + P nao abriu o dialogo 'Area do administrador' na janela principal: %s" % info)
+    if info["impressoes"] != before:
+        problems.append("o Ctrl + P na janela principal comecou uma impressao (beforeprint): %s" % info)
+
+
+def open_admin_with_blf(page, capturas, result, record, problems):
+    """A senha de teste no diálogo abre a área do administrador (captura admin.png), que liga o BLF nos atalhos; Sair."""
+    dialog = page.locator("dialog.dialog-adm[open]")
+    if dialog.count() == 0:
+        problems.append("a area do administrador: o dialogo do Ctrl + P nao estava aberto")
+        return
+    page.locator("#adm-senha").fill(TEST_ADMIN_PASSWORD)
+    dialog.locator("button[type=submit]").click()
+    blf = page.get_by_role("switch", name="BLF nos atalhos")
+    try:
+        blf.wait_for(timeout=15000)
+    except Exception:   # noqa: BLE001
+        error = page.locator("#adm-erro")
+        text = error.inner_text() if error.count() else ""
+        record["admin"] = {"abriu": False, "erro": text}
+        problems.append("a senha de teste (%s) nao abriu a area do administrador: '%s'" % (ADMIN_PASSWORD_VARIABLE, text))
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(500)
+        return
+    if blf.get_attribute("aria-checked") != "true":
+        blf.click()
+    on = bool(wait_for(lambda: blf.get_attribute("aria-checked") == "true", 10, pump=page.wait_for_timeout))
+    page.wait_for_timeout(300)
+    screenshot(page, capturas, "admin.png", result)
+    record["admin"] = {"abriu": True, "blf": on}
+    log("area do administrador: %s" % record["admin"])
+    if not on:
+        problems.append("o BLF nos atalhos nao ligou na area do administrador (adminSet)")
+    page.get_by_role("button", name="Sair da área do administrador").click()
+    page.locator("nav.nav").wait_for(timeout=10000)
+
+
+def check_blf_shortcut(page, registrar, capturas, result, record, problems):
+    """Um atalho para 2002 com o BLF: Livre (o NOTIFY da assinatura), Ocupado com o "BLF 2002 confirmed" do registrador
+    falso (captura atalhos.png) e Livre de novo com o "terminated"."""
+    page.locator("nav.nav button", has_text="Atalhos").click()
+    page.locator("button.atalho-novo").first.click()
+    page.locator("#atalho-nome").fill(SHORTCUT_NAME)
+    page.locator("#atalho-numero").fill(DESTINO)
+    switch = page.locator('[role="switch"][aria-labelledby="atalho-blf"]')
+    if switch.is_enabled() and switch.get_attribute("aria-checked") != "true":
+        switch.click()
+    info = {"chave_ativa": switch.is_enabled(), "chave": switch.get_attribute("aria-checked")}
+    page.get_by_role("button", name="Salvar atalho").click()
+    card = page.locator("li.atalho").filter(has_text=SHORTCUT_NAME).first
+    card.wait_for(timeout=15000)
+    word = card.locator(".blf-palavra")
+
+    def shows(text):
+        return bool(wait_for(lambda: word.count() > 0 and word.inner_text() == text, 20, pump=page.wait_for_timeout))
+
+    info["livre"] = shows("Livre")
+    if info["livre"]:
+        info["confirmed"] = registrar.command("BLF %s confirmed" % DESTINO)
+        info["ocupado"] = shows("Ocupado")
+    screenshot(page, capturas, "atalhos.png", result)
+    if info.get("ocupado"):
+        info["terminated"] = registrar.command("BLF %s terminated" % DESTINO)
+        info["livre_de_novo"] = shows("Livre")
+    info["assinaturas"] = [event for event in registrar.events() if event.startswith("sub-in %s " % DESTINO)]
+    record["blf"] = info
+    log("BLF do atalho %s: %s" % (DESTINO, info))
+    if not info["livre"]:
+        problems.append("o atalho para %s com o BLF nao mostrou Livre: %s" % (DESTINO, info))
+    elif not info.get("ocupado"):
+        problems.append("o atalho para %s nao mostrou Ocupado com o BLF %s confirmed: %s" % (DESTINO, DESTINO, info))
+    elif not info.get("livre_de_novo"):
+        problems.append("o atalho para %s nao voltou a Livre com o BLF %s terminated: %s" % (DESTINO, DESTINO, info))
+
+
+def check_internet_hook(exe, page, data_dir, capturas, result, record, problems):
+    """O gancho de teste da internet: off deixa a bolinha cinza com "Sem internet · tentando de novo" e a bandeja sem
+    conexão (captura sem-internet.png); on mostra "Conectando…" e depois o verde, e a bandeja conectada."""
+    def status():
+        return page.evaluate(ACCOUNT_STATUS_SCRIPT)
+
+    offline_before = count_lines(read_log(data_dir), TRAY_OFFLINE)
+    online_before = count_lines(read_log(data_dir), TRAY_CONNECTED)
+    info = {"off": subprocess.run([str(exe), INTERNET_HOOK, "off"], timeout=30).returncode}
+    gray = bool(wait_for(lambda: (lambda s: s["texto"] == NO_INTERNET and account_dot(s) == "cinza")(status()), 20,
+                         pump=page.wait_for_timeout))
+    info["sem_internet"] = status()
+    info["bandeja_sem_conexao"] = bool(wait_for(lambda: count_lines(read_log(data_dir), TRAY_OFFLINE) > offline_before,
+                                                10, pump=page.wait_for_timeout))
+    screenshot(page, capturas, "sem-internet.png", result)
+    page.evaluate(STATUS_HISTORY_SCRIPT)
+    info["on"] = subprocess.run([str(exe), INTERNET_HOOK, "on"], timeout=30).returncode
+    green = bool(wait_for(lambda: (lambda s: s["texto"] == CONNECTED and account_dot(s) == "verde")(status()), 40,
+                          pump=page.wait_for_timeout))
+    info["de_volta"] = status()
+    info["estados"] = page.evaluate("() => window.__fumacaEstados")
+    info["bandeja_conectado"] = bool(wait_for(lambda: count_lines(read_log(data_dir), TRAY_CONNECTED) > online_before,
+                                              10, pump=page.wait_for_timeout))
+    record["internet"] = info
+    log("internet: %s" % info)
+    if info["off"] != 0 or info["on"] != 0:
+        problems.append("o %s terminou com o codigo %s/%s" % (INTERNET_HOOK, info["off"], info["on"]))
+    if not gray:
+        problems.append("'%s off' nao deixou a bolinha cinza com '%s': %s" % (INTERNET_HOOK, NO_INTERNET, info["sem_internet"]))
+    if not info["bandeja_sem_conexao"]:
+        problems.append("sem internet, a bandeja nao ficou sem conexao ('%s' no diagnostico.log)" % TRAY_OFFLINE)
+    if not green:
+        problems.append("'%s on' nao voltou ao verde com '%s': %s" % (INTERNET_HOOK, CONNECTED, info["de_volta"]))
+    elif CONNECTING not in (info["estados"] or []):
+        problems.append("a internet de volta nao mostrou '%s' antes do verde: %s" % (CONNECTING, info["estados"]))
+    if not info["bandeja_conectado"]:
+        problems.append("com a internet de volta, a bandeja nao voltou ao conectado ('%s' no diagnostico.log)"
+                        % TRAY_CONNECTED)
+
+
+def check_ctrl_p_notice(win, hwnd, browser, page, registrar, record, problems):
+    """Com uma ligação tocando e o aviso na tela, o Ctrl + P no aviso não abre nada (nem na janela principal), não
+    imprime e o aviso continua com a ligação; o Recusar dele recusa."""
+    notice_page = find_page(browser, "/aviso.html", 30, page.wait_for_timeout)
+    win.minimize(hwnd)
+    wait_for(lambda: win.minimized(hwnd), 10, pump=page.wait_for_timeout)
+    refused_before = count_events(registrar.events(), "inv-out %s 486" % RAMAL)
+    reply = registrar.command("RING " + RAMAL)
+    if reply != ["OK"]:
+        problems.append("Ctrl + P no aviso: RING %s: %s" % (RAMAL, reply))
+        return
+    try:
+        notice = wait_for(lambda: next((h for h in win.windows(NOTICE_CLASS) if win.visible(h)), None), 20,
+                          pump=page.wait_for_timeout)
+        if not notice:
+            problems.append("Ctrl + P no aviso: o aviso de ligacao recebida nao apareceu")
+            return
+        notice_page.locator('[role="alertdialog"]').wait_for(timeout=15000)
+        notice_before = print_count(notice_page)
+        main_before = print_count(page)
+        notice_page.keyboard.press("Control+KeyP")
+        page.wait_for_timeout(1500)
+        info = {
+            "impressoes_no_aviso": print_count(notice_page),
+            "impressoes_na_principal": print_count(page),
+            "dialogos_no_aviso": notice_page.locator("dialog[open]").count(),
+            "dialogo_do_administrador": page.locator("dialog.dialog-adm[open]").count(),
+            "aviso_com_a_ligacao": notice_page.locator('[role="alertdialog"]').is_visible(),
+        }
+        record["ctrl_p_aviso"] = info
+        log("Ctrl + P no aviso: %s" % info)
+        if info["impressoes_no_aviso"] != notice_before or info["impressoes_na_principal"] != main_before:
+            problems.append("o Ctrl + P no aviso comecou uma impressao (beforeprint): %s" % info)
+        if info["dialogos_no_aviso"] or info["dialogo_do_administrador"]:
+            problems.append("o Ctrl + P no aviso abriu um dialogo: %s" % info)
+        if not info["aviso_com_a_ligacao"]:
+            problems.append("depois do Ctrl + P, o aviso nao mostra mais a ligacao: %s" % info)
+        notice_page.get_by_role("button", name="Recusar").click(timeout=10000)
+        if not wait_for(lambda: count_events(registrar.events(), "inv-out %s 486" % RAMAL) > refused_before, 20,
+                        pump=page.wait_for_timeout):
+            problems.append("Ctrl + P no aviso: o Recusar do aviso nao chegou ao registrador: %s" % registrar.events())
+        wait_for(lambda: not win.visible(notice), 10, pump=page.wait_for_timeout)
+    finally:
+        if count_events(registrar.events(), "inv-out %s 486" % RAMAL) <= refused_before:
+            registrar.command("HANGUP " + RAMAL)
+        win.restore(hwnd)
+        wait_for(lambda: not win.minimized(hwnd), 10, pump=page.wait_for_timeout)
 
 
 def run_rehearsal(args, result):

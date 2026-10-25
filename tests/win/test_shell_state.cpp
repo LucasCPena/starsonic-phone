@@ -97,6 +97,84 @@ TEST_CASE("a call on the connected account shows the in-call tray icon (red dot)
     CHECK(ChooseTrayIcon(*s) == TrayIcon::Offline);
 }
 
+TEST_CASE("the tray follows the rc.3 dot table: no internet, connecting and errors come before the call and Nao perturbe") {
+    // Sem internet (conta.internet false) com a conta conectada, o Nao perturbe e uma ligacao: o de sem conexao.
+    std::optional<ShellStatus> s = ReadShellStatus(State(
+        R"("conta":{"status":"conectado","servidor":"127.0.0.1","internet":false},"naoPerturbe":true,"perdidas":0,)"
+        R"("ligacao":{"top":{"id":4,"phase":"active"},"second":null,"secondKind":"none","conference":false})"));
+    REQUIRE(s.has_value());
+    CHECK_FALSE(s->internet);
+    CHECK(s->inCall);
+    CHECK(ChooseTrayIcon(*s) == TrayIcon::Offline);
+    s = ReadShellStatus(State(R"("conta":{"status":"conectado","internet":false},"naoPerturbe":true,"perdidas":0,"ligacao":null)"));
+    REQUIRE(s.has_value());
+    CHECK(ChooseTrayIcon(*s) == TrayIcon::Offline);
+    s = ReadShellStatus(State(R"("conta":{"status":"conectado","internet":false},"naoPerturbe":false,"perdidas":0,"ligacao":null)"));
+    REQUIRE(s.has_value());
+    CHECK(ChooseTrayIcon(*s) == TrayIcon::Offline);
+
+    // Conectando, erro e sem_conexao (com a internet): o de sem conexao, tambem com o Nao perturbe ligado e com uma
+    // ligacao (a bolinha nao fica vermelha).
+    for (const char* account : {"conectando", "erro", "sem_conexao"}) {
+        s = ReadShellStatus(State(std::string(R"("conta":{"status":")") + account +
+                                  R"(","internet":true},"naoPerturbe":true,"perdidas":0,"ligacao":null)"));
+        REQUIRE(s.has_value());
+        CHECK_MESSAGE(ChooseTrayIcon(*s) == TrayIcon::Offline, account);
+        s = ReadShellStatus(State(std::string(R"("conta":{"status":")") + account +
+                                  R"(","internet":true},"naoPerturbe":false,"perdidas":0,)"
+                                  R"("ligacao":{"top":{"id":4,"phase":"active"},"second":null,"secondKind":"none","conference":false})"));
+        REQUIRE(s.has_value());
+        CHECK_MESSAGE(ChooseTrayIcon(*s) == TrayIcon::Offline, account);
+    }
+
+    // Conectado com a internet: a ligacao (vermelho), depois o Nao perturbe (o vermelho dele), depois o verde.
+    s = ReadShellStatus(State(R"("conta":{"status":"conectado","internet":true},"naoPerturbe":true,"perdidas":0,)"
+                              R"("ligacao":{"top":{"id":4,"phase":"active"},"second":null,"secondKind":"none","conference":false})"));
+    REQUIRE(s.has_value());
+    CHECK(s->internet);
+    CHECK(ChooseTrayIcon(*s) == TrayIcon::InCall);
+    s = ReadShellStatus(State(R"("conta":{"status":"conectado","internet":true},"naoPerturbe":true,"perdidas":0,"ligacao":null)"));
+    REQUIRE(s.has_value());
+    CHECK(ChooseTrayIcon(*s) == TrayIcon::DoNotDisturb);
+    s = ReadShellStatus(State(R"("conta":{"status":"conectado","internet":true},"naoPerturbe":false,"perdidas":0,"ligacao":null)"));
+    REQUIRE(s.has_value());
+    CHECK(ChooseTrayIcon(*s) == TrayIcon::Connected);
+
+    // A perdida fica onde estava na rc.2, entre a ligacao e o Nao perturbe: sem internet (e sem conexao), o de sem
+    // conexao vem antes dela.
+    s = ReadShellStatus(State(R"("conta":{"status":"conectado","internet":true},"naoPerturbe":true,"perdidas":3,"ligacao":null)"));
+    REQUIRE(s.has_value());
+    CHECK(ChooseTrayIcon(*s) == TrayIcon::Missed);
+    s = ReadShellStatus(State(R"("conta":{"status":"conectado","internet":false},"naoPerturbe":true,"perdidas":3,"ligacao":null)"));
+    REQUIRE(s.has_value());
+    CHECK(ChooseTrayIcon(*s) == TrayIcon::Offline);
+    s = ReadShellStatus(State(R"("conta":{"status":"sem_conexao"},"naoPerturbe":false,"perdidas":3,"ligacao":null)"));
+    REQUIRE(s.has_value());
+    CHECK(ChooseTrayIcon(*s) == TrayIcon::Offline);
+}
+
+TEST_CASE("the shell reads the account server and whether the admin shows the Nao perturbe item") {
+    std::optional<ShellStatus> s = ReadShellStatus(State(
+        R"("conta":{"status":"conectado","servidor":"starcloud1-starsonic.com.br","internet":true},"naoPerturbe":false,)"
+        R"("perdidas":0,"ligacao":null,"admin":{"aberto":false,"naoPerturbe":false,"atenderAuto":true,"blf":false})"));
+    REQUIRE(s.has_value());
+    CHECK(s->server == "starcloud1-starsonic.com.br");
+    CHECK_FALSE(s->doNotDisturbShown);
+    s = ReadShellStatus(State(
+        R"("conta":{"status":"conectado","servidor":"127.0.0.1"},"naoPerturbe":true,"perdidas":0,"ligacao":null,)"
+        R"("admin":{"aberto":true,"naoPerturbe":true,"atenderAuto":false,"blf":true})"));
+    REQUIRE(s.has_value());
+    CHECK(s->server == "127.0.0.1");
+    CHECK(s->doNotDisturbShown);
+    // Sem conta: sem servidor (o monitor de rede nao testa o DNS). Sem o admin (um estado de antes da rc.3): o item
+    // aparece, e a internet vale ate o executavel dizer o contrario.
+    s = ReadShellStatus(State(R"("conta":null,"naoPerturbe":false,"perdidas":0,"ligacao":null)"));
+    REQUIRE(s.has_value());
+    CHECK(s->server.empty());
+    CHECK(s->doNotDisturbShown);
+    CHECK(s->internet);
+}
+
 TEST_CASE("the shell ignores the other messages and invalid text") {
     CHECK_FALSE(ReadShellStatus(R"({"v":1,"type":"toast","texto":"state"})").has_value());
     CHECK_FALSE(ReadShellStatus(R"({"v":1,"type":"ring","tipo":"completo"})").has_value());

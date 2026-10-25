@@ -158,3 +158,13 @@ class RecoveryHelpersTest(unittest.TestCase):
         self.assertEqual(windows_smoke.browser_process(rows, 100), 200)
         self.assertIsNone(windows_smoke.browser_process(rows, 999))
         self.assertIsNone(windows_smoke.browser_process([], 100))
+
+
+class Rc3HelpersTest(unittest.TestCase):
+    def test_the_account_dot_color_comes_from_the_classes_of_the_interface(self):
+        self.assertEqual(windows_smoke.account_dot({"texto": "x", "bolinha": "dot dot-off"}), "cinza")
+        self.assertEqual(windows_smoke.account_dot({"texto": "x", "bolinha": "dot dot-online"}), "verde")
+        self.assertEqual(windows_smoke.account_dot({"texto": "x", "bolinha": "dot dot-busy"}), "vermelha")
+        self.assertEqual(windows_smoke.account_dot({"texto": "x", "bolinha": "dot"}), "ciano")
+        self.assertIsNone(windows_smoke.account_dot({"texto": None, "bolinha": None}))
+        self.assertIsNone(windows_smoke.account_dot(None))

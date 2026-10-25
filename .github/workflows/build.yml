@@ -192,7 +192,10 @@ jobs:
           # -V: o resumo do doctest (quantos casos rodaram) fica no log.
           Invoke-Native ctest @('--test-dir', 'build-desktop-win', '-C', 'Release', '-V')
 
+      # A versão vale também quando um teste acima falhou: o app novo, os instaladores e a fumaça (com !cancelled())
+      # rodam assim mesmo e mostram o que falhou neles (um teste vermelho não esconde a fumaça).
       - name: Versão
+        if: ${{ !cancelled() }}
         env:
           INPUT_VERSION: ${{ inputs.version }}
           INPUT_CHANNEL: ${{ inputs.channel }}
@@ -314,8 +317,10 @@ jobs:
           python -m pip install --disable-pip-version-check --no-input -r tests\smoke\requirements-windows.txt
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
+      # Leva uns 2 minutos: o limite só corta uma página presa (uma impressão que travasse o aviso, por exemplo).
       - name: Fumaça do app novo instalado (CDP, ligações no registrador falso)
         if: ${{ !cancelled() && steps.fumaca-deps.outcome == 'success' && steps.installer-teste.outcome == 'success' }}
+        timeout-minutes: 20
         run: .\tests\smoke\Test-InstalledApp.ps1 -Setup "dist-teste\StarsonicPhone-$($env:STARSONIC_VERSION)-setup.exe" -Capturas capturas-windows
 
       - name: Teste do instalador
