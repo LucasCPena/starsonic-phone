@@ -40,8 +40,11 @@ public:
     // fora; a conta nasce sem registrar e parada (como depois de um Pause). onActive: chamado (numa thread do
     // PJSIP, com a trava do pjsua; não pode chamar o PJSIP nem esperar) cada vez que a conta passa de sem
     // registro a registrada, também na primeira vez, e na primeira resposta que a deixa registrada depois de um
-    // Resume (o registro pode ter continuado vivo no Pause). Lança pj::Error como o create().
-    void Start(const pj::AccountConfig& config, bool paused, std::function<void()> onActive);
+    // Resume (o registro pode ter continuado vivo no Pause). onInactive: do mesmo jeito, cada vez que ela passa de
+    // registrada a sem registro fora do Pause e do Retire (uma renovação recusada ou sem resposta, a central
+    // reiniciada). Lança pj::Error como o create().
+    void Start(const pj::AccountConfig& config, bool paused, std::function<void()> onActive,
+               std::function<void()> onInactive);
 
     // A rede caiu: o PJSIP deixa de tentar de novo (o intervalo das novas tentativas vai a zero) e nenhuma
     // resposta de registro vira evento. O registro não sai do servidor (Ruling 25): ele vive até vencer ou até
@@ -83,7 +86,8 @@ private:
     EngineEndpoint* endpoint_;
     const int id_;
     pj::AccountConfig config_;   // a de Start (com a apiMutex_ do motor)
-    std::function<void()> onActive_;   // de Start, antes do create(): só lido nos callbacks
+    std::function<void()> onActive_;     // de Start, antes do create(): só lidos nos callbacks
+    std::function<void()> onInactive_;
     std::atomic<bool> retired_{false};
     std::atomic<bool> paused_{false};   // a rede está fora: as respostas de registro não viram evento
     std::atomic<bool> resumed_{false};  // o Resume: a próxima resposta que deixa a conta registrada é a volta

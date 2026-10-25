@@ -40,6 +40,7 @@ Porta de controle (--control-port N, TCP no mesmo --host; um comando por linha, 
   BLF <ramal> <estado>[+<estado>...]  os diálogos do ramal para o BLF (estado: terminated, early ou
                      confirmed), ou refuse                                    -> OK
   BLF <ramal> <estado>@<n>  muda só o diálogo n (NOTIFY partial)              -> OK | ERR no-dialog
+  FORGET             a central esquece as assinaturas de BLF, sem NOTIFY (como reiniciada) -> OK
   DROP REGISTER <on|off>  com on, os REGISTER somem sem resposta (pacote perdido) -> OK
   FAIL REGISTER <on|off>  com on, todo REGISTER leva 503 (a central reiniciando)  -> OK
   REFER_REPLY <cod>  o código da resposta ao REFER (padrão 202)        -> OK
@@ -740,6 +741,9 @@ class Registrar:
             if name == "DROP" and blf[:1] == ["REGISTER"] and len(blf) == 2 and blf[1] in ("on", "off"):
                 self.drop_register = blf[1] == "on"
                 return ["OK"]
+            if name == "FORGET" and not ramal:
+                self.subscriptions.clear()
+                return ["OK"]
             if name == "FAIL" and blf[:1] == ["REGISTER"] and len(blf) == 2 and blf[1] in ("on", "off"):
                 self.fail_register = blf[1] == "on"
                 return ["OK"]
@@ -836,7 +840,7 @@ def start_tcp_server(registrar, host, port):
 
 
 def start_control_server(registrar, host, port):
-    """Porta de controle (RING, HANGUP, PASSWORD, REGISTERS, EXPIRES, BLF, DROP, FAIL, REFER_REPLY,
+    """Porta de controle (RING, HANGUP, PASSWORD, REGISTERS, EXPIRES, BLF, FORGET, DROP, FAIL, REFER_REPLY,
     REFER_NOTIFY, RESET, LOG), numa thread. Mesma forma de start_tcp_server."""
     return _start_tcp(_ControlHandler, registrar, host, port)
 

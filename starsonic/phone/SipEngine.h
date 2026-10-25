@@ -153,7 +153,9 @@ public:
     // (o primeiro, quando o servidor manda o primeiro NOTIFY; os NOTIFY partial mudam só os diálogos que
     // trazem). Uma assinatura recusada ou encerrada pelo servidor avisa Unknown; ela é feita de novo quando
     // a conta volta a ficar registrada (depois de uma falha ou da rede voltar), e senão o PJSIP tenta de
-    // novo mais tarde (cerca de 5 min). A lista é da conta:
+    // novo mais tarde (cerca de 5 min). Depois de a conta perder o registro com a rede ligada (uma renovação
+    // recusada ou sem resposta, a central reiniciada), as assinaturas de antes da perda também são feitas de
+    // novo na volta: a central pode tê-las perdido sem avisar. A lista é da conta:
     // SetAccount e RemoveAccount retiram as assinaturas e esvaziam a lista. Sem conta, nada. Sem rede, só
     // guarda a lista (os novos avisam Unknown) e assina quando a rede volta.
     void WatchBlf(const std::vector<std::string>& numbers);

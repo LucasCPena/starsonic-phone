@@ -369,3 +369,69 @@ TEST_CASE("BLF comes back when the account registers again") {
     CHECK(listener.WaitForBlf("2007", BlfState::Ringing, kWaitSeconds));
     CHECK(LogCount(registrar, "sub-in 2007 200") == 2);   // a de antes da queda e a que voltou
 }
+
+// Correcao final (H3, A-I1 e o probe A1 do revisor A): a conta perde o registro sem o SetNetworkAvailable(false) (um
+// 503 na renovacao, a central reiniciada). Na volta do registro, as assinaturas de antes da queda sao feitas de novo: a
+// central pode te-las perdido, e sem isso o cartao mostraria o estado velho como o de agora por ate ~10 min.
+TEST_CASE("BLF subscriptions are renewed after a registration loss the host did not see") {
+    FakeRegistrar registrar("senha");
+    RecordingListener listener;
+    INFO(listener.LogTail());
+    INFO(listener.BlfText());
+    INFO(RegistrationsText(listener));
+    std::unique_ptr<SipEngine> engine = StartEngine(&listener, LoadProfile(registrar.port()));
+
+    REQUIRE(registrar.Control("EXPIRES 3") == kOk);   // a renovacao a cada ~2 s
+    REQUIRE(engine->SetAccount(Input(Transport::Udp)));
+    REQUIRE(listener.WaitFor(RecordingListener::Reached(200, true, 1), kWaitSeconds));
+    engine->WatchBlf({"2007"});
+    REQUIRE(listener.WaitForBlf("2007", BlfState::Free, kWaitSeconds));
+    REQUIRE(registrar.Control("BLF 2007 confirmed") == kOk);
+    REQUIRE(listener.WaitForBlf("2007", BlfState::Busy, kWaitSeconds));
+    REQUIRE(LogCount(registrar, "sub-in 2007 200") == 1);
+
+    // A central reinicia: esquece as assinaturas (sem NOTIFY nenhum) e responde 503 ao REGISTER por um tempo.
+    REQUIRE(registrar.Control("FORGET") == kOk);
+    REQUIRE(registrar.Control("FAIL REGISTER on") == kOk);
+    REQUIRE(listener.WaitFor(RecordingListener::Reached(503, false, 1), kWaitSeconds));
+    // A central volta, e a conta registra de novo (aqui pelo Reregister; na vida, a nova tentativa do PJSIP).
+    const size_t active = CountActive(listener.Registrations());
+    REQUIRE(registrar.Control("FAIL REGISTER off") == kOk);
+    engine->Reregister();
+    REQUIRE(listener.WaitFor(RecordingListener::Reached(200, true, active + 1), kWaitSeconds));
+
+    // A assinatura de antes da queda e feita de novo, e as mudancas do ramal voltam a chegar.
+    CHECK(WaitUntil([&] { return LogCount(registrar, "sub-in 2007 200") == 2; }, kWaitSeconds));
+    REQUIRE(registrar.Control("BLF 2007 terminated") == kOk);
+    CHECK(listener.WaitForBlf("2007", BlfState::Free, kWaitSeconds));
+}
+
+TEST_CASE("the network coming back after a registration loss subscribes each BLF number once") {
+    FakeRegistrar registrar("senha");
+    RecordingListener listener;
+    INFO(listener.LogTail());
+    INFO(listener.BlfText());
+    INFO(RegistrationsText(listener));
+    std::unique_ptr<SipEngine> engine = StartEngine(&listener, LoadProfile(registrar.port()));
+
+    REQUIRE(registrar.Control("EXPIRES 3") == kOk);
+    REQUIRE(engine->SetAccount(Input(Transport::Udp)));
+    REQUIRE(listener.WaitFor(RecordingListener::Reached(200, true, 1), kWaitSeconds));
+    engine->WatchBlf({"2007"});
+    REQUIRE(listener.WaitForBlf("2007", BlfState::Free, kWaitSeconds));
+
+    // A renovacao falha (a perda que marca as assinaturas de antes), e depois a rede cai.
+    REQUIRE(registrar.Control("FAIL REGISTER on") == kOk);
+    REQUIRE(listener.WaitFor(RecordingListener::Reached(503, false, 1), kWaitSeconds));
+    engine->SetNetworkAvailable(false);
+    REQUIRE(listener.WaitForBlf("2007", BlfState::Unknown, kWaitSeconds));
+
+    // A rede volta: a assinatura volta uma vez (a da volta da rede), e a volta do registro nao assina de novo.
+    const size_t active = CountActive(listener.Registrations());
+    REQUIRE(registrar.Control("FAIL REGISTER off") == kOk);
+    engine->SetNetworkAvailable(true);
+    REQUIRE(listener.WaitFor(RecordingListener::Reached(200, true, active + 1), kWaitSeconds));
+    CHECK(listener.WaitForBlf("2007", BlfState::Free, kWaitSeconds));
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    CHECK(LogCount(registrar, "sub-in 2007 200") == 2);   // a de antes da queda e a da volta
+}

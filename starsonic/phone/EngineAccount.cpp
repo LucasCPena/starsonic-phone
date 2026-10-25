@@ -43,8 +43,10 @@ void EngineAccount::Retire() {
     endpoint_->RemoveTimerTarget(id_);   // espera um registro adiado que esteja saindo
 }
 
-void EngineAccount::Start(const pj::AccountConfig& config, bool paused, std::function<void()> onActive) {
+void EngineAccount::Start(const pj::AccountConfig& config, bool paused, std::function<void()> onActive,
+                          std::function<void()> onInactive) {
     onActive_ = std::move(onActive);
+    onInactive_ = std::move(onInactive);
     config_ = config;
     // Só o Modify troca a configuração depois: ele nunca registra nem retira o registro por conta própria.
     config_.regConfig.disableRegOnModify = true;
@@ -177,6 +179,8 @@ void EngineAccount::onRegState(pj::OnRegStateParam& param) {
             const bool resumed = resumed_.exchange(false);
             if (!wasActive_ || resumed) onActive_();
         }
+        // A queda: de registrada a sem registro, fora do Pause (a rede caída, que o motor já trata) e do Retire.
+        if (!active && wasActive_ && !retired_ && !paused_ && onInactive_) onInactive_();
         wasActive_ = active;
         if (!retired_ && !paused_ && !stale) {
             const int code = static_cast<int>(param.code);

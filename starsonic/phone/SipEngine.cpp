@@ -6,7 +6,9 @@
 #endif
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
+#include <cstdint>
 #include <exception>
 #include <map>
 #include <mutex>
@@ -141,10 +143,13 @@ public:
         try {
             // Sem rede a conta nasce parada: registra quando SetNetworkAvailable(true) chegar. Cada vez que
             // ela volta a ficar registrada, o BLF que tinha acabado é assinado de novo (na thread dos
-            // eventos, fora do callback do PJSIP).
-            account->Start(config, !networkAvailable_, [this, accountId] {
-                events_.Post([this, accountId](EngineListener&) { RetryBlf(accountId); });
-            });
+            // eventos, fora do callback do PJSIP); quando ela perde o registro, as assinaturas de até ali
+            // ficam marcadas para a volta (a central pode tê-las perdido). A marca é só um atômico: o
+            // callback está com a trava do pjsua.
+            account->Start(
+                config, !networkAvailable_,
+                [this, accountId] { events_.Post([this, accountId](EngineListener&) { RetryBlf(accountId); }); },
+                [this] { blfLossMark_.store(blfSerial_.load()); });
         } catch (const pj::Error& failure) {
             Log(1, "o PJSIP recusou a conta " + settings.idUri + ": " + failure.info());
             return 0;
@@ -500,6 +505,7 @@ private:
     struct BlfEntry {
         std::unique_ptr<BlfTrack> track;
         std::unique_ptr<BlfBuddy> buddy;
+        uint64_t serial = 0;   // a vez da assinatura de agora (blfSerial_; 0: nenhuma)
     };
 
     BlfEntry& Entry(const std::string& number) {
@@ -527,6 +533,7 @@ private:
             return;
         }
         entry.buddy = std::move(buddy);
+        entry.serial = ++blfSerial_;
     }
 
     // Retira as assinaturas de BLF (a lista e o que se sabe de cada ramal ficam). Os avisos delas param aqui.
@@ -535,13 +542,17 @@ private:
     }
 
     // A conta accountId voltou a ficar registrada (thread dos eventos): assina de novo os ramais cuja
-    // assinatura acabou (recusada, vencida, sem resposta), sem esperar a nova tentativa do PJSIP (~5 min).
+    // assinatura acabou (recusada, vencida, sem resposta), sem esperar a nova tentativa do PJSIP (~5 min), e os
+    // assinados antes da última perda do registro (o PJSIP os acha vivos, mas a central reiniciada, ou que
+    // encerrou a assinatura sem o NOTIFY chegar, não manda mais nada: o cartão ficaria com um estado velho até a
+    // renovação da assinatura, ~10 min). Os assinados depois da perda (a volta da rede) ficam como estão.
     void RetryBlf(int accountId) {
         std::lock_guard<std::mutex> lock(apiMutex_);
         if (!RegisterThread() || !account_ || account_->Id() != accountId || !networkAvailable_) return;
+        const uint64_t lossMark = blfLossMark_.load();
         for (const std::string& number : blfNumbers_) {
             BlfEntry& entry = Entry(number);
-            if (!entry.buddy || entry.track->Ended()) SubscribeBlf(number);
+            if (!entry.buddy || entry.track->Ended() || entry.serial <= lossMark) SubscribeBlf(number);
         }
     }
 
@@ -608,6 +619,10 @@ private:
     bool networkAvailable_ = true;
     std::vector<std::string> blfNumbers_;
     std::map<std::string, BlfEntry> blf_;
+    // A vez de cada assinatura de BLF feita (sobe a cada uma, com a apiMutex_) e a vez da última antes de a conta
+    // perder o registro (o onInactive da conta, na thread do PJSIP): na volta, as de até a marca são feitas de novo.
+    std::atomic<uint64_t> blfSerial_{0};
+    std::atomic<uint64_t> blfLossMark_{0};
 };
 
 SipEngine::SipEngine(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}

@@ -282,6 +282,15 @@ class FakeRegistrarBlfTest(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(self.registrar.command(command), ["ERR bad-command"])
 
+    def test_forget_drops_the_subscriptions_without_any_notify(self):
+        self.answer(subscribe("2007"))
+        self.assertEqual(self.registrar.command("FORGET"), ["OK"])
+        self.registrar.command("BLF 2007 early")   # a central reiniciada nao lembra de ninguem: nenhum NOTIFY
+        self.assertEqual(self.sent(), [])
+        notify = self.answer(subscribe("2007", call_id="sub-2007-b"))[1]   # uma assinatura nova volta a valer
+        self.assertIn("<state>early</state>", notify.body)
+        self.assertEqual(self.registrar.command("FORGET now"), ["ERR bad-command"])
+
     def test_fail_register_answers_503_while_on(self):
         self.assertEqual(self.registrar.command("FAIL REGISTER on"), ["OK"])
         self.assertEqual([reply.status for reply in self.answer(register(self.registrar))], [503])
