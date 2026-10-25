@@ -12,6 +12,7 @@ import {
   capturar,
   comandos,
   empurrar,
+  entrarNaAdmin,
   esperarComando,
   estado,
   mudarEstado,
@@ -102,9 +103,8 @@ for (const tema of ['light', 'dark'] as const) {
           'Ligar · 11988887777',
         ]);
         await expect(aba.getByRole('button', { name: 'Adicionar atalho', exact: true })).toHaveCount(2);
-        await expect(
-          aba.getByText('Clique para usar. Clique com o botão direito para editar. Num ramal tocando, o clique puxa a ligação.', { exact: true }),
-        ).toBeAttached();
+        // O administrador não ligou o puxar (nem pôs o código): a ajuda não promete que o clique puxa a ligação.
+        await expect(aba.getByText('Clique para usar. Clique com o botão direito para editar.', { exact: true })).toBeAttached();
 
         // O BLF: a palavra inteira, logo à direita da bolinha da cor do estado, dentro do cartão.
         const blfs: Array<[string, string, string]> = [
@@ -337,6 +337,73 @@ test.describe('a aba Atalhos', () => {
     await expect(cartao(page, 'Comercial')).toHaveCount(0);
     await expect(page.getByText('5 de 8', { exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Adicionar atalho', exact: true })).toHaveCount(3);
+  });
+
+  // A ajuda da aba (C-M5): a frase do puxar só aparece quando o clique num ramal tocando de fato puxa a ligação, ou seja,
+  // com o `admin.puxa` (o BLF, o puxar e um código ligados). Sem isso, quem está numa ligação e confia na ajuda
+  // transferiria a ligação dela, em vez de puxar a do colega.
+  const AJUDA = 'Clique para usar. Clique com o botão direito para editar.';
+  const AJUDA_COM_PUXAR = `${AJUDA} Num ramal tocando, o clique puxa a ligação.`;
+
+  test('the help mentions the pickup only while admin.puxa is true', async ({ page }) => {
+    await abrir(page, 'atalhos');
+    const ajuda = page.getByRole('main', { name: 'Atalhos' }).locator('.atalhos-ajuda');
+    await expect(ajuda).toHaveText(AJUDA);
+    await mudarEstado(page, (s) => ({ ...s, admin: { ...s.admin, puxa: true } }));
+    await expect(ajuda).toHaveText(AJUDA_COM_PUXAR);
+    await mudarEstado(page, (s) => ({ ...s, admin: { ...s.admin, puxa: false } }));
+    await expect(ajuda).toHaveText(AJUDA);
+    // Sem o campo (um C++ que não o manda), e com algo que não é o booleano `true`: sem a frase.
+    await mudarEstado(page, (s) => ({ ...s, admin: { ...s.admin, puxa: true } }));
+    await expect(ajuda).toHaveText(AJUDA_COM_PUXAR);
+    await mudarEstado(page, (s) => ({ ...s, admin: Object.fromEntries(Object.entries(s.admin).filter(([k]) => k !== 'puxa')) }));
+    await expect(ajuda).toHaveText(AJUDA);
+    await mudarEstado(page, (s) => ({ ...s, admin: { ...s.admin, puxa: 'true' } }));
+    await expect(ajuda).toHaveText(AJUDA);
+  });
+
+  test('the fake bridge sets puxa only with BLF, the pickup and a code all on', async ({ page }) => {
+    await abrir(page, 'atalhos');
+    const ajuda = page.getByRole('main', { name: 'Atalhos' }).locator('.atalhos-ajuda');
+    await expect(ajuda).toHaveText(AJUDA);
+    await entrarNaAdmin(page);
+    const puxar = page.getByRole('switch', { name: 'Puxar ligação pelo atalho' });
+    const blf = page.getByRole('switch', { name: 'BLF nos atalhos' });
+    const codigo = page.getByLabel('Código para puxar a ligação');
+    const ajudaDepois = async (texto: string) => {
+      await page.getByRole('button', { name: 'Voltar' }).click();
+      await expect(ajuda).toHaveText(texto);
+      await page.keyboard.press('Control+KeyP');
+      await expect(page.getByRole('heading', { name: 'Área do administrador', level: 1 })).toBeVisible();
+    };
+    // O BLF já estava ligado: o puxar sozinho, sem o código, não basta.
+    await puxar.click();
+    await esperarComando(page, { cmd: 'adminSet', puxar: true });
+    await ajudaDepois(AJUDA);
+    // Com o código, sim.
+    await codigo.fill('**{ramal}');
+    await codigo.press('Enter');
+    await esperarComando(page, { cmd: 'adminSet', codigoPuxar: '**{ramal}' });
+    await ajudaDepois(AJUDA_COM_PUXAR);
+    // Sem o BLF dos atalhos, não puxa (o clique no atalho nem sabe que o ramal está tocando).
+    await blf.click();
+    await esperarComando(page, { cmd: 'adminSet', blf: false });
+    await ajudaDepois(AJUDA);
+    await blf.click();
+    await esperarComando(page, { cmd: 'adminSet', blf: true });
+    await ajudaDepois(AJUDA_COM_PUXAR);
+    // O puxar desligado ou o código apagado: sem a frase.
+    await puxar.click();
+    await esperarComando(page, { cmd: 'adminSet', puxar: false });
+    await ajudaDepois(AJUDA);
+    await puxar.click();
+    await esperarComando(page, { cmd: 'adminSet', puxar: true });
+    await ajudaDepois(AJUDA_COM_PUXAR);
+    await codigo.fill('');
+    await codigo.press('Enter');
+    await esperarComando(page, { cmd: 'adminSet', codigoPuxar: '' });
+    await page.getByRole('button', { name: 'Voltar' }).click();
+    await expect(ajuda).toHaveText(AJUDA);
   });
 
   test('eight shortcuts fill the grid, and none leaves eight Adicionar atalho', async ({ page }) => {

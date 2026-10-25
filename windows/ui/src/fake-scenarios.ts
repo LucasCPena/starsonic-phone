@@ -100,7 +100,7 @@ function principal(): AppState {
     teclado: '',
     tecladoVez: 0,
     atalhos: atalhosDoCanvas(),
-    admin: { aberto: false, naoPerturbe: true, atenderAuto: true, blf: true },
+    admin: { aberto: false, naoPerturbe: true, atenderAuto: true, blf: true, puxa: false },
     entrarAdmin: { erro: '', esperaAte: 0, vez: 0 },
     config: { bipeFim: true },
   };

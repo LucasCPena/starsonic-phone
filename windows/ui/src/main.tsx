@@ -334,6 +334,7 @@ function App() {
             atalhos={state.atalhos}
             ligacao={state.ligacao}
             send={send}
+            puxa={state.admin.puxa === true}
             foco={view.kind === 'tab' ? view.foco : undefined}
             onNew={(posicao, foco) => setView({ kind: 'atalho', posicao, back: { kind: 'tab', tab: 'atalhos', foco } })}
             onEdit={(atalho, posicao, foco) => setView({ kind: 'atalho', atalho, posicao, back: { kind: 'tab', tab: 'atalhos', foco } })}

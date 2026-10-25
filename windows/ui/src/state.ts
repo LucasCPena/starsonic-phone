@@ -156,6 +156,8 @@ interface AdminVisible {
   atenderAuto: boolean;
   /** O BLF nos atalhos. */
   blf: boolean;
+  /** O clique num atalho com o BLF `tocando` puxa a ligação: o BLF, o puxar e um código ligados (não é sensível). */
+  puxa: boolean;
 }
 
 /** (rc.3) A área do administrador: completa só com `aberto`. */

@@ -5,7 +5,8 @@
 // teclado, abre a edição (Editar e Remover, que pede a confirmação). Enviar teclas fica desativado fora da ligação (o
 // C++ recusaria). Numa janela pequena, a grade rola dentro do corpo da aba (a navegação fica inteira). Ao voltar da
 // edição, o foco volta ao que a abriu (o cartão, o "Mais opções" ou o "Adicionar atalho"): cada um leva um `data-foco`,
-// e o `foco` que a aba recebe diz qual; sem ele (o atalho saiu, a grade encheu), o foco vai ao título.
+// e o `foco` que a aba recebe diz qual; sem ele (o atalho saiu, a grade encheu), o foco vai ao título. A ajuda de baixo só
+// fala do puxar ligação com o `admin.puxa` (o BLF, o puxar e o código ligados): sem isso o clique num ramal tocando não puxa.
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { BlfBadge } from '../components/Blf';
 import { Confirm } from '../components/Confirm';
@@ -28,6 +29,8 @@ interface Props {
   atalhos: Shortcut[];
   ligacao: CallState | null;
   send: Send;
+  /** O clique num ramal tocando puxa a ligação (`admin.puxa`): só então a ajuda diz isso. */
+  puxa: boolean;
   /** O que volta a ter o foco na montagem (o `foco` que o onNew ou o onEdit deu, da edição que acaba de fechar). */
   foco?: string;
   /** Adicionar atalho; `posicao` é o "<n> de 8" do formulário e `foco` o que volta a ter o foco quando ela fechar. */
@@ -124,7 +127,7 @@ export function RemoverAtalho({ atalho, onCancel, onConfirm }: { atalho: Shortcu
   );
 }
 
-export function Atalhos({ atalhos, ligacao, send, foco, onNew, onEdit }: Props) {
+export function Atalhos({ atalhos, ligacao, send, puxa, foco, onNew, onEdit }: Props) {
   const [remover, setRemover] = useState<Shortcut | null>(null);
   const raiz = useRef<HTMLDivElement>(null);
   const vazios = Math.max(0, MAX_ATALHOS - atalhos.length);
@@ -163,7 +166,10 @@ export function Atalhos({ atalhos, ligacao, send, foco, onNew, onEdit }: Props) 
           </li>
         ))}
       </ul>
-      <p class="atalhos-ajuda">Clique para usar. Clique com o botão direito para editar. Num ramal tocando, o clique puxa a ligação.</p>
+      <p class="atalhos-ajuda">
+        Clique para usar. Clique com o botão direito para editar.
+        {puxa && ' Num ramal tocando, o clique puxa a ligação.'}
+      </p>
       {remover && (
         <RemoverAtalho
           atalho={remover}

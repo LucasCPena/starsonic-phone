@@ -108,7 +108,14 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
     servidores: structuredClone(SERVIDORES_DO_PERFIL),
     canal: '',
   };
-  const visivel = () => ({ naoPerturbe: state.admin.naoPerturbe, atenderAuto: state.admin.atenderAuto, blf: state.admin.blf });
+  // O clique num atalho tocando puxa a ligação só com o BLF, o puxar e um código ligados (o `admin.puxa` do C++).
+  const puxa = (blf: boolean) => blf && guardado.puxar && guardado.codigoPuxar !== '';
+  const visivel = () => ({
+    naoPerturbe: state.admin.naoPerturbe,
+    atenderAuto: state.admin.atenderAuto,
+    blf: state.admin.blf,
+    puxa: puxa(state.admin.blf),
+  });
   const adminAberto = (): AdminState => ({ aberto: true, ...visivel(), ...guardado });
   // O último BLF que o servidor deu a cada atalho (volta quando o administrador liga o BLF de novo).
   const blfVisto = new Map<string, BlfState | null>(state.atalhos.map((a) => [a.id, a.estado]));
@@ -339,7 +346,7 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
           canal: typeof command.canal === 'string' ? (command.canal as UpdateChannel) : guardado.canal,
         };
         change({
-          admin: { aberto: true, naoPerturbe, atenderAuto, blf, ...guardado },
+          admin: { aberto: true, naoPerturbe, atenderAuto, blf, puxa: puxa(blf), ...guardado },
           // Escondido, o botão fica desligado na hora (e mostrar de novo não liga de volta).
           naoPerturbe: naoPerturbe ? state.naoPerturbe : false,
           atenderAutomatico: atenderAuto ? state.atenderAutomatico : { ...state.atenderAutomatico, on: false },
