@@ -256,6 +256,12 @@ jobs:
         if: ${{ !cancelled() && steps.app-novo.outcome == 'success' }}
         run: python build\check_branding.py --repo . --exe out-novo\StarsonicPhone.exe
 
+      # Ruling 19: nenhum gancho de teste no exe de publicação (o STARSONIC_SENHA_ADMIN_TESTE, num release, abriria a
+      # área do administrador com qualquer senha), em ASCII nem em UTF-16LE. A lista dos nomes é a do script.
+      - name: Sem os ganchos de teste no app novo
+        if: ${{ !cancelled() && steps.app-novo.outcome == 'success' }}
+        run: python build\check_test_hooks.py out-novo\StarsonicPhone.exe
+
       - name: Teste do app novo (janela, interface pronta e --sair)
         if: ${{ !cancelled() && steps.app-novo.outcome == 'success' }}
         run: .\tests\smoke\Test-WindowsApp.ps1 -AppDir out-novo
@@ -264,6 +270,11 @@ jobs:
         id: app-novo-teste
         if: ${{ !cancelled() && steps.ui-dist.outcome == 'success' }}
         run: .\build\Build-Windows.ps1 -WorkDir work -Version $env:STARSONIC_VERSION -Channel $env:STARSONIC_CHANNEL -OutDir out-novo-teste -TestHooks
+
+      # O controle do passo "Sem os ganchos de teste no app novo": no build de teste, a mesma busca acha todos os nomes.
+      - name: Os ganchos de teste no build de teste (controle da busca)
+        if: ${{ !cancelled() && steps.app-novo-teste.outcome == 'success' }}
+        run: python build\check_test_hooks.py --presentes out-novo-teste\StarsonicPhone.exe
 
       - name: NSIS
         id: nsis
