@@ -323,8 +323,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     updateHooks.quit = [&window] { window.RunOnWindow([&window] { window.RequestQuit(); }); };
     updater.reset(new AppUpdater(STARSONIC_VERSION, updateChannel, updateHooks));
 
-    // O monitor de rede (rc.3, spec 8): a internet que o Windows ve e o teste DNS do servidor da conta vao ao DesktopApp
-    // (SetInternet so poe na fila). O servidor vem do estado que a janela le (callbacks.accountServer).
+    // O monitor de rede (rc.3, spec 8 e Ruling 16): a rede que o Windows ve e o teste DNS do servidor da conta vao ao
+    // DesktopApp (SetInternet so poe na fila); o "sem internet" do Windows sozinho nunca tira o app do ar. O servidor vem
+    // do estado que a janela le (callbacks.accountServer).
     NetworkMonitor::Hooks networkHooks;
     networkHooks.changed = [&app](bool internet) { app.SetInternet(internet); };
     networkHooks.log = log;

@@ -1,10 +1,12 @@
 #pragma once
-// O monitor de rede do executavel (rc.3, spec 8): diz ao DesktopApp (hooks.changed: DesktopApp::SetInternet, que so poe
-// na fila) quando a internet cai e quando volta, pela decisao do NetworkDecision.h:
+// O monitor de rede do executavel (rc.3, spec 8 e Ruling 16): diz ao DesktopApp (hooks.changed: DesktopApp::SetInternet,
+// que so poe na fila) quando a internet cai e quando volta, pela decisao do NetworkDecision.h (o "sem internet" do
+// Windows sozinho nunca tira o app do ar):
 // - o Windows: o INetworkListManager (COM), lido na abertura e a cada aviso ConnectivityChanged (o sink do
 //   INetworkListManagerEvents), numa thread propria no apartamento multithread (os avisos chegam nas threads do COM);
-// - a cada 30 s, com a internet do Windows e uma conta (SetServer), um teste DNS do servidor da conta (GetAddrInfoW),
-//   numa thread solta por teste: um nome que demora a responder nunca segura o monitor nem o fechamento.
+// - com alguma rede e uma conta num servidor com nome (SetServer; um IP nao tem teste), um teste DNS do servidor a cada
+//   30 s, e na hora quando a rede muda: o DnsQuery_W sem o cache do Windows, numa thread solta por teste, um de cada vez
+//   (um DNS que demora a responder nunca segura o monitor nem o fechamento).
 // Sem o INetworkListManager (o servico do Windows fora), so o teste DNS vale. O valor so vai ao hooks.changed quando
 // muda (o DesktopApp comeca com internet).
 //

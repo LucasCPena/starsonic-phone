@@ -2,10 +2,10 @@
 
 // O winsock2.h antes do windows.h (sozinho, o windows.h traz o winsock.h antigo).
 #include <winsock2.h>
-#include <ws2tcpip.h>
 #include <windows.h>
 
 #include <netlistmgr.h>
+#include <windns.h>
 #include <objbase.h>
 #include <ocidl.h>
 #include <wrl/client.h>
@@ -26,7 +26,11 @@ using Microsoft::WRL::ComPtr;
 
 namespace starsonic {
 
+static_assert(NetworkDecision::kIpv4Subnet == NLM_CONNECTIVITY_IPV4_SUBNET, "o NLM_CONNECTIVITY do Windows");
+static_assert(NetworkDecision::kIpv4LocalNetwork == NLM_CONNECTIVITY_IPV4_LOCALNETWORK, "o NLM_CONNECTIVITY do Windows");
 static_assert(NetworkDecision::kIpv4Internet == NLM_CONNECTIVITY_IPV4_INTERNET, "o NLM_CONNECTIVITY do Windows");
+static_assert(NetworkDecision::kIpv6Subnet == NLM_CONNECTIVITY_IPV6_SUBNET, "o NLM_CONNECTIVITY do Windows");
+static_assert(NetworkDecision::kIpv6LocalNetwork == NLM_CONNECTIVITY_IPV6_LOCALNETWORK, "o NLM_CONNECTIVITY do Windows");
 static_assert(NetworkDecision::kIpv6Internet == NLM_CONNECTIVITY_IPV6_INTERNET, "o NLM_CONNECTIVITY do Windows");
 
 struct NetworkMonitor::Shared {
@@ -41,7 +45,8 @@ struct NetworkMonitor::Shared {
     bool dnsRunning = false;        // um teste DNS a caminho
     bool dnsDone = false;           // um teste terminou e o monitor ainda nao viu
     std::string dnsServer;          // o servidor do teste que terminou
-    bool dnsResolved = false;
+    bool dnsAnswered = false;
+    long dnsStatus = 0;             // o DNS_STATUS dele (o diagnostico)
 
     void Connectivity(int value) {
         std::lock_guard<std::mutex> lock(mutex);
@@ -95,29 +100,27 @@ private:
     std::shared_ptr<NetworkMonitor::Shared> shared_;
 };
 
-// O nome do servidor resolve (GetAddrInfoW: o DNS ou o cache dele; um endereco IP resolve sempre).
-bool Resolves(const std::string& server) {
-    WSADATA data = {};
-    if (WSAStartup(MAKEWORD(2, 2), &data) != 0) return true;   // sem o Winsock, nada a dizer: nao conta como falha
-    ADDRINFOW hints = {};
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_DGRAM;
-    PADDRINFOW found = nullptr;
-    const int error = GetAddrInfoW(Utf8ToWide(server).c_str(), nullptr, &hints, &found);
-    if (found) FreeAddrInfoW(found);
-    WSACleanup();
-    return error == 0;
+// O DNS responde pelo nome do servidor (DnsQuery_W sem o cache do Windows: a pergunta vai a rede, e o arquivo hosts
+// continua valendo, como para o motor). "Esse nome nao existe" e "sem endereco IPv4" tambem sao respostas do DNS: so a
+// falta de resposta (o tempo esgotado, a rede fora, o servidor de DNS que falhou ou recusou) conta como falha.
+bool DnsAnswers(const std::string& server, DNS_STATUS* status) {
+    PDNS_RECORD records = nullptr;
+    *status = DnsQuery_W(Utf8ToWide(server).c_str(), DNS_TYPE_A, DNS_QUERY_BYPASS_CACHE, nullptr, &records, nullptr);
+    if (records) DnsRecordListFree(records, DnsFreeRecordList);
+    return *status == ERROR_SUCCESS || *status == DNS_ERROR_RCODE_NAME_ERROR || *status == DNS_INFO_NO_RECORDS;
 }
 
 // O teste DNS numa thread solta: ninguem a espera (nem o Stop), e ela guarda o resultado para o monitor.
 void StartDnsCheck(const std::shared_ptr<NetworkMonitor::Shared>& shared, const std::string& server) {
     std::thread([shared, server] {
-        const bool resolved = Resolves(server);
+        DNS_STATUS status = 0;
+        const bool answered = DnsAnswers(server, &status);
         std::lock_guard<std::mutex> lock(shared->mutex);
         shared->dnsRunning = false;
         shared->dnsDone = true;
         shared->dnsServer = server;
-        shared->dnsResolved = resolved;
+        shared->dnsAnswered = answered;
+        shared->dnsStatus = static_cast<long>(status);
         shared->wake.notify_all();
     }).detach();
 }
@@ -227,7 +230,8 @@ void NetworkMonitor::Run() {
         // O resultado de um teste do servidor de antes (a conta mudou no meio) nao conta.
         const bool dnsCurrent = shared_->dnsDone && shared_->dnsServer == shared_->server;
         shared_->dnsDone = false;
-        const bool resolved = shared_->dnsResolved;
+        const bool answered = shared_->dnsAnswered;
+        const long dnsStatus = shared_->dnsStatus;
         const std::string server = shared_->server;
         lock.unlock();
 
@@ -235,25 +239,32 @@ void NetworkMonitor::Run() {
             log("rede: conectividade do Windows " + Hex(value));
             report("o Windows", decision.OnConnectivity(value));
         }
-        if (serverChanged) report("outra conta", decision.OnServerChanged());
+        if (serverChanged) report("outra conta", decision.OnServerChanged(server));
         if (forceChanged) report("forcado", decision.Force(force));
         if (dnsCurrent) {
-            if (!resolved && decision.Internet()) log("rede: o servidor " + server + " nao resolveu");
-            report(resolved ? "o servidor da conta resolveu" : "o servidor da conta nao resolveu duas vezes seguidas",
-                   decision.OnDnsResult(resolved));
+            if (!answered && decision.Internet()) {
+                log("rede: o DNS nao respondeu pelo servidor " + server + " (" + std::to_string(dnsStatus) + ")");
+            }
+            report(answered ? "o DNS respondeu pelo servidor da conta"
+                            : "o DNS nao respondeu pelo servidor da conta duas vezes seguidas",
+                   decision.OnDnsResult(answered));
         }
 
         lock.lock();
-        if (Clock::now() >= nextDns) {
-            nextDns = Clock::now() + interval;
-            // Sem conta, ou sem a internet do Windows, nao ha o que testar.
-            if (!shared_->server.empty() && decision.WindowsInternet() && !shared_->dnsRunning && !shared_->stopping) {
-                shared_->dnsRunning = true;
-                try {
-                    StartDnsCheck(shared_, shared_->server);
-                } catch (const std::exception&) {
-                    shared_->dnsRunning = false;   // sem thread: tenta de novo daqui a 30 s
-                }
+        // O teste DNS: a cada 30 s, ou na hora quando a rede mudou. So com um servidor com nome e alguma rede.
+        const Clock::time_point now = Clock::now();
+        const bool tick = now >= nextDns;
+        if (tick) nextDns = now + interval;
+        if ((tick || decision.DnsCheckNow()) && decision.DnsCheckUseful() && !shared_->server.empty() &&
+            !shared_->dnsRunning && !shared_->stopping) {
+            if (!tick) log("rede: a rede mudou: teste DNS de " + shared_->server + " agora");
+            nextDns = now + interval;
+            decision.DnsCheckStarted();
+            shared_->dnsRunning = true;
+            try {
+                StartDnsCheck(shared_, shared_->server);
+            } catch (const std::exception&) {
+                shared_->dnsRunning = false;   // sem thread: tenta de novo daqui a 30 s
             }
         }
     }
