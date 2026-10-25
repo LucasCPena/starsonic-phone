@@ -238,6 +238,47 @@ for (const [largura, altura] of [
   });
 }
 
+// O menu do "Mais opções" (Editar e Remover, de 170 px) abre inteiro dentro da janela nas duas colunas: o cartão da
+// esquerda do Compacto e do Mínimo tem só 132 a 152 px, e o menu preso à borda direita dele saía pela esquerda da
+// janela. Vale o canto da janela e o corpo da aba (o que o corpo corta, o clique não alcança).
+for (const [largura, altura] of [
+  [300, 440],
+  [340, 560],
+  [400, 720],
+] as Array<[number, number]>) {
+  test(`the Mais opções menu opens inside the window for a card in each column at ${largura}×${altura}`, async ({ page }) => {
+    await page.setViewportSize({ width: largura, height: altura });
+    await abrir(page, 'atalhos');
+    for (const nome of NOMES) {
+      await page.getByRole('button', { name: `Mais opções para ${nome}` }).click();
+      const menu = page.getByRole('menu', { name: `Opções de ${nome}` });
+      await expect(menu, nome).toBeVisible();
+      const m = await caixa(menu);
+      const onde = JSON.stringify(m);
+      expect(m.x, `${nome}: o menu sai pela esquerda da janela ${onde}`).toBeGreaterThanOrEqual(-0.5);
+      expect(m.x + m.width, `${nome}: o menu sai pela direita da janela ${onde}`).toBeLessThanOrEqual(largura + 0.5);
+      expect(m.y, `${nome}: o menu sai por cima da janela ${onde}`).toBeGreaterThanOrEqual(-0.5);
+      expect(m.y + m.height, `${nome}: o menu sai por baixo da janela ${onde}`).toBeLessThanOrEqual(altura + 0.5);
+      // Inteiro à vista: nenhum canto dele é cortado pelo corpo da aba (o ponto de dentro acerta no menu).
+      const inteiro = await menu.evaluate((e) => {
+        const r = e.getBoundingClientRect();
+        return [
+          [r.left + 10, r.top + 10],
+          [r.right - 10, r.top + 10],
+          [r.left + 10, r.bottom - 10],
+          [r.right - 10, r.bottom - 10],
+        ].every(([x, y]) => {
+          const alvo = document.elementFromPoint(x, y);
+          return alvo !== null && e.contains(alvo);
+        });
+      });
+      expect(inteiro, `${nome}: o menu está cortado ${onde}`).toBe(true);
+      await page.keyboard.press('Escape');
+      await expect(menu, nome).toHaveCount(0);
+    }
+  });
+}
+
 test.describe('a aba Atalhos', () => {
   test('a click uses the shortcut, Enviar teclas waits for a call and the right button edits', async ({ page }) => {
     await abrir(page, 'atalhos');

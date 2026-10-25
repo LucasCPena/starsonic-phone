@@ -28,12 +28,14 @@ interface Props {
 interface CartaoProps {
   atalho: Shortcut;
   usavel: boolean;
+  /** A coluna da grade: o menu do ⋯ abre para o lado que cabe na janela (na esquerda, para a direita). */
+  coluna: 'esquerda' | 'direita';
   send: Send;
   onEdit(): void;
   onRemove(): void;
 }
 
-function Cartao({ atalho, usavel, send, onEdit, onRemove }: CartaoProps) {
+function Cartao({ atalho, usavel, coluna, send, onEdit, onRemove }: CartaoProps) {
   const [menu, setMenu] = useState<'baixo' | 'cima' | null>(null);
   const mais = useRef<HTMLButtonElement>(null);
   const abrirMenu = () => {
@@ -81,7 +83,7 @@ function Cartao({ atalho, usavel, send, onEdit, onRemove }: CartaoProps) {
         <IconMore size="sm" />
       </button>
       {menu && (
-        <Menu label={`Opções de ${atalho.nome}`} anchor={mais} onClose={() => setMenu(null)} class={`popover-atalho popover-${menu}`}>
+        <Menu label={`Opções de ${atalho.nome}`} anchor={mais} onClose={() => setMenu(null)} class={`popover-atalho popover-${menu} popover-${coluna}`}>
           <button type="button" role="menuitem" class="menuitem" onClick={() => (setMenu(null), onEdit())}>
             <IconPencil size="sm" />
             Editar
@@ -124,6 +126,7 @@ export function Atalhos({ atalhos, ligacao, send, onNew, onEdit }: Props) {
             key={a.id}
             atalho={a}
             usavel={shortcutUsable(a.acao, ligacao)}
+            coluna={i % 2 === 0 ? 'esquerda' : 'direita'}
             send={send}
             onEdit={() => onEdit(a, i + 1)}
             onRemove={() => setRemover(a)}
