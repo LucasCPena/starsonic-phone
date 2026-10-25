@@ -358,6 +358,20 @@ O que entrou depois da rc.1, aprovado pelo responsável em 22/10/2026 no canvas 
 - **Rediscar** à esquerda do Ligar: liga para a feita mais nova dos Recentes pelo mesmo `dial` do botão da linha dos Recentes (sem mudança na ponte); também no painel Nova ligação, e não no teclado dos tons.
 - **A bolinha da conta**: verde conectado, vermelho "Ocupado · em ligação" com uma ligação (tocando também; durante a ligação, na barra de título, porque a tela da ligação esconde o cabeçalho), ciano conectando, cinza sem conexão e no erro do cadastro (este com o triângulo de atenção). O verde é o token novo `--status-online: #22c55e`: a marca não tem verde (o único é o do WhatsApp, reservado a ele), e este é um pedido explícito do responsável, decisão dele. A bandeja segue as mesmas cores: o conectado com o ponto verde e o ícone novo "em ligação" com o ponto vermelho enquanto existe uma ligação da conta conectada.
 
+### rc.3 (0.1.0-rc.3)
+
+O que entrou depois da rc.2 tem spec própria: `2026-10-22-starsonic-phone-windows-w3-atalhos-blf-adm-design.md`, aprovada pelo responsável em 22/10/2026 no canvas "Starsonic Phone Windows — atalhos, administrador e status". Ela traz os atalhos com BLF e puxar ligação, a área do administrador (Ctrl + P), o bipe do fim da ligação e a bolinha com o Não perturbe e a internet. O que ela muda no texto acima:
+
+- **A navegação** ganha a aba Atalhos, entre Teclado e Recentes. Ctrl+1 a 4 seguem a ordem nova: Teclado, Atalhos, Recentes e Contatos.
+- **A bolinha da conta e a bandeja** seguem a tabela da seção 7 da spec nova:
+  - sem internet, cinza com "Sem internet · tentando de novo";
+  - o Não perturbe, vermelho com "Não perturbe · as ligações não tocam".
+  - Na bandeja, o ícone de sem conexão vence o de perdida.
+- **O Ctrl + P** abre a área do administrador e nunca imprime.
+- **Os botões Não perturbe e Atender automático** podem ser escondidos pela área. Escondido, o recurso fica desligado, e o Não perturbe sai também do menu da bandeja.
+- **A porta por servidor** (revisão 1.5) passa a vir da lista da área do administrador, que começa com a do `perfil.ini`.
+- **O canal de atualização** pode ser trocado na área. O do build continua sendo o de fábrica.
+
 ## 14. Próximos passos
 
 1. O plano de implementação desta spec (`writing-plans`), na ordem: motor (dispositivos de áudio) e controlador com os testes portados; lojas e migração; ponte e janela Win32 com o WebView2; interface (telas do canvas) com os testes do Playwright; aviso, bandeja e links; instalador e build; roteiro manual e a `0.1.0-rc.1`.

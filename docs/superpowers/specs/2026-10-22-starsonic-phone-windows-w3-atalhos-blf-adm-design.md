@@ -1,7 +1,7 @@
 # Starsonic Phone para Windows: atalhos com BLF, área do administrador, bipe e status (especificação de design)
 
 - **Data:** 22/10/2026
-- **Status:** desenho aprovado pelo responsável em 22/10/2026, no chat e no canvas "Starsonic Phone Windows — atalhos, administrador e status" (claude.ai, 7 quadros). Esta spec aguarda a revisão escrita.
+- **Status:** implementada na 0.1.0-rc.3 (25/10/2026). O que mudou durante a construção está na seção "Como ficou", no fim. O desenho foi aprovado pelo responsável em 22/10/2026, no chat e no canvas "Starsonic Phone Windows — atalhos, administrador e status" (claude.ai, 7 quadros), e esta spec, na revisão escrita do mesmo dia.
 - **Versão alvo:** 0.1.0-rc.3 (canal de teste).
 - **Base:** a W1 (`2026-10-21-starsonic-phone-windows-w1-design.md`) com a rc.2. Esta etapa traz a W3 (BLF) para dentro dos atalhos. A W2 (gravação) continua depois.
 
@@ -210,3 +210,101 @@ Esta tabela substitui a da rc.2. A ordem é a prioridade: vale a primeira linha 
 - BLF fora dos atalhos, como Contatos com presença, a não ser que o responsável peça.
 - Atalhos por conta.
 - Senha por cliente.
+
+## Como ficou
+
+O que mudou em relação ao texto acima durante a construção da 0.1.0-rc.3 (plano `docs/superpowers/plans/2026-10-22-windows-rc3-atalhos-blf-adm.md`), uma linha por item, com o motivo. O contrato da ponte é o `docs/ponte-windows.md`, e o roteiro manual são as seções 16 a 18 do `docs/teste-manual.md`.
+
+### Decisões tomadas durante a construção
+
+- **As abas no Compacto (3.1).** No Compacto, as quatro abas mostram o ícone e o rótulo, porque cabem. Só o Mínimo fica só com os ícones, como as outras abas já ficavam. A frase "a aba aparece só com o ícone" pensava no Mínimo, e uma aba diferente das outras confundia.
+- **Os cartões (3.1).**
+  - No Compacto e no Mínimo, o cartão fica sem o ícone da ação: a ação já está escrita na linha de baixo, e o nome precisa do espaço.
+  - No Normal, a linha do BLF começa embaixo do ícone: a 380 px, "Desconectado" com o botão ⋯ não cabe na coluna do texto.
+  - O teclado chega à edição pelo botão "Mais opções" (⋯) do cartão, com "Editar" e "Remover".
+- **O painel da ligação (3.1 e 3.2).**
+  - O botão Atalhos é mais um controle na grade da ligação. Ele fica travado enquanto chama e não aparece na consulta nem na conferência.
+  - Com duas ligações, "Ligar" e "Transferir com consulta" ficam desativados no painel, porque fechavam o painel sem fazer nada.
+  - Com só uma ligação tocando, sem atender, os cartões ficam desativados.
+  - Fora da ligação, "Enviar teclas" fica desativado. Por isso, um atalho "Enviar teclas" de um ramal tocando (raro) não puxa a ligação fora dela.
+- **A edição (3.3).**
+  - A edição só fecha quando o programa confirma a gravação, para não perder o que foi digitado se a gravação for recusada.
+  - O nome não aceita caractere de controle.
+  - "Enviar teclas" manda só os dígitos de tom (`0-9`, `*` e `#`) e tira o `+`.
+- **O BLF (4).**
+  - **Vários diálogos.** O estado de um ramal junta todos os diálogos que a central manda: tocando se algum toca, senão ocupado se algum fala, senão livre. Com só o primeiro, um ramal ocupado com uma segunda ligação tocando aparecia ocupado, e o puxar não funcionava.
+  - **Fora do padrão.** Um estado de diálogo fora da RFC conta como livre.
+  - **Sem registro.** Enquanto a conta não está registrada, todo atalho com BLF mostra "Desconectado". O último estado que a central mandou fica guardado e volta com o registro, porque a central só avisa quando muda.
+  - **A volta.** As assinaturas voltam no primeiro registro depois da volta da internet, e não só uma vez.
+- **O código de puxar (4 e 6.2).** Aceita só dígitos, `*`, `#`, `+` e `{ramal}`. Todo `{ramal}` é trocado, e um código sem ele é discado como está.
+- **O bipe (5).**
+  - Toca uma vez quando a última ligação atendida termina, inclusive quando a internet cai no meio dela. Se duas terminam juntas, toca um bipe só.
+  - O volume é o do bipe de espera.
+- **A senha (6.1).**
+  - A contagem dos 5 erros fica só na memória: abrir o app de novo zera a contagem.
+  - Os 10 minutos sem uso contam a partir do último comando da área.
+  - Ctrl + P vale também na tela Entrar. Durante a ligação, ele não abre nada, e uma ligação que chega fecha o diálogo.
+- **Esconder os botões (6.2).** Esconder o Não perturbe ou o Atender automático desliga o recurso na hora e grava a mudança. Depois disso, o comando que o ligaria é recusado. Mostrar de novo não liga de volta.
+- **Os servidores (6.2).**
+  - A lista da área é a tabela de portas do perfil: o starcloud1 na 35060.
+  - Um servidor fora da lista usa a porta de fábrica. A área mostra a linha fixa "Outros servidores · porta 5060" em vez de cadastrar o starcloud.
+  - O endereço não aceita espaço, `:porta` nem repetidos.
+  - Mudar a porta do servidor da conta em uso vale na hora: a conta registra de novo.
+- **O canal (6.2).** O canal é "teste", "estavel" ou vazio, e vazio quer dizer o do build. Na área, o vazio aparece como Teste, o canal destes builds. Enquanto não existe versão estável, o canal Estável não oferece nada e não mostra erro.
+- **A bolinha (7).**
+  - "Sem conexão" (a central não responde) fica na linha do erro, em cinza e sem o triângulo, acima de "em ligação" e do Não perturbe.
+  - O ícone da bandeja segue a mesma tabela. Sem internet, conectando, no erro ou sem conexão, ele mostra o de sem conexão, que também vence a perdida e o Não perturbe. A perdida volta com a conexão.
+- **A internet (8).**
+  - **Por que mudou.** O "sem internet" do Windows, sozinho, não tira o app do ar. Atrás de proxy ou firewall de empresa, e em portais, o Windows diz "sem internet" com o SIP funcionando. Os usuários são as empresas clientes.
+  - **Quando o Windows diz que não há rede nenhuma** (cabo fora, Wi-Fi desligado):
+    - a bolinha fica cinza com "Sem internet · tentando de novo";
+    - o motor para de tentar registrar;
+    - o motor não manda mais o "sair" (REGISTER com Expires 0) para a central: se a rede estiver de fato fora, ele não chega, e, se o aviso for falso, tiraria o ramal do ar à toa. O registro fica na central e vence sozinho numa queda de verdade; com um aviso falso, o ramal continua recebendo.
+  - **O DNS do servidor da conta** é testado a cada 30 s, sem o cache do Windows. Um "nome não existe" conta como resposta.
+  - **Quando o DNS falha duas vezes seguidas:** só conta com a conta sem registro, e só muda a bolinha. O motor continua como estava.
+  - **Com o ramal conectado,** o DNS nunca tira o app do ar. Numa queda só do DNS, a central e a internet continuam de pé, e o endereço da central fica em cache por até 4 h. Na rc.2 o ramal seguia tocando nesse caso, e continua seguindo.
+  - **Quando o DNS volta a responder ou a conta conecta:** volta o verde. Se o ramal não estava registrado, ele registra na hora.
+  - **O "sem internet" do Windows com rede local:** só faz o teste rodar na hora.
+  - **Servidor dado por IP:** só vale o aviso do Windows.
+  - **A conectividade do Windows:** é lida de novo a cada 30 s, além dos avisos dele, para o app nunca ficar preso em "Sem internet" com a rede de volta.
+  - **Um teste de DNS que não responde:** depois de dois intervalos, conta como perdido.
+  - **Na fumaça do CI:** um gancho que só existe no build de teste força a visão da internet, e uma sessão usa o servidor por nome (o arquivo hosts do runner).
+- **O BLF depois de perder o registro (4).** Quando a conta perde o registro sem a internet cair (um 503 no refresh, uma central reiniciada), as assinaturas de antes são refeitas no registro seguinte. Sem isso, um atalho podia mostrar um estado velho por até 10 minutos.
+- **O puxar na ajuda (4).** A frase "Num ramal tocando, o clique puxa a ligação." só aparece na aba quando o puxar está de fato ligado: o BLF e o puxar ligados, com o código preenchido. A ponte manda isso como `admin.puxa`, também com a área fechada. Sem isso, com o BLF ligado e o puxar desligado, a ajuda prometia puxar a ligação, e um clique num atalho Transferir de um ramal tocando transferia a ligação do cliente.
+- **Remover servidor (6.2)** pergunta antes, como os contatos, as contas e os atalhos. Um deslize no starcloud1 fazia a conta registrar na porta 5060 e parar de receber.
+- **O foco.** Ao abrir a edição, a área do administrador ou o formulário de servidor, o foco vai para o primeiro campo ou para o título. Ao fechar, ele volta para quem abriu.
+- **A barra de título na ligação.** Com uma mensagem de cadastro longa, o texto encolhe com reticências, e Minimizar e Fechar continuam na janela.
+- **Diferenças do canvas sem ruling próprio:**
+  - a grade de uma ligação tem quatro colunas, com o controle Atalhos;
+  - a edição e a área do administrador usam a barra escura do app, os títulos acima dos cartões e as chaves ciano das Configurações;
+  - as Configurações mantêm as ajudas de hoje para Iniciar com o Windows e Atender automaticamente.
+- **Os testes da senha (10).**
+  - Os testes usam uma senha descartável, com sal e chave próprios.
+  - Os testes que conferem o resumo embutido contra a senha de verdade só rodam com `STARSONIC_ADMIN_PASSWORD` no ambiente. Não há secret no CI, então lá eles ficam de fora.
+  - A fumaça entra na área por um substituto que só existe no build de teste (`STARSONIC_SENHA_ADMIN_TESTE`). O exe de release não tem esse nome, e o build confere isso.
+
+### Textos novos fora da seção 11 (para aprovar)
+
+**Do canvas** (as ajudas que a seção 11 cita sem escrever):
+- "Clique para usar. Clique com o botão direito para editar. Num ramal tocando, o clique puxa a ligação." (a última frase só com o puxar ligado)
+- **A linha de baixo do cartão:** "Ligar · <n>", "Transferir · <n>", "Consulta · <n>", "Enviar teclas · <n>".
+- **O painel da ligação:** "Nova ligação para <n>", "Transferir para <n>", "Consulta com <n>", "Enviar as teclas <n>", "Fechar atalhos".
+- **As ajudas das ações:** "Liga para o número.", "Durante a ligação, passa direto para o número.", "Fala antes com o número e depois passa a ligação.", "Durante a ligação, digita o número (ex.: *88)."
+- **A chave do BLF:** "Livre, ocupado ou tocando (BLF)."
+- **A área do administrador:**
+  - "Starsonic Phone · Administrador", "Starsonic", "Botões da tela principal", "Atalhos", "Servidores", "Atualizações".
+  - "Desligado: o botão some e ninguém liga o Não perturbe.", "Desligado: o botão some da tela principal."
+  - "Mostra se cada ramal está livre, ocupado ou tocando. O servidor precisa ter o BLF ligado."
+  - "Clicar num ramal tocando atende a ligação dele."
+  - "Depende da central do cliente. {ramal} vira o número do ramal que está tocando (ex.: **2007 ou *8)."
+  - "Porta <p> · UDP e TCP", "Editar".
+- **O bipe:** "Vem ligado. Um bipe curto no fone quando a outra pessoa desliga ou a ligação cai."
+
+**Novos** (nem na seção 11 nem no canvas):
+- "Muitas tentativas. Tente de novo em <n> s."
+- "Outros servidores · porta 5060"
+- **Remover:** "Remover atalho", "<nome> sai da lista de atalhos.", "Remover servidor", "<endereço> sai da lista de servidores.", "Remover".
+- **O menu do cartão:** "Mais opções para <nome>", "Mais opções", "Opções de <nome>", "Editar", "Remover".
+- **O servidor:** "Endereço", "Porta", "Salvar servidor", "Cancelar", "Editar o servidor <endereço>".
+- **Os avisos da gravação:** "Digite o nome do atalho.", "Digite o número do atalho."
+- **Palavras da seção 11 num lugar novo:** "Atalhos" no botão da tela da ligação, e "Adicionar atalho" como título da edição de um atalho novo.

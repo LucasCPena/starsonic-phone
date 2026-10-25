@@ -1,0 +1,5 @@
+Atalhos: até 8 na aba nova Atalhos e durante a ligação, para ligar, transferir, transferir com consulta ou enviar teclas.
+Com o BLF ligado pela Starsonic, o atalho mostra se o ramal está livre, tocando ou ocupado, e pode puxar a ligação de um ramal tocando.
+Um bipe curto avisa quando a ligação cai ou termina (dá para desligar em Configurações → Ligações).
+A bolinha da conta fica vermelha com o Não perturbe ligado e cinza quando a internet cai.
+Esta é uma versão de teste.
