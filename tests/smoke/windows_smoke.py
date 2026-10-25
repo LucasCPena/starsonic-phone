@@ -37,11 +37,17 @@ Fumaça (padrão), contra o StarsonicPhone.exe instalado do build de teste (STAR
    aceita, e a senha de verdade nunca vai ao CI): o Ctrl + P pelo teclado de verdade, com a janela na frente, abre o
    diálogo "Área do administrador" sem imprimir (o beforeprint da página não dispara); a senha de teste abre a área
    (captura admin.png) e liga o BLF nos atalhos; um atalho para 2002 com o BLF mostra Livre, Ocupado com o
-   "BLF 2002 confirmed" do registrador falso (captura atalhos.png) e Livre de novo; com uma ligação tocando, o Ctrl + P
-   no aviso não abre nada nem imprime; o gancho de teste "--teste-internet off" deixa a bolinha cinza com
-   "Sem internet · tentando de novo" e a bandeja sem conexão ("bandeja: sem conexao" no diagnostico.log; captura
-   sem-internet.png), e o "--teste-internet on" mostra "Conectando…" e depois o verde ("bandeja: conectado").
-Os itens 7, 8 e 9 juntam o que falhou e reprovam no fim (um não esconde o outro).
+   "BLF 2002 confirmed" do registrador falso (captura atalhos.png) e Livre de novo; o gancho de teste
+   "--teste-internet off" deixa a bolinha cinza com "Sem internet · tentando de novo" e a bandeja sem conexão
+   ("bandeja: sem conexao" no diagnostico.log; captura sem-internet.png), e o "--teste-internet on" mostra
+   "Conectando…" e depois o verde ("bandeja: conectado"); com uma ligação tocando, o Ctrl + P mandado pelo CDP à página
+   do aviso não abre nada nem imprime (o CDP não passa pelo AcceleratorKeyPressed do executável: confere só a página);
+10. (rc.3, Ruling 16) uma sessão com o servidor por nome, o caminho do DNS de toda conta de produção: o nome
+   sip.fumaca-starsonic.test vai para o arquivo hosts do runner (127.0.0.1; o arquivo volta no fim) e a conta entra
+   nele, com o teste DNS do monitor a cada STARSONIC_TESTE_DNS_MS (só o build de teste, cada resultado no
+   diagnostico.log): registra verde, os testes DNS rodam e respondem, a bolinha fica verde por mais de dois intervalos e
+   nenhum "o DNS nao respondeu" aparece. O código do DNS fica no resultado (0: o hosts valeu; 9003: o nome foi ao DNS).
+Os itens 7 a 10 juntam o que falhou e reprovam no fim (um não esconde o outro).
 Na escala de 100%, a área da interface tem 400x720 lógicos (as bordas invisíveis de redimensionar ficam fora dela). A escala de 150% de verdade (outro DPI) não dá para mudar no runner.
 
 Ensaio da atualização (--ensaio): o app já foi aberto pelo instalador (por cima da rc.7, com a variável do CDP no
@@ -60,6 +66,7 @@ import argparse
 import json
 import os
 import pathlib
+import re
 import socket
 import subprocess
 import sys
@@ -104,6 +111,14 @@ CONNECTING = "Conectando…"
 INTERNET_HOOK = "--teste-internet"
 TRAY_OFFLINE = "bandeja: sem conexao"
 TRAY_CONNECTED = "bandeja: conectado"
+# Ruling 16: a sessão com o servidor por nome (o arquivo hosts do runner aponta o nome para o registrador falso) e o
+# intervalo curto do teste DNS do monitor (só o build de teste; com ele, cada resultado vai ao diagnostico.log).
+DNS_NAME = "sip.fumaca-starsonic.test"
+DNS_PERIOD_VARIABLE = "STARSONIC_TESTE_DNS_MS"
+DNS_PERIOD_MS = 2000
+DNS_ANSWERED = "rede: o DNS respondeu pelo servidor " + DNS_NAME
+DNS_FAILED = "o DNS nao respondeu"
+HOSTS_FILE = pathlib.Path(os.environ.get("SystemRoot", "C:\\Windows")) / "System32" / "drivers" / "etc" / "hosts"
 
 
 class SmokeFailure(Exception):
@@ -863,8 +878,14 @@ def run_smoke(args, result):
             run_rc3(pw, win, exe, data_dir, registrar, capturas, result, problems)
             if problems:
                 raise SmokeFailure("; ".join(problems))
-            log("OK: o Ctrl + P abriu o administrador sem imprimir, o BLF mostrou Livre e Ocupado, o aviso ignorou o "
-                "Ctrl + P e a bolinha ficou cinza sem internet e voltou ao verde")
+            log("OK: o Ctrl + P abriu o administrador sem imprimir, o BLF mostrou Livre e Ocupado, a bolinha ficou "
+                "cinza sem internet e voltou ao verde, e a pagina do aviso ignorou o Ctrl + P")
+
+            # 10. (Ruling 16) O servidor por nome: o teste DNS de verdade.
+            run_dns_name(pw, exe, capturas, result, problems)
+            if problems:
+                raise SmokeFailure("; ".join(problems))
+            log("OK: a conta pelo nome %s registrou, o teste DNS respondeu e a bolinha ficou verde" % DNS_NAME)
     finally:
         if app:
             app.kill()
@@ -1306,7 +1327,8 @@ def run_rc3(pw, win, exe, data_dir, registrar, capturas, result, problems):
             ("area do administrador", lambda: open_admin_with_blf(page, capturas, result, record, problems)),
             ("BLF do atalho", lambda: check_blf_shortcut(page, registrar, capturas, result, record, problems)),
             ("internet", lambda: check_internet_hook(exe, page, data_dir, capturas, result, record, problems)),
-            ("Ctrl + P no aviso", lambda: check_ctrl_p_notice(win, hwnd, browser, page, registrar, record, problems)),
+            ("Ctrl + P na pagina do aviso (CDP)",
+             lambda: check_ctrl_p_notice_page(win, hwnd, browser, page, registrar, record, problems)),
         )
         for name, step in steps:
             try:
@@ -1468,9 +1490,11 @@ def check_internet_hook(exe, page, data_dir, capturas, result, record, problems)
                         % TRAY_CONNECTED)
 
 
-def check_ctrl_p_notice(win, hwnd, browser, page, registrar, record, problems):
-    """Com uma ligação tocando e o aviso na tela, o Ctrl + P no aviso não abre nada (nem na janela principal), não
-    imprime e o aviso continua com a ligação; o Recusar dele recusa."""
+def check_ctrl_p_notice_page(win, hwnd, browser, page, registrar, record, problems):
+    """Com uma ligação tocando e o aviso na tela, o Ctrl + P mandado pelo CDP à página do aviso não abre nada (nem na
+    janela principal), não imprime e o aviso continua com a ligação; o Recusar dele recusa. O CDP entrega a tecla direto
+    à página, sem passar pelo AcceleratorKeyPressed do WebView2 do executável: confere só a página do aviso (o teclado de
+    verdade não chega ao aviso, que nunca fica ativo)."""
     notice_page = find_page(browser, "/aviso.html", 30, page.wait_for_timeout)
     win.minimize(hwnd)
     wait_for(lambda: win.minimized(hwnd), 10, pump=page.wait_for_timeout)
@@ -1497,14 +1521,14 @@ def check_ctrl_p_notice(win, hwnd, browser, page, registrar, record, problems):
             "dialogo_do_administrador": page.locator("dialog.dialog-adm[open]").count(),
             "aviso_com_a_ligacao": notice_page.locator('[role="alertdialog"]').is_visible(),
         }
-        record["ctrl_p_aviso"] = info
-        log("Ctrl + P no aviso: %s" % info)
+        record["ctrl_p_pagina_do_aviso"] = info
+        log("Ctrl + P na pagina do aviso (pelo CDP, sem o AcceleratorKeyPressed do executavel): %s" % info)
         if info["impressoes_no_aviso"] != notice_before or info["impressoes_na_principal"] != main_before:
-            problems.append("o Ctrl + P no aviso comecou uma impressao (beforeprint): %s" % info)
+            problems.append("o Ctrl + P (CDP) na pagina do aviso comecou uma impressao (beforeprint): %s" % info)
         if info["dialogos_no_aviso"] or info["dialogo_do_administrador"]:
-            problems.append("o Ctrl + P no aviso abriu um dialogo: %s" % info)
+            problems.append("o Ctrl + P (CDP) na pagina do aviso abriu um dialogo: %s" % info)
         if not info["aviso_com_a_ligacao"]:
-            problems.append("depois do Ctrl + P, o aviso nao mostra mais a ligacao: %s" % info)
+            problems.append("depois do Ctrl + P (CDP), a pagina do aviso nao mostra mais a ligacao: %s" % info)
         notice_page.get_by_role("button", name="Recusar").click(timeout=10000)
         if not wait_for(lambda: count_events(registrar.events(), "inv-out %s 486" % RAMAL) > refused_before, 20,
                         pump=page.wait_for_timeout):
@@ -1515,6 +1539,85 @@ def check_ctrl_p_notice(win, hwnd, browser, page, registrar, record, problems):
             registrar.command("HANGUP " + RAMAL)
         win.restore(hwnd)
         wait_for(lambda: not win.minimized(hwnd), 10, pump=page.wait_for_timeout)
+
+
+def hosts_with(original, address, name):
+    """O arquivo hosts (os bytes dele) com a linha "<address> <name>" no fim, numa linha própria."""
+    text = original
+    if text and not text.endswith(b"\n"):
+        text += b"\r\n"
+    return text + ("%s %s\r\n" % (address, name)).encode("ascii")
+
+
+def flush_dns():
+    subprocess.run(["ipconfig", "/flushdns"], capture_output=True, timeout=60)
+
+
+def run_dns_name(pw, exe, capturas, result, problems):
+    """O item 10 (Ruling 16): uma conta no servidor por nome (o hosts do runner o aponta para o registrador falso), com o
+    teste DNS do monitor a cada DNS_PERIOD_MS. Os problemas vão para problems; o hosts volta como era."""
+    sleep = lambda ms: time.sleep(ms / 1000.0)   # noqa: E731
+    record = result.setdefault("dns_por_nome", {"servidor": DNS_NAME, "intervalo_ms": DNS_PERIOD_MS})
+    # Os argumentos do CDP so valem para um WebView2 que ainda nao esta aberto.
+    if not wait_for(lambda: webview_processes() == 0, 40, interval=1):
+        problems.append("servidor por nome: o WebView2 da abertura anterior nao saiu")
+    data_dir = pathlib.Path(tempfile.mkdtemp(prefix="starsonic-fumaca-dns-"))
+    original = HOSTS_FILE.read_bytes()
+    HOSTS_FILE.write_bytes(hosts_with(original, SERVER, DNS_NAME))
+    flush_dns()
+    app = None
+    try:
+        app = App(exe, data_dir, {DNS_PERIOD_VARIABLE: str(DNS_PERIOD_MS)})
+        browser = connect(pw)
+        page = find_page(browser, "/index.html", 60, sleep)
+        page.locator("#entrar-servidor").wait_for(timeout=60000)
+        page.locator("#entrar-servidor").fill(DNS_NAME)
+        page.locator("#entrar-ramal").fill(RAMAL)
+        page.locator("#entrar-senha").fill(SENHA)
+        page.locator("form button[type=submit]").click()
+        connected = "Conectado · " + DNS_NAME
+        page.get_by_text(connected).first.wait_for(timeout=40000)
+        log("entrou pelo nome: '%s'" % connected)
+        # A bolinha por mais de dois intervalos do teste DNS (e ate dois testes responderem).
+        colors = {}
+        texts = set()
+        started = time.monotonic()
+        while True:
+            status = page.evaluate(ACCOUNT_STATUS_SCRIPT)
+            colors[account_dot(status)] = colors.get(account_dot(status), 0) + 1
+            texts.add(status["texto"])
+            elapsed = time.monotonic() - started
+            answered = count_lines(read_log(data_dir), DNS_ANSWERED)
+            if (elapsed >= 2.5 * DNS_PERIOD_MS / 1000.0 and answered >= 2) or elapsed >= 30:
+                break
+            page.wait_for_timeout(250)
+        text = read_log(data_dir)
+        record.update({
+            "cores": colors,
+            "textos": sorted(texts),
+            "segundos": round(time.monotonic() - started, 1),
+            "respostas": count_lines(text, DNS_ANSWERED),
+            "falhas": count_lines(text, DNS_FAILED),
+            # 0: o DnsQuery_W leu o hosts; 9003 (o nome nao existe): a pergunta foi ao DNS da rede.
+            "codigos": sorted(set(re.findall(re.escape(DNS_ANSWERED) + r" \((-?\d+)\)", text))),
+        })
+        log("servidor por nome: %s" % record)
+        if set(colors) != {"verde"}:
+            problems.append("com o servidor por nome, a bolinha nao ficou so verde: %s" % record)
+        if record["respostas"] < 2:
+            problems.append("com o servidor por nome, o teste DNS nao respondeu duas vezes ('%s' no diagnostico.log): %s"
+                            % (DNS_ANSWERED, record))
+        if record["falhas"]:
+            problems.append("com o servidor por nome, o diagnostico.log tem '%s': %s" % (DNS_FAILED, record))
+        browser.close()
+        app.quit()
+        app = None
+    finally:
+        if app:
+            app.kill()
+        HOSTS_FILE.write_bytes(original)
+        flush_dns()
+        show_log(data_dir / "diagnostico.log")
 
 
 def run_rehearsal(args, result):

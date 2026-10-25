@@ -168,3 +168,9 @@ class Rc3HelpersTest(unittest.TestCase):
         self.assertEqual(windows_smoke.account_dot({"texto": "x", "bolinha": "dot"}), "ciano")
         self.assertIsNone(windows_smoke.account_dot({"texto": None, "bolinha": None}))
         self.assertIsNone(windows_smoke.account_dot(None))
+
+    def test_the_hosts_entry_goes_on_a_line_of_its_own(self):
+        self.assertEqual(windows_smoke.hosts_with(b"127.0.0.1 localhost", "127.0.0.1", "sip.fumaca-starsonic.test"),
+                         b"127.0.0.1 localhost\r\n127.0.0.1 sip.fumaca-starsonic.test\r\n")
+        self.assertEqual(windows_smoke.hosts_with(b"# hosts\r\n", "127.0.0.1", "a.test"), b"# hosts\r\n127.0.0.1 a.test\r\n")
+        self.assertEqual(windows_smoke.hosts_with(b"", "127.0.0.1", "a.test"), b"127.0.0.1 a.test\r\n")
