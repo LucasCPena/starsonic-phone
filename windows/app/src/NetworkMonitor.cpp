@@ -13,13 +13,14 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <cstdio>
-#include <deque>
 #include <exception>
 #include <mutex>
 #include <utility>
 
 #include "NetworkDecision.h"
+#include "NetworkLoop.h"
 #include "Text.h"
 
 using Microsoft::WRL::ComPtr;
@@ -37,28 +38,29 @@ struct NetworkMonitor::Shared {
     std::mutex mutex;
     std::condition_variable wake;
     bool stopping = false;
-    std::deque<int> connectivity;   // os avisos do Windows que o monitor ainda nao viu
-    std::string server;             // o servidor da conta ("" sem conta)
+    bool windowsChanged = false;   // um aviso do Windows chegou (o monitor le a conectividade de novo)
+    std::string server;            // o servidor da conta ("" sem conta)
     bool serverChanged = false;
     bool forceChanged = false;
     std::optional<bool> force;
-    bool dnsRunning = false;        // um teste DNS a caminho
-    bool dnsDone = false;           // um teste terminou e o monitor ainda nao viu
-    std::string dnsServer;          // o servidor do teste que terminou
+    bool dnsDone = false;          // um teste DNS terminou e o monitor ainda nao viu
+    uint64_t dnsTicket = 0;        // a vez dele
     bool dnsAnswered = false;
-    long dnsStatus = 0;             // o DNS_STATUS dele (o diagnostico)
+    long dnsStatus = 0;            // o DNS_STATUS dele (o diagnostico)
 
-    void Connectivity(int value) {
+    void WindowsChanged() {
         std::lock_guard<std::mutex> lock(mutex);
-        connectivity.push_back(value);
+        windowsChanged = true;
         wake.notify_all();
     }
 
     // Com a trava.
-    bool Pending() const { return stopping || !connectivity.empty() || serverChanged || forceChanged || dnsDone; }
+    bool Pending() const { return stopping || windowsChanged || serverChanged || forceChanged || dnsDone; }
 };
 
 namespace {
+
+using Log = std::function<void(const std::string& line)>;
 
 std::string Hex(long value) {
     char text[16];
@@ -66,7 +68,17 @@ std::string Hex(long value) {
     return text;
 }
 
-// Os avisos de conectividade do Windows: o COM chama nas threads dele, e o sink so guarda e acorda o monitor.
+int64_t NowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+
+std::chrono::steady_clock::time_point TimeOf(int64_t ms) {
+    return std::chrono::steady_clock::time_point(std::chrono::milliseconds(ms));
+}
+
+// Os avisos de conectividade do Windows: o COM chama nas threads dele, e o sink so acorda o monitor (que le a
+// conectividade de agora: o argumento do aviso pode ser velho, os avisos chegam em qualquer ordem).
 class ConnectivitySink final : public INetworkListManagerEvents {
 public:
     explicit ConnectivitySink(std::shared_ptr<NetworkMonitor::Shared> shared) : shared_(std::move(shared)) {}
@@ -90,14 +102,91 @@ public:
         return left;
     }
 
-    HRESULT STDMETHODCALLTYPE ConnectivityChanged(NLM_CONNECTIVITY connectivity) override {
-        shared_->Connectivity(static_cast<int>(connectivity));
+    HRESULT STDMETHODCALLTYPE ConnectivityChanged(NLM_CONNECTIVITY) override {
+        shared_->WindowsChanged();
         return S_OK;
     }
 
 private:
     std::atomic<ULONG> references_{1};
     std::shared_ptr<NetworkMonitor::Shared> shared_;
+};
+
+// O INetworkListManager e o sink dos avisos, na thread do monitor (o apartamento multithread). As linhas do diagnostico
+// saem na thread do monitor, fora da trava.
+class WindowsConnectivity {
+public:
+    WindowsConnectivity(std::shared_ptr<NetworkMonitor::Shared> shared, Log log)
+        : shared_(std::move(shared)), log_(std::move(log)) {}
+    ~WindowsConnectivity() { Disconnect(); }
+
+    WindowsConnectivity(const WindowsConnectivity&) = delete;
+    WindowsConnectivity& operator=(const WindowsConnectivity&) = delete;
+
+    // A conectividade de agora. Sem o objeto, ou com ele quebrado (o servico do Windows reiniciou), cria de novo (uma
+    // vez por leitura). Nada: nao deu.
+    std::optional<int> Read() {
+        for (int attempt = 0; attempt < 2; ++attempt) {
+            if (!manager_ && !Connect()) return std::nullopt;
+            NLM_CONNECTIVITY connectivity = NLM_CONNECTIVITY_DISCONNECTED;
+            const HRESULT read = manager_->GetConnectivity(&connectivity);
+            if (SUCCEEDED(read)) {
+                failureLogged_ = false;
+                return static_cast<int>(connectivity);
+            }
+            Disconnect();
+            if (!failureLogged_) log_("rede: o GetConnectivity do Windows falhou (" + Hex(read) + "): de novo");
+            failureLogged_ = true;
+        }
+        return std::nullopt;
+    }
+
+private:
+    bool Connect() {
+        const HRESULT created = CoCreateInstance(__uuidof(NetworkListManager), nullptr, CLSCTX_ALL,
+                                                 __uuidof(INetworkListManager),
+                                                 reinterpret_cast<void**>(manager_.ReleaseAndGetAddressOf()));
+        if (FAILED(created) || !manager_) {
+            manager_.Reset();
+            if (!failureLogged_) {
+                log_("rede: o Windows nao informa a conexao (INetworkListManager " + Hex(created) +
+                     "): o intervalo tenta de novo, e o teste DNS vale");
+            }
+            failureLogged_ = true;
+            return false;
+        }
+        // Os avisos: sem eles, o intervalo le de novo assim mesmo.
+        ComPtr<IConnectionPointContainer> container;
+        HRESULT advised = manager_.As(&container);
+        if (SUCCEEDED(advised)) {
+            advised = container->FindConnectionPoint(__uuidof(INetworkListManagerEvents), point_.ReleaseAndGetAddressOf());
+        }
+        if (SUCCEEDED(advised) && point_) {
+            ConnectivitySink* sink = new ConnectivitySink(shared_);
+            advised = point_->Advise(sink, &cookie_);
+            sink->Release();   // o ponto de conexao guarda a referencia dele
+        }
+        if (FAILED(advised) || !point_) {
+            point_.Reset();
+            cookie_ = 0;
+            log_("rede: sem os avisos de conectividade do Windows (" + Hex(advised) + "): o intervalo le de novo");
+        }
+        return true;
+    }
+
+    void Disconnect() {
+        if (point_ && cookie_) point_->Unadvise(cookie_);
+        point_.Reset();
+        cookie_ = 0;
+        manager_.Reset();
+    }
+
+    std::shared_ptr<NetworkMonitor::Shared> shared_;
+    Log log_;
+    ComPtr<INetworkListManager> manager_;
+    ComPtr<IConnectionPoint> point_;
+    DWORD cookie_ = 0;
+    bool failureLogged_ = false;
 };
 
 // O DNS responde pelo nome do servidor (DnsQuery_W sem o cache do Windows: a pergunta vai a rede, e o arquivo hosts
@@ -110,15 +199,14 @@ bool DnsAnswers(const std::string& server, DNS_STATUS* status) {
     return *status == ERROR_SUCCESS || *status == DNS_ERROR_RCODE_NAME_ERROR || *status == DNS_INFO_NO_RECORDS;
 }
 
-// O teste DNS numa thread solta: ninguem a espera (nem o Stop), e ela guarda o resultado para o monitor.
-void StartDnsCheck(const std::shared_ptr<NetworkMonitor::Shared>& shared, const std::string& server) {
-    std::thread([shared, server] {
+// O teste DNS numa thread solta: ninguem a espera (nem o Stop), e ela guarda o resultado (com a vez) para o monitor.
+void StartDnsCheck(const std::shared_ptr<NetworkMonitor::Shared>& shared, const std::string& server, uint64_t ticket) {
+    std::thread([shared, server, ticket] {
         DNS_STATUS status = 0;
         const bool answered = DnsAnswers(server, &status);
         std::lock_guard<std::mutex> lock(shared->mutex);
-        shared->dnsRunning = false;
         shared->dnsDone = true;
-        shared->dnsServer = server;
+        shared->dnsTicket = ticket;
         shared->dnsAnswered = answered;
         shared->dnsStatus = static_cast<long>(status);
         shared->wake.notify_all();
@@ -127,7 +215,11 @@ void StartDnsCheck(const std::shared_ptr<NetworkMonitor::Shared>& shared, const 
 
 }  // namespace
 
-NetworkMonitor::NetworkMonitor(Hooks hooks) : hooks_(std::move(hooks)), shared_(std::make_shared<Shared>()) {}
+NetworkMonitor::NetworkMonitor(Hooks hooks, unsigned intervalMs, bool verboseDns)
+    : hooks_(std::move(hooks)),
+      intervalMs_(intervalMs > 0 ? intervalMs : kIntervalMs),
+      verboseDns_(verboseDns),
+      shared_(std::make_shared<Shared>()) {}
 
 NetworkMonitor::~NetworkMonitor() { Stop(); }
 
@@ -165,114 +257,53 @@ void NetworkMonitor::Force(std::optional<bool> internet) {
 }
 
 void NetworkMonitor::Run() {
-    const auto log = [this](const std::string& line) {
+    const Log log = [this](const std::string& line) {
         if (hooks_.log) hooks_.log(line);
     };
-    NetworkDecision decision;
-    // O que vale mudou: vai ao DesktopApp (fora da trava).
-    const auto report = [this, &log](const char* why, std::optional<bool> internet) {
-        if (!internet) return;
-        log(std::string("rede: ") + (*internet ? "com internet" : "sem internet") + " (" + why + ")");
-        if (hooks_.changed) hooks_.changed(*internet);
-    };
-
-    // O Windows: a conectividade de agora e os avisos dela (o apartamento multithread: os avisos chegam nas threads do
-    // COM, sem laco de mensagens aqui).
+    // O apartamento multithread: os avisos chegam nas threads do COM, sem laco de mensagens aqui.
     const HRESULT com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-    ComPtr<INetworkListManager> manager;
-    ComPtr<IConnectionPoint> point;
-    DWORD cookie = 0;
-    const HRESULT created = CoCreateInstance(__uuidof(NetworkListManager), nullptr, CLSCTX_ALL,
-                                             __uuidof(INetworkListManager),
-                                             reinterpret_cast<void**>(manager.ReleaseAndGetAddressOf()));
-    if (FAILED(created) || !manager) {
-        log("rede: o Windows nao informa a conexao (INetworkListManager " + Hex(created) + "): so o teste DNS vale");
-    } else {
-        ComPtr<IConnectionPointContainer> container;
-        HRESULT advised = manager.As(&container);
-        if (SUCCEEDED(advised)) {
-            advised = container->FindConnectionPoint(__uuidof(INetworkListManagerEvents), point.ReleaseAndGetAddressOf());
-        }
-        if (SUCCEEDED(advised) && point) {
-            ConnectivitySink* sink = new ConnectivitySink(shared_);
-            advised = point->Advise(sink, &cookie);
-            sink->Release();   // o ponto de conexao guarda a referencia dele
-        }
-        if (FAILED(advised) || !point) {
-            point.Reset();
-            cookie = 0;
-            log("rede: sem os avisos de conectividade do Windows (" + Hex(advised) + ")");
-        }
-        NLM_CONNECTIVITY connectivity = NLM_CONNECTIVITY_DISCONNECTED;
-        const HRESULT read = manager->GetConnectivity(&connectivity);
-        if (SUCCEEDED(read)) {
-            log("rede: conectividade do Windows " + Hex(static_cast<long>(connectivity)));
-            report("o Windows", decision.OnConnectivity(static_cast<int>(connectivity)));
-        } else {
-            log("rede: a conectividade do Windows nao foi lida (" + Hex(read) + ")");
-        }
-    }
-
-    using Clock = std::chrono::steady_clock;
-    const std::chrono::milliseconds interval(kDnsIntervalMs);
-    Clock::time_point nextDns = Clock::now() + interval;
-    std::unique_lock<std::mutex> lock(shared_->mutex);
-    for (;;) {
-        shared_->wake.wait_until(lock, nextDns, [this] { return shared_->Pending(); });
-        if (shared_->stopping) break;
-        std::deque<int> connectivity;
-        connectivity.swap(shared_->connectivity);
-        const bool serverChanged = shared_->serverChanged;
-        shared_->serverChanged = false;
-        const bool forceChanged = shared_->forceChanged;
-        shared_->forceChanged = false;
-        const std::optional<bool> force = shared_->force;
-        // O resultado de um teste do servidor de antes (a conta mudou no meio) nao conta.
-        const bool dnsCurrent = shared_->dnsDone && shared_->dnsServer == shared_->server;
-        shared_->dnsDone = false;
-        const bool answered = shared_->dnsAnswered;
-        const long dnsStatus = shared_->dnsStatus;
-        const std::string server = shared_->server;
-        lock.unlock();
-
-        for (const int value : connectivity) {
-            log("rede: conectividade do Windows " + Hex(value));
-            report("o Windows", decision.OnConnectivity(value));
-        }
-        if (serverChanged) report("outra conta", decision.OnServerChanged(server));
-        if (forceChanged) report("forcado", decision.Force(force));
-        if (dnsCurrent) {
-            if (!answered && decision.Internet()) {
-                log("rede: o DNS nao respondeu pelo servidor " + server + " (" + std::to_string(dnsStatus) + ")");
+    {
+        WindowsConnectivity windows(shared_, log);
+        NetworkLoop loop([&windows] { return windows.Read(); }, intervalMs_, verboseDns_);
+        // O que o passo pede, fora da trava.
+        const auto apply = [this, &log, &loop](const NetworkLoop::Actions& actions) {
+            for (const std::string& line : actions.log) log(line);
+            if (actions.internet && hooks_.changed) hooks_.changed(*actions.internet);
+            if (actions.dnsServer) {
+                try {
+                    StartDnsCheck(shared_, *actions.dnsServer, actions.dnsTicket);
+                } catch (const std::exception&) {
+                    loop.OnDnsNotStarted(actions.dnsTicket);   // sem thread: o proximo intervalo tenta de novo
+                }
             }
-            report(answered ? "o DNS respondeu pelo servidor da conta"
-                            : "o DNS nao respondeu pelo servidor da conta duas vezes seguidas",
-                   decision.OnDnsResult(answered));
-        }
+        };
+        apply(loop.Open(NowMs()));
 
-        lock.lock();
-        // O teste DNS: a cada 30 s, ou na hora quando a rede mudou. So com um servidor com nome e alguma rede.
-        const Clock::time_point now = Clock::now();
-        const bool tick = now >= nextDns;
-        if (tick) nextDns = now + interval;
-        if ((tick || decision.DnsCheckNow()) && decision.DnsCheckUseful() && !shared_->server.empty() &&
-            !shared_->dnsRunning && !shared_->stopping) {
-            if (!tick) log("rede: a rede mudou: teste DNS de " + shared_->server + " agora");
-            nextDns = now + interval;
-            decision.DnsCheckStarted();
-            shared_->dnsRunning = true;
-            try {
-                StartDnsCheck(shared_, shared_->server);
-            } catch (const std::exception&) {
-                shared_->dnsRunning = false;   // sem thread: tenta de novo daqui a 30 s
-            }
-        }
-    }
-    lock.unlock();
+        std::unique_lock<std::mutex> lock(shared_->mutex);
+        for (;;) {
+            shared_->wake.wait_until(lock, TimeOf(loop.WakeAtMs()), [this] { return shared_->Pending(); });
+            if (shared_->stopping) break;
+            const bool windowsChanged = std::exchange(shared_->windowsChanged, false);
+            const bool serverChanged = std::exchange(shared_->serverChanged, false);
+            const std::string server = shared_->server;
+            const bool forceChanged = std::exchange(shared_->forceChanged, false);
+            const std::optional<bool> force = shared_->force;
+            const bool dnsDone = std::exchange(shared_->dnsDone, false);
+            const uint64_t dnsTicket = shared_->dnsTicket;
+            const bool dnsAnswered = shared_->dnsAnswered;
+            const long dnsStatus = shared_->dnsStatus;
+            lock.unlock();
 
-    if (point && cookie) point->Unadvise(cookie);
-    point.Reset();
-    manager.Reset();
+            if (windowsChanged) apply(loop.OnWindowsChanged());
+            if (serverChanged) apply(loop.OnServer(server));
+            if (forceChanged) apply(loop.OnForce(force));
+            if (dnsDone) apply(loop.OnDnsResult(dnsTicket, dnsAnswered, dnsStatus));
+            const int64_t now = NowMs();
+            if (now >= loop.WakeAtMs()) apply(loop.OnTimer(now));
+
+            lock.lock();
+        }
+    }   // o Unadvise e o objeto do Windows saem antes do CoUninitialize
     if (SUCCEEDED(com)) CoUninitialize();
 }
 

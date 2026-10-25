@@ -9,7 +9,8 @@
 // - So a rede local, sem a internet do Windows (ou outra mudanca da rede): continua como estava, e um teste DNS na hora
 //   em vez de esperar os 30 s.
 // - Duas falhas seguidas do teste DNS: sem internet. Um sucesso: com internet, na hora (e a conta das falhas recomeca).
-//   Sem rede, o resultado de um teste nao conta.
+//   O resultado de um teste que saiu antes de a rede mudar (cair, voltar, ficar so local) ou de outra conta nao conta (a
+//   vez do teste, DnsCheckStarted); sem rede, tambem nao.
 // - Um servidor dado por IP (ou nenhuma conta) nao tem teste DNS: so a falta de rede vale. Outra conta (outro servidor):
 //   as falhas de antes nao contam.
 // - O gancho de teste da fumaca (so no build de teste, NetworkMonitor::Force) forca o que vale; sem ele, volta a visao
@@ -18,6 +19,7 @@
 // Antes de tudo, com internet (o DesktopApp tambem comeca assim) e com a rede do Windows.
 //
 // C++ portatil, sem trava: o NetworkMonitor so a usa na thread dele.
+#include <cstdint>
 #include <optional>
 #include <string>
 
@@ -37,8 +39,9 @@ public:
 
     // A conectividade do Windows (os NLM_CONNECTIVITY juntos).
     std::optional<bool> OnConnectivity(int connectivity);
-    // Um teste DNS do servidor da conta terminou (answered: o DNS respondeu pelo nome).
-    std::optional<bool> OnDnsResult(bool answered);
+    // Um teste DNS do servidor da conta terminou (answered: o DNS respondeu pelo nome); generation: a vez de quando ele
+    // saiu (DnsCheckStarted).
+    std::optional<bool> OnDnsResult(bool answered, uint64_t generation);
     // O servidor da conta em uso ("" sem conta).
     std::optional<bool> OnServerChanged(const std::string& server);
     // O gancho de teste: o que vale a partir de agora (nada: a visao de verdade de novo).
@@ -48,9 +51,15 @@ public:
     bool Internet() const;
     // O teste DNS serve agora: a conta tem um servidor com nome (nao um IP) e o Windows ve alguma rede.
     bool DnsCheckUseful() const;
-    // Um teste DNS deve sair agora, sem esperar os 30 s (a rede mudou), e serve. DnsCheckStarted: saiu.
+    // Um teste DNS deve sair agora, sem esperar os 30 s (a rede mudou), e serve.
     bool DnsCheckNow() const { return dnsNow_ && DnsCheckUseful(); }
-    void DnsCheckStarted() { dnsNow_ = false; }
+    // Um teste DNS saiu: devolve a vez dele (vai no OnDnsResult).
+    uint64_t DnsCheckStarted() {
+        dnsNow_ = false;
+        return generation_;
+    }
+    // A vez de agora: sobe quando a rede muda de classe e quando a conta muda de servidor.
+    uint64_t Generation() const { return generation_; }
 
 private:
     enum class Network { None, Local, Internet };
@@ -61,6 +70,7 @@ private:
     bool namedServer_ = false;   // a conta tem um servidor com nome: o teste DNS vale
     int dnsFailures_ = 0;
     bool dnsNow_ = false;
+    uint64_t generation_ = 0;
     std::optional<bool> forced_;
     bool reported_ = true;
 };

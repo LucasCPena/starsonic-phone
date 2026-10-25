@@ -11,6 +11,7 @@ std::optional<bool> NetworkDecision::OnConnectivity(int connectivity) {
     } else if ((connectivity & (kIpv4Subnet | kIpv4LocalNetwork | kIpv6Subnet | kIpv6LocalNetwork)) != 0) {
         network = Network::Local;
     }
+    if (network != network_) ++generation_;   // um teste a caminho e da rede de antes
     if (network != Network::None && network_ == Network::None) dnsFailures_ = 0;   // a rede voltou: as falhas nao contam
     // A rede voltou ou mudou (so a local, sem a internet do Windows, por exemplo): o DNS confere agora.
     if (network != Network::None && network != network_) dnsNow_ = true;
@@ -18,8 +19,9 @@ std::optional<bool> NetworkDecision::OnConnectivity(int connectivity) {
     return Report();
 }
 
-std::optional<bool> NetworkDecision::OnDnsResult(bool answered) {
-    if (!DnsCheckUseful()) return std::nullopt;   // um teste que ja estava a caminho quando a rede caiu
+std::optional<bool> NetworkDecision::OnDnsResult(bool answered, uint64_t generation) {
+    // Um teste que saiu antes de a rede mudar ou de a conta mudar, ou que chega sem rede: nao conta.
+    if (generation != generation_ || !DnsCheckUseful()) return std::nullopt;
     if (answered) {
         dnsFailures_ = 0;
     } else if (dnsFailures_ < kDnsFailuresOffline) {
@@ -31,6 +33,7 @@ std::optional<bool> NetworkDecision::OnDnsResult(bool answered) {
 std::optional<bool> NetworkDecision::OnServerChanged(const std::string& server) {
     namedServer_ = !server.empty() && !IsIpAddress(server);
     dnsFailures_ = 0;
+    ++generation_;   // um teste a caminho e do servidor de antes
     return Report();
 }
 

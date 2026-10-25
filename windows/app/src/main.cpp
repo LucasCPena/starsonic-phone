@@ -15,8 +15,9 @@
 // runner do CI nao tem placa de som, e sem nenhum dispositivo o PJSIP nao faz nem atende ligacoes), e a
 // STARSONIC_TRAVAR_SAIR trava a thread de comandos no Sair (a fumaca confere o fechamento com limite). (rc.3) A
 // STARSONIC_SENHA_ADMIN_TESTE troca a senha do administrador pelo texto dela (a fumaca entra na area sem a senha de
-// verdade), e uma abertura com "--teste-internet off" (ou "on") com o app aberto forca o monitor de rede a ver a
-// internet fora (ou devolve a visao de verdade).
+// verdade), uma abertura com "--teste-internet off" (ou "on") com o app aberto forca o monitor de rede a ver a internet
+// fora (ou devolve a visao de verdade), e a STARSONIC_TESTE_DNS_MS encurta o intervalo do monitor de rede (o teste DNS),
+// com cada resultado no diagnostico (a fumaca com o servidor por nome).
 //
 // Fechar: todo Sair (o da interface, o da bandeja, o --sair, o Alt+F4, o do atualizador) passa pelo WM_CLOSE da
 // janela, que fecha no maximo 10 s depois mesmo sem o DesktopApp terminar (Ruling 16); depois da janela, o fechamento
@@ -29,6 +30,7 @@
 #include <shlobj.h>
 
 #include <climits>
+#include <cwchar>
 #include <memory>
 #include <thread>
 #include <optional>
@@ -329,7 +331,24 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     NetworkMonitor::Hooks networkHooks;
     networkHooks.changed = [&app](bool internet) { app.SetInternet(internet); };
     networkHooks.log = log;
+#if STARSONIC_TEST_HOOKS
+    // O build de teste: o intervalo do monitor de rede em ms (a fumaca: o teste DNS a cada poucos segundos), com cada
+    // resultado do DNS no diagnostico.
+    unsigned networkIntervalMs = NetworkMonitor::kIntervalMs;
+    bool verboseDns = false;
+    {
+        const std::wstring text = Environment(L"STARSONIC_TESTE_DNS_MS");
+        const unsigned long value = text.empty() ? 0 : std::wcstoul(text.c_str(), nullptr, 10);
+        if (value >= 100 && value <= NetworkMonitor::kIntervalMs) {
+            networkIntervalMs = static_cast<unsigned>(value);
+            verboseDns = true;
+            log("STARSONIC_TESTE_DNS_MS: o monitor de rede a cada " + std::to_string(value) + " ms (build de teste)");
+        }
+    }
+    NetworkMonitor network(networkHooks, networkIntervalMs, verboseDns);
+#else
     NetworkMonitor network(networkHooks);
+#endif
     network.Start();
 
     // As proximas aberturas (um link, o atalho de novo, o --sair) chegam aqui, na thread da janela, dentro do
@@ -388,9 +407,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     // WM_ENDSESSION voltar). O Shutdown roda o que o Sair pos na fila (os Recentes das ligacoes encerradas).
     callbacks.endSession = [&app, &updater, &network, quitDone, log] {
         if (updater) updater->Close();
-        network.Stop();
         app.HandleCommand(kQuitCommand);
         const bool done = quitDone && WaitForSingleObject(quitDone, kEndSessionWaitMs) == WAIT_OBJECT_0;
+        // Depois do Sair (as ligacoes e os Recentes primeiro: o Unadvise do monitor pode demorar), antes do Shutdown.
+        network.Stop();
         app.Shutdown();
         log(done ? "sessao do Windows encerrando: o Sair terminou" : "sessao do Windows encerrando: o Sair nao terminou a tempo");
     };

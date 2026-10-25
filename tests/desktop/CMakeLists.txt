@@ -44,6 +44,7 @@ target_sources(desktop_tests PRIVATE ${STARSONIC_DIR}/../windows/app/src/WindowF
   ${STARSONIC_DIR}/../windows/app/src/Links.cpp
   ${STARSONIC_DIR}/../windows/app/src/BrowserRestarts.cpp
   ${STARSONIC_DIR}/../windows/app/src/NetworkDecision.cpp
+  ${STARSONIC_DIR}/../windows/app/src/NetworkLoop.cpp
   ${STARSONIC_DIR}/../windows/app/src/UpdateChannel.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../win/test_network_monitor.cpp)
 target_include_directories(desktop_tests PRIVATE ${STARSONIC_DIR}/../windows/app/src)
