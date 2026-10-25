@@ -202,36 +202,48 @@ TEST_CASE("SetAccount drops the BLF subscriptions of the previous account") {
     CHECK(listener.BlfStates("2007") == std::vector<BlfState>{BlfState::Free});
 }
 
-TEST_CASE("SetNetworkAvailable false stops retries and true re-registers") {
+// Correcao final (H2, Ruling 25): sem rede, o motor nao tira o registro do servidor. So deixa de tentar de novo, e o
+// registro vive ate vencer ou ate a proxima renovacao falhar (com o "sem rede" errado, a central continua entregando).
+TEST_CASE("SetNetworkAvailable false keeps the binding, stops retries after a failure, and true re-registers") {
     FakeRegistrar registrar("senha");
     RecordingListener listener;
     INFO(listener.LogTail());
     INFO(RegistrationsText(listener));
+    INFO(listener.CallsText());
     std::unique_ptr<SipEngine> engine = StartEngine(&listener, LoadProfile(registrar.port()));
 
-    // O registrador concede 3 s: o PJSIP renova o registro a cada 2 s, menos que a espera de 3 s abaixo. Com
-    // 2 s (renovar a cada 1 s) o pjsua daria a renovação como inativa: o regIsActive conta os segundos
-    // inteiros que faltam para a próxima.
+    // O registrador concede 3 s: o PJSIP renova o registro a cada 2 s. Com 2 s (renovar a cada 1 s) o pjsua daria a
+    // renovacao como inativa: o regIsActive conta os segundos inteiros que faltam para a proxima.
     REQUIRE(registrar.Control("EXPIRES 3") == kOk);
     REQUIRE(engine->SetAccount(Input(Transport::Udp)));
     REQUIRE(listener.WaitFor(RecordingListener::Reached(200, true, 1), kWaitSeconds));
-    REQUIRE(WaitUntil([&] { return Registers(registrar) >= 3; }, kWaitSeconds));
 
     engine->SetNetworkAvailable(false);
     std::this_thread::sleep_for(std::chrono::milliseconds(500));   // os avisos de antes acabam de chegar
-    const int stopped = Registers(registrar);
     const size_t events = listener.Registrations().size();
-    std::this_thread::sleep_for(std::chrono::seconds(3));
-    CHECK(Registers(registrar) == stopped);              // nenhuma renovação e nenhuma nova tentativa
-    CHECK(listener.Registrations().size() == events);    // a conta parada não avisa nada
-    CHECK_FALSE(RecordingListener::Reached(200, false, 1)(listener.Registrations()));
-    // A conta saiu do servidor (sem rede de verdade o pedido de saída não chega, e tanto faz).
-    CHECK(registrar.Control("RING 2001") == std::vector<std::string>{"ERR no-contact"});
+    // A central alcancavel continua com o registro: o PJSIP segue renovando, e a ligacao que ela manda chega.
+    const int renewed = Registers(registrar);
+    CHECK(WaitUntil([&] { return Registers(registrar) > renewed; }, kWaitSeconds));
+    REQUIRE(registrar.Control("RING 2001") == kOk);
+    REQUIRE(listener.WaitForCalls(RecordingListener::Count(phone_test::CallEvent::Incoming, 1), kWaitSeconds));
+    const int callId = listener.Calls().front().callId;
+    REQUIRE(registrar.Control("HANGUP 2001") == kOk);
+    CHECK(listener.WaitForCalls(RecordingListener::StateReached(callId, CallState::Disconnected), kWaitSeconds));
 
+    // A renovacao seguinte falha (503): nenhuma nova tentativa (fora do Pause o PJSIP tenta de novo em ate 10 s) e
+    // nenhum aviso.
+    REQUIRE(registrar.Control("FAIL REGISTER on") == kOk);
+    REQUIRE(registrar.WaitForLog("register-503 2001", kWaitSeconds));
+    CHECK_FALSE(WaitUntil([&] { return LogCount(registrar, "register-503 2001") > 1; }, 11));
+    CHECK(listener.Registrations().size() == events);   // a conta parada nao avisa nada
+    CHECK_FALSE(RecordingListener::Reached(200, false, 1)(listener.Registrations()));
+
+    // A rede volta: registra de novo.
     const size_t active = CountActive(listener.Registrations());
+    REQUIRE(registrar.Control("FAIL REGISTER off") == kOk);
     engine->SetNetworkAvailable(true);
     CHECK(listener.WaitFor(RecordingListener::Reached(200, true, active + 1), kWaitSeconds));
-    CHECK(Registers(registrar) > stopped);
+    CHECK(registrar.Control("RING 2001") == kOk);
 }
 
 TEST_CASE("SetNetworkAvailable brings the BLF subscriptions back") {
@@ -291,32 +303,34 @@ TEST_CASE("WatchBlf aggregates several dialogs of the same extension") {
     CHECK(listener.BlfStates("2007") == expected);
 }
 
-TEST_CASE("SetNetworkAvailable true registers again after an unregister that was still on the way") {
+TEST_CASE("SetNetworkAvailable false returns at once and true registers again after a refresh still on the way") {
     FakeRegistrar registrar("senha");
     RecordingListener listener;
     INFO(listener.LogTail());
     INFO(RegistrationsText(listener));
     std::unique_ptr<SipEngine> engine = StartEngine(&listener, LoadProfile(registrar.port()));
 
+    REQUIRE(registrar.Control("EXPIRES 3") == kOk);
     REQUIRE(engine->SetAccount(Input(Transport::Udp)));
     REQUIRE(listener.WaitFor(RecordingListener::Reached(200, true, 1), kWaitSeconds));
 
-    // Os pacotes somem: o pedido de saída fica sem resposta, e o UDP o repete (0,5 s, 1,5 s, 3,5 s, 7,5 s...).
+    // Os pacotes somem: a renovacao seguinte (a cada 2 s) fica sem resposta, e o UDP a repete (0,5 s, 1 s, 2 s...).
     REQUIRE(registrar.Control("DROP REGISTER on") == kOk);
+    std::this_thread::sleep_for(std::chrono::milliseconds(2500));
     const auto start = std::chrono::steady_clock::now();
-    engine->SetNetworkAvailable(false);   // espera a resposta da saída até ~3 s e segue sem ela
-    CHECK(std::chrono::steady_clock::now() - start < std::chrono::seconds(5));
-    std::this_thread::sleep_for(std::chrono::seconds(1));
+    engine->SetNetworkAvailable(false);   // nada a esperar: o motor nao pede a saida ao servidor
+    CHECK(std::chrono::steady_clock::now() - start < std::chrono::seconds(1));
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
-    // A rede volta com a saída ainda a caminho: a repetição dela chega ao servidor e leva 200 (Expires: 0).
+    // A rede volta com a renovacao ainda a caminho: a repeticao dela chega ao servidor e leva 200.
     const size_t active = CountActive(listener.Registrations());
     const size_t before = listener.Registrations().size();
     REQUIRE(registrar.Control("DROP REGISTER off") == kOk);
     engine->SetNetworkAvailable(true);
-    // O registro vai logo depois da resposta da saída, sem esperar a nova tentativa do PJSIP (5 min).
+    // O registro sai logo depois da resposta da renovacao, sem esperar a nova tentativa do PJSIP (5 min).
     CHECK(listener.WaitFor(RecordingListener::Reached(200, true, active + 1), kWaitSeconds));
     CHECK(registrar.Control("RING 2001") == kOk);
-    // A resposta da saída de antes não chega ao listener: a conta não "saiu".
+    // Nenhuma resposta deixou a conta sem registro.
     const std::vector<phone_test::RegistrationEvent> events = listener.Registrations();
     for (size_t i = before; i < events.size(); ++i) {
         CAPTURE(i);

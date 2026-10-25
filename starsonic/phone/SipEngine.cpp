@@ -196,21 +196,11 @@ public:
         if (!available) {
             if (!networkAvailable_) return;
             networkAvailable_ = false;
-            Log(3, "sem rede: o registro e o BLF param");
+            Log(3, "sem rede: o registro para de tentar (o do servidor fica ate vencer) e o BLF para");
             if (!account_) return;
             DropBlf();
             for (auto& entry : blf_) entry.second.track->SetUnknown(false);
-            switch (account_->Pause(kUnregisterWaitMs)) {
-                case EngineAccount::Exit::Confirmed:
-                    Log(3, "sem rede: o registro saiu do servidor");
-                    break;
-                case EngineAccount::Exit::NothingToRemove:
-                    Log(3, "sem rede: a conta nao estava registrada");
-                    break;
-                case EngineAccount::Exit::NoAnswer:
-                    Log(3, "sem rede: o servidor nao confirmou a saida (o registro para assim mesmo)");
-                    break;
-            }
+            account_->Pause();
             return;
         }
         const bool wasDown = !networkAvailable_;

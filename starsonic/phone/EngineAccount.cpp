@@ -65,20 +65,21 @@ void EngineAccount::Modify(const pj::AccountConfig& config) {
     }
 }
 
-EngineAccount::Exit EngineAccount::Pause(int timeoutMs) {
+void EngineAccount::Pause() {
     paused_ = true;
     wantRegistered_ = false;
     staleInactive_ = false;
-    // Com o intervalo em zero o pjsua não agenda nova tentativa: nem depois de uma falha (a do próprio
-    // pedido de saída, sem rede) nem quando a conexão TCP cai.
+    // Com o intervalo em zero o pjsua não agenda nova tentativa: nem depois de uma falha (a renovação que não
+    // chega, sem rede) nem quando a conexão TCP cai. O registro não sai do servidor: o pedido de saída só chegaria
+    // a ele com o "sem rede" errado (a central alcançável), e aí ela apagaria o registro e o telefone não tocaria.
     pj::AccountConfig stopped = config_;
     stopped.regConfig.retryIntervalSec = 0;
     Modify(stopped);
-    return Unregister(timeoutMs);
 }
 
 void EngineAccount::Resume() {
     Modify(config_);
+    resumed_ = true;   // antes do paused_: a primeira resposta boa daqui em diante é a volta (onActive)
     paused_ = false;
     Register();
 }
@@ -169,7 +170,13 @@ void EngineAccount::onRegState(pj::OnRegStateParam& param) {
             // ter acabado de sair), uma vez só; se ele falhar, as novas tentativas são as do PJSIP.
             if (wantRegistered_.exchange(false) && !retired_ && !paused_) endpoint_->ScheduleTimer(id_);
         }
-        if (active && !wasActive_ && !retired_ && !paused_ && onActive_) onActive_();
+        if (active && !retired_ && !paused_ && onActive_) {
+            // A volta: de sem registro a registrada, ou a primeira resposta boa depois do Resume (sem o pedido de
+            // saída no Pause, o registro pode ter continuado vivo, e o BLF recusado na volta precisa de outra
+            // tentativa).
+            const bool resumed = resumed_.exchange(false);
+            if (!wasActive_ || resumed) onActive_();
+        }
         wasActive_ = active;
         if (!retired_ && !paused_ && !stale) {
             const int code = static_cast<int>(param.code);

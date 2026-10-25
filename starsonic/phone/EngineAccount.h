@@ -39,20 +39,22 @@ public:
     // O create() do pjsua2 com a configuração da conta, que fica guardada para o Resume. paused: a rede está
     // fora; a conta nasce sem registrar e parada (como depois de um Pause). onActive: chamado (numa thread do
     // PJSIP, com a trava do pjsua; não pode chamar o PJSIP nem esperar) cada vez que a conta passa de sem
-    // registro a registrada, também na primeira vez. Lança pj::Error como o create().
+    // registro a registrada, também na primeira vez, e na primeira resposta que a deixa registrada depois de um
+    // Resume (o registro pode ter continuado vivo no Pause). Lança pj::Error como o create().
     void Start(const pj::AccountConfig& config, bool paused, std::function<void()> onActive);
 
-    // A rede caiu: o PJSIP deixa de tentar de novo (o intervalo das novas tentativas vai a zero), nenhuma
-    // resposta de registro vira evento e o registro sai do servidor (Unregister, com o mesmo prazo).
-    Exit Pause(int timeoutMs);
+    // A rede caiu: o PJSIP deixa de tentar de novo (o intervalo das novas tentativas vai a zero) e nenhuma
+    // resposta de registro vira evento. O registro não sai do servidor (Ruling 25): ele vive até vencer ou até
+    // a próxima renovação falhar (uma tentativa só, sem outra). Não espera.
+    void Pause();
 
     // A rede voltou: a configuração de antes volta, as respostas voltam a virar evento e a conta pede o
     // registro (Register).
     void Resume();
 
-    // Pede o registro agora. Com um pedido ainda a caminho (PJSIP_EBUSY: uma renovação, ou a saída de um
-    // Pause que ficou sem resposta), o registro vai logo depois da resposta dele, num temporizador; se essa
-    // resposta deixa a conta sem registro, ela não vira evento (é de antes do pedido). Não espera.
+    // Pede o registro agora. Com um pedido ainda a caminho (PJSIP_EBUSY: uma renovação, também uma que saiu
+    // durante um Pause e ficou sem resposta), o registro vai logo depois da resposta dele, num temporizador; se
+    // essa resposta deixa a conta sem registro, ela não vira evento (é de antes do pedido). Não espera.
     void Register();
 
     // O registro adiado por Register (temporizador do EngineEndpoint).
@@ -84,6 +86,7 @@ private:
     std::function<void()> onActive_;   // de Start, antes do create(): só lido nos callbacks
     std::atomic<bool> retired_{false};
     std::atomic<bool> paused_{false};   // a rede está fora: as respostas de registro não viram evento
+    std::atomic<bool> resumed_{false};  // o Resume: a próxima resposta que deixa a conta registrada é a volta
     // Register achou um pedido a caminho: wantRegistered_ = registrar logo depois da resposta dele (se ela
     // deixa a conta sem registro); staleInactive_ = essa resposta, se deixa a conta sem registro, não vira
     // evento. O regc do PJSIP tem um pedido por vez, então a próxima resposta é a dele.

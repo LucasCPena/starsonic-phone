@@ -4,7 +4,7 @@ controle, ligações. Só biblioteca padrão do Python 3.
 
 - REGISTER sem Authorization -> 401 com WWW-Authenticate: Digest realm="ci", nonce, algorithm=MD5
 - REGISTER com Authorization -> 200 OK (Expires e Contact ecoados) se usuário e senha conferem,
-  senão 403
+  senão 403; com o FAIL REGISTER on, todo REGISTER -> 503 (a central fora do ar ou reiniciando)
 - OPTIONS e outros pedidos -> 200 OK; ACK -> nada; CRLF soltos (keep-alive) -> nada
 - grava o último User-Agent de REGISTER no arquivo de --log e o protocolo (udp ou tcp) do último
   REGISTER aceito no arquivo de --transport-log
@@ -41,6 +41,7 @@ Porta de controle (--control-port N, TCP no mesmo --host; um comando por linha, 
                      confirmed), ou refuse                                    -> OK
   BLF <ramal> <estado>@<n>  muda só o diálogo n (NOTIFY partial)              -> OK | ERR no-dialog
   DROP REGISTER <on|off>  com on, os REGISTER somem sem resposta (pacote perdido) -> OK
+  FAIL REGISTER <on|off>  com on, todo REGISTER leva 503 (a central reiniciando)  -> OK
   REFER_REPLY <cod>  o código da resposta ao REFER (padrão 202)        -> OK
   REFER_NOTIFY <cod> o código do sipfrag do NOTIFY (padrão 200)        -> OK
   RESET              REFER_REPLY e REFER_NOTIFY voltam ao padrão       -> OK
@@ -50,9 +51,10 @@ Registro de ligações (só em memória): inv-out <ramal> <código final>, ack-s
   bye-out <ramal> <código>, bye-in <alvo>, cancel-in <alvo>, inv-in <alvo> <código>,
   reinv-in <alvo> <sendonly|sendrecv|inactive|recvonly>, refer-in <alvo> <ramal de destino>
   [replaces=known|unknown], sub-in <alvo> <200|403> (SUBSCRIBE de dialog com Expires > 0, também a
-  renovação), unsub-in <alvo> (SUBSCRIBE de dialog com Expires: 0) (<alvo> = usuário da Request-URI do
-  pedido que o telefone mandou; known = o Call-ID do Replaces é de uma ligação que o telefone fez ao
-  registrador ou que o RING fez)
+  renovação), unsub-in <alvo> (SUBSCRIBE de dialog com Expires: 0), register-503 <ramal> (REGISTER que o
+  FAIL REGISTER on recusou; <ramal> = usuário do From) (<alvo> = usuário da Request-URI do pedido que o
+  telefone mandou; known = o Call-ID do Replaces é de uma ligação que o telefone fez ao registrador ou que
+  o RING fez)
 
 Uso: fake_registrar.py [--host 127.0.0.1] [--port 5060] --user 2001[,2002...] --password senha-certa
                        [--log ua.txt] [--transport-log transporte.txt] [--control-port 5070]
@@ -74,7 +76,7 @@ COMPACT = {"v": "via", "f": "from", "t": "to", "i": "call-id", "m": "contact", "
            "r": "refer-to"}
 REASONS = {100: "Trying", 180: "Ringing", 200: "OK", 202: "Accepted", 401: "Unauthorized", 403: "Forbidden",
            404: "Not Found", 480: "Temporarily Unavailable", 486: "Busy Here", 487: "Request Terminated",
-           603: "Decline"}
+           503: "Service Unavailable", 603: "Decline"}
 SIPFRAG_PHRASES = {200: "OK", 486: "Busy Here", 603: "Decline"}   # a frase do sipfrag do NOTIFY; outro código: "Error"
 STATUS_CODE = re.compile(r"[1-6][0-9]{2}")   # o que REFER_REPLY e REFER_NOTIFY aceitam
 CALLER = '"Cliente Teste" <sip:3001@ci>'
@@ -308,6 +310,7 @@ class Registrar:
         self.expires = None      # EXPIRES: o tempo que o 200 do REGISTER concede (None: o pedido)
         self.blf = {}            # ramal -> estados dos diálogos (lista) ou "refuse" (sem entrada: nenhum, livre)
         self.drop_register = False   # DROP REGISTER on: os REGISTER somem sem resposta
+        self.fail_register = False   # FAIL REGISTER on: todo REGISTER leva 503
         self.subscriptions = {}  # Call-ID -> _Subscription (BLF)
         self._reset_refer()
 
@@ -343,6 +346,9 @@ class Registrar:
                 return []
             if msg.method == "REGISTER" and self.drop_register:
                 return []
+            if msg.method == "REGISTER" and self.fail_register:
+                self._log("register-503 " + _uri_user(_uri_of(msg.first("from"))))
+                return [self._response(503, msg.headers, source)]
             handler = {"REGISTER": self._on_register, "INVITE": self._on_invite, "REFER": self._on_refer,
                        "BYE": self._on_bye, "CANCEL": self._on_cancel, "SUBSCRIBE": self._on_subscribe}.get(msg.method)
             if handler:
@@ -734,6 +740,9 @@ class Registrar:
             if name == "DROP" and blf[:1] == ["REGISTER"] and len(blf) == 2 and blf[1] in ("on", "off"):
                 self.drop_register = blf[1] == "on"
                 return ["OK"]
+            if name == "FAIL" and blf[:1] == ["REGISTER"] and len(blf) == 2 and blf[1] in ("on", "off"):
+                self.fail_register = blf[1] == "on"
+                return ["OK"]
             if name == "REFER_REPLY" and STATUS_CODE.fullmatch(ramal):
                 self.refer_reply = int(ramal)
                 return ["OK"]
@@ -827,8 +836,8 @@ def start_tcp_server(registrar, host, port):
 
 
 def start_control_server(registrar, host, port):
-    """Porta de controle (RING, HANGUP, PASSWORD, REGISTERS, EXPIRES, BLF, DROP, REFER_REPLY, REFER_NOTIFY,
-    RESET, LOG), numa thread. Mesma forma de start_tcp_server."""
+    """Porta de controle (RING, HANGUP, PASSWORD, REGISTERS, EXPIRES, BLF, DROP, FAIL, REFER_REPLY,
+    REFER_NOTIFY, RESET, LOG), numa thread. Mesma forma de start_tcp_server."""
     return _start_tcp(_ControlHandler, registrar, host, port)
 
 

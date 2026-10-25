@@ -134,15 +134,16 @@ public:
     // depois de 0 a 10 s no TCP; por isso o motor espera os transportes (até ~2 s) e registra de novo.
     void HandleIpChange();
 
-    // A internet caiu (false) ou voltou (true), pelo que o app enxerga da rede. false: o registro para (o
-    // motor pede a saída ao servidor, que sem rede não chega, e o PJSIP deixa de renovar e de tentar de
-    // novo), nenhuma resposta de registro vira evento, as assinaturas de BLF saem e cada ramal da lista
-    // avisa OnBlf(Unknown). A conta continua (as ligações em andamento seguem como estiverem) e uma
-    // SetAccount sem rede cria a conta sem registrar. Com um REGISTER a caminho, espera a resposta dele
-    // (até ~3 s). true: registra de novo na hora (o resultado chega por OnRegistration; com um pedido ainda
-    // a caminho, como a saída de um false que ficou sem resposta, o registro vai logo depois da resposta
-    // dele, e essa resposta não vira evento) e assina de novo os ramais da lista. Não espera. Sem conta,
-    // só guarda o estado. Repetir o mesmo valor: false não faz nada; true registra de novo.
+    // A internet caiu (false) ou voltou (true), pelo que o app enxerga da rede. false: o PJSIP deixa de
+    // tentar registrar de novo (uma renovação que falha não é repetida), nenhuma resposta de registro vira
+    // evento, as assinaturas de BLF saem e cada ramal da lista avisa OnBlf(Unknown). O registro não sai do
+    // servidor: ele vive até vencer ou até a próxima renovação falhar (com a central alcançável, como num
+    // "sem rede" errado, as ligações continuam chegando). A conta continua (as ligações em andamento seguem
+    // como estiverem) e uma SetAccount sem rede cria a conta sem registrar. true: registra de novo na hora
+    // (o resultado chega por OnRegistration; com um pedido ainda a caminho, como uma renovação sem resposta,
+    // o registro vai logo depois da resposta dele, e essa resposta não vira evento) e assina de novo os
+    // ramais da lista. Nenhum dos dois espera. Sem conta, só guarda o estado. Repetir o mesmo valor: false
+    // não faz nada; true registra de novo.
     void SetNetworkAvailable(bool available);
 
     // Os ramais (number em UTF-8, já sem separadores) cujo estado o motor acompanha na conta de agora, pelo

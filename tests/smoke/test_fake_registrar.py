@@ -282,6 +282,19 @@ class FakeRegistrarBlfTest(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(self.registrar.command(command), ["ERR bad-command"])
 
+    def test_fail_register_answers_503_while_on(self):
+        self.assertEqual(self.registrar.command("FAIL REGISTER on"), ["OK"])
+        self.assertEqual([reply.status for reply in self.answer(register(self.registrar))], [503])
+        self.assertEqual(self.registrar.command("REGISTERS 2001"), ["0"])
+        self.assertEqual(self.log(), ["register-503 2001"])   # cada REGISTER recusado vai ao registro
+        self.assertEqual(self.answer(subscribe("2007"))[0].status, 200)   # o resto continua respondendo
+        self.assertEqual(self.registrar.command("FAIL REGISTER off"), ["OK"])
+        self.assertEqual(self.answer(register(self.registrar, "nonce-2"))[0].status, 200)
+        self.assertEqual(self.registrar.command("REGISTERS 2001"), ["1"])
+        for command in ("FAIL", "FAIL REGISTER", "FAIL INVITE on", "FAIL REGISTER maybe"):
+            with self.subTest(command=command):
+                self.assertEqual(self.registrar.command(command), ["ERR bad-command"])
+
     def test_expires_command_sets_the_granted_registration_time(self):
         response = self.answer(register(self.registrar))[0]
         self.assertEqual(response.first("expires"), "300")   # o padrão: o que o telefone pediu
