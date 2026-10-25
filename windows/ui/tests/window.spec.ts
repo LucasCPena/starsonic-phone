@@ -554,6 +554,8 @@ const OUTRAS: Array<{ nome: string; cenario: string; preparar?: (page: Page) => 
       const janela = page.viewportSize()!;
       for (const nome of MAIS_DOIS_ATALHOS.map((a) => a.nome)) {
         await page.getByRole('button', { name: `Mais opções para ${nome}`, exact: true }).click();
+        // O foco chega ao primeiro item depois de o menu abrir: só então o Esc o fecha.
+        await expect(page.getByRole('menu', { name: `Opções de ${nome}` }).getByRole('menuitem', { name: 'Editar' })).toBeFocused();
         const menu = await caixa(page.getByRole('menu', { name: `Opções de ${nome}` }));
         expect(dentro(menu, janela.height, janela.width), `o menu de ${nome} sai da janela: ${JSON.stringify(menu)}`).toBe(true);
         expect(menu.y + menu.height <= nav.y + 0.5, `o menu de ${nome} cobre a navegação: ${JSON.stringify({ menu, nav })}`).toBe(true);
