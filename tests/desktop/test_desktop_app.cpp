@@ -1528,7 +1528,8 @@ TEST_CASE("hiding Nao perturbe forces it off") {
     }
     h.Restart();
     state = h.State();
-    CHECK(state["admin"] == json({{"aberto", false}, {"naoPerturbe", false}, {"atenderAuto", false}, {"blf", false}}));
+    CHECK(state["admin"] ==
+          json({{"aberto", false}, {"naoPerturbe", false}, {"atenderAuto", false}, {"blf", false}, {"puxa", false}}));
     CHECK(state["naoPerturbe"] == false);
     CHECK(h.File("dados/config.json")["nao_perturbe"] == false);
 }
@@ -1538,7 +1539,8 @@ TEST_CASE("admin commands need an open session and lock after five wrong passwor
     h.Start();
     CHECK(h.channels == std::vector<std::string>{""});   // o canal do build
     json state = h.State();
-    CHECK(state["admin"] == json({{"aberto", false}, {"naoPerturbe", true}, {"atenderAuto", true}, {"blf", false}}));
+    CHECK(state["admin"] ==
+          json({{"aberto", false}, {"naoPerturbe", true}, {"atenderAuto", true}, {"blf", false}, {"puxa", false}}));
     CHECK(state["entrarAdmin"] == json({{"erro", ""}, {"esperaAte", 0}, {"vez", 0}}));
 
     h.Send(AdminSet(R"("blf":true)"));
@@ -1567,6 +1569,7 @@ TEST_CASE("admin commands need an open session and lock after five wrong passwor
                                   {"naoPerturbe", true},
                                   {"atenderAuto", true},
                                   {"blf", false},
+                                  {"puxa", false},
                                   {"puxar", false},
                                   {"codigoPuxar", ""},
                                   {"servidores", json::array({json({{"endereco", "starcloud1-starsonic.com.br"},
@@ -1590,7 +1593,8 @@ TEST_CASE("admin commands need an open session and lock after five wrong passwor
     CHECK(h.channels.size() == 2);
 
     h.Send(R"({"v":1,"cmd":"adminLogout"})");
-    CHECK(h.State()["admin"] == json({{"aberto", false}, {"naoPerturbe", true}, {"atenderAuto", true}, {"blf", true}}));
+    CHECK(h.State()["admin"] ==
+          json({{"aberto", false}, {"naoPerturbe", true}, {"atenderAuto", true}, {"blf", true}, {"puxa", true}}));
     h.Send(AdminSet(R"("puxar":false)"));
     h.Send(kAdminLogin);
     CHECK(h.State()["admin"]["puxar"] == true);
@@ -1631,7 +1635,8 @@ TEST_CASE("admin session closes after ten idle minutes") {
     CHECK(h.State()["admin"]["aberto"] == true);
     h.time.Advance(60000);
     h.Run();
-    CHECK(h.State()["admin"] == json({{"aberto", false}, {"naoPerturbe", true}, {"atenderAuto", true}, {"blf", true}}));
+    CHECK(h.State()["admin"] ==
+          json({{"aberto", false}, {"naoPerturbe", true}, {"atenderAuto", true}, {"blf", true}, {"puxa", false}}));
     h.Send(AdminSet(R"("blf":false)"));
     CHECK(h.State()["admin"]["blf"] == true);
 
@@ -1639,6 +1644,42 @@ TEST_CASE("admin session closes after ten idle minutes") {
     h.Send(kAdminLogin);
     h.Send(R"({"v":1,"cmd":"closeToTray"})");
     CHECK(h.State()["admin"]["aberto"] == false);
+}
+
+// Correcao final (H7, C-M5): admin.puxa diz se o clique num atalho tocando puxa a ligacao (o BLF, o puxar e um codigo),
+// com a area fechada e aberta; o codigo continua so na area aberta.
+TEST_CASE("admin.puxa is true only with the blf, the pickup and a pickup code, closed and open") {
+    Harness h;
+    h.Start();
+    CHECK(h.State()["admin"] ==
+          json({{"aberto", false}, {"naoPerturbe", true}, {"atenderAuto", true}, {"blf", false}, {"puxa", false}}));
+
+    h.Send(kAdminLogin);
+    CHECK(h.State()["admin"]["puxa"] == false);
+    h.Send(AdminSet(R"("blf":true,"puxar":true,"codigoPuxar":"**{ramal}")"));
+    CHECK(h.State()["admin"]["puxa"] == true);
+    h.Send(R"({"v":1,"cmd":"adminLogout"})");
+    CHECK(h.State()["admin"] ==
+          json({{"aberto", false}, {"naoPerturbe", true}, {"atenderAuto", true}, {"blf", true}, {"puxa", true}}));
+
+    // Falta um dos tres: nao puxa (o clique faz a acao do atalho).
+    h.Send(kAdminLogin);
+    h.Send(AdminSet(R"("puxar":false)"));
+    CHECK(h.State()["admin"]["puxa"] == false);
+    h.Send(AdminSet(R"("puxar":true,"codigoPuxar":"")"));
+    CHECK(h.State()["admin"]["puxa"] == false);
+    h.Send(AdminSet(R"("codigoPuxar":"*8","blf":false)"));
+    CHECK(h.State()["admin"]["puxa"] == false);
+    h.Send(R"({"v":1,"cmd":"adminLogout"})");
+    CHECK(h.State()["admin"]["puxa"] == false);
+    // Gravado no admin.json: volta na proxima abertura.
+    h.Send(kAdminLogin);
+    h.Send(AdminSet(R"("blf":true)"));
+    CHECK(h.State()["admin"]["puxa"] == true);
+    h.Restart();
+    CHECK(h.State()["admin"]["aberto"] == false);
+    CHECK(h.State()["admin"]["puxa"] == true);
+    CHECK(h.State()["admin"].count("codigoPuxar") == 0);
 }
 
 TEST_CASE("admin servers change the account port") {

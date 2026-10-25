@@ -263,7 +263,7 @@ A configuração fica no `admin.json`, protegido pelo DPAPI do usuário (como as
   "atalhos":[{"id":"5a1c0e9b2f3d4c67","nome":"Recepção","numero":"2007","acao":"transferir","blf":true,
               "estado":"tocando"},
              {"id":"0b2e7d4c1a9f3e58","nome":"Menu","numero":"12#","acao":"teclas","blf":false,"estado":null}],
-  "admin":{"aberto":false,"naoPerturbe":true,"atenderAuto":true,"blf":true},
+  "admin":{"aberto":false,"naoPerturbe":true,"atenderAuto":true,"blf":true,"puxa":false},
   "entrarAdmin":{"erro":"","esperaAte":0,"vez":0},
   "config":{"bipeFim":true}
 }}
@@ -314,10 +314,11 @@ A configuração fica no `admin.json`, protegido pelo DPAPI do usuário (como as
 | `atalhos[].acao` | `"ligar"` \| `"transferir"` \| `"consulta"` \| `"teclas"` | Ligar, Transferir, Transferir com consulta, Enviar teclas. |
 | `atalhos[].blf` | booleano | A chave "Mostrar se o ramal está livre" do atalho. |
 | `atalhos[].estado` | `"livre"` \| `"tocando"` \| `"ocupado"` \| `"desconectado"` \| `null` | O BLF do ramal: `null` sem o `blf` do atalho ou com o BLF do administrador desligado (`admin.blf`); senão `desconectado` até o primeiro aviso do servidor, com a assinatura recusada, vencida ou sem resposta, e enquanto a conta não está registrada (o registro caiu, sem internet, conectando); quando a conta registra de novo, volta o último estado que o servidor deu, até o próximo aviso. Dois atalhos com o mesmo número têm o mesmo estado. O C++ assina só os atalhos com `blf`, com o `admin.blf` ligado, na conta em uso; de novo quando os atalhos, o administrador ou a conta mudam e quando a conta volta a registrar. |
-| `admin` | objeto | (rc.3) A área do administrador. Fechada (`aberto` `false`), só `{aberto, naoPerturbe, atenderAuto, blf}`, o que a interface precisa para esconder os botões e desativar a chave do BLF; aberta, também `puxar`, `codigoPuxar`, `servidores` e `canal`. |
+| `admin` | objeto | (rc.3) A área do administrador. Fechada (`aberto` `false`), só `{aberto, naoPerturbe, atenderAuto, blf, puxa}`, o que a interface precisa para esconder os botões, desativar a chave do BLF e mostrar a ajuda do puxar; aberta, também `puxar`, `codigoPuxar`, `servidores` e `canal`. |
 | `admin.aberto` | booleano | A área está aberta (a senha certa, há menos de 10 min sem comando). |
 | `admin.naoPerturbe`, `admin.atenderAuto` | booleano | Os botões Não perturbe e Atender automático aparecem (`false`: escondidos, e desligados; o Atender automático também some de Configurações e o atalho do Não perturbe some da bandeja). |
 | `admin.blf` | booleano | O BLF nos atalhos. `false`: a chave "Mostrar se o ramal está livre" fica desativada, com a ajuda `O administrador não ligou o BLF`. |
+| `admin.puxa` | booleano | (rc.3, com a área fechada e aberta) O clique num atalho com o BLF `tocando` puxa a ligação: `true` só com `admin.blf`, `admin.puxar` e um `admin.codigoPuxar` não vazio (o que o `useShortcut` confere, fora o `estado` do atalho). A interface só acrescenta "Num ramal tocando, o clique puxa a ligação." à ajuda da aba Atalhos com ele `true`. Não é sensível: o código continua só com a área aberta. |
 | `admin.puxar`, `admin.codigoPuxar` | booleano, texto | "Puxar ligação pelo atalho" e o "Código para puxar a ligação" (com `{ramal}`). Só com `aberto`. |
 | `admin.servidores` | lista | `{endereco: texto, porta: inteiro}`: a tabela de portas (ver `adminSet`). Só com `aberto`. |
 | `admin.canal` | `"teste"` \| `"estavel"` \| `""` | O canal de atualização (`""`: o do build). Só com `aberto`. |

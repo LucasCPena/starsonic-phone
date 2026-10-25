@@ -1041,6 +1041,8 @@ BridgeState DesktopApp::BuildState() const {
     state.admin.showDoNotDisturb = admin.mostrarNaoPerturbe;
     state.admin.showAutoAnswer = admin.mostrarAtenderAuto;
     state.admin.blf = admin.blf;
+    // O mesmo que o UseShortcut confere (fora o estado tocando do atalho): sem um dos tres, o clique faz a acao.
+    state.admin.picksUp = admin.blf && admin.puxar && !admin.codigoPuxar.empty();
     state.admin.pickup = admin.puxar;
     state.admin.pickupCode = admin.codigoPuxar;
     for (const ServerPort& server : admin.servidores) {

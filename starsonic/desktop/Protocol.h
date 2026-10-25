@@ -170,6 +170,8 @@ struct AdminView {                  // admin (rc.3): completo so com open
     bool showDoNotDisturb = true;   // naoPerturbe: o botao aparece
     bool showAutoAnswer = true;     // atenderAuto
     bool blf = false;
+    // puxa (tambem com a area fechada): o clique num atalho tocando puxa a ligacao (o BLF, o puxar e um codigo).
+    bool picksUp = false;
     bool pickup = false;            // puxar
     std::string pickupCode;         // codigoPuxar
     std::vector<ServerView> servers;   // servidores

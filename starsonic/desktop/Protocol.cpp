@@ -240,12 +240,14 @@ Out AccountJson(const AccountView& account, bool current) {
     return out;
 }
 
-// Fechada, a area do administrador mostra so o que a interface precisa para esconder os botoes (spec 9).
+// Fechada, a area do administrador mostra so o que a interface precisa para esconder os botoes (spec 9) e para a ajuda
+// do puxar (puxa: sem o codigo, que so vai com a area aberta).
 Out AdminJson(const AdminView& admin) {
     Out out{{"aberto", admin.open},
             {"naoPerturbe", admin.showDoNotDisturb},
             {"atenderAuto", admin.showAutoAnswer},
-            {"blf", admin.blf}};
+            {"blf", admin.blf},
+            {"puxa", admin.picksUp}};
     if (!admin.open) return out;
     out["puxar"] = admin.pickup;
     out["codigoPuxar"] = admin.pickupCode;
