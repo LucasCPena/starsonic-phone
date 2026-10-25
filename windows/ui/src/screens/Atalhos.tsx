@@ -153,7 +153,7 @@ export function Atalhos({ atalhos, ligacao, send, puxa, foco, onNew, onEdit }: P
             usavel={shortcutUsable(a.acao, ligacao)}
             coluna={i % 2 === 0 ? 'esquerda' : 'direita'}
             send={send}
-            onEdit={(foco) => onEdit(a, i + 1, foco)}
+            onEdit={(volta) => onEdit(a, i + 1, volta)}
             onRemove={() => setRemover(a)}
           />
         ))}
