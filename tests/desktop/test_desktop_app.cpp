@@ -1921,6 +1921,39 @@ TEST_CASE("a port change during a call still re-registers at the end after selec
     CHECK(h.port.accounts.size() == 3);
 }
 
+// Correcao final (Q1): o RegisterInEngine tira o pedido de registro novo (a conta nova ja vai com a lista de agora).
+TEST_CASE("a port change after an Entrar that failed during an adminSet re-registers the account that came back") {
+    Harness h;
+    h.StartRegistered();   // pbx.example.com, no motor com o id 1
+    h.Send(kAdminLogin);
+    h.Send(Login("outro.example.com", "3001", "errada"));
+    REQUIRE(h.port.accounts.size() == 2);
+    const int candidate = h.port.LastId();
+    // A porta do servidor do Entrar muda enquanto ele espera o resultado: nada ainda (o fim do Entrar decide).
+    h.Send(AdminSet(R"("servidores":[{"endereco":"outro.example.com","porta":5099}])"));
+    CHECK(h.port.accounts.size() == 2);
+    // O Entrar falha: a conta de antes volta ao motor, ja com a lista nova.
+    h.app->OnRegistration(403, false, candidate);
+    h.Run();
+    REQUIRE(h.port.accounts.size() == 3);
+    CHECK(h.port.accounts[2].address == L"pbx.example.com");
+    h.app->OnRegistration(200, true, h.port.LastId());
+    h.Run();
+    CHECK(h.State()["conta"]["status"] == "conectado");
+
+    // Agora muda a porta do servidor da conta que voltou: ela registra de novo, com a porta nova.
+    h.Send(AdminSet(R"("servidores":[{"endereco":"outro.example.com","porta":5099},)"
+                    R"({"endereco":"pbx.example.com","porta":5090}])"));
+    REQUIRE(h.port.accounts.size() == 4);
+    const AccountInput& again = h.port.accounts[3];
+    CHECK(again.address == L"pbx.example.com");
+    REQUIRE(again.serverPorts.has_value());
+    AccountProfile profile;
+    profile.port = 5060;
+    profile.serverPorts = *again.serverPorts;
+    CHECK(PortForServer(profile, again.address) == 5090);
+}
+
 TEST_CASE("blf shows desconectado while the account is not registered and the last state when it is back") {
     Harness h;
     h.StartRegistered();
