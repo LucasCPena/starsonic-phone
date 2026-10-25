@@ -3,8 +3,10 @@
 // `estado`: a bolinha e a palavra ao lado) com o "Mais opções" (⋯) no canto de baixo à direita. O clique usa o atalho
 // (useShortcut: o que ele faz, e o puxar ligação de um ramal tocando, são do C++); o botão direito, ou o ⋯ pelo
 // teclado, abre a edição (Editar e Remover, que pede a confirmação). Enviar teclas fica desativado fora da ligação (o
-// C++ recusaria). Numa janela pequena, a grade rola dentro do corpo da aba (a navegação fica inteira).
-import { useRef, useState } from 'preact/hooks';
+// C++ recusaria). Numa janela pequena, a grade rola dentro do corpo da aba (a navegação fica inteira). Ao voltar da
+// edição, o foco volta ao que a abriu (o cartão, o "Mais opções" ou o "Adicionar atalho"): cada um leva um `data-foco`,
+// e o `foco` que a aba recebe diz qual; sem ele (o atalho saiu, a grade encheu), o foco vai ao título.
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { BlfBadge } from '../components/Blf';
 import { Confirm } from '../components/Confirm';
 import { Menu } from '../components/Menu';
@@ -16,13 +18,21 @@ import type { Send } from '../types';
 /** Quantos atalhos cabem (a loja do C++ recusa o 9º). */
 export const MAX_ATALHOS = 8;
 
+// Os `data-foco` dos botões a que o foco volta quando a edição fecha (os espaços vazios levam todos o mesmo: vale o primeiro).
+const FOCO_NOVO = 'novo';
+export const FOCO_TITULO = 'titulo';
+const focoDoCartao = (id: string) => `cartao:${id}`;
+const focoDoMais = (id: string) => `mais:${id}`;
+
 interface Props {
   atalhos: Shortcut[];
   ligacao: CallState | null;
   send: Send;
-  /** Adicionar atalho; `posicao` é o "<n> de 8" do formulário. */
-  onNew(posicao: number): void;
-  onEdit(atalho: Shortcut, posicao: number): void;
+  /** O que volta a ter o foco na montagem (o `foco` que o onNew ou o onEdit deu, da edição que acaba de fechar). */
+  foco?: string;
+  /** Adicionar atalho; `posicao` é o "<n> de 8" do formulário e `foco` o que volta a ter o foco quando ela fechar. */
+  onNew(posicao: number, foco: string): void;
+  onEdit(atalho: Shortcut, posicao: number, foco: string): void;
 }
 
 interface CartaoProps {
@@ -31,7 +41,8 @@ interface CartaoProps {
   /** A coluna da grade: o menu do ⋯ abre para o lado que cabe na janela (na esquerda, para a direita). */
   coluna: 'esquerda' | 'direita';
   send: Send;
-  onEdit(): void;
+  /** Abrir a edição; `foco` é o botão que volta a ter o foco quando ela fechar (o cartão ou o "Mais opções"). */
+  onEdit(foco: string): void;
   onRemove(): void;
 }
 
@@ -53,11 +64,12 @@ function Cartao({ atalho, usavel, coluna, send, onEdit, onRemove }: CartaoProps)
       <button
         type="button"
         class="atalho-usar"
+        data-foco={focoDoCartao(atalho.id)}
         aria-disabled={usavel ? undefined : 'true'}
         onClick={() => usavel && send({ cmd: 'useShortcut', id: atalho.id })}
         onContextMenu={(e) => {
           e.preventDefault();
-          onEdit();
+          onEdit(focoDoCartao(atalho.id));
         }}
       >
         <span class="tile atalho-tile" aria-hidden="true">
@@ -74,6 +86,7 @@ function Cartao({ atalho, usavel, coluna, send, onEdit, onRemove }: CartaoProps)
         ref={mais}
         type="button"
         class="atalho-mais"
+        data-foco={focoDoMais(atalho.id)}
         aria-label={`Mais opções para ${atalho.nome}`}
         title="Mais opções"
         aria-haspopup="menu"
@@ -84,7 +97,7 @@ function Cartao({ atalho, usavel, coluna, send, onEdit, onRemove }: CartaoProps)
       </button>
       {menu && (
         <Menu label={`Opções de ${atalho.nome}`} anchor={mais} onClose={() => setMenu(null)} class={`popover-atalho popover-${menu} popover-${coluna}`}>
-          <button type="button" role="menuitem" class="menuitem" onClick={() => (setMenu(null), onEdit())}>
+          <button type="button" role="menuitem" class="menuitem" onClick={() => (setMenu(null), onEdit(focoDoMais(atalho.id)))}>
             <IconPencil size="sm" />
             Editar
           </button>
@@ -111,13 +124,22 @@ export function RemoverAtalho({ atalho, onCancel, onConfirm }: { atalho: Shortcu
   );
 }
 
-export function Atalhos({ atalhos, ligacao, send, onNew, onEdit }: Props) {
+export function Atalhos({ atalhos, ligacao, send, foco, onNew, onEdit }: Props) {
   const [remover, setRemover] = useState<Shortcut | null>(null);
+  const raiz = useRef<HTMLDivElement>(null);
   const vazios = Math.max(0, MAX_ATALHOS - atalhos.length);
+  // Voltando da edição: o foco vai ao que a abriu; se ele não existe mais, ao título (nunca fica no <body>).
+  useEffect(() => {
+    if (foco === undefined) return;
+    const alvos = Array.from(raiz.current?.querySelectorAll<HTMLElement>('[data-foco]') ?? []);
+    (alvos.find((e) => e.dataset.foco === foco) ?? alvos.find((e) => e.dataset.foco === FOCO_TITULO))?.focus();
+  }, []);
   return (
-    <div class="body scroll atalhos">
+    <div ref={raiz} class="body scroll atalhos">
       <div class="atalhos-topo">
-        <h1 class="atalhos-titulo">Atalhos</h1>
+        <h1 class="atalhos-titulo" data-foco={FOCO_TITULO} tabIndex={-1}>
+          Atalhos
+        </h1>
         <span class="atalhos-conta">{`${atalhos.length} de ${MAX_ATALHOS}`}</span>
       </div>
       <ul class="atalhos-grade">
@@ -128,13 +150,13 @@ export function Atalhos({ atalhos, ligacao, send, onNew, onEdit }: Props) {
             usavel={shortcutUsable(a.acao, ligacao)}
             coluna={i % 2 === 0 ? 'esquerda' : 'direita'}
             send={send}
-            onEdit={() => onEdit(a, i + 1)}
+            onEdit={(foco) => onEdit(a, i + 1, foco)}
             onRemove={() => setRemover(a)}
           />
         ))}
         {Array.from({ length: vazios }, (_, i) => (
           <li class="atalho-vazio" key={`vazio-${i}`}>
-            <button type="button" class="atalho-novo" onClick={() => onNew(atalhos.length + 1)}>
+            <button type="button" class="atalho-novo" data-foco={FOCO_NOVO} onClick={() => onNew(atalhos.length + 1, FOCO_NOVO)}>
               <IconPlus size="sm" />
               Adicionar atalho
             </button>

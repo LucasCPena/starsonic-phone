@@ -7,7 +7,9 @@
 // loja): a edição fica aberta até os atalhos do estado mudarem (gravou); recusado, o motivo vem num toast, nada muda e
 // a edição fica com o que foi digitado, com o foco no campo de que o motivo fala (ou no Salvar atalho). Esperando a
 // resposta, o Salvar fica travado (um Enter duplo grava um só) e só a resposta deste Salvar o destrava: os atalhos
-// gravados mudaram, ou chegou o toast da loja (recusas.ts); um aviso de outra coisa não conta.
+// gravados mudaram, ou chegou o toast da loja (recusas.ts); um aviso de outra coisa não conta. O foco vai ao Nome quando
+// a edição abre (nos dois modos, num efeito da montagem: o `autofocus` só vale uma vez por documento); quem fecha a
+// edição devolve o foco ao que a abriu (a aba Atalhos).
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { BackBar } from '../components/BackBar';
 import { limitCharacters, looksLikeExtension, trimAscii } from '../format';
@@ -30,6 +32,8 @@ interface Props {
   blfDoAdmin: boolean;
   send: Send;
   onClose(): void;
+  /** O atalho foi removido aqui: o cartão que abriu a edição não existe mais (o foco vai ao título da aba). */
+  onRemoved(): void;
 }
 
 const ACOES: Array<{ acao: ShortcutAction; titulo: string; ajuda: string }> = [
@@ -51,7 +55,7 @@ function gravados(atalhos: Shortcut[]): string {
   return JSON.stringify(atalhos.map((a) => [a.id, a.nome, a.numero, a.acao, a.blf]));
 }
 
-export function AtalhoForm({ atalho, posicao, atalhos, toasts, blfDoAdmin, send, onClose }: Props) {
+export function AtalhoForm({ atalho, posicao, atalhos, toasts, blfDoAdmin, send, onClose, onRemoved }: Props) {
   const [nome, setNome] = useState(atalho?.nome ?? '');
   const [numero, setNumero] = useState(atalho?.numero ?? '');
   const [acao, setAcao] = useState<ShortcutAction>(atalho?.acao ?? 'ligar');
@@ -64,6 +68,10 @@ export function AtalhoForm({ atalho, posicao, atalhos, toasts, blfDoAdmin, send,
   const campoNumero = useRef<HTMLInputElement>(null);
   const botaoSalvar = useRef<HTMLButtonElement>(null);
   const blf = blfEscolhido ?? (blfDoAdmin && looksLikeExtension(numero));
+
+  useEffect(() => {
+    campoNome.current?.focus();
+  }, []);
 
   // A resposta do C++: os atalhos gravados mudaram depois do Salvar (gravou: fecha) ou chegou o toast da loja com o
   // motivo (recusou: o Salvar volta a valer, com o que foi digitado, e o foco fica no formulário). Outro aviso, no meio
@@ -131,7 +139,6 @@ export function AtalhoForm({ atalho, posicao, atalhos, toasts, blfDoAdmin, send,
             aria-required="true"
             autocomplete="off"
             value={nome}
-            autofocus={!atalho}
             aria-invalid={erros.nome ? 'true' : undefined}
             aria-describedby={erros.nome ? 'atalho-nome-erro' : undefined}
             onInput={(e) => {
@@ -240,7 +247,7 @@ export function AtalhoForm({ atalho, posicao, atalhos, toasts, blfDoAdmin, send,
           onConfirm={() => {
             send({ cmd: 'removeShortcut', id: atalho.id });
             setRemover(false);
-            onClose();
+            onRemoved();
           }}
         />
       )}

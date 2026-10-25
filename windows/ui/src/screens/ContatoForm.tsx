@@ -1,6 +1,7 @@
 // Novo contato (pelo "+" dos Contatos ou por "Salvar contato" nos Recentes) e Editar: nome, número e observação.
-// O C++ confere nome e número (sem eles nada é gravado); o `required` só evita mandar um formulário vazio.
-import { useState } from 'preact/hooks';
+// O C++ confere nome e número (sem eles nada é gravado); o `required` só evita mandar um formulário vazio. O foco vai ao
+// Nome quando o formulário abre (novo ou editar, num efeito da montagem: o `autofocus` só vale uma vez por documento).
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { BackBar } from '../components/BackBar';
 import type { Contact } from '../state';
 import type { Send } from '../types';
@@ -19,6 +20,10 @@ export function ContatoForm({ contato, numero, nome, send, onClose }: Props) {
     numero: contato?.numero ?? numero ?? '',
     observacao: contato?.observacao ?? '',
   });
+  const campoNome = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    campoNome.current?.focus();
+  }, []);
   const mudar = (chave: keyof typeof campos) => (e: Event) => setCampos({ ...campos, [chave]: (e.currentTarget as HTMLInputElement).value });
 
   const salvar = (e: Event) => {
@@ -41,7 +46,7 @@ export function ContatoForm({ contato, numero, nome, send, onClose }: Props) {
           <label class="label" for="contato-nome">
             Nome
           </label>
-          <input id="contato-nome" class="input" required autocomplete="off" value={campos.nome} onInput={mudar('nome')} autofocus={!campos.nome} />
+          <input ref={campoNome} id="contato-nome" class="input" required autocomplete="off" value={campos.nome} onInput={mudar('nome')} />
         </div>
         <div class="field">
           <label class="label" for="contato-numero">

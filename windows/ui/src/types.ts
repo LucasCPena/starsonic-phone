@@ -7,7 +7,8 @@ export type Send = (command: Command) => void;
 export type Tab = 'teclado' | 'atalhos' | 'recentes' | 'contatos';
 
 export type View =
-  | { kind: 'tab'; tab: Tab }
+  /** `foco`: o que volta a ter o foco quando a aba volta de uma edição (o `data-foco` do botão que a abriu); vale uma vez. */
+  | { kind: 'tab'; tab: Tab; foco?: string }
   | { kind: 'configuracoes' }
   | { kind: 'sobre' }
   /** Adicionar (sem contaId) ou Editar conta: a tela Entrar como formulário. */

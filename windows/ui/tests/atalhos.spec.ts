@@ -744,6 +744,112 @@ test.describe('um atalho novo', () => {
   });
 });
 
+// O foco da edição (C-M2). Na abertura, o Nome ganha o foco nos dois modos e toda vez: o `autofocus` só vale uma vez por
+// documento (a segunda abertura ficava no <body>) e a edição de um atalho não tinha foco nenhum. Ao fechar, o foco
+// volta ao que a abriu (o Mais opções ou o cartão do atalho, o "Adicionar atalho"); sem ele (o atalho saiu, a grade
+// encheu), vai ao título da aba: nunca fica no <body>.
+test.describe('o foco da edição do atalho', () => {
+  const nome = (page: Page) => page.getByLabel('Nome', { exact: true });
+  const voltar = (page: Page) => page.getByRole('button', { name: 'Voltar' });
+  const adicionar = (page: Page) => page.getByRole('button', { name: 'Adicionar atalho', exact: true });
+  const tituloDaAba = (page: Page) => page.getByRole('main', { name: 'Atalhos' }).getByRole('heading', { name: 'Atalhos', level: 1 });
+
+  test('a new shortcut focuses Nome every time it opens, not only the first', async ({ page }) => {
+    await abrir(page, 'atalhos');
+    for (const vez of [1, 2, 3]) {
+      await adicionar(page).first().click();
+      await expect(page.getByRole('heading', { name: 'Adicionar atalho' })).toBeVisible();
+      await expect(nome(page), `abertura ${vez}`).toBeFocused();
+      await voltar(page).click();
+      await expect(page.getByRole('main', { name: 'Atalhos' })).toBeVisible();
+    }
+  });
+
+  test('an existing shortcut focuses Nome too, from the right button and from Mais opções', async ({ page }) => {
+    await abrir(page, 'atalhos');
+    await usar(page, 'Suporte').click({ button: 'right' });
+    await expect(page.getByRole('heading', { name: 'Editar atalho' })).toBeVisible();
+    await expect(nome(page)).toHaveValue('Suporte');
+    await expect(nome(page), 'pelo botão direito').toBeFocused();
+    await voltar(page).click();
+    await page.getByRole('button', { name: 'Mais opções para Comercial' }).click();
+    await page.getByRole('menuitem', { name: 'Editar' }).click();
+    await expect(nome(page)).toHaveValue('Comercial');
+    await expect(nome(page), 'pelo Mais opções').toBeFocused();
+  });
+
+  test('Voltar and Salvar give the focus back to Adicionar atalho, and to the tab title when none is left', async ({ page }) => {
+    await abrir(page, 'atalhos');
+    await adicionar(page).first().click();
+    await voltar(page).click();
+    await expect(adicionar(page).first(), 'Voltar').toBeFocused();
+    // Salvar: o atalho novo ocupa o primeiro espaço, sobra um, e o foco volta a ele.
+    await adicionar(page).first().click();
+    await nome(page).fill('Portaria');
+    await page.getByLabel('Número', { exact: true }).fill('2030');
+    await page.getByRole('button', { name: 'Salvar atalho' }).click();
+    await expect(cartao(page, 'Portaria')).toHaveCount(1);
+    await expect(adicionar(page)).toHaveCount(1);
+    await expect(adicionar(page).first(), 'Salvar').toBeFocused();
+    // O oitavo atalho enche a grade: nenhum "Adicionar atalho" sobra, e o foco vai ao título da aba.
+    await adicionar(page).first().click();
+    await nome(page).fill('Garagem');
+    await page.getByLabel('Número', { exact: true }).fill('2040');
+    await page.getByRole('button', { name: 'Salvar atalho' }).click();
+    await expect(cartao(page, 'Garagem')).toHaveCount(1);
+    await expect(adicionar(page)).toHaveCount(0);
+    await expect(tituloDaAba(page), 'a grade cheia').toBeFocused();
+  });
+
+  test('a shortcut opened by the right button gives the focus back to its card', async ({ page }) => {
+    await abrir(page, 'atalhos');
+    await usar(page, 'Suporte').click({ button: 'right' });
+    await voltar(page).click();
+    await expect(usar(page, 'Suporte'), 'Voltar').toBeFocused();
+    await usar(page, 'Suporte').click({ button: 'right' });
+    await nome(page).fill('Suporte 2');
+    await page.getByRole('button', { name: 'Salvar atalho' }).click();
+    await expect(cartao(page, 'Suporte 2')).toHaveCount(1);
+    await expect(usar(page, 'Suporte 2'), 'Salvar').toBeFocused();
+  });
+
+  test('a shortcut opened from Mais opções gives the focus back to Mais opções, all by keyboard', async ({ page }) => {
+    await abrir(page, 'atalhos');
+    const mais = page.getByRole('button', { name: 'Mais opções para Comercial' });
+    // O Enter no Mais opções abre o menu (o foco vai ao Editar, o primeiro item); o outro Enter abre a edição.
+    const editarPeloMais = async () => {
+      await page.keyboard.press('Enter');
+      await expect(page.getByRole('menu', { name: 'Opções de Comercial' }).getByRole('menuitem', { name: 'Editar' })).toBeFocused();
+      await page.keyboard.press('Enter');
+    };
+    await mais.focus();
+    await editarPeloMais();
+    await expect(nome(page)).toHaveValue('Comercial');
+    await expect(nome(page)).toBeFocused();
+    // Do Nome ao Voltar (o botão da barra vem antes do campo) e Enter.
+    await page.keyboard.press('Shift+Tab');
+    await expect(voltar(page)).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(mais, 'Voltar').toBeFocused();
+    // Salvar com um nome novo, pelo Enter no campo.
+    await editarPeloMais();
+    await expect(nome(page)).toBeFocused();
+    await nome(page).fill('Comercial 2');
+    await nome(page).press('Enter');
+    await expect(cartao(page, 'Comercial 2')).toHaveCount(1);
+    await expect(page.getByRole('button', { name: 'Mais opções para Comercial 2' }), 'Salvar').toBeFocused();
+  });
+
+  test('removing the shortcut in its editor leaves the focus on the tab title', async ({ page }) => {
+    await abrir(page, 'atalhos');
+    await usar(page, 'Financeiro').click({ button: 'right' });
+    await page.getByRole('button', { name: 'Remover' }).click();
+    await page.getByRole('dialog', { name: 'Remover atalho' }).getByRole('button', { name: 'Remover' }).click();
+    await expect(cartao(page, 'Financeiro')).toHaveCount(0);
+    await expect(tituloDaAba(page)).toBeFocused();
+  });
+});
+
 test.describe('o painel Atalhos na ligação', () => {
   const botaoAtalhos = (page: Page) => page.getByRole('button', { name: 'Atalhos', exact: true });
   const painel = (page: Page) => page.getByRole('region', { name: 'Atalhos' });

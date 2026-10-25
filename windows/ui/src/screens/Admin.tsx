@@ -96,6 +96,11 @@ function Servidores({ servidores, send }: { servidores: AdminServer[]; send: Sen
   const [endereco, setEndereco] = useState('');
   const [porta, setPorta] = useState('');
   const campo = useRef<HTMLInputElement>(null);
+  // Os botões a que o foco volta quando o formulário fecha: o Editar de cada linha e o "Adicionar servidor".
+  const botoesEditar = useRef<Array<HTMLButtonElement | null>>([]);
+  const botaoAdicionar = useRef<HTMLButtonElement>(null);
+  // O que abriu o formulário (a linha ou o "Adicionar servidor"), até o foco voltar a ele; sem ele, não há o que devolver.
+  const voltaA = useRef<number | 'novo' | null>(null);
   // A lista de quando a mudança saiu: quando o estado traz outra, o C++ gravou e o formulário fecha; recusada (o toast
   // diz o motivo), o estado não muda e o formulário fica com o que foi digitado.
   const enviadaDe = useRef<string | null>(null);
@@ -106,11 +111,22 @@ function Servidores({ servidores, send }: { servidores: AdminServer[]; send: Sen
     setEditando(null);
   }, [lista]);
   useEffect(() => {
-    if (editando !== null) campo.current?.focus();
+    if (editando !== null) {
+      campo.current?.focus();
+      return;
+    }
+    // O formulário fechou (Cancelar, gravou, removeu): o foco volta ao botão que o abriu, ou ao "Adicionar servidor" se
+    // a linha saiu. Só se o foco ficou sem lugar (o <body>: o botão do formulário saiu da tela): se a pessoa o levou a
+    // outro controle enquanto o C++ gravava, ele fica lá.
+    const alvo = voltaA.current;
+    voltaA.current = null;
+    if (alvo === null || (document.activeElement && document.activeElement !== document.body)) return;
+    ((typeof alvo === 'number' ? botoesEditar.current[alvo] : null) ?? botaoAdicionar.current)?.focus();
   }, [editando]);
 
   const abrir = (qual: number | 'novo') => {
     enviadaDe.current = null;
+    voltaA.current = qual;
     setEditando(qual);
     setEndereco(qual === 'novo' ? '' : servidores[qual].endereco);
     setPorta(qual === 'novo' ? '' : String(servidores[qual].porta));
@@ -178,7 +194,15 @@ function Servidores({ servidores, send }: { servidores: AdminServer[]; send: Sen
       </div>
       <div class="srv-acoes">
         {typeof editando === 'number' && (
-          <button type="button" class="btn btn-outline mini" onClick={() => mandar(servidores.filter((_, i) => i !== editando))}>
+          <button
+            type="button"
+            class="btn btn-outline mini"
+            onClick={() => {
+              // A linha vai sair: o foco volta ao "Adicionar servidor", e não ao Editar da que subir para o lugar dela.
+              voltaA.current = 'novo';
+              mandar(servidores.filter((_, i) => i !== editando));
+            }}
+          >
             Remover
           </button>
         )}
@@ -203,7 +227,15 @@ function Servidores({ servidores, send }: { servidores: AdminServer[]; send: Sen
               <span class="row-title set-title">{s.endereco}</span>
               <span class="row-sub">{`Porta ${s.porta} · UDP e TCP`}</span>
             </span>
-            <button type="button" class="btn btn-outline mini" aria-label={`Editar o servidor ${s.endereco}`} onClick={() => abrir(i)}>
+            <button
+              ref={(botao) => {
+                botoesEditar.current[i] = botao;
+              }}
+              type="button"
+              class="btn btn-outline mini"
+              aria-label={`Editar o servidor ${s.endereco}`}
+              onClick={() => abrir(i)}
+            >
               Editar
             </button>
           </div>
@@ -215,7 +247,7 @@ function Servidores({ servidores, send }: { servidores: AdminServer[]; send: Sen
       </div>
       {editando !== 'novo' && (
         <div class="set-row">
-          <button type="button" class="adm-adicionar" onClick={() => abrir('novo')}>
+          <button ref={botaoAdicionar} type="button" class="adm-adicionar" onClick={() => abrir('novo')}>
             <IconPlus size="sm" />
             Adicionar servidor
           </button>
@@ -230,7 +262,7 @@ export function Admin({ admin, send, onBack, onLeave }: Props) {
   const canal = admin.canal === '' ? 'teste' : admin.canal;
   return (
     <>
-      <BackBar eyebrow="Starsonic" title="Área do administrador" onBack={onBack} />
+      <BackBar eyebrow="Starsonic" title="Área do administrador" onBack={onBack} focarTitulo />
       <div class="body scroll adm">
         <h2 class="eyebrow">Botões da tela principal</h2>
         <div class="card">

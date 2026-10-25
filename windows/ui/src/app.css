@@ -640,6 +640,8 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .bar .bar-eyebrow { color: var(--cyan); font-size: 11px; }
 .bar .bar-eyebrow::before { width: 20px; }
 .bar .h1 { min-width: 0; }
+/* O título que recebe o foco ao abrir a tela (a área do administrador): o aro junto do texto, sem cobrir a linha pequena de cima. */
+.bar .h1:focus-visible { outline-offset: 0; border-radius: 4px; }
 .bar-extra { margin-left: auto; padding-right: 4px; font-size: 12.5px; font-weight: 600; color: #b9c4e6; white-space: nowrap; }
 
 /* Títulos e ajudas longos que quebram a linha (o bipe, as chaves do administrador). */

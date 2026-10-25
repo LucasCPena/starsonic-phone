@@ -776,3 +776,37 @@ test.describe('ponte e janela', () => {
     expect(parseFloat(duracao)).toBeLessThan(0.001);
   });
 });
+
+// O foco do formulário do contato (C-M2, o mesmo padrão da edição do atalho): o `autofocus` só vale uma vez por
+// documento (a segunda abertura ficava no <body>) e a edição de um contato não tinha foco nenhum.
+test.describe('o foco do formulário do contato', () => {
+  const nome = (page: Page) => page.getByLabel('Nome', { exact: true });
+
+  test('Nome takes the focus every time the form opens, for a new contact and for an existing one', async ({ page }) => {
+    await abrir(page, 'contatos');
+    for (const vez of [1, 2]) {
+      await page.getByRole('button', { name: 'Novo contato' }).click();
+      await expect(page.getByRole('heading', { name: 'Novo contato' })).toBeVisible();
+      await expect(nome(page), `abertura ${vez} de um contato novo`).toBeFocused();
+      await page.getByRole('button', { name: 'Voltar' }).click();
+      await expect(page.getByRole('searchbox', { name: 'Buscar contato' })).toBeVisible();
+    }
+    await page.getByRole('button', { name: 'Mais opções para Carlos Lima' }).click();
+    await page.getByRole('menuitem', { name: 'Editar' }).click();
+    await expect(page.getByRole('heading', { name: 'Editar contato' })).toBeVisible();
+    await expect(nome(page)).toHaveValue('Carlos Lima');
+    await expect(nome(page), 'editar um contato').toBeFocused();
+  });
+
+  test('Salvar contato from Recentes focuses Nome every time too', async ({ page }) => {
+    await abrir(page, 'recentes');
+    for (const vez of [1, 2]) {
+      await page.getByRole('button', { name: /^3001/ }).click();
+      await page.getByRole('button', { name: 'Salvar contato' }).click();
+      await expect(page.getByRole('heading', { name: 'Novo contato' })).toBeVisible();
+      await expect(nome(page), `abertura ${vez}`).toBeFocused();
+      await page.getByRole('button', { name: 'Voltar' }).click();
+      await expect(page.getByRole('button', { name: 'Todas' })).toBeVisible();
+    }
+  });
+});

@@ -17,7 +17,7 @@ import { TitleBar } from './components/TitleBar';
 import { Toast } from './components/Toast';
 import { Admin } from './screens/Admin';
 import { AtalhoForm } from './screens/AtalhoForm';
-import { Atalhos } from './screens/Atalhos';
+import { Atalhos, FOCO_TITULO } from './screens/Atalhos';
 import { Configuracoes } from './screens/Configuracoes';
 import { ContatoForm } from './screens/ContatoForm';
 import { Contatos } from './screens/Contatos';
@@ -114,6 +114,12 @@ function App() {
     if (emLigacao) setAdminLogin(false);
     estavaEmLigacao.current = emLigacao;
   }, [emLigacao]);
+
+  // O foco de volta (`foco` da aba) vale uma vez: a aba que o recebeu já o aplicou, no efeito da montagem dela, e uma
+  // tela guardada em `back` por outro lugar (o Menu, o Ctrl + P) não o repete.
+  useEffect(() => {
+    if (view.kind === 'tab' && view.foco !== undefined) setView({ kind: 'tab', tab: view.tab });
+  }, [view]);
 
   // A área do administrador fechou no C++ (Sair, 10 min sem uso, a janela fechou): a tela dela sai.
   const adminAberto = state?.admin.aberto === true;
@@ -296,6 +302,7 @@ function App() {
           blfDoAdmin={state.admin.blf}
           send={send}
           onClose={() => setView(view.back)}
+          onRemoved={() => setView({ kind: 'tab', tab: 'atalhos', foco: FOCO_TITULO })}
         />
       );
       break;
@@ -327,8 +334,9 @@ function App() {
             atalhos={state.atalhos}
             ligacao={state.ligacao}
             send={send}
-            onNew={(posicao) => setView({ kind: 'atalho', posicao, back: view })}
-            onEdit={(atalho, posicao) => setView({ kind: 'atalho', atalho, posicao, back: view })}
+            foco={view.kind === 'tab' ? view.foco : undefined}
+            onNew={(posicao, foco) => setView({ kind: 'atalho', posicao, back: { kind: 'tab', tab: 'atalhos', foco } })}
+            onEdit={(atalho, posicao, foco) => setView({ kind: 'atalho', atalho, posicao, back: { kind: 'tab', tab: 'atalhos', foco } })}
           />
         )}
         {tab === 'recentes' && (

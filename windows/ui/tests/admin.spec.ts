@@ -10,8 +10,10 @@ import {
   entrarNaAdmin,
   esperarComando,
   mudarEstado,
+  segurarCpp,
   SENHA_ADMIN_TESTE,
   semViolacoesSerias,
+  soltarCpp,
   verTextos,
   vezes,
 } from './helpers';
@@ -507,5 +509,70 @@ test.describe('a tela do administrador', () => {
     await mudarEstado(page, (s) => ({ ...s, admin: { aberto: false, naoPerturbe: true, atenderAuto: true, blf: true } }));
     await expect(telaAdmin(page)).toHaveCount(0);
     await expect(page.getByRole('textbox', { name: 'Número' })).toBeVisible();
+  });
+});
+
+// O foco da tela do administrador (C-M2): ao abrir (pela senha e pelo Ctrl + P) vai ao título da tela, e o leitor de
+// tela diz onde a pessoa está; o formulário de servidor devolve o foco ao Editar da linha ou ao "Adicionar servidor"
+// que o abriu (o foco caía no <body>).
+test.describe('o foco da tela do administrador', () => {
+  const editar = (page: Page) => page.getByRole('button', { name: 'Editar o servidor starcloud1-starsonic.com.br' });
+  const adicionar = (page: Page) => page.getByRole('button', { name: 'Adicionar servidor' });
+  const endereco = (page: Page) => page.getByLabel('Endereço', { exact: true });
+  const porta = (page: Page) => page.getByLabel('Porta', { exact: true });
+
+  test('the screen focuses its title when it opens, by the password and by Ctrl + P', async ({ page }) => {
+    await abrir(page, 'principal');
+    await entrarNaAdmin(page);
+    await expect(telaAdmin(page), 'depois da senha').toBeFocused();
+    await page.getByRole('button', { name: 'Voltar' }).click();
+    await expect(page.getByRole('textbox', { name: 'Número' })).toBeVisible();
+    // Com a área aberta, o Ctrl + P vai direto para a tela, e o foco também (de novo, na mesma sessão).
+    await page.keyboard.press('Control+KeyP');
+    await expect(telaAdmin(page)).toBeVisible();
+    await expect(telaAdmin(page), 'pelo Ctrl + P').toBeFocused();
+  });
+
+  test('the server form gives the focus back to the Editar or the Adicionar servidor that opened it', async ({ page }) => {
+    await abrir(page, 'principal');
+    await entrarNaAdmin(page);
+    // Editar: Cancelar e Salvar voltam ao Editar da linha.
+    await editar(page).click();
+    await expect(endereco(page)).toBeFocused();
+    await page.getByRole('button', { name: 'Cancelar' }).click();
+    await expect(endereco(page)).toHaveCount(0);
+    await expect(editar(page), 'Cancelar').toBeFocused();
+    await editar(page).click();
+    await porta(page).fill('35061');
+    await page.getByRole('button', { name: 'Salvar servidor' }).click();
+    await expect(page.getByText('Porta 35061 · UDP e TCP', { exact: true })).toBeVisible();
+    await expect(editar(page), 'Salvar').toBeFocused();
+    // Adicionar servidor: Cancelar e Salvar voltam a ele.
+    await adicionar(page).click();
+    await expect(endereco(page)).toBeFocused();
+    await page.getByRole('button', { name: 'Cancelar' }).click();
+    await expect(adicionar(page), 'Cancelar o novo').toBeFocused();
+    await adicionar(page).click();
+    await endereco(page).fill('pabx.cliente.com.br');
+    await porta(page).fill('5080');
+    await page.getByRole('button', { name: 'Salvar servidor' }).click();
+    await expect(page.getByText('pabx.cliente.com.br', { exact: true })).toBeVisible();
+    await expect(adicionar(page), 'Salvar o novo').toBeFocused();
+  });
+
+  test('the form closing after a slow save does not take the focus from where the person moved it', async ({ page }) => {
+    await abrir(page, 'principal');
+    await entrarNaAdmin(page);
+    await editar(page).click();
+    await porta(page).fill('35061');
+    await segurarCpp(page);
+    await page.getByRole('button', { name: 'Salvar servidor' }).click();
+    await esperarComando(page, { cmd: 'adminSet', servidores: [SERVIDORES[0], { endereco: 'starcloud1-starsonic.com.br', porta: 35061 }] });
+    // O C++ ainda não respondeu: a pessoa foi para a chave do BLF. O formulário fecha quando a resposta chega, e o foco fica onde ela o pôs.
+    const blf = page.getByRole('switch', { name: 'BLF nos atalhos' });
+    await blf.focus();
+    await soltarCpp(page);
+    await expect(page.getByText('Porta 35061 · UDP e TCP', { exact: true })).toBeVisible();
+    await expect(blf).toBeFocused();
   });
 });
