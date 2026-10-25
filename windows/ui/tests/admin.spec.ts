@@ -99,6 +99,57 @@ test.describe('o Ctrl + P', () => {
     expect((await comandos(page)).filter((c) => String(c.cmd).startsWith('admin'))).toEqual([]);
   });
 
+  test('does nothing over an open menu (the header Menu, the account list and a card menu)', async ({ page }) => {
+    await abrir(page, 'atalhos');
+    const menus: Array<[string, () => Promise<void>]> = [
+      ['Menu', () => page.getByRole('button', { name: 'Menu' }).click()],
+      ['Contas', () => page.getByRole('button', { name: /Trocar de conta/ }).click()],
+      ['Opções de Suporte', () => page.getByRole('button', { name: 'Mais opções para Suporte' }).click()],
+    ];
+    for (const [nome, abrirMenu] of menus) {
+      await abrirMenu();
+      await expect(page.getByRole('menu', { name: nome })).toBeVisible();
+      await page.keyboard.press('Control+KeyP');
+      expect(await ctrlPImpedido(page), nome).toBe(true);
+      await page.waitForTimeout(200);
+      await expect(dialogo(page), nome).toHaveCount(0);
+      await expect(page.getByRole('menu', { name: nome })).toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(page.getByRole('menu')).toHaveCount(0);
+    }
+    // Sem menu aberto, o Ctrl + P abre o diálogo.
+    await page.keyboard.press('Control+KeyP');
+    await expect(dialogo(page)).toBeVisible();
+    expect((await comandos(page)).filter((c) => String(c.cmd).startsWith('admin'))).toEqual([]);
+  });
+
+  test('an incoming call closes the dialog, and it does not come back after the call', async ({ page }) => {
+    await abrir(page, 'principal');
+    await page.keyboard.press('Control+KeyP');
+    await dialogo(page).getByLabel('Senha', { exact: true }).fill('meio-digitada');
+    await mudarEstado(page, (s) => ({
+      ...s,
+      ligacao: {
+        top: { id: 31, number: '2003', name: 'Ana Souza', incoming: true, phase: 'ringing', activeSinceMs: 0, held: false },
+        second: null,
+        secondKind: 'none',
+        muted: false,
+        conference: false,
+        conferenceSinceMs: 0,
+        consulting: false,
+        colleagueActive: false,
+      },
+    }));
+    await expect(page.getByRole('button', { name: 'Atender', exact: true })).toBeVisible();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await mudarEstado(page, (s) => ({ ...s, ligacao: null }));
+    await expect(page.getByRole('textbox', { name: 'Número' })).toBeVisible();
+    await page.waitForTimeout(200);
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(page.locator('#adm-senha')).toHaveCount(0);
+    expect((await comandos(page)).some((c) => c.cmd === 'adminLogin')).toBe(false);
+  });
+
   test('opens the admin screen directly while the area is open, also from the Entrar screen', async ({ page }) => {
     await abrir(page, 'entrar');
     await page.keyboard.press('Control+KeyP');
@@ -207,6 +258,30 @@ test('wrong admin password shows Senha incorreta and the wait', async ({ page })
     'errada-5',
     SENHA_ADMIN_TESTE,
   ]);
+});
+
+test('a double Enter sends one adminLogin and waits for its answer', async ({ page }) => {
+  await page.clock.install({ time: new Date('2026-10-22T10:00:00-03:00') });
+  await abrir(page, 'principal');
+  await page.keyboard.press('Control+KeyP');
+  const senha = dialogo(page).getByLabel('Senha', { exact: true });
+  const entrar = dialogo(page).getByRole('button', { name: 'Entrar' });
+  await senha.fill('errada-1');
+  // O relógio parado: a resposta do C++ (falso) não chega entre os dois Enter.
+  await page.clock.pauseAt(new Date('2026-10-22T10:05:00-03:00'));
+  await senha.press('Enter');
+  await senha.press('Enter');
+  expect(await vezes(page, { cmd: 'adminLogin', senha: 'errada-1' })).toBe(1);
+  // Esperando a resposta: o Entrar travado.
+  await expect(entrar).toBeDisabled();
+  await page.clock.runFor(100);
+  await expect(dialogo(page).getByRole('alert')).toHaveText('Senha incorreta.');
+  await expect(senha).toHaveValue('');
+  // Respondida: a próxima tentativa vale de novo.
+  await page.clock.resume();
+  await senha.fill('errada-2');
+  await expect(entrar).toBeEnabled();
+  expect((await comandos(page)).filter((c) => c.cmd === 'adminLogin')).toHaveLength(1);
 });
 
 for (const tema of ['light', 'dark'] as const) {
@@ -361,6 +436,8 @@ test.describe('a tela do administrador', () => {
     await verTextos(page, ['pabx.cliente.com.br', 'Porta 5080 · UDP e TCP']);
     // Um repetido: o C++ recusa com o toast, e o formulário continua com o que foi digitado.
     await page.getByRole('button', { name: 'Adicionar servidor' }).click();
+    // O formulário põe o foco no Endereço depois de aparecer: antes de digitar, o foco já chegou lá.
+    await expect(endereco).toBeFocused();
     await endereco.fill('starcloud-starsonic.com.br');
     await porta.fill('5070');
     await page.getByRole('button', { name: 'Salvar servidor' }).click();
@@ -376,6 +453,7 @@ test.describe('a tela do administrador', () => {
     await expect(page.getByText('pabx.cliente.com.br', { exact: true })).toHaveCount(0);
     // A porta só com dígitos; sem o endereço ou a porta, nada a salvar.
     await page.getByRole('button', { name: 'Adicionar servidor' }).click();
+    await expect(endereco).toBeFocused();
     await porta.fill('50a6');
     await expect(porta).toHaveValue('506');
     await expect(page.getByRole('button', { name: 'Salvar servidor' })).toBeDisabled();

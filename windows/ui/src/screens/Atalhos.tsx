@@ -1,9 +1,9 @@
 // A aba Atalhos (rc.3, spec 3): a grade de duas colunas com até 8 cartões, "<n> de 8" no alto e "Adicionar atalho" nos
-// espaços vazios. Cada cartão tem o ícone da ação, o nome, a ação e o número e o BLF (só com `estado`: a bolinha e a
-// palavra ao lado). O clique usa o atalho (useShortcut: o que ele faz, e o puxar ligação de um ramal tocando, são do
-// C++); o botão direito, ou o "Mais opções" (⋯) do cartão pelo teclado, abre a edição (Editar e Remover, que pede a
-// confirmação). Enviar teclas fica desativado fora da ligação (o C++ recusaria). Numa janela pequena, a grade rola
-// dentro do corpo da aba (a navegação fica inteira).
+// espaços vazios. Cada cartão tem o ícone da ação, o nome, a ação e o número e, embaixo, a linha do BLF (só com
+// `estado`: a bolinha e a palavra ao lado) com o "Mais opções" (⋯) no canto de baixo à direita. O clique usa o atalho
+// (useShortcut: o que ele faz, e o puxar ligação de um ramal tocando, são do C++); o botão direito, ou o ⋯ pelo
+// teclado, abre a edição (Editar e Remover, que pede a confirmação). Enviar teclas fica desativado fora da ligação (o
+// C++ recusaria). Numa janela pequena, a grade rola dentro do corpo da aba (a navegação fica inteira).
 import { useRef, useState } from 'preact/hooks';
 import { BlfBadge } from '../components/Blf';
 import { Confirm } from '../components/Confirm';
@@ -64,8 +64,9 @@ function Cartao({ atalho, usavel, send, onEdit, onRemove }: CartaoProps) {
         <span class="atalho-texto">
           <span class="atalho-nome">{atalho.nome}</span>
           <span class="atalho-detalhe">{shortcutLine(atalho)}</span>
-          {atalho.estado !== null && <BlfBadge estado={atalho.estado} />}
         </span>
+        {/* A linha do BLF, embaixo de tudo: o "Mais opções" fica no fim dela (o nome tem a linha inteira). */}
+        <span class="atalho-rodape">{atalho.estado !== null && <BlfBadge estado={atalho.estado} />}</span>
       </button>
       <button
         ref={mais}

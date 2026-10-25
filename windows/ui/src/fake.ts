@@ -3,6 +3,7 @@
 // DesktopApp. Guarda cada comando em window.__comandos; window.__fake.push(msg) manda uma mensagem à interface.
 // As regras de verdade (validações, ligações) são do C++: aqui só o bastante para as telas reagirem.
 import { createScenario, SERVIDORES_DO_PERFIL, type FakeView } from './fake-scenarios';
+import { trimAscii } from './format';
 import type { WebviewLike } from './bridge';
 import type {
   AdminServer,
@@ -101,8 +102,8 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
     const editando = typeof command.id === 'string';
     if (editando && !state.atalhos.some((a) => a.id === command.id)) return 'Esse atalho não existe mais.';
     if (!editando && state.atalhos.length >= 8) return 'Você já tem 8 atalhos. Remova um para adicionar outro.';
-    if (String(command.nome ?? '').trim() === '') return 'Digite o nome do atalho.';
-    if (String(command.numero ?? '').trim() === '') return 'Digite o número do atalho.';
+    if (trimAscii(String(command.nome ?? '')) === '') return 'Digite o nome do atalho.';
+    if (trimAscii(String(command.numero ?? '')) === '') return 'Digite o número do atalho.';
     return '';
   };
 
@@ -250,8 +251,9 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
         const id = typeof command.id === 'string' ? command.id : Math.random().toString(16).slice(2, 10) + Math.random().toString(16).slice(2, 10);
         const atalho: Shortcut = {
           id,
-          nome: String(command.nome).trim(),
-          numero: String(command.numero).trim(),
+          // Como a loja do C++: só o espaço, o tab e as quebras de linha das pontas saem.
+          nome: trimAscii(String(command.nome)),
+          numero: trimAscii(String(command.numero)),
           acao: command.acao as ShortcutAction,
           blf: command.blf === true,
           estado: null,

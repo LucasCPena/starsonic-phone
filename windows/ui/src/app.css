@@ -633,9 +633,6 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
    rc.3: a aba Atalhos, a edição, o painel na ligação, a área do administrador e o bipe (o canvas "Starsonic
    Phone Windows — atalhos, administrador e status", com os tokens de sempre). */
 
-/* No Compacto, a aba Atalhos só com o ícone (spec 3.1), alinhado aos ícones das outras (o lugar do rótulo fica). */
-.win[data-layout="compacto"] .tab-atalhos .tab-label { visibility: hidden; }
-
 /* A barra com a linha pequena em cima do título (a área do administrador) e o texto à direita ("3 de 8"). */
 .bar-titulos { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .bar .bar-eyebrow { color: var(--cyan); font-size: 11px; }
@@ -653,18 +650,22 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .atalhos-conta { font-size: 12.5px; font-weight: 600; color: var(--text-muted); white-space: nowrap; }
 .atalhos-grade { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; flex: none; }
 .atalho, .atalho-vazio { position: relative; min-width: 0; }
-.atalho-usar { width: 100%; height: 74px; display: flex; align-items: center; gap: 10px; padding: 0 10px 0 12px; border-radius: 18px;
-  border: 1px solid var(--key-border); background: var(--key); color: var(--text-strong); font-family: inherit; text-align: left;
-  transition: border-color var(--ease), background var(--ease); }
+.atalho-usar { width: 100%; height: 74px; display: grid; grid-template-columns: 38px minmax(0, 1fr); grid-template-rows: 38px 24px;
+  grid-template-areas: "tile texto" "rodape rodape"; column-gap: 10px; row-gap: 2px; align-items: center; align-content: center;
+  padding: 0 8px 0 12px; border-radius: 18px; border: 1px solid var(--key-border); background: var(--key); color: var(--text-strong);
+  font-family: inherit; text-align: left; transition: border-color var(--ease), background var(--ease); }
 .atalho-usar:not([aria-disabled="true"]):hover { border-color: var(--cyan); }
 .atalho-usar:not([aria-disabled="true"]):active { background: var(--icon-tile); }
 .atalho-usar[aria-disabled="true"] { opacity: 0.55; }
+.atalho-tile { grid-area: tile; }
 .atalho-tile .ic { width: 18px; height: 18px; }
-.atalho-texto { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
-/* O nome deixa o canto de cima à direita para o "Mais opções". */
-.atalho-nome { font-size: 14px; font-weight: 800; line-height: 1.25; padding-right: 22px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.atalho-texto { grid-area: texto; display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.atalho-nome { font-size: 14px; font-weight: 800; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .atalho-detalhe { font-size: 12px; line-height: 1.35; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.atalho-mais { position: absolute; top: 5px; right: 5px; width: 26px; height: 26px; border-radius: 999px; border: 0; background: transparent;
+/* A linha do BLF, embaixo da linha do número e de ponta a ponta do cartão; o fim dela fica para o "Mais opções", no
+   canto de baixo à direita (na altura dela), para o nome ter a linha inteira. */
+.atalho-rodape { grid-area: rodape; display: flex; align-items: center; min-width: 0; height: 24px; padding-right: 21px; }
+.atalho-mais { position: absolute; right: 4px; bottom: 5px; width: 24px; height: 24px; border-radius: 999px; border: 0; background: transparent;
   color: var(--text-muted); display: grid; place-items: center; padding: 0; }
 .atalho-mais:hover, .atalho-mais[aria-expanded="true"] { background: var(--icon-tile); color: var(--text-strong); }
 .atalho-novo { width: 100%; height: 74px; display: flex; align-items: center; justify-content: center; gap: 8px; border-radius: 18px;
@@ -673,9 +674,9 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .atalho-novo:hover { border-color: var(--cyan); color: var(--text-strong); }
 .atalho-novo .ic { width: 18px; height: 18px; }
 .atalhos-ajuda { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--text-muted); flex: none; }
-.popover-atalho { right: 4px; min-width: 170px; }
-.popover-atalho.popover-baixo { top: 34px; }
-.popover-atalho.popover-cima { top: auto; bottom: calc(100% - 4px); }
+.popover-atalho { right: 0; min-width: 170px; }
+.popover-atalho.popover-baixo { top: calc(100% + 4px); }
+.popover-atalho.popover-cima { top: auto; bottom: 32px; }
 
 /* O BLF: a bolinha da cor do estado e a palavra sempre ao lado; Tocando pisca devagar. */
 .blf { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 700; line-height: 1.3; color: var(--text-strong);
@@ -690,16 +691,24 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
   .blf-tocando .blf-dot { animation: none; }
 }
 
-/* A aba Atalhos no Compacto e no Mínimo: cartões mais baixos; sem o ícone da ação (a ação está na linha de baixo),
-   para o nome e a palavra do BLF caberem. */
+/* A aba Atalhos no Compacto e no Mínimo: sem o ícone da ação (a ação está na linha do número), para o nome e a
+   palavra do BLF caberem; o nome e o número em cima e a linha do BLF com o "Mais opções" embaixo. No Mínimo, a palavra
+   do BLF um pouco menor, para "Desconectado" e o "Mais opções" caberem lado a lado no cartão de 132 px. */
 .win[data-layout="compacto"] .atalhos { gap: 10px; padding-top: 12px; }
 .win[data-layout="compacto"] .atalhos-grade { gap: 8px; }
-.win[data-layout="compacto"] .atalho-usar, .win[data-layout="compacto"] .atalho-novo { height: 64px; border-radius: 16px; }
+.win[data-layout="compacto"] .atalho-usar, .win[data-layout="minimo"] .atalho-usar { grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 36px 24px; grid-template-areas: "texto" "rodape"; }
+.win[data-layout="compacto"] .atalho-usar, .win[data-layout="compacto"] .atalho-novo { height: 68px; border-radius: 16px; }
+.win[data-layout="compacto"] .atalho-mais { bottom: 3px; }
 .win[data-layout="minimo"] .atalhos { gap: 8px; }
 .win[data-layout="minimo"] .atalhos-titulo { font-size: 16px; }
 .win[data-layout="minimo"] .atalhos-grade { gap: 8px; }
-.win[data-layout="minimo"] .atalho-usar, .win[data-layout="minimo"] .atalho-novo { height: 60px; border-radius: 14px; }
-.win[data-layout="minimo"] .atalho-usar { padding: 0 8px 0 10px; }
+.win[data-layout="minimo"] .atalho-usar, .win[data-layout="minimo"] .atalho-novo { height: 68px; border-radius: 14px; }
+.win[data-layout="minimo"] .atalho-usar { padding: 0 6px 0 8px; }
+.win[data-layout="minimo"] .atalho-rodape { padding-right: 22px; }
+.win[data-layout="minimo"] .atalho-mais { right: 2px; bottom: 3px; }
+.win[data-layout="minimo"] .atalho .blf { gap: 5px; font-size: 10.5px; }
+.win[data-layout="minimo"] .atalho .blf-dot { width: 7px; height: 7px; }
 .win[data-layout="minimo"] .atalho-novo { gap: 6px; font-size: 12.5px; }
 .win[data-layout="compacto"] .atalho-tile, .win[data-layout="minimo"] .atalho-tile { display: none; }
 .win[data-layout="minimo"] .atalhos-ajuda { font-size: 12px; }

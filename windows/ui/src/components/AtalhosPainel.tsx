@@ -1,8 +1,9 @@
 // O painel Atalhos da tela da ligação (rc.3, spec 3.1): os mesmos atalhos da aba, cada um com o que faz durante a
 // ligação (Nova ligação, Transferir, Consulta, Enviar as teclas) e o BLF. O clique manda o useShortcut e fecha o
-// painel; o Fechar atalhos (e o Esc, na tela da ligação) fecha sem usar nada. O foco começa no Fechar: um Enter de
-// quem estava nos controles nunca transfere a ligação. Com só uma recebida tocando, nenhum atalho vale (o painel nem
-// fica aberto: Ligacao.tsx).
+// painel; o Fechar atalhos (e o Esc, na tela da ligação) fecha sem usar nada; nos dois casos o foco volta ao botão
+// Atalhos (Ligacao.tsx). O foco começa no Fechar: um Enter de quem estava nos controles nunca transfere a ligação.
+// Com uma segunda ligação, Ligar e Consulta ficam travados (shortcutUsable); com só uma recebida tocando, nenhum
+// atalho vale (o painel nem fica aberto).
 import { useEffect, useRef } from 'preact/hooks';
 import { shortcutCallLine, shortcutUsable } from '../format';
 import { IconClose, ShortcutActionIcon } from '../icons';
@@ -14,7 +15,7 @@ interface Props {
   atalhos: Shortcut[];
   ligacao: CallState;
   send: Send;
-  /** Fechar atalhos (e o Esc): o foco volta ao botão Atalhos. */
+  /** Fechar atalhos (e o Esc). */
   onClose(): void;
   /** Um atalho usado: o painel fecha. */
   onUsed(): void;

@@ -209,6 +209,24 @@ async function altura(locator: Locator): Promise<number> {
   return (await caixa(locator)).height;
 }
 
+/** No Compacto, as quatro abas com o ícone e o rótulo de 11,5 px inteiro dentro da aba, os ícones na mesma linha. */
+async function conferirRotulosDoCompacto(page: Page): Promise<void> {
+  const nav = page.getByRole('navigation', { name: 'Seções' });
+  for (const nome of ['Teclado', 'Atalhos', 'Recentes', 'Contatos']) {
+    const aba = nav.getByRole('button', { name: nome });
+    const rotulo = aba.locator('.tab-label');
+    await expect(rotulo, nome).toBeVisible();
+    await expect(rotulo, nome).toHaveText(nome);
+    expect(await rotulo.evaluate((e) => getComputedStyle(e).fontSize), nome).toBe('11.5px');
+    const r = await caixa(rotulo);
+    const a = await caixa(aba);
+    expect(r.x >= a.x - 0.5 && r.x + r.width <= a.x + a.width + 0.5, `o rótulo ${nome} sai da aba: ${JSON.stringify({ r, a })}`).toBe(true);
+  }
+  const icones = await page.locator('nav.nav .tab-pill').evaluateAll((ps) => ps.map((p) => p.getBoundingClientRect().top));
+  expect(icones).toHaveLength(4);
+  expect(Math.max(...icones) - Math.min(...icones)).toBeLessThanOrEqual(0.5);
+}
+
 test.describe('os três layouts', () => {
   for (const [largura, alturaJanela, esperado] of [
     [400, 720, 'normal'],
@@ -297,17 +315,15 @@ test.describe('os três layouts', () => {
       expect(await altura(page.locator('button.btn-call'))).toBeCloseTo(46, 0);
       expect(await altura(page.locator('button.btn-redial'))).toBeCloseTo(46, 0);
       expect(await altura(page.locator('nav.nav'))).toBeCloseTo(52, 0);
-      for (const nome of ['Teclado', 'Recentes', 'Contatos']) {
-        const rotulo = page.locator('nav.nav .tab-label', { hasText: nome });
-        await expect(rotulo, nome).toBeVisible();
-        expect(await rotulo.evaluate((e) => getComputedStyle(e).fontSize), nome).toBe('11.5px');
-      }
-      // A aba Atalhos (rc.3, spec 3.1): no Compacto só com o ícone, na mesma linha dos ícones das outras.
-      const atalhos = page.getByRole('navigation', { name: 'Seções' }).getByRole('button', { name: 'Atalhos' });
-      await expect(atalhos).toHaveAttribute('aria-label', 'Atalhos');
-      await expect(atalhos.locator('.tab-label')).toBeHidden();
-      const icones = await page.locator('nav.nav .tab-pill').evaluateAll((ps) => ps.map((p) => p.getBoundingClientRect().top));
-      expect(Math.max(...icones) - Math.min(...icones)).toBeLessThanOrEqual(0.5);
+      // As quatro abas com o ícone e o rótulo pequeno, também a Atalhos (Ruling 10 da rc.3), com os ícones alinhados.
+      await conferirRotulosDoCompacto(page);
+    });
+
+    test('the narrowest Compacto (330×540) keeps the four labels whole', async ({ page }) => {
+      await page.setViewportSize({ width: 330, height: 540 });
+      await abrir(page, 'principal');
+      await expect(page.locator('.win[data-layout="compacto"]')).toHaveCount(1);
+      await conferirRotulosDoCompacto(page);
     });
 
     test('the icon toggles send the commands and show the pressed state', async ({ page }) => {

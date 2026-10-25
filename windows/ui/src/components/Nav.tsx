@@ -1,5 +1,5 @@
-// A navegação de baixo: Teclado, Atalhos, Recentes e Contatos (Ctrl+1 a 4, nessa ordem). No layout Mínimo, só os
-// ícones (o nome de cada aba fica no aria-label); no Compacto, a aba Atalhos também só com o ícone (spec 3.1 da rc.3).
+// A navegação de baixo: Teclado, Atalhos, Recentes e Contatos (Ctrl+1 a 4, nessa ordem). No Normal e no Compacto, o
+// ícone e o rótulo das quatro (Ruling 10 da rc.3); no Mínimo, só os ícones (o nome de cada aba fica no aria-label).
 import { IconBolt, IconClock, IconContacts, IconKeypad } from '../icons';
 import type { Tab } from '../types';
 

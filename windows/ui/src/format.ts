@@ -96,11 +96,23 @@ export function blfWord(estado: BlfState): string {
 
 /**
  * O atalho pode ser usado agora? Fora da ligação, todos menos Enviar teclas; com só uma recebida tocando (sem
- * atender), nenhum (o C++ recusaria todos); com uma ligação de pé, todos (o resto é do C++).
+ * atender), nenhum (o C++ recusaria todos); com uma segunda ligação (em espera ou tocando), Ligar e Transferir com
+ * consulta não (seriam a terceira: o controlador não liga, como a Nova ligação e o Consultar da tela da ligação); nos
+ * outros casos, todos (o resto é do C++).
  */
 export function shortcutUsable(acao: ShortcutAction, ligacao: CallState | null): boolean {
   if (!ligacao) return acao !== 'teclas';
-  return ligacao.top.phase !== 'ringing';
+  if (ligacao.top.phase === 'ringing') return false;
+  if (ligacao.second !== null && (acao === 'ligar' || acao === 'consulta')) return false;
+  return true;
+}
+
+/**
+ * Tira das pontas só o espaço, o tab e as quebras de linha, como o TrimAscii da loja de atalhos do C++ (um espaço não
+ * separável, por exemplo, fica no nome gravado).
+ */
+export function trimAscii(texto: string): string {
+  return texto.replace(/^[ \t\r\n]+|[ \t\r\n]+$/g, '');
 }
 
 /** Parece um ramal (só dígitos, de 2 a 6): a chave do BLF vem ligada (com o BLF do administrador). */

@@ -1,9 +1,10 @@
 // O diálogo "Área do administrador" (rc.3, spec 6.1): o Ctrl + P da janela principal o abre (main.tsx); a senha vai no
 // adminLogin e o C++ a confere (só um resumo PBKDF2-SHA256 fica no programa), respondendo no `entrarAdmin`. Só quando a
 // `vez` muda depois de este diálogo mandar o adminLogin, o campo é limpo e o `erro` aparece ("Senha incorreta."; sem
-// erro, a área abriu): um erro de antes (o diálogo aberto de novo) não aparece. Enquanto `esperaAte` está no futuro (5
-// senhas erradas seguidas), o Entrar fica travado, com a espera contada em segundos. Esc e Cancelar fecham sem mandar
-// nada; um <dialog> modal, como o Confirm.
+// erro, a área abriu): um erro de antes (o diálogo aberto de novo) não aparece. Até essa resposta, o Entrar fica
+// travado e o Enter não manda outra tentativa (todo adminLogin é respondido; um Enter duplo não conta duas erradas).
+// Enquanto `esperaAte` está no futuro (5 senhas erradas seguidas), o Entrar também fica travado, com a espera contada
+// em segundos. Esc e Cancelar fecham sem mandar nada; um <dialog> modal, como o Confirm.
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { IconAlert, IconLock } from '../icons';
 import type { AdminLoginResult } from '../state';
@@ -25,6 +26,8 @@ export function AdminLogin({ entrarAdmin, send, onCancel, onOpened }: Props) {
   // A vez de quando o diálogo abriu (ou da última resposta vista) e quantas tentativas daqui esperam a resposta.
   const vezVista = useRef(entrarAdmin.vez);
   const esperandoResposta = useRef(0);
+  // A tentativa mandada, até a resposta (o Entrar travado).
+  const [aguardando, setAguardando] = useState(false);
   const [agora, setAgora] = useState(() => Date.now());
 
   useEffect(() => {
@@ -45,6 +48,7 @@ export function AdminLogin({ entrarAdmin, send, onCancel, onOpened }: Props) {
     vezVista.current = entrarAdmin.vez;
     if (respostas <= 0 || esperandoResposta.current === 0) return;
     esperandoResposta.current = Math.max(0, esperandoResposta.current - respostas);
+    if (esperandoResposta.current === 0) setAguardando(false);
     setSenha('');
     if (entrarAdmin.erro) {
       setErro(entrarAdmin.erro);
@@ -73,8 +77,10 @@ export function AdminLogin({ entrarAdmin, send, onCancel, onOpened }: Props) {
 
   const entrar = (e: Event) => {
     e.preventDefault();
-    if (!senha || esperando) return;
+    // A ref, e não o estado: o segundo Enter de um Enter duplo chega antes de o Entrar aparecer travado.
+    if (!senha || esperando || esperandoResposta.current > 0) return;
     esperandoResposta.current += 1;
+    setAguardando(true);
     send({ cmd: 'adminLogin', senha });
   };
 
@@ -121,7 +127,7 @@ export function AdminLogin({ entrarAdmin, send, onCancel, onOpened }: Props) {
           <button type="button" class="btn btn-outline" onClick={onCancel}>
             Cancelar
           </button>
-          <button type="submit" class="btn btn-blue" disabled={!senha || esperando}>
+          <button type="submit" class="btn btn-blue" disabled={!senha || esperando || aguardando}>
             Entrar
           </button>
         </div>

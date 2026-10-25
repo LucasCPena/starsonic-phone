@@ -3,8 +3,8 @@
 // Não decide nenhuma regra. Com uma ligação (`ligacao`), a tela da ligação toma a janela; quando a última acaba, volta
 // o Teclado. O `ring` toca aqui, também o bipe do fim da ligação (o aviso do canto, aviso.tsx, recebe as mesmas
 // mensagens e não toca). O Ctrl + P (rc.3) é só desta janela: abre o diálogo da área do administrador, um por vez e
-// nunca por cima da ligação ou de outro diálogo; com a área aberta, vai direto para ela. O app não imprime: o Ctrl + P
-// nunca chega ao imprimir do navegador.
+// nunca por cima da ligação, de outro diálogo ou de um menu aberto; com a área aberta, vai direto para ela. O app não
+// imprime: o Ctrl + P nunca chega ao imprimir do navegador.
 import { render } from 'preact';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { createBridge } from './bridge';
@@ -53,6 +53,8 @@ function App() {
   const [state, setState] = useState<AppState | null>(null);
   const [view, setView] = useState<View>(initialView);
   const [toast, setToast] = useState<{ texto: string; vez: number } | null>(null);
+  // Quantos toasts chegaram (nunca volta a zero): a edição do atalho sabe que o C++ recusou (o motivo vem num toast).
+  const [toasts, setToasts] = useState(0);
   const [reinstalar, setReinstalar] = useState(false);
   // A pergunta da atualização aberta (o `update` do C++), até a resposta.
   const [atualizacao, setAtualizacao] = useState<{ versao: string; notas: string; vez: number } | null>(null);
@@ -75,8 +77,10 @@ function App() {
       if (msg.type === 'state') {
         saidas.current = { toque: msg.state.audio.toque, altoFalante: msg.state.audio.altoFalante };
         setState(msg.state);
-      } else if (msg.type === 'toast') setToast((t) => ({ texto: msg.texto, vez: (t?.vez ?? 0) + 1 }));
-      else if (msg.type === 'ring') ringer.play(msg.tipo, saidas.current);
+      } else if (msg.type === 'toast') {
+        setToast((t) => ({ texto: msg.texto, vez: (t?.vez ?? 0) + 1 }));
+        setToasts((n) => n + 1);
+      } else if (msg.type === 'ring') ringer.play(msg.tipo, saidas.current);
       else if (msg.type === 'update') setAtualizacao((a) => ({ versao: msg.versao, notas: msg.notas, vez: (a?.vez ?? 0) + 1 }));
     });
     bridge.send({ cmd: 'ready' });
@@ -129,7 +133,8 @@ function App() {
       if (e.code === 'KeyP' || (e.key ?? '').toLowerCase() === 'p') {
         e.preventDefault();
         const s = atual.current;
-        if (!s || s.ligacao || document.querySelector('dialog[open]')) return;
+        // Nada por cima da ligação, de outro diálogo ou de um menu aberto (o Menu, as contas, o ⋯ de um atalho).
+        if (!s || s.ligacao || document.querySelector('dialog[open], [role="menu"]')) return;
         if (s.admin.aberto) setView(comAdmin);
         else setAdminLogin(true);
         return;
@@ -285,6 +290,8 @@ function App() {
           key={view.atalho?.id ?? 'novo'}
           atalho={view.atalho}
           posicao={view.posicao}
+          atalhos={state.atalhos}
+          toasts={toasts}
           blfDoAdmin={state.admin.blf}
           send={send}
           onClose={() => setView(view.back)}

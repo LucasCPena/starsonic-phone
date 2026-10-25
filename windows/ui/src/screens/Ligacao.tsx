@@ -567,7 +567,7 @@ export function Ligacao({ state, ligacao: l, send }: Props) {
       />
     );
   } else if (painel === 'atalhos') {
-    meio = <AtalhosPainel atalhos={state.atalhos} ligacao={l} send={send} onClose={fecharAtalhos} onUsed={() => setPainel(null)} />;
+    meio = <AtalhosPainel atalhos={state.atalhos} ligacao={l} send={send} onClose={fecharAtalhos} onUsed={fecharAtalhos} />;
   } else {
     // Com uma ligação (7 controles) ou duas (8), quatro colunas; na consulta e na conferência, três.
     const muitos = !conferencia && !consulta;

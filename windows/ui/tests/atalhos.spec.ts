@@ -4,7 +4,7 @@
 // ligação, o botão Atalhos abre o painel com os mesmos atalhos. A interface só manda os comandos: o que cada atalho
 // faz (e o puxar ligação de um ramal tocando) é do C++.
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { abrir, capturar, comandos, esperarComando, mudarEstado, semViolacoesSerias, verTextos } from './helpers';
+import { abrir, capturar, comandos, esperarComando, estado, mudarEstado, semViolacoesSerias, verTextos } from './helpers';
 
 const VERDE = 'rgb(34, 197, 94)'; // #22c55e
 const CIANO = 'rgb(0, 194, 203)'; // #00c2cb
@@ -124,6 +124,82 @@ for (const tema of ['light', 'dark'] as const) {
       });
     });
   }
+}
+
+// O "Mais opções" (⋯) de cada cartão fica no canto de baixo à direita, na linha do BLF: a linha do nome fica inteira
+// para o nome, e ele não cobre o nome, a linha da ação e do número nem o BLF, em nenhum tamanho (os limites de cada
+// layout: Normal de 380 a 600, Compacto de 330 a 379, Mínimo de 300 a 329).
+interface Caixa {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+function cruzam(a: Caixa, b: Caixa): boolean {
+  return a.x < b.x + b.w - 0.5 && b.x < a.x + a.w - 0.5 && a.y < b.y + b.h - 0.5 && b.y < a.y + a.h - 0.5;
+}
+
+for (const [largura, altura] of [
+  [400, 720],
+  [380, 640],
+  [600, 900],
+  [379, 639],
+  [340, 560],
+  [330, 540],
+  [329, 499],
+  [300, 440],
+] as Array<[number, number]>) {
+  test(`the Mais opções button sits on the BLF line in the bottom-right corner and covers no text at ${largura}×${altura}`, async ({ page }) => {
+    await page.setViewportSize({ width: largura, height: altura });
+    await abrir(page, 'atalhos');
+    const cartoes = await page.locator('li.atalho').evaluateAll((lis) =>
+      lis.map((li) => {
+        const caixa = (seletor: string) => {
+          const e = li.querySelector(seletor);
+          if (!e) return null;
+          const r = e.getBoundingClientRect();
+          return { x: r.x, y: r.y, w: r.width, h: r.height };
+        };
+        const nome = li.querySelector('.atalho-nome') as HTMLElement;
+        return {
+          nome: nome.textContent ?? '',
+          nomeCortado: nome.scrollWidth > nome.clientWidth + 0.5,
+          cartao: caixa('.atalho-usar')!,
+          mais: caixa('.atalho-mais')!,
+          nomeBox: caixa('.atalho-nome')!,
+          detalhe: caixa('.atalho-detalhe')!,
+          palavra: caixa('.blf-palavra'),
+          ponto: caixa('.blf-dot'),
+        };
+      }),
+    );
+    expect(cartoes).toHaveLength(6);
+    for (const c of cartoes) {
+      const { cartao: k, mais: m } = c;
+      const dentro = m.x >= k.x - 0.5 && m.y >= k.y - 0.5 && m.x + m.w <= k.x + k.w + 0.5 && m.y + m.h <= k.y + k.h + 0.5;
+      expect(dentro, `${c.nome}: o Mais opções sai do cartão ${JSON.stringify({ k, m })}`).toBe(true);
+      expect(m.x + m.w / 2, `${c.nome}: o Mais opções não está à direita`).toBeGreaterThan(k.x + k.w / 2);
+      expect(m.y + m.h / 2, `${c.nome}: o Mais opções não está embaixo`).toBeGreaterThan(k.y + k.h / 2);
+      expect(Math.min(m.w, m.h), `${c.nome}: o Mais opções menor que 24 px`).toBeGreaterThanOrEqual(24);
+      const partes: Array<[string, Caixa | null]> = [
+        ['o nome', c.nomeBox],
+        ['a linha da ação e do número', c.detalhe],
+        ['a palavra do BLF', c.palavra],
+        ['a bolinha do BLF', c.ponto],
+      ];
+      for (const [parte, box] of partes) {
+        if (box) expect(cruzam(m, box), `${c.nome}: o Mais opções cobre ${parte} ${JSON.stringify({ m, box })}`).toBe(false);
+      }
+      // Na linha do BLF: abaixo da linha do número, na altura da palavra (quando o atalho tem o BLF).
+      expect(m.y, `${c.nome}: o Mais opções não está abaixo da linha do número`).toBeGreaterThanOrEqual(c.detalhe.y + c.detalhe.h - 0.5);
+      if (c.palavra) {
+        expect(Math.abs(m.y + m.h / 2 - (c.palavra.y + c.palavra.h / 2)), `${c.nome}: o Mais opções fora da linha do BLF`).toBeLessThanOrEqual(2);
+      }
+    }
+    // A linha do nome fica toda para o nome: "Fila de espera" cabe inteiro.
+    expect(cartoes.find((c) => c.nome === 'Fila de espera')!.nomeCortado, '"Fila de espera" cortado').toBe(false);
+  });
 }
 
 test.describe('a aba Atalhos', () => {
@@ -371,12 +447,112 @@ test.describe('um atalho novo', () => {
     await page.getByRole('button', { name: 'Salvar atalho' }).click();
     await esperarComando(page, { cmd: 'saveShortcut', nome: 'Portaria', numero: '2005', acao: 'ligar', blf: false });
 
-    // Um atalho gravado com o BLF continua com ele (só vale quando o administrador ligar o BLF).
+    // Um atalho gravado com o BLF continua com ele (só vale quando o administrador ligar o BLF). O nome muda: um
+    // Salvar sem mudança só fecha a edição.
     await usar(page, 'Recepção').click({ button: 'right' });
     await expect(blf).toBeDisabled();
     await expect(blf).toHaveAttribute('aria-checked', 'true');
+    await page.getByLabel('Nome', { exact: true }).fill('Recepção 2');
     await page.getByRole('button', { name: 'Salvar atalho' }).click();
-    await esperarComando(page, { cmd: 'saveShortcut', id: RECEPCAO, nome: 'Recepção', numero: '2000', acao: 'ligar', blf: true });
+    await esperarComando(page, { cmd: 'saveShortcut', id: RECEPCAO, nome: 'Recepção 2', numero: '2000', acao: 'ligar', blf: true });
+  });
+
+  test('a blank name is refused in the form, without asking the C++', async ({ page }) => {
+    await abrir(page, 'atalhos');
+    await page.getByRole('button', { name: 'Adicionar atalho', exact: true }).first().click();
+    const nome = page.getByLabel('Nome', { exact: true });
+    await nome.fill('   ');
+    await page.getByLabel('Número', { exact: true }).fill('2030');
+    await page.getByRole('button', { name: 'Salvar atalho' }).click();
+    const erro = page.getByRole('alert');
+    await expect(erro).toHaveText('Digite o nome do atalho.');
+    await expect(nome).toHaveAttribute('aria-invalid', 'true');
+    await expect(nome).toHaveAccessibleDescription('Digite o nome do atalho.');
+    await expect(nome).toBeFocused();
+    await expect(page.getByRole('heading', { name: 'Adicionar atalho' })).toBeVisible();
+    expect((await comandos(page)).some((c) => c.cmd === 'saveShortcut')).toBe(false);
+    await semViolacoesSerias(page);
+    // Com um nome, o erro sai e o Salvar manda.
+    await nome.fill('Portaria');
+    await expect(erro).toHaveCount(0);
+    await page.getByRole('button', { name: 'Salvar atalho' }).click();
+    await esperarComando(page, { cmd: 'saveShortcut', nome: 'Portaria', numero: '2030', acao: 'ligar', blf: true });
+    await expect(page.getByRole('main', { name: 'Atalhos' })).toBeVisible();
+  });
+
+  test('a refused save keeps the editor open with what was typed', async ({ page }) => {
+    await abrir(page, 'atalhos');
+    await usar(page, 'Suporte').click({ button: 'right' });
+    await expect(page.getByRole('heading', { name: 'Editar atalho' })).toBeVisible();
+    // O Suporte saiu em outro lugar: o C++ recusa ("Esse atalho não existe mais.") e nada muda nos atalhos.
+    await mudarEstado(page, (s) => ({ ...s, atalhos: s.atalhos.filter((a: { id: string }) => a.id !== SUPORTE) }));
+    const nome = page.getByLabel('Nome', { exact: true });
+    await nome.fill('Suporte técnico');
+    const salvar = page.getByRole('button', { name: 'Salvar atalho' });
+    await salvar.click();
+    await esperarComando(page, { cmd: 'saveShortcut', id: SUPORTE, nome: 'Suporte técnico', numero: '2007', acao: 'consulta', blf: true });
+    await expect(page.getByText('Esse atalho não existe mais.', { exact: true })).toBeVisible();
+    await page.waitForTimeout(300);
+    await expect(page.getByRole('heading', { name: 'Editar atalho' })).toBeVisible();
+    await expect(nome).toHaveValue('Suporte técnico');
+    // Recusado, o Salvar volta a valer.
+    await expect(salvar).toBeEnabled();
+  });
+
+  test('a double Enter saves one shortcut, and the editor closes when the C++ saves it', async ({ page }) => {
+    await page.clock.install({ time: new Date('2026-10-22T10:00:00-03:00') });
+    await abrir(page, 'atalhos');
+    await page.getByRole('button', { name: 'Adicionar atalho', exact: true }).first().click();
+    await page.getByLabel('Nome', { exact: true }).fill('Portaria');
+    const numero = page.getByLabel('Número', { exact: true });
+    await numero.fill('2030');
+    // O relógio parado: a resposta do C++ (falso) não chega entre os dois Enter.
+    await page.clock.pauseAt(new Date('2026-10-22T10:05:00-03:00'));
+    await numero.press('Enter');
+    await numero.press('Enter');
+    expect((await comandos(page)).filter((c) => c.cmd === 'saveShortcut')).toHaveLength(1);
+    await expect(page.getByRole('button', { name: 'Salvar atalho' })).toBeDisabled();
+    await expect(page.getByRole('heading', { name: 'Adicionar atalho' })).toBeVisible();
+    // O C++ gravou: a edição fecha, com um atalho só.
+    await page.clock.runFor(200);
+    await expect(page.getByRole('main', { name: 'Atalhos' })).toBeVisible();
+    await expect(cartao(page, 'Portaria')).toHaveCount(1);
+  });
+
+  test('saving an unchanged shortcut just closes the editor', async ({ page }) => {
+    await abrir(page, 'atalhos');
+    await usar(page, 'Recepção').click({ button: 'right' });
+    await expect(page.getByRole('heading', { name: 'Editar atalho' })).toBeVisible();
+    // Só os espaços das pontas (o C++ tira): nada muda.
+    await page.getByLabel('Nome', { exact: true }).fill('Recepção ');
+    await page.getByRole('button', { name: 'Salvar atalho' }).click();
+    await expect(page.getByRole('main', { name: 'Atalhos' })).toBeVisible();
+    expect((await comandos(page)).some((c) => c.cmd === 'saveShortcut')).toBe(false);
+  });
+
+  // A loja tira das pontas só o espaço, o tab e as quebras de linha (o TrimAscii): um espaço não separável fica. A
+  // edição compara como ela, senão um Salvar sem mudança esperaria para sempre um estado que não muda.
+  test('a name the store keeps with a no-break space at the end saves untouched without waiting', async ({ page }) => {
+    await abrir(page, 'atalhos');
+    await mudarEstado(page, (s) => ({
+      ...s,
+      atalhos: s.atalhos.map((a: { id: string; nome: string }) => (a.id === RECEPCAO ? { ...a, nome: 'Recepção ' } : a)),
+    }));
+    await usar(page, 'Recepção').click({ button: 'right' });
+    await expect(page.getByRole('heading', { name: 'Editar atalho' })).toBeVisible();
+    await page.getByRole('button', { name: 'Salvar atalho' }).click();
+    await expect(page.getByRole('main', { name: 'Atalhos' })).toBeVisible();
+    expect((await comandos(page)).some((c) => c.cmd === 'saveShortcut')).toBe(false);
+  });
+
+  test('a no-break space added at the end is a change the store keeps', async ({ page }) => {
+    await abrir(page, 'atalhos');
+    await usar(page, 'Recepção').click({ button: 'right' });
+    await page.getByLabel('Nome', { exact: true }).fill('Recepção ');
+    await page.getByRole('button', { name: 'Salvar atalho' }).click();
+    await esperarComando(page, { cmd: 'saveShortcut', id: RECEPCAO, nome: 'Recepção ', numero: '2000', acao: 'ligar', blf: true });
+    await expect(page.getByRole('main', { name: 'Atalhos' })).toBeVisible();
+    expect((await estado(page)).atalhos.find((a: { id: string }) => a.id === RECEPCAO).nome).toBe('Recepção ');
   });
 
   test('Remover in the editor asks first and removes', async ({ page }) => {
@@ -430,12 +606,14 @@ test.describe('o painel Atalhos na ligação', () => {
     await botaoAtalhos(page).click();
     await painel(page).getByRole('button', { name: /^Suporte/ }).click();
     await esperarComando(page, { cmd: 'useShortcut', id: SUPORTE });
-    // Enviar teclas vale na ligação.
+    // Enviar teclas vale na ligação; depois de usar, o foco volta ao botão Atalhos.
     await botaoAtalhos(page).click();
     const teclas = painel(page).getByRole('button', { name: /^Fila de espera/ });
     await expect(teclas).toBeEnabled();
     await teclas.click();
     await esperarComando(page, { cmd: 'useShortcut', id: FILA });
+    await expect(painel(page)).toHaveCount(0);
+    await expect(botaoAtalhos(page)).toBeFocused();
 
     // Esc e o Fechar atalhos fecham sem usar nada, e o foco volta ao botão Atalhos.
     const usados = (await comandos(page)).filter((c) => c.cmd === 'useShortcut').length;
@@ -474,6 +652,28 @@ test.describe('o painel Atalhos na ligação', () => {
     await botaoAtalhos(page).click();
     await expect(painel(page).locator('.atalho-linha')).toHaveCount(6);
     await semViolacoesSerias(page);
+  });
+
+  test('with a second call, Ligar and Consulta wait (as Nova ligação and Consultar do) and the others work', async ({ page }) => {
+    // Duas em andamento, e a segunda tocando na faixa: uma terceira ligação não cabe.
+    for (const cenario of ['duas-ligacoes', 'ligacao-segunda']) {
+      await abrir(page, cenario);
+      await botaoAtalhos(page).click();
+      const linha = (nome: string) => painel(page).getByRole('button', { name: new RegExp(`^${nome}`) });
+      for (const nome of ['Recepção', 'Suporte', 'Comercial', 'Celular plantão']) {
+        await expect(linha(nome), `${cenario}: ${nome}`).toBeDisabled();
+      }
+      await expect(linha('Financeiro'), cenario).toBeEnabled();
+      await expect(linha('Fila de espera'), cenario).toBeEnabled();
+      // O clique num travado não manda nada e não fecha o painel.
+      await linha('Recepção').click({ force: true });
+      await linha('Suporte').click({ force: true });
+      await page.waitForTimeout(200);
+      expect((await comandos(page)).filter((c) => c.cmd === 'useShortcut'), cenario).toEqual([]);
+      await expect(painel(page), cenario).toBeVisible();
+      await linha('Financeiro').click();
+      await esperarComando(page, { cmd: 'useShortcut', id: FINANCEIRO });
+    }
   });
 
   test('with only an unanswered ringing call no shortcut can be used', async ({ page }) => {
