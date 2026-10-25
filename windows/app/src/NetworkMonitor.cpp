@@ -18,6 +18,7 @@
 #include <exception>
 #include <mutex>
 #include <utility>
+#include <vector>
 
 #include "NetworkDecision.h"
 #include "NetworkLoop.h"
@@ -45,10 +46,14 @@ struct NetworkMonitor::Shared {
     bool connectedChanged = false;
     bool forceChanged = false;
     std::optional<bool> force;
-    bool dnsDone = false;          // um teste DNS terminou e o monitor ainda nao viu
-    uint64_t dnsTicket = 0;        // a vez dele
-    bool dnsAnswered = false;
-    long dnsStatus = 0;            // o DNS_STATUS dele (o diagnostico)
+    // Os testes DNS que terminaram e o monitor ainda nao viu, na ordem: com um perdido que volta tarde (NetworkLoop),
+    // dois podem terminar quase juntos, e nenhum resultado se perde.
+    struct DnsResult {
+        uint64_t ticket = 0;       // a vez dele
+        bool answered = false;
+        long status = 0;           // o DNS_STATUS dele (o diagnostico)
+    };
+    std::vector<DnsResult> dnsResults;
 
     void WindowsChanged() {
         std::lock_guard<std::mutex> lock(mutex);
@@ -58,7 +63,7 @@ struct NetworkMonitor::Shared {
 
     // Com a trava.
     bool Pending() const {
-        return stopping || windowsChanged || serverChanged || connectedChanged || forceChanged || dnsDone;
+        return stopping || windowsChanged || serverChanged || connectedChanged || forceChanged || !dnsResults.empty();
     }
 };
 
@@ -209,10 +214,11 @@ void StartDnsCheck(const std::shared_ptr<NetworkMonitor::Shared>& shared, const 
         DNS_STATUS status = 0;
         const bool answered = DnsAnswers(server, &status);
         std::lock_guard<std::mutex> lock(shared->mutex);
-        shared->dnsDone = true;
-        shared->dnsTicket = ticket;
-        shared->dnsAnswered = answered;
-        shared->dnsStatus = static_cast<long>(status);
+        try {
+            const long code = static_cast<long>(status);
+            shared->dnsResults.push_back(NetworkMonitor::Shared::DnsResult{ticket, answered, code});
+        } catch (const std::exception&) {   // sem memoria: o resultado se perde (o teste vira perdido no prazo)
+        }
         shared->wake.notify_all();
     }).detach();
 }
@@ -299,17 +305,17 @@ void NetworkMonitor::Run() {
             const bool connected = shared_->connected;
             const bool forceChanged = std::exchange(shared_->forceChanged, false);
             const std::optional<bool> force = shared_->force;
-            const bool dnsDone = std::exchange(shared_->dnsDone, false);
-            const uint64_t dnsTicket = shared_->dnsTicket;
-            const bool dnsAnswered = shared_->dnsAnswered;
-            const long dnsStatus = shared_->dnsStatus;
+            std::vector<Shared::DnsResult> dnsResults;
+            dnsResults.swap(shared_->dnsResults);
             lock.unlock();
 
             if (windowsChanged) apply(loop.OnWindowsChanged());
             if (serverChanged) apply(loop.OnServer(server));   // antes do conectado: a conta nova vem com o dela
             if (connectedChanged) apply(loop.OnConnected(connected));
             if (forceChanged) apply(loop.OnForce(force));
-            if (dnsDone) apply(loop.OnDnsResult(dnsTicket, dnsAnswered, dnsStatus));
+            for (const Shared::DnsResult& result : dnsResults) {
+                apply(loop.OnDnsResult(result.ticket, result.answered, result.status));
+            }
             const int64_t now = NowMs();
             if (now >= loop.WakeAtMs()) apply(loop.OnTimer(now));
 

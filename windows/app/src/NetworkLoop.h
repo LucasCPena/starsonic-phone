@@ -8,7 +8,10 @@
 //   Windows antes da rede), o app nunca fica preso no "sem internet". Nao deu para ler: fica a de antes.
 // - O teste DNS do servidor da conta: no intervalo e na hora quando a rede muda, um de cada vez (o resultado volta com
 //   a vez dele, e um teste de antes de a rede ou a conta mudarem nao conta). As falhas so contam com a conta fora do ar
-//   (OnConnected, Ruling 23).
+//   (OnConnected, Ruling 23). Um teste sem resposta ha dois intervalos ou mais (um DnsQuery_W preso) conta como perdido
+//   no intervalo, e outro pode sair: a vez de cada teste e so dele (um contador separado da geracao da decisao), e o
+//   resultado de um perdido, se chegar, nao vale. No maximo kMaxLostDnsChecks perdidos esperam ao mesmo tempo (cada um
+//   e uma thread presa): com todos presos, nenhum outro sai ate um voltar.
 // - O diagnostico: a conectividade na abertura, em cada aviso e quando muda; o resultado do DNS na primeira vez depois da
 //   abertura ou de outra conta e quando muda (de respondeu para nao respondeu e de volta), nada que repita a cada
 //   intervalo; com verboseDns (so o build de teste, com o intervalo curto da fumaca), cada resultado.
@@ -37,6 +40,9 @@ public:
         std::vector<std::string> log;           // as linhas do diagnostico
     };
 
+    // Quantos testes DNS perdidos (sem resposta depois de dois intervalos) podem esperar ao mesmo tempo.
+    static constexpr size_t kMaxLostDnsChecks = 3;
+
     NetworkLoop(Reader reader, int64_t intervalMs, bool verboseDns);
 
     // A abertura: le a conectividade, e o primeiro intervalo fica para nowMs + o intervalo.
@@ -62,7 +68,8 @@ private:
 
     void Read(Actions& actions, bool logAlways);
     static void Report(Actions& actions, const std::string& why, std::optional<InternetState> internet);
-    void StartDns(Actions& actions, bool tick);
+    void DropLostDns(Actions& actions, int64_t nowMs);
+    void StartDns(Actions& actions, bool tick, int64_t stampMs);
 
     NetworkDecision decision_;
     Reader reader_;
@@ -73,7 +80,13 @@ private:
     bool unreadLogged_ = false;
     std::string server_;
     bool dnsRunning_ = false;
-    uint64_t dnsTicket_ = 0;
+    uint64_t dnsTicket_ = 0;           // a vez do teste a caminho (do lastTicket_)
+    uint64_t lastTicket_ = 0;          // a ultima vez dada a um teste
+    uint64_t dnsGeneration_ = 0;       // a geracao da decisao quando ele saiu (DnsCheckStarted)
+    // Quando ele saiu: a hora do intervalo, ou a do proximo intervalo para um que saiu entre dois (um limite de cima: o
+    // prazo, conferido nos intervalos, nunca fica menor que dois intervalos).
+    int64_t dnsStampMs_ = 0;
+    std::vector<uint64_t> lostTickets_;   // as vezes dos perdidos que ainda nao voltaram
     std::string dnsServer_;            // o servidor do teste a caminho
     DnsSeen dnsSeen_ = DnsSeen::None;  // o ultimo resultado no diagnostico (None: abertura ou outra conta)
 };

@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "InternetState.h"
 #include "NetworkDecision.h"
@@ -423,6 +424,95 @@ TEST_CASE("the smoke test hook goes through the monitor loop") {
     CHECK(loop.OnForce(false).internet == kNoNetwork);
     CHECK(loop.OnTimer(30000).internet == kNoChange);
     CHECK(loop.OnForce(std::nullopt).internet == kOnline);
+}
+
+// Correcao final (H6, B-M1 e o probe 1 do revisor B): um teste DNS que nunca volta (um DnsQuery_W preso) nao segura os
+// outros para sempre.
+TEST_CASE("a dns check that never comes back is lost after two intervals and its late result is dropped") {
+    FakeWindows windows;
+    NetworkLoop loop(windows.Reader(), 30000, false);
+    loop.Open(0);
+    loop.OnServer(kServer);
+    NetworkLoop::Actions actions = loop.OnTimer(30000);
+    REQUIRE(actions.dnsServer.has_value());
+    loop.OnDnsResult(actions.dnsTicket, false, 1460);
+    actions = loop.OnTimer(60000);
+    REQUIRE(actions.dnsServer.has_value());
+    CHECK(loop.OnDnsResult(actions.dnsTicket, false, 1460).internet == kNoDns);
+    // O terceiro teste sai em t = 90 s e fica preso.
+    actions = loop.OnTimer(90000);
+    REQUIRE(actions.dnsServer.has_value());
+    const uint64_t stuck = actions.dnsTicket;
+    // Um intervalo depois, ainda a caminho: nenhum outro.
+    CHECK_FALSE(loop.OnTimer(120000).dnsServer.has_value());
+    // Dois intervalos: perdido, e outro sai no mesmo intervalo, com a vez dele.
+    actions = loop.OnTimer(150000);
+    CHECK(Logged(actions, "rede: o teste DNS de starcloud1-starsonic.com.br nao voltou em dois intervalos"));
+    REQUIRE(actions.dnsServer.has_value());
+    const uint64_t fresh = actions.dnsTicket;
+    CHECK(fresh != stuck);
+    // O preso volta (respondeu) com o novo ainda a caminho: nao vale, nao vai ao diagnostico e nao solta outro.
+    NetworkLoop::Actions late = loop.OnDnsResult(stuck, true, 0);
+    CHECK(late.internet == kNoChange);
+    CHECK(late.log.empty());
+    CHECK_FALSE(late.dnsServer.has_value());
+    CHECK_FALSE(loop.OnTimer(180000).dnsServer.has_value());   // o novo continua sendo o unico a caminho
+    // O novo responde: com internet.
+    CHECK(loop.OnDnsResult(fresh, true, 0).internet == kOnline);
+    // A vez do novo nao vale duas vezes, e uma vez que nunca existiu tambem nao.
+    CHECK(loop.OnDnsResult(fresh, false, 1460).log.empty());
+    CHECK(loop.OnDnsResult(fresh + 100, false, 1460).log.empty());
+    // As falhas de verdade continuam contando do zero.
+    actions = loop.OnTimer(210000);
+    REQUIRE(actions.dnsServer.has_value());
+    CHECK(loop.OnDnsResult(actions.dnsTicket, false, 1460).internet == kNoChange);
+    actions = loop.OnTimer(240000);
+    REQUIRE(actions.dnsServer.has_value());
+    CHECK(loop.OnDnsResult(actions.dnsTicket, false, 1460).internet == kNoDns);
+}
+
+TEST_CASE("a dns check that went out between two ticks gets at least two intervals before it is lost") {
+    FakeWindows windows;
+    NetworkLoop loop(windows.Reader(), 30000, false);
+    loop.Open(0);
+    loop.OnServer(kServer);
+    // t = 29 s: a rede muda e o teste sai na hora, entre dois intervalos.
+    windows.connectivity = kIpv4LocalNetwork;
+    NetworkLoop::Actions actions = loop.OnWindowsChanged();
+    REQUIRE(actions.dnsServer.has_value());
+    const uint64_t stuck = actions.dnsTicket;
+    CHECK_FALSE(loop.OnTimer(30000).dnsServer.has_value());
+    CHECK_FALSE(loop.OnTimer(60000).dnsServer.has_value());   // 31 s: ainda nao
+    actions = loop.OnTimer(90000);                             // 61 s: perdido
+    REQUIRE(actions.dnsServer.has_value());
+    CHECK(actions.dnsTicket != stuck);
+}
+
+TEST_CASE("only a few lost dns checks wait at once, and one that comes back frees its place") {
+    FakeWindows windows;
+    NetworkLoop loop(windows.Reader(), 30000, false);
+    loop.Open(0);
+    loop.OnServer(kServer);
+    // Todo teste fica preso: cada um e perdido dois intervalos depois, e o seguinte sai.
+    std::vector<uint64_t> stuck;
+    int64_t at = 30000;
+    for (size_t i = 0; i < NetworkLoop::kMaxLostDnsChecks; ++i) {
+        NetworkLoop::Actions actions = loop.OnTimer(at);
+        REQUIRE(actions.dnsServer.has_value());
+        stuck.push_back(actions.dnsTicket);
+        CHECK_FALSE(loop.OnTimer(at + 30000).dnsServer.has_value());
+        at += 60000;
+    }
+    // O ultimo perdido enche as vagas: nenhum outro sai (cada um seria mais uma thread presa).
+    NetworkLoop::Actions actions = loop.OnTimer(at);
+    CHECK(Logged(actions, "testes DNS perdidos: nenhum outro ate um voltar"));
+    CHECK_FALSE(actions.dnsServer.has_value());
+    CHECK_FALSE(loop.OnTimer(at + 30000).dnsServer.has_value());
+    // Um deles volta (tarde): a vaga dele fica livre, e o proximo intervalo testa de novo.
+    CHECK_FALSE(loop.OnDnsResult(stuck.front(), true, 0).dnsServer.has_value());
+    actions = loop.OnTimer(at + 60000);
+    REQUIRE(actions.dnsServer.has_value());
+    CHECK(loop.OnDnsResult(actions.dnsTicket, true, 0).internet == kNoChange);
 }
 
 // O probe 3 do revisor B (correcao final, H1): o teste da hora depois de uma troca de rede e o do intervalo, 1 s
