@@ -524,6 +524,7 @@ test.describe('a tela do administrador', () => {
     // Remover.
     await page.getByRole('button', { name: 'Editar o servidor pabx.cliente.com.br' }).click();
     await page.getByRole('button', { name: 'Remover' }).click();
+    await page.getByRole('dialog', { name: 'Remover servidor' }).getByRole('button', { name: 'Remover' }).click();
     await esperarComando(page, { cmd: 'adminSet', servidores: tres.slice(0, 2) });
     await expect(page.getByText('pabx.cliente.com.br', { exact: true })).toHaveCount(0);
     // A porta só com dígitos; sem o endereço ou a porta, nada a salvar.
@@ -562,6 +563,45 @@ test.describe('a tela do administrador', () => {
     await mudarEstado(page, (s) => ({ ...s, admin: { aberto: false, naoPerturbe: true, atenderAuto: true, blf: true } }));
     await expect(telaAdmin(page)).toHaveCount(0);
     await expect(page.getByRole('textbox', { name: 'Número' })).toBeVisible();
+  });
+
+  // Remover um servidor pede a confirmação (C-M4): sem ela, um clique a mais no Remover (ao lado do Cancelar, no mesmo
+  // estilo) tirava da lista, por exemplo, o starcloud1 (porta 35060), e a conta em uso voltava a se cadastrar na porta
+  // errada. Todas as outras remoções do app (contato, conta, atalho) perguntam antes.
+  test('removing a server asks first: Cancelar keeps it and Remover sends the list without it', async ({ page }) => {
+    await abrir(page, 'principal');
+    await entrarNaAdmin(page);
+    const endereco = 'starcloud1-starsonic.com.br';
+    const mandouOsServidores = async () => (await comandos(page)).some((c) => c.cmd === 'adminSet' && 'servidores' in c);
+    await page.getByRole('button', { name: `Editar o servidor ${endereco}` }).click();
+    const remover = page.locator('.srv-form').getByRole('button', { name: 'Remover', exact: true });
+    await remover.click();
+    const confirmacao = page.getByRole('dialog', { name: 'Remover servidor' });
+    await expect(confirmacao).toContainText(`${endereco} sai da lista de servidores.`);
+    // O botão de confirmar é o azul (como o de remover um atalho ou um contato).
+    const confirmar = confirmacao.getByRole('button', { name: 'Remover', exact: true });
+    expect(await confirmar.evaluate((e) => getComputedStyle(e).backgroundColor)).toBe('rgb(12, 38, 113)');
+    await semViolacoesSerias(page);
+    // Nada sai com a confirmação aberta. Cancelar mantém o servidor e o formulário, e o foco volta ao Remover.
+    expect(await mandouOsServidores()).toBe(false);
+    await confirmacao.getByRole('button', { name: 'Cancelar', exact: true }).click();
+    await expect(confirmacao).toHaveCount(0);
+    expect(await mandouOsServidores()).toBe(false);
+    await expect(page.getByLabel('Endereço', { exact: true })).toHaveValue(endereco);
+    await expect(remover, 'Cancelar').toBeFocused();
+    // O Esc também cancela.
+    await remover.click();
+    await expect(confirmacao).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(confirmacao).toHaveCount(0);
+    expect(await mandouOsServidores()).toBe(false);
+    await expect(remover, 'Esc').toBeFocused();
+    // Confirmar manda a lista sem ele; o foco vai ao "Adicionar servidor" (a linha saiu).
+    await remover.click();
+    await confirmacao.getByRole('button', { name: 'Remover', exact: true }).click();
+    await esperarComando(page, { cmd: 'adminSet', servidores: [SERVIDORES[0]] });
+    await expect(page.getByText(endereco, { exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Adicionar servidor' }), 'Remover').toBeFocused();
   });
 });
 

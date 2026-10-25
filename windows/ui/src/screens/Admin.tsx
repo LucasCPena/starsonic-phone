@@ -2,9 +2,11 @@
 // perturbe e Atender automático: mostrar ou esconder), os atalhos (o BLF, o puxar ligação e o código), os servidores
 // (a tabela de portas, UDP e TCP; os de fora dela usam a porta da conta, 5060) e o canal de atualização. Cada mudança
 // vai num adminSet com só o que mudou (os servidores, a lista inteira); o C++ confere (a loja) e recusa com um toast, e
-// a tela segue o estado. "Sair da área do administrador" manda o adminLogout.
+// a tela segue o estado. Remover um servidor pede a confirmação antes. "Sair da área do administrador" manda o
+// adminLogout.
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { BackBar } from '../components/BackBar';
+import { Confirm } from '../components/Confirm';
 import { IconPlus } from '../icons';
 import type { AdminServer, AdminState, Command } from '../state';
 import type { Send } from '../types';
@@ -101,6 +103,10 @@ function Servidores({ servidores, send }: { servidores: AdminServer[]; send: Sen
   const botaoAdicionar = useRef<HTMLButtonElement>(null);
   // O que abriu o formulário (a linha ou o "Adicionar servidor"), até o foco voltar a ele; sem ele, não há o que devolver.
   const voltaA = useRef<number | 'novo' | null>(null);
+  // A confirmação de remover o servidor em edição; cancelada, o foco volta ao Remover do formulário (depois de ela sair).
+  const [removendo, setRemovendo] = useState(false);
+  const botaoRemover = useRef<HTMLButtonElement>(null);
+  const voltarAoRemover = useRef(false);
   // A lista de quando a mudança saiu: quando o estado traz outra, o C++ gravou e o formulário fecha; recusada (o toast
   // diz o motivo), o estado não muda e o formulário fica com o que foi digitado.
   const enviadaDe = useRef<string | null>(null);
@@ -123,6 +129,11 @@ function Servidores({ servidores, send }: { servidores: AdminServer[]; send: Sen
     if (alvo === null || (document.activeElement && document.activeElement !== document.body)) return;
     ((typeof alvo === 'number' ? botoesEditar.current[alvo] : null) ?? botaoAdicionar.current)?.focus();
   }, [editando]);
+  useEffect(() => {
+    if (removendo || !voltarAoRemover.current) return;
+    voltarAoRemover.current = false;
+    botaoRemover.current?.focus();
+  }, [removendo]);
 
   const abrir = (qual: number | 'novo') => {
     enviadaDe.current = null;
@@ -194,15 +205,7 @@ function Servidores({ servidores, send }: { servidores: AdminServer[]; send: Sen
       </div>
       <div class="srv-acoes">
         {typeof editando === 'number' && (
-          <button
-            type="button"
-            class="btn btn-outline mini"
-            onClick={() => {
-              // A linha vai sair: o foco volta ao "Adicionar servidor", e não ao Editar da que subir para o lugar dela.
-              voltaA.current = 'novo';
-              mandar(servidores.filter((_, i) => i !== editando));
-            }}
-          >
+          <button ref={botaoRemover} type="button" class="btn btn-outline mini" onClick={() => setRemovendo(true)}>
             Remover
           </button>
         )}
@@ -242,6 +245,23 @@ function Servidores({ servidores, send }: { servidores: AdminServer[]; send: Sen
         ),
       )}
       {editando === 'novo' && formulario}
+      {removendo && typeof editando === 'number' && servidores[editando] && (
+        <Confirm
+          title="Remover servidor"
+          message={`${servidores[editando].endereco} sai da lista de servidores.`}
+          confirmLabel="Remover"
+          onCancel={() => {
+            voltarAoRemover.current = true;
+            setRemovendo(false);
+          }}
+          onConfirm={() => {
+            setRemovendo(false);
+            // A linha vai sair: o foco volta ao "Adicionar servidor", e não ao Editar da que subir para o lugar dela.
+            voltaA.current = 'novo';
+            mandar(servidores.filter((_, i) => i !== editando));
+          }}
+        />
+      )}
       <div class="set-row">
         <span class="row-sub">{`Outros servidores · porta ${PORTA_DOS_OUTROS}`}</span>
       </div>
