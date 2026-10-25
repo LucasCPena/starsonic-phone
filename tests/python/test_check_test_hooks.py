@@ -72,6 +72,19 @@ class CheckTestHooksTest(unittest.TestCase):
         self.assertEqual(self.run_main()[0], 2)
         self.assertEqual(self.run_main("--presentes")[0], 2)
 
+    def test_every_message_is_ascii(self):
+        # O Python do runner do Windows escreve na pagina de codigo do console: um acento sai trocado no log do CI.
+        outputs = [self.run_main(self.exe(b"limpo"))[1],
+                   self.run_main(self.exe("STARSONIC_PERFIL".encode("utf-16-le")))[1],
+                   self.run_main("--presentes", self.exe(b"limpo"))[1],
+                   self.run_main("--presentes", self.exe(*[n.encode("ascii") for n in check_test_hooks.HOOK_NAMES]))[1],
+                   self.run_main(self.dir / "nao-existe.exe")[1],
+                   self.run_main(self.dir / "pasta-com-acento-é" / "StarsonicPhone.exe")[1],
+                   self.run_main()[1]]
+        for out in outputs:
+            with self.subTest(out=out[:60]):
+                self.assertTrue(out.isascii(), out)
+
     def test_the_list_has_every_hook_of_the_test_build_blocks(self):
         # Os nomes dos ganchos (as variaveis STARSONIC_* e as opcoes --*) nos #if STARSONIC_TEST_HOOKS do executavel.
         found = set()

@@ -11,6 +11,8 @@ Uso: check_test_hooks.py <StarsonicPhone.exe>              (0: nenhum nome; 1: a
      check_test_hooks.py --presentes <StarsonicPhone.exe>  (o build de teste: 0 com todos os nomes, 1 com algum
                                                             faltando; confere que a busca acha os nomes de verdade)
 O arquivo precisa ter o texto "Starsonic Phone" (em ASCII ou UTF-16LE); sem ele, ou sem o arquivo: 2.
+As mensagens saem em ASCII: o Python do runner do Windows escreve na página de código do console, e um acento sairia
+trocado no log do CI.
 """
 import os
 import pathlib
@@ -26,6 +28,7 @@ HOOK_NAMES = (
     "--teste-internet",
 )
 MARKER = "Starsonic Phone"   # está em todo executável do app (a classe da janela, o diagnóstico)
+USAGE = "uso: check_test_hooks.py [--presentes] <StarsonicPhone.exe>"
 
 
 def _forms(text):
@@ -37,40 +40,45 @@ def found_names(data, names=HOOK_NAMES):
     return [name for name in names if any(form in data for form in _forms(name))]
 
 
+def _say(text):
+    """Uma linha em ASCII (um caminho ou uma mensagem do Windows com acento sai com escapes, e nao trocada)."""
+    print(text.encode("ascii", "backslashreplace").decode("ascii"))
+
+
 def _error(text):
-    print("erro: " + text)
+    _say("erro: " + text)
     if os.environ.get("GITHUB_ACTIONS") == "true":
-        print("::error title=ganchos de teste::" + text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"))
+        _say("::error title=ganchos de teste::" + text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"))
 
 
 def main(argv):
     present = argv[:1] == ["--presentes"]
     paths = argv[1:] if present else argv
     if len(paths) != 1:
-        print(__doc__)
+        _say(USAGE)
         return 2
     path = pathlib.Path(paths[0])
     try:
         data = path.read_bytes()
     except OSError as error:
-        _error("não foi possível ler %s: %s" % (path, error))
+        _error("nao foi possivel ler %s: %s" % (path, error))
         return 2
     if not any(form in data for form in _forms(MARKER)):
-        _error("%s não parece o executável do app (sem o texto %r)" % (path, MARKER))
+        _error("%s nao parece o executavel do app (sem o texto %r)" % (path, MARKER))
         return 2
     found = found_names(data)
     if present:
         missing = [name for name in HOOK_NAMES if name not in found]
         if missing:
-            _error("o build de teste %s está sem os ganchos: %s" % (path, ", ".join(missing)))
+            _error("o build de teste %s esta sem os ganchos: %s" % (path, ", ".join(missing)))
             return 1
-        print("ok: os %d ganchos de teste estão em %s (a busca acha os nomes)" % (len(HOOK_NAMES), path))
+        _say("ok: os %d ganchos de teste estao em %s (a busca acha os nomes)" % (len(HOOK_NAMES), path))
         return 0
     if found:
         for name in found:
-            _error("o gancho de teste %s está no executável de publicação %s" % (name, path))
+            _error("o gancho de teste %s esta no executavel de publicacao %s" % (name, path))
         return 1
-    print("ok: nenhum dos %d ganchos de teste em %s" % (len(HOOK_NAMES), path))
+    _say("ok: nenhum dos %d ganchos de teste em %s" % (len(HOOK_NAMES), path))
     return 0
 
 
