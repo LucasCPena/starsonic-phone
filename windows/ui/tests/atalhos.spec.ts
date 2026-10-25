@@ -4,7 +4,22 @@
 // ligação, o botão Atalhos abre o painel com os mesmos atalhos. A interface só manda os comandos: o que cada atalho
 // faz (e o puxar ligação de um ramal tocando) é do C++.
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { abrir, capturar, comandos, esperarComando, estado, mudarEstado, semViolacoesSerias, verTextos } from './helpers';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { RECUSAS_DO_SALVAR } from '../src/recusas';
+import {
+  abrir,
+  capturar,
+  comandos,
+  empurrar,
+  esperarComando,
+  estado,
+  mudarEstado,
+  segurarCpp,
+  semViolacoesSerias,
+  soltarCpp,
+  verTextos,
+} from './helpers';
 
 const VERDE = 'rgb(34, 197, 94)'; // #22c55e
 const CIANO = 'rgb(0, 194, 203)'; // #00c2cb
@@ -37,6 +52,27 @@ async function caixa(locator: Locator) {
 }
 
 const nomeDoTema = (tema: 'light' | 'dark') => (tema === 'light' ? 'claro' : 'escuro');
+
+/** Os motivos de recusa de `starsonic/desktop/Atalhos.cpp`: as constantes `kErr*` (ASCII, os acentos em \xNN de UTF-8). */
+function motivosDaLoja(): string[] {
+  const fonte = readFileSync(fileURLToPath(new URL('../../../starsonic/desktop/Atalhos.cpp', import.meta.url)), 'utf8');
+  const motivos: string[] = [];
+  for (const constante of fonte.matchAll(/const char kErr\w+\[\]\s*=\s*((?:"(?:[^"\\]|\\.)*"\s*)+);/g)) {
+    const bytes: number[] = [];
+    for (const literal of constante[1].matchAll(/"((?:[^"\\]|\\.)*)"/g)) {
+      const corpo = literal[1];
+      for (let i = 0; i < corpo.length; i++) {
+        if (corpo[i] !== '\\') bytes.push(corpo.charCodeAt(i));
+        else if (corpo[++i] === 'x') {
+          bytes.push(parseInt(corpo.slice(i + 1, i + 3), 16));
+          i += 2;
+        } else bytes.push(corpo.charCodeAt(i));
+      }
+    }
+    motivos.push(Buffer.from(bytes).toString('utf8'));
+  }
+  return motivos;
+}
 
 const LAYOUTS: Array<[string, number, number]> = [
   ['normal', 400, 720],
@@ -497,6 +533,105 @@ test.describe('um atalho novo', () => {
     await expect(nome).toHaveValue('Suporte técnico');
     // Recusado, o Salvar volta a valer.
     await expect(salvar).toBeEnabled();
+  });
+
+  // Recusado o Salvar, o foco fica no formulário: no campo de que o motivo fala, se dá para saber, senão no "Salvar
+  // atalho" (o foco caía no <body>: o Salvar fica desativado esperando a resposta).
+  test('a refused save puts focus on the field the reason is about', async ({ page }) => {
+    await abrir(page, 'atalhos');
+    await page.getByRole('button', { name: 'Adicionar atalho', exact: true }).first().click();
+    const nome = page.getByLabel('Nome', { exact: true });
+    const numero = page.getByLabel('Número', { exact: true });
+    // Um tab no meio do nome: a loja recusa ("O nome não pode ter caracteres de controle."). O Enter sai do Número.
+    await nome.fill('Por\ttaria');
+    await numero.fill('2030');
+    await numero.press('Enter');
+    await esperarComando(page, { cmd: 'saveShortcut', nome: 'Por\ttaria', numero: '2030', acao: 'ligar', blf: true });
+    await expect(page.getByText('O nome não pode ter caracteres de controle.', { exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Adicionar atalho' })).toBeVisible();
+    await expect(nome).toBeFocused();
+    await expect(page.getByRole('button', { name: 'Salvar atalho' })).toBeEnabled();
+    // Corrigido o nome, o Salvar grava.
+    await nome.fill('Portaria');
+    await page.getByRole('button', { name: 'Salvar atalho' }).click();
+    await expect(page.getByRole('main', { name: 'Atalhos' })).toBeVisible();
+    await expect(cartao(page, 'Portaria')).toHaveCount(1);
+  });
+
+  test('a refused save without a field to blame puts focus on Salvar atalho', async ({ page }) => {
+    await abrir(page, 'atalhos');
+    await usar(page, 'Suporte').click({ button: 'right' });
+    await expect(page.getByRole('heading', { name: 'Editar atalho' })).toBeVisible();
+    // O Suporte saiu em outro lugar: "Esse atalho não existe mais." não é de um campo.
+    await mudarEstado(page, (s) => ({ ...s, atalhos: s.atalhos.filter((a: { id: string }) => a.id !== SUPORTE) }));
+    await page.getByLabel('Nome', { exact: true }).fill('Suporte técnico');
+    const salvar = page.getByRole('button', { name: 'Salvar atalho' });
+    await salvar.click();
+    await expect(page.getByText('Esse atalho não existe mais.', { exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Editar atalho' })).toBeVisible();
+    await expect(salvar).toBeEnabled();
+    await expect(salvar).toBeFocused();
+  });
+
+  test('a ninth shortcut refused by the store puts focus on Salvar atalho too', async ({ page }) => {
+    await abrir(page, 'atalhos');
+    await page.getByRole('button', { name: 'Adicionar atalho', exact: true }).first().click();
+    // Outro lugar completou os 8 atalhos com o editor aberto: "Você já tem 8 atalhos…" também não é de um campo.
+    await mudarEstado(page, (s) => ({
+      ...s,
+      atalhos: [
+        ...s.atalhos,
+        { id: '1a2b3c4d5e6f7a8b', nome: 'Diretoria', numero: '2020', acao: 'ligar', blf: false, estado: null },
+        { id: '8b7a6f5e4d3c2b1a', nome: 'Garagem', numero: '2040', acao: 'ligar', blf: false, estado: null },
+      ],
+    }));
+    await page.getByLabel('Nome', { exact: true }).fill('Portaria');
+    await page.getByLabel('Número', { exact: true }).fill('2030');
+    const salvar = page.getByRole('button', { name: 'Salvar atalho' });
+    await salvar.click();
+    await expect(page.getByText('Você já tem 8 atalhos. Remova um para adicionar outro.', { exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Adicionar atalho' })).toBeVisible();
+    await expect(salvar).toBeEnabled();
+    await expect(salvar).toBeFocused();
+  });
+
+  // A edição só destrava o Salvar com o toast da loja: se um motivo do Atalhos.cpp faltasse na lista dela (recusas.ts),
+  // o Salvar travaria para sempre depois dessa recusa. O campo de cada motivo é o de que ele fala.
+  test('the refusal texts the editor waits for are the ones the C++ store sends', () => {
+    const daLoja = motivosDaLoja();
+    expect(daLoja.length, 'o Atalhos.cpp não tem as constantes kErr* esperadas').toBeGreaterThanOrEqual(10);
+    expect([...RECUSAS_DO_SALVAR.keys()].sort()).toEqual([...daLoja].sort());
+    for (const motivo of daLoja) {
+      const campo = /\bnome\b/.test(motivo) ? 'nome' : /\bnúmero\b/.test(motivo) ? 'numero' : 'salvar';
+      expect(RECUSAS_DO_SALVAR.get(motivo), motivo).toBe(campo);
+    }
+  });
+
+  // O Salvar fica travado até a resposta DESTE Salvar: os atalhos gravados mudaram, ou a loja recusou (o toast com o
+  // motivo dela). Um aviso de outra coisa no meio da espera não destrava: um clique duplo nesse instante criaria dois
+  // "Portaria".
+  test('an unrelated toast during a pending save leaves Salvar locked, and a double click saves one shortcut', async ({ page }) => {
+    await abrir(page, 'atalhos');
+    await page.getByRole('button', { name: 'Adicionar atalho', exact: true }).first().click();
+    await page.getByLabel('Nome', { exact: true }).fill('Portaria');
+    await page.getByLabel('Número', { exact: true }).fill('2030');
+    // O C++ lento: a resposta ao Salvar espera.
+    await segurarCpp(page);
+    const salvar = page.getByRole('button', { name: 'Salvar atalho' });
+    await salvar.click();
+    await esperarComando(page, { cmd: 'saveShortcut', nome: 'Portaria', numero: '2030', acao: 'ligar', blf: true });
+    await expect(salvar).toBeDisabled();
+    // Um aviso que não é a resposta (o C++ avisa de outra coisa no mesmo instante).
+    await empurrar(page, { v: 1, type: 'toast', texto: 'Sem conexão com o servidor. Tente de novo em instantes.' });
+    await expect(page.getByText('Sem conexão com o servidor. Tente de novo em instantes.', { exact: true })).toBeVisible();
+    await expect(salvar).toBeDisabled();
+    await salvar.dblclick({ force: true });
+    expect((await comandos(page)).filter((c) => c.cmd === 'saveShortcut')).toHaveLength(1);
+    // A resposta chega: o editor fecha, com um atalho só.
+    await soltarCpp(page);
+    await expect(page.getByRole('main', { name: 'Atalhos' })).toBeVisible();
+    await expect(cartao(page, 'Portaria')).toHaveCount(1);
+    expect((await comandos(page)).filter((c) => c.cmd === 'saveShortcut')).toHaveLength(1);
   });
 
   test('a double Enter saves one shortcut, and the editor closes when the C++ saves it', async ({ page }) => {

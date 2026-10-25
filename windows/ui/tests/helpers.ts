@@ -32,6 +32,15 @@ export async function empurrar(page: Page, mensagem: unknown): Promise<void> {
   await page.evaluate((m) => (window as unknown as { __fake: { push(m: unknown): void } }).__fake.push(m), mensagem);
 }
 
+/** O C++ de mentira lento: segura o que ele manda de volta a um comando (o estado, o aviso, o toque) até o soltarCpp. */
+export async function segurarCpp(page: Page): Promise<void> {
+  await page.evaluate(() => (window as unknown as { __fake: { segurar(): void } }).__fake.segurar());
+}
+
+export async function soltarCpp(page: Page): Promise<void> {
+  await page.evaluate(() => (window as unknown as { __fake: { soltar(): void } }).__fake.soltar());
+}
+
 /** O estado de agora do C++ de mentira. */
 export async function estado(page: Page): Promise<Record<string, any>> {
   return page.evaluate(() => (window as unknown as { __fake: { state(): Record<string, any> } }).__fake.state());

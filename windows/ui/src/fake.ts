@@ -30,6 +30,9 @@ type Listener = (event: { data: unknown }) => void;
 export interface FakeHooks {
   push(message: unknown): void;
   state(): AppState;
+  /** Segura o que o C++ de mentira manda de volta a um comando (o estado, o aviso e o toque) até o `soltar()`: o C++ lento. */
+  segurar(): void;
+  soltar(): void;
 }
 
 declare global {
@@ -56,7 +59,14 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
   const sent: Array<Record<string, unknown>> = [];
   window.__comandos = sent;
 
-  const deliver = (message: unknown) => {
+  // O C++ lento (segurar/soltar): as respostas aos comandos esperam, na ordem; o `push` do teste passa direto.
+  let segurando = false;
+  const presas: unknown[] = [];
+  const deliver = (message: unknown, direto = false) => {
+    if (segurando && !direto) {
+      presas.push(message);
+      return;
+    }
     // Assíncrono, como o PostWebMessageAsJson.
     setTimeout(() => {
       for (const l of [...listeners]) l({ data: structuredClone(message) });
@@ -73,9 +83,16 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
       if (typeof message === 'object' && message !== null && (message as { type?: string }).type === 'state') {
         state = structuredClone((message as { state: AppState }).state);
       }
-      deliver(message);
+      deliver(message, true);
     },
     state: () => structuredClone(state),
+    segurar() {
+      segurando = true;
+    },
+    soltar() {
+      segurando = false;
+      for (const message of presas.splice(0)) deliver(message);
+    },
   };
 
   const ring = (tipo: RingKind) => deliver({ v: 1, type: 'ring', tipo } satisfies IncomingMessage);
@@ -103,6 +120,8 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
     if (editando && !state.atalhos.some((a) => a.id === command.id)) return 'Esse atalho não existe mais.';
     if (!editando && state.atalhos.length >= 8) return 'Você já tem 8 atalhos. Remova um para adicionar outro.';
     if (trimAscii(String(command.nome ?? '')) === '') return 'Digite o nome do atalho.';
+    // Nada abaixo de U+0020 no nome (um tab no meio dele, por exemplo; os das pontas a loja já tirou).
+    if (/[\u0000-\u001f]/.test(trimAscii(String(command.nome)))) return 'O nome não pode ter caracteres de controle.';
     if (trimAscii(String(command.numero ?? '')) === '') return 'Digite o número do atalho.';
     return '';
   };

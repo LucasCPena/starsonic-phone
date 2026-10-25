@@ -5,11 +5,14 @@
 // ela fica desativada (com o valor gravado), com a ajuda "O administrador não ligou o BLF".
 // O nome em branco e o número vazio param aqui, com o texto da loja embaixo do campo. O resto o C++ confere de novo (a
 // loja): a edição fica aberta até os atalhos do estado mudarem (gravou); recusado, o motivo vem num toast, nada muda e
-// a edição fica com o que foi digitado. Esperando a resposta, o Salvar fica travado (um Enter duplo grava um só).
+// a edição fica com o que foi digitado, com o foco no campo de que o motivo fala (ou no Salvar atalho). Esperando a
+// resposta, o Salvar fica travado (um Enter duplo grava um só) e só a resposta deste Salvar o destrava: os atalhos
+// gravados mudaram, ou chegou o toast da loja (recusas.ts); um aviso de outra coisa não conta.
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { BackBar } from '../components/BackBar';
 import { limitCharacters, looksLikeExtension, trimAscii } from '../format';
 import { IconAlert } from '../icons';
+import { RECUSAS_DO_SALVAR, type AlvoDoFoco } from '../recusas';
 import type { Shortcut, ShortcutAction } from '../state';
 import type { Send } from '../types';
 import { MAX_ATALHOS, RemoverAtalho } from './Atalhos';
@@ -21,8 +24,8 @@ interface Props {
   posicao: number;
   /** Os atalhos do estado (gravou quando eles mudam). */
   atalhos: Shortcut[];
-  /** Quantos toasts chegaram (um a mais com a edição esperando: o C++ recusou). */
-  toasts: number;
+  /** O último toast e quantos chegaram (um a mais, com o texto da loja, na edição esperando: o C++ recusou). */
+  toasts: { n: number; texto: string };
   /** O BLF nos atalhos do administrador (`admin.blf`). */
   blfDoAdmin: boolean;
   send: Send;
@@ -59,10 +62,12 @@ export function AtalhoForm({ atalho, posicao, atalhos, toasts, blfDoAdmin, send,
   const [esperando, setEsperando] = useState(false);
   const campoNome = useRef<HTMLInputElement>(null);
   const campoNumero = useRef<HTMLInputElement>(null);
+  const botaoSalvar = useRef<HTMLButtonElement>(null);
   const blf = blfEscolhido ?? (blfDoAdmin && looksLikeExtension(numero));
 
-  // A resposta do C++: os atalhos gravados mudaram depois do Salvar (gravou: fecha) ou chegou um toast (recusou: o
-  // Salvar volta a valer, com o que foi digitado).
+  // A resposta do C++: os atalhos gravados mudaram depois do Salvar (gravou: fecha) ou chegou o toast da loja com o
+  // motivo (recusou: o Salvar volta a valer, com o que foi digitado, e o foco fica no formulário). Outro aviso, no meio
+  // da espera, não é a resposta: o Salvar continua travado.
   const agora = gravados(atalhos);
   const enviadoDe = useRef<string | null>(null);
   const aguardando = useRef(false);
@@ -71,14 +76,23 @@ export function AtalhoForm({ atalho, posicao, atalhos, toasts, blfDoAdmin, send,
     enviadoDe.current = null;
     onClose();
   }, [agora]);
-  const toastsVistos = useRef(toasts);
+  const toastsVistos = useRef(toasts.n);
+  const [focoDepois, setFocoDepois] = useState<AlvoDoFoco | null>(null);
   useEffect(() => {
-    if (toasts === toastsVistos.current) return;
-    toastsVistos.current = toasts;
-    if (!aguardando.current) return;
+    if (toasts.n === toastsVistos.current) return;
+    toastsVistos.current = toasts.n;
+    const alvo = RECUSAS_DO_SALVAR.get(toasts.texto);
+    if (!aguardando.current || alvo === undefined) return;
     aguardando.current = false;
     setEsperando(false);
-  }, [toasts]);
+    setFocoDepois(alvo);
+  }, [toasts.n]);
+  // O foco vai depois de o Salvar destravar (um botão desativado não recebe o foco).
+  useEffect(() => {
+    if (focoDepois === null) return;
+    setFocoDepois(null);
+    (focoDepois === 'nome' ? campoNome : focoDepois === 'numero' ? campoNumero : botaoSalvar).current?.focus();
+  }, [focoDepois]);
 
   const salvar = (e: Event) => {
     e.preventDefault();
@@ -214,7 +228,7 @@ export function AtalhoForm({ atalho, posicao, atalhos, toasts, blfDoAdmin, send,
               Remover
             </button>
           )}
-          <button type="submit" class="btn btn-cyan btn-block" disabled={esperando}>
+          <button ref={botaoSalvar} type="submit" class="btn btn-cyan btn-block" disabled={esperando}>
             Salvar atalho
           </button>
         </div>

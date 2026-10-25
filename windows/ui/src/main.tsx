@@ -53,8 +53,9 @@ function App() {
   const [state, setState] = useState<AppState | null>(null);
   const [view, setView] = useState<View>(initialView);
   const [toast, setToast] = useState<{ texto: string; vez: number } | null>(null);
-  // Quantos toasts chegaram (nunca volta a zero): a edição do atalho sabe que o C++ recusou (o motivo vem num toast).
-  const [toasts, setToasts] = useState(0);
+  // O último toast e quantos chegaram (nunca volta a zero): a edição do atalho sabe que o C++ recusou (o motivo vem num
+  // toast, com o texto da loja) e distingue essa resposta de um aviso de outra coisa.
+  const [toasts, setToasts] = useState({ n: 0, texto: '' });
   const [reinstalar, setReinstalar] = useState(false);
   // A pergunta da atualização aberta (o `update` do C++), até a resposta.
   const [atualizacao, setAtualizacao] = useState<{ versao: string; notas: string; vez: number } | null>(null);
@@ -79,7 +80,7 @@ function App() {
         setState(msg.state);
       } else if (msg.type === 'toast') {
         setToast((t) => ({ texto: msg.texto, vez: (t?.vez ?? 0) + 1 }));
-        setToasts((n) => n + 1);
+        setToasts((t) => ({ n: t.n + 1, texto: msg.texto }));
       } else if (msg.type === 'ring') ringer.play(msg.tipo, saidas.current);
       else if (msg.type === 'update') setAtualizacao((a) => ({ versao: msg.versao, notas: msg.notas, vez: (a?.vez ?? 0) + 1 }));
     });
