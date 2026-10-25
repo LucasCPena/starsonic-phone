@@ -374,7 +374,11 @@ test.describe('a aba Atalhos', () => {
       await page.getByRole('button', { name: 'Voltar' }).click();
       await expect(ajuda).toHaveText(texto);
       await page.keyboard.press('Control+KeyP');
-      await expect(page.getByRole('heading', { name: 'Área do administrador', level: 1 })).toBeVisible();
+      const titulo = page.getByRole('heading', { name: 'Área do administrador', level: 1 });
+      await expect(titulo).toBeVisible();
+      // O foco no título vem do efeito da montagem: esperar por ele garante que os efeitos da tela (o do código para
+      // puxar inclusive) já rodaram antes do próximo fill.
+      await expect(titulo).toBeFocused();
     };
     // O BLF já estava ligado: o puxar sozinho, sem o código, não basta.
     await puxar.click();

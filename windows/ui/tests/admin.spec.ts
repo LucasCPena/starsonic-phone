@@ -636,6 +636,7 @@ test.describe('o foco da tela do administrador', () => {
     await expect(endereco(page)).toHaveCount(0);
     await expect(editar(page), 'Cancelar').toBeFocused();
     await editar(page).click();
+    await expect(endereco(page)).toBeFocused();   // o efeito do [editando] já pôs o foco no Endereço
     await porta(page).fill('35061');
     await page.getByRole('button', { name: 'Salvar servidor' }).click();
     await expect(page.getByText('Porta 35061 · UDP e TCP', { exact: true })).toBeVisible();
@@ -657,6 +658,7 @@ test.describe('o foco da tela do administrador', () => {
     await abrir(page, 'principal');
     await entrarNaAdmin(page);
     await editar(page).click();
+    await expect(endereco(page)).toBeFocused();   // o efeito do [editando] já pôs o foco no Endereço
     await porta(page).fill('35061');
     await segurarCpp(page);
     await page.getByRole('button', { name: 'Salvar servidor' }).click();
