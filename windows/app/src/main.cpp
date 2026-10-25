@@ -13,7 +13,10 @@
 // No build de teste (STARSONIC_TEST_HOOKS), a variavel STARSONIC_PERFIL troca o perfil embutido pelo texto dela (um
 // perfil que aponta para o registrador falso), e a STARSONIC_SOM_NULO poe o motor no dispositivo nulo do PJSIP (o
 // runner do CI nao tem placa de som, e sem nenhum dispositivo o PJSIP nao faz nem atende ligacoes), e a
-// STARSONIC_TRAVAR_SAIR trava a thread de comandos no Sair (a fumaca confere o fechamento com limite).
+// STARSONIC_TRAVAR_SAIR trava a thread de comandos no Sair (a fumaca confere o fechamento com limite). (rc.3) A
+// STARSONIC_SENHA_ADMIN_TESTE troca a senha do administrador pelo texto dela (a fumaca entra na area sem a senha de
+// verdade), e uma abertura com "--teste-internet off" (ou "on") com o app aberto forca o monitor de rede a ver a
+// internet fora (ou devolve a visao de verdade).
 //
 // Fechar: todo Sair (o da interface, o da bandeja, o --sair, o Alt+F4, o do atualizador) passa pelo WM_CLOSE da
 // janela, que fecha no maximo 10 s depois mesmo sem o DesktopApp terminar (Ruling 16); depois da janela, o fechamento
@@ -42,12 +45,14 @@
 #include "LegacyCrypto.h"
 #include "Links.h"
 #include "MainWindow.h"
+#include "NetworkMonitor.h"
 #include "Profile.h"
 #include "ShellState.h"
 #include "SingleInstance.h"
 #include "Stores.h"
 #include "Text.h"
 #include "Threads.h"
+#include "UpdateChannel.h"
 #include "WinFiles.h"
 #include "app_build.h"
 #include "resource.h"
@@ -140,6 +145,17 @@ void OpenUrl(const std::string& url) {
     ShellExecuteW(nullptr, L"open", Utf8ToWide(url).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
 
+#if STARSONIC_TEST_HOOKS
+// O texto de uma variavel de ambiente ("" sem ela).
+std::wstring Environment(const wchar_t* name) {
+    const DWORD size = GetEnvironmentVariableW(name, nullptr, 0);
+    if (size <= 1) return std::wstring();
+    std::wstring text(size, L'\0');
+    text.resize(GetEnvironmentVariableW(name, &text[0], size));
+    return text;
+}
+#endif
+
 }  // namespace
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
@@ -190,6 +206,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     config.profile = profile;
     config.version = STARSONIC_VERSION;
     config.decrypt = [](const std::wstring& encrypted) { return LegacyDecrypt(encrypted); };
+#if STARSONIC_TEST_HOOKS
+    // O build de teste: a senha do administrador da fumaca (Ruling 11; a de verdade nunca vai ao CI). O texto nunca
+    // vai ao diagnostico.
+    const std::string testAdminPassword = WideToUtf8(Environment(L"STARSONIC_SENHA_ADMIN_TESTE"));
+    if (!testAdminPassword.empty()) {
+        config.checkAdminPassword = [testAdminPassword](const std::string& typed) { return typed == testAdminPassword; };
+        log("STARSONIC_SENHA_ADMIN_TESTE: a area do administrador entra com a senha de teste (build de teste)");
+    }
+#endif
 
     // O Iniciar com o Windows: o registro vale mais que o config.json (o instalador pode nao ter gravado o Run, a rc.7
     // podia estar sem, a pessoa pode ter tirado no Gerenciador de Tarefas). Ligado, o valor e regravado com o caminho
@@ -228,6 +253,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
 
     MainWindow window;   // antes do DesktopApp: os ganchos dele chegam na janela ate o Shutdown
     std::unique_ptr<AppUpdater> updater;   // criado depois do DesktopApp; Close() antes do Shutdown dele
+    // O canal de atualizacao que vale (o do administrador, pelo gancho updateChannel, ou o do build): o atualizador le a
+    // cada verificacao. Antes do DesktopApp: o gancho chega na abertura dele, talvez antes de o atualizador existir.
+    UpdateChannel updateChannel(STARSONIC_UPDATE_CHANNEL_TEST != 0);
 
     // O gancho quit ja rodou (o DesktopApp encerrou as ligacoes): o logoff do Windows espera por ele.
     const HANDLE quitDone = CreateEventW(nullptr, TRUE, FALSE, nullptr);
@@ -274,6 +302,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     hooks.updateAnswer = [&updater](bool now) {
         if (updater) updater->Answer(now);
     };
+    // O canal do administrador (na abertura e quando ele muda): so guarda (vale a partir da proxima verificacao).
+    hooks.updateChannel = [&updateChannel, log](const std::string& channel) {
+        updateChannel.Set(channel);
+        log(std::string("atualizacao: canal ") + (updateChannel.Test() ? "teste" : "estavel") +
+            (channel.empty() ? " (o do build)" : " (o do administrador)"));
+    };
 
     DesktopApp app(config, hooks, engine, engine, files, cipher, clock, scheduler);
     engine.SetListener(&app);
@@ -287,11 +321,29 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     updateHooks.notify = [&app](const std::string& text) { app.Notify(text); };
     updateHooks.log = log;
     updateHooks.quit = [&window] { window.RunOnWindow([&window] { window.RequestQuit(); }); };
-    updater.reset(new AppUpdater(STARSONIC_VERSION, STARSONIC_UPDATE_CHANNEL_TEST != 0, updateHooks));
+    updater.reset(new AppUpdater(STARSONIC_VERSION, updateChannel, updateHooks));
+
+    // O monitor de rede (rc.3, spec 8): a internet que o Windows ve e o teste DNS do servidor da conta vao ao DesktopApp
+    // (SetInternet so poe na fila). O servidor vem do estado que a janela le (callbacks.accountServer).
+    NetworkMonitor::Hooks networkHooks;
+    networkHooks.changed = [&app](bool internet) { app.SetInternet(internet); };
+    networkHooks.log = log;
+    NetworkMonitor network(networkHooks);
+    network.Start();
 
     // As proximas aberturas (um link, o atalho de novo, o --sair) chegam aqui, na thread da janela, dentro do
     // WM_COPYDATA: so poe o trabalho na fila e volta.
-    single.Listen(instance, [&app, &window, &diag](const std::vector<std::wstring>& raw) {
+    single.Listen(instance, [&app, &window, &diag, &network](const std::vector<std::wstring>& raw) {
+#if STARSONIC_TEST_HOOKS
+        // O build de teste: "--teste-internet off" forca o monitor de rede a ver a internet fora, e "on" devolve a visao
+        // de verdade (a fumaca confere a bolinha cinza e a volta ao verde).
+        if (raw.size() == 2 && raw[0] == L"--teste-internet" && (raw[1] == L"off" || raw[1] == L"on")) {
+            const bool off = raw[1] == L"off";
+            diag.Write(std::string("--teste-internet ") + (off ? "off" : "on") + " (build de teste)");
+            network.Force(off ? std::optional<bool>(false) : std::nullopt);
+            return;
+        }
+#endif
         const CommandLine next = ParseCommandLine(raw);
         if (next.quit) {
             diag.Write("pedido para sair (--sair)");
@@ -329,11 +381,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     callbacks.devicesChanged = [&app] { app.RefreshAudioDevices(); };
     callbacks.moved = [&app](int x, int y) { app.SaveWindowPosition(x, y); };
     callbacks.resized = [&app](int width, int height) { app.SaveWindowSize(width, height); };
+    callbacks.accountServer = [&network](const std::string& server) { network.SetServer(server); };
     callbacks.quitRequested = [&app] { app.HandleCommand(kQuitCommand); };
     // O logoff ou o desligamento: o mesmo Sair, esperando pouco (o Windows encerra o processo depois de o
     // WM_ENDSESSION voltar). O Shutdown roda o que o Sair pos na fila (os Recentes das ligacoes encerradas).
-    callbacks.endSession = [&app, &updater, quitDone, log] {
+    callbacks.endSession = [&app, &updater, &network, quitDone, log] {
         if (updater) updater->Close();
+        network.Stop();
         app.HandleCommand(kQuitCommand);
         const bool done = quitDone && WaitForSingleObject(quitDone, kEndSessionWaitMs) == WAIT_OBJECT_0;
         app.Shutdown();
@@ -383,6 +437,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         ExitProcess(0);
     });
     updater->Close();
+    network.Stop();   // antes do Shutdown: nenhum SetInternet depois dele
     app.Shutdown();
     scheduler.Stop();
     engine.Stop();

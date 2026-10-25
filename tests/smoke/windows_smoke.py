@@ -405,6 +405,21 @@ class Win32:
             time.sleep(0.05)
         return sent
 
+    def focus(self):
+        """A janela com o foco do teclado na thread em primeiro plano (GetGUIThreadInfo)."""
+        ctypes, wintypes = self.ctypes, self.wintypes
+
+        class GUITHREADINFO(ctypes.Structure):
+            _fields_ = [("cbSize", wintypes.DWORD), ("flags", wintypes.DWORD), ("hwndActive", wintypes.HWND),
+                        ("hwndFocus", wintypes.HWND), ("hwndCapture", wintypes.HWND), ("hwndMenuOwner", wintypes.HWND),
+                        ("hwndMoveSize", wintypes.HWND), ("hwndCaret", wintypes.HWND), ("rcCaret", wintypes.RECT)]
+
+        info = GUITHREADINFO()
+        info.cbSize = ctypes.sizeof(GUITHREADINFO)
+        if not self.user32.GetGUIThreadInfo(0, ctypes.byref(info)):
+            return 0
+        return info.hwndFocus or 0
+
     def ctrl_key(self, letter):
         """Ctrl + a letra, pelo teclado de verdade (na janela em primeiro plano)."""
         vk = ord(letter.upper())
@@ -1322,6 +1337,7 @@ def check_ctrl_p(win, exe, hwnd, page, record, problems):
     opened = False
     if in_front:
         page.wait_for_timeout(500)   # o foco chega ao WebView2 (o WM_ACTIVATE)
+        info["foco"] = win.describe(win.focus())
         info["sendinput"] = win.ctrl_key("P")
         opened = bool(wait_for(lambda: dialog.count() > 0, 5, pump=page.wait_for_timeout))
         info["pelo_teclado"] = opened

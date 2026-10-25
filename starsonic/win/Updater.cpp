@@ -223,11 +223,10 @@ void OnManifest(const SharedPtr& shared, const ManifestReply& result, bool userA
     }
 }
 
-void FetchManifest(SharedPtr shared) {
+void FetchManifest(SharedPtr shared, bool testChannel) {
     try {
         ManifestReply result;
-        const HttpResponse response = HttpsGet(ManifestUrl(shared->options.testChannel), kManifestMaxBytes,
-                                               shared->UserAgent());
+        const HttpResponse response = HttpsGet(ManifestUrl(testChannel), kManifestMaxBytes, shared->UserAgent());
         result.status = response.status;
         if (response.error) {
             result.failure = "erro " + std::to_string(response.error);
@@ -249,12 +248,14 @@ Updater::Updater(std::shared_ptr<UpdateUi> ui, UpdaterOptions options) : shared_
 
 Updater::~Updater() = default;
 
-void Updater::Check() {
+void Updater::Check() { Check(shared_->options.testChannel); }
+
+void Updater::Check(bool testChannel) {
     if (shared_->busy) {
         return;
     }
     try {
-        std::thread(FetchManifest, shared_).detach();
+        std::thread(FetchManifest, shared_, testChannel).detach();
     } catch (const std::exception&) {
         shared_->Log(2, "nao foi possivel iniciar a verificacao");
     }

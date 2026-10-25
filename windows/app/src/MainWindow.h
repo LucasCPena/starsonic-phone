@@ -20,7 +20,8 @@
 // a interface (ShellState): o "fechar" da barra esconde a janela na bandeja (o WebView continua rodando: o toque e
 // dele); com uma ligacao tocando e a janela fora da frente (escondida, minimizada ou atras de outra), o aviso aparece
 // no canto; o Atender do aviso traz a janela para a frente. O logoff ou o desligamento do Windows (WM_ENDSESSION)
-// chama callbacks.endSession, que faz o Sair com uma espera curta.
+// chama callbacks.endSession, que faz o Sair com uma espera curta. (rc.3) O icone da bandeja que muda vai ao
+// diagnostico ("bandeja: <icone>"), e o servidor da conta, ao monitor de rede (callbacks.accountServer).
 //
 // O WebView2: a pagina abre com a versao na URL (index.html?v=<versao>, e o aviso.html tambem); o navegador que sai
 // (morto ou caido) e refeito com um ambiente novo, a janela e o aviso ("navegador reiniciado" no diagnostico; o
@@ -75,6 +76,8 @@ public:
         std::function<void(const std::string& line)> log;
         std::function<void(HRESULT error)> webViewFailed;
         std::function<void()> devicesChanged;   // um dispositivo de som entrou ou saiu (1 s depois do ultimo aviso)
+        // (rc.3) O servidor da conta em uso mudou (conta.servidor; "" sem conta): o teste DNS do monitor de rede.
+        std::function<void(const std::string& server)> accountServer;
     };
 
     MainWindow() = default;
@@ -134,6 +137,8 @@ private:
     NoticeWindow notice_;
     Tray tray_;
     ShellStatus status_;
+    TrayIcon trayIcon_ = TrayIcon::Offline;   // o da bandeja agora (vai ao diagnostico quando muda)
+    std::string server_;                       // o conta.servidor que o monitor de rede tem
     bool active_ = false;        // a janela e a ativa (na frente)
     bool trayLogged_ = false;
     bool noticeStarted_ = false;   // o WebView do aviso ja abriu (depois da primeira mensagem da interface)

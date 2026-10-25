@@ -43,6 +43,8 @@ target_link_libraries(desktop_tests PRIVATE SQLite::SQLite3 Threads::Threads)
 target_sources(desktop_tests PRIVATE ${STARSONIC_DIR}/../windows/app/src/WindowFit.cpp
   ${STARSONIC_DIR}/../windows/app/src/Links.cpp
   ${STARSONIC_DIR}/../windows/app/src/BrowserRestarts.cpp
+  ${STARSONIC_DIR}/../windows/app/src/NetworkDecision.cpp
+  ${STARSONIC_DIR}/../windows/app/src/UpdateChannel.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../win/test_network_monitor.cpp)
 target_include_directories(desktop_tests PRIVATE ${STARSONIC_DIR}/../windows/app/src)
 

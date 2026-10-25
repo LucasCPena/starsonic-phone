@@ -62,6 +62,9 @@ public:
 
     // Comeca uma verificacao (nunca espera a rede). As threads guardam o que precisam: o Updater pode sair antes.
     void Check();
+    // A mesma, no canal dado (o app novo: o canal do administrador vale a partir da proxima verificacao) em vez do
+    // options.testChannel.
+    void Check(bool testChannel);
 
     struct Shared;   // o estado dividido com as threads (Updater.cpp)
 

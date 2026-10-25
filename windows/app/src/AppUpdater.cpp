@@ -5,6 +5,7 @@
 #include <utility>
 
 #include "Text.h"
+#include "UpdateChannel.h"
 #include "Updater.h"
 
 namespace starsonic {
@@ -68,10 +69,11 @@ private:
     bool closed_ = false;
 };
 
-AppUpdater::AppUpdater(std::string version, bool testChannel, Hooks hooks) : ui_(std::make_shared<Ui>(std::move(hooks))) {
+AppUpdater::AppUpdater(std::string version, const UpdateChannel& channel, Hooks hooks)
+    : channel_(channel), ui_(std::make_shared<Ui>(std::move(hooks))) {
     UpdaterOptions options;
     options.installedVersion = std::move(version);
-    options.testChannel = testChannel;
+    options.testChannel = channel.Test();   // a verificacao le o canal de novo (Check(test))
     std::shared_ptr<Ui> ui = ui_;
     options.log = [ui](int level, const std::string& line) {
         // O detalhe (nivel 4: "nada novo") tambem vai: o diagnostico e para o suporte.
@@ -97,7 +99,7 @@ void AppUpdater::Start(unsigned long firstDelayMs, unsigned long intervalMs) {
         for (;;) {
             if (wake_.wait_for(lock, wait, [this] { return stopping_; })) return;
             lock.unlock();
-            updater_->Check();
+            updater_->Check(channel_.Test());   // o canal de agora (o administrador pode ter trocado)
             lock.lock();
             wait = std::chrono::milliseconds(intervalMs);
         }

@@ -2,7 +2,9 @@
 // O atualizador no app novo (spec 7.3; o mesmo Updater do app antigo, starsonic/win/Updater.h): a pergunta vira um
 // aviso dentro da interface ({"type":"update"}, DesktopApp::OfferUpdate) e a resposta volta pelos comandos
 // updateNow/updateLater (DesktopApp -> Answer). Os avisos ("Termine a chamada para atualizar." e os outros) vao como
-// toast. A verificacao roda um tempo depois de abrir e a cada 24 h, numa thread propria.
+// toast. A verificacao roda um tempo depois de abrir e a cada 24 h, numa thread propria. (rc.3) O canal (o canal-teste
+// ou o release estavel) e o que vale a cada verificacao (UpdateChannel: o do administrador ou o do build); sem um
+// release estavel (o releases/latest da 404), a verificacao do estavel so escreve uma linha no diagnostico.
 //
 // Threads: os passos do Updater rodam nas threads dele (sem post): o Ask espera a resposta ali, sem travar a janela
 // nem a thread de comandos. Close() (antes do DesktopApp sair) solta um Ask que espera (vale "Depois") e, dali em
@@ -17,6 +19,7 @@
 namespace starsonic {
 
 class Updater;
+class UpdateChannel;
 
 class AppUpdater {
 public:
@@ -28,7 +31,8 @@ public:
         std::function<void()> quit;                                    // o instalador abriu: o Sair
     };
 
-    AppUpdater(std::string version, bool testChannel, Hooks hooks);
+    // channel: lido a cada verificacao (precisa durar mais que o AppUpdater).
+    AppUpdater(std::string version, const UpdateChannel& channel, Hooks hooks);
     ~AppUpdater();   // Close() e espera a thread do relogio
 
     AppUpdater(const AppUpdater&) = delete;
@@ -42,6 +46,7 @@ public:
 
 private:
     class Ui;
+    const UpdateChannel& channel_;
     std::shared_ptr<Ui> ui_;
     std::unique_ptr<Updater> updater_;
     std::thread timer_;

@@ -139,8 +139,11 @@ void WebViewHost::Configure() {
         settings->put_IsZoomControlEnabled(FALSE);
         settings->put_AreDevToolsEnabled(options_.devTools ? TRUE : FALSE);
         settings->put_AreDefaultContextMenusEnabled(options_.devTools ? TRUE : FALSE);
+        // As teclas do navegador: so no build de teste, e nunca no aviso.
         ComPtr<ICoreWebView2Settings3> settings3;
-        if (SUCCEEDED(settings.As(&settings3))) settings3->put_AreBrowserAcceleratorKeysEnabled(options_.devTools ? TRUE : FALSE);
+        if (SUCCEEDED(settings.As(&settings3))) {
+            settings3->put_AreBrowserAcceleratorKeysEnabled(options_.devTools && options_.pageGetsCtrlP ? TRUE : FALSE);
+        }
         // A senha da tela Entrar nunca fica guardada no WebView (so no contas.json, cifrada).
         ComPtr<ICoreWebView2Settings4> settings4;
         if (SUCCEEDED(settings.As(&settings4))) {
@@ -225,6 +228,27 @@ void WebViewHost::Configure() {
                 args->get_Uri(&uri);
                 args->put_Handled(TRUE);
                 Log("janela nova bloqueada: " + Short(TakeString(uri)));
+                return S_OK;
+            })
+            .Get(),
+        &token);
+
+    // O Ctrl + P (com ou sem Shift) nunca imprime (spec 6.1 da rc.3), tambem com as teclas do navegador ligadas (o build
+    // de teste): o navegador nao trata a tecla. A pagina principal continua recebendo (a area do administrador); a do
+    // aviso, nao.
+    controller_->add_AcceleratorKeyPressed(
+        Callback<ICoreWebView2AcceleratorKeyPressedEventHandler>(
+            [this](ICoreWebView2Controller*, ICoreWebView2AcceleratorKeyPressedEventArgs* args) -> HRESULT {
+                COREWEBVIEW2_KEY_EVENT_KIND kind = COREWEBVIEW2_KEY_EVENT_KIND_KEY_UP;
+                UINT key = 0;
+                if (FAILED(args->get_KeyEventKind(&kind)) || FAILED(args->get_VirtualKey(&key))) return S_OK;
+                const bool down =
+                    kind == COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN || kind == COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN;
+                if (!down || key != 'P' || GetKeyState(VK_CONTROL) >= 0) return S_OK;
+                ComPtr<ICoreWebView2AcceleratorKeyPressedEventArgs> event(args);
+                ComPtr<ICoreWebView2AcceleratorKeyPressedEventArgs2> event2;
+                if (SUCCEEDED(event.As(&event2))) event2->put_IsBrowserAcceleratorKeyEnabled(FALSE);
+                if (!options_.pageGetsCtrlP) args->put_Handled(TRUE);
                 return S_OK;
             })
             .Get(),

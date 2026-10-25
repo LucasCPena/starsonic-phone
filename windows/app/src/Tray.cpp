@@ -119,8 +119,9 @@ void Tray::Update() {
     Shell_NotifyIconW(NIM_MODIFY, &data);
 }
 
-void Tray::SetState(TrayIcon icon, bool doNotDisturb) {
+void Tray::SetState(TrayIcon icon, bool doNotDisturb, bool showDoNotDisturb) {
     doNotDisturb_ = doNotDisturb;
+    showDoNotDisturb_ = showDoNotDisturb;
     if (icon == icon_) return;
     icon_ = icon;
     Update();
@@ -165,7 +166,10 @@ Tray::Choice Tray::ShowMenu(int x, int y) {
     const HMENU menu = CreatePopupMenu();
     if (!menu) return Choice::None;
     AppendMenuW(menu, MF_STRING, kOpen, L"Abrir");
-    AppendMenuW(menu, MF_STRING | (doNotDisturb_ ? MF_CHECKED : MF_UNCHECKED), kDoNotDisturb, L"N\u00e3o perturbe");
+    // Escondido pelo administrador, o Nao perturbe sai do menu (e o DesktopApp o deixa desligado).
+    if (showDoNotDisturb_) {
+        AppendMenuW(menu, MF_STRING | (doNotDisturb_ ? MF_CHECKED : MF_UNCHECKED), kDoNotDisturb, L"N\u00e3o perturbe");
+    }
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kQuit, L"Sair");
     SetMenuDefaultItem(menu, kOpen, FALSE);

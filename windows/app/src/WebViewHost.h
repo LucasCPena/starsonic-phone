@@ -8,6 +8,10 @@
 // O microfone e a reproducao automatica ficam permitidos so para a origem do app (WebPermissions.h), e toda outra
 // permissao e negada.
 //
+// As teclas do navegador (Ctrl + P imprimir, F5, Ctrl + F...) ficam desligadas no build de publicacao; no de teste (as
+// ferramentas do desenvolvedor), so na janela principal, e mesmo ali o Ctrl + P nunca imprime (o AcceleratorKeyPressed
+// tira a tecla do navegador e a deixa para a pagina).
+//
 // O aviso de ligacao recebida (NoticeWindow) tem o seu WebViewHost, com o mesmo ambiente (Options.environment: o
 // mesmo perfil e a mesma pasta de dados) e a pagina aviso.html.
 //
@@ -53,6 +57,10 @@ public:
         std::wstring startPage = L"https://app.starsonic.local/index.html";
         // O ambiente de outro WebViewHost (o do aviso usa o da janela principal); vazio: cria um em userDataFolder.
         Microsoft::WRL::ComPtr<ICoreWebView2Environment> environment;
+        // (rc.3) O Ctrl + P nunca imprime (o app nao imprime nada, spec 6.1). true: a pagina recebe a tecla (a principal
+        // abre a area do administrador com ela). false (o aviso): ninguem recebe, e as teclas do navegador ficam
+        // desligadas tambem no build de teste.
+        bool pageGetsCtrlP = true;
     };
 
     WebViewHost(HWND parent, Callbacks callbacks);

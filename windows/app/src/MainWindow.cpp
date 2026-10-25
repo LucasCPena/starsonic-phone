@@ -156,6 +156,9 @@ bool MainWindow::Create(HINSTANCE instance, const Options& options, Callbacks ca
         if (IsCommand(json, "ready")) {
             if (restarts_.Restarting()) Log("navegador reiniciado: a interface voltou");
             restarts_.OnReady();
+            // A janela ja estava ativa quando o WebView2 abriu (a abertura, o navegador novo, a pagina recarregada): o
+            // teclado vai para a pagina sem um clique antes (o Ctrl + P, o Teclado), como depois de um WM_ACTIVATE.
+            if (active_ && webview_) webview_->Focus();
         }
         if (callbacks_.command) callbacks_.command(json);
     };
@@ -298,6 +301,7 @@ void MainWindow::StartNotice() {
     noticeOptions.devTools = options_.devTools;
     noticeOptions.startPage = Versioned(kNoticePage, options_.version);
     noticeOptions.environment = webview_->Environment();
+    noticeOptions.pageGetsCtrlP = false;   // o aviso nao reage ao Ctrl + P (e nunca imprime)
     if (!noticeOptions.environment) return;
     notice_.StartWebView(noticeOptions);
 }
@@ -449,9 +453,18 @@ void MainWindow::DrainOutbox() {
         }
     }
     if (changed) {
-        tray_.SetState(ChooseTrayIcon(status_), status_.doNotDisturb);
+        const TrayIcon icon = ChooseTrayIcon(status_);
+        if (icon != trayIcon_) {
+            trayIcon_ = icon;
+            Log(std::string("bandeja: ") + TrayIconName(icon));
+        }
+        tray_.SetState(icon, status_.doNotDisturb, status_.doNotDisturbShown);
         tray_.SetRinging(status_.ringing);
         RefreshNotice();
+        if (status_.server != server_) {
+            server_ = status_.server;
+            if (callbacks_.accountServer) callbacks_.accountServer(server_);
+        }
     }
 }
 
