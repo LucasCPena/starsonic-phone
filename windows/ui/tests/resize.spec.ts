@@ -3,7 +3,7 @@
 // página, com o cursor de cada uma, que mandam o `resize` ao C++ no botão esquerdo apertado. Elas nunca cobrem os botões
 // da barra de título.
 import { expect, test, type Page } from '@playwright/test';
-import { abrir, comandos, esperarComando } from './helpers';
+import { abrir, comandos, esperarComando, mudarEstado } from './helpers';
 
 const ZONAS: Array<{ borda: string; cursor: string }> = [
   { borda: 'cima', cursor: 'ns-resize' },
@@ -154,3 +154,51 @@ test('the call title bar in Normal keeps "Starsonic Phone · <conta>"', async ({
   await abrir(page, 'ligacao');
   await expect(page.locator('.titlebar .titlebar-text')).toHaveText('Starsonic Phone · Recepção · 2001');
 });
+
+// Na ligação, a barra de título mostra o estado da conta, e o erro de cadastro vence o "Ocupado · em ligação" (a tabela da
+// rc.3): uma mensagem longa do C++ não empurra o Minimizar e o Fechar para fora da janela. O estado encolhe com
+// reticências, os dois botões ficam onde estavam, inteiros na janela e livres (o ponto de dentro acerta neles).
+const MENSAGEM_LONGA = 'Não foi possível falar com o servidor. Confira o endereço e a sua internet.';
+for (const [largura, altura] of [
+  [300, 440],
+  [340, 560],
+  [380, 640],
+  [400, 720],
+] as Array<[number, number]>) {
+  test(`a long registration message in the call title bar keeps Minimizar and Fechar in the window at ${largura}×${altura}`, async ({ page }) => {
+    await page.setViewportSize({ width: largura, height: altura });
+    await abrir(page, 'ligacao');
+    const nomes = ['Minimizar', 'Fechar para a bandeja'];
+    const caixas = async () => Promise.all(nomes.map(async (nome) => (await page.getByRole('button', { name: nome, exact: true }).boundingBox())!));
+    // Onde os botões ficam com o "Ocupado · em ligação" (o estado curto).
+    const antes = await caixas();
+    await mudarEstado(page, (s) => ({ ...s, conta: { ...s.conta, status: 'erro', texto: MENSAGEM_LONGA } }));
+    const estado = page.locator('.titlebar .account-status');
+    await expect(estado).toContainText('Não foi possível falar com o servidor.');
+    const depois = await caixas();
+    for (const [i, nome] of nomes.entries()) {
+      const b = depois[i];
+      expect(b.x + b.width, `${nome} sai pela direita da janela: ${JSON.stringify(b)}`).toBeLessThanOrEqual(largura + 0.5);
+      expect(Math.abs(b.x - antes[i].x), `${nome} saiu do lugar: ${JSON.stringify({ antes: antes[i], depois: b })}`).toBeLessThanOrEqual(0.5);
+      expect(Math.abs(b.width - antes[i].width), `${nome} espremido: ${JSON.stringify({ antes: antes[i], depois: b })}`).toBeLessThanOrEqual(0.5);
+      const livre = await page.getByRole('button', { name: nome, exact: true }).evaluate((e) => {
+        const r = e.getBoundingClientRect();
+        return [
+          [r.left + r.width / 2, r.top + r.height / 2],
+          [r.left + r.width / 2, r.top + 9],
+          [r.left + 8, r.top + r.height / 2],
+          [r.right - 8, r.top + r.height / 2],
+        ].every(([x, y]) => {
+          const alvo = document.elementFromPoint(x, y);
+          return alvo !== null && (alvo === e || e.contains(alvo));
+        });
+      });
+      expect(livre, `${nome} fora do alcance do clique: ${JSON.stringify(b)}`).toBe(true);
+    }
+    // O estado fica antes dos botões, com a bolinha e o começo do texto, e a página não rola na horizontal.
+    const e = (await estado.boundingBox())!;
+    expect(e.x + e.width, 'o estado passa do começo dos botões').toBeLessThanOrEqual(depois[0].x + 0.5);
+    expect(e.width, 'o estado sumiu').toBeGreaterThanOrEqual(40);
+    expect(await page.evaluate(() => document.scrollingElement!.scrollWidth), 'a página rola na horizontal').toBeLessThanOrEqual(largura);
+  });
+}

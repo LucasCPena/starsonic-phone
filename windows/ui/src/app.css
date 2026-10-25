@@ -86,7 +86,7 @@ button { cursor: default; }
 /* Barra de título própria (a janela não tem a moldura do Windows) */
 .titlebar { height: 32px; flex: none; display: flex; align-items: center; justify-content: space-between; padding-left: 14px;
   background: var(--navy-950); color: #b9c4e6; font-size: 12px; font-weight: 500; -webkit-app-region: drag; app-region: drag; user-select: none; }
-.caption { display: flex; height: 32px; -webkit-app-region: no-drag; app-region: no-drag; }
+.caption { display: flex; flex: none; height: 32px; -webkit-app-region: no-drag; app-region: no-drag; }
 .caption button { width: 44px; height: 32px; border: 0; background: transparent; color: #b9c4e6; display: grid; place-items: center; padding: 0; transition: background var(--ease), color var(--ease); }
 .caption button:hover { background: rgba(255, 255, 255, 0.08); color: #ffffff; }
 .caption button.caption-close:hover { background: var(--danger); color: #ffffff; }
@@ -403,8 +403,10 @@ button.link { border: 0; background: transparent; padding: 0; font-family: inher
 .call-panel .call-row { gap: 10px; }
 .call-panel .btn-redial { width: 46px; height: 46px; }
 .call-panel .btn-redial .ic { width: 20px; height: 20px; }
-/* A conta em uso na barra de título da ligação (o cabeçalho fica escondido): a bolinha e o estado. */
-.account-status { display: inline-flex; align-items: center; gap: 8px; flex: none; margin-right: 10px; color: #ffffff; font-weight: 600; white-space: nowrap; }
+/* A conta em uso na barra de título da ligação (o cabeçalho fica escondido): a bolinha e o estado. O estado encolhe com
+   reticências quando a mensagem é longa (um erro de cadastro na ligação): o Minimizar e o Fechar ficam na janela. */
+.account-status { display: inline-flex; align-items: center; gap: 8px; flex: 0 1 auto; min-width: 0; margin-right: 10px; color: #ffffff; font-weight: 600; white-space: nowrap; }
+.account-status-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .account-status .dot { width: 8px; height: 8px; box-shadow: 0 0 0 3px rgba(185, 196, 230, 0.16); }
 .account-status .dot-busy { box-shadow: 0 0 0 3px rgba(214, 69, 69, 0.28); }
 .titlebar .titlebar-text { flex: 1; }
