@@ -143,12 +143,15 @@ public:
         try {
             // Sem rede a conta nasce parada: registra quando SetNetworkAvailable(true) chegar. Cada vez que
             // ela volta a ficar registrada, o BLF que tinha acabado é assinado de novo (na thread dos
-            // eventos, fora do callback do PJSIP); quando ela perde o registro, as assinaturas de até ali
-            // ficam marcadas para a volta (a central pode tê-las perdido). A marca é só um atômico: o
+            // eventos, fora do callback do PJSIP), só com números de BLF: sem eles (o Android), a fila dos
+            // eventos nunca espera a apiMutex_. Quando ela perde o registro, as assinaturas de até ali ficam
+            // marcadas para a volta (a central pode tê-las perdido). Os dois só leem e escrevem atômicos: o
             // callback está com a trava do pjsua.
             account->Start(
                 config, !networkAvailable_,
-                [this, accountId] { events_.Post([this, accountId](EngineListener&) { RetryBlf(accountId); }); },
+                [this, accountId] {
+                    if (hasBlf_) events_.Post([this, accountId](EngineListener&) { RetryBlf(accountId); });
+                },
                 [this] { blfLossMark_.store(blfSerial_.load()); });
         } catch (const pj::Error& failure) {
             Log(1, "o PJSIP recusou a conta " + settings.idUri + ": " + failure.info());
@@ -248,6 +251,7 @@ public:
             }
         }
         blfNumbers_ = wanted;
+        hasBlf_ = !blfNumbers_.empty();
         for (const std::string& number : wanted) {
             BlfEntry& entry = Entry(number);
             if (!networkAvailable_) {
@@ -550,10 +554,15 @@ private:
         std::lock_guard<std::mutex> lock(apiMutex_);
         if (!RegisterThread() || !account_ || account_->Id() != accountId || !networkAvailable_) return;
         const uint64_t lossMark = blfLossMark_.load();
+        int renewed = 0;
         for (const std::string& number : blfNumbers_) {
             BlfEntry& entry = Entry(number);
-            if (!entry.buddy || entry.track->Ended() || entry.serial <= lossMark) SubscribeBlf(number);
+            if (!entry.buddy || entry.track->Ended() || entry.serial <= lossMark) {
+                SubscribeBlf(number);
+                ++renewed;
+            }
         }
+        Log(3, "BLF: a conta registrou de novo; " + std::to_string(renewed) + " assinatura(s) feita(s) de novo");
     }
 
     // Desliga as ligações, tira a conta do servidor (esperando a resposta, até um limite) e a apaga.
@@ -564,6 +573,7 @@ private:
         account_->Retire();
         blf_.clear();   // cada buddy antes do track dele
         blfNumbers_.clear();
+        hasBlf_ = false;
         if (!calls_.End(kCallEndWaitMs)) Log(2, "a ligacao nao terminou a tempo; a conta sai assim mesmo");
         switch (account_->Unregister(kUnregisterWaitMs)) {
             case EngineAccount::Exit::Confirmed:
@@ -623,6 +633,8 @@ private:
     // perder o registro (o onInactive da conta, na thread do PJSIP): na volta, as de até a marca são feitas de novo.
     std::atomic<uint64_t> blfSerial_{0};
     std::atomic<uint64_t> blfLossMark_{0};
+    // A conta tem números de BLF (escrito com a apiMutex_, no WatchBlf e no RetireAccount; lido no onActive da conta).
+    std::atomic<bool> hasBlf_{false};
 };
 
 SipEngine::SipEngine(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}

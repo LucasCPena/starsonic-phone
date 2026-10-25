@@ -23,6 +23,7 @@
 #include <fstream>
 #include <functional>
 #include <iterator>
+#include <map>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -321,6 +322,22 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         log_.push_back(line);
         if (log_.size() > kMaxLogLines) log_.pop_front();
+        for (auto& counted : counted_) {
+            if (line.find(counted.first) != std::string::npos) ++counted.second;
+        }
+    }
+
+    // Daqui em diante, conta as linhas de log com `part` (o LogTail guarda so as ultimas; isto conta todas).
+    void CountLog(const std::string& part) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        counted_.emplace(part, 0);
+    }
+
+    // Quantas linhas de log com `part` chegaram desde o CountLog(part).
+    size_t LogCount(const std::string& part) const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto found = counted_.find(part);
+        return found == counted_.end() ? 0 : found->second;
     }
 
     // Chamado de dentro de OnIncomingCall, depois de guardar o evento (sem a trava do listener).
@@ -455,6 +472,7 @@ private:
     std::vector<BlfEvent> blfs_;
     std::function<void(int)> incomingHook_;
     std::deque<std::string> log_;
+    std::map<std::string, size_t> counted_;   // CountLog: o texto e quantas linhas o tiveram
 };
 
 }  // namespace phone_test

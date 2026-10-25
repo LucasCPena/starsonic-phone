@@ -435,3 +435,54 @@ TEST_CASE("the network coming back after a registration loss subscribes each BLF
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
     CHECK(LogCount(registrar, "sub-in 2007 200") == 2);   // a de antes da queda e a da volta
 }
+
+namespace {
+
+// A linha do RetryBlf no log: ele rodou, na thread dos eventos, com a trava da API.
+const char kRetryBlfLine[] = "BLF: a conta registrou de novo";
+
+// A conta perde o registro (a renovacao leva 503) e registra de novo: uma volta de sem registro a registrada.
+void LoseAndRegain(const FakeRegistrar& registrar, RecordingListener& listener, SipEngine& engine) {
+    const size_t failures = listener.Registrations().size() - CountActive(listener.Registrations());
+    REQUIRE(registrar.Control("FAIL REGISTER on") == kOk);
+    REQUIRE(listener.WaitFor(
+        [failures](const std::vector<phone_test::RegistrationEvent>& events) {
+            return events.size() - CountActive(events) > failures;
+        },
+        kWaitSeconds));
+    const size_t active = CountActive(listener.Registrations());
+    REQUIRE(registrar.Control("FAIL REGISTER off") == kOk);
+    engine.Reregister();
+    REQUIRE(listener.WaitFor(RecordingListener::Reached(200, true, active + 1), kWaitSeconds));
+}
+
+}  // namespace
+
+// Correcao final (H5, A-M4): sem numeros de BLF (o Android), a volta do registro nao poe o RetryBlf na fila dos
+// eventos: ele esperaria a trava da API (presa ate ~2 s num HandleIpChange), e a ligacao que chega depois na mesma fila
+// atrasaria com ele.
+TEST_CASE("a registration without BLF numbers never queues the BLF retry behind the API lock") {
+    FakeRegistrar registrar("senha");
+    RecordingListener listener;
+    listener.CountLog(kRetryBlfLine);
+    INFO(listener.LogTail());
+    INFO(RegistrationsText(listener));
+    std::unique_ptr<SipEngine> engine = StartEngine(&listener, LoadProfile(registrar.port()));
+
+    REQUIRE(registrar.Control("EXPIRES 3") == kOk);   // a renovacao a cada ~2 s
+    REQUIRE(engine->SetAccount(Input(Transport::Udp)));
+    REQUIRE(listener.WaitFor(RecordingListener::Reached(200, true, 1), kWaitSeconds));   // a primeira volta
+    LoseAndRegain(registrar, listener, *engine);                                         // e outra
+    CHECK(listener.LogCount(kRetryBlfLine) == 0);
+
+    // Com um numero de BLF, a volta passa pelo RetryBlf (a medida acha quando ele roda).
+    engine->WatchBlf({"2007"});
+    REQUIRE(listener.WaitForBlf("2007", BlfState::Free, kWaitSeconds));
+    LoseAndRegain(registrar, listener, *engine);
+    CHECK(listener.LogCount(kRetryBlfLine) == 1);
+
+    // A lista vazia de novo: a volta nao passa mais por ele.
+    engine->WatchBlf({});
+    LoseAndRegain(registrar, listener, *engine);
+    CHECK(listener.LogCount(kRetryBlfLine) == 1);
+}
