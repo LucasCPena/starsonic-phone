@@ -7,7 +7,8 @@
 //   aviso que chegue (o Advise que falhou, um aviso perdido, o servico do Windows que reiniciou, o Iniciar com o
 //   Windows antes da rede), o app nunca fica preso no "sem internet". Nao deu para ler: fica a de antes.
 // - O teste DNS do servidor da conta: no intervalo e na hora quando a rede muda, um de cada vez (o resultado volta com
-//   a vez dele, e um teste de antes de a rede ou a conta mudarem nao conta).
+//   a vez dele, e um teste de antes de a rede ou a conta mudarem nao conta). As falhas so contam com a conta fora do ar
+//   (OnConnected, Ruling 23).
 // - O diagnostico: a conectividade na abertura, em cada aviso e quando muda; o resultado do DNS na primeira vez depois da
 //   abertura ou de outra conta e quando muda (de respondeu para nao respondeu e de volta), nada que repita a cada
 //   intervalo; com verboseDns (so o build de teste, com o intervalo curto da fumaca), cada resultado.
@@ -30,7 +31,7 @@ public:
 
     // O que um passo pede.
     struct Actions {
-        std::optional<bool> internet;           // vai ao SetInternet (o que vale mudou)
+        std::optional<InternetState> internet;  // vai ao SetInternet (o que vale mudou)
         std::optional<std::string> dnsServer;   // um teste DNS deste servidor sai agora
         uint64_t dnsTicket = 0;                 // a vez do teste: volta no OnDnsResult (ou no OnDnsNotStarted)
         std::vector<std::string> log;           // as linhas do diagnostico
@@ -44,6 +45,8 @@ public:
     Actions OnWindowsChanged();
     // O servidor da conta em uso ("" sem conta).
     Actions OnServer(const std::string& server);
+    // A conta em uso esta conectada (conta.status "conectado") ou nao.
+    Actions OnConnected(bool connected);
     // O gancho de teste (NetworkMonitor::Force).
     Actions OnForce(std::optional<bool> internet);
     // O teste DNS da vez ticket terminou (status: o codigo do DnsQuery_W, para o diagnostico).
@@ -58,7 +61,7 @@ private:
     enum class DnsSeen { None, Answered, Failed };
 
     void Read(Actions& actions, bool logAlways);
-    static void Report(Actions& actions, const std::string& why, std::optional<bool> internet);
+    static void Report(Actions& actions, const std::string& why, std::optional<InternetState> internet);
     void StartDns(Actions& actions, bool tick);
 
     NetworkDecision decision_;

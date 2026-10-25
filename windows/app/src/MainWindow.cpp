@@ -461,9 +461,10 @@ void MainWindow::DrainOutbox() {
         tray_.SetState(icon, status_.doNotDisturb, status_.doNotDisturbShown);
         tray_.SetRinging(status_.ringing);
         RefreshNotice();
-        if (status_.server != server_) {
+        if (status_.server != server_ || status_.connected != connected_) {
             server_ = status_.server;
-            if (callbacks_.accountServer) callbacks_.accountServer(server_);
+            connected_ = status_.connected;
+            if (callbacks_.account) callbacks_.account(server_, connected_);
         }
     }
 }

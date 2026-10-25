@@ -41,6 +41,8 @@ struct NetworkMonitor::Shared {
     bool windowsChanged = false;   // um aviso do Windows chegou (o monitor le a conectividade de novo)
     std::string server;            // o servidor da conta ("" sem conta)
     bool serverChanged = false;
+    bool connected = false;        // a conta esta conectada
+    bool connectedChanged = false;
     bool forceChanged = false;
     std::optional<bool> force;
     bool dnsDone = false;          // um teste DNS terminou e o monitor ainda nao viu
@@ -55,7 +57,9 @@ struct NetworkMonitor::Shared {
     }
 
     // Com a trava.
-    bool Pending() const { return stopping || windowsChanged || serverChanged || forceChanged || dnsDone; }
+    bool Pending() const {
+        return stopping || windowsChanged || serverChanged || connectedChanged || forceChanged || dnsDone;
+    }
 };
 
 namespace {
@@ -241,11 +245,16 @@ void NetworkMonitor::Stop() {
     if (thread_.joinable()) thread_.join();
 }
 
-void NetworkMonitor::SetServer(const std::string& server) {
+void NetworkMonitor::SetAccount(const std::string& server, bool connected) {
     std::lock_guard<std::mutex> lock(shared_->mutex);
-    if (server == shared_->server) return;
-    shared_->server = server;
-    shared_->serverChanged = true;
+    if (server != shared_->server) {
+        shared_->server = server;
+        shared_->serverChanged = true;
+    }
+    if (connected != shared_->connected) {
+        shared_->connected = connected;
+        shared_->connectedChanged = true;
+    }
     shared_->wake.notify_all();
 }
 
@@ -286,6 +295,8 @@ void NetworkMonitor::Run() {
             const bool windowsChanged = std::exchange(shared_->windowsChanged, false);
             const bool serverChanged = std::exchange(shared_->serverChanged, false);
             const std::string server = shared_->server;
+            const bool connectedChanged = std::exchange(shared_->connectedChanged, false);
+            const bool connected = shared_->connected;
             const bool forceChanged = std::exchange(shared_->forceChanged, false);
             const std::optional<bool> force = shared_->force;
             const bool dnsDone = std::exchange(shared_->dnsDone, false);
@@ -295,7 +306,8 @@ void NetworkMonitor::Run() {
             lock.unlock();
 
             if (windowsChanged) apply(loop.OnWindowsChanged());
-            if (serverChanged) apply(loop.OnServer(server));
+            if (serverChanged) apply(loop.OnServer(server));   // antes do conectado: a conta nova vem com o dela
+            if (connectedChanged) apply(loop.OnConnected(connected));
             if (forceChanged) apply(loop.OnForce(force));
             if (dnsDone) apply(loop.OnDnsResult(dnsTicket, dnsAnswered, dnsStatus));
             const int64_t now = NowMs();

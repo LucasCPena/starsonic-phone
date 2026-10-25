@@ -56,6 +56,7 @@
 #include "CallEngine.h"
 #include "Cipher.h"
 #include "Files.h"
+#include "InternetState.h"
 #include "LegacyImport.h"
 #include "LoginFlow.h"
 #include "Profile.h"
@@ -155,7 +156,7 @@ struct DesktopHooks {
 //     liga e recusado). Os servidores do administrador sao a tabela de portas da conta (AccountInput::serverPorts);
 //     a porta do servidor em uso mudou: a conta registra de novo (no fim da ligacao, se ha uma, sem aviso; fora da
 //     troca de conta que espera: escolher a mesma conta nao o tira, e um SetAccount no meio ja leva a lista nova).
-//   - SetInternet: a internet que o host ve (RegistrationPort::SetNetworkAvailable; conta.internet).
+//   - SetInternet: a internet que o host ve (InternetState.h; RegistrationPort::SetNetworkAvailable; conta.internet).
 //   - O bipe do fim (ring fim): uma ligacao atendida acabou, nenhuma outra ficou e o bipeFim esta ligado.
 class DesktopApp : public EngineListener {
 public:
@@ -198,10 +199,13 @@ public:
     void OfferUpdate(const std::string& version, const std::string& notes);
     // Um aviso de 2 s do executavel (o toast: "Termine a chamada para atualizar."). So poe na fila.
     void Notify(const std::string& text);
-    // A internet que o host ve (o monitor de rede, rc.3): false para o registro no motor (SetNetworkAvailable) e mostra
-    // conta.internet false; true registra de novo. O mesmo valor de antes: nada. Antes de qualquer chamada, true. So
-    // poe na fila.
-    void SetInternet(bool available);
+    // A internet que o host ve (o monitor de rede, rc.3, com o Ruling 23; InternetState.h). Sem ela (NoNetwork ou
+    // NoDns), conta.internet false. NoNetwork para o registro no motor (SetNetworkAvailable(false)) e a ligacao nao
+    // sai; NoDns nao mexe no motor (o registro vivo e a ligacao continuam). De NoNetwork para outro: o motor volta
+    // (registra de novo, Conectando). De NoDns para Online: a conta sem registro registra de novo na hora, sem troca de
+    // conta (SetNetworkAvailable(true) com a rede ja la). O mesmo valor de antes: nada. Antes de qualquer chamada,
+    // Online. So poe na fila.
+    void SetInternet(InternetState state);
     // A fila de comandos roda o que ja tinha e para; daqui em diante nada mais entra. Nunca de dentro de um gancho.
     void Shutdown();
 
@@ -270,7 +274,7 @@ private:
     void TouchAdmin();
     void CloseAdmin(const char* why);
     void ApplyAdminLimits();
-    void HandleInternet(bool available);
+    void HandleInternet(InternetState state);
     void ScheduleReRegister();
     void RunReRegister();
     bool EnginePortChanged() const;
@@ -325,7 +329,7 @@ private:
     // rc.3 (so na thread de comandos, menos blfGeneration_).
     AtalhosStore atalhos_;
     AdminStore admin_;
-    bool internet_ = true;
+    InternetState internet_ = InternetState::Online;
     // O que foi ao motor no ultimo SetAccount (o endereco e a tabela de portas) e o registro de novo que espera o fim
     // da ligacao porque a porta do administrador mudou (fora do pending_: uma troca de conta nao o apaga).
     std::wstring engineAddress_;

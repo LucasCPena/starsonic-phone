@@ -278,8 +278,8 @@ void DesktopApp::Notify(const std::string& text) {
     Post([this, text] { Toast(text); });
 }
 
-void DesktopApp::SetInternet(bool available) {
-    Post([this, available] { HandleInternet(available); });
+void DesktopApp::SetInternet(InternetState state) {
+    Post([this, state] { HandleInternet(state); });
 }
 
 void DesktopApp::Shutdown() {
@@ -990,7 +990,7 @@ BridgeState DesktopApp::BuildState() const {
                 view.text = U8(RegistrationMessage(code, false));
             }
         }
-        view.internet = internet_;
+        view.internet = internet_ == InternetState::Online;
         state.account = view;
     }
     const Settings settings = settings_.Get();
@@ -1364,15 +1364,38 @@ void DesktopApp::ApplyAdminLimits() {
     if (changed) SaveSettings(settings);
 }
 
-// A internet (spec 8): sem ela, o registro para no motor e a ligacao nao sai (o aviso sem conexao); com ela de volta,
-// a conta registra de novo (Conectando, ate a resposta).
-void DesktopApp::HandleInternet(bool available) {
-    if (available == internet_) return;
-    internet_ = available;
-    Log(available ? "internet: voltou" : "internet: caiu");
-    port_.SetNetworkAvailable(available);
-    registered_ = false;
-    if (available && engineAccountId_ != 0 && !loginRequest_) registration_.reset();
+// A internet (spec 8, com o Ruling 23). Sem rede: o registro para no motor e a ligacao nao sai (o aviso sem conexao);
+// com a rede de volta, a conta registra de novo (Conectando, ate a resposta). Sem o DNS: so a bolinha; o motor segue
+// como esta (um registro vivo continua valendo: as ligacoes chegam e saem). Do DNS de volta, a conta que ficou sem
+// registro registra de novo na hora (no motor de sempre: sem troca de conta).
+void DesktopApp::HandleInternet(InternetState state) {
+    if (state == internet_) return;
+    const bool wasNoNetwork = internet_ == InternetState::NoNetwork;
+    internet_ = state;
+    const bool account = engineAccountId_ != 0 && !loginRequest_;
+    switch (state) {
+        case InternetState::NoNetwork:
+            Log("internet: caiu (sem rede): o registro para");
+            port_.SetNetworkAvailable(false);
+            registered_ = false;
+            return;
+        case InternetState::NoDns:
+            Log("internet: o DNS nao responde (o registro continua como esta)");
+            break;
+        case InternetState::Online:
+            Log("internet: voltou");
+            break;
+    }
+    if (wasNoNetwork) {
+        port_.SetNetworkAvailable(true);   // o motor volta e registra de novo
+        registered_ = false;
+        if (account) registration_.reset();
+        return;
+    }
+    if (state == InternetState::Online && account && !registered_) {
+        port_.SetNetworkAvailable(true);   // com a rede ja la: so registra de novo, agora
+        registration_.reset();
+    }
 }
 
 }  // namespace starsonic

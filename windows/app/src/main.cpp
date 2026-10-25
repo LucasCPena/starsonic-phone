@@ -325,11 +325,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     updateHooks.quit = [&window] { window.RunOnWindow([&window] { window.RequestQuit(); }); };
     updater.reset(new AppUpdater(STARSONIC_VERSION, updateChannel, updateHooks));
 
-    // O monitor de rede (rc.3, spec 8 e Ruling 16): a rede que o Windows ve e o teste DNS do servidor da conta vao ao
-    // DesktopApp (SetInternet so poe na fila); o "sem internet" do Windows sozinho nunca tira o app do ar. O servidor vem
-    // do estado que a janela le (callbacks.accountServer).
+    // O monitor de rede (rc.3, spec 8 e os Rulings 16 e 23): a rede que o Windows ve e o teste DNS do servidor da conta
+    // vao ao DesktopApp (SetInternet so poe na fila); o "sem internet" do Windows sozinho nunca tira o app do ar, e o
+    // DNS sem resposta so muda a bolinha. O servidor e a conta conectada vem do estado que a janela le
+    // (callbacks.account).
     NetworkMonitor::Hooks networkHooks;
-    networkHooks.changed = [&app](bool internet) { app.SetInternet(internet); };
+    networkHooks.changed = [&app](InternetState state) { app.SetInternet(state); };
     networkHooks.log = log;
 #if STARSONIC_TEST_HOOKS
     // O build de teste: o intervalo do monitor de rede em ms (a fumaca: o teste DNS a cada poucos segundos), com cada
@@ -401,7 +402,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     callbacks.devicesChanged = [&app] { app.RefreshAudioDevices(); };
     callbacks.moved = [&app](int x, int y) { app.SaveWindowPosition(x, y); };
     callbacks.resized = [&app](int width, int height) { app.SaveWindowSize(width, height); };
-    callbacks.accountServer = [&network](const std::string& server) { network.SetServer(server); };
+    callbacks.account = [&network](const std::string& server, bool connected) {
+        network.SetAccount(server, connected);
+    };
     callbacks.quitRequested = [&app] { app.HandleCommand(kQuitCommand); };
     // O logoff ou o desligamento: o mesmo Sair, esperando pouco (o Windows encerra o processo depois de o
     // WM_ENDSESSION voltar). O Shutdown roda o que o Sair pos na fila (os Recentes das ligacoes encerradas).

@@ -13,6 +13,19 @@ std::string Hex(int value) {
     return text;
 }
 
+// O que cada estado faz, para o diagnostico.
+const char* Describe(InternetState state) {
+    switch (state) {
+        case InternetState::NoNetwork:
+            return "sem internet, sem rede: o motor para";
+        case InternetState::NoDns:
+            return "sem internet pelo DNS: o motor continua";
+        case InternetState::Online:
+            break;
+    }
+    return "com internet";
+}
+
 }  // namespace
 
 NetworkLoop::NetworkLoop(Reader reader, int64_t intervalMs, bool verboseDns)
@@ -39,6 +52,12 @@ NetworkLoop::Actions NetworkLoop::OnServer(const std::string& server) {
     dnsSeen_ = DnsSeen::None;
     Report(actions, "outra conta", decision_.OnServerChanged(server));
     StartDns(actions, /*tick=*/false);
+    return actions;
+}
+
+NetworkLoop::Actions NetworkLoop::OnConnected(bool connected) {
+    Actions actions;
+    Report(actions, connected ? "a conta conectou" : "a conta saiu do ar", decision_.OnConnectedChanged(connected));
     return actions;
 }
 
@@ -91,14 +110,17 @@ void NetworkLoop::Read(Actions& actions, bool logAlways) {
         actions.log.push_back("rede: conectividade do Windows " + Hex(*connectivity));
     }
     lastConnectivity_ = connectivity;
-    const std::optional<bool> change = decision_.OnConnectivity(*connectivity);
-    if (change) Report(actions, *change ? "o Windows ve a rede" : "o Windows nao ve nenhuma rede", change);
+    const std::optional<InternetState> change = decision_.OnConnectivity(*connectivity);
+    if (change) {
+        Report(actions, *change == InternetState::NoNetwork ? "o Windows nao ve nenhuma rede" : "o Windows ve a rede",
+               change);
+    }
 }
 
-void NetworkLoop::Report(Actions& actions, const std::string& why, std::optional<bool> internet) {
+void NetworkLoop::Report(Actions& actions, const std::string& why, std::optional<InternetState> internet) {
     if (!internet) return;
     actions.internet = internet;
-    actions.log.push_back(std::string("rede: ") + (*internet ? "com internet" : "sem internet") + " (" + why + ")");
+    actions.log.push_back(std::string("rede: ") + Describe(*internet) + " (" + why + ")");
 }
 
 void NetworkLoop::StartDns(Actions& actions, bool tick) {

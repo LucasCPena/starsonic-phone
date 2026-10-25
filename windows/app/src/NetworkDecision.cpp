@@ -4,7 +4,7 @@
 
 namespace starsonic {
 
-std::optional<bool> NetworkDecision::OnConnectivity(int connectivity) {
+std::optional<InternetState> NetworkDecision::OnConnectivity(int connectivity) {
     Network network = Network::None;
     if ((connectivity & (kIpv4Internet | kIpv6Internet)) != 0) {
         network = Network::Internet;
@@ -19,38 +19,47 @@ std::optional<bool> NetworkDecision::OnConnectivity(int connectivity) {
     return Report();
 }
 
-std::optional<bool> NetworkDecision::OnDnsResult(bool answered, uint64_t generation) {
+std::optional<InternetState> NetworkDecision::OnDnsResult(bool answered, uint64_t generation) {
     // Um teste que saiu antes de a rede mudar ou de a conta mudar, ou que chega sem rede: nao conta.
     if (generation != generation_ || !DnsCheckUseful()) return std::nullopt;
     if (answered) {
         dnsFailures_ = 0;
-    } else if (dnsFailures_ < kDnsFailuresOffline) {
+    } else if (!connected_ && dnsFailures_ < kDnsFailuresOffline) {
+        // Com a conta conectada, o registro vivo prova que a central responde: a falha do DNS nao conta.
         ++dnsFailures_;
     }
     return Report();
 }
 
-std::optional<bool> NetworkDecision::OnServerChanged(const std::string& server) {
+std::optional<InternetState> NetworkDecision::OnConnectedChanged(bool connected) {
+    connected_ = connected;
+    if (connected) dnsFailures_ = 0;   // um registro vivo zera a conta das falhas (e tira do "sem o DNS")
+    return Report();
+}
+
+std::optional<InternetState> NetworkDecision::OnServerChanged(const std::string& server) {
     namedServer_ = !server.empty() && !IsIpAddress(server);
     dnsFailures_ = 0;
     ++generation_;   // um teste a caminho e do servidor de antes
     return Report();
 }
 
-std::optional<bool> NetworkDecision::Force(std::optional<bool> internet) {
+std::optional<InternetState> NetworkDecision::Force(std::optional<bool> internet) {
     forced_ = internet;
     return Report();
 }
 
-bool NetworkDecision::Internet() const {
-    if (forced_) return *forced_;
-    return network_ != Network::None && dnsFailures_ < kDnsFailuresOffline;
+InternetState NetworkDecision::State() const {
+    if (forced_) return *forced_ ? InternetState::Online : InternetState::NoNetwork;
+    if (network_ == Network::None) return InternetState::NoNetwork;
+    if (dnsFailures_ >= kDnsFailuresOffline) return InternetState::NoDns;
+    return InternetState::Online;
 }
 
 bool NetworkDecision::DnsCheckUseful() const { return namedServer_ && network_ != Network::None; }
 
-std::optional<bool> NetworkDecision::Report() {
-    const bool now = Internet();
+std::optional<InternetState> NetworkDecision::Report() {
+    const InternetState now = State();
     if (now == reported_) return std::nullopt;
     reported_ = now;
     return now;

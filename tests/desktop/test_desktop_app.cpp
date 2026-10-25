@@ -1749,14 +1749,14 @@ TEST_CASE("internet loss mid-call drops to gray and beeps once") {
     Harness h;
     h.StartRegistered();
     CHECK(h.State()["conta"]["internet"] == true);
-    h.app->SetInternet(true);   // sem mudanca: nada
+    h.app->SetInternet(InternetState::Online);   // sem mudanca: nada
     h.Run();
     CHECK(h.port.network.empty());
 
     h.Send(R"({"v":1,"cmd":"dial","numero":"2002"})");
     h.app->OnCallState(10, CallState::Confirmed, 200);
     h.Run();
-    h.app->SetInternet(false);
+    h.app->SetInternet(InternetState::NoNetwork);
     h.Run();
     CHECK(h.port.network == std::vector<bool>{false});
     CHECK(h.State()["conta"]["internet"] == false);
@@ -1771,12 +1771,12 @@ TEST_CASE("internet loss mid-call drops to gray and beeps once") {
     h.Send(R"({"v":1,"cmd":"dial","numero":"2003"})");
     CHECK(h.engine.made.size() == 1);
     CHECK(h.Toasts().back() == kNoConnection);
-    h.app->SetInternet(false);
+    h.app->SetInternet(InternetState::NoNetwork);
     h.Run();
     CHECK(h.port.network.size() == 1);
 
     // Volta: o motor registra de novo (Conectando, depois Conectado).
-    h.app->SetInternet(true);
+    h.app->SetInternet(InternetState::Online);
     h.Run();
     CHECK(h.port.network == std::vector<bool>{false, true});
     CHECK(h.State()["conta"]["internet"] == true);
@@ -1785,6 +1785,110 @@ TEST_CASE("internet loss mid-call drops to gray and beeps once") {
     h.Run();
     CHECK(h.State()["conta"]["status"] == "conectado");
     CHECK(EndBeeps(h) == 1);
+}
+
+// Correcao final (H1, Ruling 23): o DNS sem resposta so muda a bolinha; o motor segue como esta.
+TEST_CASE("a dns-only outage leaves the engine as it is and calls still go out while registered") {
+    Harness h;
+    h.StartRegistered();
+    h.app->SetInternet(InternetState::NoDns);
+    h.Run();
+    CHECK(h.port.network.empty());   // sem pausa e sem a saida do registro
+    CHECK(h.State()["conta"]["internet"] == false);
+    CHECK(h.State()["conta"]["status"] == "conectado");
+    h.app->SetInternet(InternetState::NoDns);   // de novo: nada
+    h.Run();
+    CHECK(h.port.network.empty());
+
+    // Com o registro vivo, a ligacao sai e a que chega toca.
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2002"})");
+    CHECK(h.engine.made == std::vector<std::string>{"2002"});
+    h.app->OnCallState(10, CallState::Disconnected, 487);
+    h.app->OnIncomingCall(11, "2003", "");
+    h.Run();
+    CHECK(h.State()["ligacao"]["top"]["phase"] == "ringing");
+    h.app->OnCallState(11, CallState::Disconnected, 487);
+    h.Run();
+
+    // O DNS responde de novo com a conta registrada: nada vai ao motor.
+    h.app->SetInternet(InternetState::Online);
+    h.Run();
+    CHECK(h.port.network.empty());
+    CHECK(h.State()["conta"]["internet"] == true);
+    CHECK(h.State()["conta"]["status"] == "conectado");
+    CHECK(h.port.accounts.size() == 1);
+}
+
+TEST_CASE("the dns answering again re-registers at once an account left without registration") {
+    Harness h;
+    h.StartRegistered();
+    h.app->OnRegistration(503, false, h.port.LastId());
+    h.app->SetInternet(InternetState::NoDns);
+    h.Run();
+    CHECK(h.port.network.empty());
+    CHECK(h.State()["conta"]["internet"] == false);
+    CHECK(h.State()["conta"]["status"] == "sem_conexao");
+    // Sem registro, a ligacao nao sai (o aviso de sempre).
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2002"})");
+    CHECK(h.engine.made.empty());
+    CHECK(h.Toasts().back() == kNoConnection);
+
+    // O DNS volta: o motor registra de novo agora (sem trocar a conta: nenhum SetAccount).
+    h.app->SetInternet(InternetState::Online);
+    h.Run();
+    CHECK(h.port.network == std::vector<bool>{true});
+    CHECK(h.port.accounts.size() == 1);
+    CHECK(h.State()["conta"]["internet"] == true);
+    CHECK(h.State()["conta"]["status"] == "conectando");
+    h.app->OnRegistration(200, true, h.port.LastId());
+    h.Run();
+    CHECK(h.State()["conta"]["status"] == "conectado");
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2002"})");
+    CHECK(h.engine.made == std::vector<std::string>{"2002"});
+}
+
+TEST_CASE("moving between no network and no dns pauses and resumes the engine once each way") {
+    Harness h;
+    h.StartRegistered();
+    // Sem o DNS e depois sem rede: so a falta de rede para o motor.
+    h.app->SetInternet(InternetState::NoDns);
+    h.app->SetInternet(InternetState::NoNetwork);
+    h.Run();
+    CHECK(h.port.network == std::vector<bool>{false});
+    CHECK(h.State()["conta"]["internet"] == false);
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2002"})");
+    CHECK(h.engine.made.empty());
+    // A rede volta, o DNS ainda nao: o motor volta e registra de novo (a bolinha continua sem internet).
+    h.app->SetInternet(InternetState::NoDns);
+    h.Run();
+    CHECK(h.port.network == std::vector<bool>{false, true});
+    CHECK(h.State()["conta"]["internet"] == false);
+    CHECK(h.State()["conta"]["status"] == "conectando");
+    h.app->OnRegistration(200, true, h.port.LastId());
+    h.Run();
+    CHECK(h.State()["conta"]["status"] == "conectado");
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2002"})");
+    CHECK(h.engine.made == std::vector<std::string>{"2002"});
+    h.app->OnCallState(10, CallState::Disconnected, 487);
+    h.Run();
+    // A rede cai de novo e volta inteira.
+    h.app->SetInternet(InternetState::NoNetwork);
+    h.Run();
+    CHECK(h.port.network == std::vector<bool>{false, true, false});
+    h.app->SetInternet(InternetState::Online);
+    h.Run();
+    CHECK(h.port.network == std::vector<bool>{false, true, false, true});
+    CHECK(h.State()["conta"]["internet"] == true);
+    CHECK(h.State()["conta"]["status"] == "conectando");
+    h.app->OnRegistration(200, true, h.port.LastId());
+    h.Run();
+    // Online -> sem o DNS -> online, com o registro vivo: o motor nao fica sabendo.
+    h.app->SetInternet(InternetState::NoDns);
+    h.app->SetInternet(InternetState::Online);
+    h.Run();
+    CHECK(h.port.network.size() == 4);
+    CHECK(h.port.accounts.size() == 1);
+    CHECK(h.State()["conta"]["status"] == "conectado");
 }
 
 TEST_CASE("the end beep plays only for answered calls with no other call left") {
@@ -2017,7 +2121,7 @@ TEST_CASE("blf shows desconectado while the account is not registered and the la
     h.Run();
     CHECK(ShortcutNamed(h, "Ana")["estado"] == "ocupado");
     // Sem internet, tambem desconectado.
-    h.app->SetInternet(false);
+    h.app->SetInternet(InternetState::NoNetwork);
     h.Run();
     CHECK(ShortcutNamed(h, "Ana")["estado"] == "desconectado");
 }

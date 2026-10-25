@@ -1,17 +1,37 @@
-// O monitor de rede do executavel sem o COM e sem threads (rc.3 spec 8 e Ruling 16): a decisao
-// (windows/app/src/NetworkDecision.h: o que o Windows diz, o teste DNS do servidor da conta e o gancho de teste da
-// fumaca) e o passo a passo dela (NetworkLoop.h: a conectividade lida de novo a cada intervalo e a cada aviso, um teste
-// DNS de cada vez, o diagnostico). O "sem internet" do Windows sozinho nunca tira o app do ar (o NCSI erra atras de
-// proxy, firewall e portal cativo). C++ portatil: entra no desktop_tests do Linux e do Windows.
+// O monitor de rede do executavel sem o COM e sem threads (rc.3 spec 8 e os Rulings 16 e 23): a decisao
+// (windows/app/src/NetworkDecision.h: o que o Windows diz, o teste DNS do servidor da conta, a conta conectada e o
+// gancho de teste da fumaca) e o passo a passo dela (NetworkLoop.h: a conectividade lida de novo a cada intervalo e a
+// cada aviso, um teste DNS de cada vez, o diagnostico). O "sem internet" do Windows sozinho nunca tira o app do ar (o
+// NCSI erra atras de proxy, firewall e portal cativo). C++ portatil: entra no desktop_tests do Linux e do Windows.
 #include <cstdint>
 #include <optional>
 #include <string>
 
+#include "InternetState.h"
 #include "NetworkDecision.h"
 #include "NetworkLoop.h"
 #include "test_support.h"
 
 using namespace starsonic;
+
+// As mensagens do doctest com o nome do estado.
+namespace doctest {
+template <>
+struct StringMaker<std::optional<InternetState>> {
+    static String convert(const std::optional<InternetState>& state) {
+        if (!state) return "nada";
+        switch (*state) {
+            case InternetState::Online:
+                return "Online";
+            case InternetState::NoNetwork:
+                return "NoNetwork";
+            case InternetState::NoDns:
+                return "NoDns";
+        }
+        return "?";
+    }
+};
+}  // namespace doctest
 
 namespace {
 
@@ -25,7 +45,10 @@ const int kIpv4Internet = 0x40;
 const int kIpv6LocalNetwork = 0x200;
 const int kIpv6Internet = 0x400;
 
-const std::optional<bool> kNoChange;
+const std::optional<InternetState> kNoChange;
+const std::optional<InternetState> kOnline = InternetState::Online;
+const std::optional<InternetState> kNoNetwork = InternetState::NoNetwork;
+const std::optional<InternetState> kNoDns = InternetState::NoDns;
 const char kServer[] = "starcloud1-starsonic.com.br";
 
 // A conta num servidor com nome: o teste DNS vale.
@@ -36,7 +59,7 @@ NetworkDecision WithNamedServer() {
 }
 
 // Um teste DNS que sai agora e volta com o resultado.
-std::optional<bool> Dns(NetworkDecision& decision, bool answered) {
+std::optional<InternetState> Dns(NetworkDecision& decision, bool answered) {
     return decision.OnDnsResult(answered, decision.DnsCheckStarted());
 }
 
@@ -66,46 +89,46 @@ TEST_CASE("windows with a local network but no internet stays online while the d
     NetworkDecision decision = WithNamedServer();
     CHECK(decision.DnsCheckUseful());
     CHECK(decision.OnConnectivity(kIpv4LocalNetwork | kIpv6LocalNetwork) == kNoChange);
-    CHECK(decision.Internet());
+    CHECK(decision.State() == InternetState::Online);
     // O teste DNS vem agora, sem esperar os 30 s.
     CHECK(decision.DnsCheckNow());
     const uint64_t now = decision.DnsCheckStarted();
     CHECK_FALSE(decision.DnsCheckNow());
     CHECK(decision.OnDnsResult(true, now) == kNoChange);
-    CHECK(decision.Internet());
+    CHECK(decision.State() == InternetState::Online);
     // Uma falha so nao tira do ar, e o sucesso seguinte zera a conta.
     CHECK(Dns(decision, false) == kNoChange);
     CHECK(Dns(decision, true) == kNoChange);
     CHECK(Dns(decision, false) == kNoChange);
-    CHECK(decision.Internet());
+    CHECK(decision.State() == InternetState::Online);
 }
 
-TEST_CASE("windows with a local network but no internet and two dns failures in a row goes offline") {
+TEST_CASE("windows with a local network but no internet and two dns failures in a row go to no dns") {
     NetworkDecision decision = WithNamedServer();
     CHECK(decision.OnConnectivity(kIpv4Subnet) == kNoChange);
     CHECK(Dns(decision, false) == kNoChange);
-    CHECK(Dns(decision, false) == std::optional<bool>(false));
-    CHECK_FALSE(decision.Internet());
+    CHECK(Dns(decision, false) == kNoDns);
+    CHECK(decision.State() == InternetState::NoDns);
     CHECK(Dns(decision, false) == kNoChange);
     // Qualquer sucesso do DNS volta na hora.
-    CHECK(Dns(decision, true) == std::optional<bool>(true));
+    CHECK(Dns(decision, true) == kOnline);
     // Com a internet do Windows vale o mesmo: a rede mudou (o teste vem agora) e duas falhas tiram do ar.
     CHECK(decision.OnConnectivity(kIpv4Internet) == kNoChange);
     CHECK(decision.DnsCheckNow());
     CHECK(Dns(decision, false) == kNoChange);
-    CHECK(Dns(decision, false) == std::optional<bool>(false));
+    CHECK(Dns(decision, false) == kNoDns);
     // O Windows dizer que ha internet nao traz de volta sozinho: so o DNS.
     CHECK(decision.OnConnectivity(kIpv4LocalNetwork) == kNoChange);
     CHECK(decision.OnConnectivity(kIpv4Internet | kIpv6Internet) == kNoChange);
     CHECK(decision.DnsCheckNow());
-    CHECK_FALSE(decision.Internet());
-    CHECK(Dns(decision, true) == std::optional<bool>(true));
+    CHECK(decision.State() == InternetState::NoDns);
+    CHECK(Dns(decision, true) == kOnline);
 }
 
 TEST_CASE("windows without any network goes offline at once and coming back is online at once with a dns check") {
     NetworkDecision decision = WithNamedServer();
-    CHECK(decision.OnConnectivity(kDisconnected) == std::optional<bool>(false));
-    CHECK_FALSE(decision.Internet());
+    CHECK(decision.OnConnectivity(kDisconnected) == kNoNetwork);
+    CHECK(decision.State() == InternetState::NoNetwork);
     CHECK_FALSE(decision.DnsCheckUseful());   // sem rede, nada a testar
     CHECK_FALSE(decision.DnsCheckNow());
     // So o "sem trafego" tambem e sem rede.
@@ -113,46 +136,46 @@ TEST_CASE("windows without any network goes offline at once and coming back is o
     CHECK_FALSE(decision.DnsCheckUseful());
     // Sem rede, um resultado nao conta.
     CHECK(Dns(decision, true) == kNoChange);
-    CHECK_FALSE(decision.Internet());
+    CHECK(decision.State() == InternetState::NoNetwork);
     CHECK(Dns(decision, false) == kNoChange);
     CHECK(Dns(decision, false) == kNoChange);
     // A rede volta (so a local): com internet na hora, as falhas de antes nao contam, e o teste DNS vem agora.
-    CHECK(decision.OnConnectivity(kIpv6LocalNetwork) == std::optional<bool>(true));
+    CHECK(decision.OnConnectivity(kIpv6LocalNetwork) == kOnline);
     CHECK(decision.DnsCheckNow());
     const uint64_t now = decision.DnsCheckStarted();
     CHECK_FALSE(decision.DnsCheckNow());
     CHECK(decision.OnDnsResult(false, now) == kNoChange);
-    CHECK(decision.Internet());
+    CHECK(decision.State() == InternetState::Online);
     // Com a internet do Windows, a mesma coisa (e a falha de antes da queda nao soma).
-    CHECK(decision.OnConnectivity(kDisconnected) == std::optional<bool>(false));
-    CHECK(decision.OnConnectivity(kIpv4Internet) == std::optional<bool>(true));
+    CHECK(decision.OnConnectivity(kDisconnected) == kNoNetwork);
+    CHECK(decision.OnConnectivity(kIpv4Internet) == kOnline);
     CHECK(decision.DnsCheckNow());
     CHECK(Dns(decision, false) == kNoChange);
-    CHECK(decision.Internet());
+    CHECK(decision.State() == InternetState::Online);
 }
 
 TEST_CASE("a dns result from before the network came back does not count") {
     NetworkDecision decision = WithNamedServer();
     const uint64_t before = decision.DnsCheckStarted();   // um teste a caminho quando a rede cai
-    CHECK(decision.OnConnectivity(kDisconnected) == std::optional<bool>(false));
-    CHECK(decision.OnConnectivity(kIpv4Internet) == std::optional<bool>(true));
+    CHECK(decision.OnConnectivity(kDisconnected) == kNoNetwork);
+    CHECK(decision.OnConnectivity(kIpv4Internet) == kOnline);
     CHECK(decision.OnDnsResult(false, before) == kNoChange);   // o de antes da queda nao conta
     CHECK(Dns(decision, false) == kNoChange);                  // a primeira falha de verdade: ainda com internet
-    CHECK(decision.Internet());
-    CHECK(Dns(decision, false) == std::optional<bool>(false));
+    CHECK(decision.State() == InternetState::Online);
+    CHECK(Dns(decision, false) == kNoDns);
     // A rede muda (local) com um teste a caminho: ele tambem nao conta.
-    CHECK(Dns(decision, true) == std::optional<bool>(true));
+    CHECK(Dns(decision, true) == kOnline);
     const uint64_t onInternet = decision.DnsCheckStarted();
     CHECK(decision.OnConnectivity(kIpv4LocalNetwork) == kNoChange);
     CHECK(decision.OnDnsResult(false, onInternet) == kNoChange);
     CHECK(Dns(decision, false) == kNoChange);
-    CHECK(decision.Internet());
+    CHECK(decision.State() == InternetState::Online);
     // Outra conta: o teste do servidor de antes tambem nao conta.
     const uint64_t oldServer = decision.DnsCheckStarted();
     CHECK(decision.OnServerChanged("starcloud-starsonic.com.br") == kNoChange);
     CHECK(decision.OnDnsResult(false, oldServer) == kNoChange);
     CHECK(Dns(decision, false) == kNoChange);
-    CHECK(decision.Internet());
+    CHECK(decision.State() == InternetState::Online);
 }
 
 TEST_CASE("a server given as an IP address ignores the dns and only the lack of a network takes it offline") {
@@ -163,9 +186,9 @@ TEST_CASE("a server given as an IP address ignores the dns and only the lack of 
     CHECK_FALSE(decision.DnsCheckNow());
     CHECK(Dns(decision, false) == kNoChange);
     CHECK(Dns(decision, false) == kNoChange);
-    CHECK(decision.Internet());
-    CHECK(decision.OnConnectivity(kDisconnected) == std::optional<bool>(false));
-    CHECK(decision.OnConnectivity(kIpv4Internet) == std::optional<bool>(true));
+    CHECK(decision.State() == InternetState::Online);
+    CHECK(decision.OnConnectivity(kDisconnected) == kNoNetwork);
+    CHECK(decision.OnConnectivity(kIpv4Internet) == kOnline);
     CHECK_FALSE(decision.DnsCheckNow());
     // Sem conta: nada a testar tambem.
     CHECK(decision.OnServerChanged("") == kNoChange);
@@ -195,36 +218,78 @@ TEST_CASE("an IP address is told apart from a server name") {
 TEST_CASE("another account server forgets the dns failures") {
     NetworkDecision decision = WithNamedServer();
     CHECK(Dns(decision, false) == kNoChange);
-    CHECK(Dns(decision, false) == std::optional<bool>(false));
-    CHECK(decision.OnServerChanged("starcloud-starsonic.com.br") == std::optional<bool>(true));
+    CHECK(Dns(decision, false) == kNoDns);
+    CHECK(decision.OnServerChanged("starcloud-starsonic.com.br") == kOnline);
     CHECK(Dns(decision, false) == kNoChange);
     CHECK(decision.OnServerChanged(kServer) == kNoChange);
     CHECK(Dns(decision, false) == kNoChange);   // a falha antes da troca nao somou
-    CHECK(decision.Internet());
+    CHECK(decision.State() == InternetState::Online);
     // Sem rede, a troca de servidor nao traz a internet de volta.
-    CHECK(decision.OnConnectivity(kDisconnected) == std::optional<bool>(false));
+    CHECK(decision.OnConnectivity(kDisconnected) == kNoNetwork);
     CHECK(decision.OnServerChanged("starcloud-starsonic.com.br") == kNoChange);
-    CHECK_FALSE(decision.Internet());
+    CHECK(decision.State() == InternetState::NoNetwork);
 }
 
 TEST_CASE("the smoke test hook forces the view and gives the real one back") {
     NetworkDecision decision = WithNamedServer();
-    CHECK(decision.Force(false) == std::optional<bool>(false));
-    CHECK_FALSE(decision.Internet());
+    CHECK(decision.Force(false) == kNoNetwork);
+    CHECK(decision.State() == InternetState::NoNetwork);
     // Forcado: o Windows e o DNS nao mudam o que vale.
     CHECK(decision.OnConnectivity(kIpv4Internet) == kNoChange);
     CHECK(Dns(decision, true) == kNoChange);
     CHECK(decision.Force(false) == kNoChange);
     // De volta a visao de verdade (online).
-    CHECK(decision.Force(std::nullopt) == std::optional<bool>(true));
+    CHECK(decision.Force(std::nullopt) == kOnline);
     CHECK(decision.Force(std::nullopt) == kNoChange);
     // A de verdade continua contando enquanto forcado: a rede caiu no meio.
-    CHECK(decision.Force(false) == std::optional<bool>(false));
+    CHECK(decision.Force(false) == kNoNetwork);
     CHECK(decision.OnConnectivity(kDisconnected) == kNoChange);
     CHECK(decision.Force(std::nullopt) == kNoChange);
-    CHECK_FALSE(decision.Internet());
-    CHECK(decision.Force(true) == std::optional<bool>(true));
-    CHECK(decision.Force(std::nullopt) == std::optional<bool>(false));
+    CHECK(decision.State() == InternetState::NoNetwork);
+    CHECK(decision.Force(true) == kOnline);
+    CHECK(decision.Force(std::nullopt) == kNoNetwork);
+}
+
+// Correcao final (H1, Ruling 23): o registro vivo prova que a central responde; o DNS so conta com a conta fora do ar.
+TEST_CASE("dns failures with a live registration keep the app online") {
+    NetworkDecision decision = WithNamedServer();
+    CHECK(decision.OnConnectedChanged(true) == kNoChange);
+    for (int i = 0; i < 4; ++i) CHECK(Dns(decision, false) == kNoChange);
+    CHECK(decision.State() == InternetState::Online);
+    // A conta sai do ar: as falhas passam a contar, do zero (as de antes nao somam).
+    CHECK(decision.OnConnectedChanged(false) == kNoChange);
+    CHECK(Dns(decision, false) == kNoChange);
+    CHECK(decision.State() == InternetState::Online);
+    // Uma falha fora do ar e outra conectada nao sao duas seguidas.
+    CHECK(decision.OnConnectedChanged(true) == kNoChange);
+    CHECK(Dns(decision, false) == kNoChange);
+    CHECK(decision.OnConnectedChanged(false) == kNoChange);
+    CHECK(Dns(decision, false) == kNoChange);
+    CHECK(decision.State() == InternetState::Online);
+}
+
+TEST_CASE("two dns failures while the account is not connected are no dns, and connecting again is online at once") {
+    NetworkDecision decision = WithNamedServer();
+    CHECK(Dns(decision, false) == kNoChange);
+    CHECK(Dns(decision, false) == kNoDns);
+    // A conta conecta (o motor achou a central pelo cache do Windows): com internet na hora, e as falhas zeram.
+    CHECK(decision.OnConnectedChanged(true) == kOnline);
+    CHECK(decision.OnConnectedChanged(false) == kNoChange);
+    CHECK(Dns(decision, false) == kNoChange);
+    CHECK(Dns(decision, false) == kNoDns);
+    // Do "sem o DNS" para o "sem rede" e de volta: a rede que volta e com internet na hora.
+    CHECK(decision.OnConnectivity(kDisconnected) == kNoNetwork);
+    CHECK(decision.OnConnectedChanged(true) == kNoChange);   // sem rede, a conta conectada nao traz a internet
+    CHECK(decision.State() == InternetState::NoNetwork);
+    CHECK(decision.OnConnectivity(kIpv4Internet) == kOnline);
+    // Do "sem rede" direto para o "sem o DNS" nao da: a rede volta com internet, e o DNS conta do zero.
+    CHECK(decision.OnConnectedChanged(false) == kNoChange);
+    CHECK(decision.OnConnectivity(kDisconnected) == kNoNetwork);
+    CHECK(decision.OnConnectivity(kIpv4LocalNetwork) == kOnline);
+    CHECK(Dns(decision, false) == kNoChange);
+    CHECK(Dns(decision, false) == kNoDns);
+    // O DNS que responde tambem volta.
+    CHECK(Dns(decision, true) == kOnline);
 }
 
 TEST_CASE("the monitor reads the windows connectivity again on every tick and leaves no network without any event") {
@@ -232,7 +297,7 @@ TEST_CASE("the monitor reads the windows connectivity again on every tick and le
     windows.connectivity = kDisconnected;
     NetworkLoop loop(windows.Reader(), 30000, false);
     NetworkLoop::Actions actions = loop.Open(1000);
-    CHECK(actions.internet == std::optional<bool>(false));
+    CHECK(actions.internet == kNoNetwork);
     CHECK(loop.WakeAtMs() == 31000);
     // Sem rede e sem aviso do Windows: o intervalo continua e le de novo.
     actions = loop.OnTimer(31000);
@@ -242,7 +307,7 @@ TEST_CASE("the monitor reads the windows connectivity again on every tick and le
     // proximo intervalo ve.
     windows.connectivity = kIpv4Internet;
     actions = loop.OnTimer(61000);
-    CHECK(actions.internet == std::optional<bool>(true));
+    CHECK(actions.internet == kOnline);
     CHECK(windows.reads == 3);
     CHECK(loop.WakeAtMs() == 91000);
 }
@@ -252,10 +317,10 @@ TEST_CASE("a windows event reads the connectivity again instead of trusting the 
     NetworkLoop loop(windows.Reader(), 30000, false);
     CHECK(loop.Open(0).internet == kNoChange);
     windows.connectivity = kDisconnected;
-    CHECK(loop.OnWindowsChanged().internet == std::optional<bool>(false));
+    CHECK(loop.OnWindowsChanged().internet == kNoNetwork);
     // Avisos fora de ordem: vale o que o Windows diz agora.
     windows.connectivity = kIpv4LocalNetwork;
-    CHECK(loop.OnWindowsChanged().internet == std::optional<bool>(true));
+    CHECK(loop.OnWindowsChanged().internet == kOnline);
     CHECK(loop.OnWindowsChanged().internet == kNoChange);
     CHECK(windows.reads == 4);
     // Sem conseguir ler (o servico do Windows fora): fica o que era.
@@ -287,7 +352,7 @@ TEST_CASE("the monitor runs one dns check at a time, at the tick and right away 
     CHECK(loop.OnDnsResult(second, false, 1460).internet == kNoChange);
     actions = loop.OnTimer(90000);
     REQUIRE(actions.dnsServer.has_value());
-    CHECK(loop.OnDnsResult(actions.dnsTicket, false, 1460).internet == std::optional<bool>(false));
+    CHECK(loop.OnDnsResult(actions.dnsTicket, false, 1460).internet == kNoDns);
     // Um teste que nem saiu (sem thread) nao trava os proximos.
     actions = loop.OnTimer(120000);
     REQUIRE(actions.dnsServer.has_value());
@@ -355,7 +420,47 @@ TEST_CASE("the smoke test hook goes through the monitor loop") {
     FakeWindows windows;
     NetworkLoop loop(windows.Reader(), 30000, false);
     loop.Open(0);
-    CHECK(loop.OnForce(false).internet == std::optional<bool>(false));
+    CHECK(loop.OnForce(false).internet == kNoNetwork);
     CHECK(loop.OnTimer(30000).internet == kNoChange);
-    CHECK(loop.OnForce(std::nullopt).internet == std::optional<bool>(true));
+    CHECK(loop.OnForce(std::nullopt).internet == kOnline);
+}
+
+// O probe 3 do revisor B (correcao final, H1): o teste da hora depois de uma troca de rede e o do intervalo, 1 s
+// depois, falham juntos. Com a conta conectada, continua com internet; fora do ar, e o "sem o DNS" (so a bolinha).
+TEST_CASE("the check right after a network change and the tick a second later keep the app online while connected") {
+    FakeWindows windows;
+    NetworkLoop loop(windows.Reader(), 30000, false);
+    loop.Open(0);
+    loop.OnServer(kServer);
+    CHECK(loop.OnConnected(true).internet == kNoChange);
+    // t = 29 s: a rede muda de classe (o Wi-Fi, a VPN) e o teste DNS sai na hora; ele falha.
+    windows.connectivity = kIpv4LocalNetwork;
+    NetworkLoop::Actions actions = loop.OnWindowsChanged();
+    REQUIRE(actions.dnsServer.has_value());
+    CHECK(loop.OnDnsResult(actions.dnsTicket, false, 1460).internet == kNoChange);
+    // t = 30 s: o intervalo, outro teste e outra falha.
+    actions = loop.OnTimer(30000);
+    REQUIRE(actions.dnsServer.has_value());
+    CHECK(loop.OnDnsResult(actions.dnsTicket, false, 1460).internet == kNoChange);
+
+    // A conta fora do ar: as mesmas duas falhas sao o "sem o DNS".
+    CHECK(loop.OnConnected(false).internet == kNoChange);
+    windows.connectivity = kIpv4Internet;
+    actions = loop.OnWindowsChanged();
+    REQUIRE(actions.dnsServer.has_value());
+    CHECK(loop.OnDnsResult(actions.dnsTicket, false, 1460).internet == kNoChange);
+    actions = loop.OnTimer(60000);
+    REQUIRE(actions.dnsServer.has_value());
+    actions = loop.OnDnsResult(actions.dnsTicket, false, 1460);
+    CHECK(actions.internet == kNoDns);
+    CHECK(Logged(actions, "rede: sem internet pelo DNS: o motor continua"));
+    // A conta conecta: com internet na hora.
+    actions = loop.OnConnected(true);
+    CHECK(actions.internet == kOnline);
+    CHECK(Logged(actions, "rede: com internet (a conta conectou)"));
+    // Sem rede nenhuma, o "sem internet" forte, como sempre.
+    windows.connectivity = kDisconnected;
+    actions = loop.OnWindowsChanged();
+    CHECK(actions.internet == kNoNetwork);
+    CHECK(Logged(actions, "rede: sem internet, sem rede: o motor para"));
 }
