@@ -5,7 +5,7 @@
 // janela pode ter, com 0 a 3 sugestões de contatos; as sugestões ficam com o espaço que sobra, numa lista que rola
 // sozinha e mostra pelo menos uma.
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { abrir, capturar, empurrar, entrarNaAdmin, esperarComando, semViolacoesSerias } from './helpers';
+import { abrir, capturar, empurrar, entrarNaAdmin, esperarComando, mudarEstado, semViolacoesSerias } from './helpers';
 
 interface Caixa {
   x: number;
@@ -440,6 +440,18 @@ async function conferirMolde(page: Page, largura: number, alturaJanela: number):
   expect(sobra, 'a página rola').toBeLessThanOrEqual(0.5);
 }
 
+// Os dois atalhos que completam os oito (o cenário tem seis), no pior caso do que a loja aceita: o nome de 24 caracteres, o
+// número de 32 e o BLF em cada um (um deles tocando).
+const MAIS_DOIS_ATALHOS = [
+  { id: '1a2b3c4d5e6f7a8b', nome: 'Atendimento financeiro 1', numero: '12345678901234567890123456789012', acao: 'consulta', blf: true, estado: 'tocando' },
+  { id: '8b7a6f5e4d3c2b1a', nome: 'Plantão da madrugada 24h', numero: '*88#+2007*1234567890123456789012', acao: 'ligar', blf: true, estado: 'ocupado' },
+];
+
+/** Os oito atalhos: os seis do cenário e os dois de cima. */
+async function comOitoAtalhos(page: Page): Promise<void> {
+  await mudarEstado(page, (s) => ({ ...s, atalhos: [...s.atalhos, ...MAIS_DOIS_ATALHOS] }));
+}
+
 const OUTRAS: Array<{ nome: string; cenario: string; preparar?: (page: Page) => Promise<void>; botoes: string[] }> = [
   { nome: 'Recentes', cenario: 'recentes', botoes: [] },
   { nome: 'Contatos', cenario: 'contatos', botoes: [] },
@@ -516,6 +528,57 @@ const OUTRAS: Array<{ nome: string; cenario: string; preparar?: (page: Page) => 
     preparar: async (page) => {
       await page.getByRole('button', { name: 'Atalhos', exact: true }).click();
       await expect(page.getByRole('region', { name: 'Atalhos' })).toBeVisible();
+    },
+    botoes: ['Desligar', 'Fechar atalhos'],
+  },
+  // Oito atalhos (a grade cheia, sem "Adicionar atalho"): a grade rola dentro do corpo da aba, e o último cartão, com o
+  // nome e o número mais compridos, fica inteiro, acima da navegação, com o "Mais opções" livre.
+  {
+    nome: 'a aba Atalhos com oito atalhos',
+    cenario: 'atalhos',
+    preparar: async (page) => {
+      await comOitoAtalhos(page);
+      await expect(page.locator('li.atalho')).toHaveCount(8);
+      await expect(page.getByRole('button', { name: 'Adicionar atalho', exact: true })).toHaveCount(0);
+      const corpo = page.locator('.body.atalhos');
+      await corpo.evaluate((e) => {
+        e.scrollTop = e.scrollHeight;
+      });
+      const ultimo = await caixa(page.locator('li.atalho').last());
+      const area = await caixa(corpo);
+      const nav = await caixa(page.locator('nav.nav'));
+      expect(contem(area, ultimo), `o último cartão sai do corpo: ${JSON.stringify({ area, ultimo })}`).toBe(true);
+      expect(ultimo.y + ultimo.height <= nav.y + 0.5, `o último cartão cobre a navegação: ${JSON.stringify({ ultimo, nav })}`).toBe(true);
+      // O menu do "Mais opções" dos dois últimos cartões (um em cada coluna, na última linha) abre inteiro, dentro da
+      // janela e acima da navegação.
+      const janela = page.viewportSize()!;
+      for (const nome of MAIS_DOIS_ATALHOS.map((a) => a.nome)) {
+        await page.getByRole('button', { name: `Mais opções para ${nome}`, exact: true }).click();
+        const menu = await caixa(page.getByRole('menu', { name: `Opções de ${nome}` }));
+        expect(dentro(menu, janela.height, janela.width), `o menu de ${nome} sai da janela: ${JSON.stringify(menu)}`).toBe(true);
+        expect(menu.y + menu.height <= nav.y + 0.5, `o menu de ${nome} cobre a navegação: ${JSON.stringify({ menu, nav })}`).toBe(true);
+        await page.keyboard.press('Escape');
+        await expect(page.getByRole('menu')).toHaveCount(0);
+      }
+    },
+    botoes: ['Mais opções para Plantão da madrugada 24h'],
+  },
+  // O painel da ligação com oito atalhos: a lista rola dentro do painel, e o Desligar e o Fechar atalhos ficam inteiros.
+  {
+    nome: 'o painel de atalhos com oito atalhos',
+    cenario: 'ligacao',
+    preparar: async (page) => {
+      await comOitoAtalhos(page);
+      await page.getByRole('button', { name: 'Atalhos', exact: true }).click();
+      await expect(page.getByRole('region', { name: 'Atalhos' })).toBeVisible();
+      await expect(page.locator('.atalhos-lista .atalho-linha')).toHaveCount(8);
+      const lista = page.locator('.atalhos-lista');
+      await lista.evaluate((e) => {
+        e.scrollTop = e.scrollHeight;
+      });
+      const ultima = await caixa(page.locator('.atalhos-lista .atalho-linha').last());
+      const area = await caixa(lista);
+      expect(contem(area, ultima), `a última linha sai da lista: ${JSON.stringify({ area, ultima })}`).toBe(true);
     },
     botoes: ['Desligar', 'Fechar atalhos'],
   },
