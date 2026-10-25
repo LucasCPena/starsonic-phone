@@ -695,7 +695,9 @@ void DesktopApp::HandleRegistration(int sipCode, bool active, int accountId) {
     }
     const bool was = registered_;
     registration_ = sipCode;
-    registered_ = sipCode >= 200 && sipCode <= 299;
+    // Sem rede, uma resposta que ja estava na fila antes de o motor parar nao vale como registro: a ligacao sairia para
+    // falhar no motor (sem o aviso de sempre) e o BLF voltaria sem rede. Sem o DNS, vale (o motor nao parou).
+    registered_ = internet_ != InternetState::NoNetwork && sipCode >= 200 && sipCode <= 299;
     if (registered_ && !was) blfForce_ = true;   // registrou de novo: o BLF tambem (UpdateBlf)
 }
 

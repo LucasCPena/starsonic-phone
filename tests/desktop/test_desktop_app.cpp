@@ -1241,6 +1241,12 @@ json ShortcutNamed(const Harness& h, const std::string& nome) {
 }
 std::string IdOf(const Harness& h, const std::string& nome) { return ShortcutNamed(h, nome)["id"]; }
 
+// O ultimo toast ("" sem nenhum).
+std::string LastToast(const Harness& h) {
+    const std::vector<std::string> toasts = h.Toasts();
+    return toasts.empty() ? std::string() : toasts.back();
+}
+
 size_t EndBeeps(const Harness& h) {
     size_t count = 0;
     for (const json& ring : h.Messages("ring")) {
@@ -1831,7 +1837,7 @@ TEST_CASE("the dns answering again re-registers at once an account left without 
     // Sem registro, a ligacao nao sai (o aviso de sempre).
     h.Send(R"({"v":1,"cmd":"dial","numero":"2002"})");
     CHECK(h.engine.made.empty());
-    CHECK(h.Toasts().back() == kNoConnection);
+    CHECK(LastToast(h) == kNoConnection);
 
     // O DNS volta: o motor registra de novo agora (sem trocar a conta: nenhum SetAccount).
     h.app->SetInternet(InternetState::Online);
@@ -1845,6 +1851,53 @@ TEST_CASE("the dns answering again re-registers at once an account left without 
     CHECK(h.State()["conta"]["status"] == "conectado");
     h.Send(R"({"v":1,"cmd":"dial","numero":"2002"})");
     CHECK(h.engine.made == std::vector<std::string>{"2002"});
+}
+
+// Correcao final (H4, A-M2 e o probe A2 do revisor A): sem rede, uma resposta de registro que ja estava na fila nao
+// marca a conta registrada; sem o DNS, marca.
+TEST_CASE("a registration answer queued before the network dropped does not mark the account registered") {
+    Harness h;
+    h.StartRegistered();
+    h.Send(kAdminLogin);
+    h.Send(AdminSet(R"("blf":true)"));
+    h.Send(SaveShortcut("Ana", "2007", "ligar", true));
+    h.app->OnBlf("2007", BlfState::Busy);
+    h.Run();
+    REQUIRE(ShortcutNamed(h, "Ana")["estado"] == "ocupado");
+    const size_t watches = h.port.watches.size();
+
+    // O motor ja tinha posto uma renovacao na fila quando o host viu a rede cair.
+    h.app->SetInternet(InternetState::NoNetwork);
+    h.app->OnRegistration(200, true, h.port.LastId());
+    h.Run();
+    CHECK(h.State()["conta"]["internet"] == false);
+    CHECK(ShortcutNamed(h, "Ana")["estado"] == "desconectado");
+    CHECK(h.port.watches.size() == watches);   // nada de pedir o BLF de novo sem rede
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2003"})");
+    CHECK(h.engine.made.empty());   // o aviso de sempre, e nao uma ligacao que o motor parado recusa
+    CHECK(LastToast(h) == kNoConnection);
+
+    // A rede volta e o registro de verdade chega: registrada de novo, com o ultimo estado do BLF.
+    h.app->SetInternet(InternetState::Online);
+    h.app->OnRegistration(200, true, h.port.LastId());
+    h.Run();
+    CHECK(ShortcutNamed(h, "Ana")["estado"] == "ocupado");
+    CHECK(h.port.watches.size() == watches + 1);
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2003"})");
+    CHECK(h.engine.made == std::vector<std::string>{"2003"});
+}
+
+TEST_CASE("a registration answer during a dns-only outage still marks the account registered") {
+    Harness h;
+    h.StartRegistered();
+    h.app->OnRegistration(503, false, h.port.LastId());
+    h.app->SetInternet(InternetState::NoDns);
+    h.app->OnRegistration(200, true, h.port.LastId());
+    h.Run();
+    CHECK(h.State()["conta"]["internet"] == false);
+    CHECK(h.State()["conta"]["status"] == "conectado");
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2003"})");
+    CHECK(h.engine.made == std::vector<std::string>{"2003"});
 }
 
 TEST_CASE("moving between no network and no dns pauses and resumes the engine once each way") {
