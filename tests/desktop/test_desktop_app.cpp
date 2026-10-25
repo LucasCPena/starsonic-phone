@@ -1793,6 +1793,25 @@ TEST_CASE("internet loss mid-call drops to gray and beeps once") {
     CHECK(EndBeeps(h) == 1);
 }
 
+// Correcao final (H8, B-M2): o executavel faz o teste DNS do monitor de rede com o conta.servidor: o endereco sem a
+// porta, tambem com a porta do perfil ou do administrador.
+TEST_CASE("conta.servidor is the bare address without the port, also with an admin port") {
+    Harness h;
+    h.SeedAccount(L"starcloud1-starsonic.com.br", L"2001", L"segredo", true);   // 35060 no perfil dos testes
+    h.Start();
+    h.app->OnRegistration(200, true, h.port.LastId());
+    h.Run();
+    CHECK(h.State()["conta"]["servidor"] == "starcloud1-starsonic.com.br");
+    CHECK(h.State()["contas"][0]["servidor"] == "starcloud1-starsonic.com.br");
+    h.Send(kAdminLogin);
+    h.Send(AdminSet(R"("servidores":[{"endereco":"starcloud1-starsonic.com.br","porta":5090}])"));
+    REQUIRE(h.port.accounts.size() == 2);   // registrou de novo com a porta nova
+    h.app->OnRegistration(200, true, h.port.LastId());
+    h.Run();
+    CHECK(h.State()["conta"]["servidor"] == "starcloud1-starsonic.com.br");
+    CHECK(h.State()["conta"]["texto"] == "Conectado \xc2\xb7 starcloud1-starsonic.com.br");
+}
+
 // Correcao final (H1, Ruling 23): o DNS sem resposta so muda a bolinha; o motor segue como esta.
 TEST_CASE("a dns-only outage leaves the engine as it is and calls still go out while registered") {
     Harness h;

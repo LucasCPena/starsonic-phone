@@ -283,11 +283,11 @@ A configuração fica no `admin.json`, protegido pelo DPAPI do usuário (como as
 | `entrar.podeCancelar` | booleano | A tela pede a senha de uma troca de conta (`selectAccount` de uma conta sem senha): a interface mostra o botão `Cancelar`, que manda `cancelLogin` e volta para a conta em uso. |
 | `entrar.contaId` | texto | A conta que a tela edita (vai de volta no `login`); `""` = conta nova. |
 | `conta` | objeto \| `null` | A conta em uso (o cabeçalho); `null` sem nenhuma. |
-| `conta.id`, `conta.nome`, `conta.ramal`, `conta.servidor` | texto | `nome` pode ser `""` (sem nome: a interface mostra o ramal). |
+| `conta.id`, `conta.nome`, `conta.ramal`, `conta.servidor` | texto | `nome` pode ser `""` (sem nome: a interface mostra o ramal). `servidor` é o endereço como a tela Entrar o aceitou, sem a porta (a porta vem da lista do administrador, `admin.servidores`): o executável faz o teste DNS do monitor de rede com ele, e com um `host:porta` todo teste falharia. |
 | `conta.protocolo` | `"udp"` \| `"tcp"` | |
 | `conta.status` | `"conectado"` \| `"conectando"` \| `"sem_conexao"` \| `"erro"` | O registro: `conectando` (esperando a resposta, ou trocando de conta), `conectado`, `sem_conexao` (o servidor não responde, ou a conta não está registrada) e `erro` (o servidor recusou: senha, ramal). |
 | `conta.texto` | texto | A linha do cabeçalho: `Conectado · <servidor>`, `Conectando…`, ou a mensagem do registro (as de `entrar.erro`); pode ser `""` com `sem_conexao`. |
-| `conta.internet` | booleano | (rc.3) O executável vê a internet (`DesktopApp::SetInternet`; `true` até ele dizer o contrário). `false` vem antes de tudo na bolinha (cinza, `Sem internet · tentando de novo`): o motor para de tentar registrar, e o `status`/`texto` ficam como estavam. Quando volta, o motor registra de novo: `status` `conectando` e depois `conectado`. Uma ligação que caiu não é refeita. |
+| `conta.internet` | booleano | (rc.3) O executável vê a internet (`DesktopApp::SetInternet`, com os estados de `InternetState.h`; `true` até ele dizer o contrário). `false` sem rede (o Windows não vê nenhuma rede) e sem o DNS (duas falhas seguidas do teste DNS do servidor, com a conta fora do ar). `false` vem antes de tudo na bolinha (cinza, `Sem internet · tentando de novo`), e o `status`/`texto` ficam como estavam. Sem rede, o motor para de tentar registrar (o registro que a central tem fica até vencer) e a ligação não sai; quando a rede volta, o motor registra de novo: `status` `conectando` e depois `conectado`. Sem o DNS, o motor segue como está (um registro vivo continua: as ligações chegam e saem); quando o DNS volta, a conta sem registro registra de novo na hora (`conectando`, sem troca de conta). Uma ligação que caiu não é refeita. |
 | `contas` | lista | As contas gravadas, na ordem em que foram incluídas: `{id, nome, ramal, servidor, protocolo, emUso}` (`emUso`: booleano, a em uso). |
 | `naoPerturbe` | booleano | O botão Não perturbe (ligado ou não). Não confundir com `admin.naoPerturbe` (o botão aparece). |
 | `atenderAutomatico` | objeto | `{on: booleano, segundos: inteiro de 0 a 30}`. |
@@ -415,17 +415,22 @@ depois de abrir e a cada 24 h. Achou uma versão mais nova:
   Os comandos das duas vão ao mesmo `DesktopApp`; o `answer` do aviso também traz a janela principal para a frente.
   `HandleCommand` pode ser chamado da thread da janela (ele só lê o JSON e põe na fila).
 - O executável lê o `state` que passa (sem perguntar ao `DesktopApp`): com uma recebida tocando (`top.phase`
-  `ringing`, ou `secondKind` `ringing` fora da conferência) e a janela fora da frente, o aviso aparece; o ícone da
-  bandeja segue `perdidas` (a perdida), `naoPerturbe` e `conta.status`, e pisca enquanto toca. O menu da bandeja
-  manda `setDnd` e `quit` como a interface.
+  `ringing`, ou `secondKind` `ringing` fora da conferência) e a janela fora da frente, o aviso aparece. O ícone da
+  bandeja segue a tabela da bolinha (rc.3; vale a primeira que bate, Ruling 17): sem internet (`conta.internet`
+  `false`), conectando, erro, sem conexão ou sem conta → sem conexão; depois a ligação (também tocando) → em
+  ligação; a perdida que a pessoa ainda não viu (`perdidas`) → perdida; o Não perturbe (`naoPerturbe`) → não
+  perturbe; e conectado (`conta.status` `conectado`) → conectado. Ele pisca enquanto toca. O menu da bandeja manda
+  `setDnd` e `quit` como a interface.
 - Os links `tel:`/`sip:`/`callto:` (já lidos: `ParseLinkArgument`) vão a `DesktopApp::DialLink(numero)`, que só
   preenche `teclado` (e escreve `link recebido` no diagnóstico). Com o app aberto, a segunda abertura entrega os
   argumentos à primeira (instância única: o mutex `Local\StarsonicPhone` e `WM_COPYDATA`) e sai com o código 0; o
   `--sair` vai pelo mesmo caminho.
 - A atualização: `DesktopApp::OfferUpdate(versao, notas)` manda a pergunta e guarda até a resposta; a resposta vai
   ao gancho `updateAnswer(agora)`. `DesktopApp::Notify(texto)` manda um toast do executável.
-- O logoff ou o desligamento do Windows (`WM_ENDSESSION`) faz o mesmo `quit`, espera até 3 s pelo gancho `quit` e
-  roda o `Shutdown()` (os Recentes das ligações encerradas ficam gravados).
+- O logoff ou o desligamento do Windows (`WM_ENDSESSION`) faz o mesmo `quit`, espera até 3 s pelo gancho `quit`,
+  para o monitor de rede (rc.3: depois do Sair, porque o `Unadvise` do Windows pode demorar e as ligações e os
+  Recentes vêm antes; antes do `Shutdown`, para nenhum `SetInternet` chegar depois dele) e roda o `Shutdown()` (os
+  Recentes das ligações encerradas ficam gravados).
 - A posição e o tamanho da janela: depois de a pessoa mover a janela, o executável chama
   `DesktopApp::SaveWindowPosition(x, y)` (o canto de cima da área da interface, em pixels da tela), que grava
   `janela_x`/`janela_y` no `config.json`; depois de ela mudar o tamanho, `DesktopApp::SaveWindowSize(largura, altura)`
@@ -452,11 +457,24 @@ depois de abrir e a cada 24 h. Achou uma versão mais nova:
 - (rc.3) O BLF e a rede vão pelo `RegistrationPort` (o `EngineHost`): `WatchBlf(numeros)` e
   `SetNetworkAvailable(disponivel)`, os do `SipEngine`; o `OnBlf` do motor vai ao `DesktopApp::OnBlf` (que só põe na
   fila). A conta vai ao motor com `AccountInput::serverPorts` (a lista do administrador, no lugar do `[portas]`).
-- (rc.3) A internet: o monitor de rede do executável chama `DesktopApp::SetInternet(disponivel)` (de qualquer thread;
-  só põe na fila). Repetir o mesmo valor não faz nada.
+- (rc.3) A internet: o monitor de rede do executável chama `DesktopApp::SetInternet(estado)` (de qualquer thread;
+  só põe na fila) com um dos três estados de `InternetState.h`. Repetir o mesmo valor não faz nada.
+  - `Online`: com internet.
+  - `NoNetwork` (sem rede): o Windows não vê nenhuma rede. O motor para (`SetNetworkAvailable(false)`: nenhuma nova
+    tentativa de registro; o registro que a central tem não sai, e vive até vencer ou até a próxima renovação falhar),
+    o `dial` é recusado com o aviso de sempre, e `conta.internet` fica `false`. Saindo dele (para `Online` ou
+    `NoDns`), o motor volta e registra de novo (`SetNetworkAvailable(true)`; `conectando` até a resposta).
+  - `NoDns` (sem o DNS): duas falhas seguidas do teste DNS do servidor, contadas só com a conta fora do ar (com
+    `conta.status` `conectado`, o registro vivo prova que a central responde, e a falha não conta). Só
+    `conta.internet` fica `false`: o motor segue como está (sem pausa e sem a saída do registro), a ligação sai e
+    chega se a conta está registrada, e o motor continua tentando registrar se não está. Saindo dele para `Online`
+    (o DNS respondeu, ou a conta conectou), a conta sem registro registra de novo na hora, sem troca de conta.
+  O monitor lê do `state` que passa o `conta.servidor` (o teste DNS; um IP ou nenhuma conta: sem teste, só a falta de
+  rede vale) e se `conta.status` é `conectado`. O Windows dizer "sem internet" (o NCSI) com uma rede local só faz um
+  teste DNS sair na hora.
 - (rc.3) O gancho `updateChannel(canal)`: o canal de atualização que vale (`"teste"`, `"estavel"` ou `""` = o do
-  build), na abertura e quando o administrador muda o canal. Como os outros ganchos, roda na thread de comandos e só
-  põe o trabalho na fila do atualizador (nunca espera).
+  build), na abertura e quando o administrador muda o canal. Como os outros ganchos, roda na thread de comandos e
+  nunca espera: só guarda o canal num atômico, que a próxima verificação do atualizador lê (não verifica na hora).
 - (rc.3) A área do administrador fecha no `closeToTray` e no `quit`; a bandeja segue `admin.naoPerturbe` (o atalho
   do Não perturbe some quando ele está escondido) e `conta.internet`.
 - Ao fechar: `Shutdown()`, o `Stop()` do agendador, o motor destruído, o `DesktopApp` destruído (detalhes no
