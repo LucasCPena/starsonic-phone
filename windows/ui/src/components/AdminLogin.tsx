@@ -4,7 +4,9 @@
 // erro, a área abriu): um erro de antes (o diálogo aberto de novo) não aparece. Até essa resposta, o Entrar fica
 // travado e o Enter não manda outra tentativa (todo adminLogin é respondido; um Enter duplo não conta duas erradas).
 // Enquanto `esperaAte` está no futuro (5 senhas erradas seguidas), o Entrar também fica travado, com a espera contada
-// em segundos. Esc e Cancelar fecham sem mandar nada; um <dialog> modal, como o Confirm.
+// em segundos. Essa espera é dita uma vez ao leitor de tela, quando a quinta resposta chega (uma região viva que ganha o
+// texto com o primeiro valor); a contagem que anda não fala: fica fora de qualquer região viva. Esc e Cancelar fecham
+// sem mandar nada; um <dialog> modal, como o Confirm.
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { IconAlert, IconLock } from '../icons';
 import type { AdminLoginResult } from '../state';
@@ -29,6 +31,8 @@ export function AdminLogin({ entrarAdmin, send, onCancel, onOpened }: Props) {
   // A tentativa mandada, até a resposta (o Entrar travado).
   const [aguardando, setAguardando] = useState(false);
   const [agora, setAgora] = useState(() => Date.now());
+  // O que a região viva da espera diz ao leitor de tela: o texto do primeiro instante da espera, uma vez (vazio fora dela).
+  const [anuncio, setAnuncio] = useState('');
 
   useEffect(() => {
     const dialogo = ref.current!;
@@ -53,6 +57,9 @@ export function AdminLogin({ entrarAdmin, send, onCancel, onOpened }: Props) {
     if (entrarAdmin.erro) {
       setErro(entrarAdmin.erro);
       campo.current?.focus();
+      // A quinta errada: a espera começou com esta resposta.
+      const restante = entrarAdmin.esperaAte - Date.now();
+      if (restante > 0) setAnuncio(`Muitas tentativas. Tente de novo em ${Math.ceil(restante / 1000)} s.`);
     } else {
       onOpened();
     }
@@ -74,6 +81,10 @@ export function AdminLogin({ entrarAdmin, send, onCancel, onOpened }: Props) {
   const restanteMs = entrarAdmin.esperaAte - agora;
   const esperando = entrarAdmin.esperaAte > 0 && restanteMs > 0;
   const descricao = [erro ? 'adm-erro' : '', esperando ? 'adm-espera' : ''].filter(Boolean).join(' ');
+  // A espera acabou: o texto sai da região viva (um "30 s" velho não fica, e a próxima espera é dita de novo).
+  useEffect(() => {
+    if (!esperando) setAnuncio('');
+  }, [esperando]);
 
   const entrar = (e: Event) => {
     e.preventDefault();
@@ -122,6 +133,9 @@ export function AdminLogin({ entrarAdmin, send, onCancel, onOpened }: Props) {
               {`Muitas tentativas. Tente de novo em ${Math.ceil(restanteMs / 1000)} s.`}
             </p>
           )}
+          <p class="sr-only" role="status">
+            {anuncio}
+          </p>
         </div>
         <div class="dialog-actions adm-acoes">
           <button type="button" class="btn btn-outline" onClick={onCancel}>

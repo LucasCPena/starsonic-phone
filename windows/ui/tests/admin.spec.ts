@@ -220,7 +220,8 @@ test('wrong admin password shows Senha incorreta and the wait', async ({ page })
   await senha.press('Enter');
   await page.clock.runFor(100);
   await esperarComando(page, { cmd: 'adminLogin', senha: 'errada-5' });
-  const espera = dialogo(page).getByText(/^Muitas tentativas\./);
+  // A contagem que a pessoa vê (a região viva da espera, escondida, tem o mesmo texto: o teste de baixo a confere).
+  const espera = dialogo(page).locator('#adm-espera');
   await expect(espera).toHaveText('Muitas tentativas. Tente de novo em 30 s.');
   await expect(erro).toHaveText('Senha incorreta.');
   await expect(senha).toHaveValue('');
@@ -274,12 +275,64 @@ test('the wait after five wrong passwords passes axe', async ({ page }) => {
     await esperarComando(page, { cmd: 'adminLogin', senha: `errada-${vez}` });
     await expect(senha).toHaveValue('');
   }
-  await expect(dialogo(page).getByText(/^Muitas tentativas\. Tente de novo em \d+ s\.$/)).toBeVisible();
+  await expect(dialogo(page).locator('#adm-espera')).toHaveText(/^Muitas tentativas\. Tente de novo em \d+ s\.$/);
   // Com a senha certa digitada, o Entrar continua travado pela espera.
   await senha.fill(SENHA_ADMIN_TESTE);
   await expect(dialogo(page).getByRole('button', { name: 'Entrar' })).toBeDisabled();
   await semViolacoesSerias(page);
   await capturar(page, 'admin-espera', 'claro');
+});
+
+// A espera depois de 5 erradas é dita uma vez (C-M3): quem usa leitor de tela digita a senha certa, aperta Enter e, sem
+// isto, não ouve por que nada acontece (só o "Senha incorreta." do alerta, como nas quatro tentativas de antes). O texto
+// da espera vai, com o primeiro valor, para uma região viva; a contagem que anda fica fora de qualquer uma.
+test('the 30 s wait is announced once in a live region, and the countdown that ticks is outside any', async ({ page }) => {
+  await page.clock.install({ time: new Date('2026-10-22T10:00:00-03:00') });
+  await abrir(page, 'principal');
+  await page.keyboard.press('Control+KeyP');
+  const senha = dialogo(page).getByLabel('Senha', { exact: true });
+  for (let vez = 1; vez <= 4; vez++) {
+    await senha.fill(`errada-${vez}`);
+    await senha.press('Enter');
+    await esperarComando(page, { cmd: 'adminLogin', senha: `errada-${vez}` });
+    await expect(senha).toHaveValue('');
+  }
+  // Dali em diante, cada vez que o texto de uma região viva do diálogo ganha "Muitas tentativas" (inserido ou trocado).
+  await page.evaluate(() => {
+    const w = window as unknown as { __anuncios: string[] };
+    w.__anuncios = [];
+    new MutationObserver((registros) => {
+      for (const r of registros) {
+        const no = r.type === 'characterData' ? r.target.parentElement : (r.target as Element);
+        const viva = no?.closest('[role="status"], [role="alert"], [role="log"], [aria-live]:not([aria-live="off"])');
+        if (viva?.textContent?.includes('Muitas tentativas')) w.__anuncios.push(viva.textContent);
+      }
+    }).observe(document.body, { subtree: true, childList: true, characterData: true });
+  });
+  await page.clock.pauseAt(new Date('2026-10-22T10:05:00-03:00'));
+  await senha.fill('errada-5');
+  await senha.press('Enter');
+  await page.clock.runFor(100);
+  await esperarComando(page, { cmd: 'adminLogin', senha: 'errada-5' });
+  const espera = dialogo(page).locator('#adm-espera');
+  await expect(espera).toHaveText('Muitas tentativas. Tente de novo em 30 s.');
+  // A região viva tem o texto da espera, com o primeiro valor.
+  const vivas = dialogo(page).locator('[role="status"], [role="alert"], [aria-live]').filter({ hasText: 'Muitas tentativas' });
+  await expect(vivas).toHaveCount(1);
+  await expect(vivas).toHaveText('Muitas tentativas. Tente de novo em 30 s.');
+  // A contagem anda (20 s) e a região viva não muda: o leitor de tela não repete a cada segundo.
+  await page.clock.runFor(10_000);
+  await expect(espera).toHaveText('Muitas tentativas. Tente de novo em 20 s.');
+  await expect(vivas).toHaveText('Muitas tentativas. Tente de novo em 30 s.');
+  expect(await page.evaluate(() => (window as unknown as { __anuncios: string[] }).__anuncios)).toEqual([
+    'Muitas tentativas. Tente de novo em 30 s.',
+  ]);
+  // A contagem que anda não está dentro de região viva nenhuma.
+  expect(await espera.evaluate((e) => e.closest('[role="status"], [role="alert"], [role="log"], [aria-live]'))).toBeNull();
+  // A espera acabou: o texto sai da região viva também (não fica um "30 s" velho).
+  await page.clock.runFor(20_000);
+  await expect(espera).toHaveCount(0);
+  await expect(vivas).toHaveCount(0);
 });
 
 test('a double Enter sends one adminLogin and waits for its answer', async ({ page }) => {
