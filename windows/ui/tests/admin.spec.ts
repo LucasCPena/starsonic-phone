@@ -206,6 +206,8 @@ test('wrong admin password shows Senha incorreta and the wait', async ({ page })
   await senha.fill('errada-3');
   await senha.press('Enter');
   await esperarComando(page, { cmd: 'adminLogin', senha: 'errada-3' });
+  // A resposta chegou (o campo limpo): até ela, o Entrar fica travado e o Enter não manda outra tentativa.
+  await expect(senha).toHaveValue('');
   await senha.fill('errada-4');
   await senha.press('Enter');
   await esperarComando(page, { cmd: 'adminLogin', senha: 'errada-4' });
@@ -225,13 +227,12 @@ test('wrong admin password shows Senha incorreta and the wait', async ({ page })
   expect(await opacidade()).toBeLessThan(0.6);
   await page.clock.runFor(10_000);
   await expect(espera).toHaveText('Muitas tentativas. Tente de novo em 20 s.');
-  // A espera também passa no axe (com o relógio andando: o axe usa os relógios da página).
-  await page.clock.resume();
-  await semViolacoesSerias(page);
-  await capturar(page, 'admin-espera', 'claro');
 
-  // Às 10:05:25 faltam 5 s: fechar e abrir de novo não tira a espera (o erro de antes, sim).
-  await page.clock.pauseAt(new Date('2026-10-22T10:05:25-03:00'));
+  // 25 s depois da 5ª errada (às 10:05:25), faltam 5 s: fechar e abrir de novo não tira a espera (o erro de antes,
+  // sim). O relógio segue parado até lá (o runFor): um resume seguido de pauseAt às vezes volta a hora para trás no
+  // relógio falso do Playwright (um tique de tempo real no meio termina depois do pauseAt). O axe da espera fica no
+  // teste de baixo.
+  await page.clock.runFor(14_900);
   await page.keyboard.press('Escape');
   await page.keyboard.press('Control+KeyP');
   await page.clock.runFor(100);
@@ -258,6 +259,25 @@ test('wrong admin password shows Senha incorreta and the wait', async ({ page })
     'errada-5',
     SENHA_ADMIN_TESTE,
   ]);
+});
+
+// A espera passa no axe, com o relógio de verdade (o axe usa os relógios da página; a espera dura 30 s).
+test('the wait after five wrong passwords passes axe', async ({ page }) => {
+  await abrir(page, 'principal');
+  await page.keyboard.press('Control+KeyP');
+  const senha = dialogo(page).getByLabel('Senha', { exact: true });
+  for (let vez = 1; vez <= 5; vez++) {
+    await senha.fill(`errada-${vez}`);
+    await senha.press('Enter');
+    await esperarComando(page, { cmd: 'adminLogin', senha: `errada-${vez}` });
+    await expect(senha).toHaveValue('');
+  }
+  await expect(dialogo(page).getByText(/^Muitas tentativas\. Tente de novo em \d+ s\.$/)).toBeVisible();
+  // Com a senha certa digitada, o Entrar continua travado pela espera.
+  await senha.fill(SENHA_ADMIN_TESTE);
+  await expect(dialogo(page).getByRole('button', { name: 'Entrar' })).toBeDisabled();
+  await semViolacoesSerias(page);
+  await capturar(page, 'admin-espera', 'claro');
 });
 
 test('a double Enter sends one adminLogin and waits for its answer', async ({ page }) => {
