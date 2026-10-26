@@ -12,6 +12,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -32,6 +33,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -39,7 +41,9 @@ import kotlinx.coroutines.launch
 /**
  * O serviço em primeiro plano que mantém a conta gravada registrada (spec 6.2 e 7.2), com a notificação fixa
  * (canal "conexao", importância baixa): o título é o do status que o app mostra ([App.status]: o da conta, com a
- * ligação e o Não perturbe), e tocar nela abre o app.
+ * ligação e o Não perturbe), e tocar nela abre o app. Os títulos vão na ordem ([ConnectionNotice], R23): a notificação
+ * de um startForeground chega à tela depois, pelo ActivityManager, e um título novo espera ela aparecer, para ela não
+ * ficar por cima dele.
  *
  * - Começa por [start] (ACTION_START): no fim do Entrar, ao abrir o app com a conta gravada, depois de ligar
  *   o celular e de atualizar o app ([BootReceiver]). O sistema também o recria sozinho depois de fechar o
@@ -76,6 +80,16 @@ class SipService : Service() {
     private var notifications: Job? = null   // só na thread principal
     private var inCall = false               // os tipos da ligação estão no serviço (só na thread principal)
     private var monitoring = false           // só na thread do serviço
+
+    // O título da notificação fixa, na ordem (R23): o notify de cada título novo, e a conferência da tela até a
+    // notificação mandada aparecer. Só na thread principal.
+    private var noticeWatch: Job? = null
+    private var noticeSentAt = 0L   // quando foi a última mandada (início ou notify)
+    private val notice = ConnectionNotice { title, seq ->
+        noticeSentAt = SystemClock.uptimeMillis()
+        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification(title, seq))
+        watchNotice()
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -114,9 +128,7 @@ class SipService : Service() {
         }
         if (notifications == null) {
             notifications = scope.launch {
-                app.status.map { it.notificationTitle }.distinctUntilChanged().collect { title ->
-                    getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification(title))
-                }
+                app.status.map { it.notificationTitle }.distinctUntilChanged().collect(notice::titleChanged)
             }
             // Os tipos da ligação entram e saem com ela.
             scope.launch {
@@ -186,7 +198,14 @@ class SipService : Service() {
         val call = app.calls.state.value?.usesMicrophone == true
         for (type in foregroundTypes(call)) {
             try {
-                ServiceCompat.startForeground(this, NOTIFICATION_ID, notification(app.status.value.notificationTitle), type)
+                val title = app.status.value.notificationTitle
+                val seq = notice.nextSeq()
+                ServiceCompat.startForeground(this, NOTIFICATION_ID, notification(title, seq), type)
+                // A notificação do início chega à tela depois, pelo ActivityManager: até ela aparecer, os títulos
+                // novos esperam (R23).
+                notice.started(seq, title)
+                noticeSentAt = SystemClock.uptimeMillis()
+                watchNotice()
                 inCall = call && type != foregroundTypes(false).single()
                 return true
             } catch (e: IllegalStateException) {
@@ -219,7 +238,35 @@ class SipService : Service() {
         }
     }
 
-    private fun notification(title: String): Notification {
+    // Confere a tela até a notificação mandada aparecer (R23): a de um início chega pelo ActivityManager, depois do que
+    // foi direto; a que não aparece em NOTICE_WAIT_MILLIS vai de novo, até NOTICE_RETRIES vezes (e o log de diagnóstico
+    // anota se nem assim). Só enquanto há uma a caminho: em geral, uma ou duas conferências.
+    private fun watchNotice() {
+        if (noticeWatch?.isActive == true) return
+        noticeWatch = scope.launch {
+            val manager = getSystemService(NotificationManager::class.java)
+            var retries = 0
+            while (notice.waiting) {
+                delay(NOTICE_CHECK_MILLIS)
+                notice.shown(shownSeq(manager))
+                if (!notice.waiting || SystemClock.uptimeMillis() - noticeSentAt < NOTICE_WAIT_MILLIS) continue
+                if (retries++ == NOTICE_RETRIES) {
+                    app.note("notificação fixa: o título \"${app.status.value.notificationTitle}\" não apareceu")
+                    break
+                }
+                noticeSentAt = SystemClock.uptimeMillis()
+                notice.timedOut()
+            }
+        }
+    }
+
+    // O número de ordem da notificação fixa na tela agora (null: nenhuma, ou uma sem ele).
+    private fun shownSeq(manager: NotificationManager): Long? =
+        manager.activeNotifications.firstOrNull { it.id == NOTIFICATION_ID && it.notification.channelId == CHANNEL_ID }
+            ?.notification?.extras?.takeIf { it.containsKey(EXTRA_SEQ) }?.getLong(EXTRA_SEQ)
+
+    // A notificação fixa com o [title] e o número de ordem [seq] (R23), nos extras.
+    private fun notification(title: String, seq: Long): Notification {
         val open = PendingIntent.getActivity(
             this,
             0,
@@ -240,6 +287,7 @@ class SipService : Service() {
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            .addExtras(Bundle().apply { putLong(EXTRA_SEQ, seq) })
             .build()
     }
 
@@ -325,5 +373,12 @@ class SipService : Service() {
 
         private const val STOP_WAIT_MILLIS = 10_000L
         private const val STOP_RETRY_MILLIS = 50L
+
+        // A conferência da notificação fixa na tela (R23): o número de ordem dela, de quanto em quanto tempo a tela é
+        // conferida, quanto a mandada pode demorar a aparecer antes de ir de novo e quantas vezes vai de novo.
+        private const val EXTRA_SEQ = "br.com.starsonic.phone.extra.ORDEM"
+        private const val NOTICE_CHECK_MILLIS = 100L
+        private const val NOTICE_WAIT_MILLIS = 3_000L
+        private const val NOTICE_RETRIES = 3
     }
 }
