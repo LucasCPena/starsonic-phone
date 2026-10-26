@@ -11,11 +11,16 @@ import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.util.DisplayMetrics
 import android.view.Display
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.junit4.ComposeTestRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.printToString
+import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
@@ -29,6 +34,7 @@ import java.io.IOException
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.net.Socket
+import org.junit.Assert.assertTrue
 
 /**
  * O andaime dos testes no emulador, com o motor de verdade e o registrador falso do CI rodando no computador
@@ -36,6 +42,9 @@ import java.net.Socket
  * registrar (o endereço do registrador), porta (a porta de controle dele) e senha (a senha que ele aceita).
  *
  * As esperas, quando falham, trazem o fim do log do motor e a tela.
+ *
+ * Nas telas do app: o menu do cabeçalho ([openMenu]), o texto de um campo ([editableText]) e a área de toque
+ * ([assertTouchAtLeast48]).
  *
  * Para os testes do visual: as fotos das telas ([saveScreen]), a tela, a letra e o tema do emulador (com o
  * [restoreLook]) e os contatos da agenda ([insertContact]).
@@ -174,6 +183,29 @@ class Emulator(private val compose: ComposeTestRule) {
             if (!multiLine) return@use listOfNotNull(reader.readLine())
             generateSequence { reader.readLine() }.takeWhile { it != "END" }.toList()
         }
+
+    /** Abre o menu do cabeçalho da tela principal e toca na linha [tag] dele (menu-configuracoes ou menu-sobre). */
+    fun openMenu(tag: String) {
+        waitUntil("o menu do cabeçalho") { showsTag("menu") }
+        compose.onNodeWithTag("menu").performClick()
+        waitUntil("o item $tag do menu") { showsTag(tag) }
+        compose.onNodeWithTag(tag).performClick()
+    }
+
+    /** O texto do campo [tag] (os da tela Entrar). */
+    fun editableText(tag: String): String =
+        compose.onNodeWithTag(tag).fetchSemanticsNode().config.getOrNull(SemanticsProperties.EditableText)?.text.orEmpty()
+
+    /** A área de toque do elemento [tag] tem pelo menos 48 × 48 dp (spec 3.3), mesmo com o desenho menor. */
+    fun assertTouchAtLeast48(tag: String) {
+        val node = compose.onNodeWithTag(tag).fetchSemanticsNode()
+        val minimum = with(node.layoutInfo.density) { 48.dp.toPx() }
+        val touch = node.touchBoundsInRoot
+        assertTrue(
+            "a área de toque de $tag tem ${touch.width} × ${touch.height} px (pelo menos $minimum)",
+            touch.width >= minimum - 0.5f && touch.height >= minimum - 0.5f,
+        )
+    }
 
     /** Pede o fim das MainActivity que ainda não acabaram (as de fora do ActivityScenario também) e diz quantas eram. */
     fun finishMainActivities(): Int {

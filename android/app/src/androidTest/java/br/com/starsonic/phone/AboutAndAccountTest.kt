@@ -4,8 +4,6 @@ import android.app.Activity
 import android.app.Instrumentation
 import android.content.Intent
 import android.net.Uri
-import androidx.compose.ui.semantics.SemanticsProperties
-import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
@@ -101,7 +99,7 @@ class AboutAndAccountTest {
     fun aboutLinksOpenTheSiteWhatsappTheDialerAndTheSourceCode() {
         // Nada abre de verdade: o pedido para fora do app fica no lugar.
         intending(not(isInternal())).respondWith(Instrumentation.ActivityResult(Activity.RESULT_OK, null))
-        openMenu("menu-sobre")
+        emulator.openMenu("menu-sobre")
         emulator.waitForText("starsonic.com.br")
         emulator.waitForText("(11) 5060-3000")
         click("site")
@@ -116,7 +114,7 @@ class AboutAndAccountTest {
 
     @Test
     fun aboutShowsVersionLicenseAndCredits() {
-        openMenu("menu-sobre")
+        emulator.openMenu("menu-sobre")
         // A versão do build (0.0.0 no CI).
         emulator.waitForText("Starsonic Phone ${BuildConfig.VERSION_NAME}")
         emulator.waitForText("Licença GPL v3")
@@ -132,7 +130,7 @@ class AboutAndAccountTest {
         compose.onNodeWithTag("servidor").assert(hasText(emulator.registrar))
         compose.onNodeWithText("TCP").assertExists()
         compose.onNodeWithTag("ramal").assert(hasText("2001"))
-        assertEquals("a senha vazia", "", editableText("senha"))
+        assertEquals("a senha vazia", "", emulator.editableText("senha"))
         // A conta nova vai por UDP: o status só volta a "Conectado" se o serviço passar a segurar a conta nova.
         compose.onNodeWithTag("protocolo").performClick()
         compose.onNodeWithText("UDP").performClick()
@@ -157,7 +155,7 @@ class AboutAndAccountTest {
             compose.onNodeWithTag("aviso").assert(hasText("Ramal ou senha incorretos."))
             compose.onNodeWithTag("servidor").assert(hasText(emulator.registrar))
             compose.onNodeWithTag("ramal").assert(hasText("2001"))
-            assertEquals("a senha vazia", "", editableText("senha"))
+            assertEquals("a senha vazia", "", emulator.editableText("senha"))
             assertEquals("a conta continua gravada", account, app.store.load())
             assertTrue("o serviço continua de pé", SipService.running)
             // Uma vez por falha: quem sai da tela não volta para ela até uma falha nova.
@@ -257,7 +255,7 @@ class AboutAndAccountTest {
     @Test
     fun sendDiagnosticsOpensTheShareSheetWithoutThePassword() {
         intending(hasAction(Intent.ACTION_CHOOSER)).respondWith(Instrumentation.ActivityResult(Activity.RESULT_OK, null))
-        openMenu("menu-sobre")
+        emulator.openMenu("menu-sobre")
         emulator.waitUntil("o Enviar diagnóstico") { emulator.showsTag("enviar-diagnostico") }
         click("enviar-diagnostico")
         val chooser = sentIntent(Intent.ACTION_CHOOSER)
@@ -301,7 +299,7 @@ class AboutAndAccountTest {
         openAccount("config-sair")
         compose.onNodeWithTag("sair-confirmar").performClick()
         emulator.waitUntil("a tela Entrar") { emulator.showsTag("entrar") }
-        assertEquals("o ramal vazio", "", editableText("ramal"))
+        assertEquals("o ramal vazio", "", emulator.editableText("ramal"))
         emulator.waitUntil("o serviço parar") { !SipService.running }
         emulator.waitUntil("a notificação fixa sair") { emulator.connectionNotificationTitle() == null }
         assertNull("a conta e a senha saíram", app.store.load())
@@ -312,17 +310,9 @@ class AboutAndAccountTest {
         assertEquals("o contato do ramal no registrador", "ERR no-contact", emulator.control("RING 2001"))
     }
 
-    // Abre o menu do cabeçalho e toca no item [tag] (menu-configuracoes ou menu-sobre).
-    private fun openMenu(tag: String) {
-        emulator.waitUntil("o menu do cabeçalho") { emulator.showsTag("menu") }
-        compose.onNodeWithTag("menu").performClick()
-        emulator.waitUntil("o item $tag do menu") { emulator.showsTag(tag) }
-        compose.onNodeWithTag(tag).performClick()
-    }
-
     // Abre as Configurações pelo menu e toca na linha [tag] da Conta (config-editar ou config-sair).
     private fun openAccount(tag: String) {
-        openMenu("menu-configuracoes")
+        emulator.openMenu("menu-configuracoes")
         emulator.waitUntil("as Configurações") { emulator.showsTag(tag) }
         compose.onNodeWithTag(tag).performClick()
     }
@@ -330,10 +320,6 @@ class AboutAndAccountTest {
     private fun click(tag: String) {
         compose.onNodeWithTag(tag).performScrollTo().performClick()
     }
-
-    // O texto de um campo da tela Entrar.
-    private fun editableText(tag: String): String =
-        compose.onNodeWithTag(tag).fetchSemanticsNode().config.getOrNull(SemanticsProperties.EditableText)?.text.orEmpty()
 
     // O último pedido com [action] que o app mandou (o Espresso-Intents guarda todos e os lê na thread principal); o
     // compartilhar sai de uma coroutine, depois de o arquivo ser lido fora da thread principal.

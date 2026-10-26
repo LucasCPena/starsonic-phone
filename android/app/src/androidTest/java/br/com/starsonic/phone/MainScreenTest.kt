@@ -30,7 +30,6 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.text.TextLayoutResult
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.toSize
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -130,8 +129,8 @@ class MainScreenTest {
         compose.onNodeWithTag(DND).assertIsOff()
         compose.onNodeWithTag(AUTO).assertIsOff()
         // As pílulas parecem menores (36 dp), mas o toque tem 48; o botão do menu (44) também.
-        assertTouchAtLeast48(DND)
-        assertTouchAtLeast48("menu")
+        emulator.assertTouchAtLeast48(DND)
+        emulator.assertTouchAtLeast48("menu")
         // Não perturbe ligado: a pílula, a bolinha vermelha com a linha dela, a notificação fixa e a configuração gravada.
         compose.onNodeWithTag(DND).performClick()
         compose.onNodeWithTag(DND).assertIsOn()
@@ -162,7 +161,7 @@ class MainScreenTest {
     fun rediscarIsDisabledUntilACallIsMadeThenDialsTheLastOne() {
         open()
         compose.onNodeWithTag(REDIAL).performScrollTo().assertIsNotEnabled().assertContentDescriptionEquals("Rediscar")
-        assertTouchAtLeast48(REDIAL)
+        emulator.assertTouchAtLeast48(REDIAL)
         var before = emulator.callLog().size
         dial("2002")
         waitForLog(before, "inv-in 2002 200")
@@ -209,7 +208,7 @@ class MainScreenTest {
         emulator.waitForText("${emulator.registrar} · TCP")
         assertTrue("o ramal", emulator.showsText("2001"))
         compose.onNodeWithTag("config-editar").assertContentDescriptionEquals("Editar conta")
-        assertTouchAtLeast48("config-editar")
+        emulator.assertTouchAtLeast48("config-editar")
         assertTrue("o Sair da conta", emulator.showsText("Sair da conta"))
         assertTrue("a ajuda do Sair", emulator.showsText("O celular deixa de receber as ligações do ramal."))
         emulator.saveScreen("configuracoes-conta-claro.png")
@@ -465,17 +464,6 @@ class MainScreenTest {
         } catch (e: IllegalStateException) {
             false   // sem nenhuma tela do Compose na frente
         }
-
-    // A área de toque do elemento [tag] tem pelo menos 48 × 48 dp (spec 3.3), mesmo com o desenho menor.
-    private fun assertTouchAtLeast48(tag: String) {
-        val node = compose.onNodeWithTag(tag).fetchSemanticsNode()
-        val minimum = with(node.layoutInfo.density) { 48.dp.toPx() }
-        val touch = node.touchBoundsInRoot
-        assertTrue(
-            "a área de toque de $tag tem ${touch.width} × ${touch.height} px (pelo menos $minimum)",
-            touch.width >= minimum - 0.5f && touch.height >= minimum - 0.5f,
-        )
-    }
 
     // O lugar inteiro do elemento [tag] na tela (também a parte que a rolagem esconde).
     private fun layoutBounds(tag: String): Rect =
