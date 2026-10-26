@@ -14,6 +14,7 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.filterToOne
 import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasTestTag
@@ -58,12 +59,13 @@ import org.junit.runners.MethodSorters
 /**
  * A tela principal no visual do Windows, no emulador (spec 3 a 7 e 11), com o motor de verdade e o registrador falso do
  * CI (ver [Emulator] e o CallFlowTest): as pílulas Não perturbe e Atender automático (a linha do status e a notificação
- * fixa), o Rediscar, o menu (Configurações e Sobre), a letra do celular no máximo numa tela pequena (Review Focus 5) e os
- * temas claro e escuro.
+ * fixa), o Rediscar, o menu (Configurações e Sobre), a letra do celular no máximo numa tela pequena (Review Focus 5; e,
+ * com ela, o número longo, o menu e os filtros do Recentes, R24) e os temas claro e escuro.
  *
  * As fotos (R19): os testes dos temas, do menu e da letra grande guardam a tela inteira ([Emulator.saveScreen]) para a
  * conferência com os quadros do canvas; os dos temas e o do menu numa tela do tamanho dos quadros (390 × 844 dp), os dos
- * temas com os contatos e os Recentes dos quadros. Os outros rodam na tela do emulador do CI (320 × 640 dp).
+ * temas com os contatos e os Recentes dos quadros. Os outros rodam na tela do emulador do CI (320 × 640 dp), ou na que
+ * eles mesmos põem.
  *
  * Cada teste começa com a conta gravada por TCP (o CI confere que o último REGISTER aceito veio por TCP), os Recentes
  * vazios e o Não perturbe e o Atender automático desligados; o fim devolve as configurações de ligação, a tela, a letra
@@ -244,15 +246,8 @@ class MainScreenTest {
         }
         assertNoOverlap(tabs)
         // O nome de cada aba numa linha só, inteiro e dentro da aba: com a letra grande, ele encolhe em vez de quebrar no
-        // meio da palavra. A falha mostra as três.
-        val labels = TABS.zip(TAB_LABELS).map { (tag, label) ->
-            val node = compose.onNodeWithTag(tag, useUnmergedTree = true).onChildren().filterToOne(hasText(label))
-            val layout = textLayout(node)
-            val bounds = node.fetchSemanticsNode().let { Rect(it.positionInRoot, it.size.toSize()) }
-            val whole = layout.lineCount == 1 && layout.getLineEnd(0) == label.length && isInside(bounds, tabs.getValue(tag))
-            whole to "\"$label\": ${layout.lineCount} linha(s), a primeira até ${layout.getLineEnd(0)} de ${label.length}, em $bounds"
-        }
-        assertTrue("os nomes das abas: ${labels.joinToString { it.second }}", labels.all { it.first })
+        // meio da palavra.
+        assertLabelsWhole("os nomes das abas", TABS.zip(TAB_LABELS))
         emulator.saveScreen("teclado-letra-grande.png")
         // As 12 teclas, o Rediscar e o Ligar: cada um aparece inteiro entre o cabeçalho e a navegação, rolando o Teclado.
         val body = Rect(header.left, header.bottom, header.right, nav.top)
@@ -265,6 +260,59 @@ class MainScreenTest {
         // E nada do Teclado por cima de nada (todos na mesma rolagem).
         assertNoOverlap((listOf("numero", "apagar") + KEYS.map { "tecla-$it" } + listOf(REDIAL, "ligar")).associateWith(::layoutBounds))
         emulator.saveScreen("teclado-letra-grande-fim.png")
+    }
+
+    @Test
+    fun aLongNumberShowsItsLastDigitsAtTheLargestFontScale() {
+        // R24, na tela de 360 × 640 dp com a maior letra: o número que não cabe mostra os últimos dígitos digitados, com
+        // a reticência no começo (no Windows, o campo rola até o cursor).
+        emulator.useDisplay(720, 1280, 320)
+        emulator.setFontScale(2.0f)
+        open()
+        val number = "1234567890123456"
+        for (digit in number) compose.onNodeWithTag("tecla-$digit").performScrollTo().performClick()
+        compose.onNodeWithTag("numero").performScrollTo().assertTextEquals(number)
+        val typed = textLayout(compose.onNodeWithTag("numero"))
+        assertEquals("o número numa linha", 1, typed.lineCount)
+        assertEquals("o último dígito à vista", number.length, typed.getLineEnd(0, visibleEnd = true))
+        emulator.saveScreen("numero-letra-grande.png")
+    }
+
+    @Test
+    fun theMenuGrowsWithItsTextAtTheLargestFontScale() {
+        // R24, na tela de 360 × 640 dp com a maior letra: o menu cresce com o texto (com pelo menos a largura do quadro),
+        // e "Configurações" não quebra no meio da palavra.
+        emulator.useDisplay(720, 1280, 320)
+        emulator.setFontScale(2.0f)
+        open()
+        compose.onNodeWithTag("menu").performClick()
+        emulator.waitUntil("o menu aberto") { emulator.showsTag("menu-configuracoes") && emulator.showsTag("menu-sobre") }
+        assertLabelsWhole("as linhas do menu", listOf("menu-configuracoes" to "Configurações", "menu-sobre" to "Sobre"))
+        emulator.saveScreen("menu-letra-grande.png")
+        device.pressBack()
+        emulator.waitUntil("o menu fechado") { !emulator.showsTag("menu-sobre") }
+    }
+
+    @Test
+    fun theRecentsFiltersWrapAtTheLargestFontScale() {
+        // R24: com a maior letra, "Todas" e "Perdidas · 12" não cabem lado a lado na tela de 320 dp, a do emulador do CI
+        // (na de 360 dp, até "Perdidas · 200" cabe): a segunda pílula desce, inteira.
+        emulator.useDisplay(640, 1280, 320)
+        emulator.setFontScale(2.0f)
+        val now = System.currentTimeMillis()
+        repeat(12) { app.recents.add(Recent("3001", "", CallKind.PERDIDA, now - it * 60_000L, 0)) }
+        open()
+        compose.onNodeWithTag("aba-recentes").performClick()
+        emulator.waitUntil("os filtros") { emulator.showsTag("filtro-perdidas") }
+        val filters = listOf("filtro-todas" to "Todas", "filtro-perdidas" to "Perdidas · 12")
+        assertLabelsWhole("os filtros", filters)
+        val pills = filters.map { it.first }.associateWith(::layoutBounds)
+        assertNoOverlap(pills)
+        val screen = layoutBounds("navegacao")
+        for ((tag, bounds) in pills) {
+            assertTrue("$tag ($bounds) na largura da tela ($screen)", bounds.left >= screen.left - EPSILON && bounds.right <= screen.right + EPSILON)
+        }
+        emulator.saveScreen("recentes-letra-grande.png")
     }
 
     @Test
@@ -432,6 +480,19 @@ class MainScreenTest {
     private fun widthDp(tag: String): Float {
         val node = compose.onNodeWithTag(tag).fetchSemanticsNode()
         return with(node.layoutInfo.density) { node.size.width.toDp().value }
+    }
+
+    // Cada texto (o segundo do par) dentro do elemento com a etiqueta (o primeiro) numa linha só, inteiro e dentro dele: a
+    // letra grande não o quebra nem o corta. A falha descreve cada um.
+    private fun assertLabelsWhole(what: String, labels: List<Pair<String, String>>) {
+        val found = labels.map { (tag, label) ->
+            val node = compose.onNodeWithTag(tag, useUnmergedTree = true).onChildren().filterToOne(hasText(label))
+            val layout = textLayout(node)
+            val bounds = node.fetchSemanticsNode().let { Rect(it.positionInRoot, it.size.toSize()) }
+            val whole = layout.lineCount == 1 && layout.getLineEnd(0) == label.length && isInside(bounds, layoutBounds(tag))
+            whole to "\"$label\": ${layout.lineCount} linha(s), a primeira até ${layout.getLineEnd(0)} de ${label.length}, em $bounds"
+        }
+        assertTrue("$what: ${found.joinToString { it.second }}", found.all { it.first })
     }
 
     // O texto do nó [node] como foi desenhado (as linhas e o corte).
