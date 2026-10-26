@@ -264,14 +264,27 @@ fun DialKey(digit: String, letters: String, tag: String, modifier: Modifier = Mo
     }
 }
 
-/** A altura, a letra e o ícone de um botão em pílula: o .btn (48 dp) ou o .btn-call do Ligar (58 dp, tudo maior). */
-enum class ButtonSize(internal val height: Dp, internal val fontSize: TextUnit, internal val iconSize: Dp) {
-    Regular(48.dp, 15.sp, 16.dp),
-    Call(58.dp, 16.sp, 20.dp),
+/** A altura, a letra, o ícone e o respiro dos lados de um botão em pílula, nas medidas do canvas. */
+enum class ButtonSize(internal val height: Dp, internal val fontSize: TextUnit, internal val iconSize: Dp, internal val padding: Dp) {
+    /** O .btn: 48 dp (o Enviar diagnóstico). */
+    Regular(48.dp, 15.sp, 16.dp, 22.dp),
+
+    /** O Entrar e o Continuar, mais altos (height: 54px). */
+    Large(54.dp, 15.sp, 16.dp, 22.dp),
+
+    /** O Abrir ajustes das Permissões, mais baixo (height: 42px). */
+    Small(42.dp, 15.sp, 16.dp, 22.dp),
+
+    /** O Permitir das Permissões (40 dp, 16 dos lados e a letra de 13,5) e os botões das janelas de confirmação. */
+    Compact(40.dp, 13.5.sp, 16.dp, 16.dp),
+
+    /** O .btn-call do Ligar: 58 dp, tudo maior. */
+    Call(58.dp, 16.sp, 20.dp, 22.dp),
 }
 
 /**
- * O botão ciano (o .btn-cyan do canvas: o Ligar, o Entrar e o Continuar), com o texto escuro e a sombra ciano.
+ * O botão ciano (o .btn-cyan do canvas: o Ligar, o Entrar e o Continuar), com o texto escuro e a sombra ciano; o
+ * [icon] vai antes do texto e o [trailingIcon], depois (a seta do Entrar).
  * Desligado, o do Windows (.btn-cyan:disabled): o ciano escuro (cyan-d), sem a sombra e sem apagar.
  */
 @Composable
@@ -280,42 +293,54 @@ fun CyanButton(
     tag: String,
     modifier: Modifier = Modifier,
     icon: ImageVector? = null,
+    trailingIcon: ImageVector? = null,
     enabled: Boolean = true,
     size: ButtonSize = ButtonSize.Regular,
     onClick: () -> Unit,
 ) {
     val container = if (enabled) Starsonic.Cyan else Starsonic.CyanDark
-    PillButton(text, icon, tag, enabled, modifier, size, container, Starsonic.OnCyan, null, CyanShadow, fadeWhenDisabled = false, onClick)
+    PillButton(
+        text, icon, trailingIcon, tag, enabled, modifier, size, container, Starsonic.OnCyan, null, CyanShadow,
+        fadeWhenDisabled = false, onClick,
+    )
 }
 
-/** O botão azul (o .btn-blue do canvas: o Permitir), com o texto branco, igual nos dois temas. */
+/** O botão azul (o .btn-blue do canvas: o Permitir), com o texto branco, igual nos dois temas; os ícones como no [CyanButton]. */
 @Composable
 fun BlueButton(
     text: String,
     tag: String,
     modifier: Modifier = Modifier,
     icon: ImageVector? = null,
+    trailingIcon: ImageVector? = null,
     enabled: Boolean = true,
     size: ButtonSize = ButtonSize.Regular,
     onClick: () -> Unit,
 ) {
-    PillButton(text, icon, tag, enabled, modifier, size, Starsonic.Blue, Starsonic.White, null, null, fadeWhenDisabled = true, onClick)
+    PillButton(
+        text, icon, trailingIcon, tag, enabled, modifier, size, Starsonic.Blue, Starsonic.White, null, null,
+        fadeWhenDisabled = true, onClick,
+    )
 }
 
-/** O botão de contorno (o .btn-outline do canvas: o Enviar diagnóstico e o Abrir ajustes), sem fundo. */
+/** O botão de contorno (o .btn-outline do canvas: o Enviar diagnóstico e o Abrir ajustes), sem fundo; os ícones como no [CyanButton]. */
 @Composable
 fun OutlineButton(
     text: String,
     tag: String,
     modifier: Modifier = Modifier,
     icon: ImageVector? = null,
+    trailingIcon: ImageVector? = null,
     enabled: Boolean = true,
     size: ButtonSize = ButtonSize.Regular,
     onClick: () -> Unit,
 ) {
     val colors = LocalStarsonicColors.current
     val border = BorderStroke(1.5.dp, colors.border)
-    PillButton(text, icon, tag, enabled, modifier, size, Color.Transparent, colors.textStrong, border, null, fadeWhenDisabled = true, onClick)
+    PillButton(
+        text, icon, trailingIcon, tag, enabled, modifier, size, Color.Transparent, colors.textStrong, border, null,
+        fadeWhenDisabled = true, onClick,
+    )
 }
 
 /**
@@ -385,6 +410,25 @@ fun Avatar(initials: String, modifier: Modifier = Modifier, size: Dp = 36.dp) {
         contentAlignment = Alignment.Center,
     ) {
         Text(initials, style = AvatarLetters, color = Color.White, maxLines = 1)
+    }
+}
+
+/**
+ * O quadrado de um ícone (o .tile do canvas: as linhas do Sobre e das Permissões): o fundo ciano claro e o [icon] na cor
+ * dos ícones, no quadrado de [size] com os cantos de [corner] e o ícone de [iconSize] (40, 12 e 20 do canvas; 36, 11 e
+ * 16 no Sobre). É enfeite: o texto ao lado diz o que é.
+ */
+@Composable
+fun IconTile(icon: ImageVector, modifier: Modifier = Modifier, size: Dp = 40.dp, corner: Dp = 12.dp, iconSize: Dp = 20.dp) {
+    val colors = LocalStarsonicColors.current
+    Box(
+        modifier
+            .size(size)
+            .clip(RoundedCornerShape(corner))
+            .background(colors.iconTile),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(icon, contentDescription = null, tint = colors.icon, modifier = Modifier.size(iconSize))
     }
 }
 
@@ -497,12 +541,12 @@ fun ListGroupTitle(text: String, modifier: Modifier = Modifier) {
 }
 
 /**
- * O rótulo de uma seção (o .eyebrow do canvas): o traço ciano e o [text] em maiúsculas, espaçado. O leitor de tela o
- * lê como está escrito ([text], sem as maiúsculas) e como um título.
+ * O rótulo de uma seção (o .eyebrow do canvas): o traço ciano e o [text] em maiúsculas, espaçado, na [color] (a do
+ * destaque; no cabeçalho escuro do Entrar, o ciano). O leitor de tela o lê como está escrito ([text], sem as
+ * maiúsculas) e como um título.
  */
 @Composable
-fun Eyebrow(text: String, modifier: Modifier = Modifier) {
-    val colors = LocalStarsonicColors.current
+fun Eyebrow(text: String, modifier: Modifier = Modifier, color: Color = LocalStarsonicColors.current.accentText) {
     Row(
         modifier.clearAndSetSemantics {
             this.text = AnnotatedString(text)
@@ -512,13 +556,17 @@ fun Eyebrow(text: String, modifier: Modifier = Modifier) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(Modifier.size(width = 26.dp, height = 2.dp).background(Starsonic.Cyan, RoundedCornerShape(2.dp)))
-        Text(text.uppercase(), style = EyebrowLabel, color = colors.accentText)
+        Text(text.uppercase(), style = EyebrowLabel, color = color)
     }
 }
 
-/** Um cartão de linhas (o .card do canvas: as seções de Configurações, do Sobre e das Permissões), de cantos de 18 dp. */
+/**
+ * Um cartão de linhas (o .card do canvas: as seções de Configurações, do Sobre e das Permissões), de cantos de 18 dp, 16
+ * dp dos lados e [verticalPadding] em cima e embaixo (4 nos cartões de linhas; 14 no cartão do fabricante, nas
+ * Permissões).
+ */
 @Composable
-fun SettingsCard(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
+fun SettingsCard(modifier: Modifier = Modifier, verticalPadding: Dp = 4.dp, content: @Composable ColumnScope.() -> Unit) {
     val colors = LocalStarsonicColors.current
     val shape = RoundedCornerShape(18.dp)
     Column(
@@ -527,15 +575,15 @@ fun SettingsCard(modifier: Modifier = Modifier, content: @Composable ColumnScope
             .clip(shape)
             .background(colors.card)
             .border(Hairline, colors.border, shape)
-            .padding(horizontal = Hairline + 16.dp, vertical = Hairline + 4.dp),
+            .padding(horizontal = Hairline + 16.dp, vertical = Hairline + verticalPadding),
         content = content,
     )
 }
 
 /**
- * Uma linha de um [SettingsCard] (o .set-row do canvas): pelo menos 56 dp, o [leading] (a bolinha, um ícone), o
- * [title] com a [help] embaixo e o [trailing] (uma chave, a escolha, a seta). A linha embaixo dela separa da próxima: a
- * última do cartão ([last]) vai sem. Com [onClick], a linha toda é o botão (Sair da conta, Permissões e bateria).
+ * Uma linha de um [SettingsCard] (o .set-row do canvas) com o [title] (o .set-title) e a [help] embaixo (o .set-help);
+ * o resto como na [SettingRow] de textos livres. Com [onClick], a linha toda é o botão (Sair da conta, Tempo para
+ * atender, Permissões e bateria).
  */
 @Composable
 fun SettingRow(
@@ -545,15 +593,40 @@ fun SettingRow(
     help: String? = null,
     last: Boolean = false,
     onClick: (() -> Unit)? = null,
+    role: Role = Role.Button,
     leading: (@Composable () -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
+) {
+    val colors = LocalStarsonicColors.current
+    SettingRow(tag, modifier, last, onClick, role, leading, trailing) {
+        Text(title, style = SetTitle, color = colors.textStrong)
+        if (help != null) Text(help, style = SetHelp, color = colors.textMuted)
+    }
+}
+
+/**
+ * Uma linha de um [SettingsCard] (o .set-row do canvas) com os textos livres do meio ([content], um embaixo do outro, 3
+ * dp entre eles: os do Sobre e os avisos das Permissões): pelo menos 56 dp, o [leading] (a bolinha, um ícone, o quadrado
+ * do ícone) e o [trailing] (uma chave, a escolha, a seta, um botão). A linha embaixo dela separa da próxima: a última do
+ * cartão ([last]) vai sem. Com [onClick], a linha toda é o botão, com o papel [role] para o leitor de tela.
+ */
+@Composable
+fun SettingRow(
+    tag: String,
+    modifier: Modifier = Modifier,
+    last: Boolean = false,
+    onClick: (() -> Unit)? = null,
+    role: Role = Role.Button,
+    leading: (@Composable () -> Unit)? = null,
+    trailing: (@Composable () -> Unit)? = null,
+    content: @Composable ColumnScope.() -> Unit,
 ) {
     val colors = LocalStarsonicColors.current
     Row(
         modifier
             .fillMaxWidth()
             .heightIn(min = 56.dp)
-            .then(if (onClick != null) Modifier.clickable(role = Role.Button, onClick = onClick) else Modifier)
+            .then(if (onClick != null) Modifier.clickable(role = role, onClick = onClick) else Modifier)
             .testTag(tag)
             .then(
                 if (last) {
@@ -571,15 +644,13 @@ fun SettingRow(
     ) {
         leading?.invoke()
         Column(
-            // Sem o clique na linha, o título e a ajuda são lidos juntos; com ele, eles são o nome do botão.
+            // Sem o clique na linha, os textos são lidos juntos; com ele, eles são o nome do botão.
             Modifier
                 .weight(1f)
                 .then(if (onClick == null) Modifier.semantics(mergeDescendants = true) {} else Modifier),
             verticalArrangement = Arrangement.spacedBy(3.dp),
-        ) {
-            Text(title, style = SetTitle, color = colors.textStrong)
-            if (help != null) Text(help, style = SetHelp, color = colors.textMuted)
-        }
+            content = content,
+        )
         trailing?.invoke()
     }
 }
@@ -703,13 +774,15 @@ private fun NavTab(label: String, icon: ImageVector, tag: String, on: Boolean, m
     }
 }
 
-// O .btn do canvas: a pílula de [size] com o [icon] (opcional) antes do [text], 22 dp dos lados e 9 entre os dois; o
-// [border] fica por dentro (border-box). Desligado, sem a sombra e, com [fadeWhenDisabled], apagado (a opacidade do
-// Windows); o ciano desligado troca de cor em vez de apagar ([CyanButton]).
+// O .btn do canvas: a pílula de [size] com o [icon] antes do [text] e o [trailingIcon] depois dele (os dois opcionais),
+// o respiro de [size] dos lados e 9 dp entre as partes; o [border] fica por dentro (border-box). Desligado, sem a sombra
+// e, com [fadeWhenDisabled], apagado (a opacidade do Windows); o ciano desligado troca de cor em vez de apagar
+// ([CyanButton]).
 @Composable
 private fun PillButton(
     text: String,
     icon: ImageVector?,
+    trailingIcon: ImageVector?,
     tag: String,
     enabled: Boolean,
     modifier: Modifier,
@@ -732,12 +805,13 @@ private fun PillButton(
                 .then(if (border != null) Modifier.border(border, CircleShape) else Modifier)
                 .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
                 .testTag(tag)
-                .padding(horizontal = (border?.width ?: 0.dp) + 22.dp),
+                .padding(horizontal = (border?.width ?: 0.dp) + size.padding),
             horizontalArrangement = Arrangement.spacedBy(9.dp, Alignment.CenterHorizontally),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (icon != null) Icon(icon, contentDescription = null, modifier = Modifier.size(size.iconSize))
             Text(text, style = ButtonLabel.copy(fontSize = size.fontSize), textAlign = TextAlign.Center)
+            if (trailingIcon != null) Icon(trailingIcon, contentDescription = null, modifier = Modifier.size(size.iconSize))
         }
     }
 }
@@ -748,11 +822,11 @@ internal fun Modifier.bottomLine(color: Color): Modifier = drawBehind {
     drawRect(color, topLeft = Offset(0f, size.height - line), size = Size(size.width, line))
 }
 
-// O fundo escuro da marca: o gradient-hero com o brilho ciano, o círculo de [glowSize] do ::after do canvas, que passa
-// [glowRight] da borda direita e [glowTop] do alto (o right e o top do CSS: negativos, para fora da caixa). O brilho é
-// o [glow] no centro e some a 62% do raio (o radial-gradient(circle, …) vai até o canto do quadrado do círculo), dentro
-// da caixa (o overflow: hidden).
-private fun Modifier.hero(glowSize: Dp, glowRight: Dp, glowTop: Dp, glow: Color): Modifier =
+// O fundo escuro da marca (o cabeçalho, as barras escuras e o cabeçalho do Entrar): o gradient-hero com o brilho ciano,
+// o círculo de [glowSize] do ::after do canvas, que passa [glowRight] da borda direita e [glowTop] do alto (o right e o
+// top do CSS: negativos, para fora da caixa). O brilho é o [glow] no centro e some a 62% do raio (o
+// radial-gradient(circle, …) vai até o canto do quadrado do círculo), dentro da caixa (o overflow: hidden).
+internal fun Modifier.hero(glowSize: Dp, glowRight: Dp, glowTop: Dp, glow: Color): Modifier =
     background(Starsonic.HeroGradient).drawWithCache {
         val diameter = glowSize.toPx()
         val center = Offset(size.width - glowRight.toPx() - diameter / 2, glowTop.toPx() + diameter / 2)

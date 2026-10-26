@@ -6,20 +6,19 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -31,33 +30,47 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
-import br.com.starsonic.phone.main.Band
+import br.com.starsonic.phone.ui.BlueButton
+import br.com.starsonic.phone.ui.ButtonSize
+import br.com.starsonic.phone.ui.CyanButton
+import br.com.starsonic.phone.ui.DarkBar
+import br.com.starsonic.phone.ui.Eyebrow
+import br.com.starsonic.phone.ui.IconTile
 import br.com.starsonic.phone.ui.LocalStarsonicColors
+import br.com.starsonic.phone.ui.OutlineButton
 import br.com.starsonic.phone.ui.PlusJakartaSans
+import br.com.starsonic.phone.ui.SettingRow
+import br.com.starsonic.phone.ui.SettingsCard
 import br.com.starsonic.phone.ui.Starsonic
 import br.com.starsonic.phone.ui.StarsonicIcons
 
 /**
- * A tela Permissões (spec 4.1 e 7.1 item 4), depois de um Entrar que começou sem conta gravada. Mostra só o
- * que falta, cada item explicado pelo aviso dele na faixa, com "Permitir", que abre a janela do próprio
- * Android: o pedido das notificações e do microfone (a partir do segundo toque, que o Android pode não mostrar
- * mais, a página do app), o ajuste da tela cheia e o pedido para sair da otimização de bateria. Em Xiaomi e
- * Samsung, o passo a passo dos ajustes do fabricante, com "Abrir ajustes" (a página do app). "Continuar" segue
- * para a tela principal; sem nada que falte nem passo a passo, ela segue sozinha.
+ * A tela Permissões (spec 3.4, 4.1 e 7.1 item 4, os quadros Permissoes e PermissoesEscuro do canvas): a barra escura com
+ * o Voltar e, em "Para as ligações chegarem", os quatro avisos, cada um explicado pelo texto dele na faixa: o que falta
+ * com "Permitir", que abre a janela do próprio Android (o pedido das notificações e do microfone, que, a partir do
+ * segundo toque, o Android pode não mostrar mais: aí, a página do app; o ajuste da tela cheia; o pedido para sair da
+ * otimização de bateria), e o que já está dado com o sinal de feito. Em Xiaomi e Samsung, o cartão com o passo a passo
+ * dos ajustes do fabricante e "Abrir ajustes" (a página do app). No fim, "Continuar".
  *
- * [resumes] muda a cada volta ao app (ON_RESUME): a tela confere de novo o que falta.
+ * Ela abre depois de um Entrar que começou sem conta gravada ([continuesAlone]: sem nada que falte nem passo a passo,
+ * ela segue sozinha) e por Configurações → Permissões e bateria (fica até a pessoa sair). O Voltar, o voltar do Android
+ * (na activity) e o Continuar levam a [onContinue]. [resumes] muda a cada volta ao app (ON_RESUME): a tela confere de
+ * novo o que falta.
  */
 @Composable
-fun PermissionsScreen(status: String, resumes: Int, guide: Guide, onContinue: () -> Unit) {
+fun PermissionsScreen(resumes: Int, guide: Guide, continuesAlone: Boolean, onContinue: () -> Unit) {
     val context = LocalContext.current
+    val colors = LocalStarsonicColors.current
     val grants = remember(resumes) { Grants.read(context) }
     val missing = grants.missing
     var askedNotifications by rememberSaveable { mutableStateOf(false) }
@@ -66,8 +79,8 @@ fun PermissionsScreen(status: String, resumes: Int, guide: Guide, onContinue: ()
     val requestNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
     val requestMicrophone = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
 
-    LaunchedEffect(missing, guide) {
-        if (missing.isEmpty() && guide == Guide.GENERIC) onContinue()
+    LaunchedEffect(missing, guide, continuesAlone) {
+        if (continuesAlone && missing.isEmpty() && guide == Guide.GENERIC) onContinue()
     }
 
     val allow: (Banner) -> Unit = { banner ->
@@ -84,44 +97,97 @@ fun PermissionsScreen(status: String, resumes: Int, guide: Guide, onContinue: ()
         }
     }
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        Band(status = status)
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .navigationBarsPadding()
-                .padding(horizontal = 24.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text(TITLE, style = MaterialTheme.typography.titleLarge)
-            for (banner in missing) {
-                Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(banner.text, style = MaterialTheme.typography.bodyLarge)
-                        Button(onClick = { allow(banner) }, modifier = Modifier.testTag("permitir-${banner.name}")) {
-                            Text(ALLOW)
+    Column(Modifier.fillMaxSize().background(colors.surface)) {
+        DarkBar(TITLE, onBack = onContinue)
+        BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
+            // A coluna tem pelo menos a altura da tela: o Continuar fica no fim dela (o margin-top: auto do canvas); sem
+            // espaço, a tela rola.
+            val screen = maxHeight
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .heightIn(min = screen)
+                    .navigationBarsPadding()
+                    .padding(start = 20.dp, top = 18.dp, end = 20.dp, bottom = 14.dp),
+                verticalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Eyebrow(SECTION)
+                    SettingsCard {
+                        Banner.entries.forEachIndexed { index, banner ->
+                            PermissionRow(banner, allowed = banner !in missing, last = index == Banner.entries.lastIndex) {
+                                allow(banner)
+                            }
                         }
                     }
+                    if (guide != Guide.GENERIC) GuideCard(guide) { openSettings(context, appDetailsIntent(context)) }
                 }
-            }
-            if (guide != Guide.GENERIC) {
-                Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(guide.title, style = MaterialTheme.typography.bodyLarge)
-                        guide.steps.forEachIndexed { index, step ->
-                            Text("${index + 1}. $step", style = MaterialTheme.typography.bodyMedium)
-                        }
-                        OutlinedButton(onClick = { openSettings(context, appDetailsIntent(context)) }) {
-                            Text(OPEN_SETTINGS)
-                        }
-                    }
-                }
-            }
-            Button(onClick = onContinue, modifier = Modifier.fillMaxWidth().testTag("continuar")) {
-                Text(CONTINUE)
+                CyanButton(
+                    CONTINUE,
+                    tag = "continuar",
+                    size = ButtonSize.Large,
+                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                    onClick = onContinue,
+                )
             }
         }
     }
+}
+
+// Um aviso (o .set-row do quadro, etiqueta permissao-<aviso>): o quadrado do ícone, o texto dele e, no fim, o Permitir
+// azul compacto (permitir-<aviso>) ou, já dado ([allowed]), o sinal de feito verde (permitida-<aviso>).
+@Composable
+private fun PermissionRow(banner: Banner, allowed: Boolean, last: Boolean, onAllow: () -> Unit) {
+    val colors = LocalStarsonicColors.current
+    SettingRow(
+        tag = "permissao-${banner.name}",
+        last = last,
+        leading = { IconTile(bannerIcon(banner)) },
+        trailing = {
+            if (allowed) {
+                Icon(
+                    StarsonicIcons.Check,
+                    contentDescription = null,
+                    tint = Starsonic.StatusOnline,
+                    modifier = Modifier.size(20.dp).testTag("permitida-${banner.name}"),
+                )
+            } else {
+                BlueButton(ALLOW, tag = "permitir-${banner.name}", size = ButtonSize.Compact, onClick = onAllow)
+            }
+        },
+    ) {
+        Text(banner.text, style = BannerItemText, color = colors.text)
+    }
+}
+
+// O cartão do fabricante (o segundo .card do quadro): o título, os passos numerados e o Abrir ajustes ([onOpen]).
+@Composable
+private fun GuideCard(guide: Guide, onOpen: () -> Unit) {
+    val colors = LocalStarsonicColors.current
+    SettingsCard(verticalPadding = 14.dp) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(guide.title, style = GuideTitle, color = colors.textStrong)
+            // A lista numerada (o ol do quadro: os números na margem de 20 dp).
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                guide.steps.forEachIndexed { index, step ->
+                    Row(Modifier.semantics(mergeDescendants = true) {}) {
+                        Text("${index + 1}.", style = GuideStep, color = colors.textMuted, modifier = Modifier.width(20.dp))
+                        Text(step, style = GuideStep, color = colors.textMuted, modifier = Modifier.weight(1f))
+                    }
+                }
+            }
+            OutlineButton(OPEN_SETTINGS, tag = "abrir-ajustes", size = ButtonSize.Small, onClick = onOpen)
+        }
+    }
+}
+
+// O ícone de cada aviso: o sino, o microfone, o celular e a bateria.
+private fun bannerIcon(banner: Banner): ImageVector = when (banner) {
+    Banner.NOTIFICATIONS -> StarsonicIcons.Bell
+    Banner.MICROPHONE -> StarsonicIcons.Microphone
+    Banner.FULL_SCREEN -> StarsonicIcons.FullScreen
+    Banner.BATTERY -> StarsonicIcons.Battery
 }
 
 /**
@@ -149,6 +215,7 @@ fun WarningBanner(banner: Banner) {
 }
 
 private const val TITLE = "Permissões"
+private const val SECTION = "Para as ligações chegarem"
 private const val ALLOW = "Permitir"
 private const val CONTINUE = "Continuar"
 private const val OPEN_SETTINGS = "Abrir ajustes"
@@ -162,3 +229,9 @@ private val BannerText = TextStyle(
     lineHeightStyle = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None),
 )
 private val BannerLink = BannerText.copy(fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
+
+// O texto de um aviso nas Permissões (o .set-help na cor do texto), o título do cartão do fabricante (o .set-title) e
+// os passos dele (13,5, altura 1,45).
+private val BannerItemText = BannerText.copy(fontSize = 12.5.sp, fontWeight = FontWeight.Normal, lineHeight = 1.4.em)
+private val GuideTitle = BannerText.copy(fontSize = 14.5.sp, fontWeight = FontWeight.Bold, lineHeight = 1.3.em)
+private val GuideStep = BannerText.copy(fontSize = 13.5.sp, fontWeight = FontWeight.Normal, lineHeight = 1.45.em)

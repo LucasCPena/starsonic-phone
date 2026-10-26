@@ -183,6 +183,10 @@ data class StarsonicColors(
 /** Os papéis do tema de agora ([StarsonicTheme]). */
 val LocalStarsonicColors = staticCompositionLocalOf { StarsonicColors.Light }
 
+/** Os papéis são os do tema escuro (o Sobre troca o logo: o principal no claro, o negativo no escuro). */
+val StarsonicColors.isDark: Boolean
+    get() = this == StarsonicColors.Dark
+
 /**
  * A Plus Jakarta Sans, a letra do Windows (res/font, convertida do PlusJakartaSans-Variable.woff2 do Windows; a licença
  * OFL vai em assets/licencas): um arquivo só, de pesos variáveis, usado nos pesos 400, 500, 600, 700 e 800.

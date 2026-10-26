@@ -1,9 +1,10 @@
 package br.com.starsonic.phone
 
+import androidx.compose.ui.test.assertIsNotSelected
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
-import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
@@ -14,6 +15,7 @@ import br.com.starsonic.phone.engine.Transport
 import br.com.starsonic.phone.main.MainActivity
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.FixMethodOrder
 import org.junit.Rule
@@ -47,6 +49,9 @@ class LoginScreenTest {
         scenario = ActivityScenario.launch(MainActivity::class.java)
         // A tela aparece depois de o app ler a conta gravada, fora da thread principal.
         emulator.waitUntil("a tela Entrar") { compose.onAllNodesWithTag("entrar").fetchSemanticsNodes().isNotEmpty() }
+        // O cabeçalho do visual do Windows (spec 10).
+        assertTrue("o rótulo do cabeçalho", emulator.showsText("Ramal no celular"))
+        assertTrue("o título do cabeçalho", emulator.showsText("Entre com o seu ramal"))
     }
 
     @After
@@ -119,9 +124,12 @@ class LoginScreenTest {
 
     private fun login(password: String, tcp: Boolean = false) {
         type("servidor", emulator.registrar)
+        // O Protocolo: o UDP do perfil já vem escolhido, e o TCP fica ao lado.
+        compose.onNodeWithTag("protocolo-udp").assertIsSelected()
         if (tcp) {
-            compose.onNodeWithTag("protocolo").performClick()
-            compose.onNodeWithText("TCP").performClick()
+            compose.onNodeWithTag("protocolo-tcp").performScrollTo().performClick()
+            compose.onNodeWithTag("protocolo-tcp").assertIsSelected()
+            compose.onNodeWithTag("protocolo-udp").assertIsNotSelected()
         }
         type("ramal", "2001")
         type("senha", password)

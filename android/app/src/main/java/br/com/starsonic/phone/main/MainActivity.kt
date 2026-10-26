@@ -92,13 +92,15 @@ import kotlinx.coroutines.withContext
 /**
  * As telas do app (spec 4.1 e 7.1):
  * - Sem conta gravada, a tela Entrar. Depois de um Entrar que começou sem conta (o primeiro, ou o de depois de
- *   Sair), a tela Permissões, se falta alguma coisa.
+ *   Sair), a tela Permissões, se falta alguma coisa; dela, a tela principal.
  * - Com conta, a tela principal no visual do Windows (spec 3): o cabeçalho da marca com o menu, o cartão da conta (a
  *   bolinha, o ramal e a linha do status) e as pílulas Não perturbe e Atender automático (spec 4 e 5); a faixa de
  *   avisos; as abas Teclado (com o Rediscar, spec 6), Recentes e Contatos (a agenda do celular, spec da 0.2, 7.5), com a
  *   volta para a ligação em andamento; e a navegação de baixo. A notificação de ligação perdida abre o Recentes
  *   ([ACTION_RECENTS]). O menu do cabeçalho tem Configurações e Sobre (spec 3.3).
- * - Configurações (spec 8): a parte Conta, com o Editar conta e o Sair da conta.
+ * - Configurações (spec 8): a Conta, com o Editar conta e o Sair da conta; as Ligações (o bipe no fim da ligação, o
+ *   Atender automático e o tempo dele); e o Celular, com Permissões e bateria, que abre a tela Permissões (que daqui
+ *   não segue sozinha, e o voltar volta às Configurações).
  * - Editar conta: a tela Entrar com servidor, protocolo e ramal preenchidos e a senha vazia (nunca a tela
  *   Permissões depois). Registrou: a conta nova é gravada e o serviço começa de novo, porque ele só troca a conta que
  *   segura quando começa (fica com a nova, que já está no motor, sem outro REGISTER). Falhou: a conta anterior volta.
@@ -142,6 +144,10 @@ class MainActivity : ComponentActivity() {
     // Para onde o voltar do Android leva do Editar: a tela de onde ele abriu (as Configurações ou a principal).
     private var editReturn = Screen.MAIN
 
+    // Para onde a tela Permissões leva (o voltar, o Voltar e o Continuar): a principal, depois do Entrar; as
+    // Configurações, de onde ela abriu.
+    private var permissionsReturn = Screen.MAIN
+
     // Há conta gravada (a de quando o app abriu, ou a do Entrar). Só na thread principal.
     private var signedIn = false
 
@@ -164,6 +170,8 @@ class MainActivity : ComponentActivity() {
         val restored = savedInstanceState?.getString(STATE_SCREEN)?.let { name -> Screen.entries.firstOrNull { it.name == name } }
         editMessage = savedInstanceState?.getString(STATE_EDIT_MESSAGE).orEmpty()
         editReturn = if (savedInstanceState?.getString(STATE_EDIT_RETURN) == Screen.SETTINGS.name) Screen.SETTINGS else Screen.MAIN
+        permissionsReturn =
+            if (savedInstanceState?.getString(STATE_PERMISSIONS_RETURN) == Screen.SETTINGS.name) Screen.SETTINGS else Screen.MAIN
         lifecycleScope.launch {
             val (account, transport) = withContext(Dispatchers.IO) {
                 app.contactDialProfile()   // o perfil da regra dos números dos contatos, lido aqui, e não num toque
@@ -214,25 +222,33 @@ class MainActivity : ComponentActivity() {
         setContent {
             StarsonicTheme {
                 Surface(Modifier.fillMaxSize()) {
-                    BackHandler(enabled = screen == Screen.EDIT || screen == Screen.ABOUT || screen == Screen.SETTINGS) { back() }
+                    BackHandler(enabled = screen in INNER_SCREENS) { back() }
                     when (screen) {
                         null -> {}   // a tela de abertura está na frente
                         Screen.ENTRAR -> EntrarScreen()
-                        Screen.PERMISSIONS -> {
-                            val status by app.status.collectAsState()
-                            PermissionsScreen(status.line, resumes, deviceGuide()) { screen = Screen.MAIN }
-                        }
+                        Screen.PERMISSIONS -> PermissionsScreen(
+                            resumes,
+                            deviceGuide(),
+                            continuesAlone = permissionsReturn == Screen.MAIN,
+                            onContinue = ::back,
+                        )
                         Screen.MAIN -> MainScreen()
                         Screen.EDIT -> EditScreen()
-                        Screen.ABOUT -> {
-                            val status by app.status.collectAsState()
-                            AboutScreen(status.line, BuildConfig.VERSION_NAME, onSendDiagnostics = ::sendDiagnostics)
-                        }
+                        Screen.ABOUT -> AboutScreen(BuildConfig.VERSION_NAME, onBack = ::back, onSendDiagnostics = ::sendDiagnostics)
                         Screen.SETTINGS -> {
                             val status by app.status.collectAsState()
                             // A conta gravada, para o "servidor · protocolo": lida fora da thread principal (Keystore e disco).
                             val account by produceState<Account?>(null) { value = withContext(Dispatchers.IO) { app.store.load() } }
-                            SettingsScreen(status, account, onBack = ::back, onEdit = { openEdit("") }, onSignOut = ::signOut)
+                            SettingsScreen(
+                                status,
+                                account,
+                                app.callSettings,
+                                onBack = ::back,
+                                onEdit = { openEdit("") },
+                                onSignOut = ::signOut,
+                                onPermissions = ::openPermissions,
+                                note = app::note,
+                            )
                         }
                     }
                 }
@@ -251,6 +267,7 @@ class MainActivity : ComponentActivity() {
         screen?.let { outState.putString(STATE_SCREEN, it.name) }
         outState.putString(STATE_EDIT_MESSAGE, editMessage)
         outState.putString(STATE_EDIT_RETURN, editReturn.name)
+        outState.putString(STATE_PERMISSIONS_RETURN, permissionsReturn.name)
     }
 
     override fun onStart() {
@@ -296,6 +313,7 @@ class MainActivity : ComponentActivity() {
             if (!SipService.start(this)) app.gateway.removeAccount()
             app.calls.onLogin()   // depois de um Sair, as ligações voltam a valer
             endLogin()
+            permissionsReturn = Screen.MAIN
             screen = if (needsPermissions()) Screen.PERMISSIONS else Screen.MAIN
         }
     }
@@ -457,14 +475,24 @@ class MainActivity : ComponentActivity() {
         screen = Screen.EDIT
     }
 
+    // A tela Permissões das Configurações (Permissões e bateria): ela não segue sozinha, e sair dela volta às
+    // Configurações.
+    private fun openPermissions() {
+        permissionsReturn = Screen.SETTINGS
+        screen = Screen.PERMISSIONS
+    }
+
     // O voltar (o do Android e o da barra escura): do Editar, para onde ele abriu (sair no meio de uma tentativa a
-    // desfaz); das Configurações e do Sobre, a tela principal.
+    // desfaz); da tela Permissões (também o Continuar), para onde ela leva; das Configurações e do Sobre, a tela
+    // principal.
     private fun back() {
-        screen = if (screen == Screen.EDIT) {
-            endLogin()
-            editReturn
-        } else {
-            Screen.MAIN
+        screen = when (screen) {
+            Screen.EDIT -> {
+                endLogin()
+                editReturn
+            }
+            Screen.PERMISSIONS -> permissionsReturn
+            else -> Screen.MAIN
         }
     }
 
@@ -567,6 +595,10 @@ class MainActivity : ComponentActivity() {
         private const val STATE_SCREEN = "tela"
         private const val STATE_EDIT_MESSAGE = "aviso-editar"
         private const val STATE_EDIT_RETURN = "volta-editar"
+        private const val STATE_PERMISSIONS_RETURN = "volta-permissoes"
+
+        // As telas em que o voltar do Android fica no app ([back]).
+        private val INNER_SCREENS = setOf(Screen.EDIT, Screen.ABOUT, Screen.SETTINGS, Screen.PERMISSIONS)
 
         // As abas, na ordem da navegação de baixo (BottomNav).
         private const val TAB_KEYPAD = 0

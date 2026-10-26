@@ -51,6 +51,12 @@ class CallSettingsStoreTest {
     }
 
     @Test
+    fun `the auto answer options are the Windows ones, in order`() {
+        // O "Tempo para atender" das Configurações oferece estas, nesta ordem (spec 5).
+        assertEquals(listOf(0, 1, 2, 3, 5, 8, 10, 15, 20, 30), AUTO_ANSWER_SECONDS)
+    }
+
+    @Test
     fun `call settings survive sign out`() {
         // Cada arquivo do app pelo nome, como no getSharedPreferences: o da conta e o das configurações de ligação.
         val files = HashMap<String, FakePreferences>()

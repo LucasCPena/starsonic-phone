@@ -5,10 +5,10 @@ import android.app.Instrumentation
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithTag
-import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
@@ -128,12 +128,12 @@ class AboutAndAccountTest {
         openAccount("config-editar")
         emulator.waitUntil("a tela Entrar do Editar") { emulator.showsTag("entrar") }
         compose.onNodeWithTag("servidor").assert(hasText(emulator.registrar))
-        compose.onNodeWithText("TCP").assertExists()
+        compose.onNodeWithTag("protocolo-tcp").assertIsSelected()
         compose.onNodeWithTag("ramal").assert(hasText("2001"))
         assertEquals("a senha vazia", "", emulator.editableText("senha"))
         // A conta nova vai por UDP: o status só volta a "Conectado" se o serviço passar a segurar a conta nova.
-        compose.onNodeWithTag("protocolo").performClick()
-        compose.onNodeWithText("UDP").performClick()
+        compose.onNodeWithTag("protocolo-udp").performScrollTo().performClick()
+        compose.onNodeWithTag("protocolo-udp").assertIsSelected()
         compose.onNodeWithTag("senha").performScrollTo().performTextInput(emulator.senha)
         compose.onNodeWithTag("entrar").performScrollTo().performClick()
         emulator.waitUntil("a tela principal") { emulator.showsTag("aba-teclado") }

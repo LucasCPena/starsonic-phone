@@ -108,6 +108,8 @@ class UpdatePromptTest {
         assertTrue("o app pode instalar apps (o run-update-test.sh deixa)", app.packageManager.canRequestPackageInstalls())
         emulator.waitForText(QUESTION)
         emulator.waitForText(NOTES)
+        // A janela do Windows, para a conferência com o visual (R19; o tema claro do emulador).
+        emulator.saveScreen("atualizacao-claro.png")
         compose.onNodeWithTag("atualizar").performClick()
         // O SHA-256 do canal não é o do APK servido: o arquivo é apagado e o aviso aparece.
         emulator.waitForText(DOWNLOAD_FAILED)

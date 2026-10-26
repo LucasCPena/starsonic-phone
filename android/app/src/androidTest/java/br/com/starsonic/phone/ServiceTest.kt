@@ -5,7 +5,6 @@ import android.app.NotificationManager
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
-import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
@@ -93,8 +92,7 @@ class ServiceTest {
     private fun login() {
         emulator.waitUntil("a tela Entrar") { compose.onAllNodesWithTag("entrar").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("servidor").performScrollTo().performTextInput(emulator.registrar)
-        compose.onNodeWithTag("protocolo").performClick()
-        compose.onNodeWithText("TCP").performClick()
+        compose.onNodeWithTag("protocolo-tcp").performScrollTo().performClick()
         compose.onNodeWithTag("ramal").performScrollTo().performTextInput("2001")
         compose.onNodeWithTag("senha").performScrollTo().performTextInput(emulator.senha)
         compose.onNodeWithTag("entrar").performScrollTo().performClick()
