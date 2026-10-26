@@ -142,7 +142,8 @@ fun ContactsScreen(source: ContactsSource, onCall: (String) -> Unit) {
             return@Column
         }
         val groups = remember(shown) { shown.groupBy { groupLetter(it.name) }.toList() }
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 14.dp)) {
+        // O gap de 10 dp do canvas entre a busca e a lista (que rola embaixo dela).
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 20.dp, top = 10.dp, end = 20.dp, bottom = 14.dp)) {
             for ((letter, inGroup) in groups) {
                 item { ListGroupTitle(letter) }
                 items(inGroup) { contact ->
