@@ -243,12 +243,16 @@ class MainScreenTest {
             assertInside("$tag na navegação", bounds, nav)
         }
         assertNoOverlap(tabs)
-        // O nome de cada aba numa linha só, inteiro: com a letra grande, ele encolhe em vez de quebrar no meio da palavra.
-        for ((tag, label) in TABS.zip(TAB_LABELS)) {
-            val layout = textLayout(compose.onNodeWithTag(tag, useUnmergedTree = true).onChildren().filterToOne(hasText(label)))
-            assertEquals("\"$label\" numa linha", 1, layout.lineCount)
-            assertFalse("\"$label\" inteiro, sem corte", layout.hasVisualOverflow)
+        // O nome de cada aba numa linha só, inteiro e dentro da aba: com a letra grande, ele encolhe em vez de quebrar no
+        // meio da palavra. A falha mostra as três.
+        val labels = TABS.zip(TAB_LABELS).map { (tag, label) ->
+            val node = compose.onNodeWithTag(tag, useUnmergedTree = true).onChildren().filterToOne(hasText(label))
+            val layout = textLayout(node)
+            val bounds = node.fetchSemanticsNode().let { Rect(it.positionInRoot, it.size.toSize()) }
+            val whole = layout.lineCount == 1 && layout.getLineEnd(0) == label.length && isInside(bounds, tabs.getValue(tag))
+            whole to "\"$label\": ${layout.lineCount} linha(s), a primeira até ${layout.getLineEnd(0)} de ${label.length}, em $bounds"
         }
+        assertTrue("os nomes das abas: ${labels.joinToString { it.second }}", labels.all { it.first })
         emulator.saveScreen("teclado-letra-grande.png")
         // As 12 teclas, o Rediscar e o Ligar: cada um aparece inteiro entre o cabeçalho e a navegação, rolando o Teclado.
         val body = Rect(header.left, header.bottom, header.right, nav.top)
@@ -438,10 +442,12 @@ class MainScreenTest {
     }
 
     private fun assertInside(what: String, inner: Rect, outer: Rect) {
-        val inside = inner.left >= outer.left - EPSILON && inner.top >= outer.top - EPSILON &&
-            inner.right <= outer.right + EPSILON && inner.bottom <= outer.bottom + EPSILON
-        assertTrue("$what: $inner fora de $outer", inside)
+        assertTrue("$what: $inner fora de $outer", isInside(inner, outer))
     }
+
+    private fun isInside(inner: Rect, outer: Rect): Boolean =
+        inner.left >= outer.left - EPSILON && inner.top >= outer.top - EPSILON &&
+            inner.right <= outer.right + EPSILON && inner.bottom <= outer.bottom + EPSILON
 
     private fun assertNoOverlap(parts: Map<String, Rect>) {
         val entries = parts.entries.toList()
