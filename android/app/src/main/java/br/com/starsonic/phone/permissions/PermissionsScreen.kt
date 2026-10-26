@@ -37,6 +37,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.LineHeightStyle
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
@@ -168,11 +169,17 @@ private fun GuideCard(guide: Guide, onOpen: () -> Unit) {
     SettingsCard(verticalPadding = 14.dp) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(guide.title, style = GuideTitle, color = colors.textStrong)
-            // A lista numerada (o ol do quadro: os números na margem de 20 dp).
+            // A lista numerada (o ol do quadro: os números na margem de 20 dp, encostados no texto).
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 guide.steps.forEachIndexed { index, step ->
                     Row(Modifier.semantics(mergeDescendants = true) {}) {
-                        Text("${index + 1}.", style = GuideStep, color = colors.textMuted, modifier = Modifier.width(20.dp))
+                        Text(
+                            "${index + 1}.",
+                            style = GuideStep,
+                            color = colors.textMuted,
+                            textAlign = TextAlign.End,
+                            modifier = Modifier.width(20.dp).padding(end = 4.dp),
+                        )
                         Text(step, style = GuideStep, color = colors.textMuted, modifier = Modifier.weight(1f))
                     }
                 }
