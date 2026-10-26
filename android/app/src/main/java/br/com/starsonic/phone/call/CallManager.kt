@@ -181,11 +181,12 @@ object EndCause {
  *   - Não perturbe (spec 4): a recebida leva ocupado (486), entra no Recentes como perdida e o aviso dela sai sem som
  *     ([CallNotifier.showMissed] silent; também o da que o motor recusou sozinho); nada vai ao Telecom. A que já toca
  *     continua tocando: ele vale para as próximas. As feitas funcionam normalmente.
- *   - Atender automático (spec 5): a recebida que chega sozinha (sem nenhuma outra ligação) e vai ao Telecom é
- *     atendida, como no Atender, depois do tempo escolhido (0: na próxima volta do [clock]). Ele se decide na chegada:
- *     a que chega com outra toca normalmente, também depois que a outra acaba. Na hora, só se ela ainda é a única
- *     ligação, tocando, e com o Atender automático ligado e o Não perturbe desligado; o atender, o recusar, o fim dela
- *     e o Sair o cancelam antes.
+ *   - Atender automático (spec 5): a recebida que toca sozinha (sem nenhuma outra ligação) é atendida, como no
+ *     Atender, depois do tempo escolhido, contado de quando o celular toca: quando o Telecom cria a Connection dela
+ *     ([onIncomingReady]; 0: logo depois, na próxima volta do [clock]). A que o Telecom não cria nunca é atendida
+ *     sozinha. Ele se decide aí: a que toca com outra toca normalmente, também depois que a outra acaba. Quando o tempo
+ *     acaba, as mesmas regras valem de novo: ainda a única ligação, tocando, com o Atender automático ligado e o Não
+ *     perturbe desligado; o atender, o recusar, o fim dela e o Sair o cancelam antes.
  *   - O bipe no fim (spec 9): a atendida que acaba sem outra de pé (as que sobram também estão saindo), com a chave
  *     ligada e sem ser pelo Sair, toca o bipe ([beep]), e a Connection dela só sai do Telecom quando ele acaba (em
  *     1,5 s no máximo): até lá o Telecom mantém o som da ligação, e o bipe sai nele. Um bipe por vez: a que acaba
@@ -317,8 +318,6 @@ class CallManager(
             val incoming = Call(incoming = true, number, name, clock.nowMillis(), contact).also { it.id = callId }
             calls += incoming
             if (active == null) active = incoming
-            // O Atender automático só vale para a que chega sozinha (no Não perturbe, ela já recebeu o ocupado).
-            if (other == null && chosen.autoAnswer) startAutoAnswer(incoming, chosen.autoAnswerSeconds)
             publish()
             val shownName = incoming.displayName
             effects += { telecom.addIncoming(callId, number, shownName) }
@@ -424,6 +423,21 @@ class CallManager(
             waiting
         }
         background.execute { onDialed(dialed, gateway.makeCall(dialed.number)) }
+    }
+
+    /**
+     * O Telecom criou a Connection da recebida [callId]: o celular toca agora, e o Atender automático conta daqui (spec
+     * 5: "depois do tempo escolhido tocando"). Ele começa se ela é a única ligação, ainda tocando, com o Atender
+     * automático ligado e o Não perturbe desligado; a recebida que o Telecom não cria (recusada, ou que já não toca)
+     * nunca é atendida sozinha. Uma criação repetida não recomeça a contagem.
+     */
+    fun onIncomingReady(callId: Int) {
+        val chosen = settings()
+        act {
+            val ringing = calls.firstOrNull { it.incoming && it.id == callId } ?: return@act
+            if (ringing === autoCall || !autoAnswers(ringing, chosen)) return@act
+            startAutoAnswer(ringing, chosen.autoAnswerSeconds)
+        }
     }
 
     /**
@@ -806,9 +820,9 @@ class CallManager(
         publish()
     }
 
-    // Com a trava: o Atender automático da recebida [call], que chegou sozinha, daqui a [seconds] s ([autoAnswer]). Um
+    // Com a trava: o Atender automático da recebida [call], que toca sozinha, daqui a [seconds] s ([autoAnswer]). Um
     // por vez (o cancel é só a garantia: um marcado é de uma recebida que ainda toca sozinha, e com ela nenhuma outra
-    // chega sozinha).
+    // toca sozinha).
     private fun startAutoAnswer(call: Call, seconds: Int) {
         cancelAutoAnswer()
         autoCall = call
@@ -819,17 +833,21 @@ class CallManager(
     }
 
     // Com a trava: a hora do Atender automático de [call]. Só o marcado de agora vale (um cancelado cujo aviso já tinha
-    // saído não atende), e só se [call] ainda é a única ligação, tocando (nem atendida, nem recusada, nem saindo), com
-    // o Atender automático ligado e o Não perturbe desligado ([chosen], as de agora), e sem Sair. A da operadora não é
-    // perguntada de novo: o nosso próprio toque põe o áudio no modo dela.
+    // saído não atende), e as regras são as do começo ([autoAnswers]), de novo, com as configurações de agora. A da
+    // operadora não é perguntada de novo: o nosso próprio toque põe o áudio no modo dela.
     private fun autoAnswer(call: Call, chosen: CallSettings, effects: MutableList<() -> Unit>) {
         if (call !== autoCall) return
         autoCall = null
         autoTimer = null
+        if (autoAnswers(call, chosen)) answer(call, effects)
+    }
+
+    // Com a trava: o Atender automático vale para [call]: ela é a única ligação, tocando (nem atendida, nem recusada,
+    // nem saindo), com o Atender automático ligado e o Não perturbe desligado ([chosen]), e sem Sair.
+    private fun autoAnswers(call: Call, chosen: CallSettings): Boolean {
         val alone = calls.size == 1 && calls[0] === call
         val ringing = call.phase == CallPhase.RINGING && !call.answered && !call.rejected && !call.ending
-        if (loggedOut || !alone || !ringing || !chosen.autoAnswer || chosen.doNotDisturb) return
-        answer(call, effects)
+        return !loggedOut && alone && ringing && chosen.autoAnswer && !chosen.doNotDisturb
     }
 
     // Com a trava: o Atender automático marcado (se há) não atende mais.

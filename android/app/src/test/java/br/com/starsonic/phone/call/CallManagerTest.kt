@@ -26,8 +26,9 @@ import org.junit.rules.TemporaryFolder
  * As ligações na JVM (spec 7.3 a 7.5; as duas ligações, a consulta e a conferência da 0.2, spec 7.1 a 7.4; o Não
  * perturbe, o Atender automático e o bipe no fim da rc.2, spec 4, 5 e 9), com o motor, o Telecom, as notificações, o
  * relógio e o bipe falsos e os Recentes de verdade numa pasta temporária. O makeCall roda na hora (no app, numa thread
- * própria). As configurações de ligação são as de fábrica ([settings]), lidas a cada uso; o bipe acaba na hora
- * ([NoBeep]), a não ser nos testes do bipe, que usam o [beep] falso.
+ * própria), e o Telecom falso cria a Connection de cada recebida na hora em que a recebe (o celular toca), avisando o
+ * CallManager como o CallConnectionService. As configurações de ligação são as de fábrica ([settings]), lidas a cada
+ * uso; o bipe acaba na hora ([NoBeep]), a não ser nos testes do bipe, que usam o [beep] falso.
  */
 class CallManagerTest {
     @get:Rule
@@ -48,6 +49,10 @@ class CallManagerTest {
             gateway, telecom, recents, notifier, CallCore(), clock, { registered }, contacts, { raw -> raw },
             Executor { it.run() }, settings = { settings }, beep = { done -> endBeep.play(done) },
         )
+    }
+
+    init {
+        telecom.onIncomingCreated = { callId -> calls.onIncomingReady(callId) }
     }
 
     // Uma ligação chega e toca (o motor responde 180 sozinho).
@@ -1973,8 +1978,59 @@ class CallManagerTest {
         )
     }
 
-    // O Atender automático (spec 5): só a recebida que chegou sozinha, depois do tempo escolhido, se ela ainda toca
-    // sozinha, com ele ligado e o Não perturbe desligado.
+    // O Atender automático (spec 5): só a recebida que toca sozinha, depois do tempo escolhido contado de quando o
+    // celular toca (o Telecom criou a Connection dela), se ela ainda toca sozinha, com ele ligado e o Não perturbe
+    // desligado.
+
+    @Test
+    fun `auto answer starts when the phone rings`() {
+        settings = CallSettings(autoAnswer = true, autoAnswerSeconds = 3)
+        telecom.createsConnections = false
+        // Até o Telecom criar a Connection, o celular não toca, e nada é atendido.
+        ring(1)
+        clock.advance(10_000)
+        assertTrue(gateway.answers.isEmpty())
+        assertTrue(calls.isRinging(1))
+        // O celular toca: o tempo conta daqui, e uma criação repetida não recomeça a contagem.
+        telecom.createConnection(1)
+        clock.advance(2_000)
+        telecom.createConnection(1)
+        clock.advance(999)
+        assertTrue("2999 ms depois de tocar: ainda não", gateway.answers.isEmpty())
+        clock.advance(1)
+        assertEquals(listOf(1), gateway.answers)
+        calls.onCallState(1, CallState.CONFIRMED, 200)
+        calls.onCallState(1, CallState.DISCONNECTED, 200)
+        // Na hora: logo depois de a Connection nascer, na próxima volta do relógio.
+        settings = settings.copy(autoAnswerSeconds = 0)
+        ring(2, "3002", "")
+        clock.advance(5_000)
+        assertEquals(listOf(1), gateway.answers)
+        telecom.createConnection(2)
+        assertEquals(listOf(1), gateway.answers)
+        clock.advance(0)
+        assertEquals(listOf(1, 2), gateway.answers)
+        calls.onCallState(2, CallState.DISCONNECTED, 200)
+        // O Telecom não criou a Connection (recusou a ligação): nada é atendido.
+        ring(3, "3003", "")
+        calls.onTelecomFailed(3)
+        clock.advance(10_000)
+        calls.onCallState(3, CallState.DISCONNECTED, 486)
+        // A Connection nasce depois de quem ligou desistir: nada.
+        ring(4, "3004", "")
+        calls.onCallState(4, CallState.DISCONNECTED, 487)
+        telecom.createConnection(4)
+        clock.advance(10_000)
+        assertEquals(listOf(1, 2), gateway.answers)
+        // Ligado só depois de o celular tocar: vale para a próxima.
+        settings = settings.copy(autoAnswer = false)
+        ring(5, "3005", "")
+        telecom.createConnection(5)
+        settings = settings.copy(autoAnswer = true)
+        clock.advance(10_000)
+        assertEquals(listOf(1, 2), gateway.answers)
+        assertTrue(calls.isRinging(5))
+    }
 
     @Test
     fun `auto answer answers the only ringing call after the chosen seconds`() {
@@ -2000,9 +2056,9 @@ class CallManagerTest {
     @Test
     fun `auto answer na hora answers at once`() {
         settings = CallSettings(autoAnswer = true, autoAnswerSeconds = 0)
-        calls.onIncoming(1, "3001", "Cliente Teste")
-        assertTrue("não dentro do aviso do motor: na próxima volta do relógio", gateway.answers.isEmpty())
-        assertEquals("o Telecom já recebeu a ligação", listOf(Triple(1, "3001", "Cliente Teste")), telecom.incoming)
+        calls.onIncoming(1, "3001", "Cliente Teste")   // o Telecom a recebe e cria a Connection na hora: ela toca
+        assertTrue("não dentro dos avisos: na próxima volta do relógio", gateway.answers.isEmpty())
+        assertEquals(listOf(Triple(1, "3001", "Cliente Teste")), telecom.incoming)
         clock.advance(0)
         assertEquals(listOf(1), gateway.answers)
         assertEquals(CallPhase.CONNECTING, calls.state.value?.phase)
@@ -2016,14 +2072,14 @@ class CallManagerTest {
         assertEquals(listOf(1), gateway.answers)
         calls.onCallState(1, CallState.CONFIRMED, 200)
         ring(2, "3002", "Fulano")   // a segunda, com a 1 em andamento: toca normalmente
-        clock.advance(60_000)
-        assertEquals("a segunda não é atendida sozinha", listOf(1), gateway.answers)
         assertEquals(SecondUi(2, "3002", "Fulano", SecondKind.RINGING), calls.state.value?.second)
-        // Nem quando a primeira acaba e ela fica sozinha, tocando: ele se decide na chegada.
+        // A primeira acaba antes do tempo, e a segunda fica sozinha, tocando: ninguém a atende sozinho (ele se decide
+        // quando o celular começa a tocar).
+        clock.advance(1_000)
         calls.onCallState(1, CallState.DISCONNECTED, 200)
         assertTrue(calls.isRinging(2))
         clock.advance(60_000)
-        assertEquals(listOf(1), gateway.answers)
+        assertEquals("a segunda não é atendida sozinha", listOf(1), gateway.answers)
         assertTrue(calls.isRinging(2))
     }
 

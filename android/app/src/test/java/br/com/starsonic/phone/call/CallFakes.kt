@@ -147,9 +147,15 @@ internal class CallGateway : SipGateway {
  * pedido (o fim, com o motivo); [joined] com as conferências pedidas (a ativa e a outra) e [splits] com quantas vezes
  * ela saiu. [order] guarda, na ordem, os pedidos que mexem no estado das Connections: "join 10 1", "split", "hold 1",
  * "active 1" e "disconnect 1".
+ *
+ * A Connection de cada recebida nasce na hora do addIncoming (o celular toca), e [onIncomingCreated] é avisado (o teste
+ * o liga ao CallManager.onIncomingReady, como o CallConnectionService); com [createsConnections] false, ela só nasce
+ * quando o teste pede ([createConnection]).
  */
 internal class FakeTelecom : TelecomAdapter {
     var permitted = true
+    var createsConnections = true
+    var onIncomingCreated: (Int) -> Unit = {}
     val incoming = mutableListOf<Triple<Int, String, String>>()
     val placed = mutableListOf<String>()
     val held = mutableListOf<Int>()
@@ -163,7 +169,11 @@ internal class FakeTelecom : TelecomAdapter {
 
     override fun addIncoming(callId: Int, number: String, name: String) {
         incoming += Triple(callId, number, name)
+        if (createsConnections) onIncomingCreated(callId)
     }
+
+    /** O Telecom cria agora a Connection da recebida [callId] (com [createsConnections] false). */
+    fun createConnection(callId: Int) = onIncomingCreated(callId)
 
     override fun placeOutgoing(number: String) {
         placed += number

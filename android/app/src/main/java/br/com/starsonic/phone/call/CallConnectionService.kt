@@ -20,7 +20,8 @@ import kotlinx.coroutines.flow.StateFlow
 
 /**
  * O serviço que o Telecom do Android chama para criar as ligações do app (self-managed). A recebida só nasce
- * se ainda toca, e a feita só se o CallManager ainda espera por ela; senão, uma Connection que já falhou.
+ * se ainda toca, e a feita só se o CallManager ainda espera por ela; senão, uma Connection que já falhou. Com a
+ * Connection da recebida criada, o celular toca, e o CallManager é avisado (o Atender automático conta daqui).
  * Roda na thread principal.
  */
 class CallConnectionService : ConnectionService() {
@@ -32,7 +33,9 @@ class CallConnectionService : ConnectionService() {
         val ringing = app.calls.isRinging(call.callId)
         CallLog.i { "Telecom: criar a recebida ${call.callId} (tocando: $ringing)" }
         if (!ringing) return Connection.createFailedConnection(DisconnectCause(DisconnectCause.MISSED))
-        return app.telecom.created(CallConnection(app, incoming = true, call.callId, call.number, call.name))
+        val connection = app.telecom.created(CallConnection(app, incoming = true, call.callId, call.number, call.name))
+        app.calls.onIncomingReady(call.callId)   // o celular toca: o Atender automático conta daqui
+        return connection
     }
 
     override fun onCreateIncomingConnectionFailed(manager: PhoneAccountHandle?, request: ConnectionRequest) {
