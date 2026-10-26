@@ -3,6 +3,7 @@ package br.com.starsonic.phone
 import android.Manifest
 import android.content.res.Configuration
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
@@ -15,6 +16,7 @@ import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.filterToOne
 import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasTestTag
@@ -265,16 +267,22 @@ class MainScreenTest {
     @Test
     fun aLongNumberShowsItsLastDigitsAtTheLargestFontScale() {
         // R24, na tela de 360 × 640 dp com a maior letra: o número que não cabe mostra os últimos dígitos digitados, com
-        // a reticência no começo (no Windows, o campo rola até o cursor).
+        // a reticência no começo (no Windows, o campo rola até o cursor). Os 16 dígitos pedem uns 349 dp, e o campo tem
+        // 268. O que a tela mostra é conferido no desenho: no Android 14, com o espaçamento das letras, o Compose refaz a
+        // reticência do começo trocando o texto do layout (TextLayoutResult conta "…" e o fim, e não os 16).
         emulator.useDisplay(720, 1280, 320)
         emulator.setFontScale(2.0f)
         open()
         val number = "1234567890123456"
         for (digit in number) compose.onNodeWithTag("tecla-$digit").performScrollTo().performClick()
         compose.onNodeWithTag("numero").performScrollTo().assertTextEquals(number)
-        val typed = textLayout(compose.onNodeWithTag("numero"))
-        assertEquals("o número numa linha", 1, typed.lineCount)
-        assertEquals("o último dígito à vista", number.length, typed.getLineEnd(0, visibleEnd = true))
+        val before = compose.onNodeWithTag("numero").captureToImage().asAndroidBitmap()
+        // Mais um dígito: com a reticência no fim, o campo continua igual (o começo do número); com ela no começo, o
+        // dígito novo aparece no fim.
+        compose.onNodeWithTag("tecla-7").performScrollTo().performClick()
+        compose.onNodeWithTag("numero").performScrollTo().assertTextEquals(number + "7")
+        val after = compose.onNodeWithTag("numero").captureToImage().asAndroidBitmap()
+        assertFalse("o dígito novo aparece no fim do número", before.sameAs(after))
         emulator.saveScreen("numero-letra-grande.png")
     }
 
