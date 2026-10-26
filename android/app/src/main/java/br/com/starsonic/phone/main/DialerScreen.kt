@@ -175,12 +175,14 @@ private fun NumberLine(number: String, onErase: () -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // Sem espaço para todos os dígitos, a reticência vai no começo: os últimos digitados ficam à vista (no Windows,
+        // o campo rola até o cursor).
         Text(
             number,
             style = NumberText,
             color = colors.textStrong,
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+            overflow = TextOverflow.StartEllipsis,
             modifier = Modifier.weight(1f).testTag("numero"),
         )
         // O Apagar (o .ghost do canvas): redondo, de 44 dp, sem fundo; apagado sem número.
