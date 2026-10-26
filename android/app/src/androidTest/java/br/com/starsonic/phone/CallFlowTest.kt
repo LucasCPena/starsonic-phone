@@ -90,7 +90,7 @@ class CallFlowTest {
             .forEach { notifications.cancel(it.tag, it.id) }
         app.store.save(Account(emulator.registrar, Transport.TCP, "2001", emulator.senha))
         scenario = ActivityScenario.launch(MainActivity::class.java)
-        emulator.waitForText("Conectado · 2001")
+        emulator.waitForText("Conectado · ${emulator.registrar}")
     }
 
     @After

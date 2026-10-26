@@ -83,14 +83,18 @@ class PreferencesAccountStore(
         editor.apply()
     }
 
-    private companion object {
+    internal companion object {
+        /**
+         * O arquivo da conta, que o Sair apaga. As configurações de ligação ficam em outro
+         * ([PreferencesCallSettingsStore.FILE]).
+         */
         const val FILE = "conta"
-        const val KEY_ADDRESS = "servidor"
-        const val KEY_TRANSPORT = "protocolo"
-        const val KEY_RAMAL = "ramal"
-        const val KEY_SENHA = "senha-cifrada"
-        const val UDP = "udp"
-        const val TCP = "tcp"
-        val KEYS = listOf(KEY_ADDRESS, KEY_TRANSPORT, KEY_RAMAL, KEY_SENHA)
+        private const val KEY_ADDRESS = "servidor"
+        private const val KEY_TRANSPORT = "protocolo"
+        private const val KEY_RAMAL = "ramal"
+        private const val KEY_SENHA = "senha-cifrada"
+        private const val UDP = "udp"
+        private const val TCP = "tcp"
+        private val KEYS = listOf(KEY_ADDRESS, KEY_TRANSPORT, KEY_RAMAL, KEY_SENHA)
     }
 }

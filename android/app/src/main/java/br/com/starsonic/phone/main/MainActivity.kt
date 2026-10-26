@@ -196,14 +196,14 @@ class MainActivity : ComponentActivity() {
                         null -> {}   // a tela de abertura está na frente
                         Screen.ENTRAR -> EntrarScreen()
                         Screen.PERMISSIONS -> {
-                            val status by app.connection.status.collectAsState()
-                            PermissionsScreen(status.band, resumes, deviceGuide()) { screen = Screen.MAIN }
+                            val status by app.status.collectAsState()
+                            PermissionsScreen(status.line, resumes, deviceGuide()) { screen = Screen.MAIN }
                         }
                         Screen.MAIN -> MainScreen()
                         Screen.EDIT -> EditScreen()
                         Screen.ABOUT -> {
-                            val status by app.connection.status.collectAsState()
-                            AboutScreen(status.band, BuildConfig.VERSION_NAME, onSendDiagnostics = ::sendDiagnostics)
+                            val status by app.status.collectAsState()
+                            AboutScreen(status.line, BuildConfig.VERSION_NAME, onSendDiagnostics = ::sendDiagnostics)
                         }
                     }
                 }
@@ -311,14 +311,14 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     private fun MainScreen() {
-        val status by app.connection.status.collectAsState()
+        val status by app.status.collectAsState()
         val banner = remember(resumes) { Grants.read(this@MainActivity).banner }
         val call by app.calls.state.collectAsState()
         val message by app.calls.endMessage.collectAsState()
         val update by app.updater.ui.collectAsState()
         var confirmingSignOut by rememberSaveable { mutableStateOf(false) }
         Column(Modifier.fillMaxSize()) {
-            Band(status = status.band) {
+            Band(status = status.line) {
                 MenuButton(
                     onEdit = { openEdit("") },
                     onSignOut = { confirmingSignOut = true },

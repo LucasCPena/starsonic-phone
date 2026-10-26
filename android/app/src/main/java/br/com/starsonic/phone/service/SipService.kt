@@ -38,8 +38,8 @@ import kotlinx.coroutines.launch
 
 /**
  * O serviço em primeiro plano que mantém a conta gravada registrada (spec 6.2 e 7.2), com a notificação fixa
- * (canal "conexao", importância baixa): o título é o status da conta ([Connection.status]), e tocar nela abre
- * o app.
+ * (canal "conexao", importância baixa): o título é o do status que o app mostra ([App.status]: o da conta, com a
+ * ligação e o Não perturbe), e tocar nela abre o app.
  *
  * - Começa por [start] (ACTION_START): no fim do Entrar, ao abrir o app com a conta gravada, depois de ligar
  *   o celular e de atualizar o app ([BootReceiver]). O sistema também o recria sozinho depois de fechar o
@@ -114,7 +114,7 @@ class SipService : Service() {
         }
         if (notifications == null) {
             notifications = scope.launch {
-                app.connection.status.map { it.notificationTitle }.distinctUntilChanged().collect { title ->
+                app.status.map { it.notificationTitle }.distinctUntilChanged().collect { title ->
                     getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification(title))
                 }
             }
@@ -186,7 +186,7 @@ class SipService : Service() {
         val call = app.calls.state.value?.usesMicrophone == true
         for (type in foregroundTypes(call)) {
             try {
-                ServiceCompat.startForeground(this, NOTIFICATION_ID, notification(app.connection.status.value.notificationTitle), type)
+                ServiceCompat.startForeground(this, NOTIFICATION_ID, notification(app.status.value.notificationTitle), type)
                 inCall = call && type != foregroundTypes(false).single()
                 return true
             } catch (e: IllegalStateException) {

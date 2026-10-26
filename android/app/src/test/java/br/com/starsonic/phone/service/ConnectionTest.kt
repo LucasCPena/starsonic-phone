@@ -25,8 +25,8 @@ class ConnectionTest {
     private val account = Account("sip.exemplo.com.br", Transport.TCP, "2001", "senha-certa")
     private val service = Any()   // o serviço de pé (o dono da conta)
 
-    private val connected = Status("Conectado · 2001", "Conectado (ramal 2001)")
-    private val connecting = Status("Conectando…", "Conectando…")
+    private val connected = Status(Dot.ONLINE, "Conectado · sip.exemplo.com.br", "Conectado (ramal 2001)")
+    private val connecting = Status(Dot.CONNECTING, "Conectando…", "Conectando…")
 
     // A tela Entrar registra uma conta (a tentativa, ou a anterior de volta depois de uma falha).
     private fun login(account: Account): Int =
@@ -138,7 +138,27 @@ class ConnectionTest {
         engine.registration(403, false, id + 1)     // de uma conta que não é a do serviço
         assertEquals(connected, connection.status.value)
         engine.registration(403, false, id)   // da conta do serviço
-        assertEquals(Status("Ramal ou senha incorretos.", "Ramal ou senha incorretos."), connection.status.value)
+        assertEquals(
+            Status(Dot.ERROR, "Ramal ou senha incorretos.", "Ramal ou senha incorretos."),
+            connection.status.value,
+        )
+    }
+
+    @Test
+    fun `the ramal is the one of the service account`() {
+        assertEquals("sem o serviço", "", connection.ramal.value)
+        connection.claim(service)
+        connection.adopt(service, account)
+        assertEquals("2001", connection.ramal.value)
+        // O Editar com outro ramal: a tentativa da tela Entrar, mesmo registrada, ainda não é a conta do serviço...
+        val newer = account.copy(ramal = "2002")
+        engine.registration(200, true, login(newer))
+        assertEquals("2001", connection.ramal.value)
+        // ...até o serviço segurar a conta nova, gravada.
+        assertEquals(Adoption.KEPT, connection.adopt(service, newer))
+        assertEquals("2002", connection.ramal.value)
+        connection.release(service)   // Sair
+        assertEquals("", connection.ramal.value)
     }
 
     @Test
@@ -338,7 +358,10 @@ class ConnectionTest {
         connection.adopt(service, account)
         engine.registration(200, true)
         connection.setOnline(service, false)
-        assertEquals(Status("Sem internet", "Sem internet"), connection.status.value)
+        assertEquals(
+            Status(Dot.OFFLINE, "Sem internet · tentando de novo", "Sem internet · tentando de novo"),
+            connection.status.value,
+        )
         connection.setOnline(service, true)
         assertEquals(connected, connection.status.value)
     }

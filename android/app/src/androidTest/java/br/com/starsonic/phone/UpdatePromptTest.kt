@@ -86,7 +86,7 @@ class UpdatePromptTest {
         app.store.save(Account(emulator.registrar, Transport.TCP, "2001", emulator.senha))
         app.updater.useTestChannel(channelUrl, installerPrefix)
         scenario = ActivityScenario.launch(MainActivity::class.java)
-        emulator.waitForText("Conectado · 2001")
+        emulator.waitForText("Conectado · ${emulator.registrar}")
         Intents.init()
         recording = true
     }
@@ -119,7 +119,7 @@ class UpdatePromptTest {
         // O app continua aberto, na tela principal e conectado, sem pedir a instalação ao Android.
         emulator.waitUntil("a tela principal") { emulator.showsTag("aba-teclado") }
         assertEquals(Lifecycle.State.RESUMED, scenario!!.state)
-        emulator.waitForText("Conectado · 2001")
+        emulator.waitForText("Conectado · ${emulator.registrar}")
         assertNull("nenhuma confirmação do instalador do Android", app.updateInstaller.confirmation.value)
     }
 

@@ -46,8 +46,8 @@ internal fun StarsonicTheme(content: @Composable () -> Unit) {
 
 /**
  * A faixa do topo: azul, por baixo da barra de status, com "starsonic" em branco e ciano
- * (branding/logo-faixa.png), o status da conta (o StatusModel: ex.: "Conectado · 2001") e, na tela principal, o
- * menu (⋮) à direita ([menu]).
+ * (branding/logo-faixa.png), a linha do status (o App.status: ex.: "Conectado · starcloud1-starsonic.com.br") e, na
+ * tela principal, o menu (⋮) à direita ([menu]).
  */
 @Composable
 fun Band(status: String, menu: (@Composable () -> Unit)? = null) {

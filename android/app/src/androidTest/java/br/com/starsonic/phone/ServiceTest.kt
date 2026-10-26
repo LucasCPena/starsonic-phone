@@ -59,7 +59,7 @@ class ServiceTest {
         val before = emulator.registers()
         scenario = ActivityScenario.launch(MainActivity::class.java)
         login()
-        emulator.waitForText("Conectado · 2001")
+        emulator.waitForText("Conectado · ${emulator.registrar}")
         emulator.waitUntil("a notificação \"Conectado (ramal 2001)\"") { notificationTitle() == "Conectado (ramal 2001)" }
         // O serviço ficou com a conta que a tela Entrar registrou: nenhum REGISTER a mais.
         Thread.sleep(3_000)
@@ -84,7 +84,7 @@ class ServiceTest {
         app.store.save(Account(emulator.registrar, Transport.TCP, "2001", emulator.senha))
         val before = emulator.registers()
         scenario = ActivityScenario.launch(MainActivity::class.java)
-        emulator.waitForText("Conectado · 2001")
+        emulator.waitForText("Conectado · ${emulator.registrar}")
         emulator.waitUntil("a notificação \"Conectado (ramal 2001)\"") { notificationTitle() == "Conectado (ramal 2001)" }
         Thread.sleep(3_000)
         assertEquals("REGISTER aceitos do ramal 2001", before + 1, emulator.registers())

@@ -108,10 +108,18 @@ class Connection(
     /** Quem pôs no motor a conta que está nele. */
     private enum class Setter { SERVICE, LOGIN }
 
-    private val mutableStatus = MutableStateFlow(StatusModel.from(null, false, true, "", core))
+    private val mutableStatus = MutableStateFlow(StatusModel.account(null, false, true, "", "", core))
 
-    /** O status da conta do serviço: a faixa e a notificação fixa ("Conectando…" sem o serviço). */
+    /**
+     * O status da conta do serviço (spec 7, [StatusModel.account]; "Conectando…" sem o serviço). O que o app mostra,
+     * com a ligação e o Não perturbe por cima, é o [br.com.starsonic.phone.App.status].
+     */
     val status: StateFlow<Status> = mutableStatus
+
+    private val mutableRamal = MutableStateFlow("")
+
+    /** O ramal da conta do serviço ("" sem ela): o do título da notificação no Não perturbe ([StatusModel.shown]). */
+    val ramal: StateFlow<String> = mutableRamal
 
     private val mutableRegistered = MutableStateFlow(false)
 
@@ -481,12 +489,15 @@ class Connection(
     private fun currentIdOf(account: Account): Int =
         if (engineAccountId > removedUpTo && engineAccount == account) engineAccountId else 0
 
-    // Com a trava: o status da conta do serviço (só os resultados do id dela no motor) e, se mudou, se ela tem um
-    // registro a manter (o ouvinte do serviço): sem resposta ainda, registrada ou numa falha que o pjsua repete.
+    // Com a trava: o ramal e o status da conta do serviço (só os resultados do id dela no motor) e, se mudou, se ela
+    // tem um registro a manter (o ouvinte do serviço): sem resposta ainda, registrada ou numa falha que o pjsua repete.
     private fun publish() {
         val account = owned
         val result = if (account != null) results[currentIdOf(account)] else null
-        mutableStatus.value = StatusModel.from(result?.code, result?.active ?: false, online, account?.ramal.orEmpty(), core)
+        mutableRamal.value = account?.ramal.orEmpty()
+        mutableStatus.value = StatusModel.account(
+            result?.code, result?.active ?: false, online, account?.ramal.orEmpty(), account?.address.orEmpty(), core,
+        )
         mutableRegistered.value = online && result != null && result.code in 200..299 && result.active
         val renewing = result == null || result.code in 100..299 || retried(result.code)
         if (renewing != this.renewing) {

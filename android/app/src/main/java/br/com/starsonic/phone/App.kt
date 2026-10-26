@@ -7,6 +7,7 @@ import br.com.starsonic.phone.about.DiagnosticsLog
 import br.com.starsonic.phone.call.AndroidTelecom
 import br.com.starsonic.phone.call.CallLog
 import br.com.starsonic.phone.call.CallManager
+import br.com.starsonic.phone.call.CallUi
 import br.com.starsonic.phone.call.IncomingCallNotifier
 import br.com.starsonic.phone.contacts.AndroidContactsSource
 import br.com.starsonic.phone.contacts.ContactsSource
@@ -15,13 +16,18 @@ import br.com.starsonic.phone.core.CoreRules
 import br.com.starsonic.phone.core.DeviceClock
 import br.com.starsonic.phone.core.NativeCoreRules
 import br.com.starsonic.phone.data.AccountStore
+import br.com.starsonic.phone.data.CallSettings
+import br.com.starsonic.phone.data.CallSettingsStore
 import br.com.starsonic.phone.data.PasswordCipher
 import br.com.starsonic.phone.data.PreferencesAccountStore
+import br.com.starsonic.phone.data.PreferencesCallSettingsStore
 import br.com.starsonic.phone.data.RecentsStore
 import br.com.starsonic.phone.engine.NativeSipGateway
 import br.com.starsonic.phone.engine.SipGateway
 import br.com.starsonic.phone.engine.Transport
 import br.com.starsonic.phone.service.Connection
+import br.com.starsonic.phone.service.Status
+import br.com.starsonic.phone.service.StatusModel
 import br.com.starsonic.phone.update.AndroidInstaller
 import br.com.starsonic.phone.update.HttpUpdateNetwork
 import br.com.starsonic.phone.update.PreferencesUpdateStore
@@ -29,16 +35,27 @@ import br.com.starsonic.phone.update.UpdateChannel
 import br.com.starsonic.phone.update.UpdateWorker
 import br.com.starsonic.phone.update.Updater
 import java.io.File
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 
 /**
  * O aplicativo (android:name do manifesto): o que vive com o processo. Ele não sobe o motor nem registra
  * nada: com conta gravada, quem registra é o SipService (Android 12+ não deixa iniciar o serviço em primeiro
  * plano daqui, com o app em segundo plano). Ao começar, liga o caminho das ligações ao log de diagnóstico, anota
- * no log a versão e o aparelho, registra a conta self-managed "Starsonic Phone" no Telecom do Android e agenda a
- * verificação de atualização de 24 h (a que já está agendada fica). Tudo aqui nasce sob demanda, e o que lê o disco
- * ou o Keystore nunca na thread principal.
+ * no log a versão e o aparelho, registra a conta self-managed "Starsonic Phone" no Telecom do Android, agenda a
+ * verificação de atualização de 24 h (a que já está agendada fica) e lê as configurações de ligação, fora da thread
+ * principal. O resto nasce sob demanda, e o que lê o disco ou o Keystore nunca na thread principal.
  */
 class App : Application() {
+    // O que vive com o processo e roda fora da thread principal: o [status] e a leitura das configurações de ligação.
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
     override fun onCreate() {
         super.onCreate()
         CallLog.sink = { line -> diagnostics.append("ligação: $line") }
@@ -48,6 +65,9 @@ class App : Application() {
         )
         telecom.register()
         UpdateWorker.schedule(this)
+        // As configurações de ligação: o status as usa na hora em que o serviço começa, na thread principal (a
+        // notificação fixa); o arquivo delas é lido antes, aqui, fora dela.
+        scope.launch(Dispatchers.IO) { callSettings.settings }
     }
 
     val core: CoreRules
@@ -96,6 +116,26 @@ class App : Application() {
         CallManager(
             connection, telecom, recents, notifier, core, clock, { connection.registered.value }, contacts, dialRule,
         )
+    }
+
+    /**
+     * As configurações de ligação (o Não perturbe, o Atender automático e o bipe), no arquivo "configuracoes", que o
+     * Sair da conta não apaga. O arquivo é lido ao criar ([onCreate], fora da thread principal).
+     */
+    val callSettings: CallSettingsStore by lazy { PreferencesCallSettingsStore(this) }
+
+    /**
+     * O status que o app mostra, na bolinha, na linha ao lado dela e na notificação fixa (spec 7): o da conta do
+     * serviço ([Connection.status]) e, com ela registrada, a ligação ([CallManager.state]: qualquer uma, tocando
+     * também) e o Não perturbe por cima ([StatusModel.shown]). Nasce com o valor de agora (a notificação fixa o lê na
+     * hora) e segue as mudanças, fora da thread principal.
+     */
+    val status: StateFlow<Status> by lazy {
+        fun shown(account: Status, ramal: String, call: CallUi?, settings: CallSettings): Status =
+            StatusModel.shown(account, ramal, inCall = call != null, doNotDisturb = settings.doNotDisturb)
+        val now = shown(connection.status.value, connection.ramal.value, calls.state.value, callSettings.settings.value)
+        combine(connection.status, connection.ramal, calls.state, callSettings.settings, ::shown)
+            .stateIn(scope, SharingStarted.Eagerly, now)
     }
 
     /** A agenda do celular (só para ler: nada dela fica no app). */

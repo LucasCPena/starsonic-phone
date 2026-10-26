@@ -93,7 +93,7 @@ class LoginScreenTest {
     @Test
     fun loginOverUdpShowsConectado() {
         login(emulator.senha)
-        emulator.waitForText("Conectado · 2001")
+        emulator.waitForText("Conectado · ${emulator.registrar}")
         // A conta ficou gravada, com a senha cifrada pelo Keystore e decifrada de volta.
         assertEquals(Account(emulator.registrar, Transport.UDP, "2001", emulator.senha), app.store.load())
     }
@@ -101,7 +101,7 @@ class LoginScreenTest {
     @Test
     fun loginOverTcpShowsConectado() {
         login(emulator.senha, tcp = true)
-        emulator.waitForText("Conectado · 2001")
+        emulator.waitForText("Conectado · ${emulator.registrar}")
         assertEquals(Account(emulator.registrar, Transport.TCP, "2001", emulator.senha), app.store.load())
     }
 
@@ -111,7 +111,7 @@ class LoginScreenTest {
         assertEquals("resposta a PASSWORD", "OK", emulator.control("PASSWORD $accented"))
         try {
             login(accented, tcp = true)
-            emulator.waitForText("Conectado · 2001")
+            emulator.waitForText("Conectado · ${emulator.registrar}")
         } finally {
             assertEquals("resposta a PASSWORD", "OK", emulator.control("PASSWORD ${emulator.senha}"))
         }

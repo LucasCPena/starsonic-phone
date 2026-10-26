@@ -79,7 +79,7 @@ class AboutAndAccountTest {
         emulator.startClean()
         app.store.save(account)
         scenario = ActivityScenario.launch(MainActivity::class.java)
-        emulator.waitForText("Conectado · 2001")
+        emulator.waitForText("Conectado · ${emulator.registrar}")
         Intents.init()
         recording = true
     }
@@ -140,7 +140,7 @@ class AboutAndAccountTest {
         compose.onNodeWithTag("senha").performScrollTo().performTextInput(emulator.senha)
         compose.onNodeWithTag("entrar").performScrollTo().performClick()
         emulator.waitUntil("a tela principal") { emulator.showsTag("aba-teclado") }
-        emulator.waitForText("Conectado · 2001")
+        emulator.waitForText("Conectado · ${emulator.registrar}")
         assertFalse("sem a tela Permissões no Editar", emulator.showsTag("continuar"))
         assertEquals(account.copy(transport = Transport.UDP), app.store.load())
         // O serviço ficou com a conta que o Editar registrou: nenhum REGISTER a mais.
