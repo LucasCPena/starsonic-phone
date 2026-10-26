@@ -144,7 +144,7 @@ A tabela é a mesma do Windows. A ordem é a prioridade: vale a primeira linha q
 | Sem internet | cinza | `Sem internet · tentando de novo` | `Sem internet · tentando de novo` |
 | Conectando | ciano | `Conectando…` | `Conectando…` |
 | Erro no cadastro | cinza + triângulo de aviso | o texto de erro de hoje (o do núcleo) | o mesmo texto |
-| Em ligação (inclusive tocando) | vermelha | `Ocupado · em ligação` | a notificação da ligação, como hoje |
+| Em ligação (inclusive tocando) | vermelha | `Ocupado · em ligação` | `Ocupado · em ligação` |
 | Não perturbe ligado | vermelha | `Não perturbe · as ligações não tocam` | `Não perturbe (ramal <ramal>)` |
 | Conectado | verde | `Conectado · <servidor>` | `Conectado (ramal <ramal>)` |
 
