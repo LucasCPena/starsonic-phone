@@ -3,8 +3,10 @@ package br.com.starsonic.phone
 import android.Manifest
 import android.content.res.Configuration
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
@@ -12,15 +14,19 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.filterToOne
 import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.longClick
+import androidx.compose.ui.test.onChildren
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.toSize
 import androidx.test.core.app.ActivityScenario
@@ -188,6 +194,8 @@ class MainScreenTest {
         assertTrue("Sobre no menu", emulator.showsText("Sobre"))
         assertFalse("o Editar conta foi para as Configurações", emulator.showsText("Editar conta"))
         assertFalse("o Sair da conta foi para as Configurações", emulator.showsText("Sair da conta"))
+        // As linhas com a largura de dentro do .popover do quadro Menu (230 dp; fora delas, 6 dp e o contorno de cada lado).
+        for (tag in listOf("menu-configuracoes", "menu-sobre")) assertEquals("a largura de $tag (dp)", 230f, widthDp(tag), 0.5f)
         emulator.saveScreen("menu-claro.png")
         compose.onNodeWithTag("menu-configuracoes").performClick()
         // A parte Conta: a bolinha, o ramal, "servidor · protocolo", o Editar e o Sair, com a ajuda dele.
@@ -235,6 +243,12 @@ class MainScreenTest {
             assertInside("$tag na navegação", bounds, nav)
         }
         assertNoOverlap(tabs)
+        // O nome de cada aba numa linha só, inteiro: com a letra grande, ele encolhe em vez de quebrar no meio da palavra.
+        for ((tag, label) in TABS.zip(TAB_LABELS)) {
+            val layout = textLayout(compose.onNodeWithTag(tag, useUnmergedTree = true).onChildren().filterToOne(hasText(label)))
+            assertEquals("\"$label\" numa linha", 1, layout.lineCount)
+            assertFalse("\"$label\" inteiro, sem corte", layout.hasVisualOverflow)
+        }
         emulator.saveScreen("teclado-letra-grande.png")
         // As 12 teclas, o Rediscar e o Ligar: cada um aparece inteiro entre o cabeçalho e a navegação, rolando o Teclado.
         val body = Rect(header.left, header.bottom, header.right, nav.top)
@@ -410,6 +424,19 @@ class MainScreenTest {
     // A parte do elemento [tag] que aparece (cortada pela rolagem).
     private fun visibleBounds(tag: String): Rect = compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
 
+    // A largura do elemento [tag], em dp.
+    private fun widthDp(tag: String): Float {
+        val node = compose.onNodeWithTag(tag).fetchSemanticsNode()
+        return with(node.layoutInfo.density) { node.size.width.toDp().value }
+    }
+
+    // O texto do nó [node] como foi desenhado (as linhas e o corte).
+    private fun textLayout(node: SemanticsNodeInteraction): TextLayoutResult {
+        val results = mutableListOf<TextLayoutResult>()
+        node.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
+        return results.single()
+    }
+
     private fun assertInside(what: String, inner: Rect, outer: Rect) {
         val inside = inner.left >= outer.left - EPSILON && inner.top >= outer.top - EPSILON &&
             inner.right <= outer.right + EPSILON && inner.bottom <= outer.bottom + EPSILON
@@ -442,6 +469,7 @@ class MainScreenTest {
         const val TOOLTIP_MILLIS = 2_000L
         val KEYS = listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#")
         val TABS = listOf("aba-teclado", "aba-recentes", "aba-contatos")
+        val TAB_LABELS = listOf("Teclado", "Recentes", "Contatos")
         val MAIN_TAGS = listOf("status", "menu", DND, AUTO, "numero", "apagar", REDIAL, "ligar") +
             KEYS.map { "tecla-$it" } + TABS
     }
