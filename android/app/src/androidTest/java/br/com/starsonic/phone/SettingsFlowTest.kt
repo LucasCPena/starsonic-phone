@@ -1,7 +1,12 @@
 package br.com.starsonic.phone
 
 import android.os.PowerManager
+import android.view.ViewGroup
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
@@ -14,9 +19,13 @@ import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.unit.Density
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -25,7 +34,10 @@ import br.com.starsonic.phone.data.Account
 import br.com.starsonic.phone.data.CallSettings
 import br.com.starsonic.phone.engine.Transport
 import br.com.starsonic.phone.main.MainActivity
+import br.com.starsonic.phone.permissions.Guide
+import br.com.starsonic.phone.permissions.PermissionsScreen
 import br.com.starsonic.phone.service.SipService
+import br.com.starsonic.phone.ui.StarsonicTheme
 import java.io.File
 import java.io.IOException
 import org.junit.After
@@ -47,7 +59,11 @@ import org.junit.runners.MethodSorters
  *   "configuracoes" e iguais depois de a tela ser recriada;
  * - o Sair da conta, que pergunta antes e deixa as configurações de ligação, que valem de novo depois do Entrar
  *   (Review Focus 4);
- * - o Editar conta (a tela Entrar preenchida) e as Permissões e bateria (a tela Permissões, que daqui não segue sozinha);
+ * - o Editar conta (a tela Entrar preenchida) e as Permissões e bateria (a tela Permissões, que daqui não segue sozinha,
+ *   nem com tudo dado);
+ * - na tela Permissões, o voltar do Android (o das Configurações volta a elas; o de depois do primeiro Entrar vai para a
+ *   tela principal, R28), o nome "Permitida" do sinal de feito (R29) e os números do passo a passo do fabricante com a
+ *   letra no dobro (R30; o emulador é genérico, e o teste desenha o cartão da Samsung por cima da tela principal);
  * - as telas de dentro (Configurações, o Tempo para atender aberto, a confirmação do Sair, Permissões, Entrar e Sobre)
  *   nos temas escuro (R11) e claro, com as etiquetas no lugar e as fotos (R19), numa tela do tamanho dos quadros do
  *   canvas (390 × 844 dp).
@@ -71,6 +87,9 @@ class SettingsFlowTest {
     private var scenario: ActivityScenario<MainActivity>? = null
     private var settingsBefore: CallSettings? = null
     private var batteryRevoked = false
+
+    // O ComposeView com o passo a passo da Samsung por cima da tela principal ([showTheSamsungGuide]), da activity do teste.
+    private var overlay: ComposeView? = null
 
     @Before
     fun prepare() {
@@ -104,6 +123,18 @@ class SettingsFlowTest {
                     settingsBefore?.let { before -> app.callSettings.update { before } }
                 }
             }
+        }
+    }
+
+    @Test
+    fun aGrantedPermissionIsReadAsPermitida() {
+        // R29: o sinal de feito das Permissões tem o nome do quadro. A bateria fica por liberar, e a tela, aberta.
+        revokeBattery()
+        openSettings()
+        compose.onNodeWithTag("config-permissoes").performScrollTo().performClick()
+        emulator.waitUntil("a tela Permissões com o Permitir da bateria") { emulator.showsTag("permitir-BATTERY") }
+        for (banner in listOf("NOTIFICATIONS", "MICROPHONE", "FULL_SCREEN")) {
+            compose.onNodeWithTag("permitida-$banner").assertContentDescriptionEquals(GRANTED)
         }
     }
 
@@ -147,6 +178,33 @@ class SettingsFlowTest {
     }
 
     @Test
+    fun backOnPermissoesAfterTheFirstEntrarGoesToTheMainScreen() {
+        // R28: o primeiro Entrar (sem conta gravada) com a bateria por liberar leva à tela Permissões; o voltar do Android
+        // vai para a tela principal, como o Voltar da barra e o Continuar.
+        app.store.clear()
+        revokeBattery()
+        scenario = ActivityScenario.launch(MainActivity::class.java)
+        emulator.waitUntil("a tela Entrar") { emulator.showsTag("entrar") }
+        enterTheAccount()
+        emulator.waitUntil("a tela Permissões depois do Entrar") { emulator.showsTag("permitir-BATTERY") }
+        device.pressBack()
+        emulator.waitUntil("a tela principal") { emulator.showsTag("aba-teclado") }
+        emulator.waitForText(connected)
+    }
+
+    @Test
+    fun backOnPermissoesFromConfiguracoesReturnsToConfiguracoes() {
+        // R28: aberta das Configurações, o voltar do Android volta a elas. A bateria fica por liberar: a tela fica
+        // aberta até o voltar.
+        revokeBattery()
+        openSettings()
+        compose.onNodeWithTag("config-permissoes").performScrollTo().performClick()
+        emulator.waitUntil("a tela Permissões com o Permitir da bateria") { emulator.showsTag("permitir-BATTERY") }
+        device.pressBack()
+        emulator.waitUntil("as Configurações") { emulator.showsTag("config-permissoes") }
+    }
+
+    @Test
     fun editarContaOpensEntrarFilledIn() {
         openSettings()
         compose.onNodeWithTag("config-editar").performClick()
@@ -167,33 +225,39 @@ class SettingsFlowTest {
 
     @Test
     fun permissoesEBateriaOpensThePermissionsScreen() {
-        revokeBattery()
         openSettings()
         compose.onNodeWithTag("config-permissoes").performScrollTo()
         assertTrue("a ajuda", emulator.showsText(PERMISSIONS_HELP))
+        // Com tudo dado (o run-emulator-tests.sh dá tudo, e o emulador não tem o passo a passo de um fabricante): depois
+        // do primeiro Entrar, a tela seguiria sozinha; aberta das Configurações, ela fica.
         compose.onNodeWithTag("config-permissoes").performClick()
         emulator.waitUntil("a tela Permissões") { emulator.showsTag("continuar") }
+        Thread.sleep(2_000)
+        assertTrue("a tela Permissões continua aberta, com tudo dado", emulator.showsTag("continuar"))
         assertTrue("o título", emulator.showsText("Permissões"))
         assertTrue("a seção", emulator.showsText("Para as ligações chegarem"))
-        // Os quatro avisos: os já dados (o run-emulator-tests.sh dá tudo) com o sinal de feito, e o da bateria (que o
-        // teste tirou) com o Permitir.
         for ((banner, text) in BANNERS) {
             assertTrue("o aviso $banner", emulator.showsText(text))
+            assertTrue("o sinal de feito de $banner", emulator.showsTag("permitida-$banner"))
+            assertFalse("sem o Permitir de $banner", emulator.showsTag("permitir-$banner"))
+        }
+        // O Voltar da barra volta às Configurações.
+        compose.onNodeWithTag("voltar").performClick()
+        emulator.waitUntil("as Configurações") { emulator.showsTag("config-permissoes") }
+        // Sem a saída da otimização de bateria, o aviso dela tem o Permitir compacto do quadro: 40 dp de altura, com o
+        // toque de 48; os outros, o sinal de feito.
+        revokeBattery()
+        compose.onNodeWithTag("config-permissoes").performScrollTo().performClick()
+        emulator.waitUntil("a tela Permissões com o Permitir da bateria") { emulator.showsTag("permitir-BATTERY") }
+        for ((banner, _) in BANNERS) {
             val allowed = banner != "BATTERY"
             assertEquals("o sinal de feito de $banner", allowed, emulator.showsTag("permitida-$banner"))
             assertEquals("o Permitir de $banner", !allowed, emulator.showsTag("permitir-$banner"))
         }
-        // O Permitir compacto do quadro: 40 dp de altura, com o toque de 48.
         compose.onNodeWithTag("permitir-BATTERY").performScrollTo()
         assertEquals("a altura do Permitir (dp)", 40f, heightDp("permitir-BATTERY"), 0.5f)
         emulator.assertTouchAtLeast48("permitir-BATTERY")
-        // Aberta das Configurações, ela não segue sozinha; o Voltar e o Continuar voltam às Configurações.
-        Thread.sleep(2_000)
-        assertTrue("a tela Permissões continua aberta", emulator.showsTag("continuar"))
-        compose.onNodeWithTag("voltar").performClick()
-        emulator.waitUntil("as Configurações") { emulator.showsTag("config-permissoes") }
-        compose.onNodeWithTag("config-permissoes").performScrollTo().performClick()
-        emulator.waitUntil("a tela Permissões") { emulator.showsTag("continuar") }
+        // O Continuar também volta às Configurações.
         compose.onNodeWithTag("continuar").performScrollTo().performClick()
         emulator.waitUntil("as Configurações") { emulator.showsTag("config-permissoes") }
     }
@@ -223,11 +287,7 @@ class SettingsFlowTest {
         assertEquals("as configurações de ligação ficam", saved, app.callSettings.settings.value)
         waitForSaved("nao_perturbe" to "true", "atender_auto" to "true", "atender_segundos" to "8", "bipe_fim" to "false")
         // O Entrar de novo: elas valem outra vez (Review Focus 4), nas pílulas, na bolinha e na notificação fixa.
-        compose.onNodeWithTag("servidor").performScrollTo().performTextInput(emulator.registrar)
-        compose.onNodeWithTag("protocolo-tcp").performScrollTo().performClick()
-        compose.onNodeWithTag("ramal").performScrollTo().performTextInput("2001")
-        compose.onNodeWithTag("senha").performScrollTo().performTextInput(emulator.senha)
-        compose.onNodeWithTag("entrar").performScrollTo().performClick()
+        enterTheAccount()
         emulator.waitUntil("a tela principal") { emulator.showsTag(CHIP_DND) }
         emulator.waitForText(DND_LINE)
         compose.onNodeWithTag(CHIP_DND).assertIsOn()
@@ -273,6 +333,28 @@ class SettingsFlowTest {
 
     @Test
     fun theInnerScreensDrawInTheLightTheme() = drawTheInnerScreens(night = false, theme = "claro")
+
+    @Test
+    fun theManufacturerStepsStayWholeAtTheLargestFont() {
+        // R30: o cartão do fabricante só aparece nos celulares Samsung e Xiaomi, e o emulador do CI é genérico. O teste
+        // desenha a tela Permissões com o passo a passo da Samsung por cima da tela principal, na letra do celular e com
+        // ela no dobro (a maior do Android): os números dos passos ficam numa linha só, inteiros. As fotos são para a
+        // conferência com o quadro Permissoes.
+        emulator.setNightMode(false)
+        emulator.useCanvasDisplay()
+        scenario = ActivityScenario.launch(MainActivity::class.java)
+        emulator.waitForText(connected)
+        showTheSamsungGuide(fontScale = 1f)
+        emulator.waitUntil("o cartão do fabricante") { emulator.showsTag("abrir-ajustes") }
+        assertTrue("o título do cartão", emulator.showsText(SAMSUNG_TITLE))
+        assertStepNumbersWhole("na letra do celular")
+        emulator.saveScreen("permissoes-samsung-claro.png")
+        showTheSamsungGuide(fontScale = 2f)
+        emulator.waitUntil("o cartão do fabricante na letra maior") { emulator.showsTag("abrir-ajustes") }
+        assertStepNumbersWhole("na letra no dobro")
+        compose.onNodeWithTag("abrir-ajustes").performScrollTo()
+        emulator.saveScreen("permissoes-samsung-letra-grande.png")
+    }
 
     // As telas de dentro no tema [theme] ("escuro" ou "claro"; [night] para o do celular): cada uma com as etiquetas no
     // lugar, e a foto dela. Sem a saída da otimização de bateria, as Permissões mostram um Permitir, como no quadro.
@@ -320,6 +402,48 @@ class SettingsFlowTest {
         emulator.saveScreen("sobre-$theme.png")
         device.pressBack()
         emulator.waitUntil("a tela principal") { emulator.showsTag("aba-teclado") }
+    }
+
+    // Preenche a tela Entrar com a conta do teste (por TCP) e toca em Entrar.
+    private fun enterTheAccount() {
+        compose.onNodeWithTag("servidor").performScrollTo().performTextInput(emulator.registrar)
+        compose.onNodeWithTag("protocolo-tcp").performScrollTo().performClick()
+        compose.onNodeWithTag("ramal").performScrollTo().performTextInput("2001")
+        compose.onNodeWithTag("senha").performScrollTo().performTextInput(emulator.senha)
+        compose.onNodeWithTag("entrar").performScrollTo().performClick()
+    }
+
+    // Desenha a tela Permissões com o passo a passo da Samsung (que o emulador genérico nunca mostra) num ComposeView por
+    // cima da tela principal, no tema do app e com a letra [fontScale] vezes a do celular; da segunda vez, troca o
+    // conteúdo do mesmo ComposeView.
+    private fun showTheSamsungGuide(fontScale: Float) {
+        scenario!!.onActivity { activity ->
+            val view = overlay ?: ComposeView(activity).also {
+                activity.addContentView(it, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+                overlay = it
+            }
+            view.setContent {
+                StarsonicTheme {
+                    val density = LocalDensity.current
+                    CompositionLocalProvider(LocalDensity provides Density(density.density, density.fontScale * fontScale)) {
+                        PermissionsScreen(resumes = 0, guide = Guide.SAMSUNG, continuesAlone = false, onContinue = {})
+                    }
+                }
+            }
+        }
+    }
+
+    // Os números dos passos do fabricante ("1.", "2." e "3.") numa linha só, inteiros ([what]: a letra da vez).
+    private fun assertStepNumbersWhole(what: String) {
+        for (number in listOf("1.", "2.", "3.")) {
+            val results = mutableListOf<TextLayoutResult>()
+            compose.onNodeWithText(number, useUnmergedTree = true).performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
+            val layout = results.single()
+            assertTrue(
+                "o número \"$number\" $what: ${layout.lineCount} linha(s), a primeira até ${layout.getLineEnd(0)} de ${number.length}",
+                layout.lineCount == 1 && layout.getLineEnd(0) == number.length,
+            )
+        }
     }
 
     // Abre o app, espera a linha do status [line] (no cartão da conta) e abre as Configurações pelo menu do cabeçalho.
@@ -388,6 +512,10 @@ class SettingsFlowTest {
         const val PERMISSIONS_HELP =
             "Notificações, microfone e o uso da bateria, para as ligações chegarem com a tela apagada"
         const val DND_LINE = "Não perturbe · as ligações não tocam"
+
+        // O nome do sinal de feito das Permissões (o aria-label do quadro, R29) e o título do passo a passo da Samsung.
+        const val GRANTED = "Permitida"
+        const val SAMSUNG_TITLE = "Nos celulares Samsung, libere também o app nos ajustes:"
 
         // As opções do Tempo para atender, as do Windows, na ordem: os segundos e o nome de cada uma.
         val TIMES = listOf(
