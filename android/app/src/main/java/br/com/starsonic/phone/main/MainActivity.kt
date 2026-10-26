@@ -229,7 +229,7 @@ class MainActivity : ComponentActivity() {
                         Screen.PERMISSIONS -> PermissionsScreen(
                             resumes,
                             deviceGuide(),
-                            continuesAlone = true,   // VERMELHO de propósito (o próximo commit desfaz)
+                            continuesAlone = permissionsReturn == Screen.MAIN,
                             onContinue = ::back,
                         )
                         Screen.MAIN -> MainScreen()
@@ -598,7 +598,7 @@ class MainActivity : ComponentActivity() {
         private const val STATE_PERMISSIONS_RETURN = "volta-permissoes"
 
         // As telas em que o voltar do Android fica no app ([back]).
-        private val INNER_SCREENS = setOf(Screen.EDIT, Screen.ABOUT, Screen.SETTINGS)   // VERMELHO: sem PERMISSIONS
+        private val INNER_SCREENS = setOf(Screen.EDIT, Screen.ABOUT, Screen.SETTINGS, Screen.PERMISSIONS)
 
         // As abas, na ordem da navegação de baixo (BottomNav).
         private const val TAB_KEYPAD = 0

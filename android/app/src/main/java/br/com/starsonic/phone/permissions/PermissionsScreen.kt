@@ -15,7 +15,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
@@ -137,7 +137,8 @@ fun PermissionsScreen(resumes: Int, guide: Guide, continuesAlone: Boolean, onCon
 }
 
 // Um aviso (o .set-row do quadro, etiqueta permissao-<aviso>): o quadrado do ícone, o texto dele e, no fim, o Permitir
-// azul compacto (permitir-<aviso>) ou, já dado ([allowed]), o sinal de feito verde (permitida-<aviso>).
+// azul compacto (permitir-<aviso>) ou, já dado ([allowed]), o sinal de feito verde (permitida-<aviso>), que o leitor de
+// tela lê "Permitida" (o nome do quadro, R29): sem ele, o aviso dado soaria como o pedido.
 @Composable
 private fun PermissionRow(banner: Banner, allowed: Boolean, last: Boolean, onAllow: () -> Unit) {
     val colors = LocalStarsonicColors.current
@@ -149,7 +150,7 @@ private fun PermissionRow(banner: Banner, allowed: Boolean, last: Boolean, onAll
             if (allowed) {
                 Icon(
                     StarsonicIcons.Check,
-                    contentDescription = null,
+                    contentDescription = GRANTED,
                     tint = Starsonic.StatusOnline,
                     modifier = Modifier.size(20.dp).testTag("permitida-${banner.name}"),
                 )
@@ -169,7 +170,8 @@ private fun GuideCard(guide: Guide, onOpen: () -> Unit) {
     SettingsCard(verticalPadding = 14.dp) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(guide.title, style = GuideTitle, color = colors.textStrong)
-            // A lista numerada (o ol do quadro: os números na margem de 20 dp, encostados no texto).
+            // A lista numerada (o ol do quadro: os números na margem de 20 dp, encostados no texto). Com a letra grande,
+            // a margem cresce com o número, que nunca quebra nem corta (R30).
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 guide.steps.forEachIndexed { index, step ->
                     Row(Modifier.semantics(mergeDescendants = true) {}) {
@@ -178,7 +180,7 @@ private fun GuideCard(guide: Guide, onOpen: () -> Unit) {
                             style = GuideStep,
                             color = colors.textMuted,
                             textAlign = TextAlign.End,
-                            modifier = Modifier.width(20.dp).padding(end = 4.dp),
+                            modifier = Modifier.widthIn(min = 20.dp).padding(end = 4.dp),
                         )
                         Text(step, style = GuideStep, color = colors.textMuted, modifier = Modifier.weight(1f))
                     }
@@ -224,6 +226,7 @@ fun WarningBanner(banner: Banner) {
 private const val TITLE = "Permissões"
 private const val SECTION = "Para as ligações chegarem"
 private const val ALLOW = "Permitir"
+private const val GRANTED = "Permitida"
 private const val CONTINUE = "Continuar"
 private const val OPEN_SETTINGS = "Abrir ajustes"
 

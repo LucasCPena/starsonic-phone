@@ -13,7 +13,8 @@ import androidx.compose.ui.unit.dp
 /**
  * Os ícones de linha do canvas (os SVG de 24 × 24 do app do Windows: traço de 2, pontas e cantos redondos), com os
  * caminhos copiados dos quadros, para o Icon, que os pinta na cor de cada lugar (o tint). Cada um diz onde o canvas o
- * usa. São enfeite (contentDescription null), menos os que têm nome: Menu, Apagar, Voltar, Editar conta e Atenção.
+ * usa. São enfeite (contentDescription null), menos os que têm nome: Menu, Apagar, Voltar, Editar conta, Atenção e o
+ * sinal de feito das Permissões (Permitida).
  */
 object StarsonicIcons {
     /** Os dois controles deslizantes: o Menu do cabeçalho e Configurações no menu. */
