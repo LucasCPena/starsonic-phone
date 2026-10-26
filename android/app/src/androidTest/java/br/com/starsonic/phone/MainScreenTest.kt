@@ -163,9 +163,11 @@ class MainScreenTest {
             redialDescription() == "Rediscar 2002"
         }
         compose.onNodeWithTag(REDIAL).performScrollTo().assertIsEnabled()
-        // O aperto longo mostra o nome na dica do Android, sem ligar.
+        // O aperto longo mostra o nome na dica do Android, sem ligar. A dica some sozinha depois de 1,5 s, contados no
+        // relógio do Compose, que nos testes só anda quando o teste o avança.
         compose.onNodeWithTag(REDIAL).performTouchInput { longClick() }
         emulator.waitForText("Rediscar 2002")
+        compose.mainClock.advanceTimeBy(TOOLTIP_MILLIS)
         emulator.waitUntil("a dica sumir") { !emulator.showsText("Rediscar 2002") }
         assertNull("o aperto longo não ligou", app.calls.state.value)
         // O toque liga de novo para a feita mais nova, como o botão de ligar da linha do Recentes.
@@ -435,6 +437,9 @@ class MainScreenTest {
         const val REDIAL = "rediscar"
         const val DND_LINE = "Não perturbe · as ligações não tocam"
         const val EPSILON = 0.5f
+
+        // Mais que os 1,5 s em que a dica do Material fica na tela, com a animação da saída.
+        const val TOOLTIP_MILLIS = 2_000L
         val KEYS = listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#")
         val TABS = listOf("aba-teclado", "aba-recentes", "aba-contatos")
         val MAIN_TAGS = listOf("status", "menu", DND, AUTO, "numero", "apagar", REDIAL, "ligar") +
