@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
@@ -108,10 +107,14 @@ fun RecentsScreen(store: RecentsStore, contacts: ContactsSource, onDial: (String
 }
 
 // Os filtros (o .filters do canvas): "Todas" e "Perdidas · <n>" ([missed], só "Perdidas" sem nenhuma), em pílulas;
-// a escolhida fica cheia.
+// a escolhida fica cheia. Sem espaço lado a lado (a letra grande numa tela estreita), a segunda desce, inteira.
 @Composable
 private fun Filters(missedOnly: Boolean, missed: Int, onChange: (Boolean) -> Unit) {
-    Row(Modifier.selectableGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    FlowRow(
+        Modifier.selectableGroup(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
         FilterPill(ALL, selected = !missedOnly, tag = "filtro-todas") { onChange(false) }
         FilterPill(if (missed > 0) "$MISSED · $missed" else MISSED, selected = missedOnly, tag = "filtro-perdidas") { onChange(true) }
     }

@@ -12,7 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
@@ -54,12 +54,13 @@ fun HeaderMenu(expanded: Boolean, onExpand: () -> Unit, onDismiss: () -> Unit, o
         HeaderMenuButton(onClick = onExpand)
         // O .popover do quadro Menu: 230 dp por dentro, 6 dp de folga e o contorno de cada lado (no quadro, ele fica fora
         // da .win, sem o border-box: 244 dp ao todo), cantos de 18; 2 dp mais perto da borda que o botão. O contorno do
-        // Surface fica por dentro, sobre o primeiro dp dos 7 de folga.
+        // Surface fica por dentro, sobre o primeiro dp dos 7 de folga. Com a letra grande, o menu cresce com o texto
+        // (o DropdownMenu mede as linhas pelo maior texto), e nada quebra no meio da palavra.
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = onDismiss,
             offset = DpOffset(2.dp, 8.dp),
-            modifier = Modifier.width(244.dp).padding(horizontal = 7.dp),
+            modifier = Modifier.widthIn(min = 244.dp).padding(horizontal = 7.dp),
             shape = RoundedCornerShape(18.dp),
             containerColor = colors.popover,
             tonalElevation = 0.dp,
