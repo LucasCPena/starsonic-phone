@@ -64,6 +64,7 @@ import br.com.starsonic.phone.permissions.WarningBanner
 import br.com.starsonic.phone.permissions.deviceGuide
 import br.com.starsonic.phone.service.Refusal
 import br.com.starsonic.phone.service.SipService
+import br.com.starsonic.phone.ui.StarsonicTheme
 import br.com.starsonic.phone.update.UpdateDialog
 import br.com.starsonic.phone.update.UpdateNotification
 import br.com.starsonic.phone.update.UpdateUi

@@ -3,4 +3,6 @@
     <!-- Cores da marca (as mesmas do Windows, branding/branding.h). -->
     <color name="starsonic_blue">#383881</color>
     <color name="starsonic_cyan">#3DB1CC</color>
+    <!-- O fundo do tema escuro (navy-900 do visual do Windows: ui/StarsonicTheme.kt). -->
+    <color name="starsonic_navy_900">#0A1330</color>
 </resources>

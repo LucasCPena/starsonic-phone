@@ -1,7 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- O app segue o modo claro ou escuro do celular (values-night); a faixa e o logo não mudam. -->
-    <style name="Theme.Starsonic" parent="android:Theme.Material.Light.NoActionBar" />
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- O app segue o modo claro ou escuro do celular (values-night), com os dois temas dele: o fundo da janela é o
+         surface de cada um, e o escurecimento forçado dos fabricantes fica desligado. -->
+    <style name="Theme.Starsonic" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@android:color/white</item>
+        <item name="android:forceDarkAllowed" tools:targetApi="29">false</item>
+    </style>
 
     <!-- Tela de abertura: fundo azul com o ícone; depois, o tema do app. -->
     <style name="Theme.Starsonic.Splash" parent="Theme.SplashScreen">

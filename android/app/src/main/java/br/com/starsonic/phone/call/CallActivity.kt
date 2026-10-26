@@ -15,8 +15,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import br.com.starsonic.phone.App
-import br.com.starsonic.phone.main.StarsonicTheme
 import br.com.starsonic.phone.service.SipService
+import br.com.starsonic.phone.ui.StarsonicTheme
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
@@ -69,7 +69,8 @@ class CallActivity : ComponentActivity() {
             contactNumber = app.dialRule,
         )
         setContent {
-            StarsonicTheme {
+            // A ligação é sempre escura (spec 3.1), nos dois modos do celular.
+            StarsonicTheme(dark = true) {
                 val call by calls.state.collectAsState()
                 val message by calls.endMessage.collectAsState()
                 val routes by telecom.routes.collectAsState()
