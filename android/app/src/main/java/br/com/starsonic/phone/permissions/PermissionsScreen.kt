@@ -5,7 +5,6 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,10 +12,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -30,11 +31,19 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
+import androidx.compose.ui.unit.sp
 import br.com.starsonic.phone.main.Band
+import br.com.starsonic.phone.ui.LocalStarsonicColors
+import br.com.starsonic.phone.ui.PlusJakartaSans
+import br.com.starsonic.phone.ui.Starsonic
+import br.com.starsonic.phone.ui.StarsonicIcons
 
 /**
  * A tela Permissões (spec 4.1 e 7.1 item 4), depois de um Entrar que começou sem conta gravada. Mostra só o
@@ -116,28 +125,25 @@ fun PermissionsScreen(status: String, resumes: Int, guide: Guide, onContinue: ()
 }
 
 /**
- * A faixa de avisos da tela principal (spec 11.1): um aviso por vez, o primeiro que falta, com "Abrir
- * ajustes" para o ajuste certo do Android.
+ * A faixa de avisos da tela principal (spec 11.1), embaixo do cabeçalho: um aviso por vez, o primeiro que falta, com o
+ * triângulo de atenção amarelo do Windows e "Abrir ajustes" (o link do tema) para o ajuste certo do Android.
  */
 @Composable
 fun WarningBanner(banner: Banner) {
     val context = LocalContext.current
-    val (fill, ink) = if (isSystemInDarkTheme()) WARNING_DARK else WARNING_LIGHT
+    val colors = LocalStarsonicColors.current
     Row(
         Modifier
             .fillMaxWidth()
-            .background(fill)
-            .padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+            .background(Starsonic.Warning.copy(alpha = 0.14f))
+            .padding(start = 18.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            banner.text,
-            color = ink,
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.weight(1f).testTag("aviso-faixa"),
-        )
+        Icon(StarsonicIcons.Warning, contentDescription = null, tint = Starsonic.Warning, modifier = Modifier.size(18.dp))
+        Text(banner.text, color = colors.text, style = BannerText, modifier = Modifier.weight(1f).testTag("aviso-faixa"))
         TextButton(onClick = { openSettings(context, settingsIntent(context, banner)) }) {
-            Text(OPEN_SETTINGS)
+            Text(OPEN_SETTINGS, color = colors.accentText, style = BannerLink)
         }
     }
 }
@@ -147,6 +153,12 @@ private const val ALLOW = "Permitir"
 private const val CONTINUE = "Continuar"
 private const val OPEN_SETTINGS = "Abrir ajustes"
 
-// Fundo e texto da faixa de avisos: âmbar, no modo claro e no escuro.
-private val WARNING_LIGHT = Color(0xFFFFF3D6) to Color(0xFF4A3500)
-private val WARNING_DARK = Color(0xFF4A3500) to Color(0xFFFFE3A3)
+// O texto da faixa e o link dela (o .link do canvas).
+private val BannerText = TextStyle(
+    fontFamily = PlusJakartaSans,
+    fontSize = 13.sp,
+    fontWeight = FontWeight.SemiBold,
+    lineHeight = 1.35.em,
+    lineHeightStyle = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None),
+)
+private val BannerLink = BannerText.copy(fontSize = 13.5.sp, fontWeight = FontWeight.Bold)

@@ -47,8 +47,30 @@ fun searchContacts(all: List<Contact>, text: String): List<Contact> {
 /** Só os dígitos de [text] (um número sem os separadores, o "+", o "*" e o "#"). */
 fun digitsOf(text: String): String = text.filter(Char::isDigit)
 
+/**
+ * As iniciais do avatar de um contato (as do Windows): a primeira letra do primeiro e do último nome ("Ana Souza" dá
+ * "AS"), ou as duas primeiras de um nome só ("Financeiro" dá "FI"), em maiúsculas; "?" sem nome.
+ */
+fun initials(name: String): String {
+    val words = name.trim().split(SPACES).filter { it.isNotEmpty() }
+    val letters = when (words.size) {
+        0 -> return "?"
+        1 -> words.single().take(2)
+        else -> "${words.first().first()}${words.last().first()}"
+    }
+    return letters.uppercase(PT_BR)
+}
+
+/** A letra do grupo de um contato na lista (a do Windows): a primeira, sem o acento ("Ágata" fica no A); o resto, "#". */
+fun groupLetter(name: String): String {
+    val letter = fold(name.trim()).firstOrNull()?.uppercaseChar()
+    return if (letter != null && letter in 'A'..'Z') letter.toString() else "#"
+}
+
 // O texto sem maiúsculas e sem acentos, para comparar nomes ("João" e "joao" são iguais).
 private fun fold(text: String): String =
     Normalizer.normalize(text, Normalizer.Form.NFD).replace(MARKS, "").lowercase(Locale.ROOT)
 
 private val MARKS = Regex("\\p{Mn}+")
+private val SPACES = Regex("\\s+")
+private val PT_BR: Locale = Locale.forLanguageTag("pt-BR")

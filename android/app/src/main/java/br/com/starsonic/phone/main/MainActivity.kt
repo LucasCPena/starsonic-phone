@@ -10,16 +10,17 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -28,16 +29,20 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
+import androidx.compose.ui.unit.sp
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModel
@@ -47,13 +52,13 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import br.com.starsonic.phone.App
 import br.com.starsonic.phone.BuildConfig
-import br.com.starsonic.phone.R
 import br.com.starsonic.phone.about.AboutScreen
 import br.com.starsonic.phone.about.SEND_DIAGNOSTICS
 import br.com.starsonic.phone.call.CallActivity
 import br.com.starsonic.phone.call.CallPhase
 import br.com.starsonic.phone.contacts.ContactsScreen
 import br.com.starsonic.phone.data.Account
+import br.com.starsonic.phone.data.CallSettings
 import br.com.starsonic.phone.engine.Transport
 import br.com.starsonic.phone.login.LoginScreen
 import br.com.starsonic.phone.login.LoginViewModel
@@ -64,7 +69,16 @@ import br.com.starsonic.phone.permissions.WarningBanner
 import br.com.starsonic.phone.permissions.deviceGuide
 import br.com.starsonic.phone.service.Refusal
 import br.com.starsonic.phone.service.SipService
+import br.com.starsonic.phone.settings.SettingsScreen
+import br.com.starsonic.phone.ui.AccountCard
+import br.com.starsonic.phone.ui.BottomNav
+import br.com.starsonic.phone.ui.BrandHeader
+import br.com.starsonic.phone.ui.HeaderChip
+import br.com.starsonic.phone.ui.PlusJakartaSans
+import br.com.starsonic.phone.ui.Starsonic
+import br.com.starsonic.phone.ui.StarsonicIcons
 import br.com.starsonic.phone.ui.StarsonicTheme
+import br.com.starsonic.phone.ui.Toast
 import br.com.starsonic.phone.update.UpdateDialog
 import br.com.starsonic.phone.update.UpdateNotification
 import br.com.starsonic.phone.update.UpdateUi
@@ -79,14 +93,18 @@ import kotlinx.coroutines.withContext
  * As telas do app (spec 4.1 e 7.1):
  * - Sem conta gravada, a tela Entrar. Depois de um Entrar que começou sem conta (o primeiro, ou o de depois de
  *   Sair), a tela Permissões, se falta alguma coisa.
- * - Com conta, a tela principal: a faixa com o status e o menu (⋮), a faixa de avisos e as abas Teclado, Recentes e
- *   Contatos (a agenda do celular, spec da 0.2, 7.5), com a volta para a ligação em andamento. A notificação de ligação
- *   perdida abre o Recentes ([ACTION_RECENTS]).
+ * - Com conta, a tela principal no visual do Windows (spec 3): o cabeçalho da marca com o menu, o cartão da conta (a
+ *   bolinha, o ramal e a linha do status) e as pílulas Não perturbe e Atender automático (spec 4 e 5); a faixa de
+ *   avisos; as abas Teclado (com o Rediscar, spec 6), Recentes e Contatos (a agenda do celular, spec da 0.2, 7.5), com a
+ *   volta para a ligação em andamento; e a navegação de baixo. A notificação de ligação perdida abre o Recentes
+ *   ([ACTION_RECENTS]). O menu do cabeçalho tem Configurações e Sobre (spec 3.3).
+ * - Configurações (spec 8): a parte Conta, com o Editar conta e o Sair da conta.
  * - Editar conta: a tela Entrar com servidor, protocolo e ramal preenchidos e a senha vazia (nunca a tela
  *   Permissões depois). Registrou: a conta nova é gravada e o serviço começa de novo, porque ele só troca a conta que
  *   segura quando começa (fica com a nova, que já está no motor, sem outro REGISTER). Falhou: a conta anterior volta.
+ *   O voltar do Android volta para onde ele abriu (as Configurações, ou a tela principal).
  * - Sair da conta, depois da confirmação: a ligação de agora acaba, o serviço para (a conta sai do motor), a conta e
- *   a senha saem do celular e a tela Entrar volta, vazia. Os Recentes ficam.
+ *   a senha saem do celular e a tela Entrar volta, vazia. Os Recentes e as configurações de ligação ficam.
  * - Sobre, com os links, a licença e o "Enviar diagnóstico".
  * - O servidor recusou a senha da conta gravada (401, 403 ou 407 fora de uma tentativa da tela Entrar;
  *   [br.com.starsonic.phone.service.Connection.refusal]): com o app na frente, o Editar abre com "Ramal ou senha
@@ -108,7 +126,7 @@ class MainActivity : ComponentActivity() {
         get() = application as App
 
     /** As telas. */
-    private enum class Screen { ENTRAR, PERMISSIONS, MAIN, EDIT, ABOUT }
+    private enum class Screen { ENTRAR, PERMISSIONS, MAIN, EDIT, ABOUT, SETTINGS }
 
     // A tela de agora (null enquanto o app lê a conta gravada: a tela de abertura fica na frente). Só na thread
     // principal; sobrevive às recriações.
@@ -118,8 +136,11 @@ class MainActivity : ComponentActivity() {
     // principal; null até lá.
     private var newAccountTransport by mutableStateOf<Transport?>(null)
 
-    // O aviso com que o Editar abre (a senha recusada pelo servidor); "" no Editar do menu.
+    // O aviso com que o Editar abre (a senha recusada pelo servidor); "" no Editar das Configurações.
     private var editMessage = ""
+
+    // Para onde o voltar do Android leva do Editar: a tela de onde ele abriu (as Configurações ou a principal).
+    private var editReturn = Screen.MAIN
 
     // Há conta gravada (a de quando o app abriu, ou a do Entrar). Só na thread principal.
     private var signedIn = false
@@ -142,6 +163,7 @@ class MainActivity : ComponentActivity() {
         tab = savedInstanceState?.getInt(STATE_TAB, TAB_KEYPAD) ?: if (intent?.action == ACTION_RECENTS) TAB_RECENTS else TAB_KEYPAD
         val restored = savedInstanceState?.getString(STATE_SCREEN)?.let { name -> Screen.entries.firstOrNull { it.name == name } }
         editMessage = savedInstanceState?.getString(STATE_EDIT_MESSAGE).orEmpty()
+        editReturn = if (savedInstanceState?.getString(STATE_EDIT_RETURN) == Screen.SETTINGS.name) Screen.SETTINGS else Screen.MAIN
         lifecycleScope.launch {
             val (account, transport) = withContext(Dispatchers.IO) {
                 app.contactDialProfile()   // o perfil da regra dos números dos contatos, lido aqui, e não num toque
@@ -152,7 +174,7 @@ class MainActivity : ComponentActivity() {
                 signedIn = true
                 SipService.start(this@MainActivity)
                 screen = when (restored) {
-                    Screen.PERMISSIONS, Screen.EDIT, Screen.ABOUT -> restored
+                    Screen.PERMISSIONS, Screen.EDIT, Screen.ABOUT, Screen.SETTINGS -> restored
                     Screen.ENTRAR -> {
                         // A recriação chegou entre a gravação da conta e o fim da tela Entrar: o fim vale aqui.
                         app.calls.onLogin()
@@ -192,7 +214,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             StarsonicTheme {
                 Surface(Modifier.fillMaxSize()) {
-                    BackHandler(enabled = screen == Screen.EDIT || screen == Screen.ABOUT) { backToMain() }
+                    BackHandler(enabled = screen == Screen.EDIT || screen == Screen.ABOUT || screen == Screen.SETTINGS) { back() }
                     when (screen) {
                         null -> {}   // a tela de abertura está na frente
                         Screen.ENTRAR -> EntrarScreen()
@@ -205,6 +227,12 @@ class MainActivity : ComponentActivity() {
                         Screen.ABOUT -> {
                             val status by app.status.collectAsState()
                             AboutScreen(status.line, BuildConfig.VERSION_NAME, onSendDiagnostics = ::sendDiagnostics)
+                        }
+                        Screen.SETTINGS -> {
+                            val status by app.status.collectAsState()
+                            // A conta gravada, para o "servidor · protocolo": lida fora da thread principal (Keystore e disco).
+                            val account by produceState<Account?>(null) { value = withContext(Dispatchers.IO) { app.store.load() } }
+                            SettingsScreen(status, account, onBack = ::back, onEdit = { openEdit("") }, onSignOut = ::signOut)
                         }
                     }
                 }
@@ -222,6 +250,7 @@ class MainActivity : ComponentActivity() {
         outState.putInt(STATE_TAB, tab)
         screen?.let { outState.putString(STATE_SCREEN, it.name) }
         outState.putString(STATE_EDIT_MESSAGE, editMessage)
+        outState.putString(STATE_EDIT_RETURN, editReturn.name)
     }
 
     override fun onStart() {
@@ -313,63 +342,46 @@ class MainActivity : ComponentActivity() {
     @Composable
     private fun MainScreen() {
         val status by app.status.collectAsState()
+        val ramal by app.connection.ramal.collectAsState()
+        val settings by app.callSettings.settings.collectAsState()
         val banner = remember(resumes) { Grants.read(this@MainActivity).banner }
         val call by app.calls.state.collectAsState()
         val message by app.calls.endMessage.collectAsState()
         val update by app.updater.ui.collectAsState()
-        var confirmingSignOut by rememberSaveable { mutableStateOf(false) }
-        Column(Modifier.fillMaxSize()) {
-            Band(status = status.line) {
-                MenuButton(
-                    onEdit = { openEdit("") },
-                    onSignOut = { confirmingSignOut = true },
-                    onAbout = { screen = Screen.ABOUT },
-                )
-            }
-            if (banner != null) WarningBanner(banner)
-            // A recebida que ainda toca tem a notificação dela; a faixa é para a ligação atendida ou feita.
-            if (call?.let { it.phase != CallPhase.RINGING } == true) ReturnToCall()
-            // O aviso de discar sem registro (ou de uma feita que não completou), para as duas abas, numa vaga fixa.
-            CallMessage(message)
-            Box(Modifier.weight(1f).fillMaxWidth()) {
-                when (tab) {
-                    TAB_RECENTS -> RecentsScreen(app.recents, app.contacts, onDial = { dial(it) })
-                    TAB_CONTACTS -> ContactsScreen(app.contacts, onCall = { dialContact(it) })
-                    else -> DialerScreen(onDial = ::dial, suggest = app.contacts::search, contactNumber = app.dialRule)
+        val (redial, redialName) = rememberRedial(app.recents, app.contacts)
+        var menuOpen by remember { mutableStateOf(false) }
+        Box(Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxSize()) {
+                BrandHeader(
+                    menu = {
+                        HeaderMenu(
+                            expanded = menuOpen,
+                            onExpand = { menuOpen = true },
+                            onDismiss = { menuOpen = false },
+                            onSettings = { screen = Screen.SETTINGS },
+                            onAbout = { screen = Screen.ABOUT },
+                        )
+                    },
+                    modifier = Modifier.testTag("cabecalho"),
+                ) {
+                    AccountCard(status, ramal)
+                    CallToggles(settings)
                 }
+                if (banner != null) WarningBanner(banner)
+                // A recebida que ainda toca tem a notificação dela; a faixa é para a ligação atendida ou feita.
+                if (call?.let { it.phase != CallPhase.RINGING } == true) ReturnToCall()
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                    when (tab) {
+                        TAB_RECENTS -> RecentsScreen(app.recents, app.contacts, onDial = { dial(it) })
+                        TAB_CONTACTS -> ContactsScreen(app.contacts, onCall = { dialContact(it) })
+                        else -> DialerScreen(::dial, app.contacts::search, app.dialRule, redial, redialName)
+                    }
+                    // O aviso de discar sem registro (ou de uma feita que não completou), por cima das duas abas.
+                    CallMessage(message, Modifier.align(Alignment.BottomCenter))
+                }
+                BottomNav(selected = tab, onSelect = { tab = it }, modifier = Modifier.testTag("navegacao"))
             }
-            NavigationBar(Modifier.navigationBarsPadding()) {
-                NavigationBarItem(
-                    selected = tab == TAB_KEYPAD,
-                    onClick = { tab = TAB_KEYPAD },
-                    icon = { Icon(painterResource(R.drawable.ic_teclado), contentDescription = null) },
-                    label = { Text(KEYPAD) },
-                    modifier = Modifier.testTag("aba-teclado"),
-                )
-                NavigationBarItem(
-                    selected = tab == TAB_RECENTS,
-                    onClick = { tab = TAB_RECENTS },
-                    icon = { Icon(painterResource(R.drawable.ic_recentes), contentDescription = null) },
-                    label = { Text(RECENTS) },
-                    modifier = Modifier.testTag("aba-recentes"),
-                )
-                NavigationBarItem(
-                    selected = tab == TAB_CONTACTS,
-                    onClick = { tab = TAB_CONTACTS },
-                    icon = { Icon(painterResource(R.drawable.ic_contatos), contentDescription = null) },
-                    label = { Text(CONTACTS) },
-                    modifier = Modifier.testTag("aba-contatos"),
-                )
-            }
-        }
-        if (confirmingSignOut) {
-            SignOutDialog(
-                onConfirm = {
-                    confirmingSignOut = false
-                    signOut()
-                },
-                onDismiss = { confirmingSignOut = false },
-            )
+            MenuScrim(menuOpen)
         }
         // O aviso de atualização (versão nova, download, ligação em andamento, falha). Com o aviso da versão nova na
         // tela, a notificação dela sai.
@@ -379,41 +391,52 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // O aviso das ligações (spec 7.4 e 11.1), por 2 s, acima das abas. A vaga (duas linhas, no tamanho da letra
-    // do celular) fica sempre: o aviso aparece e some sem empurrar o teclado e a lista embaixo do dedo. Com a letra
-    // muito grande, o aviso inteiro ocupa as linhas que precisar.
+    // As pílulas do cabeçalho (spec 4 e 5): o Não perturbe e o Atender automático trocam as configurações de ligação,
+    // que o CallManager lê a cada ligação, e ficam anotadas no log de diagnóstico. Com a letra grande, a segunda desce.
     @Composable
-    private fun CallMessage(message: String) {
-        Text(
-            message,
-            color = MaterialTheme.colorScheme.error,
-            style = MaterialTheme.typography.bodyMedium,
-            textAlign = TextAlign.Center,
-            minLines = 2,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp)
-                .testTag("aviso-ligacao"),
-        )
+    private fun CallToggles(settings: CallSettings) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            HeaderChip(DO_NOT_DISTURB, StarsonicIcons.DoNotDisturb, settings.doNotDisturb, "nao-perturbe") {
+                app.callSettings.update { it.copy(doNotDisturb = !it.doNotDisturb) }
+                app.note("$DO_NOT_DISTURB ${onOrOff(app.callSettings.settings.value.doNotDisturb)}")
+            }
+            HeaderChip(AUTO_ANSWER, StarsonicIcons.Incoming, settings.autoAnswer, "atender-auto") {
+                app.callSettings.update { it.copy(autoAnswer = !it.autoAnswer) }
+                app.note("$AUTO_ANSWER ${onOrOff(app.callSettings.settings.value.autoAnswer)}")
+            }
+        }
     }
 
-    // A faixa verde da ligação em andamento: tocar volta à tela de chamada.
+    // O aviso das ligações (spec 7.4 e 11.1), por 2 s: o aviso do Windows, no fim da área das abas, por cima do conteúdo;
+    // aparece e some sem empurrar o teclado e a lista embaixo do dedo.
+    @Composable
+    private fun CallMessage(message: String, modifier: Modifier) {
+        Toast(message, tag = "aviso-ligacao", modifier = modifier.padding(horizontal = 16.dp, vertical = 14.dp))
+    }
+
+    // A faixa da ligação em andamento, embaixo do cabeçalho: ciano (a ação), com o fone e a seta; tocar volta à tela de
+    // chamada.
     @Composable
     private fun ReturnToCall() {
-        Text(
-            RETURN_TO_CALL,
-            color = Color.White,
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier
+        Row(
+            Modifier
                 .fillMaxWidth()
-                .background(CallGreen)
-                .clickable { startActivity(CallActivity.intent(this)) }
-                .padding(horizontal = 16.dp, vertical = 10.dp)
+                .background(Starsonic.Cyan)
+                .clickable(role = Role.Button) { startActivity(CallActivity.intent(this)) }
+                .heightIn(min = 48.dp)
+                .padding(horizontal = 18.dp, vertical = 10.dp)
                 .testTag("voltar-ligacao"),
-        )
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(StarsonicIcons.Phone, contentDescription = null, tint = Starsonic.OnCyan, modifier = Modifier.size(18.dp))
+            Text(RETURN_TO_CALL, color = Starsonic.OnCyan, style = BarText, modifier = Modifier.weight(1f))
+            Icon(StarsonicIcons.ArrowRight, contentDescription = null, tint = Starsonic.OnCyan, modifier = Modifier.size(16.dp))
+        }
     }
 
-    // Liga (do Teclado ou do Recentes) e abre a tela de chamada; sem registro, o aviso aparece acima das abas.
+    // Liga (do Teclado, do Rediscar ou do Recentes) e abre a tela de chamada; sem registro, o aviso aparece por cima das
+    // abas.
     private fun dial(number: String): Boolean {
         val dialed = app.calls.dial(number)
         if (dialed) startActivity(CallActivity.intent(this))
@@ -425,17 +448,24 @@ class MainActivity : ComponentActivity() {
         if (app.calls.dialContact(number)) startActivity(CallActivity.intent(this))
     }
 
-    // O Editar, com o aviso [message] ("" no do menu); um modelo novo, com a conta gravada de agora.
+    // O Editar, com o aviso [message] ("" no das Configurações); um modelo novo, com a conta gravada de agora. O voltar
+    // dele leva de novo às Configurações, se abriu de lá.
     private fun openEdit(message: String) {
         endLogin()
         editMessage = message
+        editReturn = if (screen == Screen.SETTINGS) Screen.SETTINGS else Screen.MAIN
         screen = Screen.EDIT
     }
 
-    // O voltar do Android no Editar e no Sobre: a tela principal. Sair do Editar no meio de uma tentativa a desfaz.
-    private fun backToMain() {
-        if (screen == Screen.EDIT) endLogin()
-        screen = Screen.MAIN
+    // O voltar (o do Android e o da barra escura): do Editar, para onde ele abriu (sair no meio de uma tentativa a
+    // desfaz); das Configurações e do Sobre, a tela principal.
+    private fun back() {
+        screen = if (screen == Screen.EDIT) {
+            endLogin()
+            editReturn
+        } else {
+            Screen.MAIN
+        }
     }
 
     // Sair da conta (spec 7.1.6), depois da confirmação. Tudo aqui volta na hora, na thread principal: nenhuma volta
@@ -453,7 +483,7 @@ class MainActivity : ComponentActivity() {
     // A senha recusada pelo servidor (com o app na frente): o Editar com o aviso, uma vez por recusa.
     private fun onRefusal(refusal: Refusal, shown: Screen, inCall: Boolean) {
         when (shown) {
-            Screen.MAIN, Screen.ABOUT -> {
+            Screen.MAIN, Screen.ABOUT, Screen.SETTINGS -> {
                 if (inCall) return   // com uma ligação em andamento, o Editar espera ela acabar
                 app.connection.refusalSeen(refusal)
                 app.note("o servidor recusou a senha: a tela Entrar (Editar)")
@@ -536,13 +566,27 @@ class MainActivity : ComponentActivity() {
         private const val STATE_TAB = "aba"
         private const val STATE_SCREEN = "tela"
         private const val STATE_EDIT_MESSAGE = "aviso-editar"
+        private const val STATE_EDIT_RETURN = "volta-editar"
+
+        // As abas, na ordem da navegação de baixo (BottomNav).
         private const val TAB_KEYPAD = 0
         private const val TAB_RECENTS = 1
         private const val TAB_CONTACTS = 2
-        private const val KEYPAD = "Teclado"
-        private const val RECENTS = "Recentes"
-        private const val CONTACTS = "Contatos"
         private const val RETURN_TO_CALL = "Ligação em andamento. Toque para voltar."
+        private const val DO_NOT_DISTURB = "Não perturbe"
+        private const val AUTO_ANSWER = "Atender automático"
+
+        // O que o log de diagnóstico anota quando a pessoa toca numa pílula.
+        private fun onOrOff(on: Boolean): String = if (on) "ligado" else "desligado"
+
+        // O texto da faixa da ligação em andamento.
+        private val BarText = TextStyle(
+            fontFamily = PlusJakartaSans,
+            fontSize = 13.5.sp,
+            fontWeight = FontWeight.Bold,
+            lineHeight = 1.35.em,
+            lineHeightStyle = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None),
+        )
     }
 }
 

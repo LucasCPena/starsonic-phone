@@ -49,9 +49,10 @@ import org.junit.runner.RunWith
 import org.junit.runners.MethodSorters
 
 /**
- * O menu (⋮ na faixa), a tela Sobre, o diagnóstico, o Editar e o Sair no emulador (spec 4.1, 6.4 e 7.1), com o
- * motor de verdade e o registrador falso do CI (ver [Emulator]). O que sai do app (os links do Sobre e o compartilhar
- * do diagnóstico) fica no lugar pelo Espresso-Intents: o teste confere o pedido, e nada abre de verdade.
+ * O menu do cabeçalho, a tela Sobre, o diagnóstico e, nas Configurações, o Editar e o Sair no emulador (spec 3.3, 4.1,
+ * 6.4, 7.1 e 8), com o motor de verdade e o registrador falso do CI (ver [Emulator]). O que sai do app (os links do
+ * Sobre e o compartilhar do diagnóstico) fica no lugar pelo Espresso-Intents: o teste confere o pedido, e nada abre de
+ * verdade.
  *
  * Cada teste começa com a conta gravada por TCP e o app aberto e conectado (o CI confere que o último REGISTER aceito
  * veio por TCP: o último teste, em ordem alfabética, registra por TCP ao começar). Os testes que trocam a senha no
@@ -102,7 +103,7 @@ class AboutAndAccountTest {
     fun aboutLinksOpenTheSiteWhatsappTheDialerAndTheSourceCode() {
         // Nada abre de verdade: o pedido para fora do app fica no lugar.
         intending(not(isInternal())).respondWith(Instrumentation.ActivityResult(Activity.RESULT_OK, null))
-        openMenu("Sobre")
+        openMenu("menu-sobre")
         emulator.waitForText("starsonic.com.br")
         emulator.waitForText("(11) 5060-3000")
         click("site")
@@ -117,7 +118,7 @@ class AboutAndAccountTest {
 
     @Test
     fun aboutShowsVersionLicenseAndCredits() {
-        openMenu("Sobre")
+        openMenu("menu-sobre")
         // A versão do build (0.0.0 no CI).
         emulator.waitForText("Starsonic Phone ${BuildConfig.VERSION_NAME}")
         emulator.waitForText("Licença GPL v3")
@@ -128,7 +129,7 @@ class AboutAndAccountTest {
     @Test
     fun editAccountKeepsTheFieldsAndAsksThePasswordAgain() {
         val before = emulator.registers()
-        openMenu("Editar conta")
+        openAccount("config-editar")
         emulator.waitUntil("a tela Entrar do Editar") { emulator.showsTag("entrar") }
         compose.onNodeWithTag("servidor").assert(hasText(emulator.registrar))
         compose.onNodeWithText("TCP").assertExists()
@@ -242,7 +243,7 @@ class AboutAndAccountTest {
 
     @Test
     fun passwordRefusedWithTheEditorOpenShowsTheMessage() {
-        openMenu("Editar conta")
+        openAccount("config-editar")
         emulator.waitUntil("o Editar") { emulator.showsTag("entrar") }
         assertFalse("o Editar do menu abre sem aviso", emulator.showsTag("aviso"))
         assertEquals("resposta a PASSWORD", "OK", emulator.control("PASSWORD outra"))
@@ -258,7 +259,7 @@ class AboutAndAccountTest {
     @Test
     fun sendDiagnosticsOpensTheShareSheetWithoutThePassword() {
         intending(hasAction(Intent.ACTION_CHOOSER)).respondWith(Instrumentation.ActivityResult(Activity.RESULT_OK, null))
-        openMenu("Sobre")
+        openMenu("menu-sobre")
         emulator.waitUntil("o Enviar diagnóstico") { emulator.showsTag("enviar-diagnostico") }
         click("enviar-diagnostico")
         val chooser = sentIntent(Intent.ACTION_CHOOSER)
@@ -283,7 +284,7 @@ class AboutAndAccountTest {
         app.calls.answer()
         emulator.waitUntil("a ligação atendida") { app.calls.state.value?.phase == CallPhase.ACTIVE }
         val before = emulator.callLog().size
-        openMenu("Sair da conta")
+        openAccount("config-sair")
         compose.onNodeWithTag("sair-confirmar").performClick()
         emulator.waitUntil("a ligação acabar") { app.calls.state.value == null }
         emulator.waitUntil("o BYE no LOG do registrador", details = { "LOG: ${emulator.callLog().drop(before)}" }) {
@@ -299,7 +300,7 @@ class AboutAndAccountTest {
         app.recents.add(Recent("2002", "", CallKind.FEITA, System.currentTimeMillis(), 0))
         val recents = app.recents.list()
         emulator.clearLogcat()   // a confirmação do desregistro que o motor escreve depois daqui é a do Sair
-        openMenu("Sair da conta")
+        openAccount("config-sair")
         compose.onNodeWithTag("sair-confirmar").performClick()
         emulator.waitUntil("a tela Entrar") { emulator.showsTag("entrar") }
         assertEquals("o ramal vazio", "", editableText("ramal"))
@@ -313,11 +314,19 @@ class AboutAndAccountTest {
         assertEquals("o contato do ramal no registrador", "ERR no-contact", emulator.control("RING 2001"))
     }
 
-    // Abre o menu da faixa (⋮) e toca no item.
-    private fun openMenu(item: String) {
-        emulator.waitUntil("o menu da faixa") { emulator.showsTag("menu") }
+    // Abre o menu do cabeçalho e toca no item [tag] (menu-configuracoes ou menu-sobre).
+    private fun openMenu(tag: String) {
+        emulator.waitUntil("o menu do cabeçalho") { emulator.showsTag("menu") }
         compose.onNodeWithTag("menu").performClick()
-        compose.onNodeWithText(item).performClick()
+        emulator.waitUntil("o item $tag do menu") { emulator.showsTag(tag) }
+        compose.onNodeWithTag(tag).performClick()
+    }
+
+    // Abre as Configurações pelo menu e toca na linha [tag] da Conta (config-editar ou config-sair).
+    private fun openAccount(tag: String) {
+        openMenu("menu-configuracoes")
+        emulator.waitUntil("as Configurações") { emulator.showsTag(tag) }
+        compose.onNodeWithTag(tag).performClick()
     }
 
     private fun click(tag: String) {

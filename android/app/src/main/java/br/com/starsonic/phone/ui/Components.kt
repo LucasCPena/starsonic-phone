@@ -1,8 +1,12 @@
 package br.com.starsonic.phone.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.LocalIndication
@@ -54,10 +58,13 @@ import androidx.compose.ui.graphics.shadow.Shadow
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.text
 import androidx.compose.ui.text.AnnotatedString
@@ -262,7 +269,10 @@ enum class ButtonSize(internal val height: Dp, internal val fontSize: TextUnit, 
     Call(58.dp, 16.sp, 20.dp),
 }
 
-/** O botão ciano (o .btn-cyan do canvas: o Ligar, o Entrar e o Continuar), com o texto escuro e a sombra ciano. */
+/**
+ * O botão ciano (o .btn-cyan do canvas: o Ligar, o Entrar e o Continuar), com o texto escuro e a sombra ciano.
+ * Desligado, o do Windows (.btn-cyan:disabled): o ciano escuro (cyan-d), sem a sombra e sem apagar.
+ */
 @Composable
 fun CyanButton(
     text: String,
@@ -273,7 +283,8 @@ fun CyanButton(
     size: ButtonSize = ButtonSize.Regular,
     onClick: () -> Unit,
 ) {
-    PillButton(text, icon, tag, enabled, modifier, size, Starsonic.Cyan, Starsonic.OnCyan, null, CyanShadow, onClick)
+    val container = if (enabled) Starsonic.Cyan else Starsonic.CyanDark
+    PillButton(text, icon, tag, enabled, modifier, size, container, Starsonic.OnCyan, null, CyanShadow, fadeWhenDisabled = false, onClick)
 }
 
 /** O botão azul (o .btn-blue do canvas: o Permitir), com o texto branco, igual nos dois temas. */
@@ -287,7 +298,7 @@ fun BlueButton(
     size: ButtonSize = ButtonSize.Regular,
     onClick: () -> Unit,
 ) {
-    PillButton(text, icon, tag, enabled, modifier, size, Starsonic.Blue, Starsonic.White, null, null, onClick)
+    PillButton(text, icon, tag, enabled, modifier, size, Starsonic.Blue, Starsonic.White, null, null, fadeWhenDisabled = true, onClick)
 }
 
 /** O botão de contorno (o .btn-outline do canvas: o Enviar diagnóstico e o Abrir ajustes), sem fundo. */
@@ -303,7 +314,7 @@ fun OutlineButton(
 ) {
     val colors = LocalStarsonicColors.current
     val border = BorderStroke(1.5.dp, colors.border)
-    PillButton(text, icon, tag, enabled, modifier, size, Color.Transparent, colors.textStrong, border, null, onClick)
+    PillButton(text, icon, tag, enabled, modifier, size, Color.Transparent, colors.textStrong, border, null, fadeWhenDisabled = true, onClick)
 }
 
 /**
@@ -334,6 +345,154 @@ fun RedialButton(
     ) {
         Icon(StarsonicIcons.Redial, contentDescription = null, tint = colors.textStrong, modifier = Modifier.size(24.dp))
     }
+}
+
+/**
+ * O botão redondo de uma linha (o .row-call do canvas: o ligar das linhas do Recentes e dos Contatos, o Editar conta
+ * das Configurações): 44 dp, com contorno, e o [icon] de 16 dp na cor dos ícones; [label] é o nome dele no leitor de
+ * tela.
+ */
+@Composable
+fun RowIconButton(icon: ImageVector, label: String, tag: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val colors = LocalStarsonicColors.current
+    Box(
+        modifier
+            .size(44.dp)
+            .clip(CircleShape)
+            .border(1.5.dp, colors.border, CircleShape)
+            .clickable(role = Role.Button, onClick = onClick)
+            .semantics { contentDescription = label }
+            .testTag(tag),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(icon, contentDescription = null, tint = colors.icon, modifier = Modifier.size(16.dp))
+    }
+}
+
+/**
+ * O avatar de um contato (o .avatar do canvas): o círculo de [size] no gradiente da marca, com as [initials] em branco.
+ * É enfeite: o nome do contato vem ao lado.
+ */
+@Composable
+fun Avatar(initials: String, modifier: Modifier = Modifier, size: Dp = 36.dp) {
+    Box(
+        modifier
+            .size(size)
+            .clip(CircleShape)
+            .background(Starsonic.BrandGradient)
+            .clearAndSetSemantics {},
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(initials, style = AvatarLetters, color = Color.White, maxLines = 1)
+    }
+}
+
+/**
+ * Uma linha de lista (o .row do canvas: o Recentes e os Contatos): o [leading] (o quadrado do tipo, o avatar), o
+ * [content] (o título em [ListRowTitle] e a linha de baixo em [ListRowSub]) e o [trailing] (o ligar redondo), com a
+ * linha embaixo, menos na última da lista ([last]). A linha toda é o botão ([onClick]); a etiqueta é [tag].
+ */
+@Composable
+fun ListRow(
+    tag: String,
+    last: Boolean,
+    onClick: () -> Unit,
+    leading: @Composable () -> Unit,
+    trailing: @Composable () -> Unit,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val colors = LocalStarsonicColors.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .testTag(tag)
+            .then(if (last) Modifier else Modifier.bottomLine(colors.border))
+            .padding(start = 2.dp, top = 10.dp, end = 2.dp, bottom = 10.dp + if (last) 0.dp else Hairline),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        leading()
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp), content = content)
+        trailing()
+    }
+}
+
+/** O título de uma [ListRow] e da sugestão do Teclado (o .row-title do canvas), na cor text-strong. */
+val ListRowTitle: TextStyle = TextStyle(
+    fontFamily = PlusJakartaSans,
+    fontSize = 15.sp,
+    fontWeight = FontWeight.Bold,
+    lineHeight = 18.75.sp,
+    lineHeightStyle = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None),
+)
+
+/** A linha de baixo de uma [ListRow] e da sugestão do Teclado (o .row-sub do canvas), na cor text-muted. */
+val ListRowSub: TextStyle = ListRowTitle.copy(fontSize = 12.5.sp, fontWeight = FontWeight.Normal, lineHeight = 16.875.sp)
+
+/** O aviso de uma lista vazia (o .empty do Windows): no meio, apagado, 24 dp abaixo do que vem antes. */
+@Composable
+fun ListEmptyText(text: String, modifier: Modifier = Modifier) {
+    val colors = LocalStarsonicColors.current
+    Text(
+        text,
+        style = EmptyLabel,
+        color = colors.textMuted,
+        textAlign = TextAlign.Center,
+        modifier = modifier.fillMaxWidth().padding(top = 24.dp),
+    )
+}
+
+/**
+ * O aviso de 2 s (o .toast do Windows: a caixa escura de cantos de 14 dp, com o texto branco no meio): aparece com
+ * [message] não vazio, por cima do que está embaixo (sem empurrar nada), e o leitor de tela o lê na hora. A etiqueta é
+ * [tag]; o [modifier] o põe no lugar.
+ */
+@Composable
+fun Toast(message: String, tag: String, modifier: Modifier = Modifier) {
+    val rise = with(LocalDensity.current) { 6.dp.roundToPx() }
+    AnimatedVisibility(
+        visible = message.isNotEmpty(),
+        modifier = modifier,
+        enter = fadeIn(tween(180)) + slideInVertically(tween(180)) { rise },
+        exit = ExitTransition.None,
+    ) {
+        Text(
+            message,
+            color = Color.White,
+            style = ToastLabel,
+            textAlign = TextAlign.Center,
+            modifier = Modifier
+                .dropShadow(ToastShape, ModalShadow)
+                .clip(ToastShape)
+                .background(Starsonic.Navy950)
+                .border(Hairline, Color.White.copy(alpha = 0.12f), ToastShape)
+                .padding(horizontal = Hairline + 15.dp, vertical = Hairline + 10.dp)
+                .semantics { liveRegion = LiveRegionMode.Polite }
+                .testTag(tag),
+        )
+    }
+}
+
+/**
+ * O título de um grupo de uma lista (o .group do canvas: "Hoje" e "Ontem" no Recentes, as letras nos Contatos), em
+ * maiúsculas espaçadas, apagado. O leitor de tela o lê como está escrito ([text], sem as maiúsculas) e como um título.
+ */
+@Composable
+fun ListGroupTitle(text: String, modifier: Modifier = Modifier) {
+    val colors = LocalStarsonicColors.current
+    Text(
+        text.uppercase(),
+        style = GroupLabel,
+        color = colors.textMuted,
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(start = 2.dp, top = 10.dp, end = 2.dp, bottom = 6.dp)
+            .clearAndSetSemantics {
+                this.text = AnnotatedString(text)
+                heading()
+            },
+    )
 }
 
 /**
@@ -541,7 +700,8 @@ private fun NavTab(label: String, icon: ImageVector, tag: String, on: Boolean, m
 }
 
 // O .btn do canvas: a pílula de [size] com o [icon] (opcional) antes do [text], 22 dp dos lados e 9 entre os dois; o
-// [border] fica por dentro (border-box). Desligado, sem a sombra e apagado (a opacidade do Windows).
+// [border] fica por dentro (border-box). Desligado, sem a sombra e, com [fadeWhenDisabled], apagado (a opacidade do
+// Windows); o ciano desligado troca de cor em vez de apagar ([CyanButton]).
 @Composable
 private fun PillButton(
     text: String,
@@ -554,13 +714,14 @@ private fun PillButton(
     content: Color,
     border: BorderStroke?,
     shadow: Shadow?,
+    fadeWhenDisabled: Boolean,
     onClick: () -> Unit,
 ) {
     CompositionLocalProvider(LocalContentColor provides content) {
         Row(
             modifier
                 .then(if (shadow != null && enabled) Modifier.dropShadow(CircleShape, shadow) else Modifier)
-                .alpha(if (enabled) 1f else DISABLED_ALPHA)
+                .alpha(if (enabled || !fadeWhenDisabled) 1f else DISABLED_ALPHA)
                 .heightIn(min = size.height)
                 .clip(CircleShape)
                 .background(container)
@@ -575,6 +736,12 @@ private fun PillButton(
             Text(text, style = ButtonLabel.copy(fontSize = size.fontSize), textAlign = TextAlign.Center)
         }
     }
+}
+
+// A linha de 1 dp na cor [color] embaixo do elemento (o border-bottom do canvas; o padding fica por dentro dela).
+internal fun Modifier.bottomLine(color: Color): Modifier = drawBehind {
+    val line = Hairline.toPx()
+    drawRect(color, topLeft = Offset(0f, size.height - line), size = Size(size.width, line))
 }
 
 // O fundo escuro da marca: o gradient-hero com o brilho ciano, o círculo de [glowSize] do ::after do canvas, que passa
@@ -614,6 +781,21 @@ private val ButtonLabel = Base.copy(fontWeight = FontWeight.Bold, lineHeight = 1
 // .eyebrow
 private val EyebrowLabel = Base.copy(fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.14.em)
 
+// .avatar, .group, .empty e .toast-box
+private val AvatarLetters = Base.copy(fontSize = 13.sp, fontWeight = FontWeight.ExtraBold, lineHeight = 1.em)
+private val GroupLabel = Base.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.14.em)
+private val EmptyLabel = Base.copy(fontSize = 13.5.sp, lineHeight = 1.4.em)
+private val ToastLabel = Base.copy(fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold, lineHeight = 1.4.em)
+private val ToastShape = RoundedCornerShape(14.dp)
+
+// A sombra das caixas por cima da tela (--shadow-modal: 0 40px 100px -30px rgba(7, 11, 24, 0.6)).
+private val ModalShadow = Shadow(
+    radius = 100.dp,
+    color = Starsonic.Navy950.copy(alpha = 0.6f),
+    spread = (-30).dp,
+    offset = DpOffset(0.dp, 40.dp),
+)
+
 // .set-title e .set-help
 private val SetTitle = Base.copy(fontSize = 14.5.sp, fontWeight = FontWeight.Bold, lineHeight = 1.3.em)
 private val SetHelp = Base.copy(fontSize = 12.5.sp, lineHeight = 1.4.em)
@@ -627,8 +809,8 @@ private val TabLabel = Base.copy(fontSize = 12.5.sp, fontWeight = FontWeight.Sem
 // O contorno de 1 px do canvas. O CSS é border-box: o padding fica por dentro do contorno.
 private val Hairline = 1.dp
 
-// A opacidade de um controle desligado (a do Windows: .btn-blue:disabled, .btn-redial:disabled, .ctrl:disabled).
-private const val DISABLED_ALPHA = 0.45f
+/** A opacidade de um controle desligado (a do Windows: .btn-blue:disabled, .btn-redial:disabled, .ctrl:disabled). */
+internal const val DISABLED_ALPHA = 0.45f
 
 // A sombra do botão ciano (--shadow-cyan: 0 14px 30px -12px rgba(0, 194, 203, 0.7)).
 private val CyanShadow = Shadow(

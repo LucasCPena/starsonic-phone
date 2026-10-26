@@ -45,9 +45,9 @@ class RecentsFormatTest {
 
     @Test
     fun `the title shows the name with the ramal`() {
-        assertEquals("Marcos Lima · 2005", recentTitle("2005", "Marcos Lima"))
-        assertEquals("um número longo fica de fora", "Carlos Lima", recentTitle("(11) 98888-7777", "Carlos Lima"))
-        assertEquals("sem nome, o número", "(11) 5060-3000", recentTitle("(11) 5060-3000", ""))
-        assertEquals("3001", recentTitle("3001", ""))
+        assertEquals(RecentTitle("Marcos Lima", "2005"), recentTitle("2005", "Marcos Lima"))
+        assertEquals("um número longo fica de fora", RecentTitle("Carlos Lima", null), recentTitle("(11) 98888-7777", "Carlos Lima"))
+        assertEquals("sem nome, o número", RecentTitle("(11) 5060-3000", null), recentTitle("(11) 5060-3000", ""))
+        assertEquals(RecentTitle("3001", null), recentTitle("3001", ""))
     }
 }

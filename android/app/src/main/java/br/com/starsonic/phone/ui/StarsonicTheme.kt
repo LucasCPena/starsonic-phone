@@ -93,6 +93,9 @@ object Starsonic {
 
     /** O brilho ciano do canto do cabeçalho (`glow-cyan`: rgba(0, 194, 203, 0.22) no centro do círculo). */
     val HeroGlow = Cyan.copy(alpha = 0.22f)
+
+    /** `gradient-brand`: linear-gradient(135deg, #00c2cb, #0c2671), o fundo dos avatares. */
+    val BrandGradient: Brush = CssLinearGradient(135f, listOf(0f to Cyan, 1f to Blue))
 }
 
 /**
