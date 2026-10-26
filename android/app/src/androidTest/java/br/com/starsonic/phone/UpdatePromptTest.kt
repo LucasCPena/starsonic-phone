@@ -17,8 +17,6 @@ import androidx.test.espresso.intent.Intents.intending
 import androidx.test.espresso.intent.matcher.IntentMatchers.hasAction
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
-import androidx.test.runner.lifecycle.Stage
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
@@ -102,7 +100,7 @@ class UpdatePromptTest {
         notifications.cancelAll()
         scenario?.close()
         // A abertura pela notificação pode criar outra MainActivity, fora do ActivityScenario: ela sai também.
-        emulator.waitUntil("as telas do app fecharem") { finishActivities() == 0 }
+        emulator.waitUntil("as telas do app fecharem") { emulator.finishMainActivities() == 0 }
     }
 
     @Test
@@ -225,18 +223,6 @@ class UpdatePromptTest {
         return found!!
     }
 
-    // Pede o fim das MainActivity que ainda não acabaram e diz quantas eram.
-    private fun finishActivities(): Int {
-        var alive = 0
-        InstrumentationRegistry.getInstrumentation().runOnMainSync {
-            val monitor = ActivityLifecycleMonitorRegistry.getInstance()
-            val activities = LIVE_STAGES.flatMap { monitor.getActivitiesInStage(it) }.filterIsInstance<MainActivity>()
-            activities.filter { !it.isFinishing }.forEach { it.finish() }
-            alive = activities.size
-        }
-        return alive
-    }
-
     private companion object {
         // O canal servido pelo run-update-test.sh.
         const val QUESTION = "Nova versão do Starsonic Phone disponível (9.9.9). Atualizar agora?"
@@ -244,8 +230,5 @@ class UpdatePromptTest {
         const val DOWNLOAD_FAILED = "Não foi possível baixar a atualização. Tentaremos de novo mais tarde."
         const val UPDATE_CHANNEL = "atualizacao"
         const val SYSTEM_UI = "com.android.systemui"
-        val LIVE_STAGES = listOf(
-            Stage.PRE_ON_CREATE, Stage.CREATED, Stage.STARTED, Stage.RESUMED, Stage.PAUSED, Stage.STOPPED, Stage.RESTARTED,
-        )
     }
 }

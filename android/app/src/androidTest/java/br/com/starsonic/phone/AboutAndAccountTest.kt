@@ -24,8 +24,6 @@ import androidx.test.espresso.intent.matcher.IntentMatchers.hasData
 import androidx.test.espresso.intent.matcher.IntentMatchers.isInternal
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
-import androidx.test.runner.lifecycle.Stage
 import androidx.test.uiautomator.UiDevice
 import br.com.starsonic.phone.call.CallPhase
 import br.com.starsonic.phone.data.Account
@@ -96,7 +94,7 @@ class AboutAndAccountTest {
         scenario?.close()
         // A abertura pelo ícone pode criar outra MainActivity, fora do ActivityScenario: ela sai também, e o próximo
         // teste começa só com a dele.
-        emulator.waitUntil("as telas do app fecharem") { finishActivities() == 0 }
+        emulator.waitUntil("as telas do app fecharem") { emulator.finishMainActivities() == 0 }
     }
 
     @Test
@@ -348,24 +346,9 @@ class AboutAndAccountTest {
         return found!!
     }
 
-    // Pede o fim das MainActivity que ainda não acabaram e diz quantas eram.
-    private fun finishActivities(): Int {
-        var alive = 0
-        InstrumentationRegistry.getInstrumentation().runOnMainSync {
-            val monitor = ActivityLifecycleMonitorRegistry.getInstance()
-            val activities = LIVE_STAGES.flatMap { monitor.getActivitiesInStage(it) }.filterIsInstance<MainActivity>()
-            activities.filter { !it.isFinishing }.forEach { it.finish() }
-            alive = activities.size
-        }
-        return alive
-    }
-
     private companion object {
         // A linha do motor quando o servidor confirma a saída da conta (SipEngine.cpp, RetireAccount).
         const val UNREGISTERED = "a conta saiu do servidor"
         val DIGEST_RESPONSE = Regex("""response="[0-9a-f]{32}"""")
-        val LIVE_STAGES = listOf(
-            Stage.PRE_ON_CREATE, Stage.CREATED, Stage.STARTED, Stage.RESUMED, Stage.PAUSED, Stage.STOPPED, Stage.RESTARTED,
-        )
     }
 }
