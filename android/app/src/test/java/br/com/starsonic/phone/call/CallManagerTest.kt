@@ -3,6 +3,7 @@ package br.com.starsonic.phone.call
 import br.com.starsonic.phone.contacts.Contact
 import br.com.starsonic.phone.contacts.FakeContactsSource
 import br.com.starsonic.phone.data.CallKind
+import br.com.starsonic.phone.data.CallSettings
 import br.com.starsonic.phone.data.Recent
 import br.com.starsonic.phone.data.RecentsStore
 import br.com.starsonic.phone.engine.CallState
@@ -22,9 +23,11 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 
 /**
- * As ligações na JVM (spec 7.3 a 7.5; as duas ligações, a consulta e a conferência da 0.2, spec 7.1 a 7.4), com o
- * motor, o Telecom, as notificações e o relógio falsos e os Recentes de verdade numa pasta temporária. O makeCall roda
- * na hora (no app, numa thread própria).
+ * As ligações na JVM (spec 7.3 a 7.5; as duas ligações, a consulta e a conferência da 0.2, spec 7.1 a 7.4; o Não
+ * perturbe, o Atender automático e o bipe no fim da rc.2, spec 4, 5 e 9), com o motor, o Telecom, as notificações, o
+ * relógio e o bipe falsos e os Recentes de verdade numa pasta temporária. O makeCall roda na hora (no app, numa thread
+ * própria). As configurações de ligação são as de fábrica ([settings]), lidas a cada uso; o bipe acaba na hora
+ * ([NoBeep]), a não ser nos testes do bipe, que usam o [beep] falso.
  */
 class CallManagerTest {
     @get:Rule
@@ -37,10 +40,13 @@ class CallManagerTest {
     private var registered = true
     private val recents by lazy { RecentsStore(File(folder.root, "recentes.json")) }
     private val contacts = FakeContactsSource()
+    private var settings = CallSettings()
+    private val beep = FakeBeep()
+    private var endBeep: EndBeep = NoBeep
     private val calls by lazy {
         CallManager(
             gateway, telecom, recents, notifier, CallCore(), clock, { registered }, contacts, { raw -> raw },
-            Executor { it.run() },
+            Executor { it.run() }, settings = { settings }, beep = { done -> endBeep.play(done) },
         )
     }
 
@@ -1913,6 +1919,393 @@ class CallManagerTest {
         calls.onCallState(id, CallState.DISCONNECTED, 200)
         assertEquals("os Recentes guardam o nome que a central mandou (nenhum)", "", recents.list().single().name)
         assertEquals(listOf("3001"), contacts.lookups)
+    }
+
+    // O Não perturbe (spec 4): quem liga ouve ocupado, e a perdida avisa sem som; a que já toca continua tocando.
+
+    @Test
+    fun `do not disturb answers busy and logs a silent missed call`() {
+        settings = CallSettings(doNotDisturb = true)
+        val start = clock.nowMillis()
+        calls.onIncoming(1, "3001", "Cliente Teste")
+        assertEquals("ocupado", listOf(1), gateway.rejects)
+        assertNull("não toca nem abre a tela", calls.state.value)
+        assertFalse(calls.isRinging(1))
+        assertEquals(listOf(Recent("3001", "Cliente Teste", CallKind.PERDIDA, start, 0)), recents.list())
+        assertEquals(listOf("Ligação perdida de 3001"), notifier.missed)
+        assertEquals("sem som e sem vibrar", listOf(true), notifier.missedSilent)
+        calls.onCallState(1, CallState.DISCONNECTED, 486)   // o fim da recusada, no motor: nada mais
+        assertEquals(1, notifier.missed.size)
+        assertEquals(1, recents.list().size)
+        assertTrue("nada vai ao Telecom", telecom.incoming.isEmpty() && telecom.disconnected.isEmpty())
+        // A que o motor recusou sozinho (ocupado) também avisa sem som.
+        calls.onRejectedBusy("3003", "Fulano")
+        assertEquals(listOf("Ligação perdida de 3001", "Ligação perdida de 3003"), notifier.missed)
+        assertEquals(listOf(true, true), notifier.missedSilent)
+        // As feitas funcionam normalmente.
+        val id = dialOut("2002")
+        calls.onCallState(id, CallState.CONFIRMED, 200)
+        assertEquals(CallPhase.ACTIVE, calls.state.value?.phase)
+        assertEquals(listOf(id), telecom.active)
+    }
+
+    @Test
+    fun `do not disturb spares the call already ringing`() {
+        val start = clock.nowMillis()
+        ring(1)
+        settings = settings.copy(doNotDisturb = true)   // ligado com a 1 tocando: vale para as próximas
+        assertTrue("a que já toca continua tocando", calls.isRinging(1))
+        assertEquals(CallUi(1, "3001", "Cliente Teste", incoming = true, phase = CallPhase.RINGING), calls.state.value)
+        assertTrue(gateway.rejects.isEmpty() && notifier.missed.isEmpty())
+        answerCall(1)
+        // A próxima (que, sem o Não perturbe, tocaria como a segunda) recebe ocupado, com a perdida sem som.
+        clock.advance(5_000)
+        calls.onIncoming(2, "3002", "Fulano")
+        assertEquals(listOf(2), gateway.rejects)
+        assertEquals("só a 1 foi ao Telecom", listOf(1), telecom.incoming.map { it.first })
+        assertEquals(listOf("Ligação perdida de 3002"), notifier.missed)
+        assertEquals(listOf(true), notifier.missedSilent)
+        assertEquals(listOf(Recent("3002", "Fulano", CallKind.PERDIDA, start + 5_000, 0)), recents.list())
+        assertEquals(
+            "a 1 continua",
+            CallUi(1, "3001", "Cliente Teste", incoming = true, phase = CallPhase.ACTIVE, activeSinceMillis = start),
+            calls.state.value,
+        )
+    }
+
+    // O Atender automático (spec 5): só a recebida que chegou sozinha, depois do tempo escolhido, se ela ainda toca
+    // sozinha, com ele ligado e o Não perturbe desligado.
+
+    @Test
+    fun `auto answer answers the only ringing call after the chosen seconds`() {
+        settings = CallSettings(autoAnswer = true, autoAnswerSeconds = 3)
+        ring(1)
+        clock.advance(1_000)
+        calls.onIncoming(2, "3002", "")   // outra, com a 1 tocando: ocupado, e a 1 continua sozinha
+        assertEquals(listOf(2), gateway.rejects)
+        clock.advance(1_999)
+        assertTrue("2999 ms: ainda não", gateway.answers.isEmpty())
+        assertEquals(CallPhase.RINGING, calls.state.value?.phase)
+        clock.advance(1)
+        assertEquals(listOf(1), gateway.answers)
+        assertTrue("o toque para", 1 in notifier.stopped)
+        assertEquals(CallPhase.CONNECTING, calls.state.value?.phase)
+        calls.onCallState(1, CallState.CONFIRMED, 200)
+        assertEquals(CallPhase.ACTIVE, calls.state.value?.phase)
+        assertEquals(listOf(1), telecom.active)
+        clock.advance(30_000)
+        assertEquals("uma vez só", listOf(1), gateway.answers)
+    }
+
+    @Test
+    fun `auto answer na hora answers at once`() {
+        settings = CallSettings(autoAnswer = true, autoAnswerSeconds = 0)
+        calls.onIncoming(1, "3001", "Cliente Teste")
+        assertTrue("não dentro do aviso do motor: na próxima volta do relógio", gateway.answers.isEmpty())
+        assertEquals("o Telecom já recebeu a ligação", listOf(Triple(1, "3001", "Cliente Teste")), telecom.incoming)
+        clock.advance(0)
+        assertEquals(listOf(1), gateway.answers)
+        assertEquals(CallPhase.CONNECTING, calls.state.value?.phase)
+    }
+
+    @Test
+    fun `auto answer skips a second call`() {
+        settings = CallSettings(autoAnswer = true)
+        ring(1)
+        clock.advance(3_000)
+        assertEquals(listOf(1), gateway.answers)
+        calls.onCallState(1, CallState.CONFIRMED, 200)
+        ring(2, "3002", "Fulano")   // a segunda, com a 1 em andamento: toca normalmente
+        clock.advance(60_000)
+        assertEquals("a segunda não é atendida sozinha", listOf(1), gateway.answers)
+        assertEquals(SecondUi(2, "3002", "Fulano", SecondKind.RINGING), calls.state.value?.second)
+        // Nem quando a primeira acaba e ela fica sozinha, tocando: ele se decide na chegada.
+        calls.onCallState(1, CallState.DISCONNECTED, 200)
+        assertTrue(calls.isRinging(2))
+        clock.advance(60_000)
+        assertEquals(listOf(1), gateway.answers)
+        assertTrue(calls.isRinging(2))
+    }
+
+    @Test
+    fun `do not disturb wins over auto answer`() {
+        settings = CallSettings(doNotDisturb = true, autoAnswer = true, autoAnswerSeconds = 0)
+        calls.onIncoming(1, "3001", "")
+        clock.advance(5_000)
+        assertTrue(gateway.answers.isEmpty())
+        assertEquals("ocupado", listOf(1), gateway.rejects)
+        assertEquals(listOf(true), notifier.missedSilent)
+        calls.onCallState(1, CallState.DISCONNECTED, 486)
+        // Ligado durante a contagem: a que toca continua tocando, e ninguém a atende sozinho.
+        settings = CallSettings(autoAnswer = true)
+        ring(2, "3002", "")
+        clock.advance(1_000)
+        settings = settings.copy(doNotDisturb = true)
+        clock.advance(10_000)
+        assertTrue("o Não perturbe vale mais", gateway.answers.isEmpty())
+        assertTrue("ela continua tocando", calls.isRinging(2))
+        assertEquals(listOf(1), gateway.rejects)
+    }
+
+    @Test
+    fun `auto answer never answers a call that stopped ringing`() {
+        settings = CallSettings(autoAnswer = true)   // 3 s
+        // Atendida à mão antes do tempo.
+        ring(1)
+        clock.advance(1_000)
+        answerCall(1)
+        clock.advance(10_000)
+        assertEquals("só o toque da pessoa", listOf(1), gateway.answers)
+        calls.hangup()
+        calls.onCallState(1, CallState.DISCONNECTED, 200)
+        // Atendida à mão, e uma segunda chega antes do tempo da primeira: ninguém atende sozinho.
+        ring(2, "3002", "")
+        clock.advance(1_000)
+        answerCall(2)
+        clock.advance(1_000)
+        ring(3, "3003", "")
+        clock.advance(10_000)
+        assertEquals(listOf(1, 2), gateway.answers)
+        assertTrue(calls.isRinging(3))
+        calls.reject()
+        calls.onCallState(3, CallState.DISCONNECTED, 486)
+        calls.hangup()
+        calls.onCallState(2, CallState.DISCONNECTED, 200)
+        // Recusada antes do tempo.
+        ring(4, "3004", "")
+        clock.advance(1_000)
+        calls.reject()
+        clock.advance(5_000)
+        calls.onCallState(4, CallState.DISCONNECTED, 486)
+        assertEquals(listOf(1, 2), gateway.answers)
+        // Quem ligou desistiu antes do tempo, e outra chega sozinha logo depois: a contagem é a dela.
+        ring(5, "3005", "")
+        clock.advance(1_000)
+        calls.onCallState(5, CallState.DISCONNECTED, 487)
+        clock.advance(1_000)
+        ring(6, "3006", "")
+        clock.advance(2_999)
+        assertEquals("o tempo da que desistiu não vale para a nova", listOf(1, 2), gateway.answers)
+        clock.advance(1)
+        assertEquals(listOf(1, 2, 6), gateway.answers)
+        calls.onCallState(6, CallState.DISCONNECTED, 200)
+        // Sair durante a contagem.
+        ring(7, "3007", "")
+        clock.advance(1_000)
+        calls.onLogout()
+        clock.advance(5_000)
+        assertEquals(listOf(1, 2, 6), gateway.answers)
+    }
+
+    @Test
+    fun `auto answer switched off while the call rings does not answer it`() {
+        settings = CallSettings(autoAnswer = true)
+        ring(1)
+        clock.advance(1_000)
+        settings = settings.copy(autoAnswer = false)
+        clock.advance(10_000)
+        assertTrue(gateway.answers.isEmpty())
+        assertTrue("ela continua tocando", calls.isRinging(1))
+        // Ligado de novo com ela tocando: vale para a próxima.
+        settings = settings.copy(autoAnswer = true)
+        clock.advance(10_000)
+        assertTrue(gateway.answers.isEmpty())
+    }
+
+    @Test
+    fun `auto answer never starts during a carrier call`() {
+        settings = CallSettings(autoAnswer = true)
+        telecom.permitted = false   // uma ligação da operadora em andamento
+        calls.onIncoming(1, "3001", "Cliente Teste")
+        clock.advance(5_000)
+        assertTrue(gateway.answers.isEmpty())
+        assertEquals("o ocupado de hoje", listOf(1), gateway.rejects)
+        assertTrue(telecom.incoming.isEmpty())
+        assertNull(calls.state.value)
+        assertEquals(listOf("Ligação perdida de 3001"), notifier.missed)
+        assertEquals("com som: o Não perturbe está desligado", listOf(false), notifier.missedSilent)
+    }
+
+    // O bipe no fim (spec 9): a atendida que acaba sem outra de pé toca o bipe, e a Connection dela só sai do Telecom
+    // quando ele acaba (o bipe toca no som da ligação).
+
+    @Test
+    fun `an answered call that ends beeps once and then disconnects`() {
+        endBeep = beep
+        // A outra pessoa desliga.
+        ring(1)
+        answerCall(1)
+        clock.advance(10_000)
+        calls.onCallState(1, CallState.DISCONNECTED, 200)
+        assertEquals(1, beep.dones.size)
+        assertTrue("a Connection espera o bipe", telecom.disconnected.isEmpty())
+        assertNull("a tela fecha na hora", calls.state.value)
+        assertEquals("os Recentes na hora", CallKind.RECEBIDA, recents.list().single().kind)
+        beep.dones[0]()
+        assertEquals(listOf(1 to EndCause.REMOTE), telecom.disconnected)
+        // A ligação cai (a feita, atendida, com 408 depois de uma troca de rede).
+        val id = dialOut("2002")
+        calls.onCallState(id, CallState.CONFIRMED, 200)
+        calls.onCallState(id, CallState.DISCONNECTED, 408)
+        assertEquals(2, beep.dones.size)
+        assertEquals(1, telecom.disconnected.size)
+        beep.dones[1]()
+        assertEquals(id to EndCause.ERROR, telecom.disconnected.last())
+        // A própria pessoa desliga.
+        ring(3, "3003", "")
+        answerCall(3)
+        calls.hangup()
+        calls.onCallState(3, CallState.DISCONNECTED, 200)
+        assertEquals(3, beep.dones.size)
+        assertEquals(2, telecom.disconnected.size)
+        beep.dones[2]()
+        assertEquals(listOf(1 to EndCause.REMOTE, id to EndCause.ERROR, 3 to EndCause.LOCAL), telecom.disconnected)
+        assertEquals("um bipe por ligação", 3, beep.dones.size)
+    }
+
+    @Test
+    fun `a rejected, missed or unanswered call never beeps`() {
+        endBeep = beep
+        ring(1)
+        calls.reject()
+        calls.onCallState(1, CallState.DISCONNECTED, 486)   // recusada
+        ring(2, "3002", "")
+        calls.onCallState(2, CallState.DISCONNECTED, 487)   // perdida: quem ligou desistiu
+        ring(3, "3003", "")
+        calls.answer()
+        calls.onCallState(3, CallState.DISCONNECTED, 487)   // atendida aqui, mas não completou
+        val busy = dialOut("486")
+        calls.onCallState(busy, CallState.DISCONNECTED, 486)   // a feita que não completou
+        assertTrue(beep.dones.isEmpty())
+        assertEquals(
+            "todas saem do Telecom na hora",
+            listOf(1 to EndCause.REJECTED, 2 to EndCause.MISSED, 3 to EndCause.REMOTE, busy to EndCause.BUSY),
+            telecom.disconnected,
+        )
+    }
+
+    @Test
+    fun `no beep while another call remains, one when the last answered call ends`() {
+        endBeep = beep
+        ring(1)
+        answerCall(1)
+        ring(2, "3002", "Fulano")
+        answerCall(2)   // a 1 em espera
+        calls.onCallState(2, CallState.DISCONNECTED, 200)   // a 2 acaba, e a 1 volta sozinha
+        assertTrue("sobra a 1: sem bipe", beep.dones.isEmpty())
+        assertEquals(listOf(2 to EndCause.REMOTE), telecom.disconnected)
+        // A que acaba com outra tocando também não bipa.
+        ring(3, "3003", "")
+        calls.onCallState(1, CallState.DISCONNECTED, 200)
+        assertTrue(beep.dones.isEmpty())
+        assertEquals(listOf(2 to EndCause.REMOTE, 1 to EndCause.REMOTE), telecom.disconnected)
+        // A 3, atendida, é a última: o bipe.
+        answerCall(3)
+        calls.onCallState(3, CallState.DISCONNECTED, 200)
+        assertEquals(1, beep.dones.size)
+        assertEquals(2, telecom.disconnected.size)
+        beep.dones[0]()
+        assertEquals(3 to EndCause.REMOTE, telecom.disconnected.last())
+        // Duas que acabam juntas (o Desligar da conferência): um bipe só, e as duas saem do Telecom depois dele.
+        ring(4, "3004", "")
+        answerCall(4)
+        val id = dialOut("2002")
+        calls.onCallState(id, CallState.CONFIRMED, 200)
+        calls.join()
+        calls.hangup()
+        calls.onCallState(id, CallState.DISCONNECTED, 200)
+        calls.onCallState(4, CallState.DISCONNECTED, 200)
+        assertEquals("um bipe só", 2, beep.dones.size)
+        assertEquals("as duas esperam o bipe", 3, telecom.disconnected.size)
+        beep.dones[1]()
+        assertEquals(listOf(id to EndCause.LOCAL, 4 to EndCause.LOCAL), telecom.disconnected.drop(3))
+    }
+
+    @Test
+    fun `no beep with the setting off`() {
+        endBeep = beep
+        settings = CallSettings(endBeep = false)
+        ring(1)
+        answerCall(1)
+        calls.onCallState(1, CallState.DISCONNECTED, 200)
+        assertTrue(beep.dones.isEmpty())
+        assertEquals("sai do Telecom na hora", listOf(1 to EndCause.REMOTE), telecom.disconnected)
+    }
+
+    @Test
+    fun `no beep after Sair`() {
+        endBeep = beep
+        ring(1)
+        answerCall(1)
+        calls.onLogout()
+        assertTrue(beep.dones.isEmpty())
+        assertEquals("sai do Telecom na hora", listOf(1 to EndCause.LOCAL), telecom.disconnected)
+        calls.onCallState(1, CallState.DISCONNECTED, 200)   // o fim que chega depois é ignorado
+        assertTrue(beep.dones.isEmpty())
+        assertEquals(1, telecom.disconnected.size)
+    }
+
+    @Test
+    fun `a call during the end beep is not delayed or blocked`() {
+        endBeep = beep
+        ring(1)
+        answerCall(1)
+        calls.onCallState(1, CallState.DISCONNECTED, 200)   // o bipe começa, e a Connection da 1 espera por ele
+        // Uma feita durante o bipe liga na hora.
+        val id = dialOut("2002")
+        assertEquals(listOf("2002"), telecom.placed)
+        assertEquals(listOf("2002"), gateway.made)
+        calls.onCallState(id, CallState.CONFIRMED, 200)
+        assertEquals(CallPhase.ACTIVE, calls.state.value?.phase)
+        assertEquals(listOf(1, id), telecom.active)
+        assertTrue("a 1 ainda espera o bipe", telecom.disconnected.isEmpty())
+        beep.dones[0]()
+        assertEquals("a Connection da 1 sai, e só ela", listOf(1 to EndCause.REMOTE), telecom.disconnected)
+        assertEquals(id, calls.state.value?.id)
+        assertEquals(CallPhase.ACTIVE, calls.state.value?.phase)
+        // Uma recebida durante o bipe da feita vai ao Telecom e toca na hora.
+        calls.onCallState(id, CallState.DISCONNECTED, 200)
+        assertEquals(2, beep.dones.size)
+        ring(2, "3002", "Fulano")
+        assertEquals(Triple(2, "3002", "Fulano"), telecom.incoming.last())
+        assertTrue(calls.isRinging(2))
+        answerCall(2)
+        assertEquals(CallPhase.ACTIVE, calls.state.value?.phase)
+        beep.dones[1]()
+        assertEquals(listOf(1 to EndCause.REMOTE, id to EndCause.REMOTE), telecom.disconnected)
+        assertEquals(CallPhase.ACTIVE, calls.state.value?.phase)
+        assertEquals(listOf(1, id, 2), telecom.active)
+    }
+
+    @Test
+    fun `the end beep's late disconnect never reaches a newer call`() {
+        endBeep = beep
+        ring(1)
+        answerCall(1)
+        calls.onCallState(1, CallState.DISCONNECTED, 200)   // o bipe da 1 começa
+        // Durante o bipe, o Telecom pede o fim da Connection da 1 (o fone Bluetooth) e a pessoa sai da conta: nada sai
+        // antes do fim do bipe (a Connection segue com o som da ligação até lá, e o fim dela é um só).
+        calls.hangup(1)
+        calls.onLogout()
+        assertTrue(telecom.disconnected.isEmpty())
+        assertTrue(gateway.hangups.isEmpty())
+        // Entrar de novo e ligar, ainda no bipe: ele acaba com a feita ainda sem o id do motor (a Connection dela é a
+        // que ganharia o id de um fim desconhecido).
+        calls.onLogin()
+        gateway.duringMakeCall = { beep.dones.single()() }
+        val id = dialOut("2002")
+        gateway.duringMakeCall = null
+        assertEquals("o fim é o da Connection da 1", listOf(1 to EndCause.REMOTE), telecom.disconnected)
+        beep.dones.single()()   // o done repetido (o fim do som e o limite de 1,5 s): nada
+        assertEquals(listOf(1 to EndCause.REMOTE), telecom.disconnected)
+        // A feita segue.
+        calls.onCallState(id, CallState.CONFIRMED, 200)
+        assertEquals(
+            CallUi(id, "2002", "", incoming = false, phase = CallPhase.ACTIVE, activeSinceMillis = clock.nowMillis()),
+            calls.state.value,
+        )
+        assertEquals(listOf(1, id), telecom.active)
+        assertEquals(listOf(1 to EndCause.REMOTE), telecom.disconnected)
     }
 
     // Outra thread tenta usar o CallManager por até 1 s: true se não conseguiu (a trava estava presa).

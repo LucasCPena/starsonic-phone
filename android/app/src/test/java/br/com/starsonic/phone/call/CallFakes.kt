@@ -195,17 +195,31 @@ internal class FakeTelecom : TelecomAdapter {
     }
 }
 
-/** As notificações falsas. */
+/**
+ * As notificações falsas: o texto de cada perdida ([missed]) e, na mesma ordem, se ela foi sem som ([missedSilent], a
+ * do Não perturbe); [stopped] com os ids das que pararam de tocar.
+ */
 internal class FakeNotifier : CallNotifier {
     val missed = mutableListOf<String>()
+    val missedSilent = mutableListOf<Boolean>()
     val stopped = mutableListOf<Int>()
 
-    override fun showMissed(text: String) {
+    override fun showMissed(text: String, silent: Boolean) {
         missed += text
+        missedSilent += silent
     }
 
     override fun stopRinging(callId: Int) {
         stopped += callId
+    }
+}
+
+/** O bipe do fim falso: anota cada bipe pedido, com o done dele ([dones], na ordem); o teste chama o done. */
+internal class FakeBeep : EndBeep {
+    val dones = mutableListOf<() -> Unit>()
+
+    override fun play(done: () -> Unit) {
+        dones += done
     }
 }
 

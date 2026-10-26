@@ -36,6 +36,8 @@ import br.com.starsonic.phone.main.MainActivity
  *   para o toque e a vibração que se repetem, e ela continua no alto da tela.
  * - "perdidas" ("Ligações perdidas", importância padrão): "Ligação perdida de <nome do contato ou número>"; tocar abre
  *   o Recentes.
+ * - "perdidas-nao-perturbe" ("Ligações perdidas no Não perturbe", importância baixa, sem som e sem vibração): a mesma
+ *   perdida, a das recebidas que o Não perturbe recusou (spec 4).
  *
  * O nome de quem liga chega já resolvido pelo CallManager (pelo Telecom, nos extras da recebida): o do contato do
  * celular com o número, se há (spec da 0.2, 7.5), senão o que a central mandou.
@@ -127,7 +129,13 @@ class IncomingCallNotifier(
             lockscreenVisibility = Notification.VISIBILITY_PUBLIC
         }
         val missed = NotificationChannel(CHANNEL_MISSED, CHANNEL_MISSED_NAME, NotificationManager.IMPORTANCE_DEFAULT)
-        manager.createNotificationChannels(listOf(calls, silenced, missed))
+        val missedSilent = NotificationChannel(
+            CHANNEL_MISSED_SILENT, CHANNEL_MISSED_SILENT_NAME, NotificationManager.IMPORTANCE_LOW,
+        ).apply {
+            setSound(null, null)
+            enableVibration(false)
+        }
+        manager.createNotificationChannels(listOf(calls, silenced, missed, missedSilent))
         // Um processo novo não tem ligação: a notificação que ficou de um processo que morreu (com o toque que se
         // repete) sai.
         manager.cancel(INCOMING_ID)
@@ -202,7 +210,7 @@ class IncomingCallNotifier(
         }
     }
 
-    override fun showMissed(text: String) {
+    override fun showMissed(text: String, silent: Boolean) {
         val open = PendingIntent.getActivity(
             context,
             REQUEST_RECENTS,
@@ -211,7 +219,7 @@ class IncomingCallNotifier(
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        val notification = NotificationCompat.Builder(context, CHANNEL_MISSED)
+        val notification = NotificationCompat.Builder(context, if (silent) CHANNEL_MISSED_SILENT else CHANNEL_MISSED)
             .setSmallIcon(R.drawable.ic_stat_starsonic)
             .setContentTitle(text)
             .setContentIntent(open)
@@ -315,11 +323,15 @@ class IncomingCallNotifier(
         /** O canal da recebida silenciada pelo volume (sem som e sem vibração). */
         const val CHANNEL_SILENCED = "ligacoes-silenciadas"
 
+        /** O canal das perdidas do Não perturbe (sem som e sem vibração). */
+        const val CHANNEL_MISSED_SILENT = "perdidas-nao-perturbe"
+
         const val ACTION_DECLINE = "br.com.starsonic.phone.action.RECUSAR"
 
         private const val CHANNEL_CALLS_NAME = "Ligações"
         private const val CHANNEL_MISSED_NAME = "Ligações perdidas"
         private const val CHANNEL_SILENCED_NAME = "Ligações silenciadas"
+        private const val CHANNEL_MISSED_SILENT_NAME = "Ligações perdidas no Não perturbe"
         private const val TAG = "StarsonicNotificacao"
         private const val INCOMING_ID = 2   // a notificação fixa do serviço é a 1
         private const val MISSED_ID = 3

@@ -5,6 +5,7 @@ import android.os.Build
 import android.util.Log
 import br.com.starsonic.phone.about.DiagnosticsLog
 import br.com.starsonic.phone.call.AndroidTelecom
+import br.com.starsonic.phone.call.AudioTrackEndBeep
 import br.com.starsonic.phone.call.CallLog
 import br.com.starsonic.phone.call.CallManager
 import br.com.starsonic.phone.call.CallUi
@@ -110,11 +111,15 @@ class App : Application() {
 
     /**
      * As ligações: os avisos do motor chegam pela conexão; só liga com a conta do serviço registrada
-     * ([Connection.registered]). O nome de cada ligação vem da agenda do celular quando o número está nela.
+     * ([Connection.registered]). O nome de cada ligação vem da agenda do celular quando o número está nela. As
+     * configurações de ligação são lidas a cada uso (uma chave mudada vale na próxima ligação), e o bipe do fim toca no
+     * som da ligação ([AudioTrackEndBeep]).
      */
     val calls: CallManager by lazy {
         CallManager(
             connection, telecom, recents, notifier, core, clock, { connection.registered.value }, contacts, dialRule,
+            settings = { callSettings.settings.value },
+            beep = AudioTrackEndBeep(this),
         )
     }
 

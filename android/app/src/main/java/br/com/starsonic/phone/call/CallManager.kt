@@ -5,6 +5,7 @@ import br.com.starsonic.phone.core.Clock
 import br.com.starsonic.phone.core.CoreRules
 import br.com.starsonic.phone.core.Scheduled
 import br.com.starsonic.phone.data.CallKind
+import br.com.starsonic.phone.data.CallSettings
 import br.com.starsonic.phone.data.Recent
 import br.com.starsonic.phone.data.RecentsStore
 import br.com.starsonic.phone.engine.CallState
@@ -28,8 +29,11 @@ interface CallEvents {
 
 /** As notificações que o [CallManager] pede (a da ligação recebida nasce no Telecom: IncomingCallNotifier). */
 interface CallNotifier {
-    /** "Ligação perdida de <nome do contato do celular ou número>" (canal "perdidas"). */
-    fun showMissed(text: String)
+    /**
+     * "Ligação perdida de <nome do contato do celular ou número>" (canal "perdidas"); [silent], a do Não perturbe: sem
+     * som e sem vibrar, num canal próprio.
+     */
+    fun showMissed(text: String, silent: Boolean = false)
 
     /** A ligação [callId] parou de tocar (atendida, recusada, desistência): a notificação dela sai e o toque para. */
     fun stopRinging(callId: Int)
@@ -173,13 +177,30 @@ object EndCause {
  *   faixa da segunda, nos avisos ("<nome ou número> desligou") e na notificação de perdida; os Recentes guardam o nome
  *   da central (a tela deles procura o contato na hora de mostrar). [dialContact] liga para o número de um contato pela
  *   regra dos números dos contatos ([dialRule]).
+ * - As configurações de ligação ([settings], lidas a cada uso: a chave mudada entre duas ligações vale na próxima):
+ *   - Não perturbe (spec 4): a recebida leva ocupado (486), entra no Recentes como perdida e o aviso dela sai sem som
+ *     ([CallNotifier.showMissed] silent; também o da que o motor recusou sozinho); nada vai ao Telecom. A que já toca
+ *     continua tocando: ele vale para as próximas. As feitas funcionam normalmente.
+ *   - Atender automático (spec 5): a recebida que chega sozinha (sem nenhuma outra ligação) e vai ao Telecom é
+ *     atendida, como no Atender, depois do tempo escolhido (0: na próxima volta do [clock]). Ele se decide na chegada:
+ *     a que chega com outra toca normalmente, também depois que a outra acaba. Na hora, só se ela ainda é a única
+ *     ligação, tocando, e com o Atender automático ligado e o Não perturbe desligado; o atender, o recusar, o fim dela
+ *     e o Sair o cancelam antes.
+ *   - O bipe no fim (spec 9): a atendida que acaba sem outra de pé (as que sobram também estão saindo), com a chave
+ *     ligada e sem ser pelo Sair, toca o bipe ([beep]), e a Connection dela só sai do Telecom quando ele acaba (em
+ *     1,5 s no máximo): até lá o Telecom mantém o som da ligação, e o bipe sai nele. Um bipe por vez: a que acaba
+ *     junto (a outra da conferência, as duas da transferência) espera o mesmo. Nada mais espera: a tela fecha, o
+ *     Recentes grava e uma ligação nova começa na hora. O pedido do Telecom para desligar a Connection que espera (o
+ *     fone Bluetooth) e o Sair não a cortam: ela sai uma vez só, no fim do bipe (um fim repetido para o id dela
+ *     pegaria a feita nova, que ainda não tem id no Telecom).
  * - Depois de [onLogout] (Sair), os eventos do motor são ignorados até o próximo Entrar ([onLogin]).
  *
- * Threads: os eventos chegam na thread dos eventos do motor; os toques da tela e do Telecom, na principal. Nada
- * aqui espera o motor, a não ser o makeCall, que roda em [background] (como as gravações dos Recentes, que leem
- * e gravam o disco, e a procura do contato da feita). A procura do contato da recebida (e da ocupada) lê a agenda na
- * thread dos eventos do motor, antes da trava; nenhuma roda na thread principal. A trava guarda o estado e nunca fica
- * presa numa chamada ao motor, ao Telecom, às notificações, à agenda ou ao disco, nem na entrega de [state] e
+ * Threads: os eventos chegam na thread dos eventos do motor; os toques da tela e do Telecom, na principal; a hora do
+ * Atender automático, na do [clock]; o fim do bipe, na do [beep]. Nada aqui espera o motor, a não ser o makeCall, que
+ * roda em [background] (como as gravações dos Recentes, que leem e gravam o disco, e a procura do contato da feita). A
+ * procura do contato da recebida (e da ocupada) lê a agenda na thread dos eventos do motor, antes da trava; nenhuma
+ * roda na thread principal. As configurações ([settings]) vêm da memória. A trava guarda o estado e nunca fica presa
+ * numa chamada ao motor, ao Telecom, às notificações, ao bipe, à agenda ou ao disco, nem na entrega de [state] e
  * [endMessage]: tudo sai depois, na ordem em que foi decidido. Os coletores que rodam na hora
  * (Dispatchers.Main.immediate na thread principal) rodam sem a trava, e um deles pode chamar o CallManager de volta.
  */
@@ -196,6 +217,8 @@ class CallManager(
     private val background: Executor = Executors.newSingleThreadExecutor { task ->
         Thread(task, "starsonic-ligacao").apply { isDaemon = true }
     },
+    private val settings: () -> CallSettings = { CallSettings() },
+    private val beep: EndBeep = NoBeep,
 ) : CallEvents {
     // Uma das ligações de agora: [name] é o nome que a central mandou (o dos Recentes), e [contact], o do contato do
     // celular com o número dela (procurado uma vez, quando ela começa). Só com a trava.
@@ -235,6 +258,12 @@ class CallManager(
     // [calls]. Só com a trava.
     private class Consult(val client: Call, val colleague: Call)
 
+    // O bipe do fim que toca agora: as Connections que esperam o fim dele para sair do Telecom, cada uma com o id e o
+    // motivo do fim, na ordem em que as ligações acabaram. Só com a trava.
+    private class EndBeepWait(id: Int, cause: Int) {
+        val waiting = mutableListOf(id to cause)
+    }
+
     private val lock = Any()
     private val calls = ArrayList<Call>(2)   // as ligações de agora (até duas), na ordem em que começaram
     private var active: Call? = null          // a ativa, uma de [calls]: a do som e a de cima na tela (null: nenhuma)
@@ -243,6 +272,9 @@ class CallManager(
     private var conferenceSince = 0L          // quando o Juntar foi pedido (a tela conta o tempo desde ele)
     private var muted = false                 // o mudo do microfone (o do motor vale para as duas); sai com a última
     private var maxSeenId = 0                 // o maior id de ligação do motor já visto
+    private var autoCall: Call? = null        // a recebida do Atender automático marcado (null: nenhum)
+    private var autoTimer: Scheduled? = null  // ...e o aviso dele no relógio
+    private var beeping: EndBeepWait? = null  // o bipe do fim que toca agora (null: nenhum)
     private var endTimer: Scheduled? = null
     private var endToken = 0
     private val publications = ArrayDeque<() -> Unit>()   // as entregas em [state] e [endMessage], na ordem
@@ -265,6 +297,7 @@ class CallManager(
     val endMessage: StateFlow<String> = mutableEndMessage
 
     override fun onIncoming(callId: Int, number: String, name: String) {
+        val chosen = settings()
         val permitted = !loggedOut && telecom.incomingPermitted()   // fora da trava: pergunta ao Android
         val contact = if (loggedOut) null else contacts.lookup(number)   // fora da trava: lê a agenda
         act { effects ->
@@ -274,15 +307,18 @@ class CallManager(
             // Até duas, e a segunda só com a outra em andamento (como no motor); a da operadora não deixa nenhuma.
             val other = calls.singleOrNull()
             val fits = calls.isEmpty() || (other != null && other.phase == CallPhase.ACTIVE && !other.ending)
-            if (!fits || !permitted) {
-                // Ocupado, e a ligação entra como perdida.
+            if (chosen.doNotDisturb || !fits || !permitted) {
+                // Ocupado, e a ligação entra como perdida (no Não perturbe, o aviso sai sem som).
                 effects += { gateway.reject(callId) }
-                missed(Recent(number, name, CallKind.PERDIDA, clock.nowMillis(), 0), contact, effects)
+                val recent = Recent(number, name, CallKind.PERDIDA, clock.nowMillis(), 0)
+                missed(recent, contact, effects, silent = chosen.doNotDisturb)
                 return@act
             }
             val incoming = Call(incoming = true, number, name, clock.nowMillis(), contact).also { it.id = callId }
             calls += incoming
             if (active == null) active = incoming
+            // O Atender automático só vale para a que chega sozinha (no Não perturbe, ela já recebeu o ocupado).
+            if (other == null && chosen.autoAnswer) startAutoAnswer(incoming, chosen.autoAnswerSeconds)
             publish()
             val shownName = incoming.displayName
             effects += { telecom.addIncoming(callId, number, shownName) }
@@ -290,9 +326,11 @@ class CallManager(
     }
 
     override fun onRejectedBusy(number: String, name: String) {
+        val silent = settings().doNotDisturb
         val contact = if (loggedOut) null else contacts.lookup(number)   // fora da trava: lê a agenda
         act { effects ->
-            if (!loggedOut) missed(Recent(number, name, CallKind.PERDIDA, clock.nowMillis(), 0), contact, effects)
+            if (loggedOut) return@act
+            missed(Recent(number, name, CallKind.PERDIDA, clock.nowMillis(), 0), contact, effects, silent)
         }
     }
 
@@ -426,15 +464,7 @@ class CallManager(
     fun answer() {
         act { effects ->
             val ringing = ringingCall() ?: return@act
-            ringing.answered = true
-            ringing.phase = CallPhase.CONNECTING
-            val other = otherThan(ringing)
-            active = ringing
-            val id = ringing.id
-            effects += { notifier.stopRinging(id) }
-            effects += { gateway.answer(id) }
-            if (other != null) heldByEngine(other, effects)
-            publish()
+            answer(ringing, effects)
         }
     }
 
@@ -469,7 +499,8 @@ class CallManager(
      * kit do carro, o relógio); fora da conferência, a outra acaba sem mexer na ativa. [NO_ID] é a feita mais nova (a
      * Connection dela ainda não sabe o id do motor). Na conferência, pela Connection de qualquer uma das duas (a ACTIVE
      * ou a HOLDING do Telecom), desliga as duas, como o [hangup] da tela (o Desligar encerra para todos: a tela não
-     * separa as duas), e nenhuma volta sozinha.
+     * separa as duas), e nenhuma volta sozinha. Para a Connection de uma ligação que já acabou e espera o bipe do fim,
+     * nada: ela sai do Telecom no fim do bipe.
      */
     fun hangup(callId: Int) {
         act { effects ->
@@ -692,7 +723,11 @@ class CallManager(
         }
     }
 
-    /** Sair: as ligações de agora acabam, e daqui em diante os eventos do motor são ignorados (até [onLogin]). */
+    /**
+     * Sair: as ligações de agora acabam, sem o bipe do fim (saem do Telecom na hora), e daqui em diante os eventos do
+     * motor são ignorados (até [onLogin]). Um bipe que já toca acaba como estava, e a Connection que o espera sai no
+     * fim dele.
+     */
     fun onLogout() {
         act { effects ->
             loggedOut = true
@@ -756,8 +791,57 @@ class CallManager(
         }
     }
 
+    // Com a trava: a recebida [ringing], que toca, é atendida (pela pessoa ou pelo Atender automático); a outra
+    // ligação, se há, vai para a espera (o motor a põe no answer).
+    private fun answer(ringing: Call, effects: MutableList<() -> Unit>) {
+        if (ringing === autoCall) cancelAutoAnswer()
+        ringing.answered = true
+        ringing.phase = CallPhase.CONNECTING
+        val other = otherThan(ringing)
+        active = ringing
+        val id = ringing.id
+        effects += { notifier.stopRinging(id) }
+        effects += { gateway.answer(id) }
+        if (other != null) heldByEngine(other, effects)
+        publish()
+    }
+
+    // Com a trava: o Atender automático da recebida [call], que chegou sozinha, daqui a [seconds] s ([autoAnswer]). Um
+    // por vez (o cancel é só a garantia: um marcado é de uma recebida que ainda toca sozinha, e com ela nenhuma outra
+    // chega sozinha).
+    private fun startAutoAnswer(call: Call, seconds: Int) {
+        cancelAutoAnswer()
+        autoCall = call
+        autoTimer = clock.schedule(seconds * 1000L) {
+            val chosen = settings()
+            act { effects -> autoAnswer(call, chosen, effects) }
+        }
+    }
+
+    // Com a trava: a hora do Atender automático de [call]. Só o marcado de agora vale (um cancelado cujo aviso já tinha
+    // saído não atende), e só se [call] ainda é a única ligação, tocando (nem atendida, nem recusada, nem saindo), com
+    // o Atender automático ligado e o Não perturbe desligado ([chosen], as de agora), e sem Sair. A da operadora não é
+    // perguntada de novo: o nosso próprio toque põe o áudio no modo dela.
+    private fun autoAnswer(call: Call, chosen: CallSettings, effects: MutableList<() -> Unit>) {
+        if (call !== autoCall) return
+        autoCall = null
+        autoTimer = null
+        val alone = calls.size == 1 && calls[0] === call
+        val ringing = call.phase == CallPhase.RINGING && !call.answered && !call.rejected && !call.ending
+        if (loggedOut || !alone || !ringing || !chosen.autoAnswer || chosen.doNotDisturb) return
+        answer(call, effects)
+    }
+
+    // Com a trava: o Atender automático marcado (se há) não atende mais.
+    private fun cancelAutoAnswer() {
+        autoTimer?.cancel()
+        autoTimer = null
+        autoCall = null
+    }
+
     // Com a trava: a recebida [current] recebe ocupado (486); o fim dela chega pelo motor.
     private fun reject(current: Call, effects: MutableList<() -> Unit>) {
+        if (current === autoCall) cancelAutoAnswer()
         current.rejected = true
         current.ending = true
         val id = current.id
@@ -856,12 +940,14 @@ class CallManager(
         effects += { telecom.setOnHold(id) }
     }
 
-    // Com a trava: a ligação [current] acabou com o código [code]: Recentes, notificação, aviso e Telecom. Se era a
-    // ativa, a outra (se há) passa a ser, e volta sozinha ([resumeNext]). A outra que cai do outro lado, já em
-    // andamento e com a ativa continuando, deixa o aviso "<nome ou número> desligou", como uma das duas da conferência
-    // (qualquer uma). Com ela, a consulta ([leaveConsult]) e a conferência ([leaveConference]) acabam; a outra da
-    // conferência fica como uma ligação normal ([stayAfterConference]).
+    // Com a trava: a ligação [current] acabou com o código [code]: Recentes, notificação, aviso e Telecom (na hora, ou
+    // no fim do bipe: [disconnectAfterBeep]). Se era a ativa, a outra (se há) passa a ser, e volta sozinha
+    // ([resumeNext]). A outra que cai do outro lado, já em andamento e com a ativa continuando, deixa o aviso "<nome ou
+    // número> desligou", como uma das duas da conferência (qualquer uma). Com ela, a consulta ([leaveConsult]) e a
+    // conferência ([leaveConference]) acabam; a outra da conferência fica como uma ligação normal
+    // ([stayAfterConference]).
     private fun end(current: Call, code: Int, effects: MutableList<() -> Unit>, cause: Int? = null, quiet: Boolean = false) {
+        if (current === autoCall) cancelAutoAnswer()
         val wasActive = current === active
         val colleague = leaveConsult(current)
         val fromConference = leaveConference(effects)
@@ -912,10 +998,36 @@ class CallManager(
             effects += { gateway.setMute(false) }
         }
         record(Recent(current.number, current.name, kind, current.startMillis, duration), effects)
-        effects += { telecom.disconnect(id, endCause) }
+        if (received && !loggedOut && calls.none { !it.ending } && settings().endBeep) {
+            disconnectAfterBeep(id, endCause, effects)
+        } else {
+            effects += { telecom.disconnect(id, endCause) }
+        }
         when {
             fromConference -> stayAfterConference(effects)
             wasActive && !current.held -> resumeNext(effects)
+        }
+    }
+
+    // Com a trava: uma atendida acabou sem outra de pé: a Connection [id] sai do Telecom (com o motivo [cause]) no fim
+    // do bipe. Com um bipe já tocando (a outra que acaba junto), ela espera o mesmo.
+    private fun disconnectAfterBeep(id: Int, cause: Int, effects: MutableList<() -> Unit>) {
+        beeping?.let {
+            it.waiting += id to cause
+            return
+        }
+        val wait = EndBeepWait(id, cause)
+        beeping = wait
+        effects += { beep.play { endBeepDone(wait) } }
+    }
+
+    // Em qualquer thread (a do bipe): o bipe [wait] acabou, e as Connections que o esperavam saem do Telecom. Uma vez
+    // só: um done repetido não faz nada (outro fim para o mesmo id pegaria a feita que ainda não tem id no Telecom).
+    private fun endBeepDone(wait: EndBeepWait) {
+        act { effects ->
+            if (beeping !== wait) return@act
+            beeping = null
+            for ((id, cause) in wait.waiting) effects += { telecom.disconnect(id, cause) }
         }
     }
 
@@ -997,11 +1109,11 @@ class CallManager(
         current.ending = true
     }
 
-    // Com a trava: uma perdida que a pessoa não viu (ocupado): Recentes e notificação.
-    private fun missed(recent: Recent, contact: String?, effects: MutableList<() -> Unit>) {
+    // Com a trava: uma perdida que a pessoa não viu (ocupado): Recentes e notificação ([silent]: a do Não perturbe).
+    private fun missed(recent: Recent, contact: String?, effects: MutableList<() -> Unit>, silent: Boolean = false) {
         record(recent, effects)
         val text = missedText(recent.number, recent.name, contact)
-        effects += { notifier.showMissed(text) }
+        effects += { notifier.showMissed(text, silent) }
     }
 
     // Os Recentes leem e gravam o disco: em [background], na ordem.
