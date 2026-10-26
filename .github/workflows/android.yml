@@ -296,12 +296,15 @@ jobs:
       # Cada linha do script roda à parte; a primeira que falha encerra o passo. O ServiceTest deixa a conta
       # gravada; o check-boot.sh para o app à força e confere que o BOOT_COMPLETED (com o adb como root)
       # registra o ramal de novo e segura o processador acordado (o wake lock "starsonic:conexao"). Depois, o
-      # CallFlowTest, o AboutAndAccountTest (menu, Sobre, diagnóstico, Editar e Sair) e, por último, o
-      # UpdatePromptTest (o atualizador, com o canal de teste que o run-update-test.sh serve neste computador por um
-      # `python3 -m http.server`, de pé só durante a classe): cada um começa parando o serviço que a reinstalação
-      # (MY_PACKAGE_REPLACED) iniciou com a conta gravada e registra a dele por TCP. Antes de tudo, o set-locale.sh
-      # põe o emulador em pt-BR (com o adb como root, e o Android reinicia): os botões da notificação de ligação
-      # (Atender e Recusar) são do Android, no idioma do celular, como nos clientes.
+      # CallFlowTest, o AboutAndAccountTest (menu, Sobre, diagnóstico, Editar e Sair), o ContactsFlowTest, o
+      # MainScreenTest (a tela principal no visual do Windows; depois do ContactsFlowTest, porque dá a permissão dos
+      # contatos) e, por último, o UpdatePromptTest (o atualizador, com o canal de teste que o run-update-test.sh serve
+      # neste computador por um `python3 -m http.server`, de pé só durante a classe): cada um começa parando o serviço
+      # que a reinstalação (MY_PACKAGE_REPLACED) iniciou com a conta gravada e registra a dele por TCP. Antes de tudo, o
+      # set-locale.sh põe o emulador em pt-BR (com o adb como root, e o Android reinicia): os botões da notificação de
+      # ligação (Atender e Recusar) são do Android, no idioma do celular, como nos clientes. As fotos das telas que os
+      # testes do visual tiram (a pasta telas do app) vêm do emulador logo depois da classe, para $RUNNER_TEMP/telas;
+      # sem elas, só um aviso.
       - name: Testes no emulador
         id: emulador
         if: ${{ !cancelled() && steps.gradle.outputs.apks == 'true' }}
@@ -319,7 +322,19 @@ jobs:
             bash build/android/run-emulator-tests.sh "$APK" "$TEST_APK" br.com.starsonic.phone.CallFlowTest -e registrar 10.0.2.2 -e porta 5070 -e senha senha-certa
             bash build/android/run-emulator-tests.sh "$APK" "$TEST_APK" br.com.starsonic.phone.AboutAndAccountTest -e registrar 10.0.2.2 -e porta 5070 -e senha senha-certa
             bash build/android/run-emulator-tests.sh "$APK" "$TEST_APK" br.com.starsonic.phone.ContactsFlowTest -e registrar 10.0.2.2 -e porta 5070 -e senha senha-certa
+            bash build/android/run-emulator-tests.sh "$APK" "$TEST_APK" br.com.starsonic.phone.MainScreenTest -e registrar 10.0.2.2 -e porta 5070 -e senha senha-certa
+            adb pull /sdcard/Android/data/br.com.starsonic.phone/files/telas "$RUNNER_TEMP/" || { adb exec-out run-as br.com.starsonic.phone tar cf - -C /sdcard/Android/data/br.com.starsonic.phone/files telas | tar xf - -C "$RUNNER_TEMP"; } || echo "::warning title=Fotos das telas::a pasta telas não saiu do emulador"
             bash build/android/run-update-test.sh "$APK" "$TEST_APK" -e registrar 10.0.2.2 -e porta 5070 -e senha senha-certa
+
+      # As fotos das telas (os testes do visual), publicadas também quando um teste falha, para a conferência com os
+      # quadros do canvas.
+      - name: Publicar as fotos das telas
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: telas-${{ github.sha }}
+          path: ${{ runner.temp }}/telas
+          if-no-files-found: warn
 
       # O registrador guarda o User-Agent do último REGISTER e o protocolo do último REGISTER aceito. O
       # LoginScreenTest termina os registros aceitos com o da senha com acento, por TCP; o ServiceTest, o

@@ -70,6 +70,22 @@ class ContactsTest {
     }
 
     @Test
+    fun `the avatar shows the initials of the first and last names`() {
+        assertEquals("AS", initials("Ana Souza"))
+        assertEquals("o primeiro e o último nome", "ML", initials("  Maria da Silva Lima "))
+        assertEquals("um nome só: as duas primeiras letras", "FI", initials("Financeiro"))
+        assertEquals("com o acento, em maiúsculas", "ÁS", initials("ágata souza"))
+    }
+
+    @Test
+    fun `the group letter ignores accents and puts the rest under #`() {
+        assertEquals("A", groupLetter("Ágata Souza"))
+        assertEquals("C", groupLetter("carlos Lima"))
+        assertEquals("#", groupLetter("2003 Portaria"))
+        assertEquals("#", groupLetter("+55 Recepção"))
+    }
+
+    @Test
     fun `a contact without numbers is not listed`() {
         val source = FakeContactsSource(Contact("Bruno", emptyList()), Contact("Maria Silva", listOf("3001")))
         assertEquals(listOf("Maria Silva"), source.search("").map { it.name })
