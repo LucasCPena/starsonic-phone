@@ -2302,6 +2302,85 @@ class CallManagerTest {
     }
 
     @Test
+    fun `no beep for a call held by a carrier call`() {
+        endBeep = beep
+        ring(1)
+        answerCall(1)
+        calls.holdFromTelecom(1)   // uma ligação da operadora atendida: o som é dela
+        calls.onCallState(1, CallState.DISCONNECTED, 200)   // quem ligou desliga, com a 1 em espera pelo Telecom
+        assertTrue("nada de bipe no meio da ligação da operadora", beep.dones.isEmpty())
+        assertEquals("sai do Telecom na hora", listOf(1 to EndCause.REMOTE), telecom.disconnected)
+        // Retomada pelo Telecom (a da operadora acabou), o som volta a ser nosso: o bipe toca.
+        ring(2, "3002", "")
+        answerCall(2)
+        calls.holdFromTelecom(2)
+        calls.activateFromTelecom(2)
+        calls.onCallState(2, CallState.DISCONNECTED, 200)
+        assertEquals(1, beep.dones.size)
+        beep.dones[0]()
+        // Na espera da própria pessoa, o som é nosso: o bipe também toca.
+        ring(3, "3003", "")
+        answerCall(3)
+        calls.hold(true)
+        calls.onCallState(3, CallState.DISCONNECTED, 200)
+        assertEquals(2, beep.dones.size)
+        beep.dones[1]()
+        assertEquals(listOf(1 to EndCause.REMOTE, 2 to EndCause.REMOTE, 3 to EndCause.REMOTE), telecom.disconnected)
+    }
+
+    @Test
+    fun `the end beep never holds the Connection more than 1500 ms`() {
+        endBeep = beep   // o done só roda quando o teste o chama
+        // O done se perde: a Connection sai 1,5 s depois do fim.
+        ring(1)
+        answerCall(1)
+        calls.onCallState(1, CallState.DISCONNECTED, 200)
+        clock.advance(1_499)
+        assertTrue("ainda espera o bipe", telecom.disconnected.isEmpty())
+        clock.advance(1)
+        assertEquals(listOf(1 to EndCause.REMOTE), telecom.disconnected)
+        beep.dones[0]()   // o done atrasado: nada
+        assertEquals(1, telecom.disconnected.size)
+        // O done chega antes: o limite sai, e nada desliga de novo.
+        ring(2, "3002", "")
+        answerCall(2)
+        calls.onCallState(2, CallState.DISCONNECTED, 200)
+        clock.advance(800)
+        beep.dones[1]()
+        assertEquals(2 to EndCause.REMOTE, telecom.disconnected.last())
+        assertEquals("o limite foi desmarcado", 0, clock.pending)
+        clock.advance(5_000)
+        assertEquals(2, telecom.disconnected.size)
+        // Duas que acabam juntas, e o done se perde: as duas saem no limite do primeiro fim, uma vez cada.
+        ring(3, "3003", "")
+        answerCall(3)
+        val id = dialOut("2002")
+        calls.onCallState(id, CallState.CONFIRMED, 200)
+        calls.join()
+        calls.hangup()
+        calls.onCallState(id, CallState.DISCONNECTED, 200)
+        clock.advance(500)
+        calls.onCallState(3, CallState.DISCONNECTED, 200)
+        clock.advance(999)
+        assertEquals(2, telecom.disconnected.size)
+        clock.advance(1)
+        assertEquals(listOf(id to EndCause.LOCAL, 3 to EndCause.LOCAL), telecom.disconnected.drop(2))
+        beep.dones[2]()
+        assertEquals(4, telecom.disconnected.size)
+        // Sair durante o bipe não corta a espera, e o limite continua valendo.
+        ring(4, "3004", "")
+        answerCall(4)
+        calls.onCallState(4, CallState.DISCONNECTED, 200)
+        calls.onLogout()
+        clock.advance(1_499)
+        assertEquals(4, telecom.disconnected.size)
+        clock.advance(1)
+        assertEquals(4 to EndCause.REMOTE, telecom.disconnected.last())
+        assertEquals("um fim por Connection", 5, telecom.disconnected.size)
+        assertEquals(4, beep.dones.size)
+    }
+
+    @Test
     fun `a call during the end beep is not delayed or blocked`() {
         endBeep = beep
         ring(1)

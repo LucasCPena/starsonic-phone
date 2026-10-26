@@ -233,11 +233,14 @@ internal class FakeBeep : EndBeep {
     }
 }
 
-/** O relógio falso: só anda com [advance], que roda na hora os avisos vencidos. */
+/** O relógio falso: só anda com [advance], que roda na hora os avisos vencidos; [pending], os que ainda não rodaram. */
 internal class CallClock(private var now: Long = 1_000_000L) : Clock {
     private class Task(val at: Long, val action: () -> Unit)
 
     private val tasks = mutableListOf<Task>()
+
+    val pending: Int
+        get() = tasks.size
 
     override fun nowMillis() = now
 

@@ -188,12 +188,13 @@ object EndCause {
  *     acaba, as mesmas regras valem de novo: ainda a única ligação, tocando, com o Atender automático ligado e o Não
  *     perturbe desligado; o atender, o recusar, o fim dela e o Sair o cancelam antes.
  *   - O bipe no fim (spec 9): a atendida que acaba sem outra de pé (as que sobram também estão saindo), com a chave
- *     ligada e sem ser pelo Sair, toca o bipe ([beep]), e a Connection dela só sai do Telecom quando ele acaba (em
- *     1,5 s no máximo): até lá o Telecom mantém o som da ligação, e o bipe sai nele. Um bipe por vez: a que acaba
- *     junto (a outra da conferência, as duas da transferência) espera o mesmo. Nada mais espera: a tela fecha, o
- *     Recentes grava e uma ligação nova começa na hora. O pedido do Telecom para desligar a Connection que espera (o
- *     fone Bluetooth) e o Sair não a cortam: ela sai uma vez só, no fim do bipe (um fim repetido para o id dela
- *     pegaria a feita nova, que ainda não tem id no Telecom).
+ *     ligada, sem ser pelo Sair e sem o Telecom a segurar por uma ligação da operadora (o som é dela), toca o bipe
+ *     ([beep]), e a Connection dela só sai do Telecom quando ele acaba: até lá o Telecom mantém o som da ligação, e o
+ *     bipe sai nele. A espera tem um limite no [clock] ([END_BEEP_MAX_MILLIS]), que vale também se o bipe nunca avisar
+ *     o fim. Um bipe por vez: a que acaba junto (a outra da conferência, as duas da transferência) espera o mesmo.
+ *     Nada mais espera: a tela fecha, o Recentes grava e uma ligação nova começa na hora. O pedido do Telecom para
+ *     desligar a Connection que espera (o fone Bluetooth) e o Sair não a cortam: ela sai uma vez só, no fim do bipe
+ *     ou no limite (um fim repetido para o id dela pegaria a feita nova, que ainda não tem id no Telecom).
  * - Depois de [onLogout] (Sair), os eventos do motor são ignorados até o próximo Entrar ([onLogin]).
  *
  * Threads: os eventos chegam na thread dos eventos do motor; os toques da tela e do Telecom, na principal; a hora do
@@ -260,9 +261,10 @@ class CallManager(
     private class Consult(val client: Call, val colleague: Call)
 
     // O bipe do fim que toca agora: as Connections que esperam o fim dele para sair do Telecom, cada uma com o id e o
-    // motivo do fim, na ordem em que as ligações acabaram. Só com a trava.
+    // motivo do fim, na ordem em que as ligações acabaram, e o limite dessa espera no relógio. Só com a trava.
     private class EndBeepWait(id: Int, cause: Int) {
         val waiting = mutableListOf(id to cause)
+        var backstop: Scheduled? = null
     }
 
     private val lock = Any()
@@ -514,7 +516,7 @@ class CallManager(
      * Connection dela ainda não sabe o id do motor). Na conferência, pela Connection de qualquer uma das duas (a ACTIVE
      * ou a HOLDING do Telecom), desliga as duas, como o [hangup] da tela (o Desligar encerra para todos: a tela não
      * separa as duas), e nenhuma volta sozinha. Para a Connection de uma ligação que já acabou e espera o bipe do fim,
-     * nada: ela sai do Telecom no fim do bipe.
+     * nada: ela sai do Telecom no fim do bipe (ou no limite da espera).
      */
     fun hangup(callId: Int) {
         act { effects ->
@@ -740,7 +742,7 @@ class CallManager(
     /**
      * Sair: as ligações de agora acabam, sem o bipe do fim (saem do Telecom na hora), e daqui em diante os eventos do
      * motor são ignorados (até [onLogin]). Um bipe que já toca acaba como estava, e a Connection que o espera sai no
-     * fim dele.
+     * fim dele (ou no limite da espera).
      */
     fun onLogout() {
         act { effects ->
@@ -1016,7 +1018,8 @@ class CallManager(
             effects += { gateway.setMute(false) }
         }
         record(Recent(current.number, current.name, kind, current.startMillis, duration), effects)
-        if (received && !loggedOut && calls.none { !it.ending } && settings().endBeep) {
+        // A que o Telecom segura por uma ligação da operadora não bipa: o som é dela.
+        if (received && !loggedOut && !current.heldByTelecom && calls.none { !it.ending } && settings().endBeep) {
             disconnectAfterBeep(id, endCause, effects)
         } else {
             effects += { telecom.disconnect(id, endCause) }
@@ -1028,7 +1031,8 @@ class CallManager(
     }
 
     // Com a trava: uma atendida acabou sem outra de pé: a Connection [id] sai do Telecom (com o motivo [cause]) no fim
-    // do bipe. Com um bipe já tocando (a outra que acaba junto), ela espera o mesmo.
+    // do bipe. Com um bipe já tocando (a outra que acaba junto), ela espera o mesmo. A espera tem o limite dela no
+    // relógio ([END_BEEP_MAX_MILLIS] desde o primeiro fim): um done que se perca nunca segura as Connections.
     private fun disconnectAfterBeep(id: Int, cause: Int, effects: MutableList<() -> Unit>) {
         beeping?.let {
             it.waiting += id to cause
@@ -1036,15 +1040,20 @@ class CallManager(
         }
         val wait = EndBeepWait(id, cause)
         beeping = wait
+        wait.backstop = clock.schedule(END_BEEP_MAX_MILLIS) { endBeepDone(wait) }
         effects += { beep.play { endBeepDone(wait) } }
     }
 
-    // Em qualquer thread (a do bipe): o bipe [wait] acabou, e as Connections que o esperavam saem do Telecom. Uma vez
-    // só: um done repetido não faz nada (outro fim para o mesmo id pegaria a feita que ainda não tem id no Telecom).
+    // Em qualquer thread (a do bipe, ou a do relógio, no limite): a espera [wait] acabou, e as Connections dela saem do
+    // Telecom. É a única saída da espera, e roda uma vez só: o primeiro (o done ou o limite) desmarca o outro, e um
+    // done repetido ou atrasado não faz nada (outro fim para o mesmo id pegaria a feita que ainda não tem id no
+    // Telecom).
     private fun endBeepDone(wait: EndBeepWait) {
         act { effects ->
             if (beeping !== wait) return@act
             beeping = null
+            wait.backstop?.cancel()
+            wait.backstop = null
             for ((id, cause) in wait.waiting) effects += { telecom.disconnect(id, cause) }
         }
     }

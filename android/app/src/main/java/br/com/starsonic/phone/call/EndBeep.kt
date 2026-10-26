@@ -20,11 +20,15 @@ import kotlin.math.sin
  * o Bluetooth), e o bipe sai nele, nunca no alto-falante de toque.
  *
  * O contrato do [play]: volta na hora, sem esperar o som; o done roda uma vez só, de qualquer thread, quando o bipe
- * acaba, num erro ou em 1,5 s no máximo, o que vier primeiro.
+ * acaba, num erro ou em [END_BEEP_MAX_MILLIS] no máximo, o que vier primeiro. (O CallManager não depende dele para
+ * soltar a Connection: no mesmo limite, ela sai de qualquer jeito.)
  */
 fun interface EndBeep {
     fun play(done: () -> Unit)
 }
+
+/** O máximo que a Connection da ligação que acabou espera pelo bipe do fim (spec 9). */
+const val END_BEEP_MAX_MILLIS = 1_500L
 
 /** Sem bipe: o done na hora (o padrão do [CallManager]). */
 object NoBeep : EndBeep {
@@ -66,8 +70,8 @@ private const val LEVEL = 0.18
  * só, no primeiro destes:
  * - a marca do último quadro, mais [TAIL_MILLIS] para o som sair do celular (o Bluetooth atrasa);
  * - um erro do Android, na hora;
- * - [MAX_MILLIS] desde o pedido, contados na thread principal: o limite vale mesmo com a thread do bipe presa no
- *   Android (o servidor de áudio reiniciando), e o bipe que nascer depois dele já não toca.
+ * - [END_BEEP_MAX_MILLIS] desde o pedido, contados na thread principal: o limite vale mesmo com a thread do bipe
+ *   presa no Android (o servidor de áudio reiniciando), e o bipe que nascer depois dele já não toca.
  *
  * O começo vai ao log de diagnóstico ([CallLog]), com o modo do áudio de então (3 é o da ligação), e um erro também.
  */
@@ -79,7 +83,7 @@ class AudioTrackEndBeep(context: Context) : EndBeep {
 
     override fun play(done: () -> Unit) {
         val beep = Beep(done)
-        main.postDelayed(beep.cap, MAX_MILLIS)
+        main.postDelayed(beep.cap, END_BEEP_MAX_MILLIS)
         handler.post(beep::start)
     }
 
@@ -90,7 +94,7 @@ class AudioTrackEndBeep(context: Context) : EndBeep {
         private var track: AudioTrack? = null   // só na thread do bipe
 
         val cap = Runnable {
-            if (!finished.get()) CallLog.w { "bipe do fim: o som não acabou em $MAX_MILLIS ms" }
+            if (!finished.get()) CallLog.w { "bipe do fim: o som não acabou em $END_BEEP_MAX_MILLIS ms" }
             finish()
         }
 
@@ -163,8 +167,5 @@ class AudioTrackEndBeep(context: Context) : EndBeep {
 
         /** A folga depois do último quadro tocado: o som ainda sai do celular (o Bluetooth atrasa mais). */
         const val TAIL_MILLIS = 200L
-
-        /** O máximo que a Connection espera pelo bipe (spec 9). */
-        const val MAX_MILLIS = 1_500L
     }
 }
