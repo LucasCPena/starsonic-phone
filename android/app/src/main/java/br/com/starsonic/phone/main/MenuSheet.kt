@@ -52,12 +52,14 @@ fun HeaderMenu(expanded: Boolean, onExpand: () -> Unit, onDismiss: () -> Unit, o
     val colors = LocalStarsonicColors.current
     Box {
         HeaderMenuButton(onClick = onExpand)
-        // O .popover do canvas: 230 dp, cantos de 18, o contorno e 6 dp por dentro; 2 dp mais perto da borda que o botão.
+        // O .popover do quadro Menu: 230 dp por dentro, 6 dp de folga e o contorno de cada lado (no quadro, ele fica fora
+        // da .win, sem o border-box: 244 dp ao todo), cantos de 18; 2 dp mais perto da borda que o botão. O contorno do
+        // Surface fica por dentro, sobre o primeiro dp dos 7 de folga.
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = onDismiss,
             offset = DpOffset(2.dp, 8.dp),
-            modifier = Modifier.width(230.dp).padding(horizontal = 6.dp),
+            modifier = Modifier.width(244.dp).padding(horizontal = 7.dp),
             shape = RoundedCornerShape(18.dp),
             containerColor = colors.popover,
             tonalElevation = 0.dp,

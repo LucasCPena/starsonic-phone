@@ -35,6 +35,7 @@ import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.Text
@@ -667,7 +668,8 @@ fun BottomNav(selected: Int, modifier: Modifier = Modifier, onSelect: (Int) -> U
 }
 
 // Uma aba da navegação de baixo (o .tab do canvas): o ícone na pílula de 60 × 32 dp (o toque mostra a onda nela) e o
-// nome embaixo; a ativa ([on]) em negrito, com a pílula ciano clara.
+// nome embaixo, numa linha só (com a letra grande do celular, ele encolhe até caber, em vez de quebrar no meio da
+// palavra); a ativa ([on]) em negrito, com a pílula ciano clara.
 @Composable
 private fun NavTab(label: String, icon: ImageVector, tag: String, on: Boolean, modifier: Modifier, onClick: () -> Unit) {
     val colors = LocalStarsonicColors.current
@@ -695,6 +697,8 @@ private fun NavTab(label: String, icon: ImageVector, tag: String, on: Boolean, m
             style = if (on) TabLabel.copy(fontWeight = FontWeight.Bold) else TabLabel,
             color = if (on) colors.textStrong else colors.textMuted,
             textAlign = TextAlign.Center,
+            maxLines = 1,
+            autoSize = TextAutoSize.StepBased(minFontSize = TAB_LABEL_MIN, maxFontSize = TabLabel.fontSize, stepSize = 0.5.sp),
         )
     }
 }
@@ -805,6 +809,9 @@ private val BarTitle = Base.copy(fontSize = 17.sp, fontWeight = FontWeight.Extra
 
 // .tab (a ativa, em negrito)
 private val TabLabel = Base.copy(fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, lineHeight = 1.2.em)
+
+// O menor tamanho do nome de uma aba quando ele encolhe para caber numa linha.
+private val TAB_LABEL_MIN = 8.sp
 
 // O contorno de 1 px do canvas. O CSS é border-box: o padding fica por dentro do contorno.
 private val Hairline = 1.dp
