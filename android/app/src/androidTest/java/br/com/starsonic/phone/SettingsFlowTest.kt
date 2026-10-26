@@ -118,13 +118,14 @@ class SettingsFlowTest {
         // O Tempo para atender: o menu com as opções do Windows, nesta ordem, e a de agora marcada.
         compose.onNodeWithTag(TIME).performScrollTo().assert(hasText("3 s")).performClick()
         emulator.waitUntil("o menu do Tempo para atender") { emulator.showsTag("tempo-0") }
-        val tops = TIMES.map { (seconds, label) ->
+        for ((seconds, label) in TIMES) {
             val option = compose.onNodeWithTag("tempo-$seconds").performScrollTo()
             option.assert(hasText(label))
             if (seconds == 3) option.assertIsSelected() else option.assertIsNotSelected()
-            option.fetchSemanticsNode().positionInRoot.y
         }
-        assertEquals("as opções de cima para baixo, na ordem do Windows", tops.sorted(), tops)
+        // As posições lidas de uma vez, na mesma rolagem do menu.
+        val tops = TIMES.map { (seconds, _) -> compose.onNodeWithTag("tempo-$seconds").fetchSemanticsNode().positionInRoot.y }
+        assertTrue("as opções de cima para baixo, na ordem do Windows: $tops", tops.zipWithNext().all { (above, below) -> above < below })
         val options = compose.onAllNodes(hasTagStartingWith("tempo-")).fetchSemanticsNodes().size
         assertEquals("só as opções do Windows", TIMES.size, options)
         compose.onNodeWithTag("tempo-5").performScrollTo().performClick()
