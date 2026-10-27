@@ -1,0 +1,6 @@
+Visual novo, igual ao do app do Windows, nos temas claro e escuro.
+Não perturbe e Atender automático ficam no alto da tela; o tempo fica em Configurações.
+Novo botão Rediscar, ao lado do Ligar, para ligar de novo para o último número discado.
+A bolinha da conta muda de cor conforme o estado, e a notificação do app mostra o mesmo.
+Um bipe curto avisa quando a ligação cai ou termina (dá para desligar em Configurações → Ligações).
+Esta é uma versão de teste.

@@ -1,6 +1,6 @@
 # Teste manual do Starsonic Phone (Android)
 
-Faça este roteiro antes de cada versão estável (spec §11.3), com a versão candidata (`android-vX.Y.Z-rc.N`). Use pelo menos dois celulares de marcas diferentes (ex.: Samsung e Motorola; um Xiaomi, se houver), com o Android 9 ou mais novo (de preferência um deles com o Android 14 ou mais novo), e dois ramais de teste: um num servidor por UDP e outro num servidor por TCP. Para as seções 11 a 15 (a 0.2), mais dois ramais de teste na mesma central do ramal do celular (veja a seção 11). Ramais e senhas de teste ficam fora do repositório. Para as ligações, tenha à mão outro telefone (o outro ramal, o Starsonic Phone no PC ou um celular comum).
+Faça este roteiro antes de cada versão estável (spec §11.3), com a versão candidata (`android-vX.Y.Z-rc.N`). Use pelo menos dois celulares de marcas diferentes (ex.: Samsung e Motorola; um Xiaomi, se houver), com o Android 9 ou mais novo (de preferência um deles com o Android 14 ou mais novo), e dois ramais de teste: um num servidor por UDP e outro num servidor por TCP. Para as seções 11 a 16 (a 0.2 e a 0.2.0-rc.2), mais dois ramais de teste na mesma central do ramal do celular (veja a seção 11). Ramais e senhas de teste ficam fora do repositório. Para as ligações, tenha à mão outro telefone (o outro ramal, o Starsonic Phone no PC ou um celular comum).
 
 Marque cada linha nas colunas A1 e A2 (um celular em cada); na seção 3, faça cada linha no Wi-Fi e no 4G (desligue o Wi-Fi para o 4G). Se algo não sair como o esperado, anote a versão, o celular, o passo e o que apareceu (de preferência com um print da tela) e mande o diagnóstico (Menu → Sobre → Enviar diagnóstico).
 
@@ -14,7 +14,7 @@ A1 (marca, modelo, Android): `__________`  A2: `__________`
 |---|-------|--------------------|----|----|
 | 1.1 | No navegador do celular, abra a página do release no GitHub (`…/releases/tag/android-v<versão>`), baixe `StarsonicPhone-android-<versão>.apk` e abra o arquivo. | O Android avisa que o app vem de fora da loja e pede para permitir que o navegador instale apps ("Instalar apps desconhecidos"); depois de permitir, pede a confirmação da instalação. Se o Play Protect avisar que não conhece o app, "Mais detalhes" → "Instalar assim mesmo". | ☐ | ☐ |
 | 1.2 | Termine a instalação e procure o app na tela inicial e na lista de apps. | Ícone azul com o fone branco e o anel ciano, com "Starsonic" embaixo. Em Configurações → Apps, o nome é "Starsonic Phone". | ☐ | ☐ |
-| 1.3 | Abra o app. | Abertura azul com o ícone e depois a tela Entrar, em pé, com o logo no cartão branco. | ☐ | ☐ |
+| 1.3 | Abra o app. | Abertura azul com o ícone e depois a tela Entrar, em pé, com o logo no cabeçalho escuro (rc.2; o desenho está em 16.1). | ☐ | ☐ |
 | 1.4 | Depois do primeiro Entrar (seção 2), siga a tela Permissões: "Permitir" em cada item e, no fim, "Continuar". | Notificações, microfone, tela cheia (Android 14 ou mais novo, quando o Android pedir) e uso de bateria sem restrição, cada um pela janela do próprio Android. Depois, o Teclado. | ☐ | ☐ |
 | 1.5 | Num Xiaomi, Redmi ou POCO, ou num Samsung: siga o passo a passo da tela Permissões com "Abrir ajustes". | Xiaomi: ativar "Início automático" e, em "Economia de bateria", escolher "Sem restrições". Samsung: "Bateria" → "Sem restrições". Os nomes batem com os do MIUI/HyperOS ou do One UI do aparelho (anote os que não baterem). | ☐ | ☐ |
 | 1.6 | Nas configurações do Android, tire uma de cada vez: as notificações, o microfone, a tela cheia e a isenção de bateria; volte ao app depois de cada uma. No fim, conceda tudo de novo. | A faixa mostra um aviso por vez, nesta ordem: "Permita as notificações para receber ligações.", "Permita o microfone para fazer e receber ligações.", "Permita a tela cheia para ver as ligações com o celular bloqueado.", "Libere o uso de bateria para receber ligações com o app fechado.". O botão "Abrir ajustes" abre o ajuste certo. | ☐ | ☐ |
@@ -23,14 +23,14 @@ A1 (marca, modelo, Android): `__________`  A2: `__________`
 
 | # | Passo | Resultado esperado | A1 | A2 |
 |---|-------|--------------------|----|----|
-| 2.1 | Olhe a tela Entrar. | "Servidor (endereço ou IP)" com o "Protocolo" ao lado (UDP marcado), "Ramal", "Senha" (com o botão de mostrar), "Entrar" e "Precisa de ajuda? (11) 5060-3000". Nenhum outro campo técnico (porta, proxy, codecs etc.). | ☐ | ☐ |
+| 2.1 | Olhe a tela Entrar. | "Servidor (endereço ou IP)", "Protocolo" (UDP marcado), "Ramal", "Senha" (com o botão de mostrar), "Entrar" e "Precisa de ajuda? (11) 5060-3000" (rc.2: o desenho está em 16.1). Nenhum outro campo técnico (porta, proxy, codecs etc.). | ☐ | ☐ |
 | 2.2 | Toque em "Precisa de ajuda? (11) 5060-3000". | O discador do celular abre com o número. | ☐ | ☐ |
 | 2.3 | Toque em Entrar: com o Servidor vazio; com o endereço e a porta (ex.: `starcloud1-starsonic.com.br:5060`); com o ramal com espaço no meio (ex.: `20 01`); e com a senha vazia. | "Digite o endereço do servidor."; "Digite só o endereço do servidor, como starcloud1-starsonic.com.br."; "Digite só o número do ramal."; "Digite a senha." | ☐ | ☐ |
 | 2.4 | Ramal certo com a senha errada. | "Ramal ou senha incorretos." e a tela continua aberta. | ☐ | ☐ |
 | 2.5 | Endereço que não existe (ex.: `starcloud9-starsonic.com.br`). | "Não foi possível falar com o servidor. Confira o endereço e a sua internet." | ☐ | ☐ |
 | 2.6 | No modo avião, tente entrar. | Uma mensagem de erro da tabela 11.1 (em geral "Não foi possível falar com o servidor. Confira o endereço e a sua internet."), sem código técnico além do "(código n)" previsto. | ☐ | ☐ |
-| 2.7 | Internet de volta: entre com o ramal do servidor por UDP (Protocolo UDP), com espaços nas pontas e letras maiúsculas no endereço (ex.: ` Starcloud1-Starsonic.com.br `). | A tela Permissões (no primeiro Entrar) e depois o Teclado, com "Conectado · <ramal>" na faixa. Na gaveta de notificações, a notificação fixa "Conectado (ramal <ramal>)", com "Starsonic Phone" no cabeçalho. | ☐ | ☐ |
-| 2.8 | Menu (⋮) → Editar conta: entre com o ramal do servidor por TCP, com o Protocolo TCP. Depois, abra o Editar conta de novo e volte. | O Editar abre com o servidor, o protocolo e o ramal preenchidos e a senha vazia. Depois de Entrar: "Conectado · <ramal TCP>". No Editar seguinte, o Protocolo aparece como TCP. | ☐ | ☐ |
+| 2.7 | Internet de volta: entre com o ramal do servidor por UDP (Protocolo UDP), com espaços nas pontas e letras maiúsculas no endereço (ex.: ` Starcloud1-Starsonic.com.br `). | A tela Permissões (no primeiro Entrar) e depois o Teclado, com "Conectado · <servidor>" no cartão da conta (rc.2; antes, "<ramal>" na faixa). Na gaveta de notificações, a notificação fixa "Conectado (ramal <ramal>)", com "Starsonic Phone" no cabeçalho. | ☐ | ☐ |
+| 2.8 | Menu → Configurações → o lápis de Editar conta (rc.2; antes, Menu (⋮) → Editar conta): entre com o ramal do servidor por TCP, com o Protocolo TCP. Depois, abra o Editar conta de novo e volte. | O Editar abre com o servidor, o protocolo e o ramal preenchidos e a senha vazia. Depois de Entrar: "Conectado · <servidor TCP>" (rc.2; antes, "<ramal TCP>"). No Editar seguinte, o Protocolo aparece como TCP. | ☐ | ☐ |
 | 2.9 | No PABX (ou com o fornecedor), confira o User-Agent do registro. | `Starsonic Phone Android/<versão>`, e o servidor aceita o registro. Se a plataforma filtrar esse User-Agent, anote (o plano B é usar o do Windows). | ☐ | ☐ |
 
 ## 3. Ligar e receber
@@ -39,14 +39,14 @@ Faça cada linha no Wi-Fi e no 4G. A conta fica conectada com o processador acor
 
 | # | Passo | Resultado esperado | A1 Wi-Fi | A1 4G | A2 Wi-Fi | A2 4G |
 |---|-------|--------------------|----------|-------|----------|-------|
-| 3.1 | Com o app aberto, ligue pelo Teclado para outro ramal e para um número externo. | Chama, completa e o áudio passa nos dois sentidos. O botão Ligar é verde. A tela apaga ao encostar no rosto e volta ao afastar. | ☐ | ☐ | ☐ | ☐ |
-| 3.2 | Com o app aberto, receba uma ligação. | Toca e mostra o nome do contato do celular, ou o número (e o nome, se o PABX mandar), com "Recusar" em vermelho e "Atender" em verde. Atende, e o áudio passa. | ☐ | ☐ | ☐ | ☐ |
+| 3.1 | Com o app aberto, ligue pelo Teclado para outro ramal e para um número externo. | Chama, completa e o áudio passa nos dois sentidos. O botão Ligar é ciano (rc.2; antes, verde). A tela apaga ao encostar no rosto e volta ao afastar. | ☐ | ☐ | ☐ | ☐ |
+| 3.2 | Com o app aberto, receba uma ligação. | Toca e mostra o nome do contato do celular, ou o número (e o nome, se o PABX mandar), com "Recusar" em vermelho e "Atender" em verde (rc.2: na tela cheia da recebida, o Atender é ciano; veja 16.16). Atende, e o áudio passa. | ☐ | ☐ | ☐ | ☐ |
 | 3.3 | Saia do app (botão de início), use o celular e receba uma ligação. | A notificação de ligação aparece no alto da tela, com "Atender" e "Recusar"; atender abre a tela de chamada. | ☐ | ☐ | ☐ | ☐ |
 | 3.4 | Tire o app da lista de apps recentes e receba uma ligação. | Toca do mesmo jeito; a notificação fixa continua. | ☐ | ☐ | ☐ | ☐ |
 | 3.5 | Com a tela bloqueada, e depois com a tela apagada, receba uma ligação. | Tela cheia por cima da tela bloqueada, com "Atender" e "Recusar"; atende sem desbloquear. | ☐ | ☐ | ☐ | ☐ |
 | 3.6 | Deixe o celular parado, com a tela apagada, por 1 hora, sem abrir o app. Ligue para o ramal. | Toca. | ☐ | ☐ | ☐ | ☐ |
 | 3.7 | Reinicie o celular e desbloqueie, sem abrir o app. Ligue para o ramal. | A notificação fixa volta sozinha depois do primeiro desbloqueio, e a ligação toca. | ☐ | ☐ | ☐ | ☐ |
-| 3.8 | Receba uma ligação com o celular no modo normal, no vibrar, no silencioso e no Não perturbe. | Toca e vibra conforme o modo do celular, como uma ligação comum. | ☐ | ☐ | ☐ | ☐ |
+| 3.8 | Receba uma ligação com o celular no modo normal, no vibrar, no silencioso e no Não perturbe do Android (rc.2: não é o Não perturbe do app, da seção 16). | Toca e vibra conforme o modo do celular, como uma ligação comum. | ☐ | ☐ | ☐ | ☐ |
 | 3.9 | Com uma ligação tocando, aperte o botão de volume. | O toque para, e o aviso no alto da tela continua. | ☐ | ☐ | ☐ | ☐ |
 | 3.10 | Com uma ligação tocando, abra a cortina de notificações. | Anote se o toque para. | ☐ | ☐ | ☐ | ☐ |
 | 3.11 | Deixe uma ligação tocar até o outro lado desistir. | Notificação "Ligação perdida de <contato ou número>" e a ligação no Recentes como perdida. | ☐ | ☐ | ☐ | ☐ |
@@ -60,9 +60,9 @@ Faça cada linha no Wi-Fi e no 4G. A conta fica conectada com o processador acor
 
 | # | Passo | Resultado esperado | A1 | A2 |
 |---|-------|--------------------|----|----|
-| 4.1 | Sem ligação, troque do Wi-Fi para o 4G e depois de volta; em cada rede, ligue para o ramal. | O status volta a "Conectado · <ramal>" sozinho, e a ligação toca nas duas redes. | ☐ | ☐ |
+| 4.1 | Sem ligação, troque do Wi-Fi para o 4G e depois de volta; em cada rede, ligue para o ramal. | O status volta a "Conectado · <servidor>" sozinho (rc.2; antes, "<ramal>"), e a ligação toca nas duas redes. | ☐ | ☐ |
 | 4.2 | Com uma ligação em andamento, troque do Wi-Fi para o 4G. | Anote o que acontece (a ligação pode cair, o que é aceito na etapa 1). O registro volta sozinho. | ☐ | ☐ |
-| 4.3 | Ligue o modo avião por 1 minuto e desligue. | Durante: a faixa e a notificação fixa mostram "Sem internet". Depois: "Conectado · <ramal>", sem fazer nada. | ☐ | ☐ |
+| 4.3 | Ligue o modo avião por 1 minuto e desligue. | Durante: o cartão da conta e a notificação fixa mostram "Sem internet · tentando de novo" (rc.2; antes, "Sem internet" na faixa). Depois: "Conectado · <servidor>", sem fazer nada. | ☐ | ☐ |
 | 4.4 | Com o modo avião ligado, tente ligar. | "Sem conexão com o servidor. Tente de novo em instantes." e o app não liga. | ☐ | ☐ |
 
 ## 5. Durante a ligação
@@ -125,13 +125,13 @@ A ordem dos passos importa, por causa da regra das 24 h:
 
 | # | Passo | Resultado esperado | A1 | A2 |
 |---|-------|--------------------|----|----|
-| 9.1 | Toque no menu (⋮) da faixa. | "Editar conta", "Sair da conta" e "Sobre". | ☐ | ☐ |
+| 9.1 | Toque no botão do menu, no canto direito do cabeçalho (rc.2; antes, o menu ⋮ da faixa). | "Configurações" e "Sobre" (rc.2: "Editar conta" e "Sair da conta" passaram para Configurações → Conta; veja 16.9). | ☐ | ☐ |
 | 9.2 | Abra o Sobre. | "Starsonic Phone <versão>", "Licença GPL v3", "Usa o PJSIP (GPL v2 ou posterior) e o Opus (BSD).", o site, o WhatsApp, o telefone de suporte, o link do código-fonte e "Enviar diagnóstico". | ☐ | ☐ |
 | 9.3 | No Sobre, toque no site, no WhatsApp, no telefone e no link do código-fonte. | O site abre no navegador; o wa.me abre o WhatsApp; o discador abre com (11) 5060-3000; o código-fonte abre no GitHub. | ☐ | ☐ |
 | 9.4 | "Enviar diagnóstico" para o WhatsApp e, depois, para o Gmail. | O anexo chega e abre; a senha do ramal não aparece nele. | ☐ | ☐ |
-| 9.5 | Durante uma ligação, Menu → Editar conta e toque em Entrar. | A ligação cai e vai para o Recentes; a conta registra de novo. | ☐ | ☐ |
-| 9.6 | Menu → Sair da conta; toque em "Cancelar"; depois, Sair da conta de novo e "Sair". | Pede confirmação: "Sair da conta?" — "Este celular deixa de receber as ligações do ramal. Para entrar de novo, você vai precisar da senha.". "Cancelar" não muda nada; "Sair" volta à tela Entrar, a notificação fixa some e o Recentes continua. | ☐ | ☐ |
-| 9.7 | Durante uma ligação, Menu → Sair da conta → "Sair". | A ligação termina, e o app volta à tela Entrar. | ☐ | ☐ |
+| 9.5 | Durante uma ligação, Menu → Configurações → o lápis de Editar conta (rc.2) e toque em Entrar. | A ligação cai e vai para o Recentes; a conta registra de novo. | ☐ | ☐ |
+| 9.6 | Menu → Configurações → Sair da conta (rc.2); toque em "Cancelar"; depois, Sair da conta de novo e "Sair". | Pede confirmação: "Sair da conta?" — "Este celular deixa de receber as ligações do ramal. Para entrar de novo, você vai precisar da senha.". "Cancelar" não muda nada; "Sair" volta à tela Entrar, a notificação fixa some e o Recentes continua. | ☐ | ☐ |
+| 9.7 | Durante uma ligação, Menu → Configurações → Sair da conta (rc.2) → "Sair". | A ligação termina, e o app volta à tela Entrar. | ☐ | ☐ |
 | 9.8 | Troque a senha do ramal no PABX com o app na frente; repita com o app em segundo plano (a recusa chega na renovação do registro, em até 5 min). | A tela Entrar abre com "Ramal ou senha incorretos." (com o app em segundo plano, quando ele é aberto). | ☐ | ☐ |
 | 9.9 | Android 12 ou mais novo: transfira os dados para um celular novo (pela cópia do Android/Google ou pelo cabo do fabricante) e abra o app no celular novo. | A conta não vai junto: o app abre na tela Entrar. | ☐ | ☐ |
 
@@ -140,7 +140,7 @@ A ordem dos passos importa, por causa da regra das 24 h:
 | # | Passo | Resultado esperado | A1 | A2 |
 |---|-------|--------------------|----|----|
 | 10.1 | Passe por todas as telas, avisos e notificações. | "MicroSIP" não aparece em lugar nenhum. | ☐ | ☐ |
-| 10.2 | Use o app com o celular no modo claro e no escuro. | O app segue o modo do celular; a faixa azul com "starsonic" em branco e ciano e o logo da tela Entrar não mudam. Ligar e Atender em verde; Recusar e Desligar em vermelho. | ☐ | ☐ |
+| 10.2 | Use o app com o celular no modo claro e no escuro. | O app segue o modo do celular; o cabeçalho escuro com o logo "starsonic" em branco e ciano e o logo da tela Entrar não mudam. Ligar e Atender em ciano; Recusar e Desligar em vermelho (rc.2; antes, a faixa azul e o Ligar e o Atender em verde). O visual completo está na seção 16. | ☐ | ☐ |
 | 10.3 | Com os ícones temáticos ligados (Android 13 ou mais novo), olhe o ícone na tela inicial; olhe também o ícone da notificação fixa. | O ícone temático (de uma cor só) e o da notificação (só branco) aparecem completos. | ☐ | ☐ |
 
 ## 11. Segunda ligação (0.2)
@@ -150,7 +150,7 @@ Para as seções 11 a 15, mais dois ramais de teste na mesma central do ramal do
 | # | Passo | Resultado esperado | A1 | A2 |
 |---|-------|--------------------|----|----|
 | 11.1 | Com o app aberto, numa ligação com o cliente, receba a ligação do colega. | A faixa "Ligação de <nome ou número>" no alto da tela de chamada, com Atender e Recusar; em vez do toque, um bipe curto repetido (chamada em espera) e a vibração. A conversa com o cliente continua. | ☐ | ☐ |
-| 11.2 | Toque em Atender na faixa. | O colega vira a ligação de cima (com o tempo); o cliente fica no cartão de baixo, "Em espera", e ouve a espera. Os botões passam a ser Mudo, Teclado, Viva-voz, Espera, Transferir, Alternar e Juntar; Nova ligação não aparece com duas ligações. | ☐ | ☐ |
+| 11.2 | Toque em Atender na faixa. | O colega vira a ligação de cima (com o tempo); o cliente fica no cartão de baixo, "Em espera", e ouve a espera. Os botões passam a ser Mudo, Teclado, Viva-voz, Alternar, Juntar e Transferir (rc.2; antes, também o Espera); Nova ligação não aparece com duas ligações. | ☐ | ☐ |
 | 11.3 | Toque em Alternar, duas vezes. | Os cartões trocam de lugar; quem está em cima tem o som e o outro ouve a espera. | ☐ | ☐ |
 | 11.4 | Toque em Desligar com o colega em cima. | A ligação do colega acaba e a do cliente volta sozinha: o cartão "Em espera" some, o cliente fica em cima e o áudio volta sem tocar em nada. | ☐ | ☐ |
 | 11.5 | Numa ligação, receba a segunda e toque em Recusar na faixa. | O colega ouve ocupado; a ligação entra no Recentes como perdida, sem notificação; a do cliente continua sem mudança. | ☐ | ☐ |
@@ -169,7 +169,7 @@ Para as seções 11 a 15, mais dois ramais de teste na mesma central do ramal do
 | # | Passo | Resultado esperado | A1 | A2 |
 |---|-------|--------------------|----|----|
 | 12.1 | Numa ligação com o cliente, toque em Transferir. | O campo do número com a busca nos contatos e os botões Consultar e Transferir agora. | ☐ | ☐ |
-| 12.2 | Digite o ramal do colega e toque em Consultar. | O cliente vai para o cartão de baixo, "Em espera · transferência", e ouve a espera; o colega chama em cima ("Chamando…"); os botões são Cancelar e Alternar (Alternar desabilitado até o colega atender). | ☐ | ☐ |
+| 12.2 | Digite o ramal do colega e toque em Consultar. | O cliente vai para o cartão de baixo, "Em espera · transferência", e ouve a espera; o colega chama em cima ("Chamando…"); os botões são Concluir transferência, Alternar e Cancelar (rc.2; Concluir transferência e Alternar apagados até o colega atender). | ☐ | ☐ |
 | 12.3 | O colega atende. Fale com ele e toque em Concluir transferência. | Com o colega em cima, os botões são Concluir transferência, Alternar e Cancelar. Ao concluir, as duas ligações saem do celular e a tela de chamada fecha; na central (ou nos dois telefones), o cliente e o colega ficam falando entre si. Anote se "<nome ou número> desligou" piscar por um instante antes de a tela fechar (depende da ordem em que a central desliga as duas; o resultado final tem de ser o mesmo). | ☐ | ☐ |
 | 12.4 | Repita a consulta e toque em Alternar com o colega em cima; depois, Concluir transferência com o cliente em cima. | Alternar volta a falar com o cliente (o colega fica "Em espera"); Concluir funciona de qualquer um dos dois lados. | ☐ | ☐ |
 | 12.5 | Repita a consulta e toque em Cancelar com o colega em linha. | A ligação do colega acaba e o cliente volta sozinho, sem o rótulo de transferência. | ☐ | ☐ |
@@ -190,7 +190,7 @@ Para as seções 11 a 15, mais dois ramais de teste na mesma central do ramal do
 | 13.5 | Na conferência, toque em Desligar. | As duas ligações acabam (os dois telefones ouvem o fim) e a tela de chamada fecha; as duas entram no Recentes com a duração. | ☐ | ☐ |
 | 13.6 | Na conferência, use o Teclado da ligação numa URA (um dos dois é uma URA). | Anote o que acontece: as teclas vão só para a ligação de cima. | ☐ | ☐ |
 | 13.7 | Durante uma consulta (seção 12), procure o botão Juntar. | Não aparece: antes, Cancelar ou Concluir transferência. | ☐ | ☐ |
-| 13.8 | Na conferência, olhe a notificação na gaveta. | A notificação fixa continua "Conectado (ramal <ramal>)"; nenhuma notificação do app Telefone do celular aparece por causa da conferência. | ☐ | ☐ |
+| 13.8 | Na conferência, olhe a notificação na gaveta. | A notificação fixa mostra "Ocupado · em ligação" (rc.2; antes, "Conectado (ramal <ramal>)"); nenhuma notificação do app Telefone do celular aparece por causa da conferência. | ☐ | ☐ |
 
 ## 14. Contatos (0.2)
 
@@ -224,6 +224,149 @@ Repita as seções 11 a 13 com um fone Bluetooth conectado e, depois, no viva-vo
 | 15.6 | Faça uma conferência de 10 minutos no 4G, com o celular carregado e a tela apagada a maior parte do tempo. Anote a carga e os dados do app antes e depois (Configurações → Bateria e → Uso de dados). | A1: `____` % e `____` MB em 10 min. A2: `____` % e `____` MB. O responsável aprova. | ☐ | ☐ |
 | 15.7 | No viva-voz, na conferência, troque para "Celular" e para o fone Bluetooth pela escolha de áudio. | O áudio dos dois sai por onde foi escolhido. | ☐ | ☐ |
 
+## 16. Visual do Windows, Não perturbe, Atender automático, Rediscar, bolinha e bipe (0.2.0-rc.2)
+
+Compare com os 19 quadros do canvas "Starsonic Phone Android — visual do Windows e funções novas" (claude.ai), aberto ao lado: Teclado, Recentes, Contatos, Configurações, Sobre, Entrar e Permissões, claros e escuros; mais Em ligação, Duas ligações, Ligação recebida (tela cheia), Menu aberto e Bolinha de status e notificação fixa. A consulta, a conferência e a Nova ligação não têm quadro: compare com o quadro "Duas ligações" e com o app do Windows.
+
+Para as ligações, tenha à mão os dois ramais da seção 11 (o cliente e o colega), outro celular com chip (para ligar para o número deste celular: a ligação da operadora), um fone com fio e um fone Bluetooth. O tema escuro é o de Configurações do Android → Tela → Tema escuro. A letra grande é a de Configurações do Android → Tela → Tamanho da fonte, no máximo. Entre uma linha e outra, deixe as chaves como vêm de fábrica (Não perturbe e Atender automático desligados, tempo de 3 s, bipe ligado), a não ser que a linha diga outra coisa. "Configurações → Ligações" quer dizer: menu → Configurações e, na tela, a parte "Ligações".
+
+Na tela, os rótulos de seção (como CONTA e EM LIGAÇÃO) e os selos (como ATIVA, EM ESPERA e ATENDER AUTOMÁTICO · EM 3 S) aparecem em maiúsculas. Aqui eles estão como o leitor de tela os lê.
+
+### Primeiro uso, com o app recém-instalado
+
+Faça estas linhas na instalação nova (seções 1 e 2), no tema claro e com a letra normal. Se você já passou dessa parte, desinstale o app, instale de novo pelo link (1.1) e abra.
+
+| # | Passo | Resultado esperado | A1 | A2 |
+|---|-------|--------------------|----|----|
+| 16.1 | Olhe a tela Entrar. Compare com o quadro "Entrar · claro". | O cabeçalho escuro com o logo, "Ramal no celular" em ciano e "Entre com o seu ramal". Embaixo: "Servidor (endereço ou IP)"; "Protocolo", com UDP e TCP lado a lado e o escolhido em destaque (de início, o UDP); "Ramal"; "Senha", com o olho para mostrar; o botão "Entrar" ciano, com a seta; e, no pé da tela, "Precisa de ajuda? (11) 5060-3000". | ☐ | ☐ |
+| 16.2 | Entre com o ramal do servidor por UDP (2.7). Olhe a tela Permissões. Compare com o quadro "Permissões · claro". Toque em "Permitir" num dos avisos e dê a permissão. | A barra escura com o Voltar e "Permissões"; "Para as ligações chegarem" e os quatro avisos (notificações, microfone, tela cheia e uso da bateria), cada um com o ícone, o texto e o botão azul "Permitir"; "Continuar" ciano no fim da tela. O aviso que você deu troca o botão por um sinal de feito verde. Num Samsung, Xiaomi, Redmi ou POCO, também o cartão do fabricante, com "Nos celulares Samsung, libere também o app nos ajustes:" (ou "Nos celulares Xiaomi, Redmi e POCO, libere também o app nos ajustes:"), os passos numerados e "Abrir ajustes"; nas outras marcas, o cartão não aparece. | ☐ | ☐ |
+| 16.3 | Com pelo menos uma permissão ainda sem dar, aperte a tecla Voltar do celular. | A tela principal (o Teclado) abre, e o app não fecha. O Voltar da barra escura da tela faz o mesmo. | ☐ | ☐ |
+| 16.4 | Na tela principal, antes de qualquer ligação, olhe o Rediscar e as duas pílulas do cabeçalho. Depois, abra o menu → Configurações e olhe a parte "Ligações". | O Rediscar fica apagado, e tocar nele não faz nada. "Não perturbe" e "Atender automático" estão desligados (só o contorno branco, sem o ciano). Em Ligações: o bipe ligado; "Atender automaticamente" desligado, com "Depois de 3 segundos tocando" embaixo; "Tempo para atender" em "3 s". | ☐ | ☐ |
+
+### Visual: tema claro, letra normal
+
+Volte o celular ao tema claro e à letra normal, se tiver mudado.
+
+| # | Passo | Resultado esperado | A1 | A2 |
+|---|-------|--------------------|----|----|
+| 16.5 | Olhe o Teclado. Compare com o quadro "Teclado · claro". | O cabeçalho escuro vai até o topo da tela, por trás da barra de status do Android, com o logo e o botão do menu. Embaixo, o cartão da conta (a bolinha, o ramal e a linha de status) e as pílulas "Não perturbe" e "Atender automático". Depois, o número grande com o Apagar, as 12 teclas quadradas com as letras e, na última linha, o Rediscar (redondo, com contorno) e o Ligar (pílula ciano). A navegação de baixo tem "Teclado", "Recentes" e "Contatos", com a aba ativa numa pílula ciano clara, e deixa o respiro da barra de gestos. | ☐ | ☐ |
+| 16.6 | Toque em "Recentes" (com ligações feitas, recebidas e perdidas). Compare com o quadro "Recentes · claro". | Os filtros "Todas" e "Perdidas · <n>" (só "Perdidas", se não há nenhuma). As ligações em grupos por dia ("Hoje", "Ontem" ou a data, como "24 de outubro"). Cada linha tem o ícone do tipo num quadrado (o da perdida em vermelho claro), o nome ou o número (o ramal vem ao lado do nome, como "Marcos Lima · 2005"), o tipo ("Feita", "Recebida" ou "Perdida") com a hora e, se foi atendida, a duração (ex.: "Feita · 14:32 · 2 min 05 s"), e o botão redondo de ligar. | ☐ | ☐ |
+| 16.7 | Toque em "Contatos" (com a permissão dada, 14.2). Compare com o quadro "Contatos · claro". | A busca em pílula ("Buscar contato"); os grupos pela letra; cada contato com o avatar das iniciais, o nome, os números e o botão redondo de ligar. | ☐ | ☐ |
+| 16.8 | Toque no botão do menu (os dois controles deslizantes), no canto direito do cabeçalho. Compare com o quadro "Menu aberto". | O menu abre debaixo do botão, só com "Configurações" e "Sobre", e a tela por trás escurece. Tocar fora do menu, ou apertar a tecla Voltar do celular, fecha o menu. | ☐ | ☐ |
+| 16.9 | No menu, toque em "Configurações". Compare com o quadro "Configurações · claro (nova)". | A barra escura com o Voltar e "Configurações". Três partes, cada uma com o rótulo em maiúsculas e o traço ciano. "Conta": a bolinha, o ramal e "servidor · protocolo", o lápis de "Editar conta" e "Sair da conta" (ícone vermelho), com "O celular deixa de receber as ligações do ramal.". "Ligações": "Bipe quando a ligação cai ou termina" (com "Vem ligado. Um bipe curto no fone quando a outra pessoa desliga ou a ligação cai."), "Atender automaticamente" e "Tempo para atender", com as chaves ciano. "Celular": "Permissões e bateria" (com "Notificações, microfone e o uso da bateria, para as ligações chegarem com a tela apagada"). | ☐ | ☐ |
+| 16.10 | Menu → Sobre. Compare com o quadro "Sobre · claro". | A barra escura com o Voltar e "Sobre"; o logo principal (colorido); "Starsonic Phone <versão>", "Licença GPL v3" e "Usa o PJSIP (GPL v2 ou posterior) e o Opus (BSD)."; o cartão com o site ("starsonic.com.br"), o telefone de suporte ("(11) 5060-3000") com o link "WhatsApp" ao lado e o código-fonte; e "Enviar diagnóstico" no pé da tela. | ☐ | ☐ |
+| 16.11 | Ligue para o cliente (3.1) e olhe a tela de chamada. Compare com o quadro "Em ligação". Depois, aperte Voltar e olhe a tela principal. | A tela escura. No alto, a bolinha vermelha com "Ocupado · em ligação" e o seu ramal à direita. Depois, "Em ligação" em ciano, o avatar com as iniciais (sem nome, o fone), o nome (ou o número) e, embaixo do nome, "Ramal <n>" (ou o número, se não for um ramal); "Chamando…", que vira o tempo em ciano. Os controles redondos em grade de 3 (Mudo, Teclado, Viva-voz; Espera, Transferir, Nova ligação; com um fone Bluetooth ligado, o áudio ganha também Celular e Bluetooth), o ligado em ciano, e o Desligar vermelho. Na tela principal, a faixa ciano "Ligação em andamento. Toque para voltar." embaixo do cabeçalho; tocar nela volta para a ligação. | ☐ | ☐ |
+| 16.12 | Com a ligação do cliente em andamento, receba a do colega e atenda (11.1 e 11.2). Olhe a faixa antes de atender e a tela depois. Compare com o quadro "Duas ligações". | Antes de atender, a faixa "Ligação de <nome ou número>", com Recusar (vermelho) e Atender (ciano) redondos. Depois, "Duas ligações" em ciano; o cartão da ativa (borda ciano, com "Ativa") e o da outra ("Em espera"), cada um com o avatar, o nome, o número ("Ramal <n>" num ramal) e o tempo. Os controles: Mudo, Teclado, Viva-voz, Alternar, Juntar e Transferir; o Desligar vermelho. | ☐ | ☐ |
+| 16.13 | Numa ligação, toque em Transferir, digite o ramal do colega e toque em Consultar; olhe a tela com o colega chamando e, depois, com ele em linha (12.2 e 12.3). | O colega em cima ("Chamando…" e depois o tempo); o cliente num cartão embaixo, "Em espera · transferência". Os controles: Mudo, Teclado, Viva-voz, Concluir transferência, Alternar e Cancelar; Concluir transferência e Alternar ficam apagados enquanto o colega chama. O desenho é o dos cartões do quadro "Duas ligações". | ☐ | ☐ |
+| 16.14 | Junte as duas ligações (13.1) e olhe a tela. | "Conferência" em ciano e o tempo desde o Juntar; um cartão para cada um dos dois, com o alto-falante; os controles Mudo, Teclado, Viva-voz e Separar; o Desligar vermelho. | ☐ | ☐ |
+| 16.15 | Numa ligação só, toque em "Nova ligação" e digite um número. | O painel "Nova ligação": o campo "Número", o Rediscar (redondo, com contorno) à esquerda do Ligar (ciano), as sugestões de contatos ao digitar e "Cancelar" embaixo. | ☐ | ☐ |
+| 16.16 | Com o Atender automático desligado, bloqueie o celular e receba uma ligação do cliente. Compare com o quadro "Ligação recebida (tela cheia)". | O fundo escuro; "Ligação recebida · <seu ramal>" em ciano; o avatar com os anéis; o nome (ou o número) e, embaixo do nome, o número; Recusar (vermelho) e Atender (ciano), afastados um do outro. Sem o selo "Atender automático". | ☐ | ☐ |
+
+### Visual: tema escuro
+
+Ponha o celular no tema escuro.
+
+| # | Passo | Resultado esperado | A1 | A2 |
+|---|-------|--------------------|----|----|
+| 16.17 | Repita o Teclado, o Recentes, o Contatos e o menu (16.5 a 16.8). Compare com os quadros "Teclado · escuro", "Recentes · escuro" e "Contatos · escuro". | O mesmo desenho do tema claro, com o fundo, os cartões, os campos, as teclas e a navegação nas cores escuras (o menu aberto não tem quadro escuro). O cabeçalho é o mesmo nos dois temas; as pílulas ligadas e a aba ativa continuam ciano. Nenhum texto some no fundo. | ☐ | ☐ |
+| 16.18 | Repita as Configurações, o Sobre, o Entrar (pelo lápis de Editar conta, em Configurações → Conta) e as Permissões (por Configurações → Permissões e bateria). Compare com os quadros escuros. | O mesmo desenho do tema claro, nas cores escuras. No Sobre, o logo é o negativo (claro). As chaves ligadas, o "Entrar" e o "Continuar" continuam ciano; o "Permitir" continua azul. Num Samsung ou Xiaomi, o cartão do fabricante também fica escuro e legível. | ☐ | ☐ |
+| 16.19 | Olhe a ligação, as duas ligações, a consulta, a conferência, a Nova ligação e a recebida (16.11 a 16.16), com o celular nos dois temas. | São iguais nos dois temas: a tela da ligação é sempre escura. No tema claro, a tela de chamada não pisca em branco ao abrir, nem por cima da tela bloqueada. | ☐ | ☐ |
+
+### Visual: letra no máximo
+
+Volte ao tema claro. Ponha a letra do celular no máximo.
+
+| # | Passo | Resultado esperado | A1 | A2 |
+|---|-------|--------------------|----|----|
+| 16.20 | Na tela principal, percorra o Teclado (digite um número bem longo), o Recentes (com várias ligações), o Contatos e o menu. | Nada fica cortado, escondido ou sobreposto, e dá para chegar ao cabeçalho, às 12 teclas, ao Rediscar, ao Ligar e à navegação, rolando onde preciso. Se as duas pílulas do cabeçalho não couberem lado a lado, a segunda desce para a linha de baixo. Os filtros do Recentes ficam inteiros (o segundo desce, se for preciso). O menu cresce junto com o texto. O número digitado mostra os últimos dígitos (a reticência fica no começo), e, depois de rolar até o Ligar, ele continua à vista. | ☐ | ☐ |
+| 16.21 | Com pelo menos um aviso das Permissões ainda sem dar (como no 16.3), abra as Configurações, o Sobre, o Entrar (pelo lápis de Editar conta) e as Permissões. | Cada tela rola até o fim, com os textos inteiros e sem sobreposição. Nenhuma palavra quebra no meio: o botão ou a chave que não cabe ao lado do texto desce para baixo dele. Nas Permissões, a linha de um aviso com o botão "Permitir" fica inteira (o texto e o botão). Nas Configurações, "Atender automaticamente" aparece inteiro, com a chave. No Sobre, a linha do telefone fica inteira, com o link "WhatsApp" ao alcance do toque. | ☐ | ☐ |
+| 16.22 | Num Samsung, Xiaomi, Redmi ou POCO, olhe o cartão do fabricante nas Permissões. | Os passos "1.", "2." e "3." aparecem inteiros: o número de cada passo não quebra nem corta, e "Abrir ajustes" fica inteiro. | ☐ | ☐ |
+| 16.23 | Faça uma ligação e olhe a tela de chamada, o painel do Transferir (com "Consultar" e "Transferir agora"), as duas ligações, a consulta, a conferência, a Nova ligação e a recebida (com o Atender automático ligado). | Os nomes dos controles não quebram no meio de uma palavra (a letra encolhe; quebrar num espaço, como em "Nova ligação", pode). No painel do Transferir, "Consultar" e "Transferir agora" ficam inteiros (os dois botões podem ficar um embaixo do outro). A tela rola onde não cabe, e o Desligar (ou o Recusar e o Atender) continua ao alcance. Na recebida, o selo "Atender automático · em <n> s" não separa o "em", o número e o "s". A linha de status do alto pode terminar em "…". | ☐ | ☐ |
+| 16.24 | Num celular de uns 360 dp de largura (se o seu for maior, aumente também o "Tamanho da tela" em Configurações do Android → Tela), com a letra em 200 % e as outras três permissões dadas, deixe o uso da bateria sem permissão (não toque em "Permitir" nesse aviso) e abra o app. | A tela principal mostra a faixa de aviso ("Libere o uso de bateria para receber ligações com o app fechado.", com "Abrir ajustes"), sem palavra quebrada no meio. A barra de baixo (Teclado, Recentes, Contatos) fica inteira na tela, e dá para digitar um número, rolar até o Ligar e o Rediscar, tocar no Ligar e trocar de aba. | ☐ | ☐ |
+| 16.25 | (Opcional) Volte a letra ao normal e ligue o TalkBack. Passe o dedo pelo sinal de feito de uma permissão dada, pelo botão de ligar de uma linha do Recentes, pelo Rediscar (com uma feita) e pelo Desligar com duas ligações. Com um erro de cadastro (16.63), passe o dedo pelo triângulo do cartão da conta. | Ele diz "Permitida", "Ligar", "Rediscar <número>" (ou "Rediscar <número> · <nome>"), "Desligar a ligação ativa" e "Atenção". | ☐ | ☐ |
+
+### Não perturbe
+
+Desligue o Atender automático. Os ramais são o cliente e o colega.
+
+| # | Passo | Resultado esperado | A1 | A2 |
+|---|-------|--------------------|----|----|
+| 16.26 | Toque em "Não perturbe" no cabeçalho. Depois, toque de novo. | Ligado: a pílula fica ciano, com o texto escuro; a bolinha do cartão fica vermelha, com "Não perturbe · as ligações não tocam"; a notificação fixa vira "Não perturbe (ramal <ramal>)". Desligado de novo: a pílula volta ao contorno branco, a bolinha fica verde, com "Conectado · <servidor>", e a notificação fixa volta a "Conectado (ramal <ramal>)". | ☐ | ☐ |
+| 16.27 | Ligue o Não perturbe. Receba uma ligação do cliente com o app na frente; depois, com o app fora da tela e a tela apagada. | O celular não toca nem vibra, e a tela cheia não abre. Quem liga ouve ocupado. A ligação entra no Recentes como "Perdida", e o filtro mostra "Perdidas · <n>" com uma a mais. Na gaveta de notificações, "Ligação perdida de <contato ou número>" aparece sem som e sem vibrar. Em Configurações do Android → Apps → Starsonic Phone → Notificações, o canal dela se chama "Ligações perdidas no Não perturbe". | ☐ | ☐ |
+| 16.28 | Desligue o Não perturbe. Use outro app (o navegador, por exemplo) e receba uma ligação do cliente. Com ela tocando, abra o Starsonic pelo ícone (não pela notificação) e ligue o Não perturbe. Depois, atenda pela notificação (puxe a gaveta), converse um instante e desligue. Por fim, o colega liga. | A ligação que já tocava continua tocando e atende normalmente (o Não perturbe vale para as próximas). Depois que ela acaba, o colega ouve ocupado, e a ligação dele entra no Recentes como perdida, sem som. | ☐ | ☐ |
+| 16.29 | Com o Não perturbe ligado, ligue para o cliente pelo Teclado e, depois de desligar, pelo Rediscar. | As duas chamam e completam normalmente. Durante a ligação, a bolinha é vermelha, com "Ocupado · em ligação"; ao desligar, volta "Não perturbe · as ligações não tocam". | ☐ | ☐ |
+| 16.30 | Com o Não perturbe ligado, tire o app da lista de apps recentes e olhe a notificação fixa. Reinicie o celular, desbloqueie sem abrir o app, olhe a notificação de novo e ligue do cliente. Abra o app. Por fim, desligue o Não perturbe e ligue do cliente. | A notificação continua "Não perturbe (ramal <ramal>)". Depois de reiniciar, ela volta sozinha (primeiro "Conectando…" e, com o ramal registrado, "Não perturbe (ramal <ramal>)"), e o cliente ouve ocupado. No app, a pílula continua ligada. Desligado, a ligação do cliente toca normalmente. | ☐ | ☐ |
+
+### Atender automático
+
+Desligue o Não perturbe. O Atender automático atende sozinho, no caminho de áudio de sempre (fone, headset ou Bluetooth).
+
+| # | Passo | Resultado esperado | A1 | A2 |
+|---|-------|--------------------|----|----|
+| 16.31 | Toque em "Atender automático" no cabeçalho. Abra o menu → Configurações e olhe a parte "Ligações". Desligue "Atender automaticamente", volte à tela principal e ligue a pílula de novo. | A pílula fica ciano. Em Ligações, "Atender automaticamente" está ligado, com "Depois de 3 segundos tocando" embaixo e "Tempo para atender" em "3 s". Desligar a chave nas Configurações desliga a pílula do cabeçalho, e ligar a pílula liga a chave. | ☐ | ☐ |
+| 16.32 | Com o Atender automático ligado e o tempo em 8 s (Configurações → Ligações → Tempo para atender), bloqueie o celular e receba uma ligação do cliente. Olhe a tela cheia. | A recebida mostra o selo "Atender automático · em 8 s" e conta "em 7 s", "em 6 s" e assim por diante, de segundo em segundo, desde que o celular começou a tocar. No fim, o app atende sozinho, sem desbloquear, e o áudio passa nos dois sentidos. | ☐ | ☐ |
+| 16.33 | Com o tempo ainda em 8 s, receba outra ligação e, antes de a contagem acabar, toque em Atender. Repita tocando em Recusar. | Faz só o que foi tocado. Atender atende uma vez só (o app não atende de novo). Recusar dá ocupado a quem liga, e a ligação entra no Recentes como perdida. Nos dois, o selo da contagem some. | ☐ | ☐ |
+| 16.34 | Em Configurações → Ligações, escolha "Tempo para atender" → "Na hora". Bloqueie o celular e receba uma ligação. | A recebida mostra, por um instante, "Atender automático · na hora" e é atendida assim que o celular toca. Em Ligações, "Atender automaticamente" mostra "Assim que tocar". | ☐ | ☐ |
+| 16.35 | Escolha "1 s" e depois "5 s", olhando a linha de baixo de "Atender automaticamente". Abra "Tempo para atender" de novo. | "Depois de 1 segundo tocando" e "Depois de 5 segundos tocando". A lista oferece "Na hora", "1 s", "2 s", "3 s", "5 s", "8 s", "10 s", "15 s", "20 s" e "30 s", com a de agora marcada. | ☐ | ☐ |
+| 16.36 | Com o tempo em 3 s, tire o app da lista de apps recentes, apague a tela e deixe o celular parado. Ligue do cliente. Repita com "Na hora". | Toca, com a tela cheia por cima da tela bloqueada e a contagem; depois de 3 s o app atende sozinho, sem desbloquear, e o áudio passa. Android 14 ou mais novo: se o Android não deixar o microfone, a ligação continua tocando (atenda à mão). Anote, e mande o diagnóstico (Sobre → Enviar diagnóstico): a linha "Atender automático: o Android não deixou o microfone; a ligação continua tocando" mostra que foi o Android. | ☐ | ☐ |
+| 16.37 | Com um fone Bluetooth conectado, receba uma ligação com o Atender automático ligado, com o app na frente e depois com o app fechado e a tela apagada. | É atendida sozinha, e o áudio vai pelo fone Bluetooth, nos dois sentidos. Com o app fechado e a tela apagada, anote se o outro lado ouve (3.16). | ☐ | ☐ |
+| 16.38 | Com o tempo em 5 s, use outro app, com a tela acesa, e receba uma ligação. | A notificação no alto da tela mostra "Atender automático · em 5 s" (parada, sem contar), com Atender e Recusar. Depois de 5 s, o app atende sozinho. | ☐ | ☐ |
+| 16.39 | Com o Atender automático ligado e o tempo em 3 s, reinicie o celular e desbloqueie. Não abra o app e não ligue nada. Ligue do cliente. | A notificação fixa voltou sozinha (3.7), e a ligação toca e é atendida sozinha depois de 3 s. Se ela continuar tocando, atenda à mão e mande o diagnóstico: a linha "Atender automático: o Android não deixou o microfone; a ligação continua tocando" mostra que foi o Android que não deixou. Anote o celular e o Android. | ☐ | ☐ |
+| 16.40 | Com o Atender automático ligado, ponha o tempo em 15 s. Use outro app e receba uma ligação do cliente. Com ela tocando, abra o Starsonic pelo ícone (não pela notificação) e desligue "Atender automático" no cabeçalho. O cliente precisa continuar chamando; se ele desistir antes, repita. | A ligação continua tocando e não é atendida sozinha, mesmo passando os 15 s. A notificação pode continuar mostrando "Atender automático · em 15 s": é esperado (o Android calaria o toque se o app mudasse a notificação de uma ligação que toca). Atenda ou recuse à mão. | ☐ | ☐ |
+| 16.41 | Repita o passo anterior, mas, no lugar de desligar o Atender automático, ligue o "Não perturbe". Depois que a ligação acabar, o colega liga. | A ligação que tocava continua tocando e não é atendida sozinha (vale o Não perturbe). Atenda à mão. A do colega ouve ocupado. | ☐ | ☐ |
+| 16.42 | Numa ligação com o cliente, com o Atender automático ligado, receba a do colega. | Toca na faixa "Ligação de <nome ou número>", sem o selo da contagem, e não é atendida sozinha. Atender e Recusar funcionam (11.1 e 11.5). | ☐ | ☐ |
+| 16.43 | Ligue o Atender automático e o Não perturbe. Ligue do cliente. | Quem liga ouve ocupado. Nada toca e nada é atendido sozinho (vale o Não perturbe). | ☐ | ☐ |
+| 16.44 | Com o Atender automático ligado, atenda uma ligação do celular (da operadora) e, com ela em andamento, ligue do cliente. | O cliente ouve ocupado (6.2), e nada é atendido sozinho. A ligação da operadora segue sem ser atrapalhada. | ☐ | ☐ |
+| 16.45 | Ponha o tempo em 30 s. Receba uma ligação do cliente e, enquanto ela toca (nos primeiros 10 s), ligue para o número do celular com o outro celular com chip. | A ligação da operadora não pode ser atrapalhada: ela toca e atende normalmente, sem cair nem ficar sem som. Anote o que acontece com a do ramal (continua tocando, parou de tocar ou foi atendida sozinha). | ☐ | ☐ |
+
+### Bipe no fim da ligação
+
+Deixe o bipe ligado (Configurações → Ligações). Salvo quando a linha disser outra coisa, use o fone do ouvido do celular (nem o viva-voz nem um fone).
+
+| # | Passo | Resultado esperado | A1 | A2 |
+|---|-------|--------------------|----|----|
+| 16.46 | Ligue para o cliente, espere atender, converse um instante e deixe o cliente desligar. | Dois bipes curtos no fone do ouvido, logo depois de o cliente desligar. O alto-falante do toque (o do viva-voz) não toca. | ☐ | ☐ |
+| 16.47 | Receba uma ligação do cliente, atenda e desligue pelo botão Desligar. | Dois bipes curtos no fone do ouvido. | ☐ | ☐ |
+| 16.48 | Com uma ligação atendida, faça a ligação cair: troque do Wi-Fi para o 4G (4.2). Se ela não cair, anote e pule. | Quando a ligação cai, dois bipes curtos. | ☐ | ☐ |
+| 16.49 | Plugue um fone com fio (ou USB-C) e repita as duas linhas acima (deixar o cliente desligar e desligar você). | Os bipes saem no fone com fio, e não no alto-falante do celular. | ☐ | ☐ |
+| 16.50 | Conecte um fone Bluetooth, atenda uma ligação por ele e deixe a outra pessoa desligar. Repita desligando você. | Os bipes saem no fone Bluetooth, e não no alto-falante do celular. Anote se os dois bipes saem inteiros. | ☐ | ☐ |
+| 16.51 | Recuse uma ligação. Deixe uma tocar até perder. Ligue para um número que não atende e desista antes de atender. | Nenhum bipe. | ☐ | ☐ |
+| 16.52 | Com duas ligações, desligue uma e continue na outra. Depois, desligue a outra. | Ao desligar a primeira, nenhum bipe. Ao desligar a última, o bipe. | ☐ | ☐ |
+| 16.53 | Numa ligação do ramal, atenda uma ligação do celular (da operadora): a do ramal fica em espera. Com a da operadora em andamento, deixe a outra pessoa da ligação do ramal desligar. Depois, desligue a da operadora. | Nenhum bipe do app, nem quando a ligação em espera acaba: o som é da ligação da operadora. | ☐ | ☐ |
+| 16.54 | Em Configurações → Ligações, desligue "Bipe quando a ligação cai ou termina" e repita as duas primeiras linhas deste bloco. Tire o app da lista de apps recentes e abra de novo. | Nenhum bipe, e a chave continua desligada. Numa instalação nova ela vem ligada (16.4). Ligue-a de novo. | ☐ | ☐ |
+| 16.55 | Depois dos bipes, Menu → Sobre → Enviar diagnóstico, e abra o arquivo. | O arquivo tem a linha "ligação: bipe do fim: tocando (modo do áudio 3)" para cada bipe (o 3 é o modo de ligação; se for outro número, anote). Nunca aparece "bipe do fim: o som não acabou em 1500 ms" nem "bipe do fim: não tocou". | ☐ | ☐ |
+| 16.56 | Termine uma ligação atendida e, no mesmo instante, faça o colega ligar: combinem um "já!", em que o cliente desliga e o colega liga. Repita algumas vezes. | A nova ligação toca normalmente (pode soar, por um instante, como o bipe de chamada em espera) e dá para atender. A ligação que acabou some da tela. Anote se alguma recebeu ocupado. | ☐ | ☐ |
+
+### Rediscar
+
+| # | Passo | Resultado esperado | A1 | A2 |
+|---|-------|--------------------|----|----|
+| 16.57 | Ligue para o cliente, espere atender e desligue. Volte ao Teclado, olhe o Rediscar e segure o dedo nele. | O Rediscar fica ativo. Segurar o dedo não liga: mostra, por uns 2 segundos, um balão escuro com "Rediscar <número do cliente>" ou, se o número é de um contato, "Rediscar <número> · <nome>". | ☐ | ☐ |
+| 16.58 | Ligue para o colega e desligue. Depois, receba uma ligação do cliente, atenda e desligue. Toque no Rediscar. | Liga para o colega: a feita mais nova (a recebida do cliente não conta), pelo mesmo caminho do botão de ligar da linha "Feita" do Recentes. | ☐ | ☐ |
+| 16.59 | Receba uma ligação do cliente, atenda e, com ela em andamento, toque em Nova ligação. Segure o dedo no Rediscar do painel e toque nele. Depois, em outra ligação, abra o Teclado da ligação (os tons). | O Rediscar do painel fica à esquerda do Ligar e tem o mesmo nome do balão. Ao tocar, o cliente vai para a espera e a feita mais nova (o colega, se foi a última que você fez) é discada (11.9). O Teclado da ligação (os tons) não tem o Rediscar. | ☐ | ☐ |
+
+### A bolinha e a notificação fixa
+
+Compare com o quadro "Bolinha de status e notificação fixa". O Não perturbe está em 16.26. Em cada estado, olhe o cartão da conta e puxe a gaveta de notificações.
+
+| # | Passo | Resultado esperado | A1 | A2 |
+|---|-------|--------------------|----|----|
+| 16.60 | Com a internet normal e a conta conectada, olhe o cartão da conta e a notificação fixa. | Bolinha verde, o ramal e "Conectado · <servidor>". A notificação fixa: "Conectado (ramal <ramal>)". | ☐ | ☐ |
+| 16.61 | Desligue o Wi-Fi e os dados móveis (ou ligue o modo avião). | Em poucos segundos, bolinha cinza com "Sem internet · tentando de novo", no cartão e na notificação fixa. | ☐ | ☐ |
+| 16.62 | Ligue a internet de novo e olhe o cartão logo em seguida. | Bolinha ciano com "Conectando…" (no cartão e na notificação; pode durar só um instante) e, em poucos segundos, verde com "Conectado · <servidor>". | ☐ | ☐ |
+| 16.63 | Troque a senha do ramal no PABX com o app em segundo plano (a recusa chega em até 5 min, 9.8). Olhe a notificação fixa, abra o app e aperte Voltar na tela Entrar que abrir. Depois, conserte: menu → Configurações → lápis de Editar conta, com a senha certa. | A notificação fixa mostra "Ramal ou senha incorretos."; o app abre o Editar conta com a mesma frase. Depois do Voltar, o cartão tem a bolinha cinza, o triângulo amarelo e "Ramal ou senha incorretos.". Entrando com a senha certa, volta o verde. | ☐ | ☐ |
+| 16.64 | Com a letra normal, ponha o celular num Wi-Fi sem internet (o roteador com o cabo do provedor desligado) e desligue os dados móveis. Espere e olhe o cartão. Anote o tempo até mudar: `____`. | Primeiro "Conectando…" (ciano). Depois, bolinha cinza, sem o triângulo, com a frase inteira no cartão e na notificação fixa: "Não foi possível falar com o servidor. Confira o endereço e a sua internet.". Se ela não couber numa linha, continua na seguinte: o final, "Confira o endereço e a sua internet.", tem de aparecer. Quando a internet volta: "Conectando…" e "Conectado · <servidor>" sozinhos. A mesma frase, inteira, aparece embaixo da senha no Entrar com um endereço errado (2.5). | ☐ | ☐ |
+| 16.65 | Faça uma ligação para o cliente e, com ela em andamento, olhe a tela de chamada, a tela principal (Voltar) e a notificação fixa. Depois, com uma ligação tocando (o cliente liga), puxe a gaveta de notificações. | Na tela de chamada, no alto, a bolinha vermelha com "Ocupado · em ligação" e o seu ramal à direita. Na tela principal, a faixa ciano "Ligação em andamento. Toque para voltar." e, no cartão, a bolinha vermelha com "Ocupado · em ligação". A notificação fixa diz "Ocupado · em ligação", também enquanto a ligação toca. | ☐ | ☐ |
+| 16.66 | Com o Não perturbe ligado: tire a internet; ponha a internet de volta; faça uma ligação. | Sem internet: cinza com "Sem internet · tentando de novo" (não vermelha). Com a internet de volta: "Conectando…" e depois vermelha com "Não perturbe · as ligações não tocam". Na ligação: vermelha com "Ocupado · em ligação"; ao desligar, "Não perturbe · as ligações não tocam". | ☐ | ☐ |
+
+### Configurações e Permissões
+
+| # | Passo | Resultado esperado | A1 | A2 |
+|---|-------|--------------------|----|----|
+| 16.67 | Menu → Configurações → "Permissões e bateria". Aperte a tecla Voltar do celular. Abra de novo e toque em "Continuar". | A tela Permissões abre, com os quatro avisos. O Voltar do celular (como o da barra e o Continuar) volta às Configurações, e o app não fecha. | ☐ | ☐ |
+| 16.68 | Ligue o Não perturbe e o Atender automático, ponha o tempo em 8 s e desligue o bipe. Em Configurações → Conta, toque em "Sair da conta", em "Cancelar" e de novo em "Sair da conta" e "Sair". Entre de novo com o mesmo ramal e siga as Permissões, se aparecerem. | "Cancelar" não muda nada. "Sair" volta à tela Entrar. Depois do novo Entrar, as duas pílulas estão ligadas, e em Configurações → Ligações o tempo continua em "8 s" e o bipe, desligado. As chaves valem de novo: o cliente ouve ocupado. Ponha tudo como veio de fábrica. | ☐ | ☐ |
+| 16.69 | (Opcional) Com a 0.2.0-rc.1 instalada e usada (conta, contatos, Recentes), atualize para a rc.2 pelo aviso (7.2 a 7.9). | O aviso mostra as notas desta versão (sem palavras técnicas, terminando em "Esta é uma versão de teste."). Depois de atualizar, o app abre conectado, sem pedir a senha, e com os Recentes de antes. Os padrões das chaves novas: Não perturbe e Atender automático desligados, tempo de 3 s e bipe ligado. | ☐ | ☐ |
+
 ## Onde cada critério de sucesso é verificado
 
 | Critério (spec §3) | Automático (a cada build) | Neste roteiro |
@@ -247,3 +390,17 @@ Repita as seções 11 a 13 com um fone Bluetooth conectado e, depois, no viva-vo
 | Contatos do celular: a aba, ligar pelo nome, o nome na ligação recebida, na tela, na notificação e nos Recentes; sem a permissão, só números | `ContactsTest` e `CallManagerTest` (JVM), `ContactsFlowTest` (emulador), `test_call_messages` (`ContactDialString`), `check_apk.py` (`READ_CONTACTS` e nenhuma outra permissão nova) | 14 |
 | A terceira ligação recebe ocupado; uma ligação da operadora em andamento continua bloqueando | `test_engine_calls` (486), `CallManagerTest` | 6, 11.12, 15 |
 | Tudo acima com fone Bluetooth e viva-voz; bateria e dados numa conferência de 10 minutos | — | 15 |
+
+### Critérios da 0.2.0-rc.2 (spec do visual do Windows, §1 e §11)
+
+| Critério | Automático (a cada build) | Neste roteiro |
+|----------|---------------------------|---------------|
+| O visual do Windows em todas as telas, nos temas claro e escuro e com a letra no máximo | `StarsonicColorsTest` (as cores), `MainScreenTest` (os dois temas, o menu e a letra no máximo), `SettingsFlowTest` (as telas de dentro nos dois temas e o passo a passo do fabricante), `CallFlowTest` (a segunda ligação, a consulta e a conferência, e a letra no máximo na recebida), os prints que o CI guarda (`telas-<sha>`), comparados com o canvas | 16.1 a 16.25 |
+| Não perturbe: quem liga ouve ocupado, a perdida fica sem som, a que já toca continua, e a chave fica gravada | `CallManagerTest` (`do not disturb answers busy and logs a silent missed call`, `do not disturb spares the call already ringing`, `do not disturb wins over auto answer`), `CallSettingsStoreTest`, `CallFlowTest` (`doNotDisturbMakesTheCallerHearBusy`), `MainScreenTest` (`theChipsToggleAndChangeTheDot`) | 16.26 a 16.30, 16.41, 16.43 |
+| Atender automático: o tempo, a contagem na recebida e só a mesma ligação que ainda toca; nada com uma segunda ligação, com o Não perturbe ou com uma ligação da operadora | `CallManagerTest` (`auto answer …`: o tempo, na hora, a segunda ligação, o Não perturbe, a ligação da operadora, a que parou de tocar e o microfone recusado), `CallFormatTest` (a contagem), `SettingsFormatTest`, `CallFlowTest` (`autoAnswerAnswersByItselfAfterTheTime`, `theIncomingScreenCountsDownTheAutoAnswer`), `SettingsFlowTest` (`autoAnswerAndItsTimeAreRemembered`) | 16.31 a 16.45 |
+| Atender automático com o app fechado, com a tela apagada e logo depois de reiniciar o celular (o Android 14 pode recusar o microfone) | — (não dá para repetir no emulador) | 16.36, 16.39 |
+| Rediscar: apagado sem ligação feita, liga para a feita mais nova, o nome no aperto longo e também na Nova ligação | `RedialTest`, `MainScreenTest` (`rediscarIsDisabledUntilACallIsMadeThenDialsTheLastOne`), `CallFlowTest` (`rediscarInNovaLigacaoDialsTheLastCall`) | 16.57 a 16.59 |
+| A bolinha nos seis estados e a notificação fixa com o mesmo título | `StatusModelTest` (as seis linhas e os empates), `ConnectionTest`, `ConnectionNoticeTest`, `ServiceTest`, `MainScreenTest` (o título "Não perturbe (ramal …)"), `CallFlowTest` (`theCallScreenShowsOcupadoEmLigacao`), `AboutAndAccountTest` (a senha recusada); "Sem internet" e "Conectando…" só na JVM | 16.60 a 16.66 |
+| O bipe no fim da ligação: quando toca, onde toca (fone, headset, Bluetooth) e quando não toca | `CallManagerTest` (`an answered call that ends beeps once and then disconnects`, `a rejected, missed or unanswered call never beeps`, `no beep while another call remains, one when the last answered call ends`, `no beep with the setting off`, `no beep for a call held by a carrier call`, `the end beep never holds the Connection more than 1500 ms`, `a call during the end beep is not delayed or blocked`), `EndBeepToneTest` (o som); o fone, o headset e o Bluetooth, só no manual | 16.46 a 16.56 |
+| Configurações: as chaves ficam gravadas e continuam depois do "Sair da conta" | `CallSettingsStoreTest` (`call settings survive sign out`), `SettingsFlowTest` (`sairDaContaAsksFirstAndKeepsTheCallSettings`, `theBeepSwitchStartsOnAndIsRemembered`) | 16.9, 16.67 a 16.69 |
+| A tecla Voltar na tela Permissões | `SettingsFlowTest` (`backOnPermissoesAfterTheFirstEntrarGoesToTheMainScreen`, `backOnPermissoesFromConfiguracoesReturnsToConfiguracoes`) | 16.3, 16.67 |

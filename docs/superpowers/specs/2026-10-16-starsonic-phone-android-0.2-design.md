@@ -241,3 +241,5 @@ O plano `2026-10-16-android-0-2-ramal-completo.md` implementou esta spec em 12 t
 10. **Perfil (6.3):** `ddi=55` e `prefixo_externo=` (vazio) em `branding/perfil.ini`, como a decisão 5; a confirmação do prefixo continua pendente com a Starsonic (seção 12).
 
 Pendências anotadas para a estável (0.2.0), fora as acima: a extração de parte do `CallManager` (1100 linhas) em unidades puras; um `NOTIFY 100 Trying` no registrador falso; os casos de "número já com o prefixo" e da fronteira de 6 dígitos no teste do `ContactDialString`; a notificação de espera que duplica a faixa com a tela de chamada na frente; a leitura da agenda a cada tecla na busca.
+
+As mudanças da 0.2.0-rc.2 (o visual do Windows, o Não perturbe, o Atender automático, o Rediscar, a bolinha e o bipe) estão em `2026-10-26-starsonic-phone-android-visual-windows-design.md`; no que for diferente, vale a de lá (por exemplo, a notificação fixa do item 1 e os botões do item 9).
