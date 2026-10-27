@@ -14,6 +14,7 @@ import {
   mudarEstado,
   saidasFalsas,
   semViolacoesSerias,
+  toqueIndisponivel,
   toques,
   verTextos,
   vezes,
@@ -319,18 +320,19 @@ test.describe('ligação e toque', () => {
     // O cenário só responde ao `ready`: o estado e o toque chegam depois dele.
     expect((await comandos(page))[0]).toEqual({ v: 1, cmd: 'ready' });
     await verTextos(page, ['Ligação recebida · Recepção', 'Carlos Lima']);
-    await expect.poll(async () => (await audio(page)).map((a) => a.oscillators.map((o) => [o.frequency, o.started, o.stopped]))).toEqual([[[425, true, false]]]);
+    // A recebida toca o toque do MicroSIP (rc.4): a fonte de buffer em loop.
+    await expect.poll(async () => (await audio(page)).map((a) => a.sources.map((s) => [s.loop, s.started, s.stopped]))).toEqual([[[true, true, false]]]);
     // Recarregar (a interface de novo): o `ready` traz outra vez a ligação e o toque.
     await page.reload();
     await expect(page.locator('body[data-pronto]')).toHaveCount(1);
     await verTextos(page, ['Ligação recebida · Recepção', 'Carlos Lima']);
     await expect.poll(async () => (await audio(page)).length).toBe(1);
-    await expect.poll(async () => (await audio(page))[0].oscillators[0]?.started).toBe(true);
+    await expect.poll(async () => (await audio(page))[0].sources[0]?.started).toBe(true);
     await botao(page, 'Atender').click();
     await esperarComando(page, { cmd: 'answer' });
     await verTextos(page, ['Em ligação', 'Carlos Lima']);
     // O C++ (falso) para o toque ao atender.
-    await expect.poll(async () => (await audio(page))[0].oscillators[0].stopped).toBe(true);
+    await expect.poll(async () => (await audio(page))[0].sources[0].stopped).toBe(true);
   });
 
   test('the call timer counts from activeSinceMs', async ({ page }) => {
@@ -365,6 +367,9 @@ test.describe('ligação e toque', () => {
     const inicio = new Date('2026-10-21T14:00:00-03:00').getTime();
     await page.clock.install({ time: inicio });
     await audioFalso(page);
+    // Sem o arquivo do toque do MicroSIP a recebida cai nos 425 Hz de antes: a cadência de 1 s a cada 5 s é a dela
+    // (o toque do arquivo, em loop, está em ring.spec.ts).
+    await toqueIndisponivel(page);
     await abrir(page, 'principal');
     // O relógio parado: só anda com o runFor (as mensagens da ponte falsa também saem por um setTimeout).
     await page.clock.pauseAt(inicio + 120_000);
@@ -373,9 +378,10 @@ test.describe('ligação e toque', () => {
       await page.clock.runFor(10);
     };
 
-    // Completo: o oscilador de 425 Hz, 1 s ligado e 4 s desligado.
+    // Completo (sem o arquivo): o oscilador de 425 Hz, 1 s ligado e 4 s desligado. O arquivo ainda é pedido, e a
+    // recusa dele chega depois da mensagem: o oscilador só nasce então.
     await mandar('completo');
-    await expect.poll(async () => (await audio(page)).length).toBe(1);
+    await expect.poll(async () => (await audio(page))[0]?.oscillators.length).toBe(1);
     let [ctx] = await audio(page);
     expect(ctx.oscillators).toEqual([{ type: 'sine', frequency: 425, started: true, stopped: false }]);
     expect(ctx.resumed).toBe(true);
@@ -431,7 +437,7 @@ test.describe('ligação e toque', () => {
     await mudarEstado(page, (s) => ({ ...s, audio: { ...s.audio, toque: 'saida-toque-1' } }));
     await expect.poll(async () => (await estado(page)).audio.toque).toBe('saida-toque-1');
     await empurrar(page, { v: 1, type: 'ring', tipo: 'completo' });
-    await expect.poll(async () => (await audio(page))[0]?.oscillators[0]?.started).toBe(true);
+    await expect.poll(async () => (await audio(page))[0]?.sources[0]?.started).toBe(true);
     expect((await audio(page))[0].sinkId).toBe('saida-toque-1');
     await empurrar(page, { v: 1, type: 'ring', tipo: 'parar' });
     await expect.poll(async () => (await audio(page))[0].closed).toBe(true);
@@ -439,7 +445,7 @@ test.describe('ligação e toque', () => {
     // Sem permissão (ou o dispositivo sumiu): toca no padrão do mesmo jeito.
     await page.evaluate(() => ((window as unknown as Record<string, unknown>).__audioSinkFalha = true));
     await empurrar(page, { v: 1, type: 'ring', tipo: 'completo' });
-    await expect.poll(async () => (await audio(page))[1]?.oscillators[0]?.started).toBe(true);
+    await expect.poll(async () => (await audio(page))[1]?.sources[0]?.started).toBe(true);
     expect((await audio(page))[1].sinkId).toBe('');
   });
 
@@ -463,7 +469,7 @@ test.describe('ligação e toque', () => {
     await expect.poll(async () => (await audio(page))[0].sinkId).toBe('id-headset');
     // Do bipe para o toque completo: o completo continua no Toque.
     await empurrar(page, { v: 1, type: 'ring', tipo: 'completo' });
-    await expect.poll(async () => (await audio(page))[1]?.oscillators[0]?.started).toBe(true);
+    await expect.poll(async () => (await audio(page))[1]?.sources[0]?.started).toBe(true);
     expect((await audio(page))[1].sinks).toEqual(['saida-toque-1']);
     await empurrar(page, { v: 1, type: 'ring', tipo: 'parar' });
 

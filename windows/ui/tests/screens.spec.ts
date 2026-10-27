@@ -530,7 +530,7 @@ for (const tema of ['light', 'dark'] as const) {
       await verTextos(page, [
         'Sobre',
         'Starsonic Phone 0.1.0-rc.1',
-        'Licença GPL v3 · usa o PJSIP (GPL v2 ou posterior) e o Opus (BSD)',
+        'Licença GPL v3 · usa o PJSIP (GPL v2 ou posterior), o Opus (BSD) e o toque do MicroSIP (GPL v2 ou posterior)',
         'starsonic.com.br',
         '(11) 5060-3000',
         'Também no WhatsApp · seg. a sex., 8h às 18h',

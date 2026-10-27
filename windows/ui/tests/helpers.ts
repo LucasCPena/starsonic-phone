@@ -94,14 +94,20 @@ export interface AudioGravado {
   closed: boolean;
   resumed: boolean;
   oscillators: Array<{ type: string; frequency: number; started: boolean; stopped: boolean }>;
+  /** As fontes de buffer (rc.4: o toque do MicroSIP da recebida): se tocam em loop, e se começaram e pararam. */
+  sources: Array<{ loop: boolean; started: boolean; stopped: boolean }>;
+  /** O tamanho (bytes) de cada arquivo que chegou ao decodeAudioData. */
+  decodes: number[];
   /** As automações do ganho: [tipo, valor, tempo em s do relógio do contexto]. */
   gains: Array<Array<[string, number, number]>>;
 }
 
 /**
- * Troca o AudioContext da página por um falso que grava o que o toque faz (o oscilador, o ganho, o setSinkId).
- * O `currentTime` segue o performance.now() da página (o relógio falso do Playwright, quando instalado).
+ * Troca o AudioContext da página por um falso que grava o que o toque faz (o oscilador, a fonte de buffer, o ganho, o
+ * setSinkId). O `currentTime` segue o performance.now() da página (o relógio falso do Playwright, quando instalado).
  * `window.__audioSinkFalha = true` faz o setSinkId falhar (sem permissão, ou o dispositivo sumiu).
+ * O falso decodifica como o do WebView2 (`decodeAudioData` devolve um buffer e anota o tamanho do arquivo, o toque do
+ * MicroSIP da recebida); `window.__toqueDecodeFalha = true` faz o decodeAudioData rejeitar (o arquivo que não decodifica).
  */
 export async function audioFalso(page: Page): Promise<void> {
   await page.addInitScript(() => {
@@ -123,7 +129,16 @@ export async function audioFalso(page: Page): Promise<void> {
     }
     class FakeAudioContext {
       private t0 = performance.now();
-      private rec = { sinkId: '', sinks: [] as string[], closed: false, resumed: false, oscillators: [] as unknown[], gains: [] as unknown[] };
+      private rec = {
+        sinkId: '',
+        sinks: [] as string[],
+        closed: false,
+        resumed: false,
+        oscillators: [] as unknown[],
+        sources: [] as unknown[],
+        decodes: [] as number[],
+        gains: [] as unknown[],
+      };
       state = 'running';
       destination = { connect() {}, disconnect() {} };
       constructor() {
@@ -166,6 +181,32 @@ export async function audioFalso(page: Page): Promise<void> {
           },
         };
       }
+      createBufferSource() {
+        const s = { loop: false, started: false, stopped: false };
+        this.rec.sources.push(s);
+        return {
+          buffer: null as unknown,
+          set loop(v: boolean) {
+            s.loop = v;
+          },
+          get loop() {
+            return s.loop;
+          },
+          connect() {},
+          disconnect() {},
+          start() {
+            s.started = true;
+          },
+          stop() {
+            s.stopped = true;
+          },
+        };
+      }
+      decodeAudioData(dados: ArrayBuffer) {
+        this.rec.decodes.push(dados.byteLength);
+        if (w.__toqueDecodeFalha) return Promise.reject(new DOMException('não decodificou', 'EncodingError'));
+        return Promise.resolve({ duration: 3, numberOfChannels: 1, sampleRate: 8000 });
+      }
       createGain() {
         const log: Array<[string, number, number]> = [];
         this.rec.gains.push(log);
@@ -193,6 +234,16 @@ export async function audioFalso(page: Page): Promise<void> {
 
 export async function audio(page: Page): Promise<AudioGravado[]> {
   return page.evaluate(() => (window as unknown as { __audio: AudioGravado[] }).__audio);
+}
+
+/**
+ * O arquivo do toque do MicroSIP (`assets/toque.wav`) não chega: a conexão cai, ou (com `status`) o servidor responde com
+ * esse erro e um texto no lugar do arquivo. A recebida cai nos 425 Hz.
+ */
+export async function toqueIndisponivel(page: Page, status?: number): Promise<void> {
+  await page.route('**/assets/toque.wav', (rota) =>
+    status === undefined ? rota.abort() : rota.fulfill({ status, contentType: 'text/plain', body: 'sem toque' }),
+  );
 }
 
 /** Os instantes (s) em que o ganho sobe (o começo de cada toque) e em que volta a zero. */

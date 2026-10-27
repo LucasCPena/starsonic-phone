@@ -1,6 +1,11 @@
-// O toque, gerado na interface por WebAudio (sem arquivos de som): 425 Hz, como o tom de chamada.
-// - completo: 1 s ligado e 4 s desligado (uma recebida sem outra ligação);
-// - espera: um bipe de 0,2 s a cada 3 s (a segunda ligação, sem cobrir a conversa);
+// O toque, por WebAudio na interface:
+// - completo (rc.4): o toque do MicroSIP (uma recebida sem outra ligação), o `assets/toque.wav`: a cópia do
+//   `ringtone.wav` do MicroSIP, 3 s, 8 kHz, mono. A interface lê o arquivo e o decodifica uma vez, e ele toca em loop
+//   (AudioBufferSourceNode) até o `parar`; o arquivo já traz o "trrim-trrim" e o silêncio depois, uma volta a cada 3 s.
+//   Se o arquivo não carregar, não decodificar, ou o contexto não decodificar, a recebida cai nos 425 Hz de antes
+//   (gerados, 1 s ligado e 4 s desligado): ela nunca fica muda. Os 425 Hz eram o "chamando" das centrais do Brasil, e a
+//   recebida parecia a pessoa ligando (spec da rc.4, seção 3);
+// - espera: um bipe de 425 Hz de 0,2 s a cada 3 s (a segunda ligação, sem cobrir a conversa);
 // - parar: encerra na hora;
 // - fim (rc.3): o bipe do fim da ligação, 0,25 s duas vezes com 0,15 s de intervalo, uma vez só; ele não mexe no
 //   toque de agora (toca num contexto dele, que fecha sozinho depois).
@@ -12,8 +17,8 @@
 // Sem o id, sem nome, sem rótulos (sem a permissão de mídia), sem saída que case, sem o setSinkId ou com erro nele,
 // toca no padrão: nunca fica mudo. Só a janela principal toca (o aviso do canto recebe as mesmas mensagens e fica
 // quieto, para o toque não sair em dobro).
-// O relógio, o AudioContext e a lista das saídas são injetáveis (os testes usam um relógio falso e um contexto que
-// grava o que acontece).
+// O relógio, o AudioContext, a lista das saídas e a leitura do arquivo do toque são injetáveis (os testes usam um
+// relógio falso e um contexto que grava o que acontece).
 import type { RingKind } from './state';
 
 /** O pedaço do AudioContext que o toque usa. */
@@ -22,6 +27,9 @@ export interface RingAudioContext {
   readonly destination: AudioNode;
   createOscillator(): OscillatorNode;
   createGain(): GainNode;
+  /** O toque do MicroSIP (rc.4) precisa destes dois; sem eles a recebida toca os 425 Hz. */
+  createBufferSource?(): AudioBufferSourceNode;
+  decodeAudioData?(data: ArrayBuffer): Promise<AudioBuffer>;
   setSinkId?(sinkId: string): Promise<void>;
   resume(): Promise<void>;
   close(): Promise<void>;
@@ -52,6 +60,8 @@ export interface RingOptions {
   clock?: RingClock;
   /** As saídas de som de agora (o padrão: `navigator.mediaDevices.enumerateDevices()`, só as `audiooutput`). */
   listOutputs?: () => Promise<OutputDevice[]>;
+  /** Os bytes do toque do MicroSIP (o padrão: `assets/toque.wav`, dentro do app); `null` em qualquer falha. */
+  loadToque?: () => Promise<ArrayBuffer | null>;
 }
 
 export interface Ringer {
@@ -95,6 +105,16 @@ async function enumerateOutputs(): Promise<OutputDevice[]> {
   return lista.filter((d) => d.kind === 'audiooutput').map((d) => ({ deviceId: d.deviceId, label: d.label }));
 }
 
+/** Os bytes de `assets/toque.wav`, ao lado da página. `null` em qualquer falha (sem fetch, sem o arquivo, resposta de erro). */
+async function lerToque(): Promise<ArrayBuffer | null> {
+  try {
+    const resposta = await fetch('assets/toque.wav');
+    return resposta.ok ? await resposta.arrayBuffer() : null;
+  } catch {
+    return null;
+  }
+}
+
 export const RING_HZ = 425;
 
 interface Cadence {
@@ -107,6 +127,7 @@ interface Cadence {
 }
 
 export const CADENCES: Record<Exclude<RingKind, 'parar' | 'fim'>, Cadence> = {
+  // Desde a rc.4 o completo só toca assim quando o toque do MicroSIP não toca (o arquivo não veio).
   completo: { on: 1, periodMs: 5000, level: 0.3 },
   espera: { on: 0.2, periodMs: 3000, level: 0.18 },
 };
@@ -120,16 +141,23 @@ const RAMPA = 0.01;
 export function createRinger(options: RingOptions = {}): Ringer {
   const createContext = options.createContext ?? (() => new AudioContext() as unknown as RingAudioContext);
   const listOutputs = options.listOutputs ?? enumerateOutputs;
+  const loadToque = options.loadToque ?? lerToque;
   const clock: RingClock = options.clock ?? {
     setTimeout: (fn, ms) => window.setTimeout(fn, ms),
     clearTimeout: (id) => window.clearTimeout(id),
   };
 
+  // fonte: o nó que toca (a fonte de buffer do toque do MicroSIP, ou o oscilador de 425 Hz).
   // sinkId: a saída em que o toque de agora está ("" = o padrão). As mesmas saídas de novo (o efeito do estado que
   // chega depois de o toque começar) não mexem nele.
-  let current: { tipo: RingKind; ctx: RingAudioContext; osc: OscillatorNode; timer: number; sinkId: string } | null = null;
+  let current: { tipo: RingKind; ctx: RingAudioContext; fonte: AudioScheduledSourceNode; timer: number; sinkId: string } | null = null;
   // Cada pedido ganha uma vez: um setSinkId que demora não liga um toque que já foi trocado ou parado.
   let vez = 0;
+  // O toque do MicroSIP: os bytes do arquivo são lidos uma vez por ringer (fica a promessa) e o AudioBuffer é decodificado
+  // uma vez, e serve para os contextos seguintes. Um decode que falha não fica guardado: o contexto pode ter fechado no
+  // meio (o `parar` chegou cedo), e o próximo toque tenta de novo.
+  let bytesDoToque: Promise<ArrayBuffer | null> | null = null;
+  let toqueDecodificado: AudioBuffer | null = null;
 
   const stop = () => {
     vez++;
@@ -138,12 +166,31 @@ export function createRinger(options: RingOptions = {}): Ringer {
     if (!atual) return;
     clock.clearTimeout(atual.timer);
     try {
-      atual.osc.stop();
+      atual.fonte.stop();
     } catch {
       // Já parado.
     }
-    atual.osc.disconnect();
+    atual.fonte.disconnect();
     void atual.ctx.close().catch(() => {});
+  };
+
+  /**
+   * O toque do MicroSIP decodificado. `null` quando a recebida deve cair nos 425 Hz: o contexto não decodifica, o
+   * arquivo não carregou ou não decodificou. Nunca falha.
+   */
+  const bufferDoToque = async (ctx: RingAudioContext): Promise<AudioBuffer | null> => {
+    if (toqueDecodificado) return toqueDecodificado;
+    if (typeof ctx.decodeAudioData !== 'function' || typeof ctx.createBufferSource !== 'function') return null;
+    try {
+      bytesDoToque ??= loadToque();
+      const bytes = await bytesDoToque;
+      if (!bytes) return null;
+      // O decodeAudioData esvazia o ArrayBuffer que recebe: a cópia deixa os bytes inteiros para outra tentativa.
+      toqueDecodificado = await ctx.decodeAudioData(bytes.slice(0));
+      return toqueDecodificado;
+    } catch {
+      return null;
+    }
   };
 
   /** "" é o padrão: um contexto novo já está nele, então só um toque que já toca troca para o "". */
@@ -225,14 +272,33 @@ export function createRinger(options: RingOptions = {}): Ringer {
     } catch {
       return; // Sem WebAudio: nada a tocar (a ligação aparece do mesmo jeito).
     }
+    /** Este toque foi trocado ou parado enquanto a saída (ou o arquivo) vinha: não liga, e o contexto fecha. */
+    const cancelado = () => {
+      if (minhaVez === vez) return false;
+      void ctx.close().catch(() => {});
+      return true;
+    };
     void (async () => {
       const sinkId = await saidaDo(tipo, saidas);
       await trocarSaida(ctx, sinkId);
-      if (minhaVez !== vez) {
-        void ctx.close().catch(() => {});
+      if (cancelado()) return;
+      // Só o completo toca o toque do MicroSIP (a espera é o bipe); sem ele, o oscilador de 425 Hz de antes.
+      const buffer = tipo === 'completo' ? await bufferDoToque(ctx) : null;
+      if (cancelado()) return;
+      void ctx.resume().catch(() => {});
+      const fonteDoToque = buffer ? ctx.createBufferSource?.() : undefined;
+      if (buffer && fonteDoToque) {
+        // Em loop até o `parar`, como foi gravado (ganho 1): o "trrim-trrim" e o silêncio depois são do arquivo.
+        const ganho = ctx.createGain();
+        fonteDoToque.buffer = buffer;
+        fonteDoToque.loop = true;
+        ganho.gain.value = 1;
+        fonteDoToque.connect(ganho);
+        ganho.connect(ctx.destination);
+        fonteDoToque.start();
+        current = { tipo, ctx, fonte: fonteDoToque, timer: 0, sinkId };
         return;
       }
-      void ctx.resume().catch(() => {});
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.type = 'sine';
@@ -249,7 +315,7 @@ export function createRinger(options: RingOptions = {}): Ringer {
         gain.gain.linearRampToValueAtTime(0, t + cadencia.on);
         if (current) current.timer = clock.setTimeout(tocar, cadencia.periodMs);
       };
-      current = { tipo, ctx, osc, timer: 0, sinkId };
+      current = { tipo, ctx, fonte: osc, timer: 0, sinkId };
       tocar();
     })();
   };
