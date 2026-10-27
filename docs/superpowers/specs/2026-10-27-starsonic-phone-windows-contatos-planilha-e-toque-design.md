@@ -96,7 +96,7 @@ Uma parte nova, "Contatos", depois de "Ligações":
 - **A situação,** numa linha embaixo:
   - "Lendo a planilha…";
   - "Atualizada às 14:32 · 230 contatos";
-  - ou o erro da seção 5.4, com a hora da última leitura boa quando há uma.
+  - ou o erro da seção 5.4 e, quando há uma lista de antes, "Última lista: às 14:32 · 230 contatos".
 - **O botão "Atualizar agora".**
 
 ### 5.2 De onde o app lê
@@ -132,7 +132,7 @@ Uma parte nova, "Contatos", depois de "Ligações":
   - a lista de antes continua, na memória e no arquivo;
   - a situação mostra o erro e a hora da última leitura boa.
 - **Uma planilha lida sem nenhum contato** (só o cabeçalho) é uma lista vazia válida e troca a lista. A planilha sem as colunas Nome e Número é erro e não troca nada.
-- **O link apagado:** a lista e o `contatos-empresa.json` saem.
+- **O link apagado:** a lista sai, e o `contatos-empresa.json` fica com a lista vazia.
 - **O link trocado:** a lista de antes fica até a primeira leitura boa do link novo.
 
 ### 5.4 Os erros (os textos da situação)
@@ -221,10 +221,11 @@ A mesma para importar e para a lista da empresa, em C++ portátil (`starsonic/de
 ### 7.1 Estado
 
 - **`contatos`:** continua só com os meus contatos, sem mudança.
-- **`empresa`** (novo): `{link, situacao: {tipo: "nenhuma"|"lendo"|"ok"|"erro", texto, atualizadaEm}, quantos, vez}`.
+- **`empresa`** (novo): `{link, situacao: "nenhuma"|"lendo"|"ok"|"erro", erro, atualizadaEm, quantos, vez}`.
   - `link`: o texto salvo.
-  - `texto`: a linha da seção 5.1, pronta.
-  - `atualizadaEm`: em ms desde 1970, 0 sem leitura boa.
+  - `erro`: o texto da seção 5.4 (vazio fora do `erro`).
+  - `atualizadaEm`: a hora da última leitura boa, em ms desde 1970 (0 sem nenhuma). A interface escreve a hora local ("às 14:32", ou "em 26/10 às 14:32" se não for de hoje).
+  - `quantos`: os contatos da lista de agora.
   - `vez`: sobe a cada lista nova.
 
 ### 7.2 Mensagem nova
