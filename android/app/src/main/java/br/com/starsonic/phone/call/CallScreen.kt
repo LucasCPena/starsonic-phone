@@ -1,9 +1,11 @@
 package br.com.starsonic.phone.call
 
 import android.telecom.CallAudioState
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.indication
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -22,6 +24,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.systemBars
@@ -992,21 +995,31 @@ private fun RoundAction(
     }
 }
 
-// Um redondo pequeno da faixa da segunda (o .round-sm do Windows): 40 dp (o toque, 48), o ícone de 18 e o [label] para o
-// leitor de tela.
+// Um redondo pequeno da faixa da segunda (o .round-sm do Windows): o círculo de 40 dp com o ícone de 18, o toque de 48 dp
+// (o mínimo, spec 3.3) e o [label] para o leitor de tela. No layout ele ocupa os 40 dp do desenho; o elemento do toque tem
+// 48 dp, centrado nele (o requiredSize passa 4 dp para fora de cada lado), e o retorno do toque fica no círculo.
 @Composable
 private fun SmallRound(icon: ImageVector, label: String, background: Color, tint: Color, tag: String, onClick: () -> Unit) {
+    val press = remember { MutableInteractionSource() }
     Box(
         Modifier
-            .size(40.dp)
-            .clip(CircleShape)
-            .background(background)
-            .clickable(role = Role.Button, onClick = onClick)
+            .size(SMALL_ROUND)
+            .requiredSize(MIN_TOUCH)
+            .clickable(interactionSource = press, indication = null, role = Role.Button, onClick = onClick)
             .semantics { contentDescription = label }
             .testTag(tag),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(18.dp))
+        Box(
+            Modifier
+                .size(SMALL_ROUND)
+                .clip(CircleShape)
+                .background(background)
+                .indication(press, LocalIndication.current),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(18.dp))
+        }
     }
 }
 
@@ -1154,6 +1167,10 @@ private val CardShape = RoundedCornerShape(18.dp)
 private val CARD_SPACING = 12.dp
 private val CARD_BELOW = 6.dp
 private val CARD_LINES = 2.dp
+
+// Os redondos da faixa da segunda (o .round-sm): o desenho, e o toque mínimo (spec 3.3).
+private val SMALL_ROUND = 40.dp
+private val MIN_TOUCH = 48.dp
 
 // O selo: uma pílula com uma linha (o raio é a metade dos 22 dp), de cantos redondos com mais.
 private val TagShape = RoundedCornerShape(11.dp)
