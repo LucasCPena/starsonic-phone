@@ -212,6 +212,8 @@ fun CallScreen(
     val panel = keypad || transfer || newCall
     // A recebida que toca sozinha é a tela cheia (a que toca com outra é a faixa).
     val incoming = call?.phase == CallPhase.RINGING
+    // Os dois cartões (uma em espera, fora da consulta e da conferência): o quadro DuasLigacoes junta tudo a 12 dp.
+    val twoCards = call != null && !call.conference && call.second?.kind == SecondKind.HELD && call.consult == null
     BoxWithConstraints(Modifier.fillMaxSize().callBackground().testTag("chamada")) {
         val bars = WindowInsets.systemBars.asPaddingValues()
         val sizes = if (maxHeight - bars.calculateTopPadding() - bars.calculateBottomPadding() < COMPACT_BELOW) Compact else Regular
@@ -228,7 +230,7 @@ fun CallScreen(
                         call == null -> shown?.let { Ended(it, endMessage, sizes) }
                         incoming -> Incoming(call, ramal, sizes)
                         call.conference -> Conference(call, if (keypad) digits else "", sizes, cards = !panel)
-                        call.second?.kind == SecondKind.HELD && call.consult == null -> TwoCalls(call, call.second, sizes)
+                        twoCards -> TwoCalls(call, call.second, sizes)
                         else -> {
                             val ringing = call.second?.takeIf { it.kind == SecondKind.RINGING }
                             if (ringing != null) SecondCallBar(ringing, actions)
@@ -291,7 +293,7 @@ fun CallScreen(
                 Column(
                     Modifier.fillMaxWidth().padding(top = sizes.gap),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(sizes.gap),
+                    verticalArrangement = Arrangement.spacedBy(if (twoCards) minOf(sizes.gap, CARD_GAP) else sizes.gap),
                 ) {
                     when {
                         call == null -> Spacer(Modifier.height(sizes.hang + sizes.hangGap + END_LABEL))
@@ -1071,9 +1073,10 @@ private val Base = TextStyle(
 // .call-top e .busy
 private val TopLine = Base.copy(fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, lineHeight = 1.3.em)
 
-// .who-name, .who-sub, .timer e .avatar-lg (os tamanhos vêm do CallSizes)
+// .who-name, .who-sub, .timer e .avatar-lg (os tamanhos vêm do CallSizes; o .who-sub e o .timer, sem altura de linha
+// no CSS, ficam na "normal" da Plus Jakarta Sans, 1,26)
 private val NameText = Base.copy(fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.02).em, lineHeight = 1.12.em)
-private val SubText = Base.copy(lineHeight = 1.35.em)
+private val SubText = Base.copy(lineHeight = 1.26.em)
 private val TimerText = Base.copy(fontWeight = FontWeight.Bold, letterSpacing = 0.02.em, fontFeatureSettings = "tnum")
 private val AvatarText = Base.copy(fontWeight = FontWeight.ExtraBold, lineHeight = 1.em)
 private val EndText = Base.copy(fontSize = 16.sp, fontWeight = FontWeight.SemiBold, lineHeight = 1.35.em)

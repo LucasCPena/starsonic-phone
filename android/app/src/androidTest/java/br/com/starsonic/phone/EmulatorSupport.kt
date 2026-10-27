@@ -111,10 +111,10 @@ class Emulator(private val compose: ComposeTestRule) {
     fun engineLog(): String = logcat("StarsonicMotor:I", 12)
 
     /**
-     * As últimas linhas do caminho das ligações (StarsonicLigacao, nos builds de debug) e os avisos do Telecom e
-     * das notificações do Android.
+     * As últimas linhas do caminho das ligações (StarsonicLigacao, nos builds de debug), os avisos da ponte com o
+     * Telecom (StarsonicTelecom: o Telecom que recusou uma ligação) e os do Telecom e das notificações do Android.
      */
-    fun callLogcat(): String = logcat("StarsonicLigacao:V TelecomFramework:W NotificationService:W", 20)
+    fun callLogcat(): String = logcat("StarsonicLigacao:V StarsonicTelecom:W TelecomFramework:W NotificationService:W", 20)
 
     /** Alguma linha do motor no logcat (desde o último [clearLogcat]) tem [text]. */
     fun engineLogHas(text: String): Boolean = logcatLines("StarsonicMotor:I").any { text in it }
