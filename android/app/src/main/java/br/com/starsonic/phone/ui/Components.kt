@@ -141,12 +141,17 @@ fun HeaderMenuButton(modifier: Modifier = Modifier, onClick: () -> Unit) {
 }
 
 /**
- * O cartão da conta no cabeçalho (o .account do canvas): a bolinha, o [ramal] e a linha do [status] (etiqueta `status`,
- * numa linha só, com "…" se não couber) e, no erro do cadastro, o triângulo amarelo "Atenção".
+ * O cartão da conta no cabeçalho (o .account do canvas): a bolinha, o [ramal] e a linha do [status] (etiqueta `status`) e,
+ * no erro do cadastro, o triângulo amarelo "Atenção". A linha fica numa só, com "…" se não couber, menos no erro e no sem
+ * conexão (F5): aí ela é o aviso do núcleo, com o conselho no fim ("Confira o endereço e a sua internet", "Fale com o
+ * suporte da Starsonic"), e quebra em até [ERROR_LINES] linhas (duas, na letra padrão; o aviso mais longo, inteiro na maior
+ * letra numa tela de 360 dp). Fora o 401, o 403 e o 407 (que abrem o Entrar com o aviso), este é o único lugar do app que
+ * mostra o aviso.
  */
 @Composable
 fun AccountCard(status: Status, ramal: String, modifier: Modifier = Modifier) {
     val shape = RoundedCornerShape(14.dp)
+    val warning = status.dot == Dot.ERROR || status.dot == Dot.NO_CONNECTION
     Row(
         modifier
             .fillMaxWidth()
@@ -165,7 +170,7 @@ fun AccountCard(status: Status, ramal: String, modifier: Modifier = Modifier) {
                 style = AccountSub,
                 // O cabeçalho é escuro nos dois temas: o cinza claro do escuro.
                 color = StarsonicColors.Dark.textMuted,
-                maxLines = 1,
+                maxLines = if (warning) ERROR_LINES else 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.testTag("status"),
             )
@@ -848,6 +853,9 @@ private val Base = TextStyle(
 // .account-name e .account-sub
 private val AccountName = Base.copy(fontSize = 15.sp, fontWeight = FontWeight.ExtraBold, lineHeight = 1.2.em)
 private val AccountSub = Base.copy(fontSize = 12.5.sp, fontWeight = FontWeight.Medium, lineHeight = 1.3.em)
+
+// As linhas do aviso do núcleo no cartão da conta, no erro e no sem conexão (F5).
+private const val ERROR_LINES = 4
 
 // .chip
 private val ChipLabel = Base.copy(fontSize = 13.sp, fontWeight = FontWeight.Bold, lineHeight = 1.em)
