@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
-project(starsonic_phone_windows CXX RC)
+# C: o miniz.c (o .xlsx das planilhas de contatos).
+project(starsonic_phone_windows C CXX RC)
 
 # O StarsonicPhone.exe do app novo (Win32, x86): a janela com o WebView2, o nucleo do app de PC (starsonic/desktop), o
 # controlador e o motor (starsonic/phone, o mesmo do Android) e o nucleo (starsonic/core). As dependencias vem do
@@ -94,6 +95,13 @@ file(GLOB DESKTOP_SOURCES CONFIGURE_DEPENDS ${STARSONIC_DIR}/desktop/*.cpp)
 # O motor inteiro (SipEngine, CallEngine, o controlador e o AudioDeviceName com o ramo do Windows).
 file(GLOB PHONE_SOURCES CONFIGURE_DEPENDS ${STARSONIC_DIR}/phone/*.cpp)
 
+# O miniz 3.0.2 (MIT, starsonic/third_party/miniz, como veio): o zip do .xlsx das planilhas de contatos
+# (starsonic/desktop/Planilha.cpp). Uma biblioteca so com o miniz.c, sem as opcoes de aviso do app, com o mesmo runtime
+# estatico (/MT). O zip e sempre na memoria: sem as funcoes de arquivo (MINIZ_NO_STDIO, tambem para quem inclui o
+# miniz.h).
+add_library(miniz STATIC ${STARSONIC_DIR}/third_party/miniz/miniz.c)
+target_compile_definitions(miniz PUBLIC MINIZ_NO_STDIO)
+
 # Do starsonic/win, so o que e Win32 puro (sem MFC): a senha da rc.7 e o atualizador (versao.json, HTTPS, SHA-256 e
 # o aviso de falha de TLS do PJSIP).
 add_executable(StarsonicPhone WIN32
@@ -137,6 +145,7 @@ target_link_directories(StarsonicPhone PRIVATE
   ${WEBVIEW2_DIR}/x86)
 
 target_link_libraries(StarsonicPhone PRIVATE
+  miniz
   pjsua2-lib-i386-Win32-vc14-Release-Static
   libpjproject-i386-Win32-vc14-Release-Static
   opus bcg729 libssl libcrypto sqlite3

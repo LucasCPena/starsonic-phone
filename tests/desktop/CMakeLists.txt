@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
-project(starsonic_desktop_tests CXX)
+# C: o miniz.c (o .xlsx das planilhas de contatos).
+project(starsonic_desktop_tests C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -24,6 +25,12 @@ endif()
 find_package(SQLite3 REQUIRED)
 find_package(Threads REQUIRED)
 
+# O miniz 3.0.2 (MIT, starsonic/third_party/miniz, como veio): o zip do .xlsx das planilhas de contatos (Planilha.cpp)
+# e o dos testes. Uma biblioteca so com o miniz.c, sem as opcoes de aviso do projeto. O zip e sempre na memoria: sem
+# as funcoes de arquivo (MINIZ_NO_STDIO, tambem para quem inclui o miniz.h).
+add_library(miniz STATIC ${STARSONIC_DIR}/third_party/miniz/miniz.c)
+target_compile_definitions(miniz PUBLIC MINIZ_NO_STDIO)
+
 add_executable(desktop_tests main.cpp ${DESKTOP_TEST_SOURCES} ${STARSONIC_CORE_SOURCES} ${STARSONIC_DESKTOP_SOURCES}
   ${STARSONIC_DIR}/phone/CallController.cpp)
 target_include_directories(desktop_tests PRIVATE
@@ -34,7 +41,7 @@ target_include_directories(desktop_tests PRIVATE
   ${STARSONIC_DIR}/../branding
   ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
-target_link_libraries(desktop_tests PRIVATE SQLite::SQLite3 Threads::Threads)
+target_link_libraries(desktop_tests PRIVATE miniz SQLite::SQLite3 Threads::Threads)
 
 # O tamanho e a posicao da janela principal do executavel (windows/app/src/WindowFit), a linha de comando dele, com os
 # links tel:/sip:/callto: (windows/app/src/Links), o refazer do WebView2 (BrowserRestarts), e (rc.3) a decisao do
