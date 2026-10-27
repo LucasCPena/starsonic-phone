@@ -285,7 +285,7 @@ class CallFlowTest {
         assertEquals("OK", emulator.control("RING 2001"))
         emulator.waitUntil("a ligação tocando") { app.calls.state.value?.phase == CallPhase.RINGING }
         emulator.waitUntil("a notificação com o Atender automático", details = ::notifications) {
-            callNotification()?.extras?.getCharSequence(Notification.EXTRA_TEXT)?.toString() == "3001 · Atender automático · em 30 s"
+            incomingText() == "3001 · Atender automático · em\u00A030\u00A0s"
         }
         openTheIncomingByItsNotification("Cliente Teste")
         emulator.waitUntil("a linha do Atender automático") { emulator.showsTag(AUTO_LINE) }
@@ -304,7 +304,7 @@ class CallFlowTest {
         app.callSettings.update { it.copy(doNotDisturb = false) }
         emulator.waitUntil("a linha de volta") { emulator.showsTag(AUTO_LINE) }
         emulator.waitUntil("a notificação com a linha de novo", details = ::incomingDetails) {
-            incomingText() == "3001 · Atender automático · em 30 s"
+            incomingText() == "3001 · Atender automático · em\u00A030\u00A0s"
         }
         // O Atender automático desligado: a linha sai das duas. A foto da recebida sem ela.
         app.callSettings.update { it.copy(autoAnswer = false) }
@@ -320,8 +320,10 @@ class CallFlowTest {
     @Test
     fun theLargestFontKeepsTheCountdownAndTheNamesWhole() {
         // Spec 3.3, com a maior letra na tela de 320 dp (a do emulador do CI): a linha do Atender automático quebra em
-        // linhas inteiras, com os segundos, e o nome de cada um dos dois cartões aparece inteiro (o selo desce para baixo
-        // dele, como o "Em espera · transferência"). As fotos da recebida e das duas ligações com a letra grande.
+        // linhas inteiras, com "em <n> s" numa linha só (R40), o nome de cada um dos dois cartões aparece inteiro (o selo
+        // desce para baixo dele, como o "Em espera · transferência"), e o nome de cada controle nunca quebra no meio de
+        // uma palavra (R40: ele encolhe; quebrar num espaço, como em "Nova ligação", pode). As fotos da recebida e das
+        // duas ligações com a letra grande.
         emulator.useDisplay(640, 1280, 320)
         emulator.setFontScale(2.0f)
         app.callSettings.update { it.copy(autoAnswer = true, autoAnswerSeconds = 30) }
@@ -331,17 +333,26 @@ class CallFlowTest {
         openTheIncomingByItsNotification("Cliente Teste")
         emulator.waitUntil("a linha do Atender automático") { emulator.showsTag(AUTO_LINE) }
         val line = drawnText(AUTO_LINE)
-        val drawn = line.fetchSemanticsNode().config[SemanticsProperties.Text].joinToString("")
-        assertTrue("a contagem com os segundos: \"$drawn\"", DRAWN_COUNTDOWN.matches(drawn))
         assertWhole("a linha do Atender automático", AUTO_LINE, line)
+        assertOnOneLine("o \"em <n> s\" da contagem", line, from = "EM")
+        val drawn = textOf(line)
+        assertTrue("a contagem com os segundos: \"$drawn\"", DRAWN_COUNTDOWN.matches(drawn))
         emulator.saveScreen("recebida-letra-grande.png")
         compose.onNodeWithTag("recusar").performScrollTo().performClick()
         waitForLog(before, "inv-out 2001 486")
         emulator.waitUntil("a recebida acabar") { app.calls.state.value == null }
-        // As duas ligações (sem o Atender automático): o nome inteiro em cada cartão.
+        // Uma ligação (sem o Atender automático): os nomes dos controles dela.
         app.callSettings.update { it.copy(autoAnswer = false) }
-        twoCalls()
+        val first = answerOnTheCallScreen()
+        for ((tag, label) in ONE_CALL_CONTROLS) assertWhole("o controle $label", tag, drawnText(tag, label))
+        // As duas: o nome inteiro em cada cartão, e os nomes dos controles delas.
+        assertEquals("OK", emulator.control("RING 2001"))
+        emulator.waitUntil("a faixa da segunda ligação") { showsTagWithText("segunda-ligacao", "Ligação de Cliente Teste") }
+        compose.onNodeWithTag("atender-segunda").performClick()
+        emulator.waitUntil("a segunda atendida, com a primeira em espera") { activeWith(held = first) }
+        emulator.waitUntil("o cartão da em espera") { showsTagWithText("cartao-espera", "Em espera") }
         for (card in listOf("cartao-ativa", "cartao-espera")) assertWhole("o nome em $card", card, drawnText(card, "Cliente Teste"))
+        for ((tag, label) in TWO_CALLS_CONTROLS) assertWhole("o controle $label", tag, drawnText(tag, label))
         emulator.saveScreen("duas-ligacoes-letra-grande.png")
         assertEquals("OK", emulator.control("HANGUP 2001"))
         emulator.waitUntil("a primeira de volta") { app.calls.state.value?.let { it.second == null } == true }
@@ -906,17 +917,28 @@ class CallFlowTest {
         return inside.filterToOne(if (text == null) SemanticsMatcher.keyIsDefined(SemanticsProperties.Text) else hasText(text))
     }
 
+    // O texto do nó [node] (como foi desenhado) e o layout dele.
+    private fun textOf(node: SemanticsNodeInteraction): String =
+        node.fetchSemanticsNode().config[SemanticsProperties.Text].joinToString("")
+
+    private fun textLayoutOf(node: SemanticsNodeInteraction): TextLayoutResult {
+        val results = mutableListOf<TextLayoutResult>()
+        node.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
+        return results.single()
+    }
+
+    // As linhas do texto do nó [node], para as falhas.
+    private fun linesOf(text: String, layout: TextLayoutResult): String =
+        (0 until layout.lineCount).joinToString(" | ") { "\"${text.substring(layout.getLineStart(it), layout.getLineEnd(it))}\"" }
+
     // O texto do nó [node] desenhado inteiro dentro do elemento [container]: todo ele nas linhas, sem reticências, quebrando
     // só nos espaços (nunca no meio de uma palavra) e com a caixa dentro da do elemento. O hasVisualOverflow não serve: o
     // TextLayoutResult que a semântica de um Text simples refaz usa a largura máxima que ele recebeu, e um texto mais curto
     // que ela (o nome de um cartão numa linha só) sai como transbordando. A falha mostra as linhas e as caixas.
     private fun assertWhole(what: String, container: String, node: SemanticsNodeInteraction) {
         val semantics = node.fetchSemanticsNode()
-        val text = semantics.config[SemanticsProperties.Text].joinToString("")
-        val results = mutableListOf<TextLayoutResult>()
-        node.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
-        val layout = results.single()
-        val lines = (0 until layout.lineCount).map { text.substring(layout.getLineStart(it), layout.getLineEnd(it)) }
+        val text = textOf(node)
+        val layout = textLayoutOf(node)
         val brokenWord = (0 until layout.lineCount - 1).any { line ->
             val end = layout.getLineEnd(line)
             end in 1 until text.length && !text[end - 1].isWhitespace() && !text[end].isWhitespace()
@@ -928,9 +950,19 @@ class CallFlowTest {
             box.bottom <= outer.bottom + 1
         val whole = !brokenWord && inside && layout.getLineEnd(layout.lineCount - 1) == text.length &&
             (0 until layout.lineCount).none(layout::isLineEllipsized)
-        assertTrue(
-            "$what inteiro: \"$text\" desenhado como ${lines.joinToString(" | ") { "\"$it\"" }}, em $box (em $container: $outer)",
-            whole,
+        assertTrue("$what inteiro: \"$text\" desenhado como ${linesOf(text, layout)}, em $box (em $container: $outer)", whole)
+    }
+
+    // Do último [from] do texto do nó [node] até o fim, numa linha só (o "em <n> s" da contagem: R40).
+    private fun assertOnOneLine(what: String, node: SemanticsNodeInteraction, from: String) {
+        val text = textOf(node)
+        val layout = textLayoutOf(node)
+        val start = text.lastIndexOf(from)
+        assertTrue("$what em \"$text\"", start >= 0)
+        assertEquals(
+            "$what numa linha só: ${linesOf(text, layout)}",
+            layout.getLineForOffset(start),
+            layout.getLineForOffset(text.length - 1),
         )
     }
 
@@ -1058,15 +1090,26 @@ class CallFlowTest {
         private const val CALL_STATUS = "status-ligacao"
         private const val AUTO_LINE = "atender-em"
         private const val REDIAL_NEW = "rediscar-nova"
-        private val COUNTDOWN = Regex("Atender automático · em (\\d+) s")
+        private val COUNTDOWN = Regex("Atender automático · em\u00A0(\\d+)\u00A0s")
 
         // O Desligar de uma ligação e o de duas (R39), e a linha do cartão do cliente (R35: o ramal e o tempo).
         private const val HANG_UP = "Desligar"
         private const val HANG_UP_ACTIVE = "Desligar a ligação ativa"
         private val HELD_LINE = Regex("Ramal 3001 · \\d\\d:\\d\\d")
 
-        // A linha do Atender automático como é desenhada (o selo, em maiúsculas), com os segundos.
-        private val DRAWN_COUNTDOWN = Regex("ATENDER AUTOMÁTICO · EM \\d+ S")
+        // Os controles de uma ligação e os de duas (as etiquetas e os nomes), para a letra grande.
+        private val ONE_CALL_CONTROLS = listOf(
+            "mudo" to "Mudo", "teclado-chamada" to "Teclado", "viva-voz" to "Viva-voz",
+            "espera" to "Espera", "transferir" to "Transferir", "nova-ligacao" to "Nova ligação",
+        )
+        private val TWO_CALLS_CONTROLS = listOf(
+            "mudo" to "Mudo", "teclado-chamada" to "Teclado", "viva-voz" to "Viva-voz",
+            "alternar" to "Alternar", "juntar" to "Juntar", "transferir" to "Transferir",
+        )
+
+        // A linha do Atender automático como é desenhada (o selo, em maiúsculas), com os segundos (R40: "em <n> s" com os
+        // espaços que não quebram).
+        private val DRAWN_COUNTDOWN = Regex("ATENDER AUTOMÁTICO · EM\u00A0\\d+\u00A0S")
 
         // O que a nota do risco 12 tira do dumpsys do serviço: se está em primeiro plano, os tipos e o microfone.
         private val FGS_KEYS = listOf("isForeground", "types=", "foregroundServiceType", "WhileInUse")
