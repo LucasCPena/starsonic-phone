@@ -1,6 +1,7 @@
 package br.com.starsonic.phone.ui
 
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.unit.Constraints
@@ -47,12 +48,12 @@ fun BesideOrUnder(
         val height = maxOf(start?.height ?: 0, block, if (besideIt) end?.height ?: 0 else 0)
             .coerceIn(constraints.minHeight, constraints.maxHeight)
         layout(width, height) {
-            start?.placeRelative(0, (height - start.height) / 2)
-            val top = (height - block) / 2
+            start?.placeRelative(0, middle(start.height, height))
+            val top = middle(block, height)
             text.placeRelative(textStart, top)
             if (end != null) {
                 if (besideIt) {
-                    end.placeRelative(width - end.width, (height - end.height) / 2)
+                    end.placeRelative(width - end.width, middle(end.height, height))
                 } else {
                     end.placeRelative((textStart + underShift.roundToPx()).coerceAtLeast(0), top + text.height + underGap.roundToPx())
                 }
@@ -83,7 +84,7 @@ fun SideBySideOrStacked(spacing: Dp, modifier: Modifier = Modifier, content: @Co
             var y = 0
             for (placeable in placeables) {
                 if (sideBySide) {
-                    placeable.placeRelative(x, (shown - placeable.height) / 2)
+                    placeable.placeRelative(x, middle(placeable.height, shown))
                     x += placeable.width + gap
                 } else {
                     placeable.placeRelative(0, y)
@@ -93,3 +94,7 @@ fun SideBySideOrStacked(spacing: Dp, modifier: Modifier = Modifier, content: @Co
         }
     }
 }
+
+// O lugar de cima de algo de altura [size] centrado em [space], arredondado como o CenterVertically de uma Row: na letra
+// padrão, as linhas ficam no mesmo pixel de antes (a divisão inteira punha uma parte 1 px acima quando a sobra era ímpar).
+private fun middle(size: Int, space: Int): Int = Alignment.CenterVertically.align(size, space)
