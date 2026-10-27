@@ -47,6 +47,7 @@ import br.com.starsonic.phone.engine.Transport
 import br.com.starsonic.phone.main.MainActivity
 import java.time.LocalDate
 import java.time.ZoneId
+import kotlin.math.abs
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -493,12 +494,23 @@ class MainScreenTest {
     // aparece por cima de nada.
     private fun assertTheKeypadIsReachable() {
         for (tag in KEYS.map { "tecla-$it" } + listOf(REDIAL, "ligar")) {
-            compose.onNodeWithTag(tag).performScrollTo().assertIsDisplayed()
+            scrollToWhole(tag)
+            compose.onNodeWithTag(tag).assertIsDisplayed()
             val shown = visibleBounds(tag)
             assertEquals("$tag inteiro à vista", layoutBounds(tag).height, shown.height, 1f)
             assertInside("$tag entre o cabeçalho e a navegação", shown, tabArea())
         }
         assertNoOverlap((listOf("numero", "apagar") + KEYS.map { "tecla-$it" } + listOf(REDIAL, "ligar")).associateWith(::visibleBounds))
+    }
+
+    // Rola o Teclado até o elemento [tag] aparecer inteiro. Com o cabeçalho que sobe junto (F3), a aba cresce no meio da
+    // rolagem, e o performScrollTo conta com o lugar dela de antes: com a aba menor que o número (a letra grande e a faixa
+    // de avisos), a primeira rolagem pode parar uns dp antes. Como a pessoa, que arrasta até ver, ela se repete (até três).
+    private fun scrollToWhole(tag: String) {
+        repeat(3) {
+            compose.onNodeWithTag(tag).performScrollTo()
+            if (abs(layoutBounds(tag).height - visibleBounds(tag).height) <= 1f) return
+        }
     }
 
     // A navegação de baixo inteira na tela: cada aba à vista, inteira, dentro da tela, com o toque de pelo menos 48 dp.
