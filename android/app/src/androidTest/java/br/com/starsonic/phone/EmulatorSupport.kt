@@ -8,6 +8,7 @@ import android.graphics.Bitmap
 import android.hardware.display.DisplayManager
 import android.os.Bundle
 import android.os.ParcelFileDescriptor
+import android.os.PowerManager
 import android.os.SystemClock
 import android.util.DisplayMetrics
 import android.view.Display
@@ -58,7 +59,8 @@ import org.junit.Assert.assertTrue
  * testes do visual).
  *
  * Para os testes do visual: as fotos das telas ([saveScreen]), a tela, a letra e o tema do emulador (com o
- * [restoreLook]) e os contatos da agenda ([insertContact]).
+ * [restoreLook]), a saída da otimização de bateria ([revokeBattery], com o [restoreBattery]) e os contatos da agenda
+ * ([insertContact]).
  */
 class Emulator(private val compose: ComposeTestRule) {
     val app: App = ApplicationProvider.getApplicationContext()
@@ -348,6 +350,30 @@ class Emulator(private val compose: ComposeTestRule) {
         shell("cmd uimode night ${if (night) "yes" else "no"}")
         waitUntil("o tema ${if (night) "escuro" else "claro"} do celular") { isNight() == night }
     }
+
+    // A saída da otimização de bateria que um teste tirou do app ([revokeBattery]).
+    private var batteryRevoked = false
+
+    /**
+     * Tira o app da lista dos que ficam fora da otimização de bateria (o run-emulator-tests.sh o pôs nela) até o
+     * [restoreBattery]: a faixa de avisos da tela principal e a tela Permissões mostram o aviso da bateria.
+     */
+    fun revokeBattery() {
+        batteryRevoked = true
+        shell("dumpsys deviceidle whitelist -${app.packageName}")
+        waitUntil("o app sem a saída da otimização de bateria") { !ignoresBatteryOptimizations() }
+    }
+
+    /** Devolve a saída da otimização de bateria que o [revokeBattery] tirou (sem ele, nada). */
+    fun restoreBattery() {
+        if (!batteryRevoked) return
+        batteryRevoked = false
+        shell("dumpsys deviceidle whitelist +${app.packageName}")
+        waitUntil("o app com a saída da otimização de bateria de volta") { ignoresBatteryOptimizations() }
+    }
+
+    private fun ignoresBatteryOptimizations(): Boolean =
+        app.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(app.packageName)
 
     /** Devolve a tela, a letra e o tema que os testes do visual mudaram. */
     fun restoreLook() {

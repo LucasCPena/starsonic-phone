@@ -25,6 +25,8 @@ import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onChildren
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
@@ -61,7 +63,9 @@ import org.junit.runners.MethodSorters
  * A tela principal no visual do Windows, no emulador (spec 3 a 7 e 11), com o motor de verdade e o registrador falso do
  * CI (ver [Emulator] e o CallFlowTest): as pílulas Não perturbe e Atender automático (a linha do status e a notificação
  * fixa), o Rediscar, o menu (Configurações e Sobre), a letra do celular no máximo numa tela pequena (Review Focus 5; e,
- * com ela, o número longo, o menu e os filtros do Recentes, R24) e os temas claro e escuro.
+ * com ela, o número longo, o menu e os filtros do Recentes, R24; a faixa de avisos, que deixa o Teclado e a navegação de
+ * baixo à mão, F3; o número digitado à vista, R44), o aviso do servidor inteiro no cartão da conta (F5) e os temas claro e
+ * escuro.
  *
  * As fotos (R19): os testes dos temas, do menu e da letra grande guardam a tela inteira ([Emulator.saveScreen]) para a
  * conferência com os quadros do canvas; os dos temas e o do menu numa tela do tamanho dos quadros (390 × 844 dp), os dos
@@ -69,8 +73,8 @@ import org.junit.runners.MethodSorters
  * eles mesmos põem.
  *
  * Cada teste começa com a conta gravada por TCP (o CI confere que o último REGISTER aceito veio por TCP), os Recentes
- * vazios e o Não perturbe e o Atender automático desligados; o fim devolve as configurações de ligação, a tela, a letra
- * e o tema de antes e tira da agenda os contatos que pôs.
+ * vazios e o Não perturbe e o Atender automático desligados; o fim devolve as configurações de ligação, a tela, a letra,
+ * o tema e a saída da otimização de bateria de antes e tira da agenda os contatos que pôs.
  *
  * A permissão dos contatos vem dada (GrantPermissionRule, que não fecha o app): no CI, a classe roda depois do
  * ContactsFlowTest, cujo primeiro teste precisa dela nunca dada desde a instalação.
@@ -116,10 +120,14 @@ class MainScreenTest {
             scenario?.close()
             emulator.waitUntil("as telas do app fecharem") { emulator.finishMainActivities() == 0 }
         } finally {
-            emulator.restoreLook()
-            settingsBefore?.let { before -> app.callSettings.update { before } }
-            contacts.forEach(emulator::removeContact)
-            app.recents.clear()
+            try {
+                emulator.restoreLook()
+            } finally {
+                emulator.restoreBattery()
+                settingsBefore?.let { before -> app.callSettings.update { before } }
+                contacts.forEach(emulator::removeContact)
+                app.recents.clear()
+            }
         }
     }
 
@@ -250,17 +258,59 @@ class MainScreenTest {
         // meio da palavra.
         assertLabelsWhole("os nomes das abas", TABS.zip(TAB_LABELS))
         emulator.saveScreen("teclado-letra-grande.png")
-        // As 12 teclas, o Rediscar e o Ligar: cada um aparece inteiro entre o cabeçalho e a navegação, rolando o Teclado.
-        val body = Rect(header.left, header.bottom, header.right, nav.top)
-        for (tag in KEYS.map { "tecla-$it" } + listOf(REDIAL, "ligar")) {
-            compose.onNodeWithTag(tag).performScrollTo().assertIsDisplayed()
-            val shown = visibleBounds(tag)
-            assertEquals("$tag inteiro à vista", layoutBounds(tag).height, shown.height, 1f)
-            assertInside("$tag entre o cabeçalho e a navegação", shown, body)
-        }
-        // E nada do Teclado por cima de nada (todos na mesma rolagem).
-        assertNoOverlap((listOf("numero", "apagar") + KEYS.map { "tecla-$it" } + listOf(REDIAL, "ligar")).associateWith(::layoutBounds))
+        assertTheKeypadIsReachable()
         emulator.saveScreen("teclado-letra-grande-fim.png")
+    }
+
+    @Test
+    fun theBannerLeavesTheDialerAndTheNavUsableAtTheLargestFontScale() {
+        // F3 (Review Focus 5 com uma permissão faltando): na tela de 360 × 640 dp com a maior letra e a faixa da bateria,
+        // a navegação de baixo fica inteira na tela; o texto da faixa e o "Abrir ajustes" ficam inteiros (sem lugar para
+        // as palavras ao lado do link, ele desce para baixo do texto, F4); e as 12 teclas, o Rediscar e o Ligar aparecem
+        // inteiros abaixo do que o cabeçalho ainda mostra, rolando (o cabeçalho e a faixa sobem junto com a aba quando
+        // tomam a tela). As fotos do começo e do fim.
+        emulator.useDisplay(720, 1280, 320)
+        emulator.setFontScale(2.0f)
+        emulator.revokeBattery()
+        open()
+        emulator.waitUntil("a faixa da bateria") { emulator.showsTag(BANNER) }
+        assertTheNavIsWhole()
+        emulator.assertWholeText("o aviso da faixa", BANNER_ROW, compose.onNodeWithTag(BANNER, useUnmergedTree = true))
+        emulator.assertWholeText("o link da faixa", BANNER_ROW, emulator.drawnText(BANNER_ROW, OPEN_SETTINGS))
+        emulator.saveScreen("teclado-aviso-letra-grande.png")
+        assertTheKeypadIsReachable()
+        assertTheNavIsWhole()
+        emulator.saveScreen("teclado-aviso-letra-grande-fim.png")
+    }
+
+    @Test
+    fun theTypedNumberStaysInViewAtTheLargestFontScale() {
+        // R44: na tela de 360 × 640 dp com a maior letra, o número digitado fica à vista enquanto a pessoa disca (também
+        // as teclas de baixo, como o 0) e quando ela rola até o Ligar. A foto com o Ligar à vista.
+        emulator.useDisplay(720, 1280, 320)
+        emulator.setFontScale(2.0f)
+        open()
+        for (digit in "2010") {
+            compose.onNodeWithTag("tecla-$digit").performScrollTo().performClick()
+            assertNumberInView("depois do $digit")
+        }
+        compose.onNodeWithTag("ligar").performScrollTo()
+        assertNumberInView("com o Ligar à vista")
+        compose.onNodeWithTag("numero").assertTextEquals("2010")
+        emulator.saveScreen("numero-ligar-letra-grande.png")
+    }
+
+    @Test
+    fun theUnreachableServerMessageIsWholeInTheAccountCard() {
+        // F5 (spec 7, a linha 3b): com o servidor que não responde, o cartão da conta mostra o aviso do núcleo inteiro, sem
+        // a reticência, também o conselho do fim (na letra padrão, na tela dos quadros, ele pede duas linhas). A foto da
+        // tela principal com o aviso.
+        emulator.useCanvasDisplay()
+        app.store.save(Account(UNREACHABLE, Transport.TCP, "2001", emulator.senha))
+        scenario = ActivityScenario.launch(MainActivity::class.java)
+        waitForStatus(UNREACHABLE_LINE, timeoutMillis = 60_000)
+        emulator.assertWholeText("o aviso do servidor", "cabecalho", compose.onNodeWithTag("status", useUnmergedTree = true))
+        emulator.saveScreen("teclado-sem-conexao.png")
     }
 
     @Test
@@ -431,8 +481,57 @@ class MainScreenTest {
             line in emulator.callLog().drop(before)
         }
 
-    private fun waitForStatus(line: String) =
-        emulator.waitUntil("\"$line\" na linha do status", details = { "Na linha: ${statusLine()}" }) { statusLine() == line }
+    private fun waitForStatus(line: String, timeoutMillis: Long = 20_000) =
+        emulator.waitUntil("\"$line\" na linha do status", timeoutMillis, details = { "Na linha: ${statusLine()}" }) {
+            statusLine() == line
+        }
+
+    // As 12 teclas, o Rediscar e o Ligar (Review Focus 5): cada um aparece inteiro entre o que o cabeçalho ainda mostra e a
+    // navegação, rolando o Teclado (com a letra grande numa tela pequena, o cabeçalho sobe junto, F3), e nada do Teclado
+    // aparece por cima de nada.
+    private fun assertTheKeypadIsReachable() {
+        for (tag in KEYS.map { "tecla-$it" } + listOf(REDIAL, "ligar")) {
+            compose.onNodeWithTag(tag).performScrollTo().assertIsDisplayed()
+            val shown = visibleBounds(tag)
+            assertEquals("$tag inteiro à vista", layoutBounds(tag).height, shown.height, 1f)
+            assertInside("$tag entre o cabeçalho e a navegação", shown, tabArea())
+        }
+        assertNoOverlap((listOf("numero", "apagar") + KEYS.map { "tecla-$it" } + listOf(REDIAL, "ligar")).associateWith(::visibleBounds))
+    }
+
+    // A navegação de baixo inteira na tela: cada aba à vista, inteira, dentro da tela, com o toque de pelo menos 48 dp.
+    private fun assertTheNavIsWhole() {
+        val screen = compose.onRoot().fetchSemanticsNode().let { Rect(it.positionInRoot, it.size.toSize()) }
+        for (tag in TABS) {
+            compose.onNodeWithTag(tag).assertIsDisplayed()
+            val shown = visibleBounds(tag)
+            assertEquals("$tag inteira à vista", layoutBounds(tag).height, shown.height, 1f)
+            assertInside("$tag na tela", shown, screen)
+            emulator.assertTouchAtLeast48(tag)
+        }
+    }
+
+    // O número digitado inteiro à vista, entre o que o cabeçalho ainda mostra e a navegação ([moment]: quando).
+    private fun assertNumberInView(moment: String) {
+        compose.onNodeWithTag("numero").assertIsDisplayed()
+        val shown = visibleBounds("numero")
+        assertEquals("o número inteiro à vista $moment", layoutBounds("numero").height, shown.height, 1f)
+        assertInside("o número $moment", shown, tabArea())
+    }
+
+    // O lugar da aba agora: entre o que o cabeçalho ainda mostra (o cabeçalho da marca e, se há, a faixa de avisos com o
+    // link) e a navegação de baixo.
+    private fun tabArea(): Rect {
+        val nav = layoutBounds("navegacao")
+        val header = buildList {
+            add(layoutBounds("cabecalho"))
+            if (emulator.showsTag(BANNER)) {
+                add(layoutBounds(BANNER))
+                add(compose.onNodeWithText(OPEN_SETTINGS).fetchSemanticsNode().let { Rect(it.positionInRoot, it.size.toSize()) })
+            }
+        }
+        return Rect(nav.left, maxOf(header.maxOf { it.bottom }, 0f), nav.right, nav.top)
+    }
 
     // A linha do status (no cartão da conta), ou null sem a tela principal na frente.
     private fun statusLine(): String? =
@@ -527,6 +626,15 @@ class MainScreenTest {
         const val REDIAL = "rediscar"
         const val DND_LINE = "Não perturbe · as ligações não tocam"
         const val EPSILON = 0.5f
+
+        // A faixa de avisos (o texto e a faixa inteira) e o link dela.
+        const val BANNER = "aviso-faixa"
+        const val BANNER_ROW = "faixa-aviso"
+        const val OPEN_SETTINGS = "Abrir ajustes"
+
+        // Um servidor que não responde (o próprio emulador, onde nada escuta a porta do SIP), e o aviso do núcleo para ele.
+        const val UNREACHABLE = "127.0.0.1"
+        const val UNREACHABLE_LINE = "Não foi possível falar com o servidor. Confira o endereço e a sua internet."
 
         // Mais que os 1,5 s em que a dica do Material fica na tela, com a animação da saída.
         const val TOOLTIP_MILLIS = 2_000L

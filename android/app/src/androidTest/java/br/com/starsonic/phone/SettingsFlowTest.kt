@@ -1,6 +1,5 @@
 package br.com.starsonic.phone
 
-import android.os.PowerManager
 import android.view.ViewGroup
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.ComposeView
@@ -86,7 +85,6 @@ class SettingsFlowTest {
     private val connected by lazy { "Conectado · ${emulator.registrar}" }
     private var scenario: ActivityScenario<MainActivity>? = null
     private var settingsBefore: CallSettings? = null
-    private var batteryRevoked = false
 
     // O ComposeView com o passo a passo da Samsung por cima da tela principal ([showTheSamsungGuide]), da activity do teste.
     private var overlay: ComposeView? = null
@@ -118,7 +116,7 @@ class SettingsFlowTest {
                 emulator.restoreLook()
             } finally {
                 try {
-                    if (batteryRevoked) restoreBattery()
+                    emulator.restoreBattery()
                 } finally {
                     settingsBefore?.let { before -> app.callSettings.update { before } }
                 }
@@ -129,7 +127,7 @@ class SettingsFlowTest {
     @Test
     fun aGrantedPermissionIsReadAsPermitida() {
         // R29: o sinal de feito das Permissões tem o nome do quadro. A bateria fica por liberar, e a tela, aberta.
-        revokeBattery()
+        emulator.revokeBattery()
         openSettings()
         compose.onNodeWithTag("config-permissoes").performScrollTo().performClick()
         emulator.waitUntil("a tela Permissões com o Permitir da bateria") { emulator.showsTag("permitir-BATTERY") }
@@ -182,7 +180,7 @@ class SettingsFlowTest {
         // R28: o primeiro Entrar (sem conta gravada) com a bateria por liberar leva à tela Permissões; o voltar do Android
         // vai para a tela principal, como o Voltar da barra e o Continuar.
         app.store.clear()
-        revokeBattery()
+        emulator.revokeBattery()
         scenario = ActivityScenario.launch(MainActivity::class.java)
         emulator.waitUntil("a tela Entrar") { emulator.showsTag("entrar") }
         enterTheAccount()
@@ -196,7 +194,7 @@ class SettingsFlowTest {
     fun backOnPermissoesFromConfiguracoesReturnsToConfiguracoes() {
         // R28: aberta das Configurações, o voltar do Android volta a elas. A bateria fica por liberar: a tela fica
         // aberta até o voltar.
-        revokeBattery()
+        emulator.revokeBattery()
         openSettings()
         compose.onNodeWithTag("config-permissoes").performScrollTo().performClick()
         emulator.waitUntil("a tela Permissões com o Permitir da bateria") { emulator.showsTag("permitir-BATTERY") }
@@ -246,7 +244,7 @@ class SettingsFlowTest {
         emulator.waitUntil("as Configurações") { emulator.showsTag("config-permissoes") }
         // Sem a saída da otimização de bateria, o aviso dela tem o Permitir compacto do quadro: 40 dp de altura, com o
         // toque de 48; os outros, o sinal de feito.
-        revokeBattery()
+        emulator.revokeBattery()
         compose.onNodeWithTag("config-permissoes").performScrollTo().performClick()
         emulator.waitUntil("a tela Permissões com o Permitir da bateria") { emulator.showsTag("permitir-BATTERY") }
         for ((banner, _) in BANNERS) {
@@ -361,7 +359,7 @@ class SettingsFlowTest {
     private fun drawTheInnerScreens(night: Boolean, theme: String) {
         emulator.setNightMode(night)
         emulator.useCanvasDisplay()
-        revokeBattery()
+        emulator.revokeBattery()
         openSettings()
         for (tag in SETTINGS_TAGS) assertTrue("$tag nas Configurações", emulator.showsTag(tag))
         emulator.saveScreen("configuracoes-$theme.png")
@@ -453,23 +451,6 @@ class SettingsFlowTest {
         emulator.openMenu("menu-configuracoes")
         emulator.waitUntil("as Configurações") { emulator.showsTag("config-sair") }
     }
-
-    // Tira o app da lista dos que ficam fora da otimização de bateria (o run-emulator-tests.sh o pôs nela) até o fim do
-    // teste: a tela Permissões mostra o Permitir da bateria.
-    private fun revokeBattery() {
-        batteryRevoked = true
-        emulator.shell("dumpsys deviceidle whitelist -${app.packageName}")
-        emulator.waitUntil("o app sem a saída da otimização de bateria") { !ignoresBatteryOptimizations() }
-    }
-
-    private fun restoreBattery() {
-        batteryRevoked = false
-        emulator.shell("dumpsys deviceidle whitelist +${app.packageName}")
-        emulator.waitUntil("o app com a saída da otimização de bateria de volta") { ignoresBatteryOptimizations() }
-    }
-
-    private fun ignoresBatteryOptimizations(): Boolean =
-        app.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(app.packageName)
 
     // Espera o arquivo das configurações de ligação (o SharedPreferences "configuracoes", que o Sair da conta não apaga)
     // ter cada chave com o valor (o Android grava depois da mudança, fora da thread principal, e troca o arquivo no meio).
