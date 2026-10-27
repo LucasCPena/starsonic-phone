@@ -96,6 +96,9 @@ internal val KEYS = listOf(listOf("1", "2", "3"), listOf("4", "5", "6"), listOf(
  * O Rediscar (spec 6): liga para [redial], a feita mais nova dos Recentes ([rememberRedial]; null sem nenhuma, e ele
  * fica apagado), pelo mesmo [onDial] do botão de ligar da linha do Recentes, com o número como foi discado. O nome dele
  * ("Rediscar <número> · <nome>", com o [redialName]) vale para o leitor de tela e para a dica do aperto longo.
+ *
+ * O Bipe ao digitar (0.2.0-rc.3): cada uma das 12 teclas chama o [keyTone] com ela, que toca o tom de telefone dela
+ * (o rememberKeyTones da tela principal); o Apagar, as sugestões, o Rediscar e o Ligar ficam quietos.
  */
 @Composable
 fun DialerScreen(
@@ -104,6 +107,7 @@ fun DialerScreen(
     contactNumber: (String) -> String,
     redial: Recent?,
     redialName: String?,
+    keyTone: (String) -> Unit,
 ) {
     var number by rememberSaveable { mutableStateOf("") }
     val suggestions = rememberSuggestions(number, suggest, contactNumber)
@@ -123,7 +127,12 @@ fun DialerScreen(
             ) {
                 Column(Modifier.padding(bottom = GAP), verticalArrangement = Arrangement.spacedBy(GAP)) {
                     Suggestions(suggestions, onPick = { number = it })
-                    Keys(onKey = { number += it })
+                    Keys(
+                        onKey = {
+                            number += it
+                            keyTone(it)
+                        },
+                    )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Redial(redial, redialName, onDial = { onDial(it) })

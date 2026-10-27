@@ -71,6 +71,7 @@ class CallActivity : ComponentActivity() {
             route = telecom::setRoute,
             suggest = app.contacts::search,
             contactNumber = app.dialRule,
+            keyTonesOn = { app.callSettings.settings.value.keyTones },
         )
         setContent {
             // A ligação é sempre escura (spec 3.1), nos dois modos do celular.

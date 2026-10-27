@@ -122,7 +122,8 @@ import kotlinx.coroutines.withContext
  * também pelo Rediscar dela. [consult] é o Consultar (false: não ligou), e [completeTransfer] e [cancelConsult], o
  * Concluir transferência e o Cancelar da consulta. [join] e [split] são o Juntar e o Separar da conferência. [suggest] e
  * [contactNumber] dão as sugestões dos contatos no número do Transferir e da Nova ligação (a busca da agenda e a regra
- * dos números dos contatos, como no Teclado).
+ * dos números dos contatos, como no Teclado). [keyTonesOn] diz se o Bipe ao digitar está ligado (0.2.0-rc.3: o teclado
+ * dos tons toca o tom de telefone de cada tecla, junto com o som da ligação).
  */
 class CallActions(
     val answer: () -> Unit,
@@ -142,6 +143,7 @@ class CallActions(
     val route: (Int) -> Unit,
     val suggest: (String) -> List<Contact>,
     val contactNumber: (String) -> String,
+    val keyTonesOn: () -> Boolean,
 )
 
 /**
@@ -170,7 +172,8 @@ class CallActions(
  * - O Transferir abre o número com Consultar e Transferir agora (lado a lado; com a letra grande, se um nome não cabe
  *   inteiro, um embaixo do outro: F4); a Nova ligação, o número com o Rediscar ([redial], a feita
  *   mais nova dos Recentes, com o nome do Rediscar do Teclado: [redialName]; etiqueta `rediscar-nova`, spec 6) e o Ligar.
- *   Os dois números têm as sugestões dos contatos, como o Teclado. O teclado dos tons (DTMF) não tem o Rediscar.
+ *   Os dois números têm as sugestões dos contatos, como o Teclado. O teclado dos tons (DTMF) não tem o Rediscar; com o
+ *   Bipe ao digitar ligado ([CallActions.keyTonesOn]), cada tecla dele toca o tom de telefone dela ([rememberKeyTones]).
  * - Na consulta (spec da 0.2, 7.3), o colega em cima e o cliente no cartão "Em espera · transferência" (depois do Alternar,
  *   o cliente em cima e o colega "Em espera"), com Concluir transferência (com o colega já atendido), Alternar e Cancelar
  *   no lugar de Espera, Transferir e Nova ligação.
@@ -269,9 +272,14 @@ fun CallScreen(
                 // No meio, o que a pessoa abriu: o teclado dos tons ou um número (Transferir e Nova ligação).
                 when {
                     call == null -> {}
-                    keypad -> CallKeypad(sizes, Modifier.padding(top = sizes.gap)) { key ->
-                        digits += key
-                        actions.dtmf(key)
+                    keypad -> {
+                        // O Bipe ao digitar: o som fica pronto enquanto o teclado está aberto.
+                        val keyTone = rememberKeyTones(inCall = true, enabled = actions.keyTonesOn)
+                        CallKeypad(sizes, Modifier.padding(top = sizes.gap)) { key ->
+                            digits += key
+                            keyTone(key)
+                            actions.dtmf(key)
+                        }
                     }
                     transfer -> NumberPanel(
                         TRANSFER_TO, "transferir", actions, Modifier.padding(top = sizes.gap),

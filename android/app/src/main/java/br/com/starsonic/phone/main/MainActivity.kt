@@ -56,6 +56,7 @@ import br.com.starsonic.phone.about.AboutScreen
 import br.com.starsonic.phone.about.SEND_DIAGNOSTICS
 import br.com.starsonic.phone.call.CallActivity
 import br.com.starsonic.phone.call.CallPhase
+import br.com.starsonic.phone.call.rememberKeyTones
 import br.com.starsonic.phone.contacts.ContactsScreen
 import br.com.starsonic.phone.data.Account
 import br.com.starsonic.phone.data.CallSettings
@@ -403,7 +404,11 @@ class MainActivity : ComponentActivity() {
                         when (tab) {
                             TAB_RECENTS -> RecentsScreen(app.recents, app.contacts, onDial = { dial(it) })
                             TAB_CONTACTS -> ContactsScreen(app.contacts, onCall = { dialContact(it) })
-                            else -> DialerScreen(::dial, app.contacts::search, app.dialRule, redial, redialName)
+                            // O Bipe ao digitar do Teclado: o som fica pronto só com o Teclado na frente.
+                            else -> DialerScreen(
+                                ::dial, app.contacts::search, app.dialRule, redial, redialName,
+                                keyTone = rememberKeyTones(inCall = false) { app.callSettings.settings.value.keyTones },
+                            )
                         }
                         // O aviso de discar sem registro (ou de uma feita que não completou), por cima das duas abas.
                         CallMessage(message, Modifier.align(Alignment.BottomCenter))

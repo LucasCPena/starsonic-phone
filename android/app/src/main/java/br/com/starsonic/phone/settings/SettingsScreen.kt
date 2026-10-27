@@ -62,9 +62,10 @@ import br.com.starsonic.phone.ui.StatusDot
  * - Conta: a bolinha do [status], o ramal e "servidor · protocolo" da conta gravada ([account], lida fora da thread
  *   principal; null enquanto isso), o Editar conta (o Entrar preenchido, [onEdit]) e o Sair da conta, que pergunta antes
  *   ([onSignOut] depois da confirmação).
- * - Ligações: as chaves do bipe no fim da ligação e do Atender automático, e o Tempo para atender (as opções do Windows,
- *   num menu). Cada mudança vai para as configurações de ligação ([settings]) na hora, vale na próxima ligação e fica
- *   anotada no log de diagnóstico ([note]); as pílulas do cabeçalho mostram as mesmas.
+ * - Ligações: as chaves do bipe no fim da ligação, do Bipe ao digitar (0.2.0-rc.3: o tom de telefone de cada tecla, no
+ *   Teclado e no teclado da ligação) e do Atender automático, e o Tempo para atender (as opções do Windows, num menu).
+ *   Cada mudança vai para as configurações de ligação ([settings]) na hora (o Bipe ao digitar vale já na próxima tecla, as
+ *   outras na próxima ligação) e fica anotada no log de diagnóstico ([note]); as pílulas do cabeçalho mostram as mesmas.
  * - Celular: Permissões e bateria, que abre a tela Permissões ([onPermissions]).
  */
 @Composable
@@ -123,6 +124,17 @@ fun SettingsScreen(
                         StarsonicSwitch(current.endBeep, END_BEEP, tag = "config-bipe") { on ->
                             settings.update { it.copy(endBeep = on) }
                             note("Configurações: o bipe no fim da ligação ${onOrOff(on)}")
+                        }
+                    },
+                )
+                SettingRow(
+                    title = KEY_TONES,
+                    tag = "config-linha-teclas",
+                    help = KEY_TONES_HELP,
+                    trailing = {
+                        StarsonicSwitch(current.keyTones, KEY_TONES, tag = "config-teclas") { on ->
+                            settings.update { it.copy(keyTones = on) }
+                            note("Configurações: o bipe ao digitar ${onOrOff(on)}")
                         }
                     },
                 )
@@ -249,6 +261,8 @@ private const val SIGN_OUT_HELP = "O celular deixa de receber as ligações do r
 private const val CALLS = "Ligações"
 private const val END_BEEP = "Bipe quando a ligação cai ou termina"
 private const val END_BEEP_HELP = "Vem ligado. Um bipe curto no fone quando a outra pessoa desliga ou a ligação cai."
+private const val KEY_TONES = "Bipe ao digitar"
+private const val KEY_TONES_HELP = "Vem ligado. Cada tecla faz o bipe de telefone. Com o celular no silencioso, só toca durante a ligação."
 private const val AUTO_ANSWER = "Atender automaticamente"
 private const val AUTO_ANSWER_TIME = "Tempo para atender"
 private const val PHONE = "Celular"

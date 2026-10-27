@@ -7,7 +7,8 @@ import kotlinx.coroutines.flow.StateFlow
 
 /**
  * As configurações de ligação (spec 4, 5, 8 e 9): o Não perturbe, o Atender automático com o tempo dele (um de
- * [AUTO_ANSWER_SECONDS]) e o bipe no fim da ligação. As de fábrica: desligados, 3 s e o bipe ligado.
+ * [AUTO_ANSWER_SECONDS]), o bipe no fim da ligação e o Bipe ao digitar (0.2.0-rc.3: o tom de telefone de cada tecla do
+ * Teclado e do teclado da ligação, [keyTones]). As de fábrica: desligados, 3 s e os dois bipes ligados.
  */
 data class CallSettings(
     val doNotDisturb: Boolean = false,
@@ -32,8 +33,9 @@ interface CallSettingsStore {
 /**
  * As configurações de ligação no armazenamento privado do app (SharedPreferences "configuracoes"), separado do da conta
  * ("conta", que o Sair da conta apaga): elas ficam depois do Sair e valem de novo no próximo Entrar. O arquivo é lido
- * uma vez, ao criar (o disco: nunca na thread principal); um tempo para atender fora das opções é lido como 3 s. Cada
- * mudança vale na hora e vai ao disco logo depois (apply): serve na thread principal.
+ * uma vez, ao criar (o disco: nunca na thread principal); um tempo para atender fora das opções é lido como 3 s, e uma
+ * chave que falta, como a de fábrica. Cada mudança vale na hora e vai ao disco logo depois (apply): serve na thread
+ * principal.
  */
 class PreferencesCallSettingsStore(private val preferences: SharedPreferences) : CallSettingsStore {
     /** As configurações no arquivo "configuracoes" do app. */
@@ -55,6 +57,7 @@ class PreferencesCallSettingsStore(private val preferences: SharedPreferences) :
                 .putBoolean(KEY_AUTO_ANSWER, changed.autoAnswer)
                 .putInt(KEY_AUTO_ANSWER_SECONDS, changed.autoAnswerSeconds)
                 .putBoolean(KEY_END_BEEP, changed.endBeep)
+                .putBoolean(KEY_KEY_TONES, changed.keyTones)
                 .apply()
         }
     }
@@ -66,6 +69,7 @@ class PreferencesCallSettingsStore(private val preferences: SharedPreferences) :
             autoAnswer = preferences.getBoolean(KEY_AUTO_ANSWER, DEFAULTS.autoAnswer),
             autoAnswerSeconds = if (seconds in AUTO_ANSWER_SECONDS) seconds else DEFAULTS.autoAnswerSeconds,
             endBeep = preferences.getBoolean(KEY_END_BEEP, DEFAULTS.endBeep),
+            keyTones = preferences.getBoolean(KEY_KEY_TONES, DEFAULTS.keyTones),
         )
     }
 
@@ -76,6 +80,7 @@ class PreferencesCallSettingsStore(private val preferences: SharedPreferences) :
         private const val KEY_AUTO_ANSWER = "atender_auto"
         private const val KEY_AUTO_ANSWER_SECONDS = "atender_segundos"
         private const val KEY_END_BEEP = "bipe_fim"
+        private const val KEY_KEY_TONES = "bipe_teclas"   // sem ela (o arquivo da 0.2.0-rc.2), ligado
         private val DEFAULTS = CallSettings()
     }
 }
