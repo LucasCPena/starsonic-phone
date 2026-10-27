@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -28,10 +30,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
@@ -41,6 +43,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
+import br.com.starsonic.phone.ui.BesideOrUnder
 import br.com.starsonic.phone.ui.BlueButton
 import br.com.starsonic.phone.ui.ButtonSize
 import br.com.starsonic.phone.ui.CyanButton
@@ -200,26 +203,36 @@ private fun bannerIcon(banner: Banner): ImageVector = when (banner) {
 }
 
 /**
- * A faixa de avisos da tela principal (spec 11.1), embaixo do cabeçalho: um aviso por vez, o primeiro que falta, com o
- * triângulo de atenção amarelo do Windows e "Abrir ajustes" (o link do tema) para o ajuste certo do Android.
+ * A faixa de avisos da tela principal (spec 11.1), embaixo do cabeçalho (etiqueta `faixa-aviso`; o texto, `aviso-faixa`):
+ * um aviso por vez, o primeiro que falta, com o triângulo de atenção amarelo do Windows e "Abrir ajustes" (o link do tema)
+ * para o ajuste certo do Android. O link fica ao lado do texto se cada palavra dele cabe ali; com a letra grande, ele
+ * desce para baixo do texto, alinhado com ele, e nenhuma palavra quebra no meio (F3, F4).
  */
 @Composable
 fun WarningBanner(banner: Banner) {
     val context = LocalContext.current
     val colors = LocalStarsonicColors.current
-    Row(
-        Modifier
+    val layoutDirection = LocalLayoutDirection.current
+    BesideOrUnder(
+        spacing = 10.dp,
+        underGap = 0.dp,
+        // O texto do link (dentro do respiro do TextButton) alinhado com o do aviso quando desce.
+        underShift = -ButtonDefaults.TextButtonContentPadding.calculateStartPadding(layoutDirection),
+        modifier = Modifier
             .fillMaxWidth()
             .background(Starsonic.Warning.copy(alpha = 0.14f))
+            .testTag("faixa-aviso")
             .padding(start = 18.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        leading = {
+            Icon(StarsonicIcons.Warning, contentDescription = null, tint = Starsonic.Warning, modifier = Modifier.size(18.dp))
+        },
+        trailing = {
+            TextButton(onClick = { openSettings(context, settingsIntent(context, banner)) }) {
+                Text(OPEN_SETTINGS, color = colors.accentText, style = BannerLink)
+            }
+        },
     ) {
-        Icon(StarsonicIcons.Warning, contentDescription = null, tint = Starsonic.Warning, modifier = Modifier.size(18.dp))
-        Text(banner.text, color = colors.text, style = BannerText, modifier = Modifier.weight(1f).testTag("aviso-faixa"))
-        TextButton(onClick = { openSettings(context, settingsIntent(context, banner)) }) {
-            Text(OPEN_SETTINGS, color = colors.accentText, style = BannerLink)
-        }
+        Text(banner.text, color = colors.text, style = BannerText, modifier = Modifier.testTag("aviso-faixa"))
     }
 }
 

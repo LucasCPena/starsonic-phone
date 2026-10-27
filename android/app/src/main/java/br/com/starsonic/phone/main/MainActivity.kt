@@ -75,6 +75,7 @@ import br.com.starsonic.phone.ui.BottomNav
 import br.com.starsonic.phone.ui.BrandHeader
 import br.com.starsonic.phone.ui.HeaderChip
 import br.com.starsonic.phone.ui.PlusJakartaSans
+import br.com.starsonic.phone.ui.ScrollAwayHeader
 import br.com.starsonic.phone.ui.Starsonic
 import br.com.starsonic.phone.ui.StarsonicIcons
 import br.com.starsonic.phone.ui.StarsonicTheme
@@ -97,7 +98,8 @@ import kotlinx.coroutines.withContext
  *   bolinha, o ramal e a linha do status) e as pílulas Não perturbe e Atender automático (spec 4 e 5); a faixa de
  *   avisos; as abas Teclado (com o Rediscar, spec 6), Recentes e Contatos (a agenda do celular, spec da 0.2, 7.5), com a
  *   volta para a ligação em andamento; e a navegação de baixo. A notificação de ligação perdida abre o Recentes
- *   ([ACTION_RECENTS]). O menu do cabeçalho tem Configurações e Sobre (spec 3.3).
+ *   ([ACTION_RECENTS]). O menu do cabeçalho tem Configurações e Sobre (spec 3.3). Com a letra grande numa tela pequena,
+ *   o cabeçalho e as faixas sobem junto com a aba quando tomam a tela ([ScrollAwayHeader], F3).
  * - Configurações (spec 8): a Conta, com o Editar conta e o Sair da conta; as Ligações (o bipe no fim da ligação, o
  *   Atender automático e o tempo dele); e o Celular, com Permissões e bateria, que abre a tela Permissões (que daqui
  *   não segue sozinha, e o voltar volta às Configurações).
@@ -370,32 +372,42 @@ class MainActivity : ComponentActivity() {
         var menuOpen by remember { mutableStateOf(false) }
         Box(Modifier.fillMaxSize()) {
             Column(Modifier.fillMaxSize()) {
-                BrandHeader(
-                    menu = {
-                        HeaderMenu(
-                            expanded = menuOpen,
-                            onExpand = { menuOpen = true },
-                            onDismiss = { menuOpen = false },
-                            onSettings = { screen = Screen.SETTINGS },
-                            onAbout = { screen = Screen.ABOUT },
-                        )
+                // Com a letra grande numa tela pequena, o cabeçalho e as faixas sobem junto com a aba (F3): a aba e a
+                // navegação de baixo nunca ficam sem lugar.
+                ScrollAwayHeader(
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    header = {
+                        Column(Modifier.fillMaxWidth()) {
+                            BrandHeader(
+                                menu = {
+                                    HeaderMenu(
+                                        expanded = menuOpen,
+                                        onExpand = { menuOpen = true },
+                                        onDismiss = { menuOpen = false },
+                                        onSettings = { screen = Screen.SETTINGS },
+                                        onAbout = { screen = Screen.ABOUT },
+                                    )
+                                },
+                                modifier = Modifier.testTag("cabecalho"),
+                            ) {
+                                AccountCard(status, ramal)
+                                CallToggles(settings)
+                            }
+                            if (banner != null) WarningBanner(banner)
+                            // A recebida que ainda toca tem a notificação dela; a faixa é para a ligação atendida ou feita.
+                            if (call?.let { it.phase != CallPhase.RINGING } == true) ReturnToCall()
+                        }
                     },
-                    modifier = Modifier.testTag("cabecalho"),
                 ) {
-                    AccountCard(status, ramal)
-                    CallToggles(settings)
-                }
-                if (banner != null) WarningBanner(banner)
-                // A recebida que ainda toca tem a notificação dela; a faixa é para a ligação atendida ou feita.
-                if (call?.let { it.phase != CallPhase.RINGING } == true) ReturnToCall()
-                Box(Modifier.weight(1f).fillMaxWidth()) {
-                    when (tab) {
-                        TAB_RECENTS -> RecentsScreen(app.recents, app.contacts, onDial = { dial(it) })
-                        TAB_CONTACTS -> ContactsScreen(app.contacts, onCall = { dialContact(it) })
-                        else -> DialerScreen(::dial, app.contacts::search, app.dialRule, redial, redialName)
+                    Box(Modifier.fillMaxSize()) {
+                        when (tab) {
+                            TAB_RECENTS -> RecentsScreen(app.recents, app.contacts, onDial = { dial(it) })
+                            TAB_CONTACTS -> ContactsScreen(app.contacts, onCall = { dialContact(it) })
+                            else -> DialerScreen(::dial, app.contacts::search, app.dialRule, redial, redialName)
+                        }
+                        // O aviso de discar sem registro (ou de uma feita que não completou), por cima das duas abas.
+                        CallMessage(message, Modifier.align(Alignment.BottomCenter))
                     }
-                    // O aviso de discar sem registro (ou de uma feita que não completou), por cima das duas abas.
-                    CallMessage(message, Modifier.align(Alignment.BottomCenter))
                 }
                 BottomNav(selected = tab, onSelect = { tab = it }, modifier = Modifier.testTag("navegacao"))
             }
