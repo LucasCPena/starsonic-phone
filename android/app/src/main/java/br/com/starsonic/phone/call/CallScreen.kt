@@ -35,6 +35,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.TextAutoSize
+import androidx.compose.foundation.text.modifiers.TextAutoSizeLayoutScope
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -71,6 +72,7 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.text
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -888,18 +890,40 @@ private fun Ctrl(
         ) {
             Icon(icon, contentDescription = null, tint = if (on) Starsonic.OnCyan else Color.White, modifier = Modifier.size(20.dp))
         }
-        // Uma linha por palavra: com a letra grande, o nome encolhe até cada palavra caber, em vez de quebrar no meio dela
-        // (R40, como o das abas da navegação); quebrar num espaço, como em "Nova ligação", pode.
-        Text(
-            label,
-            style = CtrlText,
-            color = Color.White,
-            textAlign = TextAlign.Center,
-            maxLines = label.count { it == ' ' } + 1,
-            autoSize = TextAutoSize.StepBased(minFontSize = CTRL_LABEL_MIN, maxFontSize = CtrlText.fontSize, stepSize = 0.5.sp),
-        )
+        // Com a letra grande, o nome encolhe até nenhuma palavra quebrar no meio (R40, como o das abas da navegação);
+        // quebrar num espaço, como em "Nova ligação", pode. Uma palavra que nem no menor tamanho cabe ("transferência", na
+        // tela de 320 dp) quebra no meio, numa linha a mais: sem limite de linhas, nenhuma letra some.
+        Text(label, style = CtrlText, color = Color.White, textAlign = TextAlign.Center, autoSize = CtrlLabelSize)
     }
 }
+
+// O tamanho de um texto que encolhe para nenhuma palavra quebrar no meio (o nome dos controles, R40): o maior, do [max] até
+// o [min], de [step] em [step], em que cada linha acaba num espaço (ou no fim) e nada transborda. Se nem o [min] dá (uma
+// palavra mais larga que a linha), o [min]: a palavra quebra no meio, numa linha a mais, e nenhuma letra some (o texto não
+// tem limite de linhas). O StepBased do Compose não serve: com o limite de linhas, ele corta as letras que não cabem no
+// menor tamanho; sem o limite, ele não encolhe a palavra quebrada.
+private class WholeWordsAutoSize(private val min: TextUnit, private val max: TextUnit, private val step: TextUnit) : TextAutoSize {
+    override fun TextAutoSizeLayoutScope.getFontSize(constraints: Constraints, text: AnnotatedString): TextUnit {
+        var size = max.value
+        while (size > min.value) {
+            if (keepsWordsWhole(text.text, performLayout(constraints, text, size.sp))) return size.sp
+            size -= step.value
+        }
+        return min
+    }
+
+    override fun equals(other: Any?): Boolean =
+        other is WholeWordsAutoSize && other.min == min && other.max == max && other.step == step
+
+    override fun hashCode(): Int = (min.hashCode() * 31 + max.hashCode()) * 31 + step.hashCode()
+}
+
+// Nada do [layout] do [text] transborda, e nenhuma linha dele acaba no meio de uma palavra.
+private fun keepsWordsWhole(text: String, layout: TextLayoutResult): Boolean =
+    !layout.hasVisualOverflow && (0 until layout.lineCount - 1).none { line ->
+        val end = layout.getLineEnd(line)
+        end in 1 until text.length && !text[end - 1].isWhitespace() && !text[end].isWhitespace()
+    }
 
 // O Desligar (o .hang do quadro Chamada): o redondo vermelho com o fone virado e o nome embaixo.
 @Composable
@@ -1165,8 +1189,10 @@ private val CtrlText = Base.copy(fontSize = 12.5.sp, fontWeight = FontWeight.Sem
 private val HangLabel = CtrlText
 private val IncomingLabel = Base.copy(fontSize = 13.sp, fontWeight = FontWeight.Bold, lineHeight = 1.2.em)
 
-// O menor tamanho do nome de um controle quando ele encolhe para cada palavra caber numa linha (o das abas, R40).
+// O menor tamanho do nome de um controle quando ele encolhe para nenhuma palavra quebrar no meio (o das abas, R40), e o
+// tamanho dele: o maior, do CtrlText até esse, de 0,5 em 0,5 sp, em que nenhuma palavra quebra ([WholeWordsAutoSize]).
 private val CTRL_LABEL_MIN = 8.sp
+private val CtrlLabelSize: TextAutoSize = WholeWordsAutoSize(min = CTRL_LABEL_MIN, max = CtrlText.fontSize, step = 0.5.sp)
 
 // .tag e .dtmf
 private val TagText = Base.copy(fontSize = 10.5.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 0.12.em, lineHeight = 1.26.em)
