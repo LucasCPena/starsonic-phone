@@ -23,7 +23,7 @@ export function Sobre({ versao, send, onBack }: Props) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
           <span class="version">{`Starsonic Phone ${versao}`}</span>
           <span class="muted" style={{ fontSize: '13.5px' }}>
-            Licença GPL v3 · usa o PJSIP (GPL v2 ou posterior), o Opus (BSD) e o toque do MicroSIP (GPL v2 ou posterior)
+            Licença GPL v3 · usa o PJSIP (GPL v2 ou posterior) e o Opus (BSD)
           </span>
           <span class="muted" style={{ fontSize: '12px' }}>
             Plus Jakarta Sans (OFL), Preact (MIT) e WebView2 (Microsoft)
