@@ -84,13 +84,13 @@ import org.junit.runners.MethodSorters
  * começa vazio em cada teste, com o Não perturbe e o Atender automático desligados; o fim devolve as configurações de
  * ligação, a tela e a letra de antes.
  *
- * As telas da ligação no visual do Windows (spec 3, 5, 6 e 7; R9, R19, R35, R38 e R39): a linha do status no alto
+ * As telas da ligação no visual do Windows (spec 3, 5, 6 e 7; R9, R19, R35, R38, R39 e R40): a linha do status no alto
  * ("Ocupado · em ligação" e o ramal, com a notificação fixa), o "Ramal <n>" embaixo do nome, o Não perturbe (o
  * registrador recebe o 486), o Atender automático com o app em segundo plano (1 s e na hora), a contagem dele na recebida
  * em tela cheia (e a notificação, que perde e ganha a linha com a decisão), o Rediscar da Nova ligação, o Desligar da
- * ligação ativa com duas, e a maior letra na tela de 320 dp (a contagem e os nomes inteiros). As fotos
- * ([Emulator.saveScreen]) saem na tela dos quadros do canvas (390 × 844 dp), menos as "-pequena" e as "-letra-grande",
- * na do emulador do CI.
+ * ligação ativa com duas, e a maior letra na tela de 320 dp (a contagem, com o "em <n> s" junto, os nomes dos cartões e
+ * os dos controles inteiros). As fotos ([Emulator.saveScreen]) saem na tela dos quadros do canvas (390 × 844 dp), menos
+ * as "-pequena" e as "-letra-grande", na do emulador do CI.
  *
  * No fim, uma "Nota do teste" na saída do am instrument conta os toques repetidos nos botões da notificação
  * (o run-emulator-tests.sh a mostra numa anotação); outra conta como o Android deixou o serviço com o Atender automático

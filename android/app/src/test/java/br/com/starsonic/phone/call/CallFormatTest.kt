@@ -6,9 +6,9 @@ import org.junit.Test
 
 /**
  * O que as telas da ligação e a notificação da recebida escrevem (spec 5, 7 e 10, os quadros Chamada, DuasLigacoes e
- * Recebida; R32, R33 e R35): o tempo da ligação, o estado dela, o título da recebida, a linha do Atender automático (a da
- * tela cheia, que conta os segundos, e a da notificação, com o tempo escolhido), o número embaixo do nome ("Ramal <n>"
- * num ramal) e a linha de baixo dos cartões.
+ * Recebida; R32, R33, R35 e R40): o tempo da ligação, o estado dela, o título da recebida, a linha do Atender automático
+ * (a da tela cheia, que conta os segundos, e a da notificação, com o tempo escolhido; o "em <n> s" e o "na hora" com
+ * espaços que não quebram), o número embaixo do nome ("Ramal <n>" num ramal) e a linha de baixo dos cartões.
  */
 class CallFormatTest {
     private companion object {
