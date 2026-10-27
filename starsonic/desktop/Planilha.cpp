@@ -158,9 +158,16 @@ private:
             name = first.empty() || last.empty() ? first + last : first + L" " + last;
         }
         if (name.empty()) return;
+        // O numero: a celula mais a esquerda numa coluna de numero cujo NormalizeDialString nao fica vazio. A linha e
+        // percorrida pelas celulas que ela tem, cada uma com uma busca nas colunas de numero, e nao pelas colunas de
+        // numero: um cabecalho com milhares delas nao multiplica o trabalho pelas linhas.
         std::wstring number;
-        for (const size_t column : numbers_) {
-            number = CellText(row, column);
+        size_t previous = kNoColumn;
+        for (const Cell& cell : row) {
+            if (cell.column == previous) continue;   // a mesma coluna de novo (um .xlsx estragado): vale a primeira
+            previous = cell.column;
+            if (!std::binary_search(numbers_.begin(), numbers_.end(), cell.column)) continue;
+            number = TrimSpaces(Utf8ToWide(cell.text));
             if (!NormalizeDialString(number).empty()) break;
             number.clear();
         }
@@ -175,7 +182,7 @@ private:
     size_t first_ = kNoColumn;
     size_t last_ = kNoColumn;
     size_t note_ = kNoColumn;
-    std::vector<size_t> numbers_;   // da esquerda para a direita (as celulas chegam em ordem de coluna)
+    std::vector<size_t> numbers_;   // em ordem (as celulas chegam em ordem de coluna), para a busca do AddContact
     std::vector<SheetContact> contacts_;
 };
 

@@ -2,6 +2,7 @@
 // montados aqui, na memoria, com o escritor de zip do miniz, so com as partes que a leitura usa ([Content_Types].xml,
 // xl/workbook.xml, xl/_rels/workbook.xml.rels, as abas e o sharedStrings); o "gravado pelo Excel" tem tambem as partes
 // e os atributos que o Excel em portugues grava.
+#include <chrono>
 #include <string>
 #include <utility>
 #include <vector>
@@ -638,6 +639,38 @@ TEST_CASE("xml nested too deep or with too many attributes in one element is unr
     CHECK(ReadContactSheet(Zip(WithPart(parts, part, sheet(255, 256).c_str()))).contacts.size() == 1);
     CHECK(ReadContactSheet(Zip(WithPart(parts, part, sheet(256, 0).c_str()))).error == SheetError::Unreadable);
     CHECK(ReadContactSheet(Zip(WithPart(parts, part, sheet(0, 257).c_str()))).error == SheetError::Unreadable);
+}
+
+TEST_CASE("thousands of number columns do not multiply the work by the rows") {
+    // Um cabecalho com 16.000 colunas de numero e 100.000 linhas so com o nome: cada linha olha so as celulas que tem.
+    // Uma busca por coluna de numero em cada linha seriam 1,6 bilhao de buscas (dezenas de segundos), e a lista da
+    // empresa e lida de novo a cada 15 minutos.
+    std::string csv = "Nome";
+    for (int i = 0; i < 16000; ++i) csv += ";Fone";
+    csv += "\n";
+    for (int i = 0; i < 100000; ++i) csv += "a\n";
+    // A primeira coluna de numero com um numero, da esquerda para a direita, continua valendo.
+    csv += "Caio;2004" + std::string(15998, ';') + "2005\n";
+    csv += "Bia" + std::string(15999, ';') + "-;2002;2003\n";
+    const auto start = std::chrono::steady_clock::now();
+    const SheetRead read = ReadContactSheet(csv);
+    const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    CHECK(read.error == SheetError::None);
+    CHECK(Contacts(read) == std::vector<std::wstring>{L"Caio|2004|", L"Bia|2002|"});
+    CHECK(seconds < 2.0);
+}
+
+TEST_CASE("a column repeated in an xlsx row counts only its first cell") {
+    // Um .xlsx estragado, com duas celulas na coluna B: vale a primeira, como no nome e na observacao.
+    const SheetRead read = ReadContactSheet(Xlsx(
+        "<row r=\"1\"><c r=\"A1\" t=\"inlineStr\"><is><t>Nome</t></is></c>"
+        "<c r=\"B1\" t=\"inlineStr\"><is><t>Telefone</t></is></c>"
+        "<c r=\"C1\" t=\"inlineStr\"><is><t>Celular</t></is></c></row>"
+        "<row r=\"2\"><c r=\"A2\" t=\"inlineStr\"><is><t>Ana</t></is></c>"
+        "<c r=\"B2\" t=\"inlineStr\"><is><t>-</t></is></c><c r=\"B2\"><v>2002</v></c>"
+        "<c r=\"C2\"><v>3003</v></c></row>"));
+    CHECK(read.error == SheetError::None);
+    CHECK(Contacts(read) == std::vector<std::wstring>{L"Ana|3003|"});
 }
 
 // ---------------------------------------------------------------- O que nao e planilha
