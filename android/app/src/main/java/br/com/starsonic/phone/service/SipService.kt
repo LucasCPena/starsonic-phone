@@ -80,8 +80,11 @@ class SipService : Service() {
     private lateinit var keepAwake: KeepAwake
     private lateinit var monitor: NetworkMonitor
     private var notifications: Job? = null   // só na thread principal
-    private var inCall = false               // os tipos da ligação estão no serviço (só na thread principal)
+    private var accepted: Int? = null        // o tipo que o Android aceitou no último início (só na thread principal)
     private var monitoring = false           // só na thread do serviço
+
+    // A volta ao primeiro plano quando a ligação muda (só na thread principal).
+    private val reentry = ForegroundReentry({ foregroundTypes(call = true) }, { foregroundTypes(call = false) })
 
     // O título da notificação fixa, na ordem (R23): o notify de cada título novo, e a conferência da tela até a
     // notificação mandada aparecer. Só na thread principal.
@@ -121,7 +124,7 @@ class SipService : Service() {
         // ACTION_START. Quem começa com startForegroundService precisa entrar em primeiro plano já, mesmo que
         // saia em seguida (sem conta gravada).
         startCommands++
-        val foreground = enterForeground() != null
+        val foreground = enterForeground(foregroundTypes(call = app.calls.state.value?.usesMicrophone == true)) != null
         // Este pedido chegou (e o serviço entrou em primeiro plano, ou o Android não deixou): um stop() que esperava
         // por ele já pode parar o serviço.
         if (intent?.action == ACTION_START) pendingStarts.decrementAndGet()
@@ -133,11 +136,9 @@ class SipService : Service() {
             notifications = scope.launch {
                 app.status.map { it.notificationTitle }.distinctUntilChanged().collect(notice::titleChanged)
             }
-            // Os tipos da ligação entram e saem com ela.
+            // Os tipos da ligação entram e saem com ela ([ForegroundReentry]).
             scope.launch {
-                app.calls.state.map { it?.usesMicrophone == true }.distinctUntilChanged().collect { call ->
-                    if (call != inCall) enterForeground()
-                }
+                app.calls.state.collect { call -> reentry.onCall(call, accepted)?.let(::enterForeground) }
             }
         }
         worker.execute { connect(startId) }
@@ -196,11 +197,11 @@ class SipService : Service() {
         }
     }
 
-    // Na thread principal: entra (ou continua) em primeiro plano com os tipos de agora ([call]: os de uma ligação que
-    // usa o microfone). Com uma ligação, tenta os tipos dela, do mais completo ao só specialUse; devolve o que o
-    // Android aceitou (null: nem o specialUse).
-    private fun enterForeground(call: Boolean = app.calls.state.value?.usesMicrophone == true): Int? {
-        for (type in foregroundTypes(call)) {
+    // Na thread principal: entra (ou continua) em primeiro plano com o primeiro dos [types] ([foregroundTypes]: os de
+    // uma ligação, do mais completo ao só specialUse, ou só os de sempre) que o Android aceitar; devolve o aceito, que
+    // fica em [accepted] (null: nem o specialUse, e o serviço fica como estava).
+    private fun enterForeground(types: List<Int>): Int? {
+        for (type in types) {
             try {
                 val title = app.status.value.notificationTitle
                 val seq = notice.nextSeq()
@@ -210,7 +211,7 @@ class SipService : Service() {
                 notice.started(seq, title)
                 noticeSentAt = SystemClock.uptimeMillis()
                 watchNotice()
-                inCall = call && type != foregroundTypes(false).single()
+                accepted = type
                 return type
             } catch (e: IllegalStateException) {
                 // ForegroundServiceStartNotAllowedException: recriado em segundo plano sem poder (Android 12+).
@@ -227,9 +228,9 @@ class SipService : Service() {
     // se o Android deixou o microfone, ou se ele nem estava entre os tipos (sem a permissão do microfone, ou antes do
     // Android 11: a ligação fica como a atendida à mão).
     private fun enterForCall(): Boolean {
-        val wanted = foregroundTypes(true).first()
-        val accepted = enterForeground(call = true)
-        return wanted and MICROPHONE == 0 || accepted != null && accepted and MICROPHONE != 0
+        val types = foregroundTypes(call = true)
+        val got = enterForeground(types)
+        return types.first() and MICROPHONE == 0 || got != null && got and MICROPHONE != 0
     }
 
     // Os tipos a tentar, em ordem: com a ligação, phoneCall e microphone (só com a permissão do microfone), depois
