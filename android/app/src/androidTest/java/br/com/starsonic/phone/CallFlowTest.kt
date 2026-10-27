@@ -94,7 +94,8 @@ import org.junit.runners.MethodSorters
  * em tela cheia (a notificação que toca fica como está, e o toque continua; a silenciada perde e ganha a linha com a
  * decisão), o Rediscar da Nova ligação, o Desligar da ligação ativa com duas, o toque de 48 dp dos redondos da faixa da
  * segunda, e a maior letra na tela de 320 dp (a contagem, com o "em <n> s" junto, os nomes dos cartões e os dos controles
- * inteiros, também os da consulta) e na de 360 dp (os botões do Transferir inteiros, F4). As fotos
+ * inteiros, também os da consulta) e na de 360 dp (os botões do Transferir inteiros, F4). O Bipe ao digitar do teclado dos
+ * tons (0.2.0-rc.3), que toca também com o celular só vibrando. As fotos
  * ([Emulator.saveScreen]) saem na tela dos quadros do canvas (390 × 844 dp), menos as "-pequena" e as "-letra-grande", na
  * do emulador do CI ou na que o teste põe.
  *
@@ -200,6 +201,28 @@ class CallFlowTest {
         }
         emulator.saveScreen("transferir-letra-grande.png")
         compose.onNodeWithTag("transferir-cancelar").performScrollTo().performClick()
+        assertEquals("OK", emulator.control("HANGUP 2001"))
+        emulator.waitUntil("a ligação acabar") { app.calls.state.value == null }
+    }
+
+    @Test
+    fun theCallKeypadBeepsEvenWithThePhoneOnVibrate() {
+        // O Bipe ao digitar no teclado dos tons (0.2.0-rc.3): a tecla toca o tom de telefone dela junto com o som da
+        // ligação, também com o celular só vibrando (fora da ligação, o Teclado fica quieto: o MainScreenTest). O app
+        // escreve no logcat do build de debug o que fez com cada tecla: uma linha por toque.
+        app.callSettings.update { it.copy(keyTones = true) }
+        answerOnTheCallScreen()
+        compose.onNodeWithTag("teclado-chamada").performClick()
+        emulator.waitUntil("o teclado da ligação") { emulator.showsTag("dtmf-5") }
+        emulator.withRingerMode(AudioManager.RINGER_MODE_VIBRATE) {
+            emulator.clearLogcat()
+            compose.onNodeWithTag("dtmf-5").performClick()
+            emulator.waitUntil("\"$KEY_TONE_IN_CALL\" no logcat", details = { "Bipe ao digitar: ${emulator.keyToneLog()}" }) {
+                emulator.keyToneLog().any { KEY_TONE_IN_CALL in it }
+            }
+            val lines = emulator.keyToneLog()
+            assertEquals("uma linha só para a tecla: $lines", 1, lines.size)
+        }
         assertEquals("OK", emulator.control("HANGUP 2001"))
         emulator.waitUntil("a ligação acabar") { app.calls.state.value == null }
     }
@@ -1186,6 +1209,9 @@ class CallFlowTest {
         private const val AUTO_LINE = "atender-em"
         private const val REDIAL_NEW = "rediscar-nova"
         private val COUNTDOWN = Regex("Atender automático · em\u00A0(\\d+)\u00A0s")
+
+        // O que o Bipe ao digitar do teclado dos tons escreve no logcat quando o tom toca (0.2.0-rc.3).
+        private const val KEY_TONE_IN_CALL = "bipe da tecla (ligação): tocou"
 
         // O texto da notificação da recebida com a linha do Atender automático de 30 s (R33 e R40), e o que o dumpsys
         // notification diz da notificação que o Android toca agora (R41).

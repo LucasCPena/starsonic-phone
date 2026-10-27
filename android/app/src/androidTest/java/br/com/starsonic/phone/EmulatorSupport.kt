@@ -6,10 +6,12 @@ import android.app.NotificationManager
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.hardware.display.DisplayManager
+import android.media.AudioManager
 import android.os.Bundle
 import android.os.ParcelFileDescriptor
 import android.os.PowerManager
 import android.os.SystemClock
+import android.os.Vibrator
 import android.util.DisplayMetrics
 import android.view.Display
 import androidx.compose.ui.geometry.Offset
@@ -64,6 +66,8 @@ import org.junit.Assert.assertTrue
  * Para os testes do visual: as fotos das telas ([saveScreen]), a tela, a letra e o tema do emulador (com o
  * [restoreLook]), a saída da otimização de bateria ([revokeBattery], com o [restoreBattery]) e os contatos da agenda
  * ([insertContact]).
+ *
+ * Para o Bipe ao digitar: o que o app fez com cada tecla ([keyToneLog]) e o modo de toque do celular ([withRingerMode]).
  */
 class Emulator(private val compose: ComposeTestRule) {
     val app: App = ApplicationProvider.getApplicationContext()
@@ -134,6 +138,31 @@ class Emulator(private val compose: ComposeTestRule) {
 
     /** Alguma linha do motor no logcat (desde o último [clearLogcat]) tem [text]. */
     fun engineLogHas(text: String): Boolean = logcatLines("StarsonicMotor:I").any { text in it }
+
+    /**
+     * As linhas do Bipe ao digitar no logcat desde o último [clearLogcat] (StarsonicTeclas, nos builds de debug): o que o
+     * app fez com cada tecla, como "bipe da tecla (Teclado): tocou".
+     */
+    fun keyToneLog(): List<String> = logcatLines("StarsonicTeclas:V")
+
+    /**
+     * Roda [block] com o celular no modo de toque [mode] (o normal ou o só vibrando: o AudioManager.RINGER_MODE_*, que o
+     * app muda sem a permissão do Não perturbe do Android) e volta ao modo de antes no fim, também quando [block] falha.
+     */
+    fun <T> withRingerMode(mode: Int, block: () -> T): T {
+        val audio = app.getSystemService(AudioManager::class.java)
+        // Sem vibração, o Android troca o só vibrando pelo silencioso, e sair do silencioso pede a permissão do Não
+        // perturbe: o modo de antes não voltaria.
+        assertTrue("o emulador com vibração", app.getSystemService(Vibrator::class.java).hasVibrator())
+        val before = audio.ringerMode
+        audio.ringerMode = mode
+        try {
+            waitUntil("o celular no modo de toque $mode", details = { "Modo de toque: ${audio.ringerMode}" }) { audio.ringerMode == mode }
+            return block()
+        } finally {
+            audio.ringerMode = before
+        }
+    }
 
     /** Limpa o logcat: uma linha que aparece depois é nova. */
     fun clearLogcat() {

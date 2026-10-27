@@ -54,8 +54,8 @@ import org.junit.runners.MethodSorters
 /**
  * As Configurações no emulador (spec 3.3, 3.4, 5, 8 e 11), com o motor de verdade e o registrador falso do CI (ver
  * [Emulator]):
- * - as chaves do bipe no fim da ligação e do Atender automático, e o Tempo para atender, gravados no arquivo
- *   "configuracoes" e iguais depois de a tela ser recriada;
+ * - as chaves do bipe no fim da ligação, do Bipe ao digitar (0.2.0-rc.3) e do Atender automático, e o Tempo para
+ *   atender, gravados no arquivo "configuracoes" e iguais depois de a tela ser recriada;
  * - o Sair da conta, que pergunta antes e deixa as configurações de ligação, que valem de novo depois do Entrar
  *   (Review Focus 4);
  * - o Editar conta (a tela Entrar preenchida) e as Permissões e bateria (a tela Permissões, que daqui não segue sozinha,
@@ -70,7 +70,7 @@ import org.junit.runners.MethodSorters
  *   canvas (390 × 844 dp).
  *
  * Cada teste começa com a conta gravada por TCP (o CI confere que o último REGISTER aceito veio por TCP) e as
- * configurações de ligação de fábrica (o bipe ligado, o Atender automático e o Não perturbe desligados, 3 s). O fim
+ * configurações de ligação de fábrica (os dois bipes ligados, o Atender automático e o Não perturbe desligados, 3 s). O fim
  * devolve as configurações de ligação, a tela, a letra, o tema e a saída da otimização de bateria de antes, cada um
  * mesmo que outro falhe.
  */
@@ -264,7 +264,7 @@ class SettingsFlowTest {
 
     @Test
     fun sairDaContaAsksFirstAndKeepsTheCallSettings() {
-        val saved = CallSettings(doNotDisturb = true, autoAnswer = true, autoAnswerSeconds = 8, endBeep = false)
+        val saved = CallSettings(doNotDisturb = true, autoAnswer = true, autoAnswerSeconds = 8, endBeep = false, keyTones = false)
         app.callSettings.update { saved }
         openSettings(line = DND_LINE)
         // Pergunta antes: o Cancelar fica com a conta.
@@ -285,7 +285,10 @@ class SettingsFlowTest {
         assertNull("a conta saiu", app.store.load())
         assertEquals("o ramal vazio", "", emulator.editableText("ramal"))
         assertEquals("as configurações de ligação ficam", saved, app.callSettings.settings.value)
-        waitForSaved("nao_perturbe" to "true", "atender_auto" to "true", "atender_segundos" to "8", "bipe_fim" to "false")
+        waitForSaved(
+            "nao_perturbe" to "true", "atender_auto" to "true", "atender_segundos" to "8", "bipe_fim" to "false",
+            "bipe_teclas" to "false",
+        )
         // O Entrar de novo: elas valem outra vez (Review Focus 4), nas pílulas, na bolinha e na notificação fixa.
         enterTheAccount()
         emulator.waitUntil("a tela principal") { emulator.showsTag(CHIP_DND) }
@@ -299,6 +302,7 @@ class SettingsFlowTest {
         emulator.openMenu("menu-configuracoes")
         emulator.waitUntil("as Configurações") { emulator.showsTag(BEEP) }
         compose.onNodeWithTag(BEEP).performScrollTo().assertIsOff()
+        compose.onNodeWithTag(KEY_TONES).performScrollTo().assertIsOff()
         compose.onNodeWithTag(AUTO).performScrollTo().assertIsOn()
         compose.onNodeWithTag(TIME).performScrollTo().assert(hasText("8 s"))
         assertTrue("a ajuda com o tempo gravado", emulator.showsText(autoAnswerHelp(8)))
@@ -326,6 +330,34 @@ class SettingsFlowTest {
         compose.onNodeWithTag(BEEP).assertIsOn()
         assertTrue("o bipe ligado", app.callSettings.settings.value.endBeep)
         waitForSaved("bipe_fim" to "true")
+    }
+
+    @Test
+    fun theKeyToneSwitchStartsOnAndIsRemembered() {
+        // O Bipe ao digitar (0.2.0-rc.3), logo abaixo do bipe do fim: uma chave de verdade para o leitor de tela, ligada de
+        // fábrica, com a ajuda embaixo; desligada, fica gravada, também depois de a tela ser recriada; e liga de novo.
+        openSettings()
+        compose.onNodeWithTag(KEY_TONES).performScrollTo()
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Switch))
+            .assertContentDescriptionEquals(KEY_TONES_TITLE)
+            .assertIsOn()
+        emulator.assertTouchAtLeast48(KEY_TONES)
+        assertTrue("a ajuda", emulator.showsText(KEY_TONES_HELP))
+        // A linha entre a do bipe do fim e a do Atender automático (as posições lidas de uma vez, na mesma rolagem).
+        val tops = listOf("config-linha-bipe", "config-linha-teclas", "config-linha-atender")
+            .map { compose.onNodeWithTag(it).fetchSemanticsNode().positionInRoot.y }
+        assertTrue("o bipe do fim, o Bipe ao digitar e o Atender automático, nesta ordem: $tops", tops.zipWithNext().all { (above, below) -> above < below })
+        compose.onNodeWithTag(KEY_TONES).performClick()
+        compose.onNodeWithTag(KEY_TONES).assertIsOff()
+        assertFalse("o Bipe ao digitar desligado", app.callSettings.settings.value.keyTones)
+        waitForSaved("bipe_teclas" to "false")
+        scenario!!.recreate()
+        emulator.waitUntil("as Configurações de novo") { emulator.showsTag(KEY_TONES) }
+        compose.onNodeWithTag(KEY_TONES).performScrollTo().assertIsOff()
+        compose.onNodeWithTag(KEY_TONES).performClick()
+        compose.onNodeWithTag(KEY_TONES).assertIsOn()
+        assertTrue("o Bipe ao digitar ligado", app.callSettings.settings.value.keyTones)
+        waitForSaved("bipe_teclas" to "true")
     }
 
     @Test
@@ -544,6 +576,9 @@ class SettingsFlowTest {
         const val CHIP_AUTO = "atender-auto"
         const val BEEP_TITLE = "Bipe quando a ligação cai ou termina"
         const val BEEP_HELP = "Vem ligado. Um bipe curto no fone quando a outra pessoa desliga ou a ligação cai."
+        const val KEY_TONES = "config-teclas"
+        const val KEY_TONES_TITLE = "Bipe ao digitar"
+        const val KEY_TONES_HELP = "Vem ligado. Cada tecla faz o bipe de telefone. Com o celular no silencioso, só toca durante a ligação."
         const val PERMISSIONS_HELP =
             "Notificações, microfone e o uso da bateria, para as ligações chegarem com a tela apagada"
         const val DND_LINE = "Não perturbe · as ligações não tocam"
@@ -574,6 +609,8 @@ class SettingsFlowTest {
             "config-sair" to "O celular deixa de receber as ligações do ramal.",
             "config-linha-bipe" to BEEP_TITLE,
             "config-linha-bipe" to BEEP_HELP,
+            "config-linha-teclas" to KEY_TONES_TITLE,
+            "config-linha-teclas" to KEY_TONES_HELP,
             "config-linha-atender" to "Atender automaticamente",
             "config-linha-atender" to "Depois de 3 segundos tocando",
             TIME to "Tempo para atender",
@@ -582,7 +619,7 @@ class SettingsFlowTest {
         )
         val SUPPORT_TEXTS = listOf("(11) 5060-3000", "Telefone de suporte", "WhatsApp")
 
-        val SETTINGS_TAGS = listOf("voltar", "config-conta", "config-editar", "config-sair", BEEP, AUTO, TIME, "config-permissoes")
+        val SETTINGS_TAGS = listOf("voltar", "config-conta", "config-editar", "config-sair", BEEP, KEY_TONES, AUTO, TIME, "config-permissoes")
         val PERMISSIONS_TAGS = listOf("voltar", "continuar", "permitir-BATTERY") + BANNERS.map { "permissao-${it.first}" }
         val ENTRAR_TAGS = listOf("servidor", "protocolo", "protocolo-udp", "protocolo-tcp", "ramal", "senha", "entrar")
         val ABOUT_TAGS = listOf("voltar", "site", "suporte", "whatsapp", "codigo-fonte", "enviar-diagnostico")

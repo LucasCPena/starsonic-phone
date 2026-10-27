@@ -2,6 +2,7 @@ package br.com.starsonic.phone
 
 import android.Manifest
 import android.content.res.Configuration
+import android.media.AudioManager
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.semantics.SemanticsActions
@@ -65,8 +66,8 @@ import org.junit.runners.MethodSorters
  * CI (ver [Emulator] e o CallFlowTest): as pílulas Não perturbe e Atender automático (a linha do status e a notificação
  * fixa), o Rediscar, o menu (Configurações e Sobre), a letra do celular no máximo numa tela pequena (Review Focus 5; e,
  * com ela, o número longo, o menu e os filtros do Recentes, R24; a faixa de avisos, que deixa o Teclado e a navegação de
- * baixo à mão, F3; o número digitado à vista, R44), o aviso do servidor inteiro no cartão da conta (F5) e os temas claro e
- * escuro.
+ * baixo à mão, F3; o número digitado à vista, R44), o aviso do servidor inteiro no cartão da conta (F5), o Bipe ao digitar
+ * do Teclado (0.2.0-rc.3: o tom de cada tecla, quieto no só vibrando e com a chave desligada) e os temas claro e escuro.
  *
  * As fotos (R19): os testes dos temas, do menu e da letra grande guardam a tela inteira ([Emulator.saveScreen]) para a
  * conferência com os quadros do canvas; os dos temas e o do menu numa tela do tamanho dos quadros (390 × 844 dp), os dos
@@ -386,6 +387,21 @@ class MainScreenTest {
     }
 
     @Test
+    fun theKeysBeepWhileTypingUnlessThePhoneIsQuietOrTheSettingIsOff() {
+        // O Bipe ao digitar (vem ligado): cada tecla do Teclado toca o tom de telefone dela com o celular no modo normal.
+        // Só vibrando, o Teclado fica quieto (na ligação, o teclado dos tons bipa mesmo assim: o CallFlowTest); com a chave
+        // desligada, também. As teclas continuam digitando. O app escreve no logcat do build de debug o que fez com cada
+        // tecla: uma linha por toque.
+        app.callSettings.update { it.copy(keyTones = true) }
+        open()
+        emulator.withRingerMode(AudioManager.RINGER_MODE_NORMAL) { pressKeyAndWaitFor("5", KEY_TONE_PLAYED) }
+        emulator.withRingerMode(AudioManager.RINGER_MODE_VIBRATE) { pressKeyAndWaitFor("6", KEY_TONE_QUIET) }
+        app.callSettings.update { it.copy(keyTones = false) }
+        emulator.withRingerMode(AudioManager.RINGER_MODE_NORMAL) { pressKeyAndWaitFor("7", KEY_TONE_OFF) }
+        compose.onNodeWithTag("numero").assertTextEquals("567")
+    }
+
+    @Test
     fun theLightThemeDraws() {
         emulator.setNightMode(false)
         emulator.useCanvasDisplay()
@@ -477,6 +493,17 @@ class MainScreenTest {
         emulator.waitUntil("a ligação acabar") { app.calls.state.value == null }
         emulator.waitUntil("a tela de chamada sair") { !emulator.showsTag("chamada") }
         emulator.waitUntil("o Teclado de volta") { emulator.showsTag(REDIAL) }
+    }
+
+    // Toca a tecla [key] do Teclado e espera a linha do Bipe ao digitar com [line] no logcat: só ela, uma linha por toque.
+    private fun pressKeyAndWaitFor(key: String, line: String) {
+        emulator.clearLogcat()
+        compose.onNodeWithTag("tecla-$key").performScrollTo().performClick()
+        emulator.waitUntil("\"$line\" no logcat", details = { "Bipe ao digitar: ${emulator.keyToneLog()}" }) {
+            emulator.keyToneLog().any { line in it }
+        }
+        val lines = emulator.keyToneLog()
+        assertEquals("uma linha só para a tecla $key: $lines", 1, lines.size)
     }
 
     private fun waitForLog(before: Int, line: String) =
@@ -649,6 +676,12 @@ class MainScreenTest {
         // Um servidor que não responde (o próprio emulador, onde nada escuta a porta do SIP), e o aviso do núcleo para ele.
         const val UNREACHABLE = "127.0.0.1"
         const val UNREACHABLE_LINE = "Não foi possível falar com o servidor. Confira o endereço e a sua internet."
+
+        // O que o Bipe ao digitar do Teclado escreve no logcat: o tom tocou; o celular no silencioso ou só vibrando; a chave
+        // desligada.
+        const val KEY_TONE_PLAYED = "bipe da tecla (Teclado): tocou"
+        const val KEY_TONE_QUIET = "bipe da tecla (Teclado): sem som"
+        const val KEY_TONE_OFF = "bipe da tecla (Teclado): desligado"
 
         // Mais que os 1,5 s em que a dica do Material fica na tela, com a animação da saída.
         const val TOOLTIP_MILLIS = 2_000L

@@ -14,6 +14,7 @@ data class CallSettings(
     val autoAnswer: Boolean = false,
     val autoAnswerSeconds: Int = 3,
     val endBeep: Boolean = true,
+    val keyTones: Boolean = true,
 )
 
 /** As opções do "Tempo para atender", em segundos, as do Windows (0 é "Na hora"). */
