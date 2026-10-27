@@ -7,7 +7,7 @@ import android.app.NotificationManager
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
-import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.lifecycle.Lifecycle
@@ -161,6 +161,10 @@ class UpdatePromptTest {
         assertNotNull("a notificação na gaveta", title)
         title.click()
         emulator.waitForText(QUESTION)
+        // A notificação sai num efeito da composição do aviso (o LaunchedEffect da tela principal). A espera abaixo só lê
+        // as notificações do Android, e o Compose dos testes (a regra v2, F8) só roda os efeitos quando o teste espera por
+        // ele: esta espera os deixa rodar antes.
+        compose.waitForIdle()
         emulator.waitUntil("a notificação sair") { updateNotification() == null }
     }
 
