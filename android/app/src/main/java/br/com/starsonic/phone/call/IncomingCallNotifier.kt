@@ -42,9 +42,13 @@ import br.com.starsonic.phone.main.MainActivity
  * O nome de quem liga chega já resolvido pelo CallManager (pelo Telecom, nos extras da recebida): o do contato do
  * celular com o número, se há (spec da 0.2, 7.5), senão o que a central mandou. Com o Atender automático marcado para
  * ela (spec 5), o texto da notificação ganha a linha "Atender automático · em <n> s" (ou "· na hora"), com o tempo
- * escolhido (R33): a notificação não é postada de novo a cada segundo, o que poderia tocar de novo. Quando a decisão
- * muda (o Atender automático desligado, o Não perturbe ligado, o microfone recusado: [autoAnswerChanged]), ela é postada
- * de novo uma vez, sem alertar, para a linha nunca prometer um atender que não vem (R38).
+ * escolhido (R33): a notificação não é postada de novo a cada segundo, o que poderia tocar de novo. Enquanto ela toca,
+ * ela também não é postada de novo quando a decisão muda (o Atender automático desligado, o Não perturbe ligado, o
+ * microfone recusado: [autoAnswerChanged]): uma atualização com o "alertar uma vez só" calaria o toque que se repete (o
+ * Android o para), e sem ele ela alertaria de novo (R41). A linha pode ficar velha enquanto ela toca; a tela cheia mostra
+ * a de agora, e o celular continua tocando.
+ * Silenciada pelo volume ([silence]), ela sai com a decisão de agora e, sem tocar, é postada de novo uma vez, sem alertar,
+ * a cada mudança da decisão, para a linha não prometer um atender que não vem (R38).
  *
  * A chamada em espera (spec da 0.2, 7.1: a recebida com outra ligação em andamento) não toca o toque do celular, para
  * não cobrir a conversa: a notificação vai ao canal "ligacoes-silenciadas" (no alto da tela, sem som), sem a tela
@@ -75,7 +79,7 @@ class IncomingCallNotifier(
     private var shownWaiting = false // ...se é a chamada em espera
     private var shownRinging = false // ...se está no canal que toca (e não no silenciado)
     private var shownAutoAnswer: Int? = null // ...e os segundos do Atender automático marcado (null: nenhum)
-    private var decidedId = 0     // a recebida do último aviso do Atender automático (R38)...
+    private var decidedId = 0     // a recebida do último aviso do Atender automático (R38 e R41)...
     private var decidedSeconds: Int? = null // ...e a decisão dele
     private var beepingId = 0     // a chamada em espera que bipa (0: nenhuma)
 
@@ -188,9 +192,10 @@ class IncomingCallNotifier(
 
     /**
      * O volume apertado durante o toque (Telecom: onSilence, Android 10+): a notificação da recebida [callId], que
-     * ainda toca, é atualizada no lugar (o mesmo id), no canal sem som e sem vibração e sem alertar de novo. O
-     * Android para o toque e a vibração que se repetem (o canal novo não tem nenhum dos dois), e ela continua no
-     * alto da tela. Na chamada em espera, que já está nesse canal, só o bipe (e a vibração dele) para.
+     * ainda toca, é atualizada no lugar (o mesmo id), no canal sem som e sem vibração e sem alertar de novo, com a decisão
+     * do Atender automático de agora (a linha que ficou velha enquanto ela tocava se acerta: R41). O Android para o toque
+     * e a vibração que se repetem (o canal novo não tem nenhum dos dois), e ela continua no alto da tela. Na chamada em
+     * espera, que já está nesse canal, só o bipe (e a vibração dele) para.
      */
     fun silence(callId: Int) {
         synchronized(lock) {
@@ -201,6 +206,7 @@ class IncomingCallNotifier(
                 CallLog.i { "notificação: chamada em espera $callId sem o bipe" }
                 return
             }
+            if (callId == decidedId) shownAutoAnswer = decidedSeconds
             post(callId, ring = false, "recebida $callId sem o toque")
         }
     }
@@ -228,20 +234,27 @@ class IncomingCallNotifier(
     }
 
     /**
-     * R38: a decisão do Atender automático sobre a recebida [callId] mudou. A notificação dela, se está lá (e não é a
-     * chamada em espera, que nunca tem a linha), é postada de novo uma vez, no mesmo canal e sem alertar de novo (o toque
-     * que se repete continua, sem recomeçar, e nem a tela cheia nem o alto da tela voltam), com a linha certa. A decisão
-     * fica guardada: a notificação que o Telecom pede depois sai com ela.
+     * R41: a decisão do Atender automático sobre a recebida [callId] mudou. Ela fica guardada: a notificação que o Telecom
+     * pede depois e a silenciada pelo volume ([silence]) saem com ela. A notificação que toca nunca é postada de novo
+     * ([repostsForAutoAnswer]): uma atualização dela com o "alertar uma vez só" calaria o toque que se repete (o Android o
+     * para), e sem ele ela alertaria de novo; a linha dela fica como está até ela parar de tocar, e a tela cheia mostra a de
+     * agora. A silenciada, que não toca, é postada de novo uma vez, no canal sem som e sem alertar, com a linha certa (a
+     * chamada em espera nunca tem a linha).
      */
     override fun autoAnswerChanged(callId: Int, seconds: Int?) {
         synchronized(lock) {
             decidedId = callId
             decidedSeconds = seconds
             val shown = ShownIncoming(shownId, shownRinging, shownWaiting, shownAutoAnswer).takeIf { shownId > stoppedUpTo }
-            if (!repostsForAutoAnswer(shown, callId, seconds)) return
+            if (!repostsForAutoAnswer(shown, callId, seconds)) {
+                if (shown != null && shown.callId == callId && shown.ringing && shown.autoAnswerSeconds != seconds) {
+                    CallLog.i { "notificação: recebida $callId tocando, com a linha do Atender automático de antes (R41)" }
+                }
+                return
+            }
             shownAutoAnswer = seconds
             val line = seconds?.let { "com o Atender automático em $it s" } ?: "sem o Atender automático"
-            post(callId, ring = shownRinging, "recebida $callId, agora $line", alertOnce = true)
+            post(callId, ring = false, "recebida $callId silenciada, agora $line")
         }
     }
 
@@ -296,11 +309,10 @@ class IncomingCallNotifier(
             null
         }
 
-    // Com a trava: mostra ou atualiza a notificação da recebida ([alertOnce]: sem alertar de novo, se ela já está lá);
-    // uma falha do Android vai ao log (a ligação segue).
-    private fun post(callId: Int, ring: Boolean, what: String, alertOnce: Boolean = !ring) {
+    // Com a trava: mostra ou atualiza a notificação da recebida; uma falha do Android vai ao log (a ligação segue).
+    private fun post(callId: Int, ring: Boolean, what: String) {
         try {
-            manager.notify(INCOMING_ID, incoming(callId, ring, alertOnce))
+            manager.notify(INCOMING_ID, incoming(callId, ring))
             shownRinging = ring
             CallLog.i { "notificação: $what" }
         } catch (e: RuntimeException) {
@@ -310,11 +322,11 @@ class IncomingCallNotifier(
 
     // Com a trava: a notificação da recebida [callId] mostrada (shownCall, shownName, shownAddress, shownWaiting e
     // shownAutoAnswer: o texto é o número, com o nome no título, e a linha do Atender automático).
-    // Tocando ([ring]): o canal "ligacoes", com o toque e a vibração repetidos até ela sair. Silenciada: o canal sem
-    // som, sem alertar de novo. A chamada em espera: no canal sem som, sem a tela cheia e, por isso, sem o CallStyle
+    // Tocando ([ring]): o canal "ligacoes", com o toque e a vibração repetidos até ela sair (R41: enquanto ela toca, nada a
+    // atualiza). Sem tocar (a silenciada e a chamada em espera): o canal sem som, e uma atualização não alerta de novo (a
+    // do volume e as da decisão do Atender automático). A chamada em espera: sem a tela cheia e, por isso, sem o CallStyle
     // (o Android o recusa sem a tela cheia fora de um serviço em primeiro plano): Recusar e Atender como ações.
-    // [alertOnce]: a atualização não toca, não vibra nem aparece de novo (a do Atender automático, R38, e a silenciada).
-    private fun incoming(callId: Int, ring: Boolean, alertOnce: Boolean): Notification {
+    private fun incoming(callId: Int, ring: Boolean): Notification {
         val screen = CallActivity.intent(context).putExtra(CallActivity.EXTRA_CALL_ID, callId)
         val fullScreen = PendingIntent.getActivity(context, REQUEST_SCREEN, screen, IMMUTABLE_UPDATE)
         val answer = PendingIntent.getActivity(
@@ -339,7 +351,7 @@ class IncomingCallNotifier(
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setOngoing(true)
             .setContentIntent(fullScreen)
-            .setOnlyAlertOnce(alertOnce)
+            .setOnlyAlertOnce(!ring)
         if (shownWaiting) {
             builder.setContentTitle("$CALL_FROM $callerName")
                 .addAction(R.drawable.ic_desligar, REJECT, decline)

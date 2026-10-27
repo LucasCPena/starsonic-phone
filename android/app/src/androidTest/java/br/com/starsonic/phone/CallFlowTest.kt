@@ -86,7 +86,7 @@ import org.junit.runners.MethodSorters
  * começa vazio em cada teste, com o Não perturbe e o Atender automático desligados; o fim devolve as configurações de
  * ligação, a tela e a letra de antes.
  *
- * As telas da ligação no visual do Windows (spec 3, 5, 6 e 7; R9, R19, R35, R39, R40 e R41): a linha do status no alto
+ * As telas da ligação no visual do Windows (spec 3, 5, 6 e 7; R9, R19, R35, R38 a R41): a linha do status no alto
  * ("Ocupado · em ligação" e o ramal, com a notificação fixa), o "Ramal <n>" embaixo do nome, o Não perturbe (o
  * registrador recebe o 486), o Atender automático com o app em segundo plano (1 s e na hora), a contagem dele na recebida
  * em tela cheia (a notificação que toca fica como está, e o toque continua; a silenciada perde e ganha a linha com a

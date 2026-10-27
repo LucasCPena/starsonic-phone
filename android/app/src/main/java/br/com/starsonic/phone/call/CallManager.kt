@@ -41,7 +41,8 @@ interface CallNotifier {
     /**
      * O Atender automático da recebida [callId], que toca sozinha, mudou (R38): ele vai atendê-la em [seconds] s (o tempo
      * escolhido; 0: na hora), ou não vai mais (null: desligado, o Não perturbe ligado, o microfone recusado, ou ela não
-     * está mais sozinha). A notificação dela, se está lá, ganha ou perde a linha dele, uma vez, sem alertar de novo.
+     * está mais sozinha). O notificador guarda a decisão: a notificação que toca fica como está (R41: uma atualização
+     * calaria o toque), e a silenciada pelo volume ganha ou perde a linha dele, uma vez, sem alertar de novo.
      */
     fun autoAnswerChanged(callId: Int, seconds: Int?)
 }
@@ -216,7 +217,7 @@ object EndCause {
  *     marcado ([CallUi.autoAnswerSeconds], R7), com as configurações de agora: [onSettingsChanged] publica de novo
  *     quando elas mudam. A notificação pergunta quando aparece ([autoAnswerSeconds]), e cada mudança da decisão depois
  *     (desligado, o Não perturbe, o microfone recusado, outra ligação) vai ao [notifier] uma vez
- *     ([CallNotifier.autoAnswerChanged], R38), para a linha dela nunca prometer um atender que não vem.
+ *     ([CallNotifier.autoAnswerChanged], R38): a notificação que toca fica como está (R41), e a silenciada acompanha.
  *   - O bipe no fim (spec 9): a atendida que acaba sem outra de pé (as que sobram também estão saindo), com a chave
  *     ligada, sem ser pelo Sair e sem o Telecom a segurar por uma ligação da operadora (o som é dela), toca o bipe
  *     ([beep]), e a Connection dela só sai do Telecom quando ele acaba: até lá o Telecom mantém o som da ligação, e o
@@ -1267,9 +1268,10 @@ class CallManager(
     }
 
     // Com a trava: a decisão do Atender automático sobre a recebida que toca ([ringing]: [decision], os segundos, ou null
-    // se ele não vai atendê-la), quando mudou desde o último aviso, vai ao notificador, na fila das publicações (R38): a
-    // notificação dela ganha ou perde a linha, uma vez por mudança, e nunca a cada segundo (a contagem é só da tela). Uma
-    // recebida nova começa sem a linha; a que parou de tocar não precisa de aviso (a notificação dela sai).
+    // se ele não vai atendê-la), quando mudou desde o último aviso, vai ao notificador, na fila das publicações (R38), uma
+    // vez por mudança e nunca a cada segundo (a contagem é só da tela): ele decide o que a notificação mostra (R41: a que
+    // toca fica como está). Uma recebida nova começa sem a linha; a que parou de tocar não precisa de aviso (a notificação
+    // dela sai).
     private fun announceAutoAnswer(ringing: Call?, decision: Int?) {
         val id = ringing?.id ?: NO_ID
         if (id != announcedId) {

@@ -2356,8 +2356,8 @@ class CallManagerTest {
         assertEquals("a notificação perde a linha", 4 to null, notifier.autoAnswer.last())
     }
 
-    // A notificação da recebida (R38): a linha do Atender automático nela segue a decisão dele. Cada mudança vai ao
-    // notificador uma vez (que posta a notificação de novo, sem alertar), e nunca a cada segundo.
+    // A notificação da recebida (R38): a decisão do Atender automático vai ao notificador uma vez a cada mudança, e nunca a
+    // cada segundo; ele decide o que a notificação mostra (R41: a que toca fica como está, e a silenciada acompanha).
 
     @Test
     fun `the incoming notification follows the auto answer decision once per change`() {
