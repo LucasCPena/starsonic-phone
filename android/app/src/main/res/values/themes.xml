@@ -14,9 +14,10 @@
         <item name="android:forceDarkAllowed" tools:targetApi="29">false</item>
     </style>
 
-    <!-- Tela de abertura: fundo azul com o ícone; depois, o tema do app. -->
+    <!-- Tela de abertura: o fundo navy-950 (o começo do gradiente do cabeçalho, que vem logo depois) com o ícone; depois,
+         o tema do app. -->
     <style name="Theme.Starsonic.Splash" parent="Theme.SplashScreen">
-        <item name="windowSplashScreenBackground">@color/starsonic_blue</item>
+        <item name="windowSplashScreenBackground">@color/starsonic_navy_950</item>
         <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
         <item name="postSplashScreenTheme">@style/Theme.Starsonic</item>
     </style>

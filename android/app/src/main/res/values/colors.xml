@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Cores da marca (as mesmas do Windows, branding/branding.h). -->
-    <color name="starsonic_blue">#383881</color>
     <color name="starsonic_cyan">#3DB1CC</color>
     <!-- O fundo do tema escuro (navy-900 do visual do Windows: ui/StarsonicTheme.kt). -->
     <color name="starsonic_navy_900">#0A1330</color>
+    <!-- O fundo da tela de abertura: o navy-950, o começo do gradiente do cabeçalho (o gradient-hero do Windows). -->
+    <color name="starsonic_navy_950">#070B18</color>
 </resources>
