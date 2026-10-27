@@ -104,6 +104,7 @@ import br.com.starsonic.phone.ui.ListRowSub
 import br.com.starsonic.phone.ui.ListRowTitle
 import br.com.starsonic.phone.ui.OutlineButton
 import br.com.starsonic.phone.ui.PlusJakartaSans
+import br.com.starsonic.phone.ui.SideBySideOrStacked
 import br.com.starsonic.phone.ui.Starsonic
 import br.com.starsonic.phone.ui.StarsonicIcons
 import br.com.starsonic.phone.ui.StatusDot
@@ -166,7 +167,8 @@ class CallActions(
  *   etiqueta `cartao-espera`), cada um com o número e o tempo; os controles Mudo, Teclado, o áudio, Alternar, Juntar e
  *   Transferir (e Retomar, se o Telecom pôs as duas em espera). A segunda que chega toca na faixa "Ligação de <nome ou
  *   número>" no alto, com Recusar e Atender. Desligar desliga a ativa (a em espera volta sozinha).
- * - O Transferir abre o número com Consultar e Transferir agora; a Nova ligação, o número com o Rediscar ([redial], a feita
+ * - O Transferir abre o número com Consultar e Transferir agora (lado a lado; com a letra grande, se um nome não cabe
+ *   inteiro, um embaixo do outro: F4); a Nova ligação, o número com o Rediscar ([redial], a feita
  *   mais nova dos Recentes, com o nome do Rediscar do Teclado: [redialName]; etiqueta `rediscar-nova`, spec 6) e o Ligar.
  *   Os dois números têm as sugestões dos contatos, como o Teclado. O teclado dos tons (DTMF) não tem o Rediscar.
  * - Na consulta (spec da 0.2, 7.3), o colega em cima e o cliente no cartão "Em espera · transferência" (depois do Alternar,
@@ -275,15 +277,16 @@ fun CallScreen(
                         TRANSFER_TO, "transferir", actions, Modifier.padding(top = sizes.gap),
                         onCancel = { transferOpen = false }, onDone = null,
                     ) { number ->
-                        // O Consultar é a segunda ligação: com duas, não.
-                        OutlineButton(
-                            CONSULT, tag = "transferir-consultar", enabled = number.isNotBlank() && call.second == null,
-                            modifier = Modifier.weight(1f),
-                        ) { if (actions.consult(number)) transferOpen = false }
-                        CyanButton(
-                            TRANSFER_NOW, tag = "transferir-agora", enabled = number.isNotBlank(), fadeWhenDisabled = true,
-                            modifier = Modifier.weight(1f),
-                        ) { if (actions.transfer(number)) transferOpen = false }
+                        // Lado a lado; com a letra grande, um embaixo do outro, sem quebrar o nome no meio (F4).
+                        SideBySideOrStacked(spacing = PANEL_GAP, modifier = Modifier.weight(1f)) {
+                            // O Consultar é a segunda ligação: com duas, não.
+                            OutlineButton(
+                                CONSULT, tag = "transferir-consultar", enabled = number.isNotBlank() && call.second == null,
+                            ) { if (actions.consult(number)) transferOpen = false }
+                            CyanButton(
+                                TRANSFER_NOW, tag = "transferir-agora", enabled = number.isNotBlank(), fadeWhenDisabled = true,
+                            ) { if (actions.transfer(number)) transferOpen = false }
+                        }
                     }
                     newCall -> {
                         val dial = { number: String -> if (actions.dial(number)) newCallOpen = false }
@@ -1071,7 +1074,7 @@ private fun NumberPanel(
         NumberField(number, onChange = { number = it }, tag = "$tagPrefix-numero", onDone = onDone)
         Row(
             Modifier.fillMaxWidth().padding(top = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(PANEL_GAP),
             verticalAlignment = Alignment.CenterVertically,
         ) { buttons(number) }
         if (suggestions.isNotEmpty()) Suggestions(suggestions, onPick = { number = it })
@@ -1152,8 +1155,10 @@ private val TOAST_TOP = 44.dp
 // O espaço entre o nome e a linha do Atender automático (o margin-top do .tag no quadro Recebida).
 private val AUTO_LINE_TOP = 14.dp
 
-// O Rediscar ao lado do Ligar do número (o .btn de 48 dp do canvas; no Windows, o .call-panel .btn-redial).
+// O Rediscar ao lado do Ligar do número (o .btn de 48 dp do canvas; no Windows, o .call-panel .btn-redial), e o espaço
+// entre os botões do número (o gap do .call-panel-actions).
 private val PANEL_BUTTON = 48.dp
+private val PANEL_GAP = 10.dp
 
 private const val GRID_COLUMNS = 3
 private const val TICK_MILLIS = 250L
