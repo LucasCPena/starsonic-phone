@@ -130,10 +130,12 @@ class AndroidTelecom(private val app: App) : TelecomAdapter {
 
     override fun incomingPermitted(): Boolean =
         try {
-            // Uma ligação da operadora tocando ou em andamento põe o áudio do celular nesses modos.
-            val carrierCall = audio.mode == AudioManager.MODE_IN_CALL || audio.mode == AudioManager.MODE_RINGTONE
+            // Uma ligação da operadora tocando ou em andamento põe o áudio do celular nesses modos. O modo é lido uma vez:
+            // o do log é o da decisão (o Telecom pode trocá-lo enquanto responde abaixo).
+            val mode = audio.mode
+            val carrierCall = mode == AudioManager.MODE_IN_CALL || mode == AudioManager.MODE_RINGTONE
             val permitted = telecom.isIncomingCallPermitted(handle)
-            CallLog.i { "Telecom: recebida permitida $permitted, modo do áudio ${audio.mode}" }
+            CallLog.i { "Telecom: recebida permitida $permitted, modo do áudio $mode" }
             permitted && !carrierCall
         } catch (e: RuntimeException) {
             Log.w(TAG, "o Telecom não respondeu se a ligação pode entrar", e)

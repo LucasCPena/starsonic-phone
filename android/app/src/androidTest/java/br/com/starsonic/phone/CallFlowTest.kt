@@ -4,6 +4,7 @@ import android.app.Instrumentation
 import android.app.Notification
 import android.app.NotificationManager
 import android.content.Intent
+import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
@@ -90,6 +91,7 @@ class CallFlowTest {
     private val emulator = Emulator(compose)
     private val app = emulator.app
     private val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+    private val audio = app.getSystemService(AudioManager::class.java)
     private var scenario: ActivityScenario<MainActivity>? = null
     private var settingsBefore: CallSettings? = null
 
@@ -715,7 +717,9 @@ class CallFlowTest {
     }
 
     // O registrador liga e a ligação é atendida no Atender da tela de chamada (aberta com o app na frente, como pelo
-    // toque na notificação): o id dela.
+    // toque na notificação): o id dela. Volta com o áudio já fora do modo do toque: o app lê o MODE_RINGTONE como uma
+    // ligação da operadora tocando, e o nosso próprio toque fica nele até o Telecom trocar o modo, um pouco depois do
+    // atender; uma segunda ligação nesse meio-tempo sairia como perdida (run 40435909397).
     private fun answerOnTheCallScreen(): Int {
         assertEquals("OK", emulator.control("RING 2001"))
         emulator.waitUntil("a ligação tocando") { app.calls.state.value?.phase == CallPhase.RINGING }
@@ -724,6 +728,9 @@ class CallFlowTest {
         compose.onNodeWithTag("atender").performClick()
         emulator.waitUntil("a ligação atendida") { app.calls.state.value?.phase == CallPhase.ACTIVE }
         emulator.waitUntil("o toque parar", details = ::notifications) { callNotification() == null }
+        emulator.waitUntil("o áudio no modo da ligação", details = { "Modo do áudio: ${audio.mode}" }) {
+            audio.mode.let { it != AudioManager.MODE_RINGTONE && it != AudioManager.MODE_IN_CALL }
+        }
         return app.calls.state.value!!.id
     }
 
