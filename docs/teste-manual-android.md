@@ -377,6 +377,25 @@ Estas três linhas vêm da última revisão do código da 0.2.0-rc.2, que corrig
 | 16.71 | Num celular pequeno (uns 360 dp de largura, como no 16.24), com a letra no máximo e o uso da bateria sem permissão, abra o Teclado e puxe o dedo para cima até aparecerem as teclas e o Ligar. Depois, puxe o dedo para baixo, quantas vezes precisar, até o fim. Repita no Recentes e no Contatos, com muitos itens. | Ao subir, o cabeçalho (o menu, o "Não perturbe", o "Atender automático" e a linha da conta) e a faixa de aviso saem pelo alto; a barra de baixo fica parada e inteira; e o alto da tela, atrás da barra de status do Android, fica azul-marinho, com os ícones dela legíveis. Ao puxar para baixo, a aba volta ao começo e, em seguida, o cabeçalho e a faixa voltam inteiros. Esta é a única conferência dessa volta (não há teste automático): anote se o cabeçalho ficou preso em cima, sem voltar. | ☐ | ☐ |
 | 16.72 | Tire o app da lista de apps recentes e abra pelo ícone. Olhe a tela de abertura, o fundo que aparece antes da tela principal. Se passar rápido demais, repita algumas vezes (ou grave a tela do celular e veja o vídeo devagar). | O fundo da abertura é o azul-marinho bem escuro do cabeçalho da tela principal, e não o azul-arroxeado de antes. A tela principal aparece sem um pulo de cor. | ☐ | ☐ |
 
+## 17. Bipe ao digitar (0.2.0-rc.3)
+
+Cada tecla do Teclado e do teclado da ligação faz o bipe de telefone (os tons do app de telefone do Android). Comece com o celular no modo normal (com som), o volume do toque no meio e, em Configurações → Ligações, "Bipe ao digitar" ligado (ele vem ligado). Para as ligações, use o cliente da seção 11.
+
+| # | Passo | Resultado esperado | A1 | A2 |
+|---|-------|--------------------|----|----|
+| 17.1 | Quem atualizou da 0.2.0-rc.2 (seção 7): abra Menu → Configurações e olhe a parte "Ligações". | Logo abaixo de "Bipe quando a ligação cai ou termina", a chave "Bipe ao digitar", ligada, com "Vem ligado. Cada tecla faz o bipe de telefone. Com o celular no silencioso, só toca durante a ligação." embaixo. As outras chaves de "Ligações" continuam como estavam. | ☐ | ☐ |
+| 17.2 | No Teclado, toque cada tecla, uma de cada vez: do 1 ao 9, o *, o 0 e o #. | Cada tecla faz um bipe curto de telefone, cada uma com o seu som (como no app de telefone do celular), e o número aparece no campo. | ☐ | ☐ |
+| 17.3 | Digite rápido um número comprido (uns 11 dígitos). | Um bipe para cada tecla, e o número aparece inteiro, sem atraso. | ☐ | ☐ |
+| 17.4 | Toque no Apagar e numa sugestão de contato. | Nenhum dos dois faz o bipe. | ☐ | ☐ |
+| 17.5 | Nas configurações do Android (Som), aumente e diminua o volume do toque e digite no Teclado depois de cada mudança. | O bipe fica mais alto ou mais baixo junto com o volume do toque. | ☐ | ☐ |
+| 17.6 | Ponha o celular no silencioso e digite no Teclado. Depois, ponha só vibrando e digite de novo. No fim, volte ao som normal. | Nenhum bipe, nos dois modos; os números aparecem no campo. | ☐ | ☐ |
+| 17.7 | Plugue um fone com fio (ou conecte um fone Bluetooth) e digite no Teclado. | O bipe sai no fone, e não no alto-falante do celular. | ☐ | ☐ |
+| 17.8 | Ligue para o cliente e, com a ligação em andamento, toque em Teclado (o teclado da ligação) e digite algumas teclas, com o celular no ouvido. | Cada tecla faz o bipe no fone do ouvido, junto com o som da ligação, e as teclas continuam chegando do outro lado, como no 5.5. | ☐ | ☐ |
+| 17.9 | Na mesma ligação, ligue o viva-voz e digite. Depois, ponha o celular só vibrando e digite de novo. | No viva-voz, o bipe sai no alto-falante. Só vibrando, o bipe continua na ligação. | ☐ | ☐ |
+| 17.10 | Ligue para uma URA (um menu de atendimento, do tipo "digite 1 para…", como no 5.5) e, no viva-voz, escolha uma opção com uma tecla. Repita com o celular no ouvido. | O menu entende a tecla uma vez só. Se ele pular duas opções, ou repetir o número, anote. | ☐ | ☐ |
+| 17.11 | Em Configurações → Ligações, desligue "Bipe ao digitar". Digite no Teclado e, numa ligação, no teclado da ligação. Tire o app da lista de apps recentes, abra de novo e olhe a chave. No fim, ligue a chave de novo. | Nenhum bipe, e os números continuam aparecendo e indo para a ligação. A chave continua desligada depois de abrir o app de novo. | ☐ | ☐ |
+| 17.12 | Com a letra do celular no máximo, abra Configurações e olhe a linha "Bipe ao digitar". | O título e o texto inteiros, sem palavra quebrada no meio; a chave ao lado, ou embaixo do texto quando não cabe. | ☐ | ☐ |
+
 ## Onde cada critério de sucesso é verificado
 
 | Critério (spec §3) | Automático (a cada build) | Neste roteiro |
@@ -414,3 +433,11 @@ Estas três linhas vêm da última revisão do código da 0.2.0-rc.2, que corrig
 | O bipe no fim da ligação: quando toca, onde toca (fone, headset, Bluetooth) e quando não toca | `CallManagerTest` (`an answered call that ends beeps once and then disconnects`, `a rejected, missed or unanswered call never beeps`, `no beep while another call remains, one when the last answered call ends`, `no beep with the setting off`, `no beep for a call held by a carrier call`, `the end beep never holds the Connection more than 1500 ms`, `a call during the end beep is not delayed or blocked`), `EndBeepToneTest` (o som), `EndBeepTimesTest` (o fim pela marca e pelo tempo); o fone, o headset e o Bluetooth, só no manual | 16.46 a 16.56 |
 | Configurações: as chaves ficam gravadas e continuam depois do "Sair da conta" | `CallSettingsStoreTest` (`call settings survive sign out`), `SettingsFlowTest` (`sairDaContaAsksFirstAndKeepsTheCallSettings`, `theBeepSwitchStartsOnAndIsRemembered`) | 16.9, 16.67 a 16.69 |
 | A tecla Voltar na tela Permissões | `SettingsFlowTest` (`backOnPermissoesAfterTheFirstEntrarGoesToTheMainScreen`, `backOnPermissoesFromConfiguracoesReturnsToConfiguracoes`) | 16.3, 16.67 |
+
+### Critérios da 0.2.0-rc.3 (o Bipe ao digitar)
+
+| Critério | Automático (a cada build) | Neste roteiro |
+|----------|---------------------------|---------------|
+| Cada tecla do Teclado faz o bipe de telefone, com o som dela; nenhum no silencioso ou só vibrando | `KeyToneTest` (JVM: o tom de cada tecla e quando ele toca), `MainScreenTest` (`theKeysBeepWhileTypingUnlessThePhoneIsQuietOrTheSettingIsOff`: tocou, quieto só vibrando, desligado) | 17.2 a 17.7 |
+| O teclado da ligação bipa junto com o som dela, também só vibrando, e o menu de atendimento entende cada tecla uma vez | `KeyToneTest`, `CallFlowTest` (`theCallKeypadBeepsEvenWithThePhoneOnVibrate`) | 17.8 a 17.10 |
+| A chave "Bipe ao digitar": ligada de fábrica (também para quem vem da rc.2), gravada, depois do "Sair da conta" e inteira com a letra no máximo | `CallSettingsStoreTest` (`a file from before the key tones reads them as on`, `call settings survive sign out`), `SettingsFlowTest` (`theKeyToneSwitchStartsOnAndIsRemembered`, `sairDaContaAsksFirstAndKeepsTheCallSettings`, `theSettingsKeepTheirWordsWholeAtTheLargestFont`) | 17.1, 17.11, 17.12 |

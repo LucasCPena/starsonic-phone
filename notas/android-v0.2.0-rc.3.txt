@@ -1,0 +1,5 @@
+Novo: cada tecla do Teclado faz o bipe de telefone ao digitar, também no teclado da ligação.
+Com o celular no silencioso ou só vibrando, o Teclado fica sem som; na ligação, o bipe continua.
+Dá para desligar em Configurações → Ligações → Bipe ao digitar.
+Traz também tudo da 0.2.0-rc.2: o visual novo, Não perturbe, Atender automático, Rediscar e a bolinha de status.
+Esta é uma versão de teste.
