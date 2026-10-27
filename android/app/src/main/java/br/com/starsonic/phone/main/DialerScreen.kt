@@ -84,7 +84,9 @@ internal val KEYS = listOf(listOf("1", "2", "3"), listOf("4", "5", "6"), listOf(
  * O Teclado (spec 3.2 e 4.1, o quadro Main do canvas): o número digitado, com o Apagar e a linha embaixo; as sugestões
  * dos contatos; as 12 teclas; e, na última linha, o Rediscar e o Ligar. [onDial] liga e diz se ligou (sem registro, não
  * liga, e a tela principal mostra o aviso); ligou pelo Ligar, o número sai do campo. Com espaço sobrando, o Rediscar e o
- * Ligar ficam no fim da tela, como no canvas; sem, a tela rola (o tamanho da letra segue o do celular).
+ * Ligar ficam no fim da tela, como no canvas; sem, a tela rola (o tamanho da letra segue o do celular). O número fica
+ * parado em cima, e o resto rola embaixo dele: com a letra grande, o número digitado nunca sai da vista, nem com as teclas
+ * de baixo e o Ligar (R44).
  *
  * As sugestões (spec da 0.2, 4.1): ao digitar, até três contatos do celular com um número que tem os dígitos digitados
  * ([suggest], a busca da agenda, chamada fora da thread principal), com o nome e o número; um toque preenche o campo
@@ -105,33 +107,36 @@ fun DialerScreen(
 ) {
     var number by rememberSaveable { mutableStateOf("") }
     val suggestions = rememberSuggestions(number, suggest, contactNumber)
-    BoxWithConstraints(Modifier.fillMaxSize()) {
-        // A coluna tem pelo menos a altura da tela: o espaço que sobra fica entre as teclas e a última linha.
-        val screen = maxHeight
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .heightIn(min = screen)
-                .padding(start = 20.dp, top = 18.dp, end = 20.dp, bottom = 14.dp),
-            verticalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Column(Modifier.padding(bottom = GAP), verticalArrangement = Arrangement.spacedBy(GAP)) {
-                NumberLine(number, onErase = { number = number.dropLast(1) })
-                Suggestions(suggestions, onPick = { number = it })
-                Keys(onKey = { number += it })
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Redial(redial, redialName, onDial = { onDial(it) })
-                CyanButton(
-                    DIAL,
-                    tag = "ligar",
-                    icon = StarsonicIcons.Phone,
-                    enabled = number.isNotEmpty(),
-                    size = ButtonSize.Call,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    if (onDial(number)) number = ""
+    Column(Modifier.fillMaxSize()) {
+        NumberLine(number, onErase = { number = number.dropLast(1) }, Modifier.padding(start = 20.dp, top = 18.dp, end = 20.dp))
+        BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
+            // A coluna tem pelo menos a altura que sobra embaixo do número: o espaço a mais fica entre as teclas e a última
+            // linha (os mesmos lugares do quadro, com o número dentro da mesma coluna).
+            val rest = maxHeight
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .heightIn(min = rest)
+                    .padding(start = 20.dp, top = GAP, end = 20.dp, bottom = 14.dp),
+                verticalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column(Modifier.padding(bottom = GAP), verticalArrangement = Arrangement.spacedBy(GAP)) {
+                    Suggestions(suggestions, onPick = { number = it })
+                    Keys(onKey = { number += it })
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Redial(redial, redialName, onDial = { onDial(it) })
+                    CyanButton(
+                        DIAL,
+                        tag = "ligar",
+                        icon = StarsonicIcons.Phone,
+                        enabled = number.isNotEmpty(),
+                        size = ButtonSize.Call,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        if (onDial(number)) number = ""
+                    }
                 }
             }
         }
@@ -158,10 +163,10 @@ fun rememberRedial(store: RecentsStore, contacts: ContactsSource): Pair<Recent?,
 
 // O número digitado (o .number do canvas): grande, numa linha só, com o Apagar à direita e a linha embaixo.
 @Composable
-private fun NumberLine(number: String, onErase: () -> Unit) {
+private fun NumberLine(number: String, onErase: () -> Unit, modifier: Modifier = Modifier) {
     val colors = LocalStarsonicColors.current
     Row(
-        Modifier
+        modifier
             .fillMaxWidth()
             .heightIn(min = 56.dp)
             .drawBehind {

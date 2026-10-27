@@ -324,13 +324,14 @@ class MainScreenTest {
         emulator.setFontScale(2.0f)
         open()
         val number = "1234567890123456"
+        // O número fica parado em cima do Teclado, à vista (R44): nada a rolar para vê-lo.
         for (digit in number) compose.onNodeWithTag("tecla-$digit").performScrollTo().performClick()
-        compose.onNodeWithTag("numero").performScrollTo().assertTextEquals(number)
+        compose.onNodeWithTag("numero").assertIsDisplayed().assertTextEquals(number)
         val before = compose.onNodeWithTag("numero").captureToImage().asAndroidBitmap()
         // Mais um dígito: com a reticência no fim, o campo continua igual (o começo do número); com ela no começo, o
         // dígito novo aparece no fim.
         compose.onNodeWithTag("tecla-7").performScrollTo().performClick()
-        compose.onNodeWithTag("numero").performScrollTo().assertTextEquals(number + "7")
+        compose.onNodeWithTag("numero").assertIsDisplayed().assertTextEquals(number + "7")
         val after = compose.onNodeWithTag("numero").captureToImage().asAndroidBitmap()
         assertFalse("o dígito novo aparece no fim do número", before.sameAs(after))
         emulator.saveScreen("numero-letra-grande.png")
