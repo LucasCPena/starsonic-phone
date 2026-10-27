@@ -34,6 +34,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -887,7 +888,16 @@ private fun Ctrl(
         ) {
             Icon(icon, contentDescription = null, tint = if (on) Starsonic.OnCyan else Color.White, modifier = Modifier.size(20.dp))
         }
-        Text(label, style = CtrlText, color = Color.White, textAlign = TextAlign.Center)
+        // Uma linha por palavra: com a letra grande, o nome encolhe até cada palavra caber, em vez de quebrar no meio dela
+        // (R40, como o das abas da navegação); quebrar num espaço, como em "Nova ligação", pode.
+        Text(
+            label,
+            style = CtrlText,
+            color = Color.White,
+            textAlign = TextAlign.Center,
+            maxLines = label.count { it == ' ' } + 1,
+            autoSize = TextAutoSize.StepBased(minFontSize = CTRL_LABEL_MIN, maxFontSize = CtrlText.fontSize, stepSize = 0.5.sp),
+        )
     }
 }
 
@@ -1154,6 +1164,9 @@ private val EndText = Base.copy(fontSize = 16.sp, fontWeight = FontWeight.SemiBo
 private val CtrlText = Base.copy(fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, lineHeight = 1.2.em)
 private val HangLabel = CtrlText
 private val IncomingLabel = Base.copy(fontSize = 13.sp, fontWeight = FontWeight.Bold, lineHeight = 1.2.em)
+
+// O menor tamanho do nome de um controle quando ele encolhe para cada palavra caber numa linha (o das abas, R40).
+private val CTRL_LABEL_MIN = 8.sp
 
 // .tag e .dtmf
 private val TagText = Base.copy(fontSize = 10.5.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 0.12.em, lineHeight = 1.26.em)

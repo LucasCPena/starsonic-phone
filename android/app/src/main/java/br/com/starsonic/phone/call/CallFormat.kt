@@ -29,9 +29,11 @@ fun incomingTitle(ramal: String): String = if (ramal.isEmpty()) INCOMING else "$
 
 /**
  * A linha do Atender automático com o tempo escolhido, a da notificação (R33: uma vez, sem contar): "Atender automático ·
- * em <n> s", e "Atender automático · na hora" com 0 s (R32).
+ * em <n> s", e "Atender automático · na hora" com 0 s (R32). O "em", o número e o "s" (e o "na hora") vão juntos, com
+ * espaços que não quebram (R40): com a letra grande, a linha quebra antes do "em", e o que aparece é o texto do spec 10.
  */
-fun autoAnswerIn(seconds: Int): String = if (seconds <= 0) "$AUTO_ANSWER · na hora" else "$AUTO_ANSWER · em $seconds s"
+fun autoAnswerIn(seconds: Int): String =
+    if (seconds <= 0) "$AUTO_ANSWER · na${NBSP}hora" else "$AUTO_ANSWER · em$NBSP$seconds${NBSP}s"
 
 /**
  * A linha do Atender automático na recebida em tela cheia (R33): os segundos que faltam dos [seconds] escolhidos desde
@@ -74,6 +76,7 @@ fun cardLine(number: String, name: String, status: String): String =
 private val RAMAL = Regex("[0-9]{2,6}")
 private const val RAMAL_LABEL = "Ramal"
 private const val SEPARATOR = " · "
+private const val NBSP = '\u00A0'   // o espaço que não quebra
 private const val CALLING = "Chamando…"
 private const val CONNECTING = "Conectando…"
 private const val INCOMING = "Ligação recebida"
