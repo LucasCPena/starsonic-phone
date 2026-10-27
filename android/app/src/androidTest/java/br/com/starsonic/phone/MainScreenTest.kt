@@ -275,12 +275,13 @@ class MainScreenTest {
         open()
         emulator.waitUntil("a faixa da bateria") { emulator.showsTag(BANNER) }
         assertTheNavIsWhole()
-        emulator.assertWholeText("o aviso da faixa", BANNER_ROW, compose.onNodeWithTag(BANNER, useUnmergedTree = true))
-        emulator.assertWholeText("o link da faixa", BANNER_ROW, emulator.drawnText(BANNER_ROW, OPEN_SETTINGS))
         emulator.saveScreen("teclado-aviso-letra-grande.png")
         assertTheKeypadIsReachable()
         assertTheNavIsWhole()
         emulator.saveScreen("teclado-aviso-letra-grande-fim.png")
+        // O texto da faixa e o link, inteiros (com a faixa lá em cima, fora da vista depois da rolagem, o desenho é o mesmo).
+        emulator.assertWholeText("o aviso da faixa", BANNER_ROW, compose.onNodeWithTag(BANNER, useUnmergedTree = true))
+        emulator.assertWholeText("o link da faixa", BANNER_ROW, emulator.drawnText(BANNER_ROW, OPEN_SETTINGS))
     }
 
     @Test
