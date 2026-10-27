@@ -12,6 +12,7 @@ import android.os.PowerManager
 import android.os.SystemClock
 import android.util.DisplayMetrics
 import android.view.Display
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -32,6 +33,8 @@ import androidx.compose.ui.test.printToString
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.toSize
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
@@ -115,7 +118,7 @@ class Emulator(private val compose: ComposeTestRule) {
     /** As primeiras linhas da árvore da tela do app (ou o motivo de não haver uma). */
     fun screen(): String =
         try {
-            compose.onRoot().printToString().lines().take(30).joinToString("\n")
+            compose.onRoot().printToString().lines().take(SCREEN_LINES).joinToString("\n")
         } catch (e: Throwable) {
             "(${e.message?.lines()?.firstOrNull()})"
         }
@@ -208,6 +211,36 @@ class Emulator(private val compose: ComposeTestRule) {
     /** O texto do campo [tag] (os da tela Entrar). */
     fun editableText(tag: String): String =
         compose.onNodeWithTag(tag).fetchSemanticsNode().config.getOrNull(SemanticsProperties.EditableText)?.text.orEmpty()
+
+    /**
+     * Espera o teclado do celular abrir de vez, com o elemento [tag] parado na janela (a posição dele, mesmo fora da parte
+     * à vista): enquanto o teclado sobe, a tela anda com ele (o imePadding e o pan da janela), e um toque no meio da subida
+     * pode cair fora do botão. É o que a pessoa faz: o teclado já abriu quando ela toca no botão. Serve para o toque logo
+     * depois do primeiro campo tocado (no run 40477577855, com a regra v2 do Compose, o Entrar do Editar foi tocado com o
+     * teclado ainda abrindo e não entrou).
+     */
+    fun waitForTheKeyboard(tag: String) {
+        waitUntil("o teclado do celular aberto") { keyboardShown() }
+        var last: Offset? = null
+        var still = 0
+        waitUntil("$tag parado com o teclado aberto") {
+            val now = compose.onNodeWithTag(tag).fetchSemanticsNode().positionInWindow
+            still = if (now == last) still + 1 else 0
+            last = now
+            still >= KEYBOARD_STILL_POLLS
+        }
+    }
+
+    // O teclado do celular aparece na janela da tela da frente.
+    private fun keyboardShown(): Boolean {
+        var shown = false
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            val activity = ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED).firstOrNull()
+            val insets = activity?.window?.decorView?.let(ViewCompat::getRootWindowInsets)
+            shown = insets?.isVisible(WindowInsetsCompat.Type.ime()) == true
+        }
+        return shown
+    }
 
     /** A área de toque do elemento [tag] tem pelo menos 48 × 48 dp (spec 3.3), mesmo com o desenho menor. */
     fun assertTouchAtLeast48(tag: String) {
@@ -454,6 +487,12 @@ class Emulator(private val compose: ComposeTestRule) {
 
         // O tempo para a tela parar antes da foto: as animações (o menu, as pílulas, o toque) e o último quadro.
         const val SCREEN_SETTLE_MILLIS = 800L
+
+        // Quantas olhadas seguidas (uma a cada 100 ms) com o elemento no mesmo lugar: o teclado acabou de subir.
+        const val KEYBOARD_STILL_POLLS = 5
+
+        // As linhas da árvore da tela numa falha: com 30, a tela Entrar parava no campo do servidor (run 40477577855).
+        const val SCREEN_LINES = 90
 
         const val RAW_CONTACTS = "content://com.android.contacts/raw_contacts"
         const val DATA = "content://com.android.contacts/data"

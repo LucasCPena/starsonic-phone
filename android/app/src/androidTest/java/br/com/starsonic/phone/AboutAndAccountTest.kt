@@ -135,6 +135,8 @@ class AboutAndAccountTest {
         compose.onNodeWithTag("protocolo-udp").performScrollTo().performClick()
         compose.onNodeWithTag("protocolo-udp").assertIsSelected()
         compose.onNodeWithTag("senha").performScrollTo().performTextInput(emulator.senha)
+        // A senha é o primeiro campo tocado: o teclado do celular abre agora, e o toque no Entrar espera ele subir.
+        emulator.waitForTheKeyboard("entrar")
         compose.onNodeWithTag("entrar").performScrollTo().performClick()
         emulator.waitUntil("a tela principal") { emulator.showsTag("aba-teclado") }
         emulator.waitForText("Conectado · ${emulator.registrar}")
