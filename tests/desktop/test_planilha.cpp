@@ -1,7 +1,9 @@
 // Testes da leitura das planilhas de contatos (starsonic/desktop/Planilha.h; spec da rc.4, secao 6). Os .xlsx sao
 // montados aqui, na memoria, com o escritor de zip do miniz, so com as partes que a leitura usa ([Content_Types].xml,
 // xl/workbook.xml, xl/_rels/workbook.xml.rels, as abas e o sharedStrings); o "gravado pelo Excel" tem tambem as partes
-// e os atributos que o Excel em portugues grava.
+// e os atributos que o Excel em portugues grava. No fim, os testes da escrita do exportar (PlanilhaEscrita.cpp; secao
+// 4.3): o que sai do WriteContactsXlsx e do WriteContactsCsv volta igual pelo ReadContactSheet.
+#include <algorithm>
 #include <chrono>
 #include <string>
 #include <utility>
@@ -10,21 +12,29 @@
 #include "Planilha.h"
 #include "Text.h"
 #include "test_support.h"
-// Por ultimo: o miniz.h define os nomes do zlib (compress, crc32, Byte...) para o resto do arquivo.
 #include "miniz/miniz.h"
+// O CMake desliga os nomes do zlib do miniz.h (MINIZ_NO_ZLIB_COMPATIBLE_NAMES, junto do MINIZ_NO_STDIO): sem isso o
+// miniz.h poe compress, crc32, Byte, uLong... como macros e typedefs em tudo que vem depois dele. Isto falha a
+// compilacao se alguem tirar o define.
+#if defined(compress) || defined(crc32)
+#error "Falta o MINIZ_NO_ZLIB_COMPATIBLE_NAMES: o miniz.h poe os nomes do zlib (compress, crc32...) como macros"
+#endif
 
 using namespace starsonic;
 
 namespace {
 
-// Os contatos lidos, um por texto: "nome|numero|observacao".
-std::vector<std::wstring> Contacts(const SheetRead& read) {
+// Os contatos, um por texto: "nome|numero|observacao".
+std::vector<std::wstring> Contacts(const std::vector<SheetContact>& contacts) {
     std::vector<std::wstring> rows;
-    for (const SheetContact& contact : read.contacts) {
+    for (const SheetContact& contact : contacts) {
         rows.push_back(contact.name + L"|" + Utf8ToWide(contact.number) + L"|" + contact.note);
     }
     return rows;
 }
+
+// Os contatos lidos.
+std::vector<std::wstring> Contacts(const SheetRead& read) { return Contacts(read.contacts); }
 
 using Parts = std::vector<std::pair<std::string, std::string>>;
 
@@ -257,6 +267,52 @@ std::string ExcelWorkbook() {
             "<si><t>Ger\xc3\xaancia</t></si><si><t>Outra Pessoa</t></si></sst>");
     return Zip(parts);
 }
+
+// A parte do .xlsx descompactada; vazia se o zip nao a tem.
+std::string XlsxPart(const std::string& xlsx, const char* name) {
+    mz_zip_archive zip;
+    mz_zip_zero_struct(&zip);
+    REQUIRE(mz_zip_reader_init_mem(&zip, xlsx.data(), xlsx.size(), 0));
+    size_t size = 0;
+    void* data = mz_zip_reader_extract_file_to_heap(&zip, name, &size, 0);
+    const std::string part = data ? std::string(static_cast<const char*>(data), size) : std::string();
+    mz_free(data);
+    mz_zip_reader_end(&zip);
+    return part;
+}
+
+// Os nomes das partes do zip, na ordem em que foram gravadas.
+std::vector<std::string> PartNames(const std::string& xlsx) {
+    mz_zip_archive zip;
+    mz_zip_zero_struct(&zip);
+    REQUIRE(mz_zip_reader_init_mem(&zip, xlsx.data(), xlsx.size(), 0));
+    std::vector<std::string> names;
+    for (mz_uint i = 0; i < mz_zip_reader_get_num_files(&zip); ++i) {
+        mz_zip_archive_file_stat stat;
+        REQUIRE(mz_zip_reader_file_stat(&zip, i, &stat));
+        names.push_back(stat.m_filename);
+    }
+    mz_zip_reader_end(&zip);
+    return names;
+}
+
+// Quantas vezes o trecho aparece no texto.
+size_t Count(const std::string& text, const std::string& piece) {
+    size_t count = 0;
+    for (size_t at = text.find(piece); at != std::string::npos; at = text.find(piece, at + piece.size())) ++count;
+    return count;
+}
+
+// A lista do exportar com o que costuma estragar: o zero da frente, o numero com parenteses, a observacao vazia, o
+// acento e a quebra de linha na observacao.
+std::vector<SheetContact> ExportedList() {
+    return {{L"Ana Souza", "2002", L"cliente"},
+            {L"Jo\u00e3o", "(11) 5060-3000", L""},
+            {L"Z\u00e9", "011987654321", L"linha1\nlinha2"}};
+}
+
+// A primeira linha do CSV exportado: o BOM do UTF-8 e o cabecalho Nome, Numero, Observacao (com acento, em UTF-8).
+const char kCsvHeader[] = "\xef\xbb\xbfNome;N\xc3\xbamero;Observa\xc3\xa7\xc3\xa3o\r\n";
 
 }  // namespace
 
@@ -717,4 +773,224 @@ TEST_CASE("bytes that are not a sheet are unreadable") {
           SheetError::Unreadable);
     CHECK(ReadContactSheet("\xef\xbb\xbf\r\n  <HTML lang=\"pt-BR\">;2002\nAna;2003\n").error ==
           SheetError::Unreadable);
+}
+
+// ---------------------------------------------------------------- O exportar (spec 4.3)
+
+TEST_CASE("the exported csv opens in columns in a Portuguese Excel") {
+    // O BOM do UTF-8, o ponto e virgula, o CRLF e o cabecalho Nome, Numero, Observacao.
+    const std::string header = "\xef\xbb\xbfNome;N\xc3\xbamero;Observa\xc3\xa7\xc3\xa3o\r\n";
+    const std::vector<SheetContact> list = {{L"Silva; Ana", "011 2002", L"diz \"oi\""}};
+    const std::string csv = WriteContactsCsv(list);
+    CHECK(csv.compare(0, header.size(), header) == 0);
+    // O que tem ponto e virgula, aspas, CR ou LF vai entre aspas, e a aspa de dentro vira duas.
+    CHECK(csv == header + "\"Silva; Ana\";011 2002;\"diz \"\"oi\"\"\"\r\n");
+}
+
+TEST_CASE("the exported csv quotes only the text with a semicolon, a quote or a line break") {
+    const std::vector<SheetContact> list = {{L"Silva, Ana", "(11) 5060-3000", L"d'\u00e1gua"},
+                                            {L"Bia;Lima", "2003", L""},
+                                            {L"Caio", "2004", L"linha1\nlinha2"},
+                                            {L"Dora", "2005", L"linha1\r\nlinha2"},
+                                            {L"Eva", "2006", L"um\rdois"},
+                                            {L"Jo\u00e3o \"Z\"", "2007", L"\"\""},
+                                            {L"Fabio", "2008;3", L"x"}};
+    const std::string csv = WriteContactsCsv(list);
+    CHECK(csv == kCsvHeader + std::string("Silva, Ana;(11) 5060-3000;d'\xc3\xa1gua\r\n"
+                                          "\"Bia;Lima\";2003;\r\n"
+                                          "Caio;2004;\"linha1\nlinha2\"\r\n"
+                                          "Dora;2005;\"linha1\r\nlinha2\"\r\n"
+                                          "Eva;2006;\"um\rdois\"\r\n"
+                                          "\"Jo\xc3\xa3o \"\"Z\"\"\";2007;\"\"\"\"\"\"\r\n"
+                                          "Fabio;\"2008;3\";x\r\n"));
+    // O leitor le tudo de volta como os mesmos contatos, com as aspas e as quebras de linha.
+    const SheetRead read = ReadContactSheet(csv);
+    CHECK(read.error == SheetError::None);
+    CHECK(Contacts(read) == Contacts(list));
+}
+
+TEST_CASE("the exported xlsx and csv read back as the same contacts") {
+    const std::vector<SheetContact> list = ExportedList();
+    const std::string xlsx = WriteContactsXlsx(list);
+    const std::string csv = WriteContactsCsv(list);
+    REQUIRE_FALSE(xlsx.empty());
+    REQUIRE_FALSE(csv.empty());
+    const auto readsBack = [&](const char* format, const std::string& bytes) {
+        CAPTURE(format);
+        const SheetRead read = ReadContactSheet(bytes);
+        CHECK(read.error == SheetError::None);
+        CHECK(Contacts(read) == Contacts(list));
+        // O numero volta como foi escrito, com o zero da frente, e a observacao vazia volta vazia.
+        REQUIRE(read.contacts.size() == 3);
+        CHECK(read.contacts[1].number == "(11) 5060-3000");
+        CHECK(read.contacts[1].note.empty());
+        CHECK(read.contacts[2].number == "011987654321");
+        CHECK(read.contacts[2].note == L"linha1\nlinha2");
+    };
+    readsBack("xlsx", xlsx);
+    readsBack("csv", csv);
+}
+
+TEST_CASE("the exported xlsx keeps numbers as text") {
+    const std::string sheet = XlsxPart(WriteContactsXlsx(ExportedList()), "xl/worksheets/sheet1.xml");
+    REQUIRE_FALSE(sheet.empty());
+    // Toda celula e texto na propria celula (t="inlineStr"), e nenhuma guarda um valor (<v>: numero ou texto
+    // compartilhado): o Excel nao mostra o numero em notacao cientifica nem tira o zero da frente.
+    CHECK(Count(sheet, "<c ") == 11);
+    CHECK(Count(sheet, " t=\"inlineStr\"") == 11);
+    CHECK(sheet.find("<v") == std::string::npos);
+    // Cada linha leva o numero dela (r="N") e cada celula, a referencia dela (A1, B1, C1...).
+    CHECK(Count(sheet, "<row ") == 4);
+    CHECK(sheet.find("<row r=\"1\"><c r=\"A1\" t=\"inlineStr\"><is><t xml:space=\"preserve\">Nome</t></is></c>"
+                     "<c r=\"B1\" t=\"inlineStr\"><is><t xml:space=\"preserve\">N\xc3\xbamero</t></is></c>"
+                     "<c r=\"C1\" t=\"inlineStr\"><is><t xml:space=\"preserve\">Observa\xc3\xa7\xc3\xa3o</t></is></c>"
+                     "</row>") != std::string::npos);
+    CHECK(sheet.find("<row r=\"4\"><c r=\"A4\" t=\"inlineStr\"><is><t xml:space=\"preserve\">Z\xc3\xa9</t></is></c>"
+                     "<c r=\"B4\" t=\"inlineStr\"><is><t xml:space=\"preserve\">011987654321</t></is></c>"
+                     "<c r=\"C4\" t=\"inlineStr\"><is><t xml:space=\"preserve\">linha1\nlinha2</t></is></c></row>") !=
+          std::string::npos);
+    // A celula sem texto (a observacao do Joao) nao e escrita: fica em branco de verdade no Excel.
+    CHECK(sheet.find("r=\"C3\"") == std::string::npos);
+    CHECK(sheet.find("<row r=\"3\"><c r=\"A3\" t=\"inlineStr\"><is><t xml:space=\"preserve\">Jo\xc3\xa3o</t></is></c>"
+                     "<c r=\"B3\" t=\"inlineStr\"><is><t xml:space=\"preserve\">(11) 5060-3000</t></is></c></row>") !=
+          std::string::npos);
+}
+
+TEST_CASE("an empty list exports only the header") {
+    const std::vector<SheetContact> none;
+    const std::string csv = WriteContactsCsv(none);
+    CHECK(csv == kCsvHeader);
+    const std::string xlsx = WriteContactsXlsx(none);
+    REQUIRE_FALSE(xlsx.empty());
+    const std::string sheet = XlsxPart(xlsx, "xl/worksheets/sheet1.xml");
+    CHECK(Count(sheet, "<row ") == 1);
+    CHECK(Count(sheet, "<c ") == 3);
+    CHECK(sheet.find("<row r=\"1\">") != std::string::npos);
+    // Uma planilha so com o cabecalho e uma lista vazia valida, nos dois formatos.
+    for (const std::string& bytes : {csv, xlsx}) {
+        const SheetRead read = ReadContactSheet(bytes);
+        CHECK(read.error == SheetError::None);
+        CHECK(read.contacts.empty());
+    }
+}
+
+TEST_CASE("the exported xlsx has the parts Excel needs and one sheet named Contatos") {
+    const std::string xlsx = WriteContactsXlsx(ExportedList());
+    const std::vector<std::string> names = PartNames(xlsx);
+    CHECK(names.size() == 5);
+    for (const char* part : {"[Content_Types].xml", "_rels/.rels", "xl/workbook.xml", "xl/_rels/workbook.xml.rels",
+                             "xl/worksheets/sheet1.xml"}) {
+        CAPTURE(part);
+        CHECK(std::find(names.begin(), names.end(), part) != names.end());
+        // Cada parte e um XML em UTF-8, com a declaracao.
+        CHECK(XlsxPart(xlsx, part).rfind("<?xml version=\"1.0\" encoding=\"UTF-8\"", 0) == 0);
+    }
+    // Os tipos que o Excel confere: o workbook e a aba.
+    const std::string types = XlsxPart(xlsx, "[Content_Types].xml");
+    CHECK(types.find("<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package."
+                     "relationships+xml\"/>") != std::string::npos);
+    CHECK(types.find("<Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-"
+                     "officedocument.spreadsheetml.sheet.main+xml\"/>") != std::string::npos);
+    CHECK(types.find("<Override PartName=\"/xl/worksheets/sheet1.xml\" ContentType=\"application/vnd.openxmlformats-"
+                     "officedocument.spreadsheetml.worksheet+xml\"/>") != std::string::npos);
+    // A raiz do pacote aponta para o workbook; o workbook, para a aba "Contatos"; e o .rels dele, para a parte da aba.
+    CHECK(XlsxPart(xlsx, "_rels/.rels")
+              .find("<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/"
+                    "relationships/officeDocument\" Target=\"xl/workbook.xml\"/>") != std::string::npos);
+    const std::string workbook = XlsxPart(xlsx, "xl/workbook.xml");
+    CHECK(Count(workbook, "<sheet ") == 1);
+    CHECK(workbook.find("<sheet name=\"Contatos\" sheetId=\"1\" r:id=\"rId1\"/>") != std::string::npos);
+    CHECK(XlsxPart(xlsx, "xl/_rels/workbook.xml.rels")
+              .find("<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/"
+                    "relationships/worksheet\" Target=\"worksheets/sheet1.xml\"/>") != std::string::npos);
+}
+
+TEST_CASE("the exported xlsx escapes the markup and keeps the spaces and the line breaks") {
+    const std::vector<SheetContact> list = {{L"  Ana & Bia <vip>  ", "2002 & <3>", L"\nx > y ]]> z\n"}};
+    const std::string xlsx = WriteContactsXlsx(list);
+    const std::string sheet = XlsxPart(xlsx, "xl/worksheets/sheet1.xml");
+    CHECK(sheet.find("<t xml:space=\"preserve\">  Ana &amp; Bia &lt;vip&gt;  </t>") != std::string::npos);
+    CHECK(sheet.find("<t xml:space=\"preserve\">2002 &amp; &lt;3&gt;</t>") != std::string::npos);
+    CHECK(sheet.find("<t xml:space=\"preserve\">\nx &gt; y ]]&gt; z\n</t>") != std::string::npos);
+    // Todo <t> leva o xml:space="preserve": os espacos e as quebras das pontas ficam no arquivo.
+    CHECK(Count(sheet, "<t>") == 0);
+    CHECK(Count(sheet, "<t xml:space=\"preserve\">") == Count(sheet, "<c "));
+    // O leitor tira os espacos e as quebras das pontas (spec 6.2), e o resto volta igual.
+    const SheetRead read = ReadContactSheet(xlsx);
+    CHECK(read.error == SheetError::None);
+    CHECK(Contacts(read) == std::vector<std::wstring>{L"Ana & Bia <vip>|2002 & <3>|x > y ]]> z"});
+}
+
+TEST_CASE("an xlsx cell loses a control character that XML cannot carry, and the csv keeps the text") {
+    const std::vector<SheetContact> list = {{L"Ana", "2002", L"cliente\x01 antigo"}};
+    const std::string xlsx = WriteContactsXlsx(list);
+    const SheetRead read = ReadContactSheet(xlsx);
+    CHECK(read.error == SheetError::None);
+    CHECK(Contacts(read) == std::vector<std::wstring>{L"Ana|2002|cliente antigo"});
+    // No CSV o texto vai como esta.
+    const std::string csv = WriteContactsCsv(list);
+    CHECK(csv.find("cliente\x01 antigo") != std::string::npos);
+    CHECK(Contacts(ReadContactSheet(csv)) == Contacts(list));
+}
+
+TEST_CASE("the exported xlsx drops every character XML 1.0 forbids and keeps the TAB, the LF and the CR") {
+    // U+0000 a U+0008, U+000B, U+000C, U+000E a U+001F, U+FFFE e U+FFFF: o Excel nao abre a planilha que tem um deles.
+    std::wstring forbidden;
+    for (wchar_t ch = 0; ch < 0x20; ++ch) {
+        if (ch != L'\t' && ch != L'\n' && ch != L'\r') forbidden.push_back(ch);
+    }
+    forbidden.push_back(static_cast<wchar_t>(0xFFFE));
+    forbidden.push_back(static_cast<wchar_t>(0xFFFF));
+    const std::vector<SheetContact> list = {{L"Ana" + forbidden + L" Souza", "20" + WideToUtf8(forbidden) + "02",
+                                             L"a" + forbidden + L"b\tc\nd\re" + forbidden}};
+    const std::string xlsx = WriteContactsXlsx(list);
+    const std::string sheet = XlsxPart(xlsx, "xl/worksheets/sheet1.xml");
+    REQUIRE_FALSE(sheet.empty());
+    // Na aba toda: nenhum caractere de controle fora o TAB e o LF (o CR vai como &#13;, porque um XML le o CR solto
+    // como LF), e nem U+FFFE nem U+FFFF (EF BF BE e EF BF BF em UTF-8).
+    const bool clean = std::all_of(sheet.begin(), sheet.end(), [](char ch) {
+        const unsigned char byte = static_cast<unsigned char>(ch);
+        return byte >= 0x20 || byte == '\t' || byte == '\n';
+    });
+    CHECK(clean);
+    CHECK(sheet.find("\xef\xbf\xbe") == std::string::npos);
+    CHECK(sheet.find("\xef\xbf\xbf") == std::string::npos);
+    CHECK(sheet.find("b\tc\nd&#13;e") != std::string::npos);
+    // O resto do texto volta intacto: o TAB, o LF e o CR no meio da observacao (as pontas o leitor tira).
+    const SheetRead read = ReadContactSheet(xlsx);
+    CHECK(read.error == SheetError::None);
+    CHECK(Contacts(read) == std::vector<std::wstring>{L"Ana Souza|2002|ab\tc\nd\re"});
+}
+
+TEST_CASE("the exported files carry accents and characters outside the basic plane as UTF-8") {
+    const std::vector<SheetContact> list = {
+        {L"Jos\u00e9 \U0001F4DE", "+55 11 98888-7777", L"Ger\u00eancia \u2013 caf\u00e9 \u20ac"}};
+    const std::string xlsx = WriteContactsXlsx(list);
+    const std::string csv = WriteContactsCsv(list);
+    CHECK(csv == kCsvHeader + std::string("Jos\xc3\xa9 \xf0\x9f\x93\x9e;+55 11 98888-7777;"
+                                          "Ger\xc3\xaancia \xe2\x80\x93 caf\xc3\xa9 \xe2\x82\xac\r\n"));
+    const std::string sheet = XlsxPart(xlsx, "xl/worksheets/sheet1.xml");
+    CHECK(sheet.find("<t xml:space=\"preserve\">Jos\xc3\xa9 \xf0\x9f\x93\x9e</t>") != std::string::npos);
+    for (const std::string& bytes : {xlsx, csv}) {
+        const SheetRead read = ReadContactSheet(bytes);
+        CHECK(read.error == SheetError::None);
+        CHECK(Contacts(read) == Contacts(list));
+    }
+}
+
+TEST_CASE("an export with the most contacts a sheet can have reads back whole in both formats") {
+    std::vector<SheetContact> list;
+    for (size_t i = 0; i < kSheetMaxContacts; ++i) {
+        list.push_back(SheetContact{L"Contato " + std::to_wstring(i), std::to_string(100000 + i),
+                                    i % 2 == 0 ? L"nota; " + std::to_wstring(i) : std::wstring()});
+    }
+    const std::vector<std::wstring> expected = Contacts(list);
+    for (const std::string& bytes : {WriteContactsXlsx(list), WriteContactsCsv(list)}) {
+        REQUIRE_FALSE(bytes.empty());
+        const SheetRead read = ReadContactSheet(bytes);
+        CHECK(read.error == SheetError::None);
+        CHECK(read.contacts.size() == kSheetMaxContacts);
+        const bool same = Contacts(read) == expected;
+        CHECK(same);
+    }
 }

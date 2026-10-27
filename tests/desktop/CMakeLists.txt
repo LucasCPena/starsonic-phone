@@ -25,11 +25,13 @@ endif()
 find_package(SQLite3 REQUIRED)
 find_package(Threads REQUIRED)
 
-# O miniz 3.0.2 (MIT, starsonic/third_party/miniz, como veio): o zip do .xlsx das planilhas de contatos (Planilha.cpp)
-# e o dos testes. Uma biblioteca so com o miniz.c, sem as opcoes de aviso do projeto. O zip e sempre na memoria: sem
-# as funcoes de arquivo (MINIZ_NO_STDIO, tambem para quem inclui o miniz.h).
+# O miniz 3.0.2 (MIT, starsonic/third_party/miniz, como veio): o zip do .xlsx das planilhas de contatos (Planilha.cpp
+# e PlanilhaEscrita.cpp) e o dos testes. Uma biblioteca so com o miniz.c, sem as opcoes de aviso do projeto. O zip e
+# sempre na memoria: sem as funcoes de arquivo (MINIZ_NO_STDIO). E sem os nomes do zlib
+# (MINIZ_NO_ZLIB_COMPATIBLE_NAMES): o miniz.h poe compress, crc32, Byte, uLong... como macros e typedefs em todo
+# arquivo que o inclui, e aqui so valem os nomes mz_. Os dois defines sao PUBLIC, tambem para quem inclui o miniz.h.
 add_library(miniz STATIC ${STARSONIC_DIR}/third_party/miniz/miniz.c)
-target_compile_definitions(miniz PUBLIC MINIZ_NO_STDIO)
+target_compile_definitions(miniz PUBLIC MINIZ_NO_STDIO MINIZ_NO_ZLIB_COMPATIBLE_NAMES)
 
 add_executable(desktop_tests main.cpp ${DESKTOP_TEST_SOURCES} ${STARSONIC_CORE_SOURCES} ${STARSONIC_DESKTOP_SOURCES}
   ${STARSONIC_DIR}/phone/CallController.cpp)

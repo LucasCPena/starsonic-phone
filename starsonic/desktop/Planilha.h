@@ -1,5 +1,6 @@
 #pragma once
-// A leitura das planilhas de contatos (spec da rc.4, secao 6): a mesma para o importar e para a lista da empresa.
+// As planilhas de contatos (spec da rc.4): a leitura (secao 6), a mesma para o importar e para a lista da empresa, e a
+// escrita do exportar (secao 4.3), no fim deste arquivo.
 // C++ portatil: nada de Windows aqui. O zip do .xlsx e o do miniz (starsonic/third_party/miniz).
 //
 // O formato sai do conteudo, nao da extensao: os bytes que comecam com "PK" sao um .xlsx; o resto e CSV.
@@ -56,5 +57,22 @@ constexpr size_t kSheetMaxPartBytes = 52428800;   // 50 MB: protege de um .xlsx 
 
 // Os contatos da planilha (os bytes do arquivo). Nunca lanca excecao: o que falha na leitura vira o erro.
 SheetRead ReadContactSheet(const std::string& bytes);
+
+// A escrita do exportar (spec 4.3), em PlanilhaEscrita.cpp: os contatos viram os bytes de um arquivo, na ordem recebida
+// (a ordem alfabetica e de quem chama). Os dois formatos levam o cabecalho Nome, Numero e Observacao (com acento, em
+// UTF-8), e o ReadContactSheet os le de volta como os mesmos contatos.
+// - .xlsx: uma aba, "Contatos", so com as partes minimas que o Excel abre ([Content_Types].xml, _rels/.rels,
+//   xl/workbook.xml, xl/_rels/workbook.xml.rels e xl/worksheets/sheet1.xml). Toda celula e texto na propria celula
+//   (t="inlineStr", sem <v>), para o Excel nao mostrar o numero em notacao cientifica nem tirar o zero da frente, e
+//   leva a referencia dela (A1, B1, C1...); a linha leva o numero dela (r="2"). A celula sem texto nao e escrita. O
+//   texto sai sem os caracteres que o XML 1.0 nao carrega (U+0000 a U+0008, U+000B, U+000C, U+000E a U+001F, U+FFFE e
+//   U+FFFF: o Excel nao abre a planilha que tem um deles), com & < > em entidades (e o CR como &#13;), e com os
+//   espacos e as quebras de linha das pontas guardados (xml:space="preserve").
+// - CSV: UTF-8 com BOM, separado por ponto e virgula e com CRLF, para o Excel em portugues abrir em colunas. O campo
+//   vai entre aspas quando tem ponto e virgula, aspas, CR ou LF (a aspa de dentro vira duas). O texto vai como esta.
+// Os dois nunca lancam excecao: devolvem vazio so se o miniz nao deu ou faltou memoria. Um arquivo exportado nunca e
+// vazio (o CSV tem o BOM e o cabecalho; o .xlsx, o zip), entao vazio e a falha.
+std::string WriteContactsXlsx(const std::vector<SheetContact>& contacts);
+std::string WriteContactsCsv(const std::vector<SheetContact>& contacts);
 
 }  // namespace starsonic

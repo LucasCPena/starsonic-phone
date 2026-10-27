@@ -8,7 +8,8 @@
 #include "CallMessages.h"   // NormalizeDialString
 #include "Stores.h"         // FoldForSearch
 #include "Text.h"
-// Por ultimo: o miniz.h define os nomes do zlib (compress, crc32, Byte...) para o resto do arquivo.
+// Os nomes do zlib (compress, crc32, Byte...) ficam desligados no CMake (MINIZ_NO_ZLIB_COMPATIBLE_NAMES): do miniz.h
+// so valem os nomes mz_.
 #include "miniz/miniz.h"
 
 namespace starsonic {

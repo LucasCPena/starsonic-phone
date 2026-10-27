@@ -96,11 +96,13 @@ file(GLOB DESKTOP_SOURCES CONFIGURE_DEPENDS ${STARSONIC_DIR}/desktop/*.cpp)
 file(GLOB PHONE_SOURCES CONFIGURE_DEPENDS ${STARSONIC_DIR}/phone/*.cpp)
 
 # O miniz 3.0.2 (MIT, starsonic/third_party/miniz, como veio): o zip do .xlsx das planilhas de contatos
-# (starsonic/desktop/Planilha.cpp). Uma biblioteca so com o miniz.c, sem as opcoes de aviso do app, com o mesmo runtime
-# estatico (/MT). O zip e sempre na memoria: sem as funcoes de arquivo (MINIZ_NO_STDIO, tambem para quem inclui o
-# miniz.h).
+# (starsonic/desktop/Planilha.cpp e PlanilhaEscrita.cpp). Uma biblioteca so com o miniz.c, sem as opcoes de aviso do
+# app, com o mesmo runtime estatico (/MT). O zip e sempre na memoria: sem as funcoes de arquivo (MINIZ_NO_STDIO). E sem
+# os nomes do zlib (MINIZ_NO_ZLIB_COMPATIBLE_NAMES): o miniz.h poe compress, crc32, Byte, uLong... como macros e
+# typedefs em todo arquivo que o inclui, e aqui so valem os nomes mz_. Os dois defines sao PUBLIC, tambem para quem
+# inclui o miniz.h.
 add_library(miniz STATIC ${STARSONIC_DIR}/third_party/miniz/miniz.c)
-target_compile_definitions(miniz PUBLIC MINIZ_NO_STDIO)
+target_compile_definitions(miniz PUBLIC MINIZ_NO_STDIO MINIZ_NO_ZLIB_COMPATIBLE_NAMES)
 
 # Do starsonic/win, so o que e Win32 puro (sem MFC): a senha da rc.7 e o atualizador (versao.json, HTTPS, SHA-256 e
 # o aviso de falha de TLS do PJSIP).
