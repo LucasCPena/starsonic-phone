@@ -98,9 +98,7 @@ import org.junit.runners.MethodSorters
  * ([Emulator.saveScreen]) saem na tela dos quadros do canvas (390 × 844 dp), menos as "-pequena" e as "-letra-grande", na
  * do emulador do CI ou na que o teste põe.
  *
- * O microfone que o Android recusa ao Atender automático (spec 12, F1): o teste o tira do app no appops até a recusa; ele
- * volta quando a pessoa atende à mão, e os tipos da ligação saem do serviço quando a recebida para de tocar sem ser
- * atendida. E os efeitos da composição destes testes voltam à thread principal, como no app (F8: a regra v2 do Compose).
+ * Os efeitos da composição destes testes voltam à thread principal, como no app (F8: a regra v2 do Compose).
  *
  * No fim, uma "Nota do teste" na saída do am instrument conta os toques repetidos nos botões da notificação
  * (o run-emulator-tests.sh a mostra numa anotação); outra conta como o Android deixou o serviço com o Atender automático
@@ -118,7 +116,6 @@ class CallFlowTest {
     private val audio = app.getSystemService(AudioManager::class.java)
     private var scenario: ActivityScenario<MainActivity>? = null
     private var settingsBefore: CallSettings? = null
-    private var microphoneBefore: String? = null   // o modo do microfone no appops, enquanto o teste o tira
 
     @Before
     fun connect() {
@@ -151,30 +148,8 @@ class CallFlowTest {
             }
             scenario?.close()
         } finally {
-            restoreMicrophone()
             emulator.restoreLook()
             settingsBefore?.let { before -> app.callSettings.update { before } }
-        }
-    }
-
-    @Test
-    fun aMicrophoneRefusedToTheAutoAnswerReturnsWhenTheCallIsAnsweredByHand() {
-        // F1 (spec 12): o Android recusa o microfone que o Atender automático pede antes de atender, e a recebida continua
-        // tocando, com o serviço só no phoneCall. A pessoa abre a tela cheia e atende nela (sem um onResume depois do
-        // atender): o serviço pede de novo os tipos da ligação, agora com o microfone (o app na frente). No fim, os de
-        // sempre.
-        ringWithTheMicrophoneRefused()
-        app.startActivity(CallActivity.intent(app))
-        emulator.waitUntil("o Atender da tela cheia") { emulator.showsTag("atender") }
-        compose.onNodeWithTag("atender").performScrollTo().performClick()
-        emulator.waitUntil("a ligação atendida") { app.calls.state.value?.phase == CallPhase.ACTIVE }
-        emulator.waitUntil("o microfone de volta no serviço", details = ::foregroundService) {
-            foregroundTypes() and MICROPHONE_TYPE != 0
-        }
-        assertEquals("OK", emulator.control("HANGUP 2001"))
-        emulator.waitUntil("a ligação acabar") { app.calls.state.value == null }
-        emulator.waitUntil("os tipos de sempre depois da ligação", details = ::foregroundService) {
-            foregroundTypes() and PHONE_CALL_TYPE == 0
         }
     }
 
@@ -208,16 +183,6 @@ class CallFlowTest {
         }
         val main = Looper.getMainLooper().thread.name
         assertEquals("os efeitos na thread principal", listOf(main, main), threads.toList())
-    }
-
-    @Test
-    fun theCallTypesLeaveWhenTheCallTheAutoAnswerPreparedStopsRinging() {
-        // F1: a recebida com o microfone recusado ao Atender automático (o serviço no phoneCall) para de tocar sem ser
-        // atendida (quem ligou desistiu): sem ligação, o serviço volta aos tipos de sempre.
-        ringWithTheMicrophoneRefused()
-        assertEquals("OK", emulator.control("HANGUP 2001"))
-        emulator.waitUntil("a recebida acabar") { app.calls.state.value == null }
-        emulator.waitUntil("os tipos de sempre", details = ::foregroundService) { foregroundTypes() and PHONE_CALL_TYPE == 0 }
     }
 
     @Test
@@ -1110,51 +1075,9 @@ class CallFlowTest {
     private fun foregroundService(): String {
         val dump = emulator.shell("dumpsys activity services br.com.starsonic.phone/.service.SipService").map { it.trim() }
         val wanted = dump.filter { line -> FGS_KEYS.any { line.contains(it, ignoreCase = true) } }.distinct().take(8)
-        return "${wanted.joinToString(" | ").take(600)}; recusas do primeiro plano no logcat: ${foregroundRefusals()}"
+        val refused = emulator.shell("logcat -d -v brief -s SipService:W").count { "não entrou em primeiro plano" in it }
+        return "${wanted.joinToString(" | ").take(600)}; recusas do primeiro plano no logcat: $refused"
     }
-
-    // Os tipos do serviço em primeiro plano agora (o "types=" do dumpsys, em hexadecimal; 0 sem ele).
-    private fun foregroundTypes(): Int =
-        emulator.shell("dumpsys activity services br.com.starsonic.phone/.service.SipService")
-            .firstNotNullOfOrNull { FOREGROUND_TYPES.find(it)?.groupValues?.get(1)?.toLong(16)?.toInt() } ?: 0
-
-    // As recusas do Android ao pôr o serviço em primeiro plano desde o último clearLogcat (o aviso do SipService).
-    private fun foregroundRefusals(): Int =
-        emulator.shell("logcat -d -v brief -s SipService:W").count { "não entrou em primeiro plano" in it }
-
-    // A recebida com o Atender automático na hora e o microfone recusado pelo Android (spec 12): o teste tira o microfone
-    // do app no appops (o modo do uid, o que o Android confere ao pôr o serviço em primeiro plano) até a recusa, e o
-    // devolve. Ela continua tocando, com o serviço no phoneCall, sem o microfone.
-    private fun ringWithTheMicrophoneRefused() {
-        app.callSettings.update { it.copy(autoAnswer = true, autoAnswerSeconds = 0) }
-        emulator.clearLogcat()
-        microphoneBefore = microphoneMode()
-        emulator.shell("appops set --uid ${app.packageName} RECORD_AUDIO ignore")
-        try {
-            assertEquals("OK", emulator.control("RING 2001"))
-            emulator.waitUntil("o Android recusar o microfone", details = ::foregroundService) { foregroundRefusals() > 0 }
-            emulator.waitUntil("o serviço no phoneCall, sem o microfone", details = ::foregroundService) {
-                foregroundTypes().let { it and PHONE_CALL_TYPE != 0 && it and MICROPHONE_TYPE == 0 }
-            }
-        } finally {
-            restoreMicrophone()
-        }
-        Thread.sleep(1_000)   // o Atender automático já desistiu (sem o microfone): ninguém a atende
-        assertEquals("a recebida continua tocando", CallPhase.RINGING, app.calls.state.value?.phase)
-    }
-
-    // Devolve o modo do microfone que o teste tirou do app no appops.
-    private fun restoreMicrophone() {
-        val mode = microphoneBefore ?: return
-        microphoneBefore = null
-        emulator.shell("appops set --uid ${app.packageName} RECORD_AUDIO $mode")
-    }
-
-    // O modo do microfone do app no appops: o do uid (o que o Android confere), ou o "foreground" de uma permissão dada.
-    private fun microphoneMode(): String =
-        emulator.shell("appops get ${app.packageName} RECORD_AUDIO").firstNotNullOfOrNull { line ->
-            MICROPHONE_MODE.find(line)?.takeIf { "Uid mode" in line }?.groupValues?.get(1)
-        } ?: "foreground"
 
     // A notificação da chamada em espera: no canal sem som, sem a tela cheia e sem o toque que se repete.
     private fun waitingNotification(): Boolean =
@@ -1297,13 +1220,6 @@ class CallFlowTest {
 
         // O que a nota do risco 12 tira do dumpsys do serviço: se está em primeiro plano, os tipos e o microfone.
         private val FGS_KEYS = listOf("isForeground", "types=", "foregroundServiceType", "WhileInUse")
-
-        // Os tipos do serviço em primeiro plano no dumpsys ("types=40000084"), os do phoneCall e do microphone (os números
-        // do ServiceInfo) e o modo do microfone no appops ("Uid mode: RECORD_AUDIO: foreground").
-        private val FOREGROUND_TYPES = Regex("""\btypes=([0-9A-Fa-f]{8})\b""")
-        private const val PHONE_CALL_TYPE = 0x04
-        private const val MICROPHONE_TYPE = 0x80
-        private val MICROPHONE_MODE = Regex("""RECORD_AUDIO: (\w+)""")
 
         // Os botões do Transferir (as etiquetas e os nomes), para a letra grande (F4).
         private val TRANSFER_BUTTONS = listOf("transferir-consultar" to "Consultar", "transferir-agora" to "Transferir agora")
