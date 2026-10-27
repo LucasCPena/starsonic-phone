@@ -52,9 +52,11 @@ import kotlinx.coroutines.launch
  *   desde o Ligar; a recebida depois de atendida), acrescenta phoneCall e microphone; no fim, volta a só
  *   specialUse. O Android 14+ não deixa acrescentar o microphone com o app em segundo plano: a troca acontece
  *   quando a ligação muda e a cada início do serviço (a tela de chamada o inicia ao aparecer, com o app na
- *   frente); se o Android recusa, o serviço fica como estava e a ligação segue. A recebida que o Atender automático
- *   vai atender (spec 12) acrescenta os tipos antes do atender ([prepareCallMicrophone]): sem o microfone, ela continua
- *   tocando.
+ *   frente); se o Android recusa, o serviço fica com o que ele aceitou e a ligação segue. A recebida que o Atender
+ *   automático vai atender (spec 12) acrescenta os tipos antes do atender ([prepareCallMicrophone]): sem o microfone,
+ *   ela continua tocando. O serviço compara o que a ligação pede com o tipo que o Android aceitou ([ForegroundReentry],
+ *   F1): o microfone recusado ao Atender automático volta quando a pessoa atende à mão, e os tipos da ligação saem
+ *   quando a recebida que ele preparou para de tocar sem ser atendida.
  * - Numa thread própria ("starsonic-servico"), lê a conta gravada (Keystore e disco), sobe o motor (uma vez
  *   por processo) e segura a conta ([Connection.adopt]): a que já está no motor (a que a tela Entrar acabou de
  *   registrar, ou a de um início anterior) fica, sem outro REGISTER. Só se a última renovação dela falhou numa falha
