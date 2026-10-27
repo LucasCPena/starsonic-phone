@@ -7,36 +7,34 @@ import android.content.Intent
 import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Looper
 import android.os.SystemClock
 import android.service.notification.StatusBarNotification
 import android.telecom.CallAudioState
-import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.semantics.SemanticsActions
+import android.view.ViewGroup
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
-import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
-import androidx.compose.ui.test.filterToOne
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
-import androidx.compose.ui.test.onChildren
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
-import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
-import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.toSize
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -55,7 +53,11 @@ import br.com.starsonic.phone.data.CallSettings
 import br.com.starsonic.phone.data.Recent
 import br.com.starsonic.phone.engine.Transport
 import br.com.starsonic.phone.main.MainActivity
+import java.util.Collections
 import java.util.regex.Pattern
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.withContext
 import org.junit.After
 import org.junit.AfterClass
 import org.junit.Assert.assertEquals
@@ -92,8 +94,13 @@ import org.junit.runners.MethodSorters
  * em tela cheia (a notificação que toca fica como está, e o toque continua; a silenciada perde e ganha a linha com a
  * decisão), o Rediscar da Nova ligação, o Desligar da ligação ativa com duas, o toque de 48 dp dos redondos da faixa da
  * segunda, e a maior letra na tela de 320 dp (a contagem, com o "em <n> s" junto, os nomes dos cartões e os dos controles
- * inteiros, também os da consulta). As fotos ([Emulator.saveScreen]) saem na tela dos quadros do canvas (390 × 844 dp),
- * menos as "-pequena" e as "-letra-grande", na do emulador do CI.
+ * inteiros, também os da consulta) e na de 360 dp (os botões do Transferir inteiros, F4). As fotos
+ * ([Emulator.saveScreen]) saem na tela dos quadros do canvas (390 × 844 dp), menos as "-pequena" e as "-letra-grande", na
+ * do emulador do CI ou na que o teste põe.
+ *
+ * O microfone que o Android recusa ao Atender automático (spec 12, F1): o teste o tira do app no appops até a recusa; ele
+ * volta quando a pessoa atende à mão, e os tipos da ligação saem do serviço quando a recebida para de tocar sem ser
+ * atendida. E os efeitos da composição destes testes voltam à thread principal, como no app (F8: a regra v2 do Compose).
  *
  * No fim, uma "Nota do teste" na saída do am instrument conta os toques repetidos nos botões da notificação
  * (o run-emulator-tests.sh a mostra numa anotação); outra conta como o Android deixou o serviço com o Atender automático
@@ -111,6 +118,7 @@ class CallFlowTest {
     private val audio = app.getSystemService(AudioManager::class.java)
     private var scenario: ActivityScenario<MainActivity>? = null
     private var settingsBefore: CallSettings? = null
+    private var microphoneBefore: String? = null   // o modo do microfone no appops, enquanto o teste o tira
 
     @Before
     fun connect() {
@@ -143,9 +151,92 @@ class CallFlowTest {
             }
             scenario?.close()
         } finally {
+            restoreMicrophone()
             emulator.restoreLook()
             settingsBefore?.let { before -> app.callSettings.update { before } }
         }
+    }
+
+    @Test
+    fun aMicrophoneRefusedToTheAutoAnswerReturnsWhenTheCallIsAnsweredByHand() {
+        // F1 (spec 12): o Android recusa o microfone que o Atender automático pede antes de atender, e a recebida continua
+        // tocando, com o serviço só no phoneCall. A pessoa abre a tela cheia e atende nela (sem um onResume depois do
+        // atender): o serviço pede de novo os tipos da ligação, agora com o microfone (o app na frente). No fim, os de
+        // sempre.
+        ringWithTheMicrophoneRefused()
+        app.startActivity(CallActivity.intent(app))
+        emulator.waitUntil("o Atender da tela cheia") { emulator.showsTag("atender") }
+        compose.onNodeWithTag("atender").performScrollTo().performClick()
+        emulator.waitUntil("a ligação atendida") { app.calls.state.value?.phase == CallPhase.ACTIVE }
+        emulator.waitUntil("o microfone de volta no serviço", details = ::foregroundService) {
+            foregroundTypes() and MICROPHONE_TYPE != 0
+        }
+        assertEquals("OK", emulator.control("HANGUP 2001"))
+        emulator.waitUntil("a ligação acabar") { app.calls.state.value == null }
+        emulator.waitUntil("os tipos de sempre depois da ligação", details = ::foregroundService) {
+            foregroundTypes() and PHONE_CALL_TYPE == 0
+        }
+    }
+
+    @Test
+    fun composeEffectsResumeOnTheMainThread() {
+        // F8: nestes testes, os efeitos da composição voltam à thread principal, como no app: o LaunchedEffect depois de um
+        // withContext(Dispatchers.IO), e a coleta de um flow que muda em outra thread (o App.status nasce no
+        // Dispatchers.Default). A regra v1 do Compose (o UnconfinedTestDispatcher) os continuava na thread que os acordou,
+        // e o Compose acusava o acesso de duas threads (runs 40379892406 e 40450292872).
+        val threads = Collections.synchronizedList(mutableListOf<String>())
+        val changes = MutableStateFlow(0)
+        scenario!!.onActivity { activity ->
+            val view = ComposeView(activity)
+            activity.addContentView(view, ViewGroup.LayoutParams(1, 1))
+            view.setContent {
+                val value by changes.collectAsState()
+                LaunchedEffect(value) {
+                    withContext(Dispatchers.IO) {}
+                    threads += Thread.currentThread().name
+                }
+            }
+        }
+        emulator.waitUntil("o primeiro efeito", details = { "Threads: $threads" }) {
+            compose.waitForIdle()
+            threads.size >= 1
+        }
+        Thread { changes.value = 1 }.apply { start() }.join()
+        emulator.waitUntil("o efeito da mudança", details = { "Threads: $threads" }) {
+            compose.waitForIdle()
+            threads.size >= 2
+        }
+        val main = Looper.getMainLooper().thread.name
+        assertEquals("os efeitos na thread principal", listOf(main, main), threads.toList())
+    }
+
+    @Test
+    fun theCallTypesLeaveWhenTheCallTheAutoAnswerPreparedStopsRinging() {
+        // F1: a recebida com o microfone recusado ao Atender automático (o serviço no phoneCall) para de tocar sem ser
+        // atendida (quem ligou desistiu): sem ligação, o serviço volta aos tipos de sempre.
+        ringWithTheMicrophoneRefused()
+        assertEquals("OK", emulator.control("HANGUP 2001"))
+        emulator.waitUntil("a recebida acabar") { app.calls.state.value == null }
+        emulator.waitUntil("os tipos de sempre", details = ::foregroundService) { foregroundTypes() and PHONE_CALL_TYPE == 0 }
+    }
+
+    @Test
+    fun theTransferPanelKeepsItsButtonsWholeAtTheLargestFont() {
+        // F4, com a maior letra na tela de 360 dp: o "Consultar" e o "Transferir agora" do Transferir ficam um embaixo do
+        // outro quando não cabem inteiros lado a lado, e nenhuma palavra quebra no meio. A foto do painel.
+        emulator.useDisplay(720, 1280, 320)
+        emulator.setFontScale(2.0f)
+        answerOnTheCallScreen()
+        compose.onNodeWithTag("transferir").performScrollTo().performClick()
+        emulator.waitUntil("o número do Transferir") { emulator.showsTag("transferir-numero") }
+        for ((tag, label) in TRANSFER_BUTTONS) {
+            compose.onNodeWithTag(tag).performScrollTo()
+            emulator.assertWholeText("o botão $label", tag, emulator.drawnText(tag, label))
+        }
+        emulator.saveScreen("transferir-letra-grande.png")
+        compose.onNodeWithTag("transferir-cancelar").performScrollTo().performClick()
+        assertEquals("OK", emulator.control("HANGUP 2001"))
+        emulator.waitUntil("a ligação acabar") { app.calls.state.value == null }
     }
 
     @Test
@@ -347,10 +438,10 @@ class CallFlowTest {
         emulator.waitUntil("a notificação de ligação", details = ::notifications) { callNotification() != null }
         openTheIncomingByItsNotification("Cliente Teste")
         emulator.waitUntil("a linha do Atender automático") { emulator.showsTag(AUTO_LINE) }
-        val line = drawnText(AUTO_LINE)
-        assertWhole("a linha do Atender automático", AUTO_LINE, line)
+        val line = emulator.drawnText(AUTO_LINE)
+        emulator.assertWholeText("a linha do Atender automático", AUTO_LINE, line)
         assertOnOneLine("o \"em <n> s\" da contagem", line, from = "EM")
-        val drawn = textOf(line)
+        val drawn = emulator.textOf(line)
         assertTrue("a contagem com os segundos: \"$drawn\"", DRAWN_COUNTDOWN.matches(drawn))
         emulator.saveScreen("recebida-letra-grande.png")
         compose.onNodeWithTag("recusar").performScrollTo().performClick()
@@ -359,15 +450,17 @@ class CallFlowTest {
         // Uma ligação (sem o Atender automático): os nomes dos controles dela.
         app.callSettings.update { it.copy(autoAnswer = false) }
         val first = answerOnTheCallScreen()
-        for ((tag, label) in ONE_CALL_CONTROLS) assertWhole("o controle $label", tag, drawnText(tag, label))
+        for ((tag, label) in ONE_CALL_CONTROLS) emulator.assertWholeText("o controle $label", tag, emulator.drawnText(tag, label))
         // As duas: o nome inteiro em cada cartão, e os nomes dos controles delas.
         assertEquals("OK", emulator.control("RING 2001"))
         emulator.waitUntil("a faixa da segunda ligação") { showsTagWithText("segunda-ligacao", "Ligação de Cliente Teste") }
         compose.onNodeWithTag("atender-segunda").performClick()
         emulator.waitUntil("a segunda atendida, com a primeira em espera") { activeWith(held = first) }
         emulator.waitUntil("o cartão da em espera") { showsTagWithText("cartao-espera", "Em espera") }
-        for (card in listOf("cartao-ativa", "cartao-espera")) assertWhole("o nome em $card", card, drawnText(card, "Cliente Teste"))
-        for ((tag, label) in TWO_CALLS_CONTROLS) assertWhole("o controle $label", tag, drawnText(tag, label))
+        for (card in listOf("cartao-ativa", "cartao-espera")) {
+            emulator.assertWholeText("o nome em $card", card, emulator.drawnText(card, "Cliente Teste"))
+        }
+        for ((tag, label) in TWO_CALLS_CONTROLS) emulator.assertWholeText("o controle $label", tag, emulator.drawnText(tag, label))
         emulator.saveScreen("duas-ligacoes-letra-grande.png")
         // A consulta (o registrador desliga a segunda, e a primeira volta sozinha): os nomes dos controles dela. O
         // "transferência" do Concluir transferência não cabe na coluna dele nem com o menor tamanho (8 sp, 16 dp com a
@@ -378,7 +471,7 @@ class CallFlowTest {
         }
         consultOnTheCallScreen("2003", first)
         for ((tag, label) in CONSULT_CONTROLS) {
-            assertWhole("o controle $label", tag, drawnText(tag, label), wholeWords = tag != COMPLETE_TRANSFER)
+            emulator.assertWholeText("o controle $label", tag, emulator.drawnText(tag, label), wholeWords = tag != COMPLETE_TRANSFER)
         }
         compose.onNodeWithTag(COMPLETE_TRANSFER).performScrollTo()
         emulator.saveScreen("consulta-letra-grande.png")
@@ -988,58 +1081,14 @@ class CallFlowTest {
     // Algum texto dentro dos elementos [tag] é a [line] inteira.
     private fun hasLine(tag: String, line: Regex): Boolean = textsUnder(tag).any(line::matches)
 
-    // O texto desenhado dentro do elemento [tag]: o [text], ou o único que há (o do selo, que o esconde do leitor de
-    // tela: ele só aparece na árvore sem a fusão).
-    private fun drawnText(tag: String, text: String? = null): SemanticsNodeInteraction {
-        val inside = compose.onNodeWithTag(tag, useUnmergedTree = true).onChildren()
-        return inside.filterToOne(if (text == null) SemanticsMatcher.keyIsDefined(SemanticsProperties.Text) else hasText(text))
-    }
-
-    // O texto do nó [node] (como foi desenhado) e o layout dele.
-    private fun textOf(node: SemanticsNodeInteraction): String =
-        node.fetchSemanticsNode().config[SemanticsProperties.Text].joinToString("")
-
-    private fun textLayoutOf(node: SemanticsNodeInteraction): TextLayoutResult {
-        val results = mutableListOf<TextLayoutResult>()
-        node.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
-        return results.single()
-    }
-
-    // As linhas do texto do nó [node], para as falhas.
-    private fun linesOf(text: String, layout: TextLayoutResult): String =
-        (0 until layout.lineCount).joinToString(" | ") { "\"${text.substring(layout.getLineStart(it), layout.getLineEnd(it))}\"" }
-
-    // O texto do nó [node] desenhado inteiro dentro do elemento [container]: todo ele nas linhas, sem reticências e com a
-    // caixa dentro da do elemento; com [wholeWords], quebrando só nos espaços (nunca no meio de uma palavra). O
-    // hasVisualOverflow não serve: o TextLayoutResult que a semântica de um Text simples refaz usa a largura máxima que ele
-    // recebeu, e um texto mais curto que ela (o nome de um cartão numa linha só) sai como transbordando. A falha mostra as
-    // linhas e as caixas.
-    private fun assertWhole(what: String, container: String, node: SemanticsNodeInteraction, wholeWords: Boolean = true) {
-        val semantics = node.fetchSemanticsNode()
-        val text = textOf(node)
-        val layout = textLayoutOf(node)
-        val brokenWord = wholeWords && (0 until layout.lineCount - 1).any { line ->
-            val end = layout.getLineEnd(line)
-            end in 1 until text.length && !text[end - 1].isWhitespace() && !text[end].isWhitespace()
-        }
-        val box = Rect(semantics.positionInRoot, semantics.size.toSize())
-        val outer = compose.onNodeWithTag(container, useUnmergedTree = true).fetchSemanticsNode()
-            .let { Rect(it.positionInRoot, it.size.toSize()) }
-        val inside = box.left >= outer.left - 1 && box.top >= outer.top - 1 && box.right <= outer.right + 1 &&
-            box.bottom <= outer.bottom + 1
-        val whole = !brokenWord && inside && layout.getLineEnd(layout.lineCount - 1) == text.length &&
-            (0 until layout.lineCount).none(layout::isLineEllipsized)
-        assertTrue("$what inteiro: \"$text\" desenhado como ${linesOf(text, layout)}, em $box (em $container: $outer)", whole)
-    }
-
     // Do último [from] do texto do nó [node] até o fim, numa linha só (o "em <n> s" da contagem: R40).
     private fun assertOnOneLine(what: String, node: SemanticsNodeInteraction, from: String) {
-        val text = textOf(node)
-        val layout = textLayoutOf(node)
+        val text = emulator.textOf(node)
+        val layout = emulator.textLayoutOf(node)
         val start = text.lastIndexOf(from)
         assertTrue("$what em \"$text\"", start >= 0)
         assertEquals(
-            "$what numa linha só: ${linesOf(text, layout)}",
+            "$what numa linha só: ${emulator.linesOf(text, layout)}",
             layout.getLineForOffset(start),
             layout.getLineForOffset(text.length - 1),
         )
@@ -1061,9 +1110,51 @@ class CallFlowTest {
     private fun foregroundService(): String {
         val dump = emulator.shell("dumpsys activity services br.com.starsonic.phone/.service.SipService").map { it.trim() }
         val wanted = dump.filter { line -> FGS_KEYS.any { line.contains(it, ignoreCase = true) } }.distinct().take(8)
-        val refused = emulator.shell("logcat -d -v brief -s SipService:W").count { "não entrou em primeiro plano" in it }
-        return "${wanted.joinToString(" | ").take(600)}; recusas do primeiro plano no logcat: $refused"
+        return "${wanted.joinToString(" | ").take(600)}; recusas do primeiro plano no logcat: ${foregroundRefusals()}"
     }
+
+    // Os tipos do serviço em primeiro plano agora (o "types=" do dumpsys, em hexadecimal; 0 sem ele).
+    private fun foregroundTypes(): Int =
+        emulator.shell("dumpsys activity services br.com.starsonic.phone/.service.SipService")
+            .firstNotNullOfOrNull { FOREGROUND_TYPES.find(it)?.groupValues?.get(1)?.toLong(16)?.toInt() } ?: 0
+
+    // As recusas do Android ao pôr o serviço em primeiro plano desde o último clearLogcat (o aviso do SipService).
+    private fun foregroundRefusals(): Int =
+        emulator.shell("logcat -d -v brief -s SipService:W").count { "não entrou em primeiro plano" in it }
+
+    // A recebida com o Atender automático na hora e o microfone recusado pelo Android (spec 12): o teste tira o microfone
+    // do app no appops (o modo do uid, o que o Android confere ao pôr o serviço em primeiro plano) até a recusa, e o
+    // devolve. Ela continua tocando, com o serviço no phoneCall, sem o microfone.
+    private fun ringWithTheMicrophoneRefused() {
+        app.callSettings.update { it.copy(autoAnswer = true, autoAnswerSeconds = 0) }
+        emulator.clearLogcat()
+        microphoneBefore = microphoneMode()
+        emulator.shell("appops set --uid ${app.packageName} RECORD_AUDIO ignore")
+        try {
+            assertEquals("OK", emulator.control("RING 2001"))
+            emulator.waitUntil("o Android recusar o microfone", details = ::foregroundService) { foregroundRefusals() > 0 }
+            emulator.waitUntil("o serviço no phoneCall, sem o microfone", details = ::foregroundService) {
+                foregroundTypes().let { it and PHONE_CALL_TYPE != 0 && it and MICROPHONE_TYPE == 0 }
+            }
+        } finally {
+            restoreMicrophone()
+        }
+        Thread.sleep(1_000)   // o Atender automático já desistiu (sem o microfone): ninguém a atende
+        assertEquals("a recebida continua tocando", CallPhase.RINGING, app.calls.state.value?.phase)
+    }
+
+    // Devolve o modo do microfone que o teste tirou do app no appops.
+    private fun restoreMicrophone() {
+        val mode = microphoneBefore ?: return
+        microphoneBefore = null
+        emulator.shell("appops set --uid ${app.packageName} RECORD_AUDIO $mode")
+    }
+
+    // O modo do microfone do app no appops: o do uid (o que o Android confere), ou o "foreground" de uma permissão dada.
+    private fun microphoneMode(): String =
+        emulator.shell("appops get ${app.packageName} RECORD_AUDIO").firstNotNullOfOrNull { line ->
+            MICROPHONE_MODE.find(line)?.takeIf { "Uid mode" in line }?.groupValues?.get(1)
+        } ?: "foreground"
 
     // A notificação da chamada em espera: no canal sem som, sem a tela cheia e sem o toque que se repete.
     private fun waitingNotification(): Boolean =
@@ -1206,6 +1297,16 @@ class CallFlowTest {
 
         // O que a nota do risco 12 tira do dumpsys do serviço: se está em primeiro plano, os tipos e o microfone.
         private val FGS_KEYS = listOf("isForeground", "types=", "foregroundServiceType", "WhileInUse")
+
+        // Os tipos do serviço em primeiro plano no dumpsys ("types=40000084"), os do phoneCall e do microphone (os números
+        // do ServiceInfo) e o modo do microfone no appops ("Uid mode: RECORD_AUDIO: foreground").
+        private val FOREGROUND_TYPES = Regex("""\btypes=([0-9A-Fa-f]{8})\b""")
+        private const val PHONE_CALL_TYPE = 0x04
+        private const val MICROPHONE_TYPE = 0x80
+        private val MICROPHONE_MODE = Regex("""RECORD_AUDIO: (\w+)""")
+
+        // Os botões do Transferir (as etiquetas e os nomes), para a letra grande (F4).
+        private val TRANSFER_BUTTONS = listOf("transferir-consultar" to "Consultar", "transferir-agora" to "Transferir agora")
 
         // Os toques repetidos nos botões da notificação, por botão, e os ids das notificações de teste.
         private val repeatedTaps = mutableMapOf("Atender" to 0, "Recusar" to 0)

@@ -11,16 +11,26 @@ import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.util.DisplayMetrics
 import android.view.Display
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.SemanticsNodeInteraction
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.ComposeTestRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.printToString
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.toSize
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
@@ -43,8 +53,9 @@ import org.junit.Assert.assertTrue
  *
  * As esperas, quando falham, trazem o fim do log do motor e a tela.
  *
- * Nas telas do app: o menu do cabeçalho ([openMenu]), o texto de um campo ([editableText]) e a área de toque
- * ([assertTouchAtLeast48]).
+ * Nas telas do app: o menu do cabeçalho ([openMenu]), o texto de um campo ([editableText]), a área de toque
+ * ([assertTouchAtLeast48]) e o texto desenhado inteiro ([drawnText] e [assertWholeText], o conferidor estrito de todos os
+ * testes do visual).
  *
  * Para os testes do visual: as fotos das telas ([saveScreen]), a tela, a letra e o tema do emulador (com o
  * [restoreLook]) e os contatos da agenda ([insertContact]).
@@ -205,6 +216,54 @@ class Emulator(private val compose: ComposeTestRule) {
             "a área de toque de $tag tem ${touch.width} × ${touch.height} px (pelo menos $minimum)",
             touch.width >= minimum - 0.5f && touch.height >= minimum - 0.5f,
         )
+    }
+
+    /**
+     * O texto desenhado dentro do elemento [tag], na árvore sem a fusão: o [text], ou, sem ele, o único texto que há lá
+     * dentro (o do selo, que o esconde do leitor de tela: ele só aparece na árvore sem a fusão).
+     */
+    fun drawnText(tag: String, text: String? = null): SemanticsNodeInteraction {
+        val drawn = if (text == null) SemanticsMatcher.keyIsDefined(SemanticsProperties.Text) else hasText(text)
+        return compose.onNode(hasAnyAncestor(hasTestTag(tag)) and drawn, useUnmergedTree = true)
+    }
+
+    /** O texto do nó [node], como foi desenhado. */
+    fun textOf(node: SemanticsNodeInteraction): String = node.fetchSemanticsNode().config[SemanticsProperties.Text].joinToString("")
+
+    /** O layout do texto do nó [node]: as linhas e o corte. */
+    fun textLayoutOf(node: SemanticsNodeInteraction): TextLayoutResult {
+        val results = mutableListOf<TextLayoutResult>()
+        node.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
+        return results.single()
+    }
+
+    /** As linhas do [text] no [layout], para as falhas. */
+    fun linesOf(text: String, layout: TextLayoutResult): String =
+        (0 until layout.lineCount).joinToString(" | ") { "\"${text.substring(layout.getLineStart(it), layout.getLineEnd(it))}\"" }
+
+    /**
+     * O texto do nó [node] desenhado inteiro dentro do elemento [container] (com a letra grande, spec 3.3): todo ele nas
+     * linhas, sem reticências e com a caixa dentro da do elemento; com [wholeWords], quebrando só nos espaços, nunca no meio
+     * de uma palavra. O hasVisualOverflow não serve: o TextLayoutResult que a semântica de um Text simples refaz usa a
+     * largura máxima que ele recebeu, e um texto mais curto que ela (o nome de um cartão numa linha só) sai como
+     * transbordando. A falha mostra as linhas e as caixas.
+     */
+    fun assertWholeText(what: String, container: String, node: SemanticsNodeInteraction, wholeWords: Boolean = true) {
+        val semantics = node.fetchSemanticsNode()
+        val text = textOf(node)
+        val layout = textLayoutOf(node)
+        val brokenWord = wholeWords && (0 until layout.lineCount - 1).any { line ->
+            val end = layout.getLineEnd(line)
+            end in 1 until text.length && !text[end - 1].isWhitespace() && !text[end].isWhitespace()
+        }
+        val box = Rect(semantics.positionInRoot, semantics.size.toSize())
+        val outer = compose.onNodeWithTag(container, useUnmergedTree = true).fetchSemanticsNode()
+            .let { Rect(it.positionInRoot, it.size.toSize()) }
+        val inside = box.left >= outer.left - 1 && box.top >= outer.top - 1 && box.right <= outer.right + 1 &&
+            box.bottom <= outer.bottom + 1
+        val whole = !brokenWord && inside && layout.getLineEnd(layout.lineCount - 1) == text.length &&
+            (0 until layout.lineCount).none(layout::isLineEllipsized)
+        assertTrue("$what inteiro: \"$text\" desenhado como ${linesOf(text, layout)}, em $box (em $container: $outer)", whole)
     }
 
     /** Pede o fim das MainActivity que ainda não acabaram (as de fora do ActivityScenario também) e diz quantas eram. */
