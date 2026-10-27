@@ -237,7 +237,8 @@ class IncomingCallNotifier(
         synchronized(lock) {
             decidedId = callId
             decidedSeconds = seconds
-            if (callId != shownId || callId <= stoppedUpTo || shownWaiting || shownAutoAnswer == seconds) return
+            val shown = ShownIncoming(shownId, shownRinging, shownWaiting, shownAutoAnswer).takeIf { shownId > stoppedUpTo }
+            if (!repostsForAutoAnswer(shown, callId, seconds)) return
             shownAutoAnswer = seconds
             val line = seconds?.let { "com o Atender automático em $it s" } ?: "sem o Atender automático"
             post(callId, ring = shownRinging, "recebida $callId, agora $line", alertOnce = true)
