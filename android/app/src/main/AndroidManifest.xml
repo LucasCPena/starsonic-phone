@@ -57,7 +57,7 @@
         </activity>
 
         <!-- A tela de chamada: por cima da tela bloqueada, acendendo a tela (a notificação de ligação a abre em
-             tela cheia); numa tarefa própria, fora dos Recentes do Android. -->
+             tela cheia); numa tarefa própria, fora dos Recentes do Android; sempre escura (o tema dela). -->
         <activity
             android:name=".call.CallActivity"
             android:excludeFromRecents="true"
@@ -66,7 +66,7 @@
             android:screenOrientation="portrait"
             android:showWhenLocked="true"
             android:taskAffinity="br.com.starsonic.phone.chamada"
-            android:theme="@style/Theme.Starsonic"
+            android:theme="@style/Theme.Starsonic.Call"
             android:turnScreenOn="true"
             android:windowSoftInputMode="adjustResize" />
 

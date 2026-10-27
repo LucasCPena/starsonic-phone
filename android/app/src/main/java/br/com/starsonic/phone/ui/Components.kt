@@ -285,7 +285,8 @@ enum class ButtonSize(internal val height: Dp, internal val fontSize: TextUnit, 
 /**
  * O botão ciano (o .btn-cyan do canvas: o Ligar, o Entrar e o Continuar), com o texto escuro e a sombra ciano; o
  * [icon] vai antes do texto e o [trailingIcon], depois (a seta do Entrar).
- * Desligado, o do Windows (.btn-cyan:disabled): o ciano escuro (cyan-d), sem a sombra e sem apagar.
+ * Desligado, o do Windows (.btn-cyan:disabled): o ciano escuro (cyan-d), sem a sombra e sem apagar; nas telas da
+ * ligação ([fadeWhenDisabled]), também apagado (.call .btn:disabled, R22).
  */
 @Composable
 fun CyanButton(
@@ -296,12 +297,13 @@ fun CyanButton(
     trailingIcon: ImageVector? = null,
     enabled: Boolean = true,
     size: ButtonSize = ButtonSize.Regular,
+    fadeWhenDisabled: Boolean = false,
     onClick: () -> Unit,
 ) {
     val container = if (enabled) Starsonic.Cyan else Starsonic.CyanDark
     PillButton(
         text, icon, trailingIcon, tag, enabled, modifier, size, container, Starsonic.OnCyan, null, CyanShadow,
-        fadeWhenDisabled = false, onClick,
+        fadeWhenDisabled, onClick,
     )
 }
 
@@ -346,7 +348,8 @@ fun OutlineButton(
 /**
  * O Rediscar (o .redial do canvas): redondo, de 58 dp, com contorno, à esquerda do Ligar. O [label] ("Rediscar <número>
  * · <nome>", ou só "Rediscar" desligado) é o nome dele no leitor de tela. Desligado ([enabled] false), fica apagado.
- * A etiqueta é `rediscar` (o do Teclado); o da Nova ligação passa o [tag] dele.
+ * A etiqueta é `rediscar` (o do Teclado); o da Nova ligação passa o [tag] dele e o fundo dele ([background]: o do
+ * painel da ligação, transparente, como o .btn-redial do Windows; o padrão é o surface da tela).
  */
 @Composable
 fun RedialButton(
@@ -354,6 +357,7 @@ fun RedialButton(
     enabled: Boolean,
     modifier: Modifier = Modifier,
     tag: String = "rediscar",
+    background: Color = LocalStarsonicColors.current.surface,
     onClick: () -> Unit,
 ) {
     val colors = LocalStarsonicColors.current
@@ -362,7 +366,7 @@ fun RedialButton(
             .size(58.dp)
             .alpha(if (enabled) 1f else DISABLED_ALPHA)
             .clip(CircleShape)
-            .background(colors.surface)
+            .background(background)
             .border(1.5.dp, colors.border, CircleShape)
             .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
             .semantics { contentDescription = label }

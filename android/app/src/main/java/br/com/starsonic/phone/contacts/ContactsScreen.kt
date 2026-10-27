@@ -14,7 +14,6 @@ import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -23,19 +22,16 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -54,10 +50,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.LineHeightStyle
@@ -297,48 +291,6 @@ internal fun rememberSuggestions(
         }
     }
     return found
-}
-
-/**
- * As sugestões do Teclado e do número da tela de chamada, lado a lado numa faixa de altura fixa (no tamanho da letra do
- * celular). O Teclado a deixa mesmo vazia: elas aparecem e somem sem empurrar o teclado embaixo do dedo. Cada uma (tag
- * sugestao-<nome>) mostra o nome e o número, em [color], e encolhe (com "…") para as três caberem; o toque passa o
- * número como é discado a [onPick].
- */
-@Composable
-internal fun ContactSuggestions(suggestions: List<Suggestion>, color: Color, onPick: (String) -> Unit) {
-    val name = MaterialTheme.typography.labelLarge
-    val number = MaterialTheme.typography.bodySmall
-    val height = with(LocalDensity.current) { name.lineHeight.toDp() + number.lineHeight.toDp() } + 12.dp
-    Row(
-        Modifier.fillMaxWidth().height(height),
-        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        for (suggestion in suggestions) {
-            Column(
-                Modifier
-                    .weight(1f, fill = false)
-                    .widthIn(max = 200.dp)
-                    .fillMaxHeight()
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(color.copy(alpha = 0.08f))
-                    .clickable { onPick(suggestion.dial) }
-                    .padding(horizontal = 12.dp, vertical = 6.dp)
-                    .testTag("sugestao-${suggestion.name}"),
-                verticalArrangement = Arrangement.Center,
-            ) {
-                Text(suggestion.name, color = color, style = name, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(
-                    suggestion.number,
-                    color = color.copy(alpha = 0.75f),
-                    style = number,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-    }
 }
 
 // A permissão já foi pedida neste processo (a primeira abertura da aba pede uma vez). Só na thread principal.

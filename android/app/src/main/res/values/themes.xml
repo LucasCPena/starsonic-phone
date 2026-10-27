@@ -7,6 +7,13 @@
         <item name="android:forceDarkAllowed" tools:targetApi="29">false</item>
     </style>
 
+    <!-- A tela da ligação e a recebida, sempre escuras (spec 3.1): o tema escuro nos dois modos do celular, com o fundo
+         navy da janela, para a tela não piscar em branco por cima da tela bloqueada antes de o Compose desenhar. -->
+    <style name="Theme.Starsonic.Call" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/starsonic_navy_900</item>
+        <item name="android:forceDarkAllowed" tools:targetApi="29">false</item>
+    </style>
+
     <!-- Tela de abertura: fundo azul com o ícone; depois, o tema do app. -->
     <style name="Theme.Starsonic.Splash" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">@color/starsonic_blue</item>

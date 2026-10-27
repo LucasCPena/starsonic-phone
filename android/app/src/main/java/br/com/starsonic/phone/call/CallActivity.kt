@@ -15,6 +15,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import br.com.starsonic.phone.App
+import br.com.starsonic.phone.main.rememberRedial
 import br.com.starsonic.phone.service.SipService
 import br.com.starsonic.phone.ui.StarsonicTheme
 import kotlinx.coroutines.flow.combine
@@ -23,7 +24,10 @@ import kotlinx.coroutines.launch
 /**
  * A tela de chamada ([CallScreen]): abre por cima da tela bloqueada e acende a tela (a notificação de ligação
  * a abre em tela cheia, e o Atender dela também), ou ao ligar do Teclado e do Recentes. Fecha quando a ligação
- * acaba (uma feita que não completou mostra o motivo por 2 s antes).
+ * acaba (uma feita que não completou mostra o motivo por 2 s antes). Sempre escura (spec 3.1), com o tema dela
+ * (Theme.Starsonic.Call: a janela já nasce no navy, sem piscar em branco por cima da tela bloqueada). No alto, a linha
+ * do status do app ([App.status], como a bolinha e a notificação fixa) com o ramal; na Nova ligação, o Rediscar da feita
+ * mais nova dos Recentes, como no Teclado.
  *
  * - Com a ligação em andamento (ou chamando) e o som no alto-falante de ouvido, a tela apaga ao encostar no
  *   rosto (o sensor de proximidade); no viva-voz, no Bluetooth, no fone com fio e tocando, não.
@@ -74,7 +78,10 @@ class CallActivity : ComponentActivity() {
                 val call by calls.state.collectAsState()
                 val message by calls.endMessage.collectAsState()
                 val routes by telecom.routes.collectAsState()
-                CallScreen(call, message, routes, actions)
+                val status by app.status.collectAsState()
+                val ramal by app.connection.ramal.collectAsState()
+                val (redial, redialName) = rememberRedial(app.recents, app.contacts)
+                CallScreen(call, message, routes, status, ramal, redial, redialName, actions)
             }
         }
         lifecycleScope.launch {

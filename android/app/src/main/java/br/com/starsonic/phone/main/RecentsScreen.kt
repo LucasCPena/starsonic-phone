@@ -190,14 +190,6 @@ internal fun kindLabel(kind: CallKind): String = when (kind) {
     CallKind.PERDIDA -> "Perdida"
 }
 
-/** A duração como num relógio: 0:42, 12:05 ou 1:02:03 (o tempo da tela de chamada). */
-internal fun duration(seconds: Int): String {
-    val hours = seconds / 3600
-    val minutes = seconds % 3600 / 60
-    val rest = seconds % 60
-    return if (hours > 0) "%d:%02d:%02d".format(hours, minutes, rest) else "%d:%02d".format(minutes, rest)
-}
-
 // Os itens em grupos de vizinhos com a mesma chave ([key]), na ordem: (a chave, os itens).
 private fun <T> List<T>.groupConsecutive(key: (T) -> String): List<Pair<String, List<T>>> {
     val groups = ArrayList<Pair<String, MutableList<T>>>()

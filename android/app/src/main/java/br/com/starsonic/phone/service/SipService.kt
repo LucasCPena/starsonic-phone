@@ -52,7 +52,9 @@ import kotlinx.coroutines.launch
  *   desde o Ligar; a recebida depois de atendida), acrescenta phoneCall e microphone; no fim, volta a só
  *   specialUse. O Android 14+ não deixa acrescentar o microphone com o app em segundo plano: a troca acontece
  *   quando a ligação muda e a cada início do serviço (a tela de chamada o inicia ao aparecer, com o app na
- *   frente); se o Android recusa, o serviço fica como estava e a ligação segue.
+ *   frente); se o Android recusa, o serviço fica como estava e a ligação segue. A recebida que o Atender automático
+ *   vai atender (spec 12) acrescenta os tipos antes do atender ([prepareCallMicrophone]): sem o microfone, ela continua
+ *   tocando.
  * - Numa thread própria ("starsonic-servico"), lê a conta gravada (Keystore e disco), sobe o motor (uma vez
  *   por processo) e segura a conta ([Connection.adopt]): a que já está no motor (a que a tela Entrar acabou de
  *   registrar, ou a de um início anterior) fica, sem outro REGISTER. Só se a última renovação dela falhou numa falha
@@ -97,6 +99,7 @@ class SipService : Service() {
         super.onCreate()
         running = true
         current = app.connection
+        instance = this   // na thread principal, como o prepareCallMicrophone
         worker = Executors.newSingleThreadExecutor { task -> Thread(task, "starsonic-servico") }
         keepAwake = KeepAwake(cpuLock())
         // Na hora, na thread que mudou o estado: depois de uma recusa que o pjsua não repete, o processador dorme; com
@@ -118,7 +121,7 @@ class SipService : Service() {
         // ACTION_START. Quem começa com startForegroundService precisa entrar em primeiro plano já, mesmo que
         // saia em seguida (sem conta gravada).
         startCommands++
-        val foreground = enterForeground()
+        val foreground = enterForeground() != null
         // Este pedido chegou (e o serviço entrou em primeiro plano, ou o Android não deixou): um stop() que esperava
         // por ele já pode parar o serviço.
         if (intent?.action == ACTION_START) pendingStarts.decrementAndGet()
@@ -149,6 +152,7 @@ class SipService : Service() {
         worker.shutdown()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         current = null
+        instance = null
         running = false
         super.onDestroy()
     }
@@ -192,10 +196,10 @@ class SipService : Service() {
         }
     }
 
-    // Na thread principal: entra (ou continua) em primeiro plano com os tipos de agora. Com uma ligação, tenta
-    // os tipos dela, do mais completo ao só specialUse; false se nem esse o Android aceitou.
-    private fun enterForeground(): Boolean {
-        val call = app.calls.state.value?.usesMicrophone == true
+    // Na thread principal: entra (ou continua) em primeiro plano com os tipos de agora ([call]: os de uma ligação que
+    // usa o microfone). Com uma ligação, tenta os tipos dela, do mais completo ao só specialUse; devolve o que o
+    // Android aceitou (null: nem o specialUse).
+    private fun enterForeground(call: Boolean = app.calls.state.value?.usesMicrophone == true): Int? {
         for (type in foregroundTypes(call)) {
             try {
                 val title = app.status.value.notificationTitle
@@ -207,7 +211,7 @@ class SipService : Service() {
                 noticeSentAt = SystemClock.uptimeMillis()
                 watchNotice()
                 inCall = call && type != foregroundTypes(false).single()
-                return true
+                return type
             } catch (e: IllegalStateException) {
                 // ForegroundServiceStartNotAllowedException: recriado em segundo plano sem poder (Android 12+).
                 Log.w(TAG, "o serviço não entrou em primeiro plano (tipos $type)", e)
@@ -216,7 +220,16 @@ class SipService : Service() {
                 Log.w(TAG, "o serviço não entrou em primeiro plano (tipos $type)", e)
             }
         }
-        return false
+        return null
+    }
+
+    // Na thread principal: os tipos da ligação já, para a recebida que o Atender automático vai atender (spec 12). true
+    // se o Android deixou o microfone, ou se ele nem estava entre os tipos (sem a permissão do microfone, ou antes do
+    // Android 11: a ligação fica como a atendida à mão).
+    private fun enterForCall(): Boolean {
+        val wanted = foregroundTypes(true).first()
+        val accepted = enterForeground(call = true)
+        return wanted and MICROPHONE == 0 || accepted != null && accepted and MICROPHONE != 0
     }
 
     // Os tipos a tentar, em ordem: com a ligação, phoneCall e microphone (só com a permissão do microfone), depois
@@ -317,6 +330,21 @@ class SipService : Service() {
         // A conexão do serviço de pé (de onCreate a onDestroy), para o reregister().
         @Volatile
         private var current: Connection? = null
+
+        // O serviço de pé (de onCreate a onDestroy), para o prepareCallMicrophone(). Só na thread principal.
+        private var instance: SipService? = null
+
+        // O tipo do microfone (Android 11+; os tipos de antes não o têm, e o número só é comparado).
+        @SuppressLint("InlinedApi")
+        private const val MICROPHONE = ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+
+        /**
+         * Na thread principal: a recebida que o Atender automático vai atender já põe o serviço em primeiro plano com os
+         * tipos da ligação, o microfone com eles (spec 12: com o app fechado, o Android 14+ pode não deixar). false se o
+         * Android não deixou o microfone: ela continua tocando. Sem o serviço de pé, ou sem o microfone entre os tipos
+         * (sem a permissão dele), true: a ligação fica como a atendida à mão.
+         */
+        fun prepareCallMicrophone(): Boolean = instance?.enterForCall() ?: true
 
         // Os pedidos de início que o Android aceitou e que ainda não chegaram ao serviço (cada um, ao chegar, põe o
         // serviço em primeiro plano).

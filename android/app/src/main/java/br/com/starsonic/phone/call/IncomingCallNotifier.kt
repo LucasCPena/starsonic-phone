@@ -40,7 +40,9 @@ import br.com.starsonic.phone.main.MainActivity
  *   perdida, a das recebidas que o Não perturbe recusou (spec 4).
  *
  * O nome de quem liga chega já resolvido pelo CallManager (pelo Telecom, nos extras da recebida): o do contato do
- * celular com o número, se há (spec da 0.2, 7.5), senão o que a central mandou.
+ * celular com o número, se há (spec da 0.2, 7.5), senão o que a central mandou. Com o Atender automático marcado para
+ * ela (spec 5), o texto da notificação ganha a linha "Atender automático · em <n> s" (ou "· na hora"), com o tempo
+ * escolhido, uma vez (R33): a notificação não é postada de novo a cada segundo, o que poderia tocar de novo.
  *
  * A chamada em espera (spec da 0.2, 7.1: a recebida com outra ligação em andamento) não toca o toque do celular, para
  * não cobrir a conversa: a notificação vai ao canal "ligacoes-silenciadas" (no alto da tela, sem som), sem a tela
@@ -68,7 +70,8 @@ class IncomingCallNotifier(
     private var shownCall = ""    // ...o número...
     private var shownName = ""    // ...o nome...
     private var shownAddress = "" // ...e o endereço
-    private var shownWaiting = false // ...e se é a chamada em espera
+    private var shownWaiting = false // ...se é a chamada em espera
+    private var shownAutoAnswer: Int? = null // ...e os segundos do Atender automático marcado (null: nenhum)
     private var beepingId = 0     // a chamada em espera que bipa (0: nenhuma)
 
     private val main = Handler(Looper.getMainLooper())
@@ -145,10 +148,17 @@ class IncomingCallNotifier(
      * A notificação da recebida [callId] (o Telecom pede: onShowIncomingCallUi), se ela ainda toca, com o [name] já
      * resolvido (o do contato do celular, ou o da central; vazio: o número). [address] é o endereço da ligação no
      * Telecom: o nome de quem liga, sem nome nem número. Com [waiting] (outra ligação em andamento), a chamada em
-     * espera: sem o toque nem a tela cheia, com o bipe e a vibração curta a cada 3 s. Uma falha do Android ao mostrá-la
-     * vai ao log e não derruba a ligação.
+     * espera: sem o toque nem a tela cheia, com o bipe e a vibração curta a cada 3 s. Com [autoAnswerSeconds], o tempo do
+     * Atender automático marcado para ela, no texto. Uma falha do Android ao mostrá-la vai ao log e não derruba a ligação.
      */
-    fun showIncoming(callId: Int, number: String, name: String, address: String = "", waiting: Boolean = false) {
+    fun showIncoming(
+        callId: Int,
+        number: String,
+        name: String,
+        address: String = "",
+        waiting: Boolean = false,
+        autoAnswerSeconds: Int? = null,
+    ) {
         synchronized(lock) {
             if (callId <= stoppedUpTo) {
                 CallLog.i { "notificação: a recebida $callId já parou de tocar" }
@@ -159,6 +169,7 @@ class IncomingCallNotifier(
             shownName = name
             shownAddress = address
             shownWaiting = waiting
+            shownAutoAnswer = autoAnswerSeconds
             if (waiting) {
                 post(callId, ring = false, "chamada em espera $callId")
                 beepingId = callId
@@ -271,7 +282,8 @@ class IncomingCallNotifier(
         }
     }
 
-    // Com a trava: a notificação da recebida [callId] mostrada (shownCall, shownName, shownAddress e shownWaiting).
+    // Com a trava: a notificação da recebida [callId] mostrada (shownCall, shownName, shownAddress, shownWaiting e
+    // shownAutoAnswer: o texto é o número, com o nome no título, e a linha do Atender automático).
     // Tocando ([ring]): o canal "ligacoes", com o toque e a vibração repetidos até ela sair. Silenciada: o canal sem
     // som, sem alertar de novo. A chamada em espera: no canal sem som, sem a tela cheia e, por isso, sem o CallStyle
     // (o Android o recusa sem a tela cheia fora de um serviço em primeiro plano): Recusar e Atender como ações.
@@ -294,7 +306,7 @@ class IncomingCallNotifier(
         val callerName = IncomingExtras.callerName(shownName, shownCall, shownAddress)
         val builder = NotificationCompat.Builder(context, if (ring) CHANNEL_CALLS else CHANNEL_SILENCED)
             .setSmallIcon(R.drawable.ic_stat_starsonic)
-            .setContentText(if (shownName.isBlank()) null else shownCall)
+            .setContentText(incomingNotificationText(shownCall, shownName, shownAutoAnswer))
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)

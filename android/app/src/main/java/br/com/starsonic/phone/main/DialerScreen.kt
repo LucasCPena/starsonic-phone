@@ -21,10 +21,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TooltipAnchorPosition
 import androidx.compose.material3.TooltipBox
 import androidx.compose.material3.TooltipDefaults
@@ -52,7 +50,6 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
@@ -125,7 +122,7 @@ fun DialerScreen(
                 Keys(onKey = { number += it })
             }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Redial(redial, redialName, onDial)
+                Redial(redial, redialName, onDial = { onDial(it) })
                 CyanButton(
                     DIAL,
                     tag = "ligar",
@@ -203,10 +200,11 @@ private fun NumberLine(number: String, onErase: () -> Unit) {
 /**
  * As sugestões dos contatos numa vaga de altura fixa (a de uma sugestão do canvas, no tamanho da letra do celular): a
  * vaga fica mesmo vazia, e as sugestões aparecem e somem sem empurrar as teclas embaixo do dedo. Uma sugestão sozinha é
- * o .suggest do canvas (o avatar, o nome, o número e a seta); duas ou três dividem a vaga, só com o nome e o número.
+ * o .suggest do canvas (o avatar, o nome, o número e a seta); duas ou três dividem a vaga, só com o nome e o número. O
+ * número do Transferir e o da Nova ligação, na tela da ligação, usam as mesmas (lá, só quando há alguma).
  */
 @Composable
-private fun Suggestions(suggestions: List<Suggestion>, onPick: (String) -> Unit) {
+internal fun Suggestions(suggestions: List<Suggestion>, onPick: (String) -> Unit) {
     val lines = with(LocalDensity.current) { ListRowTitle.lineHeight.toDp() + ListRowSub.lineHeight.toDp() } + 2.dp
     Row(
         Modifier.fillMaxWidth().height(maxOf(lines, AVATAR) + 16.dp),
@@ -257,11 +255,22 @@ private fun Keys(onKey: (String) -> Unit) {
     }
 }
 
-// O Rediscar (spec 6), com o nome dele na dica do aperto longo (a do Android), no balão escuro do Windows
-// (.redial-tip); apagado sem nenhuma feita.
+/**
+ * O Rediscar (spec 6): liga para a feita [redial] ([onDial] com o número dela), com o nome dele ([redialLabel], com o
+ * [name]) também na dica do aperto longo (a do Android), no balão escuro do Windows (.redial-tip); apagado sem nenhuma
+ * feita. O do Teclado tem a etiqueta `rediscar`; o da Nova ligação, na tela da ligação, passa a dele ([tag]), o tamanho
+ * ([modifier]) e o fundo ([background]).
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun Redial(redial: Recent?, name: String?, onDial: (String) -> Boolean) {
+internal fun Redial(
+    redial: Recent?,
+    name: String?,
+    onDial: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    tag: String = "rediscar",
+    background: Color = LocalStarsonicColors.current.surface,
+) {
     val label = redialLabel(redial, name)
     TooltipBox(
         positionProvider = TooltipDefaults.rememberTooltipPositionProvider(TooltipAnchorPosition.Above),
@@ -278,33 +287,8 @@ private fun Redial(redial: Recent?, name: String?, onDial: (String) -> Boolean) 
         },
         state = rememberTooltipState(),
     ) {
-        RedialButton(label, enabled = redial != null) {
+        RedialButton(label, enabled = redial != null, modifier = modifier, tag = tag, background = background) {
             if (redial != null) onDial(redial.number)
-        }
-    }
-}
-
-/** O teclado de 12 teclas da ligação (DTMF); [keyColor] é a cor do texto das teclas e [keySize], o tamanho de cada uma. */
-@Composable
-internal fun Keypad(
-    onKey: (String) -> Unit,
-    tagPrefix: String = "tecla-",
-    keyColor: Color = Color.Unspecified,
-    keySize: Dp = 60.dp,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        for (row in KEYS) {
-            Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                for (key in row) {
-                    TextButton(
-                        onClick = { onKey(key) },
-                        shape = CircleShape,
-                        modifier = Modifier.size(keySize).testTag(tagPrefix + key),
-                    ) {
-                        Text(key, style = MaterialTheme.typography.headlineMedium, color = keyColor)
-                    }
-                }
-            }
         }
     }
 }

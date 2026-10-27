@@ -13,8 +13,9 @@ import androidx.compose.ui.unit.dp
 /**
  * Os ícones de linha do canvas (os SVG de 24 × 24 do app do Windows: traço de 2, pontas e cantos redondos), com os
  * caminhos copiados dos quadros, para o Icon, que os pinta na cor de cada lugar (o tint). Cada um diz onde o canvas o
- * usa. São enfeite (contentDescription null), menos os que têm nome: Menu, Apagar, Voltar, Editar conta, Atenção e o
- * sinal de feito das Permissões (Permitida).
+ * usa (os das telas da ligação que os quadros não mostram vêm do windows/ui/src/icons.tsx). São enfeite
+ * (contentDescription null), menos os que têm nome: Menu, Apagar, Voltar, Editar conta, Atenção e o sinal de feito das
+ * Permissões (Permitida).
  */
 object StarsonicIcons {
     /** Os dois controles deslizantes: o Menu do cabeçalho e Configurações no menu. */
@@ -179,6 +180,22 @@ object StarsonicIcons {
 
     /** Os dois círculos: Juntar. */
     val Join: ImageVector by lazy { lineIcon("Join", circle(8f, 12f, 4f), circle(16f, 12f, 4f)) }
+
+    /** A linha que se divide em duas (o IconSplit do Windows): Separar, na conferência. */
+    val Split: ImageVector by lazy {
+        lineIcon("Split", path("M12 20v-8"), path("M12 12L6 5"), path("M12 12l6-7"), path("M6 9V5h4"), path("M18 9V5h-4"))
+    }
+
+    /** O xis (o IconClose do Windows): Cancelar, na consulta. */
+    val Close: ImageVector by lazy { lineIcon("Close", path("M6 6l12 12M18 6L6 18")) }
+
+    /** O alto-falante com uma onda (o IconSpeaking do Windows): quem fala, nos cartões da conferência. */
+    val Speaking: ImageVector by lazy {
+        lineIcon("Speaking", path("M11 5L6 9H3v6h3l5 4V5z"), path("M15.5 8.5a5 5 0 0 1 0 7"))
+    }
+
+    /** O símbolo do Bluetooth, no mesmo traço (o Windows não tem: lá, o Áudio é um menu): o fone Bluetooth na ligação. */
+    val Bluetooth: ImageVector by lazy { lineIcon("Bluetooth", path("M7 7l10 10-5 5V2l5 5L7 17")) }
 }
 
 // O fone do canvas (o mesmo no Ligar, no Atender e, virado, no Desligar).

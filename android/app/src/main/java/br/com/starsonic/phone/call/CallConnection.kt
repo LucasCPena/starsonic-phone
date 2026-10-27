@@ -70,11 +70,13 @@ class CallConnection(
     }
 
     // Com outra ligação em andamento (a de cima na tela de chamada), esta é a chamada em espera: a notificação sem o
-    // toque nem a tela cheia, e o bipe no som da ligação.
+    // toque nem a tela cheia, e o bipe no som da ligação. Sozinha, com o Atender automático marcado (a Connection já
+    // nasceu), a notificação mostra o tempo dele.
     override fun onShowIncomingCallUi() {
         val waiting = app.calls.state.value?.phase == CallPhase.ACTIVE
-        CallLog.i { "Telecom: mostrar a recebida $callId (chamada em espera: $waiting)" }
-        app.notifier.showIncoming(callId, number, name, address?.schemeSpecificPart.orEmpty(), waiting)
+        val autoAnswer = app.calls.autoAnswerSeconds(callId)
+        CallLog.i { "Telecom: mostrar a recebida $callId (chamada em espera: $waiting; atender automático: $autoAnswer)" }
+        app.notifier.showIncoming(callId, number, name, address?.schemeSpecificPart.orEmpty(), waiting, autoAnswer)
     }
 
     // Android 10+: o volume apertado durante o toque. A notificação fica, sem o toque.

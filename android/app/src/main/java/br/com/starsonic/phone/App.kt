@@ -2,6 +2,8 @@ package br.com.starsonic.phone
 
 import android.app.Application
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import br.com.starsonic.phone.about.DiagnosticsLog
 import br.com.starsonic.phone.call.AndroidTelecom
@@ -27,6 +29,7 @@ import br.com.starsonic.phone.engine.NativeSipGateway
 import br.com.starsonic.phone.engine.SipGateway
 import br.com.starsonic.phone.engine.Transport
 import br.com.starsonic.phone.service.Connection
+import br.com.starsonic.phone.service.SipService
 import br.com.starsonic.phone.service.Status
 import br.com.starsonic.phone.service.StatusModel
 import br.com.starsonic.phone.update.AndroidInstaller
@@ -112,15 +115,25 @@ class App : Application() {
     /**
      * As ligações: os avisos do motor chegam pela conexão; só liga com a conta do serviço registrada
      * ([Connection.registered]). O nome de cada ligação vem da agenda do celular quando o número está nela. As
-     * configurações de ligação são lidas a cada uso (uma chave mudada vale na próxima ligação), e o bipe do fim toca no
-     * som da ligação ([AudioTrackEndBeep]).
+     * configurações de ligação são lidas a cada uso (uma chave mudada vale na próxima ligação), e cada mudança vai à tela
+     * da recebida (a linha do Atender automático, R7); o bipe do fim toca no som da ligação ([AudioTrackEndBeep]). O
+     * Atender automático pede o microfone antes de atender ([SipService.prepareCallMicrophone], na thread principal): se
+     * o Android não deixa, com o app fechado (spec 12), a recebida continua tocando, e o log de diagnóstico anota.
      */
     val calls: CallManager by lazy {
+        val main = Handler(Looper.getMainLooper())
         CallManager(
             connection, telecom, recents, notifier, core, clock, { connection.registered.value }, contacts, dialRule,
             settings = { callSettings.settings.value },
             beep = AudioTrackEndBeep(this),
-        )
+            microphone = { ready ->
+                main.post {
+                    val granted = SipService.prepareCallMicrophone()
+                    if (!granted) warn("Atender automático: o Android não deixou o microfone; a ligação continua tocando")
+                    ready(granted)
+                }
+            },
+        ).also { manager -> scope.launch { callSettings.settings.collect { manager.onSettingsChanged() } } }
     }
 
     /**

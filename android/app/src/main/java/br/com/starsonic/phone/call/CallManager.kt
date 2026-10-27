@@ -67,6 +67,10 @@ enum class CallPhase {
  *   [SecondKind.ACTIVE]) se ouvem e têm o som; [conferenceSinceMillis] é quando o Juntar foi pedido (0 fora dela).
  * - [consult]: a transferência com consulta em andamento (spec da 0.2, 7.3), com as duas ligações dela de pé (o
  *   cliente e o colega são esta e a [second]); null sem consulta.
+ * - [autoAnswerSeconds]: a recebida que toca vai ser atendida pelo Atender automático (spec 5, R7): o tempo marcado
+ *   quando o celular começou a tocar ([autoAnswerSinceMillis]), para a linha "Atender automático · em <n> s" da tela
+ *   cheia. Só enquanto as regras dele valem para ela, com as configurações de agora (a única ligação, tocando, com ele
+ *   ligado e o Não perturbe desligado); null (e 0) fora disso.
  */
 data class CallUi(
     val id: Int,
@@ -81,6 +85,8 @@ data class CallUi(
     val conference: Boolean = false,
     val consult: ConsultUi? = null,
     val conferenceSinceMillis: Long = 0,
+    val autoAnswerSeconds: Int? = null,
+    val autoAnswerSinceMillis: Long = 0,
 ) {
     /**
      * A ligação usa o microfone: a feita desde o começo (a pessoa ligou com o app na frente) e a recebida depois
@@ -91,10 +97,11 @@ data class CallUi(
 }
 
 /**
- * A outra de duas ligações, para o cartão de baixo (ou a faixa da que toca): o id no motor, o número e o nome (o do
- * contato do celular, ou o da central, como em [CallUi.name]).
+ * A outra de duas ligações, para o cartão de baixo (ou a faixa da que toca): o id no motor, o número, o nome (o do
+ * contato do celular, ou o da central, como em [CallUi.name]) e desde quando ela está em andamento (o tempo do cartão;
+ * 0 enquanto ela toca).
  */
-data class SecondUi(val id: Int, val number: String, val name: String, val kind: SecondKind)
+data class SecondUi(val id: Int, val number: String, val name: String, val kind: SecondKind, val activeSinceMillis: Long = 0)
 
 /** Em que pé está a outra de duas ligações. */
 enum class SecondKind {
@@ -113,6 +120,16 @@ enum class SecondKind {
  * cliente, então, em espera: "Em espera · transferência").
  */
 data class ConsultUi(val colleagueId: Int, val colleagueActive: Boolean)
+
+/**
+ * O microfone da recebida que o Atender automático vai atender (spec 12): com o app fechado (em segundo plano), o
+ * Android pode não deixar o app usar o microfone. No app, o serviço entra em primeiro plano com o microfone antes do
+ * atender (SipService); nos testes da JVM, a resposta vem do teste.
+ */
+fun interface CallMicrophone {
+    /** Pede o microfone para a ligação que vai ser atendida sozinha; [ready] recebe se o Android deixou (qualquer thread). */
+    fun request(ready: (Boolean) -> Unit)
+}
 
 /** Os motivos do fim de uma ligação para o Telecom (os valores de android.telecom.DisconnectCause). */
 object EndCause {
@@ -186,7 +203,11 @@ object EndCause {
  *     ([onIncomingReady]; 0: logo depois, na próxima volta do [clock]). A que o Telecom não cria nunca é atendida
  *     sozinha. Ele se decide aí: a que toca com outra toca normalmente, também depois que a outra acaba. Quando o tempo
  *     acaba, as mesmas regras valem de novo: ainda a única ligação, tocando, com o Atender automático ligado e o Não
- *     perturbe desligado; o atender, o recusar, o fim dela e o Sair o cancelam antes.
+ *     perturbe desligado; o atender, o recusar, o fim dela e o Sair o cancelam antes. Valendo, o microfone é pedido
+ *     antes ([microphone], spec 12): sem ele (o Android não deixou, com o app fechado), ela continua tocando, e a pessoa
+ *     ainda atende à mão; com ele, as regras valem de novo antes do atender. Enquanto vai atender, a tela mostra o tempo
+ *     marcado ([CallUi.autoAnswerSeconds], R7), com as configurações de agora: [onSettingsChanged] publica de novo
+ *     quando elas mudam, e a notificação pergunta uma vez ([autoAnswerSeconds]).
  *   - O bipe no fim (spec 9): a atendida que acaba sem outra de pé (as que sobram também estão saindo), com a chave
  *     ligada, sem ser pelo Sair e sem o Telecom a segurar por uma ligação da operadora (o som é dela), toca o bipe
  *     ([beep]), e a Connection dela só sai do Telecom quando ele acaba: até lá o Telecom mantém o som da ligação, e o
@@ -198,12 +219,13 @@ object EndCause {
  * - Depois de [onLogout] (Sair), os eventos do motor são ignorados até o próximo Entrar ([onLogin]).
  *
  * Threads: os eventos chegam na thread dos eventos do motor; os toques da tela e do Telecom, na principal; a hora do
- * Atender automático, na do [clock]; o fim do bipe, na do [beep]. Nada aqui espera o motor, a não ser o makeCall, que
- * roda em [background] (como as gravações dos Recentes, que leem e gravam o disco, e a procura do contato da feita). A
- * procura do contato da recebida (e da ocupada) lê a agenda na thread dos eventos do motor, antes da trava; nenhuma
- * roda na thread principal. As configurações ([settings]) vêm da memória. A trava guarda o estado e nunca fica presa
- * numa chamada ao motor, ao Telecom, às notificações, ao bipe, à agenda ou ao disco, nem na entrega de [state] e
- * [endMessage]: tudo sai depois, na ordem em que foi decidido. Os coletores que rodam na hora
+ * Atender automático, na do [clock], e a resposta do [microphone], na que ele escolher; o fim do bipe, na do [beep].
+ * Nada aqui espera o motor, a não ser o makeCall, que roda em [background] (como as gravações dos Recentes, que leem e
+ * gravam o disco, e a procura do contato da feita). A procura do contato da recebida (e da ocupada) lê a agenda na
+ * thread dos eventos do motor, antes da trava; nenhuma roda na thread principal. As configurações ([settings]) vêm da
+ * memória. A trava guarda o estado e nunca fica presa numa chamada ao motor, ao Telecom, às notificações, ao bipe, ao
+ * microfone, à agenda ou ao disco, nem na entrega de [state] e [endMessage]: tudo sai depois, na ordem em que foi
+ * decidido. Os coletores que rodam na hora
  * (Dispatchers.Main.immediate na thread principal) rodam sem a trava, e um deles pode chamar o CallManager de volta.
  */
 class CallManager(
@@ -221,6 +243,7 @@ class CallManager(
     },
     private val settings: () -> CallSettings = { CallSettings() },
     private val beep: EndBeep = NoBeep,
+    private val microphone: CallMicrophone = CallMicrophone { ready -> ready(true) },
 ) : CallEvents {
     // Uma das ligações de agora: [name] é o nome que a central mandou (o dos Recentes), e [contact], o do contato do
     // celular com o número dela (procurado uma vez, quando ela começa). Só com a trava.
@@ -276,7 +299,9 @@ class CallManager(
     private var muted = false                 // o mudo do microfone (o do motor vale para as duas); sai com a última
     private var maxSeenId = 0                 // o maior id de ligação do motor já visto
     private var autoCall: Call? = null        // a recebida do Atender automático marcado (null: nenhum)
-    private var autoTimer: Scheduled? = null  // ...e o aviso dele no relógio
+    private var autoTimer: Scheduled? = null  // ...o aviso dele no relógio
+    private var autoSeconds = 0               // ...o tempo marcado
+    private var autoSince = 0L                // ...e quando o celular começou a tocar
     private var beeping: EndBeepWait? = null  // o bipe do fim que toca agora (null: nenhum)
     private var endTimer: Scheduled? = null
     private var endToken = 0
@@ -439,7 +464,25 @@ class CallManager(
             val ringing = calls.firstOrNull { it.incoming && it.id == callId } ?: return@act
             if (ringing === autoCall || !autoAnswers(ringing, chosen)) return@act
             startAutoAnswer(ringing, chosen.autoAnswerSeconds)
+            publish()
         }
+    }
+
+    /**
+     * As configurações de ligação mudaram (o App avisa a cada mudança): com um Atender automático marcado, a tela da
+     * recebida mostra de novo se ele ainda vai atendê-la ([CallUi.autoAnswerSeconds], R7). O atender mesmo decide com as
+     * de quando o tempo acaba.
+     */
+    fun onSettingsChanged() {
+        act { if (autoCall != null) publish() }
+    }
+
+    /**
+     * Os segundos do Atender automático marcado para a recebida [callId], se ele ainda vai atendê-la com as configurações
+     * de agora (a notificação da recebida mostra a linha dele uma vez, R33); null sem ele.
+     */
+    fun autoAnswerSeconds(callId: Int): Int? = synchronized(lock) {
+        autoCall?.takeIf { it.id == callId && autoAnswers(it, settings()) }?.let { autoSeconds }
     }
 
     /**
@@ -822,26 +865,47 @@ class CallManager(
         publish()
     }
 
-    // Com a trava: o Atender automático da recebida [call], que toca sozinha, daqui a [seconds] s ([autoAnswer]). Um
+    // Com a trava: o Atender automático da recebida [call], que toca sozinha, daqui a [seconds] s ([autoAnswerDue]). Um
     // por vez (o cancel é só a garantia: um marcado é de uma recebida que ainda toca sozinha, e com ela nenhuma outra
     // toca sozinha).
     private fun startAutoAnswer(call: Call, seconds: Int) {
         cancelAutoAnswer()
         autoCall = call
-        autoTimer = clock.schedule(seconds * 1000L) {
-            val chosen = settings()
-            act { effects -> autoAnswer(call, chosen, effects) }
-        }
+        autoSeconds = seconds
+        autoSince = clock.nowMillis()
+        autoTimer = clock.schedule(seconds * 1000L) { autoAnswerDue(call) }
     }
 
-    // Com a trava: a hora do Atender automático de [call]. Só o marcado de agora vale (um cancelado cujo aviso já tinha
-    // saído não atende), e as regras são as do começo ([autoAnswers]), de novo, com as configurações de agora. A da
-    // operadora não é perguntada de novo: o nosso próprio toque põe o áudio no modo dela.
-    private fun autoAnswer(call: Call, chosen: CallSettings, effects: MutableList<() -> Unit>) {
-        if (call !== autoCall) return
-        autoCall = null
-        autoTimer = null
-        if (autoAnswers(call, chosen)) answer(call, effects)
+    // Na thread do relógio: a hora do Atender automático de [call]. Só o marcado de agora vale (um cancelado cujo aviso já
+    // tinha saído não atende), e as regras são as do começo ([autoAnswers]), de novo, com as configurações de agora. A da
+    // operadora não é perguntada de novo: o nosso próprio toque põe o áudio no modo dela. Valendo, o microfone vem antes
+    // (spec 12), fora da trava; a resposta atende ([autoAnswer]), e até ela o marcado fica (um cancelamento no meio vale).
+    private fun autoAnswerDue(call: Call) {
+        val chosen = settings()
+        var asks = false
+        act {
+            if (call !== autoCall) return@act
+            autoTimer = null
+            if (autoAnswers(call, chosen)) {
+                asks = true
+            } else {
+                cancelAutoAnswer()
+                publish()
+            }
+        }
+        if (asks) microphone.request { granted -> autoAnswer(call, granted) }
+    }
+
+    // Em qualquer thread: a resposta do [microphone] para o Atender automático de [call]. Só o marcado de agora vale (o
+    // atender, o recusar, o fim dela e o Sair o cancelam no meio), e as regras valem de novo, com as configurações de
+    // agora. Sem o microfone, ela continua tocando, sem o Atender automático: a pessoa ainda atende à mão.
+    private fun autoAnswer(call: Call, granted: Boolean) {
+        val chosen = settings()
+        act { effects ->
+            if (call !== autoCall) return@act
+            cancelAutoAnswer()
+            if (granted && autoAnswers(call, chosen)) answer(call, effects) else publish()
+        }
     }
 
     // Com a trava: o Atender automático vale para [call]: ela é a única ligação, tocando (nem atendida, nem recusada,
@@ -857,6 +921,8 @@ class CallManager(
         autoTimer?.cancel()
         autoTimer = null
         autoCall = null
+        autoSeconds = 0
+        autoSince = 0L
     }
 
     // Com a trava: a recebida [current] recebe ocupado (486); o fim dela chega pelo motor.
@@ -1165,20 +1231,23 @@ class CallManager(
 
     // Com a trava: o estado de agora vai à fila das publicações (entregue depois de soltar a trava, em [deliver]): a
     // ligação da tela e, com duas, a outra, a consulta e a conferência (só com as duas de pé: com uma saindo, a tela já
-    // mostra a outra sozinha).
+    // mostra a outra sozinha), e o Atender automático que vai atender a de cima, com as configurações de agora.
     private fun publish() {
         val ui = shown()?.let { main ->
             val other = otherThan(main)
             val together = conference && other != null
             val second = other?.let {
-                SecondUi(it.id, it.number, it.displayName, if (together) SecondKind.ACTIVE else secondKind(it))
+                SecondUi(it.id, it.number, it.displayName, if (together) SecondKind.ACTIVE else secondKind(it), it.activeSince)
             }
+            val auto = main.takeIf { it === autoCall && autoAnswers(it, settings()) }
             CallUi(
                 main.id, main.number, main.displayName, main.incoming, main.phase, main.activeSince, main.held, muted,
                 second = second,
                 conference = together,
                 consult = consultUi(),
                 conferenceSinceMillis = if (together) conferenceSince else 0,
+                autoAnswerSeconds = auto?.let { autoSeconds },
+                autoAnswerSinceMillis = if (auto != null) autoSince else 0,
             )
         }
         publications.addLast { mutableState.value = ui }

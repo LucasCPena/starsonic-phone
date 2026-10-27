@@ -2,33 +2,41 @@ package br.com.starsonic.phone.call
 
 import android.telecom.CallAudioState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -40,34 +48,72 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.draw.dropShadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.shadow.Shadow
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.text
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpOffset
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
-import br.com.starsonic.phone.R
+import androidx.compose.ui.unit.em
+import androidx.compose.ui.unit.sp
 import br.com.starsonic.phone.contacts.Contact
-import br.com.starsonic.phone.contacts.ContactSuggestions
+import br.com.starsonic.phone.contacts.initials
 import br.com.starsonic.phone.contacts.rememberSuggestions
-import br.com.starsonic.phone.main.CallGreen
-import br.com.starsonic.phone.main.CallRed
-import br.com.starsonic.phone.main.Keypad
-import br.com.starsonic.phone.main.StarsonicBlue
-import br.com.starsonic.phone.main.StarsonicCyan
-import br.com.starsonic.phone.main.duration
+import br.com.starsonic.phone.data.Recent
+import br.com.starsonic.phone.main.KEYS
+import br.com.starsonic.phone.main.Redial
+import br.com.starsonic.phone.main.Suggestions
+import br.com.starsonic.phone.service.Status
+import br.com.starsonic.phone.ui.CyanButton
+import br.com.starsonic.phone.ui.DISABLED_ALPHA
+import br.com.starsonic.phone.ui.Eyebrow
+import br.com.starsonic.phone.ui.ListRowSub
+import br.com.starsonic.phone.ui.ListRowTitle
+import br.com.starsonic.phone.ui.OutlineButton
+import br.com.starsonic.phone.ui.PlusJakartaSans
+import br.com.starsonic.phone.ui.Starsonic
+import br.com.starsonic.phone.ui.StarsonicIcons
+import br.com.starsonic.phone.ui.StatusDot
+import br.com.starsonic.phone.ui.Toast
+import java.util.Locale
+import kotlin.math.sqrt
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 
 /**
  * O que a tela de chamada pede (ao CallManager e ao Telecom). Atender e Recusar valem para a recebida que toca (a
  * única, ou a segunda na faixa); Desligar, Espera, Teclado e Transferir (o Transferir agora), para a ativa (na
- * conferência, Desligar desliga as duas); [activate] é o Alternar, e [dial] faz a Nova ligação (false: não ligou).
- * [consult] é o Consultar (false: não ligou), e [completeTransfer] e [cancelConsult], o Concluir transferência e o
- * Cancelar da consulta. [join] e [split] são o Juntar e o Separar da conferência. [suggest] e [contactNumber] dão as
- * sugestões dos contatos no número do Transferir e da Nova ligação (a busca da agenda e a regra dos números dos
- * contatos, como no Teclado).
+ * conferência, Desligar desliga as duas); [activate] é o Alternar, e [dial] faz a Nova ligação (false: não ligou),
+ * também pelo Rediscar dela. [consult] é o Consultar (false: não ligou), e [completeTransfer] e [cancelConsult], o
+ * Concluir transferência e o Cancelar da consulta. [join] e [split] são o Juntar e o Separar da conferência. [suggest] e
+ * [contactNumber] dão as sugestões dos contatos no número do Transferir e da Nova ligação (a busca da agenda e a regra
+ * dos números dos contatos, como no Teclado).
  */
 class CallActions(
     val answer: () -> Unit,
@@ -90,30 +136,49 @@ class CallActions(
 )
 
 /**
- * A tela de chamada (spec 4.1 e 7.5; com duas ligações, spec da 0.2, 4.1, 7.1 e 7.2). Recebida tocando: o número (e
- * o nome, se o PABX mandou), Recusar e Atender. Feita ou em andamento: o número, "Chamando…" ou o tempo, Mudo,
- * Teclado (DTMF), Viva-voz (ou a escolha Celular, Viva-voz e Bluetooth com um fone Bluetooth), Espera ou Retomar,
- * Transferir (o número para onde a ligação passa), Nova ligação (o número da segunda) e Desligar. Uma feita que
- * não completou mostra o motivo ([endMessage]) com o número; com a ligação de pé, o aviso da outra (a em espera que
- * caiu, a Nova ligação que não completou) aparece embaixo do estado.
+ * A tela de chamada no visual do Windows (spec 3.2, 3.4 e 7; os quadros Chamada, DuasLigacoes e Recebida do canvas), sempre
+ * escura: o gradiente da marca com o brilho ciano no canto de baixo. As medidas são as dos quadros (390 × 844 dp); numa
+ * tela mais baixa, as do Compacto do Windows ([CallSizes]); e, se nem assim couber (a letra grande), a tela rola.
  *
- * Com duas ligações: a ativa em cima, e a outra no cartão "Em espera" embaixo, com Alternar no lugar da Nova
- * ligação; a segunda que chega toca na faixa "Ligação de <nome ou número>" no alto, com Recusar e Atender. Desligar
- * desliga a ativa (a em espera volta sozinha).
+ * - No alto (menos na recebida, que tem o título dela), a linha do status ([status]: "Ocupado · em ligação", com a bolinha
+ *   vermelha, e o [ramal]; etiqueta `status-ligacao`), porque o cabeçalho fica escondido (spec 7).
+ * - Recebida tocando, sozinha (a tela cheia): "Ligação recebida · <ramal>", o avatar com os anéis, o nome e o número e, com o
+ *   Atender automático marcado para ela ([CallUi.autoAnswerSeconds]), a linha "Atender automático · em <n> s", que conta os
+ *   segundos desde que o celular tocou (etiqueta `atender-em`, R7, R32 e R33); embaixo, Recusar (vermelho) e Atender
+ *   (ciano).
+ * - Feita ou em andamento: "Em ligação", o avatar com as iniciais (sem nome, o fone), o nome (ou o número), o número e
+ *   "Chamando…", "Conectando…" ou o tempo (com o selo "Em espera"); os controles redondos em grade de 3 (o ligado em ciano)
+ *   — Mudo, Teclado, o áudio (Viva-voz; ou Celular, Viva-voz e Bluetooth com um fone Bluetooth), Espera (ou Retomar),
+ *   Transferir e Nova ligação — e o Desligar vermelho. Uma feita que não completou mostra o motivo ([endMessage], etiqueta
+ *   `aviso-ligacao`) no lugar do tempo; com a ligação de pé, o aviso da outra (a em espera que caiu, a Nova ligação que não
+ *   completou) aparece por 2 s no alto.
+ * - Duas ligações (spec da 0.2, 7.1 e 7.2): "Duas ligações", o cartão da ativa ("Ativa") e o da outra ("Em espera",
+ *   etiqueta `cartao-espera`), cada um com o número e o tempo; os controles Mudo, Teclado, o áudio, Alternar, Juntar e
+ *   Transferir (e Retomar, se o Telecom pôs as duas em espera). A segunda que chega toca na faixa "Ligação de <nome ou
+ *   número>" no alto, com Recusar e Atender. Desligar desliga a ativa (a em espera volta sozinha).
+ * - O Transferir abre o número com Consultar e Transferir agora; a Nova ligação, o número com o Rediscar ([redial], a feita
+ *   mais nova dos Recentes, com o nome do Rediscar do Teclado: [redialName]; etiqueta `rediscar-nova`, spec 6) e o Ligar.
+ *   Os dois números têm as sugestões dos contatos, como o Teclado. O teclado dos tons (DTMF) não tem o Rediscar.
+ * - Na consulta (spec da 0.2, 7.3), o colega em cima e o cliente no cartão "Em espera · transferência" (depois do Alternar,
+ *   o cliente em cima e o colega "Em espera"), com Concluir transferência (com o colega já atendido), Alternar e Cancelar
+ *   no lugar de Espera, Transferir e Nova ligação.
+ * - Na conferência (spec da 0.2, 7.4): "Conferência" e o tempo desde o Juntar, os cartões das duas, e Mudo, Teclado, o
+ *   áudio, Separar e Desligar (as duas); Separar volta aos dois cartões, com a última que entrou em espera.
  *
- * O nome é o do contato do celular quando o número está na agenda (spec da 0.2, 7.5: o CallManager o resolve), senão
- * o que a central mandou. Transferir abre o número com Consultar e Transferir agora (a direta), e o número do Transferir
- * e o da Nova ligação têm as sugestões dos contatos, como o Teclado. Na consulta (spec da 0.2, 7.3), o colega em
- * cima e o cliente no cartão "Em espera · transferência" (depois do Alternar, o cliente em cima e o colega "Em
- * espera"), com Concluir transferência (com o colega já atendido), Alternar e Cancelar no lugar de Espera,
- * Transferir e Nova ligação.
- *
- * Com as duas em andamento (sem consulta), Juntar faz a conferência (spec da 0.2, 7.4): o título "Conferência", os
- * dois nomes (ou números) e o tempo desde o Juntar, com Mudo, Teclado, o áudio, Separar e Desligar (as duas); Separar
- * volta aos dois cartões, com a última que entrou em espera.
+ * Os nomes são os do contato do celular quando o número está na agenda (spec da 0.2, 7.5: o CallManager os resolve), senão
+ * os que a central mandou. Os botões desligados ficam apagados (0,45, sem sombra: R22).
  */
 @Composable
-fun CallScreen(call: CallUi?, endMessage: String, routes: AudioRoutes, actions: CallActions) {
+fun CallScreen(
+    call: CallUi?,
+    endMessage: String,
+    routes: AudioRoutes,
+    status: Status,
+    ramal: String,
+    redial: Recent?,
+    redialName: String?,
+    actions: CallActions,
+) {
     // Depois do fim, a tela mostra a última ligação com o aviso, até sair (não é estado: só lembra).
     val last = remember { LastCall() }
     if (call != null) last.call = call
@@ -138,97 +203,137 @@ fun CallScreen(call: CallUi?, endMessage: String, routes: AudioRoutes, actions: 
     }
     // O teclado e a transferência só valem com a ligação em andamento; a Nova ligação, com ela sozinha.
     val active = call?.phase == CallPhase.ACTIVE
-    val alone = active && call?.second == null
+    val alone = active && call.second == null
     val keypad = keypadOpen && active && sameCall
     val transfer = transferOpen && active && sameCall
     val newCall = newCallOpen && alone
     // A Nova ligação fechada por outra ligação (a segunda que chega) não volta sozinha quando ela sai.
     LaunchedEffect(alone) { if (!alone) newCallOpen = false }
-    val other = call?.second
-    Column(
-        Modifier
-            .fillMaxSize()
-            .background(StarsonicBlue)
-            .statusBarsPadding()
-            .navigationBarsPadding()
-            .imePadding()
-            .padding(horizontal = 16.dp, vertical = 12.dp)
-            .testTag("chamada"),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        if (other?.kind == SecondKind.RINGING) SecondCallBar(other, actions)
-        val conference = call?.takeIf { it.conference }
-        if (conference != null) {
-            ConferenceHeader(conference, endMessage, if (keypad) digits else "")
-        } else {
-            Header(shown, call, endMessage, if (keypad) digits else "")
-        }
-        // Na consulta com o colega em cima, o cartão de baixo é o cliente.
-        val heldLabel = if (call?.consult?.colleagueActive == true) ON_HOLD_TRANSFER else ON_HOLD
-        if (other?.kind == SecondKind.HELD) HeldCard(other, heldLabel)
-        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-            when {
-                call == null -> {}
-                call.phase == CallPhase.RINGING -> {}
-                keypad -> Keypad(
-                    onKey = { key ->
-                        digits += key
-                        actions.dtmf(key)
-                    },
-                    tagPrefix = "dtmf-",
-                    keyColor = Color.White,
-                    keySize = 56.dp,
-                )
-                transfer -> NumberPanel(
-                    title = TRANSFER_TO,
-                    tagPrefix = "transferir",
-                    actions = actions,
-                    onCancel = { transferOpen = false },
-                    choices = listOf(
-                        // O Consultar é a segunda ligação: com duas, não.
-                        PanelChoice(
-                            CONSULT, R.drawable.ic_consultar, "transferir-consultar", enabled = call.second == null,
-                        ) { number ->
-                            if (actions.consult(number)) transferOpen = false
-                        },
-                        PanelChoice(TRANSFER_NOW, R.drawable.ic_transferir_agora, "transferir-agora") { number ->
-                            if (actions.transfer(number)) transferOpen = false
-                        },
-                    ),
-                )
-                newCall -> NumberPanel(
-                    title = NEW_CALL,
-                    tagPrefix = "nova",
-                    actions = actions,
-                    onCancel = { newCallOpen = false },
-                    choices = listOf(
-                        PanelChoice(DIAL, null, "nova-ligar") { number -> if (actions.dial(number)) newCallOpen = false },
-                    ),
-                )
-                else -> Controls(
-                    call,
-                    routes,
-                    actions,
-                    onKeypad = { keypadOpen = true },
-                    onTransfer = { transferOpen = true },
-                    onNewCall = { newCallOpen = true },
-                )
-            }
-        }
-        when {
-            call == null -> Spacer(Modifier.height(72.dp))
-            call.phase == CallPhase.RINGING -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                RoundAction(R.drawable.ic_desligar, REJECT, CallRed, "recusar", actions.reject)
-                RoundAction(R.drawable.ic_ligar, ANSWER, CallGreen, "atender", actions.answer)
-            }
-            else -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                if (keypad) {
-                    TextButton(onClick = { keypadOpen = false }, modifier = Modifier.testTag("teclado-chamada")) {
-                        Text(KEYPAD, color = StarsonicCyan)
+    val panel = keypad || transfer || newCall
+    // A recebida que toca sozinha é a tela cheia (a que toca com outra é a faixa).
+    val incoming = call?.phase == CallPhase.RINGING
+    BoxWithConstraints(Modifier.fillMaxSize().callBackground().testTag("chamada")) {
+        val bars = WindowInsets.systemBars.asPaddingValues()
+        val sizes = if (maxHeight - bars.calculateTopPadding() - bars.calculateBottomPadding() < COMPACT_BELOW) Compact else Regular
+        Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars).imePadding()) {
+            if (!incoming) CallTop(status, ramal, sizes)
+            CallBody(sizes, top = if (incoming) sizes.incomingTop else sizes.bodyTop) {
+                // Em cima: quem fala (e a faixa da segunda, os cartões das duas, o cliente da consulta).
+                Column(
+                    Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(sizes.gap),
+                ) {
+                    when {
+                        call == null -> shown?.let { Ended(it, endMessage, sizes) }
+                        incoming -> Incoming(call, ramal, sizes)
+                        call.conference -> Conference(call, if (keypad) digits else "", sizes, cards = !panel)
+                        call.second?.kind == SecondKind.HELD && call.consult == null -> TwoCalls(call, call.second, sizes)
+                        else -> {
+                            val ringing = call.second?.takeIf { it.kind == SecondKind.RINGING }
+                            if (ringing != null) SecondCallBar(ringing, actions)
+                            val busy = ringing != null || call.consult != null
+                            val avatar = !panel && !(busy && sizes == Compact)
+                            Talking(
+                                call, if (keypad) digits else "", sizes, avatar,
+                                top = if (avatar && !busy) sizes.whoTop else 0.dp,
+                            )
+                            val held = call.second?.takeIf { it.kind == SecondKind.HELD }
+                            if (held != null) {
+                                // Na consulta com o colega em cima, o cartão é o cliente.
+                                val label = if (call.consult?.colleagueActive == true) ON_HOLD_TRANSFER else ON_HOLD
+                                HeldCard(held, label)
+                            }
+                        }
                     }
                 }
-                RoundAction(R.drawable.ic_desligar, HANG_UP, CallRed, "desligar", actions.hangup)
+                // No meio, o que a pessoa abriu: o teclado dos tons ou um número (Transferir e Nova ligação).
+                when {
+                    call == null -> {}
+                    keypad -> CallKeypad(sizes, Modifier.padding(top = sizes.gap)) { key ->
+                        digits += key
+                        actions.dtmf(key)
+                    }
+                    transfer -> NumberPanel(
+                        TRANSFER_TO, "transferir", actions, Modifier.padding(top = sizes.gap),
+                        onCancel = { transferOpen = false }, onDone = null,
+                    ) { number ->
+                        // O Consultar é a segunda ligação: com duas, não.
+                        OutlineButton(
+                            CONSULT, tag = "transferir-consultar", enabled = number.isNotBlank() && call.second == null,
+                            modifier = Modifier.weight(1f),
+                        ) { if (actions.consult(number)) transferOpen = false }
+                        CyanButton(
+                            TRANSFER_NOW, tag = "transferir-agora", enabled = number.isNotBlank(), fadeWhenDisabled = true,
+                            modifier = Modifier.weight(1f),
+                        ) { if (actions.transfer(number)) transferOpen = false }
+                    }
+                    newCall -> {
+                        val dial = { number: String -> if (actions.dial(number)) newCallOpen = false }
+                        NumberPanel(
+                            NEW_CALL, "nova", actions, Modifier.padding(top = sizes.gap),
+                            onCancel = { newCallOpen = false }, onDone = dial,
+                        ) { number ->
+                            // O Rediscar da Nova ligação (spec 6): a feita mais nova, pelo mesmo caminho do Ligar daqui.
+                            Redial(
+                                redial, redialName, onDial = dial, modifier = Modifier.size(PANEL_BUTTON),
+                                tag = "rediscar-nova", background = Color.Transparent,
+                            )
+                            CyanButton(
+                                DIAL, tag = "nova-ligar", icon = StarsonicIcons.Phone, enabled = number.isNotBlank(),
+                                fadeWhenDisabled = true, modifier = Modifier.weight(1f),
+                            ) { dial(number) }
+                        }
+                    }
+                    else -> {}
+                }
+                // Embaixo, os controles e o Desligar (ou Recusar e Atender).
+                Column(
+                    Modifier.fillMaxWidth().padding(top = sizes.gap),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(sizes.gap),
+                ) {
+                    when {
+                        call == null -> Spacer(Modifier.height(sizes.hang + sizes.hangGap + END_LABEL))
+                        incoming -> IncomingActions(actions, sizes)
+                        keypad -> Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.Bottom,
+                        ) {
+                            Box(Modifier.width(SIDE_SLOT), contentAlignment = Alignment.Center) {
+                                Ctrl(StarsonicIcons.Keypad, KEYPAD, "teclado-chamada", sizes, on = true, toggle = true) {
+                                    keypadOpen = false
+                                }
+                            }
+                            HangUp(sizes, actions.hangup)
+                            Spacer(Modifier.width(SIDE_SLOT))
+                        }
+                        panel -> HangUp(sizes, actions.hangup)
+                        else -> {
+                            Controls(
+                                call, routes, actions, sizes,
+                                onKeypad = { keypadOpen = true },
+                                onTransfer = { transferOpen = true },
+                                onNewCall = { newCallOpen = true },
+                            )
+                            HangUp(sizes, actions.hangup, Modifier.padding(top = sizes.hangTop))
+                        }
+                    }
+                }
             }
+        }
+        // Com a ligação de pé, o aviso de 2 s da outra ("<nome ou número> desligou", o da Nova ligação, o da transferência
+        // recusada), no alto, por cima da tela, como no Windows (.call .toast).
+        if (call != null) {
+            Toast(
+                endMessage,
+                tag = "aviso-ligacao",
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .windowInsetsPadding(WindowInsets.statusBars)
+                    .padding(start = 16.dp, top = TOAST_TOP, end = 16.dp),
+            )
         }
     }
 }
@@ -238,367 +343,762 @@ private class LastCall {
     var call: CallUi? = null
 }
 
-// O nome (ou o número), o número e o estado da ligação (ou o aviso do fim).
-@Composable
-private fun Header(shown: CallUi?, call: CallUi?, endMessage: String, digits: String) {
-    Column(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        if (shown != null) {
-            Text(
-                shown.name.ifEmpty { shown.number },
-                color = Color.White,
-                style = MaterialTheme.typography.headlineMedium,
-                textAlign = TextAlign.Center,
-            )
-            if (shown.name.isNotEmpty()) {
-                Text(shown.number, color = Color.White, style = MaterialTheme.typography.titleMedium)
-            }
-        }
-        Spacer(Modifier.height(8.dp))
-        when {
-            call == null -> Text(
-                endMessage,
-                color = Color.White,
-                style = MaterialTheme.typography.titleMedium,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.testTag("aviso-ligacao"),
-            )
-            digits.isNotEmpty() -> Text(digits, color = Color.White, style = MaterialTheme.typography.titleLarge)
-            else -> Text(status(call), color = StarsonicCyan, style = MaterialTheme.typography.titleMedium)
-        }
-        // Com a ligação de pé, o aviso de 2 s da outra: "<nome ou número> desligou", ou o da Nova ligação.
-        if (call != null && endMessage.isNotEmpty()) {
-            Spacer(Modifier.height(4.dp))
-            Text(
-                endMessage,
-                color = Color.White,
-                style = MaterialTheme.typography.bodyLarge,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.testTag("aviso-ligacao"),
-            )
-        }
-    }
-}
+// As medidas das telas da ligação: as dos quadros do canvas ([Regular]: o .call-body, o .who, os .ctrl, o .hang) e, numa
+// tela mais baixa, as do layout Compacto do Windows ([Compact]: windows/ui/src/app.css, .win.call[data-layout="compacto"]).
+private data class CallSizes(
+    val topPadding: Dp,
+    val topSides: Dp,
+    val sides: Dp,
+    val bodyTop: Dp,
+    val bodyBottom: Dp,
+    val incomingTop: Dp,
+    val gap: Dp,
+    val whoTop: Dp,
+    val whoGap: Dp,
+    val avatar: Dp,
+    val avatarLetters: TextUnit,
+    val avatarTop: Dp,
+    val avatarBottom: Dp,
+    val ringTop: Dp,
+    val ringBottom: Dp,
+    val ring: Dp,
+    val name: TextUnit,
+    val sub: TextUnit,
+    val timer: TextUnit,
+    val ctrl: Dp,
+    val ctrlGap: Dp,
+    val rowGap: Dp,
+    val columnGap: Dp,
+    val key: Dp,
+    val hang: Dp,
+    val hangGap: Dp,
+    val hangTop: Dp,
+)
 
-// A conferência: o título "Conferência", os dois nomes (ou números) e o tempo desde o Juntar (ou os dígitos do
-// teclado); com o aviso de 2 s embaixo, como no [Header].
-@Composable
-private fun ConferenceHeader(call: CallUi, endMessage: String, digits: String) {
-    Column(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(
-            CONFERENCE,
-            color = Color.White,
-            style = MaterialTheme.typography.headlineMedium,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.testTag("conferencia"),
-        )
-        Spacer(Modifier.height(8.dp))
-        val parties = listOfNotNull(call.name.ifEmpty { call.number }, call.second?.let { it.name.ifEmpty { it.number } })
-        for (party in parties) {
-            Text(party, color = Color.White, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
-        }
-        Spacer(Modifier.height(8.dp))
-        if (digits.isNotEmpty()) {
-            Text(digits, color = Color.White, style = MaterialTheme.typography.titleLarge)
-        } else {
-            Text(elapsed(call.conferenceSinceMillis), color = StarsonicCyan, style = MaterialTheme.typography.titleMedium)
-        }
-        if (endMessage.isNotEmpty()) {
-            Spacer(Modifier.height(4.dp))
-            Text(
-                endMessage,
-                color = Color.White,
-                style = MaterialTheme.typography.bodyLarge,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.testTag("aviso-ligacao"),
-            )
-        }
-    }
-}
+private val Regular = CallSizes(
+    topPadding = 18.dp, topSides = 20.dp, sides = 22.dp, bodyTop = 22.dp, bodyBottom = 30.dp, incomingTop = 58.dp,
+    gap = 16.dp, whoTop = 34.dp, whoGap = 6.dp, avatar = 96.dp, avatarLetters = 34.sp, avatarTop = 10.dp,
+    avatarBottom = 6.dp, ringTop = 18.dp, ringBottom = 8.dp, ring = 14.dp, name = 28.sp, sub = 14.sp,
+    timer = 18.sp, ctrl = 64.dp, ctrlGap = 8.dp, rowGap = 16.dp, columnGap = 10.dp, key = 54.dp, hang = 72.dp,
+    hangGap = 8.dp, hangTop = 10.dp,
+)
 
-// A faixa da segunda ligação, que toca: "Ligação de <nome ou número>", com Recusar (em vermelho) e Atender (em
-// verde), como a notificação. Os dois valem para ela (o CallManager atende ou recusa a que toca).
-@Composable
-private fun SecondCallBar(ringing: SecondUi, actions: CallActions) {
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(Color.White.copy(alpha = 0.15f))
-            .padding(horizontal = 16.dp, vertical = 12.dp)
-            .testTag("segunda-ligacao"),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Text(
-            "$CALL_FROM ${ringing.name.ifEmpty { ringing.number }}",
-            color = Color.White,
-            style = MaterialTheme.typography.titleMedium,
-            textAlign = TextAlign.Center,
-        )
-        Spacer(Modifier.height(8.dp))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-            BarButton(R.drawable.ic_desligar, REJECT, CallRed, "recusar-segunda", actions.reject)
-            BarButton(R.drawable.ic_ligar, ANSWER, CallGreen, "atender-segunda", actions.answer)
-        }
-    }
-}
+private val Compact = CallSizes(
+    topPadding = 12.dp, topSides = 16.dp, sides = 16.dp, bodyTop = 12.dp, bodyBottom = 14.dp, incomingTop = 24.dp,
+    gap = 10.dp, whoTop = 4.dp, whoGap = 4.dp, avatar = 64.dp, avatarLetters = 22.sp, avatarTop = 4.dp,
+    avatarBottom = 2.dp, ringTop = 12.dp, ringBottom = 6.dp, ring = 10.dp, name = 22.sp, sub = 13.sp,
+    timer = 16.sp, ctrl = 52.dp, ctrlGap = 6.dp, rowGap = 10.dp, columnGap = 6.dp, key = 44.dp, hang = 60.dp,
+    hangGap = 6.dp, hangTop = 4.dp,
+)
 
-// Um botão da faixa da segunda ligação: o ícone e o nome, na cor dele.
+// A linha do status no alto (o .call-top do canvas): a bolinha, a linha do status e o ramal à direita, numa linha só
+// (com "…" se não couber), lidos juntos pelo leitor de tela.
 @Composable
-private fun BarButton(icon: Int, label: String, color: Color, tag: String, onClick: () -> Unit) {
-    Button(
-        onClick = onClick,
-        colors = ButtonDefaults.buttonColors(containerColor = color, contentColor = Color.White),
-        modifier = Modifier.testTag(tag),
-    ) {
-        Icon(painterResource(icon), contentDescription = null, modifier = Modifier.size(18.dp))
-        Spacer(Modifier.width(8.dp))
-        Text(label)
-    }
-}
-
-// O cartão da outra de duas ligações, embaixo da ativa: o nome (ou o número) e [label] ("Em espera", ou "Em espera ·
-// transferência" para o cliente da consulta), em cinza.
-@Composable
-private fun HeldCard(held: SecondUi, label: String) {
+private fun CallTop(status: Status, ramal: String, sizes: CallSizes) {
     Row(
         Modifier
             .fillMaxWidth()
-            .padding(top = 16.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .background(Color.White.copy(alpha = 0.1f))
-            .padding(horizontal = 16.dp, vertical = 12.dp)
-            .testTag("cartao-espera"),
+            .padding(start = sizes.topSides, top = sizes.topPadding, end = sizes.topSides)
+            .semantics(mergeDescendants = true) {}
+            .testTag("status-ligacao"),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(Modifier.weight(1f)) {
-            Text(held.name.ifEmpty { held.number }, color = Color.White, style = MaterialTheme.typography.titleMedium)
-            if (held.name.isNotEmpty()) {
-                Text(held.number, color = HeldGray, style = MaterialTheme.typography.bodyMedium)
+        StatusDot(status.dot)
+        Text(
+            status.line,
+            style = TopLine,
+            color = Color.White,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        Text(ramal, style = TopLine, color = Muted, maxLines = 1)
+    }
+}
+
+// O corpo da tela (o .call-body): o que vem em cima, o do meio e o de baixo ([content], na ordem; os de baixo trazem o
+// espaço mínimo deles em cima), com o espaço que sobra entre eles (o de baixo fica no fim da tela). Sem espaço para tudo
+// (a letra grande), ele rola.
+@Composable
+private fun CallBody(sizes: CallSizes, top: Dp, content: @Composable ColumnScope.() -> Unit) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .heightIn(min = maxHeight)
+                .padding(start = sizes.sides, top = top, end = sizes.sides, bottom = sizes.bodyBottom),
+            verticalArrangement = Arrangement.SpaceBetween,
+            horizontalAlignment = Alignment.CenterHorizontally,
+            content = content,
+        )
+    }
+}
+
+// A ligação que acabou (até a tela fechar): quem era e o motivo do fim, no lugar do tempo.
+@Composable
+private fun Ended(last: CallUi, message: String, sizes: CallSizes) {
+    Who(last.name, last.number, eyebrow = null, avatar = true, sizes) {
+        Text(
+            message,
+            style = EndText,
+            color = Color.White,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.testTag("aviso-ligacao"),
+        )
+    }
+}
+
+// A recebida que toca sozinha (o quadro Recebida): o título com o ramal, o avatar com os anéis, o nome e o número e, com
+// o Atender automático marcado, a contagem dele.
+@Composable
+private fun Incoming(call: CallUi, ramal: String, sizes: CallSizes) {
+    Who(call.name, call.number, incomingTitle(ramal), avatar = true, sizes, rings = true) {}
+    val seconds = call.autoAnswerSeconds
+    if (seconds != null) AutoAnswerLine(seconds, call.autoAnswerSinceMillis, Modifier.padding(top = AUTO_LINE_TOP))
+}
+
+// A linha do Atender automático (o .tag do quadro Recebida), que conta os segundos (R33): "Atender automático · em <n>
+// s", ou "· na hora".
+@Composable
+private fun AutoAnswerLine(seconds: Int, sinceMillis: Long, modifier: Modifier = Modifier) {
+    val now = rememberNow()
+    Tag(autoAnswerCountdown(seconds, sinceMillis, now), modifier.testTag("atender-em"))
+}
+
+// A ligação de cima, sozinha, com a faixa da segunda ou na consulta: "Em ligação", o avatar ([avatar]), quem é, o estado
+// (o tempo) com o selo "Em espera" se ela está em espera, e os dígitos do teclado dos tons ([digits]); [top] acima (o
+// margin-top do .who no quadro Chamada).
+@Composable
+private fun Talking(call: CallUi, digits: String, sizes: CallSizes, avatar: Boolean, top: Dp) {
+    Who(call.name, call.number, IN_CALL, avatar, sizes, top = top) {
+        Ticking(style = TimerText.copy(fontSize = sizes.timer), color = Starsonic.Cyan) { now ->
+            callStatus(call.phase, call.activeSinceMillis, now)
+        }
+        if (call.held) Tag(ON_HOLD)
+        if (digits.isNotEmpty()) Digits(digits)
+    }
+}
+
+// Quem fala (o .who): o rótulo da seção ([eyebrow]), o avatar ([avatar]: as iniciais do nome, ou o fone sem nome; com
+// [rings], os anéis da recebida), o nome (ou o número), o número embaixo (com o nome) e o que vem depois ([below]).
+@Composable
+private fun Who(
+    name: String,
+    number: String,
+    eyebrow: String?,
+    avatar: Boolean,
+    sizes: CallSizes,
+    rings: Boolean = false,
+    top: Dp = 0.dp,
+    below: @Composable ColumnScope.() -> Unit,
+) {
+    Column(
+        Modifier.fillMaxWidth().padding(top = top),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(sizes.whoGap),
+    ) {
+        if (eyebrow != null) Eyebrow(eyebrow, color = Starsonic.Cyan)
+        if (avatar) {
+            CallAvatar(
+                name, sizes.avatar, sizes.avatarLetters,
+                Modifier.padding(
+                    top = if (rings) sizes.ringTop else sizes.avatarTop,
+                    bottom = if (rings) sizes.ringBottom else sizes.avatarBottom,
+                ),
+                ring = if (rings) sizes.ring else 0.dp,
+            )
+        }
+        Text(name.ifEmpty { number }, style = NameText.copy(fontSize = sizes.name), color = Color.White, textAlign = TextAlign.Center)
+        if (name.isNotEmpty()) Text(number, style = SubText.copy(fontSize = sizes.sub), color = Muted, textAlign = TextAlign.Center)
+        below()
+    }
+}
+
+// O avatar das telas da ligação (o .avatar no gradiente da marca): as iniciais do nome, ou o fone sem nome; com [ring], os
+// dois anéis ciano da recebida (o box-shadow do quadro Recebida: o de [ring] e o de duas vezes ele, mais claro). Enfeite.
+@Composable
+private fun CallAvatar(name: String, size: Dp, letters: TextUnit, modifier: Modifier = Modifier, ring: Dp = 0.dp) {
+    Box(
+        modifier
+            .then(
+                if (ring > 0.dp) {
+                    Modifier.drawBehind {
+                        val radius = this.size.minDimension / 2
+                        drawCircle(Starsonic.Cyan.copy(alpha = 0.06f), radius = radius + ring.toPx() * 30 / 14)
+                        drawCircle(Starsonic.Cyan.copy(alpha = 0.12f), radius = radius + ring.toPx())
+                    }
+                } else {
+                    Modifier
+                },
+            )
+            .size(size)
+            .clip(CircleShape)
+            .background(Starsonic.BrandGradient)
+            .clearAndSetSemantics {},
+        contentAlignment = Alignment.Center,
+    ) {
+        if (name.isBlank()) {
+            Icon(StarsonicIcons.Phone, contentDescription = null, tint = Color.White, modifier = Modifier.size(size * 0.4f))
+        } else {
+            Text(initials(name), style = AvatarText.copy(fontSize = letters), color = Color.White, maxLines = 1)
+        }
+    }
+}
+
+// As duas ligações (o quadro DuasLigacoes): o título e o cartão da ativa, em ciano, com o selo "Ativa", e o da outra, com
+// "Em espera"; cada um com o número e o tempo.
+@Composable
+private fun TwoCalls(call: CallUi, held: SecondUi, sizes: CallSizes) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(CARD_GAP)) {
+        Eyebrow(TWO_CALLS, color = Starsonic.Cyan, modifier = Modifier.padding(top = if (sizes == Regular) 18.dp else 0.dp))
+        CallCard(call.name, call.number, active = true, tag = "cartao-ativa", line = { now ->
+            cardLine(call.number, call.name, callStatus(call.phase, call.activeSinceMillis, now))
+        }) { Tag(ACTIVE) }
+        HeldCard(held, ON_HOLD)
+    }
+}
+
+// O cartão da outra de duas ligações, em espera ("Em espera", ou "Em espera · transferência" para o cliente da consulta,
+// embaixo do nome: o selo comprido não deixaria o nome caber).
+@Composable
+private fun HeldCard(held: SecondUi, label: String) {
+    val time = { now: Long ->
+        cardLine(held.number, held.name, if (held.activeSinceMillis > 0) callStatus(CallPhase.ACTIVE, held.activeSinceMillis, now) else "")
+    }
+    if (label == ON_HOLD) {
+        CallCard(held.name, held.number, active = false, tag = "cartao-espera", line = time) { Tag(label, muted = true) }
+    } else {
+        CallCard(held.name, held.number, active = false, tag = "cartao-espera", line = time, below = { Tag(label, muted = true) })
+    }
+}
+
+// A conferência (spec da 0.2, 7.4; no Windows, o .who-conf e a .conf-list): "Conferência", o tempo desde o Juntar e os
+// dígitos do teclado ([digits]); com [cards], os cartões das duas, com o alto-falante de quem fala.
+@Composable
+private fun Conference(call: CallUi, digits: String, sizes: CallSizes, cards: Boolean) {
+    Column(
+        Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(sizes.whoGap),
+    ) {
+        Eyebrow(CONFERENCE, color = Starsonic.Cyan, modifier = Modifier.testTag("conferencia"))
+        Ticking(style = TimerText.copy(fontSize = sizes.timer), color = Starsonic.Cyan) { now ->
+            callTimer(((now - call.conferenceSinceMillis) / 1000).toInt())
+        }
+        if (digits.isNotEmpty()) Digits(digits)
+    }
+    if (cards) {
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(CARD_GAP)) {
+            val parties = listOfNotNull(call.name to call.number, call.second?.let { it.name to it.number })
+            for ((name, number) in parties) {
+                CallCard(name, number, active = false, tag = "participante", line = { cardLine(number, name, "") }) {
+                    Icon(StarsonicIcons.Speaking, contentDescription = null, tint = Starsonic.Cyan, modifier = Modifier.size(20.dp))
+                }
             }
         }
-        Spacer(Modifier.width(12.dp))
-        Text(label, color = HeldGray, style = MaterialTheme.typography.labelLarge)
     }
 }
 
-// O estado: "Ligação recebida", "Chamando…", "Conectando…" ou o tempo (e "Em espera").
+// A faixa da segunda ligação, que toca (o .vcard-on do Windows): "Ligação de <nome ou número>", o número embaixo (com o
+// nome) e os redondos Recusar (vermelho) e Atender (ciano), que valem para ela; o leitor de tela a anuncia.
 @Composable
-private fun status(call: CallUi): String = when (call.phase) {
-    CallPhase.RINGING -> INCOMING
-    CallPhase.DIALING -> CALLING
-    CallPhase.CONNECTING -> CONNECTING
-    CallPhase.ACTIVE -> {
-        val time = elapsed(call.activeSinceMillis)
-        if (call.held) "$time · $ON_HOLD" else time
+private fun SecondCallBar(ringing: SecondUi, actions: CallActions) {
+    CallCard(
+        ringing.name, ringing.number, active = true, tag = "segunda-ligacao",
+        title = "$CALL_FROM ${ringing.name.ifEmpty { ringing.number }}",
+        line = { cardLine(ringing.number, ringing.name, "") },
+        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+    ) {
+        SmallRound(StarsonicIcons.HangUp, REJECT, Starsonic.Danger, Color.White, "recusar-segunda", actions.reject)
+        SmallRound(StarsonicIcons.Phone, ANSWER, Starsonic.Cyan, Starsonic.OnCyan, "atender-segunda", actions.answer)
     }
 }
 
-// O tempo desde [sinceMillis], que anda a cada segundo.
+// Um cartão de ligação (o .vcard dos quadros): o avatar, o [title] (o nome, ou o número) e a [line] embaixo (com a hora de
+// agora: o número e o tempo; sem nada, nenhuma), o [below] e, à direita, o [trailing] (um selo, os botões da faixa);
+// [active] é o da ativa (o .vcard-on, ciano).
 @Composable
-private fun elapsed(sinceMillis: Long): String {
+private fun CallCard(
+    name: String,
+    number: String,
+    active: Boolean,
+    tag: String,
+    modifier: Modifier = Modifier,
+    title: String = name.ifEmpty { number },
+    line: (Long) -> String,
+    below: (@Composable () -> Unit)? = null,
+    trailing: @Composable RowScope.() -> Unit = {},
+) {
+    Row(
+        modifier
+            .fillMaxWidth()
+            .clip(CardShape)
+            .background(if (active) Starsonic.Cyan.copy(alpha = 0.09f) else Color.White.copy(alpha = 0.045f))
+            .border(1.dp, if (active) Starsonic.Cyan.copy(alpha = 0.5f) else Color.White.copy(alpha = 0.1f), CardShape)
+            .padding(horizontal = 15.dp, vertical = 13.dp)
+            .testTag(tag),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        CallAvatar(name, CARD_AVATAR, CARD_AVATAR_LETTERS)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, style = ListRowTitle, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Ticking(style = ListRowSub, color = Muted, text = line)
+            below?.invoke()
+        }
+        trailing()
+    }
+}
+
+// Um selo (o .tag dos quadros): a pílula de 22 dp com o [text] em maiúsculas espaçadas, em ciano (ou, [muted], no cinza do
+// "Em espera" do quadro DuasLigacoes). O leitor de tela o lê como está escrito.
+@Composable
+private fun Tag(text: String, modifier: Modifier = Modifier, muted: Boolean = false) {
+    val color = if (muted) Muted else Starsonic.Cyan
+    Box(
+        modifier
+            .heightIn(min = 22.dp)
+            .clip(CircleShape)
+            .background(if (muted) Color.White.copy(alpha = 0.06f) else Starsonic.Cyan.copy(alpha = 0.14f))
+            .border(1.dp, if (muted) Color.White.copy(alpha = 0.18f) else Starsonic.Cyan.copy(alpha = 0.35f), CircleShape)
+            .padding(horizontal = 10.dp)
+            .clearAndSetSemantics { this.text = AnnotatedString(text) },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(text.uppercase(PT_BR), style = TagText, color = color, maxLines = 1)
+    }
+}
+
+// Os dígitos mandados pelo teclado dos tons (o .dtmf), numa linha só: sem lugar, os últimos.
+@Composable
+private fun Digits(digits: String) {
+    Text(digits, style = DigitsText, color = Color.White, maxLines = 1, overflow = TextOverflow.StartEllipsis)
+}
+
+// Um texto que muda com a hora (o tempo da ligação, o dos cartões): [text] com a hora de agora; vazio, nada.
+@Composable
+private fun Ticking(style: TextStyle, color: Color, text: (Long) -> String) {
+    val shown = text(rememberNow())
+    if (shown.isNotEmpty()) Text(shown, style = style, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
+}
+
+// A hora de agora, de [TICK_MILLIS] em [TICK_MILLIS] ms (o segundo novo aparece logo); só quem a lê recompõe. A espera é a
+// do relógio de verdade, na thread principal (Dispatchers.Main), e não a da composição: nos testes no emulador, a da
+// composição só anda quando o teste avança o relógio do Compose, e o tempo pararia.
+@Composable
+private fun rememberNow(): Long {
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(sinceMillis) {
-        while (true) {
-            now = System.currentTimeMillis()
-            delay(1_000)
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.Main) {
+            while (true) {
+                now = System.currentTimeMillis()
+                delay(TICK_MILLIS)
+            }
         }
     }
-    return duration(((now - sinceMillis) / 1000).toInt().coerceAtLeast(0))
+    return now
 }
 
-// Os botões da ligação: Mudo, Teclado e o áudio; Espera (ou Retomar), Transferir e a Nova ligação (com uma ligação
-// só, em andamento) ou, com duas, Alternar e Juntar (com as duas em andamento: a feita que chama ainda não alterna nem
-// junta). Na consulta: Concluir transferência e Alternar (com o colega já atendido) e Cancelar. Na conferência, só
-// Separar.
+// Os botões da ligação, em grade de 3 (o .ctrls): Mudo, Teclado e o áudio; depois, com uma ligação só (ou com a faixa da
+// segunda), Espera (ou Retomar), Transferir e a Nova ligação (com ela sozinha, em andamento); com duas, Alternar, Juntar e
+// Transferir (com as duas em andamento: a feita que chama ainda não alterna nem junta), e Retomar se a de cima está em
+// espera (o Telecom pôs as duas: uma ligação da operadora); na consulta, Concluir transferência e Alternar (com o colega
+// já atendido) e Cancelar; na conferência, Separar.
 @Composable
 private fun Controls(
     call: CallUi,
     routes: AudioRoutes,
     actions: CallActions,
+    sizes: CallSizes,
     onKeypad: () -> Unit,
     onTransfer: () -> Unit,
     onNewCall: () -> Unit,
 ) {
     val active = call.phase == CallPhase.ACTIVE
     val other = call.second
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-            Toggle(R.drawable.ic_mudo, MUTE, call.muted, true, "mudo", actions.mute)
-            Toggle(R.drawable.ic_teclado, KEYPAD, false, active, "teclado-chamada", onKeypad)
-            if (!routes.bluetoothAvailable) {
-                Toggle(R.drawable.ic_viva_voz, SPEAKER, routes.speaker, true, "viva-voz") {
-                    actions.route(if (routes.speaker) routes.handsetRoute else CallAudioState.ROUTE_SPEAKER)
-                }
-            }
-        }
+    val both = active && other?.kind == SecondKind.HELD   // as duas em andamento
+    val hold = CtrlSpec(
+        StarsonicIcons.Hold, if (call.held) RESUME else HOLD, "espera", on = call.held, enabled = active, toggle = true,
+    ) { actions.hold() }
+    val transfer = CtrlSpec(StarsonicIcons.ArrowRight, TRANSFER, "transferir", enabled = active, onClick = onTransfer)
+    val swap = CtrlSpec(StarsonicIcons.Swap, SWAP, "alternar", enabled = both, onClick = actions.activate)
+    val specs = buildList {
+        val mic = if (call.muted) StarsonicIcons.MicOff else StarsonicIcons.Mic
+        add(CtrlSpec(mic, MUTE, "mudo", on = call.muted, toggle = true) { actions.mute() })
+        add(CtrlSpec(StarsonicIcons.Keypad, KEYPAD, "teclado-chamada", enabled = active, onClick = onKeypad))
         if (routes.bluetoothAvailable) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                Toggle(R.drawable.ic_ligar, HANDSET, !routes.speaker && !routes.bluetooth, true, "celular") {
-                    actions.route(routes.handsetRoute)
-                }
-                Toggle(R.drawable.ic_viva_voz, SPEAKER, routes.speaker, true, "viva-voz") {
-                    actions.route(CallAudioState.ROUTE_SPEAKER)
-                }
-                Toggle(R.drawable.ic_bluetooth, BLUETOOTH, routes.bluetooth, true, "bluetooth") {
-                    actions.route(CallAudioState.ROUTE_BLUETOOTH)
-                }
+            add(CtrlSpec(StarsonicIcons.Phone, HANDSET, "celular", on = !routes.speaker && !routes.bluetooth, toggle = true) {
+                actions.route(routes.handsetRoute)
+            })
+            add(CtrlSpec(StarsonicIcons.Speaker, SPEAKER, "viva-voz", on = routes.speaker, toggle = true) {
+                actions.route(CallAudioState.ROUTE_SPEAKER)
+            })
+            add(CtrlSpec(StarsonicIcons.Bluetooth, BLUETOOTH, "bluetooth", on = routes.bluetooth, toggle = true) {
+                actions.route(CallAudioState.ROUTE_BLUETOOTH)
+            })
+        } else {
+            add(CtrlSpec(StarsonicIcons.Speaker, SPEAKER, "viva-voz", on = routes.speaker, toggle = true) {
+                actions.route(if (routes.speaker) routes.handsetRoute else CallAudioState.ROUTE_SPEAKER)
+            })
+        }
+        when {
+            call.conference -> add(CtrlSpec(StarsonicIcons.Split, SPLIT, "separar", onClick = actions.split))
+            call.consult != null -> {
+                add(
+                    CtrlSpec(
+                        StarsonicIcons.Check, COMPLETE_TRANSFER, "concluir-transferencia", enabled = both,
+                        onClick = actions.completeTransfer,
+                    ),
+                )
+                add(swap)
+                add(CtrlSpec(StarsonicIcons.Close, CANCEL, "cancelar-consulta", onClick = actions.cancelConsult))
+            }
+            other?.kind == SecondKind.HELD -> {
+                add(swap)
+                add(CtrlSpec(StarsonicIcons.Join, JOIN, "juntar", enabled = both, onClick = actions.join))
+                add(transfer)
+                if (call.held) add(hold)
+            }
+            else -> {
+                add(hold)
+                add(transfer)
+                add(CtrlSpec(StarsonicIcons.Add, NEW_CALL, "nova-ligacao", enabled = active && other == null, onClick = onNewCall))
             }
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-            val both = active && other?.kind == SecondKind.HELD   // as duas em andamento
-            if (call.conference) {
-                Toggle(R.drawable.ic_separar, SPLIT, false, true, "separar", actions.split)
-            } else if (call.consult != null) {
-                Toggle(
-                    104.dp, R.drawable.ic_concluir, COMPLETE_TRANSFER, false, both, "concluir-transferencia",
-                    actions.completeTransfer,
-                )
-                Toggle(R.drawable.ic_alternar, SWAP, false, both, "alternar", actions.activate)
-                Toggle(R.drawable.ic_desligar, CANCEL, false, true, "cancelar-consulta", actions.cancelConsult)
-            } else if (other != null && other.kind != SecondKind.RINGING) {
-                // Quatro botões: um pouco mais estreitos, para caber nos celulares de 320 dp.
-                val hold = if (call.held) RESUME else HOLD
-                Toggle(TWO_CALLS_WIDTH, R.drawable.ic_espera, hold, call.held, active, "espera", actions.hold)
-                Toggle(TWO_CALLS_WIDTH, R.drawable.ic_transferir, TRANSFER, false, active, "transferir", onTransfer)
-                Toggle(TWO_CALLS_WIDTH, R.drawable.ic_alternar, SWAP, false, both, "alternar", actions.activate)
-                Toggle(TWO_CALLS_WIDTH, R.drawable.ic_juntar, JOIN, false, both, "juntar", actions.join)
-            } else {
-                Toggle(R.drawable.ic_espera, if (call.held) RESUME else HOLD, call.held, active, "espera", actions.hold)
-                Toggle(R.drawable.ic_transferir, TRANSFER, false, active, "transferir", onTransfer)
-                Toggle(R.drawable.ic_nova_ligacao, NEW_CALL, false, active && other == null, "nova-ligacao", onNewCall)
+    }
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(sizes.rowGap)) {
+        for (row in specs.chunked(GRID_COLUMNS)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(sizes.columnGap)) {
+                for (spec in row) {
+                    Ctrl(spec.icon, spec.label, spec.tag, sizes, spec.on, spec.enabled, spec.toggle, Modifier.weight(1f), spec.onClick)
+                }
+                // A última linha incompleta fica à esquerda, como na grade do CSS.
+                repeat(GRID_COLUMNS - row.size) { Spacer(Modifier.weight(1f)) }
             }
         }
     }
 }
 
-// Um botão do [NumberPanel]: o nome, o ícone (null: nenhum), a etiqueta, se vale agora (além de um número digitado)
-// e o que ele faz com o número.
-private class PanelChoice(
+// Um botão da grade: o ícone, o nome, a etiqueta, se está ligado (o ciano), se vale agora e se é de ligar e desligar.
+private class CtrlSpec(
+    val icon: ImageVector,
     val label: String,
-    val icon: Int?,
     val tag: String,
+    val on: Boolean = false,
     val enabled: Boolean = true,
-    val onPick: (String) -> Unit,
+    val toggle: Boolean = false,
+    val onClick: () -> Unit,
 )
 
-// Um número, com os botões [choices] (lado a lado), as sugestões dos contatos (um toque preenche o número como ele é
-// discado: [CallActions.suggest] e [CallActions.contactNumber]) e Cancelar embaixo: para onde a ligação vai (Transferir:
-// Consultar ou Transferir agora) ou para quem ligar (Nova ligação). Com um botão só, o Concluído do teclado é ele. As
-// etiquetas: <tagPrefix>-numero, <tagPrefix>-cancelar, sugestao-<nome> e a de cada botão.
+// Um botão da ligação (o .ctrl): o círculo de [CallSizes.ctrl] com o ícone (ligado, [on], em ciano com o ícone escuro) e o
+// nome embaixo, o toque nos dois; desligado ([enabled] false), apagado (0,45). Os de ligar e desligar ([toggle]: Mudo, o
+// áudio, Espera e o Teclado aberto) dizem ao leitor de tela se estão ligados.
+@Composable
+private fun Ctrl(
+    icon: ImageVector,
+    label: String,
+    tag: String,
+    sizes: CallSizes,
+    on: Boolean = false,
+    enabled: Boolean = true,
+    toggle: Boolean = false,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    Column(
+        modifier
+            .alpha(if (enabled) 1f else DISABLED_ALPHA)
+            .clip(RoundedCornerShape(12.dp))
+            .then(
+                if (toggle) {
+                    Modifier.toggleable(value = on, enabled = enabled, role = Role.Button, onValueChange = { onClick() })
+                } else {
+                    Modifier.clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+                },
+            )
+            .testTag(tag),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(sizes.ctrlGap),
+    ) {
+        Box(
+            Modifier
+                .size(sizes.ctrl)
+                .clip(CircleShape)
+                .background(if (on) Starsonic.Cyan else Color.White.copy(alpha = 0.07f))
+                .border(1.dp, if (on) Starsonic.Cyan else Color.White.copy(alpha = 0.14f), CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(icon, contentDescription = null, tint = if (on) Starsonic.OnCyan else Color.White, modifier = Modifier.size(20.dp))
+        }
+        Text(label, style = CtrlText, color = Color.White, textAlign = TextAlign.Center)
+    }
+}
+
+// O Desligar (o .hang do quadro Chamada): o redondo vermelho com o fone virado e o nome embaixo.
+@Composable
+private fun HangUp(sizes: CallSizes, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    RoundAction(StarsonicIcons.HangUp, HANG_UP, "desligar", Starsonic.Danger, Color.White, sizes, HangLabel, modifier, onClick = onClick)
+}
+
+// Recusar e Atender da recebida (o quadro Recebida): o vermelho e o ciano, afastados, com os nomes embaixo.
+@Composable
+private fun IncomingActions(actions: CallActions, sizes: CallSizes) {
+    Row(
+        Modifier.fillMaxWidth().padding(bottom = if (sizes == Regular) 18.dp else 4.dp),
+        horizontalArrangement = Arrangement.SpaceAround,
+        verticalAlignment = Alignment.Top,
+    ) {
+        RoundAction(
+            StarsonicIcons.HangUp, REJECT, "recusar", Starsonic.Danger, Color.White, sizes, IncomingLabel,
+            gap = sizes.hangGap + 2.dp, onClick = actions.reject,
+        )
+        RoundAction(
+            StarsonicIcons.Phone, ANSWER, "atender", Starsonic.Cyan, Starsonic.OnCyan, sizes, IncomingLabel,
+            gap = sizes.hangGap + 2.dp, shadow = true, onClick = actions.answer,
+        )
+    }
+}
+
+// Um botão redondo grande com o nome embaixo (o toque vale nos dois): o círculo de [CallSizes.hang] na cor [background],
+// com o ícone de 24 dp; o Atender com a sombra ciano ([shadow]).
+@Composable
+private fun RoundAction(
+    icon: ImageVector,
+    label: String,
+    tag: String,
+    background: Color,
+    tint: Color,
+    sizes: CallSizes,
+    labelStyle: TextStyle,
+    modifier: Modifier = Modifier,
+    gap: Dp = sizes.hangGap,
+    shadow: Boolean = false,
+    onClick: () -> Unit,
+) {
+    Column(
+        modifier
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(4.dp)
+            .testTag(tag),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(gap),
+    ) {
+        Box(
+            Modifier
+                .size(sizes.hang)
+                .then(if (shadow) Modifier.dropShadow(CircleShape, CyanShadow) else Modifier)
+                .clip(CircleShape)
+                .background(background),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(24.dp))
+        }
+        Text(label, style = labelStyle, color = Color.White)
+    }
+}
+
+// Um redondo pequeno da faixa da segunda (o .round-sm do Windows): 40 dp (o toque, 48), o ícone de 18 e o [label] para o
+// leitor de tela.
+@Composable
+private fun SmallRound(icon: ImageVector, label: String, background: Color, tint: Color, tag: String, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .size(40.dp)
+            .clip(CircleShape)
+            .background(background)
+            .clickable(role = Role.Button, onClick = onClick)
+            .semantics { contentDescription = label }
+            .testTag(tag),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(18.dp))
+    }
+}
+
+// O teclado dos tons (as .call-keys do Windows): as 12 teclas em 3 colunas, só com o número (etiquetas dtmf-<tecla>).
+@Composable
+private fun CallKeypad(sizes: CallSizes, modifier: Modifier = Modifier, onKey: (String) -> Unit) {
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(sizes.columnGap + 2.dp)) {
+        for (row in KEYS) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                for (key in row) {
+                    Box(
+                        Modifier
+                            .weight(1f)
+                            .heightIn(min = sizes.key)
+                            .clip(KeyShape)
+                            .background(Color.White.copy(alpha = 0.045f))
+                            .border(1.dp, Color.White.copy(alpha = 0.1f), KeyShape)
+                            .clickable(role = Role.Button) { onKey(key) }
+                            .testTag("dtmf-$key"),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(key, style = KeyText, color = Color.White)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Um número (o .call-panel do Windows) com o [title], o campo, os botões ([buttons], lado a lado, com o número digitado),
+// as sugestões dos contatos (as do Teclado; só quando há alguma, embaixo dos botões: com o teclado do Android aberto, a
+// tela tem pouco espaço, e os botões nunca saem do lugar por causa delas; um toque preenche o número como ele é discado) e
+// Cancelar: para onde a ligação vai (Transferir) ou para quem ligar (Nova ligação). O Concluído do teclado do Android é o
+// [onDone] (null: só fecha o teclado). As etiquetas: <tagPrefix>-numero, <tagPrefix>-cancelar e sugestao-<nome>.
 @Composable
 private fun NumberPanel(
     title: String,
     tagPrefix: String,
     actions: CallActions,
+    modifier: Modifier = Modifier,
     onCancel: () -> Unit,
-    choices: List<PanelChoice>,
+    onDone: ((String) -> Unit)?,
+    buttons: @Composable RowScope.(String) -> Unit,
 ) {
     var number by rememberSaveable { mutableStateOf("") }
     val suggestions = rememberSuggestions(number, actions.suggest, actions.contactNumber)
-    val colors = OutlinedTextFieldDefaults.colors(
-        focusedTextColor = Color.White,
-        unfocusedTextColor = Color.White,
-        focusedBorderColor = StarsonicCyan,
-        unfocusedBorderColor = Color.White,
-        focusedLabelColor = StarsonicCyan,
-        unfocusedLabelColor = Color.White,
-        cursorColor = StarsonicCyan,
-    )
-    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Text(title, color = Color.White, style = MaterialTheme.typography.titleMedium)
-        OutlinedTextField(
-            value = number,
-            onValueChange = { number = it },
-            label = { Text(NUMBER) },
-            singleLine = true,
-            colors = colors,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-            // Com mais de um botão, o Concluído só fecha o teclado (a pessoa escolhe o botão).
-            keyboardActions = choices.singleOrNull()
-                ?.let { only -> KeyboardActions(onDone = { only.onPick(number) }) }
-                ?: KeyboardActions.Default,
-            modifier = Modifier.fillMaxWidth().testTag("$tagPrefix-numero"),
-        )
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            for (choice in choices) {
-                Button(
-                    onClick = { choice.onPick(number) },
-                    enabled = choice.enabled && number.isNotBlank(),
-                    colors = ButtonDefaults.buttonColors(containerColor = StarsonicCyan, contentColor = Color.White),
-                    modifier = Modifier.weight(1f).testTag(choice.tag),
-                ) {
-                    if (choice.icon != null) {
-                        Icon(painterResource(choice.icon), contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                    }
-                    Text(choice.label, textAlign = TextAlign.Center)
-                }
-            }
-        }
-        // As sugestões só ocupam lugar quando há alguma, e embaixo dos botões: com o teclado do Android aberto, a tela
-        // de chamada tem pouco espaço, e os botões nunca saem do lugar nem encolhem por causa delas.
-        if (suggestions.isNotEmpty()) ContactSuggestions(suggestions, Color.White, onPick = { number = it })
-        TextButton(onClick = onCancel, modifier = Modifier.testTag("$tagPrefix-cancelar")) {
-            Text(CANCEL, color = Color.White)
-        }
-    }
-}
-
-// Um botão redondo de ligar ou desligar, com o nome embaixo (o toque vale nos dois).
-@Composable
-private fun RoundAction(icon: Int, label: String, color: Color, tag: String, onClick: () -> Unit) {
-    Column(
-        Modifier
-            .clip(RoundedCornerShape(16.dp))
-            .clickable(onClick = onClick)
-            .padding(8.dp)
-            .testTag(tag),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Box(Modifier.size(72.dp).clip(CircleShape).background(color), contentAlignment = Alignment.Center) {
-            Icon(painterResource(icon), contentDescription = null, tint = Color.White, modifier = Modifier.size(32.dp))
-        }
-        Spacer(Modifier.height(8.dp))
-        Text(label, color = Color.White, style = MaterialTheme.typography.labelLarge)
-    }
-}
-
-// Um botão da ligação, com o nome embaixo (o toque vale nos dois): aceso ([on]) em branco, apagado transparente.
-@Composable
-private fun Toggle(icon: Int, label: String, on: Boolean, enabled: Boolean, tag: String, onClick: () -> Unit) {
-    Toggle(80.dp, icon, label, on, enabled, tag, onClick)
-}
-
-// O mesmo, na largura [width]: um nome comprido (Concluir transferência) pede uma maior, para quebrar entre as palavras.
-@Composable
-private fun Toggle(width: Dp, icon: Int, label: String, on: Boolean, enabled: Boolean, tag: String, onClick: () -> Unit) {
-    val alpha = if (enabled) 1f else 0.4f
-    Column(
-        Modifier
-            .width(width)
-            .clip(RoundedCornerShape(16.dp))
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(vertical = 4.dp)
-            .testTag(tag),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(title, style = PanelTitle, color = Color.White)
+        NumberField(number, onChange = { number = it }, tag = "$tagPrefix-numero", onDone = onDone)
+        Row(
+            Modifier.fillMaxWidth().padding(top = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) { buttons(number) }
+        if (suggestions.isNotEmpty()) Suggestions(suggestions, onPick = { number = it })
         Box(
             Modifier
-                .size(56.dp)
+                .fillMaxWidth()
+                .heightIn(min = 40.dp)
                 .clip(CircleShape)
-                .background(if (on) Color.White else Color.White.copy(alpha = 0.15f * alpha)),
+                .clickable(role = Role.Button, onClick = onCancel)
+                .testTag("$tagPrefix-cancelar"),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(
-                painterResource(icon),
-                contentDescription = null,
-                tint = if (on) StarsonicBlue else Color.White.copy(alpha = alpha),
-            )
+            Text(CANCEL, style = GhostLabel, color = Color.White)
         }
-        Spacer(Modifier.height(6.dp))
-        Text(label, color = Color.White.copy(alpha = alpha), style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.Center)
     }
 }
+
+// O campo do número (o .call-number do Windows): 52 dp, o fundo dos campos do escuro, o contorno (ciano com o foco), o
+// número grande e, vazio, "Número" (o nome dele também para o leitor de tela).
+@Composable
+private fun NumberField(value: String, onChange: (String) -> Unit, tag: String, onDone: ((String) -> Unit)?) {
+    val interactions = remember { MutableInteractionSource() }
+    val focused by interactions.collectIsFocusedAsState()
+    BasicTextField(
+        value = value,
+        onValueChange = onChange,
+        singleLine = true,
+        textStyle = NumberText.copy(color = Color.White),
+        cursorBrush = SolidColor(Starsonic.Cyan),
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+        keyboardActions = onDone?.let { done -> KeyboardActions(onDone = { done(value) }) } ?: KeyboardActions.Default,
+        interactionSource = interactions,
+        modifier = Modifier.fillMaxWidth().semantics { contentDescription = NUMBER }.testTag(tag),
+        decorationBox = { input ->
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 52.dp)
+                    .clip(FieldShape)
+                    .background(Color.White.copy(alpha = 0.06f))
+                    .border(1.dp, if (focused) Starsonic.Cyan else Color.White.copy(alpha = 0.14f), FieldShape)
+                    .padding(horizontal = 15.dp),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                if (value.isEmpty()) Text(NUMBER, style = PlaceholderText, color = Muted)
+                input()
+            }
+        },
+    )
+}
+
+// O fundo da tela da ligação (o .call do canvas): o gradient-hero com o brilho ciano do canto de baixo à esquerda (o
+// ::before: o círculo de 520 dp que passa 300 dp da esquerda e 280 dp de baixo, rgba(0, 194, 203, 0.22) no meio, sumindo a
+// 62% do raio).
+private fun Modifier.callBackground(): Modifier =
+    background(Starsonic.HeroGradient).drawWithCache {
+        val diameter = 520.dp.toPx()
+        val center = Offset(-300.dp.toPx() + diameter / 2, size.height + 280.dp.toPx() - diameter / 2)
+        val radius = diameter / 2 * sqrt(2f) * 0.62f
+        val glow = Starsonic.HeroGlow
+        val brush = Brush.radialGradient(listOf(glow, glow.copy(alpha = 0f)), center = center, radius = radius)
+        onDrawBehind { clipRect { drawCircle(brush, radius = radius, center = center) } }
+    }
+
+// Abaixo desta altura (sem as barras do Android), as medidas do Compacto: os quadros têm 772 dp entre elas, e a consulta,
+// a mais alta, pede uns 750 nas medidas deles.
+private val COMPACT_BELOW = 760.dp
+
+// O que fica de lado na última linha com o teclado dos tons aberto (o .call-side do Windows: o Teclado, para fechar).
+private val SIDE_SLOT = 80.dp
+
+// A altura do nome embaixo do Desligar, para a tela do fim não mudar de altura.
+private val END_LABEL = 16.dp
+
+// O aviso no alto, embaixo da linha do status (.call .toast { top: 44px }).
+private val TOAST_TOP = 44.dp
+
+// O espaço entre o nome e a linha do Atender automático (o margin-top do .tag no quadro Recebida).
+private val AUTO_LINE_TOP = 14.dp
+
+// O Rediscar ao lado do Ligar do número (o .btn de 48 dp do canvas; no Windows, o .call-panel .btn-redial).
+private val PANEL_BUTTON = 48.dp
+
+private const val GRID_COLUMNS = 3
+private const val TICK_MILLIS = 250L
+private val CARD_GAP = 12.dp
+private val CARD_AVATAR = 36.dp
+private val CARD_AVATAR_LETTERS = 13.sp
+private val CardShape = RoundedCornerShape(18.dp)
+private val KeyShape = RoundedCornerShape(18.dp)
+private val FieldShape = RoundedCornerShape(14.dp)
+private val PT_BR: Locale = Locale.forLanguageTag("pt-BR")
+
+// O cinza claro das linhas de baixo na tela escura (#b9c4e6).
+private val Muted = Color(0xFFB9C4E6)
+
+// A sombra do Atender (--shadow-cyan: 0 14px 30px -12px rgba(0, 194, 203, 0.7)).
+private val CyanShadow =
+    Shadow(radius = 30.dp, color = Starsonic.Cyan.copy(alpha = 0.7f), spread = (-12).dp, offset = DpOffset(0.dp, 14.dp))
+
+private val Base = TextStyle(
+    fontFamily = PlusJakartaSans,
+    lineHeightStyle = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None),
+)
+
+// .call-top e .busy
+private val TopLine = Base.copy(fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, lineHeight = 1.3.em)
+
+// .who-name, .who-sub, .timer e .avatar-lg (os tamanhos vêm do CallSizes)
+private val NameText = Base.copy(fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.02).em, lineHeight = 1.12.em)
+private val SubText = Base.copy(lineHeight = 1.35.em)
+private val TimerText = Base.copy(fontWeight = FontWeight.Bold, letterSpacing = 0.02.em, fontFeatureSettings = "tnum")
+private val AvatarText = Base.copy(fontWeight = FontWeight.ExtraBold, lineHeight = 1.em)
+private val EndText = Base.copy(fontSize = 16.sp, fontWeight = FontWeight.SemiBold, lineHeight = 1.35.em)
+
+// .ctrl, o nome do .hang e o da recebida
+private val CtrlText = Base.copy(fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, lineHeight = 1.2.em)
+private val HangLabel = CtrlText
+private val IncomingLabel = Base.copy(fontSize = 13.sp, fontWeight = FontWeight.Bold, lineHeight = 1.2.em)
+
+// .tag e .dtmf
+private val TagText = Base.copy(fontSize = 10.5.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 0.12.em, lineHeight = 1.em)
+private val DigitsText = Base.copy(fontSize = 20.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.14.em)
+
+// .call-keys .key b
+private val KeyText = Base.copy(fontSize = 23.sp, fontWeight = FontWeight.Bold, lineHeight = 1.em)
+
+// .call-panel-title, .call-number (e o placeholder) e o .btn-ghost-dark
+private val PanelTitle = Base.copy(fontSize = 15.sp, fontWeight = FontWeight.Bold, lineHeight = 1.3.em)
+private val NumberText = Base.copy(fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.01).em, lineHeight = 1.2.em)
+private val PlaceholderText = Base.copy(fontSize = 16.sp, fontWeight = FontWeight.SemiBold, lineHeight = 1.2.em)
+private val GhostLabel = Base.copy(fontSize = 15.sp, fontWeight = FontWeight.Bold, lineHeight = 1.em)
 
 private const val ANSWER = "Atender"
 private const val REJECT = "Recusar"
@@ -624,14 +1124,8 @@ private const val DIAL = "Ligar"
 private const val CALL_FROM = "Ligação de"
 private const val NUMBER = "Número"
 private const val CANCEL = "Cancelar"
-private const val INCOMING = "Ligação recebida"
-private const val CALLING = "Chamando…"
-private const val CONNECTING = "Conectando…"
+private const val IN_CALL = "Em ligação"
+private const val TWO_CALLS = "Duas ligações"
+private const val ACTIVE = "Ativa"
 private const val ON_HOLD = "Em espera"
 private const val ON_HOLD_TRANSFER = "Em espera · transferência"
-
-// O cinza de "Em espera" no cartão da outra ligação, sobre o azul da tela.
-private val HeldGray = Color.White.copy(alpha = 0.6f)
-
-// A largura dos botões da fileira de duas ligações (Espera, Transferir, Alternar e Juntar).
-private val TWO_CALLS_WIDTH = 72.dp
