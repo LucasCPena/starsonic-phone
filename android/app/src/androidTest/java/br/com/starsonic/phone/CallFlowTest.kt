@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import android.telecom.CallAudioState
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
@@ -33,6 +34,7 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.unit.toSize
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -331,7 +333,7 @@ class CallFlowTest {
         val line = drawnText(AUTO_LINE)
         val drawn = line.fetchSemanticsNode().config[SemanticsProperties.Text].joinToString("")
         assertTrue("a contagem com os segundos: \"$drawn\"", DRAWN_COUNTDOWN.matches(drawn))
-        assertWhole("a linha do Atender automático", line)
+        assertWhole("a linha do Atender automático", AUTO_LINE, line)
         emulator.saveScreen("recebida-letra-grande.png")
         compose.onNodeWithTag("recusar").performScrollTo().performClick()
         waitForLog(before, "inv-out 2001 486")
@@ -339,7 +341,7 @@ class CallFlowTest {
         // As duas ligações (sem o Atender automático): o nome inteiro em cada cartão.
         app.callSettings.update { it.copy(autoAnswer = false) }
         twoCalls()
-        for (card in listOf("cartao-ativa", "cartao-espera")) assertWhole("o nome em $card", drawnText(card, "Cliente Teste"))
+        for (card in listOf("cartao-ativa", "cartao-espera")) assertWhole("o nome em $card", card, drawnText(card, "Cliente Teste"))
         emulator.saveScreen("duas-ligacoes-letra-grande.png")
         assertEquals("OK", emulator.control("HANGUP 2001"))
         emulator.waitUntil("a primeira de volta") { app.calls.state.value?.let { it.second == null } == true }
@@ -801,12 +803,13 @@ class CallFlowTest {
     }
 
     // A recebida em tela cheia aberta como pela pessoa com o celular em uso: o Android mostra a recebida no alto da tela
-    // (a notificação de título [title]), e o toque nela abre a tela cheia e a recolhe. Aberta por fora (o
-    // startActivity), a tela cheia ficaria com a notificação por cima, nas fotos. Sem a notificação no alto, por fora.
-    private fun openTheIncomingByItsNotification(title: String) {
-        val body = By.pkg(SYSTEM_UI).text(title)
+    // (a notificação de título [title] e texto começando por [text]), e o toque nela abre a tela cheia e a recolhe.
+    // Aberta por fora (o startActivity), a tela cheia ficaria com a notificação por cima, nas fotos. Com a letra grande,
+    // o título some da notificação, e o toque é no texto. Sem a notificação no alto, por fora.
+    private fun openTheIncomingByItsNotification(title: String, text: String = "3001") {
+        val anchors = listOf(By.pkg(SYSTEM_UI).text(title), By.pkg(SYSTEM_UI).textStartsWith(text))
         repeat(3) {
-            val found = device.wait(Until.findObject(body), 10_000)
+            val found = anchors.firstNotNullOfOrNull { device.wait(Until.findObject(it), 5_000) }
             if (found == null) {
                 app.startActivity(CallActivity.intent(app))
                 return
@@ -814,7 +817,7 @@ class CallFlowTest {
             device.waitForIdle()
             found.click()
             if (within(5_000) { emulator.showsTag("chamada") }) {
-                device.wait(Until.gone(body), 5_000)
+                for (anchor in anchors) device.wait(Until.gone(anchor), 5_000)
                 return
             }
         }
@@ -903,10 +906,13 @@ class CallFlowTest {
         return inside.filterToOne(if (text == null) SemanticsMatcher.keyIsDefined(SemanticsProperties.Text) else hasText(text))
     }
 
-    // O texto do nó [node] desenhado inteiro: sem reticências, sem nada cortado e quebrando só nos espaços (nunca no meio
-    // de uma palavra). A falha mostra as linhas.
-    private fun assertWhole(what: String, node: SemanticsNodeInteraction) {
-        val text = node.fetchSemanticsNode().config[SemanticsProperties.Text].joinToString("")
+    // O texto do nó [node] desenhado inteiro dentro do elemento [container]: todo ele nas linhas, sem reticências, quebrando
+    // só nos espaços (nunca no meio de uma palavra) e com a caixa dentro da do elemento. O hasVisualOverflow não serve: o
+    // TextLayoutResult que a semântica de um Text simples refaz usa a largura máxima que ele recebeu, e um texto mais curto
+    // que ela (o nome de um cartão numa linha só) sai como transbordando. A falha mostra as linhas e as caixas.
+    private fun assertWhole(what: String, container: String, node: SemanticsNodeInteraction) {
+        val semantics = node.fetchSemanticsNode()
+        val text = semantics.config[SemanticsProperties.Text].joinToString("")
         val results = mutableListOf<TextLayoutResult>()
         node.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
         val layout = results.single()
@@ -915,9 +921,17 @@ class CallFlowTest {
             val end = layout.getLineEnd(line)
             end in 1 until text.length && !text[end - 1].isWhitespace() && !text[end].isWhitespace()
         }
-        val whole = !layout.hasVisualOverflow && !brokenWord && layout.getLineEnd(layout.lineCount - 1) == text.length &&
+        val box = Rect(semantics.positionInRoot, semantics.size.toSize())
+        val outer = compose.onNodeWithTag(container, useUnmergedTree = true).fetchSemanticsNode()
+            .let { Rect(it.positionInRoot, it.size.toSize()) }
+        val inside = box.left >= outer.left - 1 && box.top >= outer.top - 1 && box.right <= outer.right + 1 &&
+            box.bottom <= outer.bottom + 1
+        val whole = !brokenWord && inside && layout.getLineEnd(layout.lineCount - 1) == text.length &&
             (0 until layout.lineCount).none(layout::isLineEllipsized)
-        assertTrue("$what inteiro: \"$text\" desenhado como ${lines.joinToString(" | ") { "\"$it\"" }}", whole)
+        assertTrue(
+            "$what inteiro: \"$text\" desenhado como ${lines.joinToString(" | ") { "\"$it\"" }}, em $box (em $container: $outer)",
+            whole,
+        )
     }
 
     // Espera a [condition] (como o Emulator.waitUntil) e diz quando ela passou a valer (SystemClock.uptimeMillis).

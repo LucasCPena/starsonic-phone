@@ -632,9 +632,9 @@ private fun SecondCallBar(ringing: SecondUi, actions: CallActions) {
 
 // Um cartão de ligação (o .vcard dos quadros): o avatar, o [title] (o nome, ou o número) e a [line] embaixo (com a hora de
 // agora: o número e o tempo; sem nada, nenhuma), o [below] e, à direita, o [trailing] (um selo, os botões da faixa);
-// [active] é o da ativa (o .vcard-on, ciano). O nome e a linha quebram em linhas inteiras; se ao lado do [trailing] uma
-// palavra deles não cabe (a letra grande, spec 3.3), o [trailing] desce para baixo deles, como o "Em espera ·
-// transferência" do cartão do cliente, e eles ficam com a largura toda.
+// [active] é o da ativa (o .vcard-on, ciano). Nada é cortado (spec 3.3): o nome quebra nos espaços, e o [trailing] só fica
+// à direita se ao lado dele cabem cada palavra do nome, a linha inteira numa linha só e o [below]; senão (a letra grande,
+// uma tela estreita), ele desce para baixo deles, como o "Em espera · transferência" do cartão do cliente.
 @Composable
 private fun CallCard(
     name: String,
@@ -650,13 +650,9 @@ private fun CallCard(
     Layout(
         contents = listOf(
             { CallAvatar(name, CARD_AVATAR, CARD_AVATAR_LETTERS) },
-            {
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(title, style = ListRowTitle, color = Color.White)
-                    Ticking(style = ListRowSub, color = Muted, maxLines = Int.MAX_VALUE, text = line)
-                    below?.invoke()
-                }
-            },
+            { Text(title, style = ListRowTitle, color = Color.White) },
+            { Ticking(style = ListRowSub, color = Muted, maxLines = Int.MAX_VALUE, text = line) },
+            { below?.invoke() },
             {
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(CARD_SPACING),
@@ -672,32 +668,39 @@ private fun CallCard(
             .border(1.dp, if (active) Starsonic.Cyan.copy(alpha = 0.5f) else Color.White.copy(alpha = 0.1f), CardShape)
             .padding(horizontal = 15.dp, vertical = 13.dp)
             .testTag(tag),
-    ) { (avatarSlot, textSlot, trailingSlot), constraints ->
+    ) { (avatarSlot, titleSlot, lineSlot, belowSlot, trailingSlot), constraints ->
         val spacing = CARD_SPACING.roundToPx()
+        val gap = CARD_LINES.roundToPx()
         val avatar = avatarSlot.single().measure(Constraints())
-        val texts = textSlot.single()
         val end = trailingSlot.single()
         val endWidth = end.maxIntrinsicWidth(Constraints.Infinity)
         val textMax = (constraints.maxWidth - avatar.width - spacing).coerceAtLeast(0)
         val beside = textMax - (if (endWidth > 0) spacing + endWidth else 0)
-        val sideBySide = endWidth == 0 || texts.minIntrinsicWidth(Constraints.Infinity) <= beside
-        val textPlaceable = texts.measure(Constraints(maxWidth = if (sideBySide) beside.coerceAtLeast(0) else textMax))
+        val sideBySide = endWidth == 0 ||
+            titleSlot.all { it.minIntrinsicWidth(Constraints.Infinity) <= beside } &&
+            lineSlot.all { it.maxIntrinsicWidth(Constraints.Infinity) <= beside } &&
+            belowSlot.all { it.minIntrinsicWidth(Constraints.Infinity) <= beside }
+        val texts = (titleSlot + lineSlot + belowSlot)
+            .map { it.measure(Constraints(maxWidth = if (sideBySide) beside.coerceAtLeast(0) else textMax)) }
+        val textsHeight = texts.sumOf { it.height } + gap * (texts.size - 1).coerceAtLeast(0)
         val endPlaceable = end.measure(Constraints(maxWidth = if (sideBySide) constraints.maxWidth else textMax))
-        val under = if (sideBySide || endWidth == 0) 0 else CARD_BELOW.roundToPx() + endPlaceable.height
-        val block = textPlaceable.height + under
+        val under = if (sideBySide) 0 else CARD_BELOW.roundToPx() + endPlaceable.height
+        val block = textsHeight + under
         val height = maxOf(avatar.height, block, if (sideBySide) endPlaceable.height else 0)
             .coerceIn(constraints.minHeight, constraints.maxHeight)
         val width = constraints.maxWidth
         layout(width, height) {
             val x = avatar.width + spacing
             avatar.placeRelative(0, (height - avatar.height) / 2)
+            var y = (height - block) / 2
+            for (text in texts) {
+                text.placeRelative(x, y)
+                y += text.height + gap
+            }
             if (sideBySide) {
-                textPlaceable.placeRelative(x, (height - textPlaceable.height) / 2)
                 endPlaceable.placeRelative(width - endPlaceable.width, (height - endPlaceable.height) / 2)
             } else {
-                val top = (height - block) / 2
-                textPlaceable.placeRelative(x, top)
-                endPlaceable.placeRelative(x, top + textPlaceable.height + CARD_BELOW.roundToPx())
+                endPlaceable.placeRelative(x, (height - block) / 2 + textsHeight + CARD_BELOW.roundToPx())
             }
         }
     }
@@ -1112,10 +1115,11 @@ private val CARD_AVATAR = 36.dp
 private val CARD_AVATAR_LETTERS = 13.sp
 private val CardShape = RoundedCornerShape(18.dp)
 
-// Dentro do cartão: o espaço entre o avatar, os textos e o que fica à direita (o gap do .vcard), e entre os textos e o que
-// desce para baixo deles com a letra grande.
+// Dentro do cartão: o espaço entre o avatar, os textos e o que fica à direita (o gap do .vcard), entre os textos e o que
+// desce para baixo deles (a letra grande, a tela estreita), e entre o nome, a linha e o que vem embaixo deles.
 private val CARD_SPACING = 12.dp
 private val CARD_BELOW = 6.dp
+private val CARD_LINES = 2.dp
 
 // O selo: uma pílula com uma linha (o raio é a metade dos 22 dp), de cantos redondos com mais.
 private val TagShape = RoundedCornerShape(11.dp)
