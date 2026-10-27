@@ -8,6 +8,7 @@ import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
+import android.service.notification.StatusBarNotification
 import android.telecom.CallAudioState
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.semantics.SemanticsActions
@@ -34,6 +35,7 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.toSize
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -84,13 +86,14 @@ import org.junit.runners.MethodSorters
  * começa vazio em cada teste, com o Não perturbe e o Atender automático desligados; o fim devolve as configurações de
  * ligação, a tela e a letra de antes.
  *
- * As telas da ligação no visual do Windows (spec 3, 5, 6 e 7; R9, R19, R35, R38, R39 e R40): a linha do status no alto
+ * As telas da ligação no visual do Windows (spec 3, 5, 6 e 7; R9, R19, R35, R39, R40 e R41): a linha do status no alto
  * ("Ocupado · em ligação" e o ramal, com a notificação fixa), o "Ramal <n>" embaixo do nome, o Não perturbe (o
  * registrador recebe o 486), o Atender automático com o app em segundo plano (1 s e na hora), a contagem dele na recebida
- * em tela cheia (e a notificação, que perde e ganha a linha com a decisão), o Rediscar da Nova ligação, o Desligar da
- * ligação ativa com duas, e a maior letra na tela de 320 dp (a contagem, com o "em <n> s" junto, os nomes dos cartões e
- * os dos controles inteiros). As fotos ([Emulator.saveScreen]) saem na tela dos quadros do canvas (390 × 844 dp), menos
- * as "-pequena" e as "-letra-grande", na do emulador do CI.
+ * em tela cheia (a notificação que toca fica como está, e o toque continua; a silenciada perde e ganha a linha com a
+ * decisão), o Rediscar da Nova ligação, o Desligar da ligação ativa com duas, o toque de 48 dp dos redondos da faixa da
+ * segunda, e a maior letra na tela de 320 dp (a contagem, com o "em <n> s" junto, os nomes dos cartões e os dos controles
+ * inteiros, também os da consulta). As fotos ([Emulator.saveScreen]) saem na tela dos quadros do canvas (390 × 844 dp),
+ * menos as "-pequena" e as "-letra-grande", na do emulador do CI.
  *
  * No fim, uma "Nota do teste" na saída do am instrument conta os toques repetidos nos botões da notificação
  * (o run-emulator-tests.sh a mostra numa anotação); outra conta como o Android deixou o serviço com o Atender automático
@@ -278,15 +281,20 @@ class CallFlowTest {
     fun theIncomingScreenCountsDownTheAutoAnswer() {
         // R7, R32 e R33: na recebida em tela cheia, a linha "Atender automático · em <n> s" conta os segundos desde que o
         // celular tocou, só enquanto o Atender automático vai atendê-la (com as configurações de agora); a notificação
-        // mostra o tempo escolhido, uma vez. As fotos da recebida com e sem a linha (o quadro Recebida).
+        // mostra o tempo escolhido, uma vez. R41: a notificação que toca nunca é postada de novo (uma atualização dela
+        // calaria o toque que se repete): a linha dela pode ficar velha, a tela cheia mostra a de agora, e o celular continua
+        // tocando. Silenciada (o volume), ela sai com a decisão de agora e, sem tocar, perde e ganha a linha com a decisão.
+        // As fotos da recebida com e sem a linha (o quadro Recebida).
         emulator.useCanvasDisplay()
         app.callSettings.update { it.copy(autoAnswer = true, autoAnswerSeconds = 30) }
         val before = emulator.callLog().size
         assertEquals("OK", emulator.control("RING 2001"))
         emulator.waitUntil("a ligação tocando") { app.calls.state.value?.phase == CallPhase.RINGING }
         emulator.waitUntil("a notificação com o Atender automático", details = ::notifications) {
-            incomingText() == "3001 · Atender automático · em\u00A030\u00A0s"
+            incomingText() == WITH_AUTO_LINE
         }
+        emulator.waitUntil("o toque da notificação", details = ::soundDetails) { ringsNow() }
+        val posted = incomingPostTime()
         openTheIncomingByItsNotification("Cliente Teste")
         emulator.waitUntil("a linha do Atender automático") { emulator.showsTag(AUTO_LINE) }
         assertTrue("o título da recebida", emulator.showsText("Ligação recebida · 2001"))
@@ -296,20 +304,26 @@ class CallFlowTest {
         val later = countdown()
         assertTrue("a contagem desce de segundo em segundo ($first s, depois $later s)", later in 1..first - 2)
         emulator.saveScreen("recebida-atender.png")
-        // O Não perturbe ligado na contagem: ninguém a atende sozinho, e a linha sai da tela e da notificação (R38: postada
-        // de novo uma vez, sem a linha); desligado de novo, ela volta às duas.
+        // O Não perturbe ligado na contagem: ninguém a atende sozinho, e a linha sai da tela cheia. A notificação, que toca,
+        // fica como estava, com a linha velha, e o toque continua (R41).
         app.callSettings.update { it.copy(doNotDisturb = true) }
         emulator.waitUntil("a linha sair com o Não perturbe") { !emulator.showsTag(AUTO_LINE) }
-        emulator.waitUntil("a notificação sem a linha", details = ::incomingDetails) { incomingText() == "3001" }
+        assertStillRinging("com o Não perturbe ligado", posted)
+        // O volume apertado (o onSilence do Telecom): a notificação sai do toque com a decisão de agora, sem a linha. Sem
+        // tocar, ela acompanha a decisão: o Não perturbe desligado devolve a linha, e o Atender automático desligado a tira.
+        app.notifier.silence(app.calls.state.value!!.id)
+        emulator.waitUntil("a notificação silenciada, sem a linha", details = ::incomingDetails) {
+            callNotification()?.channelId == IncomingCallNotifier.CHANNEL_SILENCED && incomingText() == "3001"
+        }
         app.callSettings.update { it.copy(doNotDisturb = false) }
         emulator.waitUntil("a linha de volta") { emulator.showsTag(AUTO_LINE) }
-        emulator.waitUntil("a notificação com a linha de novo", details = ::incomingDetails) {
-            incomingText() == "3001 · Atender automático · em\u00A030\u00A0s"
+        emulator.waitUntil("a notificação silenciada com a linha de novo", details = ::incomingDetails) {
+            incomingText() == WITH_AUTO_LINE
         }
         // O Atender automático desligado: a linha sai das duas. A foto da recebida sem ela.
         app.callSettings.update { it.copy(autoAnswer = false) }
         emulator.waitUntil("a linha sair") { !emulator.showsTag(AUTO_LINE) }
-        emulator.waitUntil("a notificação sem a linha", details = ::incomingDetails) { incomingText() == "3001" }
+        emulator.waitUntil("a notificação silenciada sem a linha", details = ::incomingDetails) { incomingText() == "3001" }
         emulator.saveScreen("recebida.png")
         assertEquals("ainda tocando", CallPhase.RINGING, app.calls.state.value?.phase)
         compose.onNodeWithTag("recusar").performClick()
@@ -322,8 +336,9 @@ class CallFlowTest {
         // Spec 3.3, com a maior letra na tela de 320 dp (a do emulador do CI): a linha do Atender automático quebra em
         // linhas inteiras, com "em <n> s" numa linha só (R40), o nome de cada um dos dois cartões aparece inteiro (o selo
         // desce para baixo dele, como o "Em espera · transferência"), e o nome de cada controle nunca quebra no meio de
-        // uma palavra (R40: ele encolhe; quebrar num espaço, como em "Nova ligação", pode). As fotos da recebida e das
-        // duas ligações com a letra grande.
+        // uma palavra (R40: ele encolhe; quebrar num espaço, como em "Nova ligação", pode), também os da consulta. A
+        // palavra que nem no menor tamanho cabe ("transferência", no "Concluir transferência") quebra no meio, numa linha a
+        // mais, sem perder nenhuma letra. As fotos da recebida, das duas ligações e da consulta com a letra grande.
         emulator.useDisplay(640, 1280, 320)
         emulator.setFontScale(2.0f)
         app.callSettings.update { it.copy(autoAnswer = true, autoAnswerSeconds = 30) }
@@ -354,10 +369,27 @@ class CallFlowTest {
         for (card in listOf("cartao-ativa", "cartao-espera")) assertWhole("o nome em $card", card, drawnText(card, "Cliente Teste"))
         for ((tag, label) in TWO_CALLS_CONTROLS) assertWhole("o controle $label", tag, drawnText(tag, label))
         emulator.saveScreen("duas-ligacoes-letra-grande.png")
+        // A consulta (o registrador desliga a segunda, e a primeira volta sozinha): os nomes dos controles dela. O
+        // "transferência" do Concluir transferência não cabe na coluna dele nem com o menor tamanho (8 sp, 16 dp com a
+        // letra 2,0): ele pode quebrar no meio, mas sem perder letras.
         assertEquals("OK", emulator.control("HANGUP 2001"))
-        emulator.waitUntil("a primeira de volta") { app.calls.state.value?.let { it.second == null } == true }
+        emulator.waitUntil("a primeira de volta, sozinha") {
+            app.calls.state.value?.let { it.id == first && it.second == null && !it.held && it.phase == CallPhase.ACTIVE } == true
+        }
+        consultOnTheCallScreen("2003", first)
+        for ((tag, label) in CONSULT_CONTROLS) {
+            assertWhole("o controle $label", tag, drawnText(tag, label), wholeWords = tag != COMPLETE_TRANSFER)
+        }
+        compose.onNodeWithTag(COMPLETE_TRANSFER).performScrollTo()
+        emulator.saveScreen("consulta-letra-grande.png")
+        val before2003 = emulator.callLog().size
+        compose.onNodeWithTag("cancelar-consulta").performScrollTo().performClick()
+        waitForLog(before2003, "bye-in 2003")
+        emulator.waitUntil("o cliente de volta, sozinho") {
+            app.calls.state.value?.let { it.id == first && it.second == null && it.consult == null } == true
+        }
         assertEquals("OK", emulator.control("HANGUP 2001"))
-        emulator.waitUntil("as ligações acabarem") { app.calls.state.value == null }
+        emulator.waitUntil("a ligação acabar") { app.calls.state.value == null }
     }
 
     @Test
@@ -370,6 +402,12 @@ class CallFlowTest {
         emulator.waitUntil("a faixa da segunda ligação") { showsTagWithText("segunda-ligacao", "Ligação de Cliente Teste") }
         assertTrue("R35: o ramal na faixa: ${textsUnder("segunda-ligacao")}", "Ramal 3001" in textsUnder("segunda-ligacao"))
         compose.onNodeWithTag("desligar").assertContentDescriptionEquals(HANG_UP_ACTIVE)   // R39: a outra ainda toca
+        // Os redondos da faixa, de 40 dp no desenho: o toque de cada um tem 48 dp (o mínimo, spec 3.3) no próprio elemento,
+        // sem contar com a margem que o Compose dá aos toques menores (o touchBoundsInRoot conta com ela).
+        for (tag in listOf("recusar-segunda", "atender-segunda")) {
+            emulator.assertTouchAtLeast48(tag)
+            assertOwnTouchAtLeast48(tag)
+        }
         // A notificação da chamada em espera desce no alto da tela por uns segundos (sem a tela cheia, ela sobe
         // sozinha), por cima da faixa: a foto espera ela subir.
         device.wait(Until.gone(By.pkg(SYSTEM_UI).text("Ligação de Cliente Teste")), 15_000)
@@ -847,14 +885,14 @@ class CallFlowTest {
         return first to app.calls.state.value!!.id
     }
 
-    // Na tela de chamada, com o cliente [client] em andamento: Transferir, o número [number] e Consultar. O motor põe o
-    // cliente em espera e liga para o colega, que o registrador atende: o colega em cima e o cliente no cartão "Em
-    // espera · transferência".
+    // Na tela de chamada, com o cliente [client] em andamento: Transferir, o número [number] e Consultar (com a letra
+    // grande, a tela rola até eles). O motor põe o cliente em espera e liga para o colega, que o registrador atende: o
+    // colega em cima e o cliente no cartão "Em espera · transferência".
     private fun consultOnTheCallScreen(number: String, client: Int) {
         val before = emulator.callLog().size
-        compose.onNodeWithTag("transferir").performClick()
+        compose.onNodeWithTag("transferir").performScrollTo().performClick()
         compose.onNodeWithTag("transferir-numero").performTextInput(number)
-        compose.onNodeWithTag("transferir-consultar").performClick()
+        compose.onNodeWithTag("transferir-consultar").performScrollTo().performClick()
         waitForLog(before, "reinv-in 3001 sendonly")
         waitForLog(before, "inv-in $number 200")
         emulator.waitUntil("o colega em cima, com o cliente em espera") {
@@ -898,6 +936,46 @@ class CallFlowTest {
 
     private fun incomingDetails(): String = "Texto da notificação da recebida: ${incomingText()}"
 
+    // A hora em que a notificação de ligação do app foi postada (a última atualização dela); 0 sem ela.
+    private fun incomingPostTime(): Long = callStatusBarNotification()?.postTime ?: 0L
+
+    // O Android toca agora o toque da notificação de ligação do app: o mSoundNotificationKey do dumpsys notification é a
+    // chave dela. Uma atualização dela com o "alertar uma vez só" cala o toque que se repete e o tira dali (R41).
+    private fun ringsNow(): Boolean = callStatusBarNotification()?.key.let { it != null && it == soundKey() }
+
+    // A chave da notificação que o Android toca agora ("null": nenhuma), do dumpsys notification.
+    private fun soundKey(): String? =
+        emulator.shell("dumpsys notification").firstNotNullOfOrNull { line ->
+            line.trim().takeIf { it.startsWith(SOUND_KEY) }?.removePrefix(SOUND_KEY)
+        }
+
+    private fun soundDetails(): String =
+        "O Android toca: ${soundKey()}; a notificação de ligação: ${callStatusBarNotification()?.key} (${incomingText()})"
+
+    // R41: um pouco depois de [what] (a mudança chega à notificação na mesma publicação que à tela), a notificação da
+    // recebida que toca é a mesma que foi postada em [posted] (nenhuma atualização) e o Android ainda toca o toque dela.
+    private fun assertStillRinging(what: String, posted: Long) {
+        Thread.sleep(1_000)
+        val same = incomingPostTime() == posted
+        val rings = ringsNow()
+        assertTrue(
+            "R41: $what, a notificação que toca ${if (same) "é a mesma" else "foi postada de novo"} e o toque " +
+                "${if (rings) "continua" else "parou"}. ${soundDetails()}",
+            same && rings,
+        )
+    }
+
+    // O elemento [tag], o do toque, tem ele mesmo pelo menos 48 × 48 dp (spec 3.3): o tamanho dele, sem a margem que o
+    // Compose dá aos toques menores (o minimumTouchTargetSize), com que o touchBoundsInRoot do assertTouchAtLeast48 conta.
+    private fun assertOwnTouchAtLeast48(tag: String) {
+        val node = compose.onNodeWithTag(tag).fetchSemanticsNode()
+        val minimum = with(node.layoutInfo.density) { 48.dp.roundToPx() }
+        assertTrue(
+            "o elemento do toque de $tag tem ${node.size.width} × ${node.size.height} px (pelo menos $minimum)",
+            node.size.width >= minimum && node.size.height >= minimum,
+        )
+    }
+
     // Os textos de tudo o que está dentro dos elementos [tag] (na árvore sem a fusão), na ordem; nenhum sem a tela.
     private fun textsUnder(tag: String): List<String> =
         try {
@@ -931,15 +1009,16 @@ class CallFlowTest {
     private fun linesOf(text: String, layout: TextLayoutResult): String =
         (0 until layout.lineCount).joinToString(" | ") { "\"${text.substring(layout.getLineStart(it), layout.getLineEnd(it))}\"" }
 
-    // O texto do nó [node] desenhado inteiro dentro do elemento [container]: todo ele nas linhas, sem reticências, quebrando
-    // só nos espaços (nunca no meio de uma palavra) e com a caixa dentro da do elemento. O hasVisualOverflow não serve: o
-    // TextLayoutResult que a semântica de um Text simples refaz usa a largura máxima que ele recebeu, e um texto mais curto
-    // que ela (o nome de um cartão numa linha só) sai como transbordando. A falha mostra as linhas e as caixas.
-    private fun assertWhole(what: String, container: String, node: SemanticsNodeInteraction) {
+    // O texto do nó [node] desenhado inteiro dentro do elemento [container]: todo ele nas linhas, sem reticências e com a
+    // caixa dentro da do elemento; com [wholeWords], quebrando só nos espaços (nunca no meio de uma palavra). O
+    // hasVisualOverflow não serve: o TextLayoutResult que a semântica de um Text simples refaz usa a largura máxima que ele
+    // recebeu, e um texto mais curto que ela (o nome de um cartão numa linha só) sai como transbordando. A falha mostra as
+    // linhas e as caixas.
+    private fun assertWhole(what: String, container: String, node: SemanticsNodeInteraction, wholeWords: Boolean = true) {
         val semantics = node.fetchSemanticsNode()
         val text = textOf(node)
         val layout = textLayoutOf(node)
-        val brokenWord = (0 until layout.lineCount - 1).any { line ->
+        val brokenWord = wholeWords && (0 until layout.lineCount - 1).any { line ->
             val end = layout.getLineEnd(line)
             end in 1 until text.length && !text[end - 1].isWhitespace() && !text[end].isWhitespace()
         }
@@ -1057,11 +1136,13 @@ class CallFlowTest {
 
     // A notificação de ligação do app (canal "ligacoes", ou o da ligação silenciada), ou null. O resumo que o
     // Android cria sozinho ao agrupar as notificações do app (sem título, no canal de uma delas) não conta.
-    private fun callNotification(): Notification? =
+    private fun callNotification(): Notification? = callStatusBarNotification()?.notification
+
+    private fun callStatusBarNotification(): StatusBarNotification? =
         app.getSystemService(NotificationManager::class.java).activeNotifications
             .firstOrNull {
                 it.notification.channelId in CALL_CHANNELS && it.notification.flags and Notification.FLAG_GROUP_SUMMARY == 0
-            }?.notification
+            }
 
     // A ligação do app e as notificações dele (canal/título/tipo de ligação), para as falhas.
     private fun notifications(): String {
@@ -1092,6 +1173,11 @@ class CallFlowTest {
         private const val REDIAL_NEW = "rediscar-nova"
         private val COUNTDOWN = Regex("Atender automático · em\u00A0(\\d+)\u00A0s")
 
+        // O texto da notificação da recebida com a linha do Atender automático de 30 s (R33 e R40), e o que o dumpsys
+        // notification diz da notificação que o Android toca agora (R41).
+        private const val WITH_AUTO_LINE = "3001 · Atender automático · em\u00A030\u00A0s"
+        private const val SOUND_KEY = "mSoundNotificationKey="
+
         // O Desligar de uma ligação e o de duas (R39), e a linha do cartão do cliente (R35: o ramal e o tempo).
         private const val HANG_UP = "Desligar"
         private const val HANG_UP_ACTIVE = "Desligar a ligação ativa"
@@ -1105,6 +1191,13 @@ class CallFlowTest {
         private val TWO_CALLS_CONTROLS = listOf(
             "mudo" to "Mudo", "teclado-chamada" to "Teclado", "viva-voz" to "Viva-voz",
             "alternar" to "Alternar", "juntar" to "Juntar", "transferir" to "Transferir",
+        )
+
+        // Os da consulta: o Concluir transferência (a etiqueta), Alternar e Cancelar.
+        private const val COMPLETE_TRANSFER = "concluir-transferencia"
+        private val CONSULT_CONTROLS = listOf(
+            "mudo" to "Mudo", "teclado-chamada" to "Teclado", "viva-voz" to "Viva-voz",
+            COMPLETE_TRANSFER to "Concluir transferência", "alternar" to "Alternar", "cancelar-consulta" to "Cancelar",
         )
 
         // A linha do Atender automático como é desenhada (o selo, em maiúsculas), com os segundos (R40: "em <n> s" com os
