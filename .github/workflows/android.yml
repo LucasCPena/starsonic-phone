@@ -304,9 +304,10 @@ jobs:
       # (MY_PACKAGE_REPLACED) iniciou com a conta gravada e registra a dele por TCP. Antes de tudo, o set-locale.sh põe o
       # emulador em pt-BR (com o adb como root, e o Android reinicia): os botões da notificação de ligação (Atender e
       # Recusar) são do Android, no idioma do celular, como nos clientes. As fotos das telas que os testes do visual tiram
-      # (a pasta telas do app, que junta as das classes) vêm do emulador logo depois da classe, para $RUNNER_TEMP/telas,
-      # também quando ela falha: a linha guarda o resultado da classe (s), copia as fotos e sai com ele. Sem as fotos, só
-      # um aviso.
+      # (o CallFlowTest, o MainScreenTest, o SettingsFlowTest e o UpdatePromptTest; a pasta telas do app junta as das
+      # classes) vêm do emulador logo depois da classe, para $RUNNER_TEMP/telas, também quando ela falha: a linha guarda o
+      # resultado da classe (s), copia as fotos (build/android/pull-telas.sh, que nunca falha: sem elas, só um aviso) e sai
+      # com ele.
       - name: Testes no emulador
         id: emulador
         if: ${{ !cancelled() && steps.gradle.outputs.apks == 'true' }}
@@ -321,12 +322,12 @@ jobs:
             bash build/android/run-emulator-tests.sh "$APK" "$TEST_APK" br.com.starsonic.phone.LoginScreenTest -e registrar 10.0.2.2 -e porta 5070 -e senha senha-certa
             bash build/android/run-emulator-tests.sh "$APK" "$TEST_APK" br.com.starsonic.phone.ServiceTest -e registrar 10.0.2.2 -e porta 5070 -e senha senha-certa
             bash build/android/check-boot.sh 5070 2001
-            bash build/android/run-emulator-tests.sh "$APK" "$TEST_APK" br.com.starsonic.phone.CallFlowTest -e registrar 10.0.2.2 -e porta 5070 -e senha senha-certa
+            bash build/android/run-emulator-tests.sh "$APK" "$TEST_APK" br.com.starsonic.phone.CallFlowTest -e registrar 10.0.2.2 -e porta 5070 -e senha senha-certa; s=$?; bash build/android/pull-telas.sh; exit $s
             bash build/android/run-emulator-tests.sh "$APK" "$TEST_APK" br.com.starsonic.phone.AboutAndAccountTest -e registrar 10.0.2.2 -e porta 5070 -e senha senha-certa
             bash build/android/run-emulator-tests.sh "$APK" "$TEST_APK" br.com.starsonic.phone.ContactsFlowTest -e registrar 10.0.2.2 -e porta 5070 -e senha senha-certa
-            bash build/android/run-emulator-tests.sh "$APK" "$TEST_APK" br.com.starsonic.phone.MainScreenTest -e registrar 10.0.2.2 -e porta 5070 -e senha senha-certa; s=$?; adb pull /sdcard/Android/data/br.com.starsonic.phone/files/telas "$RUNNER_TEMP/" || { adb exec-out run-as br.com.starsonic.phone tar cf - -C /sdcard/Android/data/br.com.starsonic.phone/files telas | tar xf - -C "$RUNNER_TEMP"; } || echo "::warning title=Fotos das telas::a pasta telas não saiu do emulador"; exit $s
-            bash build/android/run-emulator-tests.sh "$APK" "$TEST_APK" br.com.starsonic.phone.SettingsFlowTest -e registrar 10.0.2.2 -e porta 5070 -e senha senha-certa; s=$?; adb pull /sdcard/Android/data/br.com.starsonic.phone/files/telas "$RUNNER_TEMP/" || { adb exec-out run-as br.com.starsonic.phone tar cf - -C /sdcard/Android/data/br.com.starsonic.phone/files telas | tar xf - -C "$RUNNER_TEMP"; } || echo "::warning title=Fotos das telas::a pasta telas não saiu do emulador"; exit $s
-            bash build/android/run-update-test.sh "$APK" "$TEST_APK" -e registrar 10.0.2.2 -e porta 5070 -e senha senha-certa; s=$?; adb pull /sdcard/Android/data/br.com.starsonic.phone/files/telas "$RUNNER_TEMP/" || { adb exec-out run-as br.com.starsonic.phone tar cf - -C /sdcard/Android/data/br.com.starsonic.phone/files telas | tar xf - -C "$RUNNER_TEMP"; } || echo "::warning title=Fotos das telas::a pasta telas não saiu do emulador"; exit $s
+            bash build/android/run-emulator-tests.sh "$APK" "$TEST_APK" br.com.starsonic.phone.MainScreenTest -e registrar 10.0.2.2 -e porta 5070 -e senha senha-certa; s=$?; bash build/android/pull-telas.sh; exit $s
+            bash build/android/run-emulator-tests.sh "$APK" "$TEST_APK" br.com.starsonic.phone.SettingsFlowTest -e registrar 10.0.2.2 -e porta 5070 -e senha senha-certa; s=$?; bash build/android/pull-telas.sh; exit $s
+            bash build/android/run-update-test.sh "$APK" "$TEST_APK" -e registrar 10.0.2.2 -e porta 5070 -e senha senha-certa; s=$?; bash build/android/pull-telas.sh; exit $s
 
       # As fotos das telas (os testes do visual), publicadas também quando um teste falha, para a conferência com os
       # quadros do canvas.

@@ -44,10 +44,16 @@ class CallManagerTest {
     private var settings = CallSettings()
     private val beep = FakeBeep()
     private var endBeep: EndBeep = NoBeep
+    private var microphone = CallMicrophone { ready -> ready(true) }
+    private var microphoneRequests = 0
     private val calls by lazy {
         CallManager(
             gateway, telecom, recents, notifier, CallCore(), clock, { registered }, contacts, { raw -> raw },
             Executor { it.run() }, settings = { settings }, beep = { done -> endBeep.play(done) },
+            microphone = { ready ->
+                microphoneRequests++
+                microphone.request(ready)
+            },
         )
     }
 
@@ -533,7 +539,7 @@ class CallManagerTest {
         assertTrue("o toque da segunda para", 2 in notifier.stopped)
         assertEquals("o Telecom põe a primeira em espera", listOf(1), telecom.held)
         assertTrue("o motor põe a primeira em espera no answer", gateway.holds.isEmpty() && gateway.activated.isEmpty())
-        val held = SecondUi(1, "3001", "Cliente Teste", SecondKind.HELD)
+        val held = SecondUi(1, "3001", "Cliente Teste", SecondKind.HELD, activeSinceMillis = start)
         assertEquals(
             CallUi(2, "3002", "Fulano", incoming = true, phase = CallPhase.CONNECTING, second = held),
             calls.state.value,
@@ -564,6 +570,30 @@ class CallManagerTest {
             ),
             recents.list(),
         )
+    }
+
+    @Test
+    fun `the other of two calls shows since when it was answered`() {
+        // O cartão da outra mostra o tempo dela (o quadro DuasLigacoes: "<número> · 00:48"): desde quando foi atendida.
+        val start = clock.nowMillis()
+        ring(1)
+        answerCall(1)
+        clock.advance(10_000)
+        ring(2, "3002", "Fulano")
+        assertEquals("tocando, ainda sem tempo", 0L, calls.state.value?.second?.activeSinceMillis)
+        clock.advance(2_000)
+        answerCall(2)
+        assertEquals("a primeira, em espera", start, calls.state.value?.second?.activeSinceMillis)
+        assertEquals(start + 12_000, calls.state.value?.activeSinceMillis)
+        calls.activate()
+        assertEquals("a segunda, em espera depois do Alternar", start + 12_000, calls.state.value?.second?.activeSinceMillis)
+        assertEquals(start, calls.state.value?.activeSinceMillis)
+        // A feita da Nova ligação ainda chama: sem tempo, até atender.
+        calls.onCallState(2, CallState.DISCONNECTED, 200)
+        val id = dialOut("2002")
+        assertEquals(id, calls.state.value?.id)
+        assertEquals(CallPhase.DIALING, calls.state.value?.phase)
+        assertEquals("a primeira continua com o tempo dela", start, calls.state.value?.second?.activeSinceMillis)
     }
 
     @Test
@@ -621,7 +651,7 @@ class CallManagerTest {
         assertEquals(listOf("Ligação perdida de 3003"), notifier.missed)
         val both = CallUi(
             2, "3002", "Fulano", incoming = true, phase = CallPhase.ACTIVE, activeSinceMillis = start,
-            second = SecondUi(1, "3001", "Cliente Teste", SecondKind.HELD),
+            second = SecondUi(1, "3001", "Cliente Teste", SecondKind.HELD, activeSinceMillis = start),
         )
         assertEquals(both, calls.state.value)
         calls.onCallState(3, CallState.DISCONNECTED, 486)   // o fim da recusada não mexe nas duas
@@ -646,7 +676,7 @@ class CallManagerTest {
         assertEquals(listOf(1, 2, 1), telecom.active)
         val first = CallUi(
             1, "3001", "Cliente Teste", incoming = true, phase = CallPhase.ACTIVE, activeSinceMillis = start,
-            second = SecondUi(2, "3002", "", SecondKind.HELD),
+            second = SecondUi(2, "3002", "", SecondKind.HELD, activeSinceMillis = start + 10_000),
         )
         assertEquals(first, calls.state.value)
         calls.activate()
@@ -656,7 +686,7 @@ class CallManagerTest {
         assertEquals(
             CallUi(
                 2, "3002", "", incoming = true, phase = CallPhase.ACTIVE, activeSinceMillis = start + 10_000,
-                second = SecondUi(1, "3001", "Cliente Teste", SecondKind.HELD),
+                second = SecondUi(1, "3001", "Cliente Teste", SecondKind.HELD, activeSinceMillis = start),
             ),
             calls.state.value,
         )
@@ -771,7 +801,7 @@ class CallManagerTest {
         assertEquals(listOf(1), telecom.held)
         assertEquals(listOf("2002"), telecom.placed)
         assertTrue("o motor põe a primeira em espera no makeCall", gateway.holds.isEmpty() && gateway.made.isEmpty())
-        val held = SecondUi(1, "3001", "Cliente Teste", SecondKind.HELD)
+        val held = SecondUi(1, "3001", "Cliente Teste", SecondKind.HELD, activeSinceMillis = start)
         assertEquals(
             CallUi(CallManager.NO_ID, "2002", "", incoming = false, phase = CallPhase.DIALING, second = held),
             calls.state.value,
@@ -867,7 +897,7 @@ class CallManagerTest {
         assertEquals(listOf(1, 2), telecom.active)
         val bothHeld = CallUi(
             2, "3002", "Fulano", incoming = true, phase = CallPhase.ACTIVE, activeSinceMillis = start + 10_000,
-            held = true, second = SecondUi(1, "3001", "Cliente Teste", SecondKind.HELD),
+            held = true, second = SecondUi(1, "3001", "Cliente Teste", SecondKind.HELD, activeSinceMillis = start),
         )
         assertEquals("a de cima continua, em espera", bothHeld, calls.state.value)
         calls.holdFromTelecom(2)   // já em espera: nada
@@ -915,7 +945,7 @@ class CallManagerTest {
         assertEquals("sem setHold(false): é o activate", listOf(2 to true), gateway.holds)
         assertEquals(listOf(1, 2, 2), telecom.active)
         assertEquals("nenhum pedido de espera novo", listOf(1, 2), telecom.held)
-        val held1 = SecondUi(1, "3001", "Cliente Teste", SecondKind.HELD)
+        val held1 = SecondUi(1, "3001", "Cliente Teste", SecondKind.HELD, activeSinceMillis = start)
         assertEquals(
             CallUi(
                 2, "3002", "Fulano", incoming = true, phase = CallPhase.ACTIVE, activeSinceMillis = start + 10_000,
@@ -932,7 +962,7 @@ class CallManagerTest {
         assertEquals(
             CallUi(
                 1, "3001", "Cliente Teste", incoming = true, phase = CallPhase.ACTIVE, activeSinceMillis = start,
-                second = SecondUi(2, "3002", "Fulano", SecondKind.HELD),
+                second = SecondUi(2, "3002", "Fulano", SecondKind.HELD, activeSinceMillis = start + 10_000),
             ),
             calls.state.value,
         )
@@ -1143,7 +1173,7 @@ class CallManagerTest {
         assertEquals("o Telecom põe o cliente em espera", listOf(1), telecom.held)
         assertEquals(listOf("2002"), telecom.placed)
         assertTrue("o motor põe o cliente em espera no makeCall", gateway.holds.isEmpty() && gateway.made.isEmpty())
-        val client = SecondUi(1, "3001", "Cliente Teste", SecondKind.HELD)
+        val client = SecondUi(1, "3001", "Cliente Teste", SecondKind.HELD, activeSinceMillis = start)
         assertEquals(
             CallUi(
                 CallManager.NO_ID, "2002", "", incoming = false, phase = CallPhase.DIALING, second = client,
@@ -1177,7 +1207,8 @@ class CallManagerTest {
         assertEquals(
             CallUi(
                 1, "3001", "Cliente Teste", incoming = true, phase = CallPhase.ACTIVE, activeSinceMillis = start,
-                second = SecondUi(id, "2002", "", SecondKind.HELD), consult = ConsultUi(id, colleagueActive = false),
+                second = SecondUi(id, "2002", "", SecondKind.HELD, activeSinceMillis = start + 10_000),
+                consult = ConsultUi(id, colleagueActive = false),
             ),
             calls.state.value,
         )
@@ -1229,7 +1260,8 @@ class CallManagerTest {
         calls.completeTransfer()
         val both = CallUi(
             id, "2002", "", incoming = false, phase = CallPhase.ACTIVE, activeSinceMillis = start + 10_000,
-            second = SecondUi(1, "3001", "Cliente Teste", SecondKind.HELD), consult = ConsultUi(id, colleagueActive = true),
+            second = SecondUi(1, "3001", "Cliente Teste", SecondKind.HELD, activeSinceMillis = start),
+            consult = ConsultUi(id, colleagueActive = true),
         )
         calls.onTransfer(1, 603)   // o REFER recusado
         assertEquals("O servidor não aceitou a transferência.", calls.endMessage.value)
@@ -1446,7 +1478,7 @@ class CallManagerTest {
         // Um 2xx no cliente sem o Concluir pedido não é da consulta: as duas continuam.
         calls.onTransfer(2, 200)
         assertEquals(ConsultUi(id, colleagueActive = false), calls.state.value?.consult)
-        assertEquals(SecondUi(id, "2002", "", SecondKind.HELD), calls.state.value?.second)
+        assertEquals(SecondUi(id, "2002", "", SecondKind.HELD, activeSinceMillis = clock.nowMillis()), calls.state.value?.second)
         calls.completeTransfer()
         assertEquals(listOf(2 to id), gateway.attended)
         calls.onTransfer(2, 200)
@@ -1489,7 +1521,7 @@ class CallManagerTest {
         assertEquals("a outra em espera desde a Nova ligação", listOf(1), telecom.held)
         val conference = CallUi(
             id, "2002", "", incoming = false, phase = CallPhase.ACTIVE, activeSinceMillis = start + 10_000,
-            second = SecondUi(1, "3001", "Cliente Teste", SecondKind.ACTIVE), conference = true,
+            second = SecondUi(1, "3001", "Cliente Teste", SecondKind.ACTIVE, activeSinceMillis = start), conference = true,
             conferenceSinceMillis = start + 15_000,
         )
         assertEquals(conference, calls.state.value)
@@ -1541,7 +1573,7 @@ class CallManagerTest {
         )
         val first = CallUi(
             1, "3001", "Cliente Teste", incoming = true, phase = CallPhase.ACTIVE, activeSinceMillis = start,
-            second = SecondUi(id, "2002", "", SecondKind.HELD),
+            second = SecondUi(id, "2002", "", SecondKind.HELD, activeSinceMillis = start + 10_000),
         )
         assertEquals(first, calls.state.value)
         calls.split()   // repetido: nada
@@ -1553,7 +1585,7 @@ class CallManagerTest {
         assertEquals(listOf(id to 1, 1 to id), telecom.joined)
         assertEquals(
             first.copy(
-                second = SecondUi(id, "2002", "", SecondKind.ACTIVE), conference = true,
+                second = SecondUi(id, "2002", "", SecondKind.ACTIVE, activeSinceMillis = start + 10_000), conference = true,
                 conferenceSinceMillis = start + 15_000,
             ),
             calls.state.value,
@@ -1797,7 +1829,7 @@ class CallManagerTest {
         assertEquals(listOf("split", "hold $id", "hold 1"), telecom.order.takeLast(3))
         val bothHeld = CallUi(
             1, "3001", "Cliente Teste", incoming = true, phase = CallPhase.ACTIVE, activeSinceMillis = start,
-            held = true, second = SecondUi(id, "2002", "", SecondKind.HELD),
+            held = true, second = SecondUi(id, "2002", "", SecondKind.HELD, activeSinceMillis = start + 10_000),
         )
         assertEquals("sem troca: nenhuma tem o som", bothHeld, calls.state.value)
         calls.holdFromTelecom(1)   // já em espera: nada
@@ -1891,7 +1923,7 @@ class CallManagerTest {
         assertEquals(SecondUi(2, "3002", "João Souza", SecondKind.RINGING), calls.state.value?.second)
         answerCall(2)
         assertEquals("João Souza", calls.state.value?.name)
-        assertEquals(SecondUi(1, "3001", "Maria Silva", SecondKind.HELD), calls.state.value?.second)
+        assertEquals(SecondUi(1, "3001", "Maria Silva", SecondKind.HELD, activeSinceMillis = start), calls.state.value?.second)
         // A em espera cai do outro lado: o aviso com o nome do contato.
         calls.onCallState(1, CallState.DISCONNECTED, 200)
         assertEquals("Maria Silva desligou", calls.endMessage.value)
@@ -2180,6 +2212,146 @@ class CallManagerTest {
         assertNull(calls.state.value)
         assertEquals(listOf("Ligação perdida de 3001"), notifier.missed)
         assertEquals("com som: o Não perturbe está desligado", listOf(false), notifier.missedSilent)
+    }
+
+    // A recebida mostra quando o Atender automático vai atendê-la (R7 e R33): o tempo marcado e quando o celular começou a
+    // tocar, só enquanto as regras dele valem para ela com as configurações de agora (a tela cheia e a notificação).
+
+    @Test
+    fun `the ringing call shows when auto answer will answer it`() {
+        settings = CallSettings(autoAnswer = true, autoAnswerSeconds = 3)
+        telecom.createsConnections = false
+        ring(1)
+        assertNull("o celular ainda não toca", calls.state.value?.autoAnswerSeconds)
+        assertNull(calls.autoAnswerSeconds(1))
+        clock.advance(500)
+        telecom.createConnection(1)
+        val rang = clock.nowMillis()
+        assertEquals(3, calls.state.value?.autoAnswerSeconds)
+        assertEquals("a contagem começa quando o celular toca", rang, calls.state.value?.autoAnswerSinceMillis)
+        assertEquals("a notificação pergunta pelo id", 3, calls.autoAnswerSeconds(1))
+        assertNull("outra ligação", calls.autoAnswerSeconds(2))
+        // O Não perturbe ligado na contagem: ninguém a atende sozinho, e a linha sai; desligado antes da hora, ela volta.
+        clock.advance(1_000)
+        settings = settings.copy(doNotDisturb = true)
+        calls.onSettingsChanged()
+        assertNull(calls.state.value?.autoAnswerSeconds)
+        assertNull(calls.autoAnswerSeconds(1))
+        settings = settings.copy(doNotDisturb = false)
+        calls.onSettingsChanged()
+        assertEquals(3, calls.state.value?.autoAnswerSeconds)
+        assertEquals("a contagem de quando tocou", rang, calls.state.value?.autoAnswerSinceMillis)
+        // O Atender automático desligado e ligado de novo antes da hora.
+        settings = settings.copy(autoAnswer = false)
+        calls.onSettingsChanged()
+        assertNull(calls.state.value?.autoAnswerSeconds)
+        settings = settings.copy(autoAnswer = true)
+        calls.onSettingsChanged()
+        assertEquals(3, calls.state.value?.autoAnswerSeconds)
+        // Outro tempo escolhido na contagem vale para a próxima: a linha mostra o marcado, o que vai valer.
+        settings = settings.copy(autoAnswerSeconds = 10)
+        calls.onSettingsChanged()
+        assertEquals(3, calls.state.value?.autoAnswerSeconds)
+        assertEquals(3, calls.autoAnswerSeconds(1))
+        clock.advance(1_999)
+        assertTrue("2999 ms depois de tocar: ainda não", gateway.answers.isEmpty())
+        clock.advance(1)
+        assertEquals(listOf(1), gateway.answers)
+        assertNull("atendida: a linha sai", calls.state.value?.autoAnswerSeconds)
+        assertNull(calls.autoAnswerSeconds(1))
+        assertEquals(0L, calls.state.value?.autoAnswerSinceMillis)
+    }
+
+    @Test
+    fun `auto answer shows na hora and never shows for a second call`() {
+        settings = CallSettings(autoAnswer = true, autoAnswerSeconds = 0)
+        calls.onIncoming(1, "3001", "Cliente Teste")   // o Telecom cria a Connection na hora: ela toca
+        assertEquals("R32: na hora", 0, calls.state.value?.autoAnswerSeconds)
+        assertEquals(0, calls.autoAnswerSeconds(1))
+        clock.advance(0)
+        assertEquals(listOf(1), gateway.answers)
+        assertNull(calls.state.value?.autoAnswerSeconds)
+        calls.onCallState(1, CallState.CONFIRMED, 200)
+        // A segunda, com a primeira em andamento, toca normalmente: nem a tela nem a notificação falam do Atender
+        // automático.
+        ring(2, "3002", "Fulano")
+        assertNull(calls.state.value?.autoAnswerSeconds)
+        assertEquals(SecondKind.RINGING, calls.state.value?.second?.kind)
+        assertNull(calls.autoAnswerSeconds(2))
+        // A primeira acaba e a segunda fica sozinha, tocando: ninguém a atende sozinho, e a linha não aparece.
+        calls.onCallState(1, CallState.DISCONNECTED, 200)
+        assertEquals(CallPhase.RINGING, calls.state.value?.phase)
+        assertEquals(2, calls.state.value?.id)
+        assertNull(calls.state.value?.autoAnswerSeconds)
+        assertNull(calls.autoAnswerSeconds(2))
+        calls.onSettingsChanged()
+        assertNull(calls.state.value?.autoAnswerSeconds)
+    }
+
+    // O microfone (spec 12): com o app fechado, o Android pode não deixar o app usar o microfone. O Atender automático o
+    // pede antes de atender; sem ele, a recebida continua tocando, e a pessoa ainda atende à mão.
+
+    @Test
+    fun `auto answer keeps the call ringing when Android refuses the microphone`() {
+        settings = CallSettings(autoAnswer = true, autoAnswerSeconds = 3)
+        microphone = CallMicrophone { ready -> ready(false) }
+        ring(1)
+        clock.advance(2_999)
+        assertEquals("nada pedido antes da hora", 0, microphoneRequests)
+        clock.advance(1)
+        assertEquals(1, microphoneRequests)
+        assertTrue("não atendeu", gateway.answers.isEmpty())
+        assertTrue("continua tocando", calls.isRinging(1))
+        assertTrue("o toque continua", 1 !in notifier.stopped)
+        assertNull("a linha sai: ela não vai ser atendida sozinha", calls.state.value?.autoAnswerSeconds)
+        assertNull(calls.autoAnswerSeconds(1))
+        clock.advance(30_000)
+        assertTrue(gateway.answers.isEmpty())
+        assertEquals("uma vez só", 1, microphoneRequests)
+        // A pessoa atende à mão.
+        answerCall(1)
+        assertEquals(listOf(1), gateway.answers)
+        assertEquals(CallPhase.ACTIVE, calls.state.value?.phase)
+    }
+
+    @Test
+    fun `auto answer waits for the microphone and answers only the call still ringing alone`() {
+        settings = CallSettings(autoAnswer = true, autoAnswerSeconds = 3)
+        val pending = mutableListOf<(Boolean) -> Unit>()
+        microphone = CallMicrophone { ready -> pending += ready }
+        // O Android deixa: ela é atendida quando a resposta chega.
+        ring(1)
+        clock.advance(3_000)
+        assertEquals(1, pending.size)
+        assertTrue("esperando o Android", gateway.answers.isEmpty())
+        assertEquals("ainda vai ser atendida", 3, calls.state.value?.autoAnswerSeconds)
+        pending.removeAt(0)(true)
+        assertEquals(listOf(1), gateway.answers)
+        calls.onCallState(1, CallState.CONFIRMED, 200)
+        calls.onCallState(1, CallState.DISCONNECTED, 200)
+        // Atendida à mão enquanto o Android responde: a resposta não atende de novo.
+        ring(2, "3002", "")
+        clock.advance(3_000)
+        answerCall(2)
+        pending.removeAt(0)(true)
+        assertEquals(listOf(1, 2), gateway.answers)
+        calls.hangup()
+        calls.onCallState(2, CallState.DISCONNECTED, 200)
+        // Quem ligou desistiu enquanto o Android responde: nada.
+        ring(3, "3003", "")
+        clock.advance(3_000)
+        calls.onCallState(3, CallState.DISCONNECTED, 487)
+        pending.removeAt(0)(true)
+        assertEquals(listOf(1, 2), gateway.answers)
+        // O Não perturbe ligado enquanto o Android responde: vale o Não perturbe, e ela continua tocando.
+        ring(4, "3004", "")
+        clock.advance(3_000)
+        settings = settings.copy(doNotDisturb = true)
+        pending.removeAt(0)(true)
+        assertEquals(listOf(1, 2), gateway.answers)
+        assertTrue(calls.isRinging(4))
+        assertNull(calls.state.value?.autoAnswerSeconds)
+        assertTrue("nada mais pedido", pending.isEmpty())
     }
 
     // O bipe no fim (spec 9): a atendida que acaba sem outra de pé toca o bipe, e a Connection dela só sai do Telecom

@@ -7,6 +7,12 @@ import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
+import android.telecom.CallAudioState
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.assertContentDescriptionEquals
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
@@ -23,6 +29,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
+import br.com.starsonic.phone.call.AudioRoutes
 import br.com.starsonic.phone.call.CallActionReceiver
 import br.com.starsonic.phone.call.CallActivity
 import br.com.starsonic.phone.call.CallPhase
@@ -30,6 +37,7 @@ import br.com.starsonic.phone.call.IncomingCallNotifier
 import br.com.starsonic.phone.call.SecondKind
 import br.com.starsonic.phone.data.Account
 import br.com.starsonic.phone.data.CallKind
+import br.com.starsonic.phone.data.CallSettings
 import br.com.starsonic.phone.data.Recent
 import br.com.starsonic.phone.engine.Transport
 import br.com.starsonic.phone.main.MainActivity
@@ -37,8 +45,10 @@ import java.util.regex.Pattern
 import org.junit.After
 import org.junit.AfterClass
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.FixMethodOrder
 import org.junit.Rule
@@ -59,10 +69,17 @@ import org.junit.runners.MethodSorters
  * Cada teste começa com a conta gravada por TCP (o CI confere que o último REGISTER aceito veio por TCP) e o
  * app aberto, que inicia o serviço; as recebidas tocam com o app em segundo plano (UiDevice.pressHome). Os
  * botões da notificação de ligação são do Android: o CI sobe o emulador em pt-BR (Atender e Recusar). O Recentes
- * começa vazio em cada teste.
+ * começa vazio em cada teste, com o Não perturbe e o Atender automático desligados; o fim devolve as configurações de
+ * ligação, a tela e a letra de antes.
+ *
+ * As telas da ligação no visual do Windows (spec 3, 5, 6 e 7; R9, R19): a linha do status no alto ("Ocupado · em
+ * ligação" e o ramal, com a notificação fixa), o Não perturbe (o registrador recebe o 486), o Atender automático com o
+ * app em segundo plano (1 s e na hora), a contagem dele na recebida em tela cheia e o Rediscar da Nova ligação. As fotos
+ * ([Emulator.saveScreen]) saem na tela dos quadros do canvas (390 × 844 dp), menos as "-pequena", na do emulador do CI.
  *
  * No fim, uma "Nota do teste" na saída do am instrument conta os toques repetidos nos botões da notificação
- * (o run-emulator-tests.sh a mostra numa anotação).
+ * (o run-emulator-tests.sh a mostra numa anotação); outra conta como o Android deixou o serviço com o Atender automático
+ * em segundo plano (o risco 12 da spec: o microfone).
  */
 @RunWith(AndroidJUnit4::class)
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
@@ -74,6 +91,7 @@ class CallFlowTest {
     private val app = emulator.app
     private val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
     private var scenario: ActivityScenario<MainActivity>? = null
+    private var settingsBefore: CallSettings? = null
 
     @Before
     fun connect() {
@@ -84,9 +102,11 @@ class CallFlowTest {
         device.executeShellCommand("wm dismiss-keyguard")
         emulator.startClean()
         app.recents.clear()
-        // Uma notificação de ligação que sobrou de um teste que falhou não engana o próximo.
+        settingsBefore = app.callSettings.settings.value
+        app.callSettings.update { it.copy(doNotDisturb = false, autoAnswer = false) }
+        // Uma notificação de ligação (ou de perdida) que sobrou de um teste que falhou não engana o próximo.
         val notifications = app.getSystemService(NotificationManager::class.java)
-        notifications.activeNotifications.filter { it.notification.channelId in CALL_CHANNELS }
+        notifications.activeNotifications.filter { it.notification.channelId in CALL_CHANNELS + MISSED_CHANNELS }
             .forEach { notifications.cancel(it.tag, it.id) }
         app.store.save(Account(emulator.registrar, Transport.TCP, "2001", emulator.senha))
         scenario = ActivityScenario.launch(MainActivity::class.java)
@@ -95,13 +115,214 @@ class CallFlowTest {
 
     @After
     fun close() {
-        // As ligações que sobraram de um teste que falhou (até duas) acabam aqui: as do registrador, e as do app.
-        if (app.calls.state.value != null) {
-            repeat(2) { emulator.control("HANGUP 2001") }
-            app.calls.state.value?.second?.let { app.calls.hangup(it.id) }
-            app.calls.hangup()
+        try {
+            // As ligações que sobraram de um teste que falhou (até duas) acabam aqui: as do registrador, e as do app.
+            if (app.calls.state.value != null) {
+                repeat(2) { emulator.control("HANGUP 2001") }
+                app.calls.state.value?.second?.let { app.calls.hangup(it.id) }
+                app.calls.hangup()
+            }
+            scenario?.close()
+        } finally {
+            emulator.restoreLook()
+            settingsBefore?.let { before -> app.callSettings.update { before } }
         }
-        scenario?.close()
+    }
+
+    @Test
+    fun theCallScreenShowsOcupadoEmLigacao() {
+        // R9: na tela da ligação, a linha do status no alto, com a bolinha ("Ocupado · em ligação" e o ramal), e a
+        // notificação fixa com o mesmo título, que volta a "Conectado" no fim. A foto do quadro Chamada (com o Mudo ligado,
+        // como nele) e a do teclado dos tons, que nunca tem o Rediscar (spec 6).
+        emulator.useCanvasDisplay()
+        answerOnTheCallScreen()
+        emulator.waitUntil("a linha do status na tela da ligação", details = { "Na linha: ${tagTexts(CALL_STATUS)}" }) {
+            tagTexts(CALL_STATUS) == listOf("Ocupado · em ligação", "2001")
+        }
+        emulator.waitUntil("a notificação \"Ocupado · em ligação\"", details = ::notificationTitle) {
+            emulator.connectionNotificationTitle() == "Ocupado · em ligação"
+        }
+        compose.onNodeWithTag("mudo").performClick()
+        emulator.waitUntil("o mudo ligado") { app.calls.state.value?.muted == true }
+        emulator.saveScreen("ligacao.png")
+        compose.onNodeWithTag("teclado-chamada").performClick()
+        emulator.waitUntil("o teclado da ligação") { emulator.showsTag("dtmf-1") }
+        for (key in "12") compose.onNodeWithTag("dtmf-$key").performClick()
+        assertFalse("o Rediscar no teclado dos tons", emulator.showsTag("rediscar") || emulator.showsTag(REDIAL_NEW))
+        emulator.saveScreen("ligacao-teclado.png")
+        compose.onNodeWithTag("teclado-chamada").performClick()
+        // A Nova ligação sem nenhuma feita nos Recentes: o Rediscar apagado, só "Rediscar".
+        compose.onNodeWithTag("nova-ligacao").performClick()
+        emulator.waitUntil("o Rediscar da Nova ligação") { emulator.showsTag(REDIAL_NEW) }
+        compose.onNodeWithTag(REDIAL_NEW).assertIsNotEnabled().assertContentDescriptionEquals("Rediscar")
+        compose.onNodeWithTag("nova-cancelar").performClick()
+        compose.onNodeWithTag("mudo").performClick()
+        assertEquals("OK", emulator.control("HANGUP 2001"))
+        emulator.waitUntil("a ligação acabar") { app.calls.state.value == null }
+        emulator.waitUntil("a notificação de volta em \"Conectado (ramal 2001)\"", details = ::notificationTitle) {
+            emulator.connectionNotificationTitle() == "Conectado (ramal 2001)"
+        }
+    }
+
+    @Test
+    fun autoAnswerAnswersByItselfAfterTheTime() {
+        // Spec 5 e 11: com o Atender automático, a recebida é atendida sozinha, sem nenhum toque, com o app em segundo
+        // plano: depois de 1 s tocando e, na hora (0 s), logo que o celular toca (a corrida do R15: a Connection do Telecom
+        // nasce antes, e o som da ligação passa por ela: o viva-voz pedido a ela vale). Sem o bipe do fim, para a Connection
+        // de uma sair na hora, antes da próxima.
+        app.callSettings.update { it.copy(autoAnswer = true, autoAnswerSeconds = 1, endBeep = false) }
+        device.pressHome()
+        emulator.clearLogcat()
+        for (seconds in listOf(1, 0)) {
+            app.callSettings.update { it.copy(autoAnswerSeconds = seconds) }
+            val before = emulator.callLog().size
+            assertEquals("OK", emulator.control("RING 2001"))
+            val rang = timeOf("a ligação chegar ($seconds s)") { app.calls.state.value != null }
+            val answered = timeOf("a ligação atendida sozinha ($seconds s)") {
+                app.calls.state.value?.phase.let { it == CallPhase.CONNECTING || it == CallPhase.ACTIVE }
+            }
+            if (seconds > 0) {
+                assertTrue("atendida depois do tempo (${answered - rang} ms depois de tocar)", answered - rang >= 700)
+            }
+            waitForLog(before, "inv-out 2001 200")
+            emulator.waitUntil("a ligação em andamento ($seconds s)") { app.calls.state.value?.phase == CallPhase.ACTIVE }
+            InstrumentationRegistry.getInstrumentation().runOnMainSync { app.telecom.setRoute(CallAudioState.ROUTE_SPEAKER) }
+            emulator.waitUntil("o viva-voz pela Connection do Telecom ($seconds s)", details = { "Rotas: ${app.telecom.routes.value}" }) {
+                app.telecom.routes.value.speaker
+            }
+            if (seconds > 0) emulator.note("CallFlowTest: Atender automático com o app em segundo plano: ${foregroundService()}")
+            assertEquals("OK", emulator.control("HANGUP 2001"))
+            emulator.waitUntil("a ligação acabar ($seconds s)") { app.calls.state.value == null }
+            emulator.waitUntil("a Connection sair do Telecom ($seconds s)", details = { "Rotas: ${app.telecom.routes.value}" }) {
+                app.telecom.routes.value == AudioRoutes()
+            }
+        }
+        assertEquals("as duas no Recentes", listOf(CallKind.RECEBIDA, CallKind.RECEBIDA), app.recents.list().map { it.kind })
+    }
+
+    @Test
+    fun doNotDisturbMakesTheCallerHearBusy() {
+        // Spec 4: com o Não perturbe ligado, quem liga ouve ocupado (o registrador recebe o 486); nada toca nem abre a tela,
+        // e a perdida entra no Recentes, com o aviso sem som, no canal do Não perturbe.
+        app.callSettings.update { it.copy(doNotDisturb = true) }
+        val before = emulator.callLog().size
+        assertEquals("OK", emulator.control("RING 2001"))
+        waitForLog(before, "inv-out 2001 486")
+        emulator.waitUntil("a perdida no Recentes") { app.recents.list().firstOrNull()?.kind == CallKind.PERDIDA }
+        assertEquals("3001", app.recents.list().first().number)
+        emulator.waitUntil("o aviso da perdida sem som", details = ::notifications) { silentMissed() != null }
+        assertEquals("Ligação perdida de 3001", silentMissed()?.extras?.getCharSequence(Notification.EXTRA_TITLE)?.toString())
+        assertNull("nada tocou", app.calls.state.value)
+        assertNull("sem a notificação de ligação", callNotification())
+        assertFalse("sem a tela de chamada", emulator.showsTag("chamada"))
+    }
+
+    @Test
+    fun rediscarInNovaLigacaoDialsTheLastCall() {
+        // Spec 6 (R4): na Nova ligação, o Rediscar liga para a feita mais nova dos Recentes pelo mesmo caminho do Ligar do
+        // painel (a primeira vai para a espera), com o nome do Rediscar do Teclado. As fotos do painel e das duas ligações
+        // (o quadro DuasLigacoes).
+        emulator.useCanvasDisplay()
+        val now = System.currentTimeMillis()
+        app.recents.add(Recent("2005", "", CallKind.FEITA, now - 120_000, 30))
+        app.recents.add(Recent("2002", "", CallKind.FEITA, now - 60_000, 30))
+        val first = answerOnTheCallScreen()
+        compose.onNodeWithTag("nova-ligacao").performClick()
+        emulator.waitUntil("o Rediscar da feita mais nova", details = { "Rediscar: ${description(REDIAL_NEW)}" }) {
+            description(REDIAL_NEW) == "Rediscar 2002"
+        }
+        compose.onNodeWithTag(REDIAL_NEW).assertIsEnabled()
+        emulator.assertTouchAtLeast48(REDIAL_NEW)
+        emulator.saveScreen("nova-ligacao.png")
+        val before = emulator.callLog().size
+        compose.onNodeWithTag(REDIAL_NEW).performClick()
+        waitForLog(before, "reinv-in 3001 sendonly")
+        waitForLog(before, "inv-in 2002 200")
+        emulator.waitUntil("a feita em cima, com a primeira em espera") { activeWith(held = first) }
+        assertEquals("2002", app.calls.state.value?.number)
+        emulator.waitUntil("o cartão da em espera") { showsTagWithText("cartao-espera", "Em espera") }
+        emulator.saveScreen("duas-ligacoes.png")
+        // Desligar a feita: a primeira volta sozinha; depois o registrador a desliga.
+        compose.onNodeWithTag("desligar").performClick()
+        emulator.waitUntil("a primeira de volta, sozinha") {
+            app.calls.state.value?.let { it.id == first && it.second == null } == true
+        }
+        assertEquals("OK", emulator.control("HANGUP 2001"))
+        emulator.waitUntil("a primeira acabar") { app.calls.state.value == null }
+    }
+
+    @Test
+    fun theIncomingScreenCountsDownTheAutoAnswer() {
+        // R7, R32 e R33: na recebida em tela cheia, a linha "Atender automático · em <n> s" conta os segundos desde que o
+        // celular tocou, só enquanto o Atender automático vai atendê-la (com as configurações de agora); a notificação
+        // mostra o tempo escolhido, uma vez. As fotos da recebida com e sem a linha (o quadro Recebida).
+        emulator.useCanvasDisplay()
+        app.callSettings.update { it.copy(autoAnswer = true, autoAnswerSeconds = 30) }
+        val before = emulator.callLog().size
+        assertEquals("OK", emulator.control("RING 2001"))
+        emulator.waitUntil("a ligação tocando") { app.calls.state.value?.phase == CallPhase.RINGING }
+        emulator.waitUntil("a notificação com o Atender automático", details = ::notifications) {
+            callNotification()?.extras?.getCharSequence(Notification.EXTRA_TEXT)?.toString() == "3001 · Atender automático · em 30 s"
+        }
+        app.startActivity(CallActivity.intent(app))
+        emulator.waitUntil("a linha do Atender automático") { emulator.showsTag(AUTO_LINE) }
+        assertTrue("o título da recebida", emulator.showsText("Ligação recebida · 2001"))
+        val first = countdown()
+        Thread.sleep(2_200)
+        val later = countdown()
+        assertTrue("a contagem desce de segundo em segundo ($first s, depois $later s)", later in 1..first - 2)
+        emulator.saveScreen("recebida-atender.png")
+        // O Não perturbe ligado na contagem: ninguém a atende sozinho, e a linha sai; desligado de novo, ela volta.
+        app.callSettings.update { it.copy(doNotDisturb = true) }
+        emulator.waitUntil("a linha sair com o Não perturbe") { !emulator.showsTag(AUTO_LINE) }
+        app.callSettings.update { it.copy(doNotDisturb = false) }
+        emulator.waitUntil("a linha de volta") { emulator.showsTag(AUTO_LINE) }
+        // O Atender automático desligado: a linha sai. A foto da recebida sem ela.
+        app.callSettings.update { it.copy(autoAnswer = false) }
+        emulator.waitUntil("a linha sair") { !emulator.showsTag(AUTO_LINE) }
+        emulator.saveScreen("recebida.png")
+        assertEquals("ainda tocando", CallPhase.RINGING, app.calls.state.value?.phase)
+        compose.onNodeWithTag("recusar").performClick()
+        waitForLog(before, "inv-out 2001 486")
+        emulator.waitUntil("a ligação acabar") { app.calls.state.value == null }
+    }
+
+    @Test
+    fun theSecondCallConsultAndConferenceDraw() {
+        // R19: as fotos da faixa da segunda ligação, da consulta e da conferência, na tela dos quadros.
+        emulator.useCanvasDisplay()
+        val client = answerOnTheCallScreen()
+        var before = emulator.callLog().size
+        assertEquals("OK", emulator.control("RING 2001"))
+        emulator.waitUntil("a faixa da segunda ligação") { showsTagWithText("segunda-ligacao", "Ligação de Cliente Teste") }
+        emulator.saveScreen("segunda-ligacao.png")
+        compose.onNodeWithTag("recusar-segunda").performClick()
+        waitForLog(before, "inv-out 2001 486")
+        emulator.waitUntil("a faixa sair") { !emulator.showsTag("segunda-ligacao") }
+        // A consulta: o colega em cima, e o cliente em espera para a transferência.
+        consultOnTheCallScreen("2003", client)
+        emulator.saveScreen("consulta.png")
+        before = emulator.callLog().size
+        compose.onNodeWithTag("cancelar-consulta").performClick()
+        waitForLog(before, "bye-in 2003")
+        emulator.waitUntil("o cliente de volta, sozinho") {
+            app.calls.state.value?.let { it.id == client && it.second == null && !it.held } == true
+        }
+        // A conferência: a Nova ligação e o Juntar.
+        before = emulator.callLog().size
+        compose.onNodeWithTag("nova-ligacao").performClick()
+        compose.onNodeWithTag("nova-numero").performTextInput("2002")
+        compose.onNodeWithTag("nova-ligar").performClick()
+        waitForLog(before, "inv-in 2002 200")
+        emulator.waitUntil("a nova ligação em cima, com a primeira em espera") { activeWith(held = client) }
+        compose.onNodeWithTag("juntar").performClick()
+        emulator.waitUntil("a Conferência") { showsTagWithText("conferencia", "Conferência") }
+        emulator.saveScreen("conferencia.png")
+        before = emulator.callLog().size
+        compose.onNodeWithTag("desligar").performClick()
+        waitForLog(before, "bye-in 3001")
+        waitForLog(before, "bye-in 2002")
+        emulator.waitUntil("as ligações acabarem") { app.calls.state.value == null }
     }
 
     @Test
@@ -113,6 +334,7 @@ class CallFlowTest {
         emulator.waitForText("3001")   // a tela de chamada
         emulator.waitUntil("a ligação atendida") { app.calls.state.value?.phase == CallPhase.ACTIVE }
         emulator.waitUntil("o toque parar", details = ::notifications) { callNotification() == null }
+        emulator.saveScreen("ligacao-pequena.png")   // na tela do emulador do CI (320 × 640 dp)
         assertEquals("OK", emulator.control("HANGUP 2001"))
         emulator.waitUntil("a tela de chamada sair") { !emulator.showsTag("chamada") }
         emulator.waitUntil("a recebida no Recentes") { app.recents.list().firstOrNull()?.kind == CallKind.RECEBIDA }
@@ -178,6 +400,7 @@ class CallFlowTest {
         compose.onNodeWithTag("atender-segunda").performClick()
         emulator.waitUntil("a segunda atendida, com a primeira em espera") { activeWith(held = first) }
         emulator.waitUntil("o cartão da em espera") { showsTagWithText("cartao-espera", "Em espera") }
+        emulator.saveScreen("duas-ligacoes-pequena.png")   // na tela do emulador do CI (320 × 640 dp)
         assertEquals("a faixa sai", false, emulator.showsTag("segunda-ligacao"))
         assertEquals("o Transferir da primeira na segunda", false, emulator.showsTag("transferir-numero"))
         emulator.waitUntil("a notificação da chamada em espera sair", details = ::notifications) { callNotification() == null }
@@ -320,6 +543,7 @@ class CallFlowTest {
             }
             assertEquals("as duas continuam", true, activeWith(held = client) && app.calls.state.value?.id == colleague)
             assertEquals("a consulta continua", true, showsTagWithText("cartao-espera", "Em espera · transferência"))
+            emulator.saveScreen("consulta-pequena.png")   // na tela do emulador do CI (320 × 640 dp)
             assertEquals("nenhum BYE", emptyList<String>(), emulator.callLog().drop(before).filter { it.startsWith("bye-in") })
             // Cancelar: o colega sai, e o cliente volta sozinho.
             compose.onNodeWithTag("cancelar-consulta").performClick()
@@ -528,6 +752,56 @@ class CallFlowTest {
         emulator.waitUntil("o cartão do cliente") { showsTagWithText("cartao-espera", "Em espera · transferência") }
     }
 
+    // Os textos do elemento [tag] (os dele e os de dentro, como o leitor de tela os lê); vazio sem ele na frente.
+    private fun tagTexts(tag: String): List<String> =
+        try {
+            compose.onNodeWithTag(tag).fetchSemanticsNode().config.getOrNull(SemanticsProperties.Text)?.map { it.text }.orEmpty()
+        } catch (e: AssertionError) {
+            emptyList()
+        } catch (e: IllegalStateException) {
+            emptyList()
+        }
+
+    // O título da notificação fixa, para as falhas.
+    private fun notificationTitle(): String = "Título da notificação fixa: ${emulator.connectionNotificationTitle()}"
+
+    // O nome do elemento [tag] para o leitor de tela, ou null sem ele na frente.
+    private fun description(tag: String): String? =
+        try {
+            compose.onNodeWithTag(tag).fetchSemanticsNode().config.getOrNull(SemanticsProperties.ContentDescription)?.joinToString()
+        } catch (e: AssertionError) {
+            null
+        } catch (e: IllegalStateException) {
+            null
+        }
+
+    // Os segundos que faltam na linha do Atender automático da recebida ("Atender automático · em <n> s").
+    private fun countdown(): Int {
+        val line = tagTexts(AUTO_LINE).joinToString()
+        return COUNTDOWN.matchEntire(line)?.groupValues?.get(1)?.toInt()
+            ?: throw AssertionError("a linha do Atender automático: \"$line\"")
+    }
+
+    // Espera a [condition] (como o Emulator.waitUntil) e diz quando ela passou a valer (SystemClock.uptimeMillis).
+    private fun timeOf(what: String, condition: () -> Boolean): Long {
+        emulator.waitUntil(what, condition = condition)
+        return SystemClock.uptimeMillis()
+    }
+
+    // O aviso sem som de uma perdida no Não perturbe (o canal dele), ou null.
+    private fun silentMissed(): Notification? =
+        app.getSystemService(NotificationManager::class.java).activeNotifications
+            .firstOrNull { it.notification.channelId == IncomingCallNotifier.CHANNEL_MISSED_SILENT }?.notification
+
+    // O serviço em primeiro plano como o Android o vê agora (os tipos e o uso do microfone, do dumpsys) e as recusas do
+    // Android ao pôr o serviço em primeiro plano (o logcat do SipService), para a nota do risco 12 da spec.
+    private fun foregroundService(): String {
+        val dump = emulator.shell("dumpsys activity services br.com.starsonic.phone/.service.SipService").map { it.trim() }
+        val wanted = dump.filter { line -> FGS_KEYS.any { line.contains(it, ignoreCase = true) } }.distinct().take(8)
+        val refused = emulator.shell("logcat -d -v brief -s SipService:W").count { "não entrou em primeiro plano" in it }
+        return "${wanted.joinToString(" | ").take(600)}; recusas do primeiro plano no logcat: $refused"
+    }
+
     // A notificação da chamada em espera: no canal sem som, sem a tela cheia e sem o toque que se repete.
     private fun waitingNotification(): Boolean =
         callNotification()?.let {
@@ -625,6 +899,17 @@ class CallFlowTest {
     companion object {
         private const val SYSTEM_UI = "com.android.systemui"
         private val CALL_CHANNELS = setOf(IncomingCallNotifier.CHANNEL_CALLS, IncomingCallNotifier.CHANNEL_SILENCED)
+        private val MISSED_CHANNELS = setOf(IncomingCallNotifier.CHANNEL_MISSED, IncomingCallNotifier.CHANNEL_MISSED_SILENT)
+
+        // As etiquetas novas das telas da ligação: a linha do status no alto, a do Atender automático na recebida e o
+        // Rediscar da Nova ligação.
+        private const val CALL_STATUS = "status-ligacao"
+        private const val AUTO_LINE = "atender-em"
+        private const val REDIAL_NEW = "rediscar-nova"
+        private val COUNTDOWN = Regex("Atender automático · em (\\d+) s")
+
+        // O que a nota do risco 12 tira do dumpsys do serviço: se está em primeiro plano, os tipos e o microfone.
+        private val FGS_KEYS = listOf("isForeground", "types=", "foregroundServiceType", "WhileInUse")
 
         // Os toques repetidos nos botões da notificação, por botão, e os ids das notificações de teste.
         private val repeatedTaps = mutableMapOf("Atender" to 0, "Recusar" to 0)
