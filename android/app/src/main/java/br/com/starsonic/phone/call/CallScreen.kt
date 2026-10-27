@@ -888,16 +888,7 @@ private fun Ctrl(
         ) {
             Icon(icon, contentDescription = null, tint = if (on) Starsonic.OnCyan else Color.White, modifier = Modifier.size(20.dp))
         }
-        // Uma linha por palavra: com a letra grande, o nome encolhe até cada palavra caber, em vez de quebrar no meio dela
-        // (R40, como o das abas da navegação); quebrar num espaço, como em "Nova ligação", pode.
-        Text(
-            label,
-            style = CtrlText,
-            color = Color.White,
-            textAlign = TextAlign.Center,
-            maxLines = label.count { it == ' ' } + 1,
-            autoSize = TextAutoSize.StepBased(minFontSize = CTRL_LABEL_MIN, maxFontSize = CtrlText.fontSize, stepSize = 0.5.sp),
-        )
+        Text(label, style = CtrlText, color = Color.White, textAlign = TextAlign.Center)
     }
 }
 
