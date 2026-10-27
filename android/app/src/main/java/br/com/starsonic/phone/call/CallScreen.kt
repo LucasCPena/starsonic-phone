@@ -772,7 +772,7 @@ private fun Controls(
         for (row in specs.chunked(GRID_COLUMNS)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(sizes.columnGap)) {
                 for (spec in row) {
-                    Ctrl(spec.icon, spec.label, spec.tag, sizes, spec.on, spec.enabled, spec.toggle, Modifier.weight(1f), spec.onClick)
+                    Ctrl(spec.icon, spec.label, spec.tag, sizes, Modifier.weight(1f), spec.on, spec.enabled, spec.toggle, spec.onClick)
                 }
                 // A última linha incompleta fica à esquerda, como na grade do CSS.
                 repeat(GRID_COLUMNS - row.size) { Spacer(Modifier.weight(1f)) }
@@ -801,10 +801,10 @@ private fun Ctrl(
     label: String,
     tag: String,
     sizes: CallSizes,
+    modifier: Modifier = Modifier,
     on: Boolean = false,
     enabled: Boolean = true,
     toggle: Boolean = false,
-    modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
     Column(
@@ -862,7 +862,8 @@ private fun IncomingActions(actions: CallActions, sizes: CallSizes) {
 }
 
 // Um botão redondo grande com o nome embaixo (o toque vale nos dois): o círculo de [CallSizes.hang] na cor [background],
-// com o ícone de 24 dp; o Atender com a sombra ciano ([shadow]).
+// com o ícone de 24 dp; o Atender com a sombra ciano ([shadow]). Sem margem em volta, como o .hang dos quadros, e a
+// sombra por fora do recorte do toque (dentro dele, ela saía cortada num retângulo).
 @Composable
 private fun RoundAction(
     icon: ImageVector,
@@ -877,26 +878,21 @@ private fun RoundAction(
     shadow: Boolean = false,
     onClick: () -> Unit,
 ) {
-    Column(
-        modifier
-            .clip(RoundedCornerShape(16.dp))
-            .clickable(role = Role.Button, onClick = onClick)
-            .padding(4.dp)
-            .testTag(tag),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(gap),
-    ) {
-        Box(
+    Box(modifier, contentAlignment = Alignment.TopCenter) {
+        if (shadow) Box(Modifier.size(sizes.hang).dropShadow(CircleShape, CyanShadow))
+        Column(
             Modifier
-                .size(sizes.hang)
-                .then(if (shadow) Modifier.dropShadow(CircleShape, CyanShadow) else Modifier)
-                .clip(CircleShape)
-                .background(background),
-            contentAlignment = Alignment.Center,
+                .clip(RoundedCornerShape(16.dp))
+                .clickable(role = Role.Button, onClick = onClick)
+                .testTag(tag),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(gap),
         ) {
-            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(24.dp))
+            Box(Modifier.size(sizes.hang).clip(CircleShape).background(background), contentAlignment = Alignment.Center) {
+                Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(24.dp))
+            }
+            Text(label, style = labelStyle, color = Color.White)
         }
-        Text(label, style = labelStyle, color = Color.White)
     }
 }
 
@@ -1038,8 +1034,8 @@ private val COMPACT_BELOW = 760.dp
 // O que fica de lado na última linha com o teclado dos tons aberto (o .call-side do Windows: o Teclado, para fechar).
 private val SIDE_SLOT = 80.dp
 
-// A altura do nome embaixo do Desligar, para a tela do fim não mudar de altura.
-private val END_LABEL = 16.dp
+// A altura do nome embaixo do Desligar (12,5 sp × 1,2), para a tela do fim não mudar de altura.
+private val END_LABEL = 15.dp
 
 // O aviso no alto, embaixo da linha do status (.call .toast { top: 44px }).
 private val TOAST_TOP = 44.dp

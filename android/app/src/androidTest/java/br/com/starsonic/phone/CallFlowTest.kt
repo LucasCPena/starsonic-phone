@@ -264,7 +264,7 @@ class CallFlowTest {
         emulator.waitUntil("a notificação com o Atender automático", details = ::notifications) {
             callNotification()?.extras?.getCharSequence(Notification.EXTRA_TEXT)?.toString() == "3001 · Atender automático · em 30 s"
         }
-        app.startActivity(CallActivity.intent(app))
+        openTheIncomingByItsNotification("Cliente Teste")
         emulator.waitUntil("a linha do Atender automático") { emulator.showsTag(AUTO_LINE) }
         assertTrue("o título da recebida", emulator.showsText("Ligação recebida · 2001"))
         val first = countdown()
@@ -295,6 +295,9 @@ class CallFlowTest {
         var before = emulator.callLog().size
         assertEquals("OK", emulator.control("RING 2001"))
         emulator.waitUntil("a faixa da segunda ligação") { showsTagWithText("segunda-ligacao", "Ligação de Cliente Teste") }
+        // A notificação da chamada em espera desce no alto da tela por uns segundos (sem a tela cheia, ela sobe
+        // sozinha), por cima da faixa: a foto espera ela subir.
+        device.wait(Until.gone(By.pkg(SYSTEM_UI).text("Ligação de Cliente Teste")), 15_000)
         emulator.saveScreen("segunda-ligacao.png")
         compose.onNodeWithTag("recusar-segunda").performClick()
         waitForLog(before, "inv-out 2001 486")
@@ -722,6 +725,27 @@ class CallFlowTest {
         emulator.waitUntil("a ligação atendida") { app.calls.state.value?.phase == CallPhase.ACTIVE }
         emulator.waitUntil("o toque parar", details = ::notifications) { callNotification() == null }
         return app.calls.state.value!!.id
+    }
+
+    // A recebida em tela cheia aberta como pela pessoa com o celular em uso: o Android mostra a recebida no alto da tela
+    // (a notificação de título [title]), e o toque nela abre a tela cheia e a recolhe. Aberta por fora (o
+    // startActivity), a tela cheia ficaria com a notificação por cima, nas fotos. Sem a notificação no alto, por fora.
+    private fun openTheIncomingByItsNotification(title: String) {
+        val body = By.pkg(SYSTEM_UI).text(title)
+        repeat(3) {
+            val found = device.wait(Until.findObject(body), 10_000)
+            if (found == null) {
+                app.startActivity(CallActivity.intent(app))
+                return
+            }
+            device.waitForIdle()
+            found.click()
+            if (within(5_000) { emulator.showsTag("chamada") }) {
+                device.wait(Until.gone(body), 5_000)
+                return
+            }
+        }
+        throw AssertionError("A notificação da recebida não abriu a tela cheia.\nNa tela: ${visibleTexts()}\n${notifications()}")
     }
 
     // Duas ligações do registrador: a primeira atendida na tela de chamada, e a segunda pela faixa, com a primeira em
