@@ -42,8 +42,8 @@ fun keyTonePlays(enabled: Boolean, ringerMode: Int, inCall: Boolean): Boolean =
 /**
  * O Bipe ao digitar de um teclado na tela: a função que toca o tom de uma tecla ([keyTone]) quando [keyTonePlays], por
  * 150 ms, no som do teclado de discagem do Android (STREAM_DTMF, a 80 do ToneGenerator), como no app de telefone dele:
- * fora da ligação, ele segue o volume do toque e sai no alto-falante (ou no fone de ouvido); na ligação, segue o volume
- * dela e sai junto com o som dela. [inCall]: o teclado da ligação. [enabled]: a chave das Configurações, lida a cada
+ * fora da ligação, ele segue o volume do toque (em alguns celulares, como os Samsung, o do sistema) e sai no alto-falante
+ * (ou no fone de ouvido); na ligação, segue o volume dela e sai junto com o som dela. [inCall]: o teclado da ligação. [enabled]: a chave das Configurações, lida a cada
  * tecla. O som fica pronto quando a tela vem para a frente (com a chave ligada) e é solto quando ela sai, ou quando o
  * teclado some.
  */
