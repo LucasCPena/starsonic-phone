@@ -617,7 +617,9 @@ fun SettingRow(
  * Uma linha de um [SettingsCard] (o .set-row do canvas) com os textos livres do meio ([content], um embaixo do outro, 3
  * dp entre eles: os do Sobre e os avisos das Permissões): pelo menos 56 dp, o [leading] (a bolinha, um ícone, o quadrado
  * do ícone) e o [trailing] (uma chave, a escolha, a seta, um botão). A linha embaixo dela separa da próxima: a última do
- * cartão ([last]) vai sem. Com [onClick], a linha toda é o botão, com o papel [role] para o leitor de tela.
+ * cartão ([last]) vai sem. Com [onClick], a linha toda é o botão, com o papel [role] para o leitor de tela. O [trailing]
+ * fica ao lado dos textos se cada palavra deles cabe ali; com a letra grande, ele desce para baixo deles, e nenhuma palavra
+ * quebra no meio ([BesideOrUnder], F4: na 0.2, o Permitir das Permissões vinha embaixo do texto).
  */
 @Composable
 fun SettingRow(
@@ -631,8 +633,10 @@ fun SettingRow(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val colors = LocalStarsonicColors.current
-    Row(
-        modifier
+    BesideOrUnder(
+        spacing = 12.dp,
+        underGap = SET_UNDER_GAP,
+        modifier = modifier
             .fillMaxWidth()
             .heightIn(min = 56.dp)
             .then(if (onClick != null) Modifier.clickable(role = role, onClick = onClick) else Modifier)
@@ -648,19 +652,15 @@ fun SettingRow(
                 },
             )
             .padding(top = 13.dp, bottom = 13.dp + if (last) 0.dp else Hairline),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        leading = leading,
+        trailing = trailing,
     ) {
-        leading?.invoke()
         Column(
             // Sem o clique na linha, os textos são lidos juntos; com ele, eles são o nome do botão.
-            Modifier
-                .weight(1f)
-                .then(if (onClick == null) Modifier.semantics(mergeDescendants = true) {} else Modifier),
+            if (onClick == null) Modifier.semantics(mergeDescendants = true) {} else Modifier,
             verticalArrangement = Arrangement.spacedBy(3.dp),
             content = content,
         )
-        trailing?.invoke()
     }
 }
 
@@ -889,6 +889,9 @@ private val ModalShadow = Shadow(
 // .set-title e .set-help
 private val SetTitle = Base.copy(fontSize = 14.5.sp, fontWeight = FontWeight.Bold, lineHeight = 1.3.em)
 private val SetHelp = Base.copy(fontSize = 12.5.sp, lineHeight = 1.4.em)
+
+// O espaço entre os textos de uma linha e o controle que desce para baixo deles (com a letra grande, F4).
+private val SET_UNDER_GAP = 8.dp
 
 // .bar-title
 private val BarTitle = Base.copy(fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.01).em)
