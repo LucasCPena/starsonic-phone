@@ -63,6 +63,8 @@ import org.junit.runners.MethodSorters
  * - na tela Permissões, o voltar do Android (o das Configurações volta a elas; o de depois do primeiro Entrar vai para a
  *   tela principal, R28), o nome "Permitida" do sinal de feito (R29) e os números do passo a passo do fabricante com a
  *   letra no dobro (R30; o emulador é genérico, e o teste desenha o cartão da Samsung por cima da tela principal);
+ * - com a letra 2,0 na tela de 360 dp, os textos das Permissões (com o Permitir da bateria), das Configurações e da
+ *   linha do suporte do Sobre sem quebrar no meio de uma palavra por causa do controle ao lado (F4);
  * - as telas de dentro (Configurações, o Tempo para atender aberto, a confirmação do Sair, Permissões, Entrar e Sobre)
  *   nos temas escuro (R11) e claro, com as etiquetas no lugar e as fotos (R19), numa tela do tamanho dos quadros do
  *   canvas (390 × 844 dp).
@@ -354,6 +356,58 @@ class SettingsFlowTest {
         emulator.saveScreen("permissoes-samsung-letra-grande.png")
     }
 
+    @Test
+    fun thePermissionRowsKeepTheirWordsWholeAtTheLargestFont() {
+        // F4, na tela de 360 dp com a letra 2,0 e a bateria por liberar: o texto de cada aviso das Permissões fica inteiro,
+        // sem quebrar no meio de uma palavra (o Permitir desce para baixo do texto quando não cabe ao lado dele), e o
+        // "Permitir" também. A foto.
+        emulator.useDisplay(720, 1280, 320)
+        emulator.setFontScale(2.0f)
+        emulator.revokeBattery()
+        openSettings()
+        compose.onNodeWithTag("config-permissoes").performScrollTo().performClick()
+        emulator.waitUntil("a tela Permissões com o Permitir da bateria") { emulator.showsTag("permitir-BATTERY") }
+        for ((banner, text) in BANNERS) {
+            val row = "permissao-$banner"
+            compose.onNodeWithTag(row).performScrollTo()
+            emulator.assertWholeText("o aviso $banner", row, emulator.drawnText(row, text))
+        }
+        compose.onNodeWithTag("permitir-BATTERY").performScrollTo()
+        emulator.assertWholeText("o Permitir", "permitir-BATTERY", emulator.drawnText("permitir-BATTERY", "Permitir"))
+        emulator.saveScreen("permissoes-letra-grande.png")
+    }
+
+    @Test
+    fun theSettingsKeepTheirWordsWholeAtTheLargestFont() {
+        // F4, na tela de 360 dp com a letra 2,0: o título e a ajuda de cada linha das Configurações ficam inteiros, sem
+        // quebrar no meio de uma palavra (a chave, a escolha ou o botão descem para baixo dos textos quando eles não cabem
+        // ao lado). A foto.
+        emulator.useDisplay(720, 1280, 320)
+        emulator.setFontScale(2.0f)
+        openSettings()
+        for ((row, text) in SETTING_TEXTS) {
+            compose.onNodeWithTag(row).performScrollTo()
+            emulator.assertWholeText("\"$text\"", row, emulator.drawnText(row, text))
+        }
+        compose.onNodeWithTag("config-linha-atender").performScrollTo()
+        emulator.saveScreen("configuracoes-letra-grande.png")
+    }
+
+    @Test
+    fun theSupportRowOfSobreKeepsItsWordsWholeAtTheLargestFont() {
+        // F4, na tela de 360 dp com a letra 2,0: o telefone de suporte do Sobre e o WhatsApp ao lado dele ficam inteiros (o
+        // WhatsApp desce para baixo dos textos quando eles não cabem ao lado). A foto.
+        emulator.useDisplay(720, 1280, 320)
+        emulator.setFontScale(2.0f)
+        scenario = ActivityScenario.launch(MainActivity::class.java)
+        emulator.waitForText(connected)
+        emulator.openMenu("menu-sobre")
+        emulator.waitUntil("o Sobre") { emulator.showsTag("suporte") }
+        compose.onNodeWithTag("suporte").performScrollTo()
+        for (text in SUPPORT_TEXTS) emulator.assertWholeText("\"$text\"", "suporte", emulator.drawnText("suporte", text))
+        emulator.saveScreen("sobre-letra-grande.png")
+    }
+
     // As telas de dentro no tema [theme] ("escuro" ou "claro"; [night] para o do celular): cada uma com as etiquetas no
     // lugar, e a foto dela. Sem a saída da otimização de bateria, as Permissões mostram um Permitir, como no quadro.
     private fun drawTheInnerScreens(night: Boolean, theme: String) {
@@ -511,6 +565,22 @@ class SettingsFlowTest {
             "FULL_SCREEN" to "Permita a tela cheia para ver as ligações com o celular bloqueado.",
             "BATTERY" to "Libere o uso de bateria para receber ligações com o app fechado.",
         )
+
+        // Os textos de cada linha das Configurações (as etiquetas das linhas e os textos), e os da linha do suporte do Sobre,
+        // para a letra grande (F4).
+        val SETTING_TEXTS = listOf(
+            "config-conta" to "2001",
+            "config-sair" to "Sair da conta",
+            "config-sair" to "O celular deixa de receber as ligações do ramal.",
+            "config-linha-bipe" to BEEP_TITLE,
+            "config-linha-bipe" to BEEP_HELP,
+            "config-linha-atender" to "Atender automaticamente",
+            "config-linha-atender" to "Depois de 3 segundos tocando",
+            TIME to "Tempo para atender",
+            "config-permissoes" to "Permissões e bateria",
+            "config-permissoes" to PERMISSIONS_HELP,
+        )
+        val SUPPORT_TEXTS = listOf("(11) 5060-3000", "Telefone de suporte", "WhatsApp")
 
         val SETTINGS_TAGS = listOf("voltar", "config-conta", "config-editar", "config-sair", BEEP, AUTO, TIME, "config-permissoes")
         val PERMISSIONS_TAGS = listOf("voltar", "continuar", "permitir-BATTERY") + BANNERS.map { "permissao-${it.first}" }
