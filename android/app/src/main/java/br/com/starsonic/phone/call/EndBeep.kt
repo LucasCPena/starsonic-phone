@@ -62,6 +62,19 @@ private const val FADE_MILLIS = 5
 private const val LEVEL = 0.18
 
 /**
+ * O fim de um bipe de [frames] quadros tocado a [sampleRate] por segundo, no AudioTrack: o quadro da marca
+ * ([markerFrame]) e o tempo depois dela até o done ([afterMarkerMillis]: o resto do som e a folga para ele sair do
+ * celular, o Bluetooth atrasa).
+ */
+internal data class EndBeepTimes(val markerFrame: Int, val afterMarkerMillis: Long)
+
+/** Os tempos do fim do bipe de [frames] quadros a [sampleRate] por segundo ([EndBeepTimes]). */
+internal fun endBeepTimes(frames: Int, sampleRate: Int): EndBeepTimes = EndBeepTimes(frames, END_BEEP_TAIL_MILLIS)
+
+/** A folga depois do último quadro tocado: o som ainda sai do celular (o Bluetooth atrasa mais). */
+private const val END_BEEP_TAIL_MILLIS = 200L
+
+/**
  * O bipe do fim no celular: o [endBeepPcm] em 16 kHz, mono, num AudioTrack estático com o uso da voz da ligação
  * (USAGE_VOICE_COMMUNICATION e CONTENT_TYPE_SPEECH), que sai no caminho de áudio da ligação enquanto a Connection dela
  * espera o done.
@@ -80,6 +93,7 @@ class AudioTrackEndBeep(context: Context) : EndBeep {
     private val main = Handler(Looper.getMainLooper())
     private val handler: Handler by lazy { Handler(HandlerThread(THREAD).apply { start() }.looper) }
     private val pcm: ShortArray by lazy { endBeepPcm(SAMPLE_RATE) }
+    private val times: EndBeepTimes by lazy { endBeepTimes(pcm.size, SAMPLE_RATE) }
 
     override fun play(done: () -> Unit) {
         val beep = Beep(done)
@@ -127,7 +141,7 @@ class AudioTrackEndBeep(context: Context) : EndBeep {
                 val written = created.write(pcm, 0, pcm.size)
                 check(written == pcm.size) { "write: $written" }
                 created.setPlaybackPositionUpdateListener(this, handler)
-                val marked = created.setNotificationMarkerPosition(pcm.size)
+                val marked = created.setNotificationMarkerPosition(times.markerFrame)
                 check(marked == AudioTrack.SUCCESS) { "marca: $marked" }
                 created.play()
                 CallLog.i { "bipe do fim: tocando (modo do áudio ${audio?.mode})" }
@@ -139,7 +153,7 @@ class AudioTrackEndBeep(context: Context) : EndBeep {
         }
 
         override fun onMarkerReached(audioTrack: AudioTrack) {
-            handler.postDelayed(::finish, TAIL_MILLIS)
+            handler.postDelayed(::finish, times.afterMarkerMillis)
         }
 
         override fun onPeriodicNotification(audioTrack: AudioTrack) {}
@@ -164,8 +178,5 @@ class AudioTrackEndBeep(context: Context) : EndBeep {
         const val THREAD = "starsonic-bipe"
         const val TAG = "StarsonicBipe"
         const val SAMPLE_RATE = 16_000
-
-        /** A folga depois do último quadro tocado: o som ainda sai do celular (o Bluetooth atrasa mais). */
-        const val TAIL_MILLIS = 200L
     }
 }
