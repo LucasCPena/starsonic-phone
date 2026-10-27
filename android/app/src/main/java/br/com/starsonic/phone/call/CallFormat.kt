@@ -2,7 +2,7 @@ package br.com.starsonic.phone.call
 
 // O que as telas da ligação e a notificação da recebida escrevem, como no app do Windows (windows/ui/src/format.ts e
 // Ligacao.tsx) e nos quadros Chamada, DuasLigacoes e Recebida do canvas: o tempo, o estado, o título da recebida, a linha
-// do Atender automático (spec 5 e 10, R32 e R33) e a linha de baixo dos cartões.
+// do Atender automático (spec 5 e 10, R32 e R33), o número embaixo do nome (R35) e a linha de baixo dos cartões.
 
 /** O tempo da ligação (o callTimer do Windows): "00:42", "12:05" e, de uma hora em diante, "1:02:03". */
 fun callTimer(seconds: Int): String {
@@ -56,12 +56,23 @@ fun incomingNotificationText(number: String, name: String, autoAnswerSeconds: In
 }
 
 /**
- * A linha de baixo de um cartão das telas da ligação (o .row-sub dos quadros): o número, quando o nome está no título, e o
- * [status] (o tempo ou "Chamando…"; vazio na conferência), separados por " · ".
+ * O número embaixo do nome nas telas da ligação (R35; o contactNumberLine do Windows, windows/ui/src/format.ts): um ramal
+ * (de 2 a 6 dígitos) é "Ramal <número>", como nos quadros Chamada e DuasLigacoes; qualquer outro número fica como veio.
+ */
+fun contactNumberLine(number: String): String {
+    val trimmed = number.trim()
+    return if (RAMAL.matches(trimmed)) "$RAMAL_LABEL $trimmed" else number
+}
+
+/**
+ * A linha de baixo de um cartão das telas da ligação (o .row-sub dos quadros): o número ([contactNumberLine]), quando o
+ * nome está no título, e o [status] (o tempo ou "Chamando…"; vazio na conferência), separados por " · ".
  */
 fun cardLine(number: String, name: String, status: String): String =
-    listOfNotNull(number.takeIf { name.isNotEmpty() }, status.ifEmpty { null }).joinToString(SEPARATOR)
+    listOfNotNull(contactNumberLine(number).takeIf { name.isNotEmpty() }, status.ifEmpty { null }).joinToString(SEPARATOR)
 
+private val RAMAL = Regex("[0-9]{2,6}")
+private const val RAMAL_LABEL = "Ramal"
 private const val SEPARATOR = " · "
 private const val CALLING = "Chamando…"
 private const val CONNECTING = "Conectando…"

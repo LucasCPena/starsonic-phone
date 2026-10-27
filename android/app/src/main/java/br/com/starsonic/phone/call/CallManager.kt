@@ -37,6 +37,13 @@ interface CallNotifier {
 
     /** A ligação [callId] parou de tocar (atendida, recusada, desistência): a notificação dela sai e o toque para. */
     fun stopRinging(callId: Int)
+
+    /**
+     * O Atender automático da recebida [callId], que toca sozinha, mudou (R38): ele vai atendê-la em [seconds] s (o tempo
+     * escolhido; 0: na hora), ou não vai mais (null: desligado, o Não perturbe ligado, o microfone recusado, ou ela não
+     * está mais sozinha). A notificação dela, se está lá, ganha ou perde a linha dele, uma vez, sem alertar de novo.
+     */
+    fun autoAnswerChanged(callId: Int, seconds: Int?)
 }
 
 /** Em que pé a ligação está, para a tela de chamada. */
@@ -207,7 +214,9 @@ object EndCause {
  *     antes ([microphone], spec 12): sem ele (o Android não deixou, com o app fechado), ela continua tocando, e a pessoa
  *     ainda atende à mão; com ele, as regras valem de novo antes do atender. Enquanto vai atender, a tela mostra o tempo
  *     marcado ([CallUi.autoAnswerSeconds], R7), com as configurações de agora: [onSettingsChanged] publica de novo
- *     quando elas mudam, e a notificação pergunta uma vez ([autoAnswerSeconds]).
+ *     quando elas mudam. A notificação pergunta quando aparece ([autoAnswerSeconds]), e cada mudança da decisão depois
+ *     (desligado, o Não perturbe, o microfone recusado, outra ligação) vai ao [notifier] uma vez
+ *     ([CallNotifier.autoAnswerChanged], R38), para a linha dela nunca prometer um atender que não vem.
  *   - O bipe no fim (spec 9): a atendida que acaba sem outra de pé (as que sobram também estão saindo), com a chave
  *     ligada, sem ser pelo Sair e sem o Telecom a segurar por uma ligação da operadora (o som é dela), toca o bipe
  *     ([beep]), e a Connection dela só sai do Telecom quando ele acaba: até lá o Telecom mantém o som da ligação, e o
@@ -302,6 +311,8 @@ class CallManager(
     private var autoTimer: Scheduled? = null  // ...o aviso dele no relógio
     private var autoSeconds = 0               // ...o tempo marcado
     private var autoSince = 0L                // ...e quando o celular começou a tocar
+    private var announcedId = NO_ID           // a recebida do último aviso do Atender automático ao notificador (R38)
+    private var announcedSeconds: Int? = null // ...e o que ele disse (null: não vai atender)
     private var beeping: EndBeepWait? = null  // o bipe do fim que toca agora (null: nenhum)
     private var endTimer: Scheduled? = null
     private var endToken = 0
@@ -1251,6 +1262,23 @@ class CallManager(
             )
         }
         publications.addLast { mutableState.value = ui }
+        val ringing = ringingCall()
+        announceAutoAnswer(ringing, ringing?.takeIf { it === autoCall && autoAnswers(it, settings()) }?.let { autoSeconds })
+    }
+
+    // Com a trava: a decisão do Atender automático sobre a recebida que toca ([ringing]: [decision], os segundos, ou null
+    // se ele não vai atendê-la), quando mudou desde o último aviso, vai ao notificador, na fila das publicações (R38): a
+    // notificação dela ganha ou perde a linha, uma vez por mudança, e nunca a cada segundo (a contagem é só da tela). Uma
+    // recebida nova começa sem a linha; a que parou de tocar não precisa de aviso (a notificação dela sai).
+    private fun announceAutoAnswer(ringing: Call?, decision: Int?) {
+        val id = ringing?.id ?: NO_ID
+        if (id != announcedId) {
+            announcedId = id
+            announcedSeconds = null
+        }
+        if (id == NO_ID || decision == announcedSeconds) return
+        announcedSeconds = decision
+        publications.addLast { notifier.autoAnswerChanged(id, decision) }
     }
 
     // Com a trava: a consulta para a tela, só com as duas de pé (com uma saindo, a tela já mostra a outra sozinha).

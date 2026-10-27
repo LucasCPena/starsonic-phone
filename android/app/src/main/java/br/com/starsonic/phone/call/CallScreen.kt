@@ -60,6 +60,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.shadow.Shadow
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
@@ -75,6 +76,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.TextUnit
@@ -138,7 +140,9 @@ class CallActions(
 /**
  * A tela de chamada no visual do Windows (spec 3.2, 3.4 e 7; os quadros Chamada, DuasLigacoes e Recebida do canvas), sempre
  * escura: o gradiente da marca com o brilho ciano no canto de baixo. As medidas são as dos quadros (390 × 844 dp); numa
- * tela mais baixa, as do Compacto do Windows ([CallSizes]); e, se nem assim couber (a letra grande), a tela rola.
+ * tela mais baixa, as do Compacto do Windows ([CallSizes]); e, se nem assim couber (a letra grande), a tela rola. Com a
+ * letra grande nada é cortado (spec 3.3): os selos e os nomes dos cartões quebram em linhas inteiras, e o que fica à direita
+ * de um cartão desce para baixo do nome quando não cabe ao lado dele.
  *
  * - No alto (menos na recebida, que tem o título dela), a linha do status ([status]: "Ocupado · em ligação", com a bolinha
  *   vermelha, e o [ramal]; etiqueta `status-ligacao`), porque o cabeçalho fica escondido (spec 7).
@@ -166,7 +170,9 @@ class CallActions(
  *   áudio, Separar e Desligar (as duas); Separar volta aos dois cartões, com a última que entrou em espera.
  *
  * Os nomes são os do contato do celular quando o número está na agenda (spec da 0.2, 7.5: o CallManager os resolve), senão
- * os que a central mandou. Os botões desligados ficam apagados (0,45, sem sombra: R22).
+ * os que a central mandou; o número embaixo do nome, num ramal (de 2 a 6 dígitos), é "Ramal <n>", como no Windows (R35).
+ * Com duas ligações fora da conferência, o leitor de tela chama o Desligar de "Desligar a ligação ativa" (R39). Os botões
+ * desligados ficam apagados (0,45, sem sombra: R22).
  */
 @Composable
 fun CallScreen(
@@ -214,6 +220,9 @@ fun CallScreen(
     val incoming = call?.phase == CallPhase.RINGING
     // Os dois cartões (uma em espera, fora da consulta e da conferência): o quadro DuasLigacoes junta tudo a 12 dp.
     val twoCards = call != null && !call.conference && call.second?.kind == SecondKind.HELD && call.consult == null
+    // Com duas ligações fora da conferência, o Desligar desliga só a de cima: "Desligar a ligação ativa" (R39, o
+    // aria-label do quadro DuasLigacoes). Na conferência ele desliga as duas, e com uma, é só "Desligar".
+    val hangUpName = if (call?.second != null && !call.conference) HANG_UP_ACTIVE else null
     BoxWithConstraints(Modifier.fillMaxSize().callBackground().testTag("chamada")) {
         val bars = WindowInsets.systemBars.asPaddingValues()
         val sizes = if (maxHeight - bars.calculateTopPadding() - bars.calculateBottomPadding() < COMPACT_BELOW) Compact else Regular
@@ -308,10 +317,10 @@ fun CallScreen(
                                     keypadOpen = false
                                 }
                             }
-                            HangUp(sizes, actions.hangup)
+                            HangUp(sizes, actions.hangup, description = hangUpName)
                             Spacer(Modifier.width(SIDE_SLOT))
                         }
-                        panel -> HangUp(sizes, actions.hangup)
+                        panel -> HangUp(sizes, actions.hangup, description = hangUpName)
                         else -> {
                             Controls(
                                 call, routes, actions, sizes,
@@ -319,7 +328,7 @@ fun CallScreen(
                                 onTransfer = { transferOpen = true },
                                 onNewCall = { newCallOpen = true },
                             )
-                            HangUp(sizes, actions.hangup, Modifier.padding(top = sizes.hangTop))
+                            HangUp(sizes, actions.hangup, Modifier.padding(top = sizes.hangTop), description = hangUpName)
                         }
                     }
                 }
@@ -484,7 +493,8 @@ private fun Talking(call: CallUi, digits: String, sizes: CallSizes, avatar: Bool
 }
 
 // Quem fala (o .who): o rótulo da seção ([eyebrow]), o avatar ([avatar]: as iniciais do nome, ou o fone sem nome; com
-// [rings], os anéis da recebida), o nome (ou o número), o número embaixo (com o nome) e o que vem depois ([below]).
+// [rings], os anéis da recebida), o nome (ou o número), o número embaixo (com o nome; um ramal como "Ramal <n>", R35) e o
+// que vem depois ([below]).
 @Composable
 private fun Who(
     name: String,
@@ -513,7 +523,9 @@ private fun Who(
             )
         }
         Text(name.ifEmpty { number }, style = NameText.copy(fontSize = sizes.name), color = Color.White, textAlign = TextAlign.Center)
-        if (name.isNotEmpty()) Text(number, style = SubText.copy(fontSize = sizes.sub), color = Muted, textAlign = TextAlign.Center)
+        if (name.isNotEmpty()) {
+            Text(contactNumberLine(number), style = SubText.copy(fontSize = sizes.sub), color = Muted, textAlign = TextAlign.Center)
+        }
         below()
     }
 }
@@ -620,7 +632,9 @@ private fun SecondCallBar(ringing: SecondUi, actions: CallActions) {
 
 // Um cartão de ligação (o .vcard dos quadros): o avatar, o [title] (o nome, ou o número) e a [line] embaixo (com a hora de
 // agora: o número e o tempo; sem nada, nenhuma), o [below] e, à direita, o [trailing] (um selo, os botões da faixa);
-// [active] é o da ativa (o .vcard-on, ciano).
+// [active] é o da ativa (o .vcard-on, ciano). O nome e a linha quebram em linhas inteiras; se ao lado do [trailing] uma
+// palavra deles não cabe (a letra grande, spec 3.3), o [trailing] desce para baixo deles, como o "Em espera ·
+// transferência" do cartão do cliente, e eles ficam com a largura toda.
 @Composable
 private fun CallCard(
     name: String,
@@ -633,43 +647,78 @@ private fun CallCard(
     below: (@Composable () -> Unit)? = null,
     trailing: @Composable RowScope.() -> Unit = {},
 ) {
-    Row(
-        modifier
+    Layout(
+        contents = listOf(
+            { CallAvatar(name, CARD_AVATAR, CARD_AVATAR_LETTERS) },
+            {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(title, style = ListRowTitle, color = Color.White)
+                    Ticking(style = ListRowSub, color = Muted, maxLines = Int.MAX_VALUE, text = line)
+                    below?.invoke()
+                }
+            },
+            {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(CARD_SPACING),
+                    verticalAlignment = Alignment.CenterVertically,
+                    content = trailing,
+                )
+            },
+        ),
+        modifier = modifier
             .fillMaxWidth()
             .clip(CardShape)
             .background(if (active) Starsonic.Cyan.copy(alpha = 0.09f) else Color.White.copy(alpha = 0.045f))
             .border(1.dp, if (active) Starsonic.Cyan.copy(alpha = 0.5f) else Color.White.copy(alpha = 0.1f), CardShape)
             .padding(horizontal = 15.dp, vertical = 13.dp)
             .testTag(tag),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        CallAvatar(name, CARD_AVATAR, CARD_AVATAR_LETTERS)
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(title, style = ListRowTitle, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Ticking(style = ListRowSub, color = Muted, text = line)
-            below?.invoke()
+    ) { (avatarSlot, textSlot, trailingSlot), constraints ->
+        val spacing = CARD_SPACING.roundToPx()
+        val avatar = avatarSlot.single().measure(Constraints())
+        val texts = textSlot.single()
+        val end = trailingSlot.single()
+        val endWidth = end.maxIntrinsicWidth(Constraints.Infinity)
+        val textMax = (constraints.maxWidth - avatar.width - spacing).coerceAtLeast(0)
+        val beside = textMax - (if (endWidth > 0) spacing + endWidth else 0)
+        val sideBySide = endWidth == 0 || texts.minIntrinsicWidth(Constraints.Infinity) <= beside
+        val textPlaceable = texts.measure(Constraints(maxWidth = if (sideBySide) beside.coerceAtLeast(0) else textMax))
+        val endPlaceable = end.measure(Constraints(maxWidth = if (sideBySide) constraints.maxWidth else textMax))
+        val under = if (sideBySide || endWidth == 0) 0 else CARD_BELOW.roundToPx() + endPlaceable.height
+        val block = textPlaceable.height + under
+        val height = maxOf(avatar.height, block, if (sideBySide) endPlaceable.height else 0)
+            .coerceIn(constraints.minHeight, constraints.maxHeight)
+        val width = constraints.maxWidth
+        layout(width, height) {
+            val x = avatar.width + spacing
+            avatar.placeRelative(0, (height - avatar.height) / 2)
+            if (sideBySide) {
+                textPlaceable.placeRelative(x, (height - textPlaceable.height) / 2)
+                endPlaceable.placeRelative(width - endPlaceable.width, (height - endPlaceable.height) / 2)
+            } else {
+                val top = (height - block) / 2
+                textPlaceable.placeRelative(x, top)
+                endPlaceable.placeRelative(x, top + textPlaceable.height + CARD_BELOW.roundToPx())
+            }
         }
-        trailing()
     }
 }
 
 // Um selo (o .tag dos quadros): a pílula de 22 dp com o [text] em maiúsculas espaçadas, em ciano (ou, [muted], no cinza do
-// "Em espera" do quadro DuasLigacoes). O leitor de tela o lê como está escrito.
+// "Em espera" do quadro DuasLigacoes). O leitor de tela o lê como está escrito. Com a letra grande, o texto quebra em
+// linhas inteiras e centradas, e a pílula cresce com ele, de cantos redondos (spec 3.3: nada cortado).
 @Composable
 private fun Tag(text: String, modifier: Modifier = Modifier, muted: Boolean = false) {
     val color = if (muted) Muted else Starsonic.Cyan
     Box(
         modifier
             .heightIn(min = 22.dp)
-            .clip(CircleShape)
-            .background(if (muted) Color.White.copy(alpha = 0.06f) else Starsonic.Cyan.copy(alpha = 0.14f))
-            .border(1.dp, if (muted) Color.White.copy(alpha = 0.18f) else Starsonic.Cyan.copy(alpha = 0.35f), CircleShape)
-            .padding(horizontal = 10.dp)
+            .background(if (muted) Color.White.copy(alpha = 0.06f) else Starsonic.Cyan.copy(alpha = 0.14f), TagShape)
+            .border(1.dp, if (muted) Color.White.copy(alpha = 0.18f) else Starsonic.Cyan.copy(alpha = 0.35f), TagShape)
+            .padding(horizontal = 10.dp, vertical = 3.dp)
             .clearAndSetSemantics { this.text = AnnotatedString(text) },
         contentAlignment = Alignment.Center,
     ) {
-        Text(text.uppercase(PT_BR), style = TagText, color = color, maxLines = 1)
+        Text(text.uppercase(PT_BR), style = TagText, color = color, textAlign = TextAlign.Center)
     }
 }
 
@@ -679,11 +728,12 @@ private fun Digits(digits: String) {
     Text(digits, style = DigitsText, color = Color.White, maxLines = 1, overflow = TextOverflow.StartEllipsis)
 }
 
-// Um texto que muda com a hora (o tempo da ligação, o dos cartões): [text] com a hora de agora; vazio, nada.
+// Um texto que muda com a hora (o tempo da ligação, o dos cartões): [text] com a hora de agora; vazio, nada. Em até
+// [maxLines] linhas (o tempo grande, numa só; a linha dos cartões quebra inteira).
 @Composable
-private fun Ticking(style: TextStyle, color: Color, text: (Long) -> String) {
+private fun Ticking(style: TextStyle, color: Color, maxLines: Int = 1, text: (Long) -> String) {
     val shown = text(rememberNow())
-    if (shown.isNotEmpty()) Text(shown, style = style, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    if (shown.isNotEmpty()) Text(shown, style = style, color = color, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
 }
 
 // A hora de agora, de [TICK_MILLIS] em [TICK_MILLIS] ms (o segundo novo aparece logo); só quem a lê recompõe. A espera é a
@@ -840,8 +890,11 @@ private fun Ctrl(
 
 // O Desligar (o .hang do quadro Chamada): o redondo vermelho com o fone virado e o nome embaixo.
 @Composable
-private fun HangUp(sizes: CallSizes, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    RoundAction(StarsonicIcons.HangUp, HANG_UP, "desligar", Starsonic.Danger, Color.White, sizes, HangLabel, modifier, onClick = onClick)
+private fun HangUp(sizes: CallSizes, onClick: () -> Unit, modifier: Modifier = Modifier, description: String? = null) {
+    RoundAction(
+        StarsonicIcons.HangUp, HANG_UP, "desligar", Starsonic.Danger, Color.White, sizes, HangLabel, modifier,
+        description = description, onClick = onClick,
+    )
 }
 
 // Recusar e Atender da recebida (o quadro Recebida): o vermelho e o ciano, afastados, com os nomes embaixo.
@@ -878,6 +931,7 @@ private fun RoundAction(
     modifier: Modifier = Modifier,
     gap: Dp = sizes.hangGap,
     shadow: Boolean = false,
+    description: String? = null,
     onClick: () -> Unit,
 ) {
     Box(modifier, contentAlignment = Alignment.TopCenter) {
@@ -886,6 +940,7 @@ private fun RoundAction(
             Modifier
                 .clip(RoundedCornerShape(16.dp))
                 .clickable(role = Role.Button, onClick = onClick)
+                .then(if (description != null) Modifier.semantics { contentDescription = description } else Modifier)
                 .testTag(tag),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(gap),
@@ -893,7 +948,9 @@ private fun RoundAction(
             Box(Modifier.size(sizes.hang).clip(CircleShape).background(background), contentAlignment = Alignment.Center) {
                 Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(24.dp))
             }
-            Text(label, style = labelStyle, color = Color.White)
+            // Com outro nome para o leitor de tela ([description]), o nome embaixo é só o desenho (como o <span> do quadro).
+            val shown = if (description != null) Modifier.clearAndSetSemantics {} else Modifier
+            Text(label, style = labelStyle, color = Color.White, modifier = shown)
         }
     }
 }
@@ -1054,6 +1111,14 @@ private val CARD_GAP = 12.dp
 private val CARD_AVATAR = 36.dp
 private val CARD_AVATAR_LETTERS = 13.sp
 private val CardShape = RoundedCornerShape(18.dp)
+
+// Dentro do cartão: o espaço entre o avatar, os textos e o que fica à direita (o gap do .vcard), e entre os textos e o que
+// desce para baixo deles com a letra grande.
+private val CARD_SPACING = 12.dp
+private val CARD_BELOW = 6.dp
+
+// O selo: uma pílula com uma linha (o raio é a metade dos 22 dp), de cantos redondos com mais.
+private val TagShape = RoundedCornerShape(11.dp)
 private val KeyShape = RoundedCornerShape(18.dp)
 private val FieldShape = RoundedCornerShape(14.dp)
 private val PT_BR: Locale = Locale.forLanguageTag("pt-BR")
@@ -1087,7 +1152,7 @@ private val HangLabel = CtrlText
 private val IncomingLabel = Base.copy(fontSize = 13.sp, fontWeight = FontWeight.Bold, lineHeight = 1.2.em)
 
 // .tag e .dtmf
-private val TagText = Base.copy(fontSize = 10.5.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 0.12.em, lineHeight = 1.em)
+private val TagText = Base.copy(fontSize = 10.5.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 0.12.em, lineHeight = 1.26.em)
 private val DigitsText = Base.copy(fontSize = 20.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.14.em)
 
 // .call-keys .key b
@@ -1102,6 +1167,7 @@ private val GhostLabel = Base.copy(fontSize = 15.sp, fontWeight = FontWeight.Bol
 private const val ANSWER = "Atender"
 private const val REJECT = "Recusar"
 private const val HANG_UP = "Desligar"
+private const val HANG_UP_ACTIVE = "Desligar a ligação ativa"   // R39: o aria-label do quadro DuasLigacoes
 private const val MUTE = "Mudo"
 private const val KEYPAD = "Teclado"
 private const val SPEAKER = "Viva-voz"

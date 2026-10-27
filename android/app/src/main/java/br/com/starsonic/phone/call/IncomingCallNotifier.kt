@@ -42,7 +42,9 @@ import br.com.starsonic.phone.main.MainActivity
  * O nome de quem liga chega já resolvido pelo CallManager (pelo Telecom, nos extras da recebida): o do contato do
  * celular com o número, se há (spec da 0.2, 7.5), senão o que a central mandou. Com o Atender automático marcado para
  * ela (spec 5), o texto da notificação ganha a linha "Atender automático · em <n> s" (ou "· na hora"), com o tempo
- * escolhido, uma vez (R33): a notificação não é postada de novo a cada segundo, o que poderia tocar de novo.
+ * escolhido (R33): a notificação não é postada de novo a cada segundo, o que poderia tocar de novo. Quando a decisão
+ * muda (o Atender automático desligado, o Não perturbe ligado, o microfone recusado: [autoAnswerChanged]), ela é postada
+ * de novo uma vez, sem alertar, para a linha nunca prometer um atender que não vem (R38).
  *
  * A chamada em espera (spec da 0.2, 7.1: a recebida com outra ligação em andamento) não toca o toque do celular, para
  * não cobrir a conversa: a notificação vai ao canal "ligacoes-silenciadas" (no alto da tela, sem som), sem a tela
@@ -71,7 +73,10 @@ class IncomingCallNotifier(
     private var shownName = ""    // ...o nome...
     private var shownAddress = "" // ...e o endereço
     private var shownWaiting = false // ...se é a chamada em espera
+    private var shownRinging = false // ...se está no canal que toca (e não no silenciado)
     private var shownAutoAnswer: Int? = null // ...e os segundos do Atender automático marcado (null: nenhum)
+    private var decidedId = 0     // a recebida do último aviso do Atender automático (R38)...
+    private var decidedSeconds: Int? = null // ...e a decisão dele
     private var beepingId = 0     // a chamada em espera que bipa (0: nenhuma)
 
     private val main = Handler(Looper.getMainLooper())
@@ -169,7 +174,8 @@ class IncomingCallNotifier(
             shownName = name
             shownAddress = address
             shownWaiting = waiting
-            shownAutoAnswer = autoAnswerSeconds
+            // Uma decisão do Atender automático avisada depois da pergunta do Telecom é a mais nova (R38).
+            shownAutoAnswer = if (callId == decidedId) decidedSeconds else autoAnswerSeconds
             if (waiting) {
                 post(callId, ring = false, "chamada em espera $callId")
                 beepingId = callId
@@ -218,6 +224,23 @@ class IncomingCallNotifier(
             stoppedUpTo = maxOf(stoppedUpTo, callId)
             if (shownId <= stoppedUpTo) manager.cancel(INCOMING_ID)
             if (beepingId != 0 && beepingId <= stoppedUpTo) stopBeep()
+        }
+    }
+
+    /**
+     * R38: a decisão do Atender automático sobre a recebida [callId] mudou. A notificação dela, se está lá (e não é a
+     * chamada em espera, que nunca tem a linha), é postada de novo uma vez, no mesmo canal e sem alertar de novo (o toque
+     * que se repete continua, sem recomeçar, e nem a tela cheia nem o alto da tela voltam), com a linha certa. A decisão
+     * fica guardada: a notificação que o Telecom pede depois sai com ela.
+     */
+    override fun autoAnswerChanged(callId: Int, seconds: Int?) {
+        synchronized(lock) {
+            decidedId = callId
+            decidedSeconds = seconds
+            if (callId != shownId || callId <= stoppedUpTo || shownWaiting || shownAutoAnswer == seconds) return
+            shownAutoAnswer = seconds
+            val line = seconds?.let { "com o Atender automático em $it s" } ?: "sem o Atender automático"
+            post(callId, ring = shownRinging, "recebida $callId, agora $line", alertOnce = true)
         }
     }
 
@@ -272,10 +295,12 @@ class IncomingCallNotifier(
             null
         }
 
-    // Com a trava: mostra ou atualiza a notificação da recebida; uma falha do Android vai ao log (a ligação segue).
-    private fun post(callId: Int, ring: Boolean, what: String) {
+    // Com a trava: mostra ou atualiza a notificação da recebida ([alertOnce]: sem alertar de novo, se ela já está lá);
+    // uma falha do Android vai ao log (a ligação segue).
+    private fun post(callId: Int, ring: Boolean, what: String, alertOnce: Boolean = !ring) {
         try {
-            manager.notify(INCOMING_ID, incoming(callId, ring))
+            manager.notify(INCOMING_ID, incoming(callId, ring, alertOnce))
+            shownRinging = ring
             CallLog.i { "notificação: $what" }
         } catch (e: RuntimeException) {
             Log.w(TAG, "a notificação da $what não foi mostrada", e)
@@ -287,7 +312,8 @@ class IncomingCallNotifier(
     // Tocando ([ring]): o canal "ligacoes", com o toque e a vibração repetidos até ela sair. Silenciada: o canal sem
     // som, sem alertar de novo. A chamada em espera: no canal sem som, sem a tela cheia e, por isso, sem o CallStyle
     // (o Android o recusa sem a tela cheia fora de um serviço em primeiro plano): Recusar e Atender como ações.
-    private fun incoming(callId: Int, ring: Boolean): Notification {
+    // [alertOnce]: a atualização não toca, não vibra nem aparece de novo (a do Atender automático, R38, e a silenciada).
+    private fun incoming(callId: Int, ring: Boolean, alertOnce: Boolean): Notification {
         val screen = CallActivity.intent(context).putExtra(CallActivity.EXTRA_CALL_ID, callId)
         val fullScreen = PendingIntent.getActivity(context, REQUEST_SCREEN, screen, IMMUTABLE_UPDATE)
         val answer = PendingIntent.getActivity(
@@ -312,7 +338,7 @@ class IncomingCallNotifier(
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setOngoing(true)
             .setContentIntent(fullScreen)
-            .setOnlyAlertOnce(!ring)
+            .setOnlyAlertOnce(alertOnce)
         if (shownWaiting) {
             builder.setContentTitle("$CALL_FROM $callerName")
                 .addAction(R.drawable.ic_desligar, REJECT, decline)
