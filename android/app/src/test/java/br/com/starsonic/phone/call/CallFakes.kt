@@ -213,6 +213,7 @@ internal class FakeNotifier : CallNotifier {
     val missed = mutableListOf<String>()
     val missedSilent = mutableListOf<Boolean>()
     val stopped = mutableListOf<Int>()
+    val autoAnswer = mutableListOf<Pair<Int, Int?>>()   // cada mudança do Atender automático da recebida (R38)
 
     override fun showMissed(text: String, silent: Boolean) {
         missed += text
@@ -221,6 +222,10 @@ internal class FakeNotifier : CallNotifier {
 
     override fun stopRinging(callId: Int) {
         stopped += callId
+    }
+
+    override fun autoAnswerChanged(callId: Int, seconds: Int?) {
+        autoAnswer += callId to seconds
     }
 }
 

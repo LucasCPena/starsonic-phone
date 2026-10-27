@@ -2286,6 +2286,7 @@ class CallManagerTest {
         assertNull(calls.autoAnswerSeconds(2))
         calls.onSettingsChanged()
         assertNull(calls.state.value?.autoAnswerSeconds)
+        assertTrue("a notificação da segunda nunca ganha a linha", notifier.autoAnswer.none { it.first == 2 })
     }
 
     // O microfone (spec 12): com o app fechado, o Android pode não deixar o app usar o microfone. O Atender automático o
@@ -2352,6 +2353,45 @@ class CallManagerTest {
         assertTrue(calls.isRinging(4))
         assertNull(calls.state.value?.autoAnswerSeconds)
         assertTrue("nada mais pedido", pending.isEmpty())
+        assertEquals("a notificação perde a linha", 4 to null, notifier.autoAnswer.last())
+    }
+
+    // A notificação da recebida (R38): a linha do Atender automático nela segue a decisão dele. Cada mudança vai ao
+    // notificador uma vez (que posta a notificação de novo, sem alertar), e nunca a cada segundo.
+
+    @Test
+    fun `the incoming notification follows the auto answer decision once per change`() {
+        settings = CallSettings(autoAnswer = true, autoAnswerSeconds = 30)
+        microphone = CallMicrophone { ready -> ready(false) }
+        ring(1)
+        assertEquals("o celular toca: vai atender em 30 s", listOf(1 to 30), notifier.autoAnswer)
+        clock.advance(5_000)
+        assertEquals("nada a cada segundo", listOf(1 to 30), notifier.autoAnswer)
+        settings = settings.copy(autoAnswer = false)
+        calls.onSettingsChanged()
+        assertEquals("desligado: não vai atender", listOf(1 to 30, 1 to null), notifier.autoAnswer)
+        settings = settings.copy(endBeep = false)
+        calls.onSettingsChanged()
+        assertEquals("outra configuração: nada", 2, notifier.autoAnswer.size)
+        settings = settings.copy(autoAnswer = true)
+        calls.onSettingsChanged()
+        settings = settings.copy(doNotDisturb = true)
+        calls.onSettingsChanged()
+        settings = settings.copy(doNotDisturb = false)
+        calls.onSettingsChanged()
+        assertEquals(listOf(1 to 30, 1 to null, 1 to 30, 1 to null, 1 to 30), notifier.autoAnswer)
+        // Na hora, o Android não deixa o microfone (spec 12): ela continua tocando, e a notificação perde a linha.
+        clock.advance(25_000)
+        assertTrue("continua tocando", calls.isRinging(1))
+        assertEquals(listOf(1 to 30, 1 to null, 1 to 30, 1 to null, 1 to 30, 1 to null), notifier.autoAnswer)
+        // Depois disso, nada mais: nem as configurações, nem o tempo, nem atender à mão.
+        settings = settings.copy(doNotDisturb = true)
+        calls.onSettingsChanged()
+        settings = settings.copy(doNotDisturb = false)
+        calls.onSettingsChanged()
+        clock.advance(10_000)
+        answerCall(1)
+        assertEquals(6, notifier.autoAnswer.size)
     }
 
     // O bipe no fim (spec 9): a atendida que acaba sem outra de pé toca o bipe, e a Connection dela só sai do Telecom

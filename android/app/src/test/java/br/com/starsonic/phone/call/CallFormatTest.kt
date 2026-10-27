@@ -6,8 +6,9 @@ import org.junit.Test
 
 /**
  * O que as telas da ligação e a notificação da recebida escrevem (spec 5, 7 e 10, os quadros Chamada, DuasLigacoes e
- * Recebida; R32 e R33): o tempo da ligação, o estado dela, o título da recebida, a linha do Atender automático (a da tela
- * cheia, que conta os segundos, e a da notificação, com o tempo escolhido) e a linha de baixo dos cartões.
+ * Recebida; R32, R33 e R35): o tempo da ligação, o estado dela, o título da recebida, a linha do Atender automático (a da
+ * tela cheia, que conta os segundos, e a da notificação, com o tempo escolhido), o número embaixo do nome ("Ramal <n>"
+ * num ramal) e a linha de baixo dos cartões.
  */
 class CallFormatTest {
     @Test
@@ -82,11 +83,29 @@ class CallFormatTest {
     }
 
     @Test
+    fun `a ramal reads as Ramal and any other number as it is, as on Windows`() {
+        // R35: o contactNumberLine do Windows (windows/ui/src/format.ts): de 2 a 6 dígitos, "Ramal <número>".
+        assertEquals("Ramal 2003", contactNumberLine("2003"))
+        assertEquals("Ramal 20", contactNumberLine("20"))
+        assertEquals("Ramal 123456", contactNumberLine("123456"))
+        assertEquals("sem os espaços em volta", "Ramal 2003", contactNumberLine(" 2003 "))
+        assertEquals("um dígito", "7", contactNumberLine("7"))
+        assertEquals("sete dígitos", "1234567", contactNumberLine("1234567"))
+        assertEquals("(11) 98888-7777", contactNumberLine("(11) 98888-7777"))
+        assertEquals("+5511988887777", contactNumberLine("+5511988887777"))
+        assertEquals("*21", contactNumberLine("*21"))
+        assertEquals("2003a", contactNumberLine("2003a"))
+        assertEquals("os outros ficam como vieram", " 98888 7777", contactNumberLine(" 98888 7777"))
+        assertEquals("", contactNumberLine(""))
+    }
+
+    @Test
     fun `a card of two calls shows the number next to the time`() {
-        assertEquals("3001 · 00:12", cardLine("3001", "Cliente Teste", "00:12"))
+        assertEquals("R35: o ramal", "Ramal 3001 · 00:12", cardLine("3001", "Cliente Teste", "00:12"))
+        assertEquals("(11) 98888-7777 · 00:48", cardLine("(11) 98888-7777", "Carlos Lima", "00:48"))
         assertEquals("sem nome, o número já é o título", "00:12", cardLine("2002", "", "00:12"))
         assertEquals("Chamando…", cardLine("2002", "", "Chamando…"))
-        assertEquals("sem o tempo (a conferência), só o número", "3001", cardLine("3001", "Cliente Teste", ""))
+        assertEquals("sem o tempo (a conferência), só o número", "Ramal 3001", cardLine("3001", "Cliente Teste", ""))
         assertEquals("", cardLine("2002", "", ""))
     }
 }

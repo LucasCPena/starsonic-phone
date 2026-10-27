@@ -9,21 +9,30 @@ import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import android.telecom.CallAudioState
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.SemanticsNodeInteraction
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.filterToOne
+import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onChildren
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -73,10 +82,13 @@ import org.junit.runners.MethodSorters
  * começa vazio em cada teste, com o Não perturbe e o Atender automático desligados; o fim devolve as configurações de
  * ligação, a tela e a letra de antes.
  *
- * As telas da ligação no visual do Windows (spec 3, 5, 6 e 7; R9, R19): a linha do status no alto ("Ocupado · em
- * ligação" e o ramal, com a notificação fixa), o Não perturbe (o registrador recebe o 486), o Atender automático com o
- * app em segundo plano (1 s e na hora), a contagem dele na recebida em tela cheia e o Rediscar da Nova ligação. As fotos
- * ([Emulator.saveScreen]) saem na tela dos quadros do canvas (390 × 844 dp), menos as "-pequena", na do emulador do CI.
+ * As telas da ligação no visual do Windows (spec 3, 5, 6 e 7; R9, R19, R35, R38 e R39): a linha do status no alto
+ * ("Ocupado · em ligação" e o ramal, com a notificação fixa), o "Ramal <n>" embaixo do nome, o Não perturbe (o
+ * registrador recebe o 486), o Atender automático com o app em segundo plano (1 s e na hora), a contagem dele na recebida
+ * em tela cheia (e a notificação, que perde e ganha a linha com a decisão), o Rediscar da Nova ligação, o Desligar da
+ * ligação ativa com duas, e a maior letra na tela de 320 dp (a contagem e os nomes inteiros). As fotos
+ * ([Emulator.saveScreen]) saem na tela dos quadros do canvas (390 × 844 dp), menos as "-pequena" e as "-letra-grande",
+ * na do emulador do CI.
  *
  * No fim, uma "Nota do teste" na saída do am instrument conta os toques repetidos nos botões da notificação
  * (o run-emulator-tests.sh a mostra numa anotação); outra conta como o Android deixou o serviço com o Atender automático
@@ -144,6 +156,10 @@ class CallFlowTest {
         emulator.waitUntil("a notificação \"Ocupado · em ligação\"", details = ::notificationTitle) {
             emulator.connectionNotificationTitle() == "Ocupado · em ligação"
         }
+        assertTrue("R35: o ramal embaixo do nome", emulator.showsText("Ramal 3001"))
+        // Com uma ligação só, o Desligar é "Desligar" (o quadro Chamada); com duas, o da ativa (R39, abaixo).
+        compose.onNodeWithTag("desligar").assert(hasText(HANG_UP))
+        assertNull("o Desligar sem outro nome", description("desligar"))
         compose.onNodeWithTag("mudo").performClick()
         emulator.waitUntil("o mudo ligado") { app.calls.state.value?.muted == true }
         emulator.saveScreen("ligacao.png")
@@ -243,6 +259,9 @@ class CallFlowTest {
         emulator.waitUntil("a feita em cima, com a primeira em espera") { activeWith(held = first) }
         assertEquals("2002", app.calls.state.value?.number)
         emulator.waitUntil("o cartão da em espera") { showsTagWithText("cartao-espera", "Em espera") }
+        assertTrue("R35: o ramal com o tempo no cartão: ${textsUnder("cartao-espera")}", hasLine("cartao-espera", HELD_LINE))
+        // R39: com duas, o Desligar é o da ligação ativa (DuasLigacoes.dc.html:44).
+        compose.onNodeWithTag("desligar").assertContentDescriptionEquals(HANG_UP_ACTIVE)
         emulator.saveScreen("duas-ligacoes.png")
         // Desligar a feita: a primeira volta sozinha; depois o registrador a desliga.
         compose.onNodeWithTag("desligar").performClick()
@@ -269,24 +288,63 @@ class CallFlowTest {
         openTheIncomingByItsNotification("Cliente Teste")
         emulator.waitUntil("a linha do Atender automático") { emulator.showsTag(AUTO_LINE) }
         assertTrue("o título da recebida", emulator.showsText("Ligação recebida · 2001"))
+        assertTrue("R35: o ramal embaixo do nome", emulator.showsText("Ramal 3001"))
         val first = countdown()
         Thread.sleep(2_200)
         val later = countdown()
         assertTrue("a contagem desce de segundo em segundo ($first s, depois $later s)", later in 1..first - 2)
         emulator.saveScreen("recebida-atender.png")
-        // O Não perturbe ligado na contagem: ninguém a atende sozinho, e a linha sai; desligado de novo, ela volta.
+        // O Não perturbe ligado na contagem: ninguém a atende sozinho, e a linha sai da tela e da notificação (R38: postada
+        // de novo uma vez, sem a linha); desligado de novo, ela volta às duas.
         app.callSettings.update { it.copy(doNotDisturb = true) }
         emulator.waitUntil("a linha sair com o Não perturbe") { !emulator.showsTag(AUTO_LINE) }
+        emulator.waitUntil("a notificação sem a linha", details = ::incomingDetails) { incomingText() == "3001" }
         app.callSettings.update { it.copy(doNotDisturb = false) }
         emulator.waitUntil("a linha de volta") { emulator.showsTag(AUTO_LINE) }
-        // O Atender automático desligado: a linha sai. A foto da recebida sem ela.
+        emulator.waitUntil("a notificação com a linha de novo", details = ::incomingDetails) {
+            incomingText() == "3001 · Atender automático · em 30 s"
+        }
+        // O Atender automático desligado: a linha sai das duas. A foto da recebida sem ela.
         app.callSettings.update { it.copy(autoAnswer = false) }
         emulator.waitUntil("a linha sair") { !emulator.showsTag(AUTO_LINE) }
+        emulator.waitUntil("a notificação sem a linha", details = ::incomingDetails) { incomingText() == "3001" }
         emulator.saveScreen("recebida.png")
         assertEquals("ainda tocando", CallPhase.RINGING, app.calls.state.value?.phase)
         compose.onNodeWithTag("recusar").performClick()
         waitForLog(before, "inv-out 2001 486")
         emulator.waitUntil("a ligação acabar") { app.calls.state.value == null }
+    }
+
+    @Test
+    fun theLargestFontKeepsTheCountdownAndTheNamesWhole() {
+        // Spec 3.3, com a maior letra na tela de 320 dp (a do emulador do CI): a linha do Atender automático quebra em
+        // linhas inteiras, com os segundos, e o nome de cada um dos dois cartões aparece inteiro (o selo desce para baixo
+        // dele, como o "Em espera · transferência"). As fotos da recebida e das duas ligações com a letra grande.
+        emulator.useDisplay(640, 1280, 320)
+        emulator.setFontScale(2.0f)
+        app.callSettings.update { it.copy(autoAnswer = true, autoAnswerSeconds = 30) }
+        val before = emulator.callLog().size
+        assertEquals("OK", emulator.control("RING 2001"))
+        emulator.waitUntil("a notificação de ligação", details = ::notifications) { callNotification() != null }
+        openTheIncomingByItsNotification("Cliente Teste")
+        emulator.waitUntil("a linha do Atender automático") { emulator.showsTag(AUTO_LINE) }
+        val line = drawnText(AUTO_LINE)
+        val drawn = line.fetchSemanticsNode().config[SemanticsProperties.Text].joinToString("")
+        assertTrue("a contagem com os segundos: \"$drawn\"", DRAWN_COUNTDOWN.matches(drawn))
+        assertWhole("a linha do Atender automático", line)
+        emulator.saveScreen("recebida-letra-grande.png")
+        compose.onNodeWithTag("recusar").performScrollTo().performClick()
+        waitForLog(before, "inv-out 2001 486")
+        emulator.waitUntil("a recebida acabar") { app.calls.state.value == null }
+        // As duas ligações (sem o Atender automático): o nome inteiro em cada cartão.
+        app.callSettings.update { it.copy(autoAnswer = false) }
+        twoCalls()
+        for (card in listOf("cartao-ativa", "cartao-espera")) assertWhole("o nome em $card", drawnText(card, "Cliente Teste"))
+        emulator.saveScreen("duas-ligacoes-letra-grande.png")
+        assertEquals("OK", emulator.control("HANGUP 2001"))
+        emulator.waitUntil("a primeira de volta") { app.calls.state.value?.let { it.second == null } == true }
+        assertEquals("OK", emulator.control("HANGUP 2001"))
+        emulator.waitUntil("as ligações acabarem") { app.calls.state.value == null }
     }
 
     @Test
@@ -297,6 +355,8 @@ class CallFlowTest {
         var before = emulator.callLog().size
         assertEquals("OK", emulator.control("RING 2001"))
         emulator.waitUntil("a faixa da segunda ligação") { showsTagWithText("segunda-ligacao", "Ligação de Cliente Teste") }
+        assertTrue("R35: o ramal na faixa: ${textsUnder("segunda-ligacao")}", "Ramal 3001" in textsUnder("segunda-ligacao"))
+        compose.onNodeWithTag("desligar").assertContentDescriptionEquals(HANG_UP_ACTIVE)   // R39: a outra ainda toca
         // A notificação da chamada em espera desce no alto da tela por uns segundos (sem a tela cheia, ela sobe
         // sozinha), por cima da faixa: a foto espera ela subir.
         device.wait(Until.gone(By.pkg(SYSTEM_UI).text("Ligação de Cliente Teste")), 15_000)
@@ -306,6 +366,8 @@ class CallFlowTest {
         emulator.waitUntil("a faixa sair") { !emulator.showsTag("segunda-ligacao") }
         // A consulta: o colega em cima, e o cliente em espera para a transferência.
         consultOnTheCallScreen("2003", client)
+        assertTrue("R35: o ramal do cliente: ${textsUnder("cartao-espera")}", hasLine("cartao-espera", HELD_LINE))
+        compose.onNodeWithTag("desligar").assertContentDescriptionEquals(HANG_UP_ACTIVE)   // R39: desliga o colega
         emulator.saveScreen("consulta.png")
         before = emulator.callLog().size
         compose.onNodeWithTag("cancelar-consulta").performClick()
@@ -322,6 +384,10 @@ class CallFlowTest {
         emulator.waitUntil("a nova ligação em cima, com a primeira em espera") { activeWith(held = client) }
         compose.onNodeWithTag("juntar").performClick()
         emulator.waitUntil("a Conferência") { showsTagWithText("conferencia", "Conferência") }
+        assertTrue("R35: o ramal no cartão: ${textsUnder("participante")}", "Ramal 3001" in textsUnder("participante"))
+        // Na conferência, o Desligar desliga as duas: só "Desligar".
+        compose.onNodeWithTag("desligar").assert(hasText(HANG_UP))
+        assertNull("o Desligar das duas", description("desligar"))
         emulator.saveScreen("conferencia.png")
         before = emulator.callLog().size
         compose.onNodeWithTag("desligar").performClick()
@@ -336,7 +402,7 @@ class CallFlowTest {
         assertEquals("OK", emulator.control("RING 2001"))
         emulator.waitUntil("a notificação de ligação", details = ::notifications) { callNotification() != null }
         tapSystemButton("Atender") { answered() }
-        emulator.waitForText("3001")   // a tela de chamada
+        emulator.waitForText("Ramal 3001")   // a tela de chamada, com o número embaixo do nome como no Windows (R35)
         emulator.waitUntil("a ligação atendida") { app.calls.state.value?.phase == CallPhase.ACTIVE }
         emulator.waitUntil("o toque parar", details = ::notifications) { callNotification() == null }
         emulator.saveScreen("ligacao-pequena.png")   // na tela do emulador do CI (320 × 640 dp)
@@ -725,7 +791,7 @@ class CallFlowTest {
         emulator.waitUntil("a ligação tocando") { app.calls.state.value?.phase == CallPhase.RINGING }
         app.startActivity(CallActivity.intent(app))
         emulator.waitUntil("o Atender da tela de chamada") { emulator.showsTag("atender") }
-        compose.onNodeWithTag("atender").performClick()
+        compose.onNodeWithTag("atender").performScrollTo().performClick()   // com a letra grande, a tela rola
         emulator.waitUntil("a ligação atendida") { app.calls.state.value?.phase == CallPhase.ACTIVE }
         emulator.waitUntil("o toque parar", details = ::notifications) { callNotification() == null }
         emulator.waitUntil("o áudio no modo da ligação", details = { "Modo do áudio: ${audio.mode}" }) {
@@ -811,6 +877,47 @@ class CallFlowTest {
         val line = tagTexts(AUTO_LINE).joinToString()
         return COUNTDOWN.matchEntire(line)?.groupValues?.get(1)?.toInt()
             ?: throw AssertionError("a linha do Atender automático: \"$line\"")
+    }
+
+    // O texto da notificação da recebida (o que vem embaixo do nome), para as esperas e as falhas.
+    private fun incomingText(): String? = callNotification()?.extras?.getCharSequence(Notification.EXTRA_TEXT)?.toString()
+
+    private fun incomingDetails(): String = "Texto da notificação da recebida: ${incomingText()}"
+
+    // Os textos de tudo o que está dentro dos elementos [tag] (na árvore sem a fusão), na ordem; nenhum sem a tela.
+    private fun textsUnder(tag: String): List<String> =
+        try {
+            compose.onAllNodes(hasAnyAncestor(hasTestTag(tag)), useUnmergedTree = true).fetchSemanticsNodes()
+                .flatMap { node -> node.config.getOrNull(SemanticsProperties.Text)?.map { it.text }.orEmpty() }
+        } catch (e: IllegalStateException) {
+            emptyList()
+        }
+
+    // Algum texto dentro dos elementos [tag] é a [line] inteira.
+    private fun hasLine(tag: String, line: Regex): Boolean = textsUnder(tag).any(line::matches)
+
+    // O texto desenhado dentro do elemento [tag]: o [text], ou o único que há (o do selo, que o esconde do leitor de
+    // tela: ele só aparece na árvore sem a fusão).
+    private fun drawnText(tag: String, text: String? = null): SemanticsNodeInteraction {
+        val inside = compose.onNodeWithTag(tag, useUnmergedTree = true).onChildren()
+        return inside.filterToOne(if (text == null) SemanticsMatcher.keyIsDefined(SemanticsProperties.Text) else hasText(text))
+    }
+
+    // O texto do nó [node] desenhado inteiro: sem reticências, sem nada cortado e quebrando só nos espaços (nunca no meio
+    // de uma palavra). A falha mostra as linhas.
+    private fun assertWhole(what: String, node: SemanticsNodeInteraction) {
+        val text = node.fetchSemanticsNode().config[SemanticsProperties.Text].joinToString("")
+        val results = mutableListOf<TextLayoutResult>()
+        node.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
+        val layout = results.single()
+        val lines = (0 until layout.lineCount).map { text.substring(layout.getLineStart(it), layout.getLineEnd(it)) }
+        val brokenWord = (0 until layout.lineCount - 1).any { line ->
+            val end = layout.getLineEnd(line)
+            end in 1 until text.length && !text[end - 1].isWhitespace() && !text[end].isWhitespace()
+        }
+        val whole = !layout.hasVisualOverflow && !brokenWord && layout.getLineEnd(layout.lineCount - 1) == text.length &&
+            (0 until layout.lineCount).none(layout::isLineEllipsized)
+        assertTrue("$what inteiro: \"$text\" desenhado como ${lines.joinToString(" | ") { "\"$it\"" }}", whole)
     }
 
     // Espera a [condition] (como o Emulator.waitUntil) e diz quando ela passou a valer (SystemClock.uptimeMillis).
@@ -938,6 +1045,14 @@ class CallFlowTest {
         private const val AUTO_LINE = "atender-em"
         private const val REDIAL_NEW = "rediscar-nova"
         private val COUNTDOWN = Regex("Atender automático · em (\\d+) s")
+
+        // O Desligar de uma ligação e o de duas (R39), e a linha do cartão do cliente (R35: o ramal e o tempo).
+        private const val HANG_UP = "Desligar"
+        private const val HANG_UP_ACTIVE = "Desligar a ligação ativa"
+        private val HELD_LINE = Regex("Ramal 3001 · \\d\\d:\\d\\d")
+
+        // A linha do Atender automático como é desenhada (o selo, em maiúsculas), com os segundos.
+        private val DRAWN_COUNTDOWN = Regex("ATENDER AUTOMÁTICO · EM \\d+ S")
 
         // O que a nota do risco 12 tira do dumpsys do serviço: se está em primeiro plano, os tipos e o microfone.
         private val FGS_KEYS = listOf("isForeground", "types=", "foregroundServiceType", "WhileInUse")
