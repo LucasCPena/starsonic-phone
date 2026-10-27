@@ -1,7 +1,7 @@
 # Starsonic Phone para Android: o visual do Windows, Não perturbe, Atender automático, Rediscar, bolinha e bipe (especificação de design)
 
 - **Data:** 26/10/2026
-- **Status:** implementada em 27/10/2026 (`android-v0.2.0-rc.2`); o que saiu diferente do texto está na seção 14. Desenho aprovado pelo responsável em 26/10/2026 ("pode continuar"), no chat e no canvas "Starsonic Phone Android — visual do Windows e funções novas" (claude.ai, 19 quadros). Esta spec aguarda a revisão escrita, e os textos da seção 14 aguardam a aprovação dele.
+- **Status:** implementada em 27/10/2026 (`android-v0.2.0-rc.2`); o que saiu diferente do texto está na seção 14. Desenho aprovado pelo responsável em 26/10/2026 ("pode continuar"), no chat e no canvas "Starsonic Phone Android — visual do Windows e funções novas" (claude.ai, 19 quadros). Esta spec aguarda a revisão escrita, e os textos e os pontos em aberto da seção 14 aguardam a aprovação dele.
 - **Versão alvo:** `android-v0.2.0-rc.2` (canal de teste do Android).
 - **Base:** o Android 0.2.0-rc.1 (`2026-10-16-starsonic-phone-android-0.2-design.md`) e o app do Windows na 0.1.0-rc.3 (`2026-10-21-starsonic-phone-windows-w1-design.md` e `2026-10-22-starsonic-phone-windows-w3-atalhos-blf-adm-design.md`), que é a referência do visual e das funções.
 
@@ -245,7 +245,7 @@ Os textos que já existem ficam como estão.
 
 ## 14. Como ficou (divergências da implementação)
 
-O plano `2026-10-26-android-visual-windows.md` implementou esta spec em sete tarefas (`android-v0.2.0-rc.2`). Abaixo, o que saiu diferente do texto acima, ou que o texto não dizia, com o motivo, na ordem em que foi decidido. Os números entre parênteses (R5, R15…) são os das decisões tomadas durante a construção; os comentários do código citam os mesmos números.
+O plano `2026-10-26-android-visual-windows.md` implementou esta spec em sete tarefas, e uma passada de correção da revisão final fechou o resto (`android-v0.2.0-rc.2`). Abaixo, o que saiu diferente do texto acima, ou que o texto não dizia, com o motivo, na ordem em que foi decidido. Os números entre parênteses (R5, R15…) são os das decisões tomadas durante a construção; os comentários do código citam os mesmos números.
 
 - **A linha "Conectado · <servidor>" (7, última linha da tabela).** Ela troca a de antes, "Conectado · <ramal>". Os textos que os testes esperavam mudaram junto (R2).
 - **Configurações nasceu na etapa da tela principal (3.3 e 8).** O menu já tinha de ter só Configurações e Sobre, e o CI não podia ficar vermelho. Por isso essa etapa criou a tela só com a parte Conta, e a etapa seguinte completou Ligações e Celular (R5).
@@ -277,6 +277,17 @@ O plano `2026-10-26-android-visual-windows.md` implementou esta spec em sete tar
 - **A fonte pesa 172 KB, e não "uns 100 KB" (12).** A licença dela (OFL) vai dentro do app, em `assets/licencas`. O Sobre do Android não a cita, como o quadro do canvas; o do Windows cita "Plus Jakarta Sans (OFL)".
 - **Os testes de tela (11).** Os testes do emulador tiram um print de cada tela nova, no claro e no escuro, e o CI guarda os prints (`telas-<sha>`) para comparar com o canvas (R19 e R31). As telas de dentro também são desenhadas no tema escuro (R11). A bolinha "Sem internet" e a "Conectando…" ficam só nos testes da JVM e no roteiro (R9).
 
+**Da revisão final.** Depois das sete tarefas, uma revisão do código todo achou os pontos abaixo, e uma passada de correção os resolveu (o CI, com o emulador, passou no fim). Os números R43 a R47 seguem a conta de cima; F1, F3, F4, F5 e F8 são os itens da lista dessa passada.
+
+- **O fim do bipe vem do som, e não do limite (9).** O app põe a marca do fim do som 10 ms antes do último quadro e, se ela não chegar, usa o tempo (o tamanho do bipe mais 0,2 s). Assim, o bipe acaba sozinho em uns 0,85 s, e a ligação que acabou espera só isso. Os 1,5 s ficaram só como rede de segurança, para um som que travou de verdade. Antes, em alguns celulares a marca no último quadro só chegava depois dos 1,5 s, e o diagnóstico anotava "o som não acabou em 1500 ms" sem ser verdade. Quando é o tempo que acaba o bipe, o diagnóstico anota "bipe do fim: sem a marca do fim, acabou pelo tempo", e isso está certo (R43).
+- **O número digitado fica parado em cima das teclas (3.3).** No Teclado, o número, com o Apagar, fica fixo no alto da aba; as sugestões, as teclas, o Rediscar e o Ligar rolam por baixo dele. Com a letra no máximo, o número não sai da vista, nem ao apertar as teclas de baixo ou o Ligar. Na letra padrão, nada rola, e o desenho é o do quadro (R44).
+- **A tela de abertura é o azul-marinho do cabeçalho (3.1 e 12).** O fundo da abertura passou do azul-arroxeado de antes (`#383881`) para o navy-950 (`#070B18`), que é o começo do degradê do cabeçalho. Assim, a abertura não pula de cor para o cabeçalho. O ícone do app não mudou (R45).
+- **O microfone que o Android recusou volta quando a pessoa atende à mão (5 e 12).** Se o Android recusa o microfone na hora de o Atender automático atender (o Android 14 pode, com o app fechado), a ligação continua tocando só com o tipo "ligação". Antes, quando a pessoa atendia à mão, o app não pedia o microfone de novo, e o outro lado podia deixar de ouvi-la com o app fora da tela. Agora o app pede de novo ao atender à mão. Os tipos de ligação que o Atender automático tinha pedido também saem se aquela ligação para de tocar sem ser atendida. O Android não deixa um teste forçar essa recusa: o caso fica nos testes da JVM e no roteiro (16.70) (F1).
+- **Com a letra grande, o cabeçalho e a faixa de avisos sobem com a aba (3.3).** Com a letra do celular maior que a padrão, se o cabeçalho (com a faixa de avisos e a da ligação em andamento) toma mais da metade da altura, ele sobe junto com a aba quando a pessoa rola, e volta quando ela puxa para baixo. A navegação de baixo fica sempre parada e inteira, e uma faixa azul-marinho fica atrás da barra de status. Antes, num celular de 360 dp, a faixa da bateria com a letra no máximo deixava a aba sem altura e empurrava a navegação para fora da tela. Na letra padrão, nada se mexe, e valem os quadros do canvas (F3).
+- **Um controle que não cabe ao lado do texto desce para baixo dele (3.3).** Com a letra grande, o botão "Permitir", a chave do "Atender automaticamente", o link "WhatsApp" e o "Abrir ajustes" da faixa só ficam ao lado do texto se cada palavra couber ali; senão, descem para baixo dele. Os dois botões do painel do Transferir ficam lado a lado se o nome de cada um couber na metade dele; senão, um embaixo do outro. Nenhuma palavra quebra no meio. O que cabe (o sinal de feito, o "3 s", a setinha) continua ao lado. Na letra padrão, tudo fica no mesmo lugar de antes (F4).
+- **O aviso do servidor aparece inteiro no cartão da conta (7).** No erro e no sem conexão, a linha do cartão é a mensagem do núcleo, com o conselho no fim ("Confira o endereço e a sua internet."). Ela quebra em até quatro linhas (duas, na letra padrão; a mensagem mais longa, na letra no máximo, precisa de quatro), e só passa disso com "…". Antes, ficava numa linha e cortava o conselho. Os outros estados continuam numa linha só (F5).
+- **Os testes do emulador usam a regra v2 do Compose (11).** A regra antiga fazia o Compose continuar em threads do próprio app, e uns 1 em 18 testes falhava sem motivo. Os oito arquivos de teste passaram para a regra v2, que roda tudo na thread principal, e o CI passou três vezes seguidas no mesmo código. Um teste do Editar teve de esperar o teclado do celular abrir antes de tocar em Entrar, porque a regra nova mostrou essa corrida (F8).
+
 ### Textos para aprovar
 
 O responsável ainda não aprovou estes textos.
@@ -302,3 +313,10 @@ O responsável ainda não aprovou estes textos.
 - "Desligar para todos": o Desligar da conferência, no Windows. O app mantém "Desligar".
 - "Seções": o nome da navegação de baixo, para o leitor de tela. O app não dá nome ao grupo.
 - "Plus Jakarta Sans (OFL)" na linha de créditos do Sobre, como no Windows. O app só leva o texto da licença da fonte dentro dele (veja o item sobre o peso da fonte, na lista acima).
+
+### Pontos em aberto para o responsável
+
+Dois pontos da revisão final ficaram sem fechar. Quem decide é o responsável.
+
+- **A volta do cabeçalho com a letra no máximo não tem teste automático (R46).** O cabeçalho sobe com a aba e deve voltar quando a pessoa puxa para baixo. O código usa a ordem de rolagem do Compose para isso, mas nenhum teste confere a volta. Está só no roteiro (16.71). Se, no uso, o cabeçalho ficar escondido depois de rolar até as teclas, ele só volta ao reabrir a tela.
+- **O tamanho da faixa de aviso com a letra no máximo (R47).** Num celular de 360 dp, com a letra no máximo e a faixa da bateria, a tela abre mostrando o cabeçalho e a faixa, e o Teclado começa embaixo (a pessoa puxa para cima para chegar nele, e a navegação fica inteira). Dá para usar, mas o texto da faixa corre numa coluna estreita, em umas nove linhas curtas, ao lado do "Abrir ajustes". Se o responsável quiser, uma mudança pequena põe o link embaixo do texto (a faixa fica com mais ou menos a metade da altura) ou limita o texto a 2 ou 3 linhas. Hoje vale uma regra só para todos os controles: ele fica ao lado se cada palavra do texto cabe ali.
