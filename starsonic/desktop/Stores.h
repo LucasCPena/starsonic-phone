@@ -7,6 +7,8 @@
 // - contas.json:   {"versao":1,"contas":[{"id","servidor","protocolo":"udp"|"tcp","ramal","senha_protegida","nome","em_uso"}]}
 //                  e, enquanto falta algo da migracao da rc.7, "migracao_pendente": ["contatos","recentes"]
 // - contatos.json: {"versao":1,"contatos":[{"id","nome","numero","observacao"}]}
+// - contatos-empresa.json: {"versao":1,"atualizada":<ms>,"contatos":[{"nome","numero","observacao"}]}
+//                  (a ultima lista boa da planilha da empresa e a hora da leitura, em ms desde 1970; 0: nenhuma)
 // - recentes.json: {"versao":1,"recentes":[{"numero","nome","tipo":"feita"|"recebida"|"perdida","inicio","duracao"}]}
 //   (inicio: ms desde 1970; duracao: em MILISSEGUNDOS, ao contrario do Android, que grava segundos)
 // - config.json:   {"versao":1,"microfone":-1,"alto_falante":-1,"toque":"","nao_perturbe":false,...}
@@ -22,11 +24,13 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "CallController.h"   // Recent
 #include "Cipher.h"
 #include "Files.h"
+#include "Planilha.h"         // SheetContact
 #include "Profile.h"          // Transport
 
 namespace starsonic {
@@ -113,6 +117,40 @@ private:
     std::string path_;
     mutable std::mutex mutex_;
     std::vector<Contact> contacts_;
+};
+
+// A lista de contatos da empresa (spec da rc.4, secao 5.3): a ultima leitura boa da planilha da empresa, guardada para a
+// lista aparecer na hora ao abrir o app e para nao sumir quando uma leitura falha. Ao contrario dos meus contatos, nao
+// tem id e o app nao a edita: cada leitura boa troca a lista inteira (Replace), na ordem da planilha.
+class CompanyListStore {
+public:
+    CompanyListStore(FileSystem& files, std::string path);
+
+    // Sem arquivo: lista vazia, sem erro (true). Arquivo ilegivel: lista vazia (false), e o arquivo nao e tocado ate o
+    // proximo Replace ou Clear. A entrada sem nome ou sem numero que vale (NormalizeDialString) fica de fora; sem a hora
+    // (ou com uma que nao e um inteiro de 0 para cima), a hora e 0.
+    bool Load();
+    std::vector<SheetContact> All() const;   // na ordem em que foram gravadas, a da planilha: a tela e que ordena
+    int64_t UpdatedMs() const;               // a hora da ultima leitura boa, em ms desde 1970; 0: nenhuma
+    // Troca a lista inteira e grava, com a hora da leitura (negativa vale 0). As entradas sem nome ou sem numero que
+    // vale ficam de fora (a leitura da planilha ja as deixa de fora: assim a memoria e o arquivo dizem sempre o mesmo).
+    // false se o disco falhou: nada muda, nem na memoria.
+    bool Replace(std::vector<SheetContact> contacts, int64_t updatedMs);
+    bool Clear();                            // a lista vazia e atualizada 0, gravadas; false se o disco falhou: nada muda
+    // O nome do primeiro contato da lista com esse numero (comparados com NormalizeDialString); vazio se nao ha. O
+    // numero de cada contato e normalizado uma vez, na troca: a busca nao percorre a lista (10.000 contatos, e os
+    // Recentes procuram um por um).
+    std::wstring NameFor(const std::string& number) const;
+
+private:
+    bool Write(const std::vector<SheetContact>& contacts, int64_t updatedMs) const;
+
+    FileSystem& files_;
+    std::string path_;
+    mutable std::mutex mutex_;
+    std::vector<SheetContact> contacts_;
+    std::unordered_map<std::wstring, size_t> byNumber_;   // o numero normalizado -> o indice do primeiro com ele
+    int64_t updatedMs_ = 0;
 };
 
 class RecentsStore {

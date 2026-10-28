@@ -444,6 +444,112 @@ std::wstring ContactsStore::NameFor(const std::string& number) const {
     return std::wstring();
 }
 
+// ---------------------------------------------------------------- CompanyListStore
+
+namespace {
+
+// Deixa na lista so as entradas com nome e com numero que vale (depois do NormalizeDialString), na mesma ordem, e devolve
+// o indice dos numeros: o numero normalizado de cada uma -> o lugar da primeira com ele. A leitura da planilha ja so
+// entrega entradas assim; conferir de novo aqui faz a memoria e o arquivo dizerem sempre o mesmo.
+std::unordered_map<std::wstring, size_t> KeepEntries(std::vector<SheetContact>& contacts) {
+    std::vector<SheetContact> kept;
+    kept.reserve(contacts.size());
+    std::unordered_map<std::wstring, size_t> byNumber;
+    byNumber.reserve(contacts.size());
+    for (SheetContact& contact : contacts) {
+        std::wstring number = NormalizedNumber(contact.number);
+        if (number.empty() || Trim(contact.name).empty()) continue;
+        byNumber.emplace(std::move(number), kept.size());   // o emplace nao troca: o primeiro de cada numero fica
+        kept.push_back(std::move(contact));
+    }
+    contacts = std::move(kept);
+    return byNumber;
+}
+
+}  // namespace
+
+CompanyListStore::CompanyListStore(FileSystem& files, std::string path) : files_(files), path_(std::move(path)) {}
+
+bool CompanyListStore::Load() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    contacts_.clear();
+    byNumber_.clear();
+    updatedMs_ = 0;
+    Json root;
+    const ReadResult result = ReadRoot(files_, path_, root);
+    if (result == ReadResult::Missing) return true;
+    const Json* list = result == ReadResult::Ok ? ListOf(root, "contatos") : nullptr;
+    if (!list) return false;
+    std::vector<SheetContact> contacts;
+    for (const Json& item : *list) {
+        if (!item.is_object()) continue;
+        SheetContact contact;
+        contact.name = Utf8ToWide(GetString(item, "nome"));
+        contact.number = GetString(item, "numero");
+        contact.note = Utf8ToWide(GetString(item, "observacao"));
+        contacts.push_back(std::move(contact));
+    }
+    byNumber_ = KeepEntries(contacts);
+    contacts_ = std::move(contacts);
+    int64_t updatedMs = 0;   // sem a hora (ou com uma que nao presta), a lista vale e a hora e 0
+    if (GetInt64(root, "atualizada", updatedMs) && updatedMs > 0) updatedMs_ = updatedMs;
+    return true;
+}
+
+std::vector<SheetContact> CompanyListStore::All() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return contacts_;
+}
+
+int64_t CompanyListStore::UpdatedMs() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return updatedMs_;
+}
+
+bool CompanyListStore::Write(const std::vector<SheetContact>& contacts, int64_t updatedMs) const {
+    Json root = NewRoot();
+    root["atualizada"] = updatedMs;
+    Json list = Json::array();
+    for (const SheetContact& contact : contacts) {
+        Json item = Json::object();
+        item["nome"] = ToUtf8(contact.name);
+        item["numero"] = contact.number;
+        item["observacao"] = ToUtf8(contact.note);
+        list.push_back(std::move(item));
+    }
+    root["contatos"] = std::move(list);
+    return WriteRoot(files_, path_, root);
+}
+
+bool CompanyListStore::Replace(std::vector<SheetContact> contacts, int64_t updatedMs) {
+    if (updatedMs < 0) updatedMs = 0;
+    // A conta dos numeros fica fora da trava: o NameFor roda na thread do motor e nao deve esperar por ela.
+    std::unordered_map<std::wstring, size_t> byNumber = KeepEntries(contacts);
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!Write(contacts, updatedMs)) return false;
+    contacts_ = std::move(contacts);
+    byNumber_ = std::move(byNumber);
+    updatedMs_ = updatedMs;
+    return true;
+}
+
+bool CompanyListStore::Clear() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!Write(std::vector<SheetContact>(), 0)) return false;
+    contacts_.clear();
+    byNumber_.clear();
+    updatedMs_ = 0;
+    return true;
+}
+
+std::wstring CompanyListStore::NameFor(const std::string& number) const {
+    const std::wstring wanted = NormalizedNumber(number);
+    if (wanted.empty()) return std::wstring();
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto found = byNumber_.find(wanted);
+    return found == byNumber_.end() ? std::wstring() : contacts_[found->second].name;
+}
+
 // ---------------------------------------------------------------- RecentsStore
 
 RecentsStore::RecentsStore(FileSystem& files, std::string path) : files_(files), path_(std::move(path)) {}
