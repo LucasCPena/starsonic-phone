@@ -2,6 +2,7 @@
 
 #include <cstdint>
 
+#include "Text.h"   // WideToUtf8: os nomes da planilha (SheetContact)
 #include "nlohmann/json.hpp"
 
 namespace starsonic {
@@ -57,6 +58,10 @@ const Name kNames[] = {
     {CommandKind::AdminLogin, "adminLogin"},
     {CommandKind::AdminLogout, "adminLogout"},
     {CommandKind::AdminSet, "adminSet"},
+    {CommandKind::ImportContacts, "importContacts"},
+    {CommandKind::ExportContacts, "exportContacts"},
+    {CommandKind::SetCompanyList, "setCompanyList"},
+    {CommandKind::RefreshCompanyList, "refreshCompanyList"},
 };
 
 // Le os campos de um comando, anotando o primeiro problema (um campo obrigatorio que falta ou um tipo errado).
@@ -170,6 +175,20 @@ const char* KindName(Recent::Kind kind) {
             break;
     }
     return "perdida";
+}
+
+const char* CompanyStatusName(CompanyListStatus status) {
+    switch (status) {
+        case CompanyListStatus::Reading:
+            return "lendo";
+        case CompanyListStatus::Ok:
+            return "ok";
+        case CompanyListStatus::Error:
+            return "erro";
+        case CompanyListStatus::None:
+            break;
+    }
+    return "nenhuma";
 }
 
 const char* PhaseName(CallView::Phase phase) {
@@ -402,6 +421,9 @@ std::optional<Command> ParseCommand(const std::string& text, std::string* error)
             f.Servers("servidores", &command.admin.servers);
             f.OptionalText("canal", &command.admin.channel);
             break;
+        case CommandKind::SetCompanyList:
+            f.Text("link", &command.link, true);   // obrigatorio, e pode ser vazio (tira a lista)
+            break;
         case CommandKind::Ready:
         case CommandKind::AdminLogout:
         case CommandKind::Answer:
@@ -419,6 +441,9 @@ std::optional<Command> ParseCommand(const std::string& text, std::string* error)
         case CommandKind::UpdateNow:
         case CommandKind::UpdateLater:
         case CommandKind::CancelLogin:
+        case CommandKind::ImportContacts:
+        case CommandKind::ExportContacts:
+        case CommandKind::RefreshCompanyList:
             break;
     }
     if (!f.ok()) return Refuse(error, cmd + ": " + f.error());
@@ -483,6 +508,12 @@ std::string StateMessage(const BridgeState& state) {
     s["entrarAdmin"] = Out{
         {"erro", state.adminLogin.error}, {"esperaAte", state.adminLogin.waitUntilMs}, {"vez", state.adminLogin.seq}};
     s["config"] = Out{{"bipeFim", state.endBeep}};
+    s["empresa"] = Out{{"link", state.company.link},
+                       {"situacao", CompanyStatusName(state.company.status)},
+                       {"erro", state.company.error},
+                       {"atualizadaEm", state.company.updatedMs},
+                       {"quantos", state.company.count},
+                       {"vez", state.company.seq}};
     return Dump(Out{{"v", kBridgeVersion}, {"type", "state"}, {"state", s}});
 }
 
@@ -495,6 +526,16 @@ std::string UpdateMessage(const std::string& version, const std::string& notes) 
 }
 
 std::string EndBeepMessage() { return Dump(Out{{"v", kBridgeVersion}, {"type", "ring"}, {"tipo", "fim"}}); }
+
+std::string CompanyContactsMessage(int seq, const std::vector<SheetContact>& contacts) {
+    Out list = Out::array();
+    for (const SheetContact& contact : contacts) {
+        list.push_back(Out{{"nome", WideToUtf8(contact.name)},
+                           {"numero", contact.number},
+                           {"observacao", WideToUtf8(contact.note)}});
+    }
+    return Dump(Out{{"v", kBridgeVersion}, {"type", "contatosEmpresa"}, {"vez", seq}, {"contatos", list}});
+}
 
 std::string RingMessage(RingKind kind) {
     const char* name = "parar";

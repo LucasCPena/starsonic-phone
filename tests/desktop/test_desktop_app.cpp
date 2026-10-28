@@ -127,6 +127,7 @@ DesktopPaths Paths() {
     paths.settings = "dados/config.json";
     paths.atalhos = "dados/atalhos.json";
     paths.admin = "dados/admin.json";
+    paths.companyList = "dados/contatos-empresa.json";
     paths.legacy.ini = "rc7/StarsonicPhone.ini";
     paths.legacy.contactsXml = "rc7/Contacts.xml";
     paths.legacy.callsDb = "rc7/call_log.db";
@@ -145,6 +146,16 @@ struct Harness {
     std::vector<std::string> opened;
     std::vector<std::string> host;   // os outros ganchos, na ordem
     std::vector<std::string> channels;   // o gancho updateChannel, na ordem
+    // rc.4: as janelas de importar e de exportar e as leituras da lista da empresa, na ordem dos pedidos, com o
+    // callback de cada um: o teste responde quando quiser (o callback so poe na fila; Run a roda).
+    std::vector<std::function<void(const std::string& path)>> importPicks;
+    std::vector<std::function<void(const std::string& path, const std::string& format)>> exportPicks;
+    struct Fetch {
+        CompanySource source;
+        std::function<void(const CompanyFetch& result)> done;
+    };
+    std::vector<Fetch> fetches;
+    bool sheetHooks = true;   // false: o executavel sem os tres ganchos (antes da Task 7)
     std::unique_ptr<DesktopApp> app;
 
     Harness() { Make(); }
@@ -172,6 +183,18 @@ struct Harness {
         hooks.setStartWithWindows = [this](bool on) { host.push_back(on ? "autostart on" : "autostart off"); };
         hooks.updateAnswer = [this](bool now) { host.push_back(now ? "update now" : "update later"); };
         hooks.updateChannel = [this](const std::string& channel) { channels.push_back(channel); };
+        if (sheetHooks) {
+            hooks.pickImportFile = [this](std::function<void(const std::string&)> done) {
+                importPicks.push_back(std::move(done));
+            };
+            hooks.pickExportFile = [this](std::function<void(const std::string&, const std::string&)> done) {
+                exportPicks.push_back(std::move(done));
+            };
+            hooks.fetchCompanyList = [this](const CompanySource& source,
+                                            std::function<void(const CompanyFetch&)> done) {
+                fetches.push_back(Fetch{source, std::move(done)});
+            };
+        }
         auto executor = std::make_unique<QueueExecutor>();
         queue = executor.get();
         app = std::make_unique<DesktopApp>(config, hooks, engine, port, files, cipher, time, time, std::move(executor));
@@ -182,6 +205,10 @@ struct Harness {
         app->Shutdown();
         app.reset();
         posts.clear();
+        // Os callbacks dos pedidos do app que fechou nao valem mais.
+        importPicks.clear();
+        exportPicks.clear();
+        fetches.clear();
         Make();
         Start();
     }
@@ -249,6 +276,38 @@ struct Harness {
         app->OnRegistration(200, true, port.LastId());
         Run();
         return id;
+    }
+
+    // rc.4: a planilha da empresa gravada no config.json, e a ultima lista dela no contatos-empresa.json, antes da
+    // abertura.
+    void SeedCompanyLink(const std::string& link) {
+        SettingsStore store(files, Paths().settings);
+        store.Load();
+        Settings settings = store.Get();
+        settings.companyListLink = link;
+        REQUIRE(store.Save(settings));
+    }
+    void SeedCompanyList(const std::vector<SheetContact>& contacts, int64_t updatedMs) {
+        CompanyListStore store(files, Paths().companyList);
+        REQUIRE(store.Replace(contacts, updatedMs));
+    }
+    // A janela de importar <index> (na ordem em que abriram) responde com o caminho, e a fila roda.
+    void AnswerImport(size_t index, const std::string& path) {
+        REQUIRE(index < importPicks.size());
+        importPicks[index](path);
+        Run();
+    }
+    // A janela de exportar <index> responde com o caminho e o formato, e a fila roda.
+    void AnswerExport(size_t index, const std::string& path, const std::string& format) {
+        REQUIRE(index < exportPicks.size());
+        exportPicks[index](path, format);
+        Run();
+    }
+    // A resposta da leitura <index> (na ordem dos pedidos) chega, e a fila roda.
+    void AnswerFetch(size_t index, const CompanyFetch& result) {
+        REQUIRE(index < fetches.size());
+        fetches[index].done(result);
+        Run();
     }
 };
 
@@ -2212,4 +2271,815 @@ TEST_CASE("Enviar teclas sends only the DTMF digits and refuses a number without
     h.Send(UseShortcut(IdOf(h, "Mais")));
     CHECK(h.engine.dtmfs.size() == 1);
     CHECK(h.Logged("useShortcut recusado: Enviar teclas sem digitos"));
+}
+
+// rc.4: o importar, o exportar e a lista da empresa (spec da rc.4, secoes 4, 5 e 7).
+namespace {
+
+// Os textos da spec (4.2, 4.3, 5.4 e 6.4).
+const char* const kCantOpenFile = "N\xc3\xa3o consegui abrir o arquivo.";
+const char* const kCantSaveFile = "N\xc3\xa3o consegui salvar o arquivo.";
+const char* const kNothingNew = "Nenhum contato novo na planilha.";
+const char* const kSheetUnreadable =
+    "N\xc3\xa3o consegui ler a planilha. Ela precisa das colunas Nome e N\xc3\xbamero.";
+const char* const kSheetTooLarge = "A planilha \xc3\xa9 grande demais (o m\xc3\xa1ximo \xc3\xa9 10.000 contatos).";
+const char* const kLinkClosed =
+    "N\xc3\xa3o consegui abrir o link. Confira se a planilha est\xc3\xa1 compartilhada para qualquer pessoa com o "
+    "link.";
+const char* const kSheetOffline = "Sem conex\xc3\xa3o com a planilha. Fica a \xc3\xbaltima lista.";
+const char* const kFileNotFound =
+    "N\xc3\xa3o achei o arquivo. Confira o caminho e se este computador tem acesso \xc3\xa0 pasta.";
+const char* const kInvalidLink = "Use um link https:// ou o caminho de um arquivo.";
+
+// Um link do Google Planilhas de mentira (o repositorio e publico: nenhum link de verdade) e o que o app busca.
+const char* const kGoogleLink = "https://docs.google.com/spreadsheets/d/1AbC_dEf-123/edit#gid=456";
+const char* const kGoogleExport = "https://docs.google.com/spreadsheets/d/1AbC_dEf-123/export?format=csv&gid=456";
+// Uma pasta da rede, como o Explorer copia o caminho.
+const char* const kFolderLink = "\\\\fileserver01\\contatos\\lista.csv";
+
+const char* const kImportContacts = R"({"v":1,"cmd":"importContacts"})";
+const char* const kExportContacts = R"({"v":1,"cmd":"exportContacts"})";
+const char* const kRefreshCompanyList = R"({"v":1,"cmd":"refreshCompanyList"})";
+const char* const kReady = R"({"v":1,"cmd":"ready"})";
+
+std::string SetCompanyList(const std::string& link) {
+    return json({{"v", 1}, {"cmd", "setCompanyList"}, {"link", link}}).dump();
+}
+std::string SaveContact(const std::string& nome, const std::string& numero, const std::string& observacao = "") {
+    return json({{"v", 1}, {"cmd", "saveContact"}, {"nome", nome}, {"numero", numero}, {"observacao", observacao}})
+        .dump();
+}
+
+CompanyFetch SheetBytes(const std::string& bytes) {
+    CompanyFetch result;
+    result.bytes = bytes;
+    return result;
+}
+CompanyFetch FetchFailed(CompanyFetchError error) {
+    CompanyFetch result;
+    result.error = error;
+    return result;
+}
+
+// O empresa do estado esperado.
+json Empresa(const std::string& link, const std::string& situacao, const std::string& erro, int64_t atualizadaEm,
+             int quantos, int vez) {
+    return json({{"link", link},
+                 {"situacao", situacao},
+                 {"erro", erro},
+                 {"atualizadaEm", atualizadaEm},
+                 {"quantos", quantos},
+                 {"vez", vez}});
+}
+
+// A ultima mensagem contatosEmpresa (o teste falha sem nenhuma).
+json LastCompanyContacts(const Harness& h) {
+    const std::vector<json> messages = h.Messages("contatosEmpresa");
+    REQUIRE_FALSE(messages.empty());
+    return messages.back();
+}
+
+// Os nomes de uma lista de contatos do JSON, na ordem.
+std::vector<std::string> NamesOf(const json& contacts) {
+    std::vector<std::string> names;
+    for (const json& contact : contacts) names.push_back(contact["nome"]);
+    return names;
+}
+std::vector<std::wstring> NamesOf(const std::vector<SheetContact>& contacts) {
+    std::vector<std::wstring> names;
+    for (const SheetContact& contact : contacts) names.push_back(contact.name);
+    return names;
+}
+
+// Uma planilha CSV com <count> contatos (Contato 1, Contato 2...).
+std::string SheetWith(size_t count) {
+    std::string csv = "Nome;Numero\n";
+    for (size_t i = 1; i <= count; ++i) csv += "Contato " + std::to_string(i) + ";" + std::to_string(40000 + i) + "\n";
+    return csv;
+}
+
+const char* const kTwoCompanyContacts = "Nome;Numero;Setor\nEmpresa Teste;3001;Recep\xc3\xa7\xc3\xa3o\nBia;3002;\n";
+
+// A lista da empresa ja lida uma vez (vez 1): o link do Google e os dois contatos acima.
+void StartWithCompanyList(Harness& h) {
+    h.Start();
+    h.Send(SetCompanyList(kGoogleLink));
+    REQUIRE(h.fetches.size() == 1);
+    h.AnswerFetch(0, SheetBytes(kTwoCompanyContacts));
+    REQUIRE(h.State()["empresa"]["vez"] == 1);
+}
+
+}  // namespace
+
+TEST_CASE("importContacts adds the new contacts and says how many already existed") {
+    Harness h;
+    h.Start();
+    h.Send(SaveContact("Ana Souza", "2002"));
+    h.files.files["importar/c.csv"] = "Nome;Numero\nAna Souza;2002\nBruno;2003\nBruno;2003\nCaio;2004\n";
+    h.Send(kImportContacts);
+    REQUIRE(h.importPicks.size() == 1);
+    CHECK(h.Toasts().empty());   // a janela ainda esta aberta
+    h.importPicks[0]("importar/c.csv");
+    CHECK(h.Toasts().empty());   // o callback so pos na fila
+    h.Run();
+    CHECK(h.Toasts() == std::vector<std::string>{"2 contatos importados (1 j\xc3\xa1 existia)."});
+    const json saved = h.File("dados/contatos.json")["contatos"];
+    REQUIRE(saved.size() == 3);
+    CHECK(NamesOf(h.State()["contatos"]) == std::vector<std::string>{"Ana Souza", "Bruno", "Caio"});
+    // Cada um com um id novo, numa gravacao so.
+    CHECK(saved[0]["id"] != saved[1]["id"]);
+    CHECK(saved[1]["id"] != saved[2]["id"]);
+    CHECK(saved[0]["id"] != saved[2]["id"]);
+    // O diagnostico com as contagens (os repetidos: o que ja existia e o repetido na planilha), sem nomes e numeros.
+    CHECK(h.Logged("importar: 2 novos, 2 repetidos, 0 fora"));
+    for (const std::string& line : h.logs) {
+        CHECK(line.find("Bruno") == std::string::npos);
+        CHECK(line.find("2004") == std::string::npos);
+    }
+}
+
+TEST_CASE("importContacts with the window cancelled does nothing") {
+    Harness h;
+    h.Start();
+    h.Send(SaveContact("Ana Souza", "2002"));
+    const int writes = h.files.writeCount;
+    h.Send(kImportContacts);
+    REQUIRE(h.importPicks.size() == 1);
+    h.AnswerImport(0, "");
+    CHECK(h.Toasts().empty());
+    CHECK(h.files.writeCount == writes);
+    CHECK(h.State()["contatos"].size() == 1);
+}
+
+TEST_CASE("importContacts of a file that is not a sheet") {
+    Harness h;
+    h.Start();
+    h.files.files["importar/lista.txt"] = "Lista de compras\npao\nleite\n";
+    h.Send(kImportContacts);
+    h.AnswerImport(0, "importar/lista.txt");
+    CHECK(h.Toasts() == std::vector<std::string>{kSheetUnreadable});
+    CHECK(h.files.files.count("dados/contatos.json") == 0);
+    // Um zip que nao abre tambem nao e planilha.
+    h.files.files["importar/estragado.xlsx"] = std::string("PK\x03\x04", 4) + "nao e um zip";
+    h.Send(kImportContacts);
+    h.AnswerImport(1, "importar/estragado.xlsx");
+    CHECK(LastToast(h) == kSheetUnreadable);
+    CHECK(h.State()["contatos"].empty());
+}
+
+TEST_CASE("importContacts of a file that does not open") {
+    Harness h;
+    h.Start();
+    h.Send(kImportContacts);
+    h.AnswerImport(0, "importar/sumiu.csv");
+    CHECK(h.Toasts() == std::vector<std::string>{kCantOpenFile});
+    CHECK(h.State()["contatos"].empty());
+}
+
+TEST_CASE("importContacts with nothing new") {
+    Harness h;
+    h.Start();
+    h.Send(SaveContact("Ana Souza", "2002"));
+    const int writes = h.files.writeCount;
+    // O mesmo nome sem acento e sem caixa, e o mesmo numero sem os separadores: todos ja existiam.
+    h.files.files["importar/c.csv"] = "Nome;Numero\nana souza;(20) 02\nANA SOUZA;20-02\n\xc3\x81na Souza;2002\n";
+    h.Send(kImportContacts);
+    h.AnswerImport(0, "importar/c.csv");
+    CHECK(h.Toasts() == std::vector<std::string>{kNothingNew});
+    CHECK(h.files.writeCount == writes);   // nada gravado
+    CHECK(h.Logged("importar: 0 novos, 3 repetidos, 0 fora"));
+    // A planilha so com o cabecalho: tambem nada novo.
+    h.files.files["importar/vazia.csv"] = "Nome;Numero\n";
+    h.Send(kImportContacts);
+    h.AnswerImport(1, "importar/vazia.csv");
+    CHECK(LastToast(h) == kNothingNew);
+    CHECK(h.files.writeCount == writes);
+    CHECK(h.State()["contatos"].size() == 1);
+}
+
+TEST_CASE("importContacts of a sheet that is too large") {
+    Harness h;
+    h.Start();
+    h.files.files["importar/grande.csv"] = SheetWith(kSheetMaxContacts + 1);
+    h.Send(kImportContacts);
+    h.AnswerImport(0, "importar/grande.csv");
+    CHECK(h.Toasts() == std::vector<std::string>{kSheetTooLarge});
+    CHECK(h.State()["contatos"].empty());
+}
+
+TEST_CASE("importContacts with contatos.json refused says the file was not saved") {
+    Harness h;
+    h.Start();
+    h.files.files["importar/c.csv"] = "Nome;Numero\nBruno;2003\n";
+    h.files.failWrites = true;
+    h.Send(kImportContacts);
+    h.AnswerImport(0, "importar/c.csv");
+    CHECK(h.Toasts() == std::vector<std::string>{kCantSaveFile});
+    CHECK(h.State()["contatos"].empty());
+    CHECK(h.Logged("importar: o contatos.json nao foi gravado"));
+}
+
+TEST_CASE("a count of one takes the singular in the import and export toasts") {
+    Harness h;
+    h.Start();
+    size_t opened = 0;
+    const auto importCsv = [&h, &opened](const std::string& csv) {
+        h.files.files["importar/c.csv"] = csv;
+        h.Send(kImportContacts);
+        h.AnswerImport(opened++, "importar/c.csv");
+        return LastToast(h);
+    };
+    CHECK(importCsv("Nome;Numero\nAna;2002\n") == "1 contato importado.");
+    CHECK(importCsv("Nome;Numero\nAna;2002\nBia;2003\n") == "1 contato importado (1 j\xc3\xa1 existia).");
+    CHECK(importCsv("Nome;Numero\nAna;2002\nBia;2003\nCaio;2004\n") == "1 contato importado (2 j\xc3\xa1 existiam).");
+    CHECK(importCsv("Nome;Numero\nAna;2002\nDavi;2005\nEva;2006\n") == "2 contatos importados (1 j\xc3\xa1 existia).");
+    CHECK(importCsv("Nome;Numero\nAna;2002\nBia;2003\nFabio;2007\nGil;2008\n") ==
+          "2 contatos importados (2 j\xc3\xa1 existiam).");
+    CHECK(importCsv("Nome;Numero\nHelio;2009\nIris;2010\n") == "2 contatos importados.");
+    // Um contato meu que vem duas vezes na planilha ja existia uma vez so (a segunda e um repetido da planilha).
+    CHECK(importCsv("Nome;Numero\nAna;2002\nana;20-02\nJoao;2011\n") == "1 contato importado (1 j\xc3\xa1 existia).");
+    CHECK(h.Logged("importar: 1 novos, 2 repetidos, 0 fora"));
+    CHECK(h.State()["contatos"].size() == 10);
+
+    h.Send(kExportContacts);
+    h.AnswerExport(0, "exportar/c.csv", "csv");
+    CHECK(LastToast(h) == "10 contatos exportados.");
+    Harness one;
+    one.Start();
+    one.Send(SaveContact("Ana", "2002"));
+    one.Send(kExportContacts);
+    one.AnswerExport(0, "exportar/c.csv", "csv");
+    CHECK(LastToast(one) == "1 contato exportado.");
+    // Zero fica no plural (a planilha so com o cabecalho).
+    Harness none;
+    none.Start();
+    none.Send(kExportContacts);
+    none.AnswerExport(0, "exportar/c.xlsx", "xlsx");
+    CHECK(LastToast(none) == "0 contatos exportados.");
+    REQUIRE(none.files.files.count("exportar/c.xlsx") == 1);
+    const SheetRead empty = ReadContactSheet(none.files.files.at("exportar/c.xlsx"));
+    CHECK(empty.error == SheetError::None);
+    CHECK(empty.contacts.empty());
+}
+
+TEST_CASE("exportContacts writes the chosen format") {
+    Harness h;
+    h.Start();
+    h.Send(SaveContact("Caio", "2004"));
+    h.Send(SaveContact("ana Souza", "011 2002"));
+    h.Send(SaveContact("Bruno", "2003", "Recep\xc3\xa7\xc3\xa3o"));
+    const std::vector<std::wstring> alphabetical = {L"ana Souza", L"Bruno", L"Caio"};
+
+    h.Send(kExportContacts);
+    REQUIRE(h.exportPicks.size() == 1);
+    CHECK(h.Toasts().empty());   // a janela ainda esta aberta
+    h.AnswerExport(0, "exportar/contatos.xlsx", "xlsx");
+    REQUIRE(h.files.files.count("exportar/contatos.xlsx") == 1);
+    const std::string xlsx = h.files.files.at("exportar/contatos.xlsx");
+    CHECK(xlsx.compare(0, 2, "PK") == 0);
+    CHECK(h.Toasts() == std::vector<std::string>{"3 contatos exportados."});
+    // So os meus contatos, em ordem alfabetica, como foram escritos.
+    const SheetRead fromXlsx = ReadContactSheet(xlsx);
+    REQUIRE(fromXlsx.error == SheetError::None);
+    CHECK(NamesOf(fromXlsx.contacts) == alphabetical);
+    CHECK(fromXlsx.contacts[0].number == "011 2002");
+    CHECK(fromXlsx.contacts[1].note == L"Recep\u00e7\u00e3o");
+    CHECK(h.Logged("exportar: 3 (xlsx)"));
+
+    h.Send(kExportContacts);
+    h.AnswerExport(1, "exportar/contatos.csv", "csv");
+    const std::string csv = h.files.files.at("exportar/contatos.csv");
+    CHECK(csv.compare(0, 3, "\xef\xbb\xbf") == 0);
+    const SheetRead fromCsv = ReadContactSheet(csv);
+    REQUIRE(fromCsv.error == SheetError::None);
+    CHECK(NamesOf(fromCsv.contacts) == alphabetical);
+    CHECK(LastToast(h) == "3 contatos exportados.");
+    CHECK(h.Logged("exportar: 3 (csv)"));
+
+    // O disco recusou (sem permissao, o arquivo aberto em outro programa).
+    h.files.failWrites = true;
+    h.Send(kExportContacts);
+    h.AnswerExport(2, "exportar/outro.xlsx", "xlsx");
+    h.files.failWrites = false;
+    CHECK(LastToast(h) == kCantSaveFile);
+    CHECK(h.files.files.count("exportar/outro.xlsx") == 0);
+
+    // Cancelado: nada.
+    const size_t toasts = h.Toasts().size();
+    const int writes = h.files.writeCount;
+    h.Send(kExportContacts);
+    h.AnswerExport(3, "", "");
+    CHECK(h.Toasts().size() == toasts);
+    CHECK(h.files.writeCount == writes);
+
+    // Um formato que nao e xlsx nem csv e um erro do executavel: nada e gravado.
+    h.Send(kExportContacts);
+    h.AnswerExport(4, "exportar/contatos.ods", "ods");
+    CHECK(LastToast(h) == kCantSaveFile);
+    CHECK(h.files.files.count("exportar/contatos.ods") == 0);
+    CHECK(h.Logged("exportar: formato desconhecido"));
+}
+
+TEST_CASE("setCompanyList saves the link and reads the converted source") {
+    Harness h;
+    h.Start();
+    CHECK(h.State()["empresa"] == Empresa("", "nenhuma", "", 0, 0, 0));
+    h.Send(SetCompanyList(kGoogleLink));
+    CHECK(h.File("dados/config.json")["planilha_empresa"] == kGoogleLink);
+    REQUIRE(h.fetches.size() == 1);
+    CHECK(h.fetches[0].source.kind == CompanySourceKind::Google);
+    CHECK(h.fetches[0].source.location == kGoogleExport);
+    CHECK(h.State()["empresa"] == Empresa(kGoogleLink, "lendo", "", 0, 0, 0));
+    CHECK(h.Messages("contatosEmpresa").empty());
+
+    h.time.Advance(5000);
+    h.AnswerFetch(0, SheetBytes(kTwoCompanyContacts));
+    CHECK(h.State()["empresa"] == Empresa(kGoogleLink, "ok", "", 1005000, 2, 1));
+    CHECK(LastCompanyContacts(h) ==
+          json({{"v", 1},
+                {"type", "contatosEmpresa"},
+                {"vez", 1},
+                {"contatos", json::array({json({{"nome", "Empresa Teste"},
+                                                {"numero", "3001"},
+                                                {"observacao", "Recep\xc3\xa7\xc3\xa3o"}}),
+                                          json({{"nome", "Bia"}, {"numero", "3002"}, {"observacao", ""}})})}}));
+    const json file = h.File("dados/contatos-empresa.json");
+    CHECK(file["versao"] == 1);
+    CHECK(file["atualizada"] == 1005000);
+    CHECK(NamesOf(file["contatos"]) == std::vector<std::string>{"Empresa Teste", "Bia"});
+    CHECK(h.Logged("lista da empresa: 2 contatos"));
+
+    // Salvar o mesmo link de novo le de novo (como o Atualizar agora), sem gravar o config.json.
+    const std::string config = h.files.files.at("dados/config.json");
+    h.Send(SetCompanyList(kGoogleLink));
+    CHECK(h.fetches.size() == 2);
+    CHECK(h.files.files.at("dados/config.json") == config);
+    CHECK(h.State()["empresa"]["situacao"] == "lendo");
+    // O link com espacos nas pontas e o mesmo link.
+    h.AnswerFetch(1, SheetBytes(kTwoCompanyContacts));
+    h.Send(SetCompanyList(std::string("  ") + kGoogleLink + " "));
+    CHECK(h.fetches.size() == 3);
+    CHECK(h.State()["empresa"]["link"] == kGoogleLink);
+}
+
+TEST_CASE("the company list is read again every 15 minutes") {
+    Harness h;
+    StartWithCompanyList(h);
+    h.time.Advance(899999);
+    h.Run();
+    CHECK(h.fetches.size() == 1);
+    h.time.Advance(1);
+    h.Run();
+    REQUIRE(h.fetches.size() == 2);
+    CHECK(h.fetches[1].source.location == kGoogleExport);
+    CHECK(h.State()["empresa"]["situacao"] == "lendo");
+    h.AnswerFetch(1, SheetBytes(kTwoCompanyContacts));
+    h.time.Advance(900000);
+    h.Run();
+    CHECK(h.fetches.size() == 3);
+    h.AnswerFetch(2, SheetBytes(kTwoCompanyContacts));
+
+    // Uma leitura pedida no meio (o Atualizar agora) conta os 15 min de novo a partir dela.
+    h.time.Advance(600000);
+    h.Send(kRefreshCompanyList);
+    REQUIRE(h.fetches.size() == 4);
+    h.AnswerFetch(3, SheetBytes(kTwoCompanyContacts));
+    h.time.Advance(899999);
+    h.Run();
+    CHECK(h.fetches.size() == 4);
+    h.time.Advance(1);
+    h.Run();
+    CHECK(h.fetches.size() == 5);
+}
+
+TEST_CASE("a failed read keeps the list and shows the error") {
+    Harness h;
+    StartWithCompanyList(h);
+    const std::string file = h.files.files.at("dados/contatos-empresa.json");
+    const size_t messages = h.Messages("contatosEmpresa").size();
+    h.time.Advance(60000);
+    h.Send(kRefreshCompanyList);
+    REQUIRE(h.fetches.size() == 2);
+    h.AnswerFetch(1, FetchFailed(CompanyFetchError::Offline));
+    CHECK(h.State()["empresa"] == Empresa(kGoogleLink, "erro", kSheetOffline, 1000000, 2, 1));
+    CHECK(h.files.files.at("dados/contatos-empresa.json") == file);
+    CHECK(h.Messages("contatosEmpresa").size() == messages);
+    CHECK(h.Logged("lista da empresa: erro sem conexao"));
+    // A proxima leitura boa tira o erro.
+    h.Send(kRefreshCompanyList);
+    CHECK(h.State()["empresa"]["situacao"] == "lendo");
+    CHECK(h.State()["empresa"]["erro"] == "");
+    h.AnswerFetch(2, SheetBytes("Nome;Numero\nEmpresa Teste;3001\n"));
+    CHECK(h.State()["empresa"] == Empresa(kGoogleLink, "ok", "", 1060000, 1, 2));
+}
+
+TEST_CASE("one read at a time") {
+    Harness h;
+    h.Start();
+    h.Send(SetCompanyList(kGoogleLink));
+    REQUIRE(h.fetches.size() == 1);
+    h.Send(kRefreshCompanyList);
+    h.Send(kRefreshCompanyList);
+    CHECK(h.fetches.size() == 1);
+    CHECK(h.State()["empresa"]["situacao"] == "lendo");
+    h.AnswerFetch(0, SheetBytes(kTwoCompanyContacts));
+    REQUIRE(h.fetches.size() == 2);   // os dois pedidos do meio: uma leitura so, depois da que estava aberta
+    CHECK(h.State()["empresa"]["situacao"] == "lendo");
+    CHECK(h.State()["empresa"]["vez"] == 1);
+    h.AnswerFetch(1, SheetBytes(kTwoCompanyContacts));
+    CHECK(h.fetches.size() == 2);
+    CHECK(h.State()["empresa"]["situacao"] == "ok");
+    CHECK(h.State()["empresa"]["vez"] == 2);
+}
+
+TEST_CASE("opening the app shows the saved list first") {
+    Harness h;
+    h.SeedCompanyLink(kGoogleLink);
+    h.SeedCompanyList({SheetContact{L"Empresa Teste", "3001", L"Recep\u00e7\u00e3o"}}, 1761062400000LL);
+    h.Start();
+    REQUIRE(h.fetches.size() == 1);
+    CHECK(h.fetches[0].source.location == kGoogleExport);
+    h.posts.clear();
+    h.Send(kReady);
+    // O estado, o toque e a lista (depois do estado).
+    REQUIRE(h.posts.size() == 3);
+    CHECK(json::parse(h.posts[0])["type"] == "state");
+    CHECK(json::parse(h.posts[1])["type"] == "ring");
+    CHECK(json::parse(h.posts[2]) ==
+          json({{"v", 1},
+                {"type", "contatosEmpresa"},
+                {"vez", 1},
+                {"contatos", json::array({json({{"nome", "Empresa Teste"},
+                                                {"numero", "3001"},
+                                                {"observacao", "Recep\xc3\xa7\xc3\xa3o"}})})}}));
+    CHECK(h.State()["empresa"] == Empresa(kGoogleLink, "lendo", "", 1761062400000LL, 1, 1));
+    CHECK(h.fetches.size() == 1);
+}
+
+TEST_CASE("a closed link and a missing file show their messages") {
+    Harness h;
+    StartWithCompanyList(h);
+    h.Send(kRefreshCompanyList);
+    h.AnswerFetch(1, FetchFailed(CompanyFetchError::Closed));
+    CHECK(h.State()["empresa"]["situacao"] == "erro");
+    CHECK(h.State()["empresa"]["erro"] == kLinkClosed);
+    h.Send(kRefreshCompanyList);
+    h.AnswerFetch(2, SheetBytes("isto nao e uma planilha\n"));
+    CHECK(h.State()["empresa"]["erro"] == kSheetUnreadable);
+    h.Send(kRefreshCompanyList);
+    h.AnswerFetch(3, FetchFailed(CompanyFetchError::TooLarge));
+    CHECK(h.State()["empresa"]["erro"] == kSheetTooLarge);
+    h.Send(kRefreshCompanyList);
+    h.AnswerFetch(4, SheetBytes(SheetWith(kSheetMaxContacts + 1)));
+    CHECK(h.State()["empresa"]["erro"] == kSheetTooLarge);
+    // A lista de antes continua em todos.
+    CHECK(h.State()["empresa"]["quantos"] == 2);
+    CHECK(h.State()["empresa"]["vez"] == 1);
+
+    // Uma pasta da rede: o caminho vai como esta, e o arquivo que nao existe tem o texto dele.
+    h.Send(SetCompanyList(kFolderLink));
+    REQUIRE(h.fetches.size() == 6);
+    CHECK(h.fetches[5].source.kind == CompanySourceKind::Path);
+    CHECK(h.fetches[5].source.location == kFolderLink);
+    h.AnswerFetch(5, FetchFailed(CompanyFetchError::NotFound));
+    CHECK(h.State()["empresa"] == Empresa(kFolderLink, "erro", kFileNotFound, 1000000, 2, 1));
+}
+
+TEST_CASE("an invalid link is saved but not read") {
+    Harness h;
+    h.Start();
+    h.Send(SetCompanyList("http://intranet/x.csv"));
+    CHECK(h.File("dados/config.json")["planilha_empresa"] == "http://intranet/x.csv");
+    CHECK(h.State()["empresa"] == Empresa("http://intranet/x.csv", "erro", kInvalidLink, 0, 0, 0));
+    CHECK(h.fetches.empty());
+    h.Send(kRefreshCompanyList);
+    h.time.Advance(900000);
+    h.Run();
+    CHECK(h.fetches.empty());
+    CHECK(h.State()["empresa"]["erro"] == kInvalidLink);
+    // Na abertura tambem.
+    h.Restart();
+    CHECK(h.State()["empresa"] == Empresa("http://intranet/x.csv", "erro", kInvalidLink, 0, 0, 0));
+    CHECK(h.fetches.empty());
+}
+
+TEST_CASE("clearing the link removes the list") {
+    Harness h;
+    StartWithCompanyList(h);
+    h.Send(SetCompanyList(""));
+    CHECK(LastCompanyContacts(h) ==
+          json({{"v", 1}, {"type", "contatosEmpresa"}, {"vez", 2}, {"contatos", json::array()}}));
+    CHECK(h.State()["empresa"] == Empresa("", "nenhuma", "", 0, 0, 2));
+    CHECK(h.File("dados/config.json")["planilha_empresa"] == "");
+    const json file = h.File("dados/contatos-empresa.json");
+    CHECK(file["contatos"] == json::array());
+    CHECK(file["atualizada"] == 0);
+    CHECK(h.fetches.size() == 1);
+    // A tarefa de 15 min nao pede mais, e o Atualizar agora sem link nao faz nada.
+    h.time.Advance(900000);
+    h.Run();
+    h.Send(kRefreshCompanyList);
+    CHECK(h.fetches.size() == 1);
+    CHECK(h.State()["empresa"]["situacao"] == "nenhuma");
+    // Salvar vazio de novo: nada muda (a lista ja saiu).
+    const size_t messages = h.Messages("contatosEmpresa").size();
+    h.Send(SetCompanyList(""));
+    CHECK(h.Messages("contatosEmpresa").size() == messages);
+    CHECK(h.State()["empresa"]["vez"] == 2);
+
+    // O link de volta: le de novo, e os 15 min voltam.
+    h.Send(SetCompanyList(kGoogleLink));
+    REQUIRE(h.fetches.size() == 2);
+    h.AnswerFetch(1, SheetBytes(kTwoCompanyContacts));
+    CHECK(h.State()["empresa"]["vez"] == 3);
+    h.time.Advance(900000);
+    h.Run();
+    CHECK(h.fetches.size() == 3);
+}
+
+TEST_CASE("names come from my contacts first, then from the company list") {
+    Harness h;
+    h.SeedCompanyLink(kGoogleLink);
+    h.SeedCompanyList({SheetContact{L"Empresa Teste", "(11) 3001", L""}}, 1761062400000LL);
+    h.StartRegistered();
+    h.app->OnIncomingCall(4, "113001", "Central");
+    h.Run();
+    CHECK(h.State()["ligacao"]["top"]["name"] == "Empresa Teste");
+    h.time.Advance(1000);
+    h.app->OnCallState(4, CallState::Disconnected, 487);
+    h.Run();
+    CHECK(h.Toasts() == std::vector<std::string>{"Liga\xc3\xa7\xc3\xa3o perdida de Empresa Teste"});
+    REQUIRE(h.State()["recentes"].size() == 1);
+    CHECK(h.State()["recentes"][0]["nome"] == "Empresa Teste");
+    CHECK(h.State()["recentes"][0]["contatoId"] == "");
+
+    // Um contato meu com o mesmo numero vale mais.
+    h.Send(SaveContact("Meu Contato", "11 3001"));
+    const std::string contactId = h.State()["contatos"][0]["id"];
+    CHECK(h.State()["recentes"][0]["nome"] == "Meu Contato");
+    CHECK(h.State()["recentes"][0]["contatoId"] == contactId);
+    h.app->OnIncomingCall(5, "113001", "Central");
+    h.Run();
+    CHECK(h.State()["ligacao"]["top"]["name"] == "Meu Contato");
+    h.app->OnCallState(5, CallState::Disconnected, 487);
+    h.Run();
+
+    // Sem os dois, o nome da central.
+    h.Send(R"({"v":1,"cmd":"removeContact","id":")" + contactId + R"("})");
+    h.Send(SetCompanyList(""));
+    CHECK(h.State()["recentes"][0]["nome"] == "Central");
+    h.app->OnIncomingCall(6, "113001", "Central");
+    h.Run();
+    CHECK(h.State()["ligacao"]["top"]["name"] == "Central");
+}
+
+TEST_CASE("the link never goes to the diagnostics") {
+    Harness h;
+    h.Start();
+    h.Send(SetCompanyList(kGoogleLink));
+    h.AnswerFetch(0, SheetBytes(kTwoCompanyContacts));
+    h.Send(kRefreshCompanyList);
+    h.AnswerFetch(1, FetchFailed(CompanyFetchError::Closed));
+    h.Send(kRefreshCompanyList);
+    h.Send(SetCompanyList(kFolderLink));   // no meio de uma leitura: a do Google e descartada
+    h.AnswerFetch(2, SheetBytes(kTwoCompanyContacts));
+    h.AnswerFetch(3, FetchFailed(CompanyFetchError::NotFound));
+    h.Send(SetCompanyList("http://segredo.example.com/lista.csv"));
+    h.Send(R"({"v":1,"cmd":"setCompanyList","link":5})");
+    h.Send(SetCompanyList(""));
+    REQUIRE_FALSE(h.logs.empty());
+    for (const std::string& line : h.logs) {
+        INFO(line);
+        CHECK(line.find("1AbC_dEf-123") == std::string::npos);
+        CHECK(line.find("docs.google.com") == std::string::npos);
+        CHECK(line.find("fileserver01") == std::string::npos);
+        CHECK(line.find("segredo") == std::string::npos);
+        CHECK(line.find("Empresa Teste") == std::string::npos);
+        CHECK(line.find("3001") == std::string::npos);
+    }
+    CHECK(h.Logged("lista da empresa: lendo (Google)"));
+    CHECK(h.Logged("lista da empresa: lendo (caminho)"));
+    CHECK(h.Logged("lista da empresa: erro link fechado"));
+    CHECK(h.Logged("lista da empresa: erro arquivo nao achado"));
+    CHECK(h.Logged("lista da empresa: erro link invalido"));
+}
+
+TEST_CASE("a read that returns after the link was cleared is dropped") {
+    Harness h;
+    StartWithCompanyList(h);
+    h.Send(kRefreshCompanyList);
+    REQUIRE(h.fetches.size() == 2);
+    h.Send(SetCompanyList(""));
+    REQUIRE(h.State()["empresa"] == Empresa("", "nenhuma", "", 0, 0, 2));
+    const std::string file = h.files.files.at("dados/contatos-empresa.json");
+    const size_t messages = h.Messages("contatosEmpresa").size();
+    h.AnswerFetch(1, SheetBytes(kTwoCompanyContacts));
+    CHECK(h.State()["empresa"] == Empresa("", "nenhuma", "", 0, 0, 2));
+    CHECK(h.files.files.at("dados/contatos-empresa.json") == file);
+    CHECK(h.Messages("contatosEmpresa").size() == messages);
+    CHECK(h.fetches.size() == 2);
+    CHECK(h.Logged("lista da empresa: a leitura de um link que saiu foi descartada"));
+    // Um pedido de novo que esperava essa leitura tambem nao roda sem link.
+    h.Send(SetCompanyList(kGoogleLink));
+    REQUIRE(h.fetches.size() == 3);
+    h.Send(kRefreshCompanyList);   // de novo, depois desta
+    h.Send(SetCompanyList(""));
+    h.AnswerFetch(2, SheetBytes(kTwoCompanyContacts));
+    CHECK(h.fetches.size() == 3);
+    CHECK(h.State()["empresa"]["situacao"] == "nenhuma");
+    CHECK(h.State()["empresa"]["quantos"] == 0);
+}
+
+TEST_CASE("a read that returns after the link changed is dropped and the new link is read") {
+    Harness h;
+    StartWithCompanyList(h);
+    h.Send(kRefreshCompanyList);
+    REQUIRE(h.fetches.size() == 2);
+    h.Send(SetCompanyList(kFolderLink));
+    CHECK(h.fetches.size() == 2);   // uma leitura por vez: a do link novo espera a aberta
+    // A lista de antes fica ate a primeira leitura boa do link novo.
+    CHECK(h.State()["empresa"] == Empresa(kFolderLink, "lendo", "", 1000000, 2, 1));
+    const std::string file = h.files.files.at("dados/contatos-empresa.json");
+    const size_t messages = h.Messages("contatosEmpresa").size();
+    h.AnswerFetch(1, SheetBytes("Nome;Numero\nDo Google;3009\n"));
+    CHECK(h.files.files.at("dados/contatos-empresa.json") == file);
+    CHECK(h.Messages("contatosEmpresa").size() == messages);
+    REQUIRE(h.fetches.size() == 3);
+    CHECK(h.fetches[2].source.kind == CompanySourceKind::Path);
+    CHECK(h.fetches[2].source.location == kFolderLink);
+    CHECK(h.State()["empresa"] == Empresa(kFolderLink, "lendo", "", 1000000, 2, 1));
+    h.AnswerFetch(2, SheetBytes("Nome;Numero\nDa Pasta;3010\n"));
+    CHECK(h.State()["empresa"] == Empresa(kFolderLink, "ok", "", 1000000, 1, 2));
+    CHECK(NamesOf(LastCompanyContacts(h)["contatos"]) == std::vector<std::string>{"Da Pasta"});
+
+    // Um link que nao vale no meio de uma leitura: o erro na hora, e a leitura aberta e descartada.
+    h.Send(kRefreshCompanyList);
+    REQUIRE(h.fetches.size() == 4);
+    h.Send(SetCompanyList("http://intranet/x.csv"));
+    CHECK(h.State()["empresa"]["situacao"] == "erro");
+    CHECK(h.State()["empresa"]["erro"] == kInvalidLink);
+    h.AnswerFetch(3, SheetBytes("Nome;Numero\nDa Pasta;3010\nOutro;3011\n"));
+    CHECK(h.State()["empresa"] == Empresa("http://intranet/x.csv", "erro", kInvalidLink, 1000000, 1, 2));
+    CHECK(h.fetches.size() == 4);
+
+    // E um link que vale logo depois do que nao vale, com a leitura ainda aberta: lendo (o erro sai), e ele e lido
+    // quando ela voltar.
+    h.Send(SetCompanyList(kGoogleLink));
+    REQUIRE(h.fetches.size() == 5);
+    h.Send(SetCompanyList("http://intranet/x.csv"));
+    h.Send(SetCompanyList(kFolderLink));
+    CHECK(h.State()["empresa"] == Empresa(kFolderLink, "lendo", "", 1000000, 1, 2));
+    h.AnswerFetch(4, SheetBytes("Nome;Numero\nDo Google;3009\n"));
+    REQUIRE(h.fetches.size() == 6);
+    CHECK(h.fetches[5].source.location == kFolderLink);
+    CHECK(h.State()["empresa"]["quantos"] == 1);
+}
+
+TEST_CASE("no company read starts after quitting") {
+    Harness h;
+    h.Start();
+    h.Send(SetCompanyList(kGoogleLink));
+    REQUIRE(h.fetches.size() == 1);
+    h.Send(kRefreshCompanyList);   // de novo, depois da aberta
+    h.Send(R"({"v":1,"cmd":"quit"})");
+    h.AnswerFetch(0, SheetBytes(kTwoCompanyContacts));
+    h.time.Advance(900000);
+    h.Run();
+    h.Send(kRefreshCompanyList);   // ignorado depois do Sair
+    CHECK(h.fetches.size() == 1);
+}
+
+TEST_CASE("the network folder down at startup keeps the saved list and recovers by itself") {
+    Harness h;
+    h.SeedCompanyLink(kFolderLink);
+    h.SeedCompanyList({SheetContact{L"Empresa Teste", "3001", L""}}, 1761062400000LL);
+    h.StartRegistered();
+    REQUIRE(h.fetches.size() == 1);
+    CHECK(h.fetches[0].source.kind == CompanySourceKind::Path);
+    // A VPN ainda nao conectou: a pasta nao responde.
+    h.AnswerFetch(0, FetchFailed(CompanyFetchError::NotFound));
+    CHECK(h.State()["empresa"] == Empresa(kFolderLink, "erro", kFileNotFound, 1761062400000LL, 1, 1));
+    CHECK(NamesOf(LastCompanyContacts(h)["contatos"]) == std::vector<std::string>{"Empresa Teste"});
+    h.app->OnIncomingCall(4, "3001", "Central");
+    h.Run();
+    CHECK(h.State()["ligacao"]["top"]["name"] == "Empresa Teste");
+    h.app->OnCallState(4, CallState::Disconnected, 487);
+    h.Run();
+    // A leitura de 15 min depois acha a pasta.
+    h.time.Advance(900000);
+    h.Run();
+    REQUIRE(h.fetches.size() == 2);
+    CHECK(h.State()["empresa"]["situacao"] == "lendo");
+    h.AnswerFetch(1, SheetBytes("Nome;Numero\nEmpresa Teste;3001\nNovo Ramal;3005\n"));
+    CHECK(h.State()["empresa"] == Empresa(kFolderLink, "ok", "", 1900000, 2, 2));
+    CHECK(NamesOf(LastCompanyContacts(h)["contatos"]) == std::vector<std::string>{"Empresa Teste", "Novo Ramal"});
+}
+
+TEST_CASE("without a saved link the company list starts empty and a list left on disk is cleared") {
+    Harness h;
+    // Um Clear que o disco recusou deixou a lista no arquivo, sem o link.
+    h.SeedCompanyList({SheetContact{L"Empresa Teste", "3001", L""}}, 1761062400000LL);
+    h.StartRegistered();
+    CHECK(h.State()["empresa"] == Empresa("", "nenhuma", "", 0, 0, 0));
+    CHECK(h.Messages("contatosEmpresa").empty());
+    CHECK(h.fetches.empty());
+    const json file = h.File("dados/contatos-empresa.json");
+    CHECK(file["contatos"] == json::array());
+    CHECK(file["atualizada"] == 0);
+    h.app->OnIncomingCall(4, "3001", "Central");
+    h.Run();
+    CHECK(h.State()["ligacao"]["top"]["name"] == "Central");
+    h.app->OnCallState(4, CallState::Disconnected, 487);
+    h.Run();
+    // O arquivo ja vazio nao e gravado de novo a cada abertura.
+    const int writes = h.files.writeCount;
+    h.Restart();
+    CHECK(h.files.writeCount == writes);
+    // E com o disco recusando o Clear de novo, a lista fica so no arquivo, sem valer.
+    h.SeedCompanyList({SheetContact{L"Empresa Teste", "3001", L""}}, 1761062400000LL);
+    h.files.failWrites = true;
+    h.Restart();
+    h.files.failWrites = false;
+    CHECK(h.State()["empresa"] == Empresa("", "nenhuma", "", 0, 0, 0));
+    CHECK(h.Messages("contatosEmpresa").empty());
+    CHECK(h.Logged("contatos-empresa.json: a lista sem o link nao foi apagada"));
+    CHECK(h.File("dados/contatos-empresa.json")["contatos"].size() == 1);
+    h.app->OnIncomingCall(5, "3001", "Central");
+    h.Run();
+    CHECK(h.State()["ligacao"]["top"]["name"] == "Central");
+}
+
+TEST_CASE("a read answered twice counts once") {
+    Harness h;
+    StartWithCompanyList(h);
+    const size_t messages = h.Messages("contatosEmpresa").size();
+    h.AnswerFetch(0, SheetBytes("Nome;Numero\nOutra Lista;3009\n"));
+    CHECK(h.State()["empresa"]["vez"] == 1);
+    CHECK(h.State()["empresa"]["quantos"] == 2);
+    CHECK(h.Messages("contatosEmpresa").size() == messages);
+    CHECK(h.Logged("lista da empresa: uma resposta repetida foi ignorada"));
+    // Tambem com outra leitura aberta: ela continua esperando a resposta dela.
+    h.Send(kRefreshCompanyList);
+    REQUIRE(h.fetches.size() == 2);
+    h.AnswerFetch(0, FetchFailed(CompanyFetchError::Offline));
+    CHECK(h.State()["empresa"]["situacao"] == "lendo");
+    h.AnswerFetch(1, SheetBytes("Nome;Numero\nEmpresa Teste;3001\n"));
+    CHECK(h.State()["empresa"]["situacao"] == "ok");
+    CHECK(h.State()["empresa"]["vez"] == 2);
+}
+
+TEST_CASE("a good read that the disk refuses keeps the list and says the file was not saved") {
+    Harness h;
+    StartWithCompanyList(h);
+    const std::string file = h.files.files.at("dados/contatos-empresa.json");
+    h.Send(kRefreshCompanyList);
+    h.files.failWrites = true;
+    h.AnswerFetch(1, SheetBytes("Nome;Numero\nOutra Lista;3009\n"));
+    CHECK(h.State()["empresa"] == Empresa(kGoogleLink, "erro", kCantSaveFile, 1000000, 2, 1));
+    CHECK(h.files.files.at("dados/contatos-empresa.json") == file);
+    CHECK(h.Logged("lista da empresa: erro disco"));
+    // O config.json recusado: o link fica o de antes, e nada e lido.
+    h.Send(SetCompanyList(kFolderLink));
+    CHECK(h.State()["empresa"]["link"] == kGoogleLink);
+    CHECK(h.fetches.size() == 2);
+    CHECK(h.Logged("config.json: a planilha da empresa nao foi gravada"));
+    h.files.failWrites = false;
+}
+
+TEST_CASE("the sheet commands without their hooks only leave a line in the diagnostics") {
+    Harness h;
+    h.sheetHooks = false;
+    h.Make();
+    h.Start();
+    h.Send(kImportContacts);
+    h.Send(kExportContacts);
+    h.Send(SetCompanyList(kGoogleLink));
+    h.Send(kRefreshCompanyList);
+    CHECK(h.Toasts().empty());
+    CHECK(h.Logged("importContacts: o executavel nao tem a janela de abrir"));
+    CHECK(h.Logged("exportContacts: o executavel nao tem a janela de salvar"));
+    CHECK(h.Logged("lista da empresa: o executavel nao le a planilha"));
+    // O link fica gravado (e a configuracao).
+    CHECK(h.File("dados/config.json")["planilha_empresa"] == kGoogleLink);
+}
+
+TEST_CASE("a hook answer that arrives after the shutdown is harmless") {
+    Harness h;
+    h.Start();
+    h.files.files["importar/c.csv"] = "Nome;Numero\nBruno;2003\n";
+    h.Send(kImportContacts);
+    h.Send(kExportContacts);
+    h.Send(SetCompanyList(kGoogleLink));
+    REQUIRE(h.importPicks.size() == 1);
+    REQUIRE(h.exportPicks.size() == 1);
+    REQUIRE(h.fetches.size() == 1);
+    h.app->Shutdown();
+    h.importPicks[0]("importar/c.csv");
+    h.exportPicks[0]("exportar/c.csv", "csv");
+    h.fetches[0].done(SheetBytes(kTwoCompanyContacts));
+    h.Run();
+    CHECK(h.Logged("tarefa descartada"));
+    CHECK(h.Toasts().empty());
+    CHECK(h.files.files.count("exportar/c.csv") == 0);
+    CHECK(h.files.files.count("dados/contatos-empresa.json") == 0);
 }

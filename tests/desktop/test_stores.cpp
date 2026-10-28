@@ -499,6 +499,36 @@ TEST_CASE("settings round trip and defaults") {
     CHECK(again.Get().windowW == 0);
 }
 
+TEST_CASE("settings: the company sheet link is saved as planilha_empresa, and an older file has none (rc.4)") {
+    MemoryFileSystem files;
+    CHECK(Settings().companyListLink.empty());
+    // Um config.json de antes da rc.4, sem a chave: sem planilha da empresa.
+    files.files[kSettingsPath] = R"({"versao":1,"nao_perturbe":true,"bipe_fim":false})";
+    SettingsStore store(files, kSettingsPath);
+    REQUIRE(store.Load());
+    CHECK(store.Get().companyListLink.empty());
+    CHECK(store.Get().doNotDisturb);
+
+    Settings settings = store.Get();
+    settings.companyListLink = "\\\\servidor\\pasta\\Lista S\xc3\xa3o Paulo.xlsx";
+    REQUIRE(store.Save(settings));
+    CHECK(nlohmann::json::parse(files.files.at(kSettingsPath))["planilha_empresa"] ==
+          "\\\\servidor\\pasta\\Lista S\xc3\xa3o Paulo.xlsx");
+    SettingsStore reloaded(files, kSettingsPath);
+    REQUIRE(reloaded.Load());
+    CHECK(reloaded.Get().companyListLink == "\\\\servidor\\pasta\\Lista S\xc3\xa3o Paulo.xlsx");
+    CHECK(reloaded.Get().doNotDisturb);
+    CHECK_FALSE(reloaded.Get().bipeFim);
+
+    // Vazio (o link tirado) tambem vai ao disco; um valor que nao e texto vale como nenhum.
+    settings.companyListLink.clear();
+    REQUIRE(reloaded.Save(settings));
+    CHECK(nlohmann::json::parse(files.files.at(kSettingsPath))["planilha_empresa"] == "");
+    files.files[kSettingsPath] = R"({"versao":1,"planilha_empresa":5})";
+    REQUIRE(reloaded.Load());
+    CHECK(reloaded.Get().companyListLink.empty());
+}
+
 TEST_CASE("settings: missing or mistyped keys keep the defaults") {
     MemoryFileSystem files;
     files.files[kSettingsPath] = R"({"versao":1,"microfone":"x","atender_automatico":true,"janela_x":1.5,"janela_largura":"340","janela_altura":-5})";

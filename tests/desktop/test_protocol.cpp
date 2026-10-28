@@ -52,6 +52,9 @@ TEST_CASE("every command of the protocol parses into its command") {
         {"updateNow", CommandKind::UpdateNow},
         {"updateLater", CommandKind::UpdateLater},
         {"cancelLogin", CommandKind::CancelLogin},
+        {"importContacts", CommandKind::ImportContacts},           // rc.4
+        {"exportContacts", CommandKind::ExportContacts},
+        {"refreshCompanyList", CommandKind::RefreshCompanyList},
     };
     for (const Simple& s : simple) {
         const Command command = Parsed(std::string(R"({"v":1,"cmd":")") + s.name + "\"}");
@@ -236,6 +239,16 @@ TEST_CASE("every command of the protocol parses into its command") {
         CHECK(c.key == "bipeFim");
         CHECK(c.value);
     }
+    SUBCASE("the company list (rc.4)") {
+        Command c = Parsed(R"({"v":1,"cmd":"setCompanyList","link":"\\\\servidor\\pasta\\Lista S\u00e3o Paulo.xlsx"})");
+        CHECK(c.kind == CommandKind::SetCompanyList);
+        CHECK(std::string(CommandName(c.kind)) == "setCompanyList");
+        CHECK(c.link == "\\\\servidor\\pasta\\Lista S\xc3\xa3o Paulo.xlsx");
+        // Vazio tira a lista.
+        c = Parsed(R"({"v":1,"cmd":"setCompanyList","link":""})");
+        CHECK(c.kind == CommandKind::SetCompanyList);
+        CHECK(c.link.empty());
+    }
     SUBCASE("resize: the edge the interface grabbed (rc.2)") {
         for (const char* edge : {"cima", "cima-esquerda", "cima-direita", "baixo-direita"}) {
             const Command c = Parsed(std::string(R"({"v":1,"cmd":"resize","borda":")") + edge + "\"}");
@@ -310,6 +323,11 @@ TEST_CASE("version 2, an unknown command and a field of the wrong type parse int
     CHECK(Refused(R"({"v":1,"cmd":"adminSet","servidores":[{"endereco":"a","porta":50.5}]})"));
     CHECK(Refused(R"({"v":1,"cmd":"adminSet","servidores":[{"endereco":"a","porta":99999999999}]})"));
     CHECK(Refused(R"({"v":1,"cmd":"setSetting","chave":"bipeFim","valor":1})"));
+    // rc.4
+    CHECK(Refused(R"({"v":1,"cmd":"setCompanyList"})"));
+    CHECK(Refused(R"({"v":1,"cmd":"setCompanyList","link":5})"));
+    CHECK(Refused(R"({"v":1,"cmd":"setCompanyList","link":null})"));
+    CHECK(Refused(R"({"v":1,"cmd":"setCompanyList","link":["https://x"]})"));
     // Campos a mais nao atrapalham.
     CHECK_FALSE(Refused(R"({"v":1,"cmd":"answer","extra":true})"));
 }
@@ -323,7 +341,7 @@ TEST_CASE("the empty state serializes with every key") {
                                            "naoPerturbe", "atenderAutomatico", "ligacao", "recentes",
                                            "perdidas",  "contatos",   "audio",    "iniciarComWindows",
                                            "versao",    "teclado",    "tecladoVez", "atalhos",
-                                           "admin",     "entrarAdmin", "config"};
+                                           "admin",     "entrarAdmin", "config",  "empresa"};
     for (const std::string& key : keys) {
         INFO(key);
         CHECK(s.contains(key));
@@ -358,6 +376,53 @@ TEST_CASE("the empty state serializes with every key") {
           json({{"aberto", false}, {"naoPerturbe", true}, {"atenderAuto", true}, {"blf", false}, {"puxa", false}}));
     CHECK(s["entrarAdmin"] == json({{"erro", ""}, {"esperaAte", 0}, {"vez", 0}}));
     CHECK(s["config"] == json({{"bipeFim", true}}));
+    REQUIRE(s.contains("empresa"));
+    CHECK(s["empresa"] == json({{"link", ""},
+                                {"situacao", "nenhuma"},
+                                {"erro", ""},
+                                {"atualizadaEm", 0},
+                                {"quantos", 0},
+                                {"vez", 0}}));
+}
+
+TEST_CASE("the state serializes the company list (rc.4)") {
+    BridgeState state;
+    state.company.link = "https://docs.google.com/spreadsheets/d/1AbC_dEf-123/edit";
+    state.company.status = CompanyListStatus::Error;
+    state.company.error = "Sem conex\xc3\xa3o com a planilha. Fica a \xc3\xbaltima lista.";
+    state.company.updatedMs = 1761062400000LL;
+    state.company.count = 230;
+    state.company.seq = 4;
+    const json s = Parse(StateMessage(state))["state"];
+    REQUIRE(s.contains("empresa"));
+    const json empresa = s["empresa"];
+    CHECK(empresa.size() == 6);
+    CHECK(empresa == json({{"link", "https://docs.google.com/spreadsheets/d/1AbC_dEf-123/edit"},
+                           {"situacao", "erro"},
+                           {"erro", "Sem conex\xc3\xa3o com a planilha. Fica a \xc3\xbaltima lista."},
+                           {"atualizadaEm", 1761062400000LL},
+                           {"quantos", 230},
+                           {"vez", 4}}));
+    state.company.error.clear();
+    state.company.status = CompanyListStatus::Reading;
+    CHECK(Parse(StateMessage(state))["state"]["empresa"]["situacao"] == "lendo");
+    state.company.status = CompanyListStatus::Ok;
+    CHECK(Parse(StateMessage(state))["state"]["empresa"]["situacao"] == "ok");
+    state.company.status = CompanyListStatus::None;
+    CHECK(Parse(StateMessage(state))["state"]["empresa"]["situacao"] == "nenhuma");
+}
+
+TEST_CASE("the company contacts message carries the list and its turn (rc.4)") {
+    std::vector<SheetContact> contacts;
+    contacts.push_back(SheetContact{L"Jos\u00e9 Ara\u00fajo", "(11) 3001-0000", L"Recep\u00e7\u00e3o"});
+    contacts.push_back(SheetContact{L"Ana", "3002", L""});
+    CHECK(CompanyContactsMessage(3, contacts) ==
+          "{\"v\":1,\"type\":\"contatosEmpresa\",\"vez\":3,\"contatos\":["
+          "{\"nome\":\"Jos\xc3\xa9 Ara\xc3\xbajo\",\"numero\":\"(11) 3001-0000\","
+          "\"observacao\":\"Recep\xc3\xa7\xc3\xa3o\"},"
+          "{\"nome\":\"Ana\",\"numero\":\"3002\",\"observacao\":\"\"}]}");
+    // A lista vazia (o link saiu).
+    CHECK(CompanyContactsMessage(5, {}) == R"({"v":1,"type":"contatosEmpresa","vez":5,"contatos":[]})");
 }
 
 TEST_CASE("the state serializes the shortcuts, the admin area, the internet and the end beep setting (rc.3)") {

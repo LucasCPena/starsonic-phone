@@ -12,15 +12,17 @@ interface recebe o estado pronto e manda comandos. Uma interface que discorde do
 
 - Interface → C++: `window.chrome.webview.postMessage({v: 1, cmd: "<comando>", ...campos})`. Os campos ficam no
   mesmo objeto do `cmd`.
-- C++ → interface: quatro mensagens, sempre com `v: 1`:
+- C++ → interface: cinco mensagens, sempre com `v: 1`:
   - `{"v":1,"type":"state","state":{...}}` — o estado inteiro, a cada mudança (só quando muda);
   - `{"v":1,"type":"toast","texto":"..."}` — um aviso de 2 s;
   - `{"v":1,"type":"ring","tipo":"completo"|"espera"|"parar"|"fim"}` — o toque (`fim`, rc.3: o bipe do fim da
     ligação, uma vez);
-  - `{"v":1,"type":"update","versao":"...","notas":"..."}` — a pergunta da atualização (ver "Atualização").
+  - `{"v":1,"type":"update","versao":"...","notas":"..."}` — a pergunta da atualização (ver "Atualização");
+  - `{"v":1,"type":"contatosEmpresa","vez":N,"contatos":[...]}` — (rc.4) a lista de contatos da empresa (ver "A lista
+    da empresa").
 - Ao carregar (e a cada recarga), a interface manda `{"v":1,"cmd":"ready"}` e recebe o estado atual e o toque atual
-  (nesta ordem), também com uma ligação que já tocava antes de a página carregar, e depois a pergunta da atualização,
-  se há uma aberta.
+  (nesta ordem), também com uma ligação que já tocava antes de a página carregar, depois a lista da empresa (rc.4, se
+  houve uma desde a abertura do app) e a pergunta da atualização, se há uma aberta.
 - Os textos são UTF-8. Os tempos são milissegundos desde 1970 (como o `Date.now()` do JavaScript).
 
 ## Versão
@@ -221,12 +223,21 @@ A configuração fica no `admin.json`, protegido pelo DPAPI do usuário (como as
 | `saveContact` | `id` (texto, opcional), `nome` (texto), `numero` (texto), `observacao` (texto, opcional) | Novo contato (sem `id`) ou a edição de um. Nome e número são obrigatórios (depois de tirar os espaços e os separadores); sem eles, nada é gravado. |
 | `removeContact` | `id` (texto) | Remove o contato (a interface pede a confirmação antes). |
 | `viewRecents` | — | A pessoa abriu a tela Recentes: `perdidas` volta a 0. |
+| `importContacts` | — | (rc.4) "Importar planilha…": o executável abre a janela de abrir arquivo do Windows (gancho `pickImportFile`). O arquivo escolhido é lido como a planilha da empresa (`.xlsx` ou CSV, pelo conteúdo) e os contatos novos entram nos meus (`contatos.json`), cada um com um id novo, numa gravação só. Ficam de fora a linha sem nome ou sem número, o contato igual a um meu (o mesmo nome, sem acento e sem caixa, e o mesmo número pelo `NormalizeDialString`) e o repetido dentro da planilha. O resultado vem num toast: `<n> contatos importados.`, `<n> contatos importados (<m> já existiam).` (`<m>`: os meus que a planilha trouxe de novo; o número 1 vai no singular: `1 contato importado.`, `(1 já existia)`), `Nenhum contato novo na planilha.`, `Não consegui ler a planilha. Ela precisa das colunas Nome e Número.`, `A planilha é grande demais (o máximo é 10.000 contatos).`, `Não consegui abrir o arquivo.` ou `Não consegui salvar o arquivo.` (o disco recusou o `contatos.json`). A janela cancelada: nada, sem toast. |
+| `exportContacts` | — | (rc.4) "Exportar planilha…": o executável abre a janela de salvar (gancho `pickExportFile`), e o tipo escolhido decide o formato. Vão só os meus contatos, em ordem alfabética, com o cabeçalho Nome, Número e Observação: o `.xlsx` (uma aba, "Contatos", todas as células como texto) ou o CSV (UTF-8 com BOM, ponto e vírgula). O resultado vem num toast: `<n> contatos exportados.` (`1 contato exportado.`) ou `Não consegui salvar o arquivo.`. A janela cancelada: nada. |
+| `setCompanyList` | `link` (texto; pode ser `""`) | (rc.4) O "Salvar" da "Planilha da empresa" (Configurações → Contatos): o link (Google Planilhas, OneDrive/SharePoint, Dropbox, outro `https://`) ou o caminho do arquivo (`\\servidor\pasta\arquivo`, `C:\…`, `file:///…`), sem os espaços das pontas, vai ao `config.json` (`planilha_empresa`) e é lido (ver "A lista da empresa"). O mesmo link de novo é o `refreshCompanyList`. `""` tira a lista: `empresa.situacao` `nenhuma`, a lista vazia na `contatosEmpresa`, e o `contatos-empresa.json` com a lista vazia. Um texto que não é `https://` nem caminho (também o `http://`) fica salvo, com o erro `Use um link https:// ou o caminho de um arquivo.`, e não é lido. |
+| `refreshCompanyList` | — | (rc.4) "Atualizar agora": lê a planilha da empresa de novo. Sem link: nada. |
 
 ```json
 {"v":1,"cmd":"saveContact","nome":"Ana Souza","numero":"(11) 98888-7777","observacao":"cliente"}
 {"v":1,"cmd":"saveContact","id":"c1d2e3f4a5b60718","nome":"Ana Souza","numero":"2005","observacao":""}
 {"v":1,"cmd":"removeContact","id":"c1d2e3f4a5b60718"}
 {"v":1,"cmd":"viewRecents"}
+{"v":1,"cmd":"importContacts"}
+{"v":1,"cmd":"exportContacts"}
+{"v":1,"cmd":"setCompanyList","link":"https://docs.google.com/spreadsheets/d/1AbC_dEf-123/edit#gid=456"}
+{"v":1,"cmd":"setCompanyList","link":""}
+{"v":1,"cmd":"refreshCompanyList"}
 ```
 
 ## O estado (C++ → interface)
@@ -265,7 +276,9 @@ A configuração fica no `admin.json`, protegido pelo DPAPI do usuário (como as
              {"id":"0b2e7d4c1a9f3e58","nome":"Menu","numero":"12#","acao":"teclas","blf":false,"estado":null}],
   "admin":{"aberto":false,"naoPerturbe":true,"atenderAuto":true,"blf":true,"puxa":false},
   "entrarAdmin":{"erro":"","esperaAte":0,"vez":0},
-  "config":{"bipeFim":true}
+  "config":{"bipeFim":true},
+  "empresa":{"link":"https://docs.google.com/spreadsheets/d/1AbC_dEf-123/edit#gid=456","situacao":"ok","erro":"",
+             "atualizadaEm":1761062400000,"quantos":230,"vez":1}
 }}
 ```
 
@@ -294,13 +307,13 @@ A configuração fica no `admin.json`, protegido pelo DPAPI do usuário (como as
 | `ligacao` | objeto \| `null` | A tela da ligação (abaixo); `null` sem ligação. |
 | `recentes` | lista | As últimas 500 ligações, a mais nova primeiro: `{numero, nome, tipo, inicio, duracao, contatoId}`. |
 | `recentes[].numero` | texto | O número como veio (a interface o mostra sem o nome). |
-| `recentes[].nome` | texto | Já resolvido: o do contato com o número, senão o que a central mandou, senão `""` (a interface mostra o número). |
+| `recentes[].nome` | texto | Já resolvido: o do contato com o número, senão (rc.4) o da lista da empresa com o número, senão o que a central mandou, senão `""` (a interface mostra o número). |
 | `recentes[].tipo` | `"feita"` \| `"recebida"` \| `"perdida"` | Perdida em vermelho. |
 | `recentes[].inicio` | inteiro | Quando a ligação começou (ms desde 1970): os grupos Hoje, Ontem e a data, e a hora. |
 | `recentes[].duracao` | inteiro | Quanto durou desde o atendimento, em **milissegundos** (0 na perdida e na feita que não completou). |
-| `recentes[].contatoId` | texto | O contato com esse número (`""`: nenhum; a linha oferece "Salvar contato"). |
+| `recentes[].contatoId` | texto | O contato com esse número (`""`: nenhum; a linha oferece "Salvar contato"). Só os meus contatos: com o nome da lista da empresa, `""` (o "Salvar contato" continua). |
 | `perdidas` | inteiro | Quantas perdidas desde a última visita aos Recentes (`viewRecents`; na abertura do app, conta do zero). O filtro "Perdidas · <n>". |
-| `contatos` | lista | A agenda em ordem alfabética (sem acento e sem caixa): `{id, nome, numero, observacao}` (texto). |
+| `contatos` | lista | A agenda em ordem alfabética (sem acento e sem caixa): `{id, nome, numero, observacao}` (texto). Só os meus contatos: os da empresa vêm na mensagem `contatosEmpresa` (rc.4). |
 | `audio` | objeto | Configurações → Áudio. |
 | `audio.microfones`, `audio.altoFalantes` | lista | Os dispositivos que o motor vê agora: `{id: inteiro, nome: texto}`. O `id` é só da lista de agora (muda quando um dispositivo entra ou sai): a escolha vai pelo `nome`. |
 | `audio.microfone`, `audio.altoFalante` | texto | O nome escolhido (`""`: o padrão do Windows). Pode não estar na lista (ver `desconectados`). |
@@ -325,6 +338,13 @@ A configuração fica no `admin.json`, protegido pelo DPAPI do usuário (como as
 | `entrarAdmin` | objeto | (rc.3) O resultado do último `adminLogin`: `{erro, esperaAte, vez}`. `erro`: `Senha incorreta.` ou `""` (o da última tentativa). `esperaAte`: até quando (ms desde 1970) o `adminLogin` é recusado depois de 5 senhas erradas seguidas (o diálogo espera até `Date.now() >= esperaAte`); `0` sem espera. `vez`: sobe a cada `adminLogin` respondido (a senha certa, a errada e a recusada na espera; começa em 0), como o `tecladoVez`: duas erradas seguidas têm o mesmo `erro`, e só a `vez` diz que a segunda foi respondida. **Quando a `vez` muda**, a interface limpa o campo Senha e mostra o `erro` (nenhum: a área abriu); fora disso, o `erro` que está no estado é de uma tentativa velha e não aparece (por exemplo, ao abrir o diálogo de novo). |
 | `config` | objeto | (rc.3) Configurações novas: `{bipeFim}`. |
 | `config.bipeFim` | booleano | "Bipe quando a ligação cai ou termina" (`setSetting` `bipeFim`; ligado de fábrica). |
+| `empresa` | objeto | (rc.4) A lista da empresa (Configurações → Contatos): `{link, situacao, erro, atualizadaEm, quantos, vez}`. Os contatos vêm na mensagem `contatosEmpresa` (ver "A lista da empresa"). |
+| `empresa.link` | texto | O texto salvo (`setCompanyList`), como foi digitado, sem os espaços das pontas; `""` sem a lista da empresa. |
+| `empresa.situacao` | `"nenhuma"` \| `"lendo"` \| `"ok"` \| `"erro"` | `nenhuma`: sem link. `lendo`: uma leitura do link de agora está aberta ou espera a que está aberta ("Lendo a planilha…"). `ok`: a última leitura foi boa ("Atualizada às 14:32 · 230 contatos"). `erro`: a última falhou, ou o link não vale (o texto em `erro`; com `atualizadaEm` maior que 0, a lista de antes continua: "Última lista: às 14:32 · 230 contatos"). |
+| `empresa.erro` | texto | Com `situacao` `erro`, o texto da situação: `Não consegui abrir o link. Confira se a planilha está compartilhada para qualquer pessoa com o link.` (401, 403, 404, ou uma página de entrar no lugar da planilha), `Sem conexão com a planilha. Fica a última lista.` (sem rede, servidor fora do ar, tempo esgotado), `Não achei o arquivo. Confira o caminho e se este computador tem acesso à pasta.`, `Use um link https:// ou o caminho de um arquivo.`, `Não consegui ler a planilha. Ela precisa das colunas Nome e Número.`, `A planilha é grande demais (o máximo é 10.000 contatos).` ou `Não consegui salvar o arquivo.` (a leitura foi boa, mas o disco recusou o `contatos-empresa.json`: a lista de antes continua). `""` fora do `erro`. |
+| `empresa.atualizadaEm` | inteiro | A hora da última leitura boa (ms desde 1970), também de uma abertura anterior (o `contatos-empresa.json`); `0` sem nenhuma. A interface escreve a hora local ("às 14:32", ou "em 26/10 às 14:32" se não for de hoje). |
+| `empresa.quantos` | inteiro | Os contatos da lista de agora (a da última leitura boa). |
+| `empresa.vez` | inteiro | Sobe a cada lista nova (a guardada, na abertura; uma leitura boa; a lista vazia quando o link sai); `0` sem nenhuma lista desde a abertura do app. É a `vez` da última `contatosEmpresa`. |
 
 ### `ligacao`
 
@@ -348,7 +368,7 @@ Cada cartão (`top`, `second`):
 |---|---|---|
 | `id` | inteiro | O id da ligação no motor; `0` numa feita que ainda não tem id (ver `hangup`). |
 | `number` | texto | O número. |
-| `name` | texto | Já resolvido: o do contato com o número, senão o que a central mandou; `""` sem os dois (a interface mostra o número). |
+| `name` | texto | Já resolvido: o do contato com o número, senão (rc.4) o da lista da empresa com o número, senão o que a central mandou; `""` sem nenhum (a interface mostra o número). O mesmo nome vai no aviso de perdida (`Ligação perdida de <nome>`). |
 | `incoming` | booleano | Recebida (`true`) ou feita. |
 | `phase` | `"ringing"` \| `"dialing"` \| `"active"` | Tocando (recebida), chamando (feita) ou em andamento. Uma recebida atendida aqui fica `active` com `activeSinceMs` 0 até o motor confirmar. |
 | `activeSinceMs` | inteiro | Quando os dois lados atenderam (ms desde 1970; 0: ainda não). O tempo da ligação é `Date.now() - activeSinceMs`. |
@@ -383,6 +403,46 @@ de novo em instantes.`) não vem no estado: ele chega como um `toast`, uma vez, 
 {"v":1,"type":"toast","texto":"A troca de conta fica para o fim da ligação."}
 {"v":1,"type":"ring","tipo":"completo"}
 {"v":1,"type":"ring","tipo":"fim"}
+```
+
+## A lista da empresa (rc.4)
+
+A planilha da empresa (spec da rc.4, seção 5): um link ou um caminho em Configurações → Contatos (`setCompanyList`),
+lido pelo executável fora da thread de comandos (o gancho `fetchCompanyList`), em CSV ou `.xlsx`, com a mesma leitura
+do `importContacts`. A última lista boa fica no `contatos-empresa.json`, na pasta de dados.
+
+- **Quando o C++ lê:** ao abrir o app, com o link salvo (a lista guardada já aparece antes da leitura, com `situacao`
+  `lendo`); a cada 15 minutos, contados da última leitura que começou (um "Atualizar agora" recomeça a conta); no
+  `setCompanyList` e no `refreshCompanyList`.
+- **Uma leitura por vez:** um pedido no meio de uma leitura espera ela voltar e roda uma vez só depois, com o link
+  salvo de agora.
+- **Uma leitura boa** troca a lista inteira, também por uma vazia (a planilha só com o cabeçalho), grava o
+  `contatos-empresa.json` e manda a `contatosEmpresa` com a `vez` nova. **Uma que falha** deixa a lista de antes (na
+  memória e no arquivo) e põe o motivo em `empresa.erro`.
+- **O link trocado:** a lista de antes fica até a primeira leitura boa do link novo. Uma leitura que volta depois de o
+  link mudar (ou sair) é descartada: nada muda por ela.
+- **O link tirado** (`setCompanyList` com `""`): a lista sai (a `contatosEmpresa` com a lista vazia) e nada mais é
+  lido. Na abertura sem o link, a lista é vazia (e o `contatos-empresa.json` fica com a lista vazia).
+- **Os nomes nas ligações** (a recebida, o aviso do canto, os Recentes e o toast da perdida): o meu contato com o
+  número, senão o da lista da empresa, senão o nome que a central mandou (os números comparados pelo
+  `NormalizeDialString`).
+- **O diagnóstico** nunca leva o link (ele pode ser uma chave de acesso) nem os nomes e os números dos contatos: só o
+  tipo da fonte (`lista da empresa: lendo (Google)`, e `Google (publicado)`, `OneDrive`, `SharePoint`, `Dropbox`,
+  `link` ou `caminho`) e as contagens.
+
+A mensagem:
+
+- `{"v":1,"type":"contatosEmpresa","vez":N,"contatos":[{"nome","numero","observacao"}]}` (texto), na ordem da
+  planilha: a interface ordena e junta com os meus. Ela fica fora do `state` porque a lista pode ter 10.000 contatos, e
+  o `state` vai inteiro a cada mudança.
+- Vem a cada lista nova, com a `vez` que o `empresa.vez` também passa a ter (ela pode chegar antes do `state` com essa
+  `vez`), e no `ready`, depois do estado e do toque, quando já houve uma lista desde a abertura (`empresa.vez` maior
+  que 0). Com `vez` 0 não há lista: a interface começa vazia.
+- A lista vazia vem quando o link sai.
+
+```json
+{"v":1,"type":"contatosEmpresa","vez":2,"contatos":[{"nome":"Recepção","numero":"3001","observacao":"Térreo"},{"nome":"Ana Souza","numero":"(11) 3002-0000","observacao":""}]}
+{"v":1,"type":"contatosEmpresa","vez":3,"contatos":[]}
 ```
 
 ## Atualização
@@ -477,6 +537,20 @@ depois de abrir e a cada 24 h. Achou uma versão mais nova:
   nunca espera: só guarda o canal num atômico, que a próxima verificação do atualizador lê (não verifica na hora).
 - (rc.3) A área do administrador fecha no `closeToTray` e no `quit`; a bandeja segue `admin.naoPerturbe` (o atalho
   do Não perturbe some quando ele está escondido) e `conta.internet`.
+- (rc.4) O arquivo novo: `DesktopPaths.companyList` (`contatos-empresa.json`, na pasta de dados).
+- (rc.4) Os três ganchos novos são chamados na thread de comandos e nunca esperam; cada um responde uma vez, por um
+  callback que pode vir de qualquer thread e só põe o resto na fila de comandos (um que chega depois do `Shutdown()` é
+  descartado, com uma linha no diagnóstico). Sem o gancho, o comando só deixa uma linha no diagnóstico.
+  - `pickImportFile(callback)`: a janela de abrir arquivo do Windows, na thread da janela (`RunOnWindow`), com os tipos
+    "Planilhas (*.xlsx, *.csv)" e "Todos os arquivos"; o callback leva o caminho (UTF-8), ou `""` se a pessoa cancelou.
+  - `pickExportFile(callback)`: a janela de salvar, com "Planilha do Excel (*.xlsx)" (a padrão) e "CSV (*.csv)" e o
+    nome "Contatos Starsonic.xlsx"; o callback leva o caminho e o formato do tipo escolhido (`"xlsx"` ou `"csv"`), ou
+    `""` se cancelou. Outro formato é um erro do executável: nada é gravado, e o toast é `Não consegui salvar o
+    arquivo.`.
+  - `fetchCompanyList(fonte, callback)`: lê a fonte (`CompanySource`: uma URL `https://` já convertida, pelo WinHTTP,
+    até 10 MB; ou um caminho, pelo disco) numa thread do executável, e o callback leva o resultado (`CompanyFetch`: os
+    bytes, ou o tipo do erro). O `DesktopApp` pede uma leitura por vez. Ao fechar, o executável para essa thread antes
+    do `Shutdown()`: nenhum callback chega a um `DesktopApp` destruído.
 - Ao fechar: `Shutdown()`, o `Stop()` do agendador, o motor destruído, o `DesktopApp` destruído (detalhes no
   `DesktopApp.h`). Depois de a janela fechar, isso tem 5 s: passou, `fechamento forcado` no diagnóstico e o processo
   sai com o código 0.

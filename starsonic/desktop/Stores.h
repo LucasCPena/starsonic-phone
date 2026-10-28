@@ -11,7 +11,8 @@
 //                  (a ultima lista boa da planilha da empresa e a hora da leitura, em ms desde 1970; 0: nenhuma)
 // - recentes.json: {"versao":1,"recentes":[{"numero","nome","tipo":"feita"|"recebida"|"perdida","inicio","duracao"}]}
 //   (inicio: ms desde 1970; duracao: em MILISSEGUNDOS, ao contrario do Android, que grava segundos)
-// - config.json:   {"versao":1,"microfone":-1,"alto_falante":-1,"toque":"","nao_perturbe":false,...}
+// - config.json:   {"versao":1,"microfone":-1,"alto_falante":-1,"toque":"","nao_perturbe":false,...,
+//                  "planilha_empresa":""} (rc.4: a planilha da empresa)
 //
 // Carregar (Load): arquivo que nao existe vale como lista vazia (true); arquivo ilegivel, que nao e JSON, de outra
 // versao ou do formato errado vale como vazio e Load devolve false; o arquivo nao e tocado ate o proximo Save.
@@ -193,6 +194,9 @@ struct Settings {
     std::string captureName;
     std::string playbackName;
     bool bipeFim = true;       // o bipe quando uma ligacao atendida termina (config.json: bipe_fim)
+    // rc.4: a planilha da empresa, o link ou o caminho que a pessoa salvou em Configuracoes (config.json:
+    // planilha_empresa; "" sem a lista da empresa).
+    std::string companyListLink;
 };
 
 class SettingsStore {

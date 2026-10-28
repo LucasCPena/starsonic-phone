@@ -1,7 +1,7 @@
 #pragma once
 // O protocolo da ponte, versao 1, entre a interface (TypeScript, no WebView2) e o C++ do app de PC: os comandos que
-// a interface manda ({"v":1,"cmd":...}) e as mensagens que o C++ manda ({"v":1,"type":"state"|"toast"|"ring"|"update",
-// ...}).
+// a interface manda ({"v":1,"cmd":...}) e as mensagens que o C++ manda ({"v":1,"type":"state"|"toast"|"ring"|"update"|
+// "contatosEmpresa", ...}).
 // O contrato, com cada campo e um exemplo, e o docs/ponte-windows.md: uma mudanca aqui muda o documento junto (e
 // o kBridgeVersion, se o formato deixa de ser compativel). Os textos sao UTF-8.
 #include <cstdint>
@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "CallController.h"   // CallSnapshot, Recent, RingKind
+#include "Planilha.h"         // SheetContact (rc.4)
 
 namespace starsonic {
 
@@ -56,6 +57,10 @@ enum class CommandKind {
     AdminLogin,       // rc.3: a area do administrador
     AdminLogout,
     AdminSet,
+    ImportContacts,       // rc.4: importar e exportar os contatos (as janelas do executavel)
+    ExportContacts,
+    SetCompanyList,       // rc.4: a planilha da empresa
+    RefreshCompanyList,
 };
 
 // Um servidor da lista do administrador (adminSet e o estado): o endereco (UTF-8) e a porta (UDP e TCP).
@@ -119,6 +124,8 @@ struct Command {
     bool blf = false;
     // adminSet
     AdminChanges admin;
+    // setCompanyList (rc.4): o link ou o caminho da planilha da empresa, como foi digitado ("" tira a lista).
+    std::string link;
 };
 
 // O comando do JSON, ou nada (com o motivo em *error, se error nao e nullptr): texto que nao e JSON, sem "v":1,
@@ -214,6 +221,18 @@ struct AudioView {                  // audio
     std::vector<std::string> disconnected;   // desconectados: os nomes escolhidos que nao estao na lista agora
 };
 
+// empresa.situacao (rc.4): "nenhuma" (sem link), "lendo", "ok" (a ultima leitura foi boa) ou "erro".
+enum class CompanyListStatus { None, Reading, Ok, Error };
+
+struct CompanyView {                // empresa (rc.4): a lista da empresa (os contatos vem na mensagem contatosEmpresa)
+    std::string link;               // o texto salvo
+    CompanyListStatus status = CompanyListStatus::None;   // situacao
+    std::string error;              // erro: o texto da spec 5.4 ("" fora do erro)
+    int64_t updatedMs = 0;          // atualizadaEm: a hora da ultima leitura boa (ms desde 1970; 0: nenhuma)
+    int count = 0;                  // quantos: os contatos da lista de agora
+    int seq = 0;                    // vez: sobe a cada lista nova
+};
+
 struct BridgeState {
     bool mainScreen = false;                // tela: "principal" (true) ou "entrar"
     LoginView login;                        // entrar
@@ -235,6 +254,7 @@ struct BridgeState {
     AdminView admin;                        // admin (rc.3)
     AdminLoginView adminLogin;              // entrarAdmin (rc.3)
     bool endBeep = true;                    // config.bipeFim (rc.3)
+    CompanyView company;                    // empresa (rc.4)
 };
 
 // {"v":1,"type":"state","state":{...}}
@@ -249,5 +269,8 @@ std::string EndBeepMessage();
 // {"v":1,"type":"update","versao":"...","notas":"..."}: a pergunta da atualizacao (a interface responde com updateNow
 // ou updateLater).
 std::string UpdateMessage(const std::string& version, const std::string& notes);
+// {"v":1,"type":"contatosEmpresa","vez":N,"contatos":[{"nome","numero","observacao"}]} (rc.4): a lista da empresa,
+// fora do state (ela pode ter 10.000 contatos, e o state vai inteiro a cada mudanca), na ordem da planilha.
+std::string CompanyContactsMessage(int seq, const std::vector<SheetContact>& contacts);
 
 }  // namespace starsonic

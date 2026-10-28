@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <exception>
+#include <set>
 #include <unordered_map>
 #include <utility>
 
@@ -21,6 +22,27 @@ const wchar_t kEmptyPassword[] = L"Digite a senha.";
 const wchar_t kConnecting[] = L"Conectando\u2026";
 const wchar_t kConnected[] = L"Conectado \u00b7 ";
 const char kWrongAdminPassword[] = "Senha incorreta.";
+
+// rc.4: os avisos do importar e do exportar (spec da rc.4, 4.2, 4.3 e 6.4) e a situacao da lista da empresa (5.4). O
+// numero 1 leva o singular (Ruling R7): "1 contato importado.", "(1 ja existia)", "1 contato exportado.".
+const char kImportedOne[] = "1 contato importado";
+const char kImportedMany[] = " contatos importados";   // depois do numero
+const char kExistedOne[] = " (1 j\xc3\xa1 existia).";
+const char kExistedMany[] = " j\xc3\xa1 existiam).";    // depois de " (" e do numero
+const char kNothingNew[] = "Nenhum contato novo na planilha.";
+const char kExportedOne[] = "1 contato exportado.";
+const char kExportedMany[] = " contatos exportados.";  // depois do numero
+const char kCantOpenFile[] = "N\xc3\xa3o consegui abrir o arquivo.";
+const char kCantSaveFile[] = "N\xc3\xa3o consegui salvar o arquivo.";
+const char kSheetUnreadable[] = "N\xc3\xa3o consegui ler a planilha. Ela precisa das colunas Nome e N\xc3\xbamero.";
+const char kSheetTooLarge[] = "A planilha \xc3\xa9 grande demais (o m\xc3\xa1ximo \xc3\xa9 10.000 contatos).";
+const char kLinkClosed[] =
+    "N\xc3\xa3o consegui abrir o link. Confira se a planilha est\xc3\xa1 compartilhada para qualquer pessoa com o "
+    "link.";
+const char kSheetOffline[] = "Sem conex\xc3\xa3o com a planilha. Fica a \xc3\xbaltima lista.";
+const char kFileNotFound[] =
+    "N\xc3\xa3o achei o arquivo. Confira o caminho e se este computador tem acesso \xc3\xa0 pasta.";
+const char kInvalidLink[] = "Use um link https:// ou o caminho de um arquivo.";
 
 std::string U8(const std::wstring& text) { return WideToUtf8(text); }
 std::wstring Wide(const std::string& text) { return Utf8ToWide(text); }
@@ -117,20 +139,64 @@ AccountProfile WithServers(AccountProfile profile, const std::vector<ServerPort>
     return profile;
 }
 
+// rc.4: "<n> contatos importados." e, com os que ja existiam, "(<m> ja existiam)", com o singular para 1.
+std::string ImportedText(size_t added, size_t existed) {
+    std::string text = added == 1 ? std::string(kImportedOne) : std::to_string(added) + kImportedMany;
+    if (existed == 1) return text + kExistedOne;
+    if (existed > 1) return text + " (" + std::to_string(existed) + kExistedMany;
+    return text + ".";
+}
+
+std::string ExportedText(size_t count) {
+    return count == 1 ? std::string(kExportedOne) : std::to_string(count) + kExportedMany;
+}
+
+// O contato como o importar o compara (spec da rc.4, 4.2): o nome sem acento e sem caixa, e o numero pelo
+// NormalizeDialString.
+using ContactKey = std::pair<std::wstring, std::wstring>;
+
+ContactKey KeyOf(const std::wstring& name, const std::string& number) {
+    return ContactKey(FoldForSearch(Trim(name)), NormalizeDialString(Trim(Wide(number))));
+}
+
+// O texto da situacao de uma busca que falhou (spec da rc.4, 5.4) e o nome do erro no diagnostico.
+struct CompanyFailure {
+    const char* text;
+    const char* why;
+};
+
+CompanyFailure FailureOf(CompanyFetchError error) {
+    switch (error) {
+        case CompanyFetchError::Closed:
+            return CompanyFailure{kLinkClosed, "link fechado"};
+        case CompanyFetchError::NotFound:
+            return CompanyFailure{kFileNotFound, "arquivo nao achado"};
+        case CompanyFetchError::TooLarge:
+            return CompanyFailure{kSheetTooLarge, "grande demais"};
+        case CompanyFetchError::Offline:
+        case CompanyFetchError::None:
+            break;
+    }
+    return CompanyFailure{kSheetOffline, "sem conexao"};
+}
+
 }  // namespace
 
-// Os nomes dos contatos para o controlador (o ContactsStore tem a trava dele: qualquer thread).
+// Os nomes dos contatos para o controlador (as duas lojas tem a trava delas: qualquer thread): o meu contato com o
+// numero e, sem ele, o da lista da empresa (spec da rc.4, 5.6); sem os dois, o controlador usa o nome da central.
 class DesktopApp::Names : public ContactNames {
 public:
-    explicit Names(ContactsStore& contacts) : contacts_(contacts) {}
+    Names(ContactsStore& contacts, CompanyListStore& company) : contacts_(contacts), company_(company) {}
     std::optional<std::string> NameFor(const std::string& number) override {
-        const std::wstring name = contacts_.NameFor(number);
+        std::wstring name = contacts_.NameFor(number);
+        if (name.empty()) name = company_.NameFor(number);
         if (name.empty()) return std::nullopt;
         return U8(name);
     }
 
 private:
     ContactsStore& contacts_;
+    CompanyListStore& company_;
 };
 
 // Os avisos do controlador (em qualquer thread, na ordem dele) vao para a fila de comandos, na mesma ordem.
@@ -193,7 +259,8 @@ DesktopApp::DesktopApp(DesktopConfig config, DesktopHooks hooks, CallEngine& eng
       contacts_(files, config_.paths.contacts),
       recents_(files, config_.paths.recents),
       settings_(files, config_.paths.settings),
-      names_(new Names(contacts_)),
+      company_(files, config_.paths.companyList),
+      names_(new Names(contacts_, company_)),
       listener_(new Listener(*this)),
       atalhos_(files, config_.paths.atalhos),
       admin_(files, cipher, config_.paths.admin, config_.profile) {
@@ -209,6 +276,7 @@ DesktopApp::~DesktopApp() {
     Shutdown();
     if (loginTimer_ != 0) scheduler_.Cancel(loginTimer_);
     if (adminTimer_ != 0) scheduler_.Cancel(adminTimer_);
+    if (companyTimer_ != 0) scheduler_.Cancel(companyTimer_);
 }
 
 void DesktopApp::Start() {
@@ -344,6 +412,8 @@ void DesktopApp::Execute(const Command& command) {
             Log("interface pronta");
             PublishState(/*force=*/true);
             if (hooks_.post) hooks_.post(RingMessage(ring_));
+            // A lista da empresa (rc.4), se houve uma desde a abertura (com o vez 0 ela e vazia, como a da interface).
+            if (companySeq_ > 0) PostCompanyContacts();
             if (updateOffer_ && hooks_.post) hooks_.post(UpdateMessage(updateOffer_->version, updateOffer_->notes));
             break;
         case CommandKind::Login:
@@ -519,6 +589,18 @@ void DesktopApp::Execute(const Command& command) {
         case CommandKind::AdminSet:
             AdminSet(command.admin);
             break;
+        case CommandKind::ImportContacts:
+            PickImport();
+            break;
+        case CommandKind::ExportContacts:
+            PickExport();
+            break;
+        case CommandKind::SetCompanyList:
+            SetCompanyList(command.link);
+            break;
+        case CommandKind::RefreshCompanyList:
+            RequestCompanyRead();
+            break;
     }
 }
 
@@ -532,6 +614,7 @@ void DesktopApp::Initialize() {
     if (!settings_.Load()) Log("config.json ilegivel: valem os padroes");
     if (!atalhos_.Load()) Log("atalhos.json ilegivel: lido como vazio");
     if (!admin_.Load()) Log("admin.json ilegivel: valem os padroes");
+    StartCompanyList();   // rc.4: antes da conta, para os nomes da lista ja valerem na primeira recebida
 
     const LegacyImportResult imported = ImportLegacy(config_.paths.legacy, config_.decrypt ? config_.decrypt : NoDecrypt,
                                                      accounts_, contacts_, recents_, files_);
@@ -889,6 +972,7 @@ void DesktopApp::Quit() {
     if (loginTimer_ != 0) scheduler_.Cancel(loginTimer_);
     loginTimer_ = 0;
     ++loginToken_;
+    CancelCompanyTimer();   // rc.4: nenhuma leitura da lista da empresa depois do Sair
     controller_->OnLogout();
     if (updateOffer_) {
         updateOffer_.reset();
@@ -1019,6 +1103,10 @@ BridgeState DesktopApp::BuildState() const {
         if (found != byNumber.end()) {
             view.name = U8(found->second->name);
             view.contactId = found->second->id;
+        } else {
+            // Sem um contato meu, o da lista da empresa (rc.4); o contatoId fica "" (a linha oferece Salvar contato).
+            const std::wstring company = company_.NameFor(recent.number);
+            if (!company.empty()) view.name = U8(company);
         }
         state.recents.push_back(view);
     }
@@ -1053,6 +1141,12 @@ BridgeState DesktopApp::BuildState() const {
     state.admin.channel = admin.canal;
     state.adminLogin = adminLogin_;
     state.endBeep = settings.bipeFim;
+    state.company.link = settings.companyListLink;
+    state.company.status = companyStatus_;
+    state.company.error = companyError_;
+    state.company.updatedMs = company_.UpdatedMs();
+    state.company.count = companyCount_;
+    state.company.seq = companySeq_;
     return state;
 }
 
@@ -1398,6 +1492,303 @@ void DesktopApp::HandleInternet(InternetState state) {
         port_.SetNetworkAvailable(true);   // com a rede ja la: so registra de novo, agora
         registration_.reset();
     }
+}
+
+// ---------------------------------------------------------------- rc.4: importar, exportar e a lista da empresa
+
+// importContacts (spec da rc.4, 4.2): a janela de abrir planilha; o resto quando ela volta.
+void DesktopApp::PickImport() {
+    if (!hooks_.pickImportFile) {
+        Log("importContacts: o executavel nao tem a janela de abrir");
+        return;
+    }
+    // O callback vem de qualquer thread (a da janela): so poe na fila.
+    hooks_.pickImportFile([this](const std::string& path) { Post([this, path] { ImportFrom(path); }); });
+}
+
+// Os contatos novos da planilha entram nos meus, cada um com um id novo, numa gravacao so. Ficam de fora o que ja
+// existe nos meus e o repetido da propria planilha: o segundo de um que ja existia conta como repetido, e o "(<m> ja
+// existiam)" do aviso e quantos contatos meus a planilha trouxe de novo. Cancelar a janela: nada, sem aviso.
+void DesktopApp::ImportFrom(const std::string& path) {
+    if (path.empty()) {
+        Log("importar: a janela foi cancelada");
+        return;
+    }
+    const std::optional<std::string> bytes = files_.Read(path);
+    if (!bytes) {
+        Log("importar: o arquivo nao abriu");
+        Toast(kCantOpenFile);
+        return;
+    }
+    SheetRead sheet = ReadContactSheet(*bytes);
+    if (sheet.error == SheetError::TooLarge) {
+        Log("importar: a planilha e grande demais");
+        Toast(kSheetTooLarge);
+        return;
+    }
+    if (sheet.error != SheetError::None) {
+        Log("importar: o arquivo nao e uma planilha com as colunas Nome e Numero");
+        Toast(kSheetUnreadable);
+        return;
+    }
+    const std::vector<Contact> mine = contacts_.All();
+    std::set<ContactKey> existing;
+    for (const Contact& contact : mine) existing.insert(KeyOf(contact.name, contact.number));
+    std::set<ContactKey> seen;
+    size_t existed = 0;
+    size_t repeated = 0;
+    std::vector<Contact> fresh;
+    for (SheetContact& row : sheet.contacts) {
+        const ContactKey key = KeyOf(row.name, row.number);
+        if (!seen.insert(key).second) {
+            ++repeated;
+        } else if (existing.count(key) != 0) {
+            ++existed;
+        } else {
+            fresh.push_back(Contact{std::string(), std::move(row.name), std::move(row.number), std::move(row.note)});
+        }
+    }
+    // O diagnostico so com as contagens: os repetidos sao os dois tipos; "fora", o que o AddAll deixou de fora.
+    const auto counts = [existed, repeated](size_t added, size_t left) {
+        return "importar: " + std::to_string(added) + " novos, " + std::to_string(existed + repeated) + " repetidos, " +
+               std::to_string(left) + " fora";
+    };
+    if (fresh.empty()) {
+        Log(counts(0, 0));
+        Toast(kNothingNew);
+        return;
+    }
+    const size_t offered = fresh.size();
+    if (!contacts_.AddAll(std::move(fresh))) {
+        Log("importar: o contatos.json nao foi gravado (o disco recusou)");
+        Toast(kCantSaveFile);
+        return;
+    }
+    // O AddAll deixa de fora o que o Save recusaria (sem nome ou sem numero que vale): a leitura ja os tira (0).
+    const size_t added = contacts_.All().size() - mine.size();
+    Log(counts(added, offered - added));
+    Toast(added == 0 ? std::string(kNothingNew) : ImportedText(added, existed));
+}
+
+// exportContacts (spec da rc.4, 4.3): a janela de salvar; o resto quando ela volta.
+void DesktopApp::PickExport() {
+    if (!hooks_.pickExportFile) {
+        Log("exportContacts: o executavel nao tem a janela de salvar");
+        return;
+    }
+    hooks_.pickExportFile([this](const std::string& path, const std::string& format) {
+        Post([this, path, format] { ExportTo(path, format); });
+    });
+}
+
+// So os meus contatos (os da empresa ja estao na planilha deles), em ordem alfabetica (a do All), no formato que a
+// janela escolheu.
+void DesktopApp::ExportTo(const std::string& path, const std::string& format) {
+    if (path.empty()) {
+        Log("exportar: a janela foi cancelada");
+        return;
+    }
+    std::vector<SheetContact> rows;
+    for (const Contact& contact : contacts_.All()) {
+        rows.push_back(SheetContact{contact.name, contact.number, contact.note});
+    }
+    std::string bytes;
+    if (format == "xlsx") {
+        bytes = WriteContactsXlsx(rows);
+    } else if (format == "csv") {
+        bytes = WriteContactsCsv(rows);
+    } else {
+        Log("exportar: formato desconhecido do executavel: " + format.substr(0, 16));
+        Toast(kCantSaveFile);
+        return;
+    }
+    // Vazio: o miniz nao deu ou faltou memoria (um arquivo exportado nunca e vazio). Ou o disco recusou (sem permissao,
+    // o arquivo aberto em outro programa).
+    if (bytes.empty() || !files_.WriteAtomic(path, bytes)) {
+        Log("exportar: o arquivo nao foi gravado (" + format + ")");
+        Toast(kCantSaveFile);
+        return;
+    }
+    Log("exportar: " + std::to_string(rows.size()) + " (" + format + ")");
+    Toast(ExportedText(rows.size()));
+}
+
+// A lista da empresa na abertura (spec da rc.4, 5.3): a guardada aparece na hora, antes da primeira leitura, que ja
+// sai. Sem o link, nenhuma lista (Ruling R11): o company_ nem e lido, e a lista que ficou no disco (um Clear que o
+// disco recusou) e apagada; se o disco recusar de novo, ela continua so no arquivo, sem valer.
+void DesktopApp::StartCompanyList() {
+    if (settings_.Get().companyListLink.empty()) {
+        CompanyListStore left(files_, config_.paths.companyList);
+        if (left.Load() && left.All().empty() && left.UpdatedMs() == 0) return;   // sem arquivo, ou ja vazio
+        if (company_.Clear()) {
+            Log("lista da empresa: sem o link, a lista que ficou no disco foi apagada");
+        } else {
+            Log("contatos-empresa.json: a lista sem o link nao foi apagada (o disco recusou)");
+        }
+        return;
+    }
+    if (!company_.Load()) Log("contatos-empresa.json ilegivel: lido como vazio");
+    if (!company_.All().empty() || company_.UpdatedMs() != 0) CompanyListChanged();   // a guardada: vez 1
+    RequestCompanyRead();
+}
+
+// setCompanyList (spec da rc.4, 5.1 e 5.3): o link gravado no config.json, e lido. O mesmo link de novo e o Atualizar
+// agora. Vazio tira a lista (o contatos-empresa.json fica com a lista vazia). O link trocado deixa a lista de antes ate
+// a primeira leitura boa do novo; a leitura aberta do de antes e descartada quando volta.
+void DesktopApp::SetCompanyList(const std::string& typed) {
+    const std::string link = U8(Trim(Wide(typed)));
+    Settings settings = settings_.Get();
+    if (link == settings.companyListLink) {
+        RequestCompanyRead();
+        return;
+    }
+    settings.companyListLink = link;
+    if (!settings_.Save(settings)) {
+        Log("config.json: a planilha da empresa nao foi gravada (fica a de antes)");
+        return;
+    }
+    if (!link.empty()) {
+        RequestCompanyRead();
+        return;
+    }
+    CancelCompanyTimer();
+    companyAgain_ = false;
+    companyStatus_ = CompanyListStatus::None;
+    companyError_.clear();
+    if (!company_.Clear()) {
+        // A lista fica ate a proxima abertura, que a apaga (StartCompanyList).
+        Log("contatos-empresa.json: a lista vazia nao foi gravada (o disco recusou)");
+        return;
+    }
+    Log("lista da empresa: o link saiu");
+    CompanyListChanged();
+}
+
+// Uma leitura pelo link salvo (spec da rc.4, 5.3): na abertura, a de 15 min, o setCompanyList e o refreshCompanyList.
+// Uma por vez: com uma aberta, o pedido marca "de novo" e roda uma vez quando ela volta (HandleCompanyFetch). Um link
+// que nao e https:// nem caminho fica com o erro, sem leitura e sem a de 15 min.
+void DesktopApp::RequestCompanyRead() {
+    if (quitting_) return;
+    const std::string link = settings_.Get().companyListLink;
+    if (link.empty()) {
+        Log("lista da empresa: sem o link, nada a ler");
+        return;
+    }
+    const std::optional<CompanySource> source = CompanySourceFor(link);
+    if (!source) {
+        CancelCompanyTimer();   // a leitura aberta (de outro link) e descartada quando voltar
+        CompanyListFailed(kInvalidLink, "link invalido");
+        return;
+    }
+    if (companyReading_) {
+        companyAgain_ = true;
+        companyStatus_ = CompanyListStatus::Reading;   // o link novo sera lido (o erro de um link invalido sai)
+        companyError_.clear();
+        return;
+    }
+    if (!hooks_.fetchCompanyList) {
+        Log("lista da empresa: o executavel nao le a planilha (sem o gancho)");
+        return;
+    }
+    companyReading_ = true;
+    companyReadLink_ = link;
+    const int seq = ++companyReadSeq_;
+    companyStatus_ = CompanyListStatus::Reading;
+    companyError_.clear();
+    ScheduleCompanyTimer();   // a proxima, 15 min depois desta
+    Log(std::string("lista da empresa: lendo (") + CompanySourceName(source->kind) + ")");
+    // O callback vem da thread do executavel que le: so poe na fila.
+    hooks_.fetchCompanyList(*source, [this, seq](const CompanyFetch& result) {
+        Post([this, seq, result] { HandleCompanyFetch(seq, result); });
+    });
+}
+
+// A leitura voltou. A resposta de uma leitura que ja voltou (o callback chamado duas vezes) nao vale; a de um link que
+// nao e mais o salvo (trocado ou tirado no meio dela) e descartada sem mudar nada (Ruling R8). Depois, o "de novo", com
+// o link de agora.
+void DesktopApp::HandleCompanyFetch(int seq, const CompanyFetch& result) {
+    if (!companyReading_ || seq != companyReadSeq_) {
+        Log("lista da empresa: uma resposta repetida foi ignorada");
+        return;
+    }
+    companyReading_ = false;
+    const bool current = companyReadLink_ == settings_.Get().companyListLink;
+    companyReadLink_.clear();
+    if (current) {
+        ApplyCompanyFetch(result);
+    } else {
+        Log("lista da empresa: a leitura de um link que saiu foi descartada");
+    }
+    if (companyAgain_) {
+        companyAgain_ = false;
+        RequestCompanyRead();
+    }
+}
+
+// Uma planilha boa troca a lista inteira (tambem por uma vazia, so com o cabecalho); um erro deixa a lista de antes, na
+// memoria e no arquivo, e a hora da ultima leitura boa.
+void DesktopApp::ApplyCompanyFetch(const CompanyFetch& result) {
+    if (result.error != CompanyFetchError::None) {
+        const CompanyFailure failure = FailureOf(result.error);
+        CompanyListFailed(failure.text, failure.why);
+        return;
+    }
+    SheetRead sheet = ReadContactSheet(result.bytes);
+    if (sheet.error == SheetError::TooLarge) {
+        CompanyListFailed(kSheetTooLarge, "grande demais");
+        return;
+    }
+    if (sheet.error != SheetError::None) {
+        CompanyListFailed(kSheetUnreadable, "planilha ilegivel");
+        return;
+    }
+    // O disco que recusa a lista nova deixa a de antes (o Replace nao muda nada): o aviso e o do disco.
+    if (!company_.Replace(std::move(sheet.contacts), clock_.NowMs())) {
+        CompanyListFailed(kCantSaveFile, "disco");
+        return;
+    }
+    companyStatus_ = CompanyListStatus::Ok;
+    companyError_.clear();
+    CompanyListChanged();
+    Log("lista da empresa: " + std::to_string(companyCount_) + " contatos");
+}
+
+void DesktopApp::CompanyListFailed(const char* text, const char* why) {
+    companyStatus_ = CompanyListStatus::Error;
+    companyError_ = text;
+    Log(std::string("lista da empresa: erro ") + why);
+}
+
+// A lista do company_ mudou (a guardada na abertura, uma leitura boa, o link que saiu): o vez sobe e ela vai a
+// interface.
+void DesktopApp::CompanyListChanged() {
+    ++companySeq_;
+    const std::vector<SheetContact> contacts = company_.All();
+    companyCount_ = static_cast<int>(contacts.size());
+    if (hooks_.post) hooks_.post(CompanyContactsMessage(companySeq_, contacts));
+}
+
+void DesktopApp::PostCompanyContacts() {
+    if (hooks_.post) hooks_.post(CompanyContactsMessage(companySeq_, company_.All()));
+}
+
+// A proxima leitura de 15 min, contada desta (a que estava agendada sai). A tarefa so poe na fila.
+void DesktopApp::ScheduleCompanyTimer() {
+    CancelCompanyTimer();
+    const int token = companyTimerToken_;
+    companyTimer_ = scheduler_.Schedule(kCompanyListRefreshMs, [this, token] {
+        Post([this, token] {
+            if (token != companyTimerToken_) return;
+            companyTimer_ = 0;
+            RequestCompanyRead();
+        });
+    });
+}
+
+void DesktopApp::CancelCompanyTimer() {
+    if (companyTimer_ != 0) scheduler_.Cancel(companyTimer_);
+    companyTimer_ = 0;
+    ++companyTimerToken_;   // uma tarefa que ja saiu do agendador (e esta na fila) nao vale mais
 }
 
 }  // namespace starsonic

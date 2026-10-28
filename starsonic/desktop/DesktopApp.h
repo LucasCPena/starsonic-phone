@@ -25,7 +25,9 @@
 //   do agendador ou na de comandos: so poem a troca na fila (nunca a fazem ali, nem esperam um evento do motor).
 //   Quando a troca roda, confere de novo se ainda nao ha ligacao (uma pode ter chegado no meio) e, se ha, espera o
 //   fim dela.
-// - As tarefas do agendador (o tempo do Entrar) so poem o trabalho na fila.
+// - As tarefas do agendador (o tempo do Entrar, e a leitura de 15 min da lista da empresa) so poem o trabalho na fila.
+// - Os callbacks dos ganchos da rc.4 (as janelas de arquivo e a leitura da lista da empresa) chegam em qualquer thread
+//   e so poem o resultado na fila; um que chega depois do Shutdown e descartado (Post).
 // - Corrida herdada (nao resolvida aqui): a volta sozinha da ligacao em espera (o Activate que o controlador pede
 //   quando a ativa acaba) roda na thread de eventos do motor, depois de o controlador soltar a trava. Um comando da
 //   thread de comandos (um Dial, um Swap) pode chegar ao motor entre a decisao e esse Activate. A thread de comandos
@@ -58,6 +60,7 @@
 #include "Files.h"
 #include "InternetState.h"
 #include "LegacyImport.h"
+#include "ListaEmpresa.h"
 #include "LoginFlow.h"
 #include "Profile.h"
 #include "Protocol.h"
@@ -92,6 +95,7 @@ struct DesktopPaths {
     std::string settings;   // config.json
     std::string atalhos;    // atalhos.json (rc.3)
     std::string admin;      // admin.json (rc.3; pelo cifrador)
+    std::string companyList;   // contatos-empresa.json (rc.4): a ultima lista boa da planilha da empresa
     LegacyPaths legacy;
 };
 
@@ -127,6 +131,14 @@ struct DesktopHooks {
     // O canal de atualizacao que vale (rc.3): "teste", "estavel" ou "" (o do build). Na abertura e quando o
     // administrador muda o canal; vale a partir da proxima verificacao.
     std::function<void(const std::string& channel)> updateChannel;
+    // rc.4 (spec da rc.4, 7.4). Os tres sao chamados na thread de comandos e nunca esperam; o callback pode vir de
+    // qualquer thread, uma vez por pedido, e so poe o resultado na fila de comandos.
+    // A janela de abrir planilha; o callback leva o caminho (UTF-8), ou "" se a pessoa cancelou.
+    std::function<void(std::function<void(const std::string& path)>)> pickImportFile;
+    // A janela de salvar; o callback leva o caminho e o formato ("xlsx" | "csv"), ou "" se cancelou.
+    std::function<void(std::function<void(const std::string& path, const std::string& format)>)> pickExportFile;
+    // Le a fonte fora da thread de comandos; o callback leva o resultado.
+    std::function<void(const CompanySource& source, std::function<void(const CompanyFetch& result)>)> fetchCompanyList;
 };
 
 // O app de PC. Responsavel por:
@@ -140,7 +152,7 @@ struct DesktopHooks {
 //   outras, ou a tela Entrar sem nenhuma).
 // - As ligacoes, pelo controlador; o Nao perturbe e o Atender automatico, gravados no config.json e repostos na
 //   abertura; Recentes (e as perdidas desde a ultima visita a eles), contatos e configuracoes.
-// - A abertura (Start): as lojas, a migracao da rc.7 e o registro da conta em uso.
+// - A abertura (Start): as lojas, a migracao da rc.7, o registro da conta em uso e (rc.4) a lista da empresa.
 // - DialLink (o link tel:): so poe o numero no Teclado, nunca liga.
 // - rc.3 (spec 3 a 8):
 //   - Os atalhos (atalhos.json): saveShortcut, removeShortcut e useShortcut, com a acao da spec 3.2 pelos comandos de
@@ -158,10 +170,27 @@ struct DesktopHooks {
 //     troca de conta que espera: escolher a mesma conta nao o tira, e um SetAccount no meio ja leva a lista nova).
 //   - SetInternet: a internet que o host ve (InternetState.h; RegistrationPort::SetNetworkAvailable; conta.internet).
 //   - O bipe do fim (ring fim): uma ligacao atendida acabou, nenhuma outra ficou e o bipeFim esta ligado.
+// - rc.4 (spec da rc.4, 4 e 5): as planilhas de contatos (Planilha.h):
+//   - importContacts: a janela de abrir (hooks.pickImportFile); os contatos novos entram nos meus (contatos.json),
+//     numa gravacao so, sem os que ja existiam (o mesmo nome sem acento e sem caixa, o mesmo numero pelo
+//     NormalizeDialString) e sem os repetidos da planilha; o resultado num toast.
+//   - exportContacts: a janela de salvar (hooks.pickExportFile); os meus contatos, em ordem alfabetica, no formato
+//     escolhido; o resultado num toast.
+//   - A lista da empresa (contatos-empresa.json, a CompanyListStore): o link salvo no config.json (setCompanyList),
+//     lido pelo executavel (hooks.fetchCompanyList, fora da thread de comandos) na abertura, a cada 15 min (contados
+//     da ultima leitura que comecou), no setCompanyList e no refreshCompanyList. Uma leitura por vez: um pedido no
+//     meio dela marca "de novo" e roda uma vez quando ela volta. Uma leitura boa troca a lista inteira (o vez sobe, e
+//     a lista vai a interface na mensagem contatosEmpresa); uma que falha deixa a lista de antes, com o erro. A
+//     leitura que volta depois de o link mudar (ou sair) e descartada. Sem o link, a lista e vazia.
+//   - Os nomes (na recebida, nos Recentes, na perdida): o meu contato com o numero, depois o da lista da empresa,
+//     depois o que a central mandou.
+//   O diagnostico nunca leva o link nem os nomes e os numeros dos contatos: so o tipo da fonte e as contagens.
 class DesktopApp : public EngineListener {
 public:
     // O tempo do Entrar (spec do Windows 7.1).
     static constexpr int64_t kLoginTimeoutMs = 15000;
+    // A leitura da lista da empresa (spec da rc.4, 5.3): a cada 15 min com o app aberto.
+    static constexpr int64_t kCompanyListRefreshMs = 15 * 60 * 1000;
     // A area do administrador (spec 6.1): fecha depois de 10 min sem comando; 5 senhas erradas seguidas: 30 s.
     static constexpr int64_t kAdminIdleMs = 10 * 60 * 1000;
     static constexpr int64_t kAdminLockMs = 30000;
@@ -171,7 +200,7 @@ public:
     DesktopApp(DesktopConfig config, DesktopHooks hooks, CallEngine& engine, RegistrationPort& port,
                FileSystem& files, SecretCipher& cipher, Clock& clock, Scheduler& scheduler,
                std::unique_ptr<Executor> executor = nullptr);
-    // Shutdown(), e o tempo do Entrar sai do agendador.
+    // Shutdown(), e o tempo do Entrar (e a leitura de 15 min da lista da empresa) sai do agendador.
     ~DesktopApp() override;
 
     DesktopApp(const DesktopApp&) = delete;
@@ -278,6 +307,21 @@ private:
     void ScheduleReRegister();
     void RunReRegister();
     bool EnginePortChanged() const;
+    // rc.4
+    void PickImport();
+    void ImportFrom(const std::string& path);
+    void PickExport();
+    void ExportTo(const std::string& path, const std::string& format);
+    void StartCompanyList();
+    void SetCompanyList(const std::string& link);
+    void RequestCompanyRead();
+    void HandleCompanyFetch(int seq, const CompanyFetch& result);
+    void ApplyCompanyFetch(const CompanyFetch& result);
+    void CompanyListFailed(const char* text, const char* why);
+    void CompanyListChanged();
+    void ScheduleCompanyTimer();
+    void CancelCompanyTimer();
+    void PostCompanyContacts();
 
     DesktopConfig config_;
     DesktopHooks hooks_;
@@ -290,6 +334,7 @@ private:
     ContactsStore contacts_;
     RecentsStore recents_;
     SettingsStore settings_;
+    CompanyListStore company_;   // rc.4: a lista da empresa (antes do names_, que a le)
 
     std::unique_ptr<Names> names_;
     std::unique_ptr<Listener> listener_;
@@ -349,6 +394,20 @@ private:
     int adminToken_ = 0;
     int adminFailures_ = 0;   // as senhas erradas seguidas (so na memoria: abrir o app de novo zera)
     AdminLoginView adminLogin_;
+
+    // rc.4: a lista da empresa (so na thread de comandos). A lista em si e o company_.
+    CompanyListStatus companyStatus_ = CompanyListStatus::None;
+    std::string companyError_;   // o texto da spec 5.4 com o companyStatus_ Error
+    int companySeq_ = 0;         // o vez: sobe a cada lista nova (0: nenhuma lista desde a abertura)
+    int companyCount_ = 0;       // os contatos do company_ (o estado sai a cada tarefa: sem copiar a lista)
+    // A leitura aberta (uma por vez): a vez dela (o callback que volta com outra vez e descartado: o de uma leitura
+    // que ja voltou), o link que ela le (outro link salvo quando ela volta: descartada) e o pedido que chegou no meio.
+    bool companyReading_ = false;
+    int companyReadSeq_ = 0;
+    std::string companyReadLink_;
+    bool companyAgain_ = false;
+    int companyTimer_ = 0;       // a tarefa do agendador da proxima leitura de 15 min (0: nenhuma)
+    int companyTimerToken_ = 0;
 
     std::unique_ptr<Executor> executor_;   // por ultimo: parado primeiro (no destrutor)
 };
