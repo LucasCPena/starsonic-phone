@@ -323,6 +323,8 @@ for (const tema of ['light', 'dark'] as const) {
 
       await page.getByRole('button', { name: 'Menu' }).click();
       await verTextos(page, ['Configurações', 'Sobre', 'Sair']);
+      // O foco chega ao primeiro item depois de o menu abrir: só então o Esc o fecha.
+      await expect(page.getByRole('menu', { name: 'Menu' }).getByRole('menuitem', { name: 'Configurações' })).toBeFocused();
       await page.keyboard.press('Escape');
       await expect(page.getByRole('menu')).toHaveCount(0);
       await page.getByRole('button', { name: 'Menu' }).click();
