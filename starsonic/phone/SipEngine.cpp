@@ -22,6 +22,7 @@
 #include "EngineEndpoint.h"
 #include "EngineEvents.h"
 #include "EngineLog.h"
+#include "PushDataCheck.h"
 #include "Text.h"
 
 namespace starsonic {
@@ -223,6 +224,20 @@ public:
         for (const std::string& number : blfNumbers_) {
             if (!blf_[number].buddy) SubscribeBlf(number);
         }
+    }
+
+    // O PJSIP (Windows e Android) não usa dados de push: só confere os dados (PushDataProblem) e diz no log que
+    // não os usa.
+    bool SetPushData(const std::optional<PushData>& data) {
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        if (!RegisterThread()) return false;
+        const std::string problem = data ? PushDataProblem(*data) : std::string();
+        if (!problem.empty()) {
+            Log(2, "push: dados recusados: " + problem);
+            return false;
+        }
+        Log(3, "push: o motor do PJSIP nao usa os dados de push");
+        return true;
     }
 
     void WatchBlf(const std::vector<std::string>& numbers) {
@@ -681,6 +696,8 @@ void SipEngine::Reregister() { impl_->Reregister(); }
 void SipEngine::HandleIpChange() { impl_->HandleIpChange(); }
 
 void SipEngine::SetNetworkAvailable(bool available) { impl_->SetNetworkAvailable(available); }
+
+bool SipEngine::SetPushData(const std::optional<PushData>& data) { return impl_->SetPushData(data); }
 
 void SipEngine::WatchBlf(const std::vector<std::string>& numbers) { impl_->WatchBlf(numbers); }
 

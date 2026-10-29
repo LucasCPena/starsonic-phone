@@ -2,7 +2,9 @@
 tratadores (_on_invite, _on_refer) e à porta de controle (command). Rodar da raiz do repositório:
 python3 -m unittest tests/smoke/test_fake_registrar.py"""
 import pathlib
+import socket
 import sys
+import time
 import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -10,17 +12,18 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import fake_registrar  # noqa: E402
 
 PHONE = fake_registrar._Peer("udp", ("127.0.0.1", 5070))
+CONTACT = "<sip:2001@127.0.0.1:5070>"
 OFFER = ("v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=phone\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\n"
          "m=audio 4000 RTP/AVP 0 101\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:101 telephone-event/8000\r\n")
 
 
-def phone_request(method, uri, call_id, extra=(), body="", cseq=1, to_tag=None):
+def phone_request(method, uri, call_id, extra=(), body="", cseq=1, to_tag=None, contact=CONTACT):
     """Pedido do telefone (2001, em 127.0.0.1:5070), lido pelo próprio analisador do registrador."""
     lines = ["%s %s SIP/2.0" % (method, uri),
              "Via: SIP/2.0/UDP 127.0.0.1:5070;rport;branch=z9hG4bK%s%d" % (call_id, cseq),
              "Max-Forwards: 70", "From: <sip:2001@ci>;tag=phone",
              "To: <%s>%s" % (uri, ";tag=" + to_tag if to_tag else ""),
-             "Call-ID: " + call_id, "CSeq: %d %s" % (cseq, method), "Contact: <sip:2001@127.0.0.1:5070>"]
+             "Call-ID: " + call_id, "CSeq: %d %s" % (cseq, method), "Contact: " + contact]
     lines += list(extra)
     lines += ["Content-Length: %d" % len(body.encode("utf-8")), "", body]
     return fake_registrar._parse("\r\n".join(lines).encode("utf-8"))
@@ -132,14 +135,16 @@ def subscribe(alvo, call_id="sub-2007", expires=None, event="dialog", cseq=1, to
     return phone_request("SUBSCRIBE", "sip:%s@ci" % alvo, call_id, extra, cseq=cseq, to_tag=to_tag)
 
 
-def register(registrar, nonce="nonce-1"):
-    """REGISTER de 2001 já com o Digest certo para a senha do registrador."""
+def register(registrar, nonce="nonce-1", contact=CONTACT, extra=(), expires=300, password=None):
+    """REGISTER de 2001 já com o Digest certo para a senha do registrador (ou para `password`). `contact` é o
+    Contact e `extra`, os cabeçalhos a mais."""
     registrar.nonces.add(nonce)
     uri = "sip:127.0.0.1"
-    response = fake_registrar.digest_response("2001", "ci", registrar.password, "REGISTER", uri, nonce)
+    response = fake_registrar.digest_response("2001", "ci", password or registrar.password, "REGISTER", uri, nonce)
     authorization = ('Digest username="2001", realm="ci", nonce="%s", uri="%s", response="%s", algorithm=MD5'
                      % (nonce, uri, response))
-    return phone_request("REGISTER", uri, "reg-2001", ["Expires: 300", "Authorization: " + authorization])
+    return phone_request("REGISTER", uri, "reg-2001",
+                         ["Expires: %d" % expires, "Authorization: " + authorization] + list(extra), contact=contact)
 
 
 class FakeRegistrarBlfTest(unittest.TestCase):
@@ -316,6 +321,132 @@ class FakeRegistrarBlfTest(unittest.TestCase):
         for command in ("EXPIRES", "EXPIRES 0", "EXPIRES abc"):
             with self.subTest(command=command):
                 self.assertEqual(self.registrar.command(command), ["ERR bad-command"])
+
+
+def read_response(conn):
+    """A resposta SIP que chega por uma conexão TCP, até o fim do cabeçalho."""
+    data = b""
+    while b"\r\n\r\n" not in data:
+        chunk = conn.recv(4096)
+        if not chunk:
+            break
+        data += chunk
+    return data
+
+
+def wait_for(check, seconds=5):
+    """Espera até `seconds` que check() fique verdadeiro; devolve o último valor."""
+    deadline = time.monotonic() + seconds
+    while not check() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    return check()
+
+
+class FakeRegistrarRegisterTest(unittest.TestCase):
+    """O que o registrador guarda do último REGISTER aceito (CONTACT e HEADER) e os keep-alives (KEEPALIVES)."""
+
+    def setUp(self):
+        self.registrar = fake_registrar.Registrar("2001", "senha-certa")
+
+    def answer(self, message):
+        """O código da primeira resposta do registrador a um pedido do telefone."""
+        replies = self.registrar.dispatch(_raw(message), ("127.0.0.1", 5070))
+        return fake_registrar._parse(replies[0]).status
+
+    def keepalives(self):
+        return self.registrar.command("KEEPALIVES")
+
+    def tcp_connection(self):
+        """Uma conexão com o lado TCP do registrador, numa porta livre; tudo se fecha no fim do teste."""
+        server = fake_registrar.start_tcp_server(self.registrar, "127.0.0.1", 0)
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        conn = socket.create_connection(("127.0.0.1", server.server_address[1]), timeout=5)
+        self.addCleanup(conn.close)
+        return conn
+
+    def test_contact_reports_the_contact_of_the_last_register(self):
+        self.assertEqual(self.registrar.command("CONTACT 2001"), ["ERR no-contact"])
+        contact = "<sip:2001@127.0.0.1:5070;pn-provider=apns;pn-prid=abc>"
+        self.assertEqual(self.answer(register(self.registrar, contact=contact)), 200)
+        self.assertEqual(self.registrar.command("CONTACT 2001"), [contact])
+        self.assertEqual(self.registrar.command("CONTACT 2002"), ["ERR no-contact"])   # outro ramal: nenhum REGISTER
+        # O cabeçalho inteiro, como chegou: com os parâmetros do próprio Contact, depois da URI.
+        whole = '<sip:2001@127.0.0.1:5070;ob>;reg-id=1;+sip.instance="<urn:uuid:00000000-0000-4000-8000-000000000001>"'
+        self.assertEqual(self.answer(register(self.registrar, "nonce-2", contact=whole)), 200)
+        self.assertEqual(self.registrar.command("CONTACT 2001"), [whole])
+
+    def test_header_reports_a_header_of_the_last_register(self):
+        self.assertEqual(self.registrar.command("HEADER 2001 x-push-token"), ["ERR no-contact"])   # nenhum REGISTER
+        self.assertEqual(self.answer(register(self.registrar, extra=["X-Push-Token: abc"])), 200)
+        self.assertEqual(self.registrar.command("HEADER 2001 x-push-token"), ["abc"])
+        self.assertEqual(self.registrar.command("HEADER 2001 X-PUSH-TOKEN"), ["abc"])   # sem diferença de maiúsculas
+        self.assertEqual(self.registrar.command("HEADER 2001 X-Outro"), ["ERR no-header"])
+        self.assertEqual(self.registrar.command("HEADER 2002 x-push-token"), ["ERR no-contact"])
+        # Um cabeçalho que vem mais de uma vez vale pelo último valor.
+        both = ["X-Push-Token: abc", "X-Push-Token: def"]
+        self.assertEqual(self.answer(register(self.registrar, "nonce-2", extra=both)), 200)
+        self.assertEqual(self.registrar.command("HEADER 2001 x-push-token"), ["def"])
+
+    def test_contact_and_header_follow_only_the_register_accepted_with_expires(self):
+        first = "<sip:2001@127.0.0.1:5070;pn-prid=um>"
+        self.assertEqual(self.answer(register(self.registrar, contact=first, extra=["X-Push-Token: um"])), 200)
+        # O desafio (401), a senha errada (403) e a saída (Expires: 0, aceita) não trocam o que vale.
+        challenge = phone_request("REGISTER", "sip:127.0.0.1", "reg-2001", ["Expires: 300", "X-Push-Token: dois"],
+                                  contact="<sip:2001@127.0.0.1:5070;pn-prid=dois>")
+        self.assertEqual(self.answer(challenge), 401)
+        wrong = register(self.registrar, "nonce-2", contact="<sip:2001@127.0.0.1:5070;pn-prid=tres>",
+                         extra=["X-Push-Token: tres"], password="errada")
+        self.assertEqual(self.answer(wrong), 403)
+        leaving = register(self.registrar, "nonce-3", contact="<sip:2001@127.0.0.1:5070;pn-prid=quatro>",
+                           extra=["X-Push-Token: quatro"], expires=0)
+        self.assertEqual(self.answer(leaving), 200)
+        self.assertEqual(self.registrar.command("REGISTERS 2001"), ["1"])
+        self.assertEqual(self.registrar.command("CONTACT 2001"), [first])
+        self.assertEqual(self.registrar.command("HEADER 2001 X-Push-Token"), ["um"])
+        # O REGISTER aceito seguinte, com Expires > 0, toma o lugar.
+        second = "<sip:2001@127.0.0.1:5070;pn-prid=cinco>"
+        self.assertEqual(self.answer(register(self.registrar, "nonce-4", contact=second,
+                                              extra=["X-Push-Token: cinco"])), 200)
+        self.assertEqual(self.registrar.command("CONTACT 2001"), [second])
+        self.assertEqual(self.registrar.command("HEADER 2001 X-Push-Token"), ["cinco"])
+
+    def test_contact_header_and_keepalives_refuse_bad_arguments(self):
+        for command in ("CONTACT", "HEADER", "HEADER 2001", "HEADER 2001 a b", "HEADER  x-push-token",
+                        "KEEPALIVES now"):
+            with self.subTest(command=command):
+                self.assertEqual(self.registrar.command(command), ["ERR bad-command"])
+
+    def test_keepalives_counts_crlf_pings_over_udp_and_tcp(self):
+        self.assertEqual(self.keepalives(), ["0"])
+        self.registrar.process(b"\r\n", ("127.0.0.1", 5070))   # o caminho do UDP: um datagrama só com CR e LF
+        self.assertEqual(self.keepalives(), ["1"])
+        conn = self.tcp_connection()
+        # O ping do TCP e, atrás dele, um pedido que tem resposta: com o 200 na mão, o ping já foi lido.
+        conn.sendall(b"\r\n\r\n" + _raw(phone_request("OPTIONS", "sip:2001@ci", "options-1")))
+        self.assertTrue(read_response(conn).startswith(b"SIP/2.0 200"))
+        self.assertEqual(self.keepalives(), ["2"])
+
+    def test_keepalives_over_tcp_count_each_double_crlf_between_messages(self):
+        conn = self.tcp_connection()
+        options = _raw(phone_request("OPTIONS", "sip:2001@ci", "options-1"))
+        conn.sendall(b"\r\n\r\n\r\n\r\n" + options)   # dois pings seguidos e um pedido (que não conta)
+        self.assertTrue(read_response(conn).startswith(b"SIP/2.0 200"))
+        self.assertEqual(self.keepalives(), ["2"])
+        conn.sendall(b"\r\n")   # um ping que chega em dois pedaços
+        time.sleep(0.1)
+        conn.sendall(b"\r\n")
+        self.assertTrue(wait_for(lambda: self.keepalives() == ["3"]), self.keepalives())
+        conn.sendall(options + b"\r\n\r\n")   # um ping depois do pedido, sem nenhum pedido atrás dele
+        self.assertTrue(read_response(conn).startswith(b"SIP/2.0 200"))
+        self.assertTrue(wait_for(lambda: self.keepalives() == ["4"]), self.keepalives())
+
+    def test_keepalives_ignore_everything_that_is_not_a_crlf_datagram(self):
+        for data in (b"", b"\x00\x01ruido", b"\r\nruido\r\n", _raw(register(self.registrar))):
+            self.registrar.process(data, ("127.0.0.1", 5070))
+        self.assertEqual(self.keepalives(), ["0"])
+        self.registrar.process(b"\r\n\r\n", ("127.0.0.1", 5070))   # um datagrama, vários CRLF: um keep-alive
+        self.assertEqual(self.keepalives(), ["1"])
 
 
 def _raw(message):

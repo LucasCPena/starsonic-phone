@@ -5,6 +5,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "Profile.h"
@@ -92,6 +93,14 @@ struct AccountInput {
     std::optional<std::vector<ServerPort>> serverPorts;
 };
 
+// Os dados de push (spec 7.3) que vão em cada REGISTER, nos dois formatos: parâmetros na URI do Contact, como na
+// RFC 8599 (pn-provider, pn-param, pn-prid), e cabeçalhos próprios. Os limites estão em PushDataProblem
+// (PushDataCheck.h).
+struct PushData {
+    std::vector<std::pair<std::string, std::string>> contactParams;   // vão na URI do Contact: ;nome=valor
+    std::vector<std::pair<std::string, std::string>> headers;         // Nome: valor
+};
+
 // Todo método público registra a thread que chama no PJLIB antes de usar o PJSIP, então pode ser
 // chamado de qualquer thread. Chamadas ao mesmo tempo esperam uma pela outra (menos HasCall e
 // CallCount, que nunca esperam). Até duas ligações, uma delas a ativa: só a ativa fica ligada ao
@@ -145,6 +154,14 @@ public:
     // ramais da lista. Nenhum dos dois espera. Sem conta, só guarda o estado. Repetir o mesmo valor: false
     // não faz nada; true registra de novo.
     void SetNetworkAvailable(bool available);
+
+    // Os dados de push que vão em cada REGISTER da conta, ou nenhum (nullopt), nos dois formatos da spec 7.3:
+    // parâmetros no Contact (como na RFC 8599) ou cabeçalhos próprios. Com uma conta registrada e a rede
+    // disponível, o motor registra de novo na hora (o resultado chega por OnRegistration), sem mexer nas
+    // ligações; sem conta ou sem rede, só guarda os dados para o próximo REGISTER. false: o PushDataProblem
+    // achou um problema nos dados, e nada muda. O motor do PJSIP (Windows e Android) só confere: não guarda
+    // nem manda nada.
+    bool SetPushData(const std::optional<PushData>& data);
 
     // Os ramais (number em UTF-8, já sem separadores) cujo estado o motor acompanha na conta de agora, pelo
     // SUBSCRIBE do evento dialog (RFC 4235, o BLF) a sip:<número>@<domínio da conta> (com a porta, como em

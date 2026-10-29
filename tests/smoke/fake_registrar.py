@@ -5,9 +5,10 @@ controle, ligações. Só biblioteca padrão do Python 3.
 - REGISTER sem Authorization -> 401 com WWW-Authenticate: Digest realm="ci", nonce, algorithm=MD5
 - REGISTER com Authorization -> 200 OK (Expires e Contact ecoados) se usuário e senha conferem,
   senão 403; com o FAIL REGISTER on, todo REGISTER -> 503 (a central fora do ar ou reiniciando)
-- OPTIONS e outros pedidos -> 200 OK; ACK -> nada; CRLF soltos (keep-alive) -> nada
+- OPTIONS e outros pedidos -> 200 OK; ACK -> nada; CRLF soltos (keep-alive) -> nada, só contados (KEEPALIVES)
 - grava o último User-Agent de REGISTER no arquivo de --log e o protocolo (udp ou tcp) do último
   REGISTER aceito no arquivo de --transport-log
+- guarda o último REGISTER aceito com Expires > 0 de cada ramal, para os comandos CONTACT e HEADER
 - escuta UDP e TCP no mesmo endereço e porta; em TCP, a resposta volta na mesma conexão
 
 Ligações (sem autenticação para INVITE, re-INVITE, REFER, BYE e CANCEL):
@@ -36,6 +37,12 @@ Porta de controle (--control-port N, TCP no mesmo --host; um comando por linha, 
   HANGUP <ramal>     BYE na ligação atendida, CANCEL se ainda toca     -> OK | ERR no-call
   PASSWORD <senha>   troca a senha aceita                              -> OK
   REGISTERS <ramal>  REGISTER aceitos com Expires > 0                  -> <n>
+  CONTACT <ramal>    o cabeçalho Contact, como chegou, do último REGISTER aceito com Expires > 0
+                     -> <valor> | ERR no-contact
+  HEADER <ramal> <nome>  o último valor do cabeçalho <nome> (sem diferença de maiúsculas) nesse REGISTER
+                     -> <valor> | ERR no-header | ERR no-contact (nenhum REGISTER aceito)
+  KEEPALIVES         keep-alives recebidos: um datagrama UDP só com CR e LF, ou cada CRLFCRLF entre
+                     mensagens no TCP                                  -> <n>
   EXPIRES <s>        o tempo que o 200 do REGISTER concede (s >= 1; padrão: o Expires pedido) -> OK
   BLF <ramal> <estado>[+<estado>...]  os diálogos do ramal para o BLF (estado: terminated, early ou
                      confirmed), ou refuse                                    -> OK
@@ -303,6 +310,8 @@ class Registrar:
         self.udp = None          # o socket UDP: por onde sai o que o registrador manda por conta própria
         self.contacts = {}       # ramal -> _Contact
         self.registers = {}      # ramal -> REGISTER aceitos com Expires > 0
+        self.last_register = {}  # ramal -> a mensagem do último REGISTER aceito com Expires > 0 (CONTACT e HEADER)
+        self.keepalives = 0      # CRLF soltos que chegaram (KEEPALIVES)
         self.calls = []          # as ligações do RING
         self.answers = {}        # INVITE já respondido (Call-ID, CSeq, branch) -> respostas a repetir
         self.cseqs = {}          # Call-ID de diálogo aberto pelo telefone -> CSeq do último pedido que mandamos nele
@@ -336,6 +345,9 @@ class Registrar:
 
     def dispatch(self, data, source, transport="udp", conn=None):
         """As mensagens (bytes) que respondem a uma recebida de source, na ordem em que devem sair."""
+        if transport == "udp" and data and not data.strip(b"\r\n"):   # keep-alive: um datagrama só com CR e LF
+            self.count_keepalives(1)
+            return []
         msg = _parse(data)
         if not msg:
             return []
@@ -355,6 +367,12 @@ class Registrar:
             if handler:
                 return handler(msg, peer)
             return [self._response(200, msg.headers, source)]
+
+    def count_keepalives(self, how_many):
+        """Soma keep-alives (CRLF soltos, que não levam resposta): um por datagrama UDP, e um por CRLFCRLF
+        entre mensagens no TCP (o _SipTcpHandler conta)."""
+        with self.lock:
+            self.keepalives += how_many
 
     def connection_closed(self, conn):
         """A conexão TCP acabou: os contatos que dependiam dela já não alcançam ninguém."""
@@ -399,6 +417,7 @@ class Registrar:
             self.contacts.pop(ramal, None)
             return
         self.registers[ramal] = self.registers.get(ramal, 0) + 1
+        self.last_register[ramal] = msg   # CONTACT e HEADER
         contact = msg.first("contact")
         if contact:
             self.contacts[ramal] = _Contact(peer, _uri_of(contact), _uri_of(msg.first("to")), msg.uri)
@@ -730,6 +749,20 @@ class Registrar:
                 return ["OK"]
             if name == "REGISTERS" and ramal:
                 return [str(self.registers.get(ramal, 0))]
+            if name == "CONTACT" and ramal:
+                register = self.last_register.get(ramal)
+                return [(register and register.first("contact")) or "ERR no-contact"]
+            if name == "HEADER" and ramal:
+                target, _, header = ramal.partition(" ")
+                if target and header and " " not in header:
+                    register = self.last_register.get(target)
+                    if not register:
+                        return ["ERR no-contact"]
+                    header = header.lower()
+                    values = _values(register.headers, COMPACT.get(header, header))
+                    return [values[-1] if values else "ERR no-header"]
+            if name == "KEEPALIVES" and not ramal:
+                return [str(self.keepalives)]
             if name == "EXPIRES" and ramal.isdigit() and int(ramal) > 0:
                 self.expires = int(ramal)
                 return ["OK"]
@@ -791,6 +824,7 @@ class _SipTcpHandler(socketserver.BaseRequestHandler):
     def handle(self):
         registrar = self.server.registrar
         buffer = b""
+        loose = 0   # CR e LF soltos entre mensagens que ainda não fecham um CRLFCRLF (o ping pode vir em pedaços)
         try:
             while True:
                 try:
@@ -799,7 +833,13 @@ class _SipTcpHandler(socketserver.BaseRequestHandler):
                     return
                 if not chunk:
                     return
-                messages, buffer = split_messages(buffer + chunk)
+                data = buffer + chunk
+                messages, buffer = split_messages(data)
+                # Contado antes das mensagens: quem manda um ping e um pedido já acha o ping contado com a resposta.
+                loose += len(data) - len(buffer) - sum(len(message) for message in messages)
+                if loose >= 4:
+                    registrar.count_keepalives(loose // 4)
+                    loose %= 4
                 for message in messages:
                     registrar.process(message, self.client_address, "tcp", self.request)
         finally:
@@ -840,8 +880,8 @@ def start_tcp_server(registrar, host, port):
 
 
 def start_control_server(registrar, host, port):
-    """Porta de controle (RING, HANGUP, PASSWORD, REGISTERS, EXPIRES, BLF, FORGET, DROP, FAIL, REFER_REPLY,
-    REFER_NOTIFY, RESET, LOG), numa thread. Mesma forma de start_tcp_server."""
+    """Porta de controle (RING, HANGUP, PASSWORD, REGISTERS, CONTACT, HEADER, KEEPALIVES, EXPIRES, BLF, FORGET,
+    DROP, FAIL, REFER_REPLY, REFER_NOTIFY, RESET, LOG), numa thread. Mesma forma de start_tcp_server."""
     return _start_tcp(_ControlHandler, registrar, host, port)
 
 

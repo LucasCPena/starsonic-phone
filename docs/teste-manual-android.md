@@ -413,11 +413,11 @@ Cada tecla do Teclado e do teclado da ligação faz o bipe de telefone (os tons 
 
 | Critério | Automático (a cada build) | Neste roteiro |
 |----------|---------------------------|---------------|
-| Numa ligação, a segunda toca na tela de chamada, é atendida (a primeira vai para a espera), a pessoa alterna, e ao desligar a ativa a outra volta sozinha | `test_engine_calls` (motor, segunda ligação e `Activate`), `CallManagerTest` (JVM), `CallFlowTest` (emulador) | 11 |
-| Transferência com consulta: concluir (as duas saem), cancelar, o colega não atende | `test_engine_calls` (REFER com Replaces, NOTIFY 200 e 603), `CallManagerTest`, `CallFlowTest` | 12 |
-| Conferência: juntar, separar, desligar; um sai e a ligação continua com o outro | `test_engine_calls` (`Join`/`Split` na mesa), `CallManagerTest`, `CallFlowTest` | 13 |
+| Numa ligação, a segunda toca na tela de chamada, é atendida (a primeira vai para a espera), a pessoa alterna, e ao desligar a ativa a outra volta sozinha | `test_engine_hold` (motor, segunda ligação e `Activate`), `CallManagerTest` (JVM), `CallFlowTest` (emulador) | 11 |
+| Transferência com consulta: concluir (as duas saem), cancelar, o colega não atende | `test_engine_transfer` (REFER com Replaces, NOTIFY 200 e 603), `CallManagerTest`, `CallFlowTest` | 12 |
+| Conferência: juntar, separar, desligar; um sai e a ligação continua com o outro | `test_engine_conference` (`Join`/`Split` na mesa), `CallManagerTest`, `CallFlowTest` | 13 |
 | Contatos do celular: a aba, ligar pelo nome, o nome na ligação recebida, na tela, na notificação e nos Recentes; sem a permissão, só números | `ContactsTest` e `CallManagerTest` (JVM), `ContactsFlowTest` (emulador), `test_call_messages` (`ContactDialString`), `check_apk.py` (`READ_CONTACTS` e nenhuma outra permissão nova) | 14 |
-| A terceira ligação recebe ocupado; uma ligação da operadora em andamento continua bloqueando | `test_engine_calls` (486), `CallManagerTest` | 6, 11.12, 15 |
+| A terceira ligação recebe ocupado; uma ligação da operadora em andamento continua bloqueando | `test_engine_hold` (486), `CallManagerTest` | 6, 11.12, 15 |
 | Tudo acima com fone Bluetooth e viva-voz; bateria e dados numa conferência de 10 minutos | — | 15 |
 
 ### Critérios da 0.2.0-rc.2 (spec do visual do Windows, §1 e §11)

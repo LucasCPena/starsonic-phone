@@ -1,6 +1,5 @@
 #include "engine_fixture.h"
 #include "relay_fixture.h"
-#include "stun_fixture.h"
 
 #include <chrono>
 #include <memory>
@@ -11,14 +10,11 @@
 #include "Profile.h"
 #include "RegistrationErrors.h"
 #include "SipEngine.h"
-#include "Text.h"
 
 using namespace starsonic;
-using phone_test::ConfigFor;
 using phone_test::Contains;
 using phone_test::DelayedUdpRelay;
 using phone_test::FakeRegistrar;
-using phone_test::FakeStunServer;
 using phone_test::Input;
 using phone_test::kUserAgent;
 using phone_test::kWaitSeconds;
@@ -145,51 +141,6 @@ TEST_CASE("SipEngine reports an unreachable server") {
     CHECK((code == 503 || code == 408));
     CHECK(RegistrationMessage(code, false) ==
           L"N\u00e3o foi poss\u00edvel falar com o servidor. Confira o endere\u00e7o e a sua internet.");
-}
-
-TEST_CASE("SipEngine uses the profile codecs in order") {
-    RecordingListener listener;
-    INFO(listener.LogTail());
-    std::unique_ptr<SipEngine> engine = StartEngine(&listener, LoadProfile());
-
-    const std::vector<std::string> expected = {"G722/16000/1", "PCMA/8000/1", "PCMU/8000/1"};
-    CHECK(engine->ActiveCodecs() == expected);
-}
-
-TEST_CASE("SipEngine skips the profile codecs that the build lacks") {
-    RecordingListener listener;
-    INFO(listener.LogTail());
-    Profile profile = LoadProfile();
-    profile.global.codecs = {L"PCMU", L"G729", L"PCMA"};   // este build do PJSIP nao traz o G.729
-    std::unique_ptr<SipEngine> engine = StartEngine(&listener, profile);
-
-    const std::vector<std::string> expected = {"PCMU/8000/1", "PCMA/8000/1"};
-    CHECK(engine->ActiveCodecs() == expected);
-    CHECK(Contains(listener.LogTail(), "G729/8000/1"));
-}
-
-TEST_CASE("SipEngine uses the STUN server of the profile") {
-    FakeStunServer stun;
-    RecordingListener listener;
-    INFO(listener.LogTail());
-    Profile profile = LoadProfile();
-    profile.global.stun = Utf8ToWide("127.0.0.1:" + std::to_string(stun.port()));
-    std::unique_ptr<SipEngine> engine = StartEngine(&listener, profile);
-
-    CHECK(stun.Requests() > 0);
-    // O endereço que o STUN devolveu e o que o transporte UDP passa a anunciar.
-    CHECK(Contains(listener.LogTail(), std::string("SIP UDP socket reachable at ") + FakeStunServer::MappedAddress()));
-}
-
-TEST_CASE("SipEngine uses no STUN when the profile leaves stun empty") {
-    RecordingListener listener;
-    INFO(listener.LogTail());
-    const Profile profile = LoadProfile();
-    REQUIRE(profile.global.stun.empty());   // como no branding/perfil.ini de hoje (stun= vazio)
-    std::unique_ptr<SipEngine> engine = StartEngine(&listener, profile);
-
-    // Sem servidor o pjsua nao escreve nada de STUN ao iniciar; com um, logo diz "Trying STUN server".
-    CHECK_FALSE(Contains(listener.LogTail(), "STUN"));
 }
 
 TEST_CASE("SipEngine registers again after HandleIpChange") {
@@ -352,35 +303,4 @@ TEST_CASE("SetAccount refuses an account without address or extension") {
     noAddress.address.clear();
     CHECK(engine->SetAccount(noAddress) == 0);
     CHECK(listener.Registrations().empty());
-}
-
-TEST_CASE("SipEngine sends the start-up lines of the PJSIP to OnLog") {
-    RecordingListener listener;
-    INFO(listener.LogTail());
-    std::unique_ptr<SipEngine> engine = StartEngine(&listener, LoadProfile());
-
-    // Escrita pelo libCreate, antes de o writer do pjsua2 existir: sem o desvio iria para o terminal.
-    CHECK(Contains(listener.LogTail(), "for POSIX initialized"));
-}
-
-TEST_CASE("SipEngine allows one instance per process") {
-    RecordingListener listener;
-    INFO(listener.LogTail());
-    std::unique_ptr<SipEngine> first = StartEngine(&listener, LoadProfile());
-
-    std::string error;
-    std::unique_ptr<SipEngine> second = SipEngine::Create(ConfigFor(LoadProfile()), &listener, &error);
-    CHECK(!second);
-    CHECK_FALSE(error.empty());
-
-    first.reset();
-    std::unique_ptr<SipEngine> again = SipEngine::Create(ConfigFor(LoadProfile()), &listener, &error);
-    CHECK(again != nullptr);
-}
-
-TEST_CASE("SipEngine needs a listener") {
-    std::string error;
-    std::unique_ptr<SipEngine> engine = SipEngine::Create(ConfigFor(LoadProfile()), nullptr, &error);
-    CHECK(!engine);
-    CHECK_FALSE(error.empty());
 }

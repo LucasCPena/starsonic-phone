@@ -1,8 +1,13 @@
 #pragma once
 // Apoio aos testes do motor: o perfil de verdade (branding/perfil.ini), a configuração dos testes e a
 // conta que entra no motor.
+#include <algorithm>
+#include <chrono>
+#include <functional>
 #include <memory>
 #include <string>
+#include <thread>
+#include <vector>
 
 #include "test_support.h"
 #include "registrar_fixture.h"
@@ -58,6 +63,53 @@ inline starsonic::AccountInput Input(starsonic::Transport transport, const std::
 
 inline bool Contains(const std::string& text, const std::string& part) {
     return text.find(part) != std::string::npos;
+}
+
+// Quantas vezes a linha está no registro de ligações do registrador.
+inline size_t LogCount(const FakeRegistrar& registrar, const std::string& line) {
+    const std::vector<std::string> log = registrar.Log();
+    return static_cast<size_t>(std::count(log.begin(), log.end(), line));
+}
+
+// REGISTER aceitos do ramal (com Expires > 0); -1 se a porta de controle não respondeu.
+inline int Registers(const FakeRegistrar& registrar, const std::string& ramal = "2001") {
+    const std::vector<std::string> reply = registrar.Control("REGISTERS " + ramal);
+    return reply.empty() ? -1 : std::stoi(reply[0]);
+}
+
+inline bool WaitUntil(const std::function<bool()>& condition, int seconds) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
+    while (!condition()) {
+        if (std::chrono::steady_clock::now() >= deadline) return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    return true;
+}
+
+inline size_t CountActive(const std::vector<phone_test::RegistrationEvent>& events) {
+    return static_cast<size_t>(std::count_if(events.begin(), events.end(), [](const phone_test::RegistrationEvent& event) {
+        return event.code == 200 && event.active;
+    }));
+}
+
+// Os registros que chegaram, numa linha só, para as mensagens dos testes.
+inline std::string RegistrationsText(const RecordingListener& listener) {
+    std::string text;
+    for (const phone_test::RegistrationEvent& event : listener.Registrations()) {
+        text += std::to_string(event.code) + (event.active ? "+" : "-") + " ";
+    }
+    return text;
+}
+
+inline const std::vector<std::string> kOk = {"OK"};
+
+// Os dados de push que o SetPushData aceita: os parâmetros do Contact da RFC 8599 e um token em cabeçalho.
+inline starsonic::PushData ValidPushData() {
+    starsonic::PushData data;
+    data.contactParams = {{"pn-provider", "apns"}, {"pn-param", "ABCDE12345.br.com.starsonic.phone.voip"},
+                          {"pn-prid", "00fc13adff785122b4ad28809a3420982341241421348097878e577c991de8f0"}};
+    data.headers = {{"X-Push-Token", "00fc13adff78512"}};
+    return data;
 }
 
 }  // namespace phone_test
