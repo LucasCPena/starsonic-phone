@@ -296,6 +296,14 @@ void BaresipAccount::SetPushData(const std::optional<PushData>& data) {
 
 void BaresipAccount::OnIpChange() {
     StopKeepAlive();   // a conexão e o endereço do último 2xx são de antes da troca
+    if (req_ && tcp_) {
+        // No TCP, o REGISTER a caminho ia pela conexão que o uag_reset_transp fechou sem avisar o pedido: a resposta
+        // dele não chega mais, e a libre só o daria por perdido no Timer F (32 s), com o REGISTER da troca esperando
+        // atrás dele. Ele sai do caminho sem virar evento (a libre não chama mais os handlers dele). No UDP, as
+        // repetições já saem pelo socket novo.
+        req_ = static_cast<struct sip_request*>(mem_deref(req_));
+        pending_ = false;
+    }
     if (!paused_) Begin();
 }
 

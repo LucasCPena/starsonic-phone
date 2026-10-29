@@ -23,6 +23,7 @@ using phone_test::Contains;
 using phone_test::DelayedUdpRelay;
 using phone_test::FakeRegistrar;
 using phone_test::Input;
+using phone_test::kOk;
 using phone_test::kWaitSeconds;
 using phone_test::Lines;
 using phone_test::LoadProfile;
@@ -235,4 +236,60 @@ TEST_CASE("the engine registers each time it is created again in the same proces
         engine.reset();   // a conta sai do servidor
         CHECK(registrar.Control("RING 2001") == Lines{"ERR no-contact"});
     }
+}
+
+TEST_CASE("SetPushData with an account that is not registered sends a new REGISTER at once") {
+    FakeRegistrar registrar("senha");
+    RecordingListener listener;
+    INFO(listener.LogTail());
+    INFO(RegistrationsText(listener));
+    std::unique_ptr<SipEngine> engine = StartEngine(&listener, LoadProfile(registrar.port()));
+
+    REQUIRE(engine->SetAccount(Input(Transport::Udp, L"2001", L"errada")));
+    // Depois de um 403 não há nova tentativa: o segundo 403 só pode vir do REGISTER do SetPushData.
+    REQUIRE(listener.WaitFor(RecordingListener::Reached(403, false, 1), kWaitSeconds));
+    REQUIRE(engine->SetPushData(kPush));   // com a conta e a rede, mesmo sem registro
+    CHECK(listener.WaitFor(RecordingListener::Reached(403, false, 2), kWaitSeconds));
+    CHECK(registrar.Control("CONTACT 2001") == Lines{"ERR no-contact"});
+}
+
+TEST_CASE("RemoveAccount with an account that is not registered sends no REGISTER and reports the exit once") {
+    FakeRegistrar registrar("senha");
+    RecordingListener listener;
+    INFO(listener.LogTail());
+    INFO(RegistrationsText(listener));
+    std::unique_ptr<SipEngine> engine = StartEngine(&listener, LoadProfile(registrar.port()));
+
+    const int id = engine->SetAccount(Input(Transport::Udp, L"2001", L"errada"));
+    REQUIRE(id > 0);
+    REQUIRE(listener.WaitFor(RecordingListener::Reached(403, false, 1), kWaitSeconds));
+    // Cada mensagem SIP que sai vira uma linha de log, na hora; só os pedidos têm a linha "REGISTER sip:".
+    listener.CountLog("REGISTER sip:");
+    engine->RemoveAccount();
+    CHECK(listener.LogCount("REGISTER sip:") == 0);   // nenhum REGISTER com Expires 0
+    CHECK(Contains(listener.LogTail(), "a conta nao estava registrada: nada a retirar do servidor"));
+    REQUIRE(listener.WaitFor(RecordingListener::Reached(200, false, 1), kWaitSeconds));
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    CHECK_FALSE(RecordingListener::Reached(200, false, 2)(listener.Registrations()));
+    CHECK(listener.Registrations().back().accountId == id);
+}
+
+TEST_CASE("HandleIpChange over TCP with a REGISTER on the way registers again within a few seconds") {
+    FakeRegistrar registrar("senha");
+    RecordingListener listener;
+    INFO(listener.LogTail());
+    INFO(RegistrationsText(listener));
+    std::unique_ptr<SipEngine> engine = StartEngine(&listener, LoadProfile(registrar.port()));
+
+    REQUIRE(engine->SetAccount(Input(Transport::Tcp)));
+    REQUIRE(listener.WaitFor(RecordingListener::Reached(200, true, 1), kWaitSeconds));
+    REQUIRE(registrar.Control("DROP REGISTER on") == kOk);
+    engine->Reregister();   // o REGISTER fica a caminho, sem resposta
+    // O registrador recebe e descarta o REGISTER: na conexão TCP local, em bem menos que isto.
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    REQUIRE(registrar.Control("DROP REGISTER off") == kOk);
+    // O REGISTER a caminho ia pela conexão que a troca de rede fecha: sem resposta dele, o da troca não espera os 32 s
+    // em que a libre o daria por perdido.
+    engine->HandleIpChange();
+    CHECK(listener.WaitFor(RecordingListener::Reached(200, true, 2), 5));
 }
