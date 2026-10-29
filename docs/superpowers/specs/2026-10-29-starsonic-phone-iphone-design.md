@@ -1,7 +1,7 @@
 # Starsonic Phone para iPhone 1.0 — especificação de design
 
 - **Data:** 29/10/2026
-- **Status:** desenho aprovado pelo responsável no chat em 29/10/2026, em cinco partes: o que a primeira versão faz, como o app é montado, a ligação com o app fechado, build e publicação, testes e etapas. Esta spec aguarda a revisão escrita.
+- **Status:** desenho aprovado pelo responsável no chat em 29/10/2026, em cinco partes: o que a primeira versão faz, como o app é montado, a ligação com o app fechado, build e publicação, testes e etapas. A spec escrita foi aprovada pelo responsável em 29/10/2026. O plano da etapa 1 está em `docs/superpowers/plans/2026-10-29-iphone-etapa-1-motor-baresip.md`, aguardando a revisão dele.
 - **Versão alvo:** 1.0.0 (TestFlight, depois App Store).
 - **Base:**
   - o app do Windows na 0.1.0-rc.4: as telas (`windows/ui`) e o núcleo (`starsonic/desktop`), com as specs da W1, da W3 e da rc.4 e o contrato da ponte em `docs/ponte-windows.md`;
