@@ -60,6 +60,38 @@ jobs:
           cmake --build build-desktop-tests -j 4
           ctest --test-dir build-desktop-tests --output-on-failure
 
+      # O motor de ligações com o baresip (o do iPhone, spec 6.2 e 9.3): a libre, o baresip e a libg722 do
+      # build/deps.lock, compilados pelo build/baresip/build-linux.sh e guardados num cache, e os testes do motor contra o
+      # registrador falso.
+      - name: Dependências do motor com o baresip
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev libopus-dev zlib1g-dev
+
+      - name: Restaurar o baresip
+        id: baresip-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: baresip-linux
+          key: baresip-linux-v1-${{ hashFiles('build/deps.lock', 'build/baresip/**') }}
+
+      - name: Compilar o baresip
+        if: steps.baresip-cache.outputs.cache-hit != 'true'
+        run: bash build/baresip/build-linux.sh work/baresip-src baresip-linux
+
+      - name: Guardar o baresip
+        if: steps.baresip-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: baresip-linux
+          key: ${{ steps.baresip-cache.outputs.cache-primary-key }}
+
+      - name: Testes do motor com o baresip
+        run: |
+          cmake -S tests/phone -B build-phone-baresip -DBARESIP_PREFIX="$PWD/baresip-linux"
+          cmake --build build-phone-baresip -j 4
+          ctest --test-dir build-phone-baresip --output-on-failure
+
       # Os testes rodam sem o GITHUB_ACTIONS: os scripts que eles fazem falhar de propósito anotariam erros falsos num
       # job verde.
       - name: Testes dos scripts

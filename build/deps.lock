@@ -52,5 +52,23 @@
     "composeCompilerPlugin": "2.4.21",
     "composeBom": "2026.09.00",
     "jdk": "17"
+  },
+  "baresip": {
+    "re": {
+      "repo": "https://github.com/baresip/re",
+      "tag": "v4.12.0",
+      "commit": "65555dad439de9d6a81b3ee6092b9c096585249b"
+    },
+    "baresip": {
+      "repo": "https://github.com/baresip/baresip",
+      "tag": "v4.12.0",
+      "commit": "9cfab81550acc4bd38d6580d79b45cc6eea65cd6"
+    },
+    "libg722": {
+      "repo": "https://github.com/sippy/libg722",
+      "tag": "v1.2.8",
+      "commit": "4c2e79c5cbcb5ee12a97a16002a073ac83396480"
+    },
+    "modules": ["g711", "libg722", "opus", "srtp", "stun", "mixminus"]
   }
 }

@@ -1,6 +1,6 @@
 # Notas do build no Windows
 
-Como o Starsonic Phone é compilado e o que precisou de ajuste para o workflow ficar verde. A primeira parte é do app novo (a partir da 0.1.0: `windows/app` e `windows/ui`); a segunda, do app antigo (a série 0.0.1, o MicroSIP), que continua compilando enquanto `microsip/` existir.
+Como o Starsonic Phone é compilado e o que precisou de ajuste para o workflow ficar verde. A primeira parte é do app novo (a partir da 0.1.0: `windows/app` e `windows/ui`); a segunda, do app antigo (a série 0.0.1, o MicroSIP), que continua compilando enquanto `microsip/` existir; a terceira, do motor de ligações com o baresip (o do iPhone), que por enquanto só é compilado no Linux, para os testes.
 
 ## App novo (0.1.0)
 
@@ -62,3 +62,25 @@ O projeto do MicroSIP espera estar dentro da árvore do pjproject (`..\pjlib\inc
 - **Código-fonte das dependências na publicação.** Como o cache não guarda os downloads do vcpkg, o `Make-SourceBundle.ps1` (só nas versões publicadas) baixa de novo o código-fonte das portas com `vcpkg install --only-downloads --binarysource=clear`, numa pasta de instalação vazia, sem compilar nada.
 - **Instalador.** O `Build-Installer.ps1` gera a lista dos arquivos instalados a partir de `out\` (sem o PDB), para o desinstalador apagar exatamente os mesmos. O CI instala o NSIS 3.10 pelo Chocolatey só se ele não estiver na imagem.
 - **`PJMEDIA_AUD_MAX_DEVS`.** O MicroSIP 3.22.16 usa o nome antigo do limite de dispositivos de áudio; no pjproject 2.17 ele se chama `PJMEDIA_AUD_DEV_MAX_DEVS`. O `config_site.h` define o nome antigo como apelido do novo (erro C2065 em `mainDlg.cpp`, `microsip.cpp` e `SettingsDlg.cpp`).
+
+## Motor com o baresip (Linux)
+
+O `SipEngine` do iPhone (`starsonic/phone/baresip/`) usa a libre e o baresip 4.12.0 e a libg722 1.2.8 (nenhum sob GPL ou LGPL, spec 10), estáticos, nas versões e commits da chave `baresip` do `build/deps.lock`, com os módulos `g711`, `libg722`, `opus`, `srtp`, `stun` e `mixminus`. O módulo `g722` do baresip (usa a spandsp, sob LGPL) nunca entra. No Linux ele passa pelos testes do contrato do motor (o `phone_tests_baresip`, contra o registrador falso).
+
+### Como compilar
+
+Pré-requisitos: Git, CMake, g++, Python 3, `libssl-dev`, `libopus-dev` e `zlib1g-dev`.
+
+```bash
+bash build/baresip/build-linux.sh work/baresip-src baresip-linux   # uma vez por versão do deps.lock
+cmake -S tests/phone -B build-phone-baresip -DBARESIP_PREFIX="$PWD/baresip-linux"
+cmake --build build-phone-baresip -j 4
+ctest --test-dir build-phone-baresip --output-on-failure
+```
+
+O `-DBARESIP_PREFIX` e o `-DPJPROJECT_PREFIX` (o `phone_tests`, com o PJSIP) podem ir no mesmo build; o `call_controller_tests` sai com qualquer um dos dois. No CI, o job `core-tests` do `build.yml` faz o mesmo, com o `baresip-linux` num cache cuja chave muda com o `build/deps.lock` e com o `build/baresip/`.
+
+### Ajustes
+
+- **Um `.a` só, com os módulos.** No `STATIC` do baresip 4.12, cada módulo é uma biblioteca OBJECT do CMake, e os objetos dele vão dentro do `libbaresip.a`; o install do baresip pede o executável e os testes dele, que o motor não usa. O script compila só a biblioteca e a copia com o `ar -M` para `lib/libstarsonic-baresip.a`, ao lado da `libre.a` e da `libg722.a`, que o link põe entre `--start-group` e `--end-group` (uma chama a outra). As bibliotecas do sistema vão em `lib/starsonic-baresip-libs.txt` (`ssl crypto opus z pthread m dl`).
+- **A conferência dos módulos.** O baresip deixa de fora, sem erro, o módulo que não acha a biblioteca dele (o `opus` sem o `libopus-dev`, por exemplo). O script procura com o `nm` o `exports_<módulo>` de cada um no `libstarsonic-baresip.a` e sai com erro se faltar um ou se sobrar um que não está no `deps.lock`. O motor carrega os mesmos módulos, na mesma ordem (a lista do `BaresipLoop.cpp`).

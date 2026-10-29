@@ -93,6 +93,10 @@ struct AccountInput {
     std::optional<std::vector<ServerPort>> serverPorts;
 };
 
+// O acesso dos testes do motor com o baresip ao estado dele (baresip/SipEngineTestAccess.h); o motor do PJSIP não a
+// define.
+struct SipEngineTestAccess;
+
 // Os dados de push (spec 7.3) que vão em cada REGISTER, nos dois formatos: parâmetros na URI do Contact, como na
 // RFC 8599 (pn-provider, pn-param, pn-prid), e cabeçalhos próprios. Os limites estão em PushDataProblem
 // (PushDataCheck.h).
@@ -271,6 +275,7 @@ public:
     std::vector<int> AudioLinks(int callId) const;
 
 private:
+    friend struct SipEngineTestAccess;
     class Impl;
     explicit SipEngine(std::unique_ptr<Impl> impl);
 
