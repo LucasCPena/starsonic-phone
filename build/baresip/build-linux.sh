@@ -22,7 +22,8 @@ WORKDIR="$(cd "$1" && pwd)"
 PREFIX="$(cd "$2" && pwd)"
 JOBS="$(nproc 2>/dev/null || echo 2)"
 
-# Valor de build/deps.lock pelo caminho de chaves; uma lista sai com um item por linha. Ex.: lock_value baresip re commit
+# Valor de build/deps.lock pelo caminho de chaves; uma lista sai com um item por linha.
+# Ex.: lock_value baresip re commit
 lock_value() {
     python3 -I -c 'import json, sys
 node = json.load(open(sys.argv[1], encoding="utf-8"))

@@ -1,6 +1,6 @@
 #pragma once
-// O laço da libre (re_main) numa thread do motor com o baresip, com o baresip montado nela, e o caminho das outras threads
-// até ele (Run). Interno ao motor; este cabeçalho não inclui a libre nem o baresip.
+// O laço da libre (re_main) numa thread do motor com o baresip, com o baresip montado nela, e o caminho das outras
+// threads até ele (Run). Interno ao motor; este cabeçalho não inclui a libre nem o baresip.
 //
 // O log da libre (dbg), o do baresip e cada mensagem SIP inteira que sai e que chega (no nível 4) vão para o LogSink na
 // hora, na thread que escreveu: a do laço, uma do re_thread_async ou a que está num Run. Níveis como no EngineConfig: 1
@@ -12,6 +12,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace starsonic {
 
@@ -39,6 +40,9 @@ public:
     // espera a rede: quem espera uma resposta sai do Run, espera numa condition_variable que o handler (na
     // thread do laço) avisa, e volta com outro Run.
     void Run(const std::function<void()>& work);
+
+    // Os módulos do baresip que o laço carrega (module_preload), na ordem: os de baresip.modules do build/deps.lock.
+    static std::vector<std::string> Modules();
 
 private:
     struct Hooks;   // as funções que a libre e o baresip chamam (BaresipLoop.cpp)

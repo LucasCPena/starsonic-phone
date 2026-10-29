@@ -10,6 +10,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstring>
+#include <iterator>
 #include <system_error>
 #include <utility>
 
@@ -18,8 +19,11 @@
 namespace starsonic {
 namespace {
 
-// Os módulos do baresip, na ordem e com os nomes da lista baresip.modules do build/deps.lock. O
-// build/baresip/build-linux.sh confere que o libstarsonic-baresip.a traz cada um deles, e nenhum outro.
+// Os módulos do baresip que o laço carrega, na ordem: os da lista baresip.modules do build/deps.lock. Duas
+// conferências: o teste "the baresip engine loads the modules of build/deps.lock, in order"
+// (tests/phone/test_engine_baresip.cpp, em todo build) compara esta lista, pelo Modules(), com a do deps.lock, nome a
+// nome e na ordem; o build/baresip/build-linux.sh compara o libstarsonic-baresip.a com o deps.lock (um módulo que falta
+// ou que sobra).
 const char* const kModules[] = {"g711", "libg722", "opus", "srtp", "stun", "mixminus"};
 
 // As threads do re_thread_async, como no main.c do baresip.
@@ -173,6 +177,10 @@ void BaresipLoop::Run(const std::function<void()>& work) {
         ~Entered() { re_thread_leave(); }
     } entered;
     work();
+}
+
+std::vector<std::string> BaresipLoop::Modules() {
+    return std::vector<std::string>(std::begin(kModules), std::end(kModules));
 }
 
 void BaresipLoop::Main() {

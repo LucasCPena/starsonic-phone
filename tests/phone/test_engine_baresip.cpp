@@ -1,5 +1,6 @@
-// Só o motor do baresip: o que depende das linhas de log do baresip ou do que esse motor faz de diferente do do PJSIP
-// (os dispositivos de som e o BLF, spec 6.1). O motor do PJSIP tem os testes dele (test_engine_pjsip.cpp).
+// Só o motor do baresip: o que depende das linhas de log do baresip, os módulos que ele carrega ou o que esse motor faz
+// de diferente do do PJSIP (os dispositivos de som e o BLF, spec 6.1). O motor do PJSIP tem os testes dele
+// (test_engine_pjsip.cpp).
 #include "engine_fixture.h"
 
 #include <chrono>
@@ -8,13 +9,25 @@
 #include <thread>
 #include <vector>
 
+#include "nlohmann/json.hpp"
+
+#include "BaresipLoop.h"
 #include "SipEngine.h"
 
 using namespace starsonic;
 using phone_test::Contains;
 using phone_test::LoadProfile;
+using phone_test::ReadText;
 using phone_test::RecordingListener;
 using phone_test::StartEngine;
+
+TEST_CASE("the baresip engine loads the modules of build/deps.lock, in order") {
+    // O build/baresip/build-linux.sh confere o .a contra o deps.lock, mas o CI só roda o script quando o cache do
+    // baresip falta: a lista do código é conferida aqui, em todo build.
+    const nlohmann::json lock = nlohmann::json::parse(ReadText(STARSONIC_REPO_DIR "/build/deps.lock"));
+    const std::vector<std::string> locked = lock.at("baresip").at("modules").get<std::vector<std::string>>();
+    CHECK(BaresipLoop::Modules() == locked);
+}
 
 TEST_CASE("the baresip engine sends the start-up lines of baresip to OnLog") {
     RecordingListener listener;
