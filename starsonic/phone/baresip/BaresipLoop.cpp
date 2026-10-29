@@ -77,12 +77,14 @@ int LibreLevelFor(int logLevel) {
 }
 
 // A configuração do baresip (o arquivo config dele), em texto: a porta SIP escolhida pelo sistema, como no PJSIP; até 4
-// ligações (as regras das duas são do motor); e, com o nullAudio, a fonte e a saída nulas. Nenhum módulo: o laço
+// ligações (as regras das duas são do motor); a ligação que chega toca até quem liga desistir, como no PJSIP (o padrão
+// do baresip a recusa com 486 depois de 120 s); e, com o nullAudio, a fonte e a saída nulas. Nenhum módulo: o laço
 // carrega os de kModules, e nenhum de interface (menu, account, contact).
 std::string ConfigText(bool nullAudio) {
     std::string text =
         "sip_listen 0.0.0.0:0\n"
-        "call_max_calls 4\n";
+        "call_max_calls 4\n"
+        "call_local_timeout 0\n";
     if (nullAudio) {
         text += std::string("audio_player ") + kNullAudioName + ",nil\n";
         text += std::string("audio_source ") + kNullAudioName + ",nil\n";
@@ -252,6 +254,16 @@ bool BaresipLoop::Setup(std::string* error) {
     if (err) {
         *error = Failure("baresip_init", err);
         return false;
+    }
+    // O baresip deixa o loopback fora dos endereços locais, e sem ele uma ligação com um servidor no próprio aparelho
+    // (o 127.0.0.1 dos testes) não acha o endereço da mídia ("ua: no laddr for"). Ele entra antes do ua_init, que abre
+    // os transportes SIP em cada endereço da lista, como no selftest do baresip. Sem ele, só essas ligações falham.
+    struct sa loopback;
+    err = sa_set_str(&loopback, "127.0.0.1", 0);
+    if (!err) err = net_add_address(baresip_network(), &loopback);
+    if (err) {
+        const std::string line = Failure("o loopback ficou fora dos enderecos locais: net_add_address", err);
+        Log(2, line.data(), line.size());
     }
     err = ua_init(config_.userAgent.c_str(), true, true, false);   // UDP e TCP, sem TLS
     if (err) {

@@ -70,6 +70,7 @@ if(BARESIP_PREFIX)
     test_engine_setup.cpp
     test_engine_register.cpp
     test_engine_network.cpp
+    test_engine_calls.cpp
     test_engine_baresip.cpp
     test_push_data.cpp
     test_account_config.cpp)
@@ -103,9 +104,7 @@ if(BARESIP_PREFIX)
     ${BARESIP_PREFIX}/lib/libg722.a
     -Wl,--end-group
     ${BARESIP_SYSTEM_LIBS})
-  # Este caso da rede precisa das ligações que chegam (a Task 4), e a Task 4 tira este filtro.
-  add_test(NAME phone_tests_baresip COMMAND phone_tests_baresip
-           "--test-case-exclude=SetNetworkAvailable false keeps the binding*")
+  add_test(NAME phone_tests_baresip COMMAND phone_tests_baresip)
 endif()
 
 # O controlador de ligações sem o motor: só o núcleo, o CallController.cpp e os testes, sem o

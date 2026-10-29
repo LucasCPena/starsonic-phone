@@ -1,7 +1,8 @@
 // Só o motor do baresip: o que depende das linhas de log do baresip, os módulos que ele carrega, o que esse motor faz
-// de diferente do do PJSIP (os dispositivos de som e o BLF, spec 6.1, e os dados de push no REGISTER, spec 7.3) e o que
-// só aqui é conferido (o keep-alive e o motor destruído e criado de novo com a conta). O motor do PJSIP tem os testes
-// dele (test_engine_pjsip.cpp).
+// de diferente do do PJSIP (os dispositivos de som e o BLF, spec 6.1, os dados de push no REGISTER, spec 7.3, também
+// durante uma ligação, e a URI das ligações de uma conta TCP) e o que só aqui é conferido (o keep-alive, o motor
+// destruído e criado de novo com a conta, os códigos das ligações encerradas aqui e a ligação que chega com a conta
+// saindo). O motor do PJSIP tem os testes dele (test_engine_pjsip.cpp).
 #include "call_fixture.h"
 #include "engine_fixture.h"
 #include "relay_fixture.h"
@@ -22,6 +23,7 @@ using namespace starsonic;
 using phone_test::Contains;
 using phone_test::DelayedUdpRelay;
 using phone_test::FakeRegistrar;
+using phone_test::History;
 using phone_test::Input;
 using phone_test::kOk;
 using phone_test::kWaitSeconds;
@@ -292,4 +294,84 @@ TEST_CASE("HandleIpChange over TCP with a REGISTER on the way registers again wi
     // em que a libre o daria por perdido.
     engine->HandleIpChange();
     CHECK(listener.WaitFor(RecordingListener::Reached(200, true, 2), 5));
+}
+
+TEST_CASE("a TCP account dials over TCP") {
+    Phone phone(Transport::Tcp);
+    const int id = phone.Dial("2002");
+    CHECK(Contains(phone.listener.LogTail(),
+                   "INVITE sip:2002@127.0.0.1:" + std::to_string(phone.registrar.port()) + ";transport=tcp SIP/2.0"));
+    CHECK(phone.engine->Hangup(id));
+}
+
+TEST_CASE("Reject and Hangup of a ringing call end it with 486 and 603") {
+    Phone phone;
+    INFO(phone.listener.CallsText());
+    INFO(phone.registrar.LogText());
+    const int rejected = phone.Ring();
+    REQUIRE(phone.engine->Reject(rejected));
+    REQUIRE(phone.WaitState(rejected, CallState::Disconnected));
+    CHECK(History(phone.listener.Calls(), rejected) == "Incoming Incoming/100 Early/180 Disconnected/486");
+    const int declined = phone.Ring();
+    REQUIRE(phone.engine->Hangup(declined));
+    REQUIRE(phone.WaitState(declined, CallState::Disconnected));
+    CHECK(History(phone.listener.Calls(), declined) == "Incoming Incoming/100 Early/180 Disconnected/603");
+    CHECK(phone.registrar.WaitForLog("inv-out 2001 603", kWaitSeconds));
+}
+
+TEST_CASE("Hangup of an outgoing call without an answer ends it with 487") {
+    FakeRegistrar registrar("senha");
+    DelayedUdpRelay relay(registrar.port(), 60000);   // nada volta durante o teste
+    RecordingListener listener;
+    INFO(listener.CallsText());
+    std::unique_ptr<SipEngine> engine = StartEngine(&listener, LoadProfile(relay.port()));
+    REQUIRE(engine->SetAccount(Input(Transport::Udp)));   // a conta basta, sem registro
+    const int id = engine->MakeCall("2002");
+    REQUIRE(id >= 0);
+    REQUIRE(engine->Hangup(id));
+    CHECK_FALSE(engine->HasCall());
+    REQUIRE(listener.WaitForCalls(RecordingListener::StateReached(id, CallState::Disconnected), kWaitSeconds));
+    CHECK(History(listener.Calls(), id) == "Calling/0 Disconnected/487");
+}
+
+TEST_CASE("an outgoing call that cannot reach the server ends with 503") {
+    RecordingListener listener;
+    INFO(listener.CallsText());
+    INFO(listener.LogTail());
+    // Ninguém escuta na porta: a conexão TCP é recusada. O 503 é o código do PJSIP para o erro de transporte
+    // (PJSIP_SC_TSX_TRANSPORT_ERROR).
+    std::unique_ptr<SipEngine> engine = StartEngine(&listener, LoadProfile(phone_test::FreePort()));
+    REQUIRE(engine->SetAccount(Input(Transport::Tcp)));
+    const int id = engine->MakeCall("2002");
+    REQUIRE(id >= 0);
+    REQUIRE(listener.WaitForCalls(RecordingListener::StateReached(id, CallState::Disconnected), kWaitSeconds));
+    CHECK(History(listener.Calls(), id) == "Calling/0 Disconnected/503");
+    CHECK_FALSE(engine->HasCall());
+}
+
+TEST_CASE("a call that arrives while the account leaves gets 480 and no event") {
+    Phone phone;
+    INFO(phone.listener.CallsText());
+    INFO(phone.registrar.LogText());
+    // O registrador descarta a saída: o RemoveAccount espera a resposta dela (~3 s), e o contato continua lá.
+    REQUIRE(phone.registrar.Control("DROP REGISTER on") == kOk);
+    phone.listener.CountLog("REGISTER sip:");
+    std::thread remover([&phone] { phone.engine->RemoveAccount(); });
+    // O REGISTER com Expires 0 já saiu: a conta está saindo.
+    CHECK(WaitUntil([&phone] { return phone.listener.LogCount("REGISTER sip:") > 0; }, kWaitSeconds));
+    CHECK(phone.registrar.Control("RING 2001") == kOk);
+    CHECK(phone.registrar.WaitForLog("inv-out 2001 480", kWaitSeconds));
+    remover.join();
+    CHECK(phone.listener.Calls().empty());
+}
+
+TEST_CASE("SetPushData during a call registers again and keeps the call") {
+    Phone phone;
+    const int id = phone.Dial("2002");
+    REQUIRE(phone.engine->SetPushData(kPush));
+    CHECK(phone.listener.WaitFor(RecordingListener::Reached(200, true, 2), kWaitSeconds));
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    CHECK_FALSE(RecordingListener::StateReached(id, CallState::Disconnected)(phone.listener.Calls()));
+    CHECK(phone.engine->CallCount() == 1);
+    CHECK(phone.engine->AudioLinks(id) == std::vector<int>{0});
 }
