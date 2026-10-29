@@ -1810,7 +1810,8 @@ def check_company_contacts(page, capturas, result, record, problems):
     info = {}
     try:
         row.wait_for(timeout=15000)
-        info["etiqueta"] = row.locator(".etiqueta").inner_text()
+        # O texto da página (o CSS mostra a etiqueta em maiúsculas: o inner_text daria "EMPRESA").
+        info["etiqueta"] = (row.locator(".etiqueta").text_content() or "").strip()
     except Exception as error:   # noqa: BLE001
         info["erro"] = "%s: %s" % (type(error).__name__, error)
     info["nomes"] = page.locator("li.row .row-title").all_inner_texts()
