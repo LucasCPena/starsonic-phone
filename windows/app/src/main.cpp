@@ -39,11 +39,13 @@
 
 #include "AppUpdater.h"
 #include "Autostart.h"
+#include "CompanyFetcher.h"
 #include "DesktopApp.h"
 #include "DiagLog.h"
 #include "Diagnostics.h"
 #include "DpapiCipher.h"
 #include "EngineHost.h"
+#include "FilePicker.h"
 #include "LegacyCrypto.h"
 #include "Links.h"
 #include "MainWindow.h"
@@ -147,6 +149,12 @@ void OpenUrl(const std::string& url) {
     ShellExecuteW(nullptr, L"open", Utf8ToWide(url).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
 
+// As janelas de arquivo da rc.4 (FilePicker.h). So a thread da janela le e escreve: sem trava.
+struct FileDialogs {
+    bool open = false;     // uma esta aberta (o Show roda o laco de mensagens: outro pedido pode chegar dentro dele)
+    bool closed = false;   // o DesktopApp parou, ou para agora: nenhuma abre, e a que volta nao responde
+};
+
 #if STARSONIC_TEST_HOOKS
 // O texto de uma variavel de ambiente ("" sem ela).
 std::wstring Environment(const wchar_t* name) {
@@ -201,6 +209,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     config.paths.settings = data + "\\config.json";
     config.paths.atalhos = data + "\\atalhos.json";
     config.paths.admin = data + "\\admin.json";   // pelo DPAPI (o mesmo cifrador das senhas)
+    config.paths.companyList = data + "\\contatos-empresa.json";   // rc.4: a ultima lista boa da planilha da empresa
     // A rc.7 guardava tudo na mesma pasta (o %APPDATA%\Starsonic Phone do app antigo instalado).
     config.paths.legacy.ini = data + "\\StarsonicPhone.ini";
     config.paths.legacy.contactsXml = data + "\\Contacts.xml";
@@ -258,6 +267,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     // O canal de atualizacao que vale (o do administrador, pelo gancho updateChannel, ou o do build): o atualizador le a
     // cada verificacao. Antes do DesktopApp: o gancho chega na abertura dele, talvez antes de o atualizador existir.
     UpdateChannel updateChannel(STARSONIC_UPDATE_CHANNEL_TEST != 0);
+    // (rc.4) A leitura da planilha da empresa (CompanyFetcher.h), numa thread propria, com o user agent do atualizador.
+    // Antes do DesktopApp (o gancho chega na abertura dele); o Stop roda antes do Shutdown dele: nenhuma resposta
+    // depois.
+    CompanyFetcher companyFetcher(L"Starsonic Phone/" + Utf8ToWide(STARSONIC_VERSION), log);
+    FileDialogs fileDialogs;   // (rc.4) as janelas de importar e exportar (ver os ganchos)
 
     // O gancho quit ja rodou (o DesktopApp encerrou as ligacoes): o logoff do Windows espera por ele.
     const HANDLE quitDone = CreateEventW(nullptr, TRUE, FALSE, nullptr);
@@ -309,6 +323,50 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         updateChannel.Set(channel);
         log(std::string("atualizacao: canal ") + (updateChannel.Test() ? "teste" : "estavel") +
             (channel.empty() ? " (o do build)" : " (o do administrador)"));
+    };
+    // (rc.4) As janelas de importar e exportar (FilePicker.h), na thread da janela, com o COM dela: o gancho so poe na
+    // fila da janela e volta. Uma por vez: o pedido que chega com uma aberta volta cancelado (""). O callback do
+    // DesktopApp (que so poe o resultado na fila de comandos) nunca roda depois do Shutdown dele: o fileDialogs.closed
+    // sobe antes de cada Shutdown, na thread da janela (o do logoff, que pode rodar dentro do laco de uma janela de
+    // arquivo aberta, e o do fim), e depois disso a janela que volta nao responde, e a que ainda nao abriu nem abre. O
+    // Sair com uma janela aberta (o da bandeja, o --sair) fecha a janela principal, que leva a de arquivo junto: o Show
+    // volta com nada, e a resposta ("", cancelado) sai ali, antes de o laco de mensagens acabar e do Shutdown.
+    hooks.pickImportFile = [&window, &fileDialogs](std::function<void(const std::string& path)> done) {
+        window.RunOnWindow([&window, &fileDialogs, done] {
+            if (fileDialogs.closed) return;
+            if (fileDialogs.open) {
+                done(std::string());
+                return;
+            }
+            fileDialogs.open = true;
+            const std::optional<std::wstring> path = PickImportFile(window.Handle());
+            fileDialogs.open = false;
+            if (!fileDialogs.closed) done(path ? WideToUtf8(*path) : std::string());
+        });
+    };
+    using ExportDone = std::function<void(const std::string& path, const std::string& format)>;
+    hooks.pickExportFile = [&window, &fileDialogs](ExportDone done) {
+        window.RunOnWindow([&window, &fileDialogs, done] {
+            if (fileDialogs.closed) return;
+            if (fileDialogs.open) {
+                done(std::string(), std::string());
+                return;
+            }
+            fileDialogs.open = true;
+            const std::optional<ExportChoice> choice = PickExportFile(window.Handle());
+            fileDialogs.open = false;
+            if (fileDialogs.closed) return;
+            if (choice) {
+                done(WideToUtf8(choice->path), choice->format);
+            } else {
+                done(std::string(), std::string());
+            }
+        });
+    };
+    // (rc.4) A leitura da planilha da empresa: so poe na fila da thread do CompanyFetcher.
+    using FetchDone = std::function<void(const CompanyFetch& result)>;
+    hooks.fetchCompanyList = [&companyFetcher](const CompanySource& source, FetchDone done) {
+        companyFetcher.Fetch(source, std::move(done));
     };
 
     DesktopApp app(config, hooks, engine, engine, files, cipher, clock, scheduler);
@@ -408,12 +466,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     callbacks.quitRequested = [&app] { app.HandleCommand(kQuitCommand); };
     // O logoff ou o desligamento: o mesmo Sair, esperando pouco (o Windows encerra o processo depois de o
     // WM_ENDSESSION voltar). O Shutdown roda o que o Sair pos na fila (os Recentes das ligacoes encerradas).
-    callbacks.endSession = [&app, &updater, &network, quitDone, log] {
+    callbacks.endSession = [&app, &updater, &network, &companyFetcher, &fileDialogs, quitDone, log] {
         if (updater) updater->Close();
         app.HandleCommand(kQuitCommand);
         const bool done = quitDone && WaitForSingleObject(quitDone, kEndSessionWaitMs) == WAIT_OBJECT_0;
-        // Depois do Sair (as ligacoes e os Recentes primeiro: o Unadvise do monitor pode demorar), antes do Shutdown.
+        // Depois do Sair (as ligacoes e os Recentes primeiro: o Unadvise do monitor pode demorar), antes do Shutdown:
+        // nenhum SetInternet, nenhuma resposta da leitura da planilha e nenhuma das janelas de arquivo depois dele (uma
+        // pode estar aberta: este WM_ENDSESSION pode rodar dentro do laco dela).
         network.Stop();
+        companyFetcher.Stop();
+        fileDialogs.closed = true;
         app.Shutdown();
         log(done ? "sessao do Windows encerrando: o Sair terminou" : "sessao do Windows encerrando: o Sair nao terminou a tempo");
     };
@@ -461,7 +523,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         ExitProcess(0);
     });
     updater->Close();
-    network.Stop();   // antes do Shutdown: nenhum SetInternet depois dele
+    // Antes do Shutdown: nenhum SetInternet, nenhuma resposta da leitura da planilha (a leitura presa nao e esperada) e
+    // nenhuma das janelas de arquivo depois dele (com o laco de mensagens no fim, nenhuma esta aberta).
+    network.Stop();
+    companyFetcher.Stop();
+    fileDialogs.closed = true;
     app.Shutdown();
     scheduler.Stop();
     engine.Stop();

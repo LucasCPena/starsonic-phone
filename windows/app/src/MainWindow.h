@@ -97,6 +97,8 @@ public:
     void RunOnWindow(std::function<void()> action);
 
     // Na thread da janela.
+    // A janela (nullptr antes do Create e depois de fechar): a dona das janelas de arquivo (rc.4).
+    HWND Handle() const { return window_; }
     void Minimize();
     void CloseToTray();     // esconde na bandeja
     void BringToFront();    // da bandeja, minimizada ou atras de outra: na frente
