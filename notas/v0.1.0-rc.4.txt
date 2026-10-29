@@ -1,0 +1,5 @@
+A ligação recebida volta a tocar o toque de telefone da versão antiga, no lugar do som de "chamando".
+Na aba Contatos, o botão ⋯ importa e exporta os contatos em planilha do Excel ou CSV, como na versão antiga.
+Lista da empresa: cole em Configurações → Contatos o link de uma planilha (Google Planilhas ou OneDrive/SharePoint) ou o caminho dela na rede.
+A lista aparece nos Contatos e nas ligações, e uma mudança na planilha chega a todos em até 15 minutos.
+Esta é uma versão de teste.

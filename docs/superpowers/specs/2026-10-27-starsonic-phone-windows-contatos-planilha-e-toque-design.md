@@ -1,7 +1,7 @@
 # Starsonic Phone para Windows: contatos por planilha (importar, exportar e a lista da empresa) e o toque do MicroSIP (especificação de design)
 
 - **Data:** 27/10/2026
-- **Status:** aprovada pelo responsável no chat em 27/10/2026 ("Pode seguir"), a construir.
+- **Status:** implementada na 0.1.0-rc.4 (29/10/2026; o responsável publica a versão de teste pelo GitHub). O que mudou durante a construção está na seção "Como ficou", no fim. A spec foi aprovada pelo responsável no chat em 27/10/2026 ("Pode seguir").
 - **Versão alvo:** 0.1.0-rc.4 (canal de teste).
 - **Base:** a 0.1.0-rc.3 do Windows (a W1, `2026-10-21-starsonic-phone-windows-w1-design.md`, com a W3, `2026-10-22-starsonic-phone-windows-w3-atalhos-blf-adm-design.md`). O contrato da ponte é o `docs/ponte-windows.md`.
 
@@ -321,3 +321,77 @@ A mesma para importar e para a lista da empresa, em C++ portátil (`starsonic/de
 - Escolher outro arquivo de toque.
 - O XML do MicroSIP, no importar e no exportar.
 - Um intervalo de leitura diferente dos 15 minutos.
+
+## Como ficou
+
+O que mudou em relação ao texto acima durante a construção da 0.1.0-rc.4 (plano `docs/superpowers/plans/2026-10-27-windows-rc4-contatos-e-toque.md`), uma linha por item, com o motivo. O contrato da ponte é o `docs/ponte-windows.md` (os comandos de "Contatos e Recentes" e a seção "A lista da empresa (rc.4)"), e o roteiro manual é a seção 19 do `docs/teste-manual.md`, com a 14.7 (a atualização da rc.3).
+
+### Decisões tomadas durante a construção
+
+- **O crédito do toque (3 e 9).** O Sobre ficou com o texto de antes, "Licença GPL v3 · usa o PJSIP (GPL v2 ou posterior) e o Opus (BSD)", sem o crédito do toque. A regra da marca vale mais: nenhum texto visível com o nome do MicroSIP no app nem no instalador, e o `build/check_branding.py` reprovou o build com o crédito. A GPL pede a licença e o código-fonte, não um crédito na tela. A origem e a licença do toque (o `ringtone.wav` do pacote oficial do MicroSIP 3.22.16, GPL v2 ou posterior) ficam em `windows/ui/assets/toque.LEIA.md`, que não vai para a `dist/` nem para o instalador, e na seção "Licença" do README.
+- **O toque na página (3).**
+  - O `index.html` passou de `connect-src 'none'` para `connect-src 'self'`. Com o `'none'`, o `fetch` do `assets/toque.wav` era bloqueado, e a recebida caía sempre nos 425 Hz, sem erro nenhum. O `'self'` só deixa a página ler os arquivos do próprio app. O `aviso.html` continua com `'none'`: o aviso do canto nunca toca.
+  - O arquivo é lido uma vez por abertura da interface. Se a leitura falhar, a recebida toca os 425 Hz até a interface abrir de novo; se só a decodificação falhar, a recebida seguinte tenta de novo.
+- **O OneDrive pessoal (5.2).** Os links `https://1drv.ms/…` e `https://onedrive.live.com/…` seguem a regra do SharePoint: o link como foi colado, sem o `#…`, com `download=1` (como está, quando já tem).
+  - A linha da tabela com o `https://api.onedrive.com/v1.0/shares/u!…/root/content` não vale mais. Desde agosto de 2024, esse endereço responde 401 a quem não entrou na conta, para os links de compartilhamento de agora (Microsoft Q&A 5384212 e 2131383; Tech Community 4226744).
+  - Já o `download=1` baixa os arquivos do Office de um compartilhamento pessoal, que hoje redireciona para `onedrive.live.com/:x:/g/personal/…`, o caminho do SharePoint (relatos de 2025 e 2026). O WinHTTP segue os redirecionamentos com os cookies, na regra padrão dele, e o diagnóstico continua dizendo "OneDrive".
+  - Isso ainda não foi conferido com um link de verdade: é a linha 19.17 do roteiro. Se falhar, o link pessoal mostra "Não consegui abrir o link…" até uma correção; os links do OneDrive e do SharePoint do trabalho não mudam.
+- **O Sair durante uma leitura (7.4; o plano dizia "Stop() espera a leitura de agora").** O `Stop()` do `CompanyFetcher` não espera: ele marca a parada, descarta os pedidos da fila e volta. A thread confere a parada com a mesma trava antes de responder, então nenhuma resposta e nenhuma linha do diagnóstico chegam depois do `Stop()`, e nenhuma chega a um `DesktopApp` destruído. A leitura presa termina sozinha, ou acaba com o processo, como nas threads do atualizador. Esperar seguraria o Sair por dezenas de segundos numa pasta da rede fora do ar (a VPN que ainda não conectou) ou num link lento (até 10 s para conectar e 30 s para ler).
+- **A escrita do exportar (4.3).**
+  - O .xlsx tira os caracteres que o XML 1.0 não aceita (os de controle, menos o TAB, o LF e o CR, e U+FFFE e U+FFFF) e escreve `&`, `<` e `>` como entidades. O Excel não abre uma planilha com um deles, e um contato importado de um arquivo ruim pode trazer um. O CR vai como `&#13;`, senão a leitura do XML o troca por LF. O CSV leva o texto como está.
+  - A célula sem texto (uma observação vazia) não é escrita, e no Excel ela fica vazia de verdade. O "todas as células como texto" vale para as que têm texto (nenhum número estragado), e a leitura põe cada célula pela referência dela (6.1).
+  - O .xlsx não traz a largura das colunas: o Excel abre as três na largura padrão.
+- **Onde ficou o código (6).**
+  - A escrita está em `starsonic/desktop/PlanilhaEscrita.cpp`, declarada no `Planilha.h` como o plano dizia, e a leitura no `Planilha.cpp`: cada arquivo com um assunto e abaixo de umas 1.000 linhas.
+  - A `CompanyListStore` está no `Stores.h` e no `Stores.cpp`, ao lado da `ContactsStore`. Ela usa o envelope dos outros arquivos de dados (a `versao`, o BOM e a gravação atômica), que uma segunda cópia no `ListaEmpresa.cpp` duplicaria. O `ListaEmpresa.h` ficou com as fontes (`CompanySourceFor`, `CompanySourceName`) e o `FromHttp`.
+- **A leitura das planilhas (6).**
+  - **O CSV do MicroSIP:** o nome é "First Name" e "Last Name" juntos também quando a coluna "Name" existe, mas está vazia na linha: o CSV do MicroSIP sempre traz a coluna.
+  - **Várias colunas de número:** vale a primeira, da esquerda para a direita, que tem um número na linha (o `NormalizeDialString` não fica vazio). Um "-" no "Telefone" não esconde o "Celular".
+  - **Um arquivo feito para encher a memória** também para em mais três limites, além dos da 6.3:
+    - o texto das células de uma aba vai até 50 MB, contando um texto compartilhado a cada célula que o usa; passou, é "grande demais";
+    - as colunas vão até a última do Excel (XFD), e as de depois ficam de fora;
+    - o XML vai até 256 níveis e 256 atributos num elemento; passou, é "Não consegui ler a planilha…".
+  - **Um título acima do cabeçalho** (ex.: "Lista de contatos" na A1) dá "Não consegui ler a planilha…", porque o cabeçalho é a primeira linha não vazia (6.2).
+- **Os avisos do importar e do exportar (4.2 e 4.3).**
+  - O número 1 vai no singular: "1 contato importado.", "(1 já existia)", "1 contato exportado." e, nas Configurações, "· 1 contato". O 0 e de 2 em diante ficam no plural da spec. "1 contatos importados" é português errado, a spec só mostrava o 120, e a interface já fazia assim ("Depois de 1 segundo tocando").
+  - O importar que o disco não grava (o `contatos.json` recusado) mostra "Não consegui salvar o arquivo.". A spec não tinha texto para isso, e um importar que falha calado, depois de escolher o arquivo, parece que nada aconteceu.
+  - Um contato meu que vem duas vezes na planilha conta uma vez no "(<m> já existiam)", e a outra como repetido.
+- **A lista da empresa (5.1, 5.3 e 7).**
+  - **Os 15 minutos** contam da última leitura que começou: a da abertura, a do Salvar, a do "Atualizar agora" ou a dos próprios 15 minutos. Um "Atualizar agora" empurra a próxima leitura sozinha para 15 minutos depois dele; com um relógio fixo, ela podia vir logo depois.
+  - **A leitura que volta tarde.** A resposta de uma leitura que volta depois de o link mudar ou sair é descartada, com uma linha no diagnóstico sem o link, e o pedido "de novo" que esperava roda com o link de agora. Aplicar a resposta traria de volta uma lista tirada, ou mostraria a lista do link antigo como a do novo (5.3).
+  - **Como o app vê que o link mudou:** pelo texto do link quando a leitura volta. Uma leitura do link A que volta depois de o campo ir de A para vazio e voltar para A vale: os dados são do link salvo, e o "de novo" lê A outra vez. Nada aparece errado.
+  - **Na abertura sem link,** a lista é vazia e a situação é "nenhuma", mesmo que o `contatos-empresa.json` ainda tenha contatos (de um "tirar a lista" que o disco recusou), e o arquivo é limpo nessa hora: sem link, sem lista (5.3).
+  - **Uma leitura boa que o disco não grava** mostra "erro" com "Não consegui salvar o arquivo." e deixa a lista de antes. Mostrar "ok" esconderia que a próxima abertura perde a lista nova. É um texto que já existe.
+  - **O mesmo link no Salvar** vale como o "Atualizar agora" e não grava o `config.json`. O link é gravado sem os espaços das pontas; as aspas do "Copiar como caminho" ficam no texto e só saem na leitura. Um texto que não é `https://` nem caminho fica salvo, com o erro "Use um link https:// ou o caminho de um arquivo.", e não é lido, nem a cada 15 minutos.
+  - **Os erros fora da tabela da 5.4:** um redirecionamento para `http://` (o WinHTTP não desce de HTTPS para HTTP) e uma resposta que não é 200, 401, 403, 404 nem 5xx (ex.: 400 ou 429) dão "Sem conexão com a planilha. Fica a última lista.".
+  - **A `contatosEmpresa` no `ready`** só vai quando o `vez` é maior que 0. Com o `vez` 0 não há lista, e é assim que a página começa (7.2). A lista guardada que aparece na abertura conta como uma lista nova (`vez` 1).
+  - **A lista vai à interface a cada leitura boa,** também quando a planilha não mudou (o `vez` sobe a cada 15 minutos), e não "só quando muda" (10). A interface compara a lista nova com a de antes e, se for igual, fica com a de antes: a tela Contatos não refaz uma lista de 10.000 contatos.
+- **Os Contatos (5.5).**
+  - **O filtro "Empresa"** mostra a planilha inteira, também o contato da empresa que é igual a um meu. O "aparece uma vez só, o meu" vale para o "Todos". Assim, o "Empresa" bate com a planilha e com o "<n> contatos" das Configurações, e cada filtro mostra a sua fonte.
+  - **"O mesmo nome e número"** é o nome sem acento e sem caixa e os mesmos dígitos do número.
+  - **A etiqueta** aparece em maiúsculas ("EMPRESA"), pelo CSS, como as outras etiquetas do app; o texto dela é "Empresa".
+  - **Sem a planilha,** os filtros somem, e o filtro escolhido volta ao "Todos".
+  - **O foco** fica no mesmo contato quando chega uma lista nova: a linha de um contato da empresa é dele (os dígitos, o nome e a observação), não da posição na planilha. Sem isso, um Enter depois de uma lista nova podia ligar para outra pessoa.
+  - **Com 10.000 contatos da empresa,** a junção, a ordem e a busca usam o que cada linha já tem calculado, e a linha de cada contato é montada uma vez e reaproveitada: um estado novo (um BLF, uma ligação) refaz a tela em uns 10 ms. O `content-visibility`, que só montava as linhas à vista, saiu, porque tirava do leitor de tela os contatos fora da tela. Por isso, abrir os Contatos com 10.000 contatos da empresa leva uns 2 s (numa máquina virtual de 2 núcleos).
+- **As janelas de arquivo (4.2, 4.3 e 7.4).**
+  - Uma por vez: o pedido que chega com uma aberta é respondido como cancelado.
+  - O tipo decide o formato, e a extensão segue o tipo. Um nome digitado com a extensão do outro tipo ganha a do tipo escolhido: "x.csv", com a Planilha do Excel escolhida, sai "x.csv.xlsx", um .xlsx. Nesse caso, o Windows não pergunta antes de trocar um arquivo que já tenha o nome final.
+  - O Sair da bandeja e o `--sair` com uma janela aberta fecham a janela junto, e nada é importado nem gravado. Na saída da conta do Windows com uma janela aberta, a janela que voltar depois do fechamento não faz nada.
+- **Os avisos das licenças MIT (10).** O miniz é MIT, e o nlohmann/json também, que já ia no executável sem o aviso junto. O `build.mjs` copia as licenças dos dois, como vieram, para `ui\assets\miniz-LICENSE.txt` e `ui\assets\nlohmann-json-LICENSE.txt`, ao lado do `preact-LICENSE.txt`, e o instalador leva a pasta `ui\` inteira. A licença MIT pede o aviso junto das cópias do programa, e nenhuma tarefa do plano tinha feito isso.
+- **Os testes (8).**
+  - A fumaça do Windows confere também a pasta com acento no caminho, a planilha aberta como no Excel, o arquivo que não existe, o de 15 MB, as duas janelas de arquivo (a dona, os textos e o Cancelar) e o `--sair` com uma delas aberta.
+  - Ficam só no roteiro manual: os links `https://` de verdade (o Google, o OneDrive e o SharePoint), o Sair da bandeja e a saída da conta do Windows com uma janela aberta, e o Sair durante uma leitura lenta. O CI não tem um servidor HTTPS nem uma pasta da rede fora do ar.
+  - A interface ganhou o `contatos-lista-grande.spec.ts`, com 10.000 contatos da empresa e um limite de tempo para o estado novo.
+- **O processo.** A partir da Task 4, as tarefas foram feitas no modelo mais forte, porque o limite semanal do outro acabou no meio da Task 4; o controlador fez o commit da Task 4 sem mudar o código. Isso é do processo e não muda o produto.
+
+### Textos novos fora da seção 9 (para aprovar)
+
+- **A lista vazia de cada filtro, nos Contatos:** "Nenhum contato seu ainda." (Meus) e "Nenhum contato da empresa." (Empresa), como o "Nenhum contato ainda." de antes (Todos).
+- **A situação, nas Configurações:**
+  - "Última lista: às <hora> · <n> contatos", que está na 5.1, mas não na 9;
+  - a hora de outro dia, da 7.1: "Atualizada em 26/10 às 14:32 · <n> contatos" e "Última lista: em 26/10 às 14:32 · <n> contatos".
+- **O singular do número 1:**
+  - "1 contato importado.", "1 contato importado (1 já existia).", "1 contato importado (<m> já existiam)." e "<n> contatos importados (1 já existia).";
+  - "1 contato exportado.";
+  - "· 1 contato", em "Atualizada às <hora> · 1 contato" e "Última lista: às <hora> · 1 contato".
+- **Um texto que já existia, em lugares novos:** "Não consegui salvar o arquivo." também no importar que o disco não grava (o toast) e na leitura da lista da empresa que o disco não grava (a situação, nas Configurações).
