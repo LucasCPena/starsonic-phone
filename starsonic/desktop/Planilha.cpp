@@ -213,13 +213,33 @@ const wchar_t kWindows1252[32] = {
 // O caractere do Windows-1252 de um byte de 0x80 em diante.
 wchar_t Windows1252(unsigned char byte) { return byte < 0xA0 ? kWindows1252[byte - 0x80] : static_cast<wchar_t>(byte); }
 
-// O texto do CSV em UTF-8, uma sequencia por vez (spec 6.1): a sequencia UTF-8 bem formada fica como esta, e cada byte
-// que nao comeca uma e lido como Windows-1252. Assim, um byte perdido num CSV em UTF-8 (uma linha colada de um arquivo
-// em Windows-1252, o 0xE9 de "Jose") nao leva o arquivo inteiro para o Windows-1252. No arquivo todo em Windows-1252, a
-// letra com acento e um byte so e quase nunca forma uma sequencia com os seguintes. O caso mais provavel e a maiuscula
-// com acento (0xC2 a 0xDF) colada num simbolo de 0x80 a 0xBF (o espaco que nao quebra, as aspas curvas): esse par sai
-// em UTF-8.
-std::string CsvText(const std::string& bytes) {
+// O texto do CSV em UTF-8 (spec 6.1), sem o BOM (bom: o arquivo tinha o BOM do UTF-8). Uma passada conta as sequencias
+// UTF-8 bem formadas de mais de um byte e os bytes soltos, os de 0x80 em diante que nao comecam uma:
+// - sem nenhum solto, o texto ja e UTF-8 e fica como esta;
+// - com o BOM, que declara o UTF-8, ou com mais sequencias do que soltos, uma sequencia por vez: a bem formada fica
+//   como esta, e cada solto e lido como Windows-1252. Um byte perdido num CSV em UTF-8 (uma linha colada de um arquivo
+//   em Windows-1252, o 0xE9 de "Jose") nao leva o arquivo inteiro para o Windows-1252;
+// - senao, o arquivo inteiro e Windows-1252, cada byte de 0x80 em diante. E o CSV que o Excel grava (sem o BOM), onde a
+//   maiuscula com acento colada num espaco que nao quebra (o "JOSE" com o E agudo, C9 A0) pareceria UTF-8.
+std::string CsvText(const std::string& bytes, bool bom) {
+    size_t sequences = 0;
+    size_t strays = 0;
+    for (size_t pos = 0; pos < bytes.size();) {
+        if (static_cast<unsigned char>(bytes[pos]) < 0x80) {
+            ++pos;
+            continue;
+        }
+        const size_t size = Utf8SequenceSize(bytes, pos);
+        if (size == 0) {
+            ++strays;
+            ++pos;
+        } else {
+            ++sequences;
+            pos += size;
+        }
+    }
+    if (strays == 0) return bytes;
+    const bool bySequence = bom || sequences > strays;
     std::string text;
     text.reserve(bytes.size());
     for (size_t pos = 0; pos < bytes.size();) {
@@ -228,7 +248,7 @@ std::string CsvText(const std::string& bytes) {
             text.push_back(bytes[pos++]);
             continue;
         }
-        const size_t size = Utf8SequenceSize(bytes, pos);
+        const size_t size = bySequence ? Utf8SequenceSize(bytes, pos) : 0;
         if (size == 0) {
             text += WideToUtf8(std::wstring(1, Windows1252(byte)));
             ++pos;
@@ -352,7 +372,8 @@ void ReadCsvRows(const std::string& text, char separator, ContactRows& rows) {
 }
 
 void ReadCsv(const std::string& bytes, ContactRows& rows) {
-    const std::string text = CsvText(StripUtf8Bom(bytes));
+    const std::string withoutBom = StripUtf8Bom(bytes);
+    const std::string text = CsvText(withoutBom, withoutBom.size() != bytes.size());
     if (LooksLikeHtml(text)) Fail(SheetError::Unreadable);
     ReadCsvRows(text, DetectSeparator(text), rows);
 }

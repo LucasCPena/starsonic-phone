@@ -464,9 +464,24 @@ TEST_CASE("a csv saved by a Portuguese Excel reads as contacts") {
                                                       L"Z\u00e9 \u2013 Caf\u00e9|2002|\u201cVIP\u201d \u20ac 10"});
 }
 
+TEST_CASE("a csv entirely in Windows-1252 reads as before even where two bytes look like utf-8") {
+    // O CSV que o Excel grava (Windows-1252, sem o BOM), com o espaco que nao quebra (0xA0) de um texto colado da web,
+    // de um e-mail ou do Word: o "JOSE" com o E agudo (0xC9) colado nele forma C9 A0, um UTF-8 bem formado (U+0260).
+    // Uma sequencia dessas contra um byte solto (o 0xE3 de "Joao") nao e maioria, e o arquivo inteiro e Windows-1252.
+    CHECK(Contacts(ReadContactSheet("Nome;Telefone\r\nJOS\xc9\xa0;2001\r\nJo\xe3o;2002\r\n")) ==
+          std::vector<std::wstring>{L"JOS\u00c9|2001|", L"Jo\u00e3o|2002|"});
+    // No meio da celula, o espaco que nao quebra fica, e o E agudo tambem.
+    CHECK(Contacts(ReadContactSheet("Nome;Telefone\r\nJOS\xc9\xa0" "DA SILVA;2001\r\nJo\xe3o;2002\r\n")) ==
+          std::vector<std::wstring>{L"JOS\u00c9\u00a0DA SILVA|2001|", L"Jo\u00e3o|2002|"});
+    // O "IRMA" com o A til (0xC3) e o espaco que nao quebra, e o "ZE" entre as aspas curvas (C9 94).
+    CHECK(Contacts(ReadContactSheet("Nome;Telefone\r\nIRM\xc3\xa0;2003\r\n\x93Z\xc9\x94;2004\r\nJo\xe3o;2002\r\n")) ==
+          std::vector<std::wstring>{L"IRM\u00c3|2003|", L"\u201cZ\u00c9\u201d|2004|", L"Jo\u00e3o|2002|"});
+}
+
 TEST_CASE("a utf-8 csv with one byte outside utf-8 reads only that byte as Windows-1252") {
     // Uma linha colada de um arquivo em Windows-1252 (o 0xE9 do "Jose") num CSV em UTF-8: o arquivo inteiro virava
-    // Windows-1252, e os nomes em UTF-8 eram importados com dois caracteres no lugar de cada acento.
+    // Windows-1252, e os nomes em UTF-8 eram importados com dois caracteres no lugar de cada acento. Com o BOM, ele e
+    // lido uma sequencia por vez pelo BOM; sem o BOM, pela contagem (3 sequencias contra 1 byte solto).
     const std::string rows = "Concei\xc3\xa7\xc3\xa3o;2002\r\nJo\xc3\xa3o;2003\r\nJos\xe9;2004\r\n";
     std::string bytes;
     SUBCASE("with the bom") { bytes = "\xef\xbb\xbf" + rows; }
@@ -478,7 +493,9 @@ TEST_CASE("a utf-8 csv with one byte outside utf-8 reads only that byte as Windo
 }
 
 TEST_CASE("a byte outside utf-8 inside a quoted csv field keeps the quotes, the separator and the utf-8 around it") {
-    const SheetRead read = ReadContactSheet("Nome;Telefone;Obs\r\n"
+    // O cabecalho em UTF-8 (o acento de "Observacao") poe as sequencias UTF-8 na frente, 5 contra 3 bytes soltos: o
+    // arquivo e lido uma sequencia por vez, sem o BOM.
+    const SheetRead read = ReadContactSheet("Nome;Telefone;Observa\xc3\xa7\xc3\xa3o\r\n"
                                             "\"Jo\xc3\xa3o\";2003;\"Ger\xc3\xaancia\"\r\n"
                                             "\"Jos\xe9 \"\"Z\xe9\"\"\";2004;\"caf\xe9; ch\xc3\xa1\"\r\n");
     CHECK(read.error == SheetError::None);
@@ -488,8 +505,9 @@ TEST_CASE("a byte outside utf-8 inside a quoted csv field keeps the quotes, the 
 
 TEST_CASE("a csv sequence that is not well-formed utf-8 is read byte by byte as Windows-1252") {
     // Bem formada: sem a forma longa, sem os substitutos (U+D800 a U+DFFF) e sem passar de U+10FFFF. O UTF-8 de 4
-    // bytes (o telefone, U+1F4DE) vale, e o 0xE9 perdido na mesma linha faz o arquivo ter os dois.
-    const SheetRead read = ReadContactSheet("Nome;Telefone\r\n"
+    // bytes (o telefone, U+1F4DE) vale, e o 0xE9 perdido na mesma linha faz o arquivo ter os dois. Com o BOM, que
+    // vale mais que a contagem: sem ele, a 1 sequencia contra os 14 bytes soltos faria o arquivo inteiro Windows-1252.
+    const SheetRead read = ReadContactSheet("\xef\xbb\xbfNome;Telefone\r\n"
                                             "Jos\xe9 \xf0\x9f\x93\x9e;2001\r\n"
                                             "A\xc0\xa9;2002\r\n"           // a forma longa de 2 bytes
                                             "B\xe0\x80\xaf;2003\r\n"       // a forma longa de 3 bytes

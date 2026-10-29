@@ -10,8 +10,9 @@
 //   inteiro sai sem a notacao cientifica e sem ".0" (1.1999998888E10 vira "11999998888"); o numero que nao e inteiro,
 //   a data e os outros tipos saem como estao no <v>. Cada celula fica na coluna da referencia dela (r="C5"): as que
 //   faltam ficam vazias.
-// - CSV: UTF-8, com ou sem o BOM; cada byte que nao comeca uma sequencia UTF-8 bem formada e lido como Windows-1252,
-//   e o resto continua em UTF-8 (um byte perdido nao leva o arquivo inteiro). O separador e a virgula, o ponto e
+// - CSV: UTF-8, com ou sem o BOM; o que nao e UTF-8 valido e lido como Windows-1252. Com o BOM, ou com mais sequencias
+//   UTF-8 bem formadas de mais de um byte do que bytes que nao comecam uma, so esses bytes sao Windows-1252 e o resto
+//   continua em UTF-8; senao (o CSV do Excel, sem o BOM), o arquivo inteiro. O separador e a virgula, o ponto e
 //   virgula ou o tab: o que mais aparece fora das aspas na primeira linha nao vazia (no empate, ';', depois ',', depois
 //   o tab; sem nenhum, uma coluna so). Aspas duplas, com "" dentro e com quebras de linha. A linha termina em CRLF, LF
 //   ou CR. Uma pagina HTML (o Google ou a Microsoft pedindo login) nao e planilha.
