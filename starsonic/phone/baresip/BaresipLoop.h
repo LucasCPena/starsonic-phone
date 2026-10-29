@@ -5,6 +5,7 @@
 // O log da libre (dbg), o do baresip e cada mensagem SIP inteira que sai e que chega (no nível 4) vão para o LogSink na
 // hora, na thread que escreveu: a do laço, uma do re_thread_async ou a que está num Run. Níveis como no EngineConfig: 1
 // erro, 2 aviso, 3 informação e 4 detalhe; as linhas acima do logLevel não saem.
+#include <atomic>
 #include <condition_variable>
 #include <cstddef>
 #include <functional>
@@ -36,13 +37,18 @@ public:
     BaresipLoop(const BaresipLoop&) = delete;
     BaresipLoop& operator=(const BaresipLoop&) = delete;
 
-    // De qualquer thread menos a do laço: re_thread_enter, work, re_thread_leave. O work é curto e nunca
+    // De qualquer thread menos a do laço: re_thread_enter, work, re_thread_leave, e true. O work é curto e nunca
     // espera a rede: quem espera uma resposta sai do Run, espera numa condition_variable que o handler (na
-    // thread do laço) avisa, e volta com outro Run.
-    void Run(const std::function<void()>& work);
+    // thread do laço) avisa, e volta com outro Run. Depois que o re_main voltou sozinho (o laço parou sem o pedido do
+    // destrutor, com a libre e o baresip já fechando), o work não roda: false, e uma linha no log. Quem recebe false
+    // não solta mais nada da libre nem do baresip (fica como está até o processo acabar).
+    bool Run(const std::function<void()>& work);
 
     // Os módulos do baresip que o laço carrega (module_preload), na ordem: os de baresip.modules do build/deps.lock.
     static std::vector<std::string> Modules();
+
+    // O texto de um código de erro da libre ou do baresip, com o número (o %m da libre): "Connection refused [111]".
+    static std::string ErrorText(int err);
 
 private:
     struct Hooks;   // as funções que a libre e o baresip chamam (BaresipLoop.cpp)
@@ -66,6 +72,7 @@ private:
     std::condition_variable changed_;
     State state_ = State::Starting;
     std::string error_;
+    std::atomic<bool> ended_{false};   // o re_main voltou (a thread do laço escreve; o Run lê)
     std::thread thread_;        // a do laço (Start)
 };
 

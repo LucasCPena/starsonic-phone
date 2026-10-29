@@ -160,8 +160,8 @@ public:
     void SetNetworkAvailable(bool available);
 
     // Os dados de push que vão em cada REGISTER da conta, ou nenhum (nullopt), nos dois formatos da spec 7.3:
-    // parâmetros no Contact (como na RFC 8599) ou cabeçalhos próprios. Com uma conta registrada e a rede
-    // disponível, o motor registra de novo na hora (o resultado chega por OnRegistration), sem mexer nas
+    // parâmetros no Contact (como na RFC 8599) ou cabeçalhos próprios. Com uma conta e a rede disponível, o
+    // motor registra de novo na hora (o resultado chega por OnRegistration), sem mexer nas
     // ligações; sem conta ou sem rede, só guarda os dados para o próximo REGISTER. false: o PushDataProblem
     // achou um problema nos dados, e nada muda. O motor do PJSIP (Windows e Android) só confere: não guarda
     // nem manda nada.

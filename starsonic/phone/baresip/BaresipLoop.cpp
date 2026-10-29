@@ -37,11 +37,7 @@ std::atomic<BaresipLoop*> g_loop{nullptr};
 struct log g_baresipLog = {LE_INIT, nullptr};
 
 // O motivo de uma falha da libre ou do baresip: o passo e o erro.
-std::string Failure(const std::string& step, int err) {
-    char text[128];
-    if (re_snprintf(text, sizeof(text), "%m", err) < 0) text[0] = '\0';
-    return step + ": " + text + " (" + std::to_string(err) + ")";
-}
+std::string Failure(const std::string& step, int err) { return step + ": " + BaresipLoop::ErrorText(err); }
 
 // O nível do motor (1 erro .. 4 detalhe) de uma linha do baresip.
 int LevelOfBaresip(uint32_t level) {
@@ -170,17 +166,30 @@ BaresipLoop::~BaresipLoop() {
     g_loop.compare_exchange_strong(self, nullptr);
 }
 
-void BaresipLoop::Run(const std::function<void()>& work) {
+bool BaresipLoop::Run(const std::function<void()>& work) {
+    // Com o re_main parado, o re_thread_enter não trava nada, e o work correria contra o fechamento da libre.
+    if (ended_) {
+        static const char kLine[] = "o laco do baresip parou: o pedido nao foi feito";
+        Log(1, kLine, sizeof(kLine) - 1);
+        return false;
+    }
     // O re_thread_leave também sai se o work lançar uma exceção.
     struct Entered {
         Entered() { re_thread_enter(); }
         ~Entered() { re_thread_leave(); }
     } entered;
     work();
+    return true;
 }
 
 std::vector<std::string> BaresipLoop::Modules() {
     return std::vector<std::string>(std::begin(kModules), std::end(kModules));
+}
+
+std::string BaresipLoop::ErrorText(int err) {
+    char text[128];   // o %m já leva o número entre colchetes
+    if (re_snprintf(text, sizeof(text), "%m", err) < 0) return "erro " + std::to_string(err);
+    return text;
 }
 
 void BaresipLoop::Main() {
@@ -196,6 +205,7 @@ void BaresipLoop::Main() {
     tmr_init(&running);
     tmr_start(&running, 0, Hooks::Running, this);
     const int err = re_main(nullptr);
+    ended_ = true;   // daqui em diante o Run não roda nada
     tmr_cancel(&running);
     if (err) {
         // Antes de o Start voltar, é a falha dele; depois, o laço parou sem o pedido do destrutor.

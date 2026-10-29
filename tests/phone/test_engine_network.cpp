@@ -99,3 +99,22 @@ TEST_CASE("SetNetworkAvailable false returns at once and true registers again af
         CHECK(events[i].active);
     }
 }
+
+// Com a rede disponivel, uma renovacao recusada (503, a central reiniciando) e tentada de novo, como no PJSIP: a
+// primeira nova tentativa sai em 0 a 10 s.
+TEST_CASE("a refused renewal is tried again within 10 s while the network is available") {
+    FakeRegistrar registrar("senha");
+    RecordingListener listener;
+    INFO(listener.LogTail());
+    INFO(RegistrationsText(listener));
+    std::unique_ptr<SipEngine> engine = StartEngine(&listener, LoadProfile(registrar.port()));
+
+    REQUIRE(registrar.Control("EXPIRES 3") == kOk);   // a renovacao sai a cada 2 s
+    REQUIRE(engine->SetAccount(Input(Transport::Udp)));
+    REQUIRE(listener.WaitFor(RecordingListener::Reached(200, true, 1), kWaitSeconds));
+
+    REQUIRE(registrar.Control("FAIL REGISTER on") == kOk);
+    REQUIRE(registrar.WaitForLog("register-503 2001", kWaitSeconds));   // a renovacao leva 503
+    CHECK(listener.WaitFor(RecordingListener::Reached(503, false, 1), kWaitSeconds));
+    CHECK(WaitUntil([&] { return LogCount(registrar, "register-503 2001") >= 2; }, 12));   // a nova tentativa
+}

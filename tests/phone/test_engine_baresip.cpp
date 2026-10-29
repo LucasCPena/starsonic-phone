@@ -1,10 +1,14 @@
-// Só o motor do baresip: o que depende das linhas de log do baresip, os módulos que ele carrega ou o que esse motor faz
-// de diferente do do PJSIP (os dispositivos de som e o BLF, spec 6.1). O motor do PJSIP tem os testes dele
-// (test_engine_pjsip.cpp).
+// Só o motor do baresip: o que depende das linhas de log do baresip, os módulos que ele carrega, o que esse motor faz
+// de diferente do do PJSIP (os dispositivos de som e o BLF, spec 6.1, e os dados de push no REGISTER, spec 7.3) e o que
+// só aqui é conferido (o keep-alive e o motor destruído e criado de novo com a conta). O motor do PJSIP tem os testes
+// dele (test_engine_pjsip.cpp).
+#include "call_fixture.h"
 #include "engine_fixture.h"
+#include "relay_fixture.h"
 
 #include <chrono>
 #include <memory>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -16,10 +20,45 @@
 
 using namespace starsonic;
 using phone_test::Contains;
+using phone_test::DelayedUdpRelay;
+using phone_test::FakeRegistrar;
+using phone_test::Input;
+using phone_test::kWaitSeconds;
+using phone_test::Lines;
 using phone_test::LoadProfile;
+using phone_test::Phone;
 using phone_test::ReadText;
 using phone_test::RecordingListener;
+using phone_test::Registers;
+using phone_test::RegistrationsText;
 using phone_test::StartEngine;
+using phone_test::WaitUntil;
+
+namespace {
+
+// Dados de push nos dois formatos: os parâmetros do Contact da RFC 8599 e um token em cabeçalho (nenhum token de
+// verdade).
+const PushData kPush = {{{"pn-provider", "apns"},
+                         {"pn-param", "ABCDE12345.br.com.starsonic.phone.voip"},
+                         {"pn-prid", "00fc13adff78512"}},
+                        {{"X-Push-Token", "00fc13adff78512"}}};
+
+// O Contact do último REGISTER aceito do ramal 2001, como chegou ao registrador ("" se ainda não houve).
+std::string LastContact(const FakeRegistrar& registrar) {
+    const Lines reply = registrar.Control("CONTACT 2001");
+    return reply.empty() ? std::string() : reply[0];
+}
+
+// O valor do X-Push-Token nesse REGISTER, ou o ERR do registrador.
+Lines PushTokenHeader(const FakeRegistrar& registrar) { return registrar.Control("HEADER 2001 X-Push-Token"); }
+
+// Os keep-alives que o registrador recebeu até agora (-1 se a porta de controle não respondeu).
+int Keepalives(const FakeRegistrar& registrar) {
+    const Lines reply = registrar.Control("KEEPALIVES");
+    return reply.empty() ? -1 : std::stoi(reply[0]);
+}
+
+}  // namespace
 
 TEST_CASE("the baresip engine loads the modules of build/deps.lock, in order") {
     // O build/baresip/build-linux.sh confere o .a contra o deps.lock, mas o CI só roda o script quando o cache do
@@ -69,4 +108,131 @@ TEST_CASE("the baresip engine lists only the null device and ignores BLF") {
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
     CHECK(listener.Blfs().empty());
     CHECK(Contains(listener.LogTail(), "BLF: sem suporte neste motor"));
+}
+
+TEST_CASE("SetPushData before SetAccount puts the push data in the REGISTER, in each format") {
+    PushData push;
+    bool inContact = false;
+    SUBCASE("parameters in the Contact") {
+        push.contactParams = kPush.contactParams;
+        inContact = true;
+    }
+    SUBCASE("headers") { push.headers = kPush.headers; }
+
+    FakeRegistrar registrar("senha");
+    RecordingListener listener;
+    INFO(listener.LogTail());
+    std::unique_ptr<SipEngine> engine = StartEngine(&listener, LoadProfile(registrar.port()));
+
+    REQUIRE(engine->SetPushData(push));
+    REQUIRE(engine->SetAccount(Input(Transport::Udp)));
+    REQUIRE(listener.WaitFor(RecordingListener::Reached(200, true, 1), kWaitSeconds));
+    const std::string contact = LastContact(registrar);
+    INFO(contact);
+    if (inContact) {
+        CHECK(Contains(contact,
+                       ";pn-provider=apns;pn-param=ABCDE12345.br.com.starsonic.phone.voip;pn-prid=00fc13adff78512>"));
+        CHECK(PushTokenHeader(registrar) == Lines{"ERR no-header"});
+    } else {
+        CHECK_FALSE(Contains(contact, "pn-"));
+        CHECK(PushTokenHeader(registrar) == Lines{"00fc13adff78512"});
+    }
+}
+
+TEST_CASE("SetPushData with a registered account registers again, the next REGISTERs keep the data, and nullopt "
+          "takes them out") {
+    FakeRegistrar registrar("senha");
+    RecordingListener listener;
+    INFO(listener.LogTail());
+    INFO(RegistrationsText(listener));
+    std::unique_ptr<SipEngine> engine = StartEngine(&listener, LoadProfile(registrar.port()));
+
+    REQUIRE(engine->SetAccount(Input(Transport::Udp)));
+    REQUIRE(listener.WaitFor(RecordingListener::Reached(200, true, 1), kWaitSeconds));
+    CHECK_FALSE(Contains(LastContact(registrar), "pn-"));
+
+    REQUIRE(engine->SetPushData(kPush));   // registra de novo na hora
+    REQUIRE(listener.WaitFor(RecordingListener::Reached(200, true, 2), kWaitSeconds));
+    CHECK(Contains(LastContact(registrar), ";pn-prid="));
+    CHECK(PushTokenHeader(registrar) == Lines{"00fc13adff78512"});
+
+    engine->Reregister();
+    REQUIRE(listener.WaitFor(RecordingListener::Reached(200, true, 3), kWaitSeconds));
+    CHECK(Contains(LastContact(registrar), ";pn-prid="));
+    CHECK(PushTokenHeader(registrar) == Lines{"00fc13adff78512"});
+
+    engine->HandleIpChange();   // o iPhone trocou de rede
+    REQUIRE(listener.WaitFor(RecordingListener::Reached(200, true, 4), kWaitSeconds));
+    CHECK(Contains(LastContact(registrar), ";pn-prid="));
+    CHECK(PushTokenHeader(registrar) == Lines{"00fc13adff78512"});
+
+    REQUIRE(engine->SetPushData(std::nullopt));
+    REQUIRE(listener.WaitFor(RecordingListener::Reached(200, true, 5), kWaitSeconds));
+    CHECK_FALSE(Contains(LastContact(registrar), "pn-"));
+    CHECK(PushTokenHeader(registrar) == Lines{"ERR no-header"});
+}
+
+TEST_CASE("SetPushData without network only stores the data, and the REGISTER after the network comes back carries "
+          "it") {
+    FakeRegistrar registrar("senha");
+    RecordingListener listener;
+    INFO(listener.LogTail());
+    INFO(RegistrationsText(listener));
+    std::unique_ptr<SipEngine> engine = StartEngine(&listener, LoadProfile(registrar.port()));
+
+    REQUIRE(engine->SetAccount(Input(Transport::Udp)));
+    REQUIRE(listener.WaitFor(RecordingListener::Reached(200, true, 1), kWaitSeconds));
+    engine->SetNetworkAvailable(false);
+    const int before = Registers(registrar);
+
+    REQUIRE(engine->SetPushData(kPush));   // sem rede: só guarda
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    CHECK(Registers(registrar) == before);
+
+    engine->SetNetworkAvailable(true);   // o primeiro REGISTER da volta já leva os dados
+    REQUIRE(listener.WaitFor(RecordingListener::Reached(200, true, 2), kWaitSeconds));
+    CHECK(Contains(LastContact(registrar), ";pn-prid=00fc13adff78512"));
+}
+
+TEST_CASE("keep-alives go to the server every keepalive seconds") {
+    Transport transport = Transport::Udp;
+    SUBCASE("over UDP") { transport = Transport::Udp; }
+    SUBCASE("over TCP") { transport = Transport::Tcp; }
+
+    Phone phone(transport, [](Profile& profile) { profile.account.keepAliveSeconds = 1; });
+    INFO(phone.listener.LogTail());
+    const int start = Keepalives(phone.registrar);
+    REQUIRE(start >= 0);
+    CHECK(WaitUntil([&] { return Keepalives(phone.registrar) >= start + 2; }, 4));
+}
+
+TEST_CASE("destroying the engine with a REGISTER on the way returns within 5 s and reports nothing") {
+    FakeRegistrar registrar("senha");
+    DelayedUdpRelay relay(registrar.port(), 60000);   // nada volta durante o teste
+    RecordingListener listener;
+    INFO(listener.LogTail());
+    std::unique_ptr<SipEngine> engine = StartEngine(&listener, LoadProfile(relay.port()));
+
+    REQUIRE(engine->SetAccount(Input(Transport::Udp)));
+    const size_t events = listener.EventCount();
+    const auto start = std::chrono::steady_clock::now();
+    engine.reset();
+    CHECK(std::chrono::steady_clock::now() - start < std::chrono::seconds(5));
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    CHECK(listener.EventCount() == events);
+}
+
+TEST_CASE("the engine registers each time it is created again in the same process") {
+    FakeRegistrar registrar("senha");
+    for (int round = 0; round < 3; ++round) {
+        CAPTURE(round);
+        RecordingListener listener;
+        INFO(listener.LogTail());
+        std::unique_ptr<SipEngine> engine = StartEngine(&listener, LoadProfile(registrar.port()));
+
+        REQUIRE(engine->SetAccount(Input(Transport::Udp)));
+        REQUIRE(listener.WaitFor(RecordingListener::Reached(200, true, 1), kWaitSeconds));
+        engine.reset();   // a conta sai do servidor
+        CHECK(registrar.Control("RING 2001") == Lines{"ERR no-contact"});
+    }
 }
