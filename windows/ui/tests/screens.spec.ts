@@ -684,6 +684,24 @@ test.describe('ponte e janela', () => {
     expect(texto).toContain('Jason Miller');
   });
 
+  // (rc.4) O miniz (o .xlsx do importar, do exportar e da lista da empresa) e o nlohmann/json vão dentro do
+  // StarsonicPhone.exe: a licença MIT pede o aviso junto das cópias, e o instalador leva a pasta ui\ inteira.
+  test('the bundle ships the MIT notices of miniz and nlohmann/json, which go inside the executable', async () => {
+    for (const [publicado, fonte, autor] of [
+      ['miniz-LICENSE.txt', 'starsonic/third_party/miniz/LICENSE', 'Rich Geldreich'],
+      ['nlohmann-json-LICENSE.txt', 'starsonic/third_party/nlohmann/LICENSE.MIT', 'Niels Lohmann'],
+    ]) {
+      const aviso = join(DIST, 'assets', publicado);
+      expect(existsSync(aviso), aviso).toBe(true);
+      // A cópia como veio, byte a byte, da licença que está ao lado do código.
+      const original = fileURLToPath(new URL(`../../../${fonte}`, import.meta.url));
+      expect(readFileSync(aviso).equals(readFileSync(original)), `${publicado} = ${fonte}`).toBe(true);
+      const texto = readFileSync(aviso, 'utf8');
+      expect(texto, publicado).toContain('Permission is hereby granted, free of charge');
+      expect(texto, publicado).toContain(autor);
+    }
+  });
+
   test('a toast shows for 2 seconds', async ({ page }) => {
     await abrir(page, 'principal');
     await empurrar(page, { v: 1, type: 'toast', texto: 'A troca de conta fica para o fim da ligação.' });

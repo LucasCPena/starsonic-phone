@@ -1,7 +1,7 @@
 // Empacota a interface em dist/ (o executável serve essa pasta pelo SetVirtualHostNameToFolderMapping).
 // src/main.tsx → dist/app.js; src/aviso.tsx → dist/aviso.js (o aviso de ligação, quando existe);
-// index.html, aviso.html, app.css, a fonte, os logos, o toque do MicroSIP (toque.wav, rc.4) e o aviso da licença do
-// Preact são copiados. Nada é baixado: tudo vai dentro do app.
+// index.html, aviso.html, app.css, a fonte, os logos, o toque do MicroSIP (toque.wav, rc.4) e os avisos das licenças
+// MIT (o do Preact e, rc.4, os do miniz e do nlohmann/json) são copiados. Nada é baixado: tudo vai dentro do app.
 import { build } from 'esbuild';
 import { createHash } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -62,4 +62,9 @@ for (const arquivo of [
 // O aviso da licença MIT do Preact, que vai dentro do app.js (a licença pede o aviso junto das cópias), ao lado do
 // OFL.txt da fonte; o instalador leva a pasta ui\ inteira.
 cpSync(join(raiz, 'node_modules', 'preact', 'LICENSE'), join(dist, 'assets', 'preact-LICENSE.txt'));
+// (rc.4) Os avisos MIT do que vai dentro do StarsonicPhone.exe, como vieram em starsonic/third_party: o miniz (o .xlsx
+// do importar, do exportar e da lista da empresa) e o nlohmann/json. Ficam ao lado do aviso do Preact.
+const terceiros = join(raiz, '..', '..', 'starsonic', 'third_party');
+cpSync(join(terceiros, 'miniz', 'LICENSE'), join(dist, 'assets', 'miniz-LICENSE.txt'));
+cpSync(join(terceiros, 'nlohmann', 'LICENSE.MIT'), join(dist, 'assets', 'nlohmann-json-LICENSE.txt'));
 console.log(`dist/: ${entradas.map(([, s]) => s).join(', ')} e os arquivos estáticos`);
