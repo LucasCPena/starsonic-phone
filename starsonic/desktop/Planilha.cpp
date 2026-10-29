@@ -189,8 +189,19 @@ private:
 
 // ---------------------------------------------------------------- CSV (spec 6.1)
 
-// UTF-8 valido: a volta pelo Utf8ToWide (que troca o que nao e UTF-8 por U+FFFD) e pelo WideToUtf8 nao muda nada.
-bool IsValidUtf8(const std::string& text) { return WideToUtf8(Utf8ToWide(text)) == text; }
+// Quantos bytes tem a sequencia UTF-8 bem formada que comeca em pos (um byte de 0x80 em diante); 0 se ali nao comeca
+// uma. Bem formada e a que a volta pelo Utf8ToWide (que troca o que nao e UTF-8 por U+FFFD) e pelo WideToUtf8 nao
+// muda: sem a forma longa, sem os substitutos (U+D800 a U+DFFF) e sem passar de U+10FFFF.
+size_t Utf8SequenceSize(const std::string& text, size_t pos) {
+    const unsigned char lead = static_cast<unsigned char>(text[pos]);
+    size_t size = 0;
+    if (lead >= 0xC2 && lead <= 0xDF) size = 2;
+    else if (lead >= 0xE0 && lead <= 0xEF) size = 3;
+    else if (lead >= 0xF0 && lead <= 0xF4) size = 4;
+    if (size == 0 || text.size() - pos < size) return 0;
+    const std::string sequence = text.substr(pos, size);
+    return WideToUtf8(Utf8ToWide(sequence)) == sequence ? size : 0;
+}
 
 // O Windows-1252 de 0x80 a 0x9F (o euro, as aspas curvas, os travessoes...); o resto e o Latin-1. Os cinco codigos que
 // ele nao define ficam com o caractere de controle do mesmo numero, como no Windows.
@@ -199,14 +210,34 @@ const wchar_t kWindows1252[32] = {
     0x2039, 0x0152, 0x008D, 0x017D, 0x008F, 0x0090, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022,
     0x2013, 0x2014, 0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x009D, 0x017E, 0x0178};
 
-std::string Windows1252ToUtf8(const std::string& bytes) {
-    std::wstring text;
+// O caractere do Windows-1252 de um byte de 0x80 em diante.
+wchar_t Windows1252(unsigned char byte) { return byte < 0xA0 ? kWindows1252[byte - 0x80] : static_cast<wchar_t>(byte); }
+
+// O texto do CSV em UTF-8, uma sequencia por vez (spec 6.1): a sequencia UTF-8 bem formada fica como esta, e cada byte
+// que nao comeca uma e lido como Windows-1252. Assim, um byte perdido num CSV em UTF-8 (uma linha colada de um arquivo
+// em Windows-1252, o 0xE9 de "Jose") nao leva o arquivo inteiro para o Windows-1252. No arquivo todo em Windows-1252, a
+// letra com acento e um byte so e quase nunca forma uma sequencia com os seguintes. O caso mais provavel e a maiuscula
+// com acento (0xC2 a 0xDF) colada num simbolo de 0x80 a 0xBF (o espaco que nao quebra, as aspas curvas): esse par sai
+// em UTF-8.
+std::string CsvText(const std::string& bytes) {
+    std::string text;
     text.reserve(bytes.size());
-    for (const char ch : bytes) {
-        const unsigned char byte = static_cast<unsigned char>(ch);
-        text.push_back(byte >= 0x80 && byte < 0xA0 ? kWindows1252[byte - 0x80] : static_cast<wchar_t>(byte));
+    for (size_t pos = 0; pos < bytes.size();) {
+        const unsigned char byte = static_cast<unsigned char>(bytes[pos]);
+        if (byte < 0x80) {
+            text.push_back(bytes[pos++]);
+            continue;
+        }
+        const size_t size = Utf8SequenceSize(bytes, pos);
+        if (size == 0) {
+            text += WideToUtf8(std::wstring(1, Windows1252(byte)));
+            ++pos;
+            continue;
+        }
+        text.append(bytes, pos, size);
+        pos += size;
     }
-    return WideToUtf8(text);
+    return text;
 }
 
 // Uma pagina HTML no lugar da planilha (o Google ou a Microsoft pedindo login).
@@ -321,8 +352,7 @@ void ReadCsvRows(const std::string& text, char separator, ContactRows& rows) {
 }
 
 void ReadCsv(const std::string& bytes, ContactRows& rows) {
-    std::string text = StripUtf8Bom(bytes);
-    if (!IsValidUtf8(text)) text = Windows1252ToUtf8(text);
+    const std::string text = CsvText(StripUtf8Bom(bytes));
     if (LooksLikeHtml(text)) Fail(SheetError::Unreadable);
     ReadCsvRows(text, DetectSeparator(text), rows);
 }

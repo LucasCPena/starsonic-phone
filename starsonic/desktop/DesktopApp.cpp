@@ -1634,9 +1634,11 @@ void DesktopApp::StartCompanyList() {
 
 // setCompanyList (spec da rc.4, 5.1 e 5.3): o link gravado no config.json, e lido. O mesmo link de novo e o Atualizar
 // agora. Vazio tira a lista (o contatos-empresa.json fica com a lista vazia). O link trocado deixa a lista de antes ate
-// a primeira leitura boa do novo; a leitura aberta do de antes e descartada quando volta.
+// a primeira leitura boa do novo; a leitura aberta do de antes e descartada quando volta. O link e gravado sem os
+// brancos das pontas, tambem os invisiveis do texto copiado (TrimLinkBlanks): o U+00A0 do Outlook ficaria no
+// config.json e no campo.
 void DesktopApp::SetCompanyList(const std::string& typed) {
-    const std::string link = U8(Trim(Wide(typed)));
+    const std::string link = TrimLinkBlanks(typed);
     Settings settings = settings_.Get();
     if (link == settings.companyListLink) {
         RequestCompanyRead();

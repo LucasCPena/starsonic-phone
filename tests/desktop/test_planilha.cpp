@@ -464,6 +464,44 @@ TEST_CASE("a csv saved by a Portuguese Excel reads as contacts") {
                                                       L"Z\u00e9 \u2013 Caf\u00e9|2002|\u201cVIP\u201d \u20ac 10"});
 }
 
+TEST_CASE("a utf-8 csv with one byte outside utf-8 reads only that byte as Windows-1252") {
+    // Uma linha colada de um arquivo em Windows-1252 (o 0xE9 do "Jose") num CSV em UTF-8: o arquivo inteiro virava
+    // Windows-1252, e os nomes em UTF-8 eram importados com dois caracteres no lugar de cada acento.
+    const std::string rows = "Concei\xc3\xa7\xc3\xa3o;2002\r\nJo\xc3\xa3o;2003\r\nJos\xe9;2004\r\n";
+    std::string bytes;
+    SUBCASE("with the bom") { bytes = "\xef\xbb\xbf" + rows; }
+    SUBCASE("without the bom") { bytes = rows; }
+    const SheetRead read = ReadContactSheet(bytes);
+    CHECK(read.error == SheetError::None);
+    CHECK(Contacts(read) ==
+          std::vector<std::wstring>{L"Concei\u00e7\u00e3o|2002|", L"Jo\u00e3o|2003|", L"Jos\u00e9|2004|"});
+}
+
+TEST_CASE("a byte outside utf-8 inside a quoted csv field keeps the quotes, the separator and the utf-8 around it") {
+    const SheetRead read = ReadContactSheet("Nome;Telefone;Obs\r\n"
+                                            "\"Jo\xc3\xa3o\";2003;\"Ger\xc3\xaancia\"\r\n"
+                                            "\"Jos\xe9 \"\"Z\xe9\"\"\";2004;\"caf\xe9; ch\xc3\xa1\"\r\n");
+    CHECK(read.error == SheetError::None);
+    CHECK(Contacts(read) == std::vector<std::wstring>{L"Jo\u00e3o|2003|Ger\u00eancia",
+                                                      L"Jos\u00e9 \"Z\u00e9\"|2004|caf\u00e9; ch\u00e1"});
+}
+
+TEST_CASE("a csv sequence that is not well-formed utf-8 is read byte by byte as Windows-1252") {
+    // Bem formada: sem a forma longa, sem os substitutos (U+D800 a U+DFFF) e sem passar de U+10FFFF. O UTF-8 de 4
+    // bytes (o telefone, U+1F4DE) vale, e o 0xE9 perdido na mesma linha faz o arquivo ter os dois.
+    const SheetRead read = ReadContactSheet("Nome;Telefone\r\n"
+                                            "Jos\xe9 \xf0\x9f\x93\x9e;2001\r\n"
+                                            "A\xc0\xa9;2002\r\n"           // a forma longa de 2 bytes
+                                            "B\xe0\x80\xaf;2003\r\n"       // a forma longa de 3 bytes
+                                            "C\xed\xa0\x80;2004\r\n"       // o substituto U+D800
+                                            "D\xf4\x90\x80\x80;2005\r\n"   // acima de U+10FFFF
+                                            "E\xc3;2006\r\n");             // a sequencia cortada
+    CHECK(read.error == SheetError::None);
+    CHECK(Contacts(read) == std::vector<std::wstring>{L"Jos\u00e9 \U0001F4DE|2001|", L"A\u00c0\u00a9|2002|",
+                                                      L"B\u00e0\u20ac\u00af|2003|", L"C\u00ed\u00a0\u20ac|2004|",
+                                                      L"D\u00f4\x90\u20ac\u20ac|2005|", L"E\u00c3|2006|"});
+}
+
 TEST_CASE("a sheet with only the header is an empty list, and a file without rows is unreadable") {
     SheetRead read = ReadContactSheet("Nome;Numero\r\n");
     CHECK(read.error == SheetError::None);

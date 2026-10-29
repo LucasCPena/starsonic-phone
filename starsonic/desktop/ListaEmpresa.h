@@ -15,9 +15,14 @@ struct CompanySource {
     std::string location;   // a URL https a buscar, ou o caminho do arquivo (UTF-8)
 };
 
-// O link colado, sem os espacos das pontas e sem as aspas em volta (o "Copiar como caminho" do Explorer), vira a fonte.
-// Nada se nao e um link https:// nem um caminho: o http:// sem o "s" nao vale, e o link com espaco ou caractere de
-// controle no meio nao e link.
+// O texto colado sem os brancos das pontas (UTF-8): o espaco, o tab, o CR e o LF, e os invisiveis que o texto copiado
+// traz junto, U+00A0 (o Outlook classico e o Word o poem no texto copiado), U+2000 a U+200B, U+202F, U+205F, U+3000 e
+// U+FEFF. O meio fica como esta. O setCompanyList grava o link assim, e o CompanySourceFor o le assim.
+std::string TrimLinkBlanks(const std::string& text);
+
+// O link colado, sem os brancos das pontas (TrimLinkBlanks) e sem as aspas em volta (o "Copiar como caminho" do
+// Explorer; os brancos de dentro delas tambem saem), vira a fonte. Nada se nao e um link https:// nem um caminho: o
+// http:// sem o "s" nao vale, e o link com espaco ou caractere de controle no meio nao e link.
 // O tipo vem do HOST do link, nao de um pedaco dele. O esquema e o host se comparam sem caixa (e saem em minusculas); o
 // resto do endereco, o caminho e a consulta, sai como foi colado (os ids do Google diferenciam maiusculas). Um host vale
 // um dominio so na fronteira de um nome: empresa.sharepoint.com e do sharepoint.com, sharepoint.com.example.org nao. O

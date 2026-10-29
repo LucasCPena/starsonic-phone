@@ -2622,6 +2622,19 @@ TEST_CASE("setCompanyList saves the link and reads the converted source") {
     CHECK(h.State()["empresa"]["link"] == kGoogleLink);
 }
 
+TEST_CASE("setCompanyList saves a link pasted with an invisible space at the end without it") {
+    // O link de um e-mail do Outlook classico, com o espaco que nao quebra (U+00A0, C2 A0 em UTF-8) no fim.
+    const std::string link = "https://empresa.sharepoint.com/:x:/s/Comercial/EaBcD?e=Xy12";
+    Harness h;
+    h.Start();
+    h.Send(SetCompanyList(link + "\xc2\xa0"));
+    CHECK(h.State()["empresa"]["link"] == link);
+    CHECK(h.File("dados/config.json")["planilha_empresa"] == link);
+    REQUIRE(h.fetches.size() == 1);
+    CHECK(h.fetches[0].source.kind == CompanySourceKind::SharePoint);
+    CHECK(h.fetches[0].source.location == "https://empresa.sharepoint.com/:x:/s/Comercial/EaBcD?e=Xy12&download=1");
+}
+
 TEST_CASE("the company list is read again every 15 minutes") {
     Harness h;
     StartWithCompanyList(h);

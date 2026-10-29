@@ -68,17 +68,37 @@ std::vector<std::string> Split(const std::string& text, char separator) {
     }
 }
 
-std::string TrimBlanks(const std::string& text) {
-    const size_t first = text.find_first_not_of(kBlanks);
-    if (first == std::string::npos) return std::string();
-    return text.substr(first, text.find_last_not_of(kBlanks) - first + 1);
+// ---------------------------------------------------------------- O link colado
+
+// Os brancos que saem das pontas do link colado, em UTF-8: os do ASCII e os invisiveis que o texto copiado traz junto
+// (o Outlook classico e o Word poem o U+00A0 no texto copiado).
+const char* const kLinkBlanks[] = {
+    " ", "\t", "\r", "\n",
+    "\xc2\xa0",   // U+00A0, o espaco que nao quebra
+    // U+2000 a U+200A, os espacos de largura fixa, e U+200B, o de largura zero
+    "\xe2\x80\x80", "\xe2\x80\x81", "\xe2\x80\x82", "\xe2\x80\x83", "\xe2\x80\x84", "\xe2\x80\x85", "\xe2\x80\x86",
+    "\xe2\x80\x87", "\xe2\x80\x88", "\xe2\x80\x89", "\xe2\x80\x8a", "\xe2\x80\x8b",
+    "\xe2\x80\xaf",   // U+202F, o espaco estreito que nao quebra
+    "\xe2\x81\x9f",   // U+205F, o espaco medio da matematica
+    "\xe3\x80\x80",   // U+3000, o espaco ideografico
+    "\xef\xbb\xbf",   // U+FEFF, o BOM
+};
+
+// Quantos bytes tem o branco no comeco (front) ou no fim de text[begin, end); 0 se ali nao ha um.
+size_t LinkBlankSize(const std::string& text, size_t begin, size_t end, bool front) {
+    for (const char* blank : kLinkBlanks) {
+        const size_t size = std::char_traits<char>::length(blank);
+        if (end - begin >= size && text.compare(front ? begin : end - size, size, blank) == 0) return size;
+    }
+    return 0;
 }
 
-// O link como a pessoa colou: sem os espacos das pontas e sem as aspas em volta (o "Copiar como caminho" do Explorer).
+// O link como a pessoa colou: sem os brancos das pontas e sem as aspas em volta (o "Copiar como caminho" do Explorer),
+// nem os brancos de dentro delas.
 std::string Pasted(const std::string& link) {
-    std::string text = TrimBlanks(link);
+    std::string text = TrimLinkBlanks(link);
     if (text.size() >= 2 && text.front() == '"' && text.back() == '"') {
-        text = TrimBlanks(text.substr(1, text.size() - 2));
+        text = TrimLinkBlanks(text.substr(1, text.size() - 2));
     }
     return text;
 }
@@ -310,6 +330,14 @@ std::optional<std::string> PathFromFileUrl(const std::string& text) {
 }
 
 }  // namespace
+
+std::string TrimLinkBlanks(const std::string& text) {
+    size_t begin = 0;
+    size_t end = text.size();
+    while (const size_t size = LinkBlankSize(text, begin, end, true)) begin += size;
+    while (const size_t size = LinkBlankSize(text, begin, end, false)) end -= size;
+    return text.substr(begin, end - begin);
+}
 
 std::optional<CompanySource> CompanySourceFor(const std::string& link) {
     const std::string text = Pasted(link);

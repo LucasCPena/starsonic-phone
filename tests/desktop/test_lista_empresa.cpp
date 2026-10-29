@@ -9,6 +9,7 @@
 
 #include "ListaEmpresa.h"
 #include "Stores.h"
+#include "Text.h"
 #include "nlohmann/json.hpp"
 #include "test_support.h"
 
@@ -318,6 +319,60 @@ TEST_CASE("company link: what is not an https link or a path is nothing") {
         "file:///C:/x%C3.csv",
         "file:///C:/x%0A.csv",
     });
+}
+
+TEST_CASE("company link: the invisible spaces at the ends of a pasted link or path are left out") {
+    // O Outlook classico e o Word poem o espaco que nao quebra (U+00A0) no texto copiado: o link que o administrador
+    // mandou por e-mail chega com ele no fim. Em UTF-8, o U+00A0 e C2 A0; o U+200B (o espaco de largura zero),
+    // E2 80 8B; o U+3000 (o espaco ideografico), E3 80 80; e o U+FEFF, EF BB BF.
+    CheckSources({
+        // A pasta da rede e o arquivo no disco.
+        {"\\\\servidor\\pasta\\contatos.xlsx\xc2\xa0", "caminho", "\\\\servidor\\pasta\\contatos.xlsx"},
+        {"C:\\Users\\Ana\\contatos.csv\xc2\xa0", "caminho", "C:\\Users\\Ana\\contatos.csv"},
+        // O SharePoint: com a consulta, o espaco ia para dentro da chave (e=Xy12, antes do &download=1); sem ela, para
+        // o fim do caminho.
+        {"https://empresa.sharepoint.com/:x:/s/Comercial/EaB?e=Xy12\xc2\xa0", "SharePoint",
+         "https://empresa.sharepoint.com/:x:/s/Comercial/EaB?e=Xy12&download=1"},
+        {"https://empresa.sharepoint.com/:x:/s/Comercial/EaB\xc2\xa0", "SharePoint",
+         "https://empresa.sharepoint.com/:x:/s/Comercial/EaB?download=1"},
+        // Outro https, com o U+00A0 ou o U+200B no fim, e com o U+00A0 antes.
+        {"https://intranet.empresa.com.br/contatos.csv\xc2\xa0", "link",
+         "https://intranet.empresa.com.br/contatos.csv"},
+        {"https://intranet.empresa.com.br/contatos.csv\xe2\x80\x8b", "link",
+         "https://intranet.empresa.com.br/contatos.csv"},
+        {"\xc2\xa0" "https://intranet.empresa.com.br/contatos.csv", "link",
+         "https://intranet.empresa.com.br/contatos.csv"},
+        // O caminho entre aspas (o "Copiar como caminho") com o espaco depois delas, e com ele dentro delas.
+        {"\"C:\\Users\\Ana\\contatos.csv\"\xc2\xa0", "caminho", "C:\\Users\\Ana\\contatos.csv"},
+        {"\"C:\\Users\\Ana\\contatos.csv\xc2\xa0\"", "caminho", "C:\\Users\\Ana\\contatos.csv"},
+        // O Google: o /edit com o espaco ja dava certo (o endereco sai so do id), e o #gid= com ele perdia a aba.
+        {"https://docs.google.com/spreadsheets/d/1AbC_dEf-123/edit\xc2\xa0", "Google",
+         "https://docs.google.com/spreadsheets/d/1AbC_dEf-123/export?format=csv"},
+        {"https://docs.google.com/spreadsheets/d/1AbC_dEf-123/edit#gid=456\xc2\xa0", "Google",
+         "https://docs.google.com/spreadsheets/d/1AbC_dEf-123/export?format=csv&gid=456"},
+        // O U+FEFF antes e o U+3000 depois.
+        {"\xef\xbb\xbf" "https://intranet.empresa.com.br/contatos.csv", "link",
+         "https://intranet.empresa.com.br/contatos.csv"},
+        {"https://intranet.empresa.com.br/contatos.csv\xe3\x80\x80", "link",
+         "https://intranet.empresa.com.br/contatos.csv"},
+    });
+    // So as pontas: o espaco no meio de um link continua fazendo dele um "nao e link".
+    CheckNothing({"https://intranet.empresa.com.br/meus contatos.csv\xc2\xa0"});
+}
+
+TEST_CASE("company link: each invisible space of the list is left out at both ends") {
+    // O UTF-8 de cada um sai do numero dele pelo WideToUtf8, e nao de uma lista de bytes escrita a mao.
+    const std::vector<unsigned> blanks = {0x00A0, 0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007,
+                                          0x2008, 0x2009, 0x200A, 0x200B, 0x202F, 0x205F, 0x3000, 0xFEFF};
+    for (const unsigned code : blanks) {
+        CAPTURE(code);
+        const std::string blank = WideToUtf8(std::wstring(1, static_cast<wchar_t>(code)));
+        const std::optional<CompanySource> source =
+            CompanySourceFor(blank + "https://intranet.empresa.com.br/contatos.csv" + blank + blank);
+        CHECK(source.has_value());
+        if (!source) continue;
+        CHECK(source->location == "https://intranet.empresa.com.br/contatos.csv");
+    }
 }
 
 TEST_CASE("company link: the scheme and the host are compared without case, the path and the query keep theirs") {
