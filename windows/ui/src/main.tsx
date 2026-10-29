@@ -4,7 +4,8 @@
 // o Teclado. O `ring` toca aqui, também o bipe do fim da ligação (o aviso do canto, aviso.tsx, recebe as mesmas
 // mensagens e não toca). O Ctrl + P (rc.3) é só desta janela: abre o diálogo da área do administrador, um por vez e
 // nunca por cima da ligação, de outro diálogo ou de um menu aberto; com a área aberta, vai direto para ela. O app não
-// imprime: o Ctrl + P nunca chega ao imprimir do navegador.
+// imprime: o Ctrl + P nunca chega ao imprimir do navegador. (rc.4) A lista da empresa (a contatosEmpresa) fica guardada
+// aqui, a de `vez` mais alta, também a que chega antes do primeiro estado, e vai à tela Contatos.
 import { render } from 'preact';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { createBridge } from './bridge';
@@ -27,7 +28,7 @@ import { Recentes } from './screens/Recentes';
 import { Sobre } from './screens/Sobre';
 import { Teclado } from './screens/Teclado';
 import { createRinger } from './ring';
-import type { AppState } from './state';
+import type { AppState, CompanyContact } from './state';
 import { accountDot, accountTitle } from './format';
 import { useLayout } from './layout';
 import type { Send, Tab, View } from './types';
@@ -37,6 +38,14 @@ const ringer = createRinger();
 const TOAST_MS = 2000;
 /** Ctrl+1 a 4: as abas na ordem da navegação. */
 const TECLA_ABA: Record<string, Tab> = Object.fromEntries(TABS.map((t, i) => [String(i + 1), t.tab]));
+
+/**
+ * (rc.4) A mesma lista da empresa (cada leitura boa vem com outra `vez`, também a de uma planilha que não mudou): a de
+ * antes fica, e a tela Contatos não refaz uma lista que pode ter 10.000 contatos.
+ */
+function mesmaLista(a: CompanyContact[], b: CompanyContact[]): boolean {
+  return a.length === b.length && a.every((c, i) => c.nome === b[i].nome && c.numero === b[i].numero && c.observacao === b[i].observacao);
+}
 
 function initialView(): View {
   const v = bridge.initialView;
@@ -59,6 +68,8 @@ function App() {
   const [reinstalar, setReinstalar] = useState(false);
   // A pergunta da atualização aberta (o `update` do C++), até a resposta.
   const [atualizacao, setAtualizacao] = useState<{ versao: string; notas: string; vez: number } | null>(null);
+  // (rc.4) A lista da empresa da última contatosEmpresa (a de `vez` mais alta: uma mais velha que chega atrasada não vale).
+  const [daEmpresa, setDaEmpresa] = useState<{ vez: number; contatos: CompanyContact[] }>({ vez: 0, contatos: [] });
   // O diálogo da área do administrador (o Ctrl + P).
   const [adminLogin, setAdminLogin] = useState(false);
   const [numero, setNumero] = useState('');
@@ -83,6 +94,11 @@ function App() {
         setToasts((t) => ({ n: t.n + 1, texto: msg.texto }));
       } else if (msg.type === 'ring') ringer.play(msg.tipo, saidas.current);
       else if (msg.type === 'update') setAtualizacao((a) => ({ versao: msg.versao, notas: msg.notas, vez: (a?.vez ?? 0) + 1 }));
+      else if (msg.type === 'contatosEmpresa') {
+        setDaEmpresa((atual) =>
+          msg.vez > atual.vez ? { vez: msg.vez, contatos: mesmaLista(atual.contatos, msg.contatos) ? atual.contatos : msg.contatos } : atual,
+        );
+      }
     });
     bridge.send({ cmd: 'ready' });
     return parar;
@@ -351,6 +367,8 @@ function App() {
         {tab === 'contatos' && (
           <Contatos
             contatos={state.contatos}
+            daEmpresa={daEmpresa.contatos}
+            comPlanilha={state.empresa.link !== ''}
             send={send}
             onNew={() => setView({ kind: 'contato', back: view })}
             onEdit={(contato) => setView({ kind: 'contato', contato, back: view })}

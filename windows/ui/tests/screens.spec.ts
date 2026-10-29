@@ -810,3 +810,102 @@ test.describe('o foco do formulário do contato', () => {
     }
   });
 });
+
+// rc.4: a lista da empresa nos Contatos (a etiqueta, os filtros e o "⋯") e a parte "Contatos" das Configurações (a
+// planilha, a ajuda e a situação), nos dois temas e nas três larguras (Normal, Compacto e Mínimo): nada rola na
+// horizontal, a etiqueta e o Salvar cabem, o axe e uma captura por tela, tema e largura.
+const LARGURAS: Array<[number, number]> = [
+  [400, 720],
+  [340, 560],
+  [300, 440],
+];
+const AJUDA_DA_PLANILHA =
+  'Cole o link do Google Planilhas ou do OneDrive/SharePoint, compartilhado para qualquer pessoa com o link, ou o caminho do arquivo na rede.';
+const LINK_FECHADO = 'Não consegui abrir o link. Confira se a planilha está compartilhada para qualquer pessoa com o link.';
+
+async function semRolarNaHorizontal(page: Page, largura: number): Promise<void> {
+  expect(await page.evaluate(() => document.scrollingElement!.scrollWidth), 'a página rola na horizontal').toBeLessThanOrEqual(largura);
+  const rolam = await page.evaluate(() =>
+    Array.from(document.querySelectorAll<HTMLElement>('.win *'))
+      .filter((e) => e.scrollWidth > e.clientWidth + 1 && ['auto', 'scroll'].includes(getComputedStyle(e).overflowX))
+      .map((e) => e.className),
+  );
+  expect(rolam, 'algo rola na horizontal').toEqual([]);
+}
+
+/** O fim do corpo das Configurações (a parte "Contatos" é a última). */
+async function irAoFim(page: Page): Promise<void> {
+  await page.locator('.body.scroll').evaluate((e) => {
+    e.scrollTop = e.scrollHeight;
+  });
+}
+
+for (const tema of ['light', 'dark'] as const) {
+  for (const [largura, altura] of LARGURAS) {
+    test.describe(`a lista da empresa em ${largura}×${altura} (${tema})`, () => {
+      test.use({ viewport: { width: largura, height: altura }, colorScheme: tema });
+
+      test('Contatos shows the company contacts with the tag, the filters and the more menu', async ({ page }) => {
+        await abrir(page, 'contatos-empresa');
+        await verTextos(page, ['Todos', 'Meus', 'Empresa', 'Almoxarifado', 'Ramal 3010 · Galpão 1', 'Ana Souza', 'Ramal 2003 · Comercial']);
+        await expect(page.getByRole('button', { name: 'Todos', exact: true })).toHaveAttribute('aria-pressed', 'true');
+        // A Ana Souza da planilha também é minha: uma vez só, a minha.
+        await expect(page.locator('li.row .row-title').getByText('Ana Souza', { exact: true })).toHaveCount(1);
+        await semRolarNaHorizontal(page, largura);
+        // O nome comprido encolhe (com reticências) e a etiqueta fica inteira, antes do botão de ligar.
+        const longa = page.locator('li.row').filter({ hasText: 'Coordenação de Logística e Transportes' });
+        await longa.scrollIntoViewIfNeeded();
+        const tag = longa.getByText('Empresa', { exact: true });
+        const t = (await tag.boundingBox())!;
+        const ligar = (await longa.getByRole('button', { name: 'Ligar para Coordenação de Logística e Transportes' }).boundingBox())!;
+        expect(t.x + t.width, 'a etiqueta passa por cima do ligar').toBeLessThanOrEqual(ligar.x + 0.5);
+        expect(await tag.evaluate((e) => e.scrollWidth <= e.clientWidth + 0.5), 'a etiqueta cortada').toBe(true);
+        await page.locator('.body.scroll').evaluate((e) => {
+          e.scrollTop = 0;
+        });
+        await semViolacoesSerias(page);
+        await capturar(page, `contatos-empresa-${largura}x${altura}`, tema);
+
+        // O "⋯" com o menu aberto, inteiro dentro da janela.
+        await page.getByRole('button', { name: 'Mais opções', exact: true }).click();
+        const menu = page.getByRole('menu', { name: 'Mais opções' });
+        await expect(menu.getByRole('menuitem', { name: 'Importar planilha…' })).toBeFocused();
+        const m = (await menu.boundingBox())!;
+        expect(m.x >= -0.5 && m.y >= -0.5 && m.x + m.width <= largura + 0.5 && m.y + m.height <= altura + 0.5, `o menu sai da janela: ${JSON.stringify(m)}`).toBe(
+          true,
+        );
+        await semViolacoesSerias(page);
+        await capturar(page, `contatos-mais-opcoes-${largura}x${altura}`, tema);
+      });
+
+      test('Configurações shows the company sheet with its status', async ({ page }) => {
+        await abrir(page, 'contatos-empresa');
+        await page.getByRole('button', { name: 'Menu' }).click();
+        await page.getByRole('menuitem', { name: 'Configurações' }).click();
+        const campo = page.getByLabel('Planilha da empresa', { exact: true });
+        await expect(campo).toHaveValue('\\\\servidor\\contatos\\empresa.xlsx');
+        await irAoFim(page);
+        await verTextos(page, ['Contatos', 'Planilha da empresa', 'Salvar', AJUDA_DA_PLANILHA, 'Atualizada às 14:32 · 7 contatos', 'Atualizar agora']);
+        await semRolarNaHorizontal(page, largura);
+        // O campo e o Salvar na mesma linha, os dois inteiros dentro do cartão.
+        const c = (await campo.boundingBox())!;
+        const s = (await page.getByRole('button', { name: 'Salvar', exact: true }).boundingBox())!;
+        const cartao = (await page.locator('.card').filter({ has: campo }).boundingBox())!;
+        expect(s.x, 'o Salvar em cima do campo').toBeGreaterThanOrEqual(c.x + c.width - 0.5);
+        expect(Math.abs(s.y + s.height / 2 - (c.y + c.height / 2)), 'o Salvar fora da linha do campo').toBeLessThanOrEqual(1);
+        expect(s.x + s.width, 'o Salvar sai do cartão').toBeLessThanOrEqual(cartao.x + cartao.width + 0.5);
+        expect(c.width, 'o campo estreito demais').toBeGreaterThanOrEqual(120);
+        await semViolacoesSerias(page);
+        await capturar(page, `configuracoes-empresa-${largura}x${altura}`, tema);
+
+        // O erro com a lista de antes: os textos mais compridos quebram a linha dentro do cartão.
+        await mudarEstado(page, (st) => ({ ...st, empresa: { ...st.empresa, situacao: 'erro', erro: LINK_FECHADO } }));
+        await verTextos(page, [LINK_FECHADO, 'Última lista: às 14:32 · 7 contatos']);
+        await irAoFim(page);
+        await semRolarNaHorizontal(page, largura);
+        await semViolacoesSerias(page);
+        await capturar(page, `configuracoes-empresa-erro-${largura}x${altura}`, tema);
+      });
+    });
+  }
+}

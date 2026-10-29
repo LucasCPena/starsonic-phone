@@ -206,6 +206,22 @@ export function dayGroup(ms: number, now: number = Date.now()): string {
   return new Intl.DateTimeFormat('pt-BR', opcoes).format(d);
 }
 
+/**
+ * A hora de uma leitura da planilha da empresa (spec da rc.4, 7.1), na hora local: "às 14:32" se for de hoje, senão
+ * "em 26/10 às 14:32".
+ */
+export function readTime(ms: number, now: number = Date.now()): string {
+  const hora = `às ${clockTime(ms)}`;
+  if (startOfDay(ms) === startOfDay(now)) return hora;
+  const d = new Date(ms);
+  return `em ${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')} ${hora}`;
+}
+
+/** "230 contatos"; um só no singular (Ruling R7): "1 contato". */
+export function contactCount(n: number): string {
+  return n === 1 ? '1 contato' : `${n} contatos`;
+}
+
 /** "Depois de 3 segundos tocando". */
 export function autoAnswerLine(segundos: number): string {
   if (segundos <= 0) return 'Assim que tocar';

@@ -1,11 +1,12 @@
 // As Configurações: Contas (a lista, a em uso marcada, Editar e "Adicionar conta"), Áudio (Microfone, Alto-falante
-// e Toque) e Ligações ((rc.3) o bipe do fim da ligação, Atender automaticamente e o tempo, Iniciar com o Windows). O
-// Atender automaticamente e o tempo somem quando o administrador esconde o Atender automático.
+// e Toque), Ligações ((rc.3) o bipe do fim da ligação, Atender automaticamente e o tempo, Iniciar com o Windows) e
+// (rc.4) Contatos (a planilha da empresa: o link ou o caminho, o Salvar, a ajuda, a situação da leitura e o "Atualizar
+// agora"). O Atender automaticamente e o tempo somem quando o administrador esconde o Atender automático.
 import { useEffect, useState } from 'preact/hooks';
 import { BackBar } from '../components/BackBar';
-import { accountDot, accountTitle, autoAnswerLine } from '../format';
-import { IconChevronDown, IconPencil, IconPlus } from '../icons';
-import type { AppState, AudioDevice } from '../state';
+import { accountDot, accountTitle, autoAnswerLine, contactCount, readTime } from '../format';
+import { IconAlert, IconChevronDown, IconPencil, IconPlus } from '../icons';
+import type { AppState, AudioDevice, CompanyList } from '../state';
 import type { Send } from '../types';
 
 interface Props {
@@ -75,6 +76,78 @@ function Select({ id, value, options, onChange }: { id: string; value: string; o
       </select>
       <IconChevronDown size="sm" />
     </span>
+  );
+}
+
+const AJUDA_DA_PLANILHA =
+  'Cole o link do Google Planilhas ou do OneDrive/SharePoint, compartilhado para qualquer pessoa com o link, ou o caminho do arquivo na rede.';
+
+/**
+ * (rc.4) A planilha da empresa (spec da rc.4, 5.1): o campo com o link ou o caminho e o Salvar (também o Enter; vazio
+ * tira a lista), a ajuda, a situação da leitura e o "Atualizar agora" (desligado sem o link e enquanto lê). O erro vem
+ * do C++ com o texto pronto; com uma lista de antes, a hora e o tamanho dela embaixo.
+ */
+function PlanilhaDaEmpresa({ empresa, send }: { empresa: CompanyList; send: Send }) {
+  const [link, setLink] = useState(empresa.link);
+  // O C++ gravou (sem os espaços das pontas) ou o link mudou: o campo segue o estado.
+  useEffect(() => setLink(empresa.link), [empresa.link]);
+  return (
+    <>
+      <form
+        class="field cfg-planilha"
+        onSubmit={(e) => {
+          e.preventDefault();
+          send({ cmd: 'setCompanyList', link });
+        }}
+      >
+        <label class="label" for="cfg-planilha">
+          Planilha da empresa
+        </label>
+        <div class="cfg-planilha-campo">
+          <input
+            id="cfg-planilha"
+            class="input"
+            autocomplete="off"
+            spellcheck={false}
+            autocapitalize="off"
+            value={link}
+            aria-describedby="cfg-planilha-ajuda"
+            onInput={(e) => setLink(e.currentTarget.value)}
+          />
+          <button type="submit" class="btn btn-cyan mini">
+            Salvar
+          </button>
+        </div>
+        <p class="help-campo" id="cfg-planilha-ajuda">
+          {AJUDA_DA_PLANILHA}
+        </p>
+      </form>
+      <div class="cfg-leitura">
+        {/* Sempre na página (vazia em "nenhuma"): o leitor de tela diz cada situação nova. */}
+        <div class="cfg-situacao" id="cfg-planilha-situacao" role="status">
+          {empresa.situacao === 'lendo' && <p>Lendo a planilha…</p>}
+          {empresa.situacao === 'ok' && <p>{`Atualizada ${readTime(empresa.atualizadaEm)} · ${contactCount(empresa.quantos)}`}</p>}
+          {empresa.situacao === 'erro' && (
+            <>
+              <p class="field-error">
+                <IconAlert size="sm" />
+                <span>{empresa.erro}</span>
+              </p>
+              {empresa.atualizadaEm > 0 && <p>{`Última lista: ${readTime(empresa.atualizadaEm)} · ${contactCount(empresa.quantos)}`}</p>}
+            </>
+          )}
+        </div>
+        <button
+          type="button"
+          class="btn btn-outline mini"
+          disabled={empresa.link === '' || empresa.situacao === 'lendo'}
+          aria-describedby="cfg-planilha-situacao"
+          onClick={() => send({ cmd: 'refreshCompanyList' })}
+        >
+          Atualizar agora
+        </button>
+      </div>
+    </>
   );
 }
 
@@ -229,6 +302,13 @@ export function Configuracoes({ state, send, onBack, onEditAccount, onAddAccount
               onClick={() => send({ cmd: 'setSetting', chave: 'iniciarComWindows', valor: !state.iniciarComWindows })}
             />
           </div>
+        </div>
+
+        <h2 class="eyebrow" style={{ marginTop: '4px' }}>
+          Contatos
+        </h2>
+        <div class="card">
+          <PlanilhaDaEmpresa empresa={state.empresa} send={send} />
         </div>
       </div>
     </>

@@ -2,7 +2,7 @@
 // Responde ao `ready` com o estado do cenário (src/fake-scenarios.ts) e imita as respostas mais simples do
 // DesktopApp. Guarda cada comando em window.__comandos; window.__fake.push(msg) manda uma mensagem à interface.
 // As regras de verdade (validações, ligações) são do C++: aqui só o bastante para as telas reagirem.
-import { createScenario, SERVIDORES_DO_PERFIL, type FakeView } from './fake-scenarios';
+import { createScenario, PLANILHA_DA_EMPRESA, SERVIDORES_DO_PERFIL, type FakeView } from './fake-scenarios';
 import { trimAscii } from './format';
 import type { WebviewLike } from './bridge';
 import type {
@@ -12,6 +12,8 @@ import type {
   BlfState,
   CallCard,
   CallState,
+  CompanyContact,
+  CompanyList,
   Contact,
   IncomingMessage,
   RingKind,
@@ -98,6 +100,24 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
   const ring = (tipo: RingKind) => deliver({ v: 1, type: 'ring', tipo } satisfies IncomingMessage);
   const toast = (texto: string) => deliver({ v: 1, type: 'toast', texto } satisfies IncomingMessage);
   const setCall = (ligacao: CallState | null) => change({ ligacao });
+
+  // (rc.4) A planilha da empresa do C++ de mentira: o link salvo é lido ("lendo") e, um instante depois, a leitura é boa
+  // e traz a planilha de exemplo; a que volta depois de o link mudar é descartada. O link vazio tira a lista. Como no
+  // C++, a contatosEmpresa sai antes do estado com a `vez` nova.
+  const empresaNoReady = () =>
+    deliver({ v: 1, type: 'contatosEmpresa', vez: state.empresa.vez, contatos: scenario.contatosEmpresa ?? [] } satisfies IncomingMessage);
+  const novaListaDaEmpresa = (contatos: CompanyContact[], empresa: Partial<CompanyList>) => {
+    const vez = state.empresa.vez + 1;
+    deliver({ v: 1, type: 'contatosEmpresa', vez, contatos } satisfies IncomingMessage);
+    change({ empresa: { ...state.empresa, ...empresa, vez } });
+  };
+  const lerPlanilha = (link: string) => {
+    change({ empresa: { ...state.empresa, link, situacao: 'lendo', erro: '' } });
+    setTimeout(() => {
+      if (state.empresa.link !== link) return;
+      novaListaDaEmpresa(PLANILHA_DA_EMPRESA, { situacao: 'ok', erro: '', atualizadaEm: Date.now(), quantos: PLANILHA_DA_EMPRESA.length });
+    }, 1000);
+  };
 
   // A área do administrador do C++ de mentira: a senha de teste, a espera de 30 s depois de 5 erradas seguidas e o
   // que a área guarda além do que a interface vê com ela fechada (o admin.json).
@@ -246,8 +266,25 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
     if (handleCall(command)) return;
     switch (command.cmd) {
       case 'ready':
+        // (rc.4) A lista da empresa vem depois do estado e do toque (com uma lista desde a abertura: `vez` > 0); no
+        // cenário da leitura que acabou com a página abrindo, só antes do primeiro estado.
+        if (scenario.empresaAntesDoEstado) empresaNoReady();
         publish();
         if (scenario.ring) deliver({ v: 1, type: 'ring', tipo: scenario.ring });
+        if (!scenario.empresaAntesDoEstado && state.empresa.vez > 0) empresaNoReady();
+        break;
+      case 'importContacts':
+      case 'exportContacts':
+        // As janelas do Windows e o aviso do resultado são do C++: as specs só olham o comando.
+        break;
+      case 'setCompanyList': {
+        const link = String(command.link ?? '').trim();
+        if (link === '') novaListaDaEmpresa([], { link: '', situacao: 'nenhuma', erro: '', atualizadaEm: 0, quantos: 0 });
+        else lerPlanilha(link);
+        break;
+      }
+      case 'refreshCompanyList':
+        if (state.empresa.link !== '') lerPlanilha(state.empresa.link);
         break;
       case 'setDnd':
         // Escondido pelo administrador, ligar é recusado (como no C++).

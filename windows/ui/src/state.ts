@@ -112,6 +112,31 @@ export interface Contact {
   observacao: string;
 }
 
+/** (rc.4) Um contato da lista da empresa (a mensagem contatosEmpresa): sem id, muda só na planilha. */
+export interface CompanyContact {
+  nome: string;
+  numero: string;
+  observacao: string;
+}
+
+/** (rc.4) A leitura da planilha da empresa: sem link, lendo, a última foi boa ou falhou. */
+export type CompanyListStatus = 'nenhuma' | 'lendo' | 'ok' | 'erro';
+
+/** (rc.4) A planilha da empresa (Configurações → Contatos). Os contatos vêm na mensagem contatosEmpresa. */
+export interface CompanyList {
+  /** O texto salvo (setCompanyList), sem os espaços das pontas; "" sem a lista da empresa. */
+  link: string;
+  situacao: CompanyListStatus;
+  /** Com `situacao` "erro", o texto que a interface mostra como está; "" fora do erro. */
+  erro: string;
+  /** A hora da última leitura boa (ms desde 1970); 0 sem nenhuma. */
+  atualizadaEm: number;
+  /** Os contatos da lista de agora (a da última leitura boa). */
+  quantos: number;
+  /** Sobe a cada lista nova: é a `vez` da última contatosEmpresa. */
+  vez: number;
+}
+
 export interface AudioDevice {
   /** Só da lista de agora: a escolha vai pelo nome. */
   id: number;
@@ -198,6 +223,8 @@ export interface AppState {
   admin: AdminState;
   entrarAdmin: AdminLoginResult;
   config: { bipeFim: boolean };
+  /** (rc.4) */
+  empresa: CompanyList;
 }
 
 /** C++ → interface. */
@@ -205,7 +232,10 @@ export type IncomingMessage =
   | { v: number; type: 'state'; state: AppState }
   | { v: number; type: 'toast'; texto: string }
   | { v: number; type: 'ring'; tipo: RingKind }
-  | { v: number; type: 'update'; versao: string; notas: string };
+  | { v: number; type: 'update'; versao: string; notas: string }
+  /** (rc.4) A lista da empresa inteira, na ordem da planilha: no `ready` (com `vez` > 0) e a cada lista nova. Fica a de
+   *  `vez` mais alta; ela pode chegar antes do `state` com essa `vez`. */
+  | { v: number; type: 'contatosEmpresa'; vez: number; contatos: CompanyContact[] };
 
 /** Interface → C++ (sem o `v`, que a ponte acrescenta). */
 export type Command =
@@ -267,7 +297,13 @@ export type Command =
       codigoPuxar?: string;
       servidores?: AdminServer[];
       canal?: UpdateChannel;
-    };
+    }
+  /** rc.4: Importar e Exportar planilha (as janelas do Windows; o resultado vem num toast) e a planilha da empresa
+   *  (`link` "" tira a lista; "Atualizar agora" lê de novo). */
+  | { cmd: 'importContacts' }
+  | { cmd: 'exportContacts' }
+  | { cmd: 'setCompanyList'; link: string }
+  | { cmd: 'refreshCompanyList' };
 
 /** Os únicos endereços que o openExternal aceita (nenhum tel:: o app é o tratador dele). */
 export const EXTERNAL_URLS = {

@@ -794,3 +794,36 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .adm-canal { padding: 12px 0; }
 .adm-canal-titulo { margin-bottom: 8px; font-size: 14px; }
 .adm-sair { flex: none; margin-top: 4px; }
+
+/* ---------------------------------------------------------------------------------------------------------
+   rc.4: a lista da empresa nos Contatos e a parte "Contatos" das Configurações (a planilha da empresa). */
+
+/* O "⋯" dos Contatos (Importar e Exportar planilha) fica marcado com o menu aberto, como os outros botões de menu. */
+.row-call[aria-expanded="true"] { border-color: var(--cyan); background: var(--icon-tile); }
+
+/* A etiqueta "Empresa" na linha do nome. A .tag da tela da ligação é ciano sobre o escuro (no claro não dá os 4,5:1):
+   esta segue o tema, com o texto de destaque (azul no claro, ciano no escuro). Ela fica inteira e o nome encolhe com
+   reticências; a linha tem a altura da dos meus contatos. */
+.row-nome { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.row-nome .row-title { min-width: 0; }
+.etiqueta { display: inline-flex; align-items: center; height: 18px; padding: 0 7px; border-radius: 999px; flex: none;
+  font-size: 10px; font-weight: 800; line-height: 1; letter-spacing: 0.1em; text-transform: uppercase; white-space: nowrap;
+  background: var(--icon-tile); color: var(--accent-text); border: 1px solid rgba(0, 194, 203, 0.35); }
+/* A lista da empresa pode ter 10.000 contatos: o navegador só faz o layout e a pintura das linhas que estão à vista (as
+   outras ficam no DOM: o Tab, a busca do navegador e o leitor de tela continuam nelas). O content-visibility corta o que
+   sai da linha: a margem deixa o anel de foco (3 px, 2 px afastado) inteiro. As linhas dos meus contatos não têm isso: o
+   menu delas sai da linha. */
+.row-empresa { content-visibility: auto; contain-intrinsic-size: auto 59px; overflow-clip-margin: 6px; }
+
+/* A planilha da empresa: o campo e o Salvar na mesma linha, a ajuda embaixo; depois a situação da leitura e o
+   "Atualizar agora". */
+.cfg-planilha { padding: 12px 0; }
+.cfg-planilha-campo { display: flex; align-items: center; gap: 8px; }
+.cfg-planilha-campo .input { flex: 1; min-width: 0; }
+.cfg-planilha-campo .btn { flex: none; height: 44px; }
+.cfg-leitura { display: flex; flex-direction: column; align-items: flex-start; padding: 12px 0; border-top: 1px solid var(--border); }
+.cfg-situacao { display: flex; flex-direction: column; gap: 4px; width: 100%; }
+.cfg-situacao:not(:empty) { margin-bottom: 10px; }
+.cfg-situacao p { margin: 0; font-size: 12.5px; line-height: 1.4; color: var(--text-muted); overflow-wrap: anywhere; }
+.cfg-situacao p.field-error { font-size: 13px; color: var(--text); }
+.cfg-leitura .btn:disabled, .cfg-leitura .btn:disabled:hover { opacity: 0.45; border-color: var(--outline); }

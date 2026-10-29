@@ -1,6 +1,6 @@
 // Os cenários da ponte falsa (?fake=<nome>): o estado que o "C++ de mentira" manda no `ready`.
 // Os dados imitam as telas do canvas. As datas são relativas ao momento em que a página abre (Hoje, Ontem).
-import type { AdminServer, AppState, CallCard, CallState, RingKind, Shortcut } from './state';
+import type { AdminServer, AppState, CallCard, CallState, CompanyContact, RingKind, Shortcut } from './state';
 
 /** A tela em que a interface abre (só na ponte falsa; o app real sempre abre no Teclado). */
 export type FakeView = 'teclado' | 'atalhos' | 'recentes' | 'contatos' | 'configuracoes' | 'sobre';
@@ -23,11 +23,31 @@ function atalhosDoCanvas(): Shortcut[] {
   ];
 }
 
+/**
+ * (rc.4) A planilha da empresa de exemplo, na ordem da planilha: a do cenário `contatos-empresa` e a que a leitura do
+ * C++ de mentira traz (setCompanyList, refreshCompanyList). A Ana Souza 2003 também é minha (aparece uma vez só). O
+ * caminho é de uma pasta da rede: nenhum endereço de rede vai no app.js.
+ */
+export const PLANILHA_DA_EMPRESA: CompanyContact[] = [
+  { nome: 'Recepção', numero: '3001', observacao: 'Térreo' },
+  { nome: 'Diretoria', numero: '3000', observacao: '' },
+  { nome: 'Coordenação de Logística e Transportes', numero: '3020', observacao: 'Galpão 2' },
+  { nome: 'Élcio Matos', numero: '3005', observacao: 'Compras' },
+  { nome: 'Beatriz Ramos', numero: '3004', observacao: 'Contabilidade' },
+  { nome: 'Ana Souza', numero: '2003', observacao: 'Comercial' },
+  { nome: 'Almoxarifado', numero: '3010', observacao: 'Galpão 1' },
+];
+const CAMINHO_DA_PLANILHA = '\\\\servidor\\contatos\\empresa.xlsx';
+
 export interface Scenario {
   state: AppState;
   /** O toque atual, mandado depois do estado em cada `ready`. */
   ring?: RingKind;
   view?: FakeView;
+  /** (rc.4) A lista da contatosEmpresa do `ready` (com a `vez` do `empresa.vez`), depois do estado e do toque. */
+  contatosEmpresa?: CompanyContact[];
+  /** (rc.4) A contatosEmpresa vem antes do primeiro estado (uma leitura que acabou com a página abrindo), e não depois. */
+  empresaAntesDoEstado?: boolean;
 }
 
 const MINUTO = 60_000;
@@ -103,6 +123,26 @@ function principal(): AppState {
     admin: { aberto: false, naoPerturbe: true, atenderAuto: true, blf: true, puxa: false },
     entrarAdmin: { erro: '', esperaAte: 0, vez: 0 },
     config: { bipeFim: true },
+    empresa: { link: '', situacao: 'nenhuma', erro: '', atualizadaEm: 0, quantos: 0, vez: 0 },
+  };
+}
+
+/** (rc.4) A tela Contatos com a planilha da empresa lida hoje às 14:32. */
+function comPlanilhaDaEmpresa(): Scenario {
+  return {
+    state: {
+      ...principal(),
+      empresa: {
+        link: CAMINHO_DA_PLANILHA,
+        situacao: 'ok',
+        erro: '',
+        atualizadaEm: quando(0, 14, 32),
+        quantos: PLANILHA_DA_EMPRESA.length,
+        vez: 1,
+      },
+    },
+    view: 'contatos',
+    contatosEmpresa: PLANILHA_DA_EMPRESA,
   };
 }
 
@@ -282,6 +322,10 @@ export function createScenario(nome: string): Scenario | undefined {
       return { state: principal(), view: 'sobre' };
     case 'nao-perturbe':
       return { state: { ...principal(), naoPerturbe: true } };
+    case 'contatos-empresa':
+      return comPlanilhaDaEmpresa();
+    case 'empresa-antes-do-estado':
+      return { ...comPlanilhaDaEmpresa(), empresaAntesDoEstado: true };
     default:
       return cenarioDeLigacao(nome);
   }
@@ -299,6 +343,8 @@ export const SCENARIO_NAMES = [
   'configuracoes',
   'sobre',
   'nao-perturbe',
+  'contatos-empresa',
+  'empresa-antes-do-estado',
   'ligacao',
   'ligacao-segunda',
   'duas-ligacoes',
