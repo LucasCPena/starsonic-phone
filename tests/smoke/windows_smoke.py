@@ -47,7 +47,18 @@ Fumaça (padrão), contra o StarsonicPhone.exe instalado do build de teste (STAR
    nele, com o teste DNS do monitor a cada STARSONIC_TESTE_DNS_MS (só o build de teste, cada resultado no
    diagnostico.log): registra verde, os testes DNS rodam e respondem, a bolinha fica verde por mais de dois intervalos e
    nenhum "o DNS nao respondeu" aparece. O código do DNS fica no resultado (0: o hosts valeu; 9003: o nome foi ao DNS).
-Os itens 7 a 10 juntam o que falhou e reprovam no fim (um não esconde o outro).
+11. (rc.4) a lista da empresa de um arquivo num caminho local e as janelas de arquivo: grava
+   contatos-empresa-teste.csv ("Nome;Número", "Empresa Teste;3001", UTF-8) numa pasta temporária com acento no nome
+   (fora do repositório) e abre o app na pasta de dados de antes; em Configurações → Contatos, o caminho em "Planilha da
+   empresa" e o Salvar, com o arquivo aberto como o Excel o abre (os outros só leem), mostram "Atualizada às … · 1
+   contato"; um arquivo que não existe dá "Não achei o arquivo…" com a "Última lista", e um de 15 MB, o "grande demais";
+   o caminho bom de novo; nos Contatos, "Empresa Teste" com a etiqueta "Empresa" (captura contatos-empresa.png); um RING
+   do registrador falso (que liga como o 3001, "Cliente Teste") mostra "Empresa Teste" na recebida (Recusar); o "⋯" abre
+   a janela de abrir do Windows ("Importar planilha…": dona da janela principal, com "Planilhas (*.xlsx, *.csv)") e a de
+   salvar ("Exportar planilha…": "Contatos Starsonic.xlsx" e "Planilha do Excel (*.xlsx)"), e fechadas (o Cancelar) nada
+   acontece ("a janela foi cancelada" no diagnostico.log); por fim, o --sair com a janela de importar aberta fecha o app
+   (código 0), sem o fechamento forçado. Fica por último: os RING de antes esperam o nome da central.
+Os itens 7 a 11 juntam o que falhou e reprovam no fim (um não esconde o outro).
 Na escala de 100%, a área da interface tem 400x720 lógicos (as bordas invisíveis de redimensionar ficam fora dela). A escala de 150% de verdade (outro DPI) não dá para mudar no runner.
 
 Ensaio da atualização (--ensaio): o app já foi aberto pelo instalador (por cima da rc.7, com a variável do CDP no
@@ -119,6 +130,31 @@ DNS_PERIOD_MS = 2000
 DNS_ANSWERED = "rede: o DNS respondeu pelo servidor " + DNS_NAME
 DNS_FAILED = "o DNS nao respondeu"
 HOSTS_FILE = pathlib.Path(os.environ.get("SystemRoot", "C:\\Windows")) / "System32" / "drivers" / "etc" / "hosts"
+# rc.4. A lista da empresa: a planilha da fumaça (o cabeçalho com acento, em UTF-8) tem o número de quem o RING liga
+# (o 3001), e fica numa pasta temporária com acento no nome (o caminho vai da interface ao CreateFileW sem perder o "ç").
+COMPANY_FOLDER_PREFIX = "starsonic-fumaça-planilha-"
+COMPANY_FILE = "contatos-empresa-teste.csv"
+COMPANY_SHEET = "Nome;N\u00famero\r\nEmpresa Teste;3001\r\n"
+COMPANY_NAME = "Empresa Teste"
+COMPANY_TAG = "Empresa"
+COMPANY_UPDATED = "Atualizada às"
+COMPANY_ONE = "· 1 contato"
+COMPANY_LAST = "Última lista: às"
+COMPANY_NOT_FOUND = "Não achei o arquivo. Confira o caminho e se este computador tem acesso à pasta."
+COMPANY_TOO_LARGE = "A planilha é grande demais (o máximo é 10.000 contatos)."
+COMPANY_BIG_BYTES = 15 * 1024 * 1024   # mais que os 10 MB: o "grande demais" sem ler
+# As janelas de arquivo do Windows (IFileOpenDialog e IFileSaveDialog): a classe, os itens do "⋯" e os textos da spec.
+DIALOG_CLASS = "#32770"
+IMPORT_ITEM = "Importar planilha…"
+EXPORT_ITEM = "Exportar planilha…"
+IMPORT_TYPE = "Planilhas (*.xlsx, *.csv)"
+EXPORT_TYPE = "Planilha do Excel (*.xlsx)"
+# Com "ocultar as extensões dos tipos conhecidos", a janela pode mostrar o nome sem o ".xlsx".
+EXPORT_NAME = "Contatos Starsonic"
+IMPORT_CANCELLED = "importar: a janela foi cancelada"
+EXPORT_CANCELLED = "exportar: a janela foi cancelada"
+FORCED_CLOSE = "fechamento forcado"
+LATE_QUIT = "o Sair nao terminou"
 
 
 class SmokeFailure(Exception):
@@ -497,6 +533,60 @@ class Win32:
         title = self.ctypes.create_unicode_buffer(256)
         self.user32.GetWindowTextW(hwnd, title, 256)
         return "0x%x [%s] '%s'" % (hwnd, name.value, title.value)
+
+    def owner(self, hwnd):
+        """A dona da janela (GW_OWNER); 0 sem dona."""
+        self.user32.GetWindow.argtypes = [self.wintypes.HWND, self.wintypes.UINT]
+        self.user32.GetWindow.restype = self.wintypes.HWND
+        return self.user32.GetWindow(hwnd, 4) or 0   # GW_OWNER
+
+    def child_texts(self, hwnd):
+        """Os textos das janelas filhas, as de outro processo também (o WM_GETTEXT, que o Windows leva de um processo ao
+        outro): (classe, texto) de cada uma com texto."""
+        ctypes, wintypes = self.ctypes, self.wintypes
+        children = []
+
+        def callback(child, _):
+            children.append(child)
+            return True
+
+        self.user32.EnumChildWindows(hwnd, self.enum_proc(callback), 0)
+        self.user32.SendMessageTimeoutW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM,
+                                                    wintypes.UINT, wintypes.UINT, ctypes.POINTER(ctypes.c_size_t)]
+        found = []
+        for child in children:
+            name = ctypes.create_unicode_buffer(256)
+            self.user32.GetClassNameW(child, name, 256)
+            text = ctypes.create_unicode_buffer(1024)
+            copied = ctypes.c_size_t()
+            # WM_GETTEXT, com SMTO_ABORTIFHUNG e 2 s.
+            if self.user32.SendMessageTimeoutW(child, 0x000D, 1024, ctypes.addressof(text), 0x0002, 2000,
+                                               ctypes.byref(copied)) and text.value:
+                found.append((name.value, text.value))
+        return found
+
+    def close(self, hwnd):
+        """WM_CLOSE pela fila da janela (numa janela de arquivo do Windows, o Cancelar)."""
+        return bool(self.user32.PostMessageW(hwnd, 0x0010, 0, 0))
+
+    def hold_file(self, path):
+        """Abre o arquivo como o Excel abre uma planilha aberta nele: para ler e escrever, e os outros só podem ler
+        (FILE_SHARE_READ). Devolve o handle, para o release_file."""
+        ctypes, wintypes = self.ctypes, self.wintypes
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+                                         wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+        kernel32.CreateFileW.restype = wintypes.HANDLE
+        # GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL.
+        handle = kernel32.CreateFileW(str(path), 0x80000000 | 0x40000000, 0x00000001, None, 3, 0x80, None)
+        if not handle or handle == ctypes.c_void_p(-1).value:
+            raise SmokeFailure("o arquivo %s nao abriu como no Excel (erro %d)" % (path, ctypes.get_last_error()))
+        return handle
+
+    def release_file(self, handle):
+        kernel32 = self.ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CloseHandle.argtypes = [self.wintypes.HANDLE]
+        kernel32.CloseHandle(handle)
 
 
 def webview_processes():
@@ -886,6 +976,15 @@ def run_smoke(args, result):
             if problems:
                 raise SmokeFailure("; ".join(problems))
             log("OK: a conta pelo nome %s registrou, o teste DNS respondeu e a bolinha ficou verde" % DNS_NAME)
+
+            # 11. (rc.4) A lista da empresa de um caminho local e as janelas de arquivo. Por último: os RING de antes
+            # esperam o nome da central ("Cliente Teste"), e com a lista o nome seria o da empresa.
+            run_rc4(pw, win, exe, data_dir, registrar, capturas, result, problems)
+            if problems:
+                raise SmokeFailure("; ".join(problems))
+            log("OK: a lista da empresa veio do caminho (tambem aberto como no Excel), os erros do caminho apareceram, "
+                "o nome dela chegou a recebida, as janelas de arquivo abriram e cancelaram, e o --sair fechou com uma "
+                "delas aberta")
     finally:
         if app:
             app.kill()
@@ -1618,6 +1717,222 @@ def run_dns_name(pw, exe, capturas, result, problems):
         HOSTS_FILE.write_bytes(original)
         flush_dns()
         show_log(data_dir / "diagnostico.log")
+
+
+# ---- rc.4: a lista da empresa e as janelas de arquivo ----
+
+def run_rc4(pw, win, exe, data_dir, registrar, capturas, result, problems):
+    """O item 11 (rc.4), na pasta de dados de antes (a conta já entra). Os problemas vão para problems (um passo que
+    quebra não esconde os outros); o app fecha no fim, pelo --sair com a janela de importar aberta."""
+    sleep = lambda ms: time.sleep(ms / 1000.0)   # noqa: E731
+    record = result.setdefault("rc4", {})
+    folder = pathlib.Path(tempfile.mkdtemp(prefix=COMPANY_FOLDER_PREFIX))
+    (folder / COMPANY_FILE).write_bytes(COMPANY_SHEET.encode("utf-8"))
+    record["pasta"] = str(folder)
+    # Os argumentos do CDP so valem para um WebView2 que ainda nao esta aberto.
+    if not wait_for(lambda: webview_processes() == 0, 40, interval=1):
+        problems.append("rc4: o WebView2 da abertura anterior nao saiu")
+    app = App(exe, data_dir)
+    try:
+        browser = connect(pw)
+        page = find_page(browser, "/index.html", 60, sleep)
+        hwnd = main_window(win, app.process.pid)
+        wait_connected(page, capturas, result, "rc4")
+        pid = app.process.pid
+        steps = (
+            ("planilha da empresa", lambda: check_company_sheet(win, page, folder, record, problems)),
+            ("Contatos com a lista da empresa", lambda: check_company_contacts(page, capturas, result, record, problems)),
+            ("recebida com o nome da empresa", lambda: check_company_caller(page, registrar, record, problems)),
+            ("janelas de importar e exportar", lambda: check_file_dialogs(win, pid, hwnd, page, data_dir, record, problems)),
+        )
+        for name, step in steps:
+            try:
+                step()
+            except Exception as error:   # noqa: BLE001
+                problems.append("%s: %s: %s" % (name, type(error).__name__, error))
+                log("%s quebrou: %s: %s" % (name, type(error).__name__, error))
+        quit_with_file_dialog_open(win, exe, app, hwnd, page, browser, data_dir, record, problems)
+        app = None
+    finally:
+        if app:
+            app.kill()
+
+
+def save_company_link(page, text, wanted, timeout=20):
+    """Escreve o texto em "Planilha da empresa" (Configurações → Contatos), clica no Salvar e espera a situação ter
+    wanted (o texto que só a leitura nova traz). Devolve (se apareceu, a situação)."""
+    page.locator("#cfg-planilha").fill(text)
+    page.locator("form.cfg-planilha button[type=submit]").click()
+    status = page.locator("#cfg-planilha-situacao")
+    found = bool(wait_for(lambda: wanted in status.inner_text(), timeout, pump=page.wait_for_timeout))
+    return found, status.inner_text().strip()
+
+
+def check_company_sheet(win, page, folder, record, problems):
+    """Configurações → Contatos, com os caminhos na pasta com acento: a planilha aberta como no Excel (os outros só
+    leem) é lida ("Atualizada às … · 1 contato"); um arquivo que não existe dá o erro do caminho, e a lista de antes
+    fica ("Última lista"); um de 15 MB, o "grande demais"; e a planilha de novo, lida."""
+    page.locator('button[aria-label="Menu"]').click()
+    page.get_by_role("menuitem", name="Configurações").click()
+    page.locator("#cfg-planilha").wait_for(timeout=15000)
+    sheet = folder / COMPANY_FILE
+    info = record.setdefault("planilha", {})
+    handle = win.hold_file(sheet)
+    try:
+        read, info["aberta_como_no_excel"] = save_company_link(page, str(sheet), COMPANY_UPDATED, timeout=30)
+    finally:
+        win.release_file(handle)
+    if not read or COMPANY_ONE not in info["aberta_como_no_excel"]:
+        problems.append("a planilha da empresa num caminho local (aberta como no Excel) nao mostrou '%s … %s': '%s'"
+                        % (COMPANY_UPDATED, COMPANY_ONE, info["aberta_como_no_excel"]))
+    found, info["arquivo_que_nao_existe"] = save_company_link(page, str(folder / "nao-existe.csv"), COMPANY_NOT_FOUND)
+    if not found or COMPANY_LAST not in info["arquivo_que_nao_existe"]:
+        problems.append("um caminho sem o arquivo nao mostrou '%s' com a '%s': '%s'"
+                        % (COMPANY_NOT_FOUND, COMPANY_LAST, info["arquivo_que_nao_existe"]))
+    big = folder / "contatos-grande.csv"
+    with open(big, "wb") as stream:
+        stream.truncate(COMPANY_BIG_BYTES)
+    found, info["arquivo_de_15_mb"] = save_company_link(page, str(big), COMPANY_TOO_LARGE)
+    if not found:
+        problems.append("um arquivo de 15 MB nao mostrou '%s': '%s'" % (COMPANY_TOO_LARGE, info["arquivo_de_15_mb"]))
+    found, info["de_novo"] = save_company_link(page, str(sheet), COMPANY_UPDATED)
+    if not found:
+        problems.append("a planilha da empresa de novo nao mostrou '%s': '%s'" % (COMPANY_UPDATED, info["de_novo"]))
+    log("planilha da empresa: %s" % info)
+    page.get_by_role("button", name="Voltar", exact=True).click()
+    page.locator("nav.nav").wait_for(timeout=10000)
+
+
+def check_company_contacts(page, capturas, result, record, problems):
+    """Nos Contatos, "Empresa Teste" com a etiqueta "Empresa" (captura contatos-empresa.png)."""
+    page.locator("nav.nav button", has_text="Contatos").click()
+    row = page.locator("li.row-empresa").filter(has_text=COMPANY_NAME).first
+    info = {}
+    try:
+        row.wait_for(timeout=15000)
+        info["etiqueta"] = row.locator(".etiqueta").inner_text()
+    except Exception as error:   # noqa: BLE001
+        info["erro"] = "%s: %s" % (type(error).__name__, error)
+    info["nomes"] = page.locator("li.row .row-title").all_inner_texts()
+    page.wait_for_timeout(300)
+    screenshot(page, capturas, "contatos-empresa.png", result)
+    record["contatos"] = info
+    log("Contatos com a lista da empresa: %s" % info)
+    if info.get("etiqueta") != COMPANY_TAG:
+        problems.append("os Contatos nao mostram '%s' com a etiqueta '%s': %s" % (COMPANY_NAME, COMPANY_TAG, info))
+
+
+def check_company_caller(page, registrar, record, problems):
+    """Um RING do registrador falso (que liga como o 3001, "Cliente Teste"): a recebida mostra o nome da lista da
+    empresa (o meu contato, depois o da empresa, depois o da central); o Recusar recusa."""
+    refused_before = count_events(registrar.events(), "inv-out %s 486" % RAMAL)
+    reply = registrar.command("RING " + RAMAL)
+    if reply != ["OK"]:
+        problems.append("recebida com o nome da empresa: RING %s: %s" % (RAMAL, reply))
+        return
+    info = {}
+    shown = False
+    try:
+        name = page.locator(".who-name").first
+        name.wait_for(timeout=20000)
+        shown = bool(wait_for(lambda: name.inner_text() == COMPANY_NAME, 10, pump=page.wait_for_timeout))
+        info["nome"] = name.inner_text()
+        page.locator(".call-actions").get_by_role("button", name="Recusar").click(timeout=10000)
+        info["recusou"] = bool(wait_for(lambda: count_events(registrar.events(), "inv-out %s 486" % RAMAL) > refused_before,
+                                        20, pump=page.wait_for_timeout))
+    finally:
+        if count_events(registrar.events(), "inv-out %s 486" % RAMAL) <= refused_before:
+            registrar.command("HANGUP " + RAMAL)
+        record["recebida"] = info
+        log("recebida da lista da empresa: %s" % info)
+    if not shown:
+        problems.append("a recebida do RING mostra '%s' (esperado '%s', o da lista da empresa)"
+                        % (info.get("nome"), COMPANY_NAME))
+    if not info.get("recusou"):
+        problems.append("o Recusar da recebida nao chegou ao registrador: %s" % registrar.events())
+    page.locator("button.btn-call").wait_for(timeout=20000)   # de volta ao Teclado
+
+
+def open_file_dialog(win, pid, hwnd, page, item, timeout=30):
+    """Os Contatos, o "⋯" e o item: a janela de arquivo do Windows (classe #32770) do app, visível e dona da janela
+    principal; None se ela não abriu."""
+    page.locator("nav.nav button", has_text="Contatos").click()
+    page.get_by_role("button", name="Mais opções", exact=True).click()
+    page.get_by_role("menuitem", name=item).click()
+    return wait_for(lambda: next((h for h in win.windows(DIALOG_CLASS, pid) if win.visible(h) and win.owner(h) == hwnd),
+                                 None), timeout, interval=0.5, pump=page.wait_for_timeout)
+
+
+def check_file_dialogs(win, pid, hwnd, page, data_dir, record, problems):
+    """O "Importar planilha…" abre a janela de abrir do Windows, dona da janela principal, com o tipo "Planilhas (*.xlsx,
+    *.csv)"; o "Exportar planilha…", a de salvar, com o nome "Contatos Starsonic.xlsx" e o tipo "Planilha do Excel
+    (*.xlsx)". Fechadas (o Cancelar), nada acontece ("a janela foi cancelada" no diagnostico.log)."""
+    windows = record.setdefault("janelas", {})
+    for label, item, wanted, cancelled in (("importar", IMPORT_ITEM, (IMPORT_TYPE,), IMPORT_CANCELLED),
+                                           ("exportar", EXPORT_ITEM, (EXPORT_NAME, EXPORT_TYPE), EXPORT_CANCELLED)):
+        info = windows.setdefault(label, {})
+        before = count_lines(read_log(data_dir), cancelled)
+        dialog = open_file_dialog(win, pid, hwnd, page, item)
+        info["abriu"] = bool(dialog)
+        if not dialog:
+            problems.append("o '%s' nao abriu a janela de arquivo do Windows (dona da janela principal)" % item)
+            continue
+        texts = [text for _, text in win.child_texts(dialog)]
+        info.update({"janela": win.describe(dialog), "textos": texts})
+        missing = [text for text in wanted if not any(text in shown for shown in texts)]
+        if missing:
+            problems.append("a janela do '%s' nao tem %s: %s" % (item, missing, texts))
+        win.close(dialog)
+        info["fechou"] = bool(wait_for(lambda: not win.visible(dialog), 10, pump=page.wait_for_timeout))
+        info["cancelada"] = bool(wait_for(lambda: count_lines(read_log(data_dir), cancelled) > before, 10,
+                                          pump=page.wait_for_timeout))
+        log("janela do '%s': %s" % (item, info))
+        if not info["fechou"]:
+            problems.append("a janela do '%s' nao fechou com o WM_CLOSE (o Cancelar)" % item)
+        elif not info["cancelada"]:
+            problems.append("a janela do '%s' fechada nao chegou ao app como cancelada ('%s')" % (item, cancelled))
+
+
+def quit_with_file_dialog_open(win, exe, app, hwnd, page, browser, data_dir, record, problems):
+    """O --sair com a janela de importar aberta (o Sair da bandeja vai pelo mesmo WM_CLOSE da janela principal): a janela
+    de arquivo sai junto com a principal, e o app fecha (código 0), sem o fechamento forçado."""
+    text = read_log(data_dir)
+    forced_before = count_lines(text, FORCED_CLOSE)
+    late_before = count_lines(text, LATE_QUIT)
+    info = {}
+    dialog = None
+    try:
+        dialog = open_file_dialog(win, app.process.pid, hwnd, page, IMPORT_ITEM)
+    except Exception as error:   # noqa: BLE001
+        info["erro"] = "%s: %s" % (type(error).__name__, error)
+    info["janela_aberta"] = win.describe(dialog) if dialog else None
+    try:
+        browser.close()
+    except Exception:   # noqa: BLE001
+        pass
+    started = time.monotonic()
+    info["sair"] = subprocess.run([str(exe), "--sair"], timeout=30).returncode
+    try:
+        info["codigo"] = app.process.wait(40)
+    except subprocess.TimeoutExpired:
+        info["codigo"] = None
+    info["segundos"] = round(time.monotonic() - started, 1)
+    text = read_log(data_dir)
+    info["fechamento_forcado"] = count_lines(text, FORCED_CLOSE) > forced_before
+    info["sair_atrasado"] = count_lines(text, LATE_QUIT) > late_before
+    record["sair_com_a_janela_aberta"] = info
+    log("--sair com a janela de importar aberta: %s" % info)
+    if not dialog:
+        problems.append("o --sair com a janela de importar aberta: a janela nao abriu")
+    if info["codigo"] is None:
+        problems.append("o app nao fechou 40 s depois do --sair com a janela de importar aberta")
+        app.kill()
+        app.process.wait(30)
+    elif info["codigo"] != 0 or info["sair"] != 0:
+        problems.append("o --sair com a janela de importar aberta: o --sair deu %s e o app fechou com %s"
+                        % (info["sair"], info["codigo"]))
+    if info["fechamento_forcado"] or info["sair_atrasado"]:
+        problems.append("o --sair com a janela de importar aberta nao fechou sozinho: %s" % info)
 
 
 def run_rehearsal(args, result):

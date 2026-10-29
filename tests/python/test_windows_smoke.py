@@ -174,3 +174,21 @@ class Rc3HelpersTest(unittest.TestCase):
                          b"127.0.0.1 localhost\r\n127.0.0.1 sip.fumaca-starsonic.test\r\n")
         self.assertEqual(windows_smoke.hosts_with(b"# hosts\r\n", "127.0.0.1", "a.test"), b"# hosts\r\n127.0.0.1 a.test\r\n")
         self.assertEqual(windows_smoke.hosts_with(b"", "127.0.0.1", "a.test"), b"127.0.0.1 a.test\r\n")
+
+
+class Rc4HelpersTest(unittest.TestCase):
+    def test_the_company_sheet_has_the_number_the_fake_registrar_calls_from(self):
+        import fake_registrar
+        lines = windows_smoke.COMPANY_SHEET.split("\r\n")
+        self.assertEqual(lines, ["Nome;Número", "Empresa Teste;3001", ""])
+        name, number = lines[1].split(";")
+        self.assertEqual(name, windows_smoke.COMPANY_NAME)
+        # O RING liga como o 3001, com o nome da central que os passos de antes esperam.
+        self.assertIn("<sip:%s@" % number, fake_registrar.CALLER)
+        self.assertIn('"%s"' % windows_smoke.CALLER_NAME, fake_registrar.CALLER)
+        self.assertNotEqual(windows_smoke.CALLER_NAME, windows_smoke.COMPANY_NAME)
+        self.assertTrue(windows_smoke.COMPANY_SHEET.encode("utf-8").startswith(b"Nome;N\xc3\xbamero\r\n"))
+
+    def test_the_company_folder_has_an_accent_and_the_big_file_passes_the_limit(self):
+        self.assertFalse(windows_smoke.COMPANY_FOLDER_PREFIX.isascii())
+        self.assertGreater(windows_smoke.COMPANY_BIG_BYTES, 10485760)
