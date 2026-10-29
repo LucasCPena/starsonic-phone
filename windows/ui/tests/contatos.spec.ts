@@ -2,7 +2,7 @@
 // ponte falsa: o teste manda o estado `empresa` e a mensagem `contatosEmpresa` pela mesma ponte de mentira e confere os
 // textos exatos e os comandos que saem (importContacts, exportContacts, setCompanyList, refreshCompanyList e o dial).
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { abrir, empurrar, esperarComando, mudarEstado, semViolacoesSerias, verTextos, vezes } from './helpers';
+import { abrir, empurrar, esperarComando, mudarEstado, segurarCpp, semViolacoesSerias, soltarCpp, verTextos, vezes } from './helpers';
 
 // Só de teste: nenhum link de cliente de verdade.
 const LINK = 'https://docs.google.com/spreadsheets/d/1AbC_dEf-123/edit#gid=456';
@@ -92,9 +92,9 @@ test.describe('Contatos com a lista da empresa', () => {
     await esperarComando(page, { cmd: 'exportContacts' });
     await expect(page.getByRole('menu')).toHaveCount(0);
     await expect(mais).toBeFocused();
-    // O Esc fecha sem mandar nada.
+    // O Esc fecha sem mandar nada (o foco chega ao primeiro item depois de o menu abrir: só então o Esc o fecha).
     await page.keyboard.press('Enter');
-    await expect(menu).toBeVisible();
+    await expect(menu.getByRole('menuitem', { name: 'Importar planilha…' })).toBeFocused();
     await page.keyboard.press('Escape');
     await expect(page.getByRole('menu')).toHaveCount(0);
     await expect(mais).toBeFocused();
@@ -388,6 +388,26 @@ test.describe('Configurações → Contatos', () => {
     await expect(campo(page)).toHaveValue('');
     await mudarEstado(page, (s) => ({ ...s, empresa: empresa() }));
     await expect(campo(page)).toHaveValue(LINK);
+  });
+
+  test('what is typed after Salvar stays when the saved link arrives', async ({ page }) => {
+    await abrir(page, 'configuracoes');
+    // O C++ lento: o estado do Salvar chega com a pessoa já digitando outro link, que fica no campo.
+    await segurarCpp(page);
+    await campo(page).fill(CAMINHO);
+    await campo(page).press('Enter');
+    await esperarComando(page, { cmd: 'setCompanyList', link: CAMINHO });
+    await campo(page).fill(LINK);
+    await soltarCpp(page);
+    await expect(page.locator('#cfg-planilha-situacao')).toHaveText('Lendo a planilha…');
+    await expect(campo(page)).toHaveValue(LINK);
+    await salvar(page).click();
+    await esperarComando(page, { cmd: 'setCompanyList', link: LINK });
+    // Sem nada digitado depois do Salvar, o campo mostra o link como o C++ gravou (sem os espaços das pontas).
+    await campo(page).fill(`  ${CAMINHO}  `);
+    await campo(page).press('Enter');
+    await esperarComando(page, { cmd: 'setCompanyList', link: `  ${CAMINHO}  ` });
+    await expect(campo(page)).toHaveValue(CAMINHO);
   });
 
   test('the status line shows reading, updated, error with the last list, and nothing', async ({ page }) => {

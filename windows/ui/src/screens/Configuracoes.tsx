@@ -2,7 +2,7 @@
 // e Toque), Ligações ((rc.3) o bipe do fim da ligação, Atender automaticamente e o tempo, Iniciar com o Windows) e
 // (rc.4) Contatos (a planilha da empresa: o link ou o caminho, o Salvar, a ajuda, a situação da leitura e o "Atualizar
 // agora"). O Atender automaticamente e o tempo somem quando o administrador esconde o Atender automático.
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { BackBar } from '../components/BackBar';
 import { accountDot, accountTitle, autoAnswerLine, contactCount, readTime } from '../format';
 import { IconAlert, IconChevronDown, IconPencil, IconPlus } from '../icons';
@@ -89,14 +89,19 @@ const AJUDA_DA_PLANILHA =
  */
 function PlanilhaDaEmpresa({ empresa, send }: { empresa: CompanyList; send: Send }) {
   const [link, setLink] = useState(empresa.link);
-  // O C++ gravou (sem os espaços das pontas) ou o link mudou: o campo segue o estado.
-  useEffect(() => setLink(empresa.link), [empresa.link]);
+  // O campo segue o link salvo que vem no estado (o C++ grava sem os espaços das pontas), menos o que a pessoa digitou
+  // depois do último Salvar: o estado dele pode chegar com ela já digitando outro.
+  const editando = useRef(false);
+  useEffect(() => {
+    if (!editando.current) setLink(empresa.link);
+  }, [empresa.link]);
   return (
     <>
       <form
         class="field cfg-planilha"
         onSubmit={(e) => {
           e.preventDefault();
+          editando.current = false;
           send({ cmd: 'setCompanyList', link });
         }}
       >
@@ -112,7 +117,10 @@ function PlanilhaDaEmpresa({ empresa, send }: { empresa: CompanyList; send: Send
             autocapitalize="off"
             value={link}
             aria-describedby="cfg-planilha-ajuda"
-            onInput={(e) => setLink(e.currentTarget.value)}
+            onInput={(e) => {
+              editando.current = true;
+              setLink(e.currentTarget.value);
+            }}
           />
           <button type="submit" class="btn btn-cyan mini">
             Salvar
