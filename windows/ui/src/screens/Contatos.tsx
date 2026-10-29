@@ -2,9 +2,9 @@
 // Exportar planilha), a lista em ordem alfabética com as iniciais, e por contato o ramal ou número e a observação. Tocar
 // no contato liga; o menu dele tem Editar e Remover. (rc.4) A lista junta os meus com os da lista da empresa (a última
 // contatosEmpresa): os da empresa têm a etiqueta "Empresa", não têm o menu (mudam só na planilha) e ligam pela regra dos
-// contatos, como os meus; um da empresa com o mesmo nome (sem acento e sem caixa) e os mesmos dígitos de um meu some
-// (fica o meu). Com a planilha da empresa configurada, os filtros Todos, Meus e Empresa (os do Recentes) ficam em cima
-// da lista; sem ela, a lista é a de todos.
+// contatos, como os meus; um da empresa com o mesmo nome (sem acento e sem caixa) e os mesmos dígitos de um meu some do
+// Todos (fica o meu). Com a planilha da empresa configurada, os filtros Todos, Meus e Empresa (os do Recentes) ficam em
+// cima da lista, e a Empresa mostra a planilha inteira (Ruling R16); sem ela, a lista é a de todos.
 // A lista da empresa pode ter 10.000 contatos: a junção, a ordem e a busca usam o que cada linha já tem calculado, e a
 // linha de cada contato é montada uma vez e reaproveitada (o Preact pula o mesmo vnode), então um estado novo (um BLF,
 // uma ligação) ou a busca não redesenham a lista inteira.
@@ -80,8 +80,27 @@ function ordem(a: Linha, b: Linha): number {
 }
 
 /**
- * Os meus e os da empresa numa lista só, em ordem; some o da empresa com o mesmo nome e os mesmos dígitos de um meu. No
- * empate da ordem, os meus vêm antes (a ordenação é estável).
+ * As linhas da planilha da empresa, em ordem (no empate, a da planilha). A chave de cada uma é o contato (os dígitos, o
+ * nome e a observação, e quantas vezes ele já apareceu antes na planilha), não a posição: numa planilha nova, a linha (e
+ * o foco nela) continua no mesmo contato.
+ */
+function linhasDaPlanilha(daEmpresa: CompanyContact[]): Linha[] {
+  const vezes = new Map<string, number>();
+  return daEmpresa
+    .map((c) => {
+      const l = linha('', c, null);
+      const contato = JSON.stringify([l.digitos, l.nomeBusca, l.obsBusca]);
+      const n = vezes.get(contato) ?? 0;
+      vezes.set(contato, n + 1);
+      l.key = `empresa:${contato}#${n}`;
+      return l;
+    })
+    .sort(ordem);
+}
+
+/**
+ * O Todos: os meus e os da empresa numa lista só, em ordem; some o da empresa com o mesmo nome e os mesmos dígitos de
+ * um meu. No empate da ordem, os meus vêm antes (a ordenação é estável).
  */
 function juntar(meus: Linha[], daEmpresa: Linha[]): Linha[] {
   const chave = (l: Linha) => `${l.digitos} ${l.nomeBusca}`;
@@ -239,20 +258,22 @@ export function Contatos({ contatos, daEmpresa, comPlanilha, send, onNew, onEdit
   // Cada estado novo traz outra cópia dos meus contatos: a lista só muda quando eles mudam de verdade.
   const meusComoEstao = JSON.stringify(contatos);
   const meus = useMemo(() => contatos.map((c) => linha(c.id, c, c)), [meusComoEstao]);
-  const daPlanilha = useMemo(() => daEmpresa.map((c, i) => linha(`empresa:${i}`, c, null)), [daEmpresa]);
+  const daPlanilha = useMemo(() => linhasDaPlanilha(daEmpresa), [daEmpresa]);
   const todas = useMemo(() => juntar(meus, daPlanilha), [meus, daPlanilha]);
   const termo = fold(busca.trim());
   const digitos = digitsOnly(busca);
   const grupos = useMemo(() => {
+    // O Todos sem o da empresa que também é meu; os Meus; a Empresa com a planilha inteira (Ruling R16).
+    const fonte = filtro === 'empresa' ? daPlanilha : todas;
     const lista: Array<{ letra: string; itens: Linha[] }> = [];
-    for (const l of todas) {
-      if ((filtro !== 'todos' && (filtro === 'meus') !== (l.meu !== null)) || !bate(l, termo, digitos)) continue;
+    for (const l of fonte) {
+      if ((filtro === 'meus' && l.meu === null) || !bate(l, termo, digitos)) continue;
       const ultimo = lista[lista.length - 1];
       if (ultimo && ultimo.letra === l.letra) ultimo.itens.push(l);
       else lista.push({ letra: l.letra, itens: [l] });
     }
     return lista;
-  }, [todas, filtro, termo, digitos]);
+  }, [todas, daPlanilha, filtro, termo, digitos]);
 
   // A linha de cada contato, montada uma vez (o Editar chama o onEdit de agora).
   const editar = useRef(onEdit);

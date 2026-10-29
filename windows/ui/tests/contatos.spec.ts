@@ -131,7 +131,7 @@ test.describe('Contatos com a lista da empresa', () => {
   });
 
   test('the menu of my contact opens over the company row below it', async ({ page }) => {
-    // As linhas da empresa só se desenham à vista (content-visibility): o menu de um meu continua por cima delas.
+    // O menu de um contato meu abre por cima da linha da empresa de baixo.
     await abrir(page, 'contatos');
     await comListaDaEmpresa(page);
     await expect.poll(() => nomes(page)).toEqual(TODOS);
@@ -239,7 +239,7 @@ test.describe('Contatos com a lista da empresa', () => {
     await expect.poll(() => nomes(page)).toEqual(TODOS);
   });
 
-  test('a company contact that is also mine shows once', async ({ page }) => {
+  test('a company contact that is also mine shows once in Todos, as mine, and in Empresa as the company row', async ({ page }) => {
     await abrir(page, 'contatos');
     await comListaDaEmpresa(page, [
       // A Ana Souza 2003 é minha: o mesmo nome (sem caixa e sem acento) e os mesmos dígitos ficam só uma vez, a minha.
@@ -260,12 +260,59 @@ test.describe('Contatos com a lista da empresa', () => {
     await expect(page.getByText('ANA SOUZA', { exact: true })).toHaveCount(0);
     await expect(page.getByText('Âna Souza', { exact: true })).toHaveCount(0);
     await expect(page.getByText('Ramal 2003 · Vendas', { exact: true })).toHaveCount(0);
-    // Nos filtros também uma vez só: a minha nos Meus; os outros dois na Empresa.
+    // Nos Meus, só os meus. Na Empresa, a planilha inteira (Ruling R16), também os que são meus: com a etiqueta e sem o menu.
     await filtro(page, 'Meus').click();
     await expect.poll(() => nomes(page)).toEqual(MEUS);
     await filtro(page, 'Empresa').click();
-    await expect.poll(() => nomes(page)).toEqual(['Ana Souza', 'Ramal da Ana']);
-    await expect(linha(page, 'Ana Souza').locator('.row-sub')).toHaveText('Ramal 3002 · Recepção 2');
+    const planilha = ['ANA SOUZA', 'Âna Souza', 'Ana Souza', 'Ramal da Ana'];
+    await expect.poll(() => nomes(page)).toEqual(planilha);
+    await expect(page.locator('li.row .row-sub')).toHaveText(['20-03 · Vendas', '(2003)', 'Ramal 3002 · Recepção 2', 'Ramal 2003']);
+    for (const nome of planilha) await expect(etiqueta(page, nome), nome).toBeVisible();
+    await expect(page.getByRole('button', { name: /^Mais opções para/ })).toHaveCount(0);
+    // De volta ao Todos: uma vez só, a minha.
+    await filtro(page, 'Todos').click();
+    await expect.poll(() => nomes(page)).toEqual(['Ana Souza', 'Ana Souza', 'Atendimento Starsonic', 'Carlos Lima', 'Financeiro', 'Ramal da Ana']);
+    await expect(page.getByText('ANA SOUZA', { exact: true })).toHaveCount(0);
+  });
+
+  test('a new company list keeps the focus on the same contact', async ({ page }) => {
+    // Os três na mesma letra (o mesmo grupo): a linha segue o contato, não a posição dele na planilha.
+    const lista = [
+      { nome: 'Contato 1', numero: '3101', observacao: '' },
+      { nome: 'Contato 2', numero: '3102', observacao: '' },
+      { nome: 'Contato 3', numero: '3103', observacao: '' },
+    ];
+    await abrir(page, 'contatos');
+    await comListaDaEmpresa(page, lista);
+    const ligar = page.getByRole('button', { name: 'Ligar para Contato 2', exact: true });
+    await ligar.focus();
+    await expect(ligar).toBeFocused();
+    // A planilha mudou com o foco nele: um contato novo no começo dela.
+    await empurrar(page, { v: 1, type: 'contatosEmpresa', vez: 2, contatos: [{ nome: 'Contato 0', numero: '3100', observacao: '' }, ...lista] });
+    await expect(linha(page, 'Contato 0')).toHaveCount(1);
+    await expect(page.locator(':focus')).toHaveAttribute('aria-label', 'Ligar para Contato 2');
+    // O Enter liga para ele, não para o vizinho.
+    await page.keyboard.press('Enter');
+    await esperarComando(page, { cmd: 'dial', numero: '3102', contato: true });
+    expect(await vezes(page, { cmd: 'dial', numero: '3101', contato: true })).toBe(0);
+  });
+
+  test('company contacts off the screen are in the accessibility tree', async ({ page }) => {
+    // O leitor de tela chega a todos: o botão de ligar de um contato da empresa fora da tela está na árvore de
+    // acessibilidade do navegador (não só no DOM).
+    const muitos = Array.from({ length: 300 }, (_, i) => ({ nome: `Contato ${String(i).padStart(3, '0')}`, numero: String(31_000 + i), observacao: '' }));
+    await abrir(page, 'contatos');
+    await comListaDaEmpresa(page, muitos);
+    await expect(page.locator('li.row-empresa')).toHaveCount(300);
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Accessibility.enable');
+    const { result } = await cdp.send('Runtime.evaluate', { expression: 'document' });
+    const botoes = async (nome: string) =>
+      (await cdp.send('Accessibility.queryAXTree', { objectId: result.objectId!, accessibleName: nome, role: 'button' })).nodes.filter((n) => !n.ignored)
+        .length;
+    // O primeiro está na tela; o último, bem abaixo dela.
+    expect(await botoes('Ligar para Contato 000'), 'na tela').toBe(1);
+    expect(await botoes('Ligar para Contato 299'), 'fora da tela').toBe(1);
   });
 
   test('search finds company contacts', async ({ page }) => {
