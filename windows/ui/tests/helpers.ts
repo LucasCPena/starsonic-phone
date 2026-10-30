@@ -41,6 +41,22 @@ export async function soltarCpp(page: Page): Promise<void> {
   await page.evaluate(() => (window as unknown as { __fake: { soltar(): void } }).__fake.soltar());
 }
 
+/** Os avisos de marca do depoisDoQueChegou (cada um com um texto que ainda não apareceu). */
+let marcas = 0;
+
+/**
+ * Espera chegar à interface o que o C++ de mentira já mandou, quando isso não muda nada que a tela mostre (o estado do
+ * adminLogout com a pessoa já no Teclado, um estado empurrado que só muda o que as teclas mandam): um aviso empurrado
+ * depois aparece na tela (as mensagens vão na ordem), com um texto novo a cada vez (um aviso de antes, ainda na tela,
+ * não vale), e os efeitos do último desenho rodam (o Preact os roda depois da pintura).
+ */
+export async function depoisDoQueChegou(page: Page): Promise<void> {
+  const texto = `Aviso de teste ${++marcas}.`;
+  await empurrar(page, { v: 1, type: 'toast', texto });
+  await expect(page.getByText(texto, { exact: true })).toBeVisible();
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0))));
+}
+
 /** O estado de agora do C++ de mentira. */
 export async function estado(page: Page): Promise<Record<string, any>> {
   return page.evaluate(() => (window as unknown as { __fake: { state(): Record<string, any> } }).__fake.state());

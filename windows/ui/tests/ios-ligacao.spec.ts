@@ -5,7 +5,7 @@
 // diálogos e do aviso de 2 s, com a área do toque de 44×44 px dos botões pequenos, o axe e as fotos
 // (test-results/capturas/ios-*.png) que vão ao responsável. No fim, o Windows sem nada disso.
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { abrir, comandos, empurrar, esperarComando, mudarEstado, type Comando } from './helpers';
+import { abrir, comandos, depoisDoQueChegou, empurrar, esperarComando, mudarEstado, type Comando } from './helpers';
 import { abrirIos, areasDe44, capturarIos, dentroDaAreaSegura, noIphone, semViolacoesSerias, TAMANHOS_IPHONE, tamanhoDe } from './ios-helpers';
 
 const TECLAS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'];
@@ -23,12 +23,6 @@ async function dasTeclas(page: Page): Promise<Comando[]> {
 /** As teclas dos keyTone que saíram, na ordem. */
 async function bipes(page: Page): Promise<unknown[]> {
   return (await comandos(page)).filter((c) => c.cmd === 'keyTone').map((c) => c.tecla);
-}
-
-/** Um aviso empurrado depois das mensagens de antes: na tela, ele diz que todas já chegaram (elas vão na ordem). */
-async function depoisDoQueChegou(page: Page): Promise<void> {
-  await empurrar(page, { v: 1, type: 'toast', texto: AVISO });
-  await expect(page.getByText(AVISO)).toBeVisible();
 }
 
 /** O aviso de 2 s na tela e parado no lugar dele: a entrada (180 ms) o traz 6 px de baixo, e a caixa só vale no fim. */
@@ -189,6 +183,8 @@ for (const tamanho of TAMANHOS_IPHONE) {
         await empurrar(page, { v: 1, type: 'agenda', vez: 2, contatos: [{ nome: 'Central de Atendimento', numeros }] });
         await mudarEstado(page, (s) => ({ ...s, agenda: { permissao: 'concedida', vez: 2, quantos: 1 } }));
         await page.getByRole('navigation', { name: 'Seções' }).getByRole('button', { name: 'Contatos', exact: true }).click();
+        // O toque só depois de a lista nova estar na tela (antes dela, a aba mostra a agenda de exemplo).
+        await expect(page.locator('main li.row .row-title')).toHaveText(['Central de Atendimento']);
         await page.locator('main li.row .row-hit').click();
         const escolha = page.getByRole('dialog', { name: 'Central de Atendimento' });
         await expect(escolha).toBeVisible();

@@ -7,6 +7,7 @@ import {
   abrir,
   capturar,
   comandos,
+  depoisDoQueChegou,
   entrarNaAdmin,
   esperarComando,
   mudarEstado,
@@ -549,10 +550,13 @@ test.describe('a tela do administrador', () => {
     await esperarComando(page, { cmd: 'adminSet', canal: 'teste' });
     await expect(teste).toBeChecked();
 
-    // Sair: a área fecha e a tela principal volta; o Ctrl + P pede a senha de novo.
+    // Sair: a área fecha e a tela principal volta; o Ctrl + P pede a senha de novo. O Sair volta ao Teclado sem esperar o
+    // C++, e o Ctrl + P lê o `admin.aberto` do último estado que chegou: antes do estado do adminLogout, ele abria a área
+    // de novo. Esse estado não muda nada que a tela mostre; o aviso de depois dele, na tela, diz que ele já chegou.
     await page.getByRole('button', { name: 'Sair da área do administrador' }).click();
     await esperarComando(page, { cmd: 'adminLogout' });
     await expect(page.getByRole('textbox', { name: 'Número' })).toBeVisible();
+    await depoisDoQueChegou(page);
     await page.keyboard.press('Control+KeyP');
     await expect(dialogo(page)).toBeVisible();
   });

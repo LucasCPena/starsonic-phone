@@ -278,13 +278,18 @@ for (const tamanho of TAMANHOS_IPHONE) {
         await bipeTecla.click();
         await esperarComando(page, { cmd: 'setSetting', chave: 'bipeTecla', valor: true });
         await expect(bipeTecla).toHaveAttribute('aria-checked', 'true');
-        // As outras, como no Windows.
+        // As outras, como no Windows: cada chave segue o estado que volta, e a ação seguinte só vem depois dele. O Tempo para
+        // atender manda o `on` do último estado que chegou: trocado antes de o estado do Atender voltar, ele mandava o
+        // on:false de antes.
         await bipeFim.click();
         await esperarComando(page, { cmd: 'setSetting', chave: 'bipeFim', valor: false });
+        await expect(bipeFim).toHaveAttribute('aria-checked', 'false');
         await atender.click();
         await esperarComando(page, { cmd: 'setAutoAnswer', on: true });
+        await expect(atender).toHaveAttribute('aria-checked', 'true');
         await tempo.selectOption('5');
         await esperarComando(page, { cmd: 'setAutoAnswer', on: true, segundos: 5 });
+        await verTextos(page, ['Depois de 5 segundos tocando']);
         expect((await comandos(page)).filter((c) => c.cmd === 'setAudio' || c.chave === 'iniciarComWindows')).toEqual([]);
       });
 
