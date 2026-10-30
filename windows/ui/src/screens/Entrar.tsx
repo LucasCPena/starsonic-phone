@@ -3,7 +3,8 @@
 // `entrar.erro` embaixo da senha. Com `entrar.ocupado`, "Conectando…" e os campos travados; o formulário de
 // Adicionar/Editar fecha quando `ocupado` passa de true para false sem erro. Com `entrar.podeCancelar` (a senha de
 // uma troca de conta), o Cancelar volta para a conta em uso (cancelLogin). (iPhone) O Editar não tem o Remover: o Sair
-// do Menu é quem tira a conta, e a confirmação do Remover fala do computador.
+// do Menu é quem tira a conta, e a confirmação do Remover fala do computador. O cabeçalho diz "Ramal no iPhone" (o
+// "Ramal no celular" do Android), no lugar do "Ramal no computador".
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { BackBar } from '../components/BackBar';
 import { Confirm } from '../components/Confirm';
@@ -115,7 +116,7 @@ export function Entrar({ state, send, mode, conta, onClose }: Props) {
           />
           <div style={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
             <p class="eyebrow" style={{ color: '#00c2cb' }}>
-              Ramal no computador
+              {ios ? 'Ramal no iPhone' : 'Ramal no computador'}
             </p>
             <h1 class="h1" style={{ color: '#ffffff', fontSize: '24px' }}>
               Entre com o seu ramal

@@ -138,6 +138,10 @@ for (const tamanho of TAMANHOS_IPHONE) {
         await abrirIos(page, 'entrar', tamanho);
         await expect(page.locator('.titlebar')).toHaveCount(0);
         await expect(page.getByRole('button', { name: 'Fechar' })).toHaveCount(0);
+        // O cabeçalho diz o aparelho (o "Ramal no celular" do Android); o do Windows diz "Ramal no computador".
+        await expect(page.locator('.brand .eyebrow')).toHaveText('Ramal no iPhone');
+        await expect(page.getByRole('heading', { name: 'Entre com o seu ramal' })).toBeVisible();
+        await expect(page.getByText('Ramal no computador')).toHaveCount(0);
         // O número da ajuda é um botão: o toque abre o discador do iPhone.
         const ligar = page.getByRole('button', { name: 'Ligar para (11) 5060-3000' });
         await expect(ligar).toHaveText('(11) 5060-3000');
