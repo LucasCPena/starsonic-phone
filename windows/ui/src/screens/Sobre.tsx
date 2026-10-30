@@ -29,7 +29,8 @@ export function Sobre({ versao, send, onBack, ios, onLicencas }: Props) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
           <span class="version">{`Starsonic Phone ${versao}`}</span>
           {ios ? (
-            <span class="muted" style={{ fontSize: '13.5px' }}>
+            // Em duas linhas do mesmo tamanho, quando não cabe numa (sem o "(BSD)" sozinho embaixo).
+            <span class="muted" style={{ fontSize: '13.5px', textWrap: 'balance' }}>
               Usa o baresip e a libre (BSD), a libg722 e o Opus (BSD)
             </span>
           ) : (
@@ -55,7 +56,8 @@ export function Sobre({ versao, send, onBack, ios, onLicencas }: Props) {
               Abrir
             </button>
           </div>
-          <div class="set-row">
+          {/* (iPhone) O horário embaixo do número, na largura toda (o app.css): o Ligar e o WhatsApp ficam na linha do número. */}
+          <div class={ios ? 'set-row about-telefone' : 'set-row'}>
             <span class="tile" aria-hidden="true">
               <IconPhone size="sm" />
             </span>

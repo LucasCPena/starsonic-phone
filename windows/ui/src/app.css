@@ -870,20 +870,29 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
    contorno do foco dos botões (3 px, a 2 px deles). */
 .win[data-plataforma="ios"] .agenda-grande li.row { content-visibility: auto; contain-intrinsic-size: auto 59px; overflow-clip-margin: 6px; }
 /* Os outros alvos pequenos das telas do iPhone com a área do toque de 44×44 px, sem mudar o desenho, como os do
-   cabeçalho: um ::after transparente no meio de cada um, do tamanho dele ou dos 44 px, o que for maior. São o Voltar das
-   barras (32 px no Compacto, 36 no Normal), a linha e o botão redondo de ligar das listas (a agenda e os Recentes; o
-   redondo tem 38 px), o Recusar e o Atender da faixa da segunda ligação (40 px) e o Desligar da que está em espera
-   (32 px), o Apagar do Teclado (32 e 40 px), o Cancelar dos painéis de número da ligação (40 px de altura), os botões do
-   Sobre (o Abrir, o Ligar e o WhatsApp) e as abas da navegação (43 px no Compacto). Nas chaves, a área é o ::before (o
-   ::after é a bolinha); na lista do tempo para atender (o <select> não tem o ::after), o enchimento cresce por cima da
-   margem negativa, e o texto fica no mesmo lugar. As sugestões do Teclado, na linha baixa de 38 px (a tela de 375×667),
-   crescem até os 44 px: com 4 px entre elas, a área não cabe sem cobrir a da outra. */
-.win[data-plataforma="ios"] :is(.bar .icon-btn, .row-call, .row-hit, .round-sm, .ghost.apagar, .btn-ghost-dark, .about button.link, .tab) { position: relative; }
-.win[data-plataforma="ios"] :is(.bar .icon-btn, .row-call, .row-hit, .round-sm, .ghost.apagar, .btn-ghost-dark, .about button.link, .tab)::after,
+   cabeçalho: um ::after transparente no meio de cada um, do tamanho dele ou dos 44 px, o que for maior (o
+   ios-toque.spec.ts mede todo alvo de cada tela). São o Voltar das barras (32 px no Compacto, 36 no Normal), a linha e o
+   botão redondo de ligar das listas (a agenda e os Recentes; o redondo tem 38 px), o Recusar e o Atender da faixa da
+   segunda ligação (40 px) e o Desligar da que está em espera (32 px), o Apagar do Teclado (32 e 40 px), o Cancelar dos
+   painéis de número da ligação (40 px de altura), os botões do Sobre (o Abrir, o Ligar e o WhatsApp), as abas da
+   navegação (43 px no Compacto), os filtros dos Recentes (32 px de altura), os botões das confirmações (36 px de altura),
+   os segmentos UDP/TCP (34 px de altura: o toque no rótulo vai ao campo dele) e o "Mostrar a senha" (36 px; ele já é
+   posicionado, e fica onde está). Nas chaves, a área é o ::before (o ::after é a bolinha); na lista do tempo para atender
+   (o <select> não tem o ::after), o enchimento cresce por cima da margem negativa, e o texto fica no mesmo lugar. Os
+   itens do Menu (40 px, um encostado no outro) e o número do Teclado (32 px no Compacto, 40 no Normal) crescem até os
+   44 px; as sugestões do Teclado também, só na tela baixa (a de 375×667: a linha compacta de 38 px, a 4 px uma da outra,
+   não tem lugar para a área sem cobrir a da outra). */
+.win[data-plataforma="ios"] :is(.bar .icon-btn, .row-call, .row-hit, .round-sm, .ghost.apagar, .btn-ghost-dark, .about button.link, .tab, .pill,
+  .dialog-actions .btn) { position: relative; }
+.win[data-plataforma="ios"] :is(.bar .icon-btn, .row-call, .row-hit, .round-sm, .ghost.apagar, .btn-ghost-dark, .about button.link, .tab, .pill,
+  .dialog-actions .btn, .seg label, .input-wrap .reveal)::after,
 .win[data-plataforma="ios"] .switch::before { content: ""; position: absolute; top: 50%; left: 50%; width: max(100%, 44px); height: max(100%, 44px);
   transform: translate(-50%, -50%); }
 .win[data-plataforma="ios"] .select select { padding-top: 14px; padding-bottom: 14px; margin-top: -10px; margin-bottom: -10px; }
-.win[data-plataforma="ios"] .suggest, .win[data-plataforma="ios"] .teclado-meio > .suggestions { min-height: 44px; }
+.win[data-plataforma="ios"] :is(.menuitem, .number-text) { min-height: 44px; }
+@media (max-height: 719.5px) {
+  .win[data-plataforma="ios"] .suggest, .win[data-plataforma="ios"] .teclado-meio > .suggestions { min-height: 44px; }
+}
 /* Os diálogos (o Confirm, a escolha do número) no meio da área segura, e nunca maiores que ela: um alto rola por dentro. */
 .win[data-plataforma="ios"] dialog:modal { inset: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left);
   max-height: calc(100% - var(--safe-top) - var(--safe-bottom) - 2em); }
@@ -894,9 +903,23 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 /* O Áudio da ligação com a saída de agora, numa linha só: um nome de fone comprido sai com as reticências (o nome do
    botão o tem inteiro). */
 .win[data-plataforma="ios"] .ctrl-rota { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* O Sobre: a linha "Avisos de licença" inteira é o botão, com a seta, como uma linha dos Ajustes do iPhone. */
+/* O Sobre: a linha "Avisos de licença" inteira é o botão, com a seta, como uma linha dos Ajustes do iPhone. Na linha do
+   telefone, o Ligar e o WhatsApp ficam na linha do número, e o horário embaixo dela, na largura toda (ao lado dos dois
+   botões, ele quebrava em três linhas). */
 .win[data-plataforma="ios"] .about-avisos { width: 100%; border: 0; border-radius: 10px; background: transparent; font: inherit; color: inherit;
   text-align: left; }
-/* Os avisos de licença: o texto como está no arquivo (as linhas em branco e os recuos), quebrando no fim da tela. */
-.win[data-plataforma="ios"] .licencas-texto { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 400 12.5px/1.55 var(--font-sans);
-  color: var(--text); }
+.win[data-plataforma="ios"] .about-telefone { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; row-gap: 2px; }
+.win[data-plataforma="ios"] .about-telefone .row-main { display: contents; }
+.win[data-plataforma="ios"] .about-telefone .tile { grid-column: 1; grid-row: 1 / span 2; }
+.win[data-plataforma="ios"] .about-telefone .row-title { grid-column: 2; grid-row: 1; }
+.win[data-plataforma="ios"] .about-telefone .row-sub { grid-column: 2 / -1; grid-row: 2; text-wrap: balance; }
+/* Os avisos de licença (Licencas.tsx): o nome e a versão de cada peça num título; os parágrafos com as linhas comuns
+   juntas, quebrando na largura da tela; as linhas que ficam como estão no arquivo (as caixas de "*", as com recuo, os
+   traços), com os espaços. */
+.win[data-plataforma="ios"] .licencas { gap: 26px; }
+.win[data-plataforma="ios"] .licenca h2 { margin: 0 0 10px; font-size: 15px; font-weight: 800; letter-spacing: -0.01em; line-height: 1.25;
+  color: var(--text-strong); }
+.win[data-plataforma="ios"] .licenca p { margin: 0 0 10px; font-size: 12.5px; line-height: 1.55; color: var(--text); overflow-wrap: anywhere; }
+.win[data-plataforma="ios"] .licenca p:last-child { margin-bottom: 0; }
+.win[data-plataforma="ios"] .licenca-linha { display: block; }
+.win[data-plataforma="ios"] .licenca-fixa { white-space: pre-wrap; }

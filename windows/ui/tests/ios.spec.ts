@@ -333,7 +333,26 @@ for (const tamanho of TAMANHOS_IPHONE) {
         await page.getByRole('button', { name: 'Avisos de licença', exact: true }).click();
         await expect(page.getByRole('heading', { name: 'Avisos de licença', level: 1 })).toBeVisible();
         const avisos = page.getByRole('region', { name: 'Avisos de licença' });
-        for (const peca of PECAS) await expect(avisos, peca).toContainText(peca);
+        // Cada peça com o nome e a versão num título, sem o sublinhado de "=" do arquivo.
+        await expect(avisos.getByRole('heading', { level: 2 })).toHaveText(PECAS);
+        await expect(avisos).not.toContainText('==');
+        // As linhas comuns de um parágrafo vão juntas e quebram na largura da tela (a frase das licenças BSD: a do baresip, a
+        // da libre e a do Opus); as caixas de "*" da libg722 e as linhas com recuo ficam como estão no arquivo, com os
+        // espaços.
+        await expect(
+          avisos.getByText('Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:', {
+            exact: true,
+          }),
+        ).toHaveCount(3);
+        const comoNoArquivo = await avisos.locator('.licenca-fixa').evaluateAll((ls) => ls.map((l) => l.textContent));
+        expect(comoNoArquivo).toEqual(
+          expect.arrayContaining(['* Copyright (c) CMU    1993', '   notice, this list of conditions and the following disclaimer.', '                    Jean-Marc Valin, Timothy B. Terriberry,']),
+        );
+        // Nenhuma palavra do arquivo fica de fora, e todas na ordem dele (fora os "=").
+        const doArquivo = readFileSync(LICENCAS, 'utf8')
+          .split(/\s+/)
+          .filter((p) => p !== '' && !/^=+$/.test(p));
+        expect((await avisos.innerText()).split(/\s+/).filter(Boolean)).toEqual(doArquivo);
         await expect(avisos).toContainText('Baresip Foundation');
         await expect(avisos).toContainText('Xiph.Org');
         await expect(avisos).toHaveAttribute('tabindex', '0');
@@ -361,10 +380,16 @@ for (const tamanho of TAMANHOS_IPHONE) {
         ]);
         // O Apagar com o desenho de sempre: redondo, de 32 px no Compacto e de 40 no Normal.
         expect(tamanhoDe(teclado[0].desenho)).toEqual(compacto ? [32, 32] : [40, 40]);
-        // Duas sugestões dividem a lista (a linha compacta, que na tela de 375×667 tinha 38 px; a que não cabe rola para a
-        // vista, como no Windows): cada uma com pelo menos 44 px de altura.
+        // A lista das sugestões guarda o mínimo de sempre (uma sugestão: 53 px; duas ou três, na linha compacta: 47 px); só
+        // na tela baixa (375×667), onde a linha compacta tinha 38 px, ele sobe para os 44 px de uma sugestão.
+        const baixa = tamanho.altura < 720;
+        const minimoDaLista = () => page.locator('.teclado-meio > .suggestions').evaluate((e) => getComputedStyle(e).minHeight);
+        expect(await minimoDaLista()).toBe(baixa ? '44px' : '53px');
+        // Duas sugestões dividem a lista (a que não cabe rola para a vista, como no Windows): cada uma com pelo menos 44 px
+        // de altura.
         await numero.fill('200');
         await expect(page.locator('.suggest')).toHaveCount(2);
+        expect(await minimoDaLista()).toBe(baixa ? '44px' : '47px');
         for (const altura of await page.locator('.suggest').evaluateAll((ss) => ss.map((s) => s.getBoundingClientRect().height))) {
           expect(altura, 'a altura de uma sugestão').toBeGreaterThanOrEqual(43.99);
         }

@@ -126,15 +126,19 @@ export function tamanhoDe(c: Caixa): [number, number] {
 
 /**
  * A caixa do desenho de um alvo e a área do toque dele: até onde, do meio do alvo para cada lado, um ponto ainda cai nele
- * (o elementFromPoint, como o toque do iPhone), pela bissecção. O ponto acha o controle (o botão, a lista de escolha ou o
- * campo) em que cai. O alvo fica inteiro na tela: fora dela, o elementFromPoint não acha nada.
+ * (o elementFromPoint, como o toque do iPhone), pela bissecção. O ponto cai no alvo quando acha ele ou algo dentro dele
+ * (o ícone de um botão, o campo dentro do rótulo que o envolve). O alvo fica inteiro na tela: fora dela, o
+ * elementFromPoint não acha nada.
  */
 export async function areaDoToque(nome: string, alvo: Locator): Promise<AreaDoToque> {
   const medidas = await alvo.evaluate((el) => {
     const r = el.getBoundingClientRect();
     const cx = r.left + r.width / 2;
     const cy = r.top + r.height / 2;
-    const acerta = (x: number, y: number) => document.elementFromPoint(x, y)?.closest('button, select, input') === el;
+    const acerta = (x: number, y: number) => {
+      const achado = document.elementFromPoint(x, y);
+      return achado !== null && el.contains(achado);
+    };
     const alcance = (ponto: (d: number) => [number, number]) => {
       let dentro = 0;
       let fora = 500;
@@ -160,18 +164,23 @@ export async function areaDoToque(nome: string, alvo: Locator): Promise<AreaDoTo
   return { nome, desenho: medidas.desenho, toque: medidas.toque };
 }
 
-/**
- * Cada alvo com a área do toque de pelo menos 44×44 px (os 44 pontos do iPhone) e nenhuma área cobrindo a de outro: cada
- * toque cai no alvo que a pessoa vê. Devolve as medidas, na ordem, para o caso conferir que o desenho continua o de
- * sempre.
- */
-export async function areasDe44(alvos: Array<[nome: string, alvo: Locator]>): Promise<AreaDoToque[]> {
+/** As medidas de cada alvo, na ordem. */
+export async function medirAreas(alvos: Array<[nome: string, alvo: Locator]>): Promise<AreaDoToque[]> {
   const areas: AreaDoToque[] = [];
   for (const [nome, alvo] of alvos) areas.push(await areaDoToque(nome, alvo));
-  for (const { nome, toque } of areas) {
-    expect(toque.direita - toque.esquerda, `${nome}: a largura do toque`).toBeGreaterThanOrEqual(43.99);
-    expect(toque.baixo - toque.cima, `${nome}: a altura do toque`).toBeGreaterThanOrEqual(43.99);
-  }
+  return areas;
+}
+
+/** Os alvos com a área do toque menor que 44×44 px, com a medida ("Menu: 40.0×40.0"). */
+export function menoresQue44(areas: AreaDoToque[]): string[] {
+  return areas
+    .filter(({ toque }) => toque.direita - toque.esquerda < 43.99 || toque.baixo - toque.cima < 43.99)
+    .map(({ nome, toque }) => `${nome}: ${(toque.direita - toque.esquerda).toFixed(1)}×${(toque.baixo - toque.cima).toFixed(1)}`);
+}
+
+/** Os pares de alvos com as áreas do toque uma por cima da outra. */
+export function areasQueSeCobrem(areas: AreaDoToque[]): string[] {
+  const pares: string[] = [];
   for (const [i, a] of areas.entries()) {
     for (const b of areas.slice(i + 1)) {
       const cruzam =
@@ -179,10 +188,62 @@ export async function areasDe44(alvos: Array<[nome: string, alvo: Locator]>): Pr
         b.toque.esquerda < a.toque.direita - 0.01 &&
         a.toque.cima < b.toque.baixo - 0.01 &&
         b.toque.cima < a.toque.baixo - 0.01;
-      expect(cruzam, `${a.nome} e ${b.nome} não se cobrem`).toBe(false);
+      if (cruzam) pares.push(`${a.nome} e ${b.nome}`);
     }
   }
+  return pares;
+}
+
+/**
+ * Cada alvo com a área do toque de pelo menos 44×44 px (os 44 pontos do iPhone) e nenhuma área cobrindo a de outro: cada
+ * toque cai no alvo que a pessoa vê. Devolve as medidas, na ordem, para o caso conferir que o desenho continua o de
+ * sempre.
+ */
+export async function areasDe44(alvos: Array<[nome: string, alvo: Locator]>): Promise<AreaDoToque[]> {
+  const areas = await medirAreas(alvos);
+  expect(menoresQue44(areas), 'os alvos com a área do toque menor que 44×44 px').toEqual([]);
+  expect(areasQueSeCobrem(areas), 'as áreas do toque que se cobrem').toEqual([]);
   return areas;
+}
+
+/**
+ * Os alvos de toque de uma parte da tela (`raiz`): cada botão, campo, lista de escolha, link, papel de botão ou de item
+ * de menu, e cada rótulo que envolve um campo (o rótulo é o alvo dele: o toque nele vai ao campo, como nos segmentos
+ * UDP/TCP e na busca), visível e inteiro na tela (fora dela e cortado por uma lista que rola, ele é medido quando chega à
+ * vista). Cada um com um nome para as mensagens: o aria-label, o texto ou o placeholder.
+ */
+export async function alvosDeToque(raiz: Locator): Promise<Array<[nome: string, alvo: Locator]>> {
+  const marcados = await raiz.evaluate((topo) => {
+    for (const velho of document.querySelectorAll('[data-alvo-de-toque]')) velho.removeAttribute('data-alvo-de-toque');
+    const SELETOR =
+      'button, a[href], select, textarea, input:not([type="hidden"]), [role="button"], [role="switch"], [role="menuitem"], [role="menuitemradio"], label:has(input)';
+    const inteiro = (el: Element) => {
+      const r = el.getBoundingClientRect();
+      if (r.width === 0 || r.height === 0) return false;
+      if (r.left < -0.5 || r.top < -0.5 || r.right > window.innerWidth + 0.5 || r.bottom > window.innerHeight + 0.5) return false;
+      for (let acima = el.parentElement; acima; acima = acima.parentElement) {
+        const s = getComputedStyle(acima);
+        if (s.overflowX === 'visible' && s.overflowY === 'visible') continue;
+        const c = acima.getBoundingClientRect();
+        const esquerda = c.left + acima.clientLeft;
+        const cima = c.top + acima.clientTop;
+        if (r.left < esquerda - 0.5 || r.top < cima - 0.5 || r.right > esquerda + acima.clientWidth + 0.5 || r.bottom > cima + acima.clientHeight + 0.5) {
+          return false;
+        }
+      }
+      return true;
+    };
+    const alvos = Array.from(topo.querySelectorAll(SELETOR))
+      // O campo dentro de um rótulo conta pelo rótulo.
+      .filter((el) => !(el.matches('input, select, textarea') && el.closest('label')))
+      .filter((el) => el.checkVisibility({ visibilityProperty: true }) && inteiro(el));
+    return alvos.map((el, i) => {
+      el.setAttribute('data-alvo-de-toque', String(i));
+      const texto = (el.textContent ?? '').replace(/\s+/g, ' ').trim();
+      return el.getAttribute('aria-label') || texto.slice(0, 40) || el.getAttribute('placeholder') || el.tagName.toLowerCase();
+    });
+  });
+  return marcados.map((nome, i): [string, Locator] => [nome, raiz.page().locator(`[data-alvo-de-toque="${i}"]`)]);
 }
 
 /** A foto da tela (o `capturar` de sempre), em test-results/capturas/ios-<nome>-<largura>x<altura>-<tema>.png. */
