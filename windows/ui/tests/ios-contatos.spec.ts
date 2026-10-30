@@ -6,7 +6,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { AGENDA_DE_EXEMPLO } from '../src/fake-scenarios';
 import type { AgendaContact, AgendaPermission } from '../src/state';
-import { comandos, empurrar, esperarComando, mudarEstado } from './helpers';
+import { comandos, depoisDoQueChegou, empurrar, esperarComando, mudarEstado } from './helpers';
 import { abrirIos, capturarIos, dentroDaAreaSegura, noIphone, semViolacoesSerias, TAMANHOS_IPHONE } from './ios-helpers';
 
 /** A agenda de exemplo na ordem da tela: a alfabética do português (a Ângela no A, o Élcio no E, a Íris no I). */
@@ -15,7 +15,6 @@ const GRUPOS = ['A', 'B', 'C', 'E', 'I', 'O', 'P'];
 const AVISO = 'Permita o acesso aos contatos para ligar pelo nome.';
 const SEM_NUMERO = 'Nenhum contato com número no iPhone.';
 const NAO_ACHOU = 'Nenhum contato encontrado.';
-const AVISO_DE_TESTE = 'Sem conexão com o servidor. Tente de novo em instantes.';
 
 /** Abre a aba Contatos pela navegação de baixo. */
 async function abrirContatos(page: Page): Promise<void> {
@@ -39,14 +38,6 @@ function busca(page: Page): Locator {
 
 async function vezesQueAbriu(page: Page): Promise<number> {
   return (await comandos(page)).filter((c) => c.cmd === 'contactsOpened').length;
-}
-
-/** Um aviso empurrado depois das mensagens de antes: na tela, ele diz que todas já passaram (as mensagens vão na ordem). */
-async function depoisDoQueChegou(page: Page): Promise<void> {
-  await empurrar(page, { v: 1, type: 'toast', texto: AVISO_DE_TESTE });
-  await expect(page.getByText(AVISO_DE_TESTE)).toBeVisible();
-  // E os efeitos do último desenho (o Preact os roda depois da pintura).
-  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0))));
 }
 
 /**
