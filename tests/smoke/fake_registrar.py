@@ -19,8 +19,9 @@ Ligações (sem autenticação para INVITE, re-INVITE, REFER, BYE e CANCEL):
 - re-INVITE -> 200 com a direção espelhada (sendonly <-> recvonly); com o DROP REINVITE on, nada; BYE e
   CANCEL -> 200
 - REFER -> 202 e um NOTIFY com SIP/2.0 200 OK (sipfrag), ou o que REFER_REPLY e REFER_NOTIFY mandarem
-  (resposta com código >= 300: nenhum NOTIFY). Um Refer-To com Replaces (RFC 3891) vai para o registro
-  de ligações com replaces=known ou replaces=unknown; o registrador não faz mais nada com ele
+  (resposta com código >= 300, ou REFER_NOTIFY none: nenhum NOTIFY com o resultado). Um Refer-To com
+  Replaces (RFC 3891) vai para o registro de ligações com replaces=known ou replaces=unknown; o registrador
+  não faz mais nada com ele
 - o registrador também liga (RING) e desliga (HANGUP): o INVITE vai ao contato do último REGISTER
   aceito do ramal, pelo mesmo transporte (UDP: o endereço de origem do REGISTER; TCP: a mesma conexão)
 - numa ligação do RING atendida, o registrador também manda um REFER (REFER) ou um INVITE novo que a troca
@@ -33,7 +34,8 @@ BLF (RFC 4235, sem autenticação): SUBSCRIBE com Event: dialog ao ramal da Requ
   ci-<ramal>-1, -2...), todos num NOTIFY state="full"; <estado>@<n> muda só o diálogo n, num NOTIFY
   state="partial" só com ele. BLF <ramal> refuse: o próximo SUBSCRIBE leva
   403 e as assinaturas abertas acabam (NOTIFY terminated;reason=rejected). SUBSCRIBE de outro evento ->
-  200 OK, como qualquer outro pedido. O NOTIFY vai ao Contact do SUBSCRIBE, pelo mesmo transporte.
+  200 OK, como qualquer outro pedido (menos o que tira a assinatura de um REFER com o REFER_NOTIFY none:
+  ver o comando). O NOTIFY vai ao Contact do SUBSCRIBE, pelo mesmo transporte.
 
 Porta de controle (--control-port N, TCP no mesmo --host; um comando por linha, resposta numa linha):
   RING <ramal>       INVITE de "Cliente Teste" <sip:3001@ci>          -> OK | ERR no-contact
@@ -60,7 +62,9 @@ Porta de controle (--control-port N, TCP no mesmo --host; um comando por linha, 
                      repetição de um deles, depois do off, é respondida -> OK
   FAIL REGISTER <on|off>  com on, todo REGISTER leva 503 (a central reiniciando)  -> OK
   REFER_REPLY <cod>  o código da resposta ao REFER (padrão 202)        -> OK
-  REFER_NOTIFY <cod> o código do sipfrag do NOTIFY (padrão 200)        -> OK
+  REFER_NOTIFY <cod> o código do sipfrag do NOTIFY (padrão 200); none: nenhum NOTIFY com o resultado, e a
+                     assinatura só acaba no SUBSCRIBE com Expires: 0 do telefone, com o NOTIFY terminated
+                     (sipfrag 100) que a RFC 6665 pede                 -> OK
   RESET              REFER_REPLY e REFER_NOTIFY voltam ao padrão       -> OK
   LOG                o registro de ligações, uma linha cada, e END
   (comando desconhecido, sem argumento ou com código que não é de 100 a 699 -> ERR bad-command)
@@ -95,7 +99,7 @@ COMPACT = {"v": "via", "f": "from", "t": "to", "i": "call-id", "m": "contact", "
 REASONS = {100: "Trying", 180: "Ringing", 200: "OK", 202: "Accepted", 401: "Unauthorized", 403: "Forbidden",
            404: "Not Found", 480: "Temporarily Unavailable", 486: "Busy Here", 487: "Request Terminated",
            503: "Service Unavailable", 603: "Decline"}
-SIPFRAG_PHRASES = {200: "OK", 486: "Busy Here", 603: "Decline"}   # a frase do sipfrag do NOTIFY; outro código: "Error"
+SIPFRAG_PHRASES = {100: "Trying", 200: "OK", 486: "Busy Here", 603: "Decline"}   # a do sipfrag; outro código: "Error"
 STATUS_CODE = re.compile(r"[1-6][0-9]{2}")   # o que REFER_REPLY e REFER_NOTIFY aceitam
 CALLER = '"Cliente Teste" <sip:3001@ci>'
 MEDIA_PORT = 40000   # nada escuta aqui: só a sinalização é de verdade
@@ -543,8 +547,9 @@ class Registrar:
         suffix = "" if replaces is None else " replaces=" + ("known" if self._known_dialog(replaces) else "unknown")
         self._log("refer-in %s %s%s" % (_uri_user(msg.uri), _uri_user(_uri_of(refer_to)), suffix))
         replies = [self._response(self.refer_reply, msg.headers, peer.address)]
-        if self.refer_reply < 300:   # recusado o REFER, não há assinatura e nada de NOTIFY
-            replies.append(self._notify(msg, peer))
+        # Recusado o REFER, não há assinatura e nada de NOTIFY; com o REFER_NOTIFY none, também não.
+        if self.refer_reply < 300 and self.refer_notify is not None:
+            replies.append(self._notify(msg, peer, "refer;id=" + msg.first("cseq").split()[0], self.refer_notify))
         return replies
 
     def _known_dialog(self, call_id):
@@ -567,19 +572,19 @@ class Registrar:
         self.cseqs[call_id] = self.cseqs.get(call_id, 0) + 1
         return self.cseqs[call_id]
 
-    def _notify(self, refer, peer):
-        """O NOTIFY que fecha a assinatura do REFER com o resultado da transferência (sipfrag): o código de
-        REFER_NOTIFY, 200 por padrão."""
-        call_id = refer.first("call-id")
-        local = refer.first("to")   # no diálogo, o To do REFER é a nossa ponta, já com a tag
-        headers = [("From", local if ";tag=" in local else local + ";tag=ci"), ("To", refer.first("from")),
+    def _notify(self, request, peer, event, code):
+        """O NOTIFY que fecha a assinatura de um REFER, no diálogo do pedido do telefone (o REFER, ou o SUBSCRIBE que
+        tira a assinatura), com o Event dado e o sipfrag do código: o de REFER_NOTIFY, 200 por padrão, no REFER."""
+        call_id = request.first("call-id")
+        local = request.first("to")   # no diálogo, o To do pedido é a nossa ponta, já com a tag
+        headers = [("From", local if ";tag=" in local else local + ";tag=ci"), ("To", request.first("from")),
                    ("Call-ID", call_id), ("CSeq", "%d NOTIFY" % self._next_cseq(call_id)),
-                   ("Contact", "<%s>" % refer.uri), ("Event", "refer;id=" + refer.first("cseq").split()[0]),
+                   ("Contact", "<%s>" % request.uri), ("Event", event),
                    ("Subscription-State", "terminated;reason=noresource"),
                    ("Content-Type", "message/sipfrag;version=2.0")]
-        target = _uri_of(refer.first("contact")) or refer.uri
-        return _request("NOTIFY", target, peer.transport, self._hostport(refer.uri, peer), _branch(), headers,
-                        "SIP/2.0 %d %s\r\n" % (self.refer_notify, SIPFRAG_PHRASES.get(self.refer_notify, "Error")))
+        target = _uri_of(request.first("contact")) or request.uri
+        return _request("NOTIFY", target, peer.transport, self._hostport(request.uri, peer), _branch(), headers,
+                        "SIP/2.0 %d %s\r\n" % (code, SIPFRAG_PHRASES.get(code, "Error")))
 
     def _on_bye(self, msg, peer):
         self._log("bye-in " + _uri_user(msg.uri))
@@ -595,7 +600,13 @@ class Registrar:
     # --- BLF: o telefone assina o estado de um ramal (SUBSCRIBE com Event: dialog) ---
 
     def _on_subscribe(self, msg, peer):
-        if msg.first("event").split(";")[0].strip().lower() != "dialog":
+        event = msg.first("event").split(";")[0].strip().lower()
+        if event == "refer" and self.refer_notify is None and msg.first("expires") == "0":
+            # Com o REFER_NOTIFY none, a assinatura do REFER só acaba quando o telefone a tira: o 200 e o NOTIFY
+            # terminated que a RFC 6665 pede, ainda sem o resultado da transferência (100).
+            return [self._response(200, msg.headers, peer.address, [("Expires", "0")]),
+                    self._notify(msg, peer, msg.first("event"), 100)]
+        if event != "dialog":
             return [self._response(200, msg.headers, peer.address)]   # como antes: qualquer pedido -> 200
         alvo = _uri_user(msg.uri)
         expires = msg.first("expires")
@@ -841,8 +852,8 @@ class Registrar:
             if name == "REFER_REPLY" and STATUS_CODE.fullmatch(ramal):
                 self.refer_reply = int(ramal)
                 return ["OK"]
-            if name == "REFER_NOTIFY" and STATUS_CODE.fullmatch(ramal):
-                self.refer_notify = int(ramal)
+            if name == "REFER_NOTIFY" and (STATUS_CODE.fullmatch(ramal) or ramal == "none"):
+                self.refer_notify = None if ramal == "none" else int(ramal)
                 return ["OK"]
             if name == "RESET" and not ramal:
                 self._reset_refer()

@@ -61,7 +61,8 @@ int LevelOfLibre(int level) {
     return 4;
 }
 
-// Os filtros do baresip e da libre no logLevel: uma linha acima dele nem é montada.
+// Os filtros do baresip e da libre no logLevel: uma linha acima dele nem é montada. O baresip, porém, monta sempre as
+// de informação (o Setup), para o baresipLines.
 enum log_level BaresipLevelFor(int logLevel) {
     if (logLevel <= 1) return LEVEL_ERROR;
     if (logLevel == 2) return LEVEL_WARN;
@@ -102,7 +103,9 @@ struct BaresipLoop::Hooks {
 
     static void BaresipLine(uint32_t level, const char* text) {
         const BaresipLoop* loop = g_loop.load();
-        if (loop && text) loop->Log(LevelOfBaresip(level), text, std::strlen(text));
+        if (!loop || !text) return;
+        loop->Observe(text);   // todas, antes do filtro do logLevel
+        loop->Log(LevelOfBaresip(level), text, std::strlen(text));
     }
 
     // Cada mensagem SIP inteira, numa linha de log só, no nível 4.
@@ -195,6 +198,7 @@ std::string BaresipLoop::ErrorText(int err) {
 }
 
 void BaresipLoop::Main() {
+    loopThread_.store(std::this_thread::get_id());   // antes de qualquer linha do baresip
     std::string error;
     if (!Setup(&error)) {
         Teardown();
@@ -233,7 +237,10 @@ bool BaresipLoop::Setup(std::string* error) {
     dbg_handler_set(Hooks::LibreLine, this);
     g_baresipLog.h = Hooks::BaresipLine;
     log_enable_stdout(false);
-    log_level_set(BaresipLevelFor(config_.logLevel));
+    // Pelo menos as de informação: o baresipLines precisa de uma delas com qualquer logLevel (o BaresipCalls lê a do
+    // fim da assinatura de uma transferência). As acima do logLevel param no Log, e o log do motor fica como era.
+    const enum log_level baresipLevel = BaresipLevelFor(config_.logLevel);
+    log_level_set(baresipLevel < LEVEL_INFO ? baresipLevel : LEVEL_INFO);
     log_register_handler(&g_baresipLog);
 
     // Sem o async, o re_thread_leave não acorda o laço, e um temporizador criado fora dele (a retransmissão de um
@@ -331,6 +338,13 @@ void BaresipLoop::Log(int level, const char* text, size_t length) const {
     while (length > 0 && (text[length - 1] == '\n' || text[length - 1] == '\r')) --length;
     if (length == 0) return;
     log_(level, std::string(text, length));
+}
+
+void BaresipLoop::Observe(const char* text) const {
+    if (!config_.baresipLines) return;
+    size_t length = std::strlen(text);
+    while (length > 0 && (text[length - 1] == '\n' || text[length - 1] == '\r')) --length;
+    config_.baresipLines(std::string(text, length), std::this_thread::get_id() == loopThread_.load());
 }
 
 }  // namespace starsonic

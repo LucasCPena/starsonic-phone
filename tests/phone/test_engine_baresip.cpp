@@ -3,13 +3,16 @@
 // durante uma ligação, a URI das ligações de uma conta TCP e o REFER do outro lado, recusado com 501) e o que só aqui
 // é conferido (o keep-alive, o motor destruído e criado de novo com a conta, os códigos das ligações encerradas aqui,
 // o CANCEL e o BYE do Hangup que esperam a resposta do outro lado, a ligação que chega com a conta saindo, o INVITE
-// com Replaces recusado, as teclas aceitas, uma transferência por vez e, pelo SipEngineTestAccess, o áudio e o mudo de
-// cada ligação: com duas, só a ativa fica com o microfone, spec 7.7, também com a espera ou a retomada que não sai e
-// com a renegociação que não acaba). O motor do PJSIP tem os testes dele (test_engine_pjsip.cpp).
+// com Replaces recusado, as teclas aceitas, uma transferência por vez, a que acaba com um erro sem evento do baresip
+// (a linha "call: subscription closed") e, pelo SipEngineTestAccess, o áudio e o mudo de cada ligação: com duas, só a
+// ativa fica com o microfone, spec 7.7, também com a espera ou a retomada que não sai e com a renegociação que não
+// acaba). O motor do PJSIP tem os testes dele (test_engine_pjsip.cpp).
 #include "call_fixture.h"
 #include "engine_fixture.h"
 #include "relay_fixture.h"
 
+#include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <memory>
 #include <optional>
@@ -19,6 +22,7 @@
 
 #include "nlohmann/json.hpp"
 
+#include "BaresipCalls.h"
 #include "BaresipLoop.h"
 #include "SipEngine.h"
 #include "SipEngineTestAccess.h"
@@ -78,6 +82,20 @@ bool WaitTransfers(RecordingListener& listener, int id, size_t times) {
         [id, times](const std::vector<CallEvent>& events) { return Transfers(events, id).size() >= times; },
         kWaitSeconds);
 }
+
+// Um RecordingListener que guarda também o maior nível de log que chegou.
+struct LevelListener : RecordingListener {
+    void OnLog(int level, const std::string& line) override {
+        RecordingListener::OnLog(level, line);
+        int seen = maxLevel_.load();
+        while (level > seen && !maxLevel_.compare_exchange_weak(seen, level)) {
+        }
+    }
+    int MaxLevel() const { return maxLevel_.load(); }
+
+private:
+    std::atomic<int> maxLevel_{0};
+};
 
 // Um motor registrado no registrador falso por um DelayedUdpRelay de 200 ms (cada resposta chega 400 ms depois do
 // pedido, antes da primeira repetição do UDP, aos 500 ms), com uma ligação feita para 2002 já confirmada. A ordem dos
@@ -799,4 +817,74 @@ TEST_CASE("a call that ends before the result of its transfer reports no OnTrans
     CHECK(phone.registrar.WaitForLog("bye-in 2002", kWaitSeconds));
     std::this_thread::sleep_for(std::chrono::milliseconds(800));   // as respostas já voltaram ao motor
     CHECK(History(phone.listener.Calls(), id) == "Calling/0 Early/180 Connecting/200 Confirmed/200 Disconnected/200");
+}
+
+TEST_CASE("a transfer whose REFER cannot reach the other side reports 503, and the call goes on as it was") {
+    // O registrador sai com a ligação de pé: no TCP, o REFER não acha mais ninguém na porta, e a libre fecha a
+    // assinatura dele com o erro da conexão, sem resposta nenhuma; o baresip só escreve "call: subscription closed",
+    // uma linha de informação, também com o logLevel 2, e o log do motor continua sem as linhas acima dele.
+    int logLevel = 4;
+    SUBCASE("logLevel 4") { logLevel = 4; }
+    SUBCASE("logLevel 2") { logLevel = 2; }
+    std::unique_ptr<FakeRegistrar> registrar(new FakeRegistrar("senha"));
+    LevelListener listener;
+    INFO(listener.CallsText());
+    INFO(listener.LogTail());
+    EngineConfig config = phone_test::ConfigFor(LoadProfile(registrar->port()));
+    config.logLevel = logLevel;
+    std::string error;
+    std::unique_ptr<SipEngine> engine = SipEngine::Create(config, &listener, &error);
+    REQUIRE_MESSAGE(engine != nullptr, error);
+    REQUIRE(engine->SetAccount(Input(Transport::Tcp)));
+    REQUIRE(listener.WaitFor(RecordingListener::Reached(200, true, 1), kWaitSeconds));
+    const int id = engine->MakeCall("2002");
+    REQUIRE(id > 0);
+    REQUIRE(listener.WaitForCalls(RecordingListener::StateReached(id, CallState::Confirmed), kWaitSeconds));
+    registrar.reset();   // a conexão TCP fecha, e ninguém mais escuta na porta
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));   // a libre já tratou o fim da conexão
+    REQUIRE(engine->Transfer(id, "2003"));
+    REQUIRE(WaitTransfers(listener, id, 1));
+    CHECK(Transfers(listener.Calls(), id) == std::vector<int>{503});
+    CHECK(Contains(listener.LogTail(), "a transferencia nao deu certo (503)"));
+    // A ligação segue como estava, com o áudio, e uma transferência nova pode sair.
+    CHECK_FALSE(RecordingListener::StateReached(id, CallState::Disconnected)(listener.Calls()));
+    CHECK(engine->CallCount() == 1);
+    CHECK(engine->AudioLinks(id) == std::vector<int>{0});
+    CHECK(SipEngineTestAccess::CallsWithAudio(*engine) == std::vector<int>{id});
+    REQUIRE(engine->Transfer(id, "2004"));
+    CHECK(WaitTransfers(listener, id, 2));
+    CHECK(Transfers(listener.Calls(), id) == std::vector<int>{503, 503});
+    CHECK(listener.MaxLevel() <= logLevel);
+}
+
+TEST_CASE("while a transfer waits for its result, no other transfer of either call goes out") {
+    Phone phone;
+    INFO(phone.listener.CallsText());
+    INFO(phone.registrar.LogText());
+    REQUIRE(phone.registrar.Control("REFER_NOTIFY none") == kOk);   // o 202 sem NOTIFY: o resultado não vem
+    int client = 0, colleague = 0;
+    phone.Consultation(&client, &colleague);
+    REQUIRE(phone.engine->Transfer(client, "2004"));
+    REQUIRE(phone.registrar.WaitForLog("refer-in 2002 2004", kWaitSeconds));
+    // O fim de uma assinatura com erro não diz de qual ligação ela é: uma transferência no ar por vez, das duas.
+    CHECK_FALSE(phone.engine->Transfer(colleague, "2004"));
+    CHECK_FALSE(phone.engine->TransferAttended(colleague, client));
+    CHECK_FALSE(phone.engine->TransferAttended(client, colleague));
+    CHECK_FALSE(phone.engine->Transfer(client, "2005"));
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    size_t refers = 0;
+    for (const std::string& line : phone.registrar.Log()) refers += line.compare(0, 9, "refer-in ") == 0 ? 1 : 0;
+    CHECK(refers == 1);   // só o primeiro REFER saiu
+    CHECK(Transfers(phone.listener.Calls(), client).empty());
+    CHECK(Transfers(phone.listener.Calls(), colleague).empty());
+}
+
+TEST_CASE("the baresip line of a transfer subscription closed by an error gives 408 on timeout and 503 otherwise") {
+    // O texto do erro é o %m da libre, o mesmo do BaresipLoop::ErrorText.
+    const std::string closed = "call: subscription closed: ";
+    CHECK(BaresipCalls::SubscriptionClosedCode(closed + BaresipLoop::ErrorText(ETIMEDOUT)) == 408);
+    CHECK(BaresipCalls::SubscriptionClosedCode(closed + BaresipLoop::ErrorText(ECONNREFUSED)) == 503);
+    CHECK(BaresipCalls::SubscriptionClosedCode(closed + BaresipLoop::ErrorText(ECONNRESET)) == 503);
+    CHECK(BaresipCalls::SubscriptionClosedCode("call: transfer failed: 486 Busy Here") == 0);
+    CHECK(BaresipCalls::SubscriptionClosedCode("audio: send DTMF digit: '1'") == 0);
 }

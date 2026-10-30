@@ -13,7 +13,8 @@
 //
 // Tudo aqui roda na thread do laço: dentro do BaresipLoop::Run, no handler dos eventos do baresip (bevent), que repassa
 // ao OnEvent, ou nos temporizadores (o das que esperam para mandar o pedido do Hangup e o do áudio). Só o Count é lido
-// de qualquer thread, e só o WaitNegotiation espera, fora do Run.
+// de qualquer thread, só o WaitNegotiation espera, fora do Run, e o OnBaresipLine é chamado em qualquer thread, mas só
+// age na do laço.
 // Cada ligação é do baresip (a lista da ua); o ponteiro dela fica aqui (numa vaga ou na lista das que esperam) até o
 // BEVENT_CALL_CLOSED, depois do qual o baresip a solta.
 #include <re.h>
@@ -105,15 +106,30 @@ public:
     bool SendDtmf(int id, const std::string& digits);
     // O microfone mudo, ou não, em todas as ligações de agora (audio_mute) e nas próximas (o Bind), até trocar de novo.
     void SetMute(bool muted);
-    // O REFER (call_transfer) para uri, só numa confirmada sem outra transferência dela no ar. TransferAttended: o
-    // REFER com Replaces (call_replace_transfer) no diálogo de id, com o diálogo de targetId no Refer-To, as duas
-    // confirmadas e diferentes, e nenhuma com uma transferência no ar. false: nada saiu (o baresip recusou: o log
-    // diz). Com true, o resultado chega uma vez, por OnTransfer(id, código), antes de qualquer Disconnected dela: a
-    // recusa do REFER ou o NOTIFY com a falha (o BEVENT_CALL_TRANSFER_FAILED), e as ligações seguem como estavam; ou
-    // o NOTIFY com 2xx, que o baresip avisa encerrando a ligação (OnTransfer(id, 200) e o Disconnected(id, 200)), e
-    // na com consulta o motor desliga então o alvo (o BYE). A ligação que acaba antes do resultado não o avisa.
+    // O REFER (call_transfer) para uri, só numa confirmada. TransferAttended: o REFER com Replaces
+    // (call_replace_transfer) no diálogo de id, com o diálogo de targetId no Refer-To, as duas confirmadas e
+    // diferentes. Uma transferência no ar por vez, das duas ligações (ver o OnBaresipLine): com outra esperando o
+    // resultado, false. false também quando nada saiu (o baresip recusou: o log diz). Com true, o resultado chega uma
+    // vez, por OnTransfer(id, código), antes de qualquer Disconnected dela: a recusa do REFER ou o NOTIFY com a falha
+    // (o BEVENT_CALL_TRANSFER_FAILED), ou o fim da assinatura com um erro (o OnBaresipLine: 408 ou 503), e as ligações
+    // seguem como estavam; ou o NOTIFY com 2xx, que o baresip avisa encerrando a ligação (OnTransfer(id, 200) e o
+    // Disconnected(id, 200)), e na com consulta o motor desliga então o alvo (o BYE). A ligação que acaba antes do
+    // resultado não o avisa. Sem nada disso (o 202 sem NOTIFY nenhum), o pedido fica no ar até a ligação acabar.
     bool Transfer(int id, const std::string& uri);
     bool TransferAttended(int id, int targetId);
+    // Uma linha de log do baresip (o baresipLines do BaresipLoop), na thread que a escreveu; só age na do laço, onde a
+    // libre trata o SIP e chama o handler que a escreve. Só uma importa: "call: subscription closed: <erro>", do
+    // sipsub_close_handler do baresip (call.c). É o único sinal de um REFER daqui que fica sem resposta (o tempo
+    // esgotado), que dá erro de transporte ou cuja assinatura acaba com um erro: nenhum evento sai. A linha não diz de
+    // qual ligação ela é; por isso só uma transferência fica no ar por vez, e ela acaba com OnTransfer(408) no tempo
+    // esgotado e OnTransfer(503) nos outros erros, como no motor do PJSIP. O baresip já soltou a assinatura antes da
+    // linha: nada mais dela chega. Depende do texto de uma linha de informação do baresip, fixado pelo commit do
+    // build/deps.lock e conferido pelo teste "a transfer whose REFER cannot reach the other side reports 503, ..."
+    // (test_engine_baresip.cpp), que falha com um baresip que mude a linha.
+    void OnBaresipLine(const std::string& line, bool onLoopThread);
+    // O código da transferência numa linha dessas: 408 com o texto do ETIMEDOUT (o do BaresipLoop::ErrorText, o mesmo
+    // %m da libre), 503 com outro; 0 se a linha é outra.
+    static int SubscriptionClosedCode(const std::string& line);
 
     int Count() const;   // de qualquer thread; cai antes de o Disconnected chegar ao listener
     // {0} (o dispositivo de som) só para a ativa, confirmada e fora da espera; vazio para a outra, para uma que toca ou
@@ -171,6 +187,7 @@ private:
     // O resultado do REFER daqui, numa ligação transferring: o OnTransfer(code), a linha do log e o fim do pedido.
     // Devolve o alvo da com consulta (o id; 0 sem consulta), que sai depois dela com o 2xx.
     int Transferred(Slot& slot, int code);
+    Slot* Transferring();   // a vaga com a transferência no ar (só há uma), ou nullptr
     // A ligação acaba aqui: a vaga se solta, o pedido sai (ua_hangup: o code na recusa da recebida que toca, senão o
     // CANCEL ou o BYE) ou espera na waiting_ e, com report, vem o Disconnected(code).
     void End(Slot& slot, int code, bool report);

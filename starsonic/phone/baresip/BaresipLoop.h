@@ -4,7 +4,8 @@
 //
 // O log da libre (dbg), o do baresip e cada mensagem SIP inteira que sai e que chega (no nível 4) vão para o LogSink na
 // hora, na thread que escreveu: a do laço, uma do re_thread_async ou a que está num Run. Níveis como no EngineConfig: 1
-// erro, 2 aviso, 3 informação e 4 detalhe; as linhas acima do logLevel não saem.
+// erro, 2 aviso, 3 informação e 4 detalhe; as linhas acima do logLevel não saem. As linhas do baresip também vão, todas
+// e antes desse filtro, ao baresipLines da LoopConfig: o baresip monta pelo menos as de informação.
 #include <atomic>
 #include <condition_variable>
 #include <cstddef>
@@ -21,6 +22,10 @@ struct LoopConfig {
     std::string userAgent;
     int logLevel = 4;        // 1 erro .. 4 detalhe, como o EngineConfig
     bool nullAudio = false;  // a fonte e a saída de som nulas (NullAudio.h) no lugar das do sistema
+    // Para quem precisa de uma linha do baresip que não vira evento (o BaresipCalls): cada linha de log do baresip, sem
+    // o fim de linha e antes do filtro do logLevel, na thread que a escreveu; onLoopThread diz se é a do laço (com a
+    // trava da libre). Vazio: nada. Dura mais que o laço e nunca chama o Run.
+    std::function<void(const std::string& line, bool onLoopThread)> baresipLines;
 };
 
 class BaresipLoop {
@@ -63,6 +68,7 @@ private:
     // Sai do Starting para o estado (e avisa o Start); false se o Start já tinha voltado.
     bool Report(State state, const std::string& error);
     void Log(int level, const char* text, size_t length) const;
+    void Observe(const char* text) const;   // uma linha do baresip para o baresipLines, se há um
 
     const LoopConfig config_;
     const LogSink log_;
@@ -73,6 +79,7 @@ private:
     State state_ = State::Starting;
     std::string error_;
     std::atomic<bool> ended_{false};   // o re_main voltou (a thread do laço escreve; o Run lê)
+    std::atomic<std::thread::id> loopThread_{};   // a thread do laço, que a escreve ao nascer (o Observe lê)
     std::thread thread_;        // a do laço (Start)
 };
 

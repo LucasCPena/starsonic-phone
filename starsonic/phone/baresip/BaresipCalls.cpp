@@ -24,6 +24,10 @@ const char kDtmfDigits[] = "0123456789*#ABCD";
 // mesmo, com um r só).
 const char kTransferredText[] = "Call transfered";
 
+// O começo da linha de informação que o sipsub_close_handler do baresip (call.c) escreve quando a assinatura de um
+// REFER daqui fecha com um erro, seguido do %m dele (ver o OnBaresipLine).
+const char kSubscriptionClosed[] = "call: subscription closed: ";
+
 // O código de um BEVENT_CALL_TRANSFER_FAILED do REFER daqui: o texto é "<código> <motivo>", a resposta ao REFER ou o
 // sipfrag do NOTIFY. 0 se ele não começa por um número.
 int TransferFailureCode(const char* text) {
@@ -309,7 +313,7 @@ void BaresipCalls::SetMute(bool muted) {
 
 bool BaresipCalls::Transfer(int id, const std::string& uri) {
     Slot* slot = Find(id);
-    if (!slot || !slot->confirmed || slot->transferring) return false;
+    if (!slot || !slot->confirmed || Transferring()) return false;   // primeiro o resultado da que está no ar
     // A marca vem antes do REFER, como no motor do PJSIP: um resultado que chegasse antes de o baresip voltar acharia o
     // pedido.
     slot->transferring = true;
@@ -326,7 +330,7 @@ bool BaresipCalls::TransferAttended(int id, int targetId) {
     Slot* slot = Find(id);
     Slot* target = Find(targetId);
     if (id == targetId || !slot || !target || !slot->confirmed || !target->confirmed) return false;
-    if (slot->transferring || target->transferring) return false;   // primeiro o resultado da que está no ar
+    if (Transferring()) return false;   // como no Transfer
     slot->transferring = true;   // como no Transfer
     slot->transferTarget = targetId;
     const int err = call_replace_transfer(slot->call, target->call);
@@ -337,6 +341,19 @@ bool BaresipCalls::TransferAttended(int id, int targetId) {
         return false;
     }
     return true;
+}
+
+void BaresipCalls::OnBaresipLine(const std::string& line, bool onLoopThread) {
+    if (!onLoopThread) return;   // as das outras threads (o áudio, por exemplo) nunca são a do fim da assinatura
+    const int code = SubscriptionClosedCode(line);
+    Slot* slot = code ? Transferring() : nullptr;
+    if (slot) (void)Transferred(*slot, code);   // sem a transferência no ar: a de um pedido que já teve o resultado
+}
+
+int BaresipCalls::SubscriptionClosedCode(const std::string& line) {
+    const size_t prefix = sizeof(kSubscriptionClosed) - 1;
+    if (line.compare(0, prefix, kSubscriptionClosed) != 0) return 0;
+    return line.compare(prefix, std::string::npos, BaresipLoop::ErrorText(ETIMEDOUT)) == 0 ? 408 : 503;
 }
 
 int BaresipCalls::Count() const { return count_.load(); }
@@ -587,6 +604,13 @@ int BaresipCalls::Transferred(Slot& slot, int code) {
         Log(2, "a transferencia nao deu certo (" + std::to_string(code) + ")");
     }
     return target;
+}
+
+BaresipCalls::Slot* BaresipCalls::Transferring() {
+    for (Slot& slot : slots_) {
+        if (slot.id != 0 && slot.transferring) return &slot;
+    }
+    return nullptr;
 }
 
 void BaresipCalls::Bind(Slot& slot, struct call* call, bool incoming) {

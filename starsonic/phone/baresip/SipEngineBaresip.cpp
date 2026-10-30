@@ -103,6 +103,12 @@ public:
         loop.userAgent = config_.userAgent;
         loop.logLevel = config_.logLevel;
         loop.nullAudio = config_.nullAudio;
+        // As linhas do baresip que as ligações leem (a do fim da assinatura de uma transferência com erro); o calls_
+        // dura mais que o laço.
+        BaresipCalls* calls = &calls_;
+        loop.baresipLines = [calls](const std::string& line, bool onLoopThread) {
+            calls->OnBaresipLine(line, onLoopThread);
+        };
         EngineListener* listener = listener_;
         loop_ = BaresipLoop::Start(
             loop, [listener](int level, const std::string& line) { listener->OnLog(level, line); }, error);

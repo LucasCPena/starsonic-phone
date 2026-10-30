@@ -119,9 +119,33 @@ class FakeRegistrarReferTest(unittest.TestCase):
         self.registrar.command("RESET")
         self.assertEqual(self.sipfrag(), "SIP/2.0 200 OK\r\n")
 
+    def unsubscribe(self):
+        """O SUBSCRIBE com que o telefone tira a assinatura do REFER, e as respostas (analisadas) do registrador."""
+        message = phone_request("SUBSCRIBE", "sip:2002@ci", "call-to-2002", ["Event: refer", "Expires: 0"], cseq=3,
+                                to_tag="ci")
+        return [fake_registrar._parse(data) for data in self.registrar._on_subscribe(message, PHONE)]
+
+    def test_refer_notify_none_accepts_the_refer_without_any_notify(self):
+        self.assertEqual(self.registrar.command("REFER_NOTIFY none"), ["OK"])
+        self.assertEqual([reply.status for reply in self.reply()], [202])   # a transferência fica sem resultado
+        self.assertEqual(self.log(), ["refer-in 2002 2003"])
+        # A assinatura só acaba quando o telefone a tira: o 200 e o NOTIFY terminated (RFC 6665), sem o resultado.
+        response, notify = self.unsubscribe()
+        self.assertEqual(response.status, 200)
+        self.assertEqual(notify.method, "NOTIFY")
+        self.assertEqual(notify.first("event"), "refer")
+        self.assertEqual(notify.first("call-id"), "call-to-2002")
+        self.assertTrue(notify.first("subscription-state").startswith("terminated"))
+        self.assertEqual(notify.body, "SIP/2.0 100 Trying\r\n")
+        self.assertEqual(self.registrar.command("REFER_REPLY 603"), ["OK"])
+        self.assertEqual([reply.status for reply in self.reply()], [603])
+        self.assertEqual(self.registrar.command("RESET"), ["OK"])   # o padrão volta: 202 e o NOTIFY 200
+        self.assertEqual([reply.status or reply.method for reply in self.reply()], [202, "NOTIFY"])
+        self.assertEqual([reply.status for reply in self.unsubscribe()], [200])   # e o SUBSCRIBE de refer, só o 200
+
     def test_refer_commands_refuse_what_is_not_a_status_code(self):
         for command in ("REFER_REPLY", "REFER_REPLY abc", "REFER_REPLY 99", "REFER_NOTIFY 7000",
-                        "REFER_NOTIFY 2x0", "RESET now"):
+                        "REFER_NOTIFY 2x0", "REFER_NOTIFY nada", "REFER_REPLY none", "RESET now"):
             with self.subTest(command=command):
                 self.assertEqual(self.registrar.command(command), ["ERR bad-command"])
         self.assertEqual([reply.status or reply.method for reply in self.reply()], [202, "NOTIFY"])
