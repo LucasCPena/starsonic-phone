@@ -4,8 +4,8 @@
 // fica desligado (regint=0): o sipreg da libre não deixa saber se há um REGISTER a caminho, não para as novas
 // tentativas sem tirar o registro do servidor e manda a saída sozinho quando é destruído.
 //
-// As regras são as do SipEngine.h e, onde ele não diz, as do motor do PJSIP. Tudo aqui roda na thread do laço: dentro
-// do BaresipLoop::Run ou num handler da libre. Só o WaitRetired é chamado fora do Run.
+// As regras são as do SipEngine.h e, onde ele não diz, as do motor do PJSIP. Tudo aqui roda com a trava da libre:
+// dentro do BaresipLoop::Run ou num handler da libre. Só o WaitRetired é chamado fora do Run.
 #include <re.h>
 
 #include <condition_variable>
@@ -24,7 +24,7 @@ namespace starsonic {
 
 class EventQueue;
 
-class BaresipAccount {   // a conta: a ua do baresip (as ligações) e o cliente de REGISTER; só na thread do laço
+class BaresipAccount {   // a conta: a ua do baresip (as ligações) e o cliente de REGISTER; só com a trava da libre
 public:
     // Ainda sem nada da libre (o Start monta a conta). events: por onde saem os OnRegistration; dura mais que a conta.
     BaresipAccount(EventQueue& events, BaresipLoop::LogSink log);

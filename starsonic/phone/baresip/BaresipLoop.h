@@ -5,7 +5,10 @@
 // O log da libre (dbg), o do baresip e cada mensagem SIP inteira que sai e que chega (no nível 4) vão para o LogSink na
 // hora, na thread que escreveu: a do laço, uma do re_thread_async ou a que está num Run. Níveis como no EngineConfig: 1
 // erro, 2 aviso, 3 informação e 4 detalhe; as linhas acima do logLevel não saem. As linhas do baresip também vão, todas
-// e antes desse filtro, ao baresipLines da LoopConfig: o baresip monta pelo menos as de informação.
+// (sem esse filtro) e depois do LogSink, ao baresipLines da LoopConfig: o baresip monta pelo menos as de informação.
+//
+// A thread do laço é a do re_main, que trata a rede e os temporizadores. Uma que está num Run também tem a trava da
+// libre, mas não é a do laço.
 #include <atomic>
 #include <condition_variable>
 #include <cstddef>
@@ -23,8 +26,9 @@ struct LoopConfig {
     int logLevel = 4;        // 1 erro .. 4 detalhe, como o EngineConfig
     bool nullAudio = false;  // a fonte e a saída de som nulas (NullAudio.h) no lugar das do sistema
     // Para quem precisa de uma linha do baresip que não vira evento (o BaresipCalls): cada linha de log do baresip, sem
-    // o fim de linha e antes do filtro do logLevel, na thread que a escreveu; onLoopThread diz se é a do laço (com a
-    // trava da libre). Vazio: nada. Dura mais que o laço e nunca chama o Run.
+    // o fim de linha, também as acima do logLevel, logo depois de ela ir ao log, na thread que a escreveu. onLoopThread
+    // só é true na thread do laço (a do re_main); numa que está num Run, com a trava da libre, ou numa outra (a do
+    // áudio), é false. Vazio: nada. Dura mais que o laço e nunca chama o Run.
     std::function<void(const std::string& line, bool onLoopThread)> baresipLines;
 };
 

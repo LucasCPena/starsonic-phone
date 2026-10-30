@@ -101,11 +101,13 @@ struct BaresipLoop::Hooks {
         static_cast<const BaresipLoop*>(arg)->Log(LevelOfLibre(level), text, length);
     }
 
+    // A linha vai ao log (o Log a filtra pelo logLevel) e depois, sempre, ao baresipLines: o que o motor escreve por
+    // causa dela sai no log depois dela.
     static void BaresipLine(uint32_t level, const char* text) {
         const BaresipLoop* loop = g_loop.load();
         if (!loop || !text) return;
-        loop->Observe(text);   // todas, antes do filtro do logLevel
         loop->Log(LevelOfBaresip(level), text, std::strlen(text));
+        loop->Observe(text);
     }
 
     // Cada mensagem SIP inteira, numa linha de log só, no nível 4.
@@ -342,9 +344,13 @@ void BaresipLoop::Log(int level, const char* text, size_t length) const {
 
 void BaresipLoop::Observe(const char* text) const {
     if (!config_.baresipLines) return;
-    size_t length = std::strlen(text);
-    while (length > 0 && (text[length - 1] == '\n' || text[length - 1] == '\r')) --length;
-    config_.baresipLines(std::string(text, length), std::this_thread::get_id() == loopThread_.load());
+    // Nenhuma exceção volta para o baresip, que é C (o baresipLines muda o estado do motor): a linha se perde.
+    try {
+        size_t length = std::strlen(text);
+        while (length > 0 && (text[length - 1] == '\n' || text[length - 1] == '\r')) --length;
+        config_.baresipLines(std::string(text, length), std::this_thread::get_id() == loopThread_.load());
+    } catch (...) {
+    }
 }
 
 }  // namespace starsonic

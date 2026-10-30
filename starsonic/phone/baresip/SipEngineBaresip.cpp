@@ -60,8 +60,8 @@ bool IsAudioDevice(const std::vector<AudioDevice>& devices, int id, bool capture
     return false;
 }
 
-// O handler dos eventos do baresip (bevent), na thread do laço: os das ligações vão ao BaresipCalls. Nenhuma exceção
-// volta para o baresip, que é C.
+// O handler dos eventos do baresip (bevent), com a trava da libre (na thread do laço, ou num Run que provoca o evento):
+// os das ligações vão ao BaresipCalls. Nenhuma exceção volta para o baresip, que é C.
 void OnBaresipEvent(enum bevent_ev ev, struct bevent* event, void* arg) {
     try {
         static_cast<BaresipCalls*>(arg)->OnEvent(ev, event);

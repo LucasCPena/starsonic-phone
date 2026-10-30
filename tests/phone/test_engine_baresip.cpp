@@ -15,7 +15,10 @@
 #include <cerrno>
 #include <chrono>
 #include <memory>
+#include <mutex>
 #include <optional>
+#include <set>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -97,9 +100,51 @@ private:
     std::atomic<int> maxLevel_{0};
 };
 
+// Um RecordingListener que guarda também os REFER que o motor mandou, um por pedido. O log tem cada mensagem SIP que
+// sai, também as repetições do UDP, e uma repetição é o mesmo pedido: o mesmo CSeq no mesmo diálogo (o Call-ID).
+struct ReferListener : RecordingListener {
+    void OnLog(int level, const std::string& line) override {
+        RecordingListener::OnLog(level, line);
+        static const std::string kSent = "SIP enviado (";
+        const size_t start = line.find("):\n");
+        if (line.compare(0, kSent.size(), kSent) != 0 || start == std::string::npos ||
+            line.compare(start + 3, 10, "REFER sip:") != 0) {
+            return;
+        }
+        const std::string referTo = Header(line, "Refer-To");
+        const size_t user = referTo.find("sip:");
+        const size_t at = referTo.find('@');
+        if (user == std::string::npos || at == std::string::npos || at < user) return;
+        const std::string number = referTo.substr(user + 4, at - user - 4);
+        std::lock_guard<std::mutex> lock(refersMutex_);
+        if (!requests_.insert(Header(line, "Call-ID") + " " + Header(line, "CSeq")).second) return;   // repetição
+        refers_.push_back(number + (Contains(referTo, "Replaces=") ? " replaces" : ""));
+    }
+
+    // Os REFER que saíram, em ordem: o número do Refer-To e, na transferência com consulta, " replaces".
+    Lines Refers() const {
+        std::lock_guard<std::mutex> lock(refersMutex_);
+        return refers_;
+    }
+
+private:
+    // O valor do cabeçalho name na mensagem SIP (vazio se não há).
+    static std::string Header(const std::string& message, const std::string& name) {
+        const std::string prefix = "\n" + name + ": ";
+        const size_t start = message.find(prefix);
+        if (start == std::string::npos) return std::string();
+        const size_t value = start + prefix.size();
+        return message.substr(value, message.find_first_of("\r\n", value) - value);
+    }
+
+    mutable std::mutex refersMutex_;
+    std::set<std::string> requests_;   // o Call-ID e o CSeq de cada REFER que saiu
+    Lines refers_;
+};
+
 // Um motor registrado no registrador falso por um DelayedUdpRelay de 200 ms (cada resposta chega 400 ms depois do
-// pedido, antes da primeira repetição do UDP, aos 500 ms), com uma ligação feita para 2002 já confirmada. A ordem dos
-// campos importa: o motor some antes do listener, do relay e do registrador.
+// pedido), com uma ligação feita para 2002 já confirmada. A ordem dos campos importa: o motor some antes do listener,
+// do relay e do registrador.
 struct SlowPhone {
     SlowPhone() : registrar("senha"), relay(registrar.port(), 200) {
         engine = StartEngine(&listener, LoadProfile(relay.port()));
@@ -117,7 +162,7 @@ struct SlowPhone {
 
     FakeRegistrar registrar;
     DelayedUdpRelay relay;
-    RecordingListener listener;
+    ReferListener listener;
     std::unique_ptr<SipEngine> engine;
     int client = 0;
 };
@@ -130,6 +175,25 @@ TEST_CASE("the baresip engine loads the modules of build/deps.lock, in order") {
     const nlohmann::json lock = nlohmann::json::parse(ReadText(STARSONIC_REPO_DIR "/build/deps.lock"));
     const std::vector<std::string> locked = lock.at("baresip").at("modules").get<std::vector<std::string>>();
     CHECK(BaresipLoop::Modules() == locked);
+}
+
+TEST_CASE("the baresip loop goes on when the hook of the baresip lines throws") {
+    // Nenhuma exceção volta para o baresip, que é C: a linha se perde, e o laço segue.
+    LoopConfig config;
+    config.userAgent = phone_test::kUserAgent;
+    config.nullAudio = true;
+    std::atomic<int> lines{0};
+    config.baresipLines = [&lines](const std::string&, bool) {
+        ++lines;
+        throw std::runtime_error("o gancho falhou");
+    };
+    std::string error;
+    std::unique_ptr<BaresipLoop> loop = BaresipLoop::Start(config, nullptr, &error);
+    REQUIRE_MESSAGE(loop != nullptr, error);
+    CHECK(lines.load() > 0);   // as linhas da subida do baresip
+    bool ran = false;
+    CHECK(loop->Run([&ran] { ran = true; }));
+    CHECK(ran);
 }
 
 TEST_CASE("the baresip engine sends the start-up lines of baresip to OnLog") {
@@ -783,9 +847,13 @@ TEST_CASE("a transfer goes one at a time: the next one waits for the result of t
     INFO(phone.listener.CallsText());
     INFO(phone.registrar.LogText());
     REQUIRE(phone.registrar.Control("REFER_REPLY 603") == kOk);   // o servidor recusa: as ligações seguem
+    // O REFER sai dentro do pedido (o destino é um endereço IP, sem DNS): os recusados são conferidos na hora. A conta
+    // é a dos pedidos, e não a do registrador, que registra também cada repetição do UDP (sem a resposta em 500 ms,
+    // numa máquina lenta).
     const int client = phone.client;
     REQUIRE(phone.engine->Transfer(client, "2003"));
     CHECK_FALSE(phone.engine->Transfer(client, "2004"));   // a resposta ao REFER ainda não chegou
+    CHECK(phone.listener.Refers() == Lines{"2003"});   // e nada saiu dele
     REQUIRE(WaitTransfers(phone.listener, client, 1));
     CHECK(phone.engine->Transfer(client, "2004"));   // com o resultado, vale de novo
     REQUIRE(WaitTransfers(phone.listener, client, 2));
@@ -795,15 +863,17 @@ TEST_CASE("a transfer goes one at a time: the next one waits for the result of t
     CHECK_FALSE(phone.engine->TransferAttended(client, colleague));
     CHECK_FALSE(phone.engine->TransferAttended(colleague, client));
     CHECK_FALSE(phone.engine->Transfer(client, "2004"));
+    CHECK(phone.listener.Refers() == Lines{"2003", "2004", "2003 replaces"});
     REQUIRE(WaitTransfers(phone.listener, client, 3));
     CHECK(phone.engine->TransferAttended(client, colleague));
     REQUIRE(WaitTransfers(phone.listener, client, 4));
     CHECK(Transfers(phone.listener.Calls(), client) == std::vector<int>{603, 603, 603, 603});
     CHECK(Transfers(phone.listener.Calls(), colleague).empty());
     CHECK(phone.engine->CallCount() == 2);
-    CHECK(phone_test::LogCount(phone.registrar, "refer-in 2002 2003") == 1);
-    CHECK(phone_test::LogCount(phone.registrar, "refer-in 2002 2004") == 1);
-    CHECK(phone_test::LogCount(phone.registrar, "refer-in 2002 2003 replaces=known") == 2);
+    CHECK(phone.listener.Refers() == Lines{"2003", "2004", "2003 replaces", "2003 replaces"});
+    CHECK(phone.registrar.LogHas("refer-in 2002 2003"));
+    CHECK(phone.registrar.LogHas("refer-in 2002 2004"));
+    CHECK(phone.registrar.LogHas("refer-in 2002 2003 replaces=known"));
 }
 
 TEST_CASE("a call that ends before the result of its transfer reports no OnTransfer") {
@@ -845,7 +915,13 @@ TEST_CASE("a transfer whose REFER cannot reach the other side reports 503, and t
     REQUIRE(engine->Transfer(id, "2003"));
     REQUIRE(WaitTransfers(listener, id, 1));
     CHECK(Transfers(listener.Calls(), id) == std::vector<int>{503});
-    CHECK(Contains(listener.LogTail(), "a transferencia nao deu certo (503)"));
+    // A linha do motor sai na thread do laço logo depois do aviso, que pode chegar antes dela (o OnLog não passa pela
+    // fila dos eventos).
+    const std::string failed = "a transferencia nao deu certo (503)";
+    CHECK(WaitUntil([&listener, &failed] { return Contains(listener.LogTail(), failed); }, kWaitSeconds));
+    // A linha do baresip (de informação: só com o logLevel 3 ou mais) sai no log antes da do motor, que ela causou.
+    const std::string log = listener.LogTail();
+    if (logLevel >= 3) CHECK(log.find("call: subscription closed: ") < log.find(failed));
     // A ligação segue como estava, com o áudio, e uma transferência nova pode sair.
     CHECK_FALSE(RecordingListener::StateReached(id, CallState::Disconnected)(listener.Calls()));
     CHECK(engine->CallCount() == 1);
