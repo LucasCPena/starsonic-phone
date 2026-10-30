@@ -62,6 +62,10 @@ const Name kNames[] = {
     {CommandKind::ExportContacts, "exportContacts"},
     {CommandKind::SetCompanyList, "setCompanyList"},
     {CommandKind::RefreshCompanyList, "refreshCompanyList"},
+    {CommandKind::ContactsOpened, "contactsOpened"},
+    {CommandKind::AllowContacts, "allowContacts"},
+    {CommandKind::AudioRoute, "audioRoute"},
+    {CommandKind::KeyTone, "keyTone"},
 };
 
 // Le os campos de um comando, anotando o primeiro problema (um campo obrigatorio que falta ou um tipo errado).
@@ -175,6 +179,23 @@ const char* KindName(Recent::Kind kind) {
             break;
     }
     return "perdida";
+}
+
+const char* PermissionName(AgendaPermission permission) {
+    switch (permission) {
+        case AgendaPermission::Denied:
+            return "negada";
+        case AgendaPermission::Granted:
+            return "concedida";
+        case AgendaPermission::Pending:
+            break;
+    }
+    return "pendente";
+}
+
+// A tecla do keyTone: uma so, de 0 a 9, * ou # (as do teclado; o + vai como 0, pela interface).
+bool KeypadKey(const std::string& key) {
+    return key.size() == 1 && ((key[0] >= '0' && key[0] <= '9') || key[0] == '*' || key[0] == '#');
 }
 
 const char* CompanyStatusName(CompanyListStatus status) {
@@ -379,10 +400,16 @@ std::optional<Command> ParseCommand(const std::string& text, std::string* error)
             break;
         case CommandKind::SetSetting:
             f.Text("chave", &command.key, true);
-            if (f.ok() && command.key != "iniciarComWindows" && command.key != "bipeFim") {
+            if (f.ok() && command.key != "iniciarComWindows" && command.key != "bipeFim" &&
+                command.key != "bipeTecla") {
                 f.Fail("chave desconhecida: " + command.key.substr(0, 40));
             }
             f.Flag("valor", &command.value, true);
+            break;
+        case CommandKind::KeyTone:
+            // A tecla que nao serve fica fora do diagnostico (sao as teclas do numero que a pessoa digita).
+            f.Text("tecla", &command.key, true);
+            if (f.ok() && !KeypadKey(command.key)) f.Fail("a tecla precisa ser de 0 a 9, * ou #");
             break;
         case CommandKind::OpenExternal:
             f.Text("url", &command.url, true);
@@ -444,6 +471,9 @@ std::optional<Command> ParseCommand(const std::string& text, std::string* error)
         case CommandKind::ImportContacts:
         case CommandKind::ExportContacts:
         case CommandKind::RefreshCompanyList:
+        case CommandKind::ContactsOpened:
+        case CommandKind::AllowContacts:
+        case CommandKind::AudioRoute:
             break;
     }
     if (!f.ok()) return Refuse(error, cmd + ": " + f.error());
@@ -508,12 +538,21 @@ std::string StateMessage(const BridgeState& state) {
     s["entrarAdmin"] = Out{
         {"erro", state.adminLogin.error}, {"esperaAte", state.adminLogin.waitUntilMs}, {"vez", state.adminLogin.seq}};
     s["config"] = Out{{"bipeFim", state.endBeep}};
+    if (state.iphone) s["config"]["bipeTecla"] = state.iphone->keyBeep;
     s["empresa"] = Out{{"link", state.company.link},
                        {"situacao", CompanyStatusName(state.company.status)},
                        {"erro", state.company.error},
                        {"atualizadaEm", state.company.updatedMs},
                        {"quantos", state.company.count},
                        {"vez", state.company.seq}};
+    // O modo iPhone: os campos dele no fim, na ordem do docs/ponte-windows.md ("O estado no iPhone").
+    if (state.iphone) {
+        s["plataforma"] = "ios";
+        s["agenda"] = Out{{"permissao", PermissionName(state.iphone->permission)},
+                          {"vez", state.iphone->agendaSeq},
+                          {"quantos", state.iphone->agendaCount}};
+        s["rotaAudio"] = state.iphone->audioRoute;
+    }
     return Dump(Out{{"v", kBridgeVersion}, {"type", "state"}, {"state", s}});
 }
 

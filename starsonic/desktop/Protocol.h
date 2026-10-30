@@ -4,11 +4,14 @@
 // "contatosEmpresa", ...}).
 // O contrato, com cada campo e um exemplo, e o docs/ponte-windows.md: uma mudanca aqui muda o documento junto (e
 // o kBridgeVersion, se o formato deixa de ser compativel). Os textos sao UTF-8.
+// O modo iPhone (a mesma interface num WKWebView) tem comandos e campos a mais, na mesma versao 1: quem decide o que
+// vale em cada plataforma e o DesktopApp.
 #include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
 
+#include "Agenda.h"           // AgendaPermission (iPhone)
 #include "CallController.h"   // CallSnapshot, Recent, RingKind
 #include "Planilha.h"         // SheetContact (rc.4)
 
@@ -61,6 +64,10 @@ enum class CommandKind {
     ExportContacts,
     SetCompanyList,       // rc.4: a planilha da empresa
     RefreshCompanyList,
+    ContactsOpened,       // iPhone: a aba Contatos abriu
+    AllowContacts,        // iPhone: o Permitir do aviso da aba Contatos
+    AudioRoute,           // iPhone: o botao Audio da ligacao
+    KeyTone,              // iPhone: o bipe de uma tecla (a tecla em Command::key)
 };
 
 // Um servidor da lista do administrador (adminSet e o estado): o endereco (UTF-8) e a porta (UDP e TCP).
@@ -110,7 +117,8 @@ struct Command {
     std::optional<std::string> capture;
     std::optional<std::string> playback;
     std::optional<std::string> ring;
-    // setSetting: as chaves "iniciarComWindows" e "bipeFim" (rc.3), com um valor booleano.
+    // setSetting: as chaves "iniciarComWindows", "bipeFim" (rc.3) e "bipeTecla" (iPhone), com um valor booleano.
+    // keyTone (iPhone): a tecla, "0" a "9", "*" ou "#".
     std::string key;
     bool value = false;
     // openExternal
@@ -233,6 +241,15 @@ struct CompanyView {                // empresa (rc.4): a lista da empresa (os co
     int seq = 0;                    // vez: sobe a cada lista nova
 };
 
+// Os campos do modo iPhone (docs/ponte-windows.md, "O estado no iPhone"), com os valores de fabrica.
+struct IPhoneView {
+    AgendaPermission permission = AgendaPermission::Pending;   // agenda.permissao
+    int agendaSeq = 0;              // agenda.vez: sobe a cada lista nova (0: nenhuma desde a abertura)
+    int agendaCount = 0;            // agenda.quantos: os contatos com algum numero da ultima lista
+    std::string audioRoute;         // rotaAudio: a saida de som com o nome que o iPhone da ("" sem saber)
+    bool keyBeep = true;            // config.bipeTecla: o "Bipe ao digitar" (ligado de fabrica)
+};
+
 struct BridgeState {
     bool mainScreen = false;                // tela: "principal" (true) ou "entrar"
     LoginView login;                        // entrar
@@ -255,6 +272,9 @@ struct BridgeState {
     AdminLoginView adminLogin;              // entrarAdmin (rc.3)
     bool endBeep = true;                    // config.bipeFim (rc.3)
     CompanyView company;                    // empresa (rc.4)
+    // O modo iPhone: plataforma "ios", agenda, rotaAudio e config.bipeTecla. Nada (o Windows): o estado de sempre,
+    // sem nenhum campo a mais.
+    std::optional<IPhoneView> iphone;
 };
 
 // {"v":1,"type":"state","state":{...}}

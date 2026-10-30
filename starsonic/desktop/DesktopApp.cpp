@@ -51,15 +51,101 @@ std::string TransportName(Transport transport) { return transport == Transport::
 
 std::string NormalizedNumber(const std::string& number) { return U8(NormalizeDialString(Wide(number))); }
 
-// Os unicos links que a interface pode abrir fora do app (os do Sobre). O tel: fica de fora: o app e o tratador dele
-// (o instalador o registra), e o link so encheria o Teclado.
-bool AllowedUrl(const std::string& url) {
-    static const char* const kAllowed[] = {"https://starsonic.com.br", STARSONIC_URL_SITE, STARSONIC_URL_SUPPORT,
-                                           STARSONIC_REPO_URL};
-    for (const char* allowed : kAllowed) {
+// O telefone do suporte para o discador do iPhone (o "Precisa de ajuda?" da tela Entrar e o Ligar do Sobre).
+const char kSupportTel[] = "tel:+551150603000";
+
+template <size_t N>
+bool Listed(const std::string& url, const char* const (&list)[N]) {
+    for (const char* allowed : list) {
         if (url == allowed) return true;
     }
     return false;
+}
+
+// Os unicos links que a interface pode abrir fora do app (os do Sobre). No Windows, o tel: fica de fora: o app e o
+// tratador dele (o instalador o registra), e o link so encheria o Teclado. No iPhone, o tel: do suporte entra (o
+// hospedeiro abre o discador), e o codigo-fonte fica de fora (o Sobre do iPhone nao tem a linha).
+bool AllowedUrl(const std::string& url, Platform platform) {
+    static const char* const kWindows[] = {"https://starsonic.com.br", STARSONIC_URL_SITE, STARSONIC_URL_SUPPORT,
+                                           STARSONIC_REPO_URL};
+    static const char* const kIPhone[] = {"https://starsonic.com.br", STARSONIC_URL_SITE, STARSONIC_URL_SUPPORT,
+                                          kSupportTel};
+    return platform == Platform::IPhone ? Listed(url, kIPhone) : Listed(url, kWindows);
+}
+
+// Onde um comando vale (docs/ponte-windows.md, "O modo iPhone"): os do PC sao recusados no iPhone, e os do iPhone no
+// Windows; os outros valem nos dois.
+enum class CommandPlatform { Both, Windows, IPhone };
+
+CommandPlatform PlatformOf(const Command& command) {
+    switch (command.kind) {
+        // A janela, a troca de conta, o som, os meus contatos, os atalhos, a area do administrador, as planilhas, a
+        // lista da empresa e a atualizacao. O quit tambem: um app do iPhone nao se fecha sozinho (regra da App Store),
+        // e o Sair do iPhone e o da conta (o removeAccount).
+        case CommandKind::Minimize:
+        case CommandKind::CloseToTray:
+        case CommandKind::Resize:
+        case CommandKind::Quit:
+        case CommandKind::SelectAccount:
+        case CommandKind::SetAudio:
+        case CommandKind::SaveContact:
+        case CommandKind::RemoveContact:
+        case CommandKind::SaveShortcut:
+        case CommandKind::RemoveShortcut:
+        case CommandKind::UseShortcut:
+        case CommandKind::AdminLogin:
+        case CommandKind::AdminLogout:
+        case CommandKind::AdminSet:
+        case CommandKind::ImportContacts:
+        case CommandKind::ExportContacts:
+        case CommandKind::SetCompanyList:
+        case CommandKind::RefreshCompanyList:
+        case CommandKind::UpdateNow:
+        case CommandKind::UpdateLater:
+            return CommandPlatform::Windows;
+        case CommandKind::ContactsOpened:
+        case CommandKind::AllowContacts:
+        case CommandKind::AudioRoute:
+        case CommandKind::KeyTone:
+            return CommandPlatform::IPhone;
+        case CommandKind::SetSetting:
+            // A chave decide: o Iniciar com o Windows e do PC, o Bipe ao digitar e do iPhone; o bipeFim vale nos dois.
+            if (command.key == "iniciarComWindows") return CommandPlatform::Windows;
+            if (command.key == "bipeTecla") return CommandPlatform::IPhone;
+            break;
+        case CommandKind::Ready:
+        case CommandKind::Login:
+        case CommandKind::RemoveAccount:
+        case CommandKind::Dial:
+        case CommandKind::Answer:
+        case CommandKind::Reject:
+        case CommandKind::Hangup:
+        case CommandKind::Hold:
+        case CommandKind::Mute:
+        case CommandKind::Dtmf:
+        case CommandKind::Transfer:
+        case CommandKind::Consult:
+        case CommandKind::CompleteTransfer:
+        case CommandKind::CancelConsult:
+        case CommandKind::Swap:
+        case CommandKind::Join:
+        case CommandKind::Split:
+        case CommandKind::SetDnd:
+        case CommandKind::SetAutoAnswer:
+        case CommandKind::OpenExternal:
+        case CommandKind::SendDiagnostics:
+        case CommandKind::ViewRecents:
+        case CommandKind::CancelLogin:
+            break;
+    }
+    return CommandPlatform::Both;
+}
+
+// O nome do comando no diagnostico: o do protocolo e, no setSetting, a chave ("setSetting iniciarComWindows").
+std::string LogName(const Command& command) {
+    std::string name = CommandName(command.kind);
+    if (command.kind == CommandKind::SetSetting) name += " " + command.key;
+    return name;
 }
 
 std::optional<SavedAccount> FindAccount(const AccountsStore& store, const std::string& id) {
@@ -405,6 +491,17 @@ void DesktopApp::Execute(const Command& command) {
         Log(std::string("comando ignorado depois do Sair: ") + CommandName(command.kind));
         return;
     }
+    // O comando da outra plataforma e recusado inteiro, antes de tudo: nada muda (nem os 10 min do administrador) e
+    // nenhum gancho e chamado.
+    const CommandPlatform platform = PlatformOf(command);
+    if (platform == CommandPlatform::Windows && IPhone()) {
+        Log("comando recusado no modo iPhone: " + LogName(command));
+        return;
+    }
+    if (platform == CommandPlatform::IPhone && !IPhone()) {
+        Log("comando recusado no modo Windows: " + LogName(command));
+        return;
+    }
     // Qualquer comando com a area do administrador aberta recomeca os 10 min (o ready e a pagina que recarregou).
     if (adminOpen_ && command.kind != CommandKind::Ready) TouchAdmin();
     switch (command.kind) {
@@ -522,7 +619,12 @@ void DesktopApp::Execute(const Command& command) {
             break;
         }
         case CommandKind::SetSetting: {
-            // So as chaves iniciarComWindows e bipeFim chegam aqui (ParseCommand).
+            // So as chaves iniciarComWindows (no Windows), bipeFim e bipeTecla (no iPhone) chegam aqui (ParseCommand e
+            // PlatformOf).
+            if (command.key == "bipeTecla") {
+                Log("comando ainda sem efeito no iPhone: " + LogName(command));
+                break;
+            }
             Settings settings = settings_.Get();
             if (command.key == "bipeFim") {
                 settings.bipeFim = command.value;
@@ -601,17 +703,44 @@ void DesktopApp::Execute(const Command& command) {
         case CommandKind::RefreshCompanyList:
             RequestCompanyRead();
             break;
+        case CommandKind::ContactsOpened:
+        case CommandKind::AllowContacts:
+        case CommandKind::AudioRoute:
+        case CommandKind::KeyTone:
+            // Os do iPhone (so chegam aqui no iPhone), ainda sem os ganchos do hospedeiro. A linha leva so o nome (a
+            // tecla do keyTone fica fora do diagnostico).
+            Log("comando ainda sem efeito no iPhone: " + LogName(command));
+            break;
     }
 }
 
-// A abertura: as lojas, a migracao da rc.7, as configuracoes e a conta em uso.
+// A abertura: as lojas, a migracao da rc.7, as configuracoes e a conta em uso. No iPhone (spec do iPhone, 6.4), so as
+// contas, os Recentes e as configuracoes, que valem como no Windows: sem os meus contatos, sem as partes do PC
+// (StartPcParts) e sem o canal de atualizacao (a atualizacao do iPhone e a da App Store).
 void DesktopApp::Initialize() {
     if (started_) return;
     started_ = true;
     if (!accounts_.Load()) Log("contas.json ilegivel: lido como vazio (o arquivo fica ate a proxima gravacao)");
-    if (!contacts_.Load()) Log("contatos.json ilegivel: lido como vazio");
+    if (!IPhone() && !contacts_.Load()) Log("contatos.json ilegivel: lido como vazio");
     if (!recents_.Load()) Log("recentes.json ilegivel: lido como vazio");
     if (!settings_.Load()) Log("config.json ilegivel: valem os padroes");
+    if (!IPhone()) StartPcParts();
+
+    ApplyAdminLimits();   // no iPhone, o administrador de fabrica: nada a desligar
+    const Settings settings = settings_.Get();
+    controller_->SetDoNotDisturb(settings.doNotDisturb);
+    controller_->SetAutoAnswer(settings.autoAnswer, settings.autoAnswerSeconds * 1000);
+    if (!IPhone() && hooks_.updateChannel) hooks_.updateChannel(admin_.Get().canal);
+    recentsSeenMs_ = clock_.NowMs();
+    ApplyAudio();
+
+    const std::optional<SavedAccount> active = accounts_.Active();
+    if (active) ActivateStored(*active);
+}
+
+// As partes do PC na abertura (so no Windows, na ordem de sempre): os atalhos, a area do administrador, a lista da
+// empresa, a migracao da rc.7 e o Iniciar com o Windows que o executavel viu.
+void DesktopApp::StartPcParts() {
     if (!atalhos_.Load()) Log("atalhos.json ilegivel: lido como vazio");
     if (!admin_.Load()) Log("admin.json ilegivel: valem os padroes");
     StartCompanyList();   // rc.4: antes da conta, para os nomes da lista ja valerem na primeira recebida
@@ -638,17 +767,6 @@ void DesktopApp::Initialize() {
         Log(std::string("iniciar com o Windows: o registro diz ") + (observed.startWithWindows ? "ligado" : "desligado"));
         SaveSettings(observed);
     }
-
-    ApplyAdminLimits();
-    const Settings settings = settings_.Get();
-    controller_->SetDoNotDisturb(settings.doNotDisturb);
-    controller_->SetAutoAnswer(settings.autoAnswer, settings.autoAnswerSeconds * 1000);
-    if (hooks_.updateChannel) hooks_.updateChannel(admin_.Get().canal);
-    recentsSeenMs_ = clock_.NowMs();
-    ApplyAudio();
-
-    const std::optional<SavedAccount> active = accounts_.Active();
-    if (active) ActivateStored(*active);
 }
 
 // Entrar (spec do Windows 7.1): as validacoes na ordem, e a conta registra (no fim da ligacao, se ha uma).
@@ -745,7 +863,15 @@ void DesktopApp::ApplyLogin(const LoginOutcome& outcome) {
         std::string id;
         if (accounts_.Save(account)) {
             id = accounts_.LastSavedId();
-            if (!accounts_.SetActive(id)) Log("contas.json: a conta em uso nao foi gravada");
+            if (!accounts_.SetActive(id)) {
+                Log("contas.json: a conta em uso nao foi gravada");
+            } else if (IPhone() && request.accountId.empty()) {
+                // Uma conta por iPhone (spec do iPhone, 4.2): a nova toma o lugar da que estava. O Editar (com o
+                // contaId) e a mesma conta.
+                for (const SavedAccount& other : accounts_.All()) {
+                    if (other.id != id && !accounts_.Remove(other.id)) Log("contas.json: a conta de antes nao saiu");
+                }
+            }
         } else {
             Log("contas.json: a conta nao foi gravada (fica so nesta abertura)");
         }
@@ -1026,7 +1152,7 @@ void DesktopApp::SaveSettings(const Settings& settings) {
 }
 
 void DesktopApp::OpenExternal(const std::string& url) {
-    if (!AllowedUrl(url)) {
+    if (!AllowedUrl(url, config_.platform)) {
         Log("openExternal recusado: " + url.substr(0, 120));
         return;
     }
@@ -1147,6 +1273,20 @@ BridgeState DesktopApp::BuildState() const {
     state.company.updatedMs = company_.UpdatedMs();
     state.company.count = companyCount_;
     state.company.seq = companySeq_;
+    if (IPhone()) {
+        // O modo iPhone (docs/ponte-windows.md, "O estado no iPhone"): os campos do PC continuam, com o valor neutro, e
+        // os do iPhone com os de fabrica (a agenda, a rota de audio e o bipe ao digitar).
+        state.accounts.erase(std::remove_if(state.accounts.begin(), state.accounts.end(),
+                                            [](const AccountView& view) { return !view.inUse; }),
+                             state.accounts.end());   // uma conta por iPhone: so a em uso
+        state.contacts.clear();
+        state.audio = AudioView();   // quem escolhe o caminho do som e o iPhone (rotaAudio)
+        state.startWithWindows = false;
+        state.shortcuts.clear();
+        state.admin = AdminView();   // o de fabrica: fechado, com os dois botoes, sem o BLF e sem o puxar
+        state.company = CompanyView();
+        state.iphone = IPhoneView();
+    }
     return state;
 }
 
@@ -1267,6 +1407,7 @@ std::vector<std::string> DesktopApp::BlfNumbers() const {
 // Depois de cada tarefa da fila: a lista do BLF no motor segue os atalhos, o administrador e a conta em uso. A conta
 // nova (ou nenhuma) comeca sem lista no motor (SetAccount e RemoveAccount a esvaziam) e sem estados.
 void DesktopApp::UpdateBlf() {
+    if (IPhone()) return;   // sem o BLF no iPhone (spec do iPhone, 6.1): nada e assinado
     const bool live = engineAccountId_ != 0 && !loginRequest_;
     if (!live || blfAccount_ != engineAccountId_) {
         blfWatched_.clear();

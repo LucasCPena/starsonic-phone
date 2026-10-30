@@ -2,7 +2,8 @@
 // O nucleo do app de PC (spec da W1, secoes 6 e 7), em C++ portatil: junta o controlador de ligacoes, as lojas
 // (contas, contatos, recentes e configuracoes), a migracao da rc.7 e o registro da conta, e conversa com a
 // interface pelo protocolo da ponte (Protocol.h, docs/ponte-windows.md). O executavel do Windows so o hospeda: da
-// a ele o motor (CallEngine e RegistrationPort), o disco, o cifrador, o relogio, o agendador e os ganchos (hooks).
+// a ele o motor (CallEngine e RegistrationPort), o disco, o cifrador, o relogio, o agendador e os ganchos (hooks). O
+// app do iPhone o hospeda do mesmo jeito, com DesktopConfig::platform IPhone (o modo iPhone, abaixo).
 //
 // Concorrencia:
 // - Uma thread de comandos (o Executor; o SerialExecutor quando nenhum e dado) faz tudo o que o DesktopApp decide:
@@ -99,7 +100,12 @@ struct DesktopPaths {
     LegacyPaths legacy;
 };
 
+// Onde o nucleo roda (spec do iPhone, 6.1): o app de PC (o Windows) ou o app do iPhone.
+enum class Platform { Windows, IPhone };
+
 struct DesktopConfig {
+    // IPhone: o modo iPhone do docs/ponte-windows.md ("O modo iPhone"; ver o DesktopApp abaixo). Windows: o de sempre.
+    Platform platform = Platform::Windows;
     DesktopPaths paths;
     Profile profile;                 // o perfil embutido (ParseProfile): o protocolo padrao, o ddi e o prefixo
     std::string version;             // a versao do app (versao, no estado)
@@ -185,6 +191,19 @@ struct DesktopHooks {
 //   - Os nomes (na recebida, nos Recentes, na perdida): o meu contato com o numero, depois o da lista da empresa,
 //     depois o que a central mandou.
 //   O diagnostico nunca leva o link nem os nomes e os numeros dos contatos: so o tipo da fonte e as contagens.
+// - O modo iPhone (DesktopConfig::platform IPhone; spec do iPhone, 4.2, 6.1 e 7.1; docs/ponte-windows.md, "O modo
+//   iPhone"):
+//   - O estado leva plataforma "ios", a agenda, a rota de audio e o bipeTecla, e os campos do PC com o valor neutro
+//     (contas so com a em uso, sem contatos nem atalhos, o administrador de fabrica, sem a lista da empresa e sem os
+//     dispositivos de som).
+//   - A abertura le so as contas, os Recentes e as configuracoes: sem os meus contatos, os atalhos, o admin.json (vale
+//     o de fabrica), a lista da empresa e a migracao da rc.7, e sem o BLF.
+//   - Uma conta so: o Entrar que registra uma conta nova deixa so ela no contas.json. O Sair e o removeAccount da em
+//     uso, como no Windows.
+//   - Os comandos do PC (a janela, o quit, a troca de conta, o som, o Iniciar com o Windows, os meus contatos, os
+//     atalhos, a area do administrador, as planilhas, a lista da empresa e a atualizacao) sao recusados inteiros, com
+//     uma linha no diagnostico; no Windows, os do iPhone tambem. O openExternal aceita o tel: do suporte e recusa o
+//     codigo-fonte.
 class DesktopApp : public EngineListener {
 public:
     // O tempo do Entrar (spec do Windows 7.1).
@@ -262,10 +281,12 @@ private:
         std::optional<LoginRequest> login;
     };
 
+    bool IPhone() const { return config_.platform == Platform::IPhone; }
     // Na thread de comandos (todas abaixo).
     void Post(std::function<void()> task);
     void Execute(const Command& command);
     void Initialize();
+    void StartPcParts();
     void HandleLogin(const Command& command);
     void StartLogin(const LoginRequest& request);
     void ApplyLogin(const LoginOutcome& outcome);
