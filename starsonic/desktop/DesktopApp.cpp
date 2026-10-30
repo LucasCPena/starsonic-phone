@@ -806,6 +806,12 @@ void DesktopApp::Initialize() {
     if (started_) return;
     started_ = true;
     if (!accounts_.Load()) Log("contas.json ilegivel: lido como vazio (o arquivo fica ate a proxima gravacao)");
+    if (IPhone()) {
+        // Uma conta por iPhone: a que nao e a em uso (a limpeza de um Entrar que o disco recusou) sai sem registrar.
+        const std::optional<SavedAccount> inUse = accounts_.Active();
+        const int removed = KeepOnlyAccount(inUse ? inUse->id : std::string());
+        if (removed > 0) Log("contas.json: contas fora de uso tiradas na abertura: " + std::to_string(removed));
+    }
     if (!IPhone() && !contacts_.Load()) Log("contatos.json ilegivel: lido como vazio");
     if (!recents_.Load()) Log("recentes.json ilegivel: lido como vazio");
     if (!settings_.Load()) Log("config.json ilegivel: valem os padroes");
@@ -953,9 +959,7 @@ void DesktopApp::ApplyLogin(const LoginOutcome& outcome) {
             } else if (IPhone() && request.accountId.empty()) {
                 // Uma conta por iPhone (spec do iPhone, 4.2): a nova toma o lugar da que estava. O Editar (com o
                 // contaId) e a mesma conta.
-                for (const SavedAccount& other : accounts_.All()) {
-                    if (other.id != id && !accounts_.Remove(other.id)) Log("contas.json: a conta de antes nao saiu");
-                }
+                KeepOnlyAccount(id);
             }
         } else {
             Log("contas.json: a conta nao foi gravada (fica so nesta abertura)");
@@ -1048,11 +1052,25 @@ void DesktopApp::RemoveAccount(const std::string& id) {
     if (!wasActive) return;
     DropEngineAccount();
     const std::vector<SavedAccount> rest = accounts_.All();
-    if (rest.empty()) {
+    // No iPhone, o Sair volta sempre ao Entrar: uma conta que ficou no contas.json nunca registra no lugar da que saiu.
+    if (rest.empty() || IPhone()) {
         ResetLogin();
         return;
     }
     SwitchTo(rest.front().id);
+}
+
+int DesktopApp::KeepOnlyAccount(const std::string& keep) {
+    int removed = 0;
+    for (const SavedAccount& other : accounts_.All()) {
+        if (other.id == keep) continue;
+        if (accounts_.Remove(other.id)) {
+            ++removed;
+        } else {
+            Log("contas.json: a conta de antes nao saiu");
+        }
+    }
+    return removed;
 }
 
 void DesktopApp::SwitchTo(const std::string& id) {

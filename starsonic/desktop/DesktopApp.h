@@ -335,6 +335,8 @@ private:
     void HandleRegistration(int sipCode, bool active, int accountId);
     void SelectAccount(const std::string& id);
     void RemoveAccount(const std::string& id);
+    // (iPhone) Tira do contas.json as contas que nao sao keep ("": todas); devolve quantas sairam.
+    int KeepOnlyAccount(const std::string& keep);
     void SwitchTo(const std::string& id);
     void CancelPasswordSwitch();
     void ActivateStored(const SavedAccount& account);

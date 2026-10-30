@@ -320,11 +320,94 @@ TEST_CASE("Sair on the iPhone is removeAccount: refused during a call, otherwise
     CHECK(h.port.accounts.size() == 1);   // nenhuma conta registrou na abertura
 }
 
+TEST_CASE("the iPhone start leaves only the account in use in contas.json") {
+    // Um contas.json com outra conta (a limpeza de um Entrar que o disco recusou): a abertura a tira, sem registra-la,
+    // e o diagnostico ganha uma linha so com a quantidade.
+    Harness h(Platform::IPhone);
+    h.SeedAccount(L"outro.example.com", L"3001", L"outra", false);
+    const std::string id = h.StartRegistered();
+    const json saved = h.File("dados/contas.json")["contas"];
+    REQUIRE(saved.size() == 1);
+    CHECK(saved[0]["id"] == id);
+    CHECK(h.port.accounts.size() == 1);   // so a em uso registrou
+    CHECK(h.Logged("contas.json: contas fora de uso tiradas na abertura: 1"));
+    for (const std::string& line : h.logs) {
+        INFO(line);
+        CHECK(line.find("outro.example.com") == std::string::npos);
+        CHECK(line.find("3001") == std::string::npos);
+    }
+    // Sem conta em uso, nenhuma fica (o Entrar e a tela).
+    Harness none(Platform::IPhone);
+    none.SeedAccount(L"pbx.example.com", L"2001", L"segredo", false);
+    none.SeedAccount(L"outro.example.com", L"3001", L"outra", false);
+    none.Start();
+    CHECK(none.File("dados/contas.json")["contas"] == json::array());
+    CHECK(none.State()["tela"] == "entrar");
+    CHECK(none.port.accounts.empty());
+    CHECK(none.Logged("contas.json: contas fora de uso tiradas na abertura: 2"));
+
+    // No Windows, as duas ficam (a lista de contas, como hoje).
+    Harness pc;
+    pc.SeedAccount(L"outro.example.com", L"3001", L"outra", false);
+    pc.StartRegistered();
+    CHECK(pc.File("dados/contas.json")["contas"].size() == 2);
+    CHECK(pc.State()["contas"].size() == 2);
+    CHECK_FALSE(pc.Logged("fora de uso"));
+}
+
+TEST_CASE("Sair on the iPhone goes back to Entrar even with another account left in contas.json") {
+    // A outra conta ficou no contas.json: o disco recusou a limpeza da abertura (o mesmo que deixa a de um Entrar).
+    Harness h(Platform::IPhone);
+    h.SeedAccount(L"outro.example.com", L"3001", L"outra", false);
+    const std::string id = h.SeedAccount(L"pbx.example.com", L"2001", L"segredo", true);
+    h.files.failWrites = true;
+    h.Start();
+    h.files.failWrites = false;
+    h.app->OnRegistration(200, true, h.port.LastId());
+    h.Run();
+    REQUIRE(h.File("dados/contas.json")["contas"].size() == 2);
+    REQUIRE(h.State()["conta"]["id"] == id);
+    REQUIRE(h.port.accounts.size() == 1);
+
+    // O Sair da em uso: ela desregistra e sai, e a tela volta ao Entrar vazio; a outra nao registra.
+    h.Send(R"({"v":1,"cmd":"removeAccount","contaId":")" + id + R"("})");
+    CHECK(h.port.removes == 1);
+    CHECK(h.port.accounts.size() == 1);
+    const json state = h.State();
+    CHECK(state["tela"] == "entrar");
+    CHECK(state["conta"].is_null());
+    CHECK(state["contas"] == json::array());
+    CHECK(state["entrar"]["contaId"] == "");
+    CHECK(state["entrar"]["servidor"] == "");
+    CHECK(state["entrar"]["ramal"] == "");
+    // A proxima abertura tira a outra, e nada registra.
+    h.Restart();
+    CHECK(h.File("dados/contas.json")["contas"] == json::array());
+    CHECK(h.State()["tela"] == "entrar");
+    CHECK(h.port.accounts.size() == 1);
+
+    // No Windows, o mesmo Sair troca para a outra conta, como hoje.
+    Harness pc;
+    const std::string other = pc.SeedAccount(L"outro.example.com", L"3001", L"outra", false);
+    const std::string pcId = pc.StartRegistered();
+    pc.Send(R"({"v":1,"cmd":"removeAccount","contaId":")" + pcId + R"("})");
+    CHECK(pc.State()["tela"] == "principal");
+    CHECK(pc.State()["conta"]["id"] == other);
+    REQUIRE(pc.port.accounts.size() == 2);
+    CHECK(pc.port.accounts.back().address == L"outro.example.com");
+}
+
 TEST_CASE("every PC command is refused on the iPhone without changing anything") {
     Harness h(Platform::IPhone);
-    // Uma segunda conta no disco, para o selectAccount ter para onde trocar: o estado do iPhone so mostra a em uso.
+    // Uma segunda conta no disco, para o selectAccount ter para onde trocar (ela fica porque o disco recusou a limpeza
+    // da abertura): o estado do iPhone so mostra a em uso.
     const std::string other = h.SeedAccount(L"outro.example.com", L"3001", L"outra", false);
-    const std::string id = h.StartRegistered();
+    const std::string id = h.SeedAccount(L"pbx.example.com", L"2001", L"segredo", true);
+    h.files.failWrites = true;
+    h.Start();
+    h.files.failWrites = false;
+    h.app->OnRegistration(200, true, h.port.LastId());
+    h.Run();
     REQUIRE(h.File("dados/contas.json")["contas"].size() == 2);
     REQUIRE(h.State()["contas"].size() == 1);
     CHECK(h.State()["contas"][0]["id"] == id);
