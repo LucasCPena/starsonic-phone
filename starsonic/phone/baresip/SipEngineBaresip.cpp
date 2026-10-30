@@ -5,9 +5,11 @@
 #include <re.h>
 #include <baresip.h>
 
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -20,14 +22,17 @@
 #include "BaresipCalls.h"
 #include "BaresipLoop.h"
 #include "EngineEvents.h"
+#include "NullAudio.h"
 #include "PushDataCheck.h"
-#include "SipEngineTestAccess.h"   // os métodos dela, quando houver, ficam aqui: eles leem o Impl
+#include "SipEngineTestAccess.h"   // os métodos dela ficam aqui: eles leem o Impl
 
 namespace starsonic {
 namespace {
 
 const int kNullAudioDevice = -2;      // o id do dispositivo nulo, o mesmo do motor do PJSIP
 const int kDefaultAudioDevice = -1;   // o padrão do sistema
+// Quanto um pedido que manda re-INVITE espera a renegociação anterior da ligação, como no motor do PJSIP.
+const int kRenegotiationWaitMs = 2000;
 
 // A libre e o baresip têm estado global: um motor por processo.
 std::mutex g_aliveMutex;
@@ -192,7 +197,7 @@ public:
     }
 
     // A conta basta, mesmo sem registro. A URI é sip:<número>@<domínio da conta>[:<porta>], e numa conta TCP leva o
-    // ;transport=tcp.
+    // ;transport=tcp. Com uma ligação confirmada fora da espera, ela vai para a espera antes (RunRenegotiating).
     int MakeCall(const std::string& number) {
         std::lock_guard<std::mutex> lock(apiMutex_);
         if (!account_ || number.empty()) {
@@ -200,7 +205,7 @@ public:
             return -1;
         }
         int id = -1;
-        loop_->Run([&] {
+        RunRenegotiating([&] {
             const std::string uri =
                 "sip:" + number + "@" + account_->CallHost() + (account_->Tcp() ? ";transport=tcp" : "");
             id = calls_.Make(account_->Ua(), uri);
@@ -208,10 +213,11 @@ public:
         return id;
     }
 
+    // A atendida vira a ativa, e a outra vai para a espera antes do 200 (RunRenegotiating).
     bool Answer(int callId) {
         std::lock_guard<std::mutex> lock(apiMutex_);
         bool done = false;
-        loop_->Run([&] { done = calls_.Answer(callId); });
+        RunRenegotiating([&] { done = calls_.Answer(callId); });
         return done;
     }
 
@@ -229,8 +235,21 @@ public:
         return done;
     }
 
-    bool Activate(int /*callId*/) { return false; }
-    bool SetHold(int /*callId*/, bool /*hold*/) { return false; }
+    // A troca da ativa, a espera e a retomada, cada uma depois da renegociação anterior da ligação (RunRenegotiating).
+    bool Activate(int callId) {
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        bool done = false;
+        RunRenegotiating([&] { done = calls_.Activate(callId); });
+        return done;
+    }
+
+    bool SetHold(int callId, bool hold) {
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        bool done = false;
+        RunRenegotiating([&] { done = calls_.SetHold(callId, hold); });
+        return done;
+    }
+
     void SetMute(bool /*muted*/) {}
     bool SendDtmf(int /*callId*/, const std::string& /*digits*/) { return false; }
     bool Transfer(int /*callId*/, const std::string& /*number*/) { return false; }
@@ -286,6 +305,22 @@ public:
 
     void RefreshAudioDevices() {}
 
+    // Os testes (SipEngineTestAccess), dentro do Run: o laço já acabou a volta de agora, com os eventos e os
+    // temporizadores dela.
+    std::vector<int> CallsWithAudio() {
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        std::vector<int> ids;
+        loop_->Run([&] { ids = calls_.CallsWithAudio(); });
+        return ids;
+    }
+
+    int OpenMicrophones() {
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        int count = 0;
+        loop_->Run([&] { count = OpenNullSources(); });
+        return count;
+    }
+
 private:
     // Sem o padrão (-1), como no motor do PJSIP; com nullAudio, o dispositivo nulo.
     std::vector<AudioDevice> ListAudioDevices() const {
@@ -308,6 +343,28 @@ private:
     // O log do motor, para a conta e as ligações (qualquer thread).
     BaresipLoop::LogSink Sink() const {
         return [this](int level, const std::string& line) { Log(level, line); };
+    }
+
+    // Com a apiMutex_: um pedido do BaresipCalls que manda re-INVITE (Make, Answer, Activate ou SetHold), no laço. Se
+    // ele esbarra numa renegociação ainda no ar (Blocked), a espera é aqui, fora do Run, pelo fim dela (até ~2 s desde
+    // o primeiro pedido), e ele vai de novo; passado o prazo, ele vai uma última vez.
+    void RunRenegotiating(const std::function<void()>& work) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(kRenegotiationWaitMs);
+        for (;;) {
+            bool blocked = false;
+            uint64_t seen = 0;
+            const bool ran = loop_->Run([&] {
+                work();
+                blocked = calls_.Blocked();
+                seen = calls_.Negotiations();
+            });
+            if (!ran || !blocked) return;
+            if (std::chrono::steady_clock::now() >= deadline) {
+                Log(2, "a renegociacao anterior da ligacao nao terminou a tempo: pedido recusado");
+                return;
+            }
+            calls_.WaitNegotiation(seen, deadline);
+        }
     }
 
     // Com a apiMutex_: as ligações da conta acabam, com o Disconnected de sempre, e as que chegarem até a conta sair
@@ -440,5 +497,11 @@ int SipEngine::CallCount() const { return impl_->CallCount(); }
 bool SipEngine::HasCall() const { return impl_->CallCount() > 0; }
 
 std::vector<int> SipEngine::AudioLinks(int callId) const { return impl_->AudioLinks(callId); }
+
+std::vector<int> SipEngineTestAccess::CallsWithAudio(const SipEngine& engine) {
+    return engine.impl_->CallsWithAudio();
+}
+
+int SipEngineTestAccess::OpenMicrophones(const SipEngine& engine) { return engine.impl_->OpenMicrophones(); }
 
 }  // namespace starsonic

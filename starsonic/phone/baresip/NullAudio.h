@@ -15,4 +15,8 @@ int RegisterNullAudio();
 // Tira as duas do baresip (sem nada registrado, nada). Na thread do laço, sem nenhuma ligação.
 void UnregisterNullAudio();
 
+// Quantas fontes nulas (os microfones das ligações) estão abertas agora, para os testes (SipEngineTestAccess). De
+// qualquer thread.
+int OpenNullSources();
+
 }  // namespace starsonic

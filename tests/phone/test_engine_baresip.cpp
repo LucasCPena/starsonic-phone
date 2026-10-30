@@ -2,7 +2,8 @@
 // de diferente do do PJSIP (os dispositivos de som e o BLF, spec 6.1, os dados de push no REGISTER, spec 7.3, também
 // durante uma ligação, e a URI das ligações de uma conta TCP) e o que só aqui é conferido (o keep-alive, o motor
 // destruído e criado de novo com a conta, os códigos das ligações encerradas aqui, o CANCEL e o BYE do Hangup que
-// esperam a resposta do outro lado e a ligação que chega com a conta saindo). O motor do PJSIP tem os testes dele
+// esperam a resposta do outro lado, a ligação que chega com a conta saindo e, pelo SipEngineTestAccess, o áudio de
+// cada ligação: com duas, só a ativa fica com o microfone, spec 7.7). O motor do PJSIP tem os testes dele
 // (test_engine_pjsip.cpp).
 #include "call_fixture.h"
 #include "engine_fixture.h"
@@ -19,6 +20,7 @@
 
 #include "BaresipLoop.h"
 #include "SipEngine.h"
+#include "SipEngineTestAccess.h"
 
 using namespace starsonic;
 using phone_test::Contains;
@@ -60,6 +62,11 @@ Lines PushTokenHeader(const FakeRegistrar& registrar) { return registrar.Control
 int Keepalives(const FakeRegistrar& registrar) {
     const Lines reply = registrar.Control("KEEPALIVES");
     return reply.empty() ? -1 : std::stoi(reply[0]);
+}
+
+// Espera até kWaitSeconds que as ligações com o áudio aberto sejam as de expected (em ordem crescente).
+bool WaitAudio(const SipEngine& engine, const std::vector<int>& expected) {
+    return WaitUntil([&] { return SipEngineTestAccess::CallsWithAudio(engine) == expected; }, kWaitSeconds);
 }
 
 }  // namespace
@@ -419,4 +426,92 @@ TEST_CASE("SetPushData during a call registers again and keeps the call") {
     CHECK_FALSE(RecordingListener::StateReached(id, CallState::Disconnected)(phone.listener.Calls()));
     CHECK(phone.engine->CallCount() == 1);
     CHECK(phone.engine->AudioLinks(id) == std::vector<int>{0});
+}
+
+TEST_CASE("only the active call has the microphone and the speaker open") {
+    Phone phone;
+    INFO(phone.listener.CallsText());
+    INFO(phone.registrar.LogText());
+    int first = 0, second = 0;
+    phone.TwoCalls(&first, &second);
+    CHECK(WaitAudio(*phone.engine, {second}));
+    REQUIRE(phone.engine->Activate(first));
+    CHECK(WaitAudio(*phone.engine, {first}));
+    REQUIRE(phone.engine->Hangup(first));
+    REQUIRE(phone.WaitState(first, CallState::Disconnected));
+    CHECK(WaitAudio(*phone.engine, {}));   // a outra segue em espera
+    REQUIRE(phone.engine->Activate(second));
+    CHECK(WaitAudio(*phone.engine, {second}));
+}
+
+TEST_CASE("the microphone of a call on hold stays closed after the answer to each re-INVITE") {
+    Phone phone;
+    INFO(phone.listener.CallsText());
+    INFO(phone.registrar.LogText());
+    // Ao aplicar cada SDP de uma ligação só de envio (a em espera), o baresip abre de novo a fonte de som dela, e o
+    // audio_started dela continua false: só a conta das fontes abertas mostra esse microfone.
+    int first = 0, second = 0;
+    phone.TwoCalls(&first, &second);
+    // O 200 do re-INVITE da espera da primeira chegou antes do ACK da segunda: o registrador responde na ordem.
+    CHECK(SipEngineTestAccess::OpenMicrophones(*phone.engine) == 1);
+    REQUIRE(phone.engine->Activate(first));   // a segunda vai para a espera, e depois a primeira volta
+    // A resposta à retomada da primeira (o áudio dela aberto) vem depois da resposta à espera da segunda.
+    REQUIRE(WaitAudio(*phone.engine, {first}));
+    CHECK(SipEngineTestAccess::OpenMicrophones(*phone.engine) == 1);
+}
+
+TEST_CASE("a call loses its audio as soon as it is put on hold, before the answer to the re-INVITE") {
+    FakeRegistrar registrar("senha");
+    DelayedUdpRelay relay(registrar.port(), 300);   // cada resposta chega 600 ms depois do pedido
+    RecordingListener listener;
+    INFO(listener.CallsText());
+    INFO(registrar.LogText());
+    std::unique_ptr<SipEngine> engine = StartEngine(&listener, LoadProfile(relay.port()));
+    REQUIRE(engine->SetAccount(Input(Transport::Udp)));
+    REQUIRE(listener.WaitFor(RecordingListener::Reached(200, true, 1), kWaitSeconds));
+    const int id = engine->MakeCall("2002");
+    REQUIRE(id > 0);
+    REQUIRE(listener.WaitForCalls(RecordingListener::StateReached(id, CallState::Confirmed), kWaitSeconds));
+    REQUIRE(WaitAudio(*engine, {id}));
+    REQUIRE(engine->SetHold(id, true));
+    CHECK(SipEngineTestAccess::CallsWithAudio(*engine).empty());
+    CHECK(SipEngineTestAccess::OpenMicrophones(*engine) == 0);
+    CHECK(engine->AudioLinks(id).empty());
+    CHECK(registrar.WaitForLog("reinv-in 2002 sendonly", kWaitSeconds));
+}
+
+TEST_CASE("a call confirmed while the other one is the active stays without audio until Activate") {
+    FakeRegistrar registrar("senha");
+    DelayedUdpRelay relay(registrar.port(), 300);   // cada resposta chega 600 ms depois do pedido
+    RecordingListener listener;
+    INFO(listener.CallsText());
+    INFO(registrar.LogText());
+    std::unique_ptr<SipEngine> engine = StartEngine(&listener, LoadProfile(relay.port()));
+    REQUIRE(engine->SetAccount(Input(Transport::Udp)));
+    REQUIRE(listener.WaitFor(RecordingListener::Reached(200, true, 1), kWaitSeconds));
+    const int first = engine->MakeCall("2002");
+    REQUIRE(first > 0);
+    REQUIRE(listener.WaitForCalls(RecordingListener::StateReached(first, CallState::Confirmed), kWaitSeconds));
+    // A resposta à espera (o SDP espelhado, recvonly) entra no log quando chega, na mesma volta do laço que a trata: o
+    // pedido seguinte ao motor já a encontra tratada.
+    listener.CountLog("a=recvonly");
+    REQUIRE(engine->SetHold(first, true));
+    REQUIRE(WaitUntil([&listener] { return listener.LogCount("a=recvonly") > 0; }, kWaitSeconds));
+    // A segunda chama (a ativa), e a primeira volta a ser a ativa antes de a segunda ser confirmada: como no motor do
+    // PJSIP, a segunda fica sem o som e fora da espera.
+    const int second = engine->MakeCall("2003");
+    REQUIRE(second > 0);
+    REQUIRE(engine->Activate(first));
+    REQUIRE(listener.WaitForCalls(RecordingListener::StateReached(second, CallState::Confirmed), kWaitSeconds));
+    CHECK(WaitAudio(*engine, {first}));
+    CHECK(engine->AudioLinks(second).empty());
+    CHECK(SipEngineTestAccess::OpenMicrophones(*engine) == 1);
+    // A segunda vira a ativa sem re-INVITE dela, e a primeira vai para a espera.
+    REQUIRE(engine->Activate(second));
+    CHECK(WaitAudio(*engine, {second}));
+    CHECK(engine->AudioLinks(second) == std::vector<int>{0});
+    CHECK(WaitUntil([&registrar] { return phone_test::LogCount(registrar, "reinv-in 2002 sendonly") == 2; },
+                    kWaitSeconds));
+    CHECK(registrar.Log() == Lines{"inv-in 2002 200", "reinv-in 2002 sendonly", "inv-in 2003 200",
+                                   "reinv-in 2002 sendrecv", "reinv-in 2002 sendonly"});
 }

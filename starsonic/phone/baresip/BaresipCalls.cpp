@@ -1,7 +1,9 @@
 #include "BaresipCalls.h"
 
+#include <algorithm>
 #include <cerrno>
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <utility>
 
@@ -9,6 +11,10 @@
 
 namespace starsonic {
 namespace {
+
+// Uma recusa do re-INVITE (4xx a 6xx) acaba a renegociação sem nenhum evento do baresip: quem espera a renegociação
+// anterior de uma ligação (WaitNegotiation) confere de novo a cada 20 ms.
+const int kNegotiationRecheckMs = 20;
 
 // Quem liga: o usuário do From (o número), sem os escapes da URI, como no motor do PJSIP, e o nome de exibição como
 // veio (sem as aspas; UTF-8).
@@ -47,11 +53,19 @@ struct BaresipCalls::Hooks {
         } catch (...) {
         }
     }
+
+    static void StopAudio(void* arg) {
+        try {
+            static_cast<BaresipCalls*>(arg)->StopSilentAudio();
+        } catch (...) {
+        }
+    }
 };
 
 BaresipCalls::BaresipCalls(EventQueue& events, BaresipLoop::LogSink log, DtmfMethod /*dtmf*/)
     : events_(events), log_(std::move(log)) {
     tmr_init(&hangupTimer_);
+    tmr_init(&audioTimer_);
 }
 
 void BaresipCalls::OnEvent(enum bevent_ev ev, struct bevent* event) {
@@ -71,18 +85,29 @@ void BaresipCalls::OnEvent(enum bevent_ev ev, struct bevent* event) {
             PostState(slot->id, CallState::Early, ProgressCode(call));
             break;
         case BEVENT_CALL_ESTABLISHED:
-            // A feita: o 200 chegou e o ACK saiu. A recebida: o ACK chegou (o Connecting saiu no Answer).
+            // A feita: o 200 chegou e o ACK saiu. A recebida: o ACK chegou (o Connecting saiu no Answer), e o baresip
+            // acabou de abrir o áudio dela.
             if (slot->confirmed) break;
             slot->progressed = true;
             slot->confirmed = true;
             if (!slot->incoming) PostState(slot->id, CallState::Connecting, 200);
             PostState(slot->id, CallState::Confirmed, 200);
+            if (Silent(*slot)) tmr_start(&audioTimer_, 0, Hooks::StopAudio, this);
             break;
+        case BEVENT_CALL_REMOTE_SDP: {
+            // Um SDP do outro lado, que o baresip aplica depois deste aviso (update_media): com ele, abre de novo o
+            // áudio, também o de uma ligação só de envio. A resposta a uma oferta (answer) acaba a negociação dela.
+            const char* text = bevent_get_text(event);
+            if (text && std::strcmp(text, "answer") == 0) Negotiated();
+            if (Silent(*slot)) tmr_start(&audioTimer_, 0, Hooks::StopAudio, this);
+            break;
+        }
         case BEVENT_CALL_CLOSED: {
             const int id = slot->id;
             const int code = EndCode(*slot, call, bevent_get_text(event));
             Free(*slot);   // antes do aviso: o Count cai antes de o Disconnected chegar ao listener
             PostState(id, CallState::Disconnected, code);
+            Negotiated();   // quem espera a renegociação dela não espera mais
             break;
         }
         default:
@@ -91,12 +116,20 @@ void BaresipCalls::OnEvent(enum bevent_ev ev, struct bevent* event) {
 }
 
 int BaresipCalls::Make(struct ua* ua, const std::string& uri) {
+    blocked_ = false;
     Slot* slot = FreeSlot();
-    const Slot* other = slot ? Other(*slot) : nullptr;
+    Slot* other = slot ? Other(*slot) : nullptr;
     if (!slot || (other && !other->confirmed)) {
         Log(2, "ligacao para " + uri + " recusada: " +
                    (slot ? "a outra ligacao nao foi confirmada" : "ja ha duas ligacoes"));
         return -1;
+    }
+    if (other && !Held(*other)) {
+        if (OfferPending(*other)) {
+            blocked_ = true;
+            return -1;
+        }
+        (void)Renegotiate(*other, true);   // antes da nova, e fica em espera mesmo se a nova não sai
     }
     struct call* call = nullptr;
     const int err = ua_connect(ua, &call, nullptr, uri.c_str(), VIDMODE_OFF);
@@ -106,19 +139,30 @@ int BaresipCalls::Make(struct ua* ua, const std::string& uri) {
     }
     // Nenhuma resposta é lida antes de o Run acabar: o Calling vem antes de qualquer outro estado da ligação.
     Bind(*slot, call, false);
+    activeId_ = slot->id;
     PostState(slot->id, CallState::Calling, 0);
     return slot->id;
 }
 
 bool BaresipCalls::Answer(int id) {
+    blocked_ = false;
     Slot* slot = Find(id);
     if (!slot || !slot->incoming || slot->answered) return false;
+    Slot* other = Other(*slot);
+    if (other && other->confirmed && !Held(*other)) {
+        if (OfferPending(*other)) {
+            blocked_ = true;
+            return false;
+        }
+        (void)Renegotiate(*other, true);   // o re-INVITE da espera sai antes do 200
+    }
     const int err = call_answer(slot->call, 200, VIDMODE_OFF);
     if (err) {
         Log(2, "nao foi possivel atender a ligacao: " + BaresipLoop::ErrorText(err));
         return false;
     }
     slot->answered = true;
+    activeId_ = id;
     PostState(id, CallState::Connecting, 200);
     return true;
 }
@@ -137,12 +181,73 @@ bool BaresipCalls::Hangup(int id) {
     return true;
 }
 
+bool BaresipCalls::Activate(int id) {
+    blocked_ = false;
+    Slot* slot = Find(id);
+    if (!slot || !slot->confirmed) return false;
+    Slot* other = Other(*slot);
+    const bool holdOther = other && other->confirmed && !Held(*other);
+    const bool resume = Held(*slot);
+    const bool wasActive = activeId_ == id;
+    if (wasActive && !holdOther && !resume) return true;   // já é a ativa: nenhum re-INVITE
+    if ((holdOther && OfferPending(*other)) || (resume && OfferPending(*slot))) {
+        blocked_ = true;
+        return false;
+    }
+    activeId_ = id;
+    if (holdOther) (void)Renegotiate(*other, true);   // a outra vai para a espera antes, como no motor do PJSIP
+    if (resume) return Renegotiate(*slot, false);
+    if (!wasActive) {
+        // Confirmada fora da espera sem ser a ativa (a outra virou a ativa antes de esta ser confirmada): o áudio dela
+        // parou, e volta agora, sem re-INVITE.
+        const int err = audio_update(call_audio(slot->call));
+        if (err) Log(2, "o audio da ligacao nao voltou: " + BaresipLoop::ErrorText(err));
+    }
+    return true;
+}
+
+bool BaresipCalls::SetHold(int id, bool hold) {
+    if (!hold) return Activate(id);   // retomar é tornar a ativa
+    blocked_ = false;
+    Slot* slot = Find(id);
+    if (!slot || !slot->confirmed) return false;
+    if (Held(*slot)) return true;   // já em espera: nenhum re-INVITE
+    if (OfferPending(*slot)) {
+        blocked_ = true;
+        return false;
+    }
+    return Renegotiate(*slot, true);
+}
+
+bool BaresipCalls::Blocked() const { return blocked_; }
+
+uint64_t BaresipCalls::Negotiations() const {
+    std::lock_guard<std::mutex> lock(negotiationMutex_);
+    return negotiations_;
+}
+
+void BaresipCalls::WaitNegotiation(uint64_t seen, std::chrono::steady_clock::time_point deadline) {
+    const auto until =
+        std::min(deadline, std::chrono::steady_clock::now() + std::chrono::milliseconds(kNegotiationRecheckMs));
+    std::unique_lock<std::mutex> lock(negotiationMutex_);
+    negotiated_.wait_until(lock, until, [this, seen] { return negotiations_ != seen; });
+}
+
 int BaresipCalls::Count() const { return count_.load(); }
 
 std::vector<int> BaresipCalls::AudioLinks(int id) const {
     const Slot* slot = Find(id);
-    if (!slot || !slot->confirmed) return std::vector<int>();
+    if (!slot || !slot->confirmed || Silent(*slot)) return std::vector<int>();
     return std::vector<int>{0};
+}
+
+std::vector<int> BaresipCalls::CallsWithAudio() const {
+    std::vector<int> ids;
+    for (const Slot& slot : slots_) {
+        if (slot.id != 0 && audio_started(call_audio(slot.call))) ids.push_back(slot.id);
+    }
+    std::sort(ids.begin(), ids.end());
+    return ids;
 }
 
 void BaresipCalls::HangupAll() {
@@ -159,6 +264,7 @@ void BaresipCalls::EndAll() {
     for (Slot& slot : slots_) {
         if (slot.id != 0) End(slot, HangupCode(slot), false);
     }
+    tmr_cancel(&audioTimer_);   // sem ligações, nada a parar: nada dele sobra depois do laço
 }
 
 void BaresipCalls::OnInvite(const struct sip_msg* msg) {
@@ -274,6 +380,33 @@ int BaresipCalls::EndCode(const Slot& slot, const struct call* call, const char*
     return timedOut ? 408 : 503;
 }
 
+bool BaresipCalls::Held(const Slot& slot) const { return call_is_onhold(slot.call); }
+
+bool BaresipCalls::Silent(const Slot& slot) const { return slot.id != activeId_ || Held(slot); }
+
+bool BaresipCalls::OfferPending(const Slot& slot) const { return !call_refresh_allowed(slot.call); }
+
+bool BaresipCalls::Renegotiate(Slot& slot, bool hold) {
+    const int err = call_hold(slot.call, hold);
+    if (err) Log(2, std::string(hold ? "espera: " : "retomar: ") + BaresipLoop::ErrorText(err));
+    if (Silent(slot)) audio_stop(call_audio(slot.call));
+    return err == 0;
+}
+
+void BaresipCalls::StopSilentAudio() {
+    for (const Slot& slot : slots_) {
+        if (slot.id != 0 && Silent(slot)) audio_stop(call_audio(slot.call));
+    }
+}
+
+void BaresipCalls::Negotiated() {
+    {
+        std::lock_guard<std::mutex> lock(negotiationMutex_);
+        ++negotiations_;
+    }
+    negotiated_.notify_all();
+}
+
 void BaresipCalls::Bind(Slot& slot, struct call* call, bool incoming) {
     slot = Slot();
     slot.call = call;
@@ -283,6 +416,7 @@ void BaresipCalls::Bind(Slot& slot, struct call* call, bool incoming) {
 }
 
 void BaresipCalls::Free(Slot& slot) {
+    if (slot.id == activeId_) activeId_ = 0;   // a outra não vira a ativa sozinha: só com um Activate
     slot = Slot();
     Recount();
 }
@@ -321,6 +455,11 @@ BaresipCalls::Slot* BaresipCalls::FreeSlot() {
         if (slot.id == 0) return &slot;
     }
     return nullptr;
+}
+
+BaresipCalls::Slot* BaresipCalls::Other(const Slot& slot) {
+    Slot* other = &slot == &slots_[0] ? &slots_[1] : &slots_[0];
+    return other->id != 0 ? other : nullptr;
 }
 
 const BaresipCalls::Slot* BaresipCalls::Other(const Slot& slot) const {

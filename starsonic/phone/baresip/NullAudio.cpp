@@ -3,6 +3,8 @@
 #include <re.h>
 #include <baresip.h>
 
+#include <atomic>
+
 namespace starsonic {
 
 // O baresip guarda o ponteiro do nome, sem copiar.
@@ -12,18 +14,23 @@ namespace {
 
 struct ausrc* g_source = nullptr;
 struct auplay* g_player = nullptr;
+std::atomic<int> g_openSources{0};   // as fontes abertas agora (OpenNullSources)
 
 // O que o baresip recebe de cada abertura e só solta (mem_deref): nada a guardar.
 struct NullStream {
     char unused;
 };
 
+// O baresip soltou uma fonte (o audio_stop, a troca do codec ou o fim da ligação).
+void CloseSource(void* /*data*/) { --g_openSources; }
+
 // Abre sempre e nunca chama o rh: nenhuma amostra sai do microfone.
 int OpenSource(struct ausrc_st** stp, const struct ausrc* /*ausrc*/, struct ausrc_prm* /*prm*/,
                const char* /*device*/, ausrc_read_h* /*rh*/, ausrc_error_h* /*errh*/, void* /*arg*/) {
     if (!stp) return EINVAL;
-    void* stream = mem_zalloc(sizeof(NullStream), nullptr);
+    void* stream = mem_zalloc(sizeof(NullStream), CloseSource);
     if (!stream) return ENOMEM;
+    ++g_openSources;
     *stp = static_cast<struct ausrc_st*>(stream);
     return 0;
 }
@@ -52,5 +59,7 @@ void UnregisterNullAudio() {
     g_player = static_cast<struct auplay*>(mem_deref(g_player));
     g_source = static_cast<struct ausrc*>(mem_deref(g_source));
 }
+
+int OpenNullSources() { return g_openSources.load(); }
 
 }  // namespace starsonic
