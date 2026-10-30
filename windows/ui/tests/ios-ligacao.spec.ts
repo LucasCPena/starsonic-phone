@@ -1,9 +1,10 @@
 // A tela da ligação no modo iPhone (spec do iPhone, 4.1, 7.7 e 11.2; docs/ponte-windows.md, "O modo iPhone"), contra a
 // ponte falsa no modo iPhone, em cada tamanho do iPhone e nos dois temas: o botão Áudio com a saída de agora, que pede a
 // escolha do iPhone (o `audioRoute`), sem o Atalhos; o bipe das teclas (o `keyTone`, só com o Bipe ao digitar) no
-// Teclado e no teclado da ligação; e a área segura (Review Focus 4 da etapa 2) da tela da ligação, do teclado dela, dos
-// diálogos e do aviso de 2 s, com a área do toque de 44×44 px dos botões pequenos, o axe e as fotos
-// (test-results/capturas/ios-*.png) que vão ao responsável. No fim, o Windows sem nada disso.
+// Teclado e no teclado da ligação; o Transferir e o Consultar de uma sugestão da agenda (com o `contato`, a regra dos
+// contatos); e a área segura (Review Focus 4 da etapa 2) da tela da ligação, do teclado dela, dos diálogos e do aviso de
+// 2 s, com a área do toque de 44×44 px dos botões pequenos, o axe e as fotos (test-results/capturas/ios-*.png) que vão ao
+// responsável. No fim, o Windows sem nada disso.
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { abrir, comandos, depoisDoQueChegou, empurrar, esperarComando, mudarEstado, type Comando } from './helpers';
 import { abrirIos, areasDe44, capturarIos, dentroDaAreaSegura, noIphone, semViolacoesSerias, TAMANHOS_IPHONE, tamanhoDe } from './ios-helpers';
@@ -160,6 +161,45 @@ for (const tamanho of TAMANHOS_IPHONE) {
         await dentroDaAreaSegura(page, ['.vcard', '.call-keys .key', 'main.call-body button']);
       });
 
+      test('Transferir and Consultar with an agenda suggestion send contato, and an edit drops it', async ({ page }) => {
+        await abrirIos(page, 'ligacao', tamanho);
+        const numero = page.getByRole('textbox', { name: 'Número para transferir' });
+        const sugestao = page.locator('.call-suggest');
+        /** O painel do Transferir com o celular da Ana Souza escolhido na sugestão da agenda. */
+        const escolher = async () => {
+          await botao(page, 'Transferir').click();
+          await numero.fill('988');
+          await expect(sugestao.locator('.row-title')).toHaveText(['Ana Souza']);
+          await sugestao.click();
+          await expect(numero).toHaveValue('+55 11 98888-7777');
+        };
+        // A sugestão, sem mudança depois: o número vai com o contato (a regra dos contatos, como o dial da aba Contatos).
+        await escolher();
+        await botao(page, 'Consultar').click();
+        await esperarComando(page, { cmd: 'consult', numero: '+55 11 98888-7777', contato: true });
+        await botao(page, 'Cancelar').click();
+        await esperarComando(page, { cmd: 'cancelConsult' });
+        // Mudado depois de escolher (o último dígito apagado e digitado de novo): o número do campo, sem o contato.
+        await escolher();
+        await numero.press('End');
+        await numero.press('Backspace');
+        await numero.press('7');
+        await expect(numero).toHaveValue('+5511988887777');
+        await botao(page, 'Consultar').click();
+        await esperarComando(page, { cmd: 'consult', numero: '+5511988887777' });
+        await botao(page, 'Cancelar').click();
+        await esperarComando(page, { cmd: 'cancelConsult' });
+        // O Transferir agora com a sugestão, também com o contato.
+        await escolher();
+        await botao(page, 'Transferir agora').click();
+        await esperarComando(page, { cmd: 'transfer', numero: '+55 11 98888-7777', contato: true });
+        expect((await comandos(page)).filter((c) => c.cmd === 'consult' || c.cmd === 'transfer')).toEqual([
+          { v: 1, cmd: 'consult', numero: '+55 11 98888-7777', contato: true },
+          { v: 1, cmd: 'consult', numero: '+5511988887777' },
+          { v: 1, cmd: 'transfer', numero: '+55 11 98888-7777', contato: true },
+        ]);
+      });
+
       test('the dialogs and the toast stay inside the safe area', async ({ page }) => {
         await abrirIos(page, 'principal', tamanho);
         // O aviso de 2 s: dentro da área segura e em cima da navegação, como no Windows.
@@ -260,4 +300,35 @@ test('without plataforma the keys send no keyTone and Áudio keeps the device me
   await page.getByRole('group', { name: 'Teclado da ligação' }).getByRole('button', { name: '1', exact: true }).click();
   await esperarComando(page, { cmd: 'dtmf', digitos: '1' });
   expect((await comandos(page)).filter((c) => c.cmd === 'keyTone' || c.cmd === 'audioRoute')).toEqual([]);
+});
+
+// No Windows, o Transferir e o Consultar de uma sugestão (os meus contatos) mandam o número do campo, nunca o `contato`:
+// mudar o Transferir do Windows é decisão do responsável.
+test('without plataforma Transferir and Consultar from a suggestion never send contato', async ({ page }) => {
+  await abrir(page, 'ligacao');
+  const contato = { id: 'f0e1d2c3b4a59687', nome: 'Ana Celular', numero: '+55 11 98888-7777', observacao: '' };
+  await mudarEstado(page, (s) => ({ ...s, contatos: [...s.contatos, contato] }));
+  await depoisDoQueChegou(page);
+  const numero = page.getByRole('textbox', { name: 'Número para transferir' });
+  const sugestao = page.locator('.call-suggest');
+  for (const acao of ['Consultar', 'Transferir agora']) {
+    await botao(page, 'Transferir').click();
+    await numero.fill('988');
+    await expect(sugestao.locator('.row-title')).toHaveText(['Ana Celular']);
+    await sugestao.click();
+    await expect(numero).toHaveValue('+55 11 98888-7777');
+    await botao(page, acao).click();
+    if (acao === 'Consultar') {
+      await esperarComando(page, { cmd: 'consult', numero: '+55 11 98888-7777' });
+      await botao(page, 'Cancelar').click();
+      await esperarComando(page, { cmd: 'cancelConsult' });
+    }
+  }
+  await esperarComando(page, { cmd: 'transfer', numero: '+55 11 98888-7777' });
+  const enviados = (await comandos(page)).filter((c) => c.cmd === 'consult' || c.cmd === 'transfer');
+  expect(enviados).toEqual([
+    { v: 1, cmd: 'consult', numero: '+55 11 98888-7777' },
+    { v: 1, cmd: 'transfer', numero: '+55 11 98888-7777' },
+  ]);
+  expect(enviados.filter((c) => 'contato' in c)).toEqual([]);
 });

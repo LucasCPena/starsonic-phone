@@ -295,8 +295,9 @@ export type Command =
   | { cmd: 'hold'; on?: boolean }
   | { cmd: 'mute'; on?: boolean }
   | { cmd: 'dtmf'; digitos: string }
-  | { cmd: 'transfer'; numero: string }
-  | { cmd: 'consult'; numero: string }
+  /** `contato`: o número de um contato, com a regra dos contatos, como no `dial` (a interface só o manda no iPhone). */
+  | { cmd: 'transfer'; numero: string; contato?: boolean }
+  | { cmd: 'consult'; numero: string; contato?: boolean }
   | { cmd: 'completeTransfer' }
   | { cmd: 'cancelConsult' }
   | { cmd: 'swap' }

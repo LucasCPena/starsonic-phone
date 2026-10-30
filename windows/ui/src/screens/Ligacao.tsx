@@ -5,7 +5,9 @@
 // Teclado físico: os dígitos, * e # mandam DTMF só com o teclado da ligação aberto; Esc fecha o teclado e o painel
 // Atalhos. (rc.3) O botão Atalhos (com uma ligação atendida, fora da consulta e da conferência) abre o painel com os
 // atalhos no lugar dos controles. As sugestões do número do Transferir e da Nova ligação vêm de `contatos`: os do estado
-// e, no iPhone, os da agenda (um por número; um contato sem nome mostra o número).
+// e, no iPhone, os da agenda (um por número; um contato sem nome mostra o número). A da Nova ligação liga com a regra dos
+// contatos (o `contato` do dial); a do Transferir põe o número no campo e, no iPhone, o Consultar e o Transferir agora
+// dele, sem mudança depois, vão com o `contato` também.
 // (iPhone) O botão Áudio mostra a saída de agora (a `rotaAudio`: "iPhone", "Viva-voz" ou o nome do fone; "Áudio" sem
 // saber), com o nome "Áudio: <saída>", e pede a escolha do iPhone (o `audioRoute`: o hospedeiro mostra a dele), no
 // lugar do menu dos dispositivos; sem o botão Atalhos (fora da 1.0), uma ligação fica em três colunas (6 controles) e
@@ -180,8 +182,8 @@ interface NumberPanelProps {
   onCancel(): void;
   /** O toque numa sugestão (null: a sugestão só preenche o número). */
   onContact: ((c: Contact) => void) | null;
-  /** Os botões do painel, com o número digitado. */
-  actions(numero: string): ComponentChildren;
+  /** Os botões do painel, com o número digitado; `daSugestao`: ele veio de uma sugestão e não mudou depois. */
+  actions(numero: string, daSugestao: boolean): ComponentChildren;
   /** O Enter no campo (null: nada). */
   onEnter: ((numero: string) => void) | null;
 }
@@ -189,6 +191,8 @@ interface NumberPanelProps {
 /** O número do Transferir e da Nova ligação, com as sugestões dos contatos (como o Teclado). */
 function NumberPanel({ titulo, rotulo, contatos, onCancel, onContact, actions, onEnter }: NumberPanelProps) {
   const [numero, setNumero] = useState('');
+  // O número do campo veio de uma sugestão e não mudou depois.
+  const [daSugestao, setDaSugestao] = useState(false);
   const campo = useRef<HTMLInputElement>(null);
   useEffect(() => campo.current?.focus(), []);
   const digitos = digitsOnly(numero);
@@ -209,6 +213,7 @@ function NumberPanel({ titulo, rotulo, contatos, onCancel, onContact, actions, o
           const valor = e.currentTarget.value.replace(/[^0-9*#+]/g, '');
           e.currentTarget.value = valor;
           setNumero(valor);
+          setDaSugestao(false);
         }}
         onKeyDown={(e) => {
           if (e.key === 'Escape') {
@@ -224,7 +229,12 @@ function NumberPanel({ titulo, rotulo, contatos, onCancel, onContact, actions, o
       {sugestoes.length > 0 && (
         <div class="call-suggestions">
           {sugestoes.map((c) => (
-            <button type="button" key={c.id} class="suggest call-suggest" onClick={() => (onContact ? onContact(c) : setNumero(c.numero))}>
+            <button
+              type="button"
+              key={c.id}
+              class="suggest call-suggest"
+              onClick={() => (onContact ? onContact(c) : (setNumero(c.numero), setDaSugestao(true)))}
+            >
               <span class="avatar" aria-hidden="true">
                 {initials(c.nome)}
               </span>
@@ -237,7 +247,7 @@ function NumberPanel({ titulo, rotulo, contatos, onCancel, onContact, actions, o
           ))}
         </div>
       )}
-      <div class="call-panel-actions">{actions(numero)}</div>
+      <div class="call-panel-actions">{actions(numero, daSugestao)}</div>
       <button type="button" class="btn btn-ghost-dark" onClick={onCancel}>
         Cancelar
       </button>
@@ -553,22 +563,31 @@ export function Ligacao({ state, ligacao: l, contatos, send }: Props) {
         onCancel={() => setPainel(null)}
         onContact={null}
         onEnter={null}
-        actions={(numero) => (
-          <>
-            {/* O Consultar é a segunda ligação: com duas, não. */}
-            <button
-              type="button"
-              class="btn btn-outline-dark"
-              disabled={!numero || l.second !== null}
-              onClick={() => (setPainel(null), send({ cmd: 'consult', numero }))}
-            >
-              Consultar
-            </button>
-            <button type="button" class="btn btn-cyan" disabled={!numero} onClick={() => (setPainel(null), send({ cmd: 'transfer', numero }))}>
-              Transferir agora
-            </button>
-          </>
-        )}
+        actions={(numero, daSugestao) => {
+          // (iPhone) O número de uma sugestão da agenda, sem mudança depois, vai com a regra dos contatos (o `contato`).
+          const contato = ios && daSugestao ? { contato: true } : {};
+          return (
+            <>
+              {/* O Consultar é a segunda ligação: com duas, não. */}
+              <button
+                type="button"
+                class="btn btn-outline-dark"
+                disabled={!numero || l.second !== null}
+                onClick={() => (setPainel(null), send({ cmd: 'consult', numero, ...contato }))}
+              >
+                Consultar
+              </button>
+              <button
+                type="button"
+                class="btn btn-cyan"
+                disabled={!numero}
+                onClick={() => (setPainel(null), send({ cmd: 'transfer', numero, ...contato }))}
+              >
+                Transferir agora
+              </button>
+            </>
+          );
+        }}
       />
     );
   } else if (painel === 'nova') {
