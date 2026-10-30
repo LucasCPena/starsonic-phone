@@ -17,6 +17,27 @@ export type ShortcutAction = 'ligar' | 'transferir' | 'consulta' | 'teclas';
 export type BlfState = 'livre' | 'tocando' | 'ocupado' | 'desconectado';
 /** rc.3: o canal de atualização ("" = o do build). */
 export type UpdateChannel = 'teste' | 'estavel' | '';
+/** (iPhone) O modo iPhone (docs/ponte-windows.md, "O modo iPhone"). Sem `plataforma` no estado, a interface é a do Windows. */
+export type Platform = 'ios';
+/** (iPhone) O acesso aos contatos da agenda: ainda não perguntado, negado ou dado. */
+export type AgendaPermission = 'pendente' | 'negada' | 'concedida';
+
+/** (iPhone) A agenda no estado; os contatos vêm na mensagem `agenda`. */
+export interface AgendaSummary {
+  permissao: AgendaPermission;
+  /** Sobe a cada lista nova: é a `vez` da última mensagem `agenda` (0 sem nenhuma desde a abertura do app). */
+  vez: number;
+  /** Os contatos da última lista. */
+  quantos: number;
+}
+
+/** (iPhone) Um contato da agenda do iPhone (a mensagem `agenda`): só para ver e ligar. */
+export interface AgendaContact {
+  /** Pode ser "" (a interface mostra o primeiro número). */
+  nome: string;
+  /** Na ordem da agenda, sem os repetidos; nunca vazia (o contato sem número fica de fora). */
+  numeros: string[];
+}
 
 /** A tela Entrar (também Adicionar e Editar conta). A senha nunca vem. */
 export interface LoginForm {
@@ -222,9 +243,15 @@ export interface AppState {
   atalhos: Shortcut[];
   admin: AdminState;
   entrarAdmin: AdminLoginResult;
-  config: { bipeFim: boolean };
+  /** `bipeTecla` (iPhone): o "Bipe ao digitar". */
+  config: { bipeFim: boolean; bipeTecla?: boolean };
   /** (rc.4) */
   empresa: CompanyList;
+  /** (iPhone) Os campos abaixo só vêm no modo iPhone. */
+  plataforma?: Platform;
+  agenda?: AgendaSummary;
+  /** A saída de som de agora: "iPhone", "Viva-voz" ou o nome do fone; "" sem saber. */
+  rotaAudio?: string;
 }
 
 /** C++ → interface. */
@@ -235,7 +262,12 @@ export type IncomingMessage =
   | { v: number; type: 'update'; versao: string; notas: string }
   /** (rc.4) A lista da empresa inteira, na ordem da planilha: no `ready` (com `vez` > 0) e a cada lista nova. Fica a de
    *  `vez` mais alta; ela pode chegar antes do `state` com essa `vez`. */
-  | { v: number; type: 'contatosEmpresa'; vez: number; contatos: CompanyContact[] };
+  | { v: number; type: 'contatosEmpresa'; vez: number; contatos: CompanyContact[] }
+  /** (iPhone) A agenda do iPhone inteira: no `ready` (com `vez` > 0) e a cada lista nova. Fica a de `vez` mais alta,
+   *  como na contatosEmpresa. */
+  | { v: number; type: 'agenda'; vez: number; contatos: AgendaContact[] }
+  /** (iPhone) A pessoa tocou no aviso da perdida: a interface vai para os Recentes. */
+  | { v: number; type: 'abrir'; tela: 'recentes' };
 
 /** Interface → C++ (sem o `v`, que a ponte acrescenta). */
 export type Command =
@@ -273,7 +305,8 @@ export type Command =
   | { cmd: 'setDnd'; on: boolean }
   | { cmd: 'setAutoAnswer'; on: boolean; segundos?: number }
   | { cmd: 'setAudio'; microfone?: string; altoFalante?: string; toque?: string }
-  | { cmd: 'setSetting'; chave: 'iniciarComWindows' | 'bipeFim'; valor: boolean }
+  /** `bipeTecla` só no modo iPhone (o Windows recusa). */
+  | { cmd: 'setSetting'; chave: 'iniciarComWindows' | 'bipeFim' | 'bipeTecla'; valor: boolean }
   | { cmd: 'saveContact'; id?: string; nome: string; numero: string; observacao?: string }
   | { cmd: 'removeContact'; id: string }
   | { cmd: 'viewRecents' }
@@ -303,12 +336,22 @@ export type Command =
   | { cmd: 'importContacts' }
   | { cmd: 'exportContacts' }
   | { cmd: 'setCompanyList'; link: string }
-  | { cmd: 'refreshCompanyList' };
+  | { cmd: 'refreshCompanyList' }
+  /** (iPhone; o Windows recusa) A aba Contatos abriu; o Permitir do aviso dela; o botão Áudio da ligação; o bipe de uma
+   *  tecla (`0-9`, `*` ou `#`), só com `config.bipeTecla`. */
+  | { cmd: 'contactsOpened' }
+  | { cmd: 'allowContacts' }
+  | { cmd: 'audioRoute' }
+  | { cmd: 'keyTone'; tecla: string };
 
-/** Os únicos endereços que o openExternal aceita (nenhum tel:: o app é o tratador dele). */
+/**
+ * Os únicos endereços que o openExternal aceita. O `suporte` (o discador do iPhone) só vale no modo iPhone: no Windows o
+ * app é o tratador do tel:, e o C++ o recusa.
+ */
 export const EXTERNAL_URLS = {
   site: 'https://starsonic.com.br',
   whatsapp: 'https://wa.me/551150603000',
   codigo: 'https://github.com/LucasCPena/starsonic-phone',
+  suporte: 'tel:+551150603000',
 } as const;
 export type ExternalUrl = (typeof EXTERNAL_URLS)[keyof typeof EXTERNAL_URLS] | 'https://starsonic.com.br/';

@@ -7,7 +7,8 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { BackBar } from '../components/BackBar';
 import { Confirm } from '../components/Confirm';
 import { IconAlert, IconArrowRight, IconEye, IconEyeOff } from '../icons';
-import type { AppState, Protocol, SavedAccount } from '../state';
+import { isIos } from '../plataforma';
+import { EXTERNAL_URLS, type AppState, type Protocol, type SavedAccount } from '../state';
 import type { Send } from '../types';
 
 interface Props {
@@ -78,8 +79,20 @@ export function Entrar({ state, send, mode, conta, onClose }: Props) {
   };
 
   // O número da ajuda é texto, para ler ou copiar: o app é o tratador do tel: (o instalador o registra), e um link só
-  // encheria o Teclado escondido.
-  const ajuda = (
+  // encheria o Teclado escondido. (iPhone) Lá ele é um botão: o toque abre o discador do iPhone com o suporte.
+  const ajuda = isIos(state) ? (
+    <p class="help">
+      Precisa de ajuda?{' '}
+      <button
+        type="button"
+        class="help-numero help-ligar"
+        aria-label="Ligar para (11) 5060-3000"
+        onClick={() => send({ cmd: 'openExternal', url: EXTERNAL_URLS.suporte })}
+      >
+        (11) 5060-3000
+      </button>
+    </p>
+  ) : (
     <p class="help">
       Precisa de ajuda? <span class="help-numero">(11) 5060-3000</span>
     </p>

@@ -9,12 +9,17 @@
 // triângulo de atenção) e sem conexão, vermelho em ligação e no Não perturbe, verde conectado; o texto do estado fica
 // sempre ao lado. (rc.3) O administrador pode esconder o Não perturbe e o Atender automático (`admin`): escondidos,
 // eles somem em todos os layouts.
-import { useRef, useState } from 'preact/hooks';
+// (iPhone) Uma conta só: a conta aparece sem a troca de conta (sem o menu Contas e sem a seta). O Menu tem
+// Configurações, Editar conta (a conta em uso), Sobre e Sair; o Sair pergunta antes ("Sair da conta?") e é o
+// removeAccount da conta em uso (o app do iPhone não fecha).
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { accountDot, accountTitle, statusWord } from '../format';
-import { IconCheck, IconChevronDown, IconDnd, IconExit, IconIncoming, IconInfo, IconMenu, IconPlus, IconSettings, IconWarning } from '../icons';
+import { IconCheck, IconChevronDown, IconDnd, IconExit, IconIncoming, IconInfo, IconMenu, IconPencil, IconPlus, IconSettings, IconWarning } from '../icons';
 import type { Layout } from '../layout';
+import { isIos } from '../plataforma';
 import type { AppState, CurrentAccount } from '../state';
 import type { Send, View } from '../types';
+import { Confirm } from './Confirm';
 import { Menu } from './Menu';
 
 interface Props {
@@ -28,12 +33,22 @@ interface Props {
 
 export function Header({ state, conta, send, navigate, current, layout }: Props) {
   const [aberto, setAberto] = useState<'menu' | 'contas' | null>(null);
+  // (iPhone) A confirmação do Sair.
+  const [sair, setSair] = useState(false);
   const menuRef = useRef<HTMLButtonElement>(null);
   const contaRef = useRef<HTMLButtonElement>(null);
   const fechar = () => setAberto(null);
+  const ios = isIos(state);
   const estado = accountDot(conta, state.ligacao !== null, state.naoPerturbe);
   const mostrarDnd = state.admin.naoPerturbe;
   const mostrarAuto = state.admin.atenderAuto;
+
+  // O Cancelar da confirmação devolve o foco ao Menu (o item que a abriu saiu com o menu).
+  const perguntando = useRef(false);
+  useEffect(() => {
+    if (perguntando.current && !sair) menuRef.current?.focus();
+    perguntando.current = sair;
+  }, [sair]);
 
   const logo = <img class="logo" src="assets/starsonic-logo-negativo.png" width={160} height={49} alt="Starsonic soluções de voz e dados" />;
 
@@ -57,12 +72,18 @@ export function Header({ state, conta, send, navigate, current, layout }: Props)
             <IconSettings size="sm" />
             Configurações
           </button>
+          {ios && (
+            <button type="button" role="menuitem" class="menuitem" onClick={() => (fechar(), navigate({ kind: 'conta', contaId: conta.id, back: current }))}>
+              <IconPencil size="sm" />
+              Editar conta
+            </button>
+          )}
           <button type="button" role="menuitem" class="menuitem" onClick={() => (fechar(), navigate({ kind: 'sobre' }))}>
             <IconInfo size="sm" />
             Sobre
           </button>
           <div class="menu-sep" role="separator" />
-          <button type="button" role="menuitem" class="menuitem" onClick={() => (fechar(), send({ cmd: 'quit' }))}>
+          <button type="button" role="menuitem" class="menuitem" onClick={() => (fechar(), ios ? setSair(true) : send({ cmd: 'quit' }))}>
             <IconExit size="sm" />
             Sair
           </button>
@@ -73,7 +94,21 @@ export function Header({ state, conta, send, navigate, current, layout }: Props)
 
   const nome = layout === 'normal' ? accountTitle(conta) : conta.ramal;
   const texto = layout === 'minimo' ? statusWord(estado.texto) : estado.texto;
-  const contaEl = (
+  const contaTexto = (
+    <>
+      <span class={estado.dot} aria-hidden="true" />
+      <span class="account-text">
+        <span class="account-name">{nome}</span>
+        <span class="account-sub">{texto}</span>
+      </span>
+      {estado.atencao && <IconWarning />}
+    </>
+  );
+  const contaEl = ios ? (
+    <div class="account-wrap">
+      <div class="account">{contaTexto}</div>
+    </div>
+  ) : (
     <div class="account-wrap">
       <button
         ref={contaRef}
@@ -85,12 +120,7 @@ export function Header({ state, conta, send, navigate, current, layout }: Props)
         onClick={() => setAberto(aberto === 'contas' ? null : 'contas')}
       >
         <span class="sr-only">Trocar de conta: </span>
-        <span class={estado.dot} aria-hidden="true" />
-        <span class="account-text">
-          <span class="account-name">{nome}</span>
-          <span class="account-sub">{texto}</span>
-        </span>
-        {estado.atencao && <IconWarning />}
+        {contaTexto}
         {layout !== 'minimo' && <IconChevronDown size="sm" />}
       </button>
       {aberto === 'contas' && (
@@ -130,18 +160,17 @@ export function Header({ state, conta, send, navigate, current, layout }: Props)
     </button>
   );
 
+  let cabecalho;
   if (layout === 'minimo') {
-    return (
+    cabecalho = (
       <header class="brand brand-strip">
         {contaEl}
         {mostrarDnd && redondo('Não perturbe', state.naoPerturbe, IconDnd, dnd)}
         {menu}
       </header>
     );
-  }
-
-  if (layout === 'compacto') {
-    return (
+  } else if (layout === 'compacto') {
+    cabecalho = (
       <header class="brand">
         <div class="brand-glow" aria-hidden="true" />
         <div class="brand-row">
@@ -155,32 +184,51 @@ export function Header({ state, conta, send, navigate, current, layout }: Props)
         {contaEl}
       </header>
     );
+  } else {
+    cabecalho = (
+      <header class="brand">
+        <div class="brand-glow" aria-hidden="true" />
+        <div class="brand-row">
+          {logo}
+          {menu}
+        </div>
+        {contaEl}
+        {(mostrarDnd || mostrarAuto) && (
+          <div class="toggles">
+            {mostrarDnd && (
+              <button type="button" class={state.naoPerturbe ? 'chip chip-on' : 'chip'} aria-pressed={state.naoPerturbe} onClick={dnd}>
+                <IconDnd />
+                Não perturbe
+              </button>
+            )}
+            {mostrarAuto && (
+              <button type="button" class={state.atenderAutomatico.on ? 'chip chip-on' : 'chip'} aria-pressed={state.atenderAutomatico.on} onClick={auto}>
+                <IconIncoming />
+                Atender automático
+              </button>
+            )}
+          </div>
+        )}
+      </header>
+    );
   }
 
+  // A confirmação fica fora do cabeçalho: dentro dele, o diálogo herdaria o foco ciano das áreas escuras.
   return (
-    <header class="brand">
-      <div class="brand-glow" aria-hidden="true" />
-      <div class="brand-row">
-        {logo}
-        {menu}
-      </div>
-      {contaEl}
-      {(mostrarDnd || mostrarAuto) && (
-        <div class="toggles">
-          {mostrarDnd && (
-            <button type="button" class={state.naoPerturbe ? 'chip chip-on' : 'chip'} aria-pressed={state.naoPerturbe} onClick={dnd}>
-              <IconDnd />
-              Não perturbe
-            </button>
-          )}
-          {mostrarAuto && (
-            <button type="button" class={state.atenderAutomatico.on ? 'chip chip-on' : 'chip'} aria-pressed={state.atenderAutomatico.on} onClick={auto}>
-              <IconIncoming />
-              Atender automático
-            </button>
-          )}
-        </div>
+    <>
+      {cabecalho}
+      {sair && (
+        <Confirm
+          title="Sair da conta?"
+          message="Este iPhone deixa de receber as ligações do ramal. Para entrar de novo, você vai precisar da senha."
+          confirmLabel="Sair"
+          onCancel={() => setSair(false)}
+          onConfirm={() => {
+            setSair(false);
+            send({ cmd: 'removeAccount', contaId: conta.id });
+          }}
+        />
       )}
-    </header>
+    </>
   );
 }

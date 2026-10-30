@@ -197,8 +197,8 @@ button { cursor: default; }
 .ghost { width: 58px; height: 58px; border-radius: 999px; border: 0; background: transparent; color: var(--text-muted); display: grid; place-items: center; padding: 0; flex: none; transition: background var(--ease), color var(--ease); }
 .ghost:hover { background: var(--icon-tile); color: var(--text-strong); }
 
-/* Navegação de baixo */
-.nav { flex: none; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-top: 1px solid var(--border); padding: 8px 12px 10px; background: var(--surface);
+/* Navegação de baixo: uma coluna por aba (o --abas do Nav.tsx: 4 no Windows, 3 no iPhone) */
+.nav { flex: none; display: grid; grid-template-columns: repeat(var(--abas, 4), minmax(0, 1fr)); border-top: 1px solid var(--border); padding: 8px 12px 10px; background: var(--surface);
   position: relative; padding-inline: max(12px, calc((100% - 480px) / 2)); }
 /* O desenho do canto de arrastar: a zona de redimensionar do canto de baixo à direita fica por cima dele. */
 .grip { position: absolute; right: 3px; bottom: 3px; width: 12px; height: 12px; fill: none; stroke: #b9c4e6; stroke-width: 1.5; stroke-linecap: round; pointer-events: none; }
@@ -822,3 +822,34 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .cfg-situacao p { margin: 0; font-size: 12.5px; line-height: 1.4; color: var(--text-muted); overflow-wrap: anywhere; }
 .cfg-situacao p.field-error { font-size: 13px; color: var(--text); }
 .cfg-leitura .btn:disabled, .cfg-leitura .btn:disabled:hover { opacity: 0.45; border-color: var(--outline); }
+
+/* ---------------------------------------------------------------------------------------------------------
+   O modo iPhone (plataforma.ts: o .win leva data-plataforma="ios"); fora dele, nada daqui vale. A área segura (em cima
+   a barra de status ou o entalhe, embaixo a barra de voltar ao início) vem do env(safe-area-inset-*), com o
+   viewport-fit=cover que a interface põe no primeiro estado do iPhone. As variáveis ficam no :root: os testes trocam o
+   valor delas no style do :root (o Chromium não tem o entalhe). */
+:root {
+  --safe-top: env(safe-area-inset-top, 0px); --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px); --safe-right: env(safe-area-inset-right, 0px);
+}
+/* A janela inteira fica dentro da área segura. Embaixo fica a superfície, a cor da navegação; na ligação, o gradiente
+   da tela passa por baixo das duas faixas. */
+.win[data-plataforma="ios"] { padding: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left); }
+/* O cabeçalho escuro de cima (o .brand ou a barra do Voltar) passa por baixo da barra de status, como num app do
+   iPhone: o gradiente e o brilho começam no alto da tela, e a caixa dele, com o que tem dentro, fica na área segura. */
+.win[data-plataforma="ios"] :is(.brand, .bar) { background: none; }
+.win[data-plataforma="ios"] .bar { position: relative; z-index: 2; }
+.win[data-plataforma="ios"] :is(.brand, .bar)::before { content: ""; position: absolute; inset: calc(-1 * var(--safe-top)) 0 0; z-index: -1;
+  background: var(--gradient-hero); }
+.win[data-plataforma="ios"] .brand-glow { top: calc(-1 * var(--safe-top)); }
+/* O toque, sem o que é do navegador: o menu do toque longo, a seleção de texto (menos nos campos), o realce do toque e
+   o zoom de dois toques. */
+.win[data-plataforma="ios"], .win[data-plataforma="ios"] * { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none;
+  -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+.win[data-plataforma="ios"] :is(input, textarea) { -webkit-user-select: text; user-select: text; }
+/* Sem as zonas de redimensionar, sem o desenho do canto delas na navegação. */
+.win[data-plataforma="ios"] .grip { display: none; }
+/* O número da ajuda da tela Entrar é um botão (o discador do iPhone), com o destaque dos links. O toque vai além da
+   linha (45 px de altura, os 44 pontos do iPhone), e a linha fica como está. */
+.win[data-plataforma="ios"] .help-ligar { display: inline-block; padding: 14px 6px; margin: -14px -6px; border: 0; border-radius: 10px;
+  background: transparent; font: inherit; font-weight: 700; color: var(--accent-text); }

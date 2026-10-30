@@ -2,12 +2,17 @@
 // Responde ao `ready` com o estado do cenário (src/fake-scenarios.ts) e imita as respostas mais simples do
 // DesktopApp. Guarda cada comando em window.__comandos; window.__fake.push(msg) manda uma mensagem à interface.
 // As regras de verdade (validações, ligações) são do C++: aqui só o bastante para as telas reagirem.
-import { createScenario, PLANILHA_DA_EMPRESA, SERVIDORES_DO_PERFIL, type FakeView } from './fake-scenarios';
+// (iPhone) `?fake=<cenario>&plataforma=ios&agenda=pendente|negada|concedida` (sem `agenda`: concedida) abre o cenário no
+// modo iPhone (docs/ponte-windows.md, "O modo iPhone"): o estado do contrato, a agenda de exemplo depois do estado no
+// `ready` (com a permissão concedida) e nenhum toque.
+import { AGENDA_DE_EXEMPLO, createScenario, entrarVazio, estadoDoIphone, PLANILHA_DA_EMPRESA, SERVIDORES_DO_PERFIL, type FakeView } from './fake-scenarios';
 import { trimAscii } from './format';
 import type { WebviewLike } from './bridge';
 import type {
   AdminServer,
   AdminState,
+  AgendaContact,
+  AgendaPermission,
   AppState,
   BlfState,
   CallCard,
@@ -52,11 +57,16 @@ function sortContacts(list: Contact[]): Contact[] {
   return [...list].sort((a, b) => fold(a.nome).localeCompare(fold(b.nome)));
 }
 
+const PERMISSOES: AgendaPermission[] = ['pendente', 'negada', 'concedida'];
+
 /** `null` para um cenário que não existe (a interface mostra o erro, não um cenário qualquer). */
 export function createFakeWebview(name: string): { webview: WebviewLike; view: FakeView | undefined } | null {
   const scenario = createScenario(name);
   if (!scenario) return null;
-  let state: AppState = structuredClone(scenario.state);
+  const parametros = new URLSearchParams(location.search);
+  const ios = parametros.get('plataforma') === 'ios';
+  const permissao = PERMISSOES.find((p) => p === parametros.get('agenda')) ?? 'concedida';
+  let state: AppState = structuredClone(ios ? estadoDoIphone(scenario.state, permissao) : scenario.state);
   const listeners = new Set<Listener>();
   const sent: Array<Record<string, unknown>> = [];
   window.__comandos = sent;
@@ -97,7 +107,10 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
     },
   };
 
-  const ring = (tipo: RingKind) => deliver({ v: 1, type: 'ring', tipo } satisfies IncomingMessage);
+  // (iPhone) Nenhum toque: quem toca é a tela de chamada do iPhone.
+  const ring = (tipo: RingKind) => {
+    if (!ios) deliver({ v: 1, type: 'ring', tipo } satisfies IncomingMessage);
+  };
   const toast = (texto: string) => deliver({ v: 1, type: 'toast', texto } satisfies IncomingMessage);
   const setCall = (ligacao: CallState | null) => change({ ligacao });
 
@@ -118,6 +131,10 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
       novaListaDaEmpresa(PLANILHA_DA_EMPRESA, { situacao: 'ok', erro: '', atualizadaEm: Date.now(), quantos: PLANILHA_DA_EMPRESA.length });
     }, 1000);
   };
+
+  // (iPhone) A agenda inteira (vazia sem a permissão concedida). Uma lista nova sai antes do estado com a `vez` nova,
+  // como no núcleo; no `ready`, depois do estado.
+  const mandarAgenda = (vez: number, contatos: AgendaContact[]) => deliver({ v: 1, type: 'agenda', vez, contatos } satisfies IncomingMessage);
 
   // A área do administrador do C++ de mentira: a senha de teste, a espera de 30 s depois de 5 erradas seguidas e o
   // que a área guarda além do que a interface vê com ela fechada (o admin.json).
@@ -266,6 +283,12 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
     if (handleCall(command)) return;
     switch (command.cmd) {
       case 'ready':
+        // (iPhone) O estado e, com uma lista desde a abertura (`vez` > 0), a agenda; nada de toque nem da lista da empresa.
+        if (ios) {
+          publish();
+          if (state.agenda && state.agenda.vez > 0) mandarAgenda(state.agenda.vez, state.agenda.permissao === 'concedida' ? AGENDA_DE_EXEMPLO : []);
+          break;
+        }
         // (rc.4) A lista da empresa vem depois do estado e do toque (com uma lista desde a abertura: `vez` > 0); no
         // cenário da leitura que acabou com a página abrindo, só antes do primeiro estado.
         if (scenario.empresaAntesDoEstado) empresaNoReady();
@@ -277,6 +300,14 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
       case 'exportContacts':
         // As janelas do Windows e o aviso do resultado são do C++: as specs só olham o comando.
         break;
+      case 'allowContacts': {
+        // (iPhone) O Permitir: a pessoa deixa, e a agenda de exemplo chega.
+        if (!ios) break;
+        const vez = (state.agenda?.vez ?? 0) + 1;
+        mandarAgenda(vez, AGENDA_DE_EXEMPLO);
+        change({ agenda: { permissao: 'concedida', vez, quantos: AGENDA_DE_EXEMPLO.length } });
+        break;
+      }
       case 'setCompanyList': {
         const link = String(command.link ?? '').trim();
         if (link === '') novaListaDaEmpresa([], { link: '', situacao: 'nenhuma', erro: '', atualizadaEm: 0, quantos: 0 });
@@ -427,6 +458,11 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
         change({ contatos: state.contatos.filter((c) => c.id !== command.id) });
         break;
       case 'removeAccount':
+        // (iPhone) O Sair: a conta em uso sai e volta a tela Entrar (os Recentes ficam).
+        if (ios && command.contaId === state.conta?.id) {
+          change({ tela: 'entrar', entrar: entrarVazio(), conta: null, contas: [] });
+          break;
+        }
         change({ contas: state.contas.filter((c) => c.id !== command.contaId) });
         break;
       case 'cancelLogin':

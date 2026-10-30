@@ -1,6 +1,7 @@
 // Os cenários da ponte falsa (?fake=<nome>): o estado que o "C++ de mentira" manda no `ready`.
 // Os dados imitam as telas do canvas. As datas são relativas ao momento em que a página abre (Hoje, Ontem).
-import type { AdminServer, AppState, CallCard, CallState, CompanyContact, RingKind, Shortcut } from './state';
+// (iPhone) Com `&plataforma=ios`, o mesmo cenário no modo iPhone (estadoDoIphone), com a agenda de exemplo.
+import type { AdminServer, AgendaContact, AgendaPermission, AppState, CallCard, CallState, CompanyContact, RingKind, Shortcut } from './state';
 
 /** A tela em que a interface abre (só na ponte falsa; o app real sempre abre no Teclado). */
 export type FakeView = 'teclado' | 'atalhos' | 'recentes' | 'contatos' | 'configuracoes' | 'sobre';
@@ -39,6 +40,21 @@ export const PLANILHA_DA_EMPRESA: CompanyContact[] = [
 ];
 const CAMINHO_DA_PLANILHA = '\\\\servidor\\contatos\\empresa.xlsx';
 
+/**
+ * (iPhone) A agenda de exemplo, na ordem em que o iPhone a entrega (a interface ordena): 8 contatos inventados, a Ana
+ * Souza com o celular e o ramal, nomes com acento e a Portaria no ramal 2000.
+ */
+export const AGENDA_DE_EXEMPLO: AgendaContact[] = [
+  { nome: 'Otávio Nunes', numeros: ['(31) 96666-5555'] },
+  { nome: 'Ana Souza', numeros: ['+55 11 98888-7777', '2003'] },
+  { nome: 'Élcio Matos', numeros: ['(11) 3333-4444'] },
+  { nome: 'Portaria', numeros: ['2000'] },
+  { nome: 'Íris Lopes', numeros: ['+55 48 99999-1111'] },
+  { nome: 'Beatriz Ramos', numeros: ['(21) 97777-6666'] },
+  { nome: 'Ângela Prado', numeros: ['(11) 95555-4444'] },
+  { nome: 'Cecília Duarte', numeros: ['(11) 2222-3333'] },
+];
+
 export interface Scenario {
   state: AppState;
   /** O toque atual, mandado depois do estado em cada `ready`. */
@@ -61,8 +77,32 @@ function quando(diasAtras: number, hora: number, minuto: number): number {
   return d.getTime();
 }
 
-function entrarVazio(): AppState['entrar'] {
+export function entrarVazio(): AppState['entrar'] {
   return { servidor: '', protocolo: 'udp', ramal: '', nome: '', erro: '', ocupado: false, pedeSenha: false, podeCancelar: false, contaId: '' };
+}
+
+/**
+ * (iPhone) O estado de um cenário no modo iPhone (docs/ponte-windows.md, "O modo iPhone"): os campos do iPhone (a
+ * agenda, a rota de áudio "iPhone" e o Bipe ao digitar ligado) e os do PC com o valor neutro. Com a permissão
+ * concedida, a agenda de exemplo é a primeira lista (`vez` 1). Nos Recentes, o `contatoId` é sempre "".
+ */
+export function estadoDoIphone(state: AppState, permissao: AgendaPermission): AppState {
+  const concedida = permissao === 'concedida';
+  return {
+    ...state,
+    plataforma: 'ios',
+    agenda: { permissao, vez: concedida ? 1 : 0, quantos: concedida ? AGENDA_DE_EXEMPLO.length : 0 },
+    rotaAudio: 'iPhone',
+    config: { ...state.config, bipeTecla: true },
+    contas: state.contas.filter((c) => c.emUso),
+    contatos: [],
+    atalhos: [],
+    iniciarComWindows: false,
+    admin: { aberto: false, naoPerturbe: true, atenderAuto: true, blf: false, puxa: false },
+    empresa: { link: '', situacao: 'nenhuma', erro: '', atualizadaEm: 0, quantos: 0, vez: 0 },
+    audio: { microfones: [], altoFalantes: [], microfone: '', altoFalante: '', toque: '', desconectados: [] },
+    recentes: state.recentes.map((r) => ({ ...r, contatoId: '' })),
+  };
 }
 
 function principal(): AppState {

@@ -1,6 +1,7 @@
 // Os Recentes: Todas e Perdidas (com a contagem), os grupos por dia (Hoje, Ontem, a data) e, em cada linha, o tipo
 // (perdida em vermelho), o nome ou número, a hora e a duração, mais o botão de ligar. Tocar na linha abre "Ligar" e
-// "Salvar contato". Abrir a tela manda o viewRecents (o C++ zera `perdidas`).
+// "Salvar contato" (sem o `onSaveContact`, como no iPhone, só o "Ligar"). Abrir a tela manda o viewRecents (o C++ zera
+// `perdidas`).
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { clockTime, dayGroup, duration, recentKindLabel } from '../format';
 import { IconIncoming, IconOutgoing, IconPhone } from '../icons';
@@ -11,7 +12,8 @@ interface Props {
   recentes: RecentCall[];
   perdidas: number;
   send: Send;
-  onSaveContact(numero: string, nome: string): void;
+  /** O "Salvar contato" de uma linha sem contato (sem ele, a linha só oferece o "Ligar"). */
+  onSaveContact?(numero: string, nome: string): void;
 }
 
 function subLine(r: RecentCall): string {
@@ -100,7 +102,7 @@ export function Recentes({ recentes, perdidas, send, onSaveContact }: Props) {
                         <IconPhone size="sm" />
                         Ligar
                       </button>
-                      {r.contatoId === '' && (
+                      {onSaveContact && r.contatoId === '' && (
                         <button type="button" class="btn btn-outline mini" onClick={() => onSaveContact(r.numero, r.nome)}>
                           Salvar contato
                         </button>

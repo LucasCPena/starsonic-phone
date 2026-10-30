@@ -554,3 +554,151 @@ depois de abrir e a cada 24 h. Achou uma versão mais nova:
 - Ao fechar: `Shutdown()`, o `Stop()` do agendador, o motor destruído, o `DesktopApp` destruído (detalhes no
   `DesktopApp.h`). Depois de a janela fechar, isso tem 5 s: passou, `fechamento forcado` no diagnóstico e o processo
   sai com o código 0.
+
+## O modo iPhone (etapa 2)
+
+A mesma interface e o mesmo `DesktopApp` no app do iPhone (spec do iPhone, seções 4.1, 6.1 e 8): o hospedeiro em Swift
+mostra a `windows/ui` num WKWebView, com um objeto da mesma forma do `window.chrome.webview` (o `postMessage` e o evento
+`message`; o `bridge.ts` não muda), e o `DesktopConfig` leva a plataforma iPhone. **Tudo nesta seção existe só com
+`plataforma: "ios"` no estado.** No Windows, o estado não ganha nenhum campo e cada comando faz o que faz hoje. O formato
+continua na versão 1 (ver "Versão").
+
+- A interface entra no modo iPhone no primeiro estado com `plataforma: "ios"`: põe `width=device-width, initial-scale=1,
+  viewport-fit=cover, maximum-scale=1` no `<meta name="viewport">` (a página vai até as bordas da tela e cuida sozinha
+  da área segura, pelo `env(safe-area-inset-*)`), e tira a barra de título, os atalhos de teclado (Ctrl+1 a 4 e
+  Ctrl + P), a aba Atalhos, a pergunta da atualização, a área do administrador e o toque.
+- O `ready` responde com o estado e, quando já houve uma lista desde a abertura do app (`agenda.vez` maior que 0), com a
+  `agenda` (abaixo), nesta ordem. Nada de toque, de lista da empresa ou de pergunta da atualização.
+
+### O estado no iPhone
+
+Os campos novos:
+
+| Campo | Tipo | Sentido |
+|---|---|---|
+| `plataforma` | `"ios"` | O modo iPhone. Sem o campo, é o Windows. |
+| `agenda` | objeto | A agenda do iPhone: `{permissao, vez, quantos}`. Os contatos vêm na mensagem `agenda`. |
+| `agenda.permissao` | `"pendente"` \| `"negada"` \| `"concedida"` | O acesso aos contatos: `pendente` (o iPhone ainda não perguntou), `negada` (a pessoa negou; só os Ajustes do iPhone mudam isso) ou `concedida`. Fora da `concedida`, a lista é vazia, e a aba Contatos mostra o aviso "Permita o acesso aos contatos para ligar pelo nome." com o Permitir (`allowContacts`). |
+| `agenda.vez` | inteiro | Sobe a cada lista nova; `0` sem nenhuma desde a abertura do app. É a `vez` da última `agenda`. |
+| `agenda.quantos` | inteiro | A contagem da última lista (os contatos com algum número). |
+| `rotaAudio` | texto | A saída de som de agora, com o nome que o iPhone dá: `iPhone` (o alto-falante do ouvido), `Viva-voz` ou o nome do fone; `""` sem saber. O botão Áudio da ligação a mostra. |
+| `config.bipeTecla` | booleano | "Bipe ao digitar" (Configurações → Ligações; `setSetting` com `bipeTecla`; ligado de fábrica, gravado no `config.json`). |
+
+Os campos do PC continuam todos no estado (todas as chaves sempre presentes), com o valor neutro:
+
+- `contas`: no máximo a conta em uso (uma conta por iPhone);
+- `contatos` e `atalhos`: `[]`; `iniciarComWindows`: `false`;
+- `admin`: fechado, com `naoPerturbe` e `atenderAuto` `true` (os dois botões aparecem) e `blf` e `puxa` `false`;
+- `empresa`: com `situacao` `"nenhuma"` (`link` e `erro` `""`; `atualizadaEm`, `quantos` e `vez` `0`);
+- `audio`: com as listas vazias (`microfones`, `altoFalantes` e `desconectados`) e `microfone`, `altoFalante` e `toque`
+  `""`: quem escolhe o caminho do som é o iPhone (`rotaAudio`).
+
+Os nomes (a recebida, os Recentes e o aviso da perdida) vêm da agenda: o do contato com o número, senão o que a central
+mandou. O `recentes[].contatoId` é sempre `""` (os contatos da agenda não têm id, e a interface não oferece o "Salvar
+contato").
+
+```json
+{"v":1,"type":"state","state":{
+  "tela":"principal",
+  "entrar":{"servidor":"","protocolo":"udp","ramal":"","nome":"","erro":"","ocupado":false,"pedeSenha":false,
+            "podeCancelar":false,"contaId":""},
+  "conta":{"id":"9f3c2a71b0d84e55","nome":"Recepção","ramal":"2001","servidor":"starcloud1-starsonic.com.br",
+           "protocolo":"udp","status":"conectado","texto":"Conectado · starcloud1-starsonic.com.br","internet":true},
+  "contas":[{"id":"9f3c2a71b0d84e55","nome":"Recepção","ramal":"2001","servidor":"starcloud1-starsonic.com.br",
+             "protocolo":"udp","emUso":true}],
+  "naoPerturbe":false,
+  "atenderAutomatico":{"on":false,"segundos":3},
+  "ligacao":null,
+  "recentes":[{"numero":"+5511988887777","nome":"Ana Souza","tipo":"perdida","inicio":1761061000000,"duracao":0,
+               "contatoId":""}],
+  "perdidas":1,
+  "contatos":[],
+  "audio":{"microfones":[],"altoFalantes":[],"microfone":"","altoFalante":"","toque":"","desconectados":[]},
+  "iniciarComWindows":false,
+  "versao":"1.0.0",
+  "teclado":"",
+  "tecladoVez":0,
+  "atalhos":[],
+  "admin":{"aberto":false,"naoPerturbe":true,"atenderAuto":true,"blf":false,"puxa":false},
+  "entrarAdmin":{"erro":"","esperaAte":0,"vez":0},
+  "config":{"bipeFim":true,"bipeTecla":true},
+  "empresa":{"link":"","situacao":"nenhuma","erro":"","atualizadaEm":0,"quantos":0,"vez":0},
+  "plataforma":"ios",
+  "agenda":{"permissao":"concedida","vez":2,"quantos":312},
+  "rotaAudio":"iPhone"
+}}
+```
+
+### As mensagens do iPhone
+
+Duas a mais (C++ → interface), também com `v: 1`:
+
+- `{"v":1,"type":"agenda","vez":N,"contatos":[{"nome":"...","numeros":["..."]}]}`: a agenda do iPhone inteira. Ela fica
+  fora do `state`, como a `contatosEmpresa`: a agenda pode ter milhares de contatos, e o `state` vai inteiro a cada
+  mudança.
+  - Cada contato: `nome` (texto; `""` num contato sem nome, e a interface mostra o primeiro número) e `numeros` (lista de
+    texto, como estão na agenda e na ordem dela, cada número uma vez: os mesmos dígitos são o mesmo número). O contato
+    sem nenhum número fica de fora. Os contatos vêm na ordem da agenda: a interface ordena.
+  - Vem a cada lista nova, com a `vez` que o `agenda.vez` também passa a ter (ela pode chegar antes do `state` com essa
+    `vez`), e no `ready`, depois do estado, quando já houve uma lista desde a abertura (`agenda.vez` maior que 0). Vale a
+    de `vez` mais alta: uma mais velha que chega atrasada não vale, como na `contatosEmpresa`.
+  - Fora da permissão `concedida`, a lista é vazia.
+  - **A privacidade** (spec do iPhone, 6.4): os contatos ficam só na memória do núcleo, e o diagnóstico nunca leva os
+    nomes nem os números da agenda, só a contagem e a permissão.
+- `{"v":1,"type":"abrir","tela":"recentes"}`: a pessoa tocou no aviso da perdida ("Ligação perdida de <nome ou
+  número>", spec do iPhone, 7.9). A interface vai para os Recentes, como a última ligação que acaba volta ao Teclado (com
+  uma ligação, a tela da ligação continua na frente). Outra `tela` não existe nesta versão: a interface a ignora.
+
+```json
+{"v":1,"type":"agenda","vez":2,"contatos":[{"nome":"Ana Souza","numeros":["+55 11 98888-7777","2003"]},{"nome":"","numeros":["(21) 97777-6666"]}]}
+{"v":1,"type":"abrir","tela":"recentes"}
+```
+
+### Os comandos do iPhone
+
+| Comando | Campos | O que faz |
+|---|---|---|
+| `contactsOpened` | — | A aba Contatos abriu (a cada vez). O hospedeiro lê a agenda de novo (a lista vem na `agenda`) e, na primeira vez (`agenda.permissao` `pendente`), pede a permissão com a janela do iPhone ("Para ligar pelo nome e mostrar quem está ligando."). |
+| `allowContacts` | — | O Permitir do aviso da aba Contatos. Com a permissão `pendente`, o hospedeiro a pede; com a `negada`, abre os Ajustes do app (o iPhone não pergunta de novo). A resposta vem no `agenda.permissao` e, com a permissão dada, na `agenda`. |
+| `audioRoute` | — | O botão Áudio da ligação: o hospedeiro mostra a escolha do iPhone (iPhone, Viva-voz ou o fone). A saída escolhida vem na `rotaAudio`, também a trocada fora do app (na tela de chamada do iPhone, ou um fone que liga). |
+| `keyTone` | `tecla` (texto: `0` a `9`, `*` ou `#`) | Uma tecla do Teclado ou do teclado da ligação (o `+` do 0 segurado vai como `0`): o hospedeiro toca o bipe de telefone dela. A interface só manda com `config.bipeTecla` ligado, e o núcleo confere de novo. Na ligação, vai junto do `dtmf` de sempre. Outra `tecla` é recusada (linha no diagnóstico). |
+| `setSetting` | `chave: "bipeTecla"`, `valor` (booleano) | "Bipe ao digitar" (Configurações → Ligações). |
+| `openExternal` | `url` (texto) | No iPhone vale também `tel:+551150603000`: o hospedeiro abre o discador do iPhone com o número do suporte (o "Precisa de ajuda?" da tela Entrar e o "Ligar" do Sobre). O site e o WhatsApp valem como sempre; o código-fonte é recusado (o Sobre do iPhone não tem a linha). |
+
+```json
+{"v":1,"cmd":"contactsOpened"}
+{"v":1,"cmd":"allowContacts"}
+{"v":1,"cmd":"audioRoute"}
+{"v":1,"cmd":"keyTone","tecla":"5"}
+{"v":1,"cmd":"setSetting","chave":"bipeTecla","valor":false}
+{"v":1,"cmd":"openExternal","url":"tel:+551150603000"}
+```
+
+### Os comandos de sempre no iPhone
+
+- **O Sair** (no Menu, depois da confirmação "Sair da conta?") é o `removeAccount` da conta em uso, como hoje: recusado
+  com uma ligação; sem ligação, a conta desregistra e sai, e a tela volta ao Entrar. Os Recentes ficam (spec do iPhone,
+  7.1).
+- **Uma conta só:** o `login` que registra uma conta nova (sem `contaId`) deixa só ela em `contas` (ela toma o lugar da
+  que estava em uso). O Editar (o `login` com o `contaId` da conta em uso) é o de hoje.
+- **O `ring` e o `update` não vêm:** quem toca é a tela de chamada do iPhone, e o bipe do fim da ligação (a regra do
+  `ring` `fim`, com o `config.bipeFim`) é do hospedeiro. A interface ignora os dois no modo iPhone. A atualização é a da
+  App Store.
+
+### Os comandos do PC, recusados no iPhone
+
+Recusados inteiros: nada muda, nenhum gancho é chamado, e o diagnóstico ganha a linha
+`comando recusado no modo iPhone: <nome>` (no `setSetting`, o nome leva a chave: `setSetting iniciarComWindows`):
+
+- a janela: `minimize`, `closeToTray`, `resize` e `quit` (um app do iPhone não se fecha sozinho, e o Sair do iPhone é o
+  da conta);
+- as contas e o som: `selectAccount`, `setAudio` e o `setSetting` com `iniciarComWindows`;
+- os meus contatos: `saveContact` e `removeContact`;
+- os atalhos: `saveShortcut`, `removeShortcut` e `useShortcut`;
+- a área do administrador: `adminLogin`, `adminLogout` e `adminSet`;
+- as planilhas e a lista da empresa: `importContacts`, `exportContacts`, `setCompanyList` e `refreshCompanyList`;
+- a atualização: `updateNow` e `updateLater`.
+
+**No Windows,** os comandos do iPhone (`contactsOpened`, `allowContacts`, `audioRoute`, `keyTone` e o `setSetting` com
+`bipeTecla`) são recusados do mesmo jeito, com a linha `comando recusado no modo Windows: <nome>`, e o `openExternal`
+continua recusando o `tel:`.

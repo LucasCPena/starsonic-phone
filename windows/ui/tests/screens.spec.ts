@@ -574,6 +574,22 @@ test.describe('ponte e janela', () => {
     await expect(page.getByRole('heading', { name: 'Sobre' })).toBeVisible();
   });
 
+  // O modo iPhone (docs/ponte-windows.md, "O modo iPhone") fica atrás do `plataforma` do estado: sem ele, o de sempre.
+  test('without plataforma the main screen keeps the title bar, the four tabs and the menu with Sair as quit', async ({ page }) => {
+    await abrir(page, 'principal');
+    expect(await page.locator('.win').getAttribute('data-plataforma')).toBeNull();
+    await expect(page.locator('.titlebar')).toHaveCount(1);
+    await expect(page.locator('.resize-zone')).toHaveCount(4);
+    await expect(page.getByRole('navigation', { name: 'Seções' }).locator('button.tab')).toHaveText(['Teclado', 'Atalhos', 'Recentes', 'Contatos']);
+    await expect(page.locator('meta[name="viewport"]')).toHaveAttribute('content', 'width=device-width, initial-scale=1');
+    await page.getByRole('button', { name: 'Menu' }).click();
+    await expect(page.getByRole('menu', { name: 'Menu' }).getByRole('menuitem')).toHaveText(['Configurações', 'Sobre', 'Sair']);
+    await page.getByRole('menuitem', { name: 'Sair' }).click();
+    await esperarComando(page, { cmd: 'quit' });
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    expect((await comandos(page)).filter((c) => c.cmd === 'removeAccount')).toEqual([]);
+  });
+
   test('without the webview and without ?fake the interface shows an error and sends nothing', async ({ page }) => {
     await page.goto('/index.html');
     await expect(page.getByRole('alert')).toHaveText('Não foi possível iniciar a interface. Reinstale o Starsonic Phone.');
@@ -641,8 +657,11 @@ test.describe('ponte e janela', () => {
     expect(encontrados.filter((u) => !permitidos.has(u))).toEqual([]);
     const html = readFileSync(join(DIST, 'index.html'), 'utf8');
     expect(html).not.toMatch(/(src|href)=["']?(https?:)?\/\//);
-    // Nenhum tel: (o app é o tratador dele: o link só encheria o Teclado).
-    expect(arquivos.filter((a) => readFileSync(a, 'utf8').includes('tel:'))).toEqual([]);
+    // Nenhum tel: (o app é o tratador dele: o link só encheria o Teclado), fora o número do suporte do modo iPhone, que só
+    // o iPhone manda e abre (o discador; docs/ponte-windows.md, "O modo iPhone"). No Windows, o número da ajuda continua
+    // texto, sem comando (o caso da tela Entrar com o erro).
+    const tels = arquivos.flatMap((a) => readFileSync(a, 'utf8').match(/tel:[^\s"'`)<>\\]*/g) ?? []);
+    expect(tels.filter((t) => t !== 'tel:+551150603000')).toEqual([]);
   });
 
   test('the update question focuses Depois: an Enter meant for the keypad never starts the update', async ({ page }) => {
