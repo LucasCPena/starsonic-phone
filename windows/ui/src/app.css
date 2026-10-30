@@ -914,8 +914,9 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .win[data-plataforma="ios"] .about-telefone .row-title { grid-column: 2; grid-row: 1; }
 .win[data-plataforma="ios"] .about-telefone .row-sub { grid-column: 2 / -1; grid-row: 2; text-wrap: balance; }
 /* Os avisos de licença (Licencas.tsx): o nome e a versão de cada peça num título; os parágrafos com as linhas comuns
-   juntas, quebrando na largura da tela; as linhas que ficam como estão no arquivo (as caixas de "*", as com recuo, os
-   traços), com os espaços. */
+   juntas, quebrando na largura da tela; os itens de lista com o recuo pendente (a marca numa coluna, e as linhas de
+   baixo começando no texto); as linhas que ficam como estão no arquivo (as caixas de "*", as com recuo, os traços),
+   com os espaços. */
 .win[data-plataforma="ios"] .licencas { gap: 26px; }
 .win[data-plataforma="ios"] .licenca h2 { margin: 0 0 10px; font-size: 15px; font-weight: 800; letter-spacing: -0.01em; line-height: 1.25;
   color: var(--text-strong); }
@@ -923,3 +924,6 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .win[data-plataforma="ios"] .licenca p:last-child { margin-bottom: 0; }
 .win[data-plataforma="ios"] .licenca-linha { display: block; }
 .win[data-plataforma="ios"] .licenca-fixa { white-space: pre-wrap; }
+.win[data-plataforma="ios"] .licenca-item { display: flex; }
+.win[data-plataforma="ios"] .licenca-marca { flex: none; white-space: pre; font-variant-numeric: tabular-nums; }
+.win[data-plataforma="ios"] .licenca-texto { flex: 1; min-width: 0; }

@@ -3,9 +3,11 @@
 // arquivo vai no pacote do app). O texto vem pelo fetch do mesmo lugar, que a CSP deixa (connect-src 'self'), e a tela o
 // mostra arrumado, sem mudar uma palavra: cada peça com o nome e a versão num título (no arquivo, a linha sublinhada com
 // "="); em cada parágrafo, as linhas comuns juntas, quebrando na largura da tela (no arquivo, elas quebram em umas 78
-// colunas); e como estão no arquivo, com os espaços, as linhas das caixas de "*" (a libg722), as linhas com recuo e os
-// traços. Uma linha comum começa outra linha da tela quando abre um aviso de copyright, um item de lista ("1.", "1)" ou
-// "- "), um endereço da web ou um título em maiúsculas ("PREAMBLE"). A região rola também pelo teclado (ela recebe o
+// colunas); cada item de lista ("1.", "1)" ou "- ") com as linhas que o continuam, também as com recuo, num parágrafo
+// com o recuo pendente (as linhas de baixo começam no texto, depois da marca); e como estão no arquivo, com os espaços,
+// as linhas das caixas de "*" (a libg722, também a lista de dentro delas), os traços e as outras linhas com recuo (os
+// nomes alinhados do Opus). Uma linha comum começa outra linha da tela quando abre um aviso de copyright, um item de
+// lista, um endereço da web ou um título em maiúsculas ("PREAMBLE"). A região rola também pelo teclado (ela recebe o
 // foco). Sem o arquivo (o pacote quebrado), o "Reinstale o Starsonic Phone." das outras telas da interface.
 import type { VNode } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
@@ -14,10 +16,14 @@ import { BackBar } from '../components/BackBar';
 const TITULO = 'Avisos de licença';
 const ARQUIVO = 'assets/licencas-ios.txt';
 
-/** Uma linha da tela: as linhas comuns de um parágrafo, juntas, ou (`fixa`) uma linha como está no arquivo. */
+/**
+ * Uma linha da tela: as linhas comuns de um parágrafo, juntas, ou (`fixa`) uma linha como está no arquivo. Num item de
+ * lista, a `marca` ("1.", "-") fica à parte, e o `texto` é o resto, com as linhas que o continuam.
+ */
 interface Linha {
   texto: string;
   fixa: boolean;
+  marca?: string;
 }
 
 /** Uma peça: o nome e a versão ("" num arquivo sem os títulos) e a licença, nos parágrafos do arquivo. */
@@ -30,8 +36,12 @@ interface Peca {
 const TITULO_DA_PECA = /^(\S.*)\n(=+)\n\n/gm;
 /** Fica como está: com recuo, numa caixa de "*", ou só traços. */
 const FIXA = /^\s|^\*|^[-=_~#]{3,}\s*$/;
-/** Começa outra linha da tela: um aviso de copyright, "All rights reserved", um endereço da web ou um item de lista. */
-const NOVA_LINHA = /^(Copyright\s+(\([cC]\)|©|\d)|All rights reserved|https?:\/\/|(\d+[.)]|[-•]|\([a-z0-9]+\))\s)/i;
+/** Começa outra linha da tela: um aviso de copyright, "All rights reserved" ou um endereço da web. */
+const NOVA_LINHA = /^(Copyright\s+(\([cC]\)|©|\d)|All rights reserved|https?:\/\/)/i;
+/** A marca de um item de lista no começo de uma linha comum ("1.", "1)", "(a)", "-" ou "•") e o espaço depois dela. */
+const MARCA_DE_ITEM = /^(\d+[.)]|\([a-z0-9]+\)|[-•])\s+/i;
+/** Uma linha com recuo que continua o texto de um item: o recuo e depois o texto (não um desenho, de "*", "|", "+" ou traços). */
+const CONTINUACAO_DO_ITEM = /^\s+[^\s*|+=_~#-]/;
 
 /** Um título dentro da licença ("PREAMBLE", "PERMISSION & CONDITIONS"): curto, em maiúsculas e sem pontuação no fim. */
 function tituloInterno(linha: string): boolean {
@@ -45,17 +55,23 @@ function paragrafosDe(licenca: string): Linha[][] {
   // A última linha da tela: uma comum, que pode receber a próxima, ou outra (uma fixa, um título).
   let junta = false;
   for (const linha of licenca.split('\n')) {
+    const ultima = atual[atual.length - 1];
     if (linha.trim() === '') {
       if (atual.length > 0) paragrafos.push(atual);
       atual = [];
       junta = false;
+    } else if (junta && ultima.marca !== undefined && CONTINUACAO_DO_ITEM.test(linha)) {
+      // A linha com recuo que continua um item de lista (no BSD, "   notice, this list…" embaixo do "1. …").
+      ultima.texto += ` ${linha.trim()}`;
     } else if (FIXA.test(linha)) {
       atual.push({ texto: linha, fixa: true });
       junta = false;
     } else {
       const comum = linha.trim();
       const titulo = tituloInterno(comum);
-      if (junta && !titulo && !NOVA_LINHA.test(comum)) atual[atual.length - 1].texto += ` ${comum}`;
+      const item = MARCA_DE_ITEM.exec(comum);
+      if (junta && !titulo && !item && !NOVA_LINHA.test(comum)) ultima.texto += ` ${comum}`;
+      else if (item) atual.push({ texto: comum.slice(item[0].length), fixa: false, marca: item[1] });
       else atual.push({ texto: comum, fixa: false });
       junta = !titulo;
     }
@@ -103,11 +119,19 @@ export function Licencas({ onBack }: { onBack(): void }): VNode {
               {peca.titulo && <h2>{peca.titulo}</h2>}
               {peca.paragrafos.map((paragrafo, j) => (
                 <p key={j}>
-                  {paragrafo.map((linha, k) => (
-                    <span key={k} class={linha.fixa ? 'licenca-linha licenca-fixa' : 'licenca-linha'}>
-                      {linha.texto}
-                    </span>
-                  ))}
+                  {paragrafo.map((linha, k) =>
+                    linha.marca !== undefined ? (
+                      // O item com o recuo pendente: a marca à parte (com o espaço do arquivo depois dela) e o texto ao lado.
+                      <span key={k} class="licenca-linha licenca-item">
+                        <span class="licenca-marca">{`${linha.marca} `}</span>
+                        <span class="licenca-texto">{linha.texto}</span>
+                      </span>
+                    ) : (
+                      <span key={k} class={linha.fixa ? 'licenca-linha licenca-fixa' : 'licenca-linha'}>
+                        {linha.texto}
+                      </span>
+                    ),
+                  )}
                 </p>
               ))}
             </section>

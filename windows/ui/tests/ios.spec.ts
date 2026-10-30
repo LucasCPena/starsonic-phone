@@ -337,17 +337,36 @@ for (const tamanho of TAMANHOS_IPHONE) {
         await expect(avisos.getByRole('heading', { level: 2 })).toHaveText(PECAS);
         await expect(avisos).not.toContainText('==');
         // As linhas comuns de um parágrafo vão juntas e quebram na largura da tela (a frase das licenças BSD: a do baresip, a
-        // da libre e a do Opus); as caixas de "*" da libg722 e as linhas com recuo ficam como estão no arquivo, com os
-        // espaços.
+        // da libre e a do Opus); as caixas de "*" da libg722 e as linhas com recuo que não continuam um item de lista (os
+        // nomes alinhados do Opus) ficam como estão no arquivo, com os espaços.
         await expect(
           avisos.getByText('Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:', {
             exact: true,
           }),
         ).toHaveCount(3);
         const comoNoArquivo = await avisos.locator('.licenca-fixa').evaluateAll((ls) => ls.map((l) => l.textContent));
-        expect(comoNoArquivo).toEqual(
-          expect.arrayContaining(['* Copyright (c) CMU    1993', '   notice, this list of conditions and the following disclaimer.', '                    Jean-Marc Valin, Timothy B. Terriberry,']),
-        );
+        expect(comoNoArquivo).toEqual(expect.arrayContaining(['* Copyright (c) CMU    1993', '                    Jean-Marc Valin, Timothy B. Terriberry,']));
+        // Um item de lista leva junto as linhas de continuação com recuo do arquivo: a cláusula 1 do BSD do baresip é um
+        // parágrafo só, que quebra na largura da tela com o recuo pendente (as linhas de baixo começam no texto, depois do
+        // "1.").
+        expect(comoNoArquivo).not.toContain('   notice, this list of conditions and the following disclaimer.');
+        const baresip = avisos.locator('section').filter({ has: page.getByRole('heading', { name: 'baresip 4.12.0', exact: true }) });
+        const clausula1 = baresip.getByText('1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.', {
+          exact: true,
+        });
+        await expect(clausula1).toHaveCount(1);
+        const item = await clausula1.evaluate((el) => {
+          const [marca, texto] = Array.from(el.children) as HTMLElement[];
+          const linha = parseFloat(getComputedStyle(texto).lineHeight);
+          return {
+            marca: marca.textContent?.trim(),
+            marcaAntesDoTexto: marca.getBoundingClientRect().right <= texto.getBoundingClientRect().left,
+            linhas: Math.round(texto.getBoundingClientRect().height / linha),
+          };
+        });
+        expect(item.marca).toBe('1.');
+        expect(item.marcaAntesDoTexto, 'o recuo pendente: o texto começa depois do "1.", em todas as linhas').toBe(true);
+        expect(item.linhas, 'o item quebra na largura da tela').toBeGreaterThan(1);
         // Nenhuma palavra do arquivo fica de fora, e todas na ordem dele (fora os "=").
         const doArquivo = readFileSync(LICENCAS, 'utf8')
           .split(/\s+/)
