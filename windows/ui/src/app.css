@@ -863,3 +863,8 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
    linha (45 px de altura, os 44 pontos do iPhone), e a linha fica como está. */
 .win[data-plataforma="ios"] .help-ligar { display: inline-block; padding: 14px 6px; margin: -14px -6px; border: 0; border-radius: 10px;
   background: transparent; font: inherit; font-weight: 700; color: var(--accent-text); }
+/* A aba Contatos do iPhone (Agenda.tsx), com milhares de contatos: cada linha fora da tela fica sem o estilo e o layout
+   do que tem dentro, com a altura de uma linha (59 px; depois de vista, a dela), e a aba abre sem montar o layout de
+   todas. A contenção corta o que passa da linha: o overflow-clip-margin deixa inteiro o contorno do foco dos botões
+   (3 px, a 2 px deles). */
+.win[data-plataforma="ios"] .agenda li.row { content-visibility: auto; contain-intrinsic-size: auto 59px; overflow-clip-margin: 6px; }

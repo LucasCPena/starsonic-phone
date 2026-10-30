@@ -4,7 +4,8 @@
 // (docs/ponte-windows.md). A conferência é olhada antes do `secondKind` (nela a segunda vem "active").
 // Teclado físico: os dígitos, * e # mandam DTMF só com o teclado da ligação aberto; Esc fecha o teclado e o painel
 // Atalhos. (rc.3) O botão Atalhos (com uma ligação atendida, fora da consulta e da conferência) abre o painel com os
-// atalhos no lugar dos controles.
+// atalhos no lugar dos controles. As sugestões do número do Transferir e da Nova ligação vêm de `contatos`: os do estado
+// e, no iPhone, os da agenda (um por número; um contato sem nome mostra o número).
 import type { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { AtalhosPainel } from '../components/AtalhosPainel';
@@ -34,6 +35,8 @@ import type { Send } from '../types';
 interface Props {
   state: AppState;
   ligacao: CallState;
+  /** As sugestões do número (o Transferir e a Nova ligação): os `contatos` do estado; no iPhone, os da agenda. */
+  contatos: Contact[];
   send: Send;
 }
 
@@ -216,7 +219,7 @@ function NumberPanel({ titulo, rotulo, contatos, onCancel, onContact, actions, o
                 {initials(c.nome)}
               </span>
               <span class="row-main">
-                <span class="row-title">{c.nome}</span>
+                <span class="row-title">{c.nome || c.numero}</span>
                 <span class="row-sub">Contato · {c.numero}</span>
               </span>
               <IconArrowRight size="sm" />
@@ -232,7 +235,7 @@ function NumberPanel({ titulo, rotulo, contatos, onCancel, onContact, actions, o
   );
 }
 
-export function Ligacao({ state, ligacao: l, send }: Props) {
+export function Ligacao({ state, ligacao: l, contatos, send }: Props) {
   const now = useNow();
   const [painelPedido, setPainel] = useState<Painel>(null);
   const [digitos, setDigitos] = useState('');
@@ -522,7 +525,7 @@ export function Ligacao({ state, ligacao: l, send }: Props) {
       <NumberPanel
         titulo="Transferir para"
         rotulo="Número para transferir"
-        contatos={state.contatos}
+        contatos={contatos}
         onCancel={() => setPainel(null)}
         onContact={null}
         onEnter={null}
@@ -550,7 +553,7 @@ export function Ligacao({ state, ligacao: l, send }: Props) {
       <NumberPanel
         titulo="Nova ligação"
         rotulo="Número da nova ligação"
-        contatos={state.contatos}
+        contatos={contatos}
         onCancel={() => setPainel(null)}
         onContact={(c) => (setPainel(null), send({ cmd: 'dial', numero: c.numero, contato: true }))}
         onEnter={ligar}

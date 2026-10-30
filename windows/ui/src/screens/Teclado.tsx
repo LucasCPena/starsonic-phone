@@ -1,4 +1,5 @@
-// O Teclado: o número grande, Apagar, até três sugestões de contatos, o teclado 3×4, o Rediscar e Ligar.
+// O Teclado: o número grande, Apagar, até três sugestões de contatos (no iPhone, da agenda: um contato sem nome mostra o
+// número), o teclado 3×4, o Rediscar e Ligar.
 // Teclado físico: números, * e # digitam; Backspace apaga; Esc limpa; Enter liga.
 import { useEffect, useRef } from 'preact/hooks';
 import { digitsOnly, initials } from '../format';
@@ -10,6 +11,7 @@ import type { Send } from '../types';
 interface Props {
   numero: string;
   setNumero(update: (atual: string) => string): void;
+  /** As sugestões: os `contatos` do estado; no iPhone, os da agenda (um por número). */
   contatos: Contact[];
   /** Para o Rediscar (a feita mais nova). */
   recentes: RecentCall[];
@@ -116,7 +118,7 @@ export function Teclado({ numero, setNumero, contatos, recentes, send }: Props) 
                   {initials(c.nome)}
                 </span>
                 <span class="row-main">
-                  <span class="row-title">{c.nome}</span>
+                  <span class="row-title">{c.nome || c.numero}</span>
                   <span class="row-sub">Contato · {c.numero}</span>
                 </span>
                 <IconArrowRight size="sm" class="muted" />

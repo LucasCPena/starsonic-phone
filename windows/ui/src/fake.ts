@@ -5,7 +5,8 @@
 // (iPhone) `?fake=<cenario>&plataforma=ios&agenda=pendente|negada|concedida` (sem `agenda`: concedida) abre o cenário no
 // modo iPhone (docs/ponte-windows.md, "O modo iPhone"): o estado do contrato, a agenda de exemplo depois do estado no
 // `ready` (com a permissão concedida) e nenhum toque. Com `&abrir=recentes`, o app aberto pelo aviso da perdida: o
-// primeiro `ready` traz também o `abrir`, depois do estado e da agenda.
+// primeiro `ready` traz também o `abrir`, depois do estado e da agenda. A aba Contatos que abre (o `contactsOpened`) lê a
+// agenda de novo, como o hospedeiro: a mesma lista, com a `vez` seguinte.
 import { AGENDA_DE_EXEMPLO, createScenario, entrarVazio, estadoDoIphone, PLANILHA_DA_EMPRESA, SERVIDORES_DO_PERFIL, type FakeView } from './fake-scenarios';
 import { trimAscii } from './format';
 import type { WebviewLike } from './bridge';
@@ -70,6 +71,12 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
   // (iPhone) Um `abrir` pedido antes do `ready`: vai uma vez, no primeiro.
   let abrirNoReady = ios && parametros.get('abrir') === 'recentes';
   let state: AppState = structuredClone(ios ? estadoDoIphone(scenario.state, permissao) : scenario.state);
+  // (iPhone) A última lista da agenda (vazia sem a permissão concedida). A que um teste manda pelo `push`, como o núcleo,
+  // passa a ser ela: é a que o `contactsOpened` lê de novo.
+  let agendaAtual: { vez: number; contatos: AgendaContact[] } = {
+    vez: state.agenda?.vez ?? 0,
+    contatos: state.agenda?.permissao === 'concedida' ? AGENDA_DE_EXEMPLO : [],
+  };
   const listeners = new Set<Listener>();
   const sent: Array<Record<string, unknown>> = [];
   window.__comandos = sent;
@@ -97,6 +104,10 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
     push(message) {
       if (typeof message === 'object' && message !== null && (message as { type?: string }).type === 'state') {
         state = structuredClone((message as { state: AppState }).state);
+      }
+      if (typeof message === 'object' && message !== null && (message as { type?: string }).type === 'agenda') {
+        const agenda = message as { vez: number; contatos: AgendaContact[] };
+        if (agenda.vez > agendaAtual.vez) agendaAtual = { vez: agenda.vez, contatos: structuredClone(agenda.contatos) };
       }
       deliver(message, true);
     },
@@ -137,7 +148,12 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
 
   // (iPhone) A agenda inteira (vazia sem a permissão concedida). Uma lista nova sai antes do estado com a `vez` nova,
   // como no núcleo; no `ready`, depois do estado.
-  const mandarAgenda = (vez: number, contatos: AgendaContact[]) => deliver({ v: 1, type: 'agenda', vez, contatos } satisfies IncomingMessage);
+  const mandarAgenda = (vez: number, contatos: AgendaContact[]) => {
+    agendaAtual = { vez, contatos };
+    deliver({ v: 1, type: 'agenda', vez, contatos } satisfies IncomingMessage);
+  };
+  /** A `vez` de uma lista nova: depois da do estado e da última lista (a de um teste pode ter vindo sem o estado). */
+  const vezSeguinte = () => Math.max(state.agenda?.vez ?? 0, agendaAtual.vez) + 1;
 
   // A área do administrador do C++ de mentira: a senha de teste, a espera de 30 s depois de 5 erradas seguidas e o
   // que a área guarda além do que a interface vê com ela fechada (o admin.json).
@@ -286,11 +302,11 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
     if (handleCall(command)) return;
     switch (command.cmd) {
       case 'ready':
-        // (iPhone) O estado, com uma lista desde a abertura (`vez` > 0) a agenda, e o `abrir` pedido antes; nada de toque
-        // nem da lista da empresa.
+        // (iPhone) O estado, a agenda (com uma lista desde a abertura: `vez` > 0) e o `abrir` pedido antes, nesta ordem;
+        // nada de toque nem da lista da empresa.
         if (ios) {
           publish();
-          if (state.agenda && state.agenda.vez > 0) mandarAgenda(state.agenda.vez, state.agenda.permissao === 'concedida' ? AGENDA_DE_EXEMPLO : []);
+          if (state.agenda && state.agenda.vez > 0) mandarAgenda(state.agenda.vez, agendaAtual.contatos);
           if (abrirNoReady) {
             abrirNoReady = false;
             deliver({ v: 1, type: 'abrir', tela: 'recentes' } satisfies IncomingMessage);
@@ -311,9 +327,19 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
       case 'allowContacts': {
         // (iPhone) O Permitir: a pessoa deixa, e a agenda de exemplo chega.
         if (!ios) break;
-        const vez = (state.agenda?.vez ?? 0) + 1;
+        const vez = vezSeguinte();
         mandarAgenda(vez, AGENDA_DE_EXEMPLO);
         change({ agenda: { permissao: 'concedida', vez, quantos: AGENDA_DE_EXEMPLO.length } });
+        break;
+      }
+      case 'contactsOpened': {
+        // (iPhone) A aba Contatos abriu: com a permissão, o hospedeiro lê a agenda de novo (aqui, a mesma lista) e ela vem
+        // com a `vez` seguinte. Sem ela, nada: com a pendente, o iPhone pergunta na janela dele, que a ponte falsa não tem
+        // (o aviso fica, e o Permitir dá a permissão); com a negada, só os Ajustes do iPhone mudam isso.
+        if (!ios || state.agenda?.permissao !== 'concedida') break;
+        const vez = vezSeguinte();
+        mandarAgenda(vez, agendaAtual.contatos);
+        change({ agenda: { ...state.agenda, vez, quantos: agendaAtual.contatos.filter((c) => c.numeros.length > 0).length } });
         break;
       }
       case 'setCompanyList': {

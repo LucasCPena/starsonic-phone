@@ -1,5 +1,7 @@
-// Como a interface escreve o que vem no estado (só apresentação: as regras ficam no C++).
-import type { BlfState, CallState, CurrentAccount, RecentCall, RecentKind, SavedAccount, Shortcut, ShortcutAction } from './state';
+// Como a interface escreve o que vem no estado (só apresentação: as regras ficam no C++). (iPhone) A ordem, a busca e as
+// sugestões da agenda do iPhone, as do Android 0.2.0-rc.3 (contacts/ContactsSource.kt): a agenda chega como o iPhone a
+// entrega, e a interface a ordena.
+import type { AgendaContact, BlfState, CallState, Contact, CurrentAccount, RecentCall, RecentKind, SavedAccount, Shortcut, ShortcutAction } from './state';
 
 /** "Recepção · 2001"; sem nome, só o ramal. */
 export function accountTitle(conta: Pick<CurrentAccount | SavedAccount, 'nome' | 'ramal'>): string {
@@ -162,6 +164,94 @@ export function groupLetter(nome: string): string {
 /** "Ramal 2003" para um número curto (um ramal), senão o número como foi gravado. */
 export function contactNumberLine(numero: string): string {
   return /^\d{2,6}$/.test(numero.trim()) ? `Ramal ${numero.trim()}` : numero;
+}
+
+/** (iPhone) A ordem alfabética do português: os acentos só desempatam, e a caixa não conta (a do Android). */
+const ORDEM_DO_PORTUGUES = new Intl.Collator('pt-BR', { sensitivity: 'accent' });
+
+/** (iPhone) O nome de um contato da agenda na tela: o nome, ou (num contato sem nome) o primeiro número. */
+export function agendaName(contato: AgendaContact): string {
+  return contato.nome.trim() || (contato.numeros[0] ?? '');
+}
+
+/** (iPhone) Um contato da agenda pronto para a lista: a letra do grupo, o nome da tela (a ordem) e a busca já calculados. */
+interface NaAgenda {
+  contato: AgendaContact;
+  letra: string;
+  nome: string;
+  /** O nome sem acento e sem caixa, e os dígitos de cada número. */
+  nomeBusca: string;
+  digitos: string[];
+}
+
+/**
+ * (iPhone) A agenda pronta de cada lista (uma lista que chega na mensagem `agenda` não muda depois; a próxima vem em outra):
+ * a busca a cada tecla, a aba que abre de novo e as sugestões não ordenam outra vez os milhares de contatos.
+ */
+const AGENDAS_PRONTAS = new WeakMap<AgendaContact[], NaAgenda[]>();
+
+/**
+ * (iPhone) Só os contatos com algum número, cada número uma vez (os mesmos dígitos são o mesmo número; vale o primeiro, na
+ * ordem da agenda), sem os espaços das pontas; em ordem: o grupo "#" primeiro, depois as letras e, no grupo, a ordem do
+ * português (no empate, a da agenda).
+ */
+function agendaPronta(contatos: AgendaContact[]): NaAgenda[] {
+  const pronta = AGENDAS_PRONTAS.get(contatos);
+  if (pronta) return pronta;
+  const lista: NaAgenda[] = [];
+  for (const c of contatos) {
+    const vistos = new Set<string>();
+    const numeros: string[] = [];
+    const digitos: string[] = [];
+    for (const gravado of c.numeros) {
+      const numero = gravado.trim();
+      if (!numero) continue;
+      const so = digitsOnly(numero);
+      // Um número sem dígitos (raro) só é repetido se for o mesmo texto.
+      const chave = so || numero;
+      if (vistos.has(chave)) continue;
+      vistos.add(chave);
+      numeros.push(numero);
+      digitos.push(so);
+    }
+    if (numeros.length === 0) continue;
+    const contato: AgendaContact = { nome: c.nome.trim(), numeros };
+    const nome = agendaName(contato);
+    lista.push({ contato, letra: groupLetter(nome), nome, nomeBusca: fold(nome), digitos });
+  }
+  lista.sort((a, b) => {
+    if (a.letra !== b.letra) return a.letra === '#' ? -1 : b.letra === '#' ? 1 : a.letra < b.letra ? -1 : 1;
+    return ORDEM_DO_PORTUGUES.compare(a.nome, b.nome);
+  });
+  AGENDAS_PRONTAS.set(contatos, lista);
+  return lista;
+}
+
+/**
+ * (iPhone) A lista e a busca da aba Contatos: dos contatos da agenda, os que têm algum número, com cada número uma vez e
+ * em ordem (ver `agendaPronta`). O texto vale sem os espaços das pontas: com letras, o nome sem acento e sem caixa; sem
+ * letras, os dígitos dentro de algum número (um texto sem letras e sem dígitos não acha nenhum); vazio, todos.
+ */
+export function searchAgenda(contatos: AgendaContact[], texto: string): AgendaContact[] {
+  const lista = agendaPronta(contatos);
+  const procurado = texto.trim();
+  if (!procurado) return lista.map((c) => c.contato);
+  if (/\p{L}/u.test(procurado)) {
+    const nome = fold(procurado);
+    return lista.filter((c) => c.nomeBusca.includes(nome)).map((c) => c.contato);
+  }
+  const digitos = digitsOnly(procurado);
+  if (!digitos) return [];
+  return lista.filter((c) => c.digitos.some((d) => d.includes(digitos))).map((c) => c.contato);
+}
+
+/**
+ * (iPhone) As sugestões do Teclado e do número do Transferir e da Nova ligação: um `Contact` por número da agenda, na
+ * ordem da aba Contatos, com o id `agenda-<contato>-<número>` e sem observação. O nome é o da agenda ("" num contato sem
+ * nome: a sugestão mostra o número).
+ */
+export function agendaSuggestions(contatos: AgendaContact[]): Contact[] {
+  return searchAgenda(contatos, '').flatMap((c, i) => c.numeros.map((numero, j) => ({ id: `agenda-${i}-${j}`, nome: c.nome, numero, observacao: '' })));
 }
 
 const TIPO: Record<RecentKind, string> = { feita: 'Feita', recebida: 'Recebida', perdida: 'Perdida' };

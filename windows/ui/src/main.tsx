@@ -10,9 +10,11 @@
 // área segura e o toque do app.css), o viewport vai até as bordas da tela, e saem a barra de título (com as zonas de
 // redimensionar), os atalhos de teclado (Ctrl+1 a 4 e Ctrl + P), a pergunta da atualização, a área do administrador, o
 // toque (o `ring` e o `update` são ignorados) e a aba Atalhos. A mensagem `abrir` (o toque no aviso da perdida) leva aos
-// Recentes, como a última ligação que acaba volta ao Teclado.
+// Recentes, como a última ligação que acaba volta ao Teclado. A agenda do iPhone (a mensagem `agenda`) fica guardada
+// aqui, como a lista da empresa (a de `vez` mais alta): vai à aba Contatos do iPhone (Agenda.tsx) e às sugestões do
+// Teclado, do Transferir e da Nova ligação, no lugar dos `contatos`.
 import { render } from 'preact';
-import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { createBridge } from './bridge';
 import { AdminLogin } from './components/AdminLogin';
 import { Atualizacao } from './components/Atualizacao';
@@ -22,6 +24,7 @@ import { Nav, TABS } from './components/Nav';
 import { TitleBar } from './components/TitleBar';
 import { Toast } from './components/Toast';
 import { Admin } from './screens/Admin';
+import { Agenda } from './screens/Agenda';
 import { AtalhoForm } from './screens/AtalhoForm';
 import { Atalhos, FOCO_TITULO } from './screens/Atalhos';
 import { Configuracoes } from './screens/Configuracoes';
@@ -33,8 +36,8 @@ import { Recentes } from './screens/Recentes';
 import { Sobre } from './screens/Sobre';
 import { Teclado } from './screens/Teclado';
 import { createRinger } from './ring';
-import type { AppState, CompanyContact } from './state';
-import { accountDot, accountTitle } from './format';
+import type { AgendaContact, AgendaSummary, AppState, CompanyContact } from './state';
+import { accountDot, accountTitle, agendaSuggestions } from './format';
 import { useLayout } from './layout';
 import { applyIphoneViewport, IPHONE_TABS, isIos } from './plataforma';
 import type { Send, Tab, View } from './types';
@@ -54,6 +57,20 @@ const TECLA_ABA: Record<string, Tab> = Object.fromEntries(TABS.map((t, i) => [St
 function mesmaLista(a: CompanyContact[], b: CompanyContact[]): boolean {
   return a.length === b.length && a.every((c, i) => c.nome === b[i].nome && c.numero === b[i].numero && c.observacao === b[i].observacao);
 }
+
+/**
+ * (iPhone) A mesma agenda (a aba Contatos que abre lê a agenda de novo, e a lista vem com outra `vez`): a de antes fica, e
+ * nem a aba nem as sugestões refazem uma lista que pode ter milhares de contatos.
+ */
+function mesmaAgenda(a: AgendaContact[], b: AgendaContact[]): boolean {
+  return (
+    a.length === b.length &&
+    a.every((c, i) => c.nome === b[i].nome && c.numeros.length === b[i].numeros.length && c.numeros.every((n, j) => n === b[i].numeros[j]))
+  );
+}
+
+/** (iPhone) Um estado do iPhone sem o `agenda` (fora do contrato): a aba fica como sem a permissão. */
+const SEM_AGENDA: AgendaSummary = { permissao: 'pendente', vez: 0, quantos: 0 };
 
 function initialView(): View {
   const v = bridge.initialView;
@@ -78,6 +95,9 @@ function App() {
   const [atualizacao, setAtualizacao] = useState<{ versao: string; notas: string; vez: number } | null>(null);
   // (rc.4) A lista da empresa da última contatosEmpresa (a de `vez` mais alta: uma mais velha que chega atrasada não vale).
   const [daEmpresa, setDaEmpresa] = useState<{ vez: number; contatos: CompanyContact[] }>({ vez: 0, contatos: [] });
+  // (iPhone) A agenda da última mensagem `agenda` (a de `vez` mais alta, como a da empresa) e as sugestões dela.
+  const [daAgenda, setDaAgenda] = useState<{ vez: number; contatos: AgendaContact[] }>({ vez: 0, contatos: [] });
+  const sugestoesDaAgenda = useMemo(() => agendaSuggestions(daAgenda.contatos), [daAgenda.contatos]);
   // O diálogo da área do administrador (o Ctrl + P).
   const [adminLogin, setAdminLogin] = useState(false);
   const [numero, setNumero] = useState('');
@@ -118,6 +138,11 @@ function App() {
       } else if (msg.type === 'contatosEmpresa') {
         setDaEmpresa((atual) =>
           msg.vez > atual.vez ? { vez: msg.vez, contatos: mesmaLista(atual.contatos, msg.contatos) ? atual.contatos : msg.contatos } : atual,
+        );
+      } else if (msg.type === 'agenda') {
+        // (iPhone) Uma lista mais velha que chega atrasada não vale.
+        setDaAgenda((atual) =>
+          msg.vez > atual.vez ? { vez: msg.vez, contatos: mesmaAgenda(atual.contatos, msg.contatos) ? atual.contatos : msg.contatos } : atual,
         );
       } else if (msg.type === 'abrir') {
         // (iPhone) O toque no aviso da perdida.
@@ -239,6 +264,8 @@ function App() {
     );
   }
 
+  // As sugestões do número (o Teclado, o Transferir e a Nova ligação): no iPhone, as da agenda, no lugar dos `contatos`.
+  const sugestoes = ios ? sugestoesDaAgenda : state.contatos;
   const toastEl = <Toast texto={toast?.texto ?? null} vez={toast?.vez ?? 0} />;
   // A pergunta da atualização e o diálogo do administrador nunca cobrem a tela da ligação.
   const avisos = (
@@ -268,7 +295,7 @@ function App() {
                 : state.conta.ramal,
           status: state.conta ? accountDot(state.conta, true, state.naoPerturbe) : undefined,
         })}
-        <Ligacao state={state} ligacao={state.ligacao} send={send} />
+        <Ligacao state={state} ligacao={state.ligacao} contatos={sugestoes} send={send} />
         {toastEl}
       </div>
     );
@@ -372,7 +399,7 @@ function App() {
       {barra()}
       {conta && <Header state={state} conta={conta} send={send} navigate={setView} current={view} layout={layout} />}
       <main class="main" aria-label={TABS.find((t) => t.tab === tab)!.label}>
-        {tab === 'teclado' && <Teclado numero={numero} setNumero={mudarNumero} contatos={state.contatos} recentes={state.recentes} send={send} />}
+        {tab === 'teclado' && <Teclado numero={numero} setNumero={mudarNumero} contatos={sugestoes} recentes={state.recentes} send={send} />}
         {tab === 'atalhos' && (
           <Atalhos
             atalhos={state.atalhos}
@@ -394,16 +421,20 @@ function App() {
             onSaveContact={ios ? undefined : (n, nome) => setView({ kind: 'contato', numero: n, nome, back: view })}
           />
         )}
-        {tab === 'contatos' && (
-          <Contatos
-            contatos={state.contatos}
-            daEmpresa={daEmpresa.contatos}
-            comPlanilha={state.empresa.link !== ''}
-            send={send}
-            onNew={() => setView({ kind: 'contato', back: view })}
-            onEdit={(contato) => setView({ kind: 'contato', contato, back: view })}
-          />
-        )}
+        {/* (iPhone) A agenda do iPhone, só para ver e ligar. */}
+        {tab === 'contatos' &&
+          (ios ? (
+            <Agenda agenda={state.agenda ?? SEM_AGENDA} contatos={daAgenda.contatos} send={send} />
+          ) : (
+            <Contatos
+              contatos={state.contatos}
+              daEmpresa={daEmpresa.contatos}
+              comPlanilha={state.empresa.link !== ''}
+              send={send}
+              onNew={() => setView({ kind: 'contato', back: view })}
+              onEdit={(contato) => setView({ kind: 'contato', contato, back: view })}
+            />
+          ))}
       </main>
       <Nav tabs={abas} tab={tab} onSelect={(t) => setView({ kind: 'tab', tab: t })} keyShortcuts={!ios} />
       {avisos}
