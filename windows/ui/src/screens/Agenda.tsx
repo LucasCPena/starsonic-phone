@@ -10,7 +10,7 @@
 // de cada contato é montada uma vez e reaproveitada (o Preact pula o mesmo vnode), como na aba Contatos do Windows: a
 // busca e um estado novo não redesenham a lista inteira. Com mais de 1.000 linhas na tela, as de fora da tela ficam sem o
 // estilo e o layout (a classe agenda-grande, no app.css): a aba abre e a busca volta a todos sem montar o layout de
-// milhares delas.
+// milhares delas. Sem o content-visibility (o iPhone com iOS 16 e 17), essas linhas vão em pedaços (PRIMEIRO_PEDACO).
 import type { JSX, VNode } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { agendaName, contactNumberLine, groupLetter, initials, searchAgenda } from '../format';
@@ -40,6 +40,32 @@ const TITULO_DA_ESCOLHA = 'escolha-numero-titulo';
  * chegarem perto da tela. Até esse número, todas ficam nela (o VoiceOver confere no aparelho, na parte 2).
  */
 const LISTA_GRANDE = 1000;
+/**
+ * Sem o content-visibility (o Safari antes do 18: o iPhone com iOS 16 e 17), a lista grande vai em pedaços: as primeiras
+ * PRIMEIRO_PEDACO linhas logo, e as outras PEDACO de cada vez, cada pedaço numa tarefa depois de o anterior ser desenhado
+ * (o setTimeout: o Safari não tem o requestIdleCallback), e a aba responde entre eles. A busca olha a agenda inteira na
+ * hora; uma lista nova ou uma busca nova recomeça do primeiro pedaço. O tempo de verdade é o do aparelho (parte 2).
+ */
+const COM_CONTENCAO = typeof CSS !== 'undefined' && CSS.supports('content-visibility', 'auto');
+const PRIMEIRO_PEDACO = 100;
+const PEDACO = 200;
+
+/** Um grupo da lista: a letra e os contatos dela, na ordem. */
+interface Grupo {
+  letra: string;
+  itens: AgendaContact[];
+}
+
+/** Os grupos só com as primeiras `n` linhas da lista. */
+function primeiras(grupos: Grupo[], n: number): Grupo[] {
+  const out: Grupo[] = [];
+  for (const g of grupos) {
+    if (n <= 0) break;
+    out.push(g.itens.length <= n ? g : { letra: g.letra, itens: g.itens.slice(0, n) });
+    n -= g.itens.length;
+  }
+  return out;
+}
 
 // O ícone de ligar é o mesmo em todas as linhas: um vnode só (sem um componente por linha, numa lista de milhares).
 const ICONE_LIGAR = IconPhone({ size: 'sm' });
@@ -128,7 +154,7 @@ function Lista({ quantos, contatos, send }: { quantos: number; contatos: AgendaC
   }, [contatos]);
 
   const grupos = useMemo(() => {
-    const lista: Array<{ letra: string; itens: AgendaContact[] }> = [];
+    const lista: Grupo[] = [];
     for (const c of searchAgenda(contatos, busca)) {
       const letra = groupLetter(agendaName(c));
       const ultimo = lista[lista.length - 1];
@@ -168,8 +194,19 @@ function Lista({ quantos, contatos, send }: { quantos: number; contatos: AgendaC
   // nenhum contato aqui, a lista está a caminho (o estado chegou antes dela), e a aba não diz que a agenda está vazia.
   const aCaminho = chaves.size === 0 && quantos > 0;
   const naTela = grupos.reduce((n, g) => n + g.itens.length, 0);
+  const grande = naTela > LISTA_GRANDE;
+  // Sem a contenção, a lista grande em pedaços: quantas linhas destes grupos já vão na tela. Uns grupos novos (uma lista
+  // nova ou uma busca nova) recomeçam do primeiro pedaço, e o pedaço pedido para os de antes não vale para eles.
+  const [pedacos, setPedacos] = useState({ de: grupos, ate: PRIMEIRO_PEDACO });
+  const ate = !grande || COM_CONTENCAO ? naTela : pedacos.de === grupos ? pedacos.ate : PRIMEIRO_PEDACO;
+  useEffect(() => {
+    if (ate >= naTela) return;
+    const seguinte = setTimeout(() => setPedacos({ de: grupos, ate: ate + PEDACO }), 0);
+    return () => clearTimeout(seguinte);
+  }, [grupos, ate]);
+  const desenhados = ate < naTela ? primeiras(grupos, ate) : grupos;
   return (
-    <div class={naTela > LISTA_GRANDE ? 'body scroll agenda agenda-grande' : 'body scroll agenda'} style={{ gap: '10px' }}>
+    <div class={grande && COM_CONTENCAO ? 'body scroll agenda agenda-grande' : 'body scroll agenda'} style={{ gap: '10px' }}>
       <div style={{ display: 'flex', flex: 'none' }}>
         <label class="search">
           <IconSearch size="sm" />
@@ -190,7 +227,7 @@ function Lista({ quantos, contatos, send }: { quantos: number; contatos: AgendaC
         </label>
       </div>
       {grupos.length === 0 && !aCaminho && <p class="empty">{busca.trim() ? 'Nenhum contato encontrado.' : 'Nenhum contato com número no iPhone.'}</p>}
-      {grupos.map((g) => (
+      {desenhados.map((g) => (
         <section key={g.letra} aria-label={g.letra}>
           <h2 class="group">{g.letra}</h2>
           <ul class="list">{g.itens.map(linhaDe)}</ul>

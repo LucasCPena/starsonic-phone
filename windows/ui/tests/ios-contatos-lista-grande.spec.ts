@@ -3,10 +3,13 @@
 // número repetido aparece uma vez, e um estado novo ou a mesma agenda lida de novo não refazem a lista. Acima de 1.000
 // linhas na tela, as de fora da tela ficam sem o estilo e o layout (a classe agenda-grande); com até 1.000 (uma agenda de
 // algumas centenas, ou uma busca), cada botão de ligar fica na árvore de acessibilidade do Chromium (lida pelo CDP: o
-// getByRole do Playwright vê o DOM, e não a árvore). Num arquivo próprio, como o contatos-lista-grande.spec.ts: o trace
-// do Playwright tira uma foto do DOM inteiro (uns 60.000 nós com a lista cheia) a cada passo, e o `trace` só se desliga
-// no arquivo inteiro. Só seletores CSS na lista grande (o getByRole varre os milhares de botões), e os tempos medidos
-// dentro da página.
+// getByRole do Playwright vê o DOM, e não a árvore). Sem o content-visibility (o Safari antes do 18: o iPhone com iOS 16
+// e 17; aqui, o CSS.supports da página trocado só para ele), a lista grande vai em pedaços: o primeiro logo, e todas as
+// linhas no fim, na ordem e na árvore de acessibilidade; a busca olha a agenda inteira na hora, e uma busca nova ou uma
+// lista nova no meio dos pedaços recomeça sem linha repetida nem faltando. Num arquivo próprio, como o
+// contatos-lista-grande.spec.ts: o trace do Playwright tira uma foto do DOM inteiro (uns 60.000 nós com a lista cheia) a
+// cada passo, e o `trace` só se desliga no arquivo inteiro. Só seletores CSS na lista grande (o getByRole varre os
+// milhares de botões), e os tempos medidos dentro da página.
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import type { AgendaContact } from '../src/state';
 import { esperarComando } from './helpers';
@@ -276,4 +279,202 @@ test('5,000 agenda contacts: the tab opens and the search answers within 1 s, in
   await esperarComando(page, { cmd: 'dial', numero: '(11) 90050-9949', contato: true });
   await linha(page, 'Élcio 0021').locator('.row-hit').click();
   await expect(page.locator('dialog[open] button')).toHaveText(['(11) 90021-9978', 'Ramal 3021', 'Cancelar']);
+});
+
+/** O tamanho do primeiro pedaço da lista grande sem o content-visibility (o PRIMEIRO_PEDACO do Agenda.tsx). */
+const PRIMEIRO_PEDACO = 100;
+
+/** O título de cada linha da agenda, na ordem dela: o nome, ou o primeiro número (os contatos sem número ficam de fora). */
+function titulosDe(agenda: AgendaContact[]): string[] {
+  return agenda.filter((c) => c.numeros.length > 0).map((c) => c.nome || c.numeros[0]);
+}
+
+/** O nome sem acento e sem caixa (o da busca). */
+function dobrar(texto: string): string {
+  return texto.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+}
+
+/** Os títulos da lista, na ordem da tela. */
+function titulosNaTela(page: Page): Promise<string[]> {
+  return page.locator('main li.row .row-title').allTextContents();
+}
+
+/**
+ * Toca na aba Contatos e acompanha, dentro da página, o desenho em pedaços até a lista ter `linhas` linhas: quantas o
+ * primeiro desenho pôs na tela e quando (um MutationObserver vê cada desenho inteiro, antes do seguinte), quantos desenhos
+ * mudaram a contagem e quando todas chegaram.
+ */
+function abrirEmPedacos(page: Page, linhas: number): Promise<{ primeiro: number; msPrimeiro: number; desenhos: number; msTodas: number }> {
+  return page.evaluate(async (linhas) => {
+    const contar = () => document.querySelectorAll('main li.row').length;
+    const visto = { primeiro: 0, msPrimeiro: 0, desenhos: 0 };
+    let antes = contar();
+    const t0 = performance.now();
+    const observador = new MutationObserver(() => {
+      const n = contar();
+      if (n === antes) return;
+      antes = n;
+      visto.desenhos++;
+      if (visto.primeiro === 0) {
+        visto.primeiro = n;
+        visto.msPrimeiro = performance.now() - t0;
+      }
+    });
+    observador.observe(document.body, { childList: true, subtree: true });
+    document.querySelector<HTMLButtonElement>('.nav .tab-contatos')!.click();
+    while (contar() !== linhas) {
+      if (performance.now() - t0 > 30_000) throw new Error(`${contar()} linhas`);
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    const msTodas = performance.now() - t0;
+    observador.disconnect();
+    return { ...visto, msTodas };
+  }, linhas);
+}
+
+/** Um passo na aba: tocar nela, escrever na busca ou o núcleo mandar uma lista nova (a `vez` seguinte, e o estado). */
+type Passo = { aba: true } | { busca: string } | { agenda: AgendaContact[] };
+
+/**
+ * Os passos, dentro da página, cada um logo depois do primeiro desenho do anterior (os outros pedaços dele ainda por
+ * vir). Devolve quantas linhas o primeiro desenho de cada passo pôs na tela; o da lista nova não é esperado (-1): ela
+ * chega numa tarefa depois, e pode vir depois de um pedaço da lista de antes.
+ */
+function passos(page: Page, lista: Passo[]): Promise<number[]> {
+  return page.evaluate(async (lista) => {
+    const contar = () => document.querySelectorAll('main li.row').length;
+    // O próximo desenho: a próxima mudança no DOM (o desenho do passo, que vem antes de qualquer pedaço da fila).
+    const proximoDesenho = () =>
+      new Promise<number>((resolve) => {
+        const observador = new MutationObserver(() => {
+          observador.disconnect();
+          resolve(contar());
+        });
+        observador.observe(document.body, { childList: true, subtree: true });
+      });
+    const linhas: number[] = [];
+    for (const passo of lista) {
+      if ('agenda' in passo) {
+        const fake = (window as unknown as { __fake: { state(): Record<string, any>; push(m: unknown): void } }).__fake;
+        const s = fake.state();
+        const vez = s.agenda.vez + 1;
+        fake.push({ v: 1, type: 'agenda', vez, contatos: passo.agenda });
+        const quantos = passo.agenda.filter((c) => c.numeros.length > 0).length;
+        fake.push({ v: 1, type: 'state', state: { ...s, agenda: { ...s.agenda, vez, quantos } } });
+        linhas.push(-1);
+        continue;
+      }
+      const desenho = proximoDesenho();
+      if ('aba' in passo) {
+        document.querySelector<HTMLButtonElement>('.nav .tab-contatos')!.click();
+      } else {
+        const campo = document.querySelector<HTMLInputElement>('main input[type="search"]')!;
+        campo.value = passo.busca;
+        campo.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      linhas.push(await desenho);
+    }
+    return linhas;
+  }, lista);
+}
+
+/** O CSS.supports da página diz que não ao content-visibility (o Safari antes do 18), e só a ele, antes de a página abrir. */
+async function semContentVisibility(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const css = CSS as unknown as { supports(...args: string[]): boolean };
+    const original = css.supports.bind(CSS);
+    css.supports = (...args: string[]) => (/content-visibility/i.test(args[0] ?? '') ? false : original(...args));
+  });
+}
+
+test.describe('without content-visibility (iOS 16 and 17)', () => {
+  test.beforeEach(async ({ page }) => semContentVisibility(page));
+
+  test('5,000 agenda contacts are drawn in pieces: the first right away, then every row in order and in the accessibility tree', async ({ page }) => {
+    await contarComparacoes(page);
+    await abrirIos(page, 'principal', TAMANHO);
+    const suporta = () => [CSS.supports('content-visibility', 'auto'), CSS.supports('(content-visibility: auto)'), CSS.supports('display', 'grid')];
+    expect(await page.evaluate(suporta)).toEqual([false, false, true]);
+    const agenda = agendaGrande();
+    const titulos = titulosDe(agenda);
+    await novaAgenda(page, agenda);
+
+    // A aba abre com o primeiro pedaço, logo; os outros vêm depois, até todas as linhas.
+    const aberta = await abrirEmPedacos(page, titulos.length);
+    const tempos =
+      `o primeiro desenho com ${aberta.primeiro} linhas em ${Math.round(aberta.msPrimeiro)} ms; ` +
+      `as ${titulos.length} em ${Math.round(aberta.msTodas)} ms, em ${aberta.desenhos} desenhos`;
+    test.info().annotations.push({ type: 'tempos', description: tempos });
+    expect(aberta.primeiro, tempos).toBeGreaterThan(0);
+    expect(aberta.primeiro, tempos).toBeLessThanOrEqual(PRIMEIRO_PEDACO);
+    expect(aberta.msPrimeiro, tempos).toBeLessThan(1000);
+    expect(aberta.desenhos, tempos).toBeGreaterThan(1);
+
+    // Sem a classe da contenção: todas as linhas com o estilo e o layout, e cada botão de ligar na árvore do Chromium.
+    await expect(page.locator('main .agenda')).not.toHaveClass(/\bagenda-grande\b/);
+    expect(await contencao(page)).toEqual({ visible: titulos.length });
+    await expect.poll(() => ligarNaArvore(page, '')).toBe(titulos.length);
+
+    // Cada contato uma vez, nenhum faltando, na ordem do português (a do caminho de hoje).
+    const naTela = await titulosNaTela(page);
+    expect(new Set(naTela).size).toBe(naTela.length);
+    expect([...naTela].sort()).toEqual([...titulos].sort());
+    await expect(page.locator('main h2.group')).toHaveText(['#', 'A', 'B', 'C', 'E', 'I', 'J', 'L', 'M', 'O', 'U', 'Z']);
+    expect(emSeguida(await grupo(page, 'A'))).toEqual(['Álvaro', 'ana', 'Ângela']);
+    expect(emSeguida(await grupo(page, 'E'))).toEqual(['Élcio', 'Érica']);
+    expect((await grupo(page, '#')).slice(0, 3)).toEqual(['(11) 90000-9999', '(11) 90050-9949', '(11) 90100-9899']);
+
+    // Rolar até o fim mostra o último contato da ordem.
+    await page.locator('main .agenda').evaluate((lista) => lista.scrollTo({ top: lista.scrollHeight }));
+    await expect(linha(page, 'Zélia 4990')).toBeInViewport();
+    expect(naTela[naTela.length - 1]).toBe('Zélia 4990');
+
+    // O memo das linhas continua: a mesma agenda lida de novo não mexe na lista nem a ordena de novo.
+    expect(await mandarObservando(page, agenda)).toEqual({ mudancas: 0, saem: [], entram: [], comparacoes: 0 });
+  });
+
+  test('a search in the middle of the pieces covers the whole agenda, and a new search or a new list starts the pieces over', async ({ page }) => {
+    await abrirIos(page, 'principal', TAMANHO);
+    const agenda = agendaGrande();
+    const titulos = titulosDe(agenda);
+    await novaAgenda(page, agenda);
+    const linhas = page.locator('main li.row');
+
+    // A aba abre e, logo depois do primeiro pedaço (o grupo "#"), "zelia": o resultado (o último grupo, longe do primeiro
+    // pedaço) vem inteiro no desenho seguinte, sem esperar os pedaços.
+    const zelias = titulos.filter((t) => t.startsWith('Zélia'));
+    let desenhos = await passos(page, [{ aba: true }, { busca: 'zelia' }]);
+    expect(desenhos[0]).toBeGreaterThan(0);
+    expect(desenhos[0]).toBeLessThanOrEqual(PRIMEIRO_PEDACO);
+    expect(desenhos[1]).toBe(zelias.length);
+    await expect(linhas).toHaveCount(zelias.length);
+    expect(await titulosNaTela(page)).toEqual(zelias);
+
+    // A busca limpa (a lista inteira em pedaços de novo) e, no meio, "a": mais de 1.000 linhas, também em pedaços, e no
+    // fim cada uma uma vez.
+    const comA = titulosDe(agenda.filter((c) => dobrar(c.nome).includes('a')));
+    expect(comA.length).toBeGreaterThan(1000);
+    desenhos = await passos(page, [{ busca: '' }, { busca: 'a' }]);
+    expect(desenhos[0]).toBeLessThanOrEqual(PRIMEIRO_PEDACO);
+    expect(desenhos[1]).toBeLessThanOrEqual(PRIMEIRO_PEDACO);
+    await expect(linhas).toHaveCount(comA.length);
+    let naTela = await titulosNaTela(page);
+    expect(new Set(naTela).size).toBe(naTela.length);
+    expect([...naTela].sort()).toEqual([...comA].sort());
+
+    // A busca limpa de novo e, no meio, uma lista nova (um contato com outro nome e um a mais): os pedaços que faltavam da
+    // de antes não valem, e a nova chega inteira, cada linha uma vez.
+    const renomeada = agenda.map((c) => (c.nome === 'Íris 0007' ? { ...c, nome: 'Íris 0007 B' } : c));
+    const nova = [{ nome: 'Aarão Teste', numeros: ['(11) 99999-0000'] }, ...renomeada];
+    const titulosNovos = titulosDe(nova);
+    desenhos = await passos(page, [{ busca: '' }, { agenda: nova }]);
+    expect(desenhos[0]).toBeLessThanOrEqual(PRIMEIRO_PEDACO);
+    await expect(linhas).toHaveCount(titulosNovos.length);
+    naTela = await titulosNaTela(page);
+    expect(new Set(naTela).size).toBe(naTela.length);
+    expect([...naTela].sort()).toEqual([...titulosNovos].sort());
+    expect(naTela).toContain('Íris 0007 B');
+    expect(naTela).not.toContain('Íris 0007');
+    expect(emSeguida(await grupo(page, 'A'))).toEqual(['Aarão', 'Álvaro', 'ana', 'Ângela']);
+  });
 });

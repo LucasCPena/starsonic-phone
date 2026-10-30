@@ -867,7 +867,8 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
    tela fica sem o estilo e o layout do que tem dentro, com a altura de uma linha (59 px; depois de vista, a dela), e a
    aba abre sem montar o layout de todas. No Chromium, essas linhas saem da árvore de acessibilidade até chegarem perto
    da tela: por isso, só na lista grande. A contenção corta o que passa da linha: o overflow-clip-margin deixa inteiro o
-   contorno do foco dos botões (3 px, a 2 px deles). */
+   contorno do foco dos botões (3 px, a 2 px deles). Sem o content-visibility (iOS 16 e 17), a classe não vai: a lista
+   vai em pedaços (Agenda.tsx). */
 .win[data-plataforma="ios"] .agenda-grande li.row { content-visibility: auto; contain-intrinsic-size: auto 59px; overflow-clip-margin: 6px; }
 /* Os outros alvos pequenos das telas do iPhone com a área do toque de 44×44 px, sem mudar o desenho, como os do
    cabeçalho: um ::after transparente no meio de cada um, do tamanho dele ou dos 44 px, o que for maior (o
