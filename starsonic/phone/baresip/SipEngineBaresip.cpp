@@ -286,8 +286,23 @@ public:
         return done;
     }
 
-    bool Join(int /*callId*/, int /*otherId*/) { return false; }
-    bool Split(int /*callId*/, int /*otherId*/) { return false; }
+    // A conferência a três, na mesa de áudio daqui (o mixminus): a que está em espera é retomada depois da renegociação
+    // anterior dela (RunRenegotiating). O Join não tem o que fazer no prazo: o que ainda esbarra é recusado.
+    bool Join(int callId, int otherId) {
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        bool done = false;
+        RunRenegotiating([&](bool /*lastTry*/) { done = calls_.Join(callId, otherId); });
+        return done;
+    }
+
+    // O Activate(callId), que desfaz a conferência: otherId vai para a espera (RunRenegotiating).
+    bool Split(int callId, int otherId) {
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        bool done = false;
+        RunRenegotiating([&](bool lastTry) { done = calls_.Split(callId, otherId, lastTry); });
+        return done;
+    }
+
     int CallCount() const { return calls_.Count(); }   // nunca espera: sem a apiMutex_ e sem o Run
 
     std::vector<int> AudioLinks(int callId) {
@@ -366,6 +381,13 @@ public:
         return ids;
     }
 
+    std::vector<int> ConferenceCalls() {
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        std::vector<int> ids;
+        loop_->Run([&] { ids = calls_.ConferenceCalls(); });
+        return ids;
+    }
+
 private:
     // Sem o padrão (-1), como no motor do PJSIP; com nullAudio, o dispositivo nulo.
     std::vector<AudioDevice> ListAudioDevices() const {
@@ -390,11 +412,11 @@ private:
         return [this](int level, const std::string& line) { Log(level, line); };
     }
 
-    // Com a apiMutex_: um pedido do BaresipCalls que manda re-INVITE (Make, Answer, Activate ou SetHold), no laço. Se
-    // ele esbarra numa renegociação ainda no ar (Blocked), a espera é aqui, fora do Run, pelo fim dela (até ~2 s desde
-    // o primeiro pedido), e ele vai de novo; passado o prazo, ele vai uma última vez, com lastTry: o Make, o Answer e o
-    // Activate seguem sem a espera da outra, e o que ainda esbarra (a espera do SetHold, ou a retomada da escolhida no
-    // Activate) é recusado.
+    // Com a apiMutex_: um pedido do BaresipCalls que manda re-INVITE (Make, Answer, Activate, SetHold, Join ou Split),
+    // no laço. Se ele esbarra numa renegociação ainda no ar (Blocked), a espera é aqui, fora do Run, pelo fim dela (até
+    // ~2 s desde o primeiro pedido), e ele vai de novo; passado o prazo, ele vai uma última vez, com lastTry: o Make, o
+    // Answer e o Activate (e o Split) seguem sem a espera da outra, e o que ainda esbarra (a espera do SetHold, a
+    // retomada da escolhida no Activate ou a retomada do Join) é recusado.
     void RunRenegotiating(const std::function<void(bool lastTry)>& work) {
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(kRenegotiationWaitMs);
         for (;;) {
@@ -557,5 +579,9 @@ void SipEngineTestAccess::FailReinvites(SipEngine& engine, bool on, int callId) 
 }
 
 std::vector<int> SipEngineTestAccess::MutedCalls(const SipEngine& engine) { return engine.impl_->MutedCalls(); }
+
+std::vector<int> SipEngineTestAccess::ConferenceCalls(const SipEngine& engine) {
+    return engine.impl_->ConferenceCalls();
+}
 
 }  // namespace starsonic

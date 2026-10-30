@@ -73,6 +73,7 @@ if(BARESIP_PREFIX)
     test_engine_calls.cpp
     test_engine_hold.cpp
     test_engine_transfer.cpp
+    test_engine_conference.cpp
     test_engine_baresip.cpp
     test_push_data.cpp
     test_account_config.cpp)

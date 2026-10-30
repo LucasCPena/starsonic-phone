@@ -1,6 +1,7 @@
 #pragma once
 // O que os testes do motor com o baresip (tests/phone/test_engine_baresip.cpp) leem do estado dele, além do contrato
-// (o áudio aberto de cada ligação, o mudo): métodos estáticos, que entram com os testes que os usam. É amiga do
+// (o áudio aberto de cada ligação, o mudo, a mistura da conferência): métodos estáticos, que entram com os testes que
+// os usam. É amiga do
 // SipEngine (o friend em SipEngine.h), e só o motor com o baresip a define; o do PJSIP nunca.
 #include <vector>
 
@@ -21,6 +22,9 @@ struct SipEngineTestAccess {
     static void FailReinvites(SipEngine& engine, bool on, int callId = 0);
     // Os ids das ligações com o microfone mudo (o audio_ismuted do baresip), em ordem crescente.
     static std::vector<int> MutedCalls(const SipEngine& engine);
+    // Os ids das ligações na mistura da conferência (o audio_is_conference do baresip, que o mixminus lê), em ordem
+    // crescente. O AudioLinks sai do estado do motor; só esta leitura mostra o que o baresip mistura.
+    static std::vector<int> ConferenceCalls(const SipEngine& engine);
 };
 
 }  // namespace starsonic

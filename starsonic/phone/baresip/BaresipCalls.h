@@ -1,15 +1,21 @@
 #pragma once
 // As ligações do motor com o baresip (internas): fazer, receber, atender, recusar, desligar, pôr em espera e retomar,
-// as teclas, o mudo e as transferências, com os eventos do contrato (SipEngine.h) na ordem e com os códigos do motor do
-// PJSIP. Até duas ligações: a que chega com outra ainda não confirmada, ou com duas em andamento, recebe 486. O outro
-// lado não troca nem transfere uma ligação daqui: o INVITE com Replaces recebe 603 (o OnInvite), e o REFER numa
-// ligação, 501 (a conta não deixa o baresip aceitá-lo: o call_transfer=no do BaresipAccount).
+// as teclas, o mudo, as transferências e a conferência a três, com os eventos do contrato (SipEngine.h) na ordem e com
+// os códigos do motor do PJSIP. Até duas ligações: a que chega com outra ainda não confirmada, ou com duas em
+// andamento, recebe 486. O outro lado não troca nem transfere uma ligação daqui: o INVITE com Replaces recebe 603 (o
+// OnInvite), e o REFER numa ligação, 501 (a conta não deixa o baresip aceitá-lo: o call_transfer=no do
+// BaresipAccount).
 //
 // Um microfone só (o iPhone, spec 7.7), como a mesa de áudio do motor do PJSIP: uma das ligações é a ativa (a feita,
 // a atendida ou a do Activate, até ela acabar), e só ela, fora da espera, fica com o áudio aberto. A outra, confirmada,
 // vai para a espera (re-INVITE sendonly) com o áudio parado; se essa espera não sai (o Make, o Answer e o Activate
 // seguem sem ela), ela fica só com o áudio parado. O baresip abre o áudio de uma ligação sozinho a cada SDP que
 // aplica, também o de uma só de envio (a em espera): o das outras para de novo logo depois (o audioTimer_).
+//
+// A conferência (o Join) é a exceção, como no motor do PJSIP: nenhuma é a ativa, as duas fora da espera ficam com o
+// áudio, e o mixminus mistura as duas (o audio_set_conference ligado: o Mix). Ele manda a cada uma, junto com o som do
+// microfone, o som que chega da outra. A central não fica sabendo. Ela acaba no Split, no Activate de uma delas ou
+// quando uma acaba; a ativa passa a ser a escolhida, ou a que ficou.
 //
 // Tudo aqui roda com a trava da libre: numa thread que está no BaresipLoop::Run ou na thread do laço (a do re_main),
 // no handler dos eventos do baresip (bevent), que repassa ao OnEvent, e nos temporizadores (o das que esperam para
@@ -47,15 +53,15 @@ public:
 
     void OnEvent(enum bevent_ev ev, struct bevent* event);   // o handler do bevent repassa aqui
 
-    // Os pedidos que mandam re-INVITE (a espera ou a retomada): Make, Answer, Activate e SetHold. A libre recusa um
-    // re-INVITE com outra oferta da mesma ligação no ar (o sipsess_modify dá EPROTO), e o call_hold do baresip, sem a
-    // renegociação anterior acabada (call_refresh_allowed), marcaria a ligação sem mandar nada. Por isso, quando uma
-    // ligação que o pedido renegociaria ainda espera a resposta de outra oferta, o re-INVITE dela não sai, o pedido
-    // devolve false (o Make, -1) e Blocked() fica true: quem chamou espera fora do Run (WaitNegotiation) e pede de
-    // novo. O Make, o Answer e o SetHold não mudam nada antes disso; o Activate já fez a escolhida a ativa, com o áudio
-    // da outra parado e, se saiu, a espera dela, como o Focus do motor do PJSIP. Uma espera ou uma retomada que não
-    // sai (um erro de transporte na hora, por exemplo) deixa a ligação como estava, e o pedido seguinte tenta de novo
-    // (ver o Renegotiate).
+    // Os pedidos que mandam re-INVITE (a espera ou a retomada): Make, Answer, Activate, SetHold, Join e Split. A libre
+    // recusa um re-INVITE com outra oferta da mesma ligação no ar (o sipsess_modify dá EPROTO), e o call_hold do
+    // baresip, sem a renegociação anterior acabada (call_refresh_allowed), marcaria a ligação sem mandar nada. Por
+    // isso, quando uma ligação que o pedido renegociaria ainda espera a resposta de outra oferta, o re-INVITE dela não
+    // sai, o pedido devolve false (o Make, -1) e Blocked() fica true: quem chamou espera fora do Run (WaitNegotiation)
+    // e pede de novo. O Make, o Answer, o SetHold e o Join não mudam nada antes disso; o Activate (e o Split, que é
+    // ele) já fez a escolhida a ativa, com o áudio da outra parado e, se saiu, a espera dela, como o Focus do motor do
+    // PJSIP. Uma espera ou uma retomada que não sai (um erro de transporte na hora, por exemplo) deixa a ligação como
+    // estava, e o pedido seguinte tenta de novo (ver o Renegotiate).
 
     // Liga para uri (a URI inteira) pela ua da conta e devolve o id da ligação, a ativa, com o OnCallState(Calling, 0)
     // já na fila. Com uma confirmada fora da espera, ela vai para a espera antes e fica nela mesmo se a nova não sai;
@@ -75,22 +81,37 @@ public:
     // antes de uma resposta provisória, RFC 3261 9.1, e largaria o INVITE: o CANCEL sai no primeiro 18x, e no 200 sai o
     // BYE) e a recebida atendida que ainda não teve o ACK (o BYE de antes dele sairia uma vez só: ele sai depois do
     // ACK, como no PJSIP). Depois de mandado, a libre termina o pedido sozinha. Desligada a ativa, nenhuma é a ativa: a
-    // outra segue em espera, sem áudio, até um Activate.
+    // outra segue em espera, sem áudio, até um Activate. Na conferência, a outra vira a ativa, com o áudio que já tem.
     bool Hangup(int id);
-    // Só numa confirmada; já ativa, nada muda e nenhum re-INVITE sai. Senão, como o Focus do motor do PJSIP: ela vira a
-    // ativa na hora, e a outra fica sem o áudio daqui na hora, também numa tentativa que volta Blocked (enquanto o
-    // motor espera, a que o app mostra em espera já não ouve nem é ouvida). A outra, confirmada e fora da espera, vai
-    // para a espera como no Make (o HoldOther: com lastTry, ou com o re-INVITE dela que não sai, segue sem ela), e esta
-    // é retomada (re-INVITE sendrecv) se estava em espera. O resultado é só o dela: false com id desconhecido,
-    // ligação não confirmada, Blocked ou a retomada que não sai (o log diz); então ela segue em espera, sem áudio, e o
-    // Activate seguinte tenta de novo.
+    // Só numa confirmada; já ativa, com o áudio, nada muda e nenhum re-INVITE sai. Senão, como o Focus do motor do
+    // PJSIP: ela vira a ativa na hora (a conferência, se há, acaba: é o Split(id, a outra)), e a outra fica sem o áudio
+    // daqui na hora, também numa tentativa que volta Blocked (enquanto o motor espera, a que o app mostra em espera já
+    // não ouve nem é ouvida). A outra, confirmada e fora da espera, vai para a espera como no Make (o HoldOther: com
+    // lastTry, ou com o re-INVITE dela que não sai, segue sem ela, e isso é decidido uma vez por pedido: as tentativas
+    // seguintes não tentam de novo), e esta é retomada (re-INVITE sendrecv) se estava em espera; fora da espera e sem
+    // o áudio, o áudio dela volta sem re-INVITE. O resultado é só o dela: false com id desconhecido, ligação não
+    // confirmada, Blocked ou a retomada que não sai (o log diz); então ela segue em espera, sem áudio, e o Activate
+    // seguinte tenta de novo.
     bool Activate(int id, bool lastTry);
     // Só numa confirmada: true a põe em espera (re-INVITE sendonly; já em espera, nada muda), e false é o Activate
     // (com o lastTry dele). A espera: false com id desconhecido, ligação não confirmada, Blocked (no prazo, o motor
-    // recusa) ou o re-INVITE que não saiu (o log diz; nada muda).
+    // recusa) ou o re-INVITE que não saiu (o log diz; nada muda). Na conferência, como no motor do PJSIP, a espera tira
+    // a ligação do som e da mistura, e a conferência segue com a outra: o Join não muda nada, e a retomada é o
+    // Activate, que a desfaz.
     bool SetHold(int id, bool hold, bool lastTry);
-    // O último Make, Answer, Activate ou SetHold parou numa ligação que ele renegociaria e que ainda espera a resposta
-    // de outra oferta (só o Activate já mudou algo; ver acima).
+    // A conferência a três: false com ids iguais, um id desconhecido, uma ligação não confirmada ou uma transferência
+    // com consulta sem resultado ainda (o transferTarget de uma delas), como no motor do PJSIP. Já em conferência, nada
+    // muda e nenhum re-INVITE sai. Senão, a que está em espera é retomada (re-INVITE sendrecv; as duas, se as duas
+    // estão), as duas ficam com o áudio e na mistura, e nenhuma vai para a espera nem é a ativa. Com a renegociação
+    // anterior de uma que seria retomada ainda no ar, Blocked, e nada muda (no prazo, o motor recusa); com a retomada
+    // que não sai (o log diz), false, e a conferência não começa.
+    bool Join(int id, int otherId);
+    // Recusado como o Join, menos pela transferência; é o Activate(id): fora da conferência, só ele, e na conferência a
+    // desfaz (a mistura sai das duas, otherId vai para a espera, sendonly e com o áudio parado, e id fica a ativa, sem
+    // re-INVITE dela).
+    bool Split(int id, int otherId, bool lastTry);
+    // O último Make, Answer, Activate, SetHold, Join ou Split parou numa ligação que ele renegociaria e que ainda
+    // espera a resposta de outra oferta (só o Activate e o Split já mudaram algo; ver acima).
     bool Blocked() const;
     // Quantas negociações acabaram até agora: cada resposta a uma oferta (o BEVENT_CALL_REMOTE_SDP com answer) e cada
     // ligação que acaba. O Run do pedido lê, e o WaitNegotiation espera mudar.
@@ -133,13 +154,15 @@ public:
 
     int Count() const;   // de qualquer thread; cai antes de o Disconnected chegar ao listener
     // {0} (o dispositivo de som) só para a ativa, confirmada e fora da espera; vazio para a outra, para uma que toca ou
-    // chama e para um id desconhecido.
+    // chama e para um id desconhecido. Na conferência, {0, a outra} para cada uma das duas na mistura.
     std::vector<int> AudioLinks(int id) const;
     // Os ids das ligações com o áudio aberto (o audio_started do baresip), em ordem crescente: os testes
     // (SipEngineTestAccess).
     std::vector<int> CallsWithAudio() const;
     // Os ids das ligações com o microfone mudo (o audio_ismuted do baresip), em ordem crescente: os testes.
     std::vector<int> MutedCalls() const;
+    // Os ids das ligações na mistura do mixminus (o audio_is_conference do baresip), em ordem crescente: os testes.
+    std::vector<int> ConferenceCalls() const;
     // Os testes (SipEngineTestAccess): com on, nenhum re-INVITE com oferta sai da ligação id (0: de todas), como num
     // erro de transporte na hora (a rede fora). O aviso do SDP que o baresip monta para ele (o BEVENT_CALL_LOCAL_SDP
     // com offer, numa confirmada) recebe um erro, e o call_modify do baresip volta antes de mandar o re-INVITE e de
@@ -205,12 +228,24 @@ private:
     int HangupCode(const Slot& slot) const;
     // O código de um fim que não saiu daqui (o BEVENT_CALL_CLOSED dela, com o motivo que o baresip deu).
     int EndCode(const Slot& slot, const struct call* call, const char* text) const;
-    bool Silent(const Slot& slot) const;         // não pode ter o áudio aberto: não é a ativa, ou está em espera
+    // Não pode ter o áudio aberto: está em espera ou, fora da conferência, não é a ativa.
+    bool Silent(const Slot& slot) const;
     bool OfferPending(const Slot& slot) const;   // ainda espera a resposta de uma oferta: a libre recusaria outra
     // A espera (sendonly) ou a retomada (sendrecv), numa confirmada sem oferta no ar: 0 quando o re-INVITE sai, e então
     // o held muda; senão o erro, e tudo fica como estava. O áudio segue o held: parado se ela fica Silent (o call_hold
-    // abre a fonte de som de novo ao aplicar a direção nova).
+    // abre a fonte de som de novo ao aplicar a direção nova), e a mistura também (o Mix).
     int Renegotiate(Slot& slot, bool hold);
+    // Uma tentativa do Activate (o Activate decide quando o pedido acaba).
+    bool ActivateOnce(int id, bool lastTry);
+    // O áudio de uma confirmada que não está Silent e que o tem parado (a que ficou fora da espera sem ser a ativa, ou
+    // uma tentativa Blocked do Activate) volta, sem re-INVITE (o audio_update).
+    void RestoreAudio(Slot& slot);
+    // As duas na mistura: a conferência, com as duas com o áudio (nenhuma em espera).
+    bool Mixing() const;
+    // A mistura do mixminus nas duas (o audio_set_conference, que ele lê a cada quadro), ligada só com o Mixing, como
+    // as ligações entre as duas na mesa do motor do PJSIP: a que vai para a espera sai dela, e o fim da conferência a
+    // desliga.
+    void Mix();
     // A espera da outra (other, confirmada e fora da espera) quando uma ligação vira a ativa (Make, Answer e
     // Activate): o que se pode, como no Focus do motor do PJSIP. Com a renegociação anterior dela no ar: Blocked e
     // false, ou, com lastTry, nenhuma espera. Sem a espera (essa, ou o re-INVITE dela que não saiu), o motivo vai para
@@ -223,6 +258,8 @@ private:
     void StopSilentAudio();
     void Negotiated();   // uma negociação acabou: acorda quem espera (WaitNegotiation)
     void Bind(Slot& slot, struct call* call, bool incoming);
+    // A vaga se solta, no fim da ligação. Na conferência, a outra vira a ativa, com o áudio que já tem, sem a mistura e
+    // sem re-INVITE, como no motor do PJSIP; fora dela, a ativa que sai não deixa nenhuma.
     void Free(Slot& slot);
     void Recount();   // o count_, pelas vagas ocupadas
     Slot* Find(int id);
@@ -239,7 +276,12 @@ private:
     const DtmfMethod dtmf_;
     Slot slots_[2];
     int nextId_ = 1;           // os ids começam em 1 e nunca se repetem no mesmo motor
-    int activeId_ = 0;         // a ativa (0: nenhuma)
+    int activeId_ = 0;         // a ativa (0: nenhuma, e na conferência)
+    bool conference_ = false;  // as duas juntas (Join) até o Split, um Activate ou o fim de uma
+    // A outra cuja espera o Activate de agora já deixou de lado (o HoldOther: o re-INVITE dela não saiu, ou o prazo
+    // passou), ou 0. As tentativas seguintes do mesmo pedido (Blocked na retomada da escolhida) não tentam a espera de
+    // novo nem escrevem a linha de novo, como o Focus do motor do PJSIP, que tenta uma vez; o pedido seguinte tenta.
+    int holdSkipped_ = 0;
     bool open_ = true;         // false: a conta ou o motor saindo (HangupAll e EndAll), e as que chegam recebem 480
     bool blocked_ = false;     // o Blocked()
     bool muted_ = false;       // o SetMute: vale também para as ligações que nascerem (o Bind)

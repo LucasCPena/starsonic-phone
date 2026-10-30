@@ -219,20 +219,36 @@ bool BaresipCalls::Hangup(int id) {
 }
 
 bool BaresipCalls::Activate(int id, bool lastTry) {
+    const bool done = ActivateOnce(id, lastTry);
+    // O pedido acabou (o motor só pede de novo depois de um Blocked, e não depois do prazo): o próximo decide a espera
+    // da outra de novo.
+    if (!blocked_ || lastTry) holdSkipped_ = 0;
+    return done;
+}
+
+bool BaresipCalls::ActivateOnce(int id, bool lastTry) {
     blocked_ = false;
     Slot* slot = Find(id);
     if (!slot || !slot->confirmed) return false;
     Slot* other = Other(*slot);
-    const bool holdOther = other && other->confirmed && !other->held;
+    // A espera da outra que este pedido já deixou de lado não é tentada de novo (o holdSkipped_).
+    const bool holdOther = other && other->confirmed && !other->held && other->id != holdSkipped_;
     const bool resume = slot->held;
-    if (activeId_ == id && !holdOther && !resume) return true;   // já é a ativa: nenhum re-INVITE
-    // Como o Focus do motor do PJSIP: ela vira a ativa já, e a outra fica sem o áudio na hora, também quando esta
-    // tentativa ainda vai voltar Blocked.
+    // Já é a ativa, com o áudio: nenhum re-INVITE. Sem o áudio (uma tentativa Blocked já a fez a ativa, e a outra
+    // acabou na espera), ela segue até o RestoreAudio.
+    if (activeId_ == id && !holdOther && !resume && audio_started(call_audio(slot->call))) return true;
+    // Como o Focus do motor do PJSIP: ela vira a ativa já (na conferência, ela acaba: é o Split), e a outra fica sem o
+    // áudio na hora, também quando esta tentativa ainda vai voltar Blocked.
     activeId_ = id;
+    if (conference_) {
+        conference_ = false;
+        Mix();
+    }
     StopSilentAudio();
     if (holdOther) {
         std::string skipped;
         if (!HoldOther(*other, lastTry, &skipped)) return false;   // Blocked: o motor espera e pede de novo
+        if (!skipped.empty()) holdSkipped_ = other->id;
         LogSkippedHold(skipped);
     }
     if (resume) {
@@ -245,13 +261,10 @@ bool BaresipCalls::Activate(int id, bool lastTry) {
         if (err) Log(2, "retomar: " + BaresipLoop::ErrorText(err));   // ela segue em espera, sem áudio
         return err == 0;
     }
-    // Confirmada fora da espera sem ser a ativa (a outra virou a ativa antes de esta ser confirmada): o áudio dela
-    // parou, e volta agora, sem re-INVITE. Pelo áudio, e não pela ativa de antes: uma tentativa Blocked já a fez a
-    // ativa.
-    if (!audio_started(call_audio(slot->call))) {
-        const int err = audio_update(call_audio(slot->call));
-        if (err) Log(2, "o audio da ligacao nao voltou: " + BaresipLoop::ErrorText(err));
-    }
+    // Confirmada fora da espera, com o áudio parado: a que não era a ativa (a outra virou a ativa antes de esta ser
+    // confirmada, ou a espera dela não saiu) ou uma tentativa Blocked que já a fez a ativa. Pelo áudio, e não pela
+    // ativa de antes.
+    RestoreAudio(*slot);
     return true;
 }
 
@@ -268,6 +281,57 @@ bool BaresipCalls::SetHold(int id, bool hold, bool lastTry) {
     const int err = Renegotiate(*slot, true);
     if (err) Log(2, "espera: " + BaresipLoop::ErrorText(err));   // nada muda: a ativa segue com o áudio
     return err == 0;
+}
+
+bool BaresipCalls::Join(int id, int otherId) {
+    blocked_ = false;
+    Slot* slot = Find(id);
+    Slot* other = Find(otherId);
+    if (id == otherId || !slot || !other || !slot->confirmed || !other->confirmed) return false;
+    // Com uma transferência com consulta sem resultado, primeiro ela termina (concluída ou cancelada).
+    if (slot->transferTarget != 0 || other->transferTarget != 0) return false;
+    if (conference_) return true;   // já em conferência: nenhum re-INVITE
+    Slot* const members[] = {slot, other};
+    const bool resume[] = {slot->held, other->held};
+    // A retomada de uma em espera com a renegociação anterior dela no ar: Blocked, antes de qualquer mudança.
+    for (int index = 0; index < 2; ++index) {
+        if (resume[index] && OfferPending(*members[index])) {
+            blocked_ = true;
+            return false;
+        }
+    }
+    // A conferência começa antes da retomada: a que volta não fica Silent, e o áudio que o call_hold abre fica aberto.
+    const int active = activeId_;
+    conference_ = true;
+    activeId_ = 0;   // nenhuma é a ativa, como no motor do PJSIP
+    for (int index = 0; index < 2; ++index) {
+        const int err = resume[index] ? Renegotiate(*members[index], false) : 0;
+        if (err) {
+            // A conferência não começa, como no motor do PJSIP: a ativa volta a ser a de antes. Com as duas em espera,
+            // a retomada que já saiu fica, sem o áudio daqui por não ser a ativa.
+            Log(2, "retomar: " + BaresipLoop::ErrorText(err));
+            conference_ = false;
+            activeId_ = active;
+            Mix();
+            StopSilentAudio();
+            return false;
+        }
+    }
+    // A que não estava em espera e tinha o áudio parado (a que ficou fora da espera sem ser a ativa) o tem de volta.
+    for (int index = 0; index < 2; ++index) {
+        if (!resume[index]) RestoreAudio(*members[index]);
+    }
+    Mix();
+    return true;
+}
+
+bool BaresipCalls::Split(int id, int otherId, bool lastTry) {
+    blocked_ = false;
+    const Slot* slot = Find(id);
+    const Slot* other = Find(otherId);
+    if (id == otherId || !slot || !other || !slot->confirmed || !other->confirmed) return false;
+    // A outra é a de otherId: só há duas vagas.
+    return Activate(id, lastTry);
 }
 
 bool BaresipCalls::Blocked() const { return blocked_; }
@@ -361,7 +425,10 @@ int BaresipCalls::Count() const { return count_.load(); }
 std::vector<int> BaresipCalls::AudioLinks(int id) const {
     const Slot* slot = Find(id);
     if (!slot || !slot->confirmed || Silent(*slot)) return std::vector<int>();
-    return std::vector<int>{0};
+    std::vector<int> links{0};
+    const Slot* other = Other(*slot);
+    if (other && Mixing()) links.push_back(other->id);   // o som dela vai também à outra (o mixminus)
+    return links;
 }
 
 std::vector<int> BaresipCalls::CallsWithAudio() const {
@@ -377,6 +444,15 @@ std::vector<int> BaresipCalls::MutedCalls() const {
     std::vector<int> ids;
     for (const Slot& slot : slots_) {
         if (slot.id != 0 && audio_ismuted(call_audio(slot.call))) ids.push_back(slot.id);
+    }
+    std::sort(ids.begin(), ids.end());
+    return ids;
+}
+
+std::vector<int> BaresipCalls::ConferenceCalls() const {
+    std::vector<int> ids;
+    for (const Slot& slot : slots_) {
+        if (slot.id != 0 && audio_is_conference(call_audio(slot.call))) ids.push_back(slot.id);
     }
     std::sort(ids.begin(), ids.end());
     return ids;
@@ -534,7 +610,7 @@ int BaresipCalls::EndCode(const Slot& slot, const struct call* call, const char*
     return timedOut ? 408 : 503;
 }
 
-bool BaresipCalls::Silent(const Slot& slot) const { return slot.id != activeId_ || slot.held; }
+bool BaresipCalls::Silent(const Slot& slot) const { return slot.held || (!conference_ && slot.id != activeId_); }
 
 bool BaresipCalls::OfferPending(const Slot& slot) const { return !call_refresh_allowed(slot.call); }
 
@@ -553,7 +629,25 @@ int BaresipCalls::Renegotiate(Slot& slot, bool hold) {
         slot.held = hold;
     }
     if (Silent(slot)) audio_stop(call_audio(slot.call));
+    Mix();   // na conferência, a que vai para a espera sai da mistura
     return err;
+}
+
+void BaresipCalls::RestoreAudio(Slot& slot) {
+    if (audio_started(call_audio(slot.call))) return;
+    const int err = audio_update(call_audio(slot.call));
+    if (err) Log(2, "o audio da ligacao nao voltou: " + BaresipLoop::ErrorText(err));
+}
+
+bool BaresipCalls::Mixing() const {
+    return conference_ && slots_[0].id != 0 && slots_[1].id != 0 && !Silent(slots_[0]) && !Silent(slots_[1]);
+}
+
+void BaresipCalls::Mix() {
+    const bool on = Mixing();
+    for (const Slot& slot : slots_) {
+        if (slot.id != 0) (void)audio_set_conference(call_audio(slot.call), on);
+    }
 }
 
 bool BaresipCalls::HoldOther(Slot& other, bool lastTry, std::string* skipped) {
@@ -623,7 +717,15 @@ void BaresipCalls::Bind(Slot& slot, struct call* call, bool incoming) {
 }
 
 void BaresipCalls::Free(Slot& slot) {
-    if (slot.id == activeId_) activeId_ = 0;   // a outra não vira a ativa sozinha: só com um Activate
+    if (conference_) {
+        // Uma das duas saiu da conferência: a outra vira a ativa, sem a mistura (nas duas, ainda nas vagas).
+        conference_ = false;
+        Mix();
+        const Slot* other = Other(slot);
+        activeId_ = other ? other->id : 0;
+    } else if (slot.id == activeId_) {
+        activeId_ = 0;   // a outra não vira a ativa sozinha: só com um Activate
+    }
     slot = Slot();
     Recount();
 }
