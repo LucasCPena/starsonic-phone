@@ -2,10 +2,15 @@
 // e Toque), Ligações ((rc.3) o bipe do fim da ligação, Atender automaticamente e o tempo, Iniciar com o Windows) e
 // (rc.4) Contatos (a planilha da empresa: o link ou o caminho, o Salvar, a ajuda, a situação da leitura e o "Atualizar
 // agora"). O Atender automaticamente e o tempo somem quando o administrador esconde o Atender automático.
+// (iPhone) Só as Ligações: o bipe do fim da ligação, o "Bipe ao digitar" (o setSetting com o bipeTecla: cada tecla do
+// Teclado e do teclado da ligação faz o bipe de telefone dela) e o Atender automaticamente com o tempo. Sem as Contas (uma
+// conta só: o Editar conta e o Sair ficam no Menu), o Áudio (quem escolhe a saída é o iPhone), o Iniciar com o Windows e
+// os Contatos (a planilha da empresa).
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { BackBar } from '../components/BackBar';
 import { accountDot, accountTitle, autoAnswerLine, contactCount, readTime } from '../format';
 import { IconAlert, IconChevronDown, IconPencil, IconPlus } from '../icons';
+import { isIos } from '../plataforma';
 import type { AppState, AudioDevice, CompanyList } from '../state';
 import type { Send } from '../types';
 
@@ -38,12 +43,12 @@ function deviceOptions(lista: AudioDevice[], escolhido: string, desconectados: s
   return opcoes;
 }
 
-/** As saídas de som da própria interface (o toque toca no WebView2, pelo setSinkId). */
-function useOutputDevices(): Opcao[] {
+/** As saídas de som da própria interface (o toque toca no WebView2, pelo setSinkId). `ativo`: false no iPhone (sem o Toque). */
+function useOutputDevices(ativo: boolean): Opcao[] {
   const [saidas, setSaidas] = useState<Opcao[]>([]);
   useEffect(() => {
     const md = navigator.mediaDevices;
-    if (!md?.enumerateDevices) return;
+    if (!ativo || !md?.enumerateDevices) return;
     let vivo = true;
     const ler = () =>
       md
@@ -60,7 +65,7 @@ function useOutputDevices(): Opcao[] {
       vivo = false;
       md.removeEventListener?.('devicechange', ler);
     };
-  }, []);
+  }, [ativo]);
   return saidas;
 }
 
@@ -161,80 +166,87 @@ function PlanilhaDaEmpresa({ empresa, send }: { empresa: CompanyList; send: Send
 
 export function Configuracoes({ state, send, onBack, onEditAccount, onAddAccount }: Props) {
   const { audio, atenderAutomatico: auto } = state;
-  const saidas = useOutputDevices();
+  const ios = isIos(state);
+  const saidas = useOutputDevices(!ios);
   const toques: Opcao[] = [{ valor: '', texto: PADRAO }, ...saidas];
   if (audio.toque && !saidas.some((s) => s.valor === audio.toque)) toques.push({ valor: audio.toque, texto: 'Dispositivo escolhido (desconectado)' });
   const tempos = TEMPOS.includes(auto.segundos) ? TEMPOS : [...TEMPOS, auto.segundos].sort((a, b) => a - b);
+  // (iPhone) O Bipe ao digitar: ligado só com o `bipeTecla` do estado (como as teclas, que só bipam com ele).
+  const bipeTecla = state.config.bipeTecla === true;
 
   return (
     <>
       <BackBar title="Configurações" onBack={onBack} />
       <div class="body scroll" style={{ gap: '10px', paddingTop: '16px' }}>
-        <h2 class="eyebrow">Contas</h2>
-        <div class="card">
-          {state.contas.map((c) => (
-            <div class="set-row" key={c.id}>
-              {/* A conta em uso: a bolinha do cabeçalho (verde conectado, ciano conectando, cinza sem conexão e no erro). */}
-              <span class={c.emUso && state.conta ? accountDot(state.conta, state.ligacao !== null, state.naoPerturbe).dot : 'dot dot-off'} aria-hidden="true" />
-              <span class="row-main">
-                <span class="row-title">{accountTitle(c)}</span>
-                <span class="row-sub">{`${c.servidor} · ${c.protocolo.toUpperCase()}${c.emUso ? ' · em uso' : ''}`}</span>
-              </span>
-              <button
-                type="button"
-                class="row-call"
-                aria-label={`Editar a conta ${c.nome || c.ramal}`}
-                title="Editar"
-                style={{ width: '34px', height: '34px' }}
-                onClick={() => onEditAccount(c.id)}
-              >
-                <IconPencil size="sm" />
-              </button>
+        {!ios && (
+          <>
+            <h2 class="eyebrow">Contas</h2>
+            <div class="card">
+              {state.contas.map((c) => (
+                <div class="set-row" key={c.id}>
+                  {/* A conta em uso: a bolinha do cabeçalho (verde conectado, ciano conectando, cinza sem conexão e no erro). */}
+                  <span class={c.emUso && state.conta ? accountDot(state.conta, state.ligacao !== null, state.naoPerturbe).dot : 'dot dot-off'} aria-hidden="true" />
+                  <span class="row-main">
+                    <span class="row-title">{accountTitle(c)}</span>
+                    <span class="row-sub">{`${c.servidor} · ${c.protocolo.toUpperCase()}${c.emUso ? ' · em uso' : ''}`}</span>
+                  </span>
+                  <button
+                    type="button"
+                    class="row-call"
+                    aria-label={`Editar a conta ${c.nome || c.ramal}`}
+                    title="Editar"
+                    style={{ width: '34px', height: '34px' }}
+                    onClick={() => onEditAccount(c.id)}
+                  >
+                    <IconPencil size="sm" />
+                  </button>
+                </div>
+              ))}
+              <div class="set-row">
+                <button type="button" class="link" onClick={onAddAccount}>
+                  <IconPlus size="sm" />
+                  Adicionar conta
+                </button>
+              </div>
             </div>
-          ))}
-          <div class="set-row">
-            <button type="button" class="link" onClick={onAddAccount}>
-              <IconPlus size="sm" />
-              Adicionar conta
-            </button>
-          </div>
-        </div>
 
-        <h2 class="eyebrow" style={{ marginTop: '4px' }}>
-          Áudio
-        </h2>
-        <div class="card">
-          <div class="set-row">
-            <label class="row-main row-title set-title" for="cfg-microfone">
-              Microfone
-            </label>
-            <Select
-              id="cfg-microfone"
-              value={audio.microfone}
-              options={deviceOptions(audio.microfones, audio.microfone, audio.desconectados)}
-              onChange={(v) => send({ cmd: 'setAudio', microfone: v })}
-            />
-          </div>
-          <div class="set-row">
-            <label class="row-main row-title set-title" for="cfg-alto-falante">
-              Alto-falante
-            </label>
-            <Select
-              id="cfg-alto-falante"
-              value={audio.altoFalante}
-              options={deviceOptions(audio.altoFalantes, audio.altoFalante, audio.desconectados)}
-              onChange={(v) => send({ cmd: 'setAudio', altoFalante: v })}
-            />
-          </div>
-          <div class="set-row">
-            <label class="row-main row-title set-title" for="cfg-toque">
-              Toque
-            </label>
-            <Select id="cfg-toque" value={audio.toque} options={toques} onChange={(v) => send({ cmd: 'setAudio', toque: v })} />
-          </div>
-        </div>
+            <h2 class="eyebrow" style={{ marginTop: '4px' }}>
+              Áudio
+            </h2>
+            <div class="card">
+              <div class="set-row">
+                <label class="row-main row-title set-title" for="cfg-microfone">
+                  Microfone
+                </label>
+                <Select
+                  id="cfg-microfone"
+                  value={audio.microfone}
+                  options={deviceOptions(audio.microfones, audio.microfone, audio.desconectados)}
+                  onChange={(v) => send({ cmd: 'setAudio', microfone: v })}
+                />
+              </div>
+              <div class="set-row">
+                <label class="row-main row-title set-title" for="cfg-alto-falante">
+                  Alto-falante
+                </label>
+                <Select
+                  id="cfg-alto-falante"
+                  value={audio.altoFalante}
+                  options={deviceOptions(audio.altoFalantes, audio.altoFalante, audio.desconectados)}
+                  onChange={(v) => send({ cmd: 'setAudio', altoFalante: v })}
+                />
+              </div>
+              <div class="set-row">
+                <label class="row-main row-title set-title" for="cfg-toque">
+                  Toque
+                </label>
+                <Select id="cfg-toque" value={audio.toque} options={toques} onChange={(v) => send({ cmd: 'setAudio', toque: v })} />
+              </div>
+            </div>
+          </>
+        )}
 
-        <h2 class="eyebrow" style={{ marginTop: '4px' }}>
+        <h2 class="eyebrow" style={ios ? undefined : { marginTop: '4px' }}>
           Ligações
         </h2>
         <div class="card">
@@ -257,6 +269,27 @@ export function Configuracoes({ state, send, onBack, onEditAccount, onAddAccount
               onClick={() => send({ cmd: 'setSetting', chave: 'bipeFim', valor: !state.config.bipeFim })}
             />
           </div>
+          {ios && (
+            <div class="set-row">
+              <span class="row-main">
+                <span class="row-title set-title wrap" id="cfg-bipe-tecla">
+                  Bipe ao digitar
+                </span>
+                <span class="row-sub wrap" id="cfg-bipe-tecla-sub">
+                  Vem ligado. Cada tecla faz o bipe de telefone.
+                </span>
+              </span>
+              <button
+                type="button"
+                class="switch"
+                role="switch"
+                aria-checked={bipeTecla}
+                aria-labelledby="cfg-bipe-tecla"
+                aria-describedby="cfg-bipe-tecla-sub"
+                onClick={() => send({ cmd: 'setSetting', chave: 'bipeTecla', valor: !bipeTecla })}
+              />
+            </div>
+          )}
           {state.admin.atenderAuto && (
             <>
               <div class="set-row">
@@ -291,33 +324,39 @@ export function Configuracoes({ state, send, onBack, onEditAccount, onAddAccount
               </div>
             </>
           )}
-          <div class="set-row">
-            <span class="row-main">
-              <span class="row-title set-title" id="cfg-iniciar">
-                Iniciar com o Windows
+          {!ios && (
+            <div class="set-row">
+              <span class="row-main">
+                <span class="row-title set-title" id="cfg-iniciar">
+                  Iniciar com o Windows
+                </span>
+                <span class="row-sub" id="cfg-iniciar-sub">
+                  Na bandeja, pronto para receber
+                </span>
               </span>
-              <span class="row-sub" id="cfg-iniciar-sub">
-                Na bandeja, pronto para receber
-              </span>
-            </span>
-            <button
-              type="button"
-              class="switch"
-              role="switch"
-              aria-checked={state.iniciarComWindows}
-              aria-labelledby="cfg-iniciar"
-              aria-describedby="cfg-iniciar-sub"
-              onClick={() => send({ cmd: 'setSetting', chave: 'iniciarComWindows', valor: !state.iniciarComWindows })}
-            />
-          </div>
+              <button
+                type="button"
+                class="switch"
+                role="switch"
+                aria-checked={state.iniciarComWindows}
+                aria-labelledby="cfg-iniciar"
+                aria-describedby="cfg-iniciar-sub"
+                onClick={() => send({ cmd: 'setSetting', chave: 'iniciarComWindows', valor: !state.iniciarComWindows })}
+              />
+            </div>
+          )}
         </div>
 
-        <h2 class="eyebrow" style={{ marginTop: '4px' }}>
-          Contatos
-        </h2>
-        <div class="card">
-          <PlanilhaDaEmpresa empresa={state.empresa} send={send} />
-        </div>
+        {!ios && (
+          <>
+            <h2 class="eyebrow" style={{ marginTop: '4px' }}>
+              Contatos
+            </h2>
+            <div class="card">
+              <PlanilhaDaEmpresa empresa={state.empresa} send={send} />
+            </div>
+          </>
+        )}
       </div>
     </>
   );

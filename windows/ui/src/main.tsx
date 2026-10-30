@@ -12,7 +12,8 @@
 // toque (o `ring` e o `update` são ignorados) e a aba Atalhos. A mensagem `abrir` (o toque no aviso da perdida) leva aos
 // Recentes, como a última ligação que acaba volta ao Teclado. A agenda do iPhone (a mensagem `agenda`) fica guardada
 // aqui, como a lista da empresa (a de `vez` mais alta): vai à aba Contatos do iPhone (Agenda.tsx) e às sugestões do
-// Teclado, do Transferir e da Nova ligação, no lugar dos `contatos`.
+// Teclado, do Transferir e da Nova ligação, no lugar dos `contatos`. As teclas do Teclado bipam com o Bipe ao digitar (o
+// `config.bipeTecla`), e o Sobre do iPhone abre os avisos de licença (Licencas.tsx).
 import { render } from 'preact';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { createBridge } from './bridge';
@@ -31,6 +32,7 @@ import { Configuracoes } from './screens/Configuracoes';
 import { ContatoForm } from './screens/ContatoForm';
 import { Contatos } from './screens/Contatos';
 import { Entrar } from './screens/Entrar';
+import { Licencas } from './screens/Licencas';
 import { Ligacao } from './screens/Ligacao';
 import { Recentes } from './screens/Recentes';
 import { Sobre } from './screens/Sobre';
@@ -337,7 +339,10 @@ function App() {
       );
       break;
     case 'sobre':
-      conteudo = <Sobre versao={state.versao} send={send} onBack={voltarAoTeclado} />;
+      conteudo = <Sobre versao={state.versao} send={send} onBack={voltarAoTeclado} ios={ios} onLicencas={() => setView({ kind: 'licencas', back: view })} />;
+      break;
+    case 'licencas':
+      conteudo = <Licencas onBack={() => setView(view.back)} />;
       break;
     case 'conta': {
       const conta = view.contaId ? state.contas.find((c) => c.id === view.contaId) : undefined;
@@ -399,7 +404,9 @@ function App() {
       {barra()}
       {conta && <Header state={state} conta={conta} send={send} navigate={setView} current={view} layout={layout} />}
       <main class="main" aria-label={TABS.find((t) => t.tab === tab)!.label}>
-        {tab === 'teclado' && <Teclado numero={numero} setNumero={mudarNumero} contatos={sugestoes} recentes={state.recentes} send={send} />}
+        {tab === 'teclado' && (
+          <Teclado numero={numero} setNumero={mudarNumero} contatos={sugestoes} recentes={state.recentes} send={send} bipe={ios && state.config.bipeTecla === true} />
+        )}
         {tab === 'atalhos' && (
           <Atalhos
             atalhos={state.atalhos}

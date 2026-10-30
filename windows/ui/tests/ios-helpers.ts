@@ -1,8 +1,9 @@
 // O que as specs do modo iPhone usam (spec do iPhone, 11.2; docs/ponte-windows.md, "O modo iPhone"): os três tamanhos
 // do iPhone com a área segura de cada um, abrir um cenário da ponte falsa no modo iPhone (?plataforma=ios), conferir que
-// nada fica embaixo do entalhe ou da barra de baixo, e as fotos que vão ao responsável. O Chromium não tem o entalhe: a
-// área segura vem das variáveis --safe-* (o app.css as define com o env(safe-area-inset-*)), postas no style do :root.
-import { expect, type Page } from '@playwright/test';
+// nada fica embaixo do entalhe ou da barra de baixo, a área do toque de 44×44 px dos alvos pequenos, e as fotos que vão
+// ao responsável. O Chromium não tem o entalhe: a área segura vem das variáveis --safe-* (o app.css as define com o
+// env(safe-area-inset-*)), postas no style do :root.
+import { expect, type Locator, type Page } from '@playwright/test';
 import type { AgendaPermission } from '../src/state';
 import { capturar } from './helpers';
 
@@ -101,6 +102,87 @@ export async function dentroDaAreaSegura(page: Page, seletores: string[]): Promi
       expect(c.direita, `${seletor}: à esquerda dos ${area.direita} px da direita`).toBeLessThanOrEqual(area.largura - area.direita + 0.5);
     }
   }
+}
+
+/** Uma caixa na tela, em pixels de CSS. */
+export interface Caixa {
+  esquerda: number;
+  direita: number;
+  cima: number;
+  baixo: number;
+}
+
+/** Uma área do toque medida: o nome do alvo, a caixa do desenho dele e a área do toque. */
+export interface AreaDoToque {
+  nome: string;
+  desenho: Caixa;
+  toque: Caixa;
+}
+
+/** A largura e a altura de uma caixa, arredondadas (o desenho de um alvo). */
+export function tamanhoDe(c: Caixa): [number, number] {
+  return [Math.round(c.direita - c.esquerda), Math.round(c.baixo - c.cima)];
+}
+
+/**
+ * A caixa do desenho de um alvo e a área do toque dele: até onde, do meio do alvo para cada lado, um ponto ainda cai nele
+ * (o elementFromPoint, como o toque do iPhone), pela bissecção. O ponto acha o controle (o botão, a lista de escolha ou o
+ * campo) em que cai. O alvo fica inteiro na tela: fora dela, o elementFromPoint não acha nada.
+ */
+export async function areaDoToque(nome: string, alvo: Locator): Promise<AreaDoToque> {
+  const medidas = await alvo.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    const cx = r.left + r.width / 2;
+    const cy = r.top + r.height / 2;
+    const acerta = (x: number, y: number) => document.elementFromPoint(x, y)?.closest('button, select, input') === el;
+    const alcance = (ponto: (d: number) => [number, number]) => {
+      let dentro = 0;
+      let fora = 500;
+      for (let i = 0; i < 40; i++) {
+        const meio = (dentro + fora) / 2;
+        if (acerta(...ponto(meio))) dentro = meio;
+        else fora = meio;
+      }
+      return dentro;
+    };
+    return {
+      naTela: r.left >= 0 && r.top >= 0 && r.right <= window.innerWidth && r.bottom <= window.innerHeight,
+      desenho: { esquerda: r.left, direita: r.right, cima: r.top, baixo: r.bottom },
+      toque: {
+        esquerda: cx - alcance((d) => [cx - d, cy]),
+        direita: cx + alcance((d) => [cx + d, cy]),
+        cima: cy - alcance((d) => [cx, cy - d]),
+        baixo: cy + alcance((d) => [cx, cy + d]),
+      },
+    };
+  });
+  expect(medidas.naTela, `${nome}: inteiro na tela`).toBe(true);
+  return { nome, desenho: medidas.desenho, toque: medidas.toque };
+}
+
+/**
+ * Cada alvo com a área do toque de pelo menos 44×44 px (os 44 pontos do iPhone) e nenhuma área cobrindo a de outro: cada
+ * toque cai no alvo que a pessoa vê. Devolve as medidas, na ordem, para o caso conferir que o desenho continua o de
+ * sempre.
+ */
+export async function areasDe44(alvos: Array<[nome: string, alvo: Locator]>): Promise<AreaDoToque[]> {
+  const areas: AreaDoToque[] = [];
+  for (const [nome, alvo] of alvos) areas.push(await areaDoToque(nome, alvo));
+  for (const { nome, toque } of areas) {
+    expect(toque.direita - toque.esquerda, `${nome}: a largura do toque`).toBeGreaterThanOrEqual(43.99);
+    expect(toque.baixo - toque.cima, `${nome}: a altura do toque`).toBeGreaterThanOrEqual(43.99);
+  }
+  for (const [i, a] of areas.entries()) {
+    for (const b of areas.slice(i + 1)) {
+      const cruzam =
+        a.toque.esquerda < b.toque.direita - 0.01 &&
+        b.toque.esquerda < a.toque.direita - 0.01 &&
+        a.toque.cima < b.toque.baixo - 0.01 &&
+        b.toque.cima < a.toque.baixo - 0.01;
+      expect(cruzam, `${a.nome} e ${b.nome} não se cobrem`).toBe(false);
+    }
+  }
+  return areas;
 }
 
 /** A foto da tela (o `capturar` de sempre), em test-results/capturas/ios-<nome>-<largura>x<altura>-<tema>.png. */

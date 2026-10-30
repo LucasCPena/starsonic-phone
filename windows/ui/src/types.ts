@@ -18,4 +18,6 @@ export type View =
   /** rc.3: Adicionar (sem atalho) ou Editar atalho; `posicao` é o "<n> de 8" do alto. */
   | { kind: 'atalho'; atalho?: Shortcut; posicao: number; back: View }
   /** rc.3: a área do administrador (só com ela aberta no C++). */
-  | { kind: 'admin'; back: View };
+  | { kind: 'admin'; back: View }
+  /** (iPhone) Os avisos de licença, abertos pelo Sobre. */
+  | { kind: 'licencas'; back: View };

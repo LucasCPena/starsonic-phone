@@ -1,6 +1,9 @@
 // O Teclado: o número grande, Apagar, até três sugestões de contatos (no iPhone, da agenda: um contato sem nome mostra o
 // número), o teclado 3×4, o Rediscar e Ligar.
 // Teclado físico: números, * e # digitam; Backspace apaga; Esc limpa; Enter liga.
+// (iPhone) Com o Bipe ao digitar (`bipe`), cada tecla, a da tela e a do teclado físico, manda o `keyTone` com ela (o
+// hospedeiro toca o bipe de telefone dela), e o "+" vai como a tecla 0, a dele; o Apagar, as sugestões, o Rediscar e o
+// Ligar ficam quietos, como no Android 0.2.0-rc.3. O campo do número, com o teclado do próprio iPhone, também.
 import { useEffect, useRef } from 'preact/hooks';
 import { digitsOnly, initials } from '../format';
 import { IconArrowRight, IconBackspace, IconPhone } from '../icons';
@@ -16,6 +19,8 @@ interface Props {
   /** Para o Rediscar (a feita mais nova). */
   recentes: RecentCall[];
   send: Send;
+  /** (iPhone) O Bipe ao digitar: cada tecla manda o `keyTone`. */
+  bipe?: boolean;
 }
 
 const KEYS: Array<[string, string]> = [
@@ -35,15 +40,23 @@ const KEYS: Array<[string, string]> = [
 
 const PERMITIDOS = /[^0-9*#+]/g;
 
-export function Teclado({ numero, setNumero, contatos, recentes, send }: Props) {
+export function Teclado({ numero, setNumero, contatos, recentes, send, bipe }: Props) {
   const campo = useRef<HTMLInputElement>(null);
   const atual = useRef(numero);
   atual.current = numero;
+  // O de agora também para o teclado físico (o ouvinte é registrado uma vez).
+  const bipar = useRef(false);
+  bipar.current = bipe === true;
 
   const ligar = () => {
     if (atual.current) send({ cmd: 'dial', numero: atual.current });
   };
   const apagar = () => setNumero((n) => n.slice(0, -1));
+  // Uma tecla digitada: o número ganha o caractere e, com o Bipe ao digitar, sai o bipe dela (o "+" é o da tecla 0).
+  const digitar = (tecla: string) => {
+    setNumero((n) => n + tecla);
+    if (bipar.current) send({ cmd: 'keyTone', tecla: tecla === '+' ? '0' : tecla });
+  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -64,7 +77,7 @@ export function Teclado({ numero, setNumero, contatos, recentes, send }: Props) 
       if (alvo.closest('input, textarea, select, [contenteditable="true"], [role="menu"], dialog')) return;
       if (/^[0-9*#+]$/.test(e.key)) {
         e.preventDefault();
-        setNumero((n) => n + e.key);
+        digitar(e.key);
       } else if (e.key === 'Backspace') {
         e.preventDefault();
         apagar();
@@ -128,7 +141,7 @@ export function Teclado({ numero, setNumero, contatos, recentes, send }: Props) 
         )}
         <div class="keys">
           {KEYS.map(([tecla, letras]) => (
-            <button type="button" key={tecla} class="key" aria-label={tecla} onClick={() => setNumero((n) => n + tecla)}>
+            <button type="button" key={tecla} class="key" aria-label={tecla} onClick={() => digitar(tecla)}>
               <b>{tecla}</b>
               <small aria-hidden="true">{letras}</small>
             </button>

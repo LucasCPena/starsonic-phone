@@ -108,8 +108,9 @@ async function contarComparacoes(page: Page): Promise<void> {
 
 /**
  * O núcleo manda uma lista da agenda (a `vez` seguinte) e o estado, e um aviso depois deles. Dentro da página, até o
- * aviso aparecer (as mensagens chegam na ordem): o que mudou na lista (as mudanças, e os títulos das linhas que saem e das
- * que entram, por um MutationObserver) e quantas comparações do Intl.Collator a página fez.
+ * aviso aparecer (as mensagens chegam na ordem): o que mudou na aba (as mudanças, e os títulos das linhas que saem e das
+ * que entram, por um MutationObserver no <main>: ele vê também a lista montada de novo inteira, que tira o .agenda de
+ * antes) e quantas comparações do Intl.Collator a página fez.
  */
 function mandarObservando(page: Page, contatos: AgendaContact[]): Promise<{ mudancas: number; saem: string[]; entram: string[]; comparacoes: number }> {
   return page.evaluate(async (contatos) => {
@@ -124,7 +125,7 @@ function mandarObservando(page: Page, contatos: AgendaContact[]): Promise<{ muda
       }
     };
     const observador = new MutationObserver(anotar);
-    observador.observe(document.querySelector('main .agenda')!, { childList: true, subtree: true, characterData: true, attributes: true });
+    observador.observe(document.querySelector('main')!, { childList: true, subtree: true, characterData: true, attributes: true });
     w.__comparacoes = 0;
     const s = w.__fake.state();
     const vez = s.agenda.vez + 1;
@@ -239,8 +240,10 @@ test('5,000 agenda contacts: the tab opens and the search answers within 1 s, in
   expect(msTodos, `"" em ${Math.round(msTodos)} ms`).toBeLessThan(1000);
   await expect(page.locator('main .agenda')).toHaveClass(/\bagenda-grande\b/);
 
-  // Um estado novo com a aba aberta não refaz as linhas: com as linhas prontas reaproveitadas, uns 4 ms aqui; refazendo,
-  // as milhares de linhas outra vez. A mediana de sete fica abaixo de 50 ms (como na lista da empresa).
+  // Um estado novo com a aba aberta não refaz as linhas: com as linhas prontas reaproveitadas, a mediana de sete fica em
+  // 1 ou 2 ms aqui; refazendo as milhares de linhas outra vez (sem o vnode guardado de cada linha), passa dos 20 ms (de
+  // 24 a 46 ms aqui, e a mais rápida das sete em 22 ms). O limite de 20 ms fica uns 10 vezes acima do tempo de agora e
+  // abaixo de todo tempo sem as linhas guardadas.
   const tempos = await page.evaluate(async () => {
     const fake = (window as unknown as { __fake: { state(): Record<string, any>; push(m: unknown): void } }).__fake;
     const medidas: number[] = [];
@@ -256,7 +259,7 @@ test('5,000 agenda contacts: the tab opens and the search answers within 1 s, in
     }
     return medidas.sort((a, b) => a - b);
   });
-  expect(tempos[3], `um estado novo: ${tempos.map((t) => Math.round(t)).join(', ')} ms`).toBeLessThan(50);
+  expect(tempos[3], `um estado novo: ${tempos.map((t) => Math.round(t)).join(', ')} ms`).toBeLessThan(20);
 
   // A mesma agenda lida de novo (outra `vez`, a mesma lista: a aba que abre) não refaz nada: nenhuma mudança na lista e
   // nenhuma lista ordenada de novo. Uma agenda diferente (um contato com outro nome) troca só a linha dele, e a lista nova

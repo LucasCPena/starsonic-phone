@@ -1,13 +1,20 @@
-// O modo iPhone da interface (spec do iPhone, seções 8 e 11.2; docs/ponte-windows.md, "O modo iPhone"), contra a ponte
-// falsa no modo iPhone (?plataforma=ios), em cada tamanho do iPhone e nos dois temas: sem a barra de título e sem as
-// partes do PC, com a área segura, o axe e as fotos (test-results/capturas/ios-*.png) que vão ao responsável.
-import { expect, test } from '@playwright/test';
+// O modo iPhone da interface (spec do iPhone, seções 4.1, 8, 10 e 11.2; docs/ponte-windows.md, "O modo iPhone"), contra a
+// ponte falsa no modo iPhone (?plataforma=ios), em cada tamanho do iPhone e nos dois temas: sem a barra de título e sem
+// as partes do PC, as Configurações só com as Ligações, o Sobre e os avisos de licença do iPhone, a área do toque de
+// 44×44 px dos alvos pequenos, com a área segura, o axe e as fotos (test-results/capturas/ios-*.png) que vão ao
+// responsável. A tela da ligação fica em ios-ligacao.spec.ts.
+import { expect, test, type Locator } from '@playwright/test';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { audio, audioFalso, comandos, empurrar, esperarComando } from './helpers';
-import { abrirIos, capturarIos, dentroDaAreaSegura, noIphone, semViolacoesSerias, TAMANHOS_IPHONE } from './ios-helpers';
+import { audio, audioFalso, comandos, empurrar, esperarComando, verTextos } from './helpers';
+import { abrirIos, areasDe44, capturarIos, dentroDaAreaSegura, noIphone, semViolacoesSerias, TAMANHOS_IPHONE, tamanhoDe } from './ios-helpers';
 
 const APP_CSS = fileURLToPath(new URL('../dist/app.css', import.meta.url));
+/** Os avisos de licença do app do iPhone, como o build os põe no pacote. */
+const LICENCAS = fileURLToPath(new URL('../dist/assets/licencas-ios.txt', import.meta.url));
+/** As teclas do Teclado, na ordem da tela. */
+const TECLAS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'];
 /** A conta em uso dos cenários: a Recepção, 2001. */
 const CONTA_EM_USO = '9f3c2a71b0d84e55';
 const VIEWPORT_DO_IPHONE = 'width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1';
@@ -223,54 +230,11 @@ for (const tamanho of TAMANHOS_IPHONE) {
       test('the header buttons have 44×44 tap areas that do not overlap', async ({ page }) => {
         await abrirIos(page, 'principal', tamanho);
         const cabecalho = page.locator('header.brand');
-        const areas: Array<{ nome: string; desenho: Caixa; toque: Caixa }> = [];
-        for (const nome of ['Não perturbe', 'Atender automático', 'Menu']) {
-          const medidas = await cabecalho.getByRole('button', { name: nome, exact: true }).evaluate((el) => {
-            // A área do toque: até onde, do meio do botão para cada lado, um ponto ainda cai nele (o elementFromPoint, como
-            // o toque do iPhone), pela bissecção.
-            const r = el.getBoundingClientRect();
-            const cx = r.left + r.width / 2;
-            const cy = r.top + r.height / 2;
-            const acerta = (x: number, y: number) => document.elementFromPoint(x, y)?.closest('button') === el;
-            const alcance = (ponto: (d: number) => [number, number]) => {
-              let dentro = 0;
-              let fora = 200;
-              for (let i = 0; i < 40; i++) {
-                const meio = (dentro + fora) / 2;
-                if (acerta(...ponto(meio))) dentro = meio;
-                else fora = meio;
-              }
-              return dentro;
-            };
-            return {
-              desenho: { esquerda: r.left, direita: r.right, cima: r.top, baixo: r.bottom },
-              toque: {
-                esquerda: cx - alcance((d) => [cx - d, cy]),
-                direita: cx + alcance((d) => [cx + d, cy]),
-                cima: cy - alcance((d) => [cx, cy - d]),
-                baixo: cy + alcance((d) => [cx, cy + d]),
-              },
-            };
-          });
-          areas.push({ nome, ...medidas });
-        }
-        for (const { nome, toque } of areas) {
-          expect(toque.direita - toque.esquerda, `${nome}: a largura do toque`).toBeGreaterThanOrEqual(43.99);
-          expect(toque.baixo - toque.cima, `${nome}: a altura do toque`).toBeGreaterThanOrEqual(43.99);
-        }
-        for (const [i, a] of areas.entries()) {
-          for (const b of areas.slice(i + 1)) {
-            const cruzam =
-              a.toque.esquerda < b.toque.direita - 0.01 &&
-              b.toque.esquerda < a.toque.direita - 0.01 &&
-              a.toque.cima < b.toque.baixo - 0.01 &&
-              b.toque.cima < a.toque.baixo - 0.01;
-            expect(cruzam, `${a.nome} e ${b.nome} não se cobrem`).toBe(false);
-          }
-        }
+        const areas = await areasDe44(
+          ['Não perturbe', 'Atender automático', 'Menu'].map((nome) => [nome, cabecalho.getByRole('button', { name: nome, exact: true })]),
+        );
         // O desenho continua o de sempre: no Compacto, os três redondos de 32 px, a 6 px um do outro; no Normal, o Menu de
         // 36 px e as pílulas de 30 px de altura.
-        const tamanhoDe = (c: Caixa) => [Math.round(c.direita - c.esquerda), Math.round(c.baixo - c.cima)];
         if ((await page.locator('.win').getAttribute('data-layout')) === 'compacto') {
           expect(areas.map((a) => tamanhoDe(a.desenho))).toEqual([
             [32, 32],
@@ -283,17 +247,243 @@ for (const tamanho of TAMANHOS_IPHONE) {
           expect(areas.slice(0, 2).map((a) => tamanhoDe(a.desenho)[1])).toEqual([30, 30]);
         }
       });
+
+      test('Configurações shows only Ligações, with Bipe ao digitar', async ({ page }) => {
+        await abrirIos(page, 'configuracoes', tamanho);
+        await expect(page.getByRole('heading', { name: 'Configurações', level: 1 })).toBeVisible();
+        // Só a parte Ligações: o bipe do fim, o Bipe ao digitar (com a ajuda) e o Atender automaticamente com o tempo.
+        await expect(page.locator('h2.eyebrow')).toHaveText(['Ligações']);
+        const bipeFim = page.getByRole('switch', { name: 'Bipe quando a ligação cai ou termina' });
+        const bipeTecla = page.getByRole('switch', { name: 'Bipe ao digitar' });
+        const atender = page.getByRole('switch', { name: 'Atender automaticamente' });
+        const tempo = page.getByRole('combobox', { name: 'Tempo para atender' });
+        await expect(page.getByRole('switch')).toHaveCount(3);
+        for (const chave of [bipeFim, bipeTecla, atender]) await expect(chave).toBeVisible();
+        await expect(bipeTecla).toHaveAccessibleDescription('Vem ligado. Cada tecla faz o bipe de telefone.');
+        await expect(bipeTecla).toHaveAttribute('aria-checked', 'true');
+        await expect(page.getByRole('combobox')).toHaveCount(1);
+        await expect(tempo).toHaveValue('3');
+        // Sem as Contas, o Áudio, o Iniciar com o Windows e os Contatos (a planilha da empresa).
+        for (const texto of ['Contas', 'Adicionar conta', 'Áudio', 'Microfone', 'Alto-falante', 'Toque', 'Iniciar com o Windows', 'Contatos', 'Planilha da empresa', 'Atualizar agora']) {
+          await expect(page.getByText(texto, { exact: true }), texto).toHaveCount(0);
+        }
+        await dentroDaAreaSegura(page, ['.bar', '.card']);
+        await semViolacoesSerias(page);
+        await capturarIos(page, 'configuracoes', tamanho, tema);
+
+        // O Bipe ao digitar manda o setSetting com o bipeTecla, e a chave segue o estado que volta.
+        await bipeTecla.click();
+        await esperarComando(page, { cmd: 'setSetting', chave: 'bipeTecla', valor: false });
+        await expect(bipeTecla).toHaveAttribute('aria-checked', 'false');
+        await bipeTecla.click();
+        await esperarComando(page, { cmd: 'setSetting', chave: 'bipeTecla', valor: true });
+        await expect(bipeTecla).toHaveAttribute('aria-checked', 'true');
+        // As outras, como no Windows.
+        await bipeFim.click();
+        await esperarComando(page, { cmd: 'setSetting', chave: 'bipeFim', valor: false });
+        await atender.click();
+        await esperarComando(page, { cmd: 'setAutoAnswer', on: true });
+        await tempo.selectOption('5');
+        await esperarComando(page, { cmd: 'setAutoAnswer', on: true, segundos: 5 });
+        expect((await comandos(page)).filter((c) => c.cmd === 'setAudio' || c.chave === 'iniciarComWindows')).toEqual([]);
+      });
+
+      test('Sobre shows the iPhone licenses, calls the support and opens the notices', async ({ page }) => {
+        await abrirIos(page, 'sobre', tamanho);
+        await verTextos(page, [
+          'Sobre',
+          'Starsonic Phone 0.1.0-rc.1',
+          'Usa o baresip e a libre (BSD), a libg722 e o Opus (BSD)',
+          'starsonic.com.br',
+          '(11) 5060-3000',
+          'Também no WhatsApp · seg. a sex., 8h às 18h',
+          'Avisos de licença',
+          'Enviar diagnóstico',
+        ]);
+        // Sem a licença e as peças do Windows, e sem o Código-fonte.
+        await expect(page.getByText(/GPL|PJSIP|WebView2|Código-fonte|github\.com/)).toHaveCount(0);
+        // O site; o telefone, com o Ligar (o discador do iPhone) e o WhatsApp; e a linha dos avisos de licença.
+        const cartao = page.locator('.about .card');
+        await expect(cartao.getByRole('button')).toHaveText(['Abrir', 'Ligar', 'WhatsApp', 'Avisos de licença']);
+        expect(await cartao.getByRole('button').evaluateAll((bs) => bs.map((b) => b.getAttribute('aria-label')))).toEqual([
+          'Abrir starsonic.com.br',
+          'Ligar para o suporte',
+          'Abrir o WhatsApp',
+          null,
+        ]);
+        await dentroDaAreaSegura(page, ['.bar', '.about .card', '.about > .btn']);
+        await semViolacoesSerias(page);
+        await capturarIos(page, 'sobre', tamanho, tema);
+
+        await page.getByRole('button', { name: 'Ligar para o suporte', exact: true }).click();
+        await esperarComando(page, { cmd: 'openExternal', url: 'tel:+551150603000' });
+        await page.getByRole('button', { name: 'Abrir o WhatsApp' }).click();
+        await esperarComando(page, { cmd: 'openExternal', url: 'https://wa.me/551150603000' });
+        await page.getByRole('button', { name: 'Abrir starsonic.com.br' }).click();
+        await esperarComando(page, { cmd: 'openExternal', url: 'https://starsonic.com.br' });
+        await page.getByRole('button', { name: 'Enviar diagnóstico' }).click();
+        await esperarComando(page, { cmd: 'sendDiagnostics' });
+        expect((await comandos(page)).filter((c) => c.cmd === 'openExternal').map((c) => c.url)).toEqual([
+          'tel:+551150603000',
+          'https://wa.me/551150603000',
+          'https://starsonic.com.br',
+        ]);
+
+        // Os avisos de licença: a tela com o nome, a versão e a licença de cada peça, que rola (também pelo teclado).
+        await page.getByRole('button', { name: 'Avisos de licença', exact: true }).click();
+        await expect(page.getByRole('heading', { name: 'Avisos de licença', level: 1 })).toBeVisible();
+        const avisos = page.getByRole('region', { name: 'Avisos de licença' });
+        for (const peca of PECAS) await expect(avisos, peca).toContainText(peca);
+        await expect(avisos).toContainText('Baresip Foundation');
+        await expect(avisos).toContainText('Xiph.Org');
+        await expect(avisos).toHaveAttribute('tabindex', '0');
+        expect(await avisos.evaluate((e) => e.scrollHeight > e.clientHeight), 'o texto rola').toBe(true);
+        await dentroDaAreaSegura(page, ['.bar', '.licencas']);
+        await semViolacoesSerias(page);
+        await capturarIos(page, 'licencas', tamanho, tema);
+        await page.getByRole('button', { name: 'Voltar' }).click();
+        await expect(page.getByRole('heading', { name: 'Sobre', level: 1 })).toBeVisible();
+      });
+
+      test('the keypad, the suggestions, the tabs and the agenda rows have 44×44 tap areas', async ({ page }) => {
+        await abrirIos(page, 'principal', tamanho);
+        const compacto = (await page.locator('.win').getAttribute('data-layout')) === 'compacto';
+        // O Teclado: o Apagar, as 12 teclas, a sugestão de "988" (a Ana Souza) e as abas.
+        const numero = page.getByRole('textbox', { name: 'Número' });
+        await numero.fill('988');
+        await expect(page.locator('.suggest')).toHaveCount(1);
+        const nav = page.getByRole('navigation', { name: 'Seções' });
+        const teclado = await areasDe44([
+          ['Apagar', page.getByRole('button', { name: 'Apagar' })],
+          ...TECLAS.map((t): [string, Locator] => [`tecla ${t}`, page.locator('.keys').getByRole('button', { name: t, exact: true })]),
+          ['a sugestão da Ana Souza', page.locator('.suggest')],
+          ...['Teclado', 'Recentes', 'Contatos'].map((n): [string, Locator] => [`a aba ${n}`, nav.getByRole('button', { name: n, exact: true })]),
+        ]);
+        // O Apagar com o desenho de sempre: redondo, de 32 px no Compacto e de 40 no Normal.
+        expect(tamanhoDe(teclado[0].desenho)).toEqual(compacto ? [32, 32] : [40, 40]);
+        // Duas sugestões dividem a lista (a linha compacta, que na tela de 375×667 tinha 38 px; a que não cabe rola para a
+        // vista, como no Windows): cada uma com pelo menos 44 px de altura.
+        await numero.fill('200');
+        await expect(page.locator('.suggest')).toHaveCount(2);
+        for (const altura of await page.locator('.suggest').evaluateAll((ss) => ss.map((s) => s.getBoundingClientRect().height))) {
+          expect(altura, 'a altura de uma sugestão').toBeGreaterThanOrEqual(43.99);
+        }
+
+        // A aba Contatos: a linha e o botão redondo de ligar de cada contato (o redondo com os 38 px de sempre).
+        await nav.getByRole('button', { name: 'Contatos', exact: true }).click();
+        const nomes = ['Ana Souza', 'Ângela Prado', 'Beatriz Ramos'];
+        const linha = (nome: string) => page.locator('main li.row').filter({ has: page.locator('.row-title').getByText(nome, { exact: true }) });
+        const contatos = await areasDe44(
+          nomes.flatMap((nome): Array<[string, Locator]> => [
+            [`a linha de ${nome}`, linha(nome).locator('.row-hit')],
+            [`Ligar para ${nome}`, page.getByRole('button', { name: `Ligar para ${nome}`, exact: true })],
+          ]),
+        );
+        expect(contatos.filter((a) => a.nome.startsWith('Ligar')).map((a) => tamanhoDe(a.desenho))).toEqual([
+          [38, 38],
+          [38, 38],
+          [38, 38],
+        ]);
+      });
+
+      test('Voltar, the switches, the time and the Sobre buttons have 44×44 tap areas', async ({ page }) => {
+        await abrirIos(page, 'configuracoes', tamanho);
+        const compacto = (await page.locator('.win').getAttribute('data-layout')) === 'compacto';
+        const voltar = page.getByRole('button', { name: 'Voltar' });
+        // Configurações: o Voltar da barra, as três chaves e o tempo para atender.
+        const configuracoes = await areasDe44([
+          ['Voltar', voltar],
+          ...['Bipe quando a ligação cai ou termina', 'Bipe ao digitar', 'Atender automaticamente'].map((n): [string, Locator] => [n, page.getByRole('switch', { name: n })]),
+          ['Tempo para atender', page.getByRole('combobox', { name: 'Tempo para atender' })],
+        ]);
+        // O desenho de sempre: o Voltar redondo, de 32 px no Compacto e de 36 no Normal, e as chaves de 42×24.
+        expect(configuracoes.map((a) => tamanhoDe(a.desenho)).slice(0, 4)).toEqual([compacto ? [32, 32] : [36, 36], [42, 24], [42, 24], [42, 24]]);
+
+        // Sobre: o Voltar, o Abrir do site, o Ligar e o WhatsApp do telefone, os avisos de licença e o Enviar diagnóstico.
+        await voltar.click();
+        await page.getByRole('button', { name: 'Menu' }).click();
+        await page.getByRole('menuitem', { name: 'Sobre' }).click();
+        await areasDe44([
+          ['Voltar', voltar],
+          ...['Abrir starsonic.com.br', 'Ligar para o suporte', 'Abrir o WhatsApp', 'Avisos de licença', 'Enviar diagnóstico'].map((n): [string, Locator] => [
+            n,
+            page.getByRole('button', { name: n, exact: true }),
+          ]),
+        ]);
+        // Os avisos de licença e o Editar conta: o Voltar.
+        await page.getByRole('button', { name: 'Avisos de licença', exact: true }).click();
+        await expect(page.getByRole('heading', { name: 'Avisos de licença', level: 1 })).toBeVisible();
+        await areasDe44([['Voltar dos avisos', voltar]]);
+        await voltar.click();
+        await voltar.click();
+        await page.getByRole('button', { name: 'Menu' }).click();
+        await page.getByRole('menuitem', { name: 'Editar conta' }).click();
+        await expect(page.getByRole('heading', { name: 'Editar conta' })).toBeVisible();
+        await areasDe44([['Voltar do Editar conta', voltar]]);
+      });
     });
   }
 }
 
-/** Uma caixa na tela, em pixels de CSS. */
-interface Caixa {
-  esquerda: number;
-  direita: number;
-  cima: number;
-  baixo: number;
+/** Os avisos de licença do iPhone (spec do iPhone, 10), na ordem do arquivo: o nome e a versão de cada peça. */
+const PECAS = ['baresip 4.12.0', 'libre 4.12.0', 'libg722 1.2.8', 'Opus 1.6.1', 'Plus Jakarta Sans 2.071', 'Preact 10.29.8', 'nlohmann/json 3.11.3', 'miniz 3.0.2'];
+
+/** Um caminho a partir da raiz do repositório. */
+function doRepositorio(caminho: string): string {
+  return fileURLToPath(new URL(`../../../${caminho}`, import.meta.url));
 }
+
+// Os avisos de licença do app do iPhone (spec do iPhone, 10): o nome, a versão e o texto inteiro da licença de cada peça,
+// nas versões fixas (o build/deps.lock, o package-lock.json e o que está em starsonic/third_party). As licenças que estão
+// no repositório são conferidas letra por letra (a do miniz com o fim de linha do resto do arquivo); as outras, pelo
+// SHA-256 do arquivo de licença de cada uma na versão fixa (o LICENSE do baresip, da libre e da libg722 nos commits do
+// deps.lock, e o COPYING do Opus na tag v1.6.1).
+test('the iPhone license notices carry the name, the version and the whole license of each piece', () => {
+  const texto = readFileSync(LICENCAS, 'utf8');
+  const lock = JSON.parse(readFileSync(doRepositorio('build/deps.lock'), 'utf8'));
+  const npm = JSON.parse(readFileSync(doRepositorio('windows/ui/package-lock.json'), 'utf8'));
+  const json = readFileSync(doRepositorio('starsonic/third_party/nlohmann/json.hpp'), 'utf8');
+  const versaoDoJson = ['MAJOR', 'MINOR', 'PATCH'].map((p) => json.match(new RegExp(`#define NLOHMANN_JSON_VERSION_${p} (\\d+)`))![1]).join('.');
+  const semV = (tag: string) => tag.replace(/^v/, '');
+  const esperadas: Array<{ peca: string; sha256?: string; arquivo?: string }> = [
+    { peca: `baresip ${semV(lock.baresip.baresip.tag)}`, sha256: '020859591b1d52b62d9436e89a13c279c890099e0b412984cf599a298aa7b128' },
+    { peca: `libre ${semV(lock.baresip.re.tag)}`, sha256: '76b5c9a0aa85ac72a6d5d2e2998f5ea4462ff633e585e59a749c7f9d506c0b76' },
+    { peca: `libg722 ${semV(lock.baresip.libg722.tag)}`, sha256: '1e254974831f464d0aa84d3bb9d534d3e6c657d6bb33e83637482b2105cb4984' },
+    { peca: `Opus ${semV(lock.android.opus.tag)}`, sha256: '01e1167d54a096d123cf6dfbbeb19587278845c6481d2d66d545669846079551' },
+    { peca: 'Plus Jakarta Sans 2.071', arquivo: 'windows/ui/assets/OFL.txt' },
+    { peca: `Preact ${npm.packages['node_modules/preact'].version}`, arquivo: 'windows/ui/node_modules/preact/LICENSE' },
+    { peca: `nlohmann/json ${versaoDoJson}`, arquivo: 'starsonic/third_party/nlohmann/LICENSE.MIT' },
+    { peca: 'miniz 3.0.2', arquivo: 'starsonic/third_party/miniz/LICENSE' },
+  ];
+  // Cada parte: o nome e a versão, sublinhados com "=", uma linha em branco e a licença inteira; duas linhas em branco
+  // entre as partes.
+  const titulos = Array.from(texto.matchAll(/^(\S.*)\n(=+)\n\n/gm)).filter((m) => m[1].length === m[2].length);
+  expect(titulos.map((m) => m[1])).toEqual(esperadas.map((e) => e.peca));
+  expect(PECAS).toEqual(esperadas.map((e) => e.peca));
+  expect(titulos[0].index, 'o arquivo começa na primeira peça').toBe(0);
+  for (const [i, titulo] of titulos.entries()) {
+    const inicio = titulo.index! + titulo[0].length;
+    const fim = i + 1 < titulos.length ? titulos[i + 1].index! - 2 : texto.length;
+    if (i + 1 < titulos.length) expect(texto.slice(fim - 1, fim + 2), `${titulo[1]}: o fim`).toBe('\n\n\n');
+    const licenca = texto.slice(inicio, fim);
+    const { peca, sha256, arquivo } = esperadas[i];
+    if (arquivo) expect(licenca, peca).toBe(readFileSync(doRepositorio(arquivo), 'utf8').replace(/\r\n/g, '\n'));
+    else expect(createHash('sha256').update(licenca).digest('hex'), peca).toBe(sha256);
+  }
+});
+
+test.describe('os avisos de licença sem o arquivo', () => {
+  test.use(noIphone(TAMANHOS_IPHONE[1]));
+
+  test('the notices screen asks to reinstall when its text does not load', async ({ page }) => {
+    await page.route('**/assets/licencas-ios.txt', (rota) => rota.abort());
+    await abrirIos(page, 'sobre', TAMANHOS_IPHONE[1]);
+    await page.getByRole('button', { name: 'Avisos de licença', exact: true }).click();
+    await expect(page.getByRole('alert')).toHaveText('Reinstale o Starsonic Phone.');
+    await expect(page.getByRole('heading', { name: 'Avisos de licença', level: 1 })).toBeVisible();
+    await semViolacoesSerias(page);
+  });
+});
 
 /** Os seletores de uma lista, separados só pelas vírgulas de fora (a de um `:is(input, textarea)` fica dentro dele). */
 function seletoresDaLista(lista: string): string[] {

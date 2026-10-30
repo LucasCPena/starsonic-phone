@@ -1,7 +1,8 @@
 // Empacota a interface em dist/ (o executável serve essa pasta pelo SetVirtualHostNameToFolderMapping).
 // src/main.tsx → dist/app.js; src/aviso.tsx → dist/aviso.js (o aviso de ligação, quando existe);
-// index.html, aviso.html, app.css, a fonte, os logos, o toque do MicroSIP (toque.wav, rc.4) e os avisos das licenças
-// MIT (o do Preact e, rc.4, os do miniz e do nlohmann/json) são copiados. Nada é baixado: tudo vai dentro do app.
+// index.html, aviso.html, app.css, a fonte, os logos, o toque do MicroSIP (toque.wav, rc.4), os avisos das licenças
+// MIT (o do Preact e, rc.4, os do miniz e do nlohmann/json) e (iPhone) os avisos de licença do app do iPhone
+// (licencas-ios.txt, que a tela Avisos de licença lê) são copiados. Nada é baixado: tudo vai dentro do app.
 import { build } from 'esbuild';
 import { createHash } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -56,6 +57,7 @@ for (const arquivo of [
   'starsonic-logo-negativo.png',
   'starsonic-logo-principal.png',
   'toque.wav',
+  'licencas-ios.txt',
 ]) {
   cpSync(join(raiz, 'assets', arquivo), join(dist, 'assets', arquivo));
 }

@@ -869,3 +869,34 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
    da tela: por isso, só na lista grande. A contenção corta o que passa da linha: o overflow-clip-margin deixa inteiro o
    contorno do foco dos botões (3 px, a 2 px deles). */
 .win[data-plataforma="ios"] .agenda-grande li.row { content-visibility: auto; contain-intrinsic-size: auto 59px; overflow-clip-margin: 6px; }
+/* Os outros alvos pequenos das telas do iPhone com a área do toque de 44×44 px, sem mudar o desenho, como os do
+   cabeçalho: um ::after transparente no meio de cada um, do tamanho dele ou dos 44 px, o que for maior. São o Voltar das
+   barras (32 px no Compacto, 36 no Normal), a linha e o botão redondo de ligar das listas (a agenda e os Recentes; o
+   redondo tem 38 px), o Recusar e o Atender da faixa da segunda ligação (40 px) e o Desligar da que está em espera
+   (32 px), o Apagar do Teclado (32 e 40 px), o Cancelar dos painéis de número da ligação (40 px de altura), os botões do
+   Sobre (o Abrir, o Ligar e o WhatsApp) e as abas da navegação (43 px no Compacto). Nas chaves, a área é o ::before (o
+   ::after é a bolinha); na lista do tempo para atender (o <select> não tem o ::after), o enchimento cresce por cima da
+   margem negativa, e o texto fica no mesmo lugar. As sugestões do Teclado, na linha baixa de 38 px (a tela de 375×667),
+   crescem até os 44 px: com 4 px entre elas, a área não cabe sem cobrir a da outra. */
+.win[data-plataforma="ios"] :is(.bar .icon-btn, .row-call, .row-hit, .round-sm, .ghost.apagar, .btn-ghost-dark, .about button.link, .tab) { position: relative; }
+.win[data-plataforma="ios"] :is(.bar .icon-btn, .row-call, .row-hit, .round-sm, .ghost.apagar, .btn-ghost-dark, .about button.link, .tab)::after,
+.win[data-plataforma="ios"] .switch::before { content: ""; position: absolute; top: 50%; left: 50%; width: max(100%, 44px); height: max(100%, 44px);
+  transform: translate(-50%, -50%); }
+.win[data-plataforma="ios"] .select select { padding-top: 14px; padding-bottom: 14px; margin-top: -10px; margin-bottom: -10px; }
+.win[data-plataforma="ios"] .suggest, .win[data-plataforma="ios"] .teclado-meio > .suggestions { min-height: 44px; }
+/* Os diálogos (o Confirm, a escolha do número) no meio da área segura, e nunca maiores que ela: um alto rola por dentro. */
+.win[data-plataforma="ios"] dialog:modal { inset: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left);
+  max-height: calc(100% - var(--safe-top) - var(--safe-bottom) - 2em); }
+/* O aviso de 2 s: em cima da navegação, como no Windows (a navegação fica em cima da barra de baixo); na ligação, no
+   alto, embaixo da barra de status. */
+.win[data-plataforma="ios"] .toast { bottom: calc(84px + var(--safe-bottom)); }
+.win[data-plataforma="ios"].call .toast { top: calc(var(--safe-top) + 12px); bottom: auto; }
+/* O Áudio da ligação com a saída de agora, numa linha só: um nome de fone comprido sai com as reticências (o nome do
+   botão o tem inteiro). */
+.win[data-plataforma="ios"] .ctrl-rota { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* O Sobre: a linha "Avisos de licença" inteira é o botão, com a seta, como uma linha dos Ajustes do iPhone. */
+.win[data-plataforma="ios"] .about-avisos { width: 100%; border: 0; border-radius: 10px; background: transparent; font: inherit; color: inherit;
+  text-align: left; }
+/* Os avisos de licença: o texto como está no arquivo (as linhas em branco e os recuos), quebrando no fim da tela. */
+.win[data-plataforma="ios"] .licencas-texto { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 400 12.5px/1.55 var(--font-sans);
+  color: var(--text); }

@@ -6,12 +6,18 @@
 // Atalhos. (rc.3) O botão Atalhos (com uma ligação atendida, fora da consulta e da conferência) abre o painel com os
 // atalhos no lugar dos controles. As sugestões do número do Transferir e da Nova ligação vêm de `contatos`: os do estado
 // e, no iPhone, os da agenda (um por número; um contato sem nome mostra o número).
+// (iPhone) O botão Áudio mostra a saída de agora (a `rotaAudio`: "iPhone", "Viva-voz" ou o nome do fone; "Áudio" sem
+// saber), com o nome "Áudio: <saída>", e pede a escolha do iPhone (o `audioRoute`: o hospedeiro mostra a dele), no
+// lugar do menu dos dispositivos; sem o botão Atalhos (fora da 1.0), uma ligação fica em três colunas (6 controles) e
+// duas em quatro (7). Cada tecla do teclado da ligação manda, junto do dtmf, o `keyTone` com ela, com o Bipe ao digitar
+// ligado (o `config.bipeTecla`).
 import type { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { AtalhosPainel } from '../components/AtalhosPainel';
 import { Menu } from '../components/Menu';
 import { Rediscar } from '../components/Rediscar';
 import { callTimer, contactNumberLine, digitsOnly, firstName, initials, nameOrNumber } from '../format';
+import { isIos } from '../plataforma';
 import {
   IconArrowRight,
   IconBolt,
@@ -82,7 +88,10 @@ function Avatar({ card, large }: { card: CallCard; large?: boolean }) {
 }
 
 interface CtrlProps {
-  label: string;
+  /** O rótulo embaixo do círculo (também o nome do botão, sem o `nome`). */
+  label: ComponentChildren;
+  /** (iPhone) O nome do botão, quando o rótulo não diz tudo (o Áudio: "Áudio: <saída>"). */
+  nome?: string;
   icon: ComponentChildren;
   onClick(): void;
   pressed?: boolean;
@@ -92,13 +101,14 @@ interface CtrlProps {
   ctrlRef?: { current: HTMLButtonElement | null };
 }
 
-function Ctrl({ label, icon, onClick, pressed, disabled, popup, expanded, ctrlRef }: CtrlProps) {
+function Ctrl({ label, nome, icon, onClick, pressed, disabled, popup, expanded, ctrlRef }: CtrlProps) {
   const classes = ['ctrl', pressed ? 'ctrl-on' : '', disabled ? 'ctrl-off' : ''].filter(Boolean).join(' ');
   return (
     <button
       ref={ctrlRef}
       type="button"
       class={classes}
+      aria-label={nome}
       aria-pressed={pressed === undefined ? undefined : pressed}
       aria-haspopup={popup ? 'menu' : undefined}
       aria-expanded={popup ? expanded === true : undefined}
@@ -246,6 +256,9 @@ export function Ligacao({ state, ligacao: l, contatos, send }: Props) {
   const [focarAtalhos, setFocarAtalhos] = useState(false);
   const painelDe = useRef(l.top.id);
   const top = l.top;
+  const ios = isIos(state);
+  // (iPhone) O bipe de cada tecla, com o Bipe ao digitar ligado.
+  const bipe = ios && state.config.bipeTecla === true;
 
   // Os painéis são da ligação de cima: quando ela troca (a segunda atendida, Alternar, a volta da em espera), eles
   // fecham e os dígitos saem.
@@ -293,6 +306,7 @@ export function Ligacao({ state, ligacao: l, contatos, send }: Props) {
 
   const dtmf = (tecla: string) => {
     send({ cmd: 'dtmf', digitos: tecla });
+    if (bipe) send({ cmd: 'keyTone', tecla });
     setDigitos((d) => d + tecla);
   };
   const dtmfRef = useRef(dtmf);
@@ -437,7 +451,17 @@ export function Ligacao({ state, ligacao: l, contatos, send }: Props) {
       onClick={() => setPainel(painel === 'teclado' ? null : 'teclado')}
     />
   );
-  const audioCtrl = (
+  // (iPhone) A saída de agora, numa linha só (um nome de fone comprido sai com reticências; o nome do botão o tem inteiro),
+  // e o toque pede a escolha do iPhone.
+  const rota = state.rotaAudio ?? '';
+  const audioCtrl = ios ? (
+    <Ctrl
+      label={<span class="ctrl-rota">{rota || 'Áudio'}</span>}
+      nome={rota ? `Áudio: ${rota}` : undefined}
+      icon={<IconSpeaker />}
+      onClick={() => send({ cmd: 'audioRoute' })}
+    />
+  ) : (
     <div class="ctrl-wrap">
       <Ctrl
         label="Áudio"
@@ -455,14 +479,14 @@ export function Ligacao({ state, ligacao: l, contatos, send }: Props) {
   );
   const transferir = <Ctrl label="Transferir" icon={<IconArrowRight />} disabled={!falando} onClick={() => setPainel('transferir')} />;
   const alternar = <Ctrl label="Alternar" icon={<IconSwap />} disabled={!ambas} onClick={() => send({ cmd: 'swap' })} />;
-  // rc.3: o painel com os atalhos (atendida, como o Transferir; sem nenhum atalho, nada a abrir).
-  const atalhos = (
+  // rc.3: o painel com os atalhos (atendida, como o Transferir; sem nenhum atalho, nada a abrir). (iPhone) Sem ele.
+  const atalhos = ios ? null : (
     <Ctrl label="Atalhos" icon={<IconBolt />} disabled={!falando || !temAtalhos} ctrlRef={atalhosRef} onClick={() => setPainel('atalhos')} />
   );
 
   // Os controles: na conferência, Mudo, Teclado e Separar; na consulta, Mudo, Alternar e Cancelar; com duas,
   // Mudo, Teclado, Áudio, Espera, Transferir, Alternar, Juntar e Atalhos; com uma, Mudo, Teclado, Áudio, Espera,
-  // Transferir, Nova ligação e Atalhos (as duas em quatro colunas).
+  // Transferir, Nova ligação e Atalhos (as duas em quatro colunas). (iPhone) Sem o Atalhos.
   let controles;
   if (conferencia) {
     controles = (
@@ -572,8 +596,9 @@ export function Ligacao({ state, ligacao: l, contatos, send }: Props) {
   } else if (painel === 'atalhos') {
     meio = <AtalhosPainel atalhos={state.atalhos} ligacao={l} send={send} onClose={fecharAtalhos} onUsed={fecharAtalhos} />;
   } else {
-    // Com uma ligação (7 controles) ou duas (8), quatro colunas; na consulta e na conferência, três.
-    const muitos = !conferencia && !consulta;
+    // Com uma ligação (7 controles) ou duas (8), quatro colunas; na consulta e na conferência, três. (iPhone) Sem o
+    // Atalhos, uma ligação (6) fica em três colunas, e duas (7) em quatro.
+    const muitos = !conferencia && !consulta && (!ios || outra !== null);
     meio = <div class={muitos ? 'ctrls ctrls-4' : 'ctrls'}>{controles}</div>;
   }
 

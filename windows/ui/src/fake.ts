@@ -6,7 +6,9 @@
 // modo iPhone (docs/ponte-windows.md, "O modo iPhone"): o estado do contrato, a agenda de exemplo depois do estado no
 // `ready` (com a permissão concedida) e nenhum toque. Com `&abrir=recentes`, o app aberto pelo aviso da perdida: o
 // primeiro `ready` traz também o `abrir`, depois do estado e da agenda. A aba Contatos que abre (o `contactsOpened`) lê a
-// agenda de novo, como o hospedeiro: a mesma lista, com a `vez` seguinte.
+// agenda de novo, como o hospedeiro: a mesma lista, com a `vez` seguinte. O Bipe ao digitar (o `setSetting` com o
+// `bipeTecla`) muda o `config.bipeTecla`; o `audioRoute` (a escolha do iPhone) e o `keyTone` (o bipe) são do hospedeiro:
+// ficam só guardados, e um teste muda a `rotaAudio` pelo `push`, como o núcleo.
 import { AGENDA_DE_EXEMPLO, createScenario, entrarVazio, estadoDoIphone, PLANILHA_DA_EMPRESA, SERVIDORES_DO_PERFIL, type FakeView } from './fake-scenarios';
 import { trimAscii } from './format';
 import type { WebviewLike } from './bridge';
@@ -368,6 +370,8 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
       case 'setSetting':
         if (command.chave === 'iniciarComWindows') change({ iniciarComWindows: command.valor === true });
         else if (command.chave === 'bipeFim') change({ config: { ...state.config, bipeFim: command.valor === true } });
+        // (iPhone) O Bipe ao digitar; o Windows o recusa.
+        else if (command.chave === 'bipeTecla' && ios) change({ config: { ...state.config, bipeTecla: command.valor === true } });
         break;
       case 'saveShortcut': {
         if (!ACOES.includes(command.acao as ShortcutAction)) break;
