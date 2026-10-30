@@ -47,10 +47,12 @@ public:
     // Os pedidos que mandam re-INVITE (a espera ou a retomada): Make, Answer, Activate e SetHold. A libre recusa um
     // re-INVITE com outra oferta da mesma ligação no ar (o sipsess_modify dá EPROTO), e o call_hold do baresip, sem a
     // renegociação anterior acabada (call_refresh_allowed), marcaria a ligação sem mandar nada. Por isso, quando uma
-    // ligação que o pedido renegociaria ainda espera a resposta de outra oferta, o pedido não muda nada, devolve false
-    // (o Make, -1) e Blocked() fica true: quem chamou espera fora do Run (WaitNegotiation) e pede de novo. Uma espera
-    // ou uma retomada que não sai (um erro de transporte na hora, por exemplo) deixa a ligação como estava, e o pedido
-    // seguinte tenta de novo (ver o Renegotiate).
+    // ligação que o pedido renegociaria ainda espera a resposta de outra oferta, o re-INVITE dela não sai, o pedido
+    // devolve false (o Make, -1) e Blocked() fica true: quem chamou espera fora do Run (WaitNegotiation) e pede de
+    // novo. O Make, o Answer e o SetHold não mudam nada antes disso; o Activate já fez a escolhida a ativa, com o áudio
+    // da outra parado e, se saiu, a espera dela, como o Focus do motor do PJSIP. Uma espera ou uma retomada que não
+    // sai (um erro de transporte na hora, por exemplo) deixa a ligação como estava, e o pedido seguinte tenta de novo
+    // (ver o Renegotiate).
 
     // Liga para uri (a URI inteira) pela ua da conta e devolve o id da ligação, a ativa, com o OnCallState(Calling, 0)
     // já na fila. Com uma confirmada fora da espera, ela vai para a espera antes e fica nela mesmo se a nova não sai;
@@ -84,8 +86,8 @@ public:
     // (com o lastTry dele). A espera: false com id desconhecido, ligação não confirmada, Blocked (no prazo, o motor
     // recusa) ou o re-INVITE que não saiu (o log diz; nada muda).
     bool SetHold(int id, bool hold, bool lastTry);
-    // O último Make, Answer, Activate ou SetHold não mudou nada: uma ligação que ele renegociaria ainda espera a
-    // resposta de outra oferta.
+    // O último Make, Answer, Activate ou SetHold parou numa ligação que ele renegociaria e que ainda espera a resposta
+    // de outra oferta (só o Activate já mudou algo; ver acima).
     bool Blocked() const;
     // Quantas negociações acabaram até agora: cada resposta a uma oferta (o BEVENT_CALL_REMOTE_SDP com answer) e cada
     // ligação que acaba. O Run do pedido lê, e o WaitNegotiation espera mudar.
