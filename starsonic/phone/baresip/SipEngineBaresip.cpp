@@ -416,14 +416,16 @@ private:
     // no laço. Se ele esbarra numa renegociação ainda no ar (Blocked), a espera é aqui, fora do Run, pelo fim dela (até
     // ~2 s desde o primeiro pedido), e ele vai de novo; passado o prazo, ele vai uma última vez, com lastTry: o Make, o
     // Answer e o Activate (e o Split) seguem sem a espera da outra, e o que ainda esbarra (a espera do SetHold, a
-    // retomada da escolhida no Activate ou a retomada do Join) é recusado.
+    // retomada da escolhida no Activate ou a retomada do Join) é recusado. O pedido começa aqui (o BeginRequest, na
+    // primeira tentativa): o que um pedido de antes guardou para as tentativas dele não vale para este.
     void RunRenegotiating(const std::function<void(bool lastTry)>& work) {
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(kRenegotiationWaitMs);
-        for (;;) {
+        for (bool first = true;; first = false) {
             const bool lastTry = std::chrono::steady_clock::now() >= deadline;
             bool blocked = false;
             uint64_t seen = 0;
             const bool ran = loop_->Run([&] {
+                if (first) calls_.BeginRequest();
                 work(lastTry);
                 blocked = calls_.Blocked();
                 seen = calls_.Negotiations();

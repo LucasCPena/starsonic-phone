@@ -219,14 +219,6 @@ bool BaresipCalls::Hangup(int id) {
 }
 
 bool BaresipCalls::Activate(int id, bool lastTry) {
-    const bool done = ActivateOnce(id, lastTry);
-    // O pedido acabou (o motor só pede de novo depois de um Blocked, e não depois do prazo): o próximo decide a espera
-    // da outra de novo.
-    if (!blocked_ || lastTry) holdSkipped_ = 0;
-    return done;
-}
-
-bool BaresipCalls::ActivateOnce(int id, bool lastTry) {
     blocked_ = false;
     Slot* slot = Find(id);
     if (!slot || !slot->confirmed) return false;
@@ -333,6 +325,8 @@ bool BaresipCalls::Split(int id, int otherId, bool lastTry) {
     // A outra é a de otherId: só há duas vagas.
     return Activate(id, lastTry);
 }
+
+void BaresipCalls::BeginRequest() { holdSkipped_ = 0; }
 
 bool BaresipCalls::Blocked() const { return blocked_; }
 

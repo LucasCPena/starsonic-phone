@@ -30,6 +30,10 @@
 #include "BaresipLoop.h"
 #include "SipEngine.h"
 #include "SipEngineTestAccess.h"
+// O dbg da libre (o dbg_printf), fora do re.h que o BaresipCalls.h inclui; este arquivo não usa as macros DEBUG_*.
+#define DEBUG_MODULE "teste"
+#define DEBUG_LEVEL 0
+#include <re_dbg.h>
 
 using namespace starsonic;
 using phone_test::CallEvent;
@@ -100,6 +104,22 @@ struct LevelListener : RecordingListener {
 
 private:
     std::atomic<int> maxLevel_{0};
+};
+
+// Um RecordingListener cujo OnLog lança nas linhas que o laço escreve de dentro da libre e do baresip, que são C: as do
+// trace do SIP ("SIP enviado" e "SIP recebido") e as do baresip que dizem os codecs ("aucodec: ").
+struct ThrowingLogListener : RecordingListener {
+    void OnLog(int level, const std::string& line) override {
+        RecordingListener::OnLog(level, line);
+        if (line.compare(0, 4, "SIP ") == 0 || line.compare(0, 9, "aucodec: ") == 0) {
+            ++thrown_;
+            throw std::runtime_error("o OnLog falhou");
+        }
+    }
+    int Thrown() const { return thrown_.load(); }
+
+private:
+    std::atomic<int> thrown_{0};
 };
 
 // Um RecordingListener que guarda também os REFER que o motor mandou, um por pedido. O log tem cada mensagem SIP que
@@ -196,6 +216,45 @@ TEST_CASE("the baresip loop goes on when the hook of the baresip lines throws") 
     bool ran = false;
     CHECK(loop->Run([&ran] { ran = true; }));
     CHECK(ran);
+}
+
+TEST_CASE("the baresip loop goes on when its log sink throws") {
+    // O LogSink recebe as linhas da libre e do baresip dentro deles, que são C: nenhuma exceção volta para eles. A
+    // linha se perde, e o baresipLines, que vem depois dela, ainda a recebe.
+    LoopConfig config;
+    config.userAgent = phone_test::kUserAgent;
+    config.nullAudio = true;
+    std::atomic<int> lines{0};
+    config.baresipLines = [&lines](const std::string&, bool) { ++lines; };
+    std::atomic<int> logged{0};
+    const BaresipLoop::LogSink sink = [&logged](int, const std::string&) {
+        ++logged;
+        throw std::runtime_error("o log falhou");
+    };
+    std::string error;
+    std::unique_ptr<BaresipLoop> loop = BaresipLoop::Start(config, sink, &error);
+    REQUIRE_MESSAGE(loop != nullptr, error);
+    CHECK(logged.load() > 0);   // as linhas da subida do baresip
+    CHECK(lines.load() > 0);
+    // Uma linha da libre (o dbg dela, que nenhum outro teste provoca) chega pelo mesmo caminho.
+    const int before = logged.load();
+    CHECK(loop->Run([] { dbg_printf(DBG_WARNING, "teste: uma linha da libre\n"); }));
+    CHECK(logged.load() == before + 1);
+    bool ran = false;
+    CHECK(loop->Run([&ran] { ran = true; }));
+    CHECK(ran);
+}
+
+TEST_CASE("the engine goes on when OnLog throws on a line from inside libre or baresip") {
+    FakeRegistrar registrar("senha");
+    ThrowingLogListener listener;
+    INFO(listener.LogTail());
+    std::unique_ptr<SipEngine> engine = StartEngine(&listener, LoadProfile(registrar.port()));
+    REQUIRE(engine->SetAccount(Input(Transport::Udp)));
+    // O REGISTER e a resposta dele passam pelo trace do SIP, que lança a cada mensagem: o registro segue.
+    CHECK(listener.WaitFor(RecordingListener::Reached(200, true, 1), kWaitSeconds));
+    CHECK(listener.Thrown() > 0);
+    CHECK(Contains(listener.LogTail(), "SIP enviado ("));
 }
 
 TEST_CASE("the baresip engine sends the start-up lines of baresip to OnLog") {
@@ -778,10 +837,16 @@ TEST_CASE("an Activate that waits for the other call gets its audio back when th
     Phone phone;
     INFO(phone.listener.CallsText());
     INFO(phone.registrar.LogText());
-    int first = 0, second = 0;
-    phone.TwoCalls(&first, &second);
+    // A primeira é feita daqui (2002) e a segunda é do RING (3001): os re-INVITE de cada uma vão a um nome.
+    const int first = phone.Dial("2002");
+    const int second = phone.Answered();   // a primeira vai para a espera
     REQUIRE(phone.engine->Activate(first));   // a segunda vai para a espera, e a primeira volta
     REQUIRE(WaitAudio(*phone.engine, {first}));
+    // O registrador já tratou os re-INVITE de até aqui: o comando de controle abaixo, que corre numa thread própria
+    // dele, não passa na frente de nenhum.
+    REQUIRE(phone.registrar.WaitForLog("reinv-in 2002 sendonly", kWaitSeconds));
+    REQUIRE(phone.registrar.WaitForLog("reinv-in 3001 sendonly", kWaitSeconds));
+    REQUIRE(phone.registrar.WaitForLog("reinv-in 2002 sendrecv", kWaitSeconds));
     // A segunda volta a ser a ativa sem a espera da primeira (o re-INVITE dela não sai), e a retomada da segunda sai e
     // fica sem resposta: a primeira fica confirmada, fora da espera e sem áudio, e a segunda, com uma oferta no ar.
     REQUIRE(phone.registrar.Control("DROP REINVITE on") == kOk);
@@ -789,12 +854,14 @@ TEST_CASE("an Activate that waits for the other call gets its audio back when th
     REQUIRE(phone.engine->Activate(second));
     SipEngineTestAccess::FailReinvites(*phone.engine, false);
     REQUIRE(SipEngineTestAccess::OpenMicrophones(*phone.engine) == 1);   // o da segunda
-    const Lines before = phone.registrar.Log();
+    // Daqui em diante, cada INVITE que o motor manda à primeira (o log tem cada mensagem que sai, também as que o
+    // registrador descarta) conta.
+    phone.listener.CountLog("\nINVITE sip:2002@");
     // O Activate da primeira tira o áudio da segunda e espera a oferta dela, e a segunda acaba nessa espera.
     bool activated = false;
     std::thread swap([&phone, first, &activated] { activated = phone.engine->Activate(first); });
     CHECK(WaitUntil([&phone] { return SipEngineTestAccess::OpenMicrophones(*phone.engine) == 0; }, kWaitSeconds));
-    CHECK(phone.registrar.Control("HANGUP 2001") == kOk);   // o BYE da segunda (a última do RING)
+    CHECK(phone.registrar.Control("HANGUP 2001") == kOk);   // o BYE da segunda, a única do RING
     swap.join();
     CHECK(activated);
     REQUIRE(phone.WaitState(second, CallState::Disconnected));
@@ -802,11 +869,8 @@ TEST_CASE("an Activate that waits for the other call gets its audio back when th
     CHECK(WaitAudio(*phone.engine, {first}));
     CHECK(phone.engine->AudioLinks(first) == std::vector<int>{0});
     CHECK(SipEngineTestAccess::OpenMicrophones(*phone.engine) == 1);
-    REQUIRE(phone.registrar.Control("DROP REINVITE off") == kOk);
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
-    Lines expected = before;
-    expected.push_back("bye-out 2001 200");
-    CHECK(phone.registrar.Log() == expected);
+    CHECK(phone.listener.LogCount("\nINVITE sip:2002@") == 0);
 }
 
 TEST_CASE("an Activate that waits for its own earlier re-INVITE tries the hold of the other call once") {
@@ -838,6 +902,38 @@ TEST_CASE("an Activate that waits for its own earlier re-INVITE tries the hold o
     // O pedido seguinte tenta a espera da segunda de novo, e ela sai (a repetição da espera da primeira e esta).
     REQUIRE(phone.engine->Activate(first));
     CHECK(phone.WaitForLogCount("reinv-in 3001 sendonly", 2));
+}
+
+TEST_CASE("a Split refused because its call ended leaves the next request free to hold the other call") {
+    Phone phone;
+    INFO(phone.listener.CallsText());
+    INFO(phone.registrar.LogText());
+    // b (2002) fica fora da espera sem ser a ativa: a espera dela não sai quando a (a do RING) é atendida.
+    const int b = phone.Dial("2002");
+    SipEngineTestAccess::FailReinvites(*phone.engine, true, b);
+    const int a = phone.Answered();
+    // A espera de a sai e fica sem resposta (a libre a repete).
+    REQUIRE(phone.registrar.Control("DROP REINVITE on") == kOk);
+    REQUIRE(phone.engine->SetHold(a, true));
+    phone.listener.CountLog("ela fica sem audio");
+    // O Split(a, b) deixa de lado a espera de b, que não sai, e espera a de a. Nessa espera, a acaba, e a tentativa
+    // seguinte do mesmo Split é recusada logo na conferência dos ids.
+    bool split = true;
+    std::thread separate([&phone, a, b, &split] { split = phone.engine->Split(a, b); });
+    CHECK(WaitUntil([&phone] { return phone.listener.LogCount("ela fica sem audio") > 0; }, kWaitSeconds));
+    CHECK(phone.registrar.Control("HANGUP 2001") == kOk);   // o BYE de a, a única do RING
+    separate.join();
+    CHECK_FALSE(split);
+    REQUIRE(phone.WaitState(a, CallState::Disconnected));
+    // Uma nova (c, 2003) vira a ativa, ainda sem a espera de b. O pedido seguinte que tem b como a outra tenta a espera
+    // dela: o que o Split de antes deixou de lado não vale para ele.
+    const int c = phone.Dial("2003");
+    SipEngineTestAccess::FailReinvites(*phone.engine, false);
+    REQUIRE(phone.registrar.Control("DROP REINVITE off") == kOk);
+    REQUIRE(phone.engine->Activate(c));
+    CHECK(phone.registrar.WaitForLog("reinv-in 2002 sendonly", kWaitSeconds));
+    CHECK(phone.engine->AudioLinks(b).empty());
+    CHECK(phone.engine->AudioLinks(c) == std::vector<int>{0});
 }
 
 TEST_CASE("SetMute mutes every call now and the next ones") {
@@ -1135,6 +1231,8 @@ TEST_CASE("Join gives the audio back to a call that stayed out of the hold, with
     REQUIRE(phone.engine->Activate(first));   // a segunda fica fora da espera, sem o áudio daqui
     SipEngineTestAccess::FailReinvites(*phone.engine, false);
     REQUIRE(WaitAudio(*phone.engine, {first}));
+    // O registro de antes do Join já tem a retomada da primeira (o registrador a registra quando a trata).
+    REQUIRE(phone.registrar.WaitForLog("reinv-in 3001 sendrecv", kWaitSeconds));
     const Lines before = phone.registrar.Log();
     REQUIRE(phone.engine->Join(first, second));   // nenhuma em espera: nada a retomar
     CHECK(WaitAudio(*phone.engine, {first, second}));
@@ -1244,4 +1342,79 @@ TEST_CASE("a call that ends while Join waits leaves the other one as it was") {
     REQUIRE(phone.engine->Activate(first));
     CHECK(phone.registrar.WaitForLog("reinv-in 3001 sendrecv", kWaitSeconds));
     CHECK(WaitAudio(*phone.engine, {first}));
+}
+
+TEST_CASE("Join resumes both calls when both are on hold") {
+    Phone phone;
+    INFO(phone.listener.CallsText());
+    INFO(phone.registrar.LogText());
+    int first = 0, second = 0;
+    phone.TwoCalls(&first, &second);   // a primeira em espera, a segunda a ativa
+    REQUIRE(phone.engine->SetHold(second, true));   // as duas em espera
+    REQUIRE(phone.WaitForLogCount("reinv-in 3001 sendonly", 2));
+    SUBCASE("both resumes go out") {
+        REQUIRE(phone.engine->Join(first, second));
+        CHECK(phone.WaitForLogCount("reinv-in 3001 sendrecv", 2));
+        CHECK(WaitAudio(*phone.engine, {first, second}));
+        CHECK(SipEngineTestAccess::ConferenceCalls(*phone.engine) == std::vector<int>{first, second});
+        CHECK(Sorted(phone.engine->AudioLinks(first)) == Sorted({0, second}));
+        CHECK(Sorted(phone.engine->AudioLinks(second)) == Sorted({0, first}));
+    }
+    SUBCASE("the second resume cannot go out") {
+        SipEngineTestAccess::FailReinvites(*phone.engine, true, second);
+        CHECK_FALSE(phone.engine->Join(first, second));
+        SipEngineTestAccess::FailReinvites(*phone.engine, false);
+        CHECK(Contains(phone.listener.LogTail(), "retomar: "));
+        // A conferência não começa. Como no motor do PJSIP, a retomada da primeira já saiu: ela fica fora da espera e,
+        // por não ser a ativa, sem o áudio daqui; a segunda segue em espera.
+        CHECK(phone.WaitForLogCount("reinv-in 3001 sendrecv", 1));
+        CHECK(SipEngineTestAccess::ConferenceCalls(*phone.engine).empty());
+        CHECK(SipEngineTestAccess::CallsWithAudio(*phone.engine).empty());
+        CHECK(phone.engine->AudioLinks(first).empty());
+        CHECK(phone.engine->AudioLinks(second).empty());
+        // O Join seguinte só retoma a segunda e junta as duas.
+        REQUIRE(phone.engine->Join(first, second));
+        CHECK(phone.WaitForLogCount("reinv-in 3001 sendrecv", 2));
+        CHECK(WaitAudio(*phone.engine, {first, second}));
+        CHECK(SipEngineTestAccess::ConferenceCalls(*phone.engine) == std::vector<int>{first, second});
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    CHECK(phone.LogCount("reinv-in 3001 sendrecv") == 2);   // uma retomada de cada
+}
+
+TEST_CASE("a transfer that succeeds during the conference ends it like the end of a call") {
+    Phone phone;
+    INFO(phone.listener.CallsText());
+    INFO(phone.registrar.LogText());
+    int a = 0, b = 0;
+    phone.Conference(&a, &b);   // a (2002) e b (2003)
+    REQUIRE(WaitAudio(*phone.engine, {a, b}));
+    // Como no motor do PJSIP: o NOTIFY 200 encerra a ligação transferida, e a conferência acaba com ela.
+    SUBCASE("Transfer: the other call stays, the active one, with its audio and with no re-INVITE") {
+        REQUIRE(phone.engine->Transfer(a, "2004"));
+        CHECK(phone.registrar.WaitForLog("refer-in 2002 2004", kWaitSeconds));
+        CHECK(phone.WaitState(a, CallState::Disconnected));
+        CHECK(phone.registrar.WaitForLog("bye-in 2002", kWaitSeconds));
+        CHECK(Contains(History(phone.listener.Calls(), a), "Transfer/200 Disconnected/200"));
+        CHECK(WaitAudio(*phone.engine, {b}));
+        CHECK(SipEngineTestAccess::ConferenceCalls(*phone.engine).empty());
+        CHECK(phone.engine->AudioLinks(b) == std::vector<int>{0});
+        CHECK(phone.engine->CallCount() == 1);
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        CHECK_FALSE(RecordingListener::StateReached(b, CallState::Disconnected)(phone.listener.Calls()));
+        CHECK(phone.LogCount("reinv-in 2003 sendonly") == 0);
+        CHECK(phone.LogCount("reinv-in 2003 sendrecv") == 0);
+    }
+    SUBCASE("TransferAttended: both calls end") {
+        REQUIRE(phone.engine->TransferAttended(a, b));
+        CHECK(phone.registrar.WaitForLog("refer-in 2002 2003 replaces=known", kWaitSeconds));
+        CHECK(phone.WaitState(a, CallState::Disconnected));
+        CHECK(phone.WaitState(b, CallState::Disconnected));
+        CHECK(phone.registrar.WaitForLog("bye-in 2002", kWaitSeconds));
+        CHECK(phone.registrar.WaitForLog("bye-in 2003", kWaitSeconds));
+        CHECK(phone.engine->CallCount() == 0);
+        CHECK(Transfers(phone.listener.Calls(), a) == std::vector<int>{200});
+        CHECK(Transfers(phone.listener.Calls(), b).empty());
+        CHECK(Contains(History(phone.listener.Calls(), b), "Disconnected/200"));
+    }
 }

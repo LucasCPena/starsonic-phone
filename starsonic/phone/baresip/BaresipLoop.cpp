@@ -95,14 +95,16 @@ std::string ConfigText(bool nullAudio) {
 
 }  // namespace
 
-// As funções que a libre e o baresip chamam, na thread que escreveu (o log e o SIP) ou na do laço.
+// As funções que a libre e o baresip chamam, na thread que escreveu (o log e o SIP) ou na do laço. Nenhuma exceção
+// volta para eles, que são C: o Log e o Observe não deixam nenhuma sair, o SipMessage e o Running têm o try/catch, e o
+// Stop só chama a libre.
 struct BaresipLoop::Hooks {
     static void LibreLine(int level, const char* text, size_t length, void* arg) {
         static_cast<const BaresipLoop*>(arg)->Log(LevelOfLibre(level), text, length);
     }
 
     // A linha vai ao log (o Log a filtra pelo logLevel) e depois, sempre, ao baresipLines: o que o motor escreve por
-    // causa dela sai no log depois dela.
+    // causa dela sai no log depois dela, e um LogSink que lança não a tira do baresipLines.
     static void BaresipLine(uint32_t level, const char* text) {
         const BaresipLoop* loop = g_loop.load();
         if (!loop || !text) return;
@@ -113,17 +115,25 @@ struct BaresipLoop::Hooks {
     // Cada mensagem SIP inteira, numa linha de log só, no nível 4.
     static void SipMessage(bool tx, enum sip_transp tp, const struct sa* src, const struct sa* dst,
                            const uint8_t* pkt, size_t len, void* /*arg*/) {
-        const BaresipLoop* loop = g_loop.load();
-        if (!loop || loop->config_.logLevel < 4) return;
-        char route[160];
-        if (re_snprintf(route, sizeof(route), "%s %J -> %J", sip_transp_name(tp), src, dst) < 0) route[0] = '\0';
-        std::string line = std::string(tx ? "SIP enviado (" : "SIP recebido (") + route + "):\n";
-        line.append(reinterpret_cast<const char*>(pkt), len);
-        loop->Log(4, line.data(), line.size());
+        try {
+            const BaresipLoop* loop = g_loop.load();
+            if (!loop || loop->config_.logLevel < 4) return;
+            char route[160];
+            if (re_snprintf(route, sizeof(route), "%s %J -> %J", sip_transp_name(tp), src, dst) < 0) route[0] = '\0';
+            std::string line = std::string(tx ? "SIP enviado (" : "SIP recebido (") + route + "):\n";
+            line.append(reinterpret_cast<const char*>(pkt), len);
+            loop->Log(4, line.data(), line.size());
+        } catch (...) {   // sem memória para a linha: ela se perde
+        }
     }
 
     // O temporizador de 0 ms: o re_main já está rodando.
-    static void Running(void* arg) { static_cast<BaresipLoop*>(arg)->Report(State::Running, std::string()); }
+    static void Running(void* arg) {
+        try {
+            static_cast<BaresipLoop*>(arg)->Report(State::Running, std::string());
+        } catch (...) {
+        }
+    }
 
     // O retorno do re_thread_async_main do destrutor, na thread do laço.
     static void Stop(int /*err*/, void* /*arg*/) { re_cancel(); }
@@ -339,7 +349,12 @@ void BaresipLoop::Log(int level, const char* text, size_t length) const {
     if (level > config_.logLevel || !log_) return;
     while (length > 0 && (text[length - 1] == '\n' || text[length - 1] == '\r')) --length;
     if (length == 0) return;
-    log_(level, std::string(text, length));
+    // Nenhuma exceção sai daqui (o LogSink, ou a falta de memória para a linha): os ganchos da libre e do baresip, que
+    // são C, e o destrutor chamam o Log. A linha se perde.
+    try {
+        log_(level, std::string(text, length));
+    } catch (...) {
+    }
 }
 
 void BaresipLoop::Observe(const char* text) const {

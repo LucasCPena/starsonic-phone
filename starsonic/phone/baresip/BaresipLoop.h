@@ -71,6 +71,8 @@ private:
     void Teardown();                 // na thread do laço, depois do re_main
     // Sai do Starting para o estado (e avisa o Start); false se o Start já tinha voltado.
     bool Report(State state, const std::string& error);
+    // Nenhum dos dois deixa sair uma exceção (do LogSink, do baresipLines ou da falta de memória): os ganchos da libre
+    // e do baresip, que são C, os chamam.
     void Log(int level, const char* text, size_t length) const;
     void Observe(const char* text) const;   // uma linha do baresip para o baresipLines, se há um
 

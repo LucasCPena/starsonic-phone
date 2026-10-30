@@ -110,6 +110,10 @@ public:
     // desfaz (a mistura sai das duas, otherId vai para a espera, sendonly e com o áudio parado, e id fica a ativa, sem
     // re-INVITE dela).
     bool Split(int id, int otherId, bool lastTry);
+    // Um pedido novo, antes da primeira tentativa dele (o motor chama, no mesmo Run): o que um pedido de antes guardou
+    // para as tentativas seguintes dele (a espera da outra deixada de lado no Activate) não vale para este, qualquer
+    // que tenha sido o fim daquele (uma recusa, o prazo ou o Split que já não acha a ligação).
+    void BeginRequest();
     // O último Make, Answer, Activate, SetHold, Join ou Split parou numa ligação que ele renegociaria e que ainda
     // espera a resposta de outra oferta (só o Activate e o Split já mudaram algo; ver acima).
     bool Blocked() const;
@@ -235,8 +239,6 @@ private:
     // o held muda; senão o erro, e tudo fica como estava. O áudio segue o held: parado se ela fica Silent (o call_hold
     // abre a fonte de som de novo ao aplicar a direção nova), e a mistura também (o Mix).
     int Renegotiate(Slot& slot, bool hold);
-    // Uma tentativa do Activate (o Activate decide quando o pedido acaba).
-    bool ActivateOnce(int id, bool lastTry);
     // O áudio de uma confirmada que não está Silent e que o tem parado (a que ficou fora da espera sem ser a ativa, ou
     // uma tentativa Blocked do Activate) volta, sem re-INVITE (o audio_update).
     void RestoreAudio(Slot& slot);
@@ -278,9 +280,10 @@ private:
     int nextId_ = 1;           // os ids começam em 1 e nunca se repetem no mesmo motor
     int activeId_ = 0;         // a ativa (0: nenhuma, e na conferência)
     bool conference_ = false;  // as duas juntas (Join) até o Split, um Activate ou o fim de uma
-    // A outra cuja espera o Activate de agora já deixou de lado (o HoldOther: o re-INVITE dela não saiu, ou o prazo
-    // passou), ou 0. As tentativas seguintes do mesmo pedido (Blocked na retomada da escolhida) não tentam a espera de
-    // novo nem escrevem a linha de novo, como o Focus do motor do PJSIP, que tenta uma vez; o pedido seguinte tenta.
+    // A outra cuja espera o Activate do pedido de agora já deixou de lado (o HoldOther: o re-INVITE dela não saiu, ou o
+    // prazo passou), ou 0. As tentativas seguintes do mesmo pedido (Blocked na retomada da escolhida) não tentam a
+    // espera de novo nem escrevem a linha de novo, como o Focus do motor do PJSIP, que tenta uma vez. O BeginRequest a
+    // zera: o pedido seguinte tenta.
     int holdSkipped_ = 0;
     bool open_ = true;         // false: a conta ou o motor saindo (HangupAll e EndAll), e as que chegam recebem 480
     bool blocked_ = false;     // o Blocked()
