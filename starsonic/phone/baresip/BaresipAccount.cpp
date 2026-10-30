@@ -49,8 +49,8 @@ std::string WithoutLr(const std::string& uri) {
 }
 
 // O texto da ua (ua_alloc), sem a senha e sem o usuário da autenticação, que vão à parte: o baresip pode escrever este
-// texto no log. O AOR da conta, o registro do baresip desligado, a rota do proxy, a cifra da mídia, os codecs do perfil
-// e, com STUN no perfil, o primeiro servidor. O dtmfmode fica para quando o motor mandar teclas (SendDtmf).
+// texto no log. O AOR da conta, o registro do baresip desligado, a rota do proxy, a cifra da mídia, os codecs do
+// perfil, o método das teclas, o REFER que chega recusado e, com STUN no perfil, o primeiro servidor.
 std::string UaText(const Profile& profile, const PjAccountSettings& settings, const std::string& route, bool tcp) {
     std::string text = "<" + settings.idUri + (tcp ? ";transport=tcp" : "") + ">;regint=0";
     if (!route.empty()) text += ";outbound=\"" + route + "\"";
@@ -61,6 +61,15 @@ std::string UaText(const Profile& profile, const PjAccountSettings& settings, co
     }
     const std::vector<std::string> codecs = CodecIds(profile.global.codecs);
     for (size_t i = 0; i < codecs.size(); ++i) text += (i == 0 ? ";audio_codecs=" : ",") + codecs[i];
+    // As teclas (o call_send_digit lê o dtmfmode da conta): info por SIP INFO; rfc2833, auto e inband por RFC 2833,
+    // como no motor do PJSIP. Nunca o auto do baresip, que cai no INFO quando o outro lado não oferece o
+    // telephone-event.
+    text += profile.global.dtmf == DtmfMethod::SipInfo ? ";dtmfmode=info" : ";dtmfmode=rtpevent";
+    // O REFER que o outro lado manda numa ligação: sem o handler de REFER do baresip na sessão, a libre responde 501 e
+    // a ligação segue como estava. Com ele, o baresip aceitaria com 202 antes de qualquer aviso e deixaria a ligação
+    // no estado de transferência, sem ninguém para fazer a ligação nova; o motor do PJSIP recusa com 603. O REFER
+    // daqui (o call_transfer e o call_replace_transfer do Transfer e do TransferAttended) não olha esta chave.
+    text += ";call_transfer=no";
     const std::vector<std::string> stun = StunServers(profile.global.stun);
     if (!stun.empty()) text += ";medianat=stun;stunserver=stun:" + stun.front();
     return text;

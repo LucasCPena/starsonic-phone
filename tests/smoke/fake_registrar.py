@@ -23,6 +23,8 @@ Ligações (sem autenticação para INVITE, re-INVITE, REFER, BYE e CANCEL):
   de ligações com replaces=known ou replaces=unknown; o registrador não faz mais nada com ele
 - o registrador também liga (RING) e desliga (HANGUP): o INVITE vai ao contato do último REGISTER
   aceito do ramal, pelo mesmo transporte (UDP: o endereço de origem do REGISTER; TCP: a mesma conexão)
+- numa ligação do RING atendida, o registrador também manda um REFER (REFER) ou um INVITE novo que a troca
+  (REPLACES, RFC 3891), como uma central que transfere; a resposta do telefone vai para o registro de ligações
 
 BLF (RFC 4235, sem autenticação): SUBSCRIBE com Event: dialog ao ramal da Request-URI -> 200 (Expires
   ecoado, ou 600) e um NOTIFY application/dialog-info+xml com o estado de agora do ramal (sem diálogo
@@ -36,6 +38,10 @@ BLF (RFC 4235, sem autenticação): SUBSCRIBE com Event: dialog ao ramal da Requ
 Porta de controle (--control-port N, TCP no mesmo --host; um comando por linha, resposta numa linha):
   RING <ramal>       INVITE de "Cliente Teste" <sip:3001@ci>          -> OK | ERR no-contact
   HANGUP <ramal>     BYE na ligação atendida, CANCEL se ainda toca     -> OK | ERR no-call
+  REFER <ramal> <destino>  REFER na última ligação do RING atendida do ramal, com Refer-To: <sip:<destino>@ci>
+                     -> OK | ERR no-call
+  REPLACES <ramal>   INVITE de "Cliente Teste" <sip:3001@ci> ao contato do ramal, com o Replaces da última ligação do
+                     RING atendida dele e o Require: replaces          -> OK | ERR no-call | ERR no-contact
   PASSWORD <senha>   troca a senha aceita                              -> OK
   REGISTERS <ramal>  REGISTER aceitos com Expires > 0                  -> <n>
   CONTACT <ramal>    o cabeçalho Contact, como chegou, do último REGISTER aceito com Expires > 0
@@ -58,8 +64,9 @@ Porta de controle (--control-port N, TCP no mesmo --host; um comando por linha, 
   RESET              REFER_REPLY e REFER_NOTIFY voltam ao padrão       -> OK
   LOG                o registro de ligações, uma linha cada, e END
   (comando desconhecido, sem argumento ou com código que não é de 100 a 699 -> ERR bad-command)
-Registro de ligações (só em memória): inv-out <ramal> <código final>, ack-sent <ramal>,
-  bye-out <ramal> <código>, bye-in <alvo>, cancel-in <alvo>, inv-in <alvo> <código>,
+Registro de ligações (só em memória): inv-out <ramal> <código final> (o INVITE do RING ou do REPLACES),
+  ack-sent <ramal>, bye-out <ramal> <código>, refer-out <ramal> <código final> (o REFER do comando REFER),
+  bye-in <alvo>, cancel-in <alvo>, inv-in <alvo> <código>,
   reinv-in <alvo> <sendonly|sendrecv|inactive|recvonly>, refer-in <alvo> <ramal de destino>
   [replaces=known|unknown], sub-in <alvo> <200|403> (SUBSCRIBE de dialog com Expires > 0, também a
   renovação), unsub-in <alvo> (SUBSCRIBE de dialog com Expires: 0), register-503 <ramal> (REGISTER que o
@@ -196,6 +203,12 @@ def _branch():
 
 def _branch_of(via):
     match = re.search(r"branch=([^;,\s]+)", via)
+    return match.group(1) if match else ""
+
+
+def _tag_of(value):
+    """A tag de um From ou To ("" sem tag)."""
+    match = re.search(r";tag=([^;,\s]+)", value)
     return match.group(1) if match else ""
 
 
@@ -659,16 +672,21 @@ class Registrar:
                 self._send(sub.peer, self._blf_notify(sub, "active;expires=%d" % sub.expires, only))
         return "OK"
 
-    # --- o registrador liga para o telefone (RING) e desliga (HANGUP) ---
+    # --- o registrador liga para o telefone (RING), desliga (HANGUP), transfere (REFER) e troca (REPLACES) ---
 
-    def _ring(self, ramal):
+    def _ring(self, ramal, replaced=None):
+        """O INVITE de CALLER ao contato do ramal (RING). Com replaced (a ligação do RING atendida que a nova troca,
+        REPLACES), ele leva o Replaces dela, como o telefone a vê (o to-tag é a tag dele), e o Require: replaces."""
         contact = self.contacts.get(ramal)
         if not contact:
             return "ERR no-contact"
         call = _Call(ramal, contact, self._hostport(contact.register_uri, contact.peer))
-        ours = "sip:3001@%s%s" % (call.server, ";transport=tcp" if contact.peer.transport == "tcp" else "")
         headers = [("From", call.local), ("To", call.remote), ("Call-ID", call.call_id), ("CSeq", "1 INVITE"),
-                   ("Contact", "<%s>" % ours), ("Content-Type", "application/sdp")]
+                   ("Contact", "<%s>" % self._our_contact(call)), ("Content-Type", "application/sdp")]
+        if replaced:
+            headers += [("Replaces", "%s;to-tag=%s;from-tag=%s" % (replaced.call_id, _tag_of(replaced.remote),
+                                                                  _tag_of(replaced.local))),
+                        ("Require", "replaces")]
         offer = self._sdp(call.server, _ours(list(RTPMAP)), "sendrecv")
         self.calls.append(call)   # antes de mandar: a resposta pode chegar antes de este método voltar
         if not self._send(contact.peer, _request("INVITE", contact.uri, contact.peer.transport, call.server,
@@ -695,15 +713,37 @@ class Registrar:
         call.state = "ending"
         return self._call_request(call, "BYE", call.target, call.cseq, call.remote, True)
 
-    def _call_request(self, call, method, uri, cseq, to, new_branch, body=""):
-        """Pedido dentro da ligação do RING. Com new_branch=False repete o branch do INVITE: é o que o
-        CANCEL e o ACK de uma resposta final que não é 2xx precisam (a mesma transação)."""
+    def _answered(self, ramal):
+        """A última ligação do RING atendida do ramal, ou None."""
+        return next((call for call in reversed(self.calls) if call.ramal == ramal and call.state == "answered"), None)
+
+    def _our_contact(self, call):
+        """O nosso Contact numa ligação do RING: a URI de quem liga, com o endereço com que o telefone nos enxerga."""
+        return "sip:3001@%s%s" % (call.server, ";transport=tcp" if call.peer.transport == "tcp" else "")
+
+    def _refer(self, ramal, destino):
+        """O REFER na última ligação do RING atendida do ramal, para sip:<destino>@ci (REFER); a resposta final do
+        telefone vai para o registro (refer-out)."""
+        call = self._answered(ramal)
+        if not call:
+            return "ERR no-call"
+        extra = [("Contact", "<%s>" % self._our_contact(call)), ("Refer-To", "<sip:%s@ci>" % destino),
+                 ("Referred-By", "<sip:3001@ci>")]
+        message = self._call_request(call, "REFER", call.target, self._next_cseq(call.call_id), call.remote, True,
+                                     extra)
+        return "OK" if self._send(call.peer, message) else "ERR no-call"
+
+    def _call_request(self, call, method, uri, cseq, to, new_branch, extra=(), body=""):
+        """Pedido dentro da ligação do RING, com os cabeçalhos extra depois dos do diálogo. Com new_branch=False
+        repete o branch do INVITE: é o que o CANCEL e o ACK de uma resposta final que não é 2xx precisam (a mesma
+        transação)."""
         headers = [("From", call.local), ("To", to), ("Call-ID", call.call_id), ("CSeq", "%d %s" % (cseq, method))]
+        headers += list(extra)
         return _request(method, uri, call.peer.transport, call.server, _branch() if new_branch else call.branch,
                         headers, body)
 
     def _on_response(self, msg, peer):
-        """Resposta do telefone a um pedido do registrador (INVITE, CANCEL, BYE, NOTIFY)."""
+        """Resposta do telefone a um pedido do registrador (INVITE, CANCEL, BYE, REFER, NOTIFY)."""
         call, cseq = self._call_of(msg.first("call-id")), msg.first("cseq").split()
         if not call or len(cseq) != 2:
             return []
@@ -712,6 +752,8 @@ class Registrar:
         if cseq[1] == "BYE" and msg.status >= 200 and call.state != "ended":
             call.state = "ended"
             self._log("bye-out %s %d" % (call.ramal, msg.status))
+        if cseq[1] == "REFER" and msg.status >= 200:   # o REFER do comando REFER: a ligação segue como estiver
+            self._log("refer-out %s %d" % (call.ramal, msg.status))
         return []
 
     def _on_invite_response(self, call, msg):
@@ -750,6 +792,13 @@ class Registrar:
                 return [self._ring(ramal)]
             if name == "HANGUP" and ramal:
                 return [self._hangup(ramal)]
+            if name == "REFER" and ramal:
+                target, _, destino = ramal.partition(" ")
+                if destino and " " not in destino:
+                    return [self._refer(target, destino)]
+            if name == "REPLACES" and ramal:
+                replaced = self._answered(ramal)
+                return [self._ring(ramal, replaced) if replaced else "ERR no-call"]
             if name == "PASSWORD" and ramal:
                 self.password = argument   # a senha inteira, com os espaços que tiver
                 return ["OK"]
@@ -889,8 +938,8 @@ def start_tcp_server(registrar, host, port):
 
 
 def start_control_server(registrar, host, port):
-    """Porta de controle (RING, HANGUP, PASSWORD, REGISTERS, CONTACT, HEADER, KEEPALIVES, EXPIRES, BLF, FORGET,
-    DROP, FAIL, REFER_REPLY, REFER_NOTIFY, RESET, LOG), numa thread. Mesma forma de start_tcp_server."""
+    """Porta de controle (RING, HANGUP, REFER, REPLACES, PASSWORD, REGISTERS, CONTACT, HEADER, KEEPALIVES, EXPIRES,
+    BLF, FORGET, DROP, FAIL, REFER_REPLY, REFER_NOTIFY, RESET, LOG), numa thread. Mesma forma de start_tcp_server."""
     return _start_tcp(_ControlHandler, registrar, host, port)
 
 

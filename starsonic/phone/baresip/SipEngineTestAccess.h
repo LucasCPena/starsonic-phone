@@ -19,6 +19,8 @@ struct SipEngineTestAccess {
     // Com on, nenhum re-INVITE com oferta sai da ligação callId (0: de todas), como num erro de transporte na hora (a
     // rede fora no meio de uma troca de Wi-Fi para 4G): a espera e a retomada dela falham sem mandar nada, até o off.
     static void FailReinvites(SipEngine& engine, bool on, int callId = 0);
+    // Os ids das ligações com o microfone mudo (o audio_ismuted do baresip), em ordem crescente.
+    static std::vector<int> MutedCalls(const SipEngine& engine);
 };
 
 }  // namespace starsonic

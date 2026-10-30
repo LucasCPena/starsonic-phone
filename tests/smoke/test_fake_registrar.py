@@ -143,6 +143,105 @@ class FakeRegistrarReferTest(unittest.TestCase):
                 self.assertEqual(self.registrar.command(command), ["ERR bad-command"])
 
 
+def phone_reply(code, request, contact="<sip:2001@127.0.0.1:5070;ob>"):
+    """A resposta do telefone (bytes) a um pedido que o registrador mandou: os mesmos Via, From, Call-ID e CSeq, o To
+    com a tag do telefone ("fone") e o Contact dele."""
+    to = request.first("to")
+    lines = ["SIP/2.0 %d %s" % (code, fake_registrar.REASONS.get(code, "OK")), "Via: " + request.first("via"),
+             "From: " + request.first("from"), "To: " + (to if ";tag=" in to else to + ";tag=fone"),
+             "Call-ID: " + request.first("call-id"), "CSeq: " + request.first("cseq"), "Contact: " + contact,
+             "Content-Length: 0", "", ""]
+    return "\r\n".join(lines).encode("utf-8")
+
+
+class FakeRegistrarRingDialogTest(unittest.TestCase):
+    """O que o registrador manda por conta própria numa ligação do RING atendida: o REFER (comando REFER) e o INVITE
+    que a troca (comando REPLACES), e as respostas do telefone no registro de ligações."""
+
+    def setUp(self):
+        self.registrar = fake_registrar.Registrar("2001", "senha-certa")
+        self.registrar.udp = RingSocket()
+        self.registrar.contacts["2001"] = fake_registrar._Contact(
+            PHONE, "sip:2001@127.0.0.1:5070", "sip:2001@ci", "sip:127.0.0.1")
+
+    def log(self):
+        return self.registrar.command("LOG")[:-1]
+
+    def sent(self):
+        """O que o registrador mandou ao telefone, analisado."""
+        return [fake_registrar._parse(data) for data, _ in self.registrar.udp.sent]
+
+    def reply(self, code, request):
+        """A resposta do telefone ao pedido e o que o registrador manda em seguida (analisado)."""
+        replies = self.registrar.dispatch(phone_reply(code, request), ("127.0.0.1", 5070))
+        return [fake_registrar._parse(data) for data in replies]
+
+    def answered_ring(self):
+        """RING 2001 e o 200 do telefone: a ligação atendida. Devolve o INVITE dela."""
+        self.assertEqual(self.registrar.command("RING 2001"), ["OK"])
+        ring = self.sent()[-1]
+        self.assertEqual([reply.method for reply in self.reply(200, ring)], ["ACK"])
+        return ring
+
+    def test_refer_command_sends_a_refer_in_the_dialog_of_the_answered_call(self):
+        ring = self.answered_ring()
+        self.assertEqual(self.registrar.command("REFER 2001 2003"), ["OK"])
+        refer = self.sent()[-1]
+        self.assertEqual(refer.method, "REFER")
+        self.assertEqual(refer.uri, "sip:2001@127.0.0.1:5070;ob")   # o Contact do 200 do telefone
+        self.assertEqual(refer.first("call-id"), ring.first("call-id"))
+        self.assertEqual(refer.first("from"), ring.first("from"))
+        self.assertEqual(refer.first("to"), ring.first("to") + ";tag=fone")
+        self.assertEqual(refer.first("cseq"), "2 REFER")   # depois do INVITE, que usou o 1
+        self.assertEqual(refer.first("refer-to"), "<sip:2003@ci>")
+        self.assertEqual(refer.first("contact"), "<sip:3001@127.0.0.1:5060>")
+        self.assertEqual(self.reply(501, refer), [])   # a resposta do telefone só vai para o registro
+        self.assertEqual(self.log(), ["inv-out 2001 200", "ack-sent 2001", "refer-out 2001 501"])
+        # A ligação continua: o BYE do HANGUP leva o CSeq seguinte ao do REFER.
+        self.assertEqual(self.registrar.command("HANGUP 2001"), ["OK"])
+        self.assertEqual(self.sent()[-1].first("cseq"), "3 BYE")
+
+    def test_refer_command_needs_an_answered_call(self):
+        self.assertEqual(self.registrar.command("REFER 2001 2003"), ["ERR no-call"])   # nenhuma ligação
+        self.assertEqual(self.registrar.command("RING 2001"), ["OK"])
+        self.assertEqual(self.registrar.command("REFER 2001 2003"), ["ERR no-call"])   # ainda toca
+        self.assertEqual([message.method for message in self.sent()], ["INVITE"])   # só o do RING
+        for command in ("REFER", "REFER 2001", "REFER 2001 2003 2004", "REFER  2003"):
+            with self.subTest(command=command):
+                self.assertEqual(self.registrar.command(command), ["ERR bad-command"])
+
+    def test_replaces_command_sends_an_invite_that_replaces_the_answered_call(self):
+        ring = self.answered_ring()
+        self.assertEqual(self.registrar.command("REPLACES 2001"), ["OK"])
+        invite = self.sent()[-1]
+        self.assertEqual(invite.method, "INVITE")
+        self.assertEqual(invite.uri, "sip:2001@127.0.0.1:5070")   # o contato do REGISTER, como no RING
+        self.assertNotEqual(invite.first("call-id"), ring.first("call-id"))   # uma ligação nova
+        self.assertNotIn(";tag=", invite.first("to"))
+        ours = ring.first("from").partition(";tag=")[2]
+        # O diálogo trocado como o telefone o vê: o to-tag é a tag dele, e o from-tag, a do registrador.
+        self.assertEqual(invite.first("replaces"), "%s;to-tag=fone;from-tag=%s" % (ring.first("call-id"), ours))
+        self.assertEqual(invite.first("require"), "replaces")
+        self.assertIn("m=audio ", invite.body)
+        # A recusa do telefone vai para o registro, com o ACK na mesma transação.
+        ack = self.reply(603, invite)
+        self.assertEqual([message.method for message in ack], ["ACK"])
+        self.assertEqual(ack[0].first("via"), invite.first("via"))
+        self.assertEqual(self.log(), ["inv-out 2001 200", "ack-sent 2001", "inv-out 2001 603"])
+        # A ligação trocada continua atendida: o HANGUP manda o BYE nela.
+        self.assertEqual(self.registrar.command("HANGUP 2001"), ["OK"])
+        bye = self.sent()[-1]
+        self.assertEqual(bye.method, "BYE")
+        self.assertEqual(bye.first("call-id"), ring.first("call-id"))
+
+    def test_replaces_command_needs_an_answered_call(self):
+        self.assertEqual(self.registrar.command("REPLACES 2001"), ["ERR no-call"])   # nenhuma ligação
+        self.assertEqual(self.registrar.command("RING 2001"), ["OK"])
+        self.assertEqual(self.registrar.command("REPLACES 2001"), ["ERR no-call"])   # ainda toca
+        self.assertEqual([message.method for message in self.sent()], ["INVITE"])   # só o do RING
+        self.assertEqual(self.registrar.command("REPLACES"), ["ERR bad-command"])
+
+
 def subscribe(alvo, call_id="sub-2007", expires=None, event="dialog", cseq=1, to_tag=None):
     """SUBSCRIBE do telefone ao estado do ramal `alvo` (BLF, RFC 4235)."""
     extra = ["Event: " + event, "Accept: application/dialog-info+xml"]

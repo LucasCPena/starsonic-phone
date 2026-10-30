@@ -1,8 +1,9 @@
 // Só o motor do baresip: o que depende das linhas de log do baresip, os módulos que ele carrega, o que esse motor faz
 // de diferente do do PJSIP (os dispositivos de som e o BLF, spec 6.1, os dados de push no REGISTER, spec 7.3, também
-// durante uma ligação, e a URI das ligações de uma conta TCP) e o que só aqui é conferido (o keep-alive, o motor
-// destruído e criado de novo com a conta, os códigos das ligações encerradas aqui, o CANCEL e o BYE do Hangup que
-// esperam a resposta do outro lado, a ligação que chega com a conta saindo e, pelo SipEngineTestAccess, o áudio de
+// durante uma ligação, a URI das ligações de uma conta TCP e o REFER do outro lado, recusado com 501) e o que só aqui
+// é conferido (o keep-alive, o motor destruído e criado de novo com a conta, os códigos das ligações encerradas aqui,
+// o CANCEL e o BYE do Hangup que esperam a resposta do outro lado, a ligação que chega com a conta saindo, o INVITE
+// com Replaces recusado, as teclas aceitas, uma transferência por vez e, pelo SipEngineTestAccess, o áudio e o mudo de
 // cada ligação: com duas, só a ativa fica com o microfone, spec 7.7, também com a espera ou a retomada que não sai e
 // com a renegociação que não acaba). O motor do PJSIP tem os testes dele (test_engine_pjsip.cpp).
 #include "call_fixture.h"
@@ -23,6 +24,7 @@
 #include "SipEngineTestAccess.h"
 
 using namespace starsonic;
+using phone_test::CallEvent;
 using phone_test::Contains;
 using phone_test::DelayedUdpRelay;
 using phone_test::FakeRegistrar;
@@ -38,6 +40,7 @@ using phone_test::RecordingListener;
 using phone_test::Registers;
 using phone_test::RegistrationsText;
 using phone_test::StartEngine;
+using phone_test::Transfers;
 using phone_test::WaitUntil;
 
 namespace {
@@ -68,6 +71,38 @@ int Keepalives(const FakeRegistrar& registrar) {
 bool WaitAudio(const SipEngine& engine, const std::vector<int>& expected) {
     return WaitUntil([&] { return SipEngineTestAccess::CallsWithAudio(engine) == expected; }, kWaitSeconds);
 }
+
+// Espera até kWaitSeconds que a ligação id tenha `times` OnTransfer.
+bool WaitTransfers(RecordingListener& listener, int id, size_t times) {
+    return listener.WaitForCalls(
+        [id, times](const std::vector<CallEvent>& events) { return Transfers(events, id).size() >= times; },
+        kWaitSeconds);
+}
+
+// Um motor registrado no registrador falso por um DelayedUdpRelay de 200 ms (cada resposta chega 400 ms depois do
+// pedido, antes da primeira repetição do UDP, aos 500 ms), com uma ligação feita para 2002 já confirmada. A ordem dos
+// campos importa: o motor some antes do listener, do relay e do registrador.
+struct SlowPhone {
+    SlowPhone() : registrar("senha"), relay(registrar.port(), 200) {
+        engine = StartEngine(&listener, LoadProfile(relay.port()));
+        REQUIRE(engine->SetAccount(Input(Transport::Udp)));
+        REQUIRE(listener.WaitFor(RecordingListener::Reached(200, true, 1), kWaitSeconds));
+        client = Dial("2002");
+    }
+
+    int Dial(const std::string& number) {
+        const int id = engine->MakeCall(number);
+        REQUIRE(id > 0);
+        REQUIRE(listener.WaitForCalls(RecordingListener::StateReached(id, CallState::Confirmed), kWaitSeconds));
+        return id;
+    }
+
+    FakeRegistrar registrar;
+    DelayedUdpRelay relay;
+    RecordingListener listener;
+    std::unique_ptr<SipEngine> engine;
+    int client = 0;
+};
 
 }  // namespace
 
@@ -653,4 +688,115 @@ TEST_CASE("a MakeCall that cannot go out after the fallback leaves the other cal
     CHECK(phone.listener.LogCount("ela fica sem audio") == 0);
     CHECK(phone.engine->AudioLinks(first) == std::vector<int>{0});   // a primeira segue a ativa, com o áudio
     CHECK(SipEngineTestAccess::OpenMicrophones(*phone.engine) == 1);
+}
+
+TEST_CASE("SetMute mutes every call now and the next ones") {
+    Phone phone;
+    const int first = phone.Dial("2002");
+    phone.engine->SetMute(true);
+    CHECK(SipEngineTestAccess::MutedCalls(*phone.engine) == std::vector<int>{first});
+    const int second = phone.Dial("2003");   // a primeira vai para a espera
+    CHECK(SipEngineTestAccess::MutedCalls(*phone.engine) == std::vector<int>{first, second});
+    phone.engine->SetMute(false);
+    CHECK(SipEngineTestAccess::MutedCalls(*phone.engine).empty());
+}
+
+TEST_CASE("SendDtmf sends 0-9, *, # and A-D in a confirmed call, and the log line has the count, not the digits") {
+    Phone phone;
+    INFO(phone.listener.CallsText());
+    INFO(phone.listener.LogTail());
+    const int id = phone.Ring();
+    CHECK_FALSE(phone.engine->SendDtmf(id, "1"));   // ainda toca
+    REQUIRE(phone.engine->Answer(id));
+    REQUIRE(phone.WaitState(id, CallState::Confirmed));
+    phone.listener.CountLog("SendDtmf: ");
+    for (const std::string digits : {"", "1x", "1 2", "a", "E"}) {
+        CAPTURE(digits);
+        CHECK_FALSE(phone.engine->SendDtmf(id, digits));
+    }
+    CHECK(phone.listener.LogCount("SendDtmf: ") == 0);   // nada saiu
+    // Cada tecla do RFC 2833 termina com a soltura, que o baresip escreve no log ao mandar o fim do evento.
+    phone.listener.CountLog("audio: send DTMF digit end: ");
+    CHECK(phone.engine->SendDtmf(id, "0123456789*#ABCD"));
+    CHECK(phone.listener.LogCount("SendDtmf: ") == 1);
+    CHECK(Contains(phone.listener.LogTail(), "\nSendDtmf: 16 digito(s), using RFC2833 method\n"));
+    CHECK(phone.listener.LogCount("audio: send DTMF digit end: ") == 16);
+}
+
+TEST_CASE("a REFER from the other side in a call is refused with 501, and the call goes on as it was") {
+    Phone phone;
+    INFO(phone.listener.CallsText());
+    INFO(phone.registrar.LogText());
+    const int id = phone.Answered();
+    REQUIRE(WaitAudio(*phone.engine, {id}));
+    REQUIRE(phone.registrar.Control("REFER 2001 2003") == kOk);
+    // A ligação não tem o handler de REFER do baresip (o call_transfer da conta desligado): a libre responde 501.
+    CHECK(phone.registrar.WaitForLog("refer-out 2001 501", kWaitSeconds));
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    CHECK(History(phone.listener.Calls(), id) == "Incoming Incoming/100 Early/180 Connecting/200 Confirmed/200");
+    CHECK(phone.engine->CallCount() == 1);
+    CHECK(phone.engine->AudioLinks(id) == std::vector<int>{0});
+    CHECK(SipEngineTestAccess::CallsWithAudio(*phone.engine) == std::vector<int>{id});
+    REQUIRE(phone.engine->SetHold(id, true));   // a ligação segue como antes: a espera sai
+    CHECK(phone.registrar.WaitForLog("reinv-in 3001 sendonly", kWaitSeconds));
+}
+
+TEST_CASE("an INVITE that replaces a call is refused with 603, with no event, and the call goes on as it was") {
+    Phone phone;
+    INFO(phone.listener.CallsText());
+    INFO(phone.registrar.LogText());
+    const int id = phone.Answered();
+    REQUIRE(WaitAudio(*phone.engine, {id}));
+    const size_t events = phone.listener.EventCount();
+    REQUIRE(phone.registrar.Control("REPLACES 2001") == kOk);
+    CHECK(phone.registrar.WaitForLog("inv-out 2001 603", kWaitSeconds));
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    CHECK(phone.listener.EventCount() == events);   // nenhum OnIncomingCall, e a de agora não acabou
+    CHECK(Contains(phone.listener.LogTail(), "pedido de troca de ligacao (Replaces) recebido e recusado (603)"));
+    CHECK(phone.engine->CallCount() == 1);
+    CHECK(phone.engine->AudioLinks(id) == std::vector<int>{0});
+    CHECK(SipEngineTestAccess::CallsWithAudio(*phone.engine) == std::vector<int>{id});
+    REQUIRE(phone.engine->SetHold(id, true));   // a ligação segue como antes: a espera sai
+    CHECK(phone.registrar.WaitForLog("reinv-in 3001 sendonly", kWaitSeconds));
+}
+
+TEST_CASE("a transfer goes one at a time: the next one waits for the result of the one on the way") {
+    SlowPhone phone;
+    INFO(phone.listener.CallsText());
+    INFO(phone.registrar.LogText());
+    REQUIRE(phone.registrar.Control("REFER_REPLY 603") == kOk);   // o servidor recusa: as ligações seguem
+    const int client = phone.client;
+    REQUIRE(phone.engine->Transfer(client, "2003"));
+    CHECK_FALSE(phone.engine->Transfer(client, "2004"));   // a resposta ao REFER ainda não chegou
+    REQUIRE(WaitTransfers(phone.listener, client, 1));
+    CHECK(phone.engine->Transfer(client, "2004"));   // com o resultado, vale de novo
+    REQUIRE(WaitTransfers(phone.listener, client, 2));
+
+    const int colleague = phone.Dial("2003");   // o cliente vai para a espera
+    REQUIRE(phone.engine->TransferAttended(client, colleague));
+    CHECK_FALSE(phone.engine->TransferAttended(client, colleague));
+    CHECK_FALSE(phone.engine->TransferAttended(colleague, client));
+    CHECK_FALSE(phone.engine->Transfer(client, "2004"));
+    REQUIRE(WaitTransfers(phone.listener, client, 3));
+    CHECK(phone.engine->TransferAttended(client, colleague));
+    REQUIRE(WaitTransfers(phone.listener, client, 4));
+    CHECK(Transfers(phone.listener.Calls(), client) == std::vector<int>{603, 603, 603, 603});
+    CHECK(Transfers(phone.listener.Calls(), colleague).empty());
+    CHECK(phone.engine->CallCount() == 2);
+    CHECK(phone_test::LogCount(phone.registrar, "refer-in 2002 2003") == 1);
+    CHECK(phone_test::LogCount(phone.registrar, "refer-in 2002 2004") == 1);
+    CHECK(phone_test::LogCount(phone.registrar, "refer-in 2002 2003 replaces=known") == 2);
+}
+
+TEST_CASE("a call that ends before the result of its transfer reports no OnTransfer") {
+    SlowPhone phone;
+    INFO(phone.listener.CallsText());
+    INFO(phone.registrar.LogText());
+    const int id = phone.client;
+    REQUIRE(phone.engine->Transfer(id, "2003"));
+    REQUIRE(phone.engine->Hangup(id));   // antes do 202 e do NOTIFY 200
+    CHECK(phone.registrar.WaitForLog("refer-in 2002 2003", kWaitSeconds));
+    CHECK(phone.registrar.WaitForLog("bye-in 2002", kWaitSeconds));
+    std::this_thread::sleep_for(std::chrono::milliseconds(800));   // as respostas já voltaram ao motor
+    CHECK(History(phone.listener.Calls(), id) == "Calling/0 Early/180 Connecting/200 Confirmed/200 Disconnected/200");
 }

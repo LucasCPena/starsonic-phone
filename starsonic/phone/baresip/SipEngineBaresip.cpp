@@ -250,10 +250,36 @@ public:
         return done;
     }
 
-    void SetMute(bool /*muted*/) {}
-    bool SendDtmf(int /*callId*/, const std::string& /*digits*/) { return false; }
-    bool Transfer(int /*callId*/, const std::string& /*number*/) { return false; }
-    bool TransferAttended(int /*callId*/, int /*targetCallId*/) { return false; }
+    // O mudo das ligações de agora e das próximas, até trocar de novo.
+    void SetMute(bool muted) {
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        loop_->Run([&] { calls_.SetMute(muted); });
+    }
+
+    bool SendDtmf(int callId, const std::string& digits) {
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        bool done = false;
+        loop_->Run([&] { done = calls_.SendDtmf(callId, digits); });
+        return done;
+    }
+
+    // O REFER para sip:<número>@<domínio da conta>[:<porta>], sem o ;transport=tcp da conta TCP, como no motor do
+    // PJSIP (o REFER sai pelo diálogo da ligação, que já está no transporte dela).
+    bool Transfer(int callId, const std::string& number) {
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        if (!account_ || number.empty()) return false;
+        bool done = false;
+        loop_->Run([&] { done = calls_.Transfer(callId, "sip:" + number + "@" + account_->CallHost()); });
+        return done;
+    }
+
+    bool TransferAttended(int callId, int targetCallId) {
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        bool done = false;
+        loop_->Run([&] { done = calls_.TransferAttended(callId, targetCallId); });
+        return done;
+    }
+
     bool Join(int /*callId*/, int /*otherId*/) { return false; }
     bool Split(int /*callId*/, int /*otherId*/) { return false; }
     int CallCount() const { return calls_.Count(); }   // nunca espera: sem a apiMutex_ e sem o Run
@@ -325,6 +351,13 @@ public:
     void FailReinvites(bool on, int callId) {
         std::lock_guard<std::mutex> lock(apiMutex_);
         loop_->Run([&] { calls_.FailReinvites(on, callId); });
+    }
+
+    std::vector<int> MutedCalls() {
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        std::vector<int> ids;
+        loop_->Run([&] { ids = calls_.MutedCalls(); });
+        return ids;
     }
 
 private:
@@ -516,5 +549,7 @@ int SipEngineTestAccess::OpenMicrophones(const SipEngine& engine) { return engin
 void SipEngineTestAccess::FailReinvites(SipEngine& engine, bool on, int callId) {
     engine.impl_->FailReinvites(on, callId);
 }
+
+std::vector<int> SipEngineTestAccess::MutedCalls(const SipEngine& engine) { return engine.impl_->MutedCalls(); }
 
 }  // namespace starsonic

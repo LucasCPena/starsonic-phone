@@ -1,7 +1,9 @@
 #pragma once
 // As ligações do motor com o baresip (internas): fazer, receber, atender, recusar, desligar, pôr em espera e retomar,
-// com os eventos do contrato (SipEngine.h) na ordem e com os códigos do motor do PJSIP. Até duas ligações: a que chega
-// com outra ainda não confirmada, ou com duas em andamento, recebe 486.
+// as teclas, o mudo e as transferências, com os eventos do contrato (SipEngine.h) na ordem e com os códigos do motor do
+// PJSIP. Até duas ligações: a que chega com outra ainda não confirmada, ou com duas em andamento, recebe 486. O outro
+// lado não troca nem transfere uma ligação daqui: o INVITE com Replaces recebe 603 (o OnInvite), e o REFER numa
+// ligação, 501 (a conta não deixa o baresip aceitá-lo: o call_transfer=no do BaresipAccount).
 //
 // Um microfone só (o iPhone, spec 7.7), como a mesa de áudio do motor do PJSIP: uma das ligações é a ativa (a feita,
 // a atendida ou a do Activate, até ela acabar), e só ela, fora da espera, fica com o áudio aberto. A outra, confirmada,
@@ -35,8 +37,8 @@ class EventQueue;
 
 class BaresipCalls {   // estado na thread do laço; Count() é lido de qualquer thread (atômico)
 public:
-    // events: por onde saem os avisos das ligações; dura mais que o BaresipCalls. dtmf: o método das teclas do perfil
-    // (o SendDtmf, que ainda não manda nada).
+    // events: por onde saem os avisos das ligações; dura mais que o BaresipCalls. dtmf: o método das teclas do perfil,
+    // o mesmo do dtmfmode da ua da conta (o BaresipAccount), que é o que o baresip usa: aqui, só para o log.
     BaresipCalls(EventQueue& events, BaresipLoop::LogSink log, DtmfMethod dtmf);
 
     BaresipCalls(const BaresipCalls&) = delete;
@@ -96,6 +98,23 @@ public:
     // de cada vez (uma recusa do re-INVITE, 4xx a 6xx, acaba a renegociação sem nenhum evento do baresip; quem chamou
     // confere de novo, num Run).
     void WaitNegotiation(uint64_t seen, std::chrono::steady_clock::time_point deadline);
+
+    // As teclas, só numa confirmada e só com 0-9, *, # e A-D (vazio ou outro caractere: false, nada sai): cada uma
+    // pelo call_send_digit, seguida da soltura (KEYCODE_REL), no dtmfmode da ua (SIP INFO ou RFC 2833). O log diz
+    // quantas e por qual método, sem as teclas. false também se o baresip recusa uma (o log diz; as de antes saíram).
+    bool SendDtmf(int id, const std::string& digits);
+    // O microfone mudo, ou não, em todas as ligações de agora (audio_mute) e nas próximas (o Bind), até trocar de novo.
+    void SetMute(bool muted);
+    // O REFER (call_transfer) para uri, só numa confirmada sem outra transferência dela no ar. TransferAttended: o
+    // REFER com Replaces (call_replace_transfer) no diálogo de id, com o diálogo de targetId no Refer-To, as duas
+    // confirmadas e diferentes, e nenhuma com uma transferência no ar. false: nada saiu (o baresip recusou: o log
+    // diz). Com true, o resultado chega uma vez, por OnTransfer(id, código), antes de qualquer Disconnected dela: a
+    // recusa do REFER ou o NOTIFY com a falha (o BEVENT_CALL_TRANSFER_FAILED), e as ligações seguem como estavam; ou
+    // o NOTIFY com 2xx, que o baresip avisa encerrando a ligação (OnTransfer(id, 200) e o Disconnected(id, 200)), e
+    // na com consulta o motor desliga então o alvo (o BYE). A ligação que acaba antes do resultado não o avisa.
+    bool Transfer(int id, const std::string& uri);
+    bool TransferAttended(int id, int targetId);
+
     int Count() const;   // de qualquer thread; cai antes de o Disconnected chegar ao listener
     // {0} (o dispositivo de som) só para a ativa, confirmada e fora da espera; vazio para a outra, para uma que toca ou
     // chama e para um id desconhecido.
@@ -103,6 +122,8 @@ public:
     // Os ids das ligações com o áudio aberto (o audio_started do baresip), em ordem crescente: os testes
     // (SipEngineTestAccess).
     std::vector<int> CallsWithAudio() const;
+    // Os ids das ligações com o microfone mudo (o audio_ismuted do baresip), em ordem crescente: os testes.
+    std::vector<int> MutedCalls() const;
     // Os testes (SipEngineTestAccess): com on, nenhum re-INVITE com oferta sai da ligação id (0: de todas), como num
     // erro de transporte na hora (a rede fora). O aviso do SDP que o baresip monta para ele (o BEVENT_CALL_LOCAL_SDP
     // com offer, numa confirmada) recebe um erro, e o call_modify do baresip volta antes de mandar o re-INVITE e de
@@ -135,19 +156,29 @@ private:
         // Em espera daqui: o último re-INVITE que saiu foi o da espera. Só o Renegotiate muda, e só quando o re-INVITE
         // sai; a marca do baresip (call_is_onhold) anda junto.
         bool held = false;
+        bool transferring = false;   // o REFER de um Transfer ou de um TransferAttended dela, ainda sem resultado
+        int transferTarget = 0;      // o alvo (o id) do TransferAttended no ar, que sai com o 2xx; 0 sem consulta
     };
 
-    // Uma ligação que já saiu das vagas (o Disconnected já foi) e espera a resposta do outro lado para mandar o pedido
-    // do Hangup (ver o Hangup).
+    // Uma ligação que já saiu das vagas (o Disconnected já foi) e espera para mandar o pedido do Hangup: a resposta do
+    // outro lado (ver o Hangup) ou, no alvo de uma com consulta que deu certo, o fim do cliente (EndTransferTarget).
     struct Waiting {
         struct call* call;
-        bool ready;   // a resposta chegou: o pedido sai no hangupTimer_
+        bool ready;   // o pedido pode sair: sai no hangupTimer_
     };
 
-    void OnInvite(const struct sip_msg* msg);   // o BEVENT_SIPSESS_CONN: toca, ou 486 ou 480
+    void OnInvite(const struct sip_msg* msg);   // o BEVENT_SIPSESS_CONN: toca, ou 603 (o Replaces), 486 ou 480
+    // O resultado do REFER daqui, numa ligação transferring: o OnTransfer(code), a linha do log e o fim do pedido.
+    // Devolve o alvo da com consulta (o id; 0 sem consulta), que sai depois dela com o 2xx.
+    int Transferred(Slot& slot, int code);
     // A ligação acaba aqui: a vaga se solta, o pedido sai (ua_hangup: o code na recusa da recebida que toca, senão o
     // CANCEL ou o BYE) ou espera na waiting_ e, com report, vem o Disconnected(code).
     void End(Slot& slot, int code, bool report);
+    // O alvo de uma com consulta que deu certo, no aviso do fim do cliente: a vaga se solta e o Disconnected vem na
+    // hora, como no End, mas o BYE espera na waiting_, já liberado, e sai no hangupTimer_, depois de o baresip soltar o
+    // cliente (logo depois do aviso) e mandar o BYE dele, como no motor do PJSIP. Também fica fora do handler do NOTIFY
+    // do cliente, que ainda está no meio.
+    void EndTransferTarget(Slot& slot);
     // Um evento de uma ligação da waiting_: o 18x ou o ESTABLISHED a liberam, e o CLOSED a tira (sem aviso). false: não
     // está lá.
     bool OnWaiting(enum bevent_ev ev, const struct call* call);
@@ -188,11 +219,13 @@ private:
 
     EventQueue& events_;
     const BaresipLoop::LogSink log_;
+    const DtmfMethod dtmf_;
     Slot slots_[2];
     int nextId_ = 1;           // os ids começam em 1 e nunca se repetem no mesmo motor
     int activeId_ = 0;         // a ativa (0: nenhuma)
     bool open_ = true;         // false: a conta ou o motor saindo (HangupAll e EndAll), e as que chegam recebem 480
     bool blocked_ = false;     // o Blocked()
+    bool muted_ = false;       // o SetMute: vale também para as ligações que nascerem (o Bind)
     bool failReinvites_ = false;   // o FailReinvites (os testes)
     int failReinvitesId_ = 0;      // a ligação dele, ou 0 (todas)
     std::atomic<int> count_{0};   // as vagas ocupadas, para o Count

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <utility>
@@ -15,6 +16,22 @@ namespace {
 // Uma recusa do re-INVITE (4xx a 6xx) acaba a renegociação sem nenhum evento do baresip: quem espera a renegociação
 // anterior de uma ligação (WaitNegotiation) confere de novo a cada 20 ms.
 const int kNegotiationRecheckMs = 20;
+
+// As teclas que o SendDtmf aceita.
+const char kDtmfDigits[] = "0123456789*#ABCD";
+
+// O texto do BEVENT_CALL_CLOSED com que o baresip encerra a ligação depois do NOTIFY com 2xx do REFER daqui (assim
+// mesmo, com um r só).
+const char kTransferredText[] = "Call transfered";
+
+// O código de um BEVENT_CALL_TRANSFER_FAILED do REFER daqui: o texto é "<código> <motivo>", a resposta ao REFER ou o
+// sipfrag do NOTIFY. 0 se ele não começa por um número.
+int TransferFailureCode(const char* text) {
+    if (!text) return 0;
+    char* end = nullptr;
+    const long code = std::strtol(text, &end, 10);
+    return end != text && code > 0 && code < 1000 ? static_cast<int>(code) : 0;
+}
 
 // Quem liga: o usuário do From (o número), sem os escapes da URI, como no motor do PJSIP, e o nome de exibição como
 // veio (sem as aspas; UTF-8).
@@ -62,8 +79,8 @@ struct BaresipCalls::Hooks {
     }
 };
 
-BaresipCalls::BaresipCalls(EventQueue& events, BaresipLoop::LogSink log, DtmfMethod /*dtmf*/)
-    : events_(events), log_(std::move(log)) {
+BaresipCalls::BaresipCalls(EventQueue& events, BaresipLoop::LogSink log, DtmfMethod dtmf)
+    : events_(events), log_(std::move(log)), dtmf_(dtmf) {
     tmr_init(&hangupTimer_);
     tmr_init(&audioTimer_);
 }
@@ -110,12 +127,24 @@ void BaresipCalls::OnEvent(enum bevent_ev ev, struct bevent* event) {
             }
             break;
         }
+        case BEVENT_CALL_TRANSFER_FAILED:
+            // O REFER daqui recusado, ou o NOTIFY com a falha: as ligações seguem como estavam.
+            if (slot->transferring) (void)Transferred(*slot, TransferFailureCode(bevent_get_text(event)));
+            break;
         case BEVENT_CALL_CLOSED: {
+            // O NOTIFY com 2xx do REFER daqui: o baresip encerra a ligação, e o BYE sai quando ele a solta, logo depois
+            // deste aviso. O resultado vem antes do fim dela, e o alvo da com consulta sai depois.
+            const char* text = bevent_get_text(event);
+            const bool transferred = slot->transferring && text && std::strcmp(text, kTransferredText) == 0;
+            const int target = transferred ? Transferred(*slot, 200) : 0;
             const int id = slot->id;
-            const int code = EndCode(*slot, call, bevent_get_text(event));
+            const int code = EndCode(*slot, call, text);
             Free(*slot);   // antes do aviso: o Count cai antes de o Disconnected chegar ao listener
             PostState(id, CallState::Disconnected, code);
             Negotiated();   // quem espera a renegociação dela não espera mais
+            // O outro lado ligou o cliente ao colega: o colega também acaba, como no motor do PJSIP.
+            Slot* other = Find(target);
+            if (other) EndTransferTarget(*other);
             break;
         }
         default:
@@ -251,6 +280,65 @@ void BaresipCalls::WaitNegotiation(uint64_t seen, std::chrono::steady_clock::tim
     negotiated_.wait_until(lock, until, [this, seen] { return negotiations_ != seen; });
 }
 
+bool BaresipCalls::SendDtmf(int id, const std::string& digits) {
+    Slot* slot = Find(id);
+    if (!slot || !slot->confirmed || digits.empty() || digits.find_first_not_of(kDtmfDigits) != std::string::npos) {
+        return false;
+    }
+    // O método que o baresip usa é o dtmfmode da ua, que vem do mesmo perfil que o dtmf_.
+    Log(4, "SendDtmf: " + std::to_string(digits.size()) + " digito(s), using " +
+               (dtmf_ == DtmfMethod::SipInfo ? "SIP INFO" : "RFC2833") + " method");
+    for (const char digit : digits) {
+        // A tecla e a soltura: no RFC 2833, a soltura fecha o evento da tecla; no SIP INFO, só a tecla manda o INFO.
+        int err = call_send_digit(slot->call, digit);
+        if (!err) err = call_send_digit(slot->call, KEYCODE_REL);
+        if (err) {
+            Log(2, "DTMF: " + BaresipLoop::ErrorText(err));
+            return false;
+        }
+    }
+    return true;
+}
+
+void BaresipCalls::SetMute(bool muted) {
+    muted_ = muted;
+    for (const Slot& slot : slots_) {
+        if (slot.id != 0) audio_mute(call_audio(slot.call), muted);
+    }
+}
+
+bool BaresipCalls::Transfer(int id, const std::string& uri) {
+    Slot* slot = Find(id);
+    if (!slot || !slot->confirmed || slot->transferring) return false;
+    // A marca vem antes do REFER, como no motor do PJSIP: um resultado que chegasse antes de o baresip voltar acharia o
+    // pedido.
+    slot->transferring = true;
+    const int err = call_transfer(slot->call, uri.c_str());
+    if (err) {
+        slot->transferring = false;
+        Log(2, "transferencia para " + uri + ": " + BaresipLoop::ErrorText(err));
+        return false;
+    }
+    return true;
+}
+
+bool BaresipCalls::TransferAttended(int id, int targetId) {
+    Slot* slot = Find(id);
+    Slot* target = Find(targetId);
+    if (id == targetId || !slot || !target || !slot->confirmed || !target->confirmed) return false;
+    if (slot->transferring || target->transferring) return false;   // primeiro o resultado da que está no ar
+    slot->transferring = true;   // como no Transfer
+    slot->transferTarget = targetId;
+    const int err = call_replace_transfer(slot->call, target->call);
+    if (err) {
+        slot->transferring = false;
+        slot->transferTarget = 0;
+        Log(2, "transferencia com consulta: " + BaresipLoop::ErrorText(err));
+        return false;
+    }
+    return true;
+}
+
 int BaresipCalls::Count() const { return count_.load(); }
 
 std::vector<int> BaresipCalls::AudioLinks(int id) const {
@@ -263,6 +351,15 @@ std::vector<int> BaresipCalls::CallsWithAudio() const {
     std::vector<int> ids;
     for (const Slot& slot : slots_) {
         if (slot.id != 0 && audio_started(call_audio(slot.call))) ids.push_back(slot.id);
+    }
+    std::sort(ids.begin(), ids.end());
+    return ids;
+}
+
+std::vector<int> BaresipCalls::MutedCalls() const {
+    std::vector<int> ids;
+    for (const Slot& slot : slots_) {
+        if (slot.id != 0 && audio_ismuted(call_audio(slot.call))) ids.push_back(slot.id);
     }
     std::sort(ids.begin(), ids.end());
     return ids;
@@ -292,6 +389,14 @@ void BaresipCalls::EndAll() {
 
 void BaresipCalls::OnInvite(const struct sip_msg* msg) {
     if (!msg) return;
+    // Um INVITE com Replaces trocaria uma ligação daqui pela nova, e o call_accept do baresip já fecharia a trocada:
+    // ele recebe 603 antes do ua_accept, sem aviso e sem mexer na ligação de agora, como no motor do PJSIP.
+    const struct sip_hdr* replaces = sip_msg_hdr(msg, SIP_HDR_REPLACES);
+    if (replaces && pl_isset(&replaces->val)) {
+        Log(2, "pedido de troca de ligacao (Replaces) recebido e recusado (603)");
+        (void)sip_treply(nullptr, uag_sip(), msg, 603, "Decline");
+        return;
+    }
     const Party party = PartyOf(msg);
     Slot* slot = FreeSlot();
     const Slot* other = slot ? Other(*slot) : nullptr;
@@ -339,6 +444,15 @@ void BaresipCalls::End(Slot& slot, int code, bool report) {
         ua_hangup(call_get_ua(call), call, static_cast<uint16_t>(code), ReasonOf(code));
     }
     if (report) PostState(id, CallState::Disconnected, code);
+}
+
+void BaresipCalls::EndTransferTarget(Slot& slot) {
+    const int id = slot.id;
+    const int code = HangupCode(slot);   // 200: o BYE de uma confirmada
+    waiting_.push_back(Waiting{slot.call, true});
+    Free(slot);
+    tmr_start(&hangupTimer_, 0, Hooks::Hangup, this);
+    PostState(id, CallState::Disconnected, code);
 }
 
 bool BaresipCalls::OnWaiting(enum bevent_ev ev, const struct call* call) {
@@ -460,11 +574,27 @@ void BaresipCalls::Negotiated() {
     negotiated_.notify_all();
 }
 
+int BaresipCalls::Transferred(Slot& slot, int code) {
+    const int id = slot.id;
+    const int target = slot.transferTarget;
+    slot.transferring = false;
+    slot.transferTarget = 0;
+    events_.Post([id, code](EngineListener& listener) { listener.OnTransfer(id, code); });
+    if (code / 100 == 2) {
+        Log(3, "transferencia aceita (" + std::to_string(code) + "): desligando " +
+                   (Find(target) ? "as ligacoes" : "a ligacao"));
+    } else {
+        Log(2, "a transferencia nao deu certo (" + std::to_string(code) + ")");
+    }
+    return target;
+}
+
 void BaresipCalls::Bind(Slot& slot, struct call* call, bool incoming) {
     slot = Slot();
     slot.call = call;
     slot.id = nextId_++;
     slot.incoming = incoming;
+    audio_mute(call_audio(call), muted_);   // o SetMute vale também para as que nascem
     Recount();
 }
 
