@@ -508,9 +508,9 @@ A etapa 1 terminou em 30/10/2026, pelo plano `docs/superpowers/plans/2026-10-29-
 
 O Linux não troca de rede, não tem rede só IPv6 e não tem o áudio do iPhone. Por isso, no iPhone:
 
-1. **A troca de rede de verdade,** do Wi-Fi para o 4G e de volta, em UDP e em TCP, com e sem ligação: a conta volta a registrar em poucos segundos, e o diagnóstico mostra o REGISTER saindo do endereço novo. O hospedeiro chama o `HandleIpChange` a cada troca (15.2). É também onde se decide o re-INVITE da ligação em andamento.
+1. **A troca de rede de verdade,** do Wi-Fi para o 4G e de volta, em UDP e em TCP, com e sem ligação: a conta volta a registrar em poucos segundos, e o diagnóstico mostra o REGISTER saindo do endereço novo. O hospedeiro chama o `HandleIpChange` a cada troca (15.2). É também onde se decide o re-INVITE da ligação em andamento. Conferir também o primeiro instante depois da troca: o `uag_reset_transp` desiste no primeiro endereço da lista que não dá para usar ainda (um IPv6 provisório, por exemplo; os de link-local também entram, `use_linklocal` ligado), e o motor tenta uma vez só, enquanto o `netroam` do baresip espera 1 s e tenta de novo. Se acontecer, fazer como ele.
 2. **Uma rede só IPv6** (NAT64 e DNS64), que a revisão da Apple exige.
-3. **A central pelo nome** depois de uma troca, com os servidores de DNS da rede nova.
+3. **A central pelo nome** depois de uma troca, com os servidores de DNS da rede nova. Cuidado conhecido: se o `HandleIpChange` roda num instante em que o sistema ainda não tem servidor de DNS (sem rede, ou o DNS da rede nova ainda não configurado), o `net_dns_refresh` deixa a libre sem servidor nenhum. Daí toda consulta falha, até a de um nome que está no cache, até o próximo `HandleIpChange`; no iOS os servidores vêm só do `res_ninit`. A correção provável é trocar os servidores só quando o sistema dá pelo menos um, ou atualizar também no `SetNetworkAvailable(true)`.
 4. **O áudio com o `audiounit`:** só a ativa com o microfone, a fonte da em espera que abre por um instante a cada renegociação (e a ideia da fonte de silêncio), as duas fontes e as duas saídas da conferência, e o áudio só depois do `didActivate` do CallKit.
 5. **A central de verdade:** o `a=crypto` nas respostas `RTP/AVP` com o SRTP opcional e o 401 e o 407 nos INVITE.
 6. **A espera e a retomada durante uma troca de rede no TCP** (a falha assíncrona do re-INVITE, 15.9) e o CANCEL depois de um 100 Trying sem 18x.
@@ -518,6 +518,7 @@ O Linux não troca de rede, não tem rede só IPv6 e não tem o áudio do iPhone
 ### 15.11 Para depois
 
 - **Antes da etapa 3,** o registrador falso ganha os comandos do 423 (`Min-Expires`) e do 407, com testes dos dois caminhos do motor, que hoje foram conferidos só à mão. O 423 pesa na etapa 3, quando o tempo do registro com push vai ao máximo da plataforma. O proxy de saída e o formato do STUN na conta (`;medianat=stun;stunserver=stun:<servidor>`) também foram conferidos só à mão e ganham testes junto.
+- **Um teste mais forte da troca de rede:** o de agora esvazia a lista de endereços antes do `HandleIpChange` e passaria mesmo sem o `net_flush_addresses`. Um gancho que deixe na frente da lista um endereço que não é desta máquina prenderia essa linha, que é a que conserta o caso do aparelho.
 - **Da camada do app:** o `CallController` ignora o retorno do `Activate`, do `SetHold` e do `Join`, nos dois motores. Uma espera que não sai aparece como em espera, com o microfone aberto para o outro lado, e uma retomada que não sai aparece como ativa. Quando uma ligação acaba durante a espera do `Join`, o app mostra a que fica em andamento sem chamar o `Activate`.
 
 ### 15.12 O processo
