@@ -1,7 +1,7 @@
 #pragma once
 // O protocolo da ponte, versao 1, entre a interface (TypeScript, no WebView2) e o C++ do app de PC: os comandos que
 // a interface manda ({"v":1,"cmd":...}) e as mensagens que o C++ manda ({"v":1,"type":"state"|"toast"|"ring"|"update"|
-// "contatosEmpresa", ...}).
+// "contatosEmpresa"|"agenda", ...}).
 // O contrato, com cada campo e um exemplo, e o docs/ponte-windows.md: uma mudanca aqui muda o documento junto (e
 // o kBridgeVersion, se o formato deixa de ser compativel). Os textos sao UTF-8.
 // O modo iPhone (a mesma interface num WKWebView) tem comandos e campos a mais, na mesma versao 1: quem decide o que
@@ -11,7 +11,7 @@
 #include <string>
 #include <vector>
 
-#include "Agenda.h"           // AgendaPermission (iPhone)
+#include "Agenda.h"           // AgendaPermission e AgendaContact (iPhone)
 #include "CallController.h"   // CallSnapshot, Recent, RingKind
 #include "Planilha.h"         // SheetContact (rc.4)
 
@@ -292,5 +292,8 @@ std::string UpdateMessage(const std::string& version, const std::string& notes);
 // {"v":1,"type":"contatosEmpresa","vez":N,"contatos":[{"nome","numero","observacao"}]} (rc.4): a lista da empresa,
 // fora do state (ela pode ter 10.000 contatos, e o state vai inteiro a cada mudanca), na ordem da planilha.
 std::string CompanyContactsMessage(int seq, const std::vector<SheetContact>& contacts);
+// {"v":1,"type":"agenda","vez":N,"contatos":[{"nome","numeros":[...]}]} (iPhone): a agenda inteira, fora do state como
+// a lista da empresa, na ordem da agenda (a interface ordena).
+std::string AgendaMessage(int seq, const std::vector<AgendaContact>& contacts);
 
 }  // namespace starsonic

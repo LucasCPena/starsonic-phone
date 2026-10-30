@@ -268,12 +268,15 @@ CompanyFailure FailureOf(CompanyFetchError error) {
 
 }  // namespace
 
-// Os nomes dos contatos para o controlador (as duas lojas tem a trava delas: qualquer thread): o meu contato com o
-// numero e, sem ele, o da lista da empresa (spec da rc.4, 5.6); sem os dois, o controlador usa o nome da central.
+// Os nomes dos contatos para o controlador (as lojas tem a trava delas: qualquer thread): o meu contato com o numero e,
+// sem ele, o da lista da empresa (spec da rc.4, 5.6); no iPhone, o da agenda (os meus contatos e a lista da empresa
+// nao existem la). Sem nenhum, o controlador usa o nome da central.
 class DesktopApp::Names : public ContactNames {
 public:
-    Names(ContactsStore& contacts, CompanyListStore& company) : contacts_(contacts), company_(company) {}
+    Names(bool iphone, ContactsStore& contacts, CompanyListStore& company, const AgendaStore& agenda)
+        : iphone_(iphone), contacts_(contacts), company_(company), agenda_(agenda) {}
     std::optional<std::string> NameFor(const std::string& number) override {
+        if (iphone_) return agenda_.NameFor(number);
         std::wstring name = contacts_.NameFor(number);
         if (name.empty()) name = company_.NameFor(number);
         if (name.empty()) return std::nullopt;
@@ -281,8 +284,10 @@ public:
     }
 
 private:
+    const bool iphone_;
     ContactsStore& contacts_;
     CompanyListStore& company_;
+    const AgendaStore& agenda_;
 };
 
 // Os avisos do controlador (em qualquer thread, na ordem dele) vao para a fila de comandos, na mesma ordem.
@@ -346,7 +351,7 @@ DesktopApp::DesktopApp(DesktopConfig config, DesktopHooks hooks, CallEngine& eng
       recents_(files, config_.paths.recents),
       settings_(files, config_.paths.settings),
       company_(files, config_.paths.companyList),
-      names_(new Names(contacts_, company_)),
+      names_(new Names(config_.platform == Platform::IPhone, contacts_, company_, agenda_)),
       listener_(new Listener(*this)),
       atalhos_(files, config_.paths.atalhos),
       admin_(files, cipher, config_.paths.admin, config_.profile) {
@@ -436,6 +441,11 @@ void DesktopApp::SetInternet(InternetState state) {
     Post([this, state] { HandleInternet(state); });
 }
 
+void DesktopApp::SetAgenda(AgendaPermission permission, std::vector<AgendaContact> contacts) {
+    // A lista vai para a fila sem copia (a agenda pode ter milhares de contatos); a tarefa roda uma vez.
+    Post([this, permission, contacts = std::move(contacts)]() mutable { ApplyAgenda(permission, std::move(contacts)); });
+}
+
 void DesktopApp::Shutdown() {
     executor_->Stop();
 }
@@ -508,6 +518,9 @@ void DesktopApp::Execute(const Command& command) {
         case CommandKind::Ready:
             Log("interface pronta");
             PublishState(/*force=*/true);
+            // iPhone: a agenda, se houve uma desde a abertura (com o vez 0 ela e vazia, como a da interface), logo
+            // depois do estado e antes do resto.
+            if (agendaSeq_ > 0) PostAgenda();
             if (hooks_.post) hooks_.post(RingMessage(ring_));
             // A lista da empresa (rc.4), se houve uma desde a abertura (com o vez 0 ela e vazia, como a da interface).
             if (companySeq_ > 0) PostCompanyContacts();
@@ -703,12 +716,17 @@ void DesktopApp::Execute(const Command& command) {
         case CommandKind::RefreshCompanyList:
             RequestCompanyRead();
             break;
+        // Os do iPhone (so chegam aqui no iPhone: PlatformOf). Os dois da agenda so chamam o hospedeiro: a lista (e a
+        // permissao) voltam pelo SetAgenda.
         case CommandKind::ContactsOpened:
+            if (hooks_.readAgenda) hooks_.readAgenda();
+            break;
         case CommandKind::AllowContacts:
+            if (hooks_.allowContacts) hooks_.allowContacts();
+            break;
         case CommandKind::AudioRoute:
         case CommandKind::KeyTone:
-            // Os do iPhone (so chegam aqui no iPhone), ainda sem os ganchos do hospedeiro. A linha leva so o nome (a
-            // tecla do keyTone fica fora do diagnostico).
+            // Ainda sem os ganchos do hospedeiro. A linha leva so o nome (a tecla do keyTone fica fora do diagnostico).
             Log("comando ainda sem efeito no iPhone: " + LogName(command));
             break;
     }
@@ -1225,6 +1243,13 @@ BridgeState DesktopApp::BuildState() const {
         view.kind = recent.kind;
         view.startMs = recent.startMs;
         view.durationMs = recent.durationMs;
+        if (IPhone()) {
+            // O nome da agenda, senao o da central; o contatoId fica "" (os contatos da agenda nao tem id).
+            const std::optional<std::string> name = agenda_.NameFor(recent.number);
+            if (name) view.name = *name;
+            state.recents.push_back(view);
+            continue;
+        }
         const auto found = byNumber.find(NormalizedNumber(recent.number));
         if (found != byNumber.end()) {
             view.name = U8(found->second->name);
@@ -1275,7 +1300,7 @@ BridgeState DesktopApp::BuildState() const {
     state.company.seq = companySeq_;
     if (IPhone()) {
         // O modo iPhone (docs/ponte-windows.md, "O estado no iPhone"): os campos do PC continuam, com o valor neutro, e
-        // os do iPhone com os de fabrica (a agenda, a rota de audio e o bipe ao digitar).
+        // os do iPhone: o resumo da agenda, e a rota de audio e o bipe ao digitar ainda com os de fabrica.
         state.accounts.erase(std::remove_if(state.accounts.begin(), state.accounts.end(),
                                             [](const AccountView& view) { return !view.inUse; }),
                              state.accounts.end());   // uma conta por iPhone: so a em uso
@@ -1285,7 +1310,11 @@ BridgeState DesktopApp::BuildState() const {
         state.shortcuts.clear();
         state.admin = AdminView();   // o de fabrica: fechado, com os dois botoes, sem o BLF e sem o puxar
         state.company = CompanyView();
-        state.iphone = IPhoneView();
+        IPhoneView iphone;
+        iphone.permission = agenda_.Permission();
+        iphone.agendaSeq = agendaSeq_;
+        iphone.agendaCount = agenda_.Count();
+        state.iphone = iphone;
     }
     return state;
 }
@@ -1932,6 +1961,27 @@ void DesktopApp::CancelCompanyTimer() {
     if (companyTimer_ != 0) scheduler_.Cancel(companyTimer_);
     companyTimer_ = 0;
     ++companyTimerToken_;   // uma tarefa que ja saiu do agendador (e esta na fila) nao vale mais
+}
+
+// ---------------------------------------------------------------- iPhone: a agenda
+
+// A lista nova do hospedeiro (SetAgenda; docs/ponte-windows.md, "As mensagens do iPhone") toma o lugar da de antes: o
+// vez sobe e ela vai a interface; o estado, com o resumo novo, sai depois da tarefa (Post). No Windows, o estado nao
+// tem a agenda, e nada muda.
+void DesktopApp::ApplyAgenda(AgendaPermission permission, std::vector<AgendaContact> contacts) {
+    if (!IPhone()) {
+        Log("agenda: recusada no modo Windows");
+        return;
+    }
+    agenda_.Replace(permission, std::move(contacts));
+    ++agendaSeq_;
+    PostAgenda();
+    // Sem os nomes e os numeros (spec do iPhone, 6.4): so a contagem e a permissao.
+    Log("agenda: " + std::to_string(agenda_.Count()) + " contatos, permissao " + AgendaPermissionName(permission));
+}
+
+void DesktopApp::PostAgenda() {
+    if (hooks_.post) hooks_.post(AgendaMessage(agendaSeq_, agenda_.All()));
 }
 
 }  // namespace starsonic

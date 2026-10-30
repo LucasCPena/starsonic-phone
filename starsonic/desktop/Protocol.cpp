@@ -181,18 +181,6 @@ const char* KindName(Recent::Kind kind) {
     return "perdida";
 }
 
-const char* PermissionName(AgendaPermission permission) {
-    switch (permission) {
-        case AgendaPermission::Denied:
-            return "negada";
-        case AgendaPermission::Granted:
-            return "concedida";
-        case AgendaPermission::Pending:
-            break;
-    }
-    return "pendente";
-}
-
 // A tecla do keyTone: uma so, de 0 a 9, * ou # (as do teclado; o + vai como 0, pela interface).
 bool KeypadKey(const std::string& key) {
     return key.size() == 1 && ((key[0] >= '0' && key[0] <= '9') || key[0] == '*' || key[0] == '#');
@@ -548,7 +536,7 @@ std::string StateMessage(const BridgeState& state) {
     // O modo iPhone: os campos dele no fim, na ordem do docs/ponte-windows.md ("O estado no iPhone").
     if (state.iphone) {
         s["plataforma"] = "ios";
-        s["agenda"] = Out{{"permissao", PermissionName(state.iphone->permission)},
+        s["agenda"] = Out{{"permissao", AgendaPermissionName(state.iphone->permission)},
                           {"vez", state.iphone->agendaSeq},
                           {"quantos", state.iphone->agendaCount}};
         s["rotaAudio"] = state.iphone->audioRoute;
@@ -574,6 +562,16 @@ std::string CompanyContactsMessage(int seq, const std::vector<SheetContact>& con
                            {"observacao", WideToUtf8(contact.note)}});
     }
     return Dump(Out{{"v", kBridgeVersion}, {"type", "contatosEmpresa"}, {"vez", seq}, {"contatos", list}});
+}
+
+std::string AgendaMessage(int seq, const std::vector<AgendaContact>& contacts) {
+    Out list = Out::array();
+    for (const AgendaContact& contact : contacts) {
+        Out numbers = Out::array();
+        for (const std::string& number : contact.numbers) numbers.push_back(number);
+        list.push_back(Out{{"nome", contact.name}, {"numeros", numbers}});
+    }
+    return Dump(Out{{"v", kBridgeVersion}, {"type", "agenda"}, {"vez", seq}, {"contatos", list}});
 }
 
 std::string RingMessage(RingKind kind) {

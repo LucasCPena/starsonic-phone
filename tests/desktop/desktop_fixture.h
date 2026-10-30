@@ -185,6 +185,9 @@ struct Harness {
         hooks.setStartWithWindows = [this](bool on) { host.push_back(on ? "autostart on" : "autostart off"); };
         hooks.updateAnswer = [this](bool now) { host.push_back(now ? "update now" : "update later"); };
         hooks.updateChannel = [this](const std::string& channel) { channels.push_back(channel); };
+        // Os do iPhone: a aba Contatos que abriu (contactsOpened) e o Permitir (allowContacts).
+        hooks.readAgenda = [this] { host.push_back("readAgenda"); };
+        hooks.allowContacts = [this] { host.push_back("allowContacts"); };
         if (sheetHooks) {
             hooks.pickImportFile = [this](std::function<void(const std::string&)> done) {
                 importPicks.push_back(std::move(done));

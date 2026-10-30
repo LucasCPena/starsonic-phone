@@ -10,8 +10,8 @@
 //   os comandos da interface, o resultado do registro, a troca de conta, as lojas, o estado e as mensagens para a
 //   interface. O estado do DesktopApp so e lido e escrito nela, sem trava; post e chamado so dela, uma vez por
 //   mensagem, na ordem.
-// - HandleCommand (na thread da interface) so le o JSON e poe o comando na fila; DialLink, RefreshAudioDevices e
-//   Start tambem so poem na fila. Nada disso espera o motor.
+// - HandleCommand (na thread da interface) so le o JSON e poe o comando na fila; DialLink, RefreshAudioDevices,
+//   SetAgenda e Start tambem so poem na fila. Nada disso espera o motor.
 // - Os comandos de ligacao chamam o controlador na thread de comandos: ele chama o motor na thread de quem chama
 //   (o Dial espera o MakeCall, o Hold ate ~2 s), e os efeitos de comandos de threads diferentes nao teriam ordem
 //   entre si. Com uma thread so, os comandos da interface chegam ao motor na ordem em que foram mandados (o
@@ -54,6 +54,7 @@
 #include <vector>
 
 #include "Admin.h"
+#include "Agenda.h"
 #include "Atalhos.h"
 #include "CallController.h"
 #include "CallEngine.h"
@@ -145,6 +146,11 @@ struct DesktopHooks {
     std::function<void(std::function<void(const std::string& path, const std::string& format)>)> pickExportFile;
     // Le a fonte fora da thread de comandos; o callback leva o resultado.
     std::function<void(const CompanySource& source, std::function<void(const CompanyFetch& result)>)> fetchCompanyList;
+    // iPhone (docs/ponte-windows.md, "Os comandos do iPhone"). A lista que o hospedeiro le volta pelo SetAgenda.
+    // A aba Contatos abriu (contactsOpened, a cada vez): le a agenda de novo e, na primeira vez, pede a permissao.
+    std::function<void()> readAgenda;
+    // O Permitir do aviso da aba Contatos (allowContacts): pede a permissao (pendente) ou abre os Ajustes (negada).
+    std::function<void()> allowContacts;
 };
 
 // O app de PC. Responsavel por:
@@ -204,6 +210,11 @@ struct DesktopHooks {
 //     atalhos, a area do administrador, as planilhas, a lista da empresa e a atualizacao) sao recusados inteiros, com
 //     uma linha no diagnostico; no Windows, os do iPhone tambem. O openExternal aceita o tel: do suporte e recusa o
 //     codigo-fonte.
+//   - A agenda (Agenda.h), so na memoria: o hospedeiro a entrega pelo SetAgenda (a cada contactsOpened, que chama o
+//     hooks.readAgenda, e quando o app volta para a frente, tambem dos Ajustes depois do allowContacts, que chama o
+//     hooks.allowContacts). Cada lista sobe o agenda.vez e vai a interface na mensagem agenda (de novo no ready, logo
+//     depois do estado, com o vez maior que 0). Os nomes (na recebida, nos Recentes, na perdida): o da agenda, depois
+//     o que a central mandou; o contatoId dos Recentes fica "". O diagnostico so leva a contagem e a permissao.
 class DesktopApp : public EngineListener {
 public:
     // O tempo do Entrar (spec do Windows 7.1).
@@ -254,6 +265,11 @@ public:
     // conta (SetNetworkAvailable(true) com a rede ja la). O mesmo valor de antes: nada. Antes de qualquer chamada,
     // Online. So poe na fila.
     void SetInternet(InternetState state);
+    // iPhone: a agenda que o hospedeiro leu, com a permissao de agora (Agenda.h): na abertura, a cada contactsOpened e
+    // quando o app volta para a frente (tambem dos Ajustes, depois do allowContacts). Troca a lista inteira (sem a
+    // permissao concedida, vazia), sobe o agenda.vez, manda a mensagem agenda e o estado, e escreve so a contagem e a
+    // permissao no diagnostico. No Windows, nada (uma linha no diagnostico). So poe na fila.
+    void SetAgenda(AgendaPermission permission, std::vector<AgendaContact> contacts);
     // A fila de comandos roda o que ja tinha e para; daqui em diante nada mais entra. Nunca de dentro de um gancho.
     void Shutdown();
 
@@ -343,6 +359,9 @@ private:
     void ScheduleCompanyTimer();
     void CancelCompanyTimer();
     void PostCompanyContacts();
+    // iPhone
+    void ApplyAgenda(AgendaPermission permission, std::vector<AgendaContact> contacts);
+    void PostAgenda();
 
     DesktopConfig config_;
     DesktopHooks hooks_;
@@ -356,6 +375,7 @@ private:
     RecentsStore recents_;
     SettingsStore settings_;
     CompanyListStore company_;   // rc.4: a lista da empresa (antes do names_, que a le)
+    AgendaStore agenda_;         // iPhone: a agenda (antes do names_, que a le; so na memoria)
 
     std::unique_ptr<Names> names_;
     std::unique_ptr<Listener> listener_;
@@ -429,6 +449,10 @@ private:
     bool companyAgain_ = false;
     int companyTimer_ = 0;       // a tarefa do agendador da proxima leitura de 15 min (0: nenhuma)
     int companyTimerToken_ = 0;
+
+    // iPhone: o agenda.vez (so na thread de comandos): sobe a cada SetAgenda (0: nenhuma lista desde a abertura). A
+    // lista em si e o agenda_.
+    int agendaSeq_ = 0;
 
     std::unique_ptr<Executor> executor_;   // por ultimo: parado primeiro (no destrutor)
 };

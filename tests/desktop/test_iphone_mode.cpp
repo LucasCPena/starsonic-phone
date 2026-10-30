@@ -1,6 +1,7 @@
-// Testes do modo iPhone do nucleo (docs/ponte-windows.md, "O modo iPhone"; spec do iPhone, 4.2, 6.1 e 7.1): o estado
-// com a plataforma e os campos do PC neutros, a conta unica, o Sair, os comandos do PC recusados no iPhone e os do
-// iPhone recusados no Windows, a abertura sem as partes do PC e o openExternal do iPhone.
+// Testes do modo iPhone do nucleo (docs/ponte-windows.md, "O modo iPhone"; spec do iPhone, 4.2, 6.1, 6.4 e 7.1): o
+// estado com a plataforma e os campos do PC neutros, a conta unica, o Sair, os comandos do PC recusados no iPhone e os
+// do iPhone recusados no Windows, a abertura sem as partes do PC, o openExternal do iPhone e a agenda (a mensagem, os
+// nomes nas ligacoes, a permissao, os ganchos e o diagnostico sem os contatos).
 #include <map>
 #include <string>
 #include <vector>
@@ -13,7 +14,45 @@ using nlohmann::json;
 namespace {
 
 const char* const kReady = R"({"v":1,"cmd":"ready"})";
+const char* const kContactsOpened = R"({"v":1,"cmd":"contactsOpened"})";
+const char* const kAllowContacts = R"({"v":1,"cmd":"allowContacts"})";
 const char* const kCompanyLink = "https://docs.google.com/spreadsheets/d/1AbC_dEf-123/edit";
+const char* const kMissedAna = "Liga\xc3\xa7\xc3\xa3o perdida de Ana Souza";
+
+// A agenda de exemplo (inventada), como o hospedeiro a entrega: a Ana com o celular (com o +55 e o DDD) e o ramal, um
+// contato sem nome, o Elcio (com acento) com o fixo, e um contato sem numero (fica de fora).
+std::vector<AgendaContact> SampleAgenda() {
+    return {AgendaContact{"Ana Souza", {"+55 11 98888-7777", "2003"}},
+            AgendaContact{"", {"(21) 97777-6666"}},
+            AgendaContact{"\xc3\x89lcio Matos", {"(11) 3333-4040"}},
+            AgendaContact{"Sem Numero", {}}};
+}
+
+// A mensagem agenda da agenda de exemplo, com a vez, no texto exato do contrato (a ordem das chaves), sem o contato sem
+// numero.
+std::string SampleAgendaMessage(int vez) {
+    return R"({"v":1,"type":"agenda","vez":)" + std::to_string(vez) +
+           R"(,"contatos":[{"nome":"Ana Souza","numeros":["+55 11 98888-7777","2003"]},)"
+           R"({"nome":"","numeros":["(21) 97777-6666"]},{"nome":")" + "\xc3\x89lcio Matos" +
+           R"(","numeros":["(11) 3333-4040"]}]})";
+}
+
+// O resumo da agenda de exemplo no estado, com a permissao concedida.
+json GrantedSummary(int vez) { return json({{"permissao", "concedida"}, {"vez", vez}, {"quantos", 3}}); }
+
+// O ultimo aviso de 2 s (o teste falha sem nenhum).
+std::string LastToast(const Harness& h) {
+    const std::vector<std::string> toasts = h.Toasts();
+    REQUIRE_FALSE(toasts.empty());
+    return toasts.back();
+}
+
+// A ultima mensagem agenda (o teste falha sem nenhuma).
+json LastAgenda(const Harness& h) {
+    const std::vector<json> messages = h.Messages("agenda");
+    REQUIRE_FALSE(messages.empty());
+    return messages.back();
+}
 
 // As chaves do estado de hoje (o do Windows), na ordem do docs/ponte-windows.md.
 std::vector<std::string> PcKeys() {
@@ -365,9 +404,9 @@ TEST_CASE("the iPhone commands are refused on Windows") {
 TEST_CASE("the iPhone commands are read on the iPhone and, until they are wired, only leave a line") {
     Harness h(Platform::IPhone);
     h.StartRegistered();
+    // O contactsOpened e o allowContacts ja chamam os ganchos (o caso "contactsOpened and allowContacts call the host
+    // hooks", abaixo).
     std::vector<Named> commands = {
-        {"contactsOpened", R"({"v":1,"cmd":"contactsOpened"})"},
-        {"allowContacts", R"({"v":1,"cmd":"allowContacts"})"},
         {"audioRoute", R"({"v":1,"cmd":"audioRoute"})"},
         {"setSetting bipeTecla", R"({"v":1,"cmd":"setSetting","chave":"bipeTecla","valor":false})"},
     };
@@ -527,4 +566,272 @@ TEST_CASE("openExternal on the iPhone opens the support number and refuses the s
     pc.Send(OpenExternal("tel:+551150603000"));
     pc.Send(OpenExternal("https://github.com/LucasCPena/starsonic-phone"));
     CHECK(pc.opened == std::vector<std::string>{"https://github.com/LucasCPena/starsonic-phone"});
+}
+
+TEST_CASE("SetAgenda sends the agenda message and the summary, and ready repeats it") {
+    Harness h(Platform::IPhone);
+    h.StartRegistered();
+    // Sem nenhuma lista desde a abertura (vez 0): o ready nao manda a agenda, e a interface comeca vazia.
+    h.posts.clear();
+    h.Send(kReady);
+    CHECK(h.Messages("agenda").empty());
+    CHECK(h.State()["agenda"] == json({{"permissao", "pendente"}, {"vez", 0}, {"quantos", 0}}));
+
+    // A lista do hospedeiro so vai para a fila. Nela: a mensagem agenda com a vez nova e o estado com o resumo, nessa
+    // ordem, e a linha do diagnostico so com a contagem e a permissao.
+    h.posts.clear();
+    h.logs.clear();
+    h.app->SetAgenda(AgendaPermission::Granted, SampleAgenda());
+    CHECK(h.posts.empty());
+    h.Run();
+    REQUIRE(h.posts.size() == 2);
+    CHECK(h.posts[0] == SampleAgendaMessage(1));
+    CHECK(json::parse(h.posts[1])["type"] == "state");
+    CHECK(h.State()["agenda"] == GrantedSummary(1));
+    CHECK(h.logs == std::vector<std::string>{"agenda: 3 contatos, permissao concedida"});
+
+    // O ready (a pagina que recarregou): o estado e, logo depois dele (antes do resto), a mesma agenda.
+    h.posts.clear();
+    h.Send(kReady);
+    REQUIRE(h.posts.size() >= 2);
+    CHECK(json::parse(h.posts[0])["type"] == "state");
+    CHECK(h.posts[1] == SampleAgendaMessage(1));
+    CHECK(h.Messages("agenda").size() == 1);
+    CHECK(h.State()["agenda"] == GrantedSummary(1));
+
+    // Cada lista nova sobe a vez, tambem com os mesmos contatos (a aba Contatos que abre le a agenda de novo).
+    h.posts.clear();
+    h.app->SetAgenda(AgendaPermission::Granted, SampleAgenda());
+    h.Run();
+    REQUIRE(h.posts.size() == 2);
+    CHECK(h.posts[0] == SampleAgendaMessage(2));
+    CHECK(h.State()["agenda"] == GrantedSummary(2));
+
+    // No Windows, nada: nenhuma mensagem, o estado de sempre (sem a agenda, tambem nos nomes) e a linha no diagnostico.
+    Harness pc;
+    pc.StartRegistered();
+    pc.posts.clear();
+    pc.logs.clear();
+    pc.app->SetAgenda(AgendaPermission::Granted, SampleAgenda());
+    pc.Run();
+    CHECK(pc.posts.empty());
+    CHECK(pc.logs == std::vector<std::string>{"agenda: recusada no modo Windows"});
+    pc.Send(kReady);
+    CHECK(pc.Messages("agenda").empty());
+    CHECK_FALSE(pc.State().contains("agenda"));
+    pc.app->OnIncomingCall(4, "011988887777", "Central");
+    pc.Run();
+    CHECK(pc.State()["ligacao"]["top"]["name"] == "Central");
+}
+
+TEST_CASE("the agenda names the incoming call, the recents and the missed call") {
+    Harness h(Platform::IPhone);
+    h.StartRegistered();
+    h.engine.nextCallId = 100;   // a feita, longe dos ids das recebidas
+    // Uma perdida antes da agenda: o nome da central nos Recentes, e o numero no aviso.
+    h.app->OnIncomingCall(4, "011988887777", "Central");
+    h.Run();
+    CHECK(h.State()["ligacao"]["top"]["name"] == "Central");
+    h.time.Advance(1000);
+    h.app->OnCallState(4, CallState::Disconnected, 487);
+    h.Run();
+    CHECK(LastToast(h) == "Liga\xc3\xa7\xc3\xa3o perdida de 011988887777");
+    CHECK(h.State()["recentes"][0]["nome"] == "Central");
+
+    // A agenda chega: os Recentes de antes ja mostram o nome dela (procurado a cada estado), com o contatoId "".
+    h.app->SetAgenda(AgendaPermission::Granted, SampleAgenda());
+    h.Run();
+    CHECK(h.State()["recentes"][0]["nome"] == "Ana Souza");
+    CHECK(h.State()["recentes"][0]["contatoId"] == "");
+
+    // A recebida em cada formato que a central manda (o celular gravado "+55 11 98888-7777"): o nome da agenda na tela,
+    // no aviso da perdida e nos Recentes.
+    int id = 5;
+    for (const char* sent : {"011988887777", "11988887777", "988887777", "+5511988887777"}) {
+        INFO(sent);
+        h.time.Advance(1000);
+        h.app->OnIncomingCall(id, sent, "Central");
+        h.Run();
+        CHECK(h.State()["ligacao"]["top"]["name"] == "Ana Souza");
+        h.time.Advance(1000);
+        h.app->OnCallState(id, CallState::Disconnected, 487);
+        h.Run();
+        CHECK(LastToast(h) == kMissedAna);
+        const json recent = h.State()["recentes"][0];
+        CHECK(recent["numero"] == sent);
+        CHECK(recent["nome"] == "Ana Souza");
+        CHECK(recent["tipo"] == "perdida");
+        CHECK(recent["contatoId"] == "");
+        ++id;
+    }
+
+    // O ramal curto so bate com o mesmo numero: o 2003 da Ana sim (aqui atendida); um fixo terminado em 2003, nao.
+    h.time.Advance(1000);
+    h.app->OnIncomingCall(id, "2003", "Central");
+    h.Run();
+    CHECK(h.State()["ligacao"]["top"]["name"] == "Ana Souza");
+    h.Send(R"({"v":1,"cmd":"answer"})");
+    h.app->OnCallState(id, CallState::Confirmed, 200);
+    h.time.Advance(1000);
+    h.app->OnCallState(id, CallState::Disconnected, 200);
+    h.Run();
+    CHECK(h.State()["recentes"][0]["tipo"] == "recebida");
+    CHECK(h.State()["recentes"][0]["nome"] == "Ana Souza");
+    ++id;
+    h.time.Advance(1000);
+    h.app->OnIncomingCall(id, "1133332003", "Central");
+    h.Run();
+    CHECK(h.State()["ligacao"]["top"]["name"] == "Central");
+    h.app->OnCallState(id, CallState::Disconnected, 487);
+    h.Run();
+    CHECK(h.State()["recentes"][0]["nome"] == "Central");
+    ++id;
+
+    // O contato sem nome nao da nome: vale o da central (e o numero no aviso).
+    h.time.Advance(1000);
+    h.app->OnIncomingCall(id, "21977776666", "Central");
+    h.Run();
+    CHECK(h.State()["ligacao"]["top"]["name"] == "Central");
+    h.app->OnCallState(id, CallState::Disconnected, 487);
+    h.Run();
+    CHECK(LastToast(h) == "Liga\xc3\xa7\xc3\xa3o perdida de 21977776666");
+
+    // A feita para um numero da agenda, como a aba Contatos manda (contato: true): o nome na tela e nos Recentes.
+    h.time.Advance(1000);
+    h.Send(R"({"v":1,"cmd":"dial","numero":"(11) 3333-4040","contato":true})");
+    CHECK(h.State()["ligacao"]["top"]["name"] == "\xc3\x89lcio Matos");
+    h.app->OnCallState(100, CallState::Disconnected, 486);
+    h.Run();
+    CHECK(h.State()["recentes"][0]["tipo"] == "feita");
+    CHECK(h.State()["recentes"][0]["nome"] == "\xc3\x89lcio Matos");
+}
+
+TEST_CASE("denied then granted shows the list without restarting") {
+    Harness h(Platform::IPhone);
+    h.StartRegistered();
+    // A aba Contatos abre: o hospedeiro le a agenda e pede a permissao; a pessoa nega. Fora da concedida, a lista e
+    // vazia, tambem se o hospedeiro mandar os contatos.
+    h.Send(kContactsOpened);
+    CHECK(h.host == std::vector<std::string>{"readAgenda"});
+    h.app->SetAgenda(AgendaPermission::Denied, SampleAgenda());
+    h.Run();
+    CHECK(h.State()["agenda"] == json({{"permissao", "negada"}, {"vez", 1}, {"quantos", 0}}));
+    CHECK(LastAgenda(h) == json({{"v", 1}, {"type", "agenda"}, {"vez", 1}, {"contatos", json::array()}}));
+    // Sem a permissao, nenhum nome vem da agenda.
+    h.app->OnIncomingCall(4, "011988887777", "Central");
+    h.Run();
+    CHECK(h.State()["ligacao"]["top"]["name"] == "Central");
+    h.time.Advance(1000);
+    h.app->OnCallState(4, CallState::Disconnected, 487);
+    h.Run();
+    CHECK(h.State()["recentes"][0]["nome"] == "Central");
+
+    // O Permitir: o hospedeiro abre os Ajustes do iPhone. A pessoa da a permissao e volta ao app, e o hospedeiro manda
+    // a lista: a aba mostra a lista e os nomes valem, no mesmo app (sem abrir de novo).
+    h.Send(kAllowContacts);
+    CHECK(h.host == std::vector<std::string>{"readAgenda", "allowContacts"});
+    h.posts.clear();
+    h.app->SetAgenda(AgendaPermission::Granted, SampleAgenda());
+    h.Run();
+    REQUIRE(h.posts.size() == 2);
+    CHECK(h.posts[0] == SampleAgendaMessage(2));
+    CHECK(h.State()["agenda"] == GrantedSummary(2));
+    CHECK(h.State()["recentes"][0]["nome"] == "Ana Souza");
+    h.time.Advance(1000);
+    h.app->OnIncomingCall(5, "011988887777", "Central");
+    h.Run();
+    CHECK(h.State()["ligacao"]["top"]["name"] == "Ana Souza");
+    h.app->OnCallState(5, CallState::Disconnected, 487);
+    h.Run();
+    // A pagina que recarrega recebe a lista de agora; nada recomecou (a conta registrou uma vez so).
+    h.posts.clear();
+    h.Send(kReady);
+    REQUIRE(h.posts.size() >= 2);
+    CHECK(h.posts[1] == SampleAgendaMessage(2));
+    CHECK(h.port.accounts.size() == 1);
+
+    // A permissao tirada de novo nos Ajustes: a lista sai, e os nomes voltam a ser os da central.
+    h.app->SetAgenda(AgendaPermission::Denied, {});
+    h.Run();
+    CHECK(h.State()["agenda"] == json({{"permissao", "negada"}, {"vez", 3}, {"quantos", 0}}));
+    CHECK(h.State()["recentes"][0]["nome"] == "Central");
+}
+
+TEST_CASE("contactsOpened and allowContacts call the host hooks") {
+    Harness h(Platform::IPhone);
+    h.StartRegistered();
+    const size_t posts = h.posts.size();
+    const std::map<std::string, std::string> disk = h.files.files;
+    h.logs.clear();
+    // A cada vez que a aba Contatos abre, o hospedeiro le a agenda; o Permitir pede a permissao (ou abre os Ajustes).
+    h.Send(kContactsOpened);
+    CHECK(h.host == std::vector<std::string>{"readAgenda"});
+    h.Send(kContactsOpened);
+    h.Send(kAllowContacts);
+    CHECK(h.host == std::vector<std::string>{"readAgenda", "readAgenda", "allowContacts"});
+    // So os ganchos (a resposta vem pelo SetAgenda): o estado e o disco ficam como estavam, e o diagnostico sem linha.
+    CHECK(h.posts.size() == posts);
+    CHECK(h.files.files == disk);
+    CHECK(h.logs.empty());
+
+    // No Windows, recusados: nenhum gancho.
+    Harness pc;
+    pc.StartRegistered();
+    pc.Send(kContactsOpened);
+    pc.Send(kAllowContacts);
+    CHECK(pc.host.empty());
+    CHECK(pc.Logged("comando recusado no modo Windows: contactsOpened"));
+    CHECK(pc.Logged("comando recusado no modo Windows: allowContacts"));
+}
+
+TEST_CASE("the diagnostics never carry agenda names or numbers") {
+    Harness h(Platform::IPhone);
+    h.StartRegistered();
+    h.engine.nextCallId = 100;
+    // Tudo o que passa pela agenda: as tres permissoes, os dois comandos, o ready, os nomes numa perdida, numa atendida
+    // e numa feita, e os Recentes.
+    for (const AgendaPermission permission :
+         {AgendaPermission::Pending, AgendaPermission::Denied, AgendaPermission::Granted}) {
+        h.app->SetAgenda(permission, SampleAgenda());
+    }
+    h.Run();
+    h.Send(kContactsOpened);
+    h.Send(kAllowContacts);
+    h.Send(kReady);
+    h.app->OnIncomingCall(4, "011988887777", "Central");
+    h.Run();
+    h.time.Advance(1000);
+    h.app->OnCallState(4, CallState::Disconnected, 487);
+    h.Run();
+    h.app->OnIncomingCall(5, "2003", "Central");
+    h.Run();
+    h.Send(R"({"v":1,"cmd":"answer"})");
+    h.app->OnCallState(5, CallState::Confirmed, 200);
+    h.app->OnCallState(5, CallState::Disconnected, 200);
+    h.Run();
+    h.Send(R"({"v":1,"cmd":"dial","numero":"(11) 3333-4040","contato":true})");
+    h.app->OnCallState(100, CallState::Disconnected, 486);
+    h.Run();
+    h.Send(R"({"v":1,"cmd":"viewRecents"})");
+    const json recentes = h.State()["recentes"];
+    REQUIRE(recentes.size() == 3);
+    CHECK(recentes[2]["nome"] == "Ana Souza");   // os nomes foram a interface
+
+    // O diagnostico so com a contagem e a permissao.
+    CHECK(h.Logged("agenda: 0 contatos, permissao pendente"));
+    CHECK(h.Logged("agenda: 0 contatos, permissao negada"));
+    CHECK(h.Logged("agenda: 3 contatos, permissao concedida"));
+    const std::vector<std::string> agenda = {"Ana",  "Souza", "\xc3\x89lcio", "Matos", "Sem Numero", "98888",
+                                             "7777", "2003",  "97777",        "6666",  "3333",       "4040"};
+    for (const std::string& line : h.logs) {
+        INFO(line);
+        for (const std::string& part : agenda) CHECK(line.find(part) == std::string::npos);
+    }
+    // E os nomes da agenda nao vao ao disco (spec do iPhone, 6.4: so na memoria): os Recentes guardam o da central.
+    for (const auto& file : h.files.files) {
+        INFO(file.first);
+        for (const char* name : {"Ana", "\xc3\x89lcio", "Matos", "Sem Numero"}) {
+            CHECK(file.second.find(name) == std::string::npos);
+        }
+    }
 }
