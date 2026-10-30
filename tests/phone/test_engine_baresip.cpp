@@ -1,8 +1,9 @@
 // Só o motor do baresip: o que depende das linhas de log do baresip, os módulos que ele carrega, o que esse motor faz
 // de diferente do do PJSIP (os dispositivos de som e o BLF, spec 6.1, os dados de push no REGISTER, spec 7.3, também
 // durante uma ligação, e a URI das ligações de uma conta TCP) e o que só aqui é conferido (o keep-alive, o motor
-// destruído e criado de novo com a conta, os códigos das ligações encerradas aqui e a ligação que chega com a conta
-// saindo). O motor do PJSIP tem os testes dele (test_engine_pjsip.cpp).
+// destruído e criado de novo com a conta, os códigos das ligações encerradas aqui, o CANCEL e o BYE do Hangup que
+// esperam a resposta do outro lado e a ligação que chega com a conta saindo). O motor do PJSIP tem os testes dele
+// (test_engine_pjsip.cpp).
 #include "call_fixture.h"
 #include "engine_fixture.h"
 #include "relay_fixture.h"
@@ -332,6 +333,50 @@ TEST_CASE("Hangup of an outgoing call without an answer ends it with 487") {
     CHECK_FALSE(engine->HasCall());
     REQUIRE(listener.WaitForCalls(RecordingListener::StateReached(id, CallState::Disconnected), kWaitSeconds));
     CHECK(History(listener.Calls(), id) == "Calling/0 Disconnected/487");
+}
+
+TEST_CASE("Hangup right after MakeCall cancels the call at the far end once the first answer arrives") {
+    FakeRegistrar registrar("senha");
+    DelayedUdpRelay relay(registrar.port(), 300);   // as respostas ao INVITE só chegam depois do Hangup
+    RecordingListener listener;
+    INFO(listener.CallsText());
+    INFO(registrar.LogText());
+    std::unique_ptr<SipEngine> engine = StartEngine(&listener, LoadProfile(relay.port()));
+    REQUIRE(engine->SetAccount(Input(Transport::Udp)));
+    REQUIRE(listener.WaitFor(RecordingListener::Reached(200, true, 1), kWaitSeconds));
+    const int id = engine->MakeCall("2002");
+    REQUIRE(id >= 0);
+    REQUIRE(engine->Hangup(id));   // antes de qualquer resposta: o CANCEL ainda não pode sair
+    CHECK_FALSE(engine->HasCall());
+    // O registrador responde sozinho 100, 180 e 200: o CANCEL sai no 180, ou o BYE depois do 200.
+    CHECK(WaitUntil([&registrar] { return registrar.LogHas("cancel-in 2002") || registrar.LogHas("bye-in 2002"); },
+                    kWaitSeconds));
+    CHECK(History(listener.Calls(), id) == "Calling/0 Disconnected/487");
+}
+
+TEST_CASE("Hangup of an answered call that still waits for the ACK sends the BYE after the ACK") {
+    FakeRegistrar registrar("senha");
+    DelayedUdpRelay relay(registrar.port(), 300);   // o ACK do nosso 200 chega 600 ms depois dele
+    RecordingListener listener;
+    INFO(listener.CallsText());
+    INFO(registrar.LogText());
+    std::unique_ptr<SipEngine> engine = StartEngine(&listener, LoadProfile(relay.port()));
+    REQUIRE(engine->SetAccount(Input(Transport::Udp)));
+    REQUIRE(listener.WaitFor(RecordingListener::Reached(200, true, 1), kWaitSeconds));
+    REQUIRE(registrar.Control("RING 2001") == kOk);
+    REQUIRE(listener.WaitForCalls(RecordingListener::Count(phone_test::CallEvent::Incoming, 1), kWaitSeconds));
+    const int id = listener.Calls().front().callId;
+    REQUIRE(engine->Answer(id));
+    REQUIRE(engine->Hangup(id));   // o 200 saiu, e o ACK ainda não chegou
+    CHECK(registrar.WaitForLog("bye-in 3001", kWaitSeconds));
+    // Cada mensagem SIP que sai ou chega vira uma linha de log, na hora: o BYE saiu depois de o ACK chegar.
+    const std::string log = listener.LogTail();
+    const size_t ack = log.find("\nACK sip:");
+    const size_t bye = log.find("\nBYE sip:");
+    CHECK(ack != std::string::npos);
+    CHECK(bye != std::string::npos);
+    CHECK(ack < bye);
+    CHECK(History(listener.Calls(), id) == "Incoming Incoming/100 Early/180 Connecting/200 Disconnected/200");
 }
 
 TEST_CASE("an outgoing call that cannot reach the server ends with 503") {

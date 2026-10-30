@@ -39,8 +39,20 @@ const char* ReasonOf(int code) {
 
 }  // namespace
 
+// As funções que a libre chama, na thread do laço. Nenhuma exceção volta para a libre, que é C.
+struct BaresipCalls::Hooks {
+    static void Hangup(void* arg) {
+        try {
+            static_cast<BaresipCalls*>(arg)->HangupReady();
+        } catch (...) {
+        }
+    }
+};
+
 BaresipCalls::BaresipCalls(EventQueue& events, BaresipLoop::LogSink log, DtmfMethod /*dtmf*/)
-    : events_(events), log_(std::move(log)) {}
+    : events_(events), log_(std::move(log)) {
+    tmr_init(&hangupTimer_);
+}
 
 void BaresipCalls::OnEvent(enum bevent_ev ev, struct bevent* event) {
     if (ev == BEVENT_SIPSESS_CONN) {
@@ -48,16 +60,20 @@ void BaresipCalls::OnEvent(enum bevent_ev ev, struct bevent* event) {
         return;
     }
     struct call* call = bevent_get_call(event);
-    Slot* slot = call ? Find(call) : nullptr;
+    if (!call || OnWaiting(ev, call)) return;
+    Slot* slot = Find(call);
     if (!slot) return;   // uma que já saiu daqui (End) ou que nunca entrou (o baresip a recusou)
     switch (ev) {
         case BEVENT_CALL_RINGING:
         case BEVENT_CALL_PROGRESS:
-            if (!slot->incoming && !slot->confirmed) PostState(slot->id, CallState::Early, ProgressCode(call));
+            if (slot->incoming || slot->confirmed) break;
+            slot->progressed = true;
+            PostState(slot->id, CallState::Early, ProgressCode(call));
             break;
         case BEVENT_CALL_ESTABLISHED:
             // A feita: o 200 chegou e o ACK saiu. A recebida: o ACK chegou (o Connecting saiu no Answer).
             if (slot->confirmed) break;
+            slot->progressed = true;
             slot->confirmed = true;
             if (!slot->incoming) PostState(slot->id, CallState::Connecting, 200);
             PostState(slot->id, CallState::Confirmed, 200);
@@ -181,11 +197,60 @@ void BaresipCalls::OnInvite(const struct sip_msg* msg) {
 void BaresipCalls::End(Slot& slot, int code, bool report) {
     struct call* call = slot.call;
     const int id = slot.id;
+    // Agora, o ua_hangup largaria o INVITE da feita que ainda não teve resposta provisória (a libre não pode mandar o
+    // CANCEL e solta a transação) e mandaria uma vez só o BYE da recebida atendida que ainda não teve o ACK (o
+    // sipsess_abort solta o pedido com a sessão): as duas esperam a resposta (o OnWaiting).
+    const bool wait = slot.incoming ? slot.answered && !slot.confirmed : !slot.progressed;
     Free(slot);   // o BEVENT_CALL_CLOSED que o ua_hangup avisa, logo abaixo, já não acha a ligação
-    // A recebida que toca recebe a recusa com o código; nas outras, o baresip manda o CANCEL ou o BYE, e a libre
-    // termina o pedido sozinha depois que a ligação sai (o ua_hangup a solta).
-    ua_hangup(call_get_ua(call), call, static_cast<uint16_t>(code), ReasonOf(code));
+    if (wait) {
+        waiting_.push_back(Waiting{call, false});
+    } else {
+        // A recebida que toca recebe a recusa com o código; nas outras, o baresip manda o CANCEL ou o BYE, e a libre
+        // termina o pedido sozinha depois que a ligação sai (o ua_hangup a solta).
+        ua_hangup(call_get_ua(call), call, static_cast<uint16_t>(code), ReasonOf(code));
+    }
     if (report) PostState(id, CallState::Disconnected, code);
+}
+
+bool BaresipCalls::OnWaiting(enum bevent_ev ev, const struct call* call) {
+    for (auto it = waiting_.begin(); it != waiting_.end(); ++it) {
+        if (it->call != call) continue;
+        switch (ev) {
+            case BEVENT_CALL_RINGING:
+            case BEVENT_CALL_PROGRESS:
+            case BEVENT_CALL_ESTABLISHED:
+                // O 18x (a feita pode mandar o CANCEL), o 200 da feita (a libre já mandou o ACK) ou o ACK da recebida:
+                // o pedido sai no temporizador, depois que a libre acabar de tratar a resposta.
+                it->ready = true;
+                tmr_start(&hangupTimer_, 0, Hooks::Hangup, this);
+                break;
+            case BEVENT_CALL_CLOSED:
+                // Acabou sozinha (uma recusa, o tempo esgotado, o BYE do outro lado ou a ua que saiu): nada a mandar.
+                waiting_.erase(it);
+                if (waiting_.empty()) tmr_cancel(&hangupTimer_);
+                break;
+            default:
+                break;
+        }
+        return true;
+    }
+    return false;
+}
+
+void BaresipCalls::HangupReady() {
+    // Saem da lista antes: o ua_hangup avisa o BEVENT_CALL_CLOSED delas na hora.
+    std::vector<struct call*> ready;
+    for (auto it = waiting_.begin(); it != waiting_.end();) {
+        if (it->ready) {
+            ready.push_back(it->call);
+            it = waiting_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    // Agora o baresip manda o CANCEL (a libre já teve a resposta provisória) ou o BYE (a ligação chegou ao
+    // ESTABLISHED), e a libre o termina sozinha.
+    for (struct call* call : ready) ua_hangup(call_get_ua(call), call, 0, nullptr);
 }
 
 int BaresipCalls::HangupCode(const Slot& slot) const {
@@ -196,12 +261,17 @@ int BaresipCalls::HangupCode(const Slot& slot) const {
 int BaresipCalls::EndCode(const Slot& slot, const struct call* call, const char* text) const {
     if (slot.confirmed) return 200;                        // o BYE de qualquer lado
     if (slot.incoming && !slot.answered) return 487;       // o CANCEL de quem liga (a libre respondeu 487)
-    const uint16_t scode = call_scode(call);
-    if (!slot.incoming && scode >= 300) return scode;      // a feita recusada: a resposta final
-    // Sem resposta final (a feita, ou a recebida atendida sem o ACK), como no motor do PJSIP: 408 com o tempo esgotado,
-    // 503 nos outros erros (os de transporte). O motivo que o baresip dá é o %m do erro, às vezes seguido do Reason.
+    // O tempo esgotado, como no motor do PJSIP, dá 408. O motivo que o baresip dá é o %m do erro, às vezes seguido do
+    // Reason.
     const std::string timeout = BaresipLoop::ErrorText(ETIMEDOUT);
-    return text && std::string(text).compare(0, timeout.size(), timeout) == 0 ? 408 : 503;
+    const bool timedOut = text && std::string(text).compare(0, timeout.size(), timeout) == 0;
+    // A recebida atendida e ainda sem o ACK: o BYE de quem ligou, ou o ACK que não veio (a libre manda o BYE).
+    if (slot.incoming) return timedOut ? 408 : 200;
+    const uint16_t scode = call_scode(call);
+    if (scode >= 300) return scode;                        // a feita recusada: a resposta final
+    // A feita sem resposta final, como no motor do PJSIP: 408 com o tempo esgotado, 503 nos outros erros (os de
+    // transporte).
+    return timedOut ? 408 : 503;
 }
 
 void BaresipCalls::Bind(Slot& slot, struct call* call, bool incoming) {

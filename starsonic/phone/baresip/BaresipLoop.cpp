@@ -292,6 +292,14 @@ bool BaresipLoop::Setup(std::string* error) {
 
 void BaresipLoop::Teardown() {
     if (libreReady_) {
+        // Uma sessão SIP que ainda espera uma resposta (o BYE ou o CANCEL de uma ligação que acabou, o 200 que espera o
+        // ACK) segura o socket das sessões, que a guarda, e com ele a pilha SIP inteira: o ua_close sozinho não as
+        // solta. Sem nenhuma ua (as ligações saem com a ua da conta), elas e os pedidos fecham à força, como no
+        // ua_stop_all forçado do baresip; o outro lado não recebe mais nada deles.
+        if (list_isempty(uag_list())) {
+            sipsess_close_all(uag_sipsess_sock());
+            sip_close(uag_sip(), true);
+        }
         ua_close();
         if (nullAudioReady_) UnregisterNullAudio();
         nullAudioReady_ = false;

@@ -78,10 +78,10 @@ public:
           events_(listener),
           calls_(events_, Sink(), config.profile.global.dtmf) {}
 
-    // A fila dos eventos para antes de tudo (nada é avisado daqui em diante); as ligações acabam (BYE, CANCEL ou 603),
-    // a conta sai do servidor, como no RemoveAccount mas sem o evento (até ~3 s com o servidor mudo), e o laço fecha o
-    // baresip e a libre. O handler dos eventos do baresip sai depois da conta: até ela sair, a ligação que chega
-    // recebe 480.
+    // A fila dos eventos para antes de tudo (nada é avisado daqui em diante); as ligações acabam (BYE, CANCEL ou 603,
+    // sem esperar as que ainda esperam a resposta do outro lado: ver o BaresipCalls::EndAll), a conta sai do servidor,
+    // como no RemoveAccount mas sem o evento (até ~3 s com o servidor mudo), e o laço fecha o baresip e a libre. O
+    // handler dos eventos do baresip sai depois da conta: até ela sair, a ligação que chega recebe 480.
     ~Impl() {
         events_.Stop();
         std::lock_guard<std::mutex> lock(apiMutex_);
@@ -313,8 +313,9 @@ private:
     // Com a apiMutex_: as ligações da conta acabam, com o Disconnected de sempre, e as que chegarem até a conta sair
     // recebem 480; a conta sai do servidor (o BaresipAccount::Retire, esperado fora do Run) e é apagada; com
     // reportExit, no fim chega OnRegistration(200, false, <id>). Sem conta, nada. Ao contrário do motor do PJSIP, não
-    // há o que esperar das ligações: cada uma acaba dentro do Run, e a libre termina o BYE, o CANCEL ou a recusa
-    // sozinha.
+    // há o que esperar das ligações: cada uma sai das vagas dentro do Run. O pedido de uma que ainda espera a resposta
+    // do outro lado (o CANCEL da feita sem 18x, o BYE da atendida sem o ACK; ver o BaresipCalls::Hangup) sai se ela
+    // chegar durante a saída da conta; senão a ligação acaba com a ua (ver o BaresipCalls::EndAll).
     void RetireAccount(bool reportExit) {
         if (!account_) return;
         const bool ran = loop_->Run([&] {
