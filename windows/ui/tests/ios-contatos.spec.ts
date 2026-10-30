@@ -83,6 +83,9 @@ for (const tamanho of TAMANHOS_IPHONE) {
         await expect(linha(page, 'Portaria').locator('.row-sub')).toHaveText('Ramal 2000');
         await expect(linha(page, 'Élcio Matos').locator('.avatar')).toHaveText('ÉM');
         await expect(linha(page, 'Portaria').locator('.avatar')).toHaveText('PO');
+        // Uma agenda pequena fica sem a contenção da lista grande: cada botão de ligar é alcançado pelo papel.
+        await expect(page.locator('main .agenda')).not.toHaveClass(/\bagenda-grande\b/);
+        await expect(page.getByRole('button', { name: /^Ligar para / })).toHaveCount(EM_ORDEM.length);
         // Só para ver e ligar: sem o "+", sem o "⋯" e sem os filtros da lista da empresa (a agenda muda no iPhone).
         await expect(page.getByRole('button', { name: 'Novo contato' })).toHaveCount(0);
         await expect(page.getByRole('button', { name: 'Mais opções' })).toHaveCount(0);
@@ -91,8 +94,8 @@ for (const tamanho of TAMANHOS_IPHONE) {
         await semViolacoesSerias(page);
         await capturarIos(page, 'contatos', tamanho, tema);
 
-        // A busca, sem os espaços das pontas: com letras, o nome sem acento e sem caixa; sem letras, os dígitos dentro de
-        // algum número (os parênteses e o traço não contam).
+        // A busca, sem os espaços das pontas: o nome sem acento e sem caixa, para qualquer texto; sem letras, também os
+        // dígitos dentro de algum número (os parênteses e o traço não contam).
         for (const [texto, achados] of [
           ['élcio', ['Élcio Matos']],
           ['ELCIO', ['Élcio Matos']],
@@ -116,6 +119,14 @@ for (const tamanho of TAMANHOS_IPHONE) {
           { v: 1, cmd: 'dial', numero: '(11) 3333-4444', contato: true },
           { v: 1, cmd: 'dial', numero: '2000', contato: true },
         ]);
+
+        // O nome vale para qualquer texto, também um sem letras (como no Android e na aba Contatos do Windows): "101" acha o
+        // "Apto 101", cujo número não tem esses dígitos.
+        await esperarComando(page, { cmd: 'contactsOpened' });
+        await novaAgenda(page, [...AGENDA_DE_EXEMPLO, { nome: 'Apto 101', numeros: ['(11) 3456-7890'] }]);
+        await expect(nomes(page)).toHaveCount(EM_ORDEM.length + 1);
+        await busca(page).fill('101');
+        await expect(nomes(page)).toHaveText(['Apto 101']);
       });
 
       test('a contact with two numbers asks which one', async ({ page }) => {
@@ -236,8 +247,12 @@ for (const tamanho of TAMANHOS_IPHONE) {
         await abrirIos(page, 'principal', tamanho);
         await abrirContatos(page);
         await expect(nomes(page)).toHaveText(EM_ORDEM);
+        // Com um contato sem nome na agenda (na lista, o número no lugar do nome).
+        await esperarComando(page, { cmd: 'contactsOpened' });
+        await novaAgenda(page, [...AGENDA_DE_EXEMPLO, { nome: '', numeros: ['(51) 94444-3333'] }]);
+        await expect(nomes(page)).toHaveText(['(51) 94444-3333', ...EM_ORDEM]);
         // Uma busca sem resultado. Com letras, só o nome vale (os dígitos do texto não contam); sem letras e sem dígitos,
-        // nenhum número bate.
+        // nenhum número bate, e o nome de verdade (o do contato sem nome é vazio) não tem o traço.
         for (const texto of ['Zuleica', 'Ana 2003', '-']) {
           await busca(page).fill(texto);
           await expect(page.getByText(NAO_ACHOU, { exact: true }), texto).toBeVisible();
@@ -245,10 +260,9 @@ for (const tamanho of TAMANHOS_IPHONE) {
           await expect(page.getByText(SEM_NUMERO)).toHaveCount(0);
         }
         await busca(page).fill('');
-        await expect(nomes(page)).toHaveText(EM_ORDEM);
+        await expect(nomes(page)).toHaveText(['(51) 94444-3333', ...EM_ORDEM]);
         // A agenda sem nenhum contato com número (o contato sem número fica de fora): o texto da agenda vazia; com uma
         // busca, o da busca.
-        await esperarComando(page, { cmd: 'contactsOpened' });
         await novaAgenda(page, [{ nome: 'Ana Sem Número', numeros: [] }]);
         await expect(page.getByText(SEM_NUMERO, { exact: true })).toBeVisible();
         await expect(nomes(page)).toHaveCount(0);

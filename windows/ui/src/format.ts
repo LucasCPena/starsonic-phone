@@ -179,7 +179,10 @@ interface NaAgenda {
   contato: AgendaContact;
   letra: string;
   nome: string;
-  /** O nome sem acento e sem caixa, e os dígitos de cada número. */
+  /**
+   * O nome da agenda sem acento e sem caixa ("" num contato sem nome: o número que a tela mostra no lugar dele não entra),
+   * e os dígitos de cada número.
+   */
   nomeBusca: string;
   digitos: string[];
 }
@@ -217,7 +220,7 @@ function agendaPronta(contatos: AgendaContact[]): NaAgenda[] {
     if (numeros.length === 0) continue;
     const contato: AgendaContact = { nome: c.nome.trim(), numeros };
     const nome = agendaName(contato);
-    lista.push({ contato, letra: groupLetter(nome), nome, nomeBusca: fold(nome), digitos });
+    lista.push({ contato, letra: groupLetter(nome), nome, nomeBusca: fold(contato.nome), digitos });
   }
   lista.sort((a, b) => {
     if (a.letra !== b.letra) return a.letra === '#' ? -1 : b.letra === '#' ? 1 : a.letra < b.letra ? -1 : 1;
@@ -229,20 +232,18 @@ function agendaPronta(contatos: AgendaContact[]): NaAgenda[] {
 
 /**
  * (iPhone) A lista e a busca da aba Contatos: dos contatos da agenda, os que têm algum número, com cada número uma vez e
- * em ordem (ver `agendaPronta`). O texto vale sem os espaços das pontas: com letras, o nome sem acento e sem caixa; sem
- * letras, os dígitos dentro de algum número (um texto sem letras e sem dígitos não acha nenhum); vazio, todos.
+ * em ordem (ver `agendaPronta`). O texto vale sem os espaços das pontas, como no Android: para qualquer texto, o nome da
+ * agenda sem acento e sem caixa ("101" acha o "Apto 101"); sem letras, também os dígitos dentro de algum número; vazio,
+ * todos.
  */
 export function searchAgenda(contatos: AgendaContact[], texto: string): AgendaContact[] {
   const lista = agendaPronta(contatos);
   const procurado = texto.trim();
   if (!procurado) return lista.map((c) => c.contato);
-  if (/\p{L}/u.test(procurado)) {
-    const nome = fold(procurado);
-    return lista.filter((c) => c.nomeBusca.includes(nome)).map((c) => c.contato);
-  }
-  const digitos = digitsOnly(procurado);
-  if (!digitos) return [];
-  return lista.filter((c) => c.digitos.some((d) => d.includes(digitos))).map((c) => c.contato);
+  const nome = fold(procurado);
+  // Um texto sem letras e sem dígitos (o "-", o "(") vale só pelo nome.
+  const digitos = /\p{L}/u.test(procurado) ? '' : digitsOnly(procurado);
+  return lista.filter((c) => c.nomeBusca.includes(nome) || (digitos !== '' && c.digitos.some((d) => d.includes(digitos)))).map((c) => c.contato);
 }
 
 /**

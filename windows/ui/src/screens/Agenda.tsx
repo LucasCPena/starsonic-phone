@@ -8,8 +8,9 @@
 // hospedeiro lê a agenda de novo e, na primeira vez, pede a permissão.
 // A agenda pode ter milhares de contatos: a ordem e a busca são as do format.ts (a ordem, uma vez por lista), e a linha
 // de cada contato é montada uma vez e reaproveitada (o Preact pula o mesmo vnode), como na aba Contatos do Windows: a
-// busca e um estado novo não redesenham a lista inteira. As linhas fora da tela ficam sem o estilo e o layout (o
-// content-visibility do .agenda, no app.css): a aba abre e a busca volta a todos sem montar o layout de milhares delas.
+// busca e um estado novo não redesenham a lista inteira. Com mais de 1.000 linhas na tela, as de fora da tela ficam sem o
+// estilo e o layout (a classe agenda-grande, no app.css): a aba abre e a busca volta a todos sem montar o layout de
+// milhares delas.
 import type { JSX, VNode } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { agendaName, contactNumberLine, groupLetter, initials, searchAgenda } from '../format';
@@ -33,6 +34,12 @@ const ESTILO_DAS_ESCOLHAS: JSX.CSSProperties = { display: 'flex', flexDirection:
 /** O número inteiro no botão, também um comprido (em duas linhas, nunca cortado). */
 const ESTILO_DO_NUMERO: JSX.CSSProperties = { height: 'auto', minHeight: '46px', padding: '10px 22px', whiteSpace: 'normal', overflowWrap: 'anywhere', lineHeight: 1.3 };
 const TITULO_DA_ESCOLHA = 'escolha-numero-titulo';
+/**
+ * Acima de tantas linhas na tela, a lista grande (a classe agenda-grande): as linhas de fora da tela ficam sem o estilo e
+ * o layout, e a aba abre e a busca responde em até 1 s. O preço: no Chromium, elas saem da árvore de acessibilidade até
+ * chegarem perto da tela. Até esse número, todas ficam nela (o VoiceOver confere no aparelho, na parte 2).
+ */
+const LISTA_GRANDE = 1000;
 
 // O ícone de ligar é o mesmo em todas as linhas: um vnode só (sem um componente por linha, numa lista de milhares).
 const ICONE_LIGAR = IconPhone({ size: 'sm' });
@@ -160,8 +167,9 @@ function Lista({ quantos, contatos, send }: { quantos: number; contatos: AgendaC
   // A agenda vazia só quando o estado também diz que ela não tem contatos com número: com o `quantos` maior que zero e
   // nenhum contato aqui, a lista está a caminho (o estado chegou antes dela), e a aba não diz que a agenda está vazia.
   const aCaminho = chaves.size === 0 && quantos > 0;
+  const naTela = grupos.reduce((n, g) => n + g.itens.length, 0);
   return (
-    <div class="body scroll agenda" style={{ gap: '10px' }}>
+    <div class={naTela > LISTA_GRANDE ? 'body scroll agenda agenda-grande' : 'body scroll agenda'} style={{ gap: '10px' }}>
       <div style={{ display: 'flex', flex: 'none' }}>
         <label class="search">
           <IconSearch size="sm" />
