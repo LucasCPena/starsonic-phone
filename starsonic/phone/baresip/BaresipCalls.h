@@ -5,9 +5,9 @@
 //
 // Um microfone só (o iPhone, spec 7.7), como a mesa de áudio do motor do PJSIP: uma das ligações é a ativa (a feita,
 // a atendida ou a do Activate, até ela acabar), e só ela, fora da espera, fica com o áudio aberto. A outra, confirmada,
-// vai para a espera (re-INVITE sendonly) com o áudio parado; se essa espera não sai antes de uma nova (o Make e o
-// Answer), ela fica só com o áudio parado. O baresip abre o áudio de uma ligação sozinho a cada SDP que aplica, também
-// o de uma só de envio (a em espera): o das outras para de novo logo depois (o audioTimer_).
+// vai para a espera (re-INVITE sendonly) com o áudio parado; se essa espera não sai (o Make, o Answer e o Activate
+// seguem sem ela), ela fica só com o áudio parado. O baresip abre o áudio de uma ligação sozinho a cada SDP que
+// aplica, também o de uma só de envio (a em espera): o das outras para de novo logo depois (o audioTimer_).
 //
 // Tudo aqui roda na thread do laço: dentro do BaresipLoop::Run, no handler dos eventos do baresip (bevent), que repassa
 // ao OnEvent, ou nos temporizadores (o das que esperam para mandar o pedido do Hangup e o do áudio). Só o Count é lido
@@ -54,8 +54,8 @@ public:
 
     // Liga para uri (a URI inteira) pela ua da conta e devolve o id da ligação, a ativa, com o OnCallState(Calling, 0)
     // já na fila. Com uma confirmada fora da espera, ela vai para a espera antes e fica nela mesmo se a nova não sai;
-    // como no motor do PJSIP, essa espera é o que se pode (ver o HoldBeforeNew): com lastTry (o prazo da espera passou)
-    // ou com o re-INVITE dela que não sai, a nova sai assim mesmo. -1 (sem evento): já há duas ligações, a outra ainda
+    // como no motor do PJSIP, essa espera é o que se pode (ver o HoldOther): com lastTry (o prazo da espera passou) ou
+    // com o re-INVITE dela que não sai, a nova sai assim mesmo. -1 (sem evento): já há duas ligações, a outra ainda
     // não foi confirmada, o baresip recusou (o log diz) ou Blocked.
     int Make(struct ua* ua, const std::string& uri, bool lastTry);
     // Só numa recebida que toca: o 200 sai e vem OnCallState(Connecting, 200); ela vira a ativa. A outra, confirmada e
@@ -72,14 +72,18 @@ public:
     // ACK, como no PJSIP). Depois de mandado, a libre termina o pedido sozinha. Desligada a ativa, nenhuma é a ativa: a
     // outra segue em espera, sem áudio, até um Activate.
     bool Hangup(int id);
-    // Só numa confirmada: ela vira a ativa. A outra, confirmada e fora da espera, vai para a espera, e esta é retomada
-    // (re-INVITE sendrecv) se estava em espera; já ativa, nada muda e nenhum re-INVITE sai. false: id desconhecido,
-    // ligação não confirmada, Blocked ou um re-INVITE que não saiu (o log diz): sem a espera da outra, nada muda; sem a
-    // retomada, esta segue em espera (e a outra, se já foi, também).
-    bool Activate(int id);
-    // Só numa confirmada: true a põe em espera (re-INVITE sendonly; já em espera, nada muda), e false é o Activate.
-    // false: id desconhecido, ligação não confirmada, Blocked ou o re-INVITE que não saiu (o log diz; nada muda).
-    bool SetHold(int id, bool hold);
+    // Só numa confirmada; já ativa, nada muda e nenhum re-INVITE sai. Senão, como o Focus do motor do PJSIP: ela vira a
+    // ativa na hora, e a outra fica sem o áudio daqui na hora, também numa tentativa que volta Blocked (enquanto o
+    // motor espera, a que o app mostra em espera já não ouve nem é ouvida). A outra, confirmada e fora da espera, vai
+    // para a espera como no Make (o HoldOther: com lastTry, ou com o re-INVITE dela que não sai, segue sem ela), e esta
+    // é retomada (re-INVITE sendrecv) se estava em espera. O resultado é só o dela: false com id desconhecido,
+    // ligação não confirmada, Blocked ou a retomada que não sai (o log diz); então ela segue em espera, sem áudio, e o
+    // Activate seguinte tenta de novo.
+    bool Activate(int id, bool lastTry);
+    // Só numa confirmada: true a põe em espera (re-INVITE sendonly; já em espera, nada muda), e false é o Activate
+    // (com o lastTry dele). A espera: false com id desconhecido, ligação não confirmada, Blocked (no prazo, o motor
+    // recusa) ou o re-INVITE que não saiu (o log diz; nada muda).
+    bool SetHold(int id, bool hold, bool lastTry);
     // O último Make, Answer, Activate ou SetHold não mudou nada: uma ligação que ele renegociaria ainda espera a
     // resposta de outra oferta.
     bool Blocked() const;
@@ -97,10 +101,11 @@ public:
     // Os ids das ligações com o áudio aberto (o audio_started do baresip), em ordem crescente: os testes
     // (SipEngineTestAccess).
     std::vector<int> CallsWithAudio() const;
-    // Os testes (SipEngineTestAccess): com on, nenhum re-INVITE com oferta sai, como num erro de transporte na hora (a
-    // rede fora). O aviso do SDP que o baresip monta para ele (o BEVENT_CALL_LOCAL_SDP com offer, numa confirmada)
-    // recebe um erro, e o call_modify do baresip volta antes de mandar o re-INVITE e de aplicar a direção nova.
-    void FailReinvites(bool on);
+    // Os testes (SipEngineTestAccess): com on, nenhum re-INVITE com oferta sai da ligação id (0: de todas), como num
+    // erro de transporte na hora (a rede fora). O aviso do SDP que o baresip monta para ele (o BEVENT_CALL_LOCAL_SDP
+    // com offer, numa confirmada) recebe um erro, e o call_modify do baresip volta antes de mandar o re-INVITE e de
+    // aplicar a direção nova.
+    void FailReinvites(bool on, int id);
 
     // A conta sai (a troca e a saída da conta): o Hangup de cada ligação, com os Disconnected de sempre. Daqui até o
     // Open da conta nova, as ligações que chegam recebem 480, sem evento, como no motor do PJSIP.
@@ -156,11 +161,14 @@ private:
     // o held muda; senão o erro, e tudo fica como estava. O áudio segue o held: parado se ela fica Silent (o call_hold
     // abre a fonte de som de novo ao aplicar a direção nova).
     int Renegotiate(Slot& slot, bool hold);
-    // A espera da outra (other, confirmada e fora da espera) antes de uma nova virar a ativa, no Make e no Answer. Com
-    // a renegociação anterior dela no ar: Blocked e false, ou, com lastTry, nenhuma espera. Sem a espera (essa, ou o
-    // re-INVITE dela que não saiu), a nova sai assim mesmo, como no motor do PJSIP, e a outra fica sem áudio daqui por
-    // não ser mais a ativa; o log diz. true: o pedido segue.
-    bool HoldBeforeNew(Slot& other, bool lastTry);
+    // A espera da outra (other, confirmada e fora da espera) quando uma ligação vira a ativa (Make, Answer e
+    // Activate): o que se pode, como no Focus do motor do PJSIP. Com a renegociação anterior dela no ar: Blocked e
+    // false, ou, com lastTry, nenhuma espera. Sem a espera (essa, ou o re-INVITE dela que não saiu), o motivo vai para
+    // *skipped, e o pedido segue: a outra fica fora da espera e sem áudio daqui por não ser mais a ativa. true: segue.
+    bool HoldOther(Slot& other, bool lastTry, std::string* skipped);
+    // A linha do log da outra que ficou fora da espera (o *skipped do HoldOther; vazio, nada), depois que a nova virou
+    // a ativa: só então ela é verdade.
+    void LogSkippedHold(const std::string& reason) const;
     // No audioTimer_, depois de o baresip aplicar um SDP (ele abre o áudio depois do evento): o audio_stop das Silent.
     void StopSilentAudio();
     void Negotiated();   // uma negociação acabou: acorda quem espera (WaitNegotiation)
@@ -184,6 +192,7 @@ private:
     bool open_ = true;         // false: a conta ou o motor saindo (HangupAll e EndAll), e as que chegam recebem 480
     bool blocked_ = false;     // o Blocked()
     bool failReinvites_ = false;   // o FailReinvites (os testes)
+    int failReinvitesId_ = 0;      // a ligação dele, ou 0 (todas)
     std::atomic<int> count_{0};   // as vagas ocupadas, para o Count
     std::vector<Waiting> waiting_;
     // Só fica armado com alguma ligação na waiting_: elas saem dela no disparo ou no CLOSED (todas, no mais tardar, com

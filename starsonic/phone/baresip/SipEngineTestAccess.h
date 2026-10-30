@@ -13,11 +13,12 @@ struct SipEngineTestAccess {
     static std::vector<int> CallsWithAudio(const SipEngine& engine);
     // Quantas fontes de som (os microfones) estão abertas agora, somando as ligações: as do dispositivo nulo do
     // nullAudio dos testes. O baresip abre de novo a fonte de uma ligação só de envio (a em espera) ao aplicar cada SDP
-    // dela, e o audio_started dela continua false: só esta conta mostra esse microfone.
+    // dela, e o audio_started dela continua false: só esta conta mostra esse microfone. Não espera um pedido em
+    // andamento: lê também enquanto outro, como o Activate, espera uma renegociação.
     static int OpenMicrophones(const SipEngine& engine);
-    // Com on, nenhum re-INVITE com oferta sai, como num erro de transporte na hora (a rede fora no meio de uma troca de
-    // Wi-Fi para 4G): a espera e a retomada falham sem mandar nada, até o off.
-    static void FailReinvites(SipEngine& engine, bool on);
+    // Com on, nenhum re-INVITE com oferta sai da ligação callId (0: de todas), como num erro de transporte na hora (a
+    // rede fora no meio de uma troca de Wi-Fi para 4G): a espera e a retomada dela falham sem mandar nada, até o off.
+    static void FailReinvites(SipEngine& engine, bool on, int callId = 0);
 };
 
 }  // namespace starsonic

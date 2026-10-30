@@ -239,14 +239,14 @@ public:
     bool Activate(int callId) {
         std::lock_guard<std::mutex> lock(apiMutex_);
         bool done = false;
-        RunRenegotiating([&](bool /*lastTry*/) { done = calls_.Activate(callId); });
+        RunRenegotiating([&](bool lastTry) { done = calls_.Activate(callId, lastTry); });
         return done;
     }
 
     bool SetHold(int callId, bool hold) {
         std::lock_guard<std::mutex> lock(apiMutex_);
         bool done = false;
-        RunRenegotiating([&](bool /*lastTry*/) { done = calls_.SetHold(callId, hold); });
+        RunRenegotiating([&](bool lastTry) { done = calls_.SetHold(callId, hold, lastTry); });
         return done;
     }
 
@@ -314,16 +314,17 @@ public:
         return ids;
     }
 
+    // Sem a apiMutex_, ao contrário dos outros: lê também no meio de um pedido que espera fora do Run (o Activate que
+    // espera a renegociação da outra). Só o Run, que já põe a leitura no fim de uma volta do laço.
     int OpenMicrophones() {
-        std::lock_guard<std::mutex> lock(apiMutex_);
         int count = 0;
         loop_->Run([&] { count = OpenNullSources(); });
         return count;
     }
 
-    void FailReinvites(bool on) {
+    void FailReinvites(bool on, int callId) {
         std::lock_guard<std::mutex> lock(apiMutex_);
-        loop_->Run([&] { calls_.FailReinvites(on); });
+        loop_->Run([&] { calls_.FailReinvites(on, callId); });
     }
 
 private:
@@ -352,8 +353,9 @@ private:
 
     // Com a apiMutex_: um pedido do BaresipCalls que manda re-INVITE (Make, Answer, Activate ou SetHold), no laço. Se
     // ele esbarra numa renegociação ainda no ar (Blocked), a espera é aqui, fora do Run, pelo fim dela (até ~2 s desde
-    // o primeiro pedido), e ele vai de novo; passado o prazo, ele vai uma última vez, com lastTry: o Make e o Answer
-    // seguem sem a espera da outra, e o Activate e o SetHold são recusados.
+    // o primeiro pedido), e ele vai de novo; passado o prazo, ele vai uma última vez, com lastTry: o Make, o Answer e o
+    // Activate seguem sem a espera da outra, e o que ainda esbarra (a espera do SetHold, ou a retomada da escolhida no
+    // Activate) é recusado.
     void RunRenegotiating(const std::function<void(bool lastTry)>& work) {
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(kRenegotiationWaitMs);
         for (;;) {
@@ -511,6 +513,8 @@ std::vector<int> SipEngineTestAccess::CallsWithAudio(const SipEngine& engine) {
 
 int SipEngineTestAccess::OpenMicrophones(const SipEngine& engine) { return engine.impl_->OpenMicrophones(); }
 
-void SipEngineTestAccess::FailReinvites(SipEngine& engine, bool on) { engine.impl_->FailReinvites(on); }
+void SipEngineTestAccess::FailReinvites(SipEngine& engine, bool on, int callId) {
+    engine.impl_->FailReinvites(on, callId);
+}
 
 }  // namespace starsonic
