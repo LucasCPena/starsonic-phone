@@ -842,11 +842,21 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .win[data-plataforma="ios"] :is(.brand, .bar)::before { content: ""; position: absolute; inset: calc(-1 * var(--safe-top)) 0 0; z-index: -1;
   background: var(--gradient-hero); }
 .win[data-plataforma="ios"] .brand-glow { top: calc(-1 * var(--safe-top)); }
-/* O toque, sem o que é do navegador: o menu do toque longo, a seleção de texto (menos nos campos), o realce do toque e
-   o zoom de dois toques. */
+/* O toque, sem o que é do navegador: o menu do toque longo, a seleção de texto, o realce do toque e o zoom de dois
+   toques. Nos campos, a seleção e o menu do toque longo voltam (o Colar do iPhone, no Servidor, no Ramal e na Senha). */
 .win[data-plataforma="ios"], .win[data-plataforma="ios"] * { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none;
   -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
-.win[data-plataforma="ios"] :is(input, textarea) { -webkit-user-select: text; user-select: text; }
+.win[data-plataforma="ios"] :is(input, textarea) { -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }
+/* Os botões do cabeçalho (Não perturbe, Atender automático e o Menu) com a área do toque de 44×44 px (os 44 pontos do
+   iPhone), sem mudar o desenho: um ::after transparente em volta de cada um. No Compacto, os três redondos de 32 px
+   ficam a 6 px um do outro (38 px de um meio ao outro): as áreas dos dois de fora vão 6 px para fora, e as três se
+   encostam sem se cobrir, cada toque no botão que a pessoa vê. */
+.win[data-plataforma="ios"] .brand :is(.toggle, .icon-btn, .chip) { position: relative; }
+.win[data-plataforma="ios"] .brand :is(.toggle, .icon-btn)::after { content: ""; position: absolute; top: 50%; left: 50%; width: 44px; height: 44px;
+  transform: translate(-50%, -50%); }
+.win[data-plataforma="ios"] .brand .chip::after { content: ""; position: absolute; top: 50%; left: 0; right: 0; height: 44px; transform: translateY(-50%); }
+.win[data-plataforma="ios"][data-layout="compacto"] .brand-actions > :first-child::after { transform: translate(calc(-50% - 6px), -50%); }
+.win[data-plataforma="ios"][data-layout="compacto"] .brand-actions > :last-child .icon-btn::after { transform: translate(calc(-50% + 6px), -50%); }
 /* Sem as zonas de redimensionar, sem o desenho do canto delas na navegação. */
 .win[data-plataforma="ios"] .grip { display: none; }
 /* O número da ajuda da tela Entrar é um botão (o discador do iPhone), com o destaque dos links. O toque vai além da

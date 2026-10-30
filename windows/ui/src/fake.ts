@@ -4,7 +4,8 @@
 // As regras de verdade (validações, ligações) são do C++: aqui só o bastante para as telas reagirem.
 // (iPhone) `?fake=<cenario>&plataforma=ios&agenda=pendente|negada|concedida` (sem `agenda`: concedida) abre o cenário no
 // modo iPhone (docs/ponte-windows.md, "O modo iPhone"): o estado do contrato, a agenda de exemplo depois do estado no
-// `ready` (com a permissão concedida) e nenhum toque.
+// `ready` (com a permissão concedida) e nenhum toque. Com `&abrir=recentes`, o app aberto pelo aviso da perdida: o
+// primeiro `ready` traz também o `abrir`, depois do estado e da agenda.
 import { AGENDA_DE_EXEMPLO, createScenario, entrarVazio, estadoDoIphone, PLANILHA_DA_EMPRESA, SERVIDORES_DO_PERFIL, type FakeView } from './fake-scenarios';
 import { trimAscii } from './format';
 import type { WebviewLike } from './bridge';
@@ -66,6 +67,8 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
   const parametros = new URLSearchParams(location.search);
   const ios = parametros.get('plataforma') === 'ios';
   const permissao = PERMISSOES.find((p) => p === parametros.get('agenda')) ?? 'concedida';
+  // (iPhone) Um `abrir` pedido antes do `ready`: vai uma vez, no primeiro.
+  let abrirNoReady = ios && parametros.get('abrir') === 'recentes';
   let state: AppState = structuredClone(ios ? estadoDoIphone(scenario.state, permissao) : scenario.state);
   const listeners = new Set<Listener>();
   const sent: Array<Record<string, unknown>> = [];
@@ -283,10 +286,15 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
     if (handleCall(command)) return;
     switch (command.cmd) {
       case 'ready':
-        // (iPhone) O estado e, com uma lista desde a abertura (`vez` > 0), a agenda; nada de toque nem da lista da empresa.
+        // (iPhone) O estado, com uma lista desde a abertura (`vez` > 0) a agenda, e o `abrir` pedido antes; nada de toque
+        // nem da lista da empresa.
         if (ios) {
           publish();
           if (state.agenda && state.agenda.vez > 0) mandarAgenda(state.agenda.vez, state.agenda.permissao === 'concedida' ? AGENDA_DE_EXEMPLO : []);
+          if (abrirNoReady) {
+            abrirNoReady = false;
+            deliver({ v: 1, type: 'abrir', tela: 'recentes' } satisfies IncomingMessage);
+          }
           break;
         }
         // (rc.4) A lista da empresa vem depois do estado e do toque (com uma lista desde a abertura: `vez` > 0); no

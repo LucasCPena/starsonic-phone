@@ -1,7 +1,7 @@
 // Os Recentes: Todas e Perdidas (com a contagem), os grupos por dia (Hoje, Ontem, a data) e, em cada linha, o tipo
 // (perdida em vermelho), o nome ou número, a hora e a duração, mais o botão de ligar. Tocar na linha abre "Ligar" e
-// "Salvar contato" (sem o `onSaveContact`, como no iPhone, só o "Ligar"). Abrir a tela manda o viewRecents (o C++ zera
-// `perdidas`).
+// "Salvar contato" (sem o `onSaveContact`, só o "Ligar"); no iPhone (`ligarAoTocar`), tocar na linha liga de volta. Abrir
+// a tela manda o viewRecents (o C++ zera `perdidas`).
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { clockTime, dayGroup, duration, recentKindLabel } from '../format';
 import { IconIncoming, IconOutgoing, IconPhone } from '../icons';
@@ -14,6 +14,8 @@ interface Props {
   send: Send;
   /** O "Salvar contato" de uma linha sem contato (sem ele, a linha só oferece o "Ligar"). */
   onSaveContact?(numero: string, nome: string): void;
+  /** (iPhone, spec 4.1) Tocar na linha liga de volta, como o botão de ligar dela, no lugar de abrir as ações. */
+  ligarAoTocar?: boolean;
 }
 
 function subLine(r: RecentCall): string {
@@ -22,7 +24,7 @@ function subLine(r: RecentCall): string {
   return partes.join(' · ');
 }
 
-export function Recentes({ recentes, perdidas, send, onSaveContact }: Props) {
+export function Recentes({ recentes, perdidas, send, onSaveContact, ligarAoTocar }: Props) {
   const [filtro, setFiltro] = useState<'todas' | 'perdidas'>('todas');
   const [aberta, setAberta] = useState<number | null>(null);
   // As perdidas que a pessoa ainda não tinha visto: o C++ zera a contagem quando a tela abre, e o filtro guarda
@@ -74,9 +76,9 @@ export function Recentes({ recentes, perdidas, send, onSaveContact }: Props) {
                     <button
                       type="button"
                       class="row-hit"
-                      aria-expanded={aberto}
+                      aria-expanded={ligarAoTocar ? undefined : aberto}
                       aria-controls={aberto ? `recente-${i}` : undefined}
-                      onClick={() => setAberta(aberto ? null : i)}
+                      onClick={() => (ligarAoTocar ? send({ cmd: 'dial', numero: r.numero }) : setAberta(aberto ? null : i))}
                     >
                       <span class={r.tipo === 'perdida' ? 'tile tile-miss' : 'tile'} aria-hidden="true">
                         {r.tipo === 'feita' ? <IconOutgoing /> : <IconIncoming />}

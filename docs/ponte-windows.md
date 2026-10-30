@@ -563,12 +563,17 @@ mostra a `windows/ui` num WKWebView, com um objeto da mesma forma do `window.chr
 `plataforma: "ios"` no estado.** No Windows, o estado não ganha nenhum campo e cada comando faz o que faz hoje. O formato
 continua na versão 1 (ver "Versão").
 
-- A interface entra no modo iPhone no primeiro estado com `plataforma: "ios"`: põe `width=device-width, initial-scale=1,
-  viewport-fit=cover, maximum-scale=1` no `<meta name="viewport">` (a página vai até as bordas da tela e cuida sozinha
-  da área segura, pelo `env(safe-area-inset-*)`), e tira a barra de título, os atalhos de teclado (Ctrl+1 a 4 e
-  Ctrl + P), a aba Atalhos, a pergunta da atualização, a área do administrador e o toque.
-- O `ready` responde com o estado e, quando já houve uma lista desde a abertura do app (`agenda.vez` maior que 0), com a
-  `agenda` (abaixo), nesta ordem. Nada de toque, de lista da empresa ou de pergunta da atualização.
+- A interface entra no modo iPhone no primeiro estado com `plataforma: "ios"`: antes de desenhar a primeira tela dele,
+  põe `width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1` no `<meta name="viewport">` (a página
+  vai até as bordas da tela e cuida sozinha da área segura, pelo `env(safe-area-inset-*)`), e tira a barra de título, os
+  atalhos de teclado (Ctrl+1 a 4 e Ctrl + P), a aba Atalhos, a pergunta da atualização, a área do administrador e o
+  toque.
+- Antes do primeiro estado, a interface não sabe a plataforma e desenha a janela do Windows. Por isso, no iPhone, o
+  hospedeiro deixa o WKWebView escondido, com o logo da abertura por cima, até a interface ficar pronta (o primeiro
+  `state` desenhado: o `body[data-pronto]`).
+- O `ready` responde com o estado, com a `agenda` quando já houve uma lista desde a abertura do app (`agenda.vez` maior
+  que 0) e com o `abrir` pedido antes dele (abaixo), nesta ordem. Nada de toque, de lista da empresa ou de pergunta da
+  atualização.
 
 ### O estado no iPhone
 
@@ -648,6 +653,8 @@ Duas a mais (C++ → interface), também com `v: 1`:
 - `{"v":1,"type":"abrir","tela":"recentes"}`: a pessoa tocou no aviso da perdida ("Ligação perdida de <nome ou
   número>", spec do iPhone, 7.9). A interface vai para os Recentes, como a última ligação que acaba volta ao Teclado (com
   uma ligação, a tela da ligação continua na frente). Outra `tela` não existe nesta versão: a interface a ignora.
+  Um `abrir` pedido antes do `ready` vai no `ready`, depois do estado e da agenda (o app que o iOS tinha fechado abre
+  pelo aviso, e a página ainda carregava).
 
 ```json
 {"v":1,"type":"agenda","vez":2,"contatos":[{"nome":"Ana Souza","numeros":["+55 11 98888-7777","2003"]},{"nome":"","numeros":["(21) 97777-6666"]}]}

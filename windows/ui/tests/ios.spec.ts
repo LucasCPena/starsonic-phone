@@ -75,12 +75,17 @@ for (const tamanho of TAMANHOS_IPHONE) {
           'menuitem',
         ]);
 
-        // Editar conta: a tela da conta em uso, preenchida.
+        // Editar conta: a tela da conta em uso, preenchida, dentro da área segura e sem o Remover (a confirmação dele fala
+        // do computador, e o Sair do Menu já tira a conta).
         await menu.getByRole('menuitem', { name: 'Editar conta' }).click();
         await expect(page.getByRole('heading', { name: 'Editar conta' })).toBeVisible();
         await expect(page.getByLabel('Servidor (endereço ou IP)')).toHaveValue('starcloud1-starsonic.com.br');
         await expect(page.getByLabel('Ramal', { exact: true })).toHaveValue('2001');
         await expect(page.getByLabel('Nome da conta (opcional)')).toHaveValue('Recepção');
+        await expect(page.getByRole('button', { name: 'Remover' })).toHaveCount(0);
+        await dentroDaAreaSegura(page, ['.bar']);
+        await semViolacoesSerias(page);
+        await capturarIos(page, 'editar-conta', tamanho, tema);
         await page.getByRole('button', { name: 'Voltar' }).click();
 
         // O Sair pergunta antes; o Cancelar não manda nada e devolve o foco ao Menu.
@@ -137,7 +142,7 @@ for (const tamanho of TAMANHOS_IPHONE) {
         await esperarComando(page, { cmd: 'openExternal', url: 'tel:+551150603000' });
       });
 
-      test('Recentes has no Salvar contato', async ({ page }) => {
+      test('Recentes calls back on a tap, without Salvar contato', async ({ page }) => {
         await abrirIos(page, 'recentes', tamanho);
         await esperarComando(page, { cmd: 'viewRecents' });
         await expect(page.getByRole('button', { name: 'Recentes' })).toHaveAttribute('aria-current', 'page');
@@ -145,13 +150,13 @@ for (const tamanho of TAMANHOS_IPHONE) {
         await dentroDaAreaSegura(page, ['.brand', '.nav']);
         await semViolacoesSerias(page);
         await capturarIos(page, 'recentes', tamanho, tema);
-        // Tocar numa linha (aqui, um número sem nome) abre só o Ligar.
+        // Tocar numa linha (aqui, um número sem nome) liga de volta (spec 4.1), como o botão de ligar dela: sem o painel
+        // do "Ligar" e do "Salvar contato".
         await page.getByRole('button', { name: /^3001/ }).click();
-        const acoes = page.locator('.row-actions');
-        await expect(acoes.getByRole('button')).toHaveText(['Ligar']);
-        await expect(page.getByRole('button', { name: 'Salvar contato' })).toHaveCount(0);
-        await acoes.getByRole('button', { name: 'Ligar' }).click();
         await esperarComando(page, { cmd: 'dial', numero: '3001' });
+        await expect(page.locator('.row-actions')).toHaveCount(0);
+        await expect(page.getByRole('button', { name: 'Salvar contato' })).toHaveCount(0);
+        expect((await comandos(page)).filter((c) => c.cmd === 'dial')).toEqual([{ v: 1, cmd: 'dial', numero: '3001' }]);
       });
 
       test('ring and update messages do nothing, and Ctrl+P and Ctrl+2 do nothing', async ({ page }) => {
@@ -190,16 +195,130 @@ for (const tamanho of TAMANHOS_IPHONE) {
         await expect(page.getByRole('main', { name: 'Recentes' })).toBeVisible();
         await expect(recentes).toHaveAttribute('aria-current', 'page');
       });
+
+      test('an abrir asked before ready comes right after the first state and opens Recentes', async ({ page }) => {
+        // O app aberto pelo aviso da perdida: o `ready` traz o estado, a agenda e o `abrir`, um atrás do outro.
+        await abrirIos(page, 'principal', tamanho, { abrir: 'recentes' });
+        await expect(page.getByRole('main', { name: 'Recentes' })).toBeVisible();
+        await expect(page.getByRole('button', { name: 'Recentes' })).toHaveAttribute('aria-current', 'page');
+        await esperarComando(page, { cmd: 'viewRecents' });
+      });
+
+      test('the iPhone viewport is in place before the first iPhone screen is drawn', async ({ page }) => {
+        // O <meta name="viewport"> no instante em que o .win do iPhone aparece: o observador roda logo depois da mudança,
+        // antes de a tela ser pintada.
+        await page.addInitScript(() => {
+          const w = window as unknown as { __viewportNoPrimeiroQuadro?: string };
+          new MutationObserver((_, observador) => {
+            if (!document.querySelector('.win[data-plataforma="ios"]')) return;
+            w.__viewportNoPrimeiroQuadro = document.querySelector('meta[name="viewport"]')?.getAttribute('content') ?? '';
+            observador.disconnect();
+          }).observe(document, { childList: true, subtree: true, attributes: true });
+        });
+        await abrirIos(page, 'principal', tamanho);
+        const noPrimeiroQuadro = await page.evaluate(() => (window as unknown as { __viewportNoPrimeiroQuadro?: string }).__viewportNoPrimeiroQuadro);
+        expect(noPrimeiroQuadro).toBe(VIEWPORT_DO_IPHONE);
+      });
+
+      test('the header buttons have 44×44 tap areas that do not overlap', async ({ page }) => {
+        await abrirIos(page, 'principal', tamanho);
+        const cabecalho = page.locator('header.brand');
+        const areas: Array<{ nome: string; desenho: Caixa; toque: Caixa }> = [];
+        for (const nome of ['Não perturbe', 'Atender automático', 'Menu']) {
+          const medidas = await cabecalho.getByRole('button', { name: nome, exact: true }).evaluate((el) => {
+            // A área do toque: até onde, do meio do botão para cada lado, um ponto ainda cai nele (o elementFromPoint, como
+            // o toque do iPhone), pela bissecção.
+            const r = el.getBoundingClientRect();
+            const cx = r.left + r.width / 2;
+            const cy = r.top + r.height / 2;
+            const acerta = (x: number, y: number) => document.elementFromPoint(x, y)?.closest('button') === el;
+            const alcance = (ponto: (d: number) => [number, number]) => {
+              let dentro = 0;
+              let fora = 200;
+              for (let i = 0; i < 40; i++) {
+                const meio = (dentro + fora) / 2;
+                if (acerta(...ponto(meio))) dentro = meio;
+                else fora = meio;
+              }
+              return dentro;
+            };
+            return {
+              desenho: { esquerda: r.left, direita: r.right, cima: r.top, baixo: r.bottom },
+              toque: {
+                esquerda: cx - alcance((d) => [cx - d, cy]),
+                direita: cx + alcance((d) => [cx + d, cy]),
+                cima: cy - alcance((d) => [cx, cy - d]),
+                baixo: cy + alcance((d) => [cx, cy + d]),
+              },
+            };
+          });
+          areas.push({ nome, ...medidas });
+        }
+        for (const { nome, toque } of areas) {
+          expect(toque.direita - toque.esquerda, `${nome}: a largura do toque`).toBeGreaterThanOrEqual(43.99);
+          expect(toque.baixo - toque.cima, `${nome}: a altura do toque`).toBeGreaterThanOrEqual(43.99);
+        }
+        for (const [i, a] of areas.entries()) {
+          for (const b of areas.slice(i + 1)) {
+            const cruzam =
+              a.toque.esquerda < b.toque.direita - 0.01 &&
+              b.toque.esquerda < a.toque.direita - 0.01 &&
+              a.toque.cima < b.toque.baixo - 0.01 &&
+              b.toque.cima < a.toque.baixo - 0.01;
+            expect(cruzam, `${a.nome} e ${b.nome} não se cobrem`).toBe(false);
+          }
+        }
+        // O desenho continua o de sempre: no Compacto, os três redondos de 32 px, a 6 px um do outro; no Normal, o Menu de
+        // 36 px e as pílulas de 30 px de altura.
+        const tamanhoDe = (c: Caixa) => [Math.round(c.direita - c.esquerda), Math.round(c.baixo - c.cima)];
+        if ((await page.locator('.win').getAttribute('data-layout')) === 'compacto') {
+          expect(areas.map((a) => tamanhoDe(a.desenho))).toEqual([
+            [32, 32],
+            [32, 32],
+            [32, 32],
+          ]);
+          expect(areas.slice(1).map((a, i) => Math.round(a.desenho.esquerda - areas[i].desenho.direita))).toEqual([6, 6]);
+        } else {
+          expect(tamanhoDe(areas[2].desenho)).toEqual([36, 36]);
+          expect(areas.slice(0, 2).map((a) => tamanhoDe(a.desenho)[1])).toEqual([30, 30]);
+        }
+      });
     });
   }
 }
 
+/** Uma caixa na tela, em pixels de CSS. */
+interface Caixa {
+  esquerda: number;
+  direita: number;
+  cima: number;
+  baixo: number;
+}
+
+/** Os seletores de uma lista, separados só pelas vírgulas de fora (a de um `:is(input, textarea)` fica dentro dele). */
+function seletoresDaLista(lista: string): string[] {
+  const partes: string[] = [];
+  let nivel = 0;
+  let inicio = 0;
+  for (let i = 0; i < lista.length; i++) {
+    if (lista[i] === '(' || lista[i] === '[') nivel++;
+    else if (lista[i] === ')' || lista[i] === ']') nivel--;
+    else if (lista[i] === ',' && nivel === 0) {
+      partes.push(lista.slice(inicio, i));
+      inicio = i + 1;
+    }
+  }
+  partes.push(lista.slice(inicio));
+  return partes.map((p) => p.trim());
+}
+
 // O menu do toque longo (o -webkit-touch-callout) é só do WebKit: o Chromium dos testes não o tem no estilo calculado, e
-// o caso confere a regra no app.css. Ela vale só no modo iPhone, como o resto.
-test('the iPhone styles turn off the long-press menu, and only in the iPhone mode', () => {
+// o caso confere as regras no app.css. Elas valem só no modo iPhone, como o resto, e nos campos o menu volta (o Colar).
+test('the iPhone styles turn off the long-press menu outside the fields, and only in the iPhone mode', () => {
   const css = readFileSync(APP_CSS, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
   const regras = Array.from(css.matchAll(/([^{}]+)\{([^{}]*)\}/g), ([, seletor, corpo]) => ({ seletor: seletor.trim(), corpo }));
   const callout = regras.filter((r) => /-webkit-touch-callout/.test(r.corpo));
   expect(callout.some((r) => /-webkit-touch-callout:\s*none/.test(r.corpo))).toBe(true);
-  for (const parte of callout.flatMap((r) => r.seletor.split(','))) expect(parte.trim()).toMatch(/^\.win\[data-plataforma="ios"\]/);
+  for (const parte of callout.flatMap((r) => seletoresDaLista(r.seletor))) expect(parte).toMatch(/^\.win\[data-plataforma="ios"\]/);
+  expect(callout.some((r) => /\binput\b/.test(r.seletor) && /\btextarea\b/.test(r.seletor) && /-webkit-touch-callout:\s*default/.test(r.corpo))).toBe(true);
 });

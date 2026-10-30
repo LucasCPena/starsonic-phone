@@ -87,8 +87,8 @@ function App() {
   // O estado de agora para os atalhos de teclado (registrados uma vez).
   const atual = useRef<AppState | null>(null);
   atual.current = state;
-  // (iPhone) O modo do último estado que chegou, para as mensagens que vêm logo depois dele (o toque, a atualização) e
-  // para as teclas.
+  // (iPhone) O modo do último estado que chegou, para as mensagens que vêm logo depois dele (o toque, a atualização, o
+  // `abrir` que o `ready` traz depois do estado) e para as teclas.
   const noIphone = useRef(false);
 
   const send = useCallback<Send>((command) => bridge.send(command), []);
@@ -99,7 +99,11 @@ function App() {
     bridge.onVersionMismatch(() => setReinstalar(true));
     const parar = bridge.subscribe((msg) => {
       if (msg.type === 'state') {
-        noIphone.current = isIos(msg.state);
+        const iphone = isIos(msg.state);
+        // (iPhone) No primeiro estado do modo iPhone, antes de a primeira tela dele ser desenhada, a página vai até as
+        // bordas da tela e fica sem o zoom.
+        if (iphone && !noIphone.current) applyIphoneViewport();
+        noIphone.current = iphone;
         saidas.current = { toque: msg.state.audio.toque, altoFalante: msg.state.audio.altoFalante };
         setState(msg.state);
       } else if (msg.type === 'toast') {
@@ -127,11 +131,6 @@ function App() {
   useEffect(() => {
     if (state) document.body.dataset.pronto = '1';
   }, [state !== null]);
-
-  // (iPhone) No primeiro estado do modo iPhone, a página vai até as bordas da tela e fica sem o zoom.
-  useEffect(() => {
-    if (ios) applyIphoneViewport();
-  }, [ios]);
 
   // Um link tel:/sip:/callto: põe o número no Teclado (a cada vez que `tecladoVez` muda; nunca liga sozinho).
   useEffect(() => {
@@ -385,12 +384,13 @@ function App() {
             onEdit={(atalho, posicao, foco) => setView({ kind: 'atalho', atalho, posicao, back: { kind: 'tab', tab: 'atalhos', foco } })}
           />
         )}
-        {/* (iPhone) Sem o "Salvar contato": os contatos são os da agenda do iPhone. */}
+        {/* (iPhone) Tocar numa linha liga de volta (spec 4.1), e sem o "Salvar contato": os contatos são os da agenda. */}
         {tab === 'recentes' && (
           <Recentes
             recentes={state.recentes}
             perdidas={state.perdidas}
             send={send}
+            ligarAoTocar={ios}
             onSaveContact={ios ? undefined : (n, nome) => setView({ kind: 'contato', numero: n, nome, back: view })}
           />
         )}

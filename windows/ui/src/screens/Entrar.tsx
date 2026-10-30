@@ -2,7 +2,8 @@
 // As validações e as mensagens são do C++: a interface manda o `login` com os campos como estão e mostra
 // `entrar.erro` embaixo da senha. Com `entrar.ocupado`, "Conectando…" e os campos travados; o formulário de
 // Adicionar/Editar fecha quando `ocupado` passa de true para false sem erro. Com `entrar.podeCancelar` (a senha de
-// uma troca de conta), o Cancelar volta para a conta em uso (cancelLogin).
+// uma troca de conta), o Cancelar volta para a conta em uso (cancelLogin). (iPhone) O Editar não tem o Remover: o Sair
+// do Menu é quem tira a conta, e a confirmação do Remover fala do computador.
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { BackBar } from '../components/BackBar';
 import { Confirm } from '../components/Confirm';
@@ -30,6 +31,7 @@ interface Campos {
 
 export function Entrar({ state, send, mode, conta, onClose }: Props) {
   const entrar = state.entrar;
+  const ios = isIos(state);
   const contaId = mode === 'adicionar' ? '' : (conta?.id ?? entrar.contaId);
   // O `entrar` do estado vale para este formulário quando é da mesma conta (ou de uma nova, sem contaId).
   const doFormulario = entrar.contaId === contaId;
@@ -80,7 +82,7 @@ export function Entrar({ state, send, mode, conta, onClose }: Props) {
 
   // O número da ajuda é texto, para ler ou copiar: o app é o tratador do tel: (o instalador o registra), e um link só
   // encheria o Teclado escondido. (iPhone) Lá ele é um botão: o toque abre o discador do iPhone com o suporte.
-  const ajuda = isIos(state) ? (
+  const ajuda = ios ? (
     <p class="help">
       Precisa de ajuda?{' '}
       <button
@@ -224,7 +226,7 @@ export function Entrar({ state, send, mode, conta, onClose }: Props) {
                 Cancelar
               </button>
             )}
-            {mode === 'editar' && conta && (
+            {mode === 'editar' && conta && !ios && (
               <button
                 type="button"
                 class="btn btn-outline btn-block"

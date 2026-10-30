@@ -3,14 +3,10 @@
 // nada fica embaixo do entalhe ou da barra de baixo, e as fotos que vão ao responsável. O Chromium não tem o entalhe: a
 // área segura vem das variáveis --safe-* (o app.css as define com o env(safe-area-inset-*)), postas no style do :root.
 import { expect, type Page } from '@playwright/test';
-import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import type { AgendaPermission } from '../src/state';
+import { capturar } from './helpers';
 
 export { semViolacoesSerias } from './helpers';
-
-const CAPTURAS = fileURLToPath(new URL('../test-results/capturas/', import.meta.url));
 
 /** Um tamanho do iPhone, em pixels de CSS, com a área segura e a escala da tela do aparelho. */
 export interface TamanhoIphone {
@@ -44,16 +40,23 @@ export function noIphone(tamanho: TamanhoIphone) {
 }
 
 /**
- * Abre o cenário da ponte falsa no modo iPhone (`agenda`: a permissão dos contatos; sem ela, concedida), no viewport do
- * tamanho com o toque e o modo móvel, e põe a área segura do tamanho nas variáveis --safe-* do style do :root.
+ * Abre o cenário da ponte falsa no modo iPhone, no viewport do tamanho com o toque e o modo móvel, e põe a área segura
+ * do tamanho nas variáveis --safe-* do style do :root. `agenda`: a permissão dos contatos (sem ela, concedida);
+ * `abrir`: um `abrir` pedido antes do `ready` (o app aberto pelo aviso da perdida), que vem no `ready`.
  */
-export async function abrirIos(page: Page, cenario: string, tamanho: TamanhoIphone, opcoes: { agenda?: AgendaPermission } = {}): Promise<void> {
+export async function abrirIos(
+  page: Page,
+  cenario: string,
+  tamanho: TamanhoIphone,
+  opcoes: { agenda?: AgendaPermission; abrir?: 'recentes' } = {},
+): Promise<void> {
   expect(page.viewportSize(), 'o viewport do tamanho: o describe usa o test.use(noIphone(tamanho))').toEqual({
     width: tamanho.largura,
     height: tamanho.altura,
   });
   const agenda = opcoes.agenda ? `&agenda=${opcoes.agenda}` : '';
-  await page.goto(`/index.html?fake=${cenario}&plataforma=ios${agenda}`);
+  const abrir = opcoes.abrir ? `&abrir=${opcoes.abrir}` : '';
+  await page.goto(`/index.html?fake=${cenario}&plataforma=ios${agenda}${abrir}`);
   await expect(page.locator('body[data-pronto]')).toHaveCount(1);
   expect(await page.evaluate(() => navigator.maxTouchPoints), 'o toque: o describe usa o test.use(noIphone(tamanho))').toBeGreaterThan(0);
   await page.evaluate(({ topo, base }) => {
@@ -100,11 +103,7 @@ export async function dentroDaAreaSegura(page: Page, seletores: string[]): Promi
   }
 }
 
-/** A foto da tela, em test-results/capturas/ios-<nome>-<largura>x<altura>-<tema>.png. */
+/** A foto da tela (o `capturar` de sempre), em test-results/capturas/ios-<nome>-<largura>x<altura>-<tema>.png. */
 export async function capturarIos(page: Page, nome: string, tamanho: TamanhoIphone, tema: string): Promise<void> {
-  mkdirSync(CAPTURAS, { recursive: true });
-  await page.evaluate(() => document.fonts.ready);
-  // O ponteiro na faixa de cima (a da barra de status): nenhum botão em hover na foto.
-  await page.mouse.move(1, 1);
-  await page.screenshot({ path: join(CAPTURAS, `ios-${nome}-${tamanho.largura}x${tamanho.altura}-${tema}.png`) });
+  await capturar(page, `ios-${nome}-${tamanho.largura}x${tamanho.altura}`, tema);
 }
