@@ -185,9 +185,17 @@ struct Harness {
         hooks.setStartWithWindows = [this](bool on) { host.push_back(on ? "autostart on" : "autostart off"); };
         hooks.updateAnswer = [this](bool now) { host.push_back(now ? "update now" : "update later"); };
         hooks.updateChannel = [this](const std::string& channel) { channels.push_back(channel); };
-        // Os do iPhone: a aba Contatos que abriu (contactsOpened) e o Permitir (allowContacts).
+        // Os do iPhone: a aba Contatos que abriu (contactsOpened), o Permitir (allowContacts), o botao Audio
+        // (audioRoute), o bipe de cada tecla (keyTone, com " na ligacao" quando ha uma), o bipe do fim e o aviso da
+        // perdida (com o texto).
         hooks.readAgenda = [this] { host.push_back("readAgenda"); };
         hooks.allowContacts = [this] { host.push_back("allowContacts"); };
+        hooks.chooseAudioRoute = [this] { host.push_back("chooseAudioRoute"); };
+        hooks.keyTone = [this](const std::string& key, bool inCall) {
+            host.push_back("keyTone " + key + (inCall ? " na ligacao" : ""));
+        };
+        hooks.endBeep = [this] { host.push_back("endBeep"); };
+        hooks.missedCall = [this](const std::string& text) { host.push_back("missedCall " + text); };
         if (sheetHooks) {
             hooks.pickImportFile = [this](std::function<void(const std::string&)> done) {
                 importPicks.push_back(std::move(done));

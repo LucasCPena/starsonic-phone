@@ -1,7 +1,7 @@
 #pragma once
 // O protocolo da ponte, versao 1, entre a interface (TypeScript, no WebView2) e o C++ do app de PC: os comandos que
 // a interface manda ({"v":1,"cmd":...}) e as mensagens que o C++ manda ({"v":1,"type":"state"|"toast"|"ring"|"update"|
-// "contatosEmpresa"|"agenda", ...}).
+// "contatosEmpresa"|"agenda"|"abrir", ...}).
 // O contrato, com cada campo e um exemplo, e o docs/ponte-windows.md: uma mudanca aqui muda o documento junto (e
 // o kBridgeVersion, se o formato deixa de ser compativel). Os textos sao UTF-8.
 // O modo iPhone (a mesma interface num WKWebView) tem comandos e campos a mais, na mesma versao 1: quem decide o que
@@ -295,5 +295,8 @@ std::string CompanyContactsMessage(int seq, const std::vector<SheetContact>& con
 // {"v":1,"type":"agenda","vez":N,"contatos":[{"nome","numeros":[...]}]} (iPhone): a agenda inteira, fora do state como
 // a lista da empresa, na ordem da agenda (a interface ordena).
 std::string AgendaMessage(int seq, const std::vector<AgendaContact>& contacts);
+// {"v":1,"type":"abrir","tela":"recentes"} (iPhone): a pessoa tocou no aviso da perdida, e a interface vai para os
+// Recentes.
+std::string OpenRecentsMessage();
 
 }  // namespace starsonic

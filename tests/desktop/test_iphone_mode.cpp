@@ -1,9 +1,12 @@
-// Testes do modo iPhone do nucleo (docs/ponte-windows.md, "O modo iPhone"; spec do iPhone, 4.2, 6.1, 6.4 e 7.1): o
-// estado com a plataforma e os campos do PC neutros, a conta unica, o Sair, os comandos do PC recusados no iPhone e os
-// do iPhone recusados no Windows, a abertura sem as partes do PC, o openExternal do iPhone e a agenda (a mensagem, os
-// nomes nas ligacoes, a permissao, os ganchos e o diagnostico sem os contatos).
+// Testes do modo iPhone do nucleo (docs/ponte-windows.md, "O modo iPhone"; spec do iPhone, 4.2, 6.1, 6.4, 7.1 e 7.7 a
+// 7.9): o estado com a plataforma e os campos do PC neutros, a conta unica, o Sair, os comandos do PC recusados no
+// iPhone e os do iPhone recusados no Windows, a abertura sem as partes do PC, o openExternal do iPhone, a agenda (a
+// mensagem, os nomes nas ligacoes, a permissao, os ganchos e o diagnostico sem os contatos), os bipes (o bipeTecla, o
+// keyTone e o bipe do fim), a rota de audio, a perdida, o abrir dos Recentes e o ready sem toque nem atualizacao.
+#include <algorithm>
 #include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "desktop_fixture.h"
@@ -401,41 +404,6 @@ TEST_CASE("the iPhone commands are refused on Windows") {
     CHECK(h.State()["admin"]["aberto"] == false);
 }
 
-TEST_CASE("the iPhone commands are read on the iPhone and, until they are wired, only leave a line") {
-    Harness h(Platform::IPhone);
-    h.StartRegistered();
-    // O contactsOpened e o allowContacts ja chamam os ganchos (o caso "contactsOpened and allowContacts call the host
-    // hooks", abaixo).
-    std::vector<Named> commands = {
-        {"audioRoute", R"({"v":1,"cmd":"audioRoute"})"},
-        {"setSetting bipeTecla", R"({"v":1,"cmd":"setSetting","chave":"bipeTecla","valor":false})"},
-    };
-    for (const char key : std::string("0123456789*#")) {
-        commands.push_back(Named{"keyTone", std::string(R"({"v":1,"cmd":"keyTone","tecla":")") + key + R"("})"});
-    }
-    for (const Named& command : commands) {
-        INFO(command.command);
-        const std::string before = Effects(h);
-        h.logs.clear();
-        h.Send(command.command);
-        CHECK(Effects(h) == before);
-        // So o nome do comando (nunca a tecla), e nao a linha da recusa.
-        CHECK(h.logs == std::vector<std::string>{std::string("comando ainda sem efeito no iPhone: ") + command.name});
-    }
-    CHECK(h.State()["config"]["bipeTecla"] == true);   // o de fabrica: nada foi gravado
-
-    // Outra tecla, ou sem ela: o comando e ignorado, como um campo errado de qualquer comando.
-    for (const char* bad : {R"({"v":1,"cmd":"keyTone","tecla":"+"})", R"({"v":1,"cmd":"keyTone","tecla":"55"})",
-                            R"({"v":1,"cmd":"keyTone","tecla":"a"})", R"({"v":1,"cmd":"keyTone","tecla":""})",
-                            R"({"v":1,"cmd":"keyTone","tecla":5})", R"({"v":1,"cmd":"keyTone"})"}) {
-        INFO(bad);
-        h.logs.clear();
-        h.Send(bad);
-        REQUIRE(h.logs.size() == 1);
-        CHECK(h.logs[0].find("comando ignorado: keyTone") == 0);
-    }
-}
-
 TEST_CASE("the iPhone start does not migrate, read the company list or watch BLF") {
     Harness h(Platform::IPhone);
     // O que o disco de um PC teria: a rc.7, os meus contatos, os atalhos com o BLF, a area do administrador (o Nao
@@ -727,9 +695,11 @@ TEST_CASE("denied then granted shows the list without restarting") {
     CHECK(h.State()["recentes"][0]["nome"] == "Central");
 
     // O Permitir: o hospedeiro abre os Ajustes do iPhone. A pessoa da a permissao e volta ao app, e o hospedeiro manda
-    // a lista: a aba mostra a lista e os nomes valem, no mesmo app (sem abrir de novo).
+    // a lista: a aba mostra a lista e os nomes valem, no mesmo app (sem abrir de novo). (A perdida de antes tambem foi
+    // ao hospedeiro, no aviso do iPhone: com o numero, sem a permissao.)
     h.Send(kAllowContacts);
-    CHECK(h.host == std::vector<std::string>{"readAgenda", "allowContacts"});
+    CHECK(h.host == std::vector<std::string>{"readAgenda", "missedCall Liga\xc3\xa7\xc3\xa3o perdida de 011988887777",
+                                             "allowContacts"});
     h.posts.clear();
     h.app->SetAgenda(AgendaPermission::Granted, SampleAgenda());
     h.Run();
@@ -834,4 +804,544 @@ TEST_CASE("the diagnostics never carry agenda names or numbers") {
             CHECK(file.second.find(name) == std::string::npos);
         }
     }
+}
+
+// Os bipes, a rota de audio, a perdida e o abrir dos Recentes (spec do iPhone, 7.7 a 7.9).
+namespace {
+
+// A mensagem abrir do toque no aviso da perdida, no texto exato do contrato.
+std::string OpenRecentsText() { return R"({"v":1,"type":"abrir","tela":"recentes"})"; }
+
+std::string KeyTone(const std::string& key) { return R"({"v":1,"cmd":"keyTone","tecla":")" + key + R"("})"; }
+
+std::string SetBipeTecla(bool on) {
+    return std::string(R"({"v":1,"cmd":"setSetting","chave":"bipeTecla","valor":)") + (on ? "true" : "false") + "}";
+}
+
+// "Ligacao perdida de <quem>": o texto do aviso de 2 s, que o controlador monta.
+std::string Missed(const std::string& who) { return "Liga\xc3\xa7\xc3\xa3o perdida de " + who; }
+
+// Quantas vezes o gancho foi chamado (o registro dele no h.host).
+size_t Calls(const Harness& h, const std::string& call) {
+    return static_cast<size_t>(std::count(h.host.begin(), h.host.end(), call));
+}
+
+// Os textos do aviso da perdida do iPhone (o gancho missedCall), na ordem.
+std::vector<std::string> MissedCalls(const Harness& h) {
+    const std::string prefix = "missedCall ";
+    std::vector<std::string> out;
+    for (const std::string& call : h.host) {
+        if (call.compare(0, prefix.size(), prefix) == 0) out.push_back(call.substr(prefix.size()));
+    }
+    return out;
+}
+
+// Os tipos das mensagens para a interface, a partir da de indice from, na ordem.
+std::vector<std::string> TypesSince(const Harness& h, size_t from) {
+    std::vector<std::string> out;
+    for (size_t i = from; i < h.posts.size(); ++i) out.push_back(json::parse(h.posts[i])["type"]);
+    return out;
+}
+
+}  // namespace
+
+TEST_CASE("bipeTecla is on by default, survives a restart and setSetting changes it") {
+    Harness h(Platform::IPhone);
+    h.StartRegistered();
+    CHECK(h.State()["config"] == json({{"bipeFim", true}, {"bipeTecla", true}}));   // de fabrica, ligado
+
+    // O setSetting o desliga: o estado e o config.json (bipe_tecla), sem mexer no bipe do fim, sem gancho e sem linha
+    // no diagnostico.
+    h.logs.clear();
+    h.Send(SetBipeTecla(false));
+    CHECK(h.State()["config"] == json({{"bipeFim", true}, {"bipeTecla", false}}));
+    CHECK(h.File("dados/config.json")["bipe_tecla"] == false);
+    CHECK(h.File("dados/config.json")["bipe_fim"] == true);
+    CHECK(h.host.empty());
+    CHECK(h.logs.empty());
+
+    // A proxima abertura le o config.json: continua desligado. O bipeFim e outra chave.
+    h.Restart();
+    CHECK(h.State()["config"] == json({{"bipeFim", true}, {"bipeTecla", false}}));
+    h.Send(R"({"v":1,"cmd":"setSetting","chave":"bipeFim","valor":false})");
+    CHECK(h.State()["config"] == json({{"bipeFim", false}, {"bipeTecla", false}}));
+    CHECK(h.File("dados/config.json")["bipe_tecla"] == false);
+
+    // Ligado de novo, tambem na abertura seguinte.
+    h.Send(SetBipeTecla(true));
+    CHECK(h.File("dados/config.json")["bipe_tecla"] == true);
+    h.Restart();
+    CHECK(h.State()["config"] == json({{"bipeFim", false}, {"bipeTecla", true}}));
+
+    // Desligado, e depois o config.json sem a chave (o de antes desta versao) ou com um valor que nao e booleano:
+    // ligado.
+    h.Send(SetBipeTecla(false));
+    json config = h.File("dados/config.json");
+    REQUIRE(config["bipe_tecla"] == false);
+    config.erase("bipe_tecla");
+    h.files.files["dados/config.json"] = config.dump();
+    h.Restart();
+    CHECK(h.State()["config"]["bipeTecla"] == true);
+    config["bipe_tecla"] = "desligado";
+    h.files.files["dados/config.json"] = config.dump();
+    h.Restart();
+    CHECK(h.State()["config"]["bipeTecla"] == true);
+}
+
+TEST_CASE("keyTone calls the host only with bipeTecla, with inCall during a call") {
+    Harness h(Platform::IPhone);
+    h.StartRegistered();
+    // Sem ligacao: cada tecla vai ao hospedeiro (inCall false), e so isso: nenhuma mensagem, nada no disco, nenhum dtmf
+    // e nenhuma linha no diagnostico (as teclas sao o numero que a pessoa digita).
+    const std::string before = Effects(h);
+    h.logs.clear();
+    std::vector<std::string> beeps;
+    for (const char key : std::string("0123456789*#")) {
+        h.Send(KeyTone(std::string(1, key)));
+        beeps.push_back(std::string("keyTone ") + key);
+    }
+    CHECK(h.host == beeps);
+    h.host.clear();
+    CHECK(Effects(h) == before);
+    CHECK(h.logs.empty());
+
+    // Com uma ligacao (a feita chamando, e depois em andamento), inCall true. O dtmf e o comando de sempre: o bipe nao
+    // manda nada ao motor.
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2002"})");
+    h.Send(KeyTone("1"));
+    h.app->OnCallState(10, CallState::Confirmed, 200);
+    h.Run();
+    h.Send(R"({"v":1,"cmd":"dtmf","digitos":"5"})");
+    h.Send(KeyTone("5"));
+    CHECK(h.host == std::vector<std::string>{"keyTone 1 na ligacao", "keyTone 5 na ligacao"});
+    CHECK(h.engine.dtmfs == std::vector<std::pair<int, std::string>>{{10, "5"}});
+    // A ligacao acabou: fora dela de novo.
+    h.app->OnCallState(10, CallState::Disconnected, 200);
+    h.Run();
+    h.host.clear();
+    h.Send(KeyTone("2"));
+    CHECK(h.host == std::vector<std::string>{"keyTone 2"});
+
+    // Com o bipeTecla desligado, nenhum bipe (a interface que ainda nao viu o estado novo), tambem na ligacao.
+    h.Send(SetBipeTecla(false));
+    h.host.clear();
+    h.logs.clear();
+    h.Send(KeyTone("3"));
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2003"})");
+    h.Send(KeyTone("4"));
+    CHECK(h.host.empty());
+    CHECK(h.logs.empty());
+    h.app->OnCallState(11, CallState::Disconnected, 486);
+    h.Run();
+    // Ligado de novo, volta.
+    h.Send(SetBipeTecla(true));
+    h.host.clear();
+    h.Send(KeyTone("#"));
+    CHECK(h.host == std::vector<std::string>{"keyTone #"});
+
+    // Outra tecla, ou sem ela: recusada na leitura do comando, com a linha de sempre (sem a tecla) e sem o bipe.
+    const std::string badKey = "comando ignorado: keyTone: a tecla precisa ser de 0 a 9, * ou #";
+    const std::vector<std::pair<std::string, std::string>> refused = {
+        {KeyTone("+"), badKey},
+        {KeyTone("55"), badKey},
+        {KeyTone("a"), badKey},
+        {KeyTone(""), badKey},
+        {KeyTone("5 "), badKey},
+        {R"({"v":1,"cmd":"keyTone","tecla":5})", "comando ignorado: keyTone: o campo tecla precisa ser texto"},
+        {R"({"v":1,"cmd":"keyTone"})", "comando ignorado: keyTone: falta o campo tecla"},
+    };
+    h.host.clear();
+    for (const auto& command : refused) {
+        INFO(command.first);
+        h.logs.clear();
+        h.Send(command.first);
+        CHECK(h.logs == std::vector<std::string>{command.second});
+    }
+    CHECK(h.host.empty());
+}
+
+TEST_CASE("the end beep goes to the host hook, not to a ring message") {
+    // A regra do ring fim do Windows ("the end beep plays only for answered calls with no other call left"), com o
+    // gancho no lugar da mensagem.
+    Harness h(Platform::IPhone);
+    h.StartRegistered();
+    // A feita que nao completou, a recebida perdida e a recusada: nada.
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2002"})");
+    h.app->OnCallState(10, CallState::Disconnected, 486);
+    h.app->OnIncomingCall(20, "2003", "");
+    h.app->OnCallState(20, CallState::Disconnected, 487);
+    h.app->OnIncomingCall(21, "2003", "");
+    h.Run();
+    h.Send(R"({"v":1,"cmd":"reject"})");
+    h.app->OnCallState(21, CallState::Disconnected, 486);
+    h.Run();
+    CHECK(Calls(h, "endBeep") == 0);
+
+    // A atendida acaba com a segunda tocando: nada; a segunda e perdida: nada.
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2002"})");
+    h.app->OnCallState(11, CallState::Confirmed, 200);
+    h.app->OnIncomingCall(22, "2004", "");
+    h.Run();
+    h.Send(R"({"v":1,"cmd":"hangup","id":11})");
+    h.app->OnCallState(11, CallState::Disconnected, 200);
+    h.Run();
+    CHECK(Calls(h, "endBeep") == 0);
+    h.app->OnCallState(22, CallState::Disconnected, 487);
+    h.Run();
+    CHECK(Calls(h, "endBeep") == 0);
+
+    // A atendida que acaba sem outra: o bipe vai ao hospedeiro, pela fila de comandos (nunca na thread do motor).
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2002"})");
+    h.app->OnCallState(12, CallState::Confirmed, 200);
+    h.Run();
+    h.app->OnCallState(12, CallState::Disconnected, 200);
+    CHECK(Calls(h, "endBeep") == 0);
+    h.Run();
+    CHECK(Calls(h, "endBeep") == 1);
+
+    // Duas atendidas: a primeira que acaba nao bipa (a outra continua); a ultima, sim.
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2002"})");
+    h.app->OnCallState(13, CallState::Confirmed, 200);
+    h.Run();
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2005"})");
+    h.app->OnCallState(14, CallState::Confirmed, 200);
+    h.Run();
+    h.app->OnCallState(14, CallState::Disconnected, 200);   // o outro lado desligou
+    h.Run();
+    CHECK(Calls(h, "endBeep") == 1);
+    h.Send(R"({"v":1,"cmd":"hangup","id":13})");          // a propria pessoa desligou
+    h.app->OnCallState(13, CallState::Disconnected, 200);
+    h.Run();
+    CHECK(Calls(h, "endBeep") == 2);
+
+    // A conferencia: as duas acabam juntas, um bipe so.
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2002"})");
+    h.app->OnCallState(15, CallState::Confirmed, 200);
+    h.Run();
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2005"})");
+    h.app->OnCallState(16, CallState::Confirmed, 200);
+    h.Run();
+    h.Send(R"({"v":1,"cmd":"join"})");
+    h.Send(R"({"v":1,"cmd":"hangup"})");
+    h.app->OnCallState(15, CallState::Disconnected, 200);
+    h.app->OnCallState(16, CallState::Disconnected, 200);
+    h.Run();
+    CHECK(Calls(h, "endBeep") == 3);
+
+    // A recebida atendida tambem bipa; o bipe nao volta no ready.
+    h.app->OnIncomingCall(23, "2006", "");
+    h.Run();
+    h.Send(R"({"v":1,"cmd":"answer"})");
+    h.app->OnCallState(23, CallState::Confirmed, 200);
+    h.app->OnCallState(23, CallState::Disconnected, 200);
+    h.Run();
+    CHECK(Calls(h, "endBeep") == 4);
+    h.Send(kReady);
+    CHECK(Calls(h, "endBeep") == 4);
+
+    // O bipeTecla nao cala o bipe do fim; o bipeFim desligado, sim.
+    h.Send(SetBipeTecla(false));
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2002"})");
+    h.app->OnCallState(17, CallState::Confirmed, 200);
+    h.app->OnCallState(17, CallState::Disconnected, 200);
+    h.Run();
+    CHECK(Calls(h, "endBeep") == 5);
+    h.Send(R"({"v":1,"cmd":"setSetting","chave":"bipeFim","valor":false})");
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2002"})");
+    h.app->OnCallState(18, CallState::Confirmed, 200);
+    h.app->OnCallState(18, CallState::Disconnected, 200);
+    h.Run();
+    CHECK(Calls(h, "endBeep") == 5);
+
+    // Nenhuma mensagem ring chegou a interface, nem a do fim.
+    CHECK(h.Messages("ring").empty());
+}
+
+TEST_CASE("no ring message reaches the interface on the iPhone") {
+    Harness h(Platform::IPhone);
+    h.StartRegistered();
+    h.app->SetAgenda(AgendaPermission::Granted, SampleAgenda());
+    h.Run();
+    // A recebida toca (no Windows, o ring completo): quem toca e a tela de chamada do iPhone.
+    h.app->OnIncomingCall(4, "2002", "Fulano");
+    h.Run();
+    REQUIRE(h.State()["ligacao"]["top"]["phase"] == "ringing");
+    // O ready com ela tocando: o estado e a agenda, nada de toque.
+    size_t from = h.posts.size();
+    h.Send(kReady);
+    CHECK(TypesSince(h, from) == std::vector<std::string>{"state", "agenda"});
+    CHECK(h.State()["ligacao"]["top"]["phase"] == "ringing");
+
+    // Atendida, e uma segunda toca (no Windows, o ring espera); o ready de novo.
+    h.Send(R"({"v":1,"cmd":"answer"})");
+    h.app->OnCallState(4, CallState::Confirmed, 200);
+    h.app->OnIncomingCall(5, "2003", "");
+    h.Run();
+    REQUIRE(h.State()["ligacao"]["secondKind"] == "ringing");
+    from = h.posts.size();
+    h.Send(kReady);
+    CHECK(TypesSince(h, from) == std::vector<std::string>{"state", "agenda"});
+
+    // A segunda recusada e a primeira desligada (no Windows, o ring parar), e o ready sem ligacao.
+    h.Send(R"({"v":1,"cmd":"reject"})");
+    h.app->OnCallState(5, CallState::Disconnected, 486);
+    h.Send(R"({"v":1,"cmd":"hangup"})");
+    h.app->OnCallState(4, CallState::Disconnected, 200);
+    h.Run();
+    CHECK(h.State()["ligacao"].is_null());
+    from = h.posts.size();
+    h.Send(kReady);
+    CHECK(TypesSince(h, from) == std::vector<std::string>{"state", "agenda"});
+
+    // Em nenhum momento um ring: nem o completo, nem o espera, nem o parar.
+    CHECK(h.Messages("ring").empty());
+}
+
+TEST_CASE("SetAudioRoute changes rotaAudio and audioRoute asks the host") {
+    Harness h(Platform::IPhone);
+    h.StartRegistered();
+    CHECK(h.State()["rotaAudio"] == "");   // sem saber
+    // O botao Audio da ligacao: o hospedeiro mostra a escolha do iPhone, e so (a saida escolhida volta pelo
+    // SetAudioRoute): nenhuma mensagem.
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2002"})");
+    h.app->OnCallState(10, CallState::Confirmed, 200);
+    h.Run();
+    const size_t posts = h.posts.size();
+    h.logs.clear();
+    h.Send(R"({"v":1,"cmd":"audioRoute"})");
+    CHECK(h.host == std::vector<std::string>{"chooseAudioRoute"});
+    CHECK(h.posts.size() == posts);
+
+    // A saida que a pessoa escolheu (ou a trocada fora do app) so vai para a fila; nela, o estado com a rotaAudio.
+    h.app->SetAudioRoute("Viva-voz");
+    CHECK(h.posts.size() == posts);
+    h.Run();
+    REQUIRE(h.posts.size() == posts + 1);
+    CHECK(h.State()["rotaAudio"] == "Viva-voz");
+    // A mesma de novo: nada sai.
+    h.app->SetAudioRoute("Viva-voz");
+    h.Run();
+    CHECK(h.posts.size() == posts + 1);
+    // Um fone que liga, o alto-falante do ouvido e "" (sem saber).
+    for (const char* route : {"Fone de Teste", "iPhone", ""}) {
+        h.app->SetAudioRoute(route);
+        h.Run();
+        CHECK(h.State()["rotaAudio"] == route);
+    }
+    // Nenhuma linha no diagnostico: nem a do botao, nem a da saida (o nome de um fone pode levar o nome de uma pessoa).
+    CHECK(h.logs.empty());
+
+    // Sem ligacao tambem; a rota so fica na memoria: nada no disco, e a proxima abertura nao sabe a saida ate o
+    // hospedeiro mandar.
+    h.app->OnCallState(10, CallState::Disconnected, 200);
+    h.Run();
+    h.app->SetAudioRoute("Fone de Teste");
+    h.Run();
+    CHECK(h.State()["rotaAudio"] == "Fone de Teste");
+    for (const auto& file : h.files.files) {
+        INFO(file.first);
+        CHECK(file.second.find("Fone de Teste") == std::string::npos);
+        CHECK(file.second.find("Viva-voz") == std::string::npos);
+    }
+    h.Restart();
+    CHECK(h.State()["rotaAudio"] == "");
+
+    // No Windows, nada: nenhuma mensagem, o estado sem a rotaAudio, e a linha no diagnostico.
+    Harness pc;
+    pc.StartRegistered();
+    const std::string before = Effects(pc);
+    pc.logs.clear();
+    pc.app->SetAudioRoute("Viva-voz");
+    pc.Run();
+    CHECK(Effects(pc) == before);
+    CHECK(pc.logs == std::vector<std::string>{"rota de audio: recusada no modo Windows"});
+    CHECK_FALSE(pc.State().contains("rotaAudio"));
+}
+
+TEST_CASE("a missed call calls missedCall with the text, but not with do not disturb") {
+    Harness h(Platform::IPhone);
+    h.StartRegistered();
+    h.engine.nextCallId = 100;   // a feita, longe dos ids das recebidas
+    h.app->SetAgenda(AgendaPermission::Granted, SampleAgenda());
+    h.Run();
+    // Quem ligou desistiu: o aviso de 2 s, como hoje, e o aviso do iPhone com o mesmo texto (com o nome da agenda),
+    // pela fila de comandos (nunca na thread do motor).
+    h.app->OnIncomingCall(4, "011988887777", "Central");
+    h.Run();
+    h.time.Advance(1000);
+    h.app->OnCallState(4, CallState::Disconnected, 487);
+    CHECK(MissedCalls(h).empty());
+    h.Run();
+    CHECK(LastToast(h) == kMissedAna);
+    CHECK(MissedCalls(h) == std::vector<std::string>{kMissedAna});
+
+    // Sem o nome da agenda, o numero: o mesmo texto do aviso de 2 s.
+    h.time.Advance(1000);
+    h.app->OnIncomingCall(5, "3001", "Central");
+    h.Run();
+    h.app->OnCallState(5, CallState::Disconnected, 487);
+    h.Run();
+    CHECK(LastToast(h) == Missed("3001"));
+    CHECK(MissedCalls(h) == std::vector<std::string>{kMissedAna, Missed("3001")});
+
+    // Ocupado com outra ligacao: a que chega com a feita ainda chamando, e a que o motor recusou sozinho.
+    h.time.Advance(1000);
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2002"})");
+    h.app->OnIncomingCall(6, "2003", "Central");
+    h.Run();
+    CHECK(h.engine.rejects == std::vector<int>{6});
+    h.app->OnRejectedBusy("21977776666", "Central");
+    h.Run();
+    CHECK(MissedCalls(h) == std::vector<std::string>{kMissedAna, Missed("3001"), kMissedAna, Missed("21977776666")});
+    h.app->OnCallState(100, CallState::Disconnected, 486);
+    h.Run();
+
+    // A atendida e a recusada pela pessoa: nenhum aviso.
+    h.time.Advance(1000);
+    h.app->OnIncomingCall(7, "2003", "Central");
+    h.Run();
+    h.Send(R"({"v":1,"cmd":"answer"})");
+    h.app->OnCallState(7, CallState::Confirmed, 200);
+    h.app->OnCallState(7, CallState::Disconnected, 200);
+    h.app->OnIncomingCall(8, "2003", "Central");
+    h.Run();
+    h.Send(R"({"v":1,"cmd":"reject"})");
+    h.app->OnCallState(8, CallState::Disconnected, 486);
+    h.Run();
+    CHECK(MissedCalls(h).size() == 4);
+
+    // Com o Nao perturbe: ocupado, e a perdida nos Recentes, sem tocar e sem aviso (nem o de 2 s, nem o do iPhone),
+    // tambem a que o motor recusou sozinho.
+    h.Send(R"({"v":1,"cmd":"setDnd","on":true})");
+    const size_t toasts = h.Toasts().size();
+    const size_t recents = h.State()["recentes"].size();
+    h.time.Advance(1000);
+    h.app->OnIncomingCall(9, "011988887777", "Central");
+    h.Run();
+    CHECK(h.engine.rejects == std::vector<int>{6, 8, 9});   // o ocupado, a recusada pela pessoa e o Nao perturbe
+    CHECK(h.State()["ligacao"].is_null());
+    h.app->OnRejectedBusy("011988887777", "Central");
+    h.Run();
+    const json state = h.State();
+    REQUIRE(state["recentes"].size() == recents + 2);
+    CHECK(state["recentes"][0]["tipo"] == "perdida");
+    CHECK(state["recentes"][1]["tipo"] == "perdida");
+    CHECK(h.Toasts().size() == toasts);
+    CHECK(MissedCalls(h).size() == 4);
+
+    // A que ja tocava quando o Nao perturbe ligou continua tocando: quem ligou desistiu, e ela tem os dois avisos
+    // (tocou).
+    h.Send(R"({"v":1,"cmd":"setDnd","on":false})");
+    h.time.Advance(1000);
+    h.app->OnIncomingCall(12, "2003", "Central");
+    h.Run();
+    h.Send(R"({"v":1,"cmd":"setDnd","on":true})");
+    h.app->OnCallState(12, CallState::Disconnected, 487);
+    h.Run();
+    CHECK(LastToast(h) == kMissedAna);
+    CHECK(MissedCalls(h) ==
+          std::vector<std::string>{kMissedAna, Missed("3001"), kMissedAna, Missed("21977776666"), kMissedAna});
+
+    // No Windows, so o aviso de 2 s.
+    Harness pc;
+    pc.StartRegistered();
+    pc.app->OnIncomingCall(4, "2002", "Central");
+    pc.Run();
+    pc.app->OnCallState(4, CallState::Disconnected, 487);
+    pc.Run();
+    CHECK(pc.Toasts() == std::vector<std::string>{Missed("2002")});
+    CHECK(pc.host.empty());
+}
+
+TEST_CASE("OpenRecents sends the abrir message on the iPhone and nothing on Windows") {
+    Harness h(Platform::IPhone);
+    h.StartRegistered();
+    h.Send(kReady);
+    // O toque no aviso da perdida so vai para a fila; nela, a mensagem abrir, sozinha (o estado nao muda), sem linha no
+    // diagnostico.
+    const size_t posts = h.posts.size();
+    h.logs.clear();
+    h.app->OpenRecents();
+    CHECK(h.posts.size() == posts);
+    h.Run();
+    REQUIRE(h.posts.size() == posts + 1);
+    CHECK(h.posts.back() == OpenRecentsText());
+    CHECK(h.logs.empty());
+    // A cada toque, uma; o ready seguinte nao a repete.
+    h.app->OpenRecents();
+    h.Run();
+    CHECK(h.Messages("abrir").size() == 2);
+    const size_t from = h.posts.size();
+    h.Send(kReady);
+    CHECK(TypesSince(h, from) == std::vector<std::string>{"state"});
+
+    // No Windows, nada, tambem antes do ready (que entao nao leva nenhum abrir): so a linha no diagnostico.
+    Harness pc;
+    pc.StartRegistered();
+    const std::string before = Effects(pc);
+    pc.logs.clear();
+    pc.app->OpenRecents();
+    pc.Run();
+    CHECK(Effects(pc) == before);
+    CHECK(pc.logs == std::vector<std::string>{"abrir os recentes: recusado no modo Windows"});
+    pc.Send(kReady);
+    pc.app->OpenRecents();
+    pc.Run();
+    CHECK(pc.Messages("abrir").empty());
+}
+
+TEST_CASE("an abrir asked before the ready goes in the ready, after the state and the agenda") {
+    // O app que o iOS tinha fechado abre pelo toque no aviso: o OpenRecents chega antes de a pagina carregar (antes do
+    // primeiro ready).
+    Harness h(Platform::IPhone);
+    h.StartRegistered();
+    h.app->SetAgenda(AgendaPermission::Granted, SampleAgenda());
+    h.app->OpenRecents();
+    h.app->OpenRecents();   // dois toques: um abrir so
+    h.Run();
+    CHECK(h.Messages("abrir").empty());
+    // O ready: o estado, a agenda e o abrir, nessa ordem (docs/ponte-windows.md, "O modo iPhone").
+    h.posts.clear();
+    h.Send(kReady);
+    REQUIRE(h.posts.size() == 3);
+    CHECK(json::parse(h.posts[0])["type"] == "state");
+    CHECK(h.posts[1] == SampleAgendaMessage(1));
+    CHECK(h.posts[2] == OpenRecentsText());
+    // Uma vez so: a pagina que recarrega depois nao volta aos Recentes.
+    h.posts.clear();
+    h.Send(kReady);
+    CHECK(TypesSince(h, 0) == std::vector<std::string>{"state", "agenda"});
+
+    // Sem nenhuma agenda desde a abertura (vez 0): o estado e o abrir. O toque aqui chega ate antes da abertura.
+    Harness cold(Platform::IPhone);
+    cold.app->OpenRecents();
+    cold.StartRegistered();
+    cold.posts.clear();
+    cold.Send(kReady);
+    REQUIRE(cold.posts.size() == 2);
+    CHECK(json::parse(cold.posts[0])["type"] == "state");
+    CHECK(cold.posts[1] == OpenRecentsText());
+}
+
+TEST_CASE("no update message reaches the interface on the iPhone") {
+    Harness h(Platform::IPhone);
+    h.StartRegistered();
+    h.Send(kReady);
+    // Uma oferta (o hospedeiro do iPhone nao tem atualizador: a atualizacao e a da App Store) nao vai a interface nem
+    // fica guardada: so a linha no diagnostico.
+    const std::string before = Effects(h);
+    h.logs.clear();
+    h.app->OfferUpdate("1.0.1", "Notas da vers\xc3\xa3o");
+    h.Run();
+    CHECK(Effects(h) == before);
+    CHECK(h.logs == std::vector<std::string>{"atualizacao: recusada no modo iPhone"});
+    // O ready nao a repete: so o estado.
+    const size_t from = h.posts.size();
+    h.Send(kReady);
+    CHECK(TypesSince(h, from) == std::vector<std::string>{"state"});
+    // As respostas sao comandos do PC (recusados), e o gancho da resposta nunca e chamado.
+    h.Send(R"({"v":1,"cmd":"updateNow"})");
+    h.Send(R"({"v":1,"cmd":"updateLater"})");
+    CHECK(h.host.empty());
+    CHECK(h.Messages("update").empty());
 }

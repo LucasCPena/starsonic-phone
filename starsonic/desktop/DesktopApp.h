@@ -11,7 +11,7 @@
 //   interface. O estado do DesktopApp so e lido e escrito nela, sem trava; post e chamado so dela, uma vez por
 //   mensagem, na ordem.
 // - HandleCommand (na thread da interface) so le o JSON e poe o comando na fila; DialLink, RefreshAudioDevices,
-//   SetAgenda e Start tambem so poem na fila. Nada disso espera o motor.
+//   SetAgenda, SetAudioRoute, OpenRecents e Start tambem so poem na fila. Nada disso espera o motor.
 // - Os comandos de ligacao chamam o controlador na thread de comandos: ele chama o motor na thread de quem chama
 //   (o Dial espera o MakeCall, o Hold ate ~2 s), e os efeitos de comandos de threads diferentes nao teriam ordem
 //   entre si. Com uma thread so, os comandos da interface chegam ao motor na ordem em que foram mandados (o
@@ -151,6 +151,17 @@ struct DesktopHooks {
     std::function<void()> readAgenda;
     // O Permitir do aviso da aba Contatos (allowContacts): pede a permissao (pendente) ou abre os Ajustes (negada).
     std::function<void()> allowContacts;
+    // O botao Audio da ligacao (audioRoute): mostra a escolha do iPhone (iPhone, Viva-voz ou o fone). A saida escolhida
+    // volta pelo SetAudioRoute.
+    std::function<void()> chooseAudioRoute;
+    // O bipe de telefone de uma tecla (keyTone, so com o bipeTecla ligado): key de "0" a "9", "*" ou "#"; inCall com
+    // uma ligacao (na ligacao, a tecla vai tambem como dtmf, pelo comando de sempre).
+    std::function<void(const std::string& key, bool inCall)> keyTone;
+    // O bipe do fim da ligacao, no lugar da mensagem ring fim (a mesma regra, com o bipeFim).
+    std::function<void()> endBeep;
+    // A perdida que a pessoa nao viu, com o texto do aviso de 2 s ("Ligacao perdida de <nome ou numero>"): o aviso do
+    // iPhone (spec do iPhone, 7.9). A recusada pelo Nao perturbe nao tem aviso (7.8).
+    std::function<void(const std::string& text)> missedCall;
 };
 
 // O app de PC. Responsavel por:
@@ -215,6 +226,12 @@ struct DesktopHooks {
 //     hooks.allowContacts). Cada lista sobe o agenda.vez e vai a interface na mensagem agenda (de novo no ready, logo
 //     depois do estado, com o vez maior que 0). Os nomes (na recebida, nos Recentes, na perdida): o da agenda, depois
 //     o que a central mandou; o contatoId dos Recentes fica "". O diagnostico so leva a contagem e a permissao.
+//   - O som e os avisos (spec do iPhone, 7.7 a 7.9): quem toca e a tela de chamada do iPhone (nenhuma mensagem ring,
+//     nem no ready), e a atualizacao e a da App Store (nenhuma update: o OfferUpdate so deixa uma linha). O bipe do fim
+//     (a regra do ring fim) vai ao hooks.endBeep; o keyTone, com o bipeTecla (config.json) ligado, ao hooks.keyTone;
+//     o audioRoute, ao hooks.chooseAudioRoute, e a saida escolhida volta pelo SetAudioRoute (a rotaAudio); a perdida
+//     que a pessoa nao viu vai tambem ao hooks.missedCall, com o texto do aviso de 2 s. O OpenRecents (o toque no
+//     aviso) manda o abrir dos Recentes; o pedido antes do primeiro ready vai nele, depois do estado e da agenda.
 class DesktopApp : public EngineListener {
 public:
     // O tempo do Entrar (spec do Windows 7.1).
@@ -254,7 +271,8 @@ public:
     void SaveWindowSize(int width, int height);
     // O atualizador achou uma versao nova: a interface pergunta ({"type":"update"}, de novo a cada ready ate a
     // resposta), e a resposta (updateNow/updateLater) vai uma vez ao hooks.updateAnswer. Uma pergunta nova toma o
-    // lugar da que estava aberta. Saindo (quit), a aberta vale "Depois". So poe na fila.
+    // lugar da que estava aberta. Saindo (quit), a aberta vale "Depois". No iPhone (a atualizacao e a da App Store),
+    // nada fica guardado e nada vai a interface: so uma linha no diagnostico. So poe na fila.
     void OfferUpdate(const std::string& version, const std::string& notes);
     // Um aviso de 2 s do executavel (o toast: "Termine a chamada para atualizar."). So poe na fila.
     void Notify(const std::string& text);
@@ -270,6 +288,14 @@ public:
     // permissao concedida, vazia), sobe o agenda.vez, manda a mensagem agenda e o estado, e escreve so a contagem e a
     // permissao no diagnostico. No Windows, nada (uma linha no diagnostico). So poe na fila.
     void SetAgenda(AgendaPermission permission, std::vector<AgendaContact> contacts);
+    // iPhone: a saida de som de agora, com o nome que o iPhone da ("iPhone", "Viva-voz" ou o do fone; "" sem saber),
+    // tambem a trocada fora do app: a rotaAudio do estado (so na memoria). No Windows, nada (uma linha no diagnostico).
+    // So poe na fila.
+    void SetAudioRoute(const std::string& name);
+    // iPhone: a pessoa tocou no aviso da perdida: a interface vai para os Recentes (a mensagem abrir). Antes do
+    // primeiro ready (a pagina ainda carrega), o abrir fica para ele, depois do estado e da agenda. No Windows, nada
+    // (uma linha no diagnostico). So poe na fila.
+    void OpenRecents();
     // A fila de comandos roda o que ja tinha e para; daqui em diante nada mais entra. Nunca de dentro de um gancho.
     void Shutdown();
 
@@ -453,6 +479,11 @@ private:
     // iPhone: o agenda.vez (so na thread de comandos): sobe a cada SetAgenda (0: nenhuma lista desde a abertura). A
     // lista em si e o agenda_.
     int agendaSeq_ = 0;
+    // iPhone (so na thread de comandos): a rotaAudio (a saida de som que o hospedeiro mandou; "" sem saber), se o
+    // primeiro ready ja chegou, e o abrir pedido antes dele (vai no ready, depois do estado e da agenda).
+    std::string audioRoute_;
+    bool interfaceReady_ = false;
+    bool openRecentsPending_ = false;
 
     std::unique_ptr<Executor> executor_;   // por ultimo: parado primeiro (no destrutor)
 };

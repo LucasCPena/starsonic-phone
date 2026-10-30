@@ -310,8 +310,13 @@ public:
                 app.Toast(snapshot.endMessage);
             }
             app.lastEndMessage_ = snapshot.endMessage;
-            if (answeredEnded && !app.quitting_ && app.settings_.Get().bipeFim && app.hooks_.post) {
-                app.hooks_.post(EndBeepMessage());
+            if (answeredEnded && !app.quitting_ && app.settings_.Get().bipeFim) {
+                // No iPhone, o hospedeiro toca o bipe: nenhuma mensagem ring chega a interface.
+                if (app.IPhone()) {
+                    if (app.hooks_.endBeep) app.hooks_.endBeep();
+                } else if (app.hooks_.post) {
+                    app.hooks_.post(EndBeepMessage());
+                }
             }
         });
     }
@@ -323,13 +328,19 @@ public:
     }
     void OnMissed(const std::string& text) override {
         DesktopApp& app = app_;
-        app.Post([&app, text] { app.Toast(text); });
+        app.Post([&app, text] {
+            app.Toast(text);
+            // No iPhone, tambem o aviso do iPhone (spec do iPhone, 7.9), com o mesmo texto. A recusada pelo Nao
+            // perturbe nao chega aqui: o controlador nao a avisa (sem tocar e sem aviso, 7.8).
+            if (app.IPhone() && app.hooks_.missedCall) app.hooks_.missedCall(text);
+        });
     }
     void OnRing(RingKind kind) override {
         DesktopApp& app = app_;
         app.Post([&app, kind] {
             app.ring_ = kind;
-            if (app.hooks_.post) app.hooks_.post(RingMessage(kind));
+            // No iPhone, quem toca e a tela de chamada do iPhone: nenhuma mensagem ring.
+            if (!app.IPhone() && app.hooks_.post) app.hooks_.post(RingMessage(kind));
         });
     }
 
@@ -423,6 +434,11 @@ void DesktopApp::SaveWindowSize(int width, int height) {
 
 void DesktopApp::OfferUpdate(const std::string& version, const std::string& notes) {
     Post([this, version, notes] {
+        // No iPhone, a atualizacao e a da App Store (docs/ponte-windows.md, "O modo iPhone"): nada fica para o ready.
+        if (IPhone()) {
+            Log("atualizacao: recusada no modo iPhone");
+            return;
+        }
         if (quitting_) {
             if (hooks_.updateAnswer) hooks_.updateAnswer(false);
             return;
@@ -444,6 +460,34 @@ void DesktopApp::SetInternet(InternetState state) {
 void DesktopApp::SetAgenda(AgendaPermission permission, std::vector<AgendaContact> contacts) {
     // A lista vai para a fila sem copia (a agenda pode ter milhares de contatos); a tarefa roda uma vez.
     Post([this, permission, contacts = std::move(contacts)]() mutable { ApplyAgenda(permission, std::move(contacts)); });
+}
+
+void DesktopApp::SetAudioRoute(const std::string& name) {
+    Post([this, name] {
+        if (!IPhone()) {
+            Log("rota de audio: recusada no modo Windows");
+            return;
+        }
+        // O estado sai depois da tarefa (Post), so se mudou. Sem linha no diagnostico: o nome de um fone pode levar o
+        // nome de uma pessoa.
+        audioRoute_ = name;
+    });
+}
+
+void DesktopApp::OpenRecents() {
+    Post([this] {
+        if (!IPhone()) {
+            Log("abrir os recentes: recusado no modo Windows");
+            return;
+        }
+        // Antes do primeiro ready a pagina ainda carrega (o app que o iOS tinha fechado abre pelo aviso): o abrir vai
+        // no ready, depois do estado e da agenda. Dois toques antes dele dao um abrir so.
+        if (!interfaceReady_) {
+            openRecentsPending_ = true;
+            return;
+        }
+        if (hooks_.post) hooks_.post(OpenRecentsMessage());
+    });
 }
 
 void DesktopApp::Shutdown() {
@@ -517,10 +561,19 @@ void DesktopApp::Execute(const Command& command) {
     switch (command.kind) {
         case CommandKind::Ready:
             Log("interface pronta");
+            interfaceReady_ = true;
             PublishState(/*force=*/true);
-            // iPhone: a agenda, se houve uma desde a abertura (com o vez 0 ela e vazia, como a da interface), logo
-            // depois do estado e antes do resto.
-            if (agendaSeq_ > 0) PostAgenda();
+            if (IPhone()) {
+                // O estado, a agenda (se houve uma desde a abertura: com o vez 0 ela e vazia, como a da interface) e o
+                // abrir pedido antes do primeiro ready, nessa ordem; nada de toque, de lista da empresa ou de pergunta
+                // da atualizacao (docs/ponte-windows.md, "O modo iPhone").
+                if (agendaSeq_ > 0) PostAgenda();
+                if (openRecentsPending_) {
+                    openRecentsPending_ = false;
+                    if (hooks_.post) hooks_.post(OpenRecentsMessage());
+                }
+                break;
+            }
             if (hooks_.post) hooks_.post(RingMessage(ring_));
             // A lista da empresa (rc.4), se houve uma desde a abertura (com o vez 0 ela e vazia, como a da interface).
             if (companySeq_ > 0) PostCompanyContacts();
@@ -634,13 +687,14 @@ void DesktopApp::Execute(const Command& command) {
         case CommandKind::SetSetting: {
             // So as chaves iniciarComWindows (no Windows), bipeFim e bipeTecla (no iPhone) chegam aqui (ParseCommand e
             // PlatformOf).
-            if (command.key == "bipeTecla") {
-                Log("comando ainda sem efeito no iPhone: " + LogName(command));
-                break;
-            }
             Settings settings = settings_.Get();
             if (command.key == "bipeFim") {
                 settings.bipeFim = command.value;
+                SaveSettings(settings);
+                break;
+            }
+            if (command.key == "bipeTecla") {
+                settings.bipeTecla = command.value;
                 SaveSettings(settings);
                 break;
             }
@@ -725,9 +779,14 @@ void DesktopApp::Execute(const Command& command) {
             if (hooks_.allowContacts) hooks_.allowContacts();
             break;
         case CommandKind::AudioRoute:
+            // A escolha do iPhone; a saida escolhida volta pelo SetAudioRoute.
+            if (hooks_.chooseAudioRoute) hooks_.chooseAudioRoute();
+            break;
         case CommandKind::KeyTone:
-            // Ainda sem os ganchos do hospedeiro. A linha leva so o nome (a tecla do keyTone fica fora do diagnostico).
-            Log("comando ainda sem efeito no iPhone: " + LogName(command));
+            // A tecla ja foi conferida na leitura (ParseCommand: outra e ignorada, com a linha, sem o valor). A
+            // interface so manda com o bipeTecla ligado, e o nucleo confere de novo. Nenhuma linha no diagnostico: as
+            // teclas sao o numero que a pessoa digita.
+            if (settings_.Get().bipeTecla && hooks_.keyTone) hooks_.keyTone(command.key, controller_->HasCalls());
             break;
     }
 }
@@ -1300,7 +1359,7 @@ BridgeState DesktopApp::BuildState() const {
     state.company.seq = companySeq_;
     if (IPhone()) {
         // O modo iPhone (docs/ponte-windows.md, "O estado no iPhone"): os campos do PC continuam, com o valor neutro, e
-        // os do iPhone: o resumo da agenda, e a rota de audio e o bipe ao digitar ainda com os de fabrica.
+        // os do iPhone: o resumo da agenda, a rota de audio e o bipe ao digitar.
         state.accounts.erase(std::remove_if(state.accounts.begin(), state.accounts.end(),
                                             [](const AccountView& view) { return !view.inUse; }),
                              state.accounts.end());   // uma conta por iPhone: so a em uso
@@ -1314,6 +1373,8 @@ BridgeState DesktopApp::BuildState() const {
         iphone.permission = agenda_.Permission();
         iphone.agendaSeq = agendaSeq_;
         iphone.agendaCount = agenda_.Count();
+        iphone.audioRoute = audioRoute_;
+        iphone.keyBeep = settings.bipeTecla;
         state.iphone = iphone;
     }
     return state;

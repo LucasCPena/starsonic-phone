@@ -574,6 +574,8 @@ std::string AgendaMessage(int seq, const std::vector<AgendaContact>& contacts) {
     return Dump(Out{{"v", kBridgeVersion}, {"type", "agenda"}, {"vez", seq}, {"contatos", list}});
 }
 
+std::string OpenRecentsMessage() { return Dump(Out{{"v", kBridgeVersion}, {"type", "abrir"}, {"tela", "recentes"}}); }
+
 std::string RingMessage(RingKind kind) {
     const char* name = "parar";
     if (kind == RingKind::Full) name = "completo";

@@ -12,7 +12,7 @@
 // - recentes.json: {"versao":1,"recentes":[{"numero","nome","tipo":"feita"|"recebida"|"perdida","inicio","duracao"}]}
 //   (inicio: ms desde 1970; duracao: em MILISSEGUNDOS, ao contrario do Android, que grava segundos)
 // - config.json:   {"versao":1,"microfone":-1,"alto_falante":-1,"toque":"","nao_perturbe":false,...,
-//                  "planilha_empresa":""} (rc.4: a planilha da empresa)
+//                  "planilha_empresa":"","bipe_tecla":true} (rc.4: a planilha da empresa; iPhone: o Bipe ao digitar)
 //
 // Carregar (Load): arquivo que nao existe vale como lista vazia (true); arquivo ilegivel, que nao e JSON, de outra
 // versao ou do formato errado vale como vazio e Load devolve false; o arquivo nao e tocado ate o proximo Save.
@@ -197,6 +197,9 @@ struct Settings {
     // rc.4: a planilha da empresa, o link ou o caminho que a pessoa salvou em Configuracoes (config.json:
     // planilha_empresa; "" sem a lista da empresa).
     std::string companyListLink;
+    // iPhone: o "Bipe ao digitar", o bipe de telefone de cada tecla (config.json: bipe_tecla; ligado de fabrica). O
+    // Windows grava a chave e nao a usa.
+    bool bipeTecla = true;
 };
 
 class SettingsStore {
