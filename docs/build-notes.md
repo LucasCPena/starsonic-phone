@@ -1,4 +1,4 @@
-# Notas do build no Windows
+# Notas do build no Windows e no Linux
 
 Como o Starsonic Phone é compilado e o que precisou de ajuste para o workflow ficar verde. A primeira parte é do app novo (a partir da 0.1.0: `windows/app` e `windows/ui`); a segunda, do app antigo (a série 0.0.1, o MicroSIP), que continua compilando enquanto `microsip/` existir; a terceira, do motor de ligações com o baresip (o do iPhone), que por enquanto só é compilado no Linux, para os testes.
 

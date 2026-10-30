@@ -174,12 +174,13 @@ public:
         loop_->Run([&] { account_->Refresh(); });
     }
 
-    // Os transportes de novo, nos endereços de agora, e, com conta e rede, um REGISTER na hora (sem conta, volta na
-    // hora).
+    // Os endereços locais e os servidores de DNS de agora (o RefreshNetwork), os transportes de novo nesses endereços
+    // e, com conta e rede, um REGISTER na hora (o OnIpChange; sem conta, volta na hora), tudo no mesmo Run.
     void HandleIpChange() {
         std::lock_guard<std::mutex> lock(apiMutex_);
         int err = 0;
         loop_->Run([&] {
+            loop_->RefreshNetwork();
             err = uag_reset_transp(false, false);
             if (account_) account_->OnIpChange();
         });
@@ -388,6 +389,11 @@ public:
         return ids;
     }
 
+    void FlushLocalAddresses() {
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        loop_->Run([] { (void)net_flush_addresses(baresip_network()); });
+    }
+
 private:
     // Sem o padrão (-1), como no motor do PJSIP; com nullAudio, o dispositivo nulo.
     std::vector<AudioDevice> ListAudioDevices() const {
@@ -403,8 +409,16 @@ private:
         return devices;
     }
 
+    // Nenhuma exceção do OnLog sai daqui, como no BaresipLoop::Log (o SipEngine.h não promete que ele não lança): a
+    // conta e as ligações escrevem também de dentro dos handlers do baresip, e uma exceção ali pararia o handler no
+    // meio (o fim de uma ligação transferida deixaria a vaga com a ligação que o baresip solta logo depois do aviso).
+    // A linha se perde.
     void Log(int level, const std::string& line) const {
-        if (level <= config_.logLevel) listener_->OnLog(level, line);
+        if (level > config_.logLevel) return;
+        try {
+            listener_->OnLog(level, line);
+        } catch (...) {
+        }
     }
 
     // O log do motor, para a conta e as ligações (qualquer thread).
@@ -585,5 +599,7 @@ std::vector<int> SipEngineTestAccess::MutedCalls(const SipEngine& engine) { retu
 std::vector<int> SipEngineTestAccess::ConferenceCalls(const SipEngine& engine) {
     return engine.impl_->ConferenceCalls();
 }
+
+void SipEngineTestAccess::FlushLocalAddresses(SipEngine& engine) { engine.impl_->FlushLocalAddresses(); }
 
 }  // namespace starsonic

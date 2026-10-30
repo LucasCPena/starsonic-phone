@@ -1,6 +1,7 @@
-"""Testes do registrador falso, em processo e sem rede: as mensagens são montadas e entregues direto aos
-tratadores (_on_invite, _on_refer) e à porta de controle (command). Rodar da raiz do repositório:
-python3 -m unittest tests/smoke/test_fake_registrar.py"""
+"""Testes do registrador falso, em processo: as mensagens são montadas e entregues direto ao registrador (aos
+tratadores, como _on_invite e _on_refer, e ao dispatch e ao process) e à porta de controle (command). Só os testes
+dos keep-alives no TCP abrem uma conexão, no 127.0.0.1, com o lado TCP dele numa porta livre. Rodar da raiz do
+repositório: python3 -m unittest tests/smoke/test_fake_registrar.py"""
 import pathlib
 import socket
 import sys

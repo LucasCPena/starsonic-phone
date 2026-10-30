@@ -1,7 +1,9 @@
 #pragma once
-// Motor de ligações sobre o PJSIP 2.17 (pjsua2), spec 6.2: monta a conta do perfil, registra, faz e
-// recebe ligações e avisa os eventos por EngineListener. Sem nada de Android; este cabeçalho também
-// não inclui o PJSIP.
+// O contrato do motor de ligações, com duas implementações: a do PJSIP 2.17 (pjsua2; SipEngine.cpp, no
+// Windows e no Android) e a do baresip e da libre 4.12 (baresip/, para o iPhone). O CMake escolhe uma
+// das duas. O motor monta a conta do perfil, registra, faz e recebe ligações e avisa os eventos por
+// EngineListener. Onde as duas fazem diferente, o comentário diz. Sem nada de Android nem de iPhone;
+// este cabeçalho não inclui o PJSIP nem o baresip.
 #include <memory>
 #include <optional>
 #include <string>
@@ -21,14 +23,14 @@ enum class CallState { Incoming = 0, Calling = 1, Early = 2, Connecting = 3, Con
 enum class BlfState { Free = 0, Ringing = 1, Busy = 2, Unknown = 3 };
 
 // Os eventos (OnRegistration, OnIncomingCall, OnRejectedBusy, OnCallState, OnTransfer e OnBlf) chegam numa
-// thread do próprio motor, um de cada vez e na ordem em que aconteceram, sem nenhuma trava do motor ou
-// do PJSIP presa: o listener pode chamar o motor (só não pode destruí-lo). Um evento pode chegar antes
-// de o método que o provocou voltar. Do começo de ~SipEngine em diante nenhum evento é entregue (o
+// thread do próprio motor, um de cada vez e na ordem em que aconteceram, sem nenhuma trava do motor, do
+// PJSIP ou da libre presa: o listener pode chamar o motor (só não pode destruí-lo). Um evento pode chegar
+// antes de o método que o provocou voltar. Do começo de ~SipEngine em diante nenhum evento é entregue (o
 // destrutor espera o que estiver com o listener terminar).
-// OnLog é diferente: chega na hora, na thread que escreveu a linha (uma do PJSIP ou a que chamou o
-// motor), às vezes com travas do motor ou do PJSIP presas; ele não pode chamar o motor nem esperar
-// por outra thread. A implementação precisa durar mais que o motor (o destrutor ainda manda linhas
-// de log).
+// OnLog é diferente: chega na hora, na thread que escreveu a linha (uma do PJSIP ou da libre, ou a que
+// chamou o motor), às vezes com travas do motor, do PJSIP ou da libre presas; ele não pode chamar o
+// motor nem esperar por outra thread. Uma exceção que saia dele não volta para o motor: a linha se
+// perde. A implementação precisa durar mais que o motor (o destrutor ainda manda linhas de log).
 class EngineListener {
 public:
     virtual ~EngineListener() {}
@@ -105,22 +107,24 @@ struct PushData {
     std::vector<std::pair<std::string, std::string>> headers;         // Nome: valor
 };
 
-// Todo método público registra a thread que chama no PJLIB antes de usar o PJSIP, então pode ser
-// chamado de qualquer thread. Chamadas ao mesmo tempo esperam uma pela outra (menos HasCall e
-// CallCount, que nunca esperam). Até duas ligações, uma delas a ativa: só a ativa fica ligada ao
-// dispositivo de som, e a outra fica em espera (re-INVITE sendonly). Na conferência (Join) as duas
-// ficam com o som e ligadas entre si. A terceira que chega recebe 486.
+// Todo método público pode ser chamado de qualquer thread: o motor do PJSIP registra a thread que chama
+// no PJLIB antes de usar o PJSIP, e o do baresip só usa o baresip e a libre dentro do laço deles.
+// Chamadas ao mesmo tempo esperam uma pela outra (menos HasCall e CallCount, que nunca esperam). Até
+// duas ligações, uma delas a ativa: só a ativa fica ligada ao dispositivo de som, e a outra fica em
+// espera (re-INVITE sendonly). Na conferência (Join) as duas ficam com o som e ligadas entre si. A
+// terceira que chega recebe 486.
 class SipEngine {
 public:
-    // O pjsua tem estado global: só um motor por processo (um segundo Create devolve nullptr até o
-    // primeiro ser destruído). Em caso de erro devolve nullptr e escreve o motivo em *error (se não
-    // for nullptr). Com stun= no perfil o pjsua testa os servidores aqui dentro, como no MicroSIP: cada
-    // um que não responde atrasa o Create em cerca de 8 s antes de ser ignorado (chame fora da thread
-    // principal).
+    // O pjsua e o baresip têm estado global: só um motor por processo (um segundo Create devolve nullptr
+    // até o primeiro ser destruído). Em caso de erro devolve nullptr e escreve o motivo em *error (se não
+    // for nullptr). No motor do PJSIP, com stun= no perfil, o pjsua testa os servidores aqui dentro, como
+    // no MicroSIP: cada um que não responde atrasa o Create em cerca de 8 s antes de ser ignorado (chame
+    // fora da thread principal). No do baresip, o STUN é só da mídia, e nada é testado aqui.
     static std::unique_ptr<SipEngine> Create(const EngineConfig& config, EngineListener* listener, std::string* error);
 
-    // Desliga as ligações e desregistra a conta, sem avisar o listener, e destrói o pjsua; demora cerca
-    // de 1 s (mais até ~5 s se o servidor não responde). Não pode ser chamado de dentro de um evento.
+    // Desliga as ligações e desregistra a conta, sem avisar o listener, e fecha o pjsua (ou o baresip e a
+    // libre); demora cerca de 1 s (mais até ~5 s se o servidor não responde). Não pode ser chamado de dentro
+    // de um evento.
     ~SipEngine();
 
     SipEngine(const SipEngine&) = delete;
@@ -129,8 +133,8 @@ public:
     // Troca a conta e registra; o resultado chega por OnRegistration com o id que SetAccount devolve
     // (> 0, e cada conta nova recebe um maior que o das anteriores). A conta anterior sai do servidor
     // sem aviso ao listener (as ligações em andamento são desligadas, com o Disconnected de sempre). 0:
-    // dados vazios ou o PJSIP recusou a conta (não há conta). Espera até ~5 s pela saída da conta
-    // anterior.
+    // dados vazios ou o PJSIP (ou o baresip) recusou a conta (não há conta). Espera até ~5 s pela saída da
+    // conta anterior.
     int SetAccount(const AccountInput& input);
 
     // Desliga as ligações, retira o registro e apaga a conta; no fim chega OnRegistration(200, false,
@@ -142,21 +146,31 @@ public:
     // Renova o registro agora. Com a rede fora (SetNetworkAvailable(false)), nada.
     void Reregister();
 
-    // A rede mudou: refaz os transportes e renova o registro (o resultado chega por OnRegistration).
-    // O pjsua, com a reescrita do Contact desligada, não refaz o registro sozinho no UDP e só o faz
-    // depois de 0 a 10 s no TCP; por isso o motor espera os transportes (até ~2 s) e registra de novo.
+    // A rede mudou (do Wi-Fi para o 4G e de volta, ou uma rede nova): refaz os transportes nos endereços
+    // de agora e renova o registro (o resultado chega por OnRegistration). Chame a cada troca de caminho, e
+    // não só o SetNetworkAvailable(true): só este refaz os transportes. Com um REGISTER a caminho no UDP,
+    // as repetições dele já saem pelo transporte novo: no motor do PJSIP ele vale como a renovação; no do
+    // baresip, o registro novo vai logo depois da resposta dele, que não vira evento.
+    // - No motor do PJSIP, os transportes ficam em 0.0.0.0 e servem a qualquer endereço. O pjsua, com a
+    //   reescrita do Contact desligada, não refaz o registro sozinho no UDP e só o faz depois de 0 a 10 s
+    //   no TCP; por isso o motor espera os transportes (até ~2 s) e registra de novo.
+    // - O do baresip lê de novo os endereços locais e os servidores de DNS (o baresip só os lê ao subir),
+    //   refaz os transportes nesses endereços e registra na hora. No TCP, o REGISTER que estava a caminho
+    //   ia pela conexão que a troca fecha: ele é largado (a resposta dele não vira evento) e sai de novo
+    //   na hora, sem esperar os 32 s em que a libre o daria por perdido.
     void HandleIpChange();
 
-    // A internet caiu (false) ou voltou (true), pelo que o app enxerga da rede. false: o PJSIP deixa de
+    // A internet caiu (false) ou voltou (true), pelo que o app enxerga da rede. false: o motor deixa de
     // tentar registrar de novo (uma renovação que falha não é repetida), nenhuma resposta de registro vira
-    // evento, as assinaturas de BLF saem e cada ramal da lista avisa OnBlf(Unknown). O registro não sai do
-    // servidor: ele vive até vencer ou até a próxima renovação falhar (com a central alcançável, como num
-    // "sem rede" errado, as ligações continuam chegando). A conta continua (as ligações em andamento seguem
-    // como estiverem) e uma SetAccount sem rede cria a conta sem registrar. true: registra de novo na hora
-    // (o resultado chega por OnRegistration; com um pedido ainda a caminho, como uma renovação sem resposta,
-    // o registro vai logo depois da resposta dele, e essa resposta não vira evento) e assina de novo os
-    // ramais da lista. Nenhum dos dois espera. Sem conta, só guarda o estado. Repetir o mesmo valor: false
-    // não faz nada; true registra de novo.
+    // evento e, no motor do PJSIP, as assinaturas de BLF saem e cada ramal da lista avisa OnBlf(Unknown). O
+    // registro não sai do servidor: ele vive até vencer ou até a próxima renovação falhar (com a central
+    // alcançável, como num "sem rede" errado, as ligações continuam chegando). A conta continua (as
+    // ligações em andamento seguem como estiverem) e uma SetAccount sem rede cria a conta sem registrar.
+    // true: registra de novo na hora (o resultado chega por OnRegistration; com um pedido ainda a caminho,
+    // como uma renovação sem resposta, o registro vai logo depois da resposta dele, e essa resposta não
+    // vira evento) e, no PJSIP, assina de novo os ramais da lista. Os transportes não mudam: numa troca de
+    // rede, é o HandleIpChange. Nenhum dos dois espera. Sem conta, só guarda o estado. Repetir o mesmo
+    // valor: false não faz nada; true registra de novo.
     void SetNetworkAvailable(bool available);
 
     // Os dados de push que vão em cada REGISTER da conta, ou nenhum (nullopt), nos dois formatos da spec 7.3:
@@ -169,8 +183,9 @@ public:
 
     // Os ramais (number em UTF-8, já sem separadores) cujo estado o motor acompanha na conta de agora, pelo
     // SUBSCRIBE do evento dialog (RFC 4235, o BLF) a sip:<número>@<domínio da conta> (com a porta, como em
-    // MakeCall). Troca a lista inteira: quem entra é assinado, quem sai tem a assinatura retirada
-    // (SUBSCRIBE com Expires: 0), quem fica continua como está. Vazia: nenhum. Os estados chegam por OnBlf
+    // MakeCall). Só no motor do PJSIP: o do baresip não assina nada e não avisa nada (só escreve no log).
+    // Troca a lista inteira: quem entra é assinado, quem sai tem a assinatura retirada (SUBSCRIBE com
+    // Expires: 0), quem fica continua como está. Vazia: nenhum. Os estados chegam por OnBlf
     // (o primeiro, quando o servidor manda o primeiro NOTIFY; os NOTIFY partial mudam só os diálogos que
     // trazem). Uma assinatura recusada ou encerrada pelo servidor avisa Unknown; ela é feita de novo quando
     // a conta volta a ficar registrada (depois de uma falha ou da rede voltar), e senão o PJSIP tenta de
@@ -187,8 +202,8 @@ public:
     // Liga para sip:<número>@<domínio da conta> (number em UTF-8, já sem separadores; ver
     // NormalizeDialString). Se a porta do perfil não é a 5060, a URI leva a porta (o servidor do
     // registro): sip:<número>@<domínio>:<porta>. Devolve o id da ligação, que os eventos dela trazem,
-    // ou -1 (sem conta, número vazio, já há duas ligações, a outra ainda não foi confirmada ou o PJSIP
-    // recusou; nesse caso nenhum evento dela chega). Com uma ligação confirmada em andamento, ela vai
+    // ou -1 (sem conta, número vazio, já há duas ligações, a outra ainda não foi confirmada ou o PJSIP (ou
+    // o baresip) recusou; nesse caso nenhum evento dela chega). Com uma ligação confirmada em andamento, ela vai
     // para a espera antes (e fica nela mesmo se a nova não sai) e a nova é a ativa. Os eventos podem
     // chegar antes de MakeCall voltar.
     int MakeCall(const std::string& number);
@@ -205,8 +220,10 @@ public:
 
     // callId vira a ativa: a outra (confirmada e fora da espera) vai para a espera, callId é retomada
     // (re-INVITE com sendrecv) se estava em espera, e só ela fica ligada ao dispositivo de som. Já
-    // ativa, nada muda. Na conferência, é o Split(callId, a outra). false: id desconhecido ou ligação
-    // ainda não confirmada.
+    // ativa, nada muda. Na conferência, é o Split(callId, a outra). false: id desconhecido, ligação
+    // ainda não confirmada ou a retomada de callId não saiu (também depois de esperar até ~2 s a
+    // renegociação anterior dela): callId já é a ativa, e a outra já saiu do som, mas callId segue em
+    // espera até um Activate seguinte.
     bool Activate(int callId);
 
     // A conferência a três, na mesa de áudio daqui (a central não fica sabendo): retoma a que está em
@@ -214,7 +231,8 @@ public:
     // sendo a ativa: o Activate de uma delas desfaz a conferência. Se uma das duas acaba, a outra segue
     // como a ativa, com o som. Já em conferência, nada muda. false (a conferência não começa): id
     // desconhecido, ids iguais, ligação não confirmada, transferência com consulta em andamento
-    // (TransferAttended sem resultado ainda) ou o PJSIP recusou a retomada.
+    // (TransferAttended sem resultado ainda) ou a retomada não saiu (também depois de esperar até ~2 s a
+    // renegociação anterior da que está em espera).
     bool Join(int callId, int otherId);
 
     // Desfaz a conferência: as duas deixam de se ouvir, otherId vai para a espera (re-INVITE com
@@ -237,13 +255,18 @@ public:
 
     // Transfere (REFER) para sip:<número>@<domínio da conta> (com a porta, como em MakeCall). O resultado
     // chega por OnTransfer; quando o outro lado avisa que deu certo (NOTIFY com 2xx), o motor desliga a
-    // ligação.
+    // ligação. Com outra transferência ainda sem resultado, os dois motores fazem diferente: o do baresip
+    // devolve false (sem REFER e sem OnTransfer), uma transferência por vez nas duas ligações juntas,
+    // porque o fim com erro de uma não diz de qual ligação ele é; o do PJSIP manda o REFER (quem impede o
+    // segundo pedido é o CallController).
     bool Transfer(int callId, const std::string& number);
 
     // A transferência com consulta: REFER com Replaces na ligação callId (o cliente, normalmente em
     // espera) apontando para a ligação targetCallId (o colega, normalmente a ativa), para o outro lado
     // ligar um ao outro. O resultado chega por OnTransfer(callId, ...); com 2xx o motor desliga as duas.
-    // false: id desconhecido, ligação não confirmada, ids iguais ou o PJSIP recusou (sem OnTransfer).
+    // false: id desconhecido, ligação não confirmada, ids iguais ou o PJSIP (ou o baresip) recusou (sem
+    // OnTransfer). Com outra transferência ainda sem resultado, como no Transfer: o motor do baresip
+    // devolve false, e o do PJSIP manda o REFER.
     bool TransferAttended(int callId, int targetCallId);
 
     // Quantas ligações há (tocando, chamando ou em andamento: 0, 1 ou 2), contando cada uma até ela
@@ -254,7 +277,9 @@ public:
     bool HasCall() const;
 
     // Os dispositivos de som que o PJSIP enxerga, na ordem dele (o id é a posição na lista). Com nullAudio,
-    // mais um no fim: o dispositivo nulo ("Null Audio", id -2). Vazio se o PJSIP falha ao listar.
+    // mais um no fim: o dispositivo nulo ("Null Audio", id -2). Vazio se o PJSIP falha ao listar. No motor
+    // do baresip, quem escolhe o caminho do som é o iPhone: a lista é vazia (com nullAudio, só o
+    // dispositivo nulo), e o SetAudioDevices e o RefreshAudioDevices não mudam nada no som.
     std::vector<AudioDevice> AudioDevices() const;
 
     // Escolhe o microfone e o alto-falante, para a ligação de agora e as próximas. -1 é o padrão do
@@ -271,7 +296,8 @@ public:
 
     // Para onde o áudio de callId vai na ponte de áudio, sem ordem: 0 é o dispositivo de som; outro
     // número, o id da outra ligação (na conferência: 0 e a outra). Vazio em espera, sem mídia ou com id
-    // desconhecido. A ponte aplica as mudanças no tique seguinte do relógio dela (cerca de 20 ms).
+    // desconhecido. No motor do PJSIP, a ponte aplica as mudanças no tique seguinte do relógio dela (cerca
+    // de 20 ms); no do baresip, a mistura da conferência é a do módulo mixminus.
     std::vector<int> AudioLinks(int callId) const;
 
 private:

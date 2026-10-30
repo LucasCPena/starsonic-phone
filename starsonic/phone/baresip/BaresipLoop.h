@@ -53,6 +53,13 @@ public:
     // não solta mais nada da libre nem do baresip (fica como está até o processo acabar).
     bool Run(const std::function<void()>& work);
 
+    // Dentro do Run, na troca de rede, antes do uag_reset_transp: a lista dos endereços locais do baresip de novo, com
+    // os de agora (o FillLocalAddresses, como na subida), e os servidores de DNS de agora (os do sistema: a
+    // configuração não tem o dns_server), como o módulo netroam do baresip faz antes do uag_reset_transp. O baresip só
+    // lê os endereços ao subir (o net_alloc): sem isto, numa troca do Wi-Fi para o 4G, o uag_reset_transp abriria os
+    // transportes nos endereços da rede de antes.
+    void RefreshNetwork();
+
     // Os módulos do baresip que o laço carrega (module_preload), na ordem: os de baresip.modules do build/deps.lock.
     static std::vector<std::string> Modules();
 
@@ -69,6 +76,11 @@ private:
     void Main();                     // a thread do laço
     bool Setup(std::string* error);  // na thread do laço, até os módulos
     void Teardown();                 // na thread do laço, depois do re_main
+    // Põe na lista dos endereços locais do baresip, de onde o ua_init e o uag_reset_transp abrem os transportes SIP e
+    // de onde sai o endereço da mídia de uma ligação feita, os endereços de agora: os das interfaces que o filtro do
+    // baresip aceita (como o net_alloc) e o loopback, que o filtro deixa de fora. O que já está na lista fica. Na
+    // thread do laço, antes do re_main (o Setup), ou dentro do Run (o RefreshNetwork).
+    void FillLocalAddresses();
     // Sai do Starting para o estado (e avisa o Start); false se o Start já tinha voltado.
     bool Report(State state, const std::string& error);
     // Nenhum dos dois deixa sair uma exceção (do LogSink, do baresipLines ou da falta de memória): os ganchos da libre

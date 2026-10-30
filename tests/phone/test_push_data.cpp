@@ -87,8 +87,9 @@ TEST_CASE("PushDataProblem refuses what would break the REGISTER") {
         CHECK_FALSE(PushDataProblem(OneParam(std::string(65, 'p'), "a")).empty());
     }
     SUBCASE("each byte that is not a character of a parameter or header name") {
-        // A RFC 3261 (token): letras, dígitos e estes.
-        const std::string allowed = "-.!%*_+`'~";
+        // O token da RFC 3261 (letras, dígitos e estes), sem o ` e o %, que o nome de um parâmetro da URI não aceita
+        // soltos.
+        const std::string allowed = "-.!*_+'~";
         for (int byte = 0; byte < 256; ++byte) {
             const char c = static_cast<char>(byte);
             const bool good = IsAsciiAlnum(c) || OneOf(c, allowed);
@@ -146,13 +147,46 @@ TEST_CASE("PushDataProblem refuses what would break the REGISTER") {
         const PushData cases[] = {OneParam("pn-prid", secret), OneHeader("X-Push-Token", secret),
                                   OneParam("pn\xc3\xa7", "a"), OneHeader("X Push", "a"), OneHeader("Via", "a"),
                                   OneParam("transport", "udp"), OneHeader("X-Push-Token", ""),
-                                  OneParam("pn-prid", std::string(513, 'a'))};
+                                  OneParam("pn-prid", std::string(513, 'a')), OneHeader("m", secret),
+                                  OneHeader("Proxy-Authorization", secret), OneParam("pn%41", secret)};
         for (const PushData& data : cases) {
             const std::string problem = PushDataProblem(data);
             INFO("motivo: " << problem);
             CHECK_FALSE(problem.empty());
             CHECK(IsLogLine(problem));
             CHECK(problem.find("segredo") == std::string::npos);
+        }
+    }
+}
+
+TEST_CASE("PushDataProblem refuses the compact form of a header, Proxy-Authorization and names with ` or %") {
+    SUBCASE("each one-letter header name, in any case") {
+        // Uma letra só é a forma compacta de um cabeçalho, que o servidor lê como o nome inteiro: as da RFC 3261 (v, f,
+        // t, i, m, l, c, e, k e s; o m seria um segundo Contact) e as de RFCs depois dela.
+        for (char letter = 'a'; letter <= 'z'; ++letter) {
+            const char upper = static_cast<char>(letter - 'a' + 'A');
+            INFO("cabecalho " << letter);
+            CHECK_FALSE(PushDataProblem(OneHeader(std::string(1, letter), "x")).empty());
+            CHECK_FALSE(PushDataProblem(OneHeader(std::string(1, upper), "x")).empty());
+        }
+        CHECK(PushDataProblem(OneHeader("mm", "x")).empty());   // duas letras já não são
+        CHECK(PushDataProblem(OneParam("m", "x")).empty());     // e no parâmetro do Contact uma letra serve
+    }
+    SUBCASE("Proxy-Authorization, in any case") {
+        // A libre o escreve no REGISTER depois de um 407, como o Authorization depois de um 401.
+        for (const char* name : {"Proxy-Authorization", "proxy-authorization", "PROXY-AUTHORIZATION"}) {
+            INFO("cabecalho " << name);
+            CHECK_FALSE(PushDataProblem(OneHeader(name, "x")).empty());
+        }
+        CHECK(PushDataProblem(OneHeader("X-Proxy-Authorization", "x")).empty());
+    }
+    SUBCASE("a parameter or header name with ` or %") {
+        // No nome de um parâmetro da URI do Contact, o ` não vale, e o % só como escape (%41 é o A): o servidor leria
+        // outro nome.
+        for (const char* name : {"pn`prid", "pn%prid", "pn%41", "%", "`"}) {
+            INFO("nome " << name);
+            CHECK_FALSE(PushDataProblem(OneParam(name, "a")).empty());
+            CHECK_FALSE(PushDataProblem(OneHeader(std::string("X-") + name, "a")).empty());
         }
     }
 }

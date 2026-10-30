@@ -10,7 +10,8 @@ const size_t kMaxValueLength = 512;
 
 // Os cabeçalhos que o motor ou a libre já escrevem no REGISTER: um igual, vindo dos dados de push, o repetiria.
 const char* const kEngineHeaders[] = {"Via", "From", "To", "Call-ID", "CSeq", "Contact", "Expires", "Max-Forwards",
-                                      "Route", "Authorization", "User-Agent", "Content-Length"};
+                                      "Route", "Authorization", "Proxy-Authorization", "User-Agent",
+                                      "Content-Length"};
 
 bool IsLetter(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
 bool IsDigit(char c) { return c >= '0' && c <= '9'; }
@@ -34,10 +35,11 @@ bool SameName(const std::string& name, const char* other) {
     return i == name.size() && !other[i];
 }
 
-// O token da RFC 3261, que serve de nome de parâmetro e de cabeçalho (sem tamanho: ver kMaxNameLength).
-bool IsToken(const std::string& name) {
+// O nome de parâmetro e de cabeçalho: o token da RFC 3261 sem o ` e o %, que o nome de um parâmetro da URI do Contact
+// não aceita soltos (o ` nunca, e o % só como escape: o servidor leria outro nome). Sem tamanho: ver kMaxNameLength.
+bool IsName(const std::string& name) {
     for (char c : name) {
-        if (!IsLetter(c) && !IsDigit(c) && !IsOneOf(c, "-.!%*_+`'~")) return false;
+        if (!IsLetter(c) && !IsDigit(c) && !IsOneOf(c, "-.!*_+'~")) return false;
     }
     return true;
 }
@@ -74,13 +76,13 @@ bool IsEngineHeader(const std::string& name) {
 
 }  // namespace
 
-// Os nomes entram no motivo só depois de passarem na conferência do token; os valores nunca entram.
+// Os nomes entram no motivo só depois de passarem na conferência dos caracteres; os valores nunca entram.
 std::string PushDataProblem(const PushData& data) {
     for (const auto& param : data.contactParams) {
         const std::string& name = param.first;
         const std::string& value = param.second;
         if (name.empty() || name.size() > kMaxNameLength) return "nome de parametro vazio ou longo demais";
-        if (!IsToken(name)) return "nome de parametro com caractere invalido";
+        if (!IsName(name)) return "nome de parametro com caractere invalido";
         if (SameName(name, "transport")) return "o parametro transport e do motor";
         if (value.size() > kMaxValueLength) return "valor do parametro " + name + " longo demais";
         if (!IsParamValue(value)) return "valor do parametro " + name + " com caractere invalido";
@@ -89,7 +91,12 @@ std::string PushDataProblem(const PushData& data) {
         const std::string& name = header.first;
         const std::string& value = header.second;
         if (name.empty() || name.size() > kMaxNameLength) return "nome de cabecalho vazio ou longo demais";
-        if (!IsToken(name)) return "nome de cabecalho com caractere invalido";
+        if (!IsName(name)) return "nome de cabecalho com caractere invalido";
+        // Uma letra só é a forma compacta de um cabeçalho (RFC 3261, 7.3.3, e as RFCs depois dela), que o servidor lê
+        // como o nome inteiro: o m é o Contact, o v é o Via.
+        if (name.size() == 1 && IsLetter(name[0])) {
+            return "o cabecalho " + name + " e a forma compacta de outro cabecalho";
+        }
         if (IsEngineHeader(name)) return "o cabecalho " + name + " e do motor";
         if (value.empty() || value.size() > kMaxValueLength) {
             return "valor do cabecalho " + name + " vazio ou longo demais";

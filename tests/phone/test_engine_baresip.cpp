@@ -1,13 +1,15 @@
 // Só o motor do baresip: o que depende das linhas de log do baresip, os módulos que ele carrega, o que esse motor faz
 // de diferente do do PJSIP (os dispositivos de som e o BLF, spec 6.1, os dados de push no REGISTER, spec 7.3, também
 // durante uma ligação, a URI das ligações de uma conta TCP e o REFER do outro lado, recusado com 501) e o que só aqui
-// é conferido (o keep-alive, o motor destruído e criado de novo com a conta, os códigos das ligações encerradas aqui,
-// o CANCEL e o BYE do Hangup que esperam a resposta do outro lado, a ligação que chega com a conta saindo, o INVITE
-// com Replaces recusado, as teclas aceitas, uma transferência por vez, a que acaba com um erro sem evento do baresip
-// (a linha "call: subscription closed"), o Join que espera a renegociação anterior ou o resultado da transferência com
-// consulta e, pelo SipEngineTestAccess, o áudio, o mudo e a mistura de cada ligação: com duas, só a ativa fica com o
-// microfone, spec 7.7, também com a espera ou a retomada que não sai e com a renegociação que não acaba, e na
-// conferência as duas, na mistura do mixminus). O motor do PJSIP tem os testes dele (test_engine_pjsip.cpp).
+// é conferido (o keep-alive, o motor destruído e criado de novo com a conta, a troca de rede que lê de novo os
+// endereços locais, os códigos das ligações encerradas aqui, o CANCEL e o BYE do Hangup que esperam a resposta do
+// outro lado, sem que o limite de ligações do baresip recuse a que chega, a ligação que chega com a conta saindo, o
+// OnLog que lança no fim de uma ligação, o INVITE com Replaces recusado, as teclas aceitas, uma transferência por vez,
+// a que acaba com um erro sem evento do baresip (a linha "call: subscription closed"), o Join que espera a
+// renegociação anterior ou o resultado da transferência com consulta e, pelo SipEngineTestAccess, o áudio, o mudo e a
+// mistura de cada ligação: com duas, só a ativa fica com o microfone, spec 7.7, também com a espera ou a retomada que
+// não sai e com a renegociação que não acaba, e na conferência as duas, na mistura do mixminus). O motor do PJSIP tem
+// os testes dele (test_engine_pjsip.cpp).
 #include "call_fixture.h"
 #include "engine_fixture.h"
 #include "relay_fixture.h"
@@ -120,6 +122,20 @@ struct ThrowingLogListener : RecordingListener {
 
 private:
     std::atomic<int> thrown_{0};
+};
+
+// Um RecordingListener cujo OnLog, com o Throw ligado, lança em toda linha, como um bad_alloc do app ao montar a linha:
+// também nas do motor que saem de dentro dos avisos do baresip (a do resultado de uma transferência).
+struct ThrowingOnLogListener : RecordingListener {
+    void OnLog(int level, const std::string& line) override {
+        RecordingListener::OnLog(level, line);
+        if (!throwing_.load()) return;
+        throw std::runtime_error("o OnLog falhou");
+    }
+    void Throw(bool on) { throwing_ = on; }
+
+private:
+    std::atomic<bool> throwing_{false};
 };
 
 // Um RecordingListener que guarda também os REFER que o motor mandou, um por pedido. O log tem cada mensagem SIP que
@@ -255,6 +271,66 @@ TEST_CASE("the engine goes on when OnLog throws on a line from inside libre or b
     CHECK(listener.WaitFor(RecordingListener::Reached(200, true, 1), kWaitSeconds));
     CHECK(listener.Thrown() > 0);
     CHECK(Contains(listener.LogTail(), "SIP enviado ("));
+}
+
+TEST_CASE("a call that ends while OnLog throws leaves no call behind in the engine") {
+    // O SipEngine.h não promete que o OnLog não lança: a linha se perde, e o fim da ligação vai até o fim. Na
+    // transferência que dá certo, o motor escreve uma linha de dentro do aviso do baresip que encerra a ligação, e o
+    // baresip solta a ligação logo depois do aviso: uma vaga que ficasse com ela apontaria para memória já solta.
+    FakeRegistrar registrar("senha");
+    ThrowingOnLogListener listener;
+    INFO(listener.CallsText());
+    INFO(registrar.LogText());
+    std::unique_ptr<SipEngine> engine = StartEngine(&listener, LoadProfile(registrar.port()));
+    REQUIRE(engine->SetAccount(Input(Transport::Udp)));
+    REQUIRE(listener.WaitFor(RecordingListener::Reached(200, true, 1), kWaitSeconds));
+    const auto dial = [&engine, &listener](const std::string& number) {
+        const int id = engine->MakeCall(number);
+        REQUIRE(id > 0);
+        REQUIRE(listener.WaitForCalls(RecordingListener::StateReached(id, CallState::Confirmed), kWaitSeconds));
+        return id;
+    };
+    listener.CountLog("transferencia aceita (200)");
+    std::vector<int> ended;
+    size_t transferLines = 0;
+    SUBCASE("a transfer ends the call") {
+        const int id = dial("2002");
+        listener.Throw(true);
+        REQUIRE(engine->Transfer(id, "2004"));
+        ended = {id};
+        transferLines = 1;
+    }
+    SUBCASE("an attended transfer ends both calls") {
+        const int client = dial("2002");
+        const int colleague = dial("2003");   // o cliente vai para a espera
+        REQUIRE(registrar.WaitForLog("reinv-in 2002 sendonly", kWaitSeconds));
+        listener.Throw(true);
+        REQUIRE(engine->TransferAttended(client, colleague));
+        ended = {client, colleague};
+        transferLines = 1;
+    }
+    SUBCASE("the other side hangs up") {
+        REQUIRE(registrar.Control("RING 2001") == kOk);
+        REQUIRE(listener.WaitForCalls(RecordingListener::Count(CallEvent::Incoming, 1), kWaitSeconds));
+        const int id = listener.Calls().front().callId;
+        REQUIRE(engine->Answer(id));
+        REQUIRE(listener.WaitForCalls(RecordingListener::StateReached(id, CallState::Confirmed), kWaitSeconds));
+        listener.Throw(true);
+        REQUIRE(registrar.Control("HANGUP 2001") == kOk);
+        ended = {id};
+    }
+    for (const int id : ended) {
+        CAPTURE(id);
+        CHECK(listener.WaitForCalls(RecordingListener::StateReached(id, CallState::Disconnected), kWaitSeconds));
+    }
+    listener.Throw(false);
+    CHECK(listener.LogCount("transferencia aceita (200)") == transferLines);   // a linha chegou ao OnLog, que lançou
+    // Nenhuma vaga ficou com uma ligação: a conta caiu a zero, a leitura do áudio passa pelas vagas, e uma nova sai.
+    CHECK(engine->CallCount() == 0);
+    CHECK(SipEngineTestAccess::CallsWithAudio(*engine).empty());
+    const int next = dial("2005");
+    CHECK(WaitAudio(*engine, {next}));
+    CHECK(engine->AudioLinks(next) == std::vector<int>{0});
 }
 
 TEST_CASE("the baresip engine sends the start-up lines of baresip to OnLog") {
@@ -482,6 +558,30 @@ TEST_CASE("HandleIpChange over TCP with a REGISTER on the way registers again wi
     CHECK(listener.WaitFor(RecordingListener::Reached(200, true, 2), 5));
 }
 
+TEST_CASE("HandleIpChange reads the local addresses again before it binds the transports") {
+    // O baresip lê os endereços locais ao subir, e o uag_reset_transp abre os transportes SIP nos da lista dele: numa
+    // troca de rede de verdade (o Wi-Fi para o 4G), os da rede de antes. O Linux dos testes não troca de rede; a lista
+    // vazia faz as vezes da velha (nenhum endereço de agora nela).
+    Transport transport = Transport::Udp;
+    SUBCASE("over UDP") { transport = Transport::Udp; }
+    SUBCASE("over TCP") { transport = Transport::Tcp; }
+    Phone phone(transport);
+    INFO(phone.listener.LogTail());
+    INFO(RegistrationsText(phone.listener));
+    INFO(phone.listener.CallsText());
+    SipEngineTestAccess::FlushLocalAddresses(*phone.engine);
+    phone.engine->HandleIpChange();
+    CHECK(phone.listener.WaitFor(RecordingListener::Reached(200, true, 2), kWaitSeconds));
+    // Os transportes estão abertos nos endereços de agora: a ligação que chega toca. A feita daqui tira o endereço da
+    // mídia da mesma lista, que tem de novo o loopback dos testes.
+    const int incoming = phone.Ring();
+    REQUIRE(phone.engine->Reject(incoming));
+    REQUIRE(phone.WaitState(incoming, CallState::Disconnected));
+    const int outgoing = phone.Dial("2002");
+    CHECK(WaitAudio(*phone.engine, {outgoing}));
+    CHECK(phone.engine->AudioLinks(outgoing) == std::vector<int>{0});
+}
+
 TEST_CASE("a TCP account dials over TCP") {
     Phone phone(Transport::Tcp);
     const int id = phone.Dial("2002");
@@ -562,6 +662,30 @@ TEST_CASE("Hangup of an answered call that still waits for the ACK sends the BYE
     CHECK(bye != std::string::npos);
     CHECK(ack < bye);
     CHECK(History(listener.Calls(), id) == "Incoming Incoming/100 Early/180 Connecting/200 Disconnected/200");
+}
+
+TEST_CASE("a call that arrives while hung-up calls still wait for the far end rings by the rules of the engine") {
+    // A ligação desligada que ainda espera a resposta do outro lado (aqui, o 18x para o CANCEL) conta no limite de
+    // ligações do próprio baresip. O 486 desse limite não passa pelo motor: a regra das duas ligações é do motor.
+    FakeRegistrar registrar("senha");
+    DelayedUdpRelay relay(registrar.port(), 500);   // cada resposta chega 1 s depois do pedido
+    RecordingListener listener;
+    INFO(listener.CallsText());
+    INFO(registrar.LogText());
+    INFO(listener.LogTail());
+    std::unique_ptr<SipEngine> engine = StartEngine(&listener, LoadProfile(relay.port()));
+    REQUIRE(engine->SetAccount(Input(Transport::Udp)));
+    REQUIRE(listener.WaitFor(RecordingListener::Reached(200, true, 1), kWaitSeconds));
+    // Quatro ligações desligadas logo depois do MakeCall: as quatro esperam o 18x, que só chega 1 s depois.
+    for (const char* number : {"2002", "2003", "2004", "2005"}) {
+        const int id = engine->MakeCall(number);
+        REQUIRE(id > 0);
+        REQUIRE(engine->Hangup(id));
+    }
+    REQUIRE_FALSE(engine->HasCall());
+    REQUIRE(registrar.Control("RING 2001") == kOk);   // o INVITE chega em 0,5 s, antes do 18x de qualquer uma delas
+    CHECK(listener.WaitForCalls(RecordingListener::Count(CallEvent::Incoming, 1), kWaitSeconds));
+    CHECK_FALSE(registrar.LogHas("inv-out 2001 486"));
 }
 
 TEST_CASE("an outgoing call that cannot reach the server ends with 503") {

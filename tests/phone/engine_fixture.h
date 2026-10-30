@@ -1,6 +1,7 @@
 #pragma once
-// Apoio aos testes do motor: o perfil de verdade (branding/perfil.ini), a configuração dos testes e a
-// conta que entra no motor.
+// Apoio aos testes dos dois motores (o do PJSIP e o do baresip): o perfil de verdade (branding/perfil.ini), a
+// configuração dos testes, a conta que entra no motor, os dados de push que o SetPushData aceita e os auxiliares
+// das esperas e das contagens (WaitUntil, LogCount, Registers e o texto dos registros).
 #include <algorithm>
 #include <chrono>
 #include <functional>

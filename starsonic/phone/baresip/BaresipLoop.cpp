@@ -77,14 +77,27 @@ int LibreLevelFor(int logLevel) {
     return DBG_DEBUG;
 }
 
-// A configuração do baresip (o arquivo config dele), em texto: a porta SIP escolhida pelo sistema, como no PJSIP; até 4
-// ligações (as regras das duas são do motor); a ligação que chega toca até quem liga desistir, como no PJSIP (o padrão
-// do baresip a recusa com 486 depois de 120 s); e, com o nullAudio, a fonte e a saída nulas. Nenhum módulo: o laço
-// carrega os de kModules, e nenhum de interface (menu, account, contact).
+// O add_laddr_filter do net.c do baresip (static lá), o do net_alloc ao subir: o endereço de interface que o filtro do
+// baresip aceita entra na lista (um que já está fica como está). false: o net_if_apply segue para o próximo.
+bool AddInterfaceAddress(const char* ifname, const struct sa* sa, void* arg) {
+    struct network* net = static_cast<struct network*>(arg);
+    if (net_ifaddr_filter(net, ifname, sa)) (void)net_add_address_ifname(net, sa, ifname);
+    return false;
+}
+
+// A configuração do baresip (o arquivo config dele), em texto: a porta SIP escolhida pelo sistema, como no PJSIP; até 8
+// ligações do baresip; a ligação que chega toca até quem liga desistir, como no PJSIP (o padrão do baresip a recusa com
+// 486 depois de 120 s); e, com o nullAudio, a fonte e a saída nulas. Nenhum módulo: o laço carrega os de kModules, e
+// nenhum de interface (menu, account, contact).
+//
+// As regras das duas ligações são do motor (o 486 da terceira, com o OnRejectedBusy, no BaresipCalls::OnInvite). O
+// limite do baresip conta também as ligações desligadas que ainda esperam a resposta do outro lado para o CANCEL ou o
+// BYE (o waiting_ do BaresipCalls, cada uma por uma ida e volta), e o 486 "Max Calls" dele recusa a que chega antes
+// de o motor vê-la: com 8, ele só viria com seis esperando ao mesmo tempo, além das duas vagas.
 std::string ConfigText(bool nullAudio) {
     std::string text =
         "sip_listen 0.0.0.0:0\n"
-        "call_max_calls 4\n"
+        "call_max_calls 8\n"
         "call_local_timeout 0\n";
     if (nullAudio) {
         text += std::string("audio_player ") + kNullAudioName + ",nil\n";
@@ -274,16 +287,9 @@ bool BaresipLoop::Setup(std::string* error) {
         *error = Failure("baresip_init", err);
         return false;
     }
-    // O baresip deixa o loopback fora dos endereços locais, e sem ele uma ligação com um servidor no próprio aparelho
-    // (o 127.0.0.1 dos testes) não acha o endereço da mídia ("ua: no laddr for"). Ele entra antes do ua_init, que abre
-    // os transportes SIP em cada endereço da lista, como no selftest do baresip. Sem ele, só essas ligações falham.
-    struct sa loopback;
-    err = sa_set_str(&loopback, "127.0.0.1", 0);
-    if (!err) err = net_add_address(baresip_network(), &loopback);
-    if (err) {
-        const std::string line = Failure("o loopback ficou fora dos enderecos locais: net_add_address", err);
-        Log(2, line.data(), line.size());
-    }
+    // O net_alloc (no baresip_init) já leu os endereços das interfaces; o loopback entra antes do ua_init, que abre os
+    // transportes SIP em cada endereço da lista, como no selftest do baresip.
+    FillLocalAddresses();
     err = ua_init(config_.userAgent.c_str(), true, true, false);   // UDP e TCP, sem TLS
     if (err) {
         *error = Failure("ua_init", err);
@@ -307,6 +313,31 @@ bool BaresipLoop::Setup(std::string* error) {
         nullAudioReady_ = true;
     }
     return true;
+}
+
+void BaresipLoop::FillLocalAddresses() {
+    struct network* net = baresip_network();
+    int err = net_if_apply(AddInterfaceAddress, net);
+    if (err) {   // para o diagnóstico: sem eles, os transportes SIP só abrem no loopback
+        const std::string line = Failure("os enderecos das interfaces nao foram lidos: net_if_apply", err);
+        Log(2, line.data(), line.size());
+    }
+    // O filtro do baresip deixa o loopback de fora, e sem ele uma ligação com um servidor no próprio aparelho (o
+    // 127.0.0.1 dos testes) não acha o endereço da mídia ("ua: no laddr for"). Sem ele, só essas ligações falham.
+    struct sa loopback;
+    err = sa_set_str(&loopback, "127.0.0.1", 0);
+    if (!err) err = net_add_address(net, &loopback);
+    if (err) {
+        const std::string line = Failure("o loopback ficou fora dos enderecos locais: net_add_address", err);
+        Log(2, line.data(), line.size());
+    }
+}
+
+void BaresipLoop::RefreshNetwork() {
+    struct network* net = baresip_network();
+    (void)net_flush_addresses(net);   // os da rede de antes saem: o FillLocalAddresses só acrescenta
+    FillLocalAddresses();
+    net_dns_refresh(net);
 }
 
 void BaresipLoop::Teardown() {
