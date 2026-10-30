@@ -15,6 +15,9 @@ struct SipEngineTestAccess {
     // nullAudio dos testes. O baresip abre de novo a fonte de uma ligação só de envio (a em espera) ao aplicar cada SDP
     // dela, e o audio_started dela continua false: só esta conta mostra esse microfone.
     static int OpenMicrophones(const SipEngine& engine);
+    // Com on, nenhum re-INVITE com oferta sai, como num erro de transporte na hora (a rede fora no meio de uma troca de
+    // Wi-Fi para 4G): a espera e a retomada falham sem mandar nada, até o off.
+    static void FailReinvites(SipEngine& engine, bool on);
 };
 
 }  // namespace starsonic

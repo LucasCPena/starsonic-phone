@@ -102,6 +102,13 @@ void BaresipCalls::OnEvent(enum bevent_ev ev, struct bevent* event) {
             if (Silent(*slot)) tmr_start(&audioTimer_, 0, Hooks::StopAudio, this);
             break;
         }
+        case BEVENT_CALL_LOCAL_SDP: {
+            const char* text = bevent_get_text(event);
+            if (failReinvites_ && slot->confirmed && text && std::strcmp(text, "offer") == 0) {
+                bevent_set_error(event, ENETUNREACH);   // o FailReinvites: o re-INVITE não sai
+            }
+            break;
+        }
         case BEVENT_CALL_CLOSED: {
             const int id = slot->id;
             const int code = EndCode(*slot, call, bevent_get_text(event));
@@ -115,7 +122,7 @@ void BaresipCalls::OnEvent(enum bevent_ev ev, struct bevent* event) {
     }
 }
 
-int BaresipCalls::Make(struct ua* ua, const std::string& uri) {
+int BaresipCalls::Make(struct ua* ua, const std::string& uri, bool lastTry) {
     blocked_ = false;
     Slot* slot = FreeSlot();
     Slot* other = slot ? Other(*slot) : nullptr;
@@ -124,13 +131,8 @@ int BaresipCalls::Make(struct ua* ua, const std::string& uri) {
                    (slot ? "a outra ligacao nao foi confirmada" : "ja ha duas ligacoes"));
         return -1;
     }
-    if (other && !Held(*other)) {
-        if (OfferPending(*other)) {
-            blocked_ = true;
-            return -1;
-        }
-        (void)Renegotiate(*other, true);   // antes da nova, e fica em espera mesmo se a nova não sai
-    }
+    // A espera da outra sai antes da nova, e a outra fica nela mesmo se a nova não sai.
+    if (other && !other->held && !HoldBeforeNew(*other, lastTry)) return -1;
     struct call* call = nullptr;
     const int err = ua_connect(ua, &call, nullptr, uri.c_str(), VIDMODE_OFF);
     if (err) {
@@ -140,22 +142,18 @@ int BaresipCalls::Make(struct ua* ua, const std::string& uri) {
     // Nenhuma resposta é lida antes de o Run acabar: o Calling vem antes de qualquer outro estado da ligação.
     Bind(*slot, call, false);
     activeId_ = slot->id;
+    StopSilentAudio();   // a outra que ficou fora da espera (HoldBeforeNew) deixa de ser a ativa: o áudio dela para
     PostState(slot->id, CallState::Calling, 0);
     return slot->id;
 }
 
-bool BaresipCalls::Answer(int id) {
+bool BaresipCalls::Answer(int id, bool lastTry) {
     blocked_ = false;
     Slot* slot = Find(id);
     if (!slot || !slot->incoming || slot->answered) return false;
     Slot* other = Other(*slot);
-    if (other && other->confirmed && !Held(*other)) {
-        if (OfferPending(*other)) {
-            blocked_ = true;
-            return false;
-        }
-        (void)Renegotiate(*other, true);   // o re-INVITE da espera sai antes do 200
-    }
+    // A espera da outra sai antes do 200.
+    if (other && other->confirmed && !other->held && !HoldBeforeNew(*other, lastTry)) return false;
     const int err = call_answer(slot->call, 200, VIDMODE_OFF);
     if (err) {
         Log(2, "nao foi possivel atender a ligacao: " + BaresipLoop::ErrorText(err));
@@ -163,6 +161,7 @@ bool BaresipCalls::Answer(int id) {
     }
     slot->answered = true;
     activeId_ = id;
+    StopSilentAudio();   // como no Make
     PostState(id, CallState::Connecting, 200);
     return true;
 }
@@ -186,17 +185,27 @@ bool BaresipCalls::Activate(int id) {
     Slot* slot = Find(id);
     if (!slot || !slot->confirmed) return false;
     Slot* other = Other(*slot);
-    const bool holdOther = other && other->confirmed && !Held(*other);
-    const bool resume = Held(*slot);
+    const bool holdOther = other && other->confirmed && !other->held;
+    const bool resume = slot->held;
     const bool wasActive = activeId_ == id;
     if (wasActive && !holdOther && !resume) return true;   // já é a ativa: nenhum re-INVITE
     if ((holdOther && OfferPending(*other)) || (resume && OfferPending(*slot))) {
         blocked_ = true;
         return false;
     }
+    if (holdOther) {   // a outra vai para a espera antes, como no motor do PJSIP
+        const int err = Renegotiate(*other, true);
+        if (err) {
+            Log(2, "espera: " + BaresipLoop::ErrorText(err));   // nada muda: a outra segue como estava
+            return false;
+        }
+    }
     activeId_ = id;
-    if (holdOther) (void)Renegotiate(*other, true);   // a outra vai para a espera antes, como no motor do PJSIP
-    if (resume) return Renegotiate(*slot, false);
+    if (resume) {
+        const int err = Renegotiate(*slot, false);
+        if (err) Log(2, "retomar: " + BaresipLoop::ErrorText(err));   // ela segue em espera, sem áudio
+        return err == 0;
+    }
     if (!wasActive) {
         // Confirmada fora da espera sem ser a ativa (a outra virou a ativa antes de esta ser confirmada): o áudio dela
         // parou, e volta agora, sem re-INVITE.
@@ -211,12 +220,14 @@ bool BaresipCalls::SetHold(int id, bool hold) {
     blocked_ = false;
     Slot* slot = Find(id);
     if (!slot || !slot->confirmed) return false;
-    if (Held(*slot)) return true;   // já em espera: nenhum re-INVITE
+    if (slot->held) return true;   // já em espera: nenhum re-INVITE
     if (OfferPending(*slot)) {
         blocked_ = true;
         return false;
     }
-    return Renegotiate(*slot, true);
+    const int err = Renegotiate(*slot, true);
+    if (err) Log(2, "espera: " + BaresipLoop::ErrorText(err));   // nada muda: a ativa segue com o áudio
+    return err == 0;
 }
 
 bool BaresipCalls::Blocked() const { return blocked_; }
@@ -249,6 +260,8 @@ std::vector<int> BaresipCalls::CallsWithAudio() const {
     std::sort(ids.begin(), ids.end());
     return ids;
 }
+
+void BaresipCalls::FailReinvites(bool on) { failReinvites_ = on; }
 
 void BaresipCalls::HangupAll() {
     open_ = false;
@@ -380,17 +393,46 @@ int BaresipCalls::EndCode(const Slot& slot, const struct call* call, const char*
     return timedOut ? 408 : 503;
 }
 
-bool BaresipCalls::Held(const Slot& slot) const { return call_is_onhold(slot.call); }
-
-bool BaresipCalls::Silent(const Slot& slot) const { return slot.id != activeId_ || Held(slot); }
+bool BaresipCalls::Silent(const Slot& slot) const { return slot.id != activeId_ || slot.held; }
 
 bool BaresipCalls::OfferPending(const Slot& slot) const { return !call_refresh_allowed(slot.call); }
 
-bool BaresipCalls::Renegotiate(Slot& slot, bool hold) {
-    const int err = call_hold(slot.call, hold);
-    if (err) Log(2, std::string(hold ? "espera: " : "retomar: ") + BaresipLoop::ErrorText(err));
+int BaresipCalls::Renegotiate(Slot& slot, bool hold) {
+    int err = call_hold(slot.call, hold);
+    // O call_hold também dá erro quando o re-INVITE já saiu e só o áudio da direção nova não abriu (o baresip escreve o
+    // motivo): com a oferta agora no ar, ele saiu.
+    if (err && OfferPending(slot)) err = 0;
+    if (err) {
+        // Nada saiu, mas o baresip já marcou a ligação (on_hold, a direção do SDP e o RTP, que ele deixa de mandar na
+        // espera) e não desfaz a marca; com ela, o call_hold seguinte igual nem tentaria. O call_hold contrário a
+        // desfaz, e tudo fica como estava: o pedido seguinte tenta de novo. O re-INVITE dessa volta quase nunca sai (a
+        // mesma falha), e se sair leva a direção que o outro lado já tem.
+        (void)call_hold(slot.call, !hold);
+    } else {
+        slot.held = hold;
+    }
     if (Silent(slot)) audio_stop(call_audio(slot.call));
-    return err == 0;
+    return err;
+}
+
+bool BaresipCalls::HoldBeforeNew(Slot& other, bool lastTry) {
+    std::string reason;
+    if (OfferPending(other)) {
+        if (!lastTry) {
+            blocked_ = true;
+            return false;
+        }
+        reason = "a renegociacao anterior nao terminou a tempo";
+    } else {
+        const int err = Renegotiate(other, true);
+        if (err == 0) return true;
+        reason = BaresipLoop::ErrorText(err);
+    }
+    // Sem a espera, a outra fica fora dela e deixa de ser a ativa (a nova é a ativa): o áudio dela para aqui. O outro
+    // lado não fica sabendo: para ele a ligação segue em andamento, mas o som daqui deixa de chegar e o dele deixa de
+    // tocar aqui, até um Activate dela.
+    Log(2, "espera da outra ligacao: " + reason + "; ela fica sem audio, sem o re-INVITE");
+    return true;
 }
 
 void BaresipCalls::StopSilentAudio() {

@@ -205,10 +205,10 @@ public:
             return -1;
         }
         int id = -1;
-        RunRenegotiating([&] {
+        RunRenegotiating([&](bool lastTry) {
             const std::string uri =
                 "sip:" + number + "@" + account_->CallHost() + (account_->Tcp() ? ";transport=tcp" : "");
-            id = calls_.Make(account_->Ua(), uri);
+            id = calls_.Make(account_->Ua(), uri, lastTry);
         });
         return id;
     }
@@ -217,7 +217,7 @@ public:
     bool Answer(int callId) {
         std::lock_guard<std::mutex> lock(apiMutex_);
         bool done = false;
-        RunRenegotiating([&] { done = calls_.Answer(callId); });
+        RunRenegotiating([&](bool lastTry) { done = calls_.Answer(callId, lastTry); });
         return done;
     }
 
@@ -239,14 +239,14 @@ public:
     bool Activate(int callId) {
         std::lock_guard<std::mutex> lock(apiMutex_);
         bool done = false;
-        RunRenegotiating([&] { done = calls_.Activate(callId); });
+        RunRenegotiating([&](bool /*lastTry*/) { done = calls_.Activate(callId); });
         return done;
     }
 
     bool SetHold(int callId, bool hold) {
         std::lock_guard<std::mutex> lock(apiMutex_);
         bool done = false;
-        RunRenegotiating([&] { done = calls_.SetHold(callId, hold); });
+        RunRenegotiating([&](bool /*lastTry*/) { done = calls_.SetHold(callId, hold); });
         return done;
     }
 
@@ -321,6 +321,11 @@ public:
         return count;
     }
 
+    void FailReinvites(bool on) {
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        loop_->Run([&] { calls_.FailReinvites(on); });
+    }
+
 private:
     // Sem o padrão (-1), como no motor do PJSIP; com nullAudio, o dispositivo nulo.
     std::vector<AudioDevice> ListAudioDevices() const {
@@ -347,19 +352,21 @@ private:
 
     // Com a apiMutex_: um pedido do BaresipCalls que manda re-INVITE (Make, Answer, Activate ou SetHold), no laço. Se
     // ele esbarra numa renegociação ainda no ar (Blocked), a espera é aqui, fora do Run, pelo fim dela (até ~2 s desde
-    // o primeiro pedido), e ele vai de novo; passado o prazo, ele vai uma última vez.
-    void RunRenegotiating(const std::function<void()>& work) {
+    // o primeiro pedido), e ele vai de novo; passado o prazo, ele vai uma última vez, com lastTry: o Make e o Answer
+    // seguem sem a espera da outra, e o Activate e o SetHold são recusados.
+    void RunRenegotiating(const std::function<void(bool lastTry)>& work) {
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(kRenegotiationWaitMs);
         for (;;) {
+            const bool lastTry = std::chrono::steady_clock::now() >= deadline;
             bool blocked = false;
             uint64_t seen = 0;
             const bool ran = loop_->Run([&] {
-                work();
+                work(lastTry);
                 blocked = calls_.Blocked();
                 seen = calls_.Negotiations();
             });
             if (!ran || !blocked) return;
-            if (std::chrono::steady_clock::now() >= deadline) {
+            if (lastTry) {
                 Log(2, "a renegociacao anterior da ligacao nao terminou a tempo: pedido recusado");
                 return;
             }
@@ -503,5 +510,7 @@ std::vector<int> SipEngineTestAccess::CallsWithAudio(const SipEngine& engine) {
 }
 
 int SipEngineTestAccess::OpenMicrophones(const SipEngine& engine) { return engine.impl_->OpenMicrophones(); }
+
+void SipEngineTestAccess::FailReinvites(SipEngine& engine, bool on) { engine.impl_->FailReinvites(on); }
 
 }  // namespace starsonic

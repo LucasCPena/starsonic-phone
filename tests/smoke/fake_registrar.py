@@ -16,7 +16,8 @@ Ligações (sem autenticação para INVITE, re-INVITE, REFER, BYE e CANCEL):
   100, 180 e 200 com SDP na porta 40000: um codec de áudio (o primeiro PCMU ou PCMA da oferta) e o
   telephone-event/8000 da oferta, no payload type e com o fmtp que ela deu (sem a=rtpmap, o 101).
   Retransmissão do mesmo INVITE (UDP) repete a última resposta, sem ligação nova.
-- re-INVITE -> 200 com a direção espelhada (sendonly <-> recvonly); BYE e CANCEL -> 200
+- re-INVITE -> 200 com a direção espelhada (sendonly <-> recvonly); com o DROP REINVITE on, nada; BYE e
+  CANCEL -> 200
 - REFER -> 202 e um NOTIFY com SIP/2.0 200 OK (sipfrag), ou o que REFER_REPLY e REFER_NOTIFY mandarem
   (resposta com código >= 300: nenhum NOTIFY). Um Refer-To com Replaces (RFC 3891) vai para o registro
   de ligações com replaces=known ou replaces=unknown; o registrador não faz mais nada com ele
@@ -49,6 +50,8 @@ Porta de controle (--control-port N, TCP no mesmo --host; um comando por linha, 
   BLF <ramal> <estado>@<n>  muda só o diálogo n (NOTIFY partial)              -> OK | ERR no-dialog
   FORGET             a central esquece as assinaturas de BLF, sem NOTIFY (como reiniciada) -> OK
   DROP REGISTER <on|off>  com on, os REGISTER somem sem resposta (pacote perdido) -> OK
+  DROP REINVITE <on|off>  com on, os re-INVITE do telefone somem sem resposta e sem registro (pacote perdido); a
+                     repetição de um deles, depois do off, é respondida -> OK
   FAIL REGISTER <on|off>  com on, todo REGISTER leva 503 (a central reiniciando)  -> OK
   REFER_REPLY <cod>  o código da resposta ao REFER (padrão 202)        -> OK
   REFER_NOTIFY <cod> o código do sipfrag do NOTIFY (padrão 200)        -> OK
@@ -320,6 +323,7 @@ class Registrar:
         self.expires = None      # EXPIRES: o tempo que o 200 do REGISTER concede (None: o pedido)
         self.blf = {}            # ramal -> estados dos diálogos (lista) ou "refuse" (sem entrada: nenhum, livre)
         self.drop_register = False   # DROP REGISTER on: os REGISTER somem sem resposta
+        self.drop_reinvite = False   # DROP REINVITE on: os re-INVITE somem sem resposta
         self.fail_register = False   # FAIL REGISTER on: todo REGISTER leva 503
         self.subscriptions = {}  # Call-ID -> _Subscription (BLF)
         self._reset_refer()
@@ -488,6 +492,8 @@ class Registrar:
         offer = _sdp_offer(msg.body)
         direction = offer[1]   # (formatos, direção, rtpmap, fmtp)
         if ";tag=" in msg.first("to"):   # re-INVITE: o diálogo já existe
+            if self.drop_reinvite:   # como um pacote perdido: nenhuma resposta guardada, e a repetição chega aqui
+                return []
             self._log("reinv-in %s %s" % (alvo, direction))
             replies = [self._accept(msg, peer, offer, MIRROR[direction])]
         else:
@@ -771,8 +777,11 @@ class Registrar:
                 reply = self._set_blf(blf[0], blf[1])
                 if reply:
                     return [reply]
-            if name == "DROP" and blf[:1] == ["REGISTER"] and len(blf) == 2 and blf[1] in ("on", "off"):
-                self.drop_register = blf[1] == "on"
+            if name == "DROP" and len(blf) == 2 and blf[0] in ("REGISTER", "REINVITE") and blf[1] in ("on", "off"):
+                if blf[0] == "REGISTER":
+                    self.drop_register = blf[1] == "on"
+                else:
+                    self.drop_reinvite = blf[1] == "on"
                 return ["OK"]
             if name == "FORGET" and not ramal:
                 self.subscriptions.clear()

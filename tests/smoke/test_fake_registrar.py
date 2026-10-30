@@ -126,6 +126,22 @@ class FakeRegistrarReferTest(unittest.TestCase):
                 self.assertEqual(self.registrar.command(command), ["ERR bad-command"])
         self.assertEqual([reply.status or reply.method for reply in self.reply()], [202, "NOTIFY"])
 
+    def test_drop_reinvite_ignores_reinvites_while_on(self):
+        self.registrar._on_invite(invite("2002", "call-to-2002"), PHONE)
+        self.assertEqual(self.registrar.command("DROP REINVITE on"), ["OK"])
+        hold = phone_request("INVITE", "sip:2002@ci", "call-to-2002", ["Content-Type: application/sdp"],
+                             OFFER + "a=sendonly\r\n", cseq=2, to_tag="ci")
+        self.assertEqual(self.registrar._on_invite(hold, PHONE), [])   # nenhuma resposta: como um pacote perdido
+        self.assertEqual(len(self.registrar._on_invite(invite("2003", "call-to-2003"), PHONE)), 3)   # o novo segue
+        self.assertEqual(self.log(), ["inv-in 2002 200", "inv-in 2003 200"])   # o re-INVITE nem entra no registro
+        self.assertEqual(self.registrar.command("DROP REINVITE off"), ["OK"])
+        replies = self.registrar._on_invite(hold, PHONE)   # a repetição dele é respondida
+        self.assertEqual([fake_registrar._parse(data).status for data in replies], [200])
+        self.assertEqual(self.log()[-1], "reinv-in 2002 sendonly")
+        for command in ("DROP REINVITE", "DROP REINVITE maybe", "DROP REINVITE on now"):
+            with self.subTest(command=command):
+                self.assertEqual(self.registrar.command(command), ["ERR bad-command"])
+
 
 def subscribe(alvo, call_id="sub-2007", expires=None, event="dialog", cseq=1, to_tag=None):
     """SUBSCRIBE do telefone ao estado do ramal `alvo` (BLF, RFC 4235)."""

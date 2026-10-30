@@ -3,8 +3,8 @@
 // durante uma ligação, e a URI das ligações de uma conta TCP) e o que só aqui é conferido (o keep-alive, o motor
 // destruído e criado de novo com a conta, os códigos das ligações encerradas aqui, o CANCEL e o BYE do Hangup que
 // esperam a resposta do outro lado, a ligação que chega com a conta saindo e, pelo SipEngineTestAccess, o áudio de
-// cada ligação: com duas, só a ativa fica com o microfone, spec 7.7). O motor do PJSIP tem os testes dele
-// (test_engine_pjsip.cpp).
+// cada ligação: com duas, só a ativa fica com o microfone, spec 7.7, também com a espera ou a retomada que não sai e
+// com a renegociação que não acaba). O motor do PJSIP tem os testes dele (test_engine_pjsip.cpp).
 #include "call_fixture.h"
 #include "engine_fixture.h"
 #include "relay_fixture.h"
@@ -514,4 +514,79 @@ TEST_CASE("a call confirmed while the other one is the active stays without audi
                     kWaitSeconds));
     CHECK(registrar.Log() == Lines{"inv-in 2002 200", "reinv-in 2002 sendonly", "inv-in 2003 200",
                                    "reinv-in 2002 sendrecv", "reinv-in 2002 sendonly"});
+}
+
+TEST_CASE("a resume that cannot go out leaves the call on hold, and the next one sends it") {
+    Phone phone;
+    INFO(phone.listener.CallsText());
+    INFO(phone.registrar.LogText());
+    const int id = phone.Dial("2002");
+    REQUIRE(phone.engine->SetHold(id, true));
+    REQUIRE(phone.registrar.WaitForLog("reinv-in 2002 sendonly", kWaitSeconds));
+    SipEngineTestAccess::FailReinvites(*phone.engine, true);   // a rede cai: nenhum re-INVITE sai
+    CHECK_FALSE(phone.engine->SetHold(id, false));
+    CHECK(phone.engine->AudioLinks(id).empty());   // segue em espera, sem áudio
+    CHECK(SipEngineTestAccess::CallsWithAudio(*phone.engine).empty());
+    CHECK(SipEngineTestAccess::OpenMicrophones(*phone.engine) == 0);
+    SipEngineTestAccess::FailReinvites(*phone.engine, false);   // a rede volta: o pedido seguinte manda a retomada
+    REQUIRE(phone.engine->SetHold(id, false));
+    CHECK(phone.registrar.WaitForLog("reinv-in 2002 sendrecv", kWaitSeconds));
+    CHECK(WaitAudio(*phone.engine, {id}));
+    CHECK(phone.engine->AudioLinks(id) == std::vector<int>{0});
+    CHECK(SipEngineTestAccess::OpenMicrophones(*phone.engine) == 1);
+    CHECK(phone.registrar.Log() == Lines{"inv-in 2002 200", "reinv-in 2002 sendonly", "reinv-in 2002 sendrecv"});
+}
+
+TEST_CASE("a hold that cannot go out leaves the call active, and the next one sends it") {
+    Phone phone;
+    INFO(phone.listener.CallsText());
+    INFO(phone.registrar.LogText());
+    const int id = phone.Dial("2002");
+    REQUIRE(WaitAudio(*phone.engine, {id}));
+    SipEngineTestAccess::FailReinvites(*phone.engine, true);   // a rede cai: nenhum re-INVITE sai
+    CHECK_FALSE(phone.engine->SetHold(id, true));
+    CHECK(phone.engine->AudioLinks(id) == std::vector<int>{0});   // segue a ativa, com o áudio
+    CHECK(SipEngineTestAccess::CallsWithAudio(*phone.engine) == std::vector<int>{id});
+    CHECK(SipEngineTestAccess::OpenMicrophones(*phone.engine) == 1);
+    SipEngineTestAccess::FailReinvites(*phone.engine, false);   // a rede volta: o pedido seguinte manda a espera
+    REQUIRE(phone.engine->SetHold(id, true));
+    CHECK(phone.registrar.WaitForLog("reinv-in 2002 sendonly", kWaitSeconds));
+    CHECK(phone.engine->AudioLinks(id).empty());
+    CHECK(SipEngineTestAccess::OpenMicrophones(*phone.engine) == 0);
+    CHECK(phone.registrar.Log() == Lines{"inv-in 2002 200", "reinv-in 2002 sendonly"});
+}
+
+TEST_CASE("Answer and MakeCall go ahead after ~2 s when the renegotiation of the other call does not end") {
+    Phone phone;
+    INFO(phone.listener.CallsText());
+    INFO(phone.registrar.LogText());
+    const int first = phone.Answered();
+    REQUIRE(phone.engine->SetHold(first, true));
+    REQUIRE(phone.registrar.WaitForLog("reinv-in 3001 sendonly", kWaitSeconds));
+    // A retomada da primeira sai e fica sem resposta (a libre a repete até o tempo esgotar, em 32 s): a renegociação
+    // dela não acaba, e a espera dela, antes da segunda, não pode sair.
+    REQUIRE(phone.registrar.Control("DROP REINVITE on") == kOk);
+    phone.listener.CountLog("ela fica sem audio");
+    int second = 0;
+    SUBCASE("Answer") {
+        second = phone.Ring();
+        REQUIRE(phone.engine->SetHold(first, false));
+        const auto start = std::chrono::steady_clock::now();
+        REQUIRE(phone.engine->Answer(second));
+        CHECK(std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(1900));
+    }
+    SUBCASE("MakeCall") {
+        REQUIRE(phone.engine->SetHold(first, false));
+        const auto start = std::chrono::steady_clock::now();
+        second = phone.engine->MakeCall("2002");
+        REQUIRE(second > 0);
+        CHECK(std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(1900));
+    }
+    REQUIRE(phone.WaitState(second, CallState::Confirmed));
+    // A primeira fica sem o áudio daqui e fora da espera, e o outro lado dela não fica sabendo.
+    CHECK(phone.engine->AudioLinks(first).empty());
+    CHECK(phone.engine->AudioLinks(second) == std::vector<int>{0});
+    CHECK(WaitAudio(*phone.engine, {second}));
+    CHECK(SipEngineTestAccess::OpenMicrophones(*phone.engine) == 1);
+    CHECK(phone.listener.LogCount("ela fica sem audio") == 1);
 }
