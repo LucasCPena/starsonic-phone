@@ -287,8 +287,23 @@ bool CallController::Place(const std::string& raw, bool consult) {
 }
 
 bool CallController::DialContact(const std::string& number) {
-    const std::string dialed = dialRule_ ? dialRule_(number) : number;
+    const std::string dialed = ContactNumber(number);
     return !dialed.empty() && Dial(dialed);
+}
+
+bool CallController::TransferContact(const std::string& number) {
+    const std::string dialed = ContactNumber(number);
+    return !dialed.empty() && Transfer(dialed);
+}
+
+bool CallController::ConsultContact(const std::string& number) {
+    const std::string dialed = ContactNumber(number);
+    return !dialed.empty() && Consult(dialed);
+}
+
+// O número de um contato depois da regra dos contatos (sem a regra, como veio). Sem a trava.
+std::string CallController::ContactNumber(const std::string& number) const {
+    return dialRule_ ? dialRule_(number) : number;
 }
 
 void CallController::Answer() {

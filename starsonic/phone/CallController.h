@@ -201,9 +201,10 @@ public:
     // O id de uma feita antes de o motor dar o dela.
     static constexpr int kNoId = 0;
 
-    // dialRule: a regra dos números dos contatos (DialContact; ex.: ContactDialString com o ddi e o
-    // prefixo do perfil). registered: a conta está registrada (o Dial confere antes de discar); vazio
-    // vale como sempre registrada. Todos os objetos precisam durar mais que o controlador.
+    // dialRule: a regra dos números dos contatos (DialContact, TransferContact e ConsultContact; ex.:
+    // ContactDialString com o ddi e o prefixo do perfil). registered: a conta está registrada (o Dial confere
+    // antes de discar); vazio vale como sempre registrada. Todos os objetos precisam durar mais que o
+    // controlador.
     CallController(CallEngine& engine, CallControllerListener& listener, Clock& clock, Scheduler& scheduler,
                    ContactNames& contacts, std::function<std::string(std::string)> dialRule,
                    std::function<bool()> registered = nullptr);
@@ -257,11 +258,17 @@ public:
     // dela esperando o resultado, na consulta (lá, a transferência é o CompleteTransfer), na conferência, ou
     // o motor recusou na hora (Transfer devolveu false: o mesmo aviso, e o pedido vale de novo).
     bool Transfer(const std::string& raw);
+    // Transfere para number, um número de um contato, como o Transfer, depois da regra dos contatos
+    // (dialRule). false se a regra não deu número, e nos casos do Transfer.
+    bool TransferContact(const std::string& number);
     // Consultar: liga para o colega raw como a Nova ligação do Dial, com a ligação em andamento (o cliente,
     // que vai para a espera), e as duas ficam marcadas como a consulta (consulting). false se não ligou:
     // sem uma ligação em andamento, com uma transferência dela esperando o resultado (o 2xx da direta
     // desligaria o cliente e deixaria o colega), e nos casos do Dial (também o aviso sem registro).
     bool Consult(const std::string& raw);
+    // Consulta number, um número de um contato, como o Consult, depois da regra dos contatos (dialRule).
+    // false se a regra não deu número, e nos casos do Consult.
+    bool ConsultContact(const std::string& number);
     // Concluir transferência: com o colega atendido (as duas em andamento, com qualquer uma ativa), o motor
     // manda o REFER com Replaces do cliente para o colega (TransferAttended). Um pedido por vez: outro
     // clique antes do resultado (OnTransfer) não faz nada. Se o colega acaba antes do resultado, ou se o
@@ -321,6 +328,7 @@ private:
     void Deliver();
 
     bool Place(const std::string& raw, bool consult);
+    std::string ContactNumber(const std::string& number) const;
 
     // Com a trava.
     void OnDialed(const CallPtr& dialed, int id, Effects& effects);

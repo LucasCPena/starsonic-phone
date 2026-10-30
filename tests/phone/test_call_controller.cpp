@@ -706,6 +706,36 @@ TEST_CASE("DialContact dials the number from the contact rule") {
     CHECK(engine.made.size() == 1);
 }
 
+TEST_CASE("TransferContact and ConsultContact take the number through the contact rule, like DialContact") {
+    FakeCallEngine engine;
+    FakeCallListener listener;
+    FakeTime time;
+    FakeContactNames contacts;
+    CallController calls(engine, listener, time, time, contacts, [](std::string raw) {
+        return WideToUtf8(ContactDialString(Utf8ToWide(raw), L"55", L"0"));
+    });
+    // O cliente: a feita para o ramal, em andamento.
+    REQUIRE(calls.Dial("2001"));
+    calls.OnCallState(10, CallState::Confirmed, 200);
+    // O Consultar de um contato: o colega sai pela regra (o +55 sai e o prefixo entra); o ramal curto vai como esta.
+    CHECK(calls.ConsultContact("+55 11 98888-7777"));
+    calls.CancelConsult();
+    calls.OnCallState(11, CallState::Disconnected, 487);
+    CHECK(calls.ConsultContact("2002"));
+    calls.CancelConsult();
+    calls.OnCallState(12, CallState::Disconnected, 487);
+    CHECK(engine.made == Strings{"2001", "011988887777", "2002"});
+    // O Transferir de um contato, pela mesma regra.
+    CHECK(calls.TransferContact("+55 11 98888-7777"));
+    CHECK(engine.transfers == Pairs{{10, "011988887777"}});
+    // A central recusou (o pedido vale de novo): uma regra que nao da numero nao manda nada.
+    calls.OnTransfer(10, 486);
+    CHECK_FALSE_MESSAGE(calls.TransferContact(" - "), "a regra nao deu numero");
+    CHECK_FALSE_MESSAGE(calls.ConsultContact(" - "), "a regra nao deu numero");
+    CHECK(engine.transfers.size() == 1);
+    CHECK(engine.made.size() == 3);
+}
+
 TEST_CASE_FIXTURE(Fixture, "the phone contact names the calls and the messages, and the Recents keep the server name") {
     contacts.names["3001"] = "Maria Silva";
     contacts.names["3002"] = U8(L"Jo\u00e3o Souza");

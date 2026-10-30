@@ -688,6 +688,10 @@ Duas a mais (C++ → interface), também com `v: 1`:
   7.1).
 - **Uma conta só:** o `login` que registra uma conta nova (sem `contaId`) deixa só ela em `contas` (ela toma o lugar da
   que estava em uso). O Editar (o `login` com o `contaId` da conta em uso) é o de hoje.
+- **O Transferir e o Consultar de um contato:** o `transfer` e o `consult` aceitam o `contato` (booleano, opcional),
+  como o `dial`: com `contato: true`, o número passa pela mesma regra dos contatos do perfil. A interface o manda quando
+  o número do campo veio de uma sugestão da agenda e não mudou depois (o núcleo o aceita também no Windows, onde a
+  interface não o manda).
 - **O `ring` e o `update` não vêm:** quem toca é a tela de chamada do iPhone, e o bipe do fim da ligação (a regra do
   `ring` `fim`, com o `config.bipeFim`) é do hospedeiro. A interface ignora os dois no modo iPhone. A atualização é a da
   App Store.

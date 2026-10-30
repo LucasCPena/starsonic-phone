@@ -348,12 +348,10 @@ std::optional<Command> ParseCommand(const std::string& text, std::string* error)
             f.Text("contaId", &command.accountId, true);
             break;
         case CommandKind::Dial:
-            f.Text("numero", &command.number, true);
-            f.Flag("contato", &command.contact, false);
-            break;
         case CommandKind::Transfer:
         case CommandKind::Consult:
             f.Text("numero", &command.number, true);
+            f.Flag("contato", &command.contact, false);
             break;
         case CommandKind::Hangup:
             f.Count("id", &command.callId);

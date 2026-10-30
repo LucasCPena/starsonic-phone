@@ -618,10 +618,18 @@ void DesktopApp::Execute(const Command& command) {
             controller_->Dtmf(command.digits);
             break;
         case CommandKind::Transfer:
-            controller_->Transfer(command.number);
+            if (command.contact) {
+                controller_->TransferContact(command.number);
+            } else {
+                controller_->Transfer(command.number);
+            }
             break;
         case CommandKind::Consult:
-            controller_->Consult(command.number);
+            if (command.contact) {
+                controller_->ConsultContact(command.number);
+            } else {
+                controller_->Consult(command.number);
+            }
             break;
         case CommandKind::CompleteTransfer:
             controller_->CompleteTransfer();

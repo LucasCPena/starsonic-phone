@@ -96,9 +96,20 @@ TEST_CASE("every command of the protocol parses into its command") {
         c = Parsed(R"({"v":1,"cmd":"transfer","numero":"2004"})");
         CHECK(c.kind == CommandKind::Transfer);
         CHECK(c.number == "2004");
+        CHECK_FALSE(c.contact);
         c = Parsed(R"({"v":1,"cmd":"consult","numero":"2005"})");
         CHECK(c.kind == CommandKind::Consult);
         CHECK(c.number == "2005");
+        CHECK_FALSE(c.contact);
+        // O transfer e o consult com um numero de um contato (o Transferir de uma sugestao da agenda), como o dial.
+        c = Parsed(R"({"v":1,"cmd":"transfer","numero":"+55 11 98888-7777","contato":true})");
+        CHECK(c.kind == CommandKind::Transfer);
+        CHECK(c.contact);
+        c = Parsed(R"({"v":1,"cmd":"consult","numero":"+55 11 98888-7777","contato":true})");
+        CHECK(c.kind == CommandKind::Consult);
+        CHECK(c.contact);
+        c = Parsed(R"({"v":1,"cmd":"transfer","numero":"2004","contato":false})");
+        CHECK_FALSE(c.contact);
     }
     SUBCASE("hangup, hold and mute") {
         Command c = Parsed(R"({"v":1,"cmd":"hangup"})");
@@ -274,6 +285,8 @@ TEST_CASE("version 2, an unknown command and a field of the wrong type parse int
     CHECK(Refused(R"({"v":1,"cmd":"dial","numero":2003})"));
     CHECK(Refused(R"({"v":1,"cmd":"dial"})"));
     CHECK(Refused(R"({"v":1,"cmd":"dial","numero":"2003","contato":"sim"})"));
+    CHECK(Refused(R"({"v":1,"cmd":"transfer","numero":"2003","contato":"sim"})"));
+    CHECK(Refused(R"({"v":1,"cmd":"consult","numero":"2003","contato":1})"));
     CHECK(Refused(R"({"v":1,"cmd":"hangup","id":"7"})"));
     CHECK(Refused(R"({"v":1,"cmd":"hangup","id":1.5})"));
     CHECK(Refused(R"({"v":1,"cmd":"hangup","id":-1})"));

@@ -99,7 +99,7 @@ struct Command {
     std::string password;
     std::string name;
     std::string accountId;
-    // dial (com contact: o numero de um contato, pela regra dos contatos), transfer, consult; saveContact: numero.
+    // dial, transfer e consult (com contact: o numero de um contato, pela regra dos contatos); saveContact: numero.
     std::string number;
     bool contact = false;
     // hangup: o id do cartao (ausente: a ligacao ativa; 0: a feita que ainda nao tem id).

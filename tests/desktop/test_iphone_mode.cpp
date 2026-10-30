@@ -674,6 +674,53 @@ TEST_CASE("the agenda names the incoming call, the recents and the missed call")
     CHECK(h.State()["recentes"][0]["nome"] == "\xc3\x89lcio Matos");
 }
 
+TEST_CASE("transfer and consult with contato reach the engine with the text of dial with contato") {
+    // O Transferir e o Consultar de uma sugestao da agenda (a interface manda o contato: true so no iPhone; o nucleo o
+    // aceita dos dois): o numero passa pela mesma regra do dial com contato: true. Sem o contato, como hoje.
+    for (const Platform platform : {Platform::IPhone, Platform::Windows}) {
+        const char* const mode = platform == Platform::IPhone ? "iPhone" : "Windows";
+        INFO(mode);
+        Harness h(platform);
+        h.StartRegistered();
+        // O dial com contato: true do celular da agenda: o +55 sai (o perfil dos testes nao tem o prefixo de saida).
+        h.Send(R"({"v":1,"cmd":"dial","numero":"+55 11 98888-7777","contato":true})");
+        REQUIRE(h.engine.made.size() == 1);
+        const std::string viaDial = h.engine.made[0];
+        CHECK(viaDial == "11988887777");
+        h.app->OnCallState(10, CallState::Confirmed, 200);
+        h.Run();
+
+        // O Consultar: o celular com o contato, o ramal com o contato e o celular sem ele (cada colega cancelado antes
+        // do proximo; o cliente volta sozinho).
+        int colleague = 11;
+        for (const char* consult : {R"({"v":1,"cmd":"consult","numero":"+55 11 98888-7777","contato":true})",
+                                    R"({"v":1,"cmd":"consult","numero":"2001","contato":true})",
+                                    R"({"v":1,"cmd":"consult","numero":"+55 11 98888-7777"})"}) {
+            INFO(consult);
+            h.Send(consult);
+            REQUIRE(h.State()["ligacao"]["consulting"] == true);
+            h.Send(R"({"v":1,"cmd":"cancelConsult"})");
+            h.app->OnCallState(colleague++, CallState::Disconnected, 487);
+            h.Run();
+        }
+        CHECK(h.engine.made == std::vector<std::string>{viaDial, viaDial, "2001", "+5511988887777"});
+
+        // O Transferir agora, do mesmo jeito (a central recusa cada um: a ligacao continua para o proximo).
+        for (const char* transfer : {R"({"v":1,"cmd":"transfer","numero":"+55 11 98888-7777","contato":true})",
+                                     R"({"v":1,"cmd":"transfer","numero":"2001","contato":true})",
+                                     R"({"v":1,"cmd":"transfer","numero":"+55 11 98888-7777"})"}) {
+            h.Send(transfer);
+            h.app->OnTransfer(10, 486);
+            h.Run();
+        }
+        std::vector<std::string> transfers;   // "<id> <numero>"
+        for (const auto& asked : h.engine.transfers) {
+            transfers.push_back(std::to_string(asked.first) + " " + asked.second);
+        }
+        CHECK(transfers == std::vector<std::string>{"10 " + viaDial, "10 2001", "10 +5511988887777"});
+    }
+}
+
 TEST_CASE("denied then granted shows the list without restarting") {
     Harness h(Platform::IPhone);
     h.StartRegistered();
