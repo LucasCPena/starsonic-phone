@@ -214,9 +214,10 @@ struct DesktopHooks {
 //     (contas so com a em uso, sem contatos nem atalhos, o administrador de fabrica, sem a lista da empresa e sem os
 //     dispositivos de som).
 //   - A abertura le so as contas, os Recentes e as configuracoes: sem os meus contatos, os atalhos, o admin.json (vale
-//     o de fabrica), a lista da empresa e a migracao da rc.7, e sem o BLF.
+//     o de fabrica), a lista da empresa e a migracao da rc.7, e sem o BLF. As contas que nao sao a em uso saem do
+//     contas.json (uma linha no diagnostico, so com a contagem).
 //   - Uma conta so: o Entrar que registra uma conta nova deixa so ela no contas.json. O Sair e o removeAccount da em
-//     uso, como no Windows.
+//     uso e volta sempre a tela Entrar: nunca troca para outra conta guardada, como o Windows faz.
 //   - Os comandos do PC (a janela, o quit, a troca de conta, o som, o Iniciar com o Windows, os meus contatos, os
 //     atalhos, a area do administrador, as planilhas, a lista da empresa e a atualizacao) sao recusados inteiros, com
 //     uma linha no diagnostico; no Windows, os do iPhone tambem. O openExternal aceita o tel: do suporte e recusa o

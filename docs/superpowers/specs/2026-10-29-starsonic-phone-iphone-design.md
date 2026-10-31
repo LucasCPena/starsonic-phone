@@ -1,7 +1,7 @@
 # Starsonic Phone para iPhone 1.0 — especificação de design
 
 - **Data:** 29/10/2026
-- **Status:** desenho aprovado pelo responsável no chat em 29/10/2026, em cinco partes: o que a primeira versão faz, como o app é montado, a ligação com o app fechado, build e publicação, testes e etapas. A spec escrita foi aprovada pelo responsável em 29/10/2026. A etapa 1 (o motor com o baresip, no Linux) terminou em 30/10/2026, pelo plano `docs/superpowers/plans/2026-10-29-iphone-etapa-1-motor-baresip.md`; o que ela decidiu e o que deixou para as etapas seguintes está na seção 15, no fim. A etapa 2 começa pela parte 1, o modo iPhone da interface e do núcleo, no Linux, pelo plano `docs/superpowers/plans/2026-10-30-iphone-etapa-2a-modo-iphone.md` (aguarda a revisão do responsável); a parte 2, o app em Swift, ganha plano próprio depois dela. As etapas 3 e 4 ainda não começaram.
+- **Status:** desenho aprovado pelo responsável no chat em 29/10/2026, em cinco partes: o que a primeira versão faz, como o app é montado, a ligação com o app fechado, build e publicação, testes e etapas. A spec escrita foi aprovada pelo responsável em 29/10/2026. A etapa 1 (o motor com o baresip, no Linux) terminou em 30/10/2026, pelo plano `docs/superpowers/plans/2026-10-29-iphone-etapa-1-motor-baresip.md`; o que ela decidiu e o que deixou para as etapas seguintes está na seção 15, no fim. A parte 1 da etapa 2 (o modo iPhone da interface e do núcleo, no Linux) terminou em 30/10/2026, pelo plano `docs/superpowers/plans/2026-10-30-iphone-etapa-2a-modo-iphone.md`; o que ela decidiu e o que a parte 2 precisa ligar e conferir está na seção 16. A parte 2, o app em Swift, ganha plano próprio. As etapas 3 e 4 ainda não começaram.
 - **Versão alvo:** 1.0.0 (TestFlight, depois App Store).
 - **Base:**
   - o app do Windows na 0.1.0-rc.4: as telas (`windows/ui`) e o núcleo (`starsonic/desktop`), com as specs da W1, da W3 e da rc.4 e o contrato da ponte em `docs/ponte-windows.md`;
@@ -403,7 +403,7 @@ Num iPhone de verdade, antes de cada versão:
 Cada etapa termina com algo que dá para testar.
 
 1. **O motor com o baresip, no Linux:** passa nos testes da seção 11.2. Não precisa do Mac nem da Apple. Se der muito errado, a licença comercial do PJSIP volta a ser a saída. Feita em 30/10/2026 (seção 15).
-2. **O app no iPhone, com o app aberto:** entra, liga, recebe e faz todas as funções da seção 4. Instalado pelo Xcode num iPhone de teste, pode começar antes da conta paga da Apple.
+2. **O app no iPhone, com o app aberto:** entra, liga, recebe e faz todas as funções da seção 4. Instalado pelo Xcode num iPhone de teste, pode começar antes da conta paga da Apple. A parte 1, o modo iPhone da interface e do núcleo, no Linux, foi feita em 30/10/2026 (seção 16); a parte 2 é o app em Swift.
 3. **O push:** a ligação com o app fechado (seção 7.4). Precisa da conta da Apple, do certificado e do manual da plataforma. O teste vai pelo TestFlight.
 4. **A publicação:** a revisão da Apple e a App Store.
 
@@ -531,3 +531,138 @@ O Linux não troca de rede, não tem rede só IPv6 e não tem o áudio do iPhone
 - A Task 7 juntou às dela os minors da Task 6 e dois do `Activate` da Task 5, e a rodada de correção dela juntou mais quatro achados pequenos: nenhum teste que falha ao acaso, nenhuma exceção que volta para o C e nenhuma ligação que fica muda ficaram para depois. Custo se errado: um diff maior para a revisão.
 - A revisão final pediu as correções que esta seção já descreve (a troca de rede, o log do motor, o limite de ligações do baresip, os nomes dos dados de push e os comentários do `SipEngine.h`) antes de dar a etapa por feita, e elas entraram numa onda só. Custo se errado: uma onda um pouco maior.
 - O TSan roda com uma libre montada sobre as pthreads: com as threads do C11 da glibc, o TSan do GCC 13 não enxerga a trava da libre e acusa corridas que não existem.
+
+## 16. Como ficou (etapa 2, parte 1)
+
+A parte 1 da etapa 2 terminou em 30/10/2026, pelo plano `docs/superpowers/plans/2026-10-30-iphone-etapa-2a-modo-iphone.md`. A interface (`windows/ui`) e o núcleo (`starsonic/desktop`) ganharam o modo iPhone e foram testados no Linux:
+
+- a interface, pelo Playwright, em três tamanhos de iPhone (375×667, 390×844 e 430×932), no claro e no escuro;
+- o núcleo, pelo `desktop_tests`.
+
+O contrato entre os dois é a seção "O modo iPhone (etapa 2)" do `docs/ponte-windows.md`, ainda no protocolo v1. O Windows segue igual, com uma exceção sem efeito: a chave nova no `config.json` (16.2).
+
+Esta seção guarda:
+
+- as decisões tomadas durante a construção, com o que cada uma custa se estiver errada;
+- os textos;
+- o que a parte 2 (o app em Swift) precisa ligar e o que ela precisa conferir no aparelho;
+- o que ficou para depois.
+
+### 16.1 A interface
+
+- **O que é só do PC some no iPhone:**
+  - a barra de título, os atalhos de teclado e a aba Atalhos;
+  - a atualização e a área do administrador.
+
+  O Sair do Menu é o da conta e pede confirmação antes.
+- **O "Remover" do Editar conta não aparece no iPhone,** porque lá quem tira a conta é o Sair. Custo se errado: uma linha.
+- **A busca dos Contatos segue a do Android:** procura sempre pelo nome, sem ligar para acento nem maiúscula, e também pelos dígitos quando o texto não tem letras. O plano dizia outra coisa: "com letras, o nome; sem letras, os dígitos". Custo se errado: nenhum.
+- **A agenda grande (mais de 1.000 contatos):**
+  - **Com o `content-visibility`** (o Safari 18 ou mais novo), a lista entra inteira, e o navegador não desenha o que está fora da tela.
+  - **Sem ele** (o iOS 16 e o 17), a lista é desenhada em pedaços: as 100 primeiras linhas na hora e o resto logo depois, sem travar a aba. No Chromium do Linux, as 100 primeiras saem em 12 a 15 ms e as 5.000 em 1,3 a 1,4 s, sem nenhuma tarefa acima de uns 90 ms. Antes, a aba ficava parada 0,7 a 0,8 s numa tarefa só.
+  - **Até 1.000 contatos,** a lista entra sempre inteira, e o VoiceOver alcança cada linha.
+
+  Custo se errado: o aparelho ainda achar lento (16.5).
+- **O "+ do 0 segurado" do plano não existe:** não há esse gesto no Windows nem no Android, e a spec não o pede. O "+" do teclado físico vai como a tecla 0. Custo se errado: nenhum.
+- **Toda área de toque tem pelo menos 44 px no iPhone.** Nos botões pequenos, a área cresce por um `::after`. Um teste passa por cada controle visível de cada tela do iPhone e falha se algum ficar abaixo de 44 px.
+- **Os avisos de licença** ficam numa tela própria, aberta pelo Sobre. Cada peça tem o nome como título, e os parágrafos são refeitos para caber na tela. O arquivo `assets/licencas-ios.txt` continua igual aos textos originais das versões fixas.
+- **No Transferir e no Consultar da ligação,** um número escolhido da agenda vai com o `contato: true` e passa pela mesma regra de discagem do Ligar. Assim um contato salvo com +55 transfere do mesmo jeito que liga. Se a pessoa edita o número depois de escolher, ele vai como número digitado. Isso vale só no iPhone; no Windows, o Transferir segue como antes (16.6).
+- **Um toque no aviso da perdida durante uma ligação** troca a vista para os Recentes por baixo da ligação. Quando a última ligação acaba, a tela volta ao Teclado, como sempre, e os Recentes não chegam a aparecer. Custo se errado: a pessoa abre os Recentes ela mesma.
+
+### 16.2 O núcleo
+
+- **O `DesktopConfig` tem o campo `platform`,** que é Windows quando não se diz nada. No iPhone, a abertura deixa de fora tudo isto:
+  - a migração da rc.7;
+  - os atalhos e o administrador;
+  - a lista da empresa e o BLF;
+  - o `contatos.json`.
+
+  O `config.json` funciona como no Windows.
+- **Uma conta só:**
+  - um Entrar novo deixa só essa conta no `contas.json`;
+  - a abertura apaga as contas que não são a em uso;
+  - o Sair sempre volta à tela Entrar e nunca registra outra conta guardada.
+
+  Assim, num iPhone usado por mais de uma pessoa, a conta de outra pessoa não volta a registrar sem ninguém ver. Custo se errado: duas regras pequenas.
+- **Comandos do outro sistema são recusados antes de tudo:** os do PC no iPhone e os do iPhone no Windows. Nada muda, e o diagnóstico ganha uma linha. A lista é um `switch` sem `default`, então o compilador avisa quando aparece um comando novo sem lado definido.
+- **O `quit` é recusado no iPhone.** A spec 6.1 o punha entre os ganchos do iPhone, mas um app do iPhone não se fecha sozinho; o Sair do iPhone é o da conta. Custo se errado: nenhum.
+- **A agenda:**
+  - Dois números são o mesmo (`SameAgendaNumber`) quando os dígitos são iguais, ou quando os dois têm 8 dígitos ou mais e os 8 últimos batem.
+  - Os índices são montados uma vez só. O `NameFor` roda na thread do motor, com uma trava própria.
+  - O nome mostrado é o da agenda; sem ele, o da central. Um contato de nome vazio não dá nome.
+  - O `recentes.json` guarda o nome da central: a agenda só aparece na tela.
+  - Quando dois números de DDDs diferentes têm os mesmos 8 últimos dígitos, vale o primeiro contato com nome na ordem da agenda, mesmo que outro, mais abaixo, tenha os dígitos iguais aos que a central manda. É o limite conhecido; a melhoria possível está em 16.6.
+- **O `ring` e o `update` não chegam à interface no iPhone.** O bipe do fim vai ao gancho `endBeep`, e o `OfferUpdate` só escreve uma linha no log. Quem atualiza o app no iPhone é a App Store.
+- **O `ready` no iPhone manda, nesta ordem:**
+  1. o estado;
+  2. a `agenda`, quando o `vez` é maior que 0;
+  3. o `abrir` pedido antes do `ready`.
+- **O `keyTone` com uma tecla errada é recusado já na leitura do comando.** O `inCall` é verdadeiro com qualquer ligação, até uma recebida que ainda está tocando. Nesse estado a tela não tem teclado, então a diferença não aparece.
+- **O texto da perdida** é o de sempre (o `MissedText`): o nome da agenda, ou então o número, mesmo quando a central manda um nome. Custo se errado: o número aparece no lugar do nome da central.
+- **O `transfer` e o `consult` aceitam o `contato`,** como o `dial`.
+- **No Windows,** o `config.json` ganha a chave `bipe_tecla` na próxima gravação. O Windows nunca a lê, do mesmo jeito que a `planilha_empresa` da rc.4. Custo se errado: uma chave sem uso.
+
+### 16.3 Os textos
+
+- Os textos do plano, que são os da spec 8 e os do Android 0.2.0-rc.3 adaptados ao iPhone, como "Este iPhone deixa de receber as ligações do ramal".
+- **"Ramal no iPhone",** no alto da tela Entrar do iPhone. É o "Ramal no celular" do Android, adaptado como os outros textos. O Windows segue com "Ramal no computador". Ainda falta a confirmação do responsável.
+
+### 16.4 O que a parte 2 liga
+
+- **A plataforma:** `DesktopConfig.platform = Platform::IPhone`.
+- **A agenda, com o `SetAgenda(permissão, contatos)`.** O app chama o `SetAgenda` em três momentos:
+  - quando a interface manda o `contactsOpened` (gancho `readAgenda`);
+  - quando a pessoa responde ao pedido de permissão (gancho `allowContacts`);
+  - quando o app volta para a frente. A aba só manda o `contactsOpened` ao abrir, e sem essa chamada a permissão dada nos Ajustes não aparece.
+- **A rota do áudio, com o `SetAudioRoute(nome)`,** chamado a cada troca de rota: fone, alto-falante ou Bluetooth. O gancho `chooseAudioRoute` abre a escolha do iOS.
+- **Os bipes:**
+  - o gancho `keyTone(tecla, emLigacao)` toca o bipe de telefone da tecla;
+  - o gancho `endBeep()` toca o bipe do fim.
+- **A perdida:** o gancho `missedCall(texto)` mostra o aviso do iOS. Com o app na frente, a interface já mostra o aviso de 2 s; o app decide se o aviso do iOS aparece também.
+- **O `OpenRecents()`:** é chamado quando a pessoa toca no aviso da perdida. O núcleo só guarda esse toque até o primeiro `ready`. O iOS pode matar a página em segundo plano; se o app a recarregar, ele chama o `OpenRecents` só depois do `ready` da página nova.
+- **O WKWebView:**
+  - fica escondido, com o logo por cima, até a interface ficar pronta (o `body[data-pronto]`);
+  - usa o `viewport-fit=cover`;
+  - o `openExternal` com `tel:+551150603000` abre o discador do iPhone.
+- **A tela:** o app fica só em pé (retrato).
+
+### 16.5 O que a parte 2 confere no aparelho
+
+- **A agenda grande no iOS 16 e 17 (o caminho em pedaços):**
+  - o tempo para abrir uma agenda de 5.000 contatos num iPhone 8;
+  - o tamanho do pedaço (aqui cada pedaço custa uns 50 ms);
+  - a rolagem que pula para o alto quando chega uma agenda mudada com a pessoa lá embaixo da lista.
+- **A agenda grande no iOS 18 ou mais novo:** o VoiceOver e o `overflow-clip-margin` com o `content-visibility`.
+- **As áreas de toque do `::after` no iOS 16.0 a 16.3:** o WebKit só passou a recortar o toque pelo botão no 257439@main, por volta do iOS 16.4. Tocar na borda de uma área de 44 px, também no cabeçalho.
+- **O `:hover` que fica preso depois de um toque no WebKit:** a borda ciano continua na última tecla tocada.
+- **Os avisos de licença:** o `fetch('assets/licencas-ios.txt')` no WKWebView.
+- **A permissão dos contatos negada e depois dada nos Ajustes,** com a volta ao app.
+- **Transferir e consultar para um contato salvo com +55.**
+- **E os itens da 15.10:** a troca de rede e o DNS.
+
+### 16.6 Para depois
+
+- **O Transferir e o Consultar do Windows:** um contato de "Meus contatos" salvo com +55 vai com o número cru, sem a regra de discagem do Ligar. A correção é uma linha na interface: mandar o `contato: true` também no Windows. Ela muda o Transferir do produto do Windows, então fica com o responsável.
+- **A colisão de DDDs:** quando os dois números têm 10 dígitos ou mais, comparar os 10 últimos antes de cair nos 8.
+- **Nomes feitos só de espaços especiais:** o `Trimmed` só tira os brancos ASCII. Um nome feito só de espaços não ASCII, como o NBSP, aparece como um nome invisível na tela da ligação, enquanto a interface mostra o número.
+- **O número do suporte em mais de um lugar:** ele aparece fora do `branding.h`, no `kSupportTel` do núcleo e no `EXTERNAL_URLS.suporte` da interface.
+- **Os testes da interface:**
+  - a docstring do `ios-helpers.ts`;
+  - o seletor do teste de toque: faltam os `role` tab, link, checkbox, radio e option, e também `summary`, `tabindex` e `onclick`;
+  - as quebras de texto do Sobre e dos avisos.
+- **Um caso que já existia no Windows:** quando a gravação das contas falha depois de um Entrar que deu certo, o cabeçalho mostra a conta anterior como "sem conexão".
+
+### 16.7 O processo
+
+- **Seis tarefas.** Cada uma foi feita por um agente novo e teve uma revisão logo depois, com rodadas de correção quando foi preciso. Só se seguiu para a próxima com o CI verde. Como na etapa 1, o trabalho foi direto no `main`.
+- **A revisão final do ramo inteiro** achou três pontos importantes:
+  - o Transferir com +55;
+  - a agenda grande no iOS 16 e 17;
+  - o texto do Entrar.
+
+  Achou também um reforço, o Sair num iPhone usado por mais de uma pessoa. Os quatro foram corrigidos numa leva só e conferidos numa segunda revisão.
+- **Os testes no fim:**
+  - o Playwright, com 700 casos do Windows e do iPhone;
+  - o `desktop_tests`, com 322;
+  - o `phone_tests` e o `call_controller_tests`.
+- **No CI do Windows,** a primeira abertura do WebView2 leva uns 18 s, e uma vez passou dos 30 s que o teste de fumaça espera. Na repetição, passou.
