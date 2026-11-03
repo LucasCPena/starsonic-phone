@@ -1,0 +1,2 @@
+Para ligar, transferir ou consultar, digite o nome ou o número: aparecem os seus contatos e os da lista da empresa.
+Esta é uma versão de teste.

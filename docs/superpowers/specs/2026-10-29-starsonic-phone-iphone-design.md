@@ -566,7 +566,7 @@ Esta seção guarda:
 - **O "+ do 0 segurado" do plano não existe:** não há esse gesto no Windows nem no Android, e a spec não o pede. O "+" do teclado físico vai como a tecla 0. Custo se errado: nenhum.
 - **Toda área de toque tem pelo menos 44 px no iPhone.** Nos botões pequenos, a área cresce por um `::after`. Um teste passa por cada controle visível de cada tela do iPhone e falha se algum ficar abaixo de 44 px.
 - **Os avisos de licença** ficam numa tela própria, aberta pelo Sobre. Cada peça tem o nome como título, e os parágrafos são refeitos para caber na tela. O arquivo `assets/licencas-ios.txt` continua igual aos textos originais das versões fixas.
-- **No Transferir e no Consultar da ligação,** um número escolhido da agenda vai com o `contato: true` e passa pela mesma regra de discagem do Ligar. Assim um contato salvo com +55 transfere do mesmo jeito que liga. Se a pessoa edita o número depois de escolher, ele vai como número digitado. O Windows leva a mesma regra desde a 0.1.0-rc.5, com as sugestões de "Meus contatos" (16.6).
+- **No Transferir e no Consultar da ligação,** um número escolhido da agenda vai com o `contato: true` e passa pela mesma regra de discagem do Ligar. Assim um contato salvo com +55 transfere do mesmo jeito que liga. Se a pessoa edita o número depois de escolher, ele vai como número digitado. O Windows leva a mesma regra desde a 0.1.0-rc.5, com as sugestões de "Meus contatos", e desde a 0.1.0-rc.6 também com os da lista da empresa (16.6).
 - **Um toque no aviso da perdida durante uma ligação** troca a vista para os Recentes por baixo da ligação. Quando a última ligação acaba, a tela volta ao Teclado, como sempre, e os Recentes não chegam a aparecer. Custo se errado: a pessoa abre os Recentes ela mesma.
 
 ### 16.2 O núcleo
@@ -642,7 +642,7 @@ Esta seção guarda:
 
 ### 16.6 Para depois
 
-- **O Transferir e o Consultar do Windows:** o responsável pediu a regra, e a 0.1.0-rc.5 a leva: um contato de "Meus contatos" salvo com +55, escolhido na sugestão, vai com o `contato: true` e passa pela regra de discagem do Ligar, como no iPhone. Fica de fora a lista da empresa, que não aparece nas sugestões do Windows: o número dela, digitado, vai cru.
+- **O Transferir e o Consultar do Windows:** o responsável pediu a regra, e a 0.1.0-rc.5 a leva: um contato de "Meus contatos" salvo com +55, escolhido na sugestão, vai com o `contato: true` e passa pela regra de discagem do Ligar, como no iPhone. A lista da empresa nas sugestões do Windows deixou de ser para depois: desde a 0.1.0-rc.6, o Teclado, o Transferir, o Consultar e a Nova ligação acham o contato pelo nome ou pelo número, nos meus e nos da lista da empresa, e o escolhido da empresa vai com o `contato: true` também. Só o número digitado, sem um contato escolhido, vai cru. O iPhone segue com a agenda e o campo só de número.
 - **A colisão de DDDs:** quando os dois números têm 10 dígitos ou mais, comparar os 10 últimos antes de cair nos 8.
 - **Nomes feitos só de espaços especiais:** o `Trimmed` só tira os brancos ASCII. Um nome feito só de espaços não ASCII, como o NBSP, aparece como um nome invisível na tela da ligação, enquanto a interface mostra o número.
 - **O número do suporte em mais de um lugar:** ele aparece fora do `branding.h`, no `kSupportTel` do núcleo e no `EXTERNAL_URLS.suporte` da interface.
