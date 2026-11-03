@@ -285,8 +285,10 @@ bool ParseDialogInfo(const std::string& body, bool* full, std::vector<std::pair<
 
 void BlfBuddy::onBuddyEvSubDlgEventState(pj::OnBuddyEvSubStateParam& param) {
     try {
-        pjsua_buddy_dlg_event_info info;
-        if (pjsua_buddy_get_dlg_event_info(getId(), &info) != PJ_SUCCESS) return;
+        // O estado da assinatura sem o pjsua_buddy_get_dlg_event_info, que derruba o app no PJSIP 2.17: um <dialog>
+        // sem o <local> ou o <remote> deixa neles o tamanho do NOTIFY de antes, com o ponteiro nulo, e ele lê dali.
+        pjsua_buddy_info info;
+        if (pjsua_buddy_get_info(getId(), &info) != PJ_SUCCESS) return;
         if (info.sub_state == PJSIP_EVSUB_STATE_TERMINATED) {
             track_->SetUnknown(true);
             return;

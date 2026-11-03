@@ -416,6 +416,26 @@ class FakeRegistrarBlfTest(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(self.registrar.command(command), ["ERR bad-command"])
 
+    def test_blf_participants_go_only_in_that_notify(self):
+        self.answer(subscribe("2007"))
+        self.assertEqual(self.registrar.command("BLF 2007 early participantes"), ["OK"])
+        notify = self.sent()[-1]
+        self.assertIn('<dialog id="ci-2007-1" direction="recipient">\r\n<local>\r\n<identity>sip:2007@ci</identity>\r\n'
+                      '<target uri="sip:2007@ci"/>\r\n</local>\r\n<remote>\r\n<identity>sip:3001@ci</identity>\r\n'
+                      '<target uri="sip:3001@ci"/>\r\n</remote>\r\n<state>early</state>', notify.body)
+        # O NOTIFY seguinte, sem o participantes: o mesmo <dialog> sem eles (o tocando que a pessoa atendeu).
+        self.assertEqual(self.registrar.command("BLF 2007 confirmed"), ["OK"])
+        notify = self.sent()[-1]
+        self.assertIn('<dialog id="ci-2007-1" direction="recipient">\r\n<state>confirmed</state>', notify.body)
+        self.assertNotIn("<local>", notify.body)
+        self.assertNotIn("<remote>", notify.body)
+        self.assertEqual(self.registrar.command("BLF 2007 terminated@1 participantes"), ["OK"])
+        self.assertIn("<local>", self.sent()[-1].body)
+        for command in ("BLF 2007 refuse participantes", "BLF 2007 early participante",
+                        "BLF 2007 early participantes x"):
+            with self.subTest(command=command):
+                self.assertEqual(self.registrar.command(command), ["ERR bad-command"])
+
     def test_drop_register_ignores_registers_while_on(self):
         self.assertEqual(self.registrar.command("DROP REGISTER on"), ["OK"])
         self.assertEqual(self.answer(register(self.registrar)), [])   # nenhuma resposta: como um pacote perdido

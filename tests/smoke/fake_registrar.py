@@ -35,7 +35,9 @@ BLF (RFC 4235, sem autenticação): SUBSCRIBE com Event: dialog ao ramal da Requ
   state="partial" só com ele. BLF <ramal> refuse: o próximo SUBSCRIBE leva
   403 e as assinaturas abertas acabam (NOTIFY terminated;reason=rejected). SUBSCRIBE de outro evento ->
   200 OK, como qualquer outro pedido (menos o que tira a assinatura de um REFER com o REFER_NOTIFY none:
-  ver o comando). O NOTIFY vai ao Contact do SUBSCRIBE, pelo mesmo transporte.
+  ver o comando). O NOTIFY vai ao Contact do SUBSCRIBE, pelo mesmo transporte. Com o participantes no fim do
+  comando BLF, os <dialog> desse NOTIFY levam também o <local> (o ramal) e o <remote> (o Cliente Teste), como
+  a central manda no tocando.
 
 Porta de controle (--control-port N, TCP no mesmo --host; um comando por linha, resposta numa linha):
   RING <ramal>       INVITE de "Cliente Teste" <sip:3001@ci>          -> OK | ERR no-contact
@@ -56,6 +58,8 @@ Porta de controle (--control-port N, TCP no mesmo --host; um comando por linha, 
   BLF <ramal> <estado>[+<estado>...]  os diálogos do ramal para o BLF (estado: terminated, early ou
                      confirmed), ou refuse                                    -> OK
   BLF <ramal> <estado>@<n>  muda só o diálogo n (NOTIFY partial)              -> OK | ERR no-dialog
+  BLF <ramal> <estados ou estado@n> participantes  o mesmo, com o <local> e o <remote> nos <dialog>
+                                                                              -> OK | ERR no-dialog
   FORGET             a central esquece as assinaturas de BLF, sem NOTIFY (como reiniciada) -> OK
   DROP REGISTER <on|off>  com on, os REGISTER somem sem resposta (pacote perdido) -> OK
   DROP REINVITE <on|off>  com on, os re-INVITE do telefone somem sem resposta e sem registro (pacote perdido); a
@@ -632,19 +636,25 @@ class Registrar:
         return [self._response(200, msg.headers, peer.address, extra),
                 self._blf_notify(sub, "active;expires=%d" % seconds)]
 
-    def _blf_notify(self, sub, state, only=None):
+    def _blf_notify(self, sub, state, only=None, participants=False):
         """O NOTIFY com o dialog-info do ramal de agora (RFC 4235): sem <dialog> enquanto nenhum BLF o mudou.
-        only=n: um NOTIFY state="partial" só com o diálogo n (contado de 1)."""
+        only=n: um NOTIFY state="partial" só com o diálogo n (contado de 1). participants: cada <dialog> leva
+        também o <local> (o ramal) e o <remote> (o CALLER), antes do <state>, como a central manda."""
         sub.version += 1
         dialogs = self.blf.get(sub.ramal)
         dialogs = dialogs if isinstance(dialogs, list) else []
         lines = ['<?xml version="1.0"?>',
                  '<dialog-info xmlns="urn:ietf:params:xml:ns:dialog-info" version="%d" state="%s" entity="%s">'
                  % (sub.version, "full" if only is None else "partial", sub.entity)]
+        caller = _uri_of(CALLER)
         for number, dialog in enumerate(dialogs, 1):
             if only is None or number == only:
-                lines += ['<dialog id="ci-%s-%d" direction="recipient">' % (sub.ramal, number),
-                          "<state>%s</state>" % dialog, "</dialog>"]
+                lines.append('<dialog id="ci-%s-%d" direction="recipient">' % (sub.ramal, number))
+                if participants:
+                    lines += ["<local>", "<identity>%s</identity>" % sub.entity, '<target uri="%s"/>' % sub.entity,
+                              "</local>", "<remote>", "<identity>%s</identity>" % caller,
+                              '<target uri="%s"/>' % caller, "</remote>"]
+                lines += ["<state>%s</state>" % dialog, "</dialog>"]
         lines.append("</dialog-info>")
         headers = [("From", sub.local), ("To", sub.remote), ("Call-ID", sub.call_id),
                    ("CSeq", "%d NOTIFY" % self._next_cseq(sub.call_id)), ("Contact", "<%s>" % sub.contact),
@@ -653,11 +663,14 @@ class Registrar:
         return _request("NOTIFY", sub.target, sub.peer.transport, sub.server, _branch(), headers,
                         "\r\n".join(lines) + "\r\n")
 
-    def _set_blf(self, ramal, spec):
-        """BLF <ramal> <estados|estado@n|refuse>: guarda os diálogos e avisa cada assinatura do ramal (refuse
-        acaba com elas). None se spec não é válido."""
+    def _set_blf(self, ramal, spec, participants=False):
+        """BLF <ramal> <estados|estado@n|refuse> [participantes]: guarda os diálogos e avisa cada assinatura do ramal
+        (refuse acaba com elas); participants vai ao _blf_notify. None se spec não é válido (também o refuse com
+        participants)."""
         only = None
         if spec == "refuse":
+            if participants:
+                return None
             state = "refuse"
         elif re.fullmatch(r"[a-z]+@[1-9][0-9]*", spec):
             dialog, _, number = spec.partition("@")
@@ -680,7 +693,7 @@ class Registrar:
                 del self.subscriptions[call_id]
                 self._send(sub.peer, self._blf_notify(sub, "terminated;reason=rejected"))
             else:
-                self._send(sub.peer, self._blf_notify(sub, "active;expires=%d" % sub.expires, only))
+                self._send(sub.peer, self._blf_notify(sub, "active;expires=%d" % sub.expires, only, participants))
         return "OK"
 
     # --- o registrador liga para o telefone (RING), desliga (HANGUP), transfere (REFER) e troca (REPLACES) ---
@@ -833,8 +846,8 @@ class Registrar:
                 self.expires = int(ramal)
                 return ["OK"]
             blf = argument.split(" ")
-            if name == "BLF" and len(blf) == 2 and blf[0]:
-                reply = self._set_blf(blf[0], blf[1])
+            if name == "BLF" and len(blf) in (2, 3) and blf[0] and blf[2:] in ([], ["participantes"]):
+                reply = self._set_blf(blf[0], blf[1], len(blf) == 3)
                 if reply:
                     return [reply]
             if name == "DROP" and len(blf) == 2 and blf[0] in ("REGISTER", "REINVITE") and blf[1] in ("on", "off"):

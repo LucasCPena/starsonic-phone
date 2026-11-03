@@ -220,6 +220,31 @@ TEST_CASE("WatchBlf aggregates several dialogs of the same extension") {
     CHECK(listener.BlfStates("2007") == expected);
 }
 
+// rc.5: o app caía quando o ramal do atalho atendia. A central manda o <dialog> do tocando com o <local> e o do falando
+// sem ele; o PJSIP 2.17 deixa, no segundo, o tamanho velho do <local> e do <remote> com o ponteiro nulo, e o
+// pjsua_buddy_get_dlg_event_info lia desse ponteiro.
+TEST_CASE("a NOTIFY without local and remote after one with them goes from Ringing to Busy") {
+    FakeRegistrar registrar("senha");
+    RecordingListener listener;
+    INFO(listener.LogTail());
+    INFO(listener.BlfText());
+    std::unique_ptr<SipEngine> engine = StartEngine(&listener, LoadProfile(registrar.port()));
+
+    REQUIRE(engine->SetAccount(Input(Transport::Udp)));
+    REQUIRE(listener.WaitFor(RecordingListener::Reached(200, true, 1), kWaitSeconds));
+    engine->WatchBlf({"2007"});
+    REQUIRE(listener.WaitForBlf("2007", BlfState::Free, kWaitSeconds));
+
+    // Tocando: o <dialog> com o <local> (o ramal) e o <remote> (quem liga). Atendida: o mesmo <dialog>, sem os dois.
+    REQUIRE(registrar.Control("BLF 2007 early participantes") == kOk);
+    REQUIRE(listener.WaitForBlf("2007", BlfState::Ringing, kWaitSeconds));
+    REQUIRE(registrar.Control("BLF 2007 confirmed") == kOk);
+    CHECK(listener.WaitForBlf("2007", BlfState::Busy, kWaitSeconds));
+
+    const std::vector<BlfState> expected = {BlfState::Free, BlfState::Ringing, BlfState::Busy};
+    CHECK(listener.BlfStates("2007") == expected);
+}
+
 TEST_CASE("BLF comes back when the account registers again") {
     FakeRegistrar registrar("senha");
     RecordingListener listener;
