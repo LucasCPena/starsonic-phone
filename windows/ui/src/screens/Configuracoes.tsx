@@ -85,7 +85,7 @@ function Select({ id, value, options, onChange }: { id: string; value: string; o
 }
 
 const AJUDA_DA_PLANILHA =
-  'Cole o link do Google Planilhas ou do OneDrive/SharePoint, compartilhado para qualquer pessoa com o link, ou o caminho do arquivo na rede.';
+  'Cole o link do Google Planilhas, do Google Drive ou do OneDrive/SharePoint, compartilhado para qualquer pessoa com o link, ou o caminho do arquivo na rede.';
 
 /**
  * (rc.4) A planilha da empresa (spec da rc.4, 5.1): o campo com o link ou o caminho e o Salvar (também o Enter; vazio

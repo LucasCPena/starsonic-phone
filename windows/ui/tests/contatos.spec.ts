@@ -408,13 +408,13 @@ test.describe('Configurações → Contatos', () => {
     await verTextos(page, [
       'Planilha da empresa',
       'Salvar',
-      'Cole o link do Google Planilhas ou do OneDrive/SharePoint, compartilhado para qualquer pessoa com o link, ou o caminho do arquivo na rede.',
+      'Cole o link do Google Planilhas, do Google Drive ou do OneDrive/SharePoint, compartilhado para qualquer pessoa com o link, ou o caminho do arquivo na rede.',
       'Atualizar agora',
     ]);
     await expect(campo(page)).toHaveAttribute('id', 'cfg-planilha');
     await expect(campo(page)).toHaveValue('');
     await expect(campo(page)).toHaveAccessibleDescription(
-      'Cole o link do Google Planilhas ou do OneDrive/SharePoint, compartilhado para qualquer pessoa com o link, ou o caminho do arquivo na rede.',
+      'Cole o link do Google Planilhas, do Google Drive ou do OneDrive/SharePoint, compartilhado para qualquer pessoa com o link, ou o caminho do arquivo na rede.',
     );
     // O Salvar.
     await campo(page).fill(LINK);

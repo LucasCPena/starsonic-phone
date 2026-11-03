@@ -859,7 +859,7 @@ const LARGURAS: Array<[number, number]> = [
   [300, 440],
 ];
 const AJUDA_DA_PLANILHA =
-  'Cole o link do Google Planilhas ou do OneDrive/SharePoint, compartilhado para qualquer pessoa com o link, ou o caminho do arquivo na rede.';
+  'Cole o link do Google Planilhas, do Google Drive ou do OneDrive/SharePoint, compartilhado para qualquer pessoa com o link, ou o caminho do arquivo na rede.';
 const LINK_FECHADO = 'Não consegui abrir o link. Confira se a planilha está compartilhada para qualquer pessoa com o link.';
 
 async function semRolarNaHorizontal(page: Page, largura: number): Promise<void> {
