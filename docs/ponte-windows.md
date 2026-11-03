@@ -110,8 +110,8 @@ O Entrar (spec do Windows, 7.1 e 11.1):
 | `hold` | `on` (booleano, opcional) | Espera: `true` põe, `false` retoma, sem `on` troca. Com duas em andamento, pôr a ativa em espera é o Alternar. Na conferência, nada. |
 | `mute` | `on` (booleano, opcional) | Mudo do microfone (vale para as duas ligações); sem `on`, troca. |
 | `dtmf` | `digitos` (texto) | Manda os dígitos (`0-9`, `*`, `#`) na ligação ativa. |
-| `transfer` | `numero` (texto) | "Transferir agora" (sem consulta). Se a central recusa, o toast `O servidor não aceitou a transferência.`. |
-| `consult` | `numero` (texto) | "Consultar": liga para o colega como a Nova ligação, marcada como consulta. |
+| `transfer` | `numero` (texto), `contato` (booleano, opcional) | "Transferir agora" (sem consulta). (rc.5) Com `contato: true`, o número de um contato passa antes pela regra dos contatos, como no `dial`; a interface o manda quando o número do campo veio de uma sugestão e não mudou depois. Se a central recusa, o toast `O servidor não aceitou a transferência.`. |
+| `consult` | `numero` (texto), `contato` (booleano, opcional) | "Consultar": liga para o colega como a Nova ligação, marcada como consulta. (rc.5) O `contato`, como no `transfer`. |
 | `completeTransfer` | — | "Concluir transferência" (com o colega atendido). |
 | `cancelConsult` | — | "Cancelar" a consulta: o colega sai e o cliente volta. |
 | `swap` | — | "Alternar" entre as duas ligações (também entre o cliente e o colega na consulta). |
@@ -127,6 +127,7 @@ O Entrar (spec do Windows, 7.1 e 11.1):
 {"v":1,"cmd":"mute"}
 {"v":1,"cmd":"dtmf","digitos":"1#"}
 {"v":1,"cmd":"transfer","numero":"2004"}
+{"v":1,"cmd":"transfer","numero":"+55 11 98888-7777","contato":true}
 {"v":1,"cmd":"consult","numero":"2004"}
 {"v":1,"cmd":"completeTransfer"}
 ```
@@ -688,10 +689,8 @@ Duas a mais (C++ → interface), também com `v: 1`:
   7.1).
 - **Uma conta só:** o `login` que registra uma conta nova (sem `contaId`) deixa só ela em `contas` (ela toma o lugar da
   que estava em uso). O Editar (o `login` com o `contaId` da conta em uso) é o de hoje.
-- **O Transferir e o Consultar de um contato:** o `transfer` e o `consult` aceitam o `contato` (booleano, opcional),
-  como o `dial`: com `contato: true`, o número passa pela mesma regra dos contatos do perfil. A interface o manda quando
-  o número do campo veio de uma sugestão da agenda e não mudou depois (o núcleo o aceita também no Windows, onde a
-  interface não o manda).
+- **O Transferir e o Consultar de um contato:** o `contato` do `transfer` e do `consult`, como no Windows (a tabela das
+  Ligações); no iPhone, a sugestão vem da agenda.
 - **O `ring` e o `update` não vêm:** quem toca é a tela de chamada do iPhone, e o bipe do fim da ligação (a regra do
   `ring` `fim`, com o `config.bipeFim`) é do hospedeiro. A interface ignora os dois no modo iPhone. A atualização é a da
   App Store.

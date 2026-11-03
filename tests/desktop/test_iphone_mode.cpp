@@ -758,8 +758,8 @@ TEST_CASE("the agenda names the incoming call, the recents and the missed call")
 }
 
 TEST_CASE("transfer and consult with contato reach the engine with the text of dial with contato") {
-    // O Transferir e o Consultar de uma sugestao da agenda (a interface manda o contato: true so no iPhone; o nucleo o
-    // aceita dos dois): o numero passa pela mesma regra do dial com contato: true. Sem o contato, como hoje.
+    // O Transferir e o Consultar de uma sugestao (a da agenda no iPhone; no Windows, desde a rc.5, a dos meus contatos):
+    // o numero passa pela mesma regra do dial com contato: true. Sem o contato, como hoje.
     for (const Platform platform : {Platform::IPhone, Platform::Windows}) {
         const char* const mode = platform == Platform::IPhone ? "iPhone" : "Windows";
         INFO(mode);

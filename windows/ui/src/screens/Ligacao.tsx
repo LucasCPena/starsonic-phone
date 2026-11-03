@@ -6,8 +6,8 @@
 // Atalhos. (rc.3) O botão Atalhos (com uma ligação atendida, fora da consulta e da conferência) abre o painel com os
 // atalhos no lugar dos controles. As sugestões do número do Transferir e da Nova ligação vêm de `contatos`: os do estado
 // e, no iPhone, os da agenda (um por número; um contato sem nome mostra o número). A da Nova ligação liga com a regra dos
-// contatos (o `contato` do dial); a do Transferir põe o número no campo e, no iPhone, o Consultar e o Transferir agora
-// dele, sem mudança depois, vão com o `contato` também.
+// contatos (o `contato` do dial); a do Transferir põe o número no campo, e o Consultar e o Transferir agora dele, sem
+// mudança depois, vão com o `contato` também (no Windows, desde a rc.5).
 // (iPhone) O botão Áudio mostra a saída de agora (a `rotaAudio`: "iPhone", "Viva-voz" ou o nome do fone; "Áudio" sem
 // saber), com o nome "Áudio: <saída>", e pede a escolha do iPhone (o `audioRoute`: o hospedeiro mostra a dele), no
 // lugar do menu dos dispositivos; sem o botão Atalhos (fora da 1.0), uma ligação fica em três colunas (6 controles) e
@@ -564,8 +564,8 @@ export function Ligacao({ state, ligacao: l, contatos, send }: Props) {
         onContact={null}
         onEnter={null}
         actions={(numero, daSugestao) => {
-          // (iPhone) O número de uma sugestão da agenda, sem mudança depois, vai com a regra dos contatos (o `contato`).
-          const contato = ios && daSugestao ? { contato: true } : {};
+          // O número de uma sugestão, sem mudança depois, vai com a regra dos contatos (o `contato`), como no Ligar.
+          const contato = daSugestao ? { contato: true } : {};
           return (
             <>
               {/* O Consultar é a segunda ligação: com duas, não. */}
