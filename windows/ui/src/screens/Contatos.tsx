@@ -7,13 +7,15 @@
 // cima da lista, e a Empresa mostra a planilha inteira (Ruling R16); sem ela, a lista é a de todos.
 // A lista da empresa pode ter 10.000 contatos: a junção, a ordem e a busca usam o que cada linha já tem calculado, e a
 // linha de cada contato é montada uma vez e reaproveitada (o Preact pula o mesmo vnode), então um estado novo (um BLF,
-// uma ligação) ou a busca não redesenham a lista inteira.
+// uma ligação) ou a busca não redesenham a lista inteira. (rc.6) A junção, a ordem e a busca ficam no
+// lista-de-contatos.ts, com a lista pronta: a mesma do painel do Transferir e das sugestões do Teclado.
 import type { VNode } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { Confirm } from '../components/Confirm';
 import { Menu } from '../components/Menu';
-import { contactNumberLine, digitsOnly, fold, groupLetter, initials } from '../format';
+import { contactNumberLine, initials } from '../format';
 import { IconMore, IconPencil, IconPhone, IconPlus, IconSearch, IconTrash } from '../icons';
+import { bate, buscaPor, listaDeContatos, type Linha } from '../lista-de-contatos';
 import type { CompanyContact, Contact } from '../state';
 import type { Send } from '../types';
 
@@ -42,78 +44,6 @@ const VAZIA: Record<Filtro, string> = {
   meus: 'Nenhum contato seu ainda.',
   empresa: 'Nenhum contato da empresa.',
 };
-
-/** Uma linha da lista: um contato meu (`meu`, com o menu) ou um da lista da empresa, com a busca e a ordem já calculadas. */
-interface Linha {
-  key: string;
-  nome: string;
-  numero: string;
-  observacao: string;
-  /** O meu contato (Editar e Remover); null num da empresa. */
-  meu: Contact | null;
-  /** O nome e a observação sem acento e sem caixa, e os dígitos do número. */
-  nomeBusca: string;
-  obsBusca: string;
-  digitos: string;
-  /** A letra do grupo ("#" para número ou símbolo). */
-  letra: string;
-}
-
-function linha(key: string, c: CompanyContact, meu: Contact | null): Linha {
-  return {
-    key,
-    nome: c.nome,
-    numero: c.numero,
-    observacao: c.observacao,
-    meu,
-    nomeBusca: fold(c.nome),
-    obsBusca: fold(c.observacao),
-    digitos: digitsOnly(c.numero),
-    letra: groupLetter(c.nome),
-  };
-}
-
-/** A ordem da lista: o grupo "#" primeiro e as letras depois; no grupo, o nome sem acento e sem caixa. */
-function ordem(a: Linha, b: Linha): number {
-  if (a.letra !== b.letra) return a.letra === '#' ? -1 : b.letra === '#' ? 1 : a.letra < b.letra ? -1 : 1;
-  return a.nomeBusca < b.nomeBusca ? -1 : a.nomeBusca > b.nomeBusca ? 1 : 0;
-}
-
-/**
- * As linhas da planilha da empresa, em ordem (no empate, a da planilha). A chave de cada uma é o contato (os dígitos, o
- * nome e a observação, e quantas vezes ele já apareceu antes na planilha), não a posição: numa planilha nova, a linha (e
- * o foco nela) continua no mesmo contato.
- */
-function linhasDaPlanilha(daEmpresa: CompanyContact[]): Linha[] {
-  const vezes = new Map<string, number>();
-  return daEmpresa
-    .map((c) => {
-      const l = linha('', c, null);
-      const contato = JSON.stringify([l.digitos, l.nomeBusca, l.obsBusca]);
-      const n = vezes.get(contato) ?? 0;
-      vezes.set(contato, n + 1);
-      l.key = `empresa:${contato}#${n}`;
-      return l;
-    })
-    .sort(ordem);
-}
-
-/**
- * O Todos: os meus e os da empresa numa lista só, em ordem; some o da empresa com o mesmo nome e os mesmos dígitos de
- * um meu. No empate da ordem, os meus vêm antes (a ordenação é estável).
- */
-function juntar(meus: Linha[], daEmpresa: Linha[]): Linha[] {
-  const chave = (l: Linha) => `${l.digitos} ${l.nomeBusca}`;
-  const minhas = new Set(meus.map(chave));
-  return [...meus, ...daEmpresa.filter((l) => !minhas.has(chave(l)))].sort(ordem);
-}
-
-/** A busca no nome e na observação (sem acento e sem caixa) e nos dígitos do número. */
-function bate(l: Linha, termo: string, digitos: string): boolean {
-  if (!termo) return true;
-  if (l.nomeBusca.includes(termo) || l.obsBusca.includes(termo)) return true;
-  return digitos.length > 0 && l.digitos.includes(digitos);
-}
 
 /** O toque na linha liga: as iniciais, o nome (com a etiqueta "Empresa", num da empresa) e o ramal ou número. */
 function rowHit(l: Linha, ligar: () => void): VNode {
@@ -255,19 +185,17 @@ export function Contatos({ contatos, daEmpresa, comPlanilha, send, onNew, onEdit
     if (!comPlanilha) setEscolhido('todos');
   }, [comPlanilha]);
 
-  // Cada estado novo traz outra cópia dos meus contatos: a lista só muda quando eles mudam de verdade.
-  const meusComoEstao = JSON.stringify(contatos);
-  const meus = useMemo(() => contatos.map((c) => linha(c.id, c, c)), [meusComoEstao]);
-  const daPlanilha = useMemo(() => linhasDaPlanilha(daEmpresa), [daEmpresa]);
-  const todas = useMemo(() => juntar(meus, daPlanilha), [meus, daPlanilha]);
-  const termo = fold(busca.trim());
-  const digitos = digitsOnly(busca);
+  // A lista pronta (lista-de-contatos.ts): cada estado novo traz outra cópia dos meus contatos, e ela só muda quando eles
+  // mudam de verdade ou chega outra lista da empresa.
+  const { daPlanilha, todas } = listaDeContatos(contatos, daEmpresa);
+  const { termo, digitos } = buscaPor(busca);
   const grupos = useMemo(() => {
     // O Todos sem o da empresa que também é meu; os Meus; a Empresa com a planilha inteira (Ruling R16).
     const fonte = filtro === 'empresa' ? daPlanilha : todas;
+    const procurada = { termo, digitos };
     const lista: Array<{ letra: string; itens: Linha[] }> = [];
     for (const l of fonte) {
-      if ((filtro === 'meus' && l.meu === null) || !bate(l, termo, digitos)) continue;
+      if ((filtro === 'meus' && l.meu === null) || !bate(l, procurada)) continue;
       const ultimo = lista[lista.length - 1];
       if (ultimo && ultimo.letra === l.letra) ultimo.itens.push(l);
       else lista.push({ letra: l.letra, itens: [l] });
