@@ -1,3 +1,4 @@
 O app não fecha mais com o BLF ligado quando um ramal do atalho atende uma ligação.
 Transferir para um contato salvo com +55 usa o mesmo número do Ligar.
+A lista da empresa aceita também o link de um arquivo CSV ou Excel do Google Drive.
 Esta é uma versão de teste.
