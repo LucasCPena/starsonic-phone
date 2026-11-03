@@ -245,6 +245,26 @@ std::optional<CompanySource> GoogleSource(const Url& url) {
     return CompanySource{CompanySourceKind::Google, location};
 }
 
+// drive.google.com: o arquivo do /file/d/<id>/..., do /open?id=<id> ou do /uc?id=<id>, com ou sem o /u/<n>/ de quem
+// tem mais de uma conta antes, pelo endereco de baixar (com o resourcekey do link). Nada se o caminho e de outra coisa
+// (uma pasta...) ou se o id nao e um id do Google.
+std::optional<CompanySource> DriveSource(const Url& url) {
+    const std::vector<std::string> parts = Split(url.path, '/');   // a primeira e vazia: o caminho comeca com '/'
+    size_t i = 1;
+    if (i + 1 < parts.size() && parts[i] == "u" && IsDigits(parts[i + 1])) i += 2;
+    std::string id;
+    if (i + 2 < parts.size() && parts[i] == "file" && parts[i + 1] == "d") {
+        id = parts[i + 2];
+    } else if (i + 1 == parts.size() && (parts[i] == "open" || parts[i] == "uc")) {
+        id = ParamValue(url.query, "id");
+    }
+    if (!IsGoogleId(id)) return std::nullopt;
+    std::string location = "https://drive.google.com/uc?export=download&id=" + id;
+    const std::string key = ParamValue(url.query, "resourcekey");
+    if (!key.empty()) location += "&resourcekey=" + key;
+    return CompanySource{CompanySourceKind::GoogleDrive, location};
+}
+
 std::optional<CompanySource> HttpsSource(const std::string& text) {
     const std::optional<Url> parsed = ParseHttps(text);
     if (!parsed) return std::nullopt;
@@ -252,6 +272,9 @@ std::optional<CompanySource> HttpsSource(const std::string& text) {
     if (url.host == "docs.google.com") {
         std::optional<CompanySource> google = GoogleSource(url);
         if (google) return google;
+    } else if (url.host == "drive.google.com") {
+        std::optional<CompanySource> drive = DriveSource(url);
+        if (drive) return drive;
     } else if (InDomain(url.host, "1drv.ms") || InDomain(url.host, "onedrive.live.com")) {
         return WithDownload(CompanySourceKind::OneDrive, url, "download");
     } else if (InDomain(url.host, "sharepoint.com")) {
@@ -357,6 +380,7 @@ const char* CompanySourceName(CompanySourceKind kind) {
     switch (kind) {
         case CompanySourceKind::Google: return "Google";
         case CompanySourceKind::GooglePublished: return "Google (publicado)";
+        case CompanySourceKind::GoogleDrive: return "Google Drive";
         case CompanySourceKind::OneDrive: return "OneDrive";
         case CompanySourceKind::SharePoint: return "SharePoint";
         case CompanySourceKind::Dropbox: return "Dropbox";

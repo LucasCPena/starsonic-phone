@@ -8,7 +8,7 @@
 
 namespace starsonic {
 
-enum class CompanySourceKind { Google, GooglePublished, OneDrive, SharePoint, Dropbox, Link, Path };
+enum class CompanySourceKind { Google, GooglePublished, GoogleDrive, OneDrive, SharePoint, Dropbox, Link, Path };
 
 struct CompanySource {
     CompanySourceKind kind = CompanySourceKind::Link;
@@ -33,6 +33,11 @@ std::string TrimLinkBlanks(const std::string& text);
 //   aba, o Google manda a primeira.
 // - Google publicado na web, .../spreadsheets/d/e/<id>/pubhtml ou /pub:
 //   https://docs.google.com/spreadsheets/d/e/<id>/pub?output=csv, com &gid=<aba> e &single=true quando o link tem.
+// - Google Drive, um arquivo enviado (um CSV ou um .xlsx que nao virou planilha do Google), pelo
+//   drive.google.com/file/d/<id> (seguido ou nao de /view, /edit, /preview...), pelo /open?id=<id> ou pelo /uc?id=<id>
+//   (com ou sem o export), tambem com o /u/<n>/ antes: https://drive.google.com/uc?export=download&id=<id>, com
+//   &resourcekey=<valor> quando o link tem. O Google responde com um redirecionamento ao drive.usercontent.google.com,
+//   que o WinHTTP segue. Outro caminho do drive.google.com (uma pasta) fica como esta.
 // - OneDrive pessoal (1drv.ms e onedrive.live.com), e OneDrive ou SharePoint do trabalho (*.sharepoint.com): o mesmo
 //   link com download=1. (A spec 5.2 mandava o OneDrive pessoal para api.onedrive.com/v1.0/shares/u!<base64url>/root/
 //   content, mas esse endereco responde 401 a quem nao entrou na conta desde agosto de 2024; o link com download=1 baixa.)
@@ -46,8 +51,8 @@ std::string TrimLinkBlanks(const std::string& text);
 //   que nao e %XX fica como esta, e o que sai sem ser UTF-8 valido ou com caractere de controle nao e caminho.
 std::optional<CompanySource> CompanySourceFor(const std::string& link);
 
-// Para o diagnostico (que nunca leva o link): "Google", "Google (publicado)", "OneDrive", "SharePoint", "Dropbox",
-// "link" e "caminho".
+// Para o diagnostico (que nunca leva o link): "Google", "Google (publicado)", "Google Drive", "OneDrive", "SharePoint",
+// "Dropbox", "link" e "caminho".
 const char* CompanySourceName(CompanySourceKind kind);
 
 // Por que a busca nao deu os bytes. Closed: o link fechado (401, 403, 404 ou uma pagina de entrar no lugar da planilha).

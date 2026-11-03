@@ -159,6 +159,42 @@ TEST_CASE("company link: a Google link published on the web becomes the publishe
     });
 }
 
+TEST_CASE("company link: a Google Drive file link becomes its download link") {
+    const char* const download = "https://drive.google.com/uc?export=download&id=1AbC_dEf-123";
+    CheckSources({
+        // O "Copiar link" do Compartilhar de um arquivo enviado (um CSV ou um .xlsx que nao virou planilha do Google).
+        {"https://drive.google.com/file/d/1AbC_dEf-123/view?usp=sharing", "Google Drive", download},
+        // O mesmo arquivo pelo /edit, pelo /preview, sem nada depois do id, e o de quem tem mais de uma conta (/u/1/).
+        {"https://drive.google.com/file/d/1AbC_dEf-123/edit", "Google Drive", download},
+        {"https://drive.google.com/file/d/1AbC_dEf-123/preview", "Google Drive", download},
+        {"https://drive.google.com/file/d/1AbC_dEf-123", "Google Drive", download},
+        {"https://drive.google.com/u/1/file/d/1AbC_dEf-123/view?usp=drive_link", "Google Drive", download},
+        // O link antigo de abrir e o de baixar, com ou sem o export (tambem com o /u/<n>/).
+        {"https://drive.google.com/open?id=1AbC_dEf-123", "Google Drive", download},
+        {"https://drive.google.com/uc?id=1AbC_dEf-123&export=download", "Google Drive", download},
+        {"https://drive.google.com/uc?id=1AbC_dEf-123", "Google Drive", download},
+        {"https://drive.google.com/u/0/uc?id=1AbC_dEf-123&export=download", "Google Drive", download},
+        // O resourcekey de alguns links vai junto.
+        {"https://drive.google.com/file/d/1AbC_dEf-123/view?usp=sharing&resourcekey=0-XyZ_12ab", "Google Drive",
+         "https://drive.google.com/uc?export=download&id=1AbC_dEf-123&resourcekey=0-XyZ_12ab"},
+        {"https://drive.google.com/open?id=1AbC_dEf-123&resourcekey=0-XyZ_12ab", "Google Drive",
+         "https://drive.google.com/uc?export=download&id=1AbC_dEf-123&resourcekey=0-XyZ_12ab"},
+    });
+}
+
+TEST_CASE("company link: a Google Drive link that is not a file link is left as it is") {
+    CheckSources({
+        // Uma pasta.
+        {"https://drive.google.com/drive/folders/1AbC_dEf-123?usp=sharing", "link",
+         "https://drive.google.com/drive/folders/1AbC_dEf-123?usp=sharing"},
+        // Sem id, ou com um que nao e id do Google.
+        {"https://drive.google.com/file/d/", "link", "https://drive.google.com/file/d/"},
+        {"https://drive.google.com/file/d/1Ab%20C/view", "link", "https://drive.google.com/file/d/1Ab%20C/view"},
+        {"https://drive.google.com/open?usp=sharing", "link", "https://drive.google.com/open?usp=sharing"},
+        {"https://drive.google.com", "link", "https://drive.google.com"},
+    });
+}
+
 TEST_CASE("company link: personal OneDrive is converted like SharePoint, with download=1 (ruling R4)") {
     CheckSources({
         {"https://1drv.ms/x/s!AbCdEf123", "OneDrive", "https://1drv.ms/x/s!AbCdEf123?download=1"},
@@ -381,6 +417,8 @@ TEST_CASE("company link: the scheme and the host are compared without case, the 
          "https://docs.google.com/spreadsheets/d/AbC_Dd/export?format=csv&gid=5"},
         {"Https://Docs.Google.Com/spreadsheets/d/e/2PACX-AbCd/pubhtml?gid=7&single=true", "Google (publicado)",
          "https://docs.google.com/spreadsheets/d/e/2PACX-AbCd/pub?output=csv&gid=7&single=true"},
+        {"HTTPS://DRIVE.GOOGLE.COM/file/d/AbC_Dd/view?usp=sharing", "Google Drive",
+         "https://drive.google.com/uc?export=download&id=AbC_Dd"},
         {"HTTPS://1DRV.MS/x/s!AbCdEf123", "OneDrive", "https://1drv.ms/x/s!AbCdEf123?download=1"},
         {"https://OneDrive.Live.com/Edit?Id=ABC&AuthKey=!XyZ", "OneDrive",
          "https://onedrive.live.com/Edit?Id=ABC&AuthKey=!XyZ&download=1"},
@@ -404,6 +442,9 @@ TEST_CASE("company link: the host decides, and a host matches a domain only at a
          "https://docs.google.com.example.org/spreadsheets/d/AbC/edit"},
         {"https://notdocs.google.com/spreadsheets/d/AbC/edit", "link",
          "https://notdocs.google.com/spreadsheets/d/AbC/edit"},
+        {"https://drive.google.com.example.org/file/d/AbC/view", "link",
+         "https://drive.google.com.example.org/file/d/AbC/view"},
+        {"https://notdrive.google.com/file/d/AbC/view", "link", "https://notdrive.google.com/file/d/AbC/view"},
         {"https://dropbox.com.example.org/s/abc/x.csv", "link", "https://dropbox.com.example.org/s/abc/x.csv"},
         {"https://mydropbox.com/s/abc/x.csv", "link", "https://mydropbox.com/s/abc/x.csv"},
         {"https://1drv.ms.example.org/x/s!AbC", "link", "https://1drv.ms.example.org/x/s!AbC"},
@@ -446,6 +487,7 @@ TEST_CASE("company link: a Google link that is not a sheet link is left as it is
 TEST_CASE("company source names are the ones the diagnostics use") {
     CHECK(std::string(CompanySourceName(CompanySourceKind::Google)) == "Google");
     CHECK(std::string(CompanySourceName(CompanySourceKind::GooglePublished)) == "Google (publicado)");
+    CHECK(std::string(CompanySourceName(CompanySourceKind::GoogleDrive)) == "Google Drive");
     CHECK(std::string(CompanySourceName(CompanySourceKind::OneDrive)) == "OneDrive");
     CHECK(std::string(CompanySourceName(CompanySourceKind::SharePoint)) == "SharePoint");
     CHECK(std::string(CompanySourceName(CompanySourceKind::Dropbox)) == "Dropbox");
