@@ -3,8 +3,9 @@
 // (Teclado.tsx). A junção dos meus (os `contatos` do estado) com os da lista da empresa (a última contatosEmpresa), a
 // ordem e a busca são as da aba Contatos desde a rc.4 e ficam escritas só aqui: um da empresa com o mesmo nome (sem
 // acento e sem caixa) e os mesmos dígitos de um meu fica de fora (vale o meu); a ordem é a do grupo (o "#" primeiro,
-// depois as letras) e, no grupo, a do nome sem acento e sem caixa; a busca olha o nome e a observação sem acento e sem
-// caixa e os dígitos do número.
+// depois as letras) e, no grupo, a do nome sem acento e sem caixa; a busca da aba olha o nome e a observação sem acento e
+// sem caixa e os dígitos do número, e a de ligar e transferir (o Teclado e os painéis) segue a regra do Android e do
+// iPhone (o `buscaPor`).
 // A lista da empresa pode ter 10.000 contatos: cada linha leva a busca e a ordem já calculadas, e a lista pronta fica
 // guardada para os mesmos contatos (os meus iguais e a mesma lista da empresa, que o main.tsx mantém quando uma leitura
 // traz a mesma planilha). Abrir de novo a aba, o painel ou o Teclado, digitar ou um estado novo com os mesmos contatos
@@ -119,20 +120,35 @@ export function listaDeContatos(contatos: Contact[], daEmpresa: CompanyContact[]
   return prontaAgora;
 }
 
-/** O texto de uma busca: sem os espaços das pontas, sem acento e sem caixa (`termo`), e os dígitos dele. */
+/**
+ * O texto de uma busca: sem os espaços das pontas, sem acento e sem caixa (`termo`), os dígitos dele que o número procura
+ * ("" para nenhum) e se a observação entra.
+ */
 export interface Busca {
   termo: string;
   digitos: string;
+  observacao: boolean;
 }
 
-export function buscaPor(texto: string): Busca {
-  return { termo: fold(texto.trim()), digitos: digitsOnly(texto) };
+/**
+ * A busca de um texto. A da aba Contatos (a de sempre): o nome ou a observação têm o texto, ou o número tem os dígitos
+ * dele, também num texto com letras ("ramal 2003" acha o 2003). (rc.6) A de ligar e transferir (`paraLigar`: o Teclado e
+ * os painéis da ligação), a regra do Android e do iPhone (o searchAgenda do format.ts): o nome, sempre; os dígitos, só num
+ * texto sem letras; a observação, não. Lá, o Enter liga para o primeiro da lista: o "loja 1" não acha quem só tem o 1 no
+ * número, e o "comercial" não põe na frente quem só tem a palavra na observação.
+ */
+export function buscaPor(texto: string, { paraLigar = false }: { paraLigar?: boolean } = {}): Busca {
+  return {
+    termo: fold(texto.trim()),
+    digitos: paraLigar && temLetras(texto) ? '' : digitsOnly(texto),
+    observacao: !paraLigar,
+  };
 }
 
-/** A linha bate com a busca: o nome ou a observação têm o termo, ou o número tem os dígitos. A busca vazia, todas. */
+/** A linha bate com a busca: o nome tem o termo (ou a observação, quando ela entra), ou o número tem os dígitos. */
 export function bate(l: Linha, busca: Busca): boolean {
   if (!busca.termo) return true;
-  if (l.nomeBusca.includes(busca.termo) || l.obsBusca.includes(busca.termo)) return true;
+  if (l.nomeBusca.includes(busca.termo) || (busca.observacao && l.obsBusca.includes(busca.termo))) return true;
   return busca.digitos.length > 0 && l.digitos.includes(busca.digitos);
 }
 

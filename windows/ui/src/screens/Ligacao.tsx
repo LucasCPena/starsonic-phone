@@ -6,10 +6,10 @@
 // Atalhos. (rc.3) O botão Atalhos (com uma ligação atendida, fora da consulta e da conferência) abre o painel com os
 // atalhos no lugar dos controles. (rc.6) No Windows, o campo do Transferir e da Nova ligação acha o contato pelo nome ou
 // pelo número (o PainelPorNome): embaixo dele, a lista dos meus contatos e dos da lista da empresa, a mesma da aba
-// Contatos (lista-de-contatos.ts). (iPhone) O campo é só de número, com as sugestões da agenda (um contato por número; um
-// contato sem nome mostra o número). O contato escolhido da Nova ligação liga com a regra dos contatos (o `contato` do
-// dial); o do Transferir põe o número no campo, e o Consultar e o Transferir agora dele, sem mudança depois, vão com o
-// `contato` também (no Windows, desde a rc.5).
+// Contatos, com a busca de ligar do Teclado (lista-de-contatos.ts). (iPhone) O campo é só de número, com as sugestões da
+// agenda (um contato por número; um contato sem nome mostra o número). O contato escolhido da Nova ligação liga com a
+// regra dos contatos (o `contato` do dial); o do Transferir põe o número no campo, e o Consultar e o Transferir agora
+// dele, sem mudança depois, vão com o `contato` também (no Windows, desde a rc.5).
 // (iPhone) O botão Áudio mostra a saída de agora (a `rotaAudio`: "iPhone", "Viva-voz" ou o nome do fone; "Áudio" sem
 // saber), com o nome "Áudio: <saída>", e pede a escolha do iPhone (o `audioRoute`: o hospedeiro mostra a dele), no
 // lugar do menu dos dispositivos; sem o botão Atalhos (fora da 1.0), uma ligação fica em três colunas (6 controles) e
@@ -330,12 +330,13 @@ function linhaDoPainel(l: Linha, marcada: boolean, escolher: (l: Linha) => void)
 /**
  * (rc.6, Windows) O Transferir (com o Consultar) e a Nova ligação pelo nome ou pelo número. O campo aceita letras; embaixo
  * dele, a lista dos meus contatos e dos da lista da empresa (`lista`): com o campo vazio, todos; digitando, os que batem
- * na busca da aba Contatos. Ela fica com o espaço que sobra e rola sozinha. É o padrão da lista com a opção marcada: as
- * setas para baixo e para cima marcam uma linha (o aria-activedescendant do campo), e o Enter nela ou o clique escolhem o
- * contato. Na Nova ligação, o escolhido liga (o `onContact`); no Transferir, o número dele vai para o campo e o painel
- * mostra quem vai receber ("Para: <nome> · <número>"), até o campo mudar. Letras sem um contato escolhido não são número:
- * os botões ficam desligados, e sem nenhum contato que bata aparece "Nenhum contato com esse nome". Só com números, como
- * antes: o número digitado, sem o `contato`. O Esc cancela.
+ * na busca de ligar (a do Teclado: com letras, só o nome; sem elas, os dígitos do número; nunca a observação). Ela fica
+ * com o espaço que sobra e rola sozinha. É o padrão da lista com a opção marcada: as setas para baixo e para cima marcam
+ * uma linha (o aria-activedescendant do campo), e o Enter nela ou o clique escolhem o contato. Na Nova ligação, o
+ * escolhido liga (o `onContact`); no Transferir, o número dele vai para o campo e o painel mostra quem vai receber
+ * ("Para: <nome> · <número>"), até o campo mudar. Letras sem um contato escolhido não são número: os botões ficam
+ * desligados, e sem nenhum contato que bata aparece "Nenhum contato com esse nome". Só com números, como antes: o número
+ * digitado, sem o `contato`. O Esc cancela.
  */
 function PainelPorNome({ titulo, rotulo, lista, onCancel, onContact, actions, onEnter }: PainelProps & { lista: Linha[] }) {
   const [texto, setTexto] = useState('');
@@ -346,7 +347,7 @@ function PainelPorNome({ titulo, rotulo, lista, onCancel, onContact, actions, on
   const campo = useRef<HTMLInputElement>(null);
   useEffect(() => campo.current?.focus(), []);
 
-  const achadas = useMemo(() => buscar(lista, buscaPor(texto)), [lista, texto]);
+  const achadas = useMemo(() => buscar(lista, buscaPor(texto, { paraLigar: true })), [lista, texto]);
   const comLetras = temLetras(texto);
   const mostrarLista = escolhido === null && achadas.length > 0;
   const nenhum = escolhido === null && comLetras && achadas.length === 0;

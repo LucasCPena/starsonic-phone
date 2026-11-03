@@ -3,9 +3,9 @@
 // Teclado físico: números, * e # digitam; Backspace apaga; Esc limpa; Enter liga.
 // (rc.6) No Windows, o campo acha o contato também pelo nome: ele aceita letras do teclado do computador (uma letra com o
 // foco fora dele vai para ele, e o foco também), e as sugestões são as dos meus contatos e dos da lista da empresa, pela
-// busca da aba Contatos (lista-de-contatos.ts), com "Empresa · <número>" nos da empresa. Com letras no campo, o Enter e o
-// Ligar ligam para a primeira sugestão, com a regra dos contatos; sem nenhuma, o Ligar fica desligado e aparece "Nenhum
-// contato com esse nome". Só com números, como antes. As teclas da tela continuam só números.
+// busca de ligar (lista-de-contatos.ts: a regra do Android e do iPhone), com "Empresa · <número>" nos da empresa. Com
+// letras no campo, o Enter e o Ligar ligam para a primeira sugestão, com a regra dos contatos; sem nenhuma, o Ligar fica
+// desligado e aparece "Nenhum contato com esse nome". Só com números, como antes. As teclas da tela continuam só números.
 // (iPhone) Com o Bipe ao digitar (`bipe`), cada tecla, a da tela e a do teclado físico, manda o `keyTone` com ela (o
 // hospedeiro toca o bipe de telefone dela), e o "+" vai como a tecla 0, a dele; o Apagar, as sugestões, o Rediscar e o
 // Ligar ficam quietos, como no Android 0.2.0-rc.3. O campo do número, com o teclado do próprio iPhone, também.
@@ -61,8 +61,9 @@ interface Sugestao {
 }
 
 /**
- * As até 3 sugestões do número. (rc.6) No Windows (com a `daEmpresa`), os meus e os da empresa, na ordem e pela busca da
- * aba Contatos: com letras, sempre; só com números, a partir de 2 dígitos, como antes. (iPhone) As da agenda, pelos
+ * As até 3 sugestões do número. (rc.6) No Windows (com a `daEmpresa`), os meus e os da empresa, na ordem da aba Contatos
+ * e pela busca de ligar (a do Android e do iPhone: com letras, só o nome; sem elas, os dígitos do número; nunca a
+ * observação): com letras, sempre; só com números, a partir de 2 dígitos, como antes. (iPhone) As da agenda, pelos
  * dígitos, a partir de 2.
  */
 function sugestoesDe(numero: string, contatos: Contact[], daEmpresa: CompanyContact[] | null): Sugestao[] {
@@ -75,7 +76,7 @@ function sugestoesDe(numero: string, contatos: Contact[], daEmpresa: CompanyCont
       .map((c) => ({ key: c.id, nome: c.nome, numero: c.numero, daEmpresa: false }));
   }
   if (!temLetras(numero) && digitos.length < 2) return [];
-  return buscar(listaDeContatos(contatos, daEmpresa).todas, buscaPor(numero), 3).map((l) => ({
+  return buscar(listaDeContatos(contatos, daEmpresa).todas, buscaPor(numero, { paraLigar: true }), 3).map((l) => ({
     key: l.key,
     nome: l.nome,
     numero: l.numero,

@@ -188,11 +188,13 @@ export function Contatos({ contatos, daEmpresa, comPlanilha, send, onNew, onEdit
   // A lista pronta (lista-de-contatos.ts): cada estado novo traz outra cópia dos meus contatos, e ela só muda quando eles
   // mudam de verdade ou chega outra lista da empresa.
   const { daPlanilha, todas } = listaDeContatos(contatos, daEmpresa);
-  const { termo, digitos } = buscaPor(busca);
+  // A busca da aba: o nome, a observação e os dígitos do número, também num texto com letras (a de ligar e transferir, a
+  // do Teclado e dos painéis da ligação, é outra).
+  const procurada = buscaPor(busca);
+  const { termo, digitos } = procurada;
   const grupos = useMemo(() => {
     // O Todos sem o da empresa que também é meu; os Meus; a Empresa com a planilha inteira (Ruling R16).
     const fonte = filtro === 'empresa' ? daPlanilha : todas;
-    const procurada = { termo, digitos };
     const lista: Array<{ letra: string; itens: Linha[] }> = [];
     for (const l of fonte) {
       if ((filtro === 'meus' && l.meu === null) || !bate(l, procurada)) continue;

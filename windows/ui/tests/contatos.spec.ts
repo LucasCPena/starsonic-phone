@@ -348,6 +348,23 @@ test.describe('Contatos com a lista da empresa', () => {
     await expect.poll(() => nomes(page)).toEqual(MEUS);
   });
 
+  test('(rc.6) the search keeps its own rule: letters with digits find by the number, and the observation counts', async ({ page }) => {
+    // A busca para ligar e transferir (o Teclado e os painéis da ligação) é outra: lá, com letras, só o nome.
+    await abrir(page, 'contatos');
+    await comListaDaEmpresa(page);
+    const busca = page.getByRole('searchbox', { name: 'Buscar contato' });
+    // A aba mostra "Ramal 2003" nos números curtos: o texto com letras e dígitos acha pelo número.
+    await busca.fill('ramal 2003');
+    await expect.poll(() => nomes(page)).toEqual(['Ana Souza']);
+    await busca.fill('ana 2003');
+    await expect.poll(() => nomes(page)).toEqual(['Ana Souza']);
+    // Uma palavra da observação: a de um contato meu e a de um da empresa.
+    await busca.fill('suporte');
+    await expect.poll(() => nomes(page)).toEqual(['Carlos Lima']);
+    await busca.fill('contabilidade');
+    await expect.poll(() => nomes(page)).toEqual(['Beatriz Ramos']);
+  });
+
   test('tapping a company contact dials it as a contact', async ({ page }) => {
     await abrir(page, 'contatos');
     await comListaDaEmpresa(page);

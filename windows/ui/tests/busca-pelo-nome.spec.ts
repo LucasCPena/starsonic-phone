@@ -1,12 +1,13 @@
 // (rc.6) Achar o contato pelo nome no Windows, contra a ponte falsa: o Transferir, o Consultar e a Nova ligação da tela
-// da ligação (a lista dos meus contatos e dos da lista da empresa embaixo do campo, a busca da aba Contatos, a escolha
-// pelo clique e pelas setas com o Enter, quem vai receber e o `contato` do que foi escolhido) e o Teclado (até 3
-// sugestões, também da empresa, e o Enter e o Ligar com letras), com os textos exatos, os comandos que saem, o axe, os
-// três tamanhos da janela e as fotos (test-results/capturas/) que vão ao responsável. O iPhone fica como estava: os
-// testes dele são os ios*.spec.ts.
+// da ligação (a lista dos meus contatos e dos da lista da empresa embaixo do campo, a busca de ligar, a escolha pelo
+// clique e pelas setas com o Enter, quem vai receber e o `contato` do que foi escolhido) e o Teclado (até 3 sugestões,
+// também da empresa, e o Enter e o Ligar com letras), com os textos exatos, os comandos que saem, o axe, os três tamanhos
+// da janela e as fotos (test-results/capturas/) que vão ao responsável. A busca de ligar é a do Android e do iPhone (com
+// letras, só o nome; sem elas, os dígitos do número; nunca a observação). O iPhone fica como estava: os testes dele são
+// os ios*.spec.ts.
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { PLANILHA_DA_EMPRESA } from '../src/fake-scenarios';
-import { abrir, capturar, comandos, empurrar, esperarComando, mudarEstado, semViolacoesSerias, vezes } from './helpers';
+import { abrir, capturar, comandos, depoisDoQueChegou, empurrar, esperarComando, mudarEstado, semViolacoesSerias, vezes } from './helpers';
 
 /** A lista da empresa dos testes, na ordem da planilha: a de exemplo (a Ana Souza 2003 também é minha) e mais dois "jo". */
 const DA_EMPRESA = [
@@ -29,6 +30,19 @@ const TODOS: Array<[nome: string, linha: string]> = [
   ['João Pereira', 'Empresa · 3002'],
   ['Jordana Alves', 'Empresa · (11) 3003-1000'],
   ['Recepção', 'Empresa · 3001'],
+];
+
+/**
+ * (Correção 1) A lista da empresa com nomes com número (o "loja 1" acha a "Loja 1" e a "Loja 10", e não a "Loja 2") e um
+ * nome que também é a observação de um contato meu (a Ana Souza tem "Comercial"). O Almoxarifado 3010 vem antes na ordem
+ * e tem o 1 no número.
+ */
+const COM_NUMEROS = [
+  ...DA_EMPRESA,
+  { nome: 'Loja 1', numero: '4001', observacao: '' },
+  { nome: 'Loja 10', numero: '4010', observacao: '' },
+  { nome: 'Loja 2', numero: '4002', observacao: '' },
+  { nome: 'Comercial', numero: '3050', observacao: '' },
 ];
 
 const NENHUM = 'Nenhum contato com esse nome';
@@ -425,13 +439,13 @@ test.describe('o Teclado', () => {
     const caixa = page.locator('.teclado-meio > .suggestions');
     expect(await caixa.evaluate((e) => e.scrollHeight > e.clientHeight), 'as sugestões não rolam').toBe(true);
     await caixa.evaluate((e) => (e.scrollTop = e.scrollHeight));
-    await numero.press('l');
-    await expect(page.locator('.suggest .row-title')).toHaveText(['Almoxarifado', 'Ana Souza', 'Coordenação de Logística e Transportes']);
+    await numero.press('n');
+    await expect(page.locator('.suggest .row-title')).toHaveText(['Ana Souza', 'Coordenação de Logística e Transportes', 'Financeiro']);
     const c = (await caixa.boundingBox())!;
     const primeira = (await page.locator('.suggest').first().boundingBox())!;
     expect(primeira.y >= c.y - 1 && primeira.y + primeira.height <= c.y + c.height + 1, 'a primeira sugestão fora da vista').toBe(true);
     await numero.press('Enter');
-    await esperarComando(page, { cmd: 'dial', numero: '3010', contato: true });
+    await esperarComando(page, { cmd: 'dial', numero: '2003', contato: true });
   });
 
   test('with letters, Enter and Ligar dial the first suggestion with contato; a tap dials that one', async ({ page }) => {
@@ -516,6 +530,82 @@ test.describe('o Teclado', () => {
     await expect(page.locator('.keys .key b')).toHaveText(['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#']);
     await page.keyboard.press('Enter');
     await esperarComando(page, { cmd: 'dial', numero: '2003', contato: true });
+  });
+});
+
+// (Correção 1) A busca para ligar e transferir é a do Android e do iPhone (o searchAgenda do format.ts): o nome, sempre;
+// os dígitos do número, só num texto sem letras; a observação, não. A aba Contatos fica com a dela (contatos.spec.ts).
+test.describe('a busca para ligar', () => {
+  test('Teclado: "loja 1" suggests Loja 1 and Loja 10, and Enter dials Loja 1', async ({ page }) => {
+    await abrir(page, 'principal');
+    await comListaDaEmpresa(page, COM_NUMEROS);
+    const numero = page.getByRole('textbox', { name: 'Número' });
+    await numero.fill('loja 1');
+    // O 1 do texto não acha quem tem 1 no número (o Almoxarifado 3010 vem antes na ordem).
+    await expect(page.locator('.suggest .row-title')).toHaveText(['Loja 1', 'Loja 10']);
+    await expect(page.locator('.suggest .row-sub')).toHaveText(['Empresa · 4001', 'Empresa · 4010']);
+    await numero.press('Enter');
+    await esperarComando(page, { cmd: 'dial', numero: '4001', contato: true });
+    expect(await ligacoes(page)).toEqual([{ v: 1, cmd: 'dial', numero: '4001', contato: true }]);
+  });
+
+  test('Teclado: "joao 2003" finds nobody, and Ligar is off', async ({ page }) => {
+    await abrir(page, 'principal');
+    await comListaDaEmpresa(page, COM_NUMEROS);
+    const numero = page.getByRole('textbox', { name: 'Número' });
+    await numero.fill('joao 2003');
+    // O 2003 é o da Ana Souza, mas o texto tem letras: só o nome vale, e nenhum tem "joao 2003".
+    await expect(page.getByText(NENHUM, { exact: true })).toBeVisible();
+    await expect(page.locator('.suggest')).toHaveCount(0);
+    await expect(botao(page, 'Ligar')).toBeDisabled();
+    await numero.press('Enter');
+    await depoisDoQueChegou(page);
+    expect(await ligacoes(page)).toEqual([]);
+  });
+
+  test('Teclado: "comercial" dials the company Comercial, not my contact with it in the observation', async ({ page }) => {
+    await abrir(page, 'principal');
+    await comListaDaEmpresa(page, COM_NUMEROS);
+    const numero = page.getByRole('textbox', { name: 'Número' });
+    await numero.fill('comercial');
+    // A Ana Souza (minha, com "Comercial" na observação) vem antes na ordem, mas a observação não entra.
+    await expect(page.locator('.suggest .row-title')).toHaveText(['Comercial']);
+    await expect(page.locator('.suggest .row-sub')).toHaveText(['Empresa · 3050']);
+    await numero.press('Enter');
+    await esperarComando(page, { cmd: 'dial', numero: '3050', contato: true });
+    expect(await ligacoes(page)).toEqual([{ v: 1, cmd: 'dial', numero: '3050', contato: true }]);
+  });
+
+  test('the panels: "loja 1" lists Loja 1 and Loja 10, "joao 2003" nobody, and the observation is not searched', async ({ page }) => {
+    await abrir(page, 'ligacao');
+    await comListaDaEmpresa(page, COM_NUMEROS);
+    await botao(page, 'Transferir').click();
+    let numero = campo(page, 'Número para transferir');
+    await numero.fill('loja 1');
+    await expect(nomes(page)).toHaveText(['Loja 1', 'Loja 10']);
+    await numero.fill('joao 2003');
+    await expect(lista(page)).toHaveCount(0);
+    await expect(page.locator('.call-panel').getByText(NENHUM, { exact: true })).toBeVisible();
+    // A observação não entra: a Ana Souza (minha, "Comercial") e o João Pereira ("Vendas") não aparecem.
+    await numero.fill('comercial');
+    await expect(nomes(page)).toHaveText(['Comercial']);
+    await numero.fill('vendas');
+    await expect(lista(page)).toHaveCount(0);
+    await expect(page.locator('.call-panel').getByText(NENHUM, { exact: true })).toBeVisible();
+    // Só números, pelos dígitos, como antes.
+    await numero.fill('4001');
+    await expect(nomes(page)).toHaveText(['Loja 1']);
+    // A Nova ligação, com a mesma busca.
+    await numero.press('Escape');
+    await botao(page, 'Nova ligação').click();
+    numero = campo(page, 'Número da nova ligação');
+    await numero.fill('loja 1');
+    await expect(nomes(page)).toHaveText(['Loja 1', 'Loja 10']);
+    await numero.fill('joao 2003');
+    await expect(page.locator('.call-panel').getByText(NENHUM, { exact: true })).toBeVisible();
+    await expect(botao(page, 'Ligar')).toBeDisabled();
+    expect(await transferencias(page)).toEqual([]);
+    expect(await ligacoes(page)).toEqual([]);
   });
 });
 
