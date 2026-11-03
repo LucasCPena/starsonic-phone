@@ -218,8 +218,17 @@ std::string GidOf(const Url& url) {
     return std::string();
 }
 
+// O arquivo <id> do Drive pelo endereco de baixar, com o resourcekey do link quando tem.
+CompanySource DriveDownload(const std::string& id, const Url& url) {
+    std::string location = "https://drive.google.com/uc?export=download&id=" + id;
+    const std::string key = ParamValue(url.query, "resourcekey");
+    if (!key.empty()) location += "&resourcekey=" + key;
+    return CompanySource{CompanySourceKind::GoogleDrive, location};
+}
+
 // docs.google.com/spreadsheets/d/<id>/..., com o /u/<n>/ de quem tem mais de uma conta antes do /d/ (planilha) ou
-// /d/e/<id>/pubhtml e /pub (publicada na web). Nada se o caminho e de outra coisa (um documento, uma pasta...).
+// /d/e/<id>/pubhtml e /pub (publicada na web). Nada se o caminho e de outra coisa (um documento, uma pasta...). Com o
+// rtpof=true na consulta, a planilha e um arquivo do Office no Drive, aberto no Planilhas: o download dele, sem o gid.
 std::optional<CompanySource> GoogleSource(const Url& url) {
     const std::vector<std::string> parts = Split(url.path, '/');   // a primeira e vazia: o caminho comeca com '/'
     size_t i = 1;
@@ -240,14 +249,15 @@ std::optional<CompanySource> GoogleSource(const Url& url) {
         return CompanySource{CompanySourceKind::GooglePublished, location};
     }
     if (!IsGoogleId(parts[i])) return std::nullopt;
+    if (ParamValue(url.query, "rtpof") == "true") return DriveDownload(parts[i], url);
     std::string location = "https://docs.google.com/spreadsheets/d/" + parts[i] + "/export?format=csv";
     if (!gid.empty()) location += "&gid=" + gid;
     return CompanySource{CompanySourceKind::Google, location};
 }
 
 // drive.google.com: o arquivo do /file/d/<id>/..., do /open?id=<id> ou do /uc?id=<id>, com ou sem o /u/<n>/ de quem
-// tem mais de uma conta antes, pelo endereco de baixar (com o resourcekey do link). Nada se o caminho e de outra coisa
-// (uma pasta...) ou se o id nao e um id do Google.
+// tem mais de uma conta antes, pelo endereco de baixar (DriveDownload). Nada se o caminho e de outra coisa (uma
+// pasta...) ou se o id nao e um id do Google.
 std::optional<CompanySource> DriveSource(const Url& url) {
     const std::vector<std::string> parts = Split(url.path, '/');   // a primeira e vazia: o caminho comeca com '/'
     size_t i = 1;
@@ -259,10 +269,7 @@ std::optional<CompanySource> DriveSource(const Url& url) {
         id = ParamValue(url.query, "id");
     }
     if (!IsGoogleId(id)) return std::nullopt;
-    std::string location = "https://drive.google.com/uc?export=download&id=" + id;
-    const std::string key = ParamValue(url.query, "resourcekey");
-    if (!key.empty()) location += "&resourcekey=" + key;
-    return CompanySource{CompanySourceKind::GoogleDrive, location};
+    return DriveDownload(id, url);
 }
 
 std::optional<CompanySource> HttpsSource(const std::string& text) {

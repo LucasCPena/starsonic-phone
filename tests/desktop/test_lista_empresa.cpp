@@ -182,6 +182,29 @@ TEST_CASE("company link: a Google Drive file link becomes its download link") {
     });
 }
 
+TEST_CASE("company link: a Google Sheets link with rtpof=true is the Office file in Drive and becomes its download") {
+    const char* const download = "https://drive.google.com/uc?export=download&id=1AbC_dEf-123";
+    CheckSources({
+        // O .xlsx enviado ao Drive sem converter, aberto no Planilhas e compartilhado de la (o roteiro, 19.34).
+        {"https://docs.google.com/spreadsheets/d/1AbC_dEf-123/edit?usp=sharing&ouid=1112223334&rtpof=true&sd=true",
+         "Google Drive", download},
+        // O gid da aba nao vale para o arquivo do Office; o resourcekey vai junto.
+        {"https://docs.google.com/spreadsheets/d/1AbC_dEf-123/edit?usp=sharing&ouid=111&rtpof=true&sd=true#gid=456",
+         "Google Drive", download},
+        {"https://docs.google.com/spreadsheets/d/1AbC_dEf-123/edit?gid=456&rtpof=true", "Google Drive", download},
+        {"https://docs.google.com/spreadsheets/d/1AbC_dEf-123/edit?rtpof=true&sd=true&resourcekey=0-XyZ_12ab",
+         "Google Drive", "https://drive.google.com/uc?export=download&id=1AbC_dEf-123&resourcekey=0-XyZ_12ab"},
+        {"https://docs.google.com/spreadsheets/u/1/d/1AbC_dEf-123/edit?rtpof=true", "Google Drive", download},
+        // Sem o rtpof=true, a planilha do Google de sempre: o CSV da aba.
+        {"https://docs.google.com/spreadsheets/d/1AbC_dEf-123/edit?usp=sharing&rtpof=false&sd=true#gid=456", "Google",
+         "https://docs.google.com/spreadsheets/d/1AbC_dEf-123/export?format=csv&gid=456"},
+        {"https://docs.google.com/spreadsheets/d/1AbC_dEf-123/edit?usp=sharing&ouid=111&sd=true", "Google",
+         "https://docs.google.com/spreadsheets/d/1AbC_dEf-123/export?format=csv"},
+        {"https://docs.google.com/spreadsheets/d/1AbC_dEf-123/edit#rtpof=true", "Google",
+         "https://docs.google.com/spreadsheets/d/1AbC_dEf-123/export?format=csv"},
+    });
+}
+
 TEST_CASE("company link: a Google Drive link that is not a file link is left as it is") {
     CheckSources({
         // Uma pasta.

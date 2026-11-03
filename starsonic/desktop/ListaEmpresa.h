@@ -30,7 +30,8 @@ std::string TrimLinkBlanks(const std::string& text);
 // - Google Planilhas, docs.google.com/spreadsheets/d/<id>/... (tambem com o /u/<n>/ antes do /d/):
 //   https://docs.google.com/spreadsheets/d/<id>/export?format=csv, com &gid=<aba> quando o link tem a aba, no #gid= ou
 //   no ?gid= (so digitos; se estao nos dois, vale o do fragmento, que e o que o Google troca ao mudar de aba). Sem a
-//   aba, o Google manda a primeira.
+//   aba, o Google manda a primeira. Com o rtpof=true na consulta, o link e o de um arquivo do Office no Drive aberto no
+//   Planilhas (um .xlsx que nao virou planilha do Google): o download do Google Drive (abaixo), sem o gid.
 // - Google publicado na web, .../spreadsheets/d/e/<id>/pubhtml ou /pub:
 //   https://docs.google.com/spreadsheets/d/e/<id>/pub?output=csv, com &gid=<aba> e &single=true quando o link tem.
 // - Google Drive, um arquivo enviado (um CSV ou um .xlsx que nao virou planilha do Google), pelo
