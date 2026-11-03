@@ -97,9 +97,10 @@ export async function semViolacoesSerias(page: Page): Promise<void> {
 export async function capturar(page: Page, nome: string, tema: string): Promise<void> {
   mkdirSync(CAPTURAS, { recursive: true });
   await page.evaluate(() => document.fonts.ready);
-  // O ponteiro fora dos botões: nenhum em hover na captura.
+  // O ponteiro fora dos botões: nenhum em hover na captura. As transições acabam antes da foto (o fundo do hover que
+  // sai, nos 160 ms do --ease, ainda aparecia no botão onde o ponteiro estava).
   await page.mouse.move(0, 0);
-  await page.screenshot({ path: join(CAPTURAS, `${nome}-${tema}.png`) });
+  await page.screenshot({ path: join(CAPTURAS, `${nome}-${tema}.png`), animations: 'disabled' });
 }
 
 /** O que o AudioContext falso guardou (um por toque). */

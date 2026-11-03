@@ -4,7 +4,8 @@
 // abrir o painel outra vez nem ao digitar: o String.prototype.normalize e o Array.prototype.sort das listas grandes da
 // página contados), a lista do painel entra em pedaços (o primeiro logo, nenhum desenho com mais de um pedaço, e no fim
 // todas as linhas, cada uma uma vez e na ordem) e um estado novo ou o relógio da ligação não mexem nela (um
-// MutationObserver). Os tempos ficam só anotados. Num arquivo próprio, como o contatos-lista-grande.spec.ts: o trace do
+// MutationObserver) nem montam as linhas de novo (as iniciais de cada uma, o String.prototype.split do initials(),
+// contadas). Os tempos ficam só anotados. Num arquivo próprio, como o contatos-lista-grande.spec.ts: o trace do
 // Playwright tira uma foto do DOM inteiro a cada passo, e o `trace` só se desliga no arquivo inteiro. Só seletores CSS na
 // lista grande (o getByRole varre os milhares de linhas).
 import { expect, test, type Page } from '@playwright/test';
@@ -45,11 +46,22 @@ function emOrdem(): string[] {
 }
 const TOTAL = 9_999 + MEUS.length;
 
-/** Conta, antes de a página carregar, os nomes dobrados (o normalize do fold) e as listas grandes ordenadas. */
+/** O trabalho contado: os nomes dobrados, as listas grandes ordenadas e as linhas da empresa montadas (as iniciais). */
+interface Trabalho {
+  dobras: number;
+  ordenacoes: number;
+  iniciais: number;
+}
+
+/**
+ * Conta, antes de a página carregar, os nomes dobrados (o normalize do fold), as listas grandes ordenadas e as linhas da
+ * lista grande montadas: o initials() de cada linha divide o nome em palavras (o split) uma vez, e só os "Contato <letras>"
+ * da empresa contam (a ligação, os meus contatos e o resto da tela também dividem os nomes deles).
+ */
 async function contarTrabalho(page: Page): Promise<void> {
   await page.addInitScript(() => {
-    const w = window as unknown as { __trabalho: { dobras: number; ordenacoes: number } };
-    w.__trabalho = { dobras: 0, ordenacoes: 0 };
+    const w = window as unknown as { __trabalho: Trabalho };
+    w.__trabalho = { dobras: 0, ordenacoes: 0, iniciais: 0 };
     const normalize = String.prototype.normalize;
     String.prototype.normalize = function (this: string, forma?: string) {
       w.__trabalho.dobras++;
@@ -60,16 +72,22 @@ async function contarTrabalho(page: Page): Promise<void> {
       if (this.length >= 1000) w.__trabalho.ordenacoes++;
       return sort.call(this, comparar) as T[];
     };
+    const split = String.prototype.split;
+    const daEmpresa = /^Contato [A-Z]{3}$/;
+    String.prototype.split = function (this: string, ...args: unknown[]) {
+      if (daEmpresa.test(String(this))) w.__trabalho.iniciais++;
+      return (split as (...a: unknown[]) => string[]).apply(this, args);
+    } as typeof split;
   });
 }
 
-async function trabalho(page: Page): Promise<{ dobras: number; ordenacoes: number }> {
-  return page.evaluate(() => ({ ...(window as unknown as { __trabalho: { dobras: number; ordenacoes: number } }).__trabalho }));
+async function trabalho(page: Page): Promise<Trabalho> {
+  return page.evaluate(() => ({ ...(window as unknown as { __trabalho: Trabalho }).__trabalho }));
 }
 
 async function zerarTrabalho(page: Page): Promise<void> {
   await page.evaluate(() => {
-    (window as unknown as { __trabalho: { dobras: number; ordenacoes: number } }).__trabalho = { dobras: 0, ordenacoes: 0 };
+    (window as unknown as { __trabalho: Trabalho }).__trabalho = { dobras: 0, ordenacoes: 0, iniciais: 0 };
   });
 }
 
@@ -169,6 +187,8 @@ test('10,000 company contacts: the Transferir panel opens in pieces, finds by na
   expect(aberto.desenhos, tempos).toBeGreaterThan(1);
   expect(await titulos(page)).toEqual(emOrdem());
   await expect(page.locator('.call-panel [role="option"] .row-sub').nth(3)).toHaveText('Empresa · 30000');
+  // A contagem das linhas montadas vê a lista: cada linha da empresa, uma vez.
+  expect((await trabalho(page)).iniciais, 'as iniciais das linhas da empresa').toBe(9_999);
 
   // Aberto de novo, o painel não dobra os nomes nem ordena a lista outra vez (o do campo vazio, no máximo).
   await page.locator('.call-panel button.btn-ghost-dark').click();
@@ -203,7 +223,9 @@ test('10,000 company contacts: the Transferir panel opens in pieces, finds by na
   expect(feito.dobras, 'nomes dobrados de novo na busca').toBeLessThanOrEqual(10);
   expect(await titulos(page)).toEqual(emOrdem());
 
-  // Um estado novo (um BLF, uma perdida) e o relógio da ligação, com o painel aberto e a lista inteira: nada muda nela.
+  // Um estado novo (um BLF, uma perdida) e o relógio da ligação, com o painel aberto e a lista inteira: nada muda nela, e
+  // nenhuma linha é montada de novo.
+  await zerarTrabalho(page);
   const mudancas = await page.evaluate(async () => {
     const lista = document.querySelector('.call-panel [role="listbox"]')!;
     let vistas = 0;
@@ -221,6 +243,7 @@ test('10,000 company contacts: the Transferir panel opens in pieces, finds by na
     return vistas + observador.takeRecords().length;
   });
   expect(mudancas, 'a lista mudou com um estado novo ou o relógio').toBe(0);
+  expect((await trabalho(page)).iniciais, 'linhas montadas de novo com um estado novo ou o relógio').toBe(0);
   await expect(page.locator('.call-panel [role="option"]')).toHaveCount(TOTAL);
 
   // O último da lista, lá embaixo, também se escolhe.
