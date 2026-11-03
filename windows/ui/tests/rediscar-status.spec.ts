@@ -119,7 +119,7 @@ test('the Nova ligação panel redials through the same path as its Ligar; the c
   await semViolacoesSerias(page);
   await rediscar.click();
   await esperarComando(page, { cmd: 'dial', numero: '1150603000' });
-  await expect(page.getByRole('textbox', { name: 'Número da nova ligação' })).toHaveCount(0);
+  await expect(page.getByRole('combobox', { name: 'Número da nova ligação' })).toHaveCount(0);
 });
 
 test.describe('a bolinha de status', () => {

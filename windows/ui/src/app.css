@@ -343,6 +343,9 @@ button.link { border: 0; background: transparent; padding: 0; font-family: inher
 .teclado .key { height: auto; }
 .suggestions-compact .suggest { padding: 5px 10px; }
 .suggestions-compact .avatar { width: 28px; height: 28px; font-size: 11.5px; }
+/* (rc.6) Um nome sem nenhum contato, no lugar das sugestões; o Ligar fica desligado. */
+.teclado-vazio { flex: none; margin: 0; text-align: center; font-size: 13.5px; line-height: 1.35; color: var(--text-muted); }
+.teclado .btn-call:disabled { opacity: 0.45; }
 /* Janela baixa (qualquer altura abaixo dos 720: a janela é cortada na área de trabalho, e a de 1920×1080 a 150% tem
    uns 672 px): o cabeçalho, o número e os espaços apertam, e a sugestão vira sempre a linha compacta. O limite é 719,5
    e não 719: numa escala fracionária, a janela de 720 lógicos pode virar 719,x px de CSS e continua no layout normal.
@@ -468,6 +471,20 @@ button.link { border: 0; background: transparent; padding: 0; font-family: inher
 .call-suggest .ic { color: #b9c4e6; }
 .call-panel-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 4px; }
 .call-panel-actions > :only-child { grid-column: 1 / -1; }
+/* (rc.6) A lista dos contatos do painel do Windows (o Transferir, o Consultar e a Nova ligação): fica com o espaço que
+   sobra e rola sozinha, como as sugestões de cima, com as linhas mais juntas; a marcada pelas setas leva o contorno ciano
+   (o foco fica no campo). No lugar dela, quem vai receber (o contato escolhido, no tom da faixa da segunda ligação) ou o
+   nada achado. */
+.call-panel > .call-lista { gap: 6px; }
+/* Cada pedaço da lista (o PRIMEIRO_PEDACO do Ligacao.tsx) numa caixa contida: um pedaço novo é posto e pintado sem o
+   navegador passar de novo pelas linhas dos de antes (com 10.000 contatos, cada pedaço levava o dobro). */
+.call-pedaco { display: flex; flex-direction: column; gap: 6px; flex: none; contain: layout paint; }
+.call-lista .suggest { flex: none; cursor: default; user-select: none; }
+.call-lista .suggest[aria-selected="true"] { background: rgba(0, 194, 203, 0.22); box-shadow: inset 0 0 0 2px var(--cyan); }
+.call-para { margin: 0; padding: 10px 14px; border-radius: 14px; background: rgba(0, 194, 203, 0.09); border: 1px solid rgba(0, 194, 203, 0.5);
+  font-size: 14px; line-height: 1.4; color: #ffffff; overflow-wrap: anywhere; }
+.call-para b { font-weight: 800; }
+.call-vazio { margin: 0; text-align: center; font-size: 13.5px; line-height: 1.4; color: #b9c4e6; }
 /* Janela baixa, um cartão em cima (a outra em espera, a segunda que toca) e o painel de número aberto: o bloco de quem
    fala sai, e o painel fica entre o cartão e o Desligar (o cartão e o título do painel dizem a ligação). */
 @media (max-height: 719.5px) {
@@ -609,6 +626,16 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .win.call[data-layout="minimo"] .call-panel .btn-redial { width: 42px; height: 42px; }
 .win.call[data-layout="minimo"] .call-suggest { padding: 5px 10px; }
 .win.call[data-layout="minimo"] .call-suggest .avatar { width: 28px; height: 28px; font-size: 11.5px; }
+/* (rc.6) A lista dos contatos do painel na linha única (o nome e, ao lado, "Contato · <número>"), como as sugestões do
+   Teclado na janela baixa: na menor janela, um contato inteiro cabe no espaço que sobra para ela. */
+.win.call[data-layout="minimo"] .call-lista .row-main { flex-direction: row; align-items: baseline; gap: 8px; }
+.win.call[data-layout="minimo"] .call-lista .row-title { flex: none; max-width: 60%; }
+/* Quem vai receber numa linha só: um nome comprido sai com as reticências, e o número fica inteiro (o leitor de tela lê
+   o nome inteiro). */
+.win.call[data-layout="minimo"] .call-para { display: flex; padding: 6px 10px; font-size: 13px; }
+.win.call[data-layout="minimo"] .call-para span { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: pre; }
+.win.call[data-layout="minimo"] .call-para span:first-child { flex: none; }
+.win.call[data-layout="minimo"] .call-para b { flex: 0 1000 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .win.call[data-layout="minimo"] .call-keys { gap: 6px; grid-auto-rows: minmax(34px, 44px); }
 .win.call[data-layout="minimo"] .btn-complete { height: 46px; }
 .win.call[data-layout="minimo"] .consult-actions { gap: 6px; margin-top: 4px; }

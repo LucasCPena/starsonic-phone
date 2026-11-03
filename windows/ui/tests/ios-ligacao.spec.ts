@@ -37,10 +37,11 @@ async function avisoNaTela(page: Page): Promise<void> {
 /**
  * O Transferir e o Consultar com o celular (+55 11 98888-7777) do contato `nome`, escolhido na sugestão: sem mudança
  * depois, o número vai com o `contato` (a regra dos contatos, como o dial da aba Contatos); mudado depois de escolher, vai
- * como está, sem ele. Com a tela da ligação aberta.
+ * como está, sem ele. Com a tela da ligação aberta. O campo é achado pelo nome: no iPhone, ele é o campo de número; no
+ * Windows (rc.6), o de nome ou número, com a lista embaixo dele (a sugestão é a linha da lista).
  */
 async function transferirDaSugestao(page: Page, nome: string): Promise<void> {
-  const numero = page.getByRole('textbox', { name: 'Número para transferir' });
+  const numero = page.getByLabel('Número para transferir', { exact: true });
   const sugestao = page.locator('.call-suggest');
   /** O painel do Transferir com o celular escolhido na sugestão. */
   const escolher = async () => {

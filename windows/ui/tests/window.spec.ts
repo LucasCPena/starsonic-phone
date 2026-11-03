@@ -120,12 +120,13 @@ for (const altura of [720, 719, 710, 701, 672, 640]) {
   });
 }
 
-// O painel Transferir com um cartão em cima (a outra em espera, ou a faixa da segunda que toca) e 0 a 2 sugestões:
-// nada transborda da parte do meio, o título não encosta no tempo e o Cancelar não encosta no Desligar.
+// O painel Transferir com um cartão em cima (a outra em espera, ou a faixa da segunda que toca) e a lista dos contatos
+// (rc.6: com o campo vazio, os 4 do cenário; digitando, os que batem): nada transborda da parte do meio, o título não
+// encosta no tempo e o Cancelar não encosta no Desligar.
 const TRANSFERIR: Array<[number, string]> = [
-  [0, ''],
+  [4, ''],
   [1, '2003'],
-  [2, '20'],
+  [3, '20'],
 ];
 for (const altura of [720, 701, 672, 640]) {
   test.describe(`o Transferir na janela de 400×${altura}`, () => {
@@ -133,10 +134,10 @@ for (const altura of [720, 701, 672, 640]) {
 
     for (const cenario of ['duas-ligacoes', 'ligacao-segunda']) {
       for (const [quantas, digitos] of TRANSFERIR) {
-        test(`fits with a card on top (${cenario}) and ${quantas} suggestion(s)`, async ({ page }) => {
+        test(`fits with a card on top (${cenario}) and ${quantas} contact(s) in the list`, async ({ page }) => {
           await abrir(page, cenario);
           await page.getByRole('button', { name: 'Transferir', exact: true }).click();
-          const campo = page.getByRole('textbox', { name: 'Número para transferir' });
+          const campo = page.getByRole('combobox', { name: 'Número para transferir' });
           await expect(campo).toBeFocused();
           if (digitos) await campo.fill(digitos);
           await expect(page.locator('.call-panel .suggest')).toHaveCount(quantas);
@@ -159,7 +160,7 @@ for (const altura of [720, 701, 672, 640]) {
           expect(cancelar.y + cancelar.height <= desligar.y - 4, `o Cancelar encosta no Desligar: ${JSON.stringify({ cancelar, desligar })}`).toBe(
             true,
           );
-          if (altura === 640 && quantas === 2) await capturar(page, `transferir-${cenario}-${altura}`, 'escuro');
+          if (altura === 640 && quantas === 3) await capturar(page, `transferir-${cenario}-${altura}`, 'escuro');
         });
       }
     }
@@ -487,7 +488,7 @@ const OUTRAS: Array<{ nome: string; cenario: string; preparar?: (page: Page) => 
     cenario: 'duas-ligacoes',
     preparar: async (page) => {
       await page.getByRole('button', { name: 'Transferir', exact: true }).click();
-      await page.getByRole('textbox', { name: 'Número para transferir' }).fill('20');
+      await page.getByRole('combobox', { name: 'Número para transferir' }).fill('20');
     },
     botoes: ['Desligar', 'Transferir agora', 'Cancelar'],
   },
@@ -505,7 +506,7 @@ const OUTRAS: Array<{ nome: string; cenario: string; preparar?: (page: Page) => 
     cenario: 'ligacao',
     preparar: async (page) => {
       await page.getByRole('button', { name: 'Nova ligação', exact: true }).click();
-      await page.getByRole('textbox', { name: 'Número da nova ligação' }).fill('20');
+      await page.getByRole('combobox', { name: 'Número da nova ligação' }).fill('20');
     },
     // O Rediscar do painel também fica inteiro e livre (até em 300×440).
     botoes: ['Desligar', 'Rediscar 1150603000', 'Ligar', 'Cancelar'],

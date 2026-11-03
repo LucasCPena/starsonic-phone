@@ -110,7 +110,7 @@ O Entrar (spec do Windows, 7.1 e 11.1):
 | `hold` | `on` (booleano, opcional) | Espera: `true` põe, `false` retoma, sem `on` troca. Com duas em andamento, pôr a ativa em espera é o Alternar. Na conferência, nada. |
 | `mute` | `on` (booleano, opcional) | Mudo do microfone (vale para as duas ligações); sem `on`, troca. |
 | `dtmf` | `digitos` (texto) | Manda os dígitos (`0-9`, `*`, `#`) na ligação ativa. |
-| `transfer` | `numero` (texto), `contato` (booleano, opcional) | "Transferir agora" (sem consulta). (rc.5) Com `contato: true`, o número de um contato passa antes pela regra dos contatos, como no `dial`; a interface o manda quando o número do campo veio de uma sugestão e não mudou depois. Se a central recusa, o toast `O servidor não aceitou a transferência.`. |
+| `transfer` | `numero` (texto), `contato` (booleano, opcional) | "Transferir agora" (sem consulta). (rc.5) Com `contato: true`, o número de um contato passa antes pela regra dos contatos, como no `dial`; a interface o manda quando o número do campo veio de uma sugestão e não mudou depois. (rc.6) No Windows, a sugestão é um contato escolhido na lista do painel, dos meus ou da lista da empresa. Se a central recusa, o toast `O servidor não aceitou a transferência.`. |
 | `consult` | `numero` (texto), `contato` (booleano, opcional) | "Consultar": liga para o colega como a Nova ligação, marcada como consulta. (rc.5) O `contato`, como no `transfer`. |
 | `completeTransfer` | — | "Concluir transferência" (com o colega atendido). |
 | `cancelConsult` | — | "Cancelar" a consulta: o colega sai e o cliente volta. |

@@ -98,7 +98,7 @@ for (const tema of ['light', 'dark'] as const) {
       // Com duas ligações, o Consultar fica travado (a consulta seria a terceira); Transferir agora vale.
       await botao(page, 'Transferir').click();
       await expect(botao(page, 'Consultar')).toBeDisabled();
-      await page.getByRole('textbox', { name: 'Número para transferir' }).fill('2004');
+      await page.getByRole('combobox', { name: 'Número para transferir' }).fill('2004');
       await expect(botao(page, 'Transferir agora')).toBeEnabled();
       await botao(page, 'Cancelar').click();
       await expect(botao(page, 'Transferir agora')).toHaveCount(0);
@@ -149,7 +149,7 @@ for (const tema of ['light', 'dark'] as const) {
       await abrir(page, 'ligacao');
       await botao(page, 'Transferir').click();
       await verTextos(page, ['Transferir para']);
-      const numero = page.getByRole('textbox', { name: 'Número para transferir' });
+      const numero = page.getByRole('combobox', { name: 'Número para transferir' });
       await expect(numero).toBeFocused();
       // Sem número, nada a mandar.
       await expect(botao(page, 'Transferir agora')).toBeDisabled();
@@ -165,7 +165,7 @@ for (const tema of ['light', 'dark'] as const) {
     test('Consultar calls the colleague and Concluir transferência completes it', async ({ page }) => {
       await abrir(page, 'ligacao');
       await botao(page, 'Transferir').click();
-      await page.getByRole('textbox', { name: 'Número para transferir' }).fill('2007');
+      await page.getByRole('combobox', { name: 'Número para transferir' }).fill('2007');
       await botao(page, 'Consultar').click();
       await esperarComando(page, { cmd: 'consult', numero: '2007' });
       // O colega chama: Concluir e Alternar travados (só entre ligações confirmadas), Cancelar vale.
@@ -217,11 +217,11 @@ for (const tema of ['light', 'dark'] as const) {
     test('Nova ligação dials a second call; Alternar and Juntar wait until it is answered', async ({ page }) => {
       await abrir(page, 'ligacao');
       await botao(page, 'Nova ligação').click();
-      const numero = page.getByRole('textbox', { name: 'Número da nova ligação' });
+      const numero = page.getByRole('combobox', { name: 'Número da nova ligação' });
       await expect(numero).toBeFocused();
       await numero.fill('2010');
-      // A sugestão do contato liga pela regra dos contatos; o Ligar liga o número digitado.
-      await expect(page.getByRole('button', { name: /Financeiro/ })).toBeVisible();
+      // O contato achado aparece na lista embaixo do campo (rc.6: busca-pelo-nome.spec.ts); o Ligar liga o número digitado.
+      await expect(page.getByRole('option', { name: /Financeiro/ })).toBeVisible();
       await semViolacoesSerias(page);
       await capturar(page, 'ligacao-nova', tema);
       await botao(page, 'Ligar').click();

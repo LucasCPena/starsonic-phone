@@ -1,14 +1,16 @@
-// (rc.6) Os contatos do Windows numa lista só: a da aba Contatos (Contatos.tsx), para ser a mesma também nos painéis
-// de número da ligação (o Transferir, o Consultar e a Nova ligação) e nas sugestões do Teclado. A junção dos meus (os
-// `contatos` do estado) com os da lista da empresa (a última contatosEmpresa), a ordem e a busca são as da aba Contatos
-// desde a rc.4 e ficam escritas só aqui: um da empresa com o mesmo nome (sem acento e sem caixa) e os mesmos dígitos de
-// um meu fica de fora (vale o meu); a ordem é a do grupo (o "#" primeiro, depois as letras) e, no grupo, a do nome sem
-// acento e sem caixa; a busca olha o nome e a observação sem acento e sem caixa e os dígitos do número.
+// (rc.6) Os contatos do Windows numa lista só, a mesma nos três lugares que a usam: a aba Contatos (Contatos.tsx), os
+// painéis de número da ligação (o Transferir, o Consultar e a Nova ligação, em Ligacao.tsx) e as sugestões do Teclado
+// (Teclado.tsx). A junção dos meus (os `contatos` do estado) com os da lista da empresa (a última contatosEmpresa), a
+// ordem e a busca são as da aba Contatos desde a rc.4 e ficam escritas só aqui: um da empresa com o mesmo nome (sem
+// acento e sem caixa) e os mesmos dígitos de um meu fica de fora (vale o meu); a ordem é a do grupo (o "#" primeiro,
+// depois as letras) e, no grupo, a do nome sem acento e sem caixa; a busca olha o nome e a observação sem acento e sem
+// caixa e os dígitos do número.
 // A lista da empresa pode ter 10.000 contatos: cada linha leva a busca e a ordem já calculadas, e a lista pronta fica
 // guardada para os mesmos contatos (os meus iguais e a mesma lista da empresa, que o main.tsx mantém quando uma leitura
-// traz a mesma planilha). Abrir a aba de novo, digitar ou um estado novo com os mesmos contatos não dobram os nomes nem
-// ordenam a lista outra vez.
-// (iPhone) Nada daqui: lá, a lista e as sugestões são as da agenda (format.ts).
+// traz a mesma planilha). Abrir de novo a aba, o painel ou o Teclado, digitar ou um estado novo com os mesmos contatos
+// não dobram os nomes nem ordenam a lista outra vez.
+// O campo de nome ou número do Teclado e dos painéis (o `nomeOuNumero`) também fica aqui. (iPhone) Nada daqui: lá, a
+// lista e as sugestões são as da agenda (format.ts).
 import { digitsOnly, fold, groupLetter } from './format';
 import type { CompanyContact, Contact } from './state';
 
@@ -132,4 +134,30 @@ export function bate(l: Linha, busca: Busca): boolean {
   if (!busca.termo) return true;
   if (l.nomeBusca.includes(busca.termo) || l.obsBusca.includes(busca.termo)) return true;
   return busca.digitos.length > 0 && l.digitos.includes(busca.digitos);
+}
+
+/** As linhas da lista que batem com a busca, na ordem dela, até `max`. A busca vazia devolve a própria lista. */
+export function buscar(lista: Linha[], busca: Busca, max = Infinity): Linha[] {
+  if (!busca.termo) return lista.length <= max ? lista : lista.slice(0, max);
+  const achadas: Linha[] = [];
+  for (const l of lista) {
+    if (!bate(l, busca)) continue;
+    achadas.push(l);
+    if (achadas.length >= max) break;
+  }
+  return achadas;
+}
+
+/** O texto tem alguma letra: é um nome. Sem nenhuma, é um número. */
+export function temLetras(texto: string): boolean {
+  return /\p{L}/u.test(texto);
+}
+
+/**
+ * O que o campo de nome ou número (o do Teclado e o dos painéis da ligação, no Windows) guarda do que foi digitado ou
+ * colado: com alguma letra, o texto como veio (um nome, com os espaços e a pontuação dele); sem nenhuma, só o que é de um
+ * número (os dígitos, *, # e +), como o campo só de número de antes.
+ */
+export function nomeOuNumero(valor: string): string {
+  return temLetras(valor) ? valor : valor.replace(/[^0-9*#+]/g, '');
 }

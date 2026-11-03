@@ -4,17 +4,19 @@
 // (docs/ponte-windows.md). A conferência é olhada antes do `secondKind` (nela a segunda vem "active").
 // Teclado físico: os dígitos, * e # mandam DTMF só com o teclado da ligação aberto; Esc fecha o teclado e o painel
 // Atalhos. (rc.3) O botão Atalhos (com uma ligação atendida, fora da consulta e da conferência) abre o painel com os
-// atalhos no lugar dos controles. As sugestões do número do Transferir e da Nova ligação vêm de `contatos`: os do estado
-// e, no iPhone, os da agenda (um por número; um contato sem nome mostra o número). A da Nova ligação liga com a regra dos
-// contatos (o `contato` do dial); a do Transferir põe o número no campo, e o Consultar e o Transferir agora dele, sem
-// mudança depois, vão com o `contato` também (no Windows, desde a rc.5).
+// atalhos no lugar dos controles. (rc.6) No Windows, o campo do Transferir e da Nova ligação acha o contato pelo nome ou
+// pelo número (o PainelPorNome): embaixo dele, a lista dos meus contatos e dos da lista da empresa, a mesma da aba
+// Contatos (lista-de-contatos.ts). (iPhone) O campo é só de número, com as sugestões da agenda (um contato por número; um
+// contato sem nome mostra o número). O contato escolhido da Nova ligação liga com a regra dos contatos (o `contato` do
+// dial); o do Transferir põe o número no campo, e o Consultar e o Transferir agora dele, sem mudança depois, vão com o
+// `contato` também (no Windows, desde a rc.5).
 // (iPhone) O botão Áudio mostra a saída de agora (a `rotaAudio`: "iPhone", "Viva-voz" ou o nome do fone; "Áudio" sem
 // saber), com o nome "Áudio: <saída>", e pede a escolha do iPhone (o `audioRoute`: o hospedeiro mostra a dele), no
 // lugar do menu dos dispositivos; sem o botão Atalhos (fora da 1.0), uma ligação fica em três colunas (6 controles) e
 // duas em quatro (7). Cada tecla do teclado da ligação manda, junto do dtmf, o `keyTone` com ela, com o Bipe ao digitar
 // ligado (o `config.bipeTecla`).
-import type { ComponentChildren } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import type { ComponentChildren, VNode } from 'preact';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { AtalhosPainel } from '../components/AtalhosPainel';
 import { Menu } from '../components/Menu';
 import { Rediscar } from '../components/Rediscar';
@@ -37,14 +39,17 @@ import {
   IconSplit,
   IconSwap,
 } from '../icons';
-import type { AppState, CallCard, CallState, Contact } from '../state';
+import { buscaPor, buscar, listaDeContatos, nomeOuNumero, temLetras, type Linha } from '../lista-de-contatos';
+import type { AppState, CallCard, CallState, CompanyContact, Contact } from '../state';
 import type { Send } from '../types';
 
 interface Props {
   state: AppState;
   ligacao: CallState;
-  /** As sugestões do número (o Transferir e a Nova ligação): os `contatos` do estado; no iPhone, os da agenda. */
+  /** Os contatos do Transferir e da Nova ligação: os `contatos` do estado; no iPhone, os da agenda. */
   contatos: Contact[];
+  /** (rc.6) A lista da empresa (a última contatosEmpresa): no Windows, ela entra na lista dos painéis com os `contatos`. */
+  daEmpresa: CompanyContact[];
   send: Send;
 }
 
@@ -175,21 +180,24 @@ function AudioMenu({ state, send, anchor, onClose }: { state: AppState; send: Se
   );
 }
 
-interface NumberPanelProps {
+/** O que os dois painéis de número (o do iPhone e o do Windows) recebem do Transferir e da Nova ligação. */
+interface PainelProps {
   titulo: string;
   rotulo: string;
-  contatos: Contact[];
   onCancel(): void;
-  /** O toque numa sugestão (null: a sugestão só preenche o número). */
-  onContact: ((c: Contact) => void) | null;
-  /** Os botões do painel, com o número digitado; `daSugestao`: ele veio de uma sugestão e não mudou depois. */
-  actions(numero: string, daSugestao: boolean): ComponentChildren;
-  /** O Enter no campo (null: nada). */
+  /** Um contato escolhido, com o número dele (null: ele só preenche o número; no Windows, o painel mostra quem recebe). */
+  onContact: ((numero: string) => void) | null;
+  /**
+   * Os botões do painel, com o número a mandar ("" sem nenhum: no Windows, um nome sem um contato escolhido não é número)
+   * e `doContato`: ele é o de um contato escolhido, sem mudança depois (vai com o `contato`).
+   */
+  actions(numero: string, doContato: boolean): ComponentChildren;
+  /** O Enter no campo sem uma linha marcada, com o número a mandar (null: nada). */
   onEnter: ((numero: string) => void) | null;
 }
 
-/** O número do Transferir e da Nova ligação, com as sugestões dos contatos (como o Teclado). */
-function NumberPanel({ titulo, rotulo, contatos, onCancel, onContact, actions, onEnter }: NumberPanelProps) {
+/** (iPhone) O número do Transferir e da Nova ligação, com as sugestões da agenda (como o Teclado). */
+function NumberPanel({ titulo, rotulo, contatos, onCancel, onContact, actions, onEnter }: PainelProps & { contatos: Contact[] }) {
   const [numero, setNumero] = useState('');
   // O número do campo veio de uma sugestão e não mudou depois.
   const [daSugestao, setDaSugestao] = useState(false);
@@ -233,7 +241,7 @@ function NumberPanel({ titulo, rotulo, contatos, onCancel, onContact, actions, o
               type="button"
               key={c.id}
               class="suggest call-suggest"
-              onClick={() => (onContact ? onContact(c) : (setNumero(c.numero), setDaSugestao(true)))}
+              onClick={() => (onContact ? onContact(c.numero) : (setNumero(c.numero), setDaSugestao(true)))}
             >
               <span class="avatar" aria-hidden="true">
                 {initials(c.nome)}
@@ -255,7 +263,241 @@ function NumberPanel({ titulo, rotulo, contatos, onCancel, onContact, actions, o
   );
 }
 
-export function Ligacao({ state, ligacao: l, contatos, send }: Props) {
+/** A lista do painel do Windows e o título que dá o nome a ela (um painel por vez). */
+const LISTA_DO_PAINEL = 'painel-contatos';
+const TITULO_DO_PAINEL = 'painel-titulo';
+const NENHUM_CONTATO = 'Nenhum contato com esse nome';
+/**
+ * A lista do painel vai em pedaços: as PRIMEIRO_PEDACO primeiras linhas logo, e mais um pedaço de PEDACO por tarefa,
+ * cada um depois do desenho do anterior (como a agenda grande do iPhone sem o content-visibility, no Agenda.tsx). Com a
+ * lista da empresa de 10.000, montar todas as linhas de uma vez travava a tela da ligação perto de 1 s; assim, o painel
+ * abre e a busca responde na hora, e a lista inteira chega logo depois. Cada pedaço é montado uma vez e reaproveitado (o
+ * Preact pula o mesmo vnode): o desenho de um pedaço novo não passa de novo pelas linhas dos de antes. A busca olha a
+ * lista inteira, e uma busca nova é outra lista na tela, do começo e do primeiro pedaço.
+ */
+const PRIMEIRO_PEDACO = 100;
+const PEDACO = 200;
+
+/** As linhas em pedaços: o primeiro com PRIMEIRO_PEDACO, os outros com PEDACO. */
+function emPedacos(linhas: Linha[]): Linha[][] {
+  const pedacos: Linha[][] = [];
+  for (let i = 0, n = PRIMEIRO_PEDACO; i < linhas.length; i += n, n = PEDACO) pedacos.push(linhas.slice(i, i + n));
+  return pedacos;
+}
+
+/** O pedaço da linha de índice `i`. */
+function pedacoDa(i: number): number {
+  return i < PRIMEIRO_PEDACO ? 0 : 1 + Math.floor((i - PRIMEIRO_PEDACO) / PEDACO);
+}
+
+/** O id de cada linha da lista na tela (o aria-activedescendant do campo aponta a marcada). */
+const IDS_DAS_LINHAS = new WeakMap<Linha, string>();
+let ultimoId = 0;
+function idDaLinha(l: Linha): string {
+  let id = IDS_DAS_LINHAS.get(l);
+  if (!id) {
+    id = `painel-contato-${++ultimoId}`;
+    IDS_DAS_LINHAS.set(l, id);
+  }
+  return id;
+}
+
+/**
+ * Uma linha da lista: as iniciais, o nome (ou o número, num contato sem nome) e embaixo "Contato · <número>" (um meu) ou
+ * "Empresa · <número>" (um da lista da empresa). Sem estado: um vnode, não um componente (numa lista de 10.000).
+ */
+function linhaDoPainel(l: Linha, marcada: boolean, escolher: (l: Linha) => void): VNode {
+  return (
+    <div
+      key={l.key}
+      id={idDaLinha(l)}
+      role="option"
+      aria-selected={marcada}
+      class="suggest call-suggest"
+      onClick={() => escolher(l)}
+    >
+      <span class="avatar" aria-hidden="true">
+        {initials(l.nome)}
+      </span>
+      <span class="row-main">
+        <span class="row-title">{l.nome || l.numero}</span>
+        <span class="row-sub">{`${l.meu ? 'Contato' : 'Empresa'} · ${l.numero}`}</span>
+      </span>
+    </div>
+  );
+}
+
+/**
+ * (rc.6, Windows) O Transferir (com o Consultar) e a Nova ligação pelo nome ou pelo número. O campo aceita letras; embaixo
+ * dele, a lista dos meus contatos e dos da lista da empresa (`lista`): com o campo vazio, todos; digitando, os que batem
+ * na busca da aba Contatos. Ela fica com o espaço que sobra e rola sozinha. É o padrão da lista com a opção marcada: as
+ * setas para baixo e para cima marcam uma linha (o aria-activedescendant do campo), e o Enter nela ou o clique escolhem o
+ * contato. Na Nova ligação, o escolhido liga (o `onContact`); no Transferir, o número dele vai para o campo e o painel
+ * mostra quem vai receber ("Para: <nome> · <número>"), até o campo mudar. Letras sem um contato escolhido não são número:
+ * os botões ficam desligados, e sem nenhum contato que bata aparece "Nenhum contato com esse nome". Só com números, como
+ * antes: o número digitado, sem o `contato`. O Esc cancela.
+ */
+function PainelPorNome({ titulo, rotulo, lista, onCancel, onContact, actions, onEnter }: PainelProps & { lista: Linha[] }) {
+  const [texto, setTexto] = useState('');
+  // O contato escolhido (só no Transferir: na Nova ligação, ele liga), até o campo mudar.
+  const [escolhido, setEscolhido] = useState<Linha | null>(null);
+  // A linha marcada pelas setas (a chave dela: numa lista nova, a marca segue o contato).
+  const [marcada, setMarcada] = useState<string | null>(null);
+  const campo = useRef<HTMLInputElement>(null);
+  useEffect(() => campo.current?.focus(), []);
+
+  const achadas = useMemo(() => buscar(lista, buscaPor(texto)), [lista, texto]);
+  const comLetras = temLetras(texto);
+  const mostrarLista = escolhido === null && achadas.length > 0;
+  const nenhum = escolhido === null && comLetras && achadas.length === 0;
+  const indice = mostrarLista && marcada !== null ? achadas.findIndex((l) => l.key === marcada) : -1;
+  // O número que os botões mandam: o do escolhido; com letras sem escolha, nenhum; só números, o digitado.
+  const numero = escolhido ? escolhido.numero : comLetras ? '' : texto;
+
+  const escolher = (l: Linha) => {
+    if (onContact) {
+      onContact(l.numero);
+      return;
+    }
+    setTexto(l.numero);
+    setEscolhido(l);
+    setMarcada(null);
+    campo.current?.focus();
+  };
+  const escolherAgora = useRef(escolher);
+  escolherAgora.current = escolher;
+
+  // A lista na tela, em pedaços (PRIMEIRO_PEDACO). Umas achadas novas (outra busca, outra lista, também a volta ao campo
+  // vazio) são outra lista na tela (a `vez`): do começo, e com o primeiro pedaço; os outros vêm um por tarefa. O pedaço da
+  // linha marcada está sempre nela.
+  const pedacos = useMemo(() => emPedacos(achadas), [achadas]);
+  const vez = useRef({ de: achadas, n: 0 });
+  if (vez.current.de !== achadas) vez.current = { de: achadas, n: vez.current.n + 1 };
+  const [naTela, setNaTela] = useState({ vez: 0, quantos: 1 });
+  const quantos = Math.max(naTela.vez === vez.current.n ? naTela.quantos : 1, indice >= 0 ? pedacoDa(indice) + 1 : 0);
+  useEffect(() => {
+    if (!mostrarLista || quantos >= pedacos.length) return;
+    const desta = vez.current.n;
+    const seguinte = setTimeout(() => setNaTela({ vez: desta, quantos: quantos + 1 }), 0);
+    return () => clearTimeout(seguinte);
+  }, [achadas, quantos, mostrarLista]);
+
+  // A linha de cada contato e cada pedaço, montados uma vez (o clique chama o escolher de agora); o pedaço da marcada, de
+  // novo a cada marca. A lista também: o relógio da ligação redesenha a tela a cada segundo, e ela fica como está.
+  const prontas = useMemo(() => ({ linhas: new WeakMap<Linha, VNode>(), pedacos: new WeakMap<Linha[], VNode>() }), []);
+  const listaNaTela = useMemo(() => {
+    if (!mostrarLista) return null;
+    const aoEscolher = (l: Linha) => escolherAgora.current(l);
+    const linhaDe = (l: Linha): VNode => {
+      if (l.key === marcada) return linhaDoPainel(l, true, aoEscolher);
+      let pronta = prontas.linhas.get(l);
+      if (!pronta) {
+        pronta = linhaDoPainel(l, false, aoEscolher);
+        prontas.linhas.set(l, pronta);
+      }
+      return pronta;
+    };
+    const comMarca = indice >= 0 ? pedacoDa(indice) : -1;
+    // Cada pedaço numa caixa própria (sem papel para o leitor de tela: as linhas são da lista): o navegador põe e pinta
+    // um pedaço novo sem passar de novo pelas linhas dos de antes.
+    const pedacoDe = (p: Linha[], k: number): VNode => {
+      const novo = () => (
+        <div key={k} role="none" class="call-pedaco">
+          {p.map(linhaDe)}
+        </div>
+      );
+      if (k === comMarca) return novo();
+      let pronto = prontas.pedacos.get(p);
+      if (!pronto) {
+        pronto = novo();
+        prontas.pedacos.set(p, pronto);
+      }
+      return pronto;
+    };
+    return (
+      <div key={vez.current.n} class="call-suggestions call-lista" id={LISTA_DO_PAINEL} role="listbox" aria-labelledby={TITULO_DO_PAINEL}>
+        {pedacos.slice(0, quantos).map(pedacoDe)}
+      </div>
+    );
+  }, [pedacos, quantos, marcada, mostrarLista]);
+
+  // A marcada fica à vista na lista.
+  useEffect(() => {
+    if (indice >= 0) document.getElementById(idDaLinha(achadas[indice]))?.scrollIntoView({ block: 'nearest' });
+  }, [marcada]);
+
+  return (
+    <div class="call-panel">
+      <h2 class="call-panel-title" id={TITULO_DO_PAINEL}>
+        {titulo}
+      </h2>
+      <input
+        ref={campo}
+        class="call-number"
+        type="text"
+        role="combobox"
+        aria-label={rotulo}
+        aria-autocomplete="list"
+        aria-expanded={mostrarLista}
+        aria-controls={mostrarLista ? LISTA_DO_PAINEL : undefined}
+        aria-activedescendant={indice >= 0 ? idDaLinha(achadas[indice]) : undefined}
+        placeholder="Digite o nome ou o número"
+        autocomplete="off"
+        spellcheck={false}
+        value={texto}
+        onInput={(e) => {
+          const valor = nomeOuNumero(e.currentTarget.value);
+          if (valor !== e.currentTarget.value) e.currentTarget.value = valor;
+          setTexto(valor);
+          setEscolhido(null);
+          setMarcada(null);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            onCancel();
+          } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            if (!mostrarLista) return;
+            e.preventDefault();
+            // Para baixo: a primeira, depois a seguinte, até a última. Para cima: a anterior, e da primeira, nenhuma.
+            const nova = e.key === 'ArrowDown' ? Math.min(indice + 1, achadas.length - 1) : indice - 1;
+            setMarcada(nova >= 0 ? achadas[nova].key : null);
+          } else if (e.key === 'Enter') {
+            if (indice >= 0) {
+              e.preventDefault();
+              escolher(achadas[indice]);
+            } else if (onEnter && numero) {
+              e.preventDefault();
+              onEnter(numero);
+            }
+          }
+        }}
+      />
+      {listaNaTela}
+      {/* Quem vai receber (o escolhido) ou o nada achado, no lugar da lista; sem nenhum dos dois, só a região que o leitor
+          de tela anuncia. */}
+      <p class={escolhido ? 'call-para' : nenhum ? 'call-vazio' : 'sr-only'} role="status">
+        {escolhido ? (
+          <>
+            <span>Para: </span>
+            <b>{escolhido.nome || escolhido.numero}</b>
+            {escolhido.nome && <span>{` · ${escolhido.numero}`}</span>}
+          </>
+        ) : nenhum ? (
+          NENHUM_CONTATO
+        ) : (
+          ''
+        )}
+      </p>
+      <div class="call-panel-actions">{actions(numero, escolhido !== null)}</div>
+      <button type="button" class="btn btn-ghost-dark" onClick={onCancel}>
+        Cancelar
+      </button>
+    </div>
+  );
+}
+
+export function Ligacao({ state, ligacao: l, contatos, daEmpresa, send }: Props) {
   const now = useNow();
   const [painelPedido, setPainel] = useState<Painel>(null);
   const [digitos, setDigitos] = useState('');
@@ -541,6 +783,11 @@ export function Ligacao({ state, ligacao: l, contatos, send }: Props) {
     );
   }
 
+  // O painel de número do Transferir e da Nova ligação: no Windows, pelo nome ou pelo número, com a lista dos meus e dos
+  // da empresa (a lista pronta, a mesma da aba Contatos); no iPhone, só pelo número, com as sugestões da agenda.
+  const painelDeNumero = (p: PainelProps) =>
+    ios ? <NumberPanel {...p} contatos={contatos} /> : <PainelPorNome {...p} lista={listaDeContatos(contatos, daEmpresa).todas} />;
+
   let meio;
   if (tocando) {
     meio = null;
@@ -555,17 +802,15 @@ export function Ligacao({ state, ligacao: l, contatos, send }: Props) {
       </div>
     );
   } else if (painel === 'transferir') {
-    meio = (
-      <NumberPanel
-        titulo="Transferir para"
-        rotulo="Número para transferir"
-        contatos={contatos}
-        onCancel={() => setPainel(null)}
-        onContact={null}
-        onEnter={null}
-        actions={(numero, daSugestao) => {
-          // O número de uma sugestão, sem mudança depois, vai com a regra dos contatos (o `contato`), como no Ligar.
-          const contato = daSugestao ? { contato: true } : {};
+    meio = painelDeNumero({
+      titulo: 'Transferir para',
+      rotulo: 'Número para transferir',
+      onCancel: () => setPainel(null),
+      onContact: null,
+      onEnter: null,
+      actions: (numero, doContato) => {
+          // O número de um contato escolhido, sem mudança depois, vai com a regra dos contatos (o `contato`), como no Ligar.
+          const contato = doContato ? { contato: true } : {};
           return (
             <>
               {/* O Consultar é a segunda ligação: com duas, não. */}
@@ -587,31 +832,27 @@ export function Ligacao({ state, ligacao: l, contatos, send }: Props) {
               </button>
             </>
           );
-        }}
-      />
-    );
+      },
+    });
   } else if (painel === 'nova') {
     const ligar = (numero: string) => (setPainel(null), send({ cmd: 'dial', numero }));
-    meio = (
-      <NumberPanel
-        titulo="Nova ligação"
-        rotulo="Número da nova ligação"
-        contatos={contatos}
-        onCancel={() => setPainel(null)}
-        onContact={(c) => (setPainel(null), send({ cmd: 'dial', numero: c.numero, contato: true }))}
-        onEnter={ligar}
-        actions={(numero) => (
-          // O Rediscar da Nova ligação: a feita mais nova, pelo mesmo caminho do Ligar do painel.
-          <div class="call-row">
-            <Rediscar recentes={state.recentes} id="rediscar-nova" onDial={ligar} />
-            <button type="button" class="btn btn-cyan btn-block" disabled={!numero} onClick={() => ligar(numero)}>
-              <IconPhone size="sm" />
-              Ligar
-            </button>
-          </div>
-        )}
-      />
-    );
+    meio = painelDeNumero({
+      titulo: 'Nova ligação',
+      rotulo: 'Número da nova ligação',
+      onCancel: () => setPainel(null),
+      onContact: (numero) => (setPainel(null), send({ cmd: 'dial', numero, contato: true })),
+      onEnter: ligar,
+      actions: (numero) => (
+        // O Rediscar da Nova ligação: a feita mais nova, pelo mesmo caminho do Ligar do painel (ele não usa o campo).
+        <div class="call-row">
+          <Rediscar recentes={state.recentes} id="rediscar-nova" onDial={ligar} />
+          <button type="button" class="btn btn-cyan btn-block" disabled={!numero} onClick={() => ligar(numero)}>
+            <IconPhone size="sm" />
+            Ligar
+          </button>
+        </div>
+      ),
+    });
   } else if (painel === 'atalhos') {
     meio = <AtalhosPainel atalhos={state.atalhos} ligacao={l} send={send} onClose={fecharAtalhos} onUsed={fecharAtalhos} />;
   } else {

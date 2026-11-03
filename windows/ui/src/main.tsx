@@ -5,7 +5,8 @@
 // mensagens e não toca). O Ctrl + P (rc.3) é só desta janela: abre o diálogo da área do administrador, um por vez e
 // nunca por cima da ligação, de outro diálogo ou de um menu aberto; com a área aberta, vai direto para ela. O app não
 // imprime: o Ctrl + P nunca chega ao imprimir do navegador. (rc.4) A lista da empresa (a contatosEmpresa) fica guardada
-// aqui, a de `vez` mais alta, também a que chega antes do primeiro estado, e vai à tela Contatos.
+// aqui, a de `vez` mais alta, também a que chega antes do primeiro estado, e vai à tela Contatos e (rc.6) ao Teclado e à
+// tela da ligação, onde o contato também se acha pelo nome (lista-de-contatos.ts).
 // (iPhone) O estado com `plataforma: "ios"` liga o modo iPhone (plataforma.ts): o .win leva o data-plataforma="ios" (a
 // área segura e o toque do app.css), o viewport vai até as bordas da tela, e saem a barra de título (com as zonas de
 // redimensionar), os atalhos de teclado (Ctrl+1 a 4 e Ctrl + P), a pergunta da atualização, a área do administrador, o
@@ -297,7 +298,7 @@ function App() {
                 : state.conta.ramal,
           status: state.conta ? accountDot(state.conta, true, state.naoPerturbe) : undefined,
         })}
-        <Ligacao state={state} ligacao={state.ligacao} contatos={sugestoes} send={send} />
+        <Ligacao state={state} ligacao={state.ligacao} contatos={sugestoes} daEmpresa={daEmpresa.contatos} send={send} />
         {toastEl}
       </div>
     );
@@ -405,7 +406,15 @@ function App() {
       {conta && <Header state={state} conta={conta} send={send} navigate={setView} current={view} layout={layout} />}
       <main class="main" aria-label={TABS.find((t) => t.tab === tab)!.label}>
         {tab === 'teclado' && (
-          <Teclado numero={numero} setNumero={mudarNumero} contatos={sugestoes} recentes={state.recentes} send={send} bipe={ios && state.config.bipeTecla === true} />
+          <Teclado
+            numero={numero}
+            setNumero={mudarNumero}
+            contatos={sugestoes}
+            daEmpresa={ios ? null : daEmpresa.contatos}
+            recentes={state.recentes}
+            send={send}
+            bipe={ios && state.config.bipeTecla === true}
+          />
         )}
         {tab === 'atalhos' && (
           <Atalhos
