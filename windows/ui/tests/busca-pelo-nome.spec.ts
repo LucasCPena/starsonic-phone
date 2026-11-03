@@ -7,7 +7,19 @@
 // os ios*.spec.ts.
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { PLANILHA_DA_EMPRESA } from '../src/fake-scenarios';
-import { abrir, capturar, comandos, depoisDoQueChegou, empurrar, esperarComando, mudarEstado, semViolacoesSerias, vezes } from './helpers';
+import {
+  abrir,
+  capturar,
+  comandos,
+  depoisDoQueChegou,
+  empurrar,
+  esperarComando,
+  mudarEstado,
+  segurarCpp,
+  semViolacoesSerias,
+  soltarCpp,
+  vezes,
+} from './helpers';
 
 /** A lista da empresa dos testes, na ordem da planilha: a de exemplo (a Ana Souza 2003 também é minha) e mais dois "jo". */
 const DA_EMPRESA = [
@@ -105,6 +117,30 @@ async function abrirTransferir(page: Page, cenario = 'ligacao'): Promise<Locator
   // A lista da empresa chegou: a lista do painel tem todos.
   await expect(nomes(page)).toHaveCount(TODOS.length);
   return numero;
+}
+
+/**
+ * As linhas da lista do painel à vista (pelo menos 10 px dentro dela), de cima para baixo: a parte de cada uma que está à
+ * vista, o nome e o número.
+ */
+async function linhasVisiveis(page: Page): Promise<Array<Caixa & { nome: string; numero: string }>> {
+  const l = await caixa(lista(page));
+  const linhas: Array<Caixa & { nome: string; numero: string }> = [];
+  for (const o of await lista(page).getByRole('option').all()) {
+    const b = await caixa(o);
+    const y = Math.max(b.y, l.y);
+    const altura = Math.min(b.y + b.height, l.y + l.height) - y;
+    if (altura < 10) continue;
+    const nome = await o.locator('.row-title').innerText();
+    const numero = (await o.locator('.row-sub').innerText()).replace(/^(Contato|Empresa) · /, '');
+    linhas.push({ x: b.x, y, width: b.width, height: altura, nome, numero });
+  }
+  return linhas;
+}
+
+/** O que saiu para a ponte depois dos `antes` primeiros comandos. */
+async function depois(page: Page, antes: number): Promise<unknown[]> {
+  return (await comandos(page)).slice(antes);
 }
 
 for (const tema of ['light', 'dark'] as const) {
@@ -226,6 +262,26 @@ test.describe('o painel do Transferir', () => {
     // Inteira dentro da lista (meio pixel de folga de cada lado: o painel fica no meio, numa posição fracionária).
     const l = (await lista(page).boundingBox())!;
     const u = (await ultima.boundingBox())!;
+    expect(u.y >= l.y - 1 && u.y + u.height <= l.y + l.height + 1, `a marcada fora da lista: ${JSON.stringify({ l, u })}`).toBe(true);
+    await numero.press('Enter');
+    await expect(para(page)).toHaveText('Para: Recepção · 3001');
+  });
+
+  test('a new company sheet with the panel open keeps the marked contact in view', async ({ page }) => {
+    await page.setViewportSize({ width: 300, height: 440 });
+    const numero = await abrirTransferir(page);
+    for (let i = 0; i < TODOS.length; i++) await numero.press('ArrowDown');
+    const ultima = opcao(page, 'Recepção');
+    await expect(ultima).toHaveAttribute('aria-selected', 'true');
+    // A releitura da planilha (de 15 em 15 minutos) traz um contato a mais: a lista na tela é outra, do começo, e a marca
+    // fica no mesmo contato, à vista.
+    await mudarEstado(page, (s) => ({ ...s, empresa: { ...s.empresa, quantos: DA_EMPRESA.length + 1, vez: 2 } }));
+    await empurrar(page, { v: 1, type: 'contatosEmpresa', vez: 2, contatos: [...DA_EMPRESA, { nome: 'Bruno Dias', numero: '3006', observacao: '' }] });
+    await expect(nomes(page)).toHaveCount(TODOS.length + 1);
+    await expect(ultima).toHaveAttribute('aria-selected', 'true');
+    await expect(numero).toHaveAttribute('aria-activedescendant', (await ultima.getAttribute('id'))!);
+    const l = await caixa(lista(page));
+    const u = await caixa(ultima);
     expect(u.y >= l.y - 1 && u.y + u.height <= l.y + l.height + 1, `a marcada fora da lista: ${JSON.stringify({ l, u })}`).toBe(true);
     await numero.press('Enter');
     await expect(para(page)).toHaveText('Para: Recepção · 3001');
@@ -609,6 +665,170 @@ test.describe('a busca para ligar', () => {
   });
 });
 
+// (Correção 1) O segundo clique de um clique duplo: o primeiro muda a tela (escolhe, liga, abre o painel), e o segundo
+// cai no que ficou embaixo do ponteiro. No Windows, ele não faz nada nos botões do painel, nos da ligação e no Desligar.
+// O segundo clique sozinho (o down e o up com o clickCount 2, o `detail` 2 do navegador) vale pelo do clique duplo de
+// verdade quando a tela muda só com a resposta do C++.
+test.describe('o clique duplo', () => {
+  for (const [largura, altura, cenario] of [
+    [400, 720, 'ligacao'],
+    [400, 640, 'duas-ligacoes'],
+  ] as Array<[number, number, string]>) {
+    test(`a double-click on the 3rd and 4th rows of the Transferir list only chooses the contact (${largura}×${altura}, ${cenario})`, async ({ page }) => {
+      await page.setViewportSize({ width: largura, height: altura });
+      const numero = await abrirTransferir(page, cenario);
+      // A 3ª e a 4ª à vista (com duas ligações em 400×640, a 4ª fica fora da lista: só a 3ª).
+      const linhas = (await linhasVisiveis(page)).slice(2, 4);
+      expect(linhas.length, 'menos de 3 linhas à vista').toBeGreaterThanOrEqual(1);
+      for (const linha of linhas) {
+        // Na metade da esquerda (antes, o Consultar caía embaixo) e na da direita (o Transferir agora), em cima, no meio e
+        // embaixo da linha (o Cancelar também).
+        for (const [fx, fy] of [0.25, 0.75].flatMap((x) => [0.25, 0.5, 0.75].map((y) => [x, y]))) {
+          await numero.fill('');
+          await expect(nomes(page)).toHaveCount(TODOS.length);
+          await page.mouse.dblclick(linha.x + linha.width * fx, linha.y + linha.height * fy);
+          await expect(para(page), `${linha.nome}, em ${fx} × ${fy}`).toHaveText(`Para: ${linha.nome} · ${linha.numero}`);
+          await expect(numero).toBeVisible();
+        }
+      }
+      await depoisDoQueChegou(page);
+      expect(await transferencias(page)).toEqual([]);
+    });
+
+    const controles: Array<[string, 'Número para transferir' | 'Número da nova ligação']> =
+      cenario === 'ligacao'
+        ? [
+            ['Transferir', 'Número para transferir'],
+            ['Nova ligação', 'Número da nova ligação'],
+          ]
+        : [['Transferir', 'Número para transferir']];
+    for (const [controle, rotulo] of controles) {
+      test(`a double-click on the ${controle} control leaves the panel open (${largura}×${altura}, ${cenario})`, async ({ page }) => {
+        await page.setViewportSize({ width: largura, height: altura });
+        await abrir(page, cenario);
+        await comListaDaEmpresa(page);
+        const c = await caixa(botao(page, controle));
+        // O Cancelar do painel aberto fica embaixo de uma parte do controle.
+        await botao(page, controle).click();
+        const cancelar = await caixa(page.locator('.call-panel').getByRole('button', { name: 'Cancelar' }));
+        await campo(page, rotulo).press('Escape');
+        await expect(page.locator('.call-panel')).toHaveCount(0);
+        const y0 = Math.max(c.y, cancelar.y);
+        const y1 = Math.min(c.y + c.height, cancelar.y + cancelar.height);
+        expect(y1 - y0, `o Cancelar não fica embaixo do ${controle}: ${JSON.stringify({ c, cancelar })}`).toBeGreaterThanOrEqual(4);
+        await page.mouse.dblclick(c.x + c.width / 2, (y0 + y1) / 2);
+        await expect(campo(page, rotulo)).toBeVisible();
+        await depoisDoQueChegou(page);
+        await expect(campo(page, rotulo)).toBeVisible();
+      });
+    }
+  }
+
+  test('Nova ligação: a double-click on a lower row dials once, and the second click reaches neither Mudo nor Espera', async ({ page }) => {
+    for (const controle of ['Mudo', 'Espera']) {
+      // O C++ que demora a responder (o segundo clique cai nos controles de uma ligação) e o de sempre.
+      for (const lento of [true, false]) {
+        await abrir(page, 'ligacao');
+        await comListaDaEmpresa(page);
+        const c = await caixa(botao(page, controle));
+        await botao(page, 'Nova ligação').click();
+        await expect(nomes(page)).toHaveCount(TODOS.length);
+        // Uma linha da lista em cima do controle, que fica no lugar dela quando o painel fecha.
+        const linha = (await linhasVisiveis(page)).find((r) => Math.min(r.y + r.height, c.y + c.height) - Math.max(r.y, c.y) >= 8);
+        expect(linha, `nenhuma linha em cima do ${controle}`).toBeDefined();
+        const x = c.x + c.width / 2;
+        const y = (Math.max(linha!.y, c.y) + Math.min(linha!.y + linha!.height, c.y + c.height)) / 2;
+        const antes = (await comandos(page)).length;
+        if (lento) {
+          await segurarCpp(page);
+          await page.mouse.click(x, y);
+          await expect(campo(page, 'Número da nova ligação')).toHaveCount(0);
+          const embaixo = await page.evaluate(([px, py]) => document.elementFromPoint(px, py)?.closest('button')?.textContent?.trim(), [x, y]);
+          expect(embaixo, 'o segundo clique não cai no controle').toBe(controle);
+          await page.mouse.down({ clickCount: 2 });
+          await page.mouse.up({ clickCount: 2 });
+          await soltarCpp(page);
+        } else {
+          await page.mouse.dblclick(x, y);
+        }
+        await expect(page.locator('.vcard').filter({ hasText: 'Ana Souza' }).getByText('Em espera', { exact: true })).toBeVisible();
+        await depoisDoQueChegou(page);
+        expect(await depois(page, antes), `${controle}, ${lento ? 'o C++ lento' : 'o C++ de sempre'}`).toEqual([
+          { v: 1, cmd: 'dial', numero: linha!.numero, contato: true },
+        ]);
+      }
+    }
+  });
+
+  test('Teclado: a double-click on a suggestion or on Ligar dials once', async ({ page }) => {
+    // A ponte falsa não abre a tela da ligação: o segundo clique cai no mesmo botão.
+    await abrir(page, 'principal');
+    await comListaDaEmpresa(page);
+    const numero = page.getByRole('textbox', { name: 'Número' });
+    await numero.fill('jo');
+    await expect(page.locator('.suggest .row-title')).toHaveText(['João Pereira', 'Jordana Alves']);
+    const antes = (await comandos(page)).length;
+    await page.locator('.suggest').first().dblclick();
+    await esperarComando(page, { cmd: 'dial', numero: '3002', contato: true });
+    await numero.fill('2004');
+    await botao(page, 'Ligar').dblclick();
+    await esperarComando(page, { cmd: 'dial', numero: '2004' });
+    await depoisDoQueChegou(page);
+    expect(await depois(page, antes)).toEqual([
+      { v: 1, cmd: 'dial', numero: '3002', contato: true },
+      { v: 1, cmd: 'dial', numero: '2004' },
+    ]);
+  });
+
+  for (const [largura, altura] of [
+    [400, 720],
+    [300, 440],
+  ] as Array<[number, number]>) {
+    test(`Teclado: a double-click on Ligar dials, and the second click does not hang up (${largura}×${altura})`, async ({ page }) => {
+      await page.setViewportSize({ width: largura, height: altura });
+      // O Desligar da tela da ligação e o Ligar do Teclado: o ponto do meio da parte de um embaixo do outro.
+      await abrir(page, 'ligacao');
+      const d = await caixa(botao(page, 'Desligar'));
+      await abrir(page, 'principal');
+      const numero = page.getByRole('textbox', { name: 'Número' });
+      await numero.fill('2004');
+      const g = await caixa(botao(page, 'Ligar'));
+      const x0 = Math.max(d.x, g.x);
+      const x1 = Math.min(d.x + d.width, g.x + g.width);
+      const y0 = Math.max(d.y, g.y);
+      const y1 = Math.min(d.y + d.height, g.y + g.height);
+      expect(x1 - x0 >= 8 && y1 - y0 >= 8, `o Desligar não fica embaixo do Ligar: ${JSON.stringify({ d, g })}`).toBe(true);
+      const x = (x0 + x1) / 2;
+      const y = (y0 + y1) / 2;
+      const antes = (await comandos(page)).length;
+      await page.mouse.click(x, y);
+      await esperarComando(page, { cmd: 'dial', numero: '2004' });
+      // O C++ começa a ligação: a tela dela, com o Desligar embaixo do ponteiro.
+      await mudarEstado(page, (s) => ({
+        ...s,
+        ligacao: {
+          top: { id: 31, number: '2004', name: '', incoming: false, phase: 'dialing', activeSinceMs: 0, held: false },
+          second: null,
+          secondKind: 'none',
+          muted: false,
+          conference: false,
+          conferenceSinceMs: 0,
+          consulting: false,
+          colleagueActive: false,
+        },
+      }));
+      await expect(page.getByText('Chamando…', { exact: true })).toBeVisible();
+      const embaixo = await page.evaluate(([px, py]) => document.elementFromPoint(px, py)?.closest('button')?.getAttribute('aria-label'), [x, y]);
+      expect(embaixo, 'o segundo clique não cai no Desligar').toBe('Desligar');
+      await page.mouse.down({ clickCount: 2 });
+      await page.mouse.up({ clickCount: 2 });
+      await depoisDoQueChegou(page);
+      expect(await depois(page, antes)).toEqual([{ v: 1, cmd: 'dial', numero: '2004' }]);
+      await expect(botao(page, 'Desligar')).toBeVisible();
+    });
+  }
+});
+
 // A janela pequena: nada rola para o lado, o painel cabe entre quem fala (ou o cartão de cima) e o Desligar, a lista
 // rola sozinha e mostra pelo menos um contato inteiro, e o axe não acha nada sério.
 interface Caixa {
@@ -733,4 +953,134 @@ for (const [largura, altura] of [
       });
     });
   }
+}
+
+// (Correção 1) O painel parado: ele ocupa a parte do meio inteira (o campo em cima, a lista com o espaço que sobra e os
+// botões embaixo), e o campo e o Cancelar ficam no mesmo lugar com o campo vazio, digitando, sem nada achado, só com um
+// número e depois da escolha (também a de um nome longo).
+async function topos(page: Page, rotulo: 'Número para transferir' | 'Número da nova ligação'): Promise<[campo: number, cancelar: number]> {
+  const c = await caixa(campo(page, rotulo));
+  const x = await caixa(page.locator('.call-panel').getByRole('button', { name: 'Cancelar' }));
+  return [c.y, x.y];
+}
+
+function parado(antes: [number, number], agora: [number, number], situacao: string): void {
+  const onde = `${situacao}: ${JSON.stringify(antes)} → ${JSON.stringify(agora)}`;
+  expect(Math.abs(agora[0] - antes[0]), `o campo mexeu (${onde})`).toBeLessThanOrEqual(0.5);
+  expect(Math.abs(agora[1] - antes[1]), `o Cancelar mexeu (${onde})`).toBeLessThanOrEqual(0.5);
+}
+
+for (const [largura, altura, cenario] of [
+  [400, 720, 'ligacao'],
+  [340, 560, 'ligacao'],
+  [300, 440, 'ligacao'],
+  [400, 640, 'duas-ligacoes'],
+] as Array<[number, number, string]>) {
+  test.describe(`o painel parado em ${largura}×${altura} (${cenario})`, () => {
+    test.use({ viewport: { width: largura, height: altura } });
+
+    test('Transferir: the field and Cancelar stay put while typing and after choosing', async ({ page }) => {
+      const rotulo = 'Número para transferir';
+      const numero = await abrirTransferir(page, cenario);
+      const vazio = await topos(page, rotulo);
+      await numero.fill('jo');
+      await expect(nomes(page)).toHaveText(['João Pereira', 'Jordana Alves']);
+      parado(vazio, await topos(page, rotulo), '"jo"');
+      await numero.fill('zzz');
+      await expect(page.locator('.call-panel').getByText(NENHUM, { exact: true })).toBeVisible();
+      parado(vazio, await topos(page, rotulo), 'nada achado');
+      await numero.fill('2004');
+      await expect(lista(page)).toHaveCount(0);
+      await expect(page.getByText(NENHUM)).toHaveCount(0);
+      parado(vazio, await topos(page, rotulo), 'só um número');
+      await numero.fill('jo');
+      await opcao(page, 'João Pereira').click();
+      await expect(para(page)).toHaveText('Para: João Pereira · 3002');
+      parado(vazio, await topos(page, rotulo), 'escolhido');
+      await numero.fill('coordenacao');
+      await opcao(page, 'Coordenação de Logística e Transportes').click();
+      await expect(para(page)).toHaveText('Para: Coordenação de Logística e Transportes · 3020');
+      parado(vazio, await topos(page, rotulo), 'nome longo escolhido');
+      await conferirPainel(page, largura, altura);
+    });
+
+    // Com duas ligações, sem a Nova ligação; nela, a escolha liga e fecha o painel.
+    if (cenario === 'ligacao') {
+      test('Nova ligação: the field and Cancelar stay put while typing', async ({ page }) => {
+        const rotulo = 'Número da nova ligação';
+        await abrir(page, cenario);
+        await comListaDaEmpresa(page);
+        await botao(page, 'Nova ligação').click();
+        const numero = campo(page, rotulo);
+        await expect(nomes(page)).toHaveCount(TODOS.length);
+        const vazio = await topos(page, rotulo);
+        await numero.fill('jo');
+        await expect(nomes(page)).toHaveText(['João Pereira', 'Jordana Alves']);
+        parado(vazio, await topos(page, rotulo), '"jo"');
+        await numero.fill('zzz');
+        await expect(page.locator('.call-panel').getByText(NENHUM, { exact: true })).toBeVisible();
+        parado(vazio, await topos(page, rotulo), 'nada achado');
+        await numero.fill('2004');
+        await expect(lista(page)).toHaveCount(0);
+        await expect(page.getByText(NENHUM)).toHaveCount(0);
+        parado(vazio, await topos(page, rotulo), 'só um número');
+        await conferirPainel(page, largura, altura);
+      });
+    }
+  });
+}
+
+// (Correção 1) A linha única da menor janela (o painel no Mínimo e o Teclado numa janela baixa): o nome encolhe primeiro,
+// com as reticências, e o "Empresa · <número>" fica inteiro, como no "Para:". E as fotos do painel nela.
+async function numeroInteiro(linha: Locator, sub: string): Promise<void> {
+  await expect(linha.locator('.row-sub')).toHaveText(sub);
+  expect(await linha.locator('.row-sub').evaluate((e) => e.scrollWidth <= e.clientWidth), `o "${sub}" cortado`).toBe(true);
+  const titulo = linha.locator('.row-title');
+  expect(await titulo.evaluate((e) => e.scrollWidth > e.clientWidth && getComputedStyle(e).textOverflow === 'ellipsis'), 'o nome longo sem as reticências').toBe(true);
+  const l = await caixa(linha);
+  const s = await caixa(linha.locator('.row-sub'));
+  expect(s.x + s.width, 'o número sai da linha').toBeLessThanOrEqual(l.x + l.width + 0.5);
+}
+
+for (const tema of ['light', 'dark'] as const) {
+  test.describe(`a janela de 300×440, o nome longo (${tema})`, () => {
+    test.use({ viewport: { width: 300, height: 440 }, colorScheme: tema });
+
+    test('the panel list cuts the long name and keeps "Empresa · 3020" whole', async ({ page }) => {
+      const numero = await abrirTransferir(page);
+      await expect(page.locator('.win[data-layout="minimo"]')).toHaveCount(1);
+      // O nome longo no alto da lista, com os de nome curto embaixo (só a lista rola: o scrollIntoView rolaria também a
+      // janela, que tem o brilho do fundo escondido embaixo dela).
+      const longo = opcao(page, 'Coordenação de Logística e Transportes');
+      await longo.evaluate((o) => {
+        const l = o.closest('[role="listbox"]')!;
+        l.scrollTop += o.getBoundingClientRect().top - l.getBoundingClientRect().top;
+      });
+      await expect(longo).toBeInViewport();
+      expect(await page.locator('.win').evaluate((e) => e.scrollTop), 'a janela rolou').toBe(0);
+      await numeroInteiro(longo, 'Empresa · 3020');
+      await semRolarParaOLado(page, 300);
+      await semViolacoesSerias(page);
+      await capturar(page, 'transferir-nome-longo-300x440', tema);
+      await numero.fill('jo');
+      await expect(nomes(page)).toHaveText(['João Pereira', 'Jordana Alves']);
+      for (const o of await lista(page).getByRole('option').all()) {
+        expect(await o.locator('.row-sub').evaluate((e) => e.scrollWidth <= e.clientWidth), 'um número cortado').toBe(true);
+      }
+      expect(await page.locator('.win').evaluate((e) => e.scrollTop), 'a janela rolou').toBe(0);
+      await semRolarParaOLado(page, 300);
+      await semViolacoesSerias(page);
+      await capturar(page, 'transferir-jo-300x440', tema);
+    });
+
+    test('the Teclado suggestion cuts the long name and keeps "Empresa · 3020" whole', async ({ page }) => {
+      await abrir(page, 'principal');
+      await comListaDaEmpresa(page);
+      await page.getByRole('textbox', { name: 'Número' }).fill('coordenacao');
+      const sugestao = page.locator('.suggest');
+      await expect(sugestao).toHaveCount(1);
+      await numeroInteiro(sugestao, 'Empresa · 3020');
+      await semRolarParaOLado(page, 300);
+    });
+  });
 }

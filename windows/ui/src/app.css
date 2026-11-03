@@ -362,6 +362,10 @@ button.link { border: 0; background: transparent; padding: 0; font-family: inher
   .suggestions .avatar { width: 28px; height: 28px; font-size: 11.5px; }
   .suggestions .row-main { flex-direction: row; align-items: baseline; gap: 8px; }
   .suggestions .row-title { flex: none; max-width: 60%; }
+  /* (rc.6) No Windows, o nome encolhe primeiro, com as reticências, e o "Contato · <número>" ou "Empresa · <número>" fica
+     inteiro, como na lista do painel no Mínimo. (iPhone) Como estava. */
+  .win:not([data-plataforma="ios"]) .suggestions .row-title { flex: 0 1 auto; min-width: 0; max-width: none; }
+  .win:not([data-plataforma="ios"]) .suggestions .row-sub { flex: none; }
 }
 .popover-menu { top: calc(100% + 6px); right: 0; }
 .popover-contas { top: calc(100% + 6px); left: 0; right: 0; }
@@ -485,6 +489,13 @@ button.link { border: 0; background: transparent; padding: 0; font-family: inher
   font-size: 14px; line-height: 1.4; color: #ffffff; overflow-wrap: anywhere; }
 .call-para b { font-weight: 800; }
 .call-vazio { margin: 0; text-align: center; font-size: 13.5px; line-height: 1.4; color: #b9c4e6; }
+/* O painel do Windows ocupa a parte do meio inteira: o campo em cima, a lista com o espaço que sobra e os botões embaixo.
+   Com a busca mudando (menos linhas, nada achado, só um número) e depois da escolha, nada se mexe: centrado e da altura
+   do que tinha, ele pulava a cada letra, e o segundo clique de um clique duplo numa linha caía no Consultar ou no
+   Transferir agora, que subiam para o lugar dela. (iPhone) O painel só de número fica como estava. */
+.call-panel.call-panel-nome { flex: 1 1 auto; }
+.call-panel-nome > .call-lista { flex-grow: 1; }
+.call-panel-nome > .call-panel-actions { margin-top: auto; }
 /* Janela baixa, um cartão em cima (a outra em espera, a segunda que toca) e o painel de número aberto: o bloco de quem
    fala sai, e o painel fica entre o cartão e o Desligar (o cartão e o título do painel dizem a ligação). */
 @media (max-height: 719.5px) {
@@ -627,9 +638,11 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .win.call[data-layout="minimo"] .call-suggest { padding: 5px 10px; }
 .win.call[data-layout="minimo"] .call-suggest .avatar { width: 28px; height: 28px; font-size: 11.5px; }
 /* (rc.6) A lista dos contatos do painel na linha única (o nome e, ao lado, "Contato · <número>"), como as sugestões do
-   Teclado na janela baixa: na menor janela, um contato inteiro cabe no espaço que sobra para ela. */
+   Teclado na janela baixa: na menor janela, um contato inteiro cabe no espaço que sobra para ela. O nome encolhe
+   primeiro, com as reticências, e o "Contato · <número>" ou "Empresa · <número>" fica inteiro, como no "Para:". */
 .win.call[data-layout="minimo"] .call-lista .row-main { flex-direction: row; align-items: baseline; gap: 8px; }
-.win.call[data-layout="minimo"] .call-lista .row-title { flex: none; max-width: 60%; }
+.win.call[data-layout="minimo"] .call-lista .row-title { flex: 0 1 auto; min-width: 0; max-width: none; }
+.win.call[data-layout="minimo"] .call-lista .row-sub { flex: none; }
 /* Quem vai receber numa linha só: um nome comprido sai com as reticências, e o número fica inteiro (o leitor de tela lê
    o nome inteiro). */
 .win.call[data-layout="minimo"] .call-para { display: flex; padding: 6px 10px; font-size: 13px; }

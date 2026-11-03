@@ -6,6 +6,8 @@
 // busca de ligar (lista-de-contatos.ts: a regra do Android e do iPhone), com "Empresa · <número>" nos da empresa. Com
 // letras no campo, o Enter e o Ligar ligam para a primeira sugestão, com a regra dos contatos; sem nenhuma, o Ligar fica
 // desligado e aparece "Nenhum contato com esse nome". Só com números, como antes. As teclas da tela continuam só números.
+// Uma sugestão e o Ligar ignoram o segundo clique de um clique duplo (o semSegundoClique): antes de a tela da ligação
+// abrir, ele ligaria de novo (depois, ele cai nela: o Ligar fica no lugar do Desligar, que também o ignora).
 // (iPhone) Com o Bipe ao digitar (`bipe`), cada tecla, a da tela e a do teclado físico, manda o `keyTone` com ela (o
 // hospedeiro toca o bipe de telefone dela), e o "+" vai como a tecla 0, a dele; o Apagar, as sugestões, o Rediscar e o
 // Ligar ficam quietos, como no Android 0.2.0-rc.3. O campo do número, com o teclado do próprio iPhone, também.
@@ -14,6 +16,7 @@ import { digitsOnly, initials } from '../format';
 import { IconArrowRight, IconBackspace, IconPhone } from '../icons';
 import { Rediscar } from '../components/Rediscar';
 import { buscaPor, buscar, listaDeContatos, nomeOuNumero, temLetras } from '../lista-de-contatos';
+import { semSegundoClique } from '../plataforma';
 import type { CompanyContact, Contact, RecentCall } from '../state';
 import type { Send } from '../types';
 
@@ -193,7 +196,12 @@ export function Teclado({ numero, setNumero, contatos, daEmpresa, recentes, send
         {sugestoes.length > 0 && (
           <div ref={caixaDasSugestoes} class={sugestoes.length > 1 ? 'suggestions suggestions-compact' : 'suggestions'}>
             {sugestoes.map((c) => (
-              <button type="button" key={c.key} class="suggest" onClick={() => send({ cmd: 'dial', numero: c.numero, contato: true })}>
+              <button
+                type="button"
+                key={c.key}
+                class="suggest"
+                onClick={semSegundoClique(porNome, () => send({ cmd: 'dial', numero: c.numero, contato: true }))}
+              >
                 <span class="avatar" aria-hidden="true">
                   {initials(c.nome)}
                 </span>
@@ -227,7 +235,7 @@ export function Teclado({ numero, setNumero, contatos, daEmpresa, recentes, send
       <div class="call-row">
         {/* O Rediscar liga como o botão de ligar de uma linha dos Recentes (o número, sem a regra dos contatos). */}
         <Rediscar recentes={recentes} id="rediscar-teclado" onDial={(n) => send({ cmd: 'dial', numero: n })} />
-        <button type="button" class="btn btn-cyan btn-call btn-block" disabled={nenhum} onClick={ligar}>
+        <button type="button" class="btn btn-cyan btn-call btn-block" disabled={nenhum} onClick={semSegundoClique(porNome, ligar)}>
           <IconPhone />
           Ligar
         </button>

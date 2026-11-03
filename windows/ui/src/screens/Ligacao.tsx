@@ -9,19 +9,20 @@
 // Contatos, com a busca de ligar do Teclado (lista-de-contatos.ts). (iPhone) O campo é só de número, com as sugestões da
 // agenda (um contato por número; um contato sem nome mostra o número). O contato escolhido da Nova ligação liga com a
 // regra dos contatos (o `contato` do dial); o do Transferir põe o número no campo, e o Consultar e o Transferir agora
-// dele, sem mudança depois, vão com o `contato` também (no Windows, desde a rc.5).
+// dele, sem mudança depois, vão com o `contato` também (no Windows, desde a rc.5). (rc.6) No Windows, os controles, o
+// Desligar e os botões dos painéis de número ignoram o segundo clique de um clique duplo (o semSegundoClique).
 // (iPhone) O botão Áudio mostra a saída de agora (a `rotaAudio`: "iPhone", "Viva-voz" ou o nome do fone; "Áudio" sem
 // saber), com o nome "Áudio: <saída>", e pede a escolha do iPhone (o `audioRoute`: o hospedeiro mostra a dele), no
 // lugar do menu dos dispositivos; sem o botão Atalhos (fora da 1.0), uma ligação fica em três colunas (6 controles) e
 // duas em quatro (7). Cada tecla do teclado da ligação manda, junto do dtmf, o `keyTone` com ela, com o Bipe ao digitar
 // ligado (o `config.bipeTecla`).
-import type { ComponentChildren, VNode } from 'preact';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { createContext, type ComponentChildren, type VNode } from 'preact';
+import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { AtalhosPainel } from '../components/AtalhosPainel';
 import { Menu } from '../components/Menu';
 import { Rediscar } from '../components/Rediscar';
 import { callTimer, contactNumberLine, digitsOnly, firstName, initials, nameOrNumber } from '../format';
-import { isIos } from '../plataforma';
+import { isIos, semSegundoClique } from '../plataforma';
 import {
   IconArrowRight,
   IconBolt,
@@ -108,7 +109,14 @@ interface CtrlProps {
   ctrlRef?: { current: HTMLButtonElement | null };
 }
 
+/**
+ * (rc.6) A tela da ligação no Windows: os botões dela (os controles, o Desligar e os dos painéis de número) ignoram o
+ * segundo clique de um clique duplo (o semSegundoClique). No iPhone, não.
+ */
+const NoWindows = createContext(false);
+
 function Ctrl({ label, nome, icon, onClick, pressed, disabled, popup, expanded, ctrlRef }: CtrlProps) {
+  const noWindows = useContext(NoWindows);
   const classes = ['ctrl', pressed ? 'ctrl-on' : '', disabled ? 'ctrl-off' : ''].filter(Boolean).join(' ');
   return (
     <button
@@ -120,7 +128,7 @@ function Ctrl({ label, nome, icon, onClick, pressed, disabled, popup, expanded, 
       aria-haspopup={popup ? 'menu' : undefined}
       aria-expanded={popup ? expanded === true : undefined}
       disabled={disabled}
-      onClick={onClick}
+      onClick={semSegundoClique(noWindows, onClick)}
     >
       <span class="ctrl-c">{icon}</span>
       {label}
@@ -129,7 +137,7 @@ function Ctrl({ label, nome, icon, onClick, pressed, disabled, popup, expanded, 
 }
 
 /** Um botão redondo grande com o rótulo fora (Desligar e Recusar em vermelho, Atender em ciano). */
-function RoundAction({ label, kind, onClick }: { label: string; kind: 'hang' | 'answer'; onClick(): void }) {
+function RoundAction({ label, kind, onClick }: { label: string; kind: 'hang' | 'answer'; onClick(e: MouseEvent): void }) {
   return (
     <div class="round-action">
       <button type="button" class={kind === 'hang' ? 'hang' : 'hang answer'} aria-label={label} onClick={onClick}>
@@ -339,6 +347,7 @@ function linhaDoPainel(l: Linha, marcada: boolean, escolher: (l: Linha) => void)
  * digitado, sem o `contato`. O Esc cancela.
  */
 function PainelPorNome({ titulo, rotulo, lista, onCancel, onContact, actions, onEnter }: PainelProps & { lista: Linha[] }) {
+  const noWindows = useContext(NoWindows);
   const [texto, setTexto] = useState('');
   // O contato escolhido (só no Transferir: na Nova ligação, ele liga), até o campo mudar.
   const [escolhido, setEscolhido] = useState<Linha | null>(null);
@@ -422,13 +431,16 @@ function PainelPorNome({ titulo, rotulo, lista, onCancel, onContact, actions, on
     );
   }, [pedacos, quantos, marcada, mostrarLista]);
 
-  // A marcada fica à vista na lista, já no desenho dela.
+  // A marcada fica à vista na lista, já no desenho dela: também numa lista nova com ela (a planilha relida com o painel
+  // aberto), que volta para o começo.
   useLayoutEffect(() => {
     if (indice >= 0) document.getElementById(idDaLinha(achadas[indice]))?.scrollIntoView({ block: 'nearest' });
-  }, [marcada]);
+  }, [marcada, achadas]);
 
+  // O painel ocupa a parte do meio inteira (o call-panel-nome do app.css): o campo em cima, a lista com o espaço que sobra
+  // e os botões embaixo, parados enquanto a busca muda e depois da escolha.
   return (
-    <div class="call-panel">
+    <div class="call-panel call-panel-nome">
       <h2 class="call-panel-title" id={TITULO_DO_PAINEL}>
         {titulo}
       </h2>
@@ -491,7 +503,7 @@ function PainelPorNome({ titulo, rotulo, lista, onCancel, onContact, actions, on
         )}
       </p>
       <div class="call-panel-actions">{actions(numero, escolhido !== null)}</div>
-      <button type="button" class="btn btn-ghost-dark" onClick={onCancel}>
+      <button type="button" class="btn btn-ghost-dark" onClick={semSegundoClique(noWindows, onCancel)}>
         Cancelar
       </button>
     </div>
@@ -819,7 +831,7 @@ export function Ligacao({ state, ligacao: l, contatos, daEmpresa, send }: Props)
                 type="button"
                 class="btn btn-outline-dark"
                 disabled={!numero || l.second !== null}
-                onClick={() => (setPainel(null), send({ cmd: 'consult', numero, ...contato }))}
+                onClick={semSegundoClique(!ios, () => (setPainel(null), send({ cmd: 'consult', numero, ...contato })))}
               >
                 Consultar
               </button>
@@ -827,7 +839,7 @@ export function Ligacao({ state, ligacao: l, contatos, daEmpresa, send }: Props)
                 type="button"
                 class="btn btn-cyan"
                 disabled={!numero}
-                onClick={() => (setPainel(null), send({ cmd: 'transfer', numero, ...contato }))}
+                onClick={semSegundoClique(!ios, () => (setPainel(null), send({ cmd: 'transfer', numero, ...contato })))}
               >
                 Transferir agora
               </button>
@@ -847,7 +859,7 @@ export function Ligacao({ state, ligacao: l, contatos, daEmpresa, send }: Props)
         // O Rediscar da Nova ligação: a feita mais nova, pelo mesmo caminho do Ligar do painel (ele não usa o campo).
         <div class="call-row">
           <Rediscar recentes={state.recentes} id="rediscar-nova" onDial={ligar} />
-          <button type="button" class="btn btn-cyan btn-block" disabled={!numero} onClick={() => ligar(numero)}>
+          <button type="button" class="btn btn-cyan btn-block" disabled={!numero} onClick={semSegundoClique(!ios, () => ligar(numero))}>
             <IconPhone size="sm" />
             Ligar
           </button>
@@ -889,7 +901,11 @@ export function Ligacao({ state, ligacao: l, contatos, daEmpresa, send }: Props)
     baixo = (
       <div class={painel === 'teclado' ? 'call-actions call-actions-keys' : 'call-actions'}>
         {painel === 'teclado' && <div class="call-side">{teclado}</div>}
-        <RoundAction label={conferencia ? 'Desligar para todos' : 'Desligar'} kind="hang" onClick={() => desligar(top)} />
+        <RoundAction
+          label={conferencia ? 'Desligar para todos' : 'Desligar'}
+          kind="hang"
+          onClick={semSegundoClique(!ios, () => desligar(top))}
+        />
         {painel === 'teclado' && <div class="call-side" />}
       </div>
     );
@@ -899,11 +915,13 @@ export function Ligacao({ state, ligacao: l, contatos, daEmpresa, send }: Props)
   // (app.css), para o painel caber entre o cartão e o Desligar.
   const painelComCartao = alto !== null && (painel === 'transferir' || painel === 'nova' || painel === 'atalhos');
   return (
-    <main class={painelComCartao ? 'call-body call-painel-cartao' : 'call-body'} aria-label={conferencia ? 'Conferência' : 'Ligação'}>
-      {alto}
-      {quem}
-      <div class="call-middle">{meio}</div>
-      {baixo}
-    </main>
+    <NoWindows.Provider value={!ios}>
+      <main class={painelComCartao ? 'call-body call-painel-cartao' : 'call-body'} aria-label={conferencia ? 'Conferência' : 'Ligação'}>
+        {alto}
+        {quem}
+        <div class="call-middle">{meio}</div>
+        {baixo}
+      </main>
+    </NoWindows.Provider>
   );
 }

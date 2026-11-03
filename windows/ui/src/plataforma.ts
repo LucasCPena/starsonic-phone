@@ -10,6 +10,19 @@ export function isIos(state: Pick<AppState, 'plataforma'> | null): boolean {
   return state?.plataforma === 'ios';
 }
 
+/**
+ * (rc.6) No Windows, o clique de um botão que muda a tela ignora o segundo clique de um clique duplo (o `detail` 2 ou
+ * mais): o primeiro liga, escolhe, abre ou fecha um painel, e o segundo cairia no botão que ficou embaixo do ponteiro (o
+ * Cancelar do painel, o Mudo, a Espera, o Desligar). Quem vem de um softphone de mesa liga com um clique duplo no contato.
+ * O teclado do computador (o Enter e o Espaço dão `detail` 0) fica como antes; no iPhone (`noWindows` false), também.
+ */
+export function semSegundoClique(noWindows: boolean, acao: () => void): (e: MouseEvent) => void {
+  return (e) => {
+    if (noWindows && e.detail > 1) return;
+    acao();
+  };
+}
+
 /** As abas do iPhone: sem os Atalhos (fora da 1.0). */
 export const IPHONE_TABS: Tab[] = ['teclado', 'recentes', 'contatos'];
 
