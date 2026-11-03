@@ -234,7 +234,7 @@ export function Teclado({ numero, setNumero, contatos, daEmpresa, recentes, send
       </div>
       <div class="call-row">
         {/* O Rediscar liga como o botão de ligar de uma linha dos Recentes (o número, sem a regra dos contatos). */}
-        <Rediscar recentes={recentes} id="rediscar-teclado" onDial={(n) => send({ cmd: 'dial', numero: n })} />
+        <Rediscar recentes={recentes} id="rediscar-teclado" noWindows={porNome} onDial={(n) => send({ cmd: 'dial', numero: n })} />
         <button type="button" class="btn btn-cyan btn-call btn-block" disabled={nenhum} onClick={semSegundoClique(porNome, ligar)}>
           <IconPhone />
           Ligar

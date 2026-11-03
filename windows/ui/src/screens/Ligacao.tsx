@@ -136,7 +136,11 @@ function Ctrl({ label, nome, icon, onClick, pressed, disabled, popup, expanded, 
   );
 }
 
-/** Um botão redondo grande com o rótulo fora (Desligar e Recusar em vermelho, Atender em ciano). */
+/**
+ * Um botão redondo grande com o rótulo fora (Desligar e Recusar em vermelho, Atender em ciano). Quem usa passa o onClick
+ * já com o semSegundoClique (no Windows): o núcleo age na primeira que toca, a cada comando, e o segundo clique do
+ * Recusar recusaria a segunda ligação, que aparece com o botão no mesmo lugar (e o do Atender a atenderia).
+ */
 function RoundAction({ label, kind, onClick }: { label: string; kind: 'hang' | 'answer'; onClick(e: MouseEvent): void }) {
   return (
     <div class="round-action">
@@ -617,10 +621,10 @@ export function Ligacao({ state, ligacao: l, contatos, daEmpresa, send }: Props)
           <span class="row-title">Ligação de {nameOrNumber(segundaTocando)}</span>
           <span class="row-sub">{segundaTocando.name ? `${contactNumberLine(segundaTocando.number)} · tocando` : 'tocando'}</span>
         </span>
-        <button type="button" class="round-sm round-danger" aria-label="Recusar" title="Recusar" onClick={() => send({ cmd: 'reject' })}>
+        <button type="button" class="round-sm round-danger" aria-label="Recusar" title="Recusar" onClick={semSegundoClique(!ios, () => send({ cmd: 'reject' }))}>
           <IconPhone class="ic-hang" />
         </button>
-        <button type="button" class="round-sm round-cyan" aria-label="Atender" title="Atender" onClick={() => send({ cmd: 'answer' })}>
+        <button type="button" class="round-sm round-cyan" aria-label="Atender" title="Atender" onClick={semSegundoClique(!ios, () => send({ cmd: 'answer' }))}>
           <IconPhone />
         </button>
       </div>
@@ -858,7 +862,7 @@ export function Ligacao({ state, ligacao: l, contatos, daEmpresa, send }: Props)
       actions: (numero) => (
         // O Rediscar da Nova ligação: a feita mais nova, pelo mesmo caminho do Ligar do painel (ele não usa o campo).
         <div class="call-row">
-          <Rediscar recentes={state.recentes} id="rediscar-nova" onDial={ligar} />
+          <Rediscar recentes={state.recentes} id="rediscar-nova" onDial={ligar} noWindows={!ios} />
           <button type="button" class="btn btn-cyan btn-block" disabled={!numero} onClick={semSegundoClique(!ios, () => ligar(numero))}>
             <IconPhone size="sm" />
             Ligar
@@ -879,8 +883,8 @@ export function Ligacao({ state, ligacao: l, contatos, daEmpresa, send }: Props)
   if (tocando) {
     baixo = (
       <div class="call-actions">
-        <RoundAction label="Recusar" kind="hang" onClick={() => send({ cmd: 'reject' })} />
-        <RoundAction label="Atender" kind="answer" onClick={() => send({ cmd: 'answer' })} />
+        <RoundAction label="Recusar" kind="hang" onClick={semSegundoClique(!ios, () => send({ cmd: 'reject' }))} />
+        <RoundAction label="Atender" kind="answer" onClick={semSegundoClique(!ios, () => send({ cmd: 'answer' }))} />
       </div>
     );
   } else if (consulta && outra) {

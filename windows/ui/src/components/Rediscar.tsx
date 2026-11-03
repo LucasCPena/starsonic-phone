@@ -6,6 +6,7 @@
 import { useLayoutEffect, useState } from 'preact/hooks';
 import { lastOutgoing } from '../format';
 import { IconRedial } from '../icons';
+import { semSegundoClique } from '../plataforma';
 import type { RecentCall } from '../state';
 
 interface Props {
@@ -14,9 +15,11 @@ interface Props {
   onDial(numero: string): void;
   /** O id do balão (um por tela). */
   id: string;
+  /** (rc.6) No Windows, o segundo clique de um clique duplo não disca de novo (o semSegundoClique). */
+  noWindows: boolean;
 }
 
-export function Rediscar({ recentes, onDial, id }: Props) {
+export function Rediscar({ recentes, onDial, id, noWindows }: Props) {
   const [balao, setBalao] = useState(false);
   const feita = lastOutgoing(recentes);
   const rotulo = feita ? `Rediscar ${feita.nome || feita.numero}` : 'Rediscar';
@@ -45,7 +48,7 @@ export function Rediscar({ recentes, onDial, id }: Props) {
         onMouseLeave={() => setBalao(false)}
         onFocus={() => setBalao(true)}
         onBlur={() => setBalao(false)}
-        onClick={() => feita && (setBalao(false), onDial(feita.numero))}
+        onClick={semSegundoClique(noWindows, () => feita && (setBalao(false), onDial(feita.numero)))}
       >
         <IconRedial />
       </button>
