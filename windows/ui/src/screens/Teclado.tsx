@@ -9,7 +9,7 @@
 // (iPhone) Com o Bipe ao digitar (`bipe`), cada tecla, a da tela e a do teclado físico, manda o `keyTone` com ela (o
 // hospedeiro toca o bipe de telefone dela), e o "+" vai como a tecla 0, a dele; o Apagar, as sugestões, o Rediscar e o
 // Ligar ficam quietos, como no Android 0.2.0-rc.3. O campo do número, com o teclado do próprio iPhone, também.
-import { useEffect, useRef } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
 import { digitsOnly, initials } from '../format';
 import { IconArrowRight, IconBackspace, IconPhone } from '../icons';
 import { Rediscar } from '../components/Rediscar';
@@ -97,10 +97,10 @@ export function Teclado({ numero, setNumero, contatos, daEmpresa, recentes, send
   const nenhum = comLetras && sugestoes.length === 0;
   const doNome = useRef<{ porNome: boolean; primeira: Sugestao | null }>({ porNome, primeira: null });
   doNome.current = { porNome, primeira: comLetras ? (sugestoes[0] ?? null) : null };
-  // (rc.6) Um texto novo mostra as sugestões do começo: a primeira, a do Enter com letras, fica à vista (a lista rola
-  // sozinha numa janela baixa, e podia estar rolada até a última).
+  // (rc.6) Um texto novo mostra as sugestões do começo, já no desenho delas: a primeira, a do Enter com letras, fica à
+  // vista (a lista rola sozinha numa janela baixa, e podia estar rolada até a última).
   const caixaDasSugestoes = useRef<HTMLDivElement>(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (porNome && caixaDasSugestoes.current) caixaDasSugestoes.current.scrollTop = 0;
   }, [numero]);
 

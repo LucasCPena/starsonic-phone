@@ -202,8 +202,10 @@ test.describe('o painel do Transferir', () => {
   });
 
   test('the marked contact far down the list scrolls into view', async ({ page }) => {
-    const numero = await abrirTransferir(page);
+    // A menor janela, antes de abrir (o layout Mínimo já desenhado: as linhas na altura delas).
     await page.setViewportSize({ width: 300, height: 440 });
+    const numero = await abrirTransferir(page);
+    await expect(page.locator('.win[data-layout="minimo"]')).toHaveCount(1);
     for (let i = 0; i < TODOS.length; i++) await numero.press('ArrowDown');
     const ultima = opcao(page, 'Recepção');
     await expect(ultima).toHaveAttribute('aria-selected', 'true');

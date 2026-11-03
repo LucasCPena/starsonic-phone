@@ -16,7 +16,7 @@
 // duas em quatro (7). Cada tecla do teclado da ligação manda, junto do dtmf, o `keyTone` com ela, com o Bipe ao digitar
 // ligado (o `config.bipeTecla`).
 import type { ComponentChildren, VNode } from 'preact';
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { AtalhosPainel } from '../components/AtalhosPainel';
 import { Menu } from '../components/Menu';
 import { Rediscar } from '../components/Rediscar';
@@ -421,8 +421,8 @@ function PainelPorNome({ titulo, rotulo, lista, onCancel, onContact, actions, on
     );
   }, [pedacos, quantos, marcada, mostrarLista]);
 
-  // A marcada fica à vista na lista.
-  useEffect(() => {
+  // A marcada fica à vista na lista, já no desenho dela.
+  useLayoutEffect(() => {
     if (indice >= 0) document.getElementById(idDaLinha(achadas[indice]))?.scrollIntoView({ block: 'nearest' });
   }, [marcada]);
 
