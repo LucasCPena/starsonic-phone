@@ -410,6 +410,39 @@ func TestConferirSenha_SemEscrita(t *testing.T) {
 	}
 }
 
+// TestConferirSenha_Abandonada: quem desiste enquanto espera uma vaga do argon2id (as duas
+// tomadas) recebe o context.Canceled, sem calcular nada, e a tentativa não conta na trava.
+func TestConferirSenha_Abandonada(t *testing.T) {
+	b := abrirTeste(t)
+	hashFalsoBarato(t)
+	soltar := semVagas(t)
+	ctx, cancelar := context.WithCancel(context.Background())
+	feito := make(chan error, 1)
+	go func() {
+		_, _, err := b.ConferirSenha(ctx, "ninguem", senhaErrada)
+		feito <- err
+	}()
+	cancelar()
+	select {
+	case err := <-feito:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("err = %v; queria context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("o ConferirSenha não voltou depois do cancelamento")
+	}
+	soltar()
+	// Ela não contou: 5 erradas ainda respondem como erradas, e só a 6ª encontra a trava.
+	for i := 0; i < 5; i++ {
+		if ok, trav := conferir(t, b, "ninguem", senhaErrada); ok || trav != 0 {
+			t.Fatalf("a errada %d = %v, %d", i+1, ok, trav)
+		}
+	}
+	if _, trav := conferir(t, b, "ninguem", senhaErrada); trav == 0 {
+		t.Fatal("a 6ª não encontrou a trava")
+	}
+}
+
 // TestConferirSenha_Juntos: tentativas juntas no mesmo nome não passam de 5 argon2id. A que
 // esperava na fila reserva o seu lugar já com a vaga, e encontra a trava que as da frente
 // fizeram.

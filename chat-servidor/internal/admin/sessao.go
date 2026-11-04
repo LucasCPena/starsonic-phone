@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"crypto/subtle"
 	"errors"
 	"log/slog"
@@ -169,6 +170,12 @@ func (p *painel) entrar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ok, travado, err := p.banco.ConferirSenha(r.Context(), usuario, r.PostForm.Get("senha"))
+	if errors.Is(err, context.Canceled) {
+		// Quem pediu foi embora enquanto a entrada esperava (uma vaga do argon2id, o banco): não
+		// é um erro do servidor, e não há a quem responder.
+		slog.Debug("admin: entrada abandonada")
+		return
+	}
 	if err != nil {
 		p.erroServidor(w, sessao{}, err)
 		return

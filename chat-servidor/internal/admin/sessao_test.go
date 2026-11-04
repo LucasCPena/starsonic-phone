@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -228,6 +229,82 @@ func TestEntrar_LimiteDevolve(t *testing.T) {
 	esperarStatus(t, resp, corpo, http.StatusTooManyRequests)
 	if !strings.Contains(corpo, "Muitas tentativas. Tente de novo daqui a 15 minutos.") {
 		t.Fatalf("a próxima:\n%s", corpo)
+	}
+}
+
+// registroDeErros guarda as mensagens do log de nível Error ou mais.
+type registroDeErros struct {
+	mu        sync.Mutex
+	mensagens []string
+}
+
+func (r *registroDeErros) Enabled(context.Context, slog.Level) bool { return true }
+
+func (r *registroDeErros) Handle(_ context.Context, rec slog.Record) error {
+	if rec.Level >= slog.LevelError {
+		r.mu.Lock()
+		r.mensagens = append(r.mensagens, rec.Message)
+		r.mu.Unlock()
+	}
+	return nil
+}
+
+func (r *registroDeErros) WithAttrs([]slog.Attr) slog.Handler { return r }
+func (r *registroDeErros) WithGroup(string) slog.Handler      { return r }
+
+// escritaVigiada diz se o manipulador escreveu alguma coisa na resposta.
+type escritaVigiada struct {
+	http.ResponseWriter
+	escreveu bool
+}
+
+func (e *escritaVigiada) WriteHeader(status int) {
+	e.escreveu = true
+	e.ResponseWriter.WriteHeader(status)
+}
+
+func (e *escritaVigiada) Write(b []byte) (int, error) {
+	e.escreveu = true
+	return e.ResponseWriter.Write(b)
+}
+
+// TestEntrar_Abandonada: quem desiste da entrada enquanto ela espera (aqui, com a única
+// conexão do banco presa) não deixa nada no log de erros, e a página não escreve resposta.
+func TestEntrar_Abandonada(t *testing.T) {
+	p := novoPainel(t)
+	n := p.navegador(t)
+	_, corpo := n.get("/admin/entrar")
+	form := url.Values{"usuario": {usuarioTeste}, "senha": {senhaTeste}, "csrf": {csrfDe(t, corpo)}}
+	entrada := cookieDe(t, n, "entrada")
+	reg := &registroDeErros{}
+	slog.SetDefault(slog.New(reg))
+	t.Cleanup(func() { slog.SetDefault(slog.New(slog.DiscardHandler)) })
+
+	soltar := segurarBanco(t, p.a.Banco)
+	ctx, cancelar := context.WithCancel(context.Background())
+	req := httptest.NewRequestWithContext(ctx, "POST", "/admin/entrar", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "entrada", Value: entrada})
+	w := &escritaVigiada{ResponseWriter: httptest.NewRecorder()}
+	feito := make(chan struct{})
+	go func() {
+		defer close(feito)
+		p.srv.Config.Handler.ServeHTTP(w, req)
+	}()
+	cancelar() // quem pediu foi embora
+	select {
+	case <-feito:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a entrada abandonada não terminou")
+	}
+	soltar()
+	if w.escreveu {
+		t.Error("a página escreveu uma resposta para quem já tinha ido embora")
+	}
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if len(reg.mensagens) > 0 {
+		t.Errorf("a entrada abandonada foi para o log de erros: %q", reg.mensagens)
 	}
 }
 
