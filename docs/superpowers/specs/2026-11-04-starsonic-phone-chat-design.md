@@ -24,6 +24,7 @@
 > 5. Os arquivos ficam 1 ano no servidor. O texto das conversas fica para sempre.
 > 6. Para entrar no chat, o técnico liga o computador à empresa com um código. Um computador novo não espera aprovação (seção 9.1).
 > 7. As telas são as do quadro.
+> 8. O chat roda numa máquina virtual (VM) nova, só para ele, com o tamanho da seção 12. Ficou de fora o servidor que já roda o GLPI e os backups, para que um problema no chat não chegue neles.
 
 ## 1. Contexto
 O Starsonic Phone é o softphone da Starsonic para os clientes dela. A lista de conversas do 3CX, que o responsável mostrou em 04/11/2026, é a referência: conversar com os colegas, mandar arquivos e fotos, e montar grupos, sem sair do app de telefone.
@@ -154,9 +155,10 @@ App do Windows                                     Servidor do chat (Linux)
 - **Os dados:** um arquivo de banco SQLite, no modo WAL, e uma pasta de arquivos, nas pastas de dados do serviço.
 - **A configuração:** um arquivo de configuração, com o endereço e a pasta de dados. Os usuários da página de administração são criados por um comando do programa, que pede a senha.
 - **O cadeado (HTTPS):**
-  - o próprio programa tira e renova o certificado do Let's Encrypt;
+  - a VM é só do chat, então o próprio programa tira e renova o certificado do Let's Encrypt, sem outro servidor web;
   - ele escuta na porta 443, e a 80 serve só para o desafio do certificado e para mandar para o HTTPS;
   - o endereço proposto é `chat.starsonic.com.br`.
+- **Isolado mesmo na VM:** o serviço roda num usuário próprio do sistema, sem senha e sem shell. O systemd o prende: ele só escreve na pasta de dados dele, não lê as pastas pessoais e não ganha privilégios. A porta 443 vem da capacidade `CAP_NET_BIND_SERVICE`, não do root.
 - **O modo de teste:** um modo só para os testes automáticos, sem cadeado e preso ao `127.0.0.1`. O programa recusa esse modo em qualquer outro endereço.
 - **No repositório:**
   - o código fica numa pasta nova, `chat-servidor/`, com os testes;
@@ -377,10 +379,23 @@ O `docs/teste-manual.md` ganha uma seção do chat, feita em dois PCs, com dois 
 - tirar e apagar.
 
 ## 12. Instalação e operação do servidor
-- **O que precisa:**
-  - um servidor Linux (Ubuntu 24.04), na internet, com 2 GB de memória e uns 100 GB de disco para começar;
-  - o endereço (por exemplo, `chat.starsonic.com.br`) apontado para ele no DNS;
-  - as portas 443 e 80 abertas.
+- **A VM do chat (decisão 8),** para começar, com umas 300 pessoas:
+
+  | O quê | Quanto |
+  |---|---|
+  | Processador | 2 vCPU |
+  | Memória | 2 GB |
+  | Disco | 120 GB SSD: 20 GB para o sistema e o banco, 100 GB para os arquivos |
+  | Sistema | Ubuntu 24.04 (ou Debian 12), com systemd |
+  | Rede | um endereço público, com o nome do chat no DNS e as portas 443 e 80 abertas |
+
+- **Como cresce:**
+  - o texto ocupa pouco: um milhão de mensagens cabem em mais ou menos 1 GB;
+  - os arquivos são o que mais cresce. Cada 100 pessoas que mandam uns 2 arquivos de 1 MB por dia ocupam uns 50 GB por ano;
+  - como os arquivos saem em 1 ano, o disco para de crescer depois do primeiro ano;
+  - o programa usa uns 200 MB de memória e não precisa de outro banco de dados;
+  - com o disco perto de 80%, é a hora de aumentar o disco.
+- **O destino da cópia de segurança** fica fora da VM e precisa de uns 150 GB.
 - **A instalação:** o programa sai pronto numa release do GitHub (`chat-v<versão>`), com o SHA-256. Um comando de uma linha instala e liga o serviço (systemd), e outro atualiza. Os comandos ficam em `docs/chat-servidor.md`.
 - **A atualização:** o servidor não se atualiza sozinho. A Starsonic roda o comando quando sai uma versão nova.
 - **A cópia de segurança:**
@@ -404,7 +419,7 @@ O `docs/teste-manual.md` ganha uma seção do chat, feita em dois PCs, com dois 
 Cada etapa tem um plano escrito em `docs/superpowers/plans/`, aprovado pelo responsável antes de começar.
 
 ## 14. Entradas necessárias da Starsonic
-- **O servidor Linux:** vocês já têm um ou vão contratar? Foi perguntado em 04/11/2026 e ficou para a instalação. Precisa estar pronto no fim da etapa 1.
+- **A VM do chat,** com o tamanho da seção 12, criada pela Starsonic. Ela precisa estar pronta no fim da etapa 1.
 - **O endereço** e o DNS. A proposta é `chat.starsonic.com.br`.
 - **O destino da cópia de segurança.**
 - **Os usuários** da página de administração.
