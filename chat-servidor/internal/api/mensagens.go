@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -110,7 +111,7 @@ func inteiroDaQuery(w http.ResponseWriter, valor string, presente bool, campo st
 	return n, true
 }
 
-// POST /api/v1/conversas/{id}/mensagens: envia uma mensagem de texto.
+// POST /api/v1/conversas/{id}/mensagens: envia uma mensagem, de texto ou de arquivo.
 func (s *servidor) enviar(w http.ResponseWriter, r *http.Request) {
 	c, _ := computadorDe(r)
 	id, ok := idDoCaminho(w, r, "id")
@@ -120,6 +121,7 @@ func (s *servidor) enviar(w http.ResponseWriter, r *http.Request) {
 	var corpo struct {
 		IDLocal string  `json:"idLocal"`
 		Texto   *string `json:"texto"`
+		Arquivo *string `json:"arquivo"`
 	}
 	if !lerJSON(w, r, &corpo) {
 		return
@@ -128,12 +130,24 @@ func (s *servidor) enviar(w http.ResponseWriter, r *http.Request) {
 		erroCampo(w, "idLocal")
 		return
 	}
-	if corpo.Texto == nil {
-		erroCampo(w, "texto")
+	// Ou texto, ou arquivo: os dois juntos, ou nenhum, não valem.
+	var texto string
+	switch {
+	case corpo.Texto != nil && corpo.Arquivo != nil:
+		erroCampo(w, "arquivo")
 		return
-	}
-	texto, err := regras.Texto(*corpo.Texto)
-	if err != nil {
+	case corpo.Arquivo != nil:
+		if !idDeArquivoValido(*corpo.Arquivo) {
+			erroCampo(w, "arquivo")
+			return
+		}
+	case corpo.Texto != nil:
+		var err error
+		if texto, err = regras.Texto(*corpo.Texto); err != nil {
+			erroCampo(w, "texto")
+			return
+		}
+	default:
 		erroCampo(w, "texto")
 		return
 	}
@@ -149,9 +163,22 @@ func (s *servidor) enviar(w http.ResponseWriter, r *http.Request) {
 	ctx := context.WithoutCancel(r.Context())
 	soltar := s.travaConversa(id)
 	defer soltar()
-	m, nova, err := s.banco.EnviarTexto(ctx, c.PessoaID, id, corpo.IDLocal, texto)
+	var (
+		m    banco.Mensagem
+		nova bool
+		err  error
+	)
+	if corpo.Arquivo != nil {
+		m, nova, err = s.banco.EnviarArquivo(ctx, c.PessoaID, id, corpo.IDLocal, *corpo.Arquivo)
+	} else {
+		m, nova, err = s.banco.EnviarTexto(ctx, c.PessoaID, id, corpo.IDLocal, texto)
+	}
 	if err != nil || !nova {
 		s.mensagensLimite.Devolver(chave, 1)
+	}
+	if errors.Is(err, banco.ErrInvalido) { // o arquivo não é da pessoa, expirou ou já está em outra mensagem
+		erroCampo(w, "arquivo")
+		return
 	}
 	if err != nil {
 		erroDoBanco(w, err)

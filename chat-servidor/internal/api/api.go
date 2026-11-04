@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/armazem"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/banco"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/eventos"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/limites"
@@ -20,22 +21,25 @@ const OrigemPadrao = "https://app.starsonic.local"
 
 const prefixo = "/api/v1/"
 
-// Deps é o que a API usa. A Task 7 acrescenta o Armazem.
+// Deps é o que a API usa.
 type Deps struct {
 	Banco   *banco.Banco
-	Hub     *eventos.Hub // obrigatório, e o mesmo da página de administração: o Fora dela só alcança as conexões deste hub
-	Origens []string     // as origens do CORS; sem nenhuma, vale OrigemPadrao
+	Hub     *eventos.Hub     // obrigatório, e o mesmo da página de administração: o Fora dela só alcança as conexões deste hub
+	Armazem *armazem.Armazem // obrigatório: os arquivos no disco
+	Origens []string         // as origens do CORS; sem nenhuma, vale OrigemPadrao
 }
 
 type servidor struct {
 	banco    *banco.Banco
 	hub      *eventos.Hub
+	armazem  *armazem.Armazem
 	origens  map[string]bool
 	padroes  []string        // as origens, como OriginPatterns do websocket.Accept
 	erradas  *limites.Janela // os códigos errados, por endereço
 	bilhetes *bilhetes
 
 	mensagensLimite *limites.Janela // as mensagens novas, por computador
+	arquivosLimite  *limites.Janela // os bytes de arquivos enviados, por computador
 	// travasConversa segura uma conversa (pelo id, em 64 faixas) enquanto uma mensagem é
 	// gravada e o evento sai: assim os eventos saem na ordem dos ids.
 	travasConversa [64]sync.Mutex
@@ -54,14 +58,19 @@ func Novo(d Deps) http.Handler {
 	if d.Hub == nil {
 		panic("api.Novo: Deps.Hub é obrigatório, e tem de ser o mesmo da página de administração")
 	}
+	if d.Armazem == nil {
+		panic("api.Novo: Deps.Armazem é obrigatório")
+	}
 	s := &servidor{
 		banco:    d.Banco,
 		hub:      d.Hub,
+		armazem:  d.Armazem,
 		origens:  map[string]bool{},
 		erradas:  limites.Nova(maxErradas, periodoErradas, d.Banco.Relogio()),
 		bilhetes: novosBilhetes(d.Banco.Relogio()),
 
 		mensagensLimite: limites.Nova(maxMensagens, periodoMensagens, d.Banco.Relogio()),
+		arquivosLimite:  limites.Nova(maxArquivosHora, periodoArquivos, d.Banco.Relogio()),
 	}
 	origens := d.Origens
 	if len(origens) == 0 {
@@ -85,6 +94,10 @@ func Novo(d Deps) http.Handler {
 	mux.HandleFunc("GET /api/v1/conversas/{id}/mensagens", s.autenticar(precisaPessoa(s.mensagens)))
 	mux.HandleFunc("POST /api/v1/conversas/{id}/mensagens", s.autenticar(precisaPessoa(s.enviar)))
 	mux.HandleFunc("POST /api/v1/conversas/{id}/lida", s.autenticar(precisaPessoa(s.lida)))
+	mux.HandleFunc("POST /api/v1/arquivos", s.autenticar(precisaPessoa(s.enviarArquivo)))
+	mux.HandleFunc("GET /api/v1/arquivos/{id}", s.autenticar(precisaPessoa(s.baixarArquivo)))
+	mux.HandleFunc("PUT /api/v1/arquivos/{id}/miniatura", s.autenticar(precisaPessoa(s.enviarMiniatura)))
+	mux.HandleFunc("GET /api/v1/arquivos/{id}/miniatura", s.autenticar(precisaPessoa(s.baixarMiniatura)))
 	mux.HandleFunc("POST /api/v1/eventos/bilhete", s.autenticar(s.novoBilhete))
 	mux.HandleFunc("GET /api/v1/eventos", s.eventos) // sem a chave: vale o bilhete
 	// O resto de /api/v1/ (rota que não existe, ou método errado numa rota que existe)

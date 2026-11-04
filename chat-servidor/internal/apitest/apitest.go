@@ -19,6 +19,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/api"
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/armazem"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/banco"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/eventos"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/tempo"
@@ -32,6 +33,8 @@ type Ambiente struct {
 	Banco    *banco.Banco
 	Relogio  *tempo.Teste
 	Hub      *eventos.Hub // com a Config padrão
+	Armazem  *armazem.Armazem
+	Arquivos string // a pasta dos arquivos no disco (<Dir>/arquivos)
 	Servidor *httptest.Server
 }
 
@@ -41,6 +44,17 @@ type Pessoa struct {
 	Ramal string `json:"ramal"`
 	Nome  string `json:"nome"`
 	Saiu  bool   `json:"saiu"`
+}
+
+// Arquivo é o arquivo como a API devolve (seção 4 do protocolo).
+type Arquivo struct {
+	ID        string `json:"id"`
+	Nome      string `json:"nome"`
+	Tipo      string `json:"tipo"`
+	Tamanho   int64  `json:"tamanho"`
+	Foto      bool   `json:"foto"`
+	Miniatura bool   `json:"miniatura"`
+	Expirado  bool   `json:"expirado"`
 }
 
 // Novo monta o ambiente; o t.Cleanup desmonta.
@@ -55,12 +69,18 @@ func Novo(t *testing.T) *Ambiente {
 		t.Fatalf("apitest: abrir o banco: %v", err)
 	}
 	hub := eventos.NovoHub(eventos.Config{})
-	srv := httptest.NewServer(api.Novo(api.Deps{Banco: b, Hub: hub}))
+	pastaArquivos := filepath.Join(dir, "arquivos")
+	arm, err := armazem.Novo(pastaArquivos)
+	if err != nil {
+		t.Fatalf("apitest: abrir o armazém: %v", err)
+	}
+	srv := httptest.NewServer(api.Novo(api.Deps{Banco: b, Hub: hub, Armazem: arm}))
 	t.Cleanup(func() {
 		srv.Close()
 		b.Fechar()
 	})
-	return &Ambiente{T: t, Dir: dir, Caminho: caminho, Banco: b, Relogio: rel, Hub: hub, Servidor: srv}
+	return &Ambiente{T: t, Dir: dir, Caminho: caminho, Banco: b, Relogio: rel, Hub: hub,
+		Armazem: arm, Arquivos: pastaArquivos, Servidor: srv}
 }
 
 // Com devolve uma cópia ligada ao t (um subteste, por exemplo), com o mesmo servidor,
@@ -218,6 +238,22 @@ func (a *Ambiente) Exec(q string, args ...any) {
 	}
 }
 
+// Contar roda uma consulta que devolve um número (um COUNT(*), por exemplo) no arquivo do
+// banco, por outra conexão.
+func (a *Ambiente) Contar(q string, args ...any) int {
+	a.T.Helper()
+	db, err := sql.Open("sqlite", "file:"+a.Caminho+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)")
+	if err != nil {
+		a.T.Fatalf("apitest: abrir o banco: %v", err)
+	}
+	defer db.Close()
+	var n int
+	if err := db.QueryRow(q, args...).Scan(&n); err != nil {
+		a.T.Fatalf("apitest: %s: %v", q, err)
+	}
+	return n
+}
+
 // Pedir faz um pedido à API. A chave vazia não manda Authorization. O corpo nil não manda
 // corpo; []byte e string vão como estão; o resto vira JSON.
 func (a *Ambiente) Pedir(chave, metodo, caminho string, corpo any) *http.Response {
@@ -251,6 +287,29 @@ func (a *Ambiente) Pedir(chave, metodo, caminho string, corpo any) *http.Respons
 	}
 	a.T.Cleanup(func() { resp.Body.Close() })
 	return resp
+}
+
+// Enviar envia um arquivo pelo POST /api/v1/arquivos, com o nome em percent-encoding e o tipo
+// dado, e devolve o Arquivo. Falha o teste se não for 201.
+func (a *Ambiente) Enviar(chave, nome, tipo string, dados []byte) Arquivo {
+	a.T.Helper()
+	req, err := http.NewRequestWithContext(a.T.Context(), "POST", a.Servidor.URL+"/api/v1/arquivos", bytes.NewReader(dados))
+	if err != nil {
+		a.T.Fatalf("apitest: pedido: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+chave)
+	req.Header.Set("Content-Type", tipo)
+	req.Header.Set("X-Arquivo-Nome", url.PathEscape(nome))
+	resp, err := a.Servidor.Client().Do(req)
+	if err != nil {
+		a.T.Fatalf("apitest: enviar %q: %v", nome, err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		a.T.Fatalf("apitest: enviar %q respondeu %d", nome, resp.StatusCode)
+	}
+	return LerJSON[struct {
+		Arquivo Arquivo `json:"arquivo"`
+	}](a.T, resp).Arquivo
 }
 
 // LerJSON lê o corpo da resposta como T.

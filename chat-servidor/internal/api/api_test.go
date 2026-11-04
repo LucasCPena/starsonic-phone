@@ -16,3 +16,13 @@ func TestNovo_SemHubEntraEmPanico(t *testing.T) {
 	}()
 	api.Novo(api.Deps{Banco: a.Banco})
 }
+
+func TestNovo_SemArmazemEntraEmPanico(t *testing.T) {
+	a := apitest.Novo(t)
+	defer func() {
+		if recover() == nil {
+			t.Fatal("api.Novo sem Armazem não entrou em pânico")
+		}
+	}()
+	api.Novo(api.Deps{Banco: a.Banco, Hub: a.Hub})
+}

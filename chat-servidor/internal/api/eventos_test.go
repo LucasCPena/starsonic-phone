@@ -121,7 +121,7 @@ func TestEventos_Origem(t *testing.T) {
 	})
 	// Os colchetes de um IPv6 seriam uma classe no path.Match das OriginPatterns.
 	t.Run("comColchetes", func(t *testing.T) {
-		srv := httptest.NewServer(api.Novo(api.Deps{Banco: a.Banco, Hub: a.Hub, Origens: []string{"http://[::1]:5173"}}))
+		srv := httptest.NewServer(api.Novo(api.Deps{Banco: a.Banco, Hub: a.Hub, Armazem: a.Armazem, Origens: []string{"http://[::1]:5173"}}))
 		t.Cleanup(srv.Close)
 		b := a.Com(t)
 		b.Servidor = srv

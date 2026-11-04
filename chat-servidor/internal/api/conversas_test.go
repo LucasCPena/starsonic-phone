@@ -17,12 +17,13 @@ import (
 
 // As formas da seção 4 do protocolo, como o app as lê.
 type mensagemResp struct {
-	ID       int64           `json:"id"`
-	Conversa int64           `json:"conversa"`
-	Autor    *apitest.Pessoa `json:"autor"`
-	Tipo     string          `json:"tipo"`
-	Texto    *string         `json:"texto"`
-	IDLocal  *string         `json:"idLocal"`
+	ID       int64            `json:"id"`
+	Conversa int64            `json:"conversa"`
+	Autor    *apitest.Pessoa  `json:"autor"`
+	Tipo     string           `json:"tipo"`
+	Texto    *string          `json:"texto"`
+	Arquivo  *apitest.Arquivo `json:"arquivo"`
+	IDLocal  *string          `json:"idLocal"`
 	Aviso    *struct {
 		Acao string          `json:"acao"`
 		Quem apitest.Pessoa  `json:"quem"`
