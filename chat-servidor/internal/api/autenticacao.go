@@ -4,10 +4,19 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/banco"
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/limites"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/segredo"
+)
+
+const (
+	maxPedidos     = 600 // pedidos com chave por computador, por minuto
+	maxPessoasEu   = 20  // POST /api/v1/pessoas/eu por computador, por minuto
+	periodoPedidos = time.Minute
 )
 
 type chaveContexto struct{}
@@ -53,20 +62,36 @@ func (s *servidor) identificar(w http.ResponseWriter, r *http.Request,
 
 // autenticar protege uma rota: sem chave válida, responde 401 chave.
 func (s *servidor) autenticar(f http.HandlerFunc) http.HandlerFunc {
-	return s.proteger(f, s.banco.ComputadorPorChave)
+	return s.proteger(f, s.banco.ComputadorPorChave, nil)
 }
 
 // autenticarTroca é o autenticar do POST /api/v1/pessoas/eu: quem pede é a pessoa que vai
 // entrar no computador, então o pedido não conta como uma vez da pessoa de antes nele.
 func (s *servidor) autenticarTroca(f http.HandlerFunc) http.HandlerFunc {
-	return s.proteger(f, s.banco.ComputadorParaTrocar)
+	return s.proteger(f, s.banco.ComputadorParaTrocar, s.pessoasEuLimite)
 }
 
-func (s *servidor) proteger(f http.HandlerFunc, achar func(context.Context, []byte) (banco.Computador, banco.Empresa, error)) http.HandlerFunc {
+// proteger acha o computador pela chave e, só então, conta o pedido no limite geral dele
+// (R43) e, se houver, no limite extra da rota. Acima de um limite, responde 429 limite.
+func (s *servidor) proteger(f http.HandlerFunc,
+	achar func(context.Context, []byte) (banco.Computador, banco.Empresa, error),
+	extra *limites.Janela) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		r2, ok := s.identificar(w, r, achar)
 		if !ok {
 			return
+		}
+		c, _ := computadorDe(r2)
+		chave := strconv.FormatInt(c.ID, 10)
+		if ok, esperar := s.geralLimite.Usar(chave, 1); !ok {
+			erroEspera(w, "limite", esperar)
+			return
+		}
+		if extra != nil {
+			if ok, esperar := extra.Usar(chave, 1); !ok {
+				erroEspera(w, "limite", esperar)
+				return
+			}
 		}
 		f(w, r2)
 	}

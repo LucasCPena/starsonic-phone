@@ -41,6 +41,8 @@ type servidor struct {
 
 	mensagensLimite *limites.Janela // as mensagens novas, por computador
 	arquivosLimite  *limites.Janela // os bytes de arquivos enviados, por computador
+	geralLimite     *limites.Janela // todo pedido com chave, por computador (R43)
+	pessoasEuLimite *limites.Janela // o POST /pessoas/eu, por computador, além do geral (R43)
 	// travasConversa segura uma conversa (pelo id, em 64 faixas) enquanto uma mensagem é
 	// gravada e o evento sai: assim os eventos saem na ordem dos ids.
 	travasConversa [64]sync.Mutex
@@ -73,6 +75,8 @@ func Novo(d Deps) http.Handler {
 
 		mensagensLimite: limites.Nova(maxMensagens, periodoMensagens, d.Banco.Relogio()),
 		arquivosLimite:  limites.Nova(maxArquivosHora, periodoArquivos, d.Banco.Relogio()),
+		geralLimite:     limites.Nova(maxPedidos, periodoPedidos, d.Banco.Relogio()),
+		pessoasEuLimite: limites.Nova(maxPessoasEu, periodoPedidos, d.Banco.Relogio()),
 	}
 	origens := d.Origens
 	if len(origens) == 0 {

@@ -34,7 +34,7 @@ Um erro vem com o status HTTP e um corpo `{"erro": "<código>"}`, às vezes com 
 | 410 | `expirado` | O arquivo passou de 365 dias e saiu do servidor. |
 | 413 | `grande` | O arquivo passa de 25 MB, a miniatura passa de 200 KiB, ou o JSON passa de 64 KiB. |
 | 429 | `tentativas` | Muitos códigos errados deste endereço. Vem com `"esperarSegundos": <n>`. |
-| 429 | `limite` | Mensagens ou arquivos demais deste computador. Vem com `"esperarSegundos": <n>`. |
+| 429 | `limite` | Pedidos, mensagens ou arquivos demais deste computador. Vem com `"esperarSegundos": <n>`. |
 | 500 | `servidor` | Um erro do servidor. O pedido pode ser tentado de novo. |
 
 ## 3. As regras dos campos
@@ -227,9 +227,17 @@ Os eventos são mensagens de texto com JSON, sempre com o campo `tipo`:
 | Miniatura | 200 KiB, JPEG |
 | Pessoas num grupo | 200, com quem cuida |
 | Nome de um grupo | 60 caracteres |
+| Pedidos por computador | 600 por minuto, em todo pedido com chave |
+| Entradas de pessoa por computador | 20 por minuto, no `POST /api/v1/pessoas/eu`, além dos 600 |
 | Mensagens por computador | 60 por minuto |
 | Arquivos por computador | 200 MB por hora |
 | Códigos errados por endereço | 10 por hora; depois, 1 hora de espera |
 | Mensagens por pedido | 50 |
 | Arquivo guardado | 365 dias |
 | Corpo JSON | 64 KiB |
+
+**Os pedidos por computador.**
+- Todo pedido que leva a chave do computador conta nos 600 por minuto, seja qual for a rota (o `GET /api/v1/eventos`, que entra com o bilhete, não leva a chave e não conta).
+- O `POST /api/v1/pessoas/eu` conta também nos 20 por minuto.
+- Acima de um limite, a resposta é `429` com `{"erro": "limite", "esperarSegundos": <n>}`. O app espera esse tempo e tenta de novo.
+- Esses limites valem junto com os de mensagens e de arquivos.
