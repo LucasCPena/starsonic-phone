@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 )
@@ -40,7 +41,9 @@ func Novo(pasta string) (*Armazem, error) {
 	return &Armazem{pasta: pasta}, nil
 }
 
-func idValido(id string) bool {
+// IDValido diz se id tem a forma de um id de arquivo: 32 hexadecimais minúsculos. É o único
+// validador do servidor: a API e o armazém usam este.
+func IDValido(id string) bool {
 	if len(id) != 32 {
 		return false
 	}
@@ -55,15 +58,16 @@ func idValido(id string) bool {
 
 // caminho devolve a subpasta e o caminho do arquivo do id.
 func (a *Armazem) caminho(id string) (pasta, arquivo string, err error) {
-	if !idValido(id) {
+	if !IDValido(id) {
 		return "", "", ErrID
 	}
 	pasta = filepath.Join(a.pasta, id[:2])
 	return pasta, filepath.Join(pasta, id), nil
 }
 
-// gravar copia até max bytes de r para destino, passando por um temporário na mesma pasta.
-func gravar(pasta, destino string, r io.Reader, max int64) (n int64, err error) {
+// gravar copia até max bytes de r para destino, passando por um temporário na mesma pasta. O
+// id só serve ao log: o nome do arquivo do cliente nunca chega aqui.
+func gravar(id, pasta, destino string, r io.Reader, max int64) (n int64, err error) {
 	if err := os.MkdirAll(pasta, permPasta); err != nil {
 		return 0, err
 	}
@@ -76,7 +80,9 @@ func gravar(pasta, destino string, r io.Reader, max int64) (n int64, err error) 
 	defer func() {
 		if !pronto {
 			tmp.Close()
-			os.Remove(nome)
+			if err := os.Remove(nome); err != nil && !errors.Is(err, os.ErrNotExist) {
+				slog.Error("armazem: não tirou o temporário", "id", id, "erro", err)
+			}
 		}
 	}()
 	if err := tmp.Chmod(permArquivo); err != nil {
@@ -100,10 +106,16 @@ func gravar(pasta, destino string, r io.Reader, max int64) (n int64, err error) 
 		return 0, err
 	}
 	pronto = true
-	if d, err := os.Open(pasta); err == nil { // grava o rename no disco; se não der, o arquivo já está lá
-		d.Sync()
-		d.Close()
+	// Grava o rename no disco. Se não der, o arquivo já está lá: só vai para o log.
+	d, err := os.Open(pasta)
+	if err != nil {
+		slog.Error("armazem: não abriu a pasta para o fsync", "id", id, "erro", err)
+		return n, nil
 	}
+	if err := d.Sync(); err != nil {
+		slog.Error("armazem: o fsync da pasta falhou", "id", id, "erro", err)
+	}
+	d.Close()
 	return n, nil
 }
 
@@ -114,7 +126,7 @@ func (a *Armazem) Gravar(id string, r io.Reader, max int64) (n int64, err error)
 	if err != nil {
 		return 0, err
 	}
-	return gravar(pasta, arquivo, r, max)
+	return gravar(id, pasta, arquivo, r, max)
 }
 
 // GravarMiniatura guarda a miniatura do arquivo id, no lugar da que houver. As regras são as
@@ -124,7 +136,7 @@ func (a *Armazem) GravarMiniatura(id string, r io.Reader, max int64) (n int64, e
 	if err != nil {
 		return 0, err
 	}
-	return gravar(pasta, arquivo+sufixoMini, r, max)
+	return gravar(id, pasta, arquivo+sufixoMini, r, max)
 }
 
 // Abrir abre o arquivo id para leitura. Se faltar, o erro satisfaz os.ErrNotExist.

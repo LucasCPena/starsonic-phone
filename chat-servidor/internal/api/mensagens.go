@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/armazem"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/banco"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/regras"
 )
@@ -137,7 +138,7 @@ func (s *servidor) enviar(w http.ResponseWriter, r *http.Request) {
 		erroCampo(w, "arquivo")
 		return
 	case corpo.Arquivo != nil:
-		if !idDeArquivoValido(*corpo.Arquivo) {
+		if !armazem.IDValido(*corpo.Arquivo) {
 			erroCampo(w, "arquivo")
 			return
 		}

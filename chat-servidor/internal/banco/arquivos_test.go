@@ -162,3 +162,104 @@ func TestMiniatura_Marcar(t *testing.T) {
 		t.Fatalf("expirado: %v", err)
 	}
 }
+
+// TestArquivoParaBaixar_ComoAsMensagens: uma pessoa baixa o arquivo exatamente quando a
+// mensagem dele aparece para ela nas Mensagens, ou quando ela é a autora (que baixa até depois
+// de sair do grupo).
+func TestArquivoParaBaixar_ComoAsMensagens(t *testing.T) {
+	ctx := context.Background()
+	// cena monta a ACME (Ana, Beatriz, Carlos) e a Outra (Abel), um grupo da Ana com a
+	// Beatriz, e um arquivo da Ana numa mensagem do grupo. O caso mexe nas pessoas depois.
+	type cena struct {
+		c      cenaMensagens
+		carlos Pessoa
+		grupo  int64
+	}
+	nova := func(t *testing.T, naDupla bool) cena {
+		c := novaCenaMensagens(t)
+		emp := c.ana.EmpresaID
+		carlos := pessoaDe(t, c.b, emp, "2005", "Carlos")
+		g, _, err := c.b.CriarGrupo(ctx, emp, c.ana.ID, "Comercial", []int64{c.bia.ID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.b.CriarArquivo(ctx, idArq, emp, c.ana.ID, "Proposta ACME.pdf", "application/pdf", 1000); err != nil {
+			t.Fatal(err)
+		}
+		avancar(c.b, time.Minute)
+		onde := g
+		if naDupla {
+			onde = c.dupla
+		}
+		if _, _, err := c.b.EnviarArquivo(ctx, c.ana.ID, onde, "m1", idArq); err != nil {
+			t.Fatal(err)
+		}
+		avancar(c.b, time.Minute)
+		return cena{c, carlos, g}
+	}
+	casos := []struct {
+		nome    string
+		naDupla bool // o arquivo vai numa mensagem da conversa a dois, não do grupo
+		monta   func(t *testing.T, s cena) (conversa int64, quem Pessoa)
+		baixa   bool
+	}{
+		{"duplaAutora", true, func(t *testing.T, s cena) (int64, Pessoa) { return s.c.dupla, s.c.ana }, true},
+		{"duplaOutraPessoa", true, func(t *testing.T, s cena) (int64, Pessoa) { return s.c.dupla, s.c.bia }, true},
+		{"membroDeAntes", false, func(t *testing.T, s cena) (int64, Pessoa) { return s.grupo, s.c.bia }, true},
+		{"entrouDepois", false, func(t *testing.T, s cena) (int64, Pessoa) {
+			if _, err := s.c.b.PorNoGrupo(ctx, s.c.ana.ID, s.grupo, []int64{s.carlos.ID}); err != nil {
+				t.Fatal(err)
+			}
+			return s.grupo, s.carlos
+		}, false},
+		{"saiu", false, func(t *testing.T, s cena) (int64, Pessoa) {
+			if _, err := s.c.b.TirarMembro(ctx, s.c.bia.ID, s.grupo, s.c.bia.ID); err != nil {
+				t.Fatal(err)
+			}
+			return s.grupo, s.c.bia
+		}, false},
+		{"tirada", false, func(t *testing.T, s cena) (int64, Pessoa) {
+			if _, err := s.c.b.TirarMembro(ctx, s.c.ana.ID, s.grupo, s.c.bia.ID); err != nil {
+				t.Fatal(err)
+			}
+			return s.grupo, s.c.bia
+		}, false},
+		{"mesmaEmpresaForaDoGrupo", false, func(t *testing.T, s cena) (int64, Pessoa) { return s.grupo, s.carlos }, false},
+		{"outraEmpresa", false, func(t *testing.T, s cena) (int64, Pessoa) { return s.grupo, s.c.abe }, false},
+		{"autoraDepoisDeSair", false, func(t *testing.T, s cena) (int64, Pessoa) {
+			if _, err := s.c.b.TirarMembro(ctx, s.c.ana.ID, s.grupo, s.c.ana.ID); err != nil {
+				t.Fatal(err)
+			}
+			return s.grupo, s.c.ana
+		}, true},
+	}
+	for _, k := range casos {
+		t.Run(k.nome, func(t *testing.T) {
+			s := nova(t, k.naDupla)
+			conversa, quem := k.monta(t, s)
+			// A mensagem aparece para a pessoa nas Mensagens?
+			veNasMensagens := false
+			ms, _, err := s.c.b.Mensagens(ctx, quem.ID, conversa, 0, 0, MaxPagina)
+			if err != nil && !errors.Is(err, ErrNaoEncontrado) {
+				t.Fatal(err)
+			}
+			for _, m := range ms {
+				if m.Arquivo != nil && m.Arquivo.ID == idArq {
+					veNasMensagens = true
+				}
+			}
+			autora := quem.ID == s.c.ana.ID
+			_, err = s.c.b.ArquivoParaBaixar(ctx, quem.EmpresaID, quem.ID, idArq)
+			if err != nil && !errors.Is(err, ErrNaoEncontrado) {
+				t.Fatal(err)
+			}
+			baixou := err == nil
+			if quer := veNasMensagens || autora; baixou != quer {
+				t.Fatalf("baixou = %v; as Mensagens (%v) ou a autoria (%v) dizem %v", baixou, veNasMensagens, autora, quer)
+			}
+			if baixou != k.baixa {
+				t.Fatalf("baixou = %v; queria %v", baixou, k.baixa)
+			}
+		})
+	}
+}

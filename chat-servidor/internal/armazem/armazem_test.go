@@ -127,7 +127,9 @@ func TestGravar_ErroDeLeituraNaoDeixaNada(t *testing.T) {
 
 func TestGravar_SobrescreveSemTemporario(t *testing.T) {
 	a, pasta := novo(t)
-	a.Gravar(idA, strings.NewReader("um"), 10)
+	if _, err := a.Gravar(idA, strings.NewReader("um"), 10); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := a.Gravar(idA, strings.NewReader("dois"), 10); err != nil {
 		t.Fatal(err)
 	}
@@ -149,9 +151,31 @@ func TestIDInvalido(t *testing.T) {
 		if err := a.Apagar(id); !errors.Is(err, ErrID) {
 			t.Errorf("Apagar(%q) = %v; queria ErrID", id, err)
 		}
+		if _, err := a.GravarMiniatura(id, strings.NewReader("x"), 10); !errors.Is(err, ErrID) {
+			t.Errorf("GravarMiniatura(%q) = %v; queria ErrID", id, err)
+		}
+		if _, err := a.AbrirMiniatura(id); !errors.Is(err, ErrID) {
+			t.Errorf("AbrirMiniatura(%q) = %v; queria ErrID", id, err)
+		}
+		if err := a.ApagarMiniatura(id); !errors.Is(err, ErrID) {
+			t.Errorf("ApagarMiniatura(%q) = %v; queria ErrID", id, err)
+		}
 	}
 	if l := arquivosEm(t, filepath.Dir(pasta)); len(l) != 0 {
 		t.Fatalf("saiu da pasta: %v", l)
+	}
+}
+
+func TestIDValido(t *testing.T) {
+	for id, quer := range map[string]bool{
+		idA: true, strings.Repeat("f", 32): true, strings.Repeat("0", 32): true,
+		"": false, idA[:31]: false, idA + "0": false, strings.ToUpper(idA): false,
+		strings.Repeat("g", 32): false, "../../etc/passwd": false, idA[:30] + "/x": false,
+		idA[:31] + "\u00e9": false,
+	} {
+		if got := IDValido(id); got != quer {
+			t.Errorf("IDValido(%q) = %v; queria %v", id, got, quer)
+		}
 	}
 }
 
@@ -184,10 +208,20 @@ func TestMiniatura(t *testing.T) {
 	f.Close()
 }
 
+// preparar grava o arquivo idA e a miniatura dele, e falha o teste se não der.
+func preparar(t *testing.T, a *Armazem) {
+	t.Helper()
+	if _, err := a.Gravar(idA, strings.NewReader("arquivo"), 100); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.GravarMiniatura(idA, strings.NewReader("mini"), 100); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestApagar(t *testing.T) {
 	a, pasta := novo(t)
-	a.Gravar(idA, strings.NewReader("arquivo"), 100)
-	a.GravarMiniatura(idA, strings.NewReader("mini"), 100)
+	preparar(t, a)
 	if err := a.Apagar(idA); err != nil {
 		t.Fatal(err)
 	}
@@ -204,8 +238,7 @@ func TestApagar(t *testing.T) {
 
 func TestApagarMiniatura_DeixaOArquivo(t *testing.T) {
 	a, pasta := novo(t)
-	a.Gravar(idA, strings.NewReader("arquivo"), 100)
-	a.GravarMiniatura(idA, strings.NewReader("mini"), 100)
+	preparar(t, a)
 	if err := a.ApagarMiniatura(idA); err != nil {
 		t.Fatal(err)
 	}

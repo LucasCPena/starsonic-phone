@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
 	"io"
@@ -183,7 +184,9 @@ func TestArquivo_Grande(t *testing.T) {
 	if n := linhasDeArquivos(t, c); n != 0 {
 		t.Fatalf("arquivos no banco = %d", n)
 	}
-	// O que passou do limite não gastou a cota da hora: o do tamanho máximo exato entra.
+	// Depois dos dois recusados, um envio do tamanho máximo exato entra (o limite de tamanho
+	// é de "mais de 25 MB", não de "25 MB"). Que a recusa não gasta a cota da hora fica para
+	// o TestArquivo_CotaSemTamanho e o TestArquivo_CortadoDevolveACota.
 	resp = enviarArquivo(c.a, c.kAna, "", "application/pdf", &zeros{maxArquivoTeste}, -1)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("25 MB exatos respondeu %d", resp.StatusCode)
@@ -257,7 +260,7 @@ func esperarSemArquivos(t *testing.T, c *cena) {
 	time.Sleep(50 * time.Millisecond) // o servidor devolve a cota logo depois de apagar
 }
 
-// TestArquivo_NomesDoEnvio é o Review Focus 1.
+// TestArquivo_Nomes é o Review Focus 1.
 func TestArquivo_Nomes(t *testing.T) {
 	c := novaCena(t)
 	conv := c.duplaAnaBia(t)
@@ -441,8 +444,8 @@ func TestArquivo_UsoUnico(t *testing.T) {
 	esperarErro(t, c.a.Pedir(c.kAna, "POST", fmt.Sprintf("/api/v1/conversas/%d/mensagens", conv), ambos), 400, "invalido")
 	// Outra empresa não usa o arquivo da ACME, nem o encontra.
 	esperarErro(t, enviarMensagemArquivo(c, c.kAbel, conv, "u7", arq.ID), 404, "naoEncontrado")
-	if c.pagina(t, c.kAna, conv, "").Mensagens[0].Arquivo.ID != arq.ID || len(c.pagina(t, c.kAna, conv, "").Mensagens) != 1 {
-		t.Fatal("a conversa tem outras mensagens além da primeira")
+	if p := c.pagina(t, c.kAna, conv, ""); len(p.Mensagens) != 1 || p.Mensagens[0].Arquivo == nil || p.Mensagens[0].Arquivo.ID != arq.ID {
+		t.Fatalf("a conversa tem outras mensagens além da primeira: %+v", p.Mensagens)
 	}
 }
 
@@ -563,9 +566,11 @@ func TestMiniatura_PrecisaSerJPEG(t *testing.T) {
 			t.Fatalf("sobrou %s", f)
 		}
 	}
-	if a := c.a.Enviar(c.kAna, "f2.png", "image/png", []byte("y")); a.Miniatura {
-		t.Fatal("arquivo novo com miniatura")
+	// O arquivo dos PUTs recusados segue sem miniatura: nem a linha foi marcada, nem o GET acha.
+	if n := c.a.Contar(`SELECT miniatura FROM arquivos WHERE id = ?`, png.ID); n != 0 {
+		t.Fatalf("miniatura = %d na linha do arquivo; queria 0", n)
 	}
+	esperarErro(t, c.a.Pedir(c.kAna, "GET", "/api/v1/arquivos/"+png.ID+"/miniatura", nil), 404, "naoEncontrado")
 }
 
 func TestArquivo_LimiteHora(t *testing.T) {
@@ -610,5 +615,298 @@ func TestArquivo_LimiteHora(t *testing.T) {
 	}
 	if total != 8*maxArquivoTeste+2 {
 		t.Fatalf("no disco: %d bytes", total)
+	}
+}
+
+// esperarTemporario espera um .tmp-* aparecer na pasta dos arquivos: o servidor já está lendo
+// o corpo e gravando.
+func esperarTemporario(t *testing.T, a *apitest.Ambiente) {
+	t.Helper()
+	limite := time.Now().Add(5 * time.Second)
+	for {
+		for _, f := range arquivosNoDisco(t, a) {
+			if strings.Contains(filepath.Base(f), ".tmp-") {
+				return
+			}
+		}
+		if time.Now().After(limite) {
+			t.Fatal("o servidor não começou a guardar o envio")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// resultado é a resposta (ou o erro) de um pedido que roda em outra goroutine.
+type resultado struct {
+	resp *http.Response
+	err  error
+}
+
+// pedirEmSegundoPlano faz o pedido com um corpo que o teste escreve aos poucos (um io.Pipe),
+// sem Content-Length.
+func pedirEmSegundoPlano(t *testing.T, a *apitest.Ambiente, chave, metodo, caminho, tipo string, corpo io.Reader) <-chan resultado {
+	t.Helper()
+	req, err := http.NewRequestWithContext(t.Context(), metodo, a.Servidor.URL+caminho, corpo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.ContentLength = -1
+	req.Header.Set("Authorization", "Bearer "+chave)
+	req.Header.Set("Content-Type", tipo)
+	ch := make(chan resultado, 1)
+	go func() {
+		resp, err := a.Servidor.Client().Do(req)
+		ch <- resultado{resp, err}
+	}()
+	return ch
+}
+
+func esperarResposta(t *testing.T, ch <-chan resultado) *http.Response {
+	t.Helper()
+	select {
+	case r := <-ch:
+		if r.err != nil {
+			t.Fatal(r.err)
+		}
+		t.Cleanup(func() { r.resp.Body.Close() })
+		return r.resp
+	case <-time.After(10 * time.Second):
+		t.Fatal("o servidor não respondeu em 10 s")
+		return nil
+	}
+}
+
+// TestArquivo_CotaSemTamanho é o R15: um envio sem Content-Length reserva 25 MB antes de ler,
+// então vários juntos não passam da cota da hora.
+func TestArquivo_CotaSemTamanho(t *testing.T) {
+	if testing.Short() {
+		t.Skip("grava 200 MB")
+	}
+	c := novaCena(t)
+	// Sete envios de 25 MB com Content-Length: sobram exatamente 25 MB na hora.
+	for i := 0; i < 7; i++ {
+		resp := enviarArquivo(c.a, c.kAna, "", "application/octet-stream", &zeros{maxArquivoTeste}, maxArquivoTeste)
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("o envio %d respondeu %d", i+1, resp.StatusCode)
+		}
+	}
+	// O envio 1, sem tamanho, fica aberto: já tem 25 MB reservados.
+	pr, pw := io.Pipe()
+	defer pw.CloseWithError(io.ErrClosedPipe)
+	um := pedirEmSegundoPlano(t, c.a, c.kAna, "POST", "/api/v1/arquivos", "application/octet-stream", pr)
+	if _, err := pw.Write(make([]byte, 16)); err != nil {
+		t.Fatal(err)
+	}
+	esperarTemporario(t, c.a)
+	// O envio 2, também sem tamanho, é recusado na hora, antes de ler.
+	e := esperarErro(t, enviarArquivo(c.a, c.kAna, "", "application/octet-stream", strings.NewReader("x"), -1), 429, "limite")
+	if e.EsperarSegundos < 1 || e.EsperarSegundos > 3600 {
+		t.Fatalf("esperarSegundos = %d", e.EsperarSegundos)
+	}
+	// O envio 1 termina com 1 MiB: ficam gastos 1 MiB, e os outros 24 MiB voltam.
+	if _, err := io.Copy(pw, &zeros{1<<20 - 16}); err != nil {
+		t.Fatal(err)
+	}
+	pw.Close()
+	resp := esperarResposta(t, um)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("o envio 1 respondeu %d", resp.StatusCode)
+	}
+	if a := apitest.LerJSON[struct{ Arquivo apitest.Arquivo }](t, resp).Arquivo; a.Tamanho != 1<<20 {
+		t.Fatalf("tamanho = %d", a.Tamanho)
+	}
+	// Agora cabem 25.000.000 bytes com Content-Length.
+	resp = enviarArquivo(c.a, c.kAna, "", "application/octet-stream", &zeros{25000000}, 25000000)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("o de 25.000.000 bytes respondeu %d", resp.StatusCode)
+	}
+}
+
+// tcpCru manda o pedido por uma conexão TCP crua e devolve a resposta, já lida.
+func tcpCru(t *testing.T, a *apitest.Ambiente, pedido string) *http.Response {
+	t.Helper()
+	conn, err := net.Dial("tcp", a.Servidor.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	if _, err := conn.Write([]byte(pedido)); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatalf("ler a resposta: %v", err)
+	}
+	corpo, _ := io.ReadAll(resp.Body)
+	resp.Body = io.NopCloser(bytes.NewReader(corpo))
+	return resp
+}
+
+// TestArquivo_CorpoIlegivel é o R17: um corpo que não dá para ler (aqui, o tamanho de um
+// pedaço do chunked encoding é inválido) é 400 invalido com o campo do corpo.
+func TestArquivo_CorpoIlegivel(t *testing.T) {
+	c := novaCena(t)
+	t.Run("envio", func(t *testing.T) {
+		resp := tcpCru(t, c.a, "POST /api/v1/arquivos HTTP/1.1\r\nHost: chat\r\nAuthorization: Bearer "+c.kAna+"\r\n"+
+			"Content-Type: application/pdf\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\nZZ\r\n")
+		if e := esperarErro(t, resp, 400, "invalido"); e.Campo != "arquivo" {
+			t.Fatalf("campo = %q", e.Campo)
+		}
+		if l := arquivosNoDisco(t, c.a); len(l) != 0 {
+			t.Fatalf("sobrou no disco: %v", l)
+		}
+	})
+	t.Run("miniatura", func(t *testing.T) {
+		png := c.a.Enviar(c.kAna, "foto.png", "image/png", []byte("x"))
+		resp := tcpCru(t, c.a, "PUT /api/v1/arquivos/"+png.ID+"/miniatura HTTP/1.1\r\nHost: chat\r\nAuthorization: Bearer "+c.kAna+"\r\n"+
+			"Transfer-Encoding: chunked\r\n\r\n4\r\n"+cabecalhoJPEG+"\r\nZZ\r\n")
+		if e := esperarErro(t, resp, 400, "invalido"); e.Campo != "miniatura" {
+			t.Fatalf("campo = %q", e.Campo)
+		}
+	})
+}
+
+// TestArquivo_FalhaDoInsert: a linha falha depois do rename. Não sobra arquivo, temporário nem
+// linha, e a cota que o envio reservou volta.
+func TestArquivo_FalhaDoInsert(t *testing.T) {
+	c := novaCena(t)
+	c.a.Exec(`CREATE TRIGGER falha BEFORE INSERT ON arquivos BEGIN SELECT RAISE(ABORT,'teste'); END`)
+	// Um envio sem tamanho reserva 25 MB. Nove deles passariam dos 200 MB da hora se algum
+	// não devolvesse a reserva: o nono daria 429 em vez de 500.
+	for i := 0; i < 9; i++ {
+		esperarErro(t, enviarArquivo(c.a, c.kAna, "", "application/pdf", strings.NewReader("x"), -1), 500, "servidor")
+		if l := arquivosNoDisco(t, c.a); len(l) != 0 {
+			t.Fatalf("envio %d: sobrou no disco %v", i+1, l)
+		}
+	}
+	if n := linhasDeArquivos(t, c); n != 0 {
+		t.Fatalf("arquivos no banco = %d", n)
+	}
+	c.a.Exec(`DROP TRIGGER falha`)
+	if r := enviarArquivo(c.a, c.kAna, "", "application/pdf", strings.NewReader("x"), -1); r.StatusCode != http.StatusCreated {
+		t.Fatalf("depois de tirar o gatilho respondeu %d", r.StatusCode)
+	}
+}
+
+// TestMiniatura_ExpiraDuranteOEnvio: o arquivo expira enquanto o servidor lê o corpo da
+// miniatura. Responde 410 e não deixa miniatura no disco, nem a nova nem a que ela trocou.
+func TestMiniatura_ExpiraDuranteOEnvio(t *testing.T) {
+	for _, substituicao := range []bool{false, true} {
+		nome := "primeira"
+		if substituicao {
+			nome = "substituicao"
+		}
+		t.Run(nome, func(t *testing.T) {
+			c := novaCena(t)
+			png := c.a.Enviar(c.kAna, "foto.png", "image/png", []byte("x"))
+			if substituicao {
+				if r := miniatura(c, c.kAna, png.ID, []byte(cabecalhoJPEG+"antiga")); r.StatusCode != 204 {
+					t.Fatalf("a primeira miniatura respondeu %d", r.StatusCode)
+				}
+			}
+			pr, pw := io.Pipe()
+			defer pw.CloseWithError(io.ErrClosedPipe)
+			ch := pedirEmSegundoPlano(t, c.a, c.kAna, "PUT", "/api/v1/arquivos/"+png.ID+"/miniatura", "image/jpeg", pr)
+			if _, err := pw.Write([]byte(cabecalhoJPEG)); err != nil {
+				t.Fatal(err)
+			}
+			esperarTemporario(t, c.a) // o servidor está lendo o corpo
+			c.a.Exec(`UPDATE arquivos SET expirado_em = ?`, time.Now().UnixMilli())
+			if _, err := pw.Write([]byte("resto")); err != nil {
+				t.Fatal(err)
+			}
+			pw.Close()
+			esperarErro(t, esperarResposta(t, ch), 410, "expirado")
+			for _, f := range arquivosNoDisco(t, c.a) {
+				if strings.HasSuffix(f, ".mini") || strings.Contains(filepath.Base(f), ".tmp-") {
+					t.Fatalf("sobrou %s", f)
+				}
+			}
+		})
+	}
+}
+
+// baixarComRange baixa o arquivo com o cabeçalho Range.
+func baixarComRange(c *cena, chave, id, intervalo string) *http.Response {
+	c.a.T.Helper()
+	req, err := http.NewRequestWithContext(c.a.T.Context(), "GET", c.a.Servidor.URL+"/api/v1/arquivos/"+id, nil)
+	if err != nil {
+		c.a.T.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+chave)
+	req.Header.Set("Range", intervalo)
+	resp, err := c.a.Servidor.Client().Do(req)
+	if err != nil {
+		c.a.T.Fatal(err)
+	}
+	c.a.T.Cleanup(func() { resp.Body.Close() })
+	return resp
+}
+
+func cabecalhosDoDownload(t *testing.T, h http.Header, nome string) {
+	t.Helper()
+	cd := `attachment; filename="` + nome + `"; filename*=UTF-8''` + nome
+	if h.Get("Content-Type") != "application/octet-stream" || h.Get("Content-Disposition") != cd ||
+		h.Get("X-Content-Type-Options") != "nosniff" || h.Get("Cache-Control") != "private, no-store" {
+		t.Fatalf("cabeçalhos = %v", h)
+	}
+}
+
+func TestArquivo_Range(t *testing.T) {
+	c := novaCena(t)
+	conv := c.duplaAnaBia(t)
+	arq := c.a.Enviar(c.kAna, "dados.bin", "application/pdf", []byte("0123456789"))
+	enviarMensagemArquivo(c, c.kAna, conv, "r1", arq.ID)
+
+	// Vários intervalos: a resposta multipart trocaria o Content-Type, então vem o arquivo inteiro.
+	resp := baixarComRange(c, c.kBia, arq.ID, "bytes=0-1,3-4")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("vários intervalos respondeu %d; queria 200", resp.StatusCode)
+	}
+	if got, _ := io.ReadAll(resp.Body); string(got) != "0123456789" {
+		t.Fatalf("corpo = %q; queria o arquivo inteiro", got)
+	}
+	cabecalhosDoDownload(t, resp.Header, "dados.bin")
+
+	// Um intervalo só: 206 com os dois bytes e os mesmos cabeçalhos.
+	resp = baixarComRange(c, c.kBia, arq.ID, "bytes=0-1")
+	if resp.StatusCode != http.StatusPartialContent {
+		t.Fatalf("um intervalo respondeu %d; queria 206", resp.StatusCode)
+	}
+	if got, _ := io.ReadAll(resp.Body); string(got) != "01" {
+		t.Fatalf("corpo = %q; queria 01", got)
+	}
+	cabecalhosDoDownload(t, resp.Header, "dados.bin")
+}
+
+// TestArquivo_OutraEmpresa: o id de um arquivo da ACME não vale para a outra empresa, nem
+// numa mensagem dela nem no download.
+func TestArquivo_OutraEmpresa(t *testing.T) {
+	a := apitest.Novo(t)
+	acme := a.Empresa("ACME Comércio Ltda")
+	outra := a.Empresa("Outra Ltda")
+	kAna := a.Ligar(acme.Codigo, "PC-ANA")
+	a.Entrar(kAna, "2003", "Ana Souza")
+	kAbel := a.Ligar(outra.Codigo, "PC-ABEL")
+	kBruno := a.Ligar(outra.Codigo, "PC-BRUNO")
+	a.Entrar(kAbel, "2003", "Abel")
+	bruno := a.Entrar(kBruno, "2004", "Bruno")
+	c := &cena{a: a, kAna: kAna, kAbel: kAbel}
+	arq := a.Enviar(kAna, "Proposta ACME.pdf", "application/pdf", []byte("segredo da ACME"))
+
+	resp := c.dupla(t, kAbel, bruno.ID)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("criar a dupla da outra empresa respondeu %d", resp.StatusCode)
+	}
+	conv := apitest.LerJSON[struct{ Conversa conversaResp }](t, resp).Conversa.ID
+
+	e := esperarErro(t, enviarMensagemArquivo(c, kAbel, conv, "o1", arq.ID), 400, "invalido")
+	if e.Campo != "arquivo" {
+		t.Fatalf("campo = %q", e.Campo)
+	}
+	esperarErro(t, baixar(c, kAbel, arq.ID), 404, "naoEncontrado")
+	if p := c.pagina(t, kAbel, conv, ""); len(p.Mensagens) != 0 {
+		t.Fatalf("a conversa da outra empresa tem %d mensagens", len(p.Mensagens))
 	}
 }

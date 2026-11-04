@@ -26,7 +26,15 @@ const (
 	maxMiniatura    = 204800    // 200 KiB
 	maxArquivosHora = 209715200 // 200 MB por hora, por computador
 	periodoArquivos = time.Hour
+	// custoMinimoArquivo é o que um arquivo custa, no mínimo, na cota da hora: um arquivo de
+	// 1 byte também dá trabalho ao servidor (R15).
+	custoMinimoArquivo = 65536
 )
+
+// custoArquivo é quanto um arquivo de n bytes gasta da cota de bytes por hora.
+func custoArquivo(n int64) int64 {
+	return max(n, custoMinimoArquivo)
+}
 
 // leitorMarcado guarda o erro que o corpo do pedido deu, para separar o cliente que cortou o
 // envio (ou mandou demais) de um erro do disco.
@@ -47,7 +55,7 @@ func (l *leitorMarcado) Read(p []byte) (int, error) {
 // id que não existe: responde 404 naoEncontrado e devolve false.
 func idDoArquivo(w http.ResponseWriter, r *http.Request) (string, bool) {
 	id := r.PathValue("id")
-	if !idDeArquivoValido(id) {
+	if !armazem.IDValido(id) {
 		escreverErro(w, http.StatusNotFound, "naoEncontrado", nil)
 		return "", false
 	}
@@ -75,29 +83,22 @@ func (s *servidor) enviarArquivo(w http.ResponseWriter, r *http.Request) {
 	nome := nomeDoEnvio(r)
 	tipo, _ := regras.TipoArquivo(r.Header.Get("Content-Type"))
 
-	// A cota de bytes por hora é do computador. Com o Content-Length, o lugar é reservado antes
-	// de ler e devolvido se o envio falhar; sem ele, só vale o que de fato chegou, contado no
-	// fim (antes de ler, só se vê se a cota já está cheia).
+	// A cota de bytes por hora é do computador, e o lugar é reservado ANTES de ler o corpo: com
+	// o Content-Length, o custo do arquivo; sem ele, o máximo (25 MB). Se o envio falhar, tudo
+	// volta; sem Content-Length, quando termina volta o que sobrou da reserva.
 	chave := strconv.FormatInt(c.ID, 10)
-	reservado := 0
+	reservado := int64(maxArquivo)
 	if r.ContentLength >= 0 {
-		reservado = int(r.ContentLength)
-		if ok, esperar := s.arquivosLimite.Usar(chave, reservado); !ok {
-			erroEspera(w, "limite", esperar)
-			return
-		}
-	} else {
-		ok, esperar := s.arquivosLimite.Usar(chave, 1)
-		if !ok {
-			erroEspera(w, "limite", esperar)
-			return
-		}
-		s.arquivosLimite.Devolver(chave, 1)
+		reservado = custoArquivo(r.ContentLength)
+	}
+	if ok, esperar := s.arquivosLimite.Usar(chave, int(reservado)); !ok {
+		erroEspera(w, "limite", esperar)
+		return
 	}
 	guardado := false
 	defer func() {
-		if !guardado && reservado > 0 {
-			s.arquivosLimite.Devolver(chave, reservado)
+		if !guardado {
+			s.arquivosLimite.Devolver(chave, int(reservado))
 		}
 	}()
 
@@ -105,21 +106,7 @@ func (s *servidor) enviarArquivo(w http.ResponseWriter, r *http.Request) {
 	corpo := &leitorMarcado{r: http.MaxBytesReader(w, r.Body, maxArquivo+1)}
 	n, err := s.armazem.Gravar(id, corpo, maxArquivo)
 	if err != nil {
-		switch {
-		case errors.Is(err, armazem.ErrGrande):
-			escreverErro(w, http.StatusRequestEntityTooLarge, "grande", nil)
-		case corpo.err != nil:
-			// O cliente cortou o envio (ou o corpo veio quebrado): não sobrou nada no disco.
-			var grande *http.MaxBytesError
-			if errors.As(corpo.err, &grande) {
-				escreverErro(w, http.StatusRequestEntityTooLarge, "grande", nil)
-			} else {
-				escreverErro(w, http.StatusBadRequest, "invalido", nil)
-			}
-		default:
-			slog.Error("armazem", "erro", err)
-			erroServidor(w)
-		}
+		erroDeGravacao(w, err, corpo, "arquivo")
 		return
 	}
 	// Daqui em diante nada mais depende do cliente.
@@ -135,7 +122,7 @@ func (s *servidor) enviarArquivo(w http.ResponseWriter, r *http.Request) {
 	}
 	guardado = true
 	if r.ContentLength < 0 {
-		s.arquivosLimite.Contar(chave, int(n))
+		s.arquivosLimite.Devolver(chave, int(reservado-custoArquivo(n)))
 	}
 	escreverJSON(w, http.StatusCreated, map[string]any{"arquivo": novoArquivoJSON(a)})
 }
@@ -170,32 +157,40 @@ func (s *servidor) enviarMiniatura(w http.ResponseWriter, r *http.Request) {
 	}
 	_, err = s.armazem.GravarMiniatura(id, io.MultiReader(bytes.NewReader(inicio), corpo), maxMiniatura)
 	if err != nil {
-		switch {
-		case errors.Is(err, armazem.ErrGrande):
-			escreverErro(w, http.StatusRequestEntityTooLarge, "grande", nil)
-		case corpo.err != nil:
-			var grande *http.MaxBytesError
-			if errors.As(corpo.err, &grande) {
-				escreverErro(w, http.StatusRequestEntityTooLarge, "grande", nil)
-			} else {
-				escreverErro(w, http.StatusBadRequest, "invalido", nil)
-			}
-		default:
-			slog.Error("armazem", "erro", err)
-			erroServidor(w)
-		}
+		erroDeGravacao(w, err, corpo, "miniatura")
 		return
 	}
 	if err := s.banco.MarcarMiniatura(context.WithoutCancel(r.Context()), c.PessoaID, id); err != nil {
-		if !a.Miniatura { // era a primeira: não deixa a miniatura sem linha
+		// O arquivo expirou (ou sumiu) enquanto o corpo chegava: nenhuma miniatura dele fica no
+		// disco, nem a nova nem a que ela trocou.
+		// Qualquer outra falha só apaga a miniatura se era a primeira: não deixa uma miniatura
+		// sem linha.
+		sumiu := errors.Is(err, banco.ErrExpirado) || errors.Is(err, banco.ErrNaoEncontrado)
+		if sumiu || !a.Miniatura {
 			if err := s.armazem.ApagarMiniatura(id); err != nil {
-				slog.Error("armazem", "erro", err)
+				slog.Error("armazem", "id", id, "erro", err)
 			}
 		}
 		erroDoArquivo(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// erroDeGravacao responde a uma gravação do corpo que falhou, no envio e na miniatura. campo é
+// o nome do corpo na resposta: "arquivo" ou "miniatura". O corpo chega por um io.LimitReader
+// de max+1, então todo corpo grande demais chega como armazem.ErrGrande.
+func erroDeGravacao(w http.ResponseWriter, err error, corpo *leitorMarcado, campo string) {
+	switch {
+	case errors.Is(err, armazem.ErrGrande):
+		escreverErro(w, http.StatusRequestEntityTooLarge, "grande", nil)
+	case corpo.err != nil:
+		// O cliente cortou o envio, ou o corpo veio quebrado: não sobrou nada no disco.
+		erroCampo(w, campo)
+	default:
+		slog.Error("armazem", "erro", err)
+		erroServidor(w)
+	}
 }
 
 // erroDoArquivo é o erroDoBanco mais o 410 expirado e o 400 de um arquivo que não aceita
@@ -310,9 +305,4 @@ func contentDisposition(nome string) string {
 		}
 	}
 	return `attachment; filename="` + ascii.String() + `"; filename*=UTF-8''` + cod.String()
-}
-
-// idDeArquivoValido diz se s tem a forma de um id de arquivo: 32 hexadecimais minúsculos.
-func idDeArquivoValido(s string) bool {
-	return len(s) == 32 && strings.Trim(s, "0123456789abcdef") == ""
 }

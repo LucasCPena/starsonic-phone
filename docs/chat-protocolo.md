@@ -24,7 +24,7 @@ Um erro vem com o status HTTP e um corpo `{"erro": "<código>"}`, às vezes com 
 
 | Status | `erro` | Quando |
 |---|---|---|
-| 400 | `invalido` | Um campo faltou ou veio fora da regra. Vem com `"campo": "<nome>"`. |
+| 400 | `invalido` | Um campo faltou ou veio fora da regra. Vem com `"campo": "<nome>"`. Só um JSON que não dá para ler vem sem campo. |
 | 401 | `chave` | Sem chave, chave desconhecida, ou o computador saiu do chat (foi tirado, a pessoa foi tirada, a empresa foi apagada ou ele desligou). O app mostra "Este computador saiu do chat…". |
 | 403 | `proibido` | Só quem cuida do grupo pode fazer isso, ou a origem do WebSocket não está na lista. |
 | 404 | `codigo` | O código da empresa não existe (só no `POST /api/v1/computadores`). |
@@ -172,13 +172,16 @@ Um erro vem com o status HTTP e um corpo `{"erro": "<código>"}`, às vezes com 
 - Responde `201` com `{"arquivo": <Arquivo>}`.
 - **Os limites:**
   - até 25 MB (26.214.400 bytes): um arquivo maior responde `413 grande`, sem guardar nada;
-  - 200 MB por hora por computador (`429 limite`).
+  - 200 MB por hora por computador (`429 limite`);
+  - cada arquivo conta pelo menos 64 KiB (65.536 bytes) nos 200 MB da hora;
+  - um envio sem Content-Length conta 25 MB até terminar e depois só o que chegou (o app manda sempre o Content-Length).
 - Um envio cortado no meio não deixa nada, nem no disco nem no banco.
 - Um arquivo que não entrou numa mensagem em 24 horas sai do servidor.
 
 **A miniatura** — `PUT /api/v1/arquivos/{id}/miniatura`.
 - O corpo é um JPEG de até 200 KiB (`413 grande`).
 - Só quem enviou o arquivo pode mandar, e só se o arquivo for uma foto (`400 invalido`).
+- Um arquivo expirado responde `410 expirado`.
 - Responde `204`.
 
 **Baixar** — `GET /api/v1/arquivos/{id}`.
