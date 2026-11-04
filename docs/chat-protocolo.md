@@ -49,7 +49,8 @@ Um erro vem com o status HTTP e um corpo `{"erro": "<código>"}`, às vezes com 
 - **O texto de uma mensagem:**
   - tem de 1 a 4.000 caracteres, contados como pontos de código Unicode, como o `[...texto].length` do JavaScript;
   - não pode ser só de espaços;
-  - as quebras de linha valem; os outros caracteres de controle, não.
+  - as quebras de linha valem. O servidor troca `\r\n` e `\r` por `\n`;
+  - os outros caracteres de controle não valem.
 - **O `idLocal`:** um texto de 1 a 64 caracteres (`[A-Za-z0-9-]`), gerado pelo app para cada mensagem. Ele é único por pessoa.
 - **O nome de um arquivo**, ao ser guardado:
   - fica só a parte depois da última `/` ou `\`;

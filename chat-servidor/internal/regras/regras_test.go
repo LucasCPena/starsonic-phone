@@ -82,6 +82,9 @@ func TestTexto(t *testing.T) {
 		{"quebra de linha", "linha1\nlinha2", "linha1\nlinha2", true},
 		{"controle", "a\x07b", "", false},
 		{"utf8 inválido", "a\xffb", "", false},
+		{"crlf vira lf", "linha1\r\nlinha2", "linha1\nlinha2", true},
+		{"cr sozinho vira lf", "a\rb", "a\nb", true},
+		{"só crlf", "\r\n\r\n", "", false},
 	})
 	_, err := Texto("")
 	var e *Erro

@@ -58,8 +58,11 @@ func NomeComputador(s string) (string, error) { return nome("computador", s, 64)
 func NomeGrupo(s string) (string, error) { return nome("nome", s, 60) }
 
 // Texto confere o texto de uma mensagem: de 1 a 4.000 pontos de código, não só de espaços;
-// só a quebra de linha vale entre os caracteres de controle. O texto volta como veio.
+// só a quebra de linha vale entre os caracteres de controle. O \r\n e o \r sozinho viram \n
+// antes de conferir, e o texto volta com \n.
 func Texto(s string) (string, error) {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
 	if !utf8.ValidString(s) {
 		return "", &Erro{Campo: "texto"}
 	}
