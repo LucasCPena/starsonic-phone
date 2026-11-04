@@ -1,11 +1,31 @@
 package limites
 
 import (
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/tempo"
 )
+
+func TestEndereco(t *testing.T) {
+	for remoto, chave := range map[string]string{
+		"192.0.2.1:1234":                          "192.0.2.1",
+		"192.0.2.1":                               "192.0.2.1", // sem porta
+		"[::ffff:192.0.2.1]:1234":                 "192.0.2.1", // IPv4 mapeado em IPv6
+		"[2001:db8:1:2::1]:1000":                  "2001:db8:1:2::/64",
+		"[2001:db8:1:2:aaaa:bbbb:cccc:dddd]:2000": "2001:db8:1:2::/64", // o mesmo /64
+		"[2001:db8:1:2::1%eth0]:1":                "2001:db8:1:2::/64", // a zona não conta
+		"[2001:db8:1:3::1]:1":                     "2001:db8:1:3::/64", // outro /64
+		"não é um endereço":                       "não é um endereço", // como veio
+	} {
+		r := httptest.NewRequest("POST", "/", nil)
+		r.RemoteAddr = remoto
+		if got := Endereco(r); got != chave {
+			t.Errorf("Endereco(%q) = %q; queria %q", remoto, got, chave)
+		}
+	}
+}
 
 func TestJanela(t *testing.T) {
 	r := tempo.NovoTeste(time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC))

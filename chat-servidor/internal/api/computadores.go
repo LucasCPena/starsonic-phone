@@ -2,36 +2,14 @@ package api
 
 import (
 	"errors"
-	"net"
 	"net/http"
-	"net/netip"
 	"time"
 
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/banco"
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/limites"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/regras"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/segredo"
 )
-
-// enderecoDe é a chave do limite de códigos errados para quem pediu. O servidor não
-// fica atrás de proxy, então o X-Forwarded-For não é lido.
-//   - IPv4: o próprio endereço (um IPv4 mapeado em IPv6 vira IPv4);
-//   - IPv6: o prefixo /64, para que girar endereços dentro do /64 não dê tentativas novas;
-//   - o que não der para ler: o RemoteAddr como veio.
-func enderecoDe(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
-	a, err := netip.ParseAddr(host)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	a = a.WithZone("").Unmap()
-	if a.Is4() {
-		return a.String()
-	}
-	return netip.PrefixFrom(a, 64).Masked().String()
-}
 
 // POST /api/v1/computadores: liga um computador a uma empresa pelo código.
 func (s *servidor) ligarComputador(w http.ResponseWriter, r *http.Request) {
@@ -55,7 +33,7 @@ func (s *servidor) ligarComputador(w http.ResponseWriter, r *http.Request) {
 
 	// Cada tentativa reserva um lugar na janela do endereço (assim, tentativas juntas
 	// não furam o limite). O código certo devolve o lugar: só o errado conta.
-	end := enderecoDe(r)
+	end := limites.Endereco(r)
 	if ok, esperar := s.erradas.Usar(end, 1); !ok {
 		erroEspera(w, "tentativas", esperar)
 		return

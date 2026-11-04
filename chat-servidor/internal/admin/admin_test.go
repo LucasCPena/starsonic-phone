@@ -34,10 +34,21 @@ type painel struct {
 	srv *httptest.Server
 }
 
+// cabecalhoEndereco é o cabeçalho com que um teste diz de que endereço o pedido vem: o
+// httptest.Server só vê 127.0.0.1, e as entradas têm um limite por endereço. O servidor do
+// teste põe o valor no RemoteAddr antes de a página ver o pedido.
+const cabecalhoEndereco = "X-Teste-Endereco"
+
 func novoPainel(t *testing.T) *painel {
 	t.Helper()
 	a := apitest.Novo(t)
-	srv := httptest.NewServer(admin.Novo(admin.Deps{Banco: a.Banco, Hub: a.Hub, Armazem: a.Armazem, Teste: true}))
+	h := admin.Novo(admin.Deps{Banco: a.Banco, Hub: a.Hub, Armazem: a.Armazem, Teste: true})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if e := r.Header.Get(cabecalhoEndereco); e != "" {
+			r.RemoteAddr = e
+		}
+		h.ServeHTTP(w, r)
+	}))
 	t.Cleanup(srv.Close) // antes do banco fechar: os Cleanup correm do último para o primeiro
 	if err := a.Banco.CriarAdmin(t.Context(), usuarioTeste, senhaTeste); err != nil {
 		t.Fatal(err)
@@ -46,12 +57,14 @@ func novoPainel(t *testing.T) *painel {
 }
 
 // navegador é um cliente com cookies que não segue os redirecionamentos: os testes conferem
-// o 303. O csrf é o da sessão, lido do HTML.
+// o 303. O csrf é o da sessão, lido do HTML. Com o endereco, os pedidos vêm dele (veja
+// cabecalhoEndereco); sem ele, de 127.0.0.1.
 type navegador struct {
-	t    *testing.T
-	p    *painel
-	c    *http.Client
-	csrf string
+	t        *testing.T
+	p        *painel
+	c        *http.Client
+	csrf     string
+	endereco string
 }
 
 func (p *painel) navegador(t *testing.T) *navegador {
@@ -61,6 +74,13 @@ func (p *painel) navegador(t *testing.T) *navegador {
 	}
 	return &navegador{t: t, p: p, c: &http.Client{Jar: jar,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+}
+
+// navegadorDe é um navegador cujos pedidos vêm do endereço dado ("192.0.2.10:1000").
+func (p *painel) navegadorDe(t *testing.T, endereco string) *navegador {
+	n := p.navegador(t)
+	n.endereco = endereco
+	return n
 }
 
 // pedir faz o pedido (com o formulário, se houver) e devolve a resposta e o corpo já lido.
@@ -76,6 +96,9 @@ func (n *navegador) pedir(metodo, caminho string, campos url.Values) (*http.Resp
 	}
 	if campos != nil {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	}
+	if n.endereco != "" {
+		req.Header.Set(cabecalhoEndereco, n.endereco)
 	}
 	resp, err := n.c.Do(req)
 	if err != nil {

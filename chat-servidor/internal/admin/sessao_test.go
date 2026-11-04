@@ -1,18 +1,71 @@
 package admin_test
 
 import (
+	"context"
 	"crypto/sha256"
+	"database/sql"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/admin"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/apitest"
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/banco"
 )
+
+// segurarBanco prende a única conexão do banco numa transação aberta, até a função devolvida
+// ser chamada (ou o teste acabar). Enquanto isso, todo pedido que lê ou escreve no banco espera.
+func segurarBanco(t *testing.T, b *banco.Banco) (soltar func()) {
+	t.Helper()
+	preso, solta, feito := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+	go func() {
+		feito <- b.Tx(context.Background(), func(*sql.Tx) error {
+			close(preso)
+			<-solta
+			return nil
+		})
+	}()
+	select {
+	case <-preso:
+	case err := <-feito:
+		t.Fatalf("não prendeu o banco: %v", err)
+	}
+	var uma sync.Once
+	soltar = func() {
+		uma.Do(func() {
+			close(solta)
+			if err := <-feito; err != nil {
+				t.Errorf("a transação que prendia o banco: %v", err)
+			}
+		})
+	}
+	t.Cleanup(soltar)
+	return soltar
+}
+
+// semBanco roda f com a única conexão do banco presa (segurarBanco) e diz se f esperou por
+// ela. Um pedido de entrar que lê a trava do nome ou vai ao argon2id lê o banco antes do
+// hash; um que responde com o banco preso não fez nada disso. Para o teste não travar, o
+// banco é solto em 5 s, e aí esperou é true.
+func semBanco(t *testing.T, b *banco.Banco, f func()) (esperou bool) {
+	t.Helper()
+	soltar := segurarBanco(t, b)
+	var passou atomic.Bool
+	prazo := time.AfterFunc(5*time.Second, func() {
+		passou.Store(true)
+		soltar()
+	})
+	f()
+	prazo.Stop()
+	soltar()
+	return passou.Load()
+}
 
 // cookieDe é o valor do cookie que o navegador guardou para a página.
 func cookieDe(t *testing.T, n *navegador, nome string) string {
@@ -99,6 +152,82 @@ func TestEntrar_SenhaErrada(t *testing.T) {
 	esperarStatus(t, resp, corpo, http.StatusUnauthorized)
 	if !strings.Contains(corpo, "Usuário ou senha incorretos.") {
 		t.Fatalf("usuário que não existe:\n%s", corpo)
+	}
+}
+
+// TestEntrar_LimitePorEndereco é o R28: 10 entradas por 15 minutos por endereço. A 11ª, mesmo
+// com a senha certa, responde 429 com o texto da trava e sem sessão, sem ler a trava do nome e
+// sem calcular o argon2id. Outro endereço não é afetado, e 15 minutos depois o endereço entra.
+func TestEntrar_LimitePorEndereco(t *testing.T) {
+	if testing.Short() {
+		t.Skip("calcula 13 argon2id de 64 MiB")
+	}
+	p := novoPainel(t)
+	daqui := p.navegadorDe(t, "192.0.2.10:1000")
+	// 10 erradas, cada uma com um nome que não existe: a trava do nome fica de fora.
+	for i := 1; i <= 10; i++ {
+		resp, corpo := daqui.entrar(fmt.Sprintf("ninguem-%d@starsonic", i), senhaErrada)
+		esperarStatus(t, resp, corpo, http.StatusUnauthorized)
+		if !strings.Contains(corpo, "Usuário ou senha incorretos.") {
+			t.Fatalf("a errada %d:\n%s", i, corpo)
+		}
+	}
+	// A 11ª, com a senha certa de quem existe, vai com a única conexão do banco presa: se ela
+	// lesse a trava do nome ou fosse ao argon2id, esperaria pelo banco.
+	_, corpo := daqui.get("/admin/entrar")
+	form := url.Values{"usuario": {usuarioTeste}, "senha": {senhaTeste}, "csrf": {csrfDe(t, corpo)}}
+	var resp *http.Response
+	esperou := semBanco(t, p.a.Banco, func() { resp, corpo = daqui.post("/admin/entrar", form) })
+	esperarStatus(t, resp, corpo, http.StatusTooManyRequests)
+	if !strings.Contains(corpo, "Muitas tentativas. Tente de novo daqui a 15 minutos.") {
+		t.Fatalf("a 11ª:\n%s", corpo)
+	}
+	if esperou {
+		t.Fatal("a 11ª esperou pelo banco: ela leu a trava do nome ou foi calcular o argon2id")
+	}
+	for _, c := range resp.Cookies() {
+		if c.Name == "sessao" && c.Value != "" {
+			t.Fatal("a 11ª abriu uma sessão")
+		}
+	}
+	if resp, _ := daqui.get("/admin/"); resp.StatusCode != http.StatusSeeOther {
+		t.Fatal("a 11ª entrou")
+	}
+	// Outro endereço não é afetado.
+	resp, _ = p.navegadorDe(t, "192.0.2.11:1000").entrar(usuarioTeste, senhaTeste)
+	esperarIr(t, resp, "/admin/")
+	// 15 minutos depois, este endereço entra de novo.
+	p.a.Relogio.Avancar(15 * time.Minute)
+	resp, _ = daqui.entrar(usuarioTeste, senhaTeste)
+	esperarIr(t, resp, "/admin/")
+}
+
+// TestEntrar_LimiteDevolve: a entrada certa devolve o seu lugar na janela do endereço, como o
+// código certo na API. As erradas usam nomes que não existem, e a trava do nome fica de fora.
+func TestEntrar_LimiteDevolve(t *testing.T) {
+	if testing.Short() {
+		t.Skip("calcula 12 argon2id de 64 MiB")
+	}
+	p := novoPainel(t)
+	daqui := p.navegadorDe(t, "192.0.2.10:1000")
+	for i := 1; i <= 9; i++ {
+		resp, corpo := daqui.entrar(fmt.Sprintf("ninguem-%d@starsonic", i), senhaErrada)
+		esperarStatus(t, resp, corpo, http.StatusUnauthorized)
+	}
+	resp, _ := daqui.entrar(usuarioTeste, senhaTeste)
+	esperarIr(t, resp, "/admin/")
+	// Do mesmo endereço, por outra porta: mais uma errada ainda é respondida, e a próxima
+	// encontra o limite.
+	outro := p.navegadorDe(t, "192.0.2.10:2000")
+	resp, corpo := outro.entrar("ninguem-10@starsonic", senhaErrada)
+	esperarStatus(t, resp, corpo, http.StatusUnauthorized)
+	if !strings.Contains(corpo, "Usuário ou senha incorretos.") {
+		t.Fatalf("a errada depois da certa:\n%s", corpo)
+	}
+	resp, corpo = outro.entrar("ninguem-11@starsonic", senhaErrada)
+	esperarStatus(t, resp, corpo, http.StatusTooManyRequests)
+	if !strings.Contains(corpo, "Muitas tentativas. Tente de novo daqui a 15 minutos.") {
+		t.Fatalf("a próxima:\n%s", corpo)
 	}
 }
 

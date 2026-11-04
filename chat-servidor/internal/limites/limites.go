@@ -3,11 +3,36 @@
 package limites
 
 import (
+	"net"
+	"net/http"
+	"net/netip"
 	"sync"
 	"time"
 
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/tempo"
 )
+
+// Endereco é a chave dos limites por endereço para quem pediu: a dos códigos errados da API e
+// a das entradas da página de administração. O servidor não fica atrás de proxy, então o
+// X-Forwarded-For não é lido.
+//   - IPv4: o próprio endereço (um IPv4 mapeado em IPv6 vira IPv4);
+//   - IPv6: o prefixo /64, para que girar endereços dentro do /64 não dê tentativas novas;
+//   - o que não der para ler: o RemoteAddr como veio.
+func Endereco(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	a, err := netip.ParseAddr(host)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	a = a.WithZone("").Unmap()
+	if a.Is4() {
+		return a.String()
+	}
+	return netip.PrefixFrom(a, 64).Masked().String()
+}
 
 type uso struct {
 	quando time.Time

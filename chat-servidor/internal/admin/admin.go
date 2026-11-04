@@ -25,6 +25,7 @@ import (
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/armazem"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/banco"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/eventos"
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/limites"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/regras"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/tempo"
 )
@@ -52,6 +53,14 @@ const (
 	textoNomeErrado  = "O nome não confere. Digite o nome da empresa exatamente como ele aparece acima."
 )
 
+// O limite das entradas por endereço (R28): cada POST /admin/entrar que passa do CSRF gasta um
+// lugar, antes da trava do nome e do argon2id, e a entrada certa devolve o seu. A chave é a
+// dos códigos errados da API (limites.Endereco).
+const (
+	maxEntradas     = 10
+	periodoEntradas = 15 * time.Minute
+)
+
 // Deps é o que a página usa: o mesmo banco, o mesmo hub e o mesmo armazém da API. O Fora
 // daqui só alcança os WebSockets do hub da API, e os eventos dos grupos saem pelo avisador da
 // API, feito com o mesmo banco e o mesmo hub.
@@ -63,12 +72,13 @@ type Deps struct {
 }
 
 type painel struct {
-	banco   *banco.Banco
-	hub     *eventos.Hub
-	armazem *armazem.Armazem
-	avisos  *api.Avisador
-	teste   bool
-	telas   map[string]*template.Template
+	banco    *banco.Banco
+	hub      *eventos.Hub
+	armazem  *armazem.Armazem
+	avisos   *api.Avisador
+	entradas *limites.Janela // as entradas, por endereço
+	teste    bool
+	telas    map[string]*template.Template
 }
 
 // Novo monta a página. O manipulador responde a tudo em /admin/.
@@ -83,7 +93,8 @@ func Novo(d Deps) http.Handler {
 		panic("admin.Novo: Deps.Armazem é obrigatório")
 	}
 	p := &painel{banco: d.Banco, hub: d.Hub, armazem: d.Armazem, avisos: api.NovoAvisador(d.Banco, d.Hub),
-		teste: d.Teste, telas: map[string]*template.Template{}}
+		entradas: limites.Nova(maxEntradas, periodoEntradas, d.Banco.Relogio()),
+		teste:    d.Teste, telas: map[string]*template.Template{}}
 	for _, nome := range []string{"entrar", "empresas", "nova", "empresa", "apagar", "erro"} {
 		p.telas[nome] = template.Must(template.ParseFS(paginasFS, "paginas/base.html", "paginas/"+nome+".html"))
 	}

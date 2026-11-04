@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/banco"
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/limites"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/segredo"
 )
 
@@ -147,6 +148,10 @@ func (p *painel) paginaEntrar(w http.ResponseWriter, r *http.Request) {
 
 // POST /admin/entrar: confere o usuário e a senha e abre a sessão. Nem o log nem a página
 // dizem se foi o usuário ou a senha; a senha nunca volta na página nem entra no log.
+//
+// A ordem: o CSRF; o limite do endereço (R28), que vem antes de tudo e, passando dele, responde
+// 429 sem ler a trava nem calcular o argon2id; e o ConferirSenha (a trava do nome, uma vaga do
+// argon2id e o hash).
 func (p *painel) entrar(w http.ResponseWriter, r *http.Request) {
 	if !p.lerFormulario(w, r, sessao{}) {
 		return
@@ -157,6 +162,12 @@ func (p *painel) entrar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	usuario := r.PostForm.Get("usuario")
+	endereco := limites.Endereco(r)
+	if livre, _ := p.entradas.Usar(endereco, 1); !livre {
+		slog.Warn("admin: entrada recusada pelo limite do endereço")
+		p.mostrarEntrada(w, http.StatusTooManyRequests, usuario, textoTrava)
+		return
+	}
 	ok, travado, err := p.banco.ConferirSenha(r.Context(), usuario, r.PostForm.Get("senha"))
 	if err != nil {
 		p.erroServidor(w, sessao{}, err)
@@ -172,6 +183,7 @@ func (p *painel) entrar(w http.ResponseWriter, r *http.Request) {
 		p.mostrarEntrada(w, http.StatusUnauthorized, usuario, textoSenhaErrada)
 		return
 	}
+	p.entradas.Devolver(endereco, 1) // a entrada certa não conta, como o código certo na API
 	token, s, err := p.banco.CriarSessao(r.Context(), usuario)
 	if err != nil {
 		p.erroServidor(w, sessao{}, err)
