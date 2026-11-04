@@ -51,6 +51,9 @@ func Ramal(s string) (string, error) {
 // NomePessoa confere o nome de uma pessoa (até 80 caracteres).
 func NomePessoa(s string) (string, error) { return nome("nome", s, 80) }
 
+// NomeEmpresa confere o nome de uma empresa (até 80 caracteres), o da página de administração.
+func NomeEmpresa(s string) (string, error) { return nome("nome", s, 80) }
+
 // NomeComputador confere o nome de um computador (até 64 caracteres).
 func NomeComputador(s string) (string, error) { return nome("computador", s, 64) }
 

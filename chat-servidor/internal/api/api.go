@@ -32,6 +32,7 @@ type Deps struct {
 type servidor struct {
 	banco    *banco.Banco
 	hub      *eventos.Hub
+	avisos   *Avisador // os eventos mensagem e conversa
 	armazem  *armazem.Armazem
 	origens  map[string]bool
 	padroes  []string        // as origens, como OriginPatterns do websocket.Accept
@@ -64,6 +65,7 @@ func Novo(d Deps) http.Handler {
 	s := &servidor{
 		banco:    d.Banco,
 		hub:      d.Hub,
+		avisos:   NovoAvisador(d.Banco, d.Hub),
 		armazem:  d.Armazem,
 		origens:  map[string]bool{},
 		erradas:  limites.Nova(maxErradas, periodoErradas, d.Banco.Relogio()),

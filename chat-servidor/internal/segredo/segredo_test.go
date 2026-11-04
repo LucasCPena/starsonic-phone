@@ -72,3 +72,18 @@ func TestNovoIDArquivo(t *testing.T) {
 		t.Fatalf("ids ruins: %q %q", a, b)
 	}
 }
+
+func TestNovoToken(t *testing.T) {
+	re := regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`)
+	vistos := map[string]bool{}
+	for i := 0; i < 100; i++ {
+		s := NovoToken()
+		if !re.MatchString(s) {
+			t.Fatalf("token fora do formato: %q", s)
+		}
+		if vistos[s] {
+			t.Fatalf("token repetido: %q", s)
+		}
+		vistos[s] = true
+	}
+}

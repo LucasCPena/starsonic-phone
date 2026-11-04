@@ -1,0 +1,20 @@
+{{/* "Nova empresa": pede o nome; a página da empresa, depois, mostra o código. */}}
+{{define "conteudo"}}{{with .Pagina -}}
+<nav class="caminho" aria-label="Caminho"><a href="/admin/">Empresas</a> <span aria-hidden="true">›</span> Nova empresa</nav>
+<h1 class="titulo">Nova empresa</h1>
+<section class="cartao formulario">
+  <form method="post" action="/admin/empresas" class="pilha">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <label class="rotulo-campo" for="nome">Nome da empresa</label>
+    <input class="entrada" id="nome" name="nome" value="{{.Nome}}" maxlength="80" required autofocus autocomplete="off" aria-describedby="nome-ajuda"{{if .Erro}} aria-invalid="true"{{end}}>
+    <span class="ajuda" id="nome-ajuda">É o nome que o app mostra no cartão Chat da área do administrador. Depois de criar, a página da empresa mostra o código de entrada.</span>
+    {{- if .Erro}}
+    <p class="erro" role="alert">{{.Erro}}</p>
+    {{- end}}
+    <div class="botoes">
+      <button type="submit" class="botao botao-acao">Criar a empresa</button>
+      <a class="botao botao-secundario" href="/admin/">Cancelar</a>
+    </div>
+  </form>
+</section>
+{{- end}}{{end}}

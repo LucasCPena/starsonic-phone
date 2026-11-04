@@ -60,3 +60,41 @@ func TestComputador_UltimaVezUmaPorMinuto(t *testing.T) {
 		t.Fatalf("ultima_vez = %d; queria %d", ultima(), inicio+61_000)
 	}
 }
+
+func TestTirarComputador(t *testing.T) {
+	b := abrirTeste(t)
+	ctx := context.Background()
+	acme, _ := b.CriarEmpresa(ctx, "ACME Comércio Ltda")
+	outra, _ := b.CriarEmpresa(ctx, "Outra Ltda")
+	_, h1 := segredo.NovaChave()
+	_, h2 := segredo.NovaChave()
+	_, h3 := segredo.NovaChave()
+	c1, _ := b.LigarComputador(ctx, acme.ID, "NOTE-ANA", h1)
+	if _, err := b.LigarComputador(ctx, acme.ID, "CASA-ANA", h2); err != nil {
+		t.Fatal(err)
+	}
+	daOutra, _ := b.LigarComputador(ctx, outra.ID, "PC-ABEL", h3)
+
+	if err := b.TirarComputador(ctx, acme.ID, c1.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := b.ComputadorPorChave(ctx, h1); !errors.Is(err, ErrNaoEncontrado) {
+		t.Fatalf("o computador tirado: %v", err)
+	}
+	if _, _, err := b.ComputadorPorChave(ctx, h2); err != nil {
+		t.Fatalf("o outro computador: %v", err)
+	}
+	// Tirar de novo não muda nada; um computador de outra empresa, ou que não existe, dá
+	// ErrNaoEncontrado e continua como estava.
+	if err := b.TirarComputador(ctx, acme.ID, c1.ID); err != nil {
+		t.Fatalf("de novo: %v", err)
+	}
+	for _, id := range []int64{daOutra.ID, 9999} {
+		if err := b.TirarComputador(ctx, acme.ID, id); !errors.Is(err, ErrNaoEncontrado) {
+			t.Fatalf("computador %d: %v", id, err)
+		}
+	}
+	if _, _, err := b.ComputadorPorChave(ctx, h3); err != nil {
+		t.Fatalf("o da outra empresa saiu: %v", err)
+	}
+}

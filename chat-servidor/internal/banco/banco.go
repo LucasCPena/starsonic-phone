@@ -25,6 +25,9 @@ var (
 	ErrGrupoCheio    = errors.New("banco: o grupo já tem 200 pessoas")
 )
 
+// NomeArquivo é o nome do arquivo do banco dentro da pasta de dados do servidor.
+const NomeArquivo = "chat.db"
+
 //go:embed migracoes/*.sql
 var migracoes embed.FS
 
@@ -33,6 +36,7 @@ type Banco struct {
 	db      *sql.DB
 	relogio tempo.Relogio
 	caminho string
+	falsas  tentativasFalsas // as tentativas de entrar com nomes que não existem (admins.go)
 }
 
 // Abrir abre (ou cria) o banco em caminho e aplica as migrações que faltam.

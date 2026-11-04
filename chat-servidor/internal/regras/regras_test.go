@@ -51,6 +51,20 @@ func TestNomePessoa(t *testing.T) {
 	})
 }
 
+func TestNomeEmpresa(t *testing.T) {
+	rodar(t, NomeEmpresa, []caso{
+		{"tira as pontas", "  ACME Comércio Ltda  ", "ACME Comércio Ltda", true},
+		{"80 vale", strings.Repeat("ç", 80), strings.Repeat("ç", 80), true},
+		{"81 não", strings.Repeat("ç", 81), "", false},
+		{"controle", "ACME\nLtda", "", false},
+		{"vazio", "   ", "", false},
+	})
+	var e *Erro
+	if _, err := NomeEmpresa(""); !errors.As(err, &e) || e.Campo != "nome" {
+		t.Fatalf("erro = %v; queria o campo nome", err)
+	}
+}
+
 func TestNomeComputador(t *testing.T) {
 	rodar(t, NomeComputador, []caso{
 		{"normal", "RECEPCAO-01", "RECEPCAO-01", true},

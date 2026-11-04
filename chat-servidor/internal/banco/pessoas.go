@@ -135,18 +135,143 @@ type leitor interface {
 
 // lerIDs devolve a primeira coluna de cada linha da consulta.
 func lerIDs(ctx context.Context, l leitor, consulta string, args ...any) ([]int64, error) {
+	return lerColuna[int64](ctx, l, consulta, args...)
+}
+
+// lerTextos devolve a primeira coluna de cada linha da consulta, como texto.
+func lerTextos(ctx context.Context, l leitor, consulta string, args ...any) ([]string, error) {
+	return lerColuna[string](ctx, l, consulta, args...)
+}
+
+func lerColuna[T any](ctx context.Context, l leitor, consulta string, args ...any) ([]T, error) {
 	linhas, err := l.QueryContext(ctx, consulta, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer linhas.Close()
-	var ids []int64
+	var lista []T
 	for linhas.Next() {
-		var id int64
-		if err := linhas.Scan(&id); err != nil {
+		var v T
+		if err := linhas.Scan(&v); err != nil {
 			return nil, err
 		}
-		ids = append(ids, id)
+		lista = append(lista, v)
 	}
-	return ids, linhas.Err()
+	return lista, linhas.Err()
+}
+
+// ComputadorVisto é um computador ativo na lista da página de administração.
+type ComputadorVisto struct {
+	ID        int64
+	Nome      string
+	UltimaVez int64 // ms UTC
+}
+
+// PessoaComComputadores é uma pessoa ativa da empresa, na página de administração, com os
+// computadores ativos em que ela já entrou (um computador de várias pessoas aparece em cada
+// uma), em ordem de nome. UltimaVez é a mais nova das últimas vezes desses computadores, ou 0
+// sem nenhum.
+type PessoaComComputadores struct {
+	Pessoa
+	Computadores []ComputadorVisto
+	UltimaVez    int64
+}
+
+// PessoasDaEmpresa são as pessoas ativas da empresa, em ordem de nome sem acento e sem caixa
+// (no empate, de id), cada uma com os computadores dela. Sem ninguém, a lista vem vazia.
+func (b *Banco) PessoasDaEmpresa(ctx context.Context, empresaID int64) ([]PessoaComComputadores, error) {
+	linhas, err := b.db.QueryContext(ctx,
+		`SELECT id, ramal, nome FROM pessoas WHERE empresa_id = ? AND saiu_em IS NULL ORDER BY nome_busca, id`,
+		empresaID)
+	if err != nil {
+		return nil, err
+	}
+	lista := []PessoaComComputadores{}
+	pos := map[int64]int{}
+	for linhas.Next() {
+		p := PessoaComComputadores{Pessoa: Pessoa{EmpresaID: empresaID}, Computadores: []ComputadorVisto{}}
+		if err := linhas.Scan(&p.ID, &p.Ramal, &p.Nome); err != nil {
+			linhas.Close()
+			return nil, err
+		}
+		pos[p.ID] = len(lista)
+		lista = append(lista, p)
+	}
+	err = linhas.Err()
+	linhas.Close() // com uma só conexão, a consulta abaixo espera esta terminar
+	if err != nil {
+		return nil, err
+	}
+
+	linhas, err = b.db.QueryContext(ctx,
+		`SELECT x.pessoa_id, c.id, c.nome, c.ultima_vez
+		   FROM computador_pessoas x JOIN computadores c ON c.id = x.computador_id
+		  WHERE c.empresa_id = ? AND c.saiu_em IS NULL
+		  ORDER BY c.nome, c.id`, empresaID)
+	if err != nil {
+		return nil, err
+	}
+	defer linhas.Close()
+	for linhas.Next() {
+		var pessoaID int64
+		var c ComputadorVisto
+		if err := linhas.Scan(&pessoaID, &c.ID, &c.Nome, &c.UltimaVez); err != nil {
+			return nil, err
+		}
+		i, ok := pos[pessoaID]
+		if !ok { // uma pessoa que saiu
+			continue
+		}
+		lista[i].Computadores = append(lista[i].Computadores, c)
+		lista[i].UltimaVez = max(lista[i].UltimaVez, c.UltimaVez)
+	}
+	return lista, linhas.Err()
+}
+
+// AvisoDeGrupo é um aviso gravado num grupo: a conversa e o id da mensagem do aviso.
+type AvisoDeGrupo struct{ ConversaID, MensagemID int64 }
+
+// TirarPessoa tira a pessoa do chat, numa transação só: ela sai de todos os grupos em que
+// está, com o aviso saiu em cada um e a passagem do cuidado de quem cuidava (a mesma do
+// TirarMembro); ela fica marcada como saiu e nunca volta (o mesmo ramal, depois, é uma pessoa
+// nova); e os computadores que agem como ela saem do chat. Devolve esses computadores, para o
+// Hub.Fora, e os avisos, para os eventos, que vão depois do commit. Uma pessoa que já saiu não
+// muda nada. Uma de outra empresa, ou que não existe, dá ErrNaoEncontrado.
+func (b *Banco) TirarPessoa(ctx context.Context, empresaID, pessoaID int64) (computadores []int64, avisos []AvisoDeGrupo, err error) {
+	agora := b.agoraMs()
+	err = b.Tx(ctx, func(tx *sql.Tx) error {
+		p, err := pessoaDaEmpresa(ctx, tx, empresaID, pessoaID)
+		if err != nil {
+			return err
+		}
+		if p.Saiu {
+			return nil
+		}
+		grupos, err := gruposDaPessoa(ctx, tx, pessoaID)
+		if err != nil {
+			return err
+		}
+		for _, g := range grupos {
+			a, err := sairDoGrupo(ctx, tx, g.id, g.cuida, pessoaID, pessoaID, agora)
+			if err != nil {
+				return err
+			}
+			avisos = append(avisos, AvisoDeGrupo{ConversaID: g.id, MensagemID: a})
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE pessoas SET saiu_em = ? WHERE id = ?`, agora, pessoaID); err != nil {
+			return err
+		}
+		computadores, err = lerIDs(ctx, tx,
+			`SELECT id FROM computadores WHERE pessoa_id = ? AND saiu_em IS NULL ORDER BY id`, pessoaID)
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx,
+			`UPDATE computadores SET saiu_em = ? WHERE pessoa_id = ? AND saiu_em IS NULL`, agora, pessoaID)
+		return err
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return computadores, avisos, nil
 }

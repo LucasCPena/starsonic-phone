@@ -1,0 +1,21 @@
+{{/* "Apagar a empresa": só com o nome da empresa digitado (seção 4.3 da spec). */}}
+{{define "conteudo"}}{{with .Pagina -}}
+<nav class="caminho" aria-label="Caminho"><a href="/admin/">Empresas</a> <span aria-hidden="true">›</span> <a href="{{.Endereco}}">{{.Nome}}</a> <span aria-hidden="true">›</span> Apagar</nav>
+<h1 class="titulo">Apagar a empresa</h1>
+<section class="cartao formulario">
+  <p class="texto">Apaga as pessoas, as conversas, as mensagens e os arquivos da <strong>{{.Nome}}</strong>, no banco e no disco. Os computadores dela saem do chat na hora. Não tem volta.</p>
+  <form method="post" action="{{.Endereco}}/apagar" class="pilha">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <label class="rotulo-campo" for="nome">Para confirmar, digite o nome da empresa</label>
+    <input class="entrada" id="nome" name="nome" required autofocus autocomplete="off" spellcheck="false" aria-describedby="nome-ajuda"{{if .Erro}} aria-invalid="true"{{end}}>
+    <span class="ajuda" id="nome-ajuda">Exatamente como aqui: {{.Nome}}</span>
+    {{- if .Erro}}
+    <p class="erro" role="alert">{{.Erro}}</p>
+    {{- end}}
+    <div class="botoes">
+      <button type="submit" class="botao botao-perigo">Apagar a empresa</button>
+      <a class="botao botao-secundario" href="{{.Endereco}}">Cancelar</a>
+    </div>
+  </form>
+</section>
+{{- end}}{{end}}

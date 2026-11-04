@@ -137,20 +137,7 @@ func (b *Banco) ArquivosSemMensagem(ctx context.Context, antesDe int64) ([]strin
 }
 
 func (b *Banco) ids(ctx context.Context, q string, args ...any) ([]string, error) {
-	rows, err := b.db.QueryContext(ctx, q, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
+	return lerTextos(ctx, b.db, q, args...)
 }
 
 // MarcarExpirado marca o arquivo como expirado agora e zera a miniatura. Devolve se marcou:

@@ -1,0 +1,599 @@
+/* A página de administração do chat: o visual das telas Painel e PainelEmpresa do quadro
+   "Starsonic Phone — telas do chat". Tudo vem daqui: as páginas não têm estilo inline, para
+   a CSP default-src 'self' valer sem exceção. */
+
+@font-face {
+  font-family: "Plus Jakarta Sans";
+  src: url("PlusJakartaSans-Variable.woff2") format("woff2");
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --fundo: #f5f7fb;
+  --texto: #0a0e1a;
+  --topo: #070b18;
+  --topo-suave: #b9c4e6;
+  --marinho: #0c2671;
+  --marinho-escuro: #0a1e57;
+  --ciano: #00c2cb;
+  --sobre-ciano: #03222a;
+  --borda: #e7eaf2;
+  --suave: #5b6478;
+  --branco: #ffffff;
+  --erro: #a1251c;
+  --erro-fundo: #fdecea;
+  --fonte: "Plus Jakarta Sans", system-ui, sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: var(--fonte);
+  background: var(--fundo);
+  color: var(--texto);
+}
+
+a {
+  color: var(--marinho);
+}
+
+a:hover {
+  color: var(--marinho-escuro);
+}
+
+:focus-visible {
+  outline: 3px solid var(--ciano);
+  outline-offset: 2px;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+form {
+  margin: 0;
+}
+
+/* O topo azul-marinho, com a marca, quem entrou e o Sair. */
+.topo {
+  background: var(--topo);
+  color: var(--branco);
+}
+
+.topo-dentro {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 14px 24px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.marca {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.logo {
+  display: block;
+  width: 170px;
+  height: auto;
+}
+
+.marca-nome {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--topo-suave);
+}
+
+.conta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.conta-nome {
+  font-size: 13.5px;
+  color: var(--topo-suave);
+}
+
+.botao-sair {
+  height: 36px;
+  padding: 0 16px;
+  border-radius: 999px;
+  border: 1.5px solid rgba(255, 255, 255, 0.28);
+  background: transparent;
+  color: var(--branco);
+  font: 700 13px var(--fonte);
+  cursor: pointer;
+}
+
+.botao-sair:hover {
+  border-color: rgba(255, 255, 255, 0.6);
+}
+
+/* O meio da página. */
+.conteudo {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 32px 24px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.cabeca {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.cabeca-titulos {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sobretitulo {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--marinho);
+}
+
+.sobretitulo-traco {
+  width: 26px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--ciano);
+}
+
+.titulo {
+  margin: 0;
+  font-size: 32px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.12;
+  color: var(--marinho);
+  overflow-wrap: anywhere;
+}
+
+.resumo {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--suave);
+}
+
+.caminho {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--suave);
+}
+
+.caminho a {
+  font-weight: 700;
+  text-decoration: none;
+}
+
+/* Os botões: o ciano é a ação principal; o marinho, a segunda; o contorno escuro, o perigo. */
+.botao {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 42px;
+  padding: 0 20px;
+  border-radius: 999px;
+  border: 0;
+  font: 700 14px var(--fonte);
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.botao-acao {
+  height: 46px;
+  padding: 0 22px 0 18px;
+  background: var(--ciano);
+  color: var(--sobre-ciano);
+  font-size: 15px;
+  box-shadow: 0 14px 30px -12px rgba(0, 194, 203, 0.7);
+}
+
+.botao-acao:hover {
+  color: var(--sobre-ciano);
+  filter: brightness(1.06);
+}
+
+.botao-primario {
+  background: var(--marinho);
+  color: var(--branco);
+}
+
+.botao-primario:hover {
+  background: var(--marinho-escuro);
+  color: var(--branco);
+}
+
+.botao-secundario {
+  border: 1.5px solid var(--borda);
+  background: var(--branco);
+  color: var(--marinho);
+}
+
+.botao-perigo {
+  border: 1.5px solid var(--texto);
+  background: var(--branco);
+  color: var(--texto);
+}
+
+.botao-perigo:hover {
+  background: var(--texto);
+  color: var(--branco);
+}
+
+.botao-pequeno {
+  height: 34px;
+  padding: 0 14px;
+  border: 1.5px solid var(--borda);
+  background: var(--branco);
+  color: var(--marinho);
+  font-size: 12.5px;
+}
+
+.botao-largo {
+  width: 100%;
+  margin-top: 8px;
+  padding: 0 22px;
+}
+
+/* Os números do alto da lista. */
+.numeros {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+.numero {
+  border-radius: 18px;
+  background: var(--branco);
+  border: 1px solid var(--borda);
+  padding: 20px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.numero-valor {
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: var(--marinho);
+}
+
+.numero-legenda {
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--suave);
+}
+
+/* Os cartões e as tabelas. */
+.cartao {
+  border-radius: 18px;
+  background: var(--branco);
+  border: 1px solid var(--borda);
+}
+
+.cartao-tabela {
+  overflow-x: auto;
+}
+
+.tabela {
+  width: 100%;
+  min-width: 640px;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.tabela th {
+  padding: 16px 12px;
+  text-align: left;
+  color: var(--suave);
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.tabela td {
+  padding: 16px 12px;
+}
+
+.tabela th:first-child,
+.tabela td:first-child {
+  padding-left: 22px;
+}
+
+.tabela th:last-child,
+.tabela td:last-child {
+  padding-right: 22px;
+}
+
+.tabela tbody tr {
+  border-top: 1px solid var(--borda);
+}
+
+.tabela-pessoas {
+  min-width: 760px;
+}
+
+.tabela-pessoas th {
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+
+.tabela-pessoas td {
+  padding-top: 14px;
+  padding-bottom: 14px;
+}
+
+.tabela-pessoas td.computadores,
+.tabela-pessoas td.fim {
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.forte {
+  font-weight: 800;
+  color: var(--marinho);
+}
+
+.suave {
+  color: var(--suave);
+}
+
+.fim {
+  text-align: right;
+}
+
+.fim form {
+  display: inline;
+}
+
+.vazio {
+  color: var(--suave);
+  text-align: center;
+}
+
+.abrir {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13.5px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.so-leitor {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.nota {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--suave);
+}
+
+/* O código de entrada. */
+.codigo-cartao {
+  padding: 20px 22px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px 24px;
+}
+
+.codigo-texto {
+  flex: 999 1 320px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.rotulo {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--marinho);
+}
+
+.rotulo-tabela {
+  padding: 18px 22px 6px;
+}
+
+.codigo {
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--texto);
+}
+
+.ajuda {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--suave);
+}
+
+.botoes {
+  flex: 1 1 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.copiado:empty {
+  display: none;
+}
+
+/* Os computadores de cada pessoa, cada um com o seu ×. */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 4px 0 10px;
+  border-radius: 999px;
+  background: var(--fundo);
+  border: 1px solid var(--borda);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.chip-tirar {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 999px;
+  border: 0;
+  background: transparent;
+  color: var(--suave);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.chip-tirar:hover {
+  background: var(--borda);
+  color: var(--texto);
+}
+
+/* Apagar a empresa. */
+.perigo-cartao {
+  padding: 20px 22px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.perigo-texto {
+  flex: 999 1 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.perigo-texto .ajuda {
+  font-size: 13.5px;
+}
+
+.perigo-titulo {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--marinho);
+}
+
+.perigo-cartao .botao {
+  flex: none;
+}
+
+/* Os formulários: entrar, nova empresa, apagar, e as páginas de erro. */
+.formulario {
+  max-width: 560px;
+  padding: 24px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.entrada-cartao {
+  align-self: center;
+  width: 100%;
+  max-width: 420px;
+  margin-top: 24px;
+  padding: 28px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.pilha {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rotulo-campo {
+  margin-top: 8px;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--marinho);
+}
+
+.entrada {
+  width: 100%;
+  height: 46px;
+  padding: 0 14px;
+  border-radius: 12px;
+  border: 1.5px solid var(--borda);
+  background: var(--branco);
+  color: var(--texto);
+  font: 500 15px var(--fonte);
+}
+
+.erro {
+  margin: 4px 0 0;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: var(--erro-fundo);
+  color: var(--erro);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.texto {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.formulario .botoes {
+  flex: none;
+  margin-top: 8px;
+}

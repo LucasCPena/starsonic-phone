@@ -2,8 +2,16 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"database/sql"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/banco"
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/tempo"
 )
 
 func TestVersao(t *testing.T) {
@@ -24,6 +32,161 @@ func TestSubcomandoDesconhecido(t *testing.T) {
 		}
 		if !strings.Contains(saida.String(), "uso:") {
 			t.Fatalf("%v: o uso não foi escrito: %q", args, saida.String())
+		}
+	}
+}
+
+// As senhas dos testes são inventadas e valem só aqui.
+const (
+	senha12 = "senha-teste1" // 12 caracteres
+	senha11 = "senha-de-11"  // 11
+)
+
+// rodar roda o subcomando com a entrada dada e devolve o código e a saída.
+func rodar(t *testing.T, entrada string, args ...string) (int, string) {
+	t.Helper()
+	var saida bytes.Buffer
+	cod := run(args, strings.NewReader(entrada), &saida)
+	return cod, saida.String()
+}
+
+// abrir abre o banco da pasta de dados, como o servidor abre.
+func abrir(t *testing.T, dados string) *banco.Banco {
+	t.Helper()
+	b, err := banco.Abrir(filepath.Join(dados, "chat.db"), tempo.Real())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { b.Fechar() })
+	return b
+}
+
+func conferir(t *testing.T, dados, usuario, senha string) bool {
+	t.Helper()
+	ok, _, err := abrir(t, dados).ConferirSenha(context.Background(), usuario, senha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ok
+}
+
+func TestAdminCriar(t *testing.T) {
+	dados := t.TempDir()
+	cod, saida := rodar(t, senha11+"\n"+senha11+"\n", "admin-criar", "suporte", "--dados", dados)
+	if cod == 0 || !strings.Contains(saida, "A senha precisa ter pelo menos 12 caracteres.") {
+		t.Fatalf("11 caracteres: código %d, saída %q", cod, saida)
+	}
+	if _, err := os.Stat(filepath.Join(dados, "chat.db")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a senha curta abriu o banco: %v", err)
+	}
+
+	cod, saida = rodar(t, senha12+"\n"+senha12+"\n", "admin-criar", "suporte", "--dados", dados)
+	if cod != 0 || strings.Contains(saida, senha12) {
+		t.Fatalf("12 caracteres: código %d, saída %q", cod, saida)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(dados, "chat.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var hash string
+	if err := db.QueryRow(`SELECT senha_hash FROM admins WHERE usuario = 'suporte'`).Scan(&hash); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(hash, "$argon2id$v=19$m=65536,t=3,p=2$") {
+		t.Fatalf("senha_hash = %q", hash)
+	}
+	if !conferir(t, dados, "suporte", senha12) {
+		t.Fatal("a senha criada não entra")
+	}
+
+	// De novo, o mesmo usuário: erro, e a senha continua a primeira.
+	cod, saida = rodar(t, "outra-senha-2\noutra-senha-2\n", "admin-criar", "suporte", "--dados", dados)
+	if cod != 1 || !strings.Contains(saida, "já existe") {
+		t.Fatalf("de novo: código %d, saída %q", cod, saida)
+	}
+	if !conferir(t, dados, "suporte", senha12) {
+		t.Fatal("o admin-criar repetido trocou a senha")
+	}
+}
+
+func TestAdminCriar_SenhasDiferentes(t *testing.T) {
+	dados := t.TempDir()
+	cod, saida := rodar(t, senha12+"\nsenha-teste2\n", "admin-criar", "suporte", "--dados", dados)
+	if cod != 1 || !strings.Contains(saida, "As senhas não são iguais.") {
+		t.Fatalf("código %d, saída %q", cod, saida)
+	}
+	// Sem a segunda senha, também não cria.
+	cod, saida = rodar(t, senha12+"\n", "admin-criar", "suporte", "--dados", dados)
+	if cod != 1 {
+		t.Fatalf("sem a segunda senha: código %d, saída %q", cod, saida)
+	}
+	if _, err := os.Stat(filepath.Join(dados, "chat.db")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("o banco foi aberto sem senha certa: %v", err)
+	}
+}
+
+func TestAdminSenha(t *testing.T) {
+	dados := t.TempDir()
+	if cod, saida := rodar(t, senha12+"\r\n"+senha12+"\r\n", "admin-criar", "--dados", dados, "suporte"); cod != 0 {
+		t.Fatalf("criar: código %d, saída %q", cod, saida)
+	}
+	const nova = "outra-senha-de-teste"
+	cod, saida := rodar(t, nova+"\n"+nova+"\n", "admin-senha", "suporte", "--dados", dados)
+	if cod != 0 || strings.Contains(saida, nova) {
+		t.Fatalf("trocar: código %d, saída %q", cod, saida)
+	}
+	if conferir(t, dados, "suporte", senha12) || !conferir(t, dados, "suporte", nova) {
+		t.Fatal("a senha não mudou")
+	}
+	if cod, saida := rodar(t, nova+"\n"+nova+"\n", "admin-senha", "ninguem", "--dados", dados); cod != 1 || !strings.Contains(saida, "não existe") {
+		t.Fatalf("usuário que não existe: código %d, saída %q", cod, saida)
+	}
+	if cod, saida := rodar(t, senha11+"\n"+senha11+"\n", "admin-senha", "suporte", "--dados", dados); cod != 1 ||
+		!strings.Contains(saida, "A senha precisa ter pelo menos 12 caracteres.") {
+		t.Fatalf("senha curta: código %d, saída %q", cod, saida)
+	}
+}
+
+func TestAdminRemover(t *testing.T) {
+	dados := t.TempDir()
+	rodar(t, senha12+"\n"+senha12+"\n", "admin-criar", "suporte", "--dados", dados)
+	// Remover não pede senha: é o operador do servidor quem roda.
+	if cod, saida := rodar(t, "", "admin-remover", "suporte", "--dados", dados); cod != 0 {
+		t.Fatalf("remover: código %d, saída %q", cod, saida)
+	}
+	if conferir(t, dados, "suporte", senha12) {
+		t.Fatal("o usuário removido ainda entra")
+	}
+	if cod, saida := rodar(t, "", "admin-remover", "suporte", "--dados", dados); cod != 1 || !strings.Contains(saida, "não existe") {
+		t.Fatalf("de novo: código %d, saída %q", cod, saida)
+	}
+}
+
+func TestAdmin_Uso(t *testing.T) {
+	dados := t.TempDir()
+	for _, args := range [][]string{
+		{"admin-criar"},
+		{"admin-criar", "suporte"},
+		{"admin-criar", "suporte", "--dados"},
+		{"admin-criar", "suporte", "outro", "--dados", dados},
+		{"admin-senha", "--dados", dados},
+		{"admin-remover", "suporte", "--dados", filepath.Join(dados, "nao-existe")},
+		{"admin-criar", "com espaço", "--dados", dados},
+	} {
+		cod, saida := rodar(t, senha12+"\n"+senha12+"\n", args...)
+		if cod != 2 || saida == "" || strings.Contains(saida, "desconhecido") || strings.Contains(saida, senha12) {
+			t.Fatalf("%q: código %d, saída %q; queria 2 e a explicação", args, cod, saida)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dados, "chat.db")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("um uso errado abriu o banco: %v", err)
+	}
+	// O uso geral cita os subcomandos novos.
+	_, saida := rodar(t, "")
+	for _, s := range []string{"admin-criar", "admin-senha", "admin-remover"} {
+		if !strings.Contains(saida, s) {
+			t.Fatalf("o uso não cita %s: %q", s, saida)
 		}
 	}
 }

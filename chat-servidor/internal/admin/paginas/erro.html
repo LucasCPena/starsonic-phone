@@ -1,0 +1,8 @@
+{{/* As páginas de erro: não encontrada, pedido recusado, erro do servidor. */}}
+{{define "conteudo"}}{{with .Pagina -}}
+<section class="cartao formulario">
+  <h1 class="titulo">{{.Titulo}}</h1>
+  <p class="texto">{{.Texto}}</p>
+  <div class="botoes"><a class="botao botao-secundario" href="{{.Voltar}}">{{.VoltarTexto}}</a></div>
+</section>
+{{- end}}{{end}}

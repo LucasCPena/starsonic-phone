@@ -1,0 +1,18 @@
+{{/* A entrada, com usuário e senha. A senha digitada nunca volta na página. */}}
+{{define "conteudo"}}{{with .Pagina -}}
+<section class="cartao entrada-cartao" aria-labelledby="entrar-titulo">
+  <h1 class="titulo" id="entrar-titulo">Entrar</h1>
+  <p class="ajuda">A administração do chat do Starsonic Phone é só da equipe da Starsonic.</p>
+  <form method="post" action="/admin/entrar" class="pilha">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <label class="rotulo-campo" for="usuario">Usuário</label>
+    <input class="entrada" id="usuario" name="usuario" value="{{.Usuario}}" required autofocus autocomplete="username" autocapitalize="none" spellcheck="false">
+    <label class="rotulo-campo" for="senha">Senha</label>
+    <input class="entrada" id="senha" name="senha" type="password" required autocomplete="current-password">
+    {{- if .Erro}}
+    <p class="erro" role="alert">{{.Erro}}</p>
+    {{- end}}
+    <button type="submit" class="botao botao-acao botao-largo">Entrar</button>
+  </form>
+</section>
+{{- end}}{{end}}

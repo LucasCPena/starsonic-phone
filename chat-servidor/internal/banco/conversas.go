@@ -300,8 +300,7 @@ func (b *Banco) PorNoGrupo(ctx context.Context, eu, conversaID int64, pessoas []
 
 // TirarMembro tira a pessoa alvo do grupo, a pedido de eu: outra pessoa (só quem cuida,
 // ErrProibido) ou ele mesmo (alvo igual a eu, o aviso saiu). Devolve o id do aviso criado,
-// numa lista. Se quem cuida sai, passa a cuidar o membro ativo com a entrada mais antiga
-// (no empate, o de menor id); sem ninguém, o grupo fica sem quem cuide. Quem não está no
+// numa lista. Se quem cuida sai, o cuidado passa como diz o sairDoGrupo. Quem não está no
 // grupo, ou um alvo que não está, dá ErrNaoEncontrado.
 func (b *Banco) TirarMembro(ctx context.Context, eu, conversaID, alvo int64) ([]int64, error) {
 	agora := b.agoraMs()
@@ -311,46 +310,87 @@ func (b *Banco) TirarMembro(ctx context.Context, eu, conversaID, alvo int64) ([]
 		if err != nil {
 			return err
 		}
-		acao, alvoAviso := "saiu", int64(0)
-		if alvo != eu {
-			if cuida != eu {
-				return ErrProibido
-			}
-			acao, alvoAviso = "tirou", alvo
+		if alvo != eu && cuida != eu {
+			return ErrProibido
 		}
-		r, err := tx.ExecContext(ctx,
-			`UPDATE membros SET saiu_em = ? WHERE conversa_id = ? AND pessoa_id = ? AND saiu_em IS NULL`,
-			agora, conversaID, alvo)
-		if err != nil {
-			return err
-		}
-		if n, err := r.RowsAffected(); err != nil {
-			return err
-		} else if n == 0 {
-			return ErrNaoEncontrado
-		}
-		a, err := avisar(ctx, tx, conversaID, eu, acao, alvoAviso, agora)
+		a, err := sairDoGrupo(ctx, tx, conversaID, cuida, eu, alvo, agora)
 		if err != nil {
 			return err
 		}
 		avisos = append(avisos, a)
-		if cuida != alvo {
-			return nil
-		}
-		var novo sql.NullInt64
-		err = tx.QueryRowContext(ctx,
-			`SELECT pessoa_id FROM membros WHERE conversa_id = ? AND saiu_em IS NULL
-			  ORDER BY entrou_em, pessoa_id LIMIT 1`, conversaID).Scan(&novo)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-		_, err = tx.ExecContext(ctx, `UPDATE conversas SET cuida_id = ? WHERE id = ?`, novo, conversaID)
-		return err
+		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
 	return avisos, nil
+}
+
+// sairDoGrupo marca a saída de alvo do grupo e grava o aviso de quem: saiu, se quem é o
+// próprio alvo, ou tirou, com o alvo. Se alvo cuidava (cuida é quem cuida agora), passa a
+// cuidar o membro ativo com a entrada mais antiga (no empate, o de menor id); sem ninguém, o
+// grupo fica sem quem cuide. Devolve o id do aviso. Se alvo não é membro ativo, dá
+// ErrNaoEncontrado. É a saída do grupo do TirarMembro e do TirarPessoa, dentro da Tx deles.
+func sairDoGrupo(ctx context.Context, tx *sql.Tx, conversaID, cuida, quem, alvo, agora int64) (int64, error) {
+	acao, alvoAviso := "saiu", int64(0)
+	if alvo != quem {
+		acao, alvoAviso = "tirou", alvo
+	}
+	r, err := tx.ExecContext(ctx,
+		`UPDATE membros SET saiu_em = ? WHERE conversa_id = ? AND pessoa_id = ? AND saiu_em IS NULL`,
+		agora, conversaID, alvo)
+	if err != nil {
+		return 0, err
+	}
+	if n, err := r.RowsAffected(); err != nil {
+		return 0, err
+	} else if n == 0 {
+		return 0, ErrNaoEncontrado
+	}
+	a, err := avisar(ctx, tx, conversaID, quem, acao, alvoAviso, agora)
+	if err != nil {
+		return 0, err
+	}
+	if cuida != alvo {
+		return a, nil
+	}
+	var novo sql.NullInt64
+	err = tx.QueryRowContext(ctx,
+		`SELECT pessoa_id FROM membros WHERE conversa_id = ? AND saiu_em IS NULL
+		  ORDER BY entrou_em, pessoa_id LIMIT 1`, conversaID).Scan(&novo)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE conversas SET cuida_id = ? WHERE id = ?`, novo, conversaID); err != nil {
+		return 0, err
+	}
+	return a, nil
+}
+
+// grupoAtivo é um grupo em que a pessoa está, com quem cuida dele (0 se ninguém).
+type grupoAtivo struct{ id, cuida int64 }
+
+// gruposDaPessoa são os grupos em que a pessoa é membro ativo, em ordem de id.
+func gruposDaPessoa(ctx context.Context, tx *sql.Tx, pessoaID int64) ([]grupoAtivo, error) {
+	linhas, err := tx.QueryContext(ctx,
+		`SELECT c.id, c.cuida_id FROM membros m JOIN conversas c ON c.id = m.conversa_id
+		  WHERE m.pessoa_id = ? AND m.saiu_em IS NULL AND c.tipo = 'grupo'
+		  ORDER BY c.id`, pessoaID)
+	if err != nil {
+		return nil, err
+	}
+	defer linhas.Close()
+	var lista []grupoAtivo
+	for linhas.Next() {
+		var g grupoAtivo
+		var cuida sql.NullInt64
+		if err := linhas.Scan(&g.id, &cuida); err != nil {
+			return nil, err
+		}
+		g.cuida = cuida.Int64
+		lista = append(lista, g)
+	}
+	return lista, linhas.Err()
 }
 
 // PessoasDaConversa são os membros ativos do grupo, ou as duas pessoas da dupla, em ordem

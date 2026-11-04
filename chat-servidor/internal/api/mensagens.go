@@ -19,12 +19,7 @@ const (
 	periodoMensagens = time.Minute
 )
 
-// Os eventos das mensagens (seção 7 do protocolo).
-type eventoMensagem struct {
-	Tipo     string       `json:"tipo"` // "mensagem"
-	Mensagem mensagemJSON `json:"mensagem"`
-}
-
+// O evento lida (seção 7 do protocolo). O mensagem fica com o Avisador.
 type eventoLida struct {
 	Tipo     string `json:"tipo"` // "lida"
 	Conversa int64  `json:"conversa"`
@@ -37,29 +32,6 @@ func (s *servidor) travaConversa(conversaID int64) (soltar func()) {
 	m := &s.travasConversa[uint64(conversaID)%uint64(len(s.travasConversa))]
 	m.Lock()
 	return m.Unlock
-}
-
-// emitirMensagens manda o evento mensagem de cada id a todos os membros da conversa agora,
-// na ordem dos ids. Vai depois do commit; um erro aqui só entra no log, porque a mensagem já
-// foi gravada e o app busca o que perdeu com o depois.
-func (s *servidor) emitirMensagens(ctx context.Context, conversaID int64, ids []int64) {
-	if len(ids) == 0 {
-		return
-	}
-	ctx = context.WithoutCancel(ctx)
-	msgs, err := s.banco.MensagensPorID(ctx, ids)
-	if err != nil {
-		slog.Error("evento mensagem", "erro", err)
-		return
-	}
-	quem, err := s.banco.PessoasDaConversa(ctx, conversaID)
-	if err != nil {
-		slog.Error("evento mensagem", "erro", err)
-		return
-	}
-	for _, m := range msgs {
-		s.hub.ParaPessoas(quem, eventoMensagem{Tipo: "mensagem", Mensagem: novaMensagemJSON(m)})
-	}
 }
 
 // GET /api/v1/conversas/{id}/mensagens: uma página das mensagens.
@@ -188,7 +160,7 @@ func (s *servidor) enviar(w http.ResponseWriter, r *http.Request) {
 	status := http.StatusOK
 	if nova {
 		status = http.StatusCreated
-		s.emitirMensagens(ctx, id, []int64{m.ID})
+		s.avisos.Mensagens(ctx, id, []int64{m.ID})
 	}
 	escreverJSON(w, status, map[string]any{"mensagem": novaMensagemJSON(m)})
 }

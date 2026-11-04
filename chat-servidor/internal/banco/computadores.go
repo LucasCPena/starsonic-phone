@@ -78,3 +78,22 @@ func (b *Banco) DesligarComputador(ctx context.Context, id int64) error {
 		`UPDATE computadores SET saiu_em = ? WHERE id = ? AND saiu_em IS NULL`, b.agoraMs(), id)
 	return err
 }
+
+// TirarComputador faz a chave do computador da empresa deixar de valer, pela página de
+// administração. Tirar de novo não muda nada. Um computador de outra empresa, ou que não
+// existe, dá ErrNaoEncontrado.
+func (b *Banco) TirarComputador(ctx context.Context, empresaID, computadorID int64) error {
+	return b.Tx(ctx, func(tx *sql.Tx) error {
+		var saiu sql.NullInt64
+		err := tx.QueryRowContext(ctx, `SELECT saiu_em FROM computadores WHERE id = ? AND empresa_id = ?`,
+			computadorID, empresaID).Scan(&saiu)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNaoEncontrado
+		}
+		if err != nil || saiu.Valid {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE computadores SET saiu_em = ? WHERE id = ?`, b.agoraMs(), computadorID)
+		return err
+	})
+}

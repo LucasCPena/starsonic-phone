@@ -1,0 +1,45 @@
+{{/* A lista das empresas (a tela Painel do quadro). */}}
+{{define "conteudo"}}{{with .Pagina -}}
+<div class="cabeca">
+  <div class="cabeca-titulos">
+    <span class="sobretitulo"><span class="sobretitulo-traco" aria-hidden="true"></span>CHAT DO STARSONIC PHONE</span>
+    <h1 class="titulo">Empresas</h1>
+  </div>
+  <a class="botao botao-acao" href="/admin/empresas/nova">{{template "icone-mais"}}Nova empresa</a>
+</div>
+<div class="numeros">
+  {{- range .Numeros}}
+  <div class="numero">
+    <span class="numero-valor">{{.Valor}}</span>
+    <span class="numero-legenda">{{.Legenda}}</span>
+  </div>
+  {{- end}}
+</div>
+<section class="cartao cartao-tabela" aria-label="Empresas no chat">
+  <table class="tabela">
+    <thead>
+      <tr>
+        <th scope="col">EMPRESA</th>
+        <th scope="col">PESSOAS</th>
+        <th scope="col">ESPAÇO DOS ARQUIVOS</th>
+        <th scope="col">NO CHAT DESDE</th>
+        <th scope="col"><span class="so-leitor">Abrir</span></th>
+      </tr>
+    </thead>
+    <tbody>
+      {{- range .Empresas}}
+      <tr>
+        <td class="forte">{{.Nome}}</td>
+        <td>{{.Pessoas}}</td>
+        <td>{{.Espaco}}</td>
+        <td class="suave">{{.Desde}}</td>
+        <td class="fim"><a class="abrir" href="{{.Endereco}}" aria-label="Abrir {{.Nome}}">Abrir{{template "icone-seta"}}</a></td>
+      </tr>
+      {{- else}}
+      <tr><td colspan="5" class="vazio">Nenhuma empresa ainda. A primeira entra pelo “Nova empresa”.</td></tr>
+      {{- end}}
+    </tbody>
+  </table>
+</section>
+<p class="nota">Os arquivos ficam 1 ano no servidor. Depois disso, saem, e a mensagem mostra “Arquivo expirado”. O texto das conversas fica.</p>
+{{- end}}{{end}}

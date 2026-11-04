@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -11,43 +10,10 @@ import (
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/regras"
 )
 
-// Os eventos das conversas (seção 7 do protocolo).
-type eventoConversa struct {
-	Tipo     string       `json:"tipo"` // "conversa"
-	Conversa conversaJSON `json:"conversa"`
-}
-
+// O evento conversaSaiu (seção 7 do protocolo). O conversa fica com o Avisador.
 type eventoConversaSaiu struct {
 	Tipo     string `json:"tipo"` // "conversaSaiu"
 	Conversa int64  `json:"conversa"`
-}
-
-// avisarMembros manda o evento conversa a cada pessoa de quem, um de cada vez: o cuida e o
-// naoLidas são de cada uma. Vai depois do commit; um erro aqui só entra no log, porque a
-// mudança já valeu e o app acerta a lista na próxima vez que a buscar.
-func (s *servidor) avisarMembros(ctx context.Context, empresaID, conversaID int64, quem []int64) {
-	ctx = context.WithoutCancel(ctx)
-	for _, id := range quem {
-		c, err := s.banco.Conversa(ctx, empresaID, id, conversaID)
-		if errors.Is(err, banco.ErrNaoEncontrado) {
-			continue
-		}
-		if err != nil {
-			slog.Error("evento conversa", "erro", err)
-			continue
-		}
-		s.hub.ParaPessoas([]int64{id}, eventoConversa{Tipo: "conversa", Conversa: novaConversaJSON(c)})
-	}
-}
-
-// avisarMudanca manda o evento conversa a todos os membros da conversa agora.
-func (s *servidor) avisarMudanca(ctx context.Context, empresaID, conversaID int64) {
-	quem, err := s.banco.PessoasDaConversa(context.WithoutCancel(ctx), conversaID)
-	if err != nil {
-		slog.Error("evento conversa", "erro", err)
-		return
-	}
-	s.avisarMembros(ctx, empresaID, conversaID, quem)
 }
 
 // idDoCaminho lê o número do segmento {nome} da rota. Um texto que não é um número
@@ -135,7 +101,7 @@ func (s *servidor) criarDupla(w http.ResponseWriter, r *http.Request, c banco.Co
 	status := http.StatusOK
 	if nova {
 		status = http.StatusCreated
-		s.avisarMudanca(r.Context(), c.EmpresaID, id)
+		s.avisos.Conversa(r.Context(), c.EmpresaID, id)
 	}
 	escreverJSON(w, status, map[string]any{"conversa": novaConversaJSON(conv)})
 }
@@ -160,8 +126,7 @@ func (s *servidor) criarGrupo(w http.ResponseWriter, r *http.Request, c banco.Co
 		erroDoBanco(w, err)
 		return
 	}
-	s.avisarMudanca(r.Context(), c.EmpresaID, id)
-	s.emitirMensagens(r.Context(), id, avisos) // o criou e os pos, a cada membro, depois do evento conversa
+	s.avisos.Grupo(r.Context(), c.EmpresaID, id, avisos) // o evento conversa, e depois o criou e os pos
 	escreverJSON(w, http.StatusCreated, map[string]any{"conversa": novaConversaJSON(conv)})
 }
 
@@ -220,8 +185,7 @@ func (s *servidor) porNoGrupo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(avisos) > 0 {
-		s.avisarMudanca(r.Context(), c.EmpresaID, id)
-		s.emitirMensagens(r.Context(), id, avisos)
+		s.avisos.Grupo(r.Context(), c.EmpresaID, id, avisos)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -243,10 +207,9 @@ func (s *servidor) tirarDoGrupo(w http.ResponseWriter, r *http.Request) {
 		erroDoBanco(w, err)
 		return
 	}
-	// Quem saiu perde a conversa; os que ficam recebem o grupo com as pessoas e o cuida novos.
+	// Quem saiu perde a conversa; os que ficam recebem o grupo com as pessoas e o cuida novos,
+	// e o aviso. Quem saiu já não é membro e não recebe o aviso da própria saída.
 	s.hub.ParaPessoas([]int64{alvo}, eventoConversaSaiu{Tipo: "conversaSaiu", Conversa: id})
-	s.avisarMudanca(r.Context(), c.EmpresaID, id)
-	// O aviso vai a quem ficou: quem saiu já não é membro e não recebe o aviso da própria saída.
-	s.emitirMensagens(r.Context(), id, avisos)
+	s.avisos.Grupo(r.Context(), c.EmpresaID, id, avisos)
 	w.WriteHeader(http.StatusNoContent)
 }

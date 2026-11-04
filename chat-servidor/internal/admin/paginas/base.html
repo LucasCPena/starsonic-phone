@@ -1,0 +1,42 @@
+{{/* A moldura de todas as páginas: o topo com a marca e, com a sessão, quem entrou e o Sair. */}}
+{{define "base" -}}
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>{{.Titulo}}</title>
+<link rel="stylesheet" href="/admin/estatico/estilo.css">
+{{block "scripts" .}}{{end}}
+</head>
+<body>
+<header class="topo">
+  <div class="topo-dentro">
+    <div class="marca">
+      <img class="logo" src="/admin/estatico/logo-negativo.png" alt="Starsonic soluções de voz e dados" width="170" height="52">
+      <span class="marca-nome">Chat · administração</span>
+    </div>
+    {{- if .Usuario}}
+    <div class="conta">
+      <span class="conta-nome">{{.Usuario}}</span>
+      <form method="post" action="/admin/sair">
+        <input type="hidden" name="csrf" value="{{.CSRF}}">
+        <button type="submit" class="botao-sair">Sair</button>
+      </form>
+    </div>
+    {{- end}}
+  </div>
+</header>
+<main class="conteudo">
+{{template "conteudo" .}}
+</main>
+</body>
+</html>
+{{end}}
+
+{{define "icone-mais"}}<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>{{end}}
+
+{{define "icone-seta"}}<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>{{end}}
+
+{{define "icone-x"}}<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>{{end}}

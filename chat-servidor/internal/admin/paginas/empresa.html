@@ -1,0 +1,75 @@
+{{/* Uma empresa (a tela PainelEmpresa do quadro): o código, as pessoas e os computadores, e
+     apagar. A página nunca mostra as conversas. */}}
+{{define "scripts"}}<script src="/admin/estatico/copiar.js" defer></script>{{end}}
+
+{{define "conteudo"}}{{with .Pagina -}}
+<nav class="caminho" aria-label="Caminho"><a href="/admin/">Empresas</a> <span aria-hidden="true">›</span> {{.Nome}}</nav>
+<div class="cabeca">
+  <h1 class="titulo">{{.Nome}}</h1>
+  <span class="resumo">{{.Resumo}}</span>
+</div>
+<section class="cartao codigo-cartao" aria-labelledby="codigo-titulo">
+  <div class="codigo-texto">
+    <h2 class="rotulo" id="codigo-titulo">CÓDIGO DE ENTRADA</h2>
+    <span class="codigo" id="codigo">{{.Codigo}}</span>
+    <span class="ajuda">O técnico cola este código na área do administrador do app. Trocar o código não tira ninguém do chat: o novo vale para os próximos computadores.</span>
+  </div>
+  <div class="botoes">
+    <button type="button" class="botao botao-primario" id="copiar" hidden>Copiar o código</button>
+    <form method="post" action="{{.Endereco}}/codigo">
+      <input type="hidden" name="csrf" value="{{$.CSRF}}">
+      <button type="submit" class="botao botao-secundario">Trocar o código</button>
+    </form>
+    <span class="ajuda copiado" id="copiado" role="status"></span>
+  </div>
+</section>
+<section class="cartao cartao-tabela" aria-labelledby="pessoas-titulo">
+  <h2 class="rotulo rotulo-tabela" id="pessoas-titulo">PESSOAS NO CHAT</h2>
+  <table class="tabela tabela-pessoas">
+    <thead>
+      <tr>
+        <th scope="col">NOME</th>
+        <th scope="col">RAMAL</th>
+        <th scope="col">COMPUTADORES</th>
+        <th scope="col">ÚLTIMA VEZ</th>
+        <th scope="col"><span class="so-leitor">Tirar</span></th>
+      </tr>
+    </thead>
+    <tbody>
+      {{- range .Pessoas}}
+      <tr>
+        <td class="forte">{{.Nome}}</td>
+        <td>{{.Ramal}}</td>
+        <td class="computadores">
+          <div class="chips">
+            {{- range .Computadores}}
+            <form class="chip" method="post" action="{{.Tirar}}" title="Última vez: {{.UltimaVez}}">
+              <input type="hidden" name="csrf" value="{{$.CSRF}}">
+              <span>{{.Nome}}</span>
+              <button type="submit" class="chip-tirar" aria-label="Tirar o computador {{.Nome}} do chat">{{template "icone-x"}}</button>
+            </form>
+            {{- end}}
+          </div>
+        </td>
+        <td class="suave">{{.UltimaVez}}</td>
+        <td class="fim">
+          <form method="post" action="{{.Tirar}}">
+            <input type="hidden" name="csrf" value="{{$.CSRF}}">
+            <button type="submit" class="botao botao-pequeno" aria-label="Tirar {{.Nome}} do chat">Tirar do chat</button>
+          </form>
+        </td>
+      </tr>
+      {{- else}}
+      <tr><td colspan="5" class="vazio">Ninguém entrou no chat ainda. Cada pessoa aparece aqui quando o app entra com a conta dela.</td></tr>
+      {{- end}}
+    </tbody>
+  </table>
+</section>
+<section class="cartao perigo-cartao" aria-labelledby="apagar-titulo">
+  <div class="perigo-texto">
+    <h2 class="perigo-titulo" id="apagar-titulo">Apagar a empresa</h2>
+    <span class="ajuda">Apaga as pessoas, as conversas, as mensagens e os arquivos da {{.Nome}}. Não tem volta: o servidor pede para você digitar o nome da empresa antes.</span>
+  </div>
+  <a class="botao botao-perigo" href="{{.Endereco}}/apagar">Apagar a empresa</a>
+</section>
+{{- end}}{{end}}
