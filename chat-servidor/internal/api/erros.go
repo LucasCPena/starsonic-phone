@@ -15,6 +15,7 @@ const limiteJSON = 64 * 1024 // o corpo JSON tem até 64 KiB (seção 1 do proto
 // escreverJSON responde com o status e o valor em JSON.
 func escreverJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
 }

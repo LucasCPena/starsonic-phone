@@ -104,3 +104,22 @@ func TestErroServidor_PedidoCanceladoNaoRegistraError(t *testing.T) {
 		t.Fatalf("o pedido cancelado registrou Error: %q", erros)
 	}
 }
+
+func TestJSON_Nosniff(t *testing.T) {
+	a := apitest.Novo(t)
+	acme := a.Empresa("ACME Comércio Ltda")
+	chave := a.Ligar(acme.Codigo, "PC-ANA")
+	a.Entrar(chave, "2003", "Ana Souza")
+
+	respostas := map[string]*http.Response{
+		"200 pessoas":   a.Pedir(chave, "GET", "/api/v1/pessoas", nil),
+		"401 sem chave": a.Pedir("", "GET", "/api/v1/pessoas", nil),
+		"404 rota":      a.Pedir(chave, "GET", "/api/v1/nada", nil),
+		"404 código":    a.Pedir("", "POST", "/api/v1/computadores", map[string]string{"codigo": "XXXX-XXXX", "computador": "PC-X"}),
+	}
+	for nome, resp := range respostas {
+		if got := resp.Header.Get("X-Content-Type-Options"); got != "nosniff" {
+			t.Errorf("%s: X-Content-Type-Options = %q; queria nosniff", nome, got)
+		}
+	}
+}
