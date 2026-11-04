@@ -17,6 +17,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/banco"
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/copia"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/servidor"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/tempo"
 )
@@ -34,6 +35,7 @@ subcomandos:
   admin-criar <usuario> --dados <pasta>     cria um usuário da página de administração
   admin-senha <usuario> --dados <pasta>     troca a senha de um usuário (e encerra as sessões dele)
   admin-remover <usuario> --dados <pasta>   remove um usuário
+  copia --dados <pasta> --destino <pasta>   faz a cópia de segurança do banco (chat-AAAA-MM-DD.db)
 
   O admin-criar e o admin-senha pedem a senha duas vezes, sem mostrar. Rode com o usuário
   do serviço, para o banco continuar dele.
@@ -54,6 +56,8 @@ func run(args []string, entrada io.Reader, saida, erros io.Writer) int {
 		return servir(args[1:], saida)
 	case "admin-criar", "admin-senha", "admin-remover":
 		return administrar(args[0], args[1:], entrada, saida, erros)
+	case "copia":
+		return copiar(args[1:], saida)
 	default:
 		fmt.Fprintf(saida, "subcomando desconhecido: %s\n\n%s", args[0], uso)
 		return 2
@@ -119,6 +123,36 @@ func servir(args []string, saida io.Writer) int {
 			return 1
 		}
 		err = servidor.Rodar(ctx, c)
+	}
+	if err != nil {
+		fmt.Fprintln(saida, "Erro:", err)
+		return 1
+	}
+	return 0
+}
+
+// copiar faz a cópia de segurança do banco (copia.Fazer). Com os argumentos errados volta 2, e
+// com um erro na cópia, 1.
+func copiar(args []string, saida io.Writer) int {
+	fs := flag.NewFlagSet("copia", flag.ContinueOnError)
+	fs.SetOutput(saida)
+	dados := fs.String("dados", "", "a pasta de dados do servidor, onde fica o "+banco.NomeArquivo)
+	destino := fs.String("destino", "", "a pasta onde a cópia é guardada")
+	fs.Usage = func() { fmt.Fprint(saida, "uso: starsonic-chat copia --dados <pasta> --destino <pasta>\n") }
+	if fs.Parse(args) != nil {
+		return 2
+	}
+	if *dados == "" || *destino == "" || fs.NArg() != 0 {
+		fs.Usage()
+		return 2
+	}
+	if info, err := os.Stat(*dados); err != nil || !info.IsDir() {
+		fmt.Fprintf(saida, "A pasta de dados não existe: %s\n", *dados)
+		return 2
+	}
+	arquivo, err := copia.Fazer(context.Background(), *dados, *destino, tempo.Real())
+	if arquivo != "" {
+		fmt.Fprintln(saida, "Cópia feita:", arquivo)
 	}
 	if err != nil {
 		fmt.Fprintln(saida, "Erro:", err)

@@ -1,0 +1,27 @@
+[Unit]
+Description=Starsonic Chat, a cópia de segurança da noite
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Roda com o dono dos dados: o SQLite precisa gravar o chat.db-shm até para ler, e o rclone
+# guarda a configuração na pasta do usuário, que é a pasta de dados.
+User=starsonic-chat
+Group=starsonic-chat
+ExecStart=/usr/local/lib/starsonic-chat/copia.sh
+
+# Sem nenhuma capacidade especial.
+CapabilityBoundingSet=
+UMask=0077
+ReadWritePaths=/var/lib/starsonic-chat
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes

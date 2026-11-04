@@ -288,3 +288,40 @@ func TestServir_EnderecoAntesDaPasta(t *testing.T) {
 		t.Fatalf("saída %q", saida.String())
 	}
 }
+
+func TestCopia(t *testing.T) {
+	dados, destino := t.TempDir(), filepath.Join(t.TempDir(), "copias")
+	b, err := banco.Abrir(filepath.Join(dados, banco.NomeArquivo), tempo.Real())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Fechar()
+	cod, saida := rodar(t, "", "copia", "--destino", destino, "--dados", dados)
+	if cod != 0 || !strings.Contains(saida, "chat-") {
+		t.Fatalf("código %d, saída %q", cod, saida)
+	}
+	itens, err := filepath.Glob(filepath.Join(destino, "chat-*.db"))
+	if err != nil || len(itens) != 1 {
+		t.Fatalf("cópias = %v, %v", itens, err)
+	}
+}
+
+func TestCopia_Uso(t *testing.T) {
+	dados := t.TempDir()
+	for _, args := range [][]string{
+		{"copia"},
+		{"copia", "--dados", dados},
+		{"copia", "--destino", dados},
+		{"copia", "--dados", dados, "--destino", dados, "sobra"},
+		{"copia", "--dados", filepath.Join(dados, "nao-existe"), "--destino", dados},
+	} {
+		cod, saida := rodar(t, "", args...)
+		if cod != 2 || saida == "" || strings.Contains(saida, "desconhecido") {
+			t.Fatalf("%q: código %d, saída %q; queria 2 e a explicação", args, cod, saida)
+		}
+	}
+	_, saida := rodar(t, "")
+	if !strings.Contains(saida, "copia --dados") {
+		t.Fatalf("o uso não cita a cópia: %q", saida)
+	}
+}

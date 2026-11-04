@@ -43,6 +43,16 @@ jobs:
           GOOS: linux
           GOARCH: amd64
         run: go build -trimpath -o starsonic-chat ./cmd/starsonic-chat
+      - name: shellcheck
+        run: shellcheck deploy/*.sh
+      - name: systemd-analyze
+        # O verify confere se o ExecStart de cada unidade existe e roda: põe o programa e o
+        # copia.sh onde a instalação os põe.
+        run: |
+          sudo install -m 0755 starsonic-chat /usr/local/bin/starsonic-chat
+          sudo install -D -m 0755 deploy/copia.sh /usr/local/lib/starsonic-chat/copia.sh
+          sudo useradd --system --no-create-home --shell /usr/sbin/nologin starsonic-chat
+          systemd-analyze verify deploy/*.service deploy/*.timer
       - uses: actions/upload-artifact@v4
         with:
           name: starsonic-chat-linux-amd64

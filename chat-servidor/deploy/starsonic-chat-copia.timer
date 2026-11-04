@@ -1,0 +1,9 @@
+[Unit]
+Description=Starsonic Chat, a cópia de segurança todo dia às 03:00 de Brasília
+
+[Timer]
+OnCalendar=*-*-* 03:00:00 America/Sao_Paulo
+Persistent=true
+
+[Install]
+WantedBy=timers.target

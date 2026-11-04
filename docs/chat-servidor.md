@@ -1,0 +1,339 @@
+# Starsonic Chat: o guia do servidor
+
+Este guia é para quem instala e cuida do servidor do chat. Você não precisa saber programar.
+
+Como usar:
+
+- Cada comando fica numa linha só. Copie a linha inteira e cole no terminal da VM.
+- Onde aparece algo entre `<` e `>`, troque pelo seu valor, sem os sinais. Exemplo: `<endereço>` vira `chat.exemplo.com.br`.
+- Depois de cada comando, o guia diz o que você deve ver. Se aparecer outra coisa, vá para o passo 10.
+
+## 1. O que a VM precisa
+
+| O quê | Quanto |
+|---|---|
+| Processador | 2 vCPU |
+| Memória | 2 GB |
+| Disco | 120 GB SSD (20 GB para o sistema e o banco, 100 GB para os arquivos) |
+| Sistema | Ubuntu 24.04 (ou Debian 12), com systemd |
+| Rede | um endereço público fixo |
+
+Antes de instalar, deixe três coisas prontas:
+
+1. **O nome do chat no DNS.** Escolha um nome, por exemplo `chat.exemplo.com.br`. No DNS da Starsonic, crie um registro do tipo A com esse nome, apontando para o endereço público da VM. O certificado (o cadeado) é pedido ao Let's Encrypt só depois que o nome aponta para a VM. Esse nome é o `<endereço>` deste guia.
+2. **As portas 80 e 443 abertas**, na rede da nuvem e em qualquer firewall. A 443 é o chat. A 80 serve para o Let's Encrypt e leva quem entrar por ela para a 443. As duas têm de estar livres na VM.
+3. **Um lugar para a cópia de segurança, fora da VM.** Pode ser outro servidor da Starsonic ou um armazenamento na nuvem. Precisa de uns 150 GB.
+
+Para conferir o nome no DNS, rode na VM:
+
+```
+getent hosts <endereço>
+```
+
+Você deve ver uma linha com o endereço público da VM. Se não aparecer nada, o DNS ainda não está pronto: espere e tente de novo.
+
+O disco cresce com os arquivos. Quando chegar perto de 80% de uso, aumente o disco. As cópias dos últimos 30 dias também ficam na VM, em `/var/lib/starsonic-chat/copias`.
+
+## 2. Instalar
+
+Veja o número da última versão do chat na página de Releases do projeto no GitHub. As versões do chat se chamam `chat-v` e o número. Se a versão for `chat-v0.1.0`, o `<versão>` é `0.1.0`.
+
+Baixe o instalador:
+
+```
+curl -fsSLO https://github.com/LucasCPena/starsonic-phone/releases/download/chat-v<versão>/instalar.sh
+```
+
+Não aparece nada. Se der erro, confira o número da versão.
+
+Rode o instalador:
+
+```
+sudo bash instalar.sh instalar <endereço>
+```
+
+Você deve ver:
+
+- `SHA-256 conferido.`
+- no fim, `Pronto: o Starsonic Chat <versão> está instalado e ligado em https://<endereço>/`
+
+O instalador confere se o sistema serve, se as portas 80 e 443 estão livres e se o programa baixado não foi alterado. Se algo estiver errado, ele para com uma frase dizendo o quê, e não instala nada pela metade.
+
+Confira que o serviço está ligado:
+
+```
+systemctl status starsonic-chat
+```
+
+Você deve ver `active (running)` em verde. Aperte `q` para sair.
+
+## 3. Criar o usuário da administração
+
+A página de administração abre com usuário e senha. Rode sempre os comandos de usuário como o usuário do serviço (`starsonic-chat`), como abaixo. Assim o banco continua sendo dele.
+
+```
+sudo -u starsonic-chat starsonic-chat admin-criar <usuário> --dados /var/lib/starsonic-chat
+```
+
+O programa pede a senha duas vezes (`Senha:` e `Repita a senha:`). Nada aparece enquanto você digita, e isso é normal. A senha precisa ter pelo menos 12 caracteres.
+
+Você deve ver: `Usuário <usuário> criado.`
+
+Para trocar a senha de um usuário (isso também encerra as sessões dele):
+
+```
+sudo -u starsonic-chat starsonic-chat admin-senha <usuário> --dados /var/lib/starsonic-chat
+```
+
+Para remover um usuário:
+
+```
+sudo -u starsonic-chat starsonic-chat admin-remover <usuário> --dados /var/lib/starsonic-chat
+```
+
+Depois de 5 senhas erradas, o usuário trava, e a página mostra `Muitas tentativas. Tente de novo daqui a 15 minutos.` A trava acaba sozinha em 15 minutos, também depois de trocar a senha. Para soltar na hora, reinicie o serviço:
+
+```
+sudo systemctl restart starsonic-chat
+```
+
+## 4. Conferir a instalação
+
+Faça estas conferências uma vez, logo depois de instalar.
+
+**O cadeado.** No navegador, abra `https://<endereço>/admin/`. A primeira vez pode demorar alguns segundos, porque o certificado é pedido nessa hora. Você deve ver a tela de entrada, com o cadeado fechado, sem nenhum aviso. Entre com o usuário do passo 3.
+
+**Os três testes de rede.** Rode na VM, ou em qualquer outro computador:
+
+```
+curl -sI https://<endereço>/admin/
+```
+
+Entre as linhas, deve haver `strict-transport-security`. Ela é o aviso para o navegador usar sempre o cadeado.
+
+```
+curl -sI http://<endereço>/admin/
+```
+
+Deve aparecer `301 Moved Permanently` e uma linha `location: https://<endereço>/admin/`. É a porta 80 levando para o cadeado.
+
+```
+curl --tlsv1.1 --tls-max 1.1 https://<endereço>/
+```
+
+Deve dar **erro** (algo como `curl: (35)`). Isso é o certo: o servidor recusa o TLS 1.1, que é antigo e inseguro. Se a página abrir, avise quem cuida do chat.
+
+**Uma empresa de teste.** Na página de administração:
+
+1. Clique em `Nova empresa`, escreva o nome `Teste` e clique em `Criar a empresa`.
+2. Na página da empresa, veja o `CÓDIGO DE ENTRADA`. É esse código que o técnico digita no app para ligar um computador à empresa. Veja que o código aparece e que o botão `Copiar o código` funciona.
+3. Clique em `Apagar a empresa` e siga o que a página pedir. A empresa de teste some da lista.
+
+## 5. Configurar a cópia de segurança
+
+Toda noite, às 03:00 (horário de Brasília), o servidor faz uma cópia do banco e a manda, junto com os arquivos, para o destino fora da VM. As cópias ficam 30 dias. Falta dizer ao servidor qual é o destino.
+
+O programa que envia se chama rclone, e o instalador já o colocou na VM. Rode a configuração como o usuário do serviço:
+
+```
+sudo -u starsonic-chat -H rclone config
+```
+
+Responda assim:
+
+1. Digite `n` e Enter (um destino novo).
+2. Em `name`, digite exatamente `starsonic-chat-copia` e Enter. Esse nome não pode ser outro.
+3. Em `Storage`, escolha o tipo do destino da Starsonic. A lista tem um número para cada tipo (por exemplo, `sftp` para outro servidor, `s3` para um armazenamento na nuvem). Digite o número e Enter.
+4. Responda as perguntas seguintes com os dados do destino. Na dúvida, aperte Enter para aceitar o que já vem escrito.
+5. No fim, digite `y` para guardar e depois `q` para sair.
+
+Confira que o destino ficou guardado:
+
+```
+sudo -u starsonic-chat -H rclone listremotes
+```
+
+Você deve ver `starsonic-chat-copia:`.
+
+Teste a cópia agora, sem esperar a noite. O comando só volta quando a cópia termina:
+
+```
+sudo systemctl start starsonic-chat-copia.service
+```
+
+Veja o resultado:
+
+```
+journalctl -u starsonic-chat-copia -n 20 --no-pager
+```
+
+Você deve ver, no fim, `starsonic-chat-copia: pronto.` Num servidor novo, também aparece `a pasta de arquivos está vazia; pulei o envio dos arquivos.` Isso é normal: ainda não há arquivos para enviar.
+
+Confira no destino:
+
+```
+sudo -u starsonic-chat -H rclone ls starsonic-chat-copia:copias
+```
+
+Deve aparecer o arquivo `chat-` com a data de hoje e `.db`.
+
+Se aparecer `ERRO: o destino starsonic-chat-copia não está configurado`, o nome do destino ficou diferente. Refaça a configuração com o nome certo. Mesmo com esse erro, a cópia fica guardada na VM, em `/var/lib/starsonic-chat/copias`.
+
+Para ver se a cópia da noite rodou:
+
+```
+systemctl list-timers starsonic-chat-copia.timer
+```
+
+Deve aparecer a próxima rodada, às 03:00 de Brasília (06:00 no horário da VM, se ela usar UTC).
+
+## 6. Voltar uma cópia
+
+Use isto se o banco estragou ou se a VM foi refeita. Quem escreveu depois da cópia perde as mensagens desse intervalo: a cópia traz o chat como estava às 03:00 daquele dia.
+
+Faça os passos na ordem.
+
+1. Pare o serviço:
+
+```
+sudo systemctl stop starsonic-chat
+```
+
+2. Escolha a cópia. Se o disco da VM está bom, veja as que estão nele:
+
+```
+ls /var/lib/starsonic-chat/copias
+```
+
+Anote o nome do dia que você quer, por exemplo `chat-2026-11-04.db`.
+
+Se a VM foi refeita (disco novo), instale o chat de novo (passo 2), configure o destino (passo 5) e baixe a cópia do destino:
+
+```
+sudo -u starsonic-chat -H rclone copy starsonic-chat-copia:copias/chat-<data>.db /var/lib/starsonic-chat/copias
+```
+
+3. Tire os arquivos `-wal` e `-shm` do banco. Eles são restos do banco antigo. Se ficarem, o banco voltado se estraga:
+
+```
+sudo rm -f /var/lib/starsonic-chat/chat.db-wal /var/lib/starsonic-chat/chat.db-shm
+```
+
+4. Guarde o banco estragado, se ele existir, e ponha a cópia no lugar dele. Faça como o usuário do serviço, para o dono ficar certo:
+
+```
+sudo -u starsonic-chat mv -f /var/lib/starsonic-chat/chat.db /var/lib/starsonic-chat/chat.db.antigo
+```
+
+Se aparecer `No such file or directory`, não tem problema: não havia banco. Siga em frente.
+
+```
+sudo -u starsonic-chat cp /var/lib/starsonic-chat/copias/chat-<data>.db /var/lib/starsonic-chat/chat.db
+```
+
+5. Ligue o serviço:
+
+```
+sudo systemctl start starsonic-chat
+```
+
+Confira com `systemctl status starsonic-chat` (deve estar `active (running)`) e entre na página de administração. Quando estiver tudo certo, apague o banco antigo para liberar espaço:
+
+```
+sudo rm -f /var/lib/starsonic-chat/chat.db.antigo
+```
+
+6. Se o disco foi perdido, traga também os arquivos. Faça isto **antes das 03:00**, antes da próxima cópia da noite:
+
+```
+sudo -u starsonic-chat -H rclone copy starsonic-chat-copia:arquivos /var/lib/starsonic-chat/arquivos
+```
+
+O que foi apagado nos últimos 30 dias fica no destino, na pasta `apagados`, separado por data.
+
+## 7. Atualizar
+
+O servidor não se atualiza sozinho. Quando sair uma versão nova, baixe o instalador dela (o `<versão>` é o número novo):
+
+```
+curl -fsSLO https://github.com/LucasCPena/starsonic-phone/releases/download/chat-v<versão>/instalar.sh
+```
+
+E rode:
+
+```
+sudo bash instalar.sh atualizar
+```
+
+Você deve ver `SHA-256 conferido.` e, no fim, `Pronto: o Starsonic Chat agora está na versão <versão>.` O serviço reinicia sozinho, e quem está no chat volta a conectar em poucos segundos. As mensagens e os arquivos não mudam.
+
+## 8. Tirar uma pessoa antes de o ramal passar para outra
+
+Quando alguém sai da empresa, tire a pessoa do chat **antes** de o ramal dela passar para outra pessoa. Se não, a pessoa nova com o mesmo ramal veria as conversas da anterior.
+
+1. Abra `https://<endereço>/admin/` e entre.
+2. Clique na empresa.
+3. Em `PESSOAS NO CHAT`, ache a pessoa e clique em `Tirar do chat`.
+
+Depois disso, o mesmo ramal entra como uma pessoa nova, sem as conversas antigas. Para tirar só um computador, clique no `×` dele.
+
+## 9. Ver os registros
+
+Os registros do chat:
+
+```
+journalctl -u starsonic-chat -n 50 --no-pager
+```
+
+Mostra as últimas 50 linhas. Para acompanhar ao vivo, rode o comando abaixo e aperte Ctrl e C para sair:
+
+```
+journalctl -u starsonic-chat -f
+```
+
+Os registros da cópia da noite:
+
+```
+journalctl -u starsonic-chat-copia -n 50 --no-pager
+```
+
+## 10. Os problemas comuns
+
+**O certificado não sai (o navegador avisa que o site não é seguro, ou nada abre).**
+O Let's Encrypt precisa achar a VM pelo nome. Rode `getent hosts <endereço>` e veja se o endereço que aparece é o da VM. Se não for, corrija o registro A no DNS e espere alguns minutos. Depois veja os registros do passo 9: um erro de certificado aparece ali. O servidor tenta de novo sozinho, mas não insista muitas vezes seguidas: o Let's Encrypt limita os pedidos que falham.
+
+**As portas estão fechadas (o chat não abre de fora da VM).**
+Confira se o servidor está escutando:
+
+```
+sudo ss -ltn
+```
+
+Devem aparecer linhas com `:80` e `:443`. Se aparecerem e o chat não abre de fora, a porta está fechada na rede da nuvem ou no firewall. Abra as portas 80 e 443 de entrada, para qualquer endereço.
+
+**O instalador diz que a porta 80 ou 443 está em uso.**
+Outro programa já usa a porta. Pare esse programa (por exemplo, `sudo systemctl stop nginx`, se ele existir) e rode o instalador de novo.
+
+**O disco está cheio.**
+Veja o uso:
+
+```
+df -h /var/lib/starsonic-chat
+```
+
+E veja o que ocupa o espaço:
+
+```
+sudo du -sh /var/lib/starsonic-chat/*
+```
+
+Se a coluna de uso passar de 80%, aumente o disco da VM na nuvem. Para liberar espaço agora, apague o `chat.db.antigo`, se existir (passo 6). Com o disco 100% cheio, o chat para de gravar mensagens: não deixe chegar lá.
+
+**A cópia da noite não chegou ao destino.**
+Veja o passo 5 (`journalctl -u starsonic-chat-copia`). A mensagem diz o motivo. Para tentar de novo na hora: `sudo systemctl start starsonic-chat-copia.service`.
+
+**A página de administração diz `Muitas tentativas. Tente de novo daqui a 15 minutos.`**
+Espere 15 minutos, ou reinicie o serviço (passo 3).
+
+**O serviço não liga.**
+Rode `journalctl -u starsonic-chat -n 50 --no-pager` e leia as últimas linhas. Uma linha que começa com `Erro:` diz o motivo. A configuração fica em `/etc/starsonic-chat/config.json`.
