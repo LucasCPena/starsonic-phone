@@ -18,7 +18,7 @@ CREATE TABLE computadores (
 CREATE TABLE computador_pessoas (
   computador_id INTEGER NOT NULL REFERENCES computadores(id) ON DELETE CASCADE,
   pessoa_id INTEGER NOT NULL REFERENCES pessoas(id) ON DELETE CASCADE,
-  primeira_vez INTEGER NOT NULL,
+  primeira_vez INTEGER NOT NULL, ultima_vez INTEGER NOT NULL,
   PRIMARY KEY (computador_id, pessoa_id)
 );
 CREATE TABLE conversas (

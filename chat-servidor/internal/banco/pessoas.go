@@ -60,15 +60,22 @@ func (b *Banco) EntrarComoPessoa(ctx context.Context, computadorID, empresaID in
 			return ErrNaoEncontrado // desfaz a pessoa criada acima
 		}
 
+		// A última vez dela neste computador é agora, a primeira ou não (a página mostra).
 		r, err = tx.ExecContext(ctx,
-			`INSERT INTO computador_pessoas (computador_id, pessoa_id, primeira_vez) VALUES (?, ?, ?)
-			 ON CONFLICT DO NOTHING`, computadorID, p.ID, agora)
+			`INSERT INTO computador_pessoas (computador_id, pessoa_id, primeira_vez, ultima_vez) VALUES (?, ?, ?, ?)
+			 ON CONFLICT DO NOTHING`, computadorID, p.ID, agora, agora)
 		if err != nil {
 			return err
 		}
 		n, err := r.RowsAffected()
-		if err != nil || n == 0 {
-			return err // ela já esteve neste computador: ninguém é avisado
+		if err != nil {
+			return err
+		}
+		if n == 0 { // ela já esteve neste computador: ninguém é avisado
+			_, err = tx.ExecContext(ctx,
+				`UPDATE computador_pessoas SET ultima_vez = ? WHERE computador_id = ? AND pessoa_id = ?`,
+				agora, computadorID, p.ID)
+			return err
 		}
 		outros, err = lerIDs(ctx, tx,
 			`SELECT id FROM computadores WHERE pessoa_id = ? AND saiu_em IS NULL AND id <> ? ORDER BY id`,
@@ -160,7 +167,9 @@ func lerColuna[T any](ctx context.Context, l leitor, consulta string, args ...an
 	return lista, linhas.Err()
 }
 
-// ComputadorVisto é um computador ativo na lista da página de administração.
+// ComputadorVisto é um computador ativo na lista da página de administração, na linha de uma
+// pessoa. UltimaVez é a última vez dessa pessoa nele (a do computador_pessoas), não a do
+// computador: um computador de várias pessoas tem uma em cada linha.
 type ComputadorVisto struct {
 	ID        int64
 	Nome      string
@@ -169,8 +178,8 @@ type ComputadorVisto struct {
 
 // PessoaComComputadores é uma pessoa ativa da empresa, na página de administração, com os
 // computadores ativos em que ela já entrou (um computador de várias pessoas aparece em cada
-// uma), em ordem de nome. UltimaVez é a mais nova das últimas vezes desses computadores, ou 0
-// sem nenhum.
+// uma), em ordem de nome. UltimaVez é a mais nova das últimas vezes dela nesses computadores,
+// ou 0 sem nenhum: quem deixou um computador que outra pessoa usa agora não parece ativa hoje.
 type PessoaComComputadores struct {
 	Pessoa
 	Computadores []ComputadorVisto
@@ -204,7 +213,7 @@ func (b *Banco) PessoasDaEmpresa(ctx context.Context, empresaID int64) ([]Pessoa
 	}
 
 	linhas, err = b.db.QueryContext(ctx,
-		`SELECT x.pessoa_id, c.id, c.nome, c.ultima_vez
+		`SELECT x.pessoa_id, c.id, c.nome, x.ultima_vez
 		   FROM computador_pessoas x JOIN computadores c ON c.id = x.computador_id
 		  WHERE c.empresa_id = ? AND c.saiu_em IS NULL
 		  ORDER BY c.nome, c.id`, empresaID)

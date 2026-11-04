@@ -28,8 +28,21 @@ func (b *Banco) LigarComputador(ctx context.Context, empresaID int64, nome strin
 }
 
 // ComputadorPorChave acha o computador ativo e a empresa dele pelo hash da chave, e
-// atualiza a ultima_vez dele, no máximo uma vez por minuto.
+// atualiza a ultima_vez dele, no máximo uma vez por minuto. Junto, no mesmo ritmo, atualiza a
+// última vez da pessoa da vez nele (a do computador_pessoas), que a página de administração
+// mostra.
 func (b *Banco) ComputadorPorChave(ctx context.Context, chaveHash []byte) (Computador, Empresa, error) {
+	return b.computadorPorChave(ctx, chaveHash, true)
+}
+
+// ComputadorParaTrocar é o ComputadorPorChave do pedido que troca a pessoa do computador (o
+// POST /api/v1/pessoas/eu): atualiza a ultima_vez do computador, mas não a da pessoa de antes
+// nele, porque quem pede já é a próxima. A da próxima vem no EntrarComoPessoa.
+func (b *Banco) ComputadorParaTrocar(ctx context.Context, chaveHash []byte) (Computador, Empresa, error) {
+	return b.computadorPorChave(ctx, chaveHash, false)
+}
+
+func (b *Banco) computadorPorChave(ctx context.Context, chaveHash []byte, daPessoa bool) (Computador, Empresa, error) {
 	var c Computador
 	var e Empresa
 	var pessoa sql.NullInt64
@@ -46,10 +59,24 @@ func (b *Banco) ComputadorPorChave(ctx context.Context, chaveHash []byte) (Compu
 	}
 	c.PessoaID = pessoa.Int64
 	agora := b.agoraMs()
-	if _, err := b.db.ExecContext(ctx,
+	r, err := b.db.ExecContext(ctx,
 		`UPDATE computadores SET ultima_vez = ? WHERE id = ? AND ultima_vez <= ?`,
-		agora, c.ID, agora-60_000); err != nil {
+		agora, c.ID, agora-60_000)
+	if err != nil {
 		return Computador{}, Empresa{}, err
+	}
+	if !daPessoa || c.PessoaID == 0 {
+		return c, e, nil
+	}
+	// A última vez da pessoa da vez neste computador vai junto com a dele, no mesmo ritmo.
+	if n, err := r.RowsAffected(); err != nil {
+		return Computador{}, Empresa{}, err
+	} else if n == 1 {
+		if _, err := b.db.ExecContext(ctx,
+			`UPDATE computador_pessoas SET ultima_vez = ? WHERE computador_id = ? AND pessoa_id = ?`,
+			agora, c.ID, c.PessoaID); err != nil {
+			return Computador{}, Empresa{}, err
+		}
 	}
 	return c, e, nil
 }

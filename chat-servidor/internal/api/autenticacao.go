@@ -24,9 +24,11 @@ func computadorDe(r *http.Request) (banco.Computador, banco.Empresa) {
 	return q.computador, q.empresa
 }
 
-// identificar acha o computador pela chave do cabeçalho Authorization: Bearer.
+// identificar acha o computador pela chave do cabeçalho Authorization: Bearer, com achar (o
+// banco.ComputadorPorChave, ou o ComputadorParaTrocar no pedido que troca a pessoa).
 // Se não achar, responde 401 chave (ou 500) e devolve false.
-func (s *servidor) identificar(w http.ResponseWriter, r *http.Request) (*http.Request, bool) {
+func (s *servidor) identificar(w http.ResponseWriter, r *http.Request,
+	achar func(context.Context, []byte) (banco.Computador, banco.Empresa, error)) (*http.Request, bool) {
 	cab := r.Header.Get("Authorization")
 	chave, ok := "", false
 	if len(cab) > 7 && strings.EqualFold(cab[:7], "Bearer ") {
@@ -36,7 +38,7 @@ func (s *servidor) identificar(w http.ResponseWriter, r *http.Request) (*http.Re
 		escreverErro(w, http.StatusUnauthorized, "chave", nil)
 		return r, false
 	}
-	c, e, err := s.banco.ComputadorPorChave(r.Context(), segredo.Hash(chave))
+	c, e, err := achar(r.Context(), segredo.Hash(chave))
 	if errors.Is(err, banco.ErrNaoEncontrado) {
 		escreverErro(w, http.StatusUnauthorized, "chave", nil)
 		return r, false
@@ -51,8 +53,18 @@ func (s *servidor) identificar(w http.ResponseWriter, r *http.Request) (*http.Re
 
 // autenticar protege uma rota: sem chave válida, responde 401 chave.
 func (s *servidor) autenticar(f http.HandlerFunc) http.HandlerFunc {
+	return s.proteger(f, s.banco.ComputadorPorChave)
+}
+
+// autenticarTroca é o autenticar do POST /api/v1/pessoas/eu: quem pede é a pessoa que vai
+// entrar no computador, então o pedido não conta como uma vez da pessoa de antes nele.
+func (s *servidor) autenticarTroca(f http.HandlerFunc) http.HandlerFunc {
+	return s.proteger(f, s.banco.ComputadorParaTrocar)
+}
+
+func (s *servidor) proteger(f http.HandlerFunc, achar func(context.Context, []byte) (banco.Computador, banco.Empresa, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		r2, ok := s.identificar(w, r)
+		r2, ok := s.identificar(w, r, achar)
 		if !ok {
 			return
 		}

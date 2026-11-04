@@ -76,7 +76,7 @@ func TestApagarEmpresa_EmCascata(t *testing.T) {
 	exec(t, b, `INSERT INTO empresas(id, nome, codigo, criada_em) VALUES (1, 'ACME Comércio Ltda', 'ABCD-EFGH', 1)`)
 	exec(t, b, `INSERT INTO pessoas(id, empresa_id, ramal, nome, nome_busca, entrou_em) VALUES (1, 1, '2003', 'Ana Souza', 'ana souza', 1)`)
 	exec(t, b, `INSERT INTO computadores(id, empresa_id, chave_hash, nome, pessoa_id, ligado_em, ultima_vez) VALUES (1, 1, x'0102', 'PC da Ana', 1, 1, 1)`)
-	exec(t, b, `INSERT INTO computador_pessoas(computador_id, pessoa_id, primeira_vez) VALUES (1, 1, 1)`)
+	exec(t, b, `INSERT INTO computador_pessoas(computador_id, pessoa_id, primeira_vez, ultima_vez) VALUES (1, 1, 1, 1)`)
 	exec(t, b, `INSERT INTO conversas(id, empresa_id, tipo, nome, criou_id, cuida_id, criada_em, atualizada_em) VALUES (1, 1, 'grupo', 'Vendas', 1, 1, 1, 1)`)
 	exec(t, b, `INSERT INTO membros(conversa_id, pessoa_id, entrou_em) VALUES (1, 1, 1)`)
 	exec(t, b, `INSERT INTO arquivos(id, empresa_id, autor_id, nome, tipo, tamanho, criado_em) VALUES ('aa', 1, 1, 'a.pdf', 'application/pdf', 10, 1)`)

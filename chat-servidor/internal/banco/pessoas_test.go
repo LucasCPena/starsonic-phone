@@ -257,25 +257,27 @@ func TestPessoasDaEmpresa(t *testing.T) {
 	acme, _ := b.CriarEmpresa(ctx, "ACME Comércio Ltda")
 	outra, _ := b.CriarEmpresa(ctx, "Outra Ltda")
 
-	// Cada computador é ligado num minuto; a última vez de cada um é a da ligação.
-	ligar := func(empresaID int64, nome string) Computador {
-		avancar(b, time.Minute)
-		return computadorTeste(t, b, empresaID, nome)
-	}
-	noteAna := ligar(acme.ID, "NOTE-ANA")
-	recepcao := ligar(acme.ID, "RECEPCAO-02")
-	fin := ligar(acme.ID, "FIN-01")
-	velho := ligar(acme.ID, "VELHO-01")
-	doCarlos := ligar(acme.ID, "COMERCIAL-03")
-	daOutra := ligar(outra.ID, "PC-ABEL")
+	noteAna := computadorTeste(t, b, acme.ID, "NOTE-ANA")
+	recepcao := computadorTeste(t, b, acme.ID, "RECEPCAO-02")
+	fin := computadorTeste(t, b, acme.ID, "FIN-01")
+	velho := computadorTeste(t, b, acme.ID, "VELHO-01")
+	doCarlos := computadorTeste(t, b, acme.ID, "COMERCIAL-03")
+	daOutra := computadorTeste(t, b, outra.ID, "PC-ABEL")
 
-	ana, _ := entrar(t, b, noteAna, "2003", "Ana Souza")
-	entrar(t, b, recepcao, "2003", "Ana Souza")
-	bia, _ := entrar(t, b, recepcao, "3004", "Beatriz Ramos") // a recepção agora é da Beatriz
-	entrar(t, b, fin, "3004", "Beatriz Ramos")
-	alvaro, _ := entrar(t, b, velho, "2001", "Álvaro Reis")
-	carlos, _ := entrar(t, b, doCarlos, "2011", "Carlos Lima")
-	entrar(t, b, daOutra, "2003", "Abel")
+	// Cada entrada num minuto: a última vez de uma pessoa num computador é a da entrada dela
+	// nele, não a do computador.
+	entrarNoMinuto := func(c Computador, ramal, nome string) Pessoa {
+		avancar(b, time.Minute)
+		p, _ := entrar(t, b, c, ramal, nome)
+		return p
+	}
+	ana := entrarNoMinuto(noteAna, "2003", "Ana Souza")       // 1
+	entrarNoMinuto(recepcao, "2003", "Ana Souza")             // 2
+	bia := entrarNoMinuto(recepcao, "3004", "Beatriz Ramos")  // 3: a recepção agora é da Beatriz
+	entrarNoMinuto(fin, "3004", "Beatriz Ramos")              // 4
+	alvaro := entrarNoMinuto(velho, "2001", "Álvaro Reis")    // 5
+	carlos := entrarNoMinuto(doCarlos, "2011", "Carlos Lima") // 6
+	entrarNoMinuto(daOutra, "2003", "Abel")                   // 7
 	// O Álvaro só tinha um computador, que saiu; o Carlos saiu do chat.
 	if err := b.DesligarComputador(ctx, velho.ID); err != nil {
 		t.Fatal(err)
@@ -288,7 +290,8 @@ func TestPessoasDaEmpresa(t *testing.T) {
 	}
 	minuto := func(n int64) int64 { return inicioTeste + n*60*1000 }
 	// Em ordem de nome sem acento; os computadores ativos em que a pessoa já entrou, em ordem
-	// de nome; a última vez é a mais nova deles.
+	// de nome, com a última vez dela em cada um; a da pessoa é a mais nova delas. A recepção,
+	// que agora é da Beatriz, fica com o minuto 2 na linha da Ana e o 3 na da Beatriz.
 	want := []PessoaComComputadores{
 		{Pessoa: alvaro, Computadores: []ComputadorVisto{}, UltimaVez: 0},
 		{Pessoa: ana, Computadores: []ComputadorVisto{
@@ -296,9 +299,9 @@ func TestPessoasDaEmpresa(t *testing.T) {
 			{ID: recepcao.ID, Nome: "RECEPCAO-02", UltimaVez: minuto(2)},
 		}, UltimaVez: minuto(2)},
 		{Pessoa: bia, Computadores: []ComputadorVisto{
-			{ID: fin.ID, Nome: "FIN-01", UltimaVez: minuto(3)},
-			{ID: recepcao.ID, Nome: "RECEPCAO-02", UltimaVez: minuto(2)},
-		}, UltimaVez: minuto(3)},
+			{ID: fin.ID, Nome: "FIN-01", UltimaVez: minuto(4)},
+			{ID: recepcao.ID, Nome: "RECEPCAO-02", UltimaVez: minuto(3)},
+		}, UltimaVez: minuto(4)},
 	}
 	if len(lista) != len(want) {
 		t.Fatalf("PessoasDaEmpresa = %+v", lista)

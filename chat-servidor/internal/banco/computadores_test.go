@@ -61,6 +61,78 @@ func TestComputador_UltimaVezUmaPorMinuto(t *testing.T) {
 	}
 }
 
+// TestComputadorPessoas_UltimaVez: a última vez de cada pessoa em cada computador (a do
+// computador_pessoas). Ela é marcada quando a pessoa entra no computador e, para a pessoa da
+// vez, junto com a do computador, no mesmo ritmo. O pedido que troca a pessoa
+// (ComputadorParaTrocar) marca a do computador, mas não a da pessoa de antes: ele é da próxima.
+func TestComputadorPessoas_UltimaVez(t *testing.T) {
+	b := abrirTeste(t)
+	ctx := context.Background()
+	e, _ := b.CriarEmpresa(ctx, "ACME Comércio Ltda")
+	_, hash := segredo.NovaChave()
+	c, err := b.LigarComputador(ctx, e.ID, "RECEPCAO-02", hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vez := func(pessoaID int64) int64 {
+		t.Helper()
+		var v int64
+		if err := b.db.QueryRow(`SELECT ultima_vez FROM computador_pessoas WHERE computador_id = ? AND pessoa_id = ?`,
+			c.ID, pessoaID).Scan(&v); err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	achar := func(f func(context.Context, []byte) (Computador, Empresa, error)) {
+		t.Helper()
+		if _, _, err := f(ctx, hash); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ana, _ := entrar(t, b, c, "2003", "Ana Souza")
+	if v := vez(ana.ID); v != inicioTeste {
+		t.Fatalf("na entrada, a vez da Ana = %d; queria %d", v, inicioTeste)
+	}
+	// Os pedidos com a Ana: a vez dela vai junto com a do computador, uma vez por minuto.
+	avancar(b, 30*time.Second)
+	achar(b.ComputadorPorChave)
+	if v := vez(ana.ID); v != inicioTeste {
+		t.Fatalf("antes de 1 minuto, a vez da Ana mudou para %d", v)
+	}
+	avancar(b, 31*time.Second)
+	achar(b.ComputadorPorChave)
+	ana1 := inicioTeste + 61_000
+	if v := vez(ana.ID); v != ana1 {
+		t.Fatalf("a vez da Ana = %d; queria %d", v, ana1)
+	}
+	// No outro dia, a recepção passa para a Beatriz: o pedido da troca não é da Ana.
+	avancar(b, 24*time.Hour)
+	achar(b.ComputadorParaTrocar)
+	bia, _ := entrar(t, b, c, "3004", "Beatriz Ramos")
+	amanha := ana1 + 24*60*60*1000
+	if va, vb := vez(ana.ID), vez(bia.ID); va != ana1 || vb != amanha {
+		t.Fatalf("depois da troca, a Ana = %d e a Beatriz = %d; queria %d e %d", va, vb, ana1, amanha)
+	}
+	var doComputador int64
+	b.db.QueryRow(`SELECT ultima_vez FROM computadores WHERE id = ?`, c.ID).Scan(&doComputador)
+	if doComputador != amanha {
+		t.Fatalf("o pedido da troca não marcou a vez do computador: %d; queria %d", doComputador, amanha)
+	}
+	// Agora os pedidos são da Beatriz.
+	avancar(b, 2*time.Minute)
+	achar(b.ComputadorPorChave)
+	if va, vb := vez(ana.ID), vez(bia.ID); va != ana1 || vb != amanha+120_000 {
+		t.Fatalf("com a Beatriz, a Ana = %d e a Beatriz = %d; queria %d e %d", va, vb, ana1, amanha+120_000)
+	}
+	// A Ana volta à recepção: a vez dela é a da volta.
+	avancar(b, time.Minute)
+	achar(b.ComputadorParaTrocar)
+	entrar(t, b, c, "2003", "Ana Souza")
+	if v := vez(ana.ID); v != amanha+180_000 {
+		t.Fatalf("na volta, a vez da Ana = %d; queria %d", v, amanha+180_000)
+	}
+}
+
 func TestTirarComputador(t *testing.T) {
 	b := abrirTeste(t)
 	ctx := context.Background()

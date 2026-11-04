@@ -3,6 +3,7 @@ package admin_test
 import (
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -122,6 +123,45 @@ func TestTirarComputador(t *testing.T) {
 	resp, corpo = n.acao(fmt.Sprintf("%s/computadores/%d/tirar", pagina, idDoComputador(p, "PC-ABEL")), nil)
 	esperarStatus(t, resp, corpo, http.StatusNotFound)
 	p.a.Entrar(kAbel, "2003", "Abel")
+}
+
+// ultimaVezNaLinha lê, na tabela de pessoas da página da empresa, a ÚLTIMA VEZ da linha da
+// pessoa e o title ("Última vez: …") do primeiro computador dela.
+func ultimaVezNaLinha(t *testing.T, corpo, nome string) (ultima, computador string) {
+	t.Helper()
+	m := regexp.MustCompile(`(?s)<td class="forte">` + regexp.QuoteMeta(nome) + `</td>(.*?)<td class="suave">([^<]*)</td>`).
+		FindStringSubmatch(corpo)
+	if m == nil {
+		t.Fatalf("a página não tem a linha de %s:\n%s", nome, corpo)
+	}
+	c := regexp.MustCompile(`title="Última vez: ([^"]*)"`).FindStringSubmatch(m[1])
+	if c == nil {
+		t.Fatalf("a linha de %s não tem computador:\n%s", nome, m[0])
+	}
+	return m[2], c[1]
+}
+
+// TestUltimaVezDaPessoa: a ÚLTIMA VEZ de uma pessoa é a dela nos computadores, não a do
+// computador. A Ana usou a RECEPCAO-02 ontem às 18:02; hoje às 09:40, a Recepção entra nela. A
+// linha da Ana mostra "ontem, 18:02", e a da Recepção, "hoje, 09:40"; o title da RECEPCAO-02,
+// em cada linha, é a vez daquela pessoa nela.
+func TestUltimaVezDaPessoa(t *testing.T) {
+	p := novoPainel(t)
+	rel := p.a.Relogio
+	e := p.a.Empresa("ACME Comércio Ltda")
+	rel.Definir(time.Date(2026, 11, 3, 21, 2, 0, 0, time.UTC)) // ontem, 18:02 em Brasília
+	k := p.a.Ligar(e.Codigo, "RECEPCAO-02")
+	p.a.Entrar(k, "2003", "Ana Souza")
+	rel.Definir(time.Date(2026, 11, 4, 12, 40, 0, 0, time.UTC)) // hoje, 09:40
+	p.a.Entrar(k, "2001", "Recepção")
+	rel.Definir(time.Date(2026, 11, 4, 12, 43, 0, 0, time.UTC))
+	_, corpo := p.logado(t).get(fmt.Sprintf("/admin/empresas/%d", e.ID))
+	for nome, vez := range map[string]string{"Ana Souza": "ontem, 18:02", "Recepção": "hoje, 09:40"} {
+		ultima, computador := ultimaVezNaLinha(t, corpo, nome)
+		if ultima != vez || computador != vez {
+			t.Errorf("a linha de %s mostra %q, e o title da RECEPCAO-02 %q; queria %q nos dois", nome, ultima, computador, vez)
+		}
+	}
 }
 
 func TestHorasDeBrasilia(t *testing.T) {

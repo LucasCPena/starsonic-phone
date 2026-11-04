@@ -86,7 +86,7 @@ func Novo(d Deps) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/v1/computadores", s.ligarComputador)
 	mux.HandleFunc("DELETE /api/v1/computadores/eu", s.autenticar(s.desligarComputador))
-	mux.HandleFunc("POST /api/v1/pessoas/eu", s.autenticar(s.entrarComoPessoa))
+	mux.HandleFunc("POST /api/v1/pessoas/eu", s.autenticarTroca(s.entrarComoPessoa))
 	mux.HandleFunc("GET /api/v1/pessoas", s.autenticar(precisaPessoa(s.colegas)))
 	mux.HandleFunc("GET /api/v1/conversas", s.autenticar(precisaPessoa(s.conversas)))
 	mux.HandleFunc("POST /api/v1/conversas", s.autenticar(precisaPessoa(s.criarConversa)))
