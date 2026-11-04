@@ -119,3 +119,10 @@ func (j *Janela) Devolver(chave string, quanto int) {
 		j.chaves[chave] = lista
 	}
 }
+
+// Tamanho diz quantas chaves a janela guarda na memória agora (para os testes).
+func (j *Janela) Tamanho() int {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return len(j.chaves)
+}

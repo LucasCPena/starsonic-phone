@@ -70,3 +70,24 @@ func TestJanela_Devolver(t *testing.T) {
 		t.Fatal("depois de devolver 1, devia caber")
 	}
 }
+
+func TestJanela_Esquece(t *testing.T) {
+	r := tempo.NovoTeste(time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC))
+	j := Nova(10, time.Hour, r)
+	for i := 0; i < 100; i++ {
+		j.Usar(string(rune('a'+i%26))+string(rune('a'+i/26)), 1)
+	}
+	if n := j.Tamanho(); n != 100 {
+		t.Fatalf("Tamanho = %d; queria 100", n)
+	}
+	r.Avancar(2 * time.Hour)
+	j.Usar("nova", 1)
+	if n := j.Tamanho(); n != 1 {
+		t.Fatalf("depois da janela, Tamanho = %d; queria 1", n)
+	}
+	// Devolver tudo também esquece a chave.
+	j.Devolver("nova", 1)
+	if n := j.Tamanho(); n != 0 {
+		t.Fatalf("depois de devolver, Tamanho = %d; queria 0", n)
+	}
+}

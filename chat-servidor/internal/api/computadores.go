@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/netip"
 	"time"
 
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/banco"
@@ -11,14 +12,25 @@ import (
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/segredo"
 )
 
-// enderecoDe é o endereço de quem pediu, sem a porta. O servidor não fica atrás de
-// proxy, então o X-Forwarded-For não é lido.
+// enderecoDe é a chave do limite de códigos errados para quem pediu. O servidor não
+// fica atrás de proxy, então o X-Forwarded-For não é lido.
+//   - IPv4: o próprio endereço (um IPv4 mapeado em IPv6 vira IPv4);
+//   - IPv6: o prefixo /64, para que girar endereços dentro do /64 não dê tentativas novas;
+//   - o que não der para ler: o RemoteAddr como veio.
 func enderecoDe(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
+		host = r.RemoteAddr
+	}
+	a, err := netip.ParseAddr(host)
+	if err != nil {
 		return r.RemoteAddr
 	}
-	return host
+	a = a.WithZone("").Unmap()
+	if a.Is4() {
+		return a.String()
+	}
+	return netip.PrefixFrom(a, 64).Masked().String()
 }
 
 // POST /api/v1/computadores: liga um computador a uma empresa pelo código.

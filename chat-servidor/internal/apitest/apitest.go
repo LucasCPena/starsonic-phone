@@ -5,6 +5,7 @@ package apitest
 import (
 	"bytes"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -18,7 +19,7 @@ import (
 
 // Ambiente é um servidor de teste inteiro.
 type Ambiente struct {
-	T        *testing.T
+	T        testing.TB
 	Dir      string
 	Caminho  string // o arquivo do banco
 	Banco    *banco.Banco
@@ -29,6 +30,7 @@ type Ambiente struct {
 // Novo monta o ambiente; o t.Cleanup desmonta.
 func Novo(t *testing.T) *Ambiente {
 	t.Helper()
+	slog.SetDefault(slog.New(slog.DiscardHandler)) // os testes não imprimem o log de pedidos
 	dir := t.TempDir()
 	rel := tempo.NovoTeste(time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC))
 	caminho := filepath.Join(dir, "chat.db")
@@ -42,6 +44,15 @@ func Novo(t *testing.T) *Ambiente {
 		b.Fechar()
 	})
 	return &Ambiente{T: t, Dir: dir, Caminho: caminho, Banco: b, Relogio: rel, Servidor: srv}
+}
+
+// Com devolve uma cópia ligada ao t (um subteste, por exemplo), com o mesmo servidor,
+// banco e relógio. Os métodos chamam o Fatalf do t que o Ambiente guarda, e só o
+// teste dono da goroutine pode chamá-lo: dentro de t.Run, use a.Com(t).
+func (a *Ambiente) Com(t testing.TB) *Ambiente {
+	c := *a
+	c.T = t
+	return &c
 }
 
 // Empresa cria uma empresa direto no banco.
@@ -102,7 +113,7 @@ func (a *Ambiente) Pedir(chave, metodo, caminho string, corpo any) *http.Respons
 }
 
 // LerJSON lê o corpo da resposta como T.
-func LerJSON[T any](t *testing.T, resp *http.Response) T {
+func LerJSON[T any](t testing.TB, resp *http.Response) T {
 	t.Helper()
 	defer resp.Body.Close()
 	var v T

@@ -4,10 +4,13 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/api"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/apitest"
 	_ "modernc.org/sqlite"
 )
@@ -166,7 +169,7 @@ func TestAutenticacao(t *testing.T) {
 	}
 	for nome, chave := range map[string]string{"sem chave": "", "inventada": strings.Repeat("a", 43), "desligada": desligada} {
 		t.Run(nome, func(t *testing.T) {
-			esperarErro(t, a.Pedir(chave, "GET", "/api/v1/pessoas", nil), 401, "chave")
+			esperarErro(t, a.Com(t).Pedir(chave, "GET", "/api/v1/pessoas", nil), 401, "chave")
 		})
 	}
 	// Outro esquema que não Bearer também é recusado.
@@ -199,6 +202,7 @@ func TestCORS(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		t.Cleanup(func() { resp.Body.Close() })
 		return resp
 	}
 	resp := pedir("https://app.starsonic.local", "OPTIONS", "/api/v1/conversas/7/mensagens")
@@ -249,4 +253,82 @@ func TestRotaDesconhecida(t *testing.T) {
 	esperarErro(t, a.Pedir(chave, "GET", "/api/v1/nada", nil), 404, "naoEncontrado")
 	// Método errado numa rota que existe: também 404 em JSON.
 	esperarErro(t, a.Pedir(chave, "GET", "/api/v1/computadores", nil), 404, "naoEncontrado")
+}
+
+// ligarDe chama o manipulador direto, com o RemoteAddr dado, e devolve o status.
+func ligarDe(h http.Handler, remoto, codigo string) int {
+	req := httptest.NewRequest("POST", "/api/v1/computadores",
+		strings.NewReader(`{"codigo":"`+codigo+`","computador":"PC"}`))
+	req.RemoteAddr = remoto
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec.Code
+}
+
+func TestLigar_IPv6MesmoPrefixo(t *testing.T) {
+	a := apitest.Novo(t)
+	emp := a.Empresa("ACME Comércio Ltda")
+	h := api.Novo(api.Deps{Banco: a.Banco})
+	for i := 0; i < 5; i++ {
+		if c := ligarDe(h, "[2001:db8:1:2::1]:1000", "STAR-AAAA-BBBB"); c != 404 {
+			t.Fatalf("erro %d: %d", i+1, c)
+		}
+		if c := ligarDe(h, "[2001:db8:1:2::ffff]:2000", "STAR-AAAA-BBBB"); c != 404 {
+			t.Fatalf("erro %d: %d", i+1, c)
+		}
+	}
+	for _, r := range []string{"[2001:db8:1:2::1]:1", "[2001:db8:1:2::ffff]:1", "[2001:db8:1:2:9::5]:1", "[2001:db8:1:2::1%eth0]:1"} {
+		if c := ligarDe(h, r, "STAR-AAAA-BBBB"); c != 429 {
+			t.Fatalf("o 11º de %s: %d; queria 429", r, c)
+		}
+	}
+	// Outro /64 segue aceito.
+	if c := ligarDe(h, "[2001:db8:1:3::1]:1", emp.Codigo); c != 201 {
+		t.Fatalf("outro /64: %d", c)
+	}
+}
+
+func TestLigar_IPv4Mapeado(t *testing.T) {
+	a := apitest.Novo(t)
+	h := api.Novo(api.Deps{Banco: a.Banco})
+	for i := 0; i < 5; i++ {
+		ligarDe(h, "[::ffff:192.0.2.1]:1000", "STAR-AAAA-BBBB")
+		ligarDe(h, "192.0.2.1:2000", "STAR-AAAA-BBBB")
+	}
+	if c := ligarDe(h, "192.0.2.1:3000", "STAR-AAAA-BBBB"); c != 429 {
+		t.Fatalf("IPv4: %d; queria 429", c)
+	}
+	if c := ligarDe(h, "[::ffff:192.0.2.1]:3000", "STAR-AAAA-BBBB"); c != 429 {
+		t.Fatalf("mapeado: %d; queria 429", c)
+	}
+	if c := ligarDe(h, "192.0.2.2:3000", "STAR-AAAA-BBBB"); c != 404 {
+		t.Fatalf("outro IPv4: %d; queria 404", c)
+	}
+}
+
+func TestLigar_Concorrente(t *testing.T) {
+	a := apitest.Novo(t)
+	var mu sync.Mutex
+	status := map[int]int{}
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resp, err := a.Servidor.Client().Post(a.Servidor.URL+"/api/v1/computadores", "application/json",
+				strings.NewReader(`{"codigo":"STAR-AAAA-BBBB","computador":"PC"}`))
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			resp.Body.Close()
+			mu.Lock()
+			status[resp.StatusCode]++
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+	if status[404] != 10 || status[429] != 40 || len(status) != 2 {
+		t.Fatalf("status = %v; queria 10x404 e 40x429", status)
+	}
 }
