@@ -222,3 +222,46 @@ func TestAdmin_Uso(t *testing.T) {
 		}
 	}
 }
+
+func TestServir_ModoTesteSoLocal(t *testing.T) {
+	for _, escutar := range []string{"0.0.0.0:8090", "192.168.0.5:80"} {
+		var saida bytes.Buffer
+		args := []string{"servir", "--teste", "--escutar", escutar, "--dados", t.TempDir()}
+		if cod := run(args, strings.NewReader(""), &saida, io.Discard); cod != 2 {
+			t.Fatalf("%s: código %d, esperava 2", escutar, cod)
+		}
+		if !strings.Contains(saida.String(), "o modo de teste só escuta em 127.0.0.1 ou [::1]") {
+			t.Fatalf("%s: saída %q", escutar, saida.String())
+		}
+	}
+}
+
+func TestServir_Uso(t *testing.T) {
+	pasta := t.TempDir()
+	casos := map[string][]string{
+		"teste sem dados":            {"servir", "--teste"},
+		"dados sem teste":            {"servir", "--dados", pasta},
+		"escutar sem teste":          {"servir", "--escutar", "127.0.0.1:8090"},
+		"teste com config":           {"servir", "--teste", "--dados", pasta, "--config", "/x.json"},
+		"argumento a mais":           {"servir", "--teste", "--dados", pasta, "sobra"},
+		"flag que não existe":        {"servir", "--xis"},
+		"teste com pasta que não há": {"servir", "--teste", "--dados", filepath.Join(pasta, "nada")},
+	}
+	for nome, args := range casos {
+		var saida bytes.Buffer
+		if cod := run(args, strings.NewReader(""), &saida, io.Discard); cod != 2 {
+			t.Fatalf("%s: código %d, esperava 2 (%q)", nome, cod, saida.String())
+		}
+	}
+}
+
+func TestServir_ConfigRuim(t *testing.T) {
+	var saida bytes.Buffer
+	args := []string{"servir", "--config", filepath.Join(t.TempDir(), "nada.json")}
+	if cod := run(args, strings.NewReader(""), &saida, io.Discard); cod != 1 {
+		t.Fatalf("código %d, esperava 1", cod)
+	}
+	if !strings.Contains(saida.String(), "configuração") {
+		t.Fatalf("saída %q", saida.String())
+	}
+}

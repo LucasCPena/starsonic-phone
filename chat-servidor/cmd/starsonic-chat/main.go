@@ -12,10 +12,12 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"golang.org/x/term"
 
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/banco"
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/servidor"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/tempo"
 )
 
@@ -26,6 +28,9 @@ const uso = `uso: starsonic-chat <subcomando>
 
 subcomandos:
   versao                                    mostra a versão
+  servir [--config <arquivo>]               põe o servidor no ar (HTTPS, com o certificado do Let's Encrypt)
+         [--teste --escutar 127.0.0.1:8090 --dados <pasta>]
+                                            ou, no modo de teste, em HTTP e só neste computador
   admin-criar <usuario> --dados <pasta>     cria um usuário da página de administração
   admin-senha <usuario> --dados <pasta>     troca a senha de um usuário (e encerra as sessões dele)
   admin-remover <usuario> --dados <pasta>   remove um usuário
@@ -45,12 +50,78 @@ func run(args []string, entrada io.Reader, saida, erros io.Writer) int {
 	case "versao":
 		fmt.Fprintln(saida, versao)
 		return 0
+	case "servir":
+		return servir(args[1:], saida)
 	case "admin-criar", "admin-senha", "admin-remover":
 		return administrar(args[0], args[1:], entrada, saida, erros)
 	default:
 		fmt.Fprintf(saida, "subcomando desconhecido: %s\n\n%s", args[0], uso)
 		return 2
 	}
+}
+
+// configPadrao é onde o serviço do systemd guarda a configuração.
+const configPadrao = "/etc/starsonic-chat/config.json"
+
+// servir põe o servidor no ar até um SIGTERM ou um SIGINT, e desliga com calma. Um desligamento
+// assim volta 0. Com os argumentos errados volta 2, e com um erro de configuração ou de
+// execução, 1.
+func servir(args []string, saida io.Writer) int {
+	fs := flag.NewFlagSet("servir", flag.ContinueOnError)
+	fs.SetOutput(saida)
+	config := fs.String("config", configPadrao, "o arquivo de configuração (JSON)")
+	teste := fs.Bool("teste", false, "o modo de teste: HTTP, só no 127.0.0.1 ou no [::1]")
+	escutar := fs.String("escutar", "127.0.0.1:8090", "no modo de teste, o endereço e a porta")
+	dados := fs.String("dados", "", "no modo de teste, a pasta de dados")
+	fs.Usage = func() {
+		fmt.Fprint(saida, "uso: starsonic-chat servir [--config <arquivo>] | --teste [--escutar 127.0.0.1:8090] --dados <pasta>\n")
+	}
+	if fs.Parse(args) != nil || fs.NArg() != 0 {
+		fs.Usage()
+		return 2
+	}
+	deuDados, deuEscutar, deuConfig := false, false, false
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "dados":
+			deuDados = true
+		case "escutar":
+			deuEscutar = true
+		case "config":
+			deuConfig = true
+		}
+	})
+	if (*teste && (deuConfig || !deuDados)) || (!*teste && (deuDados || deuEscutar)) {
+		fs.Usage()
+		return 2
+	}
+
+	ctx, parar := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer parar()
+	var err error
+	if *teste {
+		if info, e := os.Stat(*dados); e != nil || !info.IsDir() {
+			fmt.Fprintf(saida, "A pasta de dados não existe: %s\n", *dados)
+			return 2
+		}
+		err = servidor.RodarTeste(ctx, servidor.Config{Dados: *dados}, *escutar)
+		if errors.Is(err, servidor.ErroModoTeste) {
+			fmt.Fprintln(saida, err)
+			return 2
+		}
+	} else {
+		var c servidor.Config
+		if c, err = servidor.LerConfig(*config); err != nil {
+			fmt.Fprintln(saida, "Erro:", err)
+			return 1
+		}
+		err = servidor.Rodar(ctx, c)
+	}
+	if err != nil {
+		fmt.Fprintln(saida, "Erro:", err)
+		return 1
+	}
+	return 0
 }
 
 // argumentosAdmin lê o <usuario> e o --dados de um subcomando admin-*, em qualquer ordem. O
