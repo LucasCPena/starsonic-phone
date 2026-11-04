@@ -424,7 +424,10 @@ func (p *painel) apagarEmpresa(w http.ResponseWriter, r *http.Request, s sessao)
 	falhas := 0
 	for _, id := range arquivos {
 		if err := p.armazem.Apagar(id); err != nil {
-			// A linha já saiu; a varredura diária (tarefas) tira do disco o que ficou.
+			// A linha já saiu, e o arquivo fica no disco sem linha no banco. A varredura diária
+			// (tarefas) só tira os sem linha com mais de 24 h quando a tabela arquivos não está
+			// vazia e quando eles são até 1.000 na rodada; fora disso, não tira nenhum, e eles
+			// ficam. Por isso esta linha do log é o aviso para quem cuida do servidor.
 			falhas++
 			slog.Error("admin: não apagou do disco um arquivo da empresa apagada", "id", id, "erro", err)
 		}
