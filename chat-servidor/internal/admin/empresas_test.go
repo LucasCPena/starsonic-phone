@@ -229,6 +229,43 @@ func TestApagarEmpresa(t *testing.T) {
 	}
 }
 
+// TestApagarEmpresa_BilheteVelho é o R27 pela API e pela página: o bilhete que um computador
+// da empresa apagada pediu antes não abre o WebSocket de um computador novo da outra empresa.
+// Sem o AUTOINCREMENT, o computador novo ganharia o id do apagado, e o bilhete abriria o dele.
+func TestApagarEmpresa_BilheteVelho(t *testing.T) {
+	p := novoPainel(t)
+	n := p.logado(t)
+	outra := p.a.Empresa("Outra Ltda")
+	acme := p.a.Empresa("ACME Comércio Ltda")
+	kAbel := p.a.Ligar(outra.Codigo, "PC-ABEL")
+	p.a.Entrar(kAbel, "2003", "Abel")
+	p.a.Conectar(kAbel)
+	// O computador X da ACME, ligado depois, tem o maior id.
+	kX := p.a.Ligar(acme.Codigo, "NOTE-ANA")
+	p.a.Entrar(kX, "2003", "Ana Souza")
+	cX := p.a.Conectar(kX)
+	x := idDoComputador(p, "NOTE-ANA")
+	if maior := int64(p.a.Contar(`SELECT MAX(id) FROM computadores`)); x != maior {
+		t.Fatalf("o X tem o id %d; o maior é %d", x, maior)
+	}
+	bilhete := p.a.Bilhete(kX) // pedido antes de a empresa sair
+
+	resp, _ := n.acao(fmt.Sprintf("/admin/empresas/%d/apagar", acme.ID), url.Values{"nome": {"ACME Comércio Ltda"}})
+	esperarIr(t, resp, "/admin/")
+	esperarFora(t, cX)
+	// Um computador novo liga na outra empresa.
+	p.a.Entrar(p.a.Ligar(outra.Codigo, "PC-BRUNA"), "2004", "Bruna")
+	if novo := idDoComputador(p, "PC-BRUNA"); novo <= x {
+		t.Errorf("o computador novo da outra empresa ganhou o id %d; o do apagado era %d", novo, x)
+	}
+	// O bilhete do X responde 401 chave, e nenhum WebSocket abre.
+	conn, resp, err := p.a.Discar(bilhete, "")
+	if err == nil || conn != nil {
+		t.Fatal("o bilhete do computador apagado abriu o WebSocket de um computador da outra empresa")
+	}
+	esperarErroAPI(t, resp, http.StatusUnauthorized, "chave")
+}
+
 func TestSemConversas(t *testing.T) {
 	p := novoPainel(t)
 	e := p.a.Empresa("ACME Comércio Ltda")

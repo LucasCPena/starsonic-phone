@@ -234,3 +234,54 @@ func TestApagarEmpresa(t *testing.T) {
 		t.Fatalf("empresa que não existe: %v", err)
 	}
 }
+
+// TestApagarEmpresa_IdsNaoVoltam é o R27: depois de apagar a empresa que tinha os maiores ids,
+// a empresa, a pessoa, o computador e a conversa novos não ganham os ids dela. Sem isso, o
+// SQLite daria de novo o maior id, e um bilhete, um pedido em andamento ou uma janela de limite
+// da empresa apagada passaria para outra empresa.
+func TestApagarEmpresa_IdsNaoVoltam(t *testing.T) {
+	b := abrirTeste(t)
+	ctx := context.Background()
+	// A outra empresa, com uma pessoa, um computador e um grupo; depois a ACME, com os
+	// maiores ids de cada tabela.
+	outra, _ := b.CriarEmpresa(ctx, "Outra Ltda")
+	abel, _ := entrar(t, b, computadorTeste(t, b, outra.ID, "PC-ABEL"), "2003", "Abel")
+	bruna := pessoaDe(t, b, outra.ID, "2004", "Bruna")
+	if _, _, err := b.CriarGrupo(ctx, outra.ID, abel.ID, "Vendas", []int64{bruna.ID}); err != nil {
+		t.Fatal(err)
+	}
+	acme, _ := b.CriarEmpresa(ctx, "ACME Comércio Ltda")
+	pcAna := computadorTeste(t, b, acme.ID, "NOTE-ANA")
+	ana, _ := entrar(t, b, pcAna, "2003", "Ana Souza")
+	bia := pessoaDe(t, b, acme.ID, "2004", "Beatriz Ramos")
+	grupo, _, err := b.CriarGrupo(ctx, acme.ID, ana.ID, "Comercial", []int64{bia.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	maiores := map[string]int64{
+		"empresas":     acme.ID,
+		"pessoas":      int64(contar(t, b, `SELECT MAX(id) FROM pessoas`)),
+		"computadores": int64(contar(t, b, `SELECT MAX(id) FROM computadores`)),
+		"conversas":    grupo,
+	}
+	if maiores["pessoas"] != bia.ID || maiores["computadores"] <= pcAna.ID {
+		t.Fatalf("a cena não deu à ACME os maiores ids: %v", maiores)
+	}
+	if _, _, err := b.ApagarEmpresa(ctx, acme.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// De novo: uma empresa, um computador, uma pessoa e uma conversa.
+	nova, _ := b.CriarEmpresa(ctx, "Clínica Vida")
+	pcNovo := computadorTeste(t, b, nova.ID, "RECEPCAO-01")
+	carla, _ := entrar(t, b, pcNovo, "2001", "Carla")
+	dupla, _, err := b.CriarDupla(ctx, nova.ID, carla.ID, pessoaDe(t, b, nova.ID, "2002", "Davi").ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for tabela, id := range map[string]int64{"empresas": nova.ID, "pessoas": carla.ID, "computadores": pcNovo.ID, "conversas": dupla} {
+		if id <= maiores[tabela] {
+			t.Errorf("%s: o id novo é %d; o maior da empresa apagada era %d, e ele não pode voltar", tabela, id, maiores[tabela])
+		}
+	}
+}

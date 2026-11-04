@@ -1,15 +1,15 @@
 CREATE TABLE empresas (
-  id INTEGER PRIMARY KEY, nome TEXT NOT NULL, codigo TEXT NOT NULL UNIQUE, criada_em INTEGER NOT NULL
+  id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NOT NULL, codigo TEXT NOT NULL UNIQUE, criada_em INTEGER NOT NULL
 );
 CREATE TABLE pessoas (
-  id INTEGER PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   empresa_id INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
   ramal TEXT NOT NULL, nome TEXT NOT NULL, nome_busca TEXT NOT NULL,
   entrou_em INTEGER NOT NULL, saiu_em INTEGER
 );
 CREATE UNIQUE INDEX pessoas_ramal_ativo ON pessoas(empresa_id, ramal) WHERE saiu_em IS NULL;
 CREATE TABLE computadores (
-  id INTEGER PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   empresa_id INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
   chave_hash BLOB NOT NULL UNIQUE, nome TEXT NOT NULL,
   pessoa_id INTEGER REFERENCES pessoas(id),
@@ -22,7 +22,7 @@ CREATE TABLE computador_pessoas (
   PRIMARY KEY (computador_id, pessoa_id)
 );
 CREATE TABLE conversas (
-  id INTEGER PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   empresa_id INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
   tipo TEXT NOT NULL CHECK (tipo IN ('dupla', 'grupo')),
   nome TEXT, cuida_id INTEGER REFERENCES pessoas(id), criou_id INTEGER REFERENCES pessoas(id),
