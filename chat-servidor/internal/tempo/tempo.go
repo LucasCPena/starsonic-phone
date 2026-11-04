@@ -4,7 +4,22 @@ package tempo
 import (
 	"sync"
 	"time"
+	_ "time/tzdata" // o fuso vem dentro do binário: não depende do tzdata do sistema
 )
+
+// fusoSaoPaulo é o fuso das tarefas diárias e da página de administração.
+var fusoSaoPaulo = sync.OnceValue(func() *time.Location {
+	loc, err := time.LoadLocation("America/Sao_Paulo")
+	if err != nil {
+		// Não deve acontecer (o tzdata está embutido). O Brasil não tem horário de verão
+		// desde 2019: UTC-3 fixo serve de reserva.
+		return time.FixedZone("America/Sao_Paulo", -3*60*60)
+	}
+	return loc
+})
+
+// Fuso devolve o fuso America/Sao_Paulo, carregado uma só vez. Nunca é nil.
+func Fuso() *time.Location { return fusoSaoPaulo() }
 
 // Relogio diz que horas são agora.
 type Relogio interface {

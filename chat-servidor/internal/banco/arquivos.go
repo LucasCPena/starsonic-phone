@@ -118,3 +118,78 @@ func (b *Banco) MarcarMiniatura(ctx context.Context, autorID int64, id string) e
 		return err
 	})
 }
+
+// ArquivosParaExpirar acha os arquivos criados antes de antesDe (ms UTC) que ainda não
+// foram marcados como expirados.
+func (b *Banco) ArquivosParaExpirar(ctx context.Context, antesDe int64) ([]string, error) {
+	return b.ids(ctx, `SELECT id FROM arquivos WHERE criado_em < ? AND expirado_em IS NULL ORDER BY criado_em`, antesDe)
+}
+
+// ArquivosSemMensagem acha os arquivos criados antes de antesDe (ms UTC) que nenhuma
+// mensagem usa e que não expiraram: foram enviados e nunca entraram numa mensagem.
+func (b *Banco) ArquivosSemMensagem(ctx context.Context, antesDe int64) ([]string, error) {
+	return b.ids(ctx,
+		`SELECT a.id FROM arquivos a
+		  WHERE a.criado_em < ? AND a.expirado_em IS NULL
+		    AND NOT EXISTS (SELECT 1 FROM mensagens m WHERE m.arquivo_id = a.id)
+		  ORDER BY a.criado_em`, antesDe)
+}
+
+func (b *Banco) ids(ctx context.Context, q string, args ...any) ([]string, error) {
+	rows, err := b.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// MarcarExpirado marca o arquivo como expirado agora e zera a miniatura. Devolve se marcou:
+// um arquivo que já estava expirado, ou que não existe, devolve false.
+func (b *Banco) MarcarExpirado(ctx context.Context, id string) (bool, error) {
+	r, err := b.db.ExecContext(ctx,
+		`UPDATE arquivos SET expirado_em = ?, miniatura = 0 WHERE id = ? AND expirado_em IS NULL`,
+		b.agoraMs(), id)
+	if err != nil {
+		return false, err
+	}
+	n, err := r.RowsAffected()
+	return n > 0, err
+}
+
+// ApagarArquivo apaga a linha do arquivo, mas só se nenhuma mensagem o usa; a conferência e
+// o DELETE são um só comando, então uma mensagem que chega no meio não perde o arquivo.
+// Devolve se apagou.
+func (b *Banco) ApagarArquivo(ctx context.Context, id string) (bool, error) {
+	r, err := b.db.ExecContext(ctx,
+		`DELETE FROM arquivos WHERE id = ? AND NOT EXISTS (SELECT 1 FROM mensagens WHERE arquivo_id = ?)`,
+		id, id)
+	if err != nil {
+		return false, err
+	}
+	n, err := r.RowsAffected()
+	return n > 0, err
+}
+
+// EstadoArquivo diz se há linha para o id e, havendo, se está expirada e se tem miniatura.
+// Serve à varredura do disco.
+func (b *Banco) EstadoArquivo(ctx context.Context, id string) (existe, expirado, miniatura bool, err error) {
+	var mini int64
+	var exp sql.NullInt64
+	err = b.db.QueryRowContext(ctx, `SELECT miniatura, expirado_em FROM arquivos WHERE id = ?`, id).Scan(&mini, &exp)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, false, false, nil
+	}
+	if err != nil {
+		return false, false, false, err
+	}
+	return true, exp.Valid, mini != 0, nil
+}

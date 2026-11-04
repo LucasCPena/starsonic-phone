@@ -183,3 +183,6 @@ func (a *Armazem) Apagar(id string) error {
 	}
 	return primeiro
 }
+
+// Pasta devolve a pasta raiz do armazém, para a varredura da limpeza.
+func (a *Armazem) Pasta() string { return a.pasta }
