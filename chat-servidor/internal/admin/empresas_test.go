@@ -1,6 +1,7 @@
 package admin_test
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -9,10 +10,12 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/apitest"
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/banco/bancotest"
 )
 
 var reCodigo = regexp.MustCompile(`STAR-[ABCDEFGHJKMNPQRSTVWXYZ23456789]{4}-[ABCDEFGHJKMNPQRSTVWXYZ23456789]{4}`)
@@ -100,33 +103,30 @@ func TestTrocarCodigo(t *testing.T) {
 	esperarStatus(t, resp, corpo, http.StatusNotFound)
 }
 
-// linhas conta as linhas de cada tabela que são da empresa.
+// linhas conta as linhas de cada tabela que são da empresa. As tabelas vêm do sqlite_master,
+// com a regra de cada uma no bancotest, a mesma do teste do banco: uma tabela nova com dados
+// de empresa, sem regra, falha o teste.
 func linhas(p *painel, empresaID int64) map[string]int {
-	n := map[string]int{}
-	for tabela, q := range map[string]string{
-		"empresas":           `SELECT COUNT(*) FROM empresas WHERE id = ?`,
-		"pessoas":            `SELECT COUNT(*) FROM pessoas WHERE empresa_id = ?`,
-		"computadores":       `SELECT COUNT(*) FROM computadores WHERE empresa_id = ?`,
-		"computador_pessoas": `SELECT COUNT(*) FROM computador_pessoas x JOIN computadores c ON c.id = x.computador_id WHERE c.empresa_id = ?`,
-		"conversas":          `SELECT COUNT(*) FROM conversas WHERE empresa_id = ?`,
-		"membros":            `SELECT COUNT(*) FROM membros x JOIN conversas c ON c.id = x.conversa_id WHERE c.empresa_id = ?`,
-		"mensagens":          `SELECT COUNT(*) FROM mensagens x JOIN conversas c ON c.id = x.conversa_id WHERE c.empresa_id = ?`,
-		"arquivos":           `SELECT COUNT(*) FROM arquivos WHERE empresa_id = ?`,
-		"leituras":           `SELECT COUNT(*) FROM leituras x JOIN conversas c ON c.id = x.conversa_id WHERE c.empresa_id = ?`,
-	} {
-		n[tabela] = p.a.Contar(q, empresaID)
-	}
-	return n
+	db := leitura(p)
+	defer db.Close()
+	return bancotest.DaEmpresa(p.a.T, db, empresaID)
 }
 
-// total conta as linhas de cada tabela, de todas as empresas.
+// total conta as linhas de cada tabela com dados de empresa, de todas as empresas.
 func total(p *painel) map[string]int {
-	n := map[string]int{}
-	for _, tabela := range []string{"empresas", "pessoas", "computadores", "computador_pessoas", "conversas", "membros",
-		"mensagens", "arquivos", "leituras"} {
-		n[tabela] = p.a.Contar(`SELECT COUNT(*) FROM ` + tabela)
+	db := leitura(p)
+	defer db.Close()
+	return bancotest.Total(p.a.T, db)
+}
+
+// leitura abre o arquivo do banco por outra conexão, para o teste ler.
+func leitura(p *painel) *sql.DB {
+	p.a.T.Helper()
+	db, err := sql.Open("sqlite", "file:"+p.a.Caminho+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		p.a.T.Fatal(err)
 	}
-	return n
+	return db
 }
 
 // noDisco diz se o arquivo e a miniatura dele estão no disco.
@@ -226,6 +226,86 @@ func TestApagarEmpresa(t *testing.T) {
 	esperarStatus(t, resp, corpo, http.StatusNotFound)
 	if _, corpo := n.get("/admin/"); strings.Contains(corpo, "ACME Comércio Ltda") || !strings.Contains(corpo, "Outra Ltda") {
 		t.Fatalf("a lista depois de apagar:\n%s", corpo)
+	}
+}
+
+// formulario é um <form> da página, com o action e o csrf dele mesmo.
+type formulario struct{ acao, csrf string }
+
+var reFormulario = regexp.MustCompile(`(?s)<form\b[^>]*\baction="([^"]*)"[^>]*>(.*?)</form>`)
+
+// formulariosDe lê os formulários da página, na ordem. Um sem o campo csrf vem com ele vazio.
+func formulariosDe(corpo string) []formulario {
+	var fs []formulario
+	for _, m := range reFormulario.FindAllStringSubmatch(corpo, -1) {
+		f := formulario{acao: m[1]}
+		if c := reCSRF.FindStringSubmatch(m[2]); c != nil {
+			f.csrf = c[1]
+		}
+		fs = append(fs, f)
+	}
+	return fs
+}
+
+// TestFormularios: cada formulário das páginas nova, da empresa e de apagar funciona com o
+// csrf e o action dele mesmo, lidos daquela página (o acao dos outros testes manda o csrf lido
+// da lista). Todos respondem 303; o Sair de cada página vai por último, porque encerra a
+// sessão.
+func TestFormularios(t *testing.T) {
+	p := novoPainel(t)
+	e := p.a.Empresa("ACME Comércio Ltda")
+	ana := p.a.Entrar(p.a.Ligar(e.Codigo, "NOTE-ANA"), "2003", "Ana Souza")
+	bia := p.a.Entrar(p.a.Ligar(e.Codigo, "FIN-01"), "3004", "Beatriz Ramos")
+	pagina := fmt.Sprintf("/admin/empresas/%d", e.ID)
+	type acao struct {
+		campos  url.Values
+		destino string // o Location do 303; vazio é o da empresa nova
+	}
+	for _, pg := range []struct {
+		caminho string
+		acoes   map[string]acao
+	}{
+		{"/admin/empresas/nova", map[string]acao{"/admin/empresas": {url.Values{"nome": {"Clínica Vida"}}, ""}}},
+		{pagina, map[string]acao{
+			pagina + "/codigo": {nil, pagina},
+			fmt.Sprintf("%s/computadores/%d/tirar", pagina, idDoComputador(p, "NOTE-ANA")): {nil, pagina},
+			fmt.Sprintf("%s/computadores/%d/tirar", pagina, idDoComputador(p, "FIN-01")):   {nil, pagina},
+			fmt.Sprintf("%s/pessoas/%d/tirar", pagina, ana.ID):                             {nil, pagina},
+			fmt.Sprintf("%s/pessoas/%d/tirar", pagina, bia.ID):                             {nil, pagina},
+		}},
+		{pagina + "/apagar", map[string]acao{pagina + "/apagar": {url.Values{"nome": {"ACME Comércio Ltda"}}, "/admin/"}}},
+	} {
+		n := p.logado(t)
+		resp, corpo := n.get(pg.caminho)
+		esperarStatus(t, resp, corpo, http.StatusOK)
+		fs := formulariosDe(corpo)
+		var achadas, queria []string
+		for _, f := range fs {
+			achadas = append(achadas, f.acao)
+		}
+		queria = append(slices.Collect(maps.Keys(pg.acoes)), "/admin/sair")
+		slices.Sort(achadas)
+		slices.Sort(queria)
+		if !slices.Equal(achadas, queria) {
+			t.Fatalf("GET %s: os formulários = %v; queria %v", pg.caminho, achadas, queria)
+		}
+		var sair formulario
+		for _, f := range fs {
+			if f.acao == "/admin/sair" {
+				sair = f
+				continue
+			}
+			campos := url.Values{"csrf": {f.csrf}}
+			maps.Copy(campos, pg.acoes[f.acao].campos)
+			resp, corpo := n.post(f.acao, campos)
+			destino, local := pg.acoes[f.acao].destino, resp.Header.Get("Location")
+			if resp.StatusCode != http.StatusSeeOther || (destino == "" && !regexp.MustCompile(`^/admin/empresas/\d+$`).MatchString(local)) ||
+				(destino != "" && local != destino) {
+				t.Fatalf("GET %s, o formulário %s = %d para %q:\n%s", pg.caminho, f.acao, resp.StatusCode, local, corpo)
+			}
+		}
+		resp, _ = n.post(sair.acao, url.Values{"csrf": {sair.csrf}})
+		esperarIr(t, resp, "/admin/entrar")
 	}
 }
 

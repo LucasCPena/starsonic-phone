@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/banco/bancotest"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/segredo"
 )
 
@@ -128,38 +129,6 @@ func TestTrocarCodigo(t *testing.T) {
 	}
 }
 
-// contagens diz quantas linhas de cada tabela são da empresa.
-func contagens(t *testing.T, b *Banco, empresaID int64) map[string]int {
-	t.Helper()
-	porTabela := map[string]string{
-		"empresas":           `SELECT COUNT(*) FROM empresas WHERE id = ?`,
-		"pessoas":            `SELECT COUNT(*) FROM pessoas WHERE empresa_id = ?`,
-		"computadores":       `SELECT COUNT(*) FROM computadores WHERE empresa_id = ?`,
-		"computador_pessoas": `SELECT COUNT(*) FROM computador_pessoas x JOIN computadores c ON c.id = x.computador_id WHERE c.empresa_id = ?`,
-		"conversas":          `SELECT COUNT(*) FROM conversas WHERE empresa_id = ?`,
-		"membros":            `SELECT COUNT(*) FROM membros x JOIN conversas c ON c.id = x.conversa_id WHERE c.empresa_id = ?`,
-		"mensagens":          `SELECT COUNT(*) FROM mensagens x JOIN conversas c ON c.id = x.conversa_id WHERE c.empresa_id = ?`,
-		"arquivos":           `SELECT COUNT(*) FROM arquivos WHERE empresa_id = ?`,
-		"leituras":           `SELECT COUNT(*) FROM leituras x JOIN conversas c ON c.id = x.conversa_id WHERE c.empresa_id = ?`,
-	}
-	n := map[string]int{}
-	for tabela, q := range porTabela {
-		n[tabela] = contar(t, b, q, empresaID)
-	}
-	return n
-}
-
-// totais diz quantas linhas cada tabela tem, de todas as empresas.
-func totais(t *testing.T, b *Banco) map[string]int {
-	t.Helper()
-	n := map[string]int{}
-	for _, tabela := range []string{"empresas", "pessoas", "computadores", "computador_pessoas", "conversas",
-		"membros", "mensagens", "arquivos", "leituras"} {
-		n[tabela] = contar(t, b, `SELECT COUNT(*) FROM `+tabela)
-	}
-	return n
-}
-
 // encherEmpresa põe na empresa duas pessoas com computadores (um deles desligado), uma
 // conversa a dois com texto e arquivo, um grupo e uma leitura. Devolve os ids dos
 // computadores e dos arquivos, em ordem.
@@ -201,8 +170,10 @@ func TestApagarEmpresa(t *testing.T) {
 	outra, _ := b.CriarEmpresa(ctx, "Outra Ltda")
 	pcsAcme, arqsAcme := encherEmpresa(t, b, acme.ID, "a")
 	encherEmpresa(t, b, outra.ID, "o")
-	daOutra := contagens(t, b, outra.ID)
-	for tabela, n := range contagens(t, b, acme.ID) {
+	// As tabelas vêm do sqlite_master (bancotest): uma tabela nova com dados de empresa, sem
+	// regra, falha o teste.
+	daOutra := bancotest.DaEmpresa(t, b.db, outra.ID)
+	for tabela, n := range bancotest.DaEmpresa(t, b.db, acme.ID) {
 		if n == 0 {
 			t.Fatalf("a cena não pôs nada em %s", tabela)
 		}
@@ -218,10 +189,10 @@ func TestApagarEmpresa(t *testing.T) {
 		t.Fatalf("ApagarEmpresa = %v, %v; queria %v, %v", arquivos, computadores, arqsAcme, pcsAcme)
 	}
 	// Nada da ACME fica, nem linha solta: o total de cada tabela é o da outra empresa.
-	if got := totais(t, b); !maps.Equal(got, daOutra) {
+	if got := bancotest.Total(t, b.db); !maps.Equal(got, daOutra) {
 		t.Fatalf("depois de apagar = %v; queria só os da outra empresa, %v", got, daOutra)
 	}
-	if got := contagens(t, b, outra.ID); !maps.Equal(got, daOutra) {
+	if got := bancotest.DaEmpresa(t, b.db, outra.ID); !maps.Equal(got, daOutra) {
 		t.Fatalf("a outra empresa mudou: %v; era %v", got, daOutra)
 	}
 	if _, err := b.EmpresaPorCodigo(ctx, acme.Codigo); !errors.Is(err, ErrNaoEncontrado) {
