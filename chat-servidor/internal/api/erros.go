@@ -1,9 +1,11 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"time"
 )
@@ -31,8 +33,15 @@ func erroCampo(w http.ResponseWriter, campo string) {
 	escreverErro(w, http.StatusBadRequest, "invalido", map[string]any{"campo": campo})
 }
 
-// erroServidor responde 500 servidor, sem detalhes.
-func erroServidor(w http.ResponseWriter) {
+// erroServidor responde 500 servidor, sem detalhes para o app, e registra a causa no log (o
+// texto do erro não leva dado do cliente). Um pedido cancelado (o cliente foi embora) não é
+// erro do servidor: não registra nada em Error.
+func erroServidor(w http.ResponseWriter, err error) {
+	if errors.Is(err, context.Canceled) {
+		slog.Debug("pedido cancelado", "erro", err)
+	} else {
+		slog.Error("servidor", "erro", err)
+	}
 	escreverErro(w, http.StatusInternalServerError, "servidor", nil)
 }
 

@@ -59,7 +59,7 @@ func (s *servidor) entrarComoPessoa(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		erroServidor(w)
+		erroServidor(w, err)
 		return
 	}
 	if len(outros) > 0 {
@@ -73,7 +73,7 @@ func (s *servidor) colegas(w http.ResponseWriter, r *http.Request) {
 	c, _ := computadorDe(r)
 	lista, err := s.banco.Colegas(r.Context(), c.EmpresaID, c.PessoaID)
 	if err != nil {
-		erroServidor(w)
+		erroServidor(w, err)
 		return
 	}
 	pessoas := make([]pessoaJSON, 0, len(lista))

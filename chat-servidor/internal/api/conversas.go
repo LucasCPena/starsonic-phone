@@ -2,7 +2,6 @@ package api
 
 import (
 	"errors"
-	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -37,8 +36,7 @@ func erroDoBanco(w http.ResponseWriter, err error) {
 	case errors.Is(err, banco.ErrGrupoCheio):
 		escreverErro(w, http.StatusConflict, "grupoCheio", nil)
 	default:
-		slog.Error("banco", "erro", err)
-		erroServidor(w)
+		erroServidor(w, err)
 	}
 }
 

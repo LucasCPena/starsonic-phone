@@ -145,7 +145,7 @@ func (s *servidor) eventos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		erroServidor(w)
+		erroServidor(w, err)
 		return
 	}
 

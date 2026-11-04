@@ -46,7 +46,7 @@ func (s *servidor) ligarComputador(w http.ResponseWriter, r *http.Request) {
 			ok = false
 		} else if err != nil {
 			s.erradas.Devolver(end, 1)
-			erroServidor(w)
+			erroServidor(w, err)
 			return
 		}
 	}
@@ -58,7 +58,7 @@ func (s *servidor) ligarComputador(w http.ResponseWriter, r *http.Request) {
 
 	chave, hash := segredo.NovaChave()
 	if _, err := s.banco.LigarComputador(r.Context(), emp.ID, nome, hash); err != nil {
-		erroServidor(w)
+		erroServidor(w, err)
 		return
 	}
 	escreverJSON(w, http.StatusCreated, map[string]any{
@@ -72,7 +72,7 @@ func (s *servidor) ligarComputador(w http.ResponseWriter, r *http.Request) {
 func (s *servidor) desligarComputador(w http.ResponseWriter, r *http.Request) {
 	c, _ := computadorDe(r)
 	if err := s.banco.DesligarComputador(r.Context(), c.ID); err != nil {
-		erroServidor(w)
+		erroServidor(w, err)
 		return
 	}
 	// Depois do banco: quem conectar daqui em diante já é recusado por ele.

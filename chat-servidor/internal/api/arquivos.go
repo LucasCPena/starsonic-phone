@@ -188,8 +188,7 @@ func erroDeGravacao(w http.ResponseWriter, err error, corpo *leitorMarcado, camp
 		// O cliente cortou o envio, ou o corpo veio quebrado: não sobrou nada no disco.
 		erroCampo(w, campo)
 	default:
-		slog.Error("armazem", "erro", err)
-		erroServidor(w)
+		erroServidor(w, err)
 	}
 }
 
@@ -268,10 +267,10 @@ func (s *servidor) baixarMiniatura(w http.ResponseWriter, r *http.Request) {
 func (s *servidor) arquivoSumiu(w http.ResponseWriter, id string, err error) {
 	if errors.Is(err, os.ErrNotExist) {
 		slog.Error("arquivo na tabela e fora do disco", "id", id)
-	} else {
-		slog.Error("armazem", "erro", err)
+		escreverErro(w, http.StatusInternalServerError, "servidor", nil)
+		return
 	}
-	erroServidor(w)
+	erroServidor(w, err)
 }
 
 // servirArquivo manda o conteúdo com o http.ServeContent, que já tem de encontrar o

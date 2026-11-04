@@ -44,7 +44,7 @@ func (s *servidor) identificar(w http.ResponseWriter, r *http.Request,
 		return r, false
 	}
 	if err != nil {
-		erroServidor(w)
+		erroServidor(w, err)
 		return r, false
 	}
 	ctx := context.WithValue(r.Context(), chaveContexto{}, quem{c, e})
