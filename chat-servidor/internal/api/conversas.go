@@ -146,8 +146,7 @@ func (s *servidor) criarGrupo(w http.ResponseWriter, r *http.Request, c banco.Co
 		erroCampo(w, "nome")
 		return
 	}
-	// Os ids dos avisos são da Task 6, que manda o evento mensagem de cada um.
-	id, _, err := s.banco.CriarGrupo(r.Context(), c.EmpresaID, c.PessoaID, nome, pessoas)
+	id, avisos, err := s.banco.CriarGrupo(r.Context(), c.EmpresaID, c.PessoaID, nome, pessoas)
 	if errors.Is(err, banco.ErrInvalido) {
 		erroCampo(w, "pessoas")
 		return
@@ -162,6 +161,7 @@ func (s *servidor) criarGrupo(w http.ResponseWriter, r *http.Request, c banco.Co
 		return
 	}
 	s.avisarMudanca(r.Context(), c.EmpresaID, id)
+	s.emitirMensagens(r.Context(), id, avisos) // o criou e os pos, a cada membro, depois do evento conversa
 	escreverJSON(w, http.StatusCreated, map[string]any{"conversa": novaConversaJSON(conv)})
 }
 
@@ -221,6 +221,7 @@ func (s *servidor) porNoGrupo(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(avisos) > 0 {
 		s.avisarMudanca(r.Context(), c.EmpresaID, id)
+		s.emitirMensagens(r.Context(), id, avisos)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -237,12 +238,15 @@ func (s *servidor) tirarDoGrupo(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if _, err := s.banco.TirarMembro(r.Context(), c.PessoaID, id, alvo); err != nil {
+	avisos, err := s.banco.TirarMembro(r.Context(), c.PessoaID, id, alvo)
+	if err != nil {
 		erroDoBanco(w, err)
 		return
 	}
 	// Quem saiu perde a conversa; os que ficam recebem o grupo com as pessoas e o cuida novos.
 	s.hub.ParaPessoas([]int64{alvo}, eventoConversaSaiu{Tipo: "conversaSaiu", Conversa: id})
 	s.avisarMudanca(r.Context(), c.EmpresaID, id)
+	// O aviso vai a quem ficou: quem saiu já não é membro e não recebe o aviso da própria saída.
+	s.emitirMensagens(r.Context(), id, avisos)
 	w.WriteHeader(http.StatusNoContent)
 }

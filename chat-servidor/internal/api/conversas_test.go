@@ -21,6 +21,8 @@ type mensagemResp struct {
 	Conversa int64           `json:"conversa"`
 	Autor    *apitest.Pessoa `json:"autor"`
 	Tipo     string          `json:"tipo"`
+	Texto    *string         `json:"texto"`
+	IDLocal  *string         `json:"idLocal"`
 	Aviso    *struct {
 		Acao string          `json:"acao"`
 		Quem apitest.Pessoa  `json:"quem"`
@@ -459,6 +461,7 @@ func TestGrupo_PassaParaOMaisAntigo(t *testing.T) {
 		conv := c.criarGrupo(t, c.kAna, "Comercial", c.carlos.ID, c.bia.ID)
 		for _, conn := range []*websocket.Conn{cAna, cBia, cCarlos} {
 			proximo(t, conn, "conversa")
+			descartarMensagens(t, conn, 3) // criou e os dois pos
 		}
 		if r := c.tirar(c.kAna, conv.ID, c.ana.ID); r.StatusCode != http.StatusNoContent {
 			t.Fatalf("status %d", r.StatusCode)
@@ -487,13 +490,16 @@ func TestGrupo_PassaParaOMaisAntigo(t *testing.T) {
 		// O Carlos entra com o grupo; a Beatriz, 1 s depois. Ele passa a cuidar, apesar do id maior.
 		conv := c.criarGrupo(t, c.kAna, "Financeiro", c.carlos.ID)
 		proximo(t, cAna, "conversa")
+		descartarMensagens(t, cAna, 2) // criou e pos
 		proximo(t, cCarlos, "conversa")
+		descartarMensagens(t, cCarlos, 2)
 		c.a.Relogio.Avancar(time.Second)
 		if r := c.pôr(c.kAna, conv.ID, c.bia.ID); r.StatusCode != http.StatusNoContent {
 			t.Fatalf("pôr: status %d", r.StatusCode)
 		}
 		for _, conn := range []*websocket.Conn{cAna, cBia, cCarlos} {
 			proximo(t, conn, "conversa")
+			descartarMensagens(t, conn, 1) // o pos da Beatriz
 		}
 		if r := c.tirar(c.kAna, conv.ID, c.ana.ID); r.StatusCode != http.StatusNoContent {
 			t.Fatalf("status %d", r.StatusCode)
@@ -560,7 +566,9 @@ func TestGrupo_PorPessoas(t *testing.T) {
 	cAna, cBia, cDani := c.a.Conectar(c.kAna), c.a.Conectar(c.kBia), c.a.Conectar(c.kDani)
 	conv := c.criarGrupo(t, c.kAna, "Comercial", c.bia.ID)
 	proximo(t, cAna, "conversa")
+	descartarMensagens(t, cAna, 2) // criou e pos
 	proximo(t, cBia, "conversa")
+	descartarMensagens(t, cBia, 2)
 
 	// A Beatriz já está (ignorada); a Daniela entra e o Carlos também, na ordem da lista.
 	if r := c.pôr(c.kAna, conv.ID, c.bia.ID, c.dani.ID, c.carlos.ID, c.dani.ID); r.StatusCode != http.StatusNoContent {
@@ -574,6 +582,7 @@ func TestGrupo_PorPessoas(t *testing.T) {
 		if got := conversaDo(t, proximo(t, conn, "conversa")); got.ID != conv.ID || *got.Pessoas != 4 {
 			t.Fatalf("evento = %+v", got)
 		}
+		descartarMensagens(t, conn, 2) // os pos da Daniela e do Carlos
 	}
 	// Ninguém novo: nada de aviso nem de evento.
 	if r := c.pôr(c.kAna, conv.ID, c.bia.ID); r.StatusCode != http.StatusNoContent {

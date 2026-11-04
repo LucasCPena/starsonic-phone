@@ -5,8 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"sort"
-
-	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/regras"
 )
 
 // MaxGrupo é o limite de pessoas ativas num grupo, com quem cuida (seção 8 do protocolo).
@@ -515,45 +513,15 @@ func (b *Banco) resumos(ctx context.Context, pessoaID, empresaID, conversaID int
 // ultimaMensagem é a mensagem mais nova da conversa desde a hora dada (criada_em >=
 // desde), ou nil se não há nenhuma.
 func ultimaMensagem(ctx context.Context, l linhaUnica, conversaID, desde int64) (*Mensagem, error) {
-	var (
-		m                               Mensagem
-		texto, aviso, idLocal           sql.NullString
-		aID, tID                        sql.NullInt64
-		aRamal, aNome, tRamal, tNome    sql.NullString
-		aSaiu, tSaiu                    sql.NullInt64
-		fID, fNome, fTipo               sql.NullString
-		fTamanho, fMiniatura, fExpirado sql.NullInt64
-	)
-	err := l.QueryRowContext(ctx,
-		`SELECT m.id, m.conversa_id, m.tipo, m.texto, m.aviso_acao, m.id_local, m.criada_em,
-		        a.id, a.ramal, a.nome, a.saiu_em, t.id, t.ramal, t.nome, t.saiu_em,
-		        f.id, f.nome, f.tipo, f.tamanho, f.miniatura, f.expirado_em
-		   FROM mensagens m
-		   LEFT JOIN pessoas a ON a.id = m.autor_id
-		   LEFT JOIN pessoas t ON t.id = m.aviso_alvo_id
-		   LEFT JOIN arquivos f ON f.id = m.arquivo_id
+	m, err := lerMensagem(l.QueryRowContext(ctx,
+		`SELECT `+colunasMensagem+` `+juncoesMensagem+`
 		  WHERE m.conversa_id = ? AND m.criada_em >= ?
-		  ORDER BY m.id DESC LIMIT 1`, conversaID, desde).
-		Scan(&m.ID, &m.ConversaID, &m.Tipo, &texto, &aviso, &idLocal, &m.CriadaEm,
-			&aID, &aRamal, &aNome, &aSaiu, &tID, &tRamal, &tNome, &tSaiu,
-			&fID, &fNome, &fTipo, &fTamanho, &fMiniatura, &fExpirado)
+		  ORDER BY m.id DESC LIMIT 1`, conversaID, desde))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
-	}
-	m.Texto, m.AvisoAcao, m.IDLocal = texto.String, aviso.String, idLocal.String
-	if aID.Valid {
-		m.Autor = &Pessoa{ID: aID.Int64, Ramal: aRamal.String, Nome: aNome.String, Saiu: aSaiu.Valid}
-	}
-	if tID.Valid {
-		m.AvisoAlvo = &Pessoa{ID: tID.Int64, Ramal: tRamal.String, Nome: tNome.String, Saiu: tSaiu.Valid}
-	}
-	if fID.Valid {
-		_, foto := regras.TipoArquivo(fTipo.String)
-		m.Arquivo = &Arquivo{ID: fID.String, Nome: fNome.String, Tipo: fTipo.String, Tamanho: fTamanho.Int64,
-			Foto: foto, Miniatura: fMiniatura.Int64 != 0, Expirado: fExpirado.Valid}
 	}
 	return &m, nil
 }

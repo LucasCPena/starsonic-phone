@@ -35,6 +35,11 @@ type servidor struct {
 	erradas  *limites.Janela // os códigos errados, por endereço
 	bilhetes *bilhetes
 
+	mensagensLimite *limites.Janela // as mensagens novas, por computador
+	// travasConversa segura uma conversa (pelo id, em 64 faixas) enquanto uma mensagem é
+	// gravada e o evento sai: assim os eventos saem na ordem dos ids.
+	travasConversa [64]sync.Mutex
+
 	// travas seguram um computador (pelo id, em 64 faixas) enquanto um pedido lê ou muda a
 	// pessoa da vez no banco e depois avisa o hub: assim o hub fica com a mesma pessoa que
 	// o banco, mesmo com dois pedidos do mesmo computador juntos.
@@ -55,6 +60,8 @@ func Novo(d Deps) http.Handler {
 		origens:  map[string]bool{},
 		erradas:  limites.Nova(maxErradas, periodoErradas, d.Banco.Relogio()),
 		bilhetes: novosBilhetes(d.Banco.Relogio()),
+
+		mensagensLimite: limites.Nova(maxMensagens, periodoMensagens, d.Banco.Relogio()),
 	}
 	origens := d.Origens
 	if len(origens) == 0 {
@@ -75,6 +82,9 @@ func Novo(d Deps) http.Handler {
 	mux.HandleFunc("GET /api/v1/conversas/{id}/membros", s.autenticar(precisaPessoa(s.membros)))
 	mux.HandleFunc("POST /api/v1/conversas/{id}/membros", s.autenticar(precisaPessoa(s.porNoGrupo)))
 	mux.HandleFunc("DELETE /api/v1/conversas/{id}/membros/{idPessoa}", s.autenticar(precisaPessoa(s.tirarDoGrupo)))
+	mux.HandleFunc("GET /api/v1/conversas/{id}/mensagens", s.autenticar(precisaPessoa(s.mensagens)))
+	mux.HandleFunc("POST /api/v1/conversas/{id}/mensagens", s.autenticar(precisaPessoa(s.enviar)))
+	mux.HandleFunc("POST /api/v1/conversas/{id}/lida", s.autenticar(precisaPessoa(s.lida)))
 	mux.HandleFunc("POST /api/v1/eventos/bilhete", s.autenticar(s.novoBilhete))
 	mux.HandleFunc("GET /api/v1/eventos", s.eventos) // sem a chave: vale o bilhete
 	// O resto de /api/v1/ (rota que não existe, ou método errado numa rota que existe)
