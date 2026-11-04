@@ -89,13 +89,16 @@ func (s *servidor) ligarComputador(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// DELETE /api/v1/computadores/eu: a chave deixa de valer.
+// DELETE /api/v1/computadores/eu: a chave deixa de valer, e o WebSocket do computador recebe
+// o fora e fecha com 4001.
 func (s *servidor) desligarComputador(w http.ResponseWriter, r *http.Request) {
 	c, _ := computadorDe(r)
 	if err := s.banco.DesligarComputador(r.Context(), c.ID); err != nil {
 		erroServidor(w)
 		return
 	}
+	// Depois do banco: quem conectar daqui em diante já é recusado por ele.
+	s.hub.Fora([]int64{c.ID})
 	w.WriteHeader(http.StatusNoContent)
 }
 

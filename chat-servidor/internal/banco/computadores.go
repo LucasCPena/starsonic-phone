@@ -54,6 +54,24 @@ func (b *Banco) ComputadorPorChave(ctx context.Context, chaveHash []byte) (Compu
 	return c, e, nil
 }
 
+// ComputadorAtivo acha o computador pelo id, se ele não saiu. É para o WebSocket, que chega
+// com o bilhete e não com a chave.
+func (b *Banco) ComputadorAtivo(ctx context.Context, id int64) (Computador, error) {
+	var c Computador
+	var pessoa sql.NullInt64
+	err := b.db.QueryRowContext(ctx,
+		`SELECT id, empresa_id, nome, pessoa_id FROM computadores WHERE id = ? AND saiu_em IS NULL`, id).
+		Scan(&c.ID, &c.EmpresaID, &c.Nome, &pessoa)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Computador{}, ErrNaoEncontrado
+	}
+	if err != nil {
+		return Computador{}, err
+	}
+	c.PessoaID = pessoa.Int64
+	return c, nil
+}
+
 // DesligarComputador faz a chave do computador deixar de valer.
 func (b *Banco) DesligarComputador(ctx context.Context, id int64) error {
 	_, err := b.db.ExecContext(ctx,

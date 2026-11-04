@@ -59,3 +59,15 @@ func (s *servidor) autenticar(f http.HandlerFunc) http.HandlerFunc {
 		f(w, r2)
 	}
 }
+
+// precisaPessoa protege uma rota que age como a pessoa da vez: num computador onde ninguém
+// entrou, responde 409 pessoa. Vai dentro do autenticar.
+func precisaPessoa(f http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if c, _ := computadorDe(r); c.PessoaID == 0 {
+			escreverErro(w, http.StatusConflict, "pessoa", nil)
+			return
+		}
+		f(w, r)
+	}
+}

@@ -7,9 +7,11 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/banco"
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/eventos"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/limites"
 )
 
@@ -18,24 +20,39 @@ const OrigemPadrao = "https://app.starsonic.local"
 
 const prefixo = "/api/v1/"
 
-// Deps é o que a API usa. As próximas tarefas acrescentam o Hub e o Armazem.
+// Deps é o que a API usa. A Task 7 acrescenta o Armazem.
 type Deps struct {
 	Banco   *banco.Banco
-	Origens []string // as origens do CORS; sem nenhuma, vale OrigemPadrao
+	Hub     *eventos.Hub // o mesmo da página de administração; sem ele, a API cria um só dela
+	Origens []string     // as origens do CORS; sem nenhuma, vale OrigemPadrao
 }
 
 type servidor struct {
-	banco   *banco.Banco
-	origens map[string]bool
-	erradas *limites.Janela // os códigos errados, por endereço
+	banco    *banco.Banco
+	hub      *eventos.Hub
+	origens  map[string]bool
+	padroes  []string        // as origens, como OriginPatterns do websocket.Accept
+	erradas  *limites.Janela // os códigos errados, por endereço
+	bilhetes *bilhetes
+
+	// travas seguram um computador (pelo id, em 64 faixas) enquanto um pedido lê ou muda a
+	// pessoa da vez no banco e depois avisa o hub: assim o hub fica com a mesma pessoa que
+	// o banco, mesmo com dois pedidos do mesmo computador juntos.
+	travas [64]sync.Mutex
 }
 
 // Novo monta a API. O manipulador responde a tudo em /api/v1/.
 func Novo(d Deps) http.Handler {
+	hub := d.Hub
+	if hub == nil {
+		hub = eventos.NovoHub(eventos.Config{})
+	}
 	s := &servidor{
-		banco:   d.Banco,
-		origens: map[string]bool{},
-		erradas: limites.Nova(maxErradas, periodoErradas, d.Banco.Relogio()),
+		banco:    d.Banco,
+		hub:      hub,
+		origens:  map[string]bool{},
+		erradas:  limites.Nova(maxErradas, periodoErradas, d.Banco.Relogio()),
+		bilhetes: novosBilhetes(d.Banco.Relogio()),
 	}
 	origens := d.Origens
 	if len(origens) == 0 {
@@ -43,17 +60,29 @@ func Novo(d Deps) http.Handler {
 	}
 	for _, o := range origens {
 		s.origens[o] = true
+		s.padroes = append(s.padroes, padraoExato(o))
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/v1/computadores", s.ligarComputador)
 	mux.HandleFunc("DELETE /api/v1/computadores/eu", s.autenticar(s.desligarComputador))
+	mux.HandleFunc("POST /api/v1/pessoas/eu", s.autenticar(s.entrarComoPessoa))
+	mux.HandleFunc("GET /api/v1/pessoas", s.autenticar(precisaPessoa(s.colegas)))
+	mux.HandleFunc("POST /api/v1/eventos/bilhete", s.autenticar(s.novoBilhete))
+	mux.HandleFunc("GET /api/v1/eventos", s.eventos) // sem a chave: vale o bilhete
 	// O resto de /api/v1/ (rota que não existe, ou método errado numa rota que existe)
 	// responde 404 naoEncontrado em JSON. Quem não manda uma chave boa leva 401 antes.
 	mux.HandleFunc(prefixo, s.autenticar(func(w http.ResponseWriter, r *http.Request) {
 		escreverErro(w, http.StatusNotFound, "naoEncontrado", nil)
 	}))
 	return s.registrar(s.cors(mux))
+}
+
+// travar segura o computador (veja servidor.travas) e devolve a função que solta.
+func (s *servidor) travar(computadorID int64) (soltar func()) {
+	m := &s.travas[uint64(computadorID)%uint64(len(s.travas))]
+	m.Lock()
+	return m.Unlock
 }
 
 // cors responde ao OPTIONS e põe a origem permitida nas respostas.
