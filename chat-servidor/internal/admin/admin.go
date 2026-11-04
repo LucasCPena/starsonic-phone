@@ -231,6 +231,9 @@ func (p *painel) estatico(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", tipo)
+	// Não leva segredo (o código da empresa só aparece no HTML, que fica no-store): o
+	// navegador guarda por um dia.
+	w.Header().Set("Cache-Control", "private, max-age=86400")
 	w.Write(dados)
 }
 

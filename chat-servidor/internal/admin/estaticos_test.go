@@ -45,6 +45,11 @@ func conferirCabecalhos(t *testing.T, nome string, resp *http.Response, corpo st
 		"Cache-Control":           "no-store",
 		"X-Content-Type-Options":  "nosniff",
 	}
+	// Os arquivos de estatico/ (estilo, script, fonte, logo) podem ficar no navegador por um
+	// dia; o segredo (R24) está só no HTML, que continua no-store.
+	if strings.HasPrefix(resp.Request.URL.Path, "/admin/estatico/") && resp.StatusCode == http.StatusOK {
+		quer["Cache-Control"] = "private, max-age=86400"
+	}
 	for k, v := range quer {
 		if got := h.Get(k); got != v {
 			t.Errorf("%s (%d): %s = %q; queria %q", nome, resp.StatusCode, k, got, v)
