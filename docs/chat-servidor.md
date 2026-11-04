@@ -201,7 +201,7 @@ Use isto se o banco estragou ou se a VM foi refeita. Quem escreveu depois da có
 
 Faça os passos na ordem. Não pule nenhum.
 
-1. Pare a cópia da noite e o serviço. Faça isto antes de qualquer outra coisa. Numa VM refeita, o instalador já ligou o timer: pare-o logo depois de instalar, antes de configurar o destino. A razão: uma cópia feita antes de você terminar seria a cópia de um servidor vazio, e poderia tomar o lugar da cópia boa no destino.
+1. Pare a cópia da noite e o serviço. Faça isto antes de qualquer outra coisa. Numa VM refeita, estes dois ainda não existem agora: o item 2, logo abaixo, manda instalar o chat e parar os dois de novo. A razão: uma cópia feita antes de você terminar seria a cópia de um servidor vazio, e poderia tomar o lugar da cópia boa no destino.
 
 ```
 sudo systemctl stop starsonic-chat-copia.timer
@@ -221,7 +221,17 @@ sudo ls /var/lib/starsonic-chat/copias
 
    Anote o nome do dia que você quer, por exemplo `chat-2026-11-04.db`. A mais nova é a que tem a data mais recente.
 
-   **Se a VM foi refeita (disco novo),** instale o chat de novo (passo 2) e faça só a configuração do destino do passo 5 (o `rclone config`). **Não** faça o "Teste a cópia agora". Você vai precisar dos dados de acesso ao destino (servidor, usuário, senha ou chave): é por isso que o passo 5 manda guardá-los fora da VM. Veja as cópias que estão no destino:
+   **Se a VM foi refeita (disco novo),** instale o chat de novo (passo 2). O instalador liga o serviço e a cópia da noite, então pare os dois de novo agora, antes de qualquer outra coisa:
+
+```
+sudo systemctl stop starsonic-chat-copia.timer
+```
+
+```
+sudo systemctl stop starsonic-chat
+```
+
+   Depois faça só a configuração do destino do passo 5 (o `rclone config`). **Não** faça o "Teste a cópia agora". Você vai precisar dos dados de acesso ao destino (servidor, usuário, senha ou chave): é por isso que o passo 5 manda guardá-los fora da VM. Veja as cópias que estão no destino:
 
 ```
 sudo -u starsonic-chat -H rclone lsf starsonic-chat-copia:copias
