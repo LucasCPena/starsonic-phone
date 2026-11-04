@@ -8,7 +8,7 @@
   - a segurança e os erros;
   - os testes, a entrega e as etapas.
 
-  As telas estão no quadro "Starsonic Phone — telas do chat" (claude.ai, 13 telas). Esta spec aguarda a revisão escrita.
+  As telas estão no quadro "Starsonic Phone — telas do chat" (claude.ai, 13 telas). A spec escrita foi aprovada pelo responsável em 04/11/2026. O contrato da API está em `docs/chat-protocolo.md`, e o plano da etapa 1 em `docs/superpowers/plans/2026-11-04-chat-etapa-1-servidor.md`.
 - **Versão alvo:**
   - o servidor do chat 0.1.0, com tag `chat-v0.1.0`;
   - o app do Windows 0.2.0-rc.1.
