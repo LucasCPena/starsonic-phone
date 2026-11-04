@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,7 +17,7 @@ import (
 
 func TestVersao(t *testing.T) {
 	var saida bytes.Buffer
-	if cod := run([]string{"versao"}, strings.NewReader(""), &saida); cod != 0 {
+	if cod := run([]string{"versao"}, strings.NewReader(""), &saida, io.Discard); cod != 0 {
 		t.Fatalf("código %d", cod)
 	}
 	if saida.String() != "0.0.0-dev\n" {
@@ -27,7 +28,7 @@ func TestVersao(t *testing.T) {
 func TestSubcomandoDesconhecido(t *testing.T) {
 	for _, args := range [][]string{{"xis"}, {}} {
 		var saida bytes.Buffer
-		if cod := run(args, strings.NewReader(""), &saida); cod != 2 {
+		if cod := run(args, strings.NewReader(""), &saida, io.Discard); cod != 2 {
 			t.Fatalf("%v: código %d, esperava 2", args, cod)
 		}
 		if !strings.Contains(saida.String(), "uso:") {
@@ -45,9 +46,40 @@ const (
 // rodar roda o subcomando com a entrada dada e devolve o código e a saída.
 func rodar(t *testing.T, entrada string, args ...string) (int, string) {
 	t.Helper()
-	var saida bytes.Buffer
-	cod := run(args, strings.NewReader(entrada), &saida)
-	return cod, saida.String()
+	cod, saida, _ := rodarComErros(t, entrada, args...)
+	return cod, saida
+}
+
+// rodarComErros roda o subcomando e devolve o código, a saída e a saída de erros.
+func rodarComErros(t *testing.T, entrada string, args ...string) (cod int, saida, erros string) {
+	t.Helper()
+	var s, e bytes.Buffer
+	cod = run(args, strings.NewReader(entrada), &s, &e)
+	return cod, s.String(), e.String()
+}
+
+// TestAdmin_PerguntasNoErro: as perguntas da senha vão para a saída de erros, e a saída padrão
+// fica só com o resultado: redirecionar a saída não esconde as perguntas.
+func TestAdmin_PerguntasNoErro(t *testing.T) {
+	dados := t.TempDir()
+	cod, saida, erros := rodarComErros(t, senha12+"\n"+senha12+"\n", "admin-criar", "suporte", "--dados", dados)
+	if cod != 0 {
+		t.Fatalf("código %d, saída %q, erros %q", cod, saida, erros)
+	}
+	for _, p := range []string{"Senha: ", "Repita a senha: "} {
+		if strings.Contains(saida, p) {
+			t.Errorf("a pergunta %q foi para a saída padrão: %q", p, saida)
+		}
+		if !strings.Contains(erros, p) {
+			t.Errorf("a pergunta %q não foi para a saída de erros: %q", p, erros)
+		}
+	}
+	if !strings.Contains(saida, "Usuário suporte criado.") {
+		t.Errorf("o resultado não ficou na saída padrão: %q", saida)
+	}
+	if strings.Contains(saida+erros, senha12) {
+		t.Error("a senha apareceu numa das saídas")
+	}
 }
 
 // abrir abre o banco da pasta de dados, como o servidor abre.

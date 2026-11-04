@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 
@@ -34,8 +35,8 @@ subcomandos:
 `
 
 // run executa o subcomando e devolve o código de saída: 0 deu certo, 1 deu errado e 2 é um
-// uso errado. Lê as senhas de entrada e escreve em saida.
-func run(args []string, entrada io.Reader, saida io.Writer) int {
+// uso errado. Lê as senhas de entrada, pergunta por elas em erros e escreve o resto em saida.
+func run(args []string, entrada io.Reader, saida, erros io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprint(saida, uso)
 		return 2
@@ -45,7 +46,7 @@ func run(args []string, entrada io.Reader, saida io.Writer) int {
 		fmt.Fprintln(saida, versao)
 		return 0
 	case "admin-criar", "admin-senha", "admin-remover":
-		return administrar(args[0], args[1:], entrada, saida)
+		return administrar(args[0], args[1:], entrada, saida, erros)
 	default:
 		fmt.Fprintf(saida, "subcomando desconhecido: %s\n\n%s", args[0], uso)
 		return 2
@@ -83,7 +84,7 @@ func argumentosAdmin(cmd string, args []string, saida io.Writer) (usuario, dados
 
 // administrar roda o admin-criar, o admin-senha ou o admin-remover. A senha nunca vai para a
 // saída: no terminal, não aparece nem quando é digitada.
-func administrar(cmd string, args []string, entrada io.Reader, saida io.Writer) int {
+func administrar(cmd string, args []string, entrada io.Reader, saida, erros io.Writer) int {
 	usuario, dados, ok := argumentosAdmin(cmd, args, saida)
 	if !ok {
 		return 2
@@ -96,7 +97,7 @@ func administrar(cmd string, args []string, entrada io.Reader, saida io.Writer) 
 	var senha string
 	if cmd != "admin-remover" { // remover não pede senha: quem roda é o operador do servidor
 		var problema string
-		if senha, problema = pedirSenha(entrada, saida); problema != "" {
+		if senha, problema = pedirSenha(entrada, erros); problema != "" {
 			fmt.Fprintln(saida, problema)
 			return 1
 		}
@@ -133,11 +134,13 @@ func administrar(cmd string, args []string, entrada io.Reader, saida io.Writer) 
 }
 
 // pedirSenha pede a senha duas vezes e confere a regra (12 caracteres) e se as duas são iguais,
-// antes de abrir o banco. Se algo não vale, problema é o texto que explica.
-func pedirSenha(entrada io.Reader, saida io.Writer) (senha, problema string) {
+// antes de abrir o banco. As perguntas vão para perguntas (a saída de erros): com a saída
+// padrão redirecionada, elas continuam aparecendo. Se algo não vale, problema é o texto que
+// explica.
+func pedirSenha(entrada io.Reader, perguntas io.Writer) (senha, problema string) {
 	l := novoLeitorDeSenha(entrada)
-	s1, ok1 := l.ler(saida, "Senha: ")
-	s2, ok2 := l.ler(saida, "Repita a senha: ")
+	s1, ok1 := l.ler(perguntas, "Senha: ")
+	s2, ok2 := l.ler(perguntas, "Repita a senha: ")
 	switch {
 	case !ok1 || !ok2:
 		return "", "Não li a senha."
@@ -165,11 +168,14 @@ func novoLeitorDeSenha(entrada io.Reader) *leitorDeSenha {
 
 // ler mostra a pergunta e lê uma senha, sem a quebra de linha do fim. ok é false se nada
 // chegou.
-func (l *leitorDeSenha) ler(saida io.Writer, pergunta string) (senha string, ok bool) {
-	fmt.Fprint(saida, pergunta)
-	defer fmt.Fprintln(saida) // o Enter digitado não aparece no terminal
+func (l *leitorDeSenha) ler(perguntas io.Writer, pergunta string) (senha string, ok bool) {
+	fmt.Fprint(perguntas, pergunta)
+	defer fmt.Fprintln(perguntas) // o Enter digitado não aparece no terminal
 	if l.terminal != nil {
-		b, err := term.ReadPassword(int(l.terminal.Fd()))
+		fd := int(l.terminal.Fd())
+		parar := restaurarNoCtrlC(fd, perguntas)
+		b, err := term.ReadPassword(fd)
+		parar()
 		return string(b), err == nil
 	}
 	s, err := l.linhas.ReadString('\n')
@@ -179,6 +185,33 @@ func (l *leitorDeSenha) ler(saida io.Writer, pergunta string) (senha string, ok 
 	return strings.TrimSuffix(strings.TrimSuffix(s, "\n"), "\r"), true
 }
 
+// restaurarNoCtrlC guarda o estado do terminal e, se um Ctrl+C chegar enquanto a senha é lida
+// (o term.ReadPassword desliga o eco), devolve esse estado antes de o processo acabar, com o
+// código 130, o de quem saiu pelo Ctrl+C. Sem isso, o eco do terminal ficaria desligado. parar
+// desfaz a escuta. Não tem teste: precisaria de um terminal de verdade (um pty).
+func restaurarNoCtrlC(fd int, perguntas io.Writer) (parar func()) {
+	estado, err := term.GetState(fd)
+	if err != nil {
+		return func() {}
+	}
+	sinais := make(chan os.Signal, 1)
+	signal.Notify(sinais, os.Interrupt)
+	feito := make(chan struct{})
+	go func() {
+		select {
+		case <-sinais:
+			term.Restore(fd, estado)
+			fmt.Fprintln(perguntas)
+			os.Exit(130)
+		case <-feito:
+		}
+	}()
+	return func() {
+		signal.Stop(sinais)
+		close(feito)
+	}
+}
+
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout))
+	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
