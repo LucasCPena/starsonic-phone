@@ -15,6 +15,7 @@ import (
 
 	_ "modernc.org/sqlite" // o driver, sem cgo
 
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/limites"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/tempo"
 )
 
@@ -36,7 +37,7 @@ type Banco struct {
 	db      *sql.DB
 	relogio tempo.Relogio
 	caminho string
-	falsas  tentativasFalsas // as tentativas de entrar com nomes que não existem (admins.go)
+	erradas *limites.Janela // as senhas erradas de cada nome da entrada, exista ele ou não (admins.go)
 }
 
 // Abrir abre (ou cria) o banco em caminho e aplica as migrações que faltam.
@@ -54,7 +55,7 @@ func Abrir(caminho string, r tempo.Relogio) (*Banco, error) {
 		return nil, fmt.Errorf("banco: abrir %s: %w", caminho, err)
 	}
 	db.SetMaxOpenConns(1)
-	b := &Banco{db: db, relogio: r, caminho: caminho}
+	b := &Banco{db: db, relogio: r, caminho: caminho, erradas: limites.Nova(maxErros, duracaoTrava, r)}
 	// Dois processos abrindo o banco novo juntos podem esbarrar na troca para WAL
 	// ou no BEGIN IMMEDIATE do outro, e o busy_timeout não cobre todos os casos:
 	// por isso tenta de novo, por até 5 s, enquanto o erro for "banco ocupado".

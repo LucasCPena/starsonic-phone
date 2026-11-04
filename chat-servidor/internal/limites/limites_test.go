@@ -91,6 +91,53 @@ func TestJanela_Devolver(t *testing.T) {
 	}
 }
 
+func TestJanela_Cabe(t *testing.T) {
+	r := tempo.NovoTeste(time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC))
+	j := Nova(2, time.Hour, r)
+	// O Cabe não gasta nada, nem guarda a chave.
+	if ok, esperar := j.Cabe("a", 1); !ok || esperar != 0 {
+		t.Fatalf("vazia: ok=%v esperar=%v; queria true e 0", ok, esperar)
+	}
+	if n := j.Tamanho(); n != 0 {
+		t.Fatalf("o Cabe guardou a chave: Tamanho = %d", n)
+	}
+	j.Usar("a", 1)
+	r.Avancar(10 * time.Minute)
+	j.Usar("a", 1)
+	// Cheia, ele diz quanto falta, como o Usar, e não conta a tentativa.
+	for i := 0; i < 3; i++ {
+		if ok, esperar := j.Cabe("a", 1); ok || esperar != 50*time.Minute {
+			t.Fatalf("cheia: ok=%v esperar=%v; queria false e 50m", ok, esperar)
+		}
+	}
+	if ok, esperar := j.Usar("a", 1); ok || esperar != 50*time.Minute {
+		t.Fatalf("o Usar depois do Cabe: ok=%v esperar=%v; queria false e 50m", ok, esperar)
+	}
+	r.Avancar(50 * time.Minute) // o primeiro uso sai
+	if ok, _ := j.Cabe("a", 1); !ok {
+		t.Fatal("depois que o mais velho saiu, devia caber")
+	}
+}
+
+func TestJanela_Zerar(t *testing.T) {
+	r := tempo.NovoTeste(time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC))
+	j := Nova(2, time.Hour, r)
+	j.Usar("a", 1)
+	j.Usar("a", 1)
+	j.Usar("b", 1)
+	j.Zerar("a")
+	if ok, _ := j.Usar("a", 2); !ok {
+		t.Fatal("depois de zerar, a chave a devia caber inteira")
+	}
+	if ok, _ := j.Usar("b", 2); ok {
+		t.Fatal("zerar a chave a mexeu na b")
+	}
+	j.Zerar("nenhuma") // uma chave que não existe: nada muda
+	if n := j.Tamanho(); n != 2 {
+		t.Fatalf("Tamanho = %d; queria 2", n)
+	}
+}
+
 func TestJanela_Esquece(t *testing.T) {
 	r := tempo.NovoTeste(time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC))
 	j := Nova(10, time.Hour, r)

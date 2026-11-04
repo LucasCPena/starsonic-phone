@@ -2,10 +2,13 @@ package banco
 
 import (
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -50,6 +53,62 @@ func conferir(t *testing.T, b *Banco, usuario, senha string) (bool, int64) {
 		t.Fatalf("ConferirSenha(%q): %v", usuario, err)
 	}
 	return ok, travado
+}
+
+// hashFalsoBarato troca o hash falso por um de parâmetros mínimos até o fim do teste: os nomes
+// que não existem passam a custar o mesmo que os do adminRapido. A chave são zeros, sem senha
+// por trás.
+func hashFalsoBarato(t *testing.T) {
+	t.Helper()
+	antes := hashFalso
+	hashFalso = "$argon2id$v=19$m=8,t=1,p=1$" + base64.RawStdEncoding.EncodeToString([]byte("sal-falso-barato")) + "$" +
+		base64.RawStdEncoding.EncodeToString(make([]byte, 32))
+	t.Cleanup(func() { hashFalso = antes })
+}
+
+// semVagas toma as duas vagas do argon2id até soltar (ou até o fim do teste): com elas tomadas,
+// um ConferirSenha que fosse calcular o argon2id ficaria esperando.
+func semVagas(t *testing.T) (soltar func()) {
+	t.Helper()
+	for i := 0; i < cap(vagasArgon); i++ {
+		vagasArgon <- struct{}{}
+	}
+	var uma sync.Once
+	soltar = func() {
+		uma.Do(func() {
+			for i := 0; i < cap(vagasArgon); i++ {
+				<-vagasArgon
+			}
+		})
+	}
+	t.Cleanup(soltar)
+	return soltar
+}
+
+// conferirSemEsperar chama o ConferirSenha com um prazo de 5 s e falha o teste se ele esperou
+// uma vaga do argon2id (veja semVagas).
+func conferirSemEsperar(t *testing.T, b *Banco, usuario, senha string) (bool, int64) {
+	t.Helper()
+	ctx, cancelar := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelar()
+	ok, travado, err := b.ConferirSenha(ctx, usuario, senha)
+	if errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("ConferirSenha(%q) esperou uma vaga do argon2id", usuario)
+	}
+	if err != nil {
+		t.Fatalf("ConferirSenha(%q): %v", usuario, err)
+	}
+	return ok, travado
+}
+
+// milOutros faz 1.000 nomes que não existem errarem a senha uma vez cada (com o hashFalsoBarato).
+func milOutros(t *testing.T, b *Banco) {
+	t.Helper()
+	for i := 0; i < 1000; i++ {
+		if ok, trav := conferir(t, b, fmt.Sprintf("outro-%d", i), senhaErrada); ok || trav != 0 {
+			t.Fatalf("o outro %d = %v, %d", i, ok, trav)
+		}
+	}
 }
 
 func TestCriarAdmin(t *testing.T) {
@@ -194,6 +253,182 @@ func TestConferirSenha_Desconhecido(t *testing.T) {
 	}
 }
 
+// TestConferirSenha_MilNomes é o R29: a trava de um nome que não existe não sai da memória
+// porque outros 1.000 nomes erraram depois dela; ela só sai quando vence. Se saísse, tentar o
+// nome de novo diria que ele não existe (quem existe continuaria travado).
+func TestConferirSenha_MilNomes(t *testing.T) {
+	b := abrirTeste(t)
+	hashFalsoBarato(t)
+	for i := 0; i < 5; i++ {
+		conferir(t, b, "ninguem", senhaErrada)
+	}
+	trava := inicioTeste + 15*60*1000
+	if ok, trav := conferir(t, b, "ninguem", senhaTeste); ok || trav != trava {
+		t.Fatalf("a 6ª = %v, %d; queria a trava até %d", ok, trav, trava)
+	}
+	milOutros(t, b)
+	if ok, trav := conferir(t, b, "ninguem", senhaTeste); ok || trav != trava {
+		t.Fatalf("depois de 1.000 outros nomes = %v, %d; queria a trava até %d", ok, trav, trava)
+	}
+	// A recusa não calcula o argon2id: com as duas vagas tomadas, ela volta na hora.
+	soltar := semVagas(t)
+	if ok, trav := conferirSemEsperar(t, b, "ninguem", senhaTeste); ok || trav != trava {
+		t.Fatalf("com as vagas tomadas = %v, %d; queria a trava até %d", ok, trav, trava)
+	}
+	soltar()
+}
+
+// TestConferirSenha_IgualParaTodos é o R29: o nome que existe e o que não existe travam pela
+// mesma regra e na mesma memória. Os dois travam com 5 erradas, continuam travados depois de
+// 1.000 outros nomes, destravam 15 minutos depois e destravam num reinício (um Abrir novo).
+func TestConferirSenha_IgualParaTodos(t *testing.T) {
+	b := abrirTeste(t)
+	hashFalsoBarato(t)
+	adminRapido(t, b, "suporte", senhaTeste)
+	nomes := []string{"suporte", "ninguem"}
+	travar := func() {
+		t.Helper()
+		ate := b.agoraMs() + 15*60*1000
+		for _, u := range nomes {
+			for i := 0; i < 5; i++ {
+				if ok, trav := conferir(t, b, u, senhaErrada); ok || trav != 0 {
+					t.Fatalf("%s: a errada %d = %v, %d", u, i+1, ok, trav)
+				}
+			}
+			if ok, trav := conferir(t, b, u, senhaTeste); ok || trav != ate {
+				t.Fatalf("%s: a 6ª = %v, %d; queria a trava até %d", u, ok, trav, ate)
+			}
+		}
+	}
+	// livres confere que nenhum dos dois está travado no banco b: quem existe entra com a
+	// senha certa, e quem não existe só ouve que não.
+	livres := func(b *Banco, quando string) {
+		t.Helper()
+		for _, u := range nomes {
+			if ok, trav := conferir(t, b, u, senhaTeste); trav != 0 || ok != (u == "suporte") {
+				t.Fatalf("%s, %s = %v, %d; queria sem trava", quando, u, ok, trav)
+			}
+		}
+	}
+
+	travar()
+	milOutros(t, b)
+	for _, u := range nomes {
+		if ok, trav := conferir(t, b, u, senhaTeste); ok || trav == 0 {
+			t.Fatalf("depois de 1.000 outros nomes, %s = %v, %d; queria a trava", u, ok, trav)
+		}
+	}
+	avancar(b, 15*time.Minute)
+	livres(b, "15 minutos depois")
+
+	// Travados de novo (depois de mais 15 minutos, para a conferência acima sair da conta), e
+	// um reinício: o banco aberto de novo no mesmo arquivo começa sem trava nenhuma.
+	avancar(b, 15*time.Minute)
+	travar()
+	b2, err := Abrir(b.caminho, b.relogio)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { b2.Fechar() })
+	livres(b2, "depois do reinício")
+}
+
+// TestConferirSenha_SemEscrita é o R29 (e o Minor 1 da revisão): a senha errada faz o mesmo
+// trabalho para quem existe e para quem não existe (uma leitura, um argon2id e uma conta na
+// memória), sem transação de escrita. Com outra conexão segurando a escrita do banco, as duas
+// respondem na hora, e a certa também.
+func TestConferirSenha_SemEscrita(t *testing.T) {
+	b := abrirTeste(t)
+	hashFalsoBarato(t)
+	adminRapido(t, b, "suporte", senhaTeste)
+	outra, err := sql.Open("sqlite", "file:"+b.caminho+"?_pragma=busy_timeout(5000)&_txlock=immediate")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer outra.Close()
+	tx, err := outra.Begin() // BEGIN IMMEDIATE: a escrita fica com a outra conexão
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	for _, c := range []struct {
+		usuario, senha string
+		ok             bool
+	}{{"suporte", senhaErrada, false}, {"ninguem", senhaErrada, false}, {"suporte", senhaTeste, true}} {
+		ok, trav, err := b.ConferirSenha(context.Background(), c.usuario, c.senha)
+		if err != nil || ok != c.ok || trav != 0 {
+			t.Fatalf("%s com a escrita presa = %v, %d, %v; queria %v sem erro", c.usuario, ok, trav, err, c.ok)
+		}
+	}
+}
+
+// TestConferirSenha_Juntos: tentativas juntas no mesmo nome não passam de 5 argon2id. A que
+// esperava na fila reserva o seu lugar já com a vaga, e encontra a trava que as da frente
+// fizeram.
+func TestConferirSenha_Juntos(t *testing.T) {
+	b := abrirTeste(t)
+	hashFalsoBarato(t)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	calculadas, travadas := 0, 0
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ok, trav, err := b.ConferirSenha(context.Background(), "ninguem", senhaErrada)
+			mu.Lock()
+			defer mu.Unlock()
+			switch {
+			case err != nil || ok:
+				t.Errorf("= %v, %d, %v", ok, trav, err)
+			case trav == 0:
+				calculadas++
+			default:
+				travadas++
+			}
+		}()
+	}
+	wg.Wait()
+	if calculadas != 5 || travadas != 15 {
+		t.Fatalf("%d calcularam o hash e %d encontraram a trava; queria 5 e 15", calculadas, travadas)
+	}
+}
+
+// TestConferirSenha_JanelaAnda: a regra é 5 erradas em 15 minutos (R29), e a trava vai até a
+// mais velha delas fazer 15 minutos.
+func TestConferirSenha_JanelaAnda(t *testing.T) {
+	b := abrirTeste(t)
+	adminRapido(t, b, "suporte", senhaTeste)
+	errar := func(n int) {
+		t.Helper()
+		for i := 0; i < n; i++ {
+			if ok, trav := conferir(t, b, "suporte", senhaErrada); ok || trav != 0 {
+				t.Fatalf("errada = %v, %d", ok, trav)
+			}
+		}
+	}
+	// 4 erradas, e a 5ª só 15 minutos depois: as 4 já saíram da conta, e nada trava.
+	errar(4)
+	avancar(b, 15*time.Minute)
+	errar(1)
+	if ok, trav := conferir(t, b, "suporte", senhaTeste); !ok || trav != 0 {
+		t.Fatalf("4 erradas e 1 depois de 15 minutos = %v, %d; queria entrar", ok, trav)
+	}
+	// 4 erradas agora e 1 daqui a 10 minutos: trava até as 4 fazerem 15 minutos, não 15
+	// minutos depois da última.
+	inicio := b.agoraMs()
+	errar(4)
+	avancar(b, 10*time.Minute)
+	errar(1)
+	if ok, trav := conferir(t, b, "suporte", senhaTeste); ok || trav != inicio+15*60*1000 {
+		t.Fatalf("a trava = %v, %d; queria até %d", ok, trav, inicio+15*60*1000)
+	}
+	avancar(b, 5*time.Minute)
+	if ok, trav := conferir(t, b, "suporte", senhaTeste); !ok || trav != 0 {
+		t.Fatalf("quando as 4 fizeram 15 minutos = %v, %d; queria entrar", ok, trav)
+	}
+}
+
 func TestTrocarSenha(t *testing.T) {
 	b := abrirTeste(t)
 	ctx := context.Background()
@@ -215,11 +450,15 @@ func TestTrocarSenha(t *testing.T) {
 	if err := b.TrocarSenha(ctx, " Suporte ", nova); err != nil {
 		t.Fatal(err)
 	}
-	// A troca destrava e zera a conta: a nova entra já, e uma errada não trava.
+	// A troca não destrava (R29): a trava fica na memória do servidor, e o admin-senha roda em
+	// outro processo. Ela acaba sozinha em 15 minutos; aí a nova entra, e a antiga não.
+	if ok, trav := conferir(t, b, "suporte", nova); ok || trav != inicioTeste+15*60*1000 {
+		t.Fatalf("logo depois da troca = %v, %d; queria a trava, que a troca não solta", ok, trav)
+	}
+	avancar(b, 15*time.Minute)
 	if ok, _ := conferir(t, b, "suporte", nova); !ok {
 		t.Fatal("a senha nova não entrou")
 	}
-	conferir(t, b, "suporte", senhaErrada)
 	if ok, _ := conferir(t, b, "suporte", senhaTeste); ok {
 		t.Fatal("a senha antiga ainda entra")
 	}

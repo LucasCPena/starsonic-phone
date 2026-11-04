@@ -95,9 +95,26 @@ func (j *Janela) Usar(chave string, quanto int) (ok bool, esperar time.Duration)
 	defer j.mu.Unlock()
 	agora := j.r.Agora()
 	j.varrer(agora)
+	if ok, esperar = j.caber(chave, quanto, agora); ok {
+		j.chaves[chave] = append(j.chaves[chave], uso{agora, quanto})
+	}
+	return ok, esperar
+}
+
+// Cabe diz, como o Usar, se quanto caberia na chave agora e, se não, quanto falta; mas não
+// gasta nada e não guarda a chave.
+func (j *Janela) Cabe(chave string, quanto int) (ok bool, esperar time.Duration) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	agora := j.r.Agora()
+	j.varrer(agora)
+	return j.caber(chave, quanto, agora)
+}
+
+// caber poda a chave e diz se quanto cabe nela; se não, quanto falta. Com j.mu travado.
+func (j *Janela) caber(chave string, quanto int, agora time.Time) (bool, time.Duration) {
 	total := j.podar(chave, agora)
 	if total+quanto <= j.max {
-		j.chaves[chave] = append(j.chaves[chave], uso{agora, quanto})
 		return true, 0
 	}
 	if quanto > j.max {
@@ -112,6 +129,13 @@ func (j *Janela) Usar(chave string, quanto int) (ok bool, esperar time.Duration)
 		}
 	}
 	return false, j.periodo
+}
+
+// Zerar esquece a chave: tudo o que ela gastou sai da janela.
+func (j *Janela) Zerar(chave string) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	delete(j.chaves, chave)
 }
 
 // Contar gasta quanto da chave sem conferir o máximo.

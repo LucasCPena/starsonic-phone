@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -19,11 +18,11 @@ import (
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/segredo"
 )
 
-// As regras da página de administração (as Global Constraints do plano).
+// As regras da página de administração (as Global Constraints do plano e o R29).
 const (
 	minSenha      = 12               // caracteres (pontos de código), não bytes
-	maxErros      = 5                // senhas erradas seguidas que travam o usuário
-	duracaoTrava  = 15 * time.Minute // e por quanto tempo
+	maxErros      = 5                // senhas erradas em duracaoTrava que travam o nome
+	duracaoTrava  = 15 * time.Minute // a janela delas: a trava vai até a mais velha fazer 15 minutos
 	duracaoSessao = 12 * time.Hour
 )
 
@@ -39,8 +38,9 @@ const (
 
 // hashFalso é conferido quando o usuário não existe, para essa resposta demorar o mesmo que a
 // de uma senha errada. O sal e o hash são bytes sorteados uma vez, sem senha nenhuma por trás,
-// e o resultado é jogado fora: com ele, ninguém entra.
-const hashFalso = "$argon2id$v=19$m=65536,t=3,p=2$dSSza1Q6riOsoBKCFuzZ3Q$NgW3KnOJ9L8d2UPPxtn4O2dLSxdsnJqU6XIWcaCOM0w"
+// e o resultado é jogado fora: com ele, ninguém entra. É uma variável só para os testes do
+// pacote trocarem por um hash barato quando precisam de muitas tentativas.
+var hashFalso = "$argon2id$v=19$m=65536,t=3,p=2$dSSza1Q6riOsoBKCFuzZ3Q$NgW3KnOJ9L8d2UPPxtn4O2dLSxdsnJqU6XIWcaCOM0w"
 
 // vagasArgon deixa só 2 cálculos do argon2id por vez no processo. Cada um usa 64 MiB: uma
 // enxurrada de tentativas de entrar fica na fila, sem esgotar a memória do servidor.
@@ -198,8 +198,10 @@ func (b *Banco) CriarAdmin(ctx context.Context, usuario, senha string) error {
 	return nil
 }
 
-// TrocarSenha troca a senha do usuário, destrava e zera as senhas erradas dele, e encerra as
-// sessões dele. Um usuário que não existe dá ErrNaoEncontrado.
+// TrocarSenha troca a senha do usuário e encerra as sessões dele. Ela não destrava o nome: a
+// trava das senhas erradas fica só na memória do servidor (veja ConferirSenha), e o admin-senha
+// roda em outro processo. A trava acaba sozinha, em até 15 minutos. Um usuário que não existe
+// dá ErrNaoEncontrado.
 func (b *Banco) TrocarSenha(ctx context.Context, usuario, senha string) error {
 	u, ok := NormalizarUsuario(usuario)
 	if !ok {
@@ -213,8 +215,7 @@ func (b *Banco) TrocarSenha(ctx context.Context, usuario, senha string) error {
 		return err
 	}
 	return b.Tx(ctx, func(tx *sql.Tx) error {
-		r, err := tx.ExecContext(ctx,
-			`UPDATE admins SET senha_hash = ?, erros = 0, travado_ate = 0 WHERE usuario = ?`, hash, u)
+		r, err := tx.ExecContext(ctx, `UPDATE admins SET senha_hash = ? WHERE usuario = ?`, hash, u)
 		if err != nil {
 			return err
 		}
@@ -247,119 +248,69 @@ func (b *Banco) RemoverAdmin(ctx context.Context, usuario string) error {
 	return nil
 }
 
-// ConferirSenha confere a senha do usuário. ok diz se ela confere. Com o usuário travado, a
-// senha nem é conferida: ok é false e travadoAte (ms UTC) diz até quando a trava vai; fora
-// isso, travadoAte é 0. A 5ª senha errada seguida trava o usuário por 15 minutos, e ainda
-// responde como errada; a certa zera a conta.
+// ConferirSenha confere a senha do usuário. ok diz se ela confere. Com o nome travado, a senha
+// nem é conferida: ok é false e travadoAte (ms UTC) diz até quando a trava vai; fora isso,
+// travadoAte é 0.
 //
-// O usuário que não existe (ou fora da regra) responde como a senha errada, e demora o mesmo:
-// a senha é conferida contra um hash falso. As tentativas com um nome que não existe também
-// travam, na memória, pela mesma regra. Assim, nem a resposta, nem a demora, nem a trava dizem
-// quem existe.
+// A trava (R29) é uma memória só, a b.erradas, para todo nome válido já normalizado, exista ele
+// ou não, com uma regra só: 5 senhas erradas em 15 minutos travam o nome até a mais velha delas
+// fazer 15 minutos (a janela anda, como toda limites.Janela). A 5ª ainda responde como errada.
+// Uma tentativa recusada pela trava não conta e não calcula o argon2id; a senha certa zera a
+// conta do nome. Uma conta sai da memória só depois de vencer, nunca por um teto: quem limita o
+// tamanho é o tempo, porque uma conta nova só nasce dentro de uma vaga do argon2id (e a página
+// ainda limita cada endereço). Nada disso vai para o banco: um reinício solta todas as travas
+// igual, e o admin-senha, que roda em outro processo, não destrava o servidor.
 //
-// Tudo corre dentro de uma das vagas do argon2id: a trava é lida já com a vaga, então as
-// tentativas que esperavam na fila encontram a trava, sem calcular o hash.
+// O nome que não existe responde como a senha errada e faz o mesmo trabalho: uma leitura, um
+// argon2id (contra um hash falso) e uma conta na memória, sem transação de escrita. Assim, nem
+// a resposta, nem a demora, nem a trava dizem quem existe. O nome fora da regra não tem conta:
+// vai direto ao hash falso.
+//
+// A ordem: a trava do nome, antes da vaga, para o nome travado nem esperar; a vaga do argon2id;
+// a trava de novo, já reservando o lugar desta tentativa, para as que esperavam na fila
+// encontrarem a trava que as da frente fizeram; e o hash, comparado em tempo constante.
 func (b *Banco) ConferirSenha(ctx context.Context, usuario, senha string) (ok bool, travadoAte int64, err error) {
+	u, valido := NormalizarUsuario(usuario)
+	if valido {
+		if livre, esperar := b.erradas.Cabe(u, 1); !livre {
+			return false, b.agoraMs() + esperar.Milliseconds(), nil
+		}
+	}
 	if err := ocupar(ctx); err != nil {
 		return false, 0, err
 	}
 	defer soltar()
-	agora := b.agoraMs()
-	u, valido := NormalizarUsuario(usuario)
 	if !valido {
 		confere(hashFalso, senha)
 		return false, 0, nil
 	}
-	var guardado string
-	var travado int64
-	err = b.db.QueryRowContext(ctx, `SELECT senha_hash, travado_ate FROM admins WHERE usuario = ?`, u).
-		Scan(&guardado, &travado)
-	if errors.Is(err, sql.ErrNoRows) {
-		if t := b.falsas.tentar(u, agora); t != 0 {
-			return false, t, nil
-		}
-		confere(hashFalso, senha)
-		return false, 0, nil
+	if livre, esperar := b.erradas.Usar(u, 1); !livre {
+		return false, b.agoraMs() + esperar.Milliseconds(), nil
 	}
-	if err != nil {
+	guardado, existe := "", true
+	err = b.db.QueryRowContext(ctx, `SELECT senha_hash FROM admins WHERE usuario = ?`, u).Scan(&guardado)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		guardado, existe = hashFalso, false // confere igual, e não entra
+	case err != nil:
+		b.erradas.Devolver(u, 1) // não houve tentativa
 		return false, 0, err
 	}
-	if travado > agora {
-		return false, travado, nil
+	if !confere(guardado, senha) || !existe {
+		return false, 0, nil // a errada fica na conta do nome
 	}
-	certa := confere(guardado, senha)
-
-	// Grava o resultado conferindo de novo: a outra vaga pode ter travado o usuário, ou
-	// alguém trocado a senha, enquanto o hash era calculado. Aí este resultado não vale.
-	err = b.Tx(ctx, func(tx *sql.Tx) error {
-		var hashAgora string
-		var erros int
-		err := tx.QueryRowContext(ctx, `SELECT senha_hash, erros, travado_ate FROM admins WHERE usuario = ?`, u).
-			Scan(&hashAgora, &erros, &travado)
-		switch {
-		case errors.Is(err, sql.ErrNoRows): // removido no meio
-			return nil
-		case err != nil:
-			return err
-		case travado > agora:
-			travadoAte = travado
-			return nil
-		case hashAgora != guardado:
-			return nil
-		case certa:
-			ok = true
-			_, err = tx.ExecContext(ctx, `UPDATE admins SET erros = 0, travado_ate = 0 WHERE usuario = ?`, u)
-			return err
-		case erros+1 >= maxErros:
-			_, err = tx.ExecContext(ctx, `UPDATE admins SET erros = 0, travado_ate = ? WHERE usuario = ?`,
-				agora+duracaoTrava.Milliseconds(), u)
-			return err
-		default:
-			_, err = tx.ExecContext(ctx, `UPDATE admins SET erros = ? WHERE usuario = ?`, erros+1, u)
-			return err
+	// A senha confere com o hash lido antes do argon2id. Se alguém trocou a senha (ou removeu o
+	// usuário) nesse meio-tempo, o resultado não vale, e a tentativa não conta.
+	var agora string
+	if err := b.db.QueryRowContext(ctx, `SELECT senha_hash FROM admins WHERE usuario = ?`, u).Scan(&agora); err != nil || agora != guardado {
+		b.erradas.Devolver(u, 1)
+		if errors.Is(err, sql.ErrNoRows) {
+			err = nil
 		}
-	})
-	if err != nil {
 		return false, 0, err
 	}
-	return ok, travadoAte, nil
-}
-
-// maxFalsas é quantos nomes que não existem a memória guarda. Passando disso, a lista
-// recomeça: só um ataque chega lá, e recomeçar não lhe diz nada sobre quem existe.
-const maxFalsas = 1000
-
-// tentativasFalsas são as tentativas com nomes que não existem, só na memória.
-type tentativasFalsas struct {
-	mu    sync.Mutex
-	nomes map[string]*tentativaFalsa
-}
-
-type tentativaFalsa struct {
-	erros      int
-	travadoAte int64
-}
-
-// tentar devolve a trava do nome, se ele está travado; se não, conta mais uma tentativa
-// errada, que na 5ª trava, e devolve 0. É a regra do ConferirSenha.
-func (f *tentativasFalsas) tentar(nome string, agora int64) (travadoAte int64) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	t := f.nomes[nome]
-	if t == nil {
-		if f.nomes == nil || len(f.nomes) >= maxFalsas {
-			f.nomes = map[string]*tentativaFalsa{}
-		}
-		t = &tentativaFalsa{}
-		f.nomes[nome] = t
-	}
-	if t.travadoAte > agora {
-		return t.travadoAte
-	}
-	if t.erros++; t.erros >= maxErros {
-		t.erros, t.travadoAte = 0, agora+duracaoTrava.Milliseconds()
-	}
-	return 0
+	b.erradas.Zerar(u)
+	return true, 0, nil
 }
 
 // CriarSessao abre uma sessão de 12 horas para o usuário e devolve o token, que vai no

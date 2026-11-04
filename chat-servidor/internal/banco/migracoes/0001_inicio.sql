@@ -64,8 +64,7 @@ CREATE TABLE leituras (
   PRIMARY KEY (pessoa_id, conversa_id)
 );
 CREATE TABLE admins (
-  usuario TEXT PRIMARY KEY, senha_hash TEXT NOT NULL,
-  erros INTEGER NOT NULL DEFAULT 0, travado_ate INTEGER NOT NULL DEFAULT 0, criado_em INTEGER NOT NULL
+  usuario TEXT PRIMARY KEY, senha_hash TEXT NOT NULL, criado_em INTEGER NOT NULL
 );
 CREATE TABLE sessoes_admin (
   token_hash BLOB PRIMARY KEY,
