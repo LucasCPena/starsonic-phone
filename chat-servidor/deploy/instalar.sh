@@ -83,8 +83,9 @@ baixar_tudo() {
   done
   esperado=$(cut -d' ' -f1 "$pasta/$ARQUIVO_BINARIO.sha256")
   real=$(sha256sum "$pasta/$ARQUIVO_BINARIO" | cut -d' ' -f1)
-  [ -n "$esperado" ] && [ "$esperado" = "$real" ] ||
+  if [ -z "$esperado" ] || [ "$esperado" != "$real" ]; then
     falhar "o SHA-256 do programa não confere. Nada foi instalado. Rode de novo; se repetir, avise quem cuida do chat."
+  fi
   echo "SHA-256 conferido."
 }
 
