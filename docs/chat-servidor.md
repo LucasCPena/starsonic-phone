@@ -36,7 +36,7 @@ O disco cresce com os arquivos. Quando chegar perto de 80% de uso, aumente o dis
 
 ## 2. Instalar
 
-Veja o número da última versão do chat na página de Releases do projeto no GitHub. As versões do chat se chamam `chat-v` e o número. O GitHub mostra essas versões com a etiqueta `Pre-release`: isso é normal, e é a versão certa. Se a versão for `chat-v0.1.0`, o `<versão>` é `0.1.0`.
+Veja o número da última versão do chat na página de Releases do projeto no GitHub. As versões do chat se chamam `chat-v` e o número. O GitHub mostra essas versões com a etiqueta `Pre-release`: isso é normal, e é a versão certa. Se a versão for `chat-v0.1.0`, o `<versão>` é `0.1.0`. Se ainda não existir nenhuma versão `chat-v` na página, publique a primeira pelo passo 11 (Publicar uma versão).
 
 Baixe o instalador:
 
@@ -395,11 +395,11 @@ Este passo é de quem publica o chat, e não da VM. Você faz tudo pelo site do 
 4. No campo `Versão a publicar`, escreva `0.1.0` (só o número, sem o `chat-v`). Para uma versão de teste, use `0.1.0-rc.1`.
 5. Clique no botão verde `Run workflow` e espere. Leva alguns minutos.
 
-O GitHub testa o programa, monta a versão e só publica no fim, quando todos os arquivos já estão lá. Se algo falhar no meio, nada fica publicado: abra o run, veja a mensagem em vermelho, corrija e rode de novo. Se sobrar um rascunho em `Releases`, apague-o antes de rodar de novo.
+O GitHub testa o programa, monta a versão e só publica no fim, quando todos os arquivos já estão lá. Se algo falhar no meio, nada fica publicado: abra o run, veja a mensagem em vermelho, corrija e rode de novo. Se sobrar um rascunho em `Releases`, apague-o antes de rodar de novo: o workflow para com a mensagem `já existe um rascunho` se ele ainda estiver lá.
 
 ### O que conferir depois
 
-1. Em `Releases`, abra `chat-v0.1.0`. Ela deve ter a etiqueta `Pre-release` e estes sete arquivos:
+1. Em `Releases`, abra `chat-v0.1.0`. Ela deve ter a etiqueta `Pre-release` e estes sete arquivos (o GitHub mostra ainda duas linhas `Source code`, que ele cria sozinho e você pode ignorar):
    - `starsonic-chat-linux-amd64`
    - `starsonic-chat-linux-amd64.sha256`
    - `instalar.sh`
@@ -407,7 +407,19 @@ O GitHub testa o programa, monta a versão e só publica no fim, quando todos os
    - `starsonic-chat.service`
    - `starsonic-chat-copia.service`
    - `starsonic-chat-copia.timer`
-2. O SHA-256: o número dentro do arquivo `starsonic-chat-linux-amd64.sha256` tem de ser o do programa. O `instalar.sh` já confere isso sozinho na instalação (você vê `SHA-256 conferido.`). Para conferir à mão, baixe os dois arquivos na mesma pasta e rode:
+2. O SHA-256: o número dentro do arquivo `starsonic-chat-linux-amd64.sha256` tem de ser o do programa. O `instalar.sh` já confere isso sozinho na instalação (você vê `SHA-256 conferido.`). Para conferir à mão, use a VM (o Windows não tem o `sha256sum`). Na VM, baixe o programa:
+
+```
+curl -fsSLO https://github.com/LucasCPena/starsonic-phone/releases/download/chat-v0.1.0/starsonic-chat-linux-amd64
+```
+
+Baixe o arquivo do SHA-256, na mesma pasta:
+
+```
+curl -fsSLO https://github.com/LucasCPena/starsonic-phone/releases/download/chat-v0.1.0/starsonic-chat-linux-amd64.sha256
+```
+
+E rode:
 
 ```
 sha256sum -c starsonic-chat-linux-amd64.sha256
@@ -415,12 +427,12 @@ sha256sum -c starsonic-chat-linux-amd64.sha256
 
 Deve aparecer `starsonic-chat-linux-amd64: OK`.
 
-3. O endereço `releases/latest` tem de continuar respondendo 404, porque o canal Estável dos apps lê esse endereço. Rode:
+3. O endereço `releases/latest` tem de responder 404, ou mostrar uma versão do Windows (uma etiqueta que começa com `v`, como `v1.0.0`), porque o canal Estável dos apps lê esse endereço. Ele não pode mostrar a `chat-v…`. Rode:
 
 ```
 curl -sI https://api.github.com/repos/LucasCPena/starsonic-phone/releases/latest
 ```
 
-A primeira linha deve ter `404`. O workflow também confere isso no último passo e falha se não for 404. Se aparecer outra coisa, não instale nada: avise quem cuida do projeto.
+A primeira linha deve ter `404`. Se o Windows já tiver uma versão estável, o endereço responde `200`, e isso também está certo, desde que a versão seja a do Windows. O workflow confere isso no último passo e falha se o endereço apontar para outra coisa. Nesse caso, em `Releases`, abra essa release, clique em `Edit` e marque `Set as a pre-release` (ou apague a release e a etiqueta dela). Não instale nada antes disso.
 
 Pronto: agora o passo 2 (instalar) e o passo 7 (atualizar) acham a versão nova.
