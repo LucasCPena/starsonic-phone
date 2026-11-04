@@ -17,6 +17,10 @@ import (
 // duracaoBilhete é quanto um bilhete vale (seção 7 do protocolo).
 const duracaoBilhete = 30 * time.Second
 
+// maxBilhetesPorComputador é quantos bilhetes um computador tem de uma vez. Passando disso,
+// o mais velho dele sai (ruling R11).
+const maxBilhetesPorComputador = 4
+
 // bilhetes guarda os bilhetes do WebSocket na memória, só pelo SHA-256 (ruling R1). Cada um
 // vale uma vez, por 30 s do relógio. Um reinício perde os que esperavam: o app pede outro.
 type bilhetes struct {
@@ -25,6 +29,9 @@ type bilhetes struct {
 	mu       sync.Mutex
 	porHash  map[string]bilhete // a chave é o SHA-256 do bilhete
 	varreuEm time.Time
+
+	// porComputador guarda os hashes de cada computador, do mais velho ao mais novo.
+	porComputador map[int64][]string
 }
 
 type bilhete struct {
@@ -33,7 +40,7 @@ type bilhete struct {
 }
 
 func novosBilhetes(r tempo.Relogio) *bilhetes {
-	return &bilhetes{relogio: r, porHash: map[string]bilhete{}, varreuEm: r.Agora()}
+	return &bilhetes{relogio: r, porHash: map[string]bilhete{}, porComputador: map[int64][]string{}, varreuEm: r.Agora()}
 }
 
 // novo cria um bilhete para o computador.
@@ -43,7 +50,14 @@ func (b *bilhetes) novo(computadorID int64) string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.varrer(agora)
-	b.porHash[string(segredo.Hash(s))] = bilhete{computador: computadorID, vence: agora.Add(duracaoBilhete)}
+	h := string(segredo.Hash(s))
+	b.porHash[h] = bilhete{computador: computadorID, vence: agora.Add(duracaoBilhete)}
+	fila := append(b.porComputador[computadorID], h)
+	for len(fila) > maxBilhetesPorComputador {
+		delete(b.porHash, fila[0])
+		fila = fila[1:]
+	}
+	b.porComputador[computadorID] = fila
 	return s
 }
 
@@ -55,11 +69,30 @@ func (b *bilhetes) usar(s string) (computadorID int64, ok bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	x, ok := b.porHash[h]
-	delete(b.porHash, h)
+	if ok {
+		b.tirar(h, x.computador)
+	}
 	if !ok || !agora.Before(x.vence) {
 		return 0, false
 	}
 	return x.computador, true
+}
+
+// tirar apaga o bilhete e o tira da fila do computador. Com b.mu travado.
+func (b *bilhetes) tirar(h string, computadorID int64) {
+	delete(b.porHash, h)
+	fila := b.porComputador[computadorID]
+	for i, f := range fila {
+		if f == h {
+			fila = append(fila[:i], fila[i+1:]...)
+			break
+		}
+	}
+	if len(fila) == 0 {
+		delete(b.porComputador, computadorID)
+	} else {
+		b.porComputador[computadorID] = fila
+	}
 }
 
 // varrer tira da memória os bilhetes vencidos, no máximo uma vez a cada 30 s. Com b.mu
@@ -71,7 +104,7 @@ func (b *bilhetes) varrer(agora time.Time) {
 	b.varreuEm = agora
 	for h, x := range b.porHash {
 		if !agora.Before(x.vence) {
-			delete(b.porHash, h)
+			b.tirar(h, x.computador)
 		}
 	}
 }

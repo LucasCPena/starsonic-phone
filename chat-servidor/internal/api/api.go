@@ -23,7 +23,7 @@ const prefixo = "/api/v1/"
 // Deps é o que a API usa. A Task 7 acrescenta o Armazem.
 type Deps struct {
 	Banco   *banco.Banco
-	Hub     *eventos.Hub // o mesmo da página de administração; sem ele, a API cria um só dela
+	Hub     *eventos.Hub // obrigatório, e o mesmo da página de administração: o Fora dela só alcança as conexões deste hub
 	Origens []string     // as origens do CORS; sem nenhuma, vale OrigemPadrao
 }
 
@@ -43,13 +43,15 @@ type servidor struct {
 
 // Novo monta a API. O manipulador responde a tudo em /api/v1/.
 func Novo(d Deps) http.Handler {
-	hub := d.Hub
-	if hub == nil {
-		hub = eventos.NovoHub(eventos.Config{})
+	if d.Banco == nil {
+		panic("api.Novo: Deps.Banco é obrigatório")
+	}
+	if d.Hub == nil {
+		panic("api.Novo: Deps.Hub é obrigatório, e tem de ser o mesmo da página de administração")
 	}
 	s := &servidor{
 		banco:    d.Banco,
-		hub:      hub,
+		hub:      d.Hub,
 		origens:  map[string]bool{},
 		erradas:  limites.Nova(maxErradas, periodoErradas, d.Banco.Relogio()),
 		bilhetes: novosBilhetes(d.Banco.Relogio()),

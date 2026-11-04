@@ -268,7 +268,7 @@ func ligarDe(h http.Handler, remoto, codigo string) int {
 func TestLigar_IPv6MesmoPrefixo(t *testing.T) {
 	a := apitest.Novo(t)
 	emp := a.Empresa("ACME Comércio Ltda")
-	h := api.Novo(api.Deps{Banco: a.Banco})
+	h := api.Novo(api.Deps{Banco: a.Banco, Hub: a.Hub})
 	for i := 0; i < 5; i++ {
 		if c := ligarDe(h, "[2001:db8:1:2::1]:1000", "STAR-AAAA-BBBB"); c != 404 {
 			t.Fatalf("erro %d: %d", i+1, c)
@@ -290,7 +290,7 @@ func TestLigar_IPv6MesmoPrefixo(t *testing.T) {
 
 func TestLigar_IPv4Mapeado(t *testing.T) {
 	a := apitest.Novo(t)
-	h := api.Novo(api.Deps{Banco: a.Banco})
+	h := api.Novo(api.Deps{Banco: a.Banco, Hub: a.Hub})
 	for i := 0; i < 5; i++ {
 		ligarDe(h, "[::ffff:192.0.2.1]:1000", "STAR-AAAA-BBBB")
 		ligarDe(h, "192.0.2.1:2000", "STAR-AAAA-BBBB")

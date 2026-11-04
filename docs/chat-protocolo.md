@@ -26,7 +26,7 @@ Um erro vem com o status HTTP e um corpo `{"erro": "<código>"}`, às vezes com 
 |---|---|---|
 | 400 | `invalido` | Um campo faltou ou veio fora da regra. Vem com `"campo": "<nome>"`. |
 | 401 | `chave` | Sem chave, chave desconhecida, ou o computador saiu do chat (foi tirado, a pessoa foi tirada, a empresa foi apagada ou ele desligou). O app mostra "Este computador saiu do chat…". |
-| 403 | `proibido` | Só quem cuida do grupo pode fazer isso. |
+| 403 | `proibido` | Só quem cuida do grupo pode fazer isso, ou a origem do WebSocket não está na lista. |
 | 404 | `codigo` | O código da empresa não existe (só no `POST /api/v1/computadores`). |
 | 404 | `naoEncontrado` | O id não existe, é de outra empresa, ou a pessoa não está na conversa. |
 | 409 | `pessoa` | Ninguém entrou neste computador ainda (seção 4). |
@@ -197,10 +197,10 @@ Um erro vem com o status HTTP e um corpo `{"erro": "<código>"}`, às vezes com 
 1. **O bilhete:** `POST /api/v1/eventos/bilhete`, com a chave.
    - Responde `200`: `{"bilhete": "<43 caracteres base64url>"}`.
    - O bilhete vale uma vez só, por 30 segundos.
-2. **A conexão:** `GET /api/v1/eventos?bilhete=<bilhete>`, como WebSocket. A origem tem de ser uma das origens do CORS. Um bilhete inválido responde `401 chave`, sem WebSocket.
+2. **A conexão:** `GET /api/v1/eventos?bilhete=<bilhete>`, como WebSocket. A origem tem de ser uma das origens do CORS. Um bilhete inválido responde `401 chave`, sem WebSocket. Uma origem fora da lista responde `403 proibido`, sem WebSocket, e o bilhete continua valendo.
 3. **Um computador tem uma conexão só.** Uma nova fecha a anterior, com o código `4000`.
 4. **O servidor manda um ping a cada 25 segundos.** Sem resposta em 60 segundos, ele fecha a conexão.
-5. **Um computador lento é desligado.** Se 64 eventos estiverem esperando para um computador, o servidor fecha a conexão dele com o código `4002`. O app reconecta e busca o que perdeu com o `depois`.
+5. **Um computador lento é desligado.** Se 64 eventos estiverem esperando para um computador, o servidor fecha a conexão dele com o código `4002`. Com a rede cheia, o código `4002` pode não chegar, e o app vê a conexão cair; nos dois casos, ele reconecta e busca o que perdeu com o `depois`.
 
 Os eventos são mensagens de texto com JSON, sempre com o campo `tipo`:
 ```json
