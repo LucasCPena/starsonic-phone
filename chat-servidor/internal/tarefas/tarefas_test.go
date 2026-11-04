@@ -3,6 +3,7 @@ package tarefas
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -101,8 +102,10 @@ func TestExpirar_365Dias(t *testing.T) {
 		t.Fatal("a linha não ficou expirada, sem miniatura, com a hora de agora")
 	}
 	// A mensagem continua, e o download dá 410.
-	if r := c.a.Pedir(c.kBia, "GET", "/api/v1/arquivos/"+velho.ID, nil); r.StatusCode != 410 {
-		t.Fatalf("download do vencido respondeu %d; queria 410", r.StatusCode)
+	r := c.a.Pedir(c.kBia, "GET", "/api/v1/arquivos/"+velho.ID, nil)
+	corpo, _ := io.ReadAll(r.Body)
+	if r.StatusCode != 410 || !strings.Contains(string(corpo), `"erro":"expirado"`) {
+		t.Fatalf("download do vencido respondeu %d %s; queria 410 expirado", r.StatusCode, corpo)
 	}
 	resp := c.a.Pedir(c.kBia, "GET", fmt.Sprintf("/api/v1/conversas/%d/mensagens", c.conversa), nil)
 	pag := apitest.LerJSON[struct {
@@ -163,7 +166,9 @@ func TestLimpar_SemMensagem(t *testing.T) {
 	}
 }
 
-// Uma mensagem que chega entre a consulta e o DELETE não perde o arquivo.
+// Fixa só a metade do banco: o DELETE confere a mensagem no mesmo comando e o MarcarExpirado
+// marca uma vez só. A ordem banco-antes-do-disco é fixada por TestExpirar_ErroDeDisco e
+// TestLimparSemMensagem_GanhouMensagem.
 func TestApagarArquivo_SoSemMensagem(t *testing.T) {
 	c := novaCena(t)
 	usado := c.arquivo("usado.pdf", 3*dia)
@@ -248,9 +253,10 @@ func TestVarrer_Orfaos(t *testing.T) {
 	// errada, subpasta que não é hexadecimal e um link simbólico.
 	ficam := []string{
 		escrever(filepath.Join(c.a.Arquivos, "ab", "lixo.txt")),
-		escrever(filepath.Join(c.a.Arquivos, "ab", strings.Repeat("A", 32))),
-		escrever(filepath.Join(c.a.Arquivos, "ab", idOrfao("cc"))), // id na subpasta errada
+		escrever(filepath.Join(c.a.Arquivos, "ab", "ab"+strings.Repeat("A", 30))), // só o IDValido recusa
+		escrever(filepath.Join(c.a.Arquivos, "ab", idOrfao("cc"))),                // id na subpasta errada
 		escrever(filepath.Join(c.a.Arquivos, "zz", idOrfao("zz"))),
+		escrever(filepath.Join(c.a.Arquivos, "zz", ".tmp-x")), // só a subpasta inválida recusa
 		escrever(filepath.Join(c.a.Arquivos, "solto.txt")),
 	}
 	fora := filepath.Join(t.TempDir(), "fora")
@@ -263,12 +269,24 @@ func TestVarrer_Orfaos(t *testing.T) {
 	if err := os.Symlink(fora, link); err != nil {
 		t.Fatal(err)
 	}
-	ficam = append(ficam, link)
+	// Uma subpasta que é link simbólico para fora, com um arquivo velho de nome de id dentro.
+	// O prefixo é um que ainda não existe (os ids dos arquivos de teste são aleatórios).
+	pref := ""
+	for i := 0; i < 256 && pref == ""; i++ {
+		if p := fmt.Sprintf("%02x", i); !existe(filepath.Join(c.a.Arquivos, p)) {
+			pref = p
+		}
+	}
+	pastaFora := t.TempDir()
+	dentro := escrever(filepath.Join(pastaFora, idOrfao(pref)))
+	velhice(dentro, 30*dia)
+	if err := os.Symlink(pastaFora, filepath.Join(c.a.Arquivos, pref)); err != nil {
+		t.Fatal(err)
+	}
+	ficam = append(ficam, link, dentro)
 	for _, p := range ficam {
-		if _, err := os.Lstat(p); err == nil && !strings.HasSuffix(p, "solto.txt") && !strings.HasSuffix(p, "lixo.txt") {
-			if info, _ := os.Lstat(p); info.Mode()&os.ModeSymlink == 0 {
-				velhice(p, 30*dia)
-			}
+		if info, _ := os.Lstat(p); info.Mode()&os.ModeSymlink == 0 {
+			velhice(p, 30*dia)
 		}
 	}
 
@@ -311,6 +329,9 @@ func TestProximaRodada(t *testing.T) {
 		{"04h em ponto", time.Date(2026, 11, 4, 4, 0, 0, 0, fuso), time.Date(2026, 11, 5, 4, 0, 0, 0, fuso)},
 		{"04h e 1 ns", time.Date(2026, 11, 4, 4, 0, 0, 1, fuso), time.Date(2026, 11, 5, 4, 0, 0, 0, fuso)},
 		{"fim do mês", time.Date(2026, 11, 30, 12, 0, 0, 0, fuso), time.Date(2026, 12, 1, 4, 0, 0, 0, fuso)},
+		// O horário de verão de 2018 começou à meia-noite de 4/11: 04:00 já é -02:00, e somar 24 h
+		// daria 05:00.
+		{"horário de verão", time.Date(2018, 11, 3, 23, 0, 0, 0, fuso), time.Date(2018, 11, 4, 4, 0, 0, 0, fuso)},
 		// Um servidor em UTC: 06:30 UTC é 03:30 em Brasília, ainda antes das 04:00 de hoje.
 		{"em UTC", time.Date(2026, 11, 4, 6, 30, 0, 0, time.UTC), time.Date(2026, 11, 4, 4, 0, 0, 0, fuso)},
 		{"em UTC, depois", time.Date(2026, 11, 4, 7, 0, 0, 0, time.UTC), time.Date(2026, 11, 5, 4, 0, 0, 0, fuso)},
@@ -321,6 +342,11 @@ func TestProximaRodada(t *testing.T) {
 			got := proximaRodada(rel.Agora())
 			if !got.Equal(c.quer) {
 				t.Fatalf("proximaRodada(%v) = %v; queria %v", c.agora, got, c.quer)
+			}
+			if c.nome == "horário de verão" {
+				if _, off := got.Zone(); off != -2*60*60 {
+					t.Fatalf("deslocamento = %d s; queria -7200", off)
+				}
 			}
 			if got.In(fuso).Hour() != 4 {
 				t.Fatalf("a hora em Brasília é %d; queria 4", got.In(fuso).Hour())
@@ -348,7 +374,7 @@ func TestRodar_RodadaAoComecarEPara(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	// A linha já está marcada, pois a marca vem antes do disco.
+	// A rodada ao começar marcou a linha (a ordem marca-antes-do-disco é de TestExpirar_ErroDeDisco).
 	if c.a.Contar(`SELECT COUNT(*) FROM arquivos WHERE id = ? AND expirado_em IS NOT NULL`, velho.ID) != 1 {
 		t.Fatal("a linha não ficou expirada")
 	}
@@ -357,5 +383,176 @@ func TestRodar_RodadaAoComecarEPara(t *testing.T) {
 	case <-feito:
 	case <-time.After(time.Second):
 		t.Fatal("Rodar não voltou em 1 s depois do cancel")
+	}
+}
+
+// Fixa as duas ordens da expiração: marca ANTES do disco, e o erro de disco não desfaz a marca
+// nem para a rodada.
+func TestExpirar_ErroDeDisco(t *testing.T) {
+	c := novaCena(t)
+	a := c.arquivo("a.pdf", 366*dia)
+	c.mensagem(a)
+	c.miniatura(a.ID)
+	b := c.arquivo("b.pdf", 366*dia)
+	c.mensagem(b)
+
+	// Uma pasta não vazia no lugar do arquivo faz o os.Remove falhar.
+	p := c.caminho(a.ID)
+	if err := os.Remove(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(p, "x"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	e, _, err := Expirar(context.Background(), c.a.Banco, c.a.Armazem)
+	if e != 2 || err == nil {
+		t.Fatalf("expirados = %d, err = %v; queria 2 e um erro", e, err)
+	}
+	if c.a.Contar(`SELECT COUNT(*) FROM arquivos WHERE id = ? AND expirado_em IS NOT NULL AND miniatura = 0`, a.ID) != 1 {
+		t.Fatal("a linha do A não ficou expirada, sem miniatura")
+	}
+	r := c.a.Pedir(c.kBia, "GET", "/api/v1/arquivos/"+a.ID, nil)
+	corpo, _ := io.ReadAll(r.Body)
+	if r.StatusCode != 410 || !strings.Contains(string(corpo), `"erro":"expirado"`) {
+		t.Fatalf("download do A respondeu %d %s; queria 410 expirado", r.StatusCode, corpo)
+	}
+	if existe(p + ".mini") {
+		t.Fatal("a miniatura do A ficou")
+	}
+	if existe(c.caminho(b.ID)) {
+		t.Fatal("o B (depois do que falhou) ficou no disco: a rodada parou")
+	}
+
+	// Uma rodada seguinte tira os bytes de uma linha expirada.
+	if err := os.RemoveAll(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	e, l, err := Expirar(context.Background(), c.a.Banco, c.a.Armazem)
+	if err != nil || e != 0 || l != 1 || existe(p) {
+		t.Fatalf("segunda rodada = %d, %d, %v, existe=%v; queria 0, 1, nil, false", e, l, err, existe(p))
+	}
+}
+
+// Um arquivo que ganhou mensagem depois da consulta não é tocado: nem a linha, nem o disco.
+func TestLimparSemMensagem_GanhouMensagem(t *testing.T) {
+	c := novaCena(t)
+	f := c.arquivo("f.pdf", 3*dia)
+	c.miniatura(f.ID)
+	c.mensagem(f)
+	ok, err := limparSemMensagem(context.Background(), c.a.Banco, c.a.Armazem, f.ID)
+	if ok || err != nil {
+		t.Fatalf("limparSemMensagem = %v, %v; queria false, nil", ok, err)
+	}
+	if c.a.Contar(`SELECT COUNT(*) FROM arquivos WHERE id = ?`, f.ID) != 1 || !existe(c.caminho(f.ID)) || !existe(c.caminho(f.ID)+".mini") {
+		t.Fatal("o arquivo com mensagem foi tocado")
+	}
+}
+
+// O arquivo de mais de 365 dias que nunca teve mensagem perde a linha (e o nome do cliente).
+func TestLimpar_VencidoSemMensagem(t *testing.T) {
+	c := novaCena(t)
+	f := c.arquivo("f.pdf", 366*dia)
+	keep := c.arquivo("g.pdf", 2*dia) // uma linha que fica, para a tabela não estar vazia
+	c.mensagem(keep)
+	if _, _, err := Expirar(context.Background(), c.a.Banco, c.a.Armazem); err != nil {
+		t.Fatal(err)
+	}
+	if c.a.Contar(`SELECT COUNT(*) FROM arquivos WHERE id = ?`, f.ID) != 0 || existe(c.caminho(f.ID)) {
+		t.Fatal("a linha ou os bytes do vencido sem mensagem ficaram")
+	}
+}
+
+// semLinha cria n arquivos velhos com nome de id e sem linha no banco.
+func (c *cena) semLinha(t *testing.T, n int) []string {
+	t.Helper()
+	var lista []string
+	velho := c.a.Relogio.Agora().Add(-30 * dia)
+	for i := 0; i < n; i++ {
+		id := fmt.Sprintf("%02x%030x", i%256, i+1)
+		p := c.caminho(id)
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, velho, velho); err != nil {
+			t.Fatal(err)
+		}
+		lista = append(lista, p)
+	}
+	return lista
+}
+
+func TestVarrer_GuardaDoBancoVazio(t *testing.T) {
+	c := novaCena(t)
+	orfaos := c.semLinha(t, 3)
+	if _, l, err := Expirar(context.Background(), c.a.Banco, c.a.Armazem); err != nil || l != 0 {
+		t.Fatalf("banco vazio: limpos = %d, err = %v; queria 0, nil", l, err)
+	}
+	for _, p := range orfaos {
+		if !existe(p) {
+			t.Fatal("com a tabela vazia, um arquivo sem linha foi apagado")
+		}
+	}
+}
+
+func TestVarrer_GuardaDoLimite(t *testing.T) {
+	c := novaCena(t)
+	c.mensagem(c.arquivo("g.pdf", 2*dia)) // a tabela não está vazia
+	antes := limiteSemLinha
+	limiteSemLinha = 5
+	t.Cleanup(func() { limiteSemLinha = antes })
+
+	orfaos := c.semLinha(t, 6) // passa do limite
+	if _, l, err := Expirar(context.Background(), c.a.Banco, c.a.Armazem); err != nil || l != 0 {
+		t.Fatalf("passou do limite: limpos = %d, err = %v; queria 0, nil", l, err)
+	}
+	for _, p := range orfaos {
+		if !existe(p) {
+			t.Fatal("passando do limite, um arquivo sem linha foi apagado")
+		}
+	}
+	// No limite, apaga.
+	for _, p := range orfaos[5:] {
+		os.Remove(p)
+	}
+	if _, l, err := Expirar(context.Background(), c.a.Banco, c.a.Armazem); err != nil || l != 5 {
+		t.Fatalf("no limite: limpos = %d, err = %v; queria 5, nil", l, err)
+	}
+}
+
+func TestVarrer_TresSemLinhaComOutrasLinhas(t *testing.T) {
+	c := novaCena(t)
+	c.mensagem(c.arquivo("g.pdf", 2*dia))
+	orfaos := c.semLinha(t, 3)
+	if _, l, err := Expirar(context.Background(), c.a.Banco, c.a.Armazem); err != nil || l != 3 {
+		t.Fatalf("limpos = %d, err = %v; queria 3, nil", l, err)
+	}
+	for _, p := range orfaos {
+		if existe(p) {
+			t.Fatal("um arquivo sem linha ficou")
+		}
+	}
+}
+
+// Se a marca no banco falha, o arquivo não sai do disco: marcar vem antes de apagar.
+func TestExpirar_FalhaAoMarcar(t *testing.T) {
+	c := novaCena(t)
+	f := c.arquivo("f.pdf", 366*dia)
+	c.mensagem(f)
+	c.miniatura(f.ID)
+	c.a.Exec(`CREATE TRIGGER sem_marca BEFORE UPDATE ON arquivos BEGIN SELECT RAISE(ABORT, 'sem marca'); END`)
+
+	e, _, err := Expirar(context.Background(), c.a.Banco, c.a.Armazem)
+	if e != 0 || err == nil {
+		t.Fatalf("expirados = %d, err = %v; queria 0 e um erro", e, err)
+	}
+	if !existe(c.caminho(f.ID)) || !existe(c.caminho(f.ID)+".mini") {
+		t.Fatal("o arquivo saiu do disco sem a marca no banco")
 	}
 }

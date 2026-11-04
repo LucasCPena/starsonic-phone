@@ -249,3 +249,31 @@ func TestApagarMiniatura_DeixaOArquivo(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestClassificar(t *testing.T) {
+	maiusc := "01" + strings.Repeat("A", 30)
+	casos := []struct {
+		sub, nome string
+		tipo      Tipo
+		id        string
+	}{
+		{"01", idA, TipoArquivo, idA},
+		{"01", idA + ".mini", TipoMiniatura, idA},
+		{"01", ".tmp-123", TipoTemporario, ""},
+		{"02", idA, TipoEstranho, ""},    // subpasta que não é o começo do id
+		{"01", maiusc, TipoEstranho, ""}, // só minúsculas
+		{"01", idA + ".mini.mini", TipoEstranho, ""},
+		{"01", "lixo.txt", TipoEstranho, ""},
+		{"zz", ".tmp-x", TipoEstranho, ""}, // subpasta inválida
+		{"0", idA, TipoEstranho, ""},
+	}
+	for _, c := range casos {
+		tipo, id := Classificar(c.sub, c.nome)
+		if tipo != c.tipo || id != c.id {
+			t.Errorf("Classificar(%q, %q) = %v, %q; queria %v, %q", c.sub, c.nome, tipo, id, c.tipo, c.id)
+		}
+	}
+	if !SubpastaValida("0a") || SubpastaValida("0A") || SubpastaValida("abc") || SubpastaValida("zz") {
+		t.Error("SubpastaValida")
+	}
+}

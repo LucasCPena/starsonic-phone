@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // ErrGrande diz que o conteúdo passou do máximo; nada fica no disco.
@@ -186,3 +187,39 @@ func (a *Armazem) Apagar(id string) error {
 
 // Pasta devolve a pasta raiz do armazém, para a varredura da limpeza.
 func (a *Armazem) Pasta() string { return a.pasta }
+
+// Tipo diz o que é um nome de arquivo dentro de uma subpasta do armazém.
+type Tipo int
+
+const (
+	TipoEstranho   Tipo = iota // não é nada que o armazém grave
+	TipoTemporario             // .tmp-*, uma gravação em andamento (ou que morreu)
+	TipoArquivo                // <id>
+	TipoMiniatura              // <id>.mini
+)
+
+// SubpastaValida diz se nome é o nome de uma subpasta do armazém: os 2 primeiros caracteres de
+// um id (hexadecimais minúsculos).
+func SubpastaValida(nome string) bool {
+	return len(nome) == 2 && IDValido(nome+strings.Repeat("0", 30))
+}
+
+// Classificar diz o que é o arquivo nome dentro da subpasta. Para TipoArquivo e TipoMiniatura
+// devolve também o id. O nome de um id tem de começar pelo nome da subpasta. É o único lugar,
+// fora do armazém, que conhece o desenho do disco: quem varre usa este.
+func Classificar(subpasta, nome string) (Tipo, string) {
+	if !SubpastaValida(subpasta) {
+		return TipoEstranho, ""
+	}
+	if strings.HasPrefix(nome, prefixoTmp) {
+		return TipoTemporario, ""
+	}
+	id, mini := strings.CutSuffix(nome, sufixoMini)
+	if !IDValido(id) || id[:2] != subpasta {
+		return TipoEstranho, ""
+	}
+	if mini {
+		return TipoMiniatura, id
+	}
+	return TipoArquivo, id
+}

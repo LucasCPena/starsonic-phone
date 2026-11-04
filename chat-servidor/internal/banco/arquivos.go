@@ -126,11 +126,12 @@ func (b *Banco) ArquivosParaExpirar(ctx context.Context, antesDe int64) ([]strin
 }
 
 // ArquivosSemMensagem acha os arquivos criados antes de antesDe (ms UTC) que nenhuma
-// mensagem usa e que não expiraram: foram enviados e nunca entraram numa mensagem.
+// mensagem usa, expirados ou não: foram enviados e nunca entraram numa mensagem, e a linha
+// (com o nome do cliente) sai do servidor.
 func (b *Banco) ArquivosSemMensagem(ctx context.Context, antesDe int64) ([]string, error) {
 	return b.ids(ctx,
 		`SELECT a.id FROM arquivos a
-		  WHERE a.criado_em < ? AND a.expirado_em IS NULL
+		  WHERE a.criado_em < ?
 		    AND NOT EXISTS (SELECT 1 FROM mensagens m WHERE m.arquivo_id = a.id)
 		  ORDER BY a.criado_em`, antesDe)
 }
@@ -192,4 +193,11 @@ func (b *Banco) EstadoArquivo(ctx context.Context, id string) (existe, expirado,
 		return false, false, false, err
 	}
 	return true, exp.Valid, mini != 0, nil
+}
+
+// ContarArquivos devolve quantas linhas a tabela de arquivos tem.
+func (b *Banco) ContarArquivos(ctx context.Context) (int, error) {
+	var n int
+	err := b.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM arquivos`).Scan(&n)
+	return n, err
 }
