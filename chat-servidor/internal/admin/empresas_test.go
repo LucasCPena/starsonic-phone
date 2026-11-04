@@ -229,6 +229,43 @@ func TestApagarEmpresa(t *testing.T) {
 	}
 }
 
+// TestNomeEmpresa_Espacos: um nome com espaços repetidos fica com um espaço só, como a página
+// mostra; e o nome digitado para apagar passa pela mesma regra antes da comparação, que segue
+// exata e com a caixa.
+func TestNomeEmpresa_Espacos(t *testing.T) {
+	p := novoPainel(t)
+	n := p.logado(t)
+	criar := func() string {
+		t.Helper()
+		resp, _ := n.acao("/admin/empresas", url.Values{"nome": {"ACME  Ltda"}})
+		if resp.StatusCode != http.StatusSeeOther {
+			t.Fatalf("criar = %d", resp.StatusCode)
+		}
+		return resp.Header.Get("Location")
+	}
+	primeira, segunda := criar(), criar()
+	if _, corpo := n.get(primeira); !strings.Contains(corpo, `<h1 class="titulo">ACME Ltda</h1>`) {
+		t.Fatalf("a página da empresa:\n%s", corpo)
+	}
+	if c := p.a.Contar(`SELECT COUNT(*) FROM empresas WHERE nome = 'ACME Ltda'`); c != 2 {
+		t.Fatalf("%d empresas guardadas como \"ACME Ltda\"; queria 2", c)
+	}
+	// Com outra caixa, não confere.
+	resp, corpo := n.acao(primeira+"/apagar", url.Values{"nome": {"acme ltda"}})
+	esperarStatus(t, resp, corpo, http.StatusBadRequest)
+	if !strings.Contains(corpo, "O nome não confere.") {
+		t.Fatalf("acme ltda:\n%s", corpo)
+	}
+	// Digitado com os dois espaços, ou como a página mostra e com as pontas, confere.
+	resp, _ = n.acao(primeira+"/apagar", url.Values{"nome": {"ACME  Ltda"}})
+	esperarIr(t, resp, "/admin/")
+	resp, _ = n.acao(segunda+"/apagar", url.Values{"nome": {" ACME Ltda "}})
+	esperarIr(t, resp, "/admin/")
+	if c := p.a.Contar(`SELECT COUNT(*) FROM empresas`); c != 0 {
+		t.Fatalf("ficaram %d empresas", c)
+	}
+}
+
 // TestApagarEmpresa_BilheteVelho é o R27 pela API e pela página: o bilhete que um computador
 // da empresa apagada pediu antes não abre o WebSocket de um computador novo da outra empresa.
 // Sem o AUTOINCREMENT, o computador novo ganharia o id do apagado, e o bilhete abriria o dele.

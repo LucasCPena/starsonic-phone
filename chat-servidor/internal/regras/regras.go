@@ -52,7 +52,35 @@ func Ramal(s string) (string, error) {
 func NomePessoa(s string) (string, error) { return nome("nome", s, 80) }
 
 // NomeEmpresa confere o nome de uma empresa (até 80 caracteres), o da página de administração.
-func NomeEmpresa(s string) (string, error) { return nome("nome", s, 80) }
+// Cada sequência de espaços vira um espaço só, antes de conferir: o nome fica guardado como a
+// página o mostra, e o nome digitado para apagar a empresa passa pela mesma regra.
+func NomeEmpresa(s string) (string, error) { return nome("nome", juntarEspacos(s), 80) }
+
+// juntarEspacos troca cada sequência de espaços (o comum, o sem quebra, os de outras línguas)
+// por um espaço comum. Os de controle, como o tab e a quebra de linha, ficam: o nome os
+// recusa. Um texto que não é UTF-8 volta como veio, e o nome também o recusa.
+func juntarEspacos(s string) string {
+	if !utf8.ValidString(s) {
+		return s
+	}
+	var b strings.Builder
+	espaco := false
+	for _, r := range s {
+		if unicode.IsSpace(r) && !unicode.IsControl(r) {
+			espaco = true
+			continue
+		}
+		if espaco {
+			b.WriteByte(' ')
+			espaco = false
+		}
+		b.WriteRune(r)
+	}
+	if espaco {
+		b.WriteByte(' ')
+	}
+	return b.String()
+}
 
 // NomeComputador confere o nome de um computador (até 64 caracteres).
 func NomeComputador(s string) (string, error) { return nome("computador", s, 64) }

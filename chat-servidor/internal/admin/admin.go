@@ -402,13 +402,15 @@ func (p *painel) paginaApagar(w http.ResponseWriter, r *http.Request, s sessao) 
 }
 
 // POST /admin/empresas/{id}/apagar: com o nome exato da empresa, apaga tudo dela, no banco e
-// no disco, e os computadores dela recebem o fora. Com outro nome, nada muda.
+// no disco, e os computadores dela recebem o fora. Com outro nome, nada muda. O nome digitado
+// passa pela regra do nome (sem as pontas, cada sequência de espaços vira um espaço) e só
+// então é comparado, exato e com a caixa.
 func (p *painel) apagarEmpresa(w http.ResponseWriter, r *http.Request, s sessao) {
 	e, ok := p.empresaDoCaminho(w, r, s)
 	if !ok {
 		return
 	}
-	if strings.TrimSpace(r.PostForm.Get("nome")) != e.Nome {
+	if digitado, err := regras.NomeEmpresa(r.PostForm.Get("nome")); err != nil || digitado != e.Nome {
 		p.mostrarComSessao(w, s, http.StatusBadRequest, "apagar", "apagar "+e.Nome,
 			telaApagar{Nome: e.Nome, Endereco: enderecoEmpresa(e.ID), Erro: textoNomeErrado})
 		return

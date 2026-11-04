@@ -57,7 +57,15 @@ func TestNomeEmpresa(t *testing.T) {
 		{"80 vale", strings.Repeat("ç", 80), strings.Repeat("ç", 80), true},
 		{"81 não", strings.Repeat("ç", 81), "", false},
 		{"controle", "ACME\nLtda", "", false},
+		{"tab no meio", "ACME\tLtda", "", false},
 		{"vazio", "   ", "", false},
+		// Cada sequência de espaços vira um espaço só, como a página mostra.
+		{"dois espaços", "ACME  Ltda", "ACME Ltda", true},
+		{"espaços e pontas", "  ACME   Comércio  Ltda ", "ACME Comércio Ltda", true},
+		{"espaço sem quebra", "ACME  Ltda", "ACME Ltda", true},
+		{"espaço ideográfico", "ACME　Ltda", "ACME Ltda", true},
+		{"80 depois de juntar", strings.Repeat("a", 40) + "   " + strings.Repeat("b", 39), strings.Repeat("a", 40) + " " + strings.Repeat("b", 39), true},
+		{"utf8 inválido", "ACME \xff Ltda", "", false},
 	})
 	var e *Erro
 	if _, err := NomeEmpresa(""); !errors.As(err, &e) || e.Campo != "nome" {
