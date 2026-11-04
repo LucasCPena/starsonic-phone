@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -159,6 +160,53 @@ func TestCriarAdmin(t *testing.T) {
 	criarAdmin(t, b, strings.Repeat("a", 64), senhaTeste)
 	if n := contar(t, b, `SELECT COUNT(*) FROM admins`); n != 4 {
 		t.Fatalf("%d usuários; queria 4", n)
+	}
+}
+
+// phcCom monta um hash argon2id no formato PHC com os parâmetros dados (o sal e a chave não
+// importam aqui).
+func phcCom(m, tempo, p int) string {
+	return fmt.Sprintf("$argon2id$v=19$m=%d,t=%d,p=%d$%s$%s", m, tempo, p,
+		base64.RawStdEncoding.EncodeToString([]byte("sal-de-teste-123")), base64.RawStdEncoding.EncodeToString(make([]byte, 32)))
+}
+
+// TestLerPHC_Teto: o que se lê de um hash guardado tem um teto, perto do padrão. Acima dele, o
+// hash vale como malformado: m até 4 vezes o argonMemoria, t até 3 vezes o argonTempo e p até
+// 4 vezes o argonThreads.
+func TestLerPHC_Teto(t *testing.T) {
+	for _, c := range []struct {
+		nome     string
+		m, tp, p int
+		ok       bool
+	}{
+		{"o padrão", argonMemoria, argonTempo, argonThreads, true},
+		{"no teto", 4 * argonMemoria, 3 * argonTempo, 4 * argonThreads, true},
+		{"memória acima", 4*argonMemoria + 1, 1, 1, false},
+		{"tempo acima", 8, 3*argonTempo + 1, 1, false},
+		{"threads acima", 8 * (4*argonThreads + 1), 1, 4*argonThreads + 1, false},
+		{"o teto de antes da memória", 1 << 20, 1, 1, false},
+	} {
+		if _, ok := lerPHC(phcCom(c.m, c.tp, c.p)); ok != c.ok {
+			t.Errorf("%s (m=%d, t=%d, p=%d): lerPHC = %v; queria %v", c.nome, c.m, c.tp, c.p, ok, c.ok)
+		}
+	}
+}
+
+// TestConferirSenha_HashAcimaDoTeto: um hash guardado acima do teto é recusado como um
+// malformado: sem pânico e sem argon2id daquele tamanho (a conferência não aloca os 256 MiB).
+func TestConferirSenha_HashAcimaDoTeto(t *testing.T) {
+	b := abrirTeste(t)
+	m := 4*argonMemoria + 8 // KiB
+	exec(t, b, `INSERT INTO admins (usuario, senha_hash, criado_em) VALUES ('suporte', ?, 1)`, phcCom(m, 1, 1))
+	var antes, depois runtime.MemStats
+	runtime.ReadMemStats(&antes)
+	ok, trav, err := b.ConferirSenha(context.Background(), "suporte", senhaTeste)
+	runtime.ReadMemStats(&depois)
+	if ok || trav != 0 || err != nil {
+		t.Fatalf("ConferirSenha = %v, %d, %v; queria false, 0, nil", ok, trav, err)
+	}
+	if alocou := depois.TotalAlloc - antes.TotalAlloc; alocou >= uint64(m)*1024/4 {
+		t.Fatalf("a conferência alocou %d MiB: o argon2id rodou com o hash acima do teto", alocou>>20)
 	}
 }
 

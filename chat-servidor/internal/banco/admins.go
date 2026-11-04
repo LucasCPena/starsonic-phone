@@ -115,8 +115,17 @@ type phc struct {
 	sal, chave []byte
 }
 
+// O teto do que se lê de um hash guardado, perto do padrão: um banco estragado não faz cada
+// conferência alocar memória sem fim (com as duas vagas, no máximo 512 MiB juntos). Acima
+// dele, o hash vale como malformado.
+const (
+	maxArgonMemoria = 4 * argonMemoria // KiB: 256 MiB
+	maxArgonTempo   = 3 * argonTempo
+	maxArgonThreads = 4 * argonThreads
+)
+
 // lerPHC lê um $argon2id$v=19$m=…,t=…,p=…$<sal>$<hash>. Fora desse formato, ou com parâmetros
-// fora do razoável (um banco estragado não aloca memória sem fim), não lê.
+// fora do razoável (acima do teto, ou que o argon2 recusaria), não lê.
 func lerPHC(s string) (phc, bool) {
 	partes := strings.Split(s, "$")
 	if len(partes) != 6 || partes[0] != "" || partes[1] != "argon2id" || partes[2] != "v=19" {
@@ -142,8 +151,8 @@ func lerPHC(s string) (phc, bool) {
 	var err1, err2 error
 	h.sal, err1 = base64.RawStdEncoding.DecodeString(partes[4])
 	h.chave, err2 = base64.RawStdEncoding.DecodeString(partes[5])
-	if err1 != nil || err2 != nil || h.t < 1 || h.t > 10 || h.p < 1 || h.m < 8*uint32(h.p) || h.m > 1<<20 ||
-		len(h.sal) < 8 || len(h.chave) < 16 || len(h.chave) > 64 {
+	if err1 != nil || err2 != nil || h.t < 1 || h.t > maxArgonTempo || h.p < 1 || h.p > maxArgonThreads ||
+		h.m < 8*uint32(h.p) || h.m > maxArgonMemoria || len(h.sal) < 8 || len(h.chave) < 16 || len(h.chave) > 64 {
 		return phc{}, false
 	}
 	return h, true
