@@ -158,15 +158,19 @@ func (b *Banco) CriarDupla(ctx context.Context, empresaID, eu, com int64) (conve
 // CriarGrupo cria o grupo: eu cuida dele e entra, junto com as pessoas (repetidos, e o
 // próprio eu na lista, valem uma vez). A conversa ganha o aviso criou e um pos por pessoa,
 // nessa ordem. Mais de 200 pessoas no total dá ErrGrupoCheio; um id que não é de uma
-// pessoa ativa da empresa dá ErrNaoEncontrado, sem criar nada.
-func (b *Banco) CriarGrupo(ctx context.Context, empresaID, eu int64, nome string, pessoas []int64) (int64, error) {
+// pessoa ativa da empresa dá ErrNaoEncontrado, sem criar nada. Sem nenhuma outra pessoa na
+// lista dá ErrInvalido. Devolve também os ids dos avisos criados, na ordem (criou, e um pos
+// por pessoa).
+func (b *Banco) CriarGrupo(ctx context.Context, empresaID, eu int64, nome string, pessoas []int64) (id int64, avisos []int64, err error) {
 	outras := unicos(pessoas, eu)
+	if len(outras) == 0 {
+		return 0, nil, ErrInvalido
+	}
 	if len(outras)+1 > MaxGrupo {
-		return 0, ErrGrupoCheio
+		return 0, nil, ErrGrupoCheio
 	}
 	agora := b.agoraMs()
-	var id int64
-	err := b.Tx(ctx, func(tx *sql.Tx) error {
+	err = b.Tx(ctx, func(tx *sql.Tx) error {
 		if _, err := pessoaDaEmpresa(ctx, tx, empresaID, eu); err != nil {
 			return err
 		}
@@ -194,20 +198,23 @@ func (b *Banco) CriarGrupo(ctx context.Context, empresaID, eu int64, nome string
 				return err
 			}
 		}
-		if _, err := avisar(ctx, tx, id, eu, "criou", 0, agora); err != nil {
+		a, err := avisar(ctx, tx, id, eu, "criou", 0, agora)
+		if err != nil {
 			return err
 		}
+		avisos = append(avisos, a)
 		for _, o := range outras {
-			if _, err := avisar(ctx, tx, id, eu, "pos", o, agora); err != nil {
+			if a, err = avisar(ctx, tx, id, eu, "pos", o, agora); err != nil {
 				return err
 			}
+			avisos = append(avisos, a)
 		}
 		return nil
 	})
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
-	return id, nil
+	return id, avisos, nil
 }
 
 // grupoDe confere que a conversa é um grupo da empresa de eu em que eu é membro ativo, e

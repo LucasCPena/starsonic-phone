@@ -146,7 +146,12 @@ func (s *servidor) criarGrupo(w http.ResponseWriter, r *http.Request, c banco.Co
 		erroCampo(w, "nome")
 		return
 	}
-	id, err := s.banco.CriarGrupo(r.Context(), c.EmpresaID, c.PessoaID, nome, pessoas)
+	// Os ids dos avisos são da Task 6, que manda o evento mensagem de cada um.
+	id, _, err := s.banco.CriarGrupo(r.Context(), c.EmpresaID, c.PessoaID, nome, pessoas)
+	if errors.Is(err, banco.ErrInvalido) {
+		erroCampo(w, "pessoas")
+		return
+	}
 	if err != nil {
 		erroDoBanco(w, err)
 		return

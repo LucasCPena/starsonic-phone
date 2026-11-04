@@ -127,6 +127,7 @@ Um erro vem com o status HTTP e um corpo `{"erro": "<código>"}`, às vezes com 
   - Quem cria cuida do grupo e entra nele.
   - A conversa ganha o aviso `criou` e um aviso `pos` para cada pessoa posta.
   - Com mais de 199 pessoas na lista (mais quem cria), responde `409 grupoCheio`.
+  - Sem nenhuma outra pessoa na lista, responde `400 invalido` (`campo: "pessoas"`).
   - Um id que não é de uma pessoa ativa da empresa responde `404 naoEncontrado`.
 
 **Os membros** — `GET /api/v1/conversas/{id}/membros`, só para um grupo.

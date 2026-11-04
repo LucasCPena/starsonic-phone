@@ -341,6 +341,18 @@ func TestGrupo_Criar(t *testing.T) {
 	}
 }
 
+func TestGrupo_SemPessoas(t *testing.T) {
+	c := novaCena(t)
+	for nome, lista := range map[string][]int64{"vazia": {}, "soQuemCria": {c.ana.ID}} {
+		if e := esperarErro(t, c.grupo(c.kAna, "Comercial", lista...), 400, "invalido"); e.Campo != "pessoas" {
+			t.Fatalf("%s: campo = %q; queria pessoas", nome, e.Campo)
+		}
+	}
+	if l := c.lista(t, c.kAna); len(l) != 0 {
+		t.Fatalf("sobrou uma conversa: %+v", l)
+	}
+}
+
 func TestGrupo_Invalido(t *testing.T) {
 	c := novaCena(t)
 	for _, x := range []struct{ nome, campo string }{{"   ", "nome"}, {strings.Repeat("a", 61), "nome"}} {

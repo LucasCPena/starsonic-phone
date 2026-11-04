@@ -82,11 +82,11 @@ func TestCriarGrupo_Avisos(t *testing.T) {
 	carlos := pessoaDe(t, b, e.ID, "2005", "Carlos")
 
 	// A própria Ana na lista e o Carlos repetido valem uma vez só.
-	id, err := b.CriarGrupo(ctx, e.ID, ana.ID, "Comercial", []int64{bia.ID, ana.ID, carlos.ID, bia.ID})
+	id, avisosCriados, err := b.CriarGrupo(ctx, e.ID, ana.ID, "Comercial", []int64{bia.ID, ana.ID, carlos.ID, bia.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	rows, err := b.db.Query(`SELECT autor_id, aviso_acao, aviso_alvo_id FROM mensagens WHERE conversa_id = ? ORDER BY id`, id)
+	rows, err := b.db.Query(`SELECT autor_id, aviso_acao, aviso_alvo_id, id FROM mensagens WHERE conversa_id = ? ORDER BY id`, id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,12 +97,19 @@ func TestCriarGrupo_Avisos(t *testing.T) {
 		alvo  *int64
 	}
 	var got []aviso
+	var idsNoBanco []int64
 	for rows.Next() {
 		var av aviso
-		if err := rows.Scan(&av.autor, &av.acao, &av.alvo); err != nil {
+		var mid int64
+		if err := rows.Scan(&av.autor, &av.acao, &av.alvo, &mid); err != nil {
 			t.Fatal(err)
 		}
 		got = append(got, av)
+		idsNoBanco = append(idsNoBanco, mid)
+	}
+	// Os avisos devolvidos são 1 + as pessoas, na ordem dos avisos no banco.
+	if len(avisosCriados) != 3 || !slices.Equal(avisosCriados, idsNoBanco) {
+		t.Fatalf("avisos devolvidos = %v; no banco %v", avisosCriados, idsNoBanco)
 	}
 	if len(got) != 3 || got[0].acao != "criou" || got[0].alvo != nil ||
 		got[1].acao != "pos" || *got[1].alvo != bia.ID || got[2].acao != "pos" || *got[2].alvo != carlos.ID {
@@ -124,7 +131,7 @@ func TestTirarMembro_PassaParaOMaisAntigo(t *testing.T) {
 	dani := pessoaDe(t, b, e.ID, "2006", "Daniela")
 
 	// Ana cria com a Daniela e a Beatriz; 1 s depois entra o Carlos.
-	id, err := b.CriarGrupo(ctx, e.ID, ana.ID, "Comercial", []int64{dani.ID, bia.ID})
+	id, _, err := b.CriarGrupo(ctx, e.ID, ana.ID, "Comercial", []int64{dani.ID, bia.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +185,7 @@ func TestTirarMembro_Regras(t *testing.T) {
 	bia := pessoaDe(t, b, e.ID, "2004", "Beatriz")
 	carlos := pessoaDe(t, b, e.ID, "2005", "Carlos")
 	fora := pessoaDe(t, b, e.ID, "2006", "Daniela")
-	id, _ := b.CriarGrupo(ctx, e.ID, ana.ID, "Comercial", []int64{bia.ID, carlos.ID})
+	id, _, _ := b.CriarGrupo(ctx, e.ID, ana.ID, "Comercial", []int64{bia.ID, carlos.ID})
 
 	if _, err := b.TirarMembro(ctx, bia.ID, id, carlos.ID); !errors.Is(err, ErrProibido) {
 		t.Fatalf("Beatriz tirando o Carlos: %v", err)
@@ -210,7 +217,7 @@ func TestPorNoGrupo_VoltaComNovaEntrada(t *testing.T) {
 	e, _ := b.CriarEmpresa(ctx, "ACME Comércio Ltda")
 	ana := pessoaDe(t, b, e.ID, "2003", "Ana Souza")
 	bia := pessoaDe(t, b, e.ID, "2004", "Beatriz")
-	id, _ := b.CriarGrupo(ctx, e.ID, ana.ID, "Comercial", []int64{bia.ID})
+	id, _, _ := b.CriarGrupo(ctx, e.ID, ana.ID, "Comercial", []int64{bia.ID})
 
 	avancar(b, time.Second)
 	antes := texto(t, b, id, ana.ID, "antes de a Beatriz sair")
@@ -252,7 +259,7 @@ func TestConversas_NaoLidasEOrdem(t *testing.T) {
 
 	dupla, _, _ := b.CriarDupla(ctx, e.ID, ana.ID, bia.ID)
 	avancar(b, time.Second)
-	grupo, _ := b.CriarGrupo(ctx, e.ID, ana.ID, "Comercial", []int64{bia.ID, carlos.ID})
+	grupo, _, _ := b.CriarGrupo(ctx, e.ID, ana.ID, "Comercial", []int64{bia.ID, carlos.ID})
 	avancar(b, time.Second)
 	texto(t, b, dupla, bia.ID, "oi")
 	texto(t, b, dupla, bia.ID, "tudo bem?")
@@ -292,7 +299,7 @@ func TestMembros_Ordem(t *testing.T) {
 	zeca := pessoaDe(t, b, e.ID, "2003", "Zeca")
 	bia := pessoaDe(t, b, e.ID, "2004", "Álvaro")
 	carlos := pessoaDe(t, b, e.ID, "2005", "Carlos")
-	id, _ := b.CriarGrupo(ctx, e.ID, zeca.ID, "Comercial", []int64{carlos.ID, bia.ID})
+	id, _, _ := b.CriarGrupo(ctx, e.ID, zeca.ID, "Comercial", []int64{carlos.ID, bia.ID})
 
 	ms, err := b.Membros(ctx, id)
 	if err != nil || len(ms) != 3 {
@@ -301,5 +308,20 @@ func TestMembros_Ordem(t *testing.T) {
 	if ms[0].Pessoa.ID != zeca.ID || !ms[0].Cuida || !ms[0].Criou ||
 		ms[1].Pessoa.ID != bia.ID || ms[1].Cuida || ms[2].Pessoa.ID != carlos.ID {
 		t.Fatalf("Membros = %+v", ms)
+	}
+}
+
+func TestCriarGrupo_SemOutraPessoa(t *testing.T) {
+	ctx := context.Background()
+	b := abrirTeste(t)
+	e, _ := b.CriarEmpresa(ctx, "ACME Comércio Ltda")
+	ana := pessoaDe(t, b, e.ID, "2003", "Ana Souza")
+	for _, l := range [][]int64{nil, {ana.ID}} {
+		if _, _, err := b.CriarGrupo(ctx, e.ID, ana.ID, "Sozinha", l); !errors.Is(err, ErrInvalido) {
+			t.Fatalf("lista %v: %v", l, err)
+		}
+	}
+	if n := contar(t, b, `SELECT COUNT(*) FROM conversas`); n != 0 {
+		t.Fatalf("conversas = %d", n)
 	}
 }
