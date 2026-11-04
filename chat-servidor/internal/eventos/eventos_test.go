@@ -138,7 +138,7 @@ type evento struct {
 
 func TestNovoHub_Padrao(t *testing.T) {
 	h := NovoHub(Config{})
-	if h.cfg != (Config{Ping: 25 * time.Second, Espera: 60 * time.Second, Fila: 64}) {
+	if h.cfg != (Config{Ping: 25 * time.Second, Espera: 60 * time.Second, Fila: 512}) {
 		t.Fatalf("Config = %+v", h.cfg)
 	}
 }

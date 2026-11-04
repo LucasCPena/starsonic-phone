@@ -204,7 +204,7 @@ Um erro vem com o status HTTP e um corpo `{"erro": "<código>"}`, às vezes com 
 2. **A conexão:** `GET /api/v1/eventos?bilhete=<bilhete>`, como WebSocket. A origem tem de ser uma das origens do CORS. Um bilhete inválido responde `401 chave`, sem WebSocket. Uma origem fora da lista responde `403 proibido`, sem WebSocket, e o bilhete continua valendo.
 3. **Um computador tem uma conexão só.** Uma nova fecha a anterior, com o código `4000`.
 4. **O servidor manda um ping a cada 25 segundos.** Sem resposta em 60 segundos, ele fecha a conexão.
-5. **Um computador lento é desligado.** Se 64 eventos estiverem esperando para um computador, o servidor fecha a conexão dele com o código `4002`. Com a rede cheia, o código `4002` pode não chegar, e o app vê a conexão cair; nos dois casos, ele reconecta e busca o que perdeu com o `depois`.
+5. **Um computador lento é desligado.** Se 512 eventos estiverem esperando para um computador, o servidor fecha a conexão dele com o código `4002`. Com a rede cheia, o código `4002` pode não chegar, e o app vê a conexão cair; nos dois casos, ele reconecta e busca o que perdeu com o `depois`.
 6. **Quando o servidor desliga,** ele fecha a conexão com o código `1001`; o app reconecta e busca o que perdeu com o `depois`.
 
 Os eventos são mensagens de texto com JSON, sempre com o campo `tipo`:

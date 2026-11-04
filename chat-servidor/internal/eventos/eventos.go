@@ -24,7 +24,7 @@ const (
 type Config struct {
 	Ping   time.Duration // o intervalo entre os pings (25 s)
 	Espera time.Duration // quanto o servidor espera o pong, ou uma escrita, antes de fechar (60 s)
-	Fila   int           // quantos eventos esperam por um computador antes do 4002 (64)
+	Fila   int           // quantos eventos esperam por um computador antes do 4002 (512)
 }
 
 // esperaFechar é o prazo da escrita do último evento (o fora) antes do fechamento.
@@ -65,7 +65,7 @@ func (c *conexao) encerrar(codigo websocket.StatusCode, motivo string, ultimo []
 	})
 }
 
-// NovoHub cria o hub. Os campos zerados da Config valem 25 s, 60 s e 64.
+// NovoHub cria o hub. Os campos zerados da Config valem 25 s, 60 s e 512.
 func NovoHub(c Config) *Hub {
 	if c.Ping <= 0 {
 		c.Ping = 25 * time.Second
@@ -74,7 +74,7 @@ func NovoHub(c Config) *Hub {
 		c.Espera = 60 * time.Second
 	}
 	if c.Fila <= 0 {
-		c.Fila = 64
+		c.Fila = 512
 	}
 	return &Hub{cfg: c, conexoes: map[int64]*conexao{}}
 }
