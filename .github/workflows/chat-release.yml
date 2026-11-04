@@ -1,0 +1,162 @@
+name: chat-release
+
+# Publica uma versão do servidor do chat (tag chat-v<versão>). Só à mão: Actions → chat-release → Run workflow, com a
+# versão (ex.: 0.1.0 ou 0.1.0-rc.1). A release é sempre pre-release e nunca vira a "latest" do GitHub: o canal Estável
+# dos apps lê releases/latest, que tem de continuar 404. No fim, o workflow confere isso.
+# A release nasce como rascunho (sem tag), recebe os sete arquivos, e só é publicada quando todos estão listados. Se algo
+# falhar antes disso, sobra só um rascunho, que ninguém consegue baixar: apague-o em Releases e rode de novo.
+on:
+  workflow_dispatch:
+    inputs:
+      versao:
+        description: "Versão a publicar (ex.: 0.1.0 ou 0.1.0-rc.1)"
+        required: true
+        type: string
+
+concurrency:
+  group: chat-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  publicar:
+    runs-on: ubuntu-24.04
+    env:
+      VERSAO: ${{ inputs.versao }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Versão
+        run: |
+          if ! [[ "$VERSAO" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]; then
+            echo "::error title=versao::a versão \"$VERSAO\" não está no formato X.Y.Z ou X.Y.Z-rc.N"
+            exit 1
+          fi
+
+      - name: A tag ainda não existe
+        run: |
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/chat-v$VERSAO" > /dev/null 2> "$RUNNER_TEMP/tag.txt"; then
+            echo "::error title=tag::a tag chat-v$VERSAO já existe"
+            exit 1
+          elif ! grep -q "HTTP 404" "$RUNNER_TEMP/tag.txt"; then
+            echo "::error title=tag::não consegui ler a tag chat-v$VERSAO: $(cat "$RUNNER_TEMP/tag.txt")"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: chat-servidor/go.mod
+
+      # Os mesmos testes do chat.yml.
+      - name: gofmt
+        working-directory: chat-servidor
+        run: |
+          lista=$(gofmt -l .)
+          if [ -n "$lista" ]; then echo "Fora do gofmt:"; echo "$lista"; exit 1; fi
+
+      - name: go vet
+        working-directory: chat-servidor
+        run: go vet ./...
+
+      - name: Testes
+        working-directory: chat-servidor
+        run: go test -race ./...
+
+      - name: Build (linux/amd64)
+        working-directory: chat-servidor
+        env:
+          CGO_ENABLED: '0'
+          GOOS: linux
+          GOARCH: amd64
+        run: |
+          go build -trimpath -ldflags "-X main.versao=$VERSAO" -o starsonic-chat-linux-amd64 ./cmd/starsonic-chat
+          mostrada=$(./starsonic-chat-linux-amd64 versao)
+          if [ "$mostrada" != "$VERSAO" ]; then
+            echo "::error title=build::o programa mostra a versão \"$mostrada\", e não \"$VERSAO\""
+            exit 1
+          fi
+
+      # Os sete arquivos da release, com os nomes que o instalar.sh baixa.
+      - name: Arquivos da release
+        run: |
+          mkdir dist
+          cp chat-servidor/starsonic-chat-linux-amd64 dist/
+          (cd dist && sha256sum starsonic-chat-linux-amd64 > starsonic-chat-linux-amd64.sha256)
+          sed "s/@VERSAO@/$VERSAO/g" chat-servidor/deploy/instalar.sh > dist/instalar.sh
+          # Se o marcador mudou de nome, o instalar.sh sairia pedindo --versao: falha aqui.
+          if grep -q '@VERSAO@' dist/instalar.sh; then
+            echo "::error title=instalar::o instalar.sh publicado ainda tem @VERSAO@"
+            exit 1
+          fi
+          if ! grep -qxF "VERSAO=\"$VERSAO\"" dist/instalar.sh; then
+            echo "::error title=instalar::o instalar.sh publicado não tem a linha VERSAO=\"$VERSAO\""
+            exit 1
+          fi
+          cp chat-servidor/deploy/copia.sh chat-servidor/deploy/starsonic-chat.service \
+            chat-servidor/deploy/starsonic-chat-copia.service chat-servidor/deploy/starsonic-chat-copia.timer dist/
+          ls -l dist
+          cat dist/starsonic-chat-linux-amd64.sha256
+
+      # 1. Rascunho: ainda sem tag e sem download para ninguém.
+      - name: Criar o rascunho
+        run: |
+          id=$(gh api --method POST "repos/$GITHUB_REPOSITORY/releases" \
+            -f tag_name="chat-v$VERSAO" \
+            -f target_commitish="$GITHUB_SHA" \
+            -f name="Starsonic Chat $VERSAO" \
+            -f body="Servidor do Starsonic Chat $VERSAO. Para instalar, siga docs/chat-servidor.md." \
+            -F draft=true -F prerelease=true -f make_latest=false \
+            --jq .id)
+          if ! [[ "$id" =~ ^[0-9]+$ ]]; then
+            echo "::error title=rascunho::não consegui criar o rascunho da release"
+            exit 1
+          fi
+          echo "RELEASE_ID=$id" >> "$GITHUB_ENV"
+
+      # 2. Os arquivos.
+      - name: Enviar os arquivos
+        run: |
+          for f in dist/*; do
+            nome=$(basename "$f")
+            resposta=$(gh api --method POST "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?name=$nome" \
+              -H "Content-Type: application/octet-stream" --input "$f" --jq .name)
+            if [ "$resposta" != "$nome" ]; then
+              echo "::error title=envio::o envio de $nome respondeu \"$resposta\""
+              exit 1
+            fi
+            echo "enviado: $nome"
+          done
+
+      # 3. Os sete nomes, e só eles.
+      - name: Conferir a lista de arquivos
+        run: |
+          esperado=$(printf '%s\n' copia.sh instalar.sh starsonic-chat-copia.service starsonic-chat-copia.timer \
+            starsonic-chat-linux-amd64 starsonic-chat-linux-amd64.sha256 starsonic-chat.service | sort)
+          lista=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --jq '.assets[] | select(.state == "uploaded") | .name' | sort)
+          if [ "$lista" != "$esperado" ]; then
+            echo "::error title=arquivos::a lista de arquivos do rascunho não é a esperada"
+            echo "Esperado:"; echo "$esperado"; echo "Encontrado:"; echo "$lista"
+            exit 1
+          fi
+
+      # 4. Publica: pre-release, e nunca a latest.
+      - name: Publicar
+        run: |
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+            -F draft=false -F prerelease=true -f make_latest=false > /dev/null
+          echo "::notice title=release::a release chat-v$VERSAO foi publicada"
+
+      # 5. O canal Estável dos apps lê releases/latest: tem de continuar 404.
+      - name: O latest continua 404
+        run: |
+          if gh api "repos/$GITHUB_REPOSITORY/releases/latest" > /dev/null 2> "$RUNNER_TEMP/latest.txt"; then
+            echo "::error title=latest::releases/latest deixou de ser 404: o canal Estável do app vai ler esta release"
+            exit 1
+          elif ! grep -q "HTTP 404" "$RUNNER_TEMP/latest.txt"; then
+            echo "::error title=latest::não consegui ler releases/latest: $(cat "$RUNNER_TEMP/latest.txt")"
+            exit 1
+          fi
+          echo "releases/latest continua 404"

@@ -384,3 +384,43 @@ Espere 15 minutos, ou reinicie o serviço (passo 3).
 
 **O serviço não liga.**
 Rode `sudo journalctl -u starsonic-chat -n 50 --no-pager` e leia as últimas linhas. Uma linha que começa com `Erro:` diz o motivo. A configuração fica em `/etc/starsonic-chat/config.json`.
+
+## 11. Publicar uma versão
+
+Este passo é de quem publica o chat, e não da VM. Você faz tudo pelo site do GitHub, no navegador, e não precisa de comando para publicar.
+
+1. Abra a página do projeto no GitHub e clique em `Actions`.
+2. Na lista da esquerda, clique em `chat-release`.
+3. Clique em `Run workflow`, à direita.
+4. No campo `Versão a publicar`, escreva `0.1.0` (só o número, sem o `chat-v`). Para uma versão de teste, use `0.1.0-rc.1`.
+5. Clique no botão verde `Run workflow` e espere. Leva alguns minutos.
+
+O GitHub testa o programa, monta a versão e só publica no fim, quando todos os arquivos já estão lá. Se algo falhar no meio, nada fica publicado: abra o run, veja a mensagem em vermelho, corrija e rode de novo. Se sobrar um rascunho em `Releases`, apague-o antes de rodar de novo.
+
+### O que conferir depois
+
+1. Em `Releases`, abra `chat-v0.1.0`. Ela deve ter a etiqueta `Pre-release` e estes sete arquivos:
+   - `starsonic-chat-linux-amd64`
+   - `starsonic-chat-linux-amd64.sha256`
+   - `instalar.sh`
+   - `copia.sh`
+   - `starsonic-chat.service`
+   - `starsonic-chat-copia.service`
+   - `starsonic-chat-copia.timer`
+2. O SHA-256: o número dentro do arquivo `starsonic-chat-linux-amd64.sha256` tem de ser o do programa. O `instalar.sh` já confere isso sozinho na instalação (você vê `SHA-256 conferido.`). Para conferir à mão, baixe os dois arquivos na mesma pasta e rode:
+
+```
+sha256sum -c starsonic-chat-linux-amd64.sha256
+```
+
+Deve aparecer `starsonic-chat-linux-amd64: OK`.
+
+3. O endereço `releases/latest` tem de continuar respondendo 404, porque o canal Estável dos apps lê esse endereço. Rode:
+
+```
+curl -sI https://api.github.com/repos/LucasCPena/starsonic-phone/releases/latest
+```
+
+A primeira linha deve ter `404`. O workflow também confere isso no último passo e falha se não for 404. Se aparecer outra coisa, não instale nada: avise quem cuida do projeto.
+
+Pronto: agora o passo 2 (instalar) e o passo 7 (atualizar) acham a versão nova.
