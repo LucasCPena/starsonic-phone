@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	_ "modernc.org/sqlite" // o driver, sem cgo
 
@@ -50,11 +51,25 @@ func Abrir(caminho string, r tempo.Relogio) (*Banco, error) {
 	}
 	db.SetMaxOpenConns(1)
 	b := &Banco{db: db, relogio: r, caminho: caminho}
-	if err := b.migrar(); err != nil {
-		db.Close()
-		return nil, err
+	// Dois processos abrindo o banco novo juntos podem esbarrar na troca para WAL
+	// ou no BEGIN IMMEDIATE do outro, e o busy_timeout não cobre todos os casos:
+	// por isso tenta de novo, por até 5 s, enquanto o erro for "banco ocupado".
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		err = b.migrar()
+		if err == nil {
+			return b, nil
+		}
+		if !ocupado(err) || time.Now().After(deadline) {
+			db.Close()
+			return nil, err
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
-	return b, nil
+}
+
+func ocupado(err error) bool {
+	return strings.Contains(err.Error(), "SQLITE_BUSY") || strings.Contains(err.Error(), "database is locked")
 }
 
 // Fechar fecha o banco.
@@ -71,16 +86,27 @@ func (b *Banco) agoraMs() int64 { return b.relogio.Agora().UnixMilli() }
 // Regra: com uma só conexão aberta, f deve usar APENAS o *sql.Tx que recebe.
 // Chamar o *sql.DB (ou qualquer método do Banco que o use) dentro de f fica
 // esperando para sempre pela única conexão, que a transação está segurando.
-func (b *Banco) Tx(ctx context.Context, f func(*sql.Tx) error) error {
+func (b *Banco) Tx(ctx context.Context, f func(*sql.Tx) error) (err error) {
 	tx, err := b.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
+	confirmada := false
+	defer func() {
+		// Se f entrou em pânico (ou nada confirmou), desfaz e solta a única conexão;
+		// o pânico segue subindo.
+		if !confirmada {
+			tx.Rollback()
+		}
+	}()
 	if err := f(tx); err != nil {
-		tx.Rollback()
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	confirmada = true
+	return nil
 }
 
 type migracao struct {
@@ -105,19 +131,21 @@ func (b *Banco) migrar() error {
 	}
 	sort.Slice(lista, func(i, j int) bool { return lista[i].versao < lista[j].versao })
 
-	var atual int
-	if err := b.db.QueryRow("PRAGMA user_version").Scan(&atual); err != nil {
-		return fmt.Errorf("banco: ler user_version: %w", err)
-	}
 	for _, m := range lista {
-		if m.versao <= atual {
-			continue
-		}
 		sqlTexto, err := migracoes.ReadFile("migracoes/" + m.nome)
 		if err != nil {
 			return err
 		}
 		err = b.Tx(context.Background(), func(tx *sql.Tx) error {
+			// Lê a versão já dentro do BEGIN IMMEDIATE: se outro processo aplicou
+			// esta migração enquanto esperávamos, pula.
+			var atual int
+			if err := tx.QueryRow("PRAGMA user_version").Scan(&atual); err != nil {
+				return fmt.Errorf("ler user_version: %w", err)
+			}
+			if atual >= m.versao {
+				return nil
+			}
 			if _, err := tx.Exec(string(sqlTexto)); err != nil {
 				return err
 			}

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -143,7 +144,9 @@ func TestTx_Desfaz(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 	var n int
-	b.db.QueryRow("SELECT COUNT(*) FROM empresas").Scan(&n)
+	if err := b.db.QueryRow("SELECT COUNT(*) FROM empresas").Scan(&n); err != nil {
+		t.Fatal(err)
+	}
 	if n != 0 {
 		t.Fatalf("a Tx devia ter desfeito, mas há %d empresas", n)
 	}
@@ -153,7 +156,9 @@ func TestTx_Desfaz(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	b.db.QueryRow("SELECT COUNT(*) FROM empresas").Scan(&n)
+	if err := b.db.QueryRow("SELECT COUNT(*) FROM empresas").Scan(&n); err != nil {
+		t.Fatal(err)
+	}
 	if n != 1 {
 		t.Fatalf("a Tx devia ter confirmado, mas há %d empresas", n)
 	}
@@ -166,5 +171,75 @@ func TestAgoraMs_ERelogio(t *testing.T) {
 	}
 	if b.Relogio() == nil {
 		t.Fatal("Relogio nil")
+	}
+}
+
+func TestTx_PanicDesfaz(t *testing.T) {
+	b := abrirTeste(t)
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Error("o pânico devia continuar subindo")
+			}
+		}()
+		b.Tx(context.Background(), func(tx *sql.Tx) error {
+			if _, err := tx.Exec(`INSERT INTO empresas(nome, codigo, criada_em) VALUES ('X', 'X', 1)`); err != nil {
+				t.Error(err)
+			}
+			panic("falha")
+		})
+	}()
+
+	feito := make(chan error, 1)
+	go func() {
+		var n int
+		err := b.db.QueryRow("SELECT COUNT(*) FROM empresas").Scan(&n)
+		if err == nil && n != 0 {
+			err = errors.New("a linha do pânico não foi desfeita")
+		}
+		if err == nil {
+			err = b.Tx(context.Background(), func(tx *sql.Tx) error {
+				_, e := tx.Exec(`INSERT INTO empresas(nome, codigo, criada_em) VALUES ('Y', 'Y', 1)`)
+				return e
+			})
+		}
+		feito <- err
+	}()
+	select {
+	case err := <-feito:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a conexão ficou presa depois do pânico")
+	}
+}
+
+func TestMigrar_DuasAberturasJuntas(t *testing.T) {
+	caminho := filepath.Join(t.TempDir(), "chat.db")
+	r := tempo.NovoTeste(time.UnixMilli(1_700_000_000_000))
+	var wg sync.WaitGroup
+	bancos := make([]*Banco, 2)
+	erros := make([]error, 2)
+	inicio := make(chan struct{})
+	for i := range bancos {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-inicio
+			bancos[i], erros[i] = Abrir(caminho, r)
+		}()
+	}
+	close(inicio)
+	wg.Wait()
+	for i := range bancos {
+		if erros[i] != nil {
+			t.Fatalf("Abrir #%d: %v", i+1, erros[i])
+		}
+		defer bancos[i].Fechar()
+	}
+	var v int
+	if err := bancos[0].db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 1 {
+		t.Fatalf("user_version = %d, %v; queria 1", v, err)
 	}
 }
