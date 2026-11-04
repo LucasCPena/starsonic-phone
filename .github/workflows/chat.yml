@@ -1,0 +1,49 @@
+name: chat
+
+on:
+  push:
+    paths:
+      - 'chat-servidor/**'
+      - 'docs/chat-*.md'
+      - '.github/workflows/chat*.yml'
+  pull_request:
+    paths:
+      - 'chat-servidor/**'
+      - 'docs/chat-*.md'
+      - '.github/workflows/chat*.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  servidor:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: chat-servidor
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: chat-servidor/go.mod
+      - name: gofmt
+        run: |
+          lista=$(gofmt -l .)
+          if [ -n "$lista" ]; then echo "Fora do gofmt:"; echo "$lista"; exit 1; fi
+      - name: go vet
+        run: go vet ./...
+      - name: Testes
+        run: go test -race ./...
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+      - name: Build (linux/amd64)
+        env:
+          CGO_ENABLED: '0'
+          GOOS: linux
+          GOARCH: amd64
+        run: go build -trimpath -o starsonic-chat ./cmd/starsonic-chat
+      - uses: actions/upload-artifact@v4
+        with:
+          name: starsonic-chat-linux-amd64
+          path: chat-servidor/starsonic-chat

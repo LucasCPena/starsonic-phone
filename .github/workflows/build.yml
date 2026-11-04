@@ -10,6 +10,10 @@ on:
       - 'build/android/**'
       - 'build/linux/**'
       - '.github/workflows/android*.yml'
+      # O servidor do chat (Go) tem o próprio workflow (chat); não compila o Windows.
+      - 'chat-servidor/**'
+      - 'docs/chat-*.md'
+      - '.github/workflows/chat*.yml'
   pull_request:
   workflow_dispatch:   # com versão: build de versão completo (com o código-fonte), sem publicar
     inputs:
