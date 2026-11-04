@@ -70,6 +70,11 @@ func Novo(d Deps) http.Handler {
 	mux.HandleFunc("DELETE /api/v1/computadores/eu", s.autenticar(s.desligarComputador))
 	mux.HandleFunc("POST /api/v1/pessoas/eu", s.autenticar(s.entrarComoPessoa))
 	mux.HandleFunc("GET /api/v1/pessoas", s.autenticar(precisaPessoa(s.colegas)))
+	mux.HandleFunc("GET /api/v1/conversas", s.autenticar(precisaPessoa(s.conversas)))
+	mux.HandleFunc("POST /api/v1/conversas", s.autenticar(precisaPessoa(s.criarConversa)))
+	mux.HandleFunc("GET /api/v1/conversas/{id}/membros", s.autenticar(precisaPessoa(s.membros)))
+	mux.HandleFunc("POST /api/v1/conversas/{id}/membros", s.autenticar(precisaPessoa(s.porNoGrupo)))
+	mux.HandleFunc("DELETE /api/v1/conversas/{id}/membros/{idPessoa}", s.autenticar(precisaPessoa(s.tirarDoGrupo)))
 	mux.HandleFunc("POST /api/v1/eventos/bilhete", s.autenticar(s.novoBilhete))
 	mux.HandleFunc("GET /api/v1/eventos", s.eventos) // sem a chave: vale o bilhete
 	// O resto de /api/v1/ (rota que não existe, ou método errado numa rota que existe)
