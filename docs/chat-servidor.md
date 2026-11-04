@@ -20,7 +20,7 @@ Como usar:
 
 Antes de instalar, deixe três coisas prontas:
 
-1. **O nome do chat no DNS.** Escolha um nome, por exemplo `chat.exemplo.com.br`. No DNS da Starsonic, crie um registro do tipo A com esse nome, apontando para o endereço público da VM. O certificado (o cadeado) é pedido ao Let's Encrypt só depois que o nome aponta para a VM. Esse nome é o `<endereço>` deste guia.
+1. **O nome do chat no DNS.** Escolha um nome, por exemplo `chat.exemplo.com.br`. No DNS da Starsonic, crie um registro do tipo A com esse nome, apontando para o endereço público da VM. O certificado (o cadeado) é pedido ao Let's Encrypt só depois que o nome aponta para a VM. Esse nome é o `<endereço>` deste guia. Aponte o nome direto para a VM: não ponha o chat atrás de um proxy nem de uma CDN. O chat limita as tentativas pelo endereço de quem acessa, e atrás de um proxy todos teriam o mesmo endereço e dividiriam o mesmo limite.
 2. **As portas 80 e 443 abertas**, na rede da nuvem e em qualquer firewall. A 443 é o chat. A 80 serve para o Let's Encrypt e leva quem entrar por ela para a 443. As duas têm de estar livres na VM.
 3. **Um lugar para a cópia de segurança, fora da VM.** Pode ser outro servidor da Starsonic ou um armazenamento na nuvem. Precisa de uns 150 GB.
 
@@ -36,7 +36,7 @@ O disco cresce com os arquivos. Quando chegar perto de 80% de uso, aumente o dis
 
 ## 2. Instalar
 
-Veja o número da última versão do chat na página de Releases do projeto no GitHub. As versões do chat se chamam `chat-v` e o número. O GitHub mostra essas versões com a etiqueta `Pre-release`: isso é normal, e é a versão certa. Se a versão for `chat-v0.1.0`, o `<versão>` é `0.1.0`. Se ainda não existir nenhuma versão `chat-v` na página, publique a primeira pelo passo 11 (Publicar uma versão).
+Veja o número da última versão do chat na página de Releases do projeto no GitHub. As versões do chat se chamam `chat-v` e o número. O GitHub mostra essas versões com a etiqueta `Pre-release`: isso é normal, e é a versão certa. Se a versão for `chat-v0.1.0`, o `<versão>` é `0.1.0`. Se ainda não existir nenhuma versão `chat-v` na página, publique a primeira pelo passo 11 (Publicar uma versão, no fim deste guia).
 
 Baixe o instalador:
 
@@ -201,7 +201,7 @@ Use isto se o banco estragou ou se a VM foi refeita. Quem escreveu depois da có
 
 Faça os passos na ordem. Não pule nenhum.
 
-1. Pare a cópia da noite e o serviço. Faça isto antes de qualquer outra coisa. Numa VM refeita, estes dois ainda não existem agora: o item 2, logo abaixo, manda instalar o chat e parar os dois de novo. A razão: uma cópia feita antes de você terminar seria a cópia de um servidor vazio, e poderia tomar o lugar da cópia boa no destino.
+1. Pare a cópia da noite e o serviço. Faça isto antes de qualquer outra coisa. **Se a VM foi refeita, pule o item 1 e vá ao item 2.** Numa VM refeita, estes dois ainda não existem, e o item 2 manda parar os dois depois de instalar o chat. A razão: uma cópia feita antes de você terminar seria a cópia de um servidor vazio, e poderia tomar o lugar da cópia boa no destino.
 
 ```
 sudo systemctl stop starsonic-chat-copia.timer
@@ -268,6 +268,14 @@ sudo -u starsonic-chat cp /var/lib/starsonic-chat/copias/chat-<data>.db /var/lib
 ```
 sudo -u starsonic-chat -H rclone copy starsonic-chat-copia:arquivos /var/lib/starsonic-chat/arquivos
 ```
+
+   Agora feche o acesso a esses arquivos, para que só o chat possa lê-los, como tudo o que o chat grava:
+
+```
+sudo chmod -R go-rwx /var/lib/starsonic-chat/arquivos
+```
+
+   O comando não escreve nada na tela quando dá certo.
 
 6. Ligue o serviço:
 

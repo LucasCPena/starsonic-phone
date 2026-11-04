@@ -51,7 +51,9 @@ Um erro vem com o status HTTP e um corpo `{"erro": "<código>"}`, às vezes com 
   - não pode ser só de espaços;
   - as quebras de linha valem. O servidor troca `\r\n` e `\r` por `\n`;
   - os outros caracteres de controle não valem.
-- **O `idLocal`:** um texto de 1 a 64 caracteres (`[A-Za-z0-9-]`), gerado pelo app para cada mensagem. Ele é único por pessoa.
+- **O `idLocal`:** um texto de 1 a 64 caracteres (`[A-Za-z0-9-]`), gerado pelo app para cada mensagem.
+  - Ele é único por pessoa, em todas as conversas dela, e não por conversa: o mesmo `idLocal` mandado de novo, mesmo para outra conversa, devolve a mensagem que já foi gravada com ele.
+  - O app o gera ao acaso, por exemplo um UUID. Nunca use um contador por computador: dois computadores da mesma pessoa repetiriam os mesmos números, e um engoliria as mensagens do outro.
 - **O nome de um arquivo**, ao ser guardado:
   - fica só a parte depois da última `/` ou `\`;
   - saem os caracteres de controle e `: * ? " < > |`, e os pontos e espaços das pontas;
