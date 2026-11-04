@@ -45,6 +45,8 @@ jobs:
         run: go build -trimpath -o starsonic-chat ./cmd/starsonic-chat
       - name: shellcheck
         run: shellcheck deploy/*.sh
+      - name: Teste do copia.sh
+        run: bash deploy/copia-teste.sh
       - name: systemd-analyze
         # O verify confere se o ExecStart de cada unidade existe e roda: põe o programa e o
         # copia.sh onde a instalação os põe.
@@ -52,7 +54,9 @@ jobs:
           sudo install -m 0755 starsonic-chat /usr/local/bin/starsonic-chat
           sudo install -D -m 0755 deploy/copia.sh /usr/local/lib/starsonic-chat/copia.sh
           sudo useradd --system --no-create-home --shell /usr/sbin/nologin starsonic-chat
-          systemd-analyze verify deploy/*.service deploy/*.timer
+          # O verify sai com 0 até com uma chave errada, e só avisa. Qualquer linha na saída falha.
+          saida=$(systemd-analyze verify deploy/*.service deploy/*.timer 2>&1) || { echo "$saida"; exit 1; }
+          if [ -n "$saida" ]; then echo "$saida"; exit 1; fi
       - uses: actions/upload-artifact@v4
         with:
           name: starsonic-chat-linux-amd64

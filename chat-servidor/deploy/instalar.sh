@@ -113,7 +113,7 @@ instalar() {
 
   echo "Instalando o rclone e o resto..."
   apt-get update -qq
-  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq rclone ca-certificates >/dev/null
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq rclone ca-certificates tzdata >/dev/null
 
   if ! id "$USUARIO" >/dev/null 2>&1; then
     useradd --system --home-dir "$DADOS" --no-create-home --shell /usr/sbin/nologin "$USUARIO"
@@ -138,9 +138,16 @@ atualizar() {
   [ -x "$BINARIO" ] || falhar "o chat não está instalado aqui ($BINARIO não existe). Para instalar: sudo bash instalar.sh instalar <endereço>"
   baixar_tudo "$TMP"
   instalar_arquivos "$TMP"
+  # Os dois são seguros de repetir: se uma instalação parou no meio, a atualização termina.
+  systemctl enable starsonic-chat.service
+  systemctl enable --now starsonic-chat-copia.timer
   systemctl restart starsonic-chat.service
-  systemctl is-active --quiet starsonic-chat.service ||
-    falhar "o serviço não subiu. Veja o motivo com: journalctl -u starsonic-chat -n 50"
+  # O restart volta assim que o programa começa: espera um pouco para ver se ele se mantém.
+  sleep 5
+  if ! systemctl is-active --quiet starsonic-chat.service; then
+    journalctl -u starsonic-chat -n 20 --no-pager >&2 || true
+    falhar "o serviço não subiu (as últimas linhas do registro estão acima). Veja mais com: sudo journalctl -u starsonic-chat -n 50"
+  fi
   echo "Pronto: o Starsonic Chat agora está na versão $("$BINARIO" versao)."
 }
 

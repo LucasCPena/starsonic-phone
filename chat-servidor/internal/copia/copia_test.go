@@ -87,11 +87,16 @@ func TestCopia_Consistente(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
+	antes := gravadas.Load()
 	arquivo, err := Fazer(ctx, dados, destino, r)
+	durante := gravadas.Load() - antes
 	close(parar)
 	feito.Wait()
 	if err != nil {
 		t.Fatalf("Fazer: %v", err)
+	}
+	if durante == 0 {
+		t.Fatal("nenhuma mensagem foi gravada enquanto a cópia andava; o teste não prova nada")
 	}
 	if arquivo != filepath.Join(destino, "chat-2026-11-04.db") {
 		t.Fatalf("arquivo = %q", arquivo)
@@ -244,7 +249,7 @@ func TestCopia_SemWalNemShm(t *testing.T) {
 	caminho := filepath.Join(dados, banco.NomeArquivo)
 	for _, suf := range []string{"-wal", "-shm"} {
 		if _, err := os.Stat(caminho + suf); err == nil {
-			t.Skipf("o %s continua depois de fechar; o teste não vale", suf)
+			t.Fatalf("o %s continua depois de fechar; o teste não vale", suf)
 		}
 	}
 	antes, err := os.ReadFile(caminho)
