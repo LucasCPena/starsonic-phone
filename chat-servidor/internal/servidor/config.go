@@ -1,9 +1,11 @@
 package servidor
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,9 +35,16 @@ func LerConfig(caminho string) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("configuração: %w", err)
 	}
+	// Uma chave que não existe é erro (um "origem" no lugar de "origens" não pode passar em
+	// silêncio), e nada pode vir depois do objeto.
 	var a arquivoConfig
-	if err := json.Unmarshal(dados, &a); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(dados))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&a); err != nil {
 		return Config{}, fmt.Errorf("configuração %s: o JSON não vale: %w", caminho, err)
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return Config{}, fmt.Errorf("configuração %s: tem coisa depois do objeto JSON", caminho)
 	}
 	c := Config{Endereco: strings.TrimSpace(a.Endereco), Dados: a.Dados, Origens: a.Origens}
 	switch {

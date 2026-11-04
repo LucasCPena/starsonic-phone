@@ -1,8 +1,10 @@
 package servidor
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -12,11 +14,14 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/coder/websocket"
+	"golang.org/x/crypto/acme/autocert"
 
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/armazem"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/banco"
@@ -63,13 +68,16 @@ func TestConfig(t *testing.T) {
 		}
 	})
 	erros := map[string]string{
-		"sem endereco":      `{"dados":` + quote(dados) + `}`,
-		"endereco vazio":    `{"endereco":"  ","dados":` + quote(dados) + `}`,
-		"sem dados":         `{"endereco":"chat.example.com"}`,
-		"dados relativo":    `{"endereco":"chat.example.com","dados":"var/dados"}`,
-		"json quebrado":     `{"endereco":`,
-		"origens vazia":     `{"endereco":"chat.example.com","dados":` + quote(dados) + `,"origens":[""]}`,
-		"endereco com rota": `{"endereco":"chat.example.com/x","dados":` + quote(dados) + `}`,
+		"sem endereco":       `{"dados":` + quote(dados) + `}`,
+		"endereco vazio":     `{"endereco":"  ","dados":` + quote(dados) + `}`,
+		"sem dados":          `{"endereco":"chat.example.com"}`,
+		"dados relativo":     `{"endereco":"chat.example.com","dados":"var/dados"}`,
+		"json quebrado":      `{"endereco":`,
+		"origens vazia":      `{"endereco":"chat.example.com","dados":` + quote(dados) + `,"origens":[""]}`,
+		"chave desconhecida": `{"endereco":"chat.example.com","dados":` + quote(dados) + `,"origem":["https://a.example"]}`,
+		"dois objetos":       `{"endereco":"chat.example.com","dados":` + quote(dados) + `}{"endereco":"b.example.com"}`,
+		"lixo no fim":        `{"endereco":"chat.example.com","dados":` + quote(dados) + `} x`,
+		"endereco com rota":  `{"endereco":"chat.example.com/x","dados":` + quote(dados) + `}`,
 	}
 	for nome, conteudo := range erros {
 		t.Run(nome, func(t *testing.T) {
@@ -78,6 +86,12 @@ func TestConfig(t *testing.T) {
 			}
 		})
 	}
+	t.Run("a chave desconhecida é nomeada", func(t *testing.T) {
+		_, err := LerConfig(escreverConfig(t, `{"endereco":"chat.example.com","dados":`+quote(dados)+`,"origem":[]}`))
+		if err == nil || !strings.Contains(err.Error(), "origem") {
+			t.Fatalf("erro %v; queria um que nomeie a chave origem", err)
+		}
+	})
 	t.Run("arquivo que não existe", func(t *testing.T) {
 		if _, err := LerConfig(filepath.Join(t.TempDir(), "nada.json")); err == nil {
 			t.Fatal("esperava erro")
@@ -95,8 +109,9 @@ func TestHostPolicy(t *testing.T) {
 	if err := m.HostPolicy(context.Background(), "outro.example"); err == nil {
 		t.Fatal("outro.example foi aceito")
 	}
-	if got := m.Cache; got == nil {
-		t.Fatal("sem cache")
+	dados := "/var/lib/x"
+	if got, quer := m.Cache, autocert.DirCache(filepath.Join(dados, "certificados")); got != quer {
+		t.Fatalf("cache %v; queria %v", got, quer)
 	}
 	if m.Prompt == nil {
 		t.Fatal("o autocert precisa aceitar os termos (Prompt)")
@@ -309,12 +324,11 @@ func TestDesligarComCalma(t *testing.T) {
 	if _, err := net.DialTimeout("tcp", strings.TrimPrefix(s.url, "http://"), time.Second); err == nil {
 		t.Fatal("a porta continua aberta")
 	}
-	// O banco já foi fechado e solto: dá para abrir de novo.
-	b, err := banco.Abrir(filepath.Join(dados, banco.NomeArquivo), tempo.Real())
-	if err != nil {
-		t.Fatalf("abrir o banco depois: %v", err)
+	// O banco foi fechado: sem nenhuma outra conexão aberta, o SQLite junta o -wal ao arquivo
+	// e o apaga ao fechar a última.
+	if _, err := os.Stat(filepath.Join(dados, banco.NomeArquivo+"-wal")); !os.IsNotExist(err) {
+		t.Fatalf("o chat.db-wal continua lá depois do desligamento (o banco não fechou?): %v", err)
 	}
-	b.Fechar()
 }
 
 // encurtarPrazos troca os prazos por estes e os devolve no fim do teste, depois de o servidor
@@ -352,7 +366,10 @@ func TestPrazos_Arquivos(t *testing.T) {
 	}
 }
 
-func TestPrazos_WebSocketSemPrazo(t *testing.T) {
+// Guarda do comportamento do Go (R34): o Hijack zera os prazos da conexão, então o WebSocket,
+// que passa pelo prazo geral como toda rota, continua aberto depois dele. Se um Go futuro
+// mantiver o prazo depois do Hijack, este teste falha.
+func TestPrazos_WebSocketSobreviveAoPrazo(t *testing.T) {
 	encurtarPrazos(t, 300*time.Millisecond, 300*time.Millisecond)
 	dados, codigo := preparar(t)
 	s := iniciar(t, dados)
@@ -435,5 +452,254 @@ func TestHTTPParaHTTPS(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code == http.StatusMovedPermanently || rec.Header().Get("Location") != "" {
 		t.Fatalf("o desafio foi redirecionado: %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
+// escritorDePrazos é um ResponseWriter que anota os prazos pedidos pelo ResponseController.
+type escritorDePrazos struct {
+	http.ResponseWriter
+	leitura, escrita time.Time
+}
+
+func (e *escritorDePrazos) SetReadDeadline(t time.Time) error  { e.leitura = t; return nil }
+func (e *escritorDePrazos) SetWriteDeadline(t time.Time) error { e.escrita = t; return nil }
+
+func TestPrazos_Classes(t *testing.T) {
+	casos := []struct {
+		metodo, caminho string
+		quer            time.Duration
+	}{
+		{"POST", "/api/v1/arquivos", 5 * time.Minute},
+		{"GET", "/api/v1/arquivos/x", 5 * time.Minute},
+		{"PUT", "/api/v1/arquivos/x/miniatura", 5 * time.Minute},
+		{"GET", "/api/v1/arquivosX", time.Minute},
+		{"GET", "/api/v1/eventos", time.Minute}, // R34: sem isenção
+		{"POST", "/api/v1/eventos/bilhete", time.Minute},
+		{"GET", "/api/v1/conversas", time.Minute},
+		{"GET", "/admin/", time.Minute},
+		{"GET", "/", time.Minute},
+	}
+	h := comPrazos(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	for _, c := range casos {
+		w := &escritorDePrazos{ResponseWriter: httptest.NewRecorder()}
+		antes := time.Now()
+		h.ServeHTTP(w, httptest.NewRequest(c.metodo, c.caminho, nil))
+		for nome, got := range map[string]time.Time{"leitura": w.leitura, "escrita": w.escrita} {
+			if d := got.Sub(antes); d < c.quer || d > c.quer+5*time.Second {
+				t.Errorf("%s %s: prazo de %s em %v; queria %v", c.metodo, c.caminho, nome, d, c.quer)
+			}
+		}
+	}
+}
+
+// O servidor da porta 80 tem prazo de leitura e de escrita: um corpo parado não o prende.
+func TestPrazos_PortaOitenta(t *testing.T) {
+	encurtarPrazos(t, time.Hour, 400*time.Millisecond)
+	_, http80 := servidoresProducao(Config{Endereco: "chat.example.com", Dados: t.TempDir()}, http.NotFoundHandler())
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go http80.Serve(l)
+	t.Cleanup(func() { http80.Close() })
+
+	conn, err := net.Dial("tcp", l.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	inicio := time.Now()
+	io.WriteString(conn, "POST /x HTTP/1.1\r\nHost: chat.example.com\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n")
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, err := io.ReadAll(conn); err != nil {
+		t.Fatalf("o corpo parado prendeu a porta 80: %v", err)
+	}
+	if d := time.Since(inicio); d < 300*time.Millisecond || d > 3*time.Second {
+		t.Fatalf("acabou em %v; queria perto de 400 ms", d)
+	}
+}
+
+func TestServidoresProducao(t *testing.T) {
+	dados := t.TempDir()
+	c := Config{Endereco: "chat.example.com", Dados: dados}
+	https, http80 := servidoresProducao(c, http.NotFoundHandler())
+	if https.Addr != ":443" || http80.Addr != ":80" {
+		t.Fatalf("endereços %q e %q", https.Addr, http80.Addr)
+	}
+	cfg := https.TLSConfig
+	if cfg == nil || cfg.MinVersion != tls.VersionTLS12 || cfg.GetCertificate == nil {
+		t.Fatalf("TLS %+v", cfg)
+	}
+	if !slices.Contains(cfg.NextProtos, "acme-tls/1") {
+		t.Fatalf("NextProtos %v sem acme-tls/1", cfg.NextProtos)
+	}
+	if https.ReadHeaderTimeout != 10*time.Second || https.IdleTimeout != 120*time.Second {
+		t.Fatalf("443: ReadHeaderTimeout %v, IdleTimeout %v", https.ReadHeaderTimeout, https.IdleTimeout)
+	}
+	if https.WriteTimeout != 0 || https.ReadTimeout != 0 {
+		t.Fatalf("443 tem prazo global: %v e %v", https.ReadTimeout, https.WriteTimeout)
+	}
+	if http80.ReadTimeout != prazoGeral || http80.WriteTimeout != prazoGeral {
+		t.Fatalf("80: ReadTimeout %v, WriteTimeout %v; queria %v", http80.ReadTimeout, http80.WriteTimeout, prazoGeral)
+	}
+	if http80.ReadHeaderTimeout != 10*time.Second {
+		t.Fatalf("80: ReadHeaderTimeout %v", http80.ReadHeaderTimeout)
+	}
+}
+
+// O destino do redirecionamento é sempre o Endereco, mesmo com um alvo que o Go lê como
+// "esquema:opaco".
+func TestHTTPParaHTTPS_AlvoEsquisito(t *testing.T) {
+	srv := httptest.NewServer(redirecionador(gerenciador(Config{Endereco: "chat.example.com", Dados: t.TempDir()}), "chat.example.com"))
+	defer srv.Close()
+	conn, err := net.Dial("tcp", strings.TrimPrefix(srv.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	io.WriteString(conn, "GET a:@evil.example/x HTTP/1.1\r\nHost: chat.example.com\r\nConnection: close\r\n\r\n")
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	loc, err := resp.Location()
+	if err != nil {
+		t.Fatalf("status %d, sem Location: %v", resp.StatusCode, err)
+	}
+	if loc.Host != "chat.example.com" || loc.User != nil || loc.Scheme != "https" {
+		t.Fatalf("Location %q", loc)
+	}
+}
+
+func TestRodarTeste_FechaAPortaSeFalhaCedo(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	endereco := l.Addr().String()
+	l.Close()
+	arquivo := filepath.Join(t.TempDir(), "arquivo")
+	if err := os.WriteFile(arquivo, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A pasta de dados é um arquivo: o banco não abre, e o RodarTeste falha depois de escutar.
+	if err := RodarTeste(t.Context(), Config{Dados: arquivo}, endereco); err == nil {
+		t.Fatal("esperava erro")
+	}
+	l2, err := net.Listen("tcp", endereco)
+	if err != nil {
+		t.Fatalf("a porta continua presa: %v", err)
+	}
+	l2.Close()
+}
+
+func TestEscutarTodos(t *testing.T) {
+	livre, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	endereco := livre.Addr().String()
+	livre.Close()
+	ocupado, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ocupado.Close()
+
+	// O segundo falha: o primeiro fecha, e o erro volta.
+	if _, err := escutarTodos(endereco, ocupado.Addr().String()); err == nil {
+		t.Fatal("esperava erro")
+	}
+	l, err := net.Listen("tcp", endereco)
+	if err != nil {
+		t.Fatalf("o primeiro ficou aberto: %v", err)
+	}
+	l.Close()
+
+	ls, err := escutarTodos(endereco, "127.0.0.1:0")
+	if err != nil || len(ls) != 2 {
+		t.Fatalf("%v %v", ls, err)
+	}
+	for _, l := range ls {
+		l.Close()
+	}
+}
+
+// capturar troca o log por um que escreve no buffer, até o fim do teste.
+func capturar(t *testing.T) *syncBuffer {
+	t.Helper()
+	b := &syncBuffer{}
+	antigo := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(b, nil)))
+	t.Cleanup(func() { slog.SetDefault(antigo) })
+	return b
+}
+
+type syncBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
+}
+
+func TestLogDaPagina(t *testing.T) {
+	h := Montar(depsDeTeste(t))
+	log := capturar(t)
+
+	// A entrada leva o usuário, a senha e o csrf num formulário.
+	form := url.Values{"usuario": {"ana.souza"}, "senha": {"senha-de-teste-123"}, "csrf": {"csrf-de-teste-xyz"}}
+	req := httptest.NewRequest("POST", "/admin/entrar?segredo=consulta-de-teste", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	saida := log.String()
+	if n := strings.Count(saida, "msg=pedido"); n != 1 {
+		t.Fatalf("%d linhas de pedido; queria 1:\n%s", n, saida)
+	}
+	for _, proibido := range []string{"senha-de-teste-123", "ana.souza", "csrf-de-teste-xyz", "consulta-de-teste", "segredo", "/admin/entrar?"} {
+		if strings.Contains(saida, proibido) {
+			t.Fatalf("o log tem %q:\n%s", proibido, saida)
+		}
+	}
+	for _, campo := range []string{"metodo=POST", "rota=", "status=", "ms="} {
+		if !strings.Contains(saida, campo) {
+			t.Fatalf("falta %s no log:\n%s", campo, saida)
+		}
+	}
+	linha := strings.TrimSpace(saida)
+	for _, extra := range []string{"usuario", "query", "corpo", "caminho"} {
+		if strings.Contains(linha, extra+"=") {
+			t.Fatalf("campo a mais %s:\n%s", extra, linha)
+		}
+	}
+
+	// Um pedido da API dá uma linha só, não duas.
+	log2 := capturar(t)
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("POST", "/api/v1/computadores", strings.NewReader("{}")))
+	if n := strings.Count(log2.String(), "msg=pedido"); n != 1 {
+		t.Fatalf("a API deu %d linhas; queria 1:\n%s", n, log2.String())
+	}
+}
+
+func TestModoTeste_SemHSTS(t *testing.T) {
+	dados, _ := preparar(t)
+	s := iniciar(t, dados)
+	for _, caminho := range []string{"/", "/admin/entrar", "/api/v1/computadores"} {
+		resp := pedir(t, "GET", s.url+caminho, "", nil)
+		if got := resp.Header.Get("Strict-Transport-Security"); got != "" {
+			t.Fatalf("%s: o modo de teste mandou Strict-Transport-Security %q", caminho, got)
+		}
 	}
 }

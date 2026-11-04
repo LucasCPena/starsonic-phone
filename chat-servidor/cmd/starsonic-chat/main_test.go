@@ -265,3 +265,26 @@ func TestServir_ConfigRuim(t *testing.T) {
 		t.Fatalf("saída %q", saida.String())
 	}
 }
+
+// Um flag errado imprime o uso uma vez só.
+func TestServir_UsoUmaVez(t *testing.T) {
+	for _, args := range [][]string{{"servir", "--xis"}, {"servir", "-h"}, {"servir", "sobra"}} {
+		var saida bytes.Buffer
+		run(args, strings.NewReader(""), &saida, io.Discard)
+		if n := strings.Count(saida.String(), "uso: starsonic-chat servir"); n != 1 {
+			t.Fatalf("%v: o uso saiu %d vezes:\n%s", args, n, saida.String())
+		}
+	}
+}
+
+// O endereço de teste é conferido antes da pasta de dados.
+func TestServir_EnderecoAntesDaPasta(t *testing.T) {
+	var saida bytes.Buffer
+	args := []string{"servir", "--teste", "--escutar", "0.0.0.0:8090", "--dados", "/nada/que/existe"}
+	if cod := run(args, strings.NewReader(""), &saida, io.Discard); cod != 2 {
+		t.Fatalf("código %d, esperava 2", cod)
+	}
+	if !strings.Contains(saida.String(), "o modo de teste só escuta em 127.0.0.1 ou [::1]") {
+		t.Fatalf("saída %q", saida.String())
+	}
+}

@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -30,9 +31,9 @@ import (
 // ErroModoTeste é o erro do RodarTeste com um endereço que não é local.
 var ErroModoTeste = errors.New("o modo de teste só escuta em 127.0.0.1 ou [::1]")
 
-// Os prazos de leitura e de escrita de cada pedido (R32). Não há WriteTimeout no http.Server,
-// por causa do WebSocket e dos downloads: o tempo fica nas rotas. São variáveis para os
-// testes poderem encurtar.
+// Os prazos de leitura e de escrita de cada pedido (R32 e R34). O servidor da 443 não tem
+// ReadTimeout nem WriteTimeout, por causa dos envios e dos downloads: o tempo fica nas rotas.
+// São variáveis para os testes poderem encurtar.
 var (
 	prazoArquivos = 5 * time.Minute // o envio, o download e a miniatura
 	prazoGeral    = time.Minute     // o resto da API, a página e a raiz
@@ -75,26 +76,25 @@ func montar(d Deps) (http.Handler, *sync.WaitGroup) {
 	return comPrazos(contarSockets(mux, sockets)), sockets
 }
 
-// ehEventos diz se o pedido é o WebSocket dos eventos.
+// ehEventos diz se o pedido é o WebSocket dos eventos (para contá-lo no desligamento).
 func ehEventos(r *http.Request) bool {
 	return r.Method == http.MethodGet && r.URL.Path == "/api/v1/eventos"
 }
 
-// comPrazos põe os prazos do pedido antes do manipulador (R32): 5 min em /api/v1/arquivos,
-// 1 min no resto, e nenhum no WebSocket, que mantém na conexão sequestrada os prazos que
-// tinha.
+// comPrazos põe os prazos de leitura e de escrita do pedido antes do manipulador: 5 min em
+// /api/v1/arquivos, 1 min em todo o resto, o GET /api/v1/eventos também (R34). Quando o
+// pedido vira WebSocket, o Go zera os prazos da conexão no Hijack, e ela fica aberta; o
+// TestPrazos_WebSocketSobreviveAoPrazo guarda esse comportamento do Go.
 func comPrazos(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !ehEventos(r) {
-			prazo := prazoGeral
-			if r.URL.Path == "/api/v1/arquivos" || strings.HasPrefix(r.URL.Path, "/api/v1/arquivos/") {
-				prazo = prazoArquivos
-			}
-			rc := http.NewResponseController(w)
-			fim := time.Now().Add(prazo)
-			rc.SetReadDeadline(fim)  // sem suporte (um gravador de teste): fica sem prazo
-			rc.SetWriteDeadline(fim) // idem
+		prazo := prazoGeral
+		if r.URL.Path == "/api/v1/arquivos" || strings.HasPrefix(r.URL.Path, "/api/v1/arquivos/") {
+			prazo = prazoArquivos
 		}
+		rc := http.NewResponseController(w)
+		fim := time.Now().Add(prazo)
+		rc.SetReadDeadline(fim)  // sem suporte (um gravador de teste): fica sem prazo
+		rc.SetWriteDeadline(fim) // idem
 		next.ServeHTTP(w, r)
 	})
 }
@@ -175,12 +175,14 @@ func gerenciador(c Config) *autocert.Manager {
 // Endereco com 301. O Host do pedido não conta: o destino é sempre o da configuração.
 func redirecionador(m *autocert.Manager, endereco string) http.Handler {
 	return m.HTTPHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "https://"+endereco+r.URL.RequestURI(), http.StatusMovedPermanently)
+		// Montado por partes: um alvo como "a:@evil.example/x" não pode mudar o host.
+		destino := url.URL{Scheme: "https", Host: endereco, Path: r.URL.Path, RawPath: r.URL.RawPath, RawQuery: r.URL.RawQuery}
+		http.Redirect(w, r, destino.String(), http.StatusMovedPermanently)
 	}))
 }
 
-// novoHTTP é um http.Server com os tempos do servidor. Não tem WriteTimeout nem ReadTimeout:
-// eles valem por rota (comPrazos).
+// novoHTTP é um http.Server com os tempos de cabeçalhos e de conexão parada. Não tem
+// ReadTimeout nem WriteTimeout: no servidor da 443 eles valem por rota (comPrazos).
 func novoHTTP(addr string, h http.Handler) *http.Server {
 	return &http.Server{
 		Addr:              addr,
@@ -196,32 +198,84 @@ type servico struct {
 	servir func() error
 }
 
+// Os endereços de produção.
+const (
+	enderecoHTTPS = ":443"
+	enderecoHTTP  = ":80"
+)
+
+// servidoresProducao monta os dois servidores de produção, sem abrir porta: o da 443 (HTTPS,
+// com o certificado do Let's Encrypt e o HSTS) e o da 80 (o desafio do certificado e o
+// redirecionamento). O da 80 não serve WebSocket nem corpo grande, e por isso tem prazo de
+// leitura e de escrita de uma vez, o prazo geral.
+func servidoresProducao(c Config, h http.Handler) (https, http80 *http.Server) {
+	m := gerenciador(c)
+	https = novoHTTP(enderecoHTTPS, producao(h))
+	https.TLSConfig = m.TLSConfig()
+	https.TLSConfig.MinVersion = tls.VersionTLS12
+	http80 = novoHTTP(enderecoHTTP, redirecionador(m, c.Endereco))
+	http80.ReadTimeout = prazoGeral
+	http80.WriteTimeout = prazoGeral
+	return https, http80
+}
+
+// escutarTodos abre todas as portas, ou nenhuma: se uma falha, fecha as que já abriu e
+// devolve o erro.
+func escutarTodos(enderecos ...string) ([]net.Listener, error) {
+	var abertas []net.Listener
+	for _, e := range enderecos {
+		l, err := net.Listen("tcp", e)
+		if err != nil {
+			for _, a := range abertas {
+				a.Close()
+			}
+			return nil, fmt.Errorf("servidor: escutar em %s: %w", e, err)
+		}
+		abertas = append(abertas, l)
+	}
+	return abertas, nil
+}
+
 // Rodar põe o servidor no ar em produção: HTTPS na 443, com o certificado do Let's Encrypt, e
-// a porta 80 só para o desafio e o redirecionamento. Volta quando o ctx acaba (sem erro) ou
-// quando um dos servidores falha.
+// a porta 80 só para o desafio e o redirecionamento. As duas portas abrem antes de qualquer
+// coisa começar. Volta quando o ctx acaba (sem erro) ou quando um dos servidores falha.
 func Rodar(ctx context.Context, c Config) error {
 	if c.Endereco == "" || c.Dados == "" {
 		return errors.New("servidor: faltam o endereço e a pasta de dados")
 	}
-	m := gerenciador(c)
+	ls, err := escutarTodos(enderecoHTTPS, enderecoHTTP)
+	if err != nil {
+		return err
+	}
+	defer func() { // fecha de novo as que o Shutdown já fechou: sem efeito
+		for _, l := range ls {
+			l.Close()
+		}
+	}()
 	return rodar(ctx, c, false, func(h http.Handler) []servico {
-		https := novoHTTP(":443", producao(h))
-		https.TLSConfig = m.TLSConfig()
-		https.TLSConfig.MinVersion = tls.VersionTLS12
-		http80 := novoHTTP(":80", redirecionador(m, c.Endereco))
+		https, http80 := servidoresProducao(c, h)
 		return []servico{
-			{https, func() error { return https.ListenAndServeTLS("", "") }},
-			{http80, func() error { return http80.ListenAndServe() }},
+			{https, func() error { return https.ServeTLS(ls[0], "", "") }},
+			{http80, func() error { return http80.Serve(ls[1]) }},
 		}
 	})
+}
+
+// ValidarEscutar confere o endereço do modo de teste: o host tem de ser exatamente 127.0.0.1
+// ou ::1. Senão, devolve o ErroModoTeste.
+func ValidarEscutar(escutar string) error {
+	host, _, err := net.SplitHostPort(escutar)
+	if err != nil || (host != "127.0.0.1" && host != "::1") {
+		return ErroModoTeste
+	}
+	return nil
 }
 
 // RodarTeste põe o servidor no ar em HTTP, só no 127.0.0.1 ou no [::1], com a pasta
 // c.Dados. Não usa o certificado.
 func RodarTeste(ctx context.Context, c Config, escutar string) error {
-	host, _, err := net.SplitHostPort(escutar)
-	if err != nil || (host != "127.0.0.1" && host != "::1") {
-		return ErroModoTeste
+	if err := ValidarEscutar(escutar); err != nil {
+		return err
 	}
 	if c.Dados == "" {
 		return errors.New("servidor: falta a pasta de dados")
@@ -233,8 +287,10 @@ func RodarTeste(ctx context.Context, c Config, escutar string) error {
 	return servirTeste(ctx, c, l)
 }
 
-// servirTeste é o RodarTeste sobre um listener que já existe.
+// servirTeste é o RodarTeste sobre um listener que já existe. Fecha o listener em qualquer
+// saída, também quando o banco não abre.
 func servirTeste(ctx context.Context, c Config, l net.Listener) error {
+	defer l.Close()
 	return rodar(ctx, c, true, func(h http.Handler) []servico {
 		srv := novoHTTP(l.Addr().String(), h)
 		return []servico{{srv, func() error { return srv.Serve(l) }}}
@@ -242,9 +298,9 @@ func servirTeste(ctx context.Context, c Config, l net.Listener) error {
 }
 
 // rodar abre o banco e os arquivos, monta o servidor, sobe os servicos e espera o ctx acabar
-// ou um deles falhar. Depois desliga com calma, nesta ordem: os servidores (Shutdown, até
-// 10 s), os WebSockets (1001), as tarefas, e só então o banco. Um desligamento pelo ctx não é
-// erro.
+// ou um deles falhar. Depois desliga com calma: os servidores (Shutdown, até 10 s) e os
+// WebSockets (1001) e, quando as tarefas também voltaram, o banco, que fecha por último. Um
+// desligamento pelo ctx não é erro.
 func rodar(ctx context.Context, c Config, teste bool, servicos func(http.Handler) []servico) (erro error) {
 	b, err := banco.Abrir(filepath.Join(c.Dados, banco.NomeArquivo), tempo.Real())
 	if err != nil {
@@ -263,6 +319,9 @@ func rodar(ctx context.Context, c Config, teste bool, servicos func(http.Handler
 	hub := eventos.NovoHub(eventos.Config{})
 	h, sockets := montar(Deps{Banco: b, Hub: hub, Armazem: a, Origens: c.Origens, Teste: teste})
 
+	// O ctx das tarefas acaba junto com o ctx do servidor, ou seja, quando o desligamento
+	// começa (ou, se um servidor falhar, no defer abaixo). O defer espera as tarefas voltarem;
+	// ele roda antes do que fecha o banco, que fecha por último.
 	ctxTarefas, pararTarefas := context.WithCancel(ctx)
 	defer pararTarefas()
 	tarefasFeitas := make(chan struct{})
@@ -270,7 +329,7 @@ func rodar(ctx context.Context, c Config, teste bool, servicos func(http.Handler
 		defer close(tarefasFeitas)
 		tarefas.Rodar(ctxTarefas, b, a)
 	}()
-	defer func() { // roda antes de o banco fechar
+	defer func() {
 		pararTarefas()
 		<-tarefasFeitas
 	}()

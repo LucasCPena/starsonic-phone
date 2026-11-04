@@ -76,7 +76,10 @@ func servir(args []string, saida io.Writer) int {
 	fs.Usage = func() {
 		fmt.Fprint(saida, "uso: starsonic-chat servir [--config <arquivo>] | --teste [--escutar 127.0.0.1:8090] --dados <pasta>\n")
 	}
-	if fs.Parse(args) != nil || fs.NArg() != 0 {
+	if fs.Parse(args) != nil { // o flag já imprimiu o erro e o uso
+		return 2
+	}
+	if fs.NArg() != 0 {
 		fs.Usage()
 		return 2
 	}
@@ -100,15 +103,15 @@ func servir(args []string, saida io.Writer) int {
 	defer parar()
 	var err error
 	if *teste {
+		if err = servidor.ValidarEscutar(*escutar); err != nil { // antes da pasta
+			fmt.Fprintln(saida, err)
+			return 2
+		}
 		if info, e := os.Stat(*dados); e != nil || !info.IsDir() {
 			fmt.Fprintf(saida, "A pasta de dados não existe: %s\n", *dados)
 			return 2
 		}
 		err = servidor.RodarTeste(ctx, servidor.Config{Dados: *dados}, *escutar)
-		if errors.Is(err, servidor.ErroModoTeste) {
-			fmt.Fprintln(saida, err)
-			return 2
-		}
 	} else {
 		var c servidor.Config
 		if c, err = servidor.LerConfig(*config); err != nil {
