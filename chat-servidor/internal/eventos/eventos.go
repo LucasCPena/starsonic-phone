@@ -40,6 +40,8 @@ type Hub struct {
 	// A conexão (ou a reserva) de cada computador. A conexão que vai fechar sai daqui na
 	// hora, com h.mu travado: depois disso nenhum evento chega mais a ela.
 	conexoes map[int64]*conexao
+	// encerrado: o servidor vai desligar (Encerrar). Toda conexão nova fecha na hora com 1001.
+	encerrado bool
 }
 
 type conexao struct {
@@ -94,12 +96,36 @@ func (h *Hub) Reservar(computadorID int64) *Reserva {
 		fechar:     make(chan struct{}),
 	}
 	h.mu.Lock()
+	if h.encerrado {
+		h.mu.Unlock()
+		c.encerrar(websocket.StatusGoingAway, "o servidor vai desligar", nil) // fora do hub: o Servir fecha já
+		return &Reserva{h: h, c: c}
+	}
 	if velha := h.conexoes[computadorID]; velha != nil {
 		velha.encerrar(CodigoOutraConexao, "outra conexão", nil)
 	}
 	h.conexoes[computadorID] = c
 	h.mu.Unlock()
 	return &Reserva{h: h, c: c}
+}
+
+// Encerrar fecha todas as conexões do hub com 1001 ("o servidor vai desligar"), como o
+// Servir faz quando o ctx acaba, e faz o mesmo com toda conexão que chegar depois. O
+// http.Server.Shutdown não fecha os WebSockets (a conexão sequestrada sai do controle dele),
+// e o ctx do pedido só acaba quando o manipulador volta; por isso o servidor registra este
+// método no RegisterOnShutdown.
+func (h *Hub) Encerrar() {
+	h.mu.Lock()
+	h.encerrado = true
+	todas := make([]*conexao, 0, len(h.conexoes))
+	for id, c := range h.conexoes {
+		todas = append(todas, c)
+		delete(h.conexoes, id)
+	}
+	h.mu.Unlock()
+	for _, c := range todas {
+		c.encerrar(websocket.StatusGoingAway, "o servidor vai desligar", nil)
+	}
 }
 
 // DefinirPessoa diz a pessoa da vez da reserva, a que o pedido leu no banco.

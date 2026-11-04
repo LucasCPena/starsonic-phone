@@ -436,3 +436,42 @@ func TestPing(t *testing.T) {
 		}
 	})
 }
+
+// O Encerrar fecha todas as conexões com 1001, e quem chega depois também.
+func TestEncerrar(t *testing.T) {
+	h := NovoHub(Config{})
+	cli1, srv1 := par(t, nil)
+	feito1 := servir(t, h.Reservar(1), srv1)
+	cli2, srv2 := par(t, nil)
+	feito2 := servir(t, h.Reservar(2), srv2)
+
+	h.Encerrar()
+	for i, cli := range []*websocket.Conn{cli1, cli2} {
+		if c := fechamento(t, cli); c != websocket.StatusGoingAway {
+			t.Fatalf("a conexão %d fechou com %d; queria 1001", i+1, c)
+		}
+	}
+	esperar(t, feito1)
+	esperar(t, feito2)
+	if n := conectados(h); n != 0 {
+		t.Fatalf("o hub tem %d conexões; queria 0", n)
+	}
+
+	// Depois do Encerrar, uma conexão nova fecha na hora com 1001, pelos dois caminhos.
+	cli3, srv3 := par(t, nil)
+	feito3 := make(chan struct{})
+	go func() { defer close(feito3); h.Servir(context.Background(), srv3, 3) }()
+	if c := fechamento(t, cli3); c != websocket.StatusGoingAway {
+		t.Fatalf("a conexão nova fechou com %d; queria 1001", c)
+	}
+	esperar(t, feito3)
+	cli4, srv4 := par(t, nil)
+	feito4 := servir(t, h.Reservar(4), srv4)
+	if c := fechamento(t, cli4); c != websocket.StatusGoingAway {
+		t.Fatalf("a reserva nova fechou com %d; queria 1001", c)
+	}
+	esperar(t, feito4)
+	if n := conectados(h); n != 0 {
+		t.Fatalf("o hub tem %d conexões depois; queria 0", n)
+	}
+}
