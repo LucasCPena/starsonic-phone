@@ -458,6 +458,10 @@ func TestHTTPParaHTTPS(t *testing.T) {
 	if rec.Code != http.StatusMovedPermanently {
 		t.Fatalf("respondeu %d; queria 301", rec.Code)
 	}
+	// O 301 não fica guardado no navegador: o destino muda quando a porta pública muda.
+	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Fatalf("Cache-Control %q; queria no-store", cc)
+	}
 	if l := rec.Header().Get("Location"); l != "https://chat.example.com/admin/entrar?x=1&y=a%20b" {
 		t.Fatalf("Location %q", l)
 	}

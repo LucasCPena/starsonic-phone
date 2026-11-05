@@ -7,6 +7,7 @@ Como usar:
 - Cada comando fica numa linha só. Copie a linha inteira e cole no terminal da VM.
 - Onde aparece algo entre `<` e `>`, troque pelo seu valor, sem os sinais. Exemplo: `<endereço>` vira `chat.exemplo.com.br`.
 - Depois de cada comando, o guia diz o que você deve ver. Se aparecer outra coisa, vá para o passo 10.
+- Se o chat usa uma porta própria (o `--porta` do passo 2), todo endereço `https://<endereço>` deste guia leva `:` e a porta depois do nome, por exemplo `https://<endereço>:8443/admin/`.
 
 ## 1. O que a VM precisa
 
@@ -47,12 +48,14 @@ curl -s https://ifconfig.me
 - No roteador, crie duas regras de redirecionamento de porta (NAT, ou port forwarding) para o endereço interno da VM: a porta **80** pública vai para a porta **80** da VM, e a **443** pública vai para a **443** da VM.
 - Use o redirecionamento de porta comum, que mantém o endereço de quem acessa. Não use um proxy.
 - A internet da empresa precisa ter um endereço público fixo. Se a operadora usa CGNAT (um endereço dividido com outros clientes), não dá para redirecionar porta: peça à operadora um endereço público fixo.
-- Os computadores da mesma rede da VM só abrem o chat pelo nome se o roteador fizer "NAT loopback". Se ele não fizer, crie no DNS interno o mesmo nome apontando para o endereço interno da VM.
+- Os computadores da mesma rede da VM só abrem o chat pelo nome se o roteador fizer "NAT loopback". Se ele não fizer e o chat usa a 443 normal, crie no DNS interno o mesmo nome apontando para o endereço interno da VM. Com a porta própria do chat (logo abaixo), o DNS interno não serve, porque a VM não escuta nessa porta: aí o roteador precisa fazer o NAT loopback.
+- Com o NAT loopback, o chat vê todos os computadores da rede com um endereço só, o do roteador, e eles dividem os limites de tentativas erradas (de código e de senha). Para uma equipe pequena, isso não atrapalha.
 
 **Se a porta 443 pública já é de outro servidor** (por exemplo, o GLPI), o chat pode usar outra porta pública:
 
 - No roteador, a porta **80** pública vai para a **80** da VM, e uma porta livre, por exemplo a **8443**, vai para a **443** da VM.
-- No passo 2, instale com `--porta 8443`. O endereço do chat passa a ser `https://<endereço>:8443`, e é esse endereço, com a porta, que vai no navegador e no app.
+- No passo 2, instale com `--porta 8443`. O endereço do chat passa a ser `https://<endereço>:8443`, e é esse endereço, com a porta, que vai no navegador e no app. Salve-o nos favoritos já com a porta.
+- Depois da primeira visita, o navegador passa a usar sempre o cadeado para esse nome. Se alguém digitar o nome sem a porta, o navegador vai para a 443, que é do outro servidor, e mostra um erro de segurança que não deixa continuar. Não é defeito: é só escrever o endereço com a porta.
 - A regra da porta 80 tem de ficar **sempre ligada**. É por ela que o Let's Encrypt confere o nome, no primeiro cadeado e em toda renovação, a cada dois meses. Sem ela, o cadeado vence e o chat para de abrir.
 - Algumas empresas bloqueiam, no firewall delas, a saída para portas fora do comum, e nelas o chat não conecta. Um segundo endereço público, só para o chat, evita isso: com ele, o chat fica na 443 normal.
 - O primeiro cadeado precisa de um cuidado: veja "O cadeado não sai e o registro fala em `rateLimited`", no passo 10.
@@ -130,7 +133,7 @@ sudo systemctl restart starsonic-chat
 
 Faça estas conferências uma vez, logo depois de instalar.
 
-Se você instalou com `--porta`, ponha `:` e a porta depois do nome em todos os endereços com `https` deste passo, por exemplo `https://<endereço>:8443/admin/`. Sem a porta, o navegador vai para a 443, que é de outro servidor.
+Se você instalou com `--porta`, ponha `:` e a porta depois do nome em todos os endereços com `https` deste passo, por exemplo `https://<endereço>:8443/admin/`. Sem a porta, o navegador vai para a 443, que é de outro servidor. E se o roteador não faz NAT loopback (passo 1), os testes com `https` só funcionam de um computador fora da rede da VM.
 
 **O cadeado.** No navegador, abra `https://<endereço>/admin/`. A primeira vez pode demorar alguns segundos, porque o certificado é pedido nessa hora. Você deve ver a tela de entrada, com o cadeado fechado, sem nenhum aviso. Entre com o usuário do passo 3.
 
@@ -427,7 +430,7 @@ sudo ls /var/lib/starsonic-chat/certificados
 As renovações, a cada dois meses, gastam só uma falha e cabem no limite.
 
 **A página cai em outro servidor (como o GLPI).**
-Quem escolhe a máquina de cada porta é o roteador, e a 443 pública está indo para outra máquina. Use a porta própria do chat (passo 1, "Se a porta 443 pública já é de outro servidor") e abra o chat com ela no endereço, por exemplo `https://<endereço>:8443/admin/`. Escreva sempre o `https://` na frente: com uma porta diferente, o navegador não põe o `https` sozinho.
+Quem escolhe a máquina de cada porta é o roteador, e a 443 pública está indo para outra máquina. Use a porta própria do chat (passo 1, "Se a porta 443 pública já é de outro servidor") e abra o chat com ela no endereço, por exemplo `https://<endereço>:8443/admin/`. Escreva sempre o `https://` na frente: com uma porta diferente, o navegador não põe o `https` sozinho. Se o navegador mostrar um erro de segurança que não deixa continuar, é o mesmo caso: o endereço foi aberto sem a porta.
 
 **O navegador mostra "Não seguro", mas o cadeado já saiu.**
 É lembrança de um aviso de antes, de quando o nome caía em outro servidor. Feche todas as janelas do navegador e abra de novo. Para conferir o cadeado de verdade, rode na VM (com a porta, se você instalou com `--porta`):

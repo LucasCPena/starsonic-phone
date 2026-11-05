@@ -160,7 +160,7 @@ instalar() {
   conferir_endereco "$1"
   local endereco=$1
   conferir_maquina
-  [ ! -e "$CONFIG_DIR/config.json" ] || falhar "o chat já está instalado ($CONFIG_DIR/config.json existe). Para trocar de versão, use: sudo bash instalar.sh atualizar"
+  [ ! -e "$CONFIG_DIR/config.json" ] || falhar "o chat já está instalado ($CONFIG_DIR/config.json existe). Para trocar de versão, use: sudo bash instalar.sh atualizar . Para trocar a porta: sudo bash instalar.sh porta <N>"
   conferir_portas
 
   baixar_tudo "$TMP"
@@ -195,39 +195,72 @@ atualizar() {
   # Os dois são seguros de repetir: se uma instalação parou no meio, a atualização termina.
   systemctl enable starsonic-chat.service
   systemctl enable --now starsonic-chat-copia.timer
-  systemctl restart starsonic-chat.service
-  # O restart volta assim que o programa começa: espera um pouco para ver se ele se mantém.
-  sleep 5
-  if ! systemctl is-active --quiet starsonic-chat.service; then
+  systemctl restart starsonic-chat.service || true
+  if ! servico_firme; then
     journalctl -u starsonic-chat -n 20 --no-pager >&2 || true
     falhar "o serviço não subiu (as últimas linhas do registro estão acima). Veja mais com: sudo journalctl -u starsonic-chat -n 50"
   fi
   echo "Pronto: o Starsonic Chat agora está na versão $("$BINARIO" versao)."
 }
 
+# servico_firme: depois de um restart, diz se o serviço ficou de pé. O restart volta assim que o
+# programa começa, e um programa que cai volta sozinho 5 s depois (RestartSec=5). Então, 3 s
+# depois do restart, um programa que caiu ainda não voltou (não está ativo), e um que caiu e já
+# voltou deixou o NRestarts maior.
+servico_firme() {
+  local reinicios
+  reinicios=$(systemctl show -p NRestarts --value starsonic-chat.service)
+  sleep 3
+  systemctl is-active --quiet starsonic-chat.service &&
+    [ "$(systemctl show -p NRestarts --value starsonic-chat.service)" = "$reinicios" ]
+}
+
+# versao_ao_menos <versão> <mínima>: verdade se a versão é a mínima ou mais nova.
+versao_ao_menos() {
+  [ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -n 1)" = "$2" ]
+}
+
+# voltar_config: põe de volta o config.json de antes de mudar_porta e reinicia o serviço com ele.
+voltar_config() {
+  if [ -e "$CONFIG_DIR/config.json.antes" ]; then
+    mv -f "$CONFIG_DIR/config.json.antes" "$CONFIG_DIR/config.json"
+    systemctl restart starsonic-chat.service || true
+    echo "A configuração de antes voltou, e o chat foi reiniciado com ela." >&2
+  fi
+}
+
 # mudar_porta <N>: troca a porta pública numa instalação que já existe, sem baixar nada, e
-# reinicia o serviço. Se o serviço não subir com a porta nova (um programa de antes da 0.1.1 não
-# conhece a "porta"), a configuração de antes volta.
+# reinicia o serviço. Um programa de antes da 0.1.1 não conhece a "porta": aí nada muda. Se o
+# serviço não ficar de pé com a porta nova, ou se o comando parar no meio (um erro, um Ctrl+C,
+# a conexão que cai), a configuração de antes volta.
 mudar_porta() {
   conferir_porta "$1"
   conferir_maquina
   [ -e "$CONFIG_DIR/config.json" ] || falhar "o chat não está instalado aqui ($CONFIG_DIR/config.json não existe). Para instalar: sudo bash instalar.sh instalar <endereço> --porta $1"
+  [ -x "$BINARIO" ] || falhar "o chat não está instalado aqui ($BINARIO não existe)."
+  local versao
+  versao=$("$BINARIO" versao)
+  versao_ao_menos "$versao" 0.1.1 || falhar "o chat desta VM está na versão $versao, que ainda não conhece a porta. Nada mudou. Atualize primeiro (sudo bash instalar.sh atualizar) e rode este comando de novo."
+  # O comando grava o arquivo de novo só com o endereço, os dados e a porta: um "origens" posto à
+  # mão se perderia.
+  ! grep -q '"origens"' "$CONFIG_DIR/config.json" || falhar "o $CONFIG_DIR/config.json tem \"origens\", que este comando não mantém. Nada mudou. Troque a porta à mão nesse arquivo."
   local endereco
   endereco=$(ler_endereco)
   [ -n "$endereco" ] || falhar "não consegui ler o endereço em $CONFIG_DIR/config.json."
   conferir_endereco "$endereco"
 
   cp -p "$CONFIG_DIR/config.json" "$CONFIG_DIR/config.json.antes"
+  # Daqui até o fim, qualquer saída antes da hora põe a configuração de antes de volta.
+  trap voltar_config EXIT
+  trap 'exit 130' INT HUP TERM
   escrever_config "$endereco" "$1"
-  systemctl restart starsonic-chat.service
-  # O restart volta assim que o programa começa: espera um pouco para ver se ele se mantém.
-  sleep 5
-  if ! systemctl is-active --quiet starsonic-chat.service; then
-    mv -f "$CONFIG_DIR/config.json.antes" "$CONFIG_DIR/config.json"
-    systemctl restart starsonic-chat.service || true
-    falhar "o chat não subiu com a porta $1, e a configuração de antes voltou. Se o chat for de antes da versão 0.1.1, atualize primeiro (sudo bash instalar.sh atualizar) e rode este comando de novo. O registro: sudo journalctl -u starsonic-chat -n 30"
+  systemctl restart starsonic-chat.service || true
+  if ! servico_firme; then
+    journalctl -u starsonic-chat -n 20 --no-pager >&2 || true
+    falhar "o chat não ficou de pé com a porta $1 (as últimas linhas do registro estão acima)."
   fi
   rm -f "$CONFIG_DIR/config.json.antes"
+  trap - EXIT INT HUP TERM
   echo "Pronto: o chat agora está em $(endereco_publico "$endereco" "$1")"
   avisar_roteador "$1"
 }

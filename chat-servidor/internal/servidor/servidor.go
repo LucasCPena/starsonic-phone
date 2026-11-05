@@ -179,6 +179,9 @@ func redirecionador(m *autocert.Manager, host string) http.Handler {
 	return m.HTTPHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Montado por partes: um alvo como "a:@evil.example/x" não pode mudar o host.
 		destino := url.URL{Scheme: "https", Host: host, Path: r.URL.Path, RawPath: r.URL.RawPath, RawQuery: r.URL.RawQuery}
+		// Sem cache: o destino muda quando a porta pública muda, e um 301 guardado no navegador
+		// levaria para a porta velha.
+		w.Header().Set("Cache-Control", "no-store")
 		http.Redirect(w, r, destino.String(), http.StatusMovedPermanently)
 	}))
 }
