@@ -30,14 +30,21 @@ bool WriteAll(HANDLE file, const std::string& bytes) {
     return true;
 }
 
-// O texto inteiro num arquivo (ou num fluxo dele, com o ":nome"), no lugar do que estava.
-bool WriteText(const std::wstring& path, const std::string& text) {
+// O GetLastError de agora, nunca 0 (o 0 e o "gravado" do WriteText).
+DWORD LastError() {
+    const DWORD error = GetLastError();
+    return error != 0 ? error : ERROR_GEN_FAILURE;
+}
+
+// O texto inteiro num arquivo (ou num fluxo dele, com o ":nome"), no lugar do que estava. Devolve o erro do Windows (0:
+// gravado).
+DWORD WriteText(const std::wstring& path, const std::string& text) {
     const HANDLE file =
         CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (file == INVALID_HANDLE_VALUE) return false;
-    const bool written = WriteAll(file, text);
+    if (file == INVALID_HANDLE_VALUE) return LastError();
+    const DWORD error = WriteAll(file, text) ? 0 : LastError();
     CloseHandle(file);
-    return written;
+    return error;
 }
 
 }  // namespace
@@ -53,17 +60,29 @@ std::wstring SaveChatFile(const std::wstring& pasta, const std::string& nome, co
         if (name.empty()) return std::wstring();
         const std::wstring path = PathIn(pasta, name);
         // CREATE_NEW: nunca por cima de um arquivo que ja estava la.
-        const HANDLE file =
-            CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+        HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
         if (file == INVALID_HANDLE_VALUE) {
             const DWORD error = GetLastError();
             if (error == ERROR_FILE_EXISTS || error == ERROR_ALREADY_EXISTS) continue;   // outro chegou antes
             return std::wstring();
         }
-        const bool written = WriteAll(file, bytes);
-        CloseHandle(file);
-        if (written && WriteText(path + L":Zone.Identifier", ZoneIdentifier())) return path;
-        DeleteFileW(path.c_str());   // pela metade, ou sem a marca da internet
+        // A marca antes de qualquer byte do conteudo (ChatSave.h). Se o fluxo nao abre com o arquivo aberto (o
+        // compartilhamento), o arquivo vazio fecha, o fluxo e gravado, e o arquivo abre de novo para o conteudo.
+        const std::wstring stream = path + L":Zone.Identifier";
+        DWORD marked = WriteText(stream, ZoneIdentifier());
+        if (marked == ERROR_SHARING_VIOLATION) {
+            CloseHandle(file);
+            file = INVALID_HANDLE_VALUE;
+            marked = WriteText(stream, ZoneIdentifier());
+            if (marked == 0) {
+                file = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,
+                                   nullptr);
+            }
+        }
+        const bool written = marked == 0 && file != INVALID_HANDLE_VALUE && WriteAll(file, bytes);
+        if (file != INVALID_HANDLE_VALUE) CloseHandle(file);
+        if (written) return path;
+        DeleteFileW(path.c_str());   // sem a marca da internet, ou com o conteudo pela metade
         return std::wstring();
     }
     return std::wstring();

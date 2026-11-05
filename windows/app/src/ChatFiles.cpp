@@ -12,6 +12,9 @@ constexpr size_t kMaxNameChars = 120;
 constexpr int kMaxCopy = 1000;   // o FreeName para no "(1000)"
 const char kDefaultName[] = "arquivo";
 const char kEllipsis[] = "\xe2\x80\xa6";   // U+2026
+// O download: o arquivo veio (200) ou passou de 365 dias e saiu do servidor (410).
+constexpr int kStatusOk = 200;
+constexpr int kStatusGone = 410;
 
 // Os pontos de codigo do texto UTF-8. Uma sequencia invalida (o byte solto, a sequencia cortada, a forma longa, o
 // substituto, acima de U+10FFFF) vira um kInvalid, e a leitura recomeca no byte que a quebrou: a regra do Utf8ToWide
@@ -204,6 +207,12 @@ std::string FreeName(const std::string& nome, const std::function<bool(const std
 }
 
 std::string ZoneIdentifier() { return std::string("[ZoneTransfer]\r\nZoneId=3\r\nHostUrl=") + kChatOrigin + "/\r\n"; }
+
+std::string DownloadToast(int status, bool saved) {
+    if (status == kStatusOk && saved) return std::string();
+    if (status == kStatusGone) return "Arquivo expirado";
+    return "N\xc3\xa3o foi poss\xc3\xadvel baixar o arquivo.";   // "Nao foi possivel...", com o til e o acento
+}
 
 std::string FitNoticeText(const std::string& utf8, size_t maxUtf16Units) {
     const std::u32string text = Decode(utf8);

@@ -44,6 +44,11 @@ std::string FreeName(const std::string& nome, const std::function<bool(const std
 // Windows avisa antes de abrir um programa que veio assim.
 std::string ZoneIdentifier();
 
+// O toast do download (docs/ponte-windows.md, "Os toasts do chat"), em UTF-8: "" com o status 200 e o arquivo gravado
+// (saved); "Arquivo expirado" com o 410 (o arquivo passou de 365 dias); "Nao foi possivel baixar o arquivo." (com os
+// acentos) com qualquer outra coisa: o 200 sem gravar, a rede (o status 0) ou outro status.
+std::string DownloadToast(int status, bool saved);
+
 // O texto do aviso do Windows com no maximo maxUtf16Units unidades do UTF-16 (o NOTIFYICONDATA: 63 no titulo e 255 no
 // texto, sem o fim do texto). Cabe: fica como veio. Nao cabe: cortado num ponto de codigo inteiro (um emoji, o par
 // substituto do UTF-16, nunca pela metade) e terminado em U+2026, com o limite ja contando ele. UTF-8 em volta (uma

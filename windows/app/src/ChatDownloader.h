@@ -6,9 +6,8 @@
 // - O 200 vai para a pasta Downloads (SHGetKnownFolderPath(FOLDERID_Downloads)) pelo SaveChatFile (o nome limpo, o
 //   "(2)" e o Zone.Identifier: ChatSave.h) e abre com o programa padrao (ShellExecuteW "open": o Windows avisa antes de
 //   abrir um programa que veio da internet). O done leva "".
-// - O 410 (o arquivo passou de 365 dias) leva o toast "Arquivo expirado"; qualquer outra coisa (a rede, outro status, o
-//   disco) leva "Nao foi possivel baixar o arquivo." (com os acentos, em UTF-8: docs/ponte-windows.md, "Os toasts do
-//   chat").
+// - O toast de cada resultado e o DownloadToast (ChatFiles.h): o 410 (o arquivo passou de 365 dias) leva "Arquivo
+//   expirado"; qualquer outra coisa (a rede, outro status, o disco) leva "Nao foi possivel baixar o arquivo.".
 // O diagnostico leva so "chat: download <status> <bytes>": nunca a chave, o id nem o nome do arquivo.
 //
 // Threads: como o CompanyFetcher, uma thread propria (com o COM dela, para o ShellExecuteW) baixa os pedidos, um por

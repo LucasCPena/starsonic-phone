@@ -22,12 +22,7 @@ namespace starsonic {
 
 namespace {
 
-// Os toasts do download (docs/ponte-windows.md, "Os toasts do chat"), em UTF-8.
-const char kExpired[] = "Arquivo expirado";
-const char kFailed[] = "N\xc3\xa3o foi poss\xc3\xadvel baixar o arquivo.";
-
-const DWORD kStatusOk = 200;
-const DWORD kStatusGone = 410;   // o arquivo passou de 365 dias e saiu do servidor
+const DWORD kStatusOk = 200;   // so o 200 traz o arquivo (o toast de cada status e o DownloadToast, ChatFiles.h)
 
 // A pasta Downloads do usuario (criada se falta); "" se o Windows nao a deu.
 std::wstring DownloadsFolder() {
@@ -97,7 +92,8 @@ void ChatDownloader::Work(std::shared_ptr<Shared> shared) {
             request = std::move(shared->queue.front());
             shared->queue.pop_front();
         }
-        std::string toast = kFailed;
+        int status = 0;       // o status HTTP (0: sem resposta, ou o id fora da regra)
+        bool saved = false;   // gravado na pasta Downloads (e aberto)
         std::string line;
         try {
             if (!ValidFileId(request.arquivo)) {
@@ -107,6 +103,7 @@ void ChatDownloader::Work(std::shared_ptr<Shared> shared) {
                 const std::wstring url = Utf8ToWide(std::string(kChatOrigin) + "/api/v1/arquivos/" + request.arquivo);
                 const HttpResponse response =
                     HttpsGetBearer(url, kChatMaxFileBytes, shared->userAgent, request.chave);
+                status = static_cast<int>(response.status);
                 line = "chat: download " + std::to_string(response.status) + " " + std::to_string(response.body.size());
                 if (response.error == 0 && response.status == kStatusOk) {
                     // Parado no meio do download: nem grava nem abre (e a resposta tambem nao vai, abaixo).
@@ -120,15 +117,13 @@ void ChatDownloader::Work(std::shared_ptr<Shared> shared) {
                         folder.empty() ? std::wstring() : SaveChatFile(folder, request.nome, response.body);
                     if (!path.empty()) {
                         ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-                        toast.clear();
+                        saved = true;
                     }
-                } else if (response.status == kStatusGone) {
-                    toast = kExpired;
                 }
             }
         } catch (...) {
             // Sem memoria (o processo e de 32 bits): o erro de sempre.
-            toast = kFailed;
+            saved = false;
         }
         // Com a trava: depois de o Stop voltar, nenhuma resposta e nenhuma linha (o DesktopApp e o diagnostico podem ja
         // ter saido); o Stop espera so um done que ja comecou (ele so poe o toast na fila do DesktopApp).
@@ -140,7 +135,7 @@ void ChatDownloader::Work(std::shared_ptr<Shared> shared) {
             // Sem memoria para a linha: a resposta vai assim mesmo.
         }
         try {
-            if (request.done) request.done(toast);
+            if (request.done) request.done(DownloadToast(status, saved));
         } catch (...) {
             // Sem memoria na fila do DesktopApp: o toast se perde (nada mais a fazer aqui).
         }

@@ -4,6 +4,7 @@
 #include <dwmapi.h>
 #include <shellscalingapi.h>
 #include <windowsx.h>
+#include <wtsapi32.h>
 
 #include <algorithm>
 #include <utility>
@@ -136,6 +137,13 @@ bool MainWindow::Create(HINSTANCE instance, const Options& options, Callbacks ca
         target_ = window_;
     }
     badge_.Attach(window_);   // (0.2.0) o numero do chat vai ao botao quando ele aparecer (TaskbarButtonCreated)
+    // (0.2.0) A sessao do Windows bloqueada ou desconectada tira a janela da frente (WM_WTSSESSION_CHANGE). Sem o
+    // aviso, vale a regra de antes (so a janela).
+    sessionNotify_ = WTSRegisterSessionNotification(window_, NOTIFY_FOR_THIS_SESSION) != FALSE;
+    if (!sessionNotify_) {
+        const DWORD error = GetLastError();
+        Log("chat: sem o aviso de bloqueio da sessao (" + std::to_string(error) + ")");
+    }
     Place(options.position);
     ApplyFrame();
 
@@ -312,7 +320,8 @@ void MainWindow::StartNotice() {
 
 void MainWindow::RefreshNotice() {
     if (!window_) return;
-    const bool inFront = IsWindowVisible(window_) && !IsIconic(window_) && active_;
+    // Na tela bloqueada, ou com a sessao desconectada, a pessoa nao ve a janela (que continua ativa).
+    const bool inFront = IsWindowVisible(window_) && !IsIconic(window_) && active_ && !locked_ && !disconnected_;
     // (0.2.0) A janela na frente vai ao chat so quando muda. Antes do aviso de ligacao: esconde-lo pode mudar a janela
     // ativa (e chamar este de novo, ja com o valor novo).
     if (inFront != inFront_) {
@@ -586,6 +595,28 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
             if (active_ && webview_) webview_->Focus();
             RefreshNotice();
             return 0;
+        case WM_WTSSESSION_CHANGE:
+            // (0.2.0) A sessao do Windows bloqueou ou desbloqueou, desconectou ou conectou (o console ou a remota).
+            switch (wParam) {
+                case WTS_SESSION_LOCK:
+                    locked_ = true;
+                    break;
+                case WTS_SESSION_UNLOCK:
+                    locked_ = false;
+                    break;
+                case WTS_CONSOLE_DISCONNECT:
+                case WTS_REMOTE_DISCONNECT:
+                    disconnected_ = true;
+                    break;
+                case WTS_CONSOLE_CONNECT:
+                case WTS_REMOTE_CONNECT:
+                    disconnected_ = false;
+                    break;
+                default:
+                    break;
+            }
+            RefreshNotice();
+            return 0;
         case WM_SIZE:
             if (wParam != SIZE_MINIMIZED && webview_) {
                 // O WebView2 acompanha cada passo do arrasto.
@@ -712,6 +743,8 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
             audioNotify_ = nullptr;
             tray_.Remove();
             badge_.Detach();   // o ITaskbarList3 sai antes do CoUninitialize do main.cpp
+            if (sessionNotify_) WTSUnRegisterSessionNotification(window_);
+            sessionNotify_ = false;
             notice_.Close();
             if (webview_) webview_->Close();
             PostQuitMessage(0);

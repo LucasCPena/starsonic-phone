@@ -284,8 +284,8 @@ export type IncomingMessage =
   | { v: number; type: 'abrir'; tela: 'recentes' }
   /** (0.2.0) A resposta ao `chatKey`: "" e "" com o computador fora do chat. A chave nunca vem no estado. */
   | { v: number; type: 'chatChave'; chave: string; empresa: string }
-  /** (0.2.0) A janela principal está na frente (visível, sem minimizar e ativa): depois do estado a cada `ready` e a
-   *  cada mudança. Antes da primeira, `false`. */
+  /** (0.2.0) A janela principal está na frente (visível, sem minimizar e ativa, com a sessão do Windows desbloqueada e
+   *  conectada): depois do estado a cada `ready` e a cada mudança. Antes da primeira, `false`. */
   | { v: number; type: 'janela'; frente: boolean }
   /** (0.2.0) A pessoa clicou no aviso do chat: a conversa dele (0: a aba Chat). */
   | { v: number; type: 'abrir'; tela: 'chat'; conversa: number };

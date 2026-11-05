@@ -153,7 +153,7 @@ target_link_libraries(StarsonicPhone PRIVATE
   opus bcg729 libssl libcrypto sqlite3
   WebView2LoaderStatic
   ws2_32 iphlpapi winmm crypt32 advapi32 user32 gdi32 shell32 shlwapi ole32 oleaut32 uuid version
-  dwmapi shcore comctl32 winhttp dnsapi)
+  dwmapi shcore comctl32 winhttp dnsapi wtsapi32)
 
 # O manifesto vem do app.rc (DPI por monitor v2 e Common Controls 6): o linker nao gera outro.
 target_link_options(StarsonicPhone PRIVATE /MANIFEST:NO)

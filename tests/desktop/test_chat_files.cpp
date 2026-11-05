@@ -137,6 +137,21 @@ TEST_CASE("the zone identifier") {
           "[ZoneTransfer]\r\nZoneId=3\r\nHostUrl=https://chat.starcloud-starsonic.com.br:8443/\r\n");
 }
 
+TEST_CASE("the download toast") {
+    // "Nao foi possivel baixar o arquivo.", com o til e o acento, em UTF-8.
+    const std::string failed = "N\xc3\xa3o foi poss\xc3\xadvel baixar o arquivo.";
+    // O 200 com o arquivo gravado: sem toast.
+    CHECK(DownloadToast(200, true) == "");
+    // O 410: o arquivo passou de 365 dias e saiu do servidor.
+    CHECK(DownloadToast(410, false) == "Arquivo expirado");
+    // Qualquer outra coisa: o 200 que nao foi gravado, a rede (o status 0), o 401, o 404 e o 500.
+    CHECK(DownloadToast(200, false) == failed);
+    CHECK(DownloadToast(0, false) == failed);
+    CHECK(DownloadToast(401, false) == failed);
+    CHECK(DownloadToast(404, false) == failed);
+    CHECK(DownloadToast(500, false) == failed);
+}
+
 TEST_CASE("the notice text is cut in UTF-16 without splitting a pair") {
     const std::string ellipsis = "\xe2\x80\xa6";   // U+2026
     const std::string emoji = "\xf0\x9f\x98\x80";  // U+1F600: um par substituto (duas unidades) no UTF-16

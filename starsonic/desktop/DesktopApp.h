@@ -329,8 +329,9 @@ public:
     // primeiro ready (a pagina ainda carrega), o abrir fica para ele, depois do estado e da agenda. No Windows, nada
     // (uma linha no diagnostico). So poe na fila.
     void OpenRecents();
-    // 0.2.0: a janela principal ficou na frente (visivel, sem minimizar e ativa) ou saiu dela: a mensagem janela, so
-    // quando muda (antes da primeira chamada, false). No iPhone, nada (uma linha no diagnostico). So poe na fila.
+    // 0.2.0: a janela principal ficou na frente (visivel, sem minimizar e ativa, com a sessao do Windows desbloqueada e
+    // conectada) ou saiu dela: a mensagem janela, so quando muda (antes da primeira chamada, false). No iPhone, nada
+    // (uma linha no diagnostico). So poe na fila.
     void SetWindowInFront(bool inFront);
     // 0.2.0: a pessoa clicou no aviso do chat (o do hooks.chatNotice, com a conversa dele; 0: a aba Chat): a mensagem
     // abrir do chat. Antes do primeiro ready, o abrir fica para ele, depois do estado (dois cliques: o do ultimo). Esse

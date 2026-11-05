@@ -545,8 +545,9 @@ download dos arquivos.
 - `{"v":1,"type":"chatChave","chave":"…","empresa":"…"}`: a resposta ao `chatKey`, com `""` e `""` quando o computador
   não está ligado ao chat. A chave nunca vem no estado.
 - `{"v":1,"type":"janela","frente":true}`: diz se a janela principal está na frente, isto é, visível, sem minimizar e
-  ativa. Vem depois do estado a cada `ready` (no fim das mensagens dele) e de novo a cada mudança. Antes da primeira, a
-  interface considera `false`.
+  ativa, com a sessão do Windows desbloqueada e conectada (na tela bloqueada a pessoa não vê nada). Vem depois do
+  estado a cada `ready` (no fim das mensagens dele) e de novo a cada mudança. Antes da primeira, a interface considera
+  `false`.
 - `{"v":1,"type":"abrir","tela":"chat","conversa":7}`: a pessoa clicou no aviso do chat. Com `conversa` 0, a interface
   vai para a aba Chat. Um pedido antes do primeiro `ready` fica para ele, depois do estado (no fim das mensagens dele);
   dois antes dele dão um `abrir` só, o do último clique. Depois, ele vem na hora, uma vez por clique.
@@ -659,8 +660,8 @@ download dos arquivos.
     - `chatDownload(arquivo, nome, chave)`: baixa o arquivo com a chave, para a pasta Downloads, marca como vindo da
       internet e abre. O 410 vira o toast `Arquivo expirado`, e qualquer outro erro o `Não foi possível baixar o
       arquivo.`, os dois pelo `DesktopApp::Notify`.
-  - `DesktopApp::SetWindowInFront(frente)`: a janela principal ficou na frente (visível, sem minimizar e ativa) ou saiu
-    dela. Só põe na fila, e a `janela` vai à interface quando muda.
+  - `DesktopApp::SetWindowInFront(frente)`: a janela principal ficou na frente (visível, sem minimizar e ativa, com a
+    sessão do Windows desbloqueada e conectada) ou saiu dela. Só põe na fila, e a `janela` vai à interface quando muda.
   - `DesktopApp::OpenChat(conversa)`: a pessoa clicou no aviso do chat. Só põe na fila; antes do primeiro `ready`, o
     `abrir` espera por ele. Esse `ready` é o de qualquer página, também o do `aviso.html`: isso vale porque o executável
     só abre o aviso depois da primeira mensagem da janela principal, e assim o primeiro `ready` é sempre o dela.

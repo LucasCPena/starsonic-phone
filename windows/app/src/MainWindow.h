@@ -24,7 +24,8 @@
 // diagnostico ("bandeja: <icone>"), e o servidor da conta e se ela esta conectada, ao monitor de rede
 // (callbacks.account). (0.2.0) O chat: o aviso de uma mensagem sai pela bandeja, e o clique nele traz a janela para a
 // frente e abre a conversa (callbacks.openChat); o numero de nao lidas vai ao botao da barra de tarefas
-// (TaskbarBadge); e a janela na frente (visivel, sem minimizar e ativa) vai ao callbacks.inFront a cada mudanca.
+// (TaskbarBadge); e a janela na frente (visivel, sem minimizar e ativa, com a sessao do Windows desbloqueada e
+// conectada: WTSRegisterSessionNotification) vai ao callbacks.inFront a cada mudanca.
 //
 // O WebView2: a pagina abre com a versao na URL (index.html?v=<versao>, e o aviso.html tambem); o navegador que sai
 // (morto ou caido) e refeito com um ambiente novo, a janela e o aviso ("navegador reiniciado" no diagnostico; o
@@ -84,8 +85,10 @@ public:
         // (rc.3) A conta em uso mudou para o monitor de rede: o servidor (conta.servidor, "" sem conta: o teste DNS) ou
         // se ela esta conectada (conta.status "conectado": as falhas do DNS so contam sem isso, Ruling 23).
         std::function<void(const std::string& server, bool connected)> account;
-        // (0.2.0) A janela ficou na frente (visivel, sem minimizar e ativa) ou saiu dela: so quando muda (antes do
-        // primeiro, fora). Conferido a cada ativacao, minimizar, restaurar, esconder na bandeja e trazer para a frente.
+        // (0.2.0) A janela ficou na frente (visivel, sem minimizar e ativa, com a sessao do Windows desbloqueada e
+        // conectada) ou saiu dela: so quando muda (antes do primeiro, fora). Conferido a cada ativacao, minimizar,
+        // restaurar, esconder na bandeja, trazer para a frente e mudanca da sessao (bloquear, desbloquear,
+        // desconectar, conectar).
         std::function<void(bool inFront)> inFront;
         // (0.2.0) O clique no aviso do chat, com a conversa dele (0: a aba Chat), depois de a janela vir para a frente.
         std::function<void(int64_t conversa)> openChat;
@@ -155,6 +158,9 @@ private:
     Tray tray_;
     TaskbarBadge badge_;      // (0.2.0) o numero do chat no botao da barra de tarefas
     bool inFront_ = false;    // (0.2.0) a ultima janela na frente que foi ao callbacks.inFront
+    bool sessionNotify_ = false;   // (0.2.0) o WTSRegisterSessionNotification deu certo (o Unregister no WM_DESTROY)
+    bool locked_ = false;          // (0.2.0) a sessao do Windows esta bloqueada (WTS_SESSION_LOCK)
+    bool disconnected_ = false;    // (0.2.0) a sessao do Windows esta desconectada (o console ou a remota)
     ShellStatus status_;
     TrayIcon trayIcon_ = TrayIcon::Offline;   // o da bandeja agora (vai ao diagnostico quando muda)
     std::string server_;                       // o conta.servidor que o monitor de rede tem
