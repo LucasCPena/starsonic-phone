@@ -21,7 +21,7 @@ Como usar:
 
 Antes de instalar, deixe três coisas prontas:
 
-1. **O nome do chat no DNS.** Escolha um nome, por exemplo `chat.exemplo.com.br`. No DNS da Starsonic, crie um registro do tipo A com esse nome, apontando para o endereço público da VM. O certificado (o cadeado) é pedido ao Let's Encrypt só depois que o nome aponta para a VM. Esse nome é o `<endereço>` deste guia. Aponte o nome direto para a VM: não ponha o chat atrás de um proxy nem de uma CDN. O chat limita as tentativas pelo endereço de quem acessa, e atrás de um proxy todos teriam o mesmo endereço e dividiriam o mesmo limite.
+1. **O nome do chat no DNS.** Escolha um nome, por exemplo `chat.exemplo.com.br`. No DNS da Starsonic, crie um registro do tipo A com esse nome, apontando para o endereço público da VM. O certificado (o cadeado) é pedido ao Let's Encrypt só depois que o nome aponta para a VM. Esse nome é o `<endereço>` deste guia. Aponte o nome direto para a VM: não ponha o chat atrás de um proxy nem de uma CDN. O chat limita as tentativas pelo endereço de quem acessa, e atrás de um proxy todos teriam o mesmo endereço e dividiriam o mesmo limite. Se o DNS do domínio fica na Cloudflare, deixe esse registro como **Somente DNS** (a nuvem cinza): com a nuvem laranja, a Cloudflare fica no meio, como um proxy.
 2. **As portas 80 e 443 abertas**, na rede da nuvem e em qualquer firewall. A 443 é o chat. A 80 serve para o Let's Encrypt e leva quem entrar por ela para a 443. As duas têm de estar livres na VM.
 3. **Um lugar para a cópia de segurança, fora da VM.** Pode ser outro servidor da Starsonic ou um armazenamento na nuvem. Precisa de uns 150 GB.
 
