@@ -2188,8 +2188,9 @@ void DesktopApp::PostAgenda() {
 // ---------------------------------------------------------------- 0.2.0: o chat
 
 // A conta do motor registrou: o par servidor|ramal dela entra nos ramais conectados do chat (o chat.contaConectada). So
-// no Windows (o iPhone nao tem o chat). O par que ja estava nao e gravado de novo (a renovacao do registro); o que o
-// disco recusou fica nesta abertura, com uma linha.
+// no Windows (o iPhone nao tem o chat). O par que ja estava nao e gravado de novo (a renovacao do registro); o que nao
+// foi gravado (o disco recusou, ou o chat.json ilegivel na abertura, que so o chatLink e o chatUnlink trocam) fica
+// nesta abertura, com uma linha.
 void DesktopApp::AddConnectedRamal() {
     if (IPhone()) return;
     if (!chat_.AddRamal(U8(engineAddress_), U8(engineRamal_))) Log("chat.json: o ramal conectado nao foi gravado");

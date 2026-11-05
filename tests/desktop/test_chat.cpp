@@ -139,6 +139,63 @@ TEST_CASE("a chat file that does not decrypt loads empty and stays on disk") {
     CHECK(store.HasRamal("pbx.exemplo.com", "2001"));
 }
 
+TEST_CASE("an unreadable chat file is not overwritten by a new ramal") {
+    MemoryFileSystem files;
+    HexCipher cipher;
+    // O chat.json que nao decifra: o de outro usuario do Windows, ou o DPAPI que ainda nao responde logo depois de
+    // entrar no Windows (a chave ainda vale na proxima abertura).
+    const std::string unreadable = "conteudo-de-outro-usuario";
+    files.files[kChatPath] = unreadable;
+    ChatStore store(files, cipher, kChatPath);
+    CHECK_FALSE(store.Load());
+
+    // O ramal que registra fica so na memoria: o arquivo continua com os mesmos bytes, sem nenhuma gravacao.
+    CHECK_FALSE(store.AddRamal("pbx.exemplo.com", "2001"));
+    CHECK(store.HasRamal("pbx.exemplo.com", "2001"));
+    CHECK(store.AddRamal("pbx.exemplo.com", "2001"));   // ja estava: true, sem gravar
+    CHECK_FALSE(store.AddRamal("outro.exemplo.com", "2001"));
+    CHECK(store.HasRamal("outro.exemplo.com", "2001"));
+    CHECK(files.files.at(kChatPath) == unreadable);
+    CHECK(files.writeCount == 0);
+
+    // O SetLink que o disco recusa nao troca o arquivo, e o ramal seguinte continua so na memoria.
+    files.failWrites = true;
+    CHECK_FALSE(store.SetLink(ChatLink{kKey, kCompany}));
+    files.failWrites = false;
+    CHECK_FALSE(store.AddRamal("pbx.exemplo.com", "2002"));
+    CHECK(files.files.at(kChatPath) == unreadable);
+    CHECK(files.writeCount == 0);
+
+    // So o SetLink (o chatLink) grava um arquivo novo, com os ramais desta abertura; depois, o AddRamal grava como
+    // sempre.
+    REQUIRE(store.SetLink(ChatLink{kKey, kCompany}));
+    CHECK(files.writeCount == 1);
+    CHECK(store.AddRamal("pbx.exemplo.com", "2003"));
+    CHECK(files.writeCount == 2);
+    ChatStore reloaded(files, cipher, kChatPath);
+    REQUIRE(reloaded.Load());
+    REQUIRE(reloaded.Link().has_value());
+    CHECK(reloaded.Link()->chave == kKey);
+    for (const char* ramal : {"2001", "2002", "2003"}) {
+        INFO(ramal);
+        CHECK(reloaded.HasRamal("pbx.exemplo.com", ramal));
+    }
+    CHECK(reloaded.HasRamal("outro.exemplo.com", "2001"));
+
+    // O ClearLink (o chatUnlink) tambem grava um arquivo novo, sem a chave, e o AddRamal volta a gravar.
+    files.files[kChatPath] = unreadable;
+    const int writes = files.writeCount;
+    ChatStore other(files, cipher, kChatPath);
+    CHECK_FALSE(other.Load());
+    CHECK_FALSE(other.AddRamal("pbx.exemplo.com", "2001"));
+    CHECK(files.files.at(kChatPath) == unreadable);
+    REQUIRE(other.ClearLink());
+    CHECK(files.writeCount == writes + 1);
+    CHECK(Plain(files, cipher) == json({{"v", 1}, {"ramais", json::array({"pbx.exemplo.com|2001"})}}));
+    CHECK(other.AddRamal("pbx.exemplo.com", "2002"));
+    CHECK(files.writeCount == writes + 2);
+}
+
 TEST_CASE("clearing the link keeps the connected ramais") {
     MemoryFileSystem files;
     HexCipher cipher;

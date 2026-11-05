@@ -6,8 +6,11 @@
 // SecretCipher::Protect (no Windows, o DPAPI do usuario), como o admin.json, e o texto resultante e o conteudo do
 // arquivo: quem o abre num editor de texto nao ve a chave. Fora do chat, o arquivo vai sem a chave e a empresa.
 //
-// Carregar (Load): sem arquivo (ou sem o caminho: o executavel que ainda nao o da), vazio e true; arquivo que nao
-// decifra, que nao e JSON ou e de outra versao: vazio e false, e o arquivo nao e tocado ate a proxima gravacao. A chave
+// Carregar (Load): sem arquivo (ou sem o caminho: o executavel que ainda nao o da), vazio e true; arquivo que nao se
+// le, nao decifra, nao e JSON ou e de outra versao: vazio e false, e o arquivo fica como esta nesta abertura. O
+// AddRamal nao o troca (o par fica so na memoria): so o SetLink e o ClearLink, que a pessoa pede (o chatLink e o
+// chatUnlink), gravam um arquivo novo, e depois de um deles tudo volta ao de sempre. Assim um DPAPI que ainda nao
+// respondeu logo depois de entrar no Windows (o app abre com o Windows) nao custa a chave no primeiro registro. A chave
 // e a empresa passam pela conferencia do SetLink (vale o par, ou nenhum dos dois), e um ramal que nao e texto fica de
 // fora.
 //
@@ -49,14 +52,16 @@ public:
     const std::optional<ChatLink>& Link() const { return link_; }
     // O par ja se conectou a central neste computador.
     bool HasRamal(const std::string& servidor, const std::string& ramal) const;
-    // Grava a chave e a empresa, no lugar das de antes. false, e nada muda: uma das duas fora da regra (ValidChatKey,
-    // ValidChatCompany), ou o cifrador ou o disco falhou.
+    // Grava a chave e a empresa, no lugar das de antes (tambem no lugar do arquivo que o Load nao leu). false, e nada
+    // muda: uma das duas fora da regra (ValidChatKey, ValidChatCompany), ou o cifrador ou o disco falhou.
     bool SetLink(const ChatLink& link);
-    // Grava sem a chave e a empresa; os ramais ficam. false, e nada muda: o cifrador ou o disco falhou.
+    // Grava sem a chave e a empresa (tambem no lugar do arquivo que o Load nao leu); os ramais ficam. false, e nada
+    // muda: o cifrador ou o disco falhou.
     bool ClearLink();
     // O par entra nos conectados, e grava so quando ele e novo (o mesmo par de novo: true, sem gravar). false: o
-    // servidor ou o ramal vazio (o par nao entra), ou o cifrador ou o disco falhou; nesse caso o par fica nesta abertura
-    // (ele se conectou, como a ligacao do RecentsStore::Add), e a proxima gravacao o leva.
+    // servidor ou o ramal vazio (o par nao entra); o cifrador ou o disco falhou; ou o arquivo e o que o Load nao leu,
+    // que nao e trocado (ver acima). Nesses dois casos o par fica nesta abertura (ele se conectou, como a ligacao do
+    // RecentsStore::Add), e a proxima gravacao o leva (com o arquivo que o Load nao leu, a do SetLink ou do ClearLink).
     bool AddRamal(const std::string& servidor, const std::string& ramal);
 
 private:
@@ -67,6 +72,7 @@ private:
     std::string path_;
     std::optional<ChatLink> link_;
     std::vector<std::string> ramais_;   // os pares, na ordem em que entraram
+    bool unreadable_ = false;           // o Load nao leu o arquivo que existe: so o SetLink e o ClearLink o trocam
 };
 
 }  // namespace starsonic

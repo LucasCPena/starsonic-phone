@@ -252,7 +252,9 @@ struct DesktopHooks {
 //   comandos sao recusados como os do PC, e o SetWindowInFront e o OpenChat so deixam uma linha no diagnostico.
 //   - O chat.json (a ChatStore, pelo cifrador, lida na abertura): a chave do computador, a empresa dela e os ramais que
 //     ja se conectaram a central neste computador. O par servidor|ramal da conta do motor entra nele a cada registro
-//     (2xx), tambem o do Entrar; o estado diz se o da conta em uso esta la (chat.contaConectada).
+//     (2xx), tambem o do Entrar; o estado diz se o da conta em uso esta la (chat.contaConectada). Um chat.json ilegivel
+//     na abertura nunca e trocado por um registro (o par fica so na memoria): so o chatLink e o chatUnlink gravam um
+//     arquivo novo.
 //   - chatKey responde com a mensagem chatChave (a chave nunca vai no estado); chatLink grava a chave e a empresa (o
 //     disco que recusa: um toast); chatUnlink as apaga (os ramais ficam); chatNotify vai ao hooks.chatNotice (com o Nao
 //     perturbe, nada); chatBadge, ao hooks.chatBadge so quando o numero muda (comeca em 0); chatDownload, ao

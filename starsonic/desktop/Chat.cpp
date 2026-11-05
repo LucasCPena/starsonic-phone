@@ -88,7 +88,10 @@ ChatStore::ChatStore(FileSystem& files, SecretCipher& cipher, std::string path)
 bool ChatStore::Load() {
     link_.reset();
     ramais_.clear();
+    unreadable_ = false;
     if (path_.empty() || !files_.Exists(path_)) return true;
+    // Daqui em diante, o arquivo que nao se le fica como esta ate o SetLink ou o ClearLink.
+    unreadable_ = true;
     const std::optional<std::string> bytes = files_.Read(path_);
     if (!bytes) return false;
     // O que o cifrador devolveu pode ter ganho um fim de linha de um editor.
@@ -100,6 +103,7 @@ bool ChatStore::Load() {
     if (version == root.end() || !version->is_number_integer() || version->get<int64_t>() != kFormatVersion) {
         return false;
     }
+    unreadable_ = false;
     ChatLink link{GetString(root, "chave"), GetString(root, "empresa")};
     if (ValidChatKey(link.chave) && ValidChatCompany(link.empresa)) link_ = std::move(link);
     const auto ramais = root.find("ramais");
@@ -122,12 +126,14 @@ bool ChatStore::SetLink(const ChatLink& link) {
     if (!ValidChatKey(link.chave) || !ValidChatCompany(link.empresa)) return false;
     if (!Save(link, ramais_)) return false;
     link_ = link;
+    unreadable_ = false;   // o arquivo novo toma o lugar do que o Load nao leu
     return true;
 }
 
 bool ChatStore::ClearLink() {
     if (!Save(std::nullopt, ramais_)) return false;
     link_.reset();
+    unreadable_ = false;
     return true;
 }
 
@@ -136,6 +142,9 @@ bool ChatStore::AddRamal(const std::string& servidor, const std::string& ramal) 
     if (key.empty()) return false;
     if (std::find(ramais_.begin(), ramais_.end(), key) != ramais_.end()) return true;
     ramais_.push_back(key);
+    // O arquivo que o Load nao leu nunca e trocado por um registro: um DPAPI que ainda nao respondeu logo depois de
+    // entrar no Windows nao pode custar a chave. O par fica so na memoria, ate o SetLink ou o ClearLink.
+    if (unreadable_) return false;
     return Save(link_, ramais_);
 }
 

@@ -485,12 +485,15 @@ download dos arquivos.
 
 - **O `chat.json`**, na pasta de dados, guarda a chave do computador, o nome da empresa dela e os ramais conectados:
   `{"v":1,"chave":"…","empresa":"…","ramais":["servidor|ramal"]}`. Ele passa inteiro pelo DPAPI do usuário, como o
-  `admin.json`. Fora do chat, ele vai sem a chave e a empresa. Um `chat.json` que não decifra, não é JSON ou é de outra
-  versão deixa o computador fora do chat, com a linha `chat.json ilegivel: o computador fica desligado do chat`, e fica
-  no disco até a próxima gravação (que pode ser a de um ramal que registra, abaixo).
+  `admin.json`. Fora do chat, ele vai sem a chave e a empresa.
+- **Um `chat.json` que não se lê** (não decifra, não é JSON ou é de outra versão) deixa o computador fora do chat, com a
+  linha `chat.json ilegivel: o computador fica desligado do chat`. O arquivo fica no disco como está nessa abertura:
+  um registro não o troca (o ramal fica só na memória), e só o `chatLink` ou o `chatUnlink` gravam um arquivo novo.
+  Depois de um deles, tudo volta ao de sempre. Assim, um DPAPI que ainda não respondeu logo depois de entrar no Windows
+  (o app abre com o Windows) não apaga a chave do computador no primeiro registro.
 - **Os ramais conectados:** a cada registro (2xx) da conta do motor, também o do Entrar, o par `servidor|ramal` dela
-  entra no `chat.json`, se ainda não estava. O servidor vai em minúsculas, e os dois sem os espaços das pontas. O
-  `chatUnlink` não tira os ramais.
+  entra no `chat.json`, se ainda não estava (com o `chat.json` que não se lê, só na memória: ver acima). O servidor vai
+  em minúsculas, e os dois sem os espaços das pontas. O `chatUnlink` não tira os ramais.
 - **A chave nunca vai no estado nem no diagnóstico.** Ela só vem na `chatChave`, a resposta ao `chatKey`.
   - O diagnóstico também nunca leva a empresa, o título e o texto do aviso, nem o nome do arquivo.
   - Cada comando do chat deixa só `chat: <comando>` (no `chatBadge`, com o número: `chat: chatBadge 3`).

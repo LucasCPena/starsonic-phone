@@ -2994,6 +2994,35 @@ TEST_CASE("an account that registers joins the connected ramais") {
     CHECK_FALSE(saved.HasRamal("pbx.example.com", "2002"));
 }
 
+TEST_CASE("a registration leaves an unreadable chat.json as it was") {
+    // O chat.json que nao decifra na abertura (o de outro usuario do Windows, ou o DPAPI que ainda nao responde logo
+    // depois de entrar no Windows): o registro da conta nao o troca. O par fica na memoria (o contaConectada), e so o
+    // chatLink grava um arquivo novo.
+    Harness h;
+    const std::string unreadable = "conteudo-de-outro-usuario";
+    h.files.files["dados/chat.json"] = unreadable;
+    h.StartRegistered();
+    CHECK(h.Logged("chat.json ilegivel: o computador fica desligado do chat"));
+    CHECK(h.Logged("chat.json: o ramal conectado nao foi gravado"));
+    CHECK(h.files.files.at("dados/chat.json") == unreadable);
+    CHECK(h.State()["chat"] == Chat(false, "", true));
+
+    h.Send(ChatLinkCommand(kChatKey, kChatCompany));
+    CHECK(h.State()["chat"] == Chat(true, kChatCompany, true));
+    ChatStore saved(h.files, h.cipher, "dados/chat.json");
+    REQUIRE(saved.Load());
+    REQUIRE(saved.Link().has_value());
+    CHECK(saved.Link()->chave == kChatKey);
+    CHECK(saved.HasRamal("pbx.example.com", "2001"));
+
+    // Com o arquivo novo, o registro grava como sempre.
+    h.Send(Login("pbx.example.com", "2003", "segredo"));
+    h.app->OnRegistration(200, true, h.port.LastId());
+    h.Run();
+    REQUIRE(saved.Load());
+    CHECK(saved.HasRamal("pbx.example.com", "2003"));
+}
+
 TEST_CASE("chatNotify goes to the hook, and not with N\xc3\xa3o perturbe on") {
     Harness h;
     h.StartRegistered();
