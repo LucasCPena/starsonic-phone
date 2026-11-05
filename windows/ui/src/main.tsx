@@ -481,8 +481,10 @@ function App() {
               onEdit={(contato) => setView({ kind: 'contato', contato, back: view })}
             />
           ))}
+        {/* (0.2.0) A busca e o menu da lista são da pessoa: com outra pessoa (a troca de conta), a lista começa de novo. */}
         {tab === 'chat' && (
           <Lista
+            key={vistaChat.eu?.id ?? 0}
             vista={vistaChat}
             onNovaConversa={() => setView({ kind: 'chatNova', back: view })}
             onNovoGrupo={() => setView({ kind: 'chatNovoGrupo', back: view })}

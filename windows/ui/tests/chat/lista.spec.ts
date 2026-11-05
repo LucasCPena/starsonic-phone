@@ -3,8 +3,9 @@
 // primeiro), a mensagem que chega com a página aberta, a busca, a primeira vez e o "+", a conta que nunca se conectou
 // aqui, o computador tirado do chat, o computador novo da mesma pessoa, a troca de conta (Review Focus 1), o Ctrl+5, o
 // modo iPhone, o CSP e a acessibilidade nos dois temas. Cada teste cria a própria empresa.
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type APIResponse, type Page, type Route } from '@playwright/test';
 import { readFileSync } from 'node:fs';
+import { createServer, type AddressInfo, type Socket } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { capturar, comandos, depoisDoQueChegou, empurrar, esperarComando, semViolacoesSerias, verTextos } from '../helpers';
 import { abrirNoChat } from './abrir';
@@ -41,6 +42,36 @@ function data(ms: number): { dia: string; mes: string; ano: string } {
 /** A hora da última mensagem da conversa, como o servidor a guardou. */
 async function ultimaCriadaEm(api: ApiDeTeste, conversa: number): Promise<number> {
   return (await api.mensagens(conversa)).at(-1).criadaEm;
+}
+
+/**
+ * A troca de conta (Review Focus 1): a cada mudança da página, nem a conversa da primeira pessoa (a Ana Souza) nem o
+ * número dela ("Chat, 2 mensagens não lidas"). `sempre`: desde que a página abre (antes de qualquer script dela); ou
+ * só com a segunda conta (a Caixa 2) no cabeçalho, de agora em diante.
+ */
+async function vigiarAPrimeiraPessoa(page: Page, quando: 'sempre' | 'com a segunda conta'): Promise<void> {
+  const vigiar = (soComASegunda: boolean) => {
+    const w = window as unknown as { __misturas: unknown[] };
+    w.__misturas = [];
+    new MutationObserver(() => {
+      if (soComASegunda && !document.querySelector('.account-name')?.textContent?.includes('2015')) return;
+      const nomes = [...document.querySelectorAll('.chat-nome')].map((n) => n.textContent);
+      const rotulo = document.querySelector('.tab-chat')?.getAttribute('aria-label');
+      if (nomes.includes('Ana Souza') || rotulo === 'Chat, 2 mensagens não lidas') w.__misturas.push({ nomes, rotulo });
+    }).observe(document, { subtree: true, childList: true, characterData: true, attributes: true });
+  };
+  if (quando === 'sempre') await page.addInitScript(vigiar, false);
+  else await page.evaluate(vigiar, true);
+}
+
+const misturas = (page: Page) => page.evaluate(() => (window as unknown as { __misturas: unknown[] }).__misturas);
+
+/** Troca para a segunda conta do cenário chat-duas-contas pelo menu das contas. */
+async function trocarParaACaixa(page: Page): Promise<void> {
+  await page.getByRole('button', { name: /Trocar de conta/ }).click();
+  await page.getByRole('menuitemradio', { name: /Caixa 2/ }).click();
+  await esperarComando(page, { cmd: 'selectAccount', contaId: ID_DA_CAIXA });
+  await expect(page.locator('.account-name')).toHaveText('Caixa 2 · 2015');
 }
 
 test('the Chat tab appears only with the computer linked, with the unread count', async ({ page }) => {
@@ -225,9 +256,10 @@ test('a computer taken out shows the message and stops trying', async ({ page })
   const { pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO, ANA]);
   const [a, ana] = pessoas;
   await page.clock.install();
-  let bilhetes = 0;
+  // Todo pedido ao servidor do chat (o bilhete, o entrar, as conversas...).
+  let pedidos = 0;
   page.on('request', (r) => {
-    if (r.method() === 'POST' && r.url() === `${baseDoChat()}/api/v1/eventos/bilhete`) bilhetes += 1;
+    if (r.url().startsWith(baseDoChat())) pedidos += 1;
   });
   await abrirNoChat(page, { chave: a.chave, ...RECEPCAO });
   // Os eventos ligados: a mensagem da Ana chega por eles ou pela releitura de quando eles ligam.
@@ -243,22 +275,88 @@ test('a computer taken out shows the message and stops trying', async ({ page })
   await expect(abaChat(page)).toHaveAccessibleName('Chat');
   await esperarComando(page, { cmd: 'chatBadge', n: 0 });
 
-  // Dois minutos depois, nenhuma tentativa de ligar os eventos de novo.
-  const antes = bilhetes;
+  // Dois minutos depois, nenhum pedido ao servidor: nem ligar os eventos de novo, nem reler, nem entrar.
+  const antes = pedidos;
   await page.clock.runFor(120_000);
   await page.waitForTimeout(500);
-  expect(bilhetes).toBe(antes);
+  expect(pedidos).toBe(antes);
   await expect(page.getByText('Este computador saiu do chat. Fale com o suporte da Starsonic.', { exact: true })).toBeVisible();
+});
+
+test('a request with no answer gives up after 20 s and tries again', async ({ page }) => {
+  const { pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO]);
+  await page.clock.install();
+  // O entrar nunca tem resposta: a conexão fica aberta, sem nada (o servidor ou um proxy que segura o pedido).
+  const presos: Route[] = [];
+  await page.route(`${baseDoChat()}/api/v1/pessoas/eu`, (rota) => {
+    presos.push(rota);
+  });
+  await abrirNoChat(page, { chave: pessoas[0].chave, ...RECEPCAO });
+  await expect.poll(() => presos.length).toBe(1);
+  const faixa = page.getByRole('status').filter({ hasText: 'Sem conexão com o chat. Tentando de novo…' });
+  await expect(faixa).toHaveCount(0);
+
+  await page.clock.runFor(20_000);
+  await expect(faixa).toBeVisible();
+  // Depois da espera da vez (no máximo 1,5 s na primeira), o entrar vai de novo.
+  await page.clock.runFor(1_500);
+  await expect.poll(() => presos.length).toBe(2);
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
+});
+
+test('a WebSocket that never opens gives up after 20 s and connects again', async ({ page }) => {
+  // Um servidor que aceita a conexão e nunca responde: o WebSocket fica sem abrir. A API vem do page.route.
+  const conexoes: Socket[] = [];
+  const mudo = createServer((s) => conexoes.push(s));
+  await new Promise<void>((pronto) => mudo.listen(0, '127.0.0.1', pronto));
+  const base = `http://127.0.0.1:${(mudo.address() as AddressInfo).port}`;
+  let bilhetes = 0;
+  await page.route(`${base}/api/v1/**`, (rota) => {
+    const responder = (corpo: unknown) => rota.fulfill({ status: 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify(corpo) });
+    switch (new URL(rota.request().url()).pathname) {
+      case '/api/v1/pessoas/eu':
+        return responder({ pessoa: { id: 1, ramal: RECEPCAO.ramal, nome: RECEPCAO.nome, saiu: false } });
+      case '/api/v1/conversas':
+        return responder({ conversas: [] });
+      case '/api/v1/eventos/bilhete':
+        bilhetes += 1;
+        return responder({ bilhete: 'b'.repeat(43) });
+      default:
+        return rota.abort();
+    }
+  });
+  try {
+    await page.clock.install();
+    await abrirNoChat(page, { chave: 'k'.repeat(43), ...RECEPCAO, extra: { chat: base } });
+    await expect(page.getByText('Nenhuma conversa ainda', { exact: true })).toBeVisible();
+    await expect.poll(() => conexoes.length).toBe(1);
+    expect(bilhetes).toBe(1);
+    const faixa = page.getByRole('status').filter({ hasText: 'Sem conexão com o chat. Tentando de novo…' });
+    await expect(faixa).toHaveCount(0);
+
+    await page.clock.runFor(20_000);
+    await expect(faixa).toBeVisible();
+    // Uma queda: depois da espera da vez, um bilhete novo e outra conexão.
+    await page.clock.runFor(1_500);
+    await expect.poll(() => bilhetes).toBe(2);
+    await expect.poll(() => conexoes.length).toBe(2);
+  } finally {
+    for (const s of conexoes) s.destroy();
+    mudo.close();
+  }
 });
 
 test('a new computer of the same person shows the notice', async ({ page }) => {
   const { codigo, pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO, ANA]);
   const [a, ana] = pessoas;
-  await abrirNoChat(page, { chave: a.chave, ...RECEPCAO });
-  // Os eventos ligados (a mensagem chega por eles ou pela releitura de quando eles ligam): o aviso só vem por eles.
   const dupla = await ana.api.criarDupla(a.pessoa.id);
   await ana.api.enviarTexto(dupla, 'Bom dia!');
+  await abrirNoChat(page, { chave: a.chave, ...RECEPCAO });
   await expect(linhas(page)).toHaveCount(1);
+  // O aviso só vem pelos eventos: antes do segundo computador, eles têm de estar ligados. Uma mensagem de depois da
+  // primeira leitura chega por eles ou pela releitura de quando eles ligam; nos dois casos, já estão ligados.
+  await ana.api.enviarTexto(dupla, 'Pode me mandar a proposta da ACME?');
+  await expect(linhas(page).first().locator('.chat-numero')).toHaveText('2');
 
   // A mesma pessoa entra num segundo computador.
   const outro = await ligarComputador(codigo, 'RECEPCAO-02');
@@ -286,28 +384,58 @@ test("switching the account clears the first person's chat before the second one
   await abrirNoChat(page, { chave: a.chave, ...RECEPCAO, cenario: 'chat-duas-contas' });
   await expect(linhas(page).locator('.chat-nome')).toHaveText(['Ana Souza']);
   await expect(abaChat(page)).toHaveAccessibleName('Chat, 2 mensagens não lidas');
+  // Uma busca da primeira pessoa: a busca é dela, e não passa para a segunda.
+  const busca = page.getByRole('searchbox', { name: 'Procurar conversa' });
+  await busca.fill('ana');
+  await expect(linhas(page).locator('.chat-nome')).toHaveText(['Ana Souza']);
 
-  // A cada mudança da página com a segunda conta no cabeçalho: nem a conversa da primeira pessoa, nem o número dela.
-  await page.evaluate(() => {
-    const w = window as unknown as { __misturas: unknown[] };
-    w.__misturas = [];
-    new MutationObserver(() => {
-      if (!document.querySelector('.account-name')?.textContent?.includes('2015')) return;
-      const nomes = [...document.querySelectorAll('.chat-nome')].map((n) => n.textContent);
-      const rotulo = document.querySelector('.tab-chat')?.getAttribute('aria-label');
-      if (nomes.includes('Ana Souza') || rotulo === 'Chat, 2 mensagens não lidas') w.__misturas.push({ nomes, rotulo });
-    }).observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true });
-  });
-  await page.getByRole('button', { name: /Trocar de conta/ }).click();
-  await page.getByRole('menuitemradio', { name: /Caixa 2/ }).click();
-  await esperarComando(page, { cmd: 'selectAccount', contaId: ID_DA_CAIXA });
-  await expect(page.locator('.account-name')).toHaveText('Caixa 2 · 2015');
+  await vigiarAPrimeiraPessoa(page, 'com a segunda conta');
+  await trocarParaACaixa(page);
   await expect(linhas(page).locator('.chat-nome')).toHaveText(['João Pereira']);
+  await expect(busca).toHaveValue('');
   await expect(abaChat(page)).toHaveAccessibleName('Chat, 3 mensagens não lidas');
   await expect(abaChat(page).locator('.tab-numero')).toHaveText('3');
-  expect(await page.evaluate(() => (window as unknown as { __misturas: unknown[] }).__misturas)).toEqual([]);
+  expect(await misturas(page)).toEqual([]);
   // O número no ícone: o da primeira pessoa, 0 na troca e o da segunda.
   expect((await comandos(page)).filter((c) => c.cmd === 'chatBadge').map((c) => c.n)).toEqual([2, 0, 3]);
+});
+
+test("an answer for the first person that arrives after the switch never shows", async ({ page }) => {
+  const { pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO, CAIXA, ANA, JOAO]);
+  const [a, caixa, ana, joao] = pessoas;
+  const comA = await ana.api.criarDupla(a.pessoa.id);
+  for (const texto of ['Bom dia!', 'Pode me mandar a proposta da ACME?']) await ana.api.enviarTexto(comA, texto);
+  const comCaixa = await joao.api.criarDupla(caixa.pessoa.id);
+  for (const texto of ['Oi!', 'Fechamos o pedido de hoje.', 'Combinado?']) await joao.api.enviarTexto(comCaixa, texto);
+
+  // A primeira leitura das conversas (a da Recepção) vai ao servidor na hora, com o computador ainda como a Recepção,
+  // mas a resposta dela só chega à página depois da troca; as outras passam direto.
+  let presa: { rota: Route; resposta: APIResponse } | null = null;
+  let primeira = true;
+  await page.route(`${baseDoChat()}/api/v1/conversas`, async (rota) => {
+    if (!primeira || rota.request().method() !== 'GET') return rota.continue();
+    primeira = false;
+    presa = { rota, resposta: await rota.fetch() };
+  });
+  await vigiarAPrimeiraPessoa(page, 'sempre');
+  await abrirNoChat(page, { chave: a.chave, ...RECEPCAO, cenario: 'chat-duas-contas' });
+  await expect.poll(() => presa !== null).toBe(true);
+  const conversasDaRecepcao = await presa!.resposta.json();
+  expect(conversasDaRecepcao.conversas.map((c: { com: { nome: string } }) => c.com.nome)).toEqual(['Ana Souza']);
+
+  await trocarParaACaixa(page);
+  await expect(linhas(page).locator('.chat-nome')).toHaveText(['João Pereira']);
+  await expect(abaChat(page)).toHaveAccessibleName('Chat, 3 mensagens não lidas');
+  // Agora chega a resposta da Recepção.
+  const chegou = page.waitForResponse((r) => r.request() === presa!.rota.request());
+  await presa!.rota.fulfill({ response: presa!.resposta });
+  await chegou;
+  await page.evaluate(() => new Promise((r) => setTimeout(r, 200)));
+  await expect(linhas(page).locator('.chat-nome')).toHaveText(['João Pereira']);
+  await expect(abaChat(page)).toHaveAccessibleName('Chat, 3 mensagens não lidas');
+  expect(await misturas(page)).toEqual([]);
+  // A primeira pessoa nunca teve número: só o da segunda.
+  expect((await comandos(page)).filter((c) => c.cmd === 'chatBadge').map((c) => c.n)).toEqual([3]);
 });
 
 test('Ctrl+5 opens the Chat tab only with the computer linked', async ({ page }) => {

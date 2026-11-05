@@ -1,9 +1,9 @@
 // Os eventos do chat (docs/chat-protocolo.md, seção 7): o bilhete, pedido com a chave, e o WebSocket dele, no mesmo
 // endereço da API (https vira wss). O evento `fora` e o fechamento com 4001 (o computador saiu do chat) param tudo, como
 // um 401 no bilhete. Os outros fechamentos (4000: o computador conectou de novo; 4002: ele ficou lento; 1001: o
-// servidor vai desligar) e a queda sem código reconectam depois do esperaDaVez; um 429 no bilhete espera o
-// esperarSegundos dele. Quem chama relê o que perdeu a cada `conectou`.
-import { ErroChat, type ApiChat } from './api';
+// servidor vai desligar) e a queda sem código reconectam depois do esperaDaVez, como o WebSocket que não abre em 20 s;
+// um 429 no bilhete espera o esperarSegundos dele. Quem chama relê o que perdeu a cada `conectou`.
+import { ErroChat, PRAZO_DA_RESPOSTA_MS, type ApiChat } from './api';
 import type { Evento } from './tipos';
 
 /** As esperas da reconexão, uma por tentativa; depois da última, ela vale para todas. */
@@ -62,17 +62,24 @@ export function conectarEventos(
   let parado = false;
   let socket: WebSocket | null = null;
   let espera: ReturnType<typeof setTimeout> | undefined;
+  /** O prazo do `open` do WebSocket de agora. */
+  let prazoDaAbertura: ReturnType<typeof setTimeout> | undefined;
   let tentativa = 0;
 
-  const parar = () => {
-    parado = true;
-    clearTimeout(espera);
+  /** Fecha o WebSocket de agora sem ouvir mais nada dele. */
+  const fechar = () => {
+    clearTimeout(prazoDaAbertura);
     const s = socket;
     socket = null;
     if (s) {
       s.onopen = s.onmessage = s.onclose = null;
       s.close();
     }
+  };
+  const parar = () => {
+    parado = true;
+    clearTimeout(espera);
+    fechar();
   };
   // O computador saiu do chat: uma vez só (o `fora` vem antes do 4001).
   const sair = () => {
@@ -107,7 +114,13 @@ export function conectarEventos(
       return;
     }
     socket = s;
+    // Sem o `open` em 20 s (um servidor ou um proxy que segura a conexão): ela fecha, e conta como uma queda.
+    prazoDaAbertura = setTimeout(() => {
+      fechar();
+      depoisDaFalha();
+    }, PRAZO_DA_RESPOSTA_MS);
     s.onopen = () => {
+      clearTimeout(prazoDaAbertura);
       tentativa = 0;
       ao.conectou();
     };
@@ -118,6 +131,7 @@ export function conectarEventos(
       else ao.evento(e);
     };
     s.onclose = (f) => {
+      clearTimeout(prazoDaAbertura);
       socket = null;
       if (f.code === FECHOU_FORA) sair();
       else depoisDaFalha();

@@ -1,7 +1,7 @@
 // O cartão Chat da área do administrador (Task 4): ligar este computador ao chat com o código da empresa, os erros do
 // código e desligar, aqui e no servidor. Os erros vêm do page.route: um código errado de verdade conta no limite do
 // servidor (10 por hora do endereço), e os testes nunca mandam um.
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page, type Route } from '@playwright/test';
 import { capturar, comandos, entrarNaAdmin, esperarComando, semViolacoesSerias, verTextos } from '../helpers';
 import { abrirNoChat } from './abrir';
 import { baseDoChat, empresaComPessoas, novaEmpresa } from './servidor';
@@ -130,6 +130,29 @@ test('a computer taken out of the chat shows the code field again, with Desligar
   await expect(ligar(page)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Desligar do chat' })).toBeVisible();
   await expect(page.getByText(LIGADO)).toHaveCount(0);
+});
+
+test('Desligar do chat unlinks even when the server never answers', async ({ page }) => {
+  const { pessoas } = await empresaComPessoas('ACME Comércio Ltda', [RECEPCAO]);
+  await page.clock.install();
+  // O DELETE nunca tem resposta: a conexão fica aberta, sem nada.
+  const presos: Route[] = [];
+  await page.route(`${baseDoChat()}/api/v1/computadores/eu`, (rota) => {
+    presos.push(rota);
+  });
+  await abrirNoChat(page, { chave: pessoas[0].chave, ...RECEPCAO });
+  await expect(page.getByText('Nenhuma conversa ainda', { exact: true })).toBeVisible();
+  await entrarNaAdmin(page);
+  await page.getByRole('button', { name: 'Desligar do chat' }).click();
+  await expect.poll(() => presos.length).toBe(1);
+  expect((await comandos(page)).filter((c) => c.cmd === 'chatUnlink')).toEqual([]);
+
+  // Mesmo sem resposta: depois de 20 s, o chatUnlink, e o cartão volta a mostrar o campo do código.
+  await page.clock.runFor(20_000);
+  await esperarComando(page, { cmd: 'chatUnlink' });
+  await expect(campo(page)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Desligar do chat' })).toHaveCount(0);
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
 });
 
 test('Desligar do chat unlinks here and on the server', async ({ page }) => {

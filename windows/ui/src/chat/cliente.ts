@@ -8,9 +8,9 @@
 // - A troca de pessoa (a conta mudou de ramal, ou o chat desligou): os eventos param e a vista esvazia (as conversas, a
 //   aberta, o número e a faixa) antes de a outra entrar. O que chega de antes da troca é descartado (a `vez`), e os
 //   entrar vão um de cada vez: o computador age como a pessoa do último que o servidor atendeu (Review Focus 1).
-// - Os erros: sem rede ou um 500, o `conectado` fica false e há outra tentativa depois do esperaDaVez; um 401 (a chave
-//   não vale mais, em qualquer pedido ou no bilhete) é a situação `fora`, e tudo para; um 429 `limite` espera o
-//   esperarSegundos (no máximo 60 s) e tenta de novo uma vez.
+// - Os erros: sem rede (também o pedido sem resposta em 20 s) ou um 500, o `conectado` fica false e há outra tentativa
+//   depois do esperaDaVez; um 401 (a chave não vale mais, em qualquer pedido ou no bilhete) é a situação `fora`, e tudo
+//   para; um 429 `limite` espera o esperarSegundos (no máximo 60 s) e tenta de novo uma vez.
 // - Os eventos: cada `conectou` relê as conversas (o que chega durante a releitura vale de novo por cima dela); a
 //   mensagem muda a última, a hora e as não lidas da conversa e a põe no lugar dela na ordem; a `lida` zera as não
 //   lidas; o computador novo mostra a faixa e o aviso do Windows.
@@ -268,22 +268,32 @@ export class ChatCliente {
         }
         const api = criarApi(this.base, chave);
         const eu = await this.entrarEmOrdem(vez, api, conta.ramal, nome);
+        if (vez !== this.vez) return;
         const conversas = await this.comLimite(vez, () => api.conversas());
         if (vez !== this.vez) return;
         this.mudar({ situacao: 'pronto', conectado: true, eu, conversas: ordenar(conversas) });
         this.ligarEventos(vez, api);
         return;
       } catch (e) {
-        if (vez !== this.vez || e instanceof Parado) return;
-        if (ehChave(e)) {
-          this.sairDoChat();
-          return;
-        }
-        this.mudar({ conectado: false });
-        await this.dormir(esperaDaVez(tentativa, Math.random()));
-        if (vez !== this.vez) return;
+        if (!(await this.esperarDepoisDoErro(vez, e, tentativa))) return;
       }
     }
+  }
+
+  /**
+   * O erro de um pedido que se tenta até dar certo (a partida, a releitura das conversas e, na Task 6, a da conversa
+   * aberta): um 401 é a situação `fora`, e tudo para; o resto (sem rede, um 500), a faixa e a espera da vez. `true`:
+   * tente de novo, a espera passou; `false`: desista (veio outra vez, ou o computador saiu do chat).
+   */
+  private async esperarDepoisDoErro(vez: number, e: unknown, tentativa: number): Promise<boolean> {
+    if (vez !== this.vez || e instanceof Parado) return false;
+    if (ehChave(e)) {
+      this.sairDoChat();
+      return false;
+    }
+    this.mudar({ conectado: false });
+    await this.dormir(esperaDaVez(tentativa, Math.random()));
+    return vez === this.vez;
   }
 
   /** O entrar, um de cada vez: o próximo só sai depois da resposta do anterior (e não sai depois de uma parada). */
@@ -302,6 +312,9 @@ export class ChatCliente {
       return await pedir();
     } catch (e) {
       if (!ehLimite(e)) throw e;
+      // Uma parada durante o pedido não acorda uma espera que começa depois dela: sem isto, um 429 atrasado de antes de
+      // uma troca seguraria a fila do entrar por até 60 s.
+      if (vez !== this.vez) throw new Parado();
       await this.dormir(esperaDoLimite(e));
       if (vez !== this.vez) throw new Parado();
       return pedir();
@@ -375,14 +388,7 @@ export class ChatCliente {
         if (deNovo) void this.reler(vez, api);
         return;
       } catch (e) {
-        if (vez !== this.vez || e instanceof Parado) return;
-        if (ehChave(e)) {
-          this.sairDoChat();
-          return;
-        }
-        this.mudar({ conectado: false });
-        await this.dormir(esperaDaVez(tentativa, Math.random()));
-        if (vez !== this.vez) return;
+        if (!(await this.esperarDepoisDoErro(vez, e, tentativa))) return;
       }
     }
   }
