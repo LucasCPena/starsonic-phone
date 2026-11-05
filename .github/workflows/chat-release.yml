@@ -103,6 +103,10 @@ jobs:
         working-directory: chat-servidor
         run: bash deploy/copia-teste.sh
 
+      - name: Teste do instalar.sh
+        working-directory: chat-servidor
+        run: bash deploy/instalar-teste.sh
+
       - name: systemd-analyze
         working-directory: chat-servidor
         run: |

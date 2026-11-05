@@ -47,6 +47,8 @@ jobs:
         run: shellcheck deploy/*.sh
       - name: Teste do copia.sh
         run: bash deploy/copia-teste.sh
+      - name: Teste do instalar.sh
+        run: bash deploy/instalar-teste.sh
       - name: systemd-analyze
         # O verify confere se o ExecStart de cada unidade existe e roda: põe o programa e o
         # copia.sh onde a instalação os põe.

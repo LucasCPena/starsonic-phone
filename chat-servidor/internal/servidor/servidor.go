@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -171,14 +172,25 @@ func gerenciador(c Config) *autocert.Manager {
 }
 
 // redirecionador é o manipulador da porta 80: atende ao desafio do certificado
-// (/.well-known/acme-challenge/) e manda o resto, com o caminho e a query, para o HTTPS do
-// Endereco com 301. O Host do pedido não conta: o destino é sempre o da configuração.
-func redirecionador(m *autocert.Manager, endereco string) http.Handler {
+// (/.well-known/acme-challenge/) e manda o resto, com o caminho e a query, para o HTTPS de
+// host com 301. host é o Endereco, com a porta pública quando ela não é a 443 (veja
+// hostPublico). O Host do pedido não conta: o destino é sempre o da configuração.
+func redirecionador(m *autocert.Manager, host string) http.Handler {
 	return m.HTTPHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Montado por partes: um alvo como "a:@evil.example/x" não pode mudar o host.
-		destino := url.URL{Scheme: "https", Host: endereco, Path: r.URL.Path, RawPath: r.URL.RawPath, RawQuery: r.URL.RawQuery}
+		destino := url.URL{Scheme: "https", Host: host, Path: r.URL.Path, RawPath: r.URL.RawPath, RawQuery: r.URL.RawQuery}
 		http.Redirect(w, r, destino.String(), http.StatusMovedPermanently)
 	}))
+}
+
+// hostPublico é o Endereco como se chega nele de fora: sozinho na porta 443 (ou sem porta na
+// configuração), e com a porta quando o roteador traduz outra para a 443, como em
+// chat.exemplo.com.br:8443.
+func hostPublico(c Config) string {
+	if c.Porta == 0 || c.Porta == portaPadrao {
+		return c.Endereco
+	}
+	return net.JoinHostPort(c.Endereco, strconv.Itoa(c.Porta))
 }
 
 // novoHTTP é um http.Server com os tempos de cabeçalhos e de conexão parada. Não tem
@@ -213,7 +225,7 @@ func servidoresProducao(c Config, h http.Handler) (https, http80 *http.Server) {
 	https = novoHTTP(enderecoHTTPS, producao(h))
 	https.TLSConfig = m.TLSConfig()
 	https.TLSConfig.MinVersion = tls.VersionTLS12
-	http80 = novoHTTP(enderecoHTTP, redirecionador(m, c.Endereco))
+	http80 = novoHTTP(enderecoHTTP, redirecionador(m, hostPublico(c)))
 	http80.ReadTimeout = prazoGeral
 	http80.WriteTimeout = prazoGeral
 	return https, http80

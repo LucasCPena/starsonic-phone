@@ -4,6 +4,7 @@ O contrato entre o app e o servidor do chat (`chat-servidor/`). A spec é `docs/
 
 ## 1. O básico
 - **O endereço:** `https://<endereço do chat>/api/v1`, por exemplo `https://chat.starsonic.com.br/api/v1`. No modo de teste: `http://127.0.0.1:<porta>/api/v1`.
+  - Quando o servidor fica atrás de um roteador que traduz outra porta pública para a 443 dele (NAT), o endereço leva essa porta, por exemplo `https://chat.exemplo.com.br:8443/api/v1`. O app aceita o endereço com porta e usa a mesma porta no WebSocket (`wss://chat.exemplo.com.br:8443/api/v1/eventos`).
 - **O formato:** JSON em UTF-8 (`Content-Type: application/json; charset=utf-8`), menos no envio e no download de arquivos (seção 6).
 - **As horas:** milissegundos desde 1970 (UTC), num número inteiro.
 - **Os ids:**

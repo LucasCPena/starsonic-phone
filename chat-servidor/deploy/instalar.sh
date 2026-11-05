@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
 # Instala e atualiza o Starsonic Chat numa VM Ubuntu ou Debian com systemd.
 #
-#   sudo bash instalar.sh instalar <endereço>     instala (o endereço é o nome do chat no DNS)
-#   sudo bash instalar.sh atualizar               troca o programa pela versão deste script
+#   sudo bash instalar.sh instalar <endereço> [--porta N]   instala (o endereço é o nome do chat no DNS)
+#   sudo bash instalar.sh atualizar                         troca o programa pela versão deste script
+#   sudo bash instalar.sh porta <N>                         troca a porta pública do HTTPS
 #
 # Este script vem na release chat-v<versão> do GitHub, com a versão já escrita abaixo. Rodado
 # direto do repositório, ele pede --versao X.Y.Z.
+#
+# A porta: o chat escuta sempre na 80 e na 443 da VM. Quando a VM fica atrás de um roteador
+# (NAT) e a 443 pública já é de outro servidor, o roteador traduz outra porta pública (por
+# exemplo a 8443) para a 443 da VM. O --porta diz ao chat qual é essa porta, para a 80 levar
+# quem chega para ela.
 set -euo pipefail
 
 VERSAO="@VERSAO@"
@@ -17,6 +23,7 @@ BINARIO=/usr/local/bin/starsonic-chat
 LIB_DIR=/usr/local/lib/starsonic-chat
 UNIDADES=/etc/systemd/system
 ARQUIVO_BINARIO=starsonic-chat-linux-amd64
+PORTA=443
 
 falhar() {
   echo "ERRO: $*" >&2
@@ -25,8 +32,9 @@ falhar() {
 
 uso() {
   cat >&2 <<'FIM'
-uso: sudo bash instalar.sh instalar <endereço> [--versao X.Y.Z]
+uso: sudo bash instalar.sh instalar <endereço> [--porta N] [--versao X.Y.Z]
      sudo bash instalar.sh atualizar [--versao X.Y.Z]
+     sudo bash instalar.sh porta <N>
 FIM
   exit 2
 }
@@ -37,6 +45,52 @@ conferir_endereco() {
   local rotulo='[a-z0-9]([a-z0-9-]*[a-z0-9])?'
   if [ "${#1}" -gt 253 ] || ! [[ "$1" =~ ^${rotulo}(\.${rotulo})+$ ]]; then
     falhar "o endereço \"$1\" não serve. Use o nome do chat no DNS, só com letras minúsculas, números, pontos e hífens, e com pelo menos um ponto. Exemplo: chat.exemplo.com.br"
+  fi
+  # A última parte de um nome nunca é só número. Assim fica de fora um número de IP, como
+  # 189.0.2.10: o certificado é pedido para um nome, e com o IP o cadeado não sai.
+  if [[ "${1##*.}" =~ ^[0-9]+$ ]]; then
+    falhar "o endereço \"$1\" é um número de IP. Use o nome do chat no DNS, que aponta para esse IP. Exemplo: chat.exemplo.com.br"
+  fi
+}
+
+# A porta pública do HTTPS: de 1 a 65535, sem zero na frente, e não a 80, que é a do desafio do
+# certificado e do desvio para o HTTPS.
+conferir_porta() {
+  if ! [[ "$1" =~ ^[1-9][0-9]{0,4}$ ]] || [ "$1" -gt 65535 ] || [ "$1" -eq 80 ]; then
+    falhar "a porta \"$1\" não serve. Use um número de 1 a 65535, menos o 80 (a 80 é a do certificado). Exemplo: 8443"
+  fi
+}
+
+# escrever_config <endereço> <porta>: grava o config.json do serviço. A porta só entra quando não
+# é a 443.
+escrever_config() {
+  if [ "$2" = 443 ]; then
+    printf '{"endereco": "%s", "dados": "%s"}\n' "$1" "$DADOS" >"$CONFIG_DIR/config.json"
+  else
+    printf '{"endereco": "%s", "dados": "%s", "porta": %s}\n' "$1" "$DADOS" "$2" >"$CONFIG_DIR/config.json"
+  fi
+  chmod 0644 "$CONFIG_DIR/config.json"
+}
+
+# ler_endereco: o endereço do config.json que este script gravou.
+ler_endereco() {
+  sed -n 's/.*"endereco": *"\([^"]*\)".*/\1/p' "$CONFIG_DIR/config.json"
+}
+
+# endereco_publico <endereço> <porta>: como se chega no chat de fora.
+endereco_publico() {
+  if [ "$2" = 443 ]; then
+    echo "https://$1/"
+  else
+    echo "https://$1:$2/"
+  fi
+}
+
+# avisar_roteador <porta>: com uma porta que não é a 443, diz as duas regras do roteador.
+avisar_roteador() {
+  if [ "$1" != 443 ]; then
+    echo
+    echo "No roteador, deixe as duas regras para esta VM, sempre ligadas: a porta 80 pública vai para a porta 80 desta VM (é por ela que o cadeado se renova), e a porta $1 pública vai para a porta 443 desta VM."
   fi
 }
 
@@ -120,14 +174,14 @@ instalar() {
   fi
   install -d -o "$USUARIO" -g "$USUARIO" -m 0700 "$DADOS" "$DADOS/copias"
   install -d -m 0755 "$CONFIG_DIR"
-  printf '{"endereco": "%s", "dados": "%s"}\n' "$endereco" "$DADOS" >"$CONFIG_DIR/config.json"
-  chmod 0644 "$CONFIG_DIR/config.json"
+  escrever_config "$endereco" "$PORTA"
 
   instalar_arquivos "$TMP"
   systemctl enable --now starsonic-chat.service starsonic-chat-copia.timer
 
   echo
-  echo "Pronto: o Starsonic Chat $("$BINARIO" versao) está instalado e ligado em https://$endereco/"
+  echo "Pronto: o Starsonic Chat $("$BINARIO" versao) está instalado e ligado em $(endereco_publico "$endereco" "$PORTA")"
+  avisar_roteador "$PORTA"
   echo
   echo "Próximo passo: criar o usuário da administração. Rode (troque <usuário> pelo nome que quiser):"
   echo "  sudo -u $USUARIO $BINARIO admin-criar <usuário> --dados $DADOS"
@@ -151,45 +205,100 @@ atualizar() {
   echo "Pronto: o Starsonic Chat agora está na versão $("$BINARIO" versao)."
 }
 
+# mudar_porta <N>: troca a porta pública numa instalação que já existe, sem baixar nada, e
+# reinicia o serviço. Se o serviço não subir com a porta nova (um programa de antes da 0.1.1 não
+# conhece a "porta"), a configuração de antes volta.
+mudar_porta() {
+  conferir_porta "$1"
+  conferir_maquina
+  [ -e "$CONFIG_DIR/config.json" ] || falhar "o chat não está instalado aqui ($CONFIG_DIR/config.json não existe). Para instalar: sudo bash instalar.sh instalar <endereço> --porta $1"
+  local endereco
+  endereco=$(ler_endereco)
+  [ -n "$endereco" ] || falhar "não consegui ler o endereço em $CONFIG_DIR/config.json."
+  conferir_endereco "$endereco"
+
+  cp -p "$CONFIG_DIR/config.json" "$CONFIG_DIR/config.json.antes"
+  escrever_config "$endereco" "$1"
+  systemctl restart starsonic-chat.service
+  # O restart volta assim que o programa começa: espera um pouco para ver se ele se mantém.
+  sleep 5
+  if ! systemctl is-active --quiet starsonic-chat.service; then
+    mv -f "$CONFIG_DIR/config.json.antes" "$CONFIG_DIR/config.json"
+    systemctl restart starsonic-chat.service || true
+    falhar "o chat não subiu com a porta $1, e a configuração de antes voltou. Se o chat for de antes da versão 0.1.1, atualize primeiro (sudo bash instalar.sh atualizar) e rode este comando de novo. O registro: sudo journalctl -u starsonic-chat -n 30"
+  fi
+  rm -f "$CONFIG_DIR/config.json.antes"
+  echo "Pronto: o chat agora está em $(endereco_publico "$endereco" "$1")"
+  avisar_roteador "$1"
+}
+
 # --- o começo ---
-[ "$#" -ge 1 ] || uso
-comando=$1
-shift
-endereco=""
-if [ "$comando" = instalar ]; then
+principal() {
   [ "$#" -ge 1 ] || uso
-  endereco=$1
+  local comando=$1 endereco="" porta_nova=""
   shift
-fi
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --versao)
-      [ "$#" -ge 2 ] || uso
-      VERSAO=$2
-      shift 2
+  case "$comando" in
+    instalar)
+      [ "$#" -ge 1 ] || uso
+      endereco=$1
+      shift
       ;;
+    porta)
+      [ "$#" -eq 1 ] || uso
+      porta_nova=$1
+      shift
+      ;;
+    atualizar) ;;
     *) uso ;;
   esac
-done
-case "$comando" in
-  instalar | atualizar) ;;
-  *) uso ;;
-esac
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --versao)
+        [ "$#" -ge 2 ] || uso
+        VERSAO=$2
+        shift 2
+        ;;
+      --porta)
+        if [ "$comando" != instalar ] || [ "$#" -lt 2 ]; then
+          uso
+        fi
+        PORTA=$2
+        shift 2
+        ;;
+      *) uso ;;
+    esac
+  done
 
-# O endereço é conferido antes de qualquer outra coisa.
-[ "$comando" != instalar ] || conferir_endereco "$endereco"
+  # A porta muda sem baixar nada, então não precisa da versão.
+  if [ "$comando" = porta ]; then
+    mudar_porta "$porta_nova"
+    return
+  fi
 
-case "$VERSAO" in
-  @*) falhar "este script não traz a versão (é o do repositório). Rode com --versao X.Y.Z, por exemplo: --versao 0.1.0" ;;
-esac
-[[ "$VERSAO" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || falhar "a versão \"$VERSAO\" não está no formato X.Y.Z."
-BASE="https://github.com/$REPOSITORIO/releases/download/chat-v$VERSAO"
+  # O endereço e a porta são conferidos antes de qualquer outra coisa.
+  if [ "$comando" = instalar ]; then
+    conferir_endereco "$endereco"
+    conferir_porta "$PORTA"
+  fi
 
-TMP=$(mktemp -d)
-trap 'rm -rf "$TMP"' EXIT
+  case "$VERSAO" in
+    @*) falhar "este script não traz a versão (é o do repositório). Rode com --versao X.Y.Z, por exemplo: --versao 0.1.0" ;;
+  esac
+  [[ "$VERSAO" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || falhar "a versão \"$VERSAO\" não está no formato X.Y.Z."
+  BASE="https://github.com/$REPOSITORIO/releases/download/chat-v$VERSAO"
 
-if [ "$comando" = instalar ]; then
-  instalar "$endereco"
-else
-  atualizar
+  TMP=$(mktemp -d)
+  trap 'rm -rf "$TMP"' EXIT
+
+  if [ "$comando" = instalar ]; then
+    instalar "$endereco"
+  else
+    atualizar
+  fi
+}
+
+# Rodado direto, faz o que o comando pede. Lido por outro script (o instalar-teste.sh), só traz
+# as funções.
+if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
+  principal "$@"
 fi

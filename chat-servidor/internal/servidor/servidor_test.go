@@ -67,7 +67,30 @@ func TestConfig(t *testing.T) {
 			t.Fatalf("origens %v", c.Origens)
 		}
 	})
+	t.Run("sem porta vale a 443", func(t *testing.T) {
+		c, err := LerConfig(escreverConfig(t, `{"endereco":"chat.example.com","dados":`+quote(dados)+`}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.Porta != 443 {
+			t.Fatalf("porta %d; queria 443", c.Porta)
+		}
+	})
+	t.Run("com porta", func(t *testing.T) {
+		c, err := LerConfig(escreverConfig(t, `{"endereco":"chat.example.com","dados":`+quote(dados)+`,"porta":8443}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.Porta != 8443 {
+			t.Fatalf("porta %d; queria 8443", c.Porta)
+		}
+	})
 	erros := map[string]string{
+		"porta zero":         `{"endereco":"chat.example.com","dados":` + quote(dados) + `,"porta":0}`,
+		"porta 80":           `{"endereco":"chat.example.com","dados":` + quote(dados) + `,"porta":80}`,
+		"porta grande":       `{"endereco":"chat.example.com","dados":` + quote(dados) + `,"porta":70000}`,
+		"porta em texto":     `{"endereco":"chat.example.com","dados":` + quote(dados) + `,"porta":"8443"}`,
+		"porta quebrada":     `{"endereco":"chat.example.com","dados":` + quote(dados) + `,"porta":8443.5}`,
 		"sem endereco":       `{"dados":` + quote(dados) + `}`,
 		"endereco vazio":     `{"endereco":"  ","dados":` + quote(dados) + `}`,
 		"sem dados":          `{"endereco":"chat.example.com"}`,
@@ -452,6 +475,27 @@ func TestHTTPParaHTTPS(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code == http.StatusMovedPermanently || rec.Header().Get("Location") != "" {
 		t.Fatalf("o desafio foi redirecionado: %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
+// Atrás de um roteador que traduz outra porta pública para a 443 (NAT), a porta 80 leva para
+// essa porta, e não para a 443, que pode ser de outro servidor. A 443 não aparece no endereço.
+func TestHTTPParaHTTPS_Porta(t *testing.T) {
+	casos := []struct {
+		porta   int
+		destino string
+	}{
+		{8443, "https://chat.example.com:8443/admin/entrar?x=1"},
+		{443, "https://chat.example.com/admin/entrar?x=1"},
+		{0, "https://chat.example.com/admin/entrar?x=1"},
+	}
+	for _, c := range casos {
+		_, http80 := servidoresProducao(Config{Endereco: "chat.example.com", Dados: t.TempDir(), Porta: c.porta}, http.NotFoundHandler())
+		rec := httptest.NewRecorder()
+		http80.Handler.ServeHTTP(rec, httptest.NewRequest("GET", "http://chat.example.com/admin/entrar?x=1", nil))
+		if rec.Code != http.StatusMovedPermanently || rec.Header().Get("Location") != c.destino {
+			t.Fatalf("porta %d: %d %q; queria 301 para %q", c.porta, rec.Code, rec.Header().Get("Location"), c.destino)
+		}
 	}
 }
 

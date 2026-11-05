@@ -16,7 +16,7 @@ Como usar:
 | Memória | 2 GB |
 | Disco | 120 GB SSD (20 GB para o sistema e o banco, 100 GB para os arquivos) |
 | Sistema | Ubuntu 24.04 (ou Debian 12), com systemd |
-| Rede | um endereço público fixo |
+| Rede | um endereço público fixo, da VM ou do roteador na frente dela (veja "Se a VM fica atrás de um roteador", no fim deste passo) |
 
 Antes de instalar, deixe três coisas prontas:
 
@@ -30,9 +30,32 @@ Para conferir o nome no DNS, rode na VM:
 getent hosts <endereço>
 ```
 
-Você deve ver uma linha com o endereço público da VM. Se não aparecer nada, o DNS ainda não está pronto: espere e tente de novo.
+Você deve ver uma linha com o endereço público da VM (ou o do roteador, se ela fica atrás de um). Se não aparecer nada, o DNS ainda não está pronto: espere e tente de novo.
 
 O disco cresce com os arquivos. Quando chegar perto de 80% de uso, aumente o disco. As cópias dos últimos 30 dias também ficam na VM, em `/var/lib/starsonic-chat/copias`.
+
+### Se a VM fica atrás de um roteador (NAT)
+
+Quando a VM fica na rede interna da empresa, sem um endereço público só dela, quem recebe as conexões da internet é o roteador. Nesse caso:
+
+- O registro A do DNS aponta para o **endereço público do roteador**, o da internet da empresa. Para ver qual é, rode na VM:
+
+```
+curl -s https://ifconfig.me
+```
+
+- No roteador, crie duas regras de redirecionamento de porta (NAT, ou port forwarding) para o endereço interno da VM: a porta **80** pública vai para a porta **80** da VM, e a **443** pública vai para a **443** da VM.
+- Use o redirecionamento de porta comum, que mantém o endereço de quem acessa. Não use um proxy.
+- A internet da empresa precisa ter um endereço público fixo. Se a operadora usa CGNAT (um endereço dividido com outros clientes), não dá para redirecionar porta: peça à operadora um endereço público fixo.
+- Os computadores da mesma rede da VM só abrem o chat pelo nome se o roteador fizer "NAT loopback". Se ele não fizer, crie no DNS interno o mesmo nome apontando para o endereço interno da VM.
+
+**Se a porta 443 pública já é de outro servidor** (por exemplo, o GLPI), o chat pode usar outra porta pública:
+
+- No roteador, a porta **80** pública vai para a **80** da VM, e uma porta livre, por exemplo a **8443**, vai para a **443** da VM.
+- No passo 2, instale com `--porta 8443`. O endereço do chat passa a ser `https://<endereço>:8443`, e é esse endereço, com a porta, que vai no navegador e no app.
+- A regra da porta 80 tem de ficar **sempre ligada**. É por ela que o Let's Encrypt confere o nome, no primeiro cadeado e em toda renovação, a cada dois meses. Sem ela, o cadeado vence e o chat para de abrir.
+- Algumas empresas bloqueiam, no firewall delas, a saída para portas fora do comum, e nelas o chat não conecta. Um segundo endereço público, só para o chat, evita isso: com ele, o chat fica na 443 normal.
+- O primeiro cadeado precisa de um cuidado: veja "O cadeado não sai e o registro fala em `rateLimited`", no passo 10.
 
 ## 2. Instalar
 
@@ -52,10 +75,16 @@ Rode o instalador:
 sudo bash instalar.sh instalar <endereço>
 ```
 
+Se a VM fica atrás de um roteador e a porta 443 pública já é de outro servidor (passo 1), acrescente a porta pública do chat:
+
+```
+sudo bash instalar.sh instalar <endereço> --porta 8443
+```
+
 Você deve ver:
 
 - `SHA-256 conferido.`
-- no fim, `Pronto: o Starsonic Chat <versão> está instalado e ligado em https://<endereço>/`
+- no fim, `Pronto: o Starsonic Chat <versão> está instalado e ligado em https://<endereço>/`. Com `--porta`, o endereço vem com a porta, e uma linha lembra as duas regras do roteador.
 
 O instalador confere se o sistema serve, se as portas 80 e 443 estão livres e se o programa baixado não foi alterado. Se algo estiver errado, ele para com uma frase dizendo o quê, e não instala nada pela metade.
 
@@ -101,6 +130,8 @@ sudo systemctl restart starsonic-chat
 
 Faça estas conferências uma vez, logo depois de instalar.
 
+Se você instalou com `--porta`, ponha `:` e a porta depois do nome em todos os endereços com `https` deste passo, por exemplo `https://<endereço>:8443/admin/`. Sem a porta, o navegador vai para a 443, que é de outro servidor.
+
 **O cadeado.** No navegador, abra `https://<endereço>/admin/`. A primeira vez pode demorar alguns segundos, porque o certificado é pedido nessa hora. Você deve ver a tela de entrada, com o cadeado fechado, sem nenhum aviso. Entre com o usuário do passo 3.
 
 **Os três testes de rede.** Rode na VM, ou em qualquer outro computador:
@@ -115,7 +146,7 @@ Entre as linhas, deve haver `strict-transport-security`. Ela é o aviso para o n
 curl -sI http://<endereço>/admin/
 ```
 
-Deve aparecer `301 Moved Permanently` e uma linha `location: https://<endereço>/admin/`. É a porta 80 levando para o cadeado.
+Deve aparecer `301 Moved Permanently` e uma linha `location: https://<endereço>/admin/`, com a porta depois do nome se você instalou com `--porta`. É a porta 80 levando para o cadeado. Este teste é o único sem a porta: ele é sempre na 80.
 
 ```
 curl --tlsv1.1 --tls-max 1.1 --ciphers DEFAULT@SECLEVEL=0 https://<endereço>/
@@ -322,6 +353,18 @@ sudo bash instalar.sh atualizar
 
 Você deve ver `SHA-256 conferido.` e, no fim, `Pronto: o Starsonic Chat agora está na versão <versão>.` O serviço reinicia sozinho, e quem está no chat volta a conectar em poucos segundos. As mensagens e os arquivos não mudam.
 
+### Trocar a porta pública
+
+Para mudar a porta do HTTPS de uma instalação que já existe, use o instalador da versão 0.1.1 ou mais nova, o mesmo baixado acima. Isso serve, por exemplo, quando a VM passou a ficar atrás de um roteador e a 443 pública é de outro servidor (passo 1):
+
+```
+sudo bash instalar.sh porta 8443
+```
+
+Você deve ver `Pronto: o chat agora está em https://<endereço>:8443/`, e uma linha lembrando as duas regras do roteador. Para voltar à porta normal, quando o chat ganhar um endereço público só dele, rode o mesmo comando com `443` no lugar de `8443`.
+
+Se o chat da VM ainda for de antes da versão 0.1.1, o comando avisa e não muda nada. Nesse caso, atualize primeiro, como acima, e rode o comando de novo.
+
 ## 8. Tirar uma pessoa antes de o ramal passar para outra
 
 Quando alguém sai da empresa, tire a pessoa do chat **antes** de o ramal dela passar para outra pessoa. Se não, a pessoa nova com o mesmo ramal veria as conversas da anterior.
@@ -355,7 +398,45 @@ sudo journalctl -u starsonic-chat-copia -n 50 --no-pager
 ## 10. Os problemas comuns
 
 **O certificado não sai (o navegador avisa que o site não é seguro, ou nada abre).**
-O Let's Encrypt precisa achar a VM pelo nome. Rode `getent hosts <endereço>` e veja se o endereço que aparece é o da VM. Se não for, corrija o registro A no DNS e espere alguns minutos. Depois veja os registros do passo 9: um erro de certificado aparece ali. O servidor tenta de novo sozinho, mas não insista muitas vezes seguidas: o Let's Encrypt limita os pedidos que falham.
+O Let's Encrypt precisa achar a VM pelo nome. Rode `getent hosts <endereço>` e veja se o endereço que aparece é o da VM (ou o do roteador, se ela fica atrás de um). Se não for, corrija o registro A no DNS e espere alguns minutos. Depois veja os registros do passo 9: um erro de certificado aparece ali. O servidor tenta de novo sozinho, mas não insista muitas vezes seguidas: o Let's Encrypt limita os pedidos que falham.
+
+Para ver só as linhas do certificado, rode na VM:
+
+```
+sudo journalctl -u starsonic-chat --no-pager | grep -i acme
+```
+
+As linhas que dizem `missing certificate` são de conexões que ficaram esperando o pedido. O motivo de verdade está numa linha com `unable to satisfy`, `urn:ietf:params:acme:error` ou `rateLimited`.
+
+**O cadeado não sai e o registro fala em `rateLimited`.**
+O Let's Encrypt aceita no máximo 5 conferências que falham por hora para o mesmo nome, e devolve uma a cada 12 minutos. Quando a 443 pública é de outro servidor (passo 1), todo pedido de cadeado gasta uma falha na conferência pela 443 antes de conferir pela 80. Com só uma tentativa livre, o pedido não chega à 80. Para tirar o **primeiro** cadeado:
+
+1. Feche o chat no navegador e espere passar o horário que a linha do `rateLimited` mostra. O horário está em UTC: tire 3 horas para ter o de Brasília.
+2. No roteador, aponte a 443 pública para a 443 da VM do chat. O outro servidor fica fora do ar por uns minutos.
+3. Abra o chat uma vez, com a porta, e espere até 1 minuto.
+4. Confira que o cadeado saiu:
+
+```
+sudo ls /var/lib/starsonic-chat/certificados
+```
+
+   Tem de aparecer um arquivo com o nome do chat, sem `+token` no fim.
+
+5. No roteador, volte a 443 pública para o outro servidor.
+
+As renovações, a cada dois meses, gastam só uma falha e cabem no limite.
+
+**A página cai em outro servidor (como o GLPI).**
+Quem escolhe a máquina de cada porta é o roteador, e a 443 pública está indo para outra máquina. Use a porta própria do chat (passo 1, "Se a porta 443 pública já é de outro servidor") e abra o chat com ela no endereço, por exemplo `https://<endereço>:8443/admin/`. Escreva sempre o `https://` na frente: com uma porta diferente, o navegador não põe o `https` sozinho.
+
+**O navegador mostra "Não seguro", mas o cadeado já saiu.**
+É lembrança de um aviso de antes, de quando o nome caía em outro servidor. Feche todas as janelas do navegador e abra de novo. Para conferir o cadeado de verdade, rode na VM (com a porta, se você instalou com `--porta`):
+
+```
+curl -sSI https://<endereço>/admin/entrar
+```
+
+A primeira linha deve ser `HTTP/2 200`, sem nenhum erro antes.
 
 **As portas estão fechadas (o chat não abre de fora da VM).**
 Confira se o servidor está escutando:
@@ -364,7 +445,15 @@ Confira se o servidor está escutando:
 sudo ss -ltn
 ```
 
-Devem aparecer linhas com `:80` e `:443`. Se aparecerem e o chat não abre de fora, a porta está fechada na rede da nuvem ou no firewall. Abra as portas 80 e 443 de entrada, para qualquer endereço.
+Devem aparecer linhas com `:80` e `:443`. Se aparecerem e o chat não abre de fora, a porta está fechada na rede da nuvem ou no firewall. Abra as portas 80 e 443 de entrada, para qualquer endereço. Atrás de um roteador, confira as regras de redirecionamento do passo 1.
+
+Para saber se a porta 80 chega no chat vinda de fora, abra no celular, só no 4G e com o `http://` escrito:
+
+```
+http://<endereço>/.well-known/acme-challenge/teste
+```
+
+Se aparecer `acme/autocert: certificate cache miss`, a 80 chega no chat. Esse teste não gasta tentativa do Let's Encrypt.
 
 **O instalador diz que a porta 80 ou 443 está em uso.**
 Outro programa já usa a porta. Pare esse programa (por exemplo, `sudo systemctl stop nginx`, se ele existir) e rode o instalador de novo.
