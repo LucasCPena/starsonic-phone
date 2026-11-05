@@ -662,7 +662,8 @@ download dos arquivos.
   - `DesktopApp::SetWindowInFront(frente)`: a janela principal ficou na frente (visível, sem minimizar e ativa) ou saiu
     dela. Só põe na fila, e a `janela` vai à interface quando muda.
   - `DesktopApp::OpenChat(conversa)`: a pessoa clicou no aviso do chat. Só põe na fila; antes do primeiro `ready`, o
-    `abrir` espera por ele.
+    `abrir` espera por ele. Esse `ready` é o de qualquer página, também o do `aviso.html`: isso vale porque o executável
+    só abre o aviso depois da primeira mensagem da janela principal, e assim o primeiro `ready` é sempre o dela.
 - Ao fechar: `Shutdown()`, o `Stop()` do agendador, o motor destruído, o `DesktopApp` destruído (detalhes no
   `DesktopApp.h`). Depois de a janela fechar, isso tem 5 s: passou, `fechamento forcado` no diagnóstico e o processo
   sai com o código 0.

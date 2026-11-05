@@ -333,8 +333,10 @@ public:
     // quando muda (antes da primeira chamada, false). No iPhone, nada (uma linha no diagnostico). So poe na fila.
     void SetWindowInFront(bool inFront);
     // 0.2.0: a pessoa clicou no aviso do chat (o do hooks.chatNotice, com a conversa dele; 0: a aba Chat): a mensagem
-    // abrir do chat. Antes do primeiro ready, o abrir fica para ele, depois do estado (dois cliques: o do ultimo). No
-    // iPhone, nada (uma linha no diagnostico). So poe na fila.
+    // abrir do chat. Antes do primeiro ready, o abrir fica para ele, depois do estado (dois cliques: o do ultimo). Esse
+    // ready e o de qualquer pagina, tambem o do aviso.html: vale porque o executavel so abre o aviso depois da primeira
+    // mensagem da janela principal (MainWindow.cpp), e o primeiro ready e sempre o dela. No iPhone, nada (uma linha no
+    // diagnostico). So poe na fila.
     void OpenChat(int64_t conversa);
     // A fila de comandos roda o que ja tinha e para; daqui em diante nada mais entra. Nunca de dentro de um gancho.
     void Shutdown();

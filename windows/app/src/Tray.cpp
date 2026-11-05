@@ -6,6 +6,8 @@
 
 #include <cwchar>
 
+#include "ChatFiles.h"
+#include "Text.h"
 #include "resource.h"
 
 namespace starsonic {
@@ -16,6 +18,9 @@ const UINT kIconId = 1;
 const int kRingingIndex = 5;   // depois dos icones de estado (TrayIcon)
 const UINT kBlinkMs = 600;
 const wchar_t kTip[] = L"Starsonic Phone";
+// O szInfoTitle e o szInfo do NOTIFYICONDATA (64 e 256, com o fim do texto).
+const size_t kNoticeTitleUnits = 63;
+const size_t kNoticeTextUnits = 255;
 
 enum MenuItem : UINT { kOpen = 1, kDoNotDisturb = 2, kQuit = 3 };
 
@@ -44,6 +49,8 @@ Tray::~Tray() {
         if (icon) DestroyIcon(icon);
         icon = nullptr;
     }
+    if (noticeIcon_) DestroyIcon(noticeIcon_);
+    noticeIcon_ = nullptr;
 }
 
 UINT Tray::TaskbarCreatedMessage() {
@@ -148,6 +155,30 @@ void Tray::Blink() {
     Update();
 }
 
+void Tray::ShowChatNotice(const std::wstring& titulo, const std::wstring& texto, int64_t conversa) {
+    noticeConversation_ = conversa;
+    if (!added_ && !Add()) return;   // o Explorer ainda nao voltou: sem o icone, sem o aviso
+    // O tamanho grande da escala de agora (32 px em 100%), o do NIIF_LARGE_ICON.
+    if (!noticeIcon_ && FAILED(LoadIconMetric(instance_, MAKEINTRESOURCEW(IDI_APP), LIM_LARGE, &noticeIcon_))) {
+        noticeIcon_ = nullptr;
+    }
+    NOTIFYICONDATAW data = {};
+    data.cbSize = sizeof(data);
+    data.hWnd = owner_;
+    data.uID = kIconId;
+    data.uFlags = NIF_INFO;
+    const std::wstring title = Utf8ToWide(FitNoticeText(WideToUtf8(titulo), kNoticeTitleUnits));
+    std::wstring text = Utf8ToWide(FitNoticeText(WideToUtf8(texto), kNoticeTextUnits));
+    // O szInfo vazio tira o aviso em vez de mostrar (a regra do NIF_INFO): a mensagem sem texto vai com um espaco.
+    if (text.empty()) text = L" ";
+    wcsncpy_s(data.szInfoTitle, title.c_str(), _TRUNCATE);
+    wcsncpy_s(data.szInfo, text.c_str(), _TRUNCATE);
+    // O icone do app (NIIF_USER com o hBalloonIcon, grande) e o som padrao do aviso (sem o NIIF_NOSOUND).
+    data.dwInfoFlags = NIIF_USER | NIIF_LARGE_ICON;
+    data.hBalloonIcon = noticeIcon_;
+    Shell_NotifyIconW(NIM_MODIFY, &data);
+}
+
 Tray::Choice Tray::Handle(WPARAM wParam, LPARAM lParam) {
     // NOTIFYICON_VERSION_4: o evento no LOWORD do lParam e o ponto (da tela) no wParam.
     switch (LOWORD(lParam)) {
@@ -155,6 +186,8 @@ Tray::Choice Tray::Handle(WPARAM wParam, LPARAM lParam) {
         case NIN_KEYSELECT:
         case WM_LBUTTONDBLCLK:
             return Choice::Open;
+        case NIN_BALLOONUSERCLICK:
+            return Choice::OpenChat;   // o unico balao do app e o aviso do chat
         case WM_CONTEXTMENU:
             return ShowMenu(GET_X_LPARAM(wParam), GET_Y_LPARAM(wParam));
         default:

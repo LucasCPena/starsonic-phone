@@ -93,6 +93,9 @@ FitArea WorkArea(HMONITOR monitor) {
 }  // namespace
 
 MainWindow::~MainWindow() {
+    // A janela que ainda existe aqui (o laco de mensagens saiu sem fecha-la) fecha sem chamar ninguem: o DestroyWindow
+    // manda o WM_ACTIVATE e o WM_SIZE (o callbacks.inFront), e o main.cpp ja destruiu o DesktopApp.
+    callbacks_ = Callbacks();
     if (window_) DestroyWindow(window_);
 }
 
@@ -132,6 +135,7 @@ bool MainWindow::Create(HINSTANCE instance, const Options& options, Callbacks ca
         std::lock_guard<std::mutex> lock(mutex_);
         target_ = window_;
     }
+    badge_.Attach(window_);   // (0.2.0) o numero do chat vai ao botao quando ele aparecer (TaskbarButtonCreated)
     Place(options.position);
     ApplyFrame();
 
@@ -309,6 +313,12 @@ void MainWindow::StartNotice() {
 void MainWindow::RefreshNotice() {
     if (!window_) return;
     const bool inFront = IsWindowVisible(window_) && !IsIconic(window_) && active_;
+    // (0.2.0) A janela na frente vai ao chat so quando muda. Antes do aviso de ligacao: esconde-lo pode mudar a janela
+    // ativa (e chamar este de novo, ja com o valor novo).
+    if (inFront != inFront_) {
+        inFront_ = inFront;
+        if (callbacks_.inFront) callbacks_.inFront(inFront);
+    }
     if (status_.ringing && !inFront) {
         notice_.Show(window_);
     } else {
@@ -331,6 +341,11 @@ void MainWindow::OnTray(WPARAM wParam, LPARAM lParam) {
             Log("pedido para sair (bandeja)");
             RequestQuit();
             break;
+        case Tray::Choice::OpenChat:
+            // (0.2.0) O clique no aviso do chat: a janela vem para a frente, na conversa do aviso.
+            BringToFront();
+            if (callbacks_.openChat) callbacks_.openChat(tray_.NoticeConversation());
+            break;
         case Tray::Choice::None:
             break;
     }
@@ -343,6 +358,12 @@ void MainWindow::Close() {
 void MainWindow::LogAudioOutputs() {
     if (webview_) webview_->LogAudioOutputs();
 }
+
+void MainWindow::ShowChatNotice(const std::wstring& titulo, const std::wstring& texto, int64_t conversa) {
+    tray_.ShowChatNotice(titulo, texto, conversa);
+}
+
+void MainWindow::SetChatBadge(int n) { badge_.Set(n); }
 
 void MainWindow::Place(const std::optional<POINT>& position) {
     HMONITOR monitor = nullptr;
@@ -530,6 +551,13 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
         tray_.Recreate();   // o Explorer reiniciou: o icone volta
         return 0;
     }
+    // (0.2.0) O botao da barra de tarefas apareceu (a janela que saiu da bandeja, o Explorer que reiniciou): o numero
+    // do chat volta nele.
+    const UINT buttonCreated = TaskbarBadge::ButtonCreatedMessage();
+    if (buttonCreated != 0 && message == buttonCreated) {
+        badge_.OnButtonCreated();
+        return 0;
+    }
     switch (message) {
         case WM_NCCALCSIZE:
             if (wParam) {
@@ -683,6 +711,7 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
             if (audioNotify_) UnregisterDeviceNotification(audioNotify_);
             audioNotify_ = nullptr;
             tray_.Remove();
+            badge_.Detach();   // o ITaskbarList3 sai antes do CoUninitialize do main.cpp
             notice_.Close();
             if (webview_) webview_->Close();
             PostQuitMessage(0);

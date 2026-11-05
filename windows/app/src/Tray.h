@@ -3,11 +3,15 @@
 // Nao perturbe, ligacao perdida: os icones de windows/app/res; rc.3: a tabela da bolinha, ShellState.h), piscando
 // enquanto uma ligacao toca (o aviso do canto pode nao aparecer por cima de uma tela cheia: spec 13), um clique mostra a
 // janela e o menu tem Abrir, Nao perturbe (marcado quando ligado; rc.3: fora do menu quando o administrador o esconde)
-// e Sair.
+// e Sair. (0.2.0) O aviso do Windows de uma mensagem do chat sai pelo icone (o balao, que o Windows 10 e o 11 mostram
+// como um aviso deles), e o clique nele abre a conversa.
 //
 // Tudo na thread da janela dona (a principal): os avisos do icone chegam nela como kMessage, e o pisca e um timer
 // dela (kBlinkTimer), que ela repassa (Blink).
 #include <windows.h>
+
+#include <cstdint>
+#include <string>
 
 #include "ShellState.h"
 
@@ -18,7 +22,8 @@ public:
     static const UINT kMessage = WM_APP + 20;
     static const UINT_PTR kBlinkTimer = 20;
 
-    enum class Choice { None, Open, ToggleDoNotDisturb, Quit };
+    // OpenChat: o clique no aviso do chat (NIN_BALLOONUSERCLICK), para a conversa de NoticeConversation().
+    enum class Choice { None, Open, ToggleDoNotDisturb, Quit, OpenChat };
 
     Tray() = default;
     ~Tray();
@@ -37,7 +42,15 @@ public:
     void SetRinging(bool ringing);
     void Blink();   // o kBlinkTimer
 
-    // Um kMessage: o clique (Open) ou o menu (a escolha dele).
+    // (0.2.0) O aviso de uma mensagem do chat: o titulo e o texto no tamanho do NOTIFYICONDATA (FitNoticeText: 63 e
+    // 255 unidades do UTF-16, sem partir um emoji), com o icone do app grande e o som padrao do aviso. Guarda a
+    // conversa (0: a aba Chat) para o clique; um aviso novo toma o lugar do anterior. Sem o icone na bandeja, nada
+    // aparece.
+    void ShowChatNotice(const std::wstring& titulo, const std::wstring& texto, int64_t conversa);
+    // A conversa do ultimo aviso do chat (0 antes do primeiro).
+    int64_t NoticeConversation() const { return noticeConversation_; }
+
+    // Um kMessage: o clique (Open), o menu (a escolha dele) ou o clique no aviso do chat (OpenChat).
     Choice Handle(WPARAM wParam, LPARAM lParam);
 
     // A mensagem que o Explorer manda quando a barra de tarefas volta.
@@ -58,6 +71,8 @@ private:
     bool ringing_ = false;
     bool blinkOn_ = false;
     HICON icons_[6] = {};   // conectado, sem conexao, Nao perturbe, perdida, em ligacao, tocando
+    HICON noticeIcon_ = nullptr;      // o icone do app grande, o do aviso do chat
+    int64_t noticeConversation_ = 0;  // a conversa do ultimo aviso do chat
 };
 
 }  // namespace starsonic

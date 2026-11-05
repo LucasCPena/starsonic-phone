@@ -47,9 +47,19 @@ HINTERNET OpenSession(const std::wstring& agent) {
     return session;
 }
 
-HttpResponse Get(const std::wstring& url, size_t maxBytes, const std::wstring& userAgent) {
+// bearer: a chave do HttpsGetBearer (o cabecalho Authorization e nenhum redirecionamento); nullptr no HttpsGet.
+HttpResponse Get(const std::wstring& url, size_t maxBytes, const std::wstring& userAgent, const std::string* bearer) {
     if (url.compare(0, 8, L"https://") != 0) {
         return Failure(ERROR_INVALID_PARAMETER);
+    }
+    std::wstring headers;
+    if (bearer) {
+        // So ASCII visivel: um fim de linha na chave viraria outro cabecalho.
+        if (bearer->empty()) return Failure(ERROR_INVALID_PARAMETER);
+        for (const char ch : *bearer) {
+            if (ch < 0x21 || ch > 0x7E) return Failure(ERROR_INVALID_PARAMETER);
+        }
+        headers = L"Authorization: Bearer " + std::wstring(bearer->begin(), bearer->end());
     }
     URL_COMPONENTS parts = {};
     parts.dwStructSize = sizeof(parts);
@@ -76,8 +86,17 @@ HttpResponse Get(const std::wstring& url, size_t maxBytes, const std::wstring& u
                                       WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE));
     if (!request) return Failure(GetLastError());
     // WINHTTP_OPTION_SECURITY_FLAGS fica como esta: certificado invalido = falha. Redirecionamentos
-    // seguem a politica padrao do WinHTTP, que nunca desce de HTTPS para HTTP.
-    if (!WinHttpSendRequest(request.get(), WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
+    // seguem a politica padrao do WinHTTP, que nunca desce de HTTPS para HTTP; com a chave, nenhum (o
+    // WinHTTP poderia levar o Authorization ao endereco novo).
+    if (bearer) {
+        DWORD policy = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
+        if (!WinHttpSetOption(request.get(), WINHTTP_OPTION_REDIRECT_POLICY, &policy, sizeof(policy))) {
+            return Failure(GetLastError());
+        }
+    }
+    const wchar_t* extra = headers.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : headers.c_str();
+    if (!WinHttpSendRequest(request.get(), extra, static_cast<DWORD>(headers.size()), WINHTTP_NO_REQUEST_DATA, 0, 0,
+                            0) ||
         !WinHttpReceiveResponse(request.get(), NULL)) {
         return Failure(GetLastError());
     }
@@ -111,9 +130,18 @@ HttpResponse Get(const std::wstring& url, size_t maxBytes, const std::wstring& u
 
 HttpResponse HttpsGet(const std::wstring& url, size_t maxBytes, const std::wstring& userAgent) {
     try {
-        return Get(url, maxBytes, userAgent);
+        return Get(url, maxBytes, userAgent, nullptr);
     } catch (const std::bad_alloc&) {
         // Processo de 32 bits: um corpo grande pode nao caber na memoria.
         return Failure(ERROR_NOT_ENOUGH_MEMORY);
+    }
+}
+
+HttpResponse HttpsGetBearer(const std::wstring& url, size_t maxBytes, const std::wstring& userAgent,
+                            const std::string& bearer) {
+    try {
+        return Get(url, maxBytes, userAgent, &bearer);
+    } catch (const std::bad_alloc&) {
+        return Failure(ERROR_NOT_ENOUGH_MEMORY);   // o arquivo do chat (ate 25 MB) num processo de 32 bits
     }
 }

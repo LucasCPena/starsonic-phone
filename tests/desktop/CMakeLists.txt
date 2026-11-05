@@ -46,8 +46,9 @@ target_include_directories(desktop_tests PRIVATE
 target_link_libraries(desktop_tests PRIVATE miniz SQLite::SQLite3 Threads::Threads)
 
 # O tamanho e a posicao da janela principal do executavel (windows/app/src/WindowFit), a linha de comando dele, com os
-# links tel:/sip:/callto: (windows/app/src/Links), o refazer do WebView2 (BrowserRestarts), e (rc.3) a decisao do
-# monitor de rede (o teste em tests/win/test_network_monitor.cpp) e o canal de atualizacao: C++ portatil, testado
+# links tel:/sip:/callto: (windows/app/src/Links), o refazer do WebView2 (BrowserRestarts), (rc.3) a decisao do
+# monitor de rede (o teste em tests/win/test_network_monitor.cpp) e o canal de atualizacao, e (0.2.0) as regras do chat
+# no executavel (ChatFiles: o numero no icone, o nome do arquivo baixado e o corte do aviso): C++ portatil, testado
 # tambem no Linux.
 target_sources(desktop_tests PRIVATE ${STARSONIC_DIR}/../windows/app/src/WindowFit.cpp
   ${STARSONIC_DIR}/../windows/app/src/Links.cpp
@@ -55,6 +56,7 @@ target_sources(desktop_tests PRIVATE ${STARSONIC_DIR}/../windows/app/src/WindowF
   ${STARSONIC_DIR}/../windows/app/src/NetworkDecision.cpp
   ${STARSONIC_DIR}/../windows/app/src/NetworkLoop.cpp
   ${STARSONIC_DIR}/../windows/app/src/UpdateChannel.cpp
+  ${STARSONIC_DIR}/../windows/app/src/ChatFiles.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../win/test_network_monitor.cpp)
 target_include_directories(desktop_tests PRIVATE ${STARSONIC_DIR}/../windows/app/src)
 
@@ -67,7 +69,8 @@ endif()
 if(WIN32)
   # O disco, o cifrador e o diagnostico de verdade do executavel (windows/app/src): a gravacao atomica, o DPAPI, o
   # diagnostico.log, os links tel:/sip:/callto:, a instancia unica, o estado da bandeja e do aviso, as permissoes do
-  # WebView2, o Iniciar com o Windows e o Enviar diagnostico.
+  # WebView2, o Iniciar com o Windows, o Enviar diagnostico e (0.2.0) o arquivo baixado do chat, com o chat.json pelo
+  # DPAPI (tests/desktop/test_chat_windows.cpp).
   set(WINDOWS_APP_SRC ${STARSONIC_DIR}/../windows/app/src)
   target_sources(desktop_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../win/test_dpapi_cipher.cpp
@@ -85,7 +88,8 @@ if(WIN32)
     ${WINDOWS_APP_SRC}/ShellState.cpp
     ${WINDOWS_APP_SRC}/WebPermissions.cpp
     ${WINDOWS_APP_SRC}/Autostart.cpp
-    ${WINDOWS_APP_SRC}/Diagnostics.cpp)
+    ${WINDOWS_APP_SRC}/Diagnostics.cpp
+    ${WINDOWS_APP_SRC}/ChatSave.cpp)
   target_include_directories(desktop_tests PRIVATE ${WINDOWS_APP_SRC})
   target_compile_definitions(desktop_tests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
   target_link_libraries(desktop_tests PRIVATE crypt32 user32 advapi32 shell32)

@@ -22,7 +22,9 @@
 // no canto; o Atender do aviso traz a janela para a frente. O logoff ou o desligamento do Windows (WM_ENDSESSION)
 // chama callbacks.endSession, que faz o Sair com uma espera curta. (rc.3) O icone da bandeja que muda vai ao
 // diagnostico ("bandeja: <icone>"), e o servidor da conta e se ela esta conectada, ao monitor de rede
-// (callbacks.account).
+// (callbacks.account). (0.2.0) O chat: o aviso de uma mensagem sai pela bandeja, e o clique nele traz a janela para a
+// frente e abre a conversa (callbacks.openChat); o numero de nao lidas vai ao botao da barra de tarefas
+// (TaskbarBadge); e a janela na frente (visivel, sem minimizar e ativa) vai ao callbacks.inFront a cada mudanca.
 //
 // O WebView2: a pagina abre com a versao na URL (index.html?v=<versao>, e o aviso.html tambem); o navegador que sai
 // (morto ou caido) e refeito com um ambiente novo, a janela e o aviso ("navegador reiniciado" no diagnostico; o
@@ -36,6 +38,7 @@
 // de comandos nunca espera a janela). Os callbacks rodam na thread da janela e nao podem esperar a de comandos.
 #include <windows.h>
 
+#include <cstdint>
 #include <deque>
 #include <functional>
 #include <memory>
@@ -46,6 +49,7 @@
 #include "BrowserRestarts.h"
 #include "NoticeWindow.h"
 #include "ShellState.h"
+#include "TaskbarBadge.h"
 #include "Tray.h"
 #include "WebViewHost.h"
 #include "WindowFit.h"
@@ -80,6 +84,11 @@ public:
         // (rc.3) A conta em uso mudou para o monitor de rede: o servidor (conta.servidor, "" sem conta: o teste DNS) ou
         // se ela esta conectada (conta.status "conectado": as falhas do DNS so contam sem isso, Ruling 23).
         std::function<void(const std::string& server, bool connected)> account;
+        // (0.2.0) A janela ficou na frente (visivel, sem minimizar e ativa) ou saiu dela: so quando muda (antes do
+        // primeiro, fora). Conferido a cada ativacao, minimizar, restaurar, esconder na bandeja e trazer para a frente.
+        std::function<void(bool inFront)> inFront;
+        // (0.2.0) O clique no aviso do chat, com a conversa dele (0: a aba Chat), depois de a janela vir para a frente.
+        std::function<void(int64_t conversa)> openChat;
     };
 
     MainWindow() = default;
@@ -109,6 +118,10 @@ public:
     void StartResize(const std::string& edge);
     void Close();   // fecha de vez (depois do Sair): o WebView, a janela e o laco de mensagens
     void LogAudioOutputs();
+    // (0.2.0) O aviso do Windows de uma mensagem do chat (Tray::ShowChatNotice) e o numero de nao lidas no botao da
+    // barra de tarefas (TaskbarBadge::Set).
+    void ShowChatNotice(const std::wstring& titulo, const std::wstring& texto, int64_t conversa);
+    void SetChatBadge(int n);
 
 private:
     static LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
@@ -140,6 +153,8 @@ private:
     std::unique_ptr<WebViewHost> webview_;
     NoticeWindow notice_;
     Tray tray_;
+    TaskbarBadge badge_;      // (0.2.0) o numero do chat no botao da barra de tarefas
+    bool inFront_ = false;    // (0.2.0) a ultima janela na frente que foi ao callbacks.inFront
     ShellStatus status_;
     TrayIcon trayIcon_ = TrayIcon::Offline;   // o da bandeja agora (vai ao diagnostico quando muda)
     std::string server_;                       // o conta.servidor que o monitor de rede tem

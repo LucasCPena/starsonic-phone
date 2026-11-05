@@ -39,6 +39,7 @@
 
 #include "AppUpdater.h"
 #include "Autostart.h"
+#include "ChatDownloader.h"
 #include "CompanyFetcher.h"
 #include "DesktopApp.h"
 #include "DiagLog.h"
@@ -149,6 +150,14 @@ void OpenUrl(const std::string& url) {
     ShellExecuteW(nullptr, L"open", Utf8ToWide(url).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
 
+// O nome do computador no Windows (o chat.computador, 0.2.0); "" se o Windows nao o deu.
+std::string ComputerName() {
+    wchar_t name[MAX_COMPUTERNAME_LENGTH + 1] = {};
+    DWORD size = MAX_COMPUTERNAME_LENGTH + 1;
+    if (!GetComputerNameW(name, &size)) return std::string();
+    return WideToUtf8(std::wstring(name, size));
+}
+
 // As janelas de arquivo da rc.4 (FilePicker.h). So a thread da janela le e escreve: sem trava.
 struct FileDialogs {
     bool open = false;     // uma esta aberta (o Show roda o laco de mensagens: outro pedido pode chegar dentro dele)
@@ -210,6 +219,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     config.paths.atalhos = data + "\\atalhos.json";
     config.paths.admin = data + "\\admin.json";   // pelo DPAPI (o mesmo cifrador das senhas)
     config.paths.companyList = data + "\\contatos-empresa.json";   // rc.4: a ultima lista boa da planilha da empresa
+    config.paths.chat = data + "\\chat.json";   // 0.2.0: a chave do chat, pelo DPAPI (como o admin.json)
     // A rc.7 guardava tudo na mesma pasta (o %APPDATA%\Starsonic Phone do app antigo instalado).
     config.paths.legacy.ini = data + "\\StarsonicPhone.ini";
     config.paths.legacy.contactsXml = data + "\\Contacts.xml";
@@ -217,6 +227,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     config.profile = profile;
     config.version = STARSONIC_VERSION;
     config.decrypt = [](const std::wstring& encrypted) { return LegacyDecrypt(encrypted); };
+    config.computerName = ComputerName();
 #if STARSONIC_TEST_HOOKS
     // O build de teste: a senha do administrador da fumaca (Ruling 11; a de verdade nunca vai ao CI). O texto nunca
     // vai ao diagnostico.
@@ -271,6 +282,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     // Antes do DesktopApp (o gancho chega na abertura dele); o Stop roda antes do Shutdown dele: nenhuma resposta
     // depois.
     CompanyFetcher companyFetcher(L"Starsonic Phone/" + Utf8ToWide(STARSONIC_VERSION), log);
+    // (0.2.0) O download dos arquivos do chat (ChatDownloader.h), numa thread propria, com o mesmo user agent. Antes do
+    // DesktopApp (o gancho chega nele); o Stop roda antes do Shutdown dele, com o do companyFetcher: nenhum toast
+    // depois. O toast de erro vai ao DesktopApp::Notify pelo chatApp, que aponta para ele antes do Start (nenhum
+    // download antes).
+    ChatDownloader chatDownloader(L"Starsonic Phone/" + Utf8ToWide(STARSONIC_VERSION), log);
+    DesktopApp* chatApp = nullptr;
     FileDialogs fileDialogs;   // (rc.4) as janelas de importar e exportar (ver os ganchos)
 
     // O gancho quit ja rodou (o DesktopApp encerrou as ligacoes): o logoff do Windows espera por ele.
@@ -368,8 +385,24 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     hooks.fetchCompanyList = [&companyFetcher](const CompanySource& source, FetchDone done) {
         companyFetcher.Fetch(source, std::move(done));
     };
+    // (0.2.0) O chat: o aviso e o numero vao a janela (a bandeja e o botao da barra de tarefas sao dela), e o download
+    // a thread do chatDownloader. Os tres so poem na fila e voltam (a thread de comandos nunca espera a janela nem a
+    // rede).
+    hooks.chatNotice = [&window](int64_t conversa, const std::string& titulo, const std::string& texto) {
+        const std::wstring title = Utf8ToWide(titulo);
+        const std::wstring text = Utf8ToWide(texto);
+        window.RunOnWindow([&window, title, text, conversa] { window.ShowChatNotice(title, text, conversa); });
+    };
+    hooks.chatBadge = [&window](int n) { window.RunOnWindow([&window, n] { window.SetChatBadge(n); }); };
+    hooks.chatDownload = [&chatDownloader, &chatApp](const std::string& arquivo, const std::string& nome,
+                                                     const std::string& chave) {
+        chatDownloader.Download(arquivo, nome, chave, [&chatApp](const std::string& toast) {
+            if (!toast.empty() && chatApp) chatApp->Notify(toast);
+        });
+    };
 
     DesktopApp app(config, hooks, engine, engine, files, cipher, clock, scheduler);
+    chatApp = &app;
     engine.SetListener(&app);
     engine.Start();
     app.Start();
@@ -463,18 +496,22 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     callbacks.account = [&network](const std::string& server, bool connected) {
         network.SetAccount(server, connected);
     };
+    // (0.2.0) O chat: a janela na frente e o clique no aviso do chat (os dois so poem na fila do DesktopApp).
+    callbacks.inFront = [&app](bool inFront) { app.SetWindowInFront(inFront); };
+    callbacks.openChat = [&app](int64_t conversa) { app.OpenChat(conversa); };
     callbacks.quitRequested = [&app] { app.HandleCommand(kQuitCommand); };
     // O logoff ou o desligamento: o mesmo Sair, esperando pouco (o Windows encerra o processo depois de o
     // WM_ENDSESSION voltar). O Shutdown roda o que o Sair pos na fila (os Recentes das ligacoes encerradas).
-    callbacks.endSession = [&app, &updater, &network, &companyFetcher, &fileDialogs, quitDone, log] {
+    callbacks.endSession = [&app, &updater, &network, &companyFetcher, &chatDownloader, &fileDialogs, quitDone, log] {
         if (updater) updater->Close();
         app.HandleCommand(kQuitCommand);
         const bool done = quitDone && WaitForSingleObject(quitDone, kEndSessionWaitMs) == WAIT_OBJECT_0;
         // Depois do Sair (as ligacoes e os Recentes primeiro: o Unadvise do monitor pode demorar), antes do Shutdown:
-        // nenhum SetInternet, nenhuma resposta da leitura da planilha e nenhuma das janelas de arquivo depois dele (uma
-        // pode estar aberta: este WM_ENDSESSION pode rodar dentro do laco dela).
+        // nenhum SetInternet, nenhuma resposta da leitura da planilha, nenhum toast do download do chat e nenhuma das
+        // janelas de arquivo depois dele (uma pode estar aberta: este WM_ENDSESSION pode rodar dentro do laco dela).
         network.Stop();
         companyFetcher.Stop();
+        chatDownloader.Stop();
         fileDialogs.closed = true;
         app.Shutdown();
         log(done ? "sessao do Windows encerrando: o Sair terminou" : "sessao do Windows encerrando: o Sair nao terminou a tempo");
@@ -523,10 +560,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         ExitProcess(0);
     });
     updater->Close();
-    // Antes do Shutdown: nenhum SetInternet, nenhuma resposta da leitura da planilha (a leitura presa nao e esperada) e
-    // nenhuma das janelas de arquivo depois dele (com o laco de mensagens no fim, nenhuma esta aberta).
+    // Antes do Shutdown: nenhum SetInternet, nenhuma resposta da leitura da planilha (a leitura presa nao e esperada),
+    // nenhum toast do download do chat (o download de agora tambem nao) e nenhuma das janelas de arquivo depois dele
+    // (com o laco de mensagens no fim, nenhuma esta aberta).
     network.Stop();
     companyFetcher.Stop();
+    chatDownloader.Stop();
     fileDialogs.closed = true;
     app.Shutdown();
     scheduler.Stop();

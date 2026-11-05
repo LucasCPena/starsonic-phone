@@ -15,3 +15,9 @@ struct HttpResponse {
 // Resposta maior que maxBytes falha com ERROR_FILE_TOO_LARGE. userAgent: "Starsonic Phone/<versao>" (quem chama da a
 // versao: este arquivo nao depende do build de nenhum dos dois apps).
 HttpResponse HttpsGet(const std::wstring& url, size_t maxBytes, const std::wstring& userAgent);
+
+// O mesmo GET com o cabecalho "Authorization: Bearer <bearer>" (a chave do computador no chat, 0.2.0; so ASCII visivel,
+// senao falha com ERROR_INVALID_PARAMETER) e sem seguir redirecionamento (WINHTTP_OPTION_REDIRECT_POLICY_NEVER): a
+// chave nunca vai a outro endereco, e um 3xx volta como a resposta.
+HttpResponse HttpsGetBearer(const std::wstring& url, size_t maxBytes, const std::wstring& userAgent,
+                            const std::string& bearer);
