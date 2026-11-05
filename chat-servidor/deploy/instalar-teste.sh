@@ -5,7 +5,7 @@
 #
 # Os stubs (systemctl, sleep, journalctl, conferir_maquina) são chamados pelas funções do
 # instalar.sh, e não daqui: o shellcheck não vê.
-# shellcheck disable=SC2329
+# shellcheck disable=SC2317,SC2329
 set -euo pipefail
 
 aqui=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
