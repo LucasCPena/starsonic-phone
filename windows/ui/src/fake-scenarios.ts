@@ -1,10 +1,16 @@
 // Os cenários da ponte falsa (?fake=<nome>): o estado que o "C++ de mentira" manda no `ready`.
 // Os dados imitam as telas do canvas. As datas são relativas ao momento em que a página abre (Hoje, Ontem).
 // (iPhone) Com `&plataforma=ios`, o mesmo cenário no modo iPhone (estadoDoIphone), com a agenda de exemplo.
+// (0.2.0) Os cenários do chat (chat, chat-desligado, chat-sem-conta e chat-duas-contas) abrem na aba Chat; as conversas
+// vêm do servidor do chat (o de teste, pelo `chat=` da URL: fake.ts).
 import type { AdminServer, AgendaContact, AgendaPermission, AppState, CallCard, CallState, CompanyContact, RingKind, Shortcut } from './state';
 
 /** A tela em que a interface abre (só na ponte falsa; o app real sempre abre no Teclado). */
-export type FakeView = 'teclado' | 'atalhos' | 'recentes' | 'contatos' | 'configuracoes' | 'sobre';
+export type FakeView = 'teclado' | 'atalhos' | 'recentes' | 'contatos' | 'chat' | 'configuracoes' | 'sobre';
+
+/** (0.2.0) A empresa e o nome do computador do chat, sem os parâmetros `empresa` e `computador` da URL. */
+export const EMPRESA_DO_CHAT = 'ACME Comércio Ltda';
+export const COMPUTADOR_DO_CHAT = 'RECEPCAO-01';
 
 /** Os servidores do perfil embutido (a lista do administrador sem o admin.json). */
 export const SERVIDORES_DO_PERFIL: AdminServer[] = [
@@ -88,8 +94,10 @@ export function entrarVazio(): AppState['entrar'] {
  */
 export function estadoDoIphone(state: AppState, permissao: AgendaPermission): AppState {
   const concedida = permissao === 'concedida';
+  // O estado do iPhone não tem o chat.
+  const { chat: _semChat, ...doPC } = state;
   return {
-    ...state,
+    ...doPC,
     plataforma: 'ios',
     agenda: { permissao, vez: concedida ? 1 : 0, quantos: concedida ? AGENDA_DE_EXEMPLO.length : 0 },
     rotaAudio: 'iPhone',
@@ -287,6 +295,32 @@ function cenarioDeLigacao(nome: string): Scenario | undefined {
   }
 }
 
+/**
+ * (0.2.0) Os cenários do chat, na aba Chat, com a conta em uso só: o computador ligado ao chat (a chave é o parâmetro
+ * `chave`: sem ela, ele fica fora, como o C++ sem chave guardada) ou não (`chat-desligado`), e a conta em uso já conectada
+ * aqui, ou ainda não (`chat-sem-conta`). No `chat-duas-contas`, a Caixa 2 (2015) é a segunda conta, também conectada.
+ */
+function cenarioDoChat(nome: string): Scenario | undefined {
+  const base = principal();
+  const comChat = (ligado: boolean, contaConectada: boolean): AppState => ({
+    ...base,
+    contas: base.contas.filter((c) => c.emUso),
+    chat: { ligado, empresa: ligado ? EMPRESA_DO_CHAT : '', computador: COMPUTADOR_DO_CHAT, contaConectada },
+  });
+  switch (nome) {
+    case 'chat':
+      return { state: comChat(true, true), view: 'chat' };
+    case 'chat-desligado':
+      return { state: comChat(false, true), view: 'chat' };
+    case 'chat-sem-conta':
+      return { state: comChat(true, false), view: 'chat' };
+    case 'chat-duas-contas':
+      return { state: { ...comChat(true, true), contas: base.contas }, view: 'chat' };
+    default:
+      return undefined;
+  }
+}
+
 /** Monta o cenário na hora (as datas valem a partir de agora). `undefined` para um nome desconhecido. */
 export function createScenario(nome: string): Scenario | undefined {
   switch (nome) {
@@ -367,7 +401,7 @@ export function createScenario(nome: string): Scenario | undefined {
     case 'empresa-antes-do-estado':
       return { ...comPlanilhaDaEmpresa(), empresaAntesDoEstado: true };
     default:
-      return cenarioDeLigacao(nome);
+      return cenarioDeLigacao(nome) ?? cenarioDoChat(nome);
   }
 }
 
@@ -392,4 +426,8 @@ export const SCENARIO_NAMES = [
   'conferencia',
   'aviso',
   'tocando-antes-de-carregar',
+  'chat',
+  'chat-desligado',
+  'chat-sem-conta',
+  'chat-duas-contas',
 ] as const;

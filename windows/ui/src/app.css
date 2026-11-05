@@ -864,6 +864,82 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .cfg-leitura .btn:disabled, .cfg-leitura .btn:disabled:hover { opacity: 0.45; border-color: var(--outline); }
 
 /* ---------------------------------------------------------------------------------------------------------
+   0.2.0: o chat (o canvas "Starsonic Phone — telas do chat": os quadros Main, Vazio, SemConexao e AdmChat, com os
+   tokens de sempre). O ciano fica na ação (o "+", o Começar uma conversa e os números de não lidas, com o on-cyan). */
+
+/* O número de não lidas no canto do ícone da aba Chat. */
+.tab-pill { position: relative; }
+.tab-numero { position: absolute; top: -5px; right: 2px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px;
+  border: 2px solid var(--surface); background: var(--cyan); color: var(--on-cyan); font: 800 10.5px/14px var(--font-sans);
+  text-align: center; font-variant-numeric: tabular-nums; }
+
+/* A lista: o título com o "+", a busca e as linhas (a de não lidas com o fundo do campo e o texto mais forte). */
+.chat { gap: 10px; padding: 14px 16px 10px; }
+.chat-topo { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex: none; }
+.chat-titulo { margin: 0; font-size: 18px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.2; color: var(--text-strong); }
+.chat-mais { width: 38px; height: 38px; border-radius: 999px; border: 0; background: var(--cyan); color: var(--on-cyan); display: grid; place-items: center;
+  padding: 0; flex: none; box-shadow: var(--shadow-cyan); transition: background var(--ease); }
+.chat-mais .ic { stroke-width: 2.2; }
+.chat-mais:hover, .chat-mais[aria-expanded="true"] { background: var(--cyan-d); }
+.chat-menu { min-width: 220px; }
+.chat-busca { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 12px; border-radius: var(--radius-field); border: 1px solid var(--border);
+  background: var(--field); color: var(--text-muted); flex: none; min-width: 0; }
+.chat-busca:focus-within { border-color: var(--cyan); outline: 3px solid var(--focus); outline-offset: 2px; }
+.chat-busca input { flex: 1; min-width: 0; height: 100%; border: 0; background: transparent; padding: 0; font: 500 14px/1 var(--font-sans); color: var(--text); }
+.chat-busca input::placeholder { color: var(--text-muted); opacity: 1; }
+.chat-busca input:focus-visible { outline: none; }
+.chat-busca input::-webkit-search-cancel-button { display: none; }
+.chat-lista { list-style: none; margin: 0 -8px; padding: 0; display: flex; flex-direction: column; flex: none; }
+.chat-linha { width: 100%; display: flex; align-items: center; gap: 12px; min-height: 60px; padding: 8px; border: 0; border-radius: 14px; background: transparent;
+  font-family: inherit; text-align: left; color: var(--text); transition: background var(--ease); }
+.chat-linha:hover { background: var(--icon-tile); }
+.chat-linha-nova { background: var(--field); }
+.chat-avatar, .chat-avatar-grupo { width: 42px; height: 42px; flex: none; display: grid; place-items: center; }
+.chat-avatar { border-radius: 999px; background: var(--gradient-brand); color: #ffffff; font-size: 13.5px; font-weight: 800; }
+.chat-avatar-grupo { border-radius: 14px; background: var(--icon-tile); color: var(--icon); }
+.chat-textos { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.chat-linha-cima { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.chat-linha-baixo { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.chat-nome { flex: 1; min-width: 0; font-size: 14.5px; font-weight: 800; line-height: 1.25; color: var(--text-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-hora { flex: none; font-size: 11.5px; font-weight: 500; color: var(--text-muted); white-space: nowrap; }
+.chat-previa { flex: 1; min-width: 0; font-size: 12.5px; line-height: 1.35; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-linha-nova .chat-hora { font-weight: 800; color: var(--text-strong); }
+.chat-linha-nova .chat-previa { font-weight: 700; color: var(--text); }
+.chat-numero { flex: none; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: var(--cyan); color: var(--on-cyan);
+  font: 800 11.5px/20px var(--font-sans); text-align: center; font-variant-numeric: tabular-nums; }
+
+/* A primeira vez (o quadro Vazio), e o texto da conta que nunca se conectou aqui ou do computador que saiu do chat. */
+.chat-vazio { flex: 1 0 auto; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 0 28px 24px; text-align: center; }
+.chat-vazio-tile { width: 64px; height: 64px; border-radius: 22px; display: grid; place-items: center; color: var(--icon);
+  background: linear-gradient(135deg, rgba(0, 194, 203, 0.15), rgba(12, 38, 113, 0.1)); }
+.chat-vazio-tile .ic { width: 30px; height: 30px; }
+.chat-vazio-titulo { margin: 4px 0 0; font-size: 16.5px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.25; color: var(--text-strong); }
+.chat-vazio-texto { margin: 0; font-size: 13.5px; line-height: 1.55; color: var(--text-muted); }
+.chat-comecar { margin-top: 6px; height: 44px; font-size: 14.5px; }
+
+/* A faixa embaixo do cabeçalho (o quadro SemConexao): sem conexão e, com o "×", o computador novo. */
+.faixa { flex: none; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 14px; background: var(--surface);
+  border-bottom: 1px solid var(--border); font-size: 13px; font-weight: 600; line-height: 1.4; color: var(--text-strong); }
+.faixa-texto { min-width: 0; overflow-wrap: anywhere; }
+.faixa-nome { display: inline-block; max-width: 100%; overflow-wrap: anywhere; }
+.faixa-fechavel { justify-content: space-between; padding-right: 8px; }
+.faixa-fechar { width: 28px; height: 28px; border-radius: 999px; border: 0; background: transparent; color: var(--text-muted); display: grid; place-items: center;
+  padding: 0; flex: none; transition: background var(--ease), color var(--ease); }
+.faixa-fechar:hover { background: var(--icon-tile); color: var(--text-strong); }
+
+/* O cartão Chat da área do administrador (o quadro AdmChat). */
+.card.adm-chat { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px 16px; }
+.adm-chat-form { display: flex; flex-direction: column; gap: 10px; }
+.adm-chat-texto { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--text-muted); }
+.adm-chat-codigo { font-size: 15px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.adm-chat-ligado { margin: 0; display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; border-radius: 12px; background: var(--icon-tile);
+  font-size: 13px; line-height: 1.45; color: var(--text); overflow-wrap: anywhere; }
+.adm-chat-ligado .ic { flex: none; margin-top: 1px; color: var(--icon); stroke-width: 2.2; }
+.adm-chat-ligado strong { font-weight: 800; color: var(--text-strong); }
+.adm-chat-botao { align-self: flex-start; }
+.adm-chat-botao:disabled { opacity: 0.45; box-shadow: none; }
+
+/* ---------------------------------------------------------------------------------------------------------
    O modo iPhone (plataforma.ts: o .win leva data-plataforma="ios"); fora dele, nada daqui vale. A área segura (em cima
    a barra de status ou o entalhe, embaixo a barra de voltar ao início) vem do env(safe-area-inset-*), com o
    viewport-fit=cover que a interface põe no primeiro estado do iPhone. As variáveis ficam no :root: os testes trocam o

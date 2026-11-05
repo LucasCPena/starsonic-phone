@@ -3,12 +3,14 @@
 // (a tabela de portas, UDP e TCP; os de fora dela usam a porta da conta, 5060) e o canal de atualização. Cada mudança
 // vai num adminSet com só o que mudou (os servidores, a lista inteira); o C++ confere (a loja) e recusa com um toast, e
 // a tela segue o estado. Remover um servidor pede a confirmação antes. "Sair da área do administrador" manda o
-// adminLogout.
+// adminLogout. (0.2.0) O cartão Chat (CartaoChat.tsx) vem primeiro: ligar este computador ao chat de uma empresa.
 import { useEffect, useRef, useState } from 'preact/hooks';
+import { CartaoChat } from '../chat/CartaoChat';
+import type { ChatCliente } from '../chat/cliente';
 import { BackBar } from '../components/BackBar';
 import { Confirm } from '../components/Confirm';
 import { IconPlus } from '../icons';
-import type { AdminServer, AdminState, Command } from '../state';
+import type { AdminServer, AdminState, ChatSummary, Command } from '../state';
 import type { Send } from '../types';
 
 type AdminAberta = Extract<AdminState, { aberto: true }>;
@@ -19,6 +21,8 @@ interface Props {
   onBack(): void;
   /** Saiu da área (o adminLogout já foi). */
   onLeave(): void;
+  /** (0.2.0) O chat deste computador (o `chat` do estado, só no Windows) e o cliente do chat: o cartão Chat. */
+  chat?: { resumo: ChatSummary; cliente: ChatCliente };
 }
 
 /** A porta dos servidores fora da tabela: a da [conta] do perfil (a ponte não a manda; Ruling 3). */
@@ -277,13 +281,14 @@ function Servidores({ servidores, send }: { servidores: AdminServer[]; send: Sen
   );
 }
 
-export function Admin({ admin, send, onBack, onLeave }: Props) {
+export function Admin({ admin, send, onBack, onLeave, chat }: Props) {
   // Ruling 4: o canal "" é o do build, o de teste nestas versões.
   const canal = admin.canal === '' ? 'teste' : admin.canal;
   return (
     <>
       <BackBar eyebrow="Starsonic" title="Área do administrador" onBack={onBack} focarTitulo />
       <div class="body scroll adm">
+        {chat && <CartaoChat resumo={chat.resumo} cliente={chat.cliente} />}
         <h2 class="eyebrow">Botões da tela principal</h2>
         <div class="card">
           <Chave

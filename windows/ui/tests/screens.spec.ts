@@ -633,11 +633,13 @@ test.describe('ponte e janela', () => {
     expect(await page.evaluate(() => document.fonts.check('700 16px "Plus Jakarta Sans"'))).toBe(true);
 
     // Nenhum endereço de rede nos arquivos que a página lê, além dos links que o openExternal abre no
-    // navegador e dos nomes de espaço do SVG (identificadores, não pedidos).
+    // navegador, (0.2.0) do servidor do chat (o ENDERECO_DO_CHAT e o CSP da página) e dos nomes de espaço do SVG
+    // (identificadores, não pedidos).
     const permitidos = new Set([
       'https://starsonic.com.br',
       'https://wa.me/551150603000',
       'https://github.com/LucasCPena/starsonic-phone',
+      'https://chat.starcloud-starsonic.com.br:8443',
       'http://www.w3.org/2000/svg',
       'http://www.w3.org/1999/xlink',
       'http://www.w3.org/1999/xhtml',

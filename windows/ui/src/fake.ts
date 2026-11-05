@@ -9,6 +9,12 @@
 // agenda de novo, como o hospedeiro: a mesma lista, com a `vez` seguinte. O Bipe ao digitar (o `setSetting` com o
 // `bipeTecla`) muda o `config.bipeTecla`; o `audioRoute` (a escolha do iPhone) e o `keyTone` (o bipe) são do hospedeiro:
 // ficam só guardados, e um teste muda a `rotaAudio` pelo `push`, como o núcleo.
+// (0.2.0) O chat, nos cenários do chat: `&chave=` é a chave que o C++ de mentira guarda (sem ela, o computador fica fora
+// do chat), `&empresa=` a empresa dela (sem o parâmetro, ACME Comércio Ltda), `&computador=` o nome do computador (sem
+// ele, RECEPCAO-01), e `&ramal=` e `&nome=` a conta em uso. O `chat=` (o endereço do chat de teste) é da interface
+// (chat/endereco.ts). O chatKey responde com a chatChave, o chatLink guarda a chave e liga, o chatUnlink desliga; a
+// conta que registra (a escolhida nas contas, a do Entrar) fica conectada aqui. Depois de cada `ready`, a `janela` vem
+// com `frente: true`. (iPhone) Sem o chat, e os comandos dele são recusados.
 import { AGENDA_DE_EXEMPLO, createScenario, entrarVazio, estadoDoIphone, PLANILHA_DA_EMPRESA, SERVIDORES_DO_PERFIL, type FakeView } from './fake-scenarios';
 import { trimAscii } from './format';
 import type { WebviewLike } from './bridge';
@@ -35,6 +41,8 @@ import type {
 const SENHA_DE_TESTE = 'senha-de-teste';
 const ACOES: ShortcutAction[] = ['ligar', 'transferir', 'consulta', 'teclas'];
 const CODIGO_DE_PUXAR = /^(?:[0-9*#+]|\{ramal\})*$/;
+/** (0.2.0) A chave do chat que o chatLink aceita (docs/ponte-windows.md, "Os comandos do chat"). */
+const CHAVE_DO_CHAT = /^[A-Za-z0-9_-]{43}$/;
 
 type Listener = (event: { data: unknown }) => void;
 
@@ -73,6 +81,25 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
   // (iPhone) Um `abrir` pedido antes do `ready`: vai uma vez, no primeiro.
   let abrirNoReady = ios && parametros.get('abrir') === 'recentes';
   let state: AppState = structuredClone(ios ? estadoDoIphone(scenario.state, permissao) : scenario.state);
+  // (0.2.0) A chave do chat que o C++ de mentira guarda ("" fora do chat): só na chatChave, nunca no estado.
+  let chaveDoChat = '';
+  if (state.chat) {
+    chaveDoChat = state.chat.ligado ? (parametros.get('chave') ?? '') : '';
+    const ligado = chaveDoChat !== '';
+    state.chat = {
+      ...state.chat,
+      ligado,
+      empresa: ligado ? (parametros.get('empresa') ?? state.chat.empresa) : '',
+      computador: parametros.get('computador') ?? state.chat.computador,
+    };
+    const ramal = parametros.get('ramal');
+    const nome = parametros.get('nome');
+    if (state.conta && (ramal !== null || nome !== null)) {
+      const conta = { ...state.conta, ramal: ramal ?? state.conta.ramal, nome: nome ?? state.conta.nome };
+      state.conta = conta;
+      state.contas = state.contas.map((c) => (c.id === conta.id ? { ...c, ramal: conta.ramal, nome: conta.nome } : c));
+    }
+  }
   // (iPhone) A última lista da agenda (vazia sem a permissão concedida). A que um teste manda pelo `push`, como o núcleo,
   // passa a ser ela: é a que o `contactsOpened` lê de novo.
   let agendaAtual: { vez: number; contatos: AgendaContact[] } = {
@@ -321,6 +348,30 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
         publish();
         if (scenario.ring) deliver({ v: 1, type: 'ring', tipo: scenario.ring });
         if (!scenario.empresaAntesDoEstado && state.empresa.vez > 0) empresaNoReady();
+        // (0.2.0) A janela principal na frente, no fim das mensagens do `ready`.
+        deliver({ v: 1, type: 'janela', frente: true } satisfies IncomingMessage);
+        break;
+      case 'chatKey':
+        // (0.2.0) A chave guardada, só na resposta ("" e "" fora do chat).
+        if (ios || !state.chat) break;
+        deliver({ v: 1, type: 'chatChave', chave: chaveDoChat, empresa: chaveDoChat ? state.chat.empresa : '' } satisfies IncomingMessage);
+        break;
+      case 'chatLink':
+        // Como o C++: a chave de 43 caracteres de [A-Za-z0-9_-] e a empresa de 1 a 80, no lugar das de antes.
+        if (ios || !state.chat || !CHAVE_DO_CHAT.test(String(command.chave)) || typeof command.empresa !== 'string') break;
+        if ([...command.empresa].length < 1 || [...command.empresa].length > 80) break;
+        chaveDoChat = String(command.chave);
+        change({ chat: { ...state.chat, ligado: true, empresa: command.empresa } });
+        break;
+      case 'chatUnlink':
+        if (ios || !state.chat) break;
+        chaveDoChat = '';
+        change({ chat: { ...state.chat, ligado: false, empresa: '' } });
+        break;
+      case 'chatNotify':
+      case 'chatBadge':
+      case 'chatDownload':
+        // O aviso do Windows, o número no ícone e o download são do executável: as specs só olham o comando.
         break;
       case 'importContacts':
       case 'exportContacts':
@@ -479,6 +530,8 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
         change({
           contas: state.contas.map((c) => ({ ...c, emUso: c.id === conta.id })),
           conta: { ...conta, status: 'conectado', texto: `Conectado · ${conta.servidor}`, internet: true },
+          // (0.2.0) A conta registrou neste computador: conectada aqui.
+          ...(state.chat ? { chat: { ...state.chat, contaConectada: true } } : {}),
         });
         break;
       }
@@ -533,6 +586,8 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
             entrar: { servidor: '', protocolo: 'udp', ramal: '', nome: '', erro: '', ocupado: false, pedeSenha: false, podeCancelar: false, contaId: '' },
             contas: [...outras, salva],
             conta: { id, nome, ramal, servidor, protocolo, status: 'conectado', texto: `Conectado · ${servidor}`, internet: true },
+            // (0.2.0) A conta registrou neste computador: conectada aqui.
+            ...(state.chat ? { chat: { ...state.chat, contaConectada: true } } : {}),
           });
         }, 1500);
         break;

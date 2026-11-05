@@ -278,6 +278,24 @@ export const IconLock = svg(
   </>,
 );
 
+// 0.2.0 (o canvas "telas do chat"). A aba Chat é o IconMessage, e o avatar de um grupo, o IconContacts.
+/** Novo grupo: a pessoa com o "+". */
+export const IconNovoGrupo = svg(
+  <>
+    <circle cx="9" cy="8" r="3.5" />
+    <path d="M2.5 20a6.5 6.5 0 0 1 13 0" />
+    <path d="M19 8v6M16 11h6" />
+  </>,
+);
+/** A faixa sem conexão: o sinal sem rede, cortado. */
+export const IconSemRede = svg(
+  <>
+    <path d="M3 3l18 18" />
+    <path d="M8.5 16.4a5 5 0 0 1 7 0M5 12.9a10 10 0 0 1 4.2-2.5M14.8 10.4A10 10 0 0 1 19 12.9M2 8.8a15 15 0 0 1 4.5-2.9M12 5a15 15 0 0 1 10 3.8" />
+    <circle cx="12" cy="19.5" r="0.8" />
+  </>,
+);
+
 /** O ícone da ação de um atalho (o do canvas): na ligação, Ligar é a Nova ligação (o "+"). */
 export function ShortcutActionIcon({ acao, naLigacao, size }: { acao: ShortcutAction; naLigacao?: boolean; size?: Size }) {
   switch (acao) {
