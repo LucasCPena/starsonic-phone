@@ -2,7 +2,8 @@
 // 7.9): o estado com a plataforma e os campos do PC neutros, a conta unica, o Sair, os comandos do PC recusados no
 // iPhone e os do iPhone recusados no Windows, a abertura sem as partes do PC, o openExternal do iPhone, a agenda (a
 // mensagem, os nomes nas ligacoes, a permissao, os ganchos e o diagnostico sem os contatos), os bipes (o bipeTecla, o
-// keyTone e o bipe do fim), a rota de audio, a perdida, o abrir dos Recentes e o ready sem toque nem atualizacao.
+// keyTone e o bipe do fim), a rota de audio, a perdida, o abrir dos Recentes, o ready sem toque nem atualizacao e
+// (0.2.0) o estado sem o chat, com os comandos do chat recusados.
 #include <algorithm>
 #include <map>
 #include <string>
@@ -205,7 +206,8 @@ TEST_CASE("the Windows state has none of the iPhone fields") {
         INFO(key);
         CHECK(state.contains(key));
     }
-    CHECK(state.size() == PcKeys().size());
+    CHECK(state.contains("chat"));   // (0.2.0) o chat, so do Windows
+    CHECK(state.size() == PcKeys().size() + 1);
     for (const std::string& post : h.posts) {
         CHECK(post.find("bipeTecla") == std::string::npos);
         CHECK(post.find("plataforma") == std::string::npos);
@@ -1474,4 +1476,45 @@ TEST_CASE("no update message reaches the interface on the iPhone") {
     h.Send(R"({"v":1,"cmd":"updateLater"})");
     CHECK(h.host.empty());
     CHECK(h.Messages("update").empty());
+}
+
+TEST_CASE("the iPhone state has no chat and the chat commands are refused") {
+    Harness h(Platform::IPhone);
+    h.StartRegistered();
+    CHECK_FALSE(h.State().contains("chat"));
+    CHECK(h.files.files.count("dados/chat.json") == 0);   // o registro da conta nao vai ao chat.json
+    // Os seis do chat (0.2.0), com campos que valem: recusados como os outros do PC, uma linha cada, sem os campos.
+    const std::vector<Named> commands = {
+        {"chatKey", R"({"v":1,"cmd":"chatKey"})"},
+        {"chatLink", R"({"v":1,"cmd":"chatLink","chave":"Chave_de-teste-inventada-0123456789-ABCDxyz",)"
+                     R"("empresa":"ACME"})"},
+        {"chatUnlink", R"({"v":1,"cmd":"chatUnlink"})"},
+        {"chatNotify", R"({"v":1,"cmd":"chatNotify","conversa":7,"titulo":"Ana Souza","texto":"Bom dia"})"},
+        {"chatBadge", R"({"v":1,"cmd":"chatBadge","n":3})"},
+        {"chatDownload", R"({"v":1,"cmd":"chatDownload","arquivo":"0123456789abcdef0123456789abcdef",)"
+                         R"("nome":"Pedido 123.pdf"})"},
+    };
+    for (const Named& command : commands) {
+        INFO(command.name);
+        const std::string before = Effects(h);
+        h.logs.clear();
+        h.Send(command.command);
+        CHECK(Effects(h) == before);
+        CHECK(h.logs == std::vector<std::string>{std::string("comando recusado no modo iPhone: ") + command.name});
+    }
+
+    // A janela na frente e o clique num aviso do chat nao existem no iPhone: uma linha cada, e nada mais.
+    h.Send(kReady);
+    const std::string before = Effects(h);
+    h.logs.clear();
+    h.app->SetWindowInFront(true);
+    h.app->OpenChat(7);
+    h.Run();
+    CHECK(Effects(h) == before);
+    CHECK(h.logs == std::vector<std::string>{"janela na frente: recusada no modo iPhone",
+                                             "abrir o chat: recusado no modo iPhone"});
+    // O ready continua so com o estado: nenhum janela, nenhum abrir do chat.
+    const size_t from = h.posts.size();
+    h.Send(kReady);
+    CHECK(TypesSince(h, from) == std::vector<std::string>{"state"});
 }

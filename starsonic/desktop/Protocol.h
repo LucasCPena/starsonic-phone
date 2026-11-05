@@ -1,7 +1,7 @@
 #pragma once
 // O protocolo da ponte, versao 1, entre a interface (TypeScript, no WebView2) e o C++ do app de PC: os comandos que
 // a interface manda ({"v":1,"cmd":...}) e as mensagens que o C++ manda ({"v":1,"type":"state"|"toast"|"ring"|"update"|
-// "contatosEmpresa"|"agenda"|"abrir", ...}).
+// "contatosEmpresa"|"agenda"|"abrir"|"chatChave"|"janela", ...}).
 // O contrato, com cada campo e um exemplo, e o docs/ponte-windows.md: uma mudanca aqui muda o documento junto (e
 // o kBridgeVersion, se o formato deixa de ser compativel). Os textos sao UTF-8.
 // O modo iPhone (a mesma interface num WKWebView) tem comandos e campos a mais, na mesma versao 1: quem decide o que
@@ -68,6 +68,12 @@ enum class CommandKind {
     AllowContacts,        // iPhone: o Permitir do aviso da aba Contatos
     AudioRoute,           // iPhone: o botao Audio da ligacao
     KeyTone,              // iPhone: o bipe de uma tecla (a tecla em Command::key)
+    ChatKey,              // 0.2.0: o chat (so no Windows; os campos em Command::chat)
+    ChatLink,
+    ChatUnlink,
+    ChatNotify,
+    ChatBadge,
+    ChatDownload,
 };
 
 // Um servidor da lista do administrador (adminSet e o estado): o endereco (UTF-8) e a porta (UDP e TCP).
@@ -85,6 +91,19 @@ struct AdminChanges {
     std::optional<std::string> pickupCode;   // codigoPuxar
     std::optional<std::vector<ServerView>> servers;   // servidores (a lista inteira)
     std::optional<std::string> channel;      // canal: "teste", "estavel" ou "" (o do build)
+};
+
+// Os campos dos comandos do chat (0.2.0), ja conferidos (docs/ponte-windows.md, "Os comandos do chat"). Os textos sao
+// UTF-8, e os limites contam os caracteres (pontos de codigo).
+struct ChatFields {
+    std::string key;              // chatLink: chave (ValidChatKey)
+    std::string company;          // chatLink: empresa (ValidChatCompany)
+    int64_t conversation = 0;     // chatNotify: conversa (0 ou mais; 0: a aba Chat)
+    std::string title;            // chatNotify: titulo (1 a 200 caracteres)
+    std::string text;             // chatNotify: texto (0 a 500 caracteres)
+    int badge = 0;                // chatBadge: n (0 ou mais)
+    std::string fileId;           // chatDownload: arquivo (ValidFileId)
+    std::string fileName;         // chatDownload: nome (1 a 255 caracteres)
 };
 
 // Um comando lido. So os campos do comando valem; os outros ficam vazios.
@@ -134,10 +153,13 @@ struct Command {
     AdminChanges admin;
     // setCompanyList (rc.4): o link ou o caminho da planilha da empresa, como foi digitado ("" tira a lista).
     std::string link;
+    // Os do chat (0.2.0).
+    ChatFields chat;
 };
 
 // O comando do JSON, ou nada (com o motivo em *error, se error nao e nullptr): texto que nao e JSON, sem "v":1,
-// comando desconhecido, campo obrigatorio ausente ou campo com o tipo errado. Campos a mais sao ignorados.
+// comando desconhecido, campo obrigatorio ausente ou campo com o tipo errado. Campos a mais sao ignorados. Nos do chat,
+// tambem o campo fora da regra; o motivo diz o comando e o campo ("chatLink: chave invalida"), nunca o valor.
 std::optional<Command> ParseCommand(const std::string& json, std::string* error = nullptr);
 
 // O nome do comando no protocolo ("ready", "login"...).
@@ -250,6 +272,13 @@ struct IPhoneView {
     bool keyBeep = true;            // config.bipeTecla: o "Bipe ao digitar" (ligado de fabrica)
 };
 
+struct ChatView {                   // chat (0.2.0, so no Windows). A chave nunca vem aqui (so na chatChave).
+    bool linked = false;            // ligado: ha uma chave guardada
+    std::string company;            // empresa: a guardada com a chave ("" sem ela)
+    std::string computer;           // computador: o nome do computador no Windows
+    bool accountConnected = false;  // contaConectada: a conta em uso ja se conectou a central neste computador
+};
+
 struct BridgeState {
     bool mainScreen = false;                // tela: "principal" (true) ou "entrar"
     LoginView login;                        // entrar
@@ -272,6 +301,7 @@ struct BridgeState {
     AdminLoginView adminLogin;              // entrarAdmin (rc.3)
     bool endBeep = true;                    // config.bipeFim (rc.3)
     CompanyView company;                    // empresa (rc.4)
+    std::optional<ChatView> chat;           // chat (0.2.0): so no Windows; nada no iPhone
     // O modo iPhone: plataforma "ios", agenda, rotaAudio e config.bipeTecla. Nada (o Windows): o estado de sempre,
     // sem nenhum campo a mais.
     std::optional<IPhoneView> iphone;
@@ -298,5 +328,14 @@ std::string AgendaMessage(int seq, const std::vector<AgendaContact>& contacts);
 // {"v":1,"type":"abrir","tela":"recentes"} (iPhone): a pessoa tocou no aviso da perdida, e a interface vai para os
 // Recentes.
 std::string OpenRecentsMessage();
+// {"v":1,"type":"chatChave","chave":"...","empresa":"..."} (0.2.0): a resposta ao chatKey, com "" e "" fora do chat. A
+// chave so vai nesta mensagem, nunca no estado.
+std::string ChatKeyMessage(const std::string& key, const std::string& company);
+// {"v":1,"type":"janela","frente":true|false} (0.2.0): a janela principal esta na frente (visivel, sem minimizar e
+// ativa).
+std::string WindowMessage(bool inFront);
+// {"v":1,"type":"abrir","tela":"chat","conversa":N} (0.2.0): a pessoa clicou no aviso do chat; com a conversa 0, a aba
+// Chat.
+std::string OpenChatMessage(int64_t conversation);
 
 }  // namespace starsonic

@@ -669,6 +669,156 @@ TEST_CASE("the update message carries the version and the notes") {
     CHECK(Parse(UpdateMessage("0.1.0", "")) == json({{"v", 1}, {"type", "update"}, {"versao", "0.1.0"}, {"notas", ""}}));
 }
 
+// 0.2.0: o chat (docs/ponte-windows.md, "O chat (0.2.0)").
+namespace {
+
+// Uma chave inventada (43 de [A-Za-z0-9_-]) e o id de um arquivo (32 de [0-9a-f]), nunca de verdade.
+const char* const kChatKey = "Chave_de-teste-inventada-0123456789-ABCDxyz";
+const char* const kFileId = "0123456789abcdef0123456789abcdef";
+
+// O motivo da recusa (o teste falha se o comando passou).
+std::string RefusalOf(const std::string& text) {
+    std::string error;
+    const bool refused = !ParseCommand(text, &error).has_value();
+    INFO(text);
+    CHECK(refused);
+    return error;
+}
+
+std::string ChatLinkCommand(const std::string& chave, const json& empresa) {
+    return json({{"v", 1}, {"cmd", "chatLink"}, {"chave", chave}, {"empresa", empresa}}).dump();
+}
+std::string ChatNotifyCommand(const json& conversa, const std::string& titulo, const std::string& texto) {
+    return json({{"v", 1}, {"cmd", "chatNotify"}, {"conversa", conversa}, {"titulo", titulo}, {"texto", texto}}).dump();
+}
+std::string ChatDownloadCommand(const std::string& arquivo, const std::string& nome) {
+    return json({{"v", 1}, {"cmd", "chatDownload"}, {"arquivo", arquivo}, {"nome", nome}}).dump();
+}
+
+// Um texto de n caracteres com acento (2 bytes cada): os limites contam os caracteres, nao os bytes.
+std::string Accented(size_t n) {
+    std::string out;
+    for (size_t i = 0; i < n; ++i) out += "\xc3\xa9";
+    return out;
+}
+
+}  // namespace
+
+TEST_CASE("every chat command parses") {
+    Command c = Parsed(R"({"v":1,"cmd":"chatKey"})");
+    CHECK(c.kind == CommandKind::ChatKey);
+    CHECK(std::string(CommandName(c.kind)) == "chatKey");
+    c = Parsed(R"({"v":1,"cmd":"chatUnlink"})");
+    CHECK(c.kind == CommandKind::ChatUnlink);
+    CHECK(std::string(CommandName(c.kind)) == "chatUnlink");
+
+    c = Parsed(ChatLinkCommand(kChatKey, "ACME Com\xc3\xa9rcio Ltda"));
+    CHECK(c.kind == CommandKind::ChatLink);
+    CHECK(std::string(CommandName(c.kind)) == "chatLink");
+    CHECK(c.chat.key == kChatKey);
+    CHECK(c.chat.company == "ACME Com\xc3\xa9rcio Ltda");
+    c = Parsed(ChatLinkCommand(kChatKey, Accented(80)));   // o limite: 80 caracteres
+    CHECK(c.chat.company == Accented(80));
+
+    c = Parsed(ChatNotifyCommand(7, "Ana Souza", "Bom dia!\nO pedido chegou."));
+    CHECK(c.kind == CommandKind::ChatNotify);
+    CHECK(std::string(CommandName(c.kind)) == "chatNotify");
+    CHECK(c.chat.conversation == 7);
+    CHECK(c.chat.title == "Ana Souza");
+    CHECK(c.chat.text == "Bom dia!\nO pedido chegou.");
+    // A conversa 0 (a aba Chat), o texto vazio, os limites (200 e 500 caracteres) e uma conversa grande.
+    c = Parsed(ChatNotifyCommand(0, Accented(200), ""));
+    CHECK(c.chat.conversation == 0);
+    CHECK(c.chat.title == Accented(200));
+    CHECK(c.chat.text.empty());
+    c = Parsed(ChatNotifyCommand(9007199254740991LL, "A", Accented(500)));
+    CHECK(c.chat.conversation == 9007199254740991LL);
+    CHECK(c.chat.text == Accented(500));
+
+    c = Parsed(R"({"v":1,"cmd":"chatBadge","n":3})");
+    CHECK(c.kind == CommandKind::ChatBadge);
+    CHECK(std::string(CommandName(c.kind)) == "chatBadge");
+    CHECK(c.chat.badge == 3);
+    c = Parsed(R"({"v":1,"cmd":"chatBadge","n":0})");
+    CHECK(c.chat.badge == 0);
+
+    c = Parsed(ChatDownloadCommand(kFileId, "Relat\xc3\xb3rio de mar\xc3\xa7o.pdf"));
+    CHECK(c.kind == CommandKind::ChatDownload);
+    CHECK(std::string(CommandName(c.kind)) == "chatDownload");
+    CHECK(c.chat.fileId == kFileId);
+    CHECK(c.chat.fileName == "Relat\xc3\xb3rio de mar\xc3\xa7o.pdf");
+    c = Parsed(ChatDownloadCommand(kFileId, Accented(255)));
+    CHECK(c.chat.fileName == Accented(255));
+}
+
+TEST_CASE("a chat command with a bad field parses into nothing") {
+    // O motivo diz o comando e o campo, nunca o valor (a chave, a empresa, o titulo, o texto, o nome do arquivo).
+    const std::string key = kChatKey;
+    // chatLink: a chave de 42 caracteres (ou de 44, ou com o + do base64), a empresa vazia (ou de 81, ou com controle).
+    CHECK(RefusalOf(ChatLinkCommand(key.substr(0, 42), "ACME")) == "chatLink: chave invalida");
+    CHECK(RefusalOf(ChatLinkCommand(key + "x", "ACME")) == "chatLink: chave invalida");
+    CHECK(RefusalOf(ChatLinkCommand(key.substr(0, 42) + "+", "ACME")) == "chatLink: chave invalida");
+    CHECK(RefusalOf(ChatLinkCommand(key, "")) == "chatLink: empresa invalida");
+    CHECK(RefusalOf(ChatLinkCommand(key, Accented(81))) == "chatLink: empresa invalida");
+    CHECK(RefusalOf(ChatLinkCommand(key, "ACME\nLtda")) == "chatLink: empresa invalida");
+    CHECK(RefusalOf(ChatLinkCommand(key, 5)) == "chatLink: o campo empresa precisa ser texto");
+    CHECK(RefusalOf(R"({"v":1,"cmd":"chatLink","empresa":"ACME"})") == "chatLink: falta o campo chave");
+    // chatNotify: a conversa -1 (ou em texto, ou com fracao), o titulo vazio ou de 201 caracteres, o texto de 501.
+    const char* const kNotWhole = "o campo conversa precisa ser inteiro de 0 para cima";
+    CHECK(RefusalOf(ChatNotifyCommand(-1, "Ana", "Oi")) == std::string("chatNotify: ") + kNotWhole);
+    CHECK(RefusalOf(ChatNotifyCommand("7", "Ana", "Oi")) == std::string("chatNotify: ") + kNotWhole);
+    CHECK(RefusalOf(ChatNotifyCommand(1.5, "Ana", "Oi")) == std::string("chatNotify: ") + kNotWhole);
+    CHECK(RefusalOf(ChatNotifyCommand(7, "", "Oi")) == "chatNotify: titulo invalido");
+    CHECK(RefusalOf(ChatNotifyCommand(7, Accented(201), "Oi")) == "chatNotify: titulo invalido");
+    CHECK(RefusalOf(ChatNotifyCommand(7, "Ana", Accented(501))) == "chatNotify: texto invalido");
+    CHECK(RefusalOf(R"({"v":1,"cmd":"chatNotify","conversa":7,"titulo":"Ana"})") == "chatNotify: falta o campo texto");
+    // chatBadge: o n -1 ou "3".
+    const char* const kBadgeNotWhole = "chatBadge: o campo n precisa ser inteiro de 0 para cima";
+    CHECK(RefusalOf(R"({"v":1,"cmd":"chatBadge","n":-1})") == kBadgeNotWhole);
+    CHECK(RefusalOf(R"({"v":1,"cmd":"chatBadge","n":"3"})") == kBadgeNotWhole);
+    CHECK(RefusalOf(R"({"v":1,"cmd":"chatBadge"})") == "chatBadge: falta o campo n");
+    // chatDownload: o arquivo em maiusculas (ou de 31), o nome vazio (ou de 256).
+    const std::string fileId = kFileId;
+    CHECK(RefusalOf(ChatDownloadCommand("0123456789ABCDEF0123456789ABCDEF", "a.pdf")) ==
+          "chatDownload: arquivo invalido");
+    CHECK(RefusalOf(ChatDownloadCommand(fileId.substr(0, 31), "a.pdf")) == "chatDownload: arquivo invalido");
+    CHECK(RefusalOf(ChatDownloadCommand(kFileId, "")) == "chatDownload: nome invalido");
+    CHECK(RefusalOf(ChatDownloadCommand(kFileId, Accented(256))) == "chatDownload: nome invalido");
+}
+
+TEST_CASE("the state serializes the chat field") {
+    BridgeState state;
+    ChatView chat;
+    chat.linked = true;
+    chat.company = "ACME Com\xc3\xa9rcio Ltda";
+    chat.computer = "RECEPCAO-01";
+    chat.accountConnected = true;
+    state.chat = chat;
+    // Letra por letra, como no contrato, depois do empresa (no fim do estado do Windows).
+    const std::string text = StateMessage(state);
+    const std::string end = R"(,"chat":{"ligado":true,"empresa":"ACME Com)" "\xc3\xa9"
+                            R"(rcio Ltda","computador":"RECEPCAO-01","contaConectada":true}}})";
+    REQUIRE(text.size() > end.size());
+    CHECK(text.substr(text.size() - end.size()) == end);
+    CHECK(text.find(R"(,"empresa":{"link":)") < text.find(R"("chat":)"));
+    state.chat = ChatView();
+    CHECK(Parse(StateMessage(state))["state"]["chat"] ==
+          json({{"ligado", false}, {"empresa", ""}, {"computador", ""}, {"contaConectada", false}}));
+    // Sem o chat (o iPhone): nenhuma chave a mais.
+    state.chat.reset();
+    CHECK_FALSE(Parse(StateMessage(state))["state"].contains("chat"));
+
+    // As mensagens do chat, letra por letra.
+    CHECK(ChatKeyMessage(kChatKey, "ACME Com\xc3\xa9rcio Ltda") ==
+          std::string(R"({"v":1,"type":"chatChave","chave":")") + kChatKey + R"(","empresa":"ACME Com)" "\xc3\xa9"
+                                                                              R"(rcio Ltda"})");
+    CHECK(ChatKeyMessage("", "") == R"({"v":1,"type":"chatChave","chave":"","empresa":""})");
+    CHECK(WindowMessage(true) == R"({"v":1,"type":"janela","frente":true})");
+    CHECK(WindowMessage(false) == R"({"v":1,"type":"janela","frente":false})");
+    CHECK(OpenChatMessage(7) == R"({"v":1,"type":"abrir","tela":"chat","conversa":7})");
+    CHECK(OpenChatMessage(0) == R"({"v":1,"type":"abrir","tela":"chat","conversa":0})");
+}
+
 TEST_CASE("toast and ring messages") {
     CHECK(Parse(ToastMessage("A troca de conta fica para o fim da liga\xc3\xa7\xc3\xa3o.")) ==
           json({{"v", 1}, {"type", "toast"}, {"texto", "A troca de conta fica para o fim da liga\xc3\xa7\xc3\xa3o."}}));

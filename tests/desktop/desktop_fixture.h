@@ -125,6 +125,7 @@ inline DesktopPaths Paths() {
     paths.atalhos = "dados/atalhos.json";
     paths.admin = "dados/admin.json";
     paths.companyList = "dados/contatos-empresa.json";
+    paths.chat = "dados/chat.json";
     paths.legacy.ini = "rc7/StarsonicPhone.ini";
     paths.legacy.contactsXml = "rc7/Contacts.xml";
     paths.legacy.callsDb = "rc7/call_log.db";
@@ -168,6 +169,7 @@ struct Harness {
         config.paths = Paths();
         config.observedStartWithWindows = observedAutostart;
         config.version = "0.1.0-rc.1";
+        if (platform == Platform::Windows) config.computerName = "RECEPCAO-01";   // o chat.computador (0.2.0)
         config.decrypt = ToyDecrypt;
         config.profile.account.port = 5060;
         config.profile.account.serverPorts = {ServerPort{L"starcloud1-starsonic.com.br", 35060}};
@@ -196,6 +198,15 @@ struct Harness {
         };
         hooks.endBeep = [this] { host.push_back("endBeep"); };
         hooks.missedCall = [this](const std::string& text) { host.push_back("missedCall " + text); };
+        // Os do chat (0.2.0): o aviso do Windows (a conversa, o titulo e o texto), o numero no icone da barra de
+        // tarefas e o download (o arquivo, o nome e a chave).
+        hooks.chatNotice = [this](int64_t conversa, const std::string& titulo, const std::string& texto) {
+            host.push_back("chatNotice " + std::to_string(conversa) + " " + titulo + " | " + texto);
+        };
+        hooks.chatBadge = [this](int n) { host.push_back("chatBadge " + std::to_string(n)); };
+        hooks.chatDownload = [this](const std::string& arquivo, const std::string& nome, const std::string& chave) {
+            host.push_back("chatDownload " + arquivo + " | " + nome + " | " + chave);
+        };
         if (sheetHooks) {
             hooks.pickImportFile = [this](std::function<void(const std::string&)> done) {
                 importPicks.push_back(std::move(done));

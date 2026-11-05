@@ -31,6 +31,18 @@ export interface AgendaSummary {
   quantos: number;
 }
 
+/** (0.2.0, só no Windows) O chat deste computador no estado. A chave nunca vem aqui: só na mensagem `chatChave`. */
+export interface ChatSummary {
+  /** Há uma chave guardada: o computador está ligado ao chat. */
+  ligado: boolean;
+  /** O nome da empresa guardado com a chave, ou "". */
+  empresa: string;
+  /** O nome do computador no Windows. */
+  computador: string;
+  /** A conta em uso já se conectou à central neste computador (pelo par servidor|ramal); false sem conta em uso. */
+  contaConectada: boolean;
+}
+
 /** (iPhone) Um contato da agenda do iPhone (a mensagem `agenda`): só para ver e ligar. */
 export interface AgendaContact {
   /** Pode ser "" (a interface mostra o primeiro número). */
@@ -247,6 +259,8 @@ export interface AppState {
   config: { bipeFim: boolean; bipeTecla?: boolean };
   /** (rc.4) */
   empresa: CompanyList;
+  /** (0.2.0) Só no Windows: o estado do iPhone vem sem o campo. */
+  chat?: ChatSummary;
   /** (iPhone) Os campos abaixo só vêm no modo iPhone. */
   plataforma?: Platform;
   agenda?: AgendaSummary;
@@ -267,7 +281,14 @@ export type IncomingMessage =
    *  como na contatosEmpresa. */
   | { v: number; type: 'agenda'; vez: number; contatos: AgendaContact[] }
   /** (iPhone) A pessoa tocou no aviso da perdida: a interface vai para os Recentes. */
-  | { v: number; type: 'abrir'; tela: 'recentes' };
+  | { v: number; type: 'abrir'; tela: 'recentes' }
+  /** (0.2.0) A resposta ao `chatKey`: "" e "" com o computador fora do chat. A chave nunca vem no estado. */
+  | { v: number; type: 'chatChave'; chave: string; empresa: string }
+  /** (0.2.0) A janela principal está na frente (visível, sem minimizar e ativa): depois do estado a cada `ready` e a
+   *  cada mudança. Antes da primeira, `false`. */
+  | { v: number; type: 'janela'; frente: boolean }
+  /** (0.2.0) A pessoa clicou no aviso do chat: a conversa dele (0: a aba Chat). */
+  | { v: number; type: 'abrir'; tela: 'chat'; conversa: number };
 
 /** Interface → C++ (sem o `v`, que a ponte acrescenta). */
 export type Command =
@@ -343,7 +364,16 @@ export type Command =
   | { cmd: 'contactsOpened' }
   | { cmd: 'allowContacts' }
   | { cmd: 'audioRoute' }
-  | { cmd: 'keyTone'; tecla: string };
+  | { cmd: 'keyTone'; tecla: string }
+  /** (0.2.0; o iPhone recusa) O chat: pedir a chave (a resposta vem na `chatChave`), ligar e desligar o computador, o
+   *  aviso do Windows (`conversa` 0: o clique abre a aba Chat), o número no ícone da barra de tarefas e o download de
+   *  um arquivo com a chave guardada. Os limites são do docs/ponte-windows.md ("Os comandos do chat"). */
+  | { cmd: 'chatKey' }
+  | { cmd: 'chatLink'; chave: string; empresa: string }
+  | { cmd: 'chatUnlink' }
+  | { cmd: 'chatNotify'; conversa: number; titulo: string; texto: string }
+  | { cmd: 'chatBadge'; n: number }
+  | { cmd: 'chatDownload'; arquivo: string; nome: string };
 
 /**
  * Os únicos endereços que o openExternal aceita. O `suporte` (o discador do iPhone) só vale no modo iPhone: no Windows o

@@ -29,7 +29,7 @@ TEST_CASE("ready replays the current state with the ringing call") {
     h.posts.clear();
 
     h.Send(R"({"v":1,"cmd":"ready"})");
-    REQUIRE(h.posts.size() == 2);
+    REQUIRE(h.posts.size() == 3);
     const json state = json::parse(h.posts[0]);
     CHECK(state["type"] == "state");
     const json& call = state["state"]["ligacao"];
@@ -39,13 +39,14 @@ TEST_CASE("ready replays the current state with the ringing call") {
     CHECK(call["top"]["incoming"] == true);
     CHECK(call["top"]["phase"] == "ringing");
     CHECK(json::parse(h.posts[1]) == json({{"v", 1}, {"type", "ring"}, {"tipo", "completo"}}));
+    CHECK(json::parse(h.posts[2])["type"] == "janela");   // (0.2.0) a janela na frente, no fim
     CHECK(state["state"]["tela"] == "principal");
     CHECK(h.Logged("interface pronta"));
 
     // Um segundo ready (a pagina recarregou) recebe o mesmo estado de novo.
     h.posts.clear();
     h.Send(R"({"v":1,"cmd":"ready"})");
-    CHECK(h.posts.size() == 2);
+    CHECK(h.posts.size() == 3);
 }
 
 TEST_CASE("login with a port in the address shows the address message") {
@@ -869,10 +870,11 @@ TEST_CASE("an update offer reaches the interface, comes back on ready and is ans
     // A interface recarregou (ou o aviso abriu): a pergunta volta depois do estado e do toque.
     h.posts.clear();
     h.Send(R"({"v":1,"cmd":"ready"})");
-    REQUIRE(h.posts.size() == 3);
+    REQUIRE(h.posts.size() == 4);
     CHECK(json::parse(h.posts[0])["type"] == "state");
     CHECK(json::parse(h.posts[1])["type"] == "ring");
     CHECK(json::parse(h.posts[2])["type"] == "update");
+    CHECK(json::parse(h.posts[3])["type"] == "janela");   // (0.2.0) a janela na frente, no fim
 
     // Depois: a resposta vai ao executavel uma vez, e a pergunta nao volta mais.
     h.Send(R"({"v":1,"cmd":"updateLater"})");
@@ -2416,8 +2418,8 @@ TEST_CASE("opening the app shows the saved list first") {
     CHECK(h.fetches[0].source.location == kGoogleExport);
     h.posts.clear();
     h.Send(kReady);
-    // O estado, o toque e a lista (depois do estado).
-    REQUIRE(h.posts.size() == 3);
+    // O estado, o toque e a lista (depois do estado), e (0.2.0) a janela na frente, no fim.
+    REQUIRE(h.posts.size() == 4);
     CHECK(json::parse(h.posts[0])["type"] == "state");
     CHECK(json::parse(h.posts[1])["type"] == "ring");
     CHECK(json::parse(h.posts[2]) ==
@@ -2427,6 +2429,7 @@ TEST_CASE("opening the app shows the saved list first") {
                 {"contatos", json::array({json({{"nome", "Empresa Teste"},
                                                 {"numero", "3001"},
                                                 {"observacao", "Recep\xc3\xa7\xc3\xa3o"}})})}}));
+    CHECK(json::parse(h.posts[3])["type"] == "janela");
     CHECK(h.State()["empresa"] == Empresa(kGoogleLink, "lendo", "", 1761062400000LL, 1, 1));
     CHECK(h.fetches.size() == 1);
 }
@@ -2797,4 +2800,435 @@ TEST_CASE("a hook answer that arrives after the shutdown is harmless") {
     CHECK(h.Toasts().empty());
     CHECK(h.files.files.count("exportar/c.csv") == 0);
     CHECK(h.files.files.count("dados/contatos-empresa.json") == 0);
+}
+
+// 0.2.0: o chat (docs/ponte-windows.md, "O chat (0.2.0)"): a chave do computador, os ramais conectados, o aviso, o
+// numero, o download, a janela na frente, o abrir do chat e o diagnostico sem os valores.
+namespace {
+
+// Uma chave inventada (43 de [A-Za-z0-9_-]), a empresa e o id de um arquivo (32 de [0-9a-f]), nunca de verdade.
+const char* const kChatKey = "Chave_de-teste-inventada-0123456789-ABCDxyz";
+const char* const kChatCompany = "ACME Com\xc3\xa9rcio Ltda";
+const char* const kChatFile = "0123456789abcdef0123456789abcdef";
+const char* const kChatLinkFailed = "N\xc3\xa3o foi poss\xc3\xadvel ligar este computador ao chat.";
+const char* const kChatKeyCommand = R"({"v":1,"cmd":"chatKey"})";
+const char* const kChatUnlink = R"({"v":1,"cmd":"chatUnlink"})";
+const char* const kNoChatKey = R"({"v":1,"type":"chatChave","chave":"","empresa":""})";
+
+std::string ChatLinkCommand(const std::string& chave, const std::string& empresa) {
+    return json({{"v", 1}, {"cmd", "chatLink"}, {"chave", chave}, {"empresa", empresa}}).dump();
+}
+std::string ChatNotifyCommand(int64_t conversa, const std::string& titulo, const std::string& texto) {
+    return json({{"v", 1}, {"cmd", "chatNotify"}, {"conversa", conversa}, {"titulo", titulo}, {"texto", texto}}).dump();
+}
+std::string ChatBadgeCommand(int n) { return json({{"v", 1}, {"cmd", "chatBadge"}, {"n", n}}).dump(); }
+std::string ChatDownloadCommand(const std::string& arquivo, const std::string& nome) {
+    return json({{"v", 1}, {"cmd", "chatDownload"}, {"arquivo", arquivo}, {"nome", nome}}).dump();
+}
+
+// O chat do estado esperado (no computador dos testes).
+json Chat(bool ligado, const std::string& empresa, bool contaConectada) {
+    return json({{"ligado", ligado},
+                 {"empresa", empresa},
+                 {"computador", "RECEPCAO-01"},
+                 {"contaConectada", contaConectada}});
+}
+
+// Os ganchos do chat chamados, na ordem (os outros ganchos ficam de fora).
+std::vector<std::string> ChatHooks(const Harness& h) {
+    std::vector<std::string> out;
+    for (const std::string& call : h.host) {
+        if (call.compare(0, 4, "chat") == 0) out.push_back(call);
+    }
+    return out;
+}
+
+// Os tipos das mensagens para a interface, a partir da de indice from, na ordem.
+std::vector<std::string> TypesFrom(const Harness& h, size_t from) {
+    std::vector<std::string> out;
+    for (size_t i = from; i < h.posts.size(); ++i) out.push_back(json::parse(h.posts[i])["type"]);
+    return out;
+}
+
+// O id da conta do estado com esse ramal (o teste falha se nao ha).
+std::string AccountWithRamal(const Harness& h, const std::string& ramal) {
+    const json state = h.State();   // fora do for: a lista e um pedaco dele
+    for (const json& account : state["contas"]) {
+        if (account["ramal"] == ramal) return account["id"];
+    }
+    FAIL("sem a conta do ramal " << ramal);
+    return std::string();
+}
+
+}  // namespace
+
+TEST_CASE("chatLink saves the key and the state says linked with the company, the computer and the connected account") {
+    Harness h;
+    h.StartRegistered();   // a conta em uso registrou: ela ja se conectou a central neste computador
+    CHECK(h.State()["chat"] == Chat(false, "", true));
+    h.Send(ChatLinkCommand(kChatKey, kChatCompany));
+    CHECK(h.State()["chat"] == Chat(true, kChatCompany, true));
+    CHECK(h.Toasts().empty());
+    // No chat.json, pelo cifrador: a chave nao fica em claro.
+    CHECK(h.files.files.at("dados/chat.json").find(kChatKey) == std::string::npos);
+    ChatStore saved(h.files, h.cipher, "dados/chat.json");
+    REQUIRE(saved.Load());
+    REQUIRE(saved.Link().has_value());
+    CHECK(saved.Link()->chave == kChatKey);
+    CHECK(saved.Link()->empresa == kChatCompany);
+
+    // Abrir de novo: ligado, e a conta continua conectada (antes do registro desta abertura).
+    h.Restart();
+    CHECK(h.State()["chat"] == Chat(true, kChatCompany, true));
+
+    // O disco que recusa: o toast, e nada muda.
+    h.files.failWrites = true;
+    h.Send(ChatLinkCommand("Outra_chave-inventada-0123456789-ABCDEFGHIJ", "Outra Empresa"));
+    h.files.failWrites = false;
+    CHECK(h.Toasts() == std::vector<std::string>{kChatLinkFailed});
+    CHECK(h.State()["chat"] == Chat(true, kChatCompany, true));
+    CHECK(h.Logged("chat.json: a chave do chat nao foi gravada"));
+}
+
+TEST_CASE("chatKey answers the saved key and the state never carries it") {
+    Harness h;
+    h.StartRegistered();
+    // Fora do chat: "" e "".
+    h.Send(kChatKeyCommand);
+    REQUIRE_FALSE(h.posts.empty());
+    CHECK(h.posts.back() == kNoChatKey);
+    CHECK(h.Logged("chat: chatKey"));
+
+    h.Send(ChatLinkCommand(kChatKey, kChatCompany));
+    const size_t from = h.posts.size();
+    h.Send(kChatKeyCommand);
+    REQUIRE(h.posts.size() == from + 1);   // so a resposta: o estado nao mudou
+    CHECK(h.posts.back() == ChatKeyMessage(kChatKey, kChatCompany));
+
+    // O ready nao manda a chave de novo, e nenhuma outra mensagem (nenhum estado) a leva.
+    h.Send(kReady);
+    h.app->SetWindowInFront(true);
+    h.Run();
+    CHECK(h.Messages("chatChave").size() == 2);
+    CHECK(h.Messages("state").size() >= 3);
+    for (const std::string& post : h.posts) {
+        if (json::parse(post)["type"] == "chatChave") continue;
+        INFO(post);
+        CHECK(post.find(kChatKey) == std::string::npos);
+    }
+}
+
+TEST_CASE("chatUnlink clears the link and the state says not linked") {
+    Harness h;
+    h.StartRegistered();
+    h.Send(ChatLinkCommand(kChatKey, kChatCompany));
+    REQUIRE(h.State()["chat"] == Chat(true, kChatCompany, true));
+    h.Send(kChatUnlink);
+    CHECK(h.State()["chat"] == Chat(false, "", true));   // os ramais conectados ficam
+    CHECK(h.Logged("chat: chatUnlink"));
+    h.Send(kChatKeyCommand);
+    CHECK(h.posts.back() == kNoChatKey);
+    // No chat.json tambem: a proxima abertura continua fora do chat.
+    h.Restart();
+    CHECK(h.State()["chat"] == Chat(false, "", true));
+    CHECK(h.files.files.at("dados/chat.json").find(kChatKey) == std::string::npos);
+}
+
+TEST_CASE("an account that registers joins the connected ramais") {
+    // Sem conta em uso: false.
+    Harness empty;
+    empty.Start();
+    CHECK(empty.State()["chat"] == Chat(false, "", false));
+
+    // Duas contas da migracao da rc.7 (inventadas): a 2002 em uso, e a 1001.
+    Harness h;
+    h.files.files["rc7/StarsonicPhone.ini"] =
+        "[Settings]\r\naccountId=2\r\n"
+        "[Account1]\r\nlabel=1001\r\nserver=pbx.example.com:5060\r\nusername=1001\r\npassword=cifrada:segredo\r\n"
+        "transport=udp\r\n"
+        "[Account2]\r\nlabel=2002\r\nserver=starcloud1.example.com:35060\r\nusername=2002\r\npassword=cifrada:outra\r\n"
+        "transport=tcp\r\n";
+    h.Start();
+    REQUIRE(h.State()["conta"]["ramal"] == "2002");
+    // A conta da migracao ainda nao registrou neste computador; uma resposta que nao e registro (o 401, a saida da
+    // conta) nao conta.
+    CHECK(h.State()["chat"]["contaConectada"] == false);
+    h.app->OnRegistration(401, false, h.port.LastId());
+    h.app->OnRegistration(200, false, h.port.LastId());
+    h.Run();
+    CHECK(h.State()["chat"]["contaConectada"] == false);
+    CHECK(h.files.files.count("dados/chat.json") == 0);
+    h.app->OnRegistration(200, true, h.port.LastId());
+    h.Run();
+    CHECK(h.State()["chat"]["contaConectada"] == true);
+    // A renovacao do registro nao grava de novo.
+    const int writes = h.files.writeCount;
+    h.app->OnRegistration(200, true, h.port.LastId());
+    h.Run();
+    CHECK(h.files.writeCount == writes);
+
+    // A outra conta da migracao, em uso: ainda nao registrou aqui, ate o 200 dela.
+    const std::string first = AccountWithRamal(h, "2002");
+    h.Send(R"({"v":1,"cmd":"selectAccount","contaId":")" + AccountWithRamal(h, "1001") + R"("})");
+    REQUIRE(h.State()["conta"]["ramal"] == "1001");
+    CHECK(h.State()["chat"]["contaConectada"] == false);
+    h.app->OnRegistration(200, true, h.port.LastId());
+    h.Run();
+    CHECK(h.State()["chat"]["contaConectada"] == true);
+    h.Send(R"({"v":1,"cmd":"selectAccount","contaId":")" + first + R"("})");
+    CHECK(h.State()["chat"]["contaConectada"] == true);   // a 2002 ja tinha registrado
+
+    // O Entrar de uma conta nova entra quando registra.
+    h.Send(Login("pbx.example.com", "2003", "segredo"));
+    h.app->OnRegistration(200, true, h.port.LastId());
+    h.Run();
+    REQUIRE(h.State()["conta"]["ramal"] == "2003");
+    CHECK(h.State()["chat"]["contaConectada"] == true);
+
+    // No chat.json, os pares (o servidor como o Entrar o aceitou).
+    ChatStore saved(h.files, h.cipher, "dados/chat.json");
+    REQUIRE(saved.Load());
+    CHECK(saved.HasRamal("starcloud1.example.com", "2002"));
+    CHECK(saved.HasRamal("pbx.example.com", "1001"));
+    CHECK(saved.HasRamal("pbx.example.com", "2003"));
+    CHECK_FALSE(saved.HasRamal("pbx.example.com", "2002"));
+}
+
+TEST_CASE("chatNotify goes to the hook, and not with N\xc3\xa3o perturbe on") {
+    Harness h;
+    h.StartRegistered();
+    h.Send(ChatNotifyCommand(7, "Ana Souza", "Bom dia!\nO pedido chegou."));
+    h.Send(ChatNotifyCommand(0, "Recep\xc3\xa7\xc3\xa3o", ""));   // 0: o clique abre a aba Chat
+    CHECK(ChatHooks(h) == std::vector<std::string>{"chatNotice 7 Ana Souza | Bom dia!\nO pedido chegou.",
+                                                   "chatNotice 0 Recep\xc3\xa7\xc3\xa3o | "});
+    CHECK(h.Logged("chat: chatNotify"));
+
+    // Com o Nao perturbe: nenhum aviso, e uma linha so, sem o titulo e o texto.
+    h.Send(R"({"v":1,"cmd":"setDnd","on":true})");
+    h.host.clear();
+    h.logs.clear();
+    h.Send(ChatNotifyCommand(8, "Bruno", "Oi"));
+    CHECK(h.host.empty());
+    CHECK(h.logs == std::vector<std::string>{"chat: aviso calado (nao perturbe)"});
+
+    // Desligado, o aviso volta.
+    h.Send(R"({"v":1,"cmd":"setDnd","on":false})");
+    h.Send(ChatNotifyCommand(8, "Bruno", "Oi"));
+    CHECK(ChatHooks(h) == std::vector<std::string>{"chatNotice 8 Bruno | Oi"});
+}
+
+TEST_CASE("chatBadge goes to the hook only when the number changes") {
+    Harness h;
+    h.StartRegistered();
+    h.Send(ChatBadgeCommand(0));   // comeca em 0: nada
+    CHECK(ChatHooks(h).empty());
+    h.Send(ChatBadgeCommand(3));
+    h.Send(ChatBadgeCommand(3));
+    h.Send(ChatBadgeCommand(5));
+    h.Send(ChatBadgeCommand(0));
+    h.Send(ChatBadgeCommand(0));
+    CHECK(ChatHooks(h) == std::vector<std::string>{"chatBadge 3", "chatBadge 5", "chatBadge 0"});
+    // Uma linha a cada numero repassado, com ele.
+    const auto lines = std::count_if(h.logs.begin(), h.logs.end(), [](const std::string& line) {
+        return line.compare(0, 15, "chat: chatBadge") == 0;
+    });
+    CHECK(lines == 3);
+    CHECK(h.Logged("chat: chatBadge 3"));
+    CHECK(h.Logged("chat: chatBadge 5"));
+    CHECK(h.Logged("chat: chatBadge 0"));
+}
+
+TEST_CASE("chatDownload goes to the hook with the saved key, and is ignored without one") {
+    Harness h;
+    h.StartRegistered();
+    h.Send(ChatDownloadCommand(kChatFile, "Pedido 123.pdf"));
+    CHECK(ChatHooks(h).empty());
+    CHECK(h.Logged("chat: chatDownload ignorado (sem a chave)"));
+
+    h.Send(ChatLinkCommand(kChatKey, kChatCompany));
+    h.Send(ChatDownloadCommand(kChatFile, "Relat\xc3\xb3rio de mar\xc3\xa7o.pdf"));
+    CHECK(ChatHooks(h) == std::vector<std::string>{std::string("chatDownload ") + kChatFile +
+                                                   " | Relat\xc3\xb3rio de mar\xc3\xa7o.pdf | " + kChatKey});
+    CHECK(h.Logged("chat: chatDownload"));
+
+    // Desligado do chat, de novo sem a chave: ignorado.
+    h.Send(kChatUnlink);
+    h.Send(ChatDownloadCommand(kChatFile, "Pedido 123.pdf"));
+    CHECK(ChatHooks(h).size() == 1);
+}
+
+TEST_CASE("the window in front is sent when it changes and again after each ready") {
+    Harness h;
+    h.StartRegistered();
+    // Antes do primeiro SetWindowInFront, false: no ready, depois do estado (no fim).
+    size_t from = h.posts.size();
+    h.Send(kReady);
+    CHECK(TypesFrom(h, from) == std::vector<std::string>{"state", "ring", "janela"});
+    CHECK(h.posts.back() == R"({"v":1,"type":"janela","frente":false})");
+
+    // A janela veio para a frente: o SetWindowInFront so poe na fila; nela, o janela, sozinho.
+    from = h.posts.size();
+    h.logs.clear();
+    h.app->SetWindowInFront(true);
+    CHECK(h.posts.size() == from);
+    h.Run();
+    REQUIRE(h.posts.size() == from + 1);
+    CHECK(h.posts.back() == R"({"v":1,"type":"janela","frente":true})");
+    // O mesmo valor de novo: nada.
+    h.app->SetWindowInFront(true);
+    h.Run();
+    CHECK(h.posts.size() == from + 1);
+    CHECK(h.logs.empty());
+
+    // A cada ready, de novo, com o valor de agora; e a cada mudanca.
+    from = h.posts.size();
+    h.Send(kReady);
+    CHECK(TypesFrom(h, from) == std::vector<std::string>{"state", "ring", "janela"});
+    CHECK(h.posts.back() == R"({"v":1,"type":"janela","frente":true})");
+    h.app->SetWindowInFront(false);
+    h.Run();
+    CHECK(h.posts.back() == R"({"v":1,"type":"janela","frente":false})");
+    CHECK(h.Messages("janela").size() == 4);
+}
+
+TEST_CASE("OpenChat before the first ready comes after the state in the first ready") {
+    // O app aberto pelo clique no aviso: o OpenChat chega antes de a pagina carregar (antes do primeiro ready), ate
+    // antes da abertura. Dois cliques antes do ready dao um abrir so, o do ultimo.
+    Harness h;
+    h.app->OpenChat(3);
+    h.StartRegistered();
+    h.app->OpenChat(7);
+    h.Run();
+    CHECK(h.Messages("abrir").empty());
+    size_t from = h.posts.size();
+    h.Send(kReady);
+    CHECK(TypesFrom(h, from) == std::vector<std::string>{"state", "ring", "janela", "abrir"});
+    CHECK(h.posts.back() == R"({"v":1,"type":"abrir","tela":"chat","conversa":7})");
+
+    // Uma vez so: a pagina que recarrega depois nao volta ao chat.
+    from = h.posts.size();
+    h.Send(kReady);
+    CHECK(TypesFrom(h, from) == std::vector<std::string>{"state", "ring", "janela"});
+
+    // Depois do ready, o abrir vai na hora, sozinho e sem linha no diagnostico.
+    from = h.posts.size();
+    h.logs.clear();
+    h.app->OpenChat(0);
+    h.Run();
+    REQUIRE(h.posts.size() == from + 1);
+    CHECK(h.posts.back() == R"({"v":1,"type":"abrir","tela":"chat","conversa":0})");
+    CHECK(h.logs.empty());
+}
+
+TEST_CASE("the diagnostics never carry the key, the title, the text or the file name") {
+    Harness h;
+    h.StartRegistered();
+    // Os valores (inventados) faceis de achar numa linha.
+    const std::string key = kChatKey;
+    const std::string company = "Empresa Secreta Ltda";
+    const std::string title = "Titulo Secreto";
+    const std::string text = "Texto secreto da mensagem";
+    const std::string name = "Arquivo secreto.pdf";
+
+    // Os aceitos (o download antes da chave e ignorado).
+    h.Send(kChatKeyCommand);
+    h.Send(ChatDownloadCommand(kChatFile, name));
+    h.Send(ChatLinkCommand(key, company));
+    h.Send(kChatKeyCommand);
+    h.Send(ChatNotifyCommand(7, title, text));
+    h.Send(ChatBadgeCommand(3));
+    h.Send(ChatDownloadCommand(kChatFile, name));
+    // A chave que o disco recusa.
+    h.files.failWrites = true;
+    h.Send(ChatLinkCommand(key, company));
+    h.files.failWrites = false;
+    // O aviso calado pelo Nao perturbe.
+    h.Send(R"({"v":1,"cmd":"setDnd","on":true})");
+    h.Send(ChatNotifyCommand(8, title, text));
+    // Os recusados: cada regra, com os valores nos outros campos.
+    h.Send(ChatLinkCommand(key.substr(0, 42), company));
+    h.Send(ChatLinkCommand(key + "x", company));
+    h.Send(ChatLinkCommand(key, company + "\n"));
+    h.Send(R"({"v":1,"cmd":"chatLink","chave":")" + key + R"(","empresa":5})");
+    h.Send(R"({"v":1,"cmd":"chatLink","chave":")" + key + R"("})");
+    h.Send(ChatNotifyCommand(-1, title, text));
+    h.Send(ChatNotifyCommand(7, "", text));
+    h.Send(ChatNotifyCommand(7, title + std::string(200, 'x'), text));
+    h.Send(ChatNotifyCommand(7, title, text + std::string(500, 'x')));
+    h.Send(R"({"v":1,"cmd":"chatNotify","conversa":7,"titulo":")" + title + R"(","texto":3})");
+    h.Send(R"({"v":1,"cmd":"chatBadge","n":"3"})");
+    h.Send(ChatDownloadCommand("0123456789ABCDEF0123456789ABCDEF", name));
+    h.Send(ChatDownloadCommand(kChatFile, ""));
+    h.Send(ChatDownloadCommand(kChatFile, name + std::string(255, 'x')));
+    h.Send(kChatUnlink);
+    // Os ignorados depois do Sair.
+    h.Send(R"({"v":1,"cmd":"quit"})");
+    h.Send(ChatLinkCommand(key, company));
+    h.Send(ChatNotifyCommand(7, title, text));
+    h.Send(ChatDownloadCommand(kChatFile, name));
+
+    REQUIRE_FALSE(h.logs.empty());
+    for (const std::string& line : h.logs) {
+        INFO(line);
+        // Nem a chave nem um pedaco dela; nem a empresa, o titulo, o texto ou o nome do arquivo; nem o id do arquivo.
+        for (const std::string& part : {key.substr(0, 8), key.substr(15, 9), key.substr(key.size() - 8)}) {
+            CHECK(line.find(part) == std::string::npos);
+        }
+        CHECK(line.find("ecret") == std::string::npos);
+        CHECK(line.find(kChatFile) == std::string::npos);
+    }
+    // Cada caminho deixou a linha dele, so com o comando (e o numero do chatBadge) e o campo recusado.
+    for (const char* line : {"chat: chatKey",
+                             "chat: chatLink",
+                             "chat: chatNotify",
+                             "chat: chatBadge 3",
+                             "chat: chatDownload",
+                             "chat: chatDownload ignorado (sem a chave)",
+                             "chat: chatUnlink",
+                             "chat: aviso calado (nao perturbe)",
+                             "chat.json: a chave do chat nao foi gravada",
+                             "comando ignorado: chatLink: chave invalida",
+                             "comando ignorado: chatLink: empresa invalida",
+                             "comando ignorado: chatLink: o campo empresa precisa ser texto",
+                             "comando ignorado: chatLink: falta o campo empresa",
+                             "comando ignorado: chatNotify: o campo conversa precisa ser inteiro de 0 para cima",
+                             "comando ignorado: chatNotify: titulo invalido",
+                             "comando ignorado: chatNotify: texto invalido",
+                             "comando ignorado: chatNotify: o campo texto precisa ser texto",
+                             "comando ignorado: chatBadge: o campo n precisa ser inteiro de 0 para cima",
+                             "comando ignorado: chatDownload: arquivo invalido",
+                             "comando ignorado: chatDownload: nome invalido",
+                             "comando ignorado depois do Sair: chatLink",
+                             "comando ignorado depois do Sair: chatNotify",
+                             "comando ignorado depois do Sair: chatDownload"}) {
+        INFO(line);
+        CHECK(h.Logged(line));
+    }
+}
+
+TEST_CASE("the chat commands that come without the person do not keep the admin area open") {
+    // O chatKey, o chatNotify e o chatBadge vem do servidor do chat (uma mensagem que chegou), sem a pessoa: com a area
+    // do administrador aberta, eles nao recomecam os 10 min.
+    Harness h;
+    h.StartRegistered();
+    h.Send(kAdminLogin);
+    REQUIRE(h.State()["admin"]["aberto"] == true);
+    h.time.Advance(DesktopApp::kAdminIdleMs - 1000);
+    h.Run();
+    h.Send(kChatKeyCommand);
+    h.Send(ChatNotifyCommand(7, "Ana Souza", "Oi"));
+    h.Send(ChatBadgeCommand(2));
+    h.time.Advance(1000);
+    h.Run();
+    CHECK(h.State()["admin"]["aberto"] == false);
+
+    // Um comando da pessoa (o download de um arquivo) recomeca a contagem, como os outros.
+    h.Send(kAdminLogin);
+    REQUIRE(h.State()["admin"]["aberto"] == true);
+    h.time.Advance(DesktopApp::kAdminIdleMs - 1000);
+    h.Run();
+    h.Send(ChatDownloadCommand(kChatFile, "Pedido 123.pdf"));
+    h.time.Advance(1000);
+    h.Run();
+    CHECK(h.State()["admin"]["aberto"] == true);
 }

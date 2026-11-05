@@ -11,7 +11,8 @@
 //   interface. O estado do DesktopApp so e lido e escrito nela, sem trava; post e chamado so dela, uma vez por
 //   mensagem, na ordem.
 // - HandleCommand (na thread da interface) so le o JSON e poe o comando na fila; DialLink, RefreshAudioDevices,
-//   SetAgenda, SetAudioRoute, OpenRecents e Start tambem so poem na fila. Nada disso espera o motor.
+//   SetAgenda, SetAudioRoute, OpenRecents, SetWindowInFront, OpenChat e Start tambem so poem na fila. Nada disso espera
+//   o motor.
 // - Os comandos de ligacao chamam o controlador na thread de comandos: ele chama o motor na thread de quem chama
 //   (o Dial espera o MakeCall, o Hold ate ~2 s), e os efeitos de comandos de threads diferentes nao teriam ordem
 //   entre si. Com uma thread so, os comandos da interface chegam ao motor na ordem em que foram mandados (o
@@ -58,6 +59,7 @@
 #include "Atalhos.h"
 #include "CallController.h"
 #include "CallEngine.h"
+#include "Chat.h"
 #include "Cipher.h"
 #include "Files.h"
 #include "InternetState.h"
@@ -98,6 +100,9 @@ struct DesktopPaths {
     std::string atalhos;    // atalhos.json (rc.3)
     std::string admin;      // admin.json (rc.3; pelo cifrador)
     std::string companyList;   // contatos-empresa.json (rc.4): a ultima lista boa da planilha da empresa
+    // chat.json (0.2.0; pelo cifrador): a chave do chat e os ramais conectados. Vazio: o computador nunca fica ligado
+    // ao chat (o chatLink nao grava).
+    std::string chat;
     LegacyPaths legacy;
 };
 
@@ -118,6 +123,7 @@ struct DesktopConfig {
     // A conferencia da senha do administrador (rc.3). Vazio: CheckAdminPassword (o resumo embutido). Os testes dao uma
     // senha deles (nunca a de verdade).
     std::function<bool(const std::string& typed)> checkAdminPassword;
+    std::string computerName;   // (0.2.0) o nome do computador no Windows, o chat.computador ("" no iPhone)
 };
 
 // O que o executavel faz pelo DesktopApp. Todos chamados na thread de comandos, menos o log (ver acima). Um vazio
@@ -162,6 +168,15 @@ struct DesktopHooks {
     // A perdida que a pessoa nao viu, com o texto do aviso de 2 s ("Ligacao perdida de <nome ou numero>"): o aviso do
     // iPhone (spec do iPhone, 7.9). A recusada pelo Nao perturbe nao tem aviso (7.8).
     std::function<void(const std::string& text)> missedCall;
+    // 0.2.0: o chat (docs/ponte-windows.md, "O chat (0.2.0)"), so no Windows. Os tres nunca esperam: so poem o trabalho
+    // na fila do executavel.
+    // O aviso do Windows de uma mensagem (chatNotify, sem o Nao perturbe). O clique nele volta pelo OpenChat(conversa).
+    std::function<void(int64_t conversa, const std::string& titulo, const std::string& texto)> chatNotice;
+    // O numero no icone da barra de tarefas (chatBadge, so quando muda; 0: sem numero).
+    std::function<void(int n)> chatBadge;
+    // Baixa o arquivo do chat com a chave guardada (chatDownload), para a pasta Downloads, marca como vindo da internet
+    // e abre. Um erro volta como toast pelo Notify: "Arquivo expirado" (o 410) ou "Nao foi possivel baixar o arquivo.".
+    std::function<void(const std::string& arquivo, const std::string& nome, const std::string& chave)> chatDownload;
 };
 
 // O app de PC. Responsavel por:
@@ -233,6 +248,21 @@ struct DesktopHooks {
 //     o audioRoute, ao hooks.chooseAudioRoute, e a saida escolhida volta pelo SetAudioRoute (a rotaAudio); a perdida
 //     que a pessoa nao viu vai tambem ao hooks.missedCall, com o texto do aviso de 2 s. O OpenRecents (o toque no
 //     aviso) manda o abrir dos Recentes; o pedido antes do primeiro ready vai nele, depois do estado e da agenda.
+// - 0.2.0: o chat (docs/ponte-windows.md, "O chat (0.2.0)"), so no Windows. No iPhone, o estado nao tem o chat, os seis
+//   comandos sao recusados como os do PC, e o SetWindowInFront e o OpenChat so deixam uma linha no diagnostico.
+//   - O chat.json (a ChatStore, pelo cifrador, lida na abertura): a chave do computador, a empresa dela e os ramais que
+//     ja se conectaram a central neste computador. O par servidor|ramal da conta do motor entra nele a cada registro
+//     (2xx), tambem o do Entrar; o estado diz se o da conta em uso esta la (chat.contaConectada).
+//   - chatKey responde com a mensagem chatChave (a chave nunca vai no estado); chatLink grava a chave e a empresa (o
+//     disco que recusa: um toast); chatUnlink as apaga (os ramais ficam); chatNotify vai ao hooks.chatNotice (com o Nao
+//     perturbe, nada); chatBadge, ao hooks.chatBadge so quando o numero muda (comeca em 0); chatDownload, ao
+//     hooks.chatDownload com a chave guardada (sem ela, ignorado).
+//   - A janela na frente (SetWindowInFront: a mensagem janela, false ate a primeira chamada, depois do estado a cada
+//     ready e a cada mudanca) e o clique no aviso do chat (OpenChat: o abrir do chat; o pedido antes do primeiro ready
+//     vai nele, no fim, como o OpenRecents do iPhone).
+//   - O chatKey, o chatNotify e o chatBadge vem do chat, sem a pessoa: nao recomecam os 10 min do administrador.
+//   O diagnostico nunca leva a chave, a empresa, o titulo, o texto ou o nome do arquivo: so "chat: <comando>" (e o
+//   numero do chatBadge), e um comando recusado diz so o comando e o campo.
 class DesktopApp : public EngineListener {
 public:
     // O tempo do Entrar (spec do Windows 7.1).
@@ -297,6 +327,13 @@ public:
     // primeiro ready (a pagina ainda carrega), o abrir fica para ele, depois do estado e da agenda. No Windows, nada
     // (uma linha no diagnostico). So poe na fila.
     void OpenRecents();
+    // 0.2.0: a janela principal ficou na frente (visivel, sem minimizar e ativa) ou saiu dela: a mensagem janela, so
+    // quando muda (antes da primeira chamada, false). No iPhone, nada (uma linha no diagnostico). So poe na fila.
+    void SetWindowInFront(bool inFront);
+    // 0.2.0: a pessoa clicou no aviso do chat (o do hooks.chatNotice, com a conversa dele; 0: a aba Chat): a mensagem
+    // abrir do chat. Antes do primeiro ready, o abrir fica para ele, depois do estado (dois cliques: o do ultimo). No
+    // iPhone, nada (uma linha no diagnostico). So poe na fila.
+    void OpenChat(int64_t conversa);
     // A fila de comandos roda o que ja tinha e para; daqui em diante nada mais entra. Nunca de dentro de um gancho.
     void Shutdown();
 
@@ -391,6 +428,8 @@ private:
     // iPhone
     void ApplyAgenda(AgendaPermission permission, std::vector<AgendaContact> contacts);
     void PostAgenda();
+    // 0.2.0: o chat
+    void AddConnectedRamal();
 
     DesktopConfig config_;
     DesktopHooks hooks_;
@@ -445,9 +484,11 @@ private:
     AtalhosStore atalhos_;
     AdminStore admin_;
     InternetState internet_ = InternetState::Online;
-    // O que foi ao motor no ultimo SetAccount (o endereco e a tabela de portas) e o registro de novo que espera o fim
-    // da ligacao porque a porta do administrador mudou (fora do pending_: uma troca de conta nao o apaga).
+    // O que foi ao motor no ultimo SetAccount (o endereco, o ramal e a tabela de portas) e o registro de novo que
+    // espera o fim da ligacao porque a porta do administrador mudou (fora do pending_: uma troca de conta nao o apaga).
+    // O endereco e o ramal sao tambem o par dos ramais conectados do chat (0.2.0).
     std::wstring engineAddress_;
+    std::wstring engineRamal_;
     std::vector<ServerPort> enginePorts_;
     bool reRegister_ = false;
     // O BLF: a lista pedida ao motor (na conta blfAccount_), a vez em que cada numero entrou nela e o ultimo estado de
@@ -483,10 +524,19 @@ private:
     // lista em si e o agenda_.
     int agendaSeq_ = 0;
     // iPhone (so na thread de comandos): a rotaAudio (a saida de som que o hospedeiro mandou; "" sem saber), se o
-    // primeiro ready ja chegou, e o abrir pedido antes dele (vai no ready, depois do estado e da agenda).
+    // primeiro ready ja chegou (tambem no Windows, pelo abrir do chat) e o abrir pedido antes dele (vai no ready,
+    // depois do estado e da agenda).
     std::string audioRoute_;
     bool interfaceReady_ = false;
     bool openRecentsPending_ = false;
+
+    // 0.2.0: o chat (so na thread de comandos; so no Windows). O chat.json; a janela principal na frente (false ate o
+    // primeiro SetWindowInFront); o ultimo numero repassado ao hooks.chatBadge (0 na abertura); e o abrir do chat
+    // pedido antes do primeiro ready (a conversa do ultimo clique).
+    ChatStore chat_;
+    bool windowInFront_ = false;
+    int chatBadge_ = 0;
+    std::optional<int64_t> openChatPending_;
 
     std::unique_ptr<Executor> executor_;   // por ultimo: parado primeiro (no destrutor)
 };

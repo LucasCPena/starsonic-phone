@@ -2,6 +2,7 @@
 
 #include <cstdint>
 
+#include "Chat.h"   // 0.2.0: as conferencias da chave, da empresa e do id de um arquivo do chat
 #include "Text.h"   // WideToUtf8: os nomes da planilha (SheetContact)
 #include "nlohmann/json.hpp"
 
@@ -66,7 +67,32 @@ const Name kNames[] = {
     {CommandKind::AllowContacts, "allowContacts"},
     {CommandKind::AudioRoute, "audioRoute"},
     {CommandKind::KeyTone, "keyTone"},
+    {CommandKind::ChatKey, "chatKey"},
+    {CommandKind::ChatLink, "chatLink"},
+    {CommandKind::ChatUnlink, "chatUnlink"},
+    {CommandKind::ChatNotify, "chatNotify"},
+    {CommandKind::ChatBadge, "chatBadge"},
+    {CommandKind::ChatDownload, "chatDownload"},
 };
+
+// Os limites dos textos do chat (docs/ponte-windows.md, "Os comandos do chat"), em caracteres.
+constexpr size_t kMaxChatTitle = 200;
+constexpr size_t kMaxChatText = 500;
+constexpr size_t kMaxChatFileName = 255;
+
+// Quantos caracteres (pontos de codigo) tem o texto UTF-8 (o JSON lido ja e UTF-8 valido).
+size_t CountCharacters(const std::string& utf8) {
+    size_t count = 0;
+    for (char ch : utf8) {
+        if ((static_cast<unsigned char>(ch) & 0xC0) != 0x80) ++count;
+    }
+    return count;
+}
+
+bool CharactersBetween(const std::string& text, size_t least, size_t most) {
+    const size_t count = CountCharacters(text);
+    return count >= least && count <= most;
+}
 
 // Le os campos de um comando, anotando o primeiro problema (um campo obrigatorio que falta ou um tipo errado).
 class Fields {
@@ -108,6 +134,18 @@ public:
             return Wrong(key, "inteiro de 0 para cima");
         }
         *out = static_cast<int>(value->get<int64_t>());
+    }
+    // Um inteiro obrigatorio de 0 a most (sem fracao).
+    void Whole(const char* key, int64_t most, int64_t* out) {
+        const Json* value = Find(key, true);
+        if (!value) return;
+        // O JSON le um inteiro sem sinal como unsigned: acima do int64 ele nao cabe (e nao vira negativo aqui).
+        const bool whole =
+            value->is_number_unsigned()
+                ? value->get<uint64_t>() <= static_cast<uint64_t>(most)
+                : value->is_number_integer() && value->get<int64_t>() >= 0 && value->get<int64_t>() <= most;
+        if (!whole) return Wrong(key, "inteiro de 0 para cima");
+        *out = value->get<int64_t>();
     }
     // Uma lista de {endereco: texto, porta: inteiro} (a porta como veio, no intervalo de um int: a loja a confere).
     void Servers(const char* key, std::optional<std::vector<ServerView>>* out) {
@@ -437,6 +475,34 @@ std::optional<Command> ParseCommand(const std::string& text, std::string* error)
         case CommandKind::SetCompanyList:
             f.Text("link", &command.link, true);   // obrigatorio, e pode ser vazio (tira a lista)
             break;
+        // 0.2.0: o chat. O campo fora da regra e recusado com o nome dele, nunca com o valor: a chave e o segredo do
+        // computador, e a empresa, o titulo, o texto e o nome do arquivo sao da conversa (nada disso vai ao
+        // diagnostico).
+        case CommandKind::ChatLink:
+            f.Text("chave", &command.chat.key, true);
+            f.Text("empresa", &command.chat.company, true);
+            if (f.ok() && !ValidChatKey(command.chat.key)) f.Fail("chave invalida");
+            if (f.ok() && !ValidChatCompany(command.chat.company)) f.Fail("empresa invalida");
+            break;
+        case CommandKind::ChatNotify:
+            f.Whole("conversa", INT64_MAX, &command.chat.conversation);
+            f.Text("titulo", &command.chat.title, true);
+            f.Text("texto", &command.chat.text, true);
+            if (f.ok() && !CharactersBetween(command.chat.title, 1, kMaxChatTitle)) f.Fail("titulo invalido");
+            if (f.ok() && !CharactersBetween(command.chat.text, 0, kMaxChatText)) f.Fail("texto invalido");
+            break;
+        case CommandKind::ChatBadge: {
+            int64_t n = 0;
+            f.Whole("n", INT32_MAX, &n);
+            command.chat.badge = static_cast<int>(n);
+            break;
+        }
+        case CommandKind::ChatDownload:
+            f.Text("arquivo", &command.chat.fileId, true);
+            f.Text("nome", &command.chat.fileName, true);
+            if (f.ok() && !ValidFileId(command.chat.fileId)) f.Fail("arquivo invalido");
+            if (f.ok() && !CharactersBetween(command.chat.fileName, 1, kMaxChatFileName)) f.Fail("nome invalido");
+            break;
         case CommandKind::Ready:
         case CommandKind::AdminLogout:
         case CommandKind::Answer:
@@ -460,6 +526,8 @@ std::optional<Command> ParseCommand(const std::string& text, std::string* error)
         case CommandKind::ContactsOpened:
         case CommandKind::AllowContacts:
         case CommandKind::AudioRoute:
+        case CommandKind::ChatKey:
+        case CommandKind::ChatUnlink:
             break;
     }
     if (!f.ok()) return Refuse(error, cmd + ": " + f.error());
@@ -531,6 +599,13 @@ std::string StateMessage(const BridgeState& state) {
                        {"atualizadaEm", state.company.updatedMs},
                        {"quantos", state.company.count},
                        {"vez", state.company.seq}};
+    // O chat (0.2.0, so no Windows), depois da empresa.
+    if (state.chat) {
+        s["chat"] = Out{{"ligado", state.chat->linked},
+                        {"empresa", state.chat->company},
+                        {"computador", state.chat->computer},
+                        {"contaConectada", state.chat->accountConnected}};
+    }
     // O modo iPhone: os campos dele no fim, na ordem do docs/ponte-windows.md ("O estado no iPhone").
     if (state.iphone) {
         s["plataforma"] = "ios";
@@ -573,6 +648,18 @@ std::string AgendaMessage(int seq, const std::vector<AgendaContact>& contacts) {
 }
 
 std::string OpenRecentsMessage() { return Dump(Out{{"v", kBridgeVersion}, {"type", "abrir"}, {"tela", "recentes"}}); }
+
+std::string ChatKeyMessage(const std::string& key, const std::string& company) {
+    return Dump(Out{{"v", kBridgeVersion}, {"type", "chatChave"}, {"chave", key}, {"empresa", company}});
+}
+
+std::string WindowMessage(bool inFront) {
+    return Dump(Out{{"v", kBridgeVersion}, {"type", "janela"}, {"frente", inFront}});
+}
+
+std::string OpenChatMessage(int64_t conversation) {
+    return Dump(Out{{"v", kBridgeVersion}, {"type", "abrir"}, {"tela", "chat"}, {"conversa", conversation}});
+}
 
 std::string RingMessage(RingKind kind) {
     const char* name = "parar";

@@ -43,6 +43,8 @@ const char kSheetOffline[] = "Sem conex\xc3\xa3o com a planilha. Fica a \xc3\xba
 const char kFileNotFound[] =
     "N\xc3\xa3o achei o arquivo. Confira o caminho e se este computador tem acesso \xc3\xa0 pasta.";
 const char kInvalidLink[] = "Use um link https:// ou o caminho de um arquivo.";
+// 0.2.0: o chatLink que o disco (ou o cifrador) recusou.
+const char kChatLinkFailed[] = "N\xc3\xa3o foi poss\xc3\xadvel ligar este computador ao chat.";
 
 std::string U8(const std::wstring& text) { return WideToUtf8(text); }
 std::wstring Wide(const std::string& text) { return Utf8ToWide(text); }
@@ -80,8 +82,8 @@ enum class CommandPlatform { Both, Windows, IPhone };
 CommandPlatform PlatformOf(const Command& command) {
     switch (command.kind) {
         // A janela, a troca de conta, o som, os meus contatos, os atalhos, a area do administrador, as planilhas, a
-        // lista da empresa e a atualizacao. O quit tambem: um app do iPhone nao se fecha sozinho (regra da App Store),
-        // e o Sair do iPhone e o da conta (o removeAccount).
+        // lista da empresa, a atualizacao e (0.2.0) o chat. O quit tambem: um app do iPhone nao se fecha sozinho (regra
+        // da App Store), e o Sair do iPhone e o da conta (o removeAccount).
         case CommandKind::Minimize:
         case CommandKind::CloseToTray:
         case CommandKind::Resize:
@@ -102,6 +104,12 @@ CommandPlatform PlatformOf(const Command& command) {
         case CommandKind::RefreshCompanyList:
         case CommandKind::UpdateNow:
         case CommandKind::UpdateLater:
+        case CommandKind::ChatKey:
+        case CommandKind::ChatLink:
+        case CommandKind::ChatUnlink:
+        case CommandKind::ChatNotify:
+        case CommandKind::ChatBadge:
+        case CommandKind::ChatDownload:
             return CommandPlatform::Windows;
         case CommandKind::ContactsOpened:
         case CommandKind::AllowContacts:
@@ -139,6 +147,14 @@ CommandPlatform PlatformOf(const Command& command) {
             break;
     }
     return CommandPlatform::Both;
+}
+
+// Os comandos que a interface manda sozinha, sem a pessoa: o ready (a pagina que carregou) e (0.2.0) os do chat que
+// vem do servidor do chat (a chave para conectar, o aviso e o numero de uma mensagem que chegou). Eles nao recomecam os
+// 10 min da area do administrador.
+bool WithoutThePerson(CommandKind kind) {
+    return kind == CommandKind::Ready || kind == CommandKind::ChatKey || kind == CommandKind::ChatNotify ||
+           kind == CommandKind::ChatBadge;
 }
 
 // O nome do comando no diagnostico: o do protocolo e, no setSetting, a chave ("setSetting iniciarComWindows").
@@ -365,7 +381,8 @@ DesktopApp::DesktopApp(DesktopConfig config, DesktopHooks hooks, CallEngine& eng
       names_(new Names(config_.platform == Platform::IPhone, contacts_, company_, agenda_)),
       listener_(new Listener(*this)),
       atalhos_(files, config_.paths.atalhos),
-      admin_(files, cipher, config_.paths.admin, config_.profile) {
+      admin_(files, cipher, config_.paths.admin, config_.profile),
+      chat_(files, cipher, config_.paths.chat) {
     controller_.reset(new CallController(
         engine, *listener_, clock, scheduler, *names_,
         [this](std::string number) { return DialRule(number); },
@@ -490,6 +507,35 @@ void DesktopApp::OpenRecents() {
     });
 }
 
+void DesktopApp::SetWindowInFront(bool inFront) {
+    Post([this, inFront] {
+        if (IPhone()) {
+            Log("janela na frente: recusada no modo iPhone");
+            return;
+        }
+        // Sem linha no diagnostico: a janela vai e volta da frente a toda hora. O ready manda o valor de novo.
+        if (inFront == windowInFront_) return;
+        windowInFront_ = inFront;
+        if (hooks_.post) hooks_.post(WindowMessage(inFront));
+    });
+}
+
+void DesktopApp::OpenChat(int64_t conversa) {
+    Post([this, conversa] {
+        if (IPhone()) {
+            Log("abrir o chat: recusado no modo iPhone");
+            return;
+        }
+        // Antes do primeiro ready a pagina ainda carrega (o app aberto pelo clique no aviso): o abrir vai no ready,
+        // depois do estado. Dois cliques antes dele dao um abrir so, o do ultimo.
+        if (!interfaceReady_) {
+            openChatPending_ = conversa;
+            return;
+        }
+        if (hooks_.post) hooks_.post(OpenChatMessage(conversa));
+    });
+}
+
 void DesktopApp::Shutdown() {
     executor_->Stop();
 }
@@ -556,8 +602,9 @@ void DesktopApp::Execute(const Command& command) {
         Log("comando recusado no modo Windows: " + LogName(command));
         return;
     }
-    // Qualquer comando com a area do administrador aberta recomeca os 10 min (o ready e a pagina que recarregou).
-    if (adminOpen_ && command.kind != CommandKind::Ready) TouchAdmin();
+    // Qualquer comando com a area do administrador aberta recomeca os 10 min, menos os que vem sem a pessoa (o ready e
+    // a pagina que recarregou, e os do chat que vem do servidor do chat).
+    if (adminOpen_ && !WithoutThePerson(command.kind)) TouchAdmin();
     switch (command.kind) {
         case CommandKind::Ready:
             Log("interface pronta");
@@ -578,6 +625,14 @@ void DesktopApp::Execute(const Command& command) {
             // A lista da empresa (rc.4), se houve uma desde a abertura (com o vez 0 ela e vazia, como a da interface).
             if (companySeq_ > 0) PostCompanyContacts();
             if (updateOffer_ && hooks_.post) hooks_.post(UpdateMessage(updateOffer_->version, updateOffer_->notes));
+            // 0.2.0: a janela na frente (false ate o primeiro SetWindowInFront) e o abrir do chat pedido antes do
+            // primeiro ready, no fim.
+            if (hooks_.post) hooks_.post(WindowMessage(windowInFront_));
+            if (openChatPending_) {
+                const int64_t conversa = *openChatPending_;
+                openChatPending_.reset();
+                if (hooks_.post) hooks_.post(OpenChatMessage(conversa));
+            }
             break;
         case CommandKind::Login:
             HandleLogin(command);
@@ -796,6 +851,51 @@ void DesktopApp::Execute(const Command& command) {
             // teclas sao o numero que a pessoa digita.
             if (settings_.Get().bipeTecla && hooks_.keyTone) hooks_.keyTone(command.key, controller_->HasCalls());
             break;
+        // 0.2.0: o chat (so no Windows: PlatformOf). Os campos ja foram conferidos na leitura (ParseCommand). O
+        // diagnostico leva so o nome do comando (e o numero do chatBadge): nunca a chave, a empresa, o titulo, o texto
+        // ou o nome do arquivo.
+        case CommandKind::ChatKey: {
+            Log("chat: chatKey");
+            const std::optional<ChatLink>& link = chat_.Link();
+            if (hooks_.post) hooks_.post(link ? ChatKeyMessage(link->chave, link->empresa) : ChatKeyMessage("", ""));
+            break;
+        }
+        case CommandKind::ChatLink:
+            Log("chat: chatLink");
+            if (!chat_.SetLink(ChatLink{command.chat.key, command.chat.company})) {
+                Log("chat.json: a chave do chat nao foi gravada");
+                Toast(kChatLinkFailed);
+            }
+            break;
+        case CommandKind::ChatUnlink:
+            Log("chat: chatUnlink");
+            if (!chat_.ClearLink()) Log("chat.json: a chave do chat nao foi apagada");
+            break;
+        case CommandKind::ChatNotify:
+            // Com o Nao perturbe, nenhum aviso: uma linha so, a do aviso calado.
+            if (settings_.Get().doNotDisturb) {
+                Log("chat: aviso calado (nao perturbe)");
+                break;
+            }
+            Log("chat: chatNotify");
+            if (hooks_.chatNotice) hooks_.chatNotice(command.chat.conversation, command.chat.title, command.chat.text);
+            break;
+        case CommandKind::ChatBadge:
+            if (command.chat.badge == chatBadge_) break;   // o numero que ja esta no icone: nada
+            chatBadge_ = command.chat.badge;
+            Log("chat: chatBadge " + std::to_string(chatBadge_));
+            if (hooks_.chatBadge) hooks_.chatBadge(chatBadge_);
+            break;
+        case CommandKind::ChatDownload: {
+            const std::optional<ChatLink>& link = chat_.Link();
+            if (!link) {
+                Log("chat: chatDownload ignorado (sem a chave)");
+                break;
+            }
+            Log("chat: chatDownload");
+            if (hooks_.chatDownload) hooks_.chatDownload(command.chat.fileId, command.chat.fileName, link->chave);
+            break;
+        }
     }
 }
 
@@ -829,11 +929,12 @@ void DesktopApp::Initialize() {
     if (active) ActivateStored(*active);
 }
 
-// As partes do PC na abertura (so no Windows, na ordem de sempre): os atalhos, a area do administrador, a lista da
-// empresa, a migracao da rc.7 e o Iniciar com o Windows que o executavel viu.
+// As partes do PC na abertura (so no Windows, na ordem de sempre): os atalhos, a area do administrador, (0.2.0) o chat,
+// a lista da empresa, a migracao da rc.7 e o Iniciar com o Windows que o executavel viu.
 void DesktopApp::StartPcParts() {
     if (!atalhos_.Load()) Log("atalhos.json ilegivel: lido como vazio");
     if (!admin_.Load()) Log("admin.json ilegivel: valem os padroes");
+    if (!chat_.Load()) Log("chat.json ilegivel: o computador fica desligado do chat");
     StartCompanyList();   // rc.4: antes da conta, para os nomes da lista ja valerem na primeira recebida
 
     const LegacyImportResult imported = ImportLegacy(config_.paths.legacy, config_.decrypt ? config_.decrypt : NoDecrypt,
@@ -987,6 +1088,9 @@ void DesktopApp::ApplyLogin(const LoginOutcome& outcome) {
 void DesktopApp::HandleRegistration(int sipCode, bool active, int accountId) {
     if (accountId == 0 || accountId != engineAccountId_) return;   // de uma conta que ja saiu
     if (sipCode >= 200 && sipCode <= 299 && !active) return;       // a saida da conta, nao um registro
+    // 0.2.0: registrou (tambem o Entrar, tambem com a resposta que chegou depois de a rede cair): o ramal se conectou a
+    // central neste computador.
+    if (sipCode >= 200 && sipCode <= 299) AddConnectedRamal();
     if (loginRequest_) {
         ApplyLogin(flow_.OnRegistration(sipCode, false));
         return;
@@ -1383,7 +1487,16 @@ BridgeState DesktopApp::BuildState() const {
     state.company.updatedMs = company_.UpdatedMs();
     state.company.count = companyCount_;
     state.company.seq = companySeq_;
-    if (IPhone()) {
+    if (!IPhone()) {
+        // 0.2.0: o chat, so no Windows. A chave nunca vai no estado (so na chatChave, a resposta ao chatKey).
+        ChatView chat;
+        const std::optional<ChatLink>& link = chat_.Link();
+        chat.linked = link.has_value();
+        if (link) chat.company = link->empresa;
+        chat.computer = config_.computerName;
+        chat.accountConnected = active && chat_.HasRamal(U8(active->address), U8(active->ramal));
+        state.chat = chat;
+    } else {
         // O modo iPhone (docs/ponte-windows.md, "O estado no iPhone"): os campos do PC continuam, com o valor neutro, e
         // os do iPhone: o resumo da agenda, a rota de audio e o bipe ao digitar.
         state.accounts.erase(std::remove_if(state.accounts.begin(), state.accounts.end(),
@@ -1418,6 +1531,7 @@ void DesktopApp::Log(const std::string& line) const {
 int DesktopApp::RegisterInEngine(AccountInput input) {
     input.serverPorts = admin_.Get().servidores;
     engineAddress_ = input.address;
+    engineRamal_ = input.ramal;
     enginePorts_ = *input.serverPorts;
     reRegister_ = false;   // a conta nova ja vai com a lista de agora
     return port_.SetAccount(input);
@@ -2069,6 +2183,16 @@ void DesktopApp::ApplyAgenda(AgendaPermission permission, std::vector<AgendaCont
 
 void DesktopApp::PostAgenda() {
     if (hooks_.post) hooks_.post(AgendaMessage(agendaSeq_, agenda_.All()));
+}
+
+// ---------------------------------------------------------------- 0.2.0: o chat
+
+// A conta do motor registrou: o par servidor|ramal dela entra nos ramais conectados do chat (o chat.contaConectada). So
+// no Windows (o iPhone nao tem o chat). O par que ja estava nao e gravado de novo (a renovacao do registro); o que o
+// disco recusou fica nesta abertura, com uma linha.
+void DesktopApp::AddConnectedRamal() {
+    if (IPhone()) return;
+    if (!chat_.AddRamal(U8(engineAddress_), U8(engineRamal_))) Log("chat.json: o ramal conectado nao foi gravado");
 }
 
 }  // namespace starsonic

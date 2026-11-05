@@ -12,17 +12,21 @@ interface recebe o estado pronto e manda comandos. Uma interface que discorde do
 
 - Interface → C++: `window.chrome.webview.postMessage({v: 1, cmd: "<comando>", ...campos})`. Os campos ficam no
   mesmo objeto do `cmd`.
-- C++ → interface: cinco mensagens, sempre com `v: 1`:
+- C++ → interface: oito mensagens, sempre com `v: 1`:
   - `{"v":1,"type":"state","state":{...}}` — o estado inteiro, a cada mudança (só quando muda);
   - `{"v":1,"type":"toast","texto":"..."}` — um aviso de 2 s;
   - `{"v":1,"type":"ring","tipo":"completo"|"espera"|"parar"|"fim"}` — o toque (`fim`, rc.3: o bipe do fim da
     ligação, uma vez);
   - `{"v":1,"type":"update","versao":"...","notas":"..."}` — a pergunta da atualização (ver "Atualização");
   - `{"v":1,"type":"contatosEmpresa","vez":N,"contatos":[...]}` — (rc.4) a lista de contatos da empresa (ver "A lista
-    da empresa").
+    da empresa");
+  - `{"v":1,"type":"chatChave","chave":"...","empresa":"..."}` — (0.2.0) a resposta ao `chatKey` (ver "O chat");
+  - `{"v":1,"type":"janela","frente":true|false}` — (0.2.0) a janela principal está na frente (ver "O chat");
+  - `{"v":1,"type":"abrir","tela":"chat","conversa":N}` — (0.2.0) a pessoa clicou no aviso do chat (ver "O chat").
 - Ao carregar (e a cada recarga), a interface manda `{"v":1,"cmd":"ready"}` e recebe o estado atual e o toque atual
   (nesta ordem), também com uma ligação que já tocava antes de a página carregar, depois a lista da empresa (rc.4, se
-  houve uma desde a abertura do app) e a pergunta da atualização, se há uma aberta.
+  houve uma desde a abertura do app), a pergunta da atualização, se há uma aberta, e (0.2.0) no fim a `janela` e o
+  `abrir` do chat pedido antes do primeiro `ready`.
 - Os textos são UTF-8. Os tempos são milissegundos desde 1970 (como o `Date.now()` do JavaScript).
 
 ## Versão
@@ -37,8 +41,9 @@ interface recebe o estado pronto e manda comandos. Uma interface que discorde do
 
 Regras para todos:
 
-- Comando desconhecido, campo obrigatório que falta ou campo com o tipo errado: o comando é ignorado inteiro, com uma
-  linha no diagnóstico (`comando ignorado: ...`). Campos a mais são ignorados.
+- Comando desconhecido, campo obrigatório que falta ou campo com o tipo errado (nos do chat, também o campo fora da
+  regra): o comando é ignorado inteiro, com uma linha no diagnóstico (`comando ignorado: ...`). Campos a mais são
+  ignorados.
 - Os comandos rodam na ordem em que foram mandados, um por vez, numa thread do C++ (nunca na da interface): um
   comando nunca trava a janela.
 - Depois de `quit`, todo comando (menos `ready`) é ignorado.
@@ -196,8 +201,9 @@ A configuração fica no `admin.json`, protegido pelo DPAPI do usuário (como as
 | `adminLogout` | — | "Sair da área do administrador": `admin.aberto` `false`. |
 | `adminSet` | `naoPerturbe` (booleano, opcional), `atenderAuto` (booleano, opcional), `blf` (booleano, opcional), `puxar` (booleano, opcional), `codigoPuxar` (texto, opcional), `servidores` (lista de `{endereco: texto, porta: inteiro}`, opcional), `canal` (`"teste"` \| `"estavel"` \| `""`, opcional) | Muda só os campos que vieram (`servidores` troca a lista inteira) e grava o `admin.json`. Com a área fechada: ignorado (linha no diagnóstico: `adminSet recusado`). Recusado pela loja (um `canal` diferente desses, um código com algo além de dígitos, `*`, `#`, `+` e `{ramal}`, um servidor com o endereço fora da regra da tela Entrar, repetido ou com a porta fora de 1 a 65535): nada muda e o motivo vem num toast (`Escolha o canal Teste ou Estável.`, `Esse servidor já está na lista.`, `A porta deve ficar entre 1 e 65535.` etc.). |
 
-- A área fecha sozinha depois de 10 minutos sem nenhum comando da interface (qualquer comando, menos o `ready`,
-  recomeça a contagem), no `closeToTray` (a janela fechou para a bandeja) e no `quit`.
+- A área fecha sozinha depois de 10 minutos sem nenhum comando da interface (qualquer comando, menos o `ready` e (0.2.0)
+  o `chatKey`, o `chatNotify` e o `chatBadge`, que vêm do chat sem a pessoa, recomeça a contagem), no `closeToTray` (a
+  janela fechou para a bandeja) e no `quit`.
 - `naoPerturbe: false` esconde o botão Não perturbe e o desliga na hora (gravado no `config.json`; as ligações voltam
   a tocar); `atenderAuto: false` faz o mesmo com o Atender automático. Mostrar de novo não liga de volta. A abertura
   do app também desliga o que está escondido.
@@ -279,7 +285,8 @@ A configuração fica no `admin.json`, protegido pelo DPAPI do usuário (como as
   "entrarAdmin":{"erro":"","esperaAte":0,"vez":0},
   "config":{"bipeFim":true},
   "empresa":{"link":"https://docs.google.com/spreadsheets/d/1AbC_dEf-123/edit#gid=456","situacao":"ok","erro":"",
-             "atualizadaEm":1761062400000,"quantos":230,"vez":1}
+             "atualizadaEm":1761062400000,"quantos":230,"vez":1},
+  "chat":{"ligado":true,"empresa":"ACME Comércio Ltda","computador":"RECEPCAO-01","contaConectada":true}
 }}
 ```
 
@@ -346,6 +353,7 @@ A configuração fica no `admin.json`, protegido pelo DPAPI do usuário (como as
 | `empresa.atualizadaEm` | inteiro | A hora da última leitura boa (ms desde 1970), também de uma abertura anterior (o `contatos-empresa.json`); `0` sem nenhuma. A interface escreve a hora local ("às 14:32", ou "em 26/10 às 14:32" se não for de hoje). |
 | `empresa.quantos` | inteiro | Os contatos da lista de agora (a da última leitura boa). |
 | `empresa.vez` | inteiro | Sobe a cada lista nova (a guardada, na abertura; uma leitura boa; a lista vazia quando o link sai); `0` sem nenhuma lista desde a abertura do app. É a `vez` da última `contatosEmpresa`. |
+| `chat` | objeto | (0.2.0, só no Windows: o estado do iPhone não tem o campo) O chat deste computador: `{ligado, empresa, computador, contaConectada}` (ver "O chat (0.2.0)"). A chave nunca vem no estado. |
 
 ### `ligacao`
 
@@ -468,6 +476,91 @@ depois de abrir e a cada 24 h. Achou uma versão mais nova:
 {"v":1,"cmd":"updateLater"}
 ```
 
+## O chat (0.2.0)
+
+O chat da empresa, só no Windows: o servidor e a API estão no `docs/chat-protocolo.md`. A interface fala com o servidor
+do chat sozinha (a API e os eventos). O C++ guarda a chave do computador, sabe quais ramais já se conectaram à central
+neste computador e faz o que só o executável faz: o aviso do Windows, o número no ícone da barra de tarefas e o
+download dos arquivos.
+
+- **O `chat.json`**, na pasta de dados, guarda a chave do computador, o nome da empresa dela e os ramais conectados:
+  `{"v":1,"chave":"…","empresa":"…","ramais":["servidor|ramal"]}`. Ele passa inteiro pelo DPAPI do usuário, como o
+  `admin.json`. Fora do chat, ele vai sem a chave e a empresa. Um `chat.json` que não decifra, não é JSON ou é de outra
+  versão deixa o computador fora do chat, com a linha `chat.json ilegivel: o computador fica desligado do chat`, e fica
+  no disco até a próxima gravação (que pode ser a de um ramal que registra, abaixo).
+- **Os ramais conectados:** a cada registro (2xx) da conta do motor, também o do Entrar, o par `servidor|ramal` dela
+  entra no `chat.json`, se ainda não estava. O servidor vai em minúsculas, e os dois sem os espaços das pontas. O
+  `chatUnlink` não tira os ramais.
+- **A chave nunca vai no estado nem no diagnóstico.** Ela só vem na `chatChave`, a resposta ao `chatKey`.
+  - O diagnóstico também nunca leva a empresa, o título e o texto do aviso, nem o nome do arquivo.
+  - Cada comando do chat deixa só `chat: <comando>` (no `chatBadge`, com o número: `chat: chatBadge 3`).
+  - Um comando recusado deixa `comando ignorado: <comando>: <motivo>`, e o motivo diz o campo, nunca o valor:
+    `chatLink: chave invalida`, `chatNotify: titulo invalido`, `chatBadge: falta o campo n`.
+
+### O campo do estado
+
+`"chat":{"ligado":true,"empresa":"ACME Comércio Ltda","computador":"RECEPCAO-01","contaConectada":true}`, depois do
+`empresa`. O campo vem sempre no Windows e nunca no iPhone.
+
+| Campo | Tipo | Sentido |
+|---|---|---|
+| `chat.ligado` | booleano | Há uma chave guardada: o computador está ligado ao chat. |
+| `chat.empresa` | texto | O nome da empresa guardado com a chave; `""` sem ela. |
+| `chat.computador` | texto | O nome do computador no Windows. |
+| `chat.contaConectada` | booleano | A conta em uso já se conectou à central neste computador, pelo par `servidor\|ramal` (ver acima). `false` sem conta em uso, e numa conta que ainda não registrou neste computador (também uma da migração). |
+
+### Os comandos do chat
+
+| Comando | Campos | O que faz |
+|---|---|---|
+| `chatKey` | — | Pede a chave. O C++ responde com a mensagem `chatChave`. |
+| `chatLink` | `chave` (texto: 43 de `[A-Za-z0-9_-]`), `empresa` (texto: 1 a 80 caracteres, sem caractere de controle) | Guarda a chave e a empresa, no lugar das de antes, e o `chat.ligado` passa a `true`. Se não conseguir gravar, nada muda e vem o toast `Não foi possível ligar este computador ao chat.`. |
+| `chatUnlink` | — | Apaga a chave e a empresa (os ramais ficam), e o `chat.ligado` passa a `false`. |
+| `chatNotify` | `conversa` (inteiro ≥ 0), `titulo` (texto: 1 a 200 caracteres), `texto` (texto: 0 a 500 caracteres) | Mostra o aviso do Windows (o gancho `chatNotice`). Com o Não perturbe ligado (`naoPerturbe`), não mostra nada, e o diagnóstico ganha só `chat: aviso calado (nao perturbe)`. O clique no aviso volta como o `abrir` do chat, com a mesma `conversa`. `conversa` 0 faz o aviso abrir a aba Chat. |
+| `chatBadge` | `n` (inteiro ≥ 0) | Põe o número no ícone da barra de tarefas (o gancho `chatBadge`; 0 tira o número). O C++ só repassa quando o número muda. Na abertura, o número é 0. |
+| `chatDownload` | `arquivo` (texto: 32 de `[0-9a-f]`), `nome` (texto: 1 a 255 caracteres) | Baixa o arquivo com a chave guardada (o gancho `chatDownload`), para a pasta Downloads, marca como vindo da internet e abre. Sem a chave, o comando é ignorado (linha no diagnóstico). |
+
+- Os caracteres são pontos de código: um acento ou um emoji conta um.
+- Um campo fora da regra faz o comando ser ignorado inteiro, como um campo do tipo errado: por exemplo, a chave de 42
+  caracteres, a empresa vazia, a `conversa` -1, o `titulo` vazio ou de 201 caracteres, o `texto` de 501, o `n` -1 ou
+  `"3"`, o `arquivo` em maiúsculas e o `nome` vazio.
+- O `chatKey`, o `chatNotify` e o `chatBadge` vêm do chat, sem a pessoa: com a área do administrador aberta, eles não
+  recomeçam os 10 minutos.
+- No iPhone, os seis são recusados como os outros comandos do PC (ver "O modo iPhone").
+
+```json
+{"v":1,"cmd":"chatKey"}
+{"v":1,"cmd":"chatLink","chave":"Exemplo_de-chave-inventada-0123456789abcdef","empresa":"ACME Comércio Ltda"}
+{"v":1,"cmd":"chatUnlink"}
+{"v":1,"cmd":"chatNotify","conversa":7,"titulo":"Ana Souza","texto":"Bom dia! O pedido chegou."}
+{"v":1,"cmd":"chatBadge","n":3}
+{"v":1,"cmd":"chatDownload","arquivo":"0123456789abcdef0123456789abcdef","nome":"Pedido 123.pdf"}
+```
+
+### As mensagens do chat
+
+- `{"v":1,"type":"chatChave","chave":"…","empresa":"…"}`: a resposta ao `chatKey`, com `""` e `""` quando o computador
+  não está ligado ao chat. A chave nunca vem no estado.
+- `{"v":1,"type":"janela","frente":true}`: diz se a janela principal está na frente, isto é, visível, sem minimizar e
+  ativa. Vem depois do estado a cada `ready` (no fim das mensagens dele) e de novo a cada mudança. Antes da primeira, a
+  interface considera `false`.
+- `{"v":1,"type":"abrir","tela":"chat","conversa":7}`: a pessoa clicou no aviso do chat. Com `conversa` 0, a interface
+  vai para a aba Chat. Um pedido antes do primeiro `ready` fica para ele, depois do estado (no fim das mensagens dele);
+  dois antes dele dão um `abrir` só, o do último clique. Depois, ele vem na hora, uma vez por clique.
+
+```json
+{"v":1,"type":"chatChave","chave":"Exemplo_de-chave-inventada-0123456789abcdef","empresa":"ACME Comércio Ltda"}
+{"v":1,"type":"chatChave","chave":"","empresa":""}
+{"v":1,"type":"janela","frente":true}
+{"v":1,"type":"abrir","tela":"chat","conversa":7}
+```
+
+### Os toasts do chat
+
+- `Arquivo expirado`: o download respondeu 410 (o executável manda pelo `DesktopApp::Notify`).
+- `Não foi possível baixar o arquivo.`: qualquer outro erro do download (também pelo `Notify`).
+- `Não foi possível ligar este computador ao chat.`: o `chatLink` não gravou.
+
 ## Para o executável (Tasks 11 e 12)
 
 - O `DesktopApp` roda tudo numa thread de comandos própria; `post` é chamado só nela, uma mensagem por vez, na
@@ -552,6 +645,21 @@ depois de abrir e a cada 24 h. Achou uma versão mais nova:
     até 10 MB; ou um caminho, pelo disco) numa thread do executável, e o callback leva o resultado (`CompanyFetch`: os
     bytes, ou o tipo do erro). O `DesktopApp` pede uma leitura por vez. Ao fechar, o executável para essa thread antes
     do `Shutdown()`: nenhum callback chega a um `DesktopApp` destruído.
+- (0.2.0) O chat (ver "O chat (0.2.0)"):
+  - O arquivo novo `DesktopPaths.chat` (`chat.json`, na pasta de dados, pelo mesmo cifrador das senhas: o DPAPI). Sem o
+    caminho, o computador nunca fica ligado ao chat: o `chatLink` responde com o toast.
+  - O `DesktopConfig.computerName`: o nome do computador no Windows, que vai no `chat.computador`.
+  - Os três ganchos novos são chamados na thread de comandos e nunca esperam: só põem o trabalho na fila do executável.
+    - `chatNotice(conversa, titulo, texto)`: o aviso do Windows de uma mensagem. O clique nele chama
+      `DesktopApp::OpenChat(conversa)`.
+    - `chatBadge(n)`: o número no ícone da barra de tarefas (0: sem número).
+    - `chatDownload(arquivo, nome, chave)`: baixa o arquivo com a chave, para a pasta Downloads, marca como vindo da
+      internet e abre. O 410 vira o toast `Arquivo expirado`, e qualquer outro erro o `Não foi possível baixar o
+      arquivo.`, os dois pelo `DesktopApp::Notify`.
+  - `DesktopApp::SetWindowInFront(frente)`: a janela principal ficou na frente (visível, sem minimizar e ativa) ou saiu
+    dela. Só põe na fila, e a `janela` vai à interface quando muda.
+  - `DesktopApp::OpenChat(conversa)`: a pessoa clicou no aviso do chat. Só põe na fila; antes do primeiro `ready`, o
+    `abrir` espera por ele.
 - Ao fechar: `Shutdown()`, o `Stop()` do agendador, o motor destruído, o `DesktopApp` destruído (detalhes no
   `DesktopApp.h`). Depois de a janela fechar, isso tem 5 s: passou, `fechamento forcado` no diagnóstico e o processo
   sai com o código 0.
@@ -561,8 +669,8 @@ depois de abrir e a cada 24 h. Achou uma versão mais nova:
 A mesma interface e o mesmo `DesktopApp` no app do iPhone (spec do iPhone, seções 4.1, 6.1 e 8): o hospedeiro em Swift
 mostra a `windows/ui` num WKWebView, com um objeto da mesma forma do `window.chrome.webview` (o `postMessage` e o evento
 `message`; o `bridge.ts` não muda), e o `DesktopConfig` leva a plataforma iPhone. **Tudo nesta seção existe só com
-`plataforma: "ios"` no estado.** No Windows, o estado não ganha nenhum campo e cada comando faz o que faz hoje. O formato
-continua na versão 1 (ver "Versão").
+`plataforma: "ios"` no estado.** No Windows, o estado não ganha nenhum campo desta seção e cada comando faz o que faz
+hoje. O formato continua na versão 1 (ver "Versão").
 
 - A interface entra no modo iPhone no primeiro estado com `plataforma: "ios"`: antes de desenhar a primeira tela dele,
   põe `width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1` no `<meta name="viewport">` (a página
@@ -598,6 +706,8 @@ Os campos do PC continuam todos no estado (todas as chaves sempre presentes), co
 - `empresa`: com `situacao` `"nenhuma"` (`link` e `erro` `""`; `atualizadaEm`, `quantos` e `vez` `0`);
 - `audio`: com as listas vazias (`microfones`, `altoFalantes` e `desconectados`) e `microfone`, `altoFalante` e `toque`
   `""`: quem escolhe o caminho do som é o iPhone (`rotaAudio`).
+
+A exceção é o `chat` (0.2.0): o iPhone não tem o chat, e o estado dele vem sem o campo.
 
 Os nomes (a recebida, os Recentes e o aviso da perdida) vêm da agenda: o do contato com o número, senão o que a central
 mandou. O `recentes[].contatoId` é sempre `""` (os contatos da agenda não têm id, e a interface não oferece o "Salvar
@@ -707,7 +817,11 @@ Recusados inteiros: nada muda, nenhum gancho é chamado, e o diagnóstico ganha 
 - os atalhos: `saveShortcut`, `removeShortcut` e `useShortcut`;
 - a área do administrador: `adminLogin`, `adminLogout` e `adminSet`;
 - as planilhas e a lista da empresa: `importContacts`, `exportContacts`, `setCompanyList` e `refreshCompanyList`;
-- a atualização: `updateNow` e `updateLater`.
+- a atualização: `updateNow` e `updateLater`;
+- (0.2.0) o chat: `chatKey`, `chatLink`, `chatUnlink`, `chatNotify`, `chatBadge` e `chatDownload`. O estado do iPhone
+  não tem o `chat`, e o `DesktopApp::SetWindowInFront` e o `DesktopApp::OpenChat` só deixam uma linha no diagnóstico
+  (`janela na frente: recusada no modo iPhone`, `abrir o chat: recusado no modo iPhone`): o `ready` do iPhone nunca leva
+  a `janela` nem o `abrir` do chat.
 
 **No Windows,** os comandos do iPhone (`contactsOpened`, `allowContacts`, `audioRoute`, `keyTone` e o `setSetting` com
 `bipeTecla`) são recusados do mesmo jeito, com a linha `comando recusado no modo Windows: <nome>`, e o `openExternal`
