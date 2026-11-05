@@ -255,6 +255,32 @@ func TestServir_Uso(t *testing.T) {
 	}
 }
 
+// O --origem só vale no modo de teste.
+func TestServir_OrigemSoComTeste(t *testing.T) {
+	var saida bytes.Buffer
+	args := []string{"servir", "--config", filepath.Join(t.TempDir(), "config.json"), "--origem", "http://127.0.0.1:4178"}
+	if cod := run(args, strings.NewReader(""), &saida, io.Discard); cod != 2 {
+		t.Fatalf("código %d, esperava 2", cod)
+	}
+	if !strings.Contains(saida.String(), "--origem só vale com --teste") {
+		t.Fatalf("saída %q", saida.String())
+	}
+}
+
+// Uma origem é esquema://host[:porta], sem caminho, query, fragmento nem usuário.
+func TestServir_OrigemInvalida(t *testing.T) {
+	for _, origem := range []string{"127.0.0.1:4178", "http://127.0.0.1:4178/x", "ftp://a.b", "http://", "http://a.b?x=1", "http://a.b#f", "http://u@a.b"} {
+		var saida bytes.Buffer
+		args := []string{"servir", "--teste", "--dados", t.TempDir(), "--origem", origem}
+		if cod := run(args, strings.NewReader(""), &saida, io.Discard); cod != 2 {
+			t.Fatalf("%q: código %d, esperava 2 (%q)", origem, cod, saida.String())
+		}
+		if !strings.Contains(saida.String(), "--origem inválida") {
+			t.Fatalf("%q: saída %q", origem, saida.String())
+		}
+	}
+}
+
 func TestServir_ConfigRuim(t *testing.T) {
 	var saida bytes.Buffer
 	args := []string{"servir", "--config", filepath.Join(t.TempDir(), "nada.json")}

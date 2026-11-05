@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -30,7 +31,7 @@ const uso = `uso: starsonic-chat <subcomando>
 subcomandos:
   versao                                    mostra a versão
   servir [--config <arquivo>]               põe o servidor no ar (HTTPS, com o certificado do Let's Encrypt)
-         [--teste --escutar 127.0.0.1:8090 --dados <pasta>]
+         [--teste --escutar 127.0.0.1:8090 --dados <pasta> [--origem <url>]...]
                                             ou, no modo de teste, em HTTP e só neste computador
   admin-criar <usuario> --dados <pasta>     cria um usuário da página de administração
   admin-senha <usuario> --dados <pasta>     troca a senha de um usuário (e encerra as sessões dele)
@@ -77,8 +78,13 @@ func servir(args []string, saida io.Writer) int {
 	teste := fs.Bool("teste", false, "o modo de teste: HTTP, só no 127.0.0.1 ou no [::1]")
 	escutar := fs.String("escutar", "127.0.0.1:8090", "no modo de teste, o endereço e a porta")
 	dados := fs.String("dados", "", "no modo de teste, a pasta de dados")
+	var origens []string
+	fs.Func("origem", "no modo de teste, uma origem do CORS e do WebSocket (pode repetir; com alguma, a do app não vale)", func(v string) error {
+		origens = append(origens, v)
+		return nil
+	})
 	fs.Usage = func() {
-		fmt.Fprint(saida, "uso: starsonic-chat servir [--config <arquivo>] | --teste [--escutar 127.0.0.1:8090] --dados <pasta>\n")
+		fmt.Fprint(saida, "uso: starsonic-chat servir [--config <arquivo>] | --teste [--escutar 127.0.0.1:8090] --dados <pasta> [--origem <url>]...\n")
 	}
 	if fs.Parse(args) != nil { // o flag já imprimiu o erro e o uso
 		return 2
@@ -103,6 +109,18 @@ func servir(args []string, saida io.Writer) int {
 		return 2
 	}
 
+	if len(origens) > 0 && !*teste {
+		fmt.Fprintln(saida, "--origem só vale com --teste")
+		return 2
+	}
+	for i, o := range origens {
+		var ok bool
+		if origens[i], ok = normalizarOrigem(o); !ok {
+			fmt.Fprintf(saida, "--origem inválida: %q (o formato é http://host[:porta], sem caminho)\n", o)
+			return 2
+		}
+	}
+
 	ctx, parar := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer parar()
 	var err error
@@ -115,7 +133,7 @@ func servir(args []string, saida io.Writer) int {
 			fmt.Fprintf(saida, "A pasta de dados não existe: %s\n", *dados)
 			return 2
 		}
-		err = servidor.RodarTeste(ctx, servidor.Config{Dados: *dados}, *escutar)
+		err = servidor.RodarTeste(ctx, servidor.Config{Dados: *dados, Origens: origens}, *escutar)
 	} else {
 		var c servidor.Config
 		if c, err = servidor.LerConfig(*config); err != nil {
@@ -129,6 +147,19 @@ func servir(args []string, saida io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// normalizarOrigem confere uma origem do --origem (http ou https, com host, sem caminho, query,
+// fragmento nem usuário) e a devolve como esquema://host[:porta], sem a barra do fim.
+func normalizarOrigem(v string) (string, bool) {
+	u, err := url.Parse(v)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.Hostname() == "" {
+		return "", false
+	}
+	if (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.User != nil || strings.Contains(v, "#") {
+		return "", false
+	}
+	return u.Scheme + "://" + u.Host, true
 }
 
 // copiar faz a cópia de segurança do banco (copia.Fazer). Com os argumentos errados volta 2, e

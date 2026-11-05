@@ -10,8 +10,8 @@ on:
       - 'build/android/**'
       - 'build/linux/**'
       - '.github/workflows/android*.yml'
-      # O servidor do chat (Go) tem o próprio workflow (chat); não compila o Windows.
-      - 'chat-servidor/**'
+      # O servidor do chat (Go) tem o próprio workflow (chat); não compila o Windows. O chat-servidor/** não está aqui:
+      # os testes da interface usam o servidor do chat.
       - 'docs/chat-*.md'
       - '.github/workflows/chat*.yml'
   pull_request:
@@ -129,8 +129,20 @@ jobs:
       - name: Chromium do Playwright
         run: npx playwright install chromium --with-deps
 
+      # Os testes do chat falam com o servidor de verdade (chat-servidor, em modo de teste).
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: chat-servidor/go.mod
+          cache-dependency-path: chat-servidor/go.sum
+
+      - name: Servidor do chat para os testes
+        working-directory: chat-servidor
+        run: CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/starsonic-chat" ./cmd/starsonic-chat
+
       - name: Testes das telas (Playwright)
         run: npx playwright test
+        env:
+          STARSONIC_CHAT_BIN: ${{ runner.temp }}/starsonic-chat
 
       - name: Publicar as capturas
         if: ${{ !cancelled() }}

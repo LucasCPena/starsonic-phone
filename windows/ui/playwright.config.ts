@@ -6,6 +6,8 @@ const PORTA = 4178;
 
 export default defineConfig({
   testDir: 'tests',
+  // O servidor do chat (Go) em modo de teste, na 4180, para as specs de tests/chat.
+  globalSetup: './tests/chat/global-setup.ts',
   outputDir: 'test-results/saida',
   // As specs das telas rodam o axe duas vezes cada; folga para máquinas lentas.
   timeout: 60_000,

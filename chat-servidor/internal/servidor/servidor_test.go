@@ -265,6 +265,49 @@ func lerCampo(t *testing.T, resp *http.Response, campo string) string {
 	return s
 }
 
+// No modo de teste, as origens do CORS são as da Config; a padrão do app não entra.
+func TestModoTeste_Origens(t *testing.T) {
+	dados, _ := preparar(t)
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	fim := make(chan error, 1)
+	go func() { fim <- servirTeste(ctx, Config{Dados: dados, Origens: []string{"http://127.0.0.1:4178"}}, l) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-fim:
+		case <-time.After(15 * time.Second):
+			t.Error("o servidor não parou")
+		}
+	})
+	alvo := "http://" + l.Addr().String() + "/api/v1/conversas"
+	preflight := func(origem string) *http.Response {
+		req, err := http.NewRequestWithContext(t.Context(), "OPTIONS", alvo, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Origin", origem)
+		req.Header.Set("Access-Control-Request-Method", "GET")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { resp.Body.Close() })
+		return resp
+	}
+	resp := preflight("http://127.0.0.1:4178")
+	if resp.StatusCode != http.StatusNoContent || resp.Header.Get("Access-Control-Allow-Origin") != "http://127.0.0.1:4178" {
+		t.Fatalf("origem do teste: %d, ACAO %q", resp.StatusCode, resp.Header.Get("Access-Control-Allow-Origin"))
+	}
+	resp = preflight("https://app.starsonic.local")
+	if v := resp.Header.Get("Access-Control-Allow-Origin"); v != "" {
+		t.Fatalf("a origem padrão entrou: ACAO %q", v)
+	}
+}
+
 func TestModoTeste_Responde(t *testing.T) {
 	dados, codigo := preparar(t)
 	s := iniciar(t, dados)
