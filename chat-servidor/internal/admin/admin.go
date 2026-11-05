@@ -4,8 +4,9 @@
 //
 // É HTML feito no servidor (html/template), com as páginas e os estáticos embutidos. Nada é
 // inline: a CSP default-src 'self' vale para tudo, e o único script, o "Copiar o código", é um
-// arquivo. Toda resposta leva Cache-Control: no-store, porque a página da empresa mostra o
-// código, que é segredo.
+// arquivo. Toda página leva Cache-Control: no-store, porque a página da empresa mostra o
+// código, que é segredo. Só os estáticos (a fonte, o logo, o estilo e o script, sem segredo)
+// ficam um dia no navegador: private, max-age=86400.
 package admin
 
 import (

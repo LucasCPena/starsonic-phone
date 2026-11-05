@@ -199,7 +199,7 @@ Deve aparecer a próxima rodada, às 03:00 de Brasília (06:00 no horário da VM
 
 Use isto se o banco estragou ou se a VM foi refeita. Quem escreveu depois da cópia perde as mensagens desse intervalo: a cópia traz o chat como estava às 03:00 daquele dia.
 
-Faça os passos na ordem. Não pule nenhum.
+Faça os passos na ordem. Não pule nenhum, a não ser quando o próprio texto mandar pular.
 
 1. Pare a cópia da noite e o serviço. Faça isto antes de qualquer outra coisa. **Se a VM foi refeita, pule o item 1 e vá ao item 2.** Numa VM refeita, estes dois ainda não existem, e o item 2 manda parar os dois depois de instalar o chat. A razão: uma cópia feita antes de você terminar seria a cópia de um servidor vazio, e poderia tomar o lugar da cópia boa no destino.
 
