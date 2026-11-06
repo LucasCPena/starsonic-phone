@@ -30,6 +30,9 @@ export class ErroChat extends Error {
   }
 }
 
+/** O 401: a chave não vale mais (em qualquer pedido, ou no bilhete), e o computador sai do chat. */
+export const ehChave = (e: unknown): boolean => e instanceof ErroChat && e.status === 401;
+
 export interface ApiChat {
   desligar(): Promise<void>;
   entrar(ramal: string, nome: string): Promise<Pessoa>;

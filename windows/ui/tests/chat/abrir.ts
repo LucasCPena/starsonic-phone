@@ -1,8 +1,8 @@
 // Abre a interface com a ponte falsa ligada ao servidor do chat de teste (servidor.ts): o `chat=` troca o endereço do
 // chat (só com a ponte falsa), a `chave` é a que o C++ de mentira guarda (sem ela, o computador fica fora do chat), e o
 // `ramal` e o `nome` são os da conta em uso. O `extra` vai como mais parâmetros (o `plataforma=ios`, o `computador`).
-// (Task 6) A página conta os WebSockets abertos (o esperarOsEventos espera os eventos do chat no ar), e o
-// abrirAConversa abre uma conversa pela linha dela na lista.
+// (Task 6) A página conta os WebSockets abertos (o esperarOsEventos espera os eventos do chat no ar), o
+// abrirAConversa abre uma conversa pela linha dela na lista, e o pararORelogio deixa o relógio só com o runFor.
 import { expect, type Page } from '@playwright/test';
 import { baseDoChat } from './servidor';
 
@@ -63,6 +63,14 @@ export async function abrirNoChat(
  */
 export async function esperarOsEventos(page: Page): Promise<void> {
   await expect.poll(() => page.evaluate(() => (window as unknown as { __eventosNoAr?: number }).__eventosNoAr ?? 0)).toBe(1);
+}
+
+/**
+ * O relógio da página parado (depois do page.clock.install e de a página abrir): daqui em diante, ele só anda pelo
+ * runFor. Com ele parado, nenhum prazo de um pedido (os 20 s do api.ts) passa sozinho, numa máquina lenta.
+ */
+export async function pararORelogio(page: Page): Promise<void> {
+  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1000);
 }
 
 /** O texto inteiro, sem mais nada antes ou depois. */

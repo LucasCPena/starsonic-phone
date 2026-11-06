@@ -7,16 +7,18 @@
 // - A rolagem: a conversa abre embaixo; uma mensagem nova só puxa a tela quando ela está a até 80 px do fim (a minha,
 //   sempre); as anteriores chegam quando o alto da lista aparece (o IntersectionObserver), e a primeira mensagem que
 //   estava carregada fica no mesmo lugar da tela.
+// - O leitor de tela: o log fica `aria-busy` enquanto uma página de 50 está a caminho, e cada balão diz quem mandou.
 // Os nomes e as mensagens vão sempre como texto.
 import { useLayoutEffect, useMemo, useRef } from 'preact/hooks';
 import { dayGroup } from '../../format';
 import { IconBack, IconPhone, IconSemRede } from '../../icons';
 import type { Send } from '../../types';
-import type { ChatCliente, ConversaAberta, Pendente, VistaChat } from '../cliente';
+import type { ChatCliente, ConversaAberta, VistaChat } from '../cliente';
 import { Avatar } from '../componentes/Avatar';
 import { Balao } from '../componentes/Balao';
 import { Escrever } from '../componentes/Escrever';
 import { Faixa } from '../componentes/Faixa';
+import type { Pendente } from '../envios';
 import { nomeDaConversa } from '../formato';
 import {
   ESCREVA_PARA_O_GRUPO,
@@ -30,7 +32,7 @@ import {
   ramalN,
   saiuDoChat,
   SEM_CONEXAO_TENTANDO,
-  textoDoAviso,
+  textoDoAvisoDeGrupo,
   verOsMembrosDoGrupo,
   VOLTAR_PARA_AS_CONVERSAS,
 } from '../textos';
@@ -70,7 +72,7 @@ function itensDa(aberta: ConversaAberta, euId: number, agora: number): Item[] {
   };
   for (const m of aberta.mensagens) {
     separar(m.criadaEm, `d${m.id}`);
-    if (m.tipo === 'aviso') itens.push({ tipo: 'aviso', chave: `m${m.id}`, texto: m.aviso ? textoDoAviso(m.aviso, euId) : '' });
+    if (m.tipo === 'aviso') itens.push({ tipo: 'aviso', chave: `m${m.id}`, texto: m.aviso ? textoDoAvisoDeGrupo(m.aviso, euId) : '' });
     else itens.push({ tipo: 'mensagem', chave: `m${m.id}`, mensagem: m, minha: m.autor?.id === euId });
   }
   if (aberta.pendentes.length > 0) separar(agora, 'dp');
@@ -196,7 +198,14 @@ export function Conversa({ vista, conversa, cliente, send, onVoltar, onMembros }
       </div>
       {!vista.conectado && <Faixa icone={<IconSemRede size="sm" />}>{SEM_CONEXAO_TENTANDO}</Faixa>}
       {/* O log rola pelo teclado também (o tabIndex): a lista pode não ter nenhum botão. */}
-      <div ref={log} class="conversa-log" role="log" tabIndex={0} aria-label={grupo ? mensagensDoGrupo(nome) : mensagensCom(nome)}>
+      <div
+        ref={log}
+        class="conversa-log"
+        role="log"
+        tabIndex={0}
+        aria-label={grupo ? mensagensDoGrupo(nome) : mensagensCom(nome)}
+        aria-busy={aberta?.carregando ? 'true' : 'false'}
+      >
         <div ref={alto} class="conversa-alto" aria-hidden="true" />
         {itens.map((item) => {
           switch (item.tipo) {

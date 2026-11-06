@@ -1,12 +1,14 @@
 // Sem conexão (Task 6, o quadro SemConexao): a faixa e as tentativas em 1, 2, 5, 10 e 30 s, as mensagens de enquanto
 // isso que chegam uma vez só e em ordem, também com uma nova pelo WebSocket no meio da volta (Review Focus 2), a
-// mensagem escrita sem conexão, a resposta que chega depois dos 15 s e o 429 limite. O WebSocket passa pelo
+// mensagem escrita sem conexão, a resposta que chega depois dos 15 s, o 429 limite, a faixa da conversa que sai com
+// ela, a página anterior que falha (o 500 tenta de novo, o 404 relê a lista) e o aviso do Windows depois de uma queda
+// curta (um por conversa; depois de uma de mais de 2 minutos, nenhum). O WebSocket passa pelo
 // page.routeWebSocket até o servidor de verdade (a rota derruba a conexão e recusa as próximas), e o Math.random fica em
 // 0,5: cada espera é a da tabela, vezes 1. Depois que a página abre, o relógio dela fica parado e só anda pelo runFor;
 // cada passo acaba na hora de uma tentativa, e o prazo de 20 s de um pedido nunca cabe nele.
 import { expect, test, type Page, type Route, type WebSocketRoute } from '@playwright/test';
-import { capturar } from '../helpers';
-import { abrirAConversa, abrirNoChat, esperarOsEventos } from './abrir';
+import { capturar, comandos, esperarComando } from '../helpers';
+import { abrirAConversa, abrirNoChat, esperarOsEventos, pararORelogio } from './abrir';
 import { baseDoChat, empresaComPessoas } from './servidor';
 
 test.use({ bypassCSP: true });
@@ -14,6 +16,7 @@ test.use({ bypassCSP: true });
 const EMPRESA = 'ACME Comércio Ltda';
 const RECEPCAO = { ramal: '2001', nome: 'Recepção' };
 const ANA = { ramal: '2003', nome: 'Ana Souza' };
+const JOAO = { ramal: '2004', nome: 'João Pereira' };
 
 const hora = (ms: number) =>
   new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(ms);
@@ -21,17 +24,17 @@ const faixa = (page: Page) => page.getByRole('status').filter({ hasText: 'Sem co
 const conversaCom = (page: Page, nome: string) => page.getByRole('log', { name: `Mensagens com ${nome}` });
 const campoPara = (page: Page, nome: string) => page.getByRole('textbox', { name: `Mensagem para ${nome}` });
 const envios = (conversa: number) => `${baseDoChat()}/api/v1/conversas/${conversa}/mensagens`;
+/** Os avisos do Windows de uma conversa. */
+const avisosDe = async (page: Page, conversa: number) => (await comandos(page)).filter((c) => c.cmd === 'chatNotify' && c.conversa === conversa);
+/** As mensagens de uma conversa: as páginas e o envio (o mesmo caminho; quem trata a rota confere o método). */
+const mensagensDe = (conversa: number) => (url: URL) => url.pathname === `/api/v1/conversas/${conversa}/mensagens`;
+const ERRO_DO_SERVIDOR = { status: 500, contentType: 'application/json; charset=utf-8', body: JSON.stringify({ erro: 'servidor' }) };
 
 /** O fator aleatório das esperas em 1 (0,5 + 0,5): cada espera é a da tabela. */
 async function semSorteio(page: Page): Promise<void> {
   await page.addInitScript(() => {
     Math.random = () => 0.5;
   });
-}
-
-/** O relógio da página parado: daqui em diante, ele só anda pelo runFor. */
-async function pararORelogio(page: Page): Promise<void> {
-  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1000);
 }
 
 /**
@@ -300,4 +303,176 @@ test('a 429 limite waits the time asked and tries again', async ({ page }) => {
   expect(corpos[1]).toEqual(corpos[0]);
   const [m] = await a.api.mensagens(dupla);
   await expect(minha.locator('.balao-hora')).toHaveText([hora(m.criadaEm)]);
+});
+
+test('leaving a conversation whose page failed takes its banner away, and nothing more goes out for it', async ({ page }) => {
+  const { pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO, ANA]);
+  const [a, ana] = pessoas;
+  const dupla = await ana.api.criarDupla(a.pessoa.id);
+  await ana.api.enviarTexto(dupla, 'Bom dia!');
+  await semSorteio(page);
+  await page.clock.install();
+  await eventosPelaRota(page);
+  // A primeira página responde 500 uma vez; o WebSocket continua no ar.
+  let falhou = false;
+  let fechada = false;
+  const depoisDeFechar: string[] = [];
+  await page.route(mensagensDe(dupla), (rota) => {
+    if (fechada) depoisDeFechar.push(`${rota.request().method()} ${rota.request().url()}`);
+    if (falhou || rota.request().method() !== 'GET') return rota.continue();
+    falhou = true;
+    return rota.fulfill(ERRO_DO_SERVIDOR);
+  });
+  await abrirNoChat(page, { chave: a.chave, ...RECEPCAO });
+  await esperarOsEventos(page);
+  await pararORelogio(page);
+  await abrirAConversa(page, 'Ana Souza');
+  await expect(faixa(page)).toBeVisible();
+
+  // O Esc volta para a lista: a faixa da conversa sai com ela.
+  await page.keyboard.press('Escape');
+  fechada = true;
+  await expect(page.getByRole('main', { name: 'Chat' })).toBeVisible();
+  await expect(faixa(page)).toHaveCount(0);
+  // Passada a espera da outra tentativa (1 s), nada mais sai para a conversa, e a faixa não volta.
+  await page.clock.runFor(2_000);
+  await page.waitForTimeout(300);
+  expect(depoisDeFechar).toEqual([]);
+  await expect(faixa(page)).toHaveCount(0);
+});
+
+test('an older page that fails shows the banner and tries again after the wait', async ({ page }) => {
+  const { pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO, ANA]);
+  const [a, ana] = pessoas;
+  const dupla = await ana.api.criarDupla(a.pessoa.id);
+  for (let i = 1; i <= 60; i++) await ana.api.enviarTexto(dupla, `Mensagem ${i}`);
+  await semSorteio(page);
+  await page.clock.install();
+  await eventosPelaRota(page);
+  // A primeira página anterior responde 500; as outras passam.
+  let anteriores = 0;
+  await page.route(
+    (url) => mensagensDe(dupla)(url) && url.searchParams.has('antes'),
+    (rota) => (++anteriores === 1 ? rota.fulfill(ERRO_DO_SERVIDOR) : rota.continue()),
+  );
+  await abrirNoChat(page, { chave: a.chave, ...RECEPCAO });
+  await abrirAConversa(page, 'Ana Souza');
+  const log = conversaCom(page, 'Ana Souza');
+  const textos = log.locator('.balao-texto');
+  await expect(textos).toHaveCount(50);
+  await esperarOsEventos(page);
+  await pararORelogio(page);
+
+  await log.evaluate((el) => (el.scrollTop = 0));
+  await expect(faixa(page)).toBeVisible();
+  expect(anteriores).toBe(1);
+  // A espera da vez (1 s, com o sorteio em 0,5), e a mesma página de novo.
+  await page.clock.runFor(999);
+  expect(anteriores).toBe(1);
+  await page.clock.runFor(1);
+  await expect(textos).toHaveCount(60);
+  expect(anteriores).toBe(2);
+  await expect(faixa(page)).toHaveCount(0);
+});
+
+test('an older page answered 404 re-reads the list and stops', async ({ page }) => {
+  const { pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO, ANA]);
+  const [a, ana] = pessoas;
+  const dupla = await ana.api.criarDupla(a.pessoa.id);
+  for (let i = 1; i <= 60; i++) await ana.api.enviarTexto(dupla, `Mensagem ${i}`);
+  await semSorteio(page);
+  await page.clock.install();
+  await eventosPelaRota(page);
+  let anteriores = 0;
+  await page.route(
+    (url) => mensagensDe(dupla)(url) && url.searchParams.has('antes'),
+    (rota) => {
+      anteriores += 1;
+      return rota.fulfill({ status: 404, contentType: 'application/json; charset=utf-8', body: JSON.stringify({ erro: 'naoEncontrado' }) });
+    },
+  );
+  let listas = 0;
+  page.on('request', (r) => {
+    if (r.method() === 'GET' && r.url() === `${baseDoChat()}/api/v1/conversas`) listas += 1;
+  });
+  await abrirNoChat(page, { chave: a.chave, ...RECEPCAO });
+  await abrirAConversa(page, 'Ana Souza');
+  const log = conversaCom(page, 'Ana Souza');
+  await expect(log.locator('.balao-texto')).toHaveCount(50);
+  await esperarOsEventos(page);
+  await pararORelogio(page);
+  const antes = listas;
+
+  // O 404 (a conversa não é mais minha): a lista é lida de novo, e a página não é pedida outra vez.
+  await log.evaluate((el) => (el.scrollTop = 0));
+  await expect.poll(() => listas).toBe(antes + 1);
+  await page.clock.runFor(2_000);
+  await page.waitForTimeout(300);
+  expect(anteriores).toBe(1);
+  await expect(faixa(page)).toHaveCount(0);
+});
+
+test('after a short drop, one notice per conversation, with its last message', async ({ page }) => {
+  const { pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO, ANA, JOAO]);
+  const [a, ana, joao] = pessoas;
+  const comAna = await ana.api.criarDupla(a.pessoa.id);
+  const comJoao = await joao.api.criarDupla(a.pessoa.id);
+  await semSorteio(page);
+  await page.clock.install();
+  const eventos = await eventosPelaRota(page);
+  await abrirNoChat(page, { chave: a.chave, ...RECEPCAO });
+  await expect(page.locator('.chat-linha')).toHaveCount(2);
+  await esperarOsEventos(page);
+  await pararORelogio(page);
+
+  await eventos.derrubar();
+  await expect(faixa(page)).toBeVisible();
+  await ana.api.enviarTexto(comAna, 'Bom dia!');
+  await ana.api.enviarTexto(comAna, 'Pode me mandar a proposta da ACME?');
+  await joao.api.enviarTexto(comJoao, 'Fechamos o pedido de hoje.');
+  // Volta na primeira tentativa (1 s depois da queda): um aviso por conversa, com a última dela.
+  eventos.voltar();
+  await page.clock.runFor(1000);
+  await esperarOsEventos(page);
+  await esperarComando(page, { cmd: 'chatBadge', n: 3 });
+  await expect
+    .poll(() => avisosDe(page, comAna))
+    .toEqual([{ v: 1, cmd: 'chatNotify', conversa: comAna, titulo: 'Ana Souza', texto: 'Pode me mandar a proposta da ACME?' }]);
+  await expect
+    .poll(() => avisosDe(page, comJoao))
+    .toEqual([{ v: 1, cmd: 'chatNotify', conversa: comJoao, titulo: 'João Pereira', texto: 'Fechamos o pedido de hoje.' }]);
+  await page.waitForTimeout(300);
+  expect(await avisosDe(page, comAna)).toHaveLength(1);
+  expect(await avisosDe(page, comJoao)).toHaveLength(1);
+});
+
+test('after a drop of more than 2 minutes, no notice, only the number', async ({ page }) => {
+  const { pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO, ANA, JOAO]);
+  const [a, ana, joao] = pessoas;
+  const comAna = await ana.api.criarDupla(a.pessoa.id);
+  const comJoao = await joao.api.criarDupla(a.pessoa.id);
+  await semSorteio(page);
+  await page.clock.install();
+  const eventos = await eventosPelaRota(page);
+  await abrirNoChat(page, { chave: a.chave, ...RECEPCAO });
+  await expect(page.locator('.chat-linha')).toHaveCount(2);
+  await esperarOsEventos(page);
+  await pararORelogio(page);
+
+  await eventos.derrubar();
+  await ana.api.enviarTexto(comAna, 'Bom dia!');
+  await ana.api.enviarTexto(comAna, 'Pode me mandar a proposta da ACME?');
+  await joao.api.enviarTexto(comJoao, 'Fechamos o pedido de hoje.');
+  // As tentativas em 1, 3, 8, 18, 48, 78 e 108 s são recusadas; a de 138 s (mais de 2 minutos) volta.
+  for (const [i, espera] of [1000, 2000, 5000, 10000, 30000, 30000, 30000].entries()) {
+    await page.clock.runFor(espera);
+    await expect.poll(() => eventos.recusadas()).toBe(i + 1);
+  }
+  eventos.voltar();
+  await page.clock.runFor(30_000);
+  await esperarOsEventos(page);
+  await esperarComando(page, { cmd: 'chatBadge', n: 3 });
+  await page.waitForTimeout(300);
+  expect(await avisosDe(page, comAna)).toEqual([]);
+  expect(await avisosDe(page, comJoao)).toEqual([]);
 });

@@ -1,33 +1,36 @@
 // O cliente do chat: fala com o servidor (a API e os eventos) como a pessoa da conta em uso, guarda a lista de conversas
 // e diz às telas o que mostrar (a VistaChat). O main.tsx dá a ele o chat do estado da ponte e a conta em uso (o
 // atualizar). Ele manda à ponte o chatKey (a chave vem na chatChave e fica só aqui, na memória), o chatLink e o
-// chatUnlink do cartão do administrador, o número de não lidas (o chatBadge, a cada mudança) e o aviso do computador
-// novo (o chatNotify da conversa 0).
+// chatUnlink do cartão do administrador, o número de não lidas (o chatBadge, a cada mudança) e os avisos do Windows (o
+// chatNotify; o da conversa 0 é o do computador novo).
 // - A partida: com o chat ligado, a conta em uso já conectada aqui e uma conta, a chave, o entrar como a pessoa do
 //   ramal, as conversas e os eventos. Sem o `ligado`, a situação é `desligado`; sem a conta conectada, `precisaConta`.
 // - A troca de pessoa (a conta mudou de ramal, ou o chat desligou): os eventos param e a vista esvazia (as conversas, a
-//   aberta, o número e a faixa) antes de a outra entrar. O que chega de antes da troca é descartado (a `vez`), e os
-//   entrar vão um de cada vez: o computador age como a pessoa do último que o servidor atendeu (Review Focus 1).
-// - Os erros: sem rede (também o pedido sem resposta em 20 s) ou um 500, o `conectado` fica false e há outra tentativa
-//   depois do esperaDaVez; um 401 (a chave não vale mais, em qualquer pedido ou no bilhete) é a situação `fora`, e tudo
-//   para; um 429 `limite` espera o esperarSegundos (no máximo 60 s) e tenta de novo uma vez.
+//   aberta, o número e a faixa) antes de a outra entrar; a conversa aberta e os envios da pessoa de antes são soltos. O
+//   que chega de antes da troca é descartado (a `vez`), e os entrar vão um de cada vez: o computador age como a pessoa
+//   do último que o servidor atendeu (Review Focus 1).
+// - Os erros: sem rede (também o pedido sem resposta em 20 s) ou um 500, a faixa e outra tentativa depois do
+//   esperaDaVez; um 401 (a chave não vale mais, em qualquer pedido ou no bilhete) é a situação `fora`, e tudo para; um
+//   429 `limite` espera o esperarSegundos (no máximo 60 s) e tenta de novo uma vez.
+// - A faixa ("Sem conexão com o chat. Tentando de novo…") tem três fontes: os eventos que caíram e não voltaram, a lista
+//   (a partida ou a releitura) esperando outra tentativa e a conversa aberta esperando outra tentativa de um pedido
+//   dela. A da conversa sai com ela.
 // - Os eventos: cada `conectou` relê as conversas (o que chega durante a releitura vale de novo por cima dela); a
 //   mensagem muda a última, a hora e as não lidas da conversa e a põe no lugar dela na ordem; a `lida` zera as não
 //   lidas; o computador novo mostra a faixa e o aviso do Windows.
-// - (Task 6) A conversa aberta (a tela Conversa abre e fecha): as 50 mais novas, as anteriores de 50 em 50 e, a cada
-//   `conectou`, a volta (as de depois da última que ela tem sem buraco, até o temMais dar false). As mensagens ficam em
-//   ordem de id, e um id repetido não entra. O que chega de outra abertura (a `Leitura` de cada abrir) ou de outra
-//   pessoa (a `vez`) nunca pinta na de agora.
-// - (Task 6) O envio: um Pendente "Enviando…" com um idLocal novo, que sai quando chega a mensagem dele (pela resposta ou
-//   pelo evento); sem resposta em 15 s, ou com um erro, "Não enviada", e o "Tentar de novo" manda o mesmo idLocal.
+// - (Task 6) A conversa aberta é uma Aberta (aberta.ts), nova a cada abrir; os envios, com os Pendentes de cada
+//   conversa (também com ela fechada), são os Envios da pessoa da vez (envios.ts).
 // - (Task 6) A leitura e o aviso: o cliente guarda o `frente` da mensagem `janela`. A aberta com a janela na frente é
-//   lida na hora (o marcarLida até a mais nova, um id uma vez só, e as não lidas dela ficam 0); a mensagem que chega de
-//   outra pessoa, fora dela, pede o chatNotify.
+//   lida na hora (as não lidas dela ficam 0); a mensagem que chega pelos eventos de outra pessoa, fora dela, pede o
+//   chatNotify. Depois de uma queda dos eventos de menos de 2 minutos, a releitura da volta avisa, no máximo uma vez
+//   por conversa, a última que chegou durante a queda; depois de uma mais longa, fica só o número.
 // As Tasks 5 e 7 acrescentam as conversas novas, os grupos e os arquivos.
 import type { Bridge } from '../bridge';
 import { limitCharacters } from '../format';
 import type { ChatSummary } from '../state';
-import { criarApi, ErroChat, ligarComputador, type ApiChat } from './api';
+import { Aberta } from './aberta';
+import { criarApi, ehChave, ErroChat, ligarComputador, type ApiChat } from './api';
+import { Envios, SEM_PENDENTES, type Pendente } from './envios';
 import { conectarEventos, esperaDaVez, esperaDoLimite } from './eventos';
 import { textoDoAviso, tituloDoAviso } from './formato';
 import { CHAT, computadorNovo } from './textos';
@@ -35,29 +38,22 @@ import type { Conversa, Evento, Mensagem, Pessoa } from './tipos';
 
 export type SituacaoChat = 'desligado' | 'precisaConta' | 'entrando' | 'pronto' | 'fora';
 
-/** Uma mensagem minha que ainda não chegou ao servidor ("Enviando…") ou que ficou "Não enviada" (Tasks 6 e 7). */
-export interface Pendente {
-  idLocal: string;
-  conversa: number;
-  tipo: 'texto' | 'arquivo';
-  texto?: string;
-  arquivo?: { nome: string; tamanho: number; tipo: string; foto: boolean };
-  estado: 'enviando' | 'naoEnviada';
-  /** O envio do arquivo, de 0 a 1. */
-  progresso?: number;
-}
-
 /** A conversa na tela (Task 6): as mensagens em ordem de id e as minhas que ainda não foram. */
 export interface ConversaAberta {
   id: number;
   mensagens: Mensagem[];
   temMaisAntigas: boolean;
+  /** Uma página de 50 a caminho (a primeira ou uma anterior): o log fica `aria-busy`. */
+  carregando: boolean;
   pendentes: Pendente[];
 }
 
 export interface VistaChat {
   situacao: SituacaoChat;
-  /** false: sem conexão com o servidor, tentando de novo (a faixa "Sem conexão com o chat. Tentando de novo…"). */
+  /**
+   * false: a faixa "Sem conexão com o chat. Tentando de novo…" (os eventos caíram, ou a lista ou a conversa aberta
+   * espera outra tentativa).
+   */
   conectado: boolean;
   /** A pessoa da vez no servidor (null antes de entrar). */
   eu: Pessoa | null;
@@ -75,30 +71,16 @@ interface Conta {
   nome: string;
 }
 
+/** Quem espera um pedido de novo: a espera dele (a parada a acorda) e se ele ainda vale. */
+interface Dono {
+  dormir(ms: number): Promise<void>;
+  ativa(): boolean;
+}
+
 /** O nome da pessoa no servidor tem até 80 caracteres (docs/chat-protocolo.md, seção 3). */
 const MAX_NOME = 80;
-/**
- * Sem resposta em 15 s, a mensagem fica "Não enviada". O pedido continua até o prazo do api.ts (20 s): a resposta que
- * chega nesse meio ainda vale.
- */
-const PRAZO_DO_ENVIO_MS = 15_000;
-
-/** O que o cliente sabe da conversa aberta além da vista: uma nova a cada abrir (quem esperava confere se é a dela). */
-interface Leitura {
-  /** A primeira página chegou. */
-  carregada: boolean;
-  /**
-   * Até esta mensagem, a aberta tem todas, sem buraco: a volta da conexão busca as de depois dela. null: nenhuma (a
-   * primeira página veio vazia, e a volta lê as mais novas).
-   */
-  ate: number | null;
-  /** Os eventos estão no ar desde que o `ate` fechou sem buraco: cada mensagem que chega por eles o avança. */
-  continuo: boolean;
-  buscandoDepois: boolean;
-  buscandoAnteriores: boolean;
-  /** O envio em curso de cada Pendente: a tentativa de agora e o prazo dos 15 s dela. */
-  envios: Map<string, { tentativa: number; prazo: ReturnType<typeof setTimeout> }>;
-}
+/** Uma queda dos eventos mais curta que isto ainda avisa o que chegou durante ela (uma vez por conversa). */
+const QUEDA_CURTA_MS = 120_000;
 
 const VISTA_VAZIA: VistaChat = {
   situacao: 'desligado',
@@ -110,26 +92,15 @@ const VISTA_VAZIA: VistaChat = {
   computadorNovo: null,
 };
 
-/** O pedido ou a espera de antes de uma parada: quem esperava desiste. */
+/** O pedido ou a espera de antes de uma parada (ou de uma conversa que fechou): quem esperava desiste. */
 class Parado extends Error {}
 
-const ehChave = (e: unknown) => e instanceof ErroChat && e.status === 401;
 const ehLimite = (e: unknown): e is ErroChat => e instanceof ErroChat && e.status === 429 && e.erro === 'limite';
 
 /** A ordem da lista: a conversa atualizada mais nova primeiro; no empate, a de id maior (a ordem do servidor). */
 function ordenar(lista: Conversa[]): Conversa[] {
   return [...lista].sort((a, b) => b.atualizadaEm - a.atualizadaEm || b.id - a.id);
 }
-
-/** As mensagens com as novas, em ordem de id: um id que já está não entra de novo (a mesma lista, se nada entrou). */
-function juntarPorId(lista: Mensagem[], novas: Mensagem[]): Mensagem[] {
-  const ids = new Set(lista.map((m) => m.id));
-  const entram = novas.filter((m) => !ids.has(m.id) && ids.add(m.id));
-  return entram.length === 0 ? lista : [...lista, ...entram].sort((x, y) => x.id - y.id);
-}
-
-/** O id da última de uma lista em ordem de id (a página do servidor vem da mais antiga para a mais nova). */
-const ultimoId = (lista: Mensagem[]): number | null => lista.at(-1)?.id ?? null;
 
 /**
  * Um evento na lista de conversas. Vale também por cima de uma lista que já o tem (a da releitura): a mensagem que a
@@ -182,8 +153,14 @@ export class ChatCliente {
   private vez = 0;
   private eventos: { parar(): void } | null = null;
   private eventosNoAr = false;
-  /** As esperas em curso (a parada acorda todas). */
+  /** Os eventos caíram e ainda não voltaram: a faixa (antes da primeira conexão, não). */
+  private semEventos = false;
+  /** A lista (a partida ou a releitura) espera outra tentativa depois de um erro: a faixa. */
+  private falhaDaLista = false;
+  /** As esperas da sessão em curso (a parada acorda todas). */
   private readonly acordar = new Set<() => void>();
+  /** A espera da sessão (a da partida, da releitura e dos envios). */
+  private readonly daSessao: Dono = { dormir: (ms) => this.dormir(ms), ativa: () => true };
   /** O último entrar: o próximo só sai depois da resposta dele. */
   private filaDeEntrada: Promise<unknown> = Promise.resolve();
   /** Os eventos da lista que chegaram durante a releitura; null sem releitura. */
@@ -198,9 +175,18 @@ export class ChatCliente {
   /** Sobe a cada `conectou`: quem leu a aberta enquanto isso sabe que pode ter ficado um buraco. */
   private conexao = 0;
   /** A conversa aberta (null sem nenhuma). */
-  private leitura: Leitura | null = null;
+  private aberta: Aberta | null = null;
+  /** Os envios da pessoa que entrou (null fora do `pronto`). */
+  private envios: Envios | null = null;
   /** Até onde cada conversa já foi lida (mandada daqui ou lida em outro computador meu): o mesmo id nunca vai de novo. */
   private readonly lidas = new Map<number, number>();
+  /** A queda dos eventos em curso: quando ela começou e a última mensagem de cada conversa nessa hora. */
+  private queda: { em: number; ultimas: Map<number, number> } | null = null;
+  /**
+   * Depois de uma queda curta, até a releitura da volta acabar: a última mensagem de cada conversa já vista (a de antes
+   * da queda, ou uma que chegou pelos eventos depois dela). A releitura avisa as conversas com uma mais nova.
+   */
+  private avisoDaVolta: Map<number, number> | null = null;
 
   constructor(o: { bridge: Bridge; base: string }) {
     this.bridge = o.bridge;
@@ -269,79 +255,32 @@ export class ChatCliente {
    * Abre a conversa (a que estava aberta fecha): as 50 mais novas e, com a janela na frente, a leitura. Sem conexão, a
    * faixa e outra tentativa, até dar certo, a conversa fechar ou outra pessoa entrar.
    */
-  async abrir(conversa: number): Promise<void> {
+  abrir(conversa: number): Promise<void> {
     this.fechar();
-    const api = this.api;
-    if (!api) return;
-    const vez = this.vez;
-    const l: Leitura = { carregada: false, ate: null, continuo: false, buscandoDepois: false, buscandoAnteriores: false, envios: new Map() };
-    this.leitura = l;
-    this.mudar({ aberta: { id: conversa, mensagens: [], temMaisAntigas: false, pendentes: [] } });
-    const noArAntes = this.eventosNoAr;
-    const conexao = this.conexao;
-    for (let tentativa = 0; ; tentativa++) {
-      try {
-        const r = await this.comLimite(vez, () => api.mensagens(conversa, {}));
-        if (!this.aindaAberta(vez, l)) return;
-        l.carregada = true;
-        // Com os eventos no ar do começo ao fim, o que veio depois da página chegou por eles; senão, a volta busca o que
-        // pode ter ficado entre a página e eles (já, ou no próximo `conectou`).
-        l.continuo = noArAntes && this.eventosNoAr && this.conexao === conexao;
-        this.juntarNaAberta(r.mensagens, r.temMais);
-        l.ate = ultimoId(l.continuo ? this.v.aberta!.mensagens : r.mensagens);
-        if (tentativa > 0) this.mudar({ conectado: this.eventosNoAr });
-        this.lerAberta();
-        if (!l.continuo && this.eventosNoAr) void this.buscarDepois(vez, l, api);
-        return;
-      } catch (e) {
-        if (!(await this.depoisDoErroDaAberta(vez, l, api, e, tentativa))) return;
-      }
-    }
+    this.aberta = this.criarAberta(conversa);
+    this.publicarAberta();
+    return this.aberta?.abrir() ?? Promise.resolve();
   }
 
   /** Fecha a conversa aberta: o que ainda chegar dela não pinta mais (uma mensagem a caminho continua indo). */
   fechar(): void {
-    this.soltarLeitura();
+    this.soltarAberta();
     this.mudar({ aberta: null });
   }
 
-  /** As 50 anteriores à mais antiga da tela (o alto da lista apareceu). Uma de cada vez; sem rede, na próxima vez. */
-  async anteriores(): Promise<void> {
-    const l = this.leitura;
-    const a = this.v.aberta;
-    const api = this.api;
-    const primeira = a?.mensagens[0];
-    if (!l || !a || !api || !primeira || !l.carregada || !a.temMaisAntigas || l.buscandoAnteriores) return;
-    const vez = this.vez;
-    l.buscandoAnteriores = true;
-    try {
-      const r = await this.comLimite(vez, () => api.mensagens(a.id, { antes: primeira.id }));
-      if (this.aindaAberta(vez, l)) this.juntarNaAberta(r.mensagens, r.temMais);
-    } catch (e) {
-      if (vez === this.vez && ehChave(e)) this.sairDoChat();
-    } finally {
-      l.buscandoAnteriores = false;
-    }
+  /** As 50 anteriores à mais antiga da tela (o alto da lista apareceu). */
+  anteriores(): Promise<void> {
+    return this.aberta?.anteriores() ?? Promise.resolve();
   }
 
-  /** Manda o texto na conversa aberta: um Pendente "Enviando…", com um idLocal novo. Um texto só de espaços não sai. */
+  /** Manda o texto na conversa aberta (não na conversa a dois com quem saiu do chat). */
   enviarTexto(texto: string): void {
-    const a = this.v.aberta;
-    const c = a && this.v.conversas.find((x) => x.id === a.id);
-    if (!a || !c || !texto.trim() || (c.tipo === 'dupla' && c.com.saiu)) return;
-    const p: Pendente = { idLocal: crypto.randomUUID(), conversa: a.id, tipo: 'texto', texto, estado: 'enviando' };
-    this.mudar({ aberta: { ...a, pendentes: [...a.pendentes, p] } });
-    this.mandar(p);
+    if (this.aberta && this.podeEscrever(this.aberta.id)) this.envios?.enviarTexto(this.aberta.id, texto);
   }
 
-  /** O "Tentar de novo" de uma mensagem "Não enviada": o mesmo idLocal (o servidor guarda uma mensagem só por idLocal). */
+  /** O "Tentar de novo" de uma mensagem "Não enviada". */
   tentarDeNovo(idLocal: string): void {
-    const a = this.v.aberta;
-    const p = a?.pendentes.find((x) => x.idLocal === idLocal);
-    if (!a || !p || p.estado !== 'naoEnviada') return;
-    const deNovo: Pendente = { ...p, estado: 'enviando' };
-    this.mudar({ aberta: { ...a, pendentes: a.pendentes.map((x) => (x === p ? deNovo : x)) } });
-    this.mandar(deNovo);
+    this.envios?.tentarDeNovo(idLocal);
   }
 
   /** A situação pelo último atualizar; com outra pessoa (ou nenhuma), a troca. */
@@ -380,9 +319,15 @@ export class ChatCliente {
     this.eventos?.parar();
     this.eventos = null;
     this.eventosNoAr = false;
+    this.semEventos = false;
+    this.falhaDaLista = false;
     this.relendo = null;
     this.relerDeNovo = false;
-    this.soltarLeitura();
+    this.queda = null;
+    this.avisoDaVolta = null;
+    this.soltarAberta();
+    this.envios?.soltar();
+    this.envios = null;
     this.lidas.clear();
     for (const acordar of [...this.acordar]) acordar();
   }
@@ -407,29 +352,38 @@ export class ChatCliente {
         const conversas = await this.comLimite(vez, () => api.conversas());
         if (vez !== this.vez) return;
         this.api = api;
-        this.mudar({ situacao: 'pronto', conectado: true, eu, conversas: ordenar(conversas) });
+        this.envios = this.criarEnvios(vez, api, eu);
+        this.falhaDaLista = false;
+        this.mudar({ situacao: 'pronto', eu, conversas: ordenar(conversas) });
         this.ligarEventos(vez, api);
         return;
       } catch (e) {
-        if (!(await this.esperarDepoisDoErro(vez, e, tentativa))) return;
+        if (!(await this.esperarDepoisDoErro(vez, e, tentativa, this.falhouALista))) return;
       }
     }
   }
 
+  /** A lista (a partida ou a releitura) espera outra tentativa: a faixa, até ela dar certo. */
+  private readonly falhouALista = (): void => {
+    this.falhaDaLista = true;
+    this.mudar({});
+  };
+
   /**
    * O erro de um pedido que se tenta até dar certo (a partida, a releitura das conversas e as páginas da conversa
-   * aberta): um 401 é a situação `fora`, e tudo para; o resto (sem rede, um 500), a faixa e a espera da vez. `true`:
-   * tente de novo, a espera passou; `false`: desista (veio outra vez, ou o computador saiu do chat).
+   * aberta): um 401 é a situação `fora`, e tudo para; o resto (sem rede, um 500), a faixa de quem pediu (o `falhou`) e a
+   * espera da vez, na espera dele (a da conversa aberta acaba quando ela fecha). `true`: tente de novo, a espera passou;
+   * `false`: desista (veio outra vez, quem pediu não vale mais, ou o computador saiu do chat).
    */
-  private async esperarDepoisDoErro(vez: number, e: unknown, tentativa: number): Promise<boolean> {
-    if (vez !== this.vez || e instanceof Parado) return false;
+  private async esperarDepoisDoErro(vez: number, e: unknown, tentativa: number, falhou: () => void, dono: Dono = this.daSessao): Promise<boolean> {
+    if (vez !== this.vez || e instanceof Parado || !dono.ativa()) return false;
     if (ehChave(e)) {
       this.sairDoChat();
       return false;
     }
-    this.mudar({ conectado: false });
-    await this.dormir(esperaDaVez(tentativa, Math.random()));
-    return vez === this.vez;
+    falhou();
+    await dono.dormir(esperaDaVez(tentativa, Math.random()));
+    return vez === this.vez && dono.ativa();
   }
 
   /** O entrar, um de cada vez: o próximo só sai depois da resposta do anterior (e não sai depois de uma parada). */
@@ -442,17 +396,21 @@ export class ChatCliente {
     return pedido;
   }
 
-  /** Um pedido com o 429 `limite`: espera o esperarSegundos (no máximo 60 s) e tenta de novo uma vez. */
-  private async comLimite<T>(vez: number, pedir: () => Promise<T>): Promise<T> {
+  /**
+   * Um pedido com o 429 `limite`: espera o esperarSegundos (no máximo 60 s), na espera de quem pede, e tenta de novo uma
+   * vez, se o pedido ainda vale.
+   */
+  private async comLimite<T>(vez: number, pedir: () => Promise<T>, dono: Dono = this.daSessao): Promise<T> {
+    const vale = () => vez === this.vez && dono.ativa();
     try {
       return await pedir();
     } catch (e) {
       if (!ehLimite(e)) throw e;
       // Uma parada durante o pedido não acorda uma espera que começa depois dela: sem isto, um 429 atrasado de antes de
-      // uma troca seguraria a fila do entrar por até 60 s.
-      if (vez !== this.vez) throw new Parado();
-      await this.dormir(esperaDoLimite(e));
-      if (vez !== this.vez) throw new Parado();
+      // uma troca seguraria a fila do entrar por até 60 s (e o de uma conversa que fechou pediria a página de novo).
+      if (!vale()) throw new Parado();
+      await dono.dormir(esperaDoLimite(e));
+      if (!vale()) throw new Parado();
       return pedir();
     }
   }
@@ -479,20 +437,37 @@ export class ChatCliente {
         if (vez === this.vez) this.aoEvento(e, api);
       },
       conectou: desta(() => {
+        // Depois de uma queda curta, a releitura avisa o que chegou durante ela; depois de uma longa, só o número.
+        if (this.queda && Date.now() - this.queda.em < QUEDA_CURTA_MS) this.avisoDaVolta = this.queda.ultimas;
+        this.queda = null;
         this.eventosNoAr = true;
+        this.semEventos = false;
         this.conexao += 1;
-        this.mudar({ conectado: true });
+        this.mudar({});
         void this.reler(vez, api);
-        if (this.leitura) void this.buscarDepois(vez, this.leitura, api);
+        this.aberta?.conectou();
       }),
       caiu: desta(() => {
+        // Cada tentativa que não abre também é um `caiu`: a queda começa no primeiro.
+        if (this.eventosNoAr) this.comecarAQueda();
         this.eventosNoAr = false;
-        // Sem os eventos, a aberta pode perder uma mensagem: o `ate` para até a volta.
-        if (this.leitura) this.leitura.continuo = false;
-        this.mudar({ conectado: false });
+        this.semEventos = true;
+        // Sem os eventos, a aberta pode perder uma mensagem: o `ate` dela para até a volta.
+        this.aberta?.caiu();
+        this.mudar({});
       }),
       fora: desta(() => this.sairDoChat()),
     });
+  }
+
+  /**
+   * A queda dos eventos começou: a hora e a última mensagem de cada conversa. Uma queda antes de a releitura da volta
+   * anterior acabar continua do que ela tinha (o que chegou na queda de antes ainda não foi avisado).
+   */
+  private comecarAQueda(): void {
+    const ultimas = this.avisoDaVolta ?? new Map(this.v.conversas.map((c): [number, number] => [c.id, c.ultima?.id ?? 0]));
+    this.queda = { em: Date.now(), ultimas };
+    this.avisoDaVolta = null;
   }
 
   /** A chave não vale mais (o 401, o fora, o 4001): tudo para, até ligar de novo ou desligar. */
@@ -524,13 +499,27 @@ export class ChatCliente {
         }
         this.relendo = null;
         this.relerDeNovo = false;
-        this.mudar({ conversas, conectado: this.eventosNoAr });
+        this.falhaDaLista = false;
+        this.mudar({ conversas });
         if (deNovo) void this.reler(vez, api);
+        else this.avisarDaVolta();
         return;
       } catch (e) {
-        if (!(await this.esperarDepoisDoErro(vez, e, tentativa))) return;
+        if (!(await this.esperarDepoisDoErro(vez, e, tentativa, this.falhouALista))) return;
       }
     }
+  }
+
+  /**
+   * A releitura depois de uma queda curta: um aviso por conversa, com a última dela, se ela chegou durante a queda (a
+   * que chegou pelos eventos depois dela já foi avisada). O avisar não avisa as minhas, os avisos de grupo nem a
+   * conversa lida na hora.
+   */
+  private avisarDaVolta(): void {
+    const vistas = this.avisoDaVolta;
+    this.avisoDaVolta = null;
+    if (!vistas) return;
+    for (const c of this.v.conversas) if (c.ultima && c.ultima.id > (vistas.get(c.id) ?? 0)) this.avisar(c.ultima);
   }
 
   private aoEvento(e: Evento, api: ApiChat): void {
@@ -542,12 +531,10 @@ export class ChatCliente {
     this.aplicarNaLista(e, api);
     if (e.tipo === 'mensagem') {
       const m = e.mensagem;
-      const l = this.leitura;
-      if (l && this.v.aberta?.id === m.conversa) {
-        this.juntarNaAberta([m]);
-        if (l.continuo) l.ate = Math.max(l.ate ?? m.id, m.id);
-        this.lerAberta();
-      }
+      if (this.aberta?.id === m.conversa) this.aberta.chegou(m, true);
+      this.envios?.chegaram([m]);
+      const vistas = this.avisoDaVolta;
+      if (vistas) vistas.set(m.conversa, Math.max(vistas.get(m.conversa) ?? 0, m.id));
       this.avisar(m);
     } else if (e.tipo === 'lida') {
       this.lidas.set(e.conversa, Math.max(this.lidas.get(e.conversa) ?? 0, e.ate));
@@ -571,12 +558,12 @@ export class ChatCliente {
 
   /** A conversa está aberta com a janela na frente: o que chega nela já é visto. */
   private lidaNaHora(conversa: number): boolean {
-    return this.frente && this.v.aberta?.id === conversa;
+    return this.frente && this.aberta?.id === conversa;
   }
 
   /**
-   * O aviso do Windows da mensagem que chegou pelos eventos: nunca para as minhas (também as do meu outro computador),
-   * para os avisos de grupo nem para a conversa lida na hora.
+   * O aviso do Windows de uma mensagem que chegou (pelos eventos, ou na releitura depois de uma queda curta): nunca para
+   * as minhas (também as do meu outro computador), para os avisos de grupo nem para a conversa lida na hora.
    */
   private avisar(m: Mensagem): void {
     if (m.tipo === 'aviso' || m.autor?.id === this.v.eu?.id || this.lidaNaHora(m.conversa)) return;
@@ -590,165 +577,80 @@ export class ChatCliente {
     if (frente === this.frente) return;
     this.frente = frente;
     this.mudar({});
-    this.lerAberta();
+    this.aberta?.ler();
   }
 
-  /** A conversa da Leitura continua aberta, para a mesma pessoa. */
-  private aindaAberta(vez: number, l: Leitura): boolean {
-    return vez === this.vez && l === this.leitura;
+  /** A conversa está na lista, e não é a conversa a dois com quem saiu do chat. */
+  private podeEscrever(conversa: number): boolean {
+    const c = this.v.conversas.find((x) => x.id === conversa);
+    return c !== undefined && !(c.tipo === 'dupla' && c.com.saiu);
   }
 
-  /** Esquece a conversa aberta: o que esperava por ela desiste, e os prazos dos 15 s param. */
-  private soltarLeitura(): void {
-    const l = this.leitura;
-    this.leitura = null;
-    if (l) for (const { prazo } of l.envios.values()) clearTimeout(prazo);
-  }
-
-  /**
-   * O erro de uma página da aberta: um 404 (a conversa não é mais minha) relê a lista, que a tira, e desiste; o resto
-   * como no esperarDepoisDoErro. `true`: tente de novo.
-   */
-  private async depoisDoErroDaAberta(vez: number, l: Leitura, api: ApiChat, e: unknown, tentativa: number): Promise<boolean> {
-    if (!this.aindaAberta(vez, l)) return false;
-    if (e instanceof ErroChat && e.status === 404) {
-      void this.reler(vez, api);
-      return false;
-    }
-    return (await this.esperarDepoisDoErro(vez, e, tentativa)) && this.aindaAberta(vez, l);
-  }
-
-  /**
-   * A volta da conexão da aberta (a cada `conectou`, ou depois de uma primeira página que pode ter deixado um buraco):
-   * as mensagens de depois do `ate`, até o temMais dar false. Uma de cada vez: se os eventos religam enquanto ela lê,
-   * ela lê de novo no fim. As que chegam pelos eventos no meio dela não avançam o `ate` (pode haver um buraco antes).
-   */
-  private async buscarDepois(vez: number, l: Leitura, api: ApiChat): Promise<void> {
-    if (!l.carregada || l.buscandoDepois) return;
-    l.buscandoDepois = true;
-    try {
-      for (;;) {
-        const conexao = this.conexao;
-        if (!(await this.lerDepois(vez, l, api))) return;
-        if (this.conexao !== conexao) continue;
-        // Sem buraco até a mais nova, com os eventos no ar desde antes da última página: eles avançam o `ate` de novo.
-        l.continuo = this.eventosNoAr;
-        if (l.continuo) l.ate = ultimoId(this.v.aberta!.mensagens);
-        this.lerAberta();
-        return;
-      }
-    } finally {
-      l.buscandoDepois = false;
-    }
-  }
-
-  /** As páginas de uma volta, do `ate` até o temMais dar false (sem o `ate`, as mais novas). false: desista. */
-  private async lerDepois(vez: number, l: Leitura, api: ApiChat): Promise<boolean> {
-    const conversa = this.v.aberta!.id;
-    let falhou = false;
-    for (let tentativa = 0; ; ) {
-      try {
-        const depois = l.ate;
-        const r = await this.comLimite(vez, () => api.mensagens(conversa, depois === null ? {} : { depois }));
-        if (!this.aindaAberta(vez, l)) return false;
-        if (falhou) this.mudar({ conectado: this.eventosNoAr });
-        falhou = false;
-        tentativa = 0;
-        // Sem o `ate` (a aberta estava vazia): as mais novas, e as anteriores a elas vêm pelo alto da lista.
-        this.juntarNaAberta(r.mensagens, depois === null ? r.temMais : undefined);
-        l.ate = ultimoId(r.mensagens) ?? depois;
-        if (depois === null || !r.temMais) return true;
-      } catch (e) {
-        if (!(await this.depoisDoErroDaAberta(vez, l, api, e, tentativa++))) return false;
-        falhou = true;
-      }
-    }
-  }
-
-  /**
-   * As mensagens na aberta, em ordem de id (um id que já está não entra), e os meus Pendentes que viraram uma delas saem
-   * (o mesmo idLocal, pela resposta ou pelo evento, o que vier primeiro). `temMaisAntigas`: o da página que chegou.
-   */
-  private juntarNaAberta(novas: Mensagem[], temMaisAntigas?: boolean): void {
-    const a = this.v.aberta;
-    const l = this.leitura;
-    if (!a || !l) return;
-    const eu = this.v.eu?.id;
-    const chegaram = new Set(novas.filter((m) => m.idLocal !== null && m.autor?.id === eu).map((m) => m.idLocal));
-    const pendentes = a.pendentes.filter((p) => !chegaram.has(p.idLocal));
-    for (const p of a.pendentes) if (chegaram.has(p.idLocal)) this.soltarEnvio(l, p.idLocal);
-    const mensagens = juntarPorId(a.mensagens, novas);
-    const maisAntigas = temMaisAntigas ?? a.temMaisAntigas;
-    if (mensagens === a.mensagens && pendentes.length === a.pendentes.length && maisAntigas === a.temMaisAntigas) return;
-    this.mudar({ aberta: { ...a, mensagens, pendentes, temMaisAntigas: maisAntigas } });
-  }
-
-  /**
-   * Um envio do Pendente: sem resposta em 15 s, ou com um erro, ele fica "Não enviada"; a resposta que chega depois dos
-   * 15 s ainda vale. Uma tentativa nova toma o lugar da anterior (o prazo e o erro da de antes não valem mais).
-   */
-  private mandar(p: Pendente): void {
-    const l = this.leitura;
+  /** A abertura da conversa, com o que ela usa do cliente, da pessoa de agora (null fora do `pronto`). */
+  private criarAberta(conversa: number): Aberta | null {
     const api = this.api;
-    const texto = p.texto;
-    if (!l || !api || texto === undefined) return;
+    if (!api) return null;
     const vez = this.vez;
-    const antes = l.envios.get(p.idLocal);
-    if (antes) clearTimeout(antes.prazo);
-    const tentativa = (antes?.tentativa ?? 0) + 1;
-    const naoFoi = () => this.naoEnviada(l, p.idLocal, tentativa);
-    l.envios.set(p.idLocal, { tentativa, prazo: setTimeout(naoFoi, PRAZO_DO_ENVIO_MS) });
-    this.comLimite(vez, () => api.enviar(p.conversa, { idLocal: p.idLocal, texto })).then(
-      (m) => {
+    const daVez = () => vez === this.vez;
+    const aberta: Aberta = new Aberta(conversa, {
+      api,
+      daVez,
+      eventosNoAr: () => this.eventosNoAr,
+      conexao: () => this.conexao,
+      frente: () => this.frente,
+      lidas: this.lidas,
+      publicar: () => {
+        if (aberta === this.aberta) this.publicarAberta();
+      },
+      comLimite: (pedir) => this.comLimite(vez, pedir, aberta),
+      esperarDepoisDoErro: (e, tentativa, falhou) => this.esperarDepoisDoErro(vez, e, tentativa, falhou, aberta),
+      reler: () => {
+        if (daVez()) void this.reler(vez, api);
+      },
+      chegaram: (mensagens) => {
+        if (daVez()) this.envios?.chegaram(mensagens);
+      },
+      sairDoChat: () => {
+        if (daVez()) this.sairDoChat();
+      },
+    });
+    return aberta;
+  }
+
+  /** Os envios da pessoa que entrou: soltos na próxima parada. */
+  private criarEnvios(vez: number, api: ApiChat, eu: Pessoa): Envios {
+    return new Envios({
+      api,
+      eu: eu.id,
+      comLimite: (pedir) => this.comLimite(vez, pedir),
+      publicar: (conversa) => {
+        if (vez === this.vez && this.aberta?.id === conversa) this.publicarAberta();
+      },
+      chegou: (m) => {
         if (vez !== this.vez) return;
         this.aplicarNaLista({ tipo: 'mensagem', mensagem: m }, api);
-        if (this.v.aberta?.id === m.conversa) this.juntarNaAberta([m]);
+        if (this.aberta?.id === m.conversa) this.aberta.chegou(m, false);
       },
-      (e) => {
-        if (vez !== this.vez || e instanceof Parado) return;
-        if (ehChave(e)) this.sairDoChat();
-        else naoFoi();
+      sairDoChat: () => {
+        if (vez === this.vez) this.sairDoChat();
       },
-    );
-  }
-
-  /** A tentativa não foi (o prazo de 15 s ou um erro): o Pendente fica "Não enviada", se ela ainda é a de agora. */
-  private naoEnviada(l: Leitura, idLocal: string, tentativa: number): void {
-    const envio = l.envios.get(idLocal);
-    if (l !== this.leitura || envio?.tentativa !== tentativa) return;
-    clearTimeout(envio.prazo);
-    const a = this.v.aberta;
-    const p = a?.pendentes.find((x) => x.idLocal === idLocal);
-    if (!a || !p || p.estado === 'naoEnviada') return;
-    const naoEnviada: Pendente = { ...p, estado: 'naoEnviada' };
-    this.mudar({ aberta: { ...a, pendentes: a.pendentes.map((x) => (x === p ? naoEnviada : x)) } });
-  }
-
-  /** O Pendente virou mensagem: o envio dele acabou. */
-  private soltarEnvio(l: Leitura, idLocal: string): void {
-    const envio = l.envios.get(idLocal);
-    if (envio) clearTimeout(envio.prazo);
-    l.envios.delete(idLocal);
-  }
-
-  /**
-   * A leitura da aberta, com a janela na frente (a abertura, a mensagem que chega, o `frente` que vira true): o
-   * marcarLida até a mais nova. Um id nunca vai duas vezes; a leitura que não chegou ao servidor fica para a próxima vez.
-   */
-  private lerAberta(): void {
-    const a = this.v.aberta;
-    const api = this.api;
-    const ate = a ? ultimoId(a.mensagens) : null;
-    if (!this.frente || !a || !api || ate === null) return;
-    const antes = this.lidas.get(a.id) ?? 0;
-    if (ate <= antes) return;
-    this.lidas.set(a.id, ate);
-    const vez = this.vez;
-    api.marcarLida(a.id, ate).catch((e) => {
-      if (vez !== this.vez) return;
-      if (ehChave(e)) this.sairDoChat();
-      else if (this.lidas.get(a.id) === ate) this.lidas.set(a.id, antes);
     });
+  }
+
+  /** Solta a conversa aberta: as esperas dela acabam, e o que ainda chegar dela não pinta. */
+  private soltarAberta(): void {
+    this.aberta?.soltar();
+    this.aberta = null;
+  }
+
+  /** A conversa aberta na vista (as mensagens dela e os meus Pendentes nela), e a faixa, que pode ter mudado com ela. */
+  private publicarAberta(): void {
+    const a = this.aberta;
+    if (!a) return;
+    const antes = this.v.aberta;
+    const agora: ConversaAberta = { id: a.id, ...a.vista(), pendentes: this.envios?.de(a.id) ?? SEM_PENDENTES };
+    const igual = antes !== null && (Object.keys(agora) as Array<keyof ConversaAberta>).every((k) => agora[k] === antes[k]);
+    this.mudar(igual ? {} : { aberta: agora });
   }
 
   /** Pede a chave ao C++ (o chatKey); a resposta é a chatChave ("" fora do chat). Um pedido de cada vez. */
@@ -771,12 +673,13 @@ export class ChatCliente {
   }
 
   /**
-   * A vista nova (o número é sempre a soma das não lidas, e a conversa lida na hora fica com 0, também depois de uma
-   * releitura); o chatBadge sai quando o número muda.
+   * A vista nova (a faixa pelas três fontes; o número é sempre a soma das não lidas, e a conversa lida na hora fica com
+   * 0, também depois de uma releitura); o chatBadge sai quando o número muda.
    */
   private mudar(parte: Partial<VistaChat>): void {
     const antes = this.v;
     const v: VistaChat = { ...antes, ...parte };
+    v.conectado = !(this.semEventos || this.falhaDaLista || (this.aberta?.falhando() ?? false));
     const aberta = this.frente ? v.aberta?.id : undefined;
     if (aberta !== undefined && v.conversas.some((c) => c.id === aberta && c.naoLidas > 0)) {
       v.conversas = v.conversas.map((c) => (c.id === aberta ? { ...c, naoLidas: 0 } : c));

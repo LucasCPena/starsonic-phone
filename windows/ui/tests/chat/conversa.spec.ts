@@ -3,11 +3,13 @@
 // depois de 15 s e o "Tentar de novo" com o mesmo idLocal, a minha mensagem que volta também pelo WebSocket (Review
 // Focus 2), as anteriores de 50 em 50 sem perder o lugar, a mensagem nova que não puxa a tela de quem lê as antigas
 // (Review Focus 3), a leitura só com a janela na frente, a leitura em outro computador meu, o Ligar, quem saiu do chat,
-// o grupo, os textos compridos sem rolar para o lado (Review Focus 4), o Esc, a página atrasada de outra conversa e a
-// acessibilidade nos dois temas. Cada teste cria a própria empresa.
+// o grupo, os textos compridos sem rolar para o lado (Review Focus 4), o Esc, a página atrasada de outra conversa, a
+// mensagem que falha ou chega com a conversa fechada (os Pendentes ficam com a conversa), o Pendente e a página da
+// pessoa de antes que nunca aparecem depois da troca de conta (Review Focus 1), o aria-busy, quem mandou cada balão
+// para o leitor de tela e a acessibilidade nos dois temas. Cada teste cria a própria empresa.
 import { expect, test, type APIResponse, type Page, type Route } from '@playwright/test';
-import { capturar, comandos, depoisDoQueChegou, empurrar, esperarComando, semViolacoesSerias } from '../helpers';
-import { abrirAConversa, abrirNoChat, esperarOsEventos } from './abrir';
+import { capturar, comandos, depoisDoQueChegou, empurrar, esperarComando, mudarEstado, semViolacoesSerias } from '../helpers';
+import { abrirAConversa, abrirNoChat, esperarOsEventos, pararORelogio } from './abrir';
 import { ApiDeTeste, baseDoChat, empresaComPessoas, ligarComputador, tirarPessoa } from './servidor';
 
 // O CSP da página só deixa falar com o endereço do chat de verdade; o servidor de teste fica no 127.0.0.1:4180.
@@ -17,6 +19,9 @@ const EMPRESA = 'ACME Comércio Ltda';
 const RECEPCAO = { ramal: '2001', nome: 'Recepção' };
 const ANA = { ramal: '2003', nome: 'Ana Souza' };
 const JOAO = { ramal: '2004', nome: 'João Pereira' };
+/** A segunda conta do cenário chat-duas-contas. */
+const CAIXA = { ramal: '2015', nome: 'Caixa 2' };
+const ID_DA_CAIXA = '41aa07c3d2e95b18';
 const DIA = 86_400_000;
 
 // A hora como a página mostra (o timezoneId do playwright.config.ts).
@@ -31,6 +36,51 @@ const nomeDoTema = (tema: 'light' | 'dark') => (tema === 'light' ? 'claro' : 'es
 const envios = (conversa: number) => `${baseDoChat()}/api/v1/conversas/${conversa}/mensagens`;
 /** Um instante da página (um pedido que acabou de chegar já foi tratado). */
 const umInstante = (page: Page) => page.evaluate(() => new Promise((r) => setTimeout(r, 200)));
+
+/**
+ * A troca de conta pelo núcleo, com uma conversa aberta (a tela da conversa não tem o menu das contas): o estado chega
+ * com a Caixa 2 em uso, como o C++ de mentira o manda depois de um selectAccount.
+ */
+async function trocarParaACaixaPeloNucleo(page: Page): Promise<void> {
+  await mudarEstado(page, (s) => {
+    const caixa = s.contas.find((c: { id: string }) => c.id === ID_DA_CAIXA);
+    return {
+      ...s,
+      contas: s.contas.map((c: { id: string }) => ({ ...c, emUso: c.id === ID_DA_CAIXA })),
+      conta: {
+        id: caixa.id,
+        nome: caixa.nome,
+        ramal: caixa.ramal,
+        servidor: caixa.servidor,
+        protocolo: caixa.protocolo,
+        status: 'conectado',
+        texto: `Conectado · ${caixa.servidor}`,
+        internet: true,
+      },
+      chat: { ...s.chat, contaConectada: true },
+    };
+  });
+}
+
+/**
+ * Review Focus 1: depois que a conversa da primeira pessoa sai da tela (o log some), a cada mudança da página, nenhum
+ * balão com um destes textos (o window.__misturas guarda os que aparecerem).
+ */
+async function vigiarOsBaloes(page: Page, textos: string[]): Promise<void> {
+  await page.evaluate((lista) => {
+    const w = window as unknown as { __misturas: string[][] };
+    w.__misturas = [];
+    let saiu = false;
+    new MutationObserver(() => {
+      if (!document.querySelector('[role="log"]')) saiu = true;
+      if (!saiu) return;
+      const vistos = [...document.querySelectorAll('.balao-texto')].map((n) => n.textContent ?? '').filter((t) => lista.includes(t));
+      if (vistos.length > 0) w.__misturas.push(vistos);
+    }).observe(document, { subtree: true, childList: true, characterData: true });
+  }, textos);
+}
+
+const misturas = (page: Page) => page.evaluate(() => (window as unknown as { __misturas: string[][] }).__misturas);
 
 test('the conversation shows the bubbles with the time and the day, mine on the right', async ({ page }) => {
   const { pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO, ANA]);
@@ -183,6 +233,8 @@ test('no answer in 15 seconds is Não enviada, and Tentar de novo sends it with 
     return rota.continue();
   });
   await abrirNoChat(page, { chave: a.chave, ...RECEPCAO });
+  // O relógio parado: o prazo de 20 s do primeiro POST nunca passa sozinho, nem numa máquina lenta.
+  await pararORelogio(page);
   await abrirAConversa(page, 'Ana Souza');
   const campo = campoPara(page, 'Ana Souza');
   await campo.fill('Te mando o contrato em 5 minutos.');
@@ -209,7 +261,8 @@ test('no answer in 15 seconds is Não enviada, and Tentar de novo sends it with 
   const chegou = page.waitForResponse((r) => r.request() === primeiro!.request());
   await primeiro!.continue();
   expect((await chegou).status()).toBe(200);
-  await umInstante(page);
+  // Com o relógio parado, o instante é do teste (os timers da página não andam).
+  await page.waitForTimeout(200);
   await expect(log.locator('.balao')).toHaveCount(1);
   expect((await a.api.mensagens(dupla)).filter((x) => x.idLocal === corpos[0].idLocal)).toHaveLength(1);
 });
@@ -444,6 +497,9 @@ test("group bubbles show the author's name and the notices in the middle", async
   // O nome de quem mandou em cima do balão dos outros; o meu, sem nome.
   await expect(log.locator('.balao-outro .balao-autor')).toHaveText(['João Pereira', 'Ana Souza', 'João Pereira']);
   await expect(log.locator('.balao-meu .balao-autor')).toHaveCount(0);
+  // Para o leitor de tela, o meu diz "Você"; os dos outros já têm o nome à vista.
+  await expect(log.locator('.balao-meu .sr-only')).toHaveText(['Você']);
+  await expect(log.locator('.balao-outro .sr-only')).toHaveCount(0);
   // Os avisos no meio da conversa.
   const caixa = (await log.boundingBox())!;
   for (const aviso of await log.locator('.conversa-aviso').all()) {
@@ -544,6 +600,212 @@ test('a page that arrives after going to another conversation never shows there'
   await chegou;
   await umInstante(page);
   await expect(log.locator('.balao-texto')).toHaveText(['Fechamos o pedido de hoje.']);
+});
+
+test('a message that fails while its conversation is closed shows Não enviada when it opens again', async ({ page }) => {
+  const { pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO, ANA]);
+  const [a, ana] = pessoas;
+  const dupla = await ana.api.criarDupla(a.pessoa.id);
+  await ana.api.enviarTexto(dupla, 'Bom dia!');
+  await page.clock.install();
+  // O primeiro POST fica sem resposta (e sem chegar ao servidor); os outros passam.
+  const corpos: Array<{ idLocal: string; texto: string }> = [];
+  let primeiro: Route | null = null;
+  await page.route(envios(dupla), (rota) => {
+    if (rota.request().method() !== 'POST') return rota.continue();
+    corpos.push(rota.request().postDataJSON());
+    if (primeiro === null) {
+      primeiro = rota;
+      return;
+    }
+    return rota.continue();
+  });
+  await abrirNoChat(page, { chave: a.chave, ...RECEPCAO });
+  await pararORelogio(page);
+  await abrirAConversa(page, 'Ana Souza');
+  const log = conversaCom(page, 'Ana Souza');
+  await expect(log.locator('.balao-texto')).toHaveText(['Bom dia!']);
+  await campoPara(page, 'Ana Souza').fill('Te mando o contrato em 5 minutos.');
+  await campoPara(page, 'Ana Souza').press('Enter');
+  await expect(log.locator('.balao-meu .balao-hora')).toHaveText(['Enviando…']);
+  await expect.poll(() => corpos.length).toBe(1);
+
+  // A pessoa sai da conversa com a mensagem a caminho, e os 15 s passam com ela fechada.
+  await page.keyboard.press('Escape');
+  await expect(log).toHaveCount(0);
+  await page.clock.runFor(15_000);
+  await abrirAConversa(page, 'Ana Souza');
+  const minha = log.locator('.balao-meu');
+  await expect(minha.locator('.balao-texto')).toHaveText(['Te mando o contrato em 5 minutos.']);
+  await expect(minha.getByText('Não enviada', { exact: true })).toBeVisible();
+  await minha.getByRole('button', { name: 'Tentar de novo' }).click();
+  await expect.poll(() => corpos.length).toBe(2);
+  expect(corpos[1]).toEqual(corpos[0]);
+  await expect.poll(async () => (await a.api.mensagens(dupla)).filter((m) => m.idLocal === corpos[0].idLocal).length).toBe(1);
+  const m = (await a.api.mensagens(dupla)).find((x) => x.idLocal === corpos[0].idLocal);
+  await expect(minha.locator('.balao-hora')).toHaveText([hora(m.criadaEm)]);
+  await expect(minha.getByText('Não enviada', { exact: true })).toHaveCount(0);
+  await primeiro!.abort();
+});
+
+test('a message answered while its conversation is closed shows once when it opens again', async ({ page }) => {
+  const { pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO, ANA]);
+  const [a, ana] = pessoas;
+  const dupla = await ana.api.criarDupla(a.pessoa.id);
+  await ana.api.enviarTexto(dupla, 'Bom dia!');
+  let preso: Route | null = null;
+  await page.route(envios(dupla), (rota) => {
+    if (rota.request().method() !== 'POST') return rota.continue();
+    preso = rota;
+  });
+  await abrirNoChat(page, { chave: a.chave, ...RECEPCAO });
+  await abrirAConversa(page, 'Ana Souza');
+  const log = conversaCom(page, 'Ana Souza');
+  await expect(log.locator('.balao-texto')).toHaveText(['Bom dia!']);
+  await campoPara(page, 'Ana Souza').fill('Segue a proposta.');
+  await campoPara(page, 'Ana Souza').press('Enter');
+  await expect.poll(() => preso !== null).toBe(true);
+
+  // Fechada, a resposta chega: a mensagem fica na lista, e o Pendente sai.
+  await page.keyboard.press('Escape');
+  await expect(log).toHaveCount(0);
+  const chegou = page.waitForResponse((r) => r.request() === preso!.request());
+  await preso!.continue();
+  expect((await chegou).status()).toBe(201);
+  await expect(page.locator('.chat-linha .chat-previa')).toHaveText(['Você: Segue a proposta.']);
+  await abrirAConversa(page, 'Ana Souza');
+  const [, m] = await a.api.mensagens(dupla);
+  await expect(log.locator('.balao-texto')).toHaveText(['Bom dia!', 'Segue a proposta.']);
+  await expect(log.locator('.balao-meu .balao-hora')).toHaveText([hora(m.criadaEm)]);
+  await umInstante(page);
+  await expect(log.locator('.balao')).toHaveCount(2);
+  await expect(log.getByText('Enviando…')).toHaveCount(0);
+  await expect(log.getByText('Não enviada', { exact: true })).toHaveCount(0);
+});
+
+test('a message of the first person still on its way never shows for the second', async ({ page }) => {
+  const { pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO, CAIXA]);
+  const [a, caixa] = pessoas;
+  // A conversa das duas contas do mesmo computador: o mesmo id para as duas pessoas.
+  const dupla = await caixa.api.criarDupla(a.pessoa.id);
+  await caixa.api.enviarTexto(dupla, 'Oi, Recepção!');
+  // O POST da Recepção fica parado (nem chega ao servidor).
+  let preso: Route | null = null;
+  await page.route(envios(dupla), (rota) => {
+    if (rota.request().method() !== 'POST') return rota.continue();
+    preso = rota;
+  });
+  await abrirNoChat(page, { chave: a.chave, ...RECEPCAO, cenario: 'chat-duas-contas' });
+  await abrirAConversa(page, 'Caixa 2');
+  await campoPara(page, 'Caixa 2').fill('Mensagem da Recepção.');
+  await campoPara(page, 'Caixa 2').press('Enter');
+  await expect(conversaCom(page, 'Caixa 2').locator('.balao-meu .balao-hora')).toHaveText(['Enviando…']);
+  await expect.poll(() => preso !== null).toBe(true);
+  await vigiarOsBaloes(page, ['Mensagem da Recepção.']);
+
+  await trocarParaACaixaPeloNucleo(page);
+  await expect(page.locator('.account-name')).toHaveText('Caixa 2 · 2015');
+  await expect(page.getByRole('main', { name: 'Chat' })).toBeVisible();
+  // A mesma conversa, agora da Caixa 2: sem o Pendente da Recepção.
+  await abrirAConversa(page, 'Recepção');
+  const log = conversaCom(page, 'Recepção');
+  await expect(log.locator('.balao-texto')).toHaveText(['Oi, Recepção!']);
+  await umInstante(page);
+  await expect(log.locator('.balao')).toHaveCount(1);
+  expect(await misturas(page)).toEqual([]);
+  await preso!.abort();
+});
+
+test('switching the account with a conversation open leaves it, and a late older page paints nothing', async ({ page }) => {
+  const { pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO, CAIXA, ANA, JOAO]);
+  const [a, caixa, ana, joao] = pessoas;
+  const comA = await ana.api.criarDupla(a.pessoa.id);
+  const textos = Array.from({ length: 60 }, (_, i) => `Mensagem ${i + 1}`);
+  for (const texto of textos) await ana.api.enviarTexto(comA, texto);
+  const comCaixa = await joao.api.criarDupla(caixa.pessoa.id);
+  await joao.api.enviarTexto(comCaixa, 'Fechamos o pedido de hoje.');
+  // A página anterior vem do servidor ainda como a Recepção, e só chega à página depois da troca.
+  let presa: { rota: Route; resposta: APIResponse } | null = null;
+  await page.route(
+    (url) => url.pathname === `/api/v1/conversas/${comA}/mensagens` && url.searchParams.has('antes'),
+    async (rota) => {
+      presa = { rota, resposta: await rota.fetch() };
+    },
+  );
+  await abrirNoChat(page, { chave: a.chave, ...RECEPCAO, cenario: 'chat-duas-contas' });
+  await abrirAConversa(page, 'Ana Souza');
+  const log = conversaCom(page, 'Ana Souza');
+  await expect(log.locator('.balao-texto')).toHaveCount(50);
+  await log.evaluate((el) => (el.scrollTop = 0));
+  await expect.poll(() => presa !== null).toBe(true);
+  await vigiarOsBaloes(page, textos);
+
+  await trocarParaACaixaPeloNucleo(page);
+  // A conversa sai: a aba Chat, com a lista da Caixa 2.
+  await expect(page.locator('.account-name')).toHaveText('Caixa 2 · 2015');
+  await expect(page.getByRole('main', { name: 'Chat' })).toBeVisible();
+  await expect(page.locator('.chat-linha .chat-nome')).toHaveText(['João Pereira']);
+  // A página da Recepção chega agora: nada dela aparece.
+  const chegou = page.waitForResponse((r) => r.request() === presa!.rota.request());
+  await presa!.rota.fulfill({ response: presa!.resposta });
+  await chegou;
+  await umInstante(page);
+  await abrirAConversa(page, 'João Pereira');
+  await expect(conversaCom(page, 'João Pereira').locator('.balao-texto')).toHaveText(['Fechamos o pedido de hoje.']);
+  expect(await misturas(page)).toEqual([]);
+});
+
+test('the log is busy while a page of 50 goes in', async ({ page }) => {
+  const { pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO, ANA]);
+  const [a, ana] = pessoas;
+  const dupla = await ana.api.criarDupla(a.pessoa.id);
+  for (let i = 1; i <= 60; i++) await ana.api.enviarTexto(dupla, `Mensagem ${i}`);
+  // A primeira página e a anterior vêm do servidor e esperam o teste.
+  const presas: Array<{ rota: Route; resposta: APIResponse }> = [];
+  await page.route(
+    (url) => url.pathname === `/api/v1/conversas/${dupla}/mensagens` && !url.searchParams.has('depois'),
+    async (rota) => {
+      if (rota.request().method() !== 'GET') return rota.continue();
+      presas.push({ rota, resposta: await rota.fetch() });
+    },
+  );
+  await abrirNoChat(page, { chave: a.chave, ...RECEPCAO });
+  await abrirAConversa(page, 'Ana Souza');
+  const log = conversaCom(page, 'Ana Souza');
+  await expect.poll(() => presas.length).toBe(1);
+  await expect(log).toHaveAttribute('aria-busy', 'true');
+  await presas[0].rota.fulfill({ response: presas[0].resposta });
+  await expect(log.locator('.balao-texto')).toHaveCount(50);
+  await expect(log).toHaveAttribute('aria-busy', 'false');
+
+  await log.evaluate((el) => (el.scrollTop = 0));
+  await expect.poll(() => presas.length).toBe(2);
+  await expect(log).toHaveAttribute('aria-busy', 'true');
+  await presas[1].rota.fulfill({ response: presas[1].resposta });
+  await expect(log.locator('.balao-texto')).toHaveCount(60);
+  await expect(log).toHaveAttribute('aria-busy', 'false');
+});
+
+test('in a dupla each bubble tells screen readers who wrote it', async ({ page }) => {
+  const { pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO, ANA]);
+  const [a, ana] = pessoas;
+  const dupla = await ana.api.criarDupla(a.pessoa.id);
+  await ana.api.enviarTexto(dupla, 'Pode me mandar a proposta da ACME?');
+  await a.api.enviarTexto(dupla, 'Segue a proposta.');
+  await abrirNoChat(page, { chave: a.chave, ...RECEPCAO });
+  await abrirAConversa(page, 'Ana Souza');
+  const log = conversaCom(page, 'Ana Souza');
+  await expect(log.locator('.balao-texto')).toHaveCount(2);
+  // Escondido na tela (sem texto visível novo), lido antes do texto do balão.
+  await expect(log.locator('.balao-outro .sr-only')).toHaveText(['Ana Souza']);
+  await expect(log.locator('.balao-meu .sr-only')).toHaveText(['Você']);
+  await expect(log.locator('.balao-autor')).toHaveCount(0);
+  await expect(log.locator('.balao-outro')).toHaveText(/^Ana SouzaPode me mandar/);
+  // O Pendente também é meu.
+  await page.route(envios(dupla), (rota) => (rota.request().method() === 'POST' ? undefined : rota.continue()));
+  await campoPara(page, 'Ana Souza').fill('Qualquer dúvida, me liga.');
+  await campoPara(page, 'Ana Souza').press('Enter');
+  await expect(log.locator('.balao-meu .sr-only')).toHaveText(['Você', 'Você']);
 });
 
 for (const tema of ['light', 'dark'] as const) {

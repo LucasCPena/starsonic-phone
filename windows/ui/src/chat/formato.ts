@@ -2,7 +2,7 @@
 // novos" do plano da etapa 2); (Task 6) no aviso do Windows, o título e o texto; e o número da aba. Só apresentação, na
 // hora local.
 import { clockTime, fold, limitCharacters } from '../format';
-import { arquivoNoAviso, FOTO, nomeDaPessoa, textoDoAviso as textoDoAvisoDeGrupo, VOCE } from './textos';
+import { arquivoNoAviso, FOTO, nomeDaPessoa, textoDoAvisoDeGrupo, VOCE } from './textos';
 import type { Conversa, Mensagem } from './tipos';
 
 /** O texto do aviso do Windows leva os primeiros 120 caracteres da mensagem. */
@@ -67,8 +67,8 @@ export function tituloDoAviso(c: Conversa, m: Mensagem): string {
 }
 
 /**
- * O texto do aviso do Windows (não o de um aviso de grupo, que fica no textos.ts): o começo do texto, os 120 primeiros
- * pontos de código, com "…" quando corta; uma foto é "Foto", e um arquivo, "Arquivo: <nome>".
+ * O texto do aviso do Windows (o de um aviso de grupo é o textoDoAvisoDeGrupo, no textos.ts): o começo do texto, os
+ * 120 primeiros pontos de código, com "…" quando corta; uma foto é "Foto", e um arquivo, "Arquivo: <nome>".
  */
 export function textoDoAviso(m: Mensagem): string {
   if (m.tipo === 'arquivo') return m.arquivo?.foto ? FOTO : arquivoNoAviso(m.arquivo?.nome ?? '');

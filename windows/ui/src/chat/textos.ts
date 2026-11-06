@@ -107,7 +107,7 @@ export function arquivoNoAviso(nome: string): string {
 }
 
 /** O texto de um aviso de grupo; quem fez ou o alvo sou eu: "Você" no começo, "você" no meio. */
-export function textoDoAviso(aviso: AvisoDeGrupo, euId: number): string {
+export function textoDoAvisoDeGrupo(aviso: AvisoDeGrupo, euId: number): string {
   const quem = aviso.quem.id === euId ? VOCE : nomeDaPessoa(aviso.quem);
   const alvo = aviso.alvo === null ? '' : aviso.alvo.id === euId ? 'você' : nomeDaPessoa(aviso.alvo);
   switch (aviso.acao) {
