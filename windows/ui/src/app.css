@@ -1008,6 +1008,101 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .conversa-saiu { flex: none; margin: 0; padding: 14px 16px 16px; border-top: 1px solid var(--border); background: var(--surface); font-size: 13.5px;
   font-weight: 600; line-height: 1.45; color: var(--text-muted); text-align: center; overflow-wrap: anywhere; }
 
+/* (Task 5) A nova conversa, o novo grupo, o pôr pessoas e os membros (os quadros NovaConversa, NovoGrupo e Membros), no
+   lugar das abas, com a barra do Voltar. O nome do grupo em cima do título quebra em qualquer ponto (60 caracteres sem
+   espaço não passam da largura). No novo grupo, no pôr pessoas e nos membros, o fundo é o soft no claro, com os cartões
+   brancos. Cada pessoa tem as iniciais, o nome (com as reticências) e o ramal. */
+.bar .bar-eyebrow { overflow-wrap: anywhere; }
+.chat-fundo { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--soft); }
+@media (prefers-color-scheme: dark) {
+  .chat-fundo { background: var(--surface); }
+}
+.chat-subtitulo { margin: 0; font-size: 12.5px; font-weight: 700; letter-spacing: 0.12em; line-height: 1.3; text-transform: uppercase;
+  color: var(--text-strong); }
+.chat-pessoas { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.chat-pessoa { width: 100%; min-width: 0; display: flex; align-items: center; gap: 12px; color: var(--text); }
+.chat-pessoa .chat-avatar { width: 40px; height: 40px; font-size: 13px; }
+.chat-pessoa-textos { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.chat-pessoa-nome { font-size: 14.5px; font-weight: 700; line-height: 1.25; color: var(--text-strong); white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; }
+.chat-pessoa-sub { font-size: 12px; line-height: 1.3; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* O botão de baixo (o Criar grupo e o Pôr pessoas), desligado sem o que ele precisa. */
+.chat-confirmar { flex: none; width: 100%; height: 48px; font-size: 15px; font-weight: 800; }
+.chat-confirmar:disabled { opacity: 0.45; }
+
+/* A nova conversa: a busca, o Novo grupo, os colegas (a lista rola por dentro) e a nota embaixo. */
+.chat-nova { gap: 10px; padding: 16px 16px 0; }
+.chat-nova .chat-busca { height: 44px; }
+.chat-novo-grupo { flex: none; display: flex; align-items: center; gap: 12px; min-height: 56px; margin: 0 -8px; padding: 6px 8px; border: 0;
+  border-radius: 14px; background: transparent; font: 800 14.5px/1.25 var(--font-sans); color: var(--text-strong); text-align: left;
+  transition: background var(--ease); }
+.chat-novo-grupo:hover { background: var(--icon-tile); }
+.chat-novo-grupo-tile { width: 40px; height: 40px; flex: none; border-radius: 14px; background: var(--icon-tile); color: var(--icon); display: grid;
+  place-items: center; }
+.chat-nova .chat-subtitulo { margin-top: 4px; }
+.chat-colegas { flex: 1; min-height: 0; margin: 0 -8px; }
+.chat-colegas .chat-pessoa { min-height: 54px; padding: 6px 8px; border: 0; border-radius: 14px; background: transparent; font-family: inherit;
+  text-align: left; transition: background var(--ease); }
+.chat-colegas .chat-pessoa:hover { background: var(--icon-tile); }
+.chat-colegas .chat-pessoa:focus-visible { outline-offset: -3px; }
+.chat-colegas .empty { margin-top: 18px; }
+.chat-nota { flex: none; margin: 0 0 14px; font-size: 12px; line-height: 1.5; color: var(--text-muted); }
+
+/* O novo grupo e o pôr pessoas: o nome do grupo, o cartão da escolha (a lista rola por dentro) e o botão embaixo. */
+.chat-escolha { gap: 12px; padding: 16px; }
+.chat-nome-do-grupo { background: var(--card); padding: 0 14px; font-size: 15px; font-weight: 600; }
+.escolher { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 12px 14px 6px; border-radius: var(--radius);
+  border: 1px solid var(--border); background: var(--card); overflow: hidden; }
+/* O espaço é a margem de cima de cada um: o "O grupo já tem 200 pessoas." vazio (o `status` fica sempre na página) não
+   ocupa lugar. */
+.escolher > * + * { margin-top: 8px; }
+.escolher .chat-busca { height: 38px; }
+.escolher .chat-busca input { font-size: 13.5px; }
+.escolher-cheio { margin: 0; font-size: 12.5px; font-weight: 700; line-height: 1.4; color: var(--text); }
+.escolher-cheio:empty { margin-top: 0; }
+.escolher-lista { flex: 1; min-height: 0; margin-left: -14px; margin-right: -14px; padding: 0 14px; overflow-y: auto; scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent; }
+.escolher .empty { margin-top: 18px; }
+/* A linha inteira é a caixa de marcar (o input transparente por cima dela); o quadrado é só o desenho. */
+.escolher-pessoa { position: relative; min-height: 50px; border-top: 1px solid var(--border); }
+.escolher-lista li:first-child .escolher-pessoa { border-top-color: transparent; }
+.escolher-pessoa .chat-avatar { width: 34px; height: 34px; font-size: 12px; }
+.escolher-pessoa .chat-pessoa-nome { font-size: 14px; }
+.escolher-marca { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; }
+.escolher-caixa { width: 22px; height: 22px; flex: none; display: grid; place-items: center; border-radius: 7px; border: 2px solid #b9c4e6;
+  background: var(--card); color: transparent; transition: background var(--ease), border-color var(--ease); }
+@media (prefers-color-scheme: dark) {
+  .escolher-caixa { border-color: var(--outline); }
+}
+.escolher-caixa .ic { width: 14px; height: 14px; stroke-width: 3; }
+.escolher-marca:checked + .escolher-caixa { border-color: var(--pill-on-bg); background: var(--pill-on-bg); color: var(--pill-on-text); }
+.escolher-pessoa:has(.escolher-marca:focus-visible) { outline: 3px solid var(--focus); outline-offset: -3px; }
+.escolher-pessoa:has(.escolher-marca:disabled) { opacity: 0.45; }
+
+/* Os membros: o texto de quem cuida, o cartão "N pessoas" (a lista rola por dentro), o Pôr pessoas e o Sair embaixo. Numa
+   janela baixa, a tela rola. */
+.membros { gap: 14px; padding: 16px; }
+.membros-texto { flex: none; margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--text-muted); }
+.membros-cartao { flex: 0 1 auto; min-height: 120px; display: flex; flex-direction: column; padding: 6px 14px; border-radius: var(--radius);
+  border: 1px solid var(--border); background: var(--card); overflow: hidden; }
+.membros-cartao .chat-subtitulo { flex: none; margin: 10px 0 4px; }
+.membros-cartao .chat-subtitulo:focus-visible { outline-offset: 2px; border-radius: 4px; }
+.membros-lista { min-height: 0; margin: 0 -14px; padding: 0 14px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+.membros-lista:focus-visible { outline-offset: -3px; }
+.membros-lista .chat-pessoa { min-height: 54px; border-top: 1px solid var(--border); }
+.membros-lista .chat-pessoa:first-child { border-top-color: transparent; }
+.membros-lista .chat-avatar { width: 36px; height: 36px; font-size: 12px; }
+.membros-tirar { flex: none; height: 32px; padding: 0 14px; border-radius: 999px; border: 1.5px solid var(--border); background: var(--card);
+  font: 700 12.5px/1 var(--font-sans); color: var(--text-strong); transition: border-color var(--ease); }
+.membros-tirar:hover { border-color: var(--cyan); }
+.membros-por { flex: none; align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 16px 0 12px;
+  border-radius: 999px; border: 1.5px dashed var(--dashed); background: transparent; font: 700 13px/1 var(--font-sans); color: var(--text-strong);
+  transition: border-color var(--ease); }
+.membros-por:hover { border-color: var(--cyan); }
+.membros-por .ic { width: 15px; height: 15px; }
+.membros-espaco { flex: 1 0 0; }
+.btn.membros-sair { flex: none; width: 100%; background: var(--card); font-size: 14px; }
+
 /* ---------------------------------------------------------------------------------------------------------
    O modo iPhone (plataforma.ts: o .win leva data-plataforma="ios"); fora dele, nada daqui vale. A área segura (em cima
    a barra de status ou o entalhe, embaixo a barra de voltar ao início) vem do env(safe-area-inset-*), com o

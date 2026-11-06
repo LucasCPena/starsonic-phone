@@ -5,6 +5,8 @@
 // - Um Pendente sai quando chega a mensagem dele (o mesmo idLocal), pela resposta, pelo evento ou por uma página da
 //   conversa aberta, o que vier primeiro. Sem resposta em 15 s, ou com um erro, ele fica "Não enviada", e o "Tentar de
 //   novo" manda o mesmo idLocal (o servidor guarda uma mensagem só por idLocal).
+// - (Task 5) Uma conversa que sai da lista (um grupo de que a pessoa saiu ou foi tirada) leva os Pendentes dela: os
+//   prazos param, e o que ainda chegar dos envios dela não vale (R26).
 // (Task 7) Os arquivos também vão por aqui.
 import { ehChave, type ApiChat } from './api';
 import type { Mensagem } from './tipos';
@@ -53,6 +55,8 @@ export class Envios {
   private readonly tentativas = new Map<string, { tentativa: number; prazo: ReturnType<typeof setTimeout> }>();
   /** A pessoa trocou: nada do que chega daqui em diante vale. */
   private solto = false;
+  /** Os idLocal dos Pendentes de uma conversa que saiu da lista: a resposta que ainda chegar deles não vale. */
+  private readonly descartados = new Set<string>();
 
   constructor(ctx: ContextoDosEnvios) {
     this.ctx = ctx;
@@ -93,6 +97,17 @@ export class Envios {
     }
   }
 
+  /** A conversa saiu da lista (R26): os Pendentes dela saem, os prazos param, e o que ainda chegar deles não vale. */
+  soltarConversa(conversa: number): void {
+    const lista = this.porConversa.get(conversa);
+    if (this.solto || !lista) return;
+    for (const p of lista) {
+      this.soltarEnvio(p.idLocal);
+      this.descartados.add(p.idLocal);
+    }
+    this.mudar(conversa, []);
+  }
+
   /** A troca de pessoa: os prazos param, os Pendentes saem, e o que ainda chegar dos envios não vale. */
   soltar(): void {
     this.solto = true;
@@ -115,7 +130,7 @@ export class Envios {
     this.tentativas.set(p.idLocal, { tentativa, prazo: setTimeout(naoFoi, PRAZO_DO_ENVIO_MS) });
     this.ctx.comLimite(() => this.ctx.api.enviar(p.conversa, { idLocal: p.idLocal, texto })).then(
       (m) => {
-        if (this.solto) return;
+        if (this.solto || this.descartados.has(p.idLocal)) return;
         this.ctx.chegou(m);
         this.chegaram([m]);
       },

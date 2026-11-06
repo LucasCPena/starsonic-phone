@@ -20,7 +20,11 @@
 // O cartão Chat fica na área do administrador. (Task 6) A conversa (a vista chatConversa) toma o lugar das abas; o Esc,
 // sem diálogo nem menu aberto, volta dela para a lista. O clique no aviso do chat (o `abrir` com a tela "chat") leva à
 // conversa dele; com a conversa 0, ou uma que não está na lista quando ela chega, à aba Chat. Com outra pessoa no chat
-// (a troca de conta), as telas do chat da de antes saem para a aba Chat.
+// (a troca de conta), as telas do chat da de antes saem para a aba Chat. (Task 5) A nova conversa, o novo grupo, os
+// membros e o pôr pessoas (as vistas chatNova, chatNovoGrupo, chatMembros e chatPor) também tomam o lugar das abas; a
+// conversa que elas criam abre com o Voltar para a lista. As de uma conversa (a conversa, os membros e o pôr pessoas)
+// saem para a aba Chat quando ela sai da lista (R26), e todas, quando a pessoa não está mais no chat. O toast delas é
+// o mesmo da ponte (R31).
 import { render } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { createBridge } from './bridge';
@@ -28,6 +32,10 @@ import { ChatCliente } from './chat/cliente';
 import { enderecoDoChat } from './chat/endereco';
 import { Conversa } from './chat/telas/Conversa';
 import { Lista } from './chat/telas/Lista';
+import { Membros } from './chat/telas/Membros';
+import { NovaConversa } from './chat/telas/NovaConversa';
+import { NovoGrupo } from './chat/telas/NovoGrupo';
+import { PorPessoas } from './chat/telas/PorPessoas';
 import { useVistaChat } from './chat/usarChat';
 import { AdminLogin } from './components/AdminLogin';
 import { Atualizacao } from './components/Atualizacao';
@@ -102,6 +110,11 @@ function comAdmin(v: View): View {
 /** (0.2.0) As telas do chat fora da aba (a conversa, a nova conversa, o novo grupo, os membros e o pôr pessoas). */
 function telaDoChat(v: View): boolean {
   return v.kind === 'chatConversa' || v.kind === 'chatNova' || v.kind === 'chatNovoGrupo' || v.kind === 'chatMembros' || v.kind === 'chatPor';
+}
+
+/** (0.2.0) A conversa de uma tela do chat que é de uma conversa (a conversa, os membros e o pôr pessoas); senão, null. */
+function conversaDaTela(v: View): number | null {
+  return v.kind === 'chatConversa' || v.kind === 'chatMembros' || v.kind === 'chatPor' ? v.conversa : null;
 }
 
 const ABA_CHAT: View = { kind: 'tab', tab: 'chat' };
@@ -194,13 +207,19 @@ function App() {
     chatCliente.atualizar({ chat: resumoDoChat, conta: contaEmUso && { ramal: contaEmUso.ramal, nome: contaEmUso.nome } });
   }, [resumoDoChat?.ligado, resumoDoChat?.contaConectada, resumoDoChat?.computador, contaEmUso?.ramal, contaEmUso?.nome]);
 
-  // (0.2.0) A conversa da vista chatConversa, quando a lista já a tem. Uma que não está nela com a lista já lida (o
-  // aviso de uma conversa que saiu, ou que não existe): a aba Chat.
-  const conversaDaVista = view.kind === 'chatConversa' ? (vistaChat.conversas.find((c) => c.id === view.conversa) ?? null) : null;
-  const semAConversa = view.kind === 'chatConversa' && vistaChat.situacao !== 'entrando' && conversaDaVista === null;
+  // (0.2.0) A conversa das vistas chatConversa, chatMembros e chatPor, quando a lista já a tem. Uma que não está nela
+  // com a lista já lida (o aviso de uma conversa que saiu, ou que não existe; o grupo de que a pessoa saiu ou foi tirada,
+  // R26) leva à aba Chat; as telas do chat fora da aba também vão para ela quando a pessoa não está mais no chat.
+  const idDaVista = conversaDaTela(view);
+  const conversaDaVista = idDaVista === null ? null : (vistaChat.conversas.find((c) => c.id === idDaVista) ?? null);
+  const semATela =
+    telaDoChat(view) && vistaChat.situacao !== 'entrando' && (vistaChat.situacao !== 'pronto' || (idDaVista !== null && conversaDaVista === null));
   useEffect(() => {
-    if (semAConversa) setView(ABA_CHAT);
-  }, [semAConversa]);
+    if (semATela) setView(ABA_CHAT);
+  }, [semATela]);
+  // (0.2.0) O toast das telas do chat (R31): o mesmo da ponte, sem contar como um toast do C++ (os `toasts` da edição do
+  // atalho são só os dele).
+  const avisarNaTela = useCallback((texto: string) => setToast((t) => ({ texto, vez: (t?.vez ?? 0) + 1 })), []);
   // Outra pessoa no chat (a troca de conta, o chat que desligou ou saiu): as telas do chat da de antes saem.
   const euNoChat = vistaChat.eu?.id ?? null;
   const euAntes = useRef<number | null>(null);
@@ -396,6 +415,8 @@ function App() {
   }
 
   const voltarAoTeclado = () => setView({ kind: 'tab', tab: 'teclado' });
+  // (0.2.0) Uma conversa da lista (ou a que uma tela do chat acabou de criar, já na lista): o Voltar dela vai para a lista.
+  const abrirConversa = (conversa: number) => setView({ kind: 'chatConversa', conversa, back: ABA_CHAT });
   let conteudo;
   switch (view.kind) {
     case 'configuracoes':
@@ -468,6 +489,57 @@ function App() {
         );
       }
       break;
+    case 'chatNova': {
+      const daVista = view;
+      conteudo = (
+        <NovaConversa
+          vista={vistaChat}
+          cliente={chatCliente}
+          avisar={avisarNaTela}
+          onVoltar={() => setView(daVista.back)}
+          onNovoGrupo={() => setView({ kind: 'chatNovoGrupo', back: daVista })}
+          onAbrir={abrirConversa}
+        />
+      );
+      break;
+    }
+    case 'chatNovoGrupo': {
+      const daVista = view;
+      conteudo = <NovoGrupo vista={vistaChat} cliente={chatCliente} avisar={avisarNaTela} onVoltar={() => setView(daVista.back)} onAbrir={abrirConversa} />;
+      break;
+    }
+    case 'chatMembros':
+      // Os membros e o pôr pessoas são de um grupo da lista; sem ele, a aba Chat no lugar (e o efeito leva a ela).
+      if (conversaDaVista?.tipo === 'grupo') {
+        const daVista = view;
+        conteudo = (
+          <Membros
+            key={conversaDaVista.id}
+            vista={vistaChat}
+            conversa={conversaDaVista}
+            cliente={chatCliente}
+            avisar={avisarNaTela}
+            onVoltar={() => setView(daVista.back)}
+            onPorPessoas={() => setView({ kind: 'chatPor', conversa: conversaDaVista.id, back: daVista })}
+          />
+        );
+      }
+      break;
+    case 'chatPor':
+      if (conversaDaVista?.tipo === 'grupo') {
+        const daVista = view;
+        conteudo = (
+          <PorPessoas
+            key={conversaDaVista.id}
+            vista={vistaChat}
+            conversa={conversaDaVista}
+            cliente={chatCliente}
+            avisar={avisarNaTela}
+            onVoltar={() => setView(daVista.back)}
+          />
+        );
+      }
+      break;
     case 'tab':
     case 'admin':
       break;
@@ -484,11 +556,10 @@ function App() {
   }
 
   // (iPhone) Sem a aba Atalhos: uma tela de antes que fosse ela (o cenário da ponte falsa) é o Teclado. (0.2.0) Sem o
-  // computador ligado ao chat, sem a aba Chat (a tela que fosse ela é o Teclado, como as do chat que ainda não existem).
-  // A conversa que a lista ainda não tem mostra a aba Chat.
+  // computador ligado ao chat, sem a aba Chat (a tela que fosse ela é o Teclado). Uma tela do chat de uma conversa que a
+  // lista ainda não tem (ou não tem mais) mostra a aba Chat.
   const abas = ios ? IPHONE_TABS : state.chat?.ligado ? ABAS_COM_CHAT : ABAS_SEM_CHAT;
-  const tab =
-    view.kind === 'tab' && abas.includes(view.tab) ? view.tab : view.kind === 'chatConversa' && abas.includes('chat') ? 'chat' : 'teclado';
+  const tab = view.kind === 'tab' && abas.includes(view.tab) ? view.tab : telaDoChat(view) && abas.includes('chat') ? 'chat' : 'teclado';
   const conta = state.conta;
   return (
     <div class="win" data-layout={layout} data-plataforma={plataforma}>
@@ -548,7 +619,7 @@ function App() {
             vista={vistaChat}
             onNovaConversa={() => setView({ kind: 'chatNova', back: view })}
             onNovoGrupo={() => setView({ kind: 'chatNovoGrupo', back: view })}
-            onAbrir={(conversa) => setView({ kind: 'chatConversa', conversa, back: ABA_CHAT })}
+            onAbrir={abrirConversa}
             onFecharAviso={() => chatCliente.dispensarComputadorNovo()}
           />
         )}

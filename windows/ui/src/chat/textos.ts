@@ -1,7 +1,7 @@
 // Os textos do chat, letra por letra: os da seção 10 da spec (docs/superpowers/specs/2026-11-04-starsonic-phone-chat-
 // design.md) e os da lista "Os textos novos" do plano da etapa 2. A hora e a prévia da lista, e o título e o texto do
 // aviso do Windows, ficam no formato.ts.
-import type { AvisoDeGrupo, Pessoa } from './tipos';
+import type { AvisoDeGrupo, Membro, Pessoa } from './tipos';
 
 export const CHAT = 'Chat';
 export const PROCURAR_CONVERSA = 'Procurar conversa';
@@ -63,9 +63,14 @@ export function ligarPara(nome: string, ramal: string): string {
   return `Ligar para ${nome}, ramal ${ramal}`;
 }
 
+/** "1 pessoa" ou "<n> pessoas" (o título da lista dos Membros, e dentro de outros textos). */
+export function nPessoas(n: number): string {
+  return n === 1 ? '1 pessoa' : `${n} pessoas`;
+}
+
 /** A linha de baixo do cabeçalho do grupo: "5 pessoas · ver os membros" (com uma, "1 pessoa", como nos Membros). */
 export function pessoasVerOsMembros(n: number): string {
-  return `${n === 1 ? '1 pessoa' : `${n} pessoas`} · ver os membros`;
+  return `${nPessoas(n)} · ver os membros`;
 }
 
 /** O botão do cabeçalho do grupo, que leva aos Membros. */
@@ -120,6 +125,71 @@ export function textoDoAvisoDeGrupo(aviso: AvisoDeGrupo, euId: number): string {
     case 'saiu':
       return `${quem} saiu do grupo`;
   }
+}
+
+// (Task 5) A nova conversa, o novo grupo, o pôr pessoas e os membros (os quadros NovaConversa, NovoGrupo e Membros; os
+// nomes de leitor de tela são os dos quadros; o Voltar do novo grupo e do pôr pessoas é o "Voltar" do BackBar). As
+// falhas dos pedidos usam os textos do cartão Chat (R31).
+export const VOLTAR_PARA_A_CONVERSA = 'Voltar para a conversa';
+export const PROCURAR_PELO_NOME_OU_PELO_RAMAL = 'Procurar pelo nome ou pelo ramal';
+/** O nome de leitor de tela da busca da Nova conversa. */
+export const PROCURAR_UM_COLEGA = 'Procurar um colega pelo nome ou pelo ramal';
+/** O nome de leitor de tela da busca do Novo grupo e do Pôr pessoas. */
+export const PROCURAR_UMA_PESSOA = 'Procurar uma pessoa pelo nome ou pelo ramal';
+export const COLEGAS_NO_CHAT = 'Colegas no chat';
+export const APARECEM_SO_OS_COLEGAS = 'Aparecem só os colegas da sua empresa que já usam o chat.';
+export const NENHUM_COLEGA_NO_CHAT = 'Nenhum colega no chat ainda.';
+export const NINGUEM_ENCONTRADO = 'Ninguém encontrado.';
+export const NOME_DO_GRUPO = 'Nome do grupo';
+export const CRIAR_GRUPO = 'Criar grupo';
+export const O_GRUPO_JA_TEM_200 = 'O grupo já tem 200 pessoas.';
+export const MEMBROS_DO_GRUPO = 'Membros do grupo';
+export const VOCE_CUIDA_DESTE_GRUPO = 'Você cuida deste grupo: só você põe e tira pessoas. Quem está no grupo pode sair quando quiser.';
+export const TIRAR = 'Tirar';
+export const POR_PESSOAS_NO_GRUPO = 'Pôr pessoas no grupo';
+export const SAIR_DO_GRUPO = 'Sair do grupo';
+/** A confirmação do Sair: o título e o texto (os botões são "Sair do grupo" e "Cancelar"). */
+export const SAIR_DO_GRUPO_PERGUNTA = 'Sair do grupo?';
+export const PARA_VOLTAR = 'Para voltar, quem cuida do grupo precisa pôr você de novo.';
+
+/** O título da escolha: "Pessoas · 2 escolhidas" (com uma, "Pessoas · 1 escolhida"). */
+export function pessoasEscolhidas(n: number): string {
+  return `Pessoas · ${n === 1 ? '1 escolhida' : `${n} escolhidas`}`;
+}
+
+/** O botão do Novo grupo com alguém escolhido: "Criar grupo com 3 pessoas" (contando quem cria). */
+export function criarGrupoCom(n: number): string {
+  return `${CRIAR_GRUPO} com ${nPessoas(n)}`;
+}
+
+/** O botão do Pôr pessoas com alguém escolhido: "Pôr 1 pessoa no grupo" ou "Pôr <n> pessoas no grupo". */
+export function porNoGrupo(n: number): string {
+  return `Pôr ${nPessoas(n)} no grupo`;
+}
+
+/** O nome de um membro nos Membros: o meu ganha " (você)". */
+export function nomeDoMembro(p: Pessoa, euId: number): string {
+  return p.id === euId ? `${nomeDaPessoa(p)} (você)` : nomeDaPessoa(p);
+}
+
+/** A linha de baixo de um membro: "Ramal 2001 · criou o grupo", "Ramal 2001 · cuida do grupo" ou "Ramal 2001". */
+export function linhaDoMembro(m: Membro): string {
+  const ramal = ramalN(m.pessoa.ramal);
+  return m.criou ? `${ramal} · criou o grupo` : m.cuida ? `${ramal} · cuida do grupo` : ramal;
+}
+
+/** O Tirar de um membro, para o leitor de tela (o nome do quadro Membros): "Tirar Ana Souza do grupo". */
+export function tirarDoGrupo(nome: string): string {
+  return `Tirar ${nome} do grupo`;
+}
+
+/** A confirmação do Tirar: o título "Tirar Ana Souza do grupo?" e o texto (os botões são "Tirar" e "Cancelar"). */
+export function tirarDoGrupoPergunta(nome: string): string {
+  return `${tirarDoGrupo(nome)}?`;
+}
+
+export function deixaDeVer(nome: string): string {
+  return `${nome} deixa de ver as mensagens novas do grupo.`;
 }
 
 // O cartão Chat da área do administrador.

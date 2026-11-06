@@ -1,9 +1,9 @@
 // Como o chat escreve uma conversa: na lista, o nome, a prévia da última mensagem e a hora dela (a lista "Os textos
-// novos" do plano da etapa 2); (Task 6) no aviso do Windows, o título e o texto; e o número da aba. Só apresentação, na
-// hora local.
+// novos" do plano da etapa 2); (Task 6) no aviso do Windows, o título e o texto; e o número da aba. (Task 5) A busca dos
+// colegas. Só apresentação, na hora local.
 import { clockTime, fold, limitCharacters } from '../format';
 import { arquivoNoAviso, FOTO, nomeDaPessoa, textoDoAvisoDeGrupo, VOCE } from './textos';
-import type { Conversa, Mensagem } from './tipos';
+import type { Conversa, Mensagem, Pessoa } from './tipos';
 
 /** O texto do aviso do Windows leva os primeiros 120 caracteres da mensagem. */
 const COMECO_NO_AVISO = 120;
@@ -40,6 +40,17 @@ export function nomeDaConversa(c: Conversa): string {
 /** O nome da conversa para a busca: sem acento e sem caixa (e sem o " (saiu)"). */
 export function nomeParaBusca(c: Conversa): string {
   return fold(c.tipo === 'grupo' ? c.nome : c.com.nome);
+}
+
+/**
+ * (Task 5) A busca dos colegas (a Nova conversa, o Novo grupo e o Pôr pessoas): o nome sem acento e sem caixa, ou o
+ * ramal, como foi digitado; os espaços das pontas não contam. Sem nada digitado, todos.
+ */
+export function pessoasDaBusca(pessoas: Pessoa[], busca: string): Pessoa[] {
+  const texto = busca.trim();
+  if (!texto) return pessoas;
+  const termo = fold(texto);
+  return pessoas.filter((p) => fold(p.nome).includes(termo) || p.ramal.includes(texto));
 }
 
 function primeiroNome(nome: string): string {

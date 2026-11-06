@@ -1,6 +1,7 @@
 // A barra escura das telas de Configurações, Sobre e dos formulários: Voltar e o título. (rc.3) Com o `eyebrow`, a
 // linha pequena em ciano em cima do título (a área do administrador); com o `extra`, um texto à direita (o "<n> de 8"
 // da edição do atalho); com o `focarTitulo`, o foco vai ao título quando a tela abre (uma tela sem um campo a focar).
+// (0.2.0) Com o `voltar`, o nome do Voltar para o leitor de tela (o das telas do chat, como nos quadros).
 import { useEffect, useRef } from 'preact/hooks';
 import { IconBack } from '../icons';
 
@@ -10,9 +11,11 @@ interface Props {
   eyebrow?: string;
   extra?: string;
   focarTitulo?: boolean;
+  /** O nome do Voltar ("Voltar para as conversas"); sem ele, "Voltar". */
+  voltar?: string;
 }
 
-export function BackBar({ title, onBack, eyebrow, extra, focarTitulo }: Props) {
+export function BackBar({ title, onBack, eyebrow, extra, focarTitulo, voltar = 'Voltar' }: Props) {
   const titulo = useRef<HTMLHeadingElement>(null);
   // O leitor de tela diz o título e a pessoa sabe onde está; o Tab seguinte vai ao primeiro controle da tela. Num efeito
   // da montagem: o `autofocus` só vale uma vez por documento.
@@ -26,7 +29,7 @@ export function BackBar({ title, onBack, eyebrow, extra, focarTitulo }: Props) {
   );
   return (
     <div class="bar">
-      <button type="button" class="icon-btn" aria-label="Voltar" title="Voltar" onClick={onBack}>
+      <button type="button" class="icon-btn" aria-label={voltar} title={voltar} onClick={onBack}>
         <IconBack />
       </button>
       {eyebrow ? (

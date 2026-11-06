@@ -21,8 +21,8 @@ export type View =
   | { kind: 'admin'; back: View }
   /** (iPhone) Os avisos de licença, abertos pelo Sobre. */
   | { kind: 'licencas'; back: View }
-  /** (0.2.0) O chat: a conversa (Task 6), a nova conversa e o novo grupo (Task 5), os membros e o pôr pessoas no grupo
-   *  (Task 5). Até a tela de cada uma existir, o main.tsx mostra o Teclado no lugar. */
+  /** (0.2.0) O chat: a conversa (Task 6), a nova conversa, o novo grupo, os membros e o pôr pessoas no grupo (Task 5).
+   *  As de uma conversa só valem com ela na lista: sem ela, o main.tsx vai para a aba Chat. */
   | { kind: 'chatConversa'; conversa: number; back: View }
   | { kind: 'chatNova'; back: View }
   | { kind: 'chatNovoGrupo'; back: View }

@@ -26,7 +26,12 @@
 //   eventos, a releitura da volta avisa, no máximo uma vez por conversa, a última que chegou durante a queda, só se ela
 //   tiver menos de 2 minutos pelo relógio do computador (R28): o app só vê a queda quando o WebSocket fecha, e depois
 //   de o PC dormir isso só acontece na volta. As mais velhas ficam só no número.
-// As Tasks 5 e 7 acrescentam as conversas novas, os grupos e os arquivos.
+// - (Task 5) Os pedidos das telas da nova conversa, do novo grupo e dos membros (os colegas, criar a dupla ou o grupo,
+//   os membros, pôr, tirar e sair) vão uma vez cada, e a tela diz a falha (R31); a resposta de antes de uma troca de
+//   pessoa não vale. A conversa que uma tela cria entra na lista na hora (a tela da conversa só desenha uma que está
+//   nela), e o grupo de que a pessoa sai sai dela na hora. Uma conversa que sai da lista (o conversaSaiu, o sair, a
+//   releitura) leva a leitura aberta dela e os Pendentes dela (R26).
+// A Task 7 acrescenta os arquivos.
 import type { Bridge } from '../bridge';
 import { limitCharacters } from '../format';
 import type { ChatSummary } from '../state';
@@ -36,7 +41,7 @@ import { Envios, SEM_PENDENTES, type Pendente } from './envios';
 import { conectarEventos, esperaDaVez, esperaDoLimite } from './eventos';
 import { textoDoAviso, tituloDoAviso } from './formato';
 import { CHAT, computadorNovo } from './textos';
-import type { Conversa, Evento, Mensagem, Pessoa } from './tipos';
+import type { Conversa, Evento, Membro, Mensagem, Pessoa } from './tipos';
 
 export type SituacaoChat = 'desligado' | 'precisaConta' | 'entrando' | 'pronto' | 'fora';
 
@@ -82,6 +87,16 @@ interface Dono {
   ativa(): boolean;
 }
 
+/** (Task 5) A pessoa da vez, para um pedido de uma tela: a api dela, ela e a vez. */
+interface Sessao {
+  api: ApiChat;
+  eu: Pessoa;
+  vez: number;
+}
+
+/** O que muda a lista: um evento, ou (Task 5) a resposta de um criar (a conversa que a tela criou). */
+type DaLista = Evento | { tipo: 'criada'; conversa: Conversa };
+
 /** O nome da pessoa no servidor tem até 80 caracteres (docs/chat-protocolo.md, seção 3). */
 const MAX_NOME = 80;
 /** A mensagem que chegou durante uma queda só é avisada na volta com menos que isto de idade (o `criadaEm`). */
@@ -114,7 +129,7 @@ function ordenar(lista: Conversa[]): Conversa[] {
  */
 function aplicar(
   conversas: Conversa[],
-  e: Evento,
+  e: DaLista,
   contaComoNaoLida: (m: Mensagem) => boolean,
 ): { conversas: Conversa[]; reler: boolean; entrou?: boolean } {
   switch (e.tipo) {
@@ -136,6 +151,9 @@ function aplicar(
       return { conversas: ordenar([...conversas.filter((x) => x.id !== e.conversa.id), e.conversa]), reler: false };
     case 'conversaSaiu':
       return { conversas: conversas.filter((x) => x.id !== e.conversa), reler: false };
+    case 'criada':
+      // A resposta é de antes dos eventos que já chegaram: ela só põe a conversa que a lista ainda não tem.
+      return { conversas: conversas.some((x) => x.id === e.conversa.id) ? conversas : ordenar([...conversas, e.conversa]), reler: false };
     default:
       return { conversas, reler: false };
   }
@@ -172,8 +190,8 @@ export class ChatCliente {
   private readonly daSessao: Dono = { dormir: (ms) => this.dormir(ms), ativa: () => true };
   /** O último entrar: o próximo só sai depois da resposta dele. */
   private filaDeEntrada: Promise<unknown> = Promise.resolve();
-  /** Os eventos da lista que chegaram durante a releitura; null sem releitura. */
-  private relendo: Evento[] | null = null;
+  /** Os eventos da lista (e as conversas criadas) que chegaram durante a releitura; null sem releitura. */
+  private relendo: DaLista[] | null = null;
   private relerDeNovo = false;
   /** O último chatBadge (o C++ começa com 0). */
   private numero = 0;
@@ -290,6 +308,49 @@ export class ChatCliente {
   /** O "Tentar de novo" de uma mensagem "Não enviada". */
   tentarDeNovo(idLocal: string): void {
     this.envios?.tentarDeNovo(idLocal);
+  }
+
+  /** (Task 5) Os colegas da empresa que já usam o chat (sem a pessoa da vez), em ordem de nome. */
+  async colegas(): Promise<Pessoa[]> {
+    const s = this.sessao();
+    return this.daTela(s, () => s.api.colegas(), { lendo: true });
+  }
+
+  /** (Task 5) A conversa a dois com a pessoa (a que já existe, ou uma nova), já na lista: o id dela. */
+  async criarDupla(com: number): Promise<number> {
+    const s = this.sessao();
+    return this.naLista(s, await this.daTela(s, () => s.api.criarDupla(com)));
+  }
+
+  /** (Task 5) O grupo novo, com quem cria cuidando dele, já na lista: o id dele. */
+  async criarGrupo(nome: string, pessoas: number[]): Promise<number> {
+    const s = this.sessao();
+    return this.naLista(s, await this.daTela(s, () => s.api.criarGrupo(nome, pessoas)));
+  }
+
+  /** (Task 5) Os membros do grupo: quem cuida primeiro, e o resto em ordem de nome. */
+  async membros(conversa: number): Promise<Membro[]> {
+    const s = this.sessao();
+    return this.daTela(s, () => s.api.membros(conversa), { lendo: true, conversa });
+  }
+
+  /** (Task 5) Põe as pessoas no grupo (só quem cuida); a lista muda pelo evento `conversa`. */
+  async por(conversa: number, pessoas: number[]): Promise<void> {
+    const s = this.sessao();
+    await this.daTela(s, () => s.api.porMembros(conversa, pessoas), { conversa });
+  }
+
+  /** (Task 5) Tira a pessoa do grupo (só quem cuida); a lista muda pelo evento `conversa`. */
+  async tirar(conversa: number, pessoa: number): Promise<void> {
+    const s = this.sessao();
+    await this.daTela(s, () => s.api.tirarMembro(conversa, pessoa), { conversa });
+  }
+
+  /** (Task 5) Sai do grupo: ele sai da lista na hora, sem esperar o `conversaSaiu` (R26). */
+  async sair(conversa: number): Promise<void> {
+    const s = this.sessao();
+    await this.daTela(s, () => s.api.tirarMembro(conversa, s.eu.id), { conversa });
+    this.aplicarNaLista({ tipo: 'conversaSaiu', conversa }, s.api);
   }
 
   /** A situação pelo último atualizar; com outra pessoa (ou nenhuma), a troca. */
@@ -509,7 +570,7 @@ export class ChatCliente {
         this.relendo = null;
         this.relerDeNovo = false;
         this.falhaDaLista = false;
-        this.mudar({ conversas });
+        this.mudarALista(conversas);
         if (deNovo) void this.reler(vez, api);
         else this.avisarDaVolta();
         return;
@@ -556,15 +617,64 @@ export class ChatCliente {
   }
 
   /**
-   * Um evento (ou a resposta de um envio) na lista de conversas, também por cima da releitura em curso. true: a
-   * mensagem entrou agora, como a última da conversa.
+   * Um evento (ou a resposta de um envio, de um criar ou de um sair) na lista de conversas, também por cima da releitura
+   * em curso. true: a mensagem entrou agora, como a última da conversa.
    */
-  private aplicarNaLista(e: Evento, api: ApiChat): boolean {
+  private aplicarNaLista(e: DaLista, api: ApiChat): boolean {
     this.relendo?.push(e);
     const r = aplicar(this.v.conversas, e, this.contaComoNaoLida);
-    this.mudar({ conversas: r.conversas });
+    this.mudarALista(r.conversas);
     if (r.reler) void this.reler(this.vez, api);
     return r.entrou === true;
+  }
+
+  /**
+   * A lista nova (de um evento, de uma releitura, de um criar ou de um sair). Uma conversa que saiu dela leva a leitura
+   * aberta dela e os Pendentes dela (R26); as telas dela voltam para a lista pelo main.tsx.
+   */
+  private mudarALista(conversas: Conversa[]): void {
+    const ficam = new Set(conversas.map((c) => c.id));
+    const fechar = this.aberta !== null && !ficam.has(this.aberta.id);
+    if (fechar) this.soltarAberta();
+    for (const c of this.v.conversas) if (!ficam.has(c.id)) this.envios?.soltarConversa(c.id);
+    this.mudar(fechar ? { conversas, aberta: null } : { conversas });
+  }
+
+  /** (Task 5) A sessão de agora, para um pedido de uma tela; fora do `pronto`, o Parado (a tela não diz nada). */
+  private sessao(): Sessao {
+    const { api } = this;
+    const eu = this.v.eu;
+    if (!api || !eu) throw new Parado();
+    return { api, eu, vez: this.vez };
+  }
+
+  /**
+   * (Task 5) Um pedido de uma tela, uma vez só. Uma troca de pessoa no meio é o Parado (a resposta não vale); um 401 é
+   * o `fora`; um 404 de um grupo relê a lista, que o tira se ele não é mais da pessoa (e as telas dele voltam para a
+   * lista, R26). O erro vai para a tela, que diz a falha (R31). `lendo`: uma leitura, em que o 429 `limite` espera e
+   * tenta de novo uma vez, como nos pedidos que o cliente faz sozinho; numa ação, a tela diz o 429.
+   */
+  private async daTela<T>(s: Sessao, pedir: () => Promise<T>, o: { lendo?: boolean; conversa?: number } = {}): Promise<T> {
+    let r: T;
+    try {
+      r = await (o.lendo ? this.comLimite(s.vez, pedir) : pedir());
+    } catch (e) {
+      if (s.vez !== this.vez || e instanceof Parado) throw new Parado();
+      if (ehChave(e)) this.sairDoChat();
+      else if (o.conversa !== undefined && e instanceof ErroChat && e.status === 404) void this.reler(s.vez, s.api);
+      throw e;
+    }
+    if (s.vez !== this.vez) throw new Parado();
+    return r;
+  }
+
+  /**
+   * (Task 5) A conversa que uma tela criou (ou a dupla que já existia) entra na lista, se ainda não está nela: a tela da
+   * conversa só desenha uma conversa da lista. O id dela.
+   */
+  private naLista(s: Sessao, c: Conversa): number {
+    this.aplicarNaLista({ tipo: 'criada', conversa: c }, s.api);
+    return c.id;
   }
 
   /**

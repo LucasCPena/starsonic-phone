@@ -183,6 +183,26 @@ export class ApiDeTeste {
     await this.certo('POST', `/api/v1/conversas/${conversa}/lida`, { ate }, [204]);
   }
 
+  /** (Task 5) As conversas da pessoa, como o servidor as manda. */
+  async conversas(): Promise<any[]> {
+    return (await this.certo('GET', '/api/v1/conversas', undefined, [200])).conversas;
+  }
+
+  /** (Task 5) Os membros do grupo: quem cuida primeiro, e o resto em ordem de nome. */
+  async membros(conversa: number): Promise<any[]> {
+    return (await this.certo('GET', `/api/v1/conversas/${conversa}/membros`, undefined, [200])).membros;
+  }
+
+  /** (Task 5) Põe as pessoas no grupo (só quem cuida). */
+  async porNoGrupo(conversa: number, pessoas: number[]): Promise<void> {
+    await this.certo('POST', `/api/v1/conversas/${conversa}/membros`, { pessoas }, [204]);
+  }
+
+  /** (Task 5) Tira a pessoa do grupo (só quem cuida); com o próprio id, sai dele. */
+  async tirarDoGrupo(conversa: number, pessoa: number): Promise<void> {
+    await this.certo('DELETE', `/api/v1/conversas/${conversa}/membros/${pessoa}`, undefined, [204]);
+  }
+
   async desligar(): Promise<void> {
     await this.certo('DELETE', '/api/v1/computadores/eu', undefined, [204]);
   }
