@@ -169,6 +169,57 @@ test('while the conversation is on its way, the colleagues wait and the list say
   await expect(page.getByRole('log', { name: 'Mensagens com Ana Souza' })).toBeVisible();
 });
 
+/**
+ * A busca da tela de agora: o quanto o placeholder passa do campo (px; > 0, ele não cabe) e como o fim dele aparece (o
+ * text-overflow do ::placeholder: "ellipsis", com as reticências).
+ */
+async function placeholderDaBusca(page: Page, nome: string): Promise<{ sobra: number; fim: string }> {
+  return page.getByRole('searchbox', { name: nome }).evaluate((el: HTMLInputElement) => {
+    const s = getComputedStyle(el);
+    const g = document.createElement('canvas').getContext('2d')!;
+    g.font = s.font;
+    const conteudo = el.clientWidth - parseFloat(s.paddingLeft) - parseFloat(s.paddingRight);
+    return { sobra: g.measureText(el.placeholder).width - conteudo, fim: getComputedStyle(el, '::placeholder').textOverflow };
+  });
+}
+
+test('at 300 px the long search placeholder ends with an ellipsis in Nova conversa, Novo grupo and Pôr pessoas', async ({ page }) => {
+  // "Procurar pelo nome ou pelo ramal" não cabe inteiro a 300 px: ele acaba nas reticências, e não no meio de uma letra.
+  // Com o foco no campo, o Chromium (e o WebView2) corta o placeholder sem as reticências, por conta dele (nem um
+  // !important muda isso): a conferência é com o foco fora do campo, como depois do Tab.
+  await page.setViewportSize({ width: 300, height: 440 });
+  const { pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO, ANA, JOAO]);
+  const [a, ana] = pessoas;
+  // Um grupo de quem cuida é a Recepção, com o João de fora: o Pôr pessoas tem a busca.
+  await a.api.criarGrupo('Comercial', [ana.pessoa.id]);
+  await abrirNoChat(page, { chave: a.chave, ...RECEPCAO });
+  await irParaANovaConversa(page);
+  await expect(busca(page)).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(busca(page)).not.toBeFocused();
+  expect((await placeholderDaBusca(page, 'Procurar um colega pelo nome ou pelo ramal')).fim).toBe('ellipsis');
+
+  await page.getByRole('button', { name: 'Novo grupo' }).click();
+  await expect(page.getByRole('heading', { name: 'Novo grupo', level: 1 })).toBeVisible();
+  const noNovoGrupo = await placeholderDaBusca(page, 'Procurar uma pessoa pelo nome ou pelo ramal');
+  expect(noNovoGrupo.sobra).toBeGreaterThan(0);
+  expect(noNovoGrupo.fim).toBe('ellipsis');
+
+  await page.getByRole('button', { name: 'Voltar', exact: true }).click();
+  await page.getByRole('button', { name: 'Voltar para as conversas' }).click();
+  await page.locator('.chat-linha').filter({ hasText: 'Comercial' }).click();
+  await page.getByRole('button', { name: 'Ver os membros do grupo Comercial' }).click();
+  await page.getByRole('button', { name: 'Pôr pessoas no grupo' }).click();
+  await expect(page.getByRole('checkbox', { name: /^João Pereira/ })).toBeVisible();
+  const buscaDoPor = page.getByRole('searchbox', { name: 'Procurar uma pessoa pelo nome ou pelo ramal' });
+  await expect(buscaDoPor).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(buscaDoPor).not.toBeFocused();
+  const noPorPessoas = await placeholderDaBusca(page, 'Procurar uma pessoa pelo nome ou pelo ramal');
+  expect(noPorPessoas.sobra).toBeGreaterThan(0);
+  expect(noPorPessoas.fim).toBe('ellipsis');
+});
+
 for (const tema of ['light', 'dark'] as const) {
   test.describe(`a nova conversa (${tema})`, () => {
     test.use({ colorScheme: tema });

@@ -2994,6 +2994,30 @@ TEST_CASE("an account that registers joins the connected ramais") {
     CHECK_FALSE(saved.HasRamal("pbx.example.com", "2002"));
 }
 
+TEST_CASE("the central that falls after the first registration leaves the account in the chat") {
+    // A spec do chat, secao 3, criterio 5: a queda da central nao derruba o chat. Depois do primeiro 2xx, o registro
+    // falha (o 408 do tempo esgotado, o 503 da central fora e o 0 sem resposta): o estado que vai para a interface mostra
+    // a conta sem conexao (a bolinha cinza), e o chat continua ligado, com o contaConectada ainda true. Tambem depois de
+    // abrir o app de novo, com a central ainda fora (o par fica no chat.json).
+    Harness h;
+    h.StartRegistered();
+    h.Send(ChatLinkCommand(kChatKey, kChatCompany));
+    REQUIRE(h.State()["conta"]["status"] == "conectado");
+    REQUIRE(h.State()["chat"] == Chat(true, kChatCompany, true));
+    for (const int code : {408, 503, 0}) {
+        INFO("o registro respondeu " << code);
+        h.app->OnRegistration(code, false, h.port.LastId());
+        h.Run();
+        CHECK(h.State()["conta"]["status"] == "sem_conexao");
+        CHECK(h.State()["chat"] == Chat(true, kChatCompany, true));
+    }
+    h.Restart();
+    h.app->OnRegistration(408, false, h.port.LastId());
+    h.Run();
+    CHECK(h.State()["conta"]["status"] == "sem_conexao");
+    CHECK(h.State()["chat"] == Chat(true, kChatCompany, true));
+}
+
 TEST_CASE("a registration leaves an unreadable chat.json as it was") {
     // O chat.json que nao decifra na abertura (o de outro usuario do Windows, ou o DPAPI que ainda nao responde logo
     // depois de entrar no Windows): o registro da conta nao o troca. O par fica na memoria (o contaConectada), e so o

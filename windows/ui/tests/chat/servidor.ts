@@ -146,8 +146,8 @@ export class ApiDeTeste {
       .mensagem.id;
   }
 
-  /** O POST /arquivos e o POST da mensagem com o arquivo. */
-  async enviarArquivo(conversa: number, bytes: Buffer, nome: string, tipo: string): Promise<number> {
+  /** O POST /arquivos: o id do arquivo. */
+  private async subirArquivo(bytes: Buffer, nome: string, tipo: string): Promise<string> {
     const up = await fetch(`${baseDoChat()}/api/v1/arquivos`, {
       method: 'POST',
       headers: {
@@ -158,10 +158,40 @@ export class ApiDeTeste {
       body: new Uint8Array(bytes),
     });
     if (up.status !== 201) throw new Error(`enviar o arquivo respondeu ${up.status}`);
-    const arquivo: string = (await up.json()).arquivo.id;
+    return (await up.json()).arquivo.id;
+  }
+
+  /** O POST da mensagem com o arquivo: o id da mensagem. */
+  private async mensagemComArquivo(conversa: number, arquivo: string): Promise<number> {
     const idLocal = crypto.randomUUID();
     return (await this.certo('POST', `/api/v1/conversas/${conversa}/mensagens`, { idLocal, arquivo }, [201])).mensagem
       .id;
+  }
+
+  /** O POST /arquivos e o POST da mensagem com o arquivo. */
+  async enviarArquivo(conversa: number, bytes: Buffer, nome: string, tipo: string): Promise<number> {
+    return this.mensagemComArquivo(conversa, await this.subirArquivo(bytes, nome, tipo));
+  }
+
+  /**
+   * (Task 8) Uma foto com a miniatura, como um app a manda: o POST /arquivos da foto, o PUT da miniatura (um JPEG) e o
+   * POST da mensagem com o arquivo.
+   */
+  async enviarFoto(
+    conversa: number,
+    foto: Buffer,
+    nome: string,
+    miniatura: Buffer,
+    tipo = 'image/png',
+  ): Promise<{ arquivo: string; mensagem: number }> {
+    const arquivo = await this.subirArquivo(foto, nome, tipo);
+    const mini = await fetch(`${baseDoChat()}/api/v1/arquivos/${arquivo}/miniatura`, {
+      method: 'PUT',
+      headers: { authorization: `Bearer ${this.chave}`, 'content-type': 'image/jpeg' },
+      body: new Uint8Array(miniatura),
+    });
+    if (mini.status !== 204) throw new Error(`enviar a miniatura respondeu ${mini.status}`);
+    return { arquivo, mensagem: await this.mensagemComArquivo(conversa, arquivo) };
   }
 
   /** (Task 7) Um GET binário (a miniatura, o arquivo): os bytes da resposta 200. */

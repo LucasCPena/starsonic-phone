@@ -7,6 +7,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { esperarComando } from '../helpers';
 import { abrirAConversa, abrirNoChat, esperarOsEventos, exato } from './abrir';
+import { escolher, imagemDaPagina, type ArquivoDeTeste } from './anexar';
 import { empresaComPessoas } from './servidor';
 
 // O CSP da página só deixa falar com o endereço do chat de verdade; o servidor de teste fica no 127.0.0.1:4180.
@@ -21,31 +22,10 @@ const linhaDe = (page: Page, nome: string) => page.locator('.chat-linha').filter
 const voltar = (page: Page) => page.getByRole('button', { name: 'Voltar para as conversas' }).click();
 
 /** Escolhe um arquivo pelo clipe (a janela de escolher do Windows) e manda. */
-async function mandarPeloClipe(page: Page, arquivo: { name: string; mimeType: string; buffer: Buffer }): Promise<void> {
-  const janela = page.waitForEvent('filechooser');
-  await page.getByRole('button', { name: 'Anexar um arquivo ou uma foto' }).click();
-  await (await janela).setFiles([arquivo]);
+async function mandarPeloClipe(page: Page, arquivo: ArquivoDeTeste): Promise<void> {
+  await escolher(page, [arquivo]);
   await expect(page.locator('.anexo .anexo-nome')).toHaveText([arquivo.name]);
   await page.getByRole('button', { name: 'Enviar', exact: true }).click();
-}
-
-/** Uma foto de 1200×900 feita num canvas da página (um PNG). */
-async function fotoDaPagina(page: Page): Promise<Buffer> {
-  const base64 = await page.evaluate(async () => {
-    const c = document.createElement('canvas');
-    c.width = 1200;
-    c.height = 900;
-    const g = c.getContext('2d')!;
-    g.fillStyle = '#0c2671';
-    g.fillRect(0, 0, 1200, 900);
-    g.fillStyle = '#00c2cb';
-    g.fillRect(300, 225, 600, 450);
-    const imagem = await new Promise<Blob>((pronto) => c.toBlob((b) => pronto(b!), 'image/png'));
-    let texto = '';
-    for (const b of new Uint8Array(await imagem.arrayBuffer())) texto += String.fromCharCode(b);
-    return btoa(texto);
-  });
-  return Buffer.from(base64, 'base64');
 }
 
 test('two apps talk through the real server with text, photo, file and group', async ({ browser }) => {
@@ -92,7 +72,7 @@ test('two apps talk through the real server with text, photo, file and group', a
     await expect(conversaB.locator('.balao-texto')).toHaveText(['Bom dia']);
 
     // 3. A B manda uma foto, e a A vê a miniatura (a de 480 px que o app da B fez, e não a foto de 1200).
-    await mandarPeloClipe(pb, { name: 'Vitrine da loja.png', mimeType: 'image/png', buffer: await fotoDaPagina(pb) });
+    await mandarPeloClipe(pb, { name: 'Vitrine da loja.png', mimeType: 'image/png', buffer: await imagemDaPagina(pb, 1200, 900, 'image/png') });
     const miniaturaNaA = conversaA.getByRole('button', { name: 'Abrir a foto Vitrine da loja.png' }).locator('img');
     await expect(miniaturaNaA).toHaveAttribute('src', /^blob:/);
     await expect.poll(() => miniaturaNaA.evaluate((el: HTMLImageElement) => (el.complete ? el.naturalWidth : 0))).toBe(480);

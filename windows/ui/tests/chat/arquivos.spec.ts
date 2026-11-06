@@ -9,6 +9,7 @@
 import { expect, test, type Locator, type Page, type Request, type Route } from '@playwright/test';
 import { capturar, comandos, esperarComando, mudarEstado, semViolacoesSerias } from '../helpers';
 import { abrirAConversa, abrirNoChat, esperarOsEventos, pararORelogio } from './abrir';
+import { arrastar, escolher, imagemDaPagina } from './anexar';
 import { baseDoChat, empresaComPessoas, tirarPessoa, type ApiDeTeste } from './servidor';
 
 // O CSP da página só deixa falar com o endereço do chat de verdade; o servidor de teste fica no 127.0.0.1:4180.
@@ -34,40 +35,11 @@ const ehMiniatura = (url: URL) => /^\/api\/v1\/arquivos\/[0-9a-f]{32}\/miniatura
 
 const conversaCom = (page: Page, nome: string) => page.getByRole('log', { name: `Mensagens com ${nome}` });
 const campoPara = (page: Page, nome: string) => page.getByRole('textbox', { name: `Mensagem para ${nome}` });
-const clipe = (page: Page) => page.getByRole('button', { name: 'Anexar um arquivo ou uma foto' });
 const botaoEnviar = (page: Page) => page.getByRole('button', { name: 'Enviar', exact: true });
 const nomesDosAnexos = (page: Page) => page.locator('.anexo .anexo-nome');
 const nomeDoTema = (tema: 'light' | 'dark') => (tema === 'light' ? 'claro' : 'escuro');
 /** Um instante da página (um pedido que acabou de chegar já foi tratado). */
 const umInstante = (page: Page) => page.evaluate(() => new Promise((r) => setTimeout(r, 200)));
-
-interface ArquivoDeTeste {
-  name: string;
-  mimeType: string;
-  buffer: Buffer;
-}
-
-/** Escolhe os arquivos pelo clipe (a janela de escolher do Windows). */
-async function escolher(page: Page, arquivos: ArquivoDeTeste[]): Promise<void> {
-  const janela = page.waitForEvent('filechooser');
-  await clipe(page).click();
-  await (await janela).setFiles(arquivos);
-}
-
-/**
- * Arrasta para a conversa arquivos feitos na página (um `drop` com um DataTransfer, como o do Windows), de `tamanho`
- * bytes cada. true: a conversa tomou o drop para ela (o preventDefault: o navegador não abre o arquivo).
- */
-async function arrastar(page: Page, arquivos: Array<{ nome: string; tipo: string; tamanho: number }>): Promise<boolean> {
-  const dados = await page.evaluateHandle((lista) => {
-    const dt = new DataTransfer();
-    for (const a of lista) dt.items.add(new File([new Uint8Array(a.tamanho)], a.nome, { type: a.tipo }));
-    return dt;
-  }, arquivos);
-  return page
-    .locator('[role="log"]')
-    .evaluate((log, dt) => !log.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true })), dados);
-}
 
 /** Os blob: que a página criou e os que ela revogou (o espião vai antes de a página abrir). */
 async function espiarOsBlobs(page: Page): Promise<void> {
@@ -104,67 +76,7 @@ function medidasDoJpeg(jpeg: Buffer): { largura: number; altura: number } {
   throw new Error('o JPEG não tem o SOF');
 }
 
-/** Uma imagem feita num canvas da página, de largura × altura (o JPEG de uma miniatura, como a de um app, ou um PNG). */
-async function imagemDaPagina(page: Page, largura: number, altura: number, tipo: 'image/jpeg' | 'image/png' = 'image/jpeg'): Promise<Buffer> {
-  const base64 = await page.evaluate(
-    async ({ l, a, t }) => {
-      const c = document.createElement('canvas');
-      c.width = l;
-      c.height = a;
-      const g = c.getContext('2d')!;
-      g.fillStyle = '#0c2671';
-      g.fillRect(0, 0, l, a);
-      g.fillStyle = '#00c2cb';
-      g.fillRect(l / 4, a / 4, l / 2, a / 2);
-      g.fillStyle = '#ffffff';
-      g.beginPath();
-      g.arc(l / 2, a / 2, Math.min(l, a) / 8, 0, Math.PI * 2);
-      g.fill();
-      const imagem = await new Promise<Blob>((pronto) => c.toBlob((b) => pronto(b!), t, 0.8));
-      let texto = '';
-      for (const b of new Uint8Array(await imagem.arrayBuffer())) texto += String.fromCharCode(b);
-      return btoa(texto);
-    },
-    { l: largura, a: altura, t: tipo },
-  );
-  return Buffer.from(base64, 'base64');
-}
-
 const jpegDaPagina = (page: Page, largura: number, altura: number) => imagemDaPagina(page, largura, altura);
-
-/**
- * Uma foto com a miniatura, como um app a manda: o POST do arquivo (por padrão, o PNG de 1×1), o PUT da miniatura e o
- * POST da mensagem.
- */
-async function enviarFotoComMiniatura(
-  chave: string,
-  conversa: number,
-  nome: string,
-  miniatura: Buffer,
-  foto: Buffer = PNG,
-): Promise<{ arquivo: string }> {
-  const authorization = `Bearer ${chave}`;
-  const up = await fetch(ARQUIVOS, {
-    method: 'POST',
-    headers: { authorization, 'content-type': 'image/png', 'x-arquivo-nome': encodeURIComponent(nome) },
-    body: new Uint8Array(foto),
-  });
-  expect(up.status).toBe(201);
-  const arquivo: string = (await up.json()).arquivo.id;
-  const mini = await fetch(`${ARQUIVOS}/${arquivo}/miniatura`, {
-    method: 'PUT',
-    headers: { authorization, 'content-type': 'image/jpeg' },
-    body: new Uint8Array(miniatura),
-  });
-  expect(mini.status).toBe(204);
-  const msg = await fetch(envios(conversa), {
-    method: 'POST',
-    headers: { authorization, 'content-type': 'application/json' },
-    body: JSON.stringify({ idLocal: crypto.randomUUID(), arquivo }),
-  });
-  expect(msg.status).toBe(201);
-  return { arquivo };
-}
 
 /** A Recepção e a Ana, com a conversa a dois delas (a criada pela Ana). */
 async function conversaComAna() {
@@ -1063,9 +975,9 @@ test('a thumbnail that arrives late keeps the end in view, and moves nothing for
   await abrirNoChat(page, { chave: a.chave, ...RECEPCAO });
   // Uma miniatura em pé: a foto cresce bem mais que 80 px quando ela chega (o quadro tem 140).
   const retrato = await jpegDaPagina(page, 360, 480);
-  const primeira = await enviarFotoComMiniatura(ana.chave, dupla, 'Vitrine 1.png', retrato);
+  const primeira = await ana.api.enviarFoto(dupla, PNG, 'Vitrine 1.png', retrato);
   for (let i = 1; i <= 30; i++) await ana.api.enviarTexto(dupla, `Mensagem ${i}`);
-  const segunda = await enviarFotoComMiniatura(ana.chave, dupla, 'Vitrine 2.png', retrato);
+  const segunda = await ana.api.enviarFoto(dupla, PNG, 'Vitrine 2.png', retrato);
   // As miniaturas ficam presas até o teste soltar cada uma.
   const presas = new Map<string, Route>();
   await page.route(ehMiniatura, (rota) => {
@@ -1104,7 +1016,7 @@ test('a thumbnail that arrives late keeps the end in view, and moves nothing for
   expect(Math.abs((await lida.boundingBox())!.y - topo)).toBeLessThan(1);
 
   // Uma foto nova chega embaixo, longe da vista: nem ela nem a miniatura dela mexem na tela.
-  const terceira = await enviarFotoComMiniatura(ana.chave, dupla, 'Vitrine 3.png', retrato);
+  const terceira = await ana.api.enviarFoto(dupla, PNG, 'Vitrine 3.png', retrato);
   await expect.poll(() => presas.has(terceira.arquivo)).toBe(true);
   await presas.get(terceira.arquivo)!.continue();
   await expect(log.getByRole('button', { name: 'Abrir a foto Vitrine 3.png' }).locator('img')).toHaveAttribute('src', /^blob:/);
@@ -1119,7 +1031,7 @@ test('the blob: of the thumbnails go when the conversation closes and when the g
   const [a, joao] = pessoas;
   const grupo = await joao.api.criarGrupo('Comercial', [a.pessoa.id]);
   await abrirNoChat(page, { chave: a.chave, ...RECEPCAO });
-  await enviarFotoComMiniatura(joao.chave, grupo, 'Vitrine da loja.png', await jpegDaPagina(page, 480, 360));
+  await joao.api.enviarFoto(grupo, PNG, 'Vitrine da loja.png', await jpegDaPagina(page, 480, 360));
   await abrirAConversa(page, 'Comercial');
   const img = page.getByRole('button', { name: 'Abrir a foto Vitrine da loja.png' }).locator('img');
   await expect(img).toHaveAttribute('src', /^blob:/);
@@ -1146,7 +1058,7 @@ test('the blob: of the thumbnails go when the account switches with the conversa
   const [a, ana] = pessoas;
   const dupla = await ana.api.criarDupla(a.pessoa.id);
   await abrirNoChat(page, { chave: a.chave, ...RECEPCAO, cenario: 'chat-duas-contas' });
-  await enviarFotoComMiniatura(ana.chave, dupla, 'Vitrine da loja.png', await jpegDaPagina(page, 480, 360));
+  await ana.api.enviarFoto(dupla, PNG, 'Vitrine da loja.png', await jpegDaPagina(page, 480, 360));
   await abrirAConversa(page, 'Ana Souza');
   const img = conversaCom(page, 'Ana Souza').getByRole('button', { name: 'Abrir a foto Vitrine da loja.png' }).locator('img');
   await expect(img).toHaveAttribute('src', /^blob:/);
@@ -1166,7 +1078,7 @@ for (const tema of ['light', 'dark'] as const) {
       const { a, ana, dupla } = await conversaComAna();
       await abrirNoChat(page, { chave: a.chave, ...RECEPCAO });
       const vitrine = await imagemDaPagina(page, 1200, 900, 'image/png');
-      await enviarFotoComMiniatura(ana.chave, dupla, 'Vitrine da loja.png', await jpegDaPagina(page, 480, 360), vitrine);
+      await ana.api.enviarFoto(dupla, vitrine, 'Vitrine da loja.png', await jpegDaPagina(page, 480, 360));
       await ana.api.enviarArquivo(dupla, Buffer.alloc(49_152, 1), 'Pedido 4471.xlsx', XLSX);
       await a.api.enviarArquivo(dupla, Buffer.alloc(1_258_291, 1), 'Proposta ACME.pdf', PDF);
       await ana.api.enviarArquivo(dupla, PNG, 'nota-fiscal.png', 'image/png');

@@ -885,8 +885,10 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .chat-busca { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 12px; border-radius: var(--radius-field); border: 1px solid var(--border);
   background: var(--field); color: var(--text-muted); flex: none; min-width: 0; }
 .chat-busca:focus-within { border-color: var(--cyan); outline: 3px solid var(--focus); outline-offset: 2px; }
-.chat-busca input { flex: 1; min-width: 0; height: 100%; border: 0; background: transparent; padding: 0; font: 500 14px/1 var(--font-sans); color: var(--text); }
-.chat-busca input::placeholder { color: var(--text-muted); opacity: 1; }
+/* Numa janela estreita, o "Procurar pelo nome ou pelo ramal" acaba nas reticências, e não no meio de uma letra. */
+.chat-busca input { flex: 1; min-width: 0; height: 100%; border: 0; background: transparent; padding: 0; font: 500 14px/1 var(--font-sans); color: var(--text);
+  text-overflow: ellipsis; }
+.chat-busca input::placeholder { color: var(--text-muted); opacity: 1; text-overflow: ellipsis; }
 .chat-busca input:focus-visible { outline: none; }
 .chat-busca input::-webkit-search-cancel-button { display: none; }
 .chat-lista { list-style: none; margin: 0 -8px; padding: 0; display: flex; flex-direction: column; flex: none; }

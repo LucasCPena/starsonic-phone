@@ -9,6 +9,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { capturar, entrarNaAdmin, semViolacoesSerias } from '../helpers';
 import { abrirAConversa, abrirNoChat, esperarOsEventos } from './abrir';
+import { arrastar, imagemDaPagina } from './anexar';
 import { ApiDeTeste, baseDoChat, empresaComPessoas, ligarComputador } from './servidor';
 
 // O CSP da página só deixa falar com o endereço do chat de verdade; o servidor de teste fica no 127.0.0.1:4180.
@@ -27,9 +28,30 @@ const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 /** Um PNG de 1×1 (o servidor trata image/png como foto). */
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
 const DIA = 86_400_000;
+const HORA = 3_600_000;
+/** O fuso da página (o timezoneId do playwright.config.ts). */
+const FUSO = 'America/Sao_Paulo';
+const DIAS_DA_SEMANA: Record<string, string> = { Sun: 'Dom', Mon: 'Seg', Tue: 'Ter', Wed: 'Qua', Thu: 'Qui', Fri: 'Sex', Sat: 'Sáb' };
 
-/** O POST dos arquivos (o PUT da miniatura e os GET têm o id no caminho: não casam com ele). */
-const ARQUIVOS = `${baseDoChat()}/api/v1/arquivos`;
+/** O dia, o mês, o ano e o dia da semana ("Seg", como a lista) de um instante, no fuso da página. */
+function partesDaData(ms: number): { dia: string; mes: string; ano: string; semana: string } {
+  const p = Object.fromEntries(
+    new Intl.DateTimeFormat('en-US', { timeZone: FUSO, day: '2-digit', month: '2-digit', year: 'numeric', weekday: 'short' })
+      .formatToParts(ms)
+      .map((x) => [x.type, x.value]),
+  );
+  return { dia: p.day, mes: p.month, ano: p.year, semana: DIAS_DA_SEMANA[p.weekday] };
+}
+
+/**
+ * As 10 h de `dias` dias atrás, no horário de Brasília (sem horário de verão desde 2019: a meia-noite de lá é às 3 h do
+ * UTC). Longe da meia-noite, o dia da lista não muda no meio do teste.
+ */
+function asDezHorasDe(dias: number): number {
+  const hoje = partesDaData(Date.now());
+  return Date.UTC(Number(hoje.ano), Number(hoje.mes) - 1, Number(hoje.dia), 3) - dias * DIA + 10 * HORA;
+}
+
 /** O endereço do POST das mensagens da conversa (o GET das páginas vem com a busca: não casa com ele). */
 const envios = (conversa: number) => `${baseDoChat()}/api/v1/conversas/${conversa}/mensagens`;
 
@@ -52,69 +74,6 @@ async function peloMais(page: Page, item: 'Nova conversa' | 'Novo grupo'): Promi
   await page.getByRole('button', { name: 'Nova conversa ou novo grupo' }).click();
   await page.getByRole('menuitem', { name: item }).click();
   await expect(page.getByRole('heading', { name: item, level: 1 })).toBeVisible();
-}
-
-/** Uma imagem feita num canvas da página, de largura × altura (o JPEG de uma miniatura, como a de um app, ou um PNG). */
-async function imagemDaPagina(page: Page, largura: number, altura: number, tipo: 'image/jpeg' | 'image/png' = 'image/jpeg'): Promise<Buffer> {
-  const base64 = await page.evaluate(
-    async ({ l, a, t }) => {
-      const c = document.createElement('canvas');
-      c.width = l;
-      c.height = a;
-      const g = c.getContext('2d')!;
-      g.fillStyle = '#0c2671';
-      g.fillRect(0, 0, l, a);
-      g.fillStyle = '#00c2cb';
-      g.fillRect(l / 4, a / 4, l / 2, a / 2);
-      g.fillStyle = '#ffffff';
-      g.beginPath();
-      g.arc(l / 2, a / 2, Math.min(l, a) / 8, 0, Math.PI * 2);
-      g.fill();
-      const imagem = await new Promise<Blob>((pronto) => c.toBlob((b) => pronto(b!), t, 0.8));
-      let texto = '';
-      for (const b of new Uint8Array(await imagem.arrayBuffer())) texto += String.fromCharCode(b);
-      return btoa(texto);
-    },
-    { l: largura, a: altura, t: tipo },
-  );
-  return Buffer.from(base64, 'base64');
-}
-
-/** Uma foto com a miniatura, como um app a manda: o POST do arquivo, o PUT da miniatura e o POST da mensagem. */
-async function enviarFotoComMiniatura(chave: string, conversa: number, nome: string, miniatura: Buffer, foto: Buffer = PNG): Promise<void> {
-  const authorization = `Bearer ${chave}`;
-  const up = await fetch(ARQUIVOS, {
-    method: 'POST',
-    headers: { authorization, 'content-type': 'image/png', 'x-arquivo-nome': encodeURIComponent(nome) },
-    body: new Uint8Array(foto),
-  });
-  expect(up.status).toBe(201);
-  const arquivo: string = (await up.json()).arquivo.id;
-  const mini = await fetch(`${ARQUIVOS}/${arquivo}/miniatura`, {
-    method: 'PUT',
-    headers: { authorization, 'content-type': 'image/jpeg' },
-    body: new Uint8Array(miniatura),
-  });
-  expect(mini.status).toBe(204);
-  const msg = await fetch(envios(conversa), {
-    method: 'POST',
-    headers: { authorization, 'content-type': 'application/json' },
-    body: JSON.stringify({ idLocal: crypto.randomUUID(), arquivo }),
-  });
-  expect(msg.status).toBe(201);
-}
-
-/** Arrasta para a conversa arquivos feitos na página (um `drop` com um DataTransfer, como o do Windows). */
-async function arrastar(page: Page, arquivos: Array<{ nome: string; tipo: string; tamanho: number }>): Promise<void> {
-  const dados = await page.evaluateHandle((lista) => {
-    const dt = new DataTransfer();
-    for (const a of lista) dt.items.add(new File([new Uint8Array(a.tamanho)], a.nome, { type: a.tipo }));
-    return dt;
-  }, arquivos);
-  const tomou = await page
-    .locator('[role="log"]')
-    .evaluate((log, dt) => !log.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true })), dados);
-  expect(tomou, 'a conversa toma o drop').toBe(true);
 }
 
 /** A foto já está à vista: a miniatura (ou a foto grande) aberta, com a medida dela. */
@@ -270,6 +229,8 @@ interface Tela {
   nome: string;
   /** Monta a tela, pronta para a foto. */
   preparar(page: Page, janela: { largura: number; altura: number }): Promise<void>;
+  /** Logo antes da foto (depois do axe): o que precisa estar assim na hora dela (a barra do upload no meio). */
+  antesDaFoto?(page: Page): Promise<void>;
   /** Depois da foto e antes do teclado (o campo do código com um código: o "Ligar ao chat" ligado). */
   antesDoTeclado?(page: Page): Promise<void>;
 }
@@ -278,7 +239,9 @@ const TELAS: Tela[] = [
   {
     // O quadro Main: a mais nova em cima, com as iniciais ou o ícone do grupo, a prévia (a minha com "Você:", a do
     // grupo com o primeiro nome, a foto como "Foto", o arquivo pelo nome e o aviso de grupo pelo texto), a hora e as
-    // não lidas.
+    // não lidas. As quatro de baixo são de antes (R49: o GET das conversas com a hora delas recuada, como o servidor a
+    // mandaria): de ontem, de três dias atrás, de dez dias atrás e de um ano atrás, e a hora da lista mostra "Ontem", o
+    // dia da semana, o "dd/mm" e o "dd/mm/aaaa" (as três primeiras ficam à vista na janela de 400×720).
     nome: 'lista',
     async preparar(page) {
       const { pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO, ANA, JOAO, BEATRIZ, CARLOS]);
@@ -287,24 +250,51 @@ const TELAS: Tela[] = [
       await eu.api.marcarLida(comCarlos, await carlos.api.enviarArquivo(comCarlos, Buffer.alloc(49_152, 1), 'Pedido 4471.xlsx', XLSX));
       const comJoao = await eu.api.criarDupla(joao.pessoa.id);
       await eu.api.enviarTexto(comJoao, 'Combinado, te ligo depois.');
-      await beatriz.api.criarGrupo('Financeiro', [eu.pessoa.id]);
+      const financeiro = await beatriz.api.criarGrupo('Financeiro', [eu.pessoa.id]);
       const comercial = await joao.api.criarGrupo('Comercial', [eu.pessoa.id, ana.pessoa.id]);
-      await joao.api.enviarTexto(comercial, 'Fechamos o pedido de hoje.');
+      await joao.api.enviarTexto(comercial, 'Fechamos o pedido da ACME.');
       const comBeatriz = await beatriz.api.criarDupla(eu.pessoa.id);
       await beatriz.api.enviarArquivo(comBeatriz, PNG, 'Vitrine da loja.png', 'image/png');
       const comAna = await ana.api.criarDupla(eu.pessoa.id);
       await ana.api.enviarTexto(comAna, 'Bom dia!');
       await ana.api.enviarTexto(comAna, 'Pode me mandar a proposta da ACME?');
+      const recuos = new Map([
+        [comercial, asDezHorasDe(1)],
+        [financeiro, asDezHorasDe(3)],
+        [comJoao, asDezHorasDe(10)],
+        [comCarlos, asDezHorasDe(400)],
+      ]);
+      await page.route(`${baseDoChat()}/api/v1/conversas`, async (rota) => {
+        if (rota.request().method() !== 'GET') return rota.continue();
+        const resposta = await rota.fetch();
+        const json = await resposta.json();
+        for (const c of json.conversas) c.atualizadaEm = recuos.get(c.id) ?? c.atualizadaEm;
+        return rota.fulfill({ response: resposta, json });
+      });
       await abrirNoChat(page, { chave: eu.chave, ...RECEPCAO });
       const linhas = page.locator('.chat-linha');
       await expect(linhas.locator('.chat-nome')).toHaveText(['Ana Souza', 'Beatriz Ramos', 'Comercial', 'Financeiro', 'João Pereira', 'Carlos Lima']);
       await expect(linhas.locator('.chat-previa')).toHaveText([
         'Pode me mandar a proposta da ACME?',
         'Foto',
-        'João: Fechamos o pedido de hoje.',
+        'João: Fechamos o pedido da ACME.',
         'Beatriz Ramos pôs você no grupo',
         'Você: Combinado, te ligo depois.',
         'Pedido 4471.xlsx',
+      ]);
+      // A hora como a lista a escreve (formato.ts, horaDaLista): "dd/mm", ou "dd/mm/aaaa" de outro ano.
+      const hoje = partesDaData(Date.now());
+      const diaMes = (ms: number) => {
+        const d = partesDaData(ms);
+        return d.ano === hoje.ano ? `${d.dia}/${d.mes}` : `${d.dia}/${d.mes}/${d.ano}`;
+      };
+      await expect(linhas.locator('.chat-hora')).toHaveText([
+        /^\d\d:\d\d$/,
+        /^\d\d:\d\d$/,
+        'Ontem',
+        partesDaData(asDezHorasDe(3)).semana,
+        diaMes(asDezHorasDe(10)),
+        diaMes(asDezHorasDe(400)),
       ]);
     },
   },
@@ -340,6 +330,14 @@ const TELAS: Tela[] = [
       await page.getByRole('checkbox', { name: /^Beatriz Ramos/ }).check();
       await page.getByRole('checkbox', { name: /^Carlos Lima/ }).check();
       await expect(page.getByRole('button', { name: 'Criar grupo com 3 pessoas' })).toBeEnabled();
+      // As marcas rolam a lista até o Carlos: a foto mostra a lista desde o começo, com a primeira pessoa inteira.
+      const lista = page.locator('.escolher-lista');
+      await lista.evaluate((el) => {
+        el.scrollTop = 0;
+      });
+      const area = (await lista.boundingBox())!;
+      const primeira = (await lista.locator('.escolher-pessoa').first().boundingBox())!;
+      expect(primeira.y >= area.y - 0.5 && primeira.y + primeira.height <= area.y + area.height + 0.5, 'a primeira pessoa inteira').toBe(true);
     },
   },
   {
@@ -355,7 +353,7 @@ const TELAS: Tela[] = [
       await ana.api.enviarTexto(dupla, 'Segue o pedido. Qualquer dúvida, me liga.');
       const expirado = await ana.api.enviarArquivo(dupla, Buffer.alloc(49_152, 1), 'Pedido 4471.xlsx', XLSX);
       await eu.api.enviarArquivo(dupla, Buffer.alloc(1_258_291, 1), 'Proposta ACME.pdf', PDF);
-      await enviarFotoComMiniatura(ana.chave, dupla, 'Vitrine da loja.png', await imagemDaPagina(page, 480, 320));
+      await ana.api.enviarFoto(dupla, PNG, 'Vitrine da loja.png', await imagemDaPagina(page, 480, 320));
       // As mensagens até o arquivo expirado são de um ano atrás; o arquivo chega como o servidor o manda depois de
       // expirar (sem o arquivo e sem a miniatura).
       await page.route(
@@ -466,16 +464,30 @@ const TELAS: Tela[] = [
         rede.send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: bytesPorSegundo });
       await rede.send('Network.enable');
       await subirA(256 * 1024);
-      await arrastar(page, [{ nome: 'Contrato ACME.pdf', tipo: PDF, tamanho: 1_048_576 }]);
+      expect(await arrastar(page, [{ nome: 'Contrato ACME.pdf', tipo: PDF, tamanho: 1_048_576 }])).toBe(true);
       await botaoEnviar(page).click();
       const barra = log.getByRole('progressbar', { name: 'Contrato ACME.pdf' });
       await expect.poll(async () => Number(await barra.getAttribute('aria-valuenow')), { timeout: 10_000 }).toBeGreaterThanOrEqual(40);
       await subirA(1024);
-      await arrastar(page, [
-        { nome: 'Fachada da loja.jpg', tipo: 'image/jpeg', tamanho: 1_572_864 },
-        { nome: 'Pedido 4472.xlsx', tipo: XLSX, tamanho: 8192 },
-      ]);
+      expect(
+        await arrastar(page, [
+          { nome: 'Fachada da loja.jpg', tipo: 'image/jpeg', tamanho: 1_572_864 },
+          { nome: 'Pedido 4472.xlsx', tipo: XLSX, tamanho: 8192 },
+        ]),
+      ).toBe(true);
       await expect(page.locator('.anexo .anexo-nome')).toHaveText(['Fachada da loja.jpg', 'Pedido 4472.xlsx']);
+    },
+    async antesDaFoto(page) {
+      // Na hora da foto, a barra está no meio (nem vazia nem cheia), dentro da parte do log que aparece.
+      const log = conversaCom(page, 'Ana Souza');
+      const barra = log.getByRole('progressbar', { name: 'Contrato ACME.pdf' });
+      const valor = Number(await barra.getAttribute('aria-valuenow'));
+      expect(valor, 'a barra parcial').toBeGreaterThanOrEqual(1);
+      expect(valor, 'a barra parcial').toBeLessThanOrEqual(99);
+      const b = (await barra.boundingBox())!;
+      const area = (await log.boundingBox())!;
+      const dentro = b.x >= area.x - 0.5 && b.y >= area.y - 0.5 && b.x + b.width <= area.x + area.width + 0.5 && b.y + b.height <= area.y + area.height + 0.5;
+      expect(dentro, `a barra dentro do log: ${JSON.stringify({ b, area })}`).toBe(true);
     },
   },
   {
@@ -486,7 +498,7 @@ const TELAS: Tela[] = [
       const [eu, ana] = pessoas;
       const dupla = await ana.api.criarDupla(eu.pessoa.id);
       const foto = await imagemDaPagina(page, 1200, 900, 'image/png');
-      await enviarFotoComMiniatura(ana.chave, dupla, 'Vitrine da loja.png', await imagemDaPagina(page, 480, 360), foto);
+      await ana.api.enviarFoto(dupla, foto, 'Vitrine da loja.png', await imagemDaPagina(page, 480, 360));
       await abrirNoChat(page, { chave: eu.chave, ...RECEPCAO });
       await abrirAConversa(page, 'Ana Souza');
       const balao = conversaCom(page, 'Ana Souza').getByRole('button', { name: 'Abrir a foto Vitrine da loja.png' });
@@ -572,6 +584,7 @@ for (const [largura, altura] of TAMANHOS) {
         test(`chat-${tela.nome}: the photo, no serious violations, and Tab reaches every control without losing the focus`, async ({ page }) => {
           await tela.preparar(page, { largura, altura });
           await semViolacoesSerias(page);
+          if (tela.antesDaFoto) await tela.antesDaFoto(page);
           await capturar(page, `chat-${tela.nome}-${largura}x${altura}`, tema);
           if (tela.antesDoTeclado) await tela.antesDoTeclado(page);
           await conferirOTeclado(page);
