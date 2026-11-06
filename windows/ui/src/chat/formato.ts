@@ -114,8 +114,11 @@ export function numeroDaAba(naoLidas: number): string {
   return naoLidas > 9 ? '9+' : String(naoLidas);
 }
 
-/** (Task 7) Os caracteres que trocam a direção do texto: U+200E, U+200F, U+202A a U+202E e U+2066 a U+2069. */
-const MARCAS_DE_DIRECAO = /[‎‏‪-‮⁦-⁩]/g;
+/**
+ * (Task 7) Os caracteres que trocam a direção do texto, os controles de direção do Unicode (Bidi_Control): U+061C,
+ * U+200E, U+200F, U+202A a U+202E e U+2066 a U+2069 (os mesmos que o SafeDownloadName tira do nome salvo, R35).
+ */
+const MARCAS_DE_DIRECAO = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/g;
 
 /**
  * (Task 7) O texto sem os caracteres que trocam a direção (Review Focus 5): o "Proposta<U+202E>fdp.exe" aparece como

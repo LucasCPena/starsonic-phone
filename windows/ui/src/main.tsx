@@ -24,7 +24,8 @@
 // membros e o pôr pessoas (as vistas chatNova, chatNovoGrupo, chatMembros e chatPor) também tomam o lugar das abas; a
 // conversa que elas criam abre com o Voltar para a lista. As de uma conversa (a conversa, os membros e o pôr pessoas)
 // saem para a aba Chat quando ela sai da lista (R26), e todas, quando a pessoa não está mais no chat. O toast delas é
-// o mesmo da ponte (R31), também o dos arquivos da conversa (Task 7).
+// o mesmo da ponte (R31), também o dos arquivos da conversa (Task 7). Um arquivo arrastado para a janela nunca navega
+// (R39).
 import { render } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { createBridge } from './bridge';
@@ -66,6 +67,14 @@ import type { Send, Tab, View } from './types';
 
 const bridge = createBridge();
 const chatCliente = new ChatCliente({ bridge, base: enderecoDoChat() });
+// (0.2.0, R39) Um arquivo arrastado para a janela nunca navega, em lugar nenhum dela: sem isto, o WebView2 abriria o
+// file:// do arquivo (e o núcleo gravaria o caminho dele no diagnóstico). Só a conversa que recebe arquivos (com o
+// lugar de escrever) os põe como anexos; um texto arrastado fica com o navegador.
+for (const tipo of ['dragover', 'drop'] as const) {
+  document.addEventListener(tipo, (e) => {
+    if (e.dataTransfer?.types.includes('Files')) e.preventDefault();
+  });
+}
 const ringer = createRinger();
 const TOAST_MS = 2000;
 /** As abas do Windows, na ordem da navegação: com o computador ligado ao chat, também o Chat. */

@@ -191,8 +191,8 @@ export function Conversa({ vista, conversa, cliente, send, avisar, onVoltar, onM
 
   const grupo = conversa.tipo === 'grupo';
   const saiu = conversa.tipo === 'dupla' && conversa.com.saiu;
-  // Arrastar para a conversa e colar (Ctrl+V): só com o lugar de escrever, e só o que traz arquivos (o WebView2 abriria
-  // o arquivo solto; um texto colado vai para o campo, como sempre).
+  // Arrastar para a conversa e colar (Ctrl+V): só com o lugar de escrever, e só o que traz arquivos. Fora daqui (e na
+  // conversa com quem saiu), o main.tsx impede o arrastar de arquivos sem pôr nada (R39).
   const receber = saiu
     ? {}
     : {
@@ -205,7 +205,12 @@ export function Conversa({ vista, conversa, cliente, send, avisar, onVoltar, onM
           anexar([...e.dataTransfer.files]);
         },
         onPaste: (e: ClipboardEvent) => {
-          const arquivos = [...(e.clipboardData?.files ?? [])];
+          // Um texto vai para o campo, também o de células do Excel ou do PowerPoint, que vêm com uma imagem delas ao
+          // lado (no Windows, ela chega como um arquivo image/png): os arquivos só entram de um paste sem texto (um
+          // print, os arquivos copiados no Explorer).
+          const dados = e.clipboardData;
+          if (!dados || dados.getData('text/plain').trim()) return;
+          const arquivos = [...dados.files];
           if (arquivos.length === 0) return;
           e.preventDefault();
           anexar(arquivos);

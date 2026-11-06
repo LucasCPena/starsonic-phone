@@ -6,10 +6,10 @@
 // Focus 5), o nome de 120 caracteres sem rolar para o lado (Review Focus 4), o "Tentar de novo" (só o que faltou, com o
 // mesmo idLocal e os 15 s), a miniatura que chega depois sem tirar o fim da vista nem mexer em quem lê mais acima, os
 // blob: que saem com a tela deles e a acessibilidade nos dois temas. Cada teste cria a própria empresa.
-import { expect, test, type Page, type Request, type Route } from '@playwright/test';
+import { expect, test, type Locator, type Page, type Request, type Route } from '@playwright/test';
 import { capturar, comandos, esperarComando, mudarEstado, semViolacoesSerias } from '../helpers';
 import { abrirAConversa, abrirNoChat, esperarOsEventos, pararORelogio } from './abrir';
-import { baseDoChat, empresaComPessoas } from './servidor';
+import { baseDoChat, empresaComPessoas, tirarPessoa, type ApiDeTeste } from './servidor';
 
 // O CSP da página só deixa falar com o endereço do chat de verdade; o servidor de teste fica no 127.0.0.1:4180.
 test.use({ bypassCSP: true });
@@ -557,9 +557,10 @@ test('an expired file shows Arquivo expirado and does nothing on a click', async
 
 test('names with direction marks show without them', async ({ page }) => {
   const { a, ana, dupla } = await conversaComAna();
-  // Um ".exe" que aparece como ".pdf": o U+202E vira o fim do nome ao contrário.
-  const exe = 'Proposta‮fdp.exe';
-  const foto = 'Vitrine‮gnp.html';
+  // Um ".exe" que aparece como ".pdf": o U+202E vira o fim do nome ao contrário. O U+061C (a marca de letra árabe)
+  // também é um controle de direção (R35).
+  const exe = 'Proposta\u202Efdp.exe';
+  const foto = 'Vitrine\u061C\u202Egnp.html';
   await abrirNoChat(page, { chave: a.chave, ...RECEPCAO });
   await esperarOsEventos(page);
   await ana.api.enviarArquivo(dupla, PNG, foto, 'image/png');
@@ -588,11 +589,11 @@ test('names with direction marks show without them', async ({ page }) => {
   await expect(grande).toHaveCount(0);
 
   // Um anexo com as marcas, em cima do campo.
-  expect(await arrastar(page, [{ nome: 'Pedido‮xcod.exe', tipo: '', tamanho: 10 }])).toBe(true);
+  expect(await arrastar(page, [{ nome: 'Pedido\u202Excod\u061C.exe', tipo: '', tamanho: 10 }])).toBe(true);
   await expect(nomesDosAnexos(page)).toHaveText(['Pedidoxcod.exe']);
   await expect(page.getByRole('button', { name: 'Tirar Pedidoxcod.exe', exact: true })).toBeVisible();
   const textos = await page.locator('.win').evaluate((el) => el.textContent ?? '');
-  expect(textos).not.toMatch(/[‎‏‪-‮⁦-⁩]/);
+  expect(textos).not.toMatch(/[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/);
 });
 
 test('a 120-character file name never scrolls the window sideways', async ({ page }) => {
@@ -773,6 +774,288 @@ test('a file with no answer in 15 seconds is Não enviada, also after Tentar de 
   await expect.poll(async () => (await a.api.mensagens(dupla)).length).toBe(1);
   await expect(minha.getByText('Não enviada', { exact: true })).toHaveCount(0);
   await expect(minha.getByRole('button', { name: 'Abrir Proposta ACME.pdf, 18 bytes' })).toBeVisible();
+});
+
+// --- (Fix round 1) A ordem de um Enviar também depois de uma falha (R38) ------------------------------------------
+
+/** O texto do Enviar dos testes da ordem: vai depois do a.pdf e do b.xlsx. */
+const TEXTO_DO_LOTE = 'Seguem a proposta e a planilha.';
+
+/** Um Enviar com dois arquivos (o a.pdf e o b.xlsx) e o texto. */
+async function mandarOLote(page: Page): Promise<void> {
+  await escolher(page, [
+    { name: 'a.pdf', mimeType: PDF, buffer: Buffer.from('a proposta') },
+    { name: 'b.xlsx', mimeType: XLSX, buffer: Buffer.from('a planilha') },
+  ]);
+  const campo = campoPara(page, 'Ana Souza');
+  await campo.fill(TEXTO_DO_LOTE);
+  await campo.press('Enter');
+}
+
+/** O meu balão com este arquivo (ou este texto). */
+const balaoMeu = (page: Page, conteudo: string) => conversaCom(page, 'Ana Souza').locator('.balao-meu').filter({ hasText: conteudo });
+/** As mensagens da conversa no servidor, na ordem dos ids: o nome do arquivo, ou o texto. */
+const noServidor = async (api: ApiDeTeste, conversa: number) => (await api.mensagens(conversa)).map((m) => m.arquivo?.nome ?? m.texto);
+/** O nome do arquivo de um upload (o X-Arquivo-Nome dele). */
+const nomeDoUpload = (r: Request) => decodeURIComponent(r.headers()['x-arquivo-nome']);
+
+test('a file that fails stops the rest of its Enviar, and Tentar de novo on it sends them all in order', async ({ page }) => {
+  const { a, dupla } = await conversaComAna();
+  // O primeiro upload (o do a.pdf) cai; os outros passam.
+  const uploads: string[] = [];
+  await page.route(ARQUIVOS, (rota) => {
+    if (rota.request().method() !== 'POST') return rota.continue();
+    uploads.push(nomeDoUpload(rota.request()));
+    return uploads.length === 1 ? rota.abort() : rota.continue();
+  });
+  await abrirNoChat(page, { chave: a.chave, ...RECEPCAO });
+  await abrirAConversa(page, 'Ana Souza');
+  await mandarOLote(page);
+  // O b.xlsx e o texto não saem depois da falha: os três ficam "Não enviada".
+  for (const item of ['a.pdf', 'b.xlsx', TEXTO_DO_LOTE]) {
+    await expect(balaoMeu(page, item).getByText('Não enviada', { exact: true })).toBeVisible();
+  }
+  await umInstante(page);
+  expect(uploads).toEqual(['a.pdf']);
+  expect(await noServidor(a.api, dupla)).toEqual([]);
+
+  await balaoMeu(page, 'a.pdf').getByRole('button', { name: 'Tentar de novo' }).click();
+  await expect.poll(() => noServidor(a.api, dupla)).toEqual(['a.pdf', 'b.xlsx', TEXTO_DO_LOTE]);
+  expect(uploads).toEqual(['a.pdf', 'a.pdf', 'b.xlsx']);
+  await expect(conversaCom(page, 'Ana Souza').getByText('Não enviada', { exact: true })).toHaveCount(0);
+});
+
+test('a file with no progress for 15 seconds is the only one Não enviada, and Tentar de novo starts over with it', async ({ page }) => {
+  const { a, dupla } = await conversaComAna();
+  await page.clock.install();
+  // O primeiro upload fica sem resposta, o segundo espera o teste, e os outros passam.
+  const uploads: Route[] = [];
+  await page.route(ARQUIVOS, (rota) => {
+    if (rota.request().method() !== 'POST') return rota.continue();
+    uploads.push(rota);
+    if (uploads.length > 2) return rota.continue();
+  });
+  const cancelados: string[] = [];
+  page.on('requestfailed', (r) => {
+    if (r.url() === ARQUIVOS) cancelados.push(nomeDoUpload(r));
+  });
+  await abrirNoChat(page, { chave: a.chave, ...RECEPCAO });
+  // O relógio parado: os 15 s só passam pelo runFor.
+  await pararORelogio(page);
+  await abrirAConversa(page, 'Ana Souza');
+  await mandarOLote(page);
+  await expect.poll(() => uploads.length).toBe(1);
+  await page.waitForTimeout(200);
+  await page.clock.runFor(15_000);
+  // Só o da vez fica "Não enviada"; os de trás continuam esperando a vez deles.
+  await expect(balaoMeu(page, 'a.pdf').getByText('Não enviada', { exact: true })).toBeVisible();
+  await expect(balaoMeu(page, 'b.xlsx').locator('.balao-hora')).toHaveText('Enviando…');
+  await expect(balaoMeu(page, TEXTO_DO_LOTE).locator('.balao-hora')).toHaveText('Enviando…');
+  expect(uploads).toHaveLength(1);
+  expect(await noServidor(a.api, dupla)).toEqual([]);
+
+  // O Tentar de novo cancela o upload que ainda está vivo e recomeça por ele, sem passar ao b.xlsx.
+  await balaoMeu(page, 'a.pdf').getByRole('button', { name: 'Tentar de novo' }).click();
+  await expect.poll(() => uploads.length).toBe(2);
+  await expect.poll(() => cancelados).toEqual(['a.pdf']);
+  await page.waitForTimeout(300);
+  expect(uploads.map((r) => nomeDoUpload(r.request()))).toEqual(['a.pdf', 'a.pdf']);
+  await uploads[1].continue();
+  await expect.poll(() => noServidor(a.api, dupla)).toEqual(['a.pdf', 'b.xlsx', TEXTO_DO_LOTE]);
+  expect(uploads.map((r) => nomeDoUpload(r.request()))).toEqual(['a.pdf', 'a.pdf', 'b.xlsx']);
+});
+
+test('a progress after the 15 seconds brings the file back to Enviando…, with the bar, and the rest keep waiting', async ({ page }) => {
+  const { a, dupla } = await conversaComAna();
+  await page.clock.install();
+  // O upload do a.pdf fica parado (nenhum pedaço sai) até o teste soltar; o POST da mensagem dele também.
+  let upload: Route | null = null;
+  await page.route(ARQUIVOS, (rota) => {
+    if (rota.request().method() !== 'POST' || upload !== null) return rota.continue();
+    upload = rota;
+  });
+  let mensagem: Route | null = null;
+  await page.route(envios(dupla), (rota) => {
+    if (rota.request().method() !== 'POST' || mensagem !== null) return rota.continue();
+    mensagem = rota;
+  });
+  await abrirNoChat(page, { chave: a.chave, ...RECEPCAO });
+  await pararORelogio(page);
+  await abrirAConversa(page, 'Ana Souza');
+  await mandarOLote(page);
+  await expect.poll(() => upload !== null).toBe(true);
+  await page.waitForTimeout(200);
+  await page.clock.runFor(15_000);
+  const aPdf = balaoMeu(page, 'a.pdf');
+  await expect(aPdf.getByText('Não enviada', { exact: true })).toBeVisible();
+  await expect(aPdf.getByRole('progressbar')).toHaveCount(0);
+  await expect(balaoMeu(page, 'b.xlsx').locator('.balao-hora')).toHaveText('Enviando…');
+
+  // O upload anda: o a.pdf volta para "Enviando…", com a barra, e os de trás continuam esperando.
+  await upload!.continue();
+  await expect(aPdf.locator('.balao-hora')).toHaveText('Enviando…');
+  await expect(aPdf.getByRole('progressbar', { name: 'a.pdf' })).toBeVisible();
+  await expect(aPdf.getByText('Não enviada', { exact: true })).toHaveCount(0);
+  await expect.poll(() => mensagem !== null).toBe(true);
+  await expect(balaoMeu(page, 'b.xlsx').locator('.balao-hora')).toHaveText('Enviando…');
+  expect(await noServidor(a.api, dupla)).toEqual([]);
+  await mensagem!.continue();
+  await expect.poll(() => noServidor(a.api, dupla)).toEqual(['a.pdf', 'b.xlsx', TEXTO_DO_LOTE]);
+});
+
+test('Tentar de novo on a stopped file sends it and the ones after it, and the failed one before stays Não enviada', async ({ page }) => {
+  const { a, dupla } = await conversaComAna();
+  const uploads: string[] = [];
+  await page.route(ARQUIVOS, (rota) => {
+    if (rota.request().method() !== 'POST') return rota.continue();
+    uploads.push(nomeDoUpload(rota.request()));
+    return uploads.length === 1 ? rota.abort() : rota.continue();
+  });
+  await abrirNoChat(page, { chave: a.chave, ...RECEPCAO });
+  await abrirAConversa(page, 'Ana Souza');
+  await mandarOLote(page);
+  for (const item of ['a.pdf', 'b.xlsx', TEXTO_DO_LOTE]) {
+    await expect(balaoMeu(page, item).getByText('Não enviada', { exact: true })).toBeVisible();
+  }
+
+  await balaoMeu(page, 'b.xlsx').getByRole('button', { name: 'Tentar de novo' }).click();
+  await expect.poll(() => noServidor(a.api, dupla)).toEqual(['b.xlsx', TEXTO_DO_LOTE]);
+  await umInstante(page);
+  await expect(balaoMeu(page, 'a.pdf').getByText('Não enviada', { exact: true })).toBeVisible();
+  expect(uploads).toEqual(['a.pdf', 'b.xlsx']);
+});
+
+test('a separate Enviar of a text during a long upload goes right away', async ({ page }) => {
+  const { a, dupla } = await conversaComAna();
+  // O upload fica sem resposta (um arquivo grande numa rede lenta).
+  let uploads = 0;
+  await page.route(ARQUIVOS, (rota) => {
+    if (rota.request().method() !== 'POST') return rota.continue();
+    uploads += 1;
+  });
+  await abrirNoChat(page, { chave: a.chave, ...RECEPCAO });
+  await abrirAConversa(page, 'Ana Souza');
+  await escolher(page, [{ name: 'Tabela de preços.pdf', mimeType: PDF, buffer: Buffer.from('a tabela') }]);
+  await botaoEnviar(page).click();
+  await expect.poll(() => uploads).toBe(1);
+  const campo = campoPara(page, 'Ana Souza');
+  await campo.fill('Já te mando a tabela.');
+  await campo.press('Enter');
+  await expect.poll(() => noServidor(a.api, dupla)).toEqual(['Já te mando a tabela.']);
+  await expect(balaoMeu(page, 'Tabela de preços.pdf').locator('.balao-hora')).toHaveText('Enviando…');
+});
+
+// --- (Fix round 1) O colar do Excel e o arrastar fora da conversa (R39) -------------------------------------------
+
+/** Põe na área de transferência de verdade o texto e (com a `imagem`) uma imagem PNG ao lado dele. */
+async function copiar(page: Page, o: { texto?: string; imagem?: boolean }): Promise<void> {
+  await page.evaluate(async ({ texto, imagem }) => {
+    const itens: Record<string, Blob> = {};
+    if (texto !== undefined) itens['text/plain'] = new Blob([texto], { type: 'text/plain' });
+    if (imagem) {
+      const c = document.createElement('canvas');
+      c.width = 8;
+      c.height = 8;
+      itens['image/png'] = await new Promise<Blob>((pronto) => c.toBlob((b) => pronto(b!), 'image/png'));
+    }
+    await navigator.clipboard.write([new ClipboardItem(itens)]);
+  }, o);
+}
+
+test('Ctrl+V of cells from Excel (the text with an image beside it) pastes the text and attaches nothing', async ({ page, context }) => {
+  const { a } = await conversaComAna();
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await abrirNoChat(page, { chave: a.chave, ...RECEPCAO });
+  await abrirAConversa(page, 'Ana Souza');
+  const campo = campoPara(page, 'Ana Souza');
+  // Duas células do Excel: o texto, com um tab entre elas, e a imagem delas ao lado (no Windows, o CF_DIB chega como
+  // um arquivo image/png).
+  const celulas = ['Pedido 4471', '12'].join(String.fromCharCode(9));
+  await copiar(page, { texto: celulas, imagem: true });
+  await campo.focus();
+  await page.keyboard.press('Control+V');
+  await expect(campo).toHaveValue(celulas);
+  await umInstante(page);
+  await expect(page.locator('.anexo')).toHaveCount(0);
+
+  // O mesmo paste num DataTransfer montado na página: ele fica com o navegador.
+  const ambos = await page.evaluateHandle((texto) => {
+    const dt = new DataTransfer();
+    dt.setData('text/plain', texto);
+    dt.items.add(new File([new Uint8Array(64)], 'image.png', { type: 'image/png' }));
+    return dt;
+  }, celulas);
+  const tomou = await campo.evaluate(
+    (el, dt) => !el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })),
+    ambos,
+  );
+  expect(tomou).toBe(false);
+  await umInstante(page);
+  await expect(page.locator('.anexo')).toHaveCount(0);
+
+  // Só a imagem (um print), pelo Ctrl+V de verdade: ela vira um anexo, e o campo fica como estava.
+  await copiar(page, { imagem: true });
+  await campo.focus();
+  await page.keyboard.press('Control+V');
+  await expect(nomesDosAnexos(page)).toHaveText(['image.png']);
+  await expect(campo).toHaveValue(celulas);
+
+  // Um texto só de espaços não é um texto: a imagem ao lado dele vira um anexo.
+  const espacos = await page.evaluateHandle(() => {
+    const dt = new DataTransfer();
+    dt.setData('text/plain', '   ');
+    dt.items.add(new File([new Uint8Array(64)], 'print.png', { type: 'image/png' }));
+    return dt;
+  });
+  const anexou = await campo.evaluate(
+    (el, dt) => !el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })),
+    espacos,
+  );
+  expect(anexou).toBe(true);
+  await expect(nomesDosAnexos(page)).toHaveText(['image.png', 'print.png']);
+});
+
+/** Um evento de arrastar (o `dragover` ou o `drop`) com um arquivo, no elemento. true: alguém o impediu (o preventDefault). */
+async function arrastarSobre(alvo: Locator, tipo: 'dragover' | 'drop', comArquivo = true): Promise<boolean> {
+  return alvo.evaluate(
+    (el, { tipo, comArquivo }) => {
+      const dt = new DataTransfer();
+      if (comArquivo) dt.items.add(new File(['pedido'], 'Pedido 4471.xlsx'));
+      else dt.setData('text/plain', 'Pedido 4471');
+      return !el.dispatchEvent(new DragEvent(tipo, { dataTransfer: dt, bubbles: true, cancelable: true }));
+    },
+    { tipo, comArquivo },
+  );
+}
+
+test('a file dropped outside the conversation, or in one with someone who left, attaches nothing and never navigates', async ({ page }) => {
+  const { empresaId, pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO, ANA]);
+  const [a, ana] = pessoas;
+  const dupla = await ana.api.criarDupla(a.pessoa.id);
+  await ana.api.enviarTexto(dupla, 'Hoje é o meu último dia. Obrigada por tudo!');
+  await tirarPessoa(empresaId, ana.pessoa.id);
+  await abrirNoChat(page, { chave: a.chave, ...RECEPCAO });
+
+  // Fora da conversa (a lista, o cabeçalho, as abas, a barra de título): o arquivo nunca vira a página.
+  const lista = page.getByRole('main', { name: 'Chat' });
+  await expect(lista.locator('.chat-linha')).toHaveCount(1);
+  for (const alvo of [lista, page.locator('header.brand'), page.getByRole('navigation', { name: 'Seções' }), page.locator('.titlebar')]) {
+    expect(await arrastarSobre(alvo, 'dragover')).toBe(true);
+    expect(await arrastarSobre(alvo, 'drop')).toBe(true);
+  }
+  // Um texto arrastado (sem arquivo) continua com o navegador.
+  expect(await arrastarSobre(lista, 'dragover', false)).toBe(false);
+  await expect(page.getByRole('main', { name: 'Chat' })).toBeVisible();
+
+  // Na conversa com quem saiu do chat: nada entra (nem há onde escrever), e nada navega.
+  await abrirAConversa(page, 'Ana Souza (saiu)');
+  const log = conversaCom(page, 'Ana Souza (saiu)');
+  await expect(log).toBeVisible();
+  expect(await arrastarSobre(log, 'dragover')).toBe(true);
+  expect(await arrastarSobre(log, 'drop')).toBe(true);
+  await umInstante(page);
+  await expect(page.locator('.anexo')).toHaveCount(0);
+  await expect(page.getByText('Ana Souza saiu do chat.', { exact: true })).toBeVisible();
 });
 
 test('a thumbnail that arrives late keeps the end in view, and moves nothing for who reads above', async ({ page }) => {
