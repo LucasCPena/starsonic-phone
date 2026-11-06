@@ -280,6 +280,45 @@ test('Tirar asks first and takes the person out, with the notice in the conversa
   await expect(page.getByRole('button', { name: 'Ver os membros do grupo Comercial' })).toContainText('2 pessoas · ver os membros');
 });
 
+test('while a Tirar is on its way, no other Tirar nor Sair do grupo takes a click', async ({ page }) => {
+  const { pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO, ANA, JOAO]);
+  const [a, ana, joao] = pessoas;
+  const grupo = await a.api.criarGrupo('Comercial', [ana.pessoa.id, joao.pessoa.id]);
+  // O primeiro tirar fica parado aqui (nem chega ao servidor) até o teste soltar; os outros passam.
+  let preso: Route | null = null;
+  await page.route(`${CONVERSAS}/${grupo}/membros/*`, (rota) => {
+    if (rota.request().method() !== 'DELETE' || preso !== null) return rota.continue();
+    preso = rota;
+  });
+  await abrirNoChat(page, { chave: a.chave, ...RECEPCAO });
+  await abrirOsMembros(page, 'Comercial');
+  const tirarAna = page.getByRole('button', { name: 'Tirar Ana Souza do grupo' });
+  const tirarJoao = page.getByRole('button', { name: 'Tirar João Pereira do grupo' });
+  const sair = page.getByRole('button', { name: 'Sair do grupo' });
+  await tirarAna.click();
+  await page.getByRole('dialog', { name: 'Tirar Ana Souza do grupo?' }).getByRole('button', { name: 'Tirar' }).click();
+  await expect.poll(() => preso !== null).toBe(true);
+
+  // Enquanto ele vai, os outros botões das ações ficam desligados.
+  await expect(tirarAna).toBeDisabled();
+  await expect(tirarJoao).toBeDisabled();
+  await expect(sair).toBeDisabled();
+  // Ele não chega (sem rede): o toast, os botões de volta, e o foco no Tirar que foi usado.
+  await preso!.abort();
+  await expect(page.getByRole('status').filter({ hasText: 'Sem conexão com o chat. Tente de novo.' })).toBeVisible();
+  await expect(tirarJoao).toBeEnabled();
+  await expect(sair).toBeEnabled();
+  await expect(tirarAna).toBeFocused();
+  await expect(nomesDosMembros(page)).toHaveText(['Recepção (você)', 'Ana Souza', 'João Pereira']);
+
+  // De novo, até o fim: a Ana sai, e o Tirar do João e o Sair voltam.
+  await tirarAna.click();
+  await page.getByRole('dialog', { name: 'Tirar Ana Souza do grupo?' }).getByRole('button', { name: 'Tirar' }).click();
+  await expect(nomesDosMembros(page)).toHaveText(['Recepção (você)', 'João Pereira']);
+  await expect(tirarJoao).toBeEnabled();
+  await expect(sair).toBeEnabled();
+});
+
 test('Sair do grupo asks first and leaves, back to the list without the group', async ({ page }) => {
   const { pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO, ANA, JOAO]);
   const [a, ana, joao] = pessoas;

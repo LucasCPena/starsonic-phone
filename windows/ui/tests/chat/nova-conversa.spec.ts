@@ -137,6 +137,38 @@ test('a colleague opens the one conversation of the pair', async ({ page }) => {
   expect(await duplas(ana.api)).toEqual([devolvidas[0]]);
 });
 
+test('while the conversation is on its way, the colleagues wait and the list says so', async ({ page }) => {
+  const { pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO, ANA, JOAO]);
+  // O primeiro POST da dupla fica parado aqui (nem chega ao servidor) até o teste soltar; a lista e os outros passam.
+  let preso: Route | null = null;
+  await page.route(`${baseDoChat()}/api/v1/conversas`, (rota) => {
+    if (rota.request().method() !== 'POST' || preso !== null) return rota.continue();
+    preso = rota;
+  });
+  await abrirNoChat(page, { chave: pessoas[0].chave, ...RECEPCAO });
+  await irParaANovaConversa(page);
+  const lista = page.getByRole('list', { name: 'Colegas no chat' });
+  const ana = colegas(page).filter({ hasText: 'Ana Souza' });
+  const joao = colegas(page).filter({ hasText: 'João Pereira' });
+  await ana.click();
+  await expect.poll(() => preso !== null).toBe(true);
+
+  // Enquanto a conversa vem, nenhum colega aceita um clique, e a lista está ocupada.
+  await expect(ana).toBeDisabled();
+  await expect(joao).toBeDisabled();
+  await expect(lista).toHaveAttribute('aria-busy', 'true');
+  // Ela não vem (sem rede): o toast, os colegas de volta, e o foco no colega que foi usado.
+  await preso!.abort();
+  await expect(page.getByRole('status').filter({ hasText: 'Sem conexão com o chat. Tente de novo.' })).toBeVisible();
+  await expect(joao).toBeEnabled();
+  await expect(lista).toHaveAttribute('aria-busy', 'false');
+  await expect(ana).toBeFocused();
+
+  // De novo, até o fim: a conversa abre.
+  await ana.click();
+  await expect(page.getByRole('log', { name: 'Mensagens com Ana Souza' })).toBeVisible();
+});
+
 for (const tema of ['light', 'dark'] as const) {
   test.describe(`a nova conversa (${tema})`, () => {
     test.use({ colorScheme: tema });

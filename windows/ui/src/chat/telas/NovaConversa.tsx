@@ -1,9 +1,10 @@
 // A nova conversa (o quadro NovaConversa), no lugar das abas: "Chat" em cima do título e a seta de volta para a lista; a
 // busca (o nome sem acento e sem caixa, ou o ramal), o "Novo grupo" e os colegas que já usam o chat, com as iniciais, o
 // nome e o ramal; embaixo, "Aparecem só os colegas da sua empresa que já usam o chat.". Um colega abre a conversa a
-// dois com ele (a que já existe, ou uma nova). Sem nenhum colega, "Nenhum colega no chat ainda."; a busca sem
-// resultado, "Ninguém encontrado.". Sem conexão, a faixa. Os nomes vão sempre como texto.
-import { useLayoutEffect, useRef, useState } from 'preact/hooks';
+// dois com ele (a que já existe, ou uma nova); enquanto ela vem, os colegas ficam desligados e a lista, ocupada
+// (`aria-busy`). Sem nenhum colega, "Nenhum colega no chat ainda."; a busca sem resultado, "Ninguém encontrado.". Sem
+// conexão, a faixa. Os nomes vão sempre como texto.
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { BackBar } from '../../components/BackBar';
 import { IconNovoGrupo, IconSearch, IconSemRede } from '../../icons';
 import type { ChatCliente, VistaChat } from '../cliente';
@@ -42,15 +43,24 @@ interface Props {
 
 export function NovaConversa({ vista, cliente, avisar, onVoltar, onNovoGrupo, onAbrir }: Props) {
   const colegas = useLeitura(vista, () => cliente.colegas(), [cliente], avisar);
-  const { fazer } = useAcao(avisar);
+  const { emCurso, fazer } = useAcao(avisar);
   const [busca, setBusca] = useState('');
   const campo = useRef<HTMLInputElement>(null);
+  /** O colega do clique: desligado enquanto a conversa vem, ele perde o foco, que volta a ele se ela não abriu. */
+  const clicado = useRef<HTMLButtonElement | null>(null);
   useLayoutEffect(() => {
     campo.current?.focus();
   }, []);
+  useEffect(() => {
+    const botao = clicado.current;
+    if (emCurso || !botao) return;
+    clicado.current = null;
+    if (botao.isConnected && document.activeElement === document.body) botao.focus();
+  }, [emCurso]);
   const lista = colegas.dados;
   const achados = lista === null ? [] : pessoasDaBusca(lista, busca);
-  const abrir = (com: number) =>
+  const abrir = (com: number, botao: HTMLButtonElement) => {
+    clicado.current = botao;
     fazer(
       () => cliente.criarDupla(com),
       onAbrir,
@@ -59,6 +69,7 @@ export function NovaConversa({ vista, cliente, avisar, onVoltar, onNovoGrupo, on
         if (e.status === 400 || e.status === 404) colegas.reler();
       },
     );
+  };
 
   return (
     <>
@@ -98,10 +109,10 @@ export function NovaConversa({ vista, cliente, avisar, onVoltar, onNovoGrupo, on
             (achados.length === 0 ? (
               <p class="empty">{lista.length === 0 ? NENHUM_COLEGA_NO_CHAT : NINGUEM_ENCONTRADO}</p>
             ) : (
-              <ul class="chat-pessoas" aria-labelledby={ID_DO_TITULO}>
+              <ul class="chat-pessoas" aria-labelledby={ID_DO_TITULO} aria-busy={emCurso ? 'true' : 'false'}>
                 {achados.map((p) => (
                   <li key={p.id}>
-                    <button type="button" class="chat-pessoa" onClick={() => abrir(p.id)}>
+                    <button type="button" class="chat-pessoa" disabled={emCurso} onClick={(e) => abrir(p.id, e.currentTarget)}>
                       <Avatar pessoa={p} />
                       <span class="chat-pessoa-textos">
                         <span class="chat-pessoa-nome">{nomeDaPessoa(p)}</span>

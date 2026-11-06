@@ -1043,8 +1043,10 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .chat-colegas { flex: 1; min-height: 0; margin: 0 -8px; }
 .chat-colegas .chat-pessoa { min-height: 54px; padding: 6px 8px; border: 0; border-radius: 14px; background: transparent; font-family: inherit;
   text-align: left; transition: background var(--ease); }
-.chat-colegas .chat-pessoa:hover { background: var(--icon-tile); }
+.chat-colegas .chat-pessoa:not(:disabled):hover { background: var(--icon-tile); }
 .chat-colegas .chat-pessoa:focus-visible { outline-offset: -3px; }
+/* Enquanto a conversa de um colega vem, os colegas ficam desligados. */
+.chat-colegas .chat-pessoa:disabled { opacity: 0.45; }
 .chat-colegas .empty { margin-top: 18px; }
 .chat-nota { flex: none; margin: 0 0 14px; font-size: 12px; line-height: 1.5; color: var(--text-muted); }
 
@@ -1094,7 +1096,10 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .membros-lista .chat-avatar { width: 36px; height: 36px; font-size: 12px; }
 .membros-tirar { flex: none; height: 32px; padding: 0 14px; border-radius: 999px; border: 1.5px solid var(--border); background: var(--card);
   font: 700 12.5px/1 var(--font-sans); color: var(--text-strong); transition: border-color var(--ease); }
-.membros-tirar:hover { border-color: var(--cyan); }
+.membros-tirar:not(:disabled):hover { border-color: var(--cyan); }
+/* Enquanto uma ação vai, o Tirar e o Sair ficam desligados. */
+.membros-tirar:disabled { opacity: 0.45; }
+.btn.membros-sair:disabled, .btn.membros-sair:disabled:hover { opacity: 0.45; border-color: var(--outline); }
 .membros-por { flex: none; align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 16px 0 12px;
   border-radius: 999px; border: 1.5px dashed var(--dashed); background: transparent; font: 700 13px/1 var(--font-sans); color: var(--text-strong);
   transition: border-color var(--ease); }

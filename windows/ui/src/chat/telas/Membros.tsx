@@ -2,7 +2,8 @@
 // de volta para a conversa. Para quem cuida, "Você cuida deste grupo: …"; o cartão "N pessoas", com cada membro (as
 // iniciais, o nome, o meu com " (você)", e "Ramal N · criou o grupo", "Ramal N · cuida do grupo" ou "Ramal N") e, para
 // quem cuida, o Tirar ao lado de cada outro membro; o "Pôr pessoas no grupo" (quem cuida) e o "Sair do grupo" (todos).
-// - O Tirar e o Sair perguntam antes (o Confirm); fechada a pergunta, o foco volta ao botão que a abriu (e, se a linha
+// - O Tirar e o Sair perguntam antes (o Confirm). Enquanto uma ação vai, os botões delas ficam desligados: nenhum aceita
+//   um clique que não faria nada. Fechada a pergunta e acabada a ação, o foco volta ao botão que a abriu (e, se a linha
 //   dele saiu, ao título do cartão).
 // - A lista se lê de novo quando o grupo muda na lista (o evento conversa com as pessoas ou o cuida mudados: quem passa
 //   a cuidar vê o Tirar e o Pôr pessoas sem fechar a tela, R27), depois do Tirar e num 403 (R31). O grupo que sai da
@@ -52,7 +53,7 @@ interface Props {
 export function Membros({ vista, conversa, cliente, avisar, onVoltar, onPorPessoas }: Props) {
   const id = conversa.id;
   const lidos = useLeitura(vista, () => cliente.membros(id), [cliente, id, conversa.pessoas, conversa.cuida], avisar);
-  const { fazer } = useAcao(avisar);
+  const { emCurso, fazer } = useAcao(avisar);
   const membros = lidos.dados;
   const euId = vista.eu?.id ?? 0;
   const cuido = membros?.some((m) => m.cuida && m.pessoa.id === euId) === true;
@@ -67,12 +68,13 @@ export function Membros({ vista, conversa, cliente, avisar, onVoltar, onPorPesso
     abriu.current = botao;
     setPergunta(q);
   };
+  // O botão desligado durante a ação não fica com o foco: ele volta quando ela acaba, se ainda não foi para outro lugar.
   useEffect(() => {
     const botao = abriu.current;
-    if (pergunta !== null || !botao) return;
+    if (pergunta !== null || emCurso || !botao) return;
     abriu.current = null;
-    if (botao.isConnected) botao.focus();
-  }, [pergunta]);
+    if (botao.isConnected && document.activeElement === document.body) botao.focus();
+  }, [pergunta, emCurso]);
   // O Tirar que tinha o foco saiu com a linha dele: o foco vai ao título do cartão ("2 pessoas").
   useEffect(() => {
     if (!tirou.current) return;
@@ -123,6 +125,7 @@ export function Membros({ vista, conversa, cliente, avisar, onVoltar, onPorPesso
                         type="button"
                         class="membros-tirar"
                         aria-label={tirarDoGrupo(nomeDaPessoa(m.pessoa))}
+                        disabled={emCurso}
                         onClick={(e) => perguntar({ tirar: m.pessoa }, e.currentTarget)}
                       >
                         {TIRAR}
@@ -140,7 +143,7 @@ export function Membros({ vista, conversa, cliente, avisar, onVoltar, onPorPesso
             </button>
           )}
           <div class="membros-espaco" />
-          <button type="button" class="btn btn-outline membros-sair" onClick={(e) => perguntar('sair', e.currentTarget)}>
+          <button type="button" class="btn btn-outline membros-sair" disabled={emCurso} onClick={(e) => perguntar('sair', e.currentTarget)}>
             {SAIR_DO_GRUPO}
           </button>
         </div>
