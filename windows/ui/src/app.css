@@ -939,6 +939,75 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .adm-chat-botao { align-self: flex-start; }
 .adm-chat-botao:disabled { opacity: 0.45; box-shadow: none; }
 
+/* A conversa (os quadros Conversa, Grupo, SemConexao e ConversaEscura), no lugar das abas. As minhas em blue no claro e
+   em cyan no escuro, com o texto branco ou on-cyan (o par do --pill-on-bg); as dos outros no cartão, à esquerda. */
+.conversa { flex: 1; min-height: 0; display: flex; flex-direction: column;
+  --conversa-fundo: var(--soft); --balao-meu: var(--pill-on-bg); --balao-meu-texto: var(--pill-on-text); --balao-outro: var(--white); }
+@media (prefers-color-scheme: dark) {
+  .conversa { --conversa-fundo: var(--navy-900); --balao-outro: rgba(255, 255, 255, 0.06); }
+}
+.conversa-topo { flex: none; display: flex; align-items: center; gap: 10px; padding: 12px 14px 12px 10px; background: var(--gradient-hero); color: #ffffff;
+  --focus: var(--cyan); }
+@media (prefers-color-scheme: dark) {
+  .conversa-topo { border-bottom: 1px solid rgba(255, 255, 255, 0.1); }
+}
+.conversa-topo .chat-avatar, .conversa-topo .chat-avatar-grupo { width: 40px; height: 40px; }
+.conversa-topo .chat-avatar { box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.16); }
+.conversa-topo .chat-avatar-grupo { background: rgba(0, 194, 203, 0.18); color: var(--cyan); }
+.conversa-titulos { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.conversa-nome { margin: 0; font-size: 16px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.25; color: #ffffff; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; }
+.conversa-sub { font-size: 12.5px; font-weight: 500; line-height: 1.3; color: #b9c4e6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.conversa-ligar { width: 40px; height: 40px; flex: none; border-radius: 999px; border: 0; background: var(--cyan); color: var(--on-cyan); display: grid;
+  place-items: center; padding: 0; transition: background var(--ease); }
+.conversa-ligar:hover { background: var(--cyan-d); }
+.conversa-grupo { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; margin: -4px 0; padding: 4px; border: 0; border-radius: 14px;
+  background: transparent; color: #ffffff; font-family: inherit; text-align: left; transition: background var(--ease); }
+.conversa-grupo:hover { background: rgba(255, 255, 255, 0.08); }
+
+/* As mensagens: a lista rola por dentro, sem a âncora do navegador (a tela mantém o lugar sozinha), e a conversa curta
+   fica embaixo (o margin-top do alto). Um texto sem espaço quebra em qualquer ponto: nada passa da largura. */
+.conversa-log { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; overflow-x: hidden;
+  overflow-y: auto; overflow-anchor: none; background: var(--conversa-fundo); scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+.conversa-log:focus-visible { outline-offset: -3px; }
+.conversa-alto { flex: none; height: 1px; margin-top: auto; }
+.conversa-dia { align-self: center; margin: 4px 0; padding: 4px 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--card);
+  font-size: 11.5px; font-weight: 700; line-height: 1.3; color: var(--text-muted); }
+.conversa-aviso { align-self: center; max-width: 100%; margin: 0; padding: 2px 0; font-size: 12px; line-height: 1.4; color: var(--text-muted); text-align: center;
+  overflow-wrap: anywhere; }
+.balao { min-width: 0; max-width: 78%; display: flex; flex-direction: column; gap: 3px; }
+.balao-meu { align-self: flex-end; align-items: flex-end; }
+.balao-outro { align-self: flex-start; align-items: flex-start; }
+.balao-autor { max-width: 100%; padding: 0 6px; font-size: 12px; font-weight: 800; line-height: 1.3; color: var(--accent-text); overflow-wrap: anywhere; }
+.balao-texto { max-width: 100%; margin: 0; padding: 9px 13px; font-size: 14px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+.balao-outro .balao-texto { border-radius: 18px 18px 18px 6px; border: 1px solid var(--border); background: var(--balao-outro); color: var(--text); }
+.balao-meu .balao-texto { border-radius: 18px 18px 6px 18px; background: var(--balao-meu); color: var(--balao-meu-texto); }
+@media (prefers-color-scheme: dark) {
+  .balao-meu .balao-texto { font-weight: 500; }
+}
+.balao-nao-enviada { opacity: 0.72; }
+.balao-hora { padding: 0 6px; font-size: 11px; line-height: 1.3; color: var(--text-muted); }
+.balao-falha { display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; padding-right: 4px; font-size: 12px;
+  line-height: 1.3; color: var(--text); }
+.balao-tentar { padding: 0; border: 0; border-radius: 4px; background: transparent; font: 800 12px/1.3 var(--font-sans); color: var(--accent-text);
+  text-decoration: underline; text-underline-offset: 2px; }
+
+/* O lugar de escrever: o campo cresce até 5 linhas e rola por dentro; o "Faltam <n>" fica em cima dele. */
+.escrever { flex: none; display: flex; align-items: flex-end; gap: 8px; padding: 10px 12px 12px; border-top: 1px solid var(--border); background: var(--surface); }
+.escrever-texto { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.escrever-campo { display: block; width: 100%; min-height: 42px; max-height: calc(5 * 14px * 1.45 + 22px); resize: none; padding: 10px 16px; border-radius: 21px;
+  border: 1px solid var(--border); background: var(--field); font: 500 14px/1.45 var(--font-sans); color: var(--text); overflow-y: auto; scrollbar-width: thin;
+  transition: border-color var(--ease); }
+.escrever-campo::placeholder { color: var(--text-muted); opacity: 1; }
+.escrever-campo:focus { border-color: var(--cyan); }
+.escrever-faltam { order: -1; align-self: flex-end; padding-right: 12px; font-size: 12px; font-weight: 600; line-height: 1.3; color: var(--text-muted); }
+.escrever-enviar { width: 42px; height: 42px; flex: none; border-radius: 999px; border: 0; background: var(--cyan); color: var(--on-cyan); display: grid;
+  place-items: center; padding: 0; box-shadow: var(--shadow-cyan); transition: background var(--ease); }
+.escrever-enviar:hover { background: var(--cyan-d); }
+.escrever-enviar .ic { width: 18px; height: 18px; stroke-width: 2.2; }
+.conversa-saiu { flex: none; margin: 0; padding: 14px 16px 16px; border-top: 1px solid var(--border); background: var(--surface); font-size: 13.5px;
+  font-weight: 600; line-height: 1.45; color: var(--text-muted); text-align: center; overflow-wrap: anywhere; }
+
 /* ---------------------------------------------------------------------------------------------------------
    O modo iPhone (plataforma.ts: o .win leva data-plataforma="ios"); fora dele, nada daqui vale. A área segura (em cima
    a barra de status ou o entalhe, embaixo a barra de voltar ao início) vem do env(safe-area-inset-*), com o

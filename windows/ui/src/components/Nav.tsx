@@ -1,8 +1,10 @@
 // A navegação de baixo: as abas de `tabs`, uma coluna para cada. No Windows, Teclado, Atalhos, Recentes e Contatos
 // (Ctrl+1 a 4, nessa ordem) e, (0.2.0) com o computador ligado ao chat, o Chat (Ctrl+5), com o número de não lidas no
-// canto do ícone (o nome dele é o rótulo de leitor de tela: "Chat, 2 mensagens não lidas"); no iPhone (plataforma.ts),
-// Teclado, Recentes e Contatos, sem as teclas. No Normal e no Compacto, o ícone e o rótulo de cada aba (Ruling 10 da
-// rc.3); no Mínimo, só os ícones (o nome de cada aba fica no aria-label).
+// canto do ícone (de 1 a 9, e "9+" acima disso; o nome dele é o rótulo de leitor de tela, com o número inteiro: "Chat,
+// 12 mensagens não lidas"); no iPhone (plataforma.ts), Teclado, Recentes e Contatos, sem as teclas. No Normal e no
+// Compacto, o ícone e o rótulo de cada aba (Ruling 10 da rc.3); no Mínimo, só os ícones (o nome de cada aba fica no
+// aria-label).
+import { numeroDaAba } from '../chat/formato';
 import { CHAT, rotuloDaAba } from '../chat/textos';
 import { IconBolt, IconClock, IconContacts, IconKeypad, IconMessage } from '../icons';
 import type { Tab } from '../types';
@@ -46,7 +48,7 @@ export function Nav({ tabs, tab, onSelect, keyShortcuts, naoLidas = 0 }: Props) 
               <Icon />
               {numero > 0 && (
                 <span class="tab-numero" aria-hidden="true">
-                  {numero}
+                  {numeroDaAba(numero)}
                 </span>
               )}
             </span>

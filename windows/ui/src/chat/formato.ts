@@ -1,8 +1,12 @@
-// Como a lista do chat escreve uma conversa: o nome, a prévia da última mensagem e a hora dela (a lista "Os textos
-// novos" do plano da etapa 2). Só apresentação, na hora local.
-import { clockTime, fold } from '../format';
-import { FOTO, nomeDaPessoa, textoDoAviso, VOCE } from './textos';
+// Como o chat escreve uma conversa: na lista, o nome, a prévia da última mensagem e a hora dela (a lista "Os textos
+// novos" do plano da etapa 2); (Task 6) no aviso do Windows, o título e o texto; e o número da aba. Só apresentação, na
+// hora local.
+import { clockTime, fold, limitCharacters } from '../format';
+import { arquivoNoAviso, FOTO, nomeDaPessoa, textoDoAviso as textoDoAvisoDeGrupo, VOCE } from './textos';
 import type { Conversa, Mensagem } from './tipos';
+
+/** O texto do aviso do Windows leva os primeiros 120 caracteres da mensagem. */
+const COMECO_NO_AVISO = 120;
 
 const DIAS_DA_SEMANA = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
@@ -49,9 +53,31 @@ function primeiroNome(nome: string): string {
 export function previa(c: Conversa, euId: number): string {
   const m: Mensagem | null = c.ultima;
   if (!m) return '';
-  if (m.tipo === 'aviso') return m.aviso ? textoDoAviso(m.aviso, euId) : '';
+  if (m.tipo === 'aviso') return m.aviso ? textoDoAvisoDeGrupo(m.aviso, euId) : '';
   const conteudo = m.tipo === 'arquivo' ? (m.arquivo?.foto ? FOTO : (m.arquivo?.nome ?? '')) : (m.texto ?? '');
   if (m.autor?.id === euId) return `${VOCE}: ${conteudo}`;
   if (c.tipo === 'grupo' && m.autor) return `${primeiroNome(m.autor.nome)}: ${conteudo}`;
   return conteudo;
+}
+
+/** O título do aviso do Windows: o nome de quem mandou; num grupo, "<nome> no <grupo>" ("João Pereira no Comercial"). */
+export function tituloDoAviso(c: Conversa, m: Mensagem): string {
+  const autor = m.autor?.nome ?? (c.tipo === 'dupla' ? c.com.nome : '');
+  return c.tipo === 'grupo' ? `${autor} no ${c.nome}` : autor;
+}
+
+/**
+ * O texto do aviso do Windows (não o de um aviso de grupo, que fica no textos.ts): o começo do texto, os 120 primeiros
+ * pontos de código, com "…" quando corta; uma foto é "Foto", e um arquivo, "Arquivo: <nome>".
+ */
+export function textoDoAviso(m: Mensagem): string {
+  if (m.tipo === 'arquivo') return m.arquivo?.foto ? FOTO : arquivoNoAviso(m.arquivo?.nome ?? '');
+  const texto = m.texto ?? '';
+  const comeco = limitCharacters(texto, COMECO_NO_AVISO);
+  return comeco === texto ? texto : `${comeco}…`;
+}
+
+/** O número da aba Chat (como o do ícone da barra de tarefas): de 1 a 9, e "9+" acima disso. */
+export function numeroDaAba(naoLidas: number): string {
+  return naoLidas > 9 ? '9+' : String(naoLidas);
 }

@@ -1,5 +1,6 @@
 // Os textos do chat, letra por letra: os da seção 10 da spec (docs/superpowers/specs/2026-11-04-starsonic-phone-chat-
-// design.md) e os da lista "Os textos novos" do plano da etapa 2. A hora e a prévia da lista ficam no formato.ts.
+// design.md) e os da lista "Os textos novos" do plano da etapa 2. A hora e a prévia da lista, e o título e o texto do
+// aviso do Windows, ficam no formato.ts.
 import type { AvisoDeGrupo, Pessoa } from './tipos';
 
 export const CHAT = 'Chat';
@@ -40,6 +41,69 @@ export function rotuloDaAba(naoLidas: number): string {
 /** O nome de uma pessoa: quem saiu do chat ganha " (saiu)". */
 export function nomeDaPessoa(p: Pessoa): string {
   return p.saiu ? `${p.nome} (saiu)` : p.nome;
+}
+
+// A conversa (os quadros Conversa, Grupo e SemConexao; os nomes de leitor de tela são os dos quadros).
+export const VOLTAR_PARA_AS_CONVERSAS = 'Voltar para as conversas';
+export const ESCREVA_UMA_MENSAGEM = 'Escreva uma mensagem';
+export const ESCREVA_PARA_O_GRUPO = 'Escreva para o grupo';
+export const ENVIAR = 'Enviar';
+/** No lugar da hora, enquanto a mensagem não chegou ao servidor. */
+export const ENVIANDO = 'Enviando…';
+export const NAO_ENVIADA = 'Não enviada';
+export const TENTAR_DE_NOVO = 'Tentar de novo';
+
+/** "Ramal 2003". */
+export function ramalN(ramal: string): string {
+  return `Ramal ${ramal}`;
+}
+
+/** O Ligar da conversa a dois: "Ligar para Ana Souza, ramal 2003". */
+export function ligarPara(nome: string, ramal: string): string {
+  return `Ligar para ${nome}, ramal ${ramal}`;
+}
+
+/** A linha de baixo do cabeçalho do grupo: "5 pessoas · ver os membros" (com uma, "1 pessoa", como nos Membros). */
+export function pessoasVerOsMembros(n: number): string {
+  return `${n === 1 ? '1 pessoa' : `${n} pessoas`} · ver os membros`;
+}
+
+/** O botão do cabeçalho do grupo, que leva aos Membros. */
+export function verOsMembrosDoGrupo(grupo: string): string {
+  return `Ver os membros do grupo ${grupo}`;
+}
+
+/** A lista de mensagens (o `log`): "Mensagens com Ana Souza" ou "Mensagens do grupo Comercial". */
+export function mensagensCom(nome: string): string {
+  return `Mensagens com ${nome}`;
+}
+
+export function mensagensDoGrupo(grupo: string): string {
+  return `Mensagens do grupo ${grupo}`;
+}
+
+/** O campo de escrever: "Mensagem para Ana Souza" ou "Mensagem para o grupo Comercial". */
+export function mensagemPara(nome: string): string {
+  return `Mensagem para ${nome}`;
+}
+
+export function mensagemParaOGrupo(grupo: string): string {
+  return `Mensagem para o grupo ${grupo}`;
+}
+
+/** Perto do limite do texto: "Faltam 150". */
+export function faltam(n: number): string {
+  return `Faltam ${n}`;
+}
+
+/** No lugar do campo de escrever, na conversa a dois com quem saiu do chat: "Ana Souza saiu do chat.". */
+export function saiuDoChat(nome: string): string {
+  return `${nome} saiu do chat.`;
+}
+
+/** O texto do aviso do Windows de um arquivo: "Arquivo: Pedido 4471.xlsx" (a foto é "Foto"). */
+export function arquivoNoAviso(nome: string): string {
+  return `Arquivo: ${nome}`;
 }
 
 /** O texto de um aviso de grupo; quem fez ou o alvo sou eu: "Você" no começo, "você" no meio. */

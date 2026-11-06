@@ -16,13 +16,17 @@
 // Teclado, do Transferir e da Nova ligação, no lugar dos `contatos`. As teclas do Teclado bipam com o Bipe ao digitar (o
 // `config.bipeTecla`), e o Sobre do iPhone abre os avisos de licença (Licencas.tsx).
 // (0.2.0) O chat (chat/): o cliente é criado uma vez, junto com a ponte, e recebe o `chat` do estado e a conta em uso a
-// cada mudança. A aba Chat entra nas abas do Windows só com o computador ligado ao chat (o `chat.ligado`), com o Ctrl+5;
-// o clique no aviso do chat (o `abrir` com a tela "chat") leva a ela. O cartão Chat fica na área do administrador.
+// cada mudança. A aba Chat entra nas abas do Windows só com o computador ligado ao chat (o `chat.ligado`), com o Ctrl+5.
+// O cartão Chat fica na área do administrador. (Task 6) A conversa (a vista chatConversa) toma o lugar das abas; o Esc,
+// sem diálogo nem menu aberto, volta dela para a lista. O clique no aviso do chat (o `abrir` com a tela "chat") leva à
+// conversa dele; com a conversa 0, ou uma que não está na lista quando ela chega, à aba Chat. Com outra pessoa no chat
+// (a troca de conta), as telas do chat da de antes saem para a aba Chat.
 import { render } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { createBridge } from './bridge';
 import { ChatCliente } from './chat/cliente';
 import { enderecoDoChat } from './chat/endereco';
+import { Conversa } from './chat/telas/Conversa';
 import { Lista } from './chat/telas/Lista';
 import { useVistaChat } from './chat/usarChat';
 import { AdminLogin } from './components/AdminLogin';
@@ -95,6 +99,13 @@ function comAdmin(v: View): View {
   return v.kind === 'admin' ? v : { kind: 'admin', back: v };
 }
 
+/** (0.2.0) As telas do chat fora da aba (a conversa, a nova conversa, o novo grupo, os membros e o pôr pessoas). */
+function telaDoChat(v: View): boolean {
+  return v.kind === 'chatConversa' || v.kind === 'chatNova' || v.kind === 'chatNovoGrupo' || v.kind === 'chatMembros' || v.kind === 'chatPor';
+}
+
+const ABA_CHAT: View = { kind: 'tab', tab: 'chat' };
+
 function App() {
   const [state, setState] = useState<AppState | null>(null);
   const [view, setView] = useState<View>(initialView);
@@ -157,10 +168,12 @@ function App() {
           msg.vez > atual.vez ? { vez: msg.vez, contatos: mesmaAgenda(atual.contatos, msg.contatos) ? atual.contatos : msg.contatos } : atual,
         );
       } else if (msg.type === 'abrir') {
-        // (iPhone) O toque no aviso da perdida. (0.2.0, Windows) O clique no aviso do chat: a aba Chat (a conversa do
-        // aviso vem na Task 6).
+        // (iPhone) O toque no aviso da perdida. (0.2.0, Windows) O clique no aviso do chat: a conversa dele (a lista ainda
+        // chegando mostra a aba Chat até ela), ou, com a conversa 0, a aba Chat.
         if (noIphone.current && msg.tela === 'recentes') setView({ kind: 'tab', tab: 'recentes' });
-        else if (!noIphone.current && msg.tela === 'chat') setView({ kind: 'tab', tab: 'chat' });
+        else if (!noIphone.current && msg.tela === 'chat') {
+          setView(msg.conversa > 0 ? { kind: 'chatConversa', conversa: msg.conversa, back: ABA_CHAT } : ABA_CHAT);
+        }
       }
     });
     bridge.send({ cmd: 'ready' });
@@ -180,6 +193,34 @@ function App() {
   useLayoutEffect(() => {
     chatCliente.atualizar({ chat: resumoDoChat, conta: contaEmUso && { ramal: contaEmUso.ramal, nome: contaEmUso.nome } });
   }, [resumoDoChat?.ligado, resumoDoChat?.contaConectada, resumoDoChat?.computador, contaEmUso?.ramal, contaEmUso?.nome]);
+
+  // (0.2.0) A conversa da vista chatConversa, quando a lista já a tem. Uma que não está nela com a lista já lida (o
+  // aviso de uma conversa que saiu, ou que não existe): a aba Chat.
+  const conversaDaVista = view.kind === 'chatConversa' ? (vistaChat.conversas.find((c) => c.id === view.conversa) ?? null) : null;
+  const semAConversa = view.kind === 'chatConversa' && vistaChat.situacao !== 'entrando' && conversaDaVista === null;
+  useEffect(() => {
+    if (semAConversa) setView(ABA_CHAT);
+  }, [semAConversa]);
+  // Outra pessoa no chat (a troca de conta, o chat que desligou ou saiu): as telas do chat da de antes saem.
+  const euNoChat = vistaChat.eu?.id ?? null;
+  const euAntes = useRef<number | null>(null);
+  useEffect(() => {
+    if (euAntes.current !== null && euAntes.current !== euNoChat) setView((v) => (telaDoChat(v) ? ABA_CHAT : v));
+    euAntes.current = euNoChat;
+  }, [euNoChat]);
+  // O Esc, sem diálogo nem menu aberto (e fora da ligação), volta da conversa para a lista.
+  const vistaAtual = useRef(view);
+  vistaAtual.current = view;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const v = vistaAtual.current;
+      if (e.key !== 'Escape' || e.isComposing || v.kind !== 'chatConversa' || atual.current?.ligacao) return;
+      if (document.querySelector('dialog[open], [role="menu"]')) return;
+      setView(v.back);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   // Um link tel:/sip:/callto: põe o número no Teclado (a cada vez que `tecladoVez` muda; nunca liga sozinho).
   useEffect(() => {
@@ -410,6 +451,23 @@ function App() {
         />
       );
       break;
+    case 'chatConversa':
+      // Sem a conversa na lista (ela ainda chegando), a aba Chat no lugar.
+      if (conversaDaVista) {
+        const daVista = view;
+        conteudo = (
+          <Conversa
+            key={conversaDaVista.id}
+            vista={vistaChat}
+            conversa={conversaDaVista}
+            cliente={chatCliente}
+            send={send}
+            onVoltar={() => setView(daVista.back)}
+            onMembros={() => setView({ kind: 'chatMembros', conversa: conversaDaVista.id, back: daVista })}
+          />
+        );
+      }
+      break;
     case 'tab':
     case 'admin':
       break;
@@ -427,8 +485,10 @@ function App() {
 
   // (iPhone) Sem a aba Atalhos: uma tela de antes que fosse ela (o cenário da ponte falsa) é o Teclado. (0.2.0) Sem o
   // computador ligado ao chat, sem a aba Chat (a tela que fosse ela é o Teclado, como as do chat que ainda não existem).
+  // A conversa que a lista ainda não tem mostra a aba Chat.
   const abas = ios ? IPHONE_TABS : state.chat?.ligado ? ABAS_COM_CHAT : ABAS_SEM_CHAT;
-  const tab = view.kind === 'tab' && abas.includes(view.tab) ? view.tab : 'teclado';
+  const tab =
+    view.kind === 'tab' && abas.includes(view.tab) ? view.tab : view.kind === 'chatConversa' && abas.includes('chat') ? 'chat' : 'teclado';
   const conta = state.conta;
   return (
     <div class="win" data-layout={layout} data-plataforma={plataforma}>
@@ -488,7 +548,7 @@ function App() {
             vista={vistaChat}
             onNovaConversa={() => setView({ kind: 'chatNova', back: view })}
             onNovoGrupo={() => setView({ kind: 'chatNovoGrupo', back: view })}
-            onAbrir={(conversa) => setView({ kind: 'chatConversa', conversa, back: view })}
+            onAbrir={(conversa) => setView({ kind: 'chatConversa', conversa, back: ABA_CHAT })}
             onFecharAviso={() => chatCliente.dispensarComputadorNovo()}
           />
         )}
