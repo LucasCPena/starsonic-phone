@@ -11,6 +11,14 @@ import { IconPhone } from './icons';
 import type { AppState, CallCard } from './state';
 
 const bridge = createBridge();
+// (0.2.0, R39, como na janela principal) Um arquivo arrastado para o aviso nunca navega, em lugar nenhum dele: sem
+// isto, o WebView2 abriria o file:// do arquivo (e o núcleo gravaria o caminho dele no diagnóstico). Um texto
+// arrastado fica com o navegador.
+for (const tipo of ['dragover', 'drop'] as const) {
+  document.addEventListener(tipo, (e) => {
+    if (e.dataTransfer?.types.includes('Files')) e.preventDefault();
+  });
+}
 
 /** A ligação que toca agora (a conferência nunca tem uma segunda tocando). */
 function ringingCard(state: AppState): CallCard | null {

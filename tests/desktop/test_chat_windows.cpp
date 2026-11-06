@@ -4,6 +4,7 @@
 #ifdef _WIN32
 #include <windows.h>
 
+#include <cstdint>
 #include <optional>
 #include <string>
 
@@ -97,8 +98,10 @@ TEST_CASE("the chat store keeps the key with the real DPAPI") {
 TEST_CASE("a saved download gets (2) the second time and the Zone.Identifier stream") {
     TempFolder folder;
     const std::string bytes("%PDF-1.4\r\n\0\x01\xff", 13);
-    const std::wstring first = SaveChatFile(folder.path, "a.pdf", bytes);
+    unsigned long saved = 99;
+    const std::wstring first = SaveChatFile(folder.path, "a.pdf", bytes, &saved);
     CHECK(first == folder.path + L"\\a.pdf");
+    CHECK(saved == 0);   // gravado: sem o codigo de erro
     const std::wstring second = SaveChatFile(folder.path, "a.pdf", "outro");
     CHECK(second == folder.path + L"\\a (2).pdf");
     CHECK(ReadAll(first) == std::optional<std::string>(bytes));
@@ -112,7 +115,11 @@ TEST_CASE("a saved download gets (2) the second time and the Zone.Identifier str
     CHECK(SaveChatFile(folder.path, std::string("..\\nota.exe\0.pdf", 16), "x") == folder.path + L"\\nota.exe.pdf");
     CHECK_FALSE(ReadAll(folder.path + L"\\nota.exe").has_value());
 
-    // Uma pasta que nao existe: "", e nada gravado.
-    CHECK(SaveChatFile(folder.path + L"\\nao-existe", "a.pdf", "x").empty());
+    // Uma pasta que nao existe: "", e nada gravado. (0.2.0) O codigo de erro do Windows vai para o diagnostico
+    // ("chat: download nao gravado (3)", o DownloadLine), sem o nome nem o caminho.
+    unsigned long error = 0;
+    CHECK(SaveChatFile(folder.path + L"\\nao-existe", "a.pdf", "x", &error).empty());
+    CHECK(error == ERROR_PATH_NOT_FOUND);
+    CHECK(DownloadLine(200, 1, static_cast<std::uint32_t>(error)) == "chat: download nao gravado (3)");
 }
 #endif

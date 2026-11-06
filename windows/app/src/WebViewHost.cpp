@@ -4,6 +4,7 @@
 
 #include <cstdio>
 
+#include "LogRedaction.h"
 #include "Text.h"
 #include "WebPermissions.h"
 #include "WebView2EnvironmentOptions.h"
@@ -207,14 +208,15 @@ void WebViewHost::Configure() {
             .Get(),
         &token);
 
-    // Nenhuma navegacao fora do app, nem janela nova.
+    // Nenhuma navegacao fora do app, nem janela nova. O diagnostico leva so o esquema (e o host no http, https, ws e
+    // wss: RedactUrl), nunca o caminho: um arquivo solto na janela navega para o file:// dele, com o nome do arquivo.
     auto blockOutside = [this](ICoreWebView2*, ICoreWebView2NavigationStartingEventArgs* args) -> HRESULT {
         LPWSTR uri = nullptr;
         args->get_Uri(&uri);
         const std::string url = TakeString(uri);
         if (!IsAppUrl(url)) {
             args->put_Cancel(TRUE);
-            Log("navegacao bloqueada: " + Short(url));
+            Log("navegacao bloqueada: " + RedactUrl(url));
         }
         return S_OK;
     };
@@ -227,7 +229,7 @@ void WebViewHost::Configure() {
                 LPWSTR uri = nullptr;
                 args->get_Uri(&uri);
                 args->put_Handled(TRUE);
-                Log("janela nova bloqueada: " + Short(TakeString(uri)));
+                Log("janela nova bloqueada: " + RedactUrl(TakeString(uri)));
                 return S_OK;
             })
             .Get(),

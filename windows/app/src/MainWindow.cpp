@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <utility>
 
+#include "ChatFiles.h"
 #include "WindowFit.h"
 #include "resource.h"
 
@@ -136,7 +137,8 @@ bool MainWindow::Create(HINSTANCE instance, const Options& options, Callbacks ca
         std::lock_guard<std::mutex> lock(mutex_);
         target_ = window_;
     }
-    badge_.Attach(window_);   // (0.2.0) o numero do chat vai ao botao quando ele aparecer (TaskbarButtonCreated)
+    // (0.2.0) o numero do chat vai ao botao quando ele aparecer (TaskbarButtonCreated)
+    badge_.Attach(window_, [this](const std::string& line) { Log(line); });
     // (0.2.0) A sessao do Windows bloqueada ou desconectada tira a janela da frente (WM_WTSSESSION_CHANGE). Sem o
     // aviso, vale a regra de antes (so a janela).
     sessionNotify_ = WTSRegisterSessionNotification(window_, NOTIFY_FOR_THIS_SESSION) != FALSE;
@@ -148,7 +150,9 @@ bool MainWindow::Create(HINSTANCE instance, const Options& options, Callbacks ca
     ApplyFrame();
 
     // A bandeja (o estado chega com o primeiro estado da ponte) e o aviso (o WebView dele abre depois do principal).
-    if (!tray_.Create(window_, instance)) Log("a bandeja nao aceitou o icone (tenta de novo quando o Explorer voltar)");
+    if (!tray_.Create(window_, instance, [this](const std::string& line) { Log(line); })) {
+        Log("a bandeja nao aceitou o icone (tenta de novo quando o Explorer voltar)");
+    }
     NoticeWindow::Callbacks noticeCallbacks;
     noticeCallbacks.command = [this](const std::string& json) {
         // O Atender do aviso traz a janela para a frente, na ligacao (spec da W1, 7.2).
@@ -475,7 +479,8 @@ void MainWindow::DrainOutbox() {
     bool changed = false;
     for (const std::string& json : pending) {
         if (webview_) webview_->Post(json);
-        notice_.Post(json);
+        // (0.2.0) A chave do chat (a chatChave) vai so para a janela principal (NoticeMayGet, ChatFiles.h).
+        if (NoticeMayGet(json)) notice_.Post(json);
         const std::optional<ShellStatus> status = ReadShellStatus(json);
         if (status) {
             status_ = *status;

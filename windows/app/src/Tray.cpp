@@ -4,7 +4,9 @@
 #include <shellapi.h>
 #include <windowsx.h>
 
+#include <cstdint>
 #include <cwchar>
+#include <utility>
 
 #include "ChatFiles.h"
 #include "Text.h"
@@ -58,9 +60,10 @@ UINT Tray::TaskbarCreatedMessage() {
     return message;
 }
 
-bool Tray::Create(HWND owner, HINSTANCE instance) {
+bool Tray::Create(HWND owner, HINSTANCE instance, std::function<void(const std::string&)> log) {
     owner_ = owner;
     instance_ = instance;
+    log_ = std::move(log);
     return Add();
 }
 
@@ -176,7 +179,18 @@ void Tray::ShowChatNotice(const std::wstring& titulo, const std::wstring& texto,
     // O icone do app (NIIF_USER com o hBalloonIcon, grande) e o som padrao do aviso (sem o NIIF_NOSOUND).
     data.dwInfoFlags = NIIF_USER | NIIF_LARGE_ICON;
     data.hBalloonIcon = noticeIcon_;
-    Shell_NotifyIconW(NIM_MODIFY, &data);
+    // O aviso que nao apareceu vai ao diagnostico com o codigo, e nada mais (ShellFailureLine). O Shell_NotifyIconW so
+    // diz que falhou: o codigo e o do GetLastError, quando ele deixa um (o E_FAIL, quando nao).
+    SetLastError(ERROR_SUCCESS);
+    if (!Shell_NotifyIconW(NIM_MODIFY, &data)) {
+        const DWORD error = GetLastError();
+        const HRESULT result = error != ERROR_SUCCESS ? HRESULT_FROM_WIN32(error) : E_FAIL;
+        Log(ShellFailureLine("aviso", "Shell_NotifyIconW", static_cast<std::uint32_t>(result)));
+    }
+}
+
+void Tray::Log(const std::string& line) const {
+    if (log_) log_(line);
 }
 
 Tray::Choice Tray::Handle(WPARAM wParam, LPARAM lParam) {

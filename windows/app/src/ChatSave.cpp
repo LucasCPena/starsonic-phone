@@ -49,7 +49,14 @@ DWORD WriteText(const std::wstring& path, const std::string& text) {
 
 }  // namespace
 
-std::wstring SaveChatFile(const std::wstring& pasta, const std::string& nome, const std::string& bytes) {
+std::wstring SaveChatFile(const std::wstring& pasta, const std::string& nome, const std::string& bytes,
+                          unsigned long* erro) {
+    // (0.2.0) O codigo de erro da chamada que falhou vai para o diagnostico (ChatSave.h), e o caminho e "".
+    const auto failed = [erro](DWORD error) {
+        if (erro) *erro = error;
+        return std::wstring();
+    };
+    if (erro) *erro = 0;
     // O nome limpo ja e UTF-8 valido e sem NUL: a conversao para o UTF-16 nunca o corta.
     const std::string safe = SafeDownloadName(nome);
     const auto exists = [&pasta](const std::string& candidate) {
@@ -57,14 +64,14 @@ std::wstring SaveChatFile(const std::wstring& pasta, const std::string& nome, co
     };
     for (int attempt = 0; attempt < kCreateAttempts; ++attempt) {
         const std::string name = FreeName(safe, exists);
-        if (name.empty()) return std::wstring();
+        if (name.empty()) return failed(ERROR_FILE_EXISTS);   // do "(2)" ao "(1000)", todos ja existem
         const std::wstring path = PathIn(pasta, name);
         // CREATE_NEW: nunca por cima de um arquivo que ja estava la.
         HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
         if (file == INVALID_HANDLE_VALUE) {
-            const DWORD error = GetLastError();
+            const DWORD error = LastError();
             if (error == ERROR_FILE_EXISTS || error == ERROR_ALREADY_EXISTS) continue;   // outro chegou antes
-            return std::wstring();
+            return failed(error);
         }
         // A marca antes de qualquer byte do conteudo (ChatSave.h). Se o fluxo nao abre com o arquivo aberto (o
         // compartilhamento), o arquivo vazio fecha, o fluxo e gravado, e o arquivo abre de novo para o conteudo.
@@ -79,13 +86,17 @@ std::wstring SaveChatFile(const std::wstring& pasta, const std::string& nome, co
                                    nullptr);
             }
         }
-        const bool written = marked == 0 && file != INVALID_HANDLE_VALUE && WriteAll(file, bytes);
+        // O erro da chamada que falhou: a marca, o arquivo que nao abriu de novo ou o conteudo (lido antes do
+        // CloseHandle e do DeleteFileW, que trocam o GetLastError).
+        DWORD error = marked;
+        if (error == 0 && file == INVALID_HANDLE_VALUE) error = LastError();
+        if (error == 0 && !WriteAll(file, bytes)) error = LastError();
         if (file != INVALID_HANDLE_VALUE) CloseHandle(file);
-        if (written) return path;
+        if (error == 0) return path;
         DeleteFileW(path.c_str());   // sem a marca da internet, ou com o conteudo pela metade
-        return std::wstring();
+        return failed(error);
     }
-    return std::wstring();
+    return failed(ERROR_FILE_EXISTS);   // a cada tentativa, outro arquivo chegou antes com o nome livre
 }
 
 }  // namespace starsonic

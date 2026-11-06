@@ -1,5 +1,6 @@
 #include "LogRedaction.h"
 
+#include <algorithm>
 #include <cctype>
 
 namespace starsonic {
@@ -9,8 +10,38 @@ namespace {
 const char kHidden[] = " <oculto>";
 const std::string kHeader = "authorization";
 const std::string kProxy = "proxy-";
+// O RedactUrl de um texto sem esquema: um texto fixo, nunca o texto.
+const char kNoScheme[] = "(sem esquema)";
 
 bool IsBlank(char ch) { return ch == ' ' || ch == '\t'; }
+
+// Os caracteres do ASCII (o std::isalpha e o std::isdigit dependem do locale).
+bool IsAsciiLetter(char ch) { return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z'); }
+bool IsAsciiDigit(char ch) { return ch >= '0' && ch <= '9'; }
+
+// Um caractere do esquema de um endereco: o primeiro e uma letra; os outros, letras, digitos, "+", "-" ou ".".
+bool IsSchemeChar(char ch, bool first) {
+    if (IsAsciiLetter(ch)) return true;
+    return !first && (IsAsciiDigit(ch) || ch == '+' || ch == '-' || ch == '.');
+}
+
+// Um host como o navegador o da (o IDN ja em punycode): letras, digitos, ".", "-" e "_", ou o IPv6 entre colchetes.
+// Qualquer outro caractere (um espaco, uma quebra de linha, um byte fora do ASCII) faz o host nao ir ao diagnostico.
+bool IsHost(const std::string& host) {
+    if (host.size() > 2 && host.front() == '[' && host.back() == ']') {
+        // O IPv6: digitos hexadecimais, ":" e "." (o IPv4 no fim).
+        for (size_t i = 1; i + 1 < host.size(); ++i) {
+            const char ch = host[i];
+            const bool hex = IsAsciiDigit(ch) || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F');
+            if (!hex && ch != ':' && ch != '.') return false;
+        }
+        return true;
+    }
+    for (const char ch : host) {
+        if (!IsAsciiLetter(ch) && !IsAsciiDigit(ch) && ch != '.' && ch != '-' && ch != '_') return false;
+    }
+    return true;
+}
 
 std::string Lower(const std::string& text) {
     std::string out = text;
@@ -64,6 +95,29 @@ std::string RedactSecrets(const std::string& text) {
         folding = true;
     }
     return out;
+}
+
+std::string RedactUrl(const std::string& url) {
+    // O esquema (RFC 3986): uma letra, depois letras, digitos, "+", "-" ou ".", ate os dois pontos.
+    size_t colon = 0;
+    while (colon < url.size() && IsSchemeChar(url[colon], colon == 0)) ++colon;
+    if (colon == 0 || colon >= url.size() || url[colon] != ':') return kNoScheme;
+    const std::string scheme = Lower(url.substr(0, colon));
+    const std::string bare = scheme + ":";
+    if (scheme != "http" && scheme != "https" && scheme != "ws" && scheme != "wss") return bare;
+    // O host: depois do "//", ate o fim da autoridade, sem o usuario e a senha (o que vem ate o ultimo "@") e sem a
+    // porta. O "\" tambem termina a autoridade (o navegador o le como "/" nesses esquemas).
+    if (url.compare(colon + 1, 2, "//") != 0) return bare;
+    const size_t start = colon + 3;
+    const size_t end = std::min(url.find_first_of("/?#\\", start), url.size());
+    std::string host = url.substr(start, end - start);
+    const size_t at = host.rfind('@');
+    if (at != std::string::npos) host.erase(0, at + 1);
+    // O IPv6 vem entre colchetes ("[::1]"); nos outros, a porta vem depois dos dois pontos.
+    const size_t cut = (host.empty() || host[0] != '[') ? host.find(':') : host.find(']');
+    if (cut != std::string::npos) host.erase(host[0] == '[' ? cut + 1 : cut);
+    if (host.empty() || !IsHost(host)) return bare;
+    return scheme + "://" + host;
 }
 
 }  // namespace starsonic

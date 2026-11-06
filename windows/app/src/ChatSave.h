@@ -11,7 +11,10 @@ namespace starsonic {
 // falhou. A marca vem antes do conteudo: o fluxo e gravado logo depois do CREATE_NEW, antes de qualquer byte (o Stop do
 // ChatDownloader nao espera a gravacao, e o logoff pode encerrar o processo no meio dela). Assim, um app que morre no
 // meio deixa no maximo um arquivo incompleto que ja tem a marca (ou, antes dela, um arquivo vazio). Qualquer falha (a
-// marca, como num disco sem fluxos, ou o conteudo) apaga o arquivo.
-std::wstring SaveChatFile(const std::wstring& pasta, const std::string& nome, const std::string& bytes);
+// marca, como num disco sem fluxos, ou o conteudo) apaga o arquivo. (0.2.0) erro, quando vem: o codigo de erro do
+// Windows da chamada que falhou (o GetLastError dela, nunca 0; o ERROR_FILE_EXISTS quando nenhum nome ficou livre), ou
+// 0 com o arquivo gravado. O diagnostico leva so esse codigo (DownloadLine, ChatFiles.h).
+std::wstring SaveChatFile(const std::wstring& pasta, const std::string& nome, const std::string& bytes,
+                          unsigned long* erro = nullptr);
 
 }  // namespace starsonic

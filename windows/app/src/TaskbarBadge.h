@@ -15,6 +15,9 @@
 #include <shobjidl.h>
 #include <wrl/client.h>
 
+#include <functional>
+#include <string>
+
 namespace starsonic {
 
 class TaskbarBadge {
@@ -25,8 +28,9 @@ public:
     TaskbarBadge(const TaskbarBadge&) = delete;
     TaskbarBadge& operator=(const TaskbarBadge&) = delete;
 
-    // A janela do botao (logo depois de criada, antes de aparecer).
-    void Attach(HWND window);
+    // A janela do botao (logo depois de criada, antes de aparecer). log: uma linha do diagnostico (o CoCreateInstance,
+    // o HrInit e o SetOverlayIcon que falham: "numero no icone: <operacao> falhou (0x<HRESULT>)", ShellFailureLine).
+    void Attach(HWND window, std::function<void(const std::string&)> log);
     // A janela fechou: solta o ITaskbarList3, e nada mais vai ao botao.
     void Detach();
     // A mensagem TaskbarButtonCreated: o ITaskbarList3 (de novo), com o numero de agora.
@@ -39,8 +43,10 @@ public:
 
 private:
     void Apply();
+    void Fail(const char* operacao, HRESULT result) const;
 
     HWND window_ = nullptr;
+    std::function<void(const std::string&)> log_;
     Microsoft::WRL::ComPtr<ITaskbarList3> taskbar_;   // nada antes do primeiro TaskbarButtonCreated
     int count_ = 0;
 };

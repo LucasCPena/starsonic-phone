@@ -494,11 +494,36 @@ download dos arquivos.
 - **Os ramais conectados:** a cada registro (2xx) da conta do motor, também o do Entrar, o par `servidor|ramal` dela
   entra no `chat.json`, se ainda não estava (com o `chat.json` que não se lê, só na memória: ver acima). O servidor vai
   em minúsculas, e os dois sem os espaços das pontas. O `chatUnlink` não tira os ramais.
-- **A chave nunca vai no estado nem no diagnóstico.** Ela só vem na `chatChave`, a resposta ao `chatKey`.
-  - O diagnóstico também nunca leva a empresa, o título e o texto do aviso, nem o nome do arquivo.
-  - Cada comando do chat deixa só `chat: <comando>` (no `chatBadge`, com o número: `chat: chatBadge 3`).
+- **A chave nunca vai no estado nem no diagnóstico.** Ela só vem na `chatChave`, a resposta ao `chatKey`, que o
+  executável manda só para a janela principal (nunca para o `aviso.html`).
+  - O diagnóstico também nunca leva a empresa, o texto de uma mensagem, o título e o texto do aviso, o nome ou o
+    caminho de um arquivo, nem o nome de uma pessoa. As linhas do chat são só estas:
+    - cada comando, pelo nome: `chat: chatKey`, `chat: chatLink`, `chat: chatUnlink`, `chat: chatNotify` e
+      `chat: chatDownload`; o `chatBadge`, só quando o número muda, com ele: `chat: chatBadge 3`. No lugar da linha do
+      comando, o `chatNotify` com o Não perturbe ligado deixa `chat: aviso calado (nao perturbe)`, e o `chatDownload`
+      sem a chave, `chat: chatDownload ignorado (sem a chave)`;
+    - o `chat.json`: `chat.json ilegivel: o computador fica desligado do chat` (na abertura),
+      `chat.json: a chave do chat nao foi gravada` (o `chatLink`), `chat.json: a chave do chat nao foi apagada` (o
+      `chatUnlink`) e `chat.json: o ramal conectado nao foi gravado` (um registro);
+    - o download: `chat: download <status> <bytes>` (a resposta do servidor: o status HTTP, 0 sem resposta, e o
+      tamanho) e `chat: download recusado (o id do arquivo)`. O arquivo que veio (o 200) e não foi gravado na pasta
+      Downloads (a pasta que o Windows não deu, o disco sem o fluxo `Zone.Identifier`, o caminho comprido demais, o
+      disco cheio) deixa `chat: download nao gravado (<código>)`, no lugar do `chat: download 200 <bytes>`, com o código
+      de erro do Windows da chamada que falhou, em decimal (`chat: download nao gravado (112)`); a pasta Downloads que
+      falhou sem um código da Win32 leva o HRESULT, em hexadecimal (`chat: download nao gravado (0x80004005)`);
+    - o aviso e o número que o Windows recusou, com o nome da operação e o HRESULT em hexadecimal:
+      `aviso: Shell_NotifyIconW falhou (0x80004005)` e `numero no icone: <operação> falhou (0x…)`, com a operação
+      `CoCreateInstance`, `HrInit` ou `SetOverlayIcon`;
+    - `chat: sem o aviso de bloqueio da sessao (<código>)`: o Windows não avisa o executável quando a sessão bloqueia,
+      e a janela conta como na frente só por ela (visível, sem minimizar e ativa).
+  - A navegação para fora do app, nas duas janelas, é bloqueada, e a linha leva só o esquema do endereço, com o host
+    no `http`, `https`, `ws` e `wss`: nunca o caminho, a consulta, o fragmento, a porta, nem o usuário e a senha. Por
+    exemplo: `navegacao bloqueada: file:` (um arquivo solto na janela), `navegacao bloqueada: https://exemplo.com` e
+    `janela nova bloqueada: blob:`. Um endereço sem esquema vai como `(sem esquema)`. Na janela do aviso de ligação, a
+    linha começa com `aviso: ` (`aviso: navegacao bloqueada: file:`).
   - Um comando recusado deixa `comando ignorado: <comando>: <motivo>`, e o motivo diz o campo, nunca o valor:
-    `chatLink: chave invalida`, `chatNotify: titulo invalido`, `chatBadge: falta o campo n`.
+    `chatLink: chave invalida`, `chatNotify: titulo invalido`, `chatBadge: falta o campo n`. No iPhone, os comandos do
+    chat são recusados com `comando recusado no modo iPhone: <comando>` (ver "O modo iPhone").
 
 ### O campo do estado
 
@@ -569,7 +594,8 @@ download dos arquivos.
 
 - O `DesktopApp` roda tudo numa thread de comandos própria; `post` é chamado só nela, uma mensagem por vez, na
   ordem: o executável repassa cada uma ao `PostWebMessageAsJson` (na thread da janela), nas duas páginas: a janela
-  principal (`index.html`) e o aviso de ligação recebida (`aviso.html`, um segundo WebView2 com o mesmo ambiente).
+  principal (`index.html`) e o aviso de ligação recebida (`aviso.html`, um segundo WebView2 com o mesmo ambiente). A
+  `chatChave` (0.2.0) vai só para a janela principal.
   Os comandos das duas vão ao mesmo `DesktopApp`; o `answer` do aviso também traz a janela principal para a frente.
   `HandleCommand` pode ser chamado da thread da janela (ele só lê o JSON e põe na fila).
 - O executável lê o `state` que passa (sem perguntar ao `DesktopApp`): com uma recebida tocando (`top.phase`

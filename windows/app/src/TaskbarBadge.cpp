@@ -1,7 +1,9 @@
 #include "TaskbarBadge.h"
 
+#include <cstdint>
 #include <cstring>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "ChatFiles.h"
@@ -177,7 +179,10 @@ UINT TaskbarBadge::ButtonCreatedMessage() {
     return message;
 }
 
-void TaskbarBadge::Attach(HWND window) { window_ = window; }
+void TaskbarBadge::Attach(HWND window, std::function<void(const std::string&)> log) {
+    window_ = window;
+    log_ = std::move(log);
+}
 
 void TaskbarBadge::Detach() {
     taskbar_.Reset();
@@ -189,9 +194,15 @@ void TaskbarBadge::OnButtonCreated() {
     // Um ITaskbarList3 novo a cada botao: o de antes pode falar com o Explorer que saiu.
     taskbar_.Reset();
     Microsoft::WRL::ComPtr<ITaskbarList3> taskbar;
-    if (FAILED(CoCreateInstance(CLSID_TaskbarList, nullptr, CLSCTX_INPROC_SERVER,
-                                IID_PPV_ARGS(taskbar.GetAddressOf()))) ||
-        FAILED(taskbar->HrInit())) {
+    const HRESULT created =
+        CoCreateInstance(CLSID_TaskbarList, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(taskbar.GetAddressOf()));
+    if (FAILED(created)) {
+        Fail("CoCreateInstance", created);
+        return;
+    }
+    const HRESULT initialized = taskbar->HrInit();
+    if (FAILED(initialized)) {
+        Fail("HrInit", initialized);
         return;
     }
     taskbar_ = taskbar;
@@ -206,7 +217,8 @@ void TaskbarBadge::Set(int n) {
 void TaskbarBadge::Apply() {
     if (!taskbar_ || !window_) return;
     if (count_ == 0) {
-        taskbar_->SetOverlayIcon(window_, nullptr, nullptr);
+        const HRESULT cleared = taskbar_->SetOverlayIcon(window_, nullptr, nullptr);
+        if (FAILED(cleared)) Fail("SetOverlayIcon", cleared);
         return;
     }
     UINT dpi = GetDpiForWindow(window_);
@@ -214,8 +226,14 @@ void TaskbarBadge::Apply() {
     const HICON icon = DrawBadge(Utf8ToWide(BadgeText(count_)), GetSystemMetricsForDpi(SM_CXSMICON, dpi));
     const std::wstring description = Utf8ToWide(BadgeDescription(count_));
     // A barra de tarefas guarda uma copia: o icone sai logo depois.
-    taskbar_->SetOverlayIcon(window_, icon, description.c_str());
+    const HRESULT shown = taskbar_->SetOverlayIcon(window_, icon, description.c_str());
     if (icon) DestroyIcon(icon);
+    if (FAILED(shown)) Fail("SetOverlayIcon", shown);
+}
+
+void TaskbarBadge::Fail(const char* operacao, HRESULT result) const {
+    // So o nome da operacao e o codigo (ShellFailureLine): nunca o numero nem a descricao dele.
+    if (log_) log_(ShellFailureLine("numero no icone", operacao, static_cast<std::uint32_t>(result)));
 }
 
 }  // namespace starsonic

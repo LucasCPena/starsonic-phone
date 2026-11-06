@@ -1,9 +1,10 @@
 // A API do chat (docs/chat-protocolo.md, seções 5 e 6): um método para cada operação. A chave vai só no Authorization e
-// só para o endereço do chat (a `base`); nenhum pedido segue um redirecionamento nem leva cookies, e nenhum espera mais de
-// 20 s pela resposta. Os erros vêm como ErroChat, com o status e o `erro` do protocolo (seção 2). (Task 7) Os arquivos:
-// o upload vai pelo XMLHttpRequest (ele manda o Content-Length e dá o progresso), e a miniatura e os downloads pelo
-// fetch; nos três, os 20 s contam desde o último pedaço que andou (um arquivo de 25 MB numa rede lenta leva mais que
-// isso, mas nunca 20 s parado).
+// só para o endereço do chat (a `base`); nenhum pedido leva cookies, nenhum pedido do fetch segue um redirecionamento
+// (o `redirect: 'error'`), e nenhum espera mais de 20 s pela resposta. Os erros vêm como ErroChat, com o status e o
+// `erro` do protocolo (seção 2). (Task 7) Os arquivos: o upload vai pelo XMLHttpRequest (ele manda o Content-Length e
+// dá o progresso), que segue um redirecionamento sozinho e só depois recusa a resposta (ver o enviarComProgresso), e a
+// miniatura e os downloads pelo fetch; nos três, os 20 s contam desde o último pedaço que andou (um arquivo de 25 MB
+// numa rede lenta leva mais que isso, mas nunca 20 s parado).
 import type { Arquivo, Conversa, Membro, Mensagem, Pessoa } from './tipos';
 
 /** As mensagens vêm em páginas de 50 (o máximo do protocolo). */
@@ -128,8 +129,10 @@ async function pedir(base: string, chave: string | null, metodo: string, caminho
 /**
  * (Task 7) O upload de um arquivo (o POST /arquivos), pelo XMLHttpRequest: ele manda o Content-Length (o servidor
  * reserva a cota da hora por ele) e dá o progresso do envio. O nome vai no X-Arquivo-Nome, em percent-encoding. O
- * XMLHttpRequest segue um redirecionamento sozinho: a resposta que vem de outro endereço não vale (como o `redirect:
- * 'error'` do fetch).
+ * XMLHttpRequest não tem o `redirect: 'error'` do fetch: ele segue um redirecionamento sozinho (num 307 ou 308, com o
+ * arquivo de novo, para o outro endereço), e só depois, no `onload`, a resposta que veio de outro endereço (o
+ * `responseURL`) é recusada. A chave não vaza assim: num redirecionamento para outra origem, o Chromium (o do WebView2)
+ * tira o Authorization do pedido.
  */
 function enviarComProgresso(
   base: string,

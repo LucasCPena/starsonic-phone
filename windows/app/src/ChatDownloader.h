@@ -8,7 +8,10 @@
 //   abrir um programa que veio da internet). O done leva "".
 // - O toast de cada resultado e o DownloadToast (ChatFiles.h): o 410 (o arquivo passou de 365 dias) leva "Arquivo
 //   expirado"; qualquer outra coisa (a rede, outro status, o disco) leva "Nao foi possivel baixar o arquivo.".
-// O diagnostico leva so "chat: download <status> <bytes>": nunca a chave, o id nem o nome do arquivo.
+// O diagnostico leva so "chat: download <status> <bytes>" ou, com o 200 que nao foi gravado (a pasta Downloads, o
+// fluxo Zone.Identifier, o caminho, o disco), "chat: download nao gravado (<codigo>)", com o codigo de erro do Windows
+// (DownloadLine, ChatFiles.h); e "chat: download recusado (o id do arquivo)". Nunca a chave, o id, o nome nem o caminho
+// do arquivo.
 //
 // Threads: como o CompanyFetcher, uma thread propria (com o COM dela, para o ShellExecuteW) baixa os pedidos, um por
 // vez, na ordem; Download so poe na fila e volta (a thread de comandos do DesktopApp nunca espera a rede nem o disco).

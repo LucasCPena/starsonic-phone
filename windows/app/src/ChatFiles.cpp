@@ -1,5 +1,9 @@
 #include "ChatFiles.h"
 
+#include <cstdio>
+
+#include "nlohmann/json.hpp"
+
 namespace starsonic {
 
 namespace {
@@ -15,6 +19,17 @@ const char kEllipsis[] = "\xe2\x80\xa6";   // U+2026
 // O download: o arquivo veio (200) ou passou de 365 dias e saiu do servidor (410).
 constexpr int kStatusOk = 200;
 constexpr int kStatusGone = 410;
+// O maior codigo de erro da Win32 (16 bits): o DownloadLine o mostra em decimal, e um HRESULT, em hexadecimal.
+constexpr std::uint32_t kMaxWin32Error = 0xFFFF;
+// A mensagem com a chave do chat (a resposta ao chatKey, Protocol.h): so para a janela principal.
+const char kChatKeyType[] = "chatChave";
+
+// O codigo em hexadecimal, com os 8 digitos e o 0x ("0x80004005"), como o HRESULT no resto do diagnostico.
+std::string Hex(std::uint32_t code) {
+    char text[16];
+    std::snprintf(text, sizeof(text), "0x%08lx", static_cast<unsigned long>(code));
+    return text;
+}
 
 // Os pontos de codigo do texto UTF-8. Uma sequencia invalida (o byte solto, a sequencia cortada, a forma longa, o
 // substituto, acima de U+10FFFF) vira um kInvalid, e a leitura recomeca no byte que a quebrou: a regra do Utf8ToWide
@@ -110,9 +125,12 @@ bool IsBidiControl(char32_t code) {
            (code >= 0x2066 && code <= 0x2069);
 }
 
-// Os que o Windows nao aceita num nome de arquivo, menos as barras (que separam a pasta).
+// Os que o Windows nao aceita num nome de arquivo, menos as barras (que separam a pasta), e as chaves: o Windows
+// aceita, mas trata a extensao ".{CLSID}" como um objeto do shell (o arquivo abriria com outro programa, sem mostrar o
+// tipo).
 bool IsForbidden(char32_t code) {
-    return code == U':' || code == U'*' || code == U'?' || code == U'"' || code == U'<' || code == U'>' || code == U'|';
+    return code == U':' || code == U'*' || code == U'?' || code == U'"' || code == U'<' || code == U'>' ||
+           code == U'|' || code == U'{' || code == U'}';
 }
 
 bool IsDotOrSpace(char32_t code) { return code == U'.' || code == U' '; }
@@ -231,6 +249,27 @@ std::string FitNoticeText(const std::string& utf8, size_t maxUtf16Units) {
         used += units(code);
     }
     return Encode(kept) + kEllipsis;
+}
+
+std::string DownloadLine(int status, size_t bytes, std::uint32_t naoGravado) {
+    if (naoGravado == 0) return "chat: download " + std::to_string(status) + " " + std::to_string(bytes);
+    // Os codigos de erro da Win32 cabem em 16 bits (o HRESULT_CODE); acima disso, e um HRESULT sem um deles.
+    const std::string code = naoGravado <= kMaxWin32Error ? std::to_string(naoGravado) : Hex(naoGravado);
+    return "chat: download nao gravado (" + code + ")";
+}
+
+bool NoticeMayGet(const std::string& json) {
+    // A maioria das mensagens nem cita a chatChave: nem le o JSON.
+    if (json.find(kChatKeyType) == std::string::npos) return true;
+    const nlohmann::json parsed = nlohmann::json::parse(json, nullptr, /*allow_exceptions=*/false);
+    // Um texto que cita a chatChave e nao se le fica de fora (o aviso so le o estado).
+    if (!parsed.is_object()) return false;
+    const auto type = parsed.find("type");
+    return type == parsed.end() || !type->is_string() || type->get<std::string>() != kChatKeyType;
+}
+
+std::string ShellFailureLine(const char* onde, const char* operacao, std::uint32_t hresult) {
+    return std::string(onde) + ": " + operacao + " falhou (" + Hex(hresult) + ")";
 }
 
 }  // namespace starsonic

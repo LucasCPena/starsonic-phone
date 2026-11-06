@@ -11,6 +11,7 @@
 #include <windows.h>
 
 #include <cstdint>
+#include <functional>
 #include <string>
 
 #include "ShellState.h"
@@ -31,8 +32,9 @@ public:
     Tray(const Tray&) = delete;
     Tray& operator=(const Tray&) = delete;
 
-    // Poe o icone na bandeja. false: o Windows recusou (tenta de novo no TaskbarCreated).
-    bool Create(HWND owner, HINSTANCE instance);
+    // Poe o icone na bandeja. false: o Windows recusou (tenta de novo no TaskbarCreated). log: uma linha do diagnostico
+    // (0.2.0: o aviso do chat que o Windows recusou, so com o codigo: ShellFailureLine, ChatFiles.h).
+    bool Create(HWND owner, HINSTANCE instance, std::function<void(const std::string&)> log);
     // O Explorer reiniciou (a mensagem TaskbarCreated): o icone volta.
     void Recreate();
     void Remove();
@@ -45,7 +47,7 @@ public:
     // (0.2.0) O aviso de uma mensagem do chat: o titulo e o texto no tamanho do NOTIFYICONDATA (FitNoticeText: 63 e
     // 255 unidades do UTF-16, sem partir um emoji), com o icone do app grande e o som padrao do aviso. Guarda a
     // conversa (0: a aba Chat) para o clique; um aviso novo toma o lugar do anterior. Sem o icone na bandeja, nada
-    // aparece.
+    // aparece. O Shell_NotifyIconW que falha deixa "aviso: Shell_NotifyIconW falhou (0x<HRESULT>)" no diagnostico.
     void ShowChatNotice(const std::wstring& titulo, const std::wstring& texto, int64_t conversa);
     // A conversa do ultimo aviso do chat (0 antes do primeiro).
     int64_t NoticeConversation() const { return noticeConversation_; }
@@ -61,9 +63,11 @@ private:
     void Update();
     HICON IconFor(TrayIcon icon);
     Choice ShowMenu(int x, int y);
+    void Log(const std::string& line) const;
 
     HWND owner_ = nullptr;
     HINSTANCE instance_ = nullptr;
+    std::function<void(const std::string&)> log_;
     bool added_ = false;
     TrayIcon icon_ = TrayIcon::Offline;
     bool doNotDisturb_ = false;

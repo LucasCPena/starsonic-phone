@@ -5,8 +5,9 @@
 // aviso.html. A MainWindow mostra o aviso quando ha uma ligacao tocando e ela nao esta na frente, e esconde quando
 // para de tocar ou quando ela vem para a frente.
 //
-// O WebView2 do aviso usa o ambiente da janela principal (o mesmo perfil), recebe as mesmas mensagens da ponte e
-// manda os comandos dele ao mesmo DesktopApp (callbacks.command). O aviso nunca toca: o aviso.html nao tem som (so a
+// O WebView2 do aviso usa o ambiente da janela principal (o mesmo perfil), recebe as mesmas mensagens da ponte (menos
+// a chatChave, que vai so para a janela principal: NoticeMayGet, ChatFiles.h) e manda os comandos dele ao mesmo
+// DesktopApp (callbacks.command). O aviso nunca toca: o aviso.html nao tem som (so a
 // janela principal toca), e a navegacao fica presa ao host do app como na principal (WebViewHost).
 //
 // Tudo na thread da janela principal.

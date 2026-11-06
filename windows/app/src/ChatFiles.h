@@ -1,9 +1,11 @@
 #pragma once
 // As regras do chat no executavel (0.2.0; spec do chat, 6.4; docs/ponte-windows.md, "O chat (0.2.0)"): o numero no
 // icone da barra de tarefas (TaskbarBadge), o corte do titulo e do texto do aviso do Windows (Tray), o nome do arquivo
-// baixado e o Zone.Identifier dele (ChatSave) e o endereco do servidor do chat (ChatDownloader). C++ portatil, em
-// UTF-8 e sem o windows.h: testado tambem no Linux (tests/desktop/test_chat_files.cpp).
+// baixado e o Zone.Identifier dele (ChatSave), o endereco do servidor do chat (ChatDownloader), as linhas do
+// diagnostico das falhas do aviso, do numero e do download e a mensagem que o aviso de ligacao nao recebe
+// (MainWindow). C++ portatil, em UTF-8 e sem o windows.h: testado tambem no Linux (tests/desktop/test_chat_files.cpp).
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <string>
 
@@ -26,7 +28,8 @@ std::string BadgeDescription(int n);
 // - saem os controles da direcao do texto (U+061C, U+200E, U+200F, U+202A a U+202E e U+2066 a U+2069: o
 //   "Proposta<U+202E>fdp.exe" aparece como "Propostaexe.pdf");
 // - fica so a parte depois da ultima "/" ou "\" (nunca fora da pasta);
-// - saem os caracteres que o Windows nao aceita num nome (: * ? " < > |; o ":" abriria um fluxo do arquivo);
+// - saem os caracteres que o Windows nao aceita num nome (: * ? " < > |; o ":" abriria um fluxo do arquivo) e as chaves
+//   ({ e }: uma extensao ".{CLSID}" faria o Windows abrir o arquivo com outro programa, escondendo o tipo dele);
 // - saem os pontos e os espacos das pontas (o Windows tira os do fim);
 // - fica com ate 120 pontos de codigo, mantendo a extensao (a do ultimo ponto), como o servidor do chat;
 // - vazio, vira "arquivo";
@@ -49,10 +52,30 @@ std::string ZoneIdentifier();
 // acentos) com qualquer outra coisa: o 200 sem gravar, a rede (o status 0) ou outro status.
 std::string DownloadToast(int status, bool saved);
 
+// A linha do diagnostico de um download (ChatDownloader): "chat: download <status> <bytes>", a resposta do servidor (o
+// status 0: sem resposta). naoGravado: o codigo de erro do Windows da chamada que nao deixou gravar na pasta Downloads
+// o arquivo que veio (o 200 inteiro): a pasta que o Windows nao deu, o fluxo Zone.Identifier que o disco nao aceita
+// (R8), o caminho comprido demais, o disco cheio; 0 quando ele foi gravado, ou quando nao havia o que gravar. Com ele,
+// a linha e "chat: download nao gravado (<codigo>)", no lugar do "chat: download 200 <bytes>" de um arquivo gravado: o
+// codigo em decimal, ou, acima de 0xFFFF (o HRESULT da pasta Downloads sem um codigo da Win32 dentro), em hexadecimal
+// ("0x80004005"). Nunca a chave, o id, o nome ou o caminho do arquivo.
+std::string DownloadLine(int status, size_t bytes, std::uint32_t naoGravado);
+
 // O texto do aviso do Windows com no maximo maxUtf16Units unidades do UTF-16 (o NOTIFYICONDATA: 63 no titulo e 255 no
 // texto, sem o fim do texto). Cabe: fica como veio. Nao cabe: cortado num ponto de codigo inteiro (um emoji, o par
 // substituto do UTF-16, nunca pela metade) e terminado em U+2026, com o limite ja contando ele. UTF-8 em volta (uma
 // sequencia que nao e UTF-8 conta como o U+FFFD, como no Utf8ToWide).
 std::string FitNoticeText(const std::string& utf8, size_t maxUtf16Units);
+
+// A mensagem da ponte (o JSON que o DesktopApp manda) vai tambem para o aviso de ligacao recebida (aviso.html)? Todas
+// vao as duas janelas, menos a chatChave: a chave do chat vai so para a interface da janela principal, que a pediu (o
+// aviso so le o estado). Um texto que cita a chatChave e nao se le tambem fica so com a janela principal.
+bool NoticeMayGet(const std::string& json);
+
+// A linha do diagnostico de uma falha do Windows no aviso do chat (Tray: onde "aviso") ou no numero no icone
+// (TaskbarBadge: onde "numero no icone"): "<onde>: <operacao> falhou (0x<o HRESULT em 8 digitos hexadecimais>)", por
+// exemplo "aviso: Shell_NotifyIconW falhou (0x80004005)". So o nome da operacao e o codigo: nunca o titulo, o texto
+// ou o nome de quem mandou.
+std::string ShellFailureLine(const char* onde, const char* operacao, std::uint32_t hresult);
 
 }  // namespace starsonic

@@ -1,7 +1,7 @@
 // A tela da ligação (uma, com a segunda tocando, duas, consulta, conferência), o aviso de ligação recebida
 // (aviso.html, 380×168) e o toque, contra a ponte falsa: os textos exatos, os comandos que saem, o axe e as
 // capturas. A interface não decide nenhuma regra: os botões seguem só o `ligacao` do estado.
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Locator, type Page } from '@playwright/test';
 import {
   abrir,
   audio,
@@ -539,5 +539,40 @@ test.describe('ligação e toque', () => {
     await mudarEstado(page, (s) => ({ ...s, ligacao: { ...s.ligacao, second: null, secondKind: 'none' } }));
     await expect(page.getByText('Carlos Lima')).toHaveCount(0);
     await expect(botao(page, 'Atender')).toHaveCount(0);
+  });
+
+  // (0.2.0, R39 na janela do aviso) Um arquivo solto no aviso nunca navega: sem a guarda, o WebView2 abriria o file://
+  // dele (e o núcleo gravaria o caminho no diagnóstico). Como na janela principal (arquivos.spec.ts), true: o
+  // `dragover` ou o `drop` foi impedido (o preventDefault), e o navegador não faz nada com o arquivo.
+  test('a file dropped on the notice never navigates', async ({ page }) => {
+    const arrastar = (alvo: Locator, tipo: 'dragover' | 'drop', comArquivo = true): Promise<boolean> =>
+      alvo.evaluate(
+        (el, { tipo, comArquivo }) => {
+          const dt = new DataTransfer();
+          if (comArquivo) dt.items.add(new File(['proposta'], 'Proposta ACME.pdf', { type: 'application/pdf' }));
+          else dt.setData('text/plain', 'Proposta ACME');
+          return !el.dispatchEvent(new DragEvent(tipo, { dataTransfer: dt, bubbles: true, cancelable: true }));
+        },
+        { tipo, comArquivo },
+      );
+    await abrirAviso(page, 'aviso');
+    await verTextos(page, ['Ana Souza', 'Atender']);
+    // Em todo o aviso: o cartão, o nome, os botões e a página em volta.
+    for (const alvo of [page.locator('.aviso'), page.locator('.aviso-nome'), botao(page, 'Atender'), botao(page, 'Recusar'), page.locator('body')]) {
+      expect(await arrastar(alvo, 'dragover')).toBe(true);
+      expect(await arrastar(alvo, 'drop')).toBe(true);
+    }
+    // Um texto arrastado (sem arquivo) continua com o navegador.
+    expect(await arrastar(page.locator('.aviso'), 'dragover', false)).toBe(false);
+    // O aviso continua o mesmo, na mesma página.
+    expect(new URL(page.url()).pathname).toBe('/aviso.html');
+    await verTextos(page, ['Ana Souza', 'Atender']);
+    expect(await comandos(page)).toEqual([{ v: 1, cmd: 'ready' }]);
+
+    // Também no aviso vazio (nenhuma ligação tocando).
+    await mudarEstado(page, (s) => ({ ...s, ligacao: null }));
+    await expect(botao(page, 'Atender')).toHaveCount(0);
+    expect(await arrastar(page.locator('.aviso-vazio'), 'dragover')).toBe(true);
+    expect(await arrastar(page.locator('.aviso-vazio'), 'drop')).toBe(true);
   });
 });
