@@ -8,7 +8,11 @@
 // - Os erros delas: sem rede ou um 500, a faixa (enquanto um pedido dela espera) e outra tentativa depois da espera da
 //   vez; um 404 (a conversa não é mais minha) relê a lista, que a tira, e desiste; um 401 é o `fora`.
 // - A leitura: com a janela na frente, o marcarLida até a mais nova (um id uma vez só).
+// - (Task 7) As miniaturas: a de cada foto que entra (uma vez por abertura), num blob: guardado pelo id do arquivo,
+//   com a medida dela (o balão já nasce com a altura certa). O soltar revoga todas: a conversa que fecha, a troca de
+//   pessoa e a conversa que sai da lista. Uma miniatura que não vem deixa o quadro no balão.
 import { ehChave, ErroChat, type ApiChat } from './api';
+import { medirImagem } from './miniatura';
 import type { Mensagem } from './tipos';
 
 /** O que a abertura usa do cliente. As funções são da pessoa da vez dela (as que mudam algo conferem a vez). */
@@ -39,6 +43,16 @@ export interface ContextoDaAberta {
   sairDoChat(): void;
 }
 
+/** (Task 7) A miniatura de uma foto, num blob: desta abertura, com a largura e a altura dela (em px). */
+export interface Miniatura {
+  url: string;
+  largura: number;
+  altura: number;
+}
+
+/** A abertura sem miniaturas: sempre o mesmo mapa (a vista não muda à toa). Ninguém o altera. */
+const SEM_MINIATURAS: ReadonlyMap<string, Miniatura> = new Map();
+
 /** O que a vista mostra da abertura. */
 export interface VistaDaAberta {
   /** Em ordem de id. */
@@ -46,6 +60,8 @@ export interface VistaDaAberta {
   temMaisAntigas: boolean;
   /** Uma página (a primeira, 50 anteriores ou uma da volta) entrou há menos de 1 s: o log fica `aria-busy`. */
   ocupada: boolean;
+  /** (Task 7) As miniaturas que já chegaram, pelo id do arquivo. */
+  miniaturas: ReadonlyMap<string, Miniatura>;
 }
 
 /**
@@ -67,7 +83,9 @@ const ultimoId = (lista: Mensagem[]): number | null => lista.at(-1)?.id ?? null;
 export class Aberta {
   readonly id: number;
   private readonly ctx: ContextoDaAberta;
-  private v: VistaDaAberta = { mensagens: [], temMaisAntigas: false, ocupada: false };
+  private v: VistaDaAberta = { mensagens: [], temMaisAntigas: false, ocupada: false, miniaturas: SEM_MINIATURAS };
+  /** (Task 7) As fotos cuja miniatura já foi pedida (uma vez por abertura). */
+  private readonly pedidas = new Set<string>();
   /** O fim do `ocupada` (1 s depois da última página que entrou). */
   private desocupar: ReturnType<typeof setTimeout> | undefined;
   /** A primeira página chegou. */
@@ -171,12 +189,16 @@ export class Aberta {
     });
   }
 
-  /** Fecha: as esperas dela acabam (e o pedido que esperava não sai), a faixa dela sai, e nada mais dela pinta. */
+  /**
+   * Fecha: as esperas dela acabam (e o pedido que esperava não sai), a faixa dela sai, nada mais dela pinta, e (Task 7)
+   * os blob: das miniaturas saem.
+   */
   soltar(): void {
     this.solta = true;
     clearTimeout(this.desocupar);
     this.desocupar = undefined;
     for (const acordar of [...this.acordar]) acordar();
+    for (const { url } of this.v.miniaturas.values()) URL.revokeObjectURL(url);
   }
 
   /** Espera `ms`, ou até o soltar (quem esperava confere o `ativa`). */
@@ -284,10 +306,40 @@ export class Aberta {
     }
     const ocupada = v.ocupada || ocupar;
     if (mensagens !== v.mensagens || temMaisAntigas !== v.temMaisAntigas || ocupada !== v.ocupada) {
-      this.v = { mensagens, temMaisAntigas, ocupada };
+      this.v = { ...v, mensagens, temMaisAntigas, ocupada };
     }
     this.ctx.chegaram(novas);
     this.publicar();
+    this.pedirMiniaturas(novas);
+  }
+
+  /** (Task 7) As miniaturas das fotos que entraram e têm uma (a de uma foto expirada saiu do servidor). */
+  private pedirMiniaturas(mensagens: Mensagem[]): void {
+    for (const m of mensagens) {
+      const a = m.arquivo;
+      if (this.solta || m.tipo !== 'arquivo' || !a?.foto || !a.miniatura || a.expirado || this.pedidas.has(a.id)) continue;
+      this.pedidas.add(a.id);
+      void this.buscarMiniatura(a.id);
+    }
+  }
+
+  /**
+   * (Task 7) A miniatura de uma foto, num blob: que vive até o soltar, com a medida dela. Sem ela (sem rede, uma imagem
+   * que não abre), o balão fica com o quadro; um 401 é o `fora`. A que chega depois do soltar nem vira um blob:.
+   */
+  private async buscarMiniatura(id: string): Promise<void> {
+    let dados: Blob;
+    try {
+      dados = await this.ctx.comLimite(() => this.ctx.api.baixarMiniatura(id));
+    } catch (e) {
+      if (!this.solta && ehChave(e)) this.ctx.sairDoChat();
+      return;
+    }
+    const medida = this.solta ? null : await medirImagem(dados);
+    if (!medida || this.solta) return;
+    const miniaturas = new Map(this.v.miniaturas);
+    miniaturas.set(id, { url: URL.createObjectURL(dados), ...medida });
+    this.mudar({ miniaturas });
   }
 
   private mudar(parte: Partial<VistaDaAberta>): void {

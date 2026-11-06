@@ -1,6 +1,6 @@
 // Os textos do chat, letra por letra: os da seção 10 da spec (docs/superpowers/specs/2026-11-04-starsonic-phone-chat-
-// design.md) e os da lista "Os textos novos" do plano da etapa 2. A hora e a prévia da lista, e o título e o texto do
-// aviso do Windows, ficam no formato.ts.
+// design.md) e os da lista "Os textos novos" do plano da etapa 2. A hora e a prévia da lista, o título e o texto do
+// aviso do Windows e (Task 7) o tamanho e o tipo de um arquivo ficam no formato.ts.
 import type { AvisoDeGrupo, Membro, Pessoa } from './tipos';
 
 export const CHAT = 'Chat';
@@ -109,6 +109,44 @@ export function saiuDoChat(nome: string): string {
 /** O texto do aviso do Windows de um arquivo: "Arquivo: Pedido 4471.xlsx" (a foto é "Foto"). */
 export function arquivoNoAviso(nome: string): string {
   return `Arquivo: ${nome}`;
+}
+
+// (Task 7) Os arquivos e as fotos (o clipe, os anexos, os balões e a foto grande; os nomes de leitor de tela são os da
+// lista "Os textos novos"). O tamanho ("1,2 MB") fica no formato.ts.
+export const ANEXAR = 'Anexar um arquivo ou uma foto';
+export const MANDE_ATE_10 = 'Mande até 10 arquivos de uma vez.';
+export const PASSA_DE_25_MB = 'Este arquivo passa de 25 MB.';
+export const ARQUIVO_EXPIRADO = 'Arquivo expirado';
+export const BAIXAR = 'Baixar';
+export const FECHAR = 'Fechar';
+/** Os tipos de arquivo, na linha de baixo do balão ("1,2 MB · PDF"); a foto é "Foto". */
+export const PDF = 'PDF';
+export const PLANILHA = 'Planilha';
+export const DOCUMENTO = 'Documento';
+export const APRESENTACAO = 'Apresentação';
+export const AUDIO = 'Áudio';
+export const VIDEO = 'Vídeo';
+export const ARQUIVO_COMPACTADO = 'Arquivo compactado';
+export const ARQUIVO = 'Arquivo';
+
+/** O "×" de um anexo: "Tirar nota-fiscal.png". */
+export function tirarOAnexo(nome: string): string {
+  return `Tirar ${nome}`;
+}
+
+/** O balão de um arquivo: "Abrir Proposta ACME.pdf, 1,2 MB". */
+export function abrirOArquivo(nome: string, tamanho: string): string {
+  return `Abrir ${nome}, ${tamanho}`;
+}
+
+/** O balão de uma foto: "Abrir a foto nota-fiscal.jpg". */
+export function abrirAFoto(nome: string): string {
+  return `Abrir a foto ${nome}`;
+}
+
+/** O "Baixar" da foto grande: "Baixar nota-fiscal.jpg". */
+export function baixarAFoto(nome: string): string {
+  return `Baixar ${nome}`;
 }
 
 /** O texto de um aviso de grupo; quem fez ou o alvo sou eu: "Você" no começo, "você" no meio. */

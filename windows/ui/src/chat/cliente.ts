@@ -31,11 +31,13 @@
 //   pessoa não vale. A conversa que uma tela cria entra na lista na hora (a tela da conversa só desenha uma que está
 //   nela), e o grupo de que a pessoa sai sai dela na hora. Uma conversa que sai da lista (o conversaSaiu, o sair, a
 //   releitura) leva a leitura aberta dela e os Pendentes dela (R26).
-// A Task 7 acrescenta os arquivos.
+// - (Task 7) Os arquivos: o enviarArquivos vai para os envios (um Pendente por arquivo, e o texto por último); as
+//   miniaturas são da conversa aberta (aberta.ts); e o arquivo de uma foto (a foto grande) é um pedido da tela, como os
+//   da Task 5.
 import type { Bridge } from '../bridge';
 import { limitCharacters } from '../format';
 import type { ChatSummary } from '../state';
-import { Aberta } from './aberta';
+import { Aberta, type Miniatura } from './aberta';
 import { criarApi, ehChave, ErroChat, ligarComputador, type ApiChat } from './api';
 import { Envios, SEM_PENDENTES, type Pendente } from './envios';
 import { conectarEventos, esperaDaVez, esperaDoLimite } from './eventos';
@@ -55,6 +57,8 @@ export interface ConversaAberta {
   temMaisAntigas: boolean;
   /** Uma página (a primeira, 50 anteriores ou uma da volta) entrou há menos de 1 s: o log fica `aria-busy`. */
   ocupada: boolean;
+  /** (Task 7) As miniaturas das fotos que já chegaram, pelo id do arquivo (num blob: que vive com a conversa aberta). */
+  miniaturas: ReadonlyMap<string, Miniatura>;
   pendentes: Pendente[];
 }
 
@@ -305,9 +309,26 @@ export class ChatCliente {
     if (this.aberta && this.podeEscrever(this.aberta.id)) this.envios?.enviarTexto(this.aberta.id, texto);
   }
 
+  /**
+   * (Task 7) Manda os arquivos na conversa aberta, cada um numa mensagem, na ordem, e o texto por último (como o
+   * enviarTexto, não na conversa a dois com quem saiu do chat).
+   */
+  enviarArquivos(arquivos: File[], texto: string): void {
+    if (this.aberta && this.podeEscrever(this.aberta.id)) this.envios?.enviarArquivos(this.aberta.id, arquivos, texto);
+  }
+
   /** O "Tentar de novo" de uma mensagem "Não enviada". */
   tentarDeNovo(idLocal: string): void {
     this.envios?.tentarDeNovo(idLocal);
+  }
+
+  /**
+   * (Task 7) Os bytes de um arquivo (a foto grande), uma vez só, como um pedido de tela (R31): a resposta de antes de
+   * uma troca de pessoa não vale, e o 429 `limite` espera e tenta de novo uma vez.
+   */
+  async baixarArquivo(id: string): Promise<Blob> {
+    const s = this.sessao();
+    return this.daTela(s, () => s.api.baixarArquivo(id), { lendo: true });
   }
 
   /** (Task 5) Os colegas da empresa que já usam o chat (sem a pessoa da vez), em ordem de nome. */

@@ -164,6 +164,13 @@ export class ApiDeTeste {
       .id;
   }
 
+  /** (Task 7) Um GET binário (a miniatura, o arquivo): os bytes da resposta 200. */
+  async baixar(caminho: string): Promise<Buffer> {
+    const r = await fetch(baseDoChat() + caminho, { headers: { authorization: `Bearer ${this.chave}` } });
+    if (r.status !== 200) throw new Error(`GET ${caminho} respondeu ${r.status}`);
+    return Buffer.from(await r.arrayBuffer());
+  }
+
   /** Todas as mensagens visíveis da conversa, da mais antiga para a mais nova (em ordem de id). */
   async mensagens(conversa: number): Promise<any[]> {
     let todas: any[] = [];

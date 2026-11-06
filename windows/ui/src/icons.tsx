@@ -287,6 +287,25 @@ export const IconNovoGrupo = svg(
     <path d="M19 8v6M16 11h6" />
   </>,
 );
+/** (Task 7) O clipe do lugar de escrever ("Anexar um arquivo ou uma foto"). */
+export const IconClipe = svg(<path d="M21 11.5l-8.6 8.6a5 5 0 0 1-7.1-7.1l8.6-8.6a3.3 3.3 0 0 1 4.7 4.7l-8.6 8.6a1.7 1.7 0 0 1-2.4-2.4l7.9-7.9" />);
+/** (Task 7) Um arquivo do chat: a folha com o canto dobrado. */
+export const IconArquivo = svg(
+  <>
+    <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+    <path d="M14 3v5h5" />
+  </>,
+);
+/** (Task 7) Uma foto do chat: o quadro com o sol e o morro. */
+export const IconImagem = svg(
+  <>
+    <rect x="3" y="4" width="18" height="16" rx="3" />
+    <circle cx="9" cy="10" r="2" />
+    <path d="M21 16l-5-5-9 9" />
+  </>,
+);
+/** (Task 7) Baixar: a seta para baixo, na bandeja. */
+export const IconBaixar = svg(<path d="M12 4v11M7 10l5 5 5-5M5 20h14" />);
 /** A faixa sem conexão: o sinal sem rede, cortado. */
 export const IconSemRede = svg(
   <>

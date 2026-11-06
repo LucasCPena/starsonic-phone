@@ -24,7 +24,7 @@
 // membros e o pôr pessoas (as vistas chatNova, chatNovoGrupo, chatMembros e chatPor) também tomam o lugar das abas; a
 // conversa que elas criam abre com o Voltar para a lista. As de uma conversa (a conversa, os membros e o pôr pessoas)
 // saem para a aba Chat quando ela sai da lista (R26), e todas, quando a pessoa não está mais no chat. O toast delas é
-// o mesmo da ponte (R31).
+// o mesmo da ponte (R31), também o dos arquivos da conversa (Task 7).
 import { render } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { createBridge } from './bridge';
@@ -483,6 +483,7 @@ function App() {
             conversa={conversaDaVista}
             cliente={chatCliente}
             send={send}
+            avisar={avisarNaTela}
             onVoltar={() => setView(daVista.back)}
             onMembros={() => setView({ kind: 'chatMembros', conversa: conversaDaVista.id, back: daVista })}
           />

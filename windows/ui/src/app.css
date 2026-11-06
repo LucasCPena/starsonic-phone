@@ -942,9 +942,10 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 /* A conversa (os quadros Conversa, Grupo, SemConexao e ConversaEscura), no lugar das abas. As minhas em blue no claro e
    em cyan no escuro, com o texto branco ou on-cyan (o par do --pill-on-bg); as dos outros no cartão, à esquerda. */
 .conversa { flex: 1; min-height: 0; display: flex; flex-direction: column;
-  --conversa-fundo: var(--soft); --balao-meu: var(--pill-on-bg); --balao-meu-texto: var(--pill-on-text); --balao-outro: var(--white); }
+  --conversa-fundo: var(--soft); --balao-meu: var(--pill-on-bg); --balao-meu-texto: var(--pill-on-text); --balao-outro: var(--white);
+  --quadro-foto: var(--line); }
 @media (prefers-color-scheme: dark) {
-  .conversa { --conversa-fundo: var(--navy-900); --balao-outro: rgba(255, 255, 255, 0.06); }
+  .conversa { --conversa-fundo: var(--navy-900); --balao-outro: rgba(255, 255, 255, 0.06); --quadro-foto: rgba(255, 255, 255, 0.06); }
 }
 .conversa-topo { flex: none; display: flex; align-items: center; gap: 10px; padding: 12px 14px 12px 10px; background: var(--gradient-hero); color: #ffffff;
   --focus: var(--cyan); }
@@ -992,8 +993,22 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .balao-tentar { padding: 0; border: 0; border-radius: 4px; background: transparent; font: 800 12px/1.3 var(--font-sans); color: var(--accent-text);
   text-decoration: underline; text-underline-offset: 2px; }
 
-/* O lugar de escrever: o campo cresce até 5 linhas e rola por dentro; o "Faltam <n>" fica em cima dele. */
-.escrever { flex: none; display: flex; align-items: flex-end; gap: 8px; padding: 10px 12px 12px; border-top: 1px solid var(--border); background: var(--surface); }
+/* O lugar de escrever: o campo cresce até 5 linhas e rola por dentro; o "Faltam <n>" fica em cima dele. (Task 7) O
+   clipe à esquerda (o contorno, como os botões de contorno) e os anexos em cima da linha toda. */
+.escrever { flex: none; display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 12px; border-top: 1px solid var(--border);
+  background: var(--surface); }
+.escrever-linha { display: flex; align-items: flex-end; gap: 8px; }
+.escrever-anexar { width: 40px; height: 40px; flex: none; margin-bottom: 1px; border-radius: 999px; border: 1.5px solid var(--outline); background: transparent;
+  color: var(--outline-text); display: grid; place-items: center; padding: 0; transition: border-color var(--ease); }
+.escrever-anexar:hover { border-color: var(--cyan); }
+.escrever-anexar .ic { width: 18px; height: 18px; }
+/* No Mínimo (abaixo de 330 de largura ou de 540 de altura), o clipe e o Enviar menores e o campo mais justo: na janela
+   de 300 de largura, o "Escreva uma mensagem" cabe numa linha ao lado do clipe. */
+.win[data-layout="minimo"] .escrever { padding: 8px 10px 10px; }
+.win[data-layout="minimo"] .escrever-linha { gap: 6px; }
+.win[data-layout="minimo"] .escrever-anexar { width: 36px; height: 36px; margin-bottom: 3px; }
+.win[data-layout="minimo"] .escrever-enviar { width: 38px; height: 38px; margin-bottom: 2px; }
+.win[data-layout="minimo"] .escrever-campo { padding: 10px 12px; }
 .escrever-texto { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .escrever-campo { display: block; width: 100%; min-height: 42px; max-height: calc(5 * 14px * 1.45 + 22px); resize: none; padding: 10px 16px; border-radius: 21px;
   border: 1px solid var(--border); background: var(--field); font: 500 14px/1.45 var(--font-sans); color: var(--text); overflow-y: auto; scrollbar-width: thin;
@@ -1007,6 +1022,67 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .escrever-enviar .ic { width: 18px; height: 18px; stroke-width: 2.2; }
 .conversa-saiu { flex: none; margin: 0; padding: 14px 16px 16px; border-top: 1px solid var(--border); background: var(--surface); font-size: 13.5px;
   font-weight: 600; line-height: 1.45; color: var(--text-muted); text-align: center; overflow-wrap: anywhere; }
+
+/* (Task 7) Os anexos, em cima do campo: um por pílula (o ícone, o nome com as reticências, o tamanho e o "×"), até
+   três linhas; mais que isso rola por dentro. */
+.anexos { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; max-height: 108px; overflow-y: auto; scrollbar-width: thin; }
+.anexo { display: flex; align-items: center; gap: 6px; max-width: 100%; min-width: 0; height: 32px; padding: 0 3px 0 10px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--field); font-size: 12.5px; line-height: 1.3; color: var(--text); }
+.anexo > .ic { color: var(--icon); }
+.anexo-nome { min-width: 0; max-width: 180px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.anexo-tamanho { flex: none; color: var(--text-muted); }
+.anexo-tirar { width: 26px; height: 26px; flex: none; border: 0; border-radius: 999px; background: transparent; color: var(--text-muted); display: grid;
+  place-items: center; padding: 0; }
+.anexo-tirar:hover { background: var(--icon-tile); color: var(--text); }
+
+/* O arquivo no balão (os quadros Conversa, Grupo e ConversaEscura): o ícone num quadrado, o nome com as reticências,
+   "<tamanho> · <tipo>" e a seta de baixar; o meu em blue (cyan no escuro), o dos outros no cartão. */
+.balao-arquivo { position: relative; display: flex; align-items: center; gap: 10px; width: 250px; max-width: 100%; min-width: 0; padding: 10px 12px;
+  border: 0; font-family: inherit; text-align: left; }
+.balao-meu .balao-arquivo { border-radius: 18px 18px 6px 18px; background: var(--balao-meu); color: var(--balao-meu-texto); }
+.balao-outro .balao-arquivo { border-radius: 18px 18px 18px 6px; border: 1px solid var(--border); background: var(--balao-outro); color: var(--text); }
+.balao-arquivo-icone { width: 40px; height: 40px; flex: none; border-radius: 12px; display: grid; place-items: center; background: rgba(255, 255, 255, 0.12); }
+.balao-outro .balao-arquivo-icone { background: var(--icon-tile); color: var(--icon); }
+.balao-arquivo-textos { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.balao-arquivo-nome { font-size: 14px; font-weight: 700; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.balao-outro .balao-arquivo-nome { color: var(--text-strong); }
+.balao-arquivo-meta { font-size: 12px; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #b9c4e6; }
+.balao-outro .balao-arquivo-meta { color: var(--text-muted); }
+.balao-arquivo > .ic { width: 18px; height: 18px; }
+.balao-outro .balao-arquivo > .ic { color: var(--icon); }
+@media (prefers-color-scheme: dark) {
+  .balao-meu .balao-arquivo-icone { background: rgba(3, 34, 42, 0.12); }
+  .balao-meu .balao-arquivo-meta { color: inherit; font-weight: 600; }
+}
+
+/* A foto no balão: a miniatura pequena, na proporção dela (a largura e a altura já vêm no img), ou o quadro com o ícone
+   e o nome (até duas linhas), do tamanho do quadro Conversa. */
+.balao-foto { position: relative; display: block; width: 220px; max-width: 100%; padding: 0; border: 1px solid var(--border); overflow: hidden;
+  background: var(--quadro-foto); color: var(--text-muted); font-family: inherit; }
+.balao-meu .balao-foto { border-radius: 18px 18px 6px 18px; }
+.balao-outro .balao-foto { border-radius: 18px 18px 18px 6px; }
+.balao-foto img { display: block; width: 100%; height: auto; max-height: 280px; object-fit: cover; }
+.balao-foto-quadro { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; height: 140px; padding: 12px 14px;
+  font-size: 12px; font-weight: 600; line-height: 1.35; text-align: center; }
+.balao-foto-quadro .ic { width: 28px; height: 28px; stroke-width: 1.8; }
+.balao-foto-nome { max-width: 100%; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
+
+/* O progresso do upload, na base do balão do arquivo ou da foto que vai (sem mudar a altura dele). */
+.balao-progresso { position: absolute; left: 12px; right: 12px; bottom: 5px; height: 3px; border-radius: 999px; overflow: hidden;
+  background: color-mix(in srgb, currentColor 24%, transparent); }
+.balao-foto .balao-progresso { left: 14px; right: 14px; bottom: 10px; }
+.balao-progresso-feito { display: block; height: 100%; border-radius: inherit; background: currentColor; transition: width var(--ease); }
+@media (prefers-reduced-motion: reduce) {
+  .balao-progresso-feito { transition: none; }
+}
+
+/* A foto grande: o diálogo da largura da janela (até 560 px), a foto inteira no meio, o nome e os botões embaixo. */
+.dialog.foto-grande { width: calc(100% - 32px); max-width: 560px; padding: 14px 14px 16px; }
+.foto-grande-imagem { display: grid; place-items: center; min-height: 160px; margin-bottom: 12px; border-radius: 14px; overflow: hidden;
+  background: var(--quadro-foto); color: var(--text-muted); }
+.foto-grande-imagem img { display: block; max-width: 100%; max-height: calc(100vh - 220px); object-fit: contain; }
+.foto-grande-espera { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 24px; font-size: 13px; font-weight: 600; }
+.dialog .foto-grande-nome { margin: 0 0 14px; font-size: 14px; font-weight: 700; line-height: 1.35; overflow-wrap: anywhere; }
 
 /* (Task 5) A nova conversa, o novo grupo, o pôr pessoas e os membros (os quadros NovaConversa, NovoGrupo e Membros), no
    lugar das abas, com a barra do Voltar. O nome do grupo em cima do título quebra em qualquer ponto (60 caracteres sem

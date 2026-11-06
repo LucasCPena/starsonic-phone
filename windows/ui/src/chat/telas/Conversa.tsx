@@ -5,22 +5,30 @@
 // no meio. Embaixo, o Escrever, ou "<Nome> saiu do chat." na conversa a dois com quem saiu (e sem o Ligar).
 // - A tela abre a conversa no cliente ao montar e fecha ao sair: o que chega de outra abertura nunca pinta aqui.
 // - A rolagem: a conversa abre embaixo; uma mensagem nova só puxa a tela quando ela está a até 80 px do fim (a minha,
-//   sempre); as anteriores chegam quando o alto da lista aparece (o IntersectionObserver), e a primeira mensagem que
-//   estava carregada fica no mesmo lugar da tela.
+//   sempre); as anteriores chegam quando o alto da lista aparece (o IntersectionObserver). (Task 7) Uma miniatura que
+//   chega depois faz o balão dela crescer: embaixo, a tela continua no fim; mais acima, nada se mexe na tela. Para
+//   isso, a primeira mensagem à vista (a âncora, marcada a cada rolagem e a cada desenho) fica no mesmo lugar quando
+//   o que está acima dela entra (as anteriores) ou cresce (uma miniatura).
 // - O leitor de tela: o log fica `aria-busy` por 1 s desde a renderização que põe uma página (para não ler a página
 //   inteira), e cada balão diz quem mandou.
+// - (Task 7) Os arquivos: o clipe do Escrever, o arrastar para a conversa e o colar (Ctrl+V) põem os arquivos em cima do
+//   campo (os anexos, com os limites de 10 e de 25 MB: o useAnexos); o Enviar manda os arquivos, na ordem, e o texto
+//   por último. O clique num arquivo pede ao núcleo o download (o chatDownload, com o nome sem as marcas de direção,
+//   R34); o clique numa foto abre a foto grande. Sem o lugar de escrever (quem saiu do chat), nada se anexa.
 // Os nomes e as mensagens vão sempre como texto.
-import { useLayoutEffect, useMemo, useRef } from 'preact/hooks';
+import { useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { dayGroup } from '../../format';
 import { IconBack, IconPhone, IconSemRede } from '../../icons';
 import type { Send } from '../../types';
 import type { ChatCliente, ConversaAberta, VistaChat } from '../cliente';
+import { useAnexos } from '../componentes/Anexos';
 import { Avatar } from '../componentes/Avatar';
 import { Balao } from '../componentes/Balao';
 import { Escrever } from '../componentes/Escrever';
 import { Faixa } from '../componentes/Faixa';
+import { FotoGrande } from '../componentes/FotoGrande';
 import type { Pendente } from '../envios';
-import { nomeDaConversa } from '../formato';
+import { nomeDaConversa, semDirecao } from '../formato';
 import {
   ESCREVA_PARA_O_GRUPO,
   ESCREVA_UMA_MENSAGEM,
@@ -37,10 +45,15 @@ import {
   verOsMembrosDoGrupo,
   VOLTAR_PARA_AS_CONVERSAS,
 } from '../textos';
-import type { Conversa as ConversaDaLista, Mensagem } from '../tipos';
+import type { Arquivo, Conversa as ConversaDaLista, Mensagem } from '../tipos';
 
 /** Uma mensagem nova só puxa a tela quando ela está a até 80 px do fim. */
 const PERTO_DO_FIM_PX = 80;
+/**
+ * O nome de um arquivo que só tinha marcas de direção: o chatDownload não aceita um nome vazio, e o núcleo grava assim
+ * um nome vazio (o SafeDownloadName, como o servidor).
+ */
+const NOME_VAZIO = 'arquivo';
 
 interface Props {
   vista: VistaChat;
@@ -48,9 +61,14 @@ interface Props {
   conversa: ConversaDaLista;
   cliente: ChatCliente;
   send: Send;
+  /** (Task 7) O toast das telas do chat (o mesmo da ponte). */
+  avisar(texto: string): void;
   onVoltar(): void;
   onMembros(): void;
 }
+
+/** O drag tem arquivos (e não um texto, que fica com o navegador). */
+const temArquivos = (dt: DataTransfer | null): dt is DataTransfer => dt !== null && [...dt.types].includes('Files');
 
 type Item =
   | { tipo: 'dia'; chave: string; texto: string }
@@ -81,7 +99,7 @@ function itensDa(aberta: ConversaAberta, euId: number, agora: number): Item[] {
   return itens;
 }
 
-export function Conversa({ vista, conversa, cliente, send, onVoltar, onMembros }: Props) {
+export function Conversa({ vista, conversa, cliente, send, avisar, onVoltar, onMembros }: Props) {
   const id = conversa.id;
   useLayoutEffect(() => {
     void cliente.abrir(id);
@@ -91,16 +109,30 @@ export function Conversa({ vista, conversa, cliente, send, onVoltar, onMembros }
   const euId = vista.eu?.id ?? 0;
   const nome = nomeDaConversa(conversa);
   const itens = useMemo(() => (aberta ? itensDa(aberta, euId, Date.now()) : []), [aberta?.mensagens, aberta?.pendentes, euId]);
+  const miniaturas = aberta?.miniaturas;
 
   const log = useRef<HTMLDivElement>(null);
   const alto = useRef<HTMLDivElement>(null);
   /** A altura do conteúdo no último desenho: com o scrollTop de agora, diz se a tela estava perto do fim. */
   const altura = useRef(0);
-  /** A primeira mensagem carregada e onde ela estava: as anteriores entram em cima dela, e ela fica no lugar. */
+  /** A primeira mensagem à vista e onde ela estava: o que entra ou cresce acima dela não a tira do lugar na tela. */
   const ancora = useRef<{ chave: string; topo: number } | null>(null);
   /** O próximo desenho vai até o fim: a conversa que abre, e a minha mensagem. */
   const irAoFim = useRef(true);
 
+  /** Marca a âncora: a primeira mensagem que aparece na tela (ou, sem nenhuma à vista, a última acima dela). */
+  const marcarAncora = () => {
+    const el = log.current;
+    if (!el) return;
+    let no: HTMLElement | null = null;
+    for (const m of el.querySelectorAll<HTMLElement>('[data-chave^="m"]')) {
+      no = m;
+      if (m.offsetTop + m.offsetHeight > el.scrollTop) break;
+    }
+    ancora.current = no ? { chave: no.dataset.chave!, topo: no.offsetTop } : null;
+  };
+
+  // A cada desenho que muda a lista ou uma miniatura: a âncora no lugar, e o fim à vista para quem estava nele.
   useLayoutEffect(() => {
     const el = log.current;
     if (!el) return;
@@ -109,11 +141,10 @@ export function Conversa({ vista, conversa, cliente, send, onVoltar, onMembros }
     const no = a && el.querySelector<HTMLElement>(`[data-chave="${a.chave}"]`);
     if (a && no && no.offsetTop !== a.topo) el.scrollTop += no.offsetTop - a.topo;
     if (perto) el.scrollTop = el.scrollHeight;
-    const primeira = el.querySelector<HTMLElement>('[data-chave^="m"]');
-    ancora.current = primeira ? { chave: primeira.dataset.chave!, topo: primeira.offsetTop } : null;
+    marcarAncora();
     altura.current = el.scrollHeight;
     if (itens.length > 0) irAoFim.current = false;
-  }, [itens]);
+  }, [itens, miniaturas]);
 
   // O log que muda de tamanho (o campo que cresce, a faixa, a janela) e estava no fim continua no fim.
   useLayoutEffect(() => {
@@ -145,16 +176,43 @@ export function Conversa({ vista, conversa, cliente, send, onVoltar, onMembros }
     return () => observador.disconnect();
   }, [cliente, temMaisAntigas, itens, vista.conectado]);
 
+  const { anexos, anexar, tirar, levar } = useAnexos(avisar);
   const enviar = (texto: string) => {
     irAoFim.current = true;
-    cliente.enviarTexto(texto);
+    const arquivos = levar();
+    if (arquivos.length > 0) cliente.enviarArquivos(arquivos, texto);
+    else cliente.enviarTexto(texto);
   };
   const tentarDeNovo = (idLocal: string) => cliente.tentarDeNovo(idLocal);
 
+  // (Task 7) O download pelo núcleo, com o nome que a pessoa viu no balão; a foto grande.
+  const baixar = (a: Arquivo) => send({ cmd: 'chatDownload', arquivo: a.id, nome: semDirecao(a.nome) || NOME_VAZIO });
+  const [foto, setFoto] = useState<Arquivo | null>(null);
+
   const grupo = conversa.tipo === 'grupo';
   const saiu = conversa.tipo === 'dupla' && conversa.com.saiu;
+  // Arrastar para a conversa e colar (Ctrl+V): só com o lugar de escrever, e só o que traz arquivos (o WebView2 abriria
+  // o arquivo solto; um texto colado vai para o campo, como sempre).
+  const receber = saiu
+    ? {}
+    : {
+        onDragOver: (e: DragEvent) => {
+          if (temArquivos(e.dataTransfer)) e.preventDefault();
+        },
+        onDrop: (e: DragEvent) => {
+          if (!temArquivos(e.dataTransfer)) return;
+          e.preventDefault();
+          anexar([...e.dataTransfer.files]);
+        },
+        onPaste: (e: ClipboardEvent) => {
+          const arquivos = [...(e.clipboardData?.files ?? [])];
+          if (arquivos.length === 0) return;
+          e.preventDefault();
+          anexar(arquivos);
+        },
+      };
   return (
-    <div class="conversa">
+    <div class="conversa" {...receber}>
       <div class="conversa-topo">
         <button type="button" class="icon-btn" aria-label={VOLTAR_PARA_AS_CONVERSAS} title={VOLTAR_PARA_AS_CONVERSAS} onClick={onVoltar}>
           <IconBack />
@@ -206,6 +264,7 @@ export function Conversa({ vista, conversa, cliente, send, onVoltar, onMembros }
         tabIndex={0}
         aria-label={grupo ? mensagensDoGrupo(nome) : mensagensCom(nome)}
         aria-busy={aberta?.ocupada ? 'true' : 'false'}
+        onScroll={marcarAncora}
       >
         <div ref={alto} class="conversa-alto" aria-hidden="true" />
         {itens.map((item) => {
@@ -222,8 +281,21 @@ export function Conversa({ vista, conversa, cliente, send, onVoltar, onMembros }
                   {item.texto}
                 </p>
               );
-            case 'mensagem':
-              return <Balao key={item.chave} chave={item.chave} mensagem={item.mensagem} minha={item.minha} comAutor={grupo && !item.minha} />;
+            case 'mensagem': {
+              const a = item.mensagem.arquivo;
+              return (
+                <Balao
+                  key={item.chave}
+                  chave={item.chave}
+                  mensagem={item.mensagem}
+                  minha={item.minha}
+                  comAutor={grupo && !item.minha}
+                  miniatura={a ? miniaturas?.get(a.id) : undefined}
+                  onAbrirFoto={setFoto}
+                  onBaixar={baixar}
+                />
+              );
+            }
             case 'pendente':
               return <Balao key={item.chave} chave={item.chave} pendente={item.pendente} onTentarDeNovo={tentarDeNovo} />;
           }
@@ -235,7 +307,20 @@ export function Conversa({ vista, conversa, cliente, send, onVoltar, onMembros }
         <Escrever
           rotulo={grupo ? mensagemParaOGrupo(nome) : mensagemPara(nome)}
           placeholder={grupo ? ESCREVA_PARA_O_GRUPO : ESCREVA_UMA_MENSAGEM}
+          anexos={anexos}
+          onAnexar={anexar}
+          onTirar={tirar}
           onEnviar={enviar}
+        />
+      )}
+      {foto && (
+        <FotoGrande
+          key={foto.id}
+          arquivo={foto}
+          carregar={() => cliente.baixarArquivo(foto.id)}
+          avisar={avisar}
+          onBaixar={() => baixar(foto)}
+          onFechar={() => setFoto(null)}
         />
       )}
     </div>
