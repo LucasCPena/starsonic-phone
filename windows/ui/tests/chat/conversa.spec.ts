@@ -5,8 +5,9 @@
 // (Review Focus 3), a leitura só com a janela na frente, a leitura em outro computador meu, o Ligar, quem saiu do chat,
 // o grupo, os textos compridos sem rolar para o lado (Review Focus 4), o Esc, a página atrasada de outra conversa, a
 // mensagem que falha ou chega com a conversa fechada (os Pendentes ficam com a conversa), o Pendente e a página da
-// pessoa de antes que nunca aparecem depois da troca de conta (Review Focus 1), o aria-busy, quem mandou cada balão
-// para o leitor de tela e a acessibilidade nos dois temas. Cada teste cria a própria empresa.
+// pessoa de antes que nunca aparecem depois da troca de conta (Review Focus 1), o aria-busy de 1 s na entrada de cada
+// página, quem mandou cada balão para o leitor de tela e a acessibilidade nos dois temas. Cada teste cria a própria
+// empresa.
 import { expect, test, type APIResponse, type Page, type Route } from '@playwright/test';
 import { capturar, comandos, depoisDoQueChegou, empurrar, esperarComando, mudarEstado, semViolacoesSerias } from '../helpers';
 import { abrirAConversa, abrirNoChat, esperarOsEventos, pararORelogio } from './abrir';
@@ -755,11 +756,12 @@ test('switching the account with a conversation open leaves it, and a late older
   expect(await misturas(page)).toEqual([]);
 });
 
-test('the log is busy while a page of 50 goes in', async ({ page }) => {
+test('the log is busy for 1 second from the render that puts a page of 50 in', async ({ page }) => {
   const { pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO, ANA]);
   const [a, ana] = pessoas;
   const dupla = await ana.api.criarDupla(a.pessoa.id);
   for (let i = 1; i <= 60; i++) await ana.api.enviarTexto(dupla, `Mensagem ${i}`);
+  await page.clock.install();
   // A primeira página e a anterior vêm do servidor e esperam o teste.
   const presas: Array<{ rota: Route; resposta: APIResponse }> = [];
   await page.route(
@@ -770,19 +772,29 @@ test('the log is busy while a page of 50 goes in', async ({ page }) => {
     },
   );
   await abrirNoChat(page, { chave: a.chave, ...RECEPCAO });
+  await pararORelogio(page);
   await abrirAConversa(page, 'Ana Souza');
   const log = conversaCom(page, 'Ana Souza');
+  // Enquanto a página espera a rede, o log não fica ocupado.
   await expect.poll(() => presas.length).toBe(1);
-  await expect(log).toHaveAttribute('aria-busy', 'true');
+  await expect(log).toHaveAttribute('aria-busy', 'false');
+  // Ela entra com o log ocupado, e ele fica assim por 1 s.
   await presas[0].rota.fulfill({ response: presas[0].resposta });
   await expect(log.locator('.balao-texto')).toHaveCount(50);
+  await expect(log).toHaveAttribute('aria-busy', 'true');
+  await page.clock.runFor(999);
+  await expect(log).toHaveAttribute('aria-busy', 'true');
+  await page.clock.runFor(1);
   await expect(log).toHaveAttribute('aria-busy', 'false');
 
+  // As 50 anteriores, do mesmo jeito.
   await log.evaluate((el) => (el.scrollTop = 0));
   await expect.poll(() => presas.length).toBe(2);
-  await expect(log).toHaveAttribute('aria-busy', 'true');
+  await expect(log).toHaveAttribute('aria-busy', 'false');
   await presas[1].rota.fulfill({ response: presas[1].resposta });
   await expect(log.locator('.balao-texto')).toHaveCount(60);
+  await expect(log).toHaveAttribute('aria-busy', 'true');
+  await page.clock.runFor(1000);
   await expect(log).toHaveAttribute('aria-busy', 'false');
 });
 

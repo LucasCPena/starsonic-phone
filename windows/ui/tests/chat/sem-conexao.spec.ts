@@ -1,12 +1,14 @@
 // Sem conexão (Task 6, o quadro SemConexao): a faixa e as tentativas em 1, 2, 5, 10 e 30 s, as mensagens de enquanto
 // isso que chegam uma vez só e em ordem, também com uma nova pelo WebSocket no meio da volta (Review Focus 2), a
 // mensagem escrita sem conexão, a resposta que chega depois dos 15 s, o 429 limite, a faixa da conversa que sai com
-// ela, a página anterior que falha (o 500 tenta de novo, o 404 relê a lista) e o aviso do Windows depois de uma queda
-// curta (um por conversa; depois de uma de mais de 2 minutos, nenhum). O WebSocket passa pelo
-// page.routeWebSocket até o servidor de verdade (a rota derruba a conexão e recusa as próximas), e o Math.random fica em
-// 0,5: cada espera é a da tabela, vezes 1. Depois que a página abre, o relógio dela fica parado e só anda pelo runFor;
-// cada passo acaba na hora de uma tentativa, e o prazo de 20 s de um pedido nunca cabe nele.
-import { expect, test, type Page, type Route, type WebSocketRoute } from '@playwright/test';
+// ela, a página anterior que falha (o 500 tenta de novo, o 404 relê a lista), o aria-busy da página da volta e o aviso
+// do Windows depois da volta: um por conversa, só para a mensagem com menos de 2 minutos (depois de uma queda longa ou
+// do PC dormindo, nenhum), e uma vez só quando o evento dela chega depois da releitura. O WebSocket passa pelo
+// page.routeWebSocket até o servidor de verdade (a rota derruba a conexão e recusa as próximas, e pode calar ou segurar
+// o que o servidor manda), e o Math.random fica em 0,5: cada espera é a da tabela, vezes 1. Depois que a página abre, o
+// relógio dela fica parado e só anda pelo runFor (ou pelo fastForward do PC que dormiu); cada passo acaba na hora de uma
+// tentativa, e o prazo de 20 s de um pedido nunca cabe nele.
+import { expect, test, type APIResponse, type Page, type Route, type WebSocketRoute } from '@playwright/test';
 import { capturar, comandos, esperarComando } from '../helpers';
 import { abrirAConversa, abrirNoChat, esperarOsEventos, pararORelogio } from './abrir';
 import { baseDoChat, empresaComPessoas } from './servidor';
@@ -38,32 +40,82 @@ async function semSorteio(page: Page): Promise<void> {
 }
 
 /**
+ * O relógio da página na hora de verdade: o servidor de teste marca o criadaEm com o relógio dele, e o aviso da volta
+ * mede a idade da mensagem pelo relógio da página.
+ */
+async function relogioDeVerdade(page: Page): Promise<void> {
+  await page.clock.install({ time: Date.now() });
+}
+
+interface EventosPelaRota {
+  /** Fecha os WebSockets no ar e recusa os próximos, até o voltar. */
+  derrubar(): Promise<void>;
+  voltar(): void;
+  /** As conexões que a rota recusou. */
+  recusadas(): number;
+  /** O PC dormindo: os WebSockets no ar continuam abertos, mas o que o servidor manda por eles não chega mais. */
+  calar(): void;
+  /** O que o servidor mandou depois do calar (e que não chegou). */
+  caladas(): number;
+  /** O que o servidor mandar pelos WebSockets que abrirem daqui em diante fica guardado, até o soltar. */
+  guardar(): void;
+  guardadas(): number;
+  /** Entrega o que estava guardado, na ordem; o resto passa direto. */
+  soltar(): void;
+}
+
+/**
  * Os eventos pela rota: cada WebSocket passa até o servidor de verdade, até o derrubar. Depois dele, a rota fecha cada
  * conexão nova antes de ela abrir (o `close` só volta depois de a página tratar o fechamento: a próxima tentativa já
- * está marcada), até o voltar.
+ * está marcada), até o voltar. O que o servidor manda passa direto, menos depois do calar ou do guardar.
  */
-async function eventosPelaRota(page: Page): Promise<{ derrubar(): Promise<void>; voltar(): void; recusadas(): number }> {
+async function eventosPelaRota(page: Page): Promise<EventosPelaRota> {
   let cair = false;
   let recusadas = 0;
-  const noAr: WebSocketRoute[] = [];
+  let caladas = 0;
+  let guardando = false;
+  const guardadas: Array<() => void> = [];
+  const noAr: Array<{ ws: WebSocketRoute; servidor: WebSocketRoute }> = [];
   await page.routeWebSocket(/\/api\/v1\/eventos\?/, async (ws) => {
     if (cair) {
       await ws.close();
       recusadas += 1;
       return;
     }
-    ws.connectToServer();
-    noAr.push(ws);
+    const servidor = ws.connectToServer();
+    if (guardando) {
+      servidor.onMessage((m) => {
+        if (guardando) guardadas.push(() => ws.send(m));
+        else ws.send(m);
+      });
+    }
+    noAr.push({ ws, servidor });
   });
   return {
     async derrubar() {
       cair = true;
-      for (const ws of noAr.splice(0)) await ws.close();
+      for (const { ws } of noAr.splice(0)) await ws.close();
     },
     voltar() {
       cair = false;
     },
     recusadas: () => recusadas,
+    calar() {
+      for (const { servidor } of noAr) {
+        servidor.onMessage(() => {
+          caladas += 1;
+        });
+      }
+    },
+    caladas: () => caladas,
+    guardar() {
+      guardando = true;
+    },
+    guardadas: () => guardadas.length,
+    soltar() {
+      guardando = false;
+      for (const entregar of guardadas.splice(0)) entregar();
+    },
   };
 }
 
@@ -412,13 +464,54 @@ test('an older page answered 404 re-reads the list and stops', async ({ page }) 
   await expect(faixa(page)).toHaveCount(0);
 });
 
+test('a page of the return keeps the log busy for 1 second from the render that puts it in', async ({ page }) => {
+  const { pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO, ANA]);
+  const [a, ana] = pessoas;
+  const dupla = await ana.api.criarDupla(a.pessoa.id);
+  await ana.api.enviarTexto(dupla, 'Bom dia!');
+  await semSorteio(page);
+  await page.clock.install();
+  const eventos = await eventosPelaRota(page);
+  // A página da volta (a do depois) vem do servidor e espera o teste.
+  let volta: { rota: Route; resposta: APIResponse } | null = null;
+  await page.route(
+    (url) => mensagensDe(dupla)(url) && url.searchParams.has('depois'),
+    async (rota) => {
+      volta = { rota, resposta: await rota.fetch() };
+    },
+  );
+  await abrirNoChat(page, { chave: a.chave, ...RECEPCAO });
+  // Os eventos no ar antes da primeira página: ela fecha sem buraco, e só a volta lê com o depois.
+  await esperarOsEventos(page);
+  await abrirAConversa(page, 'Ana Souza');
+  const log = conversaCom(page, 'Ana Souza');
+  await expect(log.locator('.balao-texto')).toHaveText(['Bom dia!']);
+  await pararORelogio(page);
+
+  await eventos.derrubar();
+  await ana.api.enviarTexto(dupla, 'Pode me mandar a proposta da ACME?');
+  eventos.voltar();
+  await page.clock.runFor(1000);
+  await esperarOsEventos(page);
+  // Enquanto a página da volta espera a rede, o log não fica ocupado.
+  await expect.poll(() => volta !== null).toBe(true);
+  await expect(log).toHaveAttribute('aria-busy', 'false');
+  await volta!.rota.fulfill({ response: volta!.resposta });
+  await expect(log.locator('.balao-texto')).toHaveText(['Bom dia!', 'Pode me mandar a proposta da ACME?']);
+  await expect(log).toHaveAttribute('aria-busy', 'true');
+  await page.clock.runFor(999);
+  await expect(log).toHaveAttribute('aria-busy', 'true');
+  await page.clock.runFor(1);
+  await expect(log).toHaveAttribute('aria-busy', 'false');
+});
+
 test('after a short drop, one notice per conversation, with its last message', async ({ page }) => {
   const { pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO, ANA, JOAO]);
   const [a, ana, joao] = pessoas;
   const comAna = await ana.api.criarDupla(a.pessoa.id);
   const comJoao = await joao.api.criarDupla(a.pessoa.id);
   await semSorteio(page);
-  await page.clock.install();
+  await relogioDeVerdade(page);
   const eventos = await eventosPelaRota(page);
   await abrirNoChat(page, { chave: a.chave, ...RECEPCAO });
   await expect(page.locator('.chat-linha')).toHaveCount(2);
@@ -430,7 +523,8 @@ test('after a short drop, one notice per conversation, with its last message', a
   await ana.api.enviarTexto(comAna, 'Bom dia!');
   await ana.api.enviarTexto(comAna, 'Pode me mandar a proposta da ACME?');
   await joao.api.enviarTexto(comJoao, 'Fechamos o pedido de hoje.');
-  // Volta na primeira tentativa (1 s depois da queda): um aviso por conversa, com a última dela.
+  // Volta na primeira tentativa (1 s depois da queda): as mensagens têm menos de 2 minutos, e cada conversa tem um
+  // aviso, com a última dela.
   eventos.voltar();
   await page.clock.runFor(1000);
   await esperarOsEventos(page);
@@ -452,7 +546,7 @@ test('after a drop of more than 2 minutes, no notice, only the number', async ({
   const comAna = await ana.api.criarDupla(a.pessoa.id);
   const comJoao = await joao.api.criarDupla(a.pessoa.id);
   await semSorteio(page);
-  await page.clock.install();
+  await relogioDeVerdade(page);
   const eventos = await eventosPelaRota(page);
   await abrirNoChat(page, { chave: a.chave, ...RECEPCAO });
   await expect(page.locator('.chat-linha')).toHaveCount(2);
@@ -463,7 +557,8 @@ test('after a drop of more than 2 minutes, no notice, only the number', async ({
   await ana.api.enviarTexto(comAna, 'Bom dia!');
   await ana.api.enviarTexto(comAna, 'Pode me mandar a proposta da ACME?');
   await joao.api.enviarTexto(comJoao, 'Fechamos o pedido de hoje.');
-  // As tentativas em 1, 3, 8, 18, 48, 78 e 108 s são recusadas; a de 138 s (mais de 2 minutos) volta.
+  // As tentativas em 1, 3, 8, 18, 48, 78 e 108 s são recusadas; a de 138 s volta, e as mensagens da queda já têm mais
+  // de 2 minutos pelo relógio da página.
   for (const [i, espera] of [1000, 2000, 5000, 10000, 30000, 30000, 30000].entries()) {
     await page.clock.runFor(espera);
     await expect.poll(() => eventos.recusadas()).toBe(i + 1);
@@ -475,4 +570,83 @@ test('after a drop of more than 2 minutes, no notice, only the number', async ({
   await page.waitForTimeout(300);
   expect(await avisosDe(page, comAna)).toEqual([]);
   expect(await avisosDe(page, comJoao)).toEqual([]);
+});
+
+test('after the PC sleeps, the messages of the sleep are too old for a notice', async ({ page }) => {
+  const { pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO, ANA, JOAO]);
+  const [a, ana, joao] = pessoas;
+  const comAna = await ana.api.criarDupla(a.pessoa.id);
+  const comJoao = await joao.api.criarDupla(a.pessoa.id);
+  await semSorteio(page);
+  await relogioDeVerdade(page);
+  const eventos = await eventosPelaRota(page);
+  await abrirNoChat(page, { chave: a.chave, ...RECEPCAO });
+  await expect(page.locator('.chat-linha')).toHaveCount(2);
+  await esperarOsEventos(page);
+  await pararORelogio(page);
+
+  // O PC dorme: o WebSocket continua aberto, mas o que o servidor manda não chega mais.
+  eventos.calar();
+  await ana.api.enviarTexto(comAna, 'Bom dia!');
+  await ana.api.enviarTexto(comAna, 'Pode me mandar a proposta da ACME?');
+  await joao.api.enviarTexto(comJoao, 'Fechamos o pedido de hoje.');
+  await expect.poll(() => eventos.caladas()).toBe(3);
+  // Dois minutos e meio depois, ele acorda. Só agora o WebSocket fecha (a queda que o app vê dura 1 s), e ele volta na
+  // primeira tentativa.
+  await page.clock.fastForward(150_000);
+  await eventos.derrubar();
+  eventos.voltar();
+  await page.clock.runFor(1000);
+  await esperarOsEventos(page);
+  // A releitura traz as três (o número), mas elas têm mais de 2 minutos: nenhum aviso.
+  await esperarComando(page, { cmd: 'chatBadge', n: 3 });
+  await page.waitForTimeout(300);
+  expect(await avisosDe(page, comAna)).toEqual([]);
+  expect(await avisosDe(page, comJoao)).toEqual([]);
+});
+
+test('a message the re-read already brought gets no second notice when its event comes later', async ({ page }) => {
+  const { pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO, ANA]);
+  const [a, ana] = pessoas;
+  const comAna = await ana.api.criarDupla(a.pessoa.id);
+  await semSorteio(page);
+  await relogioDeVerdade(page);
+  const eventos = await eventosPelaRota(page);
+  // A releitura da volta espera o teste; as leituras da lista de antes passam.
+  const conversas = `${baseDoChat()}/api/v1/conversas`;
+  let segurarALista = false;
+  let lista: Route | null = null;
+  let listasLidas = 0;
+  await page.route(conversas, (rota) => {
+    if (rota.request().method() !== 'GET' || !segurarALista || lista !== null) return rota.continue();
+    lista = rota;
+  });
+  page.on('requestfinished', (r) => {
+    if (r.method() === 'GET' && r.url() === conversas) listasLidas += 1;
+  });
+  await abrirNoChat(page, { chave: a.chave, ...RECEPCAO });
+  await expect(page.locator('.chat-linha')).toHaveCount(1);
+  await esperarOsEventos(page);
+  // A lista da partida e a releitura do primeiro `conectou`.
+  await expect.poll(() => listasLidas).toBe(2);
+  await pararORelogio(page);
+
+  await eventos.derrubar();
+  await expect(faixa(page)).toBeVisible();
+  // Na volta, o que o servidor manda pelo WebSocket fica guardado, e a releitura espera.
+  eventos.guardar();
+  segurarALista = true;
+  eventos.voltar();
+  await page.clock.runFor(1000);
+  await esperarOsEventos(page);
+  await expect.poll(() => lista !== null).toBe(true);
+  // A Ana manda agora: a releitura traz a mensagem, e o evento dela chega só depois.
+  await ana.api.enviarTexto(comAna, 'Pode me mandar a proposta da ACME?');
+  await expect.poll(() => eventos.guardadas()).toBe(1);
+  await lista!.continue();
+  const aviso = { v: 1, cmd: 'chatNotify', conversa: comAna, titulo: 'Ana Souza', texto: 'Pode me mandar a proposta da ACME?' };
+  await expect.poll(() => avisosDe(page, comAna)).toEqual([aviso]);
+  eventos.soltar();
+  await page.waitForTimeout(300);
+  expect(await avisosDe(page, comAna)).toEqual([aviso]);
 });

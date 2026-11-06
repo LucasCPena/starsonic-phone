@@ -7,7 +7,8 @@
 // - A rolagem: a conversa abre embaixo; uma mensagem nova só puxa a tela quando ela está a até 80 px do fim (a minha,
 //   sempre); as anteriores chegam quando o alto da lista aparece (o IntersectionObserver), e a primeira mensagem que
 //   estava carregada fica no mesmo lugar da tela.
-// - O leitor de tela: o log fica `aria-busy` enquanto uma página de 50 está a caminho, e cada balão diz quem mandou.
+// - O leitor de tela: o log fica `aria-busy` por 1 s desde a renderização que põe uma página (para não ler a página
+//   inteira), e cada balão diz quem mandou.
 // Os nomes e as mensagens vão sempre como texto.
 import { useLayoutEffect, useMemo, useRef } from 'preact/hooks';
 import { dayGroup } from '../../format';
@@ -204,7 +205,7 @@ export function Conversa({ vista, conversa, cliente, send, onVoltar, onMembros }
         role="log"
         tabIndex={0}
         aria-label={grupo ? mensagensDoGrupo(nome) : mensagensCom(nome)}
-        aria-busy={aberta?.carregando ? 'true' : 'false'}
+        aria-busy={aberta?.ocupada ? 'true' : 'false'}
       >
         <div ref={alto} class="conversa-alto" aria-hidden="true" />
         {itens.map((item) => {

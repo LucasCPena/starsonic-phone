@@ -3,8 +3,8 @@
 // sai e nenhum pedido sai mais por ela.
 // - As páginas: as 50 mais novas, as anteriores de 50 em 50 (o alto da lista apareceu) e, a cada `conectou`, a volta
 //   (as de depois da última que ela tem sem buraco, até o temMais dar false). As mensagens ficam em ordem de id, e um
-//   id repetido não entra. Enquanto uma página de 50 (a primeira ou uma anterior) está a caminho, o log fica
-//   `aria-busy`.
+//   id repetido não entra. Cada página que traz mensagens deixa o log `aria-busy` por 1 s, desde a renderização que a
+//   põe (R29); enquanto uma página espera a rede, ele não fica ocupado.
 // - Os erros delas: sem rede ou um 500, a faixa (enquanto um pedido dela espera) e outra tentativa depois da espera da
 //   vez; um 404 (a conversa não é mais minha) relê a lista, que a tira, e desiste; um 401 é o `fora`.
 // - A leitura: com a janela na frente, o marcarLida até a mais nova (um id uma vez só).
@@ -23,7 +23,7 @@ export interface ContextoDaAberta {
   frente(): boolean;
   /** Até onde cada conversa já foi lida (mandada daqui ou lida em outro computador meu): o mesmo id nunca vai de novo. */
   lidas: Map<number, number>;
-  /** A vista desta abertura mudou (as mensagens, o temMaisAntigas, o carregando ou a faixa). */
+  /** A vista desta abertura mudou (as mensagens, o temMaisAntigas, o ocupada ou a faixa). */
   publicar(): void;
   /** O pedido com o 429 `limite`: a espera dele é desta abertura (acaba no soltar), e depois dela o pedido não sai. */
   comLimite<T>(pedir: () => Promise<T>): Promise<T>;
@@ -44,9 +44,15 @@ export interface VistaDaAberta {
   /** Em ordem de id. */
   mensagens: Mensagem[];
   temMaisAntigas: boolean;
-  /** Uma página de 50 a caminho (a primeira ou uma anterior): o log fica `aria-busy`. */
-  carregando: boolean;
+  /** Uma página (a primeira, 50 anteriores ou uma da volta) entrou há menos de 1 s: o log fica `aria-busy`. */
+  ocupada: boolean;
 }
+
+/**
+ * O log fica ocupado por 1 s desde a renderização que põe uma página: o Chromium não manda os eventos de região viva
+ * de um nó que entra com o log ocupado, e a árvore de acessibilidade vai em lotes (um quadro só pode cair no mesmo).
+ */
+const OCUPADA_MS = 1000;
 
 /** As mensagens com as novas, em ordem de id: um id que já está não entra de novo (a mesma lista, se nada entrou). */
 function juntarPorId(lista: Mensagem[], novas: Mensagem[]): Mensagem[] {
@@ -61,7 +67,9 @@ const ultimoId = (lista: Mensagem[]): number | null => lista.at(-1)?.id ?? null;
 export class Aberta {
   readonly id: number;
   private readonly ctx: ContextoDaAberta;
-  private v: VistaDaAberta = { mensagens: [], temMaisAntigas: false, carregando: true };
+  private v: VistaDaAberta = { mensagens: [], temMaisAntigas: false, ocupada: false };
+  /** O fim do `ocupada` (1 s depois da última página que entrou). */
+  private desocupar: ReturnType<typeof setTimeout> | undefined;
   /** A primeira página chegou. */
   private carregada = false;
   /**
@@ -108,7 +116,7 @@ export class Aberta {
     // Com os eventos no ar do começo ao fim, o que veio depois da página chegou por eles; senão, a volta busca o que
     // pode ter ficado entre a página e eles (já, ou no próximo `conectou`).
     this.continuo = noArAntes && this.ctx.eventosNoAr() && this.ctx.conexao() === conexao;
-    this.juntar(r.mensagens, { temMaisAntigas: r.temMais, carregou: true });
+    this.juntar(r.mensagens, { temMaisAntigas: r.temMais, pagina: true });
     this.ate = ultimoId(this.continuo ? this.v.mensagens : r.mensagens);
     this.ler();
     if (!this.continuo && this.ctx.eventosNoAr()) void this.buscarDepois();
@@ -118,14 +126,11 @@ export class Aberta {
   async anteriores(): Promise<void> {
     if (this.solta || !this.carregada || !this.v.temMaisAntigas || this.v.mensagens.length === 0 || this.buscandoAnteriores) return;
     this.buscandoAnteriores = true;
-    this.mudar({ carregando: true });
     try {
       const r = await this.ateDarCerto(() => this.ctx.api.mensagens(this.id, { antes: this.v.mensagens[0].id }));
-      if (r) this.juntar(r.mensagens, { temMaisAntigas: r.temMais, carregou: true });
+      if (r) this.juntar(r.mensagens, { temMaisAntigas: r.temMais, pagina: true });
     } finally {
       this.buscandoAnteriores = false;
-      // Sem a página (o 404, o `fora`): o log não espera mais por ela.
-      if (this.v.carregando && !this.solta) this.mudar({ carregando: false });
     }
   }
 
@@ -169,6 +174,8 @@ export class Aberta {
   /** Fecha: as esperas dela acabam (e o pedido que esperava não sai), a faixa dela sai, e nada mais dela pinta. */
   soltar(): void {
     this.solta = true;
+    clearTimeout(this.desocupar);
+    this.desocupar = undefined;
     for (const acordar of [...this.acordar]) acordar();
   }
 
@@ -217,7 +224,7 @@ export class Aberta {
       const r = await this.ateDarCerto(() => this.ctx.api.mensagens(this.id, depois === null ? {} : { depois }));
       if (!r) return false;
       // Sem o `ate` (a aberta estava vazia): as mais novas, e as anteriores a elas vêm pelo alto da lista.
-      this.juntar(r.mensagens, depois === null ? { temMaisAntigas: r.temMais } : {});
+      this.juntar(r.mensagens, { temMaisAntigas: depois === null ? r.temMais : undefined, pagina: true });
       this.ate = ultimoId(r.mensagens) ?? depois;
       if (depois === null || !r.temMais) return true;
     }
@@ -260,15 +267,24 @@ export class Aberta {
 
   /**
    * As mensagens nesta conversa, em ordem de id (um id que já está não entra), e os meus Pendentes que viraram uma delas
-   * saem. `temMaisAntigas`: o da página que chegou; `carregou`: a página de 50 entrou (o log deixa o aria-busy).
+   * saem. `temMaisAntigas`: o da página que chegou. Uma `pagina` que traz mensagens entra com o log ocupado, e ele fica
+   * assim por 1 s (outra página nesse meio recomeça a conta).
    */
-  private juntar(novas: Mensagem[], o: { temMaisAntigas?: boolean; carregou?: boolean } = {}): void {
+  private juntar(novas: Mensagem[], o: { temMaisAntigas?: boolean; pagina?: boolean } = {}): void {
     const v = this.v;
     const mensagens = juntarPorId(v.mensagens, novas);
     const temMaisAntigas = o.temMaisAntigas ?? v.temMaisAntigas;
-    const carregando = o.carregou ? false : v.carregando;
-    if (mensagens !== v.mensagens || temMaisAntigas !== v.temMaisAntigas || carregando !== v.carregando) {
-      this.v = { mensagens, temMaisAntigas, carregando };
+    const ocupar = o.pagina === true && mensagens !== v.mensagens;
+    if (ocupar) {
+      clearTimeout(this.desocupar);
+      this.desocupar = setTimeout(() => {
+        this.desocupar = undefined;
+        this.mudar({ ocupada: false });
+      }, OCUPADA_MS);
+    }
+    const ocupada = v.ocupada || ocupar;
+    if (mensagens !== v.mensagens || temMaisAntigas !== v.temMaisAntigas || ocupada !== v.ocupada) {
+      this.v = { mensagens, temMaisAntigas, ocupada };
     }
     this.ctx.chegaram(novas);
     this.publicar();

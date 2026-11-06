@@ -22,8 +22,10 @@
 //   conversa (também com ela fechada), são os Envios da pessoa da vez (envios.ts).
 // - (Task 6) A leitura e o aviso: o cliente guarda o `frente` da mensagem `janela`. A aberta com a janela na frente é
 //   lida na hora (as não lidas dela ficam 0); a mensagem que chega pelos eventos de outra pessoa, fora dela, pede o
-//   chatNotify. Depois de uma queda dos eventos de menos de 2 minutos, a releitura da volta avisa, no máximo uma vez
-//   por conversa, a última que chegou durante a queda; depois de uma mais longa, fica só o número.
+//   chatNotify, se ela entrou na lista agora (a que a releitura já trouxe não pede de novo). Depois de cada queda dos
+//   eventos, a releitura da volta avisa, no máximo uma vez por conversa, a última que chegou durante a queda, só se ela
+//   tiver menos de 2 minutos pelo relógio do computador (R28): o app só vê a queda quando o WebSocket fecha, e depois
+//   de o PC dormir isso só acontece na volta. As mais velhas ficam só no número.
 // As Tasks 5 e 7 acrescentam as conversas novas, os grupos e os arquivos.
 import type { Bridge } from '../bridge';
 import { limitCharacters } from '../format';
@@ -38,13 +40,16 @@ import type { Conversa, Evento, Mensagem, Pessoa } from './tipos';
 
 export type SituacaoChat = 'desligado' | 'precisaConta' | 'entrando' | 'pronto' | 'fora';
 
+/** O Pendente (uma minha que ainda não foi) mora no envios.ts e sai também daqui, como o plano o dá à Task 7. */
+export type { Pendente } from './envios';
+
 /** A conversa na tela (Task 6): as mensagens em ordem de id e as minhas que ainda não foram. */
 export interface ConversaAberta {
   id: number;
   mensagens: Mensagem[];
   temMaisAntigas: boolean;
-  /** Uma página de 50 a caminho (a primeira ou uma anterior): o log fica `aria-busy`. */
-  carregando: boolean;
+  /** Uma página (a primeira, 50 anteriores ou uma da volta) entrou há menos de 1 s: o log fica `aria-busy`. */
+  ocupada: boolean;
   pendentes: Pendente[];
 }
 
@@ -79,8 +84,8 @@ interface Dono {
 
 /** O nome da pessoa no servidor tem até 80 caracteres (docs/chat-protocolo.md, seção 3). */
 const MAX_NOME = 80;
-/** Uma queda dos eventos mais curta que isto ainda avisa o que chegou durante ela (uma vez por conversa). */
-const QUEDA_CURTA_MS = 120_000;
+/** A mensagem que chegou durante uma queda só é avisada na volta com menos que isto de idade (o `criadaEm`). */
+const IDADE_DO_AVISO_DA_VOLTA_MS = 120_000;
 
 const VISTA_VAZIA: VistaChat = {
   situacao: 'desligado',
@@ -105,9 +110,13 @@ function ordenar(lista: Conversa[]): Conversa[] {
 /**
  * Um evento na lista de conversas. Vale também por cima de uma lista que já o tem (a da releitura): a mensagem que a
  * conversa já tem (a última com o mesmo id ou um maior) não conta de novo. `reler`: a lista não basta (uma conversa que
- * ela não tem, uma leitura até antes da última).
+ * ela não tem, uma leitura até antes da última). `entrou`: a mensagem entrou agora, como a última da conversa.
  */
-function aplicar(conversas: Conversa[], e: Evento, contaComoNaoLida: (m: Mensagem) => boolean): { conversas: Conversa[]; reler: boolean } {
+function aplicar(
+  conversas: Conversa[],
+  e: Evento,
+  contaComoNaoLida: (m: Mensagem) => boolean,
+): { conversas: Conversa[]; reler: boolean; entrou?: boolean } {
   switch (e.tipo) {
     case 'mensagem': {
       const m = e.mensagem;
@@ -115,7 +124,7 @@ function aplicar(conversas: Conversa[], e: Evento, contaComoNaoLida: (m: Mensage
       if (!c) return { conversas, reler: true };
       if (c.ultima && c.ultima.id >= m.id) return { conversas, reler: false };
       const nova: Conversa = { ...c, ultima: m, atualizadaEm: m.criadaEm, naoLidas: c.naoLidas + (contaComoNaoLida(m) ? 1 : 0) };
-      return { conversas: ordenar(conversas.map((x) => (x === c ? nova : x))), reler: false };
+      return { conversas: ordenar(conversas.map((x) => (x === c ? nova : x))), reler: false, entrou: true };
     }
     case 'lida': {
       const c = conversas.find((x) => x.id === e.conversa);
@@ -180,11 +189,11 @@ export class ChatCliente {
   private envios: Envios | null = null;
   /** Até onde cada conversa já foi lida (mandada daqui ou lida em outro computador meu): o mesmo id nunca vai de novo. */
   private readonly lidas = new Map<number, number>();
-  /** A queda dos eventos em curso: quando ela começou e a última mensagem de cada conversa nessa hora. */
-  private queda: { em: number; ultimas: Map<number, number> } | null = null;
+  /** A queda dos eventos em curso: a última mensagem de cada conversa quando ela começou. */
+  private queda: Map<number, number> | null = null;
   /**
-   * Depois de uma queda curta, até a releitura da volta acabar: a última mensagem de cada conversa já vista (a de antes
-   * da queda, ou uma que chegou pelos eventos depois dela). A releitura avisa as conversas com uma mais nova.
+   * Depois de uma queda, até a releitura da volta acabar: a última mensagem de cada conversa já vista (a de antes da
+   * queda, ou uma que chegou pelos eventos depois dela). A releitura avisa as conversas com uma mais nova e recente.
    */
   private avisoDaVolta: Map<number, number> | null = null;
 
@@ -437,8 +446,9 @@ export class ChatCliente {
         if (vez === this.vez) this.aoEvento(e, api);
       },
       conectou: desta(() => {
-        // Depois de uma queda curta, a releitura avisa o que chegou durante ela; depois de uma longa, só o número.
-        if (this.queda && Date.now() - this.queda.em < QUEDA_CURTA_MS) this.avisoDaVolta = this.queda.ultimas;
+        // Depois de uma queda (de qualquer tamanho: o app pode tê-la visto só agora), a releitura avisa o que chegou
+        // durante ela e ainda é recente.
+        if (this.queda) this.avisoDaVolta = this.queda;
         this.queda = null;
         this.eventosNoAr = true;
         this.semEventos = false;
@@ -461,12 +471,11 @@ export class ChatCliente {
   }
 
   /**
-   * A queda dos eventos começou: a hora e a última mensagem de cada conversa. Uma queda antes de a releitura da volta
-   * anterior acabar continua do que ela tinha (o que chegou na queda de antes ainda não foi avisado).
+   * A queda dos eventos começou: a última mensagem de cada conversa. Uma queda antes de a releitura da volta anterior
+   * acabar continua do que ela tinha (o que chegou na queda de antes ainda não foi avisado).
    */
   private comecarAQueda(): void {
-    const ultimas = this.avisoDaVolta ?? new Map(this.v.conversas.map((c): [number, number] => [c.id, c.ultima?.id ?? 0]));
-    this.queda = { em: Date.now(), ultimas };
+    this.queda = this.avisoDaVolta ?? new Map(this.v.conversas.map((c): [number, number] => [c.id, c.ultima?.id ?? 0]));
     this.avisoDaVolta = null;
   }
 
@@ -511,15 +520,19 @@ export class ChatCliente {
   }
 
   /**
-   * A releitura depois de uma queda curta: um aviso por conversa, com a última dela, se ela chegou durante a queda (a
-   * que chegou pelos eventos depois dela já foi avisada). O avisar não avisa as minhas, os avisos de grupo nem a
-   * conversa lida na hora.
+   * A releitura depois de uma queda: um aviso por conversa, com a última dela, se ela chegou durante a queda (a que
+   * chegou pelos eventos depois dela já foi avisada) e tem menos de 2 minutos pelo relógio do computador. O avisar não
+   * avisa as minhas, os avisos de grupo nem a conversa lida na hora.
    */
   private avisarDaVolta(): void {
     const vistas = this.avisoDaVolta;
     this.avisoDaVolta = null;
     if (!vistas) return;
-    for (const c of this.v.conversas) if (c.ultima && c.ultima.id > (vistas.get(c.id) ?? 0)) this.avisar(c.ultima);
+    const agora = Date.now();
+    for (const c of this.v.conversas) {
+      const m = c.ultima;
+      if (m && m.id > (vistas.get(c.id) ?? 0) && agora - m.criadaEm < IDADE_DO_AVISO_DA_VOLTA_MS) this.avisar(m);
+    }
   }
 
   private aoEvento(e: Evento, api: ApiChat): void {
@@ -528,25 +541,30 @@ export class ChatCliente {
       this.bridge.send({ cmd: 'chatNotify', conversa: 0, titulo: CHAT, texto: computadorNovo(e.computador) });
       return;
     }
-    this.aplicarNaLista(e, api);
+    const entrou = this.aplicarNaLista(e, api);
     if (e.tipo === 'mensagem') {
       const m = e.mensagem;
       if (this.aberta?.id === m.conversa) this.aberta.chegou(m, true);
       this.envios?.chegaram([m]);
       const vistas = this.avisoDaVolta;
       if (vistas) vistas.set(m.conversa, Math.max(vistas.get(m.conversa) ?? 0, m.id));
-      this.avisar(m);
+      // Só a que entrou na lista agora: a que a releitura já trouxe (e talvez já avisou) não pede outro aviso.
+      if (entrou) this.avisar(m);
     } else if (e.tipo === 'lida') {
       this.lidas.set(e.conversa, Math.max(this.lidas.get(e.conversa) ?? 0, e.ate));
     }
   }
 
-  /** Um evento (ou a resposta de um envio) na lista de conversas, também por cima da releitura em curso. */
-  private aplicarNaLista(e: Evento, api: ApiChat): void {
+  /**
+   * Um evento (ou a resposta de um envio) na lista de conversas, também por cima da releitura em curso. true: a
+   * mensagem entrou agora, como a última da conversa.
+   */
+  private aplicarNaLista(e: Evento, api: ApiChat): boolean {
     this.relendo?.push(e);
     const r = aplicar(this.v.conversas, e, this.contaComoNaoLida);
     this.mudar({ conversas: r.conversas });
     if (r.reler) void this.reler(this.vez, api);
+    return r.entrou === true;
   }
 
   /**
