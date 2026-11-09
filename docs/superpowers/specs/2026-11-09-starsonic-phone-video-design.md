@@ -7,7 +7,7 @@
   - como funciona por dentro;
   - os problemas, os testes e o que fica fora.
 
-  Os esboços das telas foram mostrados no chat. As telas de verdade vão para um quadro, "Starsonic Phone — telas da videochamada", que o responsável aprova antes do código das telas (seção 12).
+  Os esboços das telas foram mostrados no chat. As telas de verdade vão para um quadro, "Starsonic Phone — telas da videochamada", que o responsável aprova antes do código das telas (seção 12). A spec escrita foi aprovada pelo responsável em 09/11/2026. A decisão 12 entrou depois, na leitura da licença do binário da Cisco, também aprovada por ele.
 - **Versão alvo:** o app do Windows 0.3.0-rc.1.
 - **Base:**
   - o app do Windows na 0.2.0-rc.1, com as telas (`windows/ui`), o núcleo (`starsonic/desktop`), o motor de ligações (`starsonic/phone`) e o contrato da ponte (`docs/ponte-windows.md`);
@@ -26,6 +26,7 @@
 > 9. Durante uma ligação com um colega no chat, o botão "Chat" abre a conversa com ele, também nas ligações só de voz. No "Abrir grande", a conversa fica ao lado do vídeo.
 > 10. O cartão Vídeo da área do administrador tem a lista "Porteiros": só para esses ramais o app pede a imagem antes de atender.
 > 11. Com a tela do Windows bloqueada no meio da ligação, a câmera para de mandar a imagem e volta no desbloqueio.
+> 12. A própria pessoa liga e desliga o H.264 da Cisco nas Configurações, numa chave que já vem ligada, com o aviso da Cisco ao lado, como pede a licença do binário (seção 6.3). A área do administrador continua podendo desligar o H.264 para o computador todo.
 >
 > O responsável aceitou também estas regras, que vieram como suposições:
 > - uma ligação com vídeo por vez;
@@ -96,7 +97,8 @@ As telas abaixo vão para o quadro, nos três tamanhos de janela (Normal, Compac
 - **A ligação que chega:** no aviso da ligação e na tela do app, o "Atender com vídeo" aparece ao lado do "Atender" quando a ligação oferece vídeo. A imagem do porteiro, quando vem, aparece no aviso e na tela do app, antes de atender.
 - **As Configurações:**
   - a parte "Áudio" passa a se chamar "Áudio e vídeo" e ganha o campo "Câmera", com as câmeras do computador, como o Microfone e o Alto-falante;
-  - o "Testar a câmera" mostra a imagem ali mesmo, até "Parar o teste" ou até sair da tela.
+  - o "Testar a câmera" mostra a imagem ali mesmo, até "Parar o teste" ou até sair da tela;
+  - a chave "H.264 da Cisco", que já vem ligada, com o aviso "OpenH264 Video Codec provided by Cisco Systems, Inc." embaixo. Ela só aparece com o H.264 ligado no cartão Vídeo da área do administrador. Desligada, o motor não usa o H.264, e o app não baixa o módulo.
 - **A área do administrador:** o cartão "Vídeo" (seção 4.3).
 - **A tela de Licenças:** o aviso da Cisco (seção 6.3).
 
@@ -138,7 +140,7 @@ As telas abaixo vão para o quadro, nos três tamanhos de janela (Normal, Compac
   - "Baixando…";
   - "Não foi possível baixar", com o "Tentar de novo".
 
-  Com o H.264 desligado no cartão, o app não baixa o módulo.
+  Com o H.264 desligado no cartão, o app não baixa o módulo, e a chave "H.264 da Cisco" some das Configurações.
 - Os valores do cartão valem para todas as contas do computador e ficam gravados como as outras escolhas da área.
 
 ### 4.4 O chat durante a ligação
@@ -215,12 +217,16 @@ App do Windows (um processo)
   - o núcleo baixa o módulo pelo cliente HTTP de hoje (WinHTTP, com o proxy do Windows), no endereço exato do `deps.lock`;
   - ele confere a impressão do arquivo comprimido, descomprime (bzip2), confere a do `.dll` e grava em `%LOCALAPPDATA%\Starsonic Phone\codecs\`;
   - um arquivo que não confere é apagado e não é usado;
-  - o download roda em segundo plano, quando o app abre e o módulo da versão certa não está lá, e também no "Tentar de novo" do cartão Vídeo;
+  - o download roda em segundo plano, quando o app abre e o módulo da versão certa não está lá, e também no "Tentar de novo" do cartão Vídeo. Ele só roda com o H.264 ligado no cartão e na chave da pessoa;
   - uma falha espera a próxima abertura ou o "Tentar de novo";
   - um módulo de outra versão, que sobrou de uma atualização, é apagado.
-- **A licença:**
-  - a tela de Licenças mostra "OpenH264 Video Codec provided by Cisco Systems, Inc." e o texto da licença do binário da Cisco na versão fixada, com a nota da licença de patentes AVC;
-  - a etapa 1 lê os termos do binário na versão fixada e confere se o jeito desta seção atende a eles (seção 14).
+- **A licença do binário** (lida em 09/11/2026) tem quatro condições, e o app cumpre as quatro:
+  - o binário é baixado à parte no computador da pessoa, e não vem dentro do app;
+  - a pessoa pode ligar, desligar e religar o uso dele: a chave "H.264 da Cisco" das Configurações (seção 4.1);
+  - onde a pessoa liga e desliga, o app mostra "OpenH264 Video Codec provided by Cisco Systems, Inc.";
+  - o texto inteiro da licença, com a nota da licença de patentes AVC, aparece na tela de Licenças.
+
+  A etapa 1 guarda o texto da licença da versão fixada no repositório, para a tela de Licenças da etapa 2.
 
 ### 6.4 A imagem até a página
 - **As vistas de quadros:** cada lugar onde aparece um vídeo é uma vista:
@@ -351,7 +357,7 @@ Os textos abaixo são propostas e vão para a aprovação do responsável, com a
   - "Ligar com vídeo para <nome>";
   - "Vídeo de <nome>";
   - "Sua imagem".
-- **As Configurações:** "Áudio e vídeo", "Câmera" e "Nenhuma câmera encontrada.".
+- **As Configurações:** "Áudio e vídeo", "Câmera", "Nenhuma câmera encontrada." e "H.264 da Cisco", com "OpenH264 Video Codec provided by Cisco Systems, Inc." embaixo.
 - **Os avisos:**
   - "A outra ponta não aceitou o vídeo.";
   - "A câmera está sendo usada por outro programa.";
@@ -468,12 +474,8 @@ O roteiro (`docs/teste-manual.md`) ganha a seção 23, nos dois PCs (W10 e W11) 
 - **Um porteiro ou telefone com outro jeito de H.264** (o `packetization-mode=0` ou outro perfil): o roteiro mostra. Se aparecer, a etapa acrescenta uma segunda oferta de H.264.
 - **Um porteiro que só manda a imagem depois do atender:** a imagem aparece só no atender, e o aviso mostra o nome, como hoje.
 - **O site da Cisco bloqueado na rede do cliente:** o VP8 continua com os programas, e o cartão Vídeo mostra a falha.
-- **Os termos do binário da Cisco:** a etapa 1 lê os termos na versão fixada e confere estes pontos:
-  - o download pelo próprio app;
-  - o aviso na tela de Licenças;
-  - o jeito de desligar, que é desligar o H.264 no cartão.
-
-  Se um termo pedir outra coisa, a etapa para e pergunta ao responsável.
+- **Os termos do binário da Cisco:** lidos em 09/11/2026 (seção 6.3). Se a versão fixada mudar e os termos dela pedirem outra coisa, a etapa para e pergunta ao responsável.
+- **O alcance da licença:** o texto da Cisco fala do "uso pessoal ou sem remuneração" do vídeo. É o aviso padrão do H.264, o mesmo do Windows e dos celulares. O responsável confere com quem cuida da parte legal, se quiser.
 - **Uma câmera que o DirectShow não vê:** o roteiro testa duas câmeras. Se aparecer, uma etapa futura usa o Media Foundation.
 - **Um PC fraco:** a qualidade Alta gasta processador, e por isso o padrão é a Média.
 - **O app é de 32 bits:** cada vista usa perto de 6 MB de memória, o que cabe.
