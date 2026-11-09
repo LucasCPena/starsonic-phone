@@ -21,7 +21,8 @@
 // pjsua_call_get_info e pjsua_conf_* (que pedem a trava global do pjsua e a da ponte, nenhuma de
 // diálogo) e se pega mutex_ por um instante.
 //
-// O vídeo (só com o PJMEDIA_HAS_VIDEO): o que a tabela sabe do vídeo de cada ligação (o desejo da câmera, a pausa, o
+// O vídeo (só com o PJMEDIA_HAS_VIDEO; as funções dele ficam no EngineCallVideo.cpp, e os ganchos nos métodos de
+// sempre, no EngineCall.cpp): o que a tabela sabe do vídeo de cada ligação (o desejo da câmera, a pausa, o
 // 183 dos Porteiros, o vídeo negociado) fica com mutex_, e o OnCallVideo sai pelo Emit, com mutex_ presa, quando o
 // CallVideo de uma ligação muda (PublishVideo). Uma ligação com vídeo por vez: a pausa (Paused) vem do que a tabela
 // quer, como a mesa de áudio, e o aviso já sai com a câmera desligada. O envio (o START_TRANSMIT e o STOP_TRANSMIT) só
@@ -61,6 +62,29 @@ struct VideoOffer {
 
 // O VideoOffer do INVITE (rdata: o pjsip_rx_data, o pjRxData do OnIncomingCallParam); sem SDP, nenhum vídeo.
 VideoOffer VideoOfferOf(void* rdata);
+
+#if PJMEDIA_HAS_VIDEO
+// O vídeo de uma ligação no PJSIP agora: a primeira mídia de vídeo com um stream.
+struct VideoMedia {
+    bool up = false;        // um stream de vídeo negociado (a porta nos dois lados)
+    bool canSend = false;   // a direção negociada deixa mandar
+    bool sending = false;   // a captura ligada ao stream (o START_TRANSMIT de pé)
+    int index = -1;         // o índice dela na ligação
+    // Do stream (só no MediaChanged, com a trava do diálogo): o codec e o codificador.
+    std::string codec;
+    int width = 0;
+    int height = 0;
+    int fps = 0;
+};
+
+// Do EngineCallVideo.cpp, para os ganchos do vídeo no EngineCall.cpp (o Incoming e o MediaChanged).
+VideoMedia VideoMediaOf(int pjsuaId);
+void ReadVideoStream(int pjsuaId, VideoMedia* media);
+bool CommonCodec(const std::vector<std::string>& offered, const VideoSettings& settings);
+#endif
+
+// Quanto SetHold espera uma renegociação anterior terminar (o PJSIP só aceita um re-INVITE por vez).
+const int kRenegotiationWaitMs = 2000;
 
 // Os callbacks chegam numa thread do PJSIP, ou na que chamou o PJSIP, sempre com a trava do diálogo
 // da ligação.
