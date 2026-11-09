@@ -695,6 +695,41 @@ download dos arquivos.
   `DesktopApp.h`). Depois de a janela fechar, isso tem 5 s: passou, `fechamento forcado` no diagnóstico e o processo
   sai com o código 0.
 
+### A memória do vídeo
+
+Cada vista de vídeo (a imagem da outra ponta de uma ligação, ou a nossa câmera) é uma memória compartilhada com a
+página: um cabeçalho de 64 bytes e dois lugares, cada um com um quadro I420 de até 1920×1080 (um quadro maior é
+reduzido antes, mantendo a proporção). O tamanho total é `64 + 2 × 3110400 = 6220864` bytes; cada lugar tem
+`1920*1080 + 2*(960*540)` = 3110400 bytes. Quem grava é o executável (`windows/app/src/FrameBuffer.h`).
+
+Todos os campos do cabeçalho são u32 little-endian, nestes deslocamentos:
+
+| Desloc. | Campo | Valor |
+| --- | --- | --- |
+| 0 | marca | `0x31565353` (os bytes `S`, `S`, `V`, `1`) |
+| 4 | `seq` | 0: nenhum quadro; ímpar: o cabeçalho está mudando; par: o quadro está completo |
+| 8 | lugar | 0 ou 1: o lugar do último quadro completo |
+| 12 | largura | em pixels |
+| 16 | altura | em pixels |
+| 20 | `yStride` | igual à largura |
+| 24 | `uvStride` | `(largura+1)/2` |
+| 28 | tamanho do lugar | `1920*1080 + 2*(960*540)` |
+| 32 a 63 | | zero |
+
+O lugar 0 começa no byte 64 e o lugar 1 em `64 + tamanho do lugar`. Cada lugar tem o plano Y (`yStride × altura`), depois o
+U e depois o V (cada um com `uvStride × ((altura+1)/2)`), sem sobra nas linhas.
+
+O escritor alterna os lugares: grava o quadro novo no lugar que não é o do `lugar` do cabeçalho, soma 1 ao `seq`
+(ímpar), grava `lugar`, largura, altura e os passos, e soma 1 de novo (par). O `seq` só cresce.
+
+A leitura, para quem escreve a página (o `seq` é lido de forma atômica, com `Atomics.load` num `Int32Array` da
+memória):
+
+1. Leia `s1 = seq`. Se for 0 ou ímpar, não há quadro: tente no próximo ciclo.
+2. Copie o cabeçalho e os planos do lugar indicado (copie de uma vez, para fora da memória).
+3. Leia `s2 = seq`. Se `s1 == s2`, a cópia é um quadro inteiro; se não, descarte-a, porque o escritor virou o lugar no meio
+   da cópia.
+
 ## O modo iPhone (etapa 2)
 
 A mesma interface e o mesmo `DesktopApp` no app do iPhone (spec do iPhone, seções 4.1, 6.1 e 8): o hospedeiro em Swift
