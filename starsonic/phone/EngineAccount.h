@@ -59,6 +59,8 @@ public:
     // A taxa do vídeo da conta (o rateControlBandwidth, em bit/s) para as próximas ligações, sem registrar de novo
     // (disableRegOnModify); com a rede fora, a conta segue parada.
     void SetVideoBandwidth(unsigned bandwidth);
+    // A câmera e o desenhista da conta (os ids da lista de vídeo da PJSIP) para as próximas ligações, do mesmo jeito.
+    void SetVideoDevices(pjmedia_vid_dev_index capture, pjmedia_vid_dev_index render);
 #endif
 
     // Pede o registro agora. Com um pedido ainda a caminho (PJSIP_EBUSY: uma renovação, também uma que saiu
@@ -86,6 +88,8 @@ public:
 private:
     // Troca a configuração da conta no PJSIP sem registrar nem retirar o registro (disableRegOnModify).
     void Modify(const pj::AccountConfig& config);
+    // O Modify da configuração guardada (config_), parada como no Pause se a rede está fora.
+    void ModifyKeepingPause();
 
     EventQueue* events_;
     CallTable* calls_;

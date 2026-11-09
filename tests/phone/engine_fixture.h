@@ -46,10 +46,14 @@ inline starsonic::EngineConfig ConfigFor(const starsonic::Profile& profile) {
     return config;
 }
 
-inline std::unique_ptr<starsonic::SipEngine> StartEngine(RecordingListener* listener,
-                                                         const starsonic::Profile& profile) {
+// configure muda a configuração dos testes antes do Create (o nullVideo, por exemplo).
+inline std::unique_ptr<starsonic::SipEngine> StartEngine(
+    RecordingListener* listener, const starsonic::Profile& profile,
+    const std::function<void(starsonic::EngineConfig&)>& configure = nullptr) {
+    starsonic::EngineConfig config = ConfigFor(profile);
+    if (configure) configure(config);
     std::string error;
-    std::unique_ptr<starsonic::SipEngine> engine = starsonic::SipEngine::Create(ConfigFor(profile), listener, &error);
+    std::unique_ptr<starsonic::SipEngine> engine = starsonic::SipEngine::Create(config, listener, &error);
     REQUIRE_MESSAGE(engine != nullptr, error);
     return engine;
 }

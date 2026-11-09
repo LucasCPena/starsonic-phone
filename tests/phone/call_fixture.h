@@ -7,12 +7,14 @@
 #include <chrono>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include "Profile.h"
 #include "SipEngine.h"
+#include "Video.h"
 
 namespace phone_test {
 
@@ -69,14 +71,91 @@ inline std::vector<int> Sorted(std::vector<int> items) {
     return items;
 }
 
-// Um motor registrado no registrador falso (ramal 2001). adjust muda o perfil antes do Create. A
-// ordem dos campos importa: o motor some antes do listener, e o registrador por último.
+// Um FrameSink de teste: guarda o id, o tamanho e a hora de cada quadro (os da prévia com o id kLocal, como o
+// kLocalFrames do desenhista). Os quadros chegam na thread do vídeo da PJSIP.
+class TestSink : public starsonic::FrameSink {
+public:
+    static constexpr int kLocal = -1;
+    using Clock = std::chrono::steady_clock;
+
+    struct Frame {
+        int callId;
+        int width;
+        int height;
+        Clock::time_point at;
+    };
+
+    void OnRemoteFrame(int callId, const starsonic::I420Frame& frame) override { Add(callId, frame); }
+    void OnLocalFrame(const starsonic::I420Frame& frame) override { Add(kLocal, frame); }
+
+    std::vector<Frame> Frames() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return frames_;
+    }
+
+    // Quantos quadros do id chegaram depois de since; com width > 0, só os desse tamanho.
+    size_t Count(int callId, int width = 0, int height = 0, Clock::time_point since = Clock::time_point()) const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return static_cast<size_t>(std::count_if(frames_.begin(), frames_.end(), [&](const Frame& frame) {
+            return frame.callId == callId && frame.at > since &&
+                   (width <= 0 || (frame.width == width && frame.height == height));
+        }));
+    }
+
+    // Quantos quadros, de qualquer id, chegaram depois de since.
+    size_t CountAll(Clock::time_point since) const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return static_cast<size_t>(
+            std::count_if(frames_.begin(), frames_.end(), [&](const Frame& frame) { return frame.at > since; }));
+    }
+
+    // Espera até `seconds` que o Count(callId, width, height) chegue a count.
+    bool WaitFor(int callId, size_t count, int seconds, int width = 0, int height = 0) const {
+        const auto deadline = Clock::now() + std::chrono::seconds(seconds);
+        while (Count(callId, width, height) < count) {
+            if (Clock::now() >= deadline) return false;
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        return true;
+    }
+
+    // Os quadros numa linha só, para as mensagens dos testes: o id e o tamanho de cada sequência igual.
+    std::string Text() const {
+        std::string text;
+        int run = 0;
+        const std::vector<Frame> frames = Frames();
+        for (size_t index = 0; index < frames.size(); ++index) {
+            ++run;
+            const Frame& frame = frames[index];
+            const bool last = index + 1 == frames.size() || frames[index + 1].callId != frame.callId ||
+                              frames[index + 1].width != frame.width || frames[index + 1].height != frame.height;
+            if (!last) continue;
+            text += std::to_string(frame.callId) + ":" + std::to_string(frame.width) + "x" +
+                    std::to_string(frame.height) + "*" + std::to_string(run) + "; ";
+            run = 0;
+        }
+        return text;
+    }
+
+private:
+    void Add(int callId, const starsonic::I420Frame& frame) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        frames_.push_back({callId, frame.width, frame.height, Clock::now()});
+    }
+
+    mutable std::mutex mutex_;
+    std::vector<Frame> frames_;
+};
+
+// Um motor registrado no registrador falso (ramal 2001). adjust muda o perfil e configure, a configuração do motor
+// antes do Create. A ordem dos campos importa: o motor some antes do listener, e o registrador por último.
 struct Phone {
-    explicit Phone(Transport transport = Transport::Udp, const std::function<void(Profile&)>& adjust = nullptr)
+    explicit Phone(Transport transport = Transport::Udp, const std::function<void(Profile&)>& adjust = nullptr,
+                   const std::function<void(starsonic::EngineConfig&)>& configure = nullptr)
         : registrar("senha") {
         Profile profile = LoadProfile(registrar.port());
         if (adjust) adjust(profile);
-        engine = StartEngine(&listener, profile);
+        engine = StartEngine(&listener, profile, configure);
         REQUIRE(engine->SetAccount(Input(transport)));
         REQUIRE(listener.WaitFor(RecordingListener::Reached(200, true, 1), kWaitSeconds));
     }
@@ -89,10 +168,11 @@ struct Phone {
         return Last(listener.Calls(), CallEvent::Incoming).callId;
     }
 
-    // RINGVIDEO 2001 <from> <codecs> (um INVITE com o vídeo, do usuário from) e o id que o motor deu à ligação.
-    int RingVideo(const std::string& from, const std::string& codecs = "H264,VP8") {
+    // RINGVIDEO 2001 <from> <codecs> (um INVITE com o vídeo, do usuário from) e o id que o motor deu à ligação. Com
+    // replay, o registrador manda ao telefone os datagramas que a PORTA do vídeo guardou, depois da resposta com o SDP.
+    int RingVideo(const std::string& from, const std::string& codecs = "H264,VP8", bool replay = false) {
         const size_t before = Count(CallEvent::Incoming);
-        REQUIRE(registrar.Control("RINGVIDEO 2001 " + from + " " + codecs) == Lines{"OK"});
+        REQUIRE(registrar.Control("RINGVIDEO 2001 " + from + " " + codecs + (replay ? " replay" : "")) == Lines{"OK"});
         REQUIRE(listener.WaitForCalls(RecordingListener::Count(CallEvent::Incoming, before + 1), kWaitSeconds));
         return Last(listener.Calls(), CallEvent::Incoming).callId;
     }
@@ -191,8 +271,18 @@ struct Phone {
 
 // O motor sem vídeo (o do baresip, e o do PJSIP sem o PJMEDIA_HAS_VIDEO, como o do Android): nenhum codec de vídeo, a
 // ligação com vídeo não sai (-1), o Answer e o SetCamera com o vídeo devolvem false, o Video dá o CallVideo{} e nenhum
-// OnCallVideo chega, também numa recebida que oferece vídeo, que só a voz atende.
+// OnCallVideo chega, também numa recebida que oferece vídeo, que só a voz atende. Nenhuma câmera: a escolha e o teste
+// da câmera devolvem false, a releitura e o sink não fazem nada, e nenhum OnCameraProblem nem quadro chega.
 inline void CheckNoVideo(Phone& phone) {
+    TestSink sink;
+    phone.engine->SetFrameSink(&sink);
+    CHECK(phone.engine->VideoDevices().empty());
+    CHECK_FALSE(phone.engine->SetCaptureDevice(""));
+    CHECK_FALSE(phone.engine->SetCaptureDevice("Colorbar generator"));
+    phone.engine->RefreshVideoDevices();
+    CHECK(phone.engine->VideoDevices().empty());
+    CHECK_FALSE(phone.engine->StartCameraTest());
+    phone.engine->StopCameraTest();
     CHECK(phone.engine->VideoCodecs().empty());
     phone.engine->SetVideoSettings(starsonic::VideoSettings());
     CHECK(phone.engine->MakeCall("2003", true) == -1);
@@ -214,6 +304,9 @@ inline void CheckNoVideo(Phone& phone) {
 
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
     CHECK(phone.listener.Videos().empty());
+    CHECK(phone.listener.CameraProblems().empty());
+    CHECK(sink.Frames().empty());
+    phone.engine->SetFrameSink(nullptr);
     const Lines log = phone.registrar.Log();
     CHECK(std::none_of(log.begin(), log.end(), [](const std::string& line) { return line.rfind("inv-in", 0) == 0; }));
 }

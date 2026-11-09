@@ -151,6 +151,7 @@ void CallTable::Incoming(pj::Account& account, int pjsuaId, bool accepting, cons
     int callId = 0;
     bool busy = false;
     unsigned videoCount = 0;
+    int recvOnly = -1;
     bool doorphone = false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -177,7 +178,10 @@ void CallTable::Incoming(pj::Account& account, int pjsuaId, bool accepting, cons
                 PublishVideo();
             }
             slot->ringVideoCount = slot->videoCount;
+            // Sem câmera, a resposta aceita o vídeo só para receber.
+            slot->ringRecvOnly = slot->videoCount > 0 && camera_ == PJMEDIA_VID_INVALID_DEV ? offer.index : -1;
             videoCount = slot->videoCount;
+            recvOnly = slot->ringRecvOnly;
             doorphone = slot->early;
 #endif
         } else {
@@ -199,13 +203,12 @@ void CallTable::Incoming(pj::Account& account, int pjsuaId, bool accepting, cons
     // O 183 do Porteiro leva o SDP (a resposta à oferta), sem mandar nada: a câmera só manda depois do atender, e o
     // som fica fora da mesa até lá.
 #if PJMEDIA_HAS_VIDEO
-    pjsua_call_setting setting;
-    pjsua_call_setting_default(&setting);
-    setting.vid_cnt = videoCount;
+    const pjsua_call_setting setting = RingSetting(videoCount, recvOnly);
     const pjsua_call_setting* answer = &setting;
 #else
     (void)offer;
     (void)videoCount;
+    (void)recvOnly;
     const pjsua_call_setting* answer = nullptr;
 #endif
     if (doorphone) {
@@ -246,6 +249,7 @@ void CallTable::StateChanged(EngineCall* call, CallState state, int sipCode) {
 
 void CallTable::MediaChanged(EngineCall* call) {
     const int pjsuaId = call->getId();
+    int callId = 0;
 #if PJMEDIA_HAS_VIDEO
     // Com a trava do diálogo (este callback): o stream do vídeo não muda no meio da leitura.
     VideoMedia media = VideoMediaOf(pjsuaId);
@@ -255,6 +259,7 @@ void CallTable::MediaChanged(EngineCall* call) {
         std::lock_guard<std::mutex> lock(mutex_);
         Slot* slot = Find(call);
         if (!slot) return;
+        callId = slot->callId;
         // O id vem do objeto: numa ligação feita, a mídia pode chegar antes de o makeCall voltar.
         slot->pjsuaId = pjsuaId;
 #if PJMEDIA_HAS_VIDEO
@@ -291,18 +296,25 @@ void CallTable::MediaChanged(EngineCall* call) {
         PublishVideo();
 #endif
     }
+#if PJMEDIA_HAS_VIDEO
+    // A janela da imagem que chega é nova a cada stream de vídeo: os quadros dela saem com o id da ligação.
+    if (media.up) BindCallWindow(pjsuaId, callId);
+#else
+    (void)callId;
+#endif
     Route();
     ScheduleSync();
 }
 
 void CallTable::Ended(EngineCall* call, int sipCode) {
     bool found = false;
+    int callId = 0;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         Slot* slot = Find(call);
         if (slot) {
             found = true;
-            const int callId = slot->callId;
+            callId = slot->callId;
             *slot = Slot();
             if (conference_) {
                 // Uma saiu da conferência: a outra vira a ativa, já com o som (a ligação entre as duas
@@ -320,6 +332,9 @@ void CallTable::Ended(EngineCall* call, int sipCode) {
             PublishVideo();
         }
     }
+#if PJMEDIA_HAS_VIDEO
+    if (found) UnbindRendererCall(callId);   // um quadro atrasado da janela dela não sai mais
+#endif
     delete call;
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -366,6 +381,7 @@ int CallTable::Make(pj::Account& account, const std::string& uri, bool video) {
     int callId = 0;
     unsigned videoCount = 0;
     bool refuse = false;
+    bool recvOnly = false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         Slot* slot = FreeSlot();
@@ -384,10 +400,13 @@ int CallTable::Make(pj::Account& account, const std::string& uri, bool video) {
         ++alive_;
 #if PJMEDIA_HAS_VIDEO
         // Com o vídeo nas escolhas, a oferta leva um vídeo e o desejo da câmera liga; sem ele, a ligação é só de voz
-        // e a recusa sai logo depois do makeCall, atrás do primeiro estado da ligação.
+        // e a recusa sai logo depois do makeCall, atrás do primeiro estado da ligação. Sem câmera, a oferta leva o
+        // vídeo só para receber, e a câmera fica desligada.
         if (video && VideoEnabled(settings_)) {
+            recvOnly = camera_ == PJMEDIA_VID_INVALID_DEV;
+            if (recvOnly) Problem(CameraProblem::NoCamera);
             slot->videoCount = 1;
-            slot->wish = true;
+            slot->wish = !recvOnly;
             slot->askingVideo = true;
         }
         refuse = video && !VideoEnabled(settings_);
@@ -406,6 +425,15 @@ int CallTable::Make(pj::Account& account, const std::string& uri, bool video) {
     try {
         pj::CallOpParam param(true);
         param.opt.videoCount = videoCount;   // o pjsua oferece um vídeo por padrão com o vídeo compilado
+#if PJMEDIA_HAS_VIDEO
+        if (recvOnly) {
+            // A oferta nova tem o áudio no primeiro m= e o vídeo no segundo (o pjsua guarda o media_dir na ligação).
+            param.opt.flag |= PJSUA_CALL_SET_MEDIA_DIR;
+            param.opt.mediaDir = {PJMEDIA_DIR_ENCODING_DECODING, PJMEDIA_DIR_DECODING};
+        }
+#else
+        (void)recvOnly;
+#endif
         call->makeCall(uri, param);
     } catch (const pj::Error& failure) {
         made = false;
@@ -452,24 +480,25 @@ int CallTable::Make(pj::Account& account, const std::string& uri, bool video) {
 bool CallTable::Answer(int callId, bool video) {
     int pjsuaId = PJSUA_INVALID_ID;
     unsigned videoCount = 0;
+    int recvOnly = -1;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         const Slot* slot = Find(callId);
         if (slot) {
             pjsuaId = slot->pjsuaId;
             videoCount = slot->ringVideoCount;
+            recvOnly = slot->ringRecvOnly;
         }
     }
     if (pjsuaId == PJSUA_INVALID_ID) return false;
-    // Atende primeiro: se o 200 não sai, nada muda na outra. O número de vídeos é o do 180 (ou do 183), mesmo que a
+    // Atende primeiro: se o 200 não sai, nada muda na outra. O 200 repete o setting do 180 (ou do 183), mesmo que a
     // negociação do 183 tenha recusado o vídeo: o pjsua guarda o primeiro e reclama de um diferente.
 #if PJMEDIA_HAS_VIDEO
-    pjsua_call_setting setting;
-    pjsua_call_setting_default(&setting);
-    setting.vid_cnt = videoCount;
+    const pjsua_call_setting setting = RingSetting(videoCount, recvOnly);
     const pjsua_call_setting* answer = &setting;
 #else
     (void)videoCount;
+    (void)recvOnly;
     const pjsua_call_setting* answer = nullptr;
 #endif
     if (pjsua_call_answer2(pjsuaId, answer, PJSIP_SC_OK, nullptr, nullptr) != PJ_SUCCESS) return false;
@@ -478,7 +507,10 @@ bool CallTable::Answer(int callId, bool video) {
         std::lock_guard<std::mutex> lock(mutex_);
         Slot* slot = Find(callId);
         if (slot) {
-            slot->wish = video;   // "Atender com vídeo": a câmera manda depois da confirmação
+            // "Atender com vídeo": a câmera manda depois da confirmação; sem câmera, ela fica desligada.
+            const bool noCamera = video && camera_ == PJMEDIA_VID_INVALID_DEV;
+            if (noCamera) Problem(CameraProblem::NoCamera);
+            slot->wish = video && !noCamera;
             slot->early = false;
             PublishVideo();
         }

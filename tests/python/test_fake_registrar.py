@@ -77,6 +77,13 @@ def video_section(body):
     return body[body.index("m=video"):]
 
 
+def rtp(payload_type, marker, timestamp, payload, ssrc=0x01020304, sequence=7):
+    """Um datagrama RTP: o cabeçalho de 12 bytes (versão 2, o bit M, o payload type, a sequência, o timestamp e o SSRC)
+    e a carga."""
+    return (bytes([0x80, (0x80 if marker else 0) | payload_type]) + sequence.to_bytes(2, "big") +
+            timestamp.to_bytes(4, "big") + ssrc.to_bytes(4, "big") + payload)
+
+
 def read_message(data):
     """(primeira linha, cabecalhos em minusculas -> lista de valores, corpo) de uma mensagem SIP."""
     head, _, body = data.decode("utf-8").partition("\r\n\r\n")
@@ -898,7 +905,8 @@ class CallsTest(unittest.TestCase):
 
     def test_ringvideo_refuses_bad_arguments_and_needs_the_video_port(self):
         for line in ("RINGVIDEO", "RINGVIDEO 2001", "RINGVIDEO 2001 9001 H263", "RINGVIDEO 2001 9001 H264,H264",
-                     "RINGVIDEO 2001 9001 VP8 extra", "VIDEO", "VIDEO REJECT", "VIDEO REJECT maybe", "VIDEO ECHO",
+                     "RINGVIDEO 2001 9001 VP8 extra", "RINGVIDEO 2001 9001 VP8 replay extra",
+                     "RINGVIDEO 2001 9001 replay VP8", "VIDEO", "VIDEO REJECT", "VIDEO REJECT maybe", "VIDEO ECHO",
                      "VIDEO PACKETS now", "VIDEO SDP now", "VIDEO 486 on"):
             with self.subTest(line):
                 self.assertEqual(self.command(line), ["ERR bad-command"])
@@ -926,6 +934,126 @@ class CallsTest(unittest.TestCase):
         self.assertTrue(phone.receive()[0].startswith("ACK "))
         self.assertEqual(self.log(), ["sdp-out 2001 183 video=sim", "inv-out 2001 200", "sdp-out 2001 200 video=nao",
                                       "ack-sent 2001"])
+
+    # --- a gravação e a reprodução dos pacotes (RINGVIDEO ... replay) ---
+
+    def send_rtp(self, packets):
+        """Manda à PORTA os datagramas RTP dados como (payload type, bit M, timestamp, carga), de um socket à parte."""
+        sock = self.video_socket()
+        for payload_type, marker, timestamp, payload in packets:
+            sock.sendto(rtp(payload_type, marker, timestamp, payload), ("127.0.0.1", self.video_port()))
+
+    def replay_call(self, phone, codecs="VP8"):
+        """RINGVIDEO 2001 9001 <codecs> replay e o 183 com o SDP do telefone, com o vídeo num socket UDP de verdade;
+        devolve (cabeçalhos do INVITE, o socket do vídeo do telefone)."""
+        receiver = self.video_socket()
+        self.assertEqual(self.command("RINGVIDEO 2001 9001 %s replay" % codecs), ["OK"])
+        _, invite, _ = phone.receive()
+        phone.send(phone_response(invite, 183, "Session Progress", [SDP_TYPE],
+                                  video_sdp(port=receiver.getsockname()[1])))
+        return invite, receiver
+
+    def received(self, receiver, timeout=1.0):
+        """Os datagramas que chegam ao socket até um silêncio de timeout segundos: (dados, origem, hora)."""
+        receiver.settimeout(timeout)
+        got = []
+        while True:
+            try:
+                data, source = receiver.recvfrom(65535)
+            except socket.timeout:
+                return got
+            got.append((data, source, time.monotonic()))
+
+    @staticmethod
+    def drain(receiver):
+        """Lê, sem esperar, os datagramas que já chegaram ao socket; devolve quantos."""
+        receiver.setblocking(False)
+        count = 0
+        try:
+            while True:
+                receiver.recvfrom(65535)
+                count += 1
+        except BlockingIOError:
+            return count
+        finally:
+            receiver.setblocking(True)
+
+    def test_ringvideo_replay_sends_the_kept_datagrams_frame_by_frame_with_the_offer_payload_type(self):
+        phone = self.registered()
+        # Três quadros (os timestamps 10, 20 e 30), o último pacote de cada um com o bit M; o de 12 bytes não fica.
+        packets = [(96, False, 10, b"a1"), (96, True, 10, b"a2"), (96, True, 20, b"b1"),
+                   (96, False, 30, b"c1"), (96, False, 30, b"c2"), (96, True, 30, b"c3")]
+        self.send_rtp(packets)
+        self.send_rtp([(96, False, 40, b"")])
+        self.wait_for_packets(6)
+        _, receiver = self.replay_call(phone)
+        got = self.received(receiver)
+        self.assertEqual([data for data, _, _ in got],
+                         [rtp(100, marker, timestamp, payload) for _, marker, timestamp, payload in packets])
+        self.assertTrue(all(source == ("127.0.0.1", self.video_port()) for _, source, _ in got))   # da PORTA
+        # Os pacotes de um quadro saem juntos, e um quadro a cada 40 ms (os quadros começam nos pacotes 0, 2 e 3).
+        times = [at for _, _, at in got]
+        self.assertLess(times[1] - times[0], 0.03)
+        self.assertGreater(times[2] - times[0], 0.03)
+        self.assertGreater(times[3] - times[2], 0.03)
+        self.assertLess(times[5] - times[3], 0.03)
+
+    def test_video_port_keeps_only_the_first_300_datagrams_since_the_last_reset(self):
+        phone = self.registered()
+        self.send_rtp([(96, False, 1, b"velho")] * 3)
+        self.wait_for_packets(3)
+        self.assertEqual(self.command("VIDEO PACKETS reset"), ["OK"])
+        # 305 pacotes, em quadros de 50 (os timestamps 0 a 6): ficam os 300 primeiros, os seis primeiros quadros.
+        packets = [(96, number % 50 == 49, number // 50, b"%03d" % number) for number in range(305)]
+        self.send_rtp(packets)
+        self.wait_for_packets(305)
+        _, receiver = self.replay_call(phone, "H264,VP8")
+        got = [data for data, _, _ in self.received(receiver)]
+        self.assertEqual(got, [rtp(97, marker, timestamp, payload) for _, marker, timestamp, payload in packets[:300]])
+
+    def test_ringvideo_replay_starts_only_with_a_live_video_in_the_answer(self):
+        phone = self.registered()
+        self.send_rtp([(96, True, 10, b"a1")])
+        self.wait_for_packets(1)
+        receiver = self.video_socket()
+        self.assertEqual(self.command("RINGVIDEO 2001 9001 VP8 replay"), ["OK"])
+        _, invite, _ = phone.receive()
+        phone.send(phone_response(invite, 180, "Ringing"))   # sem SDP
+        phone.send(phone_response(invite, 183, "Session Progress", [SDP_TYPE],
+                                  video_sdp(port=0)))   # o vídeo recusado
+        self.assertEqual(self.received(receiver, 0.3), [])
+        phone.send(phone_response(invite, 200, "OK", [SDP_TYPE, "Contact: <sip:2001@127.0.0.1:5070>"],
+                                  video_sdp(port=receiver.getsockname()[1])))
+        self.assertTrue(phone.receive()[0].startswith("ACK "))
+        self.assertEqual([data for data, _, _ in self.received(receiver)], [rtp(100, True, 10, b"a1")])
+
+    def test_ringvideo_replay_stops_when_the_call_ends(self):
+        phone = self.registered()
+        self.send_rtp([(96, True, timestamp, b"quadro") for timestamp in range(100)])   # 4 s de quadros
+        self.wait_for_packets(100)
+        invite, receiver = self.replay_call(phone)
+        receiver.settimeout(2)
+        receiver.recvfrom(65535)   # a reprodução começou
+        phone.send(phone_response(invite, 486, "Busy Here"))
+        self.assertTrue(phone.receive()[0].startswith("ACK "))
+        time.sleep(0.2)   # o que já estava a caminho
+        early = 1 + self.drain(receiver)
+        self.assertEqual(self.received(receiver, 0.5), [])
+        self.assertLess(early, 20)   # bem antes dos 100 quadros
+
+    def test_ringvideo_without_replay_or_without_kept_datagrams_sends_nothing(self):
+        phone = self.registered()
+        _, receiver = self.replay_call(phone)   # nada guardado
+        self.assertEqual(self.received(receiver, 0.5), [])
+        self.send_rtp([(96, True, 10, b"a1")])
+        self.wait_for_packets(1)
+        receiver = self.video_socket()
+        self.assertEqual(self.command("RINGVIDEO 2001 9001 VP8"), ["OK"])   # sem o replay
+        _, invite, _ = phone.receive()
+        phone.send(phone_response(invite, 183, "Session Progress", [SDP_TYPE],
+                                  video_sdp(port=receiver.getsockname()[1])))
+        self.assertEqual(self.received(receiver, 0.5), [])
+        self.assertEqual(self.command("RINGVIDEO 2001 9001 replay"), ["OK"])   # os codecs de sempre, com o replay
 
     # --- porta de controle ---
 

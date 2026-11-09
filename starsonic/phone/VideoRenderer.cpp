@@ -8,7 +8,10 @@
 #include <pjmedia/errno.h>
 #include <pjmedia/format.h>
 
+#include <algorithm>
 #include <cstring>
+#include <mutex>
+#include <vector>
 
 namespace starsonic {
 namespace {
@@ -29,25 +32,54 @@ struct RendererFactory {
     pjmedia_vid_dev_info info;
 };
 
+// Uma janela da pjsua. Do param em diante, só com a trava do desenhista.
 struct RendererStream {
     pjmedia_vid_dev_stream base;
     pj_pool_t* pool;
-    pjmedia_vid_dev_param param;
+    pjmedia_vid_dev_param param;   // o formato de agora (o set_cap troca o tamanho) e a janela: o próprio endereço
+    bool running;                  // entre o start e o stop
+    bool bound;                    // o BindRendererStream já disse de quem são os quadros
+    int callId;                    // a ligação dos quadros, ou kLocalFrames (a prévia)
 };
+
+// O que os streams dividem com o motor: o sink, o gate e os streams vivos (só o handle de um deles vale no
+// BindRendererStream). A trava fica presa durante a entrega de cada quadro.
+struct Hub {
+    std::mutex mutex;
+    FrameSink* sink = nullptr;
+    RemoteFrameGate* gate = nullptr;
+    std::vector<RendererStream*> streams;
+};
+
+Hub& TheHub() {
+    static Hub hub;
+    return hub;
+}
 
 RendererFactory* FactoryOf(pjmedia_vid_dev_factory* factory) { return reinterpret_cast<RendererFactory*>(factory); }
 RendererStream* StreamOf(pjmedia_vid_dev_stream* stream) { return reinterpret_cast<RendererStream*>(stream); }
 
+// Um formato que o desenhista desenha: o I420, com largura e altura.
+bool IsI420(const pjmedia_format& format) {
+    return format.id == PJMEDIA_FORMAT_I420 && format.type == PJMEDIA_TYPE_VIDEO &&
+           format.detail_type == PJMEDIA_FORMAT_DETAIL_VIDEO && format.det.vid.size.w > 0 && format.det.vid.size.h > 0;
+}
+
 pj_status_t StreamGetParam(pjmedia_vid_dev_stream* stream, pjmedia_vid_dev_param* param) {
+    std::lock_guard<std::mutex> lock(TheHub().mutex);
     *param = StreamOf(stream)->param;
     return PJ_SUCCESS;
 }
 
 pj_status_t StreamGetCap(pjmedia_vid_dev_stream* stream, pjmedia_vid_dev_cap cap, void* value) {
-    RendererStream* renderer = StreamOf(stream);
+    std::lock_guard<std::mutex> lock(TheHub().mutex);
+    const RendererStream* renderer = StreamOf(stream);
     switch (cap) {
         case PJMEDIA_VID_DEV_CAP_FORMAT:
             pjmedia_format_copy(static_cast<pjmedia_format*>(value), &renderer->param.fmt);
+            return PJ_SUCCESS;
+        case PJMEDIA_VID_DEV_CAP_OUTPUT_WINDOW:
+            *static_cast<pjmedia_vid_dev_hwnd*>(value) = renderer->param.window;
             return PJ_SUCCESS;
         case PJMEDIA_VID_DEV_CAP_OUTPUT_HIDE:
             *static_cast<pj_bool_t*>(value) = renderer->param.window_hide;
@@ -60,14 +92,16 @@ pj_status_t StreamGetCap(pjmedia_vid_dev_stream* stream, pjmedia_vid_dev_cap cap
     }
 }
 
-// A janela escondida ou não e os flags dela só ficam guardados: não há janela. O formato novo (outro tamanho) vale
-// para os próximos quadros.
+// O formato novo (outro tamanho: o PJMEDIA_EVENT_FMT_CHANGED que a porta da pjsua aplica aqui) vale para os próximos
+// quadros. A janela escondida ou não e os flags dela só ficam guardados: não há janela, e a escondida também entrega.
+// A janela é o próprio stream: outra não serve.
 pj_status_t StreamSetCap(pjmedia_vid_dev_stream* stream, pjmedia_vid_dev_cap cap, const void* value) {
+    std::lock_guard<std::mutex> lock(TheHub().mutex);
     RendererStream* renderer = StreamOf(stream);
     switch (cap) {
         case PJMEDIA_VID_DEV_CAP_FORMAT: {
             const pjmedia_format* format = static_cast<const pjmedia_format*>(value);
-            if (format->id != PJMEDIA_FORMAT_I420) return PJMEDIA_EVID_BADFORMAT;
+            if (!IsI420(*format)) return PJMEDIA_EVID_BADFORMAT;
             pjmedia_format_copy(&renderer->param.fmt, format);
             return PJ_SUCCESS;
         }
@@ -82,15 +116,66 @@ pj_status_t StreamSetCap(pjmedia_vid_dev_stream* stream, pjmedia_vid_dev_cap cap
     }
 }
 
-pj_status_t StreamStart(pjmedia_vid_dev_stream*) { return PJ_SUCCESS; }
+pj_status_t StreamStart(pjmedia_vid_dev_stream* stream) {
+    std::lock_guard<std::mutex> lock(TheHub().mutex);
+    StreamOf(stream)->running = true;
+    return PJ_SUCCESS;
+}
 
-// Na thread do relógio do vídeo da pjsua: o quadro I420 é descartado.
-pj_status_t StreamPutFrame(pjmedia_vid_dev_stream*, const pjmedia_frame*) { return PJ_SUCCESS; }
+// Na thread do relógio do vídeo da pjsua (ou na que chamou a pjmedia): o quadro I420 vai ao sink, com a trava presa.
+// Sem buffer é o "batimento" da pjsua, sem quadro.
+pj_status_t StreamPutFrame(pjmedia_vid_dev_stream* stream, const pjmedia_frame* frame) {
+    if (!frame || !frame->buf || frame->size == 0) return PJ_SUCCESS;
+    Hub& hub = TheHub();
+    std::lock_guard<std::mutex> lock(hub.mutex);
+    const RendererStream* renderer = StreamOf(stream);
+    if (!renderer->running || !renderer->bound) return PJ_SUCCESS;
+    // Os planos pelo tamanho de agora; um quadro de outro tamanho (a troca ainda a caminho) não é lido.
+    const pjmedia_video_format_info* info = pjmedia_get_video_format_info(nullptr, PJMEDIA_FORMAT_I420);
+    pjmedia_video_apply_fmt_param planes;
+    pj_bzero(&planes, sizeof(planes));
+    planes.size = renderer->param.fmt.det.vid.size;
+    planes.buffer = static_cast<pj_uint8_t*>(frame->buf);
+    if (!info || info->apply_fmt(info, &planes) != PJ_SUCCESS || planes.framebytes != frame->size) {
+        return PJ_SUCCESS;
+    }
+    const int callId = renderer->callId;
+    if (callId != kLocalFrames && hub.gate && !hub.gate->OnRemoteFrameArrived(callId)) return PJ_SUCCESS;
+    if (!hub.sink) return PJ_SUCCESS;
+    I420Frame image;
+    image.width = static_cast<int>(planes.size.w);
+    image.height = static_cast<int>(planes.size.h);
+    image.y = planes.planes[0];
+    image.yStride = planes.strides[0];
+    image.u = planes.planes[1];
+    image.uStride = planes.strides[1];
+    image.v = planes.planes[2];
+    image.vStride = planes.strides[2];
+    try {
+        if (callId == kLocalFrames) {
+            hub.sink->OnLocalFrame(image);
+        } else {
+            hub.sink->OnRemoteFrame(callId, image);
+        }
+    } catch (...) {   // o PJSIP é C: nenhuma exceção volta para ele
+    }
+    return PJ_SUCCESS;
+}
 
-pj_status_t StreamStop(pjmedia_vid_dev_stream*) { return PJ_SUCCESS; }
+pj_status_t StreamStop(pjmedia_vid_dev_stream* stream) {
+    std::lock_guard<std::mutex> lock(TheHub().mutex);
+    StreamOf(stream)->running = false;
+    return PJ_SUCCESS;
+}
 
 pj_status_t StreamDestroy(pjmedia_vid_dev_stream* stream) {
-    pj_pool_release(StreamOf(stream)->pool);   // a struct mora no pool
+    RendererStream* renderer = StreamOf(stream);
+    {
+        Hub& hub = TheHub();
+        std::lock_guard<std::mutex> lock(hub.mutex);
+        hub.streams.erase(std::remove(hub.streams.begin(), hub.streams.end(), renderer), hub.streams.end());
+    }
+    pj_pool_release(renderer->pool);   // a struct mora no pool
     return PJ_SUCCESS;
 }
 
@@ -104,7 +189,8 @@ pj_status_t FactoryInit(pjmedia_vid_dev_factory* factory) {
     pj_ansi_strxcpy(info.driver, kRendererName, sizeof(info.driver));
     info.dir = PJMEDIA_DIR_RENDER;
     info.has_callback = PJ_FALSE;
-    info.caps = PJMEDIA_VID_DEV_CAP_FORMAT | PJMEDIA_VID_DEV_CAP_OUTPUT_HIDE | PJMEDIA_VID_DEV_CAP_OUTPUT_WINDOW_FLAGS;
+    info.caps = PJMEDIA_VID_DEV_CAP_FORMAT | PJMEDIA_VID_DEV_CAP_OUTPUT_WINDOW | PJMEDIA_VID_DEV_CAP_OUTPUT_HIDE |
+                PJMEDIA_VID_DEV_CAP_OUTPUT_WINDOW_FLAGS;
     info.fmt_cnt = 1;
     pjmedia_format_init_video(&info.fmt[0], PJMEDIA_FORMAT_I420, kDefaultWidth, kDefaultHeight, kDefaultFps, 1);
     return PJ_SUCCESS;
@@ -136,17 +222,32 @@ pj_status_t FactoryDefaultParam(pj_pool_t*, pjmedia_vid_dev_factory* factory, un
     return PJ_SUCCESS;
 }
 
-// Uma janela da pjsua (uma ligação ou a prévia da câmera): só o I420, que a pjsua converte antes quando precisa.
+// Uma janela da pjsua (uma ligação ou a prévia da câmera): só o I420, que a pjsua converte antes quando precisa. O
+// stream nasce parado e sem dono (BindRendererStream).
 pj_status_t FactoryCreateStream(pjmedia_vid_dev_factory* factory, pjmedia_vid_dev_param* param,
                                 const pjmedia_vid_dev_cb*, void*, pjmedia_vid_dev_stream** stream) {
     if (param->dir != PJMEDIA_DIR_RENDER) return PJ_EINVAL;
-    if (param->fmt.id != PJMEDIA_FORMAT_I420) return PJMEDIA_EVID_BADFORMAT;
+    if (!IsI420(param->fmt)) return PJMEDIA_EVID_BADFORMAT;
     pj_pool_t* pool = pj_pool_create(FactoryOf(factory)->poolFactory, "starsonic-render", 512, 512, nullptr);
     if (!pool) return PJ_ENOMEM;
     RendererStream* renderer = PJ_POOL_ZALLOC_T(pool, RendererStream);
     renderer->pool = pool;
     renderer->param = *param;
+    renderer->param.flags |= PJMEDIA_VID_DEV_CAP_OUTPUT_WINDOW;
+    renderer->param.window.type = PJMEDIA_VID_DEV_HWND_TYPE_NONE;
+    renderer->param.window.info.window = renderer;
+    renderer->callId = kLocalFrames;
     renderer->base.op = &kStreamOps;
+    {
+        Hub& hub = TheHub();
+        std::lock_guard<std::mutex> lock(hub.mutex);
+        try {
+            hub.streams.push_back(renderer);
+        } catch (...) {
+            pj_pool_release(pool);
+            return PJ_ENOMEM;
+        }
+    }
     *stream = &renderer->base;
     return PJ_SUCCESS;
 }
@@ -177,7 +278,12 @@ pjmedia_vid_dev_index RegisterVideoRenderer(std::string* error) {
         if (error) *error = text;
         return PJMEDIA_VID_INVALID_DEV;
     }
-    // O id dele na lista de agora: a PJSIP põe os dispositivos de cada fábrica nova no fim.
+    const pjmedia_vid_dev_index id = FindVideoRenderer();
+    if (id == PJMEDIA_VID_INVALID_DEV && error) *error = "o desenhista nao apareceu na lista de video";
+    return id;
+}
+
+pjmedia_vid_dev_index FindVideoRenderer() {
     const unsigned count = pjmedia_vid_dev_count();
     for (unsigned id = 0; id < count; ++id) {
         pjmedia_vid_dev_info info;
@@ -186,8 +292,38 @@ pjmedia_vid_dev_index RegisterVideoRenderer(std::string* error) {
             return static_cast<pjmedia_vid_dev_index>(id);
         }
     }
-    if (error) *error = "o desenhista nao apareceu na lista de video";
     return PJMEDIA_VID_INVALID_DEV;
+}
+
+void BindRendererStream(void* handle, int callId) {
+    Hub& hub = TheHub();
+    std::lock_guard<std::mutex> lock(hub.mutex);
+    for (RendererStream* renderer : hub.streams) {
+        if (static_cast<void*>(renderer) != handle) continue;
+        renderer->bound = true;
+        renderer->callId = callId;
+        return;
+    }
+}
+
+void UnbindRendererCall(int callId) {
+    Hub& hub = TheHub();
+    std::lock_guard<std::mutex> lock(hub.mutex);
+    for (RendererStream* renderer : hub.streams) {
+        if (renderer->bound && renderer->callId == callId) renderer->bound = false;
+    }
+}
+
+void SetRendererSink(FrameSink* sink) {
+    Hub& hub = TheHub();
+    std::lock_guard<std::mutex> lock(hub.mutex);
+    hub.sink = sink;
+}
+
+void SetRendererGate(RemoteFrameGate* gate) {
+    Hub& hub = TheHub();
+    std::lock_guard<std::mutex> lock(hub.mutex);
+    hub.gate = gate;
 }
 
 }  // namespace starsonic

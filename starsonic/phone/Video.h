@@ -1,7 +1,8 @@
 #pragma once
 // Os tipos portáteis do vídeo (spec da videochamada, 4.2, 6.2 e 7): a qualidade, as escolhas do cartão Vídeo, a ordem
-// dos codecs, os Porteiros e o vídeo de uma ligação. Nada de PJSIP aqui: o núcleo e os testes do desktop usam estes
-// tipos sem o motor.
+// dos codecs, os Porteiros, o vídeo de uma ligação, as câmeras, os problemas da câmera, o quadro I420 e quem recebe os
+// quadros (FrameSink). Nada de PJSIP aqui: o núcleo e os testes do desktop usam estes tipos sem o motor.
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -50,12 +51,38 @@ bool IsDoorphone(const VideoSettings& settings, const std::string& user);
 struct CallVideo {
     bool offered = false;   // a recebida oferece vídeo com um codec em comum
     bool active = false;    // o vídeo negociado e a ligação sem pausa
-    bool remote = false;    // a imagem da outra ponta chegando (Task 3; sempre false nesta task)
+    bool remote = false;    // a imagem da outra ponta chegando: o primeiro quadro liga; 2 s sem quadro, a pausa e o
+                            // fim desligam
     bool camera = false;    // a nossa câmera mandando agora
     bool early = false;     // o 183 com SDP de um Porteiro, até o atender ou o fim
     bool refused = false;   // só no evento de uma recusa do vídeo
 };
 
 bool operator==(const CallVideo& a, const CallVideo& b);
+
+struct VideoDevice { std::string name; };   // só as câmeras; o nosso dispositivo de saída não entra
+
+// O problema da câmera que o motor avisa (EngineListener::OnCameraProblem): nenhuma câmera quando ela foi pedida, a
+// câmera que não abre (em uso por outro programa, bloqueada pelo Windows) e a câmera em uso que some.
+enum class CameraProblem { NoCamera, OpenFailed, Disconnected };
+
+// Um quadro I420 (os três planos, cada um com o seu passo em bytes). Os ponteiros só valem durante a chamada que o
+// entrega.
+struct I420Frame {
+    int width = 0;
+    int height = 0;
+    const uint8_t* y = nullptr; int yStride = 0;
+    const uint8_t* u = nullptr; int uStride = 0;
+    const uint8_t* v = nullptr; int vStride = 0;
+};
+
+// Quem recebe os quadros do motor (SipEngine::SetFrameSink): os da outra ponta de cada ligação e os da nossa câmera.
+class FrameSink {
+public:
+    virtual ~FrameSink() = default;
+    // Na thread de mídia da PJSIP: copie e volte logo; o quadro só vale durante a chamada.
+    virtual void OnRemoteFrame(int callId, const I420Frame& frame) = 0;
+    virtual void OnLocalFrame(const I420Frame& frame) = 0;
+};
 
 }  // namespace starsonic

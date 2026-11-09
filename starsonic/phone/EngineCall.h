@@ -33,11 +33,23 @@
 // um de cada vez, e nada muda a mídia entre a conferência do envio e o pedido ao pjsua. A API e os callbacks só pedem o
 // temporizador (ScheduleSync); o Hangup e o End da API, que desfazem a mídia em outra thread, seguram videoMutex_ (a de
 // cada passada do SyncVideo) em volta do pjsua_call_hangup. Com videoMutex_ presa só se chama o pjsua
-// (pjsua_call_get_info, pjsua_call_set_vid_strm e pjsua_call_hangup, que pegam as travas dele, a de diálogo pelo
-// try-lock do acquire_call) e se pega mutex_ por um instante; nenhum callback (que roda com a trava do diálogo) a pede.
+// (pjsua_call_get_info, pjsua_call_set_vid_strm, pjsua_call_hangup e a prévia, que pegam as travas dele, a de diálogo
+// pelo try-lock do acquire_call), a lista de vídeo da PJSIP e mutex_, por um instante; nenhum callback (que roda com a
+// trava do diálogo) a pede.
+//
+// A imagem e a câmera (também no EngineCallVideo.cpp): o desenhista nosso (VideoRenderer.h) pergunta à tabela, a cada
+// quadro de uma ligação e com a trava dele presa, se o quadro sai (FrameGate): a pausa o segura, e o primeiro quadro
+// liga o remote, que o temporizador do remote (RemoteTimer) desliga depois de 2 s sem quadro. A tabela nunca chama o
+// desenhista com mutex_ presa: a ordem é videoMutex_, as travas do pjsua, a do desenhista e mutex_. A câmera abre e
+// fecha com videoMutex_ presa: o envio de cada ligação no SyncVideo (na thread do PJSIP) e a prévia (SyncPreview, no
+// SyncVideo e no teste da câmera, na thread da API), que roda enquanto o teste está ligado ou alguma ligação manda a
+// imagem; a câmera aberta segue até fechar (o envio que começa usa a da prévia). Os problemas da câmera saem pela fila
+// dos eventos (Problem).
 #include <pjsua2.hpp>
 
+#include <chrono>
 #include <condition_variable>
+#include <functional>
 #include <mutex>
 #include <set>
 #include <string>
@@ -49,6 +61,7 @@
 #include "Profile.h"
 #include "SipEngine.h"
 #include "Video.h"
+#include "VideoRenderer.h"
 
 namespace starsonic {
 
@@ -57,6 +70,7 @@ class CallTable;
 // O vídeo que uma ligação que chega oferece: o primeiro m=video com a porta diferente de zero do INVITE.
 struct VideoOffer {
     bool video = false;                 // a oferta tem um m=video com porta
+    int index = -1;                     // a posição dele entre os m= da oferta (o media_dir da pjsua)
     std::vector<std::string> codecs;    // os nomes do a=rtpmap dele, na ordem dos formatos ("H264", "VP8"...)
 };
 
@@ -81,6 +95,22 @@ struct VideoMedia {
 VideoMedia VideoMediaOf(int pjsuaId);
 void ReadVideoStream(int pjsuaId, VideoMedia* media);
 bool CommonCodec(const std::vector<std::string>& offered, const VideoSettings& settings);
+// O pjsua_call_setting do 180 ou do 183 de uma recebida, que o 200 repete igual: videoCount vídeos e, com
+// recvOnlyIndex >= 0, o m= dessa posição só recebe (a recebida sem câmera).
+pjsua_call_setting RingSetting(unsigned videoCount, int recvOnlyIndex);
+// Os quadros da janela da imagem que chega da ligação pjsuaId (a pjsua a cria a cada stream de vídeo) passam a sair
+// com o id callId. Sem a janela, nada.
+void BindCallWindow(int pjsuaId, int callId);
+
+// Os ids de agora, na lista de vídeo da PJSIP, da câmera escolhida (PJMEDIA_VID_INVALID_DEV sem câmera) e do
+// desenhista nosso.
+struct VideoDeviceIds {
+    pjmedia_vid_dev_index camera = PJMEDIA_VID_INVALID_DEV;
+    pjmedia_vid_dev_index renderer = PJMEDIA_VID_INVALID_DEV;
+};
+
+// As câmeras da lista de vídeo da PJSIP de agora, na ordem dela: o id e o nome como a PJSIP o dá.
+std::vector<std::pair<pjmedia_vid_dev_index, std::string>> Cameras();
 #endif
 
 // Quanto SetHold espera uma renegociação anterior terminar (o PJSIP só aceita um re-INVITE por vez).
@@ -113,9 +143,12 @@ public:
     CallTable(const CallTable&) = delete;
     CallTable& operator=(const CallTable&) = delete;
 
-    // Do motor, depois do libStart e antes de qualquer ligação: o temporizador da tabela (o SyncVideo fora dos
-    // callbacks). Sem o vídeo, nada.
+    // Do motor, depois do libStart e antes de qualquer ligação: os temporizadores da tabela (o SyncVideo fora dos
+    // callbacks e o do remote), o portão dos quadros do desenhista e o aviso dos erros da captura. Sem o vídeo, nada.
     void Start(EngineEndpoint* endpoint);
+    // Do motor, numa thread registrada no PJLIB, antes do libDestroy: o desenhista e os avisos da PJSIP deixam a
+    // tabela.
+    void Stop();
 
     // Do PJSIP. Incoming vem de EngineAccount::onIncomingCall; accepting = false recusa com 480. offer: o vídeo do
     // INVITE (VideoOfferOf).
@@ -155,6 +188,16 @@ public:
     void SetCameraPaused(bool paused);
     void SetVideoSettings(const VideoSettings& settings);
     CallVideo Video(int callId);
+#if PJMEDIA_HAS_VIDEO
+    // As câmeras (ver SipEngine.h), da thread da API. Os ids da câmera escolhida e do desenhista, para a próxima vez
+    // que a câmera abre.
+    void SetVideoDevices(const VideoDeviceIds& ids);
+    // A releitura da lista: refresh relê (o pjmedia_vid_dev_refresh) e devolve os ids novos, com a câmera parada no
+    // meio (videoMutex_). A câmera em uso que sumiu é o Disconnected; a que mudou de lugar fecha e abre de novo.
+    void RefreshCameras(const std::function<VideoDeviceIds()>& refresh);
+    bool StartCameraTest();
+    void StopCameraTest();
+#endif
 
     // Desliga as ligações e espera até timeoutMs que os objetos delas sumam. false: não sumiram.
     bool End(int timeoutMs);
@@ -173,6 +216,7 @@ private:
         // O vídeo (ver o topo do arquivo).
         unsigned videoCount = 0;          // os vídeos das ofertas e respostas dela (0 ou 1): o vid_cnt
         unsigned ringVideoCount = 0;      // o vid_cnt do 180 ou do 183 da recebida, que o 200 do Answer repete
+        int ringRecvOnly = -1;            // o m=video que o 180 ou o 183 aceitou só para receber (sem câmera), ou -1
         bool wish = false;                // o desejo da câmera (MakeCall e Answer com vídeo, SetCamera)
         bool offered = false;             // a recebida oferece vídeo com um codec em comum
         bool early = false;               // o 183 de um Porteiro, até o atender
@@ -182,6 +226,8 @@ private:
         bool transferring = false;        // um Transfer ou TransferAttended ainda sem resultado
         bool sending = false;             // o envio que o SyncVideo aplicou
         bool sendFailed = false;          // o último START_TRANSMIT falhou (a linha "camera: falhou" já saiu)
+        bool remote = false;              // a imagem da outra ponta chegando (ver o topo do arquivo)
+        std::chrono::steady_clock::time_point lastFrame;   // o último quadro da outra ponta que saiu
         std::string codec;                // o codec do vídeo negociado ("H264", "VP8" ou "VP9")
         int width = 0;                    // o codificador do vídeo negociado: o tamanho e os quadros por segundo
         int height = 0;
@@ -228,8 +274,37 @@ private:
     void SyncVideo();
     // Qualquer thread, também num callback, sem mutex_ presa: um SyncVideo no temporizador da tabela, logo.
     void ScheduleSync();
-    // Pede o vídeo numa ligação confirmada sem vídeo (re-INVITE com o vídeo), esperando a renegociação anterior.
+    // Pede o vídeo numa ligação confirmada sem vídeo (re-INVITE com o vídeo), esperando a renegociação anterior. Sem
+    // câmera, o vídeo pedido só recebe.
     bool AddVideo(int callId);
+
+#if PJMEDIA_HAS_VIDEO
+    // Os quadros das ligações que chegam ao desenhista (RemoteFrameGate) e o temporizador do remote.
+    struct FrameGate : RemoteFrameGate {
+        CallTable* table = nullptr;
+        bool OnRemoteFrameArrived(int callId) override;
+    };
+    struct RemoteTimer : TimerTarget {
+        CallTable* table = nullptr;
+        void OnEngineTimer() override;
+    };
+    // Na thread do desenhista, com a trava dele presa: a pausa segura o quadro, e o primeiro liga o remote.
+    bool RemoteFrameArrived(int callId);
+    // No temporizador do remote: desliga o remote das ligações sem quadro há 2 s e marca a próxima conferência.
+    void CheckRemote();
+    // O aviso de um erro da câmera aberta (o PJMEDIA_EVENT_VID_DEV_ERROR da captura), numa thread da PJSIP.
+    static pj_status_t OnMediaEvent(pjmedia_event* event, void* table);
+    // Com mutex_ presa. A câmera em uso sumiu: o Disconnected, o desejo da câmera desliga em todas as ligações e o
+    // teste da câmera para (o SyncVideo fecha a câmera).
+    void LoseCamera();
+    // Qualquer thread, com ou sem mutex_: o OnCameraProblem, pela fila dos eventos.
+    void Problem(CameraProblem problem);
+    // Com videoMutex_ presa (sem mutex_): a prévia roda com o teste da câmera ligado ou com uma ligação mandando a
+    // imagem; device é a câmera para abrir. PJ_SUCCESS, ou o código da prévia que não abriu.
+    pj_status_t SyncPreview(pjmedia_vid_dev_index device);
+    // Com videoMutex_ presa: fecha a prévia, se está aberta.
+    void StopPreview();
+#endif
 
     struct HeldEvent {
         int callId;
@@ -253,6 +328,19 @@ private:
 
     EngineEndpoint* endpoint_ = nullptr;   // o temporizador da tabela (Start); não muda depois
     std::mutex videoMutex_;           // uma passada de SyncVideo, ou um fim de ligação pela API, por vez (o topo)
+#if PJMEDIA_HAS_VIDEO
+    FrameGate frameGate_;
+    RemoteTimer remoteTimer_;
+    // Com mutex_ (a prévia muda também com videoMutex_ presa).
+    pjmedia_vid_dev_index camera_ = PJMEDIA_VID_INVALID_DEV;     // a câmera escolhida (sem câmera: inválida)
+    pjmedia_vid_dev_index renderer_ = PJMEDIA_VID_INVALID_DEV;   // o desenhista nosso
+    bool cameraTest_ = false;           // o teste da câmera ligado
+    bool previewRunning_ = false;       // a prévia aberta, na câmera previewDevice_
+    pjmedia_vid_dev_index previewDevice_ = PJMEDIA_VID_INVALID_DEV;
+    bool cameraLost_ = false;           // a câmera da prévia sumiu (o Disconnected já saiu), até a prévia fechar
+    bool restartCamera_ = false;        // a câmera em uso mudou de lugar na lista: o SyncVideo fecha e abre de novo
+    bool remoteCheckPending_ = false;   // o temporizador do remote está marcado
+#endif
 
     std::mutex routeMutex_;           // uma passada de Route por vez (ver o topo do arquivo)
     // Com routeMutex_: os pares (origem, destino) de portas da mesa que o último pedido ligou.

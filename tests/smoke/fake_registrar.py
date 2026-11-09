@@ -24,7 +24,9 @@ Ligações (sem autenticação para INVITE, re-INVITE, REFER, BYE e CANCEL):
   espelhada (a=sendrecv para uma oferta sendrecv); os outros vão com a porta 0 (também esse m=video, com o VIDEO REJECT
   on, sem a PORTA ou sem um desses codecs). Com o VIDEO 488 on, um INVITE ou re-INVITE com um m=video de porta diferente
   de zero leva 488. A PORTA conta os datagramas com carga (mais de 12 bytes, o cabeçalho do RTP), de qualquer ligação,
-  e com o VIDEO ECHO on devolve cada datagrama a quem o mandou, com o bit mais baixo do último byte do SSRC invertido
+  guarda os primeiros 300 deles que chegam depois do último VIDEO PACKETS reset (ou da abertura), para o RINGVIDEO com
+  o replay, e com o VIDEO ECHO on devolve cada datagrama a quem o mandou, com o bit mais baixo do último byte do SSRC
+  invertido
 - REFER -> 202 e um NOTIFY com SIP/2.0 200 OK (sipfrag), ou o que REFER_REPLY e REFER_NOTIFY mandarem
   (resposta com código >= 300, ou REFER_NOTIFY none: nenhum NOTIFY com o resultado). Um Refer-To com
   Replaces (RFC 3891) vai para o registro de ligações com replaces=known ou replaces=unknown; o registrador
@@ -48,12 +50,16 @@ BLF (RFC 4235, sem autenticação): SUBSCRIBE com Event: dialog ao ramal da Requ
 
 Porta de controle (--control-port N, TCP no mesmo --host; um comando por linha, resposta numa linha):
   RING <ramal>       INVITE de "Cliente Teste" <sip:3001@ci>          -> OK | ERR no-contact
-  RINGVIDEO <ramal> <de> [<codecs>]  o RING com <de> como o usuário do From ("Cliente Teste" <sip:<de>@ci>) e também
-                     um m=video na PORTA, com a=sendrecv e os codecs da lista (separados por vírgula; padrão H264,VP8):
-                     o H264/90000 na carga 97, com o a=fmtp:97 profile-level-id=42e01f;packetization-mode=1, o
-                     H264HIGH (um H264/90000 do perfil High, que a PJSIP recusa) na carga 99, com o a=fmtp:99
-                     profile-level-id=64001f;packetization-mode=1, e o VP8/90000 na carga 100
-                                                       -> OK | ERR no-contact | ERR no-video (sem a PORTA)
+  RINGVIDEO <ramal> <de> [<codecs>] [replay]  o RING com <de> como o usuário do From ("Cliente Teste" <sip:<de>@ci>)
+                     e também um m=video na PORTA, com a=sendrecv e os codecs da lista (separados por vírgula; padrão
+                     H264,VP8): o H264/90000 na carga 97, com o a=fmtp:97 profile-level-id=42e01f;packetization-mode=1,
+                     o H264HIGH (um H264/90000 do perfil High, que a PJSIP recusa) na carga 99, com o a=fmtp:99
+                     profile-level-id=64001f;packetization-mode=1, e o VP8/90000 na carga 100. Com o replay, depois da
+                     resposta do telefone com SDP (o 183 ou o 200) com um m=video de porta diferente de zero, o
+                     registrador manda ao endereço do vídeo dessa resposta, da PORTA e em ordem, os datagramas que a
+                     PORTA guardou: os de um mesmo quadro (o mesmo timestamp do RTP) juntos, um quadro a cada 40 ms, com
+                     o payload type trocado pelo do primeiro codec da oferta (o bit M fica). Ele para no fim dos
+                     guardados ou no fim da ligação  -> OK | ERR no-contact | ERR no-video (sem a PORTA)
   HANGUP <ramal>     BYE na ligação atendida, CANCEL se ainda toca     -> OK | ERR no-call
   REFER <ramal> <destino>  REFER na última ligação do RING atendida do ramal, com Refer-To: <sip:<destino>@ci>
                      -> OK | ERR no-call
@@ -88,7 +94,7 @@ Porta de controle (--control-port N, TCP no mesmo --host; um comando por linha, 
   VIDEO ECHO <on|off> com on, cada datagrama que chega na PORTA volta na hora para quem o mandou, com o SSRC trocado
                      (a contagem continua)                              -> OK
   VIDEO PACKETS      os datagramas com carga que chegaram na PORTA      -> <n>
-  VIDEO PACKETS reset  zera a contagem                                  -> OK
+  VIDEO PACKETS reset  zera a contagem e esquece os datagramas guardados -> OK
   VIDEO SDP          as linhas do último SDP que o telefone mandou (num pedido ou numa resposta), e END
   LOG                o registro de ligações, uma linha cada, e END
   (comando desconhecido, sem argumento ou com código que não é de 100 a 699 -> ERR bad-command)
@@ -118,6 +124,7 @@ import socket
 import socketserver
 import sys
 import threading
+import time
 import traceback
 import urllib.parse
 
@@ -147,6 +154,8 @@ RING_VIDEO = {"H264": ("97", "H264/90000", "profile-level-id=42e01f;packetizatio
               "H264HIGH": ("99", "H264/90000", "profile-level-id=64001f;packetization-mode=1"),
               "VP8": ("100", "VP8/90000", None)}
 RTP_HEADER = 12   # os bytes do cabeçalho do RTP: um datagrama de vídeo com carga tem mais que isso
+VIDEO_KEPT = 300   # quantos datagramas com carga a PORTA guarda para o RINGVIDEO com o replay
+REPLAY_FRAME_SECONDS = 0.04   # o intervalo entre os quadros da reprodução (25 por segundo)
 
 
 def _md5(text):
@@ -332,6 +341,37 @@ def _echoed(data):
     return bytes(echoed)
 
 
+def _video_address(body):
+    """(host, porta) do primeiro m=video com a porta diferente de zero de um SDP: o c= dele, ou o do SDP todo. None
+    sem esse m=video ou sem c=."""
+    sections = _sdp_sections(body)
+    video = next((section for section in sections[1:] if _live_video(section)), None)
+    if video is None:
+        return None
+    connection = next((line for line in video[1:] + sections[0] if line.startswith("c=IN IP4 ")), None)
+    if connection is None:
+        return None
+    return connection.split()[2].split("/")[0], int(video[0].split()[1])
+
+
+def _frames(packets):
+    """Os datagramas RTP em quadros, na ordem: os seguidos com o mesmo timestamp (os bytes 4 a 7) ficam juntos."""
+    frames = []
+    for packet in packets:
+        if frames and frames[-1][0][4:8] == packet[4:8]:
+            frames[-1].append(packet)
+        else:
+            frames.append([packet])
+    return frames
+
+
+def _with_payload_type(data, payload_type):
+    """O datagrama RTP com outro payload type, o bit M como estava."""
+    replaced = bytearray(data)
+    replaced[1] = (replaced[1] & 0x80) | payload_type
+    return bytes(replaced)
+
+
 def _telephone_event(formats, rtpmap, fmtp):
     """(payload type, fmtp) do telephone-event/8000 da oferta, ou None. O PJSIP oferece um por taxa de
     relógio (120, 121...); o de 8000 Hz é o que vai com o PCMU e o PCMA. Sem a=rtpmap, o 101 vale como
@@ -395,6 +435,8 @@ class _Call:
         self.state = "calling"
         self.final = None                    # código da resposta final ao INVITE
         self.sdp_codes = set()               # os códigos das respostas com SDP que já foram ao registro (sdp-out)
+        self.replay = None                   # o RINGVIDEO com o replay: o payload type dos datagramas reproduzidos
+        self.replaying = False               # a reprodução já começou (uma por ligação)
 
 
 class _Subscription:
@@ -440,7 +482,9 @@ class Registrar:
         self.fail_register = False   # FAIL REGISTER on: todo REGISTER leva 503
         self.subscriptions = {}  # Call-ID -> _Subscription (BLF)
         self.video_port = None   # a PORTA do vídeo (start_video_server); sem ela, o vídeo é recusado (porta 0)
+        self.video_sock = None   # o socket da PORTA: de onde sai a reprodução do RINGVIDEO com o replay
         self.video_packets = 0   # datagramas com carga que chegaram na PORTA (VIDEO PACKETS)
+        self.video_kept = []     # os primeiros VIDEO_KEPT deles desde o último VIDEO PACKETS reset
         self.video_reject = False    # VIDEO REJECT on: o m=video da resposta vai com a porta 0
         self.video_488 = False       # VIDEO 488 on: um INVITE com vídeo leva 488
         self.video_echo = False      # VIDEO ECHO on: cada datagrama da PORTA volta a quem o mandou
@@ -498,10 +542,13 @@ class Registrar:
             self.keepalives += how_many
 
     def on_video(self, data, source, sock):
-        """Um datagrama chegou na PORTA do vídeo: conta o que tem carga e, com o VIDEO ECHO on, o devolve na hora."""
+        """Um datagrama chegou na PORTA do vídeo: conta (e guarda, até VIDEO_KEPT) o que tem carga e, com o VIDEO ECHO
+        on, o devolve na hora."""
         with self.lock:
             if len(data) > RTP_HEADER:
                 self.video_packets += 1
+                if len(self.video_kept) < VIDEO_KEPT:
+                    self.video_kept.append(data)
             echo = self.video_echo
         if echo:
             try:
@@ -850,17 +897,20 @@ class Registrar:
 
     # --- o registrador liga para o telefone (RING), desliga (HANGUP), transfere (REFER) e troca (REPLACES) ---
 
-    def _ring(self, ramal, replaced=None, user="3001", video=None):
+    def _ring(self, ramal, replaced=None, user="3001", video=None, replay=False):
         """O INVITE de CALLER ao contato do ramal (RING). Com replaced (a ligação do RING atendida que a nova troca,
         REPLACES), ele leva o Replaces dela, como o telefone a vê (o to-tag é a tag dele), e o Require: replaces. Com
         video (RINGVIDEO: os nomes dos codecs, de RING_VIDEO), o From é o "Cliente Teste" <sip:<user>@ci> e a oferta
-        também tem um m=video na PORTA, com esses codecs."""
+        também tem um m=video na PORTA, com esses codecs; com o replay, a resposta com o vídeo começa a reprodução dos
+        datagramas guardados (_sdp_out)."""
         contact = self.contacts.get(ramal)
         if not contact:
             return "ERR no-contact"
         if video and self.video_port is None:
             return "ERR no-video"
         call = _Call(ramal, contact, self._hostport(contact.register_uri, contact.peer), user)
+        if video and replay:
+            call.replay = int(RING_VIDEO[video[0]][0])
         headers = [("From", call.local), ("To", call.remote), ("Call-ID", call.call_id), ("CSeq", "1 INVITE"),
                    ("Contact", "<%s>" % self._our_contact(call)), ("Content-Type", "application/sdp")]
         if replaced:
@@ -941,7 +991,8 @@ class Registrar:
 
     def _sdp_out(self, call, msg):
         """Uma resposta do telefone ao INVITE do RING: o SDP dela fica para o VIDEO SDP, e cada código com SDP vai uma
-        vez ao registro (sdp-out), com o vídeo dele."""
+        vez ao registro (sdp-out), com o vídeo dele. No RINGVIDEO com o replay, a primeira com o vídeo começa a
+        reprodução."""
         if not msg.body.strip():
             return
         self._phone_sdp(msg.body)
@@ -949,6 +1000,26 @@ class Registrar:
             call.sdp_codes.add(msg.status)
             self._log("sdp-out %s %d video=%s" % (call.ramal, msg.status,
                                                    "nao" if _video_names(msg.body) is None else "sim"))
+        address = _video_address(msg.body)
+        if call.replay is not None and not call.replaying and address and self.video_sock:
+            call.replaying = True
+            threading.Thread(target=self._replay, args=(call, address), daemon=True).start()
+
+    def _replay(self, call, address):
+        """A reprodução do RINGVIDEO com o replay (numa thread): os datagramas guardados, um quadro a cada
+        REPLAY_FRAME_SECONDS, ao vídeo do telefone, até o fim deles ou da ligação."""
+        with self.lock:
+            frames = _frames(self.video_kept)
+        for frame in frames:
+            with self.lock:
+                if call.state not in ("calling", "ringing", "answered"):
+                    return
+            for packet in frame:
+                try:
+                    self.video_sock.sendto(_with_payload_type(packet, call.replay), address)
+                except OSError:   # a PORTA fechou (o registrador saindo)
+                    return
+            time.sleep(REPLAY_FRAME_SECONDS)
 
     def _on_invite_response(self, call, msg):
         code, to = msg.status, msg.first("to")
@@ -987,10 +1058,13 @@ class Registrar:
             if name == "RING" and ramal:
                 return [self._ring(ramal)]
             words = argument.split()
-            if name == "RINGVIDEO" and len(words) in (2, 3):
-                codecs = (words[2] if len(words) == 3 else "H264,VP8").split(",")
-                if all(codec in RING_VIDEO for codec in codecs) and len(set(codecs)) == len(codecs):
-                    return [self._ring(words[0], user=words[1], video=codecs)]
+            if name == "RINGVIDEO" and len(words) in (2, 3, 4):
+                replay = len(words) > 2 and words[-1] == "replay"
+                rest = words[2:len(words) - 1] if replay else words[2:]
+                codecs = (rest[0] if rest else "H264,VP8").split(",")
+                if (len(rest) <= 1 and all(codec in RING_VIDEO for codec in codecs) and
+                        len(set(codecs)) == len(codecs)):
+                    return [self._ring(words[0], user=words[1], video=codecs, replay=replay)]
             if name == "VIDEO":
                 reply = self._video_command(words)
                 if reply:
@@ -1067,6 +1141,7 @@ class Registrar:
             return [str(self.video_packets)]
         if words == ["PACKETS", "reset"]:
             self.video_packets = 0
+            self.video_kept = []
             return ["OK"]
         if words == ["SDP"]:
             lines = self.last_sdp.splitlines() if self.last_sdp else []
@@ -1215,7 +1290,8 @@ def start_udp_server(registrar, host, port):
 
 class _VideoServer(_UdpServer):
     """A PORTA do vídeo (--video-port): um socket UDP cujos datagramas vão ao Registrar.on_video. Liga a porta ao
-    Registrar (video_port), que a põe nas respostas e no RINGVIDEO."""
+    Registrar (video_port), que a põe nas respostas e no RINGVIDEO, e o socket (video_sock), de onde sai a reprodução
+    do RINGVIDEO com o replay."""
 
     def __init__(self, registrar, host, port):
         self.registrar = registrar
@@ -1226,6 +1302,7 @@ class _VideoServer(_UdpServer):
         self._stopped = threading.Event()
         self._thread = None
         registrar.video_port = self.server_address[1]
+        registrar.video_sock = self.sock
 
     def serve_forever(self):
         while not self._stopped.is_set():

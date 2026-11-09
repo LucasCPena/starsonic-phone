@@ -23,10 +23,10 @@ enum class CallState { Incoming = 0, Calling = 1, Early = 2, Connecting = 3, Con
 // servidor, ou a rede fora).
 enum class BlfState { Free = 0, Ringing = 1, Busy = 2, Unknown = 3 };
 
-// Os eventos (OnRegistration, OnIncomingCall, OnRejectedBusy, OnCallState, OnTransfer, OnBlf e OnCallVideo)
-// chegam numa thread do próprio motor, um de cada vez e na ordem em que aconteceram, sem nenhuma trava do motor, do
-// PJSIP ou da libre presa: o listener pode chamar o motor (só não pode destruí-lo). Um evento pode chegar
-// antes de o método que o provocou voltar. Do começo de ~SipEngine em diante nenhum evento é entregue (o
+// Os eventos (OnRegistration, OnIncomingCall, OnRejectedBusy, OnCallState, OnTransfer, OnBlf, OnCallVideo e
+// OnCameraProblem) chegam numa thread do próprio motor, um de cada vez e na ordem em que aconteceram, sem nenhuma
+// trava do motor, do PJSIP ou da libre presa: o listener pode chamar o motor (só não pode destruí-lo). Um evento
+// pode chegar antes de o método que o provocou voltar. Do começo de ~SipEngine em diante nenhum evento é entregue (o
 // destrutor espera o que estiver com o listener terminar).
 // OnLog é diferente: chega na hora, na thread que escreveu a linha (uma do PJSIP ou da libre, ou a que
 // chamou o motor), às vezes com travas do motor, do PJSIP ou da libre presas; ele não pode chamar o
@@ -73,6 +73,11 @@ public:
     // OnCallState de uma feita), nem depois do Disconnected dela. Só no motor do PJSIP com o vídeo (o Windows): sem o
     // vídeo (o Android) e no do baresip, nunca chega. Vazio por padrão.
     virtual void OnCallVideo(int /*callId*/, const CallVideo& /*video*/) {}
+    // Um problema da câmera, uma vez por problema (os casos estão em StartCameraTest e Disconnected em
+    // RefreshVideoDevices): NoCamera, a câmera pedida sem nenhuma (VideoDevices vazio); OpenFailed, a câmera que não
+    // abre (o log ganha "camera: falhou (<código>)"); Disconnected, a câmera em uso que some. Só no motor do PJSIP com
+    // o vídeo; sem o vídeo e no do baresip, nunca chega. Vazio por padrão.
+    virtual void OnCameraProblem(CameraProblem /*problem*/) {}
     // level como no PJSIP: 1 erro, 2 aviso, 3 informação, 4 detalhe. Sem senhas.
     virtual void OnLog(int level, const std::string& line) = 0;
 };
@@ -92,6 +97,7 @@ struct EngineConfig {
     bool nullAudio = false;   // sem dispositivo de som (testes)
     int logLevel = 4;
     bool h264Available = false;   // o h264Available das escolhas de vídeo de fábrica que o Create aplica
+    bool nullVideo = false;       // sem câmera (testes): o motor não usa as câmeras da PJSIP, como num PC sem câmera
 };
 
 struct AccountInput {
@@ -117,12 +123,12 @@ struct PushData {
     std::vector<std::pair<std::string, std::string>> headers;         // Nome: valor
 };
 
-// Todo método público pode ser chamado de qualquer thread: o motor do PJSIP registra a thread que chama
-// no PJLIB antes de usar o PJSIP, e o do baresip só usa o baresip e a libre dentro do laço deles.
-// Chamadas ao mesmo tempo esperam uma pela outra (menos HasCall, CallCount e Video, que nunca esperam). Até
-// duas ligações, uma delas a ativa: só a ativa fica ligada ao dispositivo de som, e a outra fica em
-// espera (re-INVITE sendonly). Na conferência (Join) as duas ficam com o som e ligadas entre si. A
-// terceira que chega recebe 486.
+// Todo método público pode ser chamado de qualquer thread (no Windows, uma fora de um apartamento STA: ver as câmeras,
+// abaixo): o motor do PJSIP registra a thread que chama no PJLIB antes de usar o PJSIP, e o do baresip só usa o baresip
+// e a libre dentro do laço deles. Chamadas ao mesmo tempo esperam uma pela outra (menos HasCall, CallCount, Video e
+// SetFrameSink, que não esperam as outras). Até duas ligações, uma delas a ativa: só a ativa fica ligada ao
+// dispositivo de som, e a outra fica em espera (re-INVITE sendonly). Na conferência (Join) as duas ficam com o som e
+// ligadas entre si. A terceira que chega recebe 486.
 class SipEngine {
 public:
     // O pjsua e o baresip têm estado global: só um motor por processo (um segundo Create devolve nullptr
@@ -235,8 +241,9 @@ public:
     // a câmera começa a mandar. Se a resposta recusa o vídeo (a porta 0), a ligação segue só com a voz e sai um
     // OnCallVideo com o refused. Sem o VideoEnabled, é a ligação só de voz, e o refused sai logo depois do primeiro
     // OnCallState dela. Uma recusa da ligação inteira por causa do vídeo (488 ou 415) chega pelo Disconnected com esse
-    // código (quem liga de novo só com a voz é o app). Sem o vídeo no motor (o Android e o baresip), com video = true
-    // devolve -1 e não liga.
+    // código (quem liga de novo só com a voz é o app). Sem câmera (VideoDevices vazio), sai o OnCameraProblem(NoCamera)
+    // e a oferta leva o vídeo só para receber (recvonly), com a câmera desligada. Sem o vídeo no motor (o Android e o
+    // baresip), com video = true devolve -1 e não liga.
     int MakeCall(const std::string& number, bool video);
 
     // Atende (200) ou recusa com Ocupado (486) a ligação recebida que está tocando. Atendida, ela vira
@@ -247,14 +254,17 @@ public:
     // O Answer com o vídeo: a resposta aceita o vídeo da oferta (um vídeo, se ela oferece vídeo com um codec em comum,
     // o offered do OnCallVideo; nenhum, se não; se a PJSIP não aceita o fmtp do codec, nenhum, com o refused). Com
     // video = false a câmera não manda nada (o "Atender"); com true, o desejo da câmera liga e ela começa a mandar
-    // depois da confirmação (o "Atender com vídeo"). Sem o vídeo no motor, com video = true devolve false e não atende.
+    // depois da confirmação (o "Atender com vídeo"). Sem câmera, com true sai o OnCameraProblem(NoCamera) e a câmera
+    // fica desligada; a resposta aceita o vídeo só para receber (recvonly) quando já não havia câmera no toque (o 180
+    // ou o 183 diz a resposta). Sem o vídeo no motor, com video = true devolve false e não atende.
     bool Answer(int callId, bool video);
 
     // O desejo da pessoa para a câmera da ligação (o botão "Câmera"). Numa ligação confirmada sem vídeo, com on, pede o
     // vídeo à outra ponta (um re-INVITE que acrescenta o vídeo); uma recusa sai como refused. Numa ligação com vídeo,
-    // liga ou desliga só o envio, sem re-INVITE. A câmera só manda com a ligação sem pausa (ver Video). false: id
-    // desconhecido, ligação ainda não confirmada sem vídeo, o re-INVITE não saiu ou sem o VideoEnabled (com on, sai um
-    // OnCallVideo com o refused). Sem o vídeo no motor, false.
+    // liga ou desliga só o envio, sem re-INVITE. A câmera só manda com a ligação sem pausa (ver Video). Sem câmera, com
+    // on sai o OnCameraProblem(NoCamera) e a câmera fica desligada; numa ligação sem vídeo o re-INVITE pede o vídeo só
+    // para receber (recvonly). false: id desconhecido, ligação ainda não confirmada sem vídeo, o re-INVITE não saiu ou
+    // sem o VideoEnabled (com on, sai um OnCallVideo com o refused). Sem o vídeo no motor, false.
     bool SetCamera(int callId, bool on);
 
     // A tela bloqueada (true): a câmera para de mandar em todas as ligações. false devolve a cada ligação sem pausa o
@@ -267,6 +277,45 @@ public:
     // com uma transferência pedida ainda sem resultado; sai da pausa com o active de volta e a câmera seguindo o
     // desejo.
     CallVideo Video(int callId) const;
+
+    // A imagem (spec da videochamada, 6.2 e 6.4): o desenhista nosso entrega cada quadro I420 ao sink. Os da outra
+    // ponta vão com o id da ligação (OnRemoteFrame) e nunca saem de uma ligação pausada (ver Video); os da nossa câmera
+    // (OnLocalFrame) saem da prévia da câmera escolhida, que roda enquanto o teste da câmera está ligado ou alguma
+    // ligação manda a imagem. nullptr descarta. Síncrono com o desenhista: ao voltar, nenhum quadro chega ao sink
+    // antigo (ele precisa durar até lá). Não espera os outros métodos, só a entrega de um quadro em andamento; não pode
+    // ser chamado de dentro do sink. O destrutor do motor larga o sink. Sem o vídeo no motor, nada.
+    void SetFrameSink(FrameSink* sink);
+
+    // As câmeras e a prévia. No Windows a câmera é a DirectShow da PJSIP, que usa o COM do apartamento multithread (o
+    // CoInitializeEx da fábrica dela, no Create): StartCameraTest, StopCameraTest, RefreshVideoDevices e
+    // SetCaptureDevice abrem, fecham ou leem as câmeras na thread que chama, e o Hangup pode fechar a câmera de uma
+    // ligação nela. Por isso só uma thread fora de um apartamento STA chama o motor (a de comandos do DesktopApp ou a
+    // dos eventos do motor, nunca a da janela, que é STA; ver EngineHost.h). O envio da câmera de uma ligação abre e
+    // fecha na thread do PJSIP.
+
+    // As câmeras que a PJSIP enxerga, na ordem dela, com o nome em UTF-8; o nosso dispositivo de saída não entra. Com
+    // o nullVideo, nenhuma. Vazio sem o vídeo no motor.
+    std::vector<VideoDevice> VideoDevices() const;
+
+    // A câmera pelo nome (o de VideoDevices); "" é a primeira. Vale na próxima vez que a câmera abre (o teste da
+    // câmera, uma ligação nova ou a Câmera ligada de novo): a aberta segue até fechar. Um nome que não está na lista
+    // usa a primeira e fica guardado: quando ela volta (RefreshVideoDevices), volta a ser a usada. false só sem o vídeo
+    // no motor.
+    bool SetCaptureDevice(const std::string& name);
+
+    // Relê as câmeras do sistema (uma entrou ou saiu: o pjmedia_vid_dev_refresh, que muda os ids da PJSIP) e acha de
+    // novo pelo nome a câmera escolhida e o desenhista nosso: as próximas ligações e a prévia usam os ids novos (as
+    // ligações em andamento seguem com a imagem que chega). A câmera em uso que sumiu avisa
+    // OnCameraProblem(Disconnected), como um erro da captura no meio: as ligações ficam com camera=false (o desejo da
+    // câmera desliga) e o teste da câmera para. A câmera em uso que só mudou de lugar na lista fecha e abre de novo.
+    // Sem o vídeo no motor, nada.
+    void RefreshVideoDevices();
+
+    // O teste da câmera: a prévia da câmera escolhida, em OnLocalFrame, até o StopCameraTest. false (e o teste não
+    // fica ligado): sem câmera (OnCameraProblem(NoCamera)) ou a câmera não abriu (OnCameraProblem(OpenFailed) e a linha
+    // "camera: falhou (<código>)" no log). Sem o vídeo no motor, false.
+    bool StartCameraTest();                             // a prévia da câmera escolhida, em OnLocalFrame
+    void StopCameraTest();
 
     // Desliga a ligação em qualquer estado (CANCEL, recusa ou BYE); o fim chega por OnCallState. A
     // outra ligação não volta sozinha: ela segue em espera até um Activate. Na conferência, a outra

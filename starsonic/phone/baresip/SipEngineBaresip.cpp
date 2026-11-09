@@ -573,6 +573,19 @@ void SipEngine::SetCameraPaused(bool) {}
 
 CallVideo SipEngine::Video(int) const { return CallVideo(); }
 
+// Sem vídeo, também sem câmeras nem quadros (o OnCameraProblem nunca sai).
+void SipEngine::SetFrameSink(FrameSink*) {}
+
+std::vector<VideoDevice> SipEngine::VideoDevices() const { return {}; }
+
+bool SipEngine::SetCaptureDevice(const std::string&) { return false; }
+
+void SipEngine::RefreshVideoDevices() {}
+
+bool SipEngine::StartCameraTest() { return false; }
+
+void SipEngine::StopCameraTest() {}
+
 bool SipEngine::Reject(int callId) { return impl_->Reject(callId); }
 
 bool SipEngine::Hangup(int callId) { return impl_->Hangup(callId); }

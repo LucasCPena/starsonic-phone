@@ -62,6 +62,9 @@ public:
         : config_(config), listener_(listener), events_(listener), calls_(&events_, config.profile.global.dtmf) {}
 
     ~Impl() {
+#if PJMEDIA_HAS_VIDEO
+        SetRendererSink(nullptr);   // nenhum quadro ao sink do app daqui em diante
+#endif
         // Daqui em diante nenhuma ligação nova e nenhum evento (o destrutor não avisa o listener).
         calls_.Close();
         events_.Stop();
@@ -73,6 +76,7 @@ public:
             } else if (!calls_.End(kCallEndWaitMs)) {
                 Log(2, "a ligacao nao terminou a tempo; o PJSIP a encerra ao sair");
             }
+            calls_.Stop();
         }
         // Um objeto de ligação que ainda exista se apaga no fim dela, que o libDestroy provoca; depois
         // do libDestroy nenhum pode ser apagado (o destrutor do pj::Call mexe no pjsua).
@@ -99,10 +103,12 @@ public:
             ep.logConfig.writer = new LogForwarder(listener_);
             endpoint_->libInit(ep);
 #if PJMEDIA_HAS_VIDEO
-            // O desenhista nosso, com o vídeo da PJSIP já de pé (o libInit), antes de qualquer conta.
+            // O desenhista nosso, com o vídeo da PJSIP já de pé (o libInit), antes de qualquer conta (o
+            // ResolveVideoDevices, no fim, acha o id dele).
             std::string rendererError;
-            renderDevice_ = RegisterVideoRenderer(&rendererError);
-            if (renderDevice_ == PJMEDIA_VID_INVALID_DEV) Log(1, "desenhista de video recusado: " + rendererError);
+            if (RegisterVideoRenderer(&rendererError) == PJMEDIA_VID_INVALID_DEV) {
+                Log(1, "desenhista de video recusado: " + rendererError);
+            }
 #endif
 
             pj::TransportConfig transport;   // porta 0: o sistema escolhe
@@ -132,6 +138,7 @@ public:
             ApplyVideoSettings(settings);
             calls_.SetVideoSettings(settings);
             calls_.Start(endpoint_.get());
+            calls_.SetVideoDevices(ResolveVideoDevices());
 #endif
             return true;
         } catch (const pj::Error& failure) {
@@ -160,8 +167,8 @@ public:
         // depois de um pedido (START_TRANSMIT); a taxa é a da qualidade das escolhas.
         config.videoConfig.autoShowIncoming = true;
         config.videoConfig.autoTransmitOutgoing = false;
-        config.videoConfig.defaultRenderDevice =
-            renderDevice_ != PJMEDIA_VID_INVALID_DEV ? renderDevice_ : PJMEDIA_VID_DEFAULT_RENDER_DEV;
+        config.videoConfig.defaultCaptureDevice = AccountCamera();
+        config.videoConfig.defaultRenderDevice = AccountRenderer();
         config.videoConfig.rateControlBandwidth = videoBandwidth_;
 #endif
         // O id vem antes do create(): uma resposta que chegue durante ele já sai com o id da conta.
@@ -402,6 +409,67 @@ public:
 
     // Sem a apiMutex_ e sem o PJSIP, como o CallCount: só a tabela.
     CallVideo Video(int callId) { return calls_.Video(callId); }
+
+    // Sem a apiMutex_: só a trava do desenhista.
+    void SetFrameSink(FrameSink* sink) {
+#if PJMEDIA_HAS_VIDEO
+        SetRendererSink(sink);
+#else
+        (void)sink;
+#endif
+    }
+
+    std::vector<VideoDevice> VideoDevices() {
+        std::vector<VideoDevice> devices;
+#if PJMEDIA_HAS_VIDEO
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        if (!RegisterThread()) return devices;
+        // A DirectShow dá o nome na página ANSI, como os dispositivos de som (AudioDeviceName.h).
+        for (const auto& camera : EngineCameras()) devices.push_back(VideoDevice{DeviceNameToUtf8(camera.second)});
+#endif
+        return devices;
+    }
+
+    bool SetCaptureDevice(const std::string& name) {
+#if PJMEDIA_HAS_VIDEO
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        if (!RegisterThread()) return false;
+        wantedCamera_ = name;
+        calls_.SetVideoDevices(ResolveVideoDevices());
+        return true;
+#else
+        (void)name;
+        return false;
+#endif
+    }
+
+    void RefreshVideoDevices() {
+#if PJMEDIA_HAS_VIDEO
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        if (!RegisterThread()) return;
+        calls_.RefreshCameras([this] {
+            const pj_status_t status = pjmedia_vid_dev_refresh();
+            if (status != PJ_SUCCESS) Log(1, "reler as cameras: " + endpoint_->utilStrError(status));
+            return ResolveVideoDevices();
+        });
+#endif
+    }
+
+    bool StartCameraTest() {
+#if PJMEDIA_HAS_VIDEO
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        return RegisterThread() && calls_.StartCameraTest();
+#else
+        return false;
+#endif
+    }
+
+    void StopCameraTest() {
+#if PJMEDIA_HAS_VIDEO
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        if (RegisterThread()) calls_.StopCameraTest();
+#endif
+    }
 
     bool Reject(int callId) {
         std::lock_guard<std::mutex> lock(apiMutex_);
@@ -646,6 +714,49 @@ private:
             if (status != PJ_SUCCESS) Log(1, "parametros do codec " + name + ": " + endpoint_->utilStrError(status));
         }
     }
+
+    // Os ids de agora do desenhista e da câmera escolhida (pelo nome; vazio ou ausente da lista: a primeira câmera),
+    // que também vão para a conta: as próximas ligações montam o vídeo com eles. Os ids da PJSIP mudam a cada releitura
+    // da lista. Com a apiMutex_ (ou no Create).
+    VideoDeviceIds ResolveVideoDevices() {
+        VideoDeviceIds ids;
+        ids.renderer = FindVideoRenderer();
+        if (ids.renderer == PJMEDIA_VID_INVALID_DEV) Log(1, "o desenhista de video saiu da lista de video");
+        for (const auto& camera : EngineCameras()) {
+            if (ids.camera == PJMEDIA_VID_INVALID_DEV) ids.camera = camera.first;
+            if (!wantedCamera_.empty() && DeviceNameToUtf8(camera.second) == wantedCamera_) {
+                ids.camera = camera.first;
+                break;
+            }
+        }
+        renderDevice_ = ids.renderer;
+        cameraDevice_ = ids.camera;
+        if (account_) account_->SetVideoDevices(AccountCamera(), AccountRenderer());
+        return ids;
+    }
+
+    // A câmera e o desenhista da conta. Sem câmera, o id inválido: a PJSIP não acha câmera nenhuma para a ligação, como
+    // num computador sem câmera (e nenhuma usa: sem câmera, o vídeo só recebe).
+    pjmedia_vid_dev_index AccountCamera() const { return cameraDevice_; }
+    // A ligação guarda o desenhista da conta do começo ao fim e o usa em cada vídeo que monta de novo (a espera, a
+    // retomada), sem um jeito de trocá-lo: com o id padrão, que a PJSIP acha de novo a cada vez, a ligação segue com o
+    // desenhista nosso depois de uma releitura que mude os ids. Só quando o padrão é o nosso (o único de saída nas
+    // nossas PJSIP); senão, o id de agora.
+    pjmedia_vid_dev_index AccountRenderer() const {
+        if (renderDevice_ == PJMEDIA_VID_INVALID_DEV) return PJMEDIA_VID_DEFAULT_RENDER_DEV;
+        pjmedia_vid_dev_info info;
+        if (pjmedia_vid_dev_get_info(PJMEDIA_VID_DEFAULT_RENDER_DEV, &info) == PJ_SUCCESS && info.id == renderDevice_) {
+            return PJMEDIA_VID_DEFAULT_RENDER_DEV;
+        }
+        return renderDevice_;
+    }
+
+    // As câmeras que o motor usa: as da PJSIP, ou nenhuma com o nullVideo (como num computador sem câmera; a câmera da
+    // conta fica com o id inválido, e a PJSIP também não acha nenhuma para as ligações).
+    std::vector<std::pair<pjmedia_vid_dev_index, std::string>> EngineCameras() const {
+        if (config_.nullVideo) return {};
+        return Cameras();
+    }
 #endif
 
     // Todos os codecs desligados, menos os do perfil, do mais para o menos preferido.
@@ -797,9 +908,12 @@ private:
     // A conta tem números de BLF (escrito com a apiMutex_, no WatchBlf e no RetireAccount; lido no onActive da conta).
     std::atomic<bool> hasBlf_{false};
 #if PJMEDIA_HAS_VIDEO
-    // O desenhista nosso na lista de vídeo da PJSIP (o defaultRenderDevice das contas) e a taxa do vídeo das contas, em
-    // bit/s (a da qualidade das escolhas; com a apiMutex_ depois do Create).
+    // Com a apiMutex_ depois do Create: o desenhista nosso e a câmera escolhida na lista de vídeo da PJSIP (os ids de
+    // agora, que a conta usa: ResolveVideoDevices), o nome que o SetCaptureDevice pediu (vazio: a primeira câmera) e a
+    // taxa do vídeo das contas, em bit/s (a da qualidade das escolhas).
     pjmedia_vid_dev_index renderDevice_ = PJMEDIA_VID_INVALID_DEV;
+    pjmedia_vid_dev_index cameraDevice_ = PJMEDIA_VID_INVALID_DEV;
+    std::string wantedCamera_;
     unsigned videoBandwidth_ = static_cast<unsigned>(ValuesOf(VideoQuality::Medium).kbps) * 1000u;
 #endif
 };
@@ -872,6 +986,18 @@ bool SipEngine::SetCamera(int callId, bool on) { return impl_->SetCamera(callId,
 void SipEngine::SetCameraPaused(bool paused) { impl_->SetCameraPaused(paused); }
 
 CallVideo SipEngine::Video(int callId) const { return impl_->Video(callId); }
+
+void SipEngine::SetFrameSink(FrameSink* sink) { impl_->SetFrameSink(sink); }
+
+std::vector<VideoDevice> SipEngine::VideoDevices() const { return impl_->VideoDevices(); }
+
+bool SipEngine::SetCaptureDevice(const std::string& name) { return impl_->SetCaptureDevice(name); }
+
+void SipEngine::RefreshVideoDevices() { impl_->RefreshVideoDevices(); }
+
+bool SipEngine::StartCameraTest() { return impl_->StartCameraTest(); }
+
+void SipEngine::StopCameraTest() { impl_->StopCameraTest(); }
 
 bool SipEngine::Reject(int callId) { return impl_->Reject(callId); }
 

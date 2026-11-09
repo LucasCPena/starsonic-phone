@@ -214,7 +214,7 @@ public:
         return reply.empty() ? -1 : std::stoi(reply[0]);
     }
 
-    // Zera a contagem do VideoPackets.
+    // Zera a contagem do VideoPackets e esquece os datagramas guardados (os que o RINGVIDEO com o replay manda).
     void ResetVideoPackets() { Control("VIDEO PACKETS reset"); }
 
     // Espera até `seconds` que o VideoPackets chegue a atLeast.
@@ -391,6 +391,11 @@ public:
         timeline_.emplace_back(callId, "video(" + VideoText(video) + ")");
         changed_.notify_all();
     }
+    void OnCameraProblem(starsonic::CameraProblem problem) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        problems_.push_back(problem);
+        changed_.notify_all();
+    }
     void OnLog(int level, const std::string& line) override {
         std::lock_guard<std::mutex> lock(mutex_);
         log_.push_back(line);
@@ -517,6 +522,22 @@ public:
         return text;
     }
 
+    // Os OnCameraProblem que chegaram, em ordem.
+    std::vector<starsonic::CameraProblem> CameraProblems() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return problems_;
+    }
+
+    // Os OnCameraProblem numa linha só, para as mensagens dos testes.
+    std::string CameraProblemsText() const {
+        static const char* const kNames[] = {"NoCamera", "OpenFailed", "Disconnected"};
+        std::string text;
+        for (const starsonic::CameraProblem problem : CameraProblems()) {
+            text += std::string(kNames[static_cast<int>(problem)]) + "; ";
+        }
+        return text;
+    }
+
     // Os OnCallVideo numa linha só, para as mensagens dos testes.
     std::string VideosText() const {
         std::string text;
@@ -615,6 +636,7 @@ private:
     std::vector<CallEvent> calls_;
     std::vector<BlfEvent> blfs_;
     std::vector<VideoEvent> videos_;
+    std::vector<starsonic::CameraProblem> problems_;
     std::vector<std::pair<int, std::string>> timeline_;   // Timeline: o id da ligação e o evento, em ordem
     std::function<void(int)> incomingHook_;
     std::deque<std::string> log_;

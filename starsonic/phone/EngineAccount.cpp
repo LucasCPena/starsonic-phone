@@ -79,12 +79,24 @@ void EngineAccount::Pause() {
     Modify(stopped);
 }
 
-#if PJMEDIA_HAS_VIDEO
-void EngineAccount::SetVideoBandwidth(unsigned bandwidth) {
-    config_.videoConfig.rateControlBandwidth = bandwidth;
+void EngineAccount::ModifyKeepingPause() {
     pj::AccountConfig current = config_;
     if (paused_) current.regConfig.retryIntervalSec = 0;   // parada como no Pause
     Modify(current);
+}
+
+#if PJMEDIA_HAS_VIDEO
+void EngineAccount::SetVideoBandwidth(unsigned bandwidth) {
+    config_.videoConfig.rateControlBandwidth = bandwidth;
+    ModifyKeepingPause();
+}
+
+void EngineAccount::SetVideoDevices(pjmedia_vid_dev_index capture, pjmedia_vid_dev_index render) {
+    pj::AccountVideoConfig& video = config_.videoConfig;
+    if (video.defaultCaptureDevice == capture && video.defaultRenderDevice == render) return;
+    video.defaultCaptureDevice = capture;
+    video.defaultRenderDevice = render;
+    ModifyKeepingPause();
 }
 #endif
 

@@ -13,7 +13,7 @@
 
 namespace starsonic {
 
-// Quem recebe um temporizador do EngineEndpoint (uma conta).
+// Quem recebe um temporizador do EngineEndpoint (uma conta, ou a tabela das ligações).
 class TimerTarget {
 public:
     // Numa thread do PJSIP, sem trava do pjsua presa, com a trava dos alvos do EngineEndpoint: não pode
@@ -62,13 +62,13 @@ public:
         targets_.erase(id);
     }
 
-    // O OnEngineTimer do alvo id corre logo, na thread do PJSIP, fora do callback de agora. Qualquer
-    // thread, com ou sem a trava do pjsua; sem o alvo na hora, nada.
-    void ScheduleTimer(int id) {
+    // O OnEngineTimer do alvo id corre logo (ou depois de delayMs), na thread do PJSIP, fora do callback de agora.
+    // Qualquer thread registrada no PJLIB, com ou sem a trava do pjsua; sem o alvo na hora, nada.
+    void ScheduleTimer(int id, unsigned delayMs = 0) {
         try {
-            utilTimerSchedule(0, reinterpret_cast<pj::Token>(static_cast<std::intptr_t>(id)));
+            utilTimerSchedule(delayMs, reinterpret_cast<pj::Token>(static_cast<std::intptr_t>(id)));
         } catch (const pj::Error& error) {
-            Log(2, "nao foi possivel agendar o temporizador da conta: " + error.info());
+            Log(2, "nao foi possivel agendar o temporizador: " + error.info());
         }
     }
 
