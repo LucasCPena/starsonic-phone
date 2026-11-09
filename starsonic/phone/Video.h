@@ -77,6 +77,8 @@ struct I420Frame {
 };
 
 // Quem recebe os quadros do motor (SipEngine::SetFrameSink): os da outra ponta de cada ligação e os da nossa câmera.
+// O sink não chama o motor (nenhum método do SipEngine): a entrega do quadro travaria com uma chamada à API em
+// andamento.
 class FrameSink {
 public:
     virtual ~FrameSink() = default;

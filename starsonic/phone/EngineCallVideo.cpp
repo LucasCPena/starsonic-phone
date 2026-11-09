@@ -448,6 +448,7 @@ void CallTable::SyncVideo() {
             Log(2, "parar o envio da camera: " + StatusText(status));
         }
     }
+    bool reported = false;   // um START desta passada já deu a linha e o OpenFailed
     {
         std::lock_guard<std::mutex> lock(mutex_);
         for (const Plan& plan : plans) {
@@ -459,6 +460,7 @@ void CallTable::SyncVideo() {
             if (failed && !slot->sendFailed) {
                 Log(3, "camera: falhou (" + std::to_string(plan.failure) + ")");
                 Problem(CameraProblem::OpenFailed);
+                reported = true;
             }
             slot->sendFailed = failed;
             if (slot->sending == plan.sending) continue;
@@ -466,18 +468,20 @@ void CallTable::SyncVideo() {
             LogVideo(*slot);   // a cada mudança do envio
         }
     }
-    // A prévia segue o envio (e o teste da câmera); na troca de lugar da câmera, ela fecha também.
+    // A prévia segue o envio (e o teste da câmera); na troca de lugar da câmera, ela fecha também, e a próxima passada
+    // abre a câmera de novo, com os ids novos.
+    bool again = restart;
     if (restart) {
         StopPreview();
     } else {
         const pj_status_t status = SyncPreview(device);
-        if (status != PJ_SUCCESS) Log(2, "previa da camera: " + StatusText(status));
+        if (status != PJ_SUCCESS && PreviewFailed(status, reported)) again = true;
     }
     {
         std::lock_guard<std::mutex> lock(mutex_);
         PublishVideo();
     }
-    if (restart) ScheduleSync();   // a próxima passada abre a câmera de novo, com os ids novos
+    if (again) ScheduleSync();
 #endif
 }
 
@@ -607,6 +611,24 @@ void CallTable::StopPreview() {
     previewRunning_ = false;
     previewDevice_ = PJMEDIA_VID_INVALID_DEV;
     cameraLost_ = false;
+}
+
+bool CallTable::PreviewFailed(pj_status_t status, bool reported) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!reported) {
+        Log(3, "camera: falhou (" + std::to_string(status) + ")");
+        Problem(CameraProblem::OpenFailed);
+    }
+    // Nada tenta de novo sozinho: o teste da câmera para, e as ligações que mandam ficam com camera=false (o desejo
+    // da câmera desliga, e a próxima passada para o envio delas).
+    cameraTest_ = false;
+    bool sending = false;
+    for (Slot& slot : slots_) {
+        if (slot.callId == 0 || !slot.sending) continue;
+        slot.wish = false;
+        sending = true;
+    }
+    return sending;
 }
 
 bool CallTable::FrameGate::OnRemoteFrameArrived(int callId) { return table->RemoteFrameArrived(callId); }

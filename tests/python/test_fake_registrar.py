@@ -1,6 +1,7 @@
 import pathlib
 import re
 import socket
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -986,17 +987,40 @@ class CallsTest(unittest.TestCase):
         self.send_rtp(packets)
         self.send_rtp([(96, False, 40, b"")])
         self.wait_for_packets(6)
+        before = time.monotonic()   # antes do 183: a reprodução não começa antes disso
         _, receiver = self.replay_call(phone)
         got = self.received(receiver)
         self.assertEqual([data for data, _, _ in got],
                          [rtp(100, marker, timestamp, payload) for _, marker, timestamp, payload in packets])
         self.assertTrue(all(source == ("127.0.0.1", self.video_port()) for _, source, _ in got))   # da PORTA
-        # Os pacotes de um quadro saem juntos, e um quadro a cada 40 ms (os quadros começam nos pacotes 0, 2 e 3).
+        # Um quadro a cada 40 ms: o segundo (o pacote 2) só sai depois de uma espera, e o terceiro (o pacote 3) depois
+        # de duas, contadas de antes do 183. Um atraso de quem lê só aumenta essas contas.
         times = [at for _, _, at in got]
-        self.assertLess(times[1] - times[0], 0.03)
-        self.assertGreater(times[2] - times[0], 0.03)
-        self.assertGreater(times[3] - times[2], 0.03)
-        self.assertLess(times[5] - times[3], 0.03)
+        self.assertGreaterEqual(times[2] - before, 0.035)
+        self.assertGreaterEqual(times[3] - before, 0.075)
+
+    def test_ringvideo_replay_sends_each_frame_at_once_and_one_frame_every_40_ms(self):
+        phone = self.registered()
+        # Dez quadros de três pacotes (os timestamps 0 a 9), o último de cada um com o bit M.
+        packets = [(96, part == 2, frame, b"%d-%d" % (frame, part)) for frame in range(10) for part in range(3)]
+        self.send_rtp(packets)
+        self.wait_for_packets(30)
+        before = time.monotonic()
+        _, receiver = self.replay_call(phone)
+        got = self.received(receiver)
+        self.assertEqual(len(got), 30)
+        times = [at for _, _, at in got]
+        # O ritmo: o último quadro só sai depois de nove esperas de 40 ms, contadas de antes do 183 (um atraso de quem
+        # lê só aumenta a conta). Sem as esperas, tudo chega de uma vez.
+        self.assertGreaterEqual(times[-1] - before, 0.35)
+        # Os pacotes de um quadro saem juntos: os intervalos dentro de um quadro (20) são bem menores que os intervalos
+        # entre os quadros (9). Pelas medianas, um atraso de quem lê ou de quem manda, numa máquina ocupada, não muda o
+        # resultado.
+        gaps = [later - earlier for earlier, later in zip(times, times[1:])]
+        inside = [gap for index, gap in enumerate(gaps) if index % 3 != 2]
+        between = [gap for index, gap in enumerate(gaps) if index % 3 == 2]
+        self.assertEqual((len(inside), len(between)), (20, 9))
+        self.assertLess(statistics.median(inside) * 2, statistics.median(between))
 
     def test_video_port_keeps_only_the_first_300_datagrams_since_the_last_reset(self):
         phone = self.registered()

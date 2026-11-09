@@ -283,7 +283,9 @@ public:
     // (OnLocalFrame) saem da prévia da câmera escolhida, que roda enquanto o teste da câmera está ligado ou alguma
     // ligação manda a imagem. nullptr descarta. Síncrono com o desenhista: ao voltar, nenhum quadro chega ao sink
     // antigo (ele precisa durar até lá). Não espera os outros métodos, só a entrega de um quadro em andamento; não pode
-    // ser chamado de dentro do sink. O destrutor do motor larga o sink. Sem o vídeo no motor, nada.
+    // ser chamado de dentro do sink. O sink não chama o motor, nenhum método: uma thread da API pode estar esperando a
+    // trava do desenhista com as travas do motor e do pjsua presas, e a entrega do quadro travaria com ela. O
+    // destrutor do motor larga o sink. Sem o vídeo no motor, nada.
     void SetFrameSink(FrameSink* sink);
 
     // As câmeras e a prévia. No Windows a câmera é a DirectShow da PJSIP, que usa o COM do apartamento multithread (o
@@ -307,8 +309,9 @@ public:
     // novo pelo nome a câmera escolhida e o desenhista nosso: as próximas ligações e a prévia usam os ids novos (as
     // ligações em andamento seguem com a imagem que chega). A câmera em uso que sumiu avisa
     // OnCameraProblem(Disconnected), como um erro da captura no meio: as ligações ficam com camera=false (o desejo da
-    // câmera desliga) e o teste da câmera para. A câmera em uso que só mudou de lugar na lista fecha e abre de novo.
-    // Sem o vídeo no motor, nada.
+    // câmera desliga) e o teste da câmera para. A câmera em uso que só mudou de lugar na lista fecha e abre de novo; se
+    // ela não abre, sai um OnCameraProblem(OpenFailed) (e a linha "camera: falhou (<código>)"), as ligações ficam com
+    // camera=false e o teste da câmera para. Sem o vídeo no motor, nada.
     void RefreshVideoDevices();
 
     // O teste da câmera: a prévia da câmera escolhida, em OnLocalFrame, até o StopCameraTest. false (e o teste não

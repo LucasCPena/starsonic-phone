@@ -304,6 +304,11 @@ private:
     pj_status_t SyncPreview(pjmedia_vid_dev_index device);
     // Com videoMutex_ presa: fecha a prévia, se está aberta.
     void StopPreview();
+    // Com videoMutex_ presa (sem mutex_): a prévia que o SyncVideo abriria não abriu (a câmera do teste, aberta de
+    // novo depois de mudar de lugar na lista). A linha "camera: falhou" e o OpenFailed, se o START da mesma passada
+    // (reported) já não os deu; o teste da câmera para, e o desejo da câmera das ligações que mandam desliga. true:
+    // alguma ligação mandava (a próxima passada para o envio dela).
+    bool PreviewFailed(pj_status_t status, bool reported);
 #endif
 
     struct HeldEvent {

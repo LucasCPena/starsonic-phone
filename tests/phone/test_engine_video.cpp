@@ -253,10 +253,12 @@ void BreakCamera(Phone& phone) {
 // canto de ruído (a imagem que muda a cada quadro, como a de uma câmera de verdade: cada quadro vira alguns pacotes; as
 // barras coloridas da PJSIP quase não mudam e viram um pacote pequeno por quadro). A releitura da lista
 // (pjmedia_vid_dev_refresh) lê o g_testCameras de novo: com 0, a câmera some. Com o g_testCameraErrorAt maior que zero,
-// o quadro desse número avisa um erro da captura (o PJMEDIA_EVENT_VID_DEV_ERROR), e nenhum quadro vem depois dele.
+// o quadro desse número avisa um erro da captura (o PJMEDIA_EVENT_VID_DEV_ERROR), e nenhum quadro vem depois dele. Com
+// o g_testCameraOpenFails, a câmera não abre mais (ocupada por outro programa, por exemplo); a aberta segue.
 std::atomic<unsigned> g_testCameras{1};
 std::atomic<int> g_testCameraErrorAt{0};
 std::atomic<bool> g_testCameraNoise{false};
+std::atomic<bool> g_testCameraOpenFails{false};
 
 const char kTestCamera[] = "Camera de teste";
 const char kTestCameraDriver[] = "Teste";
@@ -276,6 +278,7 @@ struct TestCameraScope {
         g_testCameras = 1;
         g_testCameraErrorAt = 0;
         g_testCameraNoise = false;
+        g_testCameraOpenFails = false;
     }
 };
 
@@ -419,6 +422,7 @@ pj_status_t TestCameraDefaultParam(pj_pool_t*, pjmedia_vid_dev_factory* factory,
 pj_status_t TestCameraCreateStream(pjmedia_vid_dev_factory* factory, pjmedia_vid_dev_param* param,
                                    const pjmedia_vid_dev_cb*, void*, pjmedia_vid_dev_stream** stream) {
     if (param->dir != PJMEDIA_DIR_CAPTURE || param->fmt.id != PJMEDIA_FORMAT_I420) return PJMEDIA_EVID_BADFORMAT;
+    if (g_testCameraOpenFails) return PJMEDIA_EVID_SYSERR;   // a câmera não abre
     pj_pool_t* pool = pj_pool_create(TestCameraOf(factory)->poolFactory, "teste-camera-stream", 512, 512, nullptr);
     if (!pool) return PJ_ENOMEM;
     TestCameraStream* camera = PJ_POOL_ZALLOC_T(pool, TestCameraStream);
@@ -1478,6 +1482,83 @@ TEST_CASE("a camera that does not open reports OpenFailed, in the camera test an
     CHECK(phone.listener.LogLevels("camera: falhou (") == std::vector<int>{3, 3});
     CHECK_FALSE(phone.engine->Video(id).camera);
     CHECK(sink.Frames().empty());
+}
+
+TEST_CASE("a camera test whose camera does not open again after a refresh reports OpenFailed once and stops") {
+    TestCameraScope cameras(1);
+    TestSink sink;
+    Phone phone;
+    INFO(sink.Text());
+    INFO(phone.listener.CameraProblemsText());
+    INFO(phone.listener.LogTail());
+    phone.engine->SetFrameSink(&sink);
+
+    RegisterTestCamera();
+    REQUIRE(phone.engine->SetCaptureDevice(kTestCamera));
+    REQUIRE(phone.engine->StartCameraTest());
+    REQUIRE(sink.WaitFor(TestSink::kLocal, 5, 3));
+
+    // Sem as barras, a câmera do teste muda de lugar na lista: a releitura a fecha, e o SyncVideo a abre de novo com o
+    // id novo, mas agora ela não abre.
+    g_testCameraOpenFails = true;
+    phone.listener.CountLog("camera: ");
+    phone.listener.CountLog("camera: falhou (");
+    RemoveColorbar();
+    phone.engine->RefreshVideoDevices();
+    CHECK(WaitProblems(phone, {CameraProblem::OpenFailed}));
+    CHECK(phone.listener.LogLevels("camera: falhou (") == std::vector<int>{3});
+    // O teste da câmera parou: as próximas passadas do SyncVideo não tentam de novo, e nenhuma linha nova sai.
+    for (int pass = 0; pass < 3; ++pass) {
+        phone.engine->SetCameraPaused(false);   // uma passada do SyncVideo
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
+    CHECK(phone.listener.LogCount("camera: ") == 1);
+    CHECK(phone.listener.CameraProblems() == Problems{CameraProblem::OpenFailed});
+    const Clock::time_point stopped = Clock::now();
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    CHECK(sink.Count(TestSink::kLocal, 0, 0, stopped) == 0);
+    // Desligado, o teste não volta sozinho: um pedido novo tenta abrir a câmera de novo (e ela não abre).
+    CHECK_FALSE(phone.engine->StartCameraTest());
+    CHECK(WaitProblems(phone, {CameraProblem::OpenFailed, CameraProblem::OpenFailed}));
+}
+
+TEST_CASE("a moved camera that does not open again for a call and the camera test reports OpenFailed once") {
+    TestCameraScope cameras(1);
+    TestSink sink;
+    Phone phone;
+    INFO(sink.Text());
+    INFO(phone.registrar.LogText());
+    INFO(phone.listener.VideosText());
+    INFO(phone.listener.CameraProblemsText());
+    INFO(phone.listener.LogTail());
+    phone.engine->SetFrameSink(&sink);
+
+    RegisterTestCamera();
+    REQUIRE(phone.engine->SetCaptureDevice(kTestCamera));
+    const int id = VideoCall(phone, "2003");
+    REQUIRE(phone.engine->StartCameraTest());   // a mesma câmera aberta, a do envio
+    REQUIRE(sink.WaitFor(TestSink::kLocal, 5, 3));
+
+    // A câmera muda de lugar e não abre mais: o START da ligação e a prévia do teste falham na mesma passada, e sai um
+    // OpenFailed só. A ligação fica com camera=false, e o teste da câmera para.
+    g_testCameraOpenFails = true;
+    phone.listener.CountLog("camera: ");
+    phone.listener.CountLog("camera: falhou (");
+    RemoveColorbar();
+    phone.engine->RefreshVideoDevices();
+    CHECK(WaitProblems(phone, {CameraProblem::OpenFailed}));
+    CHECK(WaitVideo(phone, id, [](const CallVideo& video) { return video.active && !video.camera; }));
+    for (int pass = 0; pass < 3; ++pass) {
+        phone.engine->SetCameraPaused(false);   // uma passada do SyncVideo
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
+    CHECK(phone.listener.LogLevels("camera: falhou (") == std::vector<int>{3});
+    CHECK(phone.listener.LogCount("camera: ") == 1);
+    CHECK(phone.listener.CameraProblems() == Problems{CameraProblem::OpenFailed});
+    CHECK(PacketsStop(phone));
+    const Clock::time_point stopped = Clock::now();
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    CHECK(sink.Count(TestSink::kLocal, 0, 0, stopped) == 0);
 }
 
 #else
