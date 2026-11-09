@@ -103,9 +103,7 @@ FrameWriter::FrameWriter(uint8_t* memory, size_t bytes) {
     SeqOf(memory_)->store(0, std::memory_order_release);
 }
 
-uint32_t FrameWriter::Seq() const {
-    return memory_ == nullptr ? 0 : SeqOf(memory_)->load(std::memory_order_acquire);
-}
+uint32_t FrameWriter::Seq() const { return memory_ == nullptr ? 0 : seq_; }
 
 bool FrameWriter::Write(const I420Frame& frame) {
     if (memory_ == nullptr || frame.width <= 0 || frame.height <= 0 || frame.y == nullptr || frame.u == nullptr ||
@@ -118,8 +116,8 @@ bool FrameWriter::Write(const I420Frame& frame) {
     const int ch = static_cast<int>(ChromaSize(size.height));
 
     std::atomic<uint32_t>* seq = SeqOf(memory_);
-    const uint32_t current = seq->load(std::memory_order_relaxed);   // so esta thread escreve
-    const uint32_t slot = current == 0 ? 0 : 1 - GetU32(memory_, kOffSlot);
+    const uint32_t current = seq_;
+    const uint32_t slot = current == 0 ? 0 : 1 - slot_;
 
     // A ordem: o ultimo store do seq do quadro anterior (par) nao pode passar para depois destas escritas no lugar
     // livre. Sem a cerca, num CPU fraco o leitor poderia ver o seq par antigo (s1 == s2) com o lugar ja sendo
@@ -136,7 +134,12 @@ bool FrameWriter::Write(const I420Frame& frame) {
     CopyPlane(frame.v, frame.vStride, static_cast<int>(ChromaSize(frame.width)),
               static_cast<int>(ChromaSize(frame.height)), v, cw, ch);
 
-    seq->store(current + 1, std::memory_order_release);   // impar: o cabecalho esta mudando
+    // O seqlock do escritor: um store release so ordena o que vem ANTES dele, entao os campos do cabecalho (que sao
+    // dados protegidos pelo seq, como o lugar) escritos depois de um store release do seq impar poderiam aparecer
+    // antes dele (o compilador, ou o CPU no ARM64). Por isso: o seq impar (relaxed), a cerca release, o cabecalho e o
+    // seq par (release). Quem ve o novo cabecalho ve tambem o seq impar, ou o par, nunca o par antigo.
+    seq->store(current + 1, std::memory_order_relaxed);   // impar: o cabecalho esta mudando
+    std::atomic_thread_fence(std::memory_order_release);
     PutU32(memory_, kOffSlot, slot);
     PutU32(memory_, kOffWidth, static_cast<uint32_t>(size.width));
     PutU32(memory_, kOffHeight, static_cast<uint32_t>(size.height));
@@ -144,6 +147,8 @@ bool FrameWriter::Write(const I420Frame& frame) {
     PutU32(memory_, kOffUvStride, static_cast<uint32_t>(cw));
     PutU32(memory_, kOffSlotBytes, static_cast<uint32_t>(FrameSlotBytes()));
     seq->store(current + 2, std::memory_order_release);   // par: o quadro esta completo
+    seq_ = current + 2;
+    slot_ = slot;
     return true;
 }
 

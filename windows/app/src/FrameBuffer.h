@@ -37,6 +37,10 @@ public:
 
 private:
     uint8_t* memory_ = nullptr;
+    // O estado do escritor fica aqui, nunca lido de volta da memoria: quem escreve no cabecalho de fora nao muda onde
+    // o proximo quadro e gravado.
+    uint32_t seq_ = 0;
+    uint32_t slot_ = 0;   // o lugar do ultimo quadro completo
 };
 
 struct ReadFrame {

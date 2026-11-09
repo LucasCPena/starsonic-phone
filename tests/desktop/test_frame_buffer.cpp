@@ -2,7 +2,10 @@
 // cabecalho, os dois lugares, o seq e a leitura que a pagina vai repetir. C++ portatil: roda tambem no Linux.
 #include <cstdint>
 #include <cstring>
+#include <atomic>
+#include <chrono>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "FrameBuffer.h"
@@ -225,4 +228,93 @@ TEST_CASE("a reader never takes a frame while the header is changing") {
     std::vector<uint32_t> aligned((copy.size() + 3) / 4);
     std::memcpy(aligned.data(), copy.data(), copy.size());
     CHECK(!ReadLatest(reinterpret_cast<const uint8_t*>(aligned.data()), copy.size()).ok);
+}
+
+TEST_CASE("the writer ignores a header changed from outside") {
+    // A memoria e de outro dono (a pagina): o que ela grava no cabecalho nunca muda onde o escritor grava.
+    constexpr size_t kGuard = 4096;
+    std::vector<uint32_t> words((FrameBufferBytes() + kGuard + 3) / 4, 0u);
+    uint8_t* data = reinterpret_cast<uint8_t*>(words.data());
+    std::memset(data + FrameBufferBytes(), 0x5A, kGuard);
+    FrameWriter writer(data, FrameBufferBytes());
+    const TestFrame a(4, 2, 10), b(4, 2, 50), c(4, 2, 90);
+    CHECK(writer.Write(a.Frame()));
+    // O lugar 7 e o seq 0 de fora: o proximo quadro vai ao lugar 1, e o seq segue de 2 para 4.
+    std::vector<uint8_t> header(data, data + kFrameHeaderBytes);
+    SetHeaderU32(header, 8, 7);
+    SetHeaderU32(header, 4, 0);
+    std::memcpy(data, header.data(), kFrameHeaderBytes);
+    CHECK(writer.Write(b.Frame()));
+    CHECK(writer.Seq() == 4u);
+    ReadFrame got = ReadLatest(data, FrameBufferBytes());
+    CHECK(got.ok);
+    CHECK(got.seq == 4u);
+    CHECK(got.y == Bytes(b.y));
+    CHECK(HeaderU32(std::vector<uint8_t>(data, data + kFrameHeaderBytes), 8) == 1u);
+    // Um seq impar e enorme de fora tambem nao importa: o seguinte e o 6, no lugar 0.
+    header.assign(data, data + kFrameHeaderBytes);
+    SetHeaderU32(header, 8, 0xFFFFFFFFu);
+    SetHeaderU32(header, 4, 0xFFFFFFF1u);
+    std::memcpy(data, header.data(), kFrameHeaderBytes);
+    CHECK(writer.Write(c.Frame()));
+    got = ReadLatest(data, FrameBufferBytes());
+    CHECK(got.ok);
+    CHECK(got.seq == 6u);
+    CHECK(got.y == Bytes(c.y));
+    CHECK(HeaderU32(std::vector<uint8_t>(data, data + kFrameHeaderBytes), 8) == 0u);
+    for (size_t i = 0; i < kGuard; ++i) CHECK(data[FrameBufferBytes() + i] == 0x5A);
+}
+
+TEST_CASE("a concurrent reader only ever sees whole frames") {
+    // Os planos de cada quadro k tem todos os bytes iguais a k % 251. Os dados que o leitor copia sao leituras sem
+    // trava (corridas formais, protegidas pelo seq): o que vale e que um quadro aceito e sempre inteiro.
+    Memory mem;
+    FrameWriter writer(mem.Data(), mem.Size());
+    std::atomic<bool> done{false};
+    std::atomic<int> written{0};
+    std::thread producer([&] {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+        for (int k = 1; k <= 4000 && std::chrono::steady_clock::now() < deadline; ++k) {
+            const uint8_t value = static_cast<uint8_t>(k % 251);
+            const int w = 64 + (k % 3), h = 48 + (k % 2);   // tamanhos que mudam, alguns impares
+            const size_t cw = static_cast<size_t>((w + 1) / 2), ch = static_cast<size_t>((h + 1) / 2);
+            std::vector<uint8_t> y(static_cast<size_t>(w * h), value), u(cw * ch, value), v(cw * ch, value);
+            I420Frame f;
+            f.width = w; f.height = h;
+            f.y = y.data(); f.yStride = w;
+            f.u = u.data(); f.uStride = static_cast<int>(cw);
+            f.v = v.data(); f.vStride = static_cast<int>(cw);
+            writer.Write(f);
+            written.store(k);
+        }
+        done.store(true);
+    });
+    int accepted = 0;
+    uint32_t last = 0;
+    bool whole = true, sizes = true, even = true, monotonic = true;
+    while (!done.load()) {
+        const ReadFrame got = ReadLatest(mem.Data(), mem.Size());
+        if (!got.ok) continue;
+        ++accepted;
+        even = even && (got.seq % 2 == 0);
+        monotonic = monotonic && got.seq >= last;
+        last = got.seq;
+        const size_t cw = static_cast<size_t>((got.width + 1) / 2), ch = static_cast<size_t>((got.height + 1) / 2);
+        sizes = sizes && got.width >= 64 && got.width <= 66 && got.height >= 48 && got.height <= 49 &&
+                got.y.size() == static_cast<size_t>(got.width * got.height) && got.u.size() == cw * ch &&
+                got.v.size() == cw * ch;
+        const char first = got.y.empty() ? 0 : got.y[0];
+        auto same = [&](const std::string& plane) {
+            for (char c : plane) if (c != first) return false;
+            return true;
+        };
+        whole = whole && same(got.y) && same(got.u) && same(got.v);
+    }
+    producer.join();
+    CHECK(accepted > 0);
+    CHECK(whole);
+    CHECK(sizes);
+    CHECK(even);
+    CHECK(monotonic);
+    CHECK(writer.Seq() == static_cast<uint32_t>(2 * written.load()));
 }
