@@ -148,6 +148,7 @@ private:
         int transferTarget = 0;           // o colega (callId) da transferência com consulta em andamento
         // O vídeo (ver o topo do arquivo).
         unsigned videoCount = 0;          // os vídeos das ofertas e respostas dela (0 ou 1): o vid_cnt
+        unsigned ringVideoCount = 0;      // o vid_cnt do 180 ou do 183 da recebida, que o 200 do Answer repete
         bool wish = false;                // o desejo da câmera (MakeCall e Answer com vídeo, SetCamera)
         bool offered = false;             // a recebida oferece vídeo com um codec em comum
         bool early = false;               // o 183 de um Porteiro, até o atender

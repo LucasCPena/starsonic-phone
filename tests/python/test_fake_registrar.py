@@ -874,6 +874,28 @@ class CallsTest(unittest.TestCase):
         self.assertTrue(video_section(body).startswith("m=video %d RTP/AVP 100\r\n" % self.video_port()))
         self.assertNotIn("H264", body)
 
+    def test_ringvideo_h264high_offers_an_h264_of_the_high_profile(self):
+        phone = self.registered()
+        self.assertEqual(self.command("RINGVIDEO 2001 9001 H264HIGH"), ["OK"])
+        _, invite, body = phone.receive()
+        video = video_section(body)
+        self.assertTrue(video.startswith("m=video %d RTP/AVP 99\r\n" % self.video_port()), video)
+        for line in ("a=rtpmap:99 H264/90000", "a=fmtp:99 profile-level-id=64001f;packetization-mode=1",
+                     "a=sendrecv"):
+            self.assertIn(line + "\r\n", video)
+        self.assertNotIn("42e01f", body)
+        phone.send(phone_response(invite, 486, "Busy Here"))
+        self.assertTrue(phone.receive()[0].startswith("ACK "))
+        # Com o H.264 de sempre, cada um na sua carga.
+        self.assertEqual(self.command("RINGVIDEO 2001 9001 H264,H264HIGH"), ["OK"])
+        _, invite, body = phone.receive()
+        video = video_section(body)
+        self.assertTrue(video.startswith("m=video %d RTP/AVP 97 99\r\n" % self.video_port()), video)
+        for line in ("a=fmtp:97 profile-level-id=42e01f;packetization-mode=1",
+                     "a=fmtp:99 profile-level-id=64001f;packetization-mode=1"):
+            self.assertIn(line + "\r\n", video)
+        self.assertEqual(self.command("RINGVIDEO 2001 9001 H264HIGH,H264HIGH"), ["ERR bad-command"])
+
     def test_ringvideo_refuses_bad_arguments_and_needs_the_video_port(self):
         for line in ("RINGVIDEO", "RINGVIDEO 2001", "RINGVIDEO 2001 9001 H263", "RINGVIDEO 2001 9001 H264,H264",
                      "RINGVIDEO 2001 9001 VP8 extra", "VIDEO", "VIDEO REJECT", "VIDEO REJECT maybe", "VIDEO ECHO",

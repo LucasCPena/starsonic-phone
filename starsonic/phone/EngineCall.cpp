@@ -300,6 +300,7 @@ void CallTable::Incoming(pj::Account& account, int pjsuaId, bool accepting, cons
                 if (!slot->offered) Refuse(*slot);
                 PublishVideo();
             }
+            slot->ringVideoCount = slot->videoCount;
             videoCount = slot->videoCount;
             doorphone = slot->early;
 #endif
@@ -403,6 +404,14 @@ void CallTable::MediaChanged(EngineCall* call) {
             slot->askingVideo = false;
             if (!media.up) Refuse(*slot);
         }
+        // A recebida que oferecia vídeo com um nome em comum, respondida por aqui (o 183 do Porteiro ou o 200, antes
+        // do Confirmed) sem o vídeo: o fmtp não casou na PJSIP (o perfil do H.264). O vídeo é recusado uma vez, como
+        // sem codec em comum, e o 183 deixa de ser o early.
+        if (slot->offered && !slot->confirmed && !media.up) {
+            slot->offered = false;
+            slot->early = false;
+            Refuse(*slot);
+        }
         PublishVideo();
 #endif
     }
@@ -454,12 +463,13 @@ void CallTable::Transferred(EngineCall* call, int sipCode) {
         const int callId = slot->callId;
         const Slot* target = Find(slot->transferTarget);
         slot->transferTarget = 0;
-        slot->transferring = false;
         Emit(callId, [callId, sipCode](EngineListener& listener) { listener.OnTransfer(callId, sipCode); });
-        PublishVideo();
-        if (sipCode / 100 == 2) {
+        if (sipCode / 100 == 2) {   // a ligação acaba logo abaixo: a imagem segue pausada até o fim
             pjsuaId = slot->pjsuaId;
             if (target) targetPjsuaId = target->pjsuaId;
+        } else {
+            slot->transferring = false;
+            PublishVideo();
         }
     }
     if (sipCode / 100 != 2) {   // as ligações seguem como estavam, e a imagem volta
@@ -514,7 +524,7 @@ int CallTable::Make(pj::Account& account, const std::string& uri, bool video) {
         ++alive_;
 #if PJMEDIA_HAS_VIDEO
         // Com o vídeo nas escolhas, a oferta leva um vídeo e o desejo da câmera liga; sem ele, a ligação é só de voz
-        // e a recusa sai logo (depois do makeCall, com os outros eventos dela).
+        // e a recusa sai logo depois do makeCall, atrás do primeiro estado da ligação.
         if (video && VideoEnabled(settings_)) {
             slot->videoCount = 1;
             slot->wish = true;
@@ -531,8 +541,6 @@ int CallTable::Make(pj::Account& account, const std::string& uri, bool video) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         dialing_ = true;
-        Slot* slot = Find(callId);
-        if (slot && refuse) Refuse(*slot);   // espera em held_: se a ligação não sai, some com os outros
     }
     bool made = true;
     try {
@@ -565,6 +573,9 @@ int CallTable::Make(pj::Account& account, const std::string& uri, bool video) {
         for (HeldEvent& entry : held) {
             if (made || entry.callId != callId) events_->Post(std::move(entry.event));
         }
+        // A recusa do vídeo sem o VideoEnabled, depois dos eventos que o makeCall deixou em held (o primeiro estado
+        // da ligação vem antes de qualquer outro evento dela). Sem a ligação, nenhuma.
+        if (made && refuse && slot) Refuse(*slot);
     }
     if (unused) {
         delete call;
@@ -586,11 +597,12 @@ bool CallTable::Answer(int callId, bool video) {
         const Slot* slot = Find(callId);
         if (slot) {
             pjsuaId = slot->pjsuaId;
-            videoCount = slot->videoCount;
+            videoCount = slot->ringVideoCount;
         }
     }
     if (pjsuaId == PJSUA_INVALID_ID) return false;
-    // Atende primeiro: se o 200 não sai, nada muda na outra. O número de vídeos é o do 180 (ou do 183).
+    // Atende primeiro: se o 200 não sai, nada muda na outra. O número de vídeos é o do 180 (ou do 183), mesmo que a
+    // negociação do 183 tenha recusado o vídeo: o pjsua guarda o primeiro e reclama de um diferente.
 #if PJMEDIA_HAS_VIDEO
     pjsua_call_setting setting;
     pjsua_call_setting_default(&setting);
@@ -1191,7 +1203,7 @@ void CallTable::SyncVideo() {
         if (!slot) continue;
         // A câmera que não abre: uma linha por sequência de falhas (o SyncVideo tenta de novo a cada passada).
         const bool failed = plan.failure != PJ_SUCCESS;
-        if (failed && !slot->sendFailed) Log(2, "camera: falhou (" + std::to_string(plan.failure) + ")");
+        if (failed && !slot->sendFailed) Log(3, "camera: falhou (" + std::to_string(plan.failure) + ")");
         slot->sendFailed = failed;
         if (slot->sending == plan.sending) continue;
         slot->sending = plan.sending;

@@ -375,6 +375,15 @@ TEST_CASE("the baresip engine lists only the null device and ignores BLF") {
     CHECK(Contains(listener.LogTail(), "BLF: sem suporte neste motor"));
 }
 
+TEST_CASE("the baresip engine has no video: the video requests are refused and no OnCallVideo arrives") {
+    Phone phone;
+    INFO(phone.registrar.LogText());
+    INFO(phone.listener.CallsText());
+    INFO(phone.listener.VideosText());
+
+    phone_test::CheckNoVideo(phone);
+}
+
 TEST_CASE("SetPushData before SetAccount puts the push data in the REGISTER, in each format") {
     PushData push;
     bool inContact = false;

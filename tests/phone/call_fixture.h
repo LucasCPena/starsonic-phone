@@ -189,4 +189,33 @@ struct Phone {
     std::unique_ptr<SipEngine> engine;
 };
 
+// O motor sem vídeo (o do baresip, e o do PJSIP sem o PJMEDIA_HAS_VIDEO, como o do Android): nenhum codec de vídeo, a
+// ligação com vídeo não sai (-1), o Answer e o SetCamera com o vídeo devolvem false, o Video dá o CallVideo{} e nenhum
+// OnCallVideo chega, também numa recebida que oferece vídeo, que só a voz atende.
+inline void CheckNoVideo(Phone& phone) {
+    CHECK(phone.engine->VideoCodecs().empty());
+    phone.engine->SetVideoSettings(starsonic::VideoSettings());
+    CHECK(phone.engine->MakeCall("2003", true) == -1);
+    CHECK(phone.engine->CallCount() == 0);
+
+    const int id = phone.RingVideo("2003");
+    CHECK_FALSE(phone.engine->Answer(id, true));
+    CHECK_FALSE(phone.engine->SetCamera(id, true));
+    CHECK(phone.engine->Video(id) == starsonic::CallVideo());
+    REQUIRE(phone.engine->Answer(id, false));
+    REQUIRE(phone.WaitState(id, CallState::Confirmed));
+    CHECK(phone.registrar.WaitForLog("sdp-out 2001 200 video=nao", kWaitSeconds));
+    CHECK_FALSE(phone.engine->SetCamera(id, true));
+    CHECK_FALSE(phone.engine->SetCamera(id, false));
+    phone.engine->SetCameraPaused(true);
+    phone.engine->SetCameraPaused(false);
+    CHECK(phone.engine->Video(id) == starsonic::CallVideo());
+    CHECK(phone.engine->Video(999) == starsonic::CallVideo());
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    CHECK(phone.listener.Videos().empty());
+    const Lines log = phone.registrar.Log();
+    CHECK(std::none_of(log.begin(), log.end(), [](const std::string& line) { return line.rfind("inv-in", 0) == 0; }));
+}
+
 }  // namespace phone_test

@@ -50,8 +50,10 @@ Porta de controle (--control-port N, TCP no mesmo --host; um comando por linha, 
   RING <ramal>       INVITE de "Cliente Teste" <sip:3001@ci>          -> OK | ERR no-contact
   RINGVIDEO <ramal> <de> [<codecs>]  o RING com <de> como o usuário do From ("Cliente Teste" <sip:<de>@ci>) e também
                      um m=video na PORTA, com a=sendrecv e os codecs da lista (separados por vírgula; padrão H264,VP8):
-                     o H264/90000 na carga 97, com o a=fmtp:97 profile-level-id=42e01f;packetization-mode=1, e o
-                     VP8/90000 na carga 100            -> OK | ERR no-contact | ERR no-video (sem a PORTA)
+                     o H264/90000 na carga 97, com o a=fmtp:97 profile-level-id=42e01f;packetization-mode=1, o
+                     H264HIGH (um H264/90000 do perfil High, que a PJSIP recusa) na carga 99, com o a=fmtp:99
+                     profile-level-id=64001f;packetization-mode=1, e o VP8/90000 na carga 100
+                                                       -> OK | ERR no-contact | ERR no-video (sem a PORTA)
   HANGUP <ramal>     BYE na ligação atendida, CANCEL se ainda toca     -> OK | ERR no-call
   REFER <ramal> <destino>  REFER na última ligação do RING atendida do ramal, com Refer-To: <sip:<destino>@ci>
                      -> OK | ERR no-call
@@ -137,8 +139,12 @@ MIRROR = {"sendrecv": "sendrecv", "sendonly": "recvonly", "recvonly": "sendonly"
 BLF_STATES = ("terminated", "early", "confirmed")   # os estados de diálogo que o comando BLF aceita
 BLF_EXPIRES = 600   # o Expires do 200 a um SUBSCRIBE que não pede um
 VIDEO_CODECS = ("H264", "VP8", "VP9")   # os nomes de a=rtpmap que a resposta aceita no vídeo (o primeiro da oferta)
-# Os codecs do m=video do RINGVIDEO: nome -> (payload type, rtpmap, fmtp ou None).
+# Os codecs do m=video do RINGVIDEO: nome -> (payload type, rtpmap, fmtp ou None). O H264HIGH é um H.264 do perfil
+# High (profile-level-id=64001f), que o telefone recusa: a PJSIP só casa o H.264 com o mesmo perfil (o dela é o
+# Constrained Baseline, 42e01f), embora o nome do codec seja o mesmo. Com o packetization-mode=0 ela casaria: a
+# negociação dela não compara o modo.
 RING_VIDEO = {"H264": ("97", "H264/90000", "profile-level-id=42e01f;packetization-mode=1"),
+              "H264HIGH": ("99", "H264/90000", "profile-level-id=64001f;packetization-mode=1"),
               "VP8": ("100", "VP8/90000", None)}
 RTP_HEADER = 12   # os bytes do cabeçalho do RTP: um datagrama de vídeo com carga tem mais que isso
 

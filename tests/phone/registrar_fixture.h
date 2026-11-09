@@ -357,6 +357,7 @@ public:
         {
             std::lock_guard<std::mutex> lock(mutex_);
             calls_.push_back({CallEvent::Incoming, callId, user, name, starsonic::CallState::Incoming, 0});
+            timeline_.emplace_back(callId, "incoming");
             hook = incomingHook_;
             changed_.notify_all();
         }
@@ -370,11 +371,13 @@ public:
     void OnCallState(int callId, starsonic::CallState state, int sipCode) override {
         std::lock_guard<std::mutex> lock(mutex_);
         calls_.push_back({CallEvent::State, callId, "", "", state, sipCode});
+        timeline_.emplace_back(callId, std::string("state(") + StateName(state) + ")");
         changed_.notify_all();
     }
     void OnTransfer(int callId, int sipCode) override {
         std::lock_guard<std::mutex> lock(mutex_);
         calls_.push_back({CallEvent::Transfer, callId, "", "", starsonic::CallState::Incoming, sipCode});
+        timeline_.emplace_back(callId, "transfer(" + std::to_string(sipCode) + ")");
         changed_.notify_all();
     }
     void OnBlf(const std::string& number, starsonic::BlfState state) override {
@@ -385,14 +388,17 @@ public:
     void OnCallVideo(int callId, const starsonic::CallVideo& video) override {
         std::lock_guard<std::mutex> lock(mutex_);
         videos_.push_back({callId, video});
+        timeline_.emplace_back(callId, "video(" + VideoText(video) + ")");
         changed_.notify_all();
     }
-    void OnLog(int, const std::string& line) override {
+    void OnLog(int level, const std::string& line) override {
         std::lock_guard<std::mutex> lock(mutex_);
         log_.push_back(line);
         if (log_.size() > kMaxLogLines) log_.pop_front();
         for (auto& counted : counted_) {
-            if (line.find(counted.first) != std::string::npos) ++counted.second;
+            if (line.find(counted.first) == std::string::npos) continue;
+            ++counted.second;
+            countedLevels_[counted.first].push_back(level);
         }
     }
 
@@ -407,6 +413,13 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         const auto found = counted_.find(part);
         return found == counted_.end() ? 0 : found->second;
+    }
+
+    // O nível de cada linha de log com `part` desde o CountLog(part), em ordem.
+    std::vector<int> LogLevels(const std::string& part) const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto found = countedLevels_.find(part);
+        return found == countedLevels_.end() ? std::vector<int>() : found->second;
     }
 
     // Chamado de dentro de OnIncomingCall, depois de guardar o evento (sem a trava do listener).
@@ -484,6 +497,24 @@ public:
             }
             return condition(starsonic::CallVideo());
         });
+    }
+
+    // Os eventos da ligação (OnIncomingCall, OnCallState, OnTransfer e OnCallVideo), na ordem em que chegaram:
+    // "incoming", "state(<estado>)", "transfer(<código>)" e "video(<VideoText>)".
+    std::vector<std::string> Timeline(int callId) const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::vector<std::string> events;
+        for (const auto& entry : timeline_) {
+            if (entry.first == callId) events.push_back(entry.second);
+        }
+        return events;
+    }
+
+    // O Timeline numa linha só, para as mensagens dos testes.
+    std::string TimelineText(int callId) const {
+        std::string text;
+        for (const std::string& event : Timeline(callId)) text += event + "; ";
+        return text;
     }
 
     // Os OnCallVideo numa linha só, para as mensagens dos testes.
@@ -584,9 +615,11 @@ private:
     std::vector<CallEvent> calls_;
     std::vector<BlfEvent> blfs_;
     std::vector<VideoEvent> videos_;
+    std::vector<std::pair<int, std::string>> timeline_;   // Timeline: o id da ligação e o evento, em ordem
     std::function<void(int)> incomingHook_;
     std::deque<std::string> log_;
     std::map<std::string, size_t> counted_;   // CountLog: o texto e quantas linhas o tiveram
+    std::map<std::string, std::vector<int>> countedLevels_;   // CountLog: o texto e o nível de cada linha
 };
 
 }  // namespace phone_test

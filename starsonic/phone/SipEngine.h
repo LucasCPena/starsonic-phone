@@ -67,9 +67,11 @@ public:
     virtual void OnBlf(const std::string& /*number*/, BlfState /*state*/) {}
     // O vídeo da ligação callId mudou: um evento a cada mudança de um campo do CallVideo (o refused sai uma vez por
     // recusa, num evento só dele, com os outros campos de agora). Numa recebida que oferece vídeo, ele sai logo depois
-    // do OnIncomingCall, com o offered ou com o refused (sem codec em comum). Nada depois do Disconnected da ligação.
-    // Só no motor do PJSIP com o vídeo (o Windows): sem o vídeo (o Android) e no do baresip, nunca chega. Vazio por
-    // padrão.
+    // do OnIncomingCall, com o offered ou com o refused (sem codec em comum); se a PJSIP não aceita o codec em comum
+    // (o fmtp, como o perfil do H.264), a resposta (o 183 de um Porteiro ou o 200) vai sem o vídeo e o refused sai
+    // nela, com o offered e o early false. Nunca antes do primeiro evento da ligação (o OnIncomingCall, ou o primeiro
+    // OnCallState de uma feita), nem depois do Disconnected dela. Só no motor do PJSIP com o vídeo (o Windows): sem o
+    // vídeo (o Android) e no do baresip, nunca chega. Vazio por padrão.
     virtual void OnCallVideo(int /*callId*/, const CallVideo& /*video*/) {}
     // level como no PJSIP: 1 erro, 2 aviso, 3 informação, 4 detalhe. Sem senhas.
     virtual void OnLog(int level, const std::string& line) = 0;
@@ -231,9 +233,10 @@ public:
     // O MakeCall com o vídeo (video = true; com false é o MakeCall de sempre, sem m=video). Com o VideoEnabled das
     // escolhas, a oferta leva um vídeo e a câmera fica com o desejo ligado: depois da confirmação, com o vídeo aceito,
     // a câmera começa a mandar. Se a resposta recusa o vídeo (a porta 0), a ligação segue só com a voz e sai um
-    // OnCallVideo com o refused. Sem o VideoEnabled, é a ligação só de voz, e sai logo o refused. Uma recusa da ligação
-    // inteira por causa do vídeo (488 ou 415) chega pelo Disconnected com esse código (quem liga de novo só com a voz é
-    // o app). Sem o vídeo no motor (o Android e o baresip), com video = true devolve -1 e não liga.
+    // OnCallVideo com o refused. Sem o VideoEnabled, é a ligação só de voz, e o refused sai logo depois do primeiro
+    // OnCallState dela. Uma recusa da ligação inteira por causa do vídeo (488 ou 415) chega pelo Disconnected com esse
+    // código (quem liga de novo só com a voz é o app). Sem o vídeo no motor (o Android e o baresip), com video = true
+    // devolve -1 e não liga.
     int MakeCall(const std::string& number, bool video);
 
     // Atende (200) ou recusa com Ocupado (486) a ligação recebida que está tocando. Atendida, ela vira
@@ -242,9 +245,9 @@ public:
     bool Reject(int callId);
 
     // O Answer com o vídeo: a resposta aceita o vídeo da oferta (um vídeo, se ela oferece vídeo com um codec em comum,
-    // o offered do OnCallVideo; nenhum, se não). Com video = false a câmera não manda nada (o "Atender"); com true, o
-    // desejo da câmera liga e ela começa a mandar depois da confirmação (o "Atender com vídeo"). Sem o vídeo no motor,
-    // com video = true devolve false e não atende.
+    // o offered do OnCallVideo; nenhum, se não; se a PJSIP não aceita o fmtp do codec, nenhum, com o refused). Com
+    // video = false a câmera não manda nada (o "Atender"); com true, o desejo da câmera liga e ela começa a mandar
+    // depois da confirmação (o "Atender com vídeo"). Sem o vídeo no motor, com video = true devolve false e não atende.
     bool Answer(int callId, bool video);
 
     // O desejo da pessoa para a câmera da ligação (o botão "Câmera"). Numa ligação confirmada sem vídeo, com on, pede o
