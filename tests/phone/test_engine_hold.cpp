@@ -139,7 +139,8 @@ TEST_CASE("SetHold right after another SetHold waits for the first re-INVITE") {
     REQUIRE(phone.engine->SetHold(id, true));
     REQUIRE(phone.engine->SetHold(id, false));
     CHECK(phone.registrar.WaitForLog("reinv-in 2002 sendrecv", kWaitSeconds));
-    CHECK(phone.registrar.Log() == Lines{"inv-in 2002 200", "reinv-in 2002 sendonly", "reinv-in 2002 sendrecv"});
+    CHECK(phone.registrar.Log() == Lines{"inv-in 2002 200", "video-in 2002 nao", "reinv-in 2002 sendonly",
+                                         "video-reinv 2002 nao", "reinv-in 2002 sendrecv", "video-reinv 2002 nao"});
 }
 
 TEST_CASE("destroying the engine with two calls is safe") {

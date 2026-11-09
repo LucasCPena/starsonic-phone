@@ -79,7 +79,7 @@ class FakeRegistrarReferTest(unittest.TestCase):
     def test_refer_with_replaces_logs_known_dialog(self):
         self.registrar._on_invite(invite("2003", "call-to-2003"), PHONE)
         self.reply(replaces_of("call-to-2003"))
-        self.assertEqual(self.log(), ["inv-in 2003 200", "refer-in 2002 2003 replaces=known"])
+        self.assertEqual(self.log(), ["inv-in 2003 200", "video-in 2003 nao", "refer-in 2002 2003 replaces=known"])
 
     def test_refer_with_replaces_of_a_ring_call_logs_known_dialog(self):
         self.registrar.udp = RingSocket()
@@ -93,7 +93,7 @@ class FakeRegistrarReferTest(unittest.TestCase):
     def test_refer_with_unknown_replaces_logs_unknown(self):
         self.registrar._on_invite(invite("2003", "call-to-2003"), PHONE)   # há um diálogo, mas não é este
         self.reply(replaces_of("call-inventado"))
-        self.assertEqual(self.log(), ["inv-in 2003 200", "refer-in 2002 2003 replaces=unknown"])
+        self.assertEqual(self.log(), ["inv-in 2003 200", "video-in 2003 nao", "refer-in 2002 2003 replaces=unknown"])
 
     def test_refer_reply_command_changes_the_response(self):
         self.assertEqual(self.registrar.command("REFER_REPLY 603"), ["OK"])
@@ -158,11 +158,12 @@ class FakeRegistrarReferTest(unittest.TestCase):
                              OFFER + "a=sendonly\r\n", cseq=2, to_tag="ci")
         self.assertEqual(self.registrar._on_invite(hold, PHONE), [])   # nenhuma resposta: como um pacote perdido
         self.assertEqual(len(self.registrar._on_invite(invite("2003", "call-to-2003"), PHONE)), 3)   # o novo segue
-        self.assertEqual(self.log(), ["inv-in 2002 200", "inv-in 2003 200"])   # o re-INVITE nem entra no registro
+        # O re-INVITE nem entra no registro.
+        self.assertEqual(self.log(), ["inv-in 2002 200", "video-in 2002 nao", "inv-in 2003 200", "video-in 2003 nao"])
         self.assertEqual(self.registrar.command("DROP REINVITE off"), ["OK"])
         replies = self.registrar._on_invite(hold, PHONE)   # a repetição dele é respondida
         self.assertEqual([fake_registrar._parse(data).status for data in replies], [200])
-        self.assertEqual(self.log()[-1], "reinv-in 2002 sendonly")
+        self.assertEqual(self.log()[-2:], ["reinv-in 2002 sendonly", "video-reinv 2002 nao"])
         for command in ("DROP REINVITE", "DROP REINVITE maybe", "DROP REINVITE on now"):
             with self.subTest(command=command):
                 self.assertEqual(self.registrar.command(command), ["ERR bad-command"])

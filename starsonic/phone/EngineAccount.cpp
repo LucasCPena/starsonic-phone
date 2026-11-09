@@ -79,6 +79,15 @@ void EngineAccount::Pause() {
     Modify(stopped);
 }
 
+#if PJMEDIA_HAS_VIDEO
+void EngineAccount::SetVideoBandwidth(unsigned bandwidth) {
+    config_.videoConfig.rateControlBandwidth = bandwidth;
+    pj::AccountConfig current = config_;
+    if (paused_) current.regConfig.retryIntervalSec = 0;   // parada como no Pause
+    Modify(current);
+}
+#endif
+
 void EngineAccount::Resume() {
     Modify(config_);
     resumed_ = true;   // antes do paused_: a primeira resposta boa daqui em diante é a volta (onActive)
@@ -200,7 +209,7 @@ void EngineAccount::onRegState(pj::OnRegStateParam& param) {
 
 void EngineAccount::onIncomingCall(pj::OnIncomingCallParam& param) {
     try {
-        calls_->Incoming(*this, param.callId, !retired_);
+        calls_->Incoming(*this, param.callId, !retired_, VideoOfferOf(param.rdata.pjRxData));
     } catch (...) {   // sem objeto de ligação, o pjsua2 recusa a ligação com 500
     }
 }

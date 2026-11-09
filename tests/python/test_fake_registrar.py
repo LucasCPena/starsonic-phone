@@ -59,6 +59,22 @@ PHONE_SDP = ("v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=phone\r\nc=IN IP4 127.0.0.1\r
              "m=audio 4000 RTP/AVP 0 8 97 101\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:8 PCMA/8000\r\n"
              "a=rtpmap:97 speex/8000\r\na=rtpmap:101 telephone-event/8000\r\n%s\r\n")
 SDP_TYPE = "Content-Type: application/sdp"
+# Uma oferta do telefone com o vídeo, como a do PJSIP: o H.264 (com o fmtp dele) e o VP8, e a direção no fim.
+VIDEO_SDP = ("v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=phone\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\n"
+             "m=audio 4000 RTP/AVP 0 101\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:101 telephone-event/8000\r\na=sendrecv\r\n"
+             "m=video 4002 RTP/AVP %s\r\na=rtpmap:97 H264/90000\r\n"
+             "a=fmtp:97 profile-level-id=42e01f; packetization-mode=1\r\na=rtpmap:98 H264/90000\r\n"
+             "a=rtpmap:100 VP8/90000\r\n%s\r\n")
+
+
+def video_sdp(formats="97 100", direction="a=sendrecv", port=4002):
+    """A oferta com o vídeo: os formatos do m=video, a direção dele e a porta."""
+    return (VIDEO_SDP % (formats, direction)).replace("m=video 4002 ", "m=video %d " % port)
+
+
+def video_section(body):
+    """O trecho do m=video de um SDP (do m=video ao fim)."""
+    return body[body.index("m=video"):]
 
 
 def read_message(data):
@@ -106,18 +122,21 @@ def answer_with_sdp(headers):
 
 
 class Server:
-    """O registrador de verdade (UDP, TCP e controle) em portas livres de 127.0.0.1, no processo do teste."""
+    """O registrador de verdade (UDP, TCP, controle e, com video, a PORTA do vídeo) em portas livres de 127.0.0.1, no
+    processo do teste."""
 
-    def __init__(self, password="senha-certa", users="2001,2002"):
+    def __init__(self, password="senha-certa", users="2001,2002", video=True):
         self.registrar = fake_registrar.Registrar(users, password)
         self.udp = fake_registrar.start_udp_server(self.registrar, "127.0.0.1", 0)
         self.tcp = fake_registrar.start_tcp_server(self.registrar, "127.0.0.1", 0)
         self.control = fake_registrar.start_control_server(self.registrar, "127.0.0.1", 0)
+        self.video = fake_registrar.start_video_server(self.registrar, "127.0.0.1", 0) if video else None
 
     def close(self):
-        for server in (self.control, self.tcp, self.udp):
-            server.shutdown()
-            server.server_close()
+        for server in (self.control, self.tcp, self.udp, self.video):
+            if server:
+                server.shutdown()
+                server.server_close()
 
 
 class Phone:
@@ -169,8 +188,8 @@ class Phone:
 
 
 def control(server, command):
-    """Manda um comando a porta de controle e devolve as linhas da resposta (a de LOG sem o END)."""
-    is_log = command == "LOG"
+    """Manda um comando a porta de controle e devolve as linhas da resposta (a de LOG e a de VIDEO SDP sem o END)."""
+    is_log = command in ("LOG", "VIDEO SDP")
     with socket.create_connection(("127.0.0.1", server.control.server_address[1]), timeout=5) as conn:
         conn.sendall((command + "\n").encode("utf-8"))
         with conn.makefile("rb") as reader:
@@ -368,7 +387,7 @@ class CallsTest(unittest.TestCase):
         self.assertEqual(ack["cseq"], ["1 ACK"])
         self.assertEqual(ack["call-id"], invite["call-id"])
         self.assertTrue(ack["to"][0].endswith(";tag=phone"), ack["to"])
-        self.assertEqual(self.log(), ["inv-out 2001 200", "ack-sent 2001"])
+        self.assertEqual(self.log(), ["inv-out 2001 200", "sdp-out 2001 200 video=nao", "ack-sent 2001"])
 
     def test_ring_over_tcp_uses_the_registration_connection(self):
         phone = self.registered("tcp")   # nada escuta no Contact (5070): so a conexao do REGISTER serve
@@ -376,7 +395,7 @@ class CallsTest(unittest.TestCase):
         self.assertTrue(invite["via"][0].startswith("SIP/2.0/TCP "), invite["via"])
         phone.send(answer_with_sdp(invite))
         self.assertTrue(phone.receive()[0].startswith("ACK "))
-        self.assertEqual(self.log(), ["inv-out 2001 200", "ack-sent 2001"])
+        self.assertEqual(self.log(), ["inv-out 2001 200", "sdp-out 2001 200 video=nao", "ack-sent 2001"])
 
     def test_ring_without_registration_errors(self):
         self.assertEqual(self.command("RING 9999"), ["ERR no-contact"])
@@ -450,7 +469,8 @@ class CallsTest(unittest.TestCase):
         self.assertTrue(start.startswith("BYE "), start)
         phone.send(phone_response(bye, 200, "OK"))
         self.wait_for_log("bye-out 2001 200")
-        self.assertEqual(self.log(), ["inv-out 2001 200", "ack-sent 2001", "bye-out 2001 200"])
+        self.assertEqual(self.log(), ["inv-out 2001 200", "sdp-out 2001 200 video=nao", "ack-sent 2001",
+                                      "bye-out 2001 200"])
 
     def test_second_ring_during_a_call_is_refused_and_hangup_ends_the_live_call(self):
         phone = self.registered()
@@ -463,7 +483,8 @@ class CallsTest(unittest.TestCase):
         start, bye, _ = phone.receive()
         self.assertTrue(start.startswith("BYE "), start)
         self.assertEqual(bye["call-id"], first["call-id"])
-        self.assertEqual(self.log(), ["inv-out 2001 200", "ack-sent 2001", "inv-out 2001 486"])
+        self.assertEqual(self.log(), ["inv-out 2001 200", "sdp-out 2001 200 video=nao", "ack-sent 2001",
+                                      "inv-out 2001 486"])
 
     def test_refer_inside_a_ring_call_numbers_the_notify_between_the_invite_and_the_bye(self):
         phone = self.registered()
@@ -483,7 +504,8 @@ class CallsTest(unittest.TestCase):
         start, bye, _ = phone.receive()
         self.assertTrue(start.startswith("BYE "), start)
         self.assertGreater(int(bye["cseq"][0].split()[0]), notify_cseq)   # e o BYE que vem depois tambem
-        self.assertEqual(self.log(), ["inv-out 2001 200", "ack-sent 2001", "refer-in 3001 2003"])
+        self.assertEqual(self.log(), ["inv-out 2001 200", "sdp-out 2001 200 video=nao", "ack-sent 2001",
+                                      "refer-in 3001 2003"])
 
     def test_ring_after_the_tcp_connection_closes_errors(self):
         phone = self.registered("tcp")
@@ -515,14 +537,14 @@ class CallsTest(unittest.TestCase):
         self.assertEqual(start, "SIP/2.0 486 Busy Here")
         self.assertEqual(headers["call-id"], ["call-phone-1"])
         self.assertIn(";tag=", headers["to"][0])
-        self.assertEqual(self.log(), ["inv-in 486 486"])
+        self.assertEqual(self.log(), ["inv-in 486 486", "video-in 486 nao"])
 
     def test_invite_to_404_and_480_are_refused_the_same_way(self):
         phone = self.phone()
         for number, status in (("404", "SIP/2.0 404 Not Found"), ("480", "SIP/2.0 480 Temporarily Unavailable")):
             self.invite(phone, number, call_id="call-" + number)
             self.assertEqual(phone.receive()[0], status)
-        self.assertEqual(self.log(), ["inv-in 404 404", "inv-in 480 480"])
+        self.assertEqual(self.log(), ["inv-in 404 404", "video-in 404 nao", "inv-in 480 480", "video-in 480 nao"])
 
     def test_invite_answered_with_sdp(self):
         phone = self.phone()
@@ -546,7 +568,7 @@ class CallsTest(unittest.TestCase):
         phone.send(phone_request("BYE", "sip:2002@ci", cseq=2, to_tag=tag))
         start, headers, _ = phone.receive()
         self.assertEqual((start, headers["cseq"]), ("SIP/2.0 200 OK", ["2 BYE"]))
-        self.assertEqual(self.log(), ["inv-in 2002 200", "bye-in 2002"])
+        self.assertEqual(self.log(), ["inv-in 2002 200", "video-in 2002 nao", "bye-in 2002"])
 
     def test_answer_has_the_first_offered_audio_codec_and_telephone_event_if_offered(self):
         phone = self.phone()
@@ -607,7 +629,7 @@ class CallsTest(unittest.TestCase):
         final = phone.receive()
         self.invite(phone, "2002")   # mesmo Call-ID, CSeq e branch: retransmissao do UDP
         self.assertEqual(phone.receive(), final)
-        self.assertEqual(self.log(), ["inv-in 2002 200"])
+        self.assertEqual(self.log(), ["inv-in 2002 200", "video-in 2002 nao"])
 
     def test_reinvite_logs_direction(self):
         phone = self.phone()
@@ -620,7 +642,8 @@ class CallsTest(unittest.TestCase):
             self.assertEqual((start, headers["cseq"]), ("SIP/2.0 200 OK", ["%d INVITE" % cseq]), offered)
             self.assertIn("a=%s\r\n" % answered, body, offered)
             phone.send(phone_request("ACK", "sip:2002@ci", cseq=cseq, to_tag=tag))
-        self.assertEqual(self.log(), ["inv-in 2002 200"] + ["reinv-in 2002 " + name for name in mirrored])
+        reinvites = [line for name in mirrored for line in ("reinv-in 2002 " + name, "video-reinv 2002 nao")]
+        self.assertEqual(self.log(), ["inv-in 2002 200", "video-in 2002 nao"] + reinvites)
 
     def test_reinvite_reads_codecs_and_direction_from_the_audio_section(self):
         phone = self.phone()
@@ -633,7 +656,8 @@ class CallsTest(unittest.TestCase):
         body = phone.receive()[2]
         self.assertIn("m=audio 40000 RTP/AVP 0\r\n", body)   # so o formato que a oferta trouxe
         self.assertIn("a=recvonly\r\n", body)                # o sendonly do SDP todo; os inactive sao dos videos
-        self.assertEqual(self.log(), ["inv-in 2002 200", "reinv-in 2002 sendonly"])
+        self.assertEqual(self.log(), ["inv-in 2002 200", "video-in 2002 nao", "reinv-in 2002 sendonly",
+                                      "video-reinv 2002 nao"])
 
     def test_refer_is_accepted_and_notified(self):
         phone = self.phone()
@@ -651,7 +675,7 @@ class CallsTest(unittest.TestCase):
         self.assertTrue(notify["to"][0].endswith(";tag=phone"), notify["to"])
         self.assertRegex(notify["cseq"][0], r"^\d+ NOTIFY$")
         phone.send(phone_response(notify, 200, "OK"))
-        self.assertEqual(self.log(), ["inv-in 2002 200", "refer-in 2002 2003"])
+        self.assertEqual(self.log(), ["inv-in 2002 200", "video-in 2002 nao", "refer-in 2002 2003"])
 
     def test_second_refer_in_a_phone_call_gets_the_next_notify_cseq(self):
         phone = self.phone()
@@ -663,7 +687,8 @@ class CallsTest(unittest.TestCase):
             _, notify, _ = phone.receive()
             self.assertEqual(notify["cseq"], ["%d NOTIFY" % notify_cseq])
             phone.send(phone_response(notify, 200, "OK"))
-        self.assertEqual(self.log(), ["inv-in 2002 200", "refer-in 2002 2003", "refer-in 2002 2003"])
+        self.assertEqual(self.log(), ["inv-in 2002 200", "video-in 2002 nao", "refer-in 2002 2003",
+                                      "refer-in 2002 2003"])
 
     def test_cancel_from_the_phone_is_answered_and_logged(self):
         phone = self.phone()
@@ -678,6 +703,207 @@ class CallsTest(unittest.TestCase):
                 phone = self.phone(transport)
                 phone.send(b"\r\n\r\n")
                 self.assertEqual(phone.register(), "SIP/2.0 200 OK")   # a primeira mensagem de volta e o 401
+
+    # --- o vídeo ---
+
+    def video_port(self):
+        return self.server.video.server_address[1]
+
+    def video_call(self, phone, number="2003", body=None, call_id="call-video-1"):
+        """INVITE com o vídeo; devolve a resposta final (o 100 e o 180 ficam para trás): (primeira linha, cabecalhos,
+        corpo)."""
+        phone.send(phone_request("INVITE", "sip:%s@ci" % number, call_id=call_id, extra=[SDP_TYPE],
+                                 body=body or video_sdp()))
+        while True:
+            message = phone.receive()
+            if not message[0].startswith("SIP/2.0 1"):
+                return message
+
+    def video_socket(self):
+        """Um socket UDP de 127.0.0.1 que fala com a PORTA do vídeo."""
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(("127.0.0.1", 0))
+        sock.settimeout(2)
+        self.addCleanup(sock.close)
+        return sock
+
+    def wait_for_packets(self, count):
+        deadline = time.monotonic() + 5
+        while self.command("VIDEO PACKETS") != [str(count)]:
+            self.assertLess(time.monotonic(), deadline, self.command("VIDEO PACKETS"))
+            time.sleep(0.02)
+
+    def test_answer_puts_the_first_video_codec_of_the_offer_on_the_video_port(self):
+        phone = self.phone()
+        start, _, body = self.video_call(phone)
+        self.assertEqual(start, "SIP/2.0 200 OK")
+        self.assertIn("m=audio 40000 RTP/AVP 0 101\r\n", body)
+        self.assertLess(body.index("m=audio"), body.index("m=video"))   # os trechos na ordem da oferta
+        video = video_section(body)
+        self.assertTrue(video.startswith("m=video %d RTP/AVP 97\r\n" % self.video_port()), video)
+        self.assertIn("a=rtpmap:97 H264/90000\r\n", video)
+        self.assertIn("a=fmtp:97 profile-level-id=42e01f; packetization-mode=1\r\n", video)
+        self.assertIn("a=sendrecv\r\n", video)
+        self.assertNotIn("VP8", body)
+        self.assertEqual(self.log(), ["inv-in 2003 200", "video-in 2003 H264,VP8"])
+
+    def test_video_in_lists_the_offered_names_in_order_without_repeating(self):
+        phone = self.phone()
+        cases = (("100 97 98", "VP8,H264", "100 VP8/90000"), ("98 97 100", "H264,VP8", "98 H264/90000"))
+        for number, (formats, names, rtpmap) in enumerate(cases):
+            with self.subTest(formats):
+                body = self.video_call(phone, body=video_sdp(formats), call_id="call-names-%d" % number)[2]
+                self.assertIn("a=rtpmap:%s\r\n" % rtpmap, video_section(body))   # a primeira carga da oferta
+                self.assertEqual(self.log()[-1], "video-in 2003 " + names)
+
+    def test_an_offer_without_video_or_with_port_zero_logs_nao(self):
+        phone = self.phone()
+        self.invite(phone, "2002")
+        phone.receive()
+        phone.receive()
+        self.assertNotIn("m=video", phone.receive()[2])   # sem vídeo na oferta, sem vídeo na resposta
+        body = self.video_call(phone, body=video_sdp(port=0), call_id="call-port-0")[2]
+        self.assertIn("m=video 0 RTP/AVP 97\r\n", body)   # o trecho volta recusado, na mesma posição
+        self.assertEqual(self.log(), ["inv-in 2002 200", "video-in 2002 nao", "inv-in 2003 200", "video-in 2003 nao"])
+
+    def test_video_reject_answers_the_video_with_port_zero(self):
+        phone = self.phone()
+        self.assertEqual(self.command("VIDEO REJECT on"), ["OK"])
+        start, _, body = self.video_call(phone)
+        self.assertEqual(start, "SIP/2.0 200 OK")
+        self.assertIn("m=audio 40000 RTP/AVP 0 101\r\n", body)
+        self.assertTrue(video_section(body).startswith("m=video 0 RTP/AVP 97\r\n"), body)
+        self.assertEqual(self.command("VIDEO REJECT off"), ["OK"])
+        body = self.video_call(phone, call_id="call-video-2")[2]
+        self.assertIn("m=video %d RTP/AVP 97\r\n" % self.video_port(), body)
+        self.assertEqual(self.log(), ["inv-in 2003 200", "video-in 2003 H264,VP8",
+                                      "inv-in 2003 200", "video-in 2003 H264,VP8"])
+
+    def test_video_488_refuses_only_the_invites_with_video(self):
+        phone = self.phone()
+        self.assertEqual(self.command("VIDEO 488 on"), ["OK"])
+        self.assertEqual(self.video_call(phone)[0], "SIP/2.0 488 Not Acceptable Here")
+        self.invite(phone, "2002", call_id="call-voice")
+        self.assertEqual([phone.receive()[0] for _ in range(3)][-1], "SIP/2.0 200 OK")
+        self.assertEqual(self.command("VIDEO 488 off"), ["OK"])
+        self.assertEqual(self.video_call(phone, call_id="call-video-2")[0], "SIP/2.0 200 OK")
+        self.assertEqual(self.log(), ["inv-in 2003 488", "video-in 2003 H264,VP8", "inv-in 2002 200",
+                                      "video-in 2002 nao", "inv-in 2003 200", "video-in 2003 H264,VP8"])
+
+    def test_reinvite_logs_its_video_and_gets_the_same_answer_rules(self):
+        phone = self.phone()
+        headers = self.video_call(phone)[1]
+        tag = re.search(r";tag=(\S+)", headers["to"][0]).group(1)
+        phone.send(phone_request("ACK", "sip:2003@ci", to_tag=tag, call_id="call-video-1"))
+        phone.send(phone_request("INVITE", "sip:2003@ci", cseq=2, to_tag=tag, call_id="call-video-1",
+                                 extra=[SDP_TYPE], body=video_sdp("100 97", "a=sendonly")))
+        start, _, body = phone.receive()
+        self.assertEqual(start, "SIP/2.0 200 OK")
+        video = video_section(body)
+        self.assertTrue(video.startswith("m=video %d RTP/AVP 100\r\n" % self.video_port()), video)
+        self.assertIn("a=recvonly\r\n", video)   # a direção do vídeo espelhada, como a do áudio
+        phone.send(phone_request("ACK", "sip:2003@ci", cseq=2, to_tag=tag, call_id="call-video-1"))
+        phone.send(phone_request("INVITE", "sip:2003@ci", cseq=3, to_tag=tag, call_id="call-video-1",
+                                 extra=[SDP_TYPE], body=PHONE_SDP % "a=sendrecv"))
+        self.assertNotIn("m=video", phone.receive()[2])
+        self.assertEqual(self.command("VIDEO 488 on"), ["OK"])   # o re-INVITE com vídeo também leva 488
+        phone.send(phone_request("INVITE", "sip:2003@ci", cseq=4, to_tag=tag, call_id="call-video-1",
+                                 extra=[SDP_TYPE], body=video_sdp()))
+        self.assertEqual(phone.receive()[0], "SIP/2.0 488 Not Acceptable Here")
+        # O reinv-in leva a direção do áudio (sendrecv nesta oferta), e o video-reinv, os nomes do vídeo.
+        self.assertEqual(self.log(), ["inv-in 2003 200", "video-in 2003 H264,VP8",
+                                      "reinv-in 2003 sendrecv", "video-reinv 2003 VP8,H264",
+                                      "reinv-in 2003 sendrecv", "video-reinv 2003 nao",
+                                      "reinv-in 2003 sendrecv", "video-reinv 2003 H264,VP8"])
+
+    def test_video_packets_counts_datagrams_with_payload_and_resets(self):
+        sock = self.video_socket()
+        self.assertEqual(self.command("VIDEO PACKETS"), ["0"])
+        for size in (12, 13, 1200, 4):   # só os que passam do cabeçalho do RTP contam
+            sock.sendto(b"\x80" * size, ("127.0.0.1", self.video_port()))
+        self.wait_for_packets(2)
+        self.assertEqual(self.command("VIDEO PACKETS reset"), ["OK"])
+        self.assertEqual(self.command("VIDEO PACKETS"), ["0"])
+        sock.sendto(b"\x80" * 40, ("127.0.0.1", self.video_port()))
+        self.wait_for_packets(1)
+
+    def test_video_echo_returns_each_datagram_with_another_ssrc(self):
+        sock = self.video_socket()
+        packet = bytes([0x80, 97, 0, 1, 0, 0, 0, 9, 1, 2, 3, 4]) + b"carga"
+        self.assertEqual(self.command("VIDEO ECHO on"), ["OK"])
+        sock.sendto(packet, ("127.0.0.1", self.video_port()))
+        echoed, source = sock.recvfrom(65535)
+        self.assertEqual(source[1], self.video_port())
+        self.assertEqual(echoed, packet[:11] + bytes([5]) + b"carga")   # o bit mais baixo do SSRC invertido
+        self.wait_for_packets(1)   # a contagem continua
+        self.assertEqual(self.command("VIDEO ECHO off"), ["OK"])
+        sock.settimeout(0.3)
+        sock.sendto(packet, ("127.0.0.1", self.video_port()))
+        self.wait_for_packets(2)
+        with self.assertRaises(socket.timeout):
+            sock.recvfrom(65535)
+
+    def test_video_sdp_gives_the_last_sdp_the_phone_sent(self):
+        self.assertEqual(self.command("VIDEO SDP"), [])   # nenhum ainda
+        phone = self.registered()
+        self.video_call(phone)
+        self.assertEqual(self.command("VIDEO SDP"), video_sdp().splitlines())
+        _, invite, _ = self.ring(phone)
+        phone.send(answer_with_sdp(invite))   # a resposta do telefone ao RING também conta
+        self.assertTrue(phone.receive()[0].startswith("ACK "))
+        self.assertEqual(self.command("VIDEO SDP"), (PHONE_SDP % "a=sendrecv").splitlines())
+
+    def test_ringvideo_offers_the_listed_codecs_on_the_video_port_from_the_given_user(self):
+        phone = self.registered()
+        self.assertEqual(self.command("RINGVIDEO 2001 9001"), ["OK"])
+        start, invite, body = phone.receive()
+        self.assertEqual(start, "INVITE sip:2001@127.0.0.1:5070;ob SIP/2.0")
+        self.assertEqual(invite["from"][0].split(";")[0], '"Cliente Teste" <sip:9001@ci>')
+        self.assertTrue(invite["contact"][0].startswith("<sip:9001@"), invite["contact"])
+        self.assertIn("m=audio 40000 RTP/AVP 0 8 101\r\n", body)
+        video = video_section(body)
+        self.assertTrue(video.startswith("m=video %d RTP/AVP 97 100\r\n" % self.video_port()), video)
+        for line in ("a=rtpmap:97 H264/90000", "a=fmtp:97 profile-level-id=42e01f;packetization-mode=1",
+                     "a=rtpmap:100 VP8/90000", "a=sendrecv"):
+            self.assertIn(line + "\r\n", video)
+        phone.send(phone_response(invite, 486, "Busy Here"))
+        self.assertTrue(phone.receive()[0].startswith("ACK "))
+        self.assertEqual(self.command("RINGVIDEO 2001 9002 VP8"), ["OK"])
+        _, invite, body = phone.receive()
+        self.assertEqual(invite["from"][0].split(";")[0], '"Cliente Teste" <sip:9002@ci>')
+        self.assertTrue(video_section(body).startswith("m=video %d RTP/AVP 100\r\n" % self.video_port()))
+        self.assertNotIn("H264", body)
+
+    def test_ringvideo_refuses_bad_arguments_and_needs_the_video_port(self):
+        for line in ("RINGVIDEO", "RINGVIDEO 2001", "RINGVIDEO 2001 9001 H263", "RINGVIDEO 2001 9001 H264,H264",
+                     "RINGVIDEO 2001 9001 VP8 extra", "VIDEO", "VIDEO REJECT", "VIDEO REJECT maybe", "VIDEO ECHO",
+                     "VIDEO PACKETS now", "VIDEO SDP now", "VIDEO 486 on"):
+            with self.subTest(line):
+                self.assertEqual(self.command(line), ["ERR bad-command"])
+        self.assertEqual(self.command("RINGVIDEO 2001 9001"), ["ERR no-contact"])
+        server = Server(video=False)
+        self.addCleanup(server.close)
+        phone = Phone(server)
+        self.addCleanup(phone.close)
+        self.assertEqual(phone.register(), "SIP/2.0 200 OK")
+        self.assertEqual(control(server, "RINGVIDEO 2001 9001"), ["ERR no-video"])
+
+    def test_sdp_out_logs_each_answer_code_with_sdp_once_with_its_video(self):
+        phone = self.registered()
+        self.assertEqual(self.command("RINGVIDEO 2001 9001"), ["OK"])
+        _, invite, _ = phone.receive()
+        phone.send(phone_response(invite, 180, "Ringing"))   # sem SDP: nada no registro
+        early = phone_response(invite, 183, "Session Progress", [SDP_TYPE], video_sdp())
+        phone.send(early)
+        phone.send(early)   # repetido: uma linha só
+        answer = phone_response(invite, 200, "OK", [SDP_TYPE, "Contact: <sip:2001@127.0.0.1:5070>"],
+                                video_sdp(port=0))
+        phone.send(answer)
+        self.assertTrue(phone.receive()[0].startswith("ACK "))
+        phone.send(answer)   # o 200 de novo (UDP): outro ACK, sem registro
+        self.assertTrue(phone.receive()[0].startswith("ACK "))
+        self.assertEqual(self.log(), ["sdp-out 2001 183 video=sim", "inv-out 2001 200", "sdp-out 2001 200 video=nao",
+                                      "ack-sent 2001"])
 
     # --- porta de controle ---
 
@@ -775,6 +1001,19 @@ class CommandLineTest(unittest.TestCase):
         self.assertEqual(control(where, "REGISTERS 2001"), ["1"])
         self.assertEqual(control(where, "RING 2001"), ["OK"])
         self.assertTrue(phone.receive()[0].startswith("INVITE sip:2001@127.0.0.1:5070"))
+
+    def test_video_port_counts_the_datagrams_of_the_running_process(self):
+        control_port, video_port = self.free_port(), self.free_port()
+        port, ready = self.start("--control-port", str(control_port), "--video-port", str(video_port))
+        self.assertEqual(ready, "registrador falso em 127.0.0.1:%d (UDP e TCP), video em 127.0.0.1:%d, controle em "
+                                "127.0.0.1:%d" % (port, video_port, control_port))
+        where = self.endpoints(port, control_port)
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.sendto(b"\x80" * 100, ("127.0.0.1", video_port))
+            deadline = time.monotonic() + 5
+            while control(where, "VIDEO PACKETS") != ["1"]:
+                self.assertLess(time.monotonic(), deadline, "o datagrama nao foi contado")
+                time.sleep(0.02)
 
 
 if __name__ == "__main__":

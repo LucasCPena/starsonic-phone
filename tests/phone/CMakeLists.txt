@@ -77,7 +77,8 @@ if(BARESIP_PREFIX)
     test_engine_conference.cpp
     test_engine_baresip.cpp
     test_push_data.cpp
-    test_account_config.cpp)
+    test_account_config.cpp
+    test_video_types.cpp)
   list(TRANSFORM BARESIP_TEST_SOURCES PREPEND ${CMAKE_CURRENT_SOURCE_DIR}/)
   file(GLOB STARSONIC_BARESIP_SOURCES CONFIGURE_DEPENDS ${STARSONIC_DIR}/phone/baresip/*.cpp)
 
@@ -89,6 +90,7 @@ if(BARESIP_PREFIX)
     ${STARSONIC_DIR}/phone/EngineEvents.cpp
     ${STARSONIC_DIR}/phone/AccountConfig.cpp
     ${STARSONIC_DIR}/phone/PushDataCheck.cpp
+    ${STARSONIC_DIR}/phone/Video.cpp
     ${STARSONIC_BARESIP_SOURCES})
   target_include_directories(phone_tests_baresip PRIVATE
     ${ENGINE_TEST_INCLUDES}

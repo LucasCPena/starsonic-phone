@@ -130,7 +130,7 @@ TEST_CASE("Join with a ringing call is refused") {
 
     // Nada mudou: nenhum re-INVITE, a feita segue com o som e a outra tocando.
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
-    CHECK(phone.registrar.Log() == Lines{"inv-in 2002 200"});
+    CHECK(phone.registrar.Log() == Lines{"inv-in 2002 200", "video-in 2002 nao"});
     CHECK(phone.engine->AudioLinks(made) == std::vector<int>{0});
     CHECK(phone.engine->CallCount() == 2);
 }

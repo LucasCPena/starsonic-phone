@@ -89,6 +89,14 @@ struct Phone {
         return Last(listener.Calls(), CallEvent::Incoming).callId;
     }
 
+    // RINGVIDEO 2001 <from> <codecs> (um INVITE com o vídeo, do usuário from) e o id que o motor deu à ligação.
+    int RingVideo(const std::string& from, const std::string& codecs = "H264,VP8") {
+        const size_t before = Count(CallEvent::Incoming);
+        REQUIRE(registrar.Control("RINGVIDEO 2001 " + from + " " + codecs) == Lines{"OK"});
+        REQUIRE(listener.WaitForCalls(RecordingListener::Count(CallEvent::Incoming, before + 1), kWaitSeconds));
+        return Last(listener.Calls(), CallEvent::Incoming).callId;
+    }
+
     // RING 2001, Answer e a espera pelo Confirmed.
     int Answered() {
         const int id = Ring();

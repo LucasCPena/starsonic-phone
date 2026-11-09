@@ -24,6 +24,8 @@
 #include "EngineLog.h"
 #include "PushDataCheck.h"
 #include "Text.h"
+#include "Video.h"
+#include "VideoRenderer.h"
 
 namespace starsonic {
 namespace {
@@ -96,6 +98,12 @@ public:
             ep.logConfig.consoleLevel = static_cast<unsigned>(config_.logLevel);
             ep.logConfig.writer = new LogForwarder(listener_);
             endpoint_->libInit(ep);
+#if PJMEDIA_HAS_VIDEO
+            // O desenhista nosso, com o vídeo da PJSIP já de pé (o libInit), antes de qualquer conta.
+            std::string rendererError;
+            renderDevice_ = RegisterVideoRenderer(&rendererError);
+            if (renderDevice_ == PJMEDIA_VID_INVALID_DEV) Log(1, "desenhista de video recusado: " + rendererError);
+#endif
 
             pj::TransportConfig transport;   // porta 0: o sistema escolhe
             udpId_ = endpoint_->transportCreate(PJSIP_TRANSPORT_UDP, transport);
@@ -116,6 +124,15 @@ public:
             // antes de qualquer ligação, ele nasce numa thread só.
             endpoint_->audDevManager().getCaptureDevMedia();
             ConfigureCodecs();
+#if PJMEDIA_HAS_VIDEO
+            // As escolhas do vídeo de fábrica, antes de qualquer ligação, e o temporizador das ligações (o envio da
+            // câmera fora dos callbacks).
+            VideoSettings settings;
+            settings.h264Available = config_.h264Available;
+            ApplyVideoSettings(settings);
+            calls_.SetVideoSettings(settings);
+            calls_.Start(endpoint_.get());
+#endif
             return true;
         } catch (const pj::Error& failure) {
             if (error) *error = "nao foi possivel iniciar o PJSIP: " + failure.info();
@@ -137,7 +154,16 @@ public:
         const AccountFields fields =
             BuildAccount(profile, input.address, input.ramal, input.senha, input.transport, L"");
         const PjAccountSettings settings = ToPjAccount(fields);
-        const pj::AccountConfig config = MakeAccountConfig(settings, settings.transport == "tcp" ? tcpId_ : udpId_);
+        pj::AccountConfig config = MakeAccountConfig(settings, settings.transport == "tcp" ? tcpId_ : udpId_);
+#if PJMEDIA_HAS_VIDEO
+        // O vídeo da conta: aceitar o vídeo mostra a imagem que chega (no desenhista nosso), mas a câmera só manda
+        // depois de um pedido (START_TRANSMIT); a taxa é a da qualidade das escolhas.
+        config.videoConfig.autoShowIncoming = true;
+        config.videoConfig.autoTransmitOutgoing = false;
+        config.videoConfig.defaultRenderDevice =
+            renderDevice_ != PJMEDIA_VID_INVALID_DEV ? renderDevice_ : PJMEDIA_VID_DEFAULT_RENDER_DEV;
+        config.videoConfig.rateControlBandwidth = videoBandwidth_;
+#endif
         // O id vem antes do create(): uma resposta que chegue durante ele já sai com o id da conta.
         const int accountId = ++lastAccountId_;
         std::unique_ptr<EngineAccount> account(new EngineAccount(&events_, &calls_, endpoint_.get(), accountId));
@@ -294,10 +320,11 @@ public:
         return ids;
     }
 
-    // O videoCodecEnum2 é o pjsua_vid_enum_codecs; sem o vídeo no PJSIP, ele devolve a lista vazia.
+    // O videoCodecEnum2 é o pjsua_vid_enum_codecs. Sem o vídeo no PJSIP, a lista vazia.
     std::vector<std::string> VideoCodecs() {
-        std::lock_guard<std::mutex> lock(apiMutex_);
         std::vector<std::string> ids;
+#if PJMEDIA_HAS_VIDEO
+        std::lock_guard<std::mutex> lock(apiMutex_);
         if (!RegisterThread()) return ids;
         try {
             pj::CodecInfoVector2 codecs = endpoint_->videoCodecEnum2();
@@ -309,23 +336,72 @@ public:
         } catch (const pj::Error& failure) {
             Log(1, "codecs de video: " + failure.info());
         }
+#endif
         return ids;
     }
 
-    int MakeCall(const std::string& number) {
+    void SetVideoSettings(const VideoSettings& settings) {
+#if PJMEDIA_HAS_VIDEO
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        if (!RegisterThread()) return;
+        ApplyVideoSettings(settings);
+        const unsigned bandwidth = static_cast<unsigned>(ValuesOf(settings.quality).kbps) * 1000u;
+        if (bandwidth != videoBandwidth_) {
+            videoBandwidth_ = bandwidth;
+            if (account_) account_->SetVideoBandwidth(videoBandwidth_);
+        }
+        calls_.SetVideoSettings(settings);
+#else
+        (void)settings;
+#endif
+    }
+
+    int MakeCall(const std::string& number, bool video) {
         std::lock_guard<std::mutex> lock(apiMutex_);
         if (!RegisterThread()) return -1;
+#if !PJMEDIA_HAS_VIDEO
+        if (video) {
+            Log(2, "ligacao com video recusada: sem video neste motor");
+            return -1;
+        }
+#endif
         if (!account_ || number.empty()) {
             Log(2, account_ ? "ligacao recusada: numero vazio" : "ligacao recusada: nao ha conta");
             return -1;
         }
-        return calls_.Make(*account_, CallUri(number));
+        return calls_.Make(*account_, CallUri(number), video);
     }
 
-    bool Answer(int callId) {
+    bool Answer(int callId, bool video) {
         std::lock_guard<std::mutex> lock(apiMutex_);
-        return RegisterThread() && calls_.Answer(callId);
+#if !PJMEDIA_HAS_VIDEO
+        if (video) return false;
+#endif
+        return RegisterThread() && calls_.Answer(callId, video);
     }
+
+    bool SetCamera(int callId, bool on) {
+#if PJMEDIA_HAS_VIDEO
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        return RegisterThread() && calls_.SetCamera(callId, on);
+#else
+        (void)callId;
+        (void)on;
+        return false;
+#endif
+    }
+
+    void SetCameraPaused(bool paused) {
+#if PJMEDIA_HAS_VIDEO
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        if (RegisterThread()) calls_.SetCameraPaused(paused);
+#else
+        (void)paused;
+#endif
+    }
+
+    // Sem a apiMutex_ e sem o PJSIP, como o CallCount: só a tabela.
+    CallVideo Video(int callId) { return calls_.Video(callId); }
 
     bool Reject(int callId) {
         std::lock_guard<std::mutex> lock(apiMutex_);
@@ -520,6 +596,58 @@ private:
     // sozinho: a conta está presa a ele.
     std::string CallUri(const std::string& number) const { return "sip:" + number + "@" + callHost_; }
 
+#if PJMEDIA_HAS_VIDEO
+    // As escolhas do vídeo na PJSIP, para as próximas ofertas e respostas: a prioridade de cada codec (255, 254 e 253
+    // na ordem do CodecOrder; 0 nos outros, que a PJSIP nunca oferece nem aceita, como o H.264 sem o módulo, que ela
+    // registra mesmo assim), a qualidade no codificador de cada um (o tamanho, os quadros por segundo e a taxa) e o
+    // fmtp do H.264 (Constrained Baseline, nível 3.1, o modo 1 de empacotamento).
+    void ApplyVideoSettings(const VideoSettings& settings) {
+        const std::vector<VideoCodec> order = CodecOrder(settings);
+        const QualityValues quality = ValuesOf(settings.quality);
+        pjsua_codec_info codecs[32];
+        unsigned count = PJ_ARRAY_SIZE(codecs);
+        pj_status_t status = pjsua_vid_enum_codecs(codecs, &count);
+        if (status != PJ_SUCCESS) {
+            Log(1, "codecs de video: " + endpoint_->utilStrError(status));
+            return;
+        }
+        for (unsigned index = 0; index < count; ++index) {
+            const pj_str_t& id = codecs[index].codec_id;
+            const std::string name(id.ptr, static_cast<size_t>(id.slen));   // "H264/97"
+            const std::string codec = name.substr(0, name.find('/'));
+            int priority = 0;
+            for (size_t position = 0; position < order.size(); ++position) {
+                if (SameCodecId(codec, CodecName(order[position]))) priority = 255 - static_cast<int>(position);
+            }
+            status = pjsua_vid_codec_set_priority(&id, static_cast<pj_uint8_t>(priority));
+            if (status != PJ_SUCCESS) Log(1, "prioridade do codec " + name + ": " + endpoint_->utilStrError(status));
+            pjmedia_vid_codec_param param;
+            status = pjsua_vid_codec_get_param(&id, &param);
+            if (status != PJ_SUCCESS) {
+                Log(1, "parametros do codec " + name + ": " + endpoint_->utilStrError(status));
+                continue;
+            }
+            pjmedia_video_format_detail& encoder = param.enc_fmt.det.vid;
+            encoder.size.w = static_cast<unsigned>(quality.width);
+            encoder.size.h = static_cast<unsigned>(quality.height);
+            encoder.fps.num = quality.fps;
+            encoder.fps.denum = 1;
+            encoder.avg_bps = static_cast<pj_uint32_t>(quality.kbps) * 1000u;
+            encoder.max_bps = encoder.avg_bps;
+            if (SameCodecId(codec, "H264")) {
+                // Como o fmtp de fábrica da PJSIP (o espaço antes do segundo nome sai no SDP depois do ";").
+                param.dec_fmtp.cnt = 2;
+                param.dec_fmtp.param[0].name = pj_str(const_cast<char*>("profile-level-id"));
+                param.dec_fmtp.param[0].val = pj_str(const_cast<char*>("42e01f"));
+                param.dec_fmtp.param[1].name = pj_str(const_cast<char*>(" packetization-mode"));
+                param.dec_fmtp.param[1].val = pj_str(const_cast<char*>("1"));
+            }
+            status = pjsua_vid_codec_set_param(&id, &param);   // a PJSIP copia os textos do fmtp
+            if (status != PJ_SUCCESS) Log(1, "parametros do codec " + name + ": " + endpoint_->utilStrError(status));
+        }
+    }
+#endif
+
     // Todos os codecs desligados, menos os do perfil, do mais para o menos preferido.
     void ConfigureCodecs() {
         const pj::CodecInfoVector2 available = endpoint_->codecEnum2();
@@ -668,6 +796,12 @@ private:
     std::atomic<uint64_t> blfLossMark_{0};
     // A conta tem números de BLF (escrito com a apiMutex_, no WatchBlf e no RetireAccount; lido no onActive da conta).
     std::atomic<bool> hasBlf_{false};
+#if PJMEDIA_HAS_VIDEO
+    // O desenhista nosso na lista de vídeo da PJSIP (o defaultRenderDevice das contas) e a taxa do vídeo das contas, em
+    // bit/s (a da qualidade das escolhas; com a apiMutex_ depois do Create).
+    pjmedia_vid_dev_index renderDevice_ = PJMEDIA_VID_INVALID_DEV;
+    unsigned videoBandwidth_ = static_cast<unsigned>(ValuesOf(VideoQuality::Medium).kbps) * 1000u;
+#endif
 };
 
 SipEngine::SipEngine(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
@@ -723,9 +857,21 @@ std::vector<std::string> SipEngine::ActiveCodecs() const { return impl_->ActiveC
 
 std::vector<std::string> SipEngine::VideoCodecs() const { return impl_->VideoCodecs(); }
 
-int SipEngine::MakeCall(const std::string& number) { return impl_->MakeCall(number); }
+void SipEngine::SetVideoSettings(const VideoSettings& settings) { impl_->SetVideoSettings(settings); }
 
-bool SipEngine::Answer(int callId) { return impl_->Answer(callId); }
+int SipEngine::MakeCall(const std::string& number) { return impl_->MakeCall(number, false); }
+
+int SipEngine::MakeCall(const std::string& number, bool video) { return impl_->MakeCall(number, video); }
+
+bool SipEngine::Answer(int callId) { return impl_->Answer(callId, false); }
+
+bool SipEngine::Answer(int callId, bool video) { return impl_->Answer(callId, video); }
+
+bool SipEngine::SetCamera(int callId, bool on) { return impl_->SetCamera(callId, on); }
+
+void SipEngine::SetCameraPaused(bool paused) { impl_->SetCameraPaused(paused); }
+
+CallVideo SipEngine::Video(int callId) const { return impl_->Video(callId); }
 
 bool SipEngine::Reject(int callId) { return impl_->Reject(callId); }
 

@@ -8,7 +8,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Os testes do app de PC (starsonic/desktop): so C++ portatil, sem pjproject. O orquestrador (DesktopApp) usa o
 # controlador de ligacoes: o CallController.cpp entra aqui (sem o SipEngine.cpp, o CallEngine.cpp e o pjproject), e
-# os testes usam o motor falso de tests/phone/fake_call_engine.h (Ruling 2 da W1).
+# os testes usam o motor falso de tests/phone/fake_call_engine.h (Ruling 2 da W1). Os tipos portateis do video
+# (starsonic/phone/Video.cpp) tambem entram.
 #   cmake -S tests/desktop -B <build> && cmake --build <build> && <build>/desktop_tests
 set(STARSONIC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../starsonic)
 
@@ -34,7 +35,7 @@ add_library(miniz STATIC ${STARSONIC_DIR}/third_party/miniz/miniz.c)
 target_compile_definitions(miniz PUBLIC MINIZ_NO_STDIO MINIZ_NO_ZLIB_COMPATIBLE_NAMES)
 
 add_executable(desktop_tests main.cpp ${DESKTOP_TEST_SOURCES} ${STARSONIC_CORE_SOURCES} ${STARSONIC_DESKTOP_SOURCES}
-  ${STARSONIC_DIR}/phone/CallController.cpp)
+  ${STARSONIC_DIR}/phone/CallController.cpp ${STARSONIC_DIR}/phone/Video.cpp)
 target_include_directories(desktop_tests PRIVATE
   ${STARSONIC_DIR}/core
   ${STARSONIC_DIR}/desktop

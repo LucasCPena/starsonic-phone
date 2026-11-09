@@ -29,8 +29,10 @@ TEST_CASE("outgoing call is held, resumed, sends DTMF and is transferred") {
     REQUIRE(phone.engine->SetHold(id, false));
     CHECK(phone.registrar.WaitForLog("reinv-in 2002 sendrecv", kWaitSeconds));
     CHECK(phone.engine->HasCall());
-    // Só os pedidos que o teste fez: nenhum re-INVITE a mais.
-    CHECK(phone.registrar.Log() == Lines{"inv-in 2002 200", "reinv-in 2002 sendonly", "reinv-in 2002 sendrecv"});
+    // Só os pedidos que o teste fez: nenhum re-INVITE a mais, e nenhum com vídeo.
+    const Lines calls = {"inv-in 2002 200", "video-in 2002 nao", "reinv-in 2002 sendonly", "video-reinv 2002 nao",
+                         "reinv-in 2002 sendrecv", "video-reinv 2002 nao"};
+    CHECK(phone.registrar.Log() == calls);
 
     CHECK(phone.engine->SendDtmf(id, "12"));
 
@@ -38,8 +40,9 @@ TEST_CASE("outgoing call is held, resumed, sends DTMF and is transferred") {
     CHECK(phone.registrar.WaitForLog("refer-in 2002 2003", kWaitSeconds));
     CHECK(phone.WaitState(id, CallState::Disconnected));   // o NOTIFY 200 encerra a ligação
     CHECK(phone.registrar.WaitForLog("bye-in 2002", kWaitSeconds));
-    CHECK(phone.registrar.Log() == Lines{"inv-in 2002 200", "reinv-in 2002 sendonly", "reinv-in 2002 sendrecv",
-                                         "refer-in 2002 2003", "bye-in 2002"});
+    Lines transferred = calls;
+    transferred.insert(transferred.end(), {"refer-in 2002 2003", "bye-in 2002"});
+    CHECK(phone.registrar.Log() == transferred);
     CHECK_FALSE(phone.engine->HasCall());
 }
 

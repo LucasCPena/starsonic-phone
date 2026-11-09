@@ -338,8 +338,14 @@ public:
         return activeCodecs_;
     }
 
-    // O vídeo fica só no motor do PJSIP do Windows (spec da videochamada, 6.2): nenhum codec de vídeo.
+    // O vídeo fica só no motor do PJSIP do Windows (spec da videochamada, 6.2): nenhum codec de vídeo, e os pedidos
+    // de vídeo são recusados (-1, false ou nada), sem OnCallVideo.
     std::vector<std::string> VideoCodecs() { return {}; }
+
+    int MakeVideoCall() const {
+        Log(2, "ligacao com video recusada: sem video neste motor");
+        return -1;
+    }
 
     // O caminho do som é do iPhone (spec 6.1): a lista só tem o dispositivo nulo, com nullAudio, e escolher um
     // dispositivo não muda nada no som.
@@ -549,9 +555,23 @@ std::vector<std::string> SipEngine::ActiveCodecs() const { return impl_->ActiveC
 
 std::vector<std::string> SipEngine::VideoCodecs() const { return impl_->VideoCodecs(); }
 
+void SipEngine::SetVideoSettings(const VideoSettings&) {}
+
 int SipEngine::MakeCall(const std::string& number) { return impl_->MakeCall(number); }
 
+int SipEngine::MakeCall(const std::string& number, bool video) {
+    return video ? impl_->MakeVideoCall() : impl_->MakeCall(number);
+}
+
 bool SipEngine::Answer(int callId) { return impl_->Answer(callId); }
+
+bool SipEngine::Answer(int callId, bool video) { return !video && impl_->Answer(callId); }
+
+bool SipEngine::SetCamera(int, bool) { return false; }
+
+void SipEngine::SetCameraPaused(bool) {}
+
+CallVideo SipEngine::Video(int) const { return CallVideo(); }
 
 bool SipEngine::Reject(int callId) { return impl_->Reject(callId); }
 

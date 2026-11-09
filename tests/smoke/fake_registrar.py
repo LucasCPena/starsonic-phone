@@ -18,6 +18,13 @@ Ligações (sem autenticação para INVITE, re-INVITE, REFER, BYE e CANCEL):
   Retransmissão do mesmo INVITE (UDP) repete a última resposta, sem ligação nova.
 - re-INVITE -> 200 com a direção espelhada (sendonly <-> recvonly); com o DROP REINVITE on, nada; BYE e
   CANCEL -> 200
+- o vídeo (--video-port PORTA): a resposta a um INVITE ou re-INVITE do telefone tem um trecho m= por m= da oferta, na
+  mesma ordem. O primeiro m=audio leva o áudio acima; o primeiro m=video com a porta diferente de zero vai na PORTA, com
+  a primeira carga da oferta cujo nome no a=rtpmap é H264, VP8 ou VP9 (o a=rtpmap e o a=fmtp dela copiados) e a direção
+  espelhada (a=sendrecv para uma oferta sendrecv); os outros vão com a porta 0 (também esse m=video, com o VIDEO REJECT
+  on, sem a PORTA ou sem um desses codecs). Com o VIDEO 488 on, um INVITE ou re-INVITE com um m=video de porta diferente
+  de zero leva 488. A PORTA conta os datagramas com carga (mais de 12 bytes, o cabeçalho do RTP), de qualquer ligação,
+  e com o VIDEO ECHO on devolve cada datagrama a quem o mandou, com o bit mais baixo do último byte do SSRC invertido
 - REFER -> 202 e um NOTIFY com SIP/2.0 200 OK (sipfrag), ou o que REFER_REPLY e REFER_NOTIFY mandarem
   (resposta com código >= 300, ou REFER_NOTIFY none: nenhum NOTIFY com o resultado). Um Refer-To com
   Replaces (RFC 3891) vai para o registro de ligações com replaces=known ou replaces=unknown; o registrador
@@ -41,6 +48,10 @@ BLF (RFC 4235, sem autenticação): SUBSCRIBE com Event: dialog ao ramal da Requ
 
 Porta de controle (--control-port N, TCP no mesmo --host; um comando por linha, resposta numa linha):
   RING <ramal>       INVITE de "Cliente Teste" <sip:3001@ci>          -> OK | ERR no-contact
+  RINGVIDEO <ramal> <de> [<codecs>]  o RING com <de> como o usuário do From ("Cliente Teste" <sip:<de>@ci>) e também
+                     um m=video na PORTA, com a=sendrecv e os codecs da lista (separados por vírgula; padrão H264,VP8):
+                     o H264/90000 na carga 97, com o a=fmtp:97 profile-level-id=42e01f;packetization-mode=1, e o
+                     VP8/90000 na carga 100            -> OK | ERR no-contact | ERR no-video (sem a PORTA)
   HANGUP <ramal>     BYE na ligação atendida, CANCEL se ainda toca     -> OK | ERR no-call
   REFER <ramal> <destino>  REFER na última ligação do RING atendida do ramal, com Refer-To: <sip:<destino>@ci>
                      -> OK | ERR no-call
@@ -70,12 +81,22 @@ Porta de controle (--control-port N, TCP no mesmo --host; um comando por linha, 
                      assinatura só acaba no SUBSCRIBE com Expires: 0 do telefone, com o NOTIFY terminated
                      (sipfrag 100) que a RFC 6665 pede                 -> OK
   RESET              REFER_REPLY e REFER_NOTIFY voltam ao padrão       -> OK
+  VIDEO REJECT <on|off>  com on, o m=video da resposta vai com a porta 0 -> OK
+  VIDEO 488 <on|off> com on, um INVITE (ou re-INVITE) com vídeo leva 488; um sem vídeo segue como hoje -> OK
+  VIDEO ECHO <on|off> com on, cada datagrama que chega na PORTA volta na hora para quem o mandou, com o SSRC trocado
+                     (a contagem continua)                              -> OK
+  VIDEO PACKETS      os datagramas com carga que chegaram na PORTA      -> <n>
+  VIDEO PACKETS reset  zera a contagem                                  -> OK
+  VIDEO SDP          as linhas do último SDP que o telefone mandou (num pedido ou numa resposta), e END
   LOG                o registro de ligações, uma linha cada, e END
   (comando desconhecido, sem argumento ou com código que não é de 100 a 699 -> ERR bad-command)
-Registro de ligações (só em memória): inv-out <ramal> <código final> (o INVITE do RING ou do REPLACES),
-  ack-sent <ramal>, bye-out <ramal> <código>, refer-out <ramal> <código final> (o REFER do comando REFER),
-  bye-in <alvo>, cancel-in <alvo>, inv-in <alvo> <código>,
-  reinv-in <alvo> <sendonly|sendrecv|inactive|recvonly>, refer-in <alvo> <ramal de destino>
+Registro de ligações (só em memória): inv-out <ramal> <código final> (o INVITE do RING, do RINGVIDEO ou do REPLACES),
+  sdp-out <ramal> <código> video=<sim|nao> (cada código de resposta com SDP do telefone a esse INVITE; sim = um m=video
+  com a porta diferente de zero), ack-sent <ramal>, bye-out <ramal> <código>, refer-out <ramal> <código final> (o
+  REFER do comando REFER), bye-in <alvo>, cancel-in <alvo>, inv-in <alvo> <código>, video-in <alvo> <nomes|nao>
+  (depois do inv-in: os nomes do a=rtpmap do primeiro m=video com porta da oferta, na ordem, sem repetir e separados
+  por vírgula, como H264,VP8; nao sem esse m=video), reinv-in <alvo> <sendonly|sendrecv|inactive|recvonly>,
+  video-reinv <alvo> <nomes|nao> (depois do reinv-in, como o video-in), refer-in <alvo> <ramal de destino>
   [replaces=known|unknown], sub-in <alvo> <200|403> (SUBSCRIBE de dialog com Expires > 0, também a
   renovação), unsub-in <alvo> (SUBSCRIBE de dialog com Expires: 0), register-503 <ramal> (REGISTER que o
   FAIL REGISTER on recusou; <ramal> = usuário do From) (<alvo> = usuário da Request-URI do pedido que o
@@ -83,7 +104,7 @@ Registro de ligações (só em memória): inv-out <ramal> <código final> (o INV
   o RING fez)
 
 Uso: fake_registrar.py [--host 127.0.0.1] [--port 5060] --user 2001[,2002...] --password senha-certa
-                       [--log ua.txt] [--transport-log transporte.txt] [--control-port 5070]
+                       [--log ua.txt] [--transport-log transporte.txt] [--control-port 5070] [--video-port 40002]
                        (os usuários da lista têm a mesma senha)
 """
 import argparse
@@ -102,7 +123,7 @@ COMPACT = {"v": "via", "f": "from", "t": "to", "i": "call-id", "m": "contact", "
            "r": "refer-to"}
 REASONS = {100: "Trying", 180: "Ringing", 200: "OK", 202: "Accepted", 401: "Unauthorized", 403: "Forbidden",
            404: "Not Found", 480: "Temporarily Unavailable", 486: "Busy Here", 487: "Request Terminated",
-           503: "Service Unavailable", 603: "Decline"}
+           488: "Not Acceptable Here", 503: "Service Unavailable", 603: "Decline"}
 SIPFRAG_PHRASES = {100: "Trying", 200: "OK", 486: "Busy Here", 603: "Decline"}   # a do sipfrag; outro código: "Error"
 STATUS_CODE = re.compile(r"[1-6][0-9]{2}")   # o que REFER_REPLY e REFER_NOTIFY aceitam
 CALLER = '"Cliente Teste" <sip:3001@ci>'
@@ -115,6 +136,11 @@ DIRECTIONS = ("sendrecv", "sendonly", "recvonly", "inactive")
 MIRROR = {"sendrecv": "sendrecv", "sendonly": "recvonly", "recvonly": "sendonly", "inactive": "inactive"}
 BLF_STATES = ("terminated", "early", "confirmed")   # os estados de diálogo que o comando BLF aceita
 BLF_EXPIRES = 600   # o Expires do 200 a um SUBSCRIBE que não pede um
+VIDEO_CODECS = ("H264", "VP8", "VP9")   # os nomes de a=rtpmap que a resposta aceita no vídeo (o primeiro da oferta)
+# Os codecs do m=video do RINGVIDEO: nome -> (payload type, rtpmap, fmtp ou None).
+RING_VIDEO = {"H264": ("97", "H264/90000", "profile-level-id=42e01f;packetization-mode=1"),
+              "VP8": ("100", "VP8/90000", None)}
+RTP_HEADER = 12   # os bytes do cabeçalho do RTP: um datagrama de vídeo com carga tem mais que isso
 
 
 def _md5(text):
@@ -220,26 +246,84 @@ def _tag_of(value):
     return match.group(1) if match else ""
 
 
-def _sdp_offer(body):
-    """(formatos do primeiro m=audio, direção, rtpmap, fmtp): direção sendrecv se o SDP não disser
-    outra; rtpmap e fmtp são os a= desse trecho, por payload type."""
-    sections = [[]]   # o primeiro trecho é o do SDP todo (antes de qualquer m=); cada m= abre outro
+def _sdp_sections(body):
+    """Os trechos de um SDP: o primeiro é o do SDP todo (antes de qualquer m=); cada m= abre outro."""
+    sections = [[]]
     for line in body.splitlines():
         if line.startswith("m="):
             sections.append([])
         sections[-1].append(line.strip())
-    audio = next((section for section in sections[1:] if section[0].startswith("m=audio ")), [])
+    return sections
+
+
+def _section(session, media):
+    """(formatos, direção, rtpmap, fmtp) de um trecho m=: a direção do trecho vale mais que a do SDP todo (sendrecv se
+    nenhum dos dois disser outra); rtpmap e fmtp são os a= do trecho, por payload type."""
     direction = "sendrecv"
-    for line in sections[0] + audio:   # a direção do trecho de áudio vale mais que a do SDP todo
+    for line in session + media:
         if line[:2] == "a=" and line[2:] in DIRECTIONS:
             direction = line[2:]
     rtpmap, fmtp = {}, {}
-    for line in audio[1:]:
+    for line in media[1:]:
         for prefix, table in (("a=rtpmap:", rtpmap), ("a=fmtp:", fmtp)):
             if line.startswith(prefix):
                 payload, _, value = line[len(prefix):].partition(" ")
                 table[payload] = value.strip()
-    return (audio[0].split()[3:] if audio else []), direction, rtpmap, fmtp
+    return (media[0].split()[3:] if media else []), direction, rtpmap, fmtp
+
+
+def _sdp_offer(body):
+    """(formatos do primeiro m=audio, direção, rtpmap, fmtp), como em _section."""
+    sections = _sdp_sections(body)
+    audio = next((section for section in sections[1:] if section[0].startswith("m=audio ")), [])
+    return _section(sections[0], audio)
+
+
+def _live_video(section):
+    """Se o trecho é um m=video com a porta diferente de zero."""
+    fields = section[0].split()
+    return len(fields) >= 4 and fields[0] == "m=video" and fields[1] != "0"
+
+
+def _video_names(body):
+    """Os nomes do a=rtpmap do primeiro m=video com porta, na ordem dos formatos e sem repetir; None sem esse
+    m=video."""
+    sections = _sdp_sections(body)
+    video = next((section for section in sections[1:] if _live_video(section)), None)
+    if video is None:
+        return None
+    formats, _, rtpmap, _ = _section(sections[0], video)
+    names = []
+    for payload in formats:
+        name = rtpmap.get(payload, "").split("/")[0]
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def _video_text(body):
+    """O vídeo de um SDP para o registro de ligações: os nomes separados por vírgula (H264,VP8), ou nao."""
+    names = _video_names(body)
+    return ",".join(names) if names else "nao"
+
+
+def _media_lines(kind, port, formats, direction=None):
+    """As linhas de um trecho m= nosso: formats = [(payload type, rtpmap ou None, fmtp ou None)], nessa ordem."""
+    lines = ["m=%s %d RTP/AVP %s" % (kind, port, " ".join(payload for payload, _, _ in formats))]
+    lines += ["a=rtpmap:%s %s" % (payload, rtpmap) for payload, rtpmap, _ in formats if rtpmap]
+    lines += ["a=fmtp:%s %s" % (payload, fmtp) for payload, _, fmtp in formats if fmtp]
+    if direction:
+        lines.append("a=" + direction)
+    return lines
+
+
+def _echoed(data):
+    """O datagrama do VIDEO ECHO: o mesmo, com o bit mais baixo do último byte do SSRC (o byte 11) invertido."""
+    if len(data) < RTP_HEADER:
+        return data
+    echoed = bytearray(data)
+    echoed[11] ^= 1
+    return bytes(echoed)
 
 
 def _telephone_event(formats, rtpmap, fmtp):
@@ -288,14 +372,15 @@ class _Contact:
 
 
 class _Call:
-    """Ligação que o registrador fez (RING): o INVITE que foi ao contato de um ramal.
+    """Ligação que o registrador fez (RING ou RINGVIDEO): o INVITE que foi ao contato de um ramal.
 
     state: calling -> ringing -> answered -> ending -> ended; cancelling entre o CANCEL e o 487."""
 
-    def __init__(self, ramal, contact, hostport):
+    def __init__(self, ramal, contact, hostport, user="3001"):
         self.ramal, self.peer, self.server = ramal, contact.peer, hostport   # server: como o telefone nos enxerga
+        self.user = user                     # o usuário do From: o 3001 do RING, ou o <de> do RINGVIDEO
         self.call_id = "ci-" + secrets.token_hex(8)
-        self.local = "%s;tag=%s" % (CALLER, secrets.token_hex(4))
+        self.local = '"Cliente Teste" <sip:%s@ci>;tag=%s' % (user, secrets.token_hex(4))
         self.remote = "<%s>" % contact.aor   # sem tag até o telefone atender
         self.request_uri = contact.uri
         self.target = contact.uri            # para onde vão BYE e ACK: o Contact do 200
@@ -303,6 +388,7 @@ class _Call:
         self.cseq = 1
         self.state = "calling"
         self.final = None                    # código da resposta final ao INVITE
+        self.sdp_codes = set()               # os códigos das respostas com SDP que já foram ao registro (sdp-out)
 
 
 class _Subscription:
@@ -347,6 +433,12 @@ class Registrar:
         self.drop_reinvite = False   # DROP REINVITE on: os re-INVITE somem sem resposta
         self.fail_register = False   # FAIL REGISTER on: todo REGISTER leva 503
         self.subscriptions = {}  # Call-ID -> _Subscription (BLF)
+        self.video_port = None   # a PORTA do vídeo (start_video_server); sem ela, o vídeo é recusado (porta 0)
+        self.video_packets = 0   # datagramas com carga que chegaram na PORTA (VIDEO PACKETS)
+        self.video_reject = False    # VIDEO REJECT on: o m=video da resposta vai com a porta 0
+        self.video_488 = False       # VIDEO 488 on: um INVITE com vídeo leva 488
+        self.video_echo = False      # VIDEO ECHO on: cada datagrama da PORTA volta a quem o mandou
+        self.last_sdp = None     # o último SDP que o telefone mandou (VIDEO SDP)
         self._reset_refer()
 
     def _reset_refer(self):
@@ -398,6 +490,18 @@ class Registrar:
         entre mensagens no TCP (o _SipTcpHandler conta)."""
         with self.lock:
             self.keepalives += how_many
+
+    def on_video(self, data, source, sock):
+        """Um datagrama chegou na PORTA do vídeo: conta o que tem carga e, com o VIDEO ECHO on, o devolve na hora."""
+        with self.lock:
+            if len(data) > RTP_HEADER:
+                self.video_packets += 1
+            echo = self.video_echo
+        if echo:
+            try:
+                sock.sendto(_echoed(data), source)
+            except OSError:
+                pass
 
     def connection_closed(self, conn):
         """A conexão TCP acabou: os contatos que dependiam dela já não alcançam ninguém."""
@@ -492,16 +596,30 @@ class Registrar:
         sock = peer.conn if peer.transport == "tcp" else self.udp
         return "%s:%d" % (hostport, sock.getsockname()[1] if sock else 5060)
 
-    def _sdp(self, hostport, formats, direction):
-        """SDP de áudio com formats = [(payload type, rtpmap, fmtp ou None)], nessa ordem."""
+    def _sdp(self, hostport, sections):
+        """O SDP com os trechos m= dados (listas de linhas, como as de _media_lines), nessa ordem."""
         self.sdp_version += 1   # cada SDP novo do diálogo sobe a versão do o=
         host = _media_host(hostport)
-        lines = ["v=0", "o=- 1 %d IN IP4 %s" % (self.sdp_version, host), "s=ci", "c=IN IP4 " + host, "t=0 0",
-                 "m=audio %d RTP/AVP %s" % (MEDIA_PORT, " ".join(payload for payload, _, _ in formats))]
-        lines += ["a=rtpmap:%s %s" % (payload, rtpmap) for payload, rtpmap, _ in formats]
-        lines += ["a=fmtp:%s %s" % (payload, fmtp) for payload, _, fmtp in formats if fmtp]
-        lines.append("a=" + direction)
+        lines = ["v=0", "o=- 1 %d IN IP4 %s" % (self.sdp_version, host), "s=ci", "c=IN IP4 " + host, "t=0 0"]
+        for section in sections:
+            lines += section
         return "\r\n".join(lines) + "\r\n"
+
+    def _video_answer(self, session, video):
+        """O trecho de vídeo da resposta ao m=video (com porta) de uma oferta: na PORTA, com a primeira carga cujo nome
+        no a=rtpmap é H264, VP8 ou VP9 (o a=rtpmap e o a=fmtp dela) e a direção espelhada; com a porta 0 se o VIDEO
+        REJECT está on, se não há a PORTA ou se a oferta não tem um desses codecs."""
+        formats, direction, rtpmap, fmtp = _section(session, video)
+        chosen = next((payload for payload in formats
+                       if rtpmap.get(payload, "").split("/")[0].upper() in VIDEO_CODECS), None)
+        if chosen is None or self.video_reject or self.video_port is None:
+            return ["m=video 0 %s %s" % (video[0].split()[2], chosen or formats[0])]
+        return _media_lines("video", self.video_port, [(chosen, rtpmap[chosen], fmtp.get(chosen))], MIRROR[direction])
+
+    def _phone_sdp(self, body):
+        """Um SDP que o telefone mandou (num pedido ou numa resposta): guarda para o VIDEO SDP."""
+        if body.strip():
+            self.last_sdp = body
 
     # --- o telefone liga para o registrador (e manda re-INVITE, REFER, BYE, CANCEL) ---
 
@@ -512,13 +630,21 @@ class Registrar:
         alvo = _uri_user(msg.uri)
         offer = _sdp_offer(msg.body)
         direction = offer[1]   # (formatos, direção, rtpmap, fmtp)
+        self._phone_sdp(msg.body)
+        video = _video_text(msg.body)
+        # O VIDEO 488 on recusa o INVITE com um m=video de porta diferente de zero (também um re-INVITE).
+        refuse_video = self.video_488 and _video_names(msg.body) is not None
         if ";tag=" in msg.first("to"):   # re-INVITE: o diálogo já existe
             if self.drop_reinvite:   # como um pacote perdido: nenhuma resposta guardada, e a repetição chega aqui
                 return []
             self._log("reinv-in %s %s" % (alvo, direction))
-            replies = [self._accept(msg, peer, offer, MIRROR[direction])]
+            self._log("video-reinv %s %s" % (alvo, video))
+            if refuse_video:
+                replies = [self._response(488, msg.headers, peer.address)]
+            else:
+                replies = [self._accept(msg, peer, offer, MIRROR[direction])]
         else:
-            refusal = {"486": 486, "404": 404, "480": 480}.get(alvo)
+            refusal = {"486": 486, "404": 404, "480": 480}.get(alvo) or (488 if refuse_video else None)
             if refusal:
                 replies = [self._response(refusal, msg.headers, peer.address)]
             else:
@@ -526,13 +652,16 @@ class Registrar:
                            self._response(180, msg.headers, peer.address),
                            self._accept(msg, peer, offer, "sendrecv")]
             self._log("inv-in %s %d" % (alvo, refusal or 200))
+            self._log("video-in %s %s" % (alvo, video))
         self.answers[key] = replies[-1:]
         return replies
 
     def _accept(self, msg, peer, offer, direction):
         """200 a um INVITE: SDP com um codec de áudio só, o primeiro que a oferta trouxe (PCMU ou PCMA), e o
         telephone-event/8000 se ela o trouxe, no payload type dela. Com dois codecs na resposta o PJSUA manda
-        um re-INVITE para travar o codec (lock_codec), e o LOG ganharia reinv-in que ninguém pediu."""
+        um re-INVITE para travar o codec (lock_codec), e o LOG ganharia reinv-in que ninguém pediu. Um trecho por m= da
+        oferta, na mesma ordem: o primeiro m=audio com esse áudio, o primeiro m=video com porta com o _video_answer, e
+        os outros com a porta 0. Uma oferta sem m=audio leva só o áudio, como antes."""
         payloads, _, rtpmap, fmtp = offer
         audio = next((payload for payload in payloads if payload in AUDIO_CODECS), None)
         if audio:
@@ -542,8 +671,25 @@ class Registrar:
                 answer.append((event[0], TELEPHONE_EVENT, event[1]))
         else:   # a oferta não traz PCMU nem PCMA: como antes, os formatos nossos que ela trouxe, ou os três
             answer = _ours([payload for payload in RTPMAP if payload in payloads] or list(RTPMAP))
+        audio_lines = _media_lines("audio", MEDIA_PORT, answer, direction)
+        offered = _sdp_sections(msg.body)
+        if not any(section[0].startswith("m=audio ") for section in offered[1:]):
+            sections = [audio_lines]
+        else:
+            sections, audio_done, video_done = [], False, False
+            for section in offered[1:]:
+                fields = section[0].split()
+                if fields[0] == "m=audio" and not audio_done:
+                    sections.append(audio_lines)
+                    audio_done = True
+                elif _live_video(section) and not video_done:
+                    sections.append(self._video_answer(offered[0], section))
+                    video_done = True
+                else:   # um trecho que a resposta recusa: o mesmo tipo, com a porta 0
+                    sections.append(["%s 0 %s %s" % (fields[0], fields[2] if len(fields) > 2 else "RTP/AVP",
+                                                     fields[3] if len(fields) > 3 else "0")])
         extra = [("Contact", "<%s>" % msg.uri), ("Content-Type", "application/sdp")]   # a URI com que nos acharam
-        return self._response(200, msg.headers, peer.address, extra, self._sdp(_uri_host(msg.uri), answer, direction))
+        return self._response(200, msg.headers, peer.address, extra, self._sdp(_uri_host(msg.uri), sections))
 
     def _on_refer(self, msg, peer):
         refer_to = msg.first("refer-to")
@@ -698,20 +844,27 @@ class Registrar:
 
     # --- o registrador liga para o telefone (RING), desliga (HANGUP), transfere (REFER) e troca (REPLACES) ---
 
-    def _ring(self, ramal, replaced=None):
+    def _ring(self, ramal, replaced=None, user="3001", video=None):
         """O INVITE de CALLER ao contato do ramal (RING). Com replaced (a ligação do RING atendida que a nova troca,
-        REPLACES), ele leva o Replaces dela, como o telefone a vê (o to-tag é a tag dele), e o Require: replaces."""
+        REPLACES), ele leva o Replaces dela, como o telefone a vê (o to-tag é a tag dele), e o Require: replaces. Com
+        video (RINGVIDEO: os nomes dos codecs, de RING_VIDEO), o From é o "Cliente Teste" <sip:<user>@ci> e a oferta
+        também tem um m=video na PORTA, com esses codecs."""
         contact = self.contacts.get(ramal)
         if not contact:
             return "ERR no-contact"
-        call = _Call(ramal, contact, self._hostport(contact.register_uri, contact.peer))
+        if video and self.video_port is None:
+            return "ERR no-video"
+        call = _Call(ramal, contact, self._hostport(contact.register_uri, contact.peer), user)
         headers = [("From", call.local), ("To", call.remote), ("Call-ID", call.call_id), ("CSeq", "1 INVITE"),
                    ("Contact", "<%s>" % self._our_contact(call)), ("Content-Type", "application/sdp")]
         if replaced:
             headers += [("Replaces", "%s;to-tag=%s;from-tag=%s" % (replaced.call_id, _tag_of(replaced.remote),
                                                                   _tag_of(replaced.local))),
                         ("Require", "replaces")]
-        offer = self._sdp(call.server, _ours(list(RTPMAP)), "sendrecv")
+        sections = [_media_lines("audio", MEDIA_PORT, _ours(list(RTPMAP)), "sendrecv")]
+        if video:
+            sections.append(_media_lines("video", self.video_port, [RING_VIDEO[name] for name in video], "sendrecv"))
+        offer = self._sdp(call.server, sections)
         self.calls.append(call)   # antes de mandar: a resposta pode chegar antes de este método voltar
         if not self._send(contact.peer, _request("INVITE", contact.uri, contact.peer.transport, call.server,
                                                  call.branch, headers, offer)):
@@ -743,7 +896,7 @@ class Registrar:
 
     def _our_contact(self, call):
         """O nosso Contact numa ligação do RING: a URI de quem liga, com o endereço com que o telefone nos enxerga."""
-        return "sip:3001@%s%s" % (call.server, ";transport=tcp" if call.peer.transport == "tcp" else "")
+        return "sip:%s@%s%s" % (call.user, call.server, ";transport=tcp" if call.peer.transport == "tcp" else "")
 
     def _refer(self, ramal, destino):
         """O REFER na última ligação do RING atendida do ramal, para sip:<destino>@ci (REFER); a resposta final do
@@ -780,16 +933,29 @@ class Registrar:
             self._log("refer-out %s %d" % (call.ramal, msg.status))
         return []
 
+    def _sdp_out(self, call, msg):
+        """Uma resposta do telefone ao INVITE do RING: o SDP dela fica para o VIDEO SDP, e cada código com SDP vai uma
+        vez ao registro (sdp-out), com o vídeo dele."""
+        if not msg.body.strip():
+            return
+        self._phone_sdp(msg.body)
+        if msg.status not in call.sdp_codes:
+            call.sdp_codes.add(msg.status)
+            self._log("sdp-out %s %d video=%s" % (call.ramal, msg.status,
+                                                   "nao" if _video_names(msg.body) is None else "sim"))
+
     def _on_invite_response(self, call, msg):
         code, to = msg.status, msg.first("to")
         if code < 200:
             if code > 100 and call.state == "calling":
                 call.state = "ringing"
+            self._sdp_out(call, msg)
             return []
         first = call.final is None   # o 200 volta a chegar (UDP) enquanto o ACK não chega: outro ACK, sem registro
         if first:
             call.final = code
             self._log("inv-out %s %d" % (call.ramal, code))
+        self._sdp_out(call, msg)
         if code >= 300:   # ACK da resposta final que não é 2xx: na mesma transação, repete o branch do INVITE
             call.state = "ended"
             return [self._call_request(call, "ACK", call.request_uri, call.cseq, to, False)]
@@ -814,6 +980,15 @@ class Registrar:
         with self.lock:
             if name == "RING" and ramal:
                 return [self._ring(ramal)]
+            words = argument.split()
+            if name == "RINGVIDEO" and len(words) in (2, 3):
+                codecs = (words[2] if len(words) == 3 else "H264,VP8").split(",")
+                if all(codec in RING_VIDEO for codec in codecs) and len(set(codecs)) == len(codecs):
+                    return [self._ring(words[0], user=words[1], video=codecs)]
+            if name == "VIDEO":
+                reply = self._video_command(words)
+                if reply:
+                    return reply
             if name == "HANGUP" and ramal:
                 return [self._hangup(ramal)]
             if name == "REFER" and ramal:
@@ -874,6 +1049,23 @@ class Registrar:
             if name == "LOG" and not ramal:
                 return self.events + ["END"]
         return ["ERR bad-command"]
+
+    def _video_command(self, words):
+        """VIDEO REJECT|488|ECHO <on|off>, VIDEO PACKETS [reset] e VIDEO SDP: as linhas da resposta, ou None se o
+        comando não é um desses (com o lock)."""
+        if len(words) == 2 and words[0] in ("REJECT", "488", "ECHO") and words[1] in ("on", "off"):
+            setattr(self, {"REJECT": "video_reject", "488": "video_488", "ECHO": "video_echo"}[words[0]],
+                    words[1] == "on")
+            return ["OK"]
+        if words == ["PACKETS"]:
+            return [str(self.video_packets)]
+        if words == ["PACKETS", "reset"]:
+            self.video_packets = 0
+            return ["OK"]
+        if words == ["SDP"]:
+            lines = self.last_sdp.splitlines() if self.last_sdp else []
+            return lines + ["END"]
+        return None
 
 
 def split_messages(buffer):
@@ -962,8 +1154,9 @@ def start_tcp_server(registrar, host, port):
 
 
 def start_control_server(registrar, host, port):
-    """Porta de controle (RING, HANGUP, REFER, REPLACES, PASSWORD, REGISTERS, CONTACT, HEADER, KEEPALIVES, EXPIRES,
-    BLF, FORGET, DROP, FAIL, REFER_REPLY, REFER_NOTIFY, RESET, LOG), numa thread. Mesma forma de start_tcp_server."""
+    """Porta de controle (RING, RINGVIDEO, HANGUP, REFER, REPLACES, PASSWORD, REGISTERS, CONTACT, HEADER, KEEPALIVES,
+    EXPIRES, BLF, FORGET, DROP, FAIL, REFER_REPLY, REFER_NOTIFY, RESET, VIDEO, LOG), numa thread. Mesma forma de
+    start_tcp_server."""
     return _start_tcp(_ControlHandler, registrar, host, port)
 
 
@@ -1014,6 +1207,40 @@ def start_udp_server(registrar, host, port):
     return _UdpServer(registrar, host, port).start()
 
 
+class _VideoServer(_UdpServer):
+    """A PORTA do vídeo (--video-port): um socket UDP cujos datagramas vão ao Registrar.on_video. Liga a porta ao
+    Registrar (video_port), que a põe nas respostas e no RINGVIDEO."""
+
+    def __init__(self, registrar, host, port):
+        self.registrar = registrar
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.bind((host, port))
+        self.sock.settimeout(0.1)   # acorda de tempos em tempos para ver se pediram para parar
+        self.server_address = self.sock.getsockname()
+        self._stopped = threading.Event()
+        self._thread = None
+        registrar.video_port = self.server_address[1]
+
+    def serve_forever(self):
+        while not self._stopped.is_set():
+            try:
+                data, source = self.sock.recvfrom(65535)
+            except socket.timeout:
+                continue
+            except ConnectionResetError:   # o Windows avisa assim que um eco nosso não achou ninguém
+                continue
+            except OSError:
+                if self._stopped.is_set() or self.sock.fileno() == -1:   # fechado de propósito
+                    return
+                raise
+            self.registrar.on_video(data, source, self.sock)
+
+
+def start_video_server(registrar, host, port):
+    """A PORTA do vídeo, numa thread. Devolve o servidor (porta 0 = o sistema escolhe; server_address traz a porta)."""
+    return _VideoServer(registrar, host, port).start()
+
+
 def main(argv):
     parser = argparse.ArgumentParser(description="Registrador SIP falso para testes.")
     parser.add_argument("--host", default="127.0.0.1")
@@ -1023,11 +1250,16 @@ def main(argv):
     parser.add_argument("--log")
     parser.add_argument("--transport-log")
     parser.add_argument("--control-port", type=int, help="porta TCP (no mesmo --host) dos comandos RING, HANGUP...")
+    parser.add_argument("--video-port", type=int,
+                        help="porta UDP (no mesmo --host) do vídeo das respostas e do RINGVIDEO")
     args = parser.parse_args(argv)
     registrar = Registrar(args.user, args.password, log_path=args.log, transport_log_path=args.transport_log)
     udp = _UdpServer(registrar, args.host, args.port)   # antes dos outros: o que chegar já fica na fila do socket
     start_tcp_server(registrar, args.host, args.port)
     ready = "registrador falso em %s:%d (UDP e TCP)" % (args.host, args.port)
+    if args.video_port is not None:
+        start_video_server(registrar, args.host, args.video_port)
+        ready += ", video em %s:%d" % (args.host, args.video_port)
     if args.control_port is not None:
         start_control_server(registrar, args.host, args.control_port)
         ready += ", controle em %s:%d" % (args.host, args.control_port)

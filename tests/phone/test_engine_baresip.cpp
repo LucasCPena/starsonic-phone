@@ -814,8 +814,10 @@ TEST_CASE("a call confirmed while the other one is the active stays without audi
     CHECK(engine->AudioLinks(second) == std::vector<int>{0});
     CHECK(WaitUntil([&registrar] { return phone_test::LogCount(registrar, "reinv-in 2002 sendonly") == 2; },
                     kWaitSeconds));
-    CHECK(registrar.Log() == Lines{"inv-in 2002 200", "reinv-in 2002 sendonly", "inv-in 2003 200",
-                                   "reinv-in 2002 sendrecv", "reinv-in 2002 sendonly"});
+    CHECK(registrar.Log() == Lines{"inv-in 2002 200", "video-in 2002 nao", "reinv-in 2002 sendonly",
+                                   "video-reinv 2002 nao", "inv-in 2003 200", "video-in 2003 nao",
+                                   "reinv-in 2002 sendrecv", "video-reinv 2002 nao", "reinv-in 2002 sendonly",
+                                   "video-reinv 2002 nao"});
 }
 
 TEST_CASE("a resume that cannot go out leaves the call on hold, and the next one sends it") {
@@ -836,7 +838,8 @@ TEST_CASE("a resume that cannot go out leaves the call on hold, and the next one
     CHECK(WaitAudio(*phone.engine, {id}));
     CHECK(phone.engine->AudioLinks(id) == std::vector<int>{0});
     CHECK(SipEngineTestAccess::OpenMicrophones(*phone.engine) == 1);
-    CHECK(phone.registrar.Log() == Lines{"inv-in 2002 200", "reinv-in 2002 sendonly", "reinv-in 2002 sendrecv"});
+    CHECK(phone.registrar.Log() == Lines{"inv-in 2002 200", "video-in 2002 nao", "reinv-in 2002 sendonly",
+                                         "video-reinv 2002 nao", "reinv-in 2002 sendrecv", "video-reinv 2002 nao"});
 }
 
 TEST_CASE("a hold that cannot go out leaves the call active, and the next one sends it") {
@@ -855,7 +858,8 @@ TEST_CASE("a hold that cannot go out leaves the call active, and the next one se
     CHECK(phone.registrar.WaitForLog("reinv-in 2002 sendonly", kWaitSeconds));
     CHECK(phone.engine->AudioLinks(id).empty());
     CHECK(SipEngineTestAccess::OpenMicrophones(*phone.engine) == 0);
-    CHECK(phone.registrar.Log() == Lines{"inv-in 2002 200", "reinv-in 2002 sendonly"});
+    CHECK(phone.registrar.Log() == Lines{"inv-in 2002 200", "video-in 2002 nao", "reinv-in 2002 sendonly",
+                                         "video-reinv 2002 nao"});
 }
 
 TEST_CASE("Answer and MakeCall go ahead after ~2 s when the renegotiation of the other call does not end") {

@@ -55,6 +55,12 @@ public:
     // registro (Register).
     void Resume();
 
+#if PJMEDIA_HAS_VIDEO
+    // A taxa do vídeo da conta (o rateControlBandwidth, em bit/s) para as próximas ligações, sem registrar de novo
+    // (disableRegOnModify); com a rede fora, a conta segue parada.
+    void SetVideoBandwidth(unsigned bandwidth);
+#endif
+
     // Pede o registro agora. Com um pedido ainda a caminho (PJSIP_EBUSY: uma renovação, também uma que saiu
     // durante um Pause e ficou sem resposta), o registro vai logo depois da resposta dele, num temporizador; se
     // essa resposta deixa a conta sem registro, ela não vira evento (é de antes do pedido). Não espera.

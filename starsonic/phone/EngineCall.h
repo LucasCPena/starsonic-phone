@@ -20,6 +20,20 @@
 // diálogo (no callback de mídia, que o pjsua chama sem a trava global dele); com ela presa só se chama
 // pjsua_call_get_info e pjsua_conf_* (que pedem a trava global do pjsua e a da ponte, nenhuma de
 // diálogo) e se pega mutex_ por um instante.
+//
+// O vídeo (só com o PJMEDIA_HAS_VIDEO): o que a tabela sabe do vídeo de cada ligação (o desejo da câmera, a pausa, o
+// 183 dos Porteiros, o vídeo negociado) fica com mutex_, e o OnCallVideo sai pelo Emit, com mutex_ presa, quando o
+// CallVideo de uma ligação muda (PublishVideo). Uma ligação com vídeo por vez: a pausa (Paused) vem do que a tabela
+// quer, como a mesa de áudio, e o aviso já sai com a câmera desligada. O envio (o START_TRANSMIT e o STOP_TRANSMIT) só
+// sai do SyncVideo, que confere o envio de verdade (a captura ligada ao stream) antes de mudá-lo: o pjsua recria o
+// stream num re-INVITE que muda a mídia (o envio cai junto) e desfaz a mídia no fim da ligação, e o START dele não
+// confere se o stream ainda existe, nem o STOP se a ligação mandava. Por isso o SyncVideo só roda no temporizador da
+// tabela (OnEngineTimer), na thread do PJSIP: é nela que chegam as respostas, os re-INVITE e os BYE que mexem na mídia,
+// um de cada vez, e nada muda a mídia entre a conferência do envio e o pedido ao pjsua. A API e os callbacks só pedem o
+// temporizador (ScheduleSync); o Hangup e o End da API, que desfazem a mídia em outra thread, seguram videoMutex_ (a de
+// cada passada do SyncVideo) em volta do pjsua_call_hangup. Com videoMutex_ presa só se chama o pjsua
+// (pjsua_call_get_info, pjsua_call_set_vid_strm e pjsua_call_hangup, que pegam as travas dele, a de diálogo pelo
+// try-lock do acquire_call) e se pega mutex_ por um instante; nenhum callback (que roda com a trava do diálogo) a pede.
 #include <pjsua2.hpp>
 
 #include <condition_variable>
@@ -29,13 +43,24 @@
 #include <utility>
 #include <vector>
 
+#include "EngineEndpoint.h"
 #include "EngineEvents.h"
 #include "Profile.h"
 #include "SipEngine.h"
+#include "Video.h"
 
 namespace starsonic {
 
 class CallTable;
+
+// O vídeo que uma ligação que chega oferece: o primeiro m=video com a porta diferente de zero do INVITE.
+struct VideoOffer {
+    bool video = false;                 // a oferta tem um m=video com porta
+    std::vector<std::string> codecs;    // os nomes do a=rtpmap dele, na ordem dos formatos ("H264", "VP8"...)
+};
+
+// O VideoOffer do INVITE (rdata: o pjsip_rx_data, o pjRxData do OnIncomingCallParam); sem SDP, nenhum vídeo.
+VideoOffer VideoOfferOf(void* rdata);
 
 // Os callbacks chegam numa thread do PJSIP, ou na que chamou o PJSIP, sempre com a trava do diálogo
 // da ligação.
@@ -48,6 +73,7 @@ public:
     void onCallTransferStatus(pj::OnCallTransferStatusParam& param) override;
     void onCallTransferRequest(pj::OnCallTransferRequestParam& param) override;
     void onCallReplaceRequest(pj::OnCallReplaceRequestParam& param) override;
+    void onCallTsxState(pj::OnCallTsxStateParam& param) override;
 
 private:
     CallTable* table_;
@@ -56,15 +82,20 @@ private:
 // Só a ligação ativa fica ligada ao dispositivo de som; a outra fica em espera (re-INVITE sendonly)
 // ou, se ainda não foi atendida, sem som. Na conferência não há uma ativa: as duas ficam ligadas ao
 // dispositivo e entre si.
-class CallTable {
+class CallTable : public TimerTarget {
 public:
     CallTable(EventQueue* events, DtmfMethod dtmf);
 
     CallTable(const CallTable&) = delete;
     CallTable& operator=(const CallTable&) = delete;
 
-    // Do PJSIP. Incoming vem de EngineAccount::onIncomingCall; accepting = false recusa com 480.
-    void Incoming(pj::Account& account, int pjsuaId, bool accepting);
+    // Do motor, depois do libStart e antes de qualquer ligação: o temporizador da tabela (o SyncVideo fora dos
+    // callbacks). Sem o vídeo, nada.
+    void Start(EngineEndpoint* endpoint);
+
+    // Do PJSIP. Incoming vem de EngineAccount::onIncomingCall; accepting = false recusa com 480. offer: o vídeo do
+    // INVITE (VideoOfferOf).
+    void Incoming(pj::Account& account, int pjsuaId, bool accepting, const VideoOffer& offer);
     void StateChanged(EngineCall* call, CallState state, int sipCode);
     // A mídia da ligação mudou (um re-INVITE pode recriá-la, com outra porta na mesa): a tabela refaz
     // as ligações da mesa.
@@ -75,10 +106,15 @@ public:
     // O resultado de uma transferência pedida em call: o aviso e, com 2xx, o fim dela (e o do colega,
     // na consulta). Pode apagar call: quem chama não mexe nele depois.
     void Transferred(EngineCall* call, int sipCode);
+    // Um re-INVITE nosso recusado (resposta final fora de 2xx): o vídeo que ele pedia, se pedia, foi recusado.
+    void ReofferFailed(EngineCall* call);
+    // O temporizador da tabela (ScheduleSync): o SyncVideo, fora dos callbacks das ligações.
+    void OnEngineTimer() override;
 
     // Da API: thread registrada no PJLIB, um pedido por vez (o motor serializa). uri é a URI SIP inteira.
-    int Make(pj::Account& account, const std::string& uri);
-    bool Answer(int callId);
+    // video: a oferta leva o vídeo (com o VideoEnabled; sem ele, o refused); sem o vídeo no motor, nunca.
+    int Make(pj::Account& account, const std::string& uri, bool video);
+    bool Answer(int callId, bool video);
     bool Reject(int callId);
     bool Hangup(int callId);
     bool Activate(int callId);
@@ -90,6 +126,11 @@ public:
     bool Split(int callId, int otherId);
     std::vector<int> AudioLinks(int callId);
     int CallCount();
+    // O vídeo (ver SipEngine.h). Sem o vídeo no motor, SetCamera devolve false e Video, o CallVideo{}.
+    bool SetCamera(int callId, bool on);
+    void SetCameraPaused(bool paused);
+    void SetVideoSettings(const VideoSettings& settings);
+    CallVideo Video(int callId);
 
     // Desliga as ligações e espera até timeoutMs que os objetos delas sumam. false: não sumiram.
     bool End(int timeoutMs);
@@ -105,6 +146,22 @@ private:
         bool held = false;                // posta em espera por aqui
         bool confirmed = false;           // já chegou ao Confirmed
         int transferTarget = 0;           // o colega (callId) da transferência com consulta em andamento
+        // O vídeo (ver o topo do arquivo).
+        unsigned videoCount = 0;          // os vídeos das ofertas e respostas dela (0 ou 1): o vid_cnt
+        bool wish = false;                // o desejo da câmera (MakeCall e Answer com vídeo, SetCamera)
+        bool offered = false;             // a recebida oferece vídeo com um codec em comum
+        bool early = false;               // o 183 de um Porteiro, até o atender
+        bool videoUp = false;             // o vídeo negociado (o último MediaChanged)
+        bool canSend = false;             // a direção negociada deixa a câmera mandar
+        bool askingVideo = false;         // uma oferta nossa com o vídeo espera a resposta: sem o vídeo nela, recusa
+        bool transferring = false;        // um Transfer ou TransferAttended ainda sem resultado
+        bool sending = false;             // o envio que o SyncVideo aplicou
+        bool sendFailed = false;          // o último START_TRANSMIT falhou (a linha "camera: falhou" já saiu)
+        std::string codec;                // o codec do vídeo negociado ("H264", "VP8" ou "VP9")
+        int width = 0;                    // o codificador do vídeo negociado: o tamanho e os quadros por segundo
+        int height = 0;
+        int fps = 0;
+        CallVideo shown;                  // o último OnCallVideo (sem o refused)
     };
 
     // Com mutex_ preso. A vaga de callId (ou de call), ou nullptr.
@@ -129,6 +186,26 @@ private:
     // Com mutex_ preso: o evento sai na hora ou, durante o makeCall de Make, espera em held_.
     void Emit(int callId, EventQueue::Event event);
 
+    // Com mutex_ preso. A ligação está pausada: uma ligação com vídeo por vez (ver SipEngine::Video).
+    bool Paused(const Slot& slot);
+    // Com mutex_ preso. A câmera da ligação deve mandar agora.
+    bool WantsToSend(const Slot& slot);
+    // Com mutex_ preso. O CallVideo de agora da ligação (sem o refused).
+    CallVideo Current(const Slot& slot);
+    // Com mutex_ preso: o OnCallVideo de cada ligação cujo CallVideo mudou.
+    void PublishVideo();
+    // Com mutex_ preso: o OnCallVideo de uma recusa do vídeo (o refused, com os outros campos de agora).
+    void Refuse(Slot& slot);
+    // Com mutex_ preso: a linha "video: ..." do log, com o codificador e o envio da ligação.
+    void LogVideo(const Slot& slot);
+    // Só no temporizador da tabela (OnEngineTimer), sem trava nenhuma presa: liga e desliga o envio de cada ligação
+    // como a tabela quer.
+    void SyncVideo();
+    // Qualquer thread, também num callback, sem mutex_ presa: um SyncVideo no temporizador da tabela, logo.
+    void ScheduleSync();
+    // Pede o vídeo numa ligação confirmada sem vídeo (re-INVITE com o vídeo), esperando a renegociação anterior.
+    bool AddVideo(int callId);
+
     struct HeldEvent {
         int callId;
         EventQueue::Event event;
@@ -146,6 +223,11 @@ private:
     bool dialing_ = false;            // Make está dentro do makeCall: os eventos esperam em held_
     std::vector<HeldEvent> held_;
     bool closed_ = false;
+    VideoSettings settings_;          // as escolhas do vídeo (SetVideoSettings)
+    bool cameraPaused_ = false;       // a tela bloqueada (SetCameraPaused)
+
+    EngineEndpoint* endpoint_ = nullptr;   // o temporizador da tabela (Start); não muda depois
+    std::mutex videoMutex_;           // uma passada de SyncVideo, ou um fim de ligação pela API, por vez (o topo)
 
     std::mutex routeMutex_;           // uma passada de Route por vez (ver o topo do arquivo)
     // Com routeMutex_: os pares (origem, destino) de portas da mesa que o último pedido ligou.

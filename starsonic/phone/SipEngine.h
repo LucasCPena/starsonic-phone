@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "Profile.h"
+#include "Video.h"
 
 namespace starsonic {
 
@@ -22,8 +23,8 @@ enum class CallState { Incoming = 0, Calling = 1, Early = 2, Connecting = 3, Con
 // servidor, ou a rede fora).
 enum class BlfState { Free = 0, Ringing = 1, Busy = 2, Unknown = 3 };
 
-// Os eventos (OnRegistration, OnIncomingCall, OnRejectedBusy, OnCallState, OnTransfer e OnBlf) chegam numa
-// thread do próprio motor, um de cada vez e na ordem em que aconteceram, sem nenhuma trava do motor, do
+// Os eventos (OnRegistration, OnIncomingCall, OnRejectedBusy, OnCallState, OnTransfer, OnBlf e OnCallVideo)
+// chegam numa thread do próprio motor, um de cada vez e na ordem em que aconteceram, sem nenhuma trava do motor, do
 // PJSIP ou da libre presa: o listener pode chamar o motor (só não pode destruí-lo). Um evento pode chegar
 // antes de o método que o provocou voltar. Do começo de ~SipEngine em diante nenhum evento é entregue (o
 // destrutor espera o que estiver com o listener terminar).
@@ -64,6 +65,12 @@ public:
     // seguido. Com SetNetworkAvailable(false), chega Unknown para cada ramal da lista. Um ramal que sai da
     // lista (ou cuja conta sai) não avisa mais nada. Vazio por padrão.
     virtual void OnBlf(const std::string& /*number*/, BlfState /*state*/) {}
+    // O vídeo da ligação callId mudou: um evento a cada mudança de um campo do CallVideo (o refused sai uma vez por
+    // recusa, num evento só dele, com os outros campos de agora). Numa recebida que oferece vídeo, ele sai logo depois
+    // do OnIncomingCall, com o offered ou com o refused (sem codec em comum). Nada depois do Disconnected da ligação.
+    // Só no motor do PJSIP com o vídeo (o Windows): sem o vídeo (o Android) e no do baresip, nunca chega. Vazio por
+    // padrão.
+    virtual void OnCallVideo(int /*callId*/, const CallVideo& /*video*/) {}
     // level como no PJSIP: 1 erro, 2 aviso, 3 informação, 4 detalhe. Sem senhas.
     virtual void OnLog(int level, const std::string& line) = 0;
 };
@@ -82,6 +89,7 @@ struct EngineConfig {
     Profile profile;
     bool nullAudio = false;   // sem dispositivo de som (testes)
     int logLevel = 4;
+    bool h264Available = false;   // o h264Available das escolhas de vídeo de fábrica que o Create aplica
 };
 
 struct AccountInput {
@@ -109,7 +117,7 @@ struct PushData {
 
 // Todo método público pode ser chamado de qualquer thread: o motor do PJSIP registra a thread que chama
 // no PJLIB antes de usar o PJSIP, e o do baresip só usa o baresip e a libre dentro do laço deles.
-// Chamadas ao mesmo tempo esperam uma pela outra (menos HasCall e CallCount, que nunca esperam). Até
+// Chamadas ao mesmo tempo esperam uma pela outra (menos HasCall, CallCount e Video, que nunca esperam). Até
 // duas ligações, uma delas a ativa: só a ativa fica ligada ao dispositivo de som, e a outra fica em
 // espera (re-INVITE sendonly). Na conferência (Join) as duas ficam com o som e ligadas entre si. A
 // terceira que chega recebe 486.
@@ -204,6 +212,13 @@ public:
     // Android) e no motor do baresip, que não tem vídeo.
     std::vector<std::string> VideoCodecs() const;
 
+    // As escolhas do vídeo (spec da videochamada, 4.3 e 7), para as próximas ofertas e respostas: os codecs na ordem do
+    // CodecOrder (prioridades 255, 254 e 253; os de fora ficam com 0 e a PJSIP nunca os oferece nem aceita), a
+    // qualidade (o tamanho, os quadros por segundo e a taxa do codificador de cada codec, e a taxa da conta), o fmtp do
+    // H.264 (profile-level-id=42e01f, packetization-mode=1) e os Porteiros. O Create já aplica as de fábrica, com o
+    // h264Available do EngineConfig. Sem o vídeo (o Android) e no motor do baresip, nada.
+    void SetVideoSettings(const VideoSettings& settings);
+
     // Liga para sip:<número>@<domínio da conta> (number em UTF-8, já sem separadores; ver
     // NormalizeDialString). Se a porta do perfil não é a 5060, a URI leva a porta (o servidor do
     // registro): sip:<número>@<domínio>:<porta>. Devolve o id da ligação, que os eventos dela trazem,
@@ -213,10 +228,42 @@ public:
     // chegar antes de MakeCall voltar.
     int MakeCall(const std::string& number);
 
+    // O MakeCall com o vídeo (video = true; com false é o MakeCall de sempre, sem m=video). Com o VideoEnabled das
+    // escolhas, a oferta leva um vídeo e a câmera fica com o desejo ligado: depois da confirmação, com o vídeo aceito,
+    // a câmera começa a mandar. Se a resposta recusa o vídeo (a porta 0), a ligação segue só com a voz e sai um
+    // OnCallVideo com o refused. Sem o VideoEnabled, é a ligação só de voz, e sai logo o refused. Uma recusa da ligação
+    // inteira por causa do vídeo (488 ou 415) chega pelo Disconnected com esse código (quem liga de novo só com a voz é
+    // o app). Sem o vídeo no motor (o Android e o baresip), com video = true devolve -1 e não liga.
+    int MakeCall(const std::string& number, bool video);
+
     // Atende (200) ou recusa com Ocupado (486) a ligação recebida que está tocando. Atendida, ela vira
     // a ativa e a outra, se há, vai para a espera.
     bool Answer(int callId);
     bool Reject(int callId);
+
+    // O Answer com o vídeo: a resposta aceita o vídeo da oferta (um vídeo, se ela oferece vídeo com um codec em comum,
+    // o offered do OnCallVideo; nenhum, se não). Com video = false a câmera não manda nada (o "Atender"); com true, o
+    // desejo da câmera liga e ela começa a mandar depois da confirmação (o "Atender com vídeo"). Sem o vídeo no motor,
+    // com video = true devolve false e não atende.
+    bool Answer(int callId, bool video);
+
+    // O desejo da pessoa para a câmera da ligação (o botão "Câmera"). Numa ligação confirmada sem vídeo, com on, pede o
+    // vídeo à outra ponta (um re-INVITE que acrescenta o vídeo); uma recusa sai como refused. Numa ligação com vídeo,
+    // liga ou desliga só o envio, sem re-INVITE. A câmera só manda com a ligação sem pausa (ver Video). false: id
+    // desconhecido, ligação ainda não confirmada sem vídeo, o re-INVITE não saiu ou sem o VideoEnabled (com on, sai um
+    // OnCallVideo com o refused). Sem o vídeo no motor, false.
+    bool SetCamera(int callId, bool on);
+
+    // A tela bloqueada (true): a câmera para de mandar em todas as ligações. false devolve a cada ligação sem pausa o
+    // seu desejo. O active não muda. Sem o vídeo no motor, nada.
+    void SetCameraPaused(bool paused);
+
+    // O vídeo da ligação agora, como o último OnCallVideo dela (sem o refused); CallVideo{} para um id desconhecido e
+    // sem o vídeo no motor. Uma ligação com vídeo por vez: o vídeo dela pausa (active e camera false, nada é mandado)
+    // na espera daqui, com duas ligações quando ela não é a ativa (também a segunda ainda tocando), na conferência e
+    // com uma transferência pedida ainda sem resultado; sai da pausa com o active de volta e a câmera seguindo o
+    // desejo.
+    CallVideo Video(int callId) const;
 
     // Desliga a ligação em qualquer estado (CANCEL, recusa ou BYE); o fim chega por OnCallState. A
     // outra ligação não volta sozinha: ela segue em espera até um Activate. Na conferência, a outra

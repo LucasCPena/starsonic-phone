@@ -36,11 +36,13 @@ inline starsonic::Profile LoadProfile(int port = 0) {
     return profile;
 }
 
+// O motor dos testes: sem som e com o H.264 disponível (o OpenH264 do sistema, no Linux dos testes).
 inline starsonic::EngineConfig ConfigFor(const starsonic::Profile& profile) {
     starsonic::EngineConfig config;
     config.userAgent = kUserAgent;
     config.profile = profile;
     config.nullAudio = true;
+    config.h264Available = true;
     return config;
 }
 

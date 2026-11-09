@@ -28,9 +28,11 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "SipEngine.h"
+#include "Video.h"
 
 extern char** environ;
 
@@ -87,14 +89,16 @@ inline std::string ReadLine(const std::string& path) {
     return text;
 }
 
-// tests/smoke/fake_registrar.py numa porta livre, com os ramais 2001 e 2002 (mesma senha) e a porta
-// de controle (RING, HANGUP, LOG...) em outra porta livre. O construtor só volta quando o registrador
-// avisa que está pronto (a porta de controle é a última a abrir). O destrutor mata o processo e apaga
-// os arquivos.
+// tests/smoke/fake_registrar.py numa porta livre, com os ramais 2001 e 2002 (mesma senha), a porta
+// de controle (RING, HANGUP, LOG...) em outra porta livre e a PORTA do vídeo (--video-port) numa terceira. O
+// construtor só volta quando o registrador avisa que está pronto (a porta de controle é a última a abrir). O
+// destrutor mata o processo e apaga os arquivos.
 class FakeRegistrar {
 public:
-    explicit FakeRegistrar(const std::string& password) : port_(FreePort()), controlPort_(FreePort()) {
+    explicit FakeRegistrar(const std::string& password)
+        : port_(FreePort()), controlPort_(FreePort()), videoPort_(FreePort()) {
         while (controlPort_ == port_) controlPort_ = FreePort();
+        while (videoPort_ == port_ || videoPort_ == controlPort_) videoPort_ = FreePort();
         const char* base = std::getenv("TMPDIR");
         std::string pattern = std::string(base && *base ? base : "/tmp") + "/starsonic-phone-XXXXXX";
         std::vector<char> buffer(pattern.begin(), pattern.end());
@@ -105,10 +109,11 @@ public:
         const std::string script = std::string(STARSONIC_REPO_DIR) + "/tests/smoke/fake_registrar.py";
         const std::string port = std::to_string(port_);
         const std::string control = std::to_string(controlPort_);
+        const std::string video = std::to_string(videoPort_);
         const std::string args[] = {"python3", script, "--host", "127.0.0.1", "--port", port,
                                     "--user", "2001,2002", "--password", password,
                                     "--log", UserAgentPath(), "--transport-log", TransportPath(),
-                                    "--control-port", control};
+                                    "--control-port", control, "--video-port", video};
         std::vector<char*> argv;
         for (const std::string& arg : args) argv.push_back(const_cast<char*>(arg.c_str()));
         argv.push_back(nullptr);
@@ -145,8 +150,8 @@ public:
     std::string UserAgent() const { return ReadLine(UserAgentPath()); }
     std::string TransportUsed() const { return ReadLine(TransportPath()); }
 
-    // Um comando na porta de controle e as linhas da resposta (a de LOG sem o END); vazio se a porta
-    // não respondeu em 5 s.
+    // Um comando na porta de controle e as linhas da resposta (a de LOG e a de VIDEO SDP sem o END); vazio se a
+    // porta não respondeu em 5 s.
     std::vector<std::string> Control(const std::string& command) const {
         std::vector<std::string> lines;
         const int fd = ConnectTcp(controlPort_);
@@ -156,8 +161,8 @@ public:
         timeout.tv_usec = 0;
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
         const std::string request = command + "\n";
-        // LOG responde várias linhas e END; os outros comandos, uma linha.
-        const bool isLog = command == "LOG";
+        // LOG e VIDEO SDP respondem várias linhas e END; os outros comandos, uma linha.
+        const bool isLog = command == "LOG" || command == "VIDEO SDP";
         bool done = send(fd, request.data(), request.size(), MSG_NOSIGNAL) != static_cast<ssize_t>(request.size());
         std::string received;
         char chunk[4096];
@@ -202,6 +207,44 @@ public:
         return text;
     }
 
+    // Os datagramas com carga que chegaram na PORTA do vídeo (VIDEO PACKETS), de qualquer ligação; -1 se a porta
+    // de controle não respondeu.
+    int VideoPackets() const {
+        const std::vector<std::string> reply = Control("VIDEO PACKETS");
+        return reply.empty() ? -1 : std::stoi(reply[0]);
+    }
+
+    // Zera a contagem do VideoPackets.
+    void ResetVideoPackets() { Control("VIDEO PACKETS reset"); }
+
+    // Espera até `seconds` que o VideoPackets chegue a atLeast.
+    bool WaitForVideoPackets(int atLeast, int seconds) const {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
+        while (VideoPackets() < atLeast) {
+            if (std::chrono::steady_clock::now() >= deadline) return false;
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        return true;
+    }
+
+    // O VideoPackets não muda durante `seconds`: nada chega na PORTA do vídeo.
+    bool VideoPacketsStay(int seconds) const {
+        const int start = VideoPackets();
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
+        while (std::chrono::steady_clock::now() < deadline) {
+            if (VideoPackets() != start) return false;
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        return VideoPackets() == start;
+    }
+
+    // O último SDP que o telefone mandou (VIDEO SDP), uma linha por linha do SDP.
+    std::string VideoSdp() const {
+        std::string text;
+        for (const std::string& line : Control("VIDEO SDP")) text += line + "\n";
+        return text;
+    }
+
 private:
     std::string UserAgentPath() const { return dir_ + "/ua.txt"; }
     std::string TransportPath() const { return dir_ + "/transport.txt"; }
@@ -241,6 +284,7 @@ private:
 
     int port_;
     int controlPort_;
+    int videoPort_;
     std::string dir_;
     pid_t pid_ = 0;
 };
@@ -265,6 +309,26 @@ struct BlfEvent {
 inline const char* BlfName(starsonic::BlfState state) {
     static const char* const kNames[] = {"Free", "Ringing", "Busy", "Unknown"};
     return kNames[static_cast<int>(state)];
+}
+
+// OnCallVideo, como chegou.
+struct VideoEvent {
+    int callId;
+    starsonic::CallVideo video;
+};
+
+// O CallVideo num texto curto, para as mensagens dos testes: os campos ligados, como "offered+active".
+inline std::string VideoText(const starsonic::CallVideo& video) {
+    std::string text;
+    const std::pair<bool, const char*> fields[] = {{video.offered, "offered"}, {video.active, "active"},
+                                                   {video.remote, "remote"},   {video.camera, "camera"},
+                                                   {video.early, "early"},     {video.refused, "refused"}};
+    for (const auto& field : fields) {
+        if (!field.first) continue;
+        if (!text.empty()) text += "+";
+        text += field.second;
+    }
+    return text.empty() ? "none" : text;
 }
 
 // OnIncomingCall, OnRejectedBusy, OnCallState ou OnTransfer, como chegou.
@@ -316,6 +380,11 @@ public:
     void OnBlf(const std::string& number, starsonic::BlfState state) override {
         std::lock_guard<std::mutex> lock(mutex_);
         blfs_.push_back({number, state});
+        changed_.notify_all();
+    }
+    void OnCallVideo(int callId, const starsonic::CallVideo& video) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        videos_.push_back({callId, video});
         changed_.notify_all();
     }
     void OnLog(int, const std::string& line) override {
@@ -380,6 +449,50 @@ public:
             }
             return false;
         });
+    }
+
+    // Os OnCallVideo que chegaram, em ordem.
+    std::vector<VideoEvent> Videos() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return videos_;
+    }
+
+    // O último OnCallVideo da ligação, ou o CallVideo{} se nenhum chegou.
+    starsonic::CallVideo LastVideo(int callId) const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (auto it = videos_.rbegin(); it != videos_.rend(); ++it) {
+            if (it->callId == callId) return it->video;
+        }
+        return starsonic::CallVideo();
+    }
+
+    // Quantos OnCallVideo da ligação chegaram com o refused.
+    int RefusedCount(int callId) const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return static_cast<int>(std::count_if(videos_.begin(), videos_.end(), [callId](const VideoEvent& event) {
+            return event.callId == callId && event.video.refused;
+        }));
+    }
+
+    // Espera até `seconds` que o último OnCallVideo da ligação satisfaça `condition` (sem nenhum, conta o
+    // CallVideo{}).
+    bool WaitForVideo(int callId, std::function<bool(const starsonic::CallVideo&)> condition, int seconds) {
+        std::unique_lock<std::mutex> lock(mutex_);
+        return changed_.wait_for(lock, std::chrono::seconds(seconds), [&] {
+            for (auto it = videos_.rbegin(); it != videos_.rend(); ++it) {
+                if (it->callId == callId) return condition(it->video);
+            }
+            return condition(starsonic::CallVideo());
+        });
+    }
+
+    // Os OnCallVideo numa linha só, para as mensagens dos testes.
+    std::string VideosText() const {
+        std::string text;
+        for (const VideoEvent& event : Videos()) {
+            text += "video(" + std::to_string(event.callId) + "," + VideoText(event.video) + "); ";
+        }
+        return text;
     }
 
     // Os eventos de BLF numa linha só, para as mensagens dos testes.
@@ -470,6 +583,7 @@ private:
     std::vector<RegistrationEvent> registrations_;
     std::vector<CallEvent> calls_;
     std::vector<BlfEvent> blfs_;
+    std::vector<VideoEvent> videos_;
     std::function<void(int)> incomingHook_;
     std::deque<std::string> log_;
     std::map<std::string, size_t> counted_;   // CountLog: o texto e quantas linhas o tiveram
