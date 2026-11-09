@@ -10,14 +10,18 @@
     "repo": "https://github.com/microsoft/vcpkg",
     "commit": "e456309491fd875487bf02b8a0dca76c1b1b00cc",
     "triplet": "x86-windows-static",
-    "ports": ["openssl", "opus", "bcg729", "sqlite3", "sqlitecpp"],
+    "ports": ["openssl", "opus", "bcg729", "sqlite3", "sqlitecpp", "libvpx"],
     "versions": {
       "openssl": "3.6.5#1",
       "opus": "1.6.1",
       "bcg729": "1.1.2",
       "sqlite3": "3.53.4#2",
-      "sqlitecpp": "3.3.3"
+      "sqlitecpp": "3.3.3",
+      "libvpx": "1.16.0#3"
     }
+  },
+  "openh264": {
+    "version": "2.6.0"
   },
   "webview2": {
     "version": "1.0.4258.31",

@@ -1,6 +1,7 @@
 # Monta as dependencias nativas do Starsonic Phone em <WorkDir>:
-#   <WorkDir>\pjproject  pjproject no commit fixo, com config_site.h, a libpjproject e o pjsua2 (o motor do app novo)
-#   <WorkDir>\vcpkg      vcpkg no commit fixo, com openssl, opus, bcg729, sqlite3 e sqlitecpp
+#   <WorkDir>\pjproject  pjproject no commit fixo, com config_site.h, a libpjproject e o pjsua2 (o motor do app novo),
+#                        com o video (a DirectShow, a libvpx, o OpenH264 pelos cabecalhos da API e a libyuv)
+#   <WorkDir>\vcpkg      vcpkg no commit fixo, com openssl, opus, bcg729, sqlite3, sqlitecpp e libvpx
 #   <WorkDir>\webview2   o SDK do WebView2 (NuGet Microsoft.Web.WebView2, SHA-256 conferido): include\ e
 #                        x86\WebView2LoaderStatic.lib
 # Versoes em build\deps.lock. Uso: .\build\Build-Deps.ps1 -WorkDir work
@@ -50,11 +51,14 @@ foreach ($port in $ports) {
     Write-Host "vcpkg: $port $expected"
 }
 
-# 4. libpjproject e pjsua2_lib (Release-Static, Win32), com os cabecalhos do vcpkg. O pjsua2 (C++) e o do motor
-#    compartilhado com o Android (starsonic/phone/SipEngine), que o app novo usa; o app antigo usa so a libpjproject.
+# 4. libpjproject e pjsua2_lib (Release-Static, Win32), com os cabecalhos do vcpkg e os da API do OpenH264 2.6.0 (o
+#    openh264.cpp da PJSIP inclui o wels\codec_api.h; so a API vem do repositorio, em starsonic\third_party\openh264, e
+#    o modulo da Cisco e carregado pelo app). O pjsua2 (C++) e o do motor compartilhado com o Android
+#    (starsonic/phone/SipEngine), que o app novo usa; o app antigo usa so a libpjproject.
 . (Join-Path $PSScriptRoot 'VsEnv.ps1')
 $vcpkgInclude = Join-Path $vcpkg "installed\$triplet\include"
-$env:CL = "/I`"$vcpkgInclude`""
+$openh264Include = Join-Path (Split-Path -Parent $PSScriptRoot) 'starsonic\third_party\openh264\include'
+$env:CL = "/I`"$vcpkgInclude`" /I`"$openh264Include`""
 Push-Location $pj
 try {
     Invoke-Native msbuild @(

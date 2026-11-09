@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Compila no Linux o pjproject fixado em build/deps.lock, para os testes do motor de ligações
-# (tests/phone). Sem vídeo, som, SSL nem codecs extras: o registro SIP e os codecs G.722, PCMA e
-# PCMU bastam.
+# (tests/phone). Com o vídeo, como no Windows: o VP8 pela libvpx e o H.264 pelo OpenH264, os dois do
+# sistema (o OpenH264 do Linux é só dos testes e nunca é publicado), a libyuv do próprio pjproject e
+# a câmera de barras coloridas do PJSIP no lugar de uma câmera de verdade. Sem som, SSL, SDL, FFmpeg,
+# Video4Linux nem codecs de voz extras: o registro SIP e os codecs G.722, PCMA e PCMU bastam.
 #
 # Uso: build/linux/build-pjproject.sh WORKDIR PREFIX
 #   WORKDIR  onde o pjproject é buscado e compilado (reaproveitado se já estiver no commit certo)
 #   PREFIX   onde o `make install` põe cabeçalhos, bibliotecas e o libpjproject.pc
-# Precisa de git, g++, make, python3, pkg-config e uuid-dev (libuuid).
+# Precisa de git, g++, make, python3, pkg-config, uuid-dev (libuuid), libvpx-dev e libopenh264-dev.
 set -euo pipefail
 
 if [ "$#" -ne 2 ]; then
@@ -62,8 +64,9 @@ cp "$ROOT/build/linux/config_site.h" "$WORKDIR/pjlib/include/pj/config_site.h"
 
 cd "$WORKDIR"
 ./configure --prefix="$PREFIX" \
-    --disable-video --disable-sound --disable-ssl --disable-opencore-amr --disable-silk \
-    --disable-libwebrtc --disable-libyuv --disable-bcg729 --disable-ilbc-codec \
+    --enable-video --with-vpx=/usr --with-openh264=/usr --disable-sdl --disable-ffmpeg --disable-v4l2 \
+    --disable-sound --disable-ssl --disable-opencore-amr --disable-silk \
+    --disable-libwebrtc --disable-bcg729 --disable-ilbc-codec \
     --disable-gsm-codec --disable-g7221-codec --disable-l16-codec \
     CFLAGS="-O2 -fPIC" CXXFLAGS="-O2 -fPIC"
 make dep

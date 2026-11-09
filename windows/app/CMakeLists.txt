@@ -124,6 +124,8 @@ target_include_directories(StarsonicPhone PRIVATE
   ${STARSONIC_DIR}/phone
   ${STARSONIC_DIR}/win
   ${STARSONIC_DIR}/third_party
+  # Os cabecalhos da API do OpenH264 2.6.0, os mesmos da PJSIP (o <wels/codec_api.h> do src/OpenH264Shim.cpp).
+  ${STARSONIC_DIR}/third_party/openh264/include
   ${REPO_DIR}/branding
   ${WEBVIEW2_DIR}/include
   ${VCPKG_INSTALLED_DIR}/include
@@ -146,15 +148,20 @@ target_link_directories(StarsonicPhone PRIVATE
   ${VCPKG_INSTALLED_DIR}/lib
   ${WEBVIEW2_DIR}/x86)
 
+# O video da PJSIP (build/config_site.h): a libvpx do vcpkg (vpx, que o vpx.c da PJSIP tambem pede por #pragma comment)
+# e as bibliotecas da DirectShow do Windows SDK que o dshow_dev.c da PJSIP pede por #pragma comment (strmiids, quartz e
+# rpcrt4), alem do ole32 e do oleaut32.
 target_link_libraries(StarsonicPhone PRIVATE
   miniz
   pjsua2-lib-i386-Win32-vc14-Release-Static
   libpjproject-i386-Win32-vc14-Release-Static
-  opus bcg729 libssl libcrypto sqlite3
+  opus bcg729 libssl libcrypto sqlite3 vpx
   WebView2LoaderStatic
   ws2_32 iphlpapi winmm crypt32 advapi32 user32 gdi32 shell32 shlwapi ole32 oleaut32 uuid version
-  dwmapi shcore comctl32 winhttp dnsapi wtsapi32)
+  dwmapi shcore comctl32 winhttp dnsapi wtsapi32 strmiids quartz rpcrt4)
 
-# O manifesto vem do app.rc (DPI por monitor v2 e Common Controls 6): o linker nao gera outro.
-target_link_options(StarsonicPhone PRIVATE /MANIFEST:NO)
+# O manifesto vem do app.rc (DPI por monitor v2 e Common Controls 6): o linker nao gera outro. O openh264.cpp da PJSIP
+# pede o openh264.lib por #pragma comment, mas as quatro funcoes do OpenH264 que ela chama vem do adaptador
+# (src/OpenH264Shim.cpp), que carrega o modulo da Cisco so em tempo de execucao: o .exe nao depende dele para abrir.
+target_link_options(StarsonicPhone PRIVATE /MANIFEST:NO /NODEFAULTLIB:openh264.lib)
 set_target_properties(StarsonicPhone PROPERTIES OUTPUT_NAME StarsonicPhone)

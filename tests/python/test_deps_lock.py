@@ -70,6 +70,33 @@ class WebView2BootstrapperKeyTest(unittest.TestCase):
                          r"[0-9a-f-]{36}/MicrosoftEdgeWebview2Setup\.exe\Z")
 
 
+class VideoDepsTest(unittest.TestCase):
+    """O vídeo do Windows (spec da videochamada, 6.2 e 6.3): o VP8 e o VP9 pela libvpx do vcpkg; o H.264 pelo módulo da
+    Cisco, baixado à parte no computador da pessoa e nunca compilado no app (a porta openh264 do vcpkg não entra)."""
+
+    def setUp(self):
+        self.lock = json.loads(LOCK.read_text(encoding="utf-8"))
+
+    def test_vcpkg_has_libvpx_and_never_openh264(self):
+        vcpkg = self.lock["vcpkg"]
+        names = [port.split("[", 1)[0] for port in vcpkg["ports"]]
+        self.assertIn("libvpx", names)
+        # O Build-Deps.ps1 confere a versão instalada contra esta (como o vcpkg list mostra: <versão>#<revisão>).
+        self.assertRegex(vcpkg["versions"]["libvpx"], r"\A\d+\.\d+\.\d+(#\d+)?\Z")
+        self.assertNotIn("openh264", names)
+        self.assertNotIn("openh264", vcpkg["versions"])
+
+    def test_openh264_version_is_2_6_0(self):
+        self.assertEqual(self.lock["openh264"]["version"], "2.6.0")
+        # Os cabeçalhos da API (starsonic/third_party/openh264) são os da mesma versão: a PJSIP compila com eles, e a
+        # chave do cache das dependências do Windows leva o deps.lock, não os cabeçalhos.
+        text = (ROOT / "starsonic" / "third_party" / "openh264" / "include" / "wels" / "codec_ver.h").read_text(
+            encoding="utf-8")
+        parts = [re.search(r"#define OPENH264_%s \((\d+)\)" % name, text).group(1)
+                 for name in ("MAJOR", "MINOR", "REVISION")]
+        self.assertEqual(".".join(parts), self.lock["openh264"]["version"])
+
+
 class AndroidGradleCatalogTest(unittest.TestCase):
     """android/gradle/libs.versions.toml usa as versões do deps.lock (o Gradle não lê o deps.lock)."""
 

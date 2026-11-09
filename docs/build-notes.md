@@ -1,6 +1,6 @@
 # Notas do build no Windows e no Linux
 
-Como o Starsonic Phone é compilado e o que precisou de ajuste para o workflow ficar verde. A primeira parte é do app novo (a partir da 0.1.0: `windows/app` e `windows/ui`); a segunda, do app antigo (a série 0.0.1, o MicroSIP), que continua compilando enquanto `microsip/` existir; a terceira, do motor de ligações com o baresip (o do iPhone), que por enquanto só é compilado no Linux, para os testes.
+Como o Starsonic Phone é compilado e o que precisou de ajuste para o workflow ficar verde. A primeira parte é do app novo (a partir da 0.1.0: `windows/app` e `windows/ui`); a segunda, do app antigo (a série 0.0.1, o MicroSIP), que continua compilando enquanto `microsip/` existir; a terceira, do motor de ligações com o baresip (o do iPhone), que por enquanto só é compilado no Linux, para os testes; a quarta, do vídeo do PJSIP (o do Windows e o dos testes do motor no Linux).
 
 ## App novo (0.1.0)
 
@@ -84,3 +84,30 @@ O `-DBARESIP_PREFIX` e o `-DPJPROJECT_PREFIX` (o `phone_tests`, com o PJSIP) pod
 
 - **Um `.a` só, com os módulos.** No `STATIC` do baresip 4.12, cada módulo é uma biblioteca OBJECT do CMake, e os objetos dele vão dentro do `libbaresip.a`; o install do baresip pede o executável e os testes dele, que o motor não usa. O script compila só a biblioteca e a copia com o `ar -M` para `lib/libstarsonic-baresip.a`, ao lado da `libre.a` e da `libg722.a`, que o link põe entre `--start-group` e `--end-group` (uma chama a outra). As bibliotecas do sistema vão em `lib/starsonic-baresip-libs.txt` (`ssl crypto opus z pthread m dl`).
 - **A conferência dos módulos.** São duas, as duas contra a lista `baresip.modules` do `deps.lock`. O script confere o arquivo: o baresip deixa de fora, sem erro, o módulo que não acha a biblioteca dele (o `opus` sem o `libopus-dev`, por exemplo), então o script procura com o `nm` o `exports_<módulo>` de cada um no `libstarsonic-baresip.a` e sai com erro se faltar um ou se sobrar um que não está no `deps.lock`. O teste "the baresip engine loads the modules of build/deps.lock, in order" (`tests/phone/test_engine_baresip.cpp`) confere o código: a lista que o motor carrega (`BaresipLoop::Modules()`, a constante `kModules` do `BaresipLoop.cpp`) tem de ser a do `deps.lock`, nome a nome e na ordem. O teste roda em todo build; o script, no CI, só quando falta o cache do `baresip-linux`, cuja chave não leva o `BaresipLoop.cpp`.
+
+## O vídeo
+
+A videochamada é só do app novo do Windows (spec da videochamada, seção 6.2). O PJSIP do Windows e o dos testes do motor no Linux compilam com o vídeo. O do Android (`build/android/config_site.h`) segue sem vídeo, e o motor do iPhone (o baresip) não tem vídeo. O `SipEngine::VideoCodecs()` lista os codecs de vídeo ligados, como `H264/97` e `VP8/100`; sem o vídeo, a lista é vazia.
+
+### As opções do Windows (`build/config_site.h`)
+
+- **`PJMEDIA_HAS_VIDEO 1`** liga o vídeo na PJSIP. Ao iniciar, o pjsua cria o subsistema de vídeo e registra as fábricas dos codecs e das câmeras.
+- **`PJMEDIA_VIDEO_DEV_HAS_DSHOW 1`** traz as câmeras pela DirectShow do Windows (o `dshow_dev.c`, com a `third_party/BaseClasses` do pjproject, que já entra na `libpjproject`). O `dshow_dev.c` pede o `strmiids`, o `quartz` e o `rpcrt4` do Windows SDK por `#pragma comment`, e o link do app os lista também.
+- **`PJMEDIA_VIDEO_DEV_HAS_SDL 0`** deixa de fora as janelas do SDL.
+- **`PJMEDIA_VIDEO_DEV_HAS_CBAR_SRC 0`** tira a câmera de teste da PJSIP (barras coloridas), que apareceria na lista das câmeras da pessoa.
+- **`PJMEDIA_HAS_FFMPEG 0`** deixa o FFmpeg de fora.
+- **`PJMEDIA_HAS_VPX_CODEC 1`** e **`PJMEDIA_HAS_VPX_CODEC_VP9 1`** trazem o VP8 e o VP9 pela libvpx, a porta `libvpx` do vcpkg (a versão fica no `build/deps.lock`, conferida pelo `Build-Deps.ps1` como as outras portas). O `vpx.c` da PJSIP pede o `vpx.lib` por `#pragma comment`, e o link do app o lista também; a pasta `lib` do vcpkg já está no link dos dois apps.
+- **`PJMEDIA_HAS_OPENH264_CODEC 1`** traz o H.264 pelo OpenH264. A PJSIP compila com os cabeçalhos da API (abaixo). As quatro funções que ela chama vêm do adaptador do app (`windows/app/src/OpenH264Shim.cpp`), que as repassa ao módulo da Cisco, carregado em tempo de execução pelo caminho completo (spec da videochamada, seção 6.3). O `openh264.cpp` da PJSIP pede o `openh264.lib` por `#pragma comment`, e o link do app o ignora (`/NODEFAULTLIB:openh264.lib`): o `.exe` não depende do módulo para abrir. O binário da Cisco nunca entra no app, e a porta `openh264` do vcpkg nunca entra no `deps.lock` (o `tests/python/test_deps_lock.py` confere).
+- **`PJMEDIA_HAS_LIBYUV 1`** usa a libyuv do próprio pjproject (`third_party/yuv`, que já entra na `libpjproject`) para converter e escalar as imagens.
+
+**Por que sem o SDL e sem o FFmpeg.** O SDL é o que desenha a imagem em janelas próprias, no jeito do MicroSIP. No app novo, a imagem vai para a página (o WebView2) por um dispositivo de saída nosso (spec da videochamada, seções 6.2 e 6.4), e o SDL seria uma biblioteca a mais, sem uso. O FFmpeg só acrescentaria o H.263+, que ficou fora do escopo: o H.264 vem do OpenH264, o VP8 e o VP9 vêm da libvpx, e a libyuv converte as imagens.
+
+**Os cabeçalhos do OpenH264.** Os quatro cabeçalhos da API (`starsonic/third_party/openh264/include/wels/`) vieram sem mudança da tag `v2.6.0` de `cisco/openh264`, com o `LICENSE` (BSD de 2 cláusulas) da mesma tag; o `README.md` da pasta diz o commit. Só a API entra no repositório. O `Build-Deps.ps1` põe a pasta no `CL` da compilação do pjproject, ao lado dos cabeçalhos do vcpkg. A versão é a do `deps.lock` (`openh264.version`), e o `test_deps_lock.py` confere que o `codec_ver.h` é dela. A chave do cache das dependências do Windows leva o `deps.lock`, e não os cabeçalhos: troque os dois juntos.
+
+### O Linux dos testes (`build/linux/`)
+
+O `build/linux/config_site.h` liga o `PJMEDIA_HAS_VIDEO`. A câmera dos testes é a de barras coloridas da PJSIP, que vem ligada por padrão. O `build-pjproject.sh` chama o `configure` com `--enable-video --with-vpx=/usr --with-openh264=/usr --disable-sdl --disable-ffmpeg --disable-v4l2`: o VP8 pela libvpx do sistema (`libvpx-dev`), o H.264 pelo OpenH264 do sistema (`libopenh264-dev`, só dos testes e nunca publicado) e a libyuv do pjproject. Sem o SDL, o FFmpeg e o Video4Linux. Os dois pacotes entram no passo "Dependências do sistema" do job "Motor de ligações (Linux)" do `android.yml`. Sem eles, o `configure` deixa os dois codecs de fora sem erro, e o teste "the video build offers H264 and VP8" (`tests/phone/test_engine_video.cpp`) falha.
+
+### Ajustes
+
+- **O app antigo com a PJSIP do vídeo.** O app antigo (o MicroSIP, edição Lite, sem vídeo) liga a mesma `libpjproject`, e o `pjsua_init` dele passa a trazer o `openh264.cpp` da PJSIP, que pede o `openh264.lib` e as quatro funções do OpenH264. O `starsonic/starsonic.targets` manda o link ignorar o `openh264.lib` (`IgnoreSpecificDefaultLibraries`), e o `starsonic/win/OpenH264Stub.cpp` define as quatro funções sem o módulo: as duas `Create` devolvem 1, e a PJSIP desiste do H.264. O `vpx.lib` vem da pasta `lib` do vcpkg, que já estava no link do app antigo.

@@ -338,6 +338,9 @@ public:
         return activeCodecs_;
     }
 
+    // O vídeo fica só no motor do PJSIP do Windows (spec da videochamada, 6.2): nenhum codec de vídeo.
+    std::vector<std::string> VideoCodecs() { return {}; }
+
     // O caminho do som é do iPhone (spec 6.1): a lista só tem o dispositivo nulo, com nullAudio, e escolher um
     // dispositivo não muda nada no som.
     std::vector<AudioDevice> AudioDevices() {
@@ -543,6 +546,8 @@ bool SipEngine::SetPushData(const std::optional<PushData>& data) { return impl_-
 void SipEngine::WatchBlf(const std::vector<std::string>& numbers) { impl_->WatchBlf(numbers); }
 
 std::vector<std::string> SipEngine::ActiveCodecs() const { return impl_->ActiveCodecs(); }
+
+std::vector<std::string> SipEngine::VideoCodecs() const { return impl_->VideoCodecs(); }
 
 int SipEngine::MakeCall(const std::string& number) { return impl_->MakeCall(number); }
 

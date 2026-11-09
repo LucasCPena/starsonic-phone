@@ -294,6 +294,24 @@ public:
         return ids;
     }
 
+    // O videoCodecEnum2 é o pjsua_vid_enum_codecs; sem o vídeo no PJSIP, ele devolve a lista vazia.
+    std::vector<std::string> VideoCodecs() {
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        std::vector<std::string> ids;
+        if (!RegisterThread()) return ids;
+        try {
+            pj::CodecInfoVector2 codecs = endpoint_->videoCodecEnum2();
+            std::stable_sort(codecs.begin(), codecs.end(),
+                             [](const pj::CodecInfo& a, const pj::CodecInfo& b) { return a.priority > b.priority; });
+            for (const pj::CodecInfo& codec : codecs) {
+                if (codec.priority > 0) ids.push_back(codec.codecId);
+            }
+        } catch (const pj::Error& failure) {
+            Log(1, "codecs de video: " + failure.info());
+        }
+        return ids;
+    }
+
     int MakeCall(const std::string& number) {
         std::lock_guard<std::mutex> lock(apiMutex_);
         if (!RegisterThread()) return -1;
@@ -702,6 +720,8 @@ bool SipEngine::SetPushData(const std::optional<PushData>& data) { return impl_-
 void SipEngine::WatchBlf(const std::vector<std::string>& numbers) { impl_->WatchBlf(numbers); }
 
 std::vector<std::string> SipEngine::ActiveCodecs() const { return impl_->ActiveCodecs(); }
+
+std::vector<std::string> SipEngine::VideoCodecs() const { return impl_->VideoCodecs(); }
 
 int SipEngine::MakeCall(const std::string& number) { return impl_->MakeCall(number); }
 

@@ -64,7 +64,8 @@ if(BARESIP_PREFIX)
   endif()
 
   # Os testes do motor com o baresip, um arquivo por assunto: os do contrato entram à medida que o motor os cumpre; os
-  # que só valem para o PJSIP (test_engine_pjsip.cpp, test_engine_audio.cpp e test_engine_blf.cpp) nunca entram.
+  # que só valem para o PJSIP (test_engine_pjsip.cpp, test_engine_audio.cpp, test_engine_blf.cpp e
+  # test_engine_video.cpp) nunca entram.
   set(BARESIP_TEST_SOURCES
     main.cpp
     test_engine_setup.cpp

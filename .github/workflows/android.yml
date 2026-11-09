@@ -83,11 +83,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # O libuuid é preciso para compilar o pjproject e também para ligar os testes.
+      # O libuuid, a libvpx (o VP8) e o OpenH264 (o H.264, só dos testes) são precisos para compilar o pjproject com o
+      # vídeo e também para ligar os testes.
       - name: Dependências do sistema
         run: |
           sudo apt-get update
-          sudo apt-get install -y uuid-dev
+          sudo apt-get install -y uuid-dev libvpx-dev libopenh264-dev
 
       - name: Restaurar o pjproject
         id: pj-cache

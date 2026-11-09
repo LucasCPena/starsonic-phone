@@ -199,6 +199,11 @@ public:
     // Os codecs ligados (prioridade acima de zero), do mais para o menos preferido.
     std::vector<std::string> ActiveCodecs() const;
 
+    // Os codecs de vídeo ligados (prioridade acima de zero), do mais para o menos preferido, como o ActiveCodecs: o id
+    // é o nome e o payload type, como "H264/97" e "VP8/100". Vazio sem o vídeo no PJSIP (PJMEDIA_HAS_VIDEO 0, como no
+    // Android) e no motor do baresip, que não tem vídeo.
+    std::vector<std::string> VideoCodecs() const;
+
     // Liga para sip:<número>@<domínio da conta> (number em UTF-8, já sem separadores; ver
     // NormalizeDialString). Se a porta do perfil não é a 5060, a URI leva a porta (o servidor do
     // registro): sip:<número>@<domínio>:<porta>. Devolve o id da ligação, que os eventos dela trazem,
