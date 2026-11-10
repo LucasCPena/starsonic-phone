@@ -16,11 +16,14 @@
 //   por último. O clique num arquivo pede ao núcleo o download (o chatDownload, com o nome sem as marcas de direção,
 //   R34); o clique numa foto abre a foto grande. Sem o lugar de escrever (quem saiu do chat), nada se anexa.
 // - (vídeo, etapa 2) A conversa que o Chat da ligação abre (o `naLigacao`, embaixo da faixa da ligação ou no painel do
-//   grande): sem o Ligar e o Ligar com vídeo do alto, e o Voltar volta para a ligação.
+//   grande): sem o Ligar e o Ligar com vídeo do alto, e o Voltar volta para a ligação. O Ligar e o Ligar com vídeo
+//   ignoram o segundo clique de um clique duplo (o semSegundoClique; o chat só existe no Windows): no fim da ligação, a
+//   conversa fica sem a faixa, e o Ligar sobe para baixo do Desligar dela; o segundo clique do Desligar ligaria de volta.
 // Os nomes e as mensagens vão sempre como texto.
 import { useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { dayGroup } from '../../format';
 import { IconBack, IconPhone, IconSemRede, IconVideo } from '../../icons';
+import { semSegundoClique } from '../../plataforma';
 import type { Send } from '../../types';
 import { ligarComVideoPara, VOLTAR_PARA_A_LIGACAO } from '../../video/textos';
 import type { ChatCliente, ConversaAberta, VistaChat } from '../cliente';
@@ -262,7 +265,7 @@ export function Conversa({ vista, conversa, cliente, send, video, naLigacao = fa
                 class="conversa-ligar conversa-video"
                 aria-label={ligarComVideoPara(conversa.com.nome, conversa.com.ramal)}
                 title={ligarComVideoPara(conversa.com.nome, conversa.com.ramal)}
-                onClick={() => send({ cmd: 'dial', numero: conversa.com.ramal, contato: true, video: true })}
+                onClick={semSegundoClique(true, () => send({ cmd: 'dial', numero: conversa.com.ramal, contato: true, video: true }))}
               >
                 <IconVideo size="sm" />
               </button>
@@ -273,7 +276,7 @@ export function Conversa({ vista, conversa, cliente, send, video, naLigacao = fa
                 class="conversa-ligar"
                 aria-label={ligarPara(conversa.com.nome, conversa.com.ramal)}
                 title={ligarPara(conversa.com.nome, conversa.com.ramal)}
-                onClick={() => send({ cmd: 'dial', numero: conversa.com.ramal, contato: true })}
+                onClick={semSegundoClique(true, () => send({ cmd: 'dial', numero: conversa.com.ramal, contato: true }))}
               >
                 <IconPhone size="sm" />
               </button>

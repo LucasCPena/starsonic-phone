@@ -5,11 +5,12 @@
 // só; a mensagem vai durante a ligação; a sua imagem na faixa com a câmera ligada (Review Focus 2); a ligação só de voz;
 // nenhum Chat com um número de fora do chat ou com quem saiu dele; nenhum Chat, e nenhum aviso, com o chat fora ou com
 // a busca dos colegas que falha (Review Focus 5); o fim da ligação com a conversa na tela (ela fica, com o que estava
-// escrito) e sem ela (o Teclado); a segunda ligação que toca (a tela da ligação volta, com o cartão dela); o painel de
-// 360 do grande; o Esc da tela cheia com a foto da conversa aberta; os três tamanhos; e a acessibilidade e o tema do app
-// nos dois temas. Cada teste cria a própria empresa.
+// escrito) e sem ela (o Teclado); o clique duplo no Desligar da faixa (o segundo clique cai no Ligar da conversa, e não
+// liga de volta); a segunda ligação que toca (a tela da ligação volta, com o cartão dela); o painel de 360 do grande; o
+// Esc da tela cheia com a foto da conversa aberta; os três tamanhos; e a acessibilidade e o tema do app nos dois temas.
+// Cada teste cria a própria empresa.
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { esperarComando, estado, mudarEstado, semViolacoesSerias, vezes } from '../helpers';
+import { comandos, esperarComando, estado, mudarEstado, semViolacoesSerias, vezes } from '../helpers';
 import { corNoMeio, perto, quadro, VERMELHO } from '../video/video';
 import { abrirNoChat, esperarOsEventos } from './abrir';
 import { baseDoChat, empresaComPessoas, tirarPessoa } from './servidor';
@@ -353,6 +354,40 @@ test('at the end of the call the conversation stays; from the call screen it goe
   await esperarComando(page, { cmd: 'hangup', id: 72 });
   await expect(page.getByRole('main', { name: 'Teclado' })).toBeVisible();
   await expect(conversaComAAna(page)).toHaveCount(0);
+});
+
+test('a double click on the strip Desligar hangs up once and never calls the colleague back', async ({ page }) => {
+  await prontoNoChat(page);
+  for (const [id, video] of [
+    [91, COM_VIDEO],
+    [92, {}],
+  ] as const) {
+    const onde = `a ligação ${id}`;
+    await chegaALigacao(page, ligacao('2003', 'Ana Souza', video, id));
+    await abrirOChat(page);
+    // O clique duplo do softphone de mesa: o primeiro clique acaba a ligação, e a conversa fica, sem a faixa; o segundo
+    // (o `detail` 2), no mesmo ponto, cai no Ligar do alto da conversa. Aqui ele vem depois de a ligação acabar na tela
+    // (o núcleo pode responder antes do segundo clique): só o segundo par do clique duplo, com o clickCount 2.
+    const d = await caixa(botao(faixa(page), 'Desligar'));
+    const ponto = { x: d.x + d.width / 2, y: d.y + d.height / 2 };
+    await page.mouse.click(ponto.x, ponto.y);
+    await esperarComando(page, { cmd: 'hangup', id });
+    await expect(faixa(page), onde).toHaveCount(0);
+    const ligar = await caixa(page.getByRole('button', { name: 'Ligar para Ana Souza, ramal 2003' }));
+    const embaixo = ponto.x > ligar.x && ponto.x < ligar.x + ligar.width && ponto.y > ligar.y && ponto.y < ligar.y + ligar.height;
+    expect(embaixo, `o Ligar (${JSON.stringify(ligar)}) embaixo do Desligar (${JSON.stringify(ponto)}) em ${onde}`).toBe(true);
+    await page.mouse.down({ clickCount: 2 });
+    await page.mouse.up({ clickCount: 2 });
+    await umInstante(page);
+    expect(await vezes(page, { cmd: 'hangup', id }), onde).toBe(1);
+    expect((await comandos(page)).filter((c) => c.cmd === 'dial'), onde).toEqual([]);
+    await expect(conversaComAAna(page), onde).toBeVisible();
+  }
+  // Fora disso, um clique duplo no Ligar da conversa liga uma vez só.
+  await page.getByRole('button', { name: 'Ligar para Ana Souza, ramal 2003' }).dblclick();
+  await esperarComando(page, { cmd: 'dial', numero: '2003', contato: true });
+  await umInstante(page);
+  expect(await vezes(page, { cmd: 'dial', numero: '2003', contato: true })).toBe(1);
 });
 
 test('a second call brings back the call screen with its card, and the conversation comes back after it', async ({ page }) => {
