@@ -58,6 +58,7 @@ import { Contatos } from './screens/Contatos';
 import { Entrar } from './screens/Entrar';
 import { Licencas } from './screens/Licencas';
 import { Ligacao } from './screens/Ligacao';
+import { Grande } from './video/Grande';
 import { Recentes } from './screens/Recentes';
 import { Sobre } from './screens/Sobre';
 import { Teclado } from './screens/Teclado';
@@ -387,6 +388,23 @@ function App() {
   // A ligação vem antes de tudo, também da tela Entrar (a troca para uma conta sem a senha deixa a conta em uso
   // registrada, e uma ligação dela precisa do Atender e do Desligar); a Entrar volta quando ela acaba.
   if (state.ligacao) {
+    // (vídeo, etapa 2) O grande e a tela cheia (só no Windows): o vídeo toma a janela no lugar da tela da ligação. No grande
+    // a barra de título é a da ligação, sem as zonas de redimensionar; na tela cheia, nenhuma barra.
+    const janela = videoDoApp(state).janela;
+    if (janela !== 'normal') {
+      return (
+        <div class={`win call win-${janela === 'telaCheia' ? 'tela-cheia' : 'grande'}`} data-layout={layout} data-plataforma={plataforma}>
+          {janela === 'grande' &&
+            barra({
+              title: state.conta ? `Starsonic Phone · ${accountTitle(state.conta)}` : undefined,
+              status: state.conta ? accountDot(state.conta, true, state.naoPerturbe) : undefined,
+              semRedimensionar: true,
+            })}
+          <Grande state={state} ligacao={state.ligacao} send={send} />
+          {toastEl}
+        </div>
+      );
+    }
     return (
       <div class="win call" data-layout={layout} data-plataforma={plataforma}>
         {/* No Compacto e no Mínimo, sem o "Starsonic Phone · ", para a conta caber ao lado do estado (no Mínimo, só o

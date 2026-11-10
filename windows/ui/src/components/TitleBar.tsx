@@ -14,9 +14,11 @@ interface Props {
   title?: string;
   /** A bolinha da conta e o estado (só na ligação). */
   status?: AccountDot;
+  /** (vídeo, etapa 2) Sem as zonas de redimensionar: o grande tem o tamanho que o executável dá. */
+  semRedimensionar?: boolean;
 }
 
-export function TitleBar({ send, closeLabel = 'Fechar para a bandeja', title = 'Starsonic Phone', status }: Props) {
+export function TitleBar({ send, closeLabel = 'Fechar para a bandeja', title = 'Starsonic Phone', status, semRedimensionar }: Props) {
   return (
     <div class="titlebar">
       {status && (
@@ -27,7 +29,7 @@ export function TitleBar({ send, closeLabel = 'Fechar para a bandeja', title = '
       )}
       <span class="titlebar-text">{title}</span>
       {/* As zonas de redimensionar da janela (a barra de título está em toda tela da janela principal). */}
-      <ResizeZones send={send} />
+      {!semRedimensionar && <ResizeZones send={send} />}
       <div class="caption">
         <button type="button" aria-label="Minimizar" title="Minimizar" onClick={() => send({ cmd: 'minimize' })}>
           <IconMinimize />
