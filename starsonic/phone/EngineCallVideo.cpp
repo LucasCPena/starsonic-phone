@@ -339,8 +339,9 @@ bool CallTable::AddVideo(int callId) {
 
 bool CallTable::Paused(const Slot& slot) {
     if (slot.held || slot.transferring || conference_) return true;
-    // Com duas ligações, só a ativa fica com o vídeo (a segunda que ainda toca também pausa).
-    return Other(&slot) != nullptr && activeId_ != slot.callId;
+    // Com duas ligações, nenhuma fica com o vídeo, com a segunda ainda tocando ou já atendida (spec da videochamada,
+    // 4.2): o vídeo volta quando a ligação fica sozinha, fora da espera.
+    return Other(&slot) != nullptr;
 }
 
 bool CallTable::WantsToSend(const Slot& slot) {

@@ -273,10 +273,9 @@ public:
     void SetCameraPaused(bool paused);
 
     // O vídeo da ligação agora, como o último OnCallVideo dela (sem o refused); CallVideo{} para um id desconhecido e
-    // sem o vídeo no motor. Uma ligação com vídeo por vez: o vídeo dela pausa (active e camera false, nada é mandado)
-    // na espera daqui, com duas ligações quando ela não é a ativa (também a segunda ainda tocando), na conferência e
-    // com uma transferência pedida ainda sem resultado; sai da pausa com o active de volta e a câmera seguindo o
-    // desejo.
+    // sem o vídeo no motor. O vídeo só numa ligação sozinha: o vídeo dela pausa (active e camera false, nada é mandado)
+    // na espera daqui, com duas ligações (as duas, com a segunda ainda tocando ou já atendida), na conferência e com
+    // uma transferência pedida ainda sem resultado; sai da pausa com o active de volta e a câmera seguindo o desejo.
     CallVideo Video(int callId) const;
 
     // A imagem (spec da videochamada, 6.2 e 6.4): o desenhista nosso entrega cada quadro I420 ao sink. Os da outra

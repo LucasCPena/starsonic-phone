@@ -175,8 +175,10 @@ void CallTable::Incoming(pj::Account& account, int pjsuaId, bool accepting, cons
                 slot->videoCount = slot->offered ? 1 : 0;
                 slot->early = slot->offered && IsDoorphone(settings_, party.user);
                 if (!slot->offered) Refuse(*slot);
-                PublishVideo();
             }
+            // O vídeo da oferta, e o da outra ligação, se há: com a segunda tocando, ela pausa já (Paused), também
+            // com uma oferta só de voz.
+            PublishVideo();
             slot->ringVideoCount = slot->videoCount;
             // Sem câmera, a resposta aceita o vídeo só para receber.
             slot->ringRecvOnly = slot->videoCount > 0 && camera_ == PJMEDIA_VID_INVALID_DEV ? offer.index : -1;
@@ -198,6 +200,8 @@ void CallTable::Incoming(pj::Account& account, int pjsuaId, bool accepting, cons
         }
         return;
     }
+    // A outra ligação, se há, para de mandar a câmera (o SyncVideo, no temporizador).
+    ScheduleSync();
     // O 180 vem depois do aviso: o Early que ele provoca chega ao listener depois do OnIncomingCall. Com o vídeo, o
     // número de vídeos da resposta já vai aqui, e o Answer repete o mesmo (o pjsua guarda o primeiro e ignora outro).
     // O 183 do Porteiro leva o SDP (a resposta à oferta), sem mandar nada: a câmera só manda depois do atender, e o

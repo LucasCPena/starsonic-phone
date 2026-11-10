@@ -66,6 +66,9 @@ void NullVideo(EngineConfig& config) { config.nullVideo = true; }
 
 bool CameraOn(const CallVideo& video) { return video.active && video.camera; }
 
+// A ligação em pausa: sem o vídeo, sem a câmera e sem a imagem da outra ponta.
+bool VideoPaused(const CallVideo& video) { return !video.active && !video.camera && !video.remote; }
+
 bool WaitVideo(Phone& phone, int id, const std::function<bool(const CallVideo&)>& condition) {
     return phone.listener.WaitForVideo(id, condition, kWaitSeconds);
 }
@@ -886,11 +889,19 @@ TEST_CASE("a second call pauses the first call's image") {
     INFO(phone.listener.CallsText());
 
     const int first = VideoCall(phone, "2003");
-    // Com a segunda tocando, a primeira continua mandando.
-    const int second = phone.Ring();
+    // Com a segunda tocando, a primeira para de mandar e fica sem imagem: com duas ligações, nenhuma tem vídeo (spec da
+    // videochamada, 4.2).
+    const int ringing = phone.Ring();
+    CHECK(WaitVideo(phone, first, VideoPaused));
+    CHECK(PacketsStop(phone));
+    // A segunda recusada: a primeira, sozinha e fora da espera, manda de novo.
+    REQUIRE(phone.engine->Reject(ringing));
+    REQUIRE(phone.WaitState(ringing, CallState::Disconnected));
+    CHECK(WaitVideo(phone, first, CameraOn));
     CHECK(PacketsRise(phone));
-    CHECK(CameraOn(phone.engine->Video(first)));
-    // A segunda atendida: a primeira vai para a espera, sem imagem.
+    // A segunda atendida: a primeira vai para a espera, sem imagem; com a segunda desligada, a retomada a devolve.
+    const int second = phone.Ring();
+    CHECK(WaitVideo(phone, first, [](const CallVideo& video) { return !video.camera && !video.active; }));
     REQUIRE(phone.engine->Answer(second));
     CHECK(WaitVideo(phone, first, [](const CallVideo& video) { return !video.camera; }));
     CHECK(PacketsStop(phone));
@@ -907,7 +918,10 @@ TEST_CASE("the conference has no image") {
     INFO(phone.listener.VideosText());
 
     const int first = VideoCall(phone, "2002");
-    const int second = VideoCall(phone, "2003");   // a primeira vai para a espera
+    // A segunda, com vídeo, põe a primeira em espera (com duas ligações, nenhuma manda a câmera).
+    const int second = phone.engine->MakeCall("2003", true);
+    REQUIRE(second > 0);
+    REQUIRE(phone.WaitState(second, CallState::Confirmed));
     REQUIRE(phone.engine->Join(first, second));
     for (const int id : {first, second}) {
         CHECK(WaitVideo(phone, id, [](const CallVideo& video) { return !video.active && !video.camera; }));
@@ -1199,20 +1213,32 @@ TEST_CASE("two video calls keep their frames apart and the paused one shows noth
 
     const int first = VideoCall(phone, "2002");
     REQUIRE(sink.WaitFor(first, 10, 5));
-    // A segunda põe a primeira em espera: só a segunda manda e mostra.
-    const int second = VideoCall(phone, "2003");
+    // A segunda põe a primeira em espera, e com duas ligações nenhuma manda nem mostra (spec da videochamada, 4.2).
+    const int second = phone.engine->MakeCall("2003", true);
+    REQUIRE(second > 0);
+    REQUIRE(phone.WaitState(second, CallState::Confirmed));
     CHECK(phone.registrar.WaitForLog("reinv-in 2002 sendonly", kWaitSeconds));
-    CHECK(WaitVideo(phone, first, [](const CallVideo& video) { return !video.active && !video.remote; }));
-    REQUIRE(sink.WaitFor(second, 10, 5));
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    for (const int id : {first, second}) {
+        CHECK(WaitVideo(phone, id, VideoPaused));
+    }
+    CHECK(PacketsStop(phone));
     const Clock::time_point paused = Clock::now();
     std::this_thread::sleep_for(std::chrono::seconds(1));
-    CHECK(sink.Count(second, 0, 0, paused) > 0);
+    CHECK(sink.Count(first, 0, 0, paused) == 0);
+    CHECK(sink.Count(second) == 0);
+    CHECK_FALSE(phone.engine->Video(first).remote);
+    CHECK_FALSE(phone.engine->Video(second).remote);
+
+    // A primeira acaba: a segunda, sozinha e fora da espera, manda e mostra, com o id dela; a primeira, nada mais.
+    REQUIRE(phone.engine->Hangup(first));
+    REQUIRE(phone.WaitState(first, CallState::Disconnected));
+    CHECK(WaitVideo(phone, second, CameraOn));
+    CHECK(PacketsRise(phone));
+    REQUIRE(sink.WaitFor(second, 10, 5));
     CHECK(sink.Count(first, 0, 0, paused) == 0);
     for (const TestSink::Frame& frame : sink.Frames()) {
         CHECK((frame.callId == first || frame.callId == second || frame.callId == TestSink::kLocal));
     }
-    CHECK_FALSE(phone.engine->Video(first).remote);
 }
 
 TEST_CASE("no frame reaches the sink after SetFrameSink(nullptr)") {
@@ -1351,15 +1377,16 @@ TEST_CASE("a doorphone ringing during a video call is paused and its image does 
     REQUIRE(phone.registrar.WaitForVideoPackets(300, 10));
     REQUIRE(sink.WaitFor(active, 10, 5));
 
-    // O porteiro toca como a segunda ligação, com o 183 e a imagem dele chegando: a segunda que toca fica em pausa, e
-    // a imagem dela não passa do desenhista.
+    // O porteiro toca como a segunda ligação, com o 183 e a imagem dele chegando: com duas ligações, as duas ficam em
+    // pausa (spec da videochamada, 4.2), e nenhuma imagem passa do desenhista, nem a do porteiro nem a da ativa.
     const int ringing = phone.RingVideo("9001", "VP8", true);
     CHECK(phone.registrar.WaitForLog("sdp-out 2001 183 video=sim", kWaitSeconds));
     CHECK(WaitVideo(phone, ringing, [](const CallVideo& video) { return video.offered && video.early; }));
+    CHECK(WaitVideo(phone, active, VideoPaused));
     const Clock::time_point rang = Clock::now();
     std::this_thread::sleep_for(std::chrono::milliseconds(1500));
     CHECK(sink.Count(ringing) == 0);
-    CHECK(sink.Count(active, 0, 0, rang) > 0);
+    CHECK(sink.Count(active, 0, 0, rang) == 0);
     const CallVideo video = phone.engine->Video(ringing);
     CHECK_FALSE(video.active);
     CHECK_FALSE(video.remote);

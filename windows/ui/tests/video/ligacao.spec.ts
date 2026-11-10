@@ -104,7 +104,7 @@ async function rotulosInteiros(page: Page, onde: string): Promise<void> {
   expect(sobram, `rótulos maiores que a coluna em ${onde}`).toEqual([]);
 }
 
-/** A câmera da ligação de cima ligada (o motor deixa o vídeo da ligação ativa, também com a outra em espera). */
+/** A câmera da ligação de cima ligada: ligada, a Câmera sempre desliga, também com duas ligações. */
 const comCameraNaDeCima = (s: Record<string, any>) => ({
   ...s,
   ligacao: { ...s.ligacao, top: { ...s.ligacao.top, video: { ...SEM_VIDEO, ativo: true, camera: true } } },
@@ -235,7 +235,7 @@ test('with two calls the Câmera only turns the camera off', async ({ page }) =>
   await expect(page.locator('.ctrls')).toHaveClass(/(^|\s)ctrls-5(\s|$)/);
   await expect(c).toHaveAccessibleName('Ligar a câmera');
   await expect(c).toBeDisabled();
-  // A câmera da de cima ligada (o motor deixa o vídeo da ativa), mesmo com a imagem da outra ponta chegando: ela desliga.
+  // A câmera da de cima ligada no estado, mesmo com a imagem da outra ponta: nada é desenhado, e a Câmera desliga.
   await mudarEstado(page, (s) => ({
     ...s,
     ligacao: { ...s.ligacao, top: { ...s.ligacao.top, video: { ...SEM_VIDEO, ativo: true, imagem: true, camera: true } } },

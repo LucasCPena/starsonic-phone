@@ -24,7 +24,7 @@
 // O vídeo (só com o PJMEDIA_HAS_VIDEO; as funções dele ficam no EngineCallVideo.cpp, e os ganchos nos métodos de
 // sempre, no EngineCall.cpp): o que a tabela sabe do vídeo de cada ligação (o desejo da câmera, a pausa, o
 // 183 dos Porteiros, o vídeo negociado) fica com mutex_, e o OnCallVideo sai pelo Emit, com mutex_ presa, quando o
-// CallVideo de uma ligação muda (PublishVideo). Uma ligação com vídeo por vez: a pausa (Paused) vem do que a tabela
+// CallVideo de uma ligação muda (PublishVideo). Vídeo só numa ligação sozinha: a pausa (Paused) vem do que a tabela
 // quer, como a mesa de áudio, e o aviso já sai com a câmera desligada. O envio (o START_TRANSMIT e o STOP_TRANSMIT) só
 // sai do SyncVideo, que confere o envio de verdade (a captura ligada ao stream) antes de mudá-lo: o pjsua recria o
 // stream num re-INVITE que muda a mídia (o envio cai junto) e desfaz a mídia no fim da ligação, e o START dele não
@@ -257,7 +257,8 @@ private:
     // Com mutex_ preso: o evento sai na hora ou, durante o makeCall de Make, espera em held_.
     void Emit(int callId, EventQueue::Event event);
 
-    // Com mutex_ preso. A ligação está pausada: uma ligação com vídeo por vez (ver SipEngine::Video).
+    // Com mutex_ preso. A ligação está pausada: a espera, a transferência, a conferência ou a outra ligação (ver
+    // SipEngine::Video).
     bool Paused(const Slot& slot);
     // Com mutex_ preso. A câmera da ligação deve mandar agora.
     bool WantsToSend(const Slot& slot);

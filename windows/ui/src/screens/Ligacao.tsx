@@ -18,7 +18,7 @@
 // ligado (o `config.bipeTecla`).
 // (vídeo, etapa 2) Com o vídeo ligado, a Câmera entra nos controles, depois do Mudo, com a regra do video/estado.ts (o
 // cameraDaLigacaoDesativada): numa ligação, a do cameraDesativada; com duas (a segunda tocando ou em espera, também na
-// consulta), só para desligar a câmera (o motor deixa o vídeo da ligação ativa); na conferência, não. Numa ligação só (o
+// consulta), só para desligar a câmera (o motor pausa o vídeo de todas); na conferência, não. Numa ligação só (o
 // imagemDaLigacao), fora do toque, sem painel aberto e com a imagem da outra ponta chegando, a área do
 // vídeo (CaixaDoVideo.tsx) toma o lugar de quem fala. Fora dela, com a câmera ligada, a sua imagem flutua no canto de cima
 // à direita (também com um painel aberto): embaixo do cartão da outra ligação quando ele está em cima, e no canto de
@@ -814,9 +814,9 @@ export function Ligacao({ state, ligacao: l, contatos, daEmpresa, send, chat = n
   );
   // (vídeo, etapa 2) A Câmera, só com o vídeo ligado (nunca no iPhone): o nome diz a ação, e ela fica acesa com a câmera
   // ligada. Numa ligação, desligada, ela espera o atender e a volta da espera (o cameraDesativada); ligada, sempre
-  // desliga. Com duas (a segunda tocando ou em espera, também na consulta), ela só desliga: o motor deixa o vídeo da
-  // ligação ativa, e a câmera que manda sempre tem como ser desligada, mas nenhuma liga com duas ligações (o
-  // cameraDaLigacaoDesativada, a mesma regra do grande).
+  // desliga. Com duas (a segunda tocando ou em espera, também na consulta), ela só desliga: o motor pausa o vídeo de
+  // todas (nada é mandado), nenhuma câmera liga com duas ligações, e a que ainda aparece ligada sempre tem como ser
+  // desligada (o cameraDaLigacaoDesativada, a mesma regra do grande).
   const cameraCtrl = videoDoApp(state).ligado ? (
     <Ctrl
       label={CAMERA}
