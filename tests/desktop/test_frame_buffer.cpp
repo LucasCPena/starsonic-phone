@@ -272,9 +272,14 @@ TEST_CASE("a concurrent reader only ever sees whole frames") {
     FrameWriter writer(mem.Data(), mem.Size());
     std::atomic<bool> done{false};
     std::atomic<int> written{0};
+    std::atomic<bool> readerStarted{false};
+    std::atomic<int> acceptedLive{0};
     std::thread producer([&] {
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
-        for (int k = 1; k <= 4000 && std::chrono::steady_clock::now() < deadline; ++k) {
+        // O escritor so comeca com o leitor rodando e continua ate o leitor aceitar 50 quadros: a sobreposicao e certa,
+        // mesmo com o leitor atrasado. O limite de 2 s so existe para o teste terminar (e falhar) se nada for aceito.
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (!readerStarted.load() && std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
+        for (int k = 1; acceptedLive.load() < 50 && std::chrono::steady_clock::now() < deadline; ++k) {
             const uint8_t value = static_cast<uint8_t>(k % 251);
             const int w = 64 + (k % 3), h = 48 + (k % 2);   // tamanhos que mudam, alguns impares
             const size_t cw = static_cast<size_t>((w + 1) / 2), ch = static_cast<size_t>((h + 1) / 2);
@@ -292,10 +297,12 @@ TEST_CASE("a concurrent reader only ever sees whole frames") {
     int accepted = 0;
     uint32_t last = 0;
     bool whole = true, sizes = true, even = true, monotonic = true;
+    readerStarted.store(true);
     while (!done.load()) {
         const ReadFrame got = ReadLatest(mem.Data(), mem.Size());
-        if (!got.ok) continue;
+        if (!got.ok) { std::this_thread::yield(); continue; }
         ++accepted;
+        acceptedLive.store(accepted);
         even = even && (got.seq % 2 == 0);
         monotonic = monotonic && got.seq >= last;
         last = got.seq;
@@ -311,7 +318,7 @@ TEST_CASE("a concurrent reader only ever sees whole frames") {
         whole = whole && same(got.y) && same(got.u) && same(got.v);
     }
     producer.join();
-    CHECK(accepted > 0);
+    CHECK(accepted >= 50);
     CHECK(whole);
     CHECK(sizes);
     CHECK(even);
