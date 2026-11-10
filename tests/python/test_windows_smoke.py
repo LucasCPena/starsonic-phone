@@ -180,6 +180,34 @@ class VideoHelpersTest(unittest.TestCase):
         self.assertIsNone(windows_smoke.h264_download_result("2026-11-10 interface pronta\n"))
         self.assertIsNone(windows_smoke.h264_download_result(""))
 
+    NOTICES = "OpenH264 2.6.0\n==============\n\ntexto da Cisco\n\nlibvpx 1.16.0\n=============\n\nlibyuv 1678\n===========\n"
+
+    def test_the_whole_license_notices_have_no_problem(self):
+        result = {"ok": True, "status": 200, "texto": self.NOTICES}
+        self.assertEqual(windows_smoke.license_notice_problems(result), [])
+
+    def test_license_notices_that_did_not_load_are_a_problem(self):
+        problems = windows_smoke.license_notice_problems({"ok": False, "status": 404, "texto": "Not Found"})
+        self.assertTrue(problems)
+        self.assertTrue(any("404" in problem for problem in problems), problems)
+        self.assertTrue(windows_smoke.license_notice_problems({"ok": True, "status": 204, "texto": self.NOTICES}))
+
+    def test_license_notices_without_a_part_are_a_problem(self):
+        for part in ("OpenH264 2.6.0", "libvpx 1.16.0", "libyuv 1678"):
+            problems = windows_smoke.license_notice_problems({"ok": True, "status": 200,
+                                                              "texto": self.NOTICES.replace(part, "")})
+            self.assertEqual(len(problems), 1, part)
+            self.assertIn(part, problems[0])
+        # O OpenH264 vem primeiro: o arquivo começa com ele.
+        moved = self.NOTICES.replace("OpenH264 2.6.0\n", "") + "OpenH264 2.6.0\n"
+        self.assertEqual(len(windows_smoke.license_notice_problems({"ok": True, "status": 200, "texto": moved})), 1)
+
+    def test_license_notices_the_page_could_not_read_are_a_problem(self):
+        # O evaluate que falhou (a página fechada, o fetch recusado) chega como None.
+        problems = windows_smoke.license_notice_problems(None)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("licencas-windows.txt", problems[0])
+
     def test_the_last_h264_line_wins(self):
         text = "h264: download falhou (rede)\nalgo\nh264: instalado 2.6.0\n"
         self.assertEqual(windows_smoke.h264_download_result(text), "instalado")

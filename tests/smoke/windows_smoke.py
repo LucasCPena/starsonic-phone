@@ -924,13 +924,16 @@ def run_smoke(args, result):
                 raise SmokeFailure("o BYE da ligacao recebida nao chegou: %s" % registrar.events())
             page.locator("button.btn-call").wait_for(timeout=20000)
 
-            # 3b. (0.3.0) O aviso com a oferta de vídeo (222 de altura) e o download do H.264 da Cisco.
+            # 3b. (0.3.0) Os avisos de licença do Windows pelo fetch da página (a tela de Licenças), o aviso com a oferta
+            # de vídeo (222 de altura) e o download do H.264 da Cisco.
             problems = []
-            check_video_notice(win, hwnd, browser, page, registrar, result.setdefault("video", {}), problems)
+            check_license_notices(page, result.setdefault("video", {}), problems)
+            check_video_notice(win, hwnd, browser, page, registrar, result["video"], problems)
             check_h264_download(data_dir, result["video"], problems)
             if problems:
                 raise SmokeFailure("; ".join(problems))
-            log("OK: o aviso com video tem 222 de altura e o Atender com video, e o H.264 da Cisco foi tratado")
+            log("OK: os avisos de licenca vieram inteiros, o aviso com video tem 222 de altura e o Atender com video, "
+                "e o H.264 da Cisco foi tratado")
             result["registrador"] = registrar.events()
             browser.close()
             app.quit()
@@ -1270,6 +1273,54 @@ def video_buffer_problems(label, vista, info):
         problems.append("%s: a memoria da vista %s tem %s bytes (esperado pelo menos %d)"
                         % (label, vista, size, VIDEO_BUFFER_BYTES))
     return problems
+
+
+# (Ruling 20) Os avisos de licença do Windows como a tela de Licenças os lê: o fetch do arquivo, do mesmo lugar da
+# página, no WebView2 de verdade (o primeiro fetch local da página). A condição da licença da Cisco depende do texto
+# inteiro: ele começa com o OpenH264 e tem a libvpx e a libyuv.
+LICENSE_NOTICES_FILE = "assets/licencas-windows.txt"
+LICENSE_NOTICES_START = "OpenH264 2.6.0"
+LICENSE_NOTICES_PARTS = ("libvpx 1.16.0", "libyuv 1678")
+LICENSE_NOTICES_SCRIPT = """async (arquivo) => {
+  const resposta = await fetch(arquivo);
+  return {ok: resposta.ok, status: resposta.status, texto: await resposta.text()};
+}"""
+
+
+def license_notice_problems(result):
+    """Os problemas dos avisos de licença que a página leu (a lista vazia: estão certos). `result` é o que o
+    LICENSE_NOTICES_SCRIPT devolveu ({"ok", "status", "texto"}), ou None se o evaluate falhou."""
+    if not isinstance(result, dict):
+        return ["os avisos de licenca (%s) nao foram lidos pela pagina" % LICENSE_NOTICES_FILE]
+    problems = []
+    if result.get("ok") is not True or result.get("status") != 200:
+        problems.append("o fetch de %s respondeu ok=%s e status %s (esperado 200)"
+                        % (LICENSE_NOTICES_FILE, result.get("ok"), result.get("status")))
+    text = result.get("texto")
+    text = text if isinstance(text, str) else ""
+    if not text.startswith(LICENSE_NOTICES_START):
+        problems.append("%s nao comeca com '%s'" % (LICENSE_NOTICES_FILE, LICENSE_NOTICES_START))
+    for part in LICENSE_NOTICES_PARTS:
+        if part not in text:
+            problems.append("%s nao tem '%s'" % (LICENSE_NOTICES_FILE, part))
+    return problems
+
+
+def check_license_notices(page, record, problems):
+    """Lê os avisos de licença do Windows pelo fetch da página principal, como a tela de Licenças, e confere o texto."""
+    try:
+        result = page.evaluate(LICENSE_NOTICES_SCRIPT, LICENSE_NOTICES_FILE)
+    except Exception as error:   # noqa: BLE001
+        log("avisos de licenca: o fetch da pagina falhou: %s" % error)
+        result = None
+    if isinstance(result, dict):
+        text = result.get("texto")
+        record["licencas"] = {"ok": result.get("ok"), "status": result.get("status"),
+                              "caracteres": len(text) if isinstance(text, str) else None}
+    else:
+        record["licencas"] = None
+    log("avisos de licenca: %s" % record["licencas"])
+    problems.extend(license_notice_problems(result))
 
 
 def h264_download_result(log_text):
