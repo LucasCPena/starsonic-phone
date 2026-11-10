@@ -1,8 +1,9 @@
 // O Sobre: o logo (principal no claro, negativo no escuro), "Starsonic Phone <versão>", a licença, o site, o
 // telefone e o WhatsApp, o código-fonte e "Enviar diagnóstico". Os links abrem no navegador padrão (openExternal).
+// A linha "Avisos de licença" abre a tela deles (Licencas.tsx), no Windows depois do código-fonte.
 // (iPhone) A linha das peças do app do iPhone no lugar da licença do Windows; no telefone, também o Ligar (o discador do
-// iPhone, pelo tel: do suporte); e, no lugar do código-fonte, a linha "Avisos de licença", que abre a tela deles
-// (Licencas.tsx). O Enviar diagnóstico abre a janela de compartilhar do iPhone (o hospedeiro).
+// iPhone, pelo tel: do suporte); e, no lugar do código-fonte, só a linha "Avisos de licença". O Enviar diagnóstico abre a
+// janela de compartilhar do iPhone (o hospedeiro).
 import { BackBar } from '../components/BackBar';
 import { IconArrowRight, IconCode, IconDocument, IconGlobe, IconPhone } from '../icons';
 import { EXTERNAL_URLS } from '../state';
@@ -12,8 +13,9 @@ interface Props {
   versao: string;
   send: Send;
   onBack(): void;
-  /** (iPhone) O Sobre do iPhone, com o `onLicencas` da linha "Avisos de licença". */
+  /** (iPhone) O Sobre do iPhone. */
   ios?: boolean;
+  /** A linha "Avisos de licença" abre a tela deles. */
   onLicencas?(): void;
 }
 
@@ -76,18 +78,7 @@ export function Sobre({ versao, send, onBack, ios, onLicencas }: Props) {
               WhatsApp
             </button>
           </div>
-          {ios ? (
-            // A linha inteira abre a tela dos avisos (como uma linha dos Ajustes do iPhone, com a seta).
-            <button type="button" class="set-row about-avisos" onClick={onLicencas}>
-              <span class="tile" aria-hidden="true">
-                <IconDocument size="sm" />
-              </span>
-              <span class="row-main">
-                <span class="row-title set-title">Avisos de licença</span>
-              </span>
-              <IconArrowRight size="sm" class="muted" />
-            </button>
-          ) : (
+          {!ios && (
             <div class="set-row">
               <span class="tile" aria-hidden="true">
                 <IconCode size="sm" />
@@ -101,6 +92,16 @@ export function Sobre({ versao, send, onBack, ios, onLicencas }: Props) {
               </button>
             </div>
           )}
+          {/* A linha inteira abre a tela dos avisos (como uma linha dos Ajustes do iPhone, com a seta): no iPhone no lugar do código-fonte, no Windows depois dele. */}
+          <button type="button" class="set-row about-avisos" onClick={onLicencas}>
+            <span class="tile" aria-hidden="true">
+              <IconDocument size="sm" />
+            </span>
+            <span class="row-main">
+              <span class="row-title set-title">Avisos de licença</span>
+            </span>
+            <IconArrowRight size="sm" class="muted" />
+          </button>
         </div>
         <button type="button" class="btn btn-outline btn-block" onClick={() => send({ cmd: 'sendDiagnostics' })}>
           Enviar diagnóstico

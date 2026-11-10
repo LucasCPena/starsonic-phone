@@ -203,7 +203,7 @@ struct Harness {
     int cameraBlockedCalls = 0;
     bool videoHooks = true;   // false: o executavel sem os quatro ganchos
     bool sheetHooks = true;   // false: o executavel sem os tres ganchos (antes da Task 7)
-    // DesktopConfig::h264Download: desligado como no build de agora; os testes do download do modulo H.264 o ligam
+    // DesktopConfig::h264Download: desligado, o padrao do nucleo (o app o liga desde a etapa 2); os testes do download do modulo H.264 o ligam
     // (AllowH264Download, antes do Start).
     bool h264Download = false;
     // O modo do nucleo (DesktopConfig::platform): o Windows, ou o iPhone com Harness h(Platform::IPhone). Vale tambem

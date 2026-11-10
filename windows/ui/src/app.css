@@ -1408,7 +1408,7 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 /* O Sobre: a linha "Avisos de licença" inteira é o botão, com a seta, como uma linha dos Ajustes do iPhone. Na linha do
    telefone, o Ligar e o WhatsApp ficam na linha do número, e o horário embaixo dela, na largura toda (ao lado dos dois
    botões, ele quebrava em três linhas). */
-.win[data-plataforma="ios"] .about-avisos { width: 100%; border: 0; border-radius: 10px; background: transparent; font: inherit; color: inherit;
+.about-avisos { width: 100%; border: 0; border-radius: 10px; background: transparent; font: inherit; color: inherit;
   text-align: left; }
 .win[data-plataforma="ios"] .about-telefone { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; row-gap: 2px; }
 .win[data-plataforma="ios"] .about-telefone .row-main { display: contents; }
@@ -1419,16 +1419,19 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
    juntas, quebrando na largura da tela; os itens de lista com o recuo pendente (a marca numa coluna, e as linhas de
    baixo começando no texto); as linhas que ficam como estão no arquivo (as caixas de "*", as com recuo, os traços),
    com os espaços. */
-.win[data-plataforma="ios"] .licencas { gap: 26px; }
-.win[data-plataforma="ios"] .licenca h2 { margin: 0 0 10px; font-size: 15px; font-weight: 800; letter-spacing: -0.01em; line-height: 1.25;
+.licencas { gap: 26px; }
+.licenca h2 { margin: 0 0 10px; font-size: 15px; font-weight: 800; letter-spacing: -0.01em; line-height: 1.25;
   color: var(--text-strong); }
-.win[data-plataforma="ios"] .licenca p { margin: 0 0 10px; font-size: 12.5px; line-height: 1.55; color: var(--text); overflow-wrap: anywhere; }
-.win[data-plataforma="ios"] .licenca p:last-child { margin-bottom: 0; }
-.win[data-plataforma="ios"] .licenca-linha { display: block; }
-.win[data-plataforma="ios"] .licenca-fixa { white-space: pre-wrap; }
-.win[data-plataforma="ios"] .licenca-item { display: flex; }
-.win[data-plataforma="ios"] .licenca-marca { flex: none; white-space: pre; font-variant-numeric: tabular-nums; }
-.win[data-plataforma="ios"] .licenca-texto { flex: 1; min-width: 0; }
+.licenca p { margin: 0 0 10px; font-size: 12.5px; line-height: 1.55; color: var(--text); overflow-wrap: anywhere; }
+.licenca p:last-child { margin-bottom: 0; }
+.licenca-linha { display: block; }
+.licenca-fixa { white-space: pre-wrap; }
+.licenca-item { display: flex; }
+.licenca-marca { flex: none; white-space: pre; font-variant-numeric: tabular-nums; }
+.licenca-texto { flex: 1; min-width: 0; }
+/* O aviso da Cisco embaixo do título do OpenH264 (só no Windows; o quadro Licencas). */
+.licenca p.licenca-destaque { margin: 0 0 10px; padding: 12px 14px; border-radius: 12px; background: rgba(0, 194, 203, 0.14); font-size: 13.5px;
+  font-weight: 700; line-height: 1.45; color: var(--text-strong); }
 
 /* O grande e a tela cheia (Grande.tsx; os quadros Grande e TelaCheia): o vídeo toma a janela toda (a barra de título do
    grande fica por cima), com a sua imagem no canto, a etiqueta de quem fala, uma sombra embaixo e a barra de baixo. */

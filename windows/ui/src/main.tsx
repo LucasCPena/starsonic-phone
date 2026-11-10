@@ -14,7 +14,7 @@
 // Recentes, como a última ligação que acaba volta ao Teclado. A agenda do iPhone (a mensagem `agenda`) fica guardada
 // aqui, como a lista da empresa (a de `vez` mais alta): vai à aba Contatos do iPhone (Agenda.tsx) e às sugestões do
 // Teclado, do Transferir e da Nova ligação, no lugar dos `contatos`. As teclas do Teclado bipam com o Bipe ao digitar (o
-// `config.bipeTecla`), e o Sobre do iPhone abre os avisos de licença (Licencas.tsx).
+// `config.bipeTecla`), e o Sobre abre os avisos de licença (Licencas.tsx; no Windows, os do OpenH264, da libvpx e da libyuv).
 // (0.2.0) O chat (chat/): o cliente é criado uma vez, junto com a ponte, e recebe o `chat` do estado e a conta em uso a
 // cada mudança. A aba Chat entra nas abas do Windows só com o computador ligado ao chat (o `chat.ligado`), com o Ctrl+5.
 // O cartão Chat fica na área do administrador. (Task 6) A conversa (a vista chatConversa) toma o lugar das abas; o Esc,
@@ -569,7 +569,7 @@ function App() {
       conteudo = <Sobre versao={state.versao} send={send} onBack={voltarAoTeclado} ios={ios} onLicencas={() => setView({ kind: 'licencas', back: view })} />;
       break;
     case 'licencas':
-      conteudo = <Licencas onBack={() => setView(view.back)} />;
+      conteudo = <Licencas onBack={() => setView(view.back)} ios={ios} />;
       break;
     case 'conta': {
       const conta = view.contaId ? state.contas.find((c) => c.id === view.contaId) : undefined;

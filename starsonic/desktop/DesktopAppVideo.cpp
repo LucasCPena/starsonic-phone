@@ -56,7 +56,7 @@ bool DesktopApp::VideoOn() const {
     return VideoEnabled(choices);
 }
 
-// O H.264 que vale: o download do modulo liberado no build (DesktopConfig::h264Download, desligado ate a etapa 2), e
+// O H.264 que vale: o download do modulo liberado no build (DesktopConfig::h264Download, ligado no app desde a etapa 2), e
 // ligado no cartao do administrador e pela pessoa.
 bool DesktopApp::H264Wanted() const {
     return config_.h264Download && admin_.Get().videoH264 && settings_.Get().h264Person;

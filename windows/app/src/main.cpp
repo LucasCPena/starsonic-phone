@@ -78,7 +78,7 @@
 
 using namespace starsonic;
 
-// (0.3.0) O windows/app/CMakeLists.txt define o STARSONIC_H264_DOWNLOAD (0 ou 1); sem ele, o download fica desligado.
+// (0.3.0) O windows/app/CMakeLists.txt define o STARSONIC_H264_DOWNLOAD (0 ou 1); sem ele, o download fica desligado (o CMakeLists.txt o liga desde a etapa 2).
 #ifndef STARSONIC_H264_DOWNLOAD
 #define STARSONIC_H264_DOWNLOAD 0
 #endif
@@ -442,8 +442,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     config.version = STARSONIC_VERSION;
     config.decrypt = [](const std::wstring& encrypted) { return LegacyDecrypt(encrypted); };
     config.computerName = ComputerName();
-    // (0.3.0) O download do modulo H.264 da Cisco, so com a opcao STARSONIC_H264_DOWNLOAD do build (desligada ate a
-    // etapa 2 do video trazer a chave, o aviso e a licenca da Cisco). Desligado, o nucleo nunca chama o h264Ensure: o
+    // (0.3.0) O download do modulo H.264 da Cisco, so com a opcao STARSONIC_H264_DOWNLOAD do build (ligada na
+    // etapa 2 do video, que trouxe a chave, o aviso e a licenca da Cisco). Desligado, o nucleo nunca chama o h264Ensure: o
     // app nao baixa nem carrega o modulo.
     config.h264Download = STARSONIC_H264_DOWNLOAD != 0;
 #if STARSONIC_TEST_HOOKS

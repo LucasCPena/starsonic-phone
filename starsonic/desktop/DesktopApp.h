@@ -123,9 +123,9 @@ struct DesktopConfig {
     // IPhone: o modo iPhone do docs/ponte-windows.md ("O modo iPhone"; ver o DesktopApp abaixo). Windows: o de sempre.
     Platform platform = Platform::Windows;
     // 0.3.0: o download do modulo H.264 da Cisco liberado neste build (a opcao STARSONIC_H264_DOWNLOAD do
-    // windows/app/CMakeLists.txt). Fica desligado ate a etapa 2 do video, que o liga junto com a chave da pessoa, o
+    // windows/app/CMakeLists.txt). A etapa 2 do video o ligou no app, junto com a chave da pessoa, o
     // aviso "OpenH264 Video Codec provided by Cisco Systems, Inc." e a licenca na tela de Licencas (as condicoes da
-    // licenca do binario). Desligado, o H.264 nao vale: a situacao fica "desligado", o modulo nunca e pedido
+    // licenca do binario). Desligado (o padrao do nucleo), o H.264 nao vale: a situacao fica "desligado", o modulo nunca e pedido
     // (hooks.h264Ensure) e o motor nunca recebe o h264Available.
     bool h264Download = false;
     DesktopPaths paths;

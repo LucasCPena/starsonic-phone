@@ -509,7 +509,7 @@ TEST_CASE("h264Retry asks again only after a failure") {
 }
 
 TEST_CASE("without the download allowed, H.264 stays off and is never fetched") {
-    // O build de agora: o DesktopConfig::h264Download desligado ate a etapa 2 (a chave, o aviso e a licenca da Cisco).
+    // O padrao do nucleo: o DesktopConfig::h264Download desligado (o app o liga desde a etapa 2, com a chave, o aviso e a licenca da Cisco).
     Harness h;
     h.Start();
     const json video = h.State()["video"];

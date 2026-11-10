@@ -8,7 +8,7 @@ project(starsonic_phone_windows C CXX RC)
 # quem chama e o build/Build-Windows.ps1:
 #   cmake -S windows/app -B <build> -A Win32 -DPJPROJECT_DIR=<work>/pjproject
 #         -DVCPKG_INSTALLED_DIR=<work>/vcpkg/installed/x86-windows-static -DWEBVIEW2_DIR=<work>/webview2
-#         -DSTARSONIC_VERSION=0.1.0-rc.1 [-DSTARSONIC_TEST_HOOKS=ON] [-DSTARSONIC_H264_DOWNLOAD=ON (so na etapa 2)]
+#         -DSTARSONIC_VERSION=0.1.0-rc.1 [-DSTARSONIC_TEST_HOOKS=ON] [-DSTARSONIC_H264_DOWNLOAD=OFF (um build sem o download)]
 if(NOT MSVC OR NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
   message(FATAL_ERROR "O app do Windows e Win32 (x86) com o MSVC: cmake -A Win32")
 endif()
@@ -25,11 +25,11 @@ set(WEBVIEW2_DIR "" CACHE PATH "O SDK do WebView2 extraido pelo Build-Deps.ps1 (
 set(STARSONIC_VERSION "0.0.0" CACHE STRING "A versao (X.Y.Z ou X.Y.Z-rc.N)")
 set(STARSONIC_CHANNEL "estavel" CACHE STRING "O canal de atualizacao (estavel ou teste)")
 option(STARSONIC_TEST_HOOKS "Build de teste: o STARSONIC_PERFIL e as ferramentas do desenvolvedor" OFF)
-# O download do modulo H.264 da Cisco (o DesktopConfig::h264Download do nucleo; spec da videochamada, 6.3). Desligado
-# em todo build ate a etapa 2 do video, que o liga junto com as condicoes da licenca do binario: a chave "H.264 da
+# O download do modulo H.264 da Cisco (o DesktopConfig::h264Download do nucleo; spec da videochamada, 6.3). Ligado
+# em todo build desde a etapa 2 do video, que o liga junto com as condicoes da licenca do binario: a chave "H.264 da
 # Cisco" das Configuracoes, o aviso "OpenH264 Video Codec provided by Cisco Systems, Inc." e o texto da licenca na tela
 # de Licencas. O release.yml publica o instalador que o build.yml compila: nenhum script passa esta opcao.
-option(STARSONIC_H264_DOWNLOAD "O app baixa e carrega o modulo H.264 da Cisco (etapa 2 do video)" OFF)
+option(STARSONIC_H264_DOWNLOAD "O app baixa e carrega o modulo H.264 da Cisco (ligado na etapa 2 do video)" ON)
 
 foreach(dir PJPROJECT_DIR VCPKG_INSTALLED_DIR WEBVIEW2_DIR)
   if(NOT ${dir} OR NOT IS_DIRECTORY "${${dir}}")

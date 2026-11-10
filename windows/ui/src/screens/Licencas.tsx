@@ -1,6 +1,8 @@
-// (iPhone) Os avisos de licença (spec do iPhone, 10), abertos pela linha "Avisos de licença" do Sobre: o nome, a versão e
-// o texto inteiro da licença de cada peça de terceiros do app do iPhone, como estão em assets/licencas-ios.txt (o mesmo
-// arquivo vai no pacote do app). O texto vem pelo fetch do mesmo lugar, que a CSP deixa (connect-src 'self'), e a tela o
+// Os avisos de licença, abertos pela linha "Avisos de licença" do Sobre: o nome, a versão e o texto inteiro da licença de
+// cada peça de terceiros do app, como estão em assets/licencas-ios.txt (iPhone, spec do iPhone, 10) ou em
+// assets/licencas-windows.txt (Windows: o OpenH264 da Cisco, a libvpx e a libyuv; o mesmo arquivo vai no pacote do app).
+// No Windows, o aviso da Cisco ("OpenH264 Video Codec provided by Cisco Systems, Inc.", que a licença do binário pede) fica
+// em destaque logo embaixo do título do OpenH264 (o quadro Licencas). O texto vem pelo fetch do mesmo lugar, que a CSP deixa (connect-src 'self'), e a tela o
 // mostra arrumado, sem mudar uma palavra: cada peça com o nome e a versão num título (no arquivo, a linha sublinhada com
 // "="); em cada parágrafo, as linhas comuns juntas, quebrando na largura da tela (no arquivo, elas quebram em umas 78
 // colunas); cada item de lista ("1.", "1)" ou "- ") com as linhas que o continuam, também as com recuo, num parágrafo
@@ -12,9 +14,11 @@
 import type { VNode } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import { BackBar } from '../components/BackBar';
+import { AVISO_DA_CISCO } from '../video/textos';
 
 const TITULO = 'Avisos de licença';
-const ARQUIVO = 'assets/licencas-ios.txt';
+const ARQUIVO_DO_IPHONE = 'assets/licencas-ios.txt';
+const ARQUIVO_DO_WINDOWS = 'assets/licencas-windows.txt';
 
 /**
  * Uma linha da tela: as linhas comuns de um parágrafo, juntas, ou (`fixa`) uma linha como está no arquivo. Num item de
@@ -90,12 +94,12 @@ function pecasDe(arquivo: string): Peca[] {
   }));
 }
 
-export function Licencas({ onBack }: { onBack(): void }): VNode {
+export function Licencas({ onBack, ios }: { onBack(): void; ios: boolean }): VNode {
   // null: lendo; false: o arquivo não veio.
   const [pecas, setPecas] = useState<Peca[] | false | null>(null);
   useEffect(() => {
     let aberta = true;
-    fetch(ARQUIVO)
+    fetch(ios ? ARQUIVO_DO_IPHONE : ARQUIVO_DO_WINDOWS)
       .then((resposta) => (resposta.ok ? resposta.text() : Promise.reject(new Error(`HTTP ${resposta.status}`))))
       .then(
         (lido) => aberta && setPecas(pecasDe(lido)),
@@ -104,7 +108,7 @@ export function Licencas({ onBack }: { onBack(): void }): VNode {
     return () => {
       aberta = false;
     };
-  }, []);
+  }, [ios]);
   return (
     <>
       <BackBar title={TITULO} onBack={onBack} />
@@ -117,6 +121,7 @@ export function Licencas({ onBack }: { onBack(): void }): VNode {
           pecas?.map((peca, i) => (
             <section key={i} class="licenca">
               {peca.titulo && <h2>{peca.titulo}</h2>}
+              {!ios && peca.titulo.startsWith('OpenH264 ') && <p class="licenca-destaque">{AVISO_DA_CISCO}</p>}
               {peca.paragrafos.map((paragrafo, j) => (
                 <p key={j}>
                   {paragrafo.map((linha, k) =>
