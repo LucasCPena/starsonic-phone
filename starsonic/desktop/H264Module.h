@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+namespace starsonic {
+
 struct H264Pin {
     std::string version, url, file, bz2Sha256, dllSha256;   // sha em hex minusculo
 };
@@ -45,3 +47,5 @@ private:
     std::string folder_;
     H264Io io_;
 };
+
+}  // namespace starsonic

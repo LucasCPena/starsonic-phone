@@ -1,6 +1,7 @@
 // O Bunzip2 (windows/app/src/Bunzip.h) com a libbz2 de verdade: o buffer comprimido no proprio teste.
 #include <bzlib.h>
 
+#include <cstdint>
 #include <string>
 
 #include "Bunzip.h"
@@ -33,6 +34,14 @@ TEST_CASE("Bunzip2 unpacks a bzip2 buffer") {
     CHECK(*out == data);
     // Exatamente no limite ainda passa.
     CHECK(Bunzip2(Compress(data), data.size()).has_value());
+}
+
+TEST_CASE("Bunzip2 with the largest limit (SIZE_MAX) unpacks the data") {
+    // O byte a mais que o limite (room + 1) daria a volta para 0: a libbz2 nao andaria, e o laco nunca acabaria.
+    const std::string data = Sample(100000);
+    const auto out = Bunzip2(Compress(data), SIZE_MAX);
+    REQUIRE(out.has_value());
+    CHECK(*out == data);
 }
 
 TEST_CASE("Bunzip2 refuses garbage") {

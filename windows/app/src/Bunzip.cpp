@@ -20,8 +20,9 @@ std::optional<std::string> Bunzip2(const std::string& compressed, size_t maxOut)
     try {
         while (ok && !ended) {
             const size_t room = maxOut - out.size();
-            // Um byte a mais que o limite: se ele sair, a saida passou do maxOut.
-            const size_t want = std::min(kChunk, room + 1);
+            // Um byte a mais que o limite: se ele sair, a saida passou do maxOut. Sem o room + 1 quando sobra mais
+            // que um pedaco: com o maxOut em SIZE_MAX, ele daria a volta para 0 e a libbz2 nao andaria.
+            const size_t want = room < kChunk ? room + 1 : kChunk;
             const size_t before = out.size();
             out.resize(before + want);
             const size_t left = std::min(compressed.size() - consumed, kUnsigned);
