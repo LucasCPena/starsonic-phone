@@ -1,5 +1,13 @@
 /work/
 /build-tests/
+# As pastas dos testes locais ("Como rodar os testes" dos planos e os jobs de testes do build.yml): o motor no Linux
+# (o prefixo pj-linux e o build-phone), o núcleo do desktop e o motor com o baresip.
+/build-desktop/
+/build-desktop-tests/
+/build-phone/
+/build-phone-baresip/
+/pj-linux/
+/baresip-linux/
 /out*/
 /dist/
 starsonic/generated/
