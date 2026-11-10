@@ -2,7 +2,7 @@
 """Teste de fumaça do app novo instalado no Windows (spec da W1, 11.2), pelo DevTools (CDP) do WebView2.
 
 Fumaça (padrão), contra o StarsonicPhone.exe instalado do build de teste (STARSONIC_TEST_HOOKS; o mesmo instalador):
-1. sobe o registrador falso (tests/smoke/fake_registrar.py, UDP e TCP na 5060, ramal 2001);
+1. sobe o registrador falso (tests/smoke/fake_registrar.py, UDP e TCP na 5060, ramal 2001, e a PORTA do vídeo na 40002);
 2. abre o app com WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333 (e o
    --autoplay-policy do próprio app, que a variável substitui), o perfil de teste (STARSONIC_PERFIL: o registrador
    falso na 5060 por UDP), o dispositivo de som nulo (STARSONIC_SOM_NULO: o runner não tem placa de som) e
@@ -158,6 +158,9 @@ EXPORT_CANCELLED = "exportar: a janela foi cancelada"
 VIDEO_BUFFER_BYTES = 6220864
 VIDEO_CALLER = "3001"
 VIDEO_NOTICE_HEIGHT = 222
+# A PORTA do vídeo do registrador falso (--video-port, a do uso dele): o RINGVIDEO do aviso com vídeo precisa dela. Nada
+# mais na fumaça usa essa porta, e o RTP do app fica bem abaixo dela (a partir da 4000).
+REGISTRAR_VIDEO_PORT = 40002
 H264_INSTALLED = "h264: instalado"
 H264_FAILED = "h264: download falhou"
 H264_WAIT = 90
@@ -274,17 +277,24 @@ def wait_for(condition, timeout, interval=0.25, pump=None):
 
 # ---- Registrador falso ----
 
+def registrar_command(python, port, control_port, log_file, video_port=REGISTRAR_VIDEO_PORT):
+    """A linha de comando do registrador falso: a porta SIP, os ramais, a senha, a porta de controle, o arquivo do
+    User-Agent e a PORTA do vídeo (sem ela, o RINGVIDEO responde "ERR no-video")."""
+    return [python, str(HERE / "fake_registrar.py"), "--port", str(port), "--user", RAMAL + "," + DESTINO,
+            "--password", SENHA, "--control-port", str(control_port), "--log", str(log_file),
+            "--video-port", str(video_port)]
+
+
 class Registrar:
     """O registrador falso (fake_registrar.py) e a porta de controle dele."""
 
-    def __init__(self, control_port, port=5060, python=sys.executable, start=True, log_dir=None):
+    def __init__(self, control_port, port=5060, python=sys.executable, start=True, log_dir=None,
+                 video_port=REGISTRAR_VIDEO_PORT):
         self.control_port = control_port
         self.process = None
         if start:
             log_dir = pathlib.Path(log_dir or tempfile.mkdtemp(prefix="starsonic-registrador-"))
-            command = [python, str(HERE / "fake_registrar.py"), "--port", str(port), "--user", RAMAL + "," + DESTINO,
-                       "--password", SENHA, "--control-port", str(control_port),
-                       "--log", str(log_dir / "user-agent.txt")]
+            command = registrar_command(python, port, control_port, log_dir / "user-agent.txt", video_port)
             self.process = subprocess.Popen(command)
             if not wait_for(self._listening, 15):
                 self.stop()

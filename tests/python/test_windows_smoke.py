@@ -117,11 +117,24 @@ class EventsTest(unittest.TestCase):
         self.assertEqual(windows_smoke.count_events(self.EVENTS, "bye"), 0)
 
 
+class RegistrarCommandTest(unittest.TestCase):
+    def test_the_registrar_command_carries_the_video_port(self):
+        # Sem a PORTA do vídeo, o RINGVIDEO do aviso com vídeo responde "ERR no-video".
+        command = windows_smoke.registrar_command("python", 5060, 5070, "ua.txt")
+        self.assertEqual(command[command.index("--video-port") + 1], str(windows_smoke.REGISTRAR_VIDEO_PORT))
+        self.assertEqual(windows_smoke.REGISTRAR_VIDEO_PORT, 40002)
+        for flag, value in (("--port", "5060"), ("--control-port", "5070"), ("--log", "ua.txt"), ("--password", "senha-certa")):
+            self.assertEqual(command[command.index(flag) + 1], value)
+        other = windows_smoke.registrar_command("python", 5060, 5070, "ua.txt", video_port=41000)
+        self.assertEqual(other[other.index("--video-port") + 1], "41000")
+
+
 class RegistrarControlTest(unittest.TestCase):
     """O Registrar do teste fala com o fake_registrar.py de verdade (portas livres, sem a 5060)."""
 
     def test_commands_and_the_call_log(self):
-        registrar = windows_smoke.Registrar(free_port(), port=free_port(socket.SOCK_DGRAM))
+        registrar = windows_smoke.Registrar(free_port(), port=free_port(socket.SOCK_DGRAM),
+                                            video_port=free_port(socket.SOCK_DGRAM))
         try:
             self.assertEqual(registrar.command("REGISTERS 2001"), ["0"])
             self.assertEqual(registrar.events(), [])
