@@ -419,14 +419,14 @@ void DesktopApp::Start() {
     Post([this] { Initialize(); });
 }
 
-void DesktopApp::HandleCommand(const std::string& json) {
+void DesktopApp::HandleCommand(const std::string& json, bool noticePage) {
     std::string error;
     std::optional<Command> command = ParseCommand(json, &error);
     if (!command) {
         Log("comando ignorado: " + error);
         return;
     }
-    Post([this, parsed = std::move(*command)] { Execute(parsed); });
+    Post([this, parsed = std::move(*command), noticePage] { Execute(parsed, noticePage); });
 }
 
 void DesktopApp::DialLink(const std::string& number) {
@@ -620,7 +620,7 @@ void DesktopApp::Post(std::function<void()> task) {
     if (!queued) Log("tarefa descartada: a fila de comandos ja parou");
 }
 
-void DesktopApp::Execute(const Command& command) {
+void DesktopApp::Execute(const Command& command, bool noticePage) {
     if (quitting_ && command.kind != CommandKind::Ready) {
         Log(std::string("comando ignorado depois do Sair: ") + CommandName(command.kind));
         return;
@@ -643,6 +643,13 @@ void DesktopApp::Execute(const Command& command) {
         case CommandKind::Ready:
             Log("interface pronta");
             interfaceReady_ = true;
+            // 0.3.0: a janela principal recarregou, ou o navegador foi refeito: o teste da camera que ficou ligado nao
+            // tem mais quem o desligue na pagina (a luz da camera ficaria acesa sem controle), e ele para antes do
+            // estado. O ready do aviso nao mexe nele. No iPhone o teste nunca liga.
+            if (!noticePage && cameraTest_) {
+                Log("video: o teste da camera parou (a janela principal recarregou)");
+                CameraTest(false);
+            }
             PublishState(/*force=*/true);
             if (IPhone()) {
                 // O estado, a agenda (se houve uma desde a abertura: com o vez 0 ela e vazia, como a da interface) e o

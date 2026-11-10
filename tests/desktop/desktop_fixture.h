@@ -314,6 +314,11 @@ struct Harness {
         app->HandleCommand(command);
         Run();
     }
+    // Um comando da pagina do aviso (o aviso.html).
+    void SendFromNotice(const std::string& command) {
+        app->HandleCommand(command, /*noticePage=*/true);
+        Run();
+    }
 
     std::vector<json> Messages(const std::string& type) const {
         std::vector<json> out;

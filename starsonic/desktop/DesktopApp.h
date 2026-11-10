@@ -311,8 +311,9 @@ struct DesktopHooks {
 //     OnVideoRefused do controlador: o refused do motor, ou o 488/415 que virou voz) vira um aviso (toast): o do H.264
 //     se o download, o cartao e a pessoa o ligam e o modulo nao esta instalado, senao o da outra ponta.
 //   - A camera (config.json: camera; "" = a primeira) vai ao motor na abertura e no setVideo; o teste da camera
-//     (cameraTest) e a lista de cameras (relida no RefreshAudioDevices) vao ao estado. O OnCameraProblem vira um aviso
-//     (toast); no OpenFailed, o texto depende do hooks.cameraBlocked (vazio: false).
+//     (cameraTest) e a lista de cameras (relida no RefreshAudioDevices) vao ao estado. O ready da janela principal
+//     (nao o do aviso: HandleCommand com noticePage) desliga o teste ligado. O OnCameraProblem vira um aviso (toast); no
+//     OpenFailed, o texto depende do hooks.cameraBlocked (vazio: false).
 //   - videoViews e videoWindow so repassam ao executavel (os ganchos); o modo da janela volta a normal quando a ultima
 //     ligacao acaba. O diagnostico nunca leva o nome da camera.
 class DesktopApp : public EngineListener {
@@ -338,8 +339,9 @@ public:
 
     // A abertura (uma vez): carrega as lojas, migra a rc.7, aplica as configuracoes e registra a conta em uso.
     void Start();
-    // Um comando da interface (JSON do protocolo). Invalido: ignorado, com uma linha no diagnostico.
-    void HandleCommand(const std::string& json);
+    // Um comando da interface (JSON do protocolo). Invalido: ignorado, com uma linha no diagnostico. noticePage: veio da
+    // pagina do aviso (o aviso.html), e nao da janela principal.
+    void HandleCommand(const std::string& json, bool noticePage = false);
     // O numero de um link tel:/sip:/callto: (ja lido): vai para o Teclado; nunca liga.
     void DialLink(const std::string& number);
     // Os dispositivos de som mudaram (um headset entrou ou saiu): o motor rele a lista do sistema
@@ -426,7 +428,8 @@ private:
     bool IPhone() const { return config_.platform == Platform::IPhone; }
     // Na thread de comandos (todas abaixo).
     void Post(std::function<void()> task);
-    void Execute(const Command& command);
+    // noticePage: o comando veio da pagina do aviso (HandleCommand).
+    void Execute(const Command& command, bool noticePage);
     void Initialize();
     void StartPcParts();
     void HandleLogin(const Command& command);

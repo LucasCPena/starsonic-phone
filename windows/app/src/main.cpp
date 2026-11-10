@@ -752,7 +752,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
             window.RequestQuit();
             return;
         }
-        app.HandleCommand(json);
+        // (0.3.0) Da pagina do aviso: o ready dela nao para o teste da camera (so o da janela principal).
+        app.HandleCommand(json, /*noticePage=*/true);
     };
     // Um headset entrou ou saiu (a janela ja esperou 1 s sem outro aviso): o DesktopApp rele na thread de comandos.
     callbacks.devicesChanged = [&app] { app.RefreshAudioDevices(); };

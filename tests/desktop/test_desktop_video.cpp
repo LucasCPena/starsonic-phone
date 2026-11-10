@@ -379,6 +379,35 @@ TEST_CASE("a camera that goes away or does not open stops the camera test") {
     CHECK(h.State()["video"]["teste"] == false);
 }
 
+TEST_CASE("the main page ready stops a running camera test") {
+    Harness h;
+    h.port.cameras = {VideoDevice{"Camera A"}};
+    h.Start();
+    h.Send(R"({"v":1,"cmd":"ready"})");   // o primeiro: nenhum teste para parar
+    CHECK(h.port.Count("stop") == 0);
+    h.Send(R"({"v":1,"cmd":"cameraTest","on":true})");
+    REQUIRE(h.State()["video"]["teste"] == true);
+
+    // O ready do aviso (o aviso.html que abriu ou recarregou) nao mexe no teste da janela principal.
+    h.SendFromNotice(R"({"v":1,"cmd":"ready"})");
+    CHECK(h.port.Count("stop") == 0);
+    CHECK(h.State()["video"]["teste"] == true);
+
+    // A janela principal recarregou, ou o navegador foi refeito: o teste que ficou ligado nao tem mais quem o desligue
+    // na pagina, e ele para. O estado que vai no ready ja diz.
+    h.posts.clear();
+    h.Send(R"({"v":1,"cmd":"ready"})");
+    CHECK(h.port.Count("stop") == 1);
+    const std::vector<json> states = h.Messages("state");
+    REQUIRE_FALSE(states.empty());
+    CHECK(states.front()["state"]["video"]["teste"] == false);
+    CHECK(h.State()["video"]["teste"] == false);
+
+    // Sem teste ligado, o ready nao chama o motor.
+    h.Send(R"({"v":1,"cmd":"ready"})");
+    CHECK(h.port.Count("stop") == 1);
+}
+
 TEST_CASE("videoViews goes to the hook with its page") {
     Harness h;
     h.Start();
@@ -635,6 +664,7 @@ TEST_CASE("the iPhone platform has no video") {
     h.Send(R"({"v":1,"cmd":"h264Retry"})");
     h.Send(R"({"v":1,"cmd":"videoViews","pagina":"aviso","vistas":["porteiro"]})");
     h.Send(R"({"v":1,"cmd":"videoWindow","modo":"grande"})");
+    h.Send(R"({"v":1,"cmd":"ready"})");
     CHECK(h.port.videoCalls.empty());
     CHECK(h.State()["video"]["ligado"] == false);
     CHECK(h.State()["video"]["teste"] == false);
