@@ -26,6 +26,7 @@
 import { createContext, type ComponentChildren, type VNode } from 'preact';
 import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { AtalhosPainel } from '../components/AtalhosPainel';
+import { VistaDeVideo } from '../components/VistaDeVideo';
 import { Menu } from '../components/Menu';
 import { Rediscar } from '../components/Rediscar';
 import { callTimer, contactNumberLine, digitsOnly, firstName, initials, nameOrNumber } from '../format';
@@ -54,7 +55,7 @@ import type { AppState, CallCard, CallState, CompanyContact, Contact } from '../
 import type { Send } from '../types';
 import { CaixaDoVideo, SuaImagemFlutuante } from '../video/CaixaDoVideo';
 import { cameraDesativada, videoDe, videoDoApp } from '../video/estado';
-import { CAMERA, DESLIGAR_A_CAMERA, LIGAR_A_CAMERA } from '../video/textos';
+import { ATENDER_COM_VIDEO, CAMERA, DESLIGAR_A_CAMERA, LIGAR_A_CAMERA, rotuloDoVideo } from '../video/textos';
 import { statusLine, useNow } from './tempoDaLigacao';
 
 interface Props {
@@ -136,13 +137,14 @@ function Ctrl({ label, nome, icon, onClick, pressed, aceso, disabled, popup, exp
 /**
  * Um botão redondo grande com o rótulo fora (Desligar e Recusar em vermelho, Atender em ciano). Quem usa passa o onClick
  * já com o semSegundoClique (no Windows): o núcleo age na primeira que toca, a cada comando, e o segundo clique do
- * Recusar recusaria a segunda ligação, que aparece com o botão no mesmo lugar (e o do Atender a atenderia).
+ * Recusar recusaria a segunda ligação, que aparece com o botão no mesmo lugar (e o do Atender a atenderia). O Atender com
+ * vídeo (`video`) é o Atender com a borda ciano e a câmera: só ele manda o `video: true`.
  */
-function RoundAction({ label, kind, onClick }: { label: string; kind: 'hang' | 'answer'; onClick(e: MouseEvent): void }) {
+function RoundAction({ label, kind, onClick }: { label: string; kind: 'hang' | 'answer' | 'video'; onClick(e: MouseEvent): void }) {
   return (
     <div class="round-action">
-      <button type="button" class={kind === 'hang' ? 'hang' : 'hang answer'} aria-label={label} onClick={onClick}>
-        <IconPhone size="lg" />
+      <button type="button" class={kind === 'hang' ? 'hang' : kind === 'video' ? 'hang answer-video' : 'hang answer'} aria-label={label} onClick={onClick}>
+        {kind === 'video' ? <IconVideo size="lg" /> : <IconPhone size="lg" />}
       </button>
       <span aria-hidden="true">{label}</span>
     </div>
@@ -530,8 +532,10 @@ export function CartaoDaOutra({ state, ligacao: l, send, now }: CartaoProps): VN
   const outra = !conferencia && l.secondKind === 'held' ? l.second : null;
   const consulta = l.consulting && outra !== null;
   if (segundaTocando) {
+    // O Atender com vídeo: a segunda oferece vídeo e o vídeo do app está ligado (nunca no iPhone).
+    const comVideo = videoDoApp(state).ligado && videoDe(state, segundaTocando).oferece;
     return (
-      <div class="vcard vcard-on" role="alert">
+      <div class={comVideo ? 'vcard vcard-on vcard-tres' : 'vcard vcard-on'} role="alert">
         <Avatar card={segundaTocando} />
         <span class="row-main">
           <span class="row-title">Ligação de {nameOrNumber(segundaTocando)}</span>
@@ -543,6 +547,17 @@ export function CartaoDaOutra({ state, ligacao: l, send, now }: CartaoProps): VN
         <button type="button" class="round-sm round-cyan" aria-label="Atender" title="Atender" onClick={semSegundoClique(!ios, () => send({ cmd: 'answer' }))}>
           <IconPhone />
         </button>
+        {comVideo && (
+          <button
+            type="button"
+            class="round-sm round-video"
+            aria-label={ATENDER_COM_VIDEO}
+            title={ATENDER_COM_VIDEO}
+            onClick={semSegundoClique(!ios, () => send({ cmd: 'answer', video: true }))}
+          >
+            <IconVideo />
+          </button>
+        )}
       </div>
     );
   }
@@ -677,6 +692,10 @@ export function Ligacao({ state, ligacao: l, contatos, daEmpresa, send }: Props)
   const video = videoDe(state, top);
   const comVideo = !tocando && l.second === null && painel === null && video.imagem;
   const suaFlutuante = !comVideo && video.camera;
+  // (vídeo, etapa 2) O porteiro que manda a imagem antes de atender: a imagem em cima, no lugar do avatar. O Atender com
+  // vídeo, com o vídeo do app ligado e a oferta da que toca.
+  const porteiro = tocando && video.cedo;
+  const atenderComVideo = tocando && videoDoApp(state).ligado && video.oferece;
 
   // O que fica no alto: a faixa da segunda que toca, ou o cartão da outra (em espera).
   const temCartao = segundaTocando !== null || outra !== null;
@@ -716,16 +735,24 @@ export function Ligacao({ state, ligacao: l, contatos, daEmpresa, send }: Props)
     );
   } else {
     const eyebrow = tocando ? `Ligação recebida · ${contaNome}` : consulta && l.colleagueActive ? 'Consultando' : 'Em ligação';
-    quem = (
+    const dele = (
       <div class={compacto ? 'who who-compact' : 'who'}>
         <span class="eyebrow">{eyebrow}</span>
-        {!compacto && <Avatar card={top} large />}
+        {!compacto && !porteiro && <Avatar card={top} large />}
         <span class="who-name">{nameOrNumber(top)}</span>
         {top.name && <span class="who-sub">{contactNumberLine(top.number)}</span>}
         {status && <span class="timer">{status}</span>}
         {top.held && !outra && <span class="tag">Em espera</span>}
         {painel === 'teclado' && digitos && <span class="dtmf">{ultimos(digitos)}</span>}
       </div>
+    );
+    quem = porteiro ? (
+      <>
+        <VistaDeVideo key={top.id} vista="remoto" desenhar={video.cedo} rotulo={rotuloDoVideo(nameOrNumber(top))} class="tocando-video" />
+        {dele}
+      </>
+    ) : (
+      dele
     );
   }
 
@@ -913,9 +940,12 @@ export function Ligacao({ state, ligacao: l, contatos, daEmpresa, send }: Props)
   let baixo;
   if (tocando) {
     baixo = (
-      <div class="call-actions">
+      <div class={atenderComVideo ? 'call-actions call-actions-tres' : 'call-actions'}>
         <RoundAction label="Recusar" kind="hang" onClick={semSegundoClique(!ios, () => send({ cmd: 'reject' }))} />
         <RoundAction label="Atender" kind="answer" onClick={semSegundoClique(!ios, () => send({ cmd: 'answer' }))} />
+        {atenderComVideo && (
+          <RoundAction label={ATENDER_COM_VIDEO} kind="video" onClick={semSegundoClique(!ios, () => send({ cmd: 'answer', video: true }))} />
+        )}
       </div>
     );
   } else if (consulta && outra) {

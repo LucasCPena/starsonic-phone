@@ -449,6 +449,14 @@ button.link { border: 0; background: transparent; padding: 0; font-family: inher
 .hang.answer { background: var(--cyan); color: var(--on-cyan); box-shadow: var(--shadow-cyan); }
 .hang.answer:hover { background: var(--cyan-d); }
 .hang.answer .ic { transform: none; }
+/* O Atender com vídeo: o Atender sem o fundo cheio, com a borda ciano e a câmera. */
+.hang.answer-video { background: rgba(0, 194, 203, 0.09); color: var(--cyan); border: 2px solid var(--cyan); }
+.hang.answer-video:hover { background: rgba(0, 194, 203, 0.2); }
+/* Três ações redondas (Recusar, Atender, Atender com vídeo): três colunas, o espaço 12. */
+.call-actions-tres { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start; justify-items: center; gap: 12px; }
+.call-actions-tres .round-action { text-align: center; }
+/* O porteiro tocando: a imagem 4:3 (267 de altura no Normal) encolhe com a janela, para os três botões caberem. */
+.tocando-video { width: 100%; max-height: 267px; flex: 1 1 0; min-height: 0; border-radius: 18px; border: 1px solid rgba(255, 255, 255, 0.1); }
 
 .vcard { width: 100%; display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 18px; background: rgba(255, 255, 255, 0.045); border: 1px solid rgba(255, 255, 255, 0.1); flex: none; }
 .vcard-on { background: rgba(0, 194, 203, 0.09); border-color: rgba(0, 194, 203, 0.5); }
@@ -465,6 +473,9 @@ button.link { border: 0; background: transparent; padding: 0; font-family: inher
 .round-danger:hover { background: #c23b3b; }
 .round-cyan { background: var(--cyan); color: var(--on-cyan); }
 .round-cyan:hover { background: var(--cyan-d); }
+.round-video { background: rgba(0, 194, 203, 0.09); color: var(--cyan); border: 1.5px solid var(--cyan); }
+.round-video:hover { background: rgba(0, 194, 203, 0.2); }
+.vcard-tres { gap: 8px; }
 .conf-list { list-style: none; margin: 0; padding: 0; width: 100%; display: flex; flex-direction: column; gap: 10px; }
 .conf-ic { color: var(--cyan); }
 
@@ -518,7 +529,8 @@ button.link { border: 0; background: transparent; padding: 0; font-family: inher
 .btn-complete { height: 54px; }
 .consult-note { margin: 0; font-size: 12.5px; line-height: 1.45; color: #b9c4e6; text-align: center; }
 
-/* O aviso do canto (aviso.html): 380×168, sem rolagem. Os cantos arredondados são do Windows 11 (DWM). */
+/* O aviso do canto (aviso.html): 380 de largura e 168 de altura (222 com o Atender com vídeo, 430 com a imagem do porteiro:
+   video/alturaDoAviso.ts), sem rolagem. Os cantos arredondados são do Windows 11 (DWM). */
 html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: var(--navy-950); }
 #aviso { width: 100%; height: 100%; }
 .aviso { width: 100%; height: 100%; box-sizing: border-box; display: flex; flex-direction: column; gap: 14px; padding: 18px 18px 16px; position: relative; overflow: hidden;
@@ -535,6 +547,12 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .aviso .btn { height: 44px; }
 .aviso-recusar { background: rgba(214, 69, 69, 0.16); color: #ffffff; border: 1.5px solid var(--danger); }
 .aviso-recusar:hover { background: rgba(214, 69, 69, 0.3); }
+/* O Atender com vídeo: a segunda linha da grade, na largura toda. */
+.aviso .aviso-video { grid-column: 1 / -1; font-weight: 700; font-size: 15px; background: rgba(0, 194, 203, 0.09); color: #ffffff; border: 1.5px solid var(--cyan); }
+.aviso .aviso-video:hover { background: rgba(0, 194, 203, 0.2); }
+.aviso .aviso-video .ic { color: var(--cyan); }
+/* A imagem do porteiro, em cima de tudo: 344×194. */
+.aviso-imagem { width: 344px; height: 194px; flex: none; border-radius: 12px; z-index: 1; }
 .aviso-erro { display: grid; place-items: center; text-align: center; font-size: 14px; font-weight: 700; }
 
 /* ---------------------------------------------------------------------------------------------------------
