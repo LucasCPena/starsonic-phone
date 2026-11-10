@@ -7,6 +7,8 @@
 #include <new>
 #include <vector>
 
+#include "HttpDeadline.h"
+
 #pragma comment(lib, "winhttp.lib")
 
 namespace {
@@ -50,13 +52,39 @@ HINTERNET OpenSession(const std::wstring& agent) {
 // O unico endereco que o HttpGetPinned aceita (o servidor de binarios da Cisco, que nao tem HTTPS).
 const wchar_t kPinnedPrefix[] = L"http://ciscobinary.openh264.org/";
 
-// bearer: a chave do HttpsGetBearer (o cabecalho Authorization e nenhum redirecionamento); nullptr no HttpsGet.
-// pinnedTimeoutMs > 0: o HttpGetPinned (HTTP so para o kPinnedPrefix, nenhum redirecionamento, esses tempos).
-HttpResponse Get(const std::wstring& url, size_t maxBytes, const std::wstring& userAgent, const std::string* bearer,
-                 int pinnedTimeoutMs = 0) {
-    const bool pinned = pinnedTimeoutMs > 0;
+// O que muda entre os tres GETs. O HttpsGet: nada. O HttpsGetBearer: a chave (o cabecalho Authorization e nenhum
+// redirecionamento). O HttpGetPinned: o pinned (HTTP so para o kPinnedPrefix, nenhum redirecionamento e o prazo total
+// de totalMs, maior que 0).
+struct GetOptions {
+    const std::string* bearer = nullptr;
+    bool pinned = false;
+    int totalMs = 0;
+};
+
+// O pinned, antes de cada espera do WinHTTP (o cabecalho da resposta ou um pedaco do corpo): com o prazo passado,
+// ERROR_WINHTTP_TIMEOUT; senao, a espera dura no maximo o que falta. Devolve 0 quando deu certo.
+DWORD LimitWait(HINTERNET request, const starsonic::HttpDeadline& deadline) {
+    const ULONGLONG now = GetTickCount64();
+    if (deadline.Passed(now)) return ERROR_WINHTTP_TIMEOUT;
+    DWORD wait = deadline.WaitMs(now);
+    // O RECEIVE_TIMEOUT vale para cada leitura; o RECEIVE_RESPONSE_TIMEOUT, para o cabecalho inteiro (um cabecalho que
+    // chega aos poucos).
+    if (!WinHttpSetOption(request, WINHTTP_OPTION_RECEIVE_TIMEOUT, &wait, sizeof(wait)) ||
+        !WinHttpSetOption(request, WINHTTP_OPTION_RECEIVE_RESPONSE_TIMEOUT, &wait, sizeof(wait))) {
+        const DWORD error = GetLastError();
+        return error ? error : ERROR_GEN_FAILURE;
+    }
+    return 0;
+}
+
+HttpResponse Get(const std::wstring& url, size_t maxBytes, const std::wstring& userAgent, const GetOptions& options) {
+    const bool pinned = options.pinned;
+    const std::string* bearer = options.bearer;
+    // O prazo total do pinned conta daqui: o nome, a conexao, o envio, a resposta e o corpo. So vale no pinned.
+    const starsonic::HttpDeadline deadline(GetTickCount64(), options.totalMs);
     if (pinned) {
-        if (url.compare(0, sizeof(kPinnedPrefix) / sizeof(wchar_t) - 1, kPinnedPrefix) != 0) {
+        if (options.totalMs <= 0 ||
+            url.compare(0, sizeof(kPinnedPrefix) / sizeof(wchar_t) - 1, kPinnedPrefix) != 0) {
             return Failure(ERROR_INVALID_PARAMETER);
         }
     } else if (url.compare(0, 8, L"https://") != 0) {
@@ -89,7 +117,8 @@ HttpResponse Get(const std::wstring& url, size_t maxBytes, const std::wstring& u
     Handle session(OpenSession(userAgent));
     if (!session) return Failure(GetLastError());
     if (pinned) {
-        WinHttpSetTimeouts(session.get(), pinnedTimeoutMs, pinnedTimeoutMs, pinnedTimeoutMs, pinnedTimeoutMs);
+        // O nome, a conexao e o envio (dentro do WinHttpSendRequest): ate totalMs cada. Depois, o prazo total.
+        WinHttpSetTimeouts(session.get(), options.totalMs, options.totalMs, options.totalMs, options.totalMs);
     } else {
         WinHttpSetTimeouts(session.get(), kConnectTimeoutMs, kConnectTimeoutMs, kReadTimeoutMs, kReadTimeoutMs);
     }
@@ -110,10 +139,15 @@ HttpResponse Get(const std::wstring& url, size_t maxBytes, const std::wstring& u
     }
     const wchar_t* extra = headers.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : headers.c_str();
     if (!WinHttpSendRequest(request.get(), extra, static_cast<DWORD>(headers.size()), WINHTTP_NO_REQUEST_DATA, 0, 0,
-                            0) ||
-        !WinHttpReceiveResponse(request.get(), NULL)) {
+                            0)) {
         return Failure(GetLastError());
     }
+    if (pinned) {
+        const DWORD error = LimitWait(request.get(), deadline);
+        if (error) return Failure(error);
+    }
+    if (!WinHttpReceiveResponse(request.get(), NULL)) return Failure(GetLastError());
+    if (pinned && deadline.Passed(GetTickCount64())) return Failure(ERROR_WINHTTP_TIMEOUT);
 
     DWORD status = 0;
     DWORD size = sizeof(status);
@@ -124,10 +158,22 @@ HttpResponse Get(const std::wstring& url, size_t maxBytes, const std::wstring& u
     std::string body;
     std::vector<char> buffer(64 * 1024);
     for (;;) {
+        DWORD want = static_cast<DWORD>(buffer.size());
+        if (pinned) {
+            const DWORD error = LimitWait(request.get(), deadline);
+            if (error) return Failure(error, status);
+            // O WinHttpReadData espera encher o que pede (um corpo que chega aos poucos o prenderia alem do prazo): o
+            // pinned so pede o que ja chegou. Com 0, o fim da resposta ou mais espera: pede 1 byte.
+            DWORD available = 0;
+            if (!WinHttpQueryDataAvailable(request.get(), &available)) return Failure(GetLastError(), status);
+            if (deadline.Passed(GetTickCount64())) return Failure(ERROR_WINHTTP_TIMEOUT, status);
+            want = available == 0 ? 1 : (available < want ? available : want);
+        }
         DWORD read = 0;
-        if (!WinHttpReadData(request.get(), buffer.data(), static_cast<DWORD>(buffer.size()), &read)) {
+        if (!WinHttpReadData(request.get(), buffer.data(), want, &read)) {
             return Failure(GetLastError(), status);
         }
+        if (pinned && deadline.Passed(GetTickCount64())) return Failure(ERROR_WINHTTP_TIMEOUT, status);
         if (read == 0) break;
         if (body.size() + read > maxBytes) {
             return Failure(ERROR_FILE_TOO_LARGE, status);
@@ -144,7 +190,7 @@ HttpResponse Get(const std::wstring& url, size_t maxBytes, const std::wstring& u
 
 HttpResponse HttpsGet(const std::wstring& url, size_t maxBytes, const std::wstring& userAgent) {
     try {
-        return Get(url, maxBytes, userAgent, nullptr);
+        return Get(url, maxBytes, userAgent, GetOptions());
     } catch (const std::bad_alloc&) {
         // Processo de 32 bits: um corpo grande pode nao caber na memoria.
         return Failure(ERROR_NOT_ENOUGH_MEMORY);
@@ -153,16 +199,23 @@ HttpResponse HttpsGet(const std::wstring& url, size_t maxBytes, const std::wstri
 
 HttpResponse HttpsGetBearer(const std::wstring& url, size_t maxBytes, const std::wstring& userAgent,
                             const std::string& bearer) {
+    GetOptions options;
+    options.bearer = &bearer;
     try {
-        return Get(url, maxBytes, userAgent, &bearer);
+        return Get(url, maxBytes, userAgent, options);
     } catch (const std::bad_alloc&) {
         return Failure(ERROR_NOT_ENOUGH_MEMORY);   // o arquivo do chat (ate 25 MB) num processo de 32 bits
     }
 }
 
 HttpResponse HttpGetPinned(const std::wstring& url, size_t maxBytes, const std::wstring& userAgent, int timeoutMs) {
+    // Sem um prazo de verdade, nenhum pedido: um timeoutMs <= 0 nunca vira um tempo do WinHTTP (0 e -1 sao sem limite).
+    if (timeoutMs <= 0) return Failure(ERROR_INVALID_PARAMETER);
+    GetOptions options;
+    options.pinned = true;
+    options.totalMs = timeoutMs;
     try {
-        return Get(url, maxBytes, userAgent, nullptr, timeoutMs > 0 ? timeoutMs : 1);
+        return Get(url, maxBytes, userAgent, options);
     } catch (const std::bad_alloc&) {
         return Failure(ERROR_NOT_ENOUGH_MEMORY);
     }

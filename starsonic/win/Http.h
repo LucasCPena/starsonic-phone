@@ -24,7 +24,12 @@ HttpResponse HttpsGetBearer(const std::wstring& url, size_t maxBytes, const std:
 
 // O GET sem TLS para um unico endereco: o binario do OpenH264 da Cisco (o servidor de binarios dela nao tem HTTPS; o
 // conteudo so vale depois das duas impressoes SHA-256 fixadas, H264Module). Todo endereco que nao comeca com
-// "http://ciscobinary.openh264.org/" falha com ERROR_INVALID_PARAMETER. Nunca segue redirecionamento (um 3xx volta como
-// a resposta), usa o proxy do Windows como o HttpsGet e desiste em timeoutMs (os tempos de conexao, envio e leitura do
-// WinHTTP). Resposta maior que maxBytes falha com ERROR_FILE_TOO_LARGE.
+// "http://ciscobinary.openh264.org/" falha com ERROR_INVALID_PARAMETER, e um timeoutMs <= 0 tambem. Nunca segue
+// redirecionamento (um 3xx volta como a resposta) e usa o proxy do Windows como o HttpsGet. Resposta maior que maxBytes
+// falha com ERROR_FILE_TOO_LARGE.
+// O prazo total, timeoutMs contado do inicio do pedido, falha com ERROR_WINHTTP_TIMEOUT. Ele e conferido depois do
+// envio, depois da resposta e depois de cada leitura, e cada espera pelo cabecalho ou pelo corpo dura no maximo o que
+// falta (pelo menos 1 ms). O corpo e lido so no que ja chegou (WinHttpQueryDataAvailable), entao um corpo que chega aos
+// poucos para no prazo. O que fica de fora: o nome, a conexao e o envio do pedido, dentro do WinHttpSendRequest, tem
+// ate timeoutMs cada (os tempos do WinHTTP); numa rede que trava ali, a falha vem logo depois, com o prazo ja passado.
 HttpResponse HttpGetPinned(const std::wstring& url, size_t maxBytes, const std::wstring& userAgent, int timeoutMs);
