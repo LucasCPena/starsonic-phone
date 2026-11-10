@@ -6,6 +6,9 @@
 
 namespace starsonic {
 
+// O teto de cada etapa antes da resposta: o nome, a conexao e o envio do pedido.
+const uint32_t kHttpPhaseMs = 15000;
+
 class HttpDeadline {
 public:
     // totalMs <= 0: o prazo ja passou (quem chama recusa antes; um negativo nunca vira um prazo sem fim).
@@ -20,6 +23,15 @@ public:
         if (nowMs >= endMs_) return 1;
         const uint64_t left = endMs_ - nowMs;
         return left > 0x7FFFFFFFu ? 0x7FFFFFFFu : static_cast<uint32_t>(left);
+    }
+
+    // O tempo de cada uma das tres etapas antes da resposta (o nome, a conexao e o envio, uma depois da outra dentro do
+    // WinHttpSendRequest): ate 15 s, e as tres juntas cabem no que falta (cada uma, no maximo um terco dele); pelo
+    // menos 1 ms. Com 60 s pela frente, 15 s cada.
+    uint32_t PhaseMs(uint64_t nowMs) const {
+        const uint32_t third = WaitMs(nowMs) / 3;
+        if (third < 1) return 1;
+        return third < kHttpPhaseMs ? third : kHttpPhaseMs;
     }
 
 private:

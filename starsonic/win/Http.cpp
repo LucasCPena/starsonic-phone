@@ -116,10 +116,8 @@ HttpResponse Get(const std::wstring& url, size_t maxBytes, const std::wstring& u
 
     Handle session(OpenSession(userAgent));
     if (!session) return Failure(GetLastError());
-    if (pinned) {
-        // O nome, a conexao e o envio (dentro do WinHttpSendRequest): ate totalMs cada. Depois, o prazo total.
-        WinHttpSetTimeouts(session.get(), options.totalMs, options.totalMs, options.totalMs, options.totalMs);
-    } else {
+    // O pinned acerta os tempos no pedido, logo antes do envio, com o que falta do prazo entao.
+    if (!pinned) {
         WinHttpSetTimeouts(session.get(), kConnectTimeoutMs, kConnectTimeoutMs, kReadTimeoutMs, kReadTimeoutMs);
     }
 
@@ -134,6 +132,16 @@ HttpResponse Get(const std::wstring& url, size_t maxBytes, const std::wstring& u
     if (bearer || pinned) {
         DWORD policy = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
         if (!WinHttpSetOption(request.get(), WINHTTP_OPTION_REDIRECT_POLICY, &policy, sizeof(policy))) {
+            return Failure(GetLastError());
+        }
+    }
+    if (pinned) {
+        // O nome, a conexao e o envio (uma etapa depois da outra, dentro do WinHttpSendRequest): ate 15 s cada, e as tres
+        // juntas cabem no que falta do prazo. A espera pela resposta fica com o que falta (o LimitWait, depois do envio).
+        const ULONGLONG now = GetTickCount64();
+        if (deadline.Passed(now)) return Failure(ERROR_WINHTTP_TIMEOUT);
+        const int phase = static_cast<int>(deadline.PhaseMs(now));
+        if (!WinHttpSetTimeouts(request.get(), phase, phase, phase, static_cast<int>(deadline.WaitMs(now)))) {
             return Failure(GetLastError());
         }
     }
