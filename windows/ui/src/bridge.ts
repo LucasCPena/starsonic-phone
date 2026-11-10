@@ -127,7 +127,13 @@ export function createBridge(): Bridge {
         if (vista) listener(vista, buffer);
         else target.releaseBuffer?.(buffer);
       };
-      target.addEventListener('sharedbufferreceived', handler);
+      // (Ruling 19) A assinatura roda quando a página carrega, antes de a plataforma vir no estado: um hospedeiro que
+      // recusa o evento com um erro (o do iPhone só promete o `message`) fica sem as memórias, e o app abre assim mesmo.
+      try {
+        target.addEventListener('sharedbufferreceived', handler);
+      } catch {
+        return () => {};
+      }
       return () => target.removeEventListener('sharedbufferreceived', handler);
     },
     releaseBuffer(buffer) {
