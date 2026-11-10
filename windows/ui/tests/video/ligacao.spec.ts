@@ -47,10 +47,6 @@ function dentro(b: Caixa, largura: number, altura: number): boolean {
   return b.x >= -0.5 && b.y >= -0.5 && b.x + b.width <= largura + 0.5 && b.y + b.height <= altura + 0.5;
 }
 
-function seCruzam(a: Caixa, b: Caixa): boolean {
-  return a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
-}
-
 /** Espera a cor (perto, com a tolerância de 2) no meio do alvo; na falha, mostra a última cor lida. */
 async function esperarCorNoMeio(page: Page, alvo: Locator, esperada: number[]): Promise<void> {
   await expect
@@ -86,17 +82,51 @@ async function botoesNaJanela(page: Page, largura: number, altura: number): Prom
   }
 }
 
-/** A sua imagem não cobre nenhum botão nem campo da tela da ligação. */
+/**
+ * A sua imagem não cobre nenhum botão, campo nem linha de lista da tela da ligação. Conta só a parte de cada um que está à
+ * vista: uma linha que a lista rolou para fora (cortada pelo overflow dela) não está na tela.
+ */
 async function semCobrirNada(page: Page, sua: Caixa): Promise<void> {
-  const alvos = page.locator('main.call-body :is(button, input)');
-  const n = await alvos.count();
-  for (let i = 0; i < n; i++) {
-    const c = await alvos.nth(i).boundingBox();
-    if (!c) continue;
-    const nome = (await alvos.nth(i).getAttribute('aria-label')) ?? (await alvos.nth(i).innerText());
-    expect(seCruzam(sua, c), `a sua imagem cobre ${nome}: ${JSON.stringify({ sua, c })}`).toBe(false);
-  }
+  const cobertos = await page.evaluate((s) => {
+    const aVista = (e: Element) => {
+      const r = e.getBoundingClientRect();
+      let [x0, y0, x1, y1] = [r.left, r.top, r.right, r.bottom];
+      for (let a = e.parentElement; a && a.tagName !== 'MAIN'; a = a.parentElement) {
+        const estilo = getComputedStyle(a);
+        if (estilo.overflowX === 'visible' && estilo.overflowY === 'visible') continue;
+        const q = a.getBoundingClientRect();
+        [x0, y0, x1, y1] = [Math.max(x0, q.left), Math.max(y0, q.top), Math.min(x1, q.right), Math.min(y1, q.bottom)];
+      }
+      return x1 > x0 && y1 > y0 ? { x0, y0, x1, y1 } : null;
+    };
+    return [...document.querySelectorAll('main.call-body :is(button, input, [role="option"])')].flatMap((e) => {
+      const v = aVista(e);
+      const cobre = v !== null && v.x0 < s.x + s.width && s.x < v.x1 && v.y0 < s.y + s.height && s.y < v.y1;
+      return cobre ? [`${e.getAttribute('aria-label') ?? e.textContent?.trim()} ${JSON.stringify(v)}`] : [];
+    });
+  }, sua);
+  expect(cobertos, `a sua imagem (${JSON.stringify(sua)}) cobre`).toEqual([]);
 }
+
+/** O rótulo de cada controle inteiro na coluna dele (nenhum passa por baixo do vizinho). */
+async function rotulosInteiros(page: Page, onde: string): Promise<void> {
+  const sobram = await page
+    .locator('.ctrls button.ctrl')
+    .evaluateAll((bs) => bs.filter((b) => b.scrollWidth > b.clientWidth + 0.5).map((b) => b.textContent?.trim()));
+  expect(sobram, `rótulos maiores que a coluna em ${onde}`).toEqual([]);
+}
+
+/** A câmera da ligação de cima ligada (o motor deixa o vídeo da ligação ativa, também com a outra em espera). */
+const comCameraNaDeCima = (s: Record<string, any>) => ({
+  ...s,
+  ligacao: { ...s.ligacao, top: { ...s.ligacao.top, video: { ...SEM_VIDEO, ativo: true, camera: true } } },
+});
+
+/** A segunda ligação (o Carlos) tocando, na faixa de cima. */
+const comASegundaTocando = (s: Record<string, any>) => ({
+  ...s,
+  ligacao: { ...s.ligacao, second: carlos({ incoming: true, phase: 'ringing', activeSinceMs: 0 }), secondKind: 'ringing' },
+});
 
 test('the video call shows the other side big, your image in the corner and Abrir grande', async ({ page }) => {
   await abrir(page, 'video');
@@ -209,20 +239,79 @@ test("a voice call keeps today's screen, with your image when the camera is on",
   await expect(camera(page)).toHaveAccessibleName('Ligar a câmera');
 });
 
-test('with two calls there is no video and no Câmera', async ({ page }) => {
-  for (const cenario of ['duas-ligacoes', 'conferencia']) {
-    await abrir(page, cenario);
-    await expect(botao(page, 'Mudo'), cenario).toBeVisible();
-    // Mesmo com a imagem da de cima chegando.
-    await mudarEstado(page, (s) => ({
-      ...s,
-      ligacao: { ...s.ligacao, top: { ...s.ligacao.top, video: { ...SEM_VIDEO, ativo: true, imagem: true } } },
-    }));
-    await expect(botao(page, 'Mudo'), cenario).toBeVisible();
-    await expect(camera(page), cenario).toHaveCount(0);
-    await expect(qualquerCamera(page), cenario).toHaveCount(0);
-    await expect(qualquerRemoto(page), cenario).toHaveCount(0);
-    await expect(botao(page, 'Abrir grande'), cenario).toHaveCount(0);
+test('with two calls the Câmera only turns the camera off', async ({ page }) => {
+  // Duas ligações (a outra em espera): nenhum vídeo desenhado, e a Câmera, depois do Mudo, nunca liga a câmera.
+  await abrir(page, 'duas-ligacoes');
+  const c = camera(page);
+  await expect(page.locator('.ctrls > *')).toHaveText(['Mudo', 'Câmera', 'Teclado', 'Áudio', 'Espera', 'Transferir', 'Alternar', 'Juntar', 'Atalhos']);
+  await expect(page.locator('.ctrls')).toHaveClass(/(^|\s)ctrls-5(\s|$)/);
+  await expect(c).toHaveAccessibleName('Ligar a câmera');
+  await expect(c).toBeDisabled();
+  // A câmera da de cima ligada (o motor deixa o vídeo da ativa), mesmo com a imagem da outra ponta chegando: ela desliga.
+  await mudarEstado(page, (s) => ({
+    ...s,
+    ligacao: { ...s.ligacao, top: { ...s.ligacao.top, video: { ...SEM_VIDEO, ativo: true, imagem: true, camera: true } } },
+  }));
+  await expect(c).toHaveAccessibleName('Desligar a câmera');
+  await expect(c).toBeEnabled();
+  await expect(c).toHaveClass(/(^|\s)ctrl-on(\s|$)/);
+  await expect(qualquerRemoto(page)).toHaveCount(0);
+  await expect(botao(page, 'Abrir grande')).toHaveCount(0);
+  await expect(suaImagem(page)).toBeVisible();
+  await c.click();
+  await esperarComando(page, { cmd: 'camera', on: false });
+  await expect(c).toHaveAccessibleName('Ligar a câmera');
+  await expect(c).toBeDisabled();
+  await expect(suaImagem(page)).toHaveCount(0);
+
+  // A consulta com a câmera ligada: Mudo, Câmera, Alternar e Cancelar, numa fila.
+  await abrir(page, 'consulta');
+  await expect(c).toHaveAccessibleName('Ligar a câmera');
+  await expect(c).toBeDisabled();
+  await mudarEstado(page, comCameraNaDeCima);
+  await expect(c).toHaveAccessibleName('Desligar a câmera');
+  await expect(c).toBeEnabled();
+  await expect(page.locator('.ctrls > *')).toHaveText(['Mudo', 'Câmera', 'Alternar', 'Cancelar']);
+  await expect(page.locator('.ctrls')).toHaveClass(/(^|\s)ctrls-4(\s|$)/);
+
+  // A conferência (o motor pausa todo vídeo nela): nenhum vídeo, e nenhuma Câmera.
+  await abrir(page, 'conferencia');
+  await mudarEstado(page, (s) => ({
+    ...s,
+    ligacao: { ...s.ligacao, top: { ...s.ligacao.top, video: { ...SEM_VIDEO, ativo: true, imagem: true } } },
+  }));
+  await expect(botao(page, 'Separar')).toBeVisible();
+  await expect(camera(page)).toHaveCount(0);
+  await expect(qualquerCamera(page)).toHaveCount(0);
+  await expect(qualquerRemoto(page)).toHaveCount(0);
+  await expect(botao(page, 'Abrir grande')).toHaveCount(0);
+});
+
+test('the two-call and consultation controls fit the three sizes', async ({ page }) => {
+  for (const [largura, altura] of [
+    [400, 720],
+    [360, 600],
+    [300, 440],
+  ] as const) {
+    await page.setViewportSize({ width: largura, height: altura });
+    for (const [cenario, quantos, grade] of [
+      ['duas-ligacoes', 9, 'ctrls-5'],
+      ['consulta', 4, 'ctrls-4'],
+    ] as const) {
+      const onde = `${cenario} em ${largura}×${altura}`;
+      await abrir(page, cenario);
+      await mudarEstado(page, comCameraNaDeCima);
+      await expect(camera(page), onde).toHaveAccessibleName('Desligar a câmera');
+      await expect(page.locator('.ctrls > *'), onde).toHaveCount(quantos);
+      await expect(page.locator('.ctrls'), onde).toHaveClass(new RegExp(`(^|\\s)${grade}(\\s|$)`));
+      const sobra = await page.evaluate(() => document.scrollingElement!.scrollHeight - innerHeight);
+      expect(sobra, `a página rola: ${onde}`).toBeLessThanOrEqual(0);
+      await botoesNaJanela(page, largura, altura);
+      await rotulosInteiros(page, onde);
+      const s = await caixa(suaImagem(page));
+      expect(dentro(s, largura, altura), `a sua imagem fora da janela: ${onde}`).toBe(true);
+      await semCobrirNada(page, s);
+    }
   }
 });
 
@@ -231,7 +320,22 @@ test('the remote view never shows a frame of the previous call', async ({ page }
   await quadro(page, 'remoto', VERMELHO);
   await esperarCorNoMeio(page, remoto(page), RGB_DO_VERMELHO);
 
-  // A de cima vira o Carlos, ainda sem a imagem: a área do vídeo sai.
+  // A de cima vira o Carlos de uma vez, já com a imagem (a área fica na tela): a vista dele é outra (o `key` do id), só
+  // com o fundo, mesmo com o vermelho da Ana ainda na memória.
+  await mudarEstado(page, (s) => ({ ...s, ligacao: { ...s.ligacao, top: carlos({ video: { ...SEM_VIDEO, ativo: true, imagem: true } }) } }));
+  const doCarlos = remoto(page, 'Carlos Lima');
+  await expect(doCarlos).toBeVisible();
+  await expect(doCarlos).toHaveAttribute('data-memoria');
+  await quadrosDeTela(page, 10);
+  const logo = await corNoMeio(page, doCarlos);
+  expect(perto(logo, FUNDO), `o quadro da Ana apareceu na vista do Carlos: ${logo}`).toBe(true);
+  await quadro(page, 'remoto', BRANCO);
+  await esperarCorNoMeio(page, doCarlos, RGB_DO_BRANCO);
+
+  // De novo, pela área que sai e volta: a Ana, com um quadro dela na memória, e o Carlos sem a imagem (a área sai).
+  await abrir(page, 'video');
+  await quadro(page, 'remoto', VERMELHO);
+  await esperarCorNoMeio(page, remoto(page), RGB_DO_VERMELHO);
   await mudarEstado(page, (s) => ({ ...s, ligacao: { ...s.ligacao, top: carlos({ video: { ...SEM_VIDEO, ativo: true } }) } }));
   await expect(page.locator('.who-name')).toHaveText('Carlos Lima');
   await expect(qualquerRemoto(page)).toHaveCount(0);
@@ -249,42 +353,68 @@ test('the remote view never shows a frame of the previous call', async ({ page }
   await esperarCorNoMeio(page, area, RGB_DO_BRANCO);
 });
 
-test('your image stays in sight with every panel', async ({ page }) => {
-  await abrir(page, 'video');
+/**
+ * Abre cada painel da lista, um de cada vez, e confere a sua imagem à vista, inteira na janela e sem cobrir nenhum botão,
+ * campo ou linha. Depois de cada um, a tela da ligação volta (`voltou`).
+ */
+async function comCadaPainel(page: Page, onde: string, paineis: string[], voltou: () => Promise<void>): Promise<void> {
+  const { width: largura, height: altura } = page.viewportSize()!;
   const sua = suaImagem(page);
-  await expect(sua).toBeVisible();
   const aVista = async (painel: string) => {
-    await expect(sua, painel).toBeVisible();
+    await expect(sua, `${painel}, ${onde}`).toBeVisible();
     const s = await caixa(sua);
-    expect(dentro(s, 400, 720), `${painel}: ${JSON.stringify(s)}`).toBe(true);
+    expect(dentro(s, largura, altura), `${painel}, ${onde}: ${JSON.stringify(s)}`).toBe(true);
     await semCobrirNada(page, s);
   };
+  for (const painel of paineis) {
+    await botao(page, painel).click();
+    if (painel === 'Teclado') {
+      await expect(page.getByRole('group', { name: 'Teclado da ligação' })).toBeVisible();
+      await aVista(painel);
+      await botao(page, 'Teclado').click();
+    } else if (painel === 'Atalhos') {
+      await expect(botao(page, 'Fechar atalhos')).toBeVisible();
+      await aVista(painel);
+      await botao(page, 'Fechar atalhos').click();
+    } else {
+      const rotulo = painel === 'Transferir' ? 'Número para transferir' : 'Número da nova ligação';
+      await expect(page.getByRole('combobox', { name: rotulo })).toBeVisible();
+      await aVista(painel);
+      await page.locator('.call-panel').getByRole('button', { name: 'Cancelar', exact: true }).click();
+    }
+    await voltou();
+  }
+}
 
-  await botao(page, 'Teclado').click();
-  await expect(page.getByRole('group', { name: 'Teclado da ligação' })).toBeVisible();
-  await aVista('Teclado');
-  await botao(page, 'Teclado').click();
-  await expect(remoto(page)).toBeVisible();
+// Uma ligação só (com o vídeo) e um cartão em cima, nos três tamanhos e na janela do Normal mais baixa que 720 (onde quem
+// fala sai com um painel aberto e um cartão em cima).
+for (const [largura, altura] of [
+  [400, 720],
+  [400, 680],
+  [400, 600],
+  [360, 600],
+  [300, 440],
+] as const) {
+  test(`your image stays in sight with every panel (${largura}×${altura})`, async ({ page }) => {
+    await page.setViewportSize({ width: largura, height: altura });
+    await abrir(page, 'video');
+    await expect(suaImagem(page)).toBeVisible();
+    await comCadaPainel(page, 'uma ligação', ['Teclado', 'Transferir', 'Nova ligação', 'Atalhos'], () => expect(remoto(page)).toBeVisible());
 
-  await botao(page, 'Transferir').click();
-  await expect(page.getByRole('combobox', { name: 'Número para transferir' })).toBeVisible();
-  await aVista('Transferir');
-  await botao(page, 'Cancelar').click();
-  await expect(remoto(page)).toBeVisible();
-
-  await botao(page, 'Nova ligação').click();
-  await expect(page.getByRole('combobox', { name: 'Número da nova ligação' })).toBeVisible();
-  await aVista('Nova ligação');
-  await botao(page, 'Cancelar').click();
-  await expect(remoto(page)).toBeVisible();
-
-  await botao(page, 'Atalhos').click();
-  await expect(botao(page, 'Fechar atalhos')).toBeVisible();
-  await aVista('Atalhos');
-  await botao(page, 'Fechar atalhos').click();
-  await expect(remoto(page)).toBeVisible();
-  await expect(sua).toBeVisible();
-});
+    // Com um cartão em cima (sem a Nova ligação, que espera a outra sair): a outra em espera com a câmera da de cima
+    // ligada, e a segunda tocando numa ligação com vídeo.
+    for (const [cenario, mudar, onde] of [
+      ['duas-ligacoes', comCameraNaDeCima, 'a outra em espera'],
+      ['video', comASegundaTocando, 'a segunda tocando'],
+    ] as const) {
+      await abrir(page, cenario);
+      await mudarEstado(page, mudar);
+      await expect(page.locator('.vcard')).toBeVisible();
+      await expect(suaImagem(page), onde).toBeVisible();
+      await comCadaPainel(page, onde, ['Teclado', 'Transferir', 'Atalhos'], () => expect(botao(page, 'Mudo')).toBeVisible());
+    }
+  });
+}
 
 test('the video problem notices stay 5 seconds, the others 2', async ({ page }) => {
   const inicio = new Date('2026-11-10T14:00:00-03:00').getTime();

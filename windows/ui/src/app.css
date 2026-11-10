@@ -1262,6 +1262,13 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .win.call[data-layout="minimo"] .sua-flutuante { width: 64px; height: 48px; border-radius: 8px; }
 .win.call[data-layout="minimo"] .call-alto > .sua-flutuante { top: calc(100% + 8px); right: 4px; }
 .win.call[data-layout="minimo"] .call-sua-imagem .who { max-width: calc(100% - 136px); }
+/* Com o cartão em cima e um painel aberto (o Transferir, os Atalhos), a sua imagem vai para o canto de baixo à direita, a
+   16 dele, ao lado do Desligar (o único botão embaixo do painel). Embaixo do cartão, ela cobriria o painel na janela
+   baixa, onde quem fala sai e o painel sobe até o cartão (o campo, o Fechar atalhos). */
+.call-painel-cartao .call-alto { position: static; }
+.call-painel-cartao .call-alto > .sua-flutuante,
+.win.call[data-layout="compacto"] .call-painel-cartao .call-alto > .sua-flutuante,
+.win.call[data-layout="minimo"] .call-painel-cartao .call-alto > .sua-flutuante { top: auto; right: 16px; bottom: 16px; }
 
 /* ---------------------------------------------------------------------------------------------------------
    O modo iPhone (plataforma.ts: o .win leva data-plataforma="ios"); fora dele, nada daqui vale. A área segura (em cima

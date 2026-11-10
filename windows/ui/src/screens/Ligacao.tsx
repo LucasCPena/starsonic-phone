@@ -16,11 +16,13 @@
 // lugar do menu dos dispositivos; sem o botão Atalhos (fora da 1.0), uma ligação fica em três colunas (6 controles) e
 // duas em quatro (7). Cada tecla do teclado da ligação manda, junto do dtmf, o `keyTone` com ela, com o Bipe ao digitar
 // ligado (o `config.bipeTecla`).
-// (vídeo, etapa 2) Com o vídeo ligado, a Câmera entra nos controles de uma ligação, depois do Mudo (a regra dela é o
-// cameraDesativada). Numa ligação só, fora do toque, sem painel aberto e com a imagem da outra ponta chegando, a área do
+// (vídeo, etapa 2) Com o vídeo ligado, a Câmera entra nos controles, depois do Mudo: numa ligação, com a regra do
+// cameraDesativada; com duas (também na consulta), só para desligar a câmera (o motor deixa o vídeo da ligação ativa); na
+// conferência, não. Numa ligação só, fora do toque, sem painel aberto e com a imagem da outra ponta chegando, a área do
 // vídeo (CaixaDoVideo.tsx) toma o lugar de quem fala. Fora dela, com a câmera ligada, a sua imagem flutua no canto de cima
-// à direita (também com um painel aberto), e embaixo do cartão da outra ligação quando ele está em cima. As colunas dos
-// controles seguem quantos são. O cartão da outra ligação (o CartaoDaOutra) também vai ao grande e à tela cheia.
+// à direita (também com um painel aberto): embaixo do cartão da outra ligação quando ele está em cima, e no canto de
+// baixo, ao lado do Desligar, com ele e um painel aberto. As colunas dos controles seguem quantos são. O cartão da outra
+// ligação (o CartaoDaOutra) também vai ao grande e à tela cheia.
 import { createContext, type ComponentChildren, type VNode } from 'preact';
 import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { AtalhosPainel } from '../components/AtalhosPainel';
@@ -777,30 +779,35 @@ export function Ligacao({ state, ligacao: l, contatos, daEmpresa, send }: Props)
     <Ctrl label="Atalhos" icon={<IconBolt />} disabled={!falando || !temAtalhos} ctrlRef={atalhosRef} onClick={() => setPainel('atalhos')} />
   );
   // (vídeo, etapa 2) A Câmera, só com o vídeo ligado (nunca no iPhone): o nome diz a ação, e ela fica acesa com a câmera
-  // ligada. Desligada, ela espera o atender e a volta da espera; ligada, sempre desliga.
-  const cameraCtrl = videoDoApp(state).ligado ? (
-    <Ctrl
-      label={CAMERA}
-      nome={video.camera ? DESLIGAR_A_CAMERA : LIGAR_A_CAMERA}
-      icon={video.camera ? <IconVideo /> : <IconVideoOff />}
-      aceso={video.camera}
-      disabled={cameraDesativada(top, video)}
-      onClick={() => send({ cmd: 'camera', on: !video.camera })}
-    />
-  ) : null;
+  // ligada. Numa ligação, desligada, ela espera o atender e a volta da espera (o cameraDesativada); ligada, sempre
+  // desliga. Com duas (a outra em espera, também na consulta), ela só desliga: o motor deixa o vídeo da ligação ativa, e a
+  // câmera que manda sempre tem como ser desligada, mas nenhuma liga com duas ligações.
+  const cameraCtrl = (soDesliga: boolean) =>
+    videoDoApp(state).ligado ? (
+      <Ctrl
+        label={CAMERA}
+        nome={video.camera ? DESLIGAR_A_CAMERA : LIGAR_A_CAMERA}
+        icon={video.camera ? <IconVideo /> : <IconVideoOff />}
+        aceso={video.camera}
+        disabled={soDesliga ? !video.camera : cameraDesativada(top, video)}
+        onClick={() => send({ cmd: 'camera', on: !video.camera })}
+      />
+    ) : null;
 
-  // Os controles: na conferência, Mudo, Teclado e Separar; na consulta, Mudo, Alternar e Cancelar; com duas,
-  // Mudo, Teclado, Áudio, Espera, Transferir, Alternar, Juntar e Atalhos; com uma, Mudo, Câmera (com o vídeo ligado),
-  // Teclado, Áudio, Espera, Transferir, Nova ligação e Atalhos. (iPhone) Sem o Atalhos. O lugar de um que não vem fica
-  // vazio (null), e a tela não remonta os outros quando ele chega.
+  // Os controles: na conferência, Mudo, Teclado e Separar (o motor pausa todo vídeo nela: sem a Câmera); na consulta,
+  // Mudo, Câmera, Alternar e Cancelar; com duas, Mudo, Câmera, Teclado, Áudio, Espera, Transferir, Alternar, Juntar e
+  // Atalhos; com uma, Mudo, Câmera, Teclado, Áudio, Espera, Transferir, Nova ligação e Atalhos. A Câmera só vem com o vídeo
+  // ligado; (iPhone) sem ela e sem o Atalhos. O lugar de um que não vem fica vazio (null), e a tela não remonta os outros
+  // quando ele chega.
   let controles: Array<VNode | null>;
   if (conferencia) {
     controles = [mudo, teclado, <Ctrl label="Separar" icon={<IconSplit />} onClick={() => send({ cmd: 'split' })} />];
   } else if (consulta) {
-    controles = [mudo, alternar, <Ctrl label="Cancelar" icon={<IconClose />} onClick={() => send({ cmd: 'cancelConsult' })} />];
+    controles = [mudo, cameraCtrl(true), alternar, <Ctrl label="Cancelar" icon={<IconClose />} onClick={() => send({ cmd: 'cancelConsult' })} />];
   } else if (outra) {
     controles = [
       mudo,
+      cameraCtrl(true),
       teclado,
       audioCtrl,
       espera,
@@ -812,7 +819,7 @@ export function Ligacao({ state, ligacao: l, contatos, daEmpresa, send }: Props)
   } else {
     controles = [
       mudo,
-      cameraCtrl,
+      cameraCtrl(false),
       teclado,
       audioCtrl,
       espera,
@@ -895,10 +902,12 @@ export function Ligacao({ state, ligacao: l, contatos, daEmpresa, send }: Props)
   } else if (painel === 'atalhos') {
     meio = <AtalhosPainel atalhos={state.atalhos} ligacao={l} send={send} onClose={fecharAtalhos} onUsed={fecharAtalhos} />;
   } else {
-    // As colunas seguem quantos controles há: com 9 (uma ligação com a Câmera e o Chat), cinco; com 7 ou 8 (uma ligação,
-    // ou duas), quatro; com menos (a consulta e a conferência, e uma ligação no iPhone, sem o Atalhos), três.
+    // As colunas seguem quantos controles há. Numa fila só: 3 (a conferência, e a consulta sem a Câmera) e 4 (a consulta
+    // com ela). Em duas filas: 6 em três colunas (uma ligação no iPhone, sem o Atalhos), 7 e 8 em quatro, e 9 em cinco
+    // (duas ligações com a Câmera).
     const quantos = controles.filter((c) => c !== null).length;
-    meio = <div class={quantos >= 9 ? 'ctrls ctrls-5' : quantos >= 7 ? 'ctrls ctrls-4' : 'ctrls'}>{controles}</div>;
+    const grade = quantos >= 9 ? 'ctrls ctrls-5' : quantos >= 7 || quantos === 4 ? 'ctrls ctrls-4' : 'ctrls';
+    meio = <div class={grade}>{controles}</div>;
   }
 
   let baixo;
