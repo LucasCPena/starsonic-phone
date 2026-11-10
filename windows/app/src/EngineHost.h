@@ -44,8 +44,9 @@ public:
     void Stop();
 
     // CallEngine
-    int MakeCall(const std::string& number) override;
-    bool Answer(int callId) override;
+    int MakeCall(const std::string& number, bool video) override;
+    bool Answer(int callId, bool video) override;
+    bool SetCamera(int callId, bool on) override;
     bool Reject(int callId) override;
     bool Hangup(int callId) override;
     bool Activate(int callId) override;
@@ -82,6 +83,7 @@ public:
     void OnCallState(int callId, CallState state, int sipCode) override;
     void OnTransfer(int callId, int sipCode) override;
     void OnBlf(const std::string& number, BlfState state) override;
+    void OnCallVideo(int callId, const CallVideo& video) override;
     void OnCameraProblem(CameraProblem problem) override;
     void OnLog(int level, const std::string& line) override;
 

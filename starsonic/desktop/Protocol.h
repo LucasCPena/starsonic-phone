@@ -81,6 +81,7 @@ enum class CommandKind {
     VideoViews,      // as vistas do video que a pagina mostra agora
     VideoWindow,     // o modo da janela do video: normal, grande ou telaCheia
     H264Retry,       // tentar de novo baixar o modulo H.264 depois de uma falha
+    Camera,          // a nossa camera na ligacao de cima: ligar ou desligar (o on)
 };
 
 // Um servidor da lista do administrador (adminSet e o estado): o endereco (UTF-8) e a porta (UDP e TCP).
@@ -169,8 +170,8 @@ struct Command {
     std::string link;
     // Os do chat (0.2.0).
     ChatFields chat;
-    // 0.3.0: o video. video: o dial e o answer com video (Task 7; ainda nao lido). setVideo: cameraName ("" = a
-    // primeira camera) e h264 (a chave da pessoa); ausentes ficam como estao. cameraTest: o on. videoViews: page
+    // 0.3.0: o video. video: o dial (tambem com contato) e o answer com video; ausente, false. camera: o on. setVideo:
+    // cameraName ("" = a primeira camera) e h264 (a chave da pessoa); ausentes ficam como estao. cameraTest: o on. videoViews: page
     // ("principal" | "aviso") e views, como vieram. videoWindow: mode, como veio (o nucleo ignora o que nao e dos tres).
     bool video = false;
     std::optional<std::string> cameraName;

@@ -601,6 +601,9 @@ TEST_CASE("the call serializes with the names of the snapshot and the second of 
     top.name = "Ana";
     top.incoming = false;
     top.phase = CallView::Active;
+    top.video.offered = true;   // o bloco video da ligacao: oferece, ativo, imagem, camera, cedo
+    top.video.active = true;
+    top.video.camera = true;
     top.activeSinceMs = 1761062400000LL;
     CallView second;
     second.id = 12;
@@ -622,7 +625,8 @@ TEST_CASE("the call serializes with the names of the snapshot and the second of 
                           {"incoming", false},
                           {"phase", "active"},
                           {"activeSinceMs", 1761062400000LL},
-                          {"held", false}}},
+                          {"held", false},
+                          {"video", {{"oferece", true}, {"ativo", true}, {"imagem", false}, {"camera", true}, {"cedo", false}}}}},
                         {"second",
                          {{"id", 12},
                           {"number", "2003"},
@@ -630,7 +634,8 @@ TEST_CASE("the call serializes with the names of the snapshot and the second of 
                           {"incoming", true},
                           {"phase", "ringing"},
                           {"activeSinceMs", 0},
-                          {"held", false}}},
+                          {"held", false},
+                          {"video", {{"oferece", false}, {"ativo", false}, {"imagem", false}, {"camera", false}, {"cedo", false}}}}},
                         {"secondKind", "ringing"},
                         {"muted", true},
                         {"conference", false},

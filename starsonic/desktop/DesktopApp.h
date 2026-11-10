@@ -17,7 +17,7 @@
 //   (o Dial espera o MakeCall, o Hold ate ~2 s), e os efeitos de comandos de threads diferentes nao teriam ordem
 //   entre si. Com uma thread so, os comandos da interface chegam ao motor na ordem em que foram mandados (o
 //   SetAccount, que espera ate ~5 s, tambem roda nela).
-// - Os eventos de ligacao do motor (OnIncomingCall, OnRejectedBusy, OnCallState, OnTransfer) vao direto ao
+// - Os eventos de ligacao do motor (OnIncomingCall, OnRejectedBusy, OnCallState, OnTransfer, OnCallVideo) vao direto ao
 //   controlador, na thread de eventos do motor (o controlador tem a trava dele). O OnRegistration e o OnBlf vao para
 //   a fila (o OnBlf leva a vez das assinaturas de quando chegou: um aviso de uma assinatura que ja saiu, da conta
 //   anterior ou de um ramal que saiu e voltou a lista, nao vale).
@@ -297,6 +297,10 @@ struct DesktopHooks {
 //   - A situacao do modulo H.264: desligado (o cartao ou a pessoa o desliga); na abertura, ou quando ele volta a ser
 //     ligado, baixando (hooks.h264Ensure) se ainda nao esta instalado; o resultado volta pelo SetH264State (instalado ou
 //     falhou; com o H.264 desligado, nada muda); o h264Retry so chama de novo depois de uma falha.
+//   - As ligacoes (Task 7): o dial e o answer levam o video so com o video.ligado (no iPhone, nunca); o camera liga ou
+//     desliga a camera da ligacao de cima; o OnCallVideo vai ao controlador (o bloco video de cada ligacao no estado).
+//     A recusa do video (o OnVideoRefused do controlador: o refused do motor, ou o 488/415 que virou voz) vira um aviso
+//     (toast): o do H.264 se o cartao e a pessoa o ligam e o modulo nao esta instalado, senao o da outra ponta.
 //   - A camera (config.json: camera; "" = a primeira) vai ao motor na abertura e no setVideo; o teste da camera
 //     (cameraTest) e a lista de cameras (relida no RefreshAudioDevices) vao ao estado. O OnCameraProblem vira um aviso
 //     (toast); no OpenFailed, o texto depende do hooks.cameraBlocked (vazio: false).
@@ -391,6 +395,8 @@ public:
     void OnBlf(const std::string& number, BlfState state) override;
     // 0.3.0: um problema da camera, na thread de eventos do motor: vai para a fila e vira um aviso (toast).
     void OnCameraProblem(CameraProblem problem) override;
+    // 0.3.0: o video de uma ligacao, na thread de eventos do motor: vai direto ao controlador, como o OnCallState.
+    void OnCallVideo(int callId, const CallVideo& video) override;
     void OnLog(int level, const std::string& line) override;
 
 private:
@@ -489,6 +495,9 @@ private:
     void HandleH264State(H264State state);
     void HandleCameraProblem(CameraProblem problem);
     void H264Retry();
+    bool VideoOn() const;
+    void CameraCommand(bool on);
+    void HandleVideoRefused();
     // 0.2.0: o chat
     void AddConnectedRamal();
 

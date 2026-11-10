@@ -78,6 +78,7 @@ const Name kNames[] = {
     {CommandKind::VideoViews, "videoViews"},
     {CommandKind::VideoWindow, "videoWindow"},
     {CommandKind::H264Retry, "h264Retry"},
+    {CommandKind::Camera, "camera"},
 };
 
 // Os limites dos textos do chat (docs/ponte-windows.md, "Os comandos do chat"), em caracteres.
@@ -287,6 +288,11 @@ Out CallJson(const CallView& view) {
     out["phase"] = PhaseName(view.phase);
     out["activeSinceMs"] = view.activeSinceMs;
     out["held"] = view.held;
+    out["video"] = Out{{"oferece", view.video.offered},
+                       {"ativo", view.video.active},
+                       {"imagem", view.video.remote},
+                       {"camera", view.video.camera},
+                       {"cedo", view.video.early}};
     return out;
 }
 
@@ -442,6 +448,7 @@ std::optional<Command> ParseCommand(const std::string& text, std::string* error)
         case CommandKind::Consult:
             f.Text("numero", &command.number, true);
             f.Flag("contato", &command.contact, false);
+            if (command.kind == CommandKind::Dial) f.Flag("video", &command.video, false);   // 0.3.0
             break;
         case CommandKind::Hangup:
             f.Count("id", &command.callId);
@@ -555,6 +562,7 @@ std::optional<Command> ParseCommand(const std::string& text, std::string* error)
             }
             break;
         case CommandKind::CameraTest:
+        case CommandKind::Camera:
             f.OptionalFlag("on", &command.on, true);
             break;
         case CommandKind::VideoViews:
@@ -602,9 +610,11 @@ std::optional<Command> ParseCommand(const std::string& text, std::string* error)
             if (f.ok() && !ValidFileId(command.chat.fileId)) f.Fail("arquivo invalido");
             if (f.ok() && !CharactersBetween(command.chat.fileName, 1, kMaxChatFileName)) f.Fail("nome invalido");
             break;
+        case CommandKind::Answer:
+            f.Flag("video", &command.video, false);   // 0.3.0
+            break;
         case CommandKind::Ready:
         case CommandKind::AdminLogout:
-        case CommandKind::Answer:
         case CommandKind::Reject:
         case CommandKind::CompleteTransfer:
         case CommandKind::CancelConsult:

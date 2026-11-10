@@ -65,14 +65,19 @@ void EngineHost::Stop() {
     engine.reset();   // fora da trava: o destrutor ainda manda linhas de log e espera o listener
 }
 
-int EngineHost::MakeCall(const std::string& number) {
+int EngineHost::MakeCall(const std::string& number, bool video) {
     SipEngine* engine = Ready();
-    return engine ? engine->MakeCall(number) : -1;
+    return engine ? engine->MakeCall(number, video) : -1;
 }
 
-bool EngineHost::Answer(int callId) {
+bool EngineHost::Answer(int callId, bool video) {
     SipEngine* engine = Ready();
-    return engine && engine->Answer(callId);
+    return engine && engine->Answer(callId, video);
+}
+
+bool EngineHost::SetCamera(int callId, bool on) {
+    SipEngine* engine = Ready();
+    return engine && engine->SetCamera(callId, on);
 }
 
 bool EngineHost::Reject(int callId) {
@@ -211,6 +216,10 @@ void EngineHost::OnTransfer(int callId, int sipCode) {
 
 void EngineHost::OnBlf(const std::string& number, BlfState state) {
     if (EngineListener* listener = listener_.load()) listener->OnBlf(number, state);
+}
+
+void EngineHost::OnCallVideo(int callId, const CallVideo& video) {
+    if (EngineListener* listener = listener_.load()) listener->OnCallVideo(callId, video);
 }
 
 void EngineHost::OnCameraProblem(CameraProblem problem) {

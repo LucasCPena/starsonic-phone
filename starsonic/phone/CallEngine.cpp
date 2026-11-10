@@ -2,9 +2,11 @@
 
 namespace starsonic {
 
-int SipCallEngine::MakeCall(const std::string& number) { return engine_.MakeCall(number); }
+int SipCallEngine::MakeCall(const std::string& number, bool video) { return engine_.MakeCall(number, video); }
 
-bool SipCallEngine::Answer(int callId) { return engine_.Answer(callId); }
+bool SipCallEngine::Answer(int callId, bool video) { return engine_.Answer(callId, video); }
+
+bool SipCallEngine::SetCamera(int callId, bool on) { return engine_.SetCamera(callId, on); }
 
 bool SipCallEngine::Reject(int callId) { return engine_.Reject(callId); }
 

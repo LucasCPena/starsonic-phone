@@ -113,7 +113,7 @@ if(BARESIP_PREFIX)
   add_test(NAME phone_tests_baresip COMMAND phone_tests_baresip)
 endif()
 
-# O controlador de ligações sem o motor: só o núcleo, o CallController.cpp e os testes, sem o
+# O controlador de ligações sem o motor: só o núcleo, o CallController.cpp, o Video.cpp e os testes, sem o
 # SipEngine.cpp, o CallEngine.cpp (o SipCallEngine) e o pjproject (Ruling 1 da W1: o ctest do job
 # phone-linux do android.yml roda os dois executáveis).
 find_package(Threads REQUIRED)
@@ -121,7 +121,8 @@ add_executable(call_controller_tests
   ${CMAKE_CURRENT_SOURCE_DIR}/call_controller_main.cpp
   ${CALL_CONTROLLER_TEST_SOURCES}
   ${STARSONIC_CORE_SOURCES}
-  ${STARSONIC_DIR}/phone/CallController.cpp)
+  ${STARSONIC_DIR}/phone/CallController.cpp
+  ${STARSONIC_DIR}/phone/Video.cpp)   # o CallView leva o CallVideo (o operator==)
 target_include_directories(call_controller_tests PRIVATE
   ${STARSONIC_DIR}/core
   ${STARSONIC_DIR}/phone

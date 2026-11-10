@@ -5,7 +5,7 @@
 // chama o MakeCall direto.
 //
 // Concorrência (o mesmo modelo do CallManager):
-// - Os eventos do motor (OnIncomingCall, OnRejectedBusy, OnCallState, OnTransfer) chegam na thread de
+// - Os eventos do motor (OnIncomingCall, OnRejectedBusy, OnCallState, OnTransfer, OnCallVideo) chegam na thread de
 //   eventos do motor; os comandos (Dial, Answer...), na de quem chama; as tarefas do Scheduler, na dele.
 //   Tudo pode chegar ao mesmo tempo: uma trava (um std::mutex) guarda o estado.
 // - Cada chamada decide com a trava presa e anota o que fazer depois: os pedidos ao motor (os efeitos)
@@ -54,7 +54,7 @@ namespace starsonic {
 // exibição que a central mandou (pode ser vazio). phase: Ringing é a recebida tocando; Dialing, a feita
 // chamando; Active, em andamento, também a recebida já atendida aqui que o motor ainda não confirmou
 // (com activeSinceMs 0 até a confirmação). activeSinceMs: quando os dois lados atenderam (0: ainda não).
-// held: em espera.
+// held: em espera. video: o vídeo agora (Video.h).
 struct CallView {
     int id = 0;
     std::string number;
@@ -63,6 +63,7 @@ struct CallView {
     enum Phase { Ringing, Dialing, Active } phase = Dialing;
     int64_t activeSinceMs = 0;
     bool held = false;
+    CallVideo video;   // o vídeo da ligação (o último OnCallVideo dela; o refused não fica aqui)
 };
 
 // O que a tela de chamada mostra: a de cima (top, a ativa) e, com duas, a outra (second: tocando ou em
@@ -124,6 +125,9 @@ public:
     virtual void OnMissed(const std::string& text) = 0;
     // O toque mudou (só quando muda).
     virtual void OnRing(RingKind kind) = 0;
+    // O vídeo foi recusado: o motor avisou (o refused do OnCallVideo), ou uma ligação discada com vídeo acabou com 488
+    // ou 415 e o controlador discou de novo só com a voz. Uma vez por recusa.
+    virtual void OnVideoRefused() {}
 };
 
 // Os milissegundos de agora (de qualquer origem fixa: só as diferenças e o activeSinceMs importam).
@@ -218,18 +222,27 @@ public:
     void OnRejectedBusy(const std::string& remoteUser, const std::string& remoteName);
     void OnCallState(int callId, CallState state, int sipCode);
     void OnTransfer(int callId, int sipCode);
+    // O vídeo da ligação callId mudou (CallView::video). Com o refused, chama o OnVideoRefused do ouvinte, uma vez.
+    // Uma ligação que o controlador não conhece (de outra, ou depois do Sair): nada.
+    void OnCallVideo(int callId, const CallVideo& video);
 
     // Liga para raw (o número como foi digitado, UTF-8): sem ligação, ou com uma em andamento (a Nova
     // ligação: ela vai para a espera e a feita é a ativa). false se não ligou: número vazio (também depois
     // de tirar os separadores), uma ligação que ainda não está em andamento, duas, depois de Sair, ou sem
     // registro (aí o aviso). O MakeCall roda aqui dentro; se ele não liga, a ligação acaba (nos Recentes
-    // como feita) e a outra, se há, volta sozinha.
-    bool Dial(const std::string& raw);
+    // como feita) e a outra, se há, volta sozinha. Com video, a ligação oferece vídeo; se ela acaba antes de
+    // confirmada com 488 ou 415 (a outra ponta não aceita o vídeo), o controlador disca o mesmo número de novo, uma
+    // vez, só com a voz, e chama o OnVideoRefused: o cartão segue "Chamando" (com o id da nova), e o fim da primeira
+    // tentativa não leva aviso nem entra nos Recentes. A nova que acaba com 488 ou 415 termina como qualquer outra.
+    bool Dial(const std::string& raw, bool video = false);
     // Liga para number, um número de um contato, como o Dial, depois da regra dos contatos (dialRule).
     // false se a regra não deu número, e nos casos do Dial.
-    bool DialContact(const std::string& number);
-    // Atende a recebida que toca; a outra ligação, se há, vai para a espera (o motor a põe no Answer).
-    void Answer();
+    bool DialContact(const std::string& number, bool video = false);
+    // Atende a recebida que toca (com video, aceitando o vídeo dela); a outra ligação, se há, vai para a espera (o
+    // motor a põe no Answer).
+    void Answer(bool video = false);
+    // Liga (on) ou desliga a nossa câmera na ligação de cima (a da tela). Sem ela, ou antes de ter o id do motor, nada.
+    void Camera(bool on);
     // Recusa a recebida que toca: ocupado (486), e ela entra nos Recentes como perdida.
     void Reject();
     // Desliga a ativa: a feita que chama é cancelada, e a recebida que toca (só ela), recusada. Com a ativa
@@ -327,7 +340,7 @@ private:
     void Act(Decide&& decide);
     void Deliver();
 
-    bool Place(const std::string& raw, bool consult);
+    bool Place(const std::string& raw, bool consult, bool video);
     std::string ContactNumber(const std::string& number) const;
 
     // Com a trava.
@@ -351,7 +364,8 @@ private:
     void ShowEndMessage(const std::string& text);
     void ClearEndMessage();
     void Publish();
-    void AnswerRinging(const CallPtr& ringing, Effects& effects);
+    void AnswerRinging(const CallPtr& ringing, Effects& effects, bool video = false);
+    bool RedialAsVoice(const CallPtr& call, int sipCode, Effects& effects);
     void StartAutoAnswer(const CallPtr& call);
     void CancelAutoAnswer();
     void QueueIdleCallbacks();

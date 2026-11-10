@@ -108,8 +108,8 @@ O Entrar (spec do Windows, 7.1 e 11.1):
 
 | Comando | Campos | O que faz |
 |---|---|---|
-| `dial` | `numero` (texto), `contato` (booleano, opcional) | Liga (o Teclado, os Recentes, os contatos). Sem ligação, ou com uma em andamento (a Nova ligação: a outra vai para a espera). Com `contato: true`, o número de um contato passa antes pela regra dos contatos do perfil (o `+55` sai e o prefixo de saída entra nos números longos). Sem registro, o toast `Sem conexão com o servidor. Tente de novo em instantes.` e nada é discado. |
-| `answer` | — | Atende a recebida que toca (a outra vai para a espera). |
+| `dial` | `numero` (texto), `contato` (booleano, opcional), (0.3.0) `video` (booleano, opcional) | Liga (o Teclado, os Recentes, os contatos). Sem ligação, ou com uma em andamento (a Nova ligação: a outra vai para a espera). Com `contato: true`, o número de um contato passa antes pela regra dos contatos do perfil (o `+55` sai e o prefixo de saída entra nos números longos). Sem registro, o toast `Sem conexão com o servidor. Tente de novo em instantes.` e nada é discado. (0.3.0) Com `video: true`, a ligação oferece vídeo (a câmera liga junto); sem o campo, vale `false`. O `video` só chega ao motor com `video.ligado` `true`; senão (e no iPhone, sempre) a ligação é só de voz. Ver "O vídeo na ligação". |
+| `answer` | (0.3.0) `video` (booleano, opcional) | Atende a recebida que toca (a outra vai para a espera). (0.3.0) Com `video: true`, aceita o vídeo da oferta (a câmera liga junto); sem o campo, vale `false`, e a ligação é atendida só com a voz. Passa ao motor nas mesmas regras do `dial`. |
 | `reject` | — | Recusa a recebida que toca (ocupado; vai aos Recentes como perdida). |
 | `hangup` | `id` (inteiro ≥ 0, opcional) | O Desligar de um cartão. **A interface manda sempre o `id` do cartão quando ele tem um** (`top.id` ou `second.id` maior que 0); `id: 0` só para o cartão de uma feita que ainda não tem id (o C++ entende `0` como "a feita mais nova"). Sem `id`: a ligação ativa. Na conferência, qualquer id desliga as duas ("Desligar para todos"). |
 | `hold` | `on` (booleano, opcional) | Espera: `true` põe, `false` retoma, sem `on` troca. Com duas em andamento, pôr a ativa em espera é o Alternar. Na conferência, nada. |
@@ -237,8 +237,9 @@ A configuração fica no `admin.json`, protegido pelo DPAPI do usuário (como as
 ### Vídeo (0.3.0)
 
 As escolhas do vídeo e a ponte das telas de vídeo, só no Windows (o motor do iPhone não tem vídeo: ver "O modo
-iPhone"). Os pedidos da ligação com vídeo (`dial`, `answer` e `camera`) têm a sua parte própria. A câmera nunca liga
-sozinha: o teste da câmera é o único jeito de ligá-la fora de uma ligação.
+iPhone"). Os pedidos da ligação com vídeo (`dial`, `answer` e `camera`) têm a sua parte própria, "O vídeo na ligação", abaixo.
+A câmera nunca liga sozinha: só ligam a câmera o `dial` e o `answer` com `video: true`, o `camera` com `on: true` e o
+`cameraTest` com `on: true` (o teste da câmera é o único jeito de ligá-la fora de uma ligação).
 
 | Comando | Campos | O que faz |
 |---|---|---|
@@ -262,6 +263,36 @@ câmera): `Nenhuma câmera encontrada.`, `A câmera está sendo usada por outro 
 no lugar do segundo quando a privacidade do Windows nega a câmera aos apps da área de trabalho (o gancho
 `cameraBlocked`), `O Windows bloqueou a câmera para este app. Libere em Configurações do Windows → Privacidade e
 segurança → Câmera.`. Uma câmera que some ou que não abre de novo também desliga o teste (`video.teste` `false`).
+
+#### O vídeo na ligação
+
+| Comando | Campos | O que faz |
+|---|---|---|
+| `dial` | `video` (booleano, opcional) | Também no `dial` com `contato: true`. Ausente, vale `false`. |
+| `answer` | `video` (booleano, opcional) | Ausente, vale `false`. |
+| `camera` | `on` (booleano) | Liga (`true`) ou desliga (`false`) a nossa câmera na ligação de cima (`ligacao.top`). Sem ligação, ou antes de a feita ter o id do motor, não faz nada. Obrigatório o `on`: sem ele, ou com outro tipo, é recusado na leitura. |
+
+```json
+{"v":1,"cmd":"dial","numero":"2003","video":true}
+{"v":1,"cmd":"answer","video":true}
+{"v":1,"cmd":"camera","on":false}
+```
+
+- **O `video.ligado` decide.** O núcleo só repassa o `video: true` do `dial` e do `answer` ao motor com o `video.ligado`
+  `true` (algum codec ligado no cartão); senão a ligação é só de voz. Como o `ligado` conta o H.264 mesmo sem o módulo
+  instalado, o pedido pode seguir com o motor sem codec que sirva: ele atende com uma ligação só de voz e avisa a
+  recusa (abaixo).
+- **O 488 e o 415.** Uma ligação discada com vídeo que acaba antes de confirmada com o código 488 ou 415 (a outra ponta
+  não aceita o vídeo) é discada de novo pelo controlador, uma vez, para o mesmo número e só com a voz. A tela segue
+  contínua: o cartão fica `dialing` (com o `id` da nova ligação, e `0` até o motor dar o dele), o fim da primeira
+  tentativa não deixa aviso nem entra nos Recentes, e o toast da recusa sai uma vez. A ligação nova que acaba com 488 ou
+  415 termina como qualquer outra (nenhuma terceira discagem), e o 486 e os outros códigos terminam como sempre. A nova
+  é só de voz: a câmera não liga.
+- **A recusa do vídeo.** Cada recusa (a de um 488/415 que virou voz, e o aviso `refused` do motor) vira um toast, uma
+  vez: `Este vídeo precisa do H.264, que ainda não foi baixado.` quando o cartão e a pessoa ligam o H.264 e a
+  `video.h264.situacao` não é `instalado`; nos outros casos, `A outra ponta não aceitou o vídeo.`.
+- **No iPhone**, o `dial` e o `answer` passam sempre `false` ao motor (a ligação segue, só de voz), e o `camera` é
+  recusado como os outros pedidos de vídeo.
 
 ### Contatos e Recentes
 
@@ -437,6 +468,7 @@ Cada cartão (`top`, `second`):
 | `phase` | `"ringing"` \| `"dialing"` \| `"active"` | Tocando (recebida), chamando (feita) ou em andamento. Uma recebida atendida aqui fica `active` com `activeSinceMs` 0 até o motor confirmar. |
 | `activeSinceMs` | inteiro | Quando os dois lados atenderam (ms desde 1970; 0: ainda não). O tempo da ligação é `Date.now() - activeSinceMs`. |
 | `held` | booleano | Em espera. |
+| `video` | objeto | (0.3.0) O vídeo da ligação: `{oferece, ativo, imagem, camera, cedo}`, os campos `offered`, `active`, `remote`, `camera` e `early` do `CallVideo`, nessa ordem. `oferece`: a recebida oferece vídeo com um codec em comum. `ativo`: o vídeo negociado e a ligação sem pausa. `imagem`: a imagem da outra ponta está chegando. `camera`: a nossa câmera está mandando. `cedo`: o 183 com imagem de um Porteiro, até o atender ou o fim. Tudo `false` numa ligação só de voz. Vem em `top` e em `second`. |
 
 O aviso de 2 s que o controlador tem (o `endMessage`: `Ocupado`, `Não atendeu`, `<nome ou número> desligou`,
 `<nome ou número>: <motivo>` do colega, `O servidor não aceitou a transferência.`, `Sem conexão com o servidor. Tente
@@ -759,6 +791,9 @@ download dos arquivos.
   - (0.3.0) O `EngineHost` repassa ao `SipEngine` os seis métodos do vídeo do `RegistrationPort` (`VideoDevices`,
     `SetCaptureDevice`, `RefreshVideoDevices`, `StartCameraTest`, `StopCameraTest` e `SetVideoSettings`), na thread de
     comandos (que não é STA, como as câmeras pedem), e passa o `OnCameraProblem` ao `DesktopApp`, que o põe na fila.
+    Na ligação, o `EngineHost` é também o `CallEngine` do vídeo (`MakeCall(numero, video)`, `Answer(id, video)` e
+    `SetCamera(id, ligada)`) e passa o `OnCallVideo` ao `DesktopApp`, que o entrega direto ao controlador, na thread de
+    eventos do motor, como o `OnCallState`.
 - Ao fechar: `Shutdown()`, o `Stop()` do agendador, o motor destruído, o `DesktopApp` destruído (detalhes no
   `DesktopApp.h`). Depois de a janela fechar, isso tem 5 s: passou, `fechamento forcado` no diagnóstico e o processo
   sai com o código 0.
@@ -955,7 +990,8 @@ Recusados inteiros: nada muda, nenhum gancho é chamado, e o diagnóstico ganha 
 - a área do administrador: `adminLogin`, `adminLogout` e `adminSet`;
 - as planilhas e a lista da empresa: `importContacts`, `exportContacts`, `setCompanyList` e `refreshCompanyList`;
 - a atualização: `updateNow` e `updateLater`;
-- (0.3.0) o vídeo: `setVideo`, `cameraTest`, `videoViews`, `videoWindow` e `h264Retry`;
+- (0.3.0) o vídeo: `setVideo`, `cameraTest`, `videoViews`, `videoWindow`, `h264Retry` e `camera`. O `video` do `dial` e do
+  `answer` não é recusado: o comando vale, e o `DesktopApp` passa `false` ao motor;
 - (0.2.0) o chat: `chatKey`, `chatLink`, `chatUnlink`, `chatNotify`, `chatBadge` e `chatDownload`. O estado do iPhone
   não tem o `chat`, e o `DesktopApp::SetWindowInFront` e o `DesktopApp::OpenChat` só deixam uma linha no diagnóstico
   (`janela na frente: recusada no modo iPhone`, `abrir o chat: recusado no modo iPhone`): o `ready` do iPhone nunca leva

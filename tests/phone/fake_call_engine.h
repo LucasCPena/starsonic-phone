@@ -25,7 +25,10 @@ class FakeCallEngine : public starsonic::CallEngine {
 public:
     std::vector<std::string> order;
     std::vector<std::string> made;
+    std::vector<bool> madeVideo;                 // o video pedido em cada MakeCall (a mesma ordem de made)
     std::vector<int> answers;
+    std::vector<bool> answersVideo;              // o video pedido em cada Answer (a mesma ordem de answers)
+    std::vector<std::pair<int, bool>> cameras;   // os SetCamera
     std::vector<int> rejects;
     std::vector<int> hangups;
     std::vector<std::pair<int, bool>> holds;
@@ -42,15 +45,21 @@ public:
     bool refuseTransfers = false;
     std::function<void(int)> duringMakeCall;
 
-    int MakeCall(const std::string& number) override {
+    int MakeCall(const std::string& number, bool video) override {
         made.push_back(number);
+        madeVideo.push_back(video);
         if (refuse) return -1;
         const int id = nextCallId++;
         if (duringMakeCall) duringMakeCall(id);
         return id;
     }
-    bool Answer(int callId) override {
+    bool Answer(int callId, bool video) override {
         answers.push_back(callId);
+        answersVideo.push_back(video);
+        return true;
+    }
+    bool SetCamera(int callId, bool on) override {
+        cameras.emplace_back(callId, on);
         return true;
     }
     bool Reject(int callId) override {
@@ -104,8 +113,9 @@ public:
     std::vector<starsonic::Recent> recents;
     std::vector<std::string> missed;
     std::vector<starsonic::RingKind> rings;
+    int videoRefused = 0;   // quantas vezes o OnVideoRefused foi chamado
     // Roda dentro de cada aviso, depois de guardá-lo, com o nome dele ("OnSnapshot", "OnRecent",
-    // "OnMissed" ou "OnRing"): um ouvinte que olha ou chama o controlador de volta.
+    // "OnMissed", "OnRing" ou "OnVideoRefused"): um ouvinte que olha ou chama o controlador de volta.
     std::function<void(const std::string& what)> during;
 
     void OnSnapshot(const starsonic::CallSnapshot& snapshot) override {
@@ -123,6 +133,10 @@ public:
     void OnRing(starsonic::RingKind kind) override {
         rings.push_back(kind);
         if (during) during("OnRing");
+    }
+    void OnVideoRefused() override {
+        ++videoRefused;
+        if (during) during("OnVideoRefused");
     }
 
     // O último estado publicado (nenhum: o de antes da primeira ligação, vazio).

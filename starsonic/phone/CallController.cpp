@@ -16,6 +16,10 @@ constexpr int64_t kEndMessageMs = 2000;
 // O maior tempo do Atender automático (spec da W1, 7.3: de 0 a 30 s).
 constexpr int64_t kAutoAnswerMaxMs = 30000;
 
+// Os códigos SIP com que a outra ponta recusa o vídeo da oferta: 488 (Not Acceptable Here) e 415 (Unsupported Media
+// Type). A feita com vídeo que acaba assim, antes de confirmada, é discada de novo só com a voz.
+bool IsVideoRefusalCode(int sipCode) { return sipCode == 488 || sipCode == 415; }
+
 // O aviso de discar sem registro.
 std::string NoConnectionText() {
     return WideToUtf8(L"Sem conex\u00e3o com o servidor. Tente de novo em instantes.");
@@ -53,7 +57,7 @@ Recent MakeRecent(const std::string& number, const std::string& name, Recent::Ki
 
 bool operator==(const CallView& a, const CallView& b) {
     return a.id == b.id && a.number == b.number && a.name == b.name && a.incoming == b.incoming &&
-           a.phase == b.phase && a.activeSinceMs == b.activeSinceMs && a.held == b.held;
+           a.phase == b.phase && a.activeSinceMs == b.activeSinceMs && a.held == b.held && a.video == b.video;
 }
 
 bool operator==(const CallSnapshot& a, const CallSnapshot& b) {
@@ -104,6 +108,8 @@ struct CallController::Call {
     bool localHangup = false;        // desligada aqui
     bool ending = false;             // pedida a saída: a tela já não a mostra
     bool abandoned = false;          // a conta saiu (Sair) com ela de pé
+    bool videoDialed = false;        // feita com vídeo e ainda não discada de novo só com a voz (488 ou 415)
+    CallVideo video;                 // o último vídeo avisado pelo motor (sem o refused)
     int64_t activeSince = 0;         // quando os dois lados atenderam (0: ainda não)
     bool held = false;               // em espera: pela pessoa, ou a outra de duas
     TransferKind transferPending = TransferKind::None;   // a transferência pedida nela, até o resultado
@@ -209,8 +215,21 @@ void CallController::OnCallState(int callId, CallState state, int sipCode) {
                 current->phase = Call::Phase::Active;
             }
         } else if (state == CallState::Disconnected) {
-            End(current, sipCode, effects);
+            if (!RedialAsVoice(current, sipCode, effects)) End(current, sipCode, effects);
         }
+        Publish();
+    });
+}
+
+void CallController::OnCallVideo(int callId, const CallVideo& video) {
+    Act([&](Effects&) {
+        // Só pelo id: o vídeo de uma ligação nunca vem antes do primeiro estado dela (que já deu o id à feita).
+        const auto it = std::find_if(calls_.begin(), calls_.end(), [callId](const CallPtr& c) { return c->id == callId; });
+        if (loggedOut_ || it == calls_.end()) return;
+        CallVideo shown = video;
+        shown.refused = false;
+        (*it)->video = shown;
+        if (video.refused) publications_.push_back([this] { listener_.OnVideoRefused(); });
         Publish();
     });
 }
@@ -241,12 +260,13 @@ void CallController::OnTransfer(int callId, int sipCode) {
     });
 }
 
-bool CallController::Dial(const std::string& raw) { return Place(raw, /*consult=*/false); }
+bool CallController::Dial(const std::string& raw, bool video) { return Place(raw, /*consult=*/false, video); }
 
-bool CallController::Consult(const std::string& raw) { return Place(raw, /*consult=*/true); }
+bool CallController::Consult(const std::string& raw) { return Place(raw, /*consult=*/true, /*video=*/false); }
 
-// A feita do Dial e do Consult (com consult, só com uma ligação em andamento, que vira o cliente).
-bool CallController::Place(const std::string& raw, bool consult) {
+// A feita do Dial e do Consult (com consult, só com uma ligação em andamento, que vira o cliente; a consulta é só de
+// voz).
+bool CallController::Place(const std::string& raw, bool consult, bool video) {
     if (IsBlank(raw)) return false;
     if (registered_ && !registered_()) {
         Act([this](Effects&) { ShowEndMessage(NoConnectionText()); });
@@ -266,6 +286,7 @@ bool CallController::Place(const std::string& raw, bool consult) {
         if (consult && (!other || other->transferPending != TransferKind::None)) return;
         ClearEndMessage();
         auto dialed = std::make_shared<Call>(false, number, std::string(), clock_.NowMs(), contact);
+        dialed->videoDialed = video;
         calls_.push_back(dialed);
         active_ = dialed;
         if (other) other->held = true;   // o motor a põe em espera no MakeCall
@@ -276,9 +297,9 @@ bool CallController::Place(const std::string& raw, bool consult) {
         Publish();
         // Depois da trava: o motor liga, e os eventos da ligação podem chegar antes de o MakeCall voltar. A
         // tela recebe a feita antes (o MakeCall pode demorar, e o Desligar dela já vale: hangupWhenDialed).
-        effects.push_back([this, dialed, number] {
+        effects.push_back([this, dialed, number, video] {
             Deliver();
-            const int id = engine_.MakeCall(number);
+            const int id = engine_.MakeCall(number, video);
             Act([&](Effects& more) { OnDialed(dialed, id, more); });
         });
         placed = true;
@@ -286,9 +307,9 @@ bool CallController::Place(const std::string& raw, bool consult) {
     return placed;
 }
 
-bool CallController::DialContact(const std::string& number) {
+bool CallController::DialContact(const std::string& number, bool video) {
     const std::string dialed = ContactNumber(number);
-    return !dialed.empty() && Dial(dialed);
+    return !dialed.empty() && Dial(dialed, video);
 }
 
 bool CallController::TransferContact(const std::string& number) {
@@ -306,10 +327,19 @@ std::string CallController::ContactNumber(const std::string& number) const {
     return dialRule_ ? dialRule_(number) : number;
 }
 
-void CallController::Answer() {
-    Act([this](Effects& effects) {
+void CallController::Answer(bool video) {
+    Act([this, video](Effects& effects) {
         const CallPtr ringing = RingingCall();
-        if (ringing) AnswerRinging(ringing, effects);
+        if (ringing) AnswerRinging(ringing, effects, video);
+    });
+}
+
+void CallController::Camera(bool on) {
+    Act([this, on](Effects& effects) {
+        const CallPtr top = Shown();
+        if (!top || top->id == kNoId) return;
+        const int id = top->id;
+        effects.push_back([this, id, on] { engine_.SetCamera(id, on); });
     });
 }
 
@@ -609,6 +639,26 @@ void CallController::Adopt(const CallPtr& call, int id, Effects& effects) {
     }
 }
 
+// Com a trava: a feita com vídeo que acabou antes de confirmada com 488 ou 415 (e não foi desligada aqui): a mesma
+// ligação segue, sem o id (como uma feita antes do MakeCall) e sem vídeo, o motor liga de novo só com a voz e o ouvinte
+// é avisado da recusa. Sem aviso de fim e sem Recentes da primeira tentativa. true se discou de novo; false: a
+// ligação acaba como sempre (inclusive a nova, que não tem mais o videoDialed).
+bool CallController::RedialAsVoice(const CallPtr& call, int sipCode, Effects& effects) {
+    if (call->incoming || !call->videoDialed || call->activeSince != 0 || !IsVideoRefusalCode(sipCode)) return false;
+    if (call->localHangup || call->ending || call->abandoned) return false;
+    call->videoDialed = false;
+    call->id = kNoId;
+    call->phase = Call::Phase::Dialing;
+    call->video = CallVideo();
+    publications_.push_back([this] { listener_.OnVideoRefused(); });
+    effects.push_back([this, call] {
+        Deliver();
+        const int id = engine_.MakeCall(call->number, false);
+        Act([&](Effects& more) { OnDialed(call, id, more); });
+    });
+    return true;
+}
+
 // Com a trava: a recebida call recebe ocupado (486); o fim dela chega pelo motor.
 void CallController::RejectCall(const CallPtr& call, Effects& effects) {
     if (call == autoCall_) CancelAutoAnswer();
@@ -815,7 +865,7 @@ void CallController::ClearEndMessage() {
 
 // Com a trava: a pessoa (ou o Atender automático) atende a recebida ringing, que toca; a outra ligação, se
 // há, vai para a espera (o motor a põe no Answer).
-void CallController::AnswerRinging(const CallPtr& ringing, Effects& effects) {
+void CallController::AnswerRinging(const CallPtr& ringing, Effects& effects, bool video) {
     if (ringing == autoCall_) CancelAutoAnswer();
     ringing->answered = true;
     ringing->phase = Call::Phase::Connecting;
@@ -823,7 +873,7 @@ void CallController::AnswerRinging(const CallPtr& ringing, Effects& effects) {
     active_ = ringing;
     if (other) other->held = true;   // o motor a põe em espera no Answer
     const int id = ringing->id;
-    effects.push_back([this, id] { engine_.Answer(id); });
+    effects.push_back([this, id, video] { engine_.Answer(id, video); });
     Publish();
 }
 
@@ -976,6 +1026,7 @@ CallView CallController::ViewOf(const Call& call) const {
     }
     view.activeSinceMs = call.activeSince;
     view.held = call.held;
+    view.video = call.video;
     return view;
 }
 

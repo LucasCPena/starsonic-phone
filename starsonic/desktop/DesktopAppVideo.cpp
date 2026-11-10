@@ -19,6 +19,10 @@ const char kCameraBlocked[] =
     "O Windows bloqueou a c\xc3\xa2mera para este app. Libere em Configura\xc3\xa7\xc3\xb5" "es do Windows \xe2\x86\x92 "
     "Privacidade e seguran\xc3\xa7" "a \xe2\x86\x92 C\xc3\xa2mera.";
 
+// 0.3.0: os avisos da recusa do video (o OnVideoRefused do controlador).
+const char kVideoRefusedByPeer[] = "A outra ponta n\xc3\xa3o aceitou o v\xc3\xad" "deo.";
+const char kVideoNeedsH264[] = "Este v\xc3\xad" "deo precisa do H.264, que ainda n\xc3\xa3o foi baixado.";
+
 }  // namespace
 
 // ---------------------------------------------------------------- 0.3.0: o video
@@ -40,6 +44,15 @@ void DesktopApp::RefreshCameras() {
     cameras_.clear();
     for (const VideoDevice& device : port_.VideoDevices()) cameras_.push_back(device.name);
     Log("video: " + std::to_string(cameras_.size()) + " camera(s)");
+}
+
+// Ha video: o ligado do estado. Olha so as escolhas, com o H.264 contado como disponivel (o modulo que ainda baixa nao
+// desliga o video: o motor atende com a voz e avisa a recusa). No iPhone, nunca.
+bool DesktopApp::VideoOn() const {
+    if (IPhone()) return false;
+    VideoSettings choices = VideoChoices();
+    choices.h264Available = true;
+    return VideoEnabled(choices);
 }
 
 // O H.264 que vale: ligado no cartao do administrador e pela pessoa.
@@ -117,6 +130,20 @@ void DesktopApp::SetVideoChoices(const Command& command) {
     }
     ApplyH264Wish();
     PushVideoSettings();
+}
+
+// A camera da ligacao de cima (o pedido camera): ligar ou desligar. Sem ligacao, nada (o controlador).
+void DesktopApp::CameraCommand(bool on) {
+    controller_->Camera(on);
+}
+
+// O video foi recusado (o motor, ou o 488/415 que o controlador discou de novo so com a voz): o aviso conta o motivo
+// que o nucleo sabe, o modulo H.264 que falta. O diagnostico leva so uma linha fixa.
+void DesktopApp::HandleVideoRefused() {
+    if (IPhone()) return;
+    const bool needsH264 = H264Wanted() && h264State_ != H264State::Installed;
+    Log(needsH264 ? "video: recusado, falta o modulo H.264" : "video: recusado pela outra ponta");
+    Toast(needsH264 ? kVideoNeedsH264 : kVideoRefusedByPeer);
 }
 
 void DesktopApp::CameraTest(bool on) {

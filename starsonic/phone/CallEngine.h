@@ -15,8 +15,11 @@ public:
     virtual ~CallEngine() {}
 
     // O id da ligação (os eventos dela trazem o mesmo), ou -1: não ligou.
-    virtual int MakeCall(const std::string& number) = 0;
-    virtual bool Answer(int callId) = 0;
+    // Com video, a ligacao oferece (MakeCall) ou aceita (Answer) o video; sem o video no motor, e so de voz.
+    virtual int MakeCall(const std::string& number, bool video) = 0;
+    virtual bool Answer(int callId, bool video) = 0;
+    // A nossa camera na ligacao callId: liga (on) ou desliga. false: o motor nao fez.
+    virtual bool SetCamera(int callId, bool on) = 0;
     virtual bool Reject(int callId) = 0;
     virtual bool Hangup(int callId) = 0;
     virtual bool Activate(int callId) = 0;
@@ -36,8 +39,9 @@ class SipCallEngine : public CallEngine {
 public:
     explicit SipCallEngine(SipEngine& engine) : engine_(engine) {}
 
-    int MakeCall(const std::string& number) override;
-    bool Answer(int callId) override;
+    int MakeCall(const std::string& number, bool video) override;
+    bool Answer(int callId, bool video) override;
+    bool SetCamera(int callId, bool on) override;
     bool Reject(int callId) override;
     bool Hangup(int callId) override;
     bool Activate(int callId) override;

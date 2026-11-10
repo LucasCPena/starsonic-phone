@@ -707,3 +707,222 @@ TEST_CASE("no log line carries the camera name, whatever the case") {
     // O nome so aparece onde a interface o le: no estado.
     CHECK(h.State()["video"]["camera"] == kPrivateCamera);
 }
+
+// ---------------------------------------------------------------- Task 7: as ligacoes com video na ponte
+
+namespace {
+
+// Os avisos da recusa do video (UTF-8).
+const char kOtherEndRefused[] = "A outra ponta n\xc3\xa3o aceitou o v\xc3\xad" "deo.";
+const char kNeedsH264[] = "Este v\xc3\xad" "deo precisa do H.264, que ainda n\xc3\xa3o foi baixado.";
+
+CallVideo Video(bool offered, bool active, bool remote, bool camera, bool early = false, bool refused = false) {
+    CallVideo video;
+    video.offered = offered;
+    video.active = active;
+    video.remote = remote;
+    video.camera = camera;
+    video.early = early;
+    video.refused = refused;
+    return video;
+}
+
+// Uma ligacao feita ao 2003 (id do motor falso: 10), ja atendida.
+void DialAndConfirm(Harness& h, const std::string& extra = "") {
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2003")" + extra + "}");
+    h.app->OnCallState(10, CallState::Confirmed, 200);
+    h.Run();
+}
+
+// O aviso da recusa do video numa ligacao em andamento (o evento do motor, na thread dele).
+std::vector<std::string> RefusedToasts(Harness& h) {
+    h.posts.clear();
+    h.app->OnCallVideo(10, Video(false, false, false, false, false, true));
+    h.Run();
+    return h.Toasts();
+}
+
+}  // namespace
+
+TEST_CASE("dial and answer pass video only when video is on") {
+    Harness h;
+    h.StartRegistered();
+
+    // Sem o "video", ou com false, a ligacao e so de voz; com true, e de video.
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2003"})");
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2003","video":false})");   // ja ha uma ligacao: o motor nao e chamado
+    CHECK(h.engine.madeVideo == std::vector<bool>({false}));
+    h.app->OnCallState(10, CallState::Disconnected, 0);
+    h.Run();
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2003","video":true})");
+    CHECK(h.engine.madeVideo == std::vector<bool>({false, true}));
+    h.app->OnCallState(11, CallState::Disconnected, 0);
+    h.Run();
+
+    // O contato leva o video tambem.
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2003","contato":true,"video":true})");
+    CHECK(h.engine.madeVideo == std::vector<bool>({false, true, true}));
+    h.app->OnCallState(12, CallState::Disconnected, 0);
+    h.Run();
+
+    // O answer.
+    h.app->OnIncomingCall(20, "2002", "Fulano");
+    h.Run();
+    h.Send(R"({"v":1,"cmd":"answer","video":true})");
+    CHECK(h.engine.answers == std::vector<int>({20}));
+    CHECK(h.engine.answersVideo == std::vector<bool>({true}));
+    h.app->OnCallState(20, CallState::Disconnected, 0);
+    h.Run();
+    h.app->OnIncomingCall(21, "2002", "Fulano");
+    h.Run();
+    h.Send(R"({"v":1,"cmd":"answer"})");
+    CHECK(h.engine.answersVideo == std::vector<bool>({true, false}));
+    h.app->OnCallState(21, CallState::Disconnected, 0);
+    h.Run();
+
+    // Com todos os codecs desligados no cartao (video.ligado false), o pedido de video vira voz.
+    OpenAdmin(h);
+    h.Send(AdminSet(R"("videoH264":false,"videoVp8":false,"videoVp9":false)"));
+    REQUIRE(h.State()["video"]["ligado"] == false);
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2003","video":true})");
+    CHECK(h.engine.made.back() == "2003");
+    CHECK(h.engine.madeVideo.back() == false);
+    h.app->OnCallState(h.engine.nextCallId - 1, CallState::Disconnected, 0);
+    h.Run();
+    h.app->OnIncomingCall(22, "2002", "Fulano");
+    h.Run();
+    h.Send(R"({"v":1,"cmd":"answer","video":true})");
+    CHECK(h.engine.answersVideo.back() == false);
+}
+
+TEST_CASE("video on with only H264 and no module still asks for video") {
+    // O ligado olha so as escolhas: com so o H.264 ligado e o modulo ainda baixando, o nucleo pede o video e o motor
+    // responde com a recusa (o aviso do H.264, abaixo).
+    Harness h;
+    h.StartRegistered();
+    OpenAdmin(h);
+    h.Send(AdminSet(R"("videoVp8":false,"videoVp9":false)"));
+    REQUIRE(h.State()["video"]["ligado"] == true);
+    REQUIRE(h.State()["video"]["h264"]["situacao"] == "baixando");
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2003","video":true})");
+    CHECK(h.engine.madeVideo == std::vector<bool>({true}));
+}
+
+TEST_CASE("the iPhone platform passes no video to dial and answer and refuses camera") {
+    Harness h(Platform::IPhone);
+    h.StartRegistered();
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2003","video":true})");
+    CHECK(h.engine.madeVideo == std::vector<bool>({false}));
+    h.app->OnCallState(10, CallState::Confirmed, 200);
+    h.Run();
+    h.Send(R"({"v":1,"cmd":"camera","on":true})");
+    CHECK(h.engine.cameras.empty());
+    CHECK(h.Logged("recusado no modo iPhone"));
+    h.app->OnCallState(10, CallState::Disconnected, 0);
+    h.Run();
+    h.app->OnIncomingCall(20, "2002", "Fulano");
+    h.Run();
+    h.Send(R"({"v":1,"cmd":"answer","video":true})");
+    CHECK(h.engine.answersVideo == std::vector<bool>({false}));
+}
+
+TEST_CASE("the camera request goes to the top call") {
+    Harness h;
+    h.StartRegistered();
+    h.Send(R"({"v":1,"cmd":"camera","on":true})");   // sem ligacao: nada
+    CHECK(h.engine.cameras.empty());
+    DialAndConfirm(h);
+    h.Send(R"({"v":1,"cmd":"camera","on":true})");
+    h.Send(R"({"v":1,"cmd":"camera","on":false})");
+    CHECK(h.engine.cameras == std::vector<std::pair<int, bool>>({{10, true}, {10, false}}));
+}
+
+TEST_CASE("the video fields of dial, answer and camera are read strictly") {
+    const auto dial = ParseCommand(R"({"v":1,"cmd":"dial","numero":"2003","video":true})");
+    REQUIRE(dial);
+    CHECK(dial->video == true);
+    CHECK(ParseCommand(R"({"v":1,"cmd":"dial","numero":"2003"})")->video == false);
+    CHECK_FALSE(ParseCommand(R"({"v":1,"cmd":"dial","numero":"2003","video":"sim"})"));
+    CHECK(ParseCommand(R"({"v":1,"cmd":"answer","video":true})")->video == true);
+    CHECK(ParseCommand(R"({"v":1,"cmd":"answer"})")->video == false);
+    CHECK_FALSE(ParseCommand(R"({"v":1,"cmd":"answer","video":1})"));
+    const auto camera = ParseCommand(R"({"v":1,"cmd":"camera","on":true})");
+    REQUIRE(camera);
+    CHECK(camera->kind == CommandKind::Camera);
+    CHECK(camera->on == std::optional<bool>(true));
+    CHECK_FALSE(ParseCommand(R"({"v":1,"cmd":"camera"})"));
+    CHECK_FALSE(ParseCommand(R"({"v":1,"cmd":"camera","on":"sim"})"));
+}
+
+TEST_CASE("the refused video toast depends on the H264 situation") {
+    Harness h;
+    h.StartRegistered();
+    DialAndConfirm(h, R"(,"video":true)");
+
+    // Cartao e pessoa com o H.264 ligado, o modulo ainda baixando: o aviso do H.264.
+    REQUIRE(h.State()["video"]["h264"]["situacao"] == "baixando");
+    CHECK(RefusedToasts(h) == std::vector<std::string>({kNeedsH264}));
+    // Falhou: o mesmo aviso.
+    h.app->SetH264State(H264State::Failed);
+    h.Run();
+    CHECK(RefusedToasts(h) == std::vector<std::string>({kNeedsH264}));
+    // Instalado: a outra ponta e que nao aceitou.
+    h.app->SetH264State(H264State::Installed);
+    h.Run();
+    CHECK(RefusedToasts(h) == std::vector<std::string>({kOtherEndRefused}));
+    // A pessoa desliga o H.264: a outra ponta.
+    h.Send(SetVideo(R"("h264":false)"));
+    CHECK(RefusedToasts(h) == std::vector<std::string>({kOtherEndRefused}));
+    // Ligado de novo, sem o modulo instalado, volta o aviso do H.264.
+    h.Send(SetVideo(R"("h264":true)"));
+    h.app->SetH264State(H264State::Failed);
+    h.Run();
+    CHECK(RefusedToasts(h) == std::vector<std::string>({kNeedsH264}));
+    // O cartao sem o H.264: a outra ponta.
+    OpenAdmin(h);
+    h.Send(AdminSet(R"("videoH264":false)"));
+    CHECK(RefusedToasts(h) == std::vector<std::string>({kOtherEndRefused}));
+}
+
+TEST_CASE("a video event that is not a refusal shows no toast") {
+    Harness h;
+    h.StartRegistered();
+    DialAndConfirm(h, R"(,"video":true)");
+    h.posts.clear();
+    h.app->OnCallVideo(10, Video(true, true, true, true));
+    h.Run();
+    CHECK(h.Toasts().empty());
+}
+
+TEST_CASE("a 488 to a video dial redials as voice and shows the refused toast") {
+    Harness h;
+    h.StartRegistered();
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2003","video":true})");
+    h.posts.clear();
+    h.app->OnCallState(10, CallState::Disconnected, 488);
+    h.Run();
+    CHECK(h.engine.made == std::vector<std::string>({"2003", "2003"}));
+    CHECK(h.engine.madeVideo == std::vector<bool>({true, false}));
+    CHECK(h.Toasts() == std::vector<std::string>({kNeedsH264}));
+    CHECK(h.State()["ligacao"]["top"]["phase"] == "dialing");
+}
+
+TEST_CASE("the call state carries the video block") {
+    Harness h;
+    h.StartRegistered();
+    DialAndConfirm(h, R"(,"video":true)");
+    json top = h.State()["ligacao"]["top"];
+    CHECK(top["video"] == json({{"oferece", false}, {"ativo", false}, {"imagem", false}, {"camera", false}, {"cedo", false}}));
+
+    h.app->OnCallVideo(10, Video(true, true, false, true, false));
+    h.Run();
+    top = h.State()["ligacao"]["top"];
+    CHECK(top["video"] == json({{"oferece", true}, {"ativo", true}, {"imagem", false}, {"camera", true}, {"cedo", false}}));
+
+    // A segunda ligacao tambem leva o bloco.
+    h.app->OnIncomingCall(20, "2002", "Fulano");
+    h.app->OnCallVideo(20, Video(true, false, false, false, true));
+    h.Run();
+    const json second = h.State()["ligacao"]["second"];
+    CHECK(second["video"] == json({{"oferece", true}, {"ativo", false}, {"imagem", false}, {"camera", false}, {"cedo", true}}));
+}

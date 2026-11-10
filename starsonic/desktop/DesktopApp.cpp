@@ -116,6 +116,7 @@ CommandPlatform PlatformOf(const Command& command) {
         case CommandKind::VideoViews:
         case CommandKind::VideoWindow:
         case CommandKind::H264Retry:
+        case CommandKind::Camera:
             return CommandPlatform::Windows;
         case CommandKind::ContactsOpened:
         case CommandKind::AllowContacts:
@@ -371,6 +372,10 @@ public:
             if (!app.IPhone() && app.hooks_.post) app.hooks_.post(RingMessage(kind));
         });
     }
+    void OnVideoRefused() override {
+        DesktopApp& app = app_;
+        app.Post([&app] { app.HandleVideoRefused(); });
+    }
 
 private:
     DesktopApp& app_;
@@ -577,6 +582,10 @@ void DesktopApp::OnCallState(int callId, CallState state, int sipCode) {
     controller_->OnCallState(callId, state, sipCode);
 }
 
+void DesktopApp::OnCallVideo(int callId, const CallVideo& video) {
+    controller_->OnCallVideo(callId, video);
+}
+
 void DesktopApp::OnTransfer(int callId, int sipCode) {
     controller_->OnTransfer(callId, sipCode);
 }
@@ -670,13 +679,13 @@ void DesktopApp::Execute(const Command& command) {
             break;
         case CommandKind::Dial:
             if (command.contact) {
-                controller_->DialContact(command.number);
+                controller_->DialContact(command.number, command.video && VideoOn());
             } else {
-                controller_->Dial(command.number);
+                controller_->Dial(command.number, command.video && VideoOn());
             }
             break;
         case CommandKind::Answer:
-            controller_->Answer();
+            controller_->Answer(command.video && VideoOn());
             break;
         case CommandKind::Reject:
             controller_->Reject();
@@ -927,6 +936,9 @@ void DesktopApp::Execute(const Command& command) {
             break;
         case CommandKind::CameraTest:
             CameraTest(command.on.value_or(false));
+            break;
+        case CommandKind::Camera:
+            CameraCommand(command.on.value_or(false));
             break;
         case CommandKind::VideoViews:
             VideoViews(command);
@@ -1545,11 +1557,9 @@ BridgeState DesktopApp::BuildState() const {
         chat.accountConnected = active && chat_.HasRamal(U8(active->address), U8(active->ramal));
         state.chat = chat;
         // 0.3.0: o video. O ligado olha so as escolhas (o H.264 conta como disponivel): o modulo que ainda baixa nao
-        // desliga o botao, e quem decide o aviso e a Task 7.
+        // desliga o botao; o aviso da recusa e o HandleVideoRefused.
         VideoView video;
-        VideoSettings choices = VideoChoices();
-        choices.h264Available = true;
-        video.on = VideoEnabled(choices);
+        video.on = VideoOn();
         video.cameras = cameras_;
         video.camera = settings.cameraName;
         video.cameraDisconnected = !settings.cameraName.empty() &&
