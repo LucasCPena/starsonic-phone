@@ -179,6 +179,34 @@ test('the big window draws nothing with a second call, ringing or held', async (
   }
 });
 
+test('the big window reads no frame while the second call is there, not even one written as it arrives', async ({ page }) => {
+  // A vista para de ler no mesmo passo em que o `desenhar` desliga: um quadro gravado na tarefa logo depois do desenho
+  // com a segunda (antes do próximo quadro de tela) não é lido nem marcado como visto na pausa, e aparece quando a
+  // ligação fica sozinha de novo.
+  await abrir(page, 'video-grande');
+  const area = remoto(page);
+  await quadro(page, 'remoto', VERMELHO);
+  await expect.poll(async () => perto(await corNoMeio(page, area), RGB_DO_VERMELHO)).toBe(true);
+  const comASegunda = await estado(page);
+  comASegunda.ligacao = { ...comASegunda.ligacao, second: { ...CARLOS, phase: 'ringing', activeSinceMs: 0, held: false }, secondKind: 'ringing' };
+  await page.evaluate(
+    ({ s, cor }) => {
+      const fake = (window as unknown as { __fake: { push(m: unknown): void; quadro(...a: unknown[]): boolean } }).__fake;
+      fake.push({ v: 1, type: 'state', state: s });
+      setTimeout(() => fake.quadro('remoto', 640, 480, cor[0], cor[1], cor[2]), 0);
+    },
+    { s: comASegunda, cor: BRANCO },
+  );
+  await expect(page.locator('.grande-cartao .vcard')).toBeVisible();
+  await quadrosDeTela(page, 10);
+  const pausada = await corNoMeio(page, area);
+  expect(perto(pausada, FUNDO), `a imagem da outra ponta com a segunda: ${pausada}`).toBe(true);
+
+  await mudarEstado(page, (s) => ({ ...s, ligacao: { ...s.ligacao, second: null, secondKind: 'none' } }));
+  await expect(page.locator('.grande-cartao .vcard')).toHaveCount(0);
+  await expect.poll(async () => perto(await corNoMeio(page, area), RGB_DO_BRANCO), 'o quadro gravado na chegada da segunda').toBe(true);
+});
+
 test('the big window always shows your image with the camera on', async ({ page }) => {
   await abrir(page, 'video-grande');
   await mudarEstado(page, (s) => ({ ...s, ligacao: { ...s.ligacao, top: { ...s.ligacao.top, video: { ...s.ligacao.top.video, imagem: false, camera: true } } } }));

@@ -85,8 +85,11 @@ export function VistaDeVideo({ vista, desenhar, rotulo, espelhar, class: classe 
     desenhista.current?.limpar();
   }, [memoria]);
 
-  // A leitura, a cada quadro de tela: o quadro novo e inteiro (o `lerQuadro` confere o `seq` antes e depois da cópia).
-  useEffect(() => {
+  // A leitura, a cada quadro de tela: o quadro novo e inteiro (o `lerQuadro` confere o `seq` antes e depois da cópia). Um
+  // efeito de layout, como o de cima: o laço para (e o fundo volta) no mesmo passo do desenho que desliga o `desenhar`. Com
+  // um efeito comum, que o Preact roda depois do próximo quadro de tela, o laço antigo ainda leria um quadro gravado nesse
+  // meio-tempo e o marcaria como visto: na volta do `desenhar`, ele não apareceria mais.
+  useLayoutEffect(() => {
     const d = desenhista.current;
     if (!d) return;
     if (!desenhar || !memoria) {
