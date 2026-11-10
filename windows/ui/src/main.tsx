@@ -532,6 +532,7 @@ function App() {
           onBack={() => setView(view.back)}
           onLeave={() => setView({ kind: 'tab', tab: 'teclado' })}
           chat={state.chat && { resumo: state.chat, cliente: chatCliente }}
+          video={isIos(state) ? undefined : state.video}
         />
         {avisos}
       </div>
