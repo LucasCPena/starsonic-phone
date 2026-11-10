@@ -3,7 +3,10 @@
 // (iPhone) Com `&plataforma=ios`, o mesmo cenário no modo iPhone (estadoDoIphone), com a agenda de exemplo.
 // (0.2.0) Os cenários do chat (chat, chat-desligado, chat-sem-conta e chat-duas-contas) abrem na aba Chat; as conversas
 // vêm do servidor do chat (o de teste, pelo `chat=` da URL: fake.ts).
-import type { AdminServer, AgendaContact, AgendaPermission, AppState, CallCard, CallState, CompanyContact, RingKind, Shortcut } from './state';
+// (0.3.0) O vídeo: o `principal` vem com o vídeo ligado, como o app de fábrica (o H.264 e o VP8), e os cenários `video`,
+// `video-voz-camera`, `video-tocando`, `video-porteiro`, `video-grande`, `sem-video` e `sem-camera`.
+import { SEM_VIDEO, VIDEO_DESLIGADO } from './video/estado';
+import type { AdminServer, AgendaContact, AgendaPermission, AppState, CallCard, CallState, CallVideo, CompanyContact, RingKind, Shortcut } from './state';
 
 /** A tela em que a interface abre (só na ponte falsa; o app real sempre abre no Teclado). */
 export type FakeView = 'teclado' | 'atalhos' | 'recentes' | 'contatos' | 'chat' | 'configuracoes' | 'sobre';
@@ -110,6 +113,13 @@ export function estadoDoIphone(state: AppState, permissao: AgendaPermission): Ap
     empresa: { link: '', situacao: 'nenhuma', erro: '', atualizadaEm: 0, quantos: 0, vez: 0 },
     audio: { microfones: [], altoFalantes: [], microfone: '', altoFalante: '', toque: '', desconectados: [] },
     recentes: state.recentes.map((r) => ({ ...r, contatoId: '' })),
+    // Só o Windows tem vídeo: o do iPhone é o neutro, e cada cartão da ligação vem sem vídeo.
+    video: structuredClone(VIDEO_DESLIGADO),
+    ligacao: state.ligacao && {
+      ...state.ligacao,
+      top: { ...state.ligacao.top, video: { ...SEM_VIDEO } },
+      second: state.ligacao.second && { ...state.ligacao.second, video: { ...SEM_VIDEO } },
+    },
   };
 }
 
@@ -172,6 +182,15 @@ function principal(): AppState {
     entrarAdmin: { erro: '', esperaAte: 0, vez: 0 },
     config: { bipeFim: true },
     empresa: { link: '', situacao: 'nenhuma', erro: '', atualizadaEm: 0, quantos: 0, vez: 0 },
+    video: {
+      ligado: true,
+      cameras: ['Integrated Camera', 'Câmera USB'],
+      camera: '',
+      cameraDesconectada: false,
+      teste: false,
+      h264: { cartao: true, pessoa: true, situacao: 'instalado' },
+      janela: 'normal',
+    },
   };
 }
 
@@ -200,7 +219,7 @@ function semConta(entrar: AppState['entrar']): AppState {
 
 /** Um cartão da ligação: em andamento e fora da espera, a não ser o que vier em `extra`. */
 function cartao(id: number, number: string, name: string, extra: Partial<CallCard> = {}): CallCard {
-  return { id, number, name, incoming: false, phase: 'active', activeSinceMs: 0, held: false, ...extra };
+  return { id, number, name, incoming: false, phase: 'active', activeSinceMs: 0, held: false, video: { ...SEM_VIDEO }, ...extra };
 }
 
 /** O `activeSinceMs` de uma ligação atendida há `haMs` ms. */
@@ -290,6 +309,51 @@ function cenarioDeLigacao(nome: string): Scenario | undefined {
         state: comLigacao(ligacao(cartao(22, CARLOS.number, CARLOS.name, { incoming: true, phase: 'ringing' }))),
         ring: 'completo',
       };
+    default:
+      return undefined;
+  }
+}
+
+/** (0.3.0) Os cenários do vídeo: a ligação com a Ana (o `video`), as variações dela, a recebida e o porteiro tocando. */
+function cenarioDeVideo(nome: string): Scenario | undefined {
+  const emLigacao = (video: Partial<CallVideo>): AppState => ({
+    ...principal(),
+    ligacao: ligacao(cartao(ANA.id, ANA.number, ANA.name, { activeSinceMs: desde(3 * MINUTO + 12 * SEGUNDO), video: { ...SEM_VIDEO, ...video } })),
+  });
+  const comVideo = { ativo: true, imagem: true, camera: true };
+  switch (nome) {
+    case 'video':
+      return { state: emLigacao(comVideo) };
+    case 'video-voz-camera':
+      // O vídeo negociado, mas a imagem da outra ponta ainda não chegou (a nossa câmera manda).
+      return { state: emLigacao({ ativo: true, imagem: false, camera: true }) };
+    case 'video-tocando':
+      return {
+        state: { ...principal(), ligacao: ligacao(cartao(21, ANA.number, ANA.name, { incoming: true, phase: 'ringing', video: { ...SEM_VIDEO, oferece: true } })) },
+        ring: 'completo',
+      };
+    case 'video-porteiro':
+      // A Portaria (um Porteiro do administrador) tocando, já com a imagem (o 183).
+      return {
+        state: {
+          ...principal(),
+          ligacao: ligacao(cartao(31, '1050', 'Portaria', { incoming: true, phase: 'ringing', video: { ...SEM_VIDEO, oferece: true, imagem: true, cedo: true } })),
+        },
+        ring: 'completo',
+      };
+    case 'video-grande': {
+      const state = emLigacao(comVideo);
+      return { state: { ...state, video: { ...state.video!, janela: 'grande' } } };
+    }
+    case 'sem-video': {
+      // O administrador desligou os três codecs; a chave da pessoa continua ligada.
+      const state = principal();
+      return { state: { ...state, video: { ...state.video!, ligado: false, h264: { cartao: false, pessoa: true, situacao: 'desligado' } } } };
+    }
+    case 'sem-camera': {
+      const state = principal();
+      return { state: { ...state, video: { ...state.video!, cameras: [] } }, view: 'configuracoes' };
+    }
     default:
       return undefined;
   }
@@ -401,7 +465,7 @@ export function createScenario(nome: string): Scenario | undefined {
     case 'empresa-antes-do-estado':
       return { ...comPlanilhaDaEmpresa(), empresaAntesDoEstado: true };
     default:
-      return cenarioDeLigacao(nome) ?? cenarioDoChat(nome);
+      return cenarioDeLigacao(nome) ?? cenarioDeVideo(nome) ?? cenarioDoChat(nome);
   }
 }
 
@@ -426,6 +490,13 @@ export const SCENARIO_NAMES = [
   'conferencia',
   'aviso',
   'tocando-antes-de-carregar',
+  'video',
+  'video-voz-camera',
+  'video-tocando',
+  'video-porteiro',
+  'video-grande',
+  'sem-video',
+  'sem-camera',
   'chat',
   'chat-desligado',
   'chat-sem-conta',

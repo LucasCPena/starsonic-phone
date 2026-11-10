@@ -338,3 +338,54 @@ export function IconWarning() {
     </svg>
   );
 }
+
+/** (0.3.0) O vídeo: a câmera. */
+export const IconVideo = svg(
+  <>
+    <rect x="2.5" y="6.5" width="13" height="11" rx="2.5" />
+    <path d="M15.5 10.5L21 7.5v9l-5.5-3" />
+  </>,
+);
+export const IconVideoOff = svg(
+  <>
+    <rect x="2.5" y="6.5" width="13" height="11" rx="2.5" />
+    <path d="M15.5 10.5L21 7.5v9l-5.5-3" />
+    <path d="M3 3l18 18" />
+  </>,
+);
+/** Abrir grande. */
+export const IconExpand = svg(
+  <>
+    <path d="M15 3h6v6" />
+    <path d="M9 21H3v-6" />
+    <path d="M21 3l-7 7" />
+    <path d="M3 21l7-7" />
+  </>,
+);
+/** Diminuir. */
+export const IconShrink = svg(
+  <>
+    <path d="M4 14h6v6" />
+    <path d="M20 10h-6V4" />
+    <path d="M14 10l7-7" />
+    <path d="M3 21l7-7" />
+  </>,
+);
+export const IconFullscreen = svg(
+  <>
+    <path d="M8 3H5a2 2 0 0 0-2 2v3" />
+    <path d="M21 8V5a2 2 0 0 0-2-2h-3" />
+    <path d="M3 16v3a2 2 0 0 0 2 2h3" />
+    <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
+  </>,
+);
+export const IconExitFullscreen = svg(
+  <>
+    <path d="M8 3v3a2 2 0 0 1-2 2H3" />
+    <path d="M21 8h-3a2 2 0 0 1-2-2V3" />
+    <path d="M3 16h3a2 2 0 0 1 2 2v3" />
+    <path d="M16 21v-3a2 2 0 0 1 2-2h3" />
+  </>,
+);
+/** Parar o teste. */
+export const IconStop = svg(<rect x="6" y="6" width="12" height="12" rx="2" />);
