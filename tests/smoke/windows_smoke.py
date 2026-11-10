@@ -153,6 +153,15 @@ EXPORT_TYPE = "Planilha do Excel (*.xlsx)"
 EXPORT_NAME = "Contatos Starsonic"
 IMPORT_CANCELLED = "importar: a janela foi cancelada"
 EXPORT_CANCELLED = "exportar: a janela foi cancelada"
+# (0.3.0) O vídeo: a memória de uma vista (o cabeçalho de 64 bytes e dois lugares de 1920x1080 em I420), o aviso com a
+# oferta de vídeo (222 pixels lógicos de altura) e as linhas do diagnóstico do download do H.264 da Cisco.
+VIDEO_BUFFER_BYTES = 6220864
+VIDEO_CALLER = "3001"
+VIDEO_NOTICE_HEIGHT = 222
+H264_INSTALLED = "h264: instalado"
+H264_FAILED = "h264: download falhou"
+H264_WAIT = 90
+
 FORCED_CLOSE = "fechamento forcado"
 LATE_QUIT = "o Sair nao terminou"
 
@@ -904,6 +913,14 @@ def run_smoke(args, result):
             if not wait_for(lambda: count_events(registrar.events(), "bye-in") >= 2, 20, pump=context_pump):
                 raise SmokeFailure("o BYE da ligacao recebida nao chegou: %s" % registrar.events())
             page.locator("button.btn-call").wait_for(timeout=20000)
+
+            # 3b. (0.3.0) O aviso com a oferta de vídeo (222 de altura) e o download do H.264 da Cisco.
+            problems = []
+            check_video_notice(win, hwnd, browser, page, registrar, result.setdefault("video", {}), problems)
+            check_h264_download(data_dir, result["video"], problems)
+            if problems:
+                raise SmokeFailure("; ".join(problems))
+            log("OK: o aviso com video tem 222 de altura e o Atender com video, e o H.264 da Cisco foi tratado")
             result["registrador"] = registrar.events()
             browser.close()
             app.quit()
@@ -1211,6 +1228,129 @@ def ring_and_reject(win, hwnd, browser, registrar, pump, label, problems):
     return True
 
 
+# ---- (0.3.0) O vídeo: as memórias das vistas, o aviso com a oferta de vídeo e o download do H.264 ----
+
+# Guarda a primeira memória que chegar à página daqui em diante: o additionalData e o tamanho dela.
+VIDEO_BUFFER_LISTEN_SCRIPT = """() => {
+  window.__fumacaMemoria = null;
+  window.chrome.webview.addEventListener('sharedbufferreceived', (evento) => {
+    if (window.__fumacaMemoria === null) {
+      window.__fumacaMemoria = {dados: evento.additionalData, bytes: evento.getBuffer().byteLength};
+    }
+  });
+}"""
+
+VIDEO_BUFFER_READ_SCRIPT = "() => window.__fumacaMemoria"
+
+VIDEO_VIEWS_SCRIPT = """([pagina, vistas]) => window.chrome.webview.postMessage({v: 1, cmd: 'videoViews', pagina, vistas})"""
+
+
+def video_buffer_problems(label, vista, info):
+    """Os problemas de uma memória de vídeo que chegou à página (a lista vazia: está certa). `info` é o que o
+    VIDEO_BUFFER_LISTEN_SCRIPT guardou ({"dados": o additionalData, "bytes": o tamanho}), ou None se ela não chegou."""
+    if info is None:
+        return ["%s: a memoria da vista %s nao chegou em 15 s" % (label, vista)]
+    problems = []
+    dados = info.get("dados")
+    esperado = {"v": 1, "type": "videoBuffer", "vista": vista, "bytes": VIDEO_BUFFER_BYTES}
+    if dados != esperado:
+        problems.append("%s: o additionalData da memoria da vista %s e %s (esperado %s)" % (label, vista, dados, esperado))
+    size = info.get("bytes")
+    if not isinstance(size, int) or size < VIDEO_BUFFER_BYTES:
+        problems.append("%s: a memoria da vista %s tem %s bytes (esperado pelo menos %d)"
+                        % (label, vista, size, VIDEO_BUFFER_BYTES))
+    return problems
+
+
+def h264_download_result(log_text):
+    """O fim do download do H.264 da Cisco pelo diagnóstico: "instalado", "falhou" (a última das duas linhas que
+    aparecer) ou None (nenhuma: o download não ligou)."""
+    result = None
+    for line in log_text.splitlines():
+        if H264_INSTALLED in line:
+            result = "instalado"
+        elif H264_FAILED in line:
+            result = "falhou"
+    return result
+
+
+def check_video_buffers(page, notice_page, label, record, problems):
+    """Pede ao executavel, pelo CDP, a memoria de uma vista em cada pagina (o `local` na principal e o `porteiro` no
+    aviso), confere o additionalData e o tamanho do que chega, e tira a vista de novo."""
+    for target, name, vista in ((page, "principal", "local"), (notice_page, "aviso", "porteiro")):
+        where = "%s (%s)" % (label, name)
+        try:
+            target.evaluate(VIDEO_BUFFER_LISTEN_SCRIPT)
+            target.evaluate(VIDEO_VIEWS_SCRIPT, [name, [vista]])
+            info = wait_for(lambda: target.evaluate(VIDEO_BUFFER_READ_SCRIPT), 15, pump=target.wait_for_timeout)
+            info = info or None
+            record["memoria_%s_%s" % (name, label.replace(" ", "_"))] = info
+            log("memoria da vista %s na pagina %s (%s): %s" % (vista, name, label, info))
+            problems.extend(video_buffer_problems(label + " na pagina " + name, vista, info))
+        except Exception as error:   # noqa: BLE001
+            problems.append("%s: a memoria da vista %s: %s" % (where, vista, error))
+        finally:
+            try:
+                target.evaluate(VIDEO_VIEWS_SCRIPT, [name, []])
+            except Exception:   # noqa: BLE001
+                pass
+
+
+def check_video_notice(win, hwnd, browser, page, registrar, record, problems):
+    """Com a janela principal minimizada, o RINGVIDEO (uma oferta de VP8) mostra o aviso com o Atender com vídeo, a área
+    da janela do aviso tem 222 pixels lógicos de altura (a da janela principal é medida do mesmo jeito) e o Recusar encerra."""
+    notice_page = find_page(browser, "/aviso.html", 30, page.wait_for_timeout)
+    win.minimize(hwnd)
+    wait_for(lambda: win.minimized(hwnd), 10, pump=page.wait_for_timeout)
+    refused_before = count_events(registrar.events(), "inv-out %s 486" % RAMAL)
+    reply = registrar.command("RINGVIDEO %s %s VP8" % (RAMAL, VIDEO_CALLER))
+    if reply != ["OK"]:
+        problems.append("aviso com video: RINGVIDEO %s %s VP8: %s" % (RAMAL, VIDEO_CALLER, reply))
+        return
+    try:
+        notice = wait_for(lambda: next((h for h in win.windows(NOTICE_CLASS) if win.visible(h)), None), 20,
+                          pump=page.wait_for_timeout)
+        if not notice:
+            problems.append("aviso com video: o aviso de ligacao recebida nao apareceu")
+            return
+        notice_page.locator('[role="alertdialog"]').wait_for(timeout=15000)
+        try:
+            notice_page.get_by_role("button", name="Atender com vídeo", exact=True).wait_for(timeout=10000)
+        except Exception as error:   # noqa: BLE001
+            problems.append("aviso com video: o aviso nao tem o Atender com video: %s" % error)
+        # A página pede a altura (o noticeHeight) depois de desenhar: espera o executável dar a ela.
+        measure_notice = lambda: logical_size(*win.client(notice), win.dpi(notice))   # noqa: E731
+        wait_for(lambda: abs(measure_notice()[1] - VIDEO_NOTICE_HEIGHT) <= 1, 10, pump=page.wait_for_timeout)
+        size = measure_notice()
+        record["aviso_com_video"] = {"logicos": list(size), "dpi": win.dpi(notice), "cliente": list(win.client(notice))}
+        log("aviso com video: %sx%s logicos" % size)
+        if abs(size[1] - VIDEO_NOTICE_HEIGHT) > 1:
+            problems.append("o aviso com video tem %s pixels logicos de altura (esperado %d)" % (size[1], VIDEO_NOTICE_HEIGHT))
+        notice_page.get_by_role("button", name="Recusar").click(timeout=10000)
+        if not wait_for(lambda: count_events(registrar.events(), "inv-out %s 486" % RAMAL) > refused_before, 20,
+                        pump=page.wait_for_timeout):
+            problems.append("aviso com video: o Recusar nao chegou ao registrador: %s" % registrar.events())
+        wait_for(lambda: not win.visible(notice), 10, pump=page.wait_for_timeout)
+    finally:
+        if count_events(registrar.events(), "inv-out %s 486" % RAMAL) <= refused_before:
+            registrar.command("HANGUP " + RAMAL)
+        win.restore(hwnd)
+        wait_for(lambda: not win.minimized(hwnd), 10, pump=page.wait_for_timeout)
+
+
+def check_h264_download(data_dir, record, problems):
+    """Espera ate 90 s uma linha `h264:` no diagnostico. O "instalado" vai para o registro; o "falhou" e so um aviso no
+    log (a Cisco fora do ar nao derruba o CI); nenhuma das duas e um problema: o download nao ligou."""
+    result = wait_for(lambda: h264_download_result(read_log(data_dir)), H264_WAIT, interval=1)
+    record["h264"] = result
+    if result == "instalado":
+        log("H.264 da Cisco: instalado")
+    elif result == "falhou":
+        log("AVISO: o download do H.264 da Cisco falhou (a Cisco fora do ar nao derruba a fumaca)")
+    else:
+        problems.append("o diagnostico.log nao tem nenhuma linha 'h264:' em %d s: o download do H.264 nao ligou" % H264_WAIT)
+
+
 def wait_interface_again(data_dir, ready_before, timeout):
     """Espera o diagnostico.log ter mais um "interface pronta" que antes."""
     return wait_for(lambda: count_lines(read_log(data_dir), "interface pronta") > ready_before, timeout, interval=0.5)
@@ -1232,6 +1372,9 @@ def run_recovery(pw, win, exe, data_dir, registrar, capturas, result, problems):
         for url in recovery["urls"]:
             if not has_version_query(url):
                 problems.append("a pagina %s abriu sem a versao na URL (?v=)" % url)
+        # (0.3.0) A memoria de cada vista chega a pagina dela, antes do navegador refeito.
+        video = result.setdefault("video", {})
+        check_video_buffers(page, notice_page, "antes do navegador refeito", video, problems)
 
         # Os dispositivos de som: tres avisos seguidos viram uma releitura so, fora da thread da janela.
         before = count_lines(read_log(data_dir), "som: os dispositivos foram relidos")
@@ -1294,6 +1437,9 @@ def run_recovery(pw, win, exe, data_dir, registrar, capturas, result, problems):
                 wait_connected(page, capturas, result, "navegador novo")
                 if not has_version_query(page.url):
                     problems.append("depois do navegador novo, a pagina abriu sem a versao na URL: %s" % page.url)
+                # (0.3.0) E de novo, nas paginas achadas outra vez.
+                check_video_buffers(page, find_page(browser, "/aviso.html", 30, page.wait_for_timeout),
+                                    "depois do navegador refeito", result.setdefault("video", {}), problems)
                 recovery["navegador_saiu"] = ring_and_reject(win, hwnd, browser, registrar, page.wait_for_timeout,
                                                              "depois do navegador novo", problems)
                 screenshot(page, capturas, "navegador-reiniciado.png", result)

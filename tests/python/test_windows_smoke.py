@@ -131,6 +131,48 @@ class RegistrarControlTest(unittest.TestCase):
         self.assertIsNotNone(registrar.process.poll())
 
 
+class VideoHelpersTest(unittest.TestCase):
+    OK = {"dados": {"v": 1, "type": "videoBuffer", "vista": "local", "bytes": 6220864}, "bytes": 6220864}
+
+    def test_a_right_video_buffer_has_no_problem(self):
+        self.assertEqual(windows_smoke.video_buffer_problems("principal", "local", self.OK), [])
+        bigger = dict(self.OK, bytes=6220864 + 4096)
+        self.assertEqual(windows_smoke.video_buffer_problems("principal", "local", bigger), [])
+
+    def test_a_video_buffer_that_never_came_is_a_problem(self):
+        problems = windows_smoke.video_buffer_problems("aviso", "porteiro", None)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("aviso", problems[0])
+        self.assertIn("porteiro", problems[0])
+
+    def test_a_video_buffer_of_another_view_is_a_problem(self):
+        problems = windows_smoke.video_buffer_problems("principal", "local", dict(self.OK, dados=dict(self.OK["dados"], vista="remoto")))
+        self.assertEqual(len(problems), 1)
+        self.assertIn("remoto", problems[0])
+
+    def test_a_smaller_video_buffer_is_a_problem(self):
+        problems = windows_smoke.video_buffer_problems("principal", "local", dict(self.OK, bytes=6220863))
+        self.assertEqual(len(problems), 1)
+        self.assertIn("6220863", problems[0])
+
+    def test_a_video_buffer_with_wrong_data_is_a_problem(self):
+        wrong = dict(self.OK["dados"], bytes=100)
+        self.assertEqual(len(windows_smoke.video_buffer_problems("principal", "local", dict(self.OK, dados=wrong))), 1)
+        self.assertEqual(len(windows_smoke.video_buffer_problems("principal", "local", dict(self.OK, dados=dict(self.OK["dados"], type="x")))), 1)
+        self.assertEqual(len(windows_smoke.video_buffer_problems("principal", "local", dict(self.OK, dados=None))), 1)
+
+    def test_the_h264_download_result_comes_from_the_log(self):
+        self.assertEqual(windows_smoke.h264_download_result("2026-11-10 h264: instalado 2.6.0\n"), "instalado")
+        self.assertEqual(windows_smoke.h264_download_result("2026-11-10 h264: download falhou (timeout)\n"), "falhou")
+        self.assertIsNone(windows_smoke.h264_download_result("2026-11-10 interface pronta\n"))
+        self.assertIsNone(windows_smoke.h264_download_result(""))
+
+    def test_the_last_h264_line_wins(self):
+        text = "h264: download falhou (rede)\nalgo\nh264: instalado 2.6.0\n"
+        self.assertEqual(windows_smoke.h264_download_result(text), "instalado")
+        self.assertEqual(windows_smoke.h264_download_result("h264: instalado 2.6.0\nh264: download falhou (rede)\n"), "falhou")
+
+
 if __name__ == "__main__":
     unittest.main()
 
