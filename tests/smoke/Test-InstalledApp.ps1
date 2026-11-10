@@ -60,7 +60,8 @@ try {
     Write-Host "Instalado em $installDir"
     Get-ChildItem -Path $installDir -Recurse -File | ForEach-Object { Write-Host ("  " + $_.FullName.Substring($installDir.Length + 1)) }
     # O instalador nunca leva o H.264 da Cisco (o app baixa o modulo na pasta codecs): a pasta instalada de verdade.
-    $h264 = @(Get-ChildItem -Path $installDir -Recurse -Force -File -Filter 'openh264*.dll' -ErrorAction SilentlyContinue)
+    # Uma pasta que nao da para ler falha, nunca passa sem ser olhada.
+    $h264 = @(Get-ChildItem -Path $installDir -Recurse -Force -File -Filter 'openh264*.dll' -ErrorAction Stop)
     if ($h264.Count -gt 0) {
         throw "O app instalado leva o H.264 da Cisco: $(($h264 | ForEach-Object { $_.FullName }) -join ', ')."
     }

@@ -1,3 +1,4 @@
 microsip/** -text
 microsip-dist/** -text
 branding/langpack_*.txt -text
+starsonic/third_party/openh264/BINARY_LICENSE.txt -text

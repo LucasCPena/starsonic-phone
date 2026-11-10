@@ -387,12 +387,15 @@ jobs:
         if: ${{ !cancelled() && steps.installer.outcome == 'success' }}
         run: .\tests\smoke\Test-Installer.ps1 -Setup "dist\StarsonicPhone-$($env:STARSONIC_VERSION)-setup.exe" -AppDir out-novo -Version $env:STARSONIC_VERSION -Capturas capturas-windows
 
-      # O módulo H.264 da Cisco (OpenH264): baixa o binário fixado, confere a assinatura Authenticode da Cisco (o O= exato
-      # da Cisco Systems, Inc. ou da Cisco WebEx LLC), a versão do .dll e as duas impressões do deps.lock, guarda o texto
-      # da licença (artefato openh264-licenca) e confere que o app empacotado não leva nenhum openh264*.dll (o instalado
-      # é conferido pela fumaça, no Test-InstalledApp.ps1). Um site da Cisco fora do ar só avisa.
+      # O módulo H.264 da Cisco (OpenH264): primeiro o auto-teste da leitura do assinante; depois baixa o binário fixado,
+      # descomprime com as regras do app, confere a assinatura Authenticode da Cisco (o único O do certificado, lido pela
+      # estrutura do nome, igual a Cisco Systems, Inc. ou a Cisco WebEx LLC), a versão do .dll e as duas impressões do
+      # deps.lock, guarda o texto da licença (artefato openh264-licenca) e confere que o app empacotado não leva nenhum
+      # openh264*.dll (o instalado é conferido pela fumaça, no Test-InstalledApp.ps1). Um site da Cisco fora do ar só
+      # avisa. No PowerShell 7 (pwsh): a leitura do nome do certificado pela estrutura é do .NET 7.
       - name: Módulo H.264 da Cisco (assinatura, impressões e app sem o binário)
         if: ${{ !cancelled() }}
+        shell: pwsh
         run: .\build\Test-OpenH264.ps1 -AppDir out-novo,out-novo-teste -LicenseDir openh264-licenca
 
       - name: Publicar a licença do binário da Cisco
