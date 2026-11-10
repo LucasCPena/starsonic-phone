@@ -2,8 +2,10 @@
 // vídeo em `grande` (1280×800; o executável redimensiona a janela quando a página manda o `videoWindow`) ou em
 // `telaCheia`. Só o vídeo da outra ponta (a janela toda, encaixada no fundo #04060e), a sua imagem no canto (com a câmera
 // ligada, sempre à vista), a etiqueta de quem fala, uma sombra embaixo e a barra de baixo: Mudo, Câmera, Chat, Tela cheia
-// (ou Sair da tela cheia), Diminuir e Desligar. A Câmera segue a regra da tela da ligação: com uma ligação, o
-// cameraDesativada; com duas (também na consulta), só desliga; na conferência, nenhuma. O Chat só aparece com o `chat`
+// (ou Sair da tela cheia), Diminuir e Desligar. (Ruling 13) O vídeo e a Câmera seguem a regra da tela da ligação, do
+// video/estado.ts: com duas ligações (a segunda tocando ou em espera, também na consulta), a imagem da outra ponta pausa
+// (a vista fica só com o fundo: o imagemDaLigacao) e a Câmera só desliga (o cameraDaLigacaoDesativada); na conferência,
+// nenhuma Câmera. O Chat só aparece com o `chat`
 // (o main.tsx o passa numa ligação com um colega do chat): ele abre e fecha a conversa num painel de 360 à direita (o
 // quadro GrandeChat), no tema do app, e o vídeo, a sua imagem e a barra de baixo ficam com o resto. O cartão da segunda
 // ligação (o CartaoDaOutra) flutua em cima, no meio. O duplo clique no vídeo alterna o grande e a tela cheia, e o Esc só
@@ -20,7 +22,7 @@ import { CartaoDaOutra } from '../screens/Ligacao';
 import { statusLine, useNow } from '../screens/tempoDaLigacao';
 import type { AppState, CallState } from '../state';
 import type { Send } from '../types';
-import { cameraDesativada, videoDe } from './estado';
+import { cameraDaLigacaoDesativada, imagemDaLigacao, videoDe } from './estado';
 import { CAMERA, CHAT, DESLIGAR_A_CAMERA, DIMINUIR, LIGAR_A_CAMERA, rotuloDoVideo, SAIR_DA_TELA_CHEIA, SUA_IMAGEM, TELA_CHEIA } from './textos';
 
 /** O chat do grande (a Task 8): o botão Chat alterna o painel da direita, com a conversa (o `painel`) dentro. */
@@ -87,14 +89,14 @@ export function Grande({ state, ligacao: l, send, chat = null }: Props): VNode {
     return () => window.removeEventListener('keydown', aoTeclar);
   }, [telaCheia, send]);
 
-  // A Câmera: com duas ligações (a outra em espera, também na consulta), só desliga; na conferência, nenhuma.
+  // A Câmera: com duas ligações (a segunda tocando ou em espera, também na consulta), só desliga; na conferência, nenhuma.
   const camera = conferencia ? null : (
     <Botao
       rotulo={CAMERA}
       nome={video.camera ? DESLIGAR_A_CAMERA : LIGAR_A_CAMERA}
       icone={video.camera ? <IconVideo /> : <IconVideoOff />}
       aceso={video.camera}
-      desligado={l.second !== null ? !video.camera : cameraDesativada(top, video)}
+      desligado={cameraDaLigacaoDesativada(l, video)}
       onClick={() => send({ cmd: 'camera', on: !video.camera })}
     />
   );
@@ -102,7 +104,7 @@ export function Grande({ state, ligacao: l, send, chat = null }: Props): VNode {
   return (
     <div class={chat?.aberto ? 'grande grande-com-chat' : 'grande'} data-modo={telaCheia ? 'tela-cheia' : 'grande'}>
       <div class="grande-video" onDblClick={alternarTela}>
-        <VistaDeVideo key={top.id} vista="remoto" desenhar={video.imagem} rotulo={rotuloDoVideo(nome)} class="grande-remoto" />
+        <VistaDeVideo key={top.id} vista="remoto" desenhar={video.imagem && imagemDaLigacao(l)} rotulo={rotuloDoVideo(nome)} class="grande-remoto" />
         <div class="grande-sombra" aria-hidden="true" />
       </div>
       <p class="grande-etiqueta">

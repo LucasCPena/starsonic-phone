@@ -1,8 +1,9 @@
 // O vídeo no estado (docs/ponte-windows.md, "Vídeo (0.3.0)"): a interface lê o vídeo só por aqui. No iPhone, ou num estado
 // sem o campo (montado à mão nos testes de antes), o vídeo é o neutro: nada de vídeo aparece. (Task 4) A regra da Câmera,
-// a mesma em toda tela que tem o botão.
+// a mesma em toda tela que tem o botão. (Ruling 13) O vídeo que pausa com duas ligações e a regra da Câmera com elas, num
+// lugar só: a tela da ligação e o grande leem daqui.
 import { isIos } from '../plataforma';
-import type { AppState, CallCard, CallVideo, VideoSettings } from '../state';
+import type { AppState, CallCard, CallState, CallVideo, VideoSettings } from '../state';
 
 export const SEM_VIDEO: CallVideo = { oferece: false, ativo: false, imagem: false, camera: false, cedo: false };
 
@@ -32,4 +33,22 @@ export function videoDe(state: AppState, card: CallCard): CallVideo {
  */
 export function cameraDesativada(card: CallCard, video: CallVideo): boolean {
   return !video.camera && (card.activeSinceMs <= 0 || card.held);
+}
+
+/**
+ * (Ruling 13) A imagem da outra ponta pode ser desenhada: só numa ligação sozinha (spec do vídeo, 4.2). Com a segunda
+ * tocando ou em espera (também na consulta) e na conferência (que sempre tem a segunda), o vídeo pausa: nada é desenhado,
+ * na tela da ligação e no grande.
+ */
+export function imagemDaLigacao(l: CallState): boolean {
+  return l.second === null;
+}
+
+/**
+ * (Ruling 13) A Câmera desativada, na tela da ligação e no grande (na conferência, nenhuma Câmera): ligada, ela sempre
+ * desliga; desligada, ela não liga com duas ligações (a segunda tocando ou em espera, também na consulta, que tem o
+ * cliente em espera) e, numa ligação sozinha, segue o cameraDesativada da de cima.
+ */
+export function cameraDaLigacaoDesativada(l: CallState, video: CallVideo): boolean {
+  return !video.camera && (l.second !== null || cameraDesativada(l.top, video));
 }

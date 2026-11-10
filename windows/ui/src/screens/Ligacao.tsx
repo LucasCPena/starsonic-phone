@@ -16,9 +16,10 @@
 // lugar do menu dos dispositivos; sem o botão Atalhos (fora da 1.0), uma ligação fica em três colunas (6 controles) e
 // duas em quatro (7). Cada tecla do teclado da ligação manda, junto do dtmf, o `keyTone` com ela, com o Bipe ao digitar
 // ligado (o `config.bipeTecla`).
-// (vídeo, etapa 2) Com o vídeo ligado, a Câmera entra nos controles, depois do Mudo: numa ligação, com a regra do
-// cameraDesativada; com duas (também na consulta), só para desligar a câmera (o motor deixa o vídeo da ligação ativa); na
-// conferência, não. Numa ligação só, fora do toque, sem painel aberto e com a imagem da outra ponta chegando, a área do
+// (vídeo, etapa 2) Com o vídeo ligado, a Câmera entra nos controles, depois do Mudo, com a regra do video/estado.ts (o
+// cameraDaLigacaoDesativada): numa ligação, a do cameraDesativada; com duas (a segunda tocando ou em espera, também na
+// consulta), só para desligar a câmera (o motor deixa o vídeo da ligação ativa); na conferência, não. Numa ligação só (o
+// imagemDaLigacao), fora do toque, sem painel aberto e com a imagem da outra ponta chegando, a área do
 // vídeo (CaixaDoVideo.tsx) toma o lugar de quem fala. Fora dela, com a câmera ligada, a sua imagem flutua no canto de cima
 // à direita (também com um painel aberto): embaixo do cartão da outra ligação quando ele está em cima, e no canto de
 // baixo, ao lado do Desligar, com ele e um painel aberto. As colunas dos controles seguem quantos são. O cartão da outra
@@ -57,7 +58,7 @@ import { buscaPor, buscar, listaDeContatos, nomeOuNumero, temLetras, type Linha 
 import type { AppState, CallCard, CallState, CompanyContact, Contact } from '../state';
 import type { Send } from '../types';
 import { CaixaDoVideo, SuaImagemFlutuante } from '../video/CaixaDoVideo';
-import { cameraDesativada, videoDe, videoDoApp } from '../video/estado';
+import { cameraDaLigacaoDesativada, imagemDaLigacao, videoDe, videoDoApp } from '../video/estado';
 import { ATENDER_COM_VIDEO, CAMERA, CHAT, DESLIGAR_A_CAMERA, LIGAR_A_CAMERA, rotuloDoVideo } from '../video/textos';
 import { statusLine, useNow } from './tempoDaLigacao';
 
@@ -692,10 +693,11 @@ export function Ligacao({ state, ligacao: l, contatos, daEmpresa, send, chat = n
   const status = statusLine(top, now);
   const compacto = painel !== null;
 
-  // (vídeo, etapa 2) O desenho com vídeo: numa ligação só (sem a segunda e sem a conferência), fora do toque, sem painel
-  // aberto e com a imagem da outra ponta chegando. Fora dele, com a câmera ligada, a sua imagem flutua no canto.
+  // (vídeo, etapa 2) O desenho com vídeo: numa ligação só (sem a segunda e sem a conferência: o imagemDaLigacao), fora do
+  // toque, sem painel aberto e com a imagem da outra ponta chegando. Fora dele, com a câmera ligada, a sua imagem flutua
+  // no canto.
   const video = videoDe(state, top);
-  const comVideo = !tocando && l.second === null && painel === null && video.imagem;
+  const comVideo = !tocando && imagemDaLigacao(l) && painel === null && video.imagem;
   const suaFlutuante = !comVideo && video.camera;
   // (vídeo, etapa 2) O porteiro que manda a imagem antes de atender: a imagem em cima, no lugar do avatar. O Atender com
   // vídeo, com o vídeo do app ligado e a oferta da que toca.
@@ -812,19 +814,19 @@ export function Ligacao({ state, ligacao: l, contatos, daEmpresa, send, chat = n
   );
   // (vídeo, etapa 2) A Câmera, só com o vídeo ligado (nunca no iPhone): o nome diz a ação, e ela fica acesa com a câmera
   // ligada. Numa ligação, desligada, ela espera o atender e a volta da espera (o cameraDesativada); ligada, sempre
-  // desliga. Com duas (a outra em espera, também na consulta), ela só desliga: o motor deixa o vídeo da ligação ativa, e a
-  // câmera que manda sempre tem como ser desligada, mas nenhuma liga com duas ligações.
-  const cameraCtrl = (soDesliga: boolean) =>
-    videoDoApp(state).ligado ? (
-      <Ctrl
-        label={CAMERA}
-        nome={video.camera ? DESLIGAR_A_CAMERA : LIGAR_A_CAMERA}
-        icon={video.camera ? <IconVideo /> : <IconVideoOff />}
-        aceso={video.camera}
-        disabled={soDesliga ? !video.camera : cameraDesativada(top, video)}
-        onClick={() => send({ cmd: 'camera', on: !video.camera })}
-      />
-    ) : null;
+  // desliga. Com duas (a segunda tocando ou em espera, também na consulta), ela só desliga: o motor deixa o vídeo da
+  // ligação ativa, e a câmera que manda sempre tem como ser desligada, mas nenhuma liga com duas ligações (o
+  // cameraDaLigacaoDesativada, a mesma regra do grande).
+  const cameraCtrl = videoDoApp(state).ligado ? (
+    <Ctrl
+      label={CAMERA}
+      nome={video.camera ? DESLIGAR_A_CAMERA : LIGAR_A_CAMERA}
+      icon={video.camera ? <IconVideo /> : <IconVideoOff />}
+      aceso={video.camera}
+      disabled={cameraDaLigacaoDesativada(l, video)}
+      onClick={() => send({ cmd: 'camera', on: !video.camera })}
+    />
+  ) : null;
 
   // (vídeo, etapa 2) O Chat, com um colega do chat na ligação de cima (nunca no iPhone). Com a segunda tocando, ele espera,
   // como a Nova ligação: a conversa da ligação só fica na tela com uma (main.tsx).
@@ -840,11 +842,11 @@ export function Ligacao({ state, ligacao: l, contatos, daEmpresa, send, chat = n
   if (conferencia) {
     controles = [mudo, teclado, <Ctrl label="Separar" icon={<IconSplit />} onClick={() => send({ cmd: 'split' })} />];
   } else if (consulta) {
-    controles = [mudo, cameraCtrl(true), alternar, <Ctrl label="Cancelar" icon={<IconClose />} onClick={() => send({ cmd: 'cancelConsult' })} />];
+    controles = [mudo, cameraCtrl, alternar, <Ctrl label="Cancelar" icon={<IconClose />} onClick={() => send({ cmd: 'cancelConsult' })} />];
   } else if (outra) {
     controles = [
       mudo,
-      cameraCtrl(true),
+      cameraCtrl,
       teclado,
       audioCtrl,
       espera,
@@ -856,7 +858,7 @@ export function Ligacao({ state, ligacao: l, contatos, daEmpresa, send, chat = n
   } else {
     controles = [
       mudo,
-      cameraCtrl(false),
+      cameraCtrl,
       chatCtrl,
       teclado,
       audioCtrl,

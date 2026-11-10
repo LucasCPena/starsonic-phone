@@ -6,7 +6,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { AVISOS_DE_5_S } from '../../src/video/textos';
 import { abrir, empurrar, esperarComando, mudarEstado, semViolacoesSerias } from '../helpers';
-import { BRANCO, FUNDO, VERMELHO, corNoMeio, perto, quadro } from './video';
+import { BRANCO, FUNDO, VERMELHO, corNoMeio, perto, quadro, quadrosDeTela } from './video';
 
 const RGB_DO_VERMELHO = [255, 1, 0];
 const RGB_DO_BRANCO = [255, 255, 255];
@@ -55,18 +55,6 @@ async function esperarCorNoMeio(page: Page, alvo: Locator, esperada: number[]): 
       return perto(cor, esperada) ? esperada : cor;
     })
     .toEqual(esperada);
-}
-
-/** Espera `n` quadros de tela da página (a leitura das vistas roda a cada um). */
-async function quadrosDeTela(page: Page, n: number): Promise<void> {
-  await page.evaluate(
-    (n) =>
-      new Promise<void>((pronto) => {
-        const proximo = () => (--n === 0 ? pronto() : requestAnimationFrame(proximo));
-        requestAnimationFrame(proximo);
-      }),
-    n,
-  );
 }
 
 /** Cada botão da tela da ligação (os controles, o Abrir grande e o Desligar) inteiro na janela. */
@@ -285,6 +273,31 @@ test('with two calls the Câmera only turns the camera off', async ({ page }) =>
   await expect(qualquerCamera(page)).toHaveCount(0);
   await expect(qualquerRemoto(page)).toHaveCount(0);
   await expect(botao(page, 'Abrir grande')).toHaveCount(0);
+});
+
+test('Ligar a câmera waits while a second call rings', async ({ page }) => {
+  // A segunda tocando (Ruling 13): como com a outra em espera, nenhuma câmera liga com duas ligações; ligada, ela desliga.
+  await abrir(page, 'ligacao');
+  const c = camera(page);
+  await expect(c).toHaveAccessibleName('Ligar a câmera');
+  await expect(c).toBeEnabled();
+  await mudarEstado(page, comASegundaTocando);
+  await expect(page.getByText('Ligação de Carlos Lima', { exact: true })).toBeVisible();
+  await expect(c).toHaveAccessibleName('Ligar a câmera');
+  await expect(c).toBeDisabled();
+
+  await mudarEstado(page, comCameraNaDeCima);
+  await expect(c).toHaveAccessibleName('Desligar a câmera');
+  await expect(c).toBeEnabled();
+  await c.click();
+  await esperarComando(page, { cmd: 'camera', on: false });
+  await expect(c).toHaveAccessibleName('Ligar a câmera');
+  await expect(c).toBeDisabled();
+
+  // A segunda sai: a ligação fica sozinha, e a Câmera liga de novo.
+  await mudarEstado(page, (s) => ({ ...s, ligacao: { ...s.ligacao, second: null, secondKind: 'none' } }));
+  await expect(page.getByText('Ligação de Carlos Lima', { exact: true })).toHaveCount(0);
+  await expect(c).toBeEnabled();
 });
 
 test('the two-call and consultation controls fit the three sizes', async ({ page }) => {

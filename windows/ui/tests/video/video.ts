@@ -73,3 +73,15 @@ export async function semWebGL(page: Page): Promise<void> {
 export function perto(cor: number[], esperada: number[], tolerancia = 2): boolean {
   return cor.length === esperada.length && cor.every((c, i) => Math.abs(c - esperada[i]) <= tolerancia);
 }
+
+/** Espera `n` quadros de tela da página (a leitura das vistas roda a cada um). */
+export async function quadrosDeTela(page: Page, n: number): Promise<void> {
+  await page.evaluate(
+    (n) =>
+      new Promise<void>((pronto) => {
+        const proximo = () => (--n === 0 ? pronto() : requestAnimationFrame(proximo));
+        requestAnimationFrame(proximo);
+      }),
+    n,
+  );
+}

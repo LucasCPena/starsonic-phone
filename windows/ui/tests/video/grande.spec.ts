@@ -3,8 +3,14 @@
 // da segunda ligação; a sua imagem sempre à vista com a câmera ligada (Review Focus 2); e as medidas dos dois quadros.
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { abrir, depoisDoQueChegou, esperarComando, estado, mudarEstado, vezes } from '../helpers';
+import { BRANCO, FUNDO, VERMELHO, corNoMeio, perto, quadro, quadrosDeTela } from './video';
 
 test.use({ viewport: { width: 1280, height: 800 } });
+
+const RGB_DO_VERMELHO = [255, 1, 0];
+const RGB_DO_BRANCO = [255, 255, 255];
+/** O Carlos (o id 12), sem vídeo: a segunda ligação dos testes. */
+const CARLOS = { id: 12, number: '2007', name: 'Carlos Lima', incoming: true, video: { oferece: false, ativo: false, imagem: false, camera: false, cedo: false } };
 
 const remoto = (page: Page) => page.getByRole('img', { name: 'Vídeo de Ana Souza', exact: true });
 const suaImagem = (page: Page) => page.getByRole('img', { name: 'Sua imagem', exact: true });
@@ -117,8 +123,36 @@ test('a second call in the big window shows its card', async ({ page }) => {
   const c = await caixa(cartao);
   quase(c.x + c.width / 2, 640, 'o cartão no meio');
   expect(c.y).toBeLessThan(120);
-  // Com duas ligações, a Câmera só desliga: com a câmera ligada, ela está ativa.
+  // Com duas ligações, a Câmera só desliga: com a câmera ligada, ela está ativa; desligada, ela espera.
   await expect(botao(page, 'Desligar a câmera')).toBeEnabled();
+  await botao(page, 'Desligar a câmera').click();
+  await esperarComando(page, { cmd: 'camera', on: false });
+  await expect(botao(page, 'Ligar a câmera')).toBeDisabled();
+});
+
+test('the big window draws nothing with a second call, ringing or held', async ({ page }) => {
+  // Spec 4.2 (Ruling 13): com duas ligações o vídeo pausa, também no grande. A vista da outra ponta fica só com o fundo,
+  // mesmo com um quadro novo chegando, e o quadro de agora volta quando a ligação fica sozinha.
+  await abrir(page, 'video-grande');
+  const area = remoto(page);
+  await quadro(page, 'remoto', VERMELHO);
+  await expect.poll(async () => perto(await corNoMeio(page, area), RGB_DO_VERMELHO)).toBe(true);
+  for (const [segunda, tipo, cor, rgb] of [
+    [{ ...CARLOS, phase: 'ringing', activeSinceMs: 0, held: false }, 'ringing', BRANCO, RGB_DO_BRANCO],
+    [{ ...CARLOS, phase: 'active', activeSinceMs: Date.now() - 41_000, held: true }, 'held', VERMELHO, RGB_DO_VERMELHO],
+  ] as const) {
+    await mudarEstado(page, (s) => ({ ...s, ligacao: { ...s.ligacao, second: segunda, secondKind: tipo } }));
+    await expect(page.locator('.grande-cartao .vcard'), tipo).toBeVisible();
+    await expect(area, tipo).toBeVisible();
+    await quadro(page, 'remoto', cor);
+    await quadrosDeTela(page, 10);
+    const agora = await corNoMeio(page, area);
+    expect(perto(agora, FUNDO), `a imagem da outra ponta com a segunda (${tipo}): ${agora}`).toBe(true);
+
+    await mudarEstado(page, (s) => ({ ...s, ligacao: { ...s.ligacao, second: null, secondKind: 'none' } }));
+    await expect(page.locator('.grande-cartao .vcard'), tipo).toHaveCount(0);
+    await expect.poll(async () => perto(await corNoMeio(page, area), rgb), `a imagem de volta depois da segunda (${tipo})`).toBe(true);
+  }
 });
 
 test('the big window always shows your image with the camera on', async ({ page }) => {
