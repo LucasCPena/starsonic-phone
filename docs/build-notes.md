@@ -112,7 +112,7 @@ As impressões ficam em dois lugares que o `tests/python/test_deps_lock.py` conf
 
 **Como trocar a versão fixada.**
 1. Troque os cabeçalhos da API (`starsonic/third_party/openh264/include/wels/`, da tag nova de `cisco/openh264`) e o `openh264.version`, `url` e `file` do `deps.lock` (o `url` e o `file` levam a versão: o teste confere). Deixe `bz2Sha256` e `dllSha256` vazias.
-2. Faça o push: o passo da Cisco só avisa (`::warning::`) com as duas impressões do binário novo, e mostra a linha do Authenticode. Confira que o `Status` é `Valid` e o `Subject` é da Cisco. Nunca fixe impressões que não passaram por essa assinatura.
+2. Faça o push: o passo da Cisco só avisa (`::warning::`) com as duas impressões do binário novo, e mostra a linha do Authenticode. Confira que o `Status` é `Valid` e o `Subject` é da Cisco. Nunca fixe impressões que não passaram por essa assinatura. As DLLs do OpenH264 são assinadas pela **Cisco WebEx LLC** e publicadas pela Cisco Systems: o passo aceita o `O=` do `Subject` igual, por inteiro, a `Cisco Systems, Inc.` ou `Cisco WebEx LLC`, nada mais (um nome parecido não vale). E o recurso de versão do `.dll` (`FileVersion` ou `ProductVersion`) tem de começar com o `openh264.version` do `deps.lock`, para um `.dll` assinado de outra versão não passar.
 3. Copie as duas impressões para o `deps.lock` e o `OpenH264Pin.h`, e o texto do artefato `openh264-licenca` para o `BINARY_LICENSE.txt`, se mudou. Faça o segundo push: agora o passo falha se as impressões diferirem.
 4. As pastas `%LOCALAPPDATA%\Starsonic Phone\codecs` de quem já usa o app perdem o arquivo da versão velha sozinhas: o `Ensure` apaga todo `openh264-*.dll` que não é o do pino e todo `*.part`.
 

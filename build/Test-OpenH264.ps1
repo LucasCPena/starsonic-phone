@@ -1,13 +1,17 @@
 # Confere o modulo H.264 da Cisco (OpenH264) fixado no build\deps.lock (e no starsonic\desktop\OpenH264Pin.h):
 #   1. baixa o openh264.url (HTTP: o servidor de binarios da Cisco nao tem HTTPS) e mostra o SHA-256 do .bz2;
 #   2. descomprime e mostra o SHA-256 do .dll;
-#   3. confere a assinatura Authenticode do .dll: Status Valid e "Cisco Systems" no Subject (senao, falha);
+#   3. confere a assinatura Authenticode do .dll: Status Valid e o O= do Subject IGUAL (o valor inteiro) a "Cisco Systems,
+#      Inc." ou "Cisco WebEx LLC" (as DLLs do OpenH264 sao assinadas pela Cisco WebEx LLC e publicadas pela Cisco
+#      Systems); depois confere o recurso de versao do .dll: FileVersion ou ProductVersion comecam com o openh264.version
+#      (prefixo pontuado: 2.6.0.x vale, 2.6.01 nao), e sem recurso de versao o passo falha;
 #   4. compara as duas impressoes com o deps.lock: vazias, so avisa (::warning:: com os valores); preenchidas, falha se
 #      forem diferentes;
 #   5. baixa https://www.openh264.org/BINARY_LICENSE.txt para <LicenseDir> (o artefato openh264-licenca); diferente do
 #      arquivo do repositorio, so avisa;
-#   6. confere que nenhuma pasta do app (o empacotado e o instalado pela fumaca) tem um openh264*.dll: o instalador
-#      nunca leva o H.264.
+#   6. confere que nenhuma pasta do app (-AppDir: a que o instalador empacota) tem um openh264*.dll: o instalador nunca
+#      leva o H.264. Uma pasta que nao existe falha (nunca passa por vazio). A pasta instalada de verdade e conferida
+#      pela fumaca (tests/smoke/Test-InstalledApp.ps1), logo depois de instalar.
 # Uma falha do site da Cisco nos downloads (1 e 5) gera so um aviso: um site fora do ar nao derruba o build.
 # Uso: .\build\Test-OpenH264.ps1 [-AppDir out-novo,out-novo-teste] [-LicenseDir openh264-licenca]
 param(
@@ -67,10 +71,38 @@ try {
 
         $signature = Get-AuthenticodeSignature -FilePath $dll
         $subject = ''
-        if ($signature.SignerCertificate) { $subject = $signature.SignerCertificate.Subject }
-        Write-Host "openh264: Authenticode Status=$($signature.Status) Subject=$subject"
-        if ($signature.Status -ne 'Valid' -or $subject -notmatch 'Cisco Systems') {
-            Write-CiFailure 'OpenH264' "assinatura da Cisco invalida (Status=$($signature.Status), Subject=$subject)"
+        $issuer = ''
+        if ($signature.SignerCertificate) {
+            $subject = $signature.SignerCertificate.Subject
+            $issuer = $signature.SignerCertificate.Issuer
+        }
+        Write-Host "openh264: Authenticode Status=$($signature.Status)"
+        Write-Host "openh264: Authenticode Subject=$subject"
+        Write-Host "openh264: Authenticode Issuer=$issuer"
+        # O valor inteiro do O= (entre aspas quando tem virgula), nunca um trecho: "Cisco Systems" dentro de outro nome nao vale.
+        $org = ''
+        if ($subject -match '(?:^|,\s*)O=(?:"([^"]*)"|([^,]*))') {
+            if ($Matches[1]) { $org = $Matches[1] } else { $org = $Matches[2].Trim() }
+        }
+        $allowed = @('Cisco Systems, Inc.', 'Cisco WebEx LLC')
+        if ($signature.Status -ne 'Valid' -or $allowed -cnotcontains $org) {
+            Write-CiFailure 'OpenH264' "assinatura da Cisco invalida (Status=$($signature.Status), O=$org, Subject=$subject)"
+        }
+
+        $info = (Get-Item -LiteralPath $dll).VersionInfo
+        Write-Host "openh264: FileVersion=$($info.FileVersion)"
+        Write-Host "openh264: ProductVersion=$($info.ProductVersion)"
+        Write-Host "openh264: ProductName=$($info.ProductName)"
+        Write-Host "openh264: OriginalFilename=$($info.OriginalFilename)"
+        $versionOk = $false
+        foreach ($value in @($info.FileVersion, $info.ProductVersion)) {
+            if ($value) {
+                $text = ([string]$value).Trim()
+                if ($text -eq $pin.version -or $text.StartsWith($pin.version + '.')) { $versionOk = $true }
+            }
+        }
+        if (-not $versionOk) {
+            Write-CiFailure 'OpenH264' "o recurso de versao do .dll nao e da $($pin.version) (FileVersion=$($info.FileVersion), ProductVersion=$($info.ProductVersion))"
         }
 
         if (-not $pin.bz2Sha256 -and -not $pin.dllSha256) {
@@ -106,8 +138,8 @@ try {
 
 # 6: o instalador e o app nunca levam o H.264.
 foreach ($dir in $AppDir) {
-    if (-not (Test-Path -LiteralPath $dir)) {
-        Write-Host "openh264: $dir nao existe (nada a conferir)"
+    if (-not (Test-Path -LiteralPath $dir -PathType Container)) {
+        Write-CiFailure 'OpenH264' "a pasta do app $dir nao existe: nao da para conferir que ela esta sem o H.264"
         continue
     }
     $found = @(Get-ChildItem -LiteralPath $dir -Recurse -Force -Filter 'openh264*.dll' -ErrorAction SilentlyContinue)

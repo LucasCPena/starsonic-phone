@@ -59,6 +59,12 @@ try {
     }
     Write-Host "Instalado em $installDir"
     Get-ChildItem -Path $installDir -Recurse -File | ForEach-Object { Write-Host ("  " + $_.FullName.Substring($installDir.Length + 1)) }
+    # O instalador nunca leva o H.264 da Cisco (o app baixa o modulo na pasta codecs): a pasta instalada de verdade.
+    $h264 = @(Get-ChildItem -Path $installDir -Recurse -Force -File -Filter 'openh264*.dll' -ErrorAction SilentlyContinue)
+    if ($h264.Count -gt 0) {
+        throw "O app instalado leva o H.264 da Cisco: $(($h264 | ForEach-Object { $_.FullName }) -join ', ')."
+    }
+    Write-Host "openh264: $installDir sem openh264*.dll"
 
     # O windows_smoke.py fecha o app que o instalador abriu (--sair) e abre o dele, com o CDP.
     & $Python (Join-Path $PSScriptRoot 'windows_smoke.py') --exe $exe --capturas $Capturas --python $Python
