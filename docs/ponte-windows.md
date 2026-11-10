@@ -781,13 +781,21 @@ download dos arquivos.
   - (0.3.0) Os quatro ganchos do vídeo, também chamados na thread de comandos e sem esperar; um vazio não faz nada. O
     executável os liga nas tarefas do vídeo.
     - `videoViews(vistas, paginaDoAviso)`: as vistas que a página mostra agora (`videoViews`, já sem as que não são da
-      página), e se é a página do aviso.
+      página), e se é a página do aviso. O executável troca só as vistas dessa página na rota do vídeo (ver "A memória do
+      vídeo").
     - `videoWindow(modo)`: o modo da janela do vídeo (`"normal"`, `"grande"` ou `"telaCheia"`), do `videoWindow` e do fim
       da última ligação.
     - `h264Ensure()`: roda o `H264Module::Ensure` fora da fila de comandos e responde pelo `DesktopApp::SetH264State`
-      (`Installed` ou `Failed`, de qualquer thread: só põe na fila). Vazio: a situação fica `baixando`.
+      (`Installed` ou `Failed`, de qualquer thread: só põe na fila). Vazio: a situação fica `baixando`. No executável, o
+      `Ensure` roda numa thread própria, na pasta `%LOCALAPPDATA%\Starsonic Phone\codecs` (criada se falta), e um pedido
+      no meio de outro é ignorado. Com o `Installed`, o módulo é conferido de novo (`Verify`) e carregado pelo caminho
+      completo, e só então a resposta é `Installed`; o módulo que não carrega dá `Failed`, com a linha
+      `h264: download falhou (carregar <código>)`. O fechamento do app não espera um download em andamento: depois dele,
+      nenhuma resposta e nenhuma linha.
     - `cameraBlocked()`: a privacidade do Windows nega a câmera aos apps da área de trabalho. Só escolhe o texto do aviso
-      de `OpenFailed`. Vazio: `false`.
+      de `OpenFailed`. Vazio: `false`. No executável, é `true` quando um dos três valores `Value` do
+      `CapabilityAccessManager\ConsentStore\webcam` é `Deny`: o do computador (`HKLM`), o do usuário (`HKCU`) e o dos
+      apps da área de trabalho do usuário (`HKCU`, `...\webcam\NonPackaged`).
   - (0.3.0) O `EngineHost` repassa ao `SipEngine` os seis métodos do vídeo do `RegistrationPort` (`VideoDevices`,
     `SetCaptureDevice`, `RefreshVideoDevices`, `StartCameraTest`, `StopCameraTest` e `SetVideoSettings`), na thread de
     comandos (que não é STA, como as câmeras pedem), e passa o `OnCameraProblem` ao `DesktopApp`, que o põe na fila.
@@ -832,6 +840,21 @@ memória):
 2. Copie o cabeçalho e os planos do lugar indicado (copie de uma vez, para fora da memória).
 3. Leia `s2 = seq`. Se `s1 == s2`, a cópia é um quadro inteiro; se não, descarte-a, porque o escritor virou o lugar no meio
    da cópia.
+
+A entrega (`windows/app/src/VideoSink.h` e `WebViewSharedBuffers.h`):
+
+- Cada memória é uma memória dividida do WebView2 e chega à página dela pelo evento `sharedbufferreceived` do
+  `window.chrome.webview` (o `PostSharedBufferToScript`), **só para leitura**: a página nunca escreve nela. O
+  `additionalData` diz a vista e o tamanho: `{"v":1,"type":"videoBuffer","vista":"remoto","bytes":6220864}`, com a
+  `vista` `remoto`, `local` ou `porteiro`. A do `porteiro` vai à página `aviso`, e a do `remoto` e a do `local`, à
+  `principal`.
+- A página recebe a memória de uma vista quando ela fica à vista pela primeira vez (o `videoViews`), e de novo depois de
+  cada recarregar da página e de cada navegador refeito. Uma memória nova da mesma vista troca a velha. A vista
+  escondida fica com a memória, sem quadros novos.
+- Os quadros vão só às vistas à vista, e no máximo 30 por segundo a cada uma: o `remoto` mostra a ligação de cima, com a
+  janela principal sem minimizar e fora da bandeja; o `porteiro`, a recebida tocando (a de cima ou a segunda), também
+  com a janela minimizada; o `local`, a nossa câmera (a da ligação ou a do teste da câmera), sem minimizar. Um quadro de
+  uma ligação que não é nenhuma dessas não vai a nenhuma vista.
 
 ## O modo iPhone (etapa 2)
 

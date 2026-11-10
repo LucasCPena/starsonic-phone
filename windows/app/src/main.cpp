@@ -28,10 +28,16 @@
 #include <objbase.h>
 #include <shellapi.h>
 #include <shlobj.h>
+#include <winhttp.h>
 
+#include <algorithm>
+#include <chrono>
 #include <climits>
 #include <cwchar>
 #include <memory>
+#include <mutex>
+#include <set>
+#include <system_error>
 #include <thread>
 #include <optional>
 #include <string>
@@ -39,6 +45,8 @@
 
 #include "AppUpdater.h"
 #include "Autostart.h"
+#include "Bunzip.h"
+#include "CameraPrivacy.h"
 #include "ChatDownloader.h"
 #include "CompanyFetcher.h"
 #include "DesktopApp.h"
@@ -47,10 +55,15 @@
 #include "DpapiCipher.h"
 #include "EngineHost.h"
 #include "FilePicker.h"
+#include "FrameRouter.h"
+#include "H264Module.h"
+#include "Http.h"
 #include "LegacyCrypto.h"
 #include "Links.h"
 #include "MainWindow.h"
 #include "NetworkMonitor.h"
+#include "OpenH264Pin.h"
+#include "OpenH264Shim.h"
 #include "Profile.h"
 #include "ShellState.h"
 #include "SingleInstance.h"
@@ -58,6 +71,7 @@
 #include "Text.h"
 #include "Threads.h"
 #include "UpdateChannel.h"
+#include "VideoSink.h"
 #include "WinFiles.h"
 #include "app_build.h"
 #include "resource.h"
@@ -175,6 +189,201 @@ std::wstring Environment(const wchar_t* name) {
 }
 #endif
 
+// (0.3.0) O relogio do credito do video (VideoSink): o monotonico, em milissegundos.
+int64_t SteadyMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+
+// (0.3.0) A gravacao atomica do modulo H.264: <arquivo>.part, descarregado no disco e trocado pelo arquivo de uma vez
+// (MoveFileExW). Um .part que sobrar (o app fechado no meio) sai na limpeza do proximo Ensure.
+bool WritePart(const std::wstring& path, const std::string& bytes) {
+    const std::wstring part = path + L".part";
+    const HANDLE file = CreateFileW(part.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL,
+                                    nullptr);
+    if (file == INVALID_HANDLE_VALUE) return false;
+    bool written = true;
+    for (size_t done = 0; written && done < bytes.size();) {
+        DWORD wrote = 0;
+        const DWORD chunk = static_cast<DWORD>(std::min<size_t>(bytes.size() - done, 1u << 20));
+        written = WriteFile(file, bytes.data() + done, chunk, &wrote, nullptr) && wrote > 0;
+        done += wrote;
+    }
+    written = written && FlushFileBuffers(file);
+    CloseHandle(file);
+    if (written && MoveFileExW(part.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        return true;
+    }
+    DeleteFileW(part.c_str());
+    return false;
+}
+
+// (0.3.0) Os nomes simples dos arquivos da pasta (sem as pastas).
+std::vector<std::string> FileNames(const std::wstring& folder) {
+    std::vector<std::string> names;
+    WIN32_FIND_DATAW found = {};
+    const HANDLE find =
+        FindFirstFileExW((folder + L"\\*").c_str(), FindExInfoBasic, &found, FindExSearchNameMatch, nullptr, 0);
+    if (find == INVALID_HANDLE_VALUE) return names;
+    do {
+        if ((found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0) names.push_back(WideToUtf8(found.cFileName));
+    } while (FindNextFileW(find, &found));
+    FindClose(find);
+    return names;
+}
+
+// (0.3.0) O H264Io do Windows: os caminhos UTF-8 vao as APIs W, a rede e o HttpGetPinned (o user agent do app), e o
+// bzip2, o Bunzip2. O log vai direto ao diagnostico (as linhas "h264:", sem o "motor N:" do motor).
+H264Io WindowsH264Io(const std::wstring& userAgent, std::function<void(const std::string&)> log) {
+    H264Io io;
+    io.read = [](const std::string& path) { return WinFiles().Read(path); };
+    io.write = [](const std::string& path, const std::string& bytes) { return WritePart(Utf8ToWide(path), bytes); };
+    io.remove = [](const std::string& path) { return DeleteFileW(Utf8ToWide(path).c_str()) != FALSE; };
+    io.list = [](const std::string& folder) { return FileNames(Utf8ToWide(folder)); };
+    io.fetch = [userAgent](const std::string& url, size_t maxBytes, int timeoutMs) {
+        HttpResponse response = HttpGetPinned(Utf8ToWide(url), maxBytes, userAgent, timeoutMs);
+        FetchResult result;
+        result.status = static_cast<int>(response.status);
+        result.body = std::move(response.body);
+        if (response.error == ERROR_WINHTTP_TIMEOUT) {
+            result.error = "tempo";
+        } else if (response.error == ERROR_FILE_TOO_LARGE) {
+            result.error = "grande";
+        } else if (response.error != 0) {
+            result.error = "rede";
+        }
+        return result;
+    };
+    io.bunzip = [](const std::string& compressed, size_t maxOut) { return Bunzip2(compressed, maxOut); };
+    io.log = std::move(log);
+    return io;
+}
+
+// (0.3.0) O codigo curto de uma falha do LoadOpenH264, sem o caminho: o numero do erro do Windows, ou "funcao" (falta
+// uma das quatro funcoes no modulo).
+std::string LoadFailureCode(const std::string& error) {
+    std::string digits;
+    const size_t at = error.find("(erro ");
+    if (at != std::string::npos) {
+        for (size_t i = at + 6; i < error.size() && error[i] >= '0' && error[i] <= '9'; ++i) digits += error[i];
+    }
+    if (!digits.empty()) return digits;
+    return error.find("funcao") != std::string::npos ? "funcao" : "outro";
+}
+
+// (0.3.0) O gancho h264Ensure: o H264Module::Ensure numa thread propria, um pedido por vez (um pedido no meio de outro
+// e ignorado: a resposta do que roda vale pelos dois). Com o Installed, a impressao de novo (Verify) e o LoadOpenH264
+// pelo caminho completo; so entao a resposta Installed. A falha do carregamento vira Failed, com a linha
+// "h264: download falhou (carregar <codigo>)".
+// O fechamento nao espera a thread: o download so desiste em 60 s, e o fechamento tem 5 s (o watchdog do main). Como a
+// do CompanyFetcher, ela guarda o que precisa (o modulo, com um H264Io so de copias), e o diagnostico e a resposta ao
+// DesktopApp passam pela trava, que o Stop fecha antes do Shutdown: depois do Stop, nenhuma linha e nenhum
+// SetH264State, e a thread nunca toca no DesktopApp destruido. Uma thread presa no download termina com o processo (o
+// .part que ela deixar sai no proximo Ensure).
+class H264Installer {
+public:
+    // folder: a pasta codecs ("" sem o %LOCALAPPDATA%: o Ensure falha sem tocar no disco, "(pasta)").
+    H264Installer(std::wstring folder, std::wstring userAgent, std::function<void(const std::string&)> log)
+        : shared_(std::make_shared<Shared>()), folder_(std::move(folder)), userAgent_(std::move(userAgent)) {
+        shared_->log = std::move(log);
+    }
+    ~H264Installer() { Stop(); }
+
+    H264Installer(const H264Installer&) = delete;
+    H264Installer& operator=(const H264Installer&) = delete;
+
+    // Na thread de comandos; nunca espera. done, na thread do Ensure: Installed ou Failed (antes do Stop).
+    void Ensure(std::function<void(H264State)> done) {
+        {
+            std::lock_guard<std::mutex> lock(shared_->mutex);
+            if (shared_->stopped || shared_->running) return;
+            shared_->running = true;
+        }
+        try {
+            std::thread(Run, shared_, folder_, userAgent_, done).detach();
+        } catch (const std::system_error&) {
+            std::lock_guard<std::mutex> lock(shared_->mutex);
+            shared_->running = false;
+            if (shared_->stopped) return;
+            if (shared_->log) shared_->log("h264: download falhou (thread)");
+            if (done) done(H264State::Failed);
+        }
+    }
+
+    // Antes do Shutdown do DesktopApp (e de o diagnostico sair). De novo, nada.
+    void Stop() {
+        std::lock_guard<std::mutex> lock(shared_->mutex);
+        shared_->stopped = true;
+    }
+
+private:
+    struct Shared {
+        std::mutex mutex;
+        bool running = false;
+        bool stopped = false;
+        std::function<void(const std::string&)> log;
+    };
+
+    static bool Stopped(const std::shared_ptr<Shared>& shared) {
+        std::lock_guard<std::mutex> lock(shared->mutex);
+        return shared->stopped;
+    }
+
+    // O modulo que o Ensure deu como instalado: a impressao de novo (o arquivo pode ter mudado depois dele) e o
+    // carregamento pelo caminho completo.
+    static H264State Load(const H264Module& module, const std::function<void(const std::string&)>& log) {
+        if (!module.Verify()) {
+            log("h264: download falhou (conferir)");
+            return H264State::Failed;
+        }
+        std::string error;
+        if (!LoadOpenH264(Utf8ToWide(module.ModulePath()), &error)) {
+            log("h264: download falhou (carregar " + LoadFailureCode(error) + ")");
+            return H264State::Failed;
+        }
+        return H264State::Installed;
+    }
+
+    static void Run(std::shared_ptr<Shared> shared, std::wstring folder, std::wstring userAgent,
+                    std::function<void(H264State)> done) {
+        // O diagnostico so com a trava, e nunca depois do Stop.
+        const std::function<void(const std::string&)> log = [shared](const std::string& line) {
+            std::lock_guard<std::mutex> lock(shared->mutex);
+            if (!shared->stopped && shared->log) shared->log(line);
+        };
+        H264State state = H264State::Failed;
+        try {
+            // A pasta (e a de cima) criada quando falta; sem ela, o Ensure falha sem tocar no disco ("pasta").
+            const std::string path = !folder.empty() && CreateFolderTree(folder) ? WideToUtf8(folder) : std::string();
+            H264Module module(kOpenH264Pin, path, WindowsH264Io(userAgent, log));
+            state = module.Ensure();
+            if (state == H264State::Installed) {
+                if (Stopped(shared)) return;   // o app fechando: o modulo nao e carregado
+                state = Load(module, log);
+            }
+        } catch (...) {
+            // Sem memoria (o processo e de 32 bits): falhou, sem os bytes.
+            state = H264State::Failed;
+            try {
+                log("h264: download falhou (memoria)");
+            } catch (...) {
+            }
+        }
+        std::lock_guard<std::mutex> lock(shared->mutex);
+        shared->running = false;
+        if (shared->stopped || !done) return;
+        try {
+            done(state);   // so poe na fila do DesktopApp
+        } catch (...) {
+            // Sem memoria na fila do DesktopApp: a resposta se perde (a situacao fica "baixando").
+        }
+    }
+
+    std::shared_ptr<Shared> shared_;
+    std::wstring folder_;
+    std::wstring userAgent_;
+};
+
 }  // namespace
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
@@ -289,6 +498,20 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     ChatDownloader chatDownloader(L"Starsonic Phone/" + Utf8ToWide(STARSONIC_VERSION), log);
     DesktopApp* chatApp = nullptr;
     FileDialogs fileDialogs;   // (rc.4) as janelas de importar e exportar (ver os ganchos)
+    // (0.3.0) A imagem do video ate a pagina (VideoSink.h): o sink dos quadros do motor, com as memorias nos WebView da
+    // janela. A rota (so na thread da janela) junta as vistas do gancho videoViews e as ligacoes do
+    // callbacks.videoRoute. O VideoSink dura mais que o motor (o engine.Stop do fechamento vem antes de ele sair), e a
+    // janela chama o Close dele antes de os WebView fecharem.
+    VideoSink videoSink(window.VideoPages(), SteadyMs);
+    RouteState routeState;
+    // (0.3.0) O modulo H.264 da Cisco (H264Installer), na pasta %LOCALAPPDATA%\Starsonic Phone\codecs, com o mesmo user
+    // agent. Antes do DesktopApp (o gancho chega na abertura dele); o Stop roda antes do Shutdown dele, com o do
+    // companyFetcher: nenhuma resposta depois. A resposta vai ao DesktopApp::SetH264State pelo h264App, que aponta para
+    // ele antes do Start (nenhum pedido antes).
+    const std::wstring localData = KnownFolder(FOLDERID_LocalAppData);
+    H264Installer h264Installer(localData.empty() ? std::wstring() : localData + L"\\" + kAppFolder + L"\\codecs",
+                                L"Starsonic Phone/" + Utf8ToWide(STARSONIC_VERSION), log);
+    DesktopApp* h264App = nullptr;
 
     // O gancho quit ja rodou (o DesktopApp encerrou as ligacoes): o logoff do Windows espera por ele.
     const HANDLE quitDone = CreateEventW(nullptr, TRUE, FALSE, nullptr);
@@ -400,10 +623,36 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
             if (!toast.empty() && chatApp) chatApp->Notify(toast);
         });
     };
+    // (0.3.0) O video. O videoViews e o h264Ensure so poem o trabalho na fila (a da janela, ou a thread do
+    // h264Installer) e voltam; o cameraBlocked so le o registro. As vistas que uma pagina mostra trocam so as vistas
+    // dela na rota (as da outra pagina ficam).
+    hooks.videoViews = [&window, &routeState, &videoSink](const std::vector<std::string>& views, bool noticePage) {
+        window.RunOnWindow([&routeState, &videoSink, views, noticePage] {
+            std::set<ViewName> visible;
+            for (const ViewName view : routeState.visible) {
+                if ((view == ViewName::Porteiro) != noticePage) visible.insert(view);
+            }
+            for (const std::string& key : views) {
+                for (const ViewName view : {ViewName::Remoto, ViewName::Local, ViewName::Porteiro}) {
+                    if (key == ViewKey(view) && (view == ViewName::Porteiro) == noticePage) visible.insert(view);
+                }
+            }
+            routeState.visible = visible;
+            videoSink.SetRouteState(routeState);
+        });
+    };
+    hooks.h264Ensure = [&h264Installer, &h264App] {
+        h264Installer.Ensure([&h264App](H264State state) {
+            if (h264App) h264App->SetH264State(state);
+        });
+    };
+    hooks.cameraBlocked = [] { return CameraBlockedByWindows(); };
 
     DesktopApp app(config, hooks, engine, engine, files, cipher, clock, scheduler);
     chatApp = &app;
+    h264App = &app;
     engine.SetListener(&app);
+    engine.SetFrameSink(&videoSink);   // (0.3.0) nao espera o motor: vai a ele quando ele fica pronto
     engine.Start();
     app.Start();
     if (arguments.link) app.DialLink(*arguments.link);
@@ -499,19 +748,29 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     // (0.2.0) O chat: a janela na frente e o clique no aviso do chat (os dois so poem na fila do DesktopApp).
     callbacks.inFront = [&app](bool inFront) { app.SetWindowInFront(inFront); };
     callbacks.openChat = [&app](int64_t conversa) { app.OpenChat(conversa); };
+    // (0.3.0) A rota do video: a ligacao de cima, a recebida tocando (a que o aviso mostra) e a janela fora da vista.
+    callbacks.videoRoute = [&routeState, &videoSink](int topCallId, int ringingCallId, bool minimized) {
+        routeState.topCallId = topCallId;
+        routeState.noticeCallId = ringingCallId;
+        routeState.minimized = minimized;
+        videoSink.SetRouteState(routeState);
+    };
     callbacks.quitRequested = [&app] { app.HandleCommand(kQuitCommand); };
     // O logoff ou o desligamento: o mesmo Sair, esperando pouco (o Windows encerra o processo depois de o
     // WM_ENDSESSION voltar). O Shutdown roda o que o Sair pos na fila (os Recentes das ligacoes encerradas).
-    callbacks.endSession = [&app, &updater, &network, &companyFetcher, &chatDownloader, &fileDialogs, quitDone, log] {
+    callbacks.endSession = [&app, &updater, &network, &companyFetcher, &chatDownloader, &h264Installer, &fileDialogs,
+                            quitDone, log] {
         if (updater) updater->Close();
         app.HandleCommand(kQuitCommand);
         const bool done = quitDone && WaitForSingleObject(quitDone, kEndSessionWaitMs) == WAIT_OBJECT_0;
         // Depois do Sair (as ligacoes e os Recentes primeiro: o Unadvise do monitor pode demorar), antes do Shutdown:
-        // nenhum SetInternet, nenhuma resposta da leitura da planilha, nenhum toast do download do chat e nenhuma das
-        // janelas de arquivo depois dele (uma pode estar aberta: este WM_ENDSESSION pode rodar dentro do laco dela).
+        // nenhum SetInternet, nenhuma resposta da leitura da planilha, nenhum toast do download do chat, nenhuma
+        // resposta do modulo H.264 e nenhuma das janelas de arquivo depois dele (uma pode estar aberta: este
+        // WM_ENDSESSION pode rodar dentro do laco dela).
         network.Stop();
         companyFetcher.Stop();
         chatDownloader.Stop();
+        h264Installer.Stop();
         fileDialogs.closed = true;
         app.Shutdown();
         log(done ? "sessao do Windows encerrando: o Sair terminou" : "sessao do Windows encerrando: o Sair nao terminou a tempo");
@@ -531,6 +790,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     options.position = position;
     options.size = windowSize;
     options.version = Utf8ToWide(STARSONIC_VERSION);
+    options.videoSink = &videoSink;   // (0.3.0) a pagina pronta, o navegador refeito e o Close
     int exitCode = 0;
     if (window.Create(instance, options, callbacks)) {
         if (arguments.tray) {
@@ -561,15 +821,17 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     });
     updater->Close();
     // Antes do Shutdown: nenhum SetInternet, nenhuma resposta da leitura da planilha (a leitura presa nao e esperada),
-    // nenhum toast do download do chat (o download de agora tambem nao) e nenhuma das janelas de arquivo depois dele
-    // (com o laco de mensagens no fim, nenhuma esta aberta).
+    // nenhum toast do download do chat (o download de agora tambem nao), nenhuma resposta do modulo H.264 (o download
+    // de agora tambem nao) e nenhuma das janelas de arquivo depois dele (com o laco de mensagens no fim, nenhuma esta
+    // aberta).
     network.Stop();
     companyFetcher.Stop();
     chatDownloader.Stop();
+    h264Installer.Stop();
     fileDialogs.closed = true;
     app.Shutdown();
     scheduler.Stop();
-    engine.Stop();
+    engine.Stop();   // (0.3.0) o ultimo quadro ao videoSink: ele sai so depois, com o fim do main
     if (closed) SetEvent(closed);
     watchdog.join();
     if (closed) CloseHandle(closed);

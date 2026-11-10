@@ -10,6 +10,14 @@
 //
 // Fechar (DesktopApp.h): depois do Shutdown do DesktopApp e do Stop do agendador, Stop() destroi o motor (nenhum
 // evento depois); o listener precisa durar ate la.
+//
+// (0.3.0) O video: o sink dos quadros (SetFrameSink) nao espera o motor; ele e guardado e passado ao motor quando ele
+// fica pronto, e precisa durar ate o Stop. O apartamento multithread do COM (o das cameras da DirectShow) fica
+// reservado do Start ao fim do Stop, e o Stop destroi o motor numa thread fora da STA da janela (EngineHost.cpp).
+#include <windows.h>
+
+#include <objbase.h>
+
 #include <atomic>
 #include <condition_variable>
 #include <functional>
@@ -38,9 +46,13 @@ public:
 
     // Os eventos do motor vao para listener (que precisa durar ate o Stop). Antes do Start.
     void SetListener(EngineListener* listener) { listener_.store(listener); }
+    // (0.3.0) Os quadros do video vao para sink (SipEngine::SetFrameSink). Nunca espera a criacao: guarda o sink e o
+    // passa ao motor quando ele fica pronto (ja pronto: agora). O sink precisa durar ate o Stop.
+    void SetFrameSink(FrameSink* sink);
     // Cria o motor numa thread propria (uma vez).
     void Start();
-    // Espera a criacao terminar e destroi o motor (demora ~1 s; ate ~5 s se o servidor nao responde).
+    // Espera a criacao terminar e destroi o motor (demora ~1 s; ate ~5 s se o servidor nao responde), numa thread curta
+    // fora da STA de quem chama, que o Stop espera.
     void Stop();
 
     // CallEngine
@@ -103,6 +115,8 @@ private:
     std::unique_ptr<SipEngine> engine_;    // escrito na criacao e no Stop
     std::atomic<SipEngine*> live_{nullptr};   // o motor para os metodos (nullptr antes, se falhou e no Stop)
     std::thread creator_;
+    FrameSink* sink_ = nullptr;                    // (0.3.0) com o mutex_: o sink dos quadros, para o motor
+    CO_MTA_USAGE_COOKIE mtaCookie_ = nullptr;      // (0.3.0) com o mutex_: o CoIncrementMTAUsage do Start
 };
 
 }  // namespace starsonic

@@ -96,8 +96,10 @@ FitArea WorkArea(HMONITOR monitor) {
 
 MainWindow::~MainWindow() {
     // A janela que ainda existe aqui (o laco de mensagens saiu sem fecha-la) fecha sem chamar ninguem: o DestroyWindow
-    // manda o WM_ACTIVATE e o WM_SIZE (o callbacks.inFront), e o main.cpp ja destruiu o DesktopApp.
+    // manda o WM_ACTIVATE e o WM_SIZE (o callbacks.inFront), e o main.cpp ja destruiu o DesktopApp (e o VideoSink: as
+    // memorias do video saem sem ele, no WM_DESTROY).
     callbacks_ = Callbacks();
+    videoSink_ = nullptr;
     if (window_) DestroyWindow(window_);
 }
 
@@ -105,6 +107,7 @@ bool MainWindow::Create(HINSTANCE instance, const Options& options, Callbacks ca
     callbacks_ = std::move(callbacks);
     instance_ = instance;
     options_ = options;
+    videoSink_ = options.videoSink;
     WNDCLASSEXW windowClass = {};
     windowClass.cbSize = sizeof(windowClass);
     windowClass.style = CS_HREDRAW | CS_VREDRAW;
@@ -157,6 +160,8 @@ bool MainWindow::Create(HINSTANCE instance, const Options& options, Callbacks ca
     noticeCallbacks.command = [this](const std::string& json) {
         // O Atender do aviso traz a janela para a frente, na ligacao (spec da W1, 7.2).
         if (IsCommand(json, "answer")) BringToFront();
+        // (0.3.0) O aviso carregou (a abertura, o recarregar ou o navegador refeito): a memoria do porteiro vai a ele.
+        if (videoSink_ && IsCommand(json, "ready")) videoSink_->PageReady(true);
         if (callbacks_.noticeCommand) callbacks_.noticeCommand(json);
     };
     noticeCallbacks.log = [this](const std::string& line) { Log(line); };
@@ -170,11 +175,20 @@ bool MainWindow::Create(HINSTANCE instance, const Options& options, Callbacks ca
             StartNotice();
         }
         if (IsCommand(json, "ready")) {
-            if (restarts_.Restarting()) Log("navegador reiniciado: a interface voltou");
+            const bool restarted = restarts_.Restarting();
+            if (restarted) Log("navegador reiniciado: a interface voltou");
             restarts_.OnReady();
             // A janela ja estava ativa quando o WebView2 abriu (a abertura, o navegador novo, a pagina recarregada): o
             // teclado vai para a pagina sem um clique antes (o Ctrl + P, o Teclado), como depois de um WM_ACTIVATE.
             if (active_ && webview_) webview_->Focus();
+            // (0.3.0) As memorias do video. O navegador refeito so termina aqui: o ambiente novo existe depois do
+            // OnEnvironment do WebViewHost novo, e a pagina dele so manda o ready depois. Entao as memorias velhas saem
+            // e as das vistas a vista sao criadas no ambiente novo; e toda pagina pronta (a abertura, o recarregar e o
+            // navegador refeito) recebe as dela.
+            if (videoSink_) {
+                if (restarted) videoSink_->BrowserRestarted();
+                videoSink_->PageReady(false);
+            }
         }
         if (callbacks_.command) callbacks_.command(json);
     };
@@ -501,7 +515,22 @@ void MainWindow::DrainOutbox() {
             connected_ = status_.connected;
             if (callbacks_.account) callbacks_.account(server_, connected_);
         }
+        RefreshVideoRoute();
     }
+}
+
+// (0.3.0) A rota do video: as ligacoes vem do estado (ShellStatus), e a janela fora da vista (minimizada ou escondida
+// na bandeja) da janela; o WM_WINDOWPOSCHANGED confere a cada mudanca dela.
+void MainWindow::RefreshVideoRoute() {
+    if (!window_) return;
+    const bool minimized = !IsWindowVisible(window_) || IsIconic(window_);
+    if (status_.topCallId == routeTop_ && status_.ringingCallId == routeRinging_ && minimized == routeMinimized_) {
+        return;
+    }
+    routeTop_ = status_.topCallId;
+    routeRinging_ = status_.ringingCallId;
+    routeMinimized_ = minimized;
+    if (callbacks_.videoRoute) callbacks_.videoRoute(routeTop_, routeRinging_, routeMinimized_);
 }
 
 void MainWindow::RunActions() {
@@ -638,6 +667,11 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
             }
             RefreshNotice();
             return 0;
+        case WM_WINDOWPOSCHANGED:
+            // (0.3.0) Mostrar, esconder (a bandeja), minimizar e restaurar passam todos por aqui: a rota do video
+            // segue. O DefWindowProc continua mandando o WM_SIZE e o WM_MOVE.
+            RefreshVideoRoute();
+            break;
         case WM_QUERYENDSESSION:
             return TRUE;   // o Windows pode encerrar: o Sair roda no WM_ENDSESSION
         case WM_ENDSESSION:
@@ -750,6 +784,10 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
             badge_.Detach();   // o ITaskbarList3 sai antes do CoUninitialize do main.cpp
             if (sessionNotify_) WTSUnRegisterSessionNotification(window_);
             sessionNotify_ = false;
+            // (0.3.0) As memorias do video saem antes dos WebView: depois do Close, nenhum quadro (o motor ainda roda
+            // ate o EngineHost::Stop). Sem o VideoSink (o ~MainWindow), so as memorias.
+            if (videoSink_) videoSink_->Close();
+            videoPages_.ReleaseAll();
             notice_.Close();
             if (webview_) webview_->Close();
             PostQuitMessage(0);

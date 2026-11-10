@@ -53,6 +53,9 @@ RequestExecutionLevel user
 !define WEBVIEW2_CLIENT "Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 ; A pasta de dados do WebView2 do app (windows\app: %LOCALAPPDATA%\Starsonic Phone\WebView2, sempre ali).
 !define WEBVIEW2_DATA "$LOCALAPPDATA\Starsonic Phone\WebView2"
+; (0.3.0) O modulo H.264 da Cisco que o app baixa (windows\app: %LOCALAPPDATA%\Starsonic Phone\codecs, sempre ali): o
+; instalador nunca o leva, e a desinstalacao o apaga com a pasta.
+!define CODECS_DATA "$LOCALAPPDATA\Starsonic Phone\codecs"
 
 Name "${APP_NAME}"
 OutFile "${OUTFILE}"
@@ -462,6 +465,8 @@ Section "Uninstall"
     ${EndIf}
     Sleep 500
   ${Loop}
+  ; O modulo H.264 baixado pelo app (o app ja fechou: o modulo nao esta carregado).
+  RMDir /r "${CODECS_DATA}"
   RMDir "$INSTDIR"
   RMDir "$LOCALAPPDATA\Starsonic Phone"
   Delete "$SMPROGRAMS\${APP_NAME}.lnk"

@@ -1,4 +1,5 @@
-// O que o executavel novo le do estado da ponte (windows/app/src/ShellState.h: o aviso e a bandeja) e as permissoes
+// O que o executavel novo le do estado da ponte (windows/app/src/ShellState.h: o aviso, a bandeja e, 0.3.0, as
+// ligacoes da rota do video) e as permissoes
 // do WebView2 (WebPermissions.h: o toque nunca fica mudo por uma permissao de reproducao automatica negada).
 // Entra no desktop_tests do job windows.
 #include <optional>
@@ -173,6 +174,42 @@ TEST_CASE("the shell reads the account server and whether the admin shows the Na
     CHECK(s->server.empty());
     CHECK(s->doNotDisturbShown);
     CHECK(s->internet);
+}
+
+TEST_CASE("the state gives the top call id and the ringing call id") {
+    // A de cima tocando: as duas com o id dela.
+    std::optional<ShellStatus> s = ReadShellStatus(State(std::string(kConnected) +
+                                                         R"(,"ligacao":{"top":{"id":4,"phase":"ringing"},"second":null,"secondKind":"none","conference":false})"));
+    REQUIRE(s.has_value());
+    CHECK(s->topCallId == 4);
+    CHECK(s->ringingCallId == 4);
+    // A de cima em andamento e a segunda tocando: o ringingCallId e o da segunda.
+    s = ReadShellStatus(State(std::string(kConnected) +
+                              R"(,"ligacao":{"top":{"id":4,"phase":"active"},"second":{"id":5,"phase":"ringing"},"secondKind":"ringing","conference":false})"));
+    REQUIRE(s.has_value());
+    CHECK(s->topCallId == 4);
+    CHECK(s->ringingCallId == 5);
+    // A segunda em espera, ou na conferencia: nenhuma tocando (a mesma regra do ringing).
+    s = ReadShellStatus(State(std::string(kConnected) +
+                              R"(,"ligacao":{"top":{"id":4,"phase":"active"},"second":{"id":5,"phase":"active"},"secondKind":"held","conference":false})"));
+    REQUIRE(s.has_value());
+    CHECK(s->topCallId == 4);
+    CHECK(s->ringingCallId == 0);
+    s = ReadShellStatus(State(std::string(kConnected) +
+                              R"(,"ligacao":{"top":{"id":4,"phase":"active"},"second":{"id":5,"phase":"active"},"secondKind":"ringing","conference":true})"));
+    REQUIRE(s.has_value());
+    CHECK(s->ringingCallId == 0);
+    // Uma feita chamando, ainda sem o id do motor: 0.
+    s = ReadShellStatus(State(std::string(kConnected) +
+                              R"(,"ligacao":{"top":{"id":0,"phase":"dialing"},"second":null,"secondKind":"none","conference":false})"));
+    REQUIRE(s.has_value());
+    CHECK(s->topCallId == 0);
+    CHECK(s->ringingCallId == 0);
+    // Sem ligacao: os dois 0.
+    s = ReadShellStatus(State(std::string(kConnected) + R"(,"ligacao":null)"));
+    REQUIRE(s.has_value());
+    CHECK(s->topCallId == 0);
+    CHECK(s->ringingCallId == 0);
 }
 
 TEST_CASE("the shell ignores the other messages and invalid text") {

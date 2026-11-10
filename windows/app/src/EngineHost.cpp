@@ -1,5 +1,7 @@
 #include "EngineHost.h"
 
+#include <cstdio>
+#include <system_error>
 #include <utility>
 
 namespace starsonic {
@@ -8,10 +10,28 @@ EngineHost::EngineHost(EngineConfig config, LogFunction log) : config_(std::move
 
 EngineHost::~EngineHost() { Stop(); }
 
+void EngineHost::SetFrameSink(FrameSink* sink) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    sink_ = sink;
+    // Sem a espera do Ready: o SipEngine::SetFrameSink so pega a trava do desenhista (nunca a da API do motor).
+    if (engine_) engine_->SetFrameSink(sink);
+}
+
 void EngineHost::Start() {
     std::lock_guard<std::mutex> lock(mutex_);
     if (started_) return;
     started_ = true;
+    // (0.3.0) O apartamento multithread do COM fica de pe do Create ate o motor sair (ver o Stop), antes de o criador
+    // rodar o Create.
+    CO_MTA_USAGE_COOKIE cookie = nullptr;
+    const HRESULT mta = CoIncrementMTAUsage(&cookie);
+    if (SUCCEEDED(mta)) {
+        mtaCookie_ = cookie;
+    } else if (log_) {
+        char code[16];
+        std::snprintf(code, sizeof(code), "0x%08lx", static_cast<unsigned long>(mta));
+        log_(std::string("o COM multithread nao ficou reservado para o motor: ") + code);
+    }
     creator_ = std::thread([this] { Create(); });
 }
 
@@ -33,6 +53,8 @@ void EngineHost::Create() {
     }
     std::lock_guard<std::mutex> lock(mutex_);
     engine_ = std::move(engine);
+    // (0.3.0) O sink que chegou antes do motor (o SetFrameSink nao espera a criacao).
+    if (engine_ && sink_) engine_->SetFrameSink(sink_);
     live_.store(engine_.get());
     done_ = true;
     created_.notify_all();
@@ -55,14 +77,39 @@ void EngineHost::Stop() {
     }
     if (creator.joinable()) creator.join();
     std::unique_ptr<SipEngine> engine;
+    CO_MTA_USAGE_COOKIE cookie = nullptr;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         live_.store(nullptr);
         engine = std::move(engine_);
+        cookie = mtaCookie_;
+        mtaCookie_ = nullptr;
         done_ = true;
         created_.notify_all();
     }
-    engine.reset();   // fora da trava: o destrutor ainda manda linhas de log e espera o listener
+    // Fora da trava: o destrutor ainda manda linhas de log e espera o listener.
+    //
+    // (0.3.0) E numa thread curta, que o Stop espera (nenhum evento depois de ele voltar, e o listener dura ate la,
+    // como antes): quem chama o Stop e a thread da janela, que e STA (o CoInitializeEx do main.cpp). A fabrica das
+    // cameras da PJSIP (a DirectShow) entra no COM multithread na thread do criador, durante o Create, e o
+    // CoUninitialize dela roda no pjsua_destroy, que tambem fecha uma camera aberta. Na thread da janela, esse
+    // CoUninitialize desfaria o apartamento dela, e a camera fecharia fora do apartamento em que abriu. Na thread curta
+    // (sem apartamento proprio: o multithread implicito), a camera fecha no multithread, e o CoUninitialize nao chega a
+    // STA da janela. O multithread fica de pe pelo CoIncrementMTAUsage do Start, ate depois de o motor sair (o
+    // CoDecrementMTAUsage abaixo): ele nao depende da referencia que a thread do criador deixou ao sair.
+    if (engine) {
+        std::thread destroyer;
+        try {
+            destroyer = std::thread([&engine] { engine.reset(); });
+        } catch (const std::system_error&) {
+        }
+        if (destroyer.joinable()) {
+            destroyer.join();
+        } else {
+            engine.reset();   // a thread nao abriu: aqui mesmo, como antes
+        }
+    }
+    if (cookie) CoDecrementMTAUsage(cookie);
 }
 
 int EngineHost::MakeCall(const std::string& number, bool video) {

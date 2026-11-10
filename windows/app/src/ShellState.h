@@ -19,6 +19,9 @@ struct ShellStatus {
     bool internet = true;            // conta.internet (so um false de verdade conta: sem conta, ou sem o campo, true)
     bool doNotDisturbShown = true;   // admin.naoPerturbe: o administrador mostra o Nao perturbe (o item da bandeja)
     std::string server;              // conta.servidor ("" sem conta): o teste DNS do monitor de rede
+    // 0.3.0: as ligacoes da rota do video (0: nenhuma, e a feita que ainda nao tem o id do motor).
+    int topCallId = 0;       // ligacao.top.id
+    int ringingCallId = 0;   // o id da recebida tocando: a de cima ou a segunda, pela mesma regra do ringing
 };
 
 // O estado de uma mensagem {"v":1,"type":"state",...}; nada para as outras (toast, ring, update) e texto invalido.

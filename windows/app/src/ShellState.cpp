@@ -1,5 +1,8 @@
 #include "ShellState.h"
 
+#include <climits>
+#include <cstdint>
+
 #include "nlohmann/json.hpp"
 
 namespace starsonic {
@@ -13,17 +16,33 @@ bool Flag(const Json& object, const char* key) {
     return found != object.end() && found->is_boolean() && found->get<bool>();
 }
 
-bool Ringing(const Json& state) {
+// O id do motor de uma ligacao do estado (0: sem o campo, ou fora de um id valido).
+int CallIdOf(const Json& call) {
+    const auto id = call.find("id");
+    if (id == call.end() || !id->is_number_integer()) return 0;
+    const int64_t value = id->get<int64_t>();
+    return value > 0 && value <= INT_MAX ? static_cast<int>(value) : 0;
+}
+
+// Uma recebida tocando: a de cima, ou a segunda (fora da conferencia). *ringingId: o id dela (0 sem ele).
+bool Ringing(const Json& state, int* ringingId) {
+    *ringingId = 0;
     const auto call = state.find("ligacao");
     if (call == state.end() || !call->is_object()) return false;
     const auto top = call->find("top");
     if (top != call->end() && top->is_object()) {
         const auto phase = top->find("phase");
-        if (phase != top->end() && phase->is_string() && phase->get<std::string>() == "ringing") return true;
+        if (phase != top->end() && phase->is_string() && phase->get<std::string>() == "ringing") {
+            *ringingId = CallIdOf(*top);
+            return true;
+        }
     }
     if (Flag(*call, "conference")) return false;
     const auto kind = call->find("secondKind");
-    return kind != call->end() && kind->is_string() && kind->get<std::string>() == "ringing";
+    if (kind == call->end() || !kind->is_string() || kind->get<std::string>() != "ringing") return false;
+    const auto second = call->find("second");
+    if (second != call->end() && second->is_object()) *ringingId = CallIdOf(*second);
+    return true;
 }
 
 }  // namespace
@@ -38,9 +57,13 @@ std::optional<ShellStatus> ReadShellStatus(const std::string& message) {
     const auto state = parsed.find("state");
     if (state == parsed.end() || !state->is_object()) return std::nullopt;
     ShellStatus status;
-    status.ringing = Ringing(*state);
+    status.ringing = Ringing(*state, &status.ringingCallId);
     const auto call = state->find("ligacao");
     status.inCall = call != state->end() && call->is_object();
+    if (status.inCall) {
+        const auto top = call->find("top");
+        if (top != call->end() && top->is_object()) status.topCallId = CallIdOf(*top);
+    }
     status.doNotDisturb = Flag(*state, "naoPerturbe");
     const auto account = state->find("conta");
     if (account != state->end() && account->is_object()) {

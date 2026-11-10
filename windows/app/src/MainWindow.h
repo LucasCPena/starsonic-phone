@@ -31,6 +31,11 @@
 // (morto ou caido) e refeito com um ambiente novo, a janela e o aviso ("navegador reiniciado" no diagnostico; o
 // motor e as ligacoes continuam); a pagina que nao responde recarrega depois de 5 s.
 //
+// (0.3.0) O video: as memorias das vistas sao do WebViewSharedBuffers da janela (VideoPages, sobre os dois WebView), e
+// o VideoSink do main.cpp (Options.videoSink) sabe aqui da pagina pronta (o ready de cada pagina), do navegador refeito
+// e do fechamento (o Close, antes de os WebView fecharem). A rota do video vai ao callbacks.videoRoute: a ligacao de
+// cima, a recebida tocando e a janela minimizada ou escondida na bandeja, so quando uma das tres muda.
+//
 // Os dispositivos de som: o WM_DEVICECHANGE (DBT_DEVNODES_CHANGED, e a chegada e a saida de uma interface de audio)
 // espera 1 s sem outro e chama callbacks.devicesChanged (o DesktopApp rele os dispositivos na thread de comandos).
 //
@@ -52,7 +57,9 @@
 #include "ShellState.h"
 #include "TaskbarBadge.h"
 #include "Tray.h"
+#include "VideoSink.h"
 #include "WebViewHost.h"
+#include "WebViewSharedBuffers.h"
 #include "WindowFit.h"
 
 namespace starsonic {
@@ -70,6 +77,9 @@ public:
         std::optional<POINT> position;   // o canto de cima da area cliente gravado (pixels da tela)
         std::optional<WindowSize> size;  // o tamanho gravado da area cliente (pixels logicos)
         std::wstring version;            // a versao do app (vai na URL das paginas: ?v=<versao>)
+        // (0.3.0) As memorias do video (feito sobre o VideoPages desta janela; nullptr: sem video). Precisa durar ate
+        // o WM_DESTROY, que chama o Close dele.
+        VideoSink* videoSink = nullptr;
     };
 
     struct Callbacks {
@@ -92,6 +102,10 @@ public:
         std::function<void(bool inFront)> inFront;
         // (0.2.0) O clique no aviso do chat, com a conversa dele (0: a aba Chat), depois de a janela vir para a frente.
         std::function<void(int64_t conversa)> openChat;
+        // (0.3.0) A rota do video mudou: a ligacao de cima (ligacao.top.id), a recebida tocando (a que o aviso mostra;
+        // a de cima ou a segunda) e a janela minimizada ou escondida na bandeja. Os ids 0: nenhuma. So quando um dos
+        // tres muda (antes do primeiro, 0, 0 e false).
+        std::function<void(int topCallId, int ringingCallId, bool minimized)> videoRoute;
     };
 
     MainWindow() = default;
@@ -125,6 +139,8 @@ public:
     // barra de tarefas (TaskbarBadge::Set).
     void ShowChatNotice(const std::wstring& titulo, const std::wstring& texto, int64_t conversa);
     void SetChatBadge(int n);
+    // (0.3.0) As memorias do video nos dois WebView, para o VideoSink (de antes do Create ate o fim da janela).
+    SharedMemoryPages& VideoPages() { return videoPages_; }
 
 private:
     static LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
@@ -145,6 +161,7 @@ private:
     void RestartWebView();
     void RegisterAudioNotifications();
     void RefreshNotice();
+    void RefreshVideoRoute();
     void OnTray(WPARAM wParam, LPARAM lParam);
     LRESULT HitTest(WPARAM wParam, LPARAM lParam) const;
     void Log(const std::string& line) const;
@@ -176,6 +193,13 @@ private:
     WebViewHost::Options webOptions_;
     BrowserRestarts restarts_;     // o navegador que sai: refaz ou desiste (3 seguidas sem o ready)
     HDEVNOTIFY audioNotify_ = nullptr;
+    // (0.3.0) O video: as memorias nos dois WebView de agora, o VideoSink que escreve nelas e a ultima rota que foi ao
+    // callbacks.videoRoute.
+    WebViewSharedBuffers videoPages_{[this] { return webview_.get(); }, [this] { return notice_.WebView(); }};
+    VideoSink* videoSink_ = nullptr;
+    int routeTop_ = 0;
+    int routeRinging_ = 0;
+    bool routeMinimized_ = false;
 
     std::mutex mutex_;
     HWND target_ = nullptr;   // a janela para o PostMessage das outras threads (nullptr: fechada)

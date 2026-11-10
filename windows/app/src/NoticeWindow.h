@@ -48,6 +48,9 @@ public:
     void StopWebView();
 
     void Post(const std::string& json);
+    // (0.3.0) O WebView do aviso agora (nullptr antes do StartWebView e depois do StopWebView): a memoria do video do
+    // porteiro vai a ele (WebViewSharedBuffers).
+    WebViewHost* WebView() const { return webview_.get(); }
     // Mostra (sem ativar) no canto do monitor de anchor (a janela principal), ou esconde.
     void Show(HWND anchor);
     void Hide();

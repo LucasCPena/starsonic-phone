@@ -51,9 +51,10 @@ target_link_libraries(desktop_tests PRIVATE miniz SQLite::SQLite3 BZip2::BZip2 T
 
 # O tamanho e a posicao da janela principal do executavel (windows/app/src/WindowFit), a linha de comando dele, com os
 # links tel:/sip:/callto: (windows/app/src/Links), o refazer do WebView2 (BrowserRestarts), (rc.3) a decisao do
-# monitor de rede (o teste em tests/win/test_network_monitor.cpp) e o canal de atualizacao, e (0.2.0) as regras do chat
-# no executavel (ChatFiles: o numero no icone, o nome do arquivo baixado e o corte do aviso): C++ portatil, testado
-# tambem no Linux.
+# monitor de rede (o teste em tests/win/test_network_monitor.cpp) e o canal de atualizacao, (0.2.0) as regras do chat
+# no executavel (ChatFiles: o numero no icone, o nome do arquivo baixado e o corte do aviso) e (0.3.0) o video no
+# executavel (a memoria de uma vista, o Bunzip2 do modulo H.264, a rota dos quadros, o VideoSink e a decisao da
+# privacidade da camera): C++ portatil, testado tambem no Linux.
 target_sources(desktop_tests PRIVATE ${STARSONIC_DIR}/../windows/app/src/WindowFit.cpp
   ${STARSONIC_DIR}/../windows/app/src/Links.cpp
   ${STARSONIC_DIR}/../windows/app/src/BrowserRestarts.cpp
@@ -63,6 +64,9 @@ target_sources(desktop_tests PRIVATE ${STARSONIC_DIR}/../windows/app/src/WindowF
   ${STARSONIC_DIR}/../windows/app/src/ChatFiles.cpp
   ${STARSONIC_DIR}/../windows/app/src/FrameBuffer.cpp
   ${STARSONIC_DIR}/../windows/app/src/Bunzip.cpp
+  ${STARSONIC_DIR}/../windows/app/src/FrameRouter.cpp
+  ${STARSONIC_DIR}/../windows/app/src/VideoSink.cpp
+  ${STARSONIC_DIR}/../windows/app/src/CameraPrivacy.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../win/test_network_monitor.cpp)
 target_include_directories(desktop_tests PRIVATE ${STARSONIC_DIR}/../windows/app/src)
 

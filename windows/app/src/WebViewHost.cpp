@@ -369,6 +369,39 @@ void WebViewHost::LogAudioOutputs() {
             .Get());
 }
 
+ComPtr<ICoreWebView2SharedBuffer> WebViewHost::CreateSharedBuffer(size_t bytes) {
+    ComPtr<ICoreWebView2SharedBuffer> buffer;
+    if (!environment_) return buffer;
+    ComPtr<ICoreWebView2Environment12> environment12;
+    if (FAILED(environment_.As(&environment12))) {
+        Log("WebView2 sem a memoria dividida (ICoreWebView2Environment12)");
+        return buffer;
+    }
+    const HRESULT created = environment12->CreateSharedBuffer(static_cast<UINT64>(bytes), &buffer);
+    if (FAILED(created) || !buffer) {
+        Log("a memoria do video nao foi criada: " + Hex(FAILED(created) ? created : E_FAIL));
+        buffer.Reset();
+    }
+    return buffer;
+}
+
+bool WebViewHost::PostSharedBuffer(ICoreWebView2SharedBuffer* buffer, const std::string& json) {
+    if (!webview_ || !buffer) return false;
+    ComPtr<ICoreWebView2_17> webview17;
+    if (FAILED(webview_.As(&webview17))) {
+        Log("WebView2 sem a entrega da memoria dividida (ICoreWebView2_17)");
+        return false;
+    }
+    // So para leitura: a pagina nunca escreve na memoria do video (o cabecalho e os quadros sao do executavel).
+    const HRESULT posted = webview17->PostSharedBufferToScript(buffer, COREWEBVIEW2_SHARED_BUFFER_ACCESS_READ_ONLY,
+                                                               Utf8ToWide(json).c_str());
+    if (FAILED(posted)) {
+        Log("a memoria do video nao foi entregue: " + Hex(posted));
+        return false;
+    }
+    return true;
+}
+
 void WebViewHost::Close() {
     if (closed_) return;
     closed_ = true;

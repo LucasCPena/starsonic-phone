@@ -15,6 +15,9 @@
 // O aviso de ligacao recebida (NoticeWindow) tem o seu WebViewHost, com o mesmo ambiente (Options.environment: o
 // mesmo perfil e a mesma pasta de dados) e a pagina aviso.html.
 //
+// (0.3.0) A memoria de uma vista do video (WebViewSharedBuffers.h): uma memoria dividida do WebView2, criada no
+// ambiente (CreateSharedBuffer) e entregue a pagina so para leitura (PostSharedBuffer), com o JSON da ponte.
+//
 // O toque toca na interface (WebAudio): o ambiente tem --autoplay-policy=no-user-gesture-required (sem ele o primeiro
 // toque, antes de um clique, pode sair mudo), e o WebView nunca e suspenso: nada de TrySuspend, e o IsVisible fica
 // TRUE o tempo todo (tambem com a janela minimizada), para o WebAudio continuar tocando.
@@ -81,6 +84,13 @@ public:
     void Reload();
     // Escreve no diagnostico os rotulos das saidas de som que o WebView2 ve (enumerateDevices, audiooutput).
     void LogAudioOutputs();
+    // (0.3.0) Uma memoria dividida de bytes no ambiente deste WebView (ICoreWebView2Environment12). Vazia sem o
+    // ambiente (ainda abrindo, ou fechado) ou se o WebView2 nao deu (o motivo vai ao diagnostico).
+    Microsoft::WRL::ComPtr<ICoreWebView2SharedBuffer> CreateSharedBuffer(size_t bytes);
+    // (0.3.0) Entrega a memoria a pagina, so para leitura (PostSharedBufferToScript com
+    // COREWEBVIEW2_SHARED_BUFFER_ACCESS_READ_ONLY), com o JSON da ponte no additionalData. Sem o WebView pronto, nada.
+    // false: nao saiu.
+    bool PostSharedBuffer(ICoreWebView2SharedBuffer* buffer, const std::string& json);
     // Fecha o WebView (antes de a janela sumir).
     void Close();
 
