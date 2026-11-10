@@ -61,7 +61,8 @@ function Botao({ rotulo, nome, icone, onClick, aceso, pressionado, desligado, pe
       onClick={semSegundoClique(true, onClick)}
     >
       <span class="grande-c">{icone}</span>
-      {rotulo}
+      {/* (Ruling 15) Numa barra estreita, o rótulo sai da vista e fica só para o leitor de tela (o app.css). */}
+      <span class="grande-rotulo">{rotulo}</span>
     </button>
   );
 }

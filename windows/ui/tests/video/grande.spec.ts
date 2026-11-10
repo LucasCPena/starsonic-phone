@@ -1,8 +1,12 @@
 // O grande e a tela cheia (video etapa 2, Task 7; os quadros Grande e TelaCheia) contra a ponte falsa: só o vídeo, a sua
 // imagem no canto, a etiqueta de quem fala e a barra de baixo; o Diminuir, a Tela cheia, o duplo clique e o Esc; o cartão
-// da segunda ligação; a sua imagem sempre à vista com a câmera ligada (Review Focus 2); e as medidas dos dois quadros.
+// da segunda ligação; a sua imagem sempre à vista com a câmera ligada (Review Focus 2); e as medidas dos dois quadros. Do
+// passe final: nada desenhado com a segunda ligação (Ruling 13), o clique duplo no Abrir grande que fica no grande (Ruling
+// 14) e a barra de baixo numa área de trabalho pequena com o painel do chat (Ruling 15, com o servidor do chat de teste).
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { abrir, depoisDoQueChegou, esperarComando, estado, mudarEstado, vezes } from '../helpers';
+import { abrirNoChat, esperarOsEventos } from '../chat/abrir';
+import { empresaComPessoas } from '../chat/servidor';
+import { abrir, depoisDoQueChegou, esperarComando, estado, mudarEstado, semViolacoesSerias, vezes } from '../helpers';
 import { BRANCO, FUNDO, VERMELHO, corNoMeio, perto, quadro, quadrosDeTela } from './video';
 
 test.use({ viewport: { width: 1280, height: 800 } });
@@ -220,4 +224,91 @@ test('a call left ringing in the big window goes back to the call screen', async
   await mudarEstado(page, soTocando);
   await depoisDoQueChegou(page);
   expect(await vezes(page, { cmd: 'videoWindow', modo: 'normal' })).toBe(1);
+});
+
+type Caixa = { x: number; y: number; width: number; height: number };
+const cruzam = (a: Caixa, b: Caixa) => a.x < b.x + b.width - 0.5 && b.x < a.x + a.width - 0.5 && a.y < b.y + b.height - 0.5 && b.y < a.y + a.height - 0.5;
+
+/** As linhas do texto do rótulo de um botão da barra (o texto fora do círculo), pela altura de cada pedaço dele. */
+const linhasDoRotulo = (b: Locator) =>
+  b.evaluate((botao) => {
+    const intervalo = document.createRange();
+    const linhas = new Set<number>();
+    const andar = (no: Node) => {
+      if (no.nodeType === Node.TEXT_NODE && no.textContent?.trim()) {
+        intervalo.selectNodeContents(no);
+        for (const r of intervalo.getClientRects()) if (r.width > 1) linhas.add(Math.round(r.top));
+      } else if (no instanceof Element && !no.classList.contains('grande-c')) {
+        no.childNodes.forEach(andar);
+      }
+    };
+    botao.childNodes.forEach(andar);
+    return linhas.size;
+  });
+
+test.describe('o grande com o chat numa área de trabalho pequena', () => {
+  // O CSP da página só deixa falar com o endereço do chat de verdade; o servidor de teste fica no 127.0.0.1:4180.
+  test.use({ bypassCSP: true });
+
+  test('the big window bar fits a small work area with the chat open', async ({ page }) => {
+    // (Ruling 15) A área de trabalho é o grande quando ela é menor que 1280×800 (a de 1920×1080 a 200%, a de 1366×768 a
+    // 150%): com o painel de 360 do chat, a barra de baixo fica toda na janela e fora do painel, sem um botão em cima do
+    // outro e com o nome de cada um.
+    const { pessoas } = await empresaComPessoas('ACME Comércio Ltda', [
+      { ramal: '2001', nome: 'Recepção' },
+      { ramal: '2003', nome: 'Ana Souza' },
+    ]);
+    await abrirNoChat(page, { chave: pessoas[0].chave, ramal: '2001', nome: 'Recepção' });
+    await esperarOsEventos(page);
+    await mudarEstado(page, (s) => ({
+      ...s,
+      video: { ...s.video, janela: 'grande' },
+      ligacao: {
+        top: { id: 51, number: '2003', name: 'Ana Souza', incoming: true, phase: 'active', activeSinceMs: Date.now() - 5_000, held: false, video: { oferece: true, ativo: true, imagem: true, camera: true, cedo: false } },
+        second: null,
+        secondKind: 'none',
+        muted: false,
+        conference: false,
+        conferenceSinceMs: 0,
+        consulting: false,
+        colleagueActive: false,
+      },
+    }));
+    await page.locator('.grande-barra').getByRole('button', { name: 'Chat', exact: true }).click();
+    const painel = page.locator('.grande-chat');
+    await expect(painel).toBeVisible();
+    for (const [largura, altura] of [
+      [960, 540],
+      [800, 500],
+    ] as const) {
+      for (const modo of ['grande', 'telaCheia'] as const) {
+        const onde = `${modo} em ${largura}×${altura}`;
+        await page.setViewportSize({ width: largura, height: altura });
+        await mudarEstado(page, (s) => ({ ...s, video: { ...s.video, janela: modo } }));
+        const tela = modo === 'grande' ? 'Tela cheia' : 'Sair da tela cheia';
+        await expect(page.locator('.grande-barra').getByRole('button', { name: tela, exact: true }), onde).toBeVisible();
+        await expect(painel, onde).toBeVisible();
+        const p = await caixa(painel);
+        const botoes = barraDeBaixo(page);
+        const esperados = ['Mudo', 'Desligar a câmera', 'Chat', tela, 'Diminuir', 'Desligar'];
+        await expect(botoes, onde).toHaveCount(esperados.length);
+        let anterior: Caixa | null = null;
+        for (const [i, nome] of esperados.entries()) {
+          const b = botoes.nth(i);
+          await expect(b, onde).toHaveAccessibleName(nome);
+          const c = await caixa(b);
+          const circulo = await caixa(b.locator('.grande-c'));
+          const dentro = c.x >= -0.5 && c.y >= -0.5 && c.x + c.width <= largura + 0.5 && c.y + c.height <= altura + 0.5;
+          expect(dentro, `${nome} fora da janela, ${onde}: ${JSON.stringify(c)}`).toBe(true);
+          expect(cruzam(c, p), `${nome} embaixo do painel do chat, ${onde}: ${JSON.stringify({ c, p })}`).toBe(false);
+          expect(circulo.x >= c.x - 0.5 && circulo.x + circulo.width <= c.x + c.width + 0.5, `o círculo de ${nome} fora dele, ${onde}`).toBe(true);
+          // O rótulo numa linha só embaixo do círculo, ou nenhum à vista (o nome fica para o leitor de tela): nunca quebrado.
+          expect(await linhasDoRotulo(b), `o rótulo de ${nome} em mais de uma linha, ${onde}`).toBeLessThanOrEqual(1);
+          if (anterior) expect(cruzam(c, anterior), `${nome} em cima do anterior, ${onde}`).toBe(false);
+          anterior = c;
+        }
+        await semViolacoesSerias(page);
+      }
+    }
+  });
 });
