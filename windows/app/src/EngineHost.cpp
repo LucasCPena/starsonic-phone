@@ -33,6 +33,43 @@ void EngineHost::Start() {
         log_(std::string("o COM multithread nao ficou reservado para o motor: ") + code);
     }
     creator_ = std::thread([this] { Create(); });
+    // (0.3.0) A thread das pausas da camera (ver o SetCameraPaused). Sem ela, o valor fica guardado e nunca chega ao
+    // motor: so a camera da sessao bloqueada deixa de pausar, o resto funciona.
+    try {
+        pauseWorker_ = std::thread([this] { PauseLoop(); });
+    } catch (const std::system_error&) {
+        if (log_) log_("a thread da pausa da camera nao abriu");
+    }
+}
+
+// A camera pausada pela sessao do Windows. O SipEngine::SetCameraPaused faz o STOP_TRANSMIT de cada ligacao, que pode
+// fechar a captura da DirectShow, e esses objetos do COM vivem no apartamento multithread (o do Create). Quem chama
+// aqui e a thread da janela, que e STA: ela nunca toca o motor, nem espera por ele. Guarda o ultimo valor e acorda a
+// thread propria (sem apartamento proprio: o multithread implicito, mantido pelo CoIncrementMTAUsage do Start), que o
+// aplica. Varias mudancas seguidas viram a ultima. O valor que chega antes de o motor existir fica guardado, e a
+// thread o aplica quando o Create termina: bloquear e desbloquear nesse intervalo nunca se perde.
+void EngineHost::SetCameraPaused(bool paused) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (stopping_) return;
+    paused_ = paused;
+    pauseDirty_ = true;
+    pauseWake_.notify_all();
+}
+
+void EngineHost::PauseLoop() {
+    std::unique_lock<std::mutex> lock(mutex_);
+    for (;;) {
+        pauseWake_.wait(lock, [this] { return stopping_ || (pauseDirty_ && done_); });
+        if (stopping_) return;
+        const bool paused = paused_;
+        pauseDirty_ = false;
+        SipEngine* engine = live_.load();
+        if (!engine) continue;   // o motor nao abriu: nada a pausar
+        // Fora da trava: o motor pode demorar (fechar a camera). O motor nao sai antes de o Stop juntar esta thread.
+        lock.unlock();
+        engine->SetCameraPaused(paused);
+        lock.lock();
+    }
 }
 
 void EngineHost::Create() {
@@ -58,6 +95,7 @@ void EngineHost::Create() {
     live_.store(engine_.get());
     done_ = true;
     created_.notify_all();
+    pauseWake_.notify_all();   // (0.3.0) a pausa que chegou antes do motor
 }
 
 SipEngine* EngineHost::Ready() {
@@ -71,11 +109,17 @@ SipEngine* EngineHost::Ready() {
 
 void EngineHost::Stop() {
     std::thread creator;
+    std::thread pauseWorker;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         creator = std::move(creator_);
+        pauseWorker = std::move(pauseWorker_);
+        stopping_ = true;
+        pauseWake_.notify_all();
     }
     if (creator.joinable()) creator.join();
+    // A thread das pausas sai antes de o motor ser destruido: nenhuma pausa toca o motor depois do Stop.
+    if (pauseWorker.joinable()) pauseWorker.join();
     std::unique_ptr<SipEngine> engine;
     CO_MTA_USAGE_COOKIE cookie = nullptr;
     {

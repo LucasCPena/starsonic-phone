@@ -52,4 +52,10 @@ int ScaleFromDpi(int value, unsigned dpi);
 FitBox FitWindow(const FitArea& work, unsigned dpi, const std::optional<WindowPosition>& position,
                  const std::optional<WindowSize>& size = std::nullopt);
 
+// (0.3.0) A janela grande da ligacao com video: 1280x800 logicos no DPI dado (arredondados), cortados na largura e na
+// altura da area de trabalho, e centrada nela. A tela cheia nao passa por aqui (ela cobre o rcMonitor).
+constexpr int kBigVideoWidth = 1280;    // pixels logicos
+constexpr int kBigVideoHeight = 800;
+FitBox BigVideoBox(const FitArea& work, unsigned dpi);
+
 }  // namespace starsonic

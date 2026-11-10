@@ -523,6 +523,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     hooks.minimize = [&window] { window.RunOnWindow([&window] { window.Minimize(); }); };
     hooks.closeToTray = [&window] { window.RunOnWindow([&window] { window.CloseToTray(); }); };
     // O resize das zonas da interface: so poe na fila da janela (a thread de comandos nunca espera a janela).
+    // (0.3.0) O modo da janela do video ("normal", "grande", "telaCheia"): da thread de comandos para a da janela.
+    hooks.videoWindow = [&window](const std::string& mode) {
+        const VideoMode wanted = mode == "grande"      ? VideoMode::Big
+                                 : mode == "telaCheia" ? VideoMode::Fullscreen
+                                                       : VideoMode::Normal;
+        window.RunOnWindow([&window, wanted] { window.SetVideoMode(wanted); });
+    };
     hooks.resize = [&window](const std::string& edge) { window.RunOnWindow([&window, edge] { window.StartResize(edge); }); };
 #if STARSONIC_TEST_HOOKS
     // O build de teste: a thread de comandos trava no Sair (a fumaca confere o fechamento com limite).
@@ -740,6 +747,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     };
     // Um headset entrou ou saiu (a janela ja esperou 1 s sem outro aviso): o DesktopApp rele na thread de comandos.
     callbacks.devicesChanged = [&app] { app.RefreshAudioDevices(); };
+    // (0.3.0) A sessao do Windows bloqueada ou desconectada pausa a camera: o EngineHost so guarda o valor (a thread da
+    // janela nunca toca o motor) e o aplica fora dela.
+    callbacks.cameraPaused = [&engine](bool paused) { engine.SetCameraPaused(paused); };
     callbacks.moved = [&app](int x, int y) { app.SaveWindowPosition(x, y); };
     callbacks.resized = [&app](int width, int height) { app.SaveWindowSize(width, height); };
     callbacks.account = [&network](const std::string& server, bool connected) {

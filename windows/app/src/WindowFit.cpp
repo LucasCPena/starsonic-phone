@@ -49,4 +49,18 @@ FitBox FitWindow(const FitArea& work, unsigned dpi, const std::optional<WindowPo
     return box;
 }
 
+FitBox BigVideoBox(const FitArea& work, unsigned dpi) {
+    if (dpi == 0) dpi = 96;
+    const int workWidth = std::max(0, work.right - work.left);
+    const int workHeight = std::max(0, work.bottom - work.top);
+    FitBox box;
+    box.width = ScaleToDpi(kBigVideoWidth, dpi);
+    box.height = ScaleToDpi(kBigVideoHeight, dpi);
+    if (workWidth > 0) box.width = std::min(box.width, workWidth);
+    if (workHeight > 0) box.height = std::min(box.height, workHeight);
+    box.x = work.left + (workWidth - box.width) / 2;
+    box.y = work.top + (workHeight - box.height) / 2;
+    return box;
+}
+
 }  // namespace starsonic

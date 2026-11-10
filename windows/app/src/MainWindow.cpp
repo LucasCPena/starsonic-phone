@@ -39,6 +39,10 @@ const wchar_t kNoticePage[] = L"https://app.starsonic.local/aviso.html";
 // KSCATEGORY_AUDIO: as interfaces de audio (o headset USB ou Bluetooth que entra ou sai).
 const GUID kAudioInterfaces = {0x6994AD04, 0x93EF, 0x11D0, {0xA3, 0xCC, 0x00, 0xA0, 0xC9, 0x22, 0x31, 0x96}};
 
+// KSCATEGORY_VIDEO_CAMERA: as interfaces de camera (a webcam que entra ou sai). Definido aqui, como o de audio, para
+// nao depender do ksmedia.h e do ks.h (que pedem os cabecalhos do driver).
+const GUID kCameraInterfaces = {0xE5323777, 0xF976, 0x4F5B, {0x9B, 0x55, 0xB9, 0x46, 0x99, 0xC4, 0x6E, 0x44}};
+
 // A pagina com a versao do app (o cache do WebView2 nunca serve a de outra versao).
 std::wstring Versioned(const wchar_t* page, const std::wstring& version) {
     return version.empty() ? std::wstring(page) : std::wstring(page) + L"?v=" + version;
@@ -88,6 +92,20 @@ FitArea WorkArea(HMONITOR monitor) {
         area.top = info.rcWork.top;
         area.right = info.rcWork.right;
         area.bottom = info.rcWork.bottom;
+    }
+    return area;
+}
+
+// O monitor inteiro (rcMonitor), para a tela cheia.
+FitArea MonitorArea(HMONITOR monitor) {
+    MONITORINFO info = {};
+    info.cbSize = sizeof(info);
+    FitArea area;
+    if (monitor && GetMonitorInfoW(monitor, &info)) {
+        area.left = info.rcMonitor.left;
+        area.top = info.rcMonitor.top;
+        area.right = info.rcMonitor.right;
+        area.bottom = info.rcMonitor.bottom;
     }
     return area;
 }
@@ -248,6 +266,10 @@ void MainWindow::RegisterAudioNotifications() {
     filter.dbcc_classguid = kAudioInterfaces;
     audioNotify_ = RegisterDeviceNotificationW(window_, &filter, DEVICE_NOTIFY_WINDOW_HANDLE);
     if (!audioNotify_) Log("som: o aviso de dispositivos de audio nao foi registrado: " + std::to_string(GetLastError()));
+    // (0.3.0) As cameras que entram e saem: o mesmo caminho do audio (o WM_DEVICECHANGE, 1 s sem outro aviso).
+    filter.dbcc_classguid = kCameraInterfaces;
+    cameraNotify_ = RegisterDeviceNotificationW(window_, &filter, DEVICE_NOTIFY_WINDOW_HANDLE);
+    if (!cameraNotify_) Log("video: o aviso de cameras nao foi registrado: " + std::to_string(GetLastError()));
 }
 
 void MainWindow::Show(int showCommand) {
@@ -428,12 +450,59 @@ void MainWindow::Place(const std::optional<POINT>& position) {
     if (actual != 0 && actual != dpi) Refit();
 }
 
+bool MainWindow::ApplyModeBox(HMONITOR monitor, UINT dpi) {
+    if (mode_ == VideoMode::Normal) return false;
+    const bool wasFitting = fitting_;
+    if (mode_ == VideoMode::Fullscreen) {
+        // Sem borda, a janela e a area cliente: cobre o monitor inteiro (o WM_NCCALCSIZE nao tira nada).
+        const FitArea area = MonitorArea(monitor);
+        fitting_ = true;
+        SetWindowPos(window_, nullptr, area.left, area.top, area.right - area.left, area.bottom - area.top,
+                     SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+        fitting_ = wasFitting;
+    } else {
+        SetClientBox(BigVideoBox(WorkArea(monitor), dpi), dpi);
+    }
+    return true;
+}
+
+void MainWindow::SetVideoMode(VideoMode mode) {
+    if (!window_ || mode == mode_) return;
+    const VideoMode previous = mode_;
+    if (previous == VideoMode::Normal) {
+        // A caixa do Normal e guardada uma vez, ao sair dele (minimizada, a caixa nao vale: volta antes).
+        if (IsIconic(window_)) ShowWindow(window_, SW_RESTORE);
+        normalBox_ = ClientBox();
+    }
+    if (previous == VideoMode::Fullscreen) {
+        SetWindowLongPtrW(window_, GWL_STYLE, normalStyle_);   // a borda de volta (o SetWindowPos abaixo aplica)
+    }
+    if (mode == VideoMode::Fullscreen) {
+        normalStyle_ = GetWindowLongPtrW(window_, GWL_STYLE);
+        SetWindowLongPtrW(window_, GWL_STYLE, normalStyle_ & ~static_cast<LONG_PTR>(WS_CAPTION | WS_THICKFRAME));
+    }
+    mode_ = mode;
+    const HMONITOR monitor = MonitorFromWindow(window_, MONITOR_DEFAULTTONEAREST);
+    UINT dpi = GetDpiForWindow(window_);
+    if (dpi == 0) dpi = MonitorDpi(monitor);
+    if (!ApplyModeBox(monitor, dpi)) {
+        // De volta ao Normal: o tamanho escolhido (desired_) no lugar de antes, no monitor de agora.
+        std::optional<WindowPosition> position;
+        if (normalBox_) position = WindowPosition{normalBox_->x, normalBox_->y};
+        normalBox_.reset();
+        SetClientBox(FitWindow(WorkArea(monitor), dpi, position, desired_), dpi);
+    }
+    Log(std::string("janela do video: ") +
+        (mode == VideoMode::Normal ? "normal" : mode == VideoMode::Big ? "grande" : "tela cheia"));
+}
+
 void MainWindow::Refit() {
     if (!window_ || IsIconic(window_)) return;
     const FitBox current = ClientBox();
     const HMONITOR monitor = MonitorFromWindow(window_, MONITOR_DEFAULTTONEAREST);
     UINT dpi = GetDpiForWindow(window_);
     if (dpi == 0) dpi = MonitorDpi(monitor);
+    if (ApplyModeBox(monitor, dpi)) return;   // o grande e a tela cheia seguem a area de trabalho e o monitor
     const FitBox box = FitWindow(WorkArea(monitor), dpi, WindowPosition{current.x, current.y}, desired_);
     if (box.x == current.x && box.y == current.y && box.width == current.width && box.height == current.height) return;
     SetClientBox(box, dpi);
@@ -470,7 +539,14 @@ void MainWindow::OnMinMaxInfo(MINMAXINFO* info) const {
     const LONG minHeight = ScaleToDpi(kMinWindowHeight, dpi) + frame.y;
     info->ptMinTrackSize.x = minWidth;
     info->ptMinTrackSize.y = minHeight;
-    const FitArea work = WorkArea(MonitorFromWindow(window_, MONITOR_DEFAULTTONEAREST));
+    const HMONITOR monitor = MonitorFromWindow(window_, MONITOR_DEFAULTTONEAREST);
+    // A tela cheia cobre o monitor inteiro (mais que a area de trabalho): o maximo e o do rcMonitor.
+    const FitArea work = mode_ == VideoMode::Fullscreen ? MonitorArea(monitor) : WorkArea(monitor);
+    if (mode_ == VideoMode::Fullscreen) {
+        info->ptMaxTrackSize.x = std::max(minWidth, static_cast<LONG>(work.right - work.left));
+        info->ptMaxTrackSize.y = std::max(minHeight, static_cast<LONG>(work.bottom - work.top));
+        return;
+    }
     if (work.right > work.left && work.bottom > work.top) {
         info->ptMaxTrackSize.x = std::max(minWidth, static_cast<LONG>(work.right - work.left + 2 * frame.x));
         info->ptMaxTrackSize.y = std::max(minHeight, static_cast<LONG>(work.bottom - work.top + frame.y));
@@ -533,6 +609,15 @@ void MainWindow::RefreshVideoRoute() {
     if (callbacks_.videoRoute) callbacks_.videoRoute(routeTop_, routeRinging_, routeMinimized_);
 }
 
+// (0.3.0) A sessao bloqueada ou desconectada pausa a camera (o main.cpp pede ao motor), e a volta a devolve. So quando
+// muda.
+void MainWindow::UpdateCameraPause() {
+    const bool paused = locked_ || disconnected_;
+    if (paused == cameraPaused_) return;
+    cameraPaused_ = paused;
+    if (callbacks_.cameraPaused) callbacks_.cameraPaused(paused);
+}
+
 void MainWindow::RunActions() {
     std::deque<std::function<void()>> pending;
     {
@@ -550,6 +635,8 @@ void MainWindow::RunActions() {
 // passar (HTTRANSPARENT), ou antes de ele abrir, a faixa de cima redimensiona (HTTOP e os cantos de cima) e o resto da
 // barra de titulo (menos os dois botoes) arrasta a janela.
 LRESULT MainWindow::HitTest(WPARAM wParam, LPARAM lParam) const {
+    // (0.3.0) Na tela cheia, nada de bordas de redimensionar nem de barra para arrastar.
+    if (mode_ == VideoMode::Fullscreen) return HTCLIENT;
     const LRESULT frame = DefWindowProcW(window_, WM_NCHITTEST, wParam, lParam);
     if (frame != HTCLIENT) return frame;
     POINT point = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
@@ -606,6 +693,8 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
             if (wParam) {
                 // Sem a barra do Windows (a da interface fica no lugar): a area cliente vai ate o alto da janela, e as
                 // bordas invisiveis de redimensionar dos lados e de baixo ficam fora dela.
+                // (0.3.0) Na tela cheia a janela e a area cliente inteira: sem bordas invisiveis.
+                if (mode_ == VideoMode::Fullscreen) return 0;
                 NCCALCSIZE_PARAMS* params = reinterpret_cast<NCCALCSIZE_PARAMS*>(lParam);
                 const ResizeFrame frame = FrameFor(GetDpiForWindow(window_));
                 RECT& rect = params->rgrc[0];
@@ -649,6 +738,7 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
                 default:
                     break;
             }
+            UpdateCameraPause();
             RefreshNotice();
             return 0;
         case WM_SIZE:
@@ -658,7 +748,7 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
                 GetClientRect(window_, &client);
                 webview_->Resize(client);
             }
-            if (wParam == SIZE_RESTORED && placed_ && !fitting_) {
+            if (wParam == SIZE_RESTORED && placed_ && !fitting_ && mode_ == VideoMode::Normal) {
                 // A pessoa (ou o Windows, num encaixe na borda da tela) escolheu um tamanho: e o novo ponto de partida,
                 // e vai para o config.json depois de 500 ms sem outro.
                 const UINT dpi = GetDpiForWindow(window_);
@@ -681,7 +771,7 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
             }
             return 0;
         case WM_MOVE:
-            if (!IsIconic(window_)) SetTimer(window_, kMoveTimer, kMoveDelayMs, nullptr);
+            if (!IsIconic(window_) && mode_ == VideoMode::Normal) SetTimer(window_, kMoveTimer, kMoveDelayMs, nullptr);
             return 0;
         case WM_DPICHANGED: {
             // A escala nova (ou outro monitor): o mesmo tamanho logico na escala dela, cortado na area de trabalho do
@@ -689,6 +779,8 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
             const RECT* suggested = reinterpret_cast<const RECT*>(lParam);
             const UINT dpi = LOWORD(wParam);
             const HMONITOR monitor = MonitorFromRect(suggested, MONITOR_DEFAULTTONEAREST);
+            // (0.3.0) O grande e a tela cheia seguem a caixa do modo no monitor novo.
+            if (ApplyModeBox(monitor, dpi)) return 0;
             const ResizeFrame frame = FrameFor(dpi);
             const FitBox box =
                 FitWindow(WorkArea(monitor), dpi, WindowPosition{suggested->left + frame.x, suggested->top}, desired_);
@@ -713,7 +805,8 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
             if (wParam == kMoveTimer) {
                 KillTimer(window_, kMoveTimer);
                 // O canto de cima a esquerda da area cliente (o da interface; as bordas invisiveis ficam fora).
-                if (!IsIconic(window_) && callbacks_.moved) {
+                // (0.3.0) Fora do Normal (o grande, a tela cheia) o lugar nao e o da pessoa: nao grava.
+                if (!IsIconic(window_) && mode_ == VideoMode::Normal && callbacks_.moved) {
                     const FitBox box = ClientBox();
                     callbacks_.moved(box.x, box.y);
                 }
@@ -721,7 +814,7 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
             }
             if (wParam == kSizeTimer) {
                 KillTimer(window_, kSizeTimer);
-                if (callbacks_.resized) callbacks_.resized(desired_.width, desired_.height);
+                if (mode_ == VideoMode::Normal && callbacks_.resized) callbacks_.resized(desired_.width, desired_.height);
                 return 0;
             }
             if (wParam == kQuitTimer) {
@@ -780,6 +873,8 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
             KillTimer(window_, kDeviceTimer);
             if (audioNotify_) UnregisterDeviceNotification(audioNotify_);
             audioNotify_ = nullptr;
+            if (cameraNotify_) UnregisterDeviceNotification(cameraNotify_);
+            cameraNotify_ = nullptr;
             tray_.Remove();
             badge_.Detach();   // o ITaskbarList3 sai antes do CoUninitialize do main.cpp
             if (sessionNotify_) WTSUnRegisterSessionNotification(window_);

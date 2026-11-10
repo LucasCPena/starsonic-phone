@@ -14,6 +14,8 @@
 // (0.3.0) O video: o sink dos quadros (SetFrameSink) nao espera o motor; ele e guardado e passado ao motor quando ele
 // fica pronto, e precisa durar ate o Stop. O apartamento multithread do COM (o das cameras da DirectShow) fica
 // reservado do Start ao fim do Stop, e o Stop destroi o motor numa thread fora da STA da janela (EngineHost.cpp).
+// SetCameraPaused (a sessao do Windows bloqueada ou desconectada) tambem nao espera o motor nem o toca na thread de
+// quem chama (a da janela, STA): guarda o valor e uma thread propria do EngineHost o aplica (ver o .cpp).
 #include <windows.h>
 
 #include <objbase.h>
@@ -49,6 +51,11 @@ public:
     // (0.3.0) Os quadros do video vao para sink (SipEngine::SetFrameSink). Nunca espera a criacao: guarda o sink e o
     // passa ao motor quando ele fica pronto (ja pronto: agora). O sink precisa durar ate o Stop.
     void SetFrameSink(FrameSink* sink);
+    // (0.3.0) Pausa ou volta a camera de todas as ligacoes (SipEngine::SetCameraPaused: a sessao bloqueada ou
+    // desconectada). Da thread da janela: so guarda o valor e acorda a thread que o aplica ao motor (a ultima mudanca
+    // vale; varias seguidas viram uma). Antes de o motor ficar pronto, o valor espera e e aplicado ao ficar pronto.
+    // Depois do Stop, nao faz nada.
+    void SetCameraPaused(bool paused);
     // Cria o motor numa thread propria (uma vez).
     void Start();
     // Espera a criacao terminar e destroi o motor (demora ~1 s; ate ~5 s se o servidor nao responde), numa thread curta
@@ -101,6 +108,8 @@ public:
 
 private:
     void Create();
+    // A thread das pausas: espera o motor ficar pronto e um valor novo, e o aplica fora da trava.
+    void PauseLoop();
     // O motor, depois de esperar a criacao (nullptr: falhou, ou ja parou).
     SipEngine* Ready();
 
@@ -115,6 +124,12 @@ private:
     std::unique_ptr<SipEngine> engine_;    // escrito na criacao e no Stop
     std::atomic<SipEngine*> live_{nullptr};   // o motor para os metodos (nullptr antes, se falhou e no Stop)
     std::thread creator_;
+    // (0.3.0) A pausa da camera, com o mutex_: o ultimo valor pedido, se ainda falta aplica-lo, e a thread que o faz.
+    std::condition_variable pauseWake_;
+    std::thread pauseWorker_;
+    bool paused_ = false;
+    bool pauseDirty_ = false;
+    bool stopping_ = false;
     FrameSink* sink_ = nullptr;                    // (0.3.0) com o mutex_: o sink dos quadros, para o motor
     CO_MTA_USAGE_COOKIE mtaCookie_ = nullptr;      // (0.3.0) com o mutex_: o CoIncrementMTAUsage do Start
 };

@@ -145,3 +145,27 @@ TEST_CASE("physical pixels go back to the same logical size") {
         }
     }
 }
+
+TEST_CASE("the big box is 1280x800 at 100%") {
+    const FitBox box = starsonic::BigVideoBox({0, 0, 1920, 1040}, 96);
+    CHECK(box.x == 320);
+    CHECK(box.y == 120);
+    CHECK(box.width == 1280);
+    CHECK(box.height == 800);
+}
+
+TEST_CASE("the big box at 150% is capped by the work area") {
+    const FitBox box = starsonic::BigVideoBox({0, 0, 1920, 1040}, 144);
+    CHECK(box.x == 0);
+    CHECK(box.y == 0);
+    CHECK(box.width == 1920);
+    CHECK(box.height == 1040);
+}
+
+TEST_CASE("the big box is centered on a second monitor") {
+    const FitBox box = starsonic::BigVideoBox({1920, 0, 3840, 1080}, 96);
+    CHECK(box.x == 2240);
+    CHECK(box.y == 140);
+    CHECK(box.width == 1280);
+    CHECK(box.height == 800);
+}

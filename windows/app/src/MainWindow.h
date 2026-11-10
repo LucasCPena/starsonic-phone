@@ -36,8 +36,17 @@
 // e do fechamento (o Close, antes de os WebView fecharem). A rota do video vai ao callbacks.videoRoute: a ligacao de
 // cima, a recebida tocando e a janela minimizada ou escondida na bandeja, so quando uma das tres muda.
 //
-// Os dispositivos de som: o WM_DEVICECHANGE (DBT_DEVNODES_CHANGED, e a chegada e a saida de uma interface de audio)
-// espera 1 s sem outro e chama callbacks.devicesChanged (o DesktopApp rele os dispositivos na thread de comandos).
+// Os dispositivos de som e as cameras: o WM_DEVICECHANGE (DBT_DEVNODES_CHANGED, e a chegada e a saida de uma interface
+// de audio ou de camera: KSCATEGORY_AUDIO e KSCATEGORY_VIDEO_CAMERA) espera 1 s sem outro e chama
+// callbacks.devicesChanged (o DesktopApp rele os dispositivos de som e as cameras na thread de comandos).
+//
+// (0.3.0) A janela do video (SetVideoMode, o gancho videoWindow do nucleo): Normal e a de sempre; Big e a janela grande
+// (1280x800 logicos, ou a area de trabalho se ela for menor, no centro do monitor da janela: WindowFit BigVideoBox);
+// Fullscreen tira a borda e cobre o monitor inteiro (rcMonitor). A caixa do Normal e guardada ao sair dele e volta com
+// ele; o estilo da janela e guardado ao entrar na tela cheia e volta ao sair. Fora do Normal a janela nao grava o
+// tamanho nem o lugar no config.json (o tamanho grande nunca vira o da pessoa), e o encaixe (o Refit e o
+// WM_DPICHANGED) usa a caixa do modo no monitor de agora. A sessao do Windows bloqueada ou desconectada chama
+// callbacks.cameraPaused(true), e a volta, (false).
 //
 // Threads: Create, Show e as acoes rodam na thread da janela. PostToWeb e RunOnWindow podem ser chamados de qualquer
 // thread (a de comandos do DesktopApp): so poem na fila e avisam a janela com PostMessage (nunca SendMessage: a thread
@@ -63,6 +72,9 @@
 #include "WindowFit.h"
 
 namespace starsonic {
+
+// (0.3.0) O modo da janela para o video (o gancho videoWindow do nucleo: "normal", "grande", "telaCheia").
+enum class VideoMode { Normal, Big, Fullscreen };
 
 class MainWindow {
 public:
@@ -106,6 +118,9 @@ public:
         // a de cima ou a segunda) e a janela minimizada ou escondida na bandeja. Os ids 0: nenhuma. So quando um dos
         // tres muda (antes do primeiro, 0, 0 e false).
         std::function<void(int topCallId, int ringingCallId, bool minimized)> videoRoute;
+        // (0.3.0) A sessao do Windows ficou bloqueada ou desconectada (true) ou voltou (false): a camera pausa e volta.
+        // So quando muda (antes do primeiro, false).
+        std::function<void(bool paused)> cameraPaused;
     };
 
     MainWindow() = default;
@@ -141,6 +156,8 @@ public:
     void SetChatBadge(int n);
     // (0.3.0) As memorias do video nos dois WebView, para o VideoSink (de antes do Create ate o fim da janela).
     SharedMemoryPages& VideoPages() { return videoPages_; }
+    // (0.3.0) O modo da janela do video, na thread da janela (o main.cpp chega aqui pelo RunOnWindow).
+    void SetVideoMode(VideoMode mode);
 
 private:
     static LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
@@ -162,6 +179,10 @@ private:
     void RegisterAudioNotifications();
     void RefreshNotice();
     void RefreshVideoRoute();
+    // (0.3.0) Poe a janela na caixa do modo (Big ou Fullscreen) no monitor dado, na escala dada. false no Normal (quem
+    // chama segue a regra de sempre).
+    bool ApplyModeBox(HMONITOR monitor, UINT dpi);
+    void UpdateCameraPause();   // o locked_ ou o disconnected_ mudou: callbacks.cameraPaused
     void OnTray(WPARAM wParam, LPARAM lParam);
     LRESULT HitTest(WPARAM wParam, LPARAM lParam) const;
     void Log(const std::string& line) const;
@@ -193,6 +214,11 @@ private:
     WebViewHost::Options webOptions_;
     BrowserRestarts restarts_;     // o navegador que sai: refaz ou desiste (3 seguidas sem o ready)
     HDEVNOTIFY audioNotify_ = nullptr;
+    HDEVNOTIFY cameraNotify_ = nullptr;   // (0.3.0) as interfaces de camera (KSCATEGORY_VIDEO_CAMERA)
+    VideoMode mode_ = VideoMode::Normal;
+    std::optional<FitBox> normalBox_;     // (0.3.0) a caixa do Normal, guardada ao sair dele
+    LONG_PTR normalStyle_ = 0;            // (0.3.0) o estilo da janela, guardado ao entrar na tela cheia
+    bool cameraPaused_ = false;           // (0.3.0) o ultimo valor que foi ao callbacks.cameraPaused
     // (0.3.0) O video: as memorias nos dois WebView de agora, o VideoSink que escreve nelas e a ultima rota que foi ao
     // callbacks.videoRoute.
     WebViewSharedBuffers videoPages_{[this] { return webview_.get(); }, [this] { return notice_.WebView(); }};
