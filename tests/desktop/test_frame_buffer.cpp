@@ -1,5 +1,6 @@
 // A memoria de uma vista de video (windows/app/src/FrameBuffer.h; docs/ponte-windows.md, "A memoria do video"): o
 // cabecalho, os dois lugares, o seq e a leitura que a pagina vai repetir. C++ portatil: roda tambem no Linux.
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <atomic>
@@ -145,6 +146,42 @@ TEST_CASE("a size change keeps working") {
         CHECK(got.u == Bytes(frame.u));
         CHECK(got.v == Bytes(frame.v));
     }
+}
+
+TEST_CASE("a cleared buffer reads empty and the next frame continues the seq") {
+    Memory mem;
+    FrameWriter writer(mem.Data(), mem.Size());
+    const TestFrame a(4, 2, 10), b(6, 4, 50);
+    CHECK(writer.Write(a.Frame()));
+    CHECK(writer.Write(a.Frame()));
+    REQUIRE(ReadLatest(mem.Data(), mem.Size()).seq == 4u);
+    // A vista vazia de novo: o seq 0 no cabecalho, com a marca, e nenhum quadro para quem le.
+    writer.Clear();
+    std::vector<uint8_t> header(mem.Data(), mem.Data() + kFrameHeaderBytes);
+    CHECK(HeaderU32(header, 0) == 0x31565353u);
+    CHECK(HeaderU32(header, 4) == 0u);
+    CHECK_FALSE(ReadLatest(mem.Data(), mem.Size()).ok);
+    // O quadro seguinte continua a contagem (o 6, no outro lugar): um seq ja usado nunca volta, e um leitor que copiava
+    // o quadro de antes ve o seq mudar.
+    CHECK(writer.Write(b.Frame()));
+    const ReadFrame got = ReadLatest(mem.Data(), mem.Size());
+    CHECK(got.ok);
+    CHECK(got.seq == 6u);
+    CHECK(got.width == 6);
+    CHECK(got.height == 4);
+    CHECK(got.y == Bytes(b.y));
+    CHECK(got.u == Bytes(b.u));
+    CHECK(got.v == Bytes(b.v));
+    header.assign(mem.Data(), mem.Data() + kFrameHeaderBytes);
+    CHECK(HeaderU32(header, 8) == 0u);
+    // Limpar duas vezes, ou uma memoria que nao serve, so deixa a vista vazia.
+    writer.Clear();
+    writer.Clear();
+    CHECK_FALSE(ReadLatest(mem.Data(), mem.Size()).ok);
+    std::vector<uint32_t> small(25, 0);
+    FrameWriter invalid(reinterpret_cast<uint8_t*>(small.data()), 100);
+    invalid.Clear();
+    CHECK(std::all_of(small.begin(), small.end(), [](uint32_t word) { return word == 0; }));
 }
 
 TEST_CASE("a frame bigger than 1920x1080 is reduced keeping the proportion") {

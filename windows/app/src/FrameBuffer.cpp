@@ -103,6 +103,16 @@ FrameWriter::FrameWriter(uint8_t* memory, size_t bytes) {
     SeqOf(memory_)->store(0, std::memory_order_release);
 }
 
+void FrameWriter::Clear() {
+    if (memory_ == nullptr) return;
+    // So o seq muda (o 0: nenhum quadro). O seq_ e o slot_ ficam: o proximo Write grava no lugar livre e continua a
+    // contagem. Um leitor que copiava o quadro de antes ve o seq mudar (o 0, e depois um seq que nunca foi usado) e o
+    // descarta. Com a contagem de volta ao 0 (um FrameWriter novo), os quadros novos repetiriam os seq de antes (2, 4,
+    // 6...): um leitor atrasado aceitaria uma copia misturada, e a pagina que compara o seq com o do quadro que
+    // desenhou tomaria o quadro novo pelo velho.
+    SeqOf(memory_)->store(0, std::memory_order_release);
+}
+
 uint32_t FrameWriter::Seq() const { return memory_ == nullptr ? 0 : seq_; }
 
 bool FrameWriter::Write(const I420Frame& frame) {

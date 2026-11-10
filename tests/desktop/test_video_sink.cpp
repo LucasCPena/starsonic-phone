@@ -182,6 +182,108 @@ TEST_CASE("a remote frame lands in the remote buffer and reads back") {
     CHECK(SeqOf(h.pages.Latest(ViewName::Remoto)) == 2u);
 }
 
+TEST_CASE("a new top call starts with an empty view") {
+    Harness h;
+    h.sink.SetRouteState(Visible({ViewName::Remoto, ViewName::Porteiro}, 7, 8));
+    uint8_t* remote = h.pages.Latest(ViewName::Remoto);
+    uint8_t* door = h.pages.Latest(ViewName::Porteiro);
+    REQUIRE(remote != nullptr);
+    REQUIRE(door != nullptr);
+    const TestFrame a(4, 2, 10), b(6, 4, 50), ringing(4, 2, 90);
+    h.sink.OnRemoteFrame(7, a.Frame());
+    h.sink.OnRemoteFrame(8, ringing.Frame());
+    const uint32_t seqA = SeqOf(remote);
+    REQUIRE(seqA == 2u);
+    REQUIRE(SeqOf(door) == 2u);
+    // A ligacao de cima vira a 9: a vista fica vazia ate o primeiro quadro dela, e o ultimo quadro da 7 nunca aparece
+    // nela. O porteiro, com a mesma recebida tocando, fica como estava.
+    h.sink.SetRouteState(Visible({ViewName::Remoto, ViewName::Porteiro}, 9, 8));
+    CHECK_FALSE(ReadLatest(remote, FrameBufferBytes()).ok);
+    CHECK(SeqOf(door) == 2u);
+    h.now += 40;
+    h.sink.OnRemoteFrame(7, a.Frame());   // um quadro atrasado da 7: a nenhuma vista
+    CHECK_FALSE(ReadLatest(remote, FrameBufferBytes()).ok);
+    h.now += 40;
+    h.sink.OnRemoteFrame(9, b.Frame());
+    const ReadFrame got = ReadLatest(remote, FrameBufferBytes());
+    CHECK(got.ok);
+    CHECK(got.width == 6);
+    CHECK(got.height == 4);
+    CHECK(got.y == Bytes(b.y));
+    CHECK(got.u == Bytes(b.u));
+    CHECK(got.v == Bytes(b.v));
+    // O seq continua de onde estava: um seq ja usado nunca volta (a pagina compara o seq com o do quadro que desenhou).
+    CHECK(got.seq > seqA);
+    // A mesma memoria, sem outra criada nem entregue.
+    CHECK(h.pages.creates[ViewName::Remoto] == 1);
+    CHECK(h.pages.posts[ViewName::Remoto] == 1);
+    // Escondida, com a mesma ligacao, a vista fica com o quadro dela; o fim da ligacao (o id 0) a esvazia.
+    h.sink.SetRouteState(Visible({ViewName::Porteiro}, 9, 8));
+    CHECK(ReadLatest(remote, FrameBufferBytes()).ok);
+    h.sink.SetRouteState(Visible({ViewName::Remoto, ViewName::Porteiro}, 0, 8));
+    CHECK_FALSE(ReadLatest(remote, FrameBufferBytes()).ok);
+}
+
+TEST_CASE("a new ringing call starts with an empty doorphone view") {
+    Harness h;
+    h.sink.SetRouteState(Visible({ViewName::Porteiro}, 0, 7));
+    uint8_t* door = h.pages.Latest(ViewName::Porteiro);
+    REQUIRE(door != nullptr);
+    const TestFrame visitor(4, 2, 10), next(6, 4, 50);
+    h.sink.OnRemoteFrame(7, visitor.Frame());
+    REQUIRE(SeqOf(door) == 2u);
+    // A recebida tocando vira a 9: o visitante da 7 nunca aparece no aviso da 9.
+    h.sink.SetRouteState(Visible({ViewName::Porteiro}, 0, 9));
+    CHECK_FALSE(ReadLatest(door, FrameBufferBytes()).ok);
+    h.now += 40;
+    h.sink.OnRemoteFrame(9, next.Frame());
+    const ReadFrame got = ReadLatest(door, FrameBufferBytes());
+    CHECK(got.ok);
+    CHECK(got.width == 6);
+    CHECK(got.y == Bytes(next.y));
+    CHECK(got.seq > 2u);
+    // Atendida (nenhuma recebida tocando): vazia de novo, e um quadro dela nao vai mais ao porteiro.
+    h.sink.SetRouteState(Visible({ViewName::Porteiro}, 9, 0));
+    CHECK_FALSE(ReadLatest(door, FrameBufferBytes()).ok);
+    h.now += 40;
+    h.sink.OnRemoteFrame(9, next.Frame());
+    CHECK_FALSE(ReadLatest(door, FrameBufferBytes()).ok);
+    CHECK(h.pages.creates[ViewName::Porteiro] == 1);
+    CHECK(h.pages.posts[ViewName::Porteiro] == 1);
+}
+
+TEST_CASE("the local view starts empty after it stops getting frames") {
+    Harness h;
+    h.sink.SetRouteState(Visible({ViewName::Local}));
+    uint8_t* local = h.pages.Latest(ViewName::Local);
+    REQUIRE(local != nullptr);
+    const TestFrame camera(4, 2, 10);
+    h.sink.OnLocalFrame(camera.Frame());
+    REQUIRE(SeqOf(local) == 2u);
+    // Uma ligacao que comeca ou muda nao mexe na nossa camera: a vista segue com o quadro dela.
+    h.sink.SetRouteState(Visible({ViewName::Local}, 5));
+    CHECK(SeqOf(local) == 2u);
+    // Escondida: vazia. A proxima vez que ela aparece comeca sem a imagem de antes, ate o proximo quadro.
+    h.sink.SetRouteState(Visible({}, 5));
+    CHECK_FALSE(ReadLatest(local, FrameBufferBytes()).ok);
+    h.sink.SetRouteState(Visible({ViewName::Local}, 5));
+    CHECK_FALSE(ReadLatest(local, FrameBufferBytes()).ok);
+    h.now += 40;
+    h.sink.OnLocalFrame(camera.Frame());
+    const ReadFrame got = ReadLatest(local, FrameBufferBytes());
+    CHECK(got.ok);
+    CHECK(got.y == Bytes(camera.y));
+    CHECK(got.seq > 2u);
+    // A janela minimizada (ou na bandeja): vazia tambem.
+    RouteState minimized = Visible({ViewName::Local}, 5);
+    minimized.minimized = true;
+    h.sink.SetRouteState(minimized);
+    CHECK_FALSE(ReadLatest(local, FrameBufferBytes()).ok);
+    // A mesma memoria o tempo todo.
+    CHECK(h.pages.creates[ViewName::Local] == 1);
+    CHECK(h.pages.posts[ViewName::Local] == 1);
+}
+
 TEST_CASE("a page reload posts the memories again") {
     Harness h;
     h.sink.SetRouteState(Visible({ViewName::Remoto, ViewName::Local, ViewName::Porteiro}, 7, 8));

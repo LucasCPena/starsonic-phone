@@ -33,6 +33,11 @@ public:
     // quadro vazio; nada muda. Uma thread so escreve numa memoria (o chamador serializa).
     bool Write(const I420Frame& frame);
 
+    // A vista vazia de novo (a ligacao dela mudou): o seq 0 no cabecalho. A contagem nao volta: o proximo Write continua
+    // do seq de antes, e um seq ja usado nunca se repete na memoria. Memoria invalida: nada.
+    void Clear();
+
+    // O seq do ultimo quadro gravado (0: nenhum); o Clear nao o muda.
     uint32_t Seq() const;
 
 private:

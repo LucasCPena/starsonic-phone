@@ -55,7 +55,9 @@ public:
     VideoSink& operator=(const VideoSink&) = delete;
 
     // Na thread da janela (a do WebView2). Depois do Close, nada.
-    // A rota nova. Uma vista a vista sem memoria ganha a sua aqui (Create e Post); a escondida fica com a dela.
+    // A rota nova. Uma vista a vista sem memoria ganha a sua aqui (Create e Post); a escondida fica com a dela. A vista
+    // cuja ligacao mudou (o remoto com o topCallId, o porteiro com o noticeCallId; tambem para o 0) esvazia (o seq 0),
+    // e o local tambem, quando deixa de receber quadros (RouteLocal vazio).
     void SetRouteState(const RouteState& state);
     // A pagina carregou ou recarregou (o ready dela): entrega de novo as memorias dela (as do porteiro vao ao aviso, as
     // outras a janela principal).
@@ -86,6 +88,8 @@ private:
     void GiveMemories(bool post);
     // Com a trava: todas as vistas sem memoria (os ponteiros largados, antes do ReleaseAll).
     void DropMemories();
+    // Com a trava: a vista vazia (FrameWriter::Clear), se ela tem memoria.
+    void ClearView(ViewName view);
 
     SharedMemoryPages& pages_;
     std::function<int64_t()> nowMs_;

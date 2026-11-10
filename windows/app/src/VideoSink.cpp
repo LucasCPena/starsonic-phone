@@ -23,9 +23,21 @@ void VideoSink::SetRouteState(const RouteState& state) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (closed_) return;
+        // A memoria nao leva o id da ligacao: quando a ligacao de uma vista muda (ou acaba), a vista esvazia aqui, com a
+        // trava (nenhum quadro no meio), e a pagina nunca mostra o ultimo quadro da ligacao de antes na vista da
+        // proxima. O local (a nossa camera) esvazia quando deixa de receber quadros (escondido ou minimizado): a
+        // proxima vez que ele aparece comeca vazio.
+        if (state.topCallId != state_.topCallId) ClearView(ViewName::Remoto);
+        if (state.noticeCallId != state_.noticeCallId) ClearView(ViewName::Porteiro);
+        if (!RouteLocal(state_).empty() && RouteLocal(state).empty()) ClearView(ViewName::Local);
         state_ = state;
     }
     GiveMemories(true);
+}
+
+void VideoSink::ClearView(ViewName view) {
+    Slot& slot = SlotOf(view);
+    if (slot.writer) slot.writer->Clear();
 }
 
 void VideoSink::PageReady(bool noticePage) {

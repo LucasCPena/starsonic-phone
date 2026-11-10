@@ -831,7 +831,8 @@ O lugar 0 começa no byte 64 e o lugar 1 em `64 + tamanho do lugar`. Cada lugar 
 U e depois o V (cada um com `uvStride × ((altura+1)/2)`), sem sobra nas linhas.
 
 O escritor alterna os lugares: grava o quadro novo no lugar que não é o do `lugar` do cabeçalho, soma 1 ao `seq`
-(ímpar), grava `lugar`, largura, altura e os passos, e soma 1 de novo (par). O `seq` só cresce.
+(ímpar), grava `lugar`, largura, altura e os passos, e soma 1 de novo (par). O `seq` só cresce, menos quando a vista
+esvazia (volta a 0, ver "A entrega"): o quadro seguinte continua a contagem de antes, e um `seq` já usado nunca volta.
 
 A leitura, para quem escreve a página (o `seq` é lido de forma atômica, com `Atomics.load` num `Int32Array` da
 memória):
@@ -855,6 +856,10 @@ A entrega (`windows/app/src/VideoSink.h` e `WebViewSharedBuffers.h`):
   janela principal sem minimizar e fora da bandeja; o `porteiro`, a recebida tocando (a de cima ou a segunda), também
   com a janela minimizada; o `local`, a nossa câmera (a da ligação ou a do teste da câmera), sem minimizar. Um quadro de
   uma ligação que não é nenhuma dessas não vai a nenhuma vista.
+- A página desenha uma vista só para a ligação a que ela pertence (o `remoto`, a de cima; o `porteiro`, a recebida
+  tocando) e trata o `seq` 0 como vazio, sem imagem: o cabeçalho não diz a ligação. A memória de uma vista esvazia (o
+  `seq` volta a 0) quando a ligação dela muda ou acaba, e a do `local` quando ele deixa de receber quadros (escondido ou
+  com a janela minimizada): a próxima ligação, ou o próximo mostrar, começa vazia, nunca com o último quadro de antes.
 
 ## O modo iPhone (etapa 2)
 
