@@ -62,6 +62,7 @@
 #include "Chat.h"
 #include "Cipher.h"
 #include "Files.h"
+#include "H264Module.h"
 #include "InternetState.h"
 #include "LegacyImport.h"
 #include "ListaEmpresa.h"
@@ -89,6 +90,15 @@ public:
     virtual void RefreshAudioDevices() = 0;
     virtual void WatchBlf(const std::vector<std::string>& numbers) = 0;
     virtual void SetNetworkAvailable(bool available) = 0;
+    // Video (0.3.0): os contratos sao os do SipEngine (VideoDevices, SetCaptureDevice, RefreshVideoDevices,
+    // StartCameraTest, StopCameraTest e SetVideoSettings). As cameras abrem, fecham e sao lidas na thread de quem chama:
+    // so a thread de comandos chama (nunca a da janela, que e STA). No iPhone, o nucleo nao chama nenhum.
+    virtual std::vector<VideoDevice> VideoDevices() = 0;
+    virtual bool SetCaptureDevice(const std::string& name) = 0;
+    virtual void RefreshVideoDevices() = 0;
+    virtual bool StartCameraTest() = 0;
+    virtual void StopCameraTest() = 0;
+    virtual void SetVideoSettings(const VideoSettings& settings) = 0;
 };
 
 // Os arquivos (caminhos UTF-8): os quatro da pasta de dados (spec 6.6) e os da rc.7 (LegacyImport.h).
@@ -177,6 +187,19 @@ struct DesktopHooks {
     // Baixa o arquivo do chat com a chave guardada (chatDownload), para a pasta Downloads, marca como vindo da internet
     // e abre. Um erro volta como toast pelo Notify: "Arquivo expirado" (o 410) ou "Nao foi possivel baixar o arquivo.".
     std::function<void(const std::string& arquivo, const std::string& nome, const std::string& chave)> chatDownload;
+    // 0.3.0: o video (docs/ponte-windows.md, "O video (0.3.0)"), so no Windows. Ligados no executavel (Tasks 8 e 9); um
+    // vazio nao faz nada. Todos chamados na thread de comandos e nunca esperam.
+    // As vistas do video que a pagina mostra agora (videoViews, ja sem as que nao sao da pagina), e se e a pagina do
+    // aviso (a do Porteiro).
+    std::function<void(const std::vector<std::string>& views, bool noticePage)> videoViews;
+    // O modo da janela (videoWindow, ou "normal" no fim da ultima ligacao): "normal", "grande" ou "telaCheia".
+    std::function<void(const std::string& mode)> videoWindow;
+    // Roda o H264Module::Ensure fora da fila de comandos (baixa e confere o modulo) e responde pelo SetH264State
+    // (Installed ou Failed). Vazio: a situacao fica "baixando".
+    std::function<void()> h264Ensure;
+    // A privacidade do Windows nega a camera aos apps da area de trabalho (so para escolher o aviso do OpenFailed).
+    // Vazio: false.
+    std::function<bool()> cameraBlocked;
 };
 
 // O app de PC. Responsavel por:
@@ -265,6 +288,20 @@ struct DesktopHooks {
 //   - O chatKey, o chatNotify e o chatBadge vem do chat, sem a pessoa: nao recomecam os 10 min do administrador.
 //   O diagnostico nunca leva a chave, a empresa, o titulo, o texto ou o nome do arquivo: so "chat: <comando>" (e o
 //   numero do chatBadge), e um comando recusado diz so o comando e o campo.
+// - 0.3.0: o video (docs/ponte-windows.md, "O video (0.3.0)"), so no Windows; as escolhas, nao as ligacoes (as da
+//   ligacao vem nas Tasks seguintes). No iPhone (o motor baresip nao tem video), video.ligado e sempre false, os cinco
+//   pedidos de video sao recusados como os do PC e o nucleo nunca chama o porto nem os ganchos do video.
+//   - As escolhas que vao ao motor (RegistrationPort::SetVideoSettings), na abertura e a cada mudanca: os campos do
+//     cartao Video do administrador (admin.json), os Porteiros e o h264Available, que vale o H.264 do cartao ligado, a
+//     chave da pessoa ligada (config.json: h264) e o modulo instalado.
+//   - A situacao do modulo H.264: desligado (o cartao ou a pessoa o desliga); na abertura, ou quando ele volta a ser
+//     ligado, baixando (hooks.h264Ensure) se ainda nao esta instalado; o resultado volta pelo SetH264State (instalado ou
+//     falhou; com o H.264 desligado, nada muda); o h264Retry so chama de novo depois de uma falha.
+//   - A camera (config.json: camera; "" = a primeira) vai ao motor na abertura e no setVideo; o teste da camera
+//     (cameraTest) e a lista de cameras (relida no RefreshAudioDevices) vao ao estado. O OnCameraProblem vira um aviso
+//     (toast); no OpenFailed, o texto depende do hooks.cameraBlocked (vazio: false).
+//   - videoViews e videoWindow so repassam ao executavel (os ganchos); o modo da janela volta a normal quando a ultima
+//     ligacao acaba. O diagnostico nunca leva o nome da camera.
 class DesktopApp : public EngineListener {
 public:
     // O tempo do Entrar (spec do Windows 7.1).
@@ -339,6 +376,9 @@ public:
     // mensagem da janela principal (MainWindow.cpp), e o primeiro ready e sempre o dela. No iPhone, nada (uma linha no
     // diagnostico). So poe na fila.
     void OpenChat(int64_t conversa);
+    // 0.3.0: o modulo H.264 terminou de baixar e conferir (Installed) ou falhou (Failed), em qualquer thread: vai para a
+    // fila. Com o H.264 desligado (no cartao ou pela pessoa), nada muda. No iPhone, nada. So poe na fila.
+    void SetH264State(H264State state);
     // A fila de comandos roda o que ja tinha e para; daqui em diante nada mais entra. Nunca de dentro de um gancho.
     void Shutdown();
 
@@ -349,6 +389,8 @@ public:
     void OnCallState(int callId, CallState state, int sipCode) override;
     void OnTransfer(int callId, int sipCode) override;
     void OnBlf(const std::string& number, BlfState state) override;
+    // 0.3.0: um problema da camera, na thread de eventos do motor: vai para a fila e vira um aviso (toast).
+    void OnCameraProblem(CameraProblem problem) override;
     void OnLog(int level, const std::string& line) override;
 
 private:
@@ -433,6 +475,20 @@ private:
     // iPhone
     void ApplyAgenda(AgendaPermission permission, std::vector<AgendaContact> contacts);
     void PostAgenda();
+    // 0.3.0: o video
+    void StartVideo();
+    void RefreshCameras();
+    VideoSettings VideoChoices() const;
+    void PushVideoSettings();
+    bool H264Wanted() const;
+    void ApplyH264Wish();
+    void SetVideoChoices(const Command& command);
+    void CameraTest(bool on);
+    void VideoViews(const Command& command);
+    void VideoWindow(const std::string& mode);
+    void HandleH264State(H264State state);
+    void HandleCameraProblem(CameraProblem problem);
+    void H264Retry();
     // 0.2.0: o chat
     void AddConnectedRamal();
 
@@ -542,6 +598,15 @@ private:
     bool windowInFront_ = false;
     int chatBadge_ = 0;
     std::optional<int64_t> openChatPending_;
+
+    // 0.3.0: o video (so na thread de comandos; so no Windows). As cameras que o motor lista (lidas na abertura e no
+    // RefreshAudioDevices), o teste da camera ligado, a situacao do modulo H.264, o modo da janela do video e as
+    // ultimas escolhas que foram ao motor (so vai de novo o que mudou).
+    std::vector<std::string> cameras_;
+    bool cameraTest_ = false;
+    H264State h264State_ = H264State::Off;
+    std::string videoWindow_ = "normal";
+    std::optional<VideoSettings> videoSent_;
 
     std::unique_ptr<Executor> executor_;   // por ultimo: parado primeiro (no destrutor)
 };

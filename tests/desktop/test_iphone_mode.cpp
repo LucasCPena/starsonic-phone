@@ -62,7 +62,8 @@ json LastAgenda(const Harness& h) {
 std::vector<std::string> PcKeys() {
     return {"tela",     "entrar",   "conta",    "contas",  "naoPerturbe",       "atenderAutomatico", "ligacao",
             "recentes", "perdidas", "contatos", "audio",   "iniciarComWindows", "versao",            "teclado",
-            "tecladoVez", "atalhos", "admin",   "entrarAdmin", "config",        "empresa"};
+            "tecladoVez", "atalhos", "admin",   "entrarAdmin", "config",        "empresa",
+            "video"};   // (0.3.0) o video, tambem no iPhone (com o ligado false)
 }
 
 const json& NeutralAdmin() {
@@ -123,6 +124,14 @@ TEST_CASE("the iPhone state carries the platform and the neutral PC fields") {
     CHECK(state["agenda"] == json({{"permissao", "pendente"}, {"vez", 0}, {"quantos", 0}}));
     CHECK(state["rotaAudio"] == "");
     CHECK(state["config"] == json({{"bipeFim", true}, {"bipeTecla", true}}));
+    // (0.3.0) o motor do iPhone nao tem video: o bloco existe, neutro.
+    CHECK(state["video"] == json({{"ligado", false},
+                                  {"cameras", json::array()},
+                                  {"camera", ""},
+                                  {"cameraDesconectada", false},
+                                  {"teste", false},
+                                  {"h264", json({{"cartao", false}, {"pessoa", false}, {"situacao", "desligado"}})},
+                                  {"janela", "normal"}}));
     // Os campos do PC, todos presentes, com o valor neutro (docs/ponte-windows.md, "O estado no iPhone").
     CHECK(state["atalhos"] == json::array());
     CHECK(state["contatos"] == json::array());

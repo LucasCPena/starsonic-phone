@@ -86,6 +86,45 @@ public:
         if (system) devices = *system;
     }
     int LastId() const { return nextId - 1; }
+
+    // Video (0.3.0): as cameras do motor (o teste troca a lista), o que o motor recebeu e as chamadas, na ordem. As
+    // cameras do motor so mudam para as do sistema (systemCameras) no RefreshVideoDevices, como o pjmedia.
+    std::vector<VideoDevice> cameras;
+    std::optional<std::vector<VideoDevice>> systemCameras;
+    std::vector<std::string> videoCalls;   // "devices", "capture", "refresh", "start", "stop", "settings"
+    std::vector<std::string> captureNames;   // os nomes de SetCaptureDevice, na ordem
+    std::vector<VideoSettings> videoSettings;   // os SetVideoSettings, na ordem
+    bool captureAccepts = true;                 // o retorno do SetCaptureDevice
+    bool cameraTestStarts = true;               // o retorno do StartCameraTest
+    std::vector<VideoDevice> VideoDevices() override {
+        videoCalls.push_back("devices");
+        return cameras;
+    }
+    bool SetCaptureDevice(const std::string& name) override {
+        videoCalls.push_back("capture");
+        captureNames.push_back(name);
+        return captureAccepts;
+    }
+    void RefreshVideoDevices() override {
+        videoCalls.push_back("refresh");
+        if (systemCameras) cameras = *systemCameras;
+    }
+    bool StartCameraTest() override {
+        videoCalls.push_back("start");
+        return cameraTestStarts;
+    }
+    void StopCameraTest() override { videoCalls.push_back("stop"); }
+    void SetVideoSettings(const VideoSettings& settings) override {
+        videoCalls.push_back("settings");
+        videoSettings.push_back(settings);
+    }
+    int Count(const std::string& call) const {
+        int count = 0;
+        for (const std::string& item : videoCalls) {
+            if (item == call) ++count;
+        }
+        return count;
+    }
 };
 
 // O cifrador de teste: "enc:" e os bytes em hexadecimal.
@@ -153,6 +192,15 @@ struct Harness {
         std::function<void(const CompanyFetch& result)> done;
     };
     std::vector<Fetch> fetches;
+    // Video (0.3.0): os ganchos que as Tasks 8 e 9 ligam no executavel. h264Ensures: quantas vezes o h264Ensure foi
+    // chamado; viewCalls: as chamadas do videoViews (as vistas e se e a pagina do aviso); windowModes: as do
+    // videoWindow; cameraBlockedValue: o que o cameraBlocked responde; cameraBlockedCalls: quantas vezes foi chamado.
+    int h264Ensures = 0;
+    std::vector<std::pair<std::vector<std::string>, bool>> viewCalls;
+    std::vector<std::string> windowModes;
+    bool cameraBlockedValue = false;
+    int cameraBlockedCalls = 0;
+    bool videoHooks = true;   // false: o executavel sem os quatro ganchos
     bool sheetHooks = true;   // false: o executavel sem os tres ganchos (antes da Task 7)
     // O modo do nucleo (DesktopConfig::platform): o Windows, ou o iPhone com Harness h(Platform::IPhone). Vale tambem
     // no Restart.
@@ -207,6 +255,17 @@ struct Harness {
         hooks.chatDownload = [this](const std::string& arquivo, const std::string& nome, const std::string& chave) {
             host.push_back("chatDownload " + arquivo + " | " + nome + " | " + chave);
         };
+        if (videoHooks) {
+            hooks.videoViews = [this](const std::vector<std::string>& views, bool noticePage) {
+                viewCalls.emplace_back(views, noticePage);
+            };
+            hooks.videoWindow = [this](const std::string& mode) { windowModes.push_back(mode); };
+            hooks.h264Ensure = [this] { ++h264Ensures; };
+            hooks.cameraBlocked = [this] {
+                ++cameraBlockedCalls;
+                return cameraBlockedValue;
+            };
+        }
         if (sheetHooks) {
             hooks.pickImportFile = [this](std::function<void(const std::string&)> done) {
                 importPicks.push_back(std::move(done));

@@ -1343,7 +1343,13 @@ TEST_CASE("admin commands need an open session and lock after five wrong passwor
                                   {"codigoPuxar", ""},
                                   {"servidores", json::array({json({{"endereco", "starcloud1-starsonic.com.br"},
                                                                     {"porta", 35060}})})},
-                                  {"canal", ""}}));
+                                  {"canal", ""},
+                                  {"videoH264", true},
+                                  {"videoVp8", true},
+                                  {"videoVp9", false},
+                                  {"videoPrimeiro", "h264"},
+                                  {"videoQualidade", "media"},
+                                  {"porteiros", json::array()}}));
 
     h.Send(AdminSet(R"("blf":true,"puxar":true,"codigoPuxar":"*8","canal":"estavel")"));
     state = h.State();

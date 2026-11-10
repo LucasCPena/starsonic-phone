@@ -694,6 +694,8 @@ bool SettingsStore::Load() {
     settings_.bipeFim = GetBool(root, "bipe_fim", defaults.bipeFim);
     settings_.companyListLink = GetString(root, "planilha_empresa");   // um config.json de antes da rc.4: nenhuma
     settings_.bipeTecla = GetBool(root, "bipe_tecla", defaults.bipeTecla);   // um de antes do iPhone: ligado
+    settings_.cameraName = GetString(root, "camera");   // um de antes do video: a primeira camera
+    settings_.h264Person = GetBool(root, "h264", defaults.h264Person);
     Clamp(settings_);
     return true;
 }
@@ -725,6 +727,8 @@ bool SettingsStore::Save(Settings settings) {
     root["bipe_fim"] = settings.bipeFim;
     root["planilha_empresa"] = settings.companyListLink;
     root["bipe_tecla"] = settings.bipeTecla;
+    root["camera"] = settings.cameraName;
+    root["h264"] = settings.h264Person;
     if (!WriteRoot(files_, path_, root)) return false;
     settings_ = settings;
     return true;

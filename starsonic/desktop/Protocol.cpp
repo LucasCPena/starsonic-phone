@@ -73,6 +73,11 @@ const Name kNames[] = {
     {CommandKind::ChatNotify, "chatNotify"},
     {CommandKind::ChatBadge, "chatBadge"},
     {CommandKind::ChatDownload, "chatDownload"},
+    {CommandKind::SetVideo, "setVideo"},
+    {CommandKind::CameraTest, "cameraTest"},
+    {CommandKind::VideoViews, "videoViews"},
+    {CommandKind::VideoWindow, "videoWindow"},
+    {CommandKind::H264Retry, "h264Retry"},
 };
 
 // Os limites dos textos do chat (docs/ponte-windows.md, "Os comandos do chat"), em caracteres.
@@ -165,6 +170,24 @@ public:
             servers.push_back(ServerView{address->get<std::string>(), static_cast<int>(port->get<int64_t>())});
         }
         *out = servers;
+    }
+    // Uma lista de textos (obrigatoria se required).
+    void TextList(const char* key, std::vector<std::string>* out, bool required) {
+        const Json* value = Find(key, required);
+        if (!value) return;
+        if (!value->is_array()) return Wrong(key, "lista");
+        std::vector<std::string> items;
+        for (const Json& item : *value) {
+            if (!item.is_string()) return Wrong(key, "lista de textos");
+            items.push_back(item.get<std::string>());
+        }
+        *out = std::move(items);
+    }
+    void OptionalTextList(const char* key, std::optional<std::vector<std::string>>* out) {
+        std::vector<std::string> items;
+        if (!Find(key, false)) return;
+        TextList(key, &items, true);
+        if (ok()) *out = std::move(items);
     }
     void Fail(const std::string& message) {
         if (ok()) error_ = message;
@@ -306,6 +329,44 @@ Out AccountJson(const AccountView& account, bool current) {
     return out;
 }
 
+const char* CodecKey(VideoCodec codec) {
+    switch (codec) {
+        case VideoCodec::Vp8:
+            return "vp8";
+        case VideoCodec::Vp9:
+            return "vp9";
+        case VideoCodec::H264:
+            break;
+    }
+    return "h264";
+}
+
+const char* QualityKey(VideoQuality quality) {
+    switch (quality) {
+        case VideoQuality::Low:
+            return "baixa";
+        case VideoQuality::High:
+            return "alta";
+        case VideoQuality::Medium:
+            break;
+    }
+    return "media";
+}
+
+const char* H264StateName(H264State state) {
+    switch (state) {
+        case H264State::Downloading:
+            return "baixando";
+        case H264State::Installed:
+            return "instalado";
+        case H264State::Failed:
+            return "falhou";
+        case H264State::Off:
+            break;
+    }
+    return "desligado";
+}
+
 // Fechada, a area do administrador mostra so o que a interface precisa para esconder os botoes (spec 9) e para a ajuda
 // do puxar (puxa: sem o codigo, que so vai com a area aberta).
 Out AdminJson(const AdminView& admin) {
@@ -323,6 +384,14 @@ Out AdminJson(const AdminView& admin) {
     }
     out["servidores"] = servers;
     out["canal"] = admin.channel;
+    out["videoH264"] = admin.videoH264;
+    out["videoVp8"] = admin.videoVp8;
+    out["videoVp9"] = admin.videoVp9;
+    out["videoPrimeiro"] = CodecKey(admin.videoFirst);
+    out["videoQualidade"] = QualityKey(admin.videoQuality);
+    Out doorphones = Out::array();
+    for (const std::string& doorphone : admin.doorphones) doorphones.push_back(doorphone);
+    out["porteiros"] = doorphones;
     return out;
 }
 
@@ -369,6 +438,8 @@ std::optional<Command> ParseCommand(const std::string& text, std::string* error)
     if (!known) return Refuse(error, "comando desconhecido: " + cmd.substr(0, 40));
 
     Fields f(message);
+    std::optional<std::string> firstCodec;   // adminSet: videoPrimeiro e videoQualidade, antes de conferidos
+    std::optional<std::string> quality;
     switch (command.kind) {
         case CommandKind::Login:
             f.Text("servidor", &command.server, true);
@@ -471,6 +542,52 @@ std::optional<Command> ParseCommand(const std::string& text, std::string* error)
             f.OptionalText("codigoPuxar", &command.admin.pickupCode);
             f.Servers("servidores", &command.admin.servers);
             f.OptionalText("canal", &command.admin.channel);
+            f.OptionalFlag("videoH264", &command.admin.videoH264, false);
+            f.OptionalFlag("videoVp8", &command.admin.videoVp8, false);
+            f.OptionalFlag("videoVp9", &command.admin.videoVp9, false);
+            f.OptionalText("videoPrimeiro", &firstCodec);
+            f.OptionalText("videoQualidade", &quality);
+            f.OptionalTextList("porteiros", &command.admin.doorphones);
+            if (f.ok() && firstCodec) {
+                if (*firstCodec == "h264") {
+                    command.admin.videoFirst = VideoCodec::H264;
+                } else if (*firstCodec == "vp8") {
+                    command.admin.videoFirst = VideoCodec::Vp8;
+                } else if (*firstCodec == "vp9") {
+                    command.admin.videoFirst = VideoCodec::Vp9;
+                } else {
+                    f.Fail("codec desconhecido: " + firstCodec->substr(0, 40));
+                }
+            }
+            if (f.ok() && quality) {
+                if (*quality == "baixa") {
+                    command.admin.videoQuality = VideoQuality::Low;
+                } else if (*quality == "media") {
+                    command.admin.videoQuality = VideoQuality::Medium;
+                } else if (*quality == "alta") {
+                    command.admin.videoQuality = VideoQuality::High;
+                } else {
+                    f.Fail("qualidade desconhecida: " + quality->substr(0, 40));
+                }
+            }
+            break;
+        // 0.3.0: o video. O nome da camera nunca vai ao diagnostico (so o nome do campo, quando recusado).
+        case CommandKind::SetVideo:
+            f.OptionalText("camera", &command.cameraName);
+            f.OptionalFlag("h264", &command.h264, false);
+            break;
+        case CommandKind::CameraTest:
+            f.OptionalFlag("on", &command.on, true);
+            break;
+        case CommandKind::VideoViews:
+            f.Text("pagina", &command.page, true);
+            f.TextList("vistas", &command.views, true);
+            if (f.ok() && command.page != "principal" && command.page != "aviso") {
+                f.Fail("pagina desconhecida: " + command.page.substr(0, 40));
+            }
+            break;
+        case CommandKind::VideoWindow:
+            f.Text("modo", &command.mode, true);
             break;
         case CommandKind::SetCompanyList:
             f.Text("link", &command.link, true);   // obrigatorio, e pode ser vazio (tira a lista)
@@ -528,6 +645,7 @@ std::optional<Command> ParseCommand(const std::string& text, std::string* error)
         case CommandKind::AudioRoute:
         case CommandKind::ChatKey:
         case CommandKind::ChatUnlink:
+        case CommandKind::H264Retry:
             break;
     }
     if (!f.ok()) return Refuse(error, cmd + ": " + f.error());
@@ -599,6 +717,20 @@ std::string StateMessage(const BridgeState& state) {
                        {"atualizadaEm", state.company.updatedMs},
                        {"quantos", state.company.count},
                        {"vez", state.company.seq}};
+    // O video (0.3.0), depois da empresa e antes do chat.
+    {
+        Out cameras = Out::array();
+        for (const std::string& camera : state.video.cameras) cameras.push_back(camera);
+        s["video"] = Out{{"ligado", state.video.on},
+                         {"cameras", cameras},
+                         {"camera", state.video.camera},
+                         {"cameraDesconectada", state.video.cameraDisconnected},
+                         {"teste", state.video.test},
+                         {"h264", Out{{"cartao", state.video.h264Card},
+                                      {"pessoa", state.video.h264Person},
+                                      {"situacao", H264StateName(state.video.h264State)}}},
+                         {"janela", state.video.window}};
+    }
     // O chat (0.2.0, so no Windows), depois da empresa.
     if (state.chat) {
         s["chat"] = Out{{"ligado", state.chat->linked},

@@ -46,6 +46,14 @@ const char kInvalidLink[] = "Use um link https:// ou o caminho de um arquivo.";
 // 0.2.0: o chatLink que o disco (ou o cifrador) recusou.
 const char kChatLinkFailed[] = "N\xc3\xa3o foi poss\xc3\xadvel ligar este computador ao chat.";
 
+// 0.3.0: os avisos da camera (o OnCameraProblem).
+const char kNoCamera[] = "Nenhuma c\xc3\xa2mera encontrada.";
+const char kCameraInUse[] = "A c\xc3\xa2mera est\xc3\xa1 sendo usada por outro programa.";
+const char kCameraGone[] = "A c\xc3\xa2mera foi desconectada.";
+const char kCameraBlocked[] =
+    "O Windows bloqueou a c\xc3\xa2mera para este app. Libere em Configura\xc3\xa7\xc3\xb5" "es do Windows \xe2\x86\x92 "
+    "Privacidade e seguran\xc3\xa7" "a \xe2\x86\x92 C\xc3\xa2mera.";
+
 std::string U8(const std::wstring& text) { return WideToUtf8(text); }
 std::wstring Wide(const std::string& text) { return Utf8ToWide(text); }
 
@@ -110,6 +118,12 @@ CommandPlatform PlatformOf(const Command& command) {
         case CommandKind::ChatNotify:
         case CommandKind::ChatBadge:
         case CommandKind::ChatDownload:
+        // 0.3.0: o video (o motor do iPhone nao tem video).
+        case CommandKind::SetVideo:
+        case CommandKind::CameraTest:
+        case CommandKind::VideoViews:
+        case CommandKind::VideoWindow:
+        case CommandKind::H264Retry:
             return CommandPlatform::Windows;
         case CommandKind::ContactsOpened:
         case CommandKind::AllowContacts:
@@ -319,7 +333,13 @@ public:
             const CallSnapshot& before = app.call_;
             const bool answeredEnded = !snapshot.top && ((before.top && before.top->activeSinceMs > 0) ||
                                                          (before.second && before.second->activeSinceMs > 0));
+            const bool lastEnded = before.top && !snapshot.top;
             app.call_ = snapshot;
+            // O modo da janela do video volta a normal quando a ultima ligacao acaba.
+            if (lastEnded && !app.quitting_ && app.videoWindow_ != "normal") {
+                app.videoWindow_ = "normal";
+                if (app.hooks_.videoWindow) app.hooks_.videoWindow("normal");
+            }
             // O aviso de 2 s (o fim de uma feita, "<nome> desligou", sem conexao, a transferencia recusada) vai como
             // toast quando aparece.
             if (!snapshot.endMessage.empty() && snapshot.endMessage != app.lastEndMessage_) {
@@ -424,6 +444,11 @@ void DesktopApp::RefreshAudioDevices() {
     Post([this] {
         Log("som: os dispositivos foram relidos");
         ApplyAudio();
+        // As cameras entram e saem junto (0.3.0): o motor rele a lista, e o estado mostra a nova.
+        if (!IPhone()) {
+            port_.RefreshVideoDevices();
+            RefreshCameras();
+        }
     });
 }
 
@@ -536,6 +561,10 @@ void DesktopApp::OpenChat(int64_t conversa) {
     });
 }
 
+void DesktopApp::SetH264State(H264State state) {
+    Post([this, state] { HandleH264State(state); });
+}
+
 void DesktopApp::Shutdown() {
     executor_->Stop();
 }
@@ -564,6 +593,10 @@ void DesktopApp::OnBlf(const std::string& number, BlfState state) {
     // A vez das assinaturas de agora (na thread do motor): HandleBlf descarta o aviso de uma assinatura mais velha.
     const int64_t generation = blfGeneration_.load();
     Post([this, generation, number, state] { HandleBlf(generation, number, state); });
+}
+
+void DesktopApp::OnCameraProblem(CameraProblem problem) {
+    Post([this, problem] { HandleCameraProblem(problem); });
 }
 
 void DesktopApp::OnLog(int level, const std::string& line) {
@@ -896,6 +929,22 @@ void DesktopApp::Execute(const Command& command) {
             if (hooks_.chatDownload) hooks_.chatDownload(command.chat.fileId, command.chat.fileName, link->chave);
             break;
         }
+        // 0.3.0: o video (so no Windows: PlatformOf). O diagnostico leva so o nome do comando: nunca o nome da camera.
+        case CommandKind::SetVideo:
+            SetVideoChoices(command);
+            break;
+        case CommandKind::CameraTest:
+            CameraTest(command.on.value_or(false));
+            break;
+        case CommandKind::VideoViews:
+            VideoViews(command);
+            break;
+        case CommandKind::VideoWindow:
+            VideoWindow(command.mode);
+            break;
+        case CommandKind::H264Retry:
+            H264Retry();
+            break;
     }
 }
 
@@ -924,6 +973,7 @@ void DesktopApp::Initialize() {
     if (!IPhone() && hooks_.updateChannel) hooks_.updateChannel(admin_.Get().canal);
     recentsSeenMs_ = clock_.NowMs();
     ApplyAudio();
+    if (!IPhone()) StartVideo();
 
     const std::optional<SavedAccount> active = accounts_.Active();
     if (active) ActivateStored(*active);
@@ -1479,6 +1529,12 @@ BridgeState DesktopApp::BuildState() const {
         state.admin.servers.push_back(ServerView{U8(server.address), server.port});
     }
     state.admin.channel = admin.canal;
+    state.admin.videoH264 = admin.videoH264;
+    state.admin.videoVp8 = admin.videoVp8;
+    state.admin.videoVp9 = admin.videoVp9;
+    state.admin.videoFirst = admin.videoFirst;
+    state.admin.videoQuality = admin.videoQuality;
+    state.admin.doorphones = admin.doorphones;
     state.adminLogin = adminLogin_;
     state.endBeep = settings.bipeFim;
     state.company.link = settings.companyListLink;
@@ -1496,6 +1552,22 @@ BridgeState DesktopApp::BuildState() const {
         chat.computer = config_.computerName;
         chat.accountConnected = active && chat_.HasRamal(U8(active->address), U8(active->ramal));
         state.chat = chat;
+        // 0.3.0: o video. O ligado olha so as escolhas (o H.264 conta como disponivel): o modulo que ainda baixa nao
+        // desliga o botao, e quem decide o aviso e a Task 7.
+        VideoView video;
+        VideoSettings choices = VideoChoices();
+        choices.h264Available = true;
+        video.on = VideoEnabled(choices);
+        video.cameras = cameras_;
+        video.camera = settings.cameraName;
+        video.cameraDisconnected = !settings.cameraName.empty() &&
+                                   std::find(cameras_.begin(), cameras_.end(), settings.cameraName) == cameras_.end();
+        video.test = cameraTest_;
+        video.h264Card = admin.videoH264;
+        video.h264Person = settings.h264Person;
+        video.h264State = h264State_;
+        video.window = videoWindow_;
+        state.video = video;
     } else {
         // O modo iPhone (docs/ponte-windows.md, "O estado no iPhone"): os campos do PC continuam, com o valor neutro, e
         // os do iPhone: o resumo da agenda, a rota de audio e o bipe ao digitar.
@@ -1739,6 +1811,12 @@ void DesktopApp::AdminSet(const AdminChanges& changes) {
     if (changes.pickup) next.puxar = *changes.pickup;
     if (changes.pickupCode) next.codigoPuxar = *changes.pickupCode;
     if (changes.channel) next.canal = *changes.channel;
+    if (changes.videoH264) next.videoH264 = *changes.videoH264;
+    if (changes.videoVp8) next.videoVp8 = *changes.videoVp8;
+    if (changes.videoVp9) next.videoVp9 = *changes.videoVp9;
+    if (changes.videoFirst) next.videoFirst = *changes.videoFirst;
+    if (changes.videoQuality) next.videoQuality = *changes.videoQuality;
+    if (changes.doorphones) next.doorphones = *changes.doorphones;
     if (changes.servers) {
         next.servidores.clear();
         for (const ServerView& server : *changes.servers) {
@@ -1753,6 +1831,8 @@ void DesktopApp::AdminSet(const AdminChanges& changes) {
     }
     const AdminConfig& saved = admin_.Get();
     ApplyAdminLimits();
+    ApplyH264Wish();
+    PushVideoSettings();
     if (saved.canal != before.canal && hooks_.updateChannel) hooks_.updateChannel(saved.canal);
     // A porta do servidor da conta no motor mudou: ela registra de novo (no fim da ligacao, se ha uma).
     if (EnginePortChanged() && !reRegister_) {
@@ -1862,6 +1942,153 @@ void DesktopApp::HandleInternet(InternetState state) {
     if (state == InternetState::Online && account && !registered_) {
         port_.SetNetworkAvailable(true);   // com a rede ja la: so registra de novo, agora
         registration_.reset();
+    }
+}
+
+// ---------------------------------------------------------------- 0.3.0: o video
+
+// A abertura do video (so no Windows): a camera escolhida vai ao motor, a lista de cameras entra no estado, o modulo
+// H.264 e pedido se esta ligado e as escolhas vao ao motor.
+void DesktopApp::StartVideo() {
+    const Settings settings = settings_.Get();
+    if (!settings.cameraName.empty() && !port_.SetCaptureDevice(settings.cameraName)) {
+        Log("video: o motor nao aceitou a camera escolhida");
+    }
+    RefreshCameras();
+    ApplyH264Wish();
+    PushVideoSettings();
+}
+
+// Le as cameras que o motor lista agora (so os nomes, na ordem dele).
+void DesktopApp::RefreshCameras() {
+    cameras_.clear();
+    for (const VideoDevice& device : port_.VideoDevices()) cameras_.push_back(device.name);
+    Log("video: " + std::to_string(cameras_.size()) + " camera(s)");
+}
+
+// O H.264 que vale: ligado no cartao do administrador e pela pessoa.
+bool DesktopApp::H264Wanted() const { return admin_.Get().videoH264 && settings_.Get().h264Person; }
+
+// As escolhas que o motor recebe: o cartao, os Porteiros e o h264Available (o H.264 que vale e o modulo instalado).
+VideoSettings DesktopApp::VideoChoices() const {
+    const AdminConfig& admin = admin_.Get();
+    VideoSettings choices;
+    choices.h264 = admin.videoH264;
+    choices.vp8 = admin.videoVp8;
+    choices.vp9 = admin.videoVp9;
+    choices.first = admin.videoFirst;
+    choices.quality = admin.videoQuality;
+    choices.h264Available = H264Wanted() && h264State_ == H264State::Installed;
+    choices.doorphones = admin.doorphones;
+    return choices;
+}
+
+// Manda ao motor as escolhas de agora, se mudaram desde a ultima vez.
+void DesktopApp::PushVideoSettings() {
+    const VideoSettings choices = VideoChoices();
+    if (videoSent_ && videoSent_->h264 == choices.h264 && videoSent_->vp8 == choices.vp8 &&
+        videoSent_->vp9 == choices.vp9 && videoSent_->first == choices.first &&
+        videoSent_->quality == choices.quality && videoSent_->h264Available == choices.h264Available &&
+        videoSent_->doorphones == choices.doorphones) {
+        return;
+    }
+    videoSent_ = choices;
+    port_.SetVideoSettings(choices);
+}
+
+// O cartao ou a pessoa mudou o H.264: desligado, a situacao e "desligado"; ligado de novo (ou na abertura) sem estar
+// instalado, vira "baixando" e o executavel baixa e confere o modulo (hooks.h264Ensure), que responde pelo SetH264State.
+void DesktopApp::ApplyH264Wish() {
+    if (!H264Wanted()) {
+        h264State_ = H264State::Off;
+        return;
+    }
+    if (h264State_ != H264State::Off) return;
+    h264State_ = H264State::Downloading;
+    Log("video: o modulo H.264 foi pedido");
+    if (hooks_.h264Ensure) hooks_.h264Ensure();
+}
+
+void DesktopApp::HandleH264State(H264State state) {
+    if (IPhone() || !H264Wanted()) return;   // um resultado atrasado, com o H.264 desligado: nada muda
+    if (state != H264State::Installed && state != H264State::Failed) return;
+    h264State_ = state;
+    Log(state == H264State::Installed ? "video: o modulo H.264 esta instalado" : "video: o modulo H.264 falhou");
+    PushVideoSettings();
+}
+
+void DesktopApp::H264Retry() {
+    if (h264State_ != H264State::Failed || !H264Wanted()) {
+        Log("h264Retry ignorado: nao houve falha");
+        return;
+    }
+    h264State_ = H264State::Downloading;
+    Log("video: o modulo H.264 foi pedido de novo");
+    if (hooks_.h264Ensure) hooks_.h264Ensure();
+}
+
+void DesktopApp::SetVideoChoices(const Command& command) {
+    Settings settings = settings_.Get();
+    if (command.cameraName) {
+        settings.cameraName = *command.cameraName;
+        if (!port_.SetCaptureDevice(settings.cameraName)) Log("video: o motor nao aceitou a camera escolhida");
+    }
+    if (command.h264) settings.h264Person = *command.h264;
+    SaveSettings(settings);
+    ApplyH264Wish();
+    PushVideoSettings();
+}
+
+void DesktopApp::CameraTest(bool on) {
+    if (on) {
+        cameraTest_ = port_.StartCameraTest();
+        if (!cameraTest_) Log("video: o teste da camera nao ligou");
+        return;
+    }
+    port_.StopCameraTest();
+    cameraTest_ = false;
+}
+
+// Uma vista que nao e da pagina e ignorada (a "principal" tem remoto e local; o "aviso", o porteiro).
+void DesktopApp::VideoViews(const Command& command) {
+    const bool notice = command.page == "aviso";
+    std::vector<std::string> views;
+    for (const std::string& view : command.views) {
+        const bool fits = notice ? view == "porteiro" : (view == "remoto" || view == "local");
+        if (fits && std::find(views.begin(), views.end(), view) == views.end()) views.push_back(view);
+    }
+    if (hooks_.videoViews) hooks_.videoViews(views, notice);
+}
+
+void DesktopApp::VideoWindow(const std::string& mode) {
+    if (mode != "normal" && mode != "grande" && mode != "telaCheia") {
+        Log("videoWindow ignorado: modo desconhecido");
+        return;
+    }
+    videoWindow_ = mode;
+    if (hooks_.videoWindow) hooks_.videoWindow(mode);
+}
+
+// O aviso da camera (o toast). O que o motor parou (a camera que some ou que nao abre de novo) para tambem o teste.
+void DesktopApp::HandleCameraProblem(CameraProblem problem) {
+    if (IPhone()) return;
+    switch (problem) {
+        case CameraProblem::NoCamera:
+            Log("video: nenhuma camera");
+            Toast(kNoCamera);
+            break;
+        case CameraProblem::OpenFailed: {
+            const bool blocked = hooks_.cameraBlocked && hooks_.cameraBlocked();
+            Log(blocked ? "video: a camera nao abriu (bloqueada pelo Windows)" : "video: a camera nao abriu");
+            Toast(blocked ? kCameraBlocked : kCameraInUse);
+            cameraTest_ = false;
+            break;
+        }
+        case CameraProblem::Disconnected:
+            Log("video: a camera foi desconectada");
+            Toast(kCameraGone);
+            cameraTest_ = false;
+            break;
     }
 }
 

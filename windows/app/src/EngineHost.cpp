@@ -162,6 +162,33 @@ void EngineHost::SetNetworkAvailable(bool available) {
     if (SipEngine* engine = Ready()) engine->SetNetworkAvailable(available);
 }
 
+std::vector<VideoDevice> EngineHost::VideoDevices() {
+    SipEngine* engine = Ready();
+    return engine ? engine->VideoDevices() : std::vector<VideoDevice>();
+}
+
+bool EngineHost::SetCaptureDevice(const std::string& name) {
+    SipEngine* engine = Ready();
+    return engine && engine->SetCaptureDevice(name);
+}
+
+void EngineHost::RefreshVideoDevices() {
+    if (SipEngine* engine = Ready()) engine->RefreshVideoDevices();
+}
+
+bool EngineHost::StartCameraTest() {
+    SipEngine* engine = Ready();
+    return engine && engine->StartCameraTest();
+}
+
+void EngineHost::StopCameraTest() {
+    if (SipEngine* engine = Ready()) engine->StopCameraTest();
+}
+
+void EngineHost::SetVideoSettings(const VideoSettings& settings) {
+    if (SipEngine* engine = Ready()) engine->SetVideoSettings(settings);
+}
+
 void EngineHost::OnRegistration(int sipCode, bool active, int accountId) {
     if (EngineListener* listener = listener_.load()) listener->OnRegistration(sipCode, active, accountId);
 }
@@ -184,6 +211,10 @@ void EngineHost::OnTransfer(int callId, int sipCode) {
 
 void EngineHost::OnBlf(const std::string& number, BlfState state) {
     if (EngineListener* listener = listener_.load()) listener->OnBlf(number, state);
+}
+
+void EngineHost::OnCameraProblem(CameraProblem problem) {
+    if (EngineListener* listener = listener_.load()) listener->OnCameraProblem(problem);
 }
 
 void EngineHost::OnLog(int level, const std::string& line) {

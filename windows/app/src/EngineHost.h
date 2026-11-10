@@ -66,6 +66,14 @@ public:
     void RefreshAudioDevices() override;
     void WatchBlf(const std::vector<std::string>& numbers) override;   // rc.3
     void SetNetworkAvailable(bool available) override;                 // rc.3
+    // Video (0.3.0): as cameras e as escolhas do video. Rodam na thread de comandos do DesktopApp, que nao e a STA da
+    // janela (SipEngine.h: as cameras abrem, fecham e leem na thread de quem chama).
+    std::vector<VideoDevice> VideoDevices() override;
+    bool SetCaptureDevice(const std::string& name) override;
+    void RefreshVideoDevices() override;
+    bool StartCameraTest() override;
+    void StopCameraTest() override;
+    void SetVideoSettings(const VideoSettings& settings) override;
 
     // EngineListener (do SipEngine): repassados ao listener; o OnLog vai direto ao diagnostico.
     void OnRegistration(int sipCode, bool active, int accountId) override;
@@ -74,6 +82,7 @@ public:
     void OnCallState(int callId, CallState state, int sipCode) override;
     void OnTransfer(int callId, int sipCode) override;
     void OnBlf(const std::string& number, BlfState state) override;
+    void OnCameraProblem(CameraProblem problem) override;
     void OnLog(int level, const std::string& line) override;
 
 private:

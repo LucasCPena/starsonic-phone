@@ -199,7 +199,7 @@ A configuração fica no `admin.json`, protegido pelo DPAPI do usuário (como as
 |---|---|---|
 | `adminLogin` | `senha` (texto) | Toda tentativa tem resposta: `entrarAdmin.vez` sobe. A senha certa abre a área (`admin.aberto` `true`, `entrarAdmin.erro` `""`, `esperaAte` `0`). A errada: `entrarAdmin.erro` `Senha incorreta.` (a interface limpa o campo). Na 5ª errada seguida, `entrarAdmin.esperaAte` traz até quando (agora + 30 s) todo `adminLogin` é recusado, também com a senha certa (o `erro` continua `Senha incorreta.`). Uma certa zera a conta. A conta das erradas fica só na memória (abrir o app de novo zera). A senha digitada nunca vai ao diagnóstico nem ao estado. Com a área já aberta, a senha certa só recomeça os 10 min. |
 | `adminLogout` | — | "Sair da área do administrador": `admin.aberto` `false`. |
-| `adminSet` | `naoPerturbe` (booleano, opcional), `atenderAuto` (booleano, opcional), `blf` (booleano, opcional), `puxar` (booleano, opcional), `codigoPuxar` (texto, opcional), `servidores` (lista de `{endereco: texto, porta: inteiro}`, opcional), `canal` (`"teste"` \| `"estavel"` \| `""`, opcional) | Muda só os campos que vieram (`servidores` troca a lista inteira) e grava o `admin.json`. Com a área fechada: ignorado (linha no diagnóstico: `adminSet recusado`). Recusado pela loja (um `canal` diferente desses, um código com algo além de dígitos, `*`, `#`, `+` e `{ramal}`, um servidor com o endereço fora da regra da tela Entrar, repetido ou com a porta fora de 1 a 65535): nada muda e o motivo vem num toast (`Escolha o canal Teste ou Estável.`, `Esse servidor já está na lista.`, `A porta deve ficar entre 1 e 65535.` etc.). |
+| `adminSet` | `naoPerturbe` (booleano, opcional), `atenderAuto` (booleano, opcional), `blf` (booleano, opcional), `puxar` (booleano, opcional), `codigoPuxar` (texto, opcional), `servidores` (lista de `{endereco: texto, porta: inteiro}`, opcional), `canal` (`"teste"` \| `"estavel"` \| `""`, opcional), (0.3.0) `videoH264`, `videoVp8` e `videoVp9` (booleanos, opcionais), `videoPrimeiro` (`"h264"` \| `"vp8"` \| `"vp9"`, opcional), `videoQualidade` (`"baixa"` \| `"media"` \| `"alta"`, opcional), `porteiros` (lista de textos, opcional) | Muda só os campos que vieram (`servidores` troca a lista inteira) e grava o `admin.json`. Com a área fechada: ignorado (linha no diagnóstico: `adminSet recusado`). Recusado pela loja (um `canal` diferente desses, um código com algo além de dígitos, `*`, `#`, `+` e `{ramal}`, um servidor com o endereço fora da regra da tela Entrar, repetido ou com a porta fora de 1 a 65535): nada muda e o motivo vem num toast (`Escolha o canal Teste ou Estável.`, `Esse servidor já está na lista.`, `A porta deve ficar entre 1 e 65535.` etc.). Um `videoPrimeiro` ou `videoQualidade` fora dos valores acima, ou um `porteiros` que não é uma lista de textos, é recusado já na leitura do comando (linha no diagnóstico). |
 
 - A área fecha sozinha depois de 10 minutos sem nenhum comando da interface (qualquer comando, menos o `ready` e (0.2.0)
   o `chatKey`, o `chatNotify` e o `chatBadge`, que vêm do chat sem a pessoa, recomeça a contagem), no `closeToTray` (a
@@ -215,13 +215,53 @@ A configuração fica no `admin.json`, protegido pelo DPAPI do usuário (como as
   contas (Entrar, troca de conta) já usam a lista.
 - `canal` é o canal de atualização: `"teste"` (o `canal-teste`), `"estavel"` (o release estável) ou `""` (o de
   fábrica, o do build). Vale a partir da próxima verificação.
+- (0.3.0) O cartão Vídeo, gravado no `admin.json` (`videoH264`, `videoVp8`, `videoVp9`, `videoPrimeiro`,
+  `videoQualidade` e `porteiros`; uma chave que falta vale o padrão, e um valor que não serve volta ao padrão, como o
+  `canal`). De fábrica: H.264 e VP8 ligados, VP9 desligado, H.264 primeiro, qualidade `media` e nenhum Porteiro. Cada
+  mudança vai ao motor (`SetVideoSettings`). A qualidade é a imagem do codificador: `baixa` 320×240, 15 qps e
+  300 kbit/s; `media` 640×480, 25 qps e 800 kbit/s; `alta` 1280×720, 30 qps e 1500 kbit/s.
+- (0.3.0) Os `porteiros` são os ramais cujo vídeo chega sozinho: até 20, cada um com 1 a 15 dígitos, só dígitos e sem
+  repetir. A lista vai inteira, e os espaços das pontas de cada item saem. A loja recusa (nada muda, e o motivo vem num
+  toast) mais de 20 (`No máximo 20 porteiros.`), um item com algo que não é dígito (`Cada porteiro só pode ter
+  dígitos.`), um item vazio ou com mais de 15 dígitos (`Cada porteiro precisa ter de 1 a 15 dígitos.`) e um repetido
+  (`Esse porteiro já está na lista.`).
 
 ```json
 {"v":1,"cmd":"adminLogin","senha":"..."}
 {"v":1,"cmd":"adminSet","naoPerturbe":false,"blf":true,"puxar":true,"codigoPuxar":"**{ramal}"}
 {"v":1,"cmd":"adminSet","servidores":[{"endereco":"starcloud1-starsonic.com.br","porta":35060}],"canal":"teste"}
+{"v":1,"cmd":"adminSet","videoVp9":true,"videoPrimeiro":"vp8","videoQualidade":"alta","porteiros":["9001","9002"]}
 {"v":1,"cmd":"adminLogout"}
 ```
+
+### Vídeo (0.3.0)
+
+As escolhas do vídeo e a ponte das telas de vídeo, só no Windows (o motor do iPhone não tem vídeo: ver "O modo
+iPhone"). Os pedidos da ligação com vídeo (`dial`, `answer` e `camera`) têm a sua parte própria. A câmera nunca liga
+sozinha: o teste da câmera é o único jeito de ligá-la fora de uma ligação.
+
+| Comando | Campos | O que faz |
+|---|---|---|
+| `setVideo` | `camera` (texto, opcional), `h264` (booleano, opcional) | `camera`: o nome da câmera (um de `video.cameras`); `""` quer dizer a primeira. Grava no `config.json` (chave `camera`) e manda ao motor (`SetCaptureDevice`); vale na próxima vez que a câmera abre. Um nome que não está na lista fica gravado, e `video.cameraDesconectada` vira `true`. `h264`: a chave da pessoa para o H.264 (chave `h264` do `config.json`, ligada de fábrica). Desligar põe `video.h264.situacao` em `desligado`; ligar de novo, se o módulo não está instalado, em `baixando` (o gancho `h264Ensure`). O que não veio fica como está. |
+| `cameraTest` | `on` (booleano) | `true`: liga o teste da câmera (`StartCameraTest`), e a imagem vai na vista `local`; `video.teste` segue o resultado (`false` se o motor não abriu a câmera, e então o aviso da câmera vem num toast). `false`: desliga (`StopCameraTest`). |
+| `videoViews` | `pagina` (`"principal"` \| `"aviso"`), `vistas` (lista de textos) | As vistas de vídeo que a página mostra agora (o gancho `videoViews`, com `pagina == "aviso"`). A página `principal` só tem `remoto` e `local` (o teste da câmera também usa a `local`, porque é a mesma imagem), e a página `aviso`, só `porteiro`. Uma vista que não é da página é ignorada, e a lista vai inteira a cada vez (uma lista vazia tira todas). Outra `pagina` é recusada na leitura. |
+| `videoWindow` | `modo` (`"normal"` \| `"grande"` \| `"telaCheia"`) | O modo da janela do vídeo: o `DesktopApp` grava em `video.janela` e chama o gancho `videoWindow`. Outro `modo` é ignorado (linha no diagnóstico). Quando a última ligação acaba, se a `janela` não é `normal`, ela volta a `normal` (o gancho `videoWindow("normal")`). |
+| `h264Retry` | — | Tenta de novo baixar o módulo H.264, só depois de uma falha (`video.h264.situacao` `falhou`): vira `baixando` e chama o gancho `h264Ensure`. Em outra situação, é ignorado. |
+
+```json
+{"v":1,"cmd":"setVideo","camera":"Integrated Camera","h264":true}
+{"v":1,"cmd":"cameraTest","on":true}
+{"v":1,"cmd":"videoViews","pagina":"principal","vistas":["remoto","local"]}
+{"v":1,"cmd":"videoViews","pagina":"aviso","vistas":["porteiro"]}
+{"v":1,"cmd":"videoWindow","modo":"grande"}
+{"v":1,"cmd":"h264Retry"}
+```
+
+Os avisos da câmera vêm num toast, quando o motor avisa o problema (o diagnóstico leva só a frase, nunca o nome da
+câmera): `Nenhuma câmera encontrada.`, `A câmera está sendo usada por outro programa.`, `A câmera foi desconectada.` e,
+no lugar do segundo quando a privacidade do Windows nega a câmera aos apps da área de trabalho (o gancho
+`cameraBlocked`), `O Windows bloqueou a câmera para este app. Libere em Configurações do Windows → Privacidade e
+segurança → Câmera.`. Uma câmera que some ou que não abre de novo também desliga o teste (`video.teste` `false`).
 
 ### Contatos e Recentes
 
@@ -286,6 +326,8 @@ A configuração fica no `admin.json`, protegido pelo DPAPI do usuário (como as
   "config":{"bipeFim":true},
   "empresa":{"link":"https://docs.google.com/spreadsheets/d/1AbC_dEf-123/edit#gid=456","situacao":"ok","erro":"",
              "atualizadaEm":1761062400000,"quantos":230,"vez":1},
+  "video":{"ligado":true,"cameras":["Integrated Camera"],"camera":"","cameraDesconectada":false,"teste":false,
+           "h264":{"cartao":true,"pessoa":true,"situacao":"instalado"},"janela":"normal"},
   "chat":{"ligado":true,"empresa":"ACME Comércio Ltda","computador":"RECEPCAO-01","contaConectada":true}
 }}
 ```
@@ -335,7 +377,7 @@ A configuração fica no `admin.json`, protegido pelo DPAPI do usuário (como as
 | `atalhos[].acao` | `"ligar"` \| `"transferir"` \| `"consulta"` \| `"teclas"` | Ligar, Transferir, Transferir com consulta, Enviar teclas. |
 | `atalhos[].blf` | booleano | A chave "Mostrar se o ramal está livre" do atalho. |
 | `atalhos[].estado` | `"livre"` \| `"tocando"` \| `"ocupado"` \| `"desconectado"` \| `null` | O BLF do ramal: `null` sem o `blf` do atalho ou com o BLF do administrador desligado (`admin.blf`); senão `desconectado` até o primeiro aviso do servidor, com a assinatura recusada, vencida ou sem resposta, e enquanto a conta não está registrada (o registro caiu, sem internet, conectando); quando a conta registra de novo, volta o último estado que o servidor deu, até o próximo aviso. Dois atalhos com o mesmo número têm o mesmo estado. O C++ assina só os atalhos com `blf`, com o `admin.blf` ligado, na conta em uso; de novo quando os atalhos, o administrador ou a conta mudam e quando a conta volta a registrar. |
-| `admin` | objeto | (rc.3) A área do administrador. Fechada (`aberto` `false`), só `{aberto, naoPerturbe, atenderAuto, blf, puxa}`, o que a interface precisa para esconder os botões, desativar a chave do BLF e mostrar a ajuda do puxar; aberta, também `puxar`, `codigoPuxar`, `servidores` e `canal`. |
+| `admin` | objeto | (rc.3) A área do administrador. Fechada (`aberto` `false`), só `{aberto, naoPerturbe, atenderAuto, blf, puxa}`, o que a interface precisa para esconder os botões, desativar a chave do BLF e mostrar a ajuda do puxar; aberta, também `puxar`, `codigoPuxar`, `servidores`, `canal` e (0.3.0) os campos do cartão Vídeo. |
 | `admin.aberto` | booleano | A área está aberta (a senha certa, há menos de 10 min sem comando). |
 | `admin.naoPerturbe`, `admin.atenderAuto` | booleano | Os botões Não perturbe e Atender automático aparecem (`false`: escondidos, e desligados; o Atender automático também some de Configurações e o atalho do Não perturbe some da bandeja). |
 | `admin.blf` | booleano | O BLF nos atalhos. `false`: a chave "Mostrar se o ramal está livre" fica desativada, com a ajuda `O administrador não ligou o BLF`. |
@@ -343,6 +385,10 @@ A configuração fica no `admin.json`, protegido pelo DPAPI do usuário (como as
 | `admin.puxar`, `admin.codigoPuxar` | booleano, texto | "Puxar ligação pelo atalho" e o "Código para puxar a ligação" (com `{ramal}`). Só com `aberto`. |
 | `admin.servidores` | lista | `{endereco: texto, porta: inteiro}`: a tabela de portas (ver `adminSet`). Só com `aberto`. |
 | `admin.canal` | `"teste"` \| `"estavel"` \| `""` | O canal de atualização (`""`: o do build). Só com `aberto`. |
+| `admin.videoH264`, `admin.videoVp8`, `admin.videoVp9` | booleano | (0.3.0) O cartão Vídeo: os codecs ligados (ver `adminSet`). De fábrica `true`, `true` e `false`. Só com `aberto`. |
+| `admin.videoPrimeiro` | `"h264"` \| `"vp8"` \| `"vp9"` | O codec que vai primeiro (`"h264"` de fábrica). Só com `aberto`. |
+| `admin.videoQualidade` | `"baixa"` \| `"media"` \| `"alta"` | A qualidade do vídeo (`"media"` de fábrica). Só com `aberto`. |
+| `admin.porteiros` | lista de textos | Os Porteiros (`[]` de fábrica). Só com `aberto`. |
 | `entrarAdmin` | objeto | (rc.3) O resultado do último `adminLogin`: `{erro, esperaAte, vez}`. `erro`: `Senha incorreta.` ou `""` (o da última tentativa). `esperaAte`: até quando (ms desde 1970) o `adminLogin` é recusado depois de 5 senhas erradas seguidas (o diálogo espera até `Date.now() >= esperaAte`); `0` sem espera. `vez`: sobe a cada `adminLogin` respondido (a senha certa, a errada e a recusada na espera; começa em 0), como o `tecladoVez`: duas erradas seguidas têm o mesmo `erro`, e só a `vez` diz que a segunda foi respondida. **Quando a `vez` muda**, a interface limpa o campo Senha e mostra o `erro` (nenhum: a área abriu); fora disso, o `erro` que está no estado é de uma tentativa velha e não aparece (por exemplo, ao abrir o diálogo de novo). |
 | `config` | objeto | (rc.3) Configurações novas: `{bipeFim}`. |
 | `config.bipeFim` | booleano | "Bipe quando a ligação cai ou termina" (`setSetting` `bipeFim`; ligado de fábrica). |
@@ -353,6 +399,15 @@ A configuração fica no `admin.json`, protegido pelo DPAPI do usuário (como as
 | `empresa.atualizadaEm` | inteiro | A hora da última leitura boa (ms desde 1970), também de uma abertura anterior (o `contatos-empresa.json`); `0` sem nenhuma. A interface escreve a hora local ("às 14:32", ou "em 26/10 às 14:32" se não for de hoje). |
 | `empresa.quantos` | inteiro | Os contatos da lista de agora (a da última leitura boa). |
 | `empresa.vez` | inteiro | Sobe a cada lista nova (a guardada, na abertura; uma leitura boa; a lista vazia quando o link sai); `0` sem nenhuma lista desde a abertura do app. É a `vez` da última `contatosEmpresa`. |
+| `video` | objeto | (0.3.0) As escolhas do vídeo, a câmera e o módulo H.264: `{ligado, cameras, camera, cameraDesconectada, teste, h264, janela}`. Vem sempre, também no iPhone (neutro, com `ligado` `false`). Vem antes do `chat`. |
+| `video.ligado` | booleano | Há vídeo nas escolhas: algum codec ligado no cartão (o H.264 conta mesmo sem o módulo instalado, para o botão não sumir enquanto ele baixa). `false` com os três codecs desligados. Sempre `false` no iPhone. |
+| `video.cameras` | lista de textos | Os nomes das câmeras do motor, na ordem dele; relida junto com os dispositivos de som (o aviso do `WM_DEVICECHANGE`: `RefreshAudioDevices`). |
+| `video.camera` | texto | A câmera escolhida (`setVideo`); `""` é a primeira. |
+| `video.cameraDesconectada` | booleano | `video.camera` não está vazio e não está em `video.cameras`. |
+| `video.teste` | booleano | O teste da câmera está ligado (`cameraTest`). |
+| `video.h264` | objeto | `{cartao, pessoa, situacao}`: o H.264 ligado no cartão do administrador (`cartao`), a chave da pessoa (`pessoa`) e o módulo da Cisco. |
+| `video.h264.situacao` | `"desligado"` \| `"baixando"` \| `"instalado"` \| `"falhou"` | `desligado`: o cartão ou a pessoa desliga o H.264. Na abertura, ou quando o H.264 volta a ser ligado, e se ainda não está instalado, vira `baixando` (o gancho `h264Ensure`); `instalado` ou `falhou` chegam pelo `DesktopApp::SetH264State`. Um `SetH264State` com o H.264 desligado não muda nada. O motor só recebe o H.264 (`h264Available`) com o cartão ligado, a pessoa ligada e a situação `instalado`. |
+| `video.janela` | `"normal"` \| `"grande"` \| `"telaCheia"` | O modo da janela do vídeo (`videoWindow`); volta a `normal` quando a última ligação acaba. |
 | `chat` | objeto | (0.2.0, só no Windows: o estado do iPhone não tem o campo) O chat deste computador: `{ligado, empresa, computador, contaConectada}` (ver "O chat (0.2.0)"). A chave nunca vem no estado. |
 
 ### `ligacao`
@@ -691,6 +746,19 @@ download dos arquivos.
   - `DesktopApp::OpenChat(conversa)`: a pessoa clicou no aviso do chat. Só põe na fila; antes do primeiro `ready`, o
     `abrir` espera por ele. Esse `ready` é o de qualquer página, também o do `aviso.html`: isso vale porque o executável
     só abre o aviso depois da primeira mensagem da janela principal, e assim o primeiro `ready` é sempre o dela.
+  - (0.3.0) Os quatro ganchos do vídeo, também chamados na thread de comandos e sem esperar; um vazio não faz nada. O
+    executável os liga nas tarefas do vídeo.
+    - `videoViews(vistas, paginaDoAviso)`: as vistas que a página mostra agora (`videoViews`, já sem as que não são da
+      página), e se é a página do aviso.
+    - `videoWindow(modo)`: o modo da janela do vídeo (`"normal"`, `"grande"` ou `"telaCheia"`), do `videoWindow` e do fim
+      da última ligação.
+    - `h264Ensure()`: roda o `H264Module::Ensure` fora da fila de comandos e responde pelo `DesktopApp::SetH264State`
+      (`Installed` ou `Failed`, de qualquer thread: só põe na fila). Vazio: a situação fica `baixando`.
+    - `cameraBlocked()`: a privacidade do Windows nega a câmera aos apps da área de trabalho. Só escolhe o texto do aviso
+      de `OpenFailed`. Vazio: `false`.
+  - (0.3.0) O `EngineHost` repassa ao `SipEngine` os seis métodos do vídeo do `RegistrationPort` (`VideoDevices`,
+    `SetCaptureDevice`, `RefreshVideoDevices`, `StartCameraTest`, `StopCameraTest` e `SetVideoSettings`), na thread de
+    comandos (que não é STA, como as câmeras pedem), e passa o `OnCameraProblem` ao `DesktopApp`, que o põe na fila.
 - Ao fechar: `Shutdown()`, o `Stop()` do agendador, o motor destruído, o `DesktopApp` destruído (detalhes no
   `DesktopApp.h`). Depois de a janela fechar, isso tem 5 s: passou, `fechamento forcado` no diagnóstico e o processo
   sai com o código 0.
@@ -770,6 +838,9 @@ Os campos do PC continuam todos no estado (todas as chaves sempre presentes), co
 - `contatos` e `atalhos`: `[]`; `iniciarComWindows`: `false`;
 - `admin`: fechado, com `naoPerturbe` e `atenderAuto` `true` (os dois botões aparecem) e `blf` e `puxa` `false`;
 - `empresa`: com `situacao` `"nenhuma"` (`link` e `erro` `""`; `atualizadaEm`, `quantos` e `vez` `0`);
+- `video`: neutro, com `ligado` `false`, `cameras` `[]`, `camera` `""`, `cameraDesconectada` e `teste` `false`, `h264`
+  com `cartao` e `pessoa` `false` e `situacao` `desligado`, e `janela` `normal` (o motor do iPhone não tem vídeo: o
+  `DesktopApp` não chama o porto nem os ganchos do vídeo);
 - `audio`: com as listas vazias (`microfones`, `altoFalantes` e `desconectados`) e `microfone`, `altoFalante` e `toque`
   `""`: quem escolhe o caminho do som é o iPhone (`rotaAudio`).
 
@@ -884,6 +955,7 @@ Recusados inteiros: nada muda, nenhum gancho é chamado, e o diagnóstico ganha 
 - a área do administrador: `adminLogin`, `adminLogout` e `adminSet`;
 - as planilhas e a lista da empresa: `importContacts`, `exportContacts`, `setCompanyList` e `refreshCompanyList`;
 - a atualização: `updateNow` e `updateLater`;
+- (0.3.0) o vídeo: `setVideo`, `cameraTest`, `videoViews`, `videoWindow` e `h264Retry`;
 - (0.2.0) o chat: `chatKey`, `chatLink`, `chatUnlink`, `chatNotify`, `chatBadge` e `chatDownload`. O estado do iPhone
   não tem o `chat`, e o `DesktopApp::SetWindowInFront` e o `DesktopApp::OpenChat` só deixam uma linha no diagnóstico
   (`janela na frente: recusada no modo iPhone`, `abrir o chat: recusado no modo iPhone`): o `ready` do iPhone nunca leva

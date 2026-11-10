@@ -3,11 +3,14 @@
 // C++ portatil: nada de Windows aqui.
 //
 // admin.json: o JSON {"versao":1,"mostrar_nao_perturbe","mostrar_atender_automatico","blf","puxar","codigo_puxar",
-// "servidores":[{"endereco","porta"}],"canal"} passa inteiro pelo SecretCipher::Protect (no Windows, o DPAPI do
+// "servidores":[{"endereco","porta"}],"canal","videoH264","videoVp8","videoVp9","videoPrimeiro","videoQualidade",
+// "porteiros"} passa inteiro pelo SecretCipher::Protect (no Windows, o DPAPI do
 // usuario) e o texto resultante e o conteudo do arquivo. Quem troca o arquivo num editor de texto nao o abre.
 //
-// O canal ("teste" ou "estavel"; "" = o do build), o codigo de puxar e os servidores passam pela mesma validacao do Save
-// ao carregar: o que nao serve volta ao padrao ou fica de fora.
+// O canal ("teste" ou "estavel"; "" = o do build), o codigo de puxar, os servidores, o codec que vai primeiro
+// ("h264", "vp8" ou "vp9"), a qualidade ("baixa", "media" ou "alta") e os Porteiros passam pela mesma validacao do Save
+// ao carregar: o que nao serve volta ao padrao ou fica de fora. As chaves do video que faltam valem o padrao de
+// fabrica: H.264 e VP8 ligados, VP9 desligado, H.264 primeiro, qualidade media, nenhum Porteiro.
 //
 // Carregar (Load): sem arquivo, os padroes (true); arquivo que nao decifra, que nao e JSON ou e de outra versao: os
 // padroes e false; o arquivo nao e tocado ate o proximo Save. Os padroes: os dois botoes aparecem, BLF e puxar
@@ -21,6 +24,7 @@
 #include "Cipher.h"
 #include "Files.h"
 #include "Profile.h"
+#include "Video.h"
 
 namespace starsonic {
 
@@ -32,6 +36,16 @@ struct AdminConfig {
     std::string codigoPuxar;               // com {ramal}: PickupNumber troca pelo numero do atalho
     std::vector<ServerPort> servidores;    // os padroes vem do perfil
     std::string canal;                     // "" = o canal do build
+    // O cartao Video (0.3.0): os codecs, o que vai primeiro, a qualidade e os Porteiros (ramais cujo video chega sozinho:
+    // ate 20, cada um com 1 a 15 digitos, sem repetir).
+    bool videoH264 = true;
+    bool videoVp8 = true;
+    bool videoVp9 = false;
+    VideoCodec videoFirst = VideoCodec::H264;
+    VideoQuality videoQuality = VideoQuality::Medium;
+    std::vector<std::string> doorphones;
+    static constexpr size_t kMaxDoorphones = 20;
+    static constexpr size_t kMaxDoorphoneDigits = 15;
 };
 
 class AdminStore {
@@ -44,6 +58,8 @@ public:
     // "teste" ou "estavel", um codigo de puxar com algo alem de digitos, * # + e {ramal}, e um servidor com endereco
     // invalido (ValidateServerAddress: sem espaco, sem host:porta), repetido (sem olhar a caixa) ou com a porta fora de
     // 1 a 65535. O codigo e os enderecos ficam sem os espacos das pontas (os enderecos, tambem em minusculas).
+    // Os Porteiros: mais de 20, um item com algo que nao e digito, com mais de 15 digitos ou vazio, e um repetido tambem
+    // sao recusados (cada regra com a sua mensagem). Os itens ficam sem os espacos das pontas.
     // Tambem false se o cifrador ou o disco falhou.
     bool Save(const AdminConfig& config, std::string* error = nullptr);
 

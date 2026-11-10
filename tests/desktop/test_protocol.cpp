@@ -354,7 +354,8 @@ TEST_CASE("the empty state serializes with every key") {
                                            "naoPerturbe", "atenderAutomatico", "ligacao", "recentes",
                                            "perdidas",  "contatos",   "audio",    "iniciarComWindows",
                                            "versao",    "teclado",    "tecladoVez", "atalhos",
-                                           "admin",     "entrarAdmin", "config",  "empresa"};
+                                           "admin",     "entrarAdmin", "config",  "empresa",
+                                           "video"};
     for (const std::string& key : keys) {
         INFO(key);
         CHECK(s.contains(key));
@@ -500,7 +501,13 @@ TEST_CASE("the state serializes the shortcuts, the admin area, the internet and 
                               {"codigoPuxar", "**{ramal}"},
                               {"servidores", json::array({json({{"endereco", "starcloud1-starsonic.com.br"},
                                                                 {"porta", 35060}})})},
-                              {"canal", "estavel"}}));
+                              {"canal", "estavel"},
+                              {"videoH264", true},
+                              {"videoVp8", true},
+                              {"videoVp9", false},
+                              {"videoPrimeiro", "h264"},
+                              {"videoQualidade", "media"},
+                              {"porteiros", json::array()}}));
 }
 
 TEST_CASE("the state serializes the accounts, the recents, the contacts and the audio") {
@@ -829,4 +836,67 @@ TEST_CASE("toast and ring messages") {
     CHECK(Parse(EndBeepMessage()) == json({{"v", 1}, {"type", "ring"}, {"tipo", "fim"}}));
     // Um nome da central com bytes que nao sao UTF-8 nao impede a mensagem.
     CHECK_NOTHROW(Parse(ToastMessage("Liga\xc3\xa7\xc3\xa3o perdida de \xff\xfe")));
+}
+
+TEST_CASE("the state serializes the video block, letter by letter, between the company and the chat") {
+    BridgeState state;
+    state.video.on = true;
+    state.video.cameras = {"Integrated Camera", "USB 2.0 Camera"};
+    state.video.camera = "USB 2.0 Camera";
+    state.video.cameraDisconnected = true;
+    state.video.test = true;
+    state.video.h264Card = true;
+    state.video.h264Person = false;
+    state.video.h264State = H264State::Failed;
+    state.video.window = "telaCheia";
+    const std::string text = StateMessage(state);
+    const std::string video =
+        R"("video":{"ligado":true,"cameras":["Integrated Camera","USB 2.0 Camera"],"camera":"USB 2.0 Camera",)"
+        R"("cameraDesconectada":true,"teste":true,"h264":{"cartao":true,"pessoa":false,"situacao":"falhou"},)"
+        R"("janela":"telaCheia"})";
+    CHECK(text.find(video) != std::string::npos);
+    CHECK(text.find(R"("empresa":{)") < text.find(video));
+    for (const auto& [value, name] :
+         {std::pair<H264State, const char*>{H264State::Off, "desligado"}, {H264State::Downloading, "baixando"},
+          {H264State::Installed, "instalado"}, {H264State::Failed, "falhou"}}) {
+        state.video.h264State = value;
+        CHECK(Parse(StateMessage(state))["state"]["video"]["h264"]["situacao"] == name);
+    }
+}
+
+TEST_CASE("setVideo, cameraTest, videoViews, videoWindow and h264Retry are read with their fields") {
+    const std::optional<Command> set = ParseCommand(R"({"v":1,"cmd":"setVideo","camera":"","h264":false})");
+    REQUIRE(set);
+    CHECK(set->kind == CommandKind::SetVideo);
+    REQUIRE(set->cameraName);
+    CHECK(*set->cameraName == "");
+    REQUIRE(set->h264);
+    CHECK(*set->h264 == false);
+    const std::optional<Command> none = ParseCommand(R"({"v":1,"cmd":"setVideo"})");
+    REQUIRE(none);
+    CHECK_FALSE(none->cameraName);
+    CHECK_FALSE(none->h264);
+    CHECK_FALSE(ParseCommand(R"({"v":1,"cmd":"setVideo","camera":3})"));
+    CHECK_FALSE(ParseCommand(R"({"v":1,"cmd":"setVideo","h264":"sim"})"));
+
+    const std::optional<Command> test = ParseCommand(R"({"v":1,"cmd":"cameraTest","on":true})");
+    REQUIRE(test);
+    CHECK(test->kind == CommandKind::CameraTest);
+    CHECK(test->on.value_or(false));
+
+    const std::optional<Command> views =
+        ParseCommand(R"({"v":1,"cmd":"videoViews","pagina":"principal","vistas":["remoto","local"]})");
+    REQUIRE(views);
+    CHECK(views->page == "principal");
+    CHECK(views->views == std::vector<std::string>({"remoto", "local"}));
+
+    const std::optional<Command> window = ParseCommand(R"({"v":1,"cmd":"videoWindow","modo":"grande"})");
+    REQUIRE(window);
+    CHECK(window->mode == "grande");
+    CHECK_FALSE(ParseCommand(R"({"v":1,"cmd":"videoWindow"})"));
+
+    const std::optional<Command> retry = ParseCommand(R"({"v":1,"cmd":"h264Retry"})");
+    REQUIRE(retry);
+    CHECK(retry->kind == CommandKind::H264Retry);
+    CHECK(std::string(CommandName(CommandKind::VideoViews)) == "videoViews");
 }

@@ -200,6 +200,10 @@ struct Settings {
     // iPhone: o "Bipe ao digitar", o bipe de telefone de cada tecla (config.json: bipe_tecla; ligado de fabrica). O
     // Windows grava a chave e nao a usa.
     bool bipeTecla = true;
+    // Video (0.3.0): a camera escolhida em Configuracoes (config.json: camera; "" = a primeira) e a chave da pessoa para
+    // o H.264 (config.json: h264; ligada de fabrica).
+    std::string cameraName;
+    bool h264Person = true;
 };
 
 class SettingsStore {

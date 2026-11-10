@@ -13,7 +13,9 @@
 
 #include "Agenda.h"           // AgendaPermission e AgendaContact (iPhone)
 #include "CallController.h"   // CallSnapshot, Recent, RingKind
+#include "H264Module.h"       // H264State (0.3.0: o bloco video)
 #include "Planilha.h"         // SheetContact (rc.4)
+#include "Video.h"            // VideoCodec e VideoQuality (0.3.0: o cartao Video do administrador)
 
 namespace starsonic {
 
@@ -74,6 +76,11 @@ enum class CommandKind {
     ChatNotify,
     ChatBadge,
     ChatDownload,
+    SetVideo,        // 0.3.0: o video (so no Windows): a camera e a chave do H.264 da pessoa
+    CameraTest,      // o teste da camera (a imagem vai na vista local)
+    VideoViews,      // as vistas do video que a pagina mostra agora
+    VideoWindow,     // o modo da janela do video: normal, grande ou telaCheia
+    H264Retry,       // tentar de novo baixar o modulo H.264 depois de uma falha
 };
 
 // Um servidor da lista do administrador (adminSet e o estado): o endereco (UTF-8) e a porta (UDP e TCP).
@@ -91,6 +98,13 @@ struct AdminChanges {
     std::optional<std::string> pickupCode;   // codigoPuxar
     std::optional<std::vector<ServerView>> servers;   // servidores (a lista inteira)
     std::optional<std::string> channel;      // canal: "teste", "estavel" ou "" (o do build)
+    // 0.3.0: o cartao Video.
+    std::optional<bool> videoH264;           // videoH264
+    std::optional<bool> videoVp8;            // videoVp8
+    std::optional<bool> videoVp9;            // videoVp9
+    std::optional<VideoCodec> videoFirst;    // videoPrimeiro: "h264", "vp8" ou "vp9"
+    std::optional<VideoQuality> videoQuality;   // videoQualidade: "baixa", "media" ou "alta"
+    std::optional<std::vector<std::string>> doorphones;   // porteiros (a lista inteira; a loja confere as regras)
 };
 
 // Os campos dos comandos do chat (0.2.0), ja conferidos (docs/ponte-windows.md, "Os comandos do chat"). Os textos sao
@@ -155,6 +169,15 @@ struct Command {
     std::string link;
     // Os do chat (0.2.0).
     ChatFields chat;
+    // 0.3.0: o video. video: o dial e o answer com video (Task 7; ainda nao lido). setVideo: cameraName ("" = a
+    // primeira camera) e h264 (a chave da pessoa); ausentes ficam como estao. cameraTest: o on. videoViews: page
+    // ("principal" | "aviso") e views, como vieram. videoWindow: mode, como veio (o nucleo ignora o que nao e dos tres).
+    bool video = false;
+    std::optional<std::string> cameraName;
+    std::optional<bool> h264;
+    std::string page;
+    std::vector<std::string> views;
+    std::string mode;
 };
 
 // O comando do JSON, ou nada (com o motivo em *error, se error nao e nullptr): texto que nao e JSON, sem "v":1,
@@ -213,6 +236,13 @@ struct AdminView {                  // admin (rc.3): completo so com open
     std::string pickupCode;         // codigoPuxar
     std::vector<ServerView> servers;   // servidores
     std::string channel;            // canal ("" = o do build)
+    // 0.3.0: o cartao Video (so com a area aberta).
+    bool videoH264 = true;          // videoH264
+    bool videoVp8 = true;           // videoVp8
+    bool videoVp9 = false;          // videoVp9
+    VideoCodec videoFirst = VideoCodec::H264;       // videoPrimeiro
+    VideoQuality videoQuality = VideoQuality::Medium;   // videoQualidade
+    std::vector<std::string> doorphones;            // porteiros
 };
 
 struct AdminLoginView {             // entrarAdmin (rc.3): o resultado da ultima tentativa
@@ -279,6 +309,19 @@ struct ChatView {                   // chat (0.2.0, so no Windows). A chave nunc
     bool accountConnected = false;  // contaConectada: a conta em uso ja se conectou a central neste computador
 };
 
+// video (0.3.0): as escolhas do video e o estado da camera e do modulo H.264. No iPhone, tudo neutro (ligado false).
+struct VideoView {
+    bool on = false;                            // ligado: ha algum codec ligado (VideoEnabled, sem olhar o modulo)
+    std::vector<std::string> cameras;           // cameras: os nomes, na ordem do motor
+    std::string camera;                         // camera: o nome escolhido ("" = a primeira)
+    bool cameraDisconnected = false;            // cameraDesconectada: o nome escolhido nao esta em cameras
+    bool test = false;                          // teste: o teste da camera ligado
+    bool h264Card = false;                      // h264.cartao: o administrador deixa o H.264 ligado
+    bool h264Person = false;                    // h264.pessoa: a chave da pessoa
+    H264State h264State = H264State::Off;       // h264.situacao: "desligado" | "baixando" | "instalado" | "falhou"
+    std::string window = "normal";              // janela: "normal" | "grande" | "telaCheia"
+};
+
 struct BridgeState {
     bool mainScreen = false;                // tela: "principal" (true) ou "entrar"
     LoginView login;                        // entrar
@@ -302,6 +345,7 @@ struct BridgeState {
     bool endBeep = true;                    // config.bipeFim (rc.3)
     CompanyView company;                    // empresa (rc.4)
     std::optional<ChatView> chat;           // chat (0.2.0): so no Windows; nada no iPhone
+    VideoView video;                        // video (0.3.0)
     // O modo iPhone: plataforma "ios", agenda, rotaAudio e config.bipeTecla. Nada (o Windows): o estado de sempre,
     // sem nenhum campo a mais.
     std::optional<IPhoneView> iphone;

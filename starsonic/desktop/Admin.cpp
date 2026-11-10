@@ -55,6 +55,10 @@ const char kErrChannel[] = "Escolha o canal Teste ou Est\xc3\xa1vel.";
 const char kErrCode[] = "O c\xc3\xb3" "digo s\xc3\xb3 pode ter d\xc3\xadgitos, *, #, + e {ramal}.";
 const char kErrDuplicate[] = "Esse servidor j\xc3\xa1 est\xc3\xa1 na lista.";
 const char kErrPort[] = "A porta deve ficar entre 1 e 65535.";
+const char kErrDoorphoneCount[] = "No m\xc3\xa1ximo 20 porteiros.";
+const char kErrDoorphoneChars[] = "Cada porteiro s\xc3\xb3 pode ter d\xc3\xadgitos.";
+const char kErrDoorphoneLength[] = "Cada porteiro precisa ter de 1 a 15 d\xc3\xadgitos.";
+const char kErrDoorphoneDuplicate[] = "Esse porteiro j\xc3\xa1 est\xc3\xa1 na lista.";
 
 bool ValidChannel(const std::string& channel) {
     return channel.empty() || channel == "teste" || channel == "estavel";
@@ -88,6 +92,42 @@ std::string CheckServer(const ServerPort& server, ServerPort* normalized) {
     normalized->address = std::move(address);
     normalized->port = server.port;
     return std::string();
+}
+
+enum class DoorphoneCheck { Ok, Chars, Length };
+
+// Um Porteiro: so digitos, de 1 a 15.
+DoorphoneCheck CheckDoorphone(const std::string& doorphone) {
+    for (char ch : doorphone) {
+        if (ch < '0' || ch > '9') return DoorphoneCheck::Chars;
+    }
+    if (doorphone.empty() || doorphone.size() > AdminConfig::kMaxDoorphoneDigits) return DoorphoneCheck::Length;
+    return DoorphoneCheck::Ok;
+}
+
+// Os nomes no admin.json.
+const char* CodecKey(VideoCodec codec) {
+    switch (codec) {
+        case VideoCodec::Vp8:
+            return "vp8";
+        case VideoCodec::Vp9:
+            return "vp9";
+        case VideoCodec::H264:
+            break;
+    }
+    return "h264";
+}
+
+const char* QualityKey(VideoQuality quality) {
+    switch (quality) {
+        case VideoQuality::Low:
+            return "baixa";
+        case VideoQuality::High:
+            return "alta";
+        case VideoQuality::Medium:
+            break;
+    }
+    return "media";
 }
 
 }  // namespace
@@ -129,6 +169,29 @@ bool AdminStore::Load() {
     config_.codigoPuxar = ValidPickupCode(code) ? code : std::string();
     const std::string channel = GetString(root, "canal");
     config_.canal = ValidChannel(channel) ? channel : std::string();
+    config_.videoH264 = GetBool(root, "videoH264", defaults.videoH264);
+    config_.videoVp8 = GetBool(root, "videoVp8", defaults.videoVp8);
+    config_.videoVp9 = GetBool(root, "videoVp9", defaults.videoVp9);
+    const std::string first = GetString(root, "videoPrimeiro");
+    config_.videoFirst = first == "vp8" ? VideoCodec::Vp8 : first == "vp9" ? VideoCodec::Vp9 : defaults.videoFirst;
+    const std::string quality = GetString(root, "videoQualidade");
+    config_.videoQuality =
+        quality == "baixa" ? VideoQuality::Low : quality == "alta" ? VideoQuality::High : defaults.videoQuality;
+    const auto doorphones = root.find("porteiros");
+    if (doorphones != root.end() && doorphones->is_array()) {
+        // Como os servidores: o item que nao serve ou repete fica de fora, e a lista para nos 20.
+        for (const Json& item : *doorphones) {
+            if (config_.doorphones.size() >= AdminConfig::kMaxDoorphones) break;
+            if (!item.is_string()) continue;
+            const std::string doorphone = TrimAscii(item.get<std::string>());
+            if (CheckDoorphone(doorphone) != DoorphoneCheck::Ok) continue;
+            if (std::find(config_.doorphones.begin(), config_.doorphones.end(), doorphone) !=
+                config_.doorphones.end()) {
+                continue;
+            }
+            config_.doorphones.push_back(doorphone);
+        }
+    }
     const auto servers = root.find("servidores");
     if (servers != root.end() && servers->is_array()) {
         std::vector<ServerPort> list;
@@ -172,6 +235,18 @@ bool AdminStore::Save(const AdminConfig& requested, std::string* error) {
         if (duplicate) return fail(kErrDuplicate);
         config.servidores.push_back(std::move(normalized));
     }
+    if (requested.doorphones.size() > AdminConfig::kMaxDoorphones) return fail(kErrDoorphoneCount);
+    config.doorphones.clear();
+    for (const std::string& typed : requested.doorphones) {
+        const std::string doorphone = TrimAscii(typed);
+        const DoorphoneCheck check = CheckDoorphone(doorphone);
+        if (check == DoorphoneCheck::Chars) return fail(kErrDoorphoneChars);
+        if (check == DoorphoneCheck::Length) return fail(kErrDoorphoneLength);
+        if (std::find(config.doorphones.begin(), config.doorphones.end(), doorphone) != config.doorphones.end()) {
+            return fail(kErrDoorphoneDuplicate);
+        }
+        config.doorphones.push_back(doorphone);
+    }
 
     Json root = Json::object();
     root["versao"] = kFormatVersion;
@@ -189,6 +264,14 @@ bool AdminStore::Save(const AdminConfig& requested, std::string* error) {
     }
     root["servidores"] = std::move(servers);
     root["canal"] = config.canal;
+    root["videoH264"] = config.videoH264;
+    root["videoVp8"] = config.videoVp8;
+    root["videoVp9"] = config.videoVp9;
+    root["videoPrimeiro"] = CodecKey(config.videoFirst);
+    root["videoQualidade"] = QualityKey(config.videoQuality);
+    Json doorphones = Json::array();
+    for (const std::string& doorphone : config.doorphones) doorphones.push_back(doorphone);
+    root["porteiros"] = std::move(doorphones);
 
     const std::optional<std::string> sealed =
         cipher_.Protect(root.dump(2, ' ', false, Json::error_handler_t::replace));
