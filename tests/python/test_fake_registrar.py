@@ -728,8 +728,11 @@ class CallsTest(unittest.TestCase):
                 return message
 
     def video_socket(self):
-        """Um socket UDP de 127.0.0.1 que fala com a PORTA do vídeo."""
+        """Um socket UDP de 127.0.0.1 que fala com a PORTA do vídeo. A memória de recepção cabe uma reprodução inteira
+        (os 300 datagramas guardados): com os 208 KiB de fábrica do Linux, uns 256 datagramas pequenos, um teste sem CPU
+        no meio da reprodução perderia o resto."""
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1 << 20)
         sock.bind(("127.0.0.1", 0))
         sock.settimeout(2)
         self.addCleanup(sock.close)
@@ -1027,10 +1030,14 @@ class CallsTest(unittest.TestCase):
         self.send_rtp([(96, False, 1, b"velho")] * 3)
         self.wait_for_packets(3)
         self.assertEqual(self.command("VIDEO PACKETS reset"), ["OK"])
-        # 305 pacotes, em quadros de 50 (os timestamps 0 a 6): ficam os 300 primeiros, os seis primeiros quadros.
+        # 305 pacotes, em quadros de 50 (os timestamps 0 a 6): ficam os 300 primeiros, os seis primeiros quadros. Eles vão
+        # um quadro por vez, cada um depois de a PORTA contar os anteriores: os 305 de uma vez passam da memória de
+        # fábrica do socket dela (uns 256 datagramas pequenos no Linux) quando a thread dela fica sem CPU, e o sistema
+        # descarta o resto antes de ela ler (a contagem parava em 256).
         packets = [(96, number % 50 == 49, number // 50, b"%03d" % number) for number in range(305)]
-        self.send_rtp(packets)
-        self.wait_for_packets(305)
+        for start in range(0, len(packets), 50):
+            self.send_rtp(packets[start:start + 50])
+            self.wait_for_packets(min(start + 50, len(packets)))
         _, receiver = self.replay_call(phone, "H264,VP8")
         got = [data for data, _, _ in self.received(receiver)]
         self.assertEqual(got, [rtp(97, marker, timestamp, payload) for _, marker, timestamp, payload in packets[:300]])
