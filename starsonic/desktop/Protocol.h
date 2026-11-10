@@ -20,6 +20,8 @@
 namespace starsonic {
 
 constexpr int kBridgeVersion = 1;
+constexpr int kMinNoticeHeight = 168;   // noticeHeight: a altura do aviso, em pixels logicos
+constexpr int kMaxNoticeHeight = 480;
 
 enum class CommandKind {
     Ready,
@@ -82,6 +84,7 @@ enum class CommandKind {
     VideoWindow,     // o modo da janela do video: normal, grande ou telaCheia
     H264Retry,       // tentar de novo baixar o modulo H.264 depois de uma falha
     Camera,          // a nossa camera na ligacao de cima: ligar ou desligar (o on)
+    NoticeHeight,    // a altura do aviso de ligacao recebida (so da pagina do aviso; o noticeHeight)
 };
 
 // Um servidor da lista do administrador (adminSet e o estado): o endereco (UTF-8) e a porta (UDP e TCP).
@@ -179,6 +182,8 @@ struct Command {
     std::string page;
     std::vector<std::string> views;
     std::string mode;
+    // noticeHeight: a altura pedida (de 168 a 480, pixels logicos).
+    int noticeHeight = 0;
 };
 
 // O comando do JSON, ou nada (com o motivo em *error, se error nao e nullptr): texto que nao e JSON, sem "v":1,

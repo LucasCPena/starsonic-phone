@@ -115,6 +115,7 @@ CommandPlatform PlatformOf(const Command& command) {
         case CommandKind::CameraTest:
         case CommandKind::VideoViews:
         case CommandKind::VideoWindow:
+        case CommandKind::NoticeHeight:
         case CommandKind::H264Retry:
         case CommandKind::Camera:
             return CommandPlatform::Windows;
@@ -955,6 +956,14 @@ void DesktopApp::Execute(const Command& command, bool noticePage) {
             break;
         case CommandKind::H264Retry:
             H264Retry();
+            break;
+        case CommandKind::NoticeHeight:
+            // So a pagina do aviso pede a altura dele.
+            if (!noticePage) {
+                Log("noticeHeight recusado: pagina principal");
+            } else if (hooks_.noticeHeight) {
+                hooks_.noticeHeight(command.noticeHeight);
+            }
             break;
     }
 }

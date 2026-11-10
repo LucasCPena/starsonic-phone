@@ -467,6 +467,8 @@ bool MainWindow::ApplyModeBox(HMONITOR monitor, UINT dpi) {
     return true;
 }
 
+void MainWindow::SetNoticeHeight(int logicalHeight) { notice_.SetHeight(logicalHeight); }
+
 void MainWindow::SetVideoMode(VideoMode mode) {
     if (!window_ || mode == mode_) return;
     const VideoMode previous = mode_;

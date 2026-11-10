@@ -538,6 +538,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
                                                        : VideoMode::Normal;
         window.RunOnWindow([&window, wanted] { window.SetVideoMode(wanted); });
     };
+    // (0.3.0) A altura do aviso de ligacao recebida, pedida pela pagina do aviso.
+    hooks.noticeHeight = [&window](int height) {
+        window.RunOnWindow([&window, height] { window.SetNoticeHeight(height); });
+    };
     // O resize das zonas da interface: so poe na fila da janela (a thread de comandos nunca espera a janela).
     hooks.resize = [&window](const std::string& edge) { window.RunOnWindow([&window, edge] { window.StartResize(edge); }); };
 #if STARSONIC_TEST_HOOKS

@@ -158,6 +158,8 @@ public:
     SharedMemoryPages& VideoPages() { return videoPages_; }
     // (0.3.0) O modo da janela do video, na thread da janela (o main.cpp chega aqui pelo RunOnWindow).
     void SetVideoMode(VideoMode mode);
+    // (0.3.0) A altura do aviso de ligacao recebida (o gancho noticeHeight), em pixels logicos, na thread da janela.
+    void SetNoticeHeight(int logicalHeight);
 
 private:
     static LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam);

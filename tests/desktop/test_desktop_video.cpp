@@ -1043,3 +1043,26 @@ TEST_CASE("the call state carries the video block") {
     const json second = h.State()["ligacao"]["second"];
     CHECK(second["video"] == json({{"oferece", true}, {"ativo", false}, {"imagem", false}, {"camera", false}, {"cedo", true}}));
 }
+
+TEST_CASE("noticeHeight from the notice page goes to the hook") {
+    Harness h;
+    h.StartRegistered();
+    h.SendFromNotice(R"({"v":1,"cmd":"noticeHeight","altura":430})");
+    CHECK(h.noticeHeights == std::vector<int>({430}));
+}
+
+TEST_CASE("noticeHeight from the main page is ignored") {
+    Harness h;
+    h.StartRegistered();
+    h.Send(R"({"v":1,"cmd":"noticeHeight","altura":430})");
+    CHECK(h.noticeHeights.empty());
+    CHECK(h.Logged("noticeHeight recusado: pagina principal"));
+}
+
+TEST_CASE("noticeHeight is refused on the iPhone") {
+    Harness h(Platform::IPhone);
+    h.StartRegistered();
+    h.SendFromNotice(R"({"v":1,"cmd":"noticeHeight","altura":430})");
+    CHECK(h.noticeHeights.empty());
+    CHECK(h.Logged("recusado no modo iPhone"));
+}

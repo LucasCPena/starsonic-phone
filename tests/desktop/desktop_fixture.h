@@ -198,6 +198,7 @@ struct Harness {
     int h264Ensures = 0;
     std::vector<std::pair<std::vector<std::string>, bool>> viewCalls;
     std::vector<std::string> windowModes;
+    std::vector<int> noticeHeights;   // as alturas do noticeHeight
     bool cameraBlockedValue = false;
     int cameraBlockedCalls = 0;
     bool videoHooks = true;   // false: o executavel sem os quatro ganchos
@@ -264,6 +265,7 @@ struct Harness {
                 viewCalls.emplace_back(views, noticePage);
             };
             hooks.videoWindow = [this](const std::string& mode) { windowModes.push_back(mode); };
+            hooks.noticeHeight = [this](int height) { noticeHeights.push_back(height); };
             hooks.h264Ensure = [this] { ++h264Ensures; };
             hooks.cameraBlocked = [this] {
                 ++cameraBlockedCalls;

@@ -186,3 +186,40 @@ TEST_CASE("the big box of an empty work area never starts before the area") {
     CHECK(shifted.x >= 100);
     CHECK(shifted.y >= 50);
 }
+
+TEST_CASE("the notice box is 380 wide at the bottom right") {
+    FitBox box = starsonic::NoticeBox({0, 0, 1920, 1040}, 96, 168);
+    CHECK(box.x == 1528);
+    CHECK(box.y == 860);
+    CHECK(box.width == 380);
+    CHECK(box.height == 168);
+    box = starsonic::NoticeBox({0, 0, 1920, 1040}, 96, 430);
+    CHECK(box.x == 1528);
+    CHECK(box.y == 598);
+    CHECK(box.width == 380);
+    CHECK(box.height == 430);
+}
+
+TEST_CASE("the notice box follows the scale") {
+    const FitBox box = starsonic::NoticeBox({0, 0, 1920, 1040}, 144, 430);
+    CHECK(box.x == 1332);
+    CHECK(box.y == 377);
+    CHECK(box.width == 570);
+    CHECK(box.height == 645);
+}
+
+TEST_CASE("the notice box is on its own monitor") {
+    const FitBox box = starsonic::NoticeBox({1920, 0, 3840, 1040}, 96, 222);
+    CHECK(box.x == 3448);
+    CHECK(box.y == 806);
+    CHECK(box.width == 380);
+    CHECK(box.height == 222);
+}
+
+TEST_CASE("a short work area cuts the notice height") {
+    const FitBox box = starsonic::NoticeBox({0, 0, 800, 400}, 96, 430);
+    CHECK(box.x == 408);
+    CHECK(box.y == 12);
+    CHECK(box.width == 380);
+    CHECK(box.height == 376);
+}

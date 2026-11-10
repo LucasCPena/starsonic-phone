@@ -200,6 +200,8 @@ struct DesktopHooks {
     std::function<void(const std::vector<std::string>& views, bool noticePage)> videoViews;
     // O modo da janela (videoWindow, ou "normal" no fim da ultima ligacao): "normal", "grande" ou "telaCheia".
     std::function<void(const std::string& mode)> videoWindow;
+    // A altura do aviso de ligacao recebida (noticeHeight, so da pagina do aviso), em pixels logicos de 168 a 480.
+    std::function<void(int height)> noticeHeight;
     // Roda o H264Module::Ensure fora da fila de comandos (baixa e confere o modulo) e responde pelo SetH264State
     // (Installed ou Failed). So e chamado com o DesktopConfig::h264Download. Vazio: a situacao fica "baixando".
     std::function<void()> h264Ensure;

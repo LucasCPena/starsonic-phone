@@ -905,3 +905,22 @@ TEST_CASE("setVideo, cameraTest, videoViews, videoWindow and h264Retry are read 
     CHECK(retry->kind == CommandKind::H264Retry);
     CHECK(std::string(CommandName(CommandKind::VideoViews)) == "videoViews");
 }
+
+TEST_CASE("noticeHeight takes a whole height between 168 and 480") {
+    const std::optional<Command> ok = ParseCommand(R"({"v":1,"cmd":"noticeHeight","altura":222})");
+    REQUIRE(ok);
+    CHECK(ok->kind == CommandKind::NoticeHeight);
+    CHECK(ok->noticeHeight == 222);
+    CHECK(std::string(CommandName(CommandKind::NoticeHeight)) == "noticeHeight");
+    const std::optional<Command> low = ParseCommand(R"({"v":1,"cmd":"noticeHeight","altura":168})");
+    REQUIRE(low);
+    CHECK(low->noticeHeight == 168);
+    const std::optional<Command> high = ParseCommand(R"({"v":1,"cmd":"noticeHeight","altura":480})");
+    REQUIRE(high);
+    CHECK(high->noticeHeight == 480);
+    CHECK_FALSE(ParseCommand(R"({"v":1,"cmd":"noticeHeight"})"));
+    CHECK_FALSE(ParseCommand(R"({"v":1,"cmd":"noticeHeight","altura":167})"));
+    CHECK_FALSE(ParseCommand(R"({"v":1,"cmd":"noticeHeight","altura":481})"));
+    CHECK_FALSE(ParseCommand(R"({"v":1,"cmd":"noticeHeight","altura":"222"})"));
+    CHECK_FALSE(ParseCommand(R"({"v":1,"cmd":"noticeHeight","altura":222.5})"));
+}

@@ -247,6 +247,7 @@ A câmera nunca liga sozinha: só ligam a câmera o `dial` e o `answer` com `vid
 | `cameraTest` | `on` (booleano) | `true`: liga o teste da câmera (`StartCameraTest`), e a imagem vai na vista `local`; `video.teste` segue o resultado (`false` se o motor não abriu a câmera, e então o aviso da câmera vem num toast). `false`: desliga (`StopCameraTest`). Ligar com o teste já ligado não faz nada. O `ready` da janela principal (uma recarga da página, ou o navegador refeito) desliga o teste que estava ligado (`video.teste` `false`, já no estado desse `ready`): sem a página que o ligou, a luz da câmera ficaria acesa sem controle à vista. O `ready` do aviso não mexe nele. Com a tela bloqueada, a câmera do teste fecha e volta sozinha no desbloqueio; o `video.teste` segue `true`. |
 | `videoViews` | `pagina` (`"principal"` \| `"aviso"`), `vistas` (lista de textos) | As vistas de vídeo que a página mostra agora (o gancho `videoViews`, com `pagina == "aviso"`). A página `principal` só tem `remoto` e `local` (o teste da câmera também usa a `local`, porque é a mesma imagem), e a página `aviso`, só `porteiro`. Uma vista que não é da página é ignorada, e a lista vai inteira a cada vez (uma lista vazia tira todas). Outra `pagina` é recusada na leitura, e também mais de 8 vistas ou uma vista com mais de 32 caracteres (`videoViews: vistas invalidas`). |
 | `videoWindow` | `modo` (`"normal"` \| `"grande"` \| `"telaCheia"`) | O modo da janela do vídeo: o `DesktopApp` grava em `video.janela` e chama o gancho `videoWindow`. Outro `modo` é ignorado (linha no diagnóstico). Quando a última ligação acaba, se a `janela` não é `normal`, ela volta a `normal` (o gancho `videoWindow("normal")`). |
+| `noticeHeight` | `altura` (inteiro de 168 a 480) | A altura do aviso de ligação recebida, em pixels lógicos: 222 quando a ligação oferece vídeo, 430 com a imagem do porteiro. Só vale vindo da página do aviso (o gancho `noticeHeight`); da página principal é só uma linha no diagnóstico (`noticeHeight recusado: pagina principal`). Sem a `altura`, fora do intervalo ou não inteira, é recusado na leitura (`noticeHeight: altura invalida`). Exemplo: `{"v":1,"cmd":"noticeHeight","altura":222}`. Recusado no modo iPhone. |
 | `h264Retry` | — | Tenta de novo baixar o módulo H.264, só depois de uma falha (`video.h264.situacao` `falhou`): vira `baixando` e chama o gancho `h264Ensure`. Em outra situação, é ignorado. |
 
 ```json
@@ -787,13 +788,16 @@ download dos arquivos.
   - `DesktopApp::OpenChat(conversa)`: a pessoa clicou no aviso do chat. Só põe na fila; antes do primeiro `ready`, o
     `abrir` espera por ele. Esse `ready` é o de qualquer página, também o do `aviso.html`: isso vale porque o executável
     só abre o aviso depois da primeira mensagem da janela principal, e assim o primeiro `ready` é sempre o dela.
-  - (0.3.0) Os quatro ganchos do vídeo, também chamados na thread de comandos e sem esperar; um vazio não faz nada. O
+  - (0.3.0) Os ganchos do vídeo, também chamados na thread de comandos e sem esperar; um vazio não faz nada. O
     executável os liga nas tarefas do vídeo.
     - `videoViews(vistas, paginaDoAviso)`: as vistas que a página mostra agora (`videoViews`, já sem as que não são da
       página), e se é a página do aviso. O executável troca só as vistas dessa página na rota do vídeo (ver "A memória do
       vídeo").
     - `videoWindow(modo)`: o modo da janela do vídeo (`"normal"`, `"grande"` ou `"telaCheia"`), do `videoWindow` e do fim
       da última ligação.
+    - `noticeHeight(altura)`: a altura do aviso de ligação recebida, em pixels lógicos (de 168 a 480), só do `noticeHeight` da
+      página do aviso. O executável a repassa ao `NoticeWindow::SetHeight`, que refaz o tamanho e o lugar no monitor onde
+      o aviso está (escondido, vale no próximo `Show`).
     - `h264Ensure()`: roda o `H264Module::Ensure` fora da fila de comandos e responde pelo `DesktopApp::SetH264State`
       (`Installed` ou `Failed`, de qualquer thread: só põe na fila). Só é chamado com o `DesktopConfig::h264Download`
       (a opção `STARSONIC_H264_DOWNLOAD` do build, desligada até a etapa 2). Vazio: a situação fica `baixando`. No

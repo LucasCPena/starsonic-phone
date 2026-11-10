@@ -1,5 +1,5 @@
 #pragma once
-// O aviso de ligacao recebida (spec da W1, 4.1 e 7.2): a janela de 380x168 (em 100% de escala) no canto de baixo a
+// O aviso de ligacao recebida (spec da W1, 4.1 e 7.2): a janela de 380 de largura e 168 de altura (em 100% de escala; a altura muda, pedida pela pagina: SetHeight) no canto de baixo a
 // direita da area de trabalho do monitor da janela principal, sempre por cima e sem tomar o foco
 // (WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW: fora da barra de tarefas e do Alt+Tab), com o seu WebView2 em
 // aviso.html. A MainWindow mostra o aviso quando ha uma ligacao tocando e ela nao esta na frente, e esconde quando
@@ -18,15 +18,15 @@
 #include <string>
 
 #include "WebViewHost.h"
+#include "WindowFit.h"
 
 namespace starsonic {
 
 class NoticeWindow {
 public:
     static const wchar_t kClassName[];   // "Starsonic Phone Aviso"
-    static constexpr int kWidth = 380;   // em pixels de 100% de escala
-    static constexpr int kHeight = 168;
-    static constexpr int kMargin = 12;   // do canto da area de trabalho
+    // Os tamanhos (380 de largura, 168 de altura de fabrica e a margem de 12 do canto, em pixels de 100% de escala)
+    // estao no WindowFit.h (kNoticeWidth, kNoticeHeight, kNoticeMargin); a altura muda com o SetHeight.
 
     struct Callbacks {
         std::function<void(const std::string& json)> command;   // um comando da interface do aviso
@@ -53,6 +53,9 @@ public:
     WebViewHost* WebView() const { return webview_.get(); }
     // Mostra (sem ativar) no canto do monitor de anchor (a janela principal), ou esconde.
     void Show(HWND anchor);
+    // (0.3.0) A altura pedida pela pagina, em pixels logicos (de 168 a 480). Com o aviso a vista, refaz o tamanho e o
+    // lugar no monitor onde ele esta; escondido, so guarda para o proximo Show.
+    void SetHeight(int logicalHeight);
     void Hide();
     bool Visible() const;
     void Close();
@@ -62,7 +65,11 @@ private:
     LRESULT Handle(UINT message, WPARAM wParam, LPARAM lParam);
     void Log(const std::string& line) const;
 
+    // Poe o aviso no canto do monitor, com a altura de height_; show: tambem mostra (sem ativar).
+    void Place(HMONITOR monitor, bool show);
+
     HWND window_ = nullptr;
+    int height_ = kNoticeHeight;   // logica
     Callbacks callbacks_;
     std::unique_ptr<WebViewHost> webview_;
 };

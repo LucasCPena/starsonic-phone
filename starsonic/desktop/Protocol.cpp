@@ -77,6 +77,7 @@ const Name kNames[] = {
     {CommandKind::CameraTest, "cameraTest"},
     {CommandKind::VideoViews, "videoViews"},
     {CommandKind::VideoWindow, "videoWindow"},
+    {CommandKind::NoticeHeight, "noticeHeight"},
     {CommandKind::H264Retry, "h264Retry"},
     {CommandKind::Camera, "camera"},
 };
@@ -579,6 +580,13 @@ std::optional<Command> ParseCommand(const std::string& text, std::string* error)
         case CommandKind::VideoWindow:
             f.Text("modo", &command.mode, true);
             break;
+        case CommandKind::NoticeHeight: {
+            int64_t height = 0;
+            f.Whole("altura", kMaxNoticeHeight, &height);
+            if (f.ok() && height < kMinNoticeHeight) f.Fail("altura invalida");
+            command.noticeHeight = static_cast<int>(height);
+            break;
+        }
         case CommandKind::SetCompanyList:
             f.Text("link", &command.link, true);   // obrigatorio, e pode ser vazio (tira a lista)
             break;

@@ -24,8 +24,6 @@ UINT MonitorDpi(HMONITOR monitor) {
     return x;
 }
 
-int Scale(int value, UINT dpi) { return MulDiv(value, static_cast<int>(dpi), 96); }
-
 }  // namespace
 
 NoticeWindow::~NoticeWindow() { Close(); }
@@ -45,7 +43,7 @@ bool NoticeWindow::Create(HINSTANCE instance, Callbacks callbacks) {
     }
     // Sem dono: uma janela com dono some quando a dona e minimizada (e o aviso e para a principal fora da frente).
     window_ = CreateWindowExW(WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW, kClassName, L"Starsonic Phone",
-                              WS_POPUP | WS_CLIPCHILDREN, 0, 0, kWidth, kHeight, nullptr, nullptr, instance, this);
+                              WS_POPUP | WS_CLIPCHILDREN, 0, 0, kNoticeWidth, kNoticeHeight, nullptr, nullptr, instance, this);
     if (!window_) {
         Log("o aviso nao foi criado: " + std::to_string(GetLastError()));
         return false;
@@ -82,20 +80,26 @@ void NoticeWindow::Post(const std::string& json) {
 
 void NoticeWindow::Show(HWND anchor) {
     if (!window_) return;
-    const HMONITOR monitor = MonitorFromWindow(anchor ? anchor : window_, MONITOR_DEFAULTTOPRIMARY);
+    Place(MonitorFromWindow(anchor ? anchor : window_, MONITOR_DEFAULTTOPRIMARY), /*show=*/true);
+}
+
+void NoticeWindow::SetHeight(int logicalHeight) {
+    if (logicalHeight == height_) return;
+    height_ = logicalHeight;
+    // Escondido, o proximo Show usa a altura nova. A vista: refaz no monitor onde o aviso esta.
+    if (window_ && Visible()) Place(MonitorFromWindow(window_, MONITOR_DEFAULTTONEAREST), /*show=*/false);
+}
+
+void NoticeWindow::Place(HMONITOR monitor, bool show) {
     MONITORINFO info = {};
     info.cbSize = sizeof(info);
     GetMonitorInfoW(monitor, &info);
-    const UINT dpi = MonitorDpi(monitor);
-    const int width = Scale(kWidth, dpi);
-    const int height = Scale(kHeight, dpi);
-    const int margin = Scale(kMargin, dpi);
-    const RECT& work = info.rcWork;
-    const int x = work.right - width - margin;
-    const int y = work.bottom - height - margin;
+    const FitArea work = {info.rcWork.left, info.rcWork.top, info.rcWork.right, info.rcWork.bottom};
+    const FitBox box = NoticeBox(work, MonitorDpi(monitor), height_);
     const bool wasVisible = Visible();
-    SetWindowPos(window_, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
-    if (!wasVisible) Log("aviso de ligacao recebida aberto");
+    SetWindowPos(window_, HWND_TOPMOST, box.x, box.y, box.width, box.height,
+                 SWP_NOACTIVATE | (show ? SWP_SHOWWINDOW : 0));
+    if (show && !wasVisible) Log("aviso de ligacao recebida aberto");
 }
 
 void NoticeWindow::Hide() {

@@ -64,4 +64,20 @@ FitBox BigVideoBox(const FitArea& work, unsigned dpi) {
     return box;
 }
 
+FitBox NoticeBox(const FitArea& work, unsigned dpi, int logicalHeight) {
+    if (dpi == 0) dpi = 96;
+    const int workWidth = std::max(0, work.right - work.left);
+    const int workHeight = std::max(0, work.bottom - work.top);
+    const int margin = ScaleToDpi(kNoticeMargin, dpi);
+    FitBox box;
+    box.width = ScaleToDpi(kNoticeWidth, dpi);
+    box.height = ScaleToDpi(logicalHeight, dpi);
+    if (workWidth > 0) box.width = std::min(box.width, std::max(1, workWidth - 2 * margin));
+    if (workHeight > 0) box.height = std::min(box.height, std::max(1, workHeight - 2 * margin));
+    // Embaixo e a direita; numa area menor que a caixa nunca comeca antes da borda da area.
+    box.x = std::max(work.left, work.right - box.width - margin);
+    box.y = std::max(work.top, work.bottom - box.height - margin);
+    return box;
+}
+
 }  // namespace starsonic
