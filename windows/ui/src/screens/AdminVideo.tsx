@@ -145,8 +145,8 @@ export function CartaoVideo({ admin, video, send }: { admin: AdminAberto; video:
             onChange={(v) => send({ cmd: 'adminSet', videoPrimeiro: v as CodecDeVideo })}
           />
         </div>
-        <fieldset class="field adm-canal">
-          <legend class="label adm-canal-titulo">Qualidade</legend>
+        <fieldset class="field adm-qualidade">
+          <legend class="label adm-qualidade-titulo">Qualidade</legend>
           <div class="seg seg-3">
             {QUALIDADES.map((q) => (
               <label key={q.valor}>
