@@ -68,7 +68,8 @@ test('the fake core answers the video commands like the core', async ({ page }) 
 test('the fake core refuses the camera test without cameras', async ({ page }) => {
   await abrir(page, 'sem-camera');
   await mandar(page, { cmd: 'cameraTest', on: true });
-  await expect(page.getByText('Nenhuma câmera encontrada.').first()).toBeVisible();
+  // O aviso (o campo Câmera das Configurações, desativado, diz o mesmo).
+  await expect(page.getByRole('status').filter({ hasText: 'Nenhuma câmera encontrada.' })).toBeVisible();
   expect((await estado(page)).video.teste).toBe(false);
 });
 

@@ -21,6 +21,8 @@
   --status-online: #22c55e;
   /* O contorno tracejado dos espaços vazios (rc.3: "Adicionar atalho", "Adicionar servidor"). */
   --dashed: #d3d8e6;
+  /* (0.3.0) O fundo da área do vídeo e das faixas da imagem encaixada, nos dois temas (o quadro da videochamada). */
+  --video-bg: #04060e;
   --surface: var(--white); --surface-alt: var(--soft); --card: var(--white); --border: var(--line);
   --text-strong: var(--blue); --text: var(--ink); --text-muted: var(--muted); --text-accent: var(--cyan-d);
   --icon: var(--blue); --icon-tile: rgba(0, 194, 203, 0.14); --focus: var(--blue);
@@ -277,6 +279,8 @@ label.set-title { flex: 1 0 auto; }
 .select select { appearance: none; -webkit-appearance: none; border: 0; background: transparent; font: 600 13px/1.3 var(--font-sans); color: var(--text-muted);
   text-align: right; text-align-last: right; padding: 4px 20px 4px 2px; max-width: 226px; border-radius: 8px; text-overflow: ellipsis; }
 .select select:hover { color: var(--text-strong); }
+/* (0.3.0) Desativada (a Câmera sem câmeras), a lista não reage ao ponteiro. */
+.select select:disabled:hover { color: var(--text-muted); }
 .select select option { color: var(--text); background: var(--surface); }
 .select .ic { position: absolute; right: 2px; pointer-events: none; }
 .link { color: var(--accent-text); font-weight: 700; text-decoration: none; }
@@ -1185,6 +1189,20 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .membros-por .ic { width: 15px; height: 15px; }
 .membros-espaco { flex: 1 0 0; }
 .btn.membros-sair { flex: none; width: 100%; background: var(--card); font-size: 14px; }
+
+/* ---------------------------------------------------------------------------------------------------------
+   0.3.0: o vídeo (o quadro "Starsonic Phone — telas da videochamada", com os tokens de sempre). */
+
+/* A vista de vídeo (VistaDeVideo.tsx): o canvas cobre a caixa, por cima do fundo da área do vídeo. Ele fica fora do
+   fluxo: o tamanho dele (a caixa vezes o devicePixelRatio) nunca muda o tamanho da caixa, que vem de quem a usa. */
+.vista-video { position: relative; overflow: hidden; background: var(--video-bg); }
+.vista-video > canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+
+/* As Configurações (ConfigDoVideo.tsx; os quadros Configuracoes e ConfiguracoesEscuro): o "Testar a câmera"
+   (desativado sem câmeras) e, com o teste ligado, a prévia 16:9 na largura do cartão, com o "Parar o teste" embaixo. */
+.cfg-teste-ligado { flex-direction: column; align-items: flex-start; gap: 10px; }
+.cfg-previa { align-self: stretch; aspect-ratio: 16 / 9; border-radius: 12px; }
+.cfg-teste .btn:disabled, .cfg-teste .btn:disabled:hover { opacity: 0.45; border-color: var(--outline); }
 
 /* ---------------------------------------------------------------------------------------------------------
    O modo iPhone (plataforma.ts: o .win leva data-plataforma="ios"); fora dele, nada daqui vale. A área segura (em cima

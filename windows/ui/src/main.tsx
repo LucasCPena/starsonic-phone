@@ -26,6 +26,8 @@
 // saem para a aba Chat quando ela sai da lista (R26), e todas, quando a pessoa não está mais no chat. O toast delas é
 // o mesmo da ponte (R31), também o dos arquivos da conversa (Task 7). Um arquivo arrastado para a janela nunca navega
 // (R39).
+// (0.3.0) O vídeo: as memórias das vistas desta página (video/vistas.ts) são guardadas uma vez, junto com a ponte, e vão
+// às vistas de vídeo pelo VideoContexto.
 import { render } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { createBridge } from './bridge';
@@ -64,9 +66,11 @@ import { accountDot, accountTitle, agendaSuggestions } from './format';
 import { useLayout } from './layout';
 import { applyIphoneViewport, IPHONE_TABS, isIos } from './plataforma';
 import type { Send, Tab, View } from './types';
+import { criarVideoDaPagina, VideoContexto } from './video/vistas';
 
 const bridge = createBridge();
 const chatCliente = new ChatCliente({ bridge, base: enderecoDoChat() });
+const videoDaPagina = criarVideoDaPagina(bridge, 'principal');
 // (0.2.0, R39) Um arquivo arrastado para a janela nunca navega, em lugar nenhum dela: sem isto, o WebView2 abriria o
 // file:// do arquivo (e o núcleo gravaria o caminho dele no diagnóstico). Só a conversa que recebe arquivos (com o
 // lugar de escrever) os põe como anexos; um texto arrastado fica com o navegador.
@@ -640,4 +644,9 @@ function App() {
   );
 }
 
-render(<App />, document.getElementById('app')!);
+render(
+  <VideoContexto.Provider value={videoDaPagina}>
+    <App />
+  </VideoContexto.Provider>,
+  document.getElementById('app')!,
+);

@@ -17,13 +17,20 @@
 // com `frente: true`. (iPhone) Sem o chat, e os comandos dele são recusados.
 // (0.3.0) O vídeo: o `video` do estado e o `video` de cada cartão seguem os comandos como o núcleo (docs/ponte-windows.md,
 // "Vídeo (0.3.0)" e "O vídeo na ligação"): as escolhas do vídeo, o H.264 que baixa (1 s) e instala, o teste da câmera, o
-// modo da janela, a câmera na ligação e o cartão Vídeo do administrador. O `noticeHeight` e o `videoViews` só ficam no
-// `__comandos` (as memórias são da interface). O `__fake.mandar(comando)` manda o comando como se a página o mandasse (só
-// dos testes da ponte falsa). No iPhone, o vídeo é recusado.
+// modo da janela, a câmera na ligação e o cartão Vídeo do administrador. O `noticeHeight` só fica no `__comandos`. O
+// `__fake.mandar(comando)` manda o comando como se a página o mandasse (só dos testes da ponte falsa). No iPhone, o vídeo
+// é recusado.
+// (0.3.0) As memórias do vídeo, como o executável ("A memória do vídeo"): a de cada vista da página nasce no primeiro
+// `videoViews` que a mostra (as vistas da outra página são ignoradas) e chega pelo `sharedbufferreceived`, depois. O evento
+// leva a própria memória, sem o structuredClone das mensagens: o quadro que um teste grava depois aparece na página. O
+// `__fake.quadro(vista, largura, altura, y, u, v)` grava um quadro como o escritor do executável (false enquanto a vista
+// não tem memória), o `__fake.esvaziar(vista)` a esvazia, o `__fake.memoriaCrua(dados, bytes)` entrega uma memória
+// qualquer e o `__fake.liberadas()` conta as que a página soltou (como no WebView2, uma memória solta fica inacessível).
 import { AGENDA_DE_EXEMPLO, createScenario, entrarVazio, estadoDoIphone, PLANILHA_DA_EMPRESA, SERVIDORES_DO_PERFIL, type FakeView } from './fake-scenarios';
 import { trimAscii } from './format';
+import { escreverQuadro, esvaziar as esvaziarMemoria, TAMANHO_DA_MEMORIA, type Plano } from './video/memoria';
 import { NENHUMA_CAMERA } from './video/textos';
-import type { WebviewLike } from './bridge';
+import type { SharedBufferEventLike, WebviewLike } from './bridge';
 import type {
   AdminAberto,
   AdminServer,
@@ -45,6 +52,7 @@ import type {
   ShortcutAction,
   UpdateChannel,
   VideoSettings,
+  VistaDeVideoNome,
 } from './state';
 
 /** A senha que a área do administrador da ponte falsa aceita: só de teste (a de verdade nunca fica no repositório). */
@@ -58,6 +66,7 @@ const CODIGO_DE_PUXAR = /^(?:[0-9*#+]|\{ramal\})*$/;
 const CHAVE_DO_CHAT = /^[A-Za-z0-9_-]{43}$/;
 
 type Listener = (event: { data: unknown }) => void;
+type OuvinteDeMemoria = (event: SharedBufferEventLike) => void;
 
 export interface FakeHooks {
   push(message: unknown): void;
@@ -67,6 +76,14 @@ export interface FakeHooks {
   soltar(): void;
   /** (0.3.0) O comando como se a página o mandasse (guardado em `__comandos`); só dos testes da ponte falsa. */
   mandar(comando: Record<string, unknown>): void;
+  /** (0.3.0) Grava um quadro na memória da vista, como o escritor do executável; `false` enquanto ela não tem memória. */
+  quadro(vista: VistaDeVideoNome, largura: number, altura: number, y: Plano, u: Plano, v: Plano): boolean;
+  /** (0.3.0) Esvazia a memória da vista (o `seq` volta a 0), como o executável quando a ligação dela muda ou acaba. */
+  esvaziar(vista: VistaDeVideoNome): void;
+  /** (0.3.0) Entrega à página uma memória qualquer de `bytes` bytes, com este `additionalData`. */
+  memoriaCrua(dados: unknown, bytes: number): void;
+  /** (0.3.0) Quantas memórias a página soltou (o `releaseBuffer`). */
+  liberadas(): number;
 }
 
 declare global {
@@ -124,6 +141,21 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
   const listeners = new Set<Listener>();
   const sent: Array<Record<string, unknown>> = [];
   window.__comandos = sent;
+  // (0.3.0) As memórias do vídeo: a de cada vista (do primeiro `videoViews` que a mostra) e quantas a página soltou.
+  const ouvintesDeMemoria = new Set<OuvinteDeMemoria>();
+  const memorias = new Map<VistaDeVideoNome, ArrayBuffer>();
+  let liberadas = 0;
+  /** Assíncrono, como o PostSharedBufferToScript; o evento leva a própria memória (não uma cópia). */
+  const entregarMemoria = (memoria: ArrayBuffer, dados: unknown) => {
+    setTimeout(() => {
+      for (const l of [...ouvintesDeMemoria]) l({ additionalData: structuredClone(dados), getBuffer: () => memoria });
+    }, 0);
+  };
+  /** A memória da vista que a página ainda lê (uma que ela soltou fica sem o conteúdo: o escritor não a alcança mais). */
+  const memoriaDaVista = (vista: VistaDeVideoNome) => {
+    const memoria = memorias.get(vista);
+    return memoria && memoria.byteLength > 0 ? memoria : null;
+  };
 
   // O C++ lento (segurar/soltar): as respostas aos comandos esperam, na ordem; o `push` do teste passa direto.
   let segurando = false;
@@ -164,6 +196,20 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
       for (const message of presas.splice(0)) deliver(message);
     },
     mandar: (comando) => webview.postMessage({ v: 1, ...comando }),
+    quadro(vista, largura, altura, y, u, v) {
+      const memoria = memoriaDaVista(vista);
+      if (!memoria) return false;
+      escreverQuadro(memoria, largura, altura, y, u, v);
+      return true;
+    },
+    esvaziar(vista) {
+      const memoria = memoriaDaVista(vista);
+      if (memoria) esvaziarMemoria(memoria);
+    },
+    memoriaCrua(dados, bytes) {
+      entregarMemoria(new ArrayBuffer(bytes), dados);
+    },
+    liberadas: () => liberadas,
   };
 
   // (iPhone) Nenhum toque: quem toca é a tela de chamada do iPhone.
@@ -477,9 +523,21 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
       case 'h264Retry':
         if (state.video?.h264.situacao === 'falhou') baixarH264();
         break;
-      case 'videoViews':
+      case 'videoViews': {
+        // A memória de cada vista da página nasce no primeiro `videoViews` que a mostra; uma vista que não é da página
+        // (a `principal` tem o `remoto` e o `local`, o `aviso`, o `porteiro`) é ignorada.
+        if (ios || !Array.isArray(command.vistas)) break;
+        const daPagina: VistaDeVideoNome[] = command.pagina === 'aviso' ? ['porteiro'] : command.pagina === 'principal' ? ['remoto', 'local'] : [];
+        for (const vista of daPagina) {
+          if (!command.vistas.includes(vista) || memorias.has(vista)) continue;
+          const memoria = new ArrayBuffer(TAMANHO_DA_MEMORIA);
+          memorias.set(vista, memoria);
+          entregarMemoria(memoria, { v: 1, type: 'videoBuffer', vista, bytes: TAMANHO_DA_MEMORIA });
+        }
+        break;
+      }
       case 'noticeHeight':
-        // As memórias das vistas e a altura do aviso são do executável: as specs só olham o comando.
+        // A altura do aviso é do executável: as specs só olham o comando.
         break;
       case 'chatNotify':
       case 'chatBadge':
@@ -736,11 +794,18 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
       sent.push(command);
       handle(command);
     },
-    addEventListener(_type, listener) {
-      listeners.add(listener);
+    addEventListener(type: string, listener: Listener | OuvinteDeMemoria) {
+      if (type === 'sharedbufferreceived') ouvintesDeMemoria.add(listener as OuvinteDeMemoria);
+      else listeners.add(listener as Listener);
     },
-    removeEventListener(_type, listener) {
-      listeners.delete(listener);
+    removeEventListener(type: string, listener: Listener | OuvinteDeMemoria) {
+      if (type === 'sharedbufferreceived') ouvintesDeMemoria.delete(listener as OuvinteDeMemoria);
+      else listeners.delete(listener as Listener);
+    },
+    releaseBuffer(buffer) {
+      liberadas += 1;
+      // Como o WebView2: a memória solta fica "detached" na página, e cada acesso a ela dá um TypeError.
+      structuredClone(buffer, { transfer: [buffer] });
     },
   };
   return { webview, view: scenario.view };

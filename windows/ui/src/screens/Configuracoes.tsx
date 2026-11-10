@@ -6,13 +6,20 @@
 // Teclado e do teclado da ligação faz o bipe de telefone dela) e o Atender automaticamente com o tempo. Sem as Contas (uma
 // conta só: o Editar conta e o Sair ficam no Menu), o Áudio (quem escolhe a saída é o iPhone), o Iniciar com o Windows e
 // os Contatos (a planilha da empresa).
+// (0.3.0) O vídeo (video/ConfigDoVideo.tsx) fica no cartão do Áudio, depois do Toque: o campo Câmera, o Testar a câmera e
+// a chave do H.264 da Cisco. O título do cartão é "Áudio e vídeo" com o vídeo ligado ou a chave do H.264 à vista, e
+// "Áudio" sem os dois.
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { BackBar } from '../components/BackBar';
+import { Select, type Opcao } from '../components/Select';
 import { accountDot, accountTitle, autoAnswerLine, contactCount, readTime } from '../format';
-import { IconAlert, IconChevronDown, IconPencil, IconPlus } from '../icons';
+import { IconAlert, IconPencil, IconPlus } from '../icons';
 import { isIos } from '../plataforma';
 import type { AppState, AudioDevice, CompanyList } from '../state';
 import type { Send } from '../types';
+import { ConfigDoVideo } from '../video/ConfigDoVideo';
+import { videoDoApp } from '../video/estado';
+import { AUDIO_E_VIDEO } from '../video/textos';
 
 interface Props {
   state: AppState;
@@ -24,11 +31,6 @@ interface Props {
 
 const PADRAO = 'Padrão do Windows';
 const TEMPOS = [0, 1, 2, 3, 5, 8, 10, 15, 20, 30];
-
-interface Opcao {
-  valor: string;
-  texto: string;
-}
 
 /** As opções de um dispositivo do motor: o padrão, os de agora e o escolhido que está desconectado. */
 function deviceOptions(lista: AudioDevice[], escolhido: string, desconectados: string[]): Opcao[] {
@@ -67,21 +69,6 @@ function useOutputDevices(ativo: boolean): Opcao[] {
     };
   }, [ativo]);
   return saidas;
-}
-
-function Select({ id, value, options, onChange }: { id: string; value: string; options: Opcao[]; onChange(v: string): void }) {
-  return (
-    <span class="select">
-      <select id={id} value={value} onChange={(e) => onChange(e.currentTarget.value)}>
-        {options.map((o) => (
-          <option key={o.valor} value={o.valor}>
-            {o.texto}
-          </option>
-        ))}
-      </select>
-      <IconChevronDown size="sm" />
-    </span>
-  );
 }
 
 const AJUDA_DA_PLANILHA =
@@ -173,6 +160,8 @@ export function Configuracoes({ state, send, onBack, onEditAccount, onAddAccount
   const tempos = TEMPOS.includes(auto.segundos) ? TEMPOS : [...TEMPOS, auto.segundos].sort((a, b) => a - b);
   // (iPhone) O Bipe ao digitar: ligado só com o `bipeTecla` do estado (como as teclas, que só bipam com ele).
   const bipeTecla = state.config.bipeTecla === true;
+  // (0.3.0) Neutro no iPhone (e sem o campo no estado).
+  const video = videoDoApp(state);
 
   return (
     <>
@@ -211,7 +200,7 @@ export function Configuracoes({ state, send, onBack, onEditAccount, onAddAccount
             </div>
 
             <h2 class="eyebrow" style={{ marginTop: '4px' }}>
-              Áudio
+              {video.ligado || video.h264.cartao ? AUDIO_E_VIDEO : 'Áudio'}
             </h2>
             <div class="card">
               <div class="set-row">
@@ -242,6 +231,7 @@ export function Configuracoes({ state, send, onBack, onEditAccount, onAddAccount
                 </label>
                 <Select id="cfg-toque" value={audio.toque} options={toques} onChange={(v) => send({ cmd: 'setAudio', toque: v })} />
               </div>
+              <ConfigDoVideo video={video} send={send} />
             </div>
           </>
         )}

@@ -2,15 +2,29 @@
 // No WebView2 é o window.chrome.webview. Sem ele, só com `?fake=<cenario>` (um navegador comum, os testes) a ponte
 // falsa faz o papel do C++. Sem o webview e sem um cenário válido, a ponte fica indisponível: a interface mostra o
 // erro e não manda nada (nunca finge um app conectado com dados de exemplo).
+// (0.3.0) As memórias do vídeo (docs/ponte-windows.md, "A memória do vídeo") chegam pelo evento `sharedbufferreceived`.
+// Só passa uma memória que confere: o `additionalData` (o objeto, ou o texto JSON dele) de uma vista conhecida com o
+// tamanho combinado, e a memória com pelo menos esse tamanho. As outras são soltas na hora (o `releaseBuffer`).
 import { createFakeWebview } from './fake';
 import type { FakeView } from './fake-scenarios';
-import { PROTOCOL_VERSION, type Command, type IncomingMessage } from './state';
+import { PROTOCOL_VERSION, type Command, type IncomingMessage, type VistaDeVideoNome } from './state';
+import { TAMANHO_DA_MEMORIA } from './video/memoria';
+
+/** (0.3.0) O evento de uma memória dividida do WebView2 (o `sharedbufferreceived`). */
+export interface SharedBufferEventLike {
+  additionalData: unknown;
+  getBuffer(): ArrayBuffer;
+}
 
 /** O pedaço do window.chrome.webview que a interface usa. */
 export interface WebviewLike {
   postMessage(message: unknown): void;
   addEventListener(type: 'message', listener: (event: { data: unknown }) => void): void;
+  addEventListener(type: 'sharedbufferreceived', listener: (event: SharedBufferEventLike) => void): void;
   removeEventListener(type: 'message', listener: (event: { data: unknown }) => void): void;
+  removeEventListener(type: 'sharedbufferreceived', listener: (event: SharedBufferEventLike) => void): void;
+  /** (0.3.0) Solta a memória dividida na hora, sem esperar o coletor de lixo. */
+  releaseBuffer?(buffer: ArrayBuffer): void;
 }
 
 declare global {
@@ -31,10 +45,33 @@ export interface Bridge {
   readonly initialView: FakeView | undefined;
   /** A mensagem veio de outra versão do formato. */
   readonly onVersionMismatch: (listener: () => void) => void;
+  /** (0.3.0) Recebe as memórias do vídeo que conferem; devolve a função que para de receber. */
+  subscribeBuffers(listener: (vista: VistaDeVideoNome, buffer: ArrayBuffer) => void): () => void;
+  /** (0.3.0) Solta uma memória do vídeo (a velha de uma vista que ganhou uma nova). */
+  releaseBuffer(buffer: ArrayBuffer): void;
 }
 
 function isMessage(data: unknown): data is IncomingMessage {
   return typeof data === 'object' && data !== null && 'type' in data && 'v' in data;
+}
+
+const VISTAS: readonly VistaDeVideoNome[] = ['remoto', 'local', 'porteiro'];
+
+/** (0.3.0) A vista de uma memória que confere (`{v: 1, type: 'videoBuffer', vista, bytes: 6220864}`), ou `null`. */
+function vistaDaMemoria(additionalData: unknown, buffer: ArrayBuffer): VistaDeVideoNome | null {
+  let dados = additionalData;
+  if (typeof dados === 'string') {
+    try {
+      dados = JSON.parse(dados);
+    } catch {
+      return null;
+    }
+  }
+  if (typeof dados !== 'object' || dados === null) return null;
+  const { v, type, vista, bytes } = dados as Record<string, unknown>;
+  const conhecida = VISTAS.find((nome) => nome === vista);
+  if (v !== PROTOCOL_VERSION || type !== 'videoBuffer' || !conhecida || bytes !== TAMANHO_DA_MEMORIA) return null;
+  return buffer.byteLength >= TAMANHO_DA_MEMORIA ? conhecida : null;
 }
 
 export function createBridge(): Bridge {
@@ -80,6 +117,19 @@ export function createBridge(): Bridge {
     onVersionMismatch(listener) {
       mismatchListeners.push(listener);
     },
+    subscribeBuffers(listener) {
+      const handler = (event: SharedBufferEventLike) => {
+        const buffer = event.getBuffer();
+        const vista = vistaDaMemoria(event.additionalData, buffer);
+        if (vista) listener(vista, buffer);
+        else target.releaseBuffer?.(buffer);
+      };
+      target.addEventListener('sharedbufferreceived', handler);
+      return () => target.removeEventListener('sharedbufferreceived', handler);
+    },
+    releaseBuffer(buffer) {
+      target.releaseBuffer?.(buffer);
+    },
   };
 }
 
@@ -91,5 +141,7 @@ function unavailableBridge(): Bridge {
     send() {},
     subscribe: () => () => {},
     onVersionMismatch() {},
+    subscribeBuffers: () => () => {},
+    releaseBuffer() {},
   };
 }

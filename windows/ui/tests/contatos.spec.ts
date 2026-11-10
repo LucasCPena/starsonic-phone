@@ -420,8 +420,8 @@ test.describe('Configurações → Contatos', () => {
 
   test('the company sheet field saves the link', async ({ page }) => {
     await abrir(page, 'configuracoes');
-    // A parte "Contatos", depois de "Ligações".
-    expect(await page.locator('h2.eyebrow').allTextContents()).toEqual(['Contas', 'Áudio', 'Ligações', 'Contatos']);
+    // A parte "Contatos", depois de "Ligações" (0.3.0: o cenário vem com o vídeo ligado, como o app de fábrica).
+    expect(await page.locator('h2.eyebrow').allTextContents()).toEqual(['Contas', 'Áudio e vídeo', 'Ligações', 'Contatos']);
     await verTextos(page, [
       'Planilha da empresa',
       'Salvar',
