@@ -143,3 +143,27 @@ test('the full screen keeps the sizes of the board', async ({ page }) => {
     quase(b.height, 60, 'o círculo');
   }
 });
+
+test('a call left ringing in the big window goes back to the call screen', async ({ page }) => {
+  await abrir(page, 'video-grande');
+  const tocando = {
+    id: 12,
+    number: '2007',
+    name: 'Carlos Lima',
+    incoming: true,
+    phase: 'ringing',
+    activeSinceMs: 0,
+    held: false,
+    video: { oferece: true, ativo: false, imagem: false, camera: false, cedo: false },
+  };
+  const soTocando = (s: Record<string, any>) => ({ ...s, ligacao: { ...s.ligacao, top: tocando, second: null, secondKind: 'none' } });
+  await mudarEstado(page, soTocando);
+  await expect(botao(page, 'Atender com vídeo')).toBeVisible();
+  await expect(botao(page, 'Recusar')).toBeVisible();
+  await expect(botao(page, 'Atender')).toBeVisible();
+  await expect(botao(page, 'Diminuir')).toHaveCount(0);
+  await expect.poll(() => vezes(page, { cmd: 'videoWindow', modo: 'normal' })).toBe(1);
+  await mudarEstado(page, soTocando);
+  await depoisDoQueChegou(page);
+  expect(await vezes(page, { cmd: 'videoWindow', modo: 'normal' })).toBe(1);
+});

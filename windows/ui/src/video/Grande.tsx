@@ -75,7 +75,7 @@ export function Grande({ state, ligacao: l, send, chat = null }: Props): VNode {
   useEffect(() => {
     if (!telaCheia) return;
     const aoTeclar = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || e.isComposing) return;
+      if (e.key !== 'Escape' || e.isComposing || e.defaultPrevented) return;
       send({ cmd: 'videoWindow', modo: 'grande' });
     };
     window.addEventListener('keydown', aoTeclar);

@@ -285,6 +285,15 @@ function App() {
     estavaEmLigacao.current = emLigacao;
   }, [emLigacao]);
 
+  // (vídeo, etapa 2) O núcleo só volta a janela a `normal` quando a última ligação acaba: se a do vídeo acabou e a que
+  // tocava ficou sozinha (ainda tocando), o grande não serve (sem Recusar nem Atender). A página mostra a tela da
+  // ligação e pede o `normal` uma vez por ligação que toca.
+  const toqueNoGrande = state?.ligacao != null && state.ligacao.top.phase === 'ringing' && state.video != null && videoDoApp(state).janela !== 'normal';
+  const idQueToca = toqueNoGrande ? state!.ligacao!.top.id : null;
+  useEffect(() => {
+    if (idQueToca !== null) send({ cmd: 'videoWindow', modo: 'normal' });
+  }, [idQueToca, send]);
+
   // O foco de volta (`foco` da aba) vale uma vez: a aba que o recebeu já o aplicou, no efeito da montagem dela, e uma
   // tela guardada em `back` por outro lugar (o Menu, o Ctrl + P) não o repete.
   useEffect(() => {
@@ -391,7 +400,7 @@ function App() {
     // (vídeo, etapa 2) O grande e a tela cheia (só no Windows): o vídeo toma a janela no lugar da tela da ligação. No grande
     // a barra de título é a da ligação, sem as zonas de redimensionar; na tela cheia, nenhuma barra.
     const janela = videoDoApp(state).janela;
-    if (janela !== 'normal') {
+    if (janela !== 'normal' && state.ligacao.top.phase !== 'ringing') {
       return (
         <div class={`win call win-${janela === 'telaCheia' ? 'tela-cheia' : 'grande'}`} data-layout={layout} data-plataforma={plataforma}>
           {janela === 'grande' &&
