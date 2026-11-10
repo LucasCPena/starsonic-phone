@@ -408,6 +408,39 @@ TEST_CASE("the main page ready stops a running camera test") {
     CHECK(h.port.Count("stop") == 1);
 }
 
+TEST_CASE("the camera test stops when the main window goes out of sight") {
+    Harness h;
+    h.port.cameras = {VideoDevice{"Camera A"}};
+    h.Start();
+    // Sem o teste ligado, a janela que sai da vista e volta nao chama o motor.
+    h.app->SetWindowOutOfSight(true);
+    h.Run();
+    h.app->SetWindowOutOfSight(false);
+    h.Run();
+    CHECK(h.port.Count("stop") == 0);
+    CHECK_FALSE(h.Logged("janela fora da vista"));
+
+    h.Send(R"({"v":1,"cmd":"cameraTest","on":true})");
+    REQUIRE(h.State()["video"]["teste"] == true);
+    // Minimizada ou fechada para a bandeja: o teste para, com uma linha sem nada da pessoa, e o estado diz.
+    h.posts.clear();
+    h.app->SetWindowOutOfSight(true);
+    CHECK(h.port.Count("stop") == 0);   // so poe na fila
+    h.Run();
+    CHECK(h.port.Count("stop") == 1);
+    CHECK(h.State()["video"]["teste"] == false);
+    CHECK(h.Logged("video: o teste da camera parou: janela fora da vista"));
+
+    // De volta a vista, o teste nao liga sozinho; fora dela de novo, sem o teste, nada.
+    h.app->SetWindowOutOfSight(false);
+    h.Run();
+    CHECK(h.port.Count("start") == 1);
+    CHECK(h.State()["video"]["teste"] == false);
+    h.app->SetWindowOutOfSight(true);
+    h.Run();
+    CHECK(h.port.Count("stop") == 1);
+}
+
 TEST_CASE("videoViews goes to the hook with its page") {
     Harness h;
     h.Start();

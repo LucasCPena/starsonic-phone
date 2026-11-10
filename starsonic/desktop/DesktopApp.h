@@ -11,8 +11,8 @@
 //   interface. O estado do DesktopApp so e lido e escrito nela, sem trava; post e chamado so dela, uma vez por
 //   mensagem, na ordem.
 // - HandleCommand (na thread da interface) so le o JSON e poe o comando na fila; DialLink, RefreshAudioDevices,
-//   SetAgenda, SetAudioRoute, OpenRecents, SetWindowInFront, OpenChat e Start tambem so poem na fila. Nada disso espera
-//   o motor.
+//   SetAgenda, SetAudioRoute, OpenRecents, SetWindowInFront, SetWindowOutOfSight, OpenChat e Start tambem so poem na
+//   fila. Nada disso espera o motor.
 // - Os comandos de ligacao chamam o controlador na thread de comandos: ele chama o motor na thread de quem chama
 //   (o Dial espera o MakeCall, o Hold ate ~2 s), e os efeitos de comandos de threads diferentes nao teriam ordem
 //   entre si. Com uma thread so, os comandos da interface chegam ao motor na ordem em que foram mandados (o
@@ -314,8 +314,9 @@ struct DesktopHooks {
 //     se o download, o cartao e a pessoa o ligam e o modulo nao esta instalado, senao o da outra ponta.
 //   - A camera (config.json: camera; "" = a primeira) vai ao motor na abertura e no setVideo; o teste da camera
 //     (cameraTest) e a lista de cameras (relida no RefreshAudioDevices) vao ao estado. O ready da janela principal
-//     (nao o do aviso: HandleCommand com noticePage) desliga o teste ligado. O OnCameraProblem vira um aviso (toast); no
-//     OpenFailed, o texto depende do hooks.cameraBlocked (vazio: false).
+//     (nao o do aviso: HandleCommand com noticePage) desliga o teste ligado, e a janela principal fora da vista
+//     (SetWindowOutOfSight) tambem. O OnCameraProblem vira um aviso (toast); no OpenFailed, o texto depende do
+//     hooks.cameraBlocked (vazio: false).
 //   - videoViews e videoWindow so repassam ao executavel (os ganchos); o modo da janela volta a normal quando a ultima
 //     ligacao acaba. O diagnostico nunca leva o nome da camera.
 class DesktopApp : public EngineListener {
@@ -396,6 +397,11 @@ public:
     // 0.3.0: o modulo H.264 terminou de baixar e conferir (Installed) ou falhou (Failed), em qualquer thread: vai para a
     // fila. Com o H.264 desligado (no cartao ou pela pessoa), nada muda. No iPhone, nada. So poe na fila.
     void SetH264State(H264State state);
+    // 0.3.0: a janela principal saiu da vista (minimizada, ou escondida na bandeja: a pagina nao ve, o WebView2 segue
+    // visivel para ela) ou voltou. Fora da vista, o teste da camera ligado para (a luz da camera ficaria acesa sem a
+    // previa a vista), com uma linha no diagnostico, e o estado sai com o video.teste false; a volta nao liga o teste de
+    // novo. Sem o teste ligado (no iPhone ele nunca liga), nada. So poe na fila.
+    void SetWindowOutOfSight(bool outOfSight);
     // A fila de comandos roda o que ja tinha e para; daqui em diante nada mais entra. Nunca de dentro de um gancho.
     void Shutdown();
 

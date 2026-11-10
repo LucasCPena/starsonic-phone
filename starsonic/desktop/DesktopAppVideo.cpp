@@ -162,6 +162,16 @@ void DesktopApp::CameraTest(bool on) {
     cameraTest_ = false;
 }
 
+// A janela principal fora da vista (minimizada ou na bandeja): a pessoa nao ve mais a previa, e o teste ligado para, como
+// ao sair da tela Configuracoes. O estado sai depois da tarefa (Post), com o video.teste false. A volta nao liga de novo.
+void DesktopApp::SetWindowOutOfSight(bool outOfSight) {
+    Post([this, outOfSight] {
+        if (!outOfSight || !cameraTest_) return;
+        Log("video: o teste da camera parou: janela fora da vista");
+        CameraTest(false);
+    });
+}
+
 // Uma vista que nao e da pagina e ignorada (a "principal" tem remoto e local; o "aviso", o porteiro).
 void DesktopApp::VideoViews(const Command& command) {
     const bool notice = command.page == "aviso";

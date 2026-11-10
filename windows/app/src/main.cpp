@@ -773,11 +773,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     callbacks.inFront = [&app](bool inFront) { app.SetWindowInFront(inFront); };
     callbacks.openChat = [&app](int64_t conversa) { app.OpenChat(conversa); };
     // (0.3.0) A rota do video: a ligacao de cima, a recebida tocando (a que o aviso mostra) e a janela fora da vista.
-    callbacks.videoRoute = [&routeState, &videoSink](int topCallId, int ringingCallId, bool minimized) {
+    // Fora da vista (minimizada ou na bandeja), o teste da camera tambem para: a pagina nao ve isso (o WebView2 segue
+    // visivel para ela), e o DesktopApp so poe na fila.
+    callbacks.videoRoute = [&routeState, &videoSink, &app](int topCallId, int ringingCallId, bool minimized) {
         routeState.topCallId = topCallId;
         routeState.noticeCallId = ringingCallId;
         routeState.minimized = minimized;
         videoSink.SetRouteState(routeState);
+        app.SetWindowOutOfSight(minimized);
     };
     callbacks.quitRequested = [&app] { app.HandleCommand(kQuitCommand); };
     // O logoff ou o desligamento: o mesmo Sair, esperando pouco (o Windows encerra o processo depois de o
