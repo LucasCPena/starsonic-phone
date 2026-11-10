@@ -267,8 +267,9 @@ public:
     // sem o VideoEnabled (com on, sai um OnCallVideo com o refused). Sem o vídeo no motor, false.
     bool SetCamera(int callId, bool on);
 
-    // A tela bloqueada (true): a câmera para de mandar em todas as ligações. false devolve a cada ligação sem pausa o
-    // seu desejo. O active não muda. Sem o vídeo no motor, nada.
+    // A tela bloqueada (true): a câmera para de mandar em todas as ligações, e a do teste da câmera fecha também (o
+    // teste segue ligado, sem quadros). false devolve a cada ligação sem pausa o seu desejo, e ao teste ligado a sua
+    // câmera. O active não muda. Sem o vídeo no motor, nada.
     void SetCameraPaused(bool paused);
 
     // O vídeo da ligação agora, como o último OnCallVideo dela (sem o refused); CallVideo{} para um id desconhecido e

@@ -1080,6 +1080,28 @@ TEST_CASE("the camera test delivers local frames and stops") {
     CHECK(phone.listener.CameraProblems().empty());
 }
 
+TEST_CASE("the locked screen pauses the camera test and the unlock brings it back") {
+    TestSink sink;
+    Phone phone;
+    INFO(sink.Text());
+    INFO(phone.listener.CameraProblemsText());
+    phone.engine->SetFrameSink(&sink);
+
+    REQUIRE(phone.engine->StartCameraTest());
+    REQUIRE(sink.WaitFor(TestSink::kLocal, 5, 3));
+    // A tela bloqueada fecha também a câmera do teste: depois de 500 ms (o que já estava a caminho), nenhum quadro.
+    phone.engine->SetCameraPaused(true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    const Clock::time_point paused = Clock::now();
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    CHECK(sink.Count(TestSink::kLocal, 0, 0, paused) == 0);
+    // O teste segue sendo o desejo da pessoa: o desbloqueio traz os quadros de volta, sem um pedido novo.
+    phone.engine->SetCameraPaused(false);
+    const size_t before = sink.Count(TestSink::kLocal);
+    CHECK(sink.WaitFor(TestSink::kLocal, before + 5, 3));
+    CHECK(phone.listener.CameraProblems().empty());
+}
+
 TEST_CASE("a missing chosen camera falls back to the first") {
     TestSink sink;
     Phone phone;

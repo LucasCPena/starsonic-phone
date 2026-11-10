@@ -299,8 +299,8 @@ private:
     void LoseCamera();
     // Qualquer thread, com ou sem mutex_: o OnCameraProblem, pela fila dos eventos.
     void Problem(CameraProblem problem);
-    // Com videoMutex_ presa (sem mutex_): a prévia roda com o teste da câmera ligado ou com uma ligação mandando a
-    // imagem; device é a câmera para abrir. PJ_SUCCESS, ou o código da prévia que não abriu.
+    // Com videoMutex_ presa (sem mutex_): a prévia roda com o teste da câmera ligado fora da tela bloqueada, ou com uma
+    // ligação mandando a imagem; device é a câmera para abrir. PJ_SUCCESS, ou o código da prévia que não abriu.
     pj_status_t SyncPreview(pjmedia_vid_dev_index device);
     // Com videoMutex_ presa: fecha a prévia, se está aberta.
     void StopPreview();

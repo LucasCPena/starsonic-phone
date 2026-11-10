@@ -566,8 +566,11 @@ pj_status_t CallTable::SyncPreview(pjmedia_vid_dev_index device) {
     QualityValues quality = ValuesOf(VideoQuality::Medium);
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        wanted = cameraTest_ || std::any_of(std::begin(slots_), std::end(slots_),
-                                            [](const Slot& slot) { return slot.callId != 0 && slot.sending; });
+        // A tela bloqueada (cameraPaused_) fecha também a câmera do teste, como a das ligações. O cameraTest_ segue
+        // sendo o desejo da pessoa (o teste continua ligado): o desbloqueio abre a câmera de novo, sem um pedido novo.
+        wanted = (cameraTest_ && !cameraPaused_) ||
+                 std::any_of(std::begin(slots_), std::end(slots_),
+                             [](const Slot& slot) { return slot.callId != 0 && slot.sending; });
         running = previewRunning_;
         lost = cameraLost_;
         renderer = renderer_;
