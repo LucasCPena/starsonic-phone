@@ -26,6 +26,7 @@ const UINT_PTR kQuitTimer = 2;            // o Sair nao terminou a tempo: fecha 
 const UINT_PTR kRestartTimer = 3;         // o navegador do WebView2 saiu: abre de novo
 const UINT_PTR kUnresponsiveTimer = 4;    // a pagina nao responde: recarrega
 const UINT_PTR kDeviceTimer = 5;          // um dispositivo de som mudou: rele depois de 1 s sem outro aviso
+const UINT kModeMessage = WM_APP + 3;     // (0.3.0) a janela voltou da minimizada: encaixa no modo de agora
 const UINT_PTR kSizeTimer = 6;            // a pessoa parou de mudar o tamanho: grava o tamanho
 const UINT kMoveDelayMs = 500;
 const UINT kQuitTimeoutMs = 10000;
@@ -239,7 +240,7 @@ bool MainWindow::Create(HINSTANCE instance, const Options& options, Callbacks ca
     webOptions_.devTools = options.devTools;
     webOptions_.startPage = Versioned(kMainPage, options.version);
     CreateWebView();
-    RegisterAudioNotifications();
+    RegisterDeviceNotifications();
     return true;
 }
 
@@ -259,7 +260,7 @@ void MainWindow::RestartWebView() {
     CreateWebView();
 }
 
-void MainWindow::RegisterAudioNotifications() {
+void MainWindow::RegisterDeviceNotifications() {
     DEV_BROADCAST_DEVICEINTERFACE_W filter = {};
     filter.dbcc_size = sizeof(filter);
     filter.dbcc_devicetype = DBT_DEVTYP_DEVICEINTERFACE;
@@ -469,10 +470,17 @@ bool MainWindow::ApplyModeBox(HMONITOR monitor, UINT dpi) {
 void MainWindow::SetVideoMode(VideoMode mode) {
     if (!window_ || mode == mode_) return;
     const VideoMode previous = mode_;
+    // O SetWindowPos numa janela maximizada ou minimizada nao muda o lugar dela ao voltar (o Windows guarda o retangulo
+    // de restaurar a parte): a janela voltaria com o tamanho do modo errado, e o WM_SIZE da volta o gravaria como o
+    // tamanho da pessoa. Por isso, ao ir para o Grande ou a tela cheia, restaura antes (ela e a pagina do video que
+    // pediu, a pessoa esta olhando). A janela ja maximizada nao volta maximizada (ela nem tem o botao de maximizar; so
+    // o encaixe do Windows a maximiza).
+    if (mode != VideoMode::Normal && (IsIconic(window_) || IsZoomed(window_))) ShowWindow(window_, SW_RESTORE);
     if (previous == VideoMode::Normal) {
-        // A caixa do Normal e guardada uma vez, ao sair dele (minimizada, a caixa nao vale: volta antes).
-        if (IsIconic(window_)) ShowWindow(window_, SW_RESTORE);
-        normalBox_ = ClientBox();
+        // O tamanho ou o lugar que a pessoa acabou de escolher e ainda esperava os 500 ms: grava agora (depois do
+        // restaurar acima, que tambem pode te-los mudado), antes de o modo mudar e a janela nao gravar mais.
+        FlushWindowSaves();
+        normalBox_ = ClientBox();   // a caixa do Normal e guardada uma vez, ao sair dele
     }
     if (previous == VideoMode::Fullscreen) {
         SetWindowLongPtrW(window_, GWL_STYLE, normalStyle_);   // a borda de volta (o SetWindowPos abaixo aplica)
@@ -482,18 +490,49 @@ void MainWindow::SetVideoMode(VideoMode mode) {
         SetWindowLongPtrW(window_, GWL_STYLE, normalStyle_ & ~static_cast<LONG_PTR>(WS_CAPTION | WS_THICKFRAME));
     }
     mode_ = mode;
+    modePending_ = false;
+    // De volta ao Normal com a janela minimizada (o ultimo videoWindow("normal") depois do fim da ligacao): restaurar
+    // para encaixar a mostraria na tela contra a vontade da pessoa, e o SetWindowPos nao muda o retangulo de restaurar.
+    // O encaixe espera a janela voltar (WM_WINDOWPOSCHANGED manda o kModeMessage), e o WM_SIZE dessa volta nao conta
+    // como escolha (modePending_).
+    if (mode == VideoMode::Normal && IsIconic(window_)) {
+        modePending_ = true;
+    } else {
+        ApplyCurrentMode();
+    }
+    Log(std::string("janela do video: ") +
+        (mode == VideoMode::Normal ? "normal" : mode == VideoMode::Big ? "grande" : "tela cheia"));
+}
+
+// Poe a janela na caixa do modo de agora, no monitor de agora.
+void MainWindow::ApplyCurrentMode() {
     const HMONITOR monitor = MonitorFromWindow(window_, MONITOR_DEFAULTTONEAREST);
     UINT dpi = GetDpiForWindow(window_);
     if (dpi == 0) dpi = MonitorDpi(monitor);
     if (!ApplyModeBox(monitor, dpi)) {
-        // De volta ao Normal: o tamanho escolhido (desired_) no lugar de antes, no monitor de agora.
+        // O Normal: o tamanho escolhido (desired_) no lugar de antes, no monitor de agora.
         std::optional<WindowPosition> position;
         if (normalBox_) position = WindowPosition{normalBox_->x, normalBox_->y};
         normalBox_.reset();
         SetClientBox(FitWindow(WorkArea(monitor), dpi, position, desired_), dpi);
     }
-    Log(std::string("janela do video: ") +
-        (mode == VideoMode::Normal ? "normal" : mode == VideoMode::Big ? "grande" : "tela cheia"));
+}
+
+// Grava ja o tamanho e o lugar que esperam o timer de 500 ms.
+void MainWindow::FlushWindowSaves() {
+    if (sizeSavePending_) {
+        sizeSavePending_ = false;
+        KillTimer(window_, kSizeTimer);
+        if (callbacks_.resized) callbacks_.resized(desired_.width, desired_.height);
+    }
+    if (moveSavePending_) {
+        moveSavePending_ = false;
+        KillTimer(window_, kMoveTimer);
+        if (!IsIconic(window_) && callbacks_.moved) {
+            const FitBox box = ClientBox();
+            callbacks_.moved(box.x, box.y);
+        }
+    }
 }
 
 void MainWindow::Refit() {
@@ -748,12 +787,13 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
                 GetClientRect(window_, &client);
                 webview_->Resize(client);
             }
-            if (wParam == SIZE_RESTORED && placed_ && !fitting_ && mode_ == VideoMode::Normal) {
+            if (wParam == SIZE_RESTORED && placed_ && !fitting_ && mode_ == VideoMode::Normal && !modePending_) {
                 // A pessoa (ou o Windows, num encaixe na borda da tela) escolheu um tamanho: e o novo ponto de partida,
                 // e vai para o config.json depois de 500 ms sem outro.
                 const UINT dpi = GetDpiForWindow(window_);
                 desired_ = WindowSize{ScaleFromDpi(LOWORD(lParam), dpi), ScaleFromDpi(HIWORD(lParam), dpi)};
                 SetTimer(window_, kSizeTimer, kMoveDelayMs, nullptr);
+                sizeSavePending_ = true;
             }
             RefreshNotice();
             return 0;
@@ -761,6 +801,9 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
             // (0.3.0) Mostrar, esconder (a bandeja), minimizar e restaurar passam todos por aqui: a rota do video
             // segue. O DefWindowProc continua mandando o WM_SIZE e o WM_MOVE.
             RefreshVideoRoute();
+            // O encaixe do Normal que esperava a janela voltar da bandeja ou da minimizada: fora deste WM_ (o
+            // SetWindowPos aqui dentro se misturaria com o WM_SIZE que o DefWindowProc ainda manda).
+            if (modePending_ && !IsIconic(window_)) PostMessageW(window_, kModeMessage, 0, 0);
             break;
         case WM_QUERYENDSESSION:
             return TRUE;   // o Windows pode encerrar: o Sair roda no WM_ENDSESSION
@@ -771,7 +814,10 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
             }
             return 0;
         case WM_MOVE:
-            if (!IsIconic(window_) && mode_ == VideoMode::Normal) SetTimer(window_, kMoveTimer, kMoveDelayMs, nullptr);
+            if (!IsIconic(window_) && mode_ == VideoMode::Normal && !modePending_) {
+                SetTimer(window_, kMoveTimer, kMoveDelayMs, nullptr);
+                moveSavePending_ = true;
+            }
             return 0;
         case WM_DPICHANGED: {
             // A escala nova (ou outro monitor): o mesmo tamanho logico na escala dela, cortado na area de trabalho do
@@ -804,6 +850,7 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
         case WM_TIMER:
             if (wParam == kMoveTimer) {
                 KillTimer(window_, kMoveTimer);
+                moveSavePending_ = false;
                 // O canto de cima a esquerda da area cliente (o da interface; as bordas invisiveis ficam fora).
                 // (0.3.0) Fora do Normal (o grande, a tela cheia) o lugar nao e o da pessoa: nao grava.
                 if (!IsIconic(window_) && mode_ == VideoMode::Normal && callbacks_.moved) {
@@ -814,6 +861,7 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
             }
             if (wParam == kSizeTimer) {
                 KillTimer(window_, kSizeTimer);
+                sizeSavePending_ = false;
                 if (mode_ == VideoMode::Normal && callbacks_.resized) callbacks_.resized(desired_.width, desired_.height);
                 return 0;
             }
@@ -891,6 +939,13 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
         default:
             if (message == kOutboxMessage) {
                 DrainOutbox();
+                return 0;
+            }
+            if (message == kModeMessage) {
+                if (modePending_ && !IsIconic(window_)) {
+                    modePending_ = false;
+                    ApplyCurrentMode();
+                }
                 return 0;
             }
             if (message == kActionsMessage) {

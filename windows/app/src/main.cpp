@@ -522,7 +522,6 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     hooks.openUrl = [&window](const std::string& url) { window.RunOnWindow([url] { OpenUrl(url); }); };
     hooks.minimize = [&window] { window.RunOnWindow([&window] { window.Minimize(); }); };
     hooks.closeToTray = [&window] { window.RunOnWindow([&window] { window.CloseToTray(); }); };
-    // O resize das zonas da interface: so poe na fila da janela (a thread de comandos nunca espera a janela).
     // (0.3.0) O modo da janela do video ("normal", "grande", "telaCheia"): da thread de comandos para a da janela.
     hooks.videoWindow = [&window](const std::string& mode) {
         const VideoMode wanted = mode == "grande"      ? VideoMode::Big
@@ -530,6 +529,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
                                                        : VideoMode::Normal;
         window.RunOnWindow([&window, wanted] { window.SetVideoMode(wanted); });
     };
+    // O resize das zonas da interface: so poe na fila da janela (a thread de comandos nunca espera a janela).
     hooks.resize = [&window](const std::string& edge) { window.RunOnWindow([&window, edge] { window.StartResize(edge); }); };
 #if STARSONIC_TEST_HOOKS
     // O build de teste: a thread de comandos trava no Sair (a fumaca confere o fechamento com limite).

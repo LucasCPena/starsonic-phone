@@ -176,12 +176,14 @@ private:
     // Cria o WebViewHost da janela principal (na abertura e quando o navegador sai).
     void CreateWebView();
     void RestartWebView();
-    void RegisterAudioNotifications();
+    void RegisterDeviceNotifications();   // o audio e as cameras
     void RefreshNotice();
     void RefreshVideoRoute();
     // (0.3.0) Poe a janela na caixa do modo (Big ou Fullscreen) no monitor dado, na escala dada. false no Normal (quem
     // chama segue a regra de sempre).
     bool ApplyModeBox(HMONITOR monitor, UINT dpi);
+    void ApplyCurrentMode();     // (0.3.0) a janela na caixa do modo de agora
+    void FlushWindowSaves();     // (0.3.0) grava ja o tamanho e o lugar que esperam os 500 ms
     void UpdateCameraPause();   // o locked_ ou o disconnected_ mudou: callbacks.cameraPaused
     void OnTray(WPARAM wParam, LPARAM lParam);
     LRESULT HitTest(WPARAM wParam, LPARAM lParam) const;
@@ -218,6 +220,9 @@ private:
     VideoMode mode_ = VideoMode::Normal;
     std::optional<FitBox> normalBox_;     // (0.3.0) a caixa do Normal, guardada ao sair dele
     LONG_PTR normalStyle_ = 0;            // (0.3.0) o estilo da janela, guardado ao entrar na tela cheia
+    bool modePending_ = false;            // (0.3.0) o Normal espera a janela sair da minimizada para encaixar
+    bool sizeSavePending_ = false;        // (0.3.0) o kSizeTimer esta armado
+    bool moveSavePending_ = false;        // (0.3.0) o kMoveTimer esta armado
     bool cameraPaused_ = false;           // (0.3.0) o ultimo valor que foi ao callbacks.cameraPaused
     // (0.3.0) O video: as memorias nos dois WebView de agora, o VideoSink que escreve nelas e a ultima rota que foi ao
     // callbacks.videoRoute.

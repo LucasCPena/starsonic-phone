@@ -58,8 +58,9 @@ FitBox BigVideoBox(const FitArea& work, unsigned dpi) {
     box.height = ScaleToDpi(kBigVideoHeight, dpi);
     if (workWidth > 0) box.width = std::min(box.width, workWidth);
     if (workHeight > 0) box.height = std::min(box.height, workHeight);
-    box.x = work.left + (workWidth - box.width) / 2;
-    box.y = work.top + (workHeight - box.height) / 2;
+    // Centrada; numa area vazia (ou menor que a caixa, sem corte) nunca comeca antes da borda da area.
+    box.x = std::max(work.left, work.left + (workWidth - box.width) / 2);
+    box.y = std::max(work.top, work.top + (workHeight - box.height) / 2);
     return box;
 }
 

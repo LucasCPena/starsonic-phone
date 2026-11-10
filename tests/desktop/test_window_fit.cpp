@@ -169,3 +169,20 @@ TEST_CASE("the big box is centered on a second monitor") {
     CHECK(box.width == 1280);
     CHECK(box.height == 800);
 }
+
+TEST_CASE("the big box at 125% is 1600x1000, rounded and centered") {
+    const FitBox box = starsonic::BigVideoBox({0, 0, 1920, 1040}, 120);
+    CHECK(box.x == 160);
+    CHECK(box.y == 20);
+    CHECK(box.width == 1600);
+    CHECK(box.height == 1000);
+}
+
+TEST_CASE("the big box of an empty work area never starts before the area") {
+    const FitBox box = starsonic::BigVideoBox({0, 0, 0, 0}, 96);
+    CHECK(box.x >= 0);
+    CHECK(box.y >= 0);
+    const FitBox shifted = starsonic::BigVideoBox({100, 50, 100, 50}, 96);
+    CHECK(shifted.x >= 100);
+    CHECK(shifted.y >= 50);
+}
