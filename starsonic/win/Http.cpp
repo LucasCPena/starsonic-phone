@@ -47,9 +47,19 @@ HINTERNET OpenSession(const std::wstring& agent) {
     return session;
 }
 
+// O unico endereco que o HttpGetPinned aceita (o servidor de binarios da Cisco, que nao tem HTTPS).
+const wchar_t kPinnedPrefix[] = L"http://ciscobinary.openh264.org/";
+
 // bearer: a chave do HttpsGetBearer (o cabecalho Authorization e nenhum redirecionamento); nullptr no HttpsGet.
-HttpResponse Get(const std::wstring& url, size_t maxBytes, const std::wstring& userAgent, const std::string* bearer) {
-    if (url.compare(0, 8, L"https://") != 0) {
+// pinnedTimeoutMs > 0: o HttpGetPinned (HTTP so para o kPinnedPrefix, nenhum redirecionamento, esses tempos).
+HttpResponse Get(const std::wstring& url, size_t maxBytes, const std::wstring& userAgent, const std::string* bearer,
+                 int pinnedTimeoutMs = 0) {
+    const bool pinned = pinnedTimeoutMs > 0;
+    if (pinned) {
+        if (url.compare(0, sizeof(kPinnedPrefix) / sizeof(wchar_t) - 1, kPinnedPrefix) != 0) {
+            return Failure(ERROR_INVALID_PARAMETER);
+        }
+    } else if (url.compare(0, 8, L"https://") != 0) {
         return Failure(ERROR_INVALID_PARAMETER);
     }
     std::wstring headers;
@@ -66,7 +76,7 @@ HttpResponse Get(const std::wstring& url, size_t maxBytes, const std::wstring& u
     parts.dwHostNameLength = static_cast<DWORD>(-1);
     parts.dwUrlPathLength = static_cast<DWORD>(-1);
     parts.dwExtraInfoLength = static_cast<DWORD>(-1);
-    if (!WinHttpCrackUrl(url.c_str(), 0, 0, &parts) || parts.nScheme != INTERNET_SCHEME_HTTPS ||
+    if (!WinHttpCrackUrl(url.c_str(), 0, 0, &parts) || parts.nScheme != (pinned ? INTERNET_SCHEME_HTTP : INTERNET_SCHEME_HTTPS) ||
         !parts.lpszHostName || parts.dwHostNameLength == 0) {
         return Failure(ERROR_INVALID_PARAMETER);
     }
@@ -78,17 +88,21 @@ HttpResponse Get(const std::wstring& url, size_t maxBytes, const std::wstring& u
 
     Handle session(OpenSession(userAgent));
     if (!session) return Failure(GetLastError());
-    WinHttpSetTimeouts(session.get(), kConnectTimeoutMs, kConnectTimeoutMs, kReadTimeoutMs, kReadTimeoutMs);
+    if (pinned) {
+        WinHttpSetTimeouts(session.get(), pinnedTimeoutMs, pinnedTimeoutMs, pinnedTimeoutMs, pinnedTimeoutMs);
+    } else {
+        WinHttpSetTimeouts(session.get(), kConnectTimeoutMs, kConnectTimeoutMs, kReadTimeoutMs, kReadTimeoutMs);
+    }
 
     Handle connection(WinHttpConnect(session.get(), host.c_str(), parts.nPort, 0));
     if (!connection) return Failure(GetLastError());
     Handle request(WinHttpOpenRequest(connection.get(), L"GET", path.c_str(), NULL, WINHTTP_NO_REFERER,
-                                      WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE));
+                                      WINHTTP_DEFAULT_ACCEPT_TYPES, pinned ? 0 : WINHTTP_FLAG_SECURE));
     if (!request) return Failure(GetLastError());
     // WINHTTP_OPTION_SECURITY_FLAGS fica como esta: certificado invalido = falha. Redirecionamentos
     // seguem a politica padrao do WinHTTP, que nunca desce de HTTPS para HTTP; com a chave, nenhum (o
-    // WinHTTP poderia levar o Authorization ao endereco novo).
-    if (bearer) {
+    // WinHTTP poderia levar o Authorization ao endereco novo); no HTTP fixado, tambem nenhum (o 3xx volta como resposta).
+    if (bearer || pinned) {
         DWORD policy = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
         if (!WinHttpSetOption(request.get(), WINHTTP_OPTION_REDIRECT_POLICY, &policy, sizeof(policy))) {
             return Failure(GetLastError());
@@ -143,5 +157,13 @@ HttpResponse HttpsGetBearer(const std::wstring& url, size_t maxBytes, const std:
         return Get(url, maxBytes, userAgent, &bearer);
     } catch (const std::bad_alloc&) {
         return Failure(ERROR_NOT_ENOUGH_MEMORY);   // o arquivo do chat (ate 25 MB) num processo de 32 bits
+    }
+}
+
+HttpResponse HttpGetPinned(const std::wstring& url, size_t maxBytes, const std::wstring& userAgent, int timeoutMs) {
+    try {
+        return Get(url, maxBytes, userAgent, nullptr, timeoutMs > 0 ? timeoutMs : 1);
+    } catch (const std::bad_alloc&) {
+        return Failure(ERROR_NOT_ENOUGH_MEMORY);
     }
 }

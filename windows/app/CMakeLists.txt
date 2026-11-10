@@ -151,11 +151,12 @@ target_link_directories(StarsonicPhone PRIVATE
 # O video da PJSIP (build/config_site.h): a libvpx do vcpkg (vpx, que o vpx.c da PJSIP tambem pede por #pragma comment)
 # e as bibliotecas da DirectShow do Windows SDK que o dshow_dev.c da PJSIP pede por #pragma comment (strmiids, quartz e
 # rpcrt4), alem do ole32 e do oleaut32.
+# O bz2 (porta bzip2 do vcpkg) descompacta o modulo H.264 da Cisco, que vem em .bz2 (src/Bunzip.cpp).
 target_link_libraries(StarsonicPhone PRIVATE
   miniz
   pjsua2-lib-i386-Win32-vc14-Release-Static
   libpjproject-i386-Win32-vc14-Release-Static
-  opus bcg729 libssl libcrypto sqlite3 vpx
+  opus bcg729 libssl libcrypto sqlite3 vpx bz2
   WebView2LoaderStatic
   ws2_32 iphlpapi winmm crypt32 advapi32 user32 gdi32 shell32 shlwapi ole32 oleaut32 uuid version
   dwmapi shcore comctl32 winhttp dnsapi wtsapi32 strmiids quartz rpcrt4)

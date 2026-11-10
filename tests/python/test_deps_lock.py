@@ -96,6 +96,29 @@ class VideoDepsTest(unittest.TestCase):
                  for name in ("MAJOR", "MINOR", "REVISION")]
         self.assertEqual(".".join(parts), self.lock["openh264"]["version"])
 
+    def test_openh264_pin_header_matches_deps_lock(self):
+        # O módulo da Cisco (spec 6.3) é baixado à parte e só usado com as duas impressões (SHA-256) do .bz2 e do .dll
+        # fixadas no deps.lock e, iguais, no OpenH264Pin.h (o app confere a cada abertura).
+        pin = self.lock["openh264"]
+        self.assertEqual(pin["url"], "http://ciscobinary.openh264.org/openh264-%s-win32.dll.bz2" % pin["version"])
+        self.assertEqual(pin["file"], "openh264-%s-win32.dll" % pin["version"])
+        text = (ROOT / "starsonic" / "desktop" / "OpenH264Pin.h").read_text(encoding="utf-8")
+        match = re.search(r'kOpenH264Pin\{\s*"([^"]*)",\s*"([^"]*)",\s*"([^"]*)",\s*"([^"]*)",\s*"([^"]*)"\s*\}', text)
+        self.assertIsNotNone(match, "OpenH264Pin.h sem o kOpenH264Pin{...}")
+        self.assertEqual(list(match.groups()),
+                         [pin["version"], pin["url"], pin["file"], pin["bz2Sha256"], pin["dllSha256"]])
+
+    def test_openh264_pins_are_empty_or_sha256(self):
+        # Vazias só no primeiro push (o Test-OpenH264.ps1 avisa com os valores do binário verificado pela Cisco).
+        for name in ("bz2Sha256", "dllSha256"):
+            value = self.lock["openh264"][name]
+            self.assertTrue(value == "" or HEX64.match(value), name)
+
+    def test_vcpkg_has_bzip2_for_the_cisco_module(self):
+        names = [port.split("[", 1)[0] for port in self.lock["vcpkg"]["ports"]]
+        self.assertIn("bzip2", names)
+        self.assertRegex(self.lock["vcpkg"]["versions"]["bzip2"], r"\A\d+\.\d+\.\d+(#\d+)?\Z")
+
 
 class AndroidGradleCatalogTest(unittest.TestCase):
     """android/gradle/libs.versions.toml usa as versões do deps.lock (o Gradle não lê o deps.lock)."""

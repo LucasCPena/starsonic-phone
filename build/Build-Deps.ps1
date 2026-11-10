@@ -1,7 +1,7 @@
 # Monta as dependencias nativas do Starsonic Phone em <WorkDir>:
 #   <WorkDir>\pjproject  pjproject no commit fixo, com config_site.h, a libpjproject e o pjsua2 (o motor do app novo),
 #                        com o video (a DirectShow, a libvpx, o OpenH264 pelos cabecalhos da API e a libyuv)
-#   <WorkDir>\vcpkg      vcpkg no commit fixo, com openssl, opus, bcg729, sqlite3, sqlitecpp e libvpx
+#   <WorkDir>\vcpkg      vcpkg no commit fixo, com openssl, opus, bcg729, sqlite3, sqlitecpp, libvpx e bzip2
 #   <WorkDir>\webview2   o SDK do WebView2 (NuGet Microsoft.Web.WebView2, SHA-256 conferido): include\ e
 #                        x86\WebView2LoaderStatic.lib
 # Versoes em build\deps.lock. Uso: .\build\Build-Deps.ps1 -WorkDir work

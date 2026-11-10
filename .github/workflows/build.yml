@@ -59,7 +59,8 @@ jobs:
       - name: Testes C++ do app de PC (doctest)
         run: |
           # A migração da rc.7 lê o call_log.db (SQLite) do MicroSIP.
-          sudo apt-get install -y libsqlite3-dev
+          # E o Bunzip2 do módulo H.264 da Cisco usa a libbz2.
+          sudo apt-get install -y libsqlite3-dev libbz2-dev
           cmake -S tests/desktop -B build-desktop-tests
           cmake --build build-desktop-tests -j 4
           ctest --test-dir build-desktop-tests --output-on-failure
@@ -385,6 +386,21 @@ jobs:
       - name: Teste do instalador
         if: ${{ !cancelled() && steps.installer.outcome == 'success' }}
         run: .\tests\smoke\Test-Installer.ps1 -Setup "dist\StarsonicPhone-$($env:STARSONIC_VERSION)-setup.exe" -AppDir out-novo -Version $env:STARSONIC_VERSION -Capturas capturas-windows
+
+      # O módulo H.264 da Cisco (OpenH264): baixa o binário fixado, confere a assinatura Authenticode da Cisco e as duas
+      # impressões do deps.lock, guarda o texto da licença (artefato openh264-licenca) e confere que o app empacotado e o
+      # instalado pela fumaça não levam nenhum openh264*.dll. Um site da Cisco fora do ar só avisa.
+      - name: Módulo H.264 da Cisco (assinatura, impressões e app sem o binário)
+        if: ${{ !cancelled() }}
+        run: .\build\Test-OpenH264.ps1 -AppDir out-novo,out-novo-teste,"$env:LOCALAPPDATA\Starsonic Phone" -LicenseDir openh264-licenca
+
+      - name: Publicar a licença do binário da Cisco
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: openh264-licenca
+          path: openh264-licenca/
+          if-no-files-found: warn
 
       # O pacote "código-fonte completo" (Make-SourceBundle.ps1) também nos builds sem versão: o zip tem o
       # repositório, o pjproject, o código do vcpkg e os pacotes do npm que vão no ui\app.js (GPL v3, spec 10). Nas

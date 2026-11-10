@@ -25,6 +25,9 @@ if(MSVC)
 endif()
 find_package(SQLite3 REQUIRED)
 find_package(Threads REQUIRED)
+# O Bunzip2 (windows/app/src/Bunzip.cpp, o modulo H.264 da Cisco vem em .bz2): a libbz2 do sistema no Linux
+# (libbz2-dev); no Windows, a do vcpkg (porta bzip2), achada pelo mesmo CMAKE_PREFIX_PATH.
+find_package(BZip2 REQUIRED)
 
 # O miniz 3.0.2 (MIT, starsonic/third_party/miniz, como veio): o zip do .xlsx das planilhas de contatos (Planilha.cpp
 # e PlanilhaEscrita.cpp) e o dos testes. Uma biblioteca so com o miniz.c, sem as opcoes de aviso do projeto. O zip e
@@ -44,7 +47,7 @@ target_include_directories(desktop_tests PRIVATE
   ${STARSONIC_DIR}/../branding
   ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
-target_link_libraries(desktop_tests PRIVATE miniz SQLite::SQLite3 Threads::Threads)
+target_link_libraries(desktop_tests PRIVATE miniz SQLite::SQLite3 BZip2::BZip2 Threads::Threads)
 
 # O tamanho e a posicao da janela principal do executavel (windows/app/src/WindowFit), a linha de comando dele, com os
 # links tel:/sip:/callto: (windows/app/src/Links), o refazer do WebView2 (BrowserRestarts), (rc.3) a decisao do
@@ -59,6 +62,7 @@ target_sources(desktop_tests PRIVATE ${STARSONIC_DIR}/../windows/app/src/WindowF
   ${STARSONIC_DIR}/../windows/app/src/UpdateChannel.cpp
   ${STARSONIC_DIR}/../windows/app/src/ChatFiles.cpp
   ${STARSONIC_DIR}/../windows/app/src/FrameBuffer.cpp
+  ${STARSONIC_DIR}/../windows/app/src/Bunzip.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../win/test_network_monitor.cpp)
 target_include_directories(desktop_tests PRIVATE ${STARSONIC_DIR}/../windows/app/src)
 

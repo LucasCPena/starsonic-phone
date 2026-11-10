@@ -21,3 +21,10 @@ HttpResponse HttpsGet(const std::wstring& url, size_t maxBytes, const std::wstri
 // chave nunca vai a outro endereco, e um 3xx volta como a resposta.
 HttpResponse HttpsGetBearer(const std::wstring& url, size_t maxBytes, const std::wstring& userAgent,
                             const std::string& bearer);
+
+// O GET sem TLS para um unico endereco: o binario do OpenH264 da Cisco (o servidor de binarios dela nao tem HTTPS; o
+// conteudo so vale depois das duas impressoes SHA-256 fixadas, H264Module). Todo endereco que nao comeca com
+// "http://ciscobinary.openh264.org/" falha com ERROR_INVALID_PARAMETER. Nunca segue redirecionamento (um 3xx volta como
+// a resposta), usa o proxy do Windows como o HttpsGet e desiste em timeoutMs (os tempos de conexao, envio e leitura do
+// WinHTTP). Resposta maior que maxBytes falha com ERROR_FILE_TOO_LARGE.
+HttpResponse HttpGetPinned(const std::wstring& url, size_t maxBytes, const std::wstring& userAgent, int timeoutMs);
