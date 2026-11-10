@@ -25,7 +25,8 @@
 // leva a própria memória, sem o structuredClone das mensagens: o quadro que um teste grava depois aparece na página. O
 // `__fake.quadro(vista, largura, altura, y, u, v)` grava um quadro como o escritor do executável (false enquanto a vista
 // não tem memória), o `__fake.esvaziar(vista)` a esvazia, o `__fake.memoriaCrua(dados, bytes)` entrega uma memória
-// qualquer e o `__fake.liberadas()` conta as que a página soltou (como no WebView2, uma memória solta fica inacessível).
+// qualquer, o `__fake.liberadas()` conta as que a página soltou (como no WebView2, uma memória solta fica inacessível) e
+// o `__fake.eventoCru(evento)` põe um evento qualquer no ouvinte das memórias.
 import { AGENDA_DE_EXEMPLO, createScenario, entrarVazio, estadoDoIphone, PLANILHA_DA_EMPRESA, SERVIDORES_DO_PERFIL, type FakeView } from './fake-scenarios';
 import { trimAscii } from './format';
 import { escreverQuadro, esvaziar as esvaziarMemoria, TAMANHO_DA_MEMORIA, type Plano } from './video/memoria';
@@ -84,6 +85,8 @@ export interface FakeHooks {
   memoriaCrua(dados: unknown, bytes: number): void;
   /** (0.3.0) Quantas memórias a página soltou (o `releaseBuffer`). */
   liberadas(): number;
+  /** (0.3.0) Um evento qualquer no ouvinte das memórias, como o de um hospedeiro que manda todo evento a todo ouvinte. */
+  eventoCru(evento: unknown): void;
 }
 
 declare global {
@@ -210,6 +213,11 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
       entregarMemoria(new ArrayBuffer(bytes), dados);
     },
     liberadas: () => liberadas,
+    eventoCru(evento) {
+      setTimeout(() => {
+        for (const l of [...ouvintesDeMemoria]) l(evento as SharedBufferEventLike);
+      }, 0);
+    },
   };
 
   // (iPhone) Nenhum toque: quem toca é a tela de chamada do iPhone.

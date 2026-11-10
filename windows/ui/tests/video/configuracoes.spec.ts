@@ -2,11 +2,12 @@
 // falsa: o campo Câmera, o Testar a câmera com a sua imagem desenhada pela vista de vídeo (o WebGL, ou o canvas 2D), o
 // encaixe quando o tamanho do quadro muda, o teste que para quando a tela sai, a chave do H.264 da Cisco, as memórias
 // que não conferem e o iPhone sem vídeo. E o contrato da página com as memórias, pela prévia: a imagem em pé e
-// espelhada, a vista que volta só com um quadro mais novo, o `seq` 0 vazio e a memória nova que solta a velha.
+// espelhada, a vista que volta só com um quadro mais novo, o `seq` 0 vazio, a memória nova que solta a velha e o evento
+// sem memória (o de um hospedeiro que manda todo evento a todo ouvinte) que não quebra nada.
 import { expect, test, type Page } from '@playwright/test';
 import { createScenario } from '../../src/fake-scenarios';
 import { TAMANHO_DA_MEMORIA } from '../../src/video/memoria';
-import { abrir, esperarComando, estado, mudarEstado, semViolacoesSerias, vezes } from '../helpers';
+import { abrir, esperarComando, estado, mudarEstado, segurarCpp, semViolacoesSerias, soltarCpp, vezes } from '../helpers';
 import { BRANCO, FUNDO, VERMELHO, corNoMeio, corNoPonto, perto, quadro, semWebGL } from './video';
 
 const RGB_DO_VERMELHO = [255, 1, 0];
@@ -45,6 +46,11 @@ async function memoriaCrua(page: Page, dados: unknown, bytes: number): Promise<v
 }
 
 const liberadas = (page: Page) => page.evaluate(() => (window as unknown as { __fake: { liberadas(): number } }).__fake.liberadas());
+
+/** Um evento qualquer no ouvinte das memórias (o `sharedbufferreceived`), como o de um hospedeiro que não separa os eventos. */
+async function eventoCru(page: Page, evento: unknown): Promise<void> {
+  await page.evaluate((e) => (window as unknown as { __fake: { eventoCru(e: unknown): void } }).__fake.eventoCru(e), evento);
+}
 
 /** Espera `n` quadros de tela da página (a leitura das vistas roda a cada um). */
 async function quadrosDeTela(page: Page, n: number): Promise<void> {
@@ -212,6 +218,20 @@ test('leaving Configurações by any way stops the camera test', async ({ page }
   await saiu();
 });
 
+test('leaving right after Testar a câmera, before the test is on, stops it too', async ({ page }) => {
+  await abrir(page, 'configuracoes');
+  // O núcleo lento: o teste liga lá, mas o estado com o `teste` (que só vem depois de a câmera abrir) ainda não chegou.
+  await segurarCpp(page);
+  await testar(page).click();
+  await esperarComando(page, { cmd: 'cameraTest', on: true });
+  await page.keyboard.press('Control+1');
+  await expect(page.getByRole('heading', { name: 'Configurações', exact: true, level: 1 })).toHaveCount(0);
+  await soltarCpp(page);
+  await expect.poll(() => vezes(page, { cmd: 'cameraTest', on: false })).toBe(1);
+  await expect.poll(async () => (await estado(page)).video.teste).toBe(false);
+  expect(await vezes(page, { cmd: 'cameraTest', on: false })).toBe(1);
+});
+
 test("the H.264 switch shows the Cisco notice and follows the person's choice", async ({ page }) => {
   await abrir(page, 'configuracoes');
   const chave = chaveH264(page);
@@ -252,6 +272,20 @@ test('a buffer with wrong data is released and never drawn', async ({ page }) =>
   await quadro(page, 'local', VERMELHO);
   await esperarCor(() => corNoMeio(page, previa(page)), RGB_DO_VERMELHO);
   expect(await liberadas(page)).toBe(2);
+});
+
+test('an event without a buffer on the memory listener is ignored', async ({ page }) => {
+  const erros: string[] = [];
+  page.on('pageerror', (e) => erros.push(e.message));
+  await abrir(page, 'configuracoes');
+  // Um hospedeiro que manda todo evento a todo ouvinte (o do iPhone só promete o `message`): sem o getBuffer, nada.
+  await eventoCru(page, { data: { v: 1, type: 'toast', texto: 'Um aviso.' } });
+  await eventoCru(page, null);
+  await ligarOTeste(page);
+  await quadro(page, 'local', VERMELHO);
+  await esperarCor(() => corNoMeio(page, previa(page)), RGB_DO_VERMELHO);
+  expect(erros).toEqual([]);
+  expect(await liberadas(page)).toBe(0);
 });
 
 test('a new memory of a view releases the old one, which the view never reads again', async ({ page }) => {

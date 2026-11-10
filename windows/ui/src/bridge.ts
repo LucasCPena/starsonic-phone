@@ -119,6 +119,9 @@ export function createBridge(): Bridge {
     },
     subscribeBuffers(listener) {
       const handler = (event: SharedBufferEventLike) => {
+        // Só um evento com a memória: um hospedeiro que manda todo evento a todo ouvinte (o do iPhone só promete o
+        // `message`) não chega a ela.
+        if (typeof event?.getBuffer !== 'function') return;
         const buffer = event.getBuffer();
         const vista = vistaDaMemoria(event.additionalData, buffer);
         if (vista) listener(vista, buffer);

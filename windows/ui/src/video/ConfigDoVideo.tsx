@@ -4,8 +4,8 @@
 // câmera encontrada.") e o "Testar a câmera", que mostra a sua imagem ali mesmo, numa prévia 16:9, até o "Parar o teste".
 // Com o `video.h264.cartao` (o H.264 ligado no cartão Vídeo do administrador), a chave "H.264 da Cisco", com o aviso da
 // Cisco embaixo, também com o vídeo desligado pela pessoa. A câmera nunca liga sozinha: o teste só liga no clique, e
-// para quando a prévia sai sem o "Parar o teste": ao sair das Configurações, por qualquer caminho, ou quando o vídeo
-// desliga.
+// para (também o pedido que ainda não ligou) quando a prévia sai sem o "Parar o teste": ao sair das Configurações, por
+// qualquer caminho, ou quando o vídeo desliga.
 import { useEffect, useRef } from 'preact/hooks';
 import { Select, type Opcao } from '../components/Select';
 import { VistaDeVideo } from '../components/VistaDeVideo';
@@ -33,26 +33,29 @@ function opcoesDaCamera(video: VideoSettings): Opcao[] {
 
 /**
  * O "Testar a câmera" e, com o teste ligado, a prévia com o "Parar o teste" embaixo: o mesmo botão, que fica com o foco
- * do teclado. O teste ligado para quando ele sai (as Configurações saem, ou o vídeo desliga).
+ * do teclado. Quando ele sai (as Configurações saem, ou o vídeo desliga), o teste para: o ligado e também o pedido que
+ * ainda não ligou (o `teste` só vem ligado depois de a câmera abrir). O núcleo atende os comandos na ordem, e parar um
+ * teste desligado não faz nada.
  */
 function TesteDaCamera({ video, send }: Props) {
   const ligado = useRef(video.teste);
   ligado.current = video.teste;
+  // O último pedido da pessoa: true depois do ligar, false depois do parar.
+  const pedido = useRef(false);
   useEffect(
     () => () => {
-      if (ligado.current) send({ cmd: 'cameraTest', on: false });
+      if (ligado.current || pedido.current) send({ cmd: 'cameraTest', on: false });
     },
     [],
   );
+  const alternar = () => {
+    pedido.current = !video.teste;
+    send({ cmd: 'cameraTest', on: !video.teste });
+  };
   return (
     <div class={video.teste ? 'set-row cfg-teste cfg-teste-ligado' : 'set-row cfg-teste'}>
       {video.teste && <VistaDeVideo vista="local" desenhar={video.teste} rotulo={SUA_IMAGEM} espelhar class="cfg-previa" />}
-      <button
-        type="button"
-        class="btn btn-outline mini"
-        disabled={!video.teste && video.cameras.length === 0}
-        onClick={() => send({ cmd: 'cameraTest', on: !video.teste })}
-      >
+      <button type="button" class="btn btn-outline mini" disabled={!video.teste && video.cameras.length === 0} onClick={alternar}>
         {video.teste ? <IconStop size="sm" /> : <IconVideo size="sm" />}
         {video.teste ? PARAR_O_TESTE : TESTAR_A_CAMERA}
       </button>
