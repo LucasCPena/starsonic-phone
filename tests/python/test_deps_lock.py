@@ -108,11 +108,10 @@ class VideoDepsTest(unittest.TestCase):
         self.assertEqual(list(match.groups()),
                          [pin["version"], pin["url"], pin["file"], pin["bz2Sha256"], pin["dllSha256"]])
 
-    def test_openh264_pins_are_empty_or_sha256(self):
-        # Vazias só no primeiro push (o Test-OpenH264.ps1 avisa com os valores do binário verificado pela Cisco).
+    def test_openh264_pins_are_sha256(self):
+        # As impressões (SHA-256) do .bz2 e do .dll da Cisco, conferidas pelo Test-OpenH264.ps1 (assinatura Authenticode).
         for name in ("bz2Sha256", "dllSha256"):
-            value = self.lock["openh264"][name]
-            self.assertTrue(value == "" or HEX64.match(value), name)
+            self.assertRegex(self.lock["openh264"][name], HEX64, name)
 
     def test_vcpkg_has_bzip2_for_the_cisco_module(self):
         names = [port.split("[", 1)[0] for port in self.lock["vcpkg"]["ports"]]
