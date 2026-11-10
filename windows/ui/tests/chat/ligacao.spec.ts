@@ -407,6 +407,46 @@ test('a double click on the strip Desligar hangs up once and never calls the col
   expect(await vezes(page, { cmd: 'dial', numero: '2003', contato: true })).toBe(1);
 });
 
+test('a double click on Chat opens the conversation, and its second click opens no photo and no file', async ({ page }) => {
+  const baixados = async () => (await comandos(page)).filter((c) => c.cmd === 'chatDownload');
+  for (const tipo of ['foto', 'arquivo'] as const) {
+    // A conversa cheia de fotos (ou de arquivos): o que abre embaixo do ponteiro é uma delas.
+    const { pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO, ANA]);
+    const [a, ana] = pessoas;
+    const dupla = await ana.api.criarDupla(a.pessoa.id);
+    for (let i = 0; i < 8; i++) {
+      if (tipo === 'foto') await ana.api.enviarArquivo(dupla, PNG, `foto-${i}.png`, 'image/png');
+      else await ana.api.enviarArquivo(dupla, Buffer.from(`pedido ${i}`), `pedido-${i}.pdf`, 'application/pdf');
+    }
+    await abrirNoChat(page, { chave: a.chave, ...RECEPCAO });
+    await esperarOsEventos(page);
+    await chegaALigacao(page, ligacao('2003', 'Ana Souza'));
+    // O clique duplo do softphone de mesa: o primeiro clique abre a conversa, e o segundo (o `detail` 2), no mesmo
+    // ponto, cai numa foto ou num arquivo dela. Aqui ele vem depois de a conversa abrir: só o segundo par, com o
+    // clickCount 2.
+    const c = await caixa(botao(page, 'Chat'));
+    const ponto = { x: c.x + c.width / 2, y: c.y + c.height / 2 };
+    await page.mouse.click(ponto.x, ponto.y);
+    await expect(conversaComAAna(page)).toBeVisible();
+    const embaixo = await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest('button')?.getAttribute('aria-label') ?? '', ponto);
+    expect(embaixo, `uma ${tipo} embaixo do Chat`).toMatch(tipo === 'foto' ? /^Abrir a foto foto-\d\.png$/ : /^Abrir pedido-\d\.pdf, /);
+    await page.mouse.down({ clickCount: 2 });
+    await page.mouse.up({ clickCount: 2 });
+    await umInstante(page);
+    await expect(page.getByRole('dialog'), tipo).toHaveCount(0);
+    expect(await baixados(), tipo).toEqual([]);
+    // Fora disso, um clique duplo abre uma vez só: a foto, ou o arquivo (um chatDownload).
+    await page.getByRole('button', { name: embaixo, exact: true }).dblclick();
+    if (tipo === 'foto') {
+      await expect(page.getByRole('dialog')).toBeVisible();
+    } else {
+      await expect.poll(async () => (await baixados()).length).toBe(1);
+      await umInstante(page);
+      expect(await baixados()).toHaveLength(1);
+    }
+  }
+});
+
 test('a second call brings back the call screen with its card, and the conversation comes back after it', async ({ page }) => {
   await prontoNoChat(page);
   await chegaALigacao(page, ligacao('2003', 'Ana Souza', {}, 81));

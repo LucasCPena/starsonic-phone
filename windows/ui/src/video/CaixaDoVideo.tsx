@@ -37,7 +37,8 @@ export function CaixaDoVideo({ state, card, now, send }: Props): VNode {
       <div class="video-caixa">
         <VistaDeVideo key={card.id} vista="remoto" desenhar={video.imagem} rotulo={rotuloDoVideo(nome)} class="video-remoto" />
         {video.camera && <VistaDeVideo vista="local" desenhar rotulo={SUA_IMAGEM} espelhar class="video-sua" />}
-        {/* O grande toma a tela: o segundo clique de um clique duplo não cai no que fica embaixo do ponteiro. */}
+        {/* O grande toma a tela: o segundo clique de um clique duplo não vale aqui nem no vídeo do grande, que fica embaixo
+            do ponteiro (o Grande só alterna a tela cheia num clique duplo que começou no vídeo). */}
         <button
           type="button"
           class="video-abrir"

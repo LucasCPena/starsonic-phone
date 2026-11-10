@@ -97,6 +97,26 @@ test('Abrir grande opens the big window', async ({ page }) => {
   await expect(remoto(page)).toBeVisible();
 });
 
+test('a double click on Abrir grande opens the big window and stays there', async ({ page }) => {
+  await abrir(page, 'video');
+  // O clique duplo de quem vem de um softphone de mesa: o primeiro clique abre o grande, e o segundo (o `detail` 2), no
+  // mesmo ponto, cai no vídeo dele. Aqui ele vem depois de o grande aparecer (o executável pode mudar a janela antes do
+  // segundo clique): só o segundo par do clique duplo, com o clickCount 2.
+  const a = await caixa(botao(page, 'Abrir grande'));
+  const ponto = { x: a.x + a.width / 2, y: a.y + a.height / 2 };
+  await page.mouse.click(ponto.x, ponto.y);
+  await esperarComando(page, { cmd: 'videoWindow', modo: 'grande' });
+  await expect(botao(page, 'Diminuir')).toBeVisible();
+  const noVideo = await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest('.grande-video') != null, ponto);
+  expect(noVideo, `o vídeo do grande embaixo do Abrir grande (${JSON.stringify(ponto)})`).toBe(true);
+  await page.mouse.down({ clickCount: 2 });
+  await page.mouse.up({ clickCount: 2 });
+  await depoisDoQueChegou(page);
+  expect(await vezes(page, { cmd: 'videoWindow', modo: 'grande' })).toBe(1);
+  expect(await vezes(page, { cmd: 'videoWindow', modo: 'telaCheia' })).toBe(0);
+  await expect(botao(page, 'Tela cheia')).toBeVisible();
+});
+
 test('the call screen comes back when the call ends', async ({ page }) => {
   await abrir(page, 'video-grande');
   const id = (await estado(page)).ligacao.top.id;

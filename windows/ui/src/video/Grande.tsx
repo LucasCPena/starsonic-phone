@@ -5,15 +5,15 @@
 // (ou Sair da tela cheia), Diminuir e Desligar. (Ruling 13) O vídeo e a Câmera seguem a regra da tela da ligação, do
 // video/estado.ts: com duas ligações (a segunda tocando ou em espera, também na consulta), a imagem da outra ponta pausa
 // (a vista fica só com o fundo: o imagemDaLigacao) e a Câmera só desliga (o cameraDaLigacaoDesativada); na conferência,
-// nenhuma Câmera. O Chat só aparece com o `chat`
-// (o main.tsx o passa numa ligação com um colega do chat): ele abre e fecha a conversa num painel de 360 à direita (o
-// quadro GrandeChat), no tema do app, e o vídeo, a sua imagem e a barra de baixo ficam com o resto. O cartão da segunda
-// ligação (o CartaoDaOutra) flutua em cima, no meio. O duplo clique no vídeo alterna o grande e a tela cheia, e o Esc só
-// vale na tela cheia (o ouvinte sai quando ela sai), fora de um diálogo aberto (a foto grande da conversa fecha com ele, e
-// a tela cheia fica). Os botões ignoram o segundo clique de um clique duplo: o Tela cheia dá lugar ao Sair da tela cheia
-// no mesmo ponto.
+// nenhuma Câmera. O Chat só aparece com o `chat` (o main.tsx o passa numa ligação com um colega do chat): ele abre e
+// fecha a conversa num painel de 360 à direita (o quadro GrandeChat), no tema do app, e o vídeo, a sua imagem e a barra
+// de baixo ficam com o resto. O cartão da segunda ligação (o CartaoDaOutra) flutua em cima, no meio. O duplo clique no
+// vídeo alterna o grande e a tela cheia (só o que começou no vídeo: o segundo clique de um clique duplo no Abrir grande
+// cai aqui e não vale), e o Esc só vale na tela cheia (o ouvinte sai quando ela sai), fora de um diálogo aberto (a foto
+// grande da conversa fecha com ele, e a tela cheia fica). Os botões ignoram o segundo clique de um clique duplo: o Tela
+// cheia dá lugar ao Sair da tela cheia no mesmo ponto.
 import type { ComponentChildren, VNode } from 'preact';
-import { useEffect } from 'preact/hooks';
+import { useEffect, useRef } from 'preact/hooks';
 import { VistaDeVideo } from '../components/VistaDeVideo';
 import { contactNumberLine, nameOrNumber } from '../format';
 import { IconExitFullscreen, IconFullscreen, IconMessage, IconMic, IconMicOff, IconPhone, IconShrink, IconVideo, IconVideoOff } from '../icons';
@@ -76,6 +76,25 @@ export function Grande({ state, ligacao: l, send, chat = null }: Props): VNode {
   const tempo = statusLine(top, now);
   const alternarTela = () => send({ cmd: 'videoWindow', modo: telaCheia ? 'grande' : 'telaCheia' });
 
+  // (Ruling 14) O clique duplo no vídeo só alterna a tela quando o primeiro clique dele também caiu no vídeo: o segundo
+  // clique de um clique duplo que começou em outro lugar (o Abrir grande, que abre o grande embaixo do ponteiro, ou um
+  // botão do cartão da outra ligação, que sai dali) não vale. Cada primeiro clique (o `detail` 1), em qualquer lugar da
+  // página, diz se caiu no vídeo.
+  const areaDoVideo = useRef<HTMLDivElement>(null);
+  const primeiroNoVideo = useRef(false);
+  useEffect(() => {
+    const aoClicar = (e: MouseEvent) => {
+      if (e.detail === 1) primeiroNoVideo.current = areaDoVideo.current?.contains(e.target as Node) === true;
+    };
+    document.addEventListener('click', aoClicar, true);
+    return () => document.removeEventListener('click', aoClicar, true);
+  }, []);
+  const aoClicarDuasVezes = () => {
+    if (!primeiroNoVideo.current) return;
+    primeiroNoVideo.current = false;
+    alternarTela();
+  };
+
   // O Esc só vale na tela cheia; o ouvinte sai quando ela sai (ou a tela desmonta). Com um diálogo aberto (a foto grande
   // da conversa do painel), o Esc é dele: ele fecha, e a tela cheia fica (o preventDefault do Esc impediria o diálogo de
   // fechar).
@@ -103,7 +122,7 @@ export function Grande({ state, ligacao: l, send, chat = null }: Props): VNode {
 
   return (
     <div class={chat?.aberto ? 'grande grande-com-chat' : 'grande'} data-modo={telaCheia ? 'tela-cheia' : 'grande'}>
-      <div class="grande-video" onDblClick={alternarTela}>
+      <div class="grande-video" ref={areaDoVideo} onDblClick={aoClicarDuasVezes}>
         <VistaDeVideo key={top.id} vista="remoto" desenhar={video.imagem && imagemDaLigacao(l)} rotulo={rotuloDoVideo(nome)} class="grande-remoto" />
         <div class="grande-sombra" aria-hidden="true" />
       </div>
