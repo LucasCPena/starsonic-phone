@@ -4,9 +4,10 @@
 // a tela manda o viewRecents (o C++ zera `perdidas`).
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { clockTime, dayGroup, duration, recentKindLabel } from '../format';
-import { IconIncoming, IconOutgoing, IconPhone } from '../icons';
+import { IconIncoming, IconOutgoing, IconPhone, IconVideo } from '../icons';
 import type { RecentCall } from '../state';
 import type { Send } from '../types';
+import { LIGAR_COM_VIDEO } from '../video/textos';
 
 interface Props {
   recentes: RecentCall[];
@@ -16,6 +17,8 @@ interface Props {
   onSaveContact?(numero: string, nome: string): void;
   /** (iPhone, spec 4.1) Tocar na linha liga de volta, como o botão de ligar dela, no lugar de abrir as ações. */
   ligarAoTocar?: boolean;
+  /** (vídeo, etapa 2) O "Ligar com vídeo" da linha aberta: só com o vídeo ligado. */
+  video: boolean;
 }
 
 function subLine(r: RecentCall): string {
@@ -24,7 +27,7 @@ function subLine(r: RecentCall): string {
   return partes.join(' · ');
 }
 
-export function Recentes({ recentes, perdidas, send, onSaveContact, ligarAoTocar }: Props) {
+export function Recentes({ recentes, perdidas, send, onSaveContact, ligarAoTocar, video }: Props) {
   const [filtro, setFiltro] = useState<'todas' | 'perdidas'>('todas');
   const [aberta, setAberta] = useState<number | null>(null);
   // As perdidas que a pessoa ainda não tinha visto: o C++ zera a contagem quando a tela abre, e o filtro guarda
@@ -104,6 +107,12 @@ export function Recentes({ recentes, perdidas, send, onSaveContact, ligarAoTocar
                         <IconPhone size="sm" />
                         Ligar
                       </button>
+                      {video && (
+                        <button type="button" class="btn btn-outline mini" onClick={() => send({ cmd: 'dial', numero: r.numero, video: true })}>
+                          <IconVideo size="sm" />
+                          {LIGAR_COM_VIDEO}
+                        </button>
+                      )}
                       {onSaveContact && r.contatoId === '' && (
                         <button type="button" class="btn btn-outline mini" onClick={() => onSaveContact(r.numero, r.nome)}>
                           Salvar contato

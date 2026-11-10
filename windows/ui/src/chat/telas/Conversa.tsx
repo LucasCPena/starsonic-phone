@@ -18,8 +18,9 @@
 // Os nomes e as mensagens vão sempre como texto.
 import { useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { dayGroup } from '../../format';
-import { IconBack, IconPhone, IconSemRede } from '../../icons';
+import { IconBack, IconPhone, IconSemRede, IconVideo } from '../../icons';
 import type { Send } from '../../types';
+import { ligarComVideoPara } from '../../video/textos';
 import type { ChatCliente, ConversaAberta, VistaChat } from '../cliente';
 import { useAnexos } from '../componentes/Anexos';
 import { Avatar } from '../componentes/Avatar';
@@ -61,6 +62,8 @@ interface Props {
   conversa: ConversaDaLista;
   cliente: ChatCliente;
   send: Send;
+  /** (vídeo, etapa 2) O "Ligar com vídeo" do cabeçalho, antes do Ligar: só com o vídeo ligado. */
+  video: boolean;
   /** (Task 7) O toast das telas do chat (o mesmo da ponte). */
   avisar(texto: string): void;
   onVoltar(): void;
@@ -99,7 +102,7 @@ function itensDa(aberta: ConversaAberta, euId: number, agora: number): Item[] {
   return itens;
 }
 
-export function Conversa({ vista, conversa, cliente, send, avisar, onVoltar, onMembros }: Props) {
+export function Conversa({ vista, conversa, cliente, send, video, avisar, onVoltar, onMembros }: Props) {
   const id = conversa.id;
   useLayoutEffect(() => {
     void cliente.abrir(id);
@@ -246,6 +249,17 @@ export function Conversa({ vista, conversa, cliente, send, avisar, onVoltar, onM
               <h1 class="conversa-nome">{nome}</h1>
               <span class="conversa-sub">{ramalN(conversa.com.ramal)}</span>
             </div>
+            {!saiu && video && (
+              <button
+                type="button"
+                class="conversa-ligar conversa-video"
+                aria-label={ligarComVideoPara(conversa.com.nome, conversa.com.ramal)}
+                title={ligarComVideoPara(conversa.com.nome, conversa.com.ramal)}
+                onClick={() => send({ cmd: 'dial', numero: conversa.com.ramal, contato: true, video: true })}
+              >
+                <IconVideo size="sm" />
+              </button>
+            )}
             {!saiu && (
               <button
                 type="button"

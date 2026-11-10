@@ -14,10 +14,11 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { Confirm } from '../components/Confirm';
 import { Menu } from '../components/Menu';
 import { contactNumberLine, initials } from '../format';
-import { IconMore, IconPencil, IconPhone, IconPlus, IconSearch, IconTrash } from '../icons';
+import { IconMore, IconPencil, IconPhone, IconPlus, IconSearch, IconTrash, IconVideo } from '../icons';
 import { bate, buscaPor, listaDeContatos, type Linha } from '../lista-de-contatos';
 import type { CompanyContact, Contact } from '../state';
 import type { Send } from '../types';
+import { ligarComVideoPara } from '../video/textos';
 
 interface Props {
   contatos: Contact[];
@@ -25,6 +26,8 @@ interface Props {
   daEmpresa: CompanyContact[];
   /** (rc.4) Há uma planilha da empresa configurada (`empresa.link`): os filtros aparecem. */
   comPlanilha: boolean;
+  /** (vídeo, etapa 2) O "Ligar com vídeo para <nome>" em cada linha: só com o vídeo ligado. */
+  video: boolean;
   send: Send;
   onNew(): void;
   onEdit(contato: Contact): void;
@@ -79,10 +82,37 @@ function callButton(nome: string, ligar: () => void): VNode {
   );
 }
 
-function ContactRow({ l, c, send, onEdit, onRemove }: { l: Linha; c: Contact; send: Send; onEdit(c: Contact): void; onRemove(c: Contact): void }) {
+// O mesmo para o de vídeo.
+const ICONE_VIDEO = IconVideo({ size: 'sm' });
+
+function videoButton(nome: string, ligar: () => void): VNode {
+  const rotulo = ligarComVideoPara(nome);
+  return (
+    <button type="button" class="row-call row-video" aria-label={rotulo} title={rotulo} onClick={ligar}>
+      {ICONE_VIDEO}
+    </button>
+  );
+}
+
+function ContactRow({
+  l,
+  c,
+  video,
+  send,
+  onEdit,
+  onRemove,
+}: {
+  l: Linha;
+  c: Contact;
+  video: boolean;
+  send: Send;
+  onEdit(c: Contact): void;
+  onRemove(c: Contact): void;
+}) {
   const [menu, setMenu] = useState<'baixo' | 'cima' | null>(null);
   const botao = useRef<HTMLButtonElement>(null);
   const ligar = () => send({ cmd: 'dial', numero: c.numero, contato: true });
+  const ligarComVideo = () => send({ cmd: 'dial', numero: c.numero, contato: true, video: true });
   const abrirMenu = () => {
     if (menu) {
       setMenu(null);
@@ -93,8 +123,11 @@ function ContactRow({ l, c, send, onEdit, onRemove }: { l: Linha; c: Contact; se
     setMenu(r.bottom + 110 > window.innerHeight - 70 ? 'cima' : 'baixo');
   };
   return (
-    <li class="row" style={{ position: 'relative' }}>
+    <li class={video ? 'row row-com-video' : 'row'} style={{ position: 'relative' }}>
       {rowHit(l, ligar)}
+      {/* Com o vídeo: [vídeo] [ligar] [mais]. */}
+      {video && videoButton(c.nome, ligarComVideo)}
+      {video && callButton(c.nome, ligar)}
       <button
         ref={botao}
         type="button"
@@ -107,7 +140,7 @@ function ContactRow({ l, c, send, onEdit, onRemove }: { l: Linha; c: Contact; se
       >
         <IconMore size="sm" />
       </button>
-      {callButton(c.nome, ligar)}
+      {!video && callButton(c.nome, ligar)}
       {menu && (
         <Menu label={`Opções de ${c.nome}`} anchor={botao} onClose={() => setMenu(null)} class={`popover-row popover-${menu}`}>
           <button type="button" role="menuitem" class="menuitem" onClick={() => (setMenu(null), onEdit(c))}>
@@ -125,11 +158,12 @@ function ContactRow({ l, c, send, onEdit, onRemove }: { l: Linha; c: Contact; se
 }
 
 /** (rc.4) Um contato da lista da empresa: sem o menu (muda só na planilha). Sem estado: um vnode, não um componente. */
-function companyRow(l: Linha, send: Send): VNode {
+function companyRow(l: Linha, video: boolean, send: Send): VNode {
   const ligar = () => send({ cmd: 'dial', numero: l.numero, contato: true });
   return (
-    <li key={l.key} class="row row-empresa">
+    <li key={l.key} class={video ? 'row row-empresa row-com-video' : 'row row-empresa'}>
       {rowHit(l, ligar)}
+      {video && videoButton(l.nome, () => send({ cmd: 'dial', numero: l.numero, contato: true, video: true }))}
       {callButton(l.nome, ligar)}
     </li>
   );
@@ -174,7 +208,7 @@ function MaisOpcoes({ send }: { send: Send }) {
   );
 }
 
-export function Contatos({ contatos, daEmpresa, comPlanilha, send, onNew, onEdit }: Props) {
+export function Contatos({ contatos, daEmpresa, comPlanilha, video, send, onNew, onEdit }: Props) {
   const [busca, setBusca] = useState('');
   const [escolhido, setEscolhido] = useState<Filtro>('todos');
   const [remover, setRemover] = useState<Contact | null>(null);
@@ -208,14 +242,14 @@ export function Contatos({ contatos, daEmpresa, comPlanilha, send, onNew, onEdit
   // A linha de cada contato, montada uma vez (o Editar chama o onEdit de agora).
   const editar = useRef(onEdit);
   editar.current = onEdit;
-  const linhas = useMemo(() => new WeakMap<Linha, VNode>(), [send]);
+  const linhas = useMemo(() => new WeakMap<Linha, VNode>(), [send, video]);
   const linhaDe = (l: Linha): VNode => {
     let pronta = linhas.get(l);
     if (!pronta) {
       pronta = l.meu ? (
-        <ContactRow key={l.key} l={l} c={l.meu} send={send} onEdit={(c) => editar.current(c)} onRemove={setRemover} />
+        <ContactRow key={l.key} l={l} c={l.meu} video={video} send={send} onEdit={(c) => editar.current(c)} onRemove={setRemover} />
       ) : (
-        companyRow(l, send)
+        companyRow(l, video, send)
       );
       linhas.set(l, pronta);
     }

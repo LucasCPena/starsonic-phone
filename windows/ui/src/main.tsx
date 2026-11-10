@@ -66,6 +66,7 @@ import { accountDot, accountTitle, agendaSuggestions } from './format';
 import { useLayout } from './layout';
 import { applyIphoneViewport, IPHONE_TABS, isIos } from './plataforma';
 import type { Send, Tab, View } from './types';
+import { videoDoApp } from './video/estado';
 import { criarVideoDaPagina, VideoContexto } from './video/vistas';
 
 const bridge = createBridge();
@@ -163,6 +164,8 @@ function App() {
   const send = useCallback<Send>((command) => bridge.send(command), []);
   const layout = useLayout();
   const ios = isIos(state);
+  // (vídeo, etapa 2) O Ligar com vídeo das telas: só com o vídeo ligado (neutro no iPhone).
+  const comVideo = state !== null && videoDoApp(state).ligado;
 
   useEffect(() => {
     bridge.onVersionMismatch(() => setReinstalar(true));
@@ -496,6 +499,7 @@ function App() {
             conversa={conversaDaVista}
             cliente={chatCliente}
             send={send}
+            video={comVideo}
             avisar={avisarNaTela}
             onVoltar={() => setView(daVista.back)}
             onMembros={() => setView({ kind: 'chatMembros', conversa: conversaDaVista.id, back: daVista })}
@@ -589,6 +593,7 @@ function App() {
             recentes={state.recentes}
             send={send}
             bipe={ios && state.config.bipeTecla === true}
+            video={comVideo}
           />
         )}
         {tab === 'atalhos' && (
@@ -609,6 +614,7 @@ function App() {
             perdidas={state.perdidas}
             send={send}
             ligarAoTocar={ios}
+            video={comVideo}
             onSaveContact={ios ? undefined : (n, nome) => setView({ kind: 'contato', numero: n, nome, back: view })}
           />
         )}
@@ -621,6 +627,7 @@ function App() {
               contatos={state.contatos}
               daEmpresa={daEmpresa.contatos}
               comPlanilha={state.empresa.link !== ''}
+              video={comVideo}
               send={send}
               onNew={() => setView({ kind: 'contato', back: view })}
               onEdit={(contato) => setView({ kind: 'contato', contato, back: view })}

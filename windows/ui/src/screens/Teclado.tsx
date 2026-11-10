@@ -13,12 +13,13 @@
 // Ligar ficam quietos, como no Android 0.2.0-rc.3. O campo do número, com o teclado do próprio iPhone, também.
 import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
 import { digitsOnly, initials } from '../format';
-import { IconArrowRight, IconBackspace, IconPhone } from '../icons';
+import { IconArrowRight, IconBackspace, IconPhone, IconVideo } from '../icons';
 import { Rediscar } from '../components/Rediscar';
 import { buscaPor, buscar, listaDeContatos, nomeOuNumero, temLetras } from '../lista-de-contatos';
 import { semSegundoClique } from '../plataforma';
 import type { CompanyContact, Contact, RecentCall } from '../state';
 import type { Send } from '../types';
+import { LIGAR_COM_VIDEO } from '../video/textos';
 
 interface Props {
   numero: string;
@@ -35,6 +36,8 @@ interface Props {
   send: Send;
   /** (iPhone) O Bipe ao digitar: cada tecla manda o `keyTone`. */
   bipe?: boolean;
+  /** (vídeo, etapa 2) O "Ligar com vídeo" ao lado do Ligar: só com o vídeo ligado (o `videoDoApp`). */
+  video: boolean;
 }
 
 const KEYS: Array<[string, string]> = [
@@ -87,7 +90,7 @@ function sugestoesDe(numero: string, contatos: Contact[], daEmpresa: CompanyCont
   }));
 }
 
-export function Teclado({ numero, setNumero, contatos, daEmpresa, recentes, send, bipe }: Props) {
+export function Teclado({ numero, setNumero, contatos, daEmpresa, recentes, send, bipe, video }: Props) {
   const campo = useRef<HTMLInputElement>(null);
   const atual = useRef(numero);
   atual.current = numero;
@@ -108,15 +111,17 @@ export function Teclado({ numero, setNumero, contatos, daEmpresa, recentes, send
     if (porNome && caixaDasSugestoes.current) caixaDasSugestoes.current.scrollTop = 0;
   }, [numero]);
 
-  const ligar = () => {
+  // O `comVideo` só vem do botão novo: o Ligar e o Enter mandam o comando de sempre, sem o campo `video`.
+  const ligar = (comVideo = false) => {
     const n = atual.current;
     if (!n) return;
+    const extra = comVideo ? { video: true as const } : {};
     if (doNome.current.porNome && temLetras(n)) {
       const primeira = doNome.current.primeira;
-      if (primeira) send({ cmd: 'dial', numero: primeira.numero, contato: true });
+      if (primeira) send({ cmd: 'dial', numero: primeira.numero, contato: true, ...extra });
       return;
     }
-    send({ cmd: 'dial', numero: n });
+    send({ cmd: 'dial', numero: n, ...extra });
   };
   const apagar = () => setNumero((n) => n.slice(0, -1));
   // Uma tecla digitada: o número ganha o caractere e, com o Bipe ao digitar, sai o bipe dela (o "+" é o da tecla 0).
@@ -235,7 +240,19 @@ export function Teclado({ numero, setNumero, contatos, daEmpresa, recentes, send
       <div class="call-row">
         {/* O Rediscar liga como o botão de ligar de uma linha dos Recentes (o número, sem a regra dos contatos). */}
         <Rediscar recentes={recentes} id="rediscar-teclado" noWindows={porNome} onDial={(n) => send({ cmd: 'dial', numero: n })} />
-        <button type="button" class="btn btn-cyan btn-call btn-block" disabled={nenhum} onClick={semSegundoClique(porNome, ligar)}>
+        {video && (
+          <button
+            type="button"
+            class="btn-video"
+            aria-label={LIGAR_COM_VIDEO}
+            title={LIGAR_COM_VIDEO}
+            disabled={nenhum}
+            onClick={semSegundoClique(porNome, () => ligar(true))}
+          >
+            <IconVideo />
+          </button>
+        )}
+        <button type="button" class="btn btn-cyan btn-call btn-block" disabled={nenhum} onClick={semSegundoClique(porNome, () => ligar())}>
           <IconPhone />
           Ligar
         </button>
