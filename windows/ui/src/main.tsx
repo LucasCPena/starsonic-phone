@@ -27,7 +27,8 @@
 // o mesmo da ponte (R31), também o dos arquivos da conversa (Task 7). Um arquivo arrastado para a janela nunca navega
 // (R39).
 // (0.3.0) O vídeo: as memórias das vistas desta página (video/vistas.ts) são guardadas uma vez, junto com a ponte, e vão
-// às vistas de vídeo pelo VideoContexto.
+// às vistas de vídeo pelo VideoContexto. Os avisos do vídeo (os toasts do AVISOS_DE_5_S) ficam 5 s na tela; os outros,
+// os 2 s de sempre.
 import { render } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { createBridge } from './bridge';
@@ -67,6 +68,7 @@ import { useLayout } from './layout';
 import { applyIphoneViewport, IPHONE_TABS, isIos } from './plataforma';
 import type { Send, Tab, View } from './types';
 import { videoDoApp } from './video/estado';
+import { AVISOS_DE_5_S } from './video/textos';
 import { criarVideoDaPagina, VideoContexto } from './video/vistas';
 
 const bridge = createBridge();
@@ -82,6 +84,8 @@ for (const tipo of ['dragover', 'drop'] as const) {
 }
 const ringer = createRinger();
 const TOAST_MS = 2000;
+/** (vídeo, etapa 2) Os avisos do vídeo (a câmera, o H.264, a recusa) ficam mais tempo: dizem o que fazer. */
+const TOAST_DO_VIDEO_MS = 5000;
 /** As abas do Windows, na ordem da navegação: com o computador ligado ao chat, também o Chat. */
 const ABAS_COM_CHAT = TABS.map((t) => t.tab);
 const ABAS_SEM_CHAT = ABAS_COM_CHAT.filter((t) => t !== 'chat');
@@ -294,7 +298,7 @@ function App() {
 
   useEffect(() => {
     if (!toast) return;
-    const t = setTimeout(() => setToast(null), TOAST_MS);
+    const t = setTimeout(() => setToast(null), AVISOS_DE_5_S.has(toast.texto) ? TOAST_DO_VIDEO_MS : TOAST_MS);
     return () => clearTimeout(t);
   }, [toast]);
 

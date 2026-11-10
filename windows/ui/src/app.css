@@ -425,6 +425,8 @@ button.link { border: 0; background: transparent; padding: 0; font-family: inher
 .call-middle:has(.call-keys, .call-panel) { justify-content: center; }
 .ctrls { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 10px; width: 100%; }
 .ctrls-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px 4px; }
+/* (vídeo, etapa 2) Com 9 controles (uma ligação com a Câmera e o Chat), cinco colunas (Ligacao.tsx). */
+.ctrls-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px 6px; }
 .ctrl { display: flex; flex-direction: column; align-items: center; gap: 7px; border: 0; background: transparent; color: #ffffff; font: 600 12px/1.2 var(--font-sans); padding: 0; width: 100%; border-radius: 12px; text-align: center; }
 .ctrl-c { width: 58px; height: 58px; border-radius: 999px; background: rgba(255, 255, 255, 0.07); border: 1px solid rgba(255, 255, 255, 0.14); display: grid; place-items: center; transition: background var(--ease), border-color var(--ease); }
 .ctrl:not(:disabled):hover .ctrl-c { background: rgba(255, 255, 255, 0.13); }
@@ -1210,6 +1212,56 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .cfg-teste-ligado { flex-direction: column; align-items: flex-start; gap: 10px; }
 .cfg-previa { align-self: stretch; aspect-ratio: 16 / 9; border-radius: 12px; }
 .cfg-teste .btn:disabled, .cfg-teste .btn:disabled:hover { opacity: 0.45; border-color: var(--outline); }
+
+/* A tela da ligação com vídeo (CaixaDoVideo.tsx; os quadros Video, VideoCompacto e VideoMinimo): a área do vídeo fica com
+   o espaço que sobra, quem fala vem embaixo dela, e os controles ficam um pouco menores (o Desligar e o resto, como na
+   ligação só de voz). A área é a vista da outra ponta, com a sua imagem embaixo à direita e o Abrir grande em cima à
+   direita, por cima dela. */
+.call-com-video { padding-top: 16px; gap: 12px; }
+.call-com-video .call-middle { flex: none; }
+.video-caixa { position: relative; flex: 1 1 0; min-height: 0; width: 100%; }
+.video-remoto { position: absolute; inset: 0; border-radius: 18px; border: 1px solid rgba(255, 255, 255, 0.1); }
+.video-sua { position: absolute; right: 10px; bottom: 10px; width: 96px; height: 72px; border-radius: 10px; border: 1.5px solid rgba(255, 255, 255, 0.55); }
+.video-abrir { position: absolute; top: 10px; right: 10px; height: 32px; display: inline-flex; align-items: center; gap: 6px; padding: 0 12px 0 10px;
+  border: 0; border-radius: 999px; background: rgba(7, 11, 24, 0.62); color: #ffffff; font: 700 12.5px/1 var(--font-sans); white-space: nowrap;
+  transition: background var(--ease); }
+.video-abrir:hover { background: rgba(7, 11, 24, 0.85); }
+.video-abrir .ic { width: 14px; height: 14px; }
+.who-video { gap: 3px; margin-top: 0; }
+.who-video .who-name { font-size: 20px; }
+.who-video .who-sub { font-size: 13px; }
+.who-video .timer { font-size: inherit; }
+.call-com-video .ctrls { gap: 12px 6px; }
+.call-com-video .ctrl-c { width: 54px; height: 54px; }
+.win.call[data-layout="compacto"] .video-sua { width: 80px; height: 60px; }
+.win.call[data-layout="compacto"] .who-video .who-name { font-size: 18px; }
+.win.call[data-layout="compacto"] .call-com-video .ctrls { gap: 10px 4px; }
+.win.call[data-layout="compacto"] .call-com-video .ctrl { font-size: 11px; }
+.win.call[data-layout="compacto"] .call-com-video .ctrl-c { width: 46px; height: 46px; }
+.win.call[data-layout="minimo"] .video-remoto { border-radius: 14px; }
+.win.call[data-layout="minimo"] .video-sua { right: 8px; bottom: 8px; width: 64px; height: 48px; border-radius: 8px; }
+.win.call[data-layout="minimo"] .video-abrir { height: 28px; }
+.win.call[data-layout="minimo"] .call-com-video .ctrl-c { width: 40px; height: 40px; }
+/* No Mínimo, quem fala numa linha só: um nome comprido sai com as reticências, e o tempo fica inteiro. */
+.who-linha { display: flex; align-items: baseline; max-width: 100%; margin: 0; font-size: 15px; line-height: 1.3; }
+.who-linha-nome { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 800; color: #ffffff; }
+.who-linha-tempo { flex: none; white-space: pre; color: #b9c4e6; }
+
+/* A sua imagem flutuante (o quadro VozComCamera): fora da área do vídeo, com a câmera ligada, a 16 do canto de cima à
+   direita da tela da ligação, por cima do resto, também com um painel aberto. Com um cartão em cima (a segunda que toca,
+   a outra em espera), ela fica embaixo dele, no mesmo canto: o Recusar, o Atender e o Desligar do cartão ficam livres.
+   Quem fala fica mais estreito, para o nome nunca passar por baixo dela. */
+.sua-flutuante { position: absolute; top: 16px; right: 16px; z-index: 2; width: 96px; height: 72px; border-radius: 10px;
+  border: 1.5px solid rgba(255, 255, 255, 0.55); }
+.call-alto { position: relative; width: 100%; flex: none; }
+.call-alto > .sua-flutuante { top: calc(100% + 14px); right: -6px; }
+.call-sua-imagem .who { max-width: calc(100% - 180px); }
+.win.call[data-layout="compacto"] .sua-flutuante { width: 80px; height: 60px; }
+.win.call[data-layout="compacto"] .call-alto > .sua-flutuante { top: calc(100% + 10px); right: 0; }
+.win.call[data-layout="compacto"] .call-sua-imagem .who { max-width: calc(100% - 160px); }
+.win.call[data-layout="minimo"] .sua-flutuante { width: 64px; height: 48px; border-radius: 8px; }
+.win.call[data-layout="minimo"] .call-alto > .sua-flutuante { top: calc(100% + 8px); right: 4px; }
+.win.call[data-layout="minimo"] .call-sua-imagem .who { max-width: calc(100% - 136px); }
 
 /* ---------------------------------------------------------------------------------------------------------
    O modo iPhone (plataforma.ts: o .win leva data-plataforma="ios"); fora dele, nada daqui vale. A área segura (em cima

@@ -724,13 +724,24 @@ test.describe('o clique duplo', () => {
     }
   }
 
-  test('Nova ligação: a double-click on a lower row dials once, and the second click reaches neither Mudo nor Espera', async ({ page }) => {
-    for (const controle of ['Mudo', 'Espera']) {
+  test('Nova ligação: a double-click on a lower row dials once, and the second click reaches neither Mudo, Câmera nor Espera', async ({ page }) => {
+    // Os controles de ligar e desligar que ficam embaixo das linhas da lista (o rótulo e o nome do botão). (vídeo, etapa 2)
+    // Com o vídeo ligado, a primeira fila é o Mudo, a Câmera, o Teclado e o Áudio; sem ele, a dos controles de antes, com a
+    // Espera.
+    for (const [controle, nome, comVideo] of [
+      ['Mudo', 'Mudo', true],
+      ['Câmera', 'Ligar a câmera', true],
+      ['Espera', 'Espera', false],
+    ] as const) {
       // O C++ que demora a responder (o segundo clique cai nos controles de uma ligação) e o de sempre.
       for (const lento of [true, false]) {
         await abrir(page, 'ligacao');
+        if (!comVideo) {
+          await mudarEstado(page, (s) => ({ ...s, video: { ...s.video, ligado: false } }));
+          await expect(botao(page, 'Ligar a câmera')).toHaveCount(0);
+        }
         await comListaDaEmpresa(page);
-        const c = await caixa(botao(page, controle));
+        const c = await caixa(botao(page, nome));
         await botao(page, 'Nova ligação').click();
         await expect(nomes(page)).toHaveCount(TODOS.length);
         // Uma linha da lista em cima do controle, que fica no lugar dela quando o painel fecha.

@@ -1,5 +1,6 @@
 // O vídeo no estado (docs/ponte-windows.md, "Vídeo (0.3.0)"): a interface lê o vídeo só por aqui. No iPhone, ou num estado
-// sem o campo (montado à mão nos testes de antes), o vídeo é o neutro: nada de vídeo aparece.
+// sem o campo (montado à mão nos testes de antes), o vídeo é o neutro: nada de vídeo aparece. (Task 4) A regra da Câmera,
+// a mesma em toda tela que tem o botão.
 import { isIos } from '../plataforma';
 import type { AppState, CallCard, CallVideo, VideoSettings } from '../state';
 
@@ -23,4 +24,12 @@ export function videoDoApp(state: AppState): VideoSettings {
 /** O vídeo de uma ligação (`SEM_VIDEO` no iPhone ou sem o campo). */
 export function videoDe(state: AppState, card: CallCard): CallVideo {
   return isIos(state) || !card.video ? SEM_VIDEO : card.video;
+}
+
+/**
+ * A regra da Câmera (a tela da ligação, o grande e a faixa da conversa): a câmera desligada só liga numa ligação
+ * atendida (activeSinceMs > 0) e fora da espera; ligada, ela sempre desliga.
+ */
+export function cameraDesativada(card: CallCard, video: CallVideo): boolean {
+  return !video.camera && (card.activeSinceMs <= 0 || card.held);
 }
