@@ -202,6 +202,9 @@ struct Harness {
     int cameraBlockedCalls = 0;
     bool videoHooks = true;   // false: o executavel sem os quatro ganchos
     bool sheetHooks = true;   // false: o executavel sem os tres ganchos (antes da Task 7)
+    // DesktopConfig::h264Download: desligado como no build de agora; os testes do download do modulo H.264 o ligam
+    // (AllowH264Download, antes do Start).
+    bool h264Download = false;
     // O modo do nucleo (DesktopConfig::platform): o Windows, ou o iPhone com Harness h(Platform::IPhone). Vale tambem
     // no Restart.
     Platform platform = Platform::Windows;
@@ -214,6 +217,7 @@ struct Harness {
     void Make() {
         DesktopConfig config;
         config.platform = platform;
+        config.h264Download = h264Download;
         config.paths = Paths();
         config.observedStartWithWindows = observedAutostart;
         config.version = "0.1.0-rc.1";
@@ -299,6 +303,11 @@ struct Harness {
     void Start() {
         app->Start();
         Run();
+    }
+    // O build que baixa o modulo H.264 da Cisco (DesktopConfig::h264Download): refaz o app, antes do Start.
+    void AllowH264Download() {
+        h264Download = true;
+        Make();
     }
     void Run() { queue->RunAll(); }
     void Send(const std::string& command) {

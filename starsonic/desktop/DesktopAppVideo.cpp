@@ -55,8 +55,11 @@ bool DesktopApp::VideoOn() const {
     return VideoEnabled(choices);
 }
 
-// O H.264 que vale: ligado no cartao do administrador e pela pessoa.
-bool DesktopApp::H264Wanted() const { return admin_.Get().videoH264 && settings_.Get().h264Person; }
+// O H.264 que vale: o download do modulo liberado no build (DesktopConfig::h264Download, desligado ate a etapa 2), e
+// ligado no cartao do administrador e pela pessoa.
+bool DesktopApp::H264Wanted() const {
+    return config_.h264Download && admin_.Get().videoH264 && settings_.Get().h264Person;
+}
 
 // As escolhas que o motor recebe: o cartao, os Porteiros e o h264Available (o H.264 que vale e o modulo instalado).
 VideoSettings DesktopApp::VideoChoices() const {
@@ -85,8 +88,9 @@ void DesktopApp::PushVideoSettings() {
     port_.SetVideoSettings(choices);
 }
 
-// O cartao ou a pessoa mudou o H.264: desligado, a situacao e "desligado"; ligado de novo (ou na abertura) sem estar
-// instalado, vira "baixando" e o executavel baixa e confere o modulo (hooks.h264Ensure), que responde pelo SetH264State.
+// O cartao ou a pessoa mudou o H.264: desligado (ou sem o download no build), a situacao e "desligado"; ligado de novo
+// (ou na abertura) sem estar instalado, vira "baixando" e o executavel baixa e confere o modulo (hooks.h264Ensure), que
+// responde pelo SetH264State.
 void DesktopApp::ApplyH264Wish() {
     if (!H264Wanted()) {
         h264State_ = H264State::Off;

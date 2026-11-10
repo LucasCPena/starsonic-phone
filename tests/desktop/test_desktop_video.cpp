@@ -60,7 +60,9 @@ json Strings(const std::vector<std::string>& items) { return json(items); }
 }  // namespace
 
 TEST_CASE("the video block starts with the defaults") {
+    // Num build que baixa o modulo H.264 (o build de agora, sem o download, tem o teste dele mais abaixo).
     Harness h;
+    h.AllowH264Download();
     h.Start();
     const json video = h.State()["video"];
     CHECK(video["ligado"] == true);
@@ -91,6 +93,7 @@ TEST_CASE("the closed admin area does not show the video card") {
 
 TEST_CASE("the engine gets H264 only when installed") {
     Harness h;
+    h.AllowH264Download();
     h.Start();
     VideoSettings first = LastSettings(h);
     CHECK(first.h264);
@@ -114,6 +117,7 @@ TEST_CASE("the engine gets H264 only when installed") {
 
 TEST_CASE("the person turning H264 off stops it, and on asks for the module") {
     Harness h;
+    h.AllowH264Download();
     h.Start();
     h.app->SetH264State(H264State::Installed);
     h.Run();
@@ -143,6 +147,7 @@ TEST_CASE("the person turning H264 off stops it, and on asks for the module") {
 
 TEST_CASE("a late H264 result with H264 off changes nothing") {
     Harness h;
+    h.AllowH264Download();
     h.Start();
     h.Send(SetVideo(R"("h264":false)"));
     h.app->SetH264State(H264State::Installed);
@@ -167,6 +172,7 @@ TEST_CASE("a late H264 result with H264 off changes nothing") {
 
 TEST_CASE("the admin card turning H264 back on asks for the module") {
     Harness h;
+    h.AllowH264Download();
     h.Start();
     OpenAdmin(h);
     h.Send(AdminSet(R"("videoH264":false)"));
@@ -180,7 +186,7 @@ TEST_CASE("the admin card turning H264 back on asks for the module") {
 TEST_CASE("without the h264Ensure hook the state stays downloading") {
     Harness h;
     h.videoHooks = false;
-    h.Make();
+    h.AllowH264Download();
     h.Start();
     CHECK(h.State()["video"]["h264"]["situacao"] == "baixando");
     h.Send(R"({"v":1,"cmd":"h264Retry"})");   // nada a repetir, e nenhum gancho
@@ -453,6 +459,7 @@ TEST_CASE("the window mode stays while a second call remains and ends with the l
 
 TEST_CASE("h264Retry asks again only after a failure") {
     Harness h;
+    h.AllowH264Download();
     h.Start();
     REQUIRE(h.h264Ensures == 1);
     h.Send(R"({"v":1,"cmd":"h264Retry"})");   // baixando: nada
@@ -470,6 +477,37 @@ TEST_CASE("h264Retry asks again only after a failure") {
     CHECK(h.State()["video"]["h264"]["situacao"] == "baixando");
     h.Send(R"({"v":1,"cmd":"h264Retry"})");   // ja baixando de novo: nada
     CHECK(h.h264Ensures == 2);
+}
+
+TEST_CASE("without the download allowed, H.264 stays off and is never fetched") {
+    // O build de agora: o DesktopConfig::h264Download desligado ate a etapa 2 (a chave, o aviso e a licenca da Cisco).
+    Harness h;
+    h.Start();
+    const json video = h.State()["video"];
+    CHECK(video["h264"] == json({{"cartao", true}, {"pessoa", true}, {"situacao", "desligado"}}));
+    CHECK(video["ligado"] == true);   // o VP8 segue ligado
+    CHECK(h.h264Ensures == 0);
+    CHECK_FALSE(LastSettings(h).h264Available);
+
+    // Nada pede o modulo: a pessoa e o cartao ligando de novo, o h264Retry e um resultado que chegasse assim mesmo.
+    h.Send(SetVideo(R"("h264":false)"));
+    h.Send(SetVideo(R"("h264":true)"));
+    OpenAdmin(h);
+    h.Send(AdminSet(R"("videoH264":false)"));
+    h.Send(AdminSet(R"("videoH264":true)"));
+    h.Send(R"({"v":1,"cmd":"h264Retry"})");
+    h.app->SetH264State(H264State::Failed);
+    h.Run();
+    h.Send(R"({"v":1,"cmd":"h264Retry"})");
+    h.app->SetH264State(H264State::Installed);
+    h.Run();
+    CHECK(h.h264Ensures == 0);
+    CHECK(h.State()["video"]["h264"]["situacao"] == "desligado");
+    REQUIRE_FALSE(h.port.videoSettings.empty());
+    for (const VideoSettings& settings : h.port.videoSettings) CHECK_FALSE(settings.h264Available);
+    h.Restart();
+    CHECK(h.h264Ensures == 0);
+    CHECK(h.State()["video"]["h264"]["situacao"] == "desligado");
 }
 
 TEST_CASE("the camera list refreshes with the device notice") {
@@ -581,7 +619,9 @@ TEST_CASE("the admin file keeps the video choices and an invalid saved value tak
 }
 
 TEST_CASE("the iPhone platform has no video") {
+    // Nem com o download do H.264 liberado.
     Harness h(Platform::IPhone);
+    h.AllowH264Download();
     h.Start();
     CHECK(h.State()["video"]["ligado"] == false);
     CHECK(h.State()["video"]["cameras"] == json::array());
@@ -799,6 +839,7 @@ TEST_CASE("video on with only H264 and no module still asks for video") {
     // O ligado olha so as escolhas: com so o H.264 ligado e o modulo ainda baixando, o nucleo pede o video e o motor
     // responde com a recusa (o aviso do H.264, abaixo).
     Harness h;
+    h.AllowH264Download();
     h.StartRegistered();
     OpenAdmin(h);
     h.Send(AdminSet(R"("videoVp8":false,"videoVp9":false)"));
@@ -856,6 +897,7 @@ TEST_CASE("the video fields of dial, answer and camera are read strictly") {
 
 TEST_CASE("the refused video toast depends on the H264 situation") {
     Harness h;
+    h.AllowH264Download();
     h.StartRegistered();
     DialAndConfirm(h, R"(,"video":true)");
 
@@ -896,6 +938,7 @@ TEST_CASE("a video event that is not a refusal shows no toast") {
 
 TEST_CASE("a 488 to a video dial redials as voice and shows the refused toast") {
     Harness h;
+    h.AllowH264Download();
     h.StartRegistered();
     h.Send(R"({"v":1,"cmd":"dial","numero":"2003","video":true})");
     h.posts.clear();

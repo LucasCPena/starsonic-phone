@@ -122,6 +122,12 @@ enum class Platform { Windows, IPhone };
 struct DesktopConfig {
     // IPhone: o modo iPhone do docs/ponte-windows.md ("O modo iPhone"; ver o DesktopApp abaixo). Windows: o de sempre.
     Platform platform = Platform::Windows;
+    // 0.3.0: o download do modulo H.264 da Cisco liberado neste build (a opcao STARSONIC_H264_DOWNLOAD do
+    // windows/app/CMakeLists.txt). Fica desligado ate a etapa 2 do video, que o liga junto com a chave da pessoa, o
+    // aviso "OpenH264 Video Codec provided by Cisco Systems, Inc." e a licenca na tela de Licencas (as condicoes da
+    // licenca do binario). Desligado, o H.264 nao vale: a situacao fica "desligado", o modulo nunca e pedido
+    // (hooks.h264Ensure) e o motor nunca recebe o h264Available.
+    bool h264Download = false;
     DesktopPaths paths;
     Profile profile;                 // o perfil embutido (ParseProfile): o protocolo padrao, o ddi e o prefixo
     std::string version;             // a versao do app (versao, no estado)
@@ -195,7 +201,7 @@ struct DesktopHooks {
     // O modo da janela (videoWindow, ou "normal" no fim da ultima ligacao): "normal", "grande" ou "telaCheia".
     std::function<void(const std::string& mode)> videoWindow;
     // Roda o H264Module::Ensure fora da fila de comandos (baixa e confere o modulo) e responde pelo SetH264State
-    // (Installed ou Failed). Vazio: a situacao fica "baixando".
+    // (Installed ou Failed). So e chamado com o DesktopConfig::h264Download. Vazio: a situacao fica "baixando".
     std::function<void()> h264Ensure;
     // A privacidade do Windows nega a camera aos apps da area de trabalho (so para escolher o aviso do OpenFailed).
     // Vazio: false.
@@ -292,15 +298,18 @@ struct DesktopHooks {
 //   ligacao vem nas Tasks seguintes). No iPhone (o motor baresip nao tem video), video.ligado e sempre false, os cinco
 //   pedidos de video sao recusados como os do PC e o nucleo nunca chama o porto nem os ganchos do video.
 //   - As escolhas que vao ao motor (RegistrationPort::SetVideoSettings), na abertura e a cada mudanca: os campos do
-//     cartao Video do administrador (admin.json), os Porteiros e o h264Available, que vale o H.264 do cartao ligado, a
-//     chave da pessoa ligada (config.json: h264) e o modulo instalado.
-//   - A situacao do modulo H.264: desligado (o cartao ou a pessoa o desliga); na abertura, ou quando ele volta a ser
-//     ligado, baixando (hooks.h264Ensure) se ainda nao esta instalado; o resultado volta pelo SetH264State (instalado ou
-//     falhou; com o H.264 desligado, nada muda); o h264Retry so chama de novo depois de uma falha.
+//     cartao Video do administrador (admin.json), os Porteiros e o h264Available, que vale o download liberado no build
+//     (DesktopConfig::h264Download), o H.264 do cartao ligado, a chave da pessoa ligada (config.json: h264) e o modulo
+//     instalado.
+//   - A situacao do modulo H.264: desligado (o build sem o download, o cartao ou a pessoa o desliga); na abertura, ou
+//     quando ele volta a ser ligado, baixando (hooks.h264Ensure) se ainda nao esta instalado; o resultado volta pelo
+//     SetH264State (instalado ou falhou; com o H.264 desligado, nada muda); o h264Retry so chama de novo depois de uma
+//     falha.
 //   - As ligacoes (Task 7): o dial e o answer levam o video so com o video.ligado (no iPhone, nunca); o camera liga ou
 //     desliga a camera da ligacao de cima; o OnCallVideo vai ao controlador (o bloco video de cada ligacao no estado).
 //     A recusa do video (o OnVideoRefused do controlador: o refused do motor, ou o 488/415 que virou voz) vira um aviso
-//     (toast): o do H.264 se o cartao e a pessoa o ligam e o modulo nao esta instalado, senao o da outra ponta.
+//     (toast): o do H.264 se o download, o cartao e a pessoa o ligam e o modulo nao esta instalado, senao o da outra
+//     ponta.
 //   - A camera (config.json: camera; "" = a primeira) vai ao motor na abertura e no setVideo; o teste da camera
 //     (cameraTest) e a lista de cameras (relida no RefreshAudioDevices) vao ao estado. O OnCameraProblem vira um aviso
 //     (toast); no OpenFailed, o texto depende do hooks.cameraBlocked (vazio: false).

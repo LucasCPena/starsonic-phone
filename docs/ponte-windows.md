@@ -243,7 +243,7 @@ A câmera nunca liga sozinha: só ligam a câmera o `dial` e o `answer` com `vid
 
 | Comando | Campos | O que faz |
 |---|---|---|
-| `setVideo` | `camera` (texto, opcional), `h264` (booleano, opcional) | `camera`: o nome da câmera (um de `video.cameras`); `""` quer dizer a primeira. Grava no `config.json` (chave `camera`) e manda ao motor (`SetCaptureDevice`); vale na próxima vez que a câmera abre. Um nome que não está na lista fica gravado, e `video.cameraDesconectada` vira `true`. `h264`: a chave da pessoa para o H.264 (chave `h264` do `config.json`, ligada de fábrica). Desligar põe `video.h264.situacao` em `desligado`; ligar de novo, se o módulo não está instalado, em `baixando` (o gancho `h264Ensure`). O que não veio fica como está. A `camera` tem até 200 caracteres (mais que isso é recusado na leitura: `setVideo: camera invalida`). Só o que ficou gravado vai ao motor: se o disco recusa, nada muda. |
+| `setVideo` | `camera` (texto, opcional), `h264` (booleano, opcional) | `camera`: o nome da câmera (um de `video.cameras`); `""` quer dizer a primeira. Grava no `config.json` (chave `camera`) e manda ao motor (`SetCaptureDevice`); vale na próxima vez que a câmera abre. Um nome que não está na lista fica gravado, e `video.cameraDesconectada` vira `true`. `h264`: a chave da pessoa para o H.264 (chave `h264` do `config.json`, ligada de fábrica). Desligar põe `video.h264.situacao` em `desligado`; ligar de novo, se o módulo não está instalado, em `baixando` (o gancho `h264Ensure`), só no build com o download liberado (abaixo). O que não veio fica como está. A `camera` tem até 200 caracteres (mais que isso é recusado na leitura: `setVideo: camera invalida`). Só o que ficou gravado vai ao motor: se o disco recusa, nada muda. |
 | `cameraTest` | `on` (booleano) | `true`: liga o teste da câmera (`StartCameraTest`), e a imagem vai na vista `local`; `video.teste` segue o resultado (`false` se o motor não abriu a câmera, e então o aviso da câmera vem num toast). `false`: desliga (`StopCameraTest`). Ligar com o teste já ligado não faz nada. Com a tela bloqueada, a câmera do teste fecha e volta sozinha no desbloqueio; o `video.teste` segue `true`. |
 | `videoViews` | `pagina` (`"principal"` \| `"aviso"`), `vistas` (lista de textos) | As vistas de vídeo que a página mostra agora (o gancho `videoViews`, com `pagina == "aviso"`). A página `principal` só tem `remoto` e `local` (o teste da câmera também usa a `local`, porque é a mesma imagem), e a página `aviso`, só `porteiro`. Uma vista que não é da página é ignorada, e a lista vai inteira a cada vez (uma lista vazia tira todas). Outra `pagina` é recusada na leitura, e também mais de 8 vistas ou uma vista com mais de 32 caracteres (`videoViews: vistas invalidas`). |
 | `videoWindow` | `modo` (`"normal"` \| `"grande"` \| `"telaCheia"`) | O modo da janela do vídeo: o `DesktopApp` grava em `video.janela` e chama o gancho `videoWindow`. Outro `modo` é ignorado (linha no diagnóstico). Quando a última ligação acaba, se a `janela` não é `normal`, ela volta a `normal` (o gancho `videoWindow("normal")`). |
@@ -263,6 +263,13 @@ câmera): `Nenhuma câmera encontrada.`, `A câmera está sendo usada por outro 
 no lugar do segundo quando a privacidade do Windows nega a câmera aos apps da área de trabalho (o gancho
 `cameraBlocked`), `O Windows bloqueou a câmera para este app. Libere em Configurações do Windows → Privacidade e
 segurança → Câmera.`. Uma câmera que some ou que não abre de novo também desliga o teste (`video.teste` `false`).
+
+**O download do H.264 fica desligado até a etapa 2.** O app só baixa e carrega o módulo da Cisco no build com a opção
+`STARSONIC_H264_DOWNLOAD` do `windows/app/CMakeLists.txt` (o `DesktopConfig::h264Download` do núcleo), desligada em
+todo build, porque as condições da licença do binário (a chave "H.264 da Cisco" da pessoa, o aviso "OpenH264 Video Codec
+provided by Cisco Systems, Inc." e o texto da licença na tela de Licenças) só chegam na etapa 2, que liga a opção junto
+com elas. Sem a opção, `video.h264.situacao` fica `desligado`, o gancho `h264Ensure` nunca é chamado, o `h264Retry` é
+ignorado e o motor nunca recebe o H.264.
 
 #### O vídeo na ligação
 
@@ -289,8 +296,8 @@ segurança → Câmera.`. Uma câmera que some ou que não abre de novo também 
   415 termina como qualquer outra (nenhuma terceira discagem), e o 486 e os outros códigos terminam como sempre. A nova
   é só de voz: a câmera não liga.
 - **A recusa do vídeo.** Cada recusa (a de um 488/415 que virou voz, e o aviso `refused` do motor) vira um toast, uma
-  vez: `Este vídeo precisa do H.264, que ainda não foi baixado.` quando o cartão e a pessoa ligam o H.264 e a
-  `video.h264.situacao` não é `instalado`; nos outros casos, `A outra ponta não aceitou o vídeo.`.
+  vez: `Este vídeo precisa do H.264, que ainda não foi baixado.` quando o cartão e a pessoa ligam o H.264 (com o download
+  liberado no build) e a `video.h264.situacao` não é `instalado`; nos outros casos, `A outra ponta não aceitou o vídeo.`.
 - **No iPhone**, o `dial` e o `answer` passam sempre `false` ao motor (a ligação segue, só de voz), e o `camera` é
   recusado como os outros pedidos de vídeo.
 
@@ -437,7 +444,7 @@ segurança → Câmera.`. Uma câmera que some ou que não abre de novo também 
 | `video.cameraDesconectada` | booleano | `video.camera` não está vazio e não está em `video.cameras`. |
 | `video.teste` | booleano | O teste da câmera está ligado (`cameraTest`). Segue `true` com a tela bloqueada (a câmera dele fecha e volta no desbloqueio). |
 | `video.h264` | objeto | `{cartao, pessoa, situacao}`: o H.264 ligado no cartão do administrador (`cartao`), a chave da pessoa (`pessoa`) e o módulo da Cisco. |
-| `video.h264.situacao` | `"desligado"` \| `"baixando"` \| `"instalado"` \| `"falhou"` | `desligado`: o cartão ou a pessoa desliga o H.264. Na abertura, ou quando o H.264 volta a ser ligado, e se ainda não está instalado, vira `baixando` (o gancho `h264Ensure`); `instalado` ou `falhou` chegam pelo `DesktopApp::SetH264State`. Um `SetH264State` com o H.264 desligado não muda nada. O motor só recebe o H.264 (`h264Available`) com o cartão ligado, a pessoa ligada e a situação `instalado`. |
+| `video.h264.situacao` | `"desligado"` \| `"baixando"` \| `"instalado"` \| `"falhou"` | `desligado`: o cartão ou a pessoa desliga o H.264, ou o build não baixa o módulo (a opção `STARSONIC_H264_DOWNLOAD`, desligada até a etapa 2). Na abertura, ou quando o H.264 volta a ser ligado, e se ainda não está instalado, vira `baixando` (o gancho `h264Ensure`); `instalado` ou `falhou` chegam pelo `DesktopApp::SetH264State`. Um `SetH264State` com o H.264 desligado não muda nada. O motor só recebe o H.264 (`h264Available`) com o download liberado, o cartão ligado, a pessoa ligada e a situação `instalado`. |
 | `video.janela` | `"normal"` \| `"grande"` \| `"telaCheia"` | O modo da janela do vídeo (`videoWindow`); volta a `normal` quando a última ligação acaba. |
 | `chat` | objeto | (0.2.0, só no Windows: o estado do iPhone não tem o campo) O chat deste computador: `{ligado, empresa, computador, contaConectada}` (ver "O chat (0.2.0)"). A chave nunca vem no estado. |
 
@@ -786,12 +793,13 @@ download dos arquivos.
     - `videoWindow(modo)`: o modo da janela do vídeo (`"normal"`, `"grande"` ou `"telaCheia"`), do `videoWindow` e do fim
       da última ligação.
     - `h264Ensure()`: roda o `H264Module::Ensure` fora da fila de comandos e responde pelo `DesktopApp::SetH264State`
-      (`Installed` ou `Failed`, de qualquer thread: só põe na fila). Vazio: a situação fica `baixando`. No executável, o
-      `Ensure` roda numa thread própria, na pasta `%LOCALAPPDATA%\Starsonic Phone\codecs` (criada se falta), e um pedido
-      no meio de outro é ignorado. Com o `Installed`, o módulo é conferido de novo (`Verify`) e carregado pelo caminho
-      completo, e só então a resposta é `Installed`; o módulo que não carrega dá `Failed`, com a linha
-      `h264: download falhou (carregar <código>)`. O fechamento do app não espera um download em andamento: depois dele,
-      nenhuma resposta e nenhuma linha.
+      (`Installed` ou `Failed`, de qualquer thread: só põe na fila). Só é chamado com o `DesktopConfig::h264Download`
+      (a opção `STARSONIC_H264_DOWNLOAD` do build, desligada até a etapa 2). Vazio: a situação fica `baixando`. No
+      executável, o `Ensure` roda numa thread própria, na pasta `%LOCALAPPDATA%\Starsonic Phone\codecs` (criada se
+      falta), e um pedido no meio de outro é ignorado. Com o `Installed`, o módulo é conferido de novo (`Verify`) e
+      carregado pelo caminho completo, e só então a resposta é `Installed`; o módulo que não carrega dá `Failed`,
+      com a linha `h264: download falhou (carregar <código>)`. O fechamento do app não espera um download em
+      andamento: depois dele, nenhuma resposta e nenhuma linha.
     - `cameraBlocked()`: a privacidade do Windows nega a câmera aos apps da área de trabalho. Só escolhe o texto do aviso
       de `OpenFailed`. Vazio: `false`. No executável, é `true` quando um dos três valores `Value` do
       `CapabilityAccessManager\ConsentStore\webcam` é `Deny`: o do computador (`HKLM`), o do usuário (`HKCU`) e o dos
