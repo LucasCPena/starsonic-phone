@@ -1556,8 +1556,8 @@ BridgeState DesktopApp::BuildState() const {
         chat.computer = config_.computerName;
         chat.accountConnected = active && chat_.HasRamal(U8(active->address), U8(active->ramal));
         state.chat = chat;
-        // 0.3.0: o video. O ligado olha so as escolhas (o H.264 conta como disponivel): o modulo que ainda baixa nao
-        // desliga o botao; o aviso da recusa e o HandleVideoRefused.
+        // 0.3.0: o video. O ligado olha so as escolhas (o H.264 que vale conta como disponivel: VideoOn): o modulo que
+        // ainda baixa nao desliga o botao; o aviso da recusa e o HandleVideoRefused.
         VideoView video;
         video.on = VideoOn();
         video.cameras = cameras_;

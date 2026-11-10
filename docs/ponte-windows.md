@@ -286,9 +286,10 @@ ignorado e o motor nunca recebe o H.264.
 ```
 
 - **O `video.ligado` decide.** O núcleo só repassa o `video: true` do `dial` e do `answer` ao motor com o `video.ligado`
-  `true` (algum codec ligado no cartão); senão a ligação é só de voz. Como o `ligado` conta o H.264 mesmo sem o módulo
-  instalado, o pedido pode seguir com o motor sem codec que sirva: ele atende com uma ligação só de voz e avisa a
-  recusa (abaixo).
+  `true` (algum codec que vale: o VP8 ou o VP9 do cartão, ou o H.264 do cartão com a chave da pessoa ligada e o download
+  liberado no build); senão a ligação é só de voz. Como o `ligado` conta o H.264 mesmo sem o módulo instalado (ainda
+  baixando, ou com a falha), o pedido pode seguir com o motor sem codec que sirva: ele atende com uma ligação só de voz e
+  avisa a recusa (abaixo).
 - **O 488 e o 415.** Uma ligação discada com vídeo que acaba antes de confirmada com o código 488 ou 415 (a outra ponta
   não aceita o vídeo) é discada de novo pelo controlador, uma vez, para o mesmo número e só com a voz. A tela segue
   contínua: o cartão fica `dialing` (com o `id` da nova ligação, e `0` até o motor dar o dele), o fim da primeira
@@ -438,7 +439,7 @@ ignorado e o motor nunca recebe o H.264.
 | `empresa.quantos` | inteiro | Os contatos da lista de agora (a da última leitura boa). |
 | `empresa.vez` | inteiro | Sobe a cada lista nova (a guardada, na abertura; uma leitura boa; a lista vazia quando o link sai); `0` sem nenhuma lista desde a abertura do app. É a `vez` da última `contatosEmpresa`. |
 | `video` | objeto | (0.3.0) As escolhas do vídeo, a câmera e o módulo H.264: `{ligado, cameras, camera, cameraDesconectada, teste, h264, janela}`. Vem sempre, também no iPhone (neutro, com `ligado` `false`). Vem antes do `chat`. |
-| `video.ligado` | booleano | Há vídeo nas escolhas: algum codec ligado no cartão (o H.264 conta mesmo sem o módulo instalado, para o botão não sumir enquanto ele baixa). `false` com os três codecs desligados. Sempre `false` no iPhone. |
+| `video.ligado` | booleano | Há vídeo nas escolhas: algum codec que vale, o VP8 ou o VP9 ligado no cartão, ou o H.264 ligado no cartão e pela pessoa, com o download liberado no build (o H.264 conta mesmo sem o módulo instalado, para o botão não sumir enquanto ele baixa). `false` sem nenhum: os três codecs desligados, ou só o H.264 com a chave da pessoa desligada. Sempre `false` no iPhone. |
 | `video.cameras` | lista de textos | Os nomes das câmeras do motor, na ordem dele; relida junto com os dispositivos de som (o aviso do `WM_DEVICECHANGE`: `RefreshAudioDevices`). |
 | `video.camera` | texto | A câmera escolhida (`setVideo`); `""` é a primeira. |
 | `video.cameraDesconectada` | booleano | `video.camera` não está vazio e não está em `video.cameras`. |

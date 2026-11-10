@@ -505,6 +505,10 @@ TEST_CASE("without the download allowed, H.264 stays off and is never fetched") 
     CHECK(h.State()["video"]["h264"]["situacao"] == "desligado");
     REQUIRE_FALSE(h.port.videoSettings.empty());
     for (const VideoSettings& settings : h.port.videoSettings) CHECK_FALSE(settings.h264Available);
+
+    // Com so o H.264 no cartao, nao ha codec que sirva: o video desliga.
+    h.Send(AdminSet(R"("videoVp8":false,"videoVp9":false)"));
+    CHECK(h.State()["video"]["ligado"] == false);
     h.Restart();
     CHECK(h.h264Ensures == 0);
     CHECK(h.State()["video"]["h264"]["situacao"] == "desligado");
@@ -847,6 +851,46 @@ TEST_CASE("video on with only H264 and no module still asks for video") {
     REQUIRE(h.State()["video"]["h264"]["situacao"] == "baixando");
     h.Send(R"({"v":1,"cmd":"dial","numero":"2003","video":true})");
     CHECK(h.engine.madeVideo == std::vector<bool>({true}));
+}
+
+TEST_CASE("video is off when H264 is the only codec and the person turned H264 off") {
+    // O ligado segue a chave da pessoa: sem ela, o motor recusaria o video e o aviso culparia a outra ponta.
+    Harness h;
+    h.AllowH264Download();
+    h.StartRegistered();
+    OpenAdmin(h);
+    h.Send(AdminSet(R"("videoVp8":false,"videoVp9":false)"));
+    REQUIRE(h.State()["video"]["ligado"] == true);
+
+    h.Send(SetVideo(R"("h264":false)"));
+    CHECK(h.State()["video"]["ligado"] == false);
+    h.posts.clear();
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2003","video":true})");
+    CHECK(h.engine.madeVideo == std::vector<bool>({false}));
+    CHECK(h.Toasts().empty());
+    h.app->OnCallState(10, CallState::Disconnected, 0);
+    h.Run();
+    h.app->OnIncomingCall(20, "2002", "Fulano");
+    h.Run();
+    h.Send(R"({"v":1,"cmd":"answer","video":true})");
+    CHECK(h.engine.answersVideo == std::vector<bool>({false}));
+    h.app->OnCallState(20, CallState::Disconnected, 0);
+    h.Run();
+
+    // Ligada de novo, o video volta, tambem com o modulo ainda baixando (ele so conta no aviso da recusa).
+    h.Send(SetVideo(R"("h264":true)"));
+    REQUIRE(h.State()["video"]["h264"]["situacao"] == "baixando");
+    CHECK(h.State()["video"]["ligado"] == true);
+    h.Send(R"({"v":1,"cmd":"dial","numero":"2003","video":true})");
+    CHECK(h.engine.madeVideo == std::vector<bool>({false, true}));
+    h.app->OnCallState(11, CallState::Disconnected, 0);
+    h.Run();
+
+    // O modulo instalado nao muda a chave: desligada, sem video.
+    h.app->SetH264State(H264State::Installed);
+    h.Run();
+    h.Send(SetVideo(R"("h264":false)"));
+    CHECK(h.State()["video"]["ligado"] == false);
 }
 
 TEST_CASE("the iPhone platform passes no video to dial and answer and refuses camera") {

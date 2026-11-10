@@ -305,11 +305,11 @@ struct DesktopHooks {
 //     quando ele volta a ser ligado, baixando (hooks.h264Ensure) se ainda nao esta instalado; o resultado volta pelo
 //     SetH264State (instalado ou falhou; com o H.264 desligado, nada muda); o h264Retry so chama de novo depois de uma
 //     falha.
-//   - As ligacoes (Task 7): o dial e o answer levam o video so com o video.ligado (no iPhone, nunca); o camera liga ou
-//     desliga a camera da ligacao de cima; o OnCallVideo vai ao controlador (o bloco video de cada ligacao no estado).
-//     A recusa do video (o OnVideoRefused do controlador: o refused do motor, ou o 488/415 que virou voz) vira um aviso
-//     (toast): o do H.264 se o download, o cartao e a pessoa o ligam e o modulo nao esta instalado, senao o da outra
-//     ponta.
+//   - As ligacoes (Task 7): o dial e o answer levam o video so com o video.ligado (no iPhone, nunca), que conta o H.264
+//     so com o download, o cartao e a pessoa (o modulo que ainda baixa conta); o camera liga ou desliga a camera da
+//     ligacao de cima; o OnCallVideo vai ao controlador (o bloco video de cada ligacao no estado). A recusa do video (o
+//     OnVideoRefused do controlador: o refused do motor, ou o 488/415 que virou voz) vira um aviso (toast): o do H.264
+//     se o download, o cartao e a pessoa o ligam e o modulo nao esta instalado, senao o da outra ponta.
 //   - A camera (config.json: camera; "" = a primeira) vai ao motor na abertura e no setVideo; o teste da camera
 //     (cameraTest) e a lista de cameras (relida no RefreshAudioDevices) vao ao estado. O OnCameraProblem vira um aviso
 //     (toast); no OpenFailed, o texto depende do hooks.cameraBlocked (vazio: false).

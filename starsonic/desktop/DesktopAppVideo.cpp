@@ -46,12 +46,13 @@ void DesktopApp::RefreshCameras() {
     Log("video: " + std::to_string(cameras_.size()) + " camera(s)");
 }
 
-// Ha video: o ligado do estado. Olha so as escolhas, com o H.264 contado como disponivel (o modulo que ainda baixa nao
-// desliga o video: o motor atende com a voz e avisa a recusa). No iPhone, nunca.
+// Ha video: o ligado do estado. Olha so as escolhas, com o H.264 contado como disponivel quando ele vale (H264Wanted: o
+// cartao, a pessoa e o download liberado no build). O modulo que ainda baixa nao desliga o video: o motor atende com a
+// voz e avisa a recusa, com o aviso do H.264. No iPhone, nunca.
 bool DesktopApp::VideoOn() const {
     if (IPhone()) return false;
     VideoSettings choices = VideoChoices();
-    choices.h264Available = true;
+    choices.h264Available = H264Wanted();
     return VideoEnabled(choices);
 }
 
