@@ -28,7 +28,11 @@
 // (R39).
 // (0.3.0) O vídeo: as memórias das vistas desta página (video/vistas.ts) são guardadas uma vez, junto com a ponte, e vão
 // às vistas de vídeo pelo VideoContexto. Os avisos do vídeo (os toasts do AVISOS_DE_5_S) ficam 5 s na tela; os outros,
-// os 2 s de sempre.
+// os 2 s de sempre. (Task 8) O chat na ligação: numa ligação com um colega do chat (video/chatDaLigacao.ts), o Chat da
+// tela da ligação e do grande abre a conversa com ele (a dupla, criada se ainda não existe), só para a ligação de cima de
+// agora e só com ela sozinha. Na janela normal, a tela é a barra da ligação, a faixa dela (FaixaDaLigacao.tsx) e a
+// conversa; no grande, o painel da direita. No fim da ligação com a conversa na tela, ela fica (a vista chatConversa,
+// com o Voltar para a aba Chat); sem ela, o Teclado, como sempre.
 import { render } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { createBridge } from './bridge';
@@ -40,7 +44,8 @@ import { Membros } from './chat/telas/Membros';
 import { NovaConversa } from './chat/telas/NovaConversa';
 import { NovoGrupo } from './chat/telas/NovoGrupo';
 import { PorPessoas } from './chat/telas/PorPessoas';
-import { useVistaChat } from './chat/usarChat';
+import type { Conversa as ConversaDaLista } from './chat/tipos';
+import { useAcao, useVistaChat } from './chat/usarChat';
 import { AdminLogin } from './components/AdminLogin';
 import { Atualizacao } from './components/Atualizacao';
 import { BackBar } from './components/BackBar';
@@ -68,7 +73,9 @@ import { accountDot, accountTitle, agendaSuggestions } from './format';
 import { useLayout } from './layout';
 import { applyIphoneViewport, IPHONE_TABS, isIos } from './plataforma';
 import type { Send, Tab, View } from './types';
+import { useColegaDaLigacao } from './video/chatDaLigacao';
 import { videoDoApp } from './video/estado';
+import { FaixaDaLigacao } from './video/FaixaDaLigacao';
 import { AVISOS_DE_5_S } from './video/textos';
 import { criarVideoDaPagina, VideoContexto } from './video/vistas';
 
@@ -241,6 +248,17 @@ function App() {
   // (0.2.0) O toast das telas do chat (R31): o mesmo da ponte, sem contar como um toast do C++ (os `toasts` da edição do
   // atalho são só os dele).
   const avisarNaTela = useCallback((texto: string) => setToast((t) => ({ texto, vez: (t?.vez ?? 0) + 1 })), []);
+  // (vídeo, etapa 2) O chat na ligação: o colega da ligação de cima no chat (o Chat), a ação do Chat (a falha do pedido é
+  // o toast das telas do chat), a conversa que ele abriu, com o id da ligação de cima (ela sai quando a de cima muda), e a
+  // conversa da ligação na tela no último desenho com a ligação (no fim dela, ela fica).
+  const colegaDaLigacao = useColegaDaLigacao(chatCliente, vistaChat, state);
+  const acaoDoChat = useAcao(avisarNaTela);
+  const [chatDaLigacao, setChatDaLigacao] = useState<{ conversa: number; ligacao: number } | null>(null);
+  const conversaNaLigacao = useRef<number | null>(null);
+  const idDeCima = state?.ligacao?.top.id ?? 0;
+  useEffect(() => {
+    setChatDaLigacao((c) => (c !== null && c.ligacao !== idDeCima ? null : c));
+  }, [idDeCima]);
   // Outra pessoa no chat (a troca de conta, o chat que desligou ou saiu): as telas do chat da de antes saem.
   const euNoChat = vistaChat.eu?.id ?? null;
   const euAntes = useRef<number | null>(null);
@@ -275,12 +293,17 @@ function App() {
     if (state) ringer.setOutputs({ toque: state.audio.toque, altoFalante: state.audio.altoFalante });
   }, [state?.audio.toque, state?.audio.altoFalante]);
 
-  // A última ligação acabou: volta ao Teclado (spec da W1, 7.2). Uma ligação que chega fecha o diálogo do
-  // administrador (ele não volta sozinho depois dela).
+  // A última ligação acabou: volta ao Teclado (spec da W1, 7.2); (vídeo, etapa 2) com a conversa da ligação na tela, a
+  // vista vira a chatConversa dela, com o Voltar para a aba Chat. Uma ligação que chega fecha o diálogo do administrador
+  // (ele não volta sozinho depois dela).
   const emLigacao = state?.ligacao != null;
   const estavaEmLigacao = useRef(false);
   useEffect(() => {
-    if (estavaEmLigacao.current && !emLigacao) setView({ kind: 'tab', tab: 'teclado' });
+    if (estavaEmLigacao.current && !emLigacao) {
+      const fica = conversaNaLigacao.current;
+      setView(fica !== null ? { kind: 'chatConversa', conversa: fica, back: ABA_CHAT } : { kind: 'tab', tab: 'teclado' });
+      conversaNaLigacao.current = null;
+    }
     if (emLigacao) setAdminLogin(false);
     estavaEmLigacao.current = emLigacao;
   }, [emLigacao]);
@@ -394,13 +417,59 @@ function App() {
     </>
   );
 
+  // A conversa da lista na tela: a da vista chatConversa e (vídeo, etapa 2) a do Chat da ligação (o `naLigacao`, embaixo
+  // da faixa ou no painel do grande). O `key` é a conversa: a que fica no fim da ligação é a mesma, com o que estava
+  // escrito. A da ligação é uma conversa a dois, sem os membros.
+  const telaDaConversa = (c: ConversaDaLista, o: { naLigacao?: boolean; onVoltar(): void; onMembros?(): void }) => (
+    <Conversa
+      key={c.id}
+      vista={vistaChat}
+      conversa={c}
+      cliente={chatCliente}
+      send={send}
+      video={comVideo}
+      naLigacao={o.naLigacao}
+      avisar={avisarNaTela}
+      onVoltar={o.onVoltar}
+      onMembros={o.onMembros ?? (() => {})}
+    />
+  );
+
   // A ligação vem antes de tudo, também da tela Entrar (a troca para uma conta sem a senha deixa a conta em uso
   // registrada, e uma ligação dela precisa do Atender e do Desligar); a Entrar volta quando ela acaba.
   if (state.ligacao) {
+    const l = state.ligacao;
+    // (vídeo, etapa 2) A conversa do Chat: a da ligação de cima, com ela sozinha (com a segunda, a tela da ligação volta,
+    // com o cartão dela) e na lista. O Chat pede a conversa a dois com o colega (a que já existe, ou uma nova), e ela abre
+    // se a ligação dele ainda está em cima quando ela vem.
+    const daLigacao =
+      chatDaLigacao !== null && chatDaLigacao.ligacao === l.top.id && l.second === null
+        ? (vistaChat.conversas.find((c) => c.id === chatDaLigacao.conversa) ?? null)
+        : null;
+    conversaNaLigacao.current = daLigacao?.id ?? null;
+    const fecharOChat = () => setChatDaLigacao(null);
+    const abrirOChat = () => {
+      const colega = colegaDaLigacao;
+      const ligacao = l.top.id;
+      if (!colega) return;
+      acaoDoChat.fazer(
+        () => chatCliente.criarDupla(colega.id),
+        (conversa) => {
+          if (atual.current?.ligacao?.top.id === ligacao) setChatDaLigacao({ conversa, ligacao });
+        },
+      );
+    };
+    const conversaDaLigacao = (c: ConversaDaLista) => telaDaConversa(c, { naLigacao: true, onVoltar: fecharOChat });
+
     // (vídeo, etapa 2) O grande e a tela cheia (só no Windows): o vídeo toma a janela no lugar da tela da ligação. No grande
-    // a barra de título é a da ligação, sem as zonas de redimensionar; na tela cheia, nenhuma barra.
+    // a barra de título é a da ligação, sem as zonas de redimensionar; na tela cheia, nenhuma barra. O Chat abre e fecha a
+    // conversa no painel da direita (o Voltar dela também o fecha).
     const janela = videoDoApp(state).janela;
-    if (janela !== 'normal' && state.ligacao.top.phase !== 'ringing') {
+    if (janela !== 'normal' && l.top.phase !== 'ringing') {
+      const chat =
+        l.second === null && (colegaDaLigacao !== null || daLigacao !== null)
+          ? { aberto: daLigacao !== null, alternar: daLigacao ? fecharOChat : abrirOChat, painel: daLigacao && conversaDaLigacao(daLigacao) }
+          : null;
       return (
         <div class={`win call win-${janela === 'telaCheia' ? 'tela-cheia' : 'grande'}`} data-layout={layout} data-plataforma={plataforma}>
           {janela === 'grande' &&
@@ -409,26 +478,44 @@ function App() {
               status: state.conta ? accountDot(state.conta, true, state.naoPerturbe) : undefined,
               semRedimensionar: true,
             })}
-          <Grande state={state} ligacao={state.ligacao} send={send} />
+          <Grande state={state} ligacao={l} send={send} chat={chat} />
+          {toastEl}
+        </div>
+      );
+    }
+    // No Compacto e no Mínimo, sem o "Starsonic Phone · ", para a conta caber ao lado do estado (no Mínimo, só o ramal).
+    const barraDaLigacao = barra({
+      title: !state.conta
+        ? undefined
+        : layout === 'normal'
+          ? `Starsonic Phone · ${accountTitle(state.conta)}`
+          : layout === 'compacto'
+            ? accountTitle(state.conta)
+            : state.conta.ramal,
+      status: state.conta ? accountDot(state.conta, true, state.naoPerturbe) : undefined,
+    });
+    // (vídeo, etapa 2) A conversa do Chat, no tema do app, embaixo da faixa da ligação.
+    if (daLigacao) {
+      return (
+        <div class="win" data-layout={layout} data-plataforma={plataforma}>
+          {barraDaLigacao}
+          <FaixaDaLigacao state={state} ligacao={l} send={send} onVoltar={fecharOChat} />
+          {conversaDaLigacao(daLigacao)}
           {toastEl}
         </div>
       );
     }
     return (
       <div class="win call" data-layout={layout} data-plataforma={plataforma}>
-        {/* No Compacto e no Mínimo, sem o "Starsonic Phone · ", para a conta caber ao lado do estado (no Mínimo, só o
-            ramal). */}
-        {barra({
-          title: !state.conta
-            ? undefined
-            : layout === 'normal'
-              ? `Starsonic Phone · ${accountTitle(state.conta)}`
-              : layout === 'compacto'
-                ? accountTitle(state.conta)
-                : state.conta.ramal,
-          status: state.conta ? accountDot(state.conta, true, state.naoPerturbe) : undefined,
-        })}
-        <Ligacao state={state} ligacao={state.ligacao} contatos={sugestoes} daEmpresa={daEmpresa.contatos} send={send} />
+        {barraDaLigacao}
+        <Ligacao
+          state={state}
+          ligacao={l}
+          contatos={sugestoes}
+          daEmpresa={daEmpresa.contatos}
+          send={send}
+          chat={colegaDaLigacao && { abrir: abrirOChat }}
+        />
         {toastEl}
       </div>
     );
@@ -523,19 +610,10 @@ function App() {
       // Sem a conversa na lista (ela ainda chegando), a aba Chat no lugar.
       if (conversaDaVista) {
         const daVista = view;
-        conteudo = (
-          <Conversa
-            key={conversaDaVista.id}
-            vista={vistaChat}
-            conversa={conversaDaVista}
-            cliente={chatCliente}
-            send={send}
-            video={comVideo}
-            avisar={avisarNaTela}
-            onVoltar={() => setView(daVista.back)}
-            onMembros={() => setView({ kind: 'chatMembros', conversa: conversaDaVista.id, back: daVista })}
-          />
-        );
+        conteudo = telaDaConversa(conversaDaVista, {
+          onVoltar: () => setView(daVista.back),
+          onMembros: () => setView({ kind: 'chatMembros', conversa: conversaDaVista.id, back: daVista }),
+        });
       }
       break;
     case 'chatNova': {
@@ -593,6 +671,10 @@ function App() {
     case 'admin':
       break;
   }
+  // (vídeo, etapa 2) A ligação acabou com a conversa dela na tela: ela fica já neste desenho, no mesmo lugar (com o que
+  // estava escrito), até o efeito do fim da ligação passar a vista para ela.
+  const ficou = estavaEmLigacao.current ? vistaChat.conversas.find((c) => c.id === conversaNaLigacao.current) : undefined;
+  if (ficou) conteudo = telaDaConversa(ficou, { onVoltar: () => setView(ABA_CHAT) });
 
   if (conteudo) {
     return (

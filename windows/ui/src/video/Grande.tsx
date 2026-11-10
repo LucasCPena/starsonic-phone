@@ -4,9 +4,12 @@
 // ligada, sempre à vista), a etiqueta de quem fala, uma sombra embaixo e a barra de baixo: Mudo, Câmera, Chat, Tela cheia
 // (ou Sair da tela cheia), Diminuir e Desligar. A Câmera segue a regra da tela da ligação: com uma ligação, o
 // cameraDesativada; com duas (também na consulta), só desliga; na conferência, nenhuma. O Chat só aparece com o `chat`
-// (a Task 8 o passa, com o painel). O cartão da segunda ligação (o CartaoDaOutra) flutua em cima, no meio. O duplo clique
-// no vídeo alterna o grande e a tela cheia, e o Esc só vale na tela cheia (o ouvinte sai quando ela sai). Os botões
-// ignoram o segundo clique de um clique duplo: o Tela cheia dá lugar ao Sair da tela cheia no mesmo ponto.
+// (o main.tsx o passa numa ligação com um colega do chat): ele abre e fecha a conversa num painel de 360 à direita (o
+// quadro GrandeChat), no tema do app, e o vídeo, a sua imagem e a barra de baixo ficam com o resto. O cartão da segunda
+// ligação (o CartaoDaOutra) flutua em cima, no meio. O duplo clique no vídeo alterna o grande e a tela cheia, e o Esc só
+// vale na tela cheia (o ouvinte sai quando ela sai), fora de um diálogo aberto (a foto grande da conversa fecha com ele, e
+// a tela cheia fica). Os botões ignoram o segundo clique de um clique duplo: o Tela cheia dá lugar ao Sair da tela cheia
+// no mesmo ponto.
 import type { ComponentChildren, VNode } from 'preact';
 import { useEffect } from 'preact/hooks';
 import { VistaDeVideo } from '../components/VistaDeVideo';
@@ -20,7 +23,7 @@ import type { Send } from '../types';
 import { cameraDesativada, videoDe } from './estado';
 import { CAMERA, CHAT, DESLIGAR_A_CAMERA, DIMINUIR, LIGAR_A_CAMERA, rotuloDoVideo, SAIR_DA_TELA_CHEIA, SUA_IMAGEM, TELA_CHEIA } from './textos';
 
-/** O chat do grande (a Task 8): o botão Chat alterna o painel, que a Task 8 desenha. */
+/** O chat do grande (a Task 8): o botão Chat alterna o painel da direita, com a conversa (o `painel`) dentro. */
 export interface ChatDoGrande {
   aberto: boolean;
   alternar(): void;
@@ -71,11 +74,13 @@ export function Grande({ state, ligacao: l, send, chat = null }: Props): VNode {
   const tempo = statusLine(top, now);
   const alternarTela = () => send({ cmd: 'videoWindow', modo: telaCheia ? 'grande' : 'telaCheia' });
 
-  // O Esc só vale na tela cheia; o ouvinte sai quando ela sai (ou a tela desmonta).
+  // O Esc só vale na tela cheia; o ouvinte sai quando ela sai (ou a tela desmonta). Com um diálogo aberto (a foto grande
+  // da conversa do painel), o Esc é dele: ele fecha, e a tela cheia fica (o preventDefault do Esc impediria o diálogo de
+  // fechar).
   useEffect(() => {
     if (!telaCheia) return;
     const aoTeclar = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || e.isComposing || e.defaultPrevented) return;
+      if (e.key !== 'Escape' || e.isComposing || e.defaultPrevented || document.querySelector('dialog[open]')) return;
       send({ cmd: 'videoWindow', modo: 'grande' });
     };
     window.addEventListener('keydown', aoTeclar);
@@ -95,7 +100,7 @@ export function Grande({ state, ligacao: l, send, chat = null }: Props): VNode {
   );
 
   return (
-    <div class="grande" data-modo={telaCheia ? 'tela-cheia' : 'grande'}>
+    <div class={chat?.aberto ? 'grande grande-com-chat' : 'grande'} data-modo={telaCheia ? 'tela-cheia' : 'grande'}>
       <div class="grande-video" onDblClick={alternarTela}>
         <VistaDeVideo key={top.id} vista="remoto" desenhar={video.imagem} rotulo={rotuloDoVideo(nome)} class="grande-remoto" />
         <div class="grande-sombra" aria-hidden="true" />
@@ -109,7 +114,8 @@ export function Grande({ state, ligacao: l, send, chat = null }: Props): VNode {
       <div class="grande-cartao">
         <CartaoDaOutra state={state} ligacao={l} send={send} now={now} />
       </div>
-      {chat?.aberto && chat.painel}
+      {/* O painel volta às cores do tema do app (o tema-do-app do app.css), por cima das da tela da ligação. */}
+      {chat?.aberto && <div class="grande-chat tema-do-app">{chat.painel}</div>}
       <div class="grande-barra">
         <Botao rotulo="Mudo" icone={l.muted ? <IconMicOff /> : <IconMic />} pressionado={l.muted} onClick={() => send({ cmd: 'mute', on: !l.muted })} />
         {camera}

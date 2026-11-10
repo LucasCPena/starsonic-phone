@@ -22,7 +22,9 @@
 // vídeo (CaixaDoVideo.tsx) toma o lugar de quem fala. Fora dela, com a câmera ligada, a sua imagem flutua no canto de cima
 // à direita (também com um painel aberto): embaixo do cartão da outra ligação quando ele está em cima, e no canto de
 // baixo, ao lado do Desligar, com ele e um painel aberto. As colunas dos controles seguem quantos são. O cartão da outra
-// ligação (o CartaoDaOutra) também vai ao grande e à tela cheia.
+// ligação (o CartaoDaOutra) também vai ao grande e à tela cheia. (Task 8) Numa ligação com um colega do chat (o `chat`,
+// do main.tsx), o Chat vem depois da Câmera, nos controles de uma ligação: ele abre a conversa com o colega, embaixo da
+// faixa da ligação. Com a segunda tocando, ele espera, como a Nova ligação (a conversa só fica na tela com uma ligação).
 import { createContext, type ComponentChildren, type VNode } from 'preact';
 import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { AtalhosPainel } from '../components/AtalhosPainel';
@@ -38,6 +40,7 @@ import {
   IconClose,
   IconKeypad,
   IconMerge,
+  IconMessage,
   IconMic,
   IconMicOff,
   IconPause,
@@ -55,7 +58,7 @@ import type { AppState, CallCard, CallState, CompanyContact, Contact } from '../
 import type { Send } from '../types';
 import { CaixaDoVideo, SuaImagemFlutuante } from '../video/CaixaDoVideo';
 import { cameraDesativada, videoDe, videoDoApp } from '../video/estado';
-import { ATENDER_COM_VIDEO, CAMERA, DESLIGAR_A_CAMERA, LIGAR_A_CAMERA, rotuloDoVideo } from '../video/textos';
+import { ATENDER_COM_VIDEO, CAMERA, CHAT, DESLIGAR_A_CAMERA, LIGAR_A_CAMERA, rotuloDoVideo } from '../video/textos';
 import { statusLine, useNow } from './tempoDaLigacao';
 
 interface Props {
@@ -66,6 +69,8 @@ interface Props {
   /** (rc.6) A lista da empresa (a última contatosEmpresa): no Windows, ela entra na lista dos painéis com os `contatos`. */
   daEmpresa: CompanyContact[];
   send: Send;
+  /** (vídeo, etapa 2) O Chat, com um colega do chat na ligação de cima: abre a conversa com ele (main.tsx). */
+  chat?: { abrir(): void } | null;
 }
 
 type Painel = 'teclado' | 'transferir' | 'nova' | 'atalhos' | null;
@@ -590,7 +595,7 @@ export function CartaoDaOutra({ state, ligacao: l, send, now }: CartaoProps): VN
   );
 }
 
-export function Ligacao({ state, ligacao: l, contatos, daEmpresa, send }: Props) {
+export function Ligacao({ state, ligacao: l, contatos, daEmpresa, send, chat = null }: Props) {
   const now = useNow();
   const [painelPedido, setPainel] = useState<Painel>(null);
   const [digitos, setDigitos] = useState('');
@@ -821,11 +826,16 @@ export function Ligacao({ state, ligacao: l, contatos, daEmpresa, send }: Props)
       />
     ) : null;
 
+  // (vídeo, etapa 2) O Chat, com um colega do chat na ligação de cima (nunca no iPhone). Com a segunda tocando, ele espera,
+  // como a Nova ligação: a conversa da ligação só fica na tela com uma (main.tsx).
+  const chatCtrl =
+    chat && !ios ? <Ctrl label={CHAT} icon={<IconMessage />} disabled={l.second !== null} onClick={chat.abrir} /> : null;
+
   // Os controles: na conferência, Mudo, Teclado e Separar (o motor pausa todo vídeo nela: sem a Câmera); na consulta,
   // Mudo, Câmera, Alternar e Cancelar; com duas, Mudo, Câmera, Teclado, Áudio, Espera, Transferir, Alternar, Juntar e
-  // Atalhos; com uma, Mudo, Câmera, Teclado, Áudio, Espera, Transferir, Nova ligação e Atalhos. A Câmera só vem com o vídeo
-  // ligado; (iPhone) sem ela e sem o Atalhos. O lugar de um que não vem fica vazio (null), e a tela não remonta os outros
-  // quando ele chega.
+  // Atalhos; com uma, Mudo, Câmera, Chat, Teclado, Áudio, Espera, Transferir, Nova ligação e Atalhos. A Câmera só vem com o
+  // vídeo ligado, e o Chat com um colega do chat; (iPhone) sem os dois e sem o Atalhos. O lugar de um que não vem fica
+  // vazio (null), e a tela não remonta os outros quando ele chega.
   let controles: Array<VNode | null>;
   if (conferencia) {
     controles = [mudo, teclado, <Ctrl label="Separar" icon={<IconSplit />} onClick={() => send({ cmd: 'split' })} />];
@@ -847,6 +857,7 @@ export function Ligacao({ state, ligacao: l, contatos, daEmpresa, send }: Props)
     controles = [
       mudo,
       cameraCtrl(false),
+      chatCtrl,
       teclado,
       audioCtrl,
       espera,
@@ -931,7 +942,7 @@ export function Ligacao({ state, ligacao: l, contatos, daEmpresa, send }: Props)
   } else {
     // As colunas seguem quantos controles há. Numa fila só: 3 (a conferência, e a consulta sem a Câmera) e 4 (a consulta
     // com ela). Em duas filas: 6 em três colunas (uma ligação no iPhone, sem o Atalhos), 7 e 8 em quatro, e 9 em cinco
-    // (duas ligações com a Câmera).
+    // (duas ligações com a Câmera, ou uma com a Câmera e o Chat).
     const quantos = controles.filter((c) => c !== null).length;
     const grade = quantos >= 9 ? 'ctrls ctrls-5' : quantos >= 7 || quantos === 4 ? 'ctrls ctrls-4' : 'ctrls';
     meio = <div class={grade}>{controles}</div>;
