@@ -70,7 +70,8 @@ const videoDaDeCima = (page: Page, video: Video) =>
   mudarEstado(page, (s) => ({ ...s, ligacao: { ...s.ligacao, top: { ...s.ligacao.top, video: { ...SEM_VIDEO, ...video } } } }));
 
 const botao = (onde: Page | Locator, nome: string) => onde.getByRole('button', { name: nome, exact: true });
-const faixa = (page: Page) => page.locator('.faixa-ligacao');
+/** A faixa da ligação: a seção com o nome da ligação, como no quadro ConversaNaLigacao. */
+const faixa = (page: Page) => page.getByRole('region', { name: 'Ligação com Ana Souza', exact: true });
 const topoDaConversa = (page: Page) => page.locator('.conversa-topo');
 const conversaComAAna = (page: Page) => page.getByRole('log', { name: 'Mensagens com Ana Souza' });
 const campoParaAAna = (page: Page) => page.getByRole('textbox', { name: 'Mensagem para Ana Souza' });
@@ -208,6 +209,11 @@ test('the call strip shows your image with the camera on', async ({ page }) => {
   expect(s.x >= r.x && s.y >= r.y && s.x + s.width <= r.x + r.width && s.y + s.height <= r.y + r.height, JSON.stringify({ r, s })).toBe(true);
   expect(s.width).toBeLessThan(r.width);
   await expect(f.getByText(/^Em ligação · 00:\d\d$/)).toBeVisible();
+  // Como no quadro: "Em ligação ·" em #b9c4e6, 12 px e 600; o tempo em ciano, 14 px e 700; o Voltar em branco e 700.
+  await textoDaFaixa(f.locator('.faixa-nome'), 'rgb(185, 196, 230)', '12px', '600');
+  await expect(f.locator('.faixa-nome')).toHaveText('Em ligação ·');
+  await textoDaFaixa(f.locator('.faixa-tempo'), 'rgb(0, 194, 203)', '14px', '700');
+  await textoDaFaixa(botao(f, 'Voltar para a ligação'), 'rgb(255, 255, 255)', '12.5px', '700');
   // A sua imagem desenha a câmera.
   await quadro(page, 'local', VERMELHO);
   await expect.poll(async () => perto(await corNoMeio(page, sua), RGB_DO_VERMELHO)).toBe(true);
@@ -221,11 +227,22 @@ test('the call strip shows your image with the camera on', async ({ page }) => {
   quase(so.height, 48, 'a altura da sua imagem');
   await expect(f.getByText(/^Em ligação · 00:\d\d$/)).toBeVisible();
 
-  // Sem nenhuma das duas: nenhuma miniatura, e o nome no lugar do "Em ligação".
+  // Sem nenhuma das duas: nenhuma miniatura, e o nome no lugar do "Em ligação": como no quadro ConversaNaLigacaoEscura,
+  // o nome em branco, 14,5 px e 800, e "· <tempo>" em ciano.
   await videoDaDeCima(page, {});
   await expect(f.getByRole('img')).toHaveCount(0);
   await expect(f.getByText(/^Ana Souza · 00:\d\d$/)).toBeVisible();
+  await textoDaFaixa(f.locator('.faixa-nome'), 'rgb(255, 255, 255)', '14.5px', '800');
+  await expect(f.locator('.faixa-tempo')).toHaveText(/^\s*· 00:\d\d$/);
+  await textoDaFaixa(f.locator('.faixa-tempo'), 'rgb(0, 194, 203)', '14px', '700');
 });
+
+/** A cor, o tamanho e o peso de um texto da faixa. */
+async function textoDaFaixa(alvo: Locator, cor: string, tamanho: string, peso: string): Promise<void> {
+  await expect(alvo).toHaveCSS('color', cor);
+  await expect(alvo).toHaveCSS('font-size', tamanho);
+  await expect(alvo).toHaveCSS('font-weight', peso);
+}
 
 test('a voice call also has the Chat button, and the strip shows the name and the time', async ({ page }) => {
   await prontoNoChat(page);
@@ -527,6 +544,8 @@ test('the call screen with the Chat and the strip fit the three sizes', async ({
       .locator('.faixa-nome, .faixa-tempo, .faixa-voltar')
       .evaluateAll((els) => els.filter((e) => e.scrollWidth > e.clientWidth + 0.5 || e.getBoundingClientRect().width < 1).map((e) => e.textContent));
     expect(cortados, `cortados na faixa em ${onde}`).toEqual([]);
+    // O "Voltar para a ligação" (em 700, como no quadro) numa linha só.
+    expect((await caixa(botao(f, 'Voltar para a ligação'))).height, `o Voltar para a ligação em duas linhas em ${onde}`).toBeLessThan(20);
     const tempo = await caixa(f.locator('.faixa-tempo'));
     expect(tempo.x + tempo.width, `o tempo fora da faixa em ${onde}`).toBeLessThanOrEqual((await caixa(f.locator('.faixa-botoes'))).x + 0.5);
     await botao(f, 'Voltar para a ligação').click();
@@ -568,10 +587,13 @@ for (const tema of ['light', 'dark'] as const) {
       const minha = (onde: Page | Locator) => onde.locator('.balao-meu .balao-texto');
       const azulOuCiano = tema === 'light' ? 'rgb(12, 38, 113)' : 'rgb(0, 194, 203)';
 
-      // Na janela normal: a faixa e a conversa.
+      // Na janela normal: a faixa (navy nos dois temas, com os textos do quadro) e a conversa.
       await chegaALigacao(page, ligacao('2003', 'Ana Souza', COM_VIDEO));
       await abrirOChat(page);
       await expect(minha(page)).toHaveCSS('background-color', azulOuCiano);
+      await expect(faixa(page)).toHaveCSS('background-color', 'rgb(7, 11, 24)');
+      await textoDaFaixa(faixa(page).locator('.faixa-nome'), 'rgb(185, 196, 230)', '12px', '600');
+      await textoDaFaixa(botao(faixa(page), 'Voltar para a ligação'), 'rgb(255, 255, 255)', '12.5px', '700');
       await semViolacoesSerias(page);
       await botao(faixa(page), 'Voltar para a ligação').click();
 

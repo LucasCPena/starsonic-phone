@@ -45,8 +45,9 @@ export function situacaoDoH264(s: H264Situacao): string | null {
   }
 }
 
-// A faixa da conversa.
+// A faixa da conversa: o texto e o nome da seção para o leitor de tela (o quadro ConversaNaLigacao).
 export const EM_LIGACAO = 'Em ligação';
+export const ligacaoCom = (nome: string) => `Ligação com ${nome}`;
 
 /** Os seis avisos do vídeo (os toasts do núcleo) que ficam 5 s na tela. */
 export const AVISOS_DE_5_S: ReadonlySet<string> = new Set([

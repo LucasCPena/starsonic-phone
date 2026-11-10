@@ -3,7 +3,9 @@
 // outra ponta (o `remoto`, com o `key` do id da ligação), com a sua imagem pequena dentro com a câmera ligada; sem a
 // imagem da outra ponta, a sua imagem (com a câmera ligada, ela está sempre à vista); sem nenhuma das duas, nenhuma. No
 // meio, "Em ligação · <tempo>" com a miniatura, ou "<nome> · <tempo>" sem ela (o nome sai com as reticências, e o tempo
-// fica inteiro), e o "Voltar para a ligação". À direita, os botões redondos: o Mudo, a Câmera (só com o vídeo ligado, com
+// fica inteiro), e o "Voltar para a ligação". (Ruling 16) Como nos quadros: a faixa é a seção "Ligação com <nome>"; o
+// "Em ligação ·" vai no cinza-azulado e menor, o nome em branco e mais forte, e o tempo em ciano (com o "·" antes dele
+// quando vem o nome). À direita, os botões redondos: o Mudo, a Câmera (só com o vídeo ligado, com
 // a regra da tela da ligação: o cameraDesativada) e o Desligar (o hangup com o id). A conversa só fica com uma ligação
 // (main.tsx). Os botões ignoram o segundo clique de um clique duplo, como os da tela da ligação.
 import type { VNode } from 'preact';
@@ -15,7 +17,7 @@ import { statusLine, useNow } from '../screens/tempoDaLigacao';
 import type { AppState, CallState } from '../state';
 import type { Send } from '../types';
 import { cameraDesativada, videoDe, videoDoApp } from './estado';
-import { DESLIGAR_A_CAMERA, EM_LIGACAO, LIGAR_A_CAMERA, rotuloDoVideo, SUA_IMAGEM, VOLTAR_PARA_A_LIGACAO } from './textos';
+import { DESLIGAR_A_CAMERA, EM_LIGACAO, LIGAR_A_CAMERA, ligacaoCom, rotuloDoVideo, SUA_IMAGEM, VOLTAR_PARA_A_LIGACAO } from './textos';
 
 interface Props {
   state: AppState;
@@ -35,7 +37,7 @@ export function FaixaDaLigacao({ state, ligacao: l, send, onVoltar }: Props): VN
   const aoClicar = (acao: () => void) => semSegundoClique(true, acao);
   const camera = video.camera ? DESLIGAR_A_CAMERA : LIGAR_A_CAMERA;
   return (
-    <div class="faixa-ligacao">
+    <section class="faixa-ligacao" aria-label={ligacaoCom(nome)}>
       {/* A vista da sua imagem é a mesma quando a da outra ponta chega ou sai (ela não remonta): só a medida muda. */}
       {miniatura && (
         <div class="faixa-miniatura">
@@ -45,8 +47,17 @@ export function FaixaDaLigacao({ state, ligacao: l, send, onVoltar }: Props): VN
       )}
       <div class="faixa-textos">
         <p class="faixa-titulo">
-          <span class="faixa-nome">{miniatura ? EM_LIGACAO : nome}</span>
-          {tempo && <span class="faixa-tempo">{` · ${tempo}`}</span>}
+          {miniatura ? (
+            <>
+              <span class="faixa-nome faixa-em-ligacao">{tempo ? `${EM_LIGACAO} ·` : EM_LIGACAO}</span>
+              {tempo && <span class="faixa-tempo">{` ${tempo}`}</span>}
+            </>
+          ) : (
+            <>
+              <span class="faixa-nome">{nome}</span>
+              {tempo && <span class="faixa-tempo">{` · ${tempo}`}</span>}
+            </>
+          )}
         </p>
         <button type="button" class="faixa-voltar" onClick={aoClicar(onVoltar)}>
           {VOLTAR_PARA_A_LIGACAO}
@@ -85,6 +96,6 @@ export function FaixaDaLigacao({ state, ligacao: l, send, onVoltar }: Props): VN
           <IconPhone class="ic-hang" />
         </button>
       </div>
-    </div>
+    </section>
   );
 }

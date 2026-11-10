@@ -1290,22 +1290,26 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .win.call[data-layout="minimo"] .call-painel-cartao .call-alto > .sua-flutuante { top: auto; right: 16px; bottom: 16px; }
 
 /* A faixa da ligação em cima da conversa que o Chat da ligação abriu (FaixaDaLigacao.tsx; os quadros ConversaNaLigacao e
-   ConversaNaLigacaoEscura): navy-950 nos dois temas; a miniatura de 64×48 (a imagem da outra ponta com a sua pequena
-   dentro, ou só a sua); "Em ligação · 03:12" (o nome sai com as reticências, e o tempo fica inteiro) e o "Voltar para a
-   ligação" sublinhado; e os botões redondos de 36 (o Mudo e a Câmera acesos em ciano, o Desligar em vermelho). No Mínimo,
-   como na tela da ligação, tudo menor (a miniatura de 48×36 e os botões de 32), para o "Em ligação · <tempo>" e o
-   "Voltar para a ligação" caberem numa linha cada (numa janela ainda mais estreita, o link quebra a linha). */
+   ConversaNaLigacaoEscura): navy-950 nos dois temas, com o fio claro em cima; a miniatura de 64×48 (a imagem da outra
+   ponta com a sua pequena dentro, ou só a sua); "Em ligação · 03:12" (o "Em ligação ·" no cinza-azulado, menor, e o
+   tempo em ciano) ou, sem a miniatura, "Ana Souza · 03:12" (o nome em branco e forte, que sai com as reticências, e o
+   "· 03:12" em ciano, inteiro), e o "Voltar para a ligação" em branco, sublinhado; e os botões redondos de 36 (o Mudo e a
+   Câmera acesos em ciano, o Desligar em vermelho). No Mínimo, como na tela da ligação, tudo menor (a miniatura de 48×36,
+   os botões de 32 e os textos), para o "Em ligação · <tempo>" e o "Voltar para a ligação" caberem numa linha cada (numa
+   janela ainda mais estreita, o link quebra a linha). */
 .faixa-ligacao { flex: none; display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--navy-950); color: #ffffff;
-  --focus: var(--cyan); }
+  border-top: 1px solid rgba(255, 255, 255, 0.08); --focus: var(--cyan); }
 .faixa-miniatura { position: relative; flex: none; width: 64px; height: 48px; border-radius: 8px; overflow: hidden; background: var(--video-bg); }
 .faixa-remoto, .faixa-sua-so { position: absolute; inset: 0; }
 .faixa-sua { position: absolute; right: 3px; bottom: 3px; width: 24px; height: 18px; border-radius: 3px; border: 1px solid rgba(255, 255, 255, 0.55); }
 .faixa-textos { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
-.faixa-titulo { display: flex; max-width: 100%; margin: 0; font-size: 13px; font-weight: 700; line-height: 1.3; white-space: nowrap; }
-.faixa-nome { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.faixa-tempo { flex: none; white-space: pre; color: var(--cyan); font-variant-numeric: tabular-nums; }
-.faixa-voltar { max-width: 100%; padding: 0; border: 0; border-radius: 4px; background: transparent; font: 600 12.5px/1.3 var(--font-sans);
-  color: var(--cyan); text-align: left; text-decoration: underline; text-underline-offset: 2px; }
+.faixa-titulo { display: flex; align-items: baseline; max-width: 100%; margin: 0; line-height: 1.3; white-space: nowrap; }
+.faixa-nome { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 14.5px; font-weight: 800; letter-spacing: -0.01em; }
+.faixa-em-ligacao { font-size: 12px; font-weight: 600; letter-spacing: 0; color: #b9c4e6; }
+.faixa-tempo { flex: none; white-space: pre; font-size: 14px; font-weight: 700; letter-spacing: 0.02em; color: var(--cyan);
+  font-variant-numeric: tabular-nums; }
+.faixa-voltar { max-width: 100%; padding: 0; border: 0; border-radius: 4px; background: transparent; font: 700 12.5px/1.3 var(--font-sans);
+  color: #ffffff; text-align: left; text-decoration: underline; text-underline-offset: 3px; }
 .faixa-botoes { flex: none; display: flex; gap: 6px; }
 .faixa-botao { width: 36px; height: 36px; flex: none; border-radius: 999px; border: 1px solid rgba(255, 255, 255, 0.18); background: rgba(255, 255, 255, 0.1);
   color: #ffffff; display: grid; place-items: center; padding: 0; transition: background var(--ease), border-color var(--ease); }
@@ -1318,8 +1322,10 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .win[data-layout="minimo"] .faixa-ligacao { gap: 8px; padding: 8px 10px; }
 .win[data-layout="minimo"] .faixa-miniatura { width: 48px; height: 36px; border-radius: 6px; }
 .win[data-layout="minimo"] .faixa-sua { right: 2px; bottom: 2px; width: 18px; height: 14px; border-radius: 2px; }
-.win[data-layout="minimo"] .faixa-titulo { font-size: 12.5px; }
-.win[data-layout="minimo"] .faixa-voltar { font-size: 11.5px; }
+.win[data-layout="minimo"] .faixa-nome { font-size: 13px; }
+.win[data-layout="minimo"] .faixa-em-ligacao { font-size: 11px; }
+.win[data-layout="minimo"] .faixa-tempo { font-size: 12.5px; }
+.win[data-layout="minimo"] .faixa-voltar { font-size: 11px; }
 .win[data-layout="minimo"] .faixa-botoes { gap: 4px; }
 .win[data-layout="minimo"] .faixa-botao { width: 32px; height: 32px; }
 .win[data-layout="minimo"] .faixa-botao .ic { width: 16px; height: 16px; }
