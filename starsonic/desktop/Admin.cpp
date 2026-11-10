@@ -105,31 +105,6 @@ DoorphoneCheck CheckDoorphone(const std::string& doorphone) {
     return DoorphoneCheck::Ok;
 }
 
-// Os nomes no admin.json.
-const char* CodecKey(VideoCodec codec) {
-    switch (codec) {
-        case VideoCodec::Vp8:
-            return "vp8";
-        case VideoCodec::Vp9:
-            return "vp9";
-        case VideoCodec::H264:
-            break;
-    }
-    return "h264";
-}
-
-const char* QualityKey(VideoQuality quality) {
-    switch (quality) {
-        case VideoQuality::Low:
-            return "baixa";
-        case VideoQuality::High:
-            return "alta";
-        case VideoQuality::Medium:
-            break;
-    }
-    return "media";
-}
-
 }  // namespace
 
 // ---------------------------------------------------------------- AdminStore
@@ -172,11 +147,8 @@ bool AdminStore::Load() {
     config_.videoH264 = GetBool(root, "videoH264", defaults.videoH264);
     config_.videoVp8 = GetBool(root, "videoVp8", defaults.videoVp8);
     config_.videoVp9 = GetBool(root, "videoVp9", defaults.videoVp9);
-    const std::string first = GetString(root, "videoPrimeiro");
-    config_.videoFirst = first == "vp8" ? VideoCodec::Vp8 : first == "vp9" ? VideoCodec::Vp9 : defaults.videoFirst;
-    const std::string quality = GetString(root, "videoQualidade");
-    config_.videoQuality =
-        quality == "baixa" ? VideoQuality::Low : quality == "alta" ? VideoQuality::High : defaults.videoQuality;
+    config_.videoFirst = ParseCodecKey(GetString(root, "videoPrimeiro")).value_or(defaults.videoFirst);
+    config_.videoQuality = ParseQualityKey(GetString(root, "videoQualidade")).value_or(defaults.videoQuality);
     const auto doorphones = root.find("porteiros");
     if (doorphones != root.end() && doorphones->is_array()) {
         // Como os servidores: o item que nao serve ou repete fica de fora, e a lista para nos 20.

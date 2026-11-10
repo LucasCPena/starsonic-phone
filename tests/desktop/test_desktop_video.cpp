@@ -2,6 +2,8 @@
 // administrador, a camera e a chave do H.264 da pessoa, a situacao do modulo H.264, os pedidos novos da ponte
 // (setVideo, cameraTest, videoViews, videoWindow, h264Retry), o bloco video do estado e os avisos da camera. O Harness e
 // os falsos ficam no desktop_fixture.h.
+#include <algorithm>
+#include <cctype>
 #include <string>
 #include <vector>
 
@@ -35,6 +37,23 @@ void OpenAdmin(Harness& h) {
     h.Send(kAdminLogin);
     REQUIRE(h.State()["admin"]["aberto"] == true);
 }
+
+// O texto em minusculas (para procurar sem olhar a caixa).
+std::string Lower(std::string text) {
+    std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return text;
+}
+
+// Alguma linha do diagnostico leva o texto (sem olhar a caixa)?
+bool AnyLogHas(const Harness& h, const std::string& text) {
+    const std::string wanted = Lower(text);
+    for (const std::string& line : h.logs) {
+        if (Lower(line).find(wanted) != std::string::npos) return true;
+    }
+    return false;
+}
+
+const char kPrivateCamera[] = "Webcam Particular Lucas 7";
 
 json Strings(const std::vector<std::string>& items) { return json(items); }
 
@@ -585,4 +604,106 @@ TEST_CASE("the iPhone platform has no video") {
     h.app->OnCameraProblem(CameraProblem::NoCamera);
     h.Run();
     CHECK(h.Toasts().empty());
+}
+
+TEST_CASE("the codec and quality keys map both ways, in one place") {
+    CHECK(std::string(CodecKey(VideoCodec::H264)) == "h264");
+    CHECK(std::string(CodecKey(VideoCodec::Vp8)) == "vp8");
+    CHECK(std::string(CodecKey(VideoCodec::Vp9)) == "vp9");
+    for (VideoCodec codec : {VideoCodec::H264, VideoCodec::Vp8, VideoCodec::Vp9}) {
+        const std::optional<VideoCodec> back = ParseCodecKey(CodecKey(codec));
+        REQUIRE(back);
+        CHECK(*back == codec);
+    }
+    CHECK_FALSE(ParseCodecKey("av1"));
+    CHECK_FALSE(ParseCodecKey(""));
+    CHECK_FALSE(ParseCodecKey("H264"));   // as chaves sao minusculas
+
+    CHECK(std::string(QualityKey(VideoQuality::Low)) == "baixa");
+    CHECK(std::string(QualityKey(VideoQuality::Medium)) == "media");
+    CHECK(std::string(QualityKey(VideoQuality::High)) == "alta");
+    for (VideoQuality quality : {VideoQuality::Low, VideoQuality::Medium, VideoQuality::High}) {
+        const std::optional<VideoQuality> back = ParseQualityKey(QualityKey(quality));
+        REQUIRE(back);
+        CHECK(*back == quality);
+    }
+    CHECK_FALSE(ParseQualityKey("ultra"));
+    CHECK_FALSE(ParseQualityKey(""));
+}
+
+TEST_CASE("an over-long camera name or a too long list of views is refused like the chat fields") {
+    std::string error;
+    CHECK(ParseCommand(SetVideo(R"("camera":")" + std::string(200, 'a') + R"(")"), &error));
+    CHECK_FALSE(ParseCommand(SetVideo(R"("camera":")" + std::string(201, 'a') + R"(")"), &error));
+    CHECK(error == "setVideo: camera invalida");   // o motivo diz o comando e o campo, nunca o valor
+    // Os caracteres contam como pontos de codigo, nao como bytes.
+    std::string accented;
+    for (int i = 0; i < 200; ++i) accented += "\xc3\xa9";
+    CHECK(ParseCommand(SetVideo(R"("camera":")" + accented + R"(")")));
+    CHECK_FALSE(ParseCommand(SetVideo(R"("camera":")" + accented + "x" + R"(")")));
+
+    json views = json::array();
+    for (int i = 0; i < 8; ++i) views.push_back("local");
+    const std::string head = R"({"v":1,"cmd":"videoViews","pagina":"principal","vistas":)";
+    CHECK(ParseCommand(head + views.dump() + "}"));
+    views.push_back("local");
+    CHECK_FALSE(ParseCommand(head + views.dump() + "}", &error));
+    CHECK(error == "videoViews: vistas invalidas");
+    CHECK(ParseCommand(head + R"(["remoto"])" + "}"));
+    CHECK_FALSE(ParseCommand(head + "[\"" + std::string(33, 'x') + "\"]}", &error));
+    CHECK(error == "videoViews: vistas invalidas");
+    CHECK(error.find("xxx") == std::string::npos);
+}
+
+TEST_CASE("a camera test already running does not start again") {
+    Harness h;
+    h.port.cameras = {VideoDevice{"Camera A"}};
+    h.Start();
+    h.Send(R"({"v":1,"cmd":"cameraTest","on":true})");
+    h.Send(R"({"v":1,"cmd":"cameraTest","on":true})");
+    CHECK(h.port.Count("start") == 1);
+    CHECK(h.State()["video"]["teste"] == true);
+    h.Send(R"({"v":1,"cmd":"cameraTest","on":false})");
+    h.Send(R"({"v":1,"cmd":"cameraTest","on":true})");
+    CHECK(h.port.Count("start") == 2);
+}
+
+TEST_CASE("a camera choice the disk refuses changes neither the engine nor the state") {
+    Harness h;
+    h.port.cameras = {VideoDevice{"Camera A"}, VideoDevice{"Camera B"}};
+    h.Start();
+    h.Send(SetVideo(R"("camera":"Camera A")"));
+    const size_t captures = h.port.captureNames.size();
+    h.files.failWrites = true;
+    h.Send(SetVideo(R"("camera":"Camera B","h264":false)"));
+    CHECK(h.port.captureNames.size() == captures);   // o motor so recebe o que ficou gravado
+    CHECK(h.State()["video"]["camera"] == "Camera A");
+    CHECK(h.State()["video"]["h264"]["pessoa"] == true);
+    CHECK(h.Logged("config.json: as configuracoes nao foram gravadas"));
+    h.files.failWrites = false;
+    h.Send(SetVideo(R"("camera":"Camera B")"));
+    CHECK(h.port.captureNames.back() == "Camera B");
+}
+
+TEST_CASE("no log line carries the camera name, whatever the case") {
+    Harness h;
+    h.port.cameras = {VideoDevice{kPrivateCamera}};
+    h.port.systemCameras = std::vector<VideoDevice>{};
+    h.Start();
+    h.Send(SetVideo(std::string(R"("camera":")") + kPrivateCamera + R"(")"));
+    h.Send(R"({"v":1,"cmd":"cameraTest","on":true})");
+    h.Send(R"({"v":1,"cmd":"cameraTest","on":false})");
+    h.app->OnCameraProblem(CameraProblem::OpenFailed);
+    h.app->OnCameraProblem(CameraProblem::Disconnected);
+    h.Run();
+    h.app->RefreshAudioDevices();   // a camera some: cameraDesconectada
+    h.Run();
+    REQUIRE(h.State()["video"]["cameraDesconectada"] == true);
+    h.Restart();
+    CHECK_FALSE(h.logs.empty());
+    CHECK_FALSE(AnyLogHas(h, kPrivateCamera));
+    CHECK_FALSE(AnyLogHas(h, "WEBCAM PARTICULAR"));
+    CHECK_FALSE(AnyLogHas(h, "lucas"));
+    // O nome so aparece onde a interface o le: no estado.
+    CHECK(h.State()["video"]["camera"] == kPrivateCamera);
 }

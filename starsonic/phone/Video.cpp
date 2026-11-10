@@ -29,6 +29,44 @@ bool Usable(const VideoSettings& settings, VideoCodec codec) {
 
 }  // namespace
 
+const char* CodecKey(VideoCodec codec) {
+    switch (codec) {
+        case VideoCodec::Vp8:
+            return "vp8";
+        case VideoCodec::Vp9:
+            return "vp9";
+        case VideoCodec::H264:
+            break;
+    }
+    return "h264";
+}
+
+std::optional<VideoCodec> ParseCodecKey(const std::string& key) {
+    if (key == "h264") return VideoCodec::H264;
+    if (key == "vp8") return VideoCodec::Vp8;
+    if (key == "vp9") return VideoCodec::Vp9;
+    return std::nullopt;
+}
+
+const char* QualityKey(VideoQuality quality) {
+    switch (quality) {
+        case VideoQuality::Low:
+            return "baixa";
+        case VideoQuality::High:
+            return "alta";
+        case VideoQuality::Medium:
+            break;
+    }
+    return "media";
+}
+
+std::optional<VideoQuality> ParseQualityKey(const std::string& key) {
+    if (key == "baixa") return VideoQuality::Low;
+    if (key == "media") return VideoQuality::Medium;
+    if (key == "alta") return VideoQuality::High;
+    return std::nullopt;
+}
+
 QualityValues ValuesOf(VideoQuality quality) {
     switch (quality) {
         case VideoQuality::Low:

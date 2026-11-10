@@ -2027,20 +2027,25 @@ void DesktopApp::H264Retry() {
     if (hooks_.h264Ensure) hooks_.h264Ensure();
 }
 
+// Primeiro grava (como o setAudio): o motor so recebe o que ficou gravado. Se o disco recusa, nada muda (a linha do
+// SaveSettings vai ao diagnostico) e a escolha nao chega ao motor.
 void DesktopApp::SetVideoChoices(const Command& command) {
     Settings settings = settings_.Get();
-    if (command.cameraName) {
-        settings.cameraName = *command.cameraName;
-        if (!port_.SetCaptureDevice(settings.cameraName)) Log("video: o motor nao aceitou a camera escolhida");
-    }
+    if (command.cameraName) settings.cameraName = *command.cameraName;
     if (command.h264) settings.h264Person = *command.h264;
     SaveSettings(settings);
+    const Settings saved = settings_.Get();
+    if (command.cameraName && saved.cameraName == *command.cameraName &&
+        !port_.SetCaptureDevice(saved.cameraName)) {
+        Log("video: o motor nao aceitou a camera escolhida");
+    }
     ApplyH264Wish();
     PushVideoSettings();
 }
 
 void DesktopApp::CameraTest(bool on) {
     if (on) {
+        if (cameraTest_) return;   // ja ligado: o motor nao abre a camera duas vezes
         cameraTest_ = port_.StartCameraTest();
         if (!cameraTest_) Log("video: o teste da camera nao ligou");
         return;

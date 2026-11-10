@@ -84,6 +84,11 @@ const Name kNames[] = {
 constexpr size_t kMaxChatTitle = 200;
 constexpr size_t kMaxChatText = 500;
 constexpr size_t kMaxChatFileName = 255;
+// Os limites dos campos do video (0.3.0), em caracteres: o nome da camera (o do dispositivo do Windows) e as vistas
+// (uma lista curta de nomes curtos: remoto, local, porteiro).
+constexpr size_t kMaxCameraName = 200;
+constexpr size_t kMaxVideoViews = 8;
+constexpr size_t kMaxVideoViewName = 32;
 
 // Quantos caracteres (pontos de codigo) tem o texto UTF-8 (o JSON lido ja e UTF-8 valido).
 size_t CountCharacters(const std::string& utf8) {
@@ -329,30 +334,6 @@ Out AccountJson(const AccountView& account, bool current) {
     return out;
 }
 
-const char* CodecKey(VideoCodec codec) {
-    switch (codec) {
-        case VideoCodec::Vp8:
-            return "vp8";
-        case VideoCodec::Vp9:
-            return "vp9";
-        case VideoCodec::H264:
-            break;
-    }
-    return "h264";
-}
-
-const char* QualityKey(VideoQuality quality) {
-    switch (quality) {
-        case VideoQuality::Low:
-            return "baixa";
-        case VideoQuality::High:
-            return "alta";
-        case VideoQuality::Medium:
-            break;
-    }
-    return "media";
-}
-
 const char* H264StateName(H264State state) {
     switch (state) {
         case H264State::Downloading:
@@ -549,23 +530,17 @@ std::optional<Command> ParseCommand(const std::string& text, std::string* error)
             f.OptionalText("videoQualidade", &quality);
             f.OptionalTextList("porteiros", &command.admin.doorphones);
             if (f.ok() && firstCodec) {
-                if (*firstCodec == "h264") {
-                    command.admin.videoFirst = VideoCodec::H264;
-                } else if (*firstCodec == "vp8") {
-                    command.admin.videoFirst = VideoCodec::Vp8;
-                } else if (*firstCodec == "vp9") {
-                    command.admin.videoFirst = VideoCodec::Vp9;
+                const std::optional<VideoCodec> codec = ParseCodecKey(*firstCodec);
+                if (codec) {
+                    command.admin.videoFirst = codec;
                 } else {
                     f.Fail("codec desconhecido: " + firstCodec->substr(0, 40));
                 }
             }
             if (f.ok() && quality) {
-                if (*quality == "baixa") {
-                    command.admin.videoQuality = VideoQuality::Low;
-                } else if (*quality == "media") {
-                    command.admin.videoQuality = VideoQuality::Medium;
-                } else if (*quality == "alta") {
-                    command.admin.videoQuality = VideoQuality::High;
+                const std::optional<VideoQuality> parsed = ParseQualityKey(*quality);
+                if (parsed) {
+                    command.admin.videoQuality = parsed;
                 } else {
                     f.Fail("qualidade desconhecida: " + quality->substr(0, 40));
                 }
@@ -575,6 +550,9 @@ std::optional<Command> ParseCommand(const std::string& text, std::string* error)
         case CommandKind::SetVideo:
             f.OptionalText("camera", &command.cameraName);
             f.OptionalFlag("h264", &command.h264, false);
+            if (f.ok() && command.cameraName && !CharactersBetween(*command.cameraName, 0, kMaxCameraName)) {
+                f.Fail("camera invalida");
+            }
             break;
         case CommandKind::CameraTest:
             f.OptionalFlag("on", &command.on, true);
@@ -584,6 +562,10 @@ std::optional<Command> ParseCommand(const std::string& text, std::string* error)
             f.TextList("vistas", &command.views, true);
             if (f.ok() && command.page != "principal" && command.page != "aviso") {
                 f.Fail("pagina desconhecida: " + command.page.substr(0, 40));
+            }
+            if (f.ok() && command.views.size() > kMaxVideoViews) f.Fail("vistas invalidas");
+            for (const std::string& view : command.views) {
+                if (f.ok() && !CharactersBetween(view, 0, kMaxVideoViewName)) f.Fail("vistas invalidas");
             }
             break;
         case CommandKind::VideoWindow:

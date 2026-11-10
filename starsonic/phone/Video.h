@@ -3,6 +3,7 @@
 // dos codecs, os Porteiros, o vídeo de uma ligação, as câmeras, os problemas da câmera, o quadro I420 e quem recebe os
 // quadros (FrameSink). Nada de PJSIP aqui: o núcleo e os testes do desktop usam estes tipos sem o motor.
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -10,6 +11,13 @@ namespace starsonic {
 
 enum class VideoCodec { H264, Vp8, Vp9 };
 enum class VideoQuality { Low, Medium, High };
+
+// Os nomes das escolhas na ponte e no admin.json: o codec "h264", "vp8" ou "vp9", e a qualidade "baixa", "media" ou
+// "alta". Parse devolve nada para outro texto (nao muda a caixa).
+const char* CodecKey(VideoCodec codec);
+std::optional<VideoCodec> ParseCodecKey(const std::string& key);
+const char* QualityKey(VideoQuality quality);
+std::optional<VideoQuality> ParseQualityKey(const std::string& key);
 
 // A imagem do codificador: largura e altura em pixels, quadros por segundo e a taxa em kbit/s.
 struct QualityValues {
