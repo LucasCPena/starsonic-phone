@@ -4,7 +4,8 @@
 // Usa a mesma ponte da janela principal: recebe o mesmo `state` e manda `answer`/`reject` (o executável traz a
 // janela principal para a frente no Atender). Mostra a que toca: a de cima (uma recebida) ou a segunda. Sem
 // nenhuma tocando, fica vazio (o executável esconde a janela). O toque é da janela principal: o aviso não toca.
-// Com a imagem do porteiro (`video.cedo`), a vista `porteiro` fica em cima, pela memória da página `aviso`.
+// Com a imagem do porteiro (`video.cedo`), a vista `porteiro` fica em cima, pela memória da página `aviso`, também com
+// outra ligação em andamento (a exceção do porteiro: a imagem dele chega com outra ligação; o Atender com vídeo, não).
 import { render } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import { createBridge } from './bridge';

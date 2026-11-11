@@ -18,7 +18,7 @@ test('the fake core carries the video state of the core', async ({ page }) => {
     janela: 'normal',
   });
   await abrir(page, 'video');
-  expect((await estado(page)).ligacao.top.video).toEqual({ oferece: false, ativo: true, imagem: true, camera: true, cedo: false });
+  expect((await estado(page)).ligacao.top.video).toEqual({ oferece: false, ativo: true, imagem: true, camera: true, cedo: false, porteiro: false });
 });
 
 test('the fake core answers the video commands like the core', async ({ page }) => {
@@ -94,12 +94,19 @@ test('the fake core answers with video like the core', async ({ page }) => {
   await abrir(page, 'video-tocando');
   await mandar(page, { cmd: 'answer', video: true });
   await expect.poll(async () => (await estado(page)).ligacao.top.phase).toBe('active');
-  expect((await estado(page)).ligacao.top.video).toEqual({ oferece: true, ativo: true, imagem: true, camera: true, cedo: false });
+  expect((await estado(page)).ligacao.top.video).toEqual({ oferece: true, ativo: true, imagem: true, camera: true, cedo: false, porteiro: false });
 
   await abrir(page, 'video-tocando');
   await mandar(page, { cmd: 'answer' });
   await expect.poll(async () => (await estado(page)).ligacao.top.phase).toBe('active');
   expect((await estado(page)).ligacao.top.video.camera).toBe(false);
+
+  // O porteiro segue porteiro depois de atender, como no motor; o cedo acaba no atender.
+  await abrir(page, 'video-porteiro');
+  expect((await estado(page)).ligacao.top.video).toEqual({ oferece: true, ativo: false, imagem: true, camera: false, cedo: true, porteiro: true });
+  await mandar(page, { cmd: 'answer' });
+  await expect.poll(async () => (await estado(page)).ligacao.top.phase).toBe('active');
+  expect((await estado(page)).ligacao.top.video).toEqual({ oferece: true, ativo: true, imagem: true, camera: false, cedo: false, porteiro: true });
 });
 
 test('the fake core refuses the doorphones like the core', async ({ page }) => {
@@ -141,5 +148,5 @@ test('the iPhone fake has no video', async ({ page }) => {
   await expect(page.locator('body[data-pronto]')).toHaveCount(1);
   const s = await estado(page);
   expect(s.video.ligado).toBe(false);
-  expect(s.ligacao.top.video).toEqual({ oferece: false, ativo: false, imagem: false, camera: false, cedo: false });
+  expect(s.ligacao.top.video).toEqual({ oferece: false, ativo: false, imagem: false, camera: false, cedo: false, porteiro: false });
 });

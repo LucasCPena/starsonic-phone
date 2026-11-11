@@ -99,7 +99,7 @@ export interface AutoAnswer {
   segundos: number;
 }
 
-/** (0.3.0, só no Windows) O vídeo de uma ligação (os campos `offered`, `active`, `remote`, `camera` e `early` do CallVideo). */
+/** (0.3.0, só no Windows) O vídeo de uma ligação (os campos `offered`, `active`, `remote`, `camera`, `early` e `doorphone` do CallVideo). */
 export interface CallVideo {
   /** A recebida oferece vídeo com um codec em comum. */
   oferece: boolean;
@@ -111,6 +111,11 @@ export interface CallVideo {
   camera: boolean;
   /** O 183 com imagem de um Porteiro, até o atender ou o fim. */
   cedo: boolean;
+  /**
+   * (0.3.0-rc.2) Um Porteiro (a ligação que ganhou o 183 com imagem), do toque ao fim, também depois de atender: com outra
+   * ligação, a imagem dele segue à vista, só chegando (a decisão do responsável de 11/11/2026).
+   */
+  porteiro: boolean;
 }
 
 /** (0.3.0) O módulo H.264 da Cisco. */

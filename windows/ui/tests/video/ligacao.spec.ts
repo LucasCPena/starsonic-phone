@@ -528,6 +528,43 @@ test('the second call ringing pauses the video layout', async ({ page }) => {
   await semViolacoesSerias(page);
 });
 
+test("the call screen shows the doorphone's image with another call on hold", async ({ page }) => {
+  // A exceção do porteiro (decisão do responsável de 11/11/2026): a Portaria (um Porteiro) atendida em cima, com a imagem
+  // dele chegando, e a Ana em espera. A imagem fica à vista, só chegando: a Câmera não liga com duas ligações.
+  await abrir(page, 'duas-ligacoes');
+  const portaria = (porteiro: boolean) => (s: Record<string, any>) => ({
+    ...s,
+    ligacao: {
+      ...s.ligacao,
+      top: { ...s.ligacao.top, id: 31, number: '1050', name: 'Portaria', video: { ...SEM_VIDEO, oferece: true, ativo: true, imagem: true, porteiro } },
+    },
+  });
+  await mudarEstado(page, portaria(true));
+  const area = remoto(page, 'Portaria');
+  await expect(area).toBeVisible();
+  await expect(page.locator('.call-alto .vcard')).toContainText('Ana Souza');
+  await quadro(page, 'remoto', VERMELHO);
+  await esperarCorNoMeio(page, area, RGB_DO_VERMELHO);
+  const c = camera(page);
+  await expect(c).toHaveAccessibleName('Ligar a câmera');
+  await expect(c).toBeDisabled();
+  await expect(suaImagem(page)).toHaveCount(0);
+
+  // Uma ligação comum em cima, na mesma situação: o vídeo pausa com duas ligações, e nada é desenhado.
+  await mudarEstado(page, portaria(false));
+  await expect(page.locator('.call-alto .vcard')).toContainText('Ana Souza');
+  await expect(qualquerRemoto(page)).toHaveCount(0);
+  await expect(botao(page, 'Abrir grande')).toHaveCount(0);
+  await expect(c).toBeDisabled();
+
+  // Na conferência, nem o porteiro: nada é desenhado.
+  await abrir(page, 'conferencia');
+  await mudarEstado(page, portaria(true));
+  await expect(botao(page, 'Separar')).toBeVisible();
+  await expect(qualquerRemoto(page)).toHaveCount(0);
+  await expect(botao(page, 'Abrir grande')).toHaveCount(0);
+});
+
 test('on the iPhone a call never shows video', async ({ page }) => {
   await abrir(page, 'video&plataforma=ios');
   await expect(page.locator('.who-name')).toHaveText('Ana Souza');

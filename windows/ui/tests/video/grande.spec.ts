@@ -207,6 +207,40 @@ test('the big window reads no frame while the second call is there, not even one
   await expect.poll(async () => perto(await corNoMeio(page, area), RGB_DO_BRANCO), 'o quadro gravado na chegada da segunda').toBe(true);
 });
 
+test("the big window shows the doorphone's image with another call", async ({ page }) => {
+  // A exceção do porteiro (decisão do responsável de 11/11/2026): com a Portaria (um Porteiro) em cima, a imagem dele segue
+  // no grande com a segunda tocando ou em espera, e a Câmera não liga. Na mesma situação, uma ligação comum em cima fica só
+  // com o fundo.
+  await abrir(page, 'video-grande');
+  const portaria = (porteiro: boolean, segunda: Record<string, unknown>, tipo: string) => (s: Record<string, any>) => ({
+    ...s,
+    ligacao: {
+      ...s.ligacao,
+      top: { ...s.ligacao.top, id: 31, number: '1050', name: 'Portaria', video: { ...s.ligacao.top.video, camera: false, porteiro } },
+      second: segunda,
+      secondKind: tipo,
+    },
+  });
+  const area = page.getByRole('img', { name: 'Vídeo de Portaria', exact: true });
+  for (const [segunda, tipo, cor, rgb] of [
+    [{ ...CARLOS, phase: 'ringing', activeSinceMs: 0, held: false }, 'ringing', BRANCO, RGB_DO_BRANCO],
+    [{ ...CARLOS, phase: 'active', activeSinceMs: Date.now() - 41_000, held: true }, 'held', VERMELHO, RGB_DO_VERMELHO],
+  ] as const) {
+    await mudarEstado(page, portaria(true, segunda, tipo));
+    await expect(page.locator('.grande-cartao .vcard'), tipo).toBeVisible();
+    await quadro(page, 'remoto', cor);
+    await expect.poll(async () => perto(await corNoMeio(page, area), rgb), `a imagem do porteiro com a segunda (${tipo})`).toBe(true);
+    await expect(botao(page, 'Ligar a câmera'), tipo).toBeDisabled();
+
+    await mudarEstado(page, portaria(false, segunda, tipo));
+    await expect(botao(page, 'Ligar a câmera'), tipo).toBeDisabled();
+    await quadro(page, 'remoto', cor);
+    await quadrosDeTela(page, 10);
+    const comum = await corNoMeio(page, area);
+    expect(perto(comum, FUNDO), `uma ligação comum com a segunda (${tipo}): ${comum}`).toBe(true);
+  }
+});
+
 test('the big window always shows your image with the camera on', async ({ page }) => {
   await abrir(page, 'video-grande');
   await mudarEstado(page, (s) => ({ ...s, ligacao: { ...s.ligacao, top: { ...s.ligacao.top, video: { ...s.ligacao.top.video, imagem: false, camera: true } } } }));

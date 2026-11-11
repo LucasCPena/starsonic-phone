@@ -345,12 +345,22 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
     }
     return gravados;
   };
-  /** O cartão da ligação atendida: a câmera só liga com o `video`, e o vídeo da outra ponta segue a oferta. */
+  /**
+   * O cartão da ligação atendida: a câmera só liga com o `video`, e o vídeo da outra ponta segue a oferta. Um porteiro
+   * segue porteiro (o `cedo` acaba no atender), como no motor.
+   */
   const atendida = (card: CallCard, video: boolean): CallCard => ({
     ...card,
     phase: 'active',
     activeSinceMs: Date.now(),
-    video: { oferece: card.video?.oferece ?? false, ativo: card.video?.oferece ?? false, imagem: card.video?.oferece ?? false, camera: video, cedo: false },
+    video: {
+      oferece: card.video?.oferece ?? false,
+      ativo: card.video?.oferece ?? false,
+      imagem: card.video?.oferece ?? false,
+      camera: video,
+      cedo: false,
+      porteiro: card.video?.porteiro ?? false,
+    },
   });
 
   let proximoId = 40;

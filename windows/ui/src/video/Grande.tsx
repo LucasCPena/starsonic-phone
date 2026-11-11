@@ -1,10 +1,11 @@
 // (vídeo, etapa 2) O grande e a tela cheia (os quadros Grande e TelaCheia): a tela que a página mostra com a janela do
 // vídeo em `grande` (1280×800; o executável redimensiona a janela quando a página manda o `videoWindow`) ou em
-// `telaCheia`. Só o vídeo da outra ponta (a janela toda, encaixada no fundo #04060e), a sua imagem no canto (com a câmera
-// ligada, sempre à vista), a etiqueta de quem fala, uma sombra embaixo e a barra de baixo: Mudo, Câmera, Chat, Tela cheia
-// (ou Sair da tela cheia), Diminuir e Desligar. (Ruling 13) O vídeo e a Câmera seguem a regra da tela da ligação, do
-// video/estado.ts: com duas ligações (a segunda tocando ou em espera, também na consulta), a imagem da outra ponta pausa
-// (a vista fica só com o fundo: o imagemDaLigacao) e a Câmera só desliga (o cameraDaLigacaoDesativada); na conferência,
+// `telaCheia`. Só o vídeo da outra ponta (a janela toda, encaixada no fundo #04060e), a sua imagem no canto (com a
+// câmera ligada, sempre à vista), a etiqueta de quem fala, uma sombra embaixo e a barra de baixo: Mudo, Câmera, Chat,
+// Tela cheia (ou Sair da tela cheia), Diminuir e Desligar. (Ruling 13) O vídeo e a Câmera seguem a regra da tela da
+// ligação, do video/estado.ts: com duas ligações (a segunda tocando ou em espera, também na consulta), a imagem da
+// outra ponta pausa (a vista fica só com o fundo: o imagemDaLigacao), menos a de um porteiro em cima, que segue à vista
+// (a exceção do porteiro), e a Câmera só desliga (o cameraDaLigacaoDesativada); na conferência, nenhuma imagem e
 // nenhuma Câmera. O Chat só aparece com o `chat` (o main.tsx o passa numa ligação com um colega do chat): ele abre e
 // fecha a conversa num painel de 360 à direita (o quadro GrandeChat), no tema do app, e o vídeo, a sua imagem e a barra
 // de baixo ficam com o resto. O cartão da segunda ligação (o CartaoDaOutra) flutua em cima, no meio. O duplo clique no
@@ -124,7 +125,7 @@ export function Grande({ state, ligacao: l, send, chat = null }: Props): VNode {
   return (
     <div class={chat?.aberto ? 'grande grande-com-chat' : 'grande'} data-modo={telaCheia ? 'tela-cheia' : 'grande'}>
       <div class="grande-video" ref={areaDoVideo} onDblClick={aoClicarDuasVezes}>
-        <VistaDeVideo key={top.id} vista="remoto" desenhar={video.imagem && imagemDaLigacao(l)} rotulo={rotuloDoVideo(nome)} class="grande-remoto" />
+        <VistaDeVideo key={top.id} vista="remoto" desenhar={video.imagem && imagemDaLigacao(l, video)} rotulo={rotuloDoVideo(nome)} class="grande-remoto" />
         <div class="grande-sombra" aria-hidden="true" />
       </div>
       <p class="grande-etiqueta">

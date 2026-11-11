@@ -337,7 +337,9 @@ function cenarioDeVideo(nome: string): Scenario | undefined {
       return {
         state: {
           ...principal(),
-          ligacao: ligacao(cartao(31, '1050', 'Portaria', { incoming: true, phase: 'ringing', video: { ...SEM_VIDEO, oferece: true, imagem: true, cedo: true } })),
+          ligacao: ligacao(
+            cartao(31, '1050', 'Portaria', { incoming: true, phase: 'ringing', video: { ...SEM_VIDEO, oferece: true, imagem: true, cedo: true, porteiro: true } }),
+          ),
         },
         ring: 'completo',
       };

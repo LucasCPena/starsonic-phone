@@ -65,6 +65,35 @@ test('the doorphone notice shows the image and grows to 430', async ({ page }) =
   await esperarComando(page, { cmd: 'noticeHeight', altura: 222 });
 });
 
+test('a doorphone ringing during another call shows its image in the notice', async ({ page }) => {
+  // A Ana em ligação e o Carlos tocando como a segunda: o aviso de voz. A segunda passa a ser a Portaria (um Porteiro), já
+  // com a imagem (o 183): a exceção do porteiro (decisão do responsável de 11/11/2026) a põe no aviso também com outra
+  // ligação, nos 430; o Atender com vídeo continua fora, com a outra ligação em andamento.
+  await abrir(page, 'ligacao-segunda', 'aviso.html');
+  await esperarComando(page, { cmd: 'noticeHeight', altura: 168 });
+  await mudarEstado(page, (s) => ({
+    ...s,
+    ligacao: {
+      ...s.ligacao,
+      second: {
+        ...s.ligacao.second,
+        id: 31,
+        number: '1050',
+        name: 'Portaria',
+        video: { oferece: true, ativo: true, imagem: true, camera: false, cedo: true, porteiro: true },
+      },
+    },
+  }));
+  await expect(page.getByRole('alertdialog', { name: 'Ligação recebida de Portaria' })).toBeVisible();
+  await expect(imagemDoPorteiro(page)).toBeVisible();
+  await esperarComando(page, { cmd: 'videoViews', pagina: 'aviso', vistas: ['porteiro'] });
+  await quadro(page, 'porteiro', VERMELHO);
+  await expect.poll(async () => perto(await corNoMeio(page, imagemDoPorteiro(page)), RGB_DO_VERMELHO)).toBe(true);
+  await expect(page.getByRole('button', { name: 'Atender', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Atender com vídeo' })).toHaveCount(0);
+  await expect.poll(async () => (await alturas(page)).at(-1)).toBe(430);
+});
+
 test('each notice height fits its content', async ({ page }) => {
   for (const [cenario, altura] of [
     ['aviso', ALTURA_DO_AVISO.voz],

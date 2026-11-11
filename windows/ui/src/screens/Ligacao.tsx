@@ -18,9 +18,10 @@
 // ligado (o `config.bipeTecla`).
 // (vídeo, etapa 2) Com o vídeo ligado, a Câmera entra nos controles, depois do Mudo, com a regra do video/estado.ts (o
 // cameraDaLigacaoDesativada): numa ligação, a do cameraDesativada; com duas (a segunda tocando ou em espera, também na
-// consulta), só para desligar a câmera (o motor pausa o vídeo de todas); na conferência, não. Numa ligação só (o
-// imagemDaLigacao), fora do toque, sem painel aberto e com a imagem da outra ponta chegando, a área do
-// vídeo (CaixaDoVideo.tsx) toma o lugar de quem fala. Fora dela, com a câmera ligada, a sua imagem flutua no canto de cima
+// consulta), só para desligar a câmera (o motor pausa a câmera de todas); na conferência, não. Numa ligação só, ou com a
+// segunda quando a de cima é um porteiro (o imagemDaLigacao: a exceção do porteiro), fora do toque, sem painel aberto e
+// com a imagem da outra ponta chegando, a área do vídeo (CaixaDoVideo.tsx) toma o lugar de quem fala, embaixo do cartão
+// da outra ligação quando ele está em cima. Fora dela, com a câmera ligada, a sua imagem flutua no canto de cima
 // à direita (também com um painel aberto): embaixo do cartão da outra ligação quando ele está em cima, e no canto de
 // baixo, ao lado do Desligar, com ele e um painel aberto. As colunas dos controles seguem quantos são. O cartão da outra
 // ligação (o CartaoDaOutra) também vai ao grande e à tela cheia. (Task 8) Numa ligação com um colega do chat (o `chat`,
@@ -681,14 +682,15 @@ export function Ligacao({ state, ligacao: l, contatos, daEmpresa, send, chat = n
   const status = statusLine(top, now);
   const compacto = painel !== null;
 
-  // (vídeo, etapa 2) O desenho com vídeo: numa ligação só (sem a segunda e sem a conferência: o imagemDaLigacao), fora do
-  // toque, sem painel aberto e com a imagem da outra ponta chegando. Fora dele, com a câmera ligada, a sua imagem flutua
-  // no canto.
+  // (vídeo, etapa 2) O desenho com vídeo: numa ligação só, ou com a segunda quando a de cima é um porteiro (nunca na
+  // conferência: o imagemDaLigacao), fora do toque, sem painel aberto e com a imagem da outra ponta chegando. Fora dele,
+  // com a câmera ligada, a sua imagem flutua no canto.
   const video = videoDe(state, top);
-  const comVideo = !tocando && imagemDaLigacao(l) && painel === null && video.imagem;
+  const comVideo = !tocando && imagemDaLigacao(l, video) && painel === null && video.imagem;
   const suaFlutuante = !comVideo && video.camera;
   // (vídeo, etapa 2) O porteiro que manda a imagem antes de atender: a imagem em cima, no lugar do avatar. O Atender com
-  // vídeo, com o vídeo do app ligado e a oferta da que toca.
+  // vídeo, com o vídeo do app ligado, a oferta da que toca e nenhuma outra ligação em andamento (o
+  // oferecerAtenderComVideo).
   const porteiro = tocando && video.cedo;
   const atenderComVideo = tocando && oferecerAtenderComVideo(state, top);
 
@@ -800,11 +802,11 @@ export function Ligacao({ state, ligacao: l, contatos, daEmpresa, send, chat = n
   const atalhos = ios ? null : (
     <Ctrl label="Atalhos" icon={<IconBolt />} disabled={!falando || !temAtalhos} ctrlRef={atalhosRef} onClick={() => setPainel('atalhos')} />
   );
-  // (vídeo, etapa 2) A Câmera, só com o vídeo ligado (nunca no iPhone): o nome diz a ação, e ela fica acesa com a câmera
-  // ligada. Numa ligação, desligada, ela espera o atender e a volta da espera (o cameraDesativada); ligada, sempre
-  // desliga. Com duas (a segunda tocando ou em espera, também na consulta), ela só desliga: o motor pausa o vídeo de
-  // todas (nada é mandado), nenhuma câmera liga com duas ligações, e a que ainda aparece ligada sempre tem como ser
-  // desligada (o cameraDaLigacaoDesativada, a mesma regra do grande).
+  // (vídeo, etapa 2) A Câmera, só com o vídeo ligado (nunca no iPhone): o nome diz a ação, e ela fica acesa com a
+  // câmera ligada. Numa ligação, desligada, ela espera o atender e a volta da espera (o cameraDesativada); ligada,
+  // sempre desliga. Com duas (a segunda tocando ou em espera, também na consulta), ela só desliga: o motor pausa a
+  // câmera de todas (nada é mandado, nem a um porteiro), nenhuma câmera liga com duas ligações, e a que ainda aparece
+  // ligada sempre tem como ser desligada (o cameraDaLigacaoDesativada, a mesma regra do grande).
   const cameraCtrl = videoDoApp(state).ligado ? (
     <Ctrl
       label={CAMERA}
