@@ -58,7 +58,7 @@ import { buscaPor, buscar, listaDeContatos, nomeOuNumero, temLetras, type Linha 
 import type { AppState, CallCard, CallState, CompanyContact, Contact } from '../state';
 import type { Send } from '../types';
 import { CaixaDoVideo, SuaImagemFlutuante } from '../video/CaixaDoVideo';
-import { cameraDaLigacaoDesativada, imagemDaLigacao, videoDe, videoDoApp } from '../video/estado';
+import { cameraDaLigacaoDesativada, imagemDaLigacao, oferecerAtenderComVideo, videoDe, videoDoApp } from '../video/estado';
 import { ATENDER_COM_VIDEO, CAMERA, CHAT, DESLIGAR_A_CAMERA, LIGAR_A_CAMERA, rotuloDoVideo } from '../video/textos';
 import { statusLine, useNow } from './tempoDaLigacao';
 
@@ -538,10 +538,9 @@ export function CartaoDaOutra({ state, ligacao: l, send, now }: CartaoProps): VN
   const outra = !conferencia && l.secondKind === 'held' ? l.second : null;
   const consulta = l.consulting && outra !== null;
   if (segundaTocando) {
-    // O Atender com vídeo: a segunda oferece vídeo e o vídeo do app está ligado (nunca no iPhone).
-    const comVideo = videoDoApp(state).ligado && videoDe(state, segundaTocando).oferece;
+    // Sem o Atender com vídeo: com outra ligação em andamento o vídeo pausa, e ele não cumpriria a promessa.
     return (
-      <div class={comVideo ? 'vcard vcard-on vcard-tres' : 'vcard vcard-on'} role="alert">
+      <div class="vcard vcard-on" role="alert">
         <Avatar card={segundaTocando} />
         <span class="row-main">
           <span class="row-title">Ligação de {nameOrNumber(segundaTocando)}</span>
@@ -553,17 +552,6 @@ export function CartaoDaOutra({ state, ligacao: l, send, now }: CartaoProps): VN
         <button type="button" class="round-sm round-cyan" aria-label="Atender" title="Atender" onClick={semSegundoClique(!ios, () => send({ cmd: 'answer' }))}>
           <IconPhone />
         </button>
-        {comVideo && (
-          <button
-            type="button"
-            class="round-sm round-video"
-            aria-label={ATENDER_COM_VIDEO}
-            title={ATENDER_COM_VIDEO}
-            onClick={semSegundoClique(!ios, () => send({ cmd: 'answer', video: true }))}
-          >
-            <IconVideo />
-          </button>
-        )}
       </div>
     );
   }
@@ -702,7 +690,7 @@ export function Ligacao({ state, ligacao: l, contatos, daEmpresa, send, chat = n
   // (vídeo, etapa 2) O porteiro que manda a imagem antes de atender: a imagem em cima, no lugar do avatar. O Atender com
   // vídeo, com o vídeo do app ligado e a oferta da que toca.
   const porteiro = tocando && video.cedo;
-  const atenderComVideo = tocando && videoDoApp(state).ligado && video.oferece;
+  const atenderComVideo = tocando && oferecerAtenderComVideo(state, top);
 
   // O que fica no alto: a faixa da segunda que toca, ou o cartão da outra (em espera).
   const temCartao = segundaTocando !== null || outra !== null;

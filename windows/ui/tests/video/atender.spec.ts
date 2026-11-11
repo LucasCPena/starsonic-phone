@@ -38,21 +38,32 @@ const comVideoNaSegunda = (page: Page) =>
     ligacao: { ...s.ligacao, second: { ...s.ligacao.second, video: { oferece: true, ativo: false, imagem: false, camera: false, cedo: false } } },
   }));
 
-test('the second call ringing with video has Atender com vídeo in its card', async ({ page }) => {
+test('the second call ringing with video has no Atender com vídeo while another call is up', async ({ page }) => {
   await abrir(page, 'ligacao-segunda');
   const cartao = page.getByRole('alert').filter({ hasText: 'Ligação de Carlos Lima' });
   await expect(cartao).toBeVisible();
+  await comVideoNaSegunda(page);
+  // Com outra ligação em andamento o vídeo pausa: o cartão só tem o Recusar e o Atender.
+  await expect(cartao.getByRole('button')).toHaveCount(2);
+  await expect(cartao.getByRole('button', { name: 'Recusar' })).toBeVisible();
   await expect(cartao.getByRole('button', { name: 'Atender com vídeo' })).toHaveCount(0);
-  await comVideoNaSegunda(page);
-  await expect(cartao.getByRole('button', { name: 'Atender com vídeo' })).toBeVisible();
-  await cartao.getByRole('button', { name: 'Atender com vídeo' }).click();
-  await esperarComando(page, { cmd: 'answer', video: true });
+  await expect(cartao).not.toHaveClass(/vcard-tres/);
   // O Atender do cartão segue sem o `video`.
-  await abrir(page, 'ligacao-segunda');
-  await comVideoNaSegunda(page);
-  await page.getByRole('alert').filter({ hasText: 'Ligação de Carlos Lima' }).getByRole('button', { name: 'Atender', exact: true }).click();
+  await cartao.getByRole('button', { name: 'Atender', exact: true }).click();
   await esperarComando(page, { cmd: 'answer' });
   expect((await comandos(page)).filter((c) => c.cmd === 'answer' && 'video' in c)).toEqual([]);
+});
+
+test('the ringing screen has no Atender com vídeo while another call is up', async ({ page }) => {
+  await abrir(page, 'video-tocando');
+  await expect(botao(page, 'Atender com vídeo')).toBeVisible();
+  // Outra ligação (em espera) com a que toca em cima: o vídeo pausa, e a tela só tem o Recusar e o Atender.
+  await mudarEstado(page, (s) => ({
+    ...s,
+    ligacao: { ...s.ligacao, second: { ...s.ligacao.top, id: 22, name: 'Carlos Lima', incoming: false, phase: 'active', held: true, activeSinceMs: 1, video: { ...s.ligacao.top.video, oferece: false } }, secondKind: 'held' },
+  }));
+  await expect(botao(page, 'Atender com vídeo')).toHaveCount(0);
+  await expect(page.locator('.round-action button.hang')).toHaveCount(2);
 });
 
 test('the doorphone shows its image before answering, without your camera', async ({ page }) => {

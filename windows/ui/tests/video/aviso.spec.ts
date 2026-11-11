@@ -17,6 +17,29 @@ test('the notice offers Atender com vídeo and asks for its height', async ({ pa
   expect((await comandos(page)).filter((c) => c.cmd === 'answer' && !('video' in c))).toEqual([]);
 });
 
+test('with another call up the notice offers no Atender com vídeo and asks 168', async ({ page }) => {
+  await abrir(page, 'video-tocando', 'aviso.html');
+  const comVideo = page.getByRole('button', { name: 'Atender com vídeo', exact: true });
+  await expect(comVideo).toBeVisible();
+  await esperarComando(page, { cmd: 'noticeHeight', altura: 222 });
+  // Outra ligação (em espera) entra: a que toca, de cima, segue oferecendo vídeo, mas o vídeo pausa.
+  await mudarEstado(page, (s) => ({
+    ...s,
+    ligacao: {
+      ...s.ligacao,
+      second: { ...s.ligacao.top, id: 22, number: '2007', name: 'Carlos Lima', incoming: false, phase: 'active', held: true, activeSinceMs: 1, video: { ...s.ligacao.top.video, oferece: false } },
+      secondKind: 'held',
+    },
+  }));
+  await expect(comVideo).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Atender', exact: true })).toBeVisible();
+  await expect.poll(async () => (await alturas(page)).at(-1)).toBe(168);
+  // A outra termina e a mesma ainda toca, sozinha: o botão e os 222 voltam.
+  await mudarEstado(page, (s) => ({ ...s, ligacao: { ...s.ligacao, second: null, secondKind: 'none' } }));
+  await expect(comVideo).toBeVisible();
+  await expect.poll(async () => (await alturas(page)).at(-1)).toBe(222);
+});
+
 test('a voice notice keeps 168', async ({ page }) => {
   await abrir(page, 'aviso', 'aviso.html');
   await esperarComando(page, { cmd: 'noticeHeight', altura: 168 });

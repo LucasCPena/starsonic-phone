@@ -13,7 +13,7 @@ import { VistaDeVideo } from './components/VistaDeVideo';
 import { IconPhone, IconVideo } from './icons';
 import type { AppState, CallCard } from './state';
 import { ALTURA_DO_AVISO, alturaDoAviso } from './video/alturaDoAviso';
-import { videoDe, videoDoApp } from './video/estado';
+import { oferecerAtenderComVideo, videoDe } from './video/estado';
 import { ATENDER_COM_VIDEO, rotuloDoVideo } from './video/textos';
 import { criarVideoDaPagina, VideoContexto } from './video/vistas';
 
@@ -75,7 +75,7 @@ function Aviso() {
   const conta = state.conta ? state.conta.nome || state.conta.ramal : '';
   const nome = nameOrNumber(card);
   const video = videoDe(state, card);
-  const atenderComVideo = videoDoApp(state).ligado && video.oferece;
+  const atenderComVideo = oferecerAtenderComVideo(state, card);
   return (
     <div class="aviso" role="alertdialog" aria-label={`Ligação recebida de ${nome}`}>
       {video.cedo && <VistaDeVideo key={card.id} vista="porteiro" desenhar={video.cedo} rotulo={rotuloDoVideo(nome)} class="aviso-imagem" />}

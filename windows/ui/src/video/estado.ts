@@ -28,6 +28,15 @@ export function videoDe(state: AppState, card: CallCard): CallVideo {
 }
 
 /**
+ * O aviso do canto oferece o Atender com vídeo: a ligação que toca oferece vídeo, o vídeo do app está ligado e não há
+ * outra ligação em andamento. Com duas ligações o vídeo pausa (spec 4.2), e um Atender com vídeo não cumpriria a
+ * promessa (a câmera ligaria sozinha, só quando a outra terminasse). A segunda que toca também fica sem ele.
+ */
+export function oferecerAtenderComVideo(state: AppState, card: CallCard): boolean {
+  return videoDoApp(state).ligado && videoDe(state, card).oferece && (state.ligacao?.second ?? null) === null;
+}
+
+/**
  * A regra da Câmera (a tela da ligação, o grande e a faixa da conversa): a câmera desligada só liga numa ligação
  * atendida (activeSinceMs > 0) e fora da espera; ligada, ela sempre desliga.
  */
