@@ -116,4 +116,8 @@ bool operator==(const CallVideo& a, const CallVideo& b) {
            a.early == b.early && a.refused == b.refused && a.doorphone == b.doorphone;
 }
 
+bool operator==(const RoomTile& a, const RoomTile& b) {
+    return a.x == b.x && a.y == b.y && a.width == b.width && a.height == b.height;
+}
+
 }  // namespace starsonic

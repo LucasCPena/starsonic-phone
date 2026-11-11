@@ -122,6 +122,14 @@ As impressões ficam em dois lugares que o `tests/python/test_deps_lock.py` conf
 
 O `build/linux/config_site.h` liga o `PJMEDIA_HAS_VIDEO` e, como no Windows, o `PJMEDIA_HAS_VPX_CODEC_VP9` (o VP9 vem desligado na PJSIP, e o teste "the codec settings order and filter the offer" o oferece). A câmera dos testes é a de barras coloridas da PJSIP, que vem ligada por padrão. O `build-pjproject.sh` chama o `configure` com `--enable-video --with-vpx=/usr --with-openh264=/usr --disable-sdl --disable-ffmpeg --disable-v4l2`: o VP8 e o VP9 pela libvpx do sistema (`libvpx-dev`), o H.264 pelo OpenH264 do sistema (`libopenh264-dev`, só dos testes e nunca publicado) e a libyuv do pjproject. Sem o SDL, o FFmpeg e o Video4Linux. Os dois pacotes entram no passo "Dependências do sistema" do job "Motor de ligações (Linux)" do `android.yml`. Sem eles, o `configure` deixa os dois codecs de fora sem erro, e o teste "the video build offers H264 and VP8" (`tests/phone/test_engine_video.cpp`) falha.
 
+### A sala de vídeo
+
+A sala (até 6 pessoas: quem monta e mais 5) monta o mosaico dos convidados com o `I420Scale` da libyuv (`starsonic/phone/RoomMosaic.cpp`, inteiro dentro de `#if PJMEDIA_HAS_VIDEO`: o Android compila o arquivo vazio).
+
+- **Os cabeçalhos da libyuv.** A libyuv já está dentro da `libpjproject` do Windows (o conversor da PJSIP a usa), mas o `make install` não instala os cabeçalhos dela. No Linux dos testes, o `build/linux/build-pjproject.sh` copia o `third_party/yuv/include/libyuv.h` e a pasta `libyuv/` para `$PREFIX/include/`; a biblioteca já entra no link pelo `Libs.private` do `libpjproject.pc` (o `tests/phone/CMakeLists.txt` usa o `PJ_STATIC_LDFLAGS`). No Windows, o `windows/app/CMakeLists.txt` põe o `${PJPROJECT_DIR}/third_party/yuv/include` nos includes. Como o script mudou, a chave do cache do pjproject do Linux muda, e o job `android` o refaz uma vez.
+- **As 8 ligações.** O `PJSUA_MAX_CALLS` passa de 4 para 8 no `build/config_site.h` (o Windows) e no `build/linux/config_site.h` (os testes): 5 convidados, a ligação de fora e folga. Como o `config_site.h` entra no pjproject, o job do Windows refaz as dependências uma vez.
+- **Por que o Android fica com 4.** O `build/android/config_site.h` não muda: o Android não tem vídeo, então não monta sala, e o motor dele segue com as ligações de hoje.
+
 ### Ajustes
 
 - **O app antigo com a PJSIP do vídeo.** O app antigo (o MicroSIP, edição Lite, sem vídeo) liga a mesma `libpjproject`, e o `pjsua_init` dele passa a trazer o `openh264.cpp` da PJSIP, que pede o `openh264.lib` e as quatro funções do OpenH264. O `starsonic/starsonic.targets` manda o link ignorar o `openh264.lib` (`IgnoreSpecificDefaultLibraries`), e o `starsonic/win/OpenH264Stub.cpp` define as quatro funções sem o módulo: as duas `Create` devolvem 1, e a PJSIP desiste do H.264. O `vpx.lib` vem da pasta `lib` do vcpkg, que já estava no link do app antigo.

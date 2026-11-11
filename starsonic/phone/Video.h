@@ -98,4 +98,14 @@ public:
     virtual void OnLocalFrame(const I420Frame& frame) = 0;
 };
 
+// O quadro de um convidado no mosaico da sala, de 0 a 1 da imagem inteira (o x e o y são do canto de cima à esquerda).
+struct RoomTile {
+    double x = 0;
+    double y = 0;
+    double width = 0;
+    double height = 0;
+};
+
+bool operator==(const RoomTile& a, const RoomTile& b);
+
 }  // namespace starsonic

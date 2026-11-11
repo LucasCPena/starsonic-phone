@@ -143,7 +143,8 @@ target_include_directories(StarsonicPhone PRIVATE
   ${PJPROJECT_DIR}/pjlib-util/include
   ${PJPROJECT_DIR}/pjnath/include
   ${PJPROJECT_DIR}/pjmedia/include
-  ${PJPROJECT_DIR}/pjsip/include)
+  ${PJPROJECT_DIR}/pjsip/include
+  ${PJPROJECT_DIR}/third_party/yuv/include)
 
 target_compile_definitions(StarsonicPhone PRIVATE
   UNICODE _UNICODE NOMINMAX _WIN32_WINNT=0x0A00 WINVER=0x0A00

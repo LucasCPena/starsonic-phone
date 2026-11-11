@@ -24,3 +24,6 @@
 
 /* Compatibilidade: o MicroSIP 3.22.16 usa o nome antigo do limite de dispositivos de audio. */
 #define PJMEDIA_AUD_MAX_DEVS     PJMEDIA_AUD_DEV_MAX_DEVS
+
+/* A sala de video (ate 6 pessoas): 5 convidados, mais a ligacao de fora e folga. */
+#define PJSUA_MAX_CALLS          8

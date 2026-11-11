@@ -72,4 +72,8 @@ cd "$WORKDIR"
 make dep
 make -j"$JOBS"
 make install
+# O make install não instala os cabeçalhos da libyuv (a RoomMosaic usa o libyuv/scale.h). A biblioteca já entra no
+# link pelo Libs.private do libpjproject.pc.
+cp "$WORKDIR/third_party/yuv/include/libyuv.h" "$PREFIX/include/"
+cp -r "$WORKDIR/third_party/yuv/include/libyuv" "$PREFIX/include/"
 echo "pjproject: instalado em $PREFIX"
