@@ -253,6 +253,49 @@ public:
         return VideoPackets() == start;
     }
 
+    // A origem da imagem de um convidado (VIDEO SOURCE <alvo> <origem>): "echo", "none", "color <Y> <U> <V>" ou
+    // "default". Vale para a ligação de agora do alvo (o usuário da Request-URI do INVITE) e para as próximas.
+    void VideoSource(const std::string& alvo, const std::string& source) const {
+        const std::vector<std::string> reply = Control("VIDEO SOURCE " + alvo + " " + source);
+        if (reply != std::vector<std::string>{"OK"}) {
+            throw std::runtime_error("VIDEO SOURCE " + alvo + " " + source + ": " + (reply.empty() ? "sem resposta" : reply[0]));
+        }
+    }
+
+    // Os datagramas com carga que chegaram do endereço de vídeo da ligação do alvo (VIDEO PACKETS <alvo>); -1 se a
+    // porta de controle não respondeu.
+    int PacketsOf(const std::string& alvo) const {
+        const std::vector<std::string> reply = Control("VIDEO PACKETS " + alvo);
+        return reply.empty() ? -1 : std::stoi(reply[0]);
+    }
+
+    // Os quadros-chave que chegaram desse endereço (VIDEO KEYFRAMES <alvo>); -1 se a porta de controle não respondeu.
+    int KeyframesOf(const std::string& alvo) const {
+        const std::vector<std::string> reply = Control("VIDEO KEYFRAMES " + alvo);
+        return reply.empty() ? -1 : std::stoi(reply[0]);
+    }
+
+    // Espera até `seconds` que o PacketsOf(alvo) chegue a atLeast.
+    bool WaitForPacketsOf(const std::string& alvo, int atLeast, int seconds) const {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
+        while (PacketsOf(alvo) < atLeast) {
+            if (std::chrono::steady_clock::now() >= deadline) return false;
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        return true;
+    }
+
+    // O PacketsOf(alvo) não muda durante `seconds`: nada chega do endereço de vídeo desse convidado.
+    bool PacketsStayOf(const std::string& alvo, int seconds) const {
+        const int start = PacketsOf(alvo);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
+        while (std::chrono::steady_clock::now() < deadline) {
+            if (PacketsOf(alvo) != start) return false;
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        return PacketsOf(alvo) == start;
+    }
+
     // O último SDP que o telefone mandou (VIDEO SDP), uma linha por linha do SDP.
     std::string VideoSdp() const {
         std::string text;

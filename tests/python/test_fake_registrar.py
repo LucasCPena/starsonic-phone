@@ -979,8 +979,8 @@ class CallsTest(unittest.TestCase):
         for line in ("RINGVIDEO", "RINGVIDEO 2001", "RINGVIDEO 2001 9001 H263", "RINGVIDEO 2001 9001 H264,H264",
                      "RINGVIDEO 2001 9001 VP8 extra", "RINGVIDEO 2001 9001 VP8 replay extra",
                      "RINGVIDEO 2001 9001 replay VP8", "VIDEO", "VIDEO REJECT", "VIDEO REJECT maybe", "VIDEO ECHO",
-                     "VIDEO PACKETS now", "VIDEO SDP now", "VIDEO 486 on", "VIDEO KEYFRAMES now",
-                     "VIDEO KEYFRAMES reset", "VIDEO REPLAYED now", "VIDEO REPLAYED reset"):
+                     "VIDEO PACKETS 2003 now", "VIDEO SDP now", "VIDEO 486 on", "VIDEO KEYFRAMES 2003 now",
+                     "VIDEO REPLAYED now", "VIDEO REPLAYED reset"):
             with self.subTest(line):
                 self.assertEqual(self.command(line), ["ERR bad-command"])
         self.assertEqual(self.command("RINGVIDEO 2001 9001"), ["ERR no-contact"])
@@ -1176,6 +1176,194 @@ class CallsTest(unittest.TestCase):
 
     # --- porta de controle ---
 
+    # --- o registrador como vários convidados: a imagem de cada um, o 180, o BYE e a espera ---
+
+    def guest_call(self, phone, number, receiver, call_id, formats="97 100"):
+        """INVITE com o vídeo no socket `receiver` (o do telefone) a <number>; devolve (cabecalhos, corpo) da resposta
+        final."""
+        port = receiver.getsockname()[1]
+        _, headers, body = self.video_call(phone, number, video_sdp(formats, port=port), call_id)
+        return headers, body
+
+    def wait_for_count(self, line, count):
+        deadline = time.monotonic() + 5
+        while self.command(line) != [str(count)]:
+            self.assertLess(time.monotonic(), deadline, "%s: %s" % (line, self.command(line)))
+            time.sleep(0.02)
+
+    def collect(self, sock, seconds):
+        """Os datagramas que chegam a sock durante `seconds`."""
+        received, deadline = [], time.monotonic() + seconds
+        sock.settimeout(0.05)
+        while time.monotonic() < deadline:
+            try:
+                received.append(sock.recv(65535))
+            except socket.timeout:
+                pass
+        return received
+
+    def test_video_source_color_streams_that_color_to_the_phone_video_address(self):
+        phone, receiver = self.phone(), self.video_socket()
+        self.assertEqual(self.command("VIDEO SOURCE 2003 color 150 44 200"), ["OK"])
+        _, body = self.guest_call(phone, "2003", receiver, "call-color")
+        self.assertIn("m=video %d RTP/AVP 97\r\n" % self.video_port(), body)   # a resposta escolheu o H.264 da oferta
+        packets = self.collect(receiver, 1.0)
+        self.assertEqual({packet[1] & 0x7F for packet in packets}, {97})
+        self.assertEqual(len({packet[8:12] for packet in packets}), 1)   # um SSRC só
+        frames = sum(1 for packet in packets if packet[1] & 0x80)
+        self.assertTrue(8 <= frames <= 12, "%d quadros em 1 s" % frames)
+        # Cada quadro leva o SPS, o PPS e o IDR: o primeiro pacote de um quadro é o SPS, e a cor chega inteira.
+        first_frame = fake_registrar._frames(packets)[0]
+        self.assertEqual(first_frame[0][12] & 0x1F, 7)
+        self.assertEqual(first_frame[1][12] & 0x1F, 8)
+        # Até o fim da ligação: o BYE do telefone para o fluxo.
+        phone.send(phone_request("BYE", "sip:2003@ci", cseq=2, to_tag="ci", call_id="call-color"))
+        self.assertEqual(phone.receive()[0], "SIP/2.0 200 OK")
+        self.collect(receiver, 0.3)   # o que já estava a caminho
+        self.assertEqual(self.collect(receiver, 0.5), [])
+
+    def test_video_source_color_given_after_the_answer_starts_the_current_call(self):
+        phone, receiver = self.phone(), self.video_socket()
+        self.guest_call(phone, "2003", receiver, "call-late")
+        self.assertEqual(self.collect(receiver, 0.3), [])   # sem escolha, nada sai
+        self.assertEqual(self.command("VIDEO SOURCE 2003 color 100 100 100"), ["OK"])
+        self.assertGreater(len(self.collect(receiver, 0.5)), 3)
+        self.assertEqual(self.command("VIDEO SOURCE 2003 default"), ["OK"])   # o default tira a escolha
+        self.collect(receiver, 0.3)
+        self.assertEqual(self.collect(receiver, 0.5), [])
+
+    def test_video_source_echo_returns_only_the_datagrams_of_that_callee(self):
+        phone, echoed, silent = self.phone(), self.video_socket(), self.video_socket()
+        self.assertEqual(self.command("VIDEO SOURCE 2003 echo"), ["OK"])
+        self.guest_call(phone, "2003", echoed, "call-echo")
+        self.guest_call(phone, "2004", silent, "call-silent")
+        packet = bytes([0x80, 97, 0, 1, 0, 0, 0, 9, 1, 2, 3, 4]) + b"carga"
+        for sock in (silent, echoed):
+            sock.sendto(packet, ("127.0.0.1", self.video_port()))
+        self.assertEqual(echoed.recv(65535), packet[:11] + bytes([5]) + b"carga")   # o SSRC trocado
+        self.wait_for_packets(2)
+        silent.settimeout(0.3)
+        with self.assertRaises(socket.timeout):
+            silent.recv(65535)
+
+    def test_video_source_none_answers_that_callee_with_video_port_zero(self):
+        phone, first, second = self.phone(), self.video_socket(), self.video_socket()
+        self.assertEqual(self.command("VIDEO SOURCE 2003 none"), ["OK"])
+        headers, body = self.guest_call(phone, "2003", first, "call-none")
+        self.assertIn("m=video 0 RTP/AVP 97\r\n", body)
+        self.assertIn("m=audio 40000 RTP/AVP 0 101\r\n", body)
+        self.assertIn("m=video %d RTP/AVP 97\r\n" % self.video_port(), self.guest_call(phone, "2004", second, "call-ok")[1])
+        # O re-INVITE do mesmo convidado também leva a porta 0, e o default devolve o vídeo.
+        tag = re.search(r";tag=(\S+)", headers["to"][0]).group(1)
+        reinvite = phone_request("INVITE", "sip:2003@ci", cseq=2, to_tag=tag, call_id="call-none", extra=[SDP_TYPE],
+                                 body=video_sdp(port=first.getsockname()[1]))
+        phone.send(reinvite)
+        self.assertIn("m=video 0 RTP/AVP 97\r\n", phone.receive()[2])
+        self.assertEqual(self.command("VIDEO SOURCE 2003 default"), ["OK"])
+        phone.send(phone_request("INVITE", "sip:2003@ci", cseq=3, to_tag=tag, call_id="call-none", extra=[SDP_TYPE],
+                                 body=video_sdp(port=first.getsockname()[1])))
+        self.assertIn("m=video %d RTP/AVP 97\r\n" % self.video_port(), phone.receive()[2])
+
+    def test_video_packets_and_keyframes_count_each_callee(self):
+        phone, first, second, stranger = self.phone(), self.video_socket(), self.video_socket(), self.video_socket()
+        self.guest_call(phone, "2003", first, "call-first")
+        self.guest_call(phone, "2004", second, "call-second")
+        where = ("127.0.0.1", self.video_port())
+        first.sendto(rtp(97, True, 10, IDR_SLICE), where)
+        for timestamp in (20, 30):
+            first.sendto(rtp(97, True, timestamp, P_SLICE), where)
+        second.sendto(rtp(97, True, 10, P_SLICE), where)
+        second.sendto(rtp(97, True, 20, P_SLICE), where)
+        stranger.sendto(rtp(97, True, 40, IDR_SLICE), where)   # de um endereço que nenhuma ligação deu
+        self.wait_for_packets(6)
+        self.assertEqual(self.command("VIDEO PACKETS 2003"), ["3"])
+        self.assertEqual(self.command("VIDEO PACKETS 2004"), ["2"])
+        self.assertEqual(self.command("VIDEO KEYFRAMES 2003"), ["1"])
+        self.assertEqual(self.command("VIDEO KEYFRAMES 2004"), ["0"])
+        self.assertEqual(self.command("VIDEO PACKETS 2009"), ["0"])
+        self.assertEqual(self.command("VIDEO KEYFRAMES"), ["2"])   # a contagem de todos segue como antes
+        self.assertEqual(self.command("VIDEO PACKETS reset"), ["OK"])
+        for line in ("VIDEO PACKETS 2003", "VIDEO PACKETS 2004", "VIDEO KEYFRAMES 2003"):
+            self.assertEqual(self.command(line), ["0"], line)
+
+    def test_video_source_refuses_a_bad_color_or_name(self):
+        for spec in ("color 15 128 128", "color 128 236 128", "color 128 128 0", "color 1 2", "color 16 a 16",
+                     "color", "blue", "echo now", ""):
+            self.assertEqual(self.command("VIDEO SOURCE 2003 " + spec), ["ERR bad-command"], spec)
+        self.assertEqual(self.command("VIDEO SOURCE 2003"), ["ERR bad-command"])
+        self.assertEqual(self.command("VIDEO SOURCE 2003 color 16 235 128"), ["OK"])
+
+    def test_a_call_to_180_rings_until_the_phone_cancels_it(self):
+        phone = self.phone()
+        self.invite(phone, "180")
+        self.assertEqual(phone.receive()[0], "SIP/2.0 100 Trying")
+        self.assertEqual(phone.receive()[0], "SIP/2.0 180 Ringing")
+        phone.sock.settimeout(0.4)
+        with self.assertRaises(socket.timeout):   # nenhuma resposta final
+            phone.receive()
+        phone.sock.settimeout(5)
+        phone.send(phone_request("CANCEL", "sip:180@ci", branch="z9hG4bKphone1INVITE"))
+        start, headers, _ = phone.receive()
+        self.assertEqual((start, headers["cseq"]), ("SIP/2.0 200 OK", ["1 CANCEL"]))
+        start, headers, _ = phone.receive()
+        self.assertEqual((start, headers["cseq"]), ("SIP/2.0 487 Request Terminated", ["1 INVITE"]))
+        self.assertIn(";tag=", headers["to"][0])
+        self.assertEqual(self.log(), ["inv-in 180 180", "video-in 180 nao", "cancel-in 180"])
+
+    def answered_guest(self, phone, number="2003", call_id="call-guest", port=None):
+        """A ligação do telefone ao convidado, atendida: (cabecalhos da resposta final, corpo)."""
+        _, headers, body = self.video_call(phone, number, video_sdp(port=port or 4002), call_id)
+        phone.send(phone_request("ACK", "sip:%s@ci" % number, to_tag="ci", call_id=call_id))
+        return headers, body
+
+    def test_bye_hangs_up_the_phone_call_to_the_callee(self):
+        phone = self.phone()
+        self.assertEqual(self.command("BYE 2003"), ["ERR no-call"])
+        self.answered_guest(phone)
+        self.assertEqual(self.command("BYE 2003"), ["OK"])
+        start, headers, _ = phone.receive()
+        self.assertEqual(start, "BYE sip:2001@127.0.0.1:5070 SIP/2.0")   # ao Contact do telefone
+        self.assertEqual(headers["call-id"], ["call-guest"])
+        self.assertEqual(headers["cseq"], ["1 BYE"])
+        self.assertEqual((headers["from"][0].split(";")[0], headers["to"][0]), ("<sip:2003@ci>", "<sip:2001@ci>;tag=phone"))
+        self.assertIn(";tag=", headers["from"][0])
+        phone.send(phone_response(headers, 200, "OK"))
+        self.wait_for_log("bye-out 2003 200")
+        self.assertEqual(self.command("BYE 2003"), ["ERR no-call"])   # já desligada
+
+    def test_hold_sends_a_sendonly_reinvite_and_off_a_sendrecv_one(self):
+        phone = self.phone()
+        self.assertEqual(self.command("HOLD 2003 on"), ["ERR no-call"])
+        _, answer = self.answered_guest(phone)
+        version = int(re.search(r"o=- 1 (\d+) ", answer).group(1))
+        for number, (state, direction) in enumerate((("on", "a=sendonly"), ("off", "a=sendrecv")), 1):
+            self.assertEqual(self.command("HOLD 2003 " + state), ["OK"])
+            start, headers, body = phone.receive()
+            self.assertEqual(start, "INVITE sip:2001@127.0.0.1:5070 SIP/2.0")
+            self.assertEqual((headers["cseq"], headers["call-id"]), (["%d INVITE" % number], ["call-guest"]))
+            self.assertEqual(headers["content-type"], ["application/sdp"])
+            new_version = int(re.search(r"o=- 1 (\d+) ", body).group(1))
+            self.assertGreater(new_version, version)   # o o= sobe a cada SDP
+            version = new_version
+            self.assertIn("m=audio 40000 RTP/AVP 0 101\r\n", body)
+            self.assertIn("m=video %d RTP/AVP 97\r\n" % self.video_port(), body)
+            self.assertEqual(body.count(direction + "\r\n"), 2, body)   # um por m=, e nenhuma outra direção
+            self.assertEqual(sum(body.count(other + "\r\n") for other in ("a=sendrecv", "a=sendonly", "a=recvonly",
+                                                                          "a=inactive")), 2, body)
+            phone.send(phone_response(headers, 200, "OK", [SDP_TYPE, "Contact: <sip:2001@127.0.0.1:5070>"],
+                                      PHONE_SDP % "a=recvonly"))
+            start, ack, _ = phone.receive()
+            self.assertEqual((start, ack["cseq"]), ("ACK sip:2001@127.0.0.1:5070 SIP/2.0", ["%d ACK" % number]))
+            self.wait_for_log("hold-out 2003 %s 200" % state)
+        self.assertEqual(self.command("HOLD 2003 maybe"), ["ERR bad-command"])
+
+    def test_the_color_image_keeps_streaming_while_the_callee_holds(self):
+        phone, receiver = self.phone(), self.video_socket()
+        self.assertEqual(self.command("VIDEO SOURCE 2003 color 150 44 200"), ["OK"])
+        self.guest_call(phone, "2003", receiver, "call-hold")
+        self.assertEqual(self.command("HOLD 2003 on"), ["OK"])
+        self.assertGreater(len(self.collect(receiver, 0.5)), 3)
+
     def test_password_command_changes_the_accepted_password(self):
         phone = self.phone()
         self.assertEqual(phone.register("senha-certa"), "SIP/2.0 200 OK")
@@ -1251,6 +1439,104 @@ class KeyframeTest(unittest.TestCase):
         extended = bytes([0x80 | 0x10 | 0x02]) + packet[1:12] + bytes(8) + bytes([0xBE, 0xDE, 0x00, 0x01]) + bytes(4)
         self.assertEqual(fake_registrar._rtp_payload(extended + IDR_SLICE), IDR_SLICE)
         self.assertIsNone(fake_registrar._rtp_payload(extended[:20]))   # cortado no meio dos CSRC e da extensão
+
+
+class _BitReader:
+    """Lê os bits de uma carga H.264 já sem os bytes de prevenção de emulação (Exp-Golomb incluído)."""
+
+    def __init__(self, data):
+        self.data, self.at = data, 0
+
+    def u(self, count):
+        value = 0
+        for _ in range(count):
+            value = (value << 1) | (self.data[self.at // 8] >> (7 - self.at % 8)) & 1
+            self.at += 1
+        return value
+
+    def ue(self):
+        zeros = 0
+        while self.u(1) == 0:
+            zeros += 1
+        return (1 << zeros) - 1 + self.u(zeros)
+
+    def se(self):
+        value = self.ue()
+        return (value + 1) // 2 if value % 2 else -(value // 2)
+
+    def align(self):
+        self.at += -self.at % 8
+
+    def take(self, count):
+        assert self.at % 8 == 0
+        start, self.at = self.at // 8, self.at + 8 * count
+        return self.data[start:start + count]
+
+
+def unescaped(nal):
+    """A carga de uma NAL (depois do primeiro byte) sem os 0x03 de prevenção de emulação."""
+    return re.sub(b"\x00\x00\x03", b"\x00\x00", nal[1:])
+
+
+class ColorFrameTest(unittest.TestCase):
+    """O quadro H.264 da cor (VIDEO SOURCE ... color): as três NAL e os pacotes RTP."""
+
+    def test_the_color_frame_is_an_sps_a_pps_and_an_idr_of_i_pcm_macroblocks(self):
+        sps, pps, idr = fake_registrar.color_frame(150, 44, 200, 1)
+        self.assertEqual([nal[0] for nal in (sps, pps, idr)], [0x67, 0x68, 0x65])   # nal_ref_idc 3: o SPS, o PPS e o IDR
+        reader = _BitReader(unescaped(sps))
+        self.assertEqual([reader.u(8), reader.u(8), reader.u(8)], [66, 0xC0, 31])   # o 42e0 e o level 3.1
+        self.assertEqual([reader.ue() for _ in range(4)], [0, 0, 2, 1])   # id, log2_max_frame_num, poc 2, 1 referência
+        self.assertEqual(reader.u(1), 0)                                  # sem lacunas
+        width, height = (reader.ue() + 1) * 16, (reader.ue() + 1) * 16
+        self.assertEqual((width, height), (64, 48))
+        self.assertEqual([reader.u(1) for _ in range(4)], [1, 1, 0, 0])   # frame_mbs_only, direct_8x8, sem corte e sem VUI
+        reader = _BitReader(unescaped(pps))
+        self.assertEqual([reader.ue(), reader.ue(), reader.u(1), reader.u(1), reader.ue(), reader.ue(), reader.ue(),
+                          reader.u(1), reader.u(2), reader.se(), reader.se(), reader.se(), reader.u(1), reader.u(1),
+                          reader.u(1)],
+                         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0])
+        reader = _BitReader(unescaped(idr))
+        self.assertEqual([reader.ue(), reader.ue(), reader.ue(), reader.u(4), reader.ue()], [0, 7, 0, 0, 1])
+        self.assertEqual([reader.u(1), reader.u(1), reader.se(), reader.ue()], [0, 0, 0, 1])
+        for _ in range(12):   # 4 x 3 macroblocos, cada um I_PCM
+            self.assertEqual(reader.ue(), 25)
+            reader.align()
+            self.assertEqual(reader.take(256), bytes([150]) * 256)
+            self.assertEqual(reader.take(64), bytes([44]) * 64)
+            self.assertEqual(reader.take(64), bytes([200]) * 64)
+        self.assertEqual(reader.u(1), 1)   # o fim da fatia: o bit 1 e o alinhamento
+        self.assertNotEqual(fake_registrar.color_frame(150, 44, 200, 0)[2], idr)   # o idr_pic_id alterna
+
+    def test_the_emulation_prevention_keeps_three_zero_bytes_away(self):
+        for nal in fake_registrar.color_frame(16, 235, 16):
+            self.assertNotIn(b"\x00\x00\x00", nal[1:])
+            self.assertNotIn(b"\x00\x00\x01", nal[1:])
+
+    def test_the_color_frame_travels_in_fu_a_fragments_with_the_marker_on_the_last(self):
+        nals = fake_registrar.color_frame(150, 44, 200, 0)
+        packets = fake_registrar.color_packets(nals, 97, 0x0A0B0C0D, 65534, 1000)
+        self.assertEqual({packet[4:8] for packet in packets}, {(1000).to_bytes(4, "big")})   # um timestamp só
+        self.assertEqual({packet[8:12] for packet in packets}, {bytes([0x0A, 0x0B, 0x0C, 0x0D])})
+        self.assertEqual([int.from_bytes(packet[2:4], "big") for packet in packets],
+                         [(65534 + n) % 65536 for n in range(len(packets))])   # 1 por pacote, e dá a volta
+        self.assertEqual([packet[1] for packet in packets[:-1]], [97] * (len(packets) - 1))
+        self.assertEqual(packets[-1][1], 0x80 | 97)   # o M só no último
+        self.assertEqual(packets[0][12:], nals[0])     # o SPS e o PPS, sozinhos
+        self.assertEqual(packets[1][12:], nals[1])
+        fragments = packets[2:]
+        self.assertGreater(len(fragments), 1)
+        for index, packet in enumerate(fragments):
+            self.assertLessEqual(len(packet) - 12, 1200)
+            self.assertEqual(packet[12], 0x60 | 28)   # o indicador do FU-A com o nal_ref_idc 3
+            self.assertEqual(packet[13] & 0x1F, 5)
+            self.assertEqual(bool(packet[13] & 0x80), index == 0)                   # o S no primeiro
+            self.assertEqual(bool(packet[13] & 0x40), index == len(fragments) - 1)  # o E no último
+        rebuilt = bytes([0x65]) + b"".join(packet[14:] for packet in fragments)
+        self.assertEqual(rebuilt, nals[2])   # os fragmentos juntos são o IDR inteiro
+        # O quadro seguinte: +9000 no timestamp e a sequência continua.
+        following = fake_registrar.color_packets(nals, 97, 0x0A0B0C0D, 65534 + len(packets), 1000 + 9000)
+        self.assertEqual(following[0][4:8], (10000).to_bytes(4, "big"))
 
 
 class CommandLineTest(unittest.TestCase):

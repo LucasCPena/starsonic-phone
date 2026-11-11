@@ -12,7 +12,8 @@ controle, ligações. Só biblioteca padrão do Python 3.
 - escuta UDP e TCP no mesmo endereço e porta; em TCP, a resposta volta na mesma conexão
 
 Ligações (sem autenticação para INVITE, re-INVITE, REFER, BYE e CANCEL):
-- INVITE do telefone: o usuário da Request-URI decide. 486, 404 e 480 -> essa resposta; outro ->
+- INVITE do telefone: o usuário da Request-URI decide. 486, 404 e 480 -> essa resposta; 180 -> o 100 e o 180
+  e mais nada (um convidado que só toca: o CANCEL do telefone leva o 200 e o 487 do INVITE); outro ->
   100, 180 e 200 com SDP na porta 40000: um codec de áudio (o primeiro PCMU ou PCMA da oferta) e o
   telephone-event/8000 da oferta, no payload type e com o fmtp que ela deu (sem a=rtpmap, o 101).
   Retransmissão do mesmo INVITE (UDP) repete a última resposta, sem ligação nova.
@@ -64,6 +65,10 @@ Porta de controle (--control-port N, TCP no mesmo --host; um comando por linha, 
   HANGUP <ramal>     BYE na ligação atendida, CANCEL se ainda toca     -> OK | ERR no-call
   REFER <ramal> <destino>  REFER na última ligação do RING atendida do ramal, com Refer-To: <sip:<destino>@ci>
                      -> OK | ERR no-call
+  BYE <alvo>         BYE na ligação do telefone para o alvo (o convidado desliga)   -> OK | ERR no-call
+  HOLD <alvo> <on|off>  re-INVITE na ligação do telefone para o alvo (o convidado põe em espera, ou retoma): o SDP
+                     é o da nossa última resposta, com o o= subindo e cada m= com porta em a=sendonly (on) ou
+                     a=sendrecv (off); o 2xx leva o ACK                           -> OK | ERR no-call
   REPLACES <ramal>   INVITE de "Cliente Teste" <sip:3001@ci> ao contato do ramal, com o Replaces da última ligação do
                      RING atendida dele e o Require: replaces          -> OK | ERR no-call | ERR no-contact
   PASSWORD <senha>   troca a senha aceita                              -> OK
@@ -95,8 +100,25 @@ Porta de controle (--control-port N, TCP no mesmo --host; um comando por linha, 
   VIDEO ECHO <on|off> com on, cada datagrama que chega na PORTA volta na hora para quem o mandou, com o SSRC trocado
                      (a contagem continua)                              -> OK
   VIDEO PACKETS      os datagramas com carga que chegaram na PORTA      -> <n>
-  VIDEO PACKETS reset  zera as contagens (também as do VIDEO KEYFRAMES e do VIDEO REPLAYED) e esquece os datagramas
-                     guardados -> OK
+  VIDEO PACKETS reset  zera as contagens (também as do VIDEO KEYFRAMES, do VIDEO REPLAYED e as de cada alvo) e esquece
+                     os datagramas guardados -> OK
+  VIDEO PACKETS <alvo>  os datagramas com carga que chegaram do endereço de vídeo da ligação desse alvo (o c= e a
+                     porta do m=video da oferta do telefone, atualizados a cada re-INVITE; os datagramas
+                     são reconhecidos pela porta de origem, já que o IP do c= pode não ser o de origem) -> <n>
+  VIDEO KEYFRAMES <alvo>  os quadros-chave que chegaram desse endereço, contados como no VIDEO KEYFRAMES -> <n>
+  VIDEO SOURCE <alvo> echo|none|color <Y> <U> <V>|default  a imagem do convidado <alvo> (o usuário da Request-URI do
+                     INVITE do telefone; a ligação dele é a última atendida do telefone para ele). Vale para a
+                     ligação de agora e para as próximas, e o default tira a escolha:
+                     echo   devolve, só desse alvo, cada datagrama que chega do endereço de vídeo da ligação dele,
+                            com o SSRC trocado, como o VIDEO ECHO
+                     none   a resposta a um INVITE ou re-INVITE desse alvo leva o m=video com a porta 0
+                     color  (cada valor de 16 a 235) depois do 200 com vídeo, a PORTA manda ao endereço de vídeo da
+                            ligação, até o fim dela, uma imagem H.264 dessa cor: Constrained Baseline de 64x48, a 10
+                            quadros por segundo, cada um com o SPS, o PPS e um IDR de macroblocos I_PCM (o SPS e o
+                            PPS em pacotes de uma NAL só, o IDR em fragmentos FU-A de até 1200 bytes de carga, o
+                            bit M só no último pacote do quadro), no payload type do H.264 da resposta (sem ele,
+                            nada sai), com um SSRC sorteado por fluxo
+                     -> OK | ERR bad-command (nome desconhecido, ou cor fora da faixa)
   VIDEO KEYFRAMES    os quadros-chave que chegaram na PORTA desde o último VIDEO PACKETS reset (ou da abertura), um por
                      quadro (o SSRC e o timestamp do RTP; um que começou antes do reset não conta de novo depois dele),
                      pelo codec do payload type nos m=video dos SDP que o telefone mandou: no H264, um IDR (a NAL do
@@ -110,8 +132,8 @@ Porta de controle (--control-port N, TCP no mesmo --host; um comando por linha, 
   (comando desconhecido, sem argumento ou com código que não é de 100 a 699 -> ERR bad-command)
 Registro de ligações (só em memória): inv-out <ramal> <código final> (o INVITE do RING, do RINGVIDEO ou do REPLACES),
   sdp-out <ramal> <código> video=<sim|nao> (cada código de resposta com SDP do telefone a esse INVITE; sim = um m=video
-  com a porta diferente de zero), ack-sent <ramal>, bye-out <ramal> <código>, refer-out <ramal> <código final> (o
-  REFER do comando REFER), bye-in <alvo>, cancel-in <alvo>, inv-in <alvo> <código>, video-in <alvo> <nomes|nao>
+  com a porta diferente de zero), ack-sent <ramal>, bye-out <ramal> <código> (também o BYE <alvo>, com o alvo no lugar do ramal), hold-out <alvo>
+  <on|off> <código> (o re-INVITE do HOLD), refer-out <ramal> <código final> (o REFER do comando REFER), bye-in <alvo>, cancel-in <alvo>, inv-in <alvo> <código>, video-in <alvo> <nomes|nao>
   (depois do inv-in: os nomes do a=rtpmap do primeiro m=video com porta da oferta, na ordem, sem repetir e separados
   por vírgula, como H264,VP8; nao sem esse m=video), reinv-in <alvo> <sendonly|sendrecv|inactive|recvonly>,
   video-reinv <alvo> <nomes|nao> (depois do reinv-in, como o video-in), refer-in <alvo> <ramal de destino>
@@ -126,6 +148,7 @@ Uso: fake_registrar.py [--host 127.0.0.1] [--port 5060] --user 2001[,2002...] --
                        (os usuários da lista têm a mesma senha)
 """
 import argparse
+import functools
 import hashlib
 import pathlib
 import re
@@ -166,6 +189,11 @@ RING_VIDEO = {"H264": ("97", "H264/90000", "profile-level-id=42e01f;packetizatio
 RTP_HEADER = 12   # os bytes do cabeçalho do RTP: um datagrama de vídeo com carga tem mais que isso
 VIDEO_KEPT = 300   # quantos datagramas com carga a PORTA guarda para o RINGVIDEO com o replay
 REPLAY_FRAME_SECONDS = 0.04   # o intervalo entre os quadros da reprodução (25 por segundo)
+COLOR_RANGE = range(16, 236)   # os valores de Y, U e V que o VIDEO SOURCE color aceita
+COLOR_FRAME_SECONDS = 0.1      # a imagem da cor: 10 quadros por segundo
+COLOR_TIMESTAMP_STEP = 9000    # e +9000 (90 kHz) no timestamp de um quadro ao próximo
+COLOR_MAX_PAYLOAD = 1200       # a carga de cada pacote do quadro: o FU-A tem 2 bytes de cabeçalho e o resto do IDR
+COLOR_MACROBLOCKS = 12         # a imagem tem 64x48: 4 x 3 macroblocos de 16x16
 
 
 def _md5(text):
@@ -447,6 +475,139 @@ def _with_payload_type(data, payload_type):
     return bytes(replaced)
 
 
+class _BitWriter:
+    """Escreve os campos de uma NAL do H.264 (bits e Exp-Golomb) para o quadro da cor."""
+
+    def __init__(self):
+        self.data, self.pending, self.count = bytearray(), 0, 0   # os bits que ainda não fecharam um byte
+
+    def u(self, bits, value):
+        for shift in range(bits - 1, -1, -1):
+            self.pending = (self.pending << 1) | ((value >> shift) & 1)
+            self.count += 1
+            if self.count == 8:
+                self.data.append(self.pending)
+                self.pending, self.count = 0, 0
+
+    def ue(self, value):
+        value += 1
+        length = value.bit_length()
+        self.u(length - 1, 0)
+        self.u(length, value)
+
+    def se(self, value):
+        self.ue(2 * value - 1 if value > 0 else -2 * value)
+
+    def align(self):
+        """Completa o byte com zeros."""
+        while self.count:
+            self.u(1, 0)
+
+    def raw(self, data):
+        """Bytes inteiros: só com o alinhamento feito."""
+        assert not self.count
+        self.data += data
+
+    def trailing(self):
+        """O fim de uma NAL: o bit 1 e o alinhamento."""
+        self.u(1, 1)
+        self.align()
+
+
+def _nal(kind, rbsp):
+    """Uma NAL do H.264 com o nal_ref_idc 3, sem o código de início: o cabeçalho e a carga com a prevenção de
+    emulação (um 0x03 antes de cada 0x00 0x00 seguido de 0x00 a 0x03)."""
+    escaped, zeros = bytearray([0x60 | kind]), 0
+    for byte in rbsp:
+        if zeros >= 2 and byte <= 3:
+            escaped.append(3)
+            zeros = 0
+        escaped.append(byte)
+        zeros = zeros + 1 if byte == 0 else 0
+    return bytes(escaped)
+
+
+@functools.lru_cache(maxsize=64)
+def color_frame(y, u, v, idr_pic_id=0):
+    """As três NAL (SPS, PPS e IDR, sem o código de início) de um quadro H.264 Constrained Baseline de 64x48 de uma cor só
+    (Y, U e V de 16 a 235): o IDR é feito de macroblocos I_PCM, sem predição nem transformada. O idr_pic_id (0 ou 1)
+    é o que um IDR seguido de outro precisa mudar."""
+    sps = _BitWriter()
+    sps.u(8, 66)                       # profile_idc: Baseline
+    sps.u(8, 0xC0)                     # constraint_set0 e constraint_set1 em 1, os outros e os bits reservados em 0
+    sps.u(8, 31)                       # level_idc 3.1 (o 42e01f)
+    sps.ue(0)                          # seq_parameter_set_id
+    sps.ue(0)                          # log2_max_frame_num_minus4
+    sps.ue(2)                          # pic_order_cnt_type
+    sps.ue(1)                          # max_num_ref_frames
+    sps.u(1, 0)                        # sem lacunas em frame_num
+    sps.ue(64 // 16 - 1)               # a largura em macroblocos, menos 1
+    sps.ue(48 // 16 - 1)               # a altura em macroblocos, menos 1
+    sps.u(1, 1)                        # frame_mbs_only_flag
+    sps.u(1, 1)                        # direct_8x8_inference_flag
+    sps.u(1, 0)                        # sem corte
+    sps.u(1, 0)                        # sem VUI
+    sps.trailing()
+    pps = _BitWriter()
+    pps.ue(0)                          # pic_parameter_set_id
+    pps.ue(0)                          # seq_parameter_set_id
+    pps.u(1, 0)                        # CAVLC
+    pps.u(1, 0)                        # bottom_field_pic_order_in_frame_present_flag
+    pps.ue(0)                          # uma fatia por imagem (num_slice_groups_minus1)
+    pps.ue(0)                          # num_ref_idx_l0_default_active_minus1
+    pps.ue(0)                          # num_ref_idx_l1_default_active_minus1
+    pps.u(1, 0)                        # sem predição ponderada
+    pps.u(2, 0)                        # weighted_bipred_idc
+    pps.se(0)                          # pic_init_qp_minus26
+    pps.se(0)                          # pic_init_qs_minus26
+    pps.se(0)                          # chroma_qp_index_offset
+    pps.u(1, 1)                        # deblocking_filter_control_present_flag
+    pps.u(1, 0)                        # constrained_intra_pred_flag
+    pps.u(1, 0)                        # redundant_pic_cnt_present_flag
+    pps.trailing()
+    idr = _BitWriter()
+    idr.ue(0)                          # first_mb_in_slice
+    idr.ue(7)                          # slice_type: I
+    idr.ue(0)                          # pic_parameter_set_id
+    idr.u(4, 0)                        # frame_num
+    idr.ue(idr_pic_id)
+    idr.u(1, 0)                        # no_output_of_prior_pics_flag
+    idr.u(1, 0)                        # long_term_reference_flag
+    idr.se(0)                          # slice_qp_delta
+    idr.ue(1)                          # disable_deblocking_filter_idc
+    samples = bytes([y]) * 256 + bytes([u]) * 64 + bytes([v]) * 64
+    for _ in range(COLOR_MACROBLOCKS):
+        idr.ue(25)                     # mb_type: I_PCM
+        idr.align()                    # pcm_alignment_zero_bit
+        idr.raw(samples)
+    idr.trailing()
+    return _nal(7, bytes(sps.data)), _nal(8, bytes(pps.data)), _nal(5, bytes(idr.data))
+
+
+def color_packets(nals, payload_type, ssrc, sequence, timestamp):
+    """Os datagramas RTP de um quadro da cor (as três NAL de color_frame): o SPS e o PPS, cada um num pacote só, e o IDR
+    em fragmentos FU-A de até COLOR_MAX_PAYLOAD bytes de carga. O mesmo timestamp no quadro todo, a sequência subindo
+    1 por pacote a partir de `sequence` e o bit M só no último."""
+    payloads = [nals[0], nals[1]]
+    idr = nals[2]
+    body, chunk = idr[1:], COLOR_MAX_PAYLOAD - 2
+    pieces = [body[at:at + chunk] for at in range(0, len(body), chunk)]
+    for index, piece in enumerate(pieces):
+        flags = (0x80 if index == 0 else 0) | (0x40 if index == len(pieces) - 1 else 0) | (idr[0] & 0x1F)
+        payloads.append(bytes([(idr[0] & 0x60) | 28, flags]) + piece)
+    packets = []
+    for index, payload in enumerate(payloads):
+        marker = 0x80 if index == len(payloads) - 1 else 0
+        packets.append(bytes([0x80, marker | payload_type]) + ((sequence + index) & 0xFFFF).to_bytes(2, "big") +
+                       (timestamp & 0xFFFFFFFF).to_bytes(4, "big") + ssrc.to_bytes(4, "big") + payload)
+    return packets
+
+
+def _body_of(message):
+    """O corpo (texto) de uma mensagem SIP já em bytes."""
+    return message.partition(b"\r\n\r\n")[2].decode("utf-8")
+
+
 def _telephone_event(formats, rtpmap, fmtp):
     """(payload type, fmtp) do telephone-event/8000 da oferta, ou None. O PJSIP oferece um por taxa de
     relógio (120, 121...); o de 8000 Hz é o que vai com o PCMU e o PCMA. Sem a=rtpmap, o 101 vale como
@@ -514,6 +675,47 @@ class _Call:
         self.replaying = False               # a reprodução já começou (uma por ligação)
 
 
+class _VideoCount:
+    """Os datagramas de vídeo que chegaram do endereço de vídeo das ligações de um alvo (VIDEO PACKETS <alvo>)."""
+
+    def __init__(self):
+        self.packets = 0
+        self.keyframes = 0
+        self.seen = set()   # (SSRC, timestamp) dos quadros-chave já contados: fica no reset, como o do Registrar
+
+    def add(self, data, codecs):
+        """Conta um datagrama com carga; codecs: payload type -> nome do codec, do SDP do telefone."""
+        self.packets += 1
+        payload = _rtp_payload(data)
+        key = (data[8:12], data[4:8])
+        if payload and key not in self.seen and _keyframe_start(codecs.get(data[1] & 0x7F), payload):
+            self.seen.add(key)
+            self.keyframes += 1
+
+
+class _PhoneCall:
+    """Ligação que o telefone fez a um alvo e o registrador atendeu: o diálogo, para o BYE e a espera (HOLD) que o
+    registrador manda, e o vídeo.
+
+    state: answered -> ending -> ended."""
+
+    def __init__(self, alvo, invite, peer, hostport):
+        self.alvo, self.call_id = alvo, invite.first("call-id")
+        self.peer, self.server = peer, hostport   # server: como o telefone nos enxerga
+        to = invite.first("to")
+        self.local = to if ";tag=" in to else to + ";tag=ci"   # a mesma tag que o 200 levou (_response)
+        self.remote = invite.first("from")
+        self.contact = "<%s>" % invite.uri   # o nosso Contact: a URI com que o telefone nos achou
+        self.target = invite.uri             # para onde vão BYE e re-INVITE: o Contact do telefone
+        self.state = "answered"
+        self.sections = []                   # os trechos m= da nossa última resposta (as linhas de cada um)
+        self.holds = {}                      # CSeq do re-INVITE do HOLD -> (on|off, branch)
+        self.video_address = None            # (host, porta) do vídeo do telefone: a oferta dele; None sem vídeo
+        self.codecs = {}                     # payload type -> nome do codec, dos m=video da oferta dele
+        self.payload_type = None             # o do H.264 da nossa resposta (a imagem da cor); None se ela não o escolheu
+        self.streaming = False               # a thread da imagem da cor está rodando
+
+
 class _Subscription:
     """Uma assinatura de BLF (SUBSCRIBE com Event: dialog) aberta pelo telefone."""
 
@@ -570,6 +772,15 @@ class Registrar:
         self.video_488 = False       # VIDEO 488 on: um INVITE com vídeo leva 488
         self.video_echo = False      # VIDEO ECHO on: cada datagrama da PORTA volta a quem o mandou
         self.last_sdp = None     # o último SDP que o telefone mandou (VIDEO SDP)
+        self.phone_calls = {}    # Call-ID -> _PhoneCall: as ligações do telefone que atendemos
+        self.guest_calls = {}    # alvo -> a última _PhoneCall atendida do telefone para ele
+        self.ringing = {}        # Call-ID -> (INVITE, chave de self.answers) do alvo 180, que só toca
+        self.video_sources = {}  # alvo -> ("echo",), ("none",) ou ("color", Y, U, V): o VIDEO SOURCE
+        # A porta do vídeo de uma ligação do telefone -> a _PhoneCall. Só a porta: o telefone manda da porta que o m=video
+        # dele diz, mas o IP do c= pode não ser o de origem (o motor dos testes publica o endereço da máquina e manda
+        # ao registrador de 127.0.0.1).
+        self.video_peers = {}
+        self.guest_video = {}    # alvo -> _VideoCount
         self._reset_refer()
 
     def _reset_refer(self):
@@ -624,7 +835,8 @@ class Registrar:
 
     def on_video(self, data, source, sock):
         """Um datagrama chegou na PORTA do vídeo: conta (e guarda, até VIDEO_KEPT) o que tem carga, conta o quadro-chave
-        que ele começa (um por quadro: o SSRC e o timestamp) e, com o VIDEO ECHO on, o devolve na hora."""
+        que ele começa (um por quadro: o SSRC e o timestamp), conta também no alvo da ligação de que ele vem e, com o
+        VIDEO ECHO on (ou o VIDEO SOURCE <alvo> echo), o devolve na hora."""
         with self.lock:
             if len(data) > RTP_HEADER:
                 self.video_packets += 1
@@ -636,7 +848,10 @@ class Registrar:
                         and _keyframe_start(self.video_codecs.get(data[1] & 0x7F), payload)):
                     self.video_keyframes_seen.add(key)
                     self.video_keyframes += 1
-            echo = self.video_echo
+            call = self.video_peers.get(source[1])   # de qual ligação do telefone vem (a porta do m=video dela)
+            if call is not None and len(data) > RTP_HEADER:
+                self.guest_video.setdefault(call.alvo, _VideoCount()).add(data, call.codecs)
+            echo = self.video_echo or (call is not None and self.video_sources.get(call.alvo) == ("echo",))
         if echo:
             try:
                 sock.sendto(_echoed(data), source)
@@ -745,14 +960,14 @@ class Registrar:
             lines += section
         return "\r\n".join(lines) + "\r\n"
 
-    def _video_answer(self, session, video):
+    def _video_answer(self, session, video, alvo=""):
         """O trecho de vídeo da resposta ao m=video (com porta) de uma oferta: na PORTA, com a primeira carga cujo nome
         no a=rtpmap é H264, VP8 ou VP9 (o a=rtpmap e o a=fmtp dela) e a direção espelhada; com a porta 0 se o VIDEO
-        REJECT está on, se não há a PORTA ou se a oferta não tem um desses codecs."""
+        REJECT está on (ou o VIDEO SOURCE do alvo é none), se não há a PORTA ou se a oferta não tem um desses codecs."""
         formats, direction, rtpmap, fmtp = _section(session, video)
         chosen = next((payload for payload in formats
                        if rtpmap.get(payload, "").split("/")[0].upper() in VIDEO_CODECS), None)
-        if chosen is None or self.video_reject or self.video_port is None:
+        if chosen is None or self.video_reject or self.video_sources.get(alvo) == ("none",) or self.video_port is None:
             return ["m=video 0 %s %s" % (video[0].split()[2], chosen or formats[0])]
         return _media_lines("video", self.video_port, [(chosen, rtpmap[chosen], fmtp.get(chosen))], MIRROR[direction])
 
@@ -785,18 +1000,94 @@ class Registrar:
                 replies = [self._response(488, msg.headers, peer.address)]
             else:
                 replies = [self._accept(msg, peer, offer, MIRROR[direction])]
+                self._track(alvo, msg, peer, replies[0])
         else:
             refusal = {"486": 486, "404": 404, "480": 480}.get(alvo) or (488 if refuse_video else None)
             if refusal:
                 replies = [self._response(refusal, msg.headers, peer.address)]
+            elif alvo == "180":   # só toca: o 100 e o 180, e a resposta final fica com o CANCEL do telefone
+                replies = [self._response(100, msg.headers, peer.address),
+                           self._response(180, msg.headers, peer.address)]
+                self.ringing[msg.first("call-id")] = (msg, key)
             else:
                 replies = [self._response(100, msg.headers, peer.address),
                            self._response(180, msg.headers, peer.address),
                            self._accept(msg, peer, offer, "sendrecv")]
-            self._log("inv-in %s %d" % (alvo, refusal or 200))
+                self._track(alvo, msg, peer, replies[-1])
+            self._log("inv-in %s %d" % (alvo, refusal or (180 if alvo == "180" else 200)))
             self._log("video-in %s %s" % (alvo, video))
         self.answers[key] = replies[-1:]
         return replies
+
+    def _track(self, alvo, msg, peer, answer):
+        """O 200 (answer) a um INVITE ou re-INVITE do telefone: guarda a ligação do alvo (o diálogo, o nosso SDP e o vídeo
+        do telefone, com o endereço da oferta dele) e, se a imagem da cor do alvo está escolhida, começa a mandá-la."""
+        call = self.phone_calls.get(msg.first("call-id"))
+        if call is None:
+            call = self.phone_calls[msg.first("call-id")] = _PhoneCall(alvo, msg, peer, self._hostport(msg.uri, peer))
+        call.peer = peer
+        contact = msg.first("contact")
+        call.target = _uri_of(contact) if contact else msg.uri
+        self.guest_calls[alvo] = call
+        sdp = _body_of(answer)
+        call.sections = _sdp_sections(sdp)[1:]
+        answered = _video_payload_types(sdp)   # o m=video da resposta, se ela o aceitou: um payload type só
+        for port in [key for key, value in self.video_peers.items() if value is call]:
+            del self.video_peers[port]
+        call.video_address = _video_address(msg.body) if answered else None
+        call.codecs = _video_payload_types(msg.body)
+        call.payload_type = next((payload for payload, name in answered.items() if name == "H264"), None)
+        if call.video_address:
+            self.video_peers[call.video_address[1]] = call
+        self._start_color(call)
+
+    def _forget(self, call):
+        """A ligação do telefone acabou: o vídeo dela deixa de ser contado, ecoado e mandado."""
+        call.state = "ended"
+        for port in [key for key, value in self.video_peers.items() if value is call]:
+            del self.video_peers[port]
+
+    def _color_of(self, call):
+        """(Y, U, V) da imagem da cor que a ligação deve estar recebendo agora, ou None: a ligação ainda de pé, com o vídeo
+        aceito no H.264, e o VIDEO SOURCE do alvo em color."""
+        source = self.video_sources.get(call.alvo)
+        if call.state == "answered" and source and source[0] == "color" and call.video_address and \
+                call.payload_type is not None and self.video_sock:
+            return source[1:]
+        return None
+
+    def _start_color(self, call):
+        """Começa a thread da imagem da cor da ligação, se ela deve estar recebendo uma e ainda não está."""
+        if not call.streaming and self._color_of(call):
+            call.streaming = True
+            threading.Thread(target=self._color_stream, args=(call,), daemon=True).start()
+
+    def _color_stream(self, call):
+        """A imagem da cor (numa thread): um quadro a cada COLOR_FRAME_SECONDS ao vídeo do telefone, até o fim da ligação
+        ou até o VIDEO SOURCE do alvo deixar de ser color. Um SSRC sorteado por fluxo; a cor, o endereço e o payload
+        type são os de cada quadro."""
+        ssrc, sequence, timestamp, idr_pic_id = secrets.randbits(32), secrets.randbits(16), secrets.randbits(32), 0
+        due = time.monotonic()
+        while True:
+            with self.lock:
+                color = self._color_of(call)
+                if color is None:
+                    call.streaming = False
+                    return
+                address, payload_type = call.video_address, call.payload_type
+            packets = color_packets(color_frame(*color, idr_pic_id), payload_type, ssrc, sequence, timestamp)
+            try:
+                for packet in packets:
+                    self.video_sock.sendto(packet, address)
+            except OSError:   # a PORTA fechou (o registrador saindo)
+                with self.lock:
+                    call.streaming = False
+                return
+            sequence = (sequence + len(packets)) & 0xFFFF
+            timestamp = (timestamp + COLOR_TIMESTAMP_STEP) & 0xFFFFFFFF
+            idr_pic_id ^= 1
+            due += COLOR_FRAME_SECONDS
+            time.sleep(max(0.0, due - time.monotonic()))
 
     def _accept(self, msg, peer, offer, direction):
         """200 a um INVITE: SDP com um codec de áudio só, o primeiro que a oferta trouxe (PCMU ou PCMA), e o
@@ -825,7 +1116,7 @@ class Registrar:
                     sections.append(audio_lines)
                     audio_done = True
                 elif _live_video(section) and not video_done:
-                    sections.append(self._video_answer(offered[0], section))
+                    sections.append(self._video_answer(offered[0], section, _uri_user(msg.uri)))
                     video_done = True
                 else:   # um trecho que a resposta recusa: o mesmo tipo, com a porta 0
                     sections.append(["%s 0 %s %s" % (fields[0], fields[2] if len(fields) > 2 else "RTP/AVP",
@@ -883,11 +1174,21 @@ class Registrar:
         for call in self.calls:   # o telefone desligou uma ligação que o RING fez
             if call.call_id == msg.first("call-id"):
                 call.state = "ended"
+        guest = self.phone_calls.get(msg.first("call-id"))   # ou uma que atendemos
+        if guest:
+            self._forget(guest)
         return [self._response(200, msg.headers, peer.address)]
 
     def _on_cancel(self, msg, peer):
         self._log("cancel-in " + _uri_user(msg.uri))
-        return [self._response(200, msg.headers, peer.address)]
+        replies = [self._response(200, msg.headers, peer.address)]
+        pending = self.ringing.pop(msg.first("call-id"), None)   # o CANCEL de um INVITE ao 180 leva também o 487 dele
+        if pending:
+            invite, key = pending
+            final = self._response(487, invite.headers, peer.address)
+            self.answers[key] = [final]   # a retransmissão do INVITE depois do CANCEL repete o 487
+            replies.append(final)
+        return replies
 
     # --- BLF: o telefone assina o estado de um ramal (SUBSCRIBE com Event: dialog) ---
 
@@ -1018,6 +1319,49 @@ class Registrar:
             return "ERR no-contact"
         return "OK"
 
+    def _guest_call(self, alvo):
+        """A ligação do telefone ao alvo que ainda está de pé (a última atendida), ou None."""
+        call = self.guest_calls.get(alvo)
+        return call if call and call.state == "answered" else None
+
+    def _guest_request(self, call, method, extra=(), body=""):
+        """Pedido nosso no diálogo da ligação do telefone: o From e o To dele trocados, e o CSeq seguinte do diálogo.
+        (mensagem, CSeq, branch)"""
+        cseq, branch = self._next_cseq(call.call_id), _branch()
+        headers = [("From", call.local), ("To", call.remote), ("Call-ID", call.call_id),
+                   ("CSeq", "%d %s" % (cseq, method))] + list(extra)
+        return _request(method, call.target, call.peer.transport, call.server, branch, headers, body), cseq, branch
+
+    def _guest_bye(self, alvo):
+        """BYE <alvo>: o convidado desliga a ligação do telefone."""
+        call = self._guest_call(alvo)
+        if not call:
+            return "ERR no-call"
+        message = self._guest_request(call, "BYE")[0]
+        call.state = "ending"   # a imagem da cor para já; o bye-out sai com a resposta do telefone
+        return "OK" if self._send(call.peer, message) else "ERR no-call"
+
+    def _guest_hold(self, alvo, state):
+        """HOLD <alvo> on|off: o re-INVITE do convidado, com o nosso último SDP: cada m= com porta em a=sendonly (on) ou
+        a=sendrecv (off)."""
+        call = self._guest_call(alvo)
+        if not call:
+            return "ERR no-call"
+        direction = "sendonly" if state == "on" else "sendrecv"
+        sections = []
+        for section in call.sections:
+            if section[0].split()[1] != "0":
+                section = [line for line in section if line[2:] not in DIRECTIONS or line[:2] != "a="] + ["a=" + direction]
+            sections.append(section)
+        message, cseq, branch = self._guest_request(
+            call, "INVITE", [("Contact", call.contact), ("Content-Type", "application/sdp")],
+            self._sdp(call.server, sections))
+        call.holds[cseq] = (state, branch)
+        if self._send(call.peer, message):
+            return "OK"
+        del call.holds[cseq]
+        return "ERR no-call"
+
     def _hangup(self, ramal):
         live = [call for call in self.calls if call.ramal == ramal and call.state in ("calling", "ringing", "answered")]
         if not live:
@@ -1067,8 +1411,11 @@ class Registrar:
     def _on_response(self, msg, peer):
         """Resposta do telefone a um pedido do registrador (INVITE, CANCEL, BYE, REFER, NOTIFY)."""
         call, cseq = self._call_of(msg.first("call-id")), msg.first("cseq").split()
-        if not call or len(cseq) != 2:
+        if len(cseq) != 2:
             return []
+        if not call:   # a resposta a um pedido nosso numa ligação do telefone (BYE e HOLD)
+            guest = self.phone_calls.get(msg.first("call-id"))
+            return self._on_guest_response(guest, msg, cseq) if guest else []
         if cseq[1] == "INVITE":
             return self._on_invite_response(call, msg)
         if cseq[1] == "BYE" and msg.status >= 200 and call.state != "ended":
@@ -1076,6 +1423,24 @@ class Registrar:
             self._log("bye-out %s %d" % (call.ramal, msg.status))
         if cseq[1] == "REFER" and msg.status >= 200:   # o REFER do comando REFER: a ligação segue como estiver
             self._log("refer-out %s %d" % (call.ramal, msg.status))
+        return []
+
+    def _on_guest_response(self, call, msg, cseq):
+        """Resposta do telefone a um BYE ou ao re-INVITE do HOLD, numa ligação do telefone: o registro (bye-out e hold-out) e,
+        ao re-INVITE com resposta final, o ACK (de um 2xx, um pedido novo; de outra, na mesma transação)."""
+        number, method = cseq
+        if method == "BYE" and msg.status >= 200 and call.state != "ended":
+            self._forget(call)
+            self._log("bye-out %s %d" % (call.alvo, msg.status))
+        if method == "INVITE" and msg.status >= 200 and number.isdigit():
+            hold = call.holds.pop(int(number), None)
+            if hold:
+                state, branch = hold
+                self._log("hold-out %s %s %d" % (call.alvo, state, msg.status))
+                headers = [("From", call.local), ("To", msg.first("to")), ("Call-ID", call.call_id),
+                           ("CSeq", "%s ACK" % number)]
+                return [_request("ACK", call.target, call.peer.transport, call.server,
+                                 _branch() if msg.status < 300 else branch, headers)]
         return []
 
     def _sdp_out(self, call, msg):
@@ -1162,6 +1527,10 @@ class Registrar:
                     return reply
             if name == "HANGUP" and ramal:
                 return [self._hangup(ramal)]
+            if name == "BYE" and ramal and len(words) == 1:
+                return [self._guest_bye(ramal)]
+            if name == "HOLD" and len(words) == 2 and words[1] in ("on", "off"):
+                return [self._guest_hold(words[0], words[1])]
             if name == "REFER" and ramal:
                 target, _, destino = ramal.partition(" ")
                 if destino and " " not in destino:
@@ -1221,9 +1590,26 @@ class Registrar:
                 return self.events + ["END"]
         return ["ERR bad-command"]
 
+    def _video_source(self, alvo, spec):
+        """VIDEO SOURCE <alvo> echo|none|color <Y> <U> <V>|default: guarda a escolha (a imagem da cor da ligação de agora
+        começa na hora) e devolve OK, ou ERR bad-command."""
+        if spec == ["default"]:
+            self.video_sources.pop(alvo, None)
+        elif spec in (["echo"], ["none"]):
+            self.video_sources[alvo] = (spec[0],)
+        elif (len(spec) == 4 and spec[0] == "color" and
+              all(re.fullmatch(r"[0-9]{1,3}", value) and int(value) in COLOR_RANGE for value in spec[1:])):
+            self.video_sources[alvo] = ("color",) + tuple(int(value) for value in spec[1:])
+            call = self.guest_calls.get(alvo)
+            if call:
+                self._start_color(call)
+        else:
+            return ["ERR bad-command"]
+        return ["OK"]
+
     def _video_command(self, words):
-        """VIDEO REJECT|488|ECHO <on|off>, VIDEO PACKETS [reset], VIDEO KEYFRAMES, VIDEO REPLAYED e VIDEO SDP: as linhas
-        da resposta, ou None se o comando não é um desses (com o lock)."""
+        """VIDEO REJECT|488|ECHO <on|off>, VIDEO PACKETS [reset|<alvo>], VIDEO KEYFRAMES [<alvo>], VIDEO SOURCE, VIDEO
+        REPLAYED e VIDEO SDP: as linhas da resposta, ou None se o comando não é um desses (com o lock)."""
         if len(words) == 2 and words[0] in ("REJECT", "488", "ECHO") and words[1] in ("on", "off"):
             setattr(self, {"REJECT": "video_reject", "488": "video_488", "ECHO": "video_echo"}[words[0]],
                     words[1] == "on")
@@ -1235,7 +1621,14 @@ class Registrar:
             self.video_kept = []
             self.video_keyframes = 0
             self.video_replayed = 0
+            for count in self.guest_video.values():
+                count.packets = count.keyframes = 0
             return ["OK"]
+        if len(words) == 2 and words[0] in ("PACKETS", "KEYFRAMES"):   # <alvo>
+            count = self.guest_video.get(words[1])
+            return [str(getattr(count, words[0].lower()) if count else 0)]
+        if len(words) >= 2 and words[0] == "SOURCE":
+            return self._video_source(words[1], words[2:])
         if words == ["KEYFRAMES"]:
             return [str(self.video_keyframes)]
         if words == ["REPLAYED"]:
@@ -1332,7 +1725,7 @@ def start_tcp_server(registrar, host, port):
 
 
 def start_control_server(registrar, host, port):
-    """Porta de controle (RING, RINGVIDEO, HANGUP, REFER, REPLACES, PASSWORD, REGISTERS, CONTACT, HEADER, KEEPALIVES,
+    """Porta de controle (RING, RINGVIDEO, HANGUP, BYE, HOLD, REFER, REPLACES, PASSWORD, REGISTERS, CONTACT, HEADER, KEEPALIVES,
     EXPIRES, BLF, FORGET, DROP, FAIL, REFER_REPLY, REFER_NOTIFY, RESET, VIDEO, LOG), numa thread. Mesma forma de
     start_tcp_server."""
     return _start_tcp(_ControlHandler, registrar, host, port)

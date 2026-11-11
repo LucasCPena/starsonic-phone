@@ -5,9 +5,13 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
+#include <cstdlib>
 #include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -72,7 +76,7 @@ inline std::vector<int> Sorted(std::vector<int> items) {
 }
 
 // Um FrameSink de teste: guarda o id, o tamanho e a hora de cada quadro (os da prévia com o id kLocal, como o
-// kLocalFrames do desenhista). Os quadros chegam na thread do vídeo da PJSIP.
+// kLocalFrames do desenhista) e uma cópia da última imagem de cada id. Os quadros chegam na thread do vídeo da PJSIP.
 class TestSink : public starsonic::FrameSink {
 public:
     static constexpr int kLocal = -1;
@@ -119,6 +123,54 @@ public:
         return true;
     }
 
+    // Um pixel de uma imagem, em Y, U e V.
+    struct Yuv {
+        int y;
+        int u;
+        int v;
+    };
+
+    // O pixel do último quadro do id, na fração da largura (fx) e da altura (fy), de 0 a 1 do canto de cima à
+    // esquerda; o U e o V são os do bloco 2x2 dele. Sem valor se nenhum quadro do id chegou.
+    std::optional<Yuv> PixelAt(int callId, double fx, double fy) const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto found = last_.find(callId);
+        if (found == last_.end()) return std::nullopt;
+        const Image& image = found->second;
+        const int x = Clamped(static_cast<int>(fx * image.width), image.width);
+        const int y = Clamped(static_cast<int>(fy * image.height), image.height);
+        const size_t chroma = static_cast<size_t>(y / 2) * static_cast<size_t>((image.width + 1) / 2) + x / 2;
+        return Yuv{image.y[static_cast<size_t>(y) * image.width + x], image.u[chroma], image.v[chroma]};
+    }
+
+    // Espera até `seconds` que o PixelAt(callId, fx, fy) esteja a no máximo `tolerance` de `color`, em cada plano.
+    bool WaitForColor(int callId, double fx, double fy, Yuv color, int tolerance, int seconds) const {
+        const auto deadline = Clock::now() + std::chrono::seconds(seconds);
+        for (;;) {
+            const std::optional<Yuv> pixel = PixelAt(callId, fx, fy);
+            if (pixel && std::abs(pixel->y - color.y) <= tolerance && std::abs(pixel->u - color.u) <= tolerance &&
+                std::abs(pixel->v - color.v) <= tolerance) {
+                return true;
+            }
+            if (Clock::now() >= deadline) return false;
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+    }
+
+    // O maior Y menos o menor Y do último quadro do id, na linha da fração fy da altura, entre as frações fromX e toX
+    // da largura (toX fora): 0 numa linha lisa. -1 se nenhum quadro do id chegou.
+    int RowSpanY(int callId, double fy, double fromX, double toX) const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto found = last_.find(callId);
+        if (found == last_.end()) return -1;
+        const Image& image = found->second;
+        const int y = Clamped(static_cast<int>(fy * image.height), image.height);
+        const int from = Clamped(static_cast<int>(fromX * image.width), image.width);
+        const int to = std::max(from + 1, std::min(image.width, static_cast<int>(toX * image.width)));
+        const uint8_t* row = image.y.data() + static_cast<size_t>(y) * image.width;
+        return *std::max_element(row + from, row + to) - *std::min_element(row + from, row + to);
+    }
+
     // Os quadros numa linha só, para as mensagens dos testes: o id e o tamanho de cada sequência igual.
     std::string Text() const {
         std::string text;
@@ -138,13 +190,41 @@ public:
     }
 
 private:
+    // A cópia de um quadro, com os planos sem os passos.
+    struct Image {
+        int width = 0;
+        int height = 0;
+        std::vector<uint8_t> y, u, v;
+    };
+
+    static int Clamped(int value, int size) { return std::max(0, std::min(size - 1, value)); }
+
+    static std::vector<uint8_t> CopyPlane(const uint8_t* plane, int stride, int width, int height) {
+        std::vector<uint8_t> copy(static_cast<size_t>(width) * height);
+        for (int row = 0; row < height; ++row) {
+            std::copy(plane + static_cast<size_t>(row) * stride, plane + static_cast<size_t>(row) * stride + width,
+                      copy.begin() + static_cast<size_t>(row) * width);
+        }
+        return copy;
+    }
+
     void Add(int callId, const starsonic::I420Frame& frame) {
+        Image image;
+        image.width = frame.width;
+        image.height = frame.height;
+        const int chromaWidth = (frame.width + 1) / 2;
+        const int chromaHeight = (frame.height + 1) / 2;
+        image.y = CopyPlane(frame.y, frame.yStride, frame.width, frame.height);
+        image.u = CopyPlane(frame.u, frame.uStride, chromaWidth, chromaHeight);
+        image.v = CopyPlane(frame.v, frame.vStride, chromaWidth, chromaHeight);
         std::lock_guard<std::mutex> lock(mutex_);
         frames_.push_back({callId, frame.width, frame.height, Clock::now()});
+        last_[callId] = std::move(image);
     }
 
     mutable std::mutex mutex_;
     std::vector<Frame> frames_;
+    std::map<int, Image> last_;   // a última imagem de cada id
 };
 
 // Um motor registrado no registrador falso (ramal 2001). adjust muda o perfil e configure, a configuração do motor
