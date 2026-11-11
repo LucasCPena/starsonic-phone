@@ -322,7 +322,8 @@ inline std::string VideoText(const starsonic::CallVideo& video) {
     std::string text;
     const std::pair<bool, const char*> fields[] = {{video.offered, "offered"}, {video.active, "active"},
                                                    {video.remote, "remote"},   {video.camera, "camera"},
-                                                   {video.early, "early"},     {video.refused, "refused"}};
+                                                   {video.early, "early"},     {video.refused, "refused"},
+                                                   {video.doorphone, "doorphone"}};
     for (const auto& field : fields) {
         if (!field.first) continue;
         if (!text.empty()) text += "+";

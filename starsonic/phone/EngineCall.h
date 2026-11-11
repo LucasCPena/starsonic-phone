@@ -22,10 +22,11 @@
 // diálogo) e se pega mutex_ por um instante.
 //
 // O vídeo (só com o PJMEDIA_HAS_VIDEO; as funções dele ficam no EngineCallVideo.cpp, e os ganchos nos métodos de
-// sempre, no EngineCall.cpp): o que a tabela sabe do vídeo de cada ligação (o desejo da câmera, a pausa, o
+// sempre, no EngineCall.cpp): o que a tabela sabe do vídeo de cada ligação (o desejo da câmera, as pausas, o
 // 183 dos Porteiros, o vídeo negociado) fica com mutex_, e o OnCallVideo sai pelo Emit, com mutex_ presa, quando o
-// CallVideo de uma ligação muda (PublishVideo). Vídeo só numa ligação sozinha: a pausa (Paused) vem do que a tabela
-// quer, como a mesa de áudio, e o aviso já sai com a câmera desligada. O envio (o START_TRANSMIT e o STOP_TRANSMIT) só
+// CallVideo de uma ligação muda (PublishVideo). Vídeo só numa ligação sozinha: as pausas vêm do que a tabela quer, como
+// a mesa de áudio, uma do envio (SendPaused) e outra da imagem que chega (ReceivePaused, que deixa a de um Porteiro
+// seguir com a outra ligação), e o aviso já sai com a câmera desligada. O envio (o START_TRANSMIT e o STOP_TRANSMIT) só
 // sai do SyncVideo, que confere o envio de verdade (a captura ligada ao stream) antes de mudá-lo: o pjsua recria o
 // stream num re-INVITE que muda a mídia (o envio cai junto) e desfaz a mídia no fim da ligação, e o START dele não
 // confere se o stream ainda existe, nem o STOP se a ligação mandava. Por isso o SyncVideo só roda no temporizador da
@@ -38,13 +39,13 @@
 // trava do diálogo) a pede.
 //
 // A imagem e a câmera (também no EngineCallVideo.cpp): o desenhista nosso (VideoRenderer.h) pergunta à tabela, a cada
-// quadro de uma ligação e com a trava dele presa, se o quadro sai (FrameGate): a pausa o segura, e o primeiro quadro
-// liga o remote, que o temporizador do remote (RemoteTimer) desliga depois de 2 s sem quadro. A tabela nunca chama o
-// desenhista com mutex_ presa: a ordem é videoMutex_, as travas do pjsua, a do desenhista e mutex_. A câmera abre e
-// fecha com videoMutex_ presa: o envio de cada ligação no SyncVideo (na thread do PJSIP) e a prévia (SyncPreview, no
-// SyncVideo e no teste da câmera, na thread da API), que roda enquanto o teste está ligado ou alguma ligação manda a
-// imagem; a câmera aberta segue até fechar (o envio que começa usa a da prévia). Os problemas da câmera saem pela fila
-// dos eventos (Problem).
+// quadro de uma ligação e com a trava dele presa, se o quadro sai (FrameGate): a pausa da imagem o segura, e o primeiro
+// quadro liga o remote, que o temporizador do remote (RemoteTimer) desliga depois de 2 s sem quadro. A tabela nunca
+// chama o desenhista com mutex_ presa: a ordem é videoMutex_, as travas do pjsua, a do desenhista e mutex_. A câmera
+// abre e fecha com videoMutex_ presa: o envio de cada ligação no SyncVideo (na thread do PJSIP) e a prévia
+// (SyncPreview, no SyncVideo e no teste da câmera, na thread da API), que roda enquanto o teste está ligado ou alguma
+// ligação manda a imagem; a câmera aberta segue até fechar (o envio que começa usa a da prévia). Os problemas da câmera
+// saem pela fila dos eventos (Problem).
 #include <pjsua2.hpp>
 
 #include <chrono>
@@ -220,6 +221,8 @@ private:
         bool wish = false;                // o desejo da câmera (MakeCall e Answer com vídeo, SetCamera)
         bool offered = false;             // a recebida oferece vídeo com um codec em comum
         bool early = false;               // o 183 de um Porteiro, até o atender
+        bool doorphone = false;           // um Porteiro (junto com o early), do toque ao fim: a imagem dele segue com
+                                          // a outra ligação (ReceivePaused)
         bool videoUp = false;             // o vídeo negociado (o último MediaChanged)
         bool canSend = false;             // a direção negociada deixa a câmera mandar
         bool askingVideo = false;         // uma oferta nossa com o vídeo espera a resposta: sem o vídeo nela, recusa
@@ -257,9 +260,13 @@ private:
     // Com mutex_ preso: o evento sai na hora ou, durante o makeCall de Make, espera em held_.
     void Emit(int callId, EventQueue::Event event);
 
-    // Com mutex_ preso. A ligação está pausada: a espera, a transferência, a conferência ou a outra ligação (ver
-    // SipEngine::Video).
-    bool Paused(const Slot& slot);
+    // Com mutex_ preso. O envio da ligação está pausado (a nossa câmera não manda): a espera, a transferência, a
+    // conferência ou a outra ligação (ver SipEngine::Video).
+    bool SendPaused(const Slot& slot);
+    // Com mutex_ preso. A imagem que chega da ligação está pausada (o active, o remote e o portão dos quadros): a
+    // espera, a transferência, a conferência ou a outra ligação, menos num Porteiro, cuja imagem segue com a outra
+    // ligação.
+    bool ReceivePaused(const Slot& slot);
     // Com mutex_ preso. A câmera da ligação deve mandar agora.
     bool WantsToSend(const Slot& slot);
     // Com mutex_ preso. O CallVideo de agora da ligação (sem o refused).
@@ -289,7 +296,7 @@ private:
         CallTable* table = nullptr;
         void OnEngineTimer() override;
     };
-    // Na thread do desenhista, com a trava dele presa: a pausa segura o quadro, e o primeiro liga o remote.
+    // Na thread do desenhista, com a trava dele presa: a pausa da imagem segura o quadro, e o primeiro liga o remote.
     bool RemoteFrameArrived(int callId);
     // No temporizador do remote: desliga o remote das ligações sem quadro há 2 s e marca a próxima conferência.
     void CheckRemote();

@@ -10,7 +10,7 @@
 #include "EngineLog.h"
 
 // O vídeo da tabela das ligações (ver o topo do EngineCall.h): a oferta que chega, as recusas, o desejo da câmera e
-// a pausa, o envio (o SyncVideo, no temporizador da tabela), a imagem que chega (o portão dos quadros e o remote), a
+// as pausas, o envio (o SyncVideo, no temporizador da tabela), a imagem que chega (o portão dos quadros e o remote), a
 // prévia, o teste e a releitura das câmeras, e os problemas da câmera. Os ganchos do vídeo nos métodos de sempre (o
 // Incoming, o MediaChanged, o Make, o Answer...) ficam no EngineCall.cpp. Sem o PJMEDIA_HAS_VIDEO (o Android), nada
 // daqui muda o que o motor faz.
@@ -337,27 +337,35 @@ bool CallTable::AddVideo(int callId) {
 #endif
 }
 
-bool CallTable::Paused(const Slot& slot) {
+bool CallTable::SendPaused(const Slot& slot) {
     if (slot.held || slot.transferring || conference_) return true;
-    // Com duas ligações, nenhuma fica com o vídeo, com a segunda ainda tocando ou já atendida (spec da videochamada,
-    // 4.2): o vídeo volta quando a ligação fica sozinha, fora da espera.
+    // Com duas ligações, nenhuma câmera manda, com a segunda ainda tocando ou já atendida (spec da videochamada, 4.2),
+    // também a de um Porteiro: o envio volta quando a ligação fica sozinha, fora da espera.
     return Other(&slot) != nullptr;
+}
+
+bool CallTable::ReceivePaused(const Slot& slot) {
+    if (slot.held || slot.transferring || conference_) return true;
+    // Com duas ligações, a imagem que chega também pausa, menos a de um Porteiro (decisão do responsável de 11/11/2026,
+    // spec 4.2): tocando ou atendido, a dele segue à vista, só chegando.
+    return !slot.doorphone && Other(&slot) != nullptr;
 }
 
 bool CallTable::WantsToSend(const Slot& slot) {
     return slot.wish && slot.confirmed && !slot.early && slot.videoUp && slot.canSend && !cameraPaused_ &&
-           !Paused(slot);
+           !SendPaused(slot);
 }
 
 CallVideo CallTable::Current(const Slot& slot) {
     CallVideo video;
     video.offered = slot.offered;
-    video.active = slot.videoUp && !Paused(slot);
+    video.active = slot.videoUp && !ReceivePaused(slot);
     video.remote = slot.remote && video.active;
-    // A câmera mandando: o envio aplicado, e a tabela ainda o quer (a pausa já desliga a câmera no aviso, antes do
-    // STOP_TRANSMIT do SyncVideo).
+    // A câmera mandando: o envio aplicado, e a tabela ainda o quer (a pausa do envio já desliga a câmera no aviso,
+    // antes do STOP_TRANSMIT do SyncVideo).
     video.camera = slot.sending && WantsToSend(slot);
     video.early = slot.early;
+    video.doorphone = slot.doorphone;
     return video;
 }
 
@@ -365,8 +373,8 @@ void CallTable::PublishVideo() {
 #if PJMEDIA_HAS_VIDEO
     for (Slot& slot : slots_) {
         if (slot.callId == 0) continue;
-        // A imagem que chega some na hora com a pausa e sem o vídeo: depois, só um quadro novo a liga de novo.
-        if (Paused(slot) || !slot.videoUp) slot.remote = false;
+        // A imagem que chega some na hora com a pausa dela e sem o vídeo: depois, só um quadro novo a liga de novo.
+        if (ReceivePaused(slot) || !slot.videoUp) slot.remote = false;
         const CallVideo video = Current(slot);
         if (video == slot.shown) continue;
         slot.shown = video;
@@ -645,7 +653,7 @@ bool CallTable::RemoteFrameArrived(int callId) {
         std::lock_guard<std::mutex> lock(mutex_);
         Slot* slot = Find(callId);
         if (!slot) return true;   // uma janela que a tabela não conhece (a dos testes do desenhista): o quadro sai
-        if (Paused(*slot)) return false;
+        if (ReceivePaused(*slot)) return false;
         slot->lastFrame = std::chrono::steady_clock::now();
         if (!slot->remote) {
             slot->remote = true;

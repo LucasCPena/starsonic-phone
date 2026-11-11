@@ -174,10 +174,13 @@ void CallTable::Incoming(pj::Account& account, int pjsuaId, bool accepting, cons
                 slot->offered = CommonCodec(offer.codecs, settings_);
                 slot->videoCount = slot->offered ? 1 : 0;
                 slot->early = slot->offered && IsDoorphone(settings_, party.user);
+                // O Porteiro segue sendo ele depois do atender (o early acaba no Answer): a imagem dele não pausa com a
+                // outra ligação (ReceivePaused).
+                slot->doorphone = slot->early;
                 if (!slot->offered) Refuse(*slot);
             }
-            // O vídeo da oferta, e o da outra ligação, se há: com a segunda tocando, ela pausa já (Paused), também
-            // com uma oferta só de voz.
+            // O vídeo da oferta, e o da outra ligação, se há: com a segunda tocando, ela pausa já (o envio, e a imagem
+            // fora a de um Porteiro), também com uma oferta só de voz.
             PublishVideo();
             slot->ringVideoCount = slot->videoCount;
             // Sem câmera, a resposta aceita o vídeo só para receber.

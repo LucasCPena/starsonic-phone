@@ -468,6 +468,32 @@ void RemoveColorbar() {
     REQUIRE(pjmedia_vid_unregister_factory(&pjmedia_cbar_factory, nullptr) == PJ_SUCCESS);
 }
 
+// O porteiro tocando como a segunda ligação (com o TestCameraScope do ruído e o sink já no motor): uma ligação com
+// vídeo ao 2003, com o eco, e depois o 9001, um Porteiro, com o 183 e a imagem dele chegando. A PORTA guarda os
+// datagramas da primeira (VP8, a câmera de teste com o canto de ruído), que o registrador manda de volta como a imagem
+// do porteiro: a reprodução dura uns 2,5 s depois do 183, e o que confere a imagem dele vem logo. *first: o id da
+// primeira ligação.
+int DoorphoneRingsAsSecond(Phone& phone, const TestSink& sink, int* first) {
+    VideoSettings settings = TestSettings();
+    settings.h264 = false;
+    settings.doorphones = {"9001"};
+    phone.engine->SetVideoSettings(settings);
+    RegisterTestCamera();
+    REQUIRE(phone.engine->SetCaptureDevice(kTestCamera));
+    REQUIRE(phone.registrar.Control("VIDEO ECHO on") == Lines{"OK"});
+    phone.registrar.ResetVideoPackets();
+    *first = phone.engine->MakeCall("2003", true);
+    REQUIRE(*first > 0);
+    REQUIRE(phone.registrar.WaitForVideoPackets(300, 10));
+    REQUIRE(sink.WaitFor(*first, 10, 5));
+    const int doorphone = phone.RingVideo("9001", "VP8", true);
+    REQUIRE(phone.registrar.WaitForLog("sdp-out 2001 183 video=sim", kWaitSeconds));
+    return doorphone;
+}
+
+// Um porteiro com a imagem chegando e sem a nossa câmera.
+bool DoorphoneImage(const CallVideo& video) { return video.doorphone && video.active && video.remote && !video.camera; }
+
 }  // namespace
 
 TEST_CASE("the video build offers H264 and VP8") {
@@ -1354,7 +1380,7 @@ TEST_CASE("a doorphone's image arrives before the answer and nothing goes out") 
     CHECK_FALSE(phone.engine->Video(id).early);
 }
 
-TEST_CASE("a doorphone ringing during a video call is paused and its image does not reach the sink") {
+TEST_CASE("a doorphone ringing as the second call shows its image and the first call keeps only voice") {
     TestCameraScope cameras(1, 0, true);
     TestSink sink;
     Phone phone;
@@ -1363,33 +1389,95 @@ TEST_CASE("a doorphone ringing during a video call is paused and its image does 
     INFO(phone.listener.VideosText());
     phone.engine->SetFrameSink(&sink);
 
-    VideoSettings settings = TestSettings();
-    settings.h264 = false;
-    settings.doorphones = {"9001"};
-    phone.engine->SetVideoSettings(settings);
-    RegisterTestCamera();
-    REQUIRE(phone.engine->SetCaptureDevice(kTestCamera));
-    REQUIRE(phone.registrar.Control("VIDEO ECHO on") == Lines{"OK"});
-    // A ligação ativa, com o eco: a PORTA guarda os datagramas dela, a imagem do porteiro que toca depois.
-    phone.registrar.ResetVideoPackets();
-    const int active = phone.engine->MakeCall("2003", true);
-    REQUIRE(active > 0);
-    REQUIRE(phone.registrar.WaitForVideoPackets(300, 10));
-    REQUIRE(sink.WaitFor(active, 10, 5));
-
-    // O porteiro toca como a segunda ligação, com o 183 e a imagem dele chegando: com duas ligações, as duas ficam em
-    // pausa (spec da videochamada, 4.2), e nenhuma imagem passa do desenhista, nem a do porteiro nem a da ativa.
-    const int ringing = phone.RingVideo("9001", "VP8", true);
-    CHECK(phone.registrar.WaitForLog("sdp-out 2001 183 video=sim", kWaitSeconds));
-    CHECK(WaitVideo(phone, ringing, [](const CallVideo& video) { return video.offered && video.early; }));
-    CHECK(WaitVideo(phone, active, VideoPaused));
+    // Com duas ligações o vídeo pausa (spec da videochamada, 4.2), menos a imagem do porteiro: ela passa do desenhista,
+    // também com ele tocando como a segunda (a exceção do porteiro, decisão do responsável de 11/11/2026). A primeira
+    // fica só com a voz, e nada é mandado, nem a ela nem ao porteiro.
+    int first = 0;
+    const int ringing = DoorphoneRingsAsSecond(phone, sink, &first);
     const Clock::time_point rang = Clock::now();
-    std::this_thread::sleep_for(std::chrono::milliseconds(1500));
-    CHECK(sink.Count(ringing) == 0);
-    CHECK(sink.Count(active, 0, 0, rang) == 0);
-    const CallVideo video = phone.engine->Video(ringing);
-    CHECK_FALSE(video.active);
-    CHECK_FALSE(video.remote);
+    CHECK(sink.WaitFor(ringing, 5, 5));
+    CHECK(WaitVideo(phone, ringing,
+                    [](const CallVideo& video) { return video.offered && video.early && DoorphoneImage(video); }));
+    CHECK(WaitVideo(phone, first, VideoPaused));
+    CHECK(PacketsStop(phone));
+    CHECK(sink.Count(first, 0, 0, rang) == 0);
+    CHECK_FALSE(phone.engine->Video(first).doorphone);
+}
+
+TEST_CASE("a doorphone answered with the first call on hold keeps its image and our camera stays off") {
+    TestCameraScope cameras(1, 0, true);
+    TestSink sink;
+    Phone phone;
+    INFO(sink.Text());
+    INFO(phone.registrar.LogText());
+    INFO(phone.listener.VideosText());
+    phone.engine->SetFrameSink(&sink);
+
+    int first = 0;
+    const int doorphone = DoorphoneRingsAsSecond(phone, sink, &first);
+    REQUIRE(sink.WaitFor(doorphone, 5, 5));
+    // Atendido, o porteiro fica com a imagem, e a primeira vai para a espera. O envio segue a regra das duas ligações:
+    // a câmera não manda ao porteiro enquanto a outra existir, nem com o desejo dela ligado (o Atender com vídeo).
+    REQUIRE(phone.engine->Answer(doorphone, true));
+    REQUIRE(phone.WaitState(doorphone, CallState::Confirmed));
+    const Clock::time_point answered = Clock::now();
+    CHECK(WaitUntil([&] { return sink.Count(doorphone, 0, 0, answered) >= 5; }, 5));
+    CHECK(WaitVideo(phone, doorphone, [](const CallVideo& video) { return !video.early && DoorphoneImage(video); }));
+    CHECK(phone.registrar.WaitForLog("reinv-in 2003 sendonly", kWaitSeconds));
+    CHECK(PacketsStop(phone));
+    CHECK(sink.Count(TestSink::kLocal, 0, 0, answered) == 0);   // a câmera nem abre
+    CHECK_FALSE(phone.engine->Video(doorphone).camera);
+    CHECK(VideoPaused(phone.engine->Video(first)));
+}
+
+TEST_CASE("a doorphone on hold pauses its image") {
+    TestCameraScope cameras(1, 0, true);
+    TestSink sink;
+    Phone phone;
+    INFO(sink.Text());
+    INFO(phone.registrar.LogText());
+    INFO(phone.listener.VideosText());
+    phone.engine->SetFrameSink(&sink);
+
+    int first = 0;
+    const int doorphone = DoorphoneRingsAsSecond(phone, sink, &first);
+    REQUIRE(sink.WaitFor(doorphone, 5, 5));
+    REQUIRE(phone.engine->Answer(doorphone, false));
+    REQUIRE(phone.WaitState(doorphone, CallState::Confirmed));
+    const Clock::time_point answered = Clock::now();
+    REQUIRE(WaitUntil([&] { return sink.Count(doorphone, 0, 0, answered) >= 3; }, 5));
+    // A espera pausa a imagem do porteiro como a de qualquer ligação: a exceção é só a da outra ligação.
+    REQUIRE(phone.engine->SetHold(doorphone, true));
+    CHECK(WaitVideo(phone, doorphone, VideoPaused));
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    const Clock::time_point held = Clock::now();
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    CHECK(sink.Count(doorphone, 0, 0, held) == 0);
+    CHECK(phone.engine->Video(doorphone).doorphone);
+}
+
+TEST_CASE("a doorphone in a conference pauses its image") {
+    TestCameraScope cameras(1, 0, true);
+    TestSink sink;
+    Phone phone;
+    INFO(sink.Text());
+    INFO(phone.registrar.LogText());
+    INFO(phone.listener.VideosText());
+    phone.engine->SetFrameSink(&sink);
+
+    int first = 0;
+    const int doorphone = DoorphoneRingsAsSecond(phone, sink, &first);
+    REQUIRE(sink.WaitFor(doorphone, 5, 5));
+    REQUIRE(phone.engine->Answer(doorphone, false));
+    REQUIRE(phone.WaitState(doorphone, CallState::Confirmed));
+    // Na conferência as duas ficam só com a voz, também o porteiro: a imagem dele ainda chega ao motor (a reprodução
+    // segue), mas para no desenhista.
+    REQUIRE(phone.engine->Join(first, doorphone));
+    for (const int id : {first, doorphone}) CHECK(WaitVideo(phone, id, VideoPaused));
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    const Clock::time_point joined = Clock::now();
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    CHECK(sink.Count(doorphone, 0, 0, joined) == 0);
 }
 
 TEST_CASE("a refresh finds our renderer and the camera again by name") {

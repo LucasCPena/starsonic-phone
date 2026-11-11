@@ -73,4 +73,7 @@ TEST_CASE("CallVideo compares every field") {
     b = a;
     b.early = true;
     CHECK_FALSE(a == b);
+    b = a;
+    b.doorphone = true;
+    CHECK_FALSE(a == b);
 }

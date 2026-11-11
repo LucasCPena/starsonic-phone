@@ -67,11 +67,11 @@ public:
     virtual void OnBlf(const std::string& /*number*/, BlfState /*state*/) {}
     // O vídeo da ligação callId mudou: um evento a cada mudança de um campo do CallVideo (o refused sai uma vez por
     // recusa, num evento só dele, com os outros campos de agora). Numa recebida que oferece vídeo, ele sai logo depois
-    // do OnIncomingCall, com o offered ou com o refused (sem codec em comum); se a PJSIP não aceita o codec em comum
-    // (o fmtp, como o perfil do H.264), a resposta (o 183 de um Porteiro ou o 200) vai sem o vídeo e o refused sai
-    // nela, com o offered e o early false. Nunca antes do primeiro evento da ligação (o OnIncomingCall, ou o primeiro
-    // OnCallState de uma feita), nem depois do Disconnected dela. Só no motor do PJSIP com o vídeo (o Windows): sem o
-    // vídeo (o Android) e no do baresip, nunca chega. Vazio por padrão.
+    // do OnIncomingCall, com o offered (num Porteiro, também o early e o doorphone) ou com o refused (sem codec em
+    // comum); se a PJSIP não aceita o codec em comum (o fmtp, como o perfil do H.264), a resposta (o 183 de um Porteiro
+    // ou o 200) vai sem o vídeo e o refused sai nela, com o offered e o early false. Nunca antes do primeiro evento da
+    // ligação (o OnIncomingCall, ou o primeiro OnCallState de uma feita), nem depois do Disconnected dela. Só no motor
+    // do PJSIP com o vídeo (o Windows): sem o vídeo (o Android) e no do baresip, nunca chega. Vazio por padrão.
     virtual void OnCallVideo(int /*callId*/, const CallVideo& /*video*/) {}
     // Um problema da câmera, uma vez por problema (os casos estão em StartCameraTest e Disconnected em
     // RefreshVideoDevices): NoCamera, a câmera pedida sem nenhuma (VideoDevices vazio); OpenFailed, a câmera que não
@@ -275,17 +275,20 @@ public:
     // O vídeo da ligação agora, como o último OnCallVideo dela (sem o refused); CallVideo{} para um id desconhecido e
     // sem o vídeo no motor. O vídeo só numa ligação sozinha: o vídeo dela pausa (active e camera false, nada é mandado)
     // na espera daqui, com duas ligações (as duas, com a segunda ainda tocando ou já atendida), na conferência e com
-    // uma transferência pedida ainda sem resultado; sai da pausa com o active de volta e a câmera seguindo o desejo.
+    // uma transferência pedida ainda sem resultado; sai da pausa com o active de volta e a câmera seguindo o desejo. A
+    // exceção é o Porteiro (o doorphone; decisão do responsável de 11/11/2026): com duas ligações, a imagem dele segue
+    // chegando (o active e o remote, tocando ou já atendido), mas a câmera não manda para ele; a espera, a conferência
+    // e a transferência o pausam como a qualquer ligação.
     CallVideo Video(int callId) const;
 
     // A imagem (spec da videochamada, 6.2 e 6.4): o desenhista nosso entrega cada quadro I420 ao sink. Os da outra
-    // ponta vão com o id da ligação (OnRemoteFrame) e nunca saem de uma ligação pausada (ver Video); os da nossa câmera
-    // (OnLocalFrame) saem da prévia da câmera escolhida, que roda enquanto o teste da câmera está ligado ou alguma
-    // ligação manda a imagem. nullptr descarta. Síncrono com o desenhista: ao voltar, nenhum quadro chega ao sink
-    // antigo (ele precisa durar até lá). Não espera os outros métodos, só a entrega de um quadro em andamento; não pode
-    // ser chamado de dentro do sink. O sink não chama o motor, nenhum método: uma thread da API pode estar esperando a
-    // trava do desenhista com as travas do motor e do pjsua presas, e a entrega do quadro travaria com ela. O
-    // destrutor do motor larga o sink. Sem o vídeo no motor, nada.
+    // ponta vão com o id da ligação (OnRemoteFrame) e nunca saem de uma ligação com a imagem pausada (o active false:
+    // ver Video); os da nossa câmera (OnLocalFrame) saem da prévia da câmera escolhida, que roda enquanto o teste da
+    // câmera está ligado ou alguma ligação manda a imagem. nullptr descarta. Síncrono com o desenhista: ao voltar,
+    // nenhum quadro chega ao sink antigo (ele precisa durar até lá). Não espera os outros métodos, só a entrega de um
+    // quadro em andamento; não pode ser chamado de dentro do sink. O sink não chama o motor, nenhum método: uma thread
+    // da API pode estar esperando a trava do desenhista com as travas do motor e do pjsua presas, e a entrega do quadro
+    // travaria com ela. O destrutor do motor larga o sink. Sem o vídeo no motor, nada.
     void SetFrameSink(FrameSink* sink);
 
     // As câmeras e a prévia. No Windows a câmera é a DirectShow da PJSIP, que usa o COM do apartamento multithread (o

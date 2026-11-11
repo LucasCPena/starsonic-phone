@@ -113,7 +113,7 @@ bool IsDoorphone(const VideoSettings& settings, const std::string& user) {
 
 bool operator==(const CallVideo& a, const CallVideo& b) {
     return a.offered == b.offered && a.active == b.active && a.remote == b.remote && a.camera == b.camera &&
-           a.early == b.early && a.refused == b.refused;
+           a.early == b.early && a.refused == b.refused && a.doorphone == b.doorphone;
 }
 
 }  // namespace starsonic
