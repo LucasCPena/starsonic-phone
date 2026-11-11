@@ -110,7 +110,7 @@ As telas abaixo vão para o quadro, nos três tamanhos de janela (Normal, Compac
   - na transferência.
 
   O vídeo volta quando a ligação volta a ser a única ativa e sai da espera.
-- **A exceção do porteiro** (decisão do responsável em 11/11/2026): a imagem do porteiro fica sempre à vista, também com outra ligação, antes de atender (no aviso) e depois (na tela da ligação e no grande), só recebendo.
+- **A exceção do porteiro** (decisão do responsável em 11/11/2026): a imagem do porteiro fica sempre à vista, também com outra ligação, antes de atender (no aviso) e depois (na tela da ligação e no grande), só recebendo. O aviso mostra a imagem dele antes de atender também com a janela do app na frente (0.3.0-rc.2), sem tomar o foco dela; a tela da ligação segue com o cartão da segunda.
   - Porteiro é a ligação que ganhou o 183 com o SDP: uma que chega oferecendo vídeo, de um ramal da lista "Porteiros".
   - A sua câmera nunca manda para o porteiro por causa da exceção: o envio segue a regra das duas ligações.
   - A espera, a transferência e a conferência pausam o porteiro como qualquer ligação.

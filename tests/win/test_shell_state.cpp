@@ -212,6 +212,106 @@ TEST_CASE("the state gives the top call id and the ringing call id") {
     CHECK(s->ringingCallId == 0);
 }
 
+TEST_CASE("the state marks a doorphone ringing as the second call while its image arrives before the answer") {
+    // A Ana (4) em andamento e a Portaria (5) tocando como a segunda, com o video dela.
+    const std::string active = std::string(kConnected) + R"(,"ligacao":{"top":{"id":4,"phase":"active"},)";
+    const std::string ringing = R"("secondKind":"ringing","conference":false)";
+    auto second = [&](const std::string& video, const std::string& rest) {
+        return ReadShellStatus(State(active + R"("second":{"id":5,"phase":"ringing")" + video + "}," + rest + "}"));
+    };
+    std::optional<ShellStatus> s = second(R"(,"video":{"oferece":true,"ativo":true,"imagem":true,"camera":false,)"
+                                          R"("cedo":true,"porteiro":true})",
+                                          ringing);
+    REQUIRE(s.has_value());
+    CHECK(s->ringing);
+    CHECK(s->ringingCallId == 5);
+    CHECK(s->doorphoneSecond);
+    // Sem a imagem antes do atender (um porteiro sem ela, ou uma ligacao comum): nao.
+    s = second(R"(,"video":{"oferece":true,"ativo":true,"imagem":true,"camera":false,"cedo":false,"porteiro":true})",
+               ringing);
+    REQUIRE(s.has_value());
+    CHECK(s->ringing);
+    CHECK_FALSE(s->doorphoneSecond);
+    s = second(R"(,"video":{"oferece":false,"ativo":false,"imagem":false,"camera":false,)"
+               R"("cedo":false,"porteiro":false})",
+               ringing);
+    REQUIRE(s.has_value());
+    CHECK_FALSE(s->doorphoneSecond);
+    // Na conferencia nada toca.
+    s = second(R"(,"video":{"cedo":true,"porteiro":true})", R"("secondKind":"ringing","conference":true)");
+    REQUIRE(s.has_value());
+    CHECK_FALSE(s->ringing);
+    CHECK_FALSE(s->doorphoneSecond);
+    // O video, ou o cedo, que falta ou vem com outro tipo: false.
+    for (const char* video : {"", R"(,"video":null)", R"(,"video":"cedo")", R"(,"video":{})",
+                              R"(,"video":{"cedo":"true"})", R"(,"video":{"cedo":1})"}) {
+        s = second(video, ringing);
+        REQUIRE(s.has_value());
+        CHECK(s->ringing);
+        CHECK_MESSAGE(!s->doorphoneSecond, video);
+    }
+
+    // O porteiro tocando como a de cima (a tela da ligacao o mostra): nao e a segunda.
+    s = ReadShellStatus(State(std::string(kConnected) +
+                              R"(,"ligacao":{"top":{"id":4,"phase":"ringing","video":{"cedo":true,"porteiro":true}},)"
+                              R"("second":null,"secondKind":"none","conference":false})"));
+    REQUIRE(s.has_value());
+    CHECK(s->ringing);
+    CHECK_FALSE(s->doorphoneSecond);
+    // O secondKind ringing sem o second (ou com ele de outro tipo), e sem ligacao: false.
+    for (const char* rest : {R"("second":null,"secondKind":"ringing","conference":false)",
+                             R"("secondKind":"ringing","conference":false)",
+                             R"("second":"Portaria","secondKind":"ringing","conference":false)"}) {
+        s = ReadShellStatus(State(active + rest + "}"));
+        REQUIRE(s.has_value());
+        CHECK_MESSAGE(!s->doorphoneSecond, rest);
+    }
+    s = ReadShellStatus(State(std::string(kConnected) + R"(,"ligacao":null)"));
+    REQUIRE(s.has_value());
+    CHECK_FALSE(s->doorphoneSecond);
+}
+
+TEST_CASE("the notice shows out of front, and in front only for a doorphone ringing as the second call") {
+    // A tabela (tocando, janela na frente, porteiro como a segunda -> o aviso aparece).
+    struct Row {
+        bool ringing, inFront, doorphoneSecond, shows;
+    };
+    const Row rows[] = {
+        {false, false, false, false}, {false, true, false, false}, {false, false, true, false},
+        {false, true, true, false},   {true, false, false, true},  {true, true, false, false},
+        {true, false, true, true},    {true, true, true, true},
+    };
+    for (const Row& row : rows) {
+        ShellStatus status;
+        status.ringing = row.ringing;
+        status.doorphoneSecond = row.doorphoneSecond;
+        CHECK_MESSAGE(ShowsNotice(status, row.inFront) == row.shows,
+                      "ringing " << row.ringing << ", in front " << row.inFront << ", doorphone second "
+                                 << row.doorphoneSecond);
+    }
+
+    // Do estado ao aviso, com a janela na frente: o porteiro tocando como a segunda, com a imagem, aparece; a segunda
+    // comum, e o porteiro tocando como a de cima, nao (a tela da ligacao ja mostra os dois).
+    const std::string active = std::string(kConnected) + R"(,"ligacao":{"top":{"id":4,"phase":"active"},)";
+    auto second = [&](const std::string& video) {
+        return ReadShellStatus(State(active + R"("second":{"id":5,"phase":"ringing","video":)" + video + "}," +
+                                     R"("secondKind":"ringing","conference":false})"));
+    };
+    std::optional<ShellStatus> s = second(R"({"cedo":true,"porteiro":true})");
+    REQUIRE(s.has_value());
+    CHECK(ShowsNotice(*s, true));
+    s = second(R"({"cedo":false,"porteiro":false})");
+    REQUIRE(s.has_value());
+    CHECK_FALSE(ShowsNotice(*s, true));
+    CHECK(ShowsNotice(*s, false));
+    s = ReadShellStatus(State(std::string(kConnected) +
+                              R"(,"ligacao":{"top":{"id":4,"phase":"ringing","video":{"cedo":true,"porteiro":true}},)"
+                              R"("second":null,"secondKind":"none","conference":false})"));
+    REQUIRE(s.has_value());
+    CHECK_FALSE(ShowsNotice(*s, true));
+    CHECK(ShowsNotice(*s, false));
+}
+
 TEST_CASE("the shell ignores the other messages and invalid text") {
     CHECK_FALSE(ReadShellStatus(R"({"v":1,"type":"toast","texto":"state"})").has_value());
     CHECK_FALSE(ReadShellStatus(R"({"v":1,"type":"ring","tipo":"completo"})").has_value());

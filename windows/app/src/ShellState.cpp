@@ -25,8 +25,10 @@ int CallIdOf(const Json& call) {
 }
 
 // Uma recebida tocando: a de cima, ou a segunda (fora da conferencia). *ringingId: o id dela (0 sem ele).
-bool Ringing(const Json& state, int* ringingId) {
+// *doorphoneSecond: (0.3.0-rc.2) a que toca e a segunda, com o video.cedo dela true (a imagem de um Porteiro chegando).
+bool Ringing(const Json& state, int* ringingId, bool* doorphoneSecond) {
     *ringingId = 0;
+    *doorphoneSecond = false;
     const auto call = state.find("ligacao");
     if (call == state.end() || !call->is_object()) return false;
     const auto top = call->find("top");
@@ -41,7 +43,11 @@ bool Ringing(const Json& state, int* ringingId) {
     const auto kind = call->find("secondKind");
     if (kind == call->end() || !kind->is_string() || kind->get<std::string>() != "ringing") return false;
     const auto second = call->find("second");
-    if (second != call->end() && second->is_object()) *ringingId = CallIdOf(*second);
+    if (second != call->end() && second->is_object()) {
+        *ringingId = CallIdOf(*second);
+        const auto video = second->find("video");
+        *doorphoneSecond = video != second->end() && video->is_object() && Flag(*video, "cedo");
+    }
     return true;
 }
 
@@ -57,7 +63,7 @@ std::optional<ShellStatus> ReadShellStatus(const std::string& message) {
     const auto state = parsed.find("state");
     if (state == parsed.end() || !state->is_object()) return std::nullopt;
     ShellStatus status;
-    status.ringing = Ringing(*state, &status.ringingCallId);
+    status.ringing = Ringing(*state, &status.ringingCallId, &status.doorphoneSecond);
     const auto call = state->find("ligacao");
     status.inCall = call != state->end() && call->is_object();
     if (status.inCall) {
@@ -82,6 +88,10 @@ std::optional<ShellStatus> ReadShellStatus(const std::string& message) {
         status.doNotDisturbShown = !(shown != admin->end() && shown->is_boolean() && !shown->get<bool>());
     }
     return status;
+}
+
+bool ShowsNotice(const ShellStatus& status, bool inFront) {
+    return status.ringing && (!inFront || status.doorphoneSecond);
 }
 
 TrayIcon ChooseTrayIcon(const ShellStatus& status) {

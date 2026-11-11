@@ -1,6 +1,8 @@
 // O aviso de ligação recebida: a janela de 380 de largura que o executável mostra no canto da tela (168 de altura; 222
 // com o Atender com vídeo, 430 com a imagem do porteiro: a página pede o `noticeHeight`), sempre por cima e
-// sem tomar o foco, quando uma ligação toca com a janela principal fora da frente (spec da W1, 4.1 e 7.2).
+// sem tomar o foco, quando uma ligação toca com a janela principal fora da frente (spec da W1, 4.1 e 7.2) e
+// (0.3.0-rc.2), com ela na frente, quando um Porteiro toca como a segunda ligação com a imagem dele chegando (o
+// `video.cedo`).
 // Usa a mesma ponte da janela principal: recebe o mesmo `state` e manda `answer`/`reject` (o executável traz a
 // janela principal para a frente no Atender). Mostra a que toca: a de cima (uma recebida) ou a segunda. Sem
 // nenhuma tocando, fica vazio (o executável esconde a janela). O toque é da janela principal: o aviso não toca.

@@ -695,12 +695,16 @@ download dos arquivos.
   (0.3.0) Os do aviso vão com `HandleCommand(json, true)`: o `ready` dele não desliga o teste da câmera.
   `HandleCommand` pode ser chamado da thread da janela (ele só lê o JSON e põe na fila).
 - O executável lê o `state` que passa (sem perguntar ao `DesktopApp`): com uma recebida tocando (`top.phase`
-  `ringing`, ou `secondKind` `ringing` fora da conferência) e a janela fora da frente, o aviso aparece. O ícone da
-  bandeja segue a tabela da bolinha (rc.3; vale a primeira que bate, Ruling 17): sem internet (`conta.internet`
-  `false`), conectando, erro, sem conexão ou sem conta → sem conexão; depois a ligação (também tocando) → em
-  ligação; a perdida que a pessoa ainda não viu (`perdidas`) → perdida; o Não perturbe (`naoPerturbe`) → não
-  perturbe; e conectado (`conta.status` `conectado`) → conectado. Ele pisca enquanto toca. O menu da bandeja manda
-  `setDnd` e `quit` como a interface.
+  `ringing`, ou `secondKind` `ringing` fora da conferência) e a janela fora da frente, o aviso aparece. (0.3.0-rc.2)
+  Com a janela na frente, ele aparece só com um Porteiro tocando como a segunda ligação, com a imagem dele chegando
+  antes do atender: o `secondKind` `ringing`, fora da conferência, com a de cima sem tocar, e o `second.video.cedo`
+  `true` (decisão do responsável de 11/11/2026). Ele abre sem tomar o foco da janela; a tela da ligação segue com o
+  cartão da segunda (`Ligação de …`, com Recusar e Atender). Uma segunda comum (ou um porteiro sem a imagem) e uma de
+  cima tocando seguem sem o aviso com a janela na frente. O ícone da bandeja segue a tabela da bolinha (rc.3; vale a
+  primeira que bate, Ruling 17): sem internet (`conta.internet` `false`), conectando, erro, sem conexão ou sem conta →
+  sem conexão; depois a ligação (também tocando) → em ligação; a perdida que a pessoa ainda não viu (`perdidas`) →
+  perdida; o Não perturbe (`naoPerturbe`) → não perturbe; e conectado (`conta.status` `conectado`) → conectado. Ele
+  pisca enquanto toca. O menu da bandeja manda `setDnd` e `quit` como a interface.
 - Os links `tel:`/`sip:`/`callto:` (já lidos: `ParseLinkArgument`) vão a `DesktopApp::DialLink(numero)`, que só
   preenche `teclado` (e escreve `link recebido` no diagnóstico). Com o app aberto, a segunda abertura entrega os
   argumentos à primeira (instância única: o mutex `Local\StarsonicPhone` e `WM_COPYDATA`) e sai com o código 0; o
