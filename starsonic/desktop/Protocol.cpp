@@ -293,7 +293,8 @@ Out CallJson(const CallView& view) {
                        {"ativo", view.video.active},
                        {"imagem", view.video.remote},
                        {"camera", view.video.camera},
-                       {"cedo", view.video.early}};
+                       {"cedo", view.video.early},
+                       {"porteiro", view.video.doorphone}};
     return out;
 }
 

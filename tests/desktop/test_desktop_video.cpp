@@ -1062,19 +1062,58 @@ TEST_CASE("the call state carries the video block") {
     h.StartRegistered();
     DialAndConfirm(h, R"(,"video":true)");
     json top = h.State()["ligacao"]["top"];
-    CHECK(top["video"] == json({{"oferece", false}, {"ativo", false}, {"imagem", false}, {"camera", false}, {"cedo", false}}));
+    CHECK(top["video"] == json({{"oferece", false}, {"ativo", false}, {"imagem", false}, {"camera", false}, {"cedo", false},
+                               {"porteiro", false}}));
 
     h.app->OnCallVideo(10, Video(true, true, false, true, false));
     h.Run();
     top = h.State()["ligacao"]["top"];
-    CHECK(top["video"] == json({{"oferece", true}, {"ativo", true}, {"imagem", false}, {"camera", true}, {"cedo", false}}));
+    CHECK(top["video"] == json({{"oferece", true}, {"ativo", true}, {"imagem", false}, {"camera", true}, {"cedo", false},
+                               {"porteiro", false}}));
 
     // A segunda ligacao tambem leva o bloco.
     h.app->OnIncomingCall(20, "2002", "Fulano");
     h.app->OnCallVideo(20, Video(true, false, false, false, true));
     h.Run();
     const json second = h.State()["ligacao"]["second"];
-    CHECK(second["video"] == json({{"oferece", true}, {"ativo", false}, {"imagem", false}, {"camera", false}, {"cedo", true}}));
+    CHECK(second["video"] == json({{"oferece", true}, {"ativo", false}, {"imagem", false}, {"camera", false}, {"cedo", true},
+                                  {"porteiro", false}}));
+}
+
+TEST_CASE("the doorphone flag goes to the page") {
+    Harness h;
+    h.StartRegistered();
+    // Uma ligacao comum que ofereceu o video, atendida com a camera e com a imagem: o porteiro false.
+    h.app->OnIncomingCall(10, "2003", "Ana");
+    h.Run();
+    h.Send(R"({"v":1,"cmd":"answer","video":true})");
+    h.app->OnCallState(10, CallState::Confirmed, 200);
+    h.app->OnCallVideo(10, Video(true, true, true, true));
+    h.Run();
+    json state = h.State();
+    CHECK(state["ligacao"]["top"]["video"]["porteiro"] == false);
+
+    // Um Porteiro tocando como a segunda, com a imagem (o 183): o porteiro true, e a de cima segue false.
+    h.app->OnIncomingCall(20, "9001", "Portaria");
+    CallVideo doorphone = Video(true, true, true, false, true);
+    doorphone.doorphone = true;
+    h.app->OnCallVideo(20, doorphone);
+    h.Run();
+    state = h.State();
+    CHECK(state["ligacao"]["second"]["video"]["porteiro"] == true);
+    CHECK(state["ligacao"]["top"]["video"]["porteiro"] == false);
+
+    // Atendido, ele vem para cima e segue porteiro: o cedo acaba, o porteiro nao.
+    h.Send(R"({"v":1,"cmd":"answer"})");
+    h.app->OnCallState(20, CallState::Confirmed, 200);
+    doorphone.early = false;
+    h.app->OnCallVideo(20, doorphone);
+    h.Run();
+    state = h.State();
+    CHECK(state["ligacao"]["top"]["id"] == 20);
+    CHECK(state["ligacao"]["top"]["video"]["cedo"] == false);
+    CHECK(state["ligacao"]["top"]["video"]["porteiro"] == true);
+    CHECK(state["ligacao"]["second"]["video"]["porteiro"] == false);
 }
 
 TEST_CASE("noticeHeight from the notice page goes to the hook") {
