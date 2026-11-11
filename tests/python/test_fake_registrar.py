@@ -963,7 +963,7 @@ class CallsTest(unittest.TestCase):
                      "RINGVIDEO 2001 9001 VP8 extra", "RINGVIDEO 2001 9001 VP8 replay extra",
                      "RINGVIDEO 2001 9001 replay VP8", "VIDEO", "VIDEO REJECT", "VIDEO REJECT maybe", "VIDEO ECHO",
                      "VIDEO PACKETS now", "VIDEO SDP now", "VIDEO 486 on", "VIDEO KEYFRAMES now",
-                     "VIDEO KEYFRAMES reset"):
+                     "VIDEO KEYFRAMES reset", "VIDEO REPLAYED now", "VIDEO REPLAYED reset"):
             with self.subTest(line):
                 self.assertEqual(self.command(line), ["ERR bad-command"])
         self.assertEqual(self.command("RINGVIDEO 2001 9001"), ["ERR no-contact"])
@@ -1093,6 +1093,25 @@ class CallsTest(unittest.TestCase):
         _, receiver = self.replay_call(phone, "H264,VP8")
         got = [data for data, _, _ in self.received(receiver)]
         self.assertEqual(got, [rtp(97, marker, timestamp, payload) for _, marker, timestamp, payload in packets[:300]])
+
+    def test_video_replayed_counts_the_datagrams_the_replay_sent_until_the_reset(self):
+        phone = self.registered()
+        # Dez quadros de três pacotes: a reprodução leva uns 400 ms.
+        self.send_rtp([(96, part == 2, frame, b"%d-%d" % (frame, part)) for frame in range(10) for part in range(3)])
+        self.wait_for_packets(30)
+        self.assertEqual(self.command("VIDEO REPLAYED"), ["0"])
+        _, receiver = self.replay_call(phone)
+        receiver.settimeout(2)
+        receiver.recvfrom(65535)   # a reprodução começou
+        during = int(self.command("VIDEO REPLAYED")[0])
+        self.assertEqual(len(self.received(receiver)), 29)
+        # A contagem cresce enquanto a reprodução manda (lida no meio, menos que tudo), e no fim tem todos.
+        self.assertGreaterEqual(during, 1)
+        self.assertLess(during, 30)
+        self.assertEqual(self.command("VIDEO REPLAYED"), ["30"])
+        # O VIDEO PACKETS reset zera também esta (como as outras contagens da PORTA).
+        self.assertEqual(self.command("VIDEO PACKETS reset"), ["OK"])
+        self.assertEqual(self.command("VIDEO REPLAYED"), ["0"])
 
     def test_ringvideo_replay_starts_only_with_a_live_video_in_the_answer(self):
         phone = self.registered()

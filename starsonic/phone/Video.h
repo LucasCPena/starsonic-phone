@@ -64,8 +64,9 @@ struct CallVideo {
     bool camera = false;    // a nossa câmera mandando agora
     bool early = false;     // o 183 com SDP de um Porteiro, até o atender ou o fim
     bool refused = false;   // só no evento de uma recusa do vídeo
-    bool doorphone = false;   // um Porteiro (o 183 com SDP), do toque ao fim: a imagem dele chega também com outra
-                              // ligação (a câmera não manda para ele com duas)
+    bool doorphone = false;   // a recebida de um número dos Porteiros que oferece vídeo com um codec em comum, do
+                              // toque ao fim: a imagem dele chega também com outra ligação (a câmera não manda para
+                              // ele com duas)
 };
 
 bool operator==(const CallVideo& a, const CallVideo& b);

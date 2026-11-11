@@ -894,11 +894,16 @@ TEST_CASE("a doorphone whose H264 PJSIP cannot answer reports refused once and l
     REQUIRE(WaitUntil([&] { return phone.listener.RefusedCount(id) == 1; }, kWaitSeconds));
     CHECK_FALSE(RefusedEvent(phone, id).early);
     CHECK_FALSE(phone.engine->Video(id).early);
+    // O Porteiro segue sendo ele (a recebida de um número dos Porteiros que oferece vídeo com um codec em comum),
+    // também com o 183 sem o vídeo, até o fim.
+    CHECK(RefusedEvent(phone, id).doorphone);
+    CHECK(phone.engine->Video(id).doorphone);
     REQUIRE(phone.engine->Answer(id, true));
     REQUIRE(phone.WaitState(id, CallState::Confirmed));
     CHECK(phone.registrar.VideoPacketsStay(2));
     CHECK(phone.registrar.VideoPackets() == 0);
     CHECK(phone.listener.RefusedCount(id) == 1);
+    CHECK(phone.engine->Video(id).doorphone);
     // O 200 leva o mesmo número de vídeos do 183: o pjsua guarda o primeiro e reclama de um diferente.
     CHECK(phone.listener.LogCount("The call setting changes is ignored") == 0);
 }
@@ -1532,7 +1537,11 @@ TEST_CASE("a doorphone in a conference pauses its image") {
     for (const int id : {first, doorphone}) CHECK(WaitVideo(phone, id, VideoPaused));
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
     const Clock::time_point joined = Clock::now();
+    const int replayed = phone.registrar.VideoReplayed();
     std::this_thread::sleep_for(std::chrono::seconds(1));
+    // O registrador ainda mandava a imagem do porteiro nesse segundo (a reprodução não tinha acabado): nenhum quadro
+    // desenhado é o portão que segura, e não o fim da imagem.
+    CHECK(phone.registrar.VideoReplayed() > replayed);
     CHECK(sink.Count(doorphone, 0, 0, joined) == 0);
 }
 

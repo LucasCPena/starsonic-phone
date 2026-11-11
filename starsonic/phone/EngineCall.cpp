@@ -152,7 +152,7 @@ void CallTable::Incoming(pj::Account& account, int pjsuaId, bool accepting, cons
     bool busy = false;
     unsigned videoCount = 0;
     int recvOnly = -1;
-    bool doorphone = false;
+    bool sendEarly = false;   // o 183 com o SDP (o early de um Porteiro) no lugar do 180
     {
         std::lock_guard<std::mutex> lock(mutex_);
         // Toca sem ligação nenhuma ou com uma só, já confirmada (a segunda ligação).
@@ -187,7 +187,7 @@ void CallTable::Incoming(pj::Account& account, int pjsuaId, bool accepting, cons
             slot->ringRecvOnly = slot->videoCount > 0 && camera_ == PJMEDIA_VID_INVALID_DEV ? offer.index : -1;
             videoCount = slot->videoCount;
             recvOnly = slot->ringRecvOnly;
-            doorphone = slot->early;
+            sendEarly = slot->early;
 #endif
         } else {
             busy = accepting && !closed_;
@@ -218,7 +218,7 @@ void CallTable::Incoming(pj::Account& account, int pjsuaId, bool accepting, cons
     (void)recvOnly;
     const pjsua_call_setting* answer = nullptr;
 #endif
-    if (doorphone) {
+    if (sendEarly) {
         const pj_status_t status = pjsua_call_answer2(pjsuaId, answer, PJSIP_SC_PROGRESS, nullptr, nullptr);
         if (status == PJ_SUCCESS) return;
         Log(2, "nao foi possivel mandar o 183 do porteiro: " + StatusText(status));

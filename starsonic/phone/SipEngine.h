@@ -69,9 +69,11 @@ public:
     // recusa, num evento só dele, com os outros campos de agora). Numa recebida que oferece vídeo, ele sai logo depois
     // do OnIncomingCall, com o offered (num Porteiro, também o early e o doorphone) ou com o refused (sem codec em
     // comum); se a PJSIP não aceita o codec em comum (o fmtp, como o perfil do H.264), a resposta (o 183 de um Porteiro
-    // ou o 200) vai sem o vídeo e o refused sai nela, com o offered e o early false. Nunca antes do primeiro evento da
-    // ligação (o OnIncomingCall, ou o primeiro OnCallState de uma feita), nem depois do Disconnected dela. Só no motor
-    // do PJSIP com o vídeo (o Windows): sem o vídeo (o Android) e no do baresip, nunca chega. Vazio por padrão.
+    // ou o 200) vai sem o vídeo e o refused sai nela, com o offered e o early false e o doorphone de um Porteiro true
+    // (ele segue até o fim: a recebida de um número dos Porteiros que oferece vídeo com um codec em comum, com ou sem o
+    // 183). Nunca antes do primeiro evento da ligação (o OnIncomingCall, ou o primeiro OnCallState de uma feita), nem
+    // depois do Disconnected dela. Só no motor do PJSIP com o vídeo (o Windows): sem o vídeo (o Android) e no do
+    // baresip, nunca chega. Vazio por padrão.
     virtual void OnCallVideo(int /*callId*/, const CallVideo& /*video*/) {}
     // Um problema da câmera, uma vez por problema (os casos estão em StartCameraTest e Disconnected em
     // RefreshVideoDevices): NoCamera, a câmera pedida sem nenhuma (VideoDevices vazio); OpenFailed, a câmera que não

@@ -102,8 +102,9 @@ test('the fake core answers with video like the core', async ({ page }) => {
   expect((await estado(page)).ligacao.top.video.camera).toBe(false);
 
   // O porteiro segue porteiro depois de atender, como no motor; o cedo acaba no atender.
+  // Tocando com a imagem (o 183), o vídeo já está ativo: o núcleo nunca manda o `imagem` sem o `ativo`.
   await abrir(page, 'video-porteiro');
-  expect((await estado(page)).ligacao.top.video).toEqual({ oferece: true, ativo: false, imagem: true, camera: false, cedo: true, porteiro: true });
+  expect((await estado(page)).ligacao.top.video).toEqual({ oferece: true, ativo: true, imagem: true, camera: false, cedo: true, porteiro: true });
   await mandar(page, { cmd: 'answer' });
   await expect.poll(async () => (await estado(page)).ligacao.top.phase).toBe('active');
   expect((await estado(page)).ligacao.top.video).toEqual({ oferece: true, ativo: true, imagem: true, camera: false, cedo: false, porteiro: true });

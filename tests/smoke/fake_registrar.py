@@ -59,7 +59,8 @@ Porta de controle (--control-port N, TCP no mesmo --host; um comando por linha, 
                      registrador manda ao endereço do vídeo dessa resposta, da PORTA e em ordem, os datagramas que a
                      PORTA guardou: os de um mesmo quadro (o mesmo timestamp do RTP) juntos, um quadro a cada 40 ms, com
                      o payload type trocado pelo do primeiro codec da oferta (o bit M fica). Ele para no fim dos
-                     guardados ou no fim da ligação  -> OK | ERR no-contact | ERR no-video (sem a PORTA)
+                     guardados ou no fim da ligação (o VIDEO REPLAYED conta os datagramas que ele mandou)
+                     -> OK | ERR no-contact | ERR no-video (sem a PORTA)
   HANGUP <ramal>     BYE na ligação atendida, CANCEL se ainda toca     -> OK | ERR no-call
   REFER <ramal> <destino>  REFER na última ligação do RING atendida do ramal, com Refer-To: <sip:<destino>@ci>
                      -> OK | ERR no-call
@@ -94,12 +95,15 @@ Porta de controle (--control-port N, TCP no mesmo --host; um comando por linha, 
   VIDEO ECHO <on|off> com on, cada datagrama que chega na PORTA volta na hora para quem o mandou, com o SSRC trocado
                      (a contagem continua)                              -> OK
   VIDEO PACKETS      os datagramas com carga que chegaram na PORTA      -> <n>
-  VIDEO PACKETS reset  zera as contagens (também a do VIDEO KEYFRAMES) e esquece os datagramas guardados -> OK
+  VIDEO PACKETS reset  zera as contagens (também as do VIDEO KEYFRAMES e do VIDEO REPLAYED) e esquece os datagramas
+                     guardados -> OK
   VIDEO KEYFRAMES    os quadros-chave que chegaram na PORTA desde o último VIDEO PACKETS reset (ou da abertura), um por
                      quadro (o SSRC e o timestamp do RTP), pelo codec do payload type nos m=video dos SDP que o telefone
                      mandou: no H264, um IDR (a NAL do tipo 5 sozinha, dentro de um STAP-A ou no primeiro fragmento de
                      um FU-A; o SPS e o PPS antes dele contam com ele); no VP8, o começo do quadro (o S e o PID 0 no
                      descritor) com o P 0 no primeiro byte do cabeçalho do quadro; outro codec não conta  -> <n>
+  VIDEO REPLAYED     os datagramas que a reprodução do RINGVIDEO com o replay mandou ao telefone desde o último
+                     VIDEO PACKETS reset (ou da abertura), de qualquer ligação  -> <n>
   VIDEO SDP          as linhas do último SDP que o telefone mandou (num pedido ou numa resposta), e END
   LOG                o registro de ligações, uma linha cada, e END
   (comando desconhecido, sem argumento ou com código que não é de 100 a 699 -> ERR bad-command)
@@ -557,6 +561,7 @@ class Registrar:
         self.video_kept = []     # os primeiros VIDEO_KEPT deles desde o último VIDEO PACKETS reset
         self.video_keyframes = set()   # (SSRC, timestamp) de cada quadro-chave que chegou desde então (VIDEO KEYFRAMES)
         self.video_codecs = {}   # payload type -> codec, dos m=video dos SDP do telefone (o VIDEO KEYFRAMES)
+        self.video_replayed = 0   # datagramas que a reprodução mandou ao telefone desde então (VIDEO REPLAYED)
         self.video_reject = False    # VIDEO REJECT on: o m=video da resposta vai com a porta 0
         self.video_488 = False       # VIDEO 488 on: um INVITE com vídeo leva 488
         self.video_echo = False      # VIDEO ECHO on: cada datagrama da PORTA volta a quem o mandou
@@ -1096,6 +1101,8 @@ class Registrar:
                     self.video_sock.sendto(_with_payload_type(packet, call.replay), address)
                 except OSError:   # a PORTA fechou (o registrador saindo)
                     return
+                with self.lock:
+                    self.video_replayed += 1
             time.sleep(REPLAY_FRAME_SECONDS)
 
     def _on_invite_response(self, call, msg):
@@ -1208,8 +1215,8 @@ class Registrar:
         return ["ERR bad-command"]
 
     def _video_command(self, words):
-        """VIDEO REJECT|488|ECHO <on|off>, VIDEO PACKETS [reset], VIDEO KEYFRAMES e VIDEO SDP: as linhas da resposta, ou
-        None se o comando não é um desses (com o lock)."""
+        """VIDEO REJECT|488|ECHO <on|off>, VIDEO PACKETS [reset], VIDEO KEYFRAMES, VIDEO REPLAYED e VIDEO SDP: as linhas
+        da resposta, ou None se o comando não é um desses (com o lock)."""
         if len(words) == 2 and words[0] in ("REJECT", "488", "ECHO") and words[1] in ("on", "off"):
             setattr(self, {"REJECT": "video_reject", "488": "video_488", "ECHO": "video_echo"}[words[0]],
                     words[1] == "on")
@@ -1220,9 +1227,12 @@ class Registrar:
             self.video_packets = 0
             self.video_kept = []
             self.video_keyframes = set()
+            self.video_replayed = 0
             return ["OK"]
         if words == ["KEYFRAMES"]:
             return [str(len(self.video_keyframes))]
+        if words == ["REPLAYED"]:
+            return [str(self.video_replayed)]
         if words == ["SDP"]:
             lines = self.last_sdp.splitlines() if self.last_sdp else []
             return lines + ["END"]

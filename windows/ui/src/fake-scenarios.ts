@@ -333,12 +333,17 @@ function cenarioDeVideo(nome: string): Scenario | undefined {
         ring: 'completo',
       };
     case 'video-porteiro':
-      // A Portaria (um Porteiro do administrador) tocando, já com a imagem (o 183).
+      // A Portaria (um Porteiro do administrador) tocando, já com a imagem (o 183): o vídeo ativo, como no núcleo (que
+      // nunca manda o `imagem` sem o `ativo`).
       return {
         state: {
           ...principal(),
           ligacao: ligacao(
-            cartao(31, '1050', 'Portaria', { incoming: true, phase: 'ringing', video: { ...SEM_VIDEO, oferece: true, imagem: true, cedo: true, porteiro: true } }),
+            cartao(31, '1050', 'Portaria', {
+              incoming: true,
+              phase: 'ringing',
+              video: { ...SEM_VIDEO, oferece: true, ativo: true, imagem: true, cedo: true, porteiro: true },
+            }),
           ),
         },
         ring: 'completo',

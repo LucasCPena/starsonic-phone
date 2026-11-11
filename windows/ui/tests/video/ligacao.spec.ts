@@ -2,7 +2,8 @@
 // Avisos) contra a ponte falsa: a imagem da outra ponta grande, a sua no canto e o Abrir grande; a Câmera e a regra dela;
 // a ligação só de voz com a sua imagem; o vídeo que pausa com duas ligações, com a segunda tocando e no iPhone; a vista
 // que nunca mostra um quadro da ligação de antes (Review Focus 1); a sua imagem à vista com todo painel (Review Focus 2);
-// a janela redimensionada (Review Focus 4); os três tamanhos; e os avisos do vídeo, que ficam 5 s.
+// a janela redimensionada (Review Focus 4); os três tamanhos, também com a imagem do porteiro e outra ligação em espera
+// (0.3.0-rc.2); e os avisos do vídeo, que ficam 5 s.
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { AVISOS_DE_5_S } from '../../src/video/textos';
 import { abrir, empurrar, esperarComando, mudarEstado, semViolacoesSerias } from '../helpers';
@@ -115,6 +116,27 @@ const comASegundaTocando = (s: Record<string, any>) => ({
   ...s,
   ligacao: { ...s.ligacao, second: carlos({ incoming: true, phase: 'ringing', activeSinceMs: 0 }), secondKind: 'ringing' },
 });
+
+/**
+ * (No cenário `duas-ligacoes`) A Portaria (um Porteiro, o id 31) atendida em cima, com a imagem dele chegando, e a Ana
+ * em espera; com `porteiro` false, a mesma ligação comum.
+ */
+const portaria = (porteiro: boolean) => (s: Record<string, any>) => ({
+  ...s,
+  ligacao: {
+    ...s.ligacao,
+    top: { ...s.ligacao.top, id: 31, number: '1050', name: 'Portaria', video: { ...SEM_VIDEO, oferece: true, ativo: true, imagem: true, porteiro } },
+  },
+});
+
+/** A imagem da Portaria embaixo do cartão de cima (a Ana em espera) e acima dos controles: não cobre nenhum deles. */
+async function portariaEntreOCartaoEOsControles(page: Page): Promise<void> {
+  const a = await caixa(remoto(page, 'Portaria'));
+  const cartao = await caixa(page.locator('.call-alto .vcard'));
+  const controles = await caixa(page.locator('.ctrls'));
+  expect(a.y, JSON.stringify({ a, cartao })).toBeGreaterThanOrEqual(cartao.y + cartao.height);
+  expect(a.y + a.height, JSON.stringify({ a, controles })).toBeLessThanOrEqual(controles.y);
+}
 
 test('the video call shows the other side big, your image in the corner and Abrir grande', async ({ page }) => {
   await abrir(page, 'video');
@@ -532,13 +554,6 @@ test("the call screen shows the doorphone's image with another call on hold", as
   // A exceção do porteiro (decisão do responsável de 11/11/2026): a Portaria (um Porteiro) atendida em cima, com a imagem
   // dele chegando, e a Ana em espera. A imagem fica à vista, só chegando: a Câmera não liga com duas ligações.
   await abrir(page, 'duas-ligacoes');
-  const portaria = (porteiro: boolean) => (s: Record<string, any>) => ({
-    ...s,
-    ligacao: {
-      ...s.ligacao,
-      top: { ...s.ligacao.top, id: 31, number: '1050', name: 'Portaria', video: { ...SEM_VIDEO, oferece: true, ativo: true, imagem: true, porteiro } },
-    },
-  });
   await mudarEstado(page, portaria(true));
   const area = remoto(page, 'Portaria');
   await expect(area).toBeVisible();
@@ -549,6 +564,8 @@ test("the call screen shows the doorphone's image with another call on hold", as
   await expect(c).toHaveAccessibleName('Ligar a câmera');
   await expect(c).toBeDisabled();
   await expect(suaImagem(page)).toHaveCount(0);
+  await portariaEntreOCartaoEOsControles(page);
+  await semViolacoesSerias(page);
 
   // Uma ligação comum em cima, na mesma situação: o vídeo pausa com duas ligações, e nada é desenhado.
   await mudarEstado(page, portaria(false));
@@ -563,6 +580,24 @@ test("the call screen shows the doorphone's image with another call on hold", as
   await expect(botao(page, 'Separar')).toBeVisible();
   await expect(qualquerRemoto(page)).toHaveCount(0);
   await expect(botao(page, 'Abrir grande')).toHaveCount(0);
+});
+
+test("the call screen with the doorphone's image and another call on hold fits the three sizes", async ({ page }) => {
+  for (const [largura, altura, layout] of [
+    [400, 720, 'normal'],
+    [360, 600, 'compacto'],
+    [300, 440, 'minimo'],
+  ] as const) {
+    await page.setViewportSize({ width: largura, height: altura });
+    await abrir(page, 'duas-ligacoes');
+    await mudarEstado(page, portaria(true));
+    await expect(page.locator(`.win[data-layout="${layout}"]`)).toHaveCount(1);
+    await expect(remoto(page, 'Portaria')).toBeVisible();
+    await portariaEntreOCartaoEOsControles(page);
+    const sobra = await page.evaluate(() => document.scrollingElement!.scrollHeight - innerHeight);
+    expect(sobra, `a página rola em ${largura}×${altura}`).toBeLessThanOrEqual(0);
+    await botoesNaJanela(page, largura, altura);
+  }
 });
 
 test('on the iPhone a call never shows video', async ({ page }) => {

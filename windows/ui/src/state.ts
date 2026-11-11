@@ -112,8 +112,9 @@ export interface CallVideo {
   /** O 183 com imagem de um Porteiro, até o atender ou o fim. */
   cedo: boolean;
   /**
-   * (0.3.0-rc.2) Um Porteiro (a ligação que ganhou o 183 com imagem), do toque ao fim, também depois de atender: com outra
-   * ligação, a imagem dele segue à vista, só chegando (a decisão do responsável de 11/11/2026).
+   * (0.3.0-rc.2) A recebida de um número dos Porteiros que oferece vídeo com um codec em comum, do toque ao fim, também
+   * depois de atender: com outra ligação, a imagem dele segue à vista, só chegando (a decisão do responsável de
+   * 11/11/2026).
    */
   porteiro: boolean;
 }
