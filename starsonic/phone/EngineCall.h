@@ -46,8 +46,10 @@
 // (SyncPreview, no SyncVideo e no teste da câmera, na thread da API), que roda enquanto o teste está ligado ou alguma
 // ligação manda a imagem; a câmera aberta segue até fechar (o envio que começa usa a da prévia). Os problemas da câmera
 // saem pela fila dos eventos (Problem). Enquanto alguma ligação manda a imagem, o temporizador do quadro-chave
-// (KeyframeTimer, que o SyncVideo marca) pede um quadro-chave ao stream dela a cada 3 s, e de novo em 1 s quando a
-// PJSIP recusa o pedido (o SEND_KEYFRAME do pjsua, com videoMutex_ presa, como o envio); ele para quando nenhuma manda.
+// (KeyframeTimer, que o SyncVideo marca) pede um quadro-chave ao stream dela a cada 3 s (o SEND_KEYFRAME do pjsua, com
+// videoMutex_ presa, como o envio): o pedido que a PJSIP recusa por um quadro-chave há menos de 1 s (o PJ_ETOOMANY)
+// volta em 1 s, e o recusado por outro motivo (o PJ_EINVALIDOP do envio que acabou de parar) espera os 3 s de sempre;
+// ele para quando nenhuma manda.
 #include <pjsua2.hpp>
 
 #include <chrono>

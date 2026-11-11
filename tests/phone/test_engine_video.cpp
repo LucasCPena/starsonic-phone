@@ -1577,9 +1577,15 @@ TEST_CASE("a doorphone on hold pauses its image") {
     // A espera pausa a imagem do porteiro como a de qualquer ligação: a exceção é só a da outra ligação.
     REQUIRE(phone.engine->SetHold(doorphone, true));
     CHECK(WaitVideo(phone, doorphone, VideoPaused));
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    // 200 ms para o que já estava a caminho; o segundo seguinte cabe na reprodução do registrador, que acaba uns 2,6 s
+    // depois do 183 (com 500 ms aqui, ela às vezes acabava no meio dele).
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
     const Clock::time_point held = Clock::now();
+    const int replayed = phone.registrar.VideoReplayed();
     std::this_thread::sleep_for(std::chrono::seconds(1));
+    // O registrador ainda mandava a imagem do porteiro nesse segundo: nenhum quadro desenhado é a espera que segura, e
+    // não o fim da imagem.
+    CHECK(phone.registrar.VideoReplayed() > replayed);
     CHECK(sink.Count(doorphone, 0, 0, held) == 0);
     CHECK(phone.engine->Video(doorphone).doorphone);
 }

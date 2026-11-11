@@ -271,6 +271,22 @@ TEST_CASE("the state marks a doorphone ringing as the second call while its imag
     CHECK_FALSE(s->doorphoneSecond);
 }
 
+TEST_CASE("a ringing top call is the ringing one, even with a doorphone ringing as the second call") {
+    // A de cima (4) tocando e a Portaria (5) tocando como a segunda, com a imagem chegando: vale a de cima (a regra do
+    // ringing, a mesma do ringingCard do aviso), e o porteiro nao e a segunda tocando. Com a janela na frente, a tela
+    // da ligacao mostra a de cima, sem o aviso. (O motor nao deixa duas recebidas tocarem juntas: a segunda leva 486.)
+    std::optional<ShellStatus> s = ReadShellStatus(State(
+        std::string(kConnected) + R"(,"ligacao":{"top":{"id":4,"phase":"ringing"},)"
+                                  R"("second":{"id":5,"phase":"ringing","video":{"cedo":true,"porteiro":true}},)"
+                                  R"("secondKind":"ringing","conference":false})"));
+    REQUIRE(s.has_value());
+    CHECK(s->ringing);
+    CHECK(s->ringingCallId == 4);
+    CHECK_FALSE(s->doorphoneSecond);
+    CHECK_FALSE(ShowsNotice(*s, true));
+    CHECK(ShowsNotice(*s, false));
+}
+
 TEST_CASE("the notice shows out of front, and in front only for a doorphone ringing as the second call") {
     // A tabela (tocando, janela na frente, porteiro como a segunda -> o aviso aparece).
     struct Row {

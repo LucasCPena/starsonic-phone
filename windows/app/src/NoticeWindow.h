@@ -3,7 +3,8 @@
 // direita da area de trabalho do monitor da janela principal, sempre por cima e sem tomar o foco
 // (WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW: fora da barra de tarefas e do Alt+Tab), com o seu WebView2 em
 // aviso.html. A MainWindow mostra o aviso quando ha uma ligacao tocando e ela nao esta na frente, e esconde quando
-// para de tocar ou quando ela vem para a frente.
+// para de tocar ou quando ela vem para a frente ((0.3.0-rc.2) menos o do porteiro tocando como a segunda ligacao, com
+// a imagem dele, que aparece e fica tambem com ela na frente: ShowsNotice).
 //
 // O WebView2 do aviso usa o ambiente da janela principal (o mesmo perfil), recebe as mesmas mensagens da ponte (menos
 // a chatChave, que vai so para a janela principal: NoticeMayGet, ChatFiles.h) e manda os comandos dele ao mesmo
