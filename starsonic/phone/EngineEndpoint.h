@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <map>
 #include <mutex>
+#include <set>
 
 #include "EngineLog.h"
 
@@ -63,13 +64,23 @@ public:
     }
 
     // O OnEngineTimer do alvo id corre logo (ou depois de delayMs), na thread do PJSIP, fora do callback de agora.
-    // Qualquer thread registrada no PJLIB, com ou sem a trava do pjsua; sem o alvo na hora, nada.
-    void ScheduleTimer(int id, unsigned delayMs = 0) {
+    // Qualquer thread registrada no PJLIB, com ou sem a trava do pjsua; sem o alvo na hora, nada. false: o PJSIP não
+    // agendou (a linha de nível 2 sai) e nada vai correr; quem marcou o temporizador como agendado desfaz a marca.
+    bool ScheduleTimer(int id, unsigned delayMs = 0) {
         try {
+            if (TakeScheduleFailure(id)) throw pj::Error(PJ_ENOMEM, "utilTimerSchedule()", "", __FILE__, __LINE__);
             utilTimerSchedule(delayMs, reinterpret_cast<pj::Token>(static_cast<std::intptr_t>(id)));
+            return true;
         } catch (const pj::Error& error) {
             Log(2, "nao foi possivel agendar o temporizador: " + error.info());
+            return false;
         }
+    }
+
+    // (Para os testes) O próximo ScheduleTimer do alvo id falha, como um utilTimerSchedule que lança: nada é agendado.
+    void FailNextSchedule(int id) {
+        std::lock_guard<std::mutex> lock(failuresMutex_);
+        failures_.insert(id);
     }
 
     void onTimer(const pj::OnTimerParam& param) override {
@@ -83,11 +94,19 @@ public:
     }
 
 private:
+    // Uma falha pedida pelo FailNextSchedule para o alvo id: tira o pedido e diz se havia.
+    bool TakeScheduleFailure(int id) {
+        std::lock_guard<std::mutex> lock(failuresMutex_);
+        return failures_.erase(id) != 0;
+    }
+
     std::mutex mutex_;
     std::condition_variable changed_;
     bool ipChangeDone_ = false;
     std::mutex targetsMutex_;   // nunca presa por quem segura a trava do pjsua
     std::map<int, TimerTarget*> targets_;
+    std::mutex failuresMutex_;   // a última trava: nada mais é pego com ela presa
+    std::set<int> failures_;     // os alvos cujo próximo ScheduleTimer falha (FailNextSchedule)
 };
 
 }  // namespace starsonic

@@ -46,8 +46,8 @@
 // (SyncPreview, no SyncVideo e no teste da câmera, na thread da API), que roda enquanto o teste está ligado ou alguma
 // ligação manda a imagem; a câmera aberta segue até fechar (o envio que começa usa a da prévia). Os problemas da câmera
 // saem pela fila dos eventos (Problem). Enquanto alguma ligação manda a imagem, o temporizador do quadro-chave
-// (KeyframeTimer, que o SyncVideo marca) pede um quadro-chave ao stream dela a cada 3 s (o SEND_KEYFRAME do pjsua, com
-// videoMutex_ presa, como o envio), e para quando nenhuma manda.
+// (KeyframeTimer, que o SyncVideo marca) pede um quadro-chave ao stream dela a cada 3 s, e de novo em 1 s quando a
+// PJSIP recusa o pedido (o SEND_KEYFRAME do pjsua, com videoMutex_ presa, como o envio); ele para quando nenhuma manda.
 #include <pjsua2.hpp>
 
 #include <chrono>
@@ -141,6 +141,12 @@ private:
 // dispositivo e entre si.
 class CallTable : public TimerTarget {
 public:
+    // Os ids dos temporizadores da tabela no EngineEndpoint (as contas usam os delas, que começam em 1): o SyncVideo,
+    // o do remote e o do quadro-chave. Os testes também os usam (o EngineEndpoint::FailNextSchedule).
+    static constexpr int kCallTableTimer = 0;
+    static constexpr int kRemoteTimer = -1;
+    static constexpr int kKeyframeTimer = -2;
+
     CallTable(EventQueue* events, DtmfMethod dtmf);
 
     CallTable(const CallTable&) = delete;
@@ -307,12 +313,19 @@ private:
     // No temporizador do remote: desliga o remote das ligações sem quadro há 2 s e marca a próxima conferência.
     void CheckRemote();
     // Com mutex_ presa: alguma ligação manda a imagem agora (o envio aplicado, e a tabela ainda o quer: o camera do
-    // CallVideo) e o temporizador do quadro-chave não está marcado. true: ele fica marcado, e quem chamou o agenda, sem
-    // mutex_ presa.
+    // CallVideo) e o temporizador do quadro-chave não está marcado. true: ele fica marcado, e quem chamou o agenda
+    // (ScheduleKeyframes), sem mutex_ presa.
     bool KeyframeTimerNeeded();
-    // No temporizador do quadro-chave, com videoMutex_ presa (como o SyncVideo): pede um quadro-chave ao stream de cada
-    // ligação que manda a imagem e marca a próxima vez; sem nenhuma mandando, o temporizador para.
+    // Só no temporizador do quadro-chave (OnEngineTimer), sem trava nenhuma presa; pega a videoMutex_, como o
+    // SyncVideo: pede um quadro-chave ao stream de cada ligação que manda a imagem e marca a próxima vez (mais cedo
+    // quando a PJSIP recusou um pedido); sem nenhuma mandando, o temporizador para.
     void SendKeyframes();
+    // Sem mutex_ presa, com o temporizador do quadro-chave marcado: agenda-o para daqui a delayMs. Se o agendamento
+    // falha, desmarca (o próximo SyncVideo marca de novo), em vez de deixar o quadro-chave parado até o fim do motor.
+    void ScheduleKeyframes(unsigned delayMs);
+    // Sem mutex_ presa, com o temporizador do remote marcado: agenda a próxima conferência. Se o agendamento falha,
+    // desmarca (o próximo quadro marca de novo).
+    void ScheduleRemoteCheck();
     // O aviso de um erro da câmera aberta (o PJMEDIA_EVENT_VID_DEV_ERROR da captura), numa thread da PJSIP.
     static pj_status_t OnMediaEvent(pjmedia_event* event, void* table);
     // Com mutex_ presa. A câmera em uso sumiu: o Disconnected, o desejo da câmera desliga em todas as ligações e o

@@ -889,6 +889,23 @@ class CallsTest(unittest.TestCase):
         self.wait_for_packets(1)
         self.assertEqual(self.command("VIDEO KEYFRAMES"), ["1"])
 
+    def test_video_keyframes_counts_a_keyframe_cut_by_a_reset_only_before_it(self):
+        phone = self.phone()
+        self.video_call(phone)
+        # As primeiras fatias de um quadro-chave do H.264 (o SSRC e o timestamp 10) chegam antes do VIDEO PACKETS reset,
+        # e as outras depois: ele conta antes, e não de novo depois.
+        self.send_rtp([(97, False, 10, stap_a(SPS, PPS)), (97, False, 10, IDR_SLICE)])
+        self.wait_for_packets(2)
+        self.assertEqual(self.command("VIDEO KEYFRAMES"), ["1"])
+        self.assertEqual(self.command("VIDEO PACKETS reset"), ["OK"])
+        self.send_rtp([(97, False, 10, IDR_SLICE), (97, True, 10, IDR_SLICE)])
+        self.wait_for_packets(2)
+        self.assertEqual(self.command("VIDEO KEYFRAMES"), ["0"])
+        # Um quadro-chave novo, todo depois do reset, conta.
+        self.send_rtp([(97, True, 20, IDR_SLICE)])
+        self.wait_for_packets(3)
+        self.assertEqual(self.command("VIDEO KEYFRAMES"), ["1"])
+
     def test_video_echo_returns_each_datagram_with_another_ssrc(self):
         sock = self.video_socket()
         packet = bytes([0x80, 97, 0, 1, 0, 0, 0, 9, 1, 2, 3, 4]) + b"carga"

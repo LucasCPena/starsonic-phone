@@ -19,10 +19,6 @@ namespace starsonic {
 namespace {
 
 #if PJMEDIA_HAS_VIDEO
-// Os ids dos temporizadores da tabela no EngineEndpoint: as contas usam os ids delas, que começam em 1.
-const int kCallTableTimer = 0;
-const int kRemoteTimer = -1;
-const int kKeyframeTimer = -2;
 // O remote desliga depois deste tempo sem quadro, conferido a cada kRemoteCheckMs.
 const auto kRemoteTimeout = std::chrono::seconds(2);
 const unsigned kRemoteCheckMs = 250;
@@ -32,6 +28,11 @@ const unsigned kRemoteCheckMs = 250;
 // imagem depois de uma perda de pacotes, ou de uma transferência, até o fim da ligação. Sem isto o H.264 da PJSIP só
 // manda os quadros-chave do começo do stream, e o VP8, um a cada 60 s.
 const unsigned kKeyframeIntervalMs = 3000;
+// O pedido que a PJSIP recusa (o PJ_ETOOMANY: um quadro-chave há menos de 1 s, como os do começo do stream, que vêm um
+// por segundo) volta depois deste tempo, e não depois de kKeyframeIntervalMs: sem isso, os pedidos que caem no começo
+// do stream deixavam quase 4 s sem quadro-chave depois do último deles. Só uma ligação manda a imagem por vez hoje (a
+// regra das duas ligações pausa as outras), então um reenvio só, para todas, basta.
+const unsigned kKeyframeRetryMs = 1000;
 
 // O texto de um código do PJSIP, como no EngineCall.cpp.
 std::string StatusText(pj_status_t status) { return pj::Endpoint::instance().utilStrError(status); }
@@ -502,7 +503,7 @@ void CallTable::SyncVideo() {
         // A imagem que começa a sair ganha o quadro-chave periódico; o temporizador para sozinho quando nenhuma manda.
         keyframes = KeyframeTimerNeeded();
     }
-    if (keyframes && endpoint_) endpoint_->ScheduleTimer(kKeyframeTimer, kKeyframeIntervalMs);
+    if (keyframes) ScheduleKeyframes(kKeyframeIntervalMs);
     if (again) ScheduleSync();
 #endif
 }
@@ -686,10 +687,25 @@ void CallTable::SendKeyframes() {
         keyframePending_ = !sending.empty();
     }
     // Nenhuma linha no diagnóstico (uma a cada 3 s o encheria): nenhuma nossa, e a do pjsua o LogForwarder segura. Um
-    // pedido recusado (o envio que acabou de parar, ou um quadro-chave há menos de 1 s, o limite da PJSIP) só espera o
-    // próximo.
-    for (const int pjsuaId : sending) pjsua_call_set_vid_strm(pjsuaId, PJSUA_CALL_VID_STRM_SEND_KEYFRAME, nullptr);
-    if (!sending.empty() && endpoint_) endpoint_->ScheduleTimer(kKeyframeTimer, kKeyframeIntervalMs);
+    // pedido recusado por um quadro-chave há menos de 1 s (o limite da PJSIP) volta em kKeyframeRetryMs; um recusado
+    // por outro motivo (o envio que acabou de parar) só espera o próximo.
+    bool tooSoon = false;
+    for (const int pjsuaId : sending) {
+        if (pjsua_call_set_vid_strm(pjsuaId, PJSUA_CALL_VID_STRM_SEND_KEYFRAME, nullptr) == PJ_ETOOMANY) tooSoon = true;
+    }
+    if (!sending.empty()) ScheduleKeyframes(tooSoon ? kKeyframeRetryMs : kKeyframeIntervalMs);
+}
+
+void CallTable::ScheduleKeyframes(unsigned delayMs) {
+    if (endpoint_ && endpoint_->ScheduleTimer(kKeyframeTimer, delayMs)) return;
+    std::lock_guard<std::mutex> lock(mutex_);
+    keyframePending_ = false;
+}
+
+void CallTable::ScheduleRemoteCheck() {
+    if (endpoint_ && endpoint_->ScheduleTimer(kRemoteTimer, kRemoteCheckMs)) return;
+    std::lock_guard<std::mutex> lock(mutex_);
+    remoteCheckPending_ = false;
 }
 
 bool CallTable::RemoteFrameArrived(int callId) {
@@ -708,7 +724,10 @@ bool CallTable::RemoteFrameArrived(int callId) {
         remoteCheckPending_ = true;
     } catch (...) {   // o desenhista é chamado pelo PJSIP, que é C
     }
-    if (schedule && endpoint_) endpoint_->ScheduleTimer(kRemoteTimer, kRemoteCheckMs);
+    try {
+        if (schedule) ScheduleRemoteCheck();
+    } catch (...) {
+    }
     return true;
 }
 
@@ -728,7 +747,7 @@ void CallTable::CheckRemote() {
         PublishVideo();
         remoteCheckPending_ = again;
     }
-    if (again && endpoint_) endpoint_->ScheduleTimer(kRemoteTimer, kRemoteCheckMs);
+    if (again) ScheduleRemoteCheck();
 }
 
 pj_status_t CallTable::OnMediaEvent(pjmedia_event* event, void* table) {

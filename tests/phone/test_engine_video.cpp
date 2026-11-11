@@ -30,6 +30,8 @@ extern "C" pjmedia_vid_dev_factory* pjmedia_cbar_factory(pj_pool_factory* poolFa
 #include "SipEngine.h"
 #include "Video.h"
 #if PJMEDIA_HAS_VIDEO
+#include "EngineCall.h"       // os ids dos temporizadores da tabela (CallTable::kKeyframeTimer)
+#include "EngineEndpoint.h"   // o FailNextSchedule
 #include "VideoRenderer.h"
 #endif
 
@@ -620,16 +622,22 @@ TEST_CASE("our video sends a keyframe every 3 seconds without a request") {
     phone.listener.CountLog(setVideoStream);
 
     // Os quadros-chave que saem em 7 s numa ligação com vídeo ao 2003, com as escolhas dadas, depois dos do começo do
-    // stream (o primeiro e mais 5, um por segundo: o PJMEDIA_VID_STREAM_START_KEYFRAME_CNT da PJSIP), que a contagem
-    // também enxerga; nos 7 s, nenhuma linha "set video stream". O registrador falso nunca pede um quadro-chave (nem o
-    // INFO, nem o RTCP): os que chegam são os do motor. *call: a ligação, de pé.
-    const auto afterStartKeyframes = std::chrono::milliseconds(5500);
+    // stream (um por segundo: o PJMEDIA_VID_STREAM_START_KEYFRAME_CNT da PJSIP), que a contagem também enxerga; nos
+    // 7 s, nenhuma linha "set video stream". O registrador falso nunca pede um quadro-chave (nem o INFO, nem o RTCP):
+    // os que chegam são os do motor. *call: a ligação, de pé.
     auto measure = [&](const VideoSettings& settings, int* call) {
         phone.engine->SetVideoSettings(settings);
         phone.registrar.ResetVideoPackets();
         *call = VideoCall(phone, "2003");
-        std::this_thread::sleep_for(afterStartKeyframes);
-        CHECK(phone.registrar.VideoKeyframes() >= 5);
+        const Clock::time_point ready = Clock::now();
+        std::this_thread::sleep_until(ready + std::chrono::seconds(5));
+        const int startKeyframes = phone.registrar.VideoKeyframes();
+        CHECK(startKeyframes >= 5);
+        // Os do começo acabam até uns 5 s daqui, e o primeiro periódico vem em até 3 s depois do último deles: os
+        // pedidos que a PJSIP recusa no começo (a menos de 1 s de um quadro-chave) voltam em 1 s. Sem isso, o do H.264
+        // vinha quase 4 s depois do último do começo, e estes 3 s ficavam sem nenhum.
+        std::this_thread::sleep_until(ready + std::chrono::seconds(8));
+        CHECK(phone.registrar.VideoKeyframes() > startKeyframes);
         phone.registrar.ResetVideoPackets();
         const size_t setVideoStreamLines = phone.listener.LogCount(setVideoStream);
         std::this_thread::sleep_for(std::chrono::seconds(7));
@@ -661,6 +669,65 @@ TEST_CASE("our video sends a keyframe every 3 seconds without a request") {
     const int cameraOffKeyframes = phone.registrar.VideoKeyframes();
     CHECK(cameraOffKeyframes == 0);
     CHECK(phone.registrar.VideoPackets() == 0);
+
+    // A câmera de volta, na mesma ligação: o envio volta com um quadro-chave (o do pjsua ao retomar), e o temporizador,
+    // que parou com ela desligada, volta a pedir um a cada 3 s (o SyncVideo o marca de novo).
+    REQUIRE(phone.engine->SetCamera(call, true));
+    CHECK(WaitUntil([&] { return phone.registrar.VideoKeyframes() >= 1; }, 5));
+    phone.registrar.ResetVideoPackets();
+    std::this_thread::sleep_for(std::chrono::seconds(7));
+    const int cameraOnKeyframes = phone.registrar.VideoKeyframes();
+    CHECK(cameraOnKeyframes >= 2);
+}
+
+// O agendamento que falha (EngineEndpoint::FailNextSchedule): a linha de nível 2 do motor.
+const char kScheduleFailed[] = "nao foi possivel agendar o temporizador";
+
+TEST_CASE("a keyframe timer that could not be scheduled is armed again by the next video change") {
+    Phone phone;
+    INFO(phone.registrar.LogText());
+    INFO(phone.listener.VideosText());
+    INFO(phone.listener.LogTail());
+    EngineEndpoint& endpoint = static_cast<EngineEndpoint&>(pj::Endpoint::instance());
+
+    VideoSettings settings = TestSettings();
+    settings.h264 = false;
+    phone.engine->SetVideoSettings(settings);
+    const int call = VideoCall(phone, "2003");
+    // Depois dos quadros-chave do começo do stream (uns 5 s: os que faltarem voltam com a câmera, sem o temporizador),
+    // a volta do temporizador do quadro-chave (no próximo pedido, em até 3 s) não é agendada: ele para.
+    std::this_thread::sleep_for(std::chrono::milliseconds(6500));
+    phone.listener.CountLog(kScheduleFailed);
+    endpoint.FailNextSchedule(CallTable::kKeyframeTimer);
+    REQUIRE(WaitUntil([&] { return phone.listener.LogCount(kScheduleFailed) == 1; }, 5));
+    // A próxima mudança do vídeo (a câmera desligada e ligada de novo) o marca outra vez: os quadros-chave voltam.
+    REQUIRE(phone.engine->SetCamera(call, false));
+    CHECK(PacketsStop(phone));
+    phone.registrar.ResetVideoPackets();
+    REQUIRE(phone.engine->SetCamera(call, true));
+    CHECK(WaitUntil([&] { return phone.registrar.VideoKeyframes() >= 1; }, 5));   // o do pjsua ao retomar
+    phone.registrar.ResetVideoPackets();
+    std::this_thread::sleep_for(std::chrono::seconds(7));
+    CHECK(phone.registrar.VideoKeyframes() >= 2);
+}
+
+TEST_CASE("remote still goes false after a remote check that could not be scheduled") {
+    Phone phone;
+    INFO(phone.listener.VideosText());
+    INFO(phone.listener.LogTail());
+    EngineEndpoint& endpoint = static_cast<EngineEndpoint&>(pj::Endpoint::instance());
+
+    REQUIRE(phone.registrar.Control("VIDEO ECHO on") == Lines{"OK"});
+    const int id = VideoCall(phone, "2003");
+    REQUIRE(WaitVideo(phone, id, [](const CallVideo& video) { return video.remote; }));
+    // A próxima conferência do remote (a cada 250 ms enquanto a imagem chega) não é agendada; a imagem segue chegando.
+    phone.listener.CountLog(kScheduleFailed);
+    endpoint.FailNextSchedule(CallTable::kRemoteTimer);
+    REQUIRE(WaitUntil([&] { return phone.listener.LogCount(kScheduleFailed) == 1; }, 2));
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    // A imagem para: o remote cai em uns 2 s, como sempre (o próximo quadro tinha agendado a conferência de novo).
+    REQUIRE(phone.engine->SetCamera(id, false));
+    CHECK(WaitVideoMs(phone, id, [](const CallVideo& video) { return !video.remote; }, 3500));
 }
 
 TEST_CASE("a camera that does not open logs camera: falhou once, at level 3") {

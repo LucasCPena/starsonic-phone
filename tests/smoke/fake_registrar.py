@@ -98,10 +98,11 @@ Porta de controle (--control-port N, TCP no mesmo --host; um comando por linha, 
   VIDEO PACKETS reset  zera as contagens (também as do VIDEO KEYFRAMES e do VIDEO REPLAYED) e esquece os datagramas
                      guardados -> OK
   VIDEO KEYFRAMES    os quadros-chave que chegaram na PORTA desde o último VIDEO PACKETS reset (ou da abertura), um por
-                     quadro (o SSRC e o timestamp do RTP), pelo codec do payload type nos m=video dos SDP que o telefone
-                     mandou: no H264, um IDR (a NAL do tipo 5 sozinha, dentro de um STAP-A ou no primeiro fragmento de
-                     um FU-A; o SPS e o PPS antes dele contam com ele); no VP8, o começo do quadro (o S e o PID 0 no
-                     descritor) com o P 0 no primeiro byte do cabeçalho do quadro; outro codec não conta  -> <n>
+                     quadro (o SSRC e o timestamp do RTP; um que começou antes do reset não conta de novo depois dele),
+                     pelo codec do payload type nos m=video dos SDP que o telefone mandou: no H264, um IDR (a NAL do
+                     tipo 5 sozinha, dentro de um STAP-A ou no primeiro fragmento de um FU-A; o SPS e o PPS antes dele
+                     contam com ele); no VP8, o começo do quadro (o S e o PID 0 no descritor) com o P 0 no primeiro
+                     byte do cabeçalho do quadro; outro codec não conta  -> <n>
   VIDEO REPLAYED     os datagramas que a reprodução do RINGVIDEO com o replay mandou ao telefone desde o último
                      VIDEO PACKETS reset (ou da abertura), de qualquer ligação  -> <n>
   VIDEO SDP          as linhas do último SDP que o telefone mandou (num pedido ou numa resposta), e END
@@ -559,7 +560,10 @@ class Registrar:
         self.video_sock = None   # o socket da PORTA: de onde sai a reprodução do RINGVIDEO com o replay
         self.video_packets = 0   # datagramas com carga que chegaram na PORTA (VIDEO PACKETS)
         self.video_kept = []     # os primeiros VIDEO_KEPT deles desde o último VIDEO PACKETS reset
-        self.video_keyframes = set()   # (SSRC, timestamp) de cada quadro-chave que chegou desde então (VIDEO KEYFRAMES)
+        self.video_keyframes = 0   # quadros-chave que chegaram desde então (VIDEO KEYFRAMES)
+        # (SSRC, timestamp) de cada quadro-chave que já chegou: fica no VIDEO PACKETS reset, e um quadro-chave cortado
+        # por ele (as fatias de um IDR dos dois lados) não conta de novo depois
+        self.video_keyframes_seen = set()
         self.video_codecs = {}   # payload type -> codec, dos m=video dos SDP do telefone (o VIDEO KEYFRAMES)
         self.video_replayed = 0   # datagramas que a reprodução mandou ao telefone desde então (VIDEO REPLAYED)
         self.video_reject = False    # VIDEO REJECT on: o m=video da resposta vai com a porta 0
@@ -627,8 +631,11 @@ class Registrar:
                 if len(self.video_kept) < VIDEO_KEPT:
                     self.video_kept.append(data)
                 payload = _rtp_payload(data)
-                if payload and _keyframe_start(self.video_codecs.get(data[1] & 0x7F), payload):
-                    self.video_keyframes.add((data[8:12], data[4:8]))
+                key = (data[8:12], data[4:8])
+                if (payload and key not in self.video_keyframes_seen
+                        and _keyframe_start(self.video_codecs.get(data[1] & 0x7F), payload)):
+                    self.video_keyframes_seen.add(key)
+                    self.video_keyframes += 1
             echo = self.video_echo
         if echo:
             try:
@@ -1226,11 +1233,11 @@ class Registrar:
         if words == ["PACKETS", "reset"]:
             self.video_packets = 0
             self.video_kept = []
-            self.video_keyframes = set()
+            self.video_keyframes = 0
             self.video_replayed = 0
             return ["OK"]
         if words == ["KEYFRAMES"]:
-            return [str(len(self.video_keyframes))]
+            return [str(self.video_keyframes)]
         if words == ["REPLAYED"]:
             return [str(self.video_replayed)]
         if words == ["SDP"]:
