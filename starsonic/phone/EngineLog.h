@@ -1,6 +1,6 @@
 #pragma once
 // O log do motor (interno): as linhas do PJSIP e as do próprio motor vão a EngineListener::OnLog, na
-// hora e na thread que as escreveu.
+// hora e na thread que as escreveu (menos a do pedido de quadro-chave: ver o LogForwarder).
 #include <pjsua2.hpp>
 
 #include <string>
@@ -13,7 +13,9 @@ namespace starsonic {
 // thread registrada no PJLIB.
 void Log(int level, const std::string& text);
 
-// O writer do pjsua2. O Endpoint é dono do objeto e o apaga no libDestroy.
+// O writer do pjsua2. O Endpoint é dono do objeto e o apaga no libDestroy. Não passa adiante a linha
+// que o pjsua escreve (nível 4) a cada pedido de quadro-chave: com o quadro-chave periódico do vídeo
+// que sai (EngineCallVideo.cpp), seria uma a cada 3 s por ligação, no diagnóstico (que grava o nível 4).
 class LogForwarder : public pj::LogWriter {
 public:
     explicit LogForwarder(EngineListener* listener) : listener_(listener) {}

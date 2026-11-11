@@ -607,6 +607,62 @@ TEST_CASE("the camera stops and starts without a re-INVITE") {
     CHECK(LinesStartingWith(phone, "reinv-in") == reinvites);
 }
 
+TEST_CASE("our video sends a keyframe every 3 seconds without a request") {
+    Phone phone;
+    INFO(phone.registrar.LogText());
+    INFO(phone.listener.VideosText());
+    INFO(phone.listener.LogTail());
+
+    // Nenhuma linha no log por quadro-chave (o diagnóstico do app grava o nível 4: seria uma a cada 3 s). O pjsua
+    // escreve "set video stream, op=<op>" a cada pjsua_call_set_vid_strm, e o motor não passa adiante a do
+    // quadro-chave; a do STOP_TRANSMIT, quando a câmera desliga, passa: a contagem enxerga a linha.
+    const std::string setVideoStream = "set video stream, op=";
+    phone.listener.CountLog(setVideoStream);
+
+    // Os quadros-chave que saem em 7 s numa ligação com vídeo ao 2003, com as escolhas dadas, depois dos do começo do
+    // stream (o primeiro e mais 5, um por segundo: o PJMEDIA_VID_STREAM_START_KEYFRAME_CNT da PJSIP), que a contagem
+    // também enxerga; nos 7 s, nenhuma linha "set video stream". O registrador falso nunca pede um quadro-chave (nem o
+    // INFO, nem o RTCP): os que chegam são os do motor. *call: a ligação, de pé.
+    const auto afterStartKeyframes = std::chrono::milliseconds(5500);
+    auto measure = [&](const VideoSettings& settings, int* call) {
+        phone.engine->SetVideoSettings(settings);
+        phone.registrar.ResetVideoPackets();
+        *call = VideoCall(phone, "2003");
+        std::this_thread::sleep_for(afterStartKeyframes);
+        CHECK(phone.registrar.VideoKeyframes() >= 5);
+        phone.registrar.ResetVideoPackets();
+        const size_t setVideoStreamLines = phone.listener.LogCount(setVideoStream);
+        std::this_thread::sleep_for(std::chrono::seconds(7));
+        CHECK(phone.registrar.VideoPackets() > 0);   // a imagem seguiu saindo
+        CHECK(phone.listener.LogCount(setVideoStream) == setVideoStreamLines);
+        return phone.registrar.VideoKeyframes();
+    };
+
+    VideoSettings h264 = TestSettings();
+    h264.vp8 = false;
+    int call = 0;
+    const int h264Keyframes = measure(h264, &call);
+    CHECK(h264Keyframes >= 2);
+    REQUIRE(phone.engine->Hangup(call));
+    REQUIRE(phone.WaitState(call, CallState::Disconnected));
+
+    VideoSettings vp8 = TestSettings();
+    vp8.h264 = false;
+    const int vp8Keyframes = measure(vp8, &call);
+    CHECK(vp8Keyframes >= 2);
+
+    // Com a nossa câmera desligada, nada sai: nem a imagem, nem um quadro-chave.
+    const size_t linesBeforeCameraOff = phone.listener.LogCount(setVideoStream);
+    REQUIRE(phone.engine->SetCamera(call, false));
+    CHECK(PacketsStop(phone));
+    CHECK(phone.listener.LogCount(setVideoStream) > linesBeforeCameraOff);   // a do STOP_TRANSMIT
+    phone.registrar.ResetVideoPackets();
+    std::this_thread::sleep_for(std::chrono::seconds(7));
+    const int cameraOffKeyframes = phone.registrar.VideoKeyframes();
+    CHECK(cameraOffKeyframes == 0);
+    CHECK(phone.registrar.VideoPackets() == 0);
+}
+
 TEST_CASE("a camera that does not open logs camera: falhou once, at level 3") {
     Phone phone;
     INFO(phone.registrar.LogText());

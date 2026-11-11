@@ -25,8 +25,8 @@ Ligações (sem autenticação para INVITE, re-INVITE, REFER, BYE e CANCEL):
   on, sem a PORTA ou sem um desses codecs). Com o VIDEO 488 on, um INVITE ou re-INVITE com um m=video de porta diferente
   de zero leva 488. A PORTA conta os datagramas com carga (mais de 12 bytes, o cabeçalho do RTP), de qualquer ligação,
   guarda os primeiros 300 deles que chegam depois do último VIDEO PACKETS reset (ou da abertura), para o RINGVIDEO com
-  o replay, e com o VIDEO ECHO on devolve cada datagrama a quem o mandou, com o bit mais baixo do último byte do SSRC
-  invertido
+  o replay, conta os quadros-chave (VIDEO KEYFRAMES) e com o VIDEO ECHO on devolve cada datagrama a quem o mandou, com
+  o bit mais baixo do último byte do SSRC invertido
 - REFER -> 202 e um NOTIFY com SIP/2.0 200 OK (sipfrag), ou o que REFER_REPLY e REFER_NOTIFY mandarem
   (resposta com código >= 300, ou REFER_NOTIFY none: nenhum NOTIFY com o resultado). Um Refer-To com
   Replaces (RFC 3891) vai para o registro de ligações com replaces=known ou replaces=unknown; o registrador
@@ -94,7 +94,12 @@ Porta de controle (--control-port N, TCP no mesmo --host; um comando por linha, 
   VIDEO ECHO <on|off> com on, cada datagrama que chega na PORTA volta na hora para quem o mandou, com o SSRC trocado
                      (a contagem continua)                              -> OK
   VIDEO PACKETS      os datagramas com carga que chegaram na PORTA      -> <n>
-  VIDEO PACKETS reset  zera a contagem e esquece os datagramas guardados -> OK
+  VIDEO PACKETS reset  zera as contagens (também a do VIDEO KEYFRAMES) e esquece os datagramas guardados -> OK
+  VIDEO KEYFRAMES    os quadros-chave que chegaram na PORTA desde o último VIDEO PACKETS reset (ou da abertura), um por
+                     quadro (o SSRC e o timestamp do RTP), pelo codec do payload type nos m=video dos SDP que o telefone
+                     mandou: no H264, um IDR (a NAL do tipo 5 sozinha, dentro de um STAP-A ou no primeiro fragmento de
+                     um FU-A; o SPS e o PPS antes dele contam com ele); no VP8, o começo do quadro (o S e o PID 0 no
+                     descritor) com o P 0 no primeiro byte do cabeçalho do quadro; outro codec não conta  -> <n>
   VIDEO SDP          as linhas do último SDP que o telefone mandou (num pedido ou numa resposta), e END
   LOG                o registro de ligações, uma linha cada, e END
   (comando desconhecido, sem argumento ou com código que não é de 100 a 699 -> ERR bad-command)
@@ -365,6 +370,71 @@ def _frames(packets):
     return frames
 
 
+def _rtp_payload(data):
+    """A carga de um datagrama RTP: o que vem depois do cabeçalho de 12 bytes, dos CSRC (o CC) e da extensão (o X), se
+    há. None se o datagrama acaba antes disso."""
+    if len(data) < RTP_HEADER:
+        return None
+    start = RTP_HEADER + 4 * (data[0] & 0x0F)
+    if data[0] & 0x10:   # a extensão: 4 bytes de cabeçalho, com o tamanho dela em palavras de 4 bytes
+        if len(data) < start + 4:
+            return None
+        start += 4 + 4 * int.from_bytes(data[start + 2:start + 4], "big")
+    return data[start:] if len(data) >= start else None
+
+
+def _keyframe_start(codec, payload):
+    """Se a carga RTP (sem o cabeçalho) começa um quadro-chave do codec (o nome do a=rtpmap): no H264, um IDR (a NAL do
+    tipo 5 sozinha, dentro de um STAP-A ou no primeiro fragmento de um FU-A; o SPS e o PPS que vêm antes dele contam com
+    ele); no VP8, o começo do quadro (o S e o PID 0 no descritor) com o P 0 no primeiro byte do cabeçalho do quadro.
+    Outro codec, ou uma carga cortada: False."""
+    if not payload:
+        return False
+    if codec == "H264":
+        nal_type = payload[0] & 0x1F
+        if nal_type == 24:   # STAP-A: as NAL, cada uma depois do tamanho dela em 2 bytes
+            at = 1
+            while at + 2 < len(payload):
+                size = int.from_bytes(payload[at:at + 2], "big")
+                if size and payload[at + 2] & 0x1F == 5:
+                    return True
+                at += 2 + size
+            return False
+        if nal_type == 28:   # FU-A: o primeiro fragmento (o S) de uma NAL do tipo 5
+            return len(payload) > 1 and payload[1] & 0x80 != 0 and payload[1] & 0x1F == 5
+        return nal_type == 5
+    if codec == "VP8":
+        first = payload[0]
+        if not first & 0x10 or first & 0x07:   # só o começo do quadro: o S, com o PID 0
+            return False
+        at = 1
+        if first & 0x80:   # o X: o byte do I, do L, do T e do K, e os campos que eles ligam
+            if len(payload) < 3:
+                return False
+            extension, at = payload[1], 2
+            if extension & 0x80:   # o I: o PictureID, de 2 bytes com o M
+                at += 2 if payload[at] & 0x80 else 1
+            if extension & 0x40:   # o L: o TL0PICIDX
+                at += 1
+            if extension & 0x30:   # o T ou o K: o byte do TID e do KEYIDX
+                at += 1
+        return len(payload) > at and payload[at] & 0x01 == 0
+    return False
+
+
+def _video_payload_types(body):
+    """Os payload types dos m=video com porta de um SDP, com o nome do a=rtpmap de cada um em maiúsculas
+    (97 -> H264)."""
+    sections = _sdp_sections(body)
+    types = {}
+    for video in (section for section in sections[1:] if _live_video(section)):
+        _, _, rtpmap, _ = _section(sections[0], video)
+        for payload, value in rtpmap.items():
+            if payload.isdigit():
+                types[int(payload)] = value.split("/")[0].upper()
+    return types
+
+
 def _with_payload_type(data, payload_type):
     """O datagrama RTP com outro payload type, o bit M como estava."""
     replaced = bytearray(data)
@@ -485,6 +555,8 @@ class Registrar:
         self.video_sock = None   # o socket da PORTA: de onde sai a reprodução do RINGVIDEO com o replay
         self.video_packets = 0   # datagramas com carga que chegaram na PORTA (VIDEO PACKETS)
         self.video_kept = []     # os primeiros VIDEO_KEPT deles desde o último VIDEO PACKETS reset
+        self.video_keyframes = set()   # (SSRC, timestamp) de cada quadro-chave que chegou desde então (VIDEO KEYFRAMES)
+        self.video_codecs = {}   # payload type -> codec, dos m=video dos SDP do telefone (o VIDEO KEYFRAMES)
         self.video_reject = False    # VIDEO REJECT on: o m=video da resposta vai com a porta 0
         self.video_488 = False       # VIDEO 488 on: um INVITE com vídeo leva 488
         self.video_echo = False      # VIDEO ECHO on: cada datagrama da PORTA volta a quem o mandou
@@ -542,13 +614,16 @@ class Registrar:
             self.keepalives += how_many
 
     def on_video(self, data, source, sock):
-        """Um datagrama chegou na PORTA do vídeo: conta (e guarda, até VIDEO_KEPT) o que tem carga e, com o VIDEO ECHO
-        on, o devolve na hora."""
+        """Um datagrama chegou na PORTA do vídeo: conta (e guarda, até VIDEO_KEPT) o que tem carga, conta o quadro-chave
+        que ele começa (um por quadro: o SSRC e o timestamp) e, com o VIDEO ECHO on, o devolve na hora."""
         with self.lock:
             if len(data) > RTP_HEADER:
                 self.video_packets += 1
                 if len(self.video_kept) < VIDEO_KEPT:
                     self.video_kept.append(data)
+                payload = _rtp_payload(data)
+                if payload and _keyframe_start(self.video_codecs.get(data[1] & 0x7F), payload):
+                    self.video_keyframes.add((data[8:12], data[4:8]))
             echo = self.video_echo
         if echo:
             try:
@@ -670,9 +745,11 @@ class Registrar:
         return _media_lines("video", self.video_port, [(chosen, rtpmap[chosen], fmtp.get(chosen))], MIRROR[direction])
 
     def _phone_sdp(self, body):
-        """Um SDP que o telefone mandou (num pedido ou numa resposta): guarda para o VIDEO SDP."""
+        """Um SDP que o telefone mandou (num pedido ou numa resposta): guarda para o VIDEO SDP, e os payload types dos
+        m=video dele, para o VIDEO KEYFRAMES saber o codec de cada datagrama da PORTA."""
         if body.strip():
             self.last_sdp = body
+            self.video_codecs.update(_video_payload_types(body))
 
     # --- o telefone liga para o registrador (e manda re-INVITE, REFER, BYE, CANCEL) ---
 
@@ -1131,8 +1208,8 @@ class Registrar:
         return ["ERR bad-command"]
 
     def _video_command(self, words):
-        """VIDEO REJECT|488|ECHO <on|off>, VIDEO PACKETS [reset] e VIDEO SDP: as linhas da resposta, ou None se o
-        comando não é um desses (com o lock)."""
+        """VIDEO REJECT|488|ECHO <on|off>, VIDEO PACKETS [reset], VIDEO KEYFRAMES e VIDEO SDP: as linhas da resposta, ou
+        None se o comando não é um desses (com o lock)."""
         if len(words) == 2 and words[0] in ("REJECT", "488", "ECHO") and words[1] in ("on", "off"):
             setattr(self, {"REJECT": "video_reject", "488": "video_488", "ECHO": "video_echo"}[words[0]],
                     words[1] == "on")
@@ -1142,7 +1219,10 @@ class Registrar:
         if words == ["PACKETS", "reset"]:
             self.video_packets = 0
             self.video_kept = []
+            self.video_keyframes = set()
             return ["OK"]
+        if words == ["KEYFRAMES"]:
+            return [str(len(self.video_keyframes))]
         if words == ["SDP"]:
             lines = self.last_sdp.splitlines() if self.last_sdp else []
             return lines + ["END"]

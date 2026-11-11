@@ -45,7 +45,9 @@
 // abre e fecha com videoMutex_ presa: o envio de cada ligação no SyncVideo (na thread do PJSIP) e a prévia
 // (SyncPreview, no SyncVideo e no teste da câmera, na thread da API), que roda enquanto o teste está ligado ou alguma
 // ligação manda a imagem; a câmera aberta segue até fechar (o envio que começa usa a da prévia). Os problemas da câmera
-// saem pela fila dos eventos (Problem).
+// saem pela fila dos eventos (Problem). Enquanto alguma ligação manda a imagem, o temporizador do quadro-chave
+// (KeyframeTimer, que o SyncVideo marca) pede um quadro-chave ao stream dela a cada 3 s (o SEND_KEYFRAME do pjsua, com
+// videoMutex_ presa, como o envio), e para quando nenhuma manda.
 #include <pjsua2.hpp>
 
 #include <chrono>
@@ -296,10 +298,21 @@ private:
         CallTable* table = nullptr;
         void OnEngineTimer() override;
     };
+    struct KeyframeTimer : TimerTarget {
+        CallTable* table = nullptr;
+        void OnEngineTimer() override;
+    };
     // Na thread do desenhista, com a trava dele presa: a pausa da imagem segura o quadro, e o primeiro liga o remote.
     bool RemoteFrameArrived(int callId);
     // No temporizador do remote: desliga o remote das ligações sem quadro há 2 s e marca a próxima conferência.
     void CheckRemote();
+    // Com mutex_ presa: alguma ligação manda a imagem agora (o envio aplicado, e a tabela ainda o quer: o camera do
+    // CallVideo) e o temporizador do quadro-chave não está marcado. true: ele fica marcado, e quem chamou o agenda, sem
+    // mutex_ presa.
+    bool KeyframeTimerNeeded();
+    // No temporizador do quadro-chave, com videoMutex_ presa (como o SyncVideo): pede um quadro-chave ao stream de cada
+    // ligação que manda a imagem e marca a próxima vez; sem nenhuma mandando, o temporizador para.
+    void SendKeyframes();
     // O aviso de um erro da câmera aberta (o PJMEDIA_EVENT_VID_DEV_ERROR da captura), numa thread da PJSIP.
     static pj_status_t OnMediaEvent(pjmedia_event* event, void* table);
     // Com mutex_ presa. A câmera em uso sumiu: o Disconnected, o desejo da câmera desliga em todas as ligações e o
@@ -344,6 +357,7 @@ private:
 #if PJMEDIA_HAS_VIDEO
     FrameGate frameGate_;
     RemoteTimer remoteTimer_;
+    KeyframeTimer keyframeTimer_;
     // Com mutex_ (a prévia muda também com videoMutex_ presa).
     pjmedia_vid_dev_index camera_ = PJMEDIA_VID_INVALID_DEV;     // a câmera escolhida (sem câmera: inválida)
     pjmedia_vid_dev_index renderer_ = PJMEDIA_VID_INVALID_DEV;   // o desenhista nosso
@@ -353,6 +367,7 @@ private:
     bool cameraLost_ = false;           // a câmera da prévia sumiu (o Disconnected já saiu), até a prévia fechar
     bool restartCamera_ = false;        // a câmera em uso mudou de lugar na lista: o SyncVideo fecha e abre de novo
     bool remoteCheckPending_ = false;   // o temporizador do remote está marcado
+    bool keyframePending_ = false;      // o temporizador do quadro-chave está marcado
 #endif
 
     std::mutex routeMutex_;           // uma passada de Route por vez (ver o topo do arquivo)

@@ -85,6 +85,35 @@ def rtp(payload_type, marker, timestamp, payload, ssrc=0x01020304, sequence=7):
             timestamp.to_bytes(4, "big") + ssrc.to_bytes(4, "big") + payload)
 
 
+# Cargas de vídeo feitas à mão, para os quadros-chave (VIDEO KEYFRAMES). As NAL do H.264: o cabeçalho de 1 byte (F, NRI
+# e o tipo) e uns bytes quaisquer.
+SPS = bytes([0x67, 0x42, 0xC0, 0x1F])        # o tipo 7
+PPS = bytes([0x68, 0xCE, 0x3C, 0x80])        # o tipo 8
+IDR_SLICE = bytes([0x65, 0x88, 0x84, 0x00])  # o tipo 5: uma fatia de um quadro-chave
+P_SLICE = bytes([0x41, 0x9A, 0x02, 0x00])    # o tipo 1: uma fatia que não é de um quadro-chave
+
+
+def stap_a(*nals):
+    """Um STAP-A (o tipo 24 do H.264): as NAL juntas, cada uma depois do tamanho dela em 2 bytes."""
+    return bytes([0x78]) + b"".join(len(nal).to_bytes(2, "big") + nal for nal in nals)
+
+
+def fu_a(nal, start, end):
+    """Um fragmento FU-A (o tipo 28 do H.264) da NAL: o indicador com o NRI dela, o cabeçalho com o S, o E e o tipo
+    dela, e o resto da NAL."""
+    return bytes([(nal[0] & 0x60) | 28, (0x80 if start else 0) | (0x40 if end else 0) | (nal[0] & 0x1F)]) + nal[1:]
+
+
+VP8_KEY = bytes([0x10, 0x02, 0x00, 0x9D, 0x01, 0x2A])   # o começo de um quadro-chave do VP8: o P (o bit 0) em 0
+VP8_INTER = bytes([0x11, 0x02, 0x00])                    # o de um quadro que não é chave: o P em 1
+
+
+def vp8(frame, start=True, partition=0, descriptor=(0x80, 0x80, 0x80, 0x01)):
+    """Uma carga VP8: o descritor (por padrão o do PJSIP, de 4 bytes: o X, o I e o PictureID de 2 bytes), com o S e o
+    PID dados no primeiro byte, e os bytes do quadro."""
+    return bytes([descriptor[0] | (0x10 if start else 0) | partition, *descriptor[1:]]) + frame
+
+
 def read_message(data):
     """(primeira linha, cabecalhos em minusculas -> lista de valores, corpo) de uma mensagem SIP."""
     head, _, body = data.decode("utf-8").partition("\r\n\r\n")
@@ -838,6 +867,28 @@ class CallsTest(unittest.TestCase):
         sock.sendto(b"\x80" * 40, ("127.0.0.1", self.video_port()))
         self.wait_for_packets(1)
 
+    def test_video_keyframes_counts_each_keyframe_once_by_the_payload_types_of_the_phone(self):
+        phone = self.phone()
+        self.video_call(phone)   # o SDP do telefone diz os payload types: o 97 e o 98 são o H.264, e o 100, o VP8
+        self.assertEqual(self.command("VIDEO KEYFRAMES"), ["0"])
+        idr = IDR_SLICE + bytes(16)
+        self.send_rtp([
+            # Um quadro-chave do H.264 em quatro pacotes, com duas fatias IDR (uma em fragmentos): conta um só.
+            (97, False, 10, stap_a(SPS, PPS)), (97, False, 10, fu_a(idr, start=True, end=False)),
+            (97, False, 10, fu_a(idr, start=False, end=True)), (97, True, 10, IDR_SLICE),
+            (97, True, 20, P_SLICE),                            # um quadro que não é chave
+            (100, True, 30, vp8(VP8_KEY)), (100, True, 40, vp8(VP8_INTER)),   # no VP8, só o primeiro
+            (96, True, 50, IDR_SLICE),                          # um payload type que o telefone não deu: nada
+        ])
+        self.wait_for_packets(8)
+        self.assertEqual(self.command("VIDEO KEYFRAMES"), ["2"])
+        # O VIDEO PACKETS reset zera os dois.
+        self.assertEqual(self.command("VIDEO PACKETS reset"), ["OK"])
+        self.assertEqual(self.command("VIDEO KEYFRAMES"), ["0"])
+        self.send_rtp([(98, True, 60, IDR_SLICE)])
+        self.wait_for_packets(1)
+        self.assertEqual(self.command("VIDEO KEYFRAMES"), ["1"])
+
     def test_video_echo_returns_each_datagram_with_another_ssrc(self):
         sock = self.video_socket()
         packet = bytes([0x80, 97, 0, 1, 0, 0, 0, 9, 1, 2, 3, 4]) + b"carga"
@@ -911,7 +962,8 @@ class CallsTest(unittest.TestCase):
         for line in ("RINGVIDEO", "RINGVIDEO 2001", "RINGVIDEO 2001 9001 H263", "RINGVIDEO 2001 9001 H264,H264",
                      "RINGVIDEO 2001 9001 VP8 extra", "RINGVIDEO 2001 9001 VP8 replay extra",
                      "RINGVIDEO 2001 9001 replay VP8", "VIDEO", "VIDEO REJECT", "VIDEO REJECT maybe", "VIDEO ECHO",
-                     "VIDEO PACKETS now", "VIDEO SDP now", "VIDEO 486 on"):
+                     "VIDEO PACKETS now", "VIDEO SDP now", "VIDEO 486 on", "VIDEO KEYFRAMES now",
+                     "VIDEO KEYFRAMES reset"):
             with self.subTest(line):
                 self.assertEqual(self.command(line), ["ERR bad-command"])
         self.assertEqual(self.command("RINGVIDEO 2001 9001"), ["ERR no-contact"])
@@ -1117,6 +1169,52 @@ class CallsTest(unittest.TestCase):
             conn.sendall(b"REGISTERS 2001\r\nLOG\nREGISTERS 2002\n")
             with conn.makefile("rb") as reader:
                 self.assertEqual([reader.readline() for _ in range(3)], [b"0\n", b"END\n", b"0\n"])
+
+
+class KeyframeTest(unittest.TestCase):
+    """O que conta como o começo de um quadro-chave na PORTA (o VIDEO KEYFRAMES), com cargas feitas à mão."""
+
+    def test_an_h264_keyframe_starts_with_an_idr_alone_in_a_stap_a_or_in_the_first_fu_a(self):
+        idr = IDR_SLICE + bytes(8)
+        for payload, expected in (
+            (IDR_SLICE, True),
+            (stap_a(SPS, PPS, IDR_SLICE), True),
+            (fu_a(idr, start=True, end=False), True),
+            (fu_a(idr, start=False, end=True), False),   # o resto de um IDR, já contado no primeiro fragmento
+            (SPS, False), (PPS, False), (stap_a(SPS, PPS), False),   # vêm antes do IDR, que conta por eles
+            (P_SLICE, False), (fu_a(P_SLICE, start=True, end=True), False), (stap_a(SPS, P_SLICE), False),
+            (b"", False), (bytes([0x7C]), False), (bytes([0x78, 0x00]), False), (bytes([0x78, 0x00, 0x09]), False),
+        ):
+            with self.subTest(payload=payload.hex()):
+                self.assertEqual(fake_registrar._keyframe_start("H264", payload), expected)
+
+    def test_a_vp8_keyframe_is_a_frame_start_with_p_zero_after_the_descriptor(self):
+        for payload, expected in (
+            (vp8(VP8_KEY), True),
+            (vp8(VP8_INTER), False),
+            (vp8(VP8_KEY, start=False), False),         # o meio de um quadro
+            (vp8(VP8_KEY, partition=1), False),         # o começo de outra partição, não o do quadro
+            (vp8(VP8_KEY, descriptor=(0x00,)), True),   # o descritor de 1 byte, sem o X
+            (vp8(VP8_INTER, descriptor=(0x00,)), False),
+            (vp8(VP8_KEY, descriptor=(0x80, 0x80, 0x05)), True),               # o PictureID de 1 byte
+            (vp8(VP8_KEY, descriptor=(0x80, 0xE0, 0x05, 0x01, 0x20)), True),   # com o TL0PICIDX e o TID
+            (vp8(b""), False), (bytes([0x90, 0x80, 0x80]), False),               # cortados
+        ):
+            with self.subTest(payload=payload.hex()):
+                self.assertEqual(fake_registrar._keyframe_start("VP8", payload), expected)
+
+    def test_other_codecs_never_count(self):
+        for codec, payload in (("VP9", vp8(VP8_KEY)), (None, IDR_SLICE), ("PCMU", IDR_SLICE)):
+            with self.subTest(codec=codec):
+                self.assertFalse(fake_registrar._keyframe_start(codec, payload))
+
+    def test_the_rtp_payload_skips_the_csrcs_and_the_header_extension(self):
+        packet = rtp(97, True, 10, IDR_SLICE)
+        self.assertEqual(fake_registrar._rtp_payload(packet), IDR_SLICE)
+        # Dois CSRC (o CC 2) e uma extensão de uma palavra (o X): a carga começa depois deles.
+        extended = bytes([0x80 | 0x10 | 0x02]) + packet[1:12] + bytes(8) + bytes([0xBE, 0xDE, 0x00, 0x01]) + bytes(4)
+        self.assertEqual(fake_registrar._rtp_payload(extended + IDR_SLICE), IDR_SLICE)
+        self.assertIsNone(fake_registrar._rtp_payload(extended[:20]))   # cortado no meio dos CSRC e da extensão
 
 
 class CommandLineTest(unittest.TestCase):

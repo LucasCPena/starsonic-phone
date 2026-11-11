@@ -214,8 +214,16 @@ public:
         return reply.empty() ? -1 : std::stoi(reply[0]);
     }
 
-    // Zera a contagem do VideoPackets e esquece os datagramas guardados (os que o RINGVIDEO com o replay manda).
+    // Zera a contagem do VideoPackets (e a do VideoKeyframes) e esquece os datagramas guardados (os que o RINGVIDEO com
+    // o replay manda).
     void ResetVideoPackets() { Control("VIDEO PACKETS reset"); }
+
+    // Os quadros-chave que chegaram na PORTA do vídeo desde o último ResetVideoPackets (VIDEO KEYFRAMES), um por
+    // quadro: um IDR do H.264 ou um quadro-chave do VP8. -1 se a porta de controle não respondeu.
+    int VideoKeyframes() const {
+        const std::vector<std::string> reply = Control("VIDEO KEYFRAMES");
+        return reply.empty() ? -1 : std::stoi(reply[0]);
+    }
 
     // Espera até `seconds` que o VideoPackets chegue a atLeast.
     bool WaitForVideoPackets(int atLeast, int seconds) const {
