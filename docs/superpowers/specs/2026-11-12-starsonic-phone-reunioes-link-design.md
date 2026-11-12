@@ -8,7 +8,7 @@
   4. a segurança e a privacidade;
   5. as etapas, os testes e o que fica de fora.
 
-  As telas de verdade (a página do navegador e as do app) vão para quadros que o responsável aprova antes do código das telas (seção 12). Esta spec escrita espera a aprovação do responsável.
+  As telas de verdade (a página do navegador e as do app) vão para quadros que o responsável aprova antes do código das telas (seção 12). Esta spec escrita foi aprovada pelo responsável em 12/11/2026, às 14:14.
 - **Versões alvo:**
   - o servidor do chat 0.2.0;
   - o servidor de vídeo 0.1.0 (novo);
