@@ -143,3 +143,46 @@ jobs:
         run: sha256sum -c "starsonic-freeswitch-$SISTEMA-amd64.tar.gz.sha256"
       - name: Conferir o pacote
         run: bash video-servidor/freeswitch/conferir-pacote.sh "pacote/starsonic-freeswitch-$SISTEMA-amd64.tar.gz"
+
+  # A configuração que o agente gera (o configurar --teste) num FreeSWITCH de verdade, o pacote de cada
+  # sistema num contêiner limpo dele: os dois perfis do sofia no ar e nenhuma linha de erro.
+  freeswitch-configuracao:
+    name: Configuração do FreeSWITCH (${{ matrix.sistema }})
+    needs: [agente, freeswitch]
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        sistema: [ubuntu-24.04, debian-12]
+        include:
+          - sistema: ubuntu-24.04
+            imagem: ubuntu:24.04
+          - sistema: debian-12
+            imagem: debian:12
+    container: ${{ matrix.imagem }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      SISTEMA: ${{ matrix.sistema }}
+    steps:
+      # Sem o git, que o contêiner limpo não tem, o checkout baixa os arquivos pela API do GitHub.
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: starsonic-video-linux-amd64
+          path: agente
+      - uses: actions/download-artifact@v4
+        with:
+          name: starsonic-freeswitch-${{ matrix.sistema }}
+          path: pacote
+      - name: SHA-256
+        working-directory: pacote
+        run: sha256sum -c "starsonic-freeswitch-$SISTEMA-amd64.tar.gz.sha256"
+      # O artefato perde a permissão de execução.
+      - name: Conferir a configuração
+        run: |
+          chmod +x agente/starsonic-video
+          bash video-servidor/freeswitch/conferir-configuracao.sh agente/starsonic-video "pacote/starsonic-freeswitch-$SISTEMA-amd64.tar.gz"

@@ -164,4 +164,5 @@ Tudo vai em HTTPS, na 443 do servidor de vídeo, com `Authorization: Bearer <cha
 - **Os registros:**
   - do agente: só o método, a rota (o padrão, sem ids), o status, o tempo, as contagens e os códigos de erro;
   - do FreeSWITCH: o console no nível `warning`, para o journal, sem arquivo de log;
+  - do coturn: o syslog (o journal), a única exceção à regra de baixo, porque ele pode levar o usuário do TURN (`<vence>:<participante>`), que é só um vencimento e o id sorteado do participante, nunca um nome, um número de telefone ou o código de um link;
   - nunca a chave, uma senha, um nome, um número de telefone, o código de um link, uma sala ou um participante.

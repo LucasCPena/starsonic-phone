@@ -1,0 +1,185 @@
+{{- /*
+  O freeswitch.xml do servidor de vídeo: um arquivo só, sem vars.xml. O gerar.FreeSWITCH o preenche, e todo
+  valor que vem dos dados passa pelo xml (o escape do XML). Os valores são os das seções 1, 6 e 7 do
+  docs/video-agente.md.
+
+  O FreeSWITCH passa o arquivo por um pré-processador, linha por linha, antes de ler o XML (o preprocess do
+  src/switch_xml.c): ele expande o $${...}, trata como comando o comentário que começa com "#" e a linha com
+  o texto X-PRE-PROCESS (ou a joga fora), e joga fora a linha que tem "<?". Por isso, nada aqui tem esses
+  textos, e a senha do ESL, o único valor livre, só tem letras e números (o config.Ler confere).
+*/ -}}
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Gerado pelo starsonic-video configurar, a partir do config.json do agente. Não edite: o configurar o escreve de novo. -->
+<document type="freeswitch/xml">
+  <section name="configuration">
+    <configuration name="switch.conf">
+      <settings>
+        <param name="rtp-start-port" value="{{xml .MidiaInicio}}"/>
+        <param name="rtp-end-port" value="{{xml .MidiaFim}}"/>
+        <param name="max-sessions" value="100"/>
+        <param name="sessions-per-second" value="20"/>
+        <param name="loglevel" value="warning"/>
+        <param name="colorize-console" value="false"/>
+        <param name="dump-cores" value="no"/>
+      </settings>
+    </configuration>
+
+    <!-- Os nove módulos do pacote, na ordem de carga. -->
+    <configuration name="modules.conf">
+      <modules>
+        <load module="mod_console"/>
+        <load module="mod_event_socket"/>
+        <load module="mod_xml_curl"/>
+        <load module="mod_sofia"/>
+        <load module="mod_commands"/>
+        <load module="mod_dptools"/>
+        <load module="mod_conference"/>
+        <load module="mod_dialplan_xml"/>
+        <load module="mod_opus"/>
+      </modules>
+    </configuration>
+
+    <!-- O registro vai só para o console (o journal), do nível warning para cima. Sem o mapa "all", o
+         mod_console não escreve nada. -->
+    <configuration name="console.conf">
+      <mappings>
+        <map name="all" value="console,alert,crit,err,warning"/>
+      </mappings>
+      <settings>
+        <param name="loglevel" value="warning"/>
+        <param name="colorize" value="false"/>
+      </settings>
+    </configuration>
+
+    <configuration name="event_socket.conf">
+      <settings>
+        <param name="listen-ip" value="127.0.0.1"/>
+        <param name="listen-port" value="{{xml .PortaESL}}"/>
+        <param name="password" value="{{xml .SenhaESL}}"/>
+        <param name="apply-inbound-acl" value="loopback.auto"/>
+      </settings>
+    </configuration>
+
+    <!-- A discagem é do agente: ele diz quem entra em qual reunião. -->
+    <configuration name="xml_curl.conf">
+      <bindings>
+        <binding name="starsonic">
+          <param name="gateway-url" value="{{xml .URLDiscagem}}" bindings="dialplan"/>
+          <param name="timeout" value="5"/>
+          <param name="enable-post-var" value="Unique-ID"/>
+          <param name="enable-post-var" value="Hunt-Context"/>
+          <param name="enable-post-var" value="Hunt-Destination-Number"/>
+          <param name="enable-post-var" value="variable_sip_h_X-Starsonic-Senha"/>
+          <param name="enable-post-var" value="variable_sofia_profile_name"/>
+        </binding>
+      </bindings>
+    </configuration>
+
+    <!-- O navegador chega pelo /sip do agente, no WebSocket local. O app (etapa 2) chega pelo SIP sobre TLS. -->
+    <configuration name="sofia.conf">
+      <profiles>
+        <profile name="navegador">
+          <settings>
+            <param name="sip-ip" value="127.0.0.1"/>
+            <param name="sip-port" value="{{xml .PortaSIPNavegador}}"/>
+            <param name="ws-binding" value="{{xml .WSBinding}}"/>
+            {{- template "perfil" .}}
+            <param name="inbound-codec-prefs" value="OPUS,VP8"/>
+            <param name="outbound-codec-prefs" value="OPUS,VP8"/>
+          </settings>
+        </profile>
+        <profile name="tls">
+          <settings>
+            <param name="sip-ip" value="{{xml .IPPrivado}}"/>
+            <param name="sip-port" value="5080"/>
+            <param name="tls" value="true"/>
+            <param name="tls-only" value="true"/>
+            <param name="tls-sip-port" value="{{xml .PortaTLS}}"/>
+            <param name="tls-cert-dir" value="{{xml .PastaTLS}}"/>
+            <param name="tls-version" value="tlsv1.2"/>
+            {{- template "perfil" .}}
+            <param name="inbound-codec-prefs" value="OPUS,PCMU,PCMA,VP8"/>
+            <param name="outbound-codec-prefs" value="OPUS,PCMU,PCMA,VP8"/>
+          </settings>
+        </profile>
+      </profiles>
+    </configuration>
+
+    <!-- Sem sons, sem gravação e sem os controles por DTMF. -->
+    <configuration name="conference.conf">
+      <profiles>
+        <profile name="starsonic">
+          <param name="rate" value="48000"/>
+          <param name="interval" value="20"/>
+          <param name="channels" value="1"/>
+          <param name="video-mode" value="mux"/>
+          <param name="video-layout-name" value="{{xml .LayoutDaReuniao}}"/>
+          <param name="video-canvas-size" value="1280x720"/>
+          <param name="video-fps" value="15"/>
+          <param name="video-codec-bandwidth" value="1.5mb"/>
+          <param name="video-canvas-bgcolor" value="#04060E"/>
+          <param name="video-letterbox-bgcolor" value="#04060E"/>
+          <param name="video-no-video-avatar" value="{{xml .QuadroSemCamera}}"/>
+          <param name="max-members" value="12"/>
+          <param name="conference-flags" value="minimize-video-encoding"/>
+          <param name="verbose-events" value="true"/>
+          <param name="caller-controls" value="none"/>
+        </profile>
+      </profiles>
+    </configuration>
+
+    <!-- Os layouts da seção 7 do docs/video-agente.md: nenhum quadro é o "floor". -->
+    <configuration name="conference_layouts.conf">
+      <layout-settings>
+        <layouts>
+          {{- range .Layouts}}
+          <layout name="{{xml .Nome}}">
+            {{- range .Quadros}}
+            <image x="{{xml .X}}" y="{{xml .Y}}" scale="{{xml .Scale}}"
+              {{- if .HScale}} hscale="{{xml .HScale}}"{{end}}
+              {{- if .Reserva}} reservation_id="{{xml .Reserva}}"{{end}}/>
+            {{- end}}
+          </layout>
+          {{- end}}
+        </layouts>
+        <groups>
+          <group name="{{xml .Grupo.Nome}}">
+            {{- range .Grupo.Layouts}}
+            <layout>{{xml .}}</layout>
+            {{- end}}
+          </group>
+        </groups>
+      </layout-settings>
+    </configuration>
+
+    <!-- Sem esta seção, o mod_opus escreve um [ERR] ao carregar. Vazia, ele usa os padrões dele. -->
+    <configuration name="opus.conf"/>
+  </section>
+
+  <!-- Quando o agente não responde ao mod_xml_curl, vale este dialplan: ninguém entra. -->
+  <section name="dialplan">
+    <context name="reunioes">
+      <extension name="sem-agente">
+        <condition>
+          <action application="respond" data="503 Service Unavailable"/>
+        </condition>
+      </extension>
+    </context>
+  </section>
+</document>
+{{- /* O que os dois perfis do sofia têm igual. */ -}}
+{{- define "perfil"}}
+            <param name="rtp-ip" value="{{xml .IPPrivado}}"/>
+            <param name="ext-rtp-ip" value="{{xml .IPPublico}}"/>
+            <param name="ext-sip-ip" value="{{xml .IPPublico}}"/>
+            <param name="context" value="reunioes"/>
+            <param name="dialplan" value="XML"/>
+            <param name="auth-calls" value="false"/>
+            <param name="disable-register" value="true"/>
+            <param name="inbound-late-negotiation" value="true"/>
+            <param name="rtp-timeout-sec" value="60"/>
+            <param name="rtp-hold-timeout-sec" value="600"/>
+            {{- range .ACLs}}
+            <param name="apply-candidate-acl" value="{{xml .}}"/>
+            {{- end}}
+{{- end}}
