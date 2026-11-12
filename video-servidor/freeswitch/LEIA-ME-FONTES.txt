@@ -15,38 +15,41 @@ O que tem aqui:
   modules.conf           os nove módulos do pacote.
   pacotes-de-build.txt   os pacotes do apt do build, um por linha.
 
-Como montar, no Ubuntu 24.04 ou no Debian 12 (amd64), como root, numa máquina de build: o prefixo
-é o /opt/starsonic-freeswitch, e o que estiver nele é apagado. Nunca num servidor em uso.
+Há dois jeitos de montar, os dois no Ubuntu 24.04 ou no Debian 12 (amd64), como root, numa máquina
+de build: o prefixo é o /opt/starsonic-freeswitch. Nunca num servidor em uso.
 
-1. Os pacotes do build:
+Primeiro, os pacotes do build (o apt precisa da rede):
      apt-get update
      xargs -a pacotes-de-build.txt apt-get install -y --no-install-recommends
 
-2. Em cada pasta, os patches de patches/<projeto>/, se houver, na ordem dos nomes:
-     git apply ../patches/<projeto>/<arquivo>.patch
+A. Com o construir.sh, que busca o código pela rede. Ele lê o deps.lock e o modules.conf ao lado
+   dele e baixa os commits fixados dos repositórios oficiais: as pastas deste pacote não entram.
+   Ele apaga o /opt/starsonic-freeswitch, monta os três projetos, tira dali o que o servidor não usa,
+   passa o strip, escreve o pacotes.txt e o VERSOES.txt e deixa os dois pacotes em saida/. Nesta
+   pasta, com o sistema da máquina (ubuntu-24.04 ou debian-12):
+     bash construir.sh ubuntu-24.04 trabalho saida
 
-3. O sofia-sip, o spandsp e o FreeSWITCH, nessa ordem:
-     cd sofia-sip
-     ./bootstrap.sh
-     ./configure --prefix=/opt/starsonic-freeswitch --with-glib=no --without-doxygen
-     make && make install
-     cd ../spandsp
-     ./bootstrap.sh
-     ./configure --prefix=/opt/starsonic-freeswitch
-     make && make install
-     cd ../freeswitch
-     cp ../modules.conf .
-     ./bootstrap.sh -j
-     ./configure --prefix=/opt/starsonic-freeswitch --disable-fhs \
-       PKG_CONFIG_PATH=/opt/starsonic-freeswitch/lib/pkgconfig \
-       LDFLAGS=-Wl,-rpath,/opt/starsonic-freeswitch/lib
-     make && make install
-
-4. O construir.sh faz esses passos, buscando os mesmos commits nos repositórios oficiais (ele roda
-   de dentro do repositório do Starsonic Phone, na pasta video-servidor/freeswitch/). Depois, tira
-   do /opt/starsonic-freeswitch o que o servidor não usa (os cabeçalhos, as bibliotecas estáticas,
-   a configuração, as páginas, os sons e os scripts de exemplo), passa o strip nos programas e nas
-   bibliotecas, escreve o pacotes.txt e o VERSOES.txt e monta o pacote.
+B. Sem rede, com as pastas deste pacote, à mão, com o /opt/starsonic-freeswitch vazio:
+   1. Em cada pasta, os patches de patches/<projeto>/, se houver, na ordem dos nomes:
+        git apply ../patches/<projeto>/<arquivo>.patch
+   2. O sofia-sip, o spandsp e o FreeSWITCH, nessa ordem:
+        cd sofia-sip
+        ./bootstrap.sh
+        ./configure --prefix=/opt/starsonic-freeswitch --with-glib=no --without-doxygen
+        make && make install
+        cd ../spandsp
+        ./bootstrap.sh
+        ./configure --prefix=/opt/starsonic-freeswitch
+        make && make install
+        cd ../freeswitch
+        cp ../modules.conf .
+        ./bootstrap.sh -j
+        ./configure --prefix=/opt/starsonic-freeswitch --disable-fhs \
+          PKG_CONFIG_PATH=/opt/starsonic-freeswitch/lib/pkgconfig \
+          LDFLAGS=-Wl,-rpath,/opt/starsonic-freeswitch/lib
+        make && make install
+   Isso deixa o FreeSWITCH em /opt/starsonic-freeswitch. O pacote do sistema tira dali o que o
+   servidor não usa e passa o strip: o passo 4 do construir.sh diz o quê.
 
 Para usar uma versão sua do sofia-sip ou do spandsp (LGPL): monte-a com o mesmo prefixo e ponha o
 .so dela no lugar do que está em /opt/starsonic-freeswitch/lib. O FreeSWITCH procura as bibliotecas

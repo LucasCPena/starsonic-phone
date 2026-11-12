@@ -43,7 +43,10 @@ if [ "$achado" != "$SISTEMA" ]; then
 fi
 
 AQUI="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LOCK="$(cd "$AQUI/.." && pwd)/deps.lock"
+# O deps.lock fica ao lado deste script no pacote das fontes, e na pasta de cima no repositório
+# (video-servidor/deps.lock). O de cá vem primeiro: a pasta de cima do pacote pode ter outro deps.lock.
+LOCK="$AQUI/deps.lock"
+[ -e "$LOCK" ] || LOCK="$AQUI/../deps.lock"
 mkdir -p "$2" "$3"
 TRABALHO="$(cd "$2" && pwd)"
 SAIDA="$(cd "$3" && pwd)"
@@ -87,8 +90,10 @@ preparar_fontes() {
         exit 1
     fi
 
-    # Os patches vão sempre sobre a árvore do commit, na ordem dos nomes. Sem a pasta, nenhum.
+    # Os patches vão sempre sobre a árvore do commit, na ordem dos nomes. Sem a pasta, nenhum. O clean
+    # tira o que um patch criou num build anterior; sem o -x, o que o .gitignore ignora (o build) fica.
     git -C "$pasta" reset -q --hard
+    git -C "$pasta" clean -q -fd
     for patch in "$AQUI/patches/$projeto"/*.patch; do
         [ -e "$patch" ] || continue
         echo "$projeto: aplicando $(basename "$patch")"
@@ -173,11 +178,14 @@ cd "$TRABALHO/freeswitch"
 make -j"$JOBS"
 make install
 
-# 4. O que o servidor não usa: os cabeçalhos e as bibliotecas estáticas, e a configuração, as páginas,
-# os sons e os scripts de exemplo (a configuração vem do starsonic-video configurar).
+# 4. O que o servidor não usa: os cabeçalhos e as bibliotecas estáticas; a configuração, as páginas,
+# os sons e os scripts de exemplo (a configuração vem do starsonic-video configurar); as pastas das
+# gravações e dos CDR (nada é gravado); e, no bin/, os programas que não são o freeswitch e o fs_cli
+# (os outros do FreeSWITCH e os do sofia-sip).
 rm -rf "$PREFIXO/include" "$PREFIXO/lib/pkgconfig" "$PREFIXO/conf" "$PREFIXO/htdocs" \
-    "$PREFIXO/sounds" "$PREFIXO/grammar" "$PREFIXO/scripts"
+    "$PREFIXO/sounds" "$PREFIXO/grammar" "$PREFIXO/scripts" "$PREFIXO/recordings" "$PREFIXO/log/xml_cdr"
 find "$PREFIXO" -type f \( -name '*.a' -o -name '*.la' \) -delete
+find "$PREFIXO/bin" -mindepth 1 -maxdepth 1 ! -name freeswitch ! -name fs_cli -exec rm -rf {} +
 LISTA_ELF="$(elfs)"
 while IFS= read -r arquivo; do
     strip --strip-unneeded "$arquivo"
@@ -188,6 +196,10 @@ done <<<"$LISTA_ELF"
 CAMINHOS="$(
     while IFS= read -r arquivo; do
         if ! saida="$(ldd "$arquivo" 2>&1)"; then
+            # Um ELF estático não pede biblioteca nenhuma.
+            if grep -q 'not a dynamic executable' <<<"$saida"; then
+                continue
+            fi
             echo "construir: o ldd não leu $arquivo: $saida" >&2
             exit 1
         fi

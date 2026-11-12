@@ -48,6 +48,10 @@ while IFS= read -r arquivo; do
     fi
     elfs=$((elfs + 1))
     if ! saida="$(ldd "$arquivo" 2>&1)"; then
+        # Um ELF estático não pede biblioteca nenhuma.
+        if grep -q 'not a dynamic executable' <<<"$saida"; then
+            continue
+        fi
         falhar "o ldd não leu $arquivo: $saida"
     fi
     if grep -q 'not found' <<<"$saida"; then
