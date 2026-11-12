@@ -1,38 +1,48 @@
 // A sala de vídeo em grupo no motor do PJSIP, contra o registrador falso que faz de vários convidados: cada um com a
 // imagem dele (VIDEO SOURCE), as contagens por convidado, o 180, o BYE e a espera. As ligações da sala (o nascimento,
 // os convidados chamados e atendidos, a sala cheia, as recusas, as saídas e o fim), o som de todos com todos e o id da
-// sala nos métodos de sempre. Com o PJSIP sem o vídeo (como o do Android), só o contrato do motor sem sala, o mesmo do
-// motor do baresip (test_engine_baresip.cpp).
+// sala nos métodos de sempre. E os mosaicos: o de cada convidado (o eco do registrador devolve o que ele recebe) e o de
+// quem montou (no FrameSink, com o id da sala), a nossa câmera neles e a lista de vídeo que muda no meio da sala. Com o
+// PJSIP sem o vídeo (como o do Android), só o contrato do motor sem sala, o mesmo do motor do baresip
+// (test_engine_baresip.cpp).
 #include "call_fixture.h"
 
-#include <pjmedia/config.h>
+#include <pjsua-lib/pjsua.h>
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <functional>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include "SipEngine.h"
 #include "Video.h"
+#include "video_devices_fixture.h"
 
 using namespace starsonic;
 using phone_test::Phone;
 
 #if PJMEDIA_HAS_VIDEO
 
+using phone_test::AddColorbar;
 using phone_test::CallEvent;
 using phone_test::kWaitSeconds;
 using phone_test::Last;
 using phone_test::Lines;
+using phone_test::RemoveColorbar;
 using phone_test::TestSink;
+using phone_test::Transport;
 using phone_test::WaitUntil;
 
 namespace {
 
 using State = RoomMember::State;
 using Members = std::vector<RoomMember>;
+using Clock = std::chrono::steady_clock;
+using Yuv = TestSink::Yuv;
 
 // Os quadros de dois convidados lado a lado no mosaico de quem montou (as MosaicCells de 2 em 1280x720).
 const RoomTile kLeft{0, 0, 0.5, 1};
@@ -117,6 +127,68 @@ bool IsRoomEvent(const CallEvent& event) { return event.kind == CallEvent::Room;
 bool NoLogLine(Phone& phone, const std::string& prefix) {
     const Lines log = phone.registrar.Log();
     return std::none_of(log.begin(), log.end(), [&](const std::string& line) { return line.rfind(prefix, 0) == 0; });
+}
+
+// As imagens dos convidados (o VIDEO SOURCE color do registrador) e o fundo do mosaico (o #04060e da página): nenhuma é
+// uma das barras da câmera de teste (as barras coloridas da PJSIP).
+const Yuv kOrange{150, 44, 200};
+const Yuv kPurple{60, 200, 180};
+const Yuv kTeal{180, 100, 60};
+const Yuv kBackground{21, 132, 127};
+// Cada espera de uma cor vai até kColorSeconds. As tolerâncias: a dos quadros que voltaram pelo codificador (o eco de
+// um convidado), na cor de um convidado e no fundo, e a do mosaico de quem montou, que só passa pelo encaixe.
+const int kColorSeconds = 8;
+const int kEchoTolerance = 16;
+const int kEchoBackground = 10;
+const int kHostTolerance = 2;
+
+// O motor sem as câmeras da PJSIP (como um computador sem câmera).
+void NullVideo(EngineConfig& config) { config.nullVideo = true; }
+
+// A imagem que o registrador manda como o convidado number: uma cor só, ou o eco do que ele recebe (o mosaico dele).
+void ShowColor(Phone& phone, const std::string& number, const Yuv& color) {
+    phone.registrar.VideoSource(number, "color " + std::to_string(color.y) + " " + std::to_string(color.u) + " " +
+                                            std::to_string(color.v));
+}
+
+void ShowEcho(Phone& phone, const std::string& number) { phone.registrar.VideoSource(number, "echo"); }
+
+// A sala com vídeo dos testes do mosaico: a videochamada ao 2002 e os convidados 2003, 2004..., cada um na sala. Os ids
+// da ligação de onde a sala nasceu e dos convidados, na ordem de entrada.
+std::vector<int> VideoRoom(Phone& phone, int guests) {
+    std::vector<int> ids{VideoCall(phone, "2002")};
+    for (int index = 0; index < guests; ++index) ids.push_back(Guest(phone, std::to_string(2003 + index)));
+    return ids;
+}
+
+// O pixel (fx, fy) do último quadro do id está na cor, com a tolerância (um quadro do id chegou).
+bool IsColor(const TestSink& sink, int id, double fx, double fy, const Yuv& color, int tolerance) {
+    const std::optional<Yuv> pixel = sink.PixelAt(id, fx, fy);
+    return pixel && std::abs(pixel->y - color.y) <= tolerance && std::abs(pixel->u - color.u) <= tolerance &&
+           std::abs(pixel->v - color.v) <= tolerance;
+}
+
+// Espera até seconds que o pixel (fx, fy) do último quadro do id fique na cor.
+bool SeesColor(const TestSink& sink, int id, double fx, double fy, const Yuv& color, int tolerance,
+               int seconds = kColorSeconds) {
+    return sink.WaitForColor(id, fx, fy, color, tolerance, seconds);
+}
+
+// Espera até seconds as barras da câmera na linha fy do último quadro do id, entre fromX e toX: o Y varia muito.
+bool SeesBars(const TestSink& sink, int id, double fy, double fromX, double toX, int seconds = kColorSeconds) {
+    return WaitUntil([&] { return sink.RowSpanY(id, fy, fromX, toX) > 100; }, seconds);
+}
+
+// Espera até 2 s pelos quadros de 1280x720 do mosaico de quem montou, com o id da sala: pelo menos 30 (os 25 qps).
+bool HostFramesFlow(const TestSink& sink, int roomId) {
+    const Clock::time_point since = Clock::now();
+    return WaitUntil([&] { return sink.Count(roomId, 1280, 720, since) >= 30; }, 2);
+}
+
+// O convidado callId está na sala com a imagem dele chegando.
+bool HasImage(const RoomInfo& room, int callId) {
+    return std::any_of(room.members.begin(), room.members.end(),
+                       [callId](const RoomMember& member) { return member.callId == callId && member.image; });
 }
 
 }  // namespace
@@ -677,6 +749,359 @@ TEST_CASE("a guest is not a line: Activate, SetHold and Join refuse it and the r
     CHECK(phone.WaitLinks(g1, {0, base}));
     CHECK(phone.engine->Room() == room);
     CHECK(NoLogLine(phone, "reinv-in"));
+}
+
+TEST_CASE("each guest receives the others and not itself") {
+    TestSink sink;
+    Phone phone;
+    INFO(sink.Text());
+    INFO(phone.registrar.LogText());
+    INFO(phone.listener.RoomsText());
+    INFO(phone.listener.LogTail());
+    phone.engine->SetFrameSink(&sink);
+    phone.engine->SetVideoSettings(RoomSettings());
+    ShowColor(phone, "2002", kOrange);
+    ShowColor(phone, "2003", kPurple);
+    ShowEcho(phone, "2004");
+    const std::vector<int> ids = VideoRoom(phone, 2);
+    const int base = ids[0];
+    const int g1 = ids[1];
+    const int g2 = ids[2];
+    const int roomId = phone.engine->Room().id;
+    REQUIRE(roomId > 0);
+
+    // O mosaico do g2 (o eco dele): a nossa câmera e a base em cima, e o g1 no centro da linha de baixo. O fundo dos
+    // dois lados do g1 mostra que não há um quarto quadro: o g2 não recebe a própria imagem.
+    CHECK(SeesBars(sink, g2, 0.25, 0.02, 0.48));
+    CHECK(SeesColor(sink, g2, 0.75, 0.25, kOrange, kEchoTolerance));
+    CHECK(SeesColor(sink, g2, 0.5, 0.75, kPurple, kEchoTolerance));
+    CHECK(SeesColor(sink, g2, 0.1, 0.75, kBackground, kEchoBackground));
+    CHECK(SeesColor(sink, g2, 0.9, 0.75, kBackground, kEchoBackground));
+
+    // A troca: o g1 no eco e o g2 em verde-água. O mosaico do g1 tem a base em cima e o g2 embaixo.
+    ShowEcho(phone, "2003");
+    ShowColor(phone, "2004", kTeal);
+    CHECK(SeesColor(sink, g1, 0.75, 0.25, kOrange, kEchoTolerance));
+    CHECK(SeesColor(sink, g1, 0.5, 0.75, kTeal, kEchoTolerance));
+    CHECK(SeesColor(sink, g1, 0.1, 0.75, kBackground, kEchoBackground));
+    CHECK(SeesColor(sink, g1, 0.9, 0.75, kBackground, kEchoBackground));
+
+    // O mosaico de quem montou, com o id da sala: os três, na ordem de entrada. A base encaixa no primeiro quadro com
+    // as faixas do fundo dos lados, e o terceiro fica no centro da linha de baixo.
+    CHECK(HostFramesFlow(sink, roomId));
+    CHECK(SeesColor(sink, roomId, 0.25, 0.25, kOrange, kHostTolerance));
+    CHECK(SeesColor(sink, roomId, 0.03, 0.25, kBackground, kHostTolerance));
+    CHECK(SeesColor(sink, roomId, 0.1, 0.75, kBackground, kHostTolerance));
+    CHECK(SeesColor(sink, roomId, 0.9, 0.75, kBackground, kHostTolerance));
+    const CallVideo video = phone.engine->Video(roomId);
+    CHECK(video.active);
+    CHECK(video.remote);
+    CHECK(WaitRoom(phone, [&](const RoomInfo& room) { return HasImage(room, base) && HasImage(room, g2); }));
+
+    // A terceira troca: a base no eco, o g1 em roxo e o g2 em verde-água. O mosaico da base tem a nossa câmera, o g1
+    // e o g2.
+    ShowEcho(phone, "2002");
+    ShowColor(phone, "2003", kPurple);
+    CHECK(SeesBars(sink, base, 0.25, 0.02, 0.48));
+    CHECK(SeesColor(sink, base, 0.75, 0.25, kPurple, kEchoTolerance));
+    CHECK(SeesColor(sink, base, 0.5, 0.75, kTeal, kEchoTolerance));
+    CHECK(SeesColor(sink, base, 0.1, 0.75, kBackground, kEchoBackground));
+    CHECK(SeesColor(sink, base, 0.9, 0.75, kBackground, kEchoBackground));
+}
+
+TEST_CASE("a guest without video is a background tile and still hears and is heard") {
+    TestSink sink;
+    Phone phone;
+    INFO(sink.Text());
+    INFO(phone.registrar.LogText());
+    INFO(phone.listener.RoomsText());
+    INFO(phone.listener.LogTail());
+    phone.engine->SetFrameSink(&sink);
+    phone.engine->SetVideoSettings(RoomSettings());
+    ShowColor(phone, "2002", kOrange);
+    WithoutVideo(phone, {"2003"});
+    ShowColor(phone, "2004", kPurple);
+    const std::vector<int> ids = VideoRoom(phone, 2);
+    const int base = ids[0];
+    const int g1 = ids[1];
+    const int g2 = ids[2];
+    const int roomId = phone.engine->Room().id;
+
+    // No mosaico de quem montou, o g1 (um telefone sem câmera) fica com o fundo entre as imagens dos outros dois.
+    CHECK(SeesColor(sink, roomId, 0.25, 0.25, kOrange, kHostTolerance));
+    CHECK(SeesColor(sink, roomId, 0.5, 0.75, kPurple, kHostTolerance));
+    CHECK(SeesColor(sink, roomId, 0.75, 0.25, kBackground, kHostTolerance));
+    CHECK(WaitRoom(phone, [&](const RoomInfo& room) { return HasImage(room, base) && HasImage(room, g2); }));
+    CHECK_FALSE(HasImage(phone.engine->Room(), g1));
+    // Ele ouve e é ouvido por todos.
+    CHECK(phone.WaitLinks(g1, {0, base, g2}));
+}
+
+TEST_CASE("the host's mosaic rearranges when a guest leaves") {
+    TestSink sink;
+    Phone phone;
+    INFO(sink.Text());
+    INFO(phone.registrar.LogText());
+    INFO(phone.listener.RoomsText());
+    INFO(phone.listener.LogTail());
+    phone.engine->SetFrameSink(&sink);
+    phone.engine->SetVideoSettings(RoomSettings());
+    ShowColor(phone, "2002", kOrange);
+    ShowColor(phone, "2003", kPurple);
+    ShowColor(phone, "2004", kTeal);
+    const std::vector<int> ids = VideoRoom(phone, 2);
+    const int base = ids[0];
+    const int roomId = phone.engine->Room().id;
+    REQUIRE(SeesColor(sink, roomId, 0.5, 0.75, kTeal, kHostTolerance));
+
+    // A ligação de onde a sala nasceu sai primeiro (o Review Focus 3): os dois que ficam, lado a lado, no mesmo id.
+    REQUIRE(phone.registrar.Control("BYE 2002") == Lines{"OK"});
+    REQUIRE(phone.WaitState(base, CallState::Disconnected));
+    CHECK(SeesColor(sink, roomId, 0.25, 0.5, kPurple, kHostTolerance, 2));
+    CHECK(SeesColor(sink, roomId, 0.75, 0.5, kTeal, kHostTolerance, 2));
+    // Cada imagem de 64x48 encaixa em 640x480 na célula de 640x720, a partir do y 120: o fundo acima dela.
+    CHECK(SeesColor(sink, roomId, 0.25, 0.08, kBackground, kHostTolerance, 2));
+    CHECK(phone.engine->Room().id == roomId);
+}
+
+TEST_CASE("a room in VP8 sends each guest its mosaic") {
+    TestSink sink;
+    Phone phone;
+    INFO(sink.Text());
+    INFO(phone.registrar.LogText());
+    INFO(phone.listener.RoomsText());
+    INFO(phone.listener.LogTail());
+    phone.engine->SetFrameSink(&sink);
+    VideoSettings settings = RoomSettings();
+    settings.h264 = false;
+    phone.engine->SetVideoSettings(settings);
+    ShowEcho(phone, "2002");
+    ShowEcho(phone, "2003");
+
+    // Cada um recebe o mosaico dele em 320x240: a nossa câmera encaixada no quadro da esquerda, com o fundo em cima
+    // dela (a câmera direto ocuparia a imagem toda).
+    for (const int id : VideoRoom(phone, 1)) {
+        CAPTURE(id);
+        CHECK(sink.WaitFor(id, 5, kColorSeconds, 320, 240));
+        CHECK(SeesBars(sink, id, 0.5, 0.02, 0.48));
+        CHECK(SeesColor(sink, id, 0.25, 0.1, kBackground, kEchoBackground));
+    }
+    CHECK(phone.registrar.KeyframesOf("2002") > 0);
+    CHECK(phone.registrar.KeyframesOf("2003") > 0);
+}
+
+TEST_CASE("with one guest left the guest gets our camera directly again") {
+    TestSink sink;
+    Phone phone;
+    INFO(sink.Text());
+    INFO(phone.registrar.LogText());
+    INFO(phone.listener.RoomsText());
+    INFO(phone.listener.VideosText());
+    INFO(phone.listener.LogTail());
+    phone.engine->SetFrameSink(&sink);
+    phone.engine->SetVideoSettings(RoomSettings());
+    ShowEcho(phone, "2002");
+    ShowColor(phone, "2003", kPurple);
+    const std::vector<int> ids = VideoRoom(phone, 1);
+    const int base = ids[0];
+    const int g1 = ids[1];
+    const int roomId = phone.engine->Room().id;
+    REQUIRE(SeesColor(sink, base, 0.75, 0.5, kPurple, kEchoTolerance));
+
+    // O g1 sai: a sala acaba, e a base, uma ligação comum de novo, recebe a nossa câmera direto, na imagem toda (as
+    // barras na linha inteira, e o roxo some do lado direito).
+    REQUIRE(phone.engine->Hangup(g1));
+    REQUIRE(WaitRoom(phone, [](const RoomInfo& room) { return room.ended; }));
+    const Clock::time_point ended = Clock::now();
+    CHECK(WaitUntil([&] {
+        return sink.RowSpanY(base, 0.5, 0.02, 0.98) > 100 && !IsColor(sink, base, 0.75, 0.5, kPurple, kEchoTolerance);
+    }, 6));
+    CHECK(phone.listener.WaitForVideo(base, [](const CallVideo& video) { return video.camera; }, kWaitSeconds));
+    CHECK(phone.engine->Video(base).camera);
+    // Nenhum quadro com o id da sala 500 ms depois do fim dela.
+    std::this_thread::sleep_until(ended + std::chrono::seconds(1));
+    CHECK(sink.Count(roomId, 0, 0, ended + std::chrono::milliseconds(500)) == 0);
+}
+
+TEST_CASE("our camera off, or the screen locked, empties our tile and the room goes on") {
+    TestSink sink;
+    Phone phone;
+    INFO(sink.Text());
+    INFO(phone.registrar.LogText());
+    INFO(phone.listener.RoomsText());
+    INFO(phone.listener.VideosText());
+    INFO(phone.listener.LogTail());
+    phone.engine->SetFrameSink(&sink);
+    phone.engine->SetVideoSettings(RoomSettings());
+    ShowColor(phone, "2002", kOrange);
+    ShowEcho(phone, "2003");
+    const std::vector<int> ids = VideoRoom(phone, 1);
+    const int roomId = phone.engine->Room().id;
+    const int g1 = ids[1];
+    // O mosaico do g1: a nossa câmera à esquerda e a base à direita.
+    REQUIRE(SeesBars(sink, g1, 0.5, 0.02, 0.48));
+    REQUIRE(SeesColor(sink, g1, 0.75, 0.5, kOrange, kEchoTolerance));
+    // A nossa câmera chega aos dois pelo mosaico (o camera da sala), e não direto (o de cada um). Ela é a da sala: o
+    // id de um convidado não a muda.
+    CHECK(phone.listener.WaitForVideo(roomId, [](const CallVideo& video) { return video.camera; }, kWaitSeconds));
+    for (const int id : ids) {
+        CAPTURE(id);
+        CHECK_FALSE(phone.engine->Video(id).camera);
+        CHECK_FALSE(phone.engine->SetCamera(id, false));
+    }
+
+    // A câmera desligada na sala: o quadro dela fica com o fundo, e ela fecha.
+    REQUIRE(phone.engine->SetCamera(roomId, false));
+    CHECK(SeesColor(sink, g1, 0.25, 0.5, kBackground, kEchoBackground));
+    CHECK_FALSE(phone.engine->Video(roomId).camera);
+    const Clock::time_point closed = Clock::now();
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    CHECK(sink.Count(TestSink::kLocal, 0, 0, closed) == 0);
+    // Ligada de novo, as barras voltam.
+    REQUIRE(phone.engine->SetCamera(roomId, true));
+    CHECK(SeesBars(sink, g1, 0.5, 0.02, 0.48));
+
+    // A tela bloqueada também esvazia o quadro, e a sala segue: o mosaico continua chegando ao g1.
+    phone.engine->SetCameraPaused(true);
+    CHECK(SeesColor(sink, g1, 0.25, 0.5, kBackground, kEchoBackground));
+    const Clock::time_point paused = Clock::now();
+    CHECK(WaitUntil([&] { return sink.Count(g1, 0, 0, paused) >= 5; }, kColorSeconds));
+    phone.engine->SetCameraPaused(false);
+    CHECK(SeesBars(sink, g1, 0.5, 0.02, 0.48));
+}
+
+TEST_CASE("without a camera the guests still get the mosaic") {
+    TestSink sink;
+    Phone phone(Transport::Udp, nullptr, NullVideo);
+    INFO(sink.Text());
+    INFO(phone.registrar.LogText());
+    INFO(phone.listener.RoomsText());
+    INFO(phone.listener.LogTail());
+    phone.engine->SetFrameSink(&sink);
+    phone.engine->SetVideoSettings(RoomSettings());
+    ShowColor(phone, "2002", kOrange);
+    ShowEcho(phone, "2003");
+
+    // Sem câmera, a videochamada só recebe: nada vai para o 2002.
+    const int base = VideoCall(phone, "2002");
+    REQUIRE(SeesColor(sink, base, 0.5, 0.5, kOrange, kHostTolerance));
+    CHECK(phone.registrar.PacketsOf("2002") == 0);
+
+    // A sala nasce dela com um re-INVITE sendrecv: a base passa a mandar, o mosaico dela.
+    const int g1 = Guest(phone, "2003");
+    CHECK(phone.registrar.WaitForLog("reinv-in 2002 sendrecv", kWaitSeconds));
+    CHECK(phone.registrar.WaitForPacketsOf("2002", 1, kColorSeconds));
+    // O g1 recebe o mosaico dele: o fundo no lugar da nossa câmera e a base à direita.
+    CHECK(phone.registrar.WaitForPacketsOf("2003", 1, kColorSeconds));
+    CHECK(SeesColor(sink, g1, 0.75, 0.5, kOrange, kEchoTolerance));
+    CHECK(SeesColor(sink, g1, 0.25, 0.5, kBackground, kEchoBackground));
+    const int packets = phone.registrar.PacketsOf("2003");
+    CHECK(phone.registrar.WaitForPacketsOf("2003", packets + 10, kColorSeconds));
+}
+
+TEST_CASE("a camera that leaves and comes back during the room keeps every guest's mosaic") {
+    TestSink sink;
+    Phone phone;
+    INFO(sink.Text());
+    INFO(phone.registrar.LogText());
+    INFO(phone.listener.RoomsText());
+    INFO(phone.listener.CameraProblemsText());
+    INFO(phone.listener.LogTail());
+    phone.engine->SetFrameSink(&sink);
+    phone.engine->SetVideoSettings(RoomSettings());
+    ShowEcho(phone, "2002");
+    ShowColor(phone, "2003", kPurple);
+    const int base = VideoRoom(phone, 1)[0];
+    const int roomId = phone.engine->Room().id;
+    REQUIRE(SeesBars(sink, base, 0.5, 0.02, 0.48));
+    REQUIRE(SeesColor(sink, base, 0.75, 0.5, kPurple, kEchoTolerance));
+
+    // A câmera em uso sai (as barras coloridas, que vêm antes dos dispositivos da sala na lista, e a releitura muda os
+    // ids deles): o Disconnected, o fundo no quadro dela, e o g1 segue no mosaico da base.
+    const std::vector<CameraProblem> disconnected{CameraProblem::Disconnected};
+    RemoveColorbar();
+    phone.engine->RefreshVideoDevices();
+    CHECK(WaitUntil([&] { return phone.listener.CameraProblems() == disconnected; }, kWaitSeconds));
+    CHECK(SeesColor(sink, base, 0.25, 0.5, kBackground, kEchoBackground));
+    CHECK(SeesColor(sink, base, 0.75, 0.5, kPurple, kEchoTolerance));
+
+    // Ela volta, agora no fim da lista, e o pedido de agora a liga de novo na sala.
+    AddColorbar();
+    phone.engine->RefreshVideoDevices();
+    REQUIRE(phone.engine->SetCamera(roomId, true));
+    CHECK(SeesBars(sink, base, 0.5, 0.02, 0.48));
+    CHECK(SeesColor(sink, base, 0.75, 0.5, kPurple, kEchoTolerance));
+    const int packets = phone.registrar.PacketsOf("2002");
+    CHECK(phone.registrar.WaitForPacketsOf("2002", packets + 10, kColorSeconds));
+}
+
+TEST_CASE("a device refresh during the room re-attaches each guest to its own mosaic") {
+    TestSink sink;
+    Phone phone;
+    INFO(sink.Text());
+    INFO(phone.registrar.LogText());
+    INFO(phone.listener.RoomsText());
+    INFO(phone.listener.LogTail());
+    phone.engine->SetFrameSink(&sink);
+    phone.engine->SetVideoSettings(RoomSettings());
+    ShowColor(phone, "2002", kOrange);
+    ShowEcho(phone, "2003");
+    ShowEcho(phone, "2004");
+    const std::vector<int> ids = VideoRoom(phone, 2);
+    const std::vector<int> echoes{ids[1], ids[2]};
+    const int roomId = phone.engine->Room().id;
+    for (const int id : echoes) REQUIRE(SeesColor(sink, id, 0.75, 0.25, kOrange, kEchoTolerance));
+
+    // Sem as barras coloridas, a releitura muda o id de cada dispositivo da sala (e a câmera em uso sai). Cada
+    // convidado volta ao mosaico dele, agora com o fundo no lugar da nossa câmera: a base em cima, à direita.
+    RemoveColorbar();
+    phone.engine->RefreshVideoDevices();
+    for (const int id : echoes) {
+        CAPTURE(id);
+        CHECK(SeesColor(sink, id, 0.25, 0.25, kBackground, kEchoBackground));
+        CHECK(SeesColor(sink, id, 0.75, 0.25, kOrange, kEchoTolerance));
+    }
+    // O mosaico de quem montou segue chegando, a 25 qps.
+    CHECK(HostFramesFlow(sink, roomId));
+}
+
+TEST_CASE("destroying the engine during a room hangs up every guest and no frame arrives after SetFrameSink(nullptr)") {
+    TestSink sink;
+    Phone phone;
+    INFO(sink.Text());
+    INFO(phone.registrar.LogText());
+    INFO(phone.listener.RoomsText());
+    INFO(phone.listener.LogTail());
+    phone.engine->SetFrameSink(&sink);
+    phone.engine->SetVideoSettings(RoomSettings());
+    ShowColor(phone, "2002", kOrange);
+    ShowColor(phone, "2003", kPurple);
+    ShowColor(phone, "2004", kTeal);
+    VideoRoom(phone, 2);
+    const int roomId = phone.engine->Room().id;
+    REQUIRE(SeesColor(sink, roomId, 0.5, 0.75, kTeal, kHostTolerance));
+
+    // O app fechando com a sala de pé (o Review Focus 5): o sink sai, e o motor acaba.
+    phone.engine->SetFrameSink(nullptr);
+    const Clock::time_point detached = Clock::now();
+    phone.engine.reset();
+    CHECK(phone.registrar.WaitForLog("bye-in 2002", kWaitSeconds));
+    CHECK(phone.registrar.WaitForLog("bye-in 2003", kWaitSeconds));
+    CHECK(phone.registrar.WaitForLog("bye-in 2004", kWaitSeconds));
+    CHECK(sink.CountAll(detached) == 0);
+}
+
+TEST_CASE("the test camera shows up and no room device does") {
+    Phone phone;
+    const std::vector<VideoDevice> devices = phone.engine->VideoDevices();
+    std::string names;
+    for (const VideoDevice& device : devices) names += device.name + "; ";
+    INFO(names);
+    CHECK(std::any_of(devices.begin(), devices.end(),
+                      [](const VideoDevice& device) { return device.name == "Colorbar generator"; }));
+    CHECK(std::none_of(devices.begin(), devices.end(), [](const VideoDevice& device) {
+        return device.name.find("Starsonic") != std::string::npos;
+    }));
 }
 
 #else

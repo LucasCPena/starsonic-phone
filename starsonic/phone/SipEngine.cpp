@@ -23,6 +23,7 @@
 #include "EngineEvents.h"
 #include "EngineLog.h"
 #include "PushDataCheck.h"
+#include "RoomVideo.h"
 #include "Text.h"
 #include "Video.h"
 #include "VideoRenderer.h"
@@ -64,6 +65,7 @@ public:
     ~Impl() {
 #if PJMEDIA_HAS_VIDEO
         SetRendererSink(nullptr);   // nenhum quadro ao sink do app daqui em diante
+        SetRendererTap(nullptr);    // nem à loja da sala
 #endif
         // Daqui em diante nenhuma ligação nova e nenhum evento (o destrutor não avisa o listener).
         calls_.Close();
@@ -103,8 +105,12 @@ public:
             ep.logConfig.writer = new LogForwarder(listener_);
             endpoint_->libInit(ep);
 #if PJMEDIA_HAS_VIDEO
-            // O desenhista nosso, com o vídeo da PJSIP já de pé (o libInit), antes de qualquer conta (o
-            // ResolveVideoDevices, no fim, acha o id dele).
+            // Os dispositivos da sala e o desenhista nosso, com o vídeo da PJSIP já de pé (o libInit), antes de
+            // qualquer conta (o ResolveVideoDevices, no fim, acha os ids). A sala vem antes do desenhista: ele segue
+            // logo antes das câmeras que entram depois na lista, como antes da sala, e continua o padrão de saída da
+            // PJSIP.
+            std::string roomError;
+            if (!RegisterRoomDevices(&roomError)) Log(1, "dispositivos da sala recusados: " + roomError);
             std::string rendererError;
             if (RegisterVideoRenderer(&rendererError) == PJMEDIA_VID_INVALID_DEV) {
                 Log(1, "desenhista de video recusado: " + rendererError);
@@ -736,8 +742,8 @@ private:
     }
 
     // Os ids de agora do desenhista e da câmera escolhida (pelo nome; vazio ou ausente da lista: a primeira câmera),
-    // que também vão para a conta: as próximas ligações montam o vídeo com eles. Os ids da PJSIP mudam a cada releitura
-    // da lista. Com a apiMutex_ (ou no Create).
+    // que também vão para a conta (com o lugar 1 da sala, sem câmera): as próximas ligações montam o vídeo com eles. Os
+    // ids da PJSIP mudam a cada releitura da lista. Com a apiMutex_ (ou no Create).
     VideoDeviceIds ResolveVideoDevices() {
         VideoDeviceIds ids;
         ids.renderer = FindVideoRenderer();
@@ -751,13 +757,17 @@ private:
         }
         renderDevice_ = ids.renderer;
         cameraDevice_ = ids.camera;
+        firstSeatDevice_ = FindRoomDevices().seats[0];
         if (account_) account_->SetVideoDevices(AccountCamera(), AccountRenderer());
         return ids;
     }
 
-    // A câmera e o desenhista da conta. Sem câmera, o id inválido: a PJSIP não acha câmera nenhuma para a ligação, como
-    // num computador sem câmera (e nenhuma usa: sem câmera, o vídeo só recebe).
-    pjmedia_vid_dev_index AccountCamera() const { return cameraDevice_; }
+    // A câmera e o desenhista da conta. Sem câmera, o lugar 1 da sala: a PJSIP só monta um vídeo que manda (o sendrecv
+    // de um convidado) com uma captura, e o convidado passa ao lugar dele antes de mandar. As ligações comuns seguem só
+    // recebendo sem câmera (a tabela pede o vídeo só para receber).
+    pjmedia_vid_dev_index AccountCamera() const {
+        return cameraDevice_ != PJMEDIA_VID_INVALID_DEV ? cameraDevice_ : firstSeatDevice_;
+    }
     // A ligação guarda o desenhista da conta do começo ao fim e o usa em cada vídeo que monta de novo (a espera, a
     // retomada), sem um jeito de trocá-lo: com o id padrão, que a PJSIP acha de novo a cada vez, a ligação segue com o
     // desenhista nosso depois de uma releitura que mude os ids. Só quando o padrão é o nosso (o único de saída nas
@@ -933,6 +943,7 @@ private:
     // taxa do vídeo das contas, em bit/s (a da qualidade das escolhas).
     pjmedia_vid_dev_index renderDevice_ = PJMEDIA_VID_INVALID_DEV;
     pjmedia_vid_dev_index cameraDevice_ = PJMEDIA_VID_INVALID_DEV;
+    pjmedia_vid_dev_index firstSeatDevice_ = PJMEDIA_VID_INVALID_DEV;   // o lugar 1 da sala (a câmera da conta sem uma)
     std::string wantedCamera_;
     unsigned videoBandwidth_ = static_cast<unsigned>(ValuesOf(VideoQuality::Medium).kbps) * 1000u;
 #endif

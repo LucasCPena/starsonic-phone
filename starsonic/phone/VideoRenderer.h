@@ -12,7 +12,8 @@
 //
 // A trava do desenhista (uma só, de todos os streams) fica presa durante a entrega de cada quadro: o SetRendererSink
 // espera a entrega em andamento, e ao voltar nenhum quadro chega ao sink antigo. Com ela presa, o desenhista só chama o
-// RemoteFrameGate e o sink. Sem o PJMEDIA_HAS_VIDEO (o Android), nada daqui existe.
+// RemoteFrameGate, o FrameTap (a loja das imagens da sala) e o sink. Sem o PJMEDIA_HAS_VIDEO (o Android), nada daqui
+// existe.
 #include <pjmedia/config.h>
 
 #include <string>
@@ -27,16 +28,30 @@ namespace starsonic {
 // O id dos quadros da prévia da câmera (OnLocalFrame) no BindRendererStream; os outros ids são os das ligações.
 const int kLocalFrames = -1;
 
+// O driver dos dispositivos de vídeo nossos na lista da PJSIP: o desenhista e os da sala (RoomVideo.h).
+constexpr char kOurVideoDriver[] = "Starsonic";
+
 // Quem diz se o quadro de uma ligação sai (o motor). Implementado fora daqui.
 class RemoteFrameGate {
 public:
     // Na thread que entrega o quadro (a do relógio do vídeo da pjsua), com a trava do desenhista presa: chegou um
-    // quadro da ligação callId, que sai para o sink só com true (false: a ligação está pausada). Também sem sink: o
-    // motor acompanha a imagem que chega. Não pode chamar o desenhista nem esperar por outra thread.
+    // quadro da ligação callId, que sai para o tap e o sink só com true (false: a ligação está pausada). Também sem
+    // sink: o motor acompanha a imagem que chega. Não pode chamar o desenhista nem esperar por outra thread.
     virtual bool OnRemoteFrameArrived(int callId) = 0;
 
 protected:
     ~RemoteFrameGate() {}
+};
+
+// A loja das imagens da sala (RoomVideo.h): cada quadro que o desenhista entrega, de cada ligação e da prévia da
+// câmera, depois do portão e antes do sink, também sem sink. Implementado fora daqui.
+class FrameTap {   // a loja da sala: na thread que entrega o quadro, com a trava do desenhista presa
+public:
+    // O quadro só vale durante a chamada. Não pode chamar o desenhista nem esperar por outra thread.
+    virtual void OnFrame(int source, const I420Frame& frame) = 0;   // source: o id da ligação, ou kLocalFrames
+
+protected:
+    ~FrameTap() {}
 };
 
 // Registra o desenhista na PJSIP: depois do libInit (com o vídeo da PJSIP de pé) e antes das contas. Devolve o id
@@ -60,6 +75,10 @@ void SetRendererSink(FrameSink* sink);
 
 // Quem decide os quadros das ligações (o motor, antes do primeiro quadro), ou nullptr: com nullptr, todos saem.
 void SetRendererGate(RemoteFrameGate* gate);
+
+// Quem recebe os quadros antes do sink (a loja da sala), ou nullptr: nenhum. Síncrono como o SetRendererSink: ao
+// voltar, nenhum quadro chega ao tap antigo. Não pode ser chamado de dentro do sink, do gate nem do tap.
+void SetRendererTap(FrameTap* tap);   // nullptr: nenhum; síncrono como o SetRendererSink
 
 }  // namespace starsonic
 #endif

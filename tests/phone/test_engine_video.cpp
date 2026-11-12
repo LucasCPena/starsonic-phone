@@ -12,11 +12,8 @@
 #if PJMEDIA_HAS_VIDEO
 #include <pjmedia-videodev/videodev_imp.h>
 #include <pjmedia/event.h>
-
-// A fábrica das câmeras de barras coloridas da PJSIP (PJMEDIA_VIDEO_DEV_HAS_CBAR_SRC, ligada no Linux dos testes).
-// Nenhum cabeçalho da PJSIP a declara: ela só serve de chave para tirar a fábrica (pjmedia_vid_unregister_factory).
-extern "C" pjmedia_vid_dev_factory* pjmedia_cbar_factory(pj_pool_factory* poolFactory);
 #endif
+#include "video_devices_fixture.h"
 
 #include <algorithm>
 #include <atomic>
@@ -41,10 +38,12 @@ using phone_test::Phone;
 #if PJMEDIA_HAS_VIDEO
 using phone_test::CallEvent;
 using phone_test::Contains;
+using phone_test::FindDevice;
 using phone_test::kWaitSeconds;
 using phone_test::Last;
 using phone_test::Lines;
 using phone_test::RecordingListener;
+using phone_test::RemoveColorbar;
 using phone_test::TestSink;
 using phone_test::Transfers;
 using phone_test::VideoEvent;
@@ -101,18 +100,6 @@ std::string DeviceNames(const std::vector<VideoDevice>& devices) {
     std::string names;
     for (const VideoDevice& device : devices) names += device.name + "; ";
     return names;
-}
-
-// O id de agora do dispositivo com esse nome (e a direção) na lista de vídeo da PJSIP, ou PJMEDIA_VID_INVALID_DEV.
-pjmedia_vid_dev_index FindDevice(const std::string& name, pjmedia_dir dir) {
-    for (unsigned id = 0; id < pjmedia_vid_dev_count(); ++id) {
-        pjmedia_vid_dev_info info;
-        if (pjmedia_vid_dev_get_info(static_cast<pjmedia_vid_dev_index>(id), &info) == PJ_SUCCESS &&
-            name == info.name && (info.dir & dir) != 0) {
-            return static_cast<pjmedia_vid_dev_index>(id);
-        }
-    }
-    return PJMEDIA_VID_INVALID_DEV;
 }
 
 // A câmera que a conta do motor (a única do pjsua) guarda para as próximas ligações. Numa thread que já chamou o motor
@@ -461,13 +448,6 @@ pjmedia_vid_dev_factory* CreateTestCamera(pj_pool_factory* poolFactory) {
 void RegisterTestCamera() {
     REQUIRE(pjmedia_vid_register_factory(&CreateTestCamera, nullptr) == PJ_SUCCESS);
     REQUIRE(FindDevice(kTestCamera, PJMEDIA_DIR_CAPTURE) != PJMEDIA_VID_INVALID_DEV);
-}
-
-// Tira da PJSIP a fábrica das câmeras de barras coloridas, que vem antes do desenhista na lista: na próxima releitura,
-// os ids dos dispositivos de depois dela mudam.
-void RemoveColorbar() {
-    REQUIRE(FindDevice("Colorbar generator", PJMEDIA_DIR_CAPTURE) != PJMEDIA_VID_INVALID_DEV);
-    REQUIRE(pjmedia_vid_unregister_factory(&pjmedia_cbar_factory, nullptr) == PJ_SUCCESS);
 }
 
 // O porteiro tocando como a segunda ligação (com o TestCameraScope do ruído e o sink já no motor): uma ligação com

@@ -16,7 +16,7 @@
 namespace starsonic {
 namespace {
 
-// O nome do driver e do dispositivo na lista de vídeo da PJSIP.
+// O nome do dispositivo na lista de vídeo da PJSIP (o driver é o kOurVideoDriver, o mesmo da sala).
 const char kRendererName[] = "Starsonic";
 // O formato que a fábrica anuncia (o I420 da libyuv; o tamanho é o de cada janela).
 const unsigned kDefaultWidth = 640;
@@ -42,12 +42,13 @@ struct RendererStream {
     int callId;                    // a ligação dos quadros, ou kLocalFrames (a prévia)
 };
 
-// O que os streams dividem com o motor: o sink, o gate e os streams vivos (só o handle de um deles vale no
+// O que os streams dividem com o motor: o sink, o gate, o tap e os streams vivos (só o handle de um deles vale no
 // BindRendererStream). A trava fica presa durante a entrega de cada quadro.
 struct Hub {
     std::mutex mutex;
     FrameSink* sink = nullptr;
     RemoteFrameGate* gate = nullptr;
+    FrameTap* tap = nullptr;
     std::vector<RendererStream*> streams;
 };
 
@@ -122,8 +123,8 @@ pj_status_t StreamStart(pjmedia_vid_dev_stream* stream) {
     return PJ_SUCCESS;
 }
 
-// Na thread do relógio do vídeo da pjsua (ou na que chamou a pjmedia): o quadro I420 vai ao sink, com a trava presa.
-// Sem buffer é o "batimento" da pjsua, sem quadro.
+// Na thread do relógio do vídeo da pjsua (ou na que chamou a pjmedia): o quadro I420 vai ao tap e ao sink, com a trava
+// presa. Sem buffer é o "batimento" da pjsua, sem quadro.
 pj_status_t StreamPutFrame(pjmedia_vid_dev_stream* stream, const pjmedia_frame* frame) {
     if (!frame || !frame->buf || frame->size == 0) return PJ_SUCCESS;
     Hub& hub = TheHub();
@@ -141,7 +142,7 @@ pj_status_t StreamPutFrame(pjmedia_vid_dev_stream* stream, const pjmedia_frame* 
     }
     const int callId = renderer->callId;
     if (callId != kLocalFrames && hub.gate && !hub.gate->OnRemoteFrameArrived(callId)) return PJ_SUCCESS;
-    if (!hub.sink) return PJ_SUCCESS;
+    if (!hub.tap && !hub.sink) return PJ_SUCCESS;
     I420Frame image;
     image.width = static_cast<int>(planes.size.w);
     image.height = static_cast<int>(planes.size.h);
@@ -151,6 +152,14 @@ pj_status_t StreamPutFrame(pjmedia_vid_dev_stream* stream, const pjmedia_frame* 
     image.uStride = planes.strides[1];
     image.v = planes.planes[2];
     image.vStride = planes.strides[2];
+    // A loja da sala guarda a imagem também sem sink: os mosaicos não dependem de o app desenhar.
+    if (hub.tap) {
+        try {
+            hub.tap->OnFrame(callId, image);
+        } catch (...) {   // o PJSIP é C: nenhuma exceção volta para ele
+        }
+    }
+    if (!hub.sink) return PJ_SUCCESS;
     try {
         if (callId == kLocalFrames) {
             hub.sink->OnLocalFrame(image);
@@ -186,7 +195,7 @@ pj_status_t FactoryInit(pjmedia_vid_dev_factory* factory) {
     pjmedia_vid_dev_info& info = FactoryOf(factory)->info;
     pj_bzero(&info, sizeof(info));
     pj_ansi_strxcpy(info.name, kRendererName, sizeof(info.name));
-    pj_ansi_strxcpy(info.driver, kRendererName, sizeof(info.driver));
+    pj_ansi_strxcpy(info.driver, kOurVideoDriver, sizeof(info.driver));
     info.dir = PJMEDIA_DIR_RENDER;
     info.has_callback = PJ_FALSE;
     info.caps = PJMEDIA_VID_DEV_CAP_FORMAT | PJMEDIA_VID_DEV_CAP_OUTPUT_WINDOW | PJMEDIA_VID_DEV_CAP_OUTPUT_HIDE |
@@ -288,7 +297,7 @@ pjmedia_vid_dev_index FindVideoRenderer() {
     for (unsigned id = 0; id < count; ++id) {
         pjmedia_vid_dev_info info;
         if (pjmedia_vid_dev_get_info(static_cast<pjmedia_vid_dev_index>(id), &info) == PJ_SUCCESS &&
-            std::strcmp(info.driver, kRendererName) == 0 && (info.dir & PJMEDIA_DIR_RENDER) != 0) {
+            std::strcmp(info.driver, kOurVideoDriver) == 0 && (info.dir & PJMEDIA_DIR_RENDER) != 0) {
             return static_cast<pjmedia_vid_dev_index>(id);
         }
     }
@@ -324,6 +333,12 @@ void SetRendererGate(RemoteFrameGate* gate) {
     Hub& hub = TheHub();
     std::lock_guard<std::mutex> lock(hub.mutex);
     hub.gate = gate;
+}
+
+void SetRendererTap(FrameTap* tap) {
+    Hub& hub = TheHub();
+    std::lock_guard<std::mutex> lock(hub.mutex);
+    hub.tap = tap;
 }
 
 }  // namespace starsonic

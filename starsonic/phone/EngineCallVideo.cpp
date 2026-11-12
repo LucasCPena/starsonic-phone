@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cstring>
 #include <string>
 #include <thread>
 #include <vector>
@@ -51,14 +52,17 @@ pjmedia_vid_dev_index CameraNamed(const std::string& name) {
     return PJMEDIA_VID_INVALID_DEV;
 }
 
-// A câmera da ligação para o próximo START_TRANSMIT: sem mandar, o pjsua só troca o id (e um id igual não muda nada).
-void UseCamera(int pjsuaId, int mediaIndex, pjmedia_vid_dev_index device) {
+// A fonte da imagem da ligação (a câmera ou um lugar da sala): sem mandar, o pjsua só troca o id para o próximo
+// START_TRANSMIT; mandando, ele troca a janela ao vivo (a captura de antes sai do codificador e a nova entra). Um id
+// igual não muda nada.
+pj_status_t UseCamera(int pjsuaId, int mediaIndex, pjmedia_vid_dev_index device) {
     pjsua_call_vid_strm_op_param param;
     pjsua_call_vid_strm_op_param_default(&param);
     param.med_idx = mediaIndex;
     param.cap_dev = device;
     const pj_status_t status = pjsua_call_set_vid_strm(pjsuaId, PJSUA_CALL_VID_STRM_CHANGE_CAP_DEV, &param);
     if (status != PJ_SUCCESS) Log(2, "camera da ligacao: " + StatusText(status));
+    return status;
 }
 
 // Os quadros da prévia da câmera device (a janela dela na pjsua) passam a sair pelo OnLocalFrame.
@@ -104,6 +108,7 @@ VideoMedia VideoMediaOf(const pjsua_call_info& info) {
         media.up = true;
         media.canSend = (item.dir & PJMEDIA_DIR_ENCODING) != 0;
         media.sending = item.stream.vid.cap_dev != PJMEDIA_VID_INVALID_DEV;
+        media.device = item.stream.vid.cap_dev;   // só com a captura ligada: senão, o inválido
         media.index = static_cast<int>(item.index);
         break;
     }
@@ -155,6 +160,8 @@ std::vector<std::pair<pjmedia_vid_dev_index, std::string>> Cameras() {
         pjmedia_vid_dev_info info;
         const pjmedia_vid_dev_index index = static_cast<pjmedia_vid_dev_index>(id);
         if (pjmedia_vid_dev_get_info(index, &info) != PJ_SUCCESS || (info.dir & PJMEDIA_DIR_CAPTURE) == 0) continue;
+        // Os dispositivos nossos (os da sala) não são câmeras.
+        if (std::strcmp(info.driver, kOurVideoDriver) == 0) continue;
         cameras.emplace_back(index, info.name);
     }
     return cameras;
@@ -223,6 +230,9 @@ void CallTable::Start(EngineEndpoint* endpoint) {
 void CallTable::Stop() {
 #if PJMEDIA_HAS_VIDEO
     SetRendererGate(nullptr);
+    // A loja da sala também sai, vazia: ela dura até o fim do processo, e outro motor começa sem as imagens deste.
+    SetRendererTap(nullptr);
+    SetRoomPlan(RoomPlan());
     pjmedia_event_unsubscribe(nullptr, &CallTable::OnMediaEvent, this, nullptr);
 #endif
 }
@@ -249,6 +259,17 @@ bool CallTable::SetCamera(int callId, bool on) {
     bool wished = false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        // Com a sala de pé, a câmera é a da sala: o id dela é o desejo da câmera na sala, e outro id (um convidado ou a
+        // ligação de fora) não a muda.
+        if (roomId_ != 0) {
+            if (callId != roomId_ || !VideoEnabled(settings_)) return false;
+            const bool noCamera = on && camera_ == PJMEDIA_VID_INVALID_DEV;
+            if (noCamera) Problem(CameraProblem::NoCamera);
+            roomWish_ = on && !noCamera;
+            PublishVideo();
+            ScheduleSync();
+            return true;
+        }
         Slot* slot = Find(callId);
         if (!slot) return false;
         if (!VideoEnabled(settings_)) {   // nenhum codec de vídeo nas escolhas: a câmera não tem para onde mandar
@@ -301,6 +322,9 @@ void CallTable::SetVideoSettings(const VideoSettings& settings) {
 
 CallVideo CallTable::Video(int callId) {
     std::lock_guard<std::mutex> lock(mutex_);
+#if PJMEDIA_HAS_VIDEO
+    if (callId != 0 && callId == roomId_) return roomVideoShown_;
+#endif
     const Slot* slot = Find(callId);
     return slot ? slot->shown : CallVideo();
 }
@@ -329,7 +353,14 @@ bool CallTable::AddVideo(int callId) {
         param.dir = camera != PJMEDIA_VID_INVALID_DEV ? PJMEDIA_DIR_ENCODING_DECODING : PJMEDIA_DIR_DECODING;
         param.cap_dev = camera;
         const pj_status_t status = pjsua_call_set_vid_strm(pjsuaId, PJSUA_CALL_VID_STRM_ADD, &param);
-        if (status == PJ_SUCCESS) return true;
+        if (status == PJ_SUCCESS) {
+            if (camera == PJMEDIA_VID_INVALID_DEV) {   // o pjsua guarda a direção nas próximas ofertas
+                std::lock_guard<std::mutex> lock(mutex_);
+                Slot* slot = Find(callId);
+                if (slot) slot->receiveOnly = true;
+            }
+            return true;
+        }
         {
             std::lock_guard<std::mutex> lock(mutex_);
             Slot* slot = Find(callId);
@@ -369,10 +400,21 @@ bool CallTable::ReceivePaused(const Slot& slot) {
 }
 
 bool CallTable::WantsToSend(const Slot& slot) {
-    // Um convidado manda a nossa câmera direto, com o desejo da câmera da sala.
+#if PJMEDIA_HAS_VIDEO
+    // Um convidado manda a nossa câmera direto só sozinho na sala (os outros, se há, ainda chamando), com o desejo da
+    // câmera da sala e você nela; com dois ou mais que já atenderam, ele manda o mosaico dele (SendsSeat).
+    if (slot.member && (RoomMosaic() || activeId_ != roomId_)) return false;
+#endif
     const bool wish = slot.member ? roomWish_ : slot.wish;
     return wish && slot.confirmed && !slot.early && slot.videoUp && slot.canSend && !cameraPaused_ &&
            !SendPaused(slot);
+}
+
+bool CallTable::SendsImage(const Slot& slot) {
+#if PJMEDIA_HAS_VIDEO
+    if (slot.seatSending) return slot.sending && SendsSeat(slot);
+#endif
+    return slot.sending && WantsToSend(slot);
 }
 
 CallVideo CallTable::Current(const Slot& slot) {
@@ -380,9 +422,9 @@ CallVideo CallTable::Current(const Slot& slot) {
     video.offered = slot.offered;
     video.active = slot.videoUp && !ReceivePaused(slot);
     video.remote = slot.remote && video.active;
-    // A câmera mandando: o envio aplicado, e a tabela ainda o quer (a pausa do envio já desliga a câmera no aviso,
-    // antes do STOP_TRANSMIT do SyncVideo).
-    video.camera = slot.sending && WantsToSend(slot);
+    // A câmera mandando: o envio aplicado, da câmera, e a tabela ainda o quer (a pausa do envio já desliga a câmera no
+    // aviso, antes do STOP_TRANSMIT do SyncVideo). O mosaico de um convidado não é a câmera.
+    video.camera = slot.sending && !slot.seatSending && WantsToSend(slot);
     video.early = slot.early;
     video.doorphone = slot.doorphone;
     return video;
@@ -435,13 +477,16 @@ void CallTable::SyncVideo() {
     struct Plan {
         int callId;
         int pjsuaId;
-        bool send;
-        bool sending;
-        pj_status_t failure;   // o código do START_TRANSMIT que falhou (a câmera não abriu), ou PJ_SUCCESS
+        bool send;              // a ligação deve mandar a imagem agora
+        int seat;               // de onde: o lugar dela na sala (o mosaico), ou 0, a câmera
+        bool sending;           // o envio de verdade, no fim da passada
+        bool seatSending;       // ...e ele é o lugar da sala
+        pj_status_t failure;    // o código do START_TRANSMIT da câmera que falhou (ela não abriu), ou PJ_SUCCESS
     };
     std::vector<Plan> plans;
     pjmedia_vid_dev_index device = PJMEDIA_VID_INVALID_DEV;
     bool restart = false;
+    bool restartRoom = false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (closed_) return;
@@ -450,22 +495,46 @@ void CallTable::SyncVideo() {
         // A câmera em uso mudou de lugar na lista (RefreshCameras): esta passada fecha tudo, e a próxima abre de novo.
         restart = restartCamera_;
         restartCamera_ = false;
+        // A lista foi relida com a sala de pé: a pjsua acha as janelas pelo id de antes, e um id novo pode ser o da
+        // janela de outro lugar. Esta passada para o envio das ligações da sala (os ids de antes são os delas) e o
+        // mosaico de quem montou, e a próxima liga tudo de novo com os ids novos.
+        restartRoom = restartRoom_;
+        restartRoom_ = false;
         for (const Slot& slot : slots_) {
-            if (slot.callId != 0 && slot.pjsuaId != PJSUA_INVALID_ID) {
-                plans.push_back(Plan{slot.callId, slot.pjsuaId, !restart && WantsToSend(slot), false, PJ_SUCCESS});
+            if (slot.callId == 0 || slot.pjsuaId == PJSUA_INVALID_ID) continue;
+            Plan plan{slot.callId, slot.pjsuaId, false, 0, false, slot.seatSending, PJ_SUCCESS};
+            if (!restart && !(restartRoom && (slot.member || slot.seatSending))) {
+                if (SendsSeat(slot)) {
+                    plan.send = true;
+                    plan.seat = slot.seat;
+                } else {
+                    plan.send = WantsToSend(slot);
+                }
             }
+            plans.push_back(plan);
         }
     }
-    // Primeiro o que para, depois o que começa: fora da sala, duas ligações nunca mandam juntas (a câmera é uma só); os
-    // convidados da sala mandam a mesma câmera, cuja janela a pjsua divide entre os streams.
+    const RoomDeviceIds room = FindRoomDevices();   // os ids de agora: a lista só muda com o videoMutex_ presa
+    // Primeiro o que para, depois o que começa ou troca de fonte: fora da sala, duas ligações nunca mandam juntas (a
+    // câmera é uma só); na sala, cada convidado manda o lugar dele, ou um convidado só, a câmera.
     std::stable_sort(plans.begin(), plans.end(), [](const Plan& a, const Plan& b) { return !a.send && b.send; });
     for (Plan& plan : plans) {
         const VideoMedia media = VideoMediaOf(plan.pjsuaId);
-        const bool send = plan.send && media.up && media.canSend && device != PJMEDIA_VID_INVALID_DEV;
+        const pjmedia_vid_dev_index source = plan.seat > 0 ? room.seats[plan.seat - 1] : device;
+        const bool send = plan.send && media.up && media.canSend && source != PJMEDIA_VID_INVALID_DEV;
         plan.sending = media.sending;
+        if (!media.sending) plan.seatSending = false;
+        if (media.index < 0) continue;
+        if (send && media.sending) {
+            // Mandando, só a fonte pode mudar: o CHANGE_CAP_DEV troca a janela ao vivo.
+            if (media.device == source || UseCamera(plan.pjsuaId, media.index, source) == PJ_SUCCESS) {
+                plan.seatSending = plan.seat > 0;
+            }
+            continue;
+        }
         // O STOP só numa ligação que manda: o do pjsua solta a câmera da ligação, e sem ela a conta dele erra.
-        if (send == media.sending || media.index < 0) continue;
-        if (send) UseCamera(plan.pjsuaId, media.index, device);
+        if (send == media.sending) continue;
+        if (send) UseCamera(plan.pjsuaId, media.index, source);
         pjsua_call_vid_strm_op_param param;
         pjsua_call_vid_strm_op_param_default(&param);
         param.med_idx = media.index;
@@ -473,10 +542,11 @@ void CallTable::SyncVideo() {
             plan.pjsuaId, send ? PJSUA_CALL_VID_STRM_START_TRANSMIT : PJSUA_CALL_VID_STRM_STOP_TRANSMIT, &param);
         if (status == PJ_SUCCESS) {
             plan.sending = send;
-        } else if (send) {
+            plan.seatSending = send && plan.seat > 0;
+        } else if (send && plan.seat == 0) {
             plan.failure = status;
         } else {
-            Log(2, "parar o envio da camera: " + StatusText(status));
+            Log(2, std::string(send ? "mandar o mosaico da sala: " : "parar o envio da camera: ") + StatusText(status));
         }
     }
     bool reported = false;   // um START desta passada já deu a linha e o OpenFailed
@@ -494,14 +564,17 @@ void CallTable::SyncVideo() {
                 reported = true;
             }
             slot->sendFailed = failed;
+            slot->seatSending = plan.sending && plan.seatSending;
             if (slot->sending == plan.sending) continue;
             slot->sending = plan.sending;
             LogVideo(*slot);   // a cada mudança do envio
         }
     }
-    // A prévia segue o envio (e o teste da câmera); na troca de lugar da câmera, ela fecha também, e a próxima passada
-    // abre a câmera de novo, com os ids novos.
-    bool again = restart;
+    // O mosaico de quem montou segue a sala (na passada da releitura, ele fecha, e a próxima o abre de novo).
+    SyncHostMosaic(restartRoom, room.host);
+    // A prévia segue o envio da câmera, o mosaico da sala e o teste da câmera; na troca de lugar da câmera, ela fecha
+    // também, e a próxima passada abre a câmera de novo, com os ids novos.
+    bool again = restart || restartRoom;
     if (restart) {
         StopPreview();
     } else {
@@ -542,20 +615,33 @@ void CallTable::RefreshCameras(const std::function<VideoDeviceIds()>& refresh) {
             std::lock_guard<std::mutex> lock(mutex_);
             if (previewRunning_ && !cameraLost_) inUse = previewDevice_;
         }
-        // O nome da câmera em uso, na lista de antes: a releitura muda os ids.
+        // O nome da câmera em uso, na lista de antes: a releitura muda os ids. A que já saiu da lista antes da
+        // releitura (o driver dela saiu da PJSIP) também sumiu.
         std::string name;
+        bool gone = false;
         pjmedia_vid_dev_info info;
-        if (inUse != PJMEDIA_VID_INVALID_DEV && pjmedia_vid_dev_get_info(inUse, &info) == PJ_SUCCESS) name = info.name;
+        if (inUse != PJMEDIA_VID_INVALID_DEV) {
+            if (pjmedia_vid_dev_get_info(inUse, &info) == PJ_SUCCESS) {
+                name = info.name;
+            } else {
+                gone = true;
+            }
+        }
         const VideoDeviceIds ids = refresh();
         const pjmedia_vid_dev_index now = name.empty() ? PJMEDIA_VID_INVALID_DEV : CameraNamed(name);
         std::lock_guard<std::mutex> lock(mutex_);
         camera_ = ids.camera;
         renderer_ = ids.renderer;
-        if (!name.empty() && now == PJMEDIA_VID_INVALID_DEV) {
+        if (gone || (!name.empty() && now == PJMEDIA_VID_INVALID_DEV)) {
             LoseCamera();
         } else if (!name.empty() && now != inUse) {
             restartCamera_ = true;
         }
+        // Os ids dos dispositivos da sala também podem ter mudado, e a pjsua acha as janelas deles pelos ids de antes:
+        // a próxima passada para tudo da sala com eles (ver o SyncVideo).
+        const bool seats = std::any_of(std::begin(slots_), std::end(slots_),
+                                       [](const Slot& slot) { return slot.callId != 0 && slot.seatSending; });
+        if (roomId_ != 0 || hostRoom_ != 0 || seats) restartRoom_ = true;
     }
     ScheduleSync();
 }
@@ -603,9 +689,11 @@ pj_status_t CallTable::SyncPreview(pjmedia_vid_dev_index device) {
         std::lock_guard<std::mutex> lock(mutex_);
         // A tela bloqueada (cameraPaused_) fecha também a câmera do teste, como a das ligações. O cameraTest_ segue
         // sendo o desejo da pessoa (o teste continua ligado): o desbloqueio abre a câmera de novo, sem um pedido novo.
+        // Os mosaicos da sala também a querem (o kHostTile), se há uma câmera; o envio de um lugar da sala, não.
         wanted = (cameraTest_ && !cameraPaused_) ||
                  std::any_of(std::begin(slots_), std::end(slots_),
-                             [](const Slot& slot) { return slot.callId != 0 && slot.sending; });
+                             [](const Slot& slot) { return slot.callId != 0 && slot.sending && !slot.seatSending; }) ||
+                 (RoomCameraWanted() && device != PJMEDIA_VID_INVALID_DEV);
         running = previewRunning_;
         lost = cameraLost_;
         renderer = renderer_;
@@ -657,14 +745,16 @@ bool CallTable::PreviewFailed(pj_status_t status, bool reported) {
         Log(3, "camera: falhou (" + std::to_string(status) + ")");
         Problem(CameraProblem::OpenFailed);
     }
-    // Nada tenta de novo sozinho: o teste da câmera para, e as ligações que mandam ficam com camera=false (o desejo
-    // da câmera desliga, e a próxima passada para o envio delas).
+    // Nada tenta de novo sozinho: o teste da câmera para, e as ligações que mandam a câmera ficam com camera=false (o
+    // desejo da câmera desliga, e a próxima passada para o envio delas). Os mosaicos da sala seguem, com o fundo no
+    // lugar da câmera (o desejo da câmera da sala desliga também).
     cameraTest_ = false;
+    if (RoomCameraWanted()) roomWish_ = false;
     bool sending = false;
     for (Slot& slot : slots_) {
-        if (slot.callId == 0 || !slot.sending) continue;
+        if (slot.callId == 0 || !slot.sending || slot.seatSending) continue;
         slot.wish = false;
-        if (slot.member) roomWish_ = false;   // os convidados mandam com o desejo da sala
+        if (slot.member) roomWish_ = false;   // um convidado só manda a câmera com o desejo da sala
         sending = true;
     }
     return sending;
@@ -678,9 +768,8 @@ void CallTable::KeyframeTimer::OnEngineTimer() { table->SendKeyframes(); }
 
 bool CallTable::KeyframeTimerNeeded() {
     if (keyframePending_ || closed_) return false;
-    keyframePending_ = std::any_of(std::begin(slots_), std::end(slots_), [this](const Slot& slot) {
-        return slot.callId != 0 && slot.sending && WantsToSend(slot);
-    });
+    keyframePending_ = std::any_of(std::begin(slots_), std::end(slots_),
+                                   [this](const Slot& slot) { return slot.callId != 0 && SendsImage(slot); });
     return keyframePending_;
 }
 
@@ -693,7 +782,7 @@ void CallTable::SendKeyframes() {
         keyframePending_ = false;
         if (closed_) return;
         for (const Slot& slot : slots_) {
-            if (slot.callId != 0 && slot.pjsuaId != PJSUA_INVALID_ID && slot.sending && WantsToSend(slot)) {
+            if (slot.callId != 0 && slot.pjsuaId != PJSUA_INVALID_ID && SendsImage(slot)) {
                 sending.push_back(slot.pjsuaId);
             }
         }
@@ -725,13 +814,25 @@ bool CallTable::RemoteFrameArrived(int callId) {
     bool schedule = false;
     try {
         std::lock_guard<std::mutex> lock(mutex_);
-        Slot* slot = Find(callId);
-        if (!slot) return true;   // uma janela que a tabela não conhece (a dos testes do desenhista): o quadro sai
-        if (ReceivePaused(*slot)) return false;
-        slot->lastFrame = std::chrono::steady_clock::now();
-        if (!slot->remote) {
-            slot->remote = true;
-            PublishVideo();
+        const auto now = std::chrono::steady_clock::now();
+        if (callId != 0 && callId == roomId_) {
+            // O mosaico de quem montou: o primeiro quadro liga o remote da sala.
+            roomLastFrame_ = now;
+            if (!roomRemote_) {
+                roomRemote_ = true;
+                PublishVideo();
+            }
+        } else if (callId != 0 && callId == hostRoom_) {
+            return false;   // o mosaico de uma sala que acabou, até o SyncVideo fechar a janela dele
+        } else {
+            Slot* slot = Find(callId);
+            if (!slot) return true;   // uma janela que a tabela não conhece (a dos testes do desenhista): o quadro sai
+            if (ReceivePaused(*slot)) return false;
+            slot->lastFrame = now;
+            if (!slot->remote) {
+                slot->remote = true;
+                PublishVideo();
+            }
         }
         schedule = !remoteCheckPending_;
         remoteCheckPending_ = true;
@@ -753,6 +854,14 @@ void CallTable::CheckRemote() {
             if (slot.callId == 0 || !slot.remote) continue;
             if (now - slot.lastFrame >= kRemoteTimeout) {
                 slot.remote = false;
+            } else {
+                again = true;
+            }
+        }
+        // O mosaico de quem montou, como a imagem de uma ligação.
+        if (roomRemote_) {
+            if (now - roomLastFrame_ >= kRemoteTimeout) {
+                roomRemote_ = false;
             } else {
                 again = true;
             }

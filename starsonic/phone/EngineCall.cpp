@@ -200,6 +200,7 @@ void CallTable::Incoming(pj::Account& account, int pjsuaId, bool accepting, cons
             slot->ringVideoCount = slot->videoCount;
             // Sem câmera, a resposta aceita o vídeo só para receber.
             slot->ringRecvOnly = slot->videoCount > 0 && camera_ == PJMEDIA_VID_INVALID_DEV ? offer.index : -1;
+            slot->receiveOnly = slot->ringRecvOnly >= 0;
             videoCount = slot->videoCount;
             recvOnly = slot->ringRecvOnly;
             sendEarly = slot->early;
@@ -451,6 +452,7 @@ int CallTable::Make(pj::Account& account, const std::string& uri, bool video) {
             if (recvOnly) Problem(CameraProblem::NoCamera);
             slot->videoCount = 1;
             slot->wish = !recvOnly;
+            slot->receiveOnly = recvOnly;
             slot->askingVideo = true;
         }
         refuse = video && !VideoEnabled(settings_);
@@ -792,6 +794,9 @@ int CallTable::CallCount() {
 }
 
 bool CallTable::End(int timeoutMs) {
+#if PJMEDIA_HAS_VIDEO
+    SetRendererTap(nullptr);   // todas as ligações saem: a loja da sala para de guardar as imagens delas
+#endif
     std::vector<int> pjsuaIds;
     {
         std::lock_guard<std::mutex> lock(mutex_);

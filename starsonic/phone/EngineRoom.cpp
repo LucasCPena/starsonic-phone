@@ -1,8 +1,10 @@
 #include "EngineCall.h"
 
 #include <algorithm>
+#include <chrono>
 #include <iterator>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -11,11 +13,20 @@
 
 // A sala de vídeo em grupo na tabela das ligações (ver o topo do EngineCall.h): o RoomAdd (o nascimento e os convidados
 // novos), a sala de agora (o RoomInfo, com os quadros do mosaico de quem montou), o OnRoom e o fim dela, e o Hangup do
-// id da sala. Os ganchos da sala nos métodos de sempre (o Incoming, o Make, o StateChanged, o Ended, o Route, as
-// pausas...) ficam no EngineCall.cpp e no EngineCallVideo.cpp. Sem o PJMEDIA_HAS_VIDEO (o Android) não há sala: o
-// RoomAdd dá -1, e o resto nunca acha uma.
+// id da sala. E os mosaicos: quem manda o lugar dele, o vídeo da sala, o plano de cada mosaico e a prévia do mosaico de
+// quem montou. Os ganchos da sala nos métodos de sempre (o Incoming, o Make, o StateChanged, o Ended, o Route, as
+// pausas, o SyncVideo...) ficam no EngineCall.cpp e no EngineCallVideo.cpp. Sem o PJMEDIA_HAS_VIDEO (o Android) não há
+// sala: o RoomAdd dá -1, e o resto nunca acha uma.
 
 namespace starsonic {
+#if PJMEDIA_HAS_VIDEO
+namespace {
+
+// O texto de um código do PJSIP, como no EngineCall.cpp.
+std::string StatusText(pj_status_t status) { return pj::Endpoint::instance().utilStrError(status); }
+
+}  // namespace
+#endif
 
 int CallTable::RoomAdd(pj::Account& account, const std::string& uri) {
 #if PJMEDIA_HAS_VIDEO
@@ -23,6 +34,7 @@ int CallTable::RoomAdd(pj::Account& account, const std::string& uri) {
     int callId = 0;
     bool born = false;        // a sala nasce deste convidado
     int activeBefore = 0;     // a ativa de antes do nascimento, que volta se ele não sai
+    int receiveOnlyBase = 0;  // a ligação de onde ela nasce, se o vídeo dela só recebe: o re-INVITE sendrecv
     RoomInfo arriving;        // o OnRoom que o traz: o Room() só o mostra se ele sai
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -44,6 +56,9 @@ int CallTable::RoomAdd(pj::Account& account, const std::string& uri) {
             base->joined = ++joins_;
             activeBefore = activeId_;
             activeId_ = roomId_;
+            // Sem câmera, o vídeo dela só recebe, e o pjsua guarda essa direção nas próximas ofertas: sem o re-INVITE,
+            // ela nunca mandaria o mosaico dela.
+            if (base->receiveOnly) receiveOnlyBase = base->callId;
         }
         // A vaga fica com o convidado desde já. A oferta leva um vídeo, sendrecv, sem o askingVideo: um convidado que
         // responde sem o vídeo é um convidado sem vídeo, sem o refused. Nada vai para a espera.
@@ -83,6 +98,7 @@ int CallTable::RoomAdd(pj::Account& account, const std::string& uri) {
         // avisado não era dela), com a ativa de antes, e a que já estava de pé segue como o listener a conhece.
         if (born) activeId_ = Find(activeBefore) ? activeBefore : 0;
     });
+    if (made && receiveOnlyBase != 0) SendReceive(receiveOnlyBase);
     ScheduleSync();
     return made ? callId : -1;
 #else
@@ -151,16 +167,22 @@ const char* CallTable::RoomAddRefusal(Slot** base) {
     return nullptr;
 }
 
-RoomInfo CallTable::CurrentRoom() {
-    RoomInfo room;
-#if PJMEDIA_HAS_VIDEO
-    if (roomId_ == 0) return room;
+std::vector<const CallTable::Slot*> CallTable::MembersInOrder() {
     std::vector<const Slot*> members;
     for (const Slot& slot : slots_) {
         if (slot.callId != 0 && slot.member) members.push_back(&slot);
     }
     std::sort(members.begin(), members.end(), [](const Slot* a, const Slot* b) { return a->joined < b->joined; });
-    // O mosaico de quem montou tem todos os convidados, também os chamados, na ordem de entrada.
+    return members;
+}
+
+RoomInfo CallTable::CurrentRoom() {
+    RoomInfo room;
+#if PJMEDIA_HAS_VIDEO
+    if (roomId_ == 0) return room;
+    const std::vector<const Slot*> members = MembersInOrder();
+    // O mosaico de quem montou tem todos os convidados, também os chamados, na ordem de entrada (a mesma do plano dele,
+    // no PlanRoom).
     const std::vector<PixelRect> cells =
         MosaicCells(static_cast<int>(members.size()), kHostMosaicWidth, kHostMosaicHeight);
     room.id = roomId_;
@@ -183,36 +205,210 @@ RoomInfo CallTable::CurrentRoom() {
 
 void CallTable::PublishRoom() {
 #if PJMEDIA_HAS_VIDEO
-    if (roomId_ == 0 || dialing_) return;
+    // Durante um makeCall nada é avisado (o FinishDial avisa depois); o plano dos mosaicos, sempre.
+    if (roomId_ != 0 && !dialing_) AnnounceRoom();
+    PlanRoom();
+#endif
+}
+
+#if PJMEDIA_HAS_VIDEO
+void CallTable::AnnounceRoom() {
     const int members = Members();
     if (roomClosing_ ? members > 0 : members >= 2) {
         const RoomInfo room = CurrentRoom();
-        if (room == roomShown_) return;
-        roomShown_ = room;
-        Emit(roomId_, [room](EngineListener& listener) { listener.OnRoom(room); });
+        if (!(room == roomShown_)) {
+            roomShown_ = room;
+            Emit(roomId_, [room](EngineListener& listener) { listener.OnRoom(room); });
+        }
+        // O vídeo da sala, sempre atrás de um OnRoom dela.
+        const CallVideo video = CurrentRoomVideo();
+        if (!(video == roomVideoShown_)) {
+            roomVideoShown_ = video;
+            const int roomId = roomId_;
+            Emit(roomId, [roomId, video](EngineListener& listener) { listener.OnCallVideo(roomId, video); });
+        }
+    } else {
+        // O fim: o último OnRoom, com quem ficou (fechando, ninguém), se o último avisado era desta sala, e antes dele
+        // o fim do vídeo da sala.
+        RoomInfo last = CurrentRoom();
+        last.ended = true;
+        const bool announce = roomShown_.id == roomId_;
+        const bool videoShown = !(roomVideoShown_ == CallVideo());
+        // Quem ficou volta a ser uma ligação comum, com o desejo da câmera da sala, e é a ativa se a sala era a ativa.
+        for (Slot& slot : slots_) {
+            if (slot.callId == 0 || !slot.member) continue;
+            slot.member = false;
+            slot.seat = 0;
+            slot.joined = 0;
+            slot.wish = roomWish_;
+            if (activeId_ == roomId_) activeId_ = slot.callId;
+        }
+        if (activeId_ == roomId_) activeId_ = 0;
+        const int roomId = roomId_;
+        roomId_ = 0;
+        roomWish_ = false;
+        roomClosing_ = false;
+        roomShown_ = RoomInfo();
+        roomRemote_ = false;
+        roomVideoShown_ = CallVideo();
+        if (announce && videoShown) {
+            Emit(roomId, [roomId](EngineListener& listener) { listener.OnCallVideo(roomId, CallVideo()); });
+        }
+        if (announce) Emit(roomId, [last](EngineListener& listener) { listener.OnRoom(last); });
+    }
+}
+
+bool CallTable::RoomMosaic() {
+    if (roomId_ == 0) return false;
+    int answered = 0;
+    for (const Slot& slot : slots_) answered += slot.callId != 0 && slot.member && slot.confirmed ? 1 : 0;
+    return answered >= 2;
+}
+
+bool CallTable::SendsSeat(const Slot& slot) {
+    return slot.member && slot.confirmed && slot.videoUp && slot.canSend && RoomMosaic();
+}
+
+bool CallTable::RoomCameraWanted() {
+    return RoomMosaic() && roomWish_ && !cameraPaused_ && activeId_ == roomId_;
+}
+
+CallVideo CallTable::CurrentRoomVideo() {
+    CallVideo video;
+    if (roomId_ == 0) return video;
+    video.active = true;
+    video.remote = roomRemote_;
+    // A nossa câmera chegando aos convidados: no mosaico de algum que o recebe, com a prévia dela aberta para a sala;
+    // ou, com um convidado só, direto na ligação dele (o camera dela).
+    const bool mosaic = RoomMosaic();
+    const bool cameraOpen = previewRunning_ && !cameraLost_ && RoomCameraWanted();
+    for (const Slot& slot : slots_) {
+        if (slot.callId == 0 || !slot.member || !slot.sending) continue;
+        if (mosaic ? slot.seatSending && cameraOpen && SendsSeat(slot) : !slot.seatSending && WantsToSend(slot)) {
+            video.camera = true;
+        }
+    }
+    return video;
+}
+
+void CallTable::PlanRoom() {
+    RoomPlan plan;
+    if (roomId_ != 0) {
+        const std::vector<const Slot*> members = MembersInOrder();
+        // O mosaico de quem montou tem todos, também os chamados, na ordem de entrada: o tile de cada um no OnRoom
+        // (CurrentRoom) é o quadro dele aqui.
+        std::vector<int> answered;   // os que já atenderam, também os em espera, na ordem de entrada
+        for (const Slot* slot : members) {
+            plan.host.push_back(slot->callId);
+            if (!slot->confirmed) continue;
+            answered.push_back(slot->callId);
+            // A imagem dele vale estando na sala (In) e chegando (o remote); senão, o fundo.
+            if (!slot->remoteHold && Current(*slot).remote) plan.live.insert(slot->callId);
+        }
+        // O de cada convidado: a nossa câmera primeiro e os outros que já atenderam, sem ele.
+        for (const Slot* slot : members) {
+            if (slot->seat >= 1 && slot->seat <= kRoomMaxGuests) {
+                plan.seats[slot->seat - 1] = GuestTiles(answered, slot->callId);
+            }
+        }
+        if (RoomCameraWanted()) plan.live.insert(kHostTile);
+    }
+    if (plan == plan_) return;
+    plan_ = plan;
+    SetRoomPlan(plan_);
+}
+
+void CallTable::SyncHostMosaic(bool restart, pjmedia_vid_dev_index host) {
+    int roomId = 0;
+    int bound = 0;
+    pjmedia_vid_dev_index opened = PJMEDIA_VID_INVALID_DEV;
+    pjmedia_vid_dev_index renderer = PJMEDIA_VID_INVALID_DEV;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        roomId = roomId_;
+        bound = hostRoom_;
+        opened = hostDevice_;
+        renderer = renderer_;
+        if (roomId == 0) hostFailed_ = false;
+    }
+    // A prévia fecha pelo id com que abriu (a pjsua acha a janela por ele, também depois de uma releitura): sem a sala,
+    // com outra sala ou na passada da releitura.
+    if (bound != 0 && (roomId != bound || restart)) {
+        const pj_status_t status = pjsua_vid_preview_stop(opened);
+        if (status != PJ_SUCCESS) Log(2, "parar o mosaico da sala: " + StatusText(status));
+        UnbindRendererCall(bound);   // um quadro atrasado dele não sai mais
+        std::lock_guard<std::mutex> lock(mutex_);
+        hostRoom_ = 0;
+        hostDevice_ = PJMEDIA_VID_INVALID_DEV;
+        bound = 0;
+    }
+    // A loja só guarda imagens com a sala de pé.
+    SetRendererTap(roomId != 0 ? RoomFrameStore() : nullptr);
+    if (roomId == 0 || bound != 0 || restart) return;
+    // O lugar 0 no desenhista nosso, à vista (a pjsua só liga a captura ao desenhista assim), em 1280x720 a 25 qps.
+    pj_status_t status = PJMEDIA_EVID_NODEFDEV;
+    if (host != PJMEDIA_VID_INVALID_DEV) {
+        pjsua_vid_preview_param param;
+        pjsua_vid_preview_param_default(&param);
+        if (renderer != PJMEDIA_VID_INVALID_DEV) param.rend_id = renderer;
+        param.show = PJ_TRUE;
+        pjmedia_format_init_video(&param.format, PJMEDIA_FORMAT_I420, static_cast<unsigned>(kHostMosaicWidth),
+                                  static_cast<unsigned>(kHostMosaicHeight), static_cast<unsigned>(kHostMosaicFps), 1);
+        status = pjsua_vid_preview_start(host, &param);
+    }
+    if (status != PJ_SUCCESS) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!hostFailed_) Log(2, "o mosaico da sala nao abriu: " + StatusText(status));
+        hostFailed_ = true;
         return;
     }
-    // O fim: o último OnRoom, com quem ficou (fechando, ninguém), se o último avisado era desta sala.
-    RoomInfo last = CurrentRoom();
-    last.ended = true;
-    const bool announce = roomShown_.id == roomId_;
-    // Quem ficou volta a ser uma ligação comum, com o desejo da câmera da sala, e é a ativa se a sala era a ativa.
-    for (Slot& slot : slots_) {
-        if (slot.callId == 0 || !slot.member) continue;
-        slot.member = false;
-        slot.seat = 0;
-        slot.joined = 0;
-        slot.wish = roomWish_;
-        if (activeId_ == roomId_) activeId_ = slot.callId;
+    // Os quadros da janela dele saem com o id da sala.
+    const pjsua_vid_win_id window = pjsua_vid_preview_get_win(host);
+    pjsua_vid_win_info info;
+    if (window != PJSUA_INVALID_ID && pjsua_vid_win_get_info(window, &info) == PJ_SUCCESS) {
+        BindRendererStream(info.hwnd.info.window, roomId);
+    } else {
+        Log(2, "o mosaico da sala ficou sem a janela do desenhista");
     }
-    if (activeId_ == roomId_) activeId_ = 0;
-    const int roomId = roomId_;
-    roomId_ = 0;
-    roomWish_ = false;
-    roomClosing_ = false;
-    roomShown_ = RoomInfo();
-    if (announce) Emit(roomId, [last](EngineListener& listener) { listener.OnRoom(last); });
-#endif
+    std::lock_guard<std::mutex> lock(mutex_);
+    hostRoom_ = roomId;
+    hostDevice_ = host;
+    hostFailed_ = false;
 }
+
+void CallTable::SendReceive(int callId) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(kRenegotiationWaitMs);
+    for (;;) {
+        int pjsuaId = PJSUA_INVALID_ID;
+        unsigned videoCount = 0;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            const Slot* slot = Find(callId);
+            if (!slot || !slot->member || !slot->receiveOnly) return;
+            pjsuaId = slot->pjsuaId;
+            videoCount = slot->videoCount;
+        }
+        if (pjsuaId == PJSUA_INVALID_ID) return;
+        // Todas as mídias com a direção de fábrica (sendrecv): o pjsua a guarda para as próximas ofertas e respostas.
+        pjsua_call_setting setting;
+        pjsua_call_setting_default(&setting);
+        setting.flag |= PJSUA_CALL_SET_MEDIA_DIR;
+        setting.vid_cnt = videoCount;
+        const pj_status_t status = pjsua_call_reinvite2(pjsuaId, &setting, nullptr);
+        if (status == PJ_SUCCESS) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            Slot* slot = Find(callId);
+            if (slot) slot->receiveOnly = false;
+            return;
+        }
+        // PJ_EINVALIDOP: outra renegociação da ligação ainda não terminou, como no Renegotiate.
+        if (status != PJ_EINVALIDOP || std::chrono::steady_clock::now() >= deadline) {
+            Log(2, "o envio do mosaico da sala: " + StatusText(status));
+            return;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+}
+#endif
 
 }  // namespace starsonic

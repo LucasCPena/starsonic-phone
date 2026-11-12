@@ -72,7 +72,8 @@ public:
     // ou o 200) vai sem o vídeo e o refused sai nela, com o offered e o early false e o doorphone de um Porteiro true
     // (ele segue até o fim: a recebida de um número dos Porteiros que oferece vídeo com um codec em comum, com ou sem o
     // 183). Nunca antes do primeiro evento da ligação (o OnIncomingCall, ou o primeiro OnCallState de uma feita), nem
-    // depois do Disconnected dela. Só no motor do PJSIP com o vídeo (o Windows): sem o vídeo (o Android) e no do
+    // depois do Disconnected dela. Com o id da sala (RoomAdd), o vídeo da sala (ver Video): nunca antes do primeiro
+    // OnRoom dela nem depois do último. Só no motor do PJSIP com o vídeo (o Windows): sem o vídeo (o Android) e no do
     // baresip, nunca chega. Vazio por padrão.
     virtual void OnCallVideo(int /*callId*/, const CallVideo& /*video*/) {}
     // Um problema da câmera, uma vez por problema (os casos estão em StartCameraTest e Disconnected em
@@ -274,7 +275,9 @@ public:
     // liga ou desliga só o envio, sem re-INVITE. A câmera só manda com a ligação sem pausa (ver Video). Sem câmera, com
     // on sai o OnCameraProblem(NoCamera) e a câmera fica desligada; numa ligação sem vídeo o re-INVITE pede o vídeo só
     // para receber (recvonly). false: id desconhecido, ligação ainda não confirmada sem vídeo, o re-INVITE não saiu ou
-    // sem o VideoEnabled (com on, sai um OnCallVideo com o refused). Sem o vídeo no motor, false.
+    // sem o VideoEnabled (com on, sai um OnCallVideo com o refused). Com a sala de pé (RoomAdd), a câmera é a da sala:
+    // o id da sala é o desejo da câmera na sala (sem câmera, com on, o NoCamera e a câmera desligada), e o de um
+    // convidado ou de outra ligação dá false. Sem o vídeo no motor, false.
     bool SetCamera(int callId, bool on);
 
     // A tela bloqueada (true): a câmera para de mandar em todas as ligações, e a do teste da câmera fecha também (o
@@ -289,14 +292,19 @@ public:
     // exceção é o Porteiro (o doorphone; decisão do responsável de 11/11/2026): com duas ligações, a imagem dele segue
     // chegando (o active e o remote, tocando ou já atendido), mas a câmera não manda para ele; a espera, a conferência
     // e a transferência o pausam como a qualquer ligação. Os convidados da sala (RoomAdd) também não pausam uns pelos
-    // outros: cada um tem o vídeo dele, e a câmera manda para cada um com o desejo da câmera da sala (o da ligação de
-    // onde ela nasceu).
+    // outros: cada um tem o vídeo dele, e o camera de um convidado é a ligação dele mandando a nossa câmera direto (um
+    // convidado só na sala; com dois ou mais, cada um recebe o mosaico dele). O id da sala dá o vídeo da sala: o active
+    // com ela de pé, o remote com o mosaico de quem montou chegando ao sink e o camera com a nossa câmera chegando aos
+    // convidados (nos mosaicos, ou direto num convidado só), com o desejo da câmera da sala (o da ligação de onde ela
+    // nasceu, e depois o SetCamera do id dela); os outros campos ficam false.
     CallVideo Video(int callId) const;
 
     // A imagem (spec da videochamada, 6.2 e 6.4): o desenhista nosso entrega cada quadro I420 ao sink. Os da outra
     // ponta vão com o id da ligação (OnRemoteFrame) e nunca saem de uma ligação com a imagem pausada (o active false:
     // ver Video); os da nossa câmera (OnLocalFrame) saem da prévia da câmera escolhida, que roda enquanto o teste da
-    // câmera está ligado ou alguma ligação manda a imagem. nullptr descarta. Síncrono com o desenhista: ao voltar,
+    // câmera está ligado, alguma ligação manda a câmera ou ela vai para os mosaicos da sala. Com a sala de pé, o
+    // mosaico de quem montou chega como OnRemoteFrame(idDaSala, ...), em 1280x720 a 25 qps, e a imagem de cada
+    // convidado segue chegando com o id da ligação dele. nullptr descarta. Síncrono com o desenhista: ao voltar,
     // nenhum quadro chega ao sink antigo (ele precisa durar até lá). Não espera os outros métodos, só a entrega de um
     // quadro em andamento; não pode ser chamado de dentro do sink. O sink não chama o motor, nenhum método: uma thread
     // da API pode estar esperando a trava do desenhista com as travas do motor e do pjsua presas, e a entrega do quadro
@@ -310,8 +318,8 @@ public:
     // dos eventos do motor, nunca a da janela, que é STA; ver EngineHost.h). O envio da câmera de uma ligação abre e
     // fecha na thread do PJSIP.
 
-    // As câmeras que a PJSIP enxerga, na ordem dela, com o nome em UTF-8; o nosso dispositivo de saída não entra. Com
-    // o nullVideo, nenhuma. Vazio sem o vídeo no motor.
+    // As câmeras que a PJSIP enxerga, na ordem dela, com o nome em UTF-8; os dispositivos nossos (o de saída e os da
+    // sala) não entram. Com o nullVideo, nenhuma. Vazio sem o vídeo no motor.
     std::vector<VideoDevice> VideoDevices() const;
 
     // A câmera pelo nome (o de VideoDevices); "" é a primeira. Vale na próxima vez que a câmera abre (o teste da
@@ -342,9 +350,14 @@ public:
     // mesmo contador das ligações, que vale nos métodos de sempre: cada um diz o que faz com ele. A saída de um
     // convidado (o Hangup dele, o fim do outro lado ou uma recusa) tira o quadro dele, e a sala se arruma; com um
     // convidado só, contando os chamados, ou nenhum, ela acaba: sai o OnRoom com o ended, e quem ficou volta a ser uma
-    // ligação comum, com o desejo da câmera da sala, e é a ativa se a sala era a ativa. Só no motor do PJSIP com o
-    // vídeo (o Windows): sem o vídeo (o Android) e no do baresip, o RoomAdd devolve -1, o Room devolve o RoomInfo{} e
-    // nenhum OnRoom chega.
+    // ligação comum, com o desejo da câmera da sala, e é a ativa se a sala era a ativa. A imagem: com dois ou mais
+    // convidados que já atenderam (também os em espera), cada um recebe o mosaico dele, a nossa câmera primeiro e os
+    // outros que já atenderam, sem ele (um quadro sem imagem fica com o fundo); com um só, ele recebe a nossa câmera
+    // direto. O mosaico de quem montou, com todos os convidados (também os chamados) na ordem de entrada, chega ao
+    // SetFrameSink com o id da sala. Sem câmera, os convidados recebem o mosaico do mesmo jeito, com o fundo no lugar
+    // da nossa câmera (a ligação de onde a sala nasce, que só recebia o vídeo, ganha um re-INVITE sendrecv). Só no
+    // motor do PJSIP com o vídeo (o Windows): sem o vídeo (o Android) e no do baresip, o RoomAdd devolve -1, o Room
+    // devolve o RoomInfo{} e nenhum OnRoom chega.
 
     // Liga para sip:<número>@<domínio da conta> (como o MakeCall com o vídeo, pela central da conta) e põe a ligação
     // na sala, chamando até ser confirmada. A oferta leva um vídeo (sendrecv): um convidado que responde sem o vídeo

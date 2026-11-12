@@ -65,6 +65,17 @@
 // fim de todo makeCall (FinishDial) avisa o que mudou no meio. Com um convidado só, ou nenhum, a sala acaba no
 // PublishRoom: o OnRoom com o ended, e quem ficou volta a ser uma ligação comum. O Hangup do id da sala a fecha
 // (roomClosing_): ela só acaba sem ninguém.
+//
+// Os mosaicos da sala (RoomVideo.h; as funções deles também no EngineRoom.cpp): com dois ou mais convidados que já
+// atenderam (também os em espera), cada um manda o mosaico dele, o lugar dele na sala (SendsSeat), no lugar da nossa
+// câmera; com um só, ele manda a nossa câmera direto, como numa ligação comum. O SyncVideo troca a fonte de cada
+// ligação pelo CHANGE_CAP_DEV (ao vivo, com a ligação mandando) e manda pelo START_TRANSMIT de sempre, com os ids do
+// FindRoomDevices de cada passada. Com a sala de pé, ele também mantém a prévia do lugar 0 no desenhista nosso
+// (SyncHostMosaic): o mosaico de quem montou, que sai com o id da sala, e cujo primeiro quadro, no portão, liga o
+// remote da sala. O OnCallVideo da sala sai atrás do OnRoom dela (PublishRoom). O plano dos mosaicos (PlanRoom) é
+// refeito com mutex_ presa a cada mudança da sala e do remote. A pjsua acha as janelas pelo id do dispositivo, que uma
+// releitura da lista muda: depois de uma releitura com a sala de pé (restartRoom_), uma passada para o envio de cada
+// ligação da sala e a prévia do lugar 0 com os ids de antes, e a seguinte liga tudo de novo com os ids novos.
 #include <pjsua2.hpp>
 
 #include <chrono>
@@ -79,6 +90,7 @@
 #include "EngineEndpoint.h"
 #include "EngineEvents.h"
 #include "Profile.h"
+#include "RoomVideo.h"
 #include "SipEngine.h"
 #include "Video.h"
 #include "VideoRenderer.h"
@@ -103,6 +115,8 @@ struct VideoMedia {
     bool up = false;        // um stream de vídeo negociado (a porta nos dois lados)
     bool canSend = false;   // a direção negociada deixa mandar
     bool sending = false;   // a captura ligada ao stream (o START_TRANSMIT de pé)
+    // O dispositivo que manda, com o envio de pé (a câmera ou um lugar da sala).
+    pjmedia_vid_dev_index device = PJMEDIA_VID_INVALID_DEV;
     int index = -1;         // o índice dela na ligação
     // Do stream (só no MediaChanged, com a trava do diálogo): o codec e o codificador.
     std::string codec;
@@ -222,7 +236,9 @@ public:
     // que a câmera abre.
     void SetVideoDevices(const VideoDeviceIds& ids);
     // A releitura da lista: refresh relê (o pjmedia_vid_dev_refresh) e devolve os ids novos, com a câmera parada no
-    // meio (videoMutex_). A câmera em uso que sumiu é o Disconnected; a que mudou de lugar fecha e abre de novo.
+    // meio (videoMutex_). A câmera em uso que sumiu (também a que já tinha saído da lista) é o Disconnected; a que
+    // mudou de lugar fecha e abre de novo. Com a sala de pé, o envio dela e o mosaico de quem montou também
+    // (restartRoom_).
     void RefreshCameras(const std::function<VideoDeviceIds()>& refresh);
     bool StartCameraTest();
     void StopCameraTest();
@@ -261,7 +277,10 @@ private:
         bool askingVideo = false;         // uma oferta nossa com o vídeo espera a resposta: sem o vídeo nela, recusa
         bool transferring = false;        // um Transfer ou TransferAttended ainda sem resultado
         bool sending = false;             // o envio que o SyncVideo aplicou
+        bool seatSending = false;         // ...e ele é o lugar da sala (o mosaico do convidado), e não a câmera
         bool sendFailed = false;          // o último START_TRANSMIT falhou (a linha "camera: falhou" já saiu)
+        bool receiveOnly = false;         // o vídeo só recebe por aqui (o media_dir DECODING, sem câmera), também nas
+                                          // próximas ofertas e respostas: o pjsua o guarda
         bool remote = false;              // a imagem da outra ponta chegando (ver o topo do arquivo)
         std::chrono::steady_clock::time_point lastFrame;   // o último quadro da outra ponta que saiu
         std::string codec;                // o codec do vídeo negociado ("H264", "VP8" ou "VP9")
@@ -317,8 +336,12 @@ private:
     // espera, a transferência, a conferência ou a outra ligação, menos num Porteiro, cuja imagem segue com a outra
     // ligação. Um convidado da sala, como no SendPaused.
     bool ReceivePaused(const Slot& slot);
-    // Com mutex_ preso. A câmera da ligação deve mandar agora (num convidado, com o desejo da câmera da sala).
+    // Com mutex_ preso. A câmera da ligação deve mandar agora (num convidado, só sozinho na sala, com o desejo da
+    // câmera da sala e você nela).
     bool WantsToSend(const Slot& slot);
+    // Com mutex_ preso. A ligação manda a imagem agora: o envio aplicado, e a tabela ainda o quer (a câmera, ou o lugar
+    // da sala).
+    bool SendsImage(const Slot& slot);
     // Com mutex_ preso. O CallVideo de agora da ligação (sem o refused).
     CallVideo Current(const Slot& slot);
     // Com mutex_ preso: o OnCallVideo de cada ligação cujo CallVideo mudou.
@@ -345,16 +368,43 @@ private:
     // Com mutex_ preso. A sala de agora (RoomInfo{} sem sala): os convidados pela ordem de entrada, cada um com o
     // estado, a imagem e o quadro dele no mosaico de quem montou.
     RoomInfo CurrentRoom();
-    // Com mutex_ preso: o OnRoom da sala, se ela mudou desde o último (roomShown_). Com um convidado só ou nenhum
-    // (com a sala fechando, só sem nenhum), ela acaba: o OnRoom com o ended (se o último avisado era dela) e quem
-    // ficou volta a ser uma ligação comum, a ativa se a sala era a ativa. Durante um makeCall (dialing_), nada: o
-    // FinishDial o chama depois.
+    // Com mutex_ preso: o OnRoom da sala, se ela mudou desde o último (roomShown_), e atrás dele o OnCallVideo da sala,
+    // se ele mudou. Com um convidado só ou nenhum (com a sala fechando, só sem nenhum), ela acaba: o último
+    // OnCallVideo dela (o CallVideo{}) e o OnRoom com o ended (se o último avisado era dela), e quem ficou volta a ser
+    // uma ligação comum, a ativa se a sala era a ativa. Durante um makeCall (dialing_), nada disso: o FinishDial o
+    // chama depois. Por fim, sempre, o plano dos mosaicos (PlanRoom).
     void PublishRoom();
+#if PJMEDIA_HAS_VIDEO
+    // Com mutex_ preso, a sala de pé e fora de um makeCall: os avisos do PublishRoom.
+    void AnnounceRoom();
+#endif
     // Sem mutex_ presa. callId é o id da sala: ela fecha (ver o topo do arquivo), e a lista traz os ids no pjsua dos
     // convidados, para o Hangup. Senão, vazia.
     std::vector<int> CloseRoom(int callId);
+    // Com mutex_ preso. Os convidados da sala, na ordem de entrada.
+    std::vector<const Slot*> MembersInOrder();
 
 #if PJMEDIA_HAS_VIDEO
+    // Os mosaicos (EngineRoom.cpp; ver o topo do arquivo). Com mutex_ preso: a sala de pé com dois ou mais convidados
+    // que já atenderam, também os em espera (cada um recebe o mosaico dele); o convidado manda o lugar dele agora
+    // (confirmado, com o vídeo negociado e a direção que deixa mandar, sem olhar a câmera); a nossa câmera vai para os
+    // mosaicos (o desejo da câmera da sala, fora da tela bloqueada e você nela: o kHostTile no live).
+    bool RoomMosaic();
+    bool SendsSeat(const Slot& slot);
+    bool RoomCameraWanted();
+    // Com mutex_ preso. O CallVideo de agora da sala (CallVideo{} sem sala): o active com ela de pé, o remote do
+    // mosaico de quem montou e o camera da nossa câmera chegando aos convidados.
+    CallVideo CurrentRoomVideo();
+    // Com mutex_ preso: o plano dos mosaicos (RoomPlan{} sem sala) vai para a loja, se mudou.
+    void PlanRoom();
+    // Só no SyncVideo (com videoMutex_ presa, sem mutex_): com a sala de pé, a prévia do lugar 0 (host, o id de agora)
+    // no desenhista nosso, ligada ao id da sala, e o tap da loja; sem sala (ou na passada da releitura, restart), a
+    // prévia fecha pelo id com que abriu. Sem sala, nenhum tap.
+    void SyncHostMosaic(bool restart, pjmedia_vid_dev_index host);
+    // Sem mutex_ presa: a ligação de onde a sala nasceu só recebia o vídeo (receiveOnly): um re-INVITE sendrecv, para
+    // ela mandar o mosaico dela, esperando a renegociação anterior como o Renegotiate.
+    void SendReceive(int callId);
+
     // Os quadros das ligações que chegam ao desenhista (RemoteFrameGate) e o temporizador do remote.
     struct FrameGate : RemoteFrameGate {
         CallTable* table = nullptr;
@@ -368,12 +418,14 @@ private:
         CallTable* table = nullptr;
         void OnEngineTimer() override;
     };
-    // Na thread do desenhista, com a trava dele presa: a pausa da imagem segura o quadro, e o primeiro liga o remote.
+    // Na thread do desenhista, com a trava dele presa: a pausa da imagem segura o quadro, e o primeiro liga o remote. O
+    // do mosaico de quem montou (o id da sala) liga o remote da sala, e o de uma sala que acabou não sai.
     bool RemoteFrameArrived(int callId);
-    // No temporizador do remote: desliga o remote das ligações sem quadro há 2 s e marca a próxima conferência.
+    // No temporizador do remote: desliga o remote das ligações (e o da sala) sem quadro há 2 s e marca a próxima
+    // conferência.
     void CheckRemote();
-    // Com mutex_ presa: alguma ligação manda a imagem agora (o envio aplicado, e a tabela ainda o quer: o camera do
-    // CallVideo) e o temporizador do quadro-chave não está marcado. true: ele fica marcado, e quem chamou o agenda
+    // Com mutex_ presa: alguma ligação manda a imagem agora (SendsImage: a câmera, ou o mosaico de um convidado da
+    // sala) e o temporizador do quadro-chave não está marcado. true: ele fica marcado, e quem chamou o agenda
     // (ScheduleKeyframes), sem mutex_ presa.
     bool KeyframeTimerNeeded();
     // Só no temporizador do quadro-chave (OnEngineTimer), sem trava nenhuma presa; pega a videoMutex_, como o
@@ -393,15 +445,17 @@ private:
     void LoseCamera();
     // Qualquer thread, com ou sem mutex_: o OnCameraProblem, pela fila dos eventos.
     void Problem(CameraProblem problem);
-    // Com videoMutex_ presa (sem mutex_): a prévia roda com o teste da câmera ligado fora da tela bloqueada, ou com uma
-    // ligação mandando a imagem; device é a câmera para abrir. PJ_SUCCESS, ou o código da prévia que não abriu.
+    // Com videoMutex_ presa (sem mutex_): a prévia roda com o teste da câmera ligado fora da tela bloqueada, com uma
+    // ligação mandando a câmera ou com a câmera nos mosaicos da sala (RoomCameraWanted); device é a câmera para abrir.
+    // PJ_SUCCESS, ou o código da prévia que não abriu.
     pj_status_t SyncPreview(pjmedia_vid_dev_index device);
     // Com videoMutex_ presa: fecha a prévia, se está aberta.
     void StopPreview();
     // Com videoMutex_ presa (sem mutex_): a prévia que o SyncVideo abriria não abriu (a câmera do teste, aberta de
     // novo depois de mudar de lugar na lista). A linha "camera: falhou" e o OpenFailed, se o START da mesma passada
-    // (reported) já não os deu; o teste da câmera para, e o desejo da câmera das ligações que mandam desliga. true:
-    // alguma ligação mandava (a próxima passada para o envio dela).
+    // (reported) já não os deu; o teste da câmera para, e o desejo da câmera das ligações que mandam a câmera (e o da
+    // sala, se os mosaicos a queriam) desliga. true: alguma ligação mandava a câmera (a próxima passada para o envio
+    // dela).
     bool PreviewFailed(pj_status_t status, bool reported);
 #endif
 
@@ -447,6 +501,16 @@ private:
     bool restartCamera_ = false;        // a câmera em uso mudou de lugar na lista: o SyncVideo fecha e abre de novo
     bool remoteCheckPending_ = false;   // o temporizador do remote está marcado
     bool keyframePending_ = false;      // o temporizador do quadro-chave está marcado
+    // Os mosaicos da sala (ver o topo do arquivo), com mutex_.
+    bool restartRoom_ = false;          // a lista foi relida com a sala de pé: o SyncVideo para tudo dela e religa
+    bool roomRemote_ = false;           // o mosaico de quem montou chegando: o remote da sala
+    std::chrono::steady_clock::time_point roomLastFrame_;   // o último quadro dele que saiu
+    CallVideo roomVideoShown_;          // o último OnCallVideo da sala
+    RoomPlan plan_;                     // o último plano que foi para a loja
+    // A prévia do lugar 0 (o SyncHostMosaic): aberta no id hostDevice_ e ligada ao id da sala hostRoom_ (0: fechada).
+    pjmedia_vid_dev_index hostDevice_ = PJMEDIA_VID_INVALID_DEV;
+    int hostRoom_ = 0;
+    bool hostFailed_ = false;           // a última abertura dela falhou (a linha do log já saiu)
 #endif
 
     std::mutex routeMutex_;           // uma passada de Route por vez (ver o topo do arquivo)
