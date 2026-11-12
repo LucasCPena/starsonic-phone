@@ -12,7 +12,6 @@
 #include <future>
 #include <memory>
 #include <optional>
-#include <sstream>
 #include <string>
 #include <thread>
 #include <utility>
@@ -21,44 +20,24 @@
 #include "CallController.h"
 #include "CallMessages.h"
 #include "Text.h"
+#include "call_controller_helpers.h"
 #include "fake_call_engine.h"
-
-namespace doctest {
-
-// As listas e os pares nas mensagens do doctest quando uma comparação falha.
-template <typename T>
-struct StringMaker<std::vector<T>> {
-    static String convert(const std::vector<T>& values) {
-        std::ostringstream out;
-        out << "[";
-        for (size_t i = 0; i < values.size(); ++i) out << (i ? ", " : "") << toString(values[i]).c_str();
-        out << "]";
-        return out.str().c_str();
-    }
-};
-
-template <typename A, typename B>
-struct StringMaker<std::pair<A, B>> {
-    static String convert(const std::pair<A, B>& value) {
-        std::ostringstream out;
-        out << "(" << toString(value.first).c_str() << ", " << toString(value.second).c_str() << ")";
-        return out.str().c_str();
-    }
-};
-
-}  // namespace doctest
 
 using namespace starsonic;
 using phone_test::FakeCallEngine;
 using phone_test::FakeCallListener;
 using phone_test::FakeContactNames;
 using phone_test::FakeTime;
+using phone_test::Held;
+using phone_test::MakeRecent;
+using phone_test::One;
+using phone_test::U8;
+using phone_test::View;
 
 namespace {
 
-// Os textos em pt-BR, em UTF-8 (os literais do C++ ficam em ASCII: build/check_source_text.py).
-std::string U8(const std::wstring& text) { return WideToUtf8(text); }
-
+// Os textos em pt-BR, em UTF-8 (os literais do C++ ficam em ASCII: build/check_source_text.py; o U8 está no
+// call_controller_helpers.h).
 std::string Missed(const std::string& who) { return U8(L"Liga\u00e7\u00e3o perdida de ") + who; }
 
 std::string EndMessage(int sipCode) { return U8(CallEndMessage(sipCode)); }
@@ -66,49 +45,13 @@ std::string EndMessage(int sipCode) { return U8(CallEndMessage(sipCode)); }
 const std::wstring kNoConnection = L"Sem conex\u00e3o com o servidor. Tente de novo em instantes.";
 const std::wstring kTransferRefused = L"O servidor n\u00e3o aceitou a transfer\u00eancia.";
 
-CallView View(int id, const std::string& number, const std::string& name, bool incoming, CallView::Phase phase,
-              int64_t activeSinceMs = 0, bool held = false) {
-    CallView view;
-    view.id = id;
-    view.number = number;
-    view.name = name;
-    view.incoming = incoming;
-    view.phase = phase;
-    view.activeSinceMs = activeSinceMs;
-    view.held = held;
-    return view;
-}
-
-Recent MakeRecent(const std::string& number, const std::string& name, Recent::Kind kind, int64_t startMs,
-                  int64_t durationMs) {
-    Recent recent;
-    recent.number = number;
-    recent.name = name;
-    recent.kind = kind;
-    recent.startMs = startMs;
-    recent.durationMs = durationMs;
-    return recent;
-}
-
-// O que a tela mostra com uma ligação (top) ou com duas (top e second, tocando ou em espera).
-CallSnapshot One(const CallView& top) {
-    CallSnapshot snapshot;
-    snapshot.top = top;
-    return snapshot;
-}
-
+// O que a tela mostra com duas (top e second, tocando ou em espera); com uma, o One (call_controller_helpers.h).
 CallSnapshot Two(const CallView& top, const CallView& second, CallSnapshot::SecondKind kind) {
     CallSnapshot snapshot;
     snapshot.top = top;
     snapshot.second = second;
     snapshot.secondKind = kind;
     return snapshot;
-}
-
-// A mesma ligação, em espera.
-CallView Held(CallView view) {
-    view.held = true;
-    return view;
 }
 
 // O snapshot na consulta (colleagueActive: o colega é a de cima).

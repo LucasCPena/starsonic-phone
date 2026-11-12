@@ -6,7 +6,6 @@
 #include "doctest/doctest.h"
 
 #include <optional>
-#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -14,38 +13,19 @@
 #include "CallController.h"
 #include "CallMessages.h"
 #include "Text.h"
+#include "call_controller_helpers.h"
 #include "fake_call_engine.h"
-
-namespace doctest {
-
-// As listas e os pares nas mensagens do doctest quando uma comparação falha (as mesmas do test_call_controller.cpp).
-template <typename T>
-struct StringMaker<std::vector<T>> {
-    static String convert(const std::vector<T>& values) {
-        std::ostringstream out;
-        out << "[";
-        for (size_t i = 0; i < values.size(); ++i) out << (i ? ", " : "") << toString(values[i]).c_str();
-        out << "]";
-        return out.str().c_str();
-    }
-};
-
-template <typename A, typename B>
-struct StringMaker<std::pair<A, B>> {
-    static String convert(const std::pair<A, B>& value) {
-        std::ostringstream out;
-        out << "(" << toString(value.first).c_str() << ", " << toString(value.second).c_str() << ")";
-        return out.str().c_str();
-    }
-};
-
-}  // namespace doctest
 
 using namespace starsonic;
 using phone_test::FakeCallEngine;
 using phone_test::FakeCallListener;
 using phone_test::FakeContactNames;
 using phone_test::FakeTime;
+using phone_test::Held;
+using phone_test::MakeRecent;
+using phone_test::One;
+using phone_test::U8;
+using phone_test::View;
 
 namespace {
 
@@ -60,9 +40,7 @@ using Ints = std::vector<int>;
 using Recents = std::vector<Recent>;
 using Strings = std::vector<std::string>;
 
-// Os textos em pt-BR, em UTF-8 (os literais do C++ ficam em ASCII: build/check_source_text.py).
-std::string U8(const std::wstring& text) { return WideToUtf8(text); }
-
+// O aviso de discar sem registro (os literais do C++ ficam em ASCII: build/check_source_text.py).
 const std::wstring kNoConnection = L"Sem conex\u00e3o com o servidor. Tente de novo em instantes.";
 
 RoomTile Tile(double x, double y, double width, double height) {
@@ -119,43 +97,6 @@ RoomMemberView Guest(int id, const std::string& number, const std::string& name,
     guest.image = image;
     guest.tile = tile;
     return guest;
-}
-
-CallView View(int id, const std::string& number, const std::string& name, bool incoming, CallView::Phase phase,
-              int64_t activeSinceMs = 0, bool held = false) {
-    CallView view;
-    view.id = id;
-    view.number = number;
-    view.name = name;
-    view.incoming = incoming;
-    view.phase = phase;
-    view.activeSinceMs = activeSinceMs;
-    view.held = held;
-    return view;
-}
-
-// A mesma ligação, em espera.
-CallView Held(CallView view) {
-    view.held = true;
-    return view;
-}
-
-// O que a tela mostra com uma ligação só.
-CallSnapshot One(const CallView& top) {
-    CallSnapshot snapshot;
-    snapshot.top = top;
-    return snapshot;
-}
-
-Recent MakeRecent(const std::string& number, const std::string& name, Recent::Kind kind, int64_t startMs,
-                  int64_t durationMs) {
-    Recent recent;
-    recent.number = number;
-    recent.name = name;
-    recent.kind = kind;
-    recent.startMs = startMs;
-    recent.durationMs = durationMs;
-    return recent;
 }
 
 // O vídeo de uma ligação com a imagem chegando e a nossa câmera mandando.
@@ -296,6 +237,38 @@ TEST_CASE_FIXTURE(RoomFixture, "RoomAdd needs a lone active video call or the ro
     CHECK(engine.roomAdds == Strings{"2003", "2004"});
 }
 
+TEST_CASE_FIXTURE(RoomFixture, "a second RoomAdd waits until the first guest is in the room") {
+    REQUIRE(calls.RoomAdd("2003"));   // o motor deu o 2, e o OnRoom que o traz ainda não chegou
+    CHECK_FALSE(calls.RoomAdd("2004"));
+    CHECK(engine.roomAdds == Strings{"2003"});
+    calls.OnRoom(Room({Member(1, kIn), Member(2)}));
+    REQUIRE(calls.RoomAdd("2004"));
+    calls.OnRoom(Room({Member(1, kIn), Member(2), Member(3)}));
+    CHECK(engine.roomAdds == Strings{"2003", "2004"});
+    REQUIRE(State().room.has_value());
+    CHECK(State().room->members == Guests{Guest(1, "3001", "Cliente Teste", kIn),
+                                          Guest(2, "2003", "Maria Silva", kCalling),
+                                          Guest(3, "2004", "Carlos Lima", kCalling)});
+}
+
+TEST_CASE_FIXTURE(RoomFixture, "RoomAdd waits until the engine has us back in the room") {
+    StartRoom();
+    TakeOutsideCall({Member(1, kIn), Member(2)});
+    // A de fora acaba: a sala volta aqui na hora (o Activate), mas o motor nos tem fora até o OnRoom dele.
+    calls.OnCallState(5, CallState::Disconnected, 200);
+    REQUIRE(engine.activated == Ints{kRoomId});
+    REQUIRE(Top() == RoomLine());
+    engine.refuseRoom = true;   // como o motor, que dá -1 com você fora da sala (SipEngine.h): ele nem é chamado
+    CHECK_FALSE(calls.RoomAdd("2004"));
+    CHECK(engine.roomAdds == Strings{"2003"});
+    CHECK_MESSAGE(listener.recents.size() == 1, "so o Recente da ligacao de fora: nada de uma feita que nao tocou");
+    CHECK(listener.roomEvents == Events{{RoomEvent::Started, 0}, {RoomEvent::Out, 0}});
+    engine.refuseRoom = false;
+    calls.OnRoom(Room({Member(1, kIn), Member(2)}));
+    CHECK(calls.RoomAdd("2004"));
+    CHECK(engine.roomAdds == Strings{"2003", "2004"});
+}
+
 TEST_CASE_FIXTURE(RoomFixture, "a guest answering, leaving and failing") {
     const int64_t added = time.NowMs();
     StartRoom();
@@ -392,6 +365,29 @@ TEST_CASE_FIXTURE(RoomFixture, "the room ending with one guest gives back a norm
                   MakeRecent("2004", "", Recent::Outgoing, added + 1000, 9000)});
 }
 
+TEST_CASE_FIXTURE(RoomFixture, "the call the room hands back while we are out waits on hold") {
+    StartRoom();
+    calls.OnCallState(2, CallState::Confirmed, 200);
+    const int64_t since2 = time.NowMs();
+    calls.OnRoom(Room({Member(1, kIn), Member(2, kIn)}));
+    TakeOutsideCall({Member(1, kIn), Member(2, kIn)});
+    const int64_t since5 = time.NowMs();
+    time.Advance(5000);
+    // A ligação 1 sai do outro lado, e o motor acaba a sala com o 2003, fora do nosso som: ele não é a ativa.
+    calls.OnCallState(1, CallState::Disconnected, 200);
+    calls.OnRoom(Ended(Out(Room({Member(2, kIn)}))));
+    const CallView stayed = View(2, "2003", "Maria Silva", false, CallView::Active, since2);
+    CHECK(Top() == View(5, "3005", "Fulano", true, CallView::Active, since5));
+    CHECK(State().second == Held(stayed));
+    CHECK(State().secondKind == CallSnapshot::Held);
+    CHECK_FALSE(State().room.has_value());
+    CHECK(engine.activated.empty());
+    // A de fora acaba: o 2003 volta sozinho, como a outra de duas ligações.
+    calls.OnCallState(5, CallState::Disconnected, 200);
+    CHECK(engine.activated == Ints{2});
+    CHECK(State() == One(stayed));
+}
+
 TEST_CASE_FIXTURE(RoomFixture, "salaEncerrar and the hang up of the room line end every guest") {
     const int64_t added = time.NowMs();
     StartRoom();
@@ -421,6 +417,22 @@ TEST_CASE_FIXTURE(RoomFixture, "salaEncerrar and the hang up of the room line en
     CHECK(State() == CallSnapshot());
     CHECK_FALSE(calls.HasCalls());
     CHECK(engine.activated.empty());
+}
+
+TEST_CASE_FIXTURE(RoomFixture, "the outside call comes back by itself when the active room ends with nobody") {
+    StartRoom();
+    TakeOutsideCall({Member(1, kIn), Member(2)});
+    const CallView outside = View(5, "3005", "Fulano", true, CallView::Active, time.NowMs());
+    calls.RoomReturn();   // a sala em cima, e a de fora em espera embaixo
+    calls.OnRoom(Room({Member(1, kIn), Member(2)}));
+    calls.RoomEnd();
+    CHECK(engine.hangups == Ints{kRoomId});
+    CHECK_MESSAGE(State() == One(Held(outside)), "ate o fim da sala, a de fora segue em espera");
+    calls.OnCallState(2, CallState::Disconnected, 487);
+    calls.OnCallState(1, CallState::Disconnected, 200);
+    calls.OnRoom(Ended(Room({})));
+    CHECK(engine.activated == Ints{kRoomId, 5});
+    CHECK(State() == One(outside));
 }
 
 TEST_CASE_FIXTURE(RoomFixture, "the outside call rings as the second line and answering takes us out") {
@@ -553,6 +565,22 @@ TEST_CASE_FIXTURE(RoomFixture, "Dial during the room is the outside call, voice 
     CHECK(Top() == RoomLine());
 }
 
+TEST_CASE_FIXTURE(RoomFixture, "an OnRoom's room and guest ids are never taken for the outside call being dialed") {
+    StartRoom();
+    // A ligação de fora sai, e chega, antes de o MakeCall voltar, o evento de um id abaixo de um que o OnRoom trouxe:
+    // ele não é de uma ligação nova (não é dela).
+    SUBCASE("below the room id") {
+        engine.duringMakeCall = [this](int) { calls.OnCallState(20, CallState::Calling, 0); };
+    }
+    SUBCASE("below a guest id") {
+        calls.OnRoom(Room({Member(1, kIn), Member(2), Member(45)}));   // um convidado que nenhum RoomAdd espera
+        engine.duringMakeCall = [this](int) { calls.OnCallState(40, CallState::Calling, 0); };
+    }
+    REQUIRE(calls.Dial("2009"));
+    CHECK(engine.hangups.empty());
+    CHECK(Top() == View(3, "2009", "", false, CallView::Dialing));
+}
+
 TEST_CASE_FIXTURE(RoomFixture, "Hold, Transfer, Consult, Join and Dtmf do nothing on the room") {
     StartRoom();
     const CallSnapshot alone = State();
@@ -599,12 +627,13 @@ TEST_CASE_FIXTURE(RoomFixture, "logging out ends the room with every guest in th
           Recents{MakeRecent("3001", "Cliente Teste", Recent::Incoming, start, added + 6000 - answeredAt),
                   MakeRecent("2003", "", Recent::Outgoing, added, 5000)});
     CHECK(listener.missed.empty());
+    CHECK_MESSAGE((listener.roomEvents.back() == Event{RoomEvent::Ended, 0}), "o Started ganha o par dele");
     // Os fins que chegam depois são ignorados, sem avisos.
     calls.OnCallState(2, CallState::Disconnected, 200);
     calls.OnCallState(1, CallState::Disconnected, 200);
     calls.OnRoom(Ended(Room({})));
     CHECK(listener.recents.size() == 2);
-    CHECK(listener.roomEvents == Events{{RoomEvent::Started, 0}, {RoomEvent::Entered, 2}});
+    CHECK(listener.roomEvents == Events{{RoomEvent::Started, 0}, {RoomEvent::Entered, 2}, {RoomEvent::Ended, 0}});
     CHECK(Message() == "");
     CHECK_FALSE(calls.HasCalls());
     CHECK(engine.hangups == Ints{kRoomId});

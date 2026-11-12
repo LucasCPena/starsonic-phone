@@ -553,14 +553,17 @@ void CallController::OnLogout() {
         ClearEndMessage();
         CancelAutoAnswer();
         const std::vector<CallPtr> current = calls_;
+        bool roomEnded = false;
         for (const CallPtr& call : current) {
             call->abandoned = true;
             const int id = call->id;
             if (id != kNoId) effects.push_back([this, id] { engine_.Hangup(id); });
             if (call->room) {
-                // A sala acaba com o Hangup do id dela: os Recentes são dos convidados, sem avisos.
+                // A sala acaba com o Hangup do id dela: os Recentes são dos convidados, sem avisos, e o Ended sai (o
+                // par do Started: os fins que o motor manda depois são ignorados).
                 for (const CallPtr& guest : call->room->guests) Record(GuestRecent(*guest));
                 EndRoomLine(call, effects);
+                roomEnded = true;
             } else {
                 End(call, 0, effects, /*quiet=*/true);
             }
@@ -575,6 +578,7 @@ void CallController::OnLogout() {
             Record(GuestRecent(*guest));
         }
         Publish();
+        if (roomEnded) PublishRoomEvent(RoomEvent::Ended, 0);
     });
 }
 
@@ -1233,9 +1237,12 @@ void CallController::OnRoomAdded(const CallPtr& guest, int id, Effects& effects)
 
 // Com a trava: o RoomAdd pode chamar o motor. Sem sala, a ligação de agora é a única, em andamento, fora da espera e da
 // saída, sem consulta, conferência ou transferência esperando o resultado, e com o vídeo ativo; com sala, a linha dela
-// está em cima, fora da espera (você na sala) e sem o full.
+// está em cima, fora da espera, com você na sala também para o motor (sem o out do último OnRoom: fora dela, o motor dá
+// -1, e o convidado entraria nos Recentes sem ter tocado) e sem o full.
 bool CallController::RoomCanGrow() const {
-    if (const CallPtr line = RoomLine()) return line == Shown() && !line->held && !line->room->full;
+    if (const CallPtr line = RoomLine()) {
+        return line == Shown() && !line->held && !line->room->out && !line->room->full;
+    }
     if (calls_.size() != 1) return false;
     const CallPtr call = calls_.front();
     return call->phase == Call::Phase::Active && !call->held && !call->ending && !client_ && !conference_ &&

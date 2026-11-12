@@ -359,12 +359,12 @@ public:
     // Põe raw (o número como foi digitado, UTF-8) na sala: o motor liga para ele (RoomAdd, aqui dentro). Sem sala, ela
     // nasce da ligação de agora, que precisa ser a única, em andamento, fora da espera e da saída, sem consulta,
     // conferência ou transferência esperando o resultado, e com o vídeo ativo; com sala, a linha dela precisa estar em
-    // cima, fora da espera e sem o full. O convidado entra na sala com o primeiro OnRoom que traz um id desconhecido,
-    // ou que traz o id que o RoomAdd devolveu, o que vier antes (como a feita, cujos eventos podem chegar antes de o
-    // MakeCall voltar); o id do RoomAdd vale mais (o de outro, tomado antes, sai). Se o motor não liga (-1), ele entra
-    // nos Recentes como feita, com o Failed (0), sem aviso. false se não pediu ao motor: número vazio (também depois de
-    // tirar os separadores), os casos acima, outro RoomAdd cujo convidado ainda não entrou, depois de Sair, ou sem
-    // registro (aí o aviso, como no Dial).
+    // cima, fora da espera, sem o out do último OnRoom (o motor nos tem na sala) e sem o full. O convidado entra na
+    // sala com o primeiro OnRoom que traz um id desconhecido, ou que traz o id que o RoomAdd devolveu, o que vier antes
+    // (como a feita, cujos eventos podem chegar antes de o MakeCall voltar); o id do RoomAdd vale mais (o de outro,
+    // tomado antes, sai). Se o motor não liga (-1), ele entra nos Recentes como feita, com o Failed (0), sem aviso.
+    // false se não pediu ao motor: número vazio (também depois de tirar os separadores), os casos acima, outro RoomAdd
+    // cujo convidado ainda não entrou, depois de Sair, ou sem registro (aí o aviso, como no Dial).
     bool RoomAdd(const std::string& raw);
     // Põe number, um número de um contato, na sala, como o RoomAdd, depois da regra dos contatos (dialRule). false
     // se a regra não deu número, e nos casos do RoomAdd.
@@ -382,7 +382,8 @@ public:
     // Senão, nada.
     void RoomReturn();
     // Sair: as ligações de agora acabam (o motor as desliga; a sala, pelo Hangup do id dela, com os Recentes de
-    // cada convidado, sem avisos), e daqui em diante os eventos do motor são ignorados, até OnLogin.
+    // cada convidado, sem avisos, e o OnRoomEvent Ended), e daqui em diante os eventos do motor são ignorados, até
+    // OnLogin.
     void OnLogout();
     // O próximo Entrar depois de OnLogout: os eventos do motor voltam a valer.
     void OnLogin();
