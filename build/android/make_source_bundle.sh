@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Pacote "código-fonte completo" de uma versão do app Android (GPL v3, spec 10): este repositório no commit de agora
 # (git archive do HEAD: só o que está versionado), o pjproject, o Opus e o Oboe nos commits de build/deps.lock (chave
-# "android") e um LEIA-ME.txt. As dependências vêm dos repositórios do deps.lock (o GitHub), só o commit fixado.
+# "android"), os patches da Starsonic na PJSIP (build/patches/pjproject do commit de agora, em pjproject-patches/) e
+# um LEIA-ME.txt. As dependências vêm dos repositórios do deps.lock (o GitHub), só o commit fixado.
 #
 # Uso: build/android/make_source_bundle.sh VERSAO OUT
 #   VERSAO  X.Y.Z ou X.Y.Z-rc.N
@@ -88,8 +89,19 @@ add_dependency "pjproject-$PJ_TAG" "$PJ_REPO" "$PJ_COMMIT"
 add_dependency "opus-$OPUS_TAG" "$OPUS_REPO" "$OPUS_COMMIT"
 add_dependency "oboe-$OBOE_VERSION" "$OBOE_REPO" "$OBOE_COMMIT"
 
-# 3. O LEIA-ME.
-cat > "$TREE/LEIA-ME.txt" <<EOF
+# 3. Os patches da Starsonic na PJSIP (build/patches/pjproject deste commit), ao lado dela: o app foi montado com eles
+# aplicados, e a licença da PJSIP pede o código das mudanças.
+PJ_PATCHES=""
+for patch in "$TREE"/starsonic-phone/build/patches/pjproject/*.patch; do
+    [ -e "$patch" ] || continue
+    mkdir -p "$TREE/pjproject-patches"
+    cp "$patch" "$TREE/pjproject-patches/"
+    PJ_PATCHES="$PJ_PATCHES${PJ_PATCHES:+, }$(basename "$patch")"
+done
+
+# 4. O LEIA-ME.
+{
+    cat <<EOF
 Starsonic Phone para Android $VERSION - código-fonte completo (GNU GPL v3)
 
 starsonic-phone/      este repositório no commit $COMMIT
@@ -97,6 +109,18 @@ starsonic-phone/      este repositório no commit $COMMIT
                       starsonic/phone, os scripts de build em build/ e os testes em tests/).
 pjproject-$PJ_TAG/       PJSIP $PJ_TAG, commit $PJ_COMMIT
                       ($PJ_REPO).
+EOF
+    if [ -n "$PJ_PATCHES" ]; then
+        cat <<EOF
+pjproject-patches/    os patches da Starsonic na PJSIP (os de starsonic-phone/build/patches/pjproject):
+                      $PJ_PATCHES.
+                      O pjproject-$PJ_TAG/ traz a PJSIP como veio do repositório; a do app foi montada com
+                      estes patches aplicados, na ordem dos nomes. Para aplicar, dentro de pjproject-$PJ_TAG/,
+                      um de cada vez: git apply ../pjproject-patches/<arquivo>
+                      (ou patch -p1 < ../pjproject-patches/<arquivo>).
+EOF
+    fi
+    cat <<EOF
 opus-$OPUS_TAG/          Opus $OPUS_TAG, commit $OPUS_COMMIT
                       ($OPUS_REPO).
 oboe-$OBOE_VERSION/          Oboe $OBOE_VERSION, commit $OBOE_COMMIT
@@ -104,12 +128,14 @@ oboe-$OBOE_VERSION/          Oboe $OBOE_VERSION, commit $OBOE_COMMIT
                       que o Google compila a partir deste código.
 
 Como compilar: starsonic-phone/README.md (seção Android). O PJSIP (com o Oboe e o Opus) sai do
-starsonic-phone/build/android/build-deps.sh, e o APK, do projeto Gradle em starsonic-phone/android.
-As bibliotecas Java e Kotlin (AndroidX, Compose, WorkManager e Kotlin) e o NDK vêm dos repositórios do
-Google, nas versões de starsonic-phone/android/gradle/libs.versions.toml e starsonic-phone/build/deps.lock.
+starsonic-phone/build/android/build-deps.sh, que aplica os patches de starsonic-phone/build/patches/pjproject, e o
+APK, do projeto Gradle em starsonic-phone/android. As bibliotecas Java e Kotlin (AndroidX, Compose, WorkManager e
+Kotlin) e o NDK vêm dos repositórios do Google, nas versões de starsonic-phone/android/gradle/libs.versions.toml e
+starsonic-phone/build/deps.lock.
 EOF
+} > "$TREE/LEIA-ME.txt"
 
-# 4. O zip (os links simbólicos vão como links, sem seguir para fora da árvore). Só no fim ele entra em OUT.
+# 5. O zip (os links simbólicos vão como links, sem seguir para fora da árvore). Só no fim ele entra em OUT.
 rm -f "$ZIP"
 (cd "$STAGE" && zip -q -r -X -y "$STAGE/pacote.zip" "$NAME") || fail "o zip falhou"
 mv "$STAGE/pacote.zip" "$ZIP"

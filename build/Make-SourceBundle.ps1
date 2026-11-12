@@ -1,5 +1,6 @@
 # Pacote "codigo-fonte completo" de uma versao (GPL v3, spec 10): este repositorio no commit da
-# versao, o pjproject no commit fixo, o codigo-fonte das bibliotecas como o vcpkg baixa (so o
+# versao, o pjproject no commit fixo, os patches da Starsonic na PJSIP (pjproject-patches\, os de
+# build\patches\pjproject no commit da versao), o codigo-fonte das bibliotecas como o vcpkg baixa (so o
 # download, sem compilar), as receitas do vcpkg dessas bibliotecas, os pacotes do npm que vao
 # dentro do ui\app.js (npm-packages\, as versoes do windows\ui\package-lock.json, com o
 # SHA-512 do lock conferido) e um LEIA-ME-FONTES.txt.
@@ -86,6 +87,14 @@ try {
     $pjDir = "pjproject-$($lock.pjproject.tag)"
     $pjZip = Join-Path $stage 'pjproject.zip'
     Invoke-Native git @('-C', $pj, 'archive', '--format=zip', "--prefix=$name/$pjDir/", '-o', $pjZip, $lock.pjproject.commit)
+    # Os patches da Starsonic na PJSIP (build\patches\pjproject deste commit), ao lado dela: a PJSIP do app foi montada
+    # com eles aplicados, e a licenca dela pede o codigo das mudancas.
+    $patchTree = Get-NativeOutput git @('-C', $repoRoot, 'ls-tree', '--name-only', 'HEAD', 'build/patches/pjproject/')
+    $pjPatches = @($patchTree.Output -split "`n" | Where-Object { $_ -like '*.patch' } | ForEach-Object { ($_ -split '/')[-1] } | Sort-Object)
+    $patchesZip = Join-Path $stage 'pjproject-patches.zip'
+    if ($pjPatches.Count -gt 0) {
+        Invoke-Native git @('-C', $repoRoot, 'archive', '--format=zip', "--prefix=$name/pjproject-patches/", '-o', $patchesZip, 'HEAD:build/patches/pjproject')
+    }
 
     # 2. Codigo-fonte das bibliotecas, baixado de novo pelo vcpkg (o cache do build nao guarda os
     # downloads), sem cache de binarios e numa pasta de instalacao vazia, para baixar todas.
@@ -172,7 +181,19 @@ try {
         "starsonic-phone/   este repositorio no commit $commit (MicroSIP com as edicoes da",
         '                   Starsonic, codigo novo em starsonic/, scripts de build e testes).',
         "$pjDir/   PJSIP $($lock.pjproject.tag), commit $($lock.pjproject.commit)",
-        "                   ($($lock.pjproject.repo)), configuracao $($lock.pjproject.configuration) $($lock.pjproject.platform).",
+        "                   ($($lock.pjproject.repo)), configuracao $($lock.pjproject.configuration) $($lock.pjproject.platform)."
+    )
+    if ($pjPatches.Count -gt 0) {
+        $readme += @(
+            'pjproject-patches/ os patches da Starsonic na PJSIP (os de starsonic-phone/build/patches/pjproject):',
+            "                   $($pjPatches -join ', ').",
+            "                   O $pjDir/ traz a PJSIP como veio do repositorio; a do app foi montada com",
+            "                   estes patches aplicados, na ordem dos nomes. Para aplicar, dentro de $pjDir/,",
+            '                   um de cada vez: git apply ../pjproject-patches/<arquivo>',
+            '                   (ou patch -p1 < ../pjproject-patches/<arquivo>).'
+        )
+    }
+    $readme += @(
         'vcpkg-downloads/   codigo-fonte das bibliotecas como o vcpkg baixa:',
         "                   $versions",
         "                   ($(($archives | ForEach-Object { $_.Name } | Sort-Object) -join ', ')).",
@@ -193,6 +214,9 @@ try {
         [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $readmePath, "$name/LEIA-ME-FONTES.txt", $level) | Out-Null
         Add-ZipEntries -Target $zip -SourceZip $repoZip
         Add-ZipEntries -Target $zip -SourceZip $pjZip
+        if ($pjPatches.Count -gt 0) {
+            Add-ZipEntries -Target $zip -SourceZip $patchesZip
+        }
         Add-DirectoryFiles -Target $zip -Directory $downloads -Prefix "$name/vcpkg-downloads/"
         Add-DirectoryFiles -Target $zip -Directory $npmDir -Prefix "$name/npm-packages/"
         foreach ($port in $installedPorts) {

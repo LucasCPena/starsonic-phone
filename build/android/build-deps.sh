@@ -2,6 +2,7 @@
 # Compila para o Android as dependências nativas do app: o pjproject (com o Oboe e o Opus), o Opus e o
 # AAR do Oboe, nas três ABIs. As versões estão em build/deps.lock (chave "android"). É um build de
 # produção, como o do Windows: otimizado (-O2) e sem assert() (-DNDEBUG e PJ_DEBUG 0 em config_site.h).
+# O pjproject leva os patches da Starsonic (build/patches/pjproject), como no Windows e no Linux dos testes.
 #
 # Uso: ANDROID_NDK_ROOT=<NDK do deps.lock> build/android/build-deps.sh OUT [WORKDIR]
 #   OUT      pasta de saída (android-deps no CI), que o app Android consome:
@@ -85,7 +86,8 @@ for key in sys.argv[2:]:
 print(node)' "$ROOT/build/deps.lock" "$@"
 }
 
-# Busca só o commit fixado (sem o histórico) e deixa a pasta limpa nele.
+# Busca só o commit fixado (sem o histórico) e deixa a pasta limpa nele: os arquivos versionados como no commit (o
+# reset tira o que uma rodada anterior mudou, os patches inclusive) e nenhum outro (o clean).
 fetch_commit() {   # fetch_commit REPO COMMIT PASTA
     local repo="$1" commit="$2" dir="$3" current=""
     mkdir -p "$dir"
@@ -101,7 +103,19 @@ fetch_commit() {   # fetch_commit REPO COMMIT PASTA
     if [ "$(git -C "$dir" rev-parse HEAD)" != "$commit" ]; then
         fail "$dir não ficou no commit $commit"
     fi
+    git -C "$dir" reset -q --hard
     git -C "$dir" clean -fdxq
+}
+
+# Os patches da Starsonic na PJSIP (build/patches/pjproject), na ordem dos nomes, sobre o commit fixado. O
+# fetch_commit acabou de deixar a pasta limpa nele: cada patch entra uma vez só.
+apply_pj_patches() {   # apply_pj_patches PASTA COMMIT
+    local dir="$1" commit="$2" patch
+    for patch in "$ROOT"/build/patches/pjproject/*.patch; do
+        [ -e "$patch" ] || continue
+        echo "aplicando $(basename "$patch")"
+        git -C "$dir" apply "$patch" || fail "o patch $(basename "$patch") não aplica no pjproject $commit"
+    done
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -162,6 +176,7 @@ echo; echo "== Fontes"
 PJ="$WORK/pjproject"
 OPUS="$WORK/opus"
 fetch_commit "$PJ_REPO" "$PJ_COMMIT" "$PJ"
+apply_pj_patches "$PJ" "$PJ_COMMIT"
 fetch_commit "$OPUS_REPO" "$OPUS_COMMIT" "$OPUS"
 # O CMake do Opus tira a versão de `git describe --tags`; o clone raso não traz a tag.
 git -C "$OPUS" tag -f "$OPUS_TAG" "$OPUS_COMMIT" >/dev/null

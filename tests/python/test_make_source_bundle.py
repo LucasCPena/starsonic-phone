@@ -1,6 +1,6 @@
 """build/android/make_source_bundle.sh com repositórios git locais no lugar do GitHub: o zip do código-fonte completo
-(GPL v3, spec 10) com este repositório no commit de agora, o pjproject, o Opus e o Oboe nos commits de deps.lock e o
-LEIA-ME.txt.
+(GPL v3, spec 10) com este repositório no commit de agora, o pjproject, o Opus e o Oboe nos commits de deps.lock, os
+patches da PJSIP (build/patches/pjproject) e o LEIA-ME.txt.
 """
 import json
 import os
@@ -95,6 +95,35 @@ class MakeSourceBundleTest(unittest.TestCase):
         for name, folder in self.deps.items():
             self.assertIn(self.commit_of(folder), readme, name)
             self.assertIn(str(folder), readme, name)
+
+    def test_the_pjsip_patches_go_next_to_the_pjsip_and_the_readme_says_how_to_apply_them(self):
+        patches = self.repo / "build" / "patches" / "pjproject"
+        patches.mkdir(parents=True)
+        (patches / "0001-teste.patch").write_text("--- a/pjlib/x.c\n+++ b/pjlib/x.c\n", encoding="utf-8")
+        self.git(self.repo, "add", "build/patches")
+        self.git(self.repo, "commit", "-q", "-m", "patch")
+        # Só o que está no commit vai, como o resto do repositório.
+        (patches / "0002-fora.patch").write_text("--- a/y.c\n", encoding="utf-8")
+        result = self.run_script(VERSION, str(self.out))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with zipfile.ZipFile(self.out / (NAME + ".zip")) as archive:
+            names = set(archive.namelist())
+            self.assertEqual(archive.read("%s/pjproject-patches/0001-teste.patch" % NAME),
+                             b"--- a/pjlib/x.c\n+++ b/pjlib/x.c\n")
+            self.assertIn("%s/starsonic-phone/build/patches/pjproject/0001-teste.patch" % NAME, names)
+            self.assertNotIn("%s/pjproject-patches/0002-fora.patch" % NAME, names)
+            readme = archive.read("%s/LEIA-ME.txt" % NAME).decode("utf-8")
+        self.assertIn("pjproject-patches/", readme)
+        self.assertIn("0001-teste.patch", readme)
+        self.assertNotIn("0002-fora.patch", readme)
+        self.assertIn("git apply", readme)
+
+    def test_without_pjsip_patches_the_bundle_has_no_patches_folder(self):
+        result = self.run_script(VERSION, str(self.out))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with zipfile.ZipFile(self.out / (NAME + ".zip")) as archive:
+            self.assertFalse([name for name in archive.namelist() if "/pjproject-patches/" in name])
+            self.assertNotIn("pjproject-patches/", archive.read("%s/LEIA-ME.txt" % NAME).decode("utf-8"))
 
     def test_a_second_run_replaces_the_bundle(self):
         self.assertEqual(self.run_script(VERSION, str(self.out)).returncode, 0)

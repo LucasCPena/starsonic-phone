@@ -80,6 +80,9 @@ jobs:
     name: Motor de ligações (Linux)
     # Fixo, como os outros jobs do Android: o ubuntu-latest vira Ubuntu 26 em 19/10/2026.
     runs-on: ubuntu-24.04
+    # Um teste travado para o job aqui, e não nas 6 horas do GitHub (em 12/11/2026, um travamento segurou o CI por
+    # quase uma hora).
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -95,7 +98,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: pj-linux
-          key: pj-linux-v1-${{ hashFiles('build/deps.lock', 'build/linux/**') }}
+          key: pj-linux-v1-${{ hashFiles('build/deps.lock', 'build/linux/**', 'build/patches/**') }}
 
       - name: Compilar o pjproject
         if: steps.pj-cache.outputs.cache-hit != 'true'
@@ -131,7 +134,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: android-deps
-          key: android-deps-v1-${{ hashFiles('build/deps.lock', 'build/android/build-deps.sh', 'build/android/config_site.h') }}
+          key: android-deps-v1-${{ hashFiles('build/deps.lock', 'build/android/build-deps.sh', 'build/android/config_site.h', 'build/patches/**') }}
 
       # O NDK do deps.lock já vem na imagem do runner; o sdkmanager só baixa se faltar.
       - name: Instalar o NDK

@@ -5,6 +5,8 @@
 # a câmera de barras coloridas do PJSIP no lugar de uma câmera de verdade. Sem som, SSL, SDL, FFmpeg,
 # Video4Linux nem codecs de voz extras: o registro SIP e os codecs G.722, PCMA e PCMU bastam.
 #
+# O pjproject leva os patches da Starsonic (build/patches/pjproject), como no Windows e no Android.
+#
 # Uso: build/linux/build-pjproject.sh WORKDIR PREFIX
 #   WORKDIR  onde o pjproject é buscado e compilado (reaproveitado se já estiver no commit certo)
 #   PREFIX   onde o `make install` põe cabeçalhos, bibliotecas e o libpjproject.pc
@@ -59,6 +61,18 @@ if [ "$(git -C "$WORKDIR" rev-parse HEAD)" != "$PJ_COMMIT" ]; then
     echo "pjproject: o WORKDIR não ficou no commit $PJ_COMMIT" >&2
     exit 1
 fi
+
+# Os patches, na ordem dos nomes, sobre o commit fixado. O reset devolve os arquivos versionados ao commit (tira o que
+# uma rodada anterior aplicou no WORKDIR reaproveitado): cada patch entra uma vez só.
+git -C "$WORKDIR" reset -q --hard
+for patch in "$ROOT"/build/patches/pjproject/*.patch; do
+    [ -e "$patch" ] || continue
+    echo "pjproject: aplicando $(basename "$patch")"
+    if ! git -C "$WORKDIR" apply "$patch"; then
+        echo "pjproject: o patch $(basename "$patch") não aplica no commit $PJ_COMMIT" >&2
+        exit 1
+    fi
+done
 
 cp "$ROOT/build/linux/config_site.h" "$WORKDIR/pjlib/include/pj/config_site.h"
 
