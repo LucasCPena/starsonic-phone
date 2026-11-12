@@ -14,10 +14,12 @@
 #include <cstdlib>
 #include <functional>
 #include <optional>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
 
+#include "RoomVideo.h"
 #include "SipEngine.h"
 #include "Video.h"
 #include "video_devices_fixture.h"
@@ -29,6 +31,7 @@ using phone_test::Phone;
 
 using phone_test::AddColorbar;
 using phone_test::CallEvent;
+using phone_test::FindDevice;
 using phone_test::kWaitSeconds;
 using phone_test::Last;
 using phone_test::Lines;
@@ -189,6 +192,18 @@ bool HostFramesFlow(const TestSink& sink, int roomId) {
 bool HasImage(const RoomInfo& room, int callId) {
     return std::any_of(room.members.begin(), room.members.end(),
                        [callId](const RoomMember& member) { return member.callId == callId && member.image; });
+}
+
+// A linha do motor quando uma releitura muda os ids dos dispositivos da sala (o envio dela recomeça), e a da mudança
+// do envio de uma ligação para desligado (a "video: ...").
+const char kRoomRestart[] = "os ids da sala mudaram na lista de video";
+const char kSendOff[] = "envio desligado";
+
+// Os valores de um plano da imagem, para a mensagem de um caso que falha.
+std::string ValuesText(const std::set<int>& values) {
+    std::string text;
+    for (const int value : values) text += std::to_string(value) + " ";
+    return text;
 }
 
 }  // namespace
@@ -907,6 +922,8 @@ TEST_CASE("with one guest left the guest gets our camera directly again") {
     const int g1 = ids[1];
     const int roomId = phone.engine->Room().id;
     REQUIRE(SeesColor(sink, base, 0.75, 0.5, kPurple, kEchoTolerance));
+    // O mosaico de quem montou chega com o id da sala: a conta do fim, lá embaixo, não passa à toa.
+    REQUIRE(HostFramesFlow(sink, roomId));
 
     // O g1 sai: a sala acaba, e a base, uma ligação comum de novo, recebe a nossa câmera direto, na imagem toda (as
     // barras na linha inteira, e o roxo some do lado direito).
@@ -1054,14 +1071,51 @@ TEST_CASE("a device refresh during the room re-attaches each guest to its own mo
 
     // Sem as barras coloridas, a releitura muda o id de cada dispositivo da sala (e a câmera em uso sai). Cada
     // convidado volta ao mosaico dele, agora com o fundo no lugar da nossa câmera: a base em cima, à direita.
+    phone.listener.CountLog(kRoomRestart);
     RemoveColorbar();
     phone.engine->RefreshVideoDevices();
+    CHECK(WaitUntil([&] { return phone.listener.LogCount(kRoomRestart) == 1; }, kWaitSeconds));
     for (const int id : echoes) {
         CAPTURE(id);
         CHECK(SeesColor(sink, id, 0.25, 0.25, kBackground, kEchoBackground));
         CHECK(SeesColor(sink, id, 0.75, 0.25, kOrange, kEchoTolerance));
     }
     // O mosaico de quem montou segue chegando, a 25 qps.
+    CHECK(HostFramesFlow(sink, roomId));
+}
+
+TEST_CASE("a device refresh that moves no room device leaves every send and the host's mosaic running") {
+    TestSink sink;
+    Phone phone;
+    INFO(sink.Text());
+    INFO(phone.registrar.LogText());
+    INFO(phone.listener.RoomsText());
+    INFO(phone.listener.LogTail());
+    phone.engine->SetFrameSink(&sink);
+    phone.engine->SetVideoSettings(RoomSettings());
+    ShowColor(phone, "2002", kOrange);
+    ShowEcho(phone, "2003");
+    ShowEcho(phone, "2004");
+    const std::vector<int> ids = VideoRoom(phone, 2);
+    const std::vector<int> echoes{ids[1], ids[2]};
+    const int roomId = phone.engine->Room().id;
+    for (const int id : echoes) REQUIRE(SeesColor(sink, id, 0.75, 0.25, kOrange, kEchoTolerance));
+    REQUIRE(HostFramesFlow(sink, roomId));
+
+    // A mesma lista relida (no Windows, um fone que entra também relê a lista de vídeo): nenhum id da sala muda, e nada
+    // da sala recomeça. Nenhum envio para no segundo seguinte (a passada que recomeça vem logo depois da releitura).
+    phone.listener.CountLog(kRoomRestart);
+    phone.listener.CountLog(kSendOff);
+    phone.engine->RefreshVideoDevices();
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    CHECK(phone.listener.LogCount(kRoomRestart) == 0);
+    CHECK(phone.listener.LogCount(kSendOff) == 0);
+    // Cada convidado segue no mosaico dele, com a nossa câmera, e o mosaico de quem montou segue chegando.
+    for (const int id : echoes) {
+        CAPTURE(id);
+        CHECK(SeesBars(sink, id, 0.25, 0.02, 0.48));
+        CHECK(SeesColor(sink, id, 0.75, 0.25, kOrange, kEchoTolerance));
+    }
     CHECK(HostFramesFlow(sink, roomId));
 }
 
@@ -1102,6 +1156,73 @@ TEST_CASE("the test camera shows up and no room device does") {
     CHECK(std::none_of(devices.begin(), devices.end(), [](const VideoDevice& device) {
         return device.name.find("Starsonic") != std::string::npos;
     }));
+}
+
+TEST_CASE("an image of odd size reaches a guest's mosaic without the bytes after its frame") {
+    Phone phone;   // os dispositivos da sala e o desenhista: o motor os registra
+    // A loja e o desenhista são um só no programa: no fim, a loja volta vazia e sem o tap.
+    struct Restore {
+        ~Restore() {
+            SetRendererTap(nullptr);
+            SetRoomPlan(RoomPlan());
+        }
+    } restore;
+    const int source = 7;   // uma ligação que a tabela não conhece: o portão deixa o quadro sair
+    RoomPlan plan;
+    plan.seats[0] = {source};
+    plan.live = {source};
+    SetRoomPlan(plan);
+    SetRendererTap(RoomFrameStore());
+
+    // Um stream do desenhista em 175x99, como a pjsua cria o de uma ligação, e um quadro no I420 da pjmedia: o croma
+    // com 87 colunas (w>>1) e cada plano dele com Y/4 bytes. Depois do quadro, bytes que não são dele.
+    const int width = 175, height = 99;
+    const pjmedia_vid_dev_index renderer = FindDevice("Starsonic", PJMEDIA_DIR_RENDER);
+    REQUIRE(renderer != PJMEDIA_VID_INVALID_DEV);
+    pjmedia_vid_dev_param param;
+    REQUIRE(pjmedia_vid_dev_default_param(nullptr, renderer, &param) == PJ_SUCCESS);
+    pjmedia_format_init_video(&param.fmt, PJMEDIA_FORMAT_I420, width, height, 25, 1);
+    pjmedia_vid_dev_stream* stream = nullptr;
+    REQUIRE(pjmedia_vid_dev_stream_create(&param, nullptr, nullptr, &stream) == PJ_SUCCESS);
+    pjmedia_vid_dev_hwnd window;
+    REQUIRE(pjmedia_vid_dev_stream_get_cap(stream, PJMEDIA_VID_DEV_CAP_OUTPUT_WINDOW, &window) == PJ_SUCCESS);
+    BindRendererStream(window.info.window, source);
+    REQUIRE(pjmedia_vid_dev_stream_start(stream) == PJ_SUCCESS);
+    const size_t luma = static_cast<size_t>(width) * height;
+    const size_t chroma = luma / 4;
+    std::vector<pj_uint8_t> bytes(luma + 2 * chroma + 64, 0);
+    std::fill_n(bytes.begin(), luma, pj_uint8_t{200});
+    std::fill_n(bytes.begin() + luma, chroma, pj_uint8_t{60});
+    std::fill_n(bytes.begin() + luma + chroma, chroma, pj_uint8_t{200});
+    pjmedia_frame frame;
+    pj_bzero(&frame, sizeof(frame));
+    frame.type = PJMEDIA_FRAME_TYPE_VIDEO;
+    frame.buf = bytes.data();
+    frame.size = luma + 2 * chroma;
+    CHECK(pjmedia_vid_dev_stream_put_frame(stream, &frame) == PJ_SUCCESS);
+    pjmedia_vid_dev_stream_stop(stream);
+    pjmedia_vid_dev_stream_destroy(stream);
+
+    // O mosaico do lugar 1, em 320x240: no croma, só a cor da imagem e a do fundo, nada dos bytes de depois do quadro.
+    const pjmedia_vid_dev_index seat = FindDevice("Starsonic sala 1", PJMEDIA_DIR_CAPTURE);
+    REQUIRE(seat != PJMEDIA_VID_INVALID_DEV);
+    REQUIRE(pjmedia_vid_dev_default_param(nullptr, seat, &param) == PJ_SUCCESS);
+    pjmedia_format_init_video(&param.fmt, PJMEDIA_FORMAT_I420, 320, 240, 25, 1);
+    REQUIRE(pjmedia_vid_dev_stream_create(&param, nullptr, nullptr, &stream) == PJ_SUCCESS);
+    std::vector<pj_uint8_t> mosaic(320 * 240 * 3 / 2, 0);
+    pjmedia_frame out;
+    pj_bzero(&out, sizeof(out));
+    out.buf = mosaic.data();
+    out.size = mosaic.size();
+    const pj_status_t got = pjmedia_vid_dev_stream_get_frame(stream, &out);
+    pjmedia_vid_dev_stream_destroy(stream);
+    REQUIRE(got == PJ_SUCCESS);
+    const auto u = mosaic.begin() + 320 * 240;
+    const auto v = u + 320 * 240 / 4;
+    const std::set<int> uValues(u, v), vValues(v, mosaic.end());
+    INFO("U: " << ValuesText(uValues) << "; V: " << ValuesText(vValues));
+    CHECK(uValues == std::set<int>{60, kBackground.u});
+    CHECK(vValues == std::set<int>{200, kBackground.v});
 }
 
 #else

@@ -108,6 +108,15 @@ pjsua_conf_port_id AudioPort(int pjsuaId, bool member, bool* usable) {
 
 }  // namespace
 
+pj_status_t RetryWhileRenegotiating(const std::function<pj_status_t()>& attempt) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(kRenegotiationWaitMs);
+    for (;;) {
+        const pj_status_t status = attempt();
+        if (status != PJ_EINVALIDOP || std::chrono::steady_clock::now() >= deadline) return status;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+}
+
 EngineCall::EngineCall(pj::Account& account, int pjsuaId, CallTable* table) : pj::Call(account, pjsuaId), table_(table) {}
 
 void EngineCall::onCallState(pj::OnCallStateParam&) {
@@ -320,6 +329,7 @@ void CallTable::MediaChanged(EngineCall* call) {
             slot->askingVideo = false;
             if (!media.up) Refuse(*slot);
         }
+        slot->askingSendRecv = false;   // a resposta ao sendrecv da sala (SendReceive), se ele esperava, chegou
         // A recebida que oferecia vídeo com um nome em comum, respondida por aqui (o 183 do Porteiro ou o 200, antes
         // do Confirmed) sem o vídeo: o fmtp não casou na PJSIP (o perfil do H.264). O vídeo é recusado uma vez, como
         // sem codec em comum, e o 183 deixa de ser o early.
@@ -794,9 +804,6 @@ int CallTable::CallCount() {
 }
 
 bool CallTable::End(int timeoutMs) {
-#if PJMEDIA_HAS_VIDEO
-    SetRendererTap(nullptr);   // todas as ligações saem: a loja da sala para de guardar as imagens delas
-#endif
     std::vector<int> pjsuaIds;
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -957,8 +964,8 @@ void CallTable::Link(int source, int sink, bool on) {
 }
 
 bool CallTable::Renegotiate(int callId, bool hold) {
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(kRenegotiationWaitMs);
-    for (;;) {
+    bool found = true;   // a ligação seguia na tabela, com o id no pjsua, em cada tentativa
+    const pj_status_t status = RetryWhileRenegotiating([&]() -> pj_status_t {
         int pjsuaId = PJSUA_INVALID_ID;
         unsigned videoCount = 0;
         {
@@ -969,31 +976,27 @@ bool CallTable::Renegotiate(int callId, bool hold) {
                 videoCount = slot->videoCount;
             }
         }
-        if (pjsuaId == PJSUA_INVALID_ID) return false;
-        pj_status_t status;
-        if (hold) {
-            status = pjsua_call_set_hold(pjsuaId, nullptr);   // a oferta é a mídia de agora, com o vídeo dela
-        } else {
-            pjsua_call_setting setting;
-            pjsua_call_setting_default(&setting);
-            setting.flag |= PJSUA_CALL_UNHOLD;
-            setting.vid_cnt = videoCount;   // a oferta nova leva o mesmo número de vídeos da ligação
-            status = pjsua_call_reinvite2(pjsuaId, &setting, nullptr);
+        if (pjsuaId == PJSUA_INVALID_ID) {
+            found = false;
+            return PJ_ENOTFOUND;
         }
-        // PJ_EINVALIDOP: o re-INVITE anterior ainda não terminou (o PJSIP só aceita um por vez).
-        if (status != PJ_EINVALIDOP || std::chrono::steady_clock::now() >= deadline) {
-            if (status != PJ_SUCCESS) {
-                Log(2, std::string(hold ? "espera: " : "retomar: ") + StatusText(status));
-                return false;
-            }
-            std::lock_guard<std::mutex> lock(mutex_);
-            Slot* slot = Find(callId);
-            if (slot) slot->held = hold;
-            PublishVideo();   // na espera daqui, o vídeo pausa; fora dela, volta
-            return true;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        if (hold) return pjsua_call_set_hold(pjsuaId, nullptr);   // a oferta é a mídia de agora, com o vídeo dela
+        pjsua_call_setting setting;
+        pjsua_call_setting_default(&setting);
+        setting.flag |= PJSUA_CALL_UNHOLD;
+        setting.vid_cnt = videoCount;   // a oferta nova leva o mesmo número de vídeos da ligação
+        return pjsua_call_reinvite2(pjsuaId, &setting, nullptr);
+    });
+    if (!found) return false;
+    if (status != PJ_SUCCESS) {
+        Log(2, std::string(hold ? "espera: " : "retomar: ") + StatusText(status));
+        return false;
     }
+    std::lock_guard<std::mutex> lock(mutex_);
+    Slot* slot = Find(callId);
+    if (slot) slot->held = hold;
+    PublishVideo();   // na espera daqui, o vídeo pausa; fora dela, volta
+    return true;
 }
 
 void CallTable::Emit(int callId, EventQueue::Event event) {

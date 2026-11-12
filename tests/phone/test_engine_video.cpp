@@ -36,6 +36,7 @@ using namespace starsonic;
 using phone_test::Phone;
 
 #if PJMEDIA_HAS_VIDEO
+using phone_test::AddColorbar;
 using phone_test::CallEvent;
 using phone_test::Contains;
 using phone_test::FindDevice;
@@ -1693,6 +1694,44 @@ TEST_CASE("the camera in use that disappears on a refresh reports Disconnected a
     INFO(DeviceNames(devices));
     CHECK(std::none_of(devices.begin(), devices.end(),
                        [](const VideoDevice& device) { return device.name == kTestCamera; }));
+}
+
+TEST_CASE("a second refresh before the camera opens again finds it by its name and reports nothing") {
+    TestCameraScope cameras(1);
+    TestSink sink;
+    Phone phone;
+    INFO(sink.Text());
+    INFO(phone.listener.CameraProblemsText());
+    INFO(phone.listener.LogTail());
+    phone.engine->SetFrameSink(&sink);
+    EngineEndpoint& endpoint = static_cast<EngineEndpoint&>(pj::Endpoint::instance());
+
+    RegisterTestCamera();
+    REQUIRE(phone.engine->SetCaptureDevice(kTestCamera));
+    REQUIRE(phone.engine->StartCameraTest());
+    REQUIRE(sink.WaitFor(TestSink::kLocal, 5, 3));
+    const pjmedia_vid_dev_index opened = FindDevice(kTestCamera, PJMEDIA_DIR_CAPTURE);
+
+    // Sem as barras, a câmera do teste muda de lugar, mas a passada que a abre de novo não é agendada: a prévia segue
+    // aberta no id de antes. As barras voltam, no fim da lista, e saem de novo: o id de antes não vale mais.
+    phone.listener.CountLog(kScheduleFailed);
+    endpoint.FailNextSchedule(CallTable::kCallTableTimer);
+    RemoveColorbar();
+    phone.engine->RefreshVideoDevices();
+    REQUIRE(WaitUntil([&] { return phone.listener.LogCount(kScheduleFailed) == 1; }, 5));
+    REQUIRE(FindDevice(kTestCamera, PJMEDIA_DIR_CAPTURE) != opened);
+    AddColorbar();
+    RemoveColorbar();
+    pjmedia_vid_dev_info info;
+    REQUIRE(pjmedia_vid_dev_get_info(opened, &info) != PJ_SUCCESS);
+
+    // A segunda releitura acha a câmera pelo nome de quando ela abriu (ela segue na lista): nenhum problema, e a
+    // passada dela fecha a prévia e a abre de novo, no id novo.
+    phone.engine->RefreshVideoDevices();
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    const Clock::time_point reopened = Clock::now();
+    CHECK(WaitUntil([&] { return sink.Count(TestSink::kLocal, 0, 0, reopened) >= 5; }, 3));
+    CHECK(phone.listener.CameraProblems().empty());
 }
 
 TEST_CASE("a capture error reports Disconnected and stops the camera test") {

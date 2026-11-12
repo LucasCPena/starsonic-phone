@@ -74,8 +74,10 @@
 // (SyncHostMosaic): o mosaico de quem montou, que sai com o id da sala, e cujo primeiro quadro, no portão, liga o
 // remote da sala. O OnCallVideo da sala sai atrás do OnRoom dela (PublishRoom). O plano dos mosaicos (PlanRoom) é
 // refeito com mutex_ presa a cada mudança da sala e do remote. A pjsua acha as janelas pelo id do dispositivo, que uma
-// releitura da lista muda: depois de uma releitura com a sala de pé (restartRoom_), uma passada para o envio de cada
-// ligação da sala e a prévia do lugar 0 com os ids de antes, e a seguinte liga tudo de novo com os ids novos.
+// releitura da lista pode mudar: depois de uma releitura que muda algum id da sala com ela de pé (restartRoom_), uma
+// passada para o envio de cada ligação da sala e a prévia do lugar 0 com os ids de antes, e a seguinte liga tudo de
+// novo com os ids novos. Um passo da sala que falha (a troca da fonte ou o START de um lugar, a prévia do lugar 0) dá
+// uma linha no log por sequência de falhas e volta numa passada kSyncRetryMs depois (o kRetryTimer).
 #include <pjsua2.hpp>
 
 #include <chrono>
@@ -152,6 +154,11 @@ std::vector<std::pair<pjmedia_vid_dev_index, std::string>> Cameras();
 // Quanto SetHold espera uma renegociação anterior terminar (o PJSIP só aceita um re-INVITE por vez).
 const int kRenegotiationWaitMs = 2000;
 
+// Um pedido que renegocia a ligação (a espera, a retomada, o vídeo pedido, o sendrecv da sala): attempt é uma
+// tentativa, com o código dela. Enquanto ele é o PJ_EINVALIDOP (a renegociação anterior ainda não terminou), outra
+// tentativa a cada 10 ms, até kRenegotiationWaitMs depois da primeira. O código da última tentativa.
+pj_status_t RetryWhileRenegotiating(const std::function<pj_status_t()>& attempt);
+
 // Os callbacks chegam numa thread do PJSIP, ou na que chamou o PJSIP, sempre com a trava do diálogo
 // da ligação.
 class EngineCall : public pj::Call {
@@ -176,10 +183,12 @@ private:
 class CallTable : public TimerTarget {
 public:
     // Os ids dos temporizadores da tabela no EngineEndpoint (as contas usam os delas, que começam em 1): o SyncVideo,
-    // o do remote e o do quadro-chave. Os testes também os usam (o EngineEndpoint::FailNextSchedule).
+    // o do remote, o do quadro-chave e o da passada que tenta de novo um passo da sala que falhou. Os testes também os
+    // usam (o EngineEndpoint::FailNextSchedule).
     static constexpr int kCallTableTimer = 0;
     static constexpr int kRemoteTimer = -1;
     static constexpr int kKeyframeTimer = -2;
+    static constexpr int kRetryTimer = -3;
 
     CallTable(EventQueue* events, DtmfMethod dtmf);
 
@@ -206,8 +215,9 @@ public:
     // O resultado de uma transferência pedida em call: o aviso e, com 2xx, o fim dela (e o do colega,
     // na consulta). Pode apagar call: quem chama não mexe nele depois.
     void Transferred(EngineCall* call, int sipCode);
-    // Um re-INVITE nosso recusado (resposta final fora de 2xx): o vídeo que ele pedia, se pedia, foi recusado.
-    void ReofferFailed(EngineCall* call);
+    // Um re-INVITE nosso recusado (resposta final sipCode, fora de 2xx): o vídeo que ele pedia, se pedia, foi recusado;
+    // o sendrecv da ligação de onde a sala nasceu (SendReceive), se era ele, dá uma linha no log.
+    void ReofferFailed(EngineCall* call, int sipCode);
     // O temporizador da tabela (ScheduleSync): o SyncVideo, fora dos callbacks das ligações.
     void OnEngineTimer() override;
 
@@ -236,9 +246,9 @@ public:
     // que a câmera abre.
     void SetVideoDevices(const VideoDeviceIds& ids);
     // A releitura da lista: refresh relê (o pjmedia_vid_dev_refresh) e devolve os ids novos, com a câmera parada no
-    // meio (videoMutex_). A câmera em uso que sumiu (também a que já tinha saído da lista) é o Disconnected; a que
-    // mudou de lugar fecha e abre de novo. Com a sala de pé, o envio dela e o mosaico de quem montou também
-    // (restartRoom_).
+    // meio (videoMutex_). A câmera em uso, pelo nome de quando ela abriu: fora da lista nova (também a que já tinha
+    // saído dela), o Disconnected; noutro id, ela fecha e abre de novo. Com a sala de pé e algum id dela mudado, o
+    // envio dela e o mosaico de quem montou também (restartRoom_). Uma volta já pedida segue pedida.
     void RefreshCameras(const std::function<VideoDeviceIds()>& refresh);
     bool StartCameraTest();
     void StopCameraTest();
@@ -279,8 +289,10 @@ private:
         bool sending = false;             // o envio que o SyncVideo aplicou
         bool seatSending = false;         // ...e ele é o lugar da sala (o mosaico do convidado), e não a câmera
         bool sendFailed = false;          // o último START_TRANSMIT falhou (a linha "camera: falhou" já saiu)
+        bool seatFailed = false;          // o último passo do lugar da sala falhou (a linha do log já saiu)
         bool receiveOnly = false;         // o vídeo só recebe por aqui (o media_dir DECODING, sem câmera), também nas
                                           // próximas ofertas e respostas: o pjsua o guarda
+        bool askingSendRecv = false;      // o re-INVITE sendrecv do SendReceive espera a resposta
         bool remote = false;              // a imagem da outra ponta chegando (ver o topo do arquivo)
         std::chrono::steady_clock::time_point lastFrame;   // o último quadro da outra ponta que saiu
         std::string codec;                // o codec do vídeo negociado ("H264", "VP8" ou "VP9")
@@ -399,10 +411,11 @@ private:
     void PlanRoom();
     // Só no SyncVideo (com videoMutex_ presa, sem mutex_): com a sala de pé, a prévia do lugar 0 (host, o id de agora)
     // no desenhista nosso, ligada ao id da sala, e o tap da loja; sem sala (ou na passada da releitura, restart), a
-    // prévia fecha pelo id com que abriu. Sem sala, nenhum tap.
-    void SyncHostMosaic(bool restart, pjmedia_vid_dev_index host);
+    // prévia fecha pelo id com que abriu. Sem sala, nenhum tap. false: a prévia devia abrir e não abriu (a linha do log
+    // sai uma vez por sequência de falhas).
+    bool SyncHostMosaic(bool restart, pjmedia_vid_dev_index host);
     // Sem mutex_ presa: a ligação de onde a sala nasceu só recebia o vídeo (receiveOnly): um re-INVITE sendrecv, para
-    // ela mandar o mosaico dela, esperando a renegociação anterior como o Renegotiate.
+    // ela mandar o mosaico dela, esperando a renegociação anterior como o Renegotiate (a recusa vai ao ReofferFailed).
     void SendReceive(int callId);
 
     // Os quadros das ligações que chegam ao desenhista (RemoteFrameGate) e o temporizador do remote.
@@ -415,6 +428,10 @@ private:
         void OnEngineTimer() override;
     };
     struct KeyframeTimer : TimerTarget {
+        CallTable* table = nullptr;
+        void OnEngineTimer() override;
+    };
+    struct RetryTimer : TimerTarget {
         CallTable* table = nullptr;
         void OnEngineTimer() override;
     };
@@ -438,6 +455,10 @@ private:
     // Sem mutex_ presa, com o temporizador do remote marcado: agenda a próxima conferência. Se o agendamento falha,
     // desmarca (o próximo quadro marca de novo).
     void ScheduleRemoteCheck();
+    // Sem mutex_ presa, no fim de um SyncVideo em que um passo da sala falhou: a passada que tenta de novo, daqui a
+    // kSyncRetryMs, se ela ainda não está marcada (uma só por vez, por mais passadas que falhem). Se o agendamento
+    // falha, desmarca (a próxima passada que falha marca de novo).
+    void ScheduleRetry();
     // O aviso de um erro da câmera aberta (o PJMEDIA_EVENT_VID_DEV_ERROR da captura), numa thread da PJSIP.
     static pj_status_t OnMediaEvent(pjmedia_event* event, void* table);
     // Com mutex_ presa. A câmera em uso sumiu: o Disconnected, o desejo da câmera desliga em todas as ligações e o
@@ -491,18 +512,21 @@ private:
     FrameGate frameGate_;
     RemoteTimer remoteTimer_;
     KeyframeTimer keyframeTimer_;
+    RetryTimer retryTimer_;
     // Com mutex_ (a prévia muda também com videoMutex_ presa).
     pjmedia_vid_dev_index camera_ = PJMEDIA_VID_INVALID_DEV;     // a câmera escolhida (sem câmera: inválida)
     pjmedia_vid_dev_index renderer_ = PJMEDIA_VID_INVALID_DEV;   // o desenhista nosso
     bool cameraTest_ = false;           // o teste da câmera ligado
     bool previewRunning_ = false;       // a prévia aberta, na câmera previewDevice_
-    pjmedia_vid_dev_index previewDevice_ = PJMEDIA_VID_INVALID_DEV;
+    pjmedia_vid_dev_index previewDevice_ = PJMEDIA_VID_INVALID_DEV;   // o id dela na lista de quando ela abriu
+    std::string previewName_;           // ...e o nome: uma releitura pode dar esse id a outro dispositivo, ou a nenhum
     bool cameraLost_ = false;           // a câmera da prévia sumiu (o Disconnected já saiu), até a prévia fechar
     bool restartCamera_ = false;        // a câmera em uso mudou de lugar na lista: o SyncVideo fecha e abre de novo
     bool remoteCheckPending_ = false;   // o temporizador do remote está marcado
     bool keyframePending_ = false;      // o temporizador do quadro-chave está marcado
+    bool retryPending_ = false;         // o temporizador da passada que tenta de novo está marcado
     // Os mosaicos da sala (ver o topo do arquivo), com mutex_.
-    bool restartRoom_ = false;          // a lista foi relida com a sala de pé: o SyncVideo para tudo dela e religa
+    bool restartRoom_ = false;          // uma releitura mudou um id da sala de pé: o SyncVideo para tudo dela e religa
     bool roomRemote_ = false;           // o mosaico de quem montou chegando: o remote da sala
     std::chrono::steady_clock::time_point roomLastFrame_;   // o último quadro dele que saiu
     CallVideo roomVideoShown_;          // o último OnCallVideo da sala

@@ -50,13 +50,15 @@ struct Image {
     int height = 0;
     std::vector<uint8_t> y, u, v;
 
+    // O quadro vem no I420 da pjmedia (o do desenhista): o passo do croma é w>>1, e cada plano dele tem Y/4 bytes. Num
+    // tamanho ímpar, a cópia fica com o par logo abaixo (a última coluna, ou a última linha, sai): o croma dela, de
+    // (w/2) x (h/2), cabe no do quadro, e nada depois dele é lido.
     void Copy(const I420Frame& frame) {
-        width = frame.width;
-        height = frame.height;
-        const int chromaWidth = (width + 1) / 2, chromaHeight = (height + 1) / 2;
+        width = frame.width & ~1;
+        height = frame.height & ~1;
         CopyPlane(frame.y, frame.yStride, width, height, &y);
-        CopyPlane(frame.u, frame.uStride, chromaWidth, chromaHeight, &u);
-        CopyPlane(frame.v, frame.vStride, chromaWidth, chromaHeight, &v);
+        CopyPlane(frame.u, frame.uStride, width / 2, height / 2, &u);
+        CopyPlane(frame.v, frame.vStride, width / 2, height / 2, &v);
     }
 
     I420Frame View() const {
@@ -66,12 +68,15 @@ struct Image {
         frame.y = y.data();
         frame.yStride = width;
         frame.u = u.data();
-        frame.uStride = (width + 1) / 2;
+        frame.uStride = width / 2;
         frame.v = v.data();
-        frame.vStride = (width + 1) / 2;
+        frame.vStride = width / 2;
         return frame;
     }
 };
+
+// A nossa câmera no plano (o kHostTile) é a fonte dos quadros da prévia no tap (o kLocalFrames).
+static_assert(kHostTile == kLocalFrames, "a nossa camera tem o mesmo id no plano e no tap");
 
 // A loja das imagens (ver o topo do RoomVideo.h). Tudo com a trava dela, que é a última de todas.
 struct Store final : FrameTap {
@@ -79,11 +84,11 @@ struct Store final : FrameTap {
     RoomPlan plan;
     std::map<int, Image> images;   // a última imagem de cada fonte do live que já chegou
 
-    // Na thread que entrega o quadro, com a trava do desenhista presa.
+    // Na thread que entrega o quadro, com a trava do desenhista presa. Um quadro sem um par de pixels nos dois lados
+    // não tem o que guardar.
     void OnFrame(int source, const I420Frame& frame) override {
         std::lock_guard<std::mutex> lock(mutex);
-        if (plan.live.count(source) == 0 || frame.width <= 0 || frame.height <= 0 || !frame.y || !frame.u ||
-            !frame.v) {
+        if (plan.live.count(source) == 0 || frame.width < 2 || frame.height < 2 || !frame.y || !frame.u || !frame.v) {
             return;
         }
         images[source].Copy(frame);

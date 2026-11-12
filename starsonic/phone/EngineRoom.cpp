@@ -1,10 +1,8 @@
 #include "EngineCall.h"
 
 #include <algorithm>
-#include <chrono>
 #include <iterator>
 #include <string>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -318,7 +316,7 @@ void CallTable::PlanRoom() {
     SetRoomPlan(plan_);
 }
 
-void CallTable::SyncHostMosaic(bool restart, pjmedia_vid_dev_index host) {
+bool CallTable::SyncHostMosaic(bool restart, pjmedia_vid_dev_index host) {
     int roomId = 0;
     int bound = 0;
     pjmedia_vid_dev_index opened = PJMEDIA_VID_INVALID_DEV;
@@ -342,9 +340,9 @@ void CallTable::SyncHostMosaic(bool restart, pjmedia_vid_dev_index host) {
         hostDevice_ = PJMEDIA_VID_INVALID_DEV;
         bound = 0;
     }
-    // A loja só guarda imagens com a sala de pé.
+    // A loja só guarda imagens com a sala de pé (o tap é só daqui, com o motor de pé).
     SetRendererTap(roomId != 0 ? RoomFrameStore() : nullptr);
-    if (roomId == 0 || bound != 0 || restart) return;
+    if (roomId == 0 || bound != 0 || restart) return true;
     // O lugar 0 no desenhista nosso, à vista (a pjsua só liga a captura ao desenhista assim), em 1280x720 a 25 qps.
     pj_status_t status = PJMEDIA_EVID_NODEFDEV;
     if (host != PJMEDIA_VID_INVALID_DEV) {
@@ -360,7 +358,7 @@ void CallTable::SyncHostMosaic(bool restart, pjmedia_vid_dev_index host) {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!hostFailed_) Log(2, "o mosaico da sala nao abriu: " + StatusText(status));
         hostFailed_ = true;
-        return;
+        return false;
     }
     // Os quadros da janela dele saem com o id da sala.
     const pjsua_vid_win_id window = pjsua_vid_preview_get_win(host);
@@ -374,40 +372,43 @@ void CallTable::SyncHostMosaic(bool restart, pjmedia_vid_dev_index host) {
     hostRoom_ = roomId;
     hostDevice_ = host;
     hostFailed_ = false;
+    return true;
 }
 
 void CallTable::SendReceive(int callId) {
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(kRenegotiationWaitMs);
-    for (;;) {
+    bool found = true;   // a ligação seguia na sala, só recebendo, com o id no pjsua, em cada tentativa
+    const pj_status_t status = RetryWhileRenegotiating([&]() -> pj_status_t {
         int pjsuaId = PJSUA_INVALID_ID;
         unsigned videoCount = 0;
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            const Slot* slot = Find(callId);
-            if (!slot || !slot->member || !slot->receiveOnly) return;
-            pjsuaId = slot->pjsuaId;
-            videoCount = slot->videoCount;
+            Slot* slot = Find(callId);
+            if (slot && slot->member && slot->receiveOnly && slot->pjsuaId != PJSUA_INVALID_ID) {
+                pjsuaId = slot->pjsuaId;
+                videoCount = slot->videoCount;
+                slot->askingSendRecv = true;   // antes do re-INVITE: a resposta pode chegar antes de o pjsua voltar
+            }
         }
-        if (pjsuaId == PJSUA_INVALID_ID) return;
+        if (pjsuaId == PJSUA_INVALID_ID) {
+            found = false;
+            return PJ_ENOTFOUND;
+        }
         // Todas as mídias com a direção de fábrica (sendrecv): o pjsua a guarda para as próximas ofertas e respostas.
         pjsua_call_setting setting;
         pjsua_call_setting_default(&setting);
         setting.flag |= PJSUA_CALL_SET_MEDIA_DIR;
         setting.vid_cnt = videoCount;
-        const pj_status_t status = pjsua_call_reinvite2(pjsuaId, &setting, nullptr);
-        if (status == PJ_SUCCESS) {
-            std::lock_guard<std::mutex> lock(mutex_);
-            Slot* slot = Find(callId);
-            if (slot) slot->receiveOnly = false;
-            return;
+        const pj_status_t result = pjsua_call_reinvite2(pjsuaId, &setting, nullptr);
+        std::lock_guard<std::mutex> lock(mutex_);
+        Slot* slot = Find(callId);
+        if (slot && result == PJ_SUCCESS) {
+            slot->receiveOnly = false;
+        } else if (slot) {
+            slot->askingSendRecv = false;
         }
-        // PJ_EINVALIDOP: outra renegociação da ligação ainda não terminou, como no Renegotiate.
-        if (status != PJ_EINVALIDOP || std::chrono::steady_clock::now() >= deadline) {
-            Log(2, "o envio do mosaico da sala: " + StatusText(status));
-            return;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
+        return result;
+    });
+    if (found && status != PJ_SUCCESS) Log(2, "o envio do mosaico da sala: " + StatusText(status));
 }
 #endif
 
