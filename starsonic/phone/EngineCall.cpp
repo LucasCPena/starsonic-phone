@@ -641,9 +641,9 @@ bool CallTable::Activate(int callId) {
     bool resume;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        // O id da sala de pé é o Voltar para a sala (ela nunca fica em espera). Um convidado não é uma linha: nenhum é
-        // a ativa sozinho.
-        const bool room = callId != 0 && callId == roomId_;
+        // O id da sala de pé é o Voltar para a sala (ela nunca fica em espera); fechando (o Hangup do id dela), ela
+        // não é mais para onde voltar. Um convidado não é uma linha: nenhum é a ativa sozinho.
+        const bool room = callId != 0 && callId == roomId_ && !roomClosing_;
         const Slot* slot = Find(callId);
         if (!room && (!slot || !slot->confirmed || slot->member)) return false;
         resume = slot && slot->held;

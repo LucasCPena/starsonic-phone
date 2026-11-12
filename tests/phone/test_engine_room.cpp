@@ -638,12 +638,14 @@ TEST_CASE("a call from outside rings without video while the room goes on") {
 
     const int base = VideoCall(phone, "2002");
     const int g1 = Guest(phone, "2003");
-    // Ela toca, e a sala segue: o nosso som com os convidados.
+    const RoomInfo room = phone.engine->Room();
+    // Ela toca, e a sala segue como estava (você nela): o nosso som com os convidados.
     const int outside = phone.RingVideo("3005");
     CHECK(phone.WaitState(outside, CallState::Early));
+    CHECK(phone.engine->Room() == room);
+    CHECK_FALSE(phone.engine->Room().out);
     CHECK(phone.WaitLinks(base, {0, g1}));
     CHECK(phone.WaitLinks(g1, {0, base}));
-    CHECK_FALSE(phone.engine->Room().out);
 
     // Recusada, todos os eventos dela já chegaram (nenhum OnCallVideo vem depois do Disconnected), e um 183 chegaria ao
     // registrador antes da resposta final: só com a voz, sem o offered, o early, o doorphone e o refused.
@@ -679,7 +681,10 @@ TEST_CASE("answering the outside call takes us out of the room and returning put
     REQUIRE(SeesColor(sink, base, 0.75, 0.5, kPurple, kEchoTolerance));
 
     // Atendida, a ligação de fora (só com a voz) tira o nosso som e a nossa câmera da sala, sem re-INVITE para os
-    // convidados: eles seguem se ouvindo, e o mosaico da base segue, com o fundo no nosso quadro.
+    // convidados: eles seguem se ouvindo, e o mosaico da base segue, com o fundo no nosso quadro. Nenhum re-INVITE
+    // (de nenhuma direção) vai aos convidados, na ida nem na volta.
+    const size_t toBase = LinesStartingWith(phone, "reinv-in 2002");
+    const size_t toG1 = LinesStartingWith(phone, "reinv-in 2003");
     const int outside = phone.RingVideo("3005");
     REQUIRE(phone.engine->Answer(outside, true));
     CHECK(phone.registrar.WaitForLog("sdp-out 2001 200 video=nao", kWaitSeconds));
@@ -687,10 +692,10 @@ TEST_CASE("answering the outside call takes us out of the room and returning put
     CHECK(phone.WaitLinks(base, {g1}));
     CHECK(phone.WaitLinks(g1, {base}));
     CHECK(phone.WaitLinks(outside, {0}));
-    CHECK(phone.LogCount("reinv-in 2002 sendonly") == 0);
-    CHECK(phone.LogCount("reinv-in 2003 sendonly") == 0);
     CHECK(SeesColor(sink, base, 0.25, 0.5, kBackground, kEchoBackground));
     CHECK(SeesColor(sink, base, 0.75, 0.5, kPurple, kEchoTolerance));
+    CHECK(LinesStartingWith(phone, "reinv-in 2002") == toBase);
+    CHECK(LinesStartingWith(phone, "reinv-in 2003") == toG1);
 
     // O Voltar para a sala: a de fora vai para a espera, e o nosso som e as barras voltam.
     REQUIRE(phone.engine->Activate(roomId));
@@ -699,6 +704,8 @@ TEST_CASE("answering the outside call takes us out of the room and returning put
     CHECK(phone.WaitLinks(base, {0, g1}));
     CHECK(phone.WaitLinks(outside, {}));
     CHECK(SeesBars(sink, base, 0.5, 0.02, 0.48));
+    CHECK(LinesStartingWith(phone, "reinv-in 2002") == toBase);
+    CHECK(LinesStartingWith(phone, "reinv-in 2003") == toG1);
 }
 
 TEST_CASE("the outside call ending leaves us out until we return") {
@@ -714,6 +721,12 @@ TEST_CASE("the outside call ending leaves us out until we return") {
     const int g1 = Guest(phone, "2003");
     const int roomId = phone.engine->Room().id;
     const int outside = AnswerOutside(phone);
+
+    // Só uma de fora por vez, também com vagas livres na sala: outra que chega recebe 486.
+    REQUIRE(phone.registrar.Control("RING 2001") == Lines{"OK"});
+    CHECK(phone.listener.WaitForCalls(phone_test::RecordingListener::Count(CallEvent::Busy, 1), kWaitSeconds));
+    REQUIRE(phone.registrar.WaitForLog("inv-out 2001 486", kWaitSeconds));
+    CHECK(phone.Count(CallEvent::Incoming) == 1);
 
     // A de fora acaba: o motor não volta sozinho para a sala, e os convidados seguem se ouvindo, sem o nosso som.
     REQUIRE(phone.registrar.Control("HANGUP 2001") == Lines{"OK"});
@@ -750,6 +763,15 @@ TEST_CASE("a second call from outside is busy, even with the room full") {
     CHECK(phone.listener.WaitForCalls(phone_test::RecordingListener::Count(CallEvent::Busy, 1), kWaitSeconds));
     CHECK(phone.registrar.WaitForLog("inv-out 2001 486", kWaitSeconds));
     CHECK(phone.Count(CallEvent::Incoming) == 1);
+
+    // A primeira acaba, e a vaga dela serve também para ligar para fora com a sala ainda cheia: só com a voz, e você
+    // sai da sala.
+    REQUIRE(phone.engine->Hangup(outside));
+    REQUIRE(phone.WaitState(outside, CallState::Disconnected));
+    const int dialed = phone.engine->MakeCall("2009");
+    REQUIRE(dialed > 0);
+    CHECK(phone.registrar.WaitForLog("video-in 2009 nao", kWaitSeconds));
+    CHECK(WaitRoom(phone, [](const RoomInfo& room) { return room.full && room.out; }));
 }
 
 TEST_CASE("a call made during the room is the outside call, voice only") {
@@ -879,6 +901,10 @@ TEST_CASE("Hangup with the room id ends every guest") {
     REQUIRE(roomId > 0);
 
     REQUIRE(phone.engine->Hangup(roomId));
+    // Depois do Hangup do id dela, a sala não é mais para onde voltar: o Voltar para a sala dá false, com ela ainda
+    // fechando ou já acabada (o pjsua avisa o fim de cada convidado dentro do Hangup, antes de mandar o BYE).
+    CHECK_FALSE(phone.engine->Activate(roomId));
+    CHECK_FALSE(phone.engine->SetHold(roomId, false));
     CHECK(phone.registrar.WaitForLog("bye-in 2002", kWaitSeconds));
     CHECK(phone.registrar.WaitForLog("bye-in 2003", kWaitSeconds));
     CHECK(phone.registrar.WaitForLog("bye-in 2004", kWaitSeconds));

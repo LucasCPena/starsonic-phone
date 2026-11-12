@@ -68,7 +68,8 @@
 // eventos dele se ele não sai; o roomShown_ só fica com ele se ele sai), e o fim de todo makeCall (FinishDial) avisa o
 // que mudou no meio. Com um convidado só, ou nenhum, a sala acaba no PublishRoom: o OnRoom com o ended, e quem ficou
 // volta a ser uma ligação comum (a ativa só se a sala era a ativa: com você fora, ela espera sem o nosso som e sem
-// re-INVITE). O Hangup do id da sala a fecha (roomClosing_): ela só acaba sem ninguém.
+// re-INVITE). O Hangup do id da sala a fecha (roomClosing_): ela só acaba sem ninguém, e até lá segue de pé para o
+// Make e o Incoming (a ligação de fora), mas o Activate do id dela dá false.
 //
 // Os mosaicos da sala (RoomVideo.h; as funções deles também no EngineRoom.cpp): com dois ou mais convidados que já
 // atenderam (também os em espera), cada um manda o mosaico dele, o lugar dele na sala (SendsSeat), no lugar da nossa
