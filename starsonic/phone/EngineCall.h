@@ -59,9 +59,10 @@
 // seguem a regra das duas ligações: na mesa de áudio, cada convidado na sala fica ligado ao nosso som e a cada outro
 // (Route), e o vídeo de um não pausa pelos outros (SendPaused e ReceivePaused), com o desejo da câmera da sala
 // (roomWish_). Não há outras ligações com a sala de pé: a que chega recebe 486, e o Make dá -1. O OnRoom sai pelo
-// Emit, com mutex_ presa, quando a sala muda (PublishRoom), comparada com a última avisada (roomShown_); durante o
-// makeCall de um RoomAdd, só o RoomAdd a avisa: a do convidado novo vai para held_ antes do makeCall (e some com os
-// eventos dele se ele não sai), e o que mudou no meio, depois dele. Com um convidado só, ou nenhum, a sala acaba no
+// Emit, com mutex_ presa, quando a sala muda (PublishRoom), comparada com a última avisada (roomShown_). Durante um
+// makeCall (o do Make ou o do RoomAdd), o PublishRoom não avisa nada: o OnRoom do convidado novo vai para held_ antes
+// do makeCall do RoomAdd (e some com os eventos dele se ele não sai; o roomShown_ só fica com ele se ele sai), e o
+// fim de todo makeCall (FinishDial) avisa o que mudou no meio. Com um convidado só, ou nenhum, a sala acaba no
 // PublishRoom: o OnRoom com o ended, e quem ficou volta a ser uma ligação comum. O Hangup do id da sala a fecha
 // (roomClosing_): ela só acaba sem ninguém.
 #include <pjsua2.hpp>
@@ -110,8 +111,10 @@ struct VideoMedia {
     int fps = 0;
 };
 
-// Do EngineCallVideo.cpp, para os ganchos do vídeo no EngineCall.cpp (o Incoming e o MediaChanged).
+// Do EngineCallVideo.cpp, para os ganchos do vídeo no EngineCall.cpp (o Incoming e o MediaChanged). O VideoMedia da
+// ligação pjsuaId, ou o de uma leitura dela que já está feita (o pjsua_call_get_info).
 VideoMedia VideoMediaOf(int pjsuaId);
+VideoMedia VideoMediaOf(const pjsua_call_info& info);
 void ReadVideoStream(int pjsuaId, VideoMedia* media);
 bool CommonCodec(const std::vector<std::string>& offered, const VideoSettings& settings);
 // O pjsua_call_setting do 180 ou do 183 de uma recebida, que o 200 repete igual: videoCount vídeos e, com
@@ -296,8 +299,15 @@ private:
     void Route();
     // Com routeMutex_ presa: pede à mesa que source transmita (on) ou não para sink.
     void Link(int source, int sink, bool on);
-    // Com mutex_ preso: o evento sai na hora ou, durante o makeCall de Make, espera em held_.
+    // Com mutex_ preso: o evento sai na hora ou, durante o makeCall do Make ou do RoomAdd, espera em held_.
     void Emit(int callId, EventQueue::Event event);
+    // Sem mutex_ presa: o fim do makeCall de uma ligação feita (Make e RoomAdd), com dialing_ ligado desde antes dele;
+    // made: ele saiu. Os eventos que esperaram em held_ saem, menos os dela se ela não saiu (o -1 sai sem evento
+    // nenhum dela); a vaga fica com o id no pjsua, ou volta a ficar livre, e o objeto que o pjsua não usou é apagado.
+    // settle, com mutex_ presa e depois dos eventos, é o que só quem discou faz (slot: a vaga dela, ou nullptr se ela
+    // não está mais na tabela). Por fim, a sala, que ninguém avisa durante o makeCall: o que mudou nele, ou o fim
+    // dela (e então o vídeo de quem ficou), e a mesa de áudio dela.
+    void FinishDial(EngineCall* call, int callId, bool made, const std::function<void(Slot* slot)>& settle);
 
     // Com mutex_ preso. O envio da ligação está pausado (a nossa câmera não manda): a espera, a transferência, a
     // conferência ou a outra ligação (ver SipEngine::Video). Um convidado da sala não olha outra ligação: só a espera
@@ -337,8 +347,8 @@ private:
     RoomInfo CurrentRoom();
     // Com mutex_ preso: o OnRoom da sala, se ela mudou desde o último (roomShown_). Com um convidado só ou nenhum
     // (com a sala fechando, só sem nenhum), ela acaba: o OnRoom com o ended (se o último avisado era dela) e quem
-    // ficou volta a ser uma ligação comum, a ativa se a sala era a ativa. Durante o makeCall (dialing_), nada: quem
-    // disca o chama depois.
+    // ficou volta a ser uma ligação comum, a ativa se a sala era a ativa. Durante um makeCall (dialing_), nada: o
+    // FinishDial o chama depois.
     void PublishRoom();
     // Sem mutex_ presa. callId é o id da sala: ela fecha (ver o topo do arquivo), e a lista traz os ids no pjsua dos
     // convidados, para o Hangup. Senão, vazia.

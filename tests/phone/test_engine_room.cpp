@@ -183,11 +183,14 @@ TEST_CASE("RoomAdd makes a room of the only video call and calls the guest witho
     CHECK_FALSE(now.ended);
     CHECK(phone.engine->Room() == now);
 
-    // A oferta do convidado leva o vídeo, e ninguém vai para a espera.
+    // A oferta do convidado leva o vídeo, e ninguém vai para a espera. Ele respondeu sem o vídeo (VIDEO SOURCE none):
+    // é um convidado sem vídeo, sem o refused.
     CHECK(phone.registrar.WaitForLog("video-in 2003 H264,VP8", kWaitSeconds));
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
     CHECK(phone.LogCount("reinv-in 2002 sendonly") == 0);
     CHECK(phone.engine->CallCount() == 2);
+    CHECK(phone.listener.RefusedCount(guest) == 0);
+    CHECK_FALSE(phone.engine->Video(guest).active);
 }
 
 TEST_CASE("everyone hears everyone in the room and the room id has no audio") {
@@ -227,34 +230,49 @@ TEST_CASE("RoomAdd needs a lone confirmed video call") {
         REQUIRE(phone.engine->Hangup(id));
         REQUIRE(phone.WaitState(id, CallState::Disconnected));
     };
+    // Cada caso dá -1 pelo motivo dele: a linha do log (sem o número) sai uma vez.
+    const auto refused = [&phone](const std::string& number, const std::string& reason) {
+        CAPTURE(reason);
+        const std::string line = "convidado da sala recusado: " + reason;
+        phone.listener.CountLog(line);
+        const size_t before = phone.listener.LogCount(line);
+        CHECK(phone.engine->RoomAdd(number) == -1);
+        CHECK(phone.listener.LogCount(line) == before + 1);
+    };
 
     // Sem ligação.
-    CHECK(phone.engine->RoomAdd("2003") == -1);
+    refused("2003", "nenhuma ligacao");
+    // Numa ligação que ainda chama (o 180 só toca).
+    const int calling = phone.engine->MakeCall("180", true);
+    REQUIRE(calling > 0);
+    REQUIRE(phone.WaitState(calling, CallState::Early));
+    refused("2003", "a ligacao nao foi confirmada");
+    end(calling);
     // Numa ligação só de voz.
     const int voice = phone.Dial("2002");
-    CHECK(phone.engine->RoomAdd("2003") == -1);
+    refused("2003", "a ligacao nao tem video");
     end(voice);
     // Numa ligação com vídeo em espera.
     const int held = VideoCall(phone, "2002");
     REQUIRE(phone.engine->SetHold(held, true));
     REQUIRE(phone.registrar.WaitForLog("reinv-in 2002 sendonly", kWaitSeconds));
-    CHECK(phone.engine->RoomAdd("2003") == -1);
+    refused("2003", "a ligacao esta em espera");
     end(held);
     // Com uma segunda tocando.
     const int call = VideoCall(phone, "2002");
     const int ringing = phone.Ring();
-    CHECK(phone.engine->RoomAdd("2003") == -1);
+    refused("2003", "mais de uma ligacao");
     REQUIRE(phone.engine->Reject(ringing));
     REQUIRE(phone.WaitState(ringing, CallState::Disconnected));
     // Com o número vazio.
-    CHECK(phone.engine->RoomAdd("") == -1);
+    refused("", "numero vazio");
     // Com as escolhas sem codec, aplicadas depois da ligação.
     VideoSettings noCodec = RoomSettings();
     noCodec.h264 = false;
     noCodec.vp8 = false;
     noCodec.vp9 = false;
     phone.engine->SetVideoSettings(noCodec);
-    CHECK(phone.engine->RoomAdd("2003") == -1);
+    refused("2003", "nenhum codec de video nas escolhas");
     end(call);
 
     // Nenhum OnRoom, e o convidado nunca foi chamado.
@@ -262,6 +280,43 @@ TEST_CASE("RoomAdd needs a lone confirmed video call") {
     CHECK(phone.listener.Rooms().empty());
     CHECK(phone.engine->Room() == RoomInfo());
     CHECK(NoLogLine(phone, "inv-in 2003"));
+}
+
+TEST_CASE("a RoomAdd whose call cannot go out leaves the call and the room as they were") {
+    Phone phone;
+    INFO(phone.listener.CallsText());
+    INFO(phone.listener.RoomsText());
+    INFO(phone.registrar.LogText());
+    INFO(phone.listener.LogTail());
+    phone.engine->SetVideoSettings(RoomSettings());
+    WithoutVideo(phone, {"2003"});
+    // Um número com @ e um endereço IPv6 dá uma URI que o PJSIP recusa na hora: o makeCall falha sem callback nenhum.
+    const std::string unreachable = "2002@[::1]";
+    const std::string failed = "nao foi possivel ligar para o convidado da sala";
+    phone.listener.CountLog(failed);
+
+    // Sem sala: ela não nasce, e a ligação segue como estava, com o nosso som e o vídeo.
+    const int base = VideoCall(phone, "2002");
+    CHECK(phone.engine->RoomAdd(unreachable) == -1);
+    CHECK(phone.listener.LogCount(failed) == 1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    CHECK(phone.listener.Rooms().empty());
+    CHECK(phone.engine->Room() == RoomInfo());
+    CHECK(phone.WaitLinks(base, {0}));
+    CHECK(phone.engine->CallCount() == 1);
+    CHECK(phone.engine->Video(base).active);
+
+    // Com a sala de pé: ela segue igual, e nenhum OnRoom chega.
+    const int g1 = Guest(phone, "2003");
+    const RoomInfo room = phone.engine->Room();
+    const size_t rooms = phone.listener.Rooms().size();
+    CHECK(phone.engine->RoomAdd(unreachable) == -1);
+    CHECK(phone.listener.LogCount(failed) == 2);
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    CHECK(phone.engine->Room() == room);
+    CHECK(phone.listener.Rooms().size() == rooms);
+    CHECK(phone.WaitLinks(base, {0, g1}));
+    CHECK(phone.engine->CallCount() == 2);
 }
 
 TEST_CASE("the room holds five guests counting the ones being called") {
@@ -518,6 +573,37 @@ TEST_CASE("Hangup with the room id ends every guest") {
     for (const int id : {base, g1, g2}) CHECK(phone.WaitState(id, CallState::Disconnected));
 
     // Ninguém volta a ser uma ligação comum: o último OnRoom acaba a sala sem ninguém, e só ele tem o ended.
+    REQUIRE(WaitRoom(phone, [](const RoomInfo& room) { return room.ended; }));
+    const std::vector<RoomInfo> rooms = phone.listener.Rooms();
+    CHECK(rooms.back().id == roomId);
+    CHECK(rooms.back().members.empty());
+    CHECK(std::count_if(rooms.begin(), rooms.end(), [](const RoomInfo& room) { return room.ended; }) == 1);
+    CHECK(WaitUntil([&phone] { return phone.engine->CallCount() == 0; }, kWaitSeconds));
+    CHECK(phone.engine->Room() == RoomInfo());
+}
+
+TEST_CASE("RemoveAccount during the room hangs up every guest and ends the room with nobody") {
+    Phone phone;
+    INFO(phone.listener.CallsText());
+    INFO(phone.listener.RoomsText());
+    INFO(phone.registrar.LogText());
+    INFO(phone.listener.LogTail());
+    phone.engine->SetVideoSettings(RoomSettings());
+    WithoutVideo(phone, {"2003", "2004"});
+
+    const int base = VideoCall(phone, "2002");
+    const int g1 = Guest(phone, "2003");
+    const int g2 = Guest(phone, "2004");
+    const int roomId = phone.engine->Room().id;
+    REQUIRE(roomId > 0);
+
+    // A conta sai com a sala de pé (o fim de todas as ligações, o End da tabela): a sala fecha como no Hangup do id
+    // dela, e ninguém volta a ser uma ligação comum.
+    phone.engine->RemoveAccount();
+    CHECK(phone.registrar.WaitForLog("bye-in 2002", kWaitSeconds));
+    CHECK(phone.registrar.WaitForLog("bye-in 2003", kWaitSeconds));
+    CHECK(phone.registrar.WaitForLog("bye-in 2004", kWaitSeconds));
+    for (const int id : {base, g1, g2}) CHECK(phone.WaitState(id, CallState::Disconnected));
     REQUIRE(WaitRoom(phone, [](const RoomInfo& room) { return room.ended; }));
     const std::vector<RoomInfo> rooms = phone.listener.Rooms();
     CHECK(rooms.back().id == roomId);

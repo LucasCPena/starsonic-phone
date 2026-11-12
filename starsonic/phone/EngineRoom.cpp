@@ -23,7 +23,7 @@ int CallTable::RoomAdd(pj::Account& account, const std::string& uri) {
     int callId = 0;
     bool born = false;        // a sala nasce deste convidado
     int activeBefore = 0;     // a ativa de antes do nascimento, que volta se ele não sai
-    RoomInfo shownBefore;     // o último OnRoom de antes dele, que volta se ele não sai
+    RoomInfo arriving;        // o OnRoom que o traz: o Room() só o mostra se ele sai
     {
         std::lock_guard<std::mutex> lock(mutex_);
         Slot* base = nullptr;
@@ -32,7 +32,6 @@ int CallTable::RoomAdd(pj::Account& account, const std::string& uri) {
             Log(2, std::string("convidado da sala recusado: ") + reason);
             return -1;
         }
-        shownBefore = roomShown_;
         if (roomId_ == 0) {
             // O nascimento: o id da sala vem antes do da ligação nova, e a ligação de agora é o primeiro convidado,
             // com o desejo da câmera dela. A sala é a ativa: o nosso som segue com ela.
@@ -59,11 +58,11 @@ int CallTable::RoomAdd(pj::Account& account, const std::string& uri) {
         slot->videoCount = 1;
         ++alive_;
         // O OnRoom que traz o convidado (também o do nascimento) espera em held_ com o id dele, antes do makeCall: ele
-        // sai antes do primeiro OnCallState da ligação, e some com os eventos dela se ela não sai.
+        // sai antes do primeiro OnCallState da ligação, e some com os eventos dela se ela não sai. Até lá, o roomShown_
+        // (e o Room()) segue com a sala que o listener conhece.
         dialing_ = true;
-        roomShown_ = CurrentRoom();
-        const RoomInfo room = roomShown_;
-        Emit(callId, [room](EngineListener& listener) { listener.OnRoom(room); });
+        arriving = CurrentRoom();
+        Emit(callId, [arriving](EngineListener& listener) { listener.OnRoom(arriving); });
     }
     bool made = true;
     try {
@@ -74,41 +73,16 @@ int CallTable::RoomAdd(pj::Account& account, const std::string& uri) {
         made = false;
         Log(2, "nao foi possivel ligar para o convidado da sala: " + failure.info());
     }
-    bool unused = false;   // o pjsua não chegou a usar o objeto
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        dialing_ = false;
-        std::vector<HeldEvent> held;
-        held.swap(held_);
-        // Como no Make: com a vaga ainda na tabela (pelo id), o Ended não apagou o objeto.
-        Slot* slot = Find(callId);
+    // O fim de todo makeCall (FinishDial) avisa a sala depois dele: o que mudou no meio, ou o fim dela.
+    FinishDial(call, callId, made, [&](Slot*) {
         if (made) {
-            if (slot) slot->pjsuaId = call->getId();
-        } else {
-            if (slot) {   // sem callback de fim: o objeto é nosso para apagar, e o convidado sai da sala
-                *slot = Slot();
-                unused = true;
-            }
-            roomShown_ = shownBefore;   // o OnRoom dele some, abaixo, com os outros eventos dele
+            roomShown_ = arriving;   // o OnRoom dele saiu, com os outros eventos dele
+            return;
         }
-        for (HeldEvent& entry : held) {
-            if (made || entry.callId != callId) events_->Post(std::move(entry.event));
-        }
-        // A sala depois do makeCall, atrás dos eventos dele: o que mudou no meio, ou o fim. A sala que não chegou a
-        // nascer acaba quieta (o último OnRoom avisado não era dela), e a ativa volta a ser a de antes.
-        PublishRoom();
-        if (born && !made && roomId_ == 0) activeId_ = Find(activeBefore) ? activeBefore : 0;
-        PublishVideo();
-    }
-    if (unused) {
-        delete call;
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            --alive_;
-        }
-        gone_.notify_all();
-    }
-    Route();
+        // O OnRoom dele sumiu com os outros eventos dele: a sala que não chegou a nascer acaba quieta (o último OnRoom
+        // avisado não era dela), com a ativa de antes, e a que já estava de pé segue como o listener a conhece.
+        if (born) activeId_ = Find(activeBefore) ? activeBefore : 0;
+    });
     ScheduleSync();
     return made ? callId : -1;
 #else

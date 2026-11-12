@@ -88,9 +88,13 @@ bool CommonCodec(const std::vector<std::string>& offered, const VideoSettings& s
 }
 
 VideoMedia VideoMediaOf(int pjsuaId) {
-    VideoMedia media;
     pjsua_call_info info;
-    if (pjsuaId == PJSUA_INVALID_ID || pjsua_call_get_info(pjsuaId, &info) != PJ_SUCCESS) return media;
+    if (pjsuaId == PJSUA_INVALID_ID || pjsua_call_get_info(pjsuaId, &info) != PJ_SUCCESS) return VideoMedia();
+    return VideoMediaOf(info);
+}
+
+VideoMedia VideoMediaOf(const pjsua_call_info& info) {
+    VideoMedia media;
     for (unsigned index = 0; index < info.media_cnt; ++index) {
         const pjsua_call_media_info& item = info.media[index];
         if (item.type != PJMEDIA_TYPE_VIDEO || item.status == PJSUA_CALL_MEDIA_NONE ||

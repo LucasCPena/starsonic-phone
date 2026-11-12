@@ -75,6 +75,24 @@ bool Transmits(pjsua_conf_port_id port, pjsua_conf_port_id sink) {
     return std::find(info.listeners, info.listeners + info.listener_cnt, sink) != info.listeners + info.listener_cnt;
 }
 
+// O áudio de uma ligação: o primeiro com uma porta na ponte, com a porta (PJSUA_INVALID_ID se não há) e o estado.
+struct CallAudio {
+    pjsua_conf_port_id port = PJSUA_INVALID_ID;
+    pjsua_call_media_status status = PJSUA_CALL_MEDIA_NONE;
+};
+
+CallAudio AudioOf(const pjsua_call_info& info) {
+    CallAudio audio;
+    for (unsigned index = 0; index < info.media_cnt; ++index) {
+        const pjsua_call_media_info& media = info.media[index];
+        if (media.type != PJMEDIA_TYPE_AUDIO || media.stream.aud.conf_slot == PJSUA_INVALID_ID) continue;
+        audio.port = media.stream.aud.conf_slot;
+        audio.status = media.status;
+        break;
+    }
+    return audio;
+}
+
 // A porta na ponte do áudio da ligação pjsuaId (PJSUA_INVALID_ID se não há) e, em *usable, se ela
 // pode ficar ligada. Como o MicroSIP: a mídia ativa (ou em espera do outro lado) fala e ouve; em
 // espera daqui ou sem mídia, fica fora do som. Um convidado da sala (member) só com a mídia ativa: em
@@ -83,28 +101,10 @@ pjsua_conf_port_id AudioPort(int pjsuaId, bool member, bool* usable) {
     *usable = false;
     pjsua_call_info info;
     if (pjsuaId == PJSUA_INVALID_ID || pjsua_call_get_info(pjsuaId, &info) != PJ_SUCCESS) return PJSUA_INVALID_ID;
-    for (unsigned index = 0; index < info.media_cnt; ++index) {
-        const pjsua_call_media_info& media = info.media[index];
-        if (media.type != PJMEDIA_TYPE_AUDIO || media.stream.aud.conf_slot == PJSUA_INVALID_ID) continue;
-        *usable = media.status == PJSUA_CALL_MEDIA_ACTIVE ||
-                  (!member && media.status == PJSUA_CALL_MEDIA_REMOTE_HOLD);
-        return media.stream.aud.conf_slot;
-    }
-    return PJSUA_INVALID_ID;
+    const CallAudio audio = AudioOf(info);
+    *usable = audio.status == PJSUA_CALL_MEDIA_ACTIVE || (!member && audio.status == PJSUA_CALL_MEDIA_REMOTE_HOLD);
+    return audio.port;
 }
-
-#if PJMEDIA_HAS_VIDEO
-// O áudio da ligação pjsuaId está em espera pedida do outro lado (o primeiro áudio, em REMOTE_HOLD). Só a sala o usa.
-bool AudioOnRemoteHold(int pjsuaId) {
-    pjsua_call_info info;
-    if (pjsuaId == PJSUA_INVALID_ID || pjsua_call_get_info(pjsuaId, &info) != PJ_SUCCESS) return false;
-    for (unsigned index = 0; index < info.media_cnt; ++index) {
-        const pjsua_call_media_info& media = info.media[index];
-        if (media.type == PJMEDIA_TYPE_AUDIO) return media.status == PJSUA_CALL_MEDIA_REMOTE_HOLD;
-    }
-    return false;
-}
-#endif
 
 }  // namespace
 
@@ -277,10 +277,16 @@ void CallTable::MediaChanged(EngineCall* call) {
     const int pjsuaId = call->getId();
     int callId = 0;
 #if PJMEDIA_HAS_VIDEO
-    // Com a trava do diálogo (este callback): o stream do vídeo não muda no meio da leitura.
-    VideoMedia media = VideoMediaOf(pjsuaId);
+    // Com a trava do diálogo (este callback): a mídia e o stream do vídeo não mudam no meio da leitura. Uma leitura só
+    // da ligação dá o vídeo dela e a espera do outro lado no áudio (a de um convidado da sala).
+    VideoMedia media;
+    bool remoteHold = false;
+    pjsua_call_info info;
+    if (pjsuaId != PJSUA_INVALID_ID && pjsua_call_get_info(pjsuaId, &info) == PJ_SUCCESS) {
+        media = VideoMediaOf(info);
+        remoteHold = AudioOf(info).status == PJSUA_CALL_MEDIA_REMOTE_HOLD;
+    }
     ReadVideoStream(pjsuaId, &media);
-    const bool remoteHold = AudioOnRemoteHold(pjsuaId);   // um convidado da sala, em espera do outro lado
 #endif
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -477,7 +483,21 @@ int CallTable::Make(pj::Account& account, const std::string& uri, bool video) {
         made = false;
         Log(2, "nao foi possivel ligar para " + uri + ": " + failure.info());
     }
-    bool unused = false;   // o pjsua não chegou a usar o objeto
+    FinishDial(call, callId, made, [&](Slot* slot) {
+        // A que não saiu deixa de ser a ativa: a outra, em espera, não volta sozinha (o Ended faz o mesmo, se ele já
+        // a tirou da tabela).
+        if (!made && activeId_ == callId) activeId_ = 0;
+        // A recusa do vídeo sem o VideoEnabled, depois dos eventos que o makeCall deixou em held (o primeiro estado
+        // da ligação vem antes de qualquer outro evento dela). Sem a ligação, nenhuma.
+        if (made && refuse && slot) Refuse(*slot);
+    });
+    ScheduleSync();
+    return made ? callId : -1;
+}
+
+void CallTable::FinishDial(EngineCall* call, int callId, bool made, const std::function<void(Slot*)>& settle) {
+    bool unused = false;    // o pjsua não chegou a usar o objeto
+    bool hadRoom = false;   // a sala de pé no fim do makeCall: a mesa dela é refeita abaixo
     {
         std::lock_guard<std::mutex> lock(mutex_);
         dialing_ = false;
@@ -490,18 +510,21 @@ int CallTable::Make(pj::Account& account, const std::string& uri, bool video) {
             if (slot) slot->pjsuaId = call->getId();
         } else if (slot) {   // sem callback de fim: o objeto é nosso para apagar
             *slot = Slot();
-            if (activeId_ == callId) activeId_ = 0;
+            slot = nullptr;
             unused = true;
         }
         // Se o makeCall falhou depois de um callback de fim, Ended já apagou o objeto; os eventos dela
-        // que ficaram em held_ somem com ele: MakeCall devolve -1 sem evento nenhum. Os da outra
-        // ligação seguem.
+        // que ficaram em held_ somem com ele: o -1 sai sem evento nenhum dela. Os das outras
+        // ligações seguem.
         for (HeldEvent& entry : held) {
             if (made || entry.callId != callId) events_->Post(std::move(entry.event));
         }
-        // A recusa do vídeo sem o VideoEnabled, depois dos eventos que o makeCall deixou em held (o primeiro estado
-        // da ligação vem antes de qualquer outro evento dela). Sem a ligação, nenhuma.
-        if (made && refuse && slot) Refuse(*slot);
+        if (settle) settle(slot);
+        // A sala que mudou durante o makeCall (PublishRoom não avisa nada nele), atrás dos eventos dele; se ela acabou,
+        // quem ficou é uma ligação comum, com o vídeo de uma. Sem a sala, nada.
+        hadRoom = roomId_ != 0;
+        PublishRoom();
+        if (hadRoom && roomId_ == 0) PublishVideo();
     }
     if (unused) {
         delete call;
@@ -511,8 +534,7 @@ int CallTable::Make(pj::Account& account, const std::string& uri, bool video) {
         }
         gone_.notify_all();
     }
-    ScheduleSync();
-    return made ? callId : -1;
+    if (hadRoom) Route();
 }
 
 bool CallTable::Answer(int callId, bool video) {
