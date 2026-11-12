@@ -1,9 +1,10 @@
 // A sala de vídeo em grupo no motor do PJSIP, contra o registrador falso que faz de vários convidados: cada um com a
 // imagem dele (VIDEO SOURCE), as contagens por convidado, o 180, o BYE e a espera. As ligações da sala (o nascimento,
-// os convidados chamados e atendidos, a sala cheia, as recusas, as saídas e o fim), o som de todos com todos e o id da
-// sala nos métodos de sempre. E os mosaicos: o de cada convidado (o eco do registrador devolve o que ele recebe) e o de
-// quem montou (no FrameSink, com o id da sala), a nossa câmera neles e a lista de vídeo que muda no meio da sala. Com o
-// PJSIP sem o vídeo (como o do Android), só o contrato do motor sem sala, o mesmo do motor do baresip
+// os convidados chamados e atendidos, a sala cheia, as recusas, as saídas e o fim), o som de todos com todos, o id da
+// sala nos métodos de sempre, a ligação de fora (a que toca, a feita e a atendida, só com a voz, e a volta para a sala)
+// e o convidado que põe a sala em espera. E os mosaicos: o de cada convidado (o eco do registrador devolve o que ele
+// recebe) e o de quem montou (no FrameSink, com o id da sala), a nossa câmera neles e a lista de vídeo que muda no meio
+// da sala. Com o PJSIP sem o vídeo (como o do Android), só o contrato do motor sem sala, o mesmo do motor do baresip
 // (test_engine_baresip.cpp).
 #include "call_fixture.h"
 
@@ -126,10 +127,23 @@ int Position(const std::vector<CallEvent>& events, const std::function<bool(cons
 // Um OnRoom, entre os eventos de ligação.
 bool IsRoomEvent(const CallEvent& event) { return event.kind == CallEvent::Room; }
 
-// Nenhuma linha do registro de ligações começa com prefix.
-bool NoLogLine(Phone& phone, const std::string& prefix) {
+// Quantas linhas do registro de ligações começam com prefix.
+size_t LinesStartingWith(Phone& phone, const std::string& prefix) {
     const Lines log = phone.registrar.Log();
-    return std::none_of(log.begin(), log.end(), [&](const std::string& line) { return line.rfind(prefix, 0) == 0; });
+    return static_cast<size_t>(
+        std::count_if(log.begin(), log.end(), [&](const std::string& line) { return line.rfind(prefix, 0) == 0; }));
+}
+
+// Nenhuma linha do registro de ligações começa com prefix.
+bool NoLogLine(Phone& phone, const std::string& prefix) { return LinesStartingWith(phone, prefix) == 0; }
+
+// A ligação de fora com a sala de pé: o 3005 liga, você atende (só com a voz) e sai da sala (o out). O id dela.
+int AnswerOutside(Phone& phone) {
+    const int id = phone.RingVideo("3005");
+    REQUIRE(phone.engine->Answer(id));
+    REQUIRE(phone.WaitState(id, CallState::Confirmed));
+    REQUIRE(WaitRoom(phone, [](const RoomInfo& room) { return room.out; }));
+    return id;
 }
 
 // As imagens dos convidados (o VIDEO SOURCE color do registrador) e o fundo do mosaico (o #04060e da página): nenhuma é
@@ -610,7 +624,84 @@ TEST_CASE("a room that ends with its guest on hold leaves a normal call with our
     CHECK(phone.WaitLinks(g1, {0}));
 }
 
-TEST_CASE("while the room is up a call that arrives is busy and MakeCall is refused") {
+TEST_CASE("a call from outside rings without video while the room goes on") {
+    Phone phone;
+    INFO(phone.listener.CallsText());
+    INFO(phone.listener.VideosText());
+    INFO(phone.registrar.LogText());
+    INFO(phone.listener.LogTail());
+    // O 3005 é um Porteiro: com a sala de pé, nem ele ganha o 183 com a imagem (a ligação de fora é só de voz).
+    VideoSettings settings = RoomSettings();
+    settings.doorphones = {"3005"};
+    phone.engine->SetVideoSettings(settings);
+    WithoutVideo(phone, {"2003"});
+
+    const int base = VideoCall(phone, "2002");
+    const int g1 = Guest(phone, "2003");
+    // Ela toca, e a sala segue: o nosso som com os convidados.
+    const int outside = phone.RingVideo("3005");
+    CHECK(phone.WaitState(outside, CallState::Early));
+    CHECK(phone.WaitLinks(base, {0, g1}));
+    CHECK(phone.WaitLinks(g1, {0, base}));
+    CHECK_FALSE(phone.engine->Room().out);
+
+    // Recusada, todos os eventos dela já chegaram (nenhum OnCallVideo vem depois do Disconnected), e um 183 chegaria ao
+    // registrador antes da resposta final: só com a voz, sem o offered, o early, o doorphone e o refused.
+    REQUIRE(phone.engine->Reject(outside));
+    REQUIRE(phone.WaitState(outside, CallState::Disconnected));
+    REQUIRE(phone.registrar.WaitForLog("inv-out 2001 486", kWaitSeconds));
+    const CallVideo video = phone.listener.LastVideo(outside);
+    CHECK_FALSE(video.offered);
+    CHECK_FALSE(video.early);
+    CHECK_FALSE(video.doorphone);
+    CHECK(phone.listener.RefusedCount(outside) == 0);
+    CHECK(NoLogLine(phone, "sdp-out 2001 183"));
+}
+
+TEST_CASE("answering the outside call takes us out of the room and returning puts it on hold") {
+    TestSink sink;
+    Phone phone;
+    INFO(sink.Text());
+    INFO(phone.listener.CallsText());
+    INFO(phone.listener.RoomsText());
+    INFO(phone.registrar.LogText());
+    INFO(phone.listener.LogTail());
+    phone.engine->SetFrameSink(&sink);
+    phone.engine->SetVideoSettings(RoomSettings());
+    ShowEcho(phone, "2002");
+    ShowColor(phone, "2003", kPurple);
+    const std::vector<int> ids = VideoRoom(phone, 1);
+    const int base = ids[0];
+    const int g1 = ids[1];
+    const int roomId = phone.engine->Room().id;
+    // O mosaico da base (o eco dela): a nossa câmera à esquerda e o g1 à direita.
+    REQUIRE(SeesBars(sink, base, 0.5, 0.02, 0.48));
+    REQUIRE(SeesColor(sink, base, 0.75, 0.5, kPurple, kEchoTolerance));
+
+    // Atendida, a ligação de fora (só com a voz) tira o nosso som e a nossa câmera da sala, sem re-INVITE para os
+    // convidados: eles seguem se ouvindo, e o mosaico da base segue, com o fundo no nosso quadro.
+    const int outside = phone.RingVideo("3005");
+    REQUIRE(phone.engine->Answer(outside, true));
+    CHECK(phone.registrar.WaitForLog("sdp-out 2001 200 video=nao", kWaitSeconds));
+    CHECK(WaitRoom(phone, [](const RoomInfo& room) { return room.out; }));
+    CHECK(phone.WaitLinks(base, {g1}));
+    CHECK(phone.WaitLinks(g1, {base}));
+    CHECK(phone.WaitLinks(outside, {0}));
+    CHECK(phone.LogCount("reinv-in 2002 sendonly") == 0);
+    CHECK(phone.LogCount("reinv-in 2003 sendonly") == 0);
+    CHECK(SeesColor(sink, base, 0.25, 0.5, kBackground, kEchoBackground));
+    CHECK(SeesColor(sink, base, 0.75, 0.5, kPurple, kEchoTolerance));
+
+    // O Voltar para a sala: a de fora vai para a espera, e o nosso som e as barras voltam.
+    REQUIRE(phone.engine->Activate(roomId));
+    CHECK(WaitRoom(phone, [](const RoomInfo& room) { return !room.out; }));
+    CHECK(phone.registrar.WaitForLog("reinv-in 3005 sendonly", kWaitSeconds));
+    CHECK(phone.WaitLinks(base, {0, g1}));
+    CHECK(phone.WaitLinks(outside, {}));
+    CHECK(SeesBars(sink, base, 0.5, 0.02, 0.48));
+}
+
+TEST_CASE("the outside call ending leaves us out until we return") {
     Phone phone;
     INFO(phone.listener.CallsText());
     INFO(phone.listener.RoomsText());
@@ -621,21 +712,155 @@ TEST_CASE("while the room is up a call that arrives is busy and MakeCall is refu
 
     const int base = VideoCall(phone, "2002");
     const int g1 = Guest(phone, "2003");
-    const RoomInfo room = phone.engine->Room();
+    const int roomId = phone.engine->Room().id;
+    const int outside = AnswerOutside(phone);
 
+    // A de fora acaba: o motor não volta sozinho para a sala, e os convidados seguem se ouvindo, sem o nosso som.
+    REQUIRE(phone.registrar.Control("HANGUP 2001") == Lines{"OK"});
+    REQUIRE(phone.WaitState(outside, CallState::Disconnected));
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    CHECK(phone.engine->Room().out);
+    CHECK(phone.WaitLinks(base, {g1}));
+
+    // O Voltar para a sala, pelo SetHold(false) do id dela.
+    REQUIRE(phone.engine->SetHold(roomId, false));
+    CHECK(WaitRoom(phone, [](const RoomInfo& room) { return !room.out; }));
+    CHECK(phone.WaitLinks(base, {0, g1}));
+    CHECK(phone.WaitLinks(g1, {0, base}));
+}
+
+TEST_CASE("a second call from outside is busy, even with the room full") {
+    Phone phone;
+    INFO(phone.listener.CallsText());
+    INFO(phone.listener.RoomsText());
+    INFO(phone.registrar.LogText());
+    INFO(phone.listener.LogTail());
+    phone.engine->SetVideoSettings(RoomSettings());
+    const std::vector<std::string> guests{"2003", "2004", "2005", "2006"};
+    WithoutVideo(phone, guests);
+
+    VideoCall(phone, "2002");
+    for (const std::string& number : guests) Guest(phone, number);
+    REQUIRE(phone.engine->Room().full);
+
+    // A sala cheia deixa a vaga da ligação de fora: ela toca. A segunda, com ela tocando, recebe 486.
+    const int outside = phone.Ring();
+    CHECK(phone.WaitState(outside, CallState::Early));
     REQUIRE(phone.registrar.Control("RING 2001") == Lines{"OK"});
     CHECK(phone.listener.WaitForCalls(phone_test::RecordingListener::Count(CallEvent::Busy, 1), kWaitSeconds));
     CHECK(phone.registrar.WaitForLog("inv-out 2001 486", kWaitSeconds));
-    phone.listener.CountLog("recusada: a sala esta de pe");
-    CHECK(phone.engine->MakeCall("2009") == -1);
-    CHECK(phone.engine->MakeCall("2009", true) == -1);
-    CHECK(phone.listener.LogCount("recusada: a sala esta de pe") == 2);
+    CHECK(phone.Count(CallEvent::Incoming) == 1);
+}
 
+TEST_CASE("a call made during the room is the outside call, voice only") {
+    Phone phone;
+    INFO(phone.listener.CallsText());
+    INFO(phone.listener.RoomsText());
+    INFO(phone.registrar.LogText());
+    INFO(phone.listener.LogTail());
+    phone.engine->SetVideoSettings(RoomSettings());
+    WithoutVideo(phone, {"2003"});
+
+    const int base = VideoCall(phone, "2002");
+    const int g1 = Guest(phone, "2003");
+    // Com o vídeo pedido, ela sai só com a voz e sem o refused, e tira você da sala.
+    const int outside = phone.engine->MakeCall("2009", true);
+    REQUIRE(outside > 0);
+    CHECK(phone.registrar.WaitForLog("video-in 2009 nao", kWaitSeconds));
+    CHECK(WaitRoom(phone, [](const RoomInfo& room) { return room.out; }));
+    REQUIRE(phone.WaitState(outside, CallState::Confirmed));
+    CHECK(phone.WaitLinks(outside, {0}));
+    CHECK(phone.WaitLinks(base, {g1}));
+    CHECK(phone.listener.RefusedCount(outside) == 0);
+
+    // Só uma de fora por vez, e você fora da sala não chama convidados: cada -1 pelo motivo dele.
+    const std::string busy = "recusada: ja ha uma ligacao fora da sala";
+    const std::string out = "convidado da sala recusado: voce esta fora da sala";
+    phone.listener.CountLog(busy);
+    phone.listener.CountLog(out);
+    CHECK(phone.engine->MakeCall("2010") == -1);
+    CHECK(phone.engine->RoomAdd("2011") == -1);
+    CHECK(phone.listener.LogCount(busy) == 1);
+    CHECK(phone.listener.LogCount(out) == 1);
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
-    CHECK(phone.engine->CallCount() == 2);
-    CHECK(phone.engine->Room() == room);
-    CHECK(phone.WaitLinks(base, {0, g1}));
-    CHECK(NoLogLine(phone, "inv-in 2009"));
+    CHECK(NoLogLine(phone, "inv-in 2010"));
+    CHECK(NoLogLine(phone, "inv-in 2011"));
+}
+
+TEST_CASE("a guest who puts the room on hold is held, out of the mix and gets no mosaic until it comes back") {
+    TestSink sink;
+    Phone phone;
+    INFO(sink.Text());
+    INFO(phone.registrar.LogText());
+    INFO(phone.listener.RoomsText());
+    INFO(phone.listener.LogTail());
+    phone.engine->SetFrameSink(&sink);
+    phone.engine->SetVideoSettings(RoomSettings());
+    ShowColor(phone, "2002", kOrange);
+    ShowColor(phone, "2003", kPurple);
+    ShowColor(phone, "2004", kTeal);
+    const std::vector<int> ids = VideoRoom(phone, 2);
+    const int base = ids[0];
+    const int g1 = ids[1];
+    const int g2 = ids[2];
+    const int roomId = phone.engine->Room().id;
+    // O g1 no segundo quadro da linha de cima do mosaico de quem montou, e o mosaico dele chegando a ele.
+    REQUIRE(SeesColor(sink, roomId, 0.75, 0.25, kPurple, kHostTolerance));
+    REQUIRE(phone.registrar.WaitForPacketsOf("2003", 1, kColorSeconds));
+
+    // O g1 põe a sala em espera (o Review Focus 1; num aparelho de verdade, com a música da central): ele fica Held e
+    // sai da mesa de áudio, e os outros seguem se ouvindo.
+    REQUIRE(phone.registrar.Control("HOLD 2003 on") == Lines{"OK"});
+    CHECK(WaitRoom(phone, [g1](const RoomInfo& room) { return HasMember(room, g1, State::Held); }));
+    CHECK(phone.WaitLinks(g1, {}));
+    CHECK(phone.WaitLinks(base, {0, g2}));
+    // O envio para ele para (a direção negociada não deixa mandar), e o quadro dele fica com o fundo, embora a imagem
+    // dele continue chegando.
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    CHECK(phone.registrar.PacketsStayOf("2003", 1));
+    CHECK(SeesColor(sink, roomId, 0.75, 0.25, kBackground, kHostTolerance));
+    const Clock::time_point held = Clock::now();
+    CHECK(WaitUntil([&] { return sink.Count(g1, 0, 0, held) >= 5; }, kColorSeconds));
+    CHECK(SeesColor(sink, g1, 0.5, 0.5, kPurple, kHostTolerance));
+
+    // Ele volta: na sala de novo, com o som de todos, o mosaico dele e o quadro dele no de quem montou.
+    const int packets = phone.registrar.PacketsOf("2003");
+    REQUIRE(phone.registrar.Control("HOLD 2003 off") == Lines{"OK"});
+    CHECK(WaitRoom(phone, [g1](const RoomInfo& room) { return HasMember(room, g1, State::In); }));
+    CHECK(phone.WaitLinks(g1, {0, base, g2}));
+    CHECK(phone.WaitLinks(base, {0, g1, g2}));
+    CHECK(phone.registrar.WaitForPacketsOf("2003", packets + 20, 5));
+    CHECK(SeesColor(sink, roomId, 0.75, 0.25, kPurple, kHostTolerance));
+}
+
+TEST_CASE("the last guest left while we are out waits without our audio until we go back") {
+    Phone phone;
+    INFO(phone.listener.CallsText());
+    INFO(phone.listener.RoomsText());
+    INFO(phone.registrar.LogText());
+    INFO(phone.listener.LogTail());
+    phone.engine->SetVideoSettings(RoomSettings());
+    WithoutVideo(phone, {"2003"});
+
+    const int base = VideoCall(phone, "2002");
+    Guest(phone, "2003");
+    const int outside = AnswerOutside(phone);
+
+    // O g1 sai com você fora: a sala acaba, e a base, agora uma ligação comum, não é a ativa. Ela espera ligada, sem o
+    // nosso som e sem re-INVITE (conferidos depois de 1 s, quando o motor já teria mexido nela).
+    const size_t reinvites = LinesStartingWith(phone, "reinv-in 2002");
+    REQUIRE(phone.registrar.Control("BYE 2003") == Lines{"OK"});
+    const Clock::time_point bye = Clock::now();
+    CHECK(WaitRoom(phone, [](const RoomInfo& room) { return room.ended; }));
+    std::this_thread::sleep_until(bye + std::chrono::seconds(1));
+    CHECK(phone.WaitLinks(outside, {0}));
+    CHECK(phone.WaitLinks(base, {}));
+    CHECK(LinesStartingWith(phone, "reinv-in 2002") == reinvites);
+
+    // Você volta para ela pelo Activate dela: a de fora vai para a espera, pelas regras das duas ligações.
+    REQUIRE(phone.engine->Activate(base));
+    CHECK(phone.WaitLinks(base, {0}));
+    CHECK(phone.registrar.WaitForLog("reinv-in 3005 sendonly", kWaitSeconds));
 }
 
 TEST_CASE("Hangup with the room id ends every guest") {

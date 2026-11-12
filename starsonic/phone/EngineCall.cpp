@@ -179,10 +179,13 @@ void CallTable::Incoming(pj::Account& account, int pjsuaId, bool accepting, cons
     bool sendEarly = false;   // o 183 com o SDP (o early de um Porteiro) no lugar do 180
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        // Toca sem ligação nenhuma ou com uma só, já confirmada (a segunda ligação), e sem a sala.
+        // Toca sem ligação nenhuma ou com uma só, já confirmada (a segunda ligação). Com a sala de pé, ela é a outra
+        // linha: toca sem a ligação de fora (a outra, fora da sala), e só com a voz.
         Slot* slot = FreeSlot();
         const Slot* other = slot ? Other(slot) : nullptr;
-        if (accepting && !closed_ && roomId_ == 0 && slot && Occupied() < 2 && (!other || other->confirmed)) {
+        const bool room = roomId_ != 0;
+        const bool rings = room ? slot && !other : slot && Occupied() < 2 && (!other || other->confirmed);
+        if (accepting && !closed_ && rings) {
             callId = nextId_++;
             slot->call = new EngineCall(account, pjsuaId, this);   // daqui em diante os callbacks vão a ele
             slot->callId = callId;
@@ -193,8 +196,10 @@ void CallTable::Incoming(pj::Account& account, int pjsuaId, bool accepting, cons
             });
 #if PJMEDIA_HAS_VIDEO
             // O vídeo da oferta, logo depois do aviso: com um codec em comum, a resposta o aceita (offered), e um
-            // Porteiro ganha o 183 com o SDP no lugar do 180; sem, o vídeo é recusado (a resposta vai sem ele).
-            if (offer.video) {
+            // Porteiro ganha o 183 com o SDP no lugar do 180; sem, o vídeo é recusado (a resposta vai sem ele). Com a
+            // sala de pé, nada disso: a ligação de fora toca só com a voz (o 180 sem o vídeo, também a de um Porteiro),
+            // sem o offered e sem a recusa.
+            if (offer.video && !room) {
                 slot->offered = CommonCodec(offer.codecs, settings_);
                 slot->videoCount = slot->offered ? 1 : 0;
                 slot->early = slot->offered && IsDoorphone(settings_, party.user);
@@ -219,7 +224,8 @@ void CallTable::Incoming(pj::Account& account, int pjsuaId, bool accepting, cons
         }
     }
     if (callId == 0) {
-        // Duas ligações, uma que ainda não foi confirmada ou a sala: 486. A conta ou o motor saindo: 480.
+        // Duas ligações, uma que ainda não foi confirmada, ou a sala e a ligação de fora: 486. A conta ou o motor
+        // saindo: 480.
         const unsigned code = busy ? PJSIP_SC_BUSY_HERE : PJSIP_SC_TEMPORARILY_UNAVAILABLE;
         Log(3, "ligacao de " + party.user + " recusada (" + std::to_string(code) + ")");
         pjsua_call_hangup(pjsuaId, code, nullptr, nullptr);
@@ -370,7 +376,8 @@ void CallTable::Ended(EngineCall* call, int sipCode) {
                 const Slot* other = Other(slot);
                 activeId_ = other ? other->callId : 0;
             } else if (activeId_ == callId) {
-                activeId_ = 0;   // a outra não volta sozinha: quem a retoma é o app, pelo Activate
+                // A outra não volta sozinha, nem a sala (o out segue): quem a retoma é o app, pelo Activate.
+                activeId_ = 0;
             }
             Emit(callId, [callId, sipCode](EngineListener& listener) {
                 listener.OnCallState(callId, CallState::Disconnected, sipCode);
@@ -435,13 +442,17 @@ int CallTable::Make(pj::Account& account, const std::string& uri, bool video) {
     unsigned videoCount = 0;
     bool refuse = false;
     bool recvOnly = false;
+    bool room = false;   // a sala de pé: a nova é a ligação de fora, só com a voz
     {
         std::lock_guard<std::mutex> lock(mutex_);
         Slot* slot = FreeSlot();
         const Slot* other = slot ? Other(slot) : nullptr;
-        if (closed_ || roomId_ != 0 || !slot || Occupied() >= 2 || (other && !other->confirmed)) {
+        // Até duas ligações, com a outra confirmada. Com a sala de pé, ela é a outra linha: só sem a ligação de fora.
+        room = roomId_ != 0;
+        const bool busy = room ? !slot || other : !slot || Occupied() >= 2 || (other && !other->confirmed);
+        if (closed_ || busy) {
             const char* reason = closed_ ? "o motor esta saindo"
-                                 : roomId_ != 0 ? "a sala esta de pe"
+                                 : room ? "ja ha uma ligacao fora da sala"
                                  : !slot || Occupied() >= 2 ? "ja ha duas ligacoes"
                                  : "a outra ligacao nao foi confirmada";
             Log(2, "ligacao para " + uri + " recusada: " + reason);
@@ -456,8 +467,9 @@ int CallTable::Make(pj::Account& account, const std::string& uri, bool video) {
 #if PJMEDIA_HAS_VIDEO
         // Com o vídeo nas escolhas, a oferta leva um vídeo e o desejo da câmera liga; sem ele, a ligação é só de voz
         // e a recusa sai logo depois do makeCall, atrás do primeiro estado da ligação. Sem câmera, a oferta leva o
-        // vídeo só para receber, e a câmera fica desligada.
-        if (video && VideoEnabled(settings_)) {
+        // vídeo só para receber, e a câmera fica desligada. Com a sala de pé, a ligação de fora é só de voz: o video
+        // não muda nada, e nada é recusado.
+        if (video && VideoEnabled(settings_) && !room) {
             recvOnly = camera_ == PJMEDIA_VID_INVALID_DEV;
             if (recvOnly) Problem(CameraProblem::NoCamera);
             slot->videoCount = 1;
@@ -465,14 +477,15 @@ int CallTable::Make(pj::Account& account, const std::string& uri, bool video) {
             slot->receiveOnly = recvOnly;
             slot->askingVideo = true;
         }
-        refuse = video && !VideoEnabled(settings_);
+        refuse = video && !VideoEnabled(settings_) && !room;
         videoCount = slot->videoCount;
 #else
         (void)video;
 #endif
     }
-    // A outra, se há, vai para a espera antes de a nova sair, e fica nela mesmo se a nova não sai.
-    Focus(callId);
+    // A outra, se há, vai para a espera antes de a nova sair, e fica nela mesmo se a nova não sai. Com a sala de pé,
+    // nada vai para a espera: a nova tira você da sala só depois do makeCall (abaixo).
+    if (!room) Focus(callId);
     {
         std::lock_guard<std::mutex> lock(mutex_);
         dialing_ = true;
@@ -503,6 +516,9 @@ int CallTable::Make(pj::Account& account, const std::string& uri, bool video) {
         // da ligação vem antes de qualquer outro evento dela). Sem a ligação, nenhuma.
         if (made && refuse && slot) Refuse(*slot);
     });
+    // A ligação de fora que saiu tira você da sala (o out), atrás dos eventos do makeCall e sem re-INVITE para os
+    // convidados; a que não saiu, ou já acabou, deixa você nela.
+    if (made && room) Focus(callId);
     ScheduleSync();
     return made ? callId : -1;
 }
@@ -579,10 +595,12 @@ bool CallTable::Answer(int callId, bool video) {
         std::lock_guard<std::mutex> lock(mutex_);
         Slot* slot = Find(callId);
         if (slot) {
-            // "Atender com vídeo": a câmera manda depois da confirmação; sem câmera, ela fica desligada.
-            const bool noCamera = video && camera_ == PJMEDIA_VID_INVALID_DEV;
+            // "Atender com vídeo": a câmera manda depois da confirmação; sem câmera, ela fica desligada. Com a sala de
+            // pé, a ligação de fora é só de voz: o video não muda nada.
+            const bool wanted = video && roomId_ == 0;
+            const bool noCamera = wanted && camera_ == PJMEDIA_VID_INVALID_DEV;
             if (noCamera) Problem(CameraProblem::NoCamera);
-            slot->wish = video && !noCamera;
+            slot->wish = wanted && !noCamera;
             slot->early = false;
             PublishVideo();
         }
@@ -590,7 +608,9 @@ bool CallTable::Answer(int callId, bool video) {
 #else
     (void)video;
 #endif
-    Focus(callId);   // e o SyncVideo, que liga a câmera depois da confirmação
+    // E o SyncVideo, que liga a câmera depois da confirmação. Com a sala de pé, você sai dela (o out), sem re-INVITE
+    // para os convidados.
+    Focus(callId);
     return true;
 }
 
@@ -621,13 +641,15 @@ bool CallTable::Activate(int callId) {
     bool resume;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        // A sala de pé: você já está nela. Um convidado não é uma linha: nenhum é a ativa sozinho.
-        if (callId != 0 && callId == roomId_) return true;
+        // O id da sala de pé é o Voltar para a sala (ela nunca fica em espera). Um convidado não é uma linha: nenhum é
+        // a ativa sozinho.
+        const bool room = callId != 0 && callId == roomId_;
         const Slot* slot = Find(callId);
-        if (!slot || !slot->confirmed || slot->member) return false;
-        resume = slot->held;
+        if (!room && (!slot || !slot->confirmed || slot->member)) return false;
+        resume = slot && slot->held;
     }
-    Focus(callId);   // na conferência, a desfaz: é o Split(callId, a outra)
+    // Na conferência, a desfaz: é o Split(callId, a outra). Com a sala, a ligação de fora é a outra.
+    Focus(callId);
     const bool done = !resume || Renegotiate(callId, false);
     ScheduleSync();
     return done;
@@ -873,8 +895,9 @@ void CallTable::Focus(int callId) {
     bool holdOther = false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        // O id da sala não tem vaga: a outra, então, é a ligação de fora, se há (Other(nullptr)).
         const Slot* slot = Find(callId);
-        if (!slot) return;
+        if (!slot && (callId == 0 || callId != roomId_)) return;
         activeId_ = callId;
         conference_ = false;
         const Slot* other = Other(slot);
@@ -882,7 +905,7 @@ void CallTable::Focus(int callId) {
             otherId = other->callId;
             holdOther = other->confirmed && !other->held;
         }
-        PublishVideo();   // a outra, se há, pausa o vídeo já
+        PublishVideo();   // a outra, se há, pausa o vídeo já; com a sala, o out dela (o nosso quadro, nos mosaicos)
     }
     // A outra sai do som na hora e callId entra (com a mídia já ativa; senão, quando ela ficar ativa:
     // MediaChanged); a câmera dela para logo (SyncVideo), e a espera dela (re-INVITE) vem em seguida.

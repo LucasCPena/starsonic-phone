@@ -44,11 +44,13 @@ public:
     // confere o id.
     virtual void OnRegistration(int sipCode, bool active, int accountId) = 0;
     // Chegou uma ligação, que toca (o motor responde 180 sozinho): sem ligação nenhuma ou com uma só, já
-    // confirmada (a segunda ligação). remoteUser é o usuário do From (o número de quem liga) e
+    // confirmada (a segunda ligação), ou com a sala de pé (RoomAdd) sem a ligação de fora. Com a sala, ela é a ligação
+    // de fora, só com a voz: o 180 sem o vídeo, também a de um Porteiro (sem o 183), e nenhum OnCallVideo com o
+    // offered, o early, o doorphone ou o refused. remoteUser é o usuário do From (o número de quem liga) e
     // remoteName, o nome de exibição (pode ser vazio), em UTF-8.
     virtual void OnIncomingCall(int callId, const std::string& remoteUser, const std::string& remoteName) = 0;
     // Chegou uma ligação com duas em andamento, com uma que ainda não foi confirmada ou com a sala de pé
-    // (RoomAdd): o motor respondeu 486 (Ocupado) sozinho.
+    // (RoomAdd) e a ligação de fora: o motor respondeu 486 (Ocupado) sozinho.
     virtual void OnRejectedBusy(const std::string& remoteUser, const std::string& remoteName) = 0;
     // A ligação callId mudou de estado; sipCode é o último código SIP dela. No Disconnected, é o do fim: numa
     // ligação encerrada aqui, a resposta daqui (486 no Reject, 603 no Hangup de uma recebida que toca, 487 na
@@ -138,8 +140,9 @@ struct PushData {
 // e a libre dentro do laço deles. Chamadas ao mesmo tempo esperam uma pela outra (menos HasCall, CallCount, Video, Room
 // e SetFrameSink, que não esperam as outras). Até duas ligações, uma delas a ativa: só a ativa fica ligada ao
 // dispositivo de som, e a outra fica em espera (re-INVITE sendonly). Na conferência (Join) as duas ficam com o som e
-// ligadas entre si. A terceira que chega recebe 486. A sala de vídeo em grupo (RoomAdd) é a exceção: os convidados
-// dela, até kRoomMaxGuests, ficam todos com o som e ligados entre si, e a ligação que chega com ela de pé recebe 486.
+// ligadas entre si. A terceira que chega recebe 486. A sala de vídeo em grupo (RoomAdd) é uma dessas linhas: os
+// convidados dela, até kRoomMaxGuests, ficam todos com o som e ligados entre si, e a outra linha é a ligação de fora,
+// só com a voz; a que chega com as duas recebe 486.
 class SipEngine {
 public:
     // O pjsua e o baresip têm estado global: só um motor por processo (um segundo Create devolve nullptr
@@ -242,9 +245,11 @@ public:
     // NormalizeDialString). Se a porta do perfil não é a 5060, a URI leva a porta (o servidor do
     // registro): sip:<número>@<domínio>:<porta>. Devolve o id da ligação, que os eventos dela trazem,
     // ou -1 (sem conta, número vazio, já há duas ligações, a outra ainda não foi confirmada, a sala está
-    // de pé (RoomAdd) ou o PJSIP (ou o baresip) recusou; nesse caso nenhum evento dela chega). Com uma
-    // ligação confirmada em andamento, ela vai para a espera antes (e fica nela mesmo se a nova não sai)
-    // e a nova é a ativa. Os eventos podem chegar antes de MakeCall voltar.
+    // de pé (RoomAdd) com a ligação de fora ou o PJSIP (ou o baresip) recusou; nesse caso nenhum evento dela
+    // chega). Com uma ligação confirmada em andamento, ela vai para a espera antes (e fica nela mesmo se a
+    // nova não sai) e a nova é a ativa. Com a sala de pé, a nova é a ligação de fora, só com a voz: nada vai
+    // para a espera, e ela, a ativa, tira você da sala (o out) depois de sair, sem re-INVITE para os
+    // convidados. Os eventos podem chegar antes de MakeCall voltar.
     int MakeCall(const std::string& number);
 
     // O MakeCall com o vídeo (video = true; com false é o MakeCall de sempre, sem m=video). Com o VideoEnabled das
@@ -253,12 +258,14 @@ public:
     // OnCallVideo com o refused. Sem o VideoEnabled, é a ligação só de voz, e o refused sai logo depois do primeiro
     // OnCallState dela. Uma recusa da ligação inteira por causa do vídeo (488 ou 415) chega pelo Disconnected com esse
     // código (quem liga de novo só com a voz é o app). Sem câmera (VideoDevices vazio), sai o OnCameraProblem(NoCamera)
-    // e a oferta leva o vídeo só para receber (recvonly), com a câmera desligada. Sem o vídeo no motor (o Android e o
+    // e a oferta leva o vídeo só para receber (recvonly), com a câmera desligada. Com a sala de pé, o video não muda
+    // nada: a ligação de fora sai só com a voz, sem o refused e sem o NoCamera. Sem o vídeo no motor (o Android e o
     // baresip), com video = true devolve -1 e não liga.
     int MakeCall(const std::string& number, bool video);
 
     // Atende (200) ou recusa com Ocupado (486) a ligação recebida que está tocando. Atendida, ela vira
-    // a ativa e a outra, se há, vai para a espera. Com o id da sala, false.
+    // a ativa e a outra, se há, vai para a espera; com a sala de pé, a ligação de fora atendida tira você da
+    // sala (o out), sem re-INVITE para os convidados. Com o id da sala, false.
     bool Answer(int callId);
     bool Reject(int callId);
 
@@ -267,7 +274,9 @@ public:
     // video = false a câmera não manda nada (o "Atender"); com true, o desejo da câmera liga e ela começa a mandar
     // depois da confirmação (o "Atender com vídeo"). Sem câmera, com true sai o OnCameraProblem(NoCamera) e a câmera
     // fica desligada; a resposta aceita o vídeo só para receber (recvonly) quando já não havia câmera no toque (o 180
-    // ou o 183 diz a resposta). Sem o vídeo no motor, com video = true devolve false e não atende.
+    // ou o 183 diz a resposta). Com a sala de pé, o video não muda nada: a ligação de fora é só de voz (o 180 já foi
+    // sem o vídeo), sem o desejo da câmera e sem o NoCamera. Sem o vídeo no motor, com video = true devolve false e
+    // não atende.
     bool Answer(int callId, bool video);
 
     // O desejo da pessoa para a câmera da ligação (o botão "Câmera"). Numa ligação confirmada sem vídeo, com on, pede o
@@ -350,14 +359,20 @@ public:
     // mesmo contador das ligações, que vale nos métodos de sempre: cada um diz o que faz com ele. A saída de um
     // convidado (o Hangup dele, o fim do outro lado ou uma recusa) tira o quadro dele, e a sala se arruma; com um
     // convidado só, contando os chamados, ou nenhum, ela acaba: sai o OnRoom com o ended, e quem ficou volta a ser uma
-    // ligação comum, com o desejo da câmera da sala, e é a ativa se a sala era a ativa. A imagem: com dois ou mais
-    // convidados que já atenderam (também os em espera), cada um recebe o mosaico dele, a nossa câmera primeiro e os
-    // outros que já atenderam, sem ele (um quadro sem imagem fica com o fundo); com um só, ele recebe a nossa câmera
-    // direto. O mosaico de quem montou, com todos os convidados (também os chamados) na ordem de entrada, chega ao
-    // SetFrameSink com o id da sala. Sem câmera, os convidados recebem o mosaico do mesmo jeito, com o fundo no lugar
-    // da nossa câmera (a ligação de onde a sala nasce, que só recebia o vídeo, ganha um re-INVITE sendrecv). Só no
-    // motor do PJSIP com o vídeo (o Windows): sem o vídeo (o Android) e no do baresip, o RoomAdd devolve -1, o Room
-    // devolve o RoomInfo{} e nenhum OnRoom chega.
+    // ligação comum, com o desejo da câmera da sala, e é a ativa se a sala era a ativa (senão, ela espera sem o nosso
+    // som e sem re-INVITE, até um Activate). A imagem: com dois ou mais convidados que já atenderam (também os em
+    // espera), cada um recebe o mosaico dele, a nossa câmera primeiro e os outros que já atenderam, sem ele (um quadro
+    // sem imagem fica com o fundo); com um só, ele recebe a nossa câmera direto. Um convidado que pôs a ligação em
+    // espera (o Held) fica com o fundo no quadro dele e não recebe o mosaico dele até voltar (a direção negociada não
+    // deixa mandar). O mosaico de quem montou, com todos os convidados (também os chamados) na ordem de entrada, chega
+    // ao SetFrameSink com o id da sala. Sem câmera, os convidados recebem o mosaico do mesmo jeito, com o fundo no
+    // lugar da nossa câmera (a ligação de onde a sala nasce, que só recebia o vídeo, ganha um re-INVITE sendrecv).
+    // Com a sala de pé, cabe uma ligação de fora, só com a voz (OnIncomingCall e MakeCall): atendida ou feita, ela é a
+    // ativa e tira você da sala (o out do RoomInfo), sem re-INVITE para os convidados: o nosso som sai deles e a nossa
+    // câmera sai dos mosaicos (o fundo no quadro dela), e eles seguem se ouvindo, cada um com o mosaico dele. O
+    // Activate do id da sala (o "Voltar para a sala") traz você de volta e põe a de fora em espera; o fim dela não
+    // traz. Só no motor do PJSIP com o vídeo (o Windows): sem o vídeo (o Android) e no do baresip, o RoomAdd devolve
+    // -1, o Room devolve o RoomInfo{} e nenhum OnRoom chega.
 
     // Liga para sip:<número>@<domínio da conta> (como o MakeCall com o vídeo, pela central da conta) e põe a ligação
     // na sala, chamando até ser confirmada. A oferta leva um vídeo (sendrecv): um convidado que responde sem o vídeo
@@ -378,8 +393,10 @@ public:
 
     // Desliga a ligação em qualquer estado (CANCEL, recusa ou BYE); o fim chega por OnCallState. A
     // outra ligação não volta sozinha: ela segue em espera até um Activate. Na conferência, a outra
-    // segue como a ativa, com o som. O id da sala desliga todos os convidados: a sala fecha (nenhum volta
-    // a ser uma ligação comum) e o último OnRoom traz o ended, sem ninguém; false se algum desligar não saiu.
+    // segue como a ativa, com o som. Com a sala de pé, o fim da ligação de fora também não traz você de
+    // volta (o out segue até o Activate do id da sala). O id da sala desliga todos os convidados: a sala fecha
+    // (nenhum volta a ser uma ligação comum) e o último OnRoom traz o ended, sem ninguém; false se algum
+    // desligar não saiu.
     bool Hangup(int callId);
 
     // callId vira a ativa: a outra (confirmada e fora da espera) vai para a espera, callId é retomada
@@ -387,8 +404,10 @@ public:
     // ativa, nada muda. Na conferência, é o Split(callId, a outra). false: id desconhecido, ligação
     // ainda não confirmada ou a retomada de callId não saiu (também depois de esperar até ~2 s a
     // renegociação anterior dela): callId já é a ativa, e a outra já saiu do som, mas callId segue em
-    // espera até um Activate seguinte. O id da sala dá true com a sala de pé (você está nela); o de um
-    // convidado dá false (ele não é uma linha: ninguém o põe em espera nem o deixa sozinho com o som).
+    // espera até um Activate seguinte. O id da sala de pé é o "Voltar para a sala" (true): os convidados
+    // voltam ao dispositivo de som e a nossa câmera, aos mosaicos (o out falso), e a ligação de fora,
+    // confirmada e fora da espera, vai para a espera. O de um convidado dá false (ele não é uma linha:
+    // ninguém o põe em espera nem o deixa sozinho com o som).
     bool Activate(int callId);
 
     // A conferência a três, na mesa de áudio daqui (a central não fica sabendo): retoma a que está em
@@ -407,9 +426,9 @@ public:
     bool Split(int callId, int otherId);
 
     // true põe callId em espera (re-INVITE com sendonly; já em espera, nada muda); false é o Activate
-    // (a outra ligação, se ativa, vai para a espera). Se outra renegociação da ligação ainda está em
-    // andamento, espera até ~2 s que ela termine. false: id desconhecido (com true, também o da sala),
-    // ligação não confirmada ou um convidado da sala.
+    // (a outra ligação, se ativa, vai para a espera; com o id da sala, o "Voltar para a sala"). Se outra
+    // renegociação da ligação ainda está em andamento, espera até ~2 s que ela termine. false: id
+    // desconhecido (com true, também o da sala), ligação não confirmada ou um convidado da sala.
     bool SetHold(int callId, bool hold);
 
     // Microfone mudo ou não, para a ligação de agora e as próximas (até trocar de novo); na
@@ -462,10 +481,10 @@ public:
     void RefreshAudioDevices();
 
     // Para onde o áudio de callId vai na ponte de áudio, sem ordem: 0 é o dispositivo de som; outro
-    // número, o id de outra ligação (na conferência: 0 e a outra; na sala: 0 e os outros convidados que
-    // estão nela). Vazio em espera, sem mídia, com id desconhecido e com o id da sala. No motor do PJSIP,
-    // a ponte aplica as mudanças no tique seguinte do relógio dela (cerca de 20 ms); no do baresip, a
-    // mistura da conferência é a do módulo mixminus.
+    // número, o id de outra ligação (na conferência: 0 e a outra; na sala: os outros convidados que estão
+    // nela, e o 0 com você nela). Vazio em espera, sem mídia, com id desconhecido e com o id da sala. No
+    // motor do PJSIP, a ponte aplica as mudanças no tique seguinte do relógio dela (cerca de 20 ms); no do
+    // baresip, a mistura da conferência é a do módulo mixminus.
     std::vector<int> AudioLinks(int callId) const;
 
 private:

@@ -58,13 +58,17 @@
 // cada uma com o lugar dela (seat), a ordem de entrada (joined) e a espera pedida do outro lado (remoteHold). Elas não
 // seguem a regra das duas ligações: na mesa de áudio, cada convidado na sala fica ligado ao nosso som e a cada outro
 // (Route), e o vídeo de um não pausa pelos outros (SendPaused e ReceivePaused), com o desejo da câmera da sala
-// (roomWish_). Não há outras ligações com a sala de pé: a que chega recebe 486, e o Make dá -1. O OnRoom sai pelo
-// Emit, com mutex_ presa, quando a sala muda (PublishRoom), comparada com a última avisada (roomShown_). Durante um
-// makeCall (o do Make ou o do RoomAdd), o PublishRoom não avisa nada: o OnRoom do convidado novo vai para held_ antes
-// do makeCall do RoomAdd (e some com os eventos dele se ele não sai; o roomShown_ só fica com ele se ele sai), e o
-// fim de todo makeCall (FinishDial) avisa o que mudou no meio. Com um convidado só, ou nenhum, a sala acaba no
-// PublishRoom: o OnRoom com o ended, e quem ficou volta a ser uma ligação comum. O Hangup do id da sala a fecha
-// (roomClosing_): ela só acaba sem ninguém.
+// (roomWish_). A sala é uma linha (o id dela no activeId_, no Focus e no Activate), e a outra, com ela de pé, é a
+// ligação de fora (a vaga a mais), só de voz: a que chega toca sem o vídeo, e a do Make sai sem ele. Atendida ou feita,
+// ela é a ativa, e você fica fora da sala (o out: o nosso som sai dos convidados, e a nossa câmera, dos mosaicos), sem
+// re-INVITE para eles; o Activate do id da sala traz você de volta e a põe em espera, e o fim dela não traz. Com ela,
+// a outra que chega recebe 486, e o Make dá -1. O OnRoom sai pelo Emit, com mutex_ presa, quando a sala muda
+// (PublishRoom), comparada com a última avisada (roomShown_). Durante um makeCall (o do Make ou o do RoomAdd), o
+// PublishRoom não avisa nada: o OnRoom do convidado novo vai para held_ antes do makeCall do RoomAdd (e some com os
+// eventos dele se ele não sai; o roomShown_ só fica com ele se ele sai), e o fim de todo makeCall (FinishDial) avisa o
+// que mudou no meio. Com um convidado só, ou nenhum, a sala acaba no PublishRoom: o OnRoom com o ended, e quem ficou
+// volta a ser uma ligação comum (a ativa só se a sala era a ativa: com você fora, ela espera sem o nosso som e sem
+// re-INVITE). O Hangup do id da sala a fecha (roomClosing_): ela só acaba sem ninguém.
 //
 // Os mosaicos da sala (RoomVideo.h; as funções deles também no EngineRoom.cpp): com dois ou mais convidados que já
 // atenderam (também os em espera), cada um manda o mosaico dele, o lugar dele na sala (SendsSeat), no lugar da nossa
@@ -179,7 +183,7 @@ private:
 // Só a ligação ativa fica ligada ao dispositivo de som; a outra fica em espera (re-INVITE sendonly)
 // ou, se ainda não foi atendida, sem som. Na conferência não há uma ativa: as duas ficam ligadas ao
 // dispositivo e entre si. Na sala, a ativa é a sala (activeId_ é o id dela): os convidados na sala ficam
-// ligados ao dispositivo e entre si.
+// ligados ao dispositivo e entre si; com a ligação de fora ativa (você fora da sala), só entre si.
 class CallTable : public TimerTarget {
 public:
     // Os ids dos temporizadores da tabela no EngineEndpoint (as contas usam os delas, que começam em 1): o SyncVideo,
@@ -222,7 +226,8 @@ public:
     void OnEngineTimer() override;
 
     // Da API: thread registrada no PJLIB, um pedido por vez (o motor serializa). uri é a URI SIP inteira.
-    // video: a oferta leva o vídeo (com o VideoEnabled; sem ele, o refused); sem o vídeo no motor, nunca.
+    // video: a oferta leva o vídeo (com o VideoEnabled; sem ele, o refused); sem o vídeo no motor, nunca, e com a sala
+    // de pé também não, sem o refused (a ligação de fora é só de voz).
     int Make(pj::Account& account, const std::string& uri, bool video);
     bool Answer(int callId, bool video);
     bool Reject(int callId);
@@ -310,15 +315,16 @@ private:
     // Com mutex_ preso. A vaga de callId (ou de call), ou nullptr.
     Slot* Find(int callId);
     Slot* Find(const EngineCall* call);
-    // Com mutex_ preso. Uma vaga livre, ou nullptr; outra vaga ocupada fora da sala (sem a sala, há no máximo duas
-    // ligações: a outra), ou nullptr; quantas vagas estão ocupadas.
+    // Com mutex_ preso. Uma vaga livre, ou nullptr; outra vaga ocupada fora da sala que não é slot (sem a sala, há no
+    // máximo duas ligações: a outra; com ela, a ligação de fora), ou nullptr; quantas vagas estão ocupadas.
     Slot* FreeSlot();
     Slot* Other(const Slot* slot);
     int Occupied();
     // O id no pjsua da ligação callId, se ela está na tabela; senão PJSUA_INVALID_ID.
     int PjsuaId(int callId);
     // callId vira a ativa (e a conferência, se havia, acaba): a outra, confirmada e fora da espera, vai
-    // para a espera, e o dispositivo de som fica só com callId.
+    // para a espera, e o dispositivo de som fica só com callId. Com a sala de pé, callId é o id dela (você volta para
+    // ela, e a outra é a ligação de fora) ou a ligação de fora (você sai da sala, e nada vai para a espera).
     void Focus(int callId);
     // Põe em espera (re-INVITE sendonly) ou retoma (sendrecv), esperando a renegociação anterior.
     bool Renegotiate(int callId, bool hold);
