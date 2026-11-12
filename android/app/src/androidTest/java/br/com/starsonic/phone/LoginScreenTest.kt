@@ -64,9 +64,11 @@ class LoginScreenTest {
         clickEntrar()
         emulator.waitForText("Digite o endereço do servidor.")
         type("servidor", emulator.registrar)
+        waitForTheKeyboardAfter("servidor", emulator.registrar)
         clickEntrar()
         emulator.waitForText("Digite só o número do ramal.")
         type("ramal", "2001")
+        waitForTheKeyboardAfter("ramal", "2001")
         clickEntrar()
         emulator.waitForText("Digite a senha.")
     }
@@ -138,6 +140,19 @@ class LoginScreenTest {
 
     private fun type(tag: String, text: String) {
         compose.onNodeWithTag(tag).performScrollTo().performTextInput(text)
+    }
+
+    /**
+     * O que o toque no Entrar logo depois do [type] usa: o [text] no campo [tag] e o teclado do celular aberto, com o
+     * Entrar parado. Cada campo tocado abre o teclado dele (o do Servidor é o de endereços), e a tela anda com o teclado
+     * que abre ou troca: no run 43204892566, o Entrar tocado logo depois do Ramal não entrou ("Digite a senha." não
+     * apareceu), o caso do [Emulator.waitForTheKeyboard].
+     */
+    private fun waitForTheKeyboardAfter(tag: String, text: String) {
+        emulator.waitUntil("\"$text\" no campo $tag", details = { "O campo $tag: \"${emulator.editableText(tag)}\"" }) {
+            emulator.editableText(tag) == text
+        }
+        emulator.waitForTheKeyboard("entrar")
     }
 
     private fun clickEntrar() {

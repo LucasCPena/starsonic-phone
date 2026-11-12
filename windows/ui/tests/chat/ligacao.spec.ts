@@ -106,6 +106,32 @@ async function abrirOChat(page: Page): Promise<void> {
   await expect(faixa(page)).toBeVisible();
 }
 
+/** O nome do balão de cada uma das 8 fotos, ou dos 8 arquivos, da conversa do clique duplo no Chat. */
+const BALAO = { foto: /^Abrir a foto foto-\d\.png$/, arquivo: /^Abrir pedido-\d\.pdf, / } as const;
+
+/**
+ * A conversa com a Ana parada: os 8 balões na lista e a rolagem igual em dois quadros de tela seguidos. A conversa aparece
+ * antes das mensagens (o GET delas), e a lista desce até o fim no desenho que as põe (o Conversa.tsx). As fotos deste
+ * teste vão sem miniatura (o enviarArquivo): cada uma fica no quadro do ícone e do nome, de altura fixa.
+ */
+async function conversaParada(page: Page, tipo: keyof typeof BALAO): Promise<void> {
+  const log = conversaComAAna(page);
+  await expect(log.getByRole('button', { name: BALAO[tipo] })).toHaveCount(8);
+  await expect
+    .poll(() =>
+      log.evaluate(
+        (el) =>
+          new Promise<boolean>((parada) =>
+            requestAnimationFrame(() => {
+              const antes = el.scrollTop;
+              requestAnimationFrame(() => parada(el.scrollTop === antes));
+            }),
+          ),
+      ),
+    )
+    .toBe(true);
+}
+
 /** Guarda o texto de todo toast que aparecer na página daqui em diante (Review Focus 5: nenhum). */
 async function vigiarOsToasts(page: Page): Promise<void> {
   await page.evaluate(() => {
@@ -428,8 +454,11 @@ test('a double click on Chat opens the conversation, and its second click opens 
     const ponto = { x: c.x + c.width / 2, y: c.y + c.height / 2 };
     await page.mouse.click(ponto.x, ponto.y);
     await expect(conversaComAAna(page)).toBeVisible();
+    // O que fica embaixo do Chat só se sabe com a conversa parada: lido logo que ela aparece, com as mensagens ainda
+    // chegando, embaixo não havia nada (o run 43109133309).
+    await conversaParada(page, tipo);
     const embaixo = await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest('button')?.getAttribute('aria-label') ?? '', ponto);
-    expect(embaixo, `uma ${tipo} embaixo do Chat`).toMatch(tipo === 'foto' ? /^Abrir a foto foto-\d\.png$/ : /^Abrir pedido-\d\.pdf, /);
+    expect(embaixo, `uma ${tipo} embaixo do Chat`).toMatch(BALAO[tipo]);
     await page.mouse.down({ clickCount: 2 });
     await page.mouse.up({ clickCount: 2 });
     await umInstante(page);

@@ -453,10 +453,18 @@ for (const [largura, altura] of [
 
 test('the video problem notices stay 5 seconds, the others 2', async ({ page }) => {
   const inicio = new Date('2026-11-10T14:00:00-03:00').getTime();
+  // O relógio parado desde antes de a página abrir: só anda com o runFor (as mensagens da ponte falsa também saem por um
+  // setTimeout). Parado com a página já aberta, ele podia voltar no tempo: no Playwright 1.56.1, o pauseAt não espera a
+  // rodada dos timers da página que o relógio fazia em tempo real (aqui, a cada quadro de tela, os requestAnimationFrame
+  // das vistas de vídeo), e ela acaba depois dele, com o relógio de volta na hora dela. O aviso empurrado nesse meio-tempo
+  // ficava 60 s no futuro e não aparecia (o primeiro aviso, nos runs 43109133309, 43174383186, 43204892724 e 43269164970).
   await page.clock.install({ time: inicio });
-  await abrir(page, 'video');
-  // O relógio parado: só anda com o runFor (as mensagens da ponte falsa também saem por um setTimeout).
   await page.clock.pauseAt(inicio + 60_000);
+  await page.goto('/index.html?fake=video');
+  // O estado (num setTimeout da ponte falsa) e o data-pronto (num efeito do Preact, depois do quadro de tela) vêm com o
+  // runFor.
+  await page.clock.runFor(1_000);
+  await expect(page.locator('body[data-pronto]')).toHaveCount(1);
   const aviso = (texto: string) => page.locator('.toast').getByText(texto, { exact: true });
   for (const texto of AVISOS_DE_5_S) {
     await empurrar(page, { v: 1, type: 'toast', texto });
