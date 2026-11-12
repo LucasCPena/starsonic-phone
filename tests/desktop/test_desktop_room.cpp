@@ -21,6 +21,7 @@ constexpr int kGuest = 31;     // o primeiro convidado (o segundo e o 32)
 constexpr int kOutside = 40;   // a ligacao de fora
 constexpr RoomMember::State kCalling = RoomMember::State::Calling;
 constexpr RoomMember::State kIn = RoomMember::State::In;
+constexpr RoomMember::State kHeld = RoomMember::State::Held;
 
 const char kRoomEnd[] = R"({"v":1,"cmd":"salaEncerrar"})";
 const char kRoomReturn[] = R"({"v":1,"cmd":"salaVoltar"})";
@@ -149,6 +150,12 @@ TEST_CASE("the room commands reach the engine") {
     // salaVoltar, com a sala fora (a ligacao de fora atendida): o Activate do id da sala.
     TakeOutsideCall(h, {Member(kCall, kIn), Member(kGuest + 1, kCalling)});
     REQUIRE(h.State()["ligacao"]["sala"]["fora"] == true);
+    // Ate la, a de fora fica em cima, e a sala e a segunda linha, em espera.
+    const json out = h.State()["ligacao"];
+    CHECK(out["top"]["id"] == kOutside);
+    CHECK(out["second"]["id"] == kRoomId);
+    CHECK(out["second"]["held"] == true);
+    CHECK(out["secondKind"] == "held");
     h.Send(kRoomReturn);
     CHECK(h.engine.activated == std::vector<int>{kRoomId});
     // salaEncerrar: o Hangup do id da sala (o motor desliga todos).
@@ -164,6 +171,8 @@ TEST_CASE("the state carries the room") {
     json call = h.State()["ligacao"];
     REQUIRE(call.contains("sala"));
     CHECK(call["sala"].is_null());
+    const int64_t since = call["top"]["activeSinceMs"].get<int64_t>();   // o tempo da ligacao 11
+    CHECK(since > 0);
 
     h.app->OnRoom(Room({Member(kCall, kIn, true, Tile(0, 0, 0.5, 1)),
                         Member(kGuest, kCalling, false, Tile(0.5, 0, 0.5, 1))}));
@@ -172,6 +181,21 @@ TEST_CASE("the state carries the room") {
     const ordered_json inOrder = StateInOrder(h).at("ligacao");
     CHECK(inOrder.at("top").at("id") == kRoomId);
     CHECK(inOrder.at("sala") == ordered_json::parse(kRoomJson));
+    // O resto do cartao da sala: o numero e o nome vazios, uma feita em andamento, com o tempo da ligacao 11 e fora da
+    // espera.
+    const ordered_json& card = inOrder.at("top");
+    CHECK(card.at("number") == "");
+    CHECK(card.at("name") == "");
+    CHECK(card.at("incoming") == false);
+    CHECK(card.at("phase") == "active");
+    CHECK(card.at("activeSinceMs") == since);
+    CHECK(card.at("held") == false);
+
+    // O 2002 poe a sala em espera: o estado dele e o emEspera.
+    h.app->OnRoom(Room({Member(kCall, kHeld, false, Tile(0, 0, 0.5, 1)),
+                        Member(kGuest, kCalling, false, Tile(0.5, 0, 0.5, 1))}));
+    h.Run();
+    CHECK(h.State()["ligacao"]["sala"]["participantes"][0]["estado"] == "emEspera");
 
     // O 2004 nao atende, e a sala acaba com a ligacao 11, que volta a ser a linha de cima: null de novo.
     h.app->OnCallState(kGuest, CallState::Disconnected, 486);

@@ -368,9 +368,11 @@ public:
     // em espera), cada um recebe o mosaico dele, a nossa câmera primeiro e os outros que já atenderam, sem ele (um
     // quadro sem imagem fica com o fundo); com um só, ele recebe a nossa câmera direto. Um convidado que pôs a ligação
     // em espera (o Held) fica com o fundo no quadro dele e não recebe o mosaico dele até voltar (a direção negociada
-    // não deixa mandar). O mosaico de quem montou, com todos os convidados (também os chamados) na ordem de entrada,
-    // chega ao SetFrameSink com o id da sala. Sem câmera, os convidados recebem o mosaico do mesmo jeito, com o fundo
-    // no lugar da nossa câmera (a ligação de onde a sala nasce, que só recebia o vídeo, ganha um re-INVITE sendrecv).
+    // não deixa mandar). A nossa câmera só abre para os mosaicos com um convidado recebendo o dele: com todos sem o
+    // vídeo ou em espera, ela fica fechada, e o camera da sala, false. O mosaico de quem montou, com todos os
+    // convidados (também os chamados) na ordem de entrada, chega ao SetFrameSink com o id da sala. Sem câmera, os
+    // convidados recebem o mosaico do mesmo jeito, com o fundo no lugar da nossa câmera (a ligação de onde a sala
+    // nasce, que só recebia o vídeo, ganha um re-INVITE sendrecv).
     // A qualidade da imagem que cada convidado recebe (o tamanho, os quadros por segundo e a taxa do codificador) segue
     // o número de convidados, contando os chamados (spec do vídeo em grupo, 7), e nunca passa da escolhida
     // (SetVideoSettings): com dois ou três, até 640x480, 25 qps e 800 kbit/s; com quatro ou cinco, até 640x480, 15 qps

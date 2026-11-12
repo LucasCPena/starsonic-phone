@@ -232,13 +232,14 @@ public:
 // - Sala de vídeo em grupo (spec do vídeo em grupo; o contrato do motor no SipEngine.h: RoomAdd, OnRoom e o id da
 //   sala nos métodos de sempre): a sala é uma linha, que nasce no lugar da ligação de onde ela vem, com o id da sala,
 //   em andamento e com o activeSinceMs dela, o número e o nome vazios, a espera (você fora da sala) e o vídeo do
-//   OnCallVideo do id da sala. Os convidados ficam dentro dela (room, no CallSnapshot), cada um com a sua ligação, e
-//   nenhum é uma linha. As regras de duas linhas dão a ligação de fora, só com a voz: ela toca como a segunda, e
-//   atendida ou feita (a Nova ligação) põe a sala em espera; o RoomReturn é o Alternar para a sala, e o fim da de fora
-//   traz a sala de volta (a volta sozinha). Uma terceira leva ocupado. Com a sala em cima, nem Hold, nem Transfer, nem
-//   Consult, nem Dtmf; com a sala, nem Join nem Split; o Hangup dela em cima é o RoomEnd. Cada convidado entra nos
-//   Recentes no fim da ligação dele (a sala não entra), e um que não entra mostra "<nome ou número>: <motivo>" por
-//   2 s, como o colega da consulta. Os avisos da sala saem pelo OnRoomEvent.
+//   OnCallVideo do id da sala (ativo desde o nascimento). Os convidados ficam dentro dela (room, no CallSnapshot), cada
+//   um com a sua ligação, e nenhum é uma linha. As regras de duas linhas dão a ligação de fora, só com a voz: ela toca
+//   como a segunda, e atendida ou feita (a Nova ligação) põe a sala em espera; o RoomReturn é o Alternar para a sala (a
+//   feita de fora que ainda chama sai), e o fim da de fora traz a sala de volta (a volta sozinha). Uma terceira leva
+//   ocupado. Com a sala em cima, nem Hold, nem Transfer, nem Consult, nem Dtmf; com a sala, nem Join nem Split; o
+//   Hangup dela em cima é o RoomEnd. Cada convidado entra nos Recentes no fim da ligação dele (a sala não entra), e um
+//   que não entra mostra "<nome ou número>: <motivo>" por 2 s, como o colega da consulta. Os avisos da sala saem pelo
+//   OnRoomEvent.
 // - Não perturbe e Atender automático (spec da W1, 7.3): com o Não perturbe, toda recebida leva ocupado
 //   (486), não toca e entra nos Recentes como perdida, sem o aviso de perdida; as feitas funcionam. O
 //   Atender automático atende, depois do tempo, a recebida que chega sem nenhuma outra ligação; com outra, a
@@ -378,8 +379,9 @@ public:
     // ou com ela saindo, nada.
     void RoomEnd();
     // Voltar para a sala: com a sala fora (em espera aqui, ou ainda fora no motor: o out do último OnRoom), é o
-    // Alternar da ligação de fora para a sala (a de fora vai para a espera); sem a de fora, só o Activate do id dela.
-    // Senão, nada.
+    // Alternar da ligação de fora para a sala (a de fora vai para a espera). A feita de fora que ainda chama não vai
+    // para a espera: ela sai, como no Hangup dela (nos Recentes como uma feita que não completou, sem aviso), e a sala
+    // volta pelo Activate do id dela; sem a de fora, só esse Activate. Senão, nada.
     void RoomReturn();
     // Sair: as ligações de agora acabam (o motor as desliga; a sala, pelo Hangup do id dela, com os Recentes de
     // cada convidado, sem avisos, e o OnRoomEvent Ended), e daqui em diante os eventos do motor são ignorados, até

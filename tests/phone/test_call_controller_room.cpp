@@ -5,6 +5,7 @@
 // a sala é a 30, e os convidados vêm a partir do 2 (Ruling M8: o nextCallId do motor falso).
 #include "doctest/doctest.h"
 
+#include <algorithm>
 #include <optional>
 #include <string>
 #include <utility>
@@ -159,8 +160,13 @@ struct RoomFixture {
         calls.OnRoom(Out(Room(std::move(members))));
     }
 
-    // A linha da sala na tela: o id dela, o número e o nome vazios, e o activeSinceMs da ligação 1.
-    CallView RoomLine() const { return View(kRoomId, "", "", false, CallView::Active, answeredAt); }
+    // A linha da sala na tela: o id dela, o número e o nome vazios, o activeSinceMs da ligação 1 e o vídeo da sala,
+    // ativo desde o nascimento (até o OnCallVideo do id dela).
+    CallView RoomLine() const {
+        CallView line = View(kRoomId, "", "", false, CallView::Active, answeredAt);
+        line.video.active = true;
+        return line;
+    }
 
     CallSnapshot State() const { return listener.State(); }
     std::optional<CallView> Top() const { return listener.State().top; }
@@ -496,6 +502,37 @@ TEST_CASE_FIXTURE(RoomFixture, "returning to the room without the outside call i
     CHECK_FALSE(State().second.has_value());
 }
 
+TEST_CASE_FIXTURE(RoomFixture, "returning to the room while the outside call still rings cancels it") {
+    StartRoom();
+    const int64_t dialed = time.NowMs();
+    REQUIRE(calls.Dial("2009"));
+    const int id = engine.nextCallId - 1;
+    calls.OnCallState(id, CallState::Early, 180);
+    calls.OnRoom(Out(Room({Member(1, kIn), Member(2)})));   // a feita tira você da sala
+    REQUIRE(State().second == Held(RoomLine()));
+    // Ela ainda chama: uma ligação chamando não vai para a espera (o motor a ligaria depois, sem o som). O Voltar a
+    // desliga, como o Desligar dela, e a sala volta para cima.
+    time.Advance(3000);
+    calls.RoomReturn();
+    CHECK(engine.hangups == Ints{id});
+    CHECK(engine.activated == Ints{kRoomId});
+    CHECK(engine.holds.empty());
+    CHECK(Top() == RoomLine());
+    CHECK_FALSE(State().second.has_value());
+    // O fim dela: o Recente de uma feita que não completou, sem aviso, e nada volta sozinho (a sala já voltou).
+    calls.OnCallState(id, CallState::Disconnected, 487);
+    CHECK(listener.recents == Recents{MakeRecent("2009", "", Recent::Outgoing, dialed, 0)});
+    CHECK(Message() == "");
+    CHECK(time.Pending() == 0);
+    CHECK(engine.activated == Ints{kRoomId});
+    CHECK(Top() == RoomLine());
+    // O motor nos tem de volta na sala.
+    calls.OnRoom(Room({Member(1, kIn), Member(2)}));
+    CHECK(listener.roomEvents == Events{{RoomEvent::Started, 0}, {RoomEvent::Out, 0}, {RoomEvent::Back, 0}});
+    REQUIRE(State().room.has_value());
+    CHECK_FALSE(State().room->out);
+}
+
 TEST_CASE_FIXTURE(RoomFixture, "the outside call ending brings us back to the room") {
     StartRoom();
     const int64_t rang = time.NowMs();
@@ -652,6 +689,17 @@ TEST_CASE_FIXTURE(RoomFixture, "the room line carries the room video and the cam
     calls.OnCallVideo(2, refused);
     CHECK(listener.videoRefused == 0);
     CHECK(Top()->video == video);
+}
+
+TEST_CASE_FIXTURE(RoomFixture, "the first state with the room already has the room video active") {
+    // O OnCallVideo do id da sala vem logo atrás do primeiro OnRoom: até ele, o cartão da sala não fica sem o vídeo.
+    StartRoom();
+    const auto first = std::find_if(listener.snapshots.begin(), listener.snapshots.end(),
+                                    [](const CallSnapshot& snapshot) { return snapshot.room.has_value(); });
+    REQUIRE(first != listener.snapshots.end());
+    REQUIRE(first->top.has_value());
+    CHECK(*first->top == RoomLine());
+    CHECK(first->top->video.active);
 }
 
 // As regras do RoomAdd que os testes acima não pegam: o -1 do motor, o OnRoom antes de ele voltar (e o id dele, que

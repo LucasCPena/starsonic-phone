@@ -4,8 +4,8 @@
 // sala nos métodos de sempre, a ligação de fora (a que toca, a feita e a atendida, só com a voz, e a volta para a sala)
 // e o convidado que põe a sala em espera. E os mosaicos: o de cada convidado (o eco do registrador devolve o que ele
 // recebe) e o de quem montou (no FrameSink, com o id da sala), a nossa câmera neles e a lista de vídeo que muda no meio
-// da sala. E a qualidade da sala pelo número de convidados (o re-INVITE de quem já está nela) e o quadro-chave de cada
-// convidado. Com o PJSIP sem o vídeo (como o do Android), só o contrato do motor sem sala, o mesmo do motor do baresip
+// da sala. A qualidade da sala e o quadro-chave de cada convidado ficam no test_engine_room_quality.cpp. Com o PJSIP
+// sem o vídeo (como o do Android), só o contrato do motor sem sala, o mesmo do motor do baresip
 // (test_engine_baresip.cpp).
 #include "call_fixture.h"
 
@@ -213,24 +213,6 @@ bool HasImage(const RoomInfo& room, int callId) {
 // do envio de uma ligação para desligado (a "video: ...").
 const char kRoomRestart[] = "os ids da sala mudaram na lista de video";
 const char kSendOff[] = "envio desligado";
-
-// A linha "video: ..." do envio que liga (também o que volta num stream refeito por um re-INVITE), no H.264 de cada
-// qualidade dos testes: a Alta, a Média (também o teto de dois ou três convidados) e a Média da sala (quatro ou cinco).
-const char kSendsHigh[] = "video: H264 1280x720 30 qps, envio ligado";
-const char kSendsMedium[] = "video: H264 640x480 25 qps, envio ligado";
-const char kSendsRoomMedium[] = "video: H264 640x480 15 qps, envio ligado";
-
-// A linha do motor quando o re-INVITE da qualidade de um convidado deixa de esperar outro re-INVITE dele, e a da PJSIP
-// a cada tentativa que encontra outro em andamento.
-const char kReinviteGaveUp[] = "o re-INVITE da qualidade da sala ficou para a proxima mudanca";
-const char kReinviteBusy[] = "Unable to create re-INVITE";
-
-// As escolhas dos testes da sala, na qualidade dada.
-VideoSettings RoomSettings(VideoQuality quality) {
-    VideoSettings settings = RoomSettings();
-    settings.quality = quality;
-    return settings;
-}
 
 // Os valores de um plano da imagem, para a mensagem de um caso que falha.
 std::string ValuesText(const std::set<int>& values) {
@@ -1257,6 +1239,61 @@ TEST_CASE("our camera off, or the screen locked, empties our tile and the room g
     CHECK(SeesBars(sink, g1, 0.5, 0.02, 0.48));
 }
 
+TEST_CASE("our camera opens for the room only when a guest receives it") {
+    TestSink sink;
+    Phone phone;
+    INFO(sink.Text());
+    INFO(phone.registrar.LogText());
+    INFO(phone.listener.RoomsText());
+    INFO(phone.listener.VideosText());
+    INFO(phone.listener.LogTail());
+    phone.engine->SetFrameSink(&sink);
+    phone.engine->SetVideoSettings(RoomSettings());
+    WithoutVideo(phone, {"2003", "2004"});
+    const std::vector<int> ids = VideoRoom(phone, 2);
+    const int roomId = phone.engine->Room().id;
+    const auto cameraOn = [](const CallVideo& video) { return video.camera; };
+    const auto cameraOff = [](const CallVideo& video) { return !video.camera; };
+    // A câmera fechada: depois de 500 ms (o que já estava a caminho chega), nenhum quadro dela por 1 s.
+    const auto closed = [&sink] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        const Clock::time_point since = Clock::now();
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        return sink.Count(TestSink::kLocal, 0, 0, since) == 0;
+    };
+    // A câmera aberta: os quadros dela chegam.
+    const auto open = [&sink] {
+        const Clock::time_point since = Clock::now();
+        return WaitUntil([&] { return sink.Count(TestSink::kLocal, 0, 0, since) >= 5; }, kColorSeconds);
+    };
+    // A base (o 2002, com o vídeo) recebe o mosaico dela, com a nossa câmera.
+    REQUIRE(phone.listener.WaitForVideo(roomId, cameraOn, kWaitSeconds));
+
+    // A base sai, e os dois que ficam atenderam sem o vídeo: ninguém recebe um mosaico, e a nossa câmera fecha (com ela
+    // aberta, a luz dela ficaria acesa sem a sua imagem à vista: spec do vídeo em grupo, 9).
+    REQUIRE(phone.registrar.Control("BYE 2002") == Lines{"OK"});
+    REQUIRE(WaitRoom(phone, [&](const RoomInfo& room) { return MemberIds(room) == std::vector<int>{ids[1], ids[2]}; }));
+    CHECK(phone.listener.WaitForVideo(roomId, cameraOff, kWaitSeconds));
+    CHECK(closed());
+    CHECK_FALSE(phone.engine->Video(roomId).camera);
+
+    // Entra um convidado com o vídeo: o mosaico dele leva a nossa câmera, que abre.
+    const int g3 = Guest(phone, "2005");
+    CHECK(phone.listener.WaitForVideo(roomId, cameraOn, kWaitSeconds));
+    CHECK(open());
+
+    // Ele põe a sala em espera: de novo ninguém recebe um mosaico, e a câmera fecha. Ele volta, e ela abre.
+    REQUIRE(phone.registrar.Control("HOLD 2005 on") == Lines{"OK"});
+    CHECK(WaitRoom(phone, [g3](const RoomInfo& room) { return HasMember(room, g3, State::Held); }));
+    CHECK(phone.listener.WaitForVideo(roomId, cameraOff, kWaitSeconds));
+    CHECK(closed());
+    CHECK_FALSE(phone.engine->Video(roomId).camera);
+    REQUIRE(phone.registrar.Control("HOLD 2005 off") == Lines{"OK"});
+    CHECK(WaitRoom(phone, [g3](const RoomInfo& room) { return HasMember(room, g3, State::In); }));
+    CHECK(phone.listener.WaitForVideo(roomId, cameraOn, kWaitSeconds));
+    CHECK(open());
+}
+
 TEST_CASE("without a camera the guests still get the mosaic") {
     TestSink sink;
     Phone phone(Transport::Udp, nullptr, NullVideo);
@@ -1387,133 +1424,6 @@ TEST_CASE("a device refresh that moves no room device leaves every send and the 
         CHECK(SeesColor(sink, id, 0.75, 0.25, kOrange, kEchoTolerance));
     }
     CHECK(HostFramesFlow(sink, roomId));
-}
-
-TEST_CASE("from four guests the room uses the room medium and the guests already in are rebuilt") {
-    Phone phone;
-    INFO(phone.registrar.LogText());
-    INFO(phone.listener.RoomsText());
-    INFO(phone.listener.LogTail());
-    phone.engine->SetVideoSettings(RoomSettings(VideoQuality::Medium));
-    for (const char* number : {"2002", "2003", "2004", "2005"}) ShowColor(phone, number, kOrange);
-    phone.listener.CountLog(kSendsMedium);
-    phone.listener.CountLog(kSendsRoomMedium);
-    // Os re-INVITE de cada um dos que já estavam (a lista de codecs deles é a da PJSIP).
-    const std::vector<std::string> already{"2002", "2003", "2004"};
-    const auto reinvites = [&phone](const std::string& number) {
-        return LinesStartingWith(phone, "video-reinv " + number + " ");
-    };
-
-    // Com três convidados, o teto da sala não muda a Média escolhida: cada um manda em 640x480, a 25 qps.
-    VideoRoom(phone, 2);
-    CHECK(WaitUntil([&] { return phone.listener.LogCount(kSendsMedium) >= 3; }, kWaitSeconds));
-
-    // O quarto põe a sala na Média da sala (640x480, a 15 qps): ele já nasce nela, e cada um dos que já estavam ganha
-    // um re-INVITE e volta a mandar no stream refeito. Um só: depois que todos voltaram, nenhum segundo.
-    const int g3 = Guest(phone, "2005");
-    for (const std::string& number : already) {
-        CAPTURE(number);
-        CHECK(WaitUntil([&] { return reinvites(number) == 1; }, kWaitSeconds));
-    }
-    CHECK(WaitUntil([&] { return phone.listener.LogCount(kSendsRoomMedium) >= 4; }, kWaitSeconds));
-    CHECK(NoLogLine(phone, "video-reinv 2005"));
-    for (const std::string& number : already) {
-        CAPTURE(number);
-        CHECK(reinvites(number) == 1);
-    }
-
-    // Ele sai: a sala volta à Média escolhida, e os três que ficam ganham mais um re-INVITE cada e mandam de novo em
-    // 640x480, a 25 qps.
-    const size_t medium = phone.listener.LogCount(kSendsMedium);
-    REQUIRE(phone.engine->Hangup(g3));
-    CHECK(WaitUntil([&] { return phone.listener.LogCount(kSendsMedium) >= medium + 3; }, kWaitSeconds));
-    for (const std::string& number : already) {
-        CAPTURE(number);
-        CHECK(reinvites(number) == 2);
-    }
-}
-
-TEST_CASE("the chosen quality comes back when the room ends") {
-    Phone phone;
-    INFO(phone.registrar.LogText());
-    INFO(phone.listener.RoomsText());
-    INFO(phone.listener.LogTail());
-    phone.engine->SetVideoSettings(RoomSettings(VideoQuality::High));
-    ShowColor(phone, "2002", kOrange);
-    ShowColor(phone, "2003", kPurple);
-    phone.listener.CountLog(kSendsHigh);
-    phone.listener.CountLog(kSendsMedium);
-
-    // A videochamada na Alta escolhida.
-    VideoCall(phone, "2002");
-    CHECK(WaitUntil([&] { return phone.listener.LogCount(kSendsHigh) >= 1; }, kWaitSeconds));
-
-    // Com a sala, o teto de dois convidados: a base passa a 640x480, a 25 qps, por um re-INVITE, e o convidado já nasce
-    // assim (uma linha de cada um).
-    const int g1 = Guest(phone, "2003");
-    CHECK(WaitUntil([&] { return phone.listener.LogCount(kSendsMedium) >= 2; }, kWaitSeconds));
-    CHECK(LinesStartingWith(phone, "video-reinv 2002 ") == 1);
-
-    // A sala acaba, e a Alta volta para quem ficou: mais um re-INVITE, e a base manda de novo em 1280x720, a 30 qps.
-    REQUIRE(phone.engine->Hangup(g1));
-    CHECK(WaitUntil([&] { return phone.listener.LogCount(kSendsHigh) >= 2; }, kWaitSeconds));
-    CHECK(LinesStartingWith(phone, "video-reinv 2002 ") == 2);
-}
-
-TEST_CASE("a quality re-INVITE blocked by a pending one stops retrying after the renegotiation wait") {
-    Phone phone;
-    INFO(phone.registrar.LogText());
-    INFO(phone.listener.LogTail());
-    phone.engine->SetVideoSettings(RoomSettings(VideoQuality::High));
-    WithoutVideo(phone, {"2003"});
-
-    // A videochamada na Alta. O registrador deixa os re-INVITE sem resposta (como um pacote perdido): o da sala, que
-    // leva a base ao teto de dois convidados, fica em andamento.
-    VideoCall(phone, "2002");
-    REQUIRE(phone.registrar.Control("DROP REINVITE on") == Lines{"OK"});
-    Guest(phone, "2003");
-
-    // Outro alvo (a Baixa, escolhida no meio da sala): o re-INVITE dele para a base encontra o primeiro em andamento e
-    // tenta de novo a cada 200 ms, por 2 s (o tempo do RetryWhileRenegotiating). Aí sai uma linha, e a base fica para a
-    // próxima mudança: nenhuma tentativa depois.
-    phone.listener.CountLog(kReinviteGaveUp);
-    phone.listener.CountLog(kReinviteBusy);
-    const Clock::time_point changed = Clock::now();
-    phone.engine->SetVideoSettings(RoomSettings(VideoQuality::Low));
-    CHECK(WaitUntil([&] { return phone.listener.LogCount(kReinviteGaveUp) >= 1; }, kWaitSeconds));
-    CHECK(Clock::now() - changed >= std::chrono::seconds(2));
-    const size_t busy = phone.listener.LogCount(kReinviteBusy);
-    CHECK(busy > 0);
-    std::this_thread::sleep_for(std::chrono::milliseconds(600));
-    CHECK(phone.listener.LogCount(kReinviteBusy) == busy);
-    CHECK(phone.listener.LogCount(kReinviteGaveUp) == 1);
-}
-
-TEST_CASE("every guest sending gets a keyframe every 3 seconds") {
-    Phone phone;
-    INFO(phone.registrar.LogText());
-    INFO(phone.listener.LogTail());
-    phone.engine->SetVideoSettings(RoomSettings());
-    ShowColor(phone, "2002", kOrange);
-    ShowColor(phone, "2003", kPurple);
-    ShowColor(phone, "2004", kTeal);
-    VideoRoom(phone, 2);
-
-    // Os quadros-chave do começo do stream do último que entrou (os da PJSIP: o primeiro quadro e mais 5, um por
-    // segundo, por uns 5,3 s) acabam antes da contagem, que começa 6 s depois do primeiro pacote dele no registrador.
-    // Nos 7 s dela, cada um manda o seu a cada 3 s, no prazo dele: 2 ou 3. Mais seria o ritmo de antes, um temporizador
-    // só para todos, que voltava em 1 s a cada recusa de um (e cada um ficava com um a cada 2 s, uns 4 em 7 s).
-    REQUIRE(phone.registrar.WaitForPacketsOf("2004", 1, kColorSeconds));
-    const Clock::time_point firstPacket = Clock::now();
-    std::this_thread::sleep_until(firstPacket + std::chrono::seconds(6));
-    phone.registrar.ResetVideoPackets();
-    std::this_thread::sleep_for(std::chrono::seconds(7));
-    for (const std::string number : {"2002", "2003", "2004"}) {
-        CAPTURE(number);
-        const int keyframes = phone.registrar.KeyframesOf(number);
-        CHECK(keyframes >= 2);
-        CHECK(keyframes <= 3);
-    }
 }
 
 TEST_CASE("destroying the engine during a room hangs up every guest and no frame arrives after SetFrameSink(nullptr)") {

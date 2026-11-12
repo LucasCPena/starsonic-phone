@@ -280,7 +280,12 @@ bool CallTable::SendsSeat(const Slot& slot) {
 }
 
 bool CallTable::RoomCameraWanted() {
-    return RoomMosaic() && roomWish_ && !cameraPaused_ && activeId_ == roomId_;
+    if (!RoomMosaic() || !roomWish_ || cameraPaused_ || activeId_ != roomId_) return false;
+    // Só com um convidado que recebe o mosaico dele (o que manda o lugar dele, SendsSeat): sem ninguém que a veja
+    // (todos sem o vídeo ou em espera), a câmera fica fechada, e a luz dela não acende com a sua imagem escondida (spec
+    // do vídeo em grupo, 9).
+    return std::any_of(std::begin(slots_), std::end(slots_),
+                       [this](const Slot& slot) { return slot.callId != 0 && SendsSeat(slot); });
 }
 
 CallVideo CallTable::CurrentRoomVideo() {

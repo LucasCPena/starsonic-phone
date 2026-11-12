@@ -797,7 +797,8 @@ pj_status_t CallTable::SyncPreview(pjmedia_vid_dev_index device) {
         std::lock_guard<std::mutex> lock(mutex_);
         // A tela bloqueada (cameraPaused_) fecha também a câmera do teste, como a das ligações. O cameraTest_ segue
         // sendo o desejo da pessoa (o teste continua ligado): o desbloqueio abre a câmera de novo, sem um pedido novo.
-        // Os mosaicos da sala também a querem (o kHostTile), se há uma câmera; o envio de um lugar da sala, não.
+        // Os mosaicos da sala também a querem (o kHostTile), com um convidado que recebe o dele e uma câmera; o envio
+        // de um lugar da sala, sozinho, não.
         wanted = (cameraTest_ && !cameraPaused_) ||
                  std::any_of(std::begin(slots_), std::end(slots_),
                              [](const Slot& slot) { return slot.callId != 0 && slot.sending && !slot.seatSending; }) ||

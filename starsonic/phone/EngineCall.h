@@ -435,7 +435,8 @@ private:
     // Os mosaicos (EngineRoom.cpp; ver o topo do arquivo). Com mutex_ preso: a sala de pé com dois ou mais convidados
     // que já atenderam, também os em espera (cada um recebe o mosaico dele); o convidado manda o lugar dele agora
     // (confirmado, com o vídeo negociado e a direção que deixa mandar, sem olhar a câmera); a nossa câmera vai para os
-    // mosaicos (o desejo da câmera da sala, fora da tela bloqueada e você nela: o kHostTile no live).
+    // mosaicos (o desejo da câmera da sala, fora da tela bloqueada, você nela e algum convidado que manda o lugar dele:
+    // o kHostTile no live, a prévia aberta para a sala e o camera da sala).
     bool RoomMosaic();
     bool SendsSeat(const Slot& slot);
     bool RoomCameraWanted();

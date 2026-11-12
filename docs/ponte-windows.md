@@ -702,7 +702,7 @@ chamados. Cada convidado é uma ligação, com o id e os eventos de sempre; a sa
 | `salaAdicionar` | `numero` (texto), `contato` (booleano, opcional) | "Adicionar à sala": o app liga para o número e o põe na sala, onde ele aparece chamando. Sem sala, ela nasce da ligação de agora, que precisa ser a única, em andamento, fora da espera, sem consulta, conferência ou transferência esperando o resultado, e com o vídeo ativo (`top.video.ativo`). Com sala, ela precisa estar em cima, com você nela (`sala.fora` `false`) e sem a `sala.cheia`. Um convidado por vez: outro `salaAdicionar` antes de o primeiro aparecer em `sala.participantes` não faz nada. Com `contato: true`, o número passa antes pela regra dos contatos do perfil, como no `dial`. Sem registro, o toast `Sem conexão com o servidor. Tente de novo em instantes.` e ninguém é chamado, como no `dial`. Fora desses casos, nada acontece (sem toast). |
 | `salaTirar` | `id` (inteiro ≥ 1) | "Tirar da sala": o convidado com esse `id` (o de `sala.participantes`) sai, sem aviso: o app desliga a ligação dele. Sem um convidado com o `id`, ou com ele já saindo, nada. Sem o `id`, com `0`, negativo, com fração ou em texto, o comando é recusado na leitura (linha no diagnóstico). |
 | `salaEncerrar` | — | "Encerrar a sala": o app desliga todos os convidados, sem aviso, e a sala sai da tela na hora (`ligacao.sala` `null`; sem outra ligação, `ligacao` `null`). Vale com a sala em cima ou em espera; sem sala, nada. A interface pergunta antes. Com a ligação de fora em espera, ela fica sozinha na tela e volta sozinha quando a sala acaba, como a outra de duas ligações. |
-| `salaVoltar` | — | "Voltar para a sala": com você fora dela (`sala.fora` `true`, ou a sala em espera), a ligação de fora vai para a espera e a sala volta para cima, com a nossa voz e a nossa câmera de volta nela. Já na sala, nada. |
+| `salaVoltar` | — | "Voltar para a sala": com você fora dela (`sala.fora` `true`, ou a sala em espera), a ligação de fora vai para a espera e a sala volta para cima, com a nossa voz e a nossa câmera de volta nela. A ligação de fora que você fez e ainda chama (o outro lado não atendeu) não vai para a espera: o app a desliga, como no Desligar dela (ela vai aos Recentes como uma feita que não completou, sem toast), e a sala volta para cima do mesmo jeito. Já na sala, nada. |
 
 ```json
 {"v":1,"cmd":"salaAdicionar","numero":"2004"}
@@ -810,8 +810,8 @@ O motor do iPhone não tem vídeo nem sala: os quatro comandos são recusados co
 
 ### Para o executável
 
-- O `EngineHost` é o `CallEngine` da sala: o `RoomAdd(numero)` (desde a Task 7 da etapa 3a) vai ao `SipEngine::RoomAdd`,
-  na thread de comandos, esperando o motor ficar pronto, como o `MakeCall`.
+- O `EngineHost` é o `CallEngine` da sala: o `RoomAdd(numero)` (desde a 0.4.0) vai ao `SipEngine::RoomAdd`, na thread
+  de comandos, esperando o motor ficar pronto, como o `MakeCall`.
 - O `OnRoom` do motor (a sala inteira, a cada mudança) passa do `EngineHost` ao `DesktopApp`, que o entrega direto ao
   controlador, na thread de eventos do motor, como o `OnCallState` e o `OnCallVideo`.
 - O mosaico de quem montou chega ao sink do vídeo como a imagem de uma ligação (`OnRemoteFrame`), com o id da sala: a

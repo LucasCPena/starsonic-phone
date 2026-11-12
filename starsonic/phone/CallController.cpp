@@ -1155,10 +1155,14 @@ void CallController::RoomReturn() {
         // Com a sala fora: em espera aqui (a ligação de fora), ou ainda fora no motor (o out do último OnRoom).
         if (!line || line->ending || !(line->held || line->room->out)) return;
         const CallPtr outside = OtherThan(line);
-        if (outside) {
+        // A feita de fora que ainda chama não vai para a espera (o motor a ligaria depois, sem o som): ela sai, como no
+        // Desligar dela (o Recente de uma feita que não completou, sem aviso), e a sala volta.
+        const bool dialing = outside && !outside->incoming && outside->phase == Call::Phase::Dialing;
+        if (outside && !dialing) {
             SwapCalls(outside, line, effects);
             return;
         }
+        if (dialing) HangupCall(outside, effects);
         line->held = false;
         active_ = line;
         Publish();
@@ -1250,8 +1254,8 @@ bool CallController::RoomCanGrow() const {
 }
 
 // Com a trava: o nascimento da sala room. A linha cujo id está nos members vira a linha da sala, no mesmo lugar, com o
-// mesmo active_ e a mesma espera, a fase ativa e o activeSince e o startMs dela; o Call dela vai para dentro, como o
-// primeiro convidado. nullptr: nenhuma linha está nos members.
+// mesmo active_ e a mesma espera, a fase ativa e o activeSince e o startMs dela, e o vídeo da sala ativo; o Call dela
+// vai para dentro, como o primeiro convidado. nullptr: nenhuma linha está nos members.
 CallController::CallPtr CallController::BearRoom(const RoomInfo& room) {
     const auto place = std::find_if(calls_.begin(), calls_.end(), [&room](const CallPtr& call) {
         return std::any_of(room.members.begin(), room.members.end(),
@@ -1264,6 +1268,9 @@ CallController::CallPtr CallController::BearRoom(const RoomInfo& room) {
     line->phase = Call::Phase::Active;
     line->activeSince = first->activeSince;
     line->held = first->held;
+    // O vídeo da sala está ativo com ela de pé, e o OnCallVideo do id dela só chega atrás deste OnRoom: o primeiro
+    // estado com a sala já o mostra.
+    line->video.active = true;
     line->room.emplace();
     line->room->guests.push_back(first);
     *place = line;
