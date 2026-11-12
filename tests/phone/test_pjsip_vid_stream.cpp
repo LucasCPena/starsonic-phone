@@ -158,9 +158,13 @@ public:
         REQUIRE(pj_init() == PJ_SUCCESS);
         initialized_ = true;
         if (!pj_thread_is_registered()) {
-            pj_bzero(threadDesc_, sizeof(threadDesc_));
+            // Só quando outra thread já iniciou o PJLIB (este pj_init não registra esta). O PJLIB guarda o endereço do
+            // descritor nesta thread, e o pj_shutdown do fim não leva a contagem a zero: o registro segue depois do
+            // caso. Por isso o descritor é estático, e não da bancada, que sai da memória.
+            static pj_thread_desc mainThreadDesc;
+            pj_bzero(mainThreadDesc, sizeof(mainThreadDesc));
             pj_thread_t* thread = nullptr;
-            REQUIRE(pj_thread_register("teste", threadDesc_, &thread) == PJ_SUCCESS);
+            REQUIRE(pj_thread_register("teste", mainThreadDesc, &thread) == PJ_SUCCESS);
         }
         pj_caching_pool_init(&cache_, &pj_pool_factory_default_policy, 0);
         cacheReady_ = true;
@@ -221,7 +225,6 @@ private:
     }
 
     bool initialized_ = false;
-    pj_thread_desc threadDesc_;
     bool cacheReady_ = false;
     pj_caching_pool cache_;
     pj_pool_t* pool_ = nullptr;

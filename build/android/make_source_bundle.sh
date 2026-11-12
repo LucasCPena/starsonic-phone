@@ -116,8 +116,9 @@ pjproject-patches/    os patches da Starsonic na PJSIP (os de starsonic-phone/bu
                       $PJ_PATCHES.
                       O pjproject-$PJ_TAG/ traz a PJSIP como veio do repositório; a do app foi montada com
                       estes patches aplicados, na ordem dos nomes. Para aplicar, dentro de pjproject-$PJ_TAG/,
-                      um de cada vez: git apply ../pjproject-patches/<arquivo>
-                      (ou patch -p1 < ../pjproject-patches/<arquivo>).
+                      um de cada vez: patch -p1 < ../pjproject-patches/<arquivo>
+                      (ou git apply ../pjproject-patches/<arquivo>, fora de qualquer repositório git: dentro
+                      de um, o git apply não muda nada e não avisa).
 EOF
     fi
     cat <<EOF

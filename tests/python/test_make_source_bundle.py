@@ -116,7 +116,10 @@ class MakeSourceBundleTest(unittest.TestCase):
         self.assertIn("pjproject-patches/", readme)
         self.assertIn("0001-teste.patch", readme)
         self.assertNotIn("0002-fora.patch", readme)
+        # O patch -p1 primeiro: o git apply, a alternativa, não muda nada (e não avisa) dentro de outro repositório git.
+        self.assertIn("patch -p1 < ../pjproject-patches/", readme)
         self.assertIn("git apply", readme)
+        self.assertLess(readme.index("patch -p1"), readme.index("git apply"))
 
     def test_without_pjsip_patches_the_bundle_has_no_patches_folder(self):
         result = self.run_script(VERSION, str(self.out))

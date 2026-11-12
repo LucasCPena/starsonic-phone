@@ -189,8 +189,9 @@ try {
             "                   $($pjPatches -join ', ').",
             "                   O $pjDir/ traz a PJSIP como veio do repositorio; a do app foi montada com",
             "                   estes patches aplicados, na ordem dos nomes. Para aplicar, dentro de $pjDir/,",
-            '                   um de cada vez: git apply ../pjproject-patches/<arquivo>',
-            '                   (ou patch -p1 < ../pjproject-patches/<arquivo>).'
+            '                   um de cada vez: patch -p1 < ../pjproject-patches/<arquivo>',
+            '                   (ou git apply ../pjproject-patches/<arquivo>, fora de qualquer repositorio git:',
+            '                   dentro de um, o git apply nao muda nada e nao avisa).'
         )
     }
     $readme += @(
