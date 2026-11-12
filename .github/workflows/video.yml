@@ -43,7 +43,103 @@ jobs:
           GOOS: linux
           GOARCH: amd64
         run: go build -trimpath -o starsonic-video ./cmd/starsonic-video
+      - name: shellcheck
+        # Todos os scripts do servidor de vídeo, também os que as próximas tarefas criarem.
+        run: git ls-files -z -- '*.sh' | xargs -0 -r shellcheck
       - uses: actions/upload-artifact@v4
         with:
           name: starsonic-video-linux-amd64
           path: video-servidor/starsonic-video
+
+  # O FreeSWITCH do servidor de vídeo, montado do código oficial (video-servidor/freeswitch/construir.sh),
+  # um pacote por sistema da VM, cada um no contêiner do sistema dele.
+  freeswitch:
+    name: FreeSWITCH (${{ matrix.sistema }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        sistema: [ubuntu-24.04, debian-12]
+        include:
+          - sistema: ubuntu-24.04
+            imagem: ubuntu:24.04
+          - sistema: debian-12
+            imagem: debian:12
+    container: ${{ matrix.imagem }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      SISTEMA: ${{ matrix.sistema }}
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      # O checkout e a leitura do deps.lock pedem estes três; o contêiner vem sem eles.
+      - name: git, ca-certificates e python3
+        run: |
+          apt-get update -q
+          apt-get install -y -q --no-install-recommends git ca-certificates python3
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      # A chave leva só o que muda os pacotes: uma mudança no conferir-pacote.sh (ou nos outros scripts da
+      # pasta) não monta o FreeSWITCH de novo.
+      - uses: actions/cache@v4
+        id: cache
+        with:
+          path: work/freeswitch-saida
+          key: freeswitch-${{ matrix.sistema }}-${{ hashFiles('video-servidor/deps.lock', 'video-servidor/freeswitch/construir.sh', 'video-servidor/freeswitch/modules.conf', 'video-servidor/freeswitch/pacotes-de-build.txt', 'video-servidor/freeswitch/LEIA-ME-FONTES.txt', 'video-servidor/freeswitch/patches/**') }}
+      - name: Pacotes do build
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: xargs -a video-servidor/freeswitch/pacotes-de-build.txt apt-get install -y -q --no-install-recommends
+      - name: Build
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: bash video-servidor/freeswitch/construir.sh "$SISTEMA" work/freeswitch-fontes work/freeswitch-saida
+      - uses: actions/upload-artifact@v4
+        with:
+          name: starsonic-freeswitch-${{ matrix.sistema }}
+          path: |
+            work/freeswitch-saida/starsonic-freeswitch-${{ matrix.sistema }}-amd64.tar.gz
+            work/freeswitch-saida/starsonic-freeswitch-${{ matrix.sistema }}-amd64.tar.gz.sha256
+          if-no-files-found: error
+      # As fontes são as mesmas nos dois sistemas.
+      - uses: actions/upload-artifact@v4
+        if: matrix.sistema == 'ubuntu-24.04'
+        with:
+          name: starsonic-freeswitch-fontes
+          path: work/freeswitch-saida/starsonic-freeswitch-fontes.tar.gz
+          if-no-files-found: error
+
+  # Cada pacote num contêiner limpo do sistema dele, como o instalador o usa: só os pacotes do pacotes.txt.
+  freeswitch-conferir:
+    name: FreeSWITCH conferido (${{ matrix.sistema }})
+    needs: freeswitch
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        sistema: [ubuntu-24.04, debian-12]
+        include:
+          - sistema: ubuntu-24.04
+            imagem: ubuntu:24.04
+          - sistema: debian-12
+            imagem: debian:12
+    container: ${{ matrix.imagem }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      SISTEMA: ${{ matrix.sistema }}
+    steps:
+      # Sem o git, que o contêiner limpo não tem, o checkout baixa os arquivos pela API do GitHub.
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: starsonic-freeswitch-${{ matrix.sistema }}
+          path: pacote
+      - name: SHA-256
+        working-directory: pacote
+        run: sha256sum -c "starsonic-freeswitch-$SISTEMA-amd64.tar.gz.sha256"
+      - name: Conferir o pacote
+        run: bash video-servidor/freeswitch/conferir-pacote.sh "pacote/starsonic-freeswitch-$SISTEMA-amd64.tar.gz"

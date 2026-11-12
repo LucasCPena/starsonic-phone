@@ -1,0 +1,17 @@
+{
+  "freeswitch": {
+    "repo": "https://github.com/signalwire/freeswitch",
+    "tag": "v1.11.3",
+    "commit": "ef32e205295e29f034f1453ad245ba5efb07b94a"
+  },
+  "sofia-sip": {
+    "repo": "https://github.com/freeswitch/sofia-sip",
+    "tag": "v1.13.18",
+    "commit": "ad36ac8f755308e8b87f98a505e83d4e408e5cc3"
+  },
+  "spandsp": {
+    "repo": "https://github.com/freeswitch/spandsp",
+    "tag": "v3.1.1",
+    "commit": "8f1e1646bdec99eac5fd2cd92c35563f736b9b89"
+  }
+}
