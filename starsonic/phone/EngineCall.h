@@ -1,7 +1,7 @@
 #pragma once
 // As ligações do motor (internas). EngineCall é a ligação do pjsua2, que recebe os callbacks do
-// PJSIP; CallTable guarda as ligações (até duas: uma delas a ativa ou, na conferência, as duas juntas)
-// e faz o que a API pede a elas.
+// PJSIP; CallTable guarda as ligações (até duas: uma delas a ativa ou, na conferência, as duas juntas;
+// ou os convidados da sala) e faz o que a API pede a elas.
 //
 // Vida de um EngineCall: a tabela cria o objeto (MakeCall ou ligação que chega) e ele se apaga no
 // próprio último callback, o do fim da ligação, quando o pjsua2 já o desligou da ligação do PJSIP
@@ -9,17 +9,18 @@
 // PJSIP pelo id da ligação no pjsua. Apagar o objeto mais tarde seria pior: o destrutor do pj::Call
 // mexe na vaga da ligação no pjsua, que a essa altura pode ser de outra ligação.
 //
-// A mesa de áudio (a ponte do pjsua): o que a tabela quer dela (a ativa, activeId_, e a conferência,
-// conference_) fica com mutex_, e Route refaz a mesa a partir disso: depois de Focus e de Join e a
-// cada mudança de mídia (um re-INVITE pode recriar a porta de uma ligação). O fim de uma ligação não
-// precisa de Route: a mesa tira a porta dela junto com as ligações que ela tinha. A ponte só enfileira
-// os pedidos (aplica no tique seguinte do relógio, ~20 ms), então Route não se guia só pelo estado
-// aplicado: guarda também o último pedido de cada par de portas (linksAsked_). Cada passada de Route
-// vai do começo ao fim com routeMutex_ presa: as da API e as dos callbacks de mídia não se misturam, e
-// a última lê o querer mais novo. routeMutex_ é pedida sem mutex_ presa, às vezes com a trava de um
-// diálogo (no callback de mídia, que o pjsua chama sem a trava global dele); com ela presa só se chama
-// pjsua_call_get_info e pjsua_conf_* (que pedem a trava global do pjsua e a da ponte, nenhuma de
-// diálogo) e se pega mutex_ por um instante.
+// A mesa de áudio (a ponte do pjsua): o que a tabela quer dela (a ativa, activeId_, a conferência,
+// conference_, e os convidados da sala) fica com mutex_, e Route refaz a mesa a partir disso: depois de
+// Focus e de Join, a cada mudança de mídia (um re-INVITE pode recriar a porta de uma ligação), no
+// Confirmed de um convidado (ele entra na sala) e no fim da sala (quem ficou volta às regras de uma
+// ligação comum). O fim de uma ligação não precisa de Route: a mesa tira a porta dela junto com as
+// ligações que ela tinha. A ponte só enfileira os pedidos (aplica no tique seguinte do relógio,
+// ~20 ms), então Route não se guia só pelo estado aplicado: guarda também o último pedido de cada par
+// de portas (linksAsked_). Cada passada de Route vai do começo ao fim com routeMutex_ presa: as da API
+// e as dos callbacks não se misturam, e a última lê o querer mais novo. routeMutex_ é pedida sem mutex_
+// presa, às vezes com a trava de um diálogo (nos callbacks de mídia e de estado, que o pjsua chama sem
+// a trava global dele); com ela presa só se chama pjsua_call_get_info e pjsua_conf_* (que pedem a
+// trava global do pjsua e a da ponte, nenhuma de diálogo) e se pega mutex_ por um instante.
 //
 // O vídeo (só com o PJMEDIA_HAS_VIDEO; as funções dele ficam no EngineCallVideo.cpp, e os ganchos nos métodos de
 // sempre, no EngineCall.cpp): o que a tabela sabe do vídeo de cada ligação (o desejo da câmera, as pausas, o
@@ -50,6 +51,19 @@
 // videoMutex_ presa, como o envio): o pedido que a PJSIP recusa por um quadro-chave há menos de 1 s (o PJ_ETOOMANY)
 // volta em 1 s, e o recusado por outro motivo (o PJ_EINVALIDOP do envio que acabou de parar) espera os 3 s de sempre;
 // ele para quando nenhuma manda.
+//
+// A sala de vídeo em grupo (só com o PJMEDIA_HAS_VIDEO; as funções dela ficam no EngineRoom.cpp, e os ganchos nos
+// métodos de sempre): a tabela tem uma vaga para cada convidado e mais uma. A sala nasce de uma ligação sozinha com o
+// vídeo (RoomAdd), com um id do mesmo contador das ligações (roomId_), e as ligações dela são as vagas com o member,
+// cada uma com o lugar dela (seat), a ordem de entrada (joined) e a espera pedida do outro lado (remoteHold). Elas não
+// seguem a regra das duas ligações: na mesa de áudio, cada convidado na sala fica ligado ao nosso som e a cada outro
+// (Route), e o vídeo de um não pausa pelos outros (SendPaused e ReceivePaused), com o desejo da câmera da sala
+// (roomWish_). Não há outras ligações com a sala de pé: a que chega recebe 486, e o Make dá -1. O OnRoom sai pelo
+// Emit, com mutex_ presa, quando a sala muda (PublishRoom), comparada com a última avisada (roomShown_); durante o
+// makeCall de um RoomAdd, só o RoomAdd a avisa: a do convidado novo vai para held_ antes do makeCall (e some com os
+// eventos dele se ele não sai), e o que mudou no meio, depois dele. Com um convidado só, ou nenhum, a sala acaba no
+// PublishRoom: o OnRoom com o ended, e quem ficou volta a ser uma ligação comum. O Hangup do id da sala a fecha
+// (roomClosing_): ela só acaba sem ninguém.
 #include <pjsua2.hpp>
 
 #include <chrono>
@@ -140,7 +154,8 @@ private:
 
 // Só a ligação ativa fica ligada ao dispositivo de som; a outra fica em espera (re-INVITE sendonly)
 // ou, se ainda não foi atendida, sem som. Na conferência não há uma ativa: as duas ficam ligadas ao
-// dispositivo e entre si.
+// dispositivo e entre si. Na sala, a ativa é a sala (activeId_ é o id dela): os convidados na sala ficam
+// ligados ao dispositivo e entre si.
 class CallTable : public TimerTarget {
 public:
     // Os ids dos temporizadores da tabela no EngineEndpoint (as contas usam os delas, que começam em 1): o SyncVideo,
@@ -209,8 +224,13 @@ public:
     bool StartCameraTest();
     void StopCameraTest();
 #endif
+    // A sala (ver SipEngine.h; EngineRoom.cpp). RoomAdd: uri é a URI SIP inteira do convidado; o id da ligação, ou -1
+    // (sempre, sem o vídeo no motor). Room: a sala como o último OnRoom (RoomInfo{} sem sala), sem esperar a API.
+    int RoomAdd(pj::Account& account, const std::string& uri);
+    RoomInfo Room();
 
-    // Desliga as ligações e espera até timeoutMs que os objetos delas sumam. false: não sumiram.
+    // Desliga as ligações e espera até timeoutMs que os objetos delas sumam. false: não sumiram. A sala, se há, fecha
+    // como no Hangup do id dela.
     bool End(int timeoutMs);
     // Daqui em diante nenhuma ligação nova (o motor está saindo): MakeCall dá -1 e as que chegam, 480.
     void Close();
@@ -246,14 +266,21 @@ private:
         int height = 0;
         int fps = 0;
         CallVideo shown;                  // o último OnCallVideo (sem o refused)
+        // A sala (ver o topo do arquivo).
+        bool member = false;              // um convidado da sala
+        int seat = 0;                     // o lugar dele, de 1 a kRoomMaxGuests: o menor livre quando ele entrou
+        bool remoteHold = false;          // o áudio em espera do outro lado (REMOTE_HOLD), do último MediaChanged
+        int joined = 0;                   // a ordem de entrada na sala (a dos convidados no OnRoom)
     };
 
     // Com mutex_ preso. A vaga de callId (ou de call), ou nullptr.
     Slot* Find(int callId);
     Slot* Find(const EngineCall* call);
-    // Com mutex_ preso. Uma vaga livre, ou nullptr; a outra vaga, se está ocupada, ou nullptr.
+    // Com mutex_ preso. Uma vaga livre, ou nullptr; outra vaga ocupada fora da sala (sem a sala, há no máximo duas
+    // ligações: a outra), ou nullptr; quantas vagas estão ocupadas.
     Slot* FreeSlot();
     Slot* Other(const Slot* slot);
+    int Occupied();
     // O id no pjsua da ligação callId, se ela está na tabela; senão PJSUA_INVALID_ID.
     int PjsuaId(int callId);
     // callId vira a ativa (e a conferência, se havia, acaba): a outra, confirmada e fora da espera, vai
@@ -263,7 +290,9 @@ private:
     bool Renegotiate(int callId, bool hold);
     // Sem mutex_ presa. Refaz as ligações da mesa de áudio a partir do que a tabela quer: a ativa (ou,
     // na conferência, as duas) com o dispositivo de som, e na conferência as duas entre si; cada uma só
-    // com a mídia ativa (ou em espera do outro lado).
+    // com a mídia ativa (ou em espera do outro lado). Na sala, cada convidado na sala (confirmado e fora
+    // da espera do outro lado, só com a mídia ativa) com cada outro e, com a sala ativa, com o
+    // dispositivo de som; um chamado ou em espera, com nada.
     void Route();
     // Com routeMutex_ presa: pede à mesa que source transmita (on) ou não para sink.
     void Link(int source, int sink, bool on);
@@ -271,13 +300,14 @@ private:
     void Emit(int callId, EventQueue::Event event);
 
     // Com mutex_ preso. O envio da ligação está pausado (a nossa câmera não manda): a espera, a transferência, a
-    // conferência ou a outra ligação (ver SipEngine::Video).
+    // conferência ou a outra ligação (ver SipEngine::Video). Um convidado da sala não olha outra ligação: só a espera
+    // daqui e a transferência dele.
     bool SendPaused(const Slot& slot);
     // Com mutex_ preso. A imagem que chega da ligação está pausada (o active, o remote e o portão dos quadros): a
     // espera, a transferência, a conferência ou a outra ligação, menos num Porteiro, cuja imagem segue com a outra
-    // ligação.
+    // ligação. Um convidado da sala, como no SendPaused.
     bool ReceivePaused(const Slot& slot);
-    // Com mutex_ preso. A câmera da ligação deve mandar agora.
+    // Com mutex_ preso. A câmera da ligação deve mandar agora (num convidado, com o desejo da câmera da sala).
     bool WantsToSend(const Slot& slot);
     // Com mutex_ preso. O CallVideo de agora da ligação (sem o refused).
     CallVideo Current(const Slot& slot);
@@ -295,6 +325,24 @@ private:
     // Pede o vídeo numa ligação confirmada sem vídeo (re-INVITE com o vídeo), esperando a renegociação anterior. Sem
     // câmera, o vídeo pedido só recebe.
     bool AddVideo(int callId);
+
+    // A sala (EngineRoom.cpp). Com mutex_ preso: quantos convidados há (contando os chamados); o lugar livre de menor
+    // número, de 1 a kRoomMaxGuests (0: nenhum); por que o RoomAdd não sai agora (nullptr: ele sai), e a ligação de
+    // onde a sala nasce, sem sala.
+    int Members();
+    int FreeSeat();
+    const char* RoomAddRefusal(Slot** base);
+    // Com mutex_ preso. A sala de agora (RoomInfo{} sem sala): os convidados pela ordem de entrada, cada um com o
+    // estado, a imagem e o quadro dele no mosaico de quem montou.
+    RoomInfo CurrentRoom();
+    // Com mutex_ preso: o OnRoom da sala, se ela mudou desde o último (roomShown_). Com um convidado só ou nenhum
+    // (com a sala fechando, só sem nenhum), ela acaba: o OnRoom com o ended (se o último avisado era dela) e quem
+    // ficou volta a ser uma ligação comum, a ativa se a sala era a ativa. Durante o makeCall (dialing_), nada: quem
+    // disca o chama depois.
+    void PublishRoom();
+    // Sem mutex_ presa. callId é o id da sala: ela fecha (ver o topo do arquivo), e a lista traz os ids no pjsua dos
+    // convidados, para o Hangup. Senão, vazia.
+    std::vector<int> CloseRoom(int callId);
 
 #if PJMEDIA_HAS_VIDEO
     // Os quadros das ligações que chegam ao desenhista (RemoteFrameGate) e o temporizador do remote.
@@ -356,16 +404,22 @@ private:
     const DtmfMethod dtmf_;
     std::mutex mutex_;
     std::condition_variable gone_;
-    Slot slots_[2];
-    int activeId_ = 0;                // a ligação ativa (0: nenhuma, e na conferência)
+    Slot slots_[kRoomMaxGuests + 1];  // os convidados da sala e mais uma; sem a sala, até duas ligações
+    int activeId_ = 0;                // a ligação ativa, ou o id da sala (0: nenhuma, e na conferência)
     bool conference_ = false;         // as duas juntas (Join) até o Split, um Activate ou uma acabar
     int alive_ = 0;                   // objetos EngineCall que ainda não se apagaram
-    int nextId_ = 1;
-    bool dialing_ = false;            // Make está dentro do makeCall: os eventos esperam em held_
+    int nextId_ = 1;                  // o próximo id, de uma ligação ou da sala
+    bool dialing_ = false;            // Make ou RoomAdd está dentro do makeCall: os eventos esperam em held_
     std::vector<HeldEvent> held_;
     bool closed_ = false;
     VideoSettings settings_;          // as escolhas do vídeo (SetVideoSettings)
     bool cameraPaused_ = false;       // a tela bloqueada (SetCameraPaused)
+    // A sala (ver o topo do arquivo), com mutex_.
+    int roomId_ = 0;                  // o id da sala de pé (0: nenhuma)
+    bool roomWish_ = false;           // o desejo da câmera da sala: o da ligação de onde ela nasceu
+    bool roomClosing_ = false;        // o Hangup do id da sala (ou o End): ela só acaba sem nenhum convidado
+    int joins_ = 0;                   // o joined do último convidado que entrou
+    RoomInfo roomShown_;              // o último OnRoom (RoomInfo{} sem sala e depois do ended)
 
     EngineEndpoint* endpoint_ = nullptr;   // o temporizador da tabela (Start); não muda depois
     std::mutex videoMutex_;           // uma passada de SyncVideo, ou um fim de ligação pela API, por vez (o topo)

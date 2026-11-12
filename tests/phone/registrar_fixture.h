@@ -390,11 +390,31 @@ inline std::string VideoText(const starsonic::CallVideo& video) {
     return text.empty() ? "none" : text;
 }
 
-// OnIncomingCall, OnRejectedBusy, OnCallState ou OnTransfer, como chegou.
+// O RoomInfo num texto curto, para as mensagens dos testes: "room <id>[ out][ full][ ended]: <id>=<estado>[+image]
+// @x,y,w,h; ...".
+inline std::string RoomText(const starsonic::RoomInfo& room) {
+    static const char* const kStates[] = {"Calling", "In", "Held"};
+    auto number = [](double value) {
+        std::string text = std::to_string(value);
+        text.erase(text.find_last_not_of('0') + 1);
+        if (!text.empty() && text.back() == '.') text.pop_back();
+        return text;
+    };
+    std::string text = "room " + std::to_string(room.id) + (room.out ? " out" : "") + (room.full ? " full" : "") +
+                       (room.ended ? " ended" : "") + ":";
+    for (const starsonic::RoomMember& member : room.members) {
+        text += " " + std::to_string(member.callId) + "=" + kStates[static_cast<int>(member.state)] +
+                (member.image ? "+image" : "") + "@" + number(member.tile.x) + "," + number(member.tile.y) + "," +
+                number(member.tile.width) + "," + number(member.tile.height) + ";";
+    }
+    return text;
+}
+
+// OnIncomingCall, OnRejectedBusy, OnCallState, OnTransfer ou OnRoom, como chegou.
 struct CallEvent {
-    enum Kind { Incoming, Busy, State, Transfer };
+    enum Kind { Incoming, Busy, State, Transfer, Room };
     Kind kind;
-    int callId;                     // Incoming, State e Transfer
+    int callId;                     // Incoming, State e Transfer; em Room, o id da sala
     std::string user, name;         // Incoming e Busy
     starsonic::CallState state;     // State
     int code;                       // State e Transfer
@@ -453,6 +473,13 @@ public:
     void OnCameraProblem(starsonic::CameraProblem problem) override {
         std::lock_guard<std::mutex> lock(mutex_);
         problems_.push_back(problem);
+        changed_.notify_all();
+    }
+    // Em Rooms() e, na ordem dos eventos de ligação, em Calls() (o tipo Room, com o id da sala).
+    void OnRoom(const starsonic::RoomInfo& room) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        rooms_.push_back(room);
+        calls_.push_back({CallEvent::Room, room.id, "", "", starsonic::CallState::Incoming, 0});
         changed_.notify_all();
     }
     void OnLog(int level, const std::string& line) override {
@@ -581,6 +608,27 @@ public:
         return text;
     }
 
+    // Os OnRoom que chegaram, em ordem.
+    std::vector<starsonic::RoomInfo> Rooms() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return rooms_;
+    }
+
+    // Espera até `seconds` que o último OnRoom satisfaça `condition` (sem nenhum, conta o RoomInfo{}).
+    bool WaitForRoom(std::function<bool(const starsonic::RoomInfo&)> condition, int seconds) {
+        std::unique_lock<std::mutex> lock(mutex_);
+        return changed_.wait_for(lock, std::chrono::seconds(seconds), [&] {
+            return condition(rooms_.empty() ? starsonic::RoomInfo() : rooms_.back());
+        });
+    }
+
+    // Os OnRoom numa linha só, para as mensagens dos testes.
+    std::string RoomsText() const {
+        std::string text;
+        for (const starsonic::RoomInfo& room : Rooms()) text += RoomText(room) + " | ";
+        return text;
+    }
+
     // Os OnCameraProblem que chegaram, em ordem.
     std::vector<starsonic::CameraProblem> CameraProblems() const {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -659,6 +707,8 @@ public:
                 text += "busy(" + event.user + "," + event.name + "); ";
             } else if (event.kind == CallEvent::Transfer) {
                 text += "transfer(" + std::to_string(event.callId) + "," + std::to_string(event.code) + "); ";
+            } else if (event.kind == CallEvent::Room) {
+                text += "room(" + std::to_string(event.callId) + "); ";
             } else {
                 text += "state(" + std::to_string(event.callId) + "," + StateName(event.state) + "," +
                         std::to_string(event.code) + "); ";
@@ -696,6 +746,7 @@ private:
     std::vector<BlfEvent> blfs_;
     std::vector<VideoEvent> videos_;
     std::vector<starsonic::CameraProblem> problems_;
+    std::vector<starsonic::RoomInfo> rooms_;
     std::vector<std::pair<int, std::string>> timeline_;   // Timeline: o id da ligação e o evento, em ordem
     std::function<void(int)> incomingHook_;
     std::deque<std::string> log_;

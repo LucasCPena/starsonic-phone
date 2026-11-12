@@ -348,6 +348,8 @@ bool CallTable::AddVideo(int callId) {
 }
 
 bool CallTable::SendPaused(const Slot& slot) {
+    // Um convidado da sala não pausa por outra ligação, da sala ou de fora (spec do vídeo em grupo, 4.2).
+    if (slot.member) return slot.held || slot.transferring;
     if (slot.held || slot.transferring || conference_) return true;
     // Com duas ligações, nenhuma câmera manda, com a segunda ainda tocando ou já atendida (spec da videochamada, 4.2),
     // também a de um Porteiro: o envio volta quando a ligação fica sozinha, fora da espera.
@@ -355,6 +357,7 @@ bool CallTable::SendPaused(const Slot& slot) {
 }
 
 bool CallTable::ReceivePaused(const Slot& slot) {
+    if (slot.member) return slot.held || slot.transferring;   // como no SendPaused
     if (slot.held || slot.transferring || conference_) return true;
     // Com duas ligações, a imagem que chega também pausa, menos a de um Porteiro (decisão do responsável de 11/11/2026,
     // spec 4.2): tocando ou atendido, a dele segue à vista, só chegando.
@@ -362,7 +365,9 @@ bool CallTable::ReceivePaused(const Slot& slot) {
 }
 
 bool CallTable::WantsToSend(const Slot& slot) {
-    return slot.wish && slot.confirmed && !slot.early && slot.videoUp && slot.canSend && !cameraPaused_ &&
+    // Um convidado manda a nossa câmera direto, com o desejo da câmera da sala.
+    const bool wish = slot.member ? roomWish_ : slot.wish;
+    return wish && slot.confirmed && !slot.early && slot.videoUp && slot.canSend && !cameraPaused_ &&
            !SendPaused(slot);
 }
 
@@ -391,6 +396,8 @@ void CallTable::PublishVideo() {
         const int callId = slot.callId;
         Emit(callId, [callId, video](EngineListener& listener) { listener.OnCallVideo(callId, video); });
     }
+    // A imagem de cada convidado (o image do OnRoom) é o remote dele: a sala depois do vídeo que a mudou.
+    PublishRoom();
 #endif
 }
 
@@ -445,7 +452,8 @@ void CallTable::SyncVideo() {
             }
         }
     }
-    // Primeiro o que para, depois o que começa: duas ligações nunca mandam juntas (a câmera é uma só).
+    // Primeiro o que para, depois o que começa: fora da sala, duas ligações nunca mandam juntas (a câmera é uma só); os
+    // convidados da sala mandam a mesma câmera, cuja janela a pjsua divide entre os streams.
     std::stable_sort(plans.begin(), plans.end(), [](const Plan& a, const Plan& b) { return !a.send && b.send; });
     for (Plan& plan : plans) {
         const VideoMedia media = VideoMediaOf(plan.pjsuaId);
@@ -652,6 +660,7 @@ bool CallTable::PreviewFailed(pj_status_t status, bool reported) {
     for (Slot& slot : slots_) {
         if (slot.callId == 0 || !slot.sending) continue;
         slot.wish = false;
+        if (slot.member) roomWish_ = false;   // os convidados mandam com o desejo da sala
         sending = true;
     }
     return sending;
@@ -773,6 +782,7 @@ void CallTable::LoseCamera() {
     cameraLost_ = true;
     cameraTest_ = false;
     for (Slot& slot : slots_) slot.wish = false;   // a câmera não volta sozinha: só com um pedido novo
+    roomWish_ = false;                             // também a da sala
     PublishVideo();
     Problem(CameraProblem::Disconnected);
 }

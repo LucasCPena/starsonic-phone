@@ -120,4 +120,12 @@ bool operator==(const RoomTile& a, const RoomTile& b) {
     return a.x == b.x && a.y == b.y && a.width == b.width && a.height == b.height;
 }
 
+bool operator==(const RoomMember& a, const RoomMember& b) {
+    return a.callId == b.callId && a.state == b.state && a.image == b.image && a.tile == b.tile;
+}
+
+bool operator==(const RoomInfo& a, const RoomInfo& b) {
+    return a.id == b.id && a.members == b.members && a.out == b.out && a.full == b.full && a.ended == b.ended;
+}
+
 }  // namespace starsonic

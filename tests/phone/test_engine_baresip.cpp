@@ -384,6 +384,14 @@ TEST_CASE("the baresip engine has no video: the video requests are refused and n
     phone_test::CheckNoVideo(phone);
 }
 
+TEST_CASE("the engine without video has no room") {
+    Phone phone;
+    INFO(phone.registrar.LogText());
+    INFO(phone.listener.CallsText());
+
+    phone_test::CheckNoRoom(phone);
+}
+
 TEST_CASE("SetPushData before SetAccount puts the push data in the REGISTER, in each format") {
     PushData push;
     bool inContact = false;

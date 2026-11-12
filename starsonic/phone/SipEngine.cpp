@@ -387,6 +387,26 @@ public:
         return RegisterThread() && calls_.Answer(callId, video);
     }
 
+    // A sala só existe com o vídeo: sem ele (o Android), nenhum convidado é chamado.
+    int RoomAdd(const std::string& number) {
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        if (!RegisterThread()) return -1;
+#if PJMEDIA_HAS_VIDEO
+        if (!account_ || number.empty()) {
+            Log(2, account_ ? "convidado da sala recusado: numero vazio" : "convidado da sala recusado: nao ha conta");
+            return -1;
+        }
+        return calls_.RoomAdd(*account_, CallUri(number));
+#else
+        (void)number;
+        Log(2, "convidado da sala recusado: sem video neste motor");
+        return -1;
+#endif
+    }
+
+    // Sem a apiMutex_ e sem o PJSIP, como o CallCount: só a tabela.
+    RoomInfo Room() { return calls_.Room(); }
+
     bool SetCamera(int callId, bool on) {
 #if PJMEDIA_HAS_VIDEO
         std::lock_guard<std::mutex> lock(apiMutex_);
@@ -998,6 +1018,10 @@ void SipEngine::RefreshVideoDevices() { impl_->RefreshVideoDevices(); }
 bool SipEngine::StartCameraTest() { return impl_->StartCameraTest(); }
 
 void SipEngine::StopCameraTest() { impl_->StopCameraTest(); }
+
+int SipEngine::RoomAdd(const std::string& number) { return impl_->RoomAdd(number); }
+
+RoomInfo SipEngine::Room() const { return impl_->Room(); }
 
 bool SipEngine::Reject(int callId) { return impl_->Reject(callId); }
 

@@ -43,7 +43,8 @@ inline CallEvent Last(const std::vector<CallEvent>& events, CallEvent::Kind kind
 }
 
 // Os eventos da ligação callId em ordem: "Incoming" para OnIncomingCall, "<estado>/<código>" para
-// OnCallState e "Transfer/<código>" para OnTransfer, como "Incoming Early/180 Confirmed/200".
+// OnCallState e "Transfer/<código>" para OnTransfer, como "Incoming Early/180 Confirmed/200". Com o id
+// de uma sala, "Room" para cada OnRoom dela.
 inline std::string History(const std::vector<CallEvent>& events, int callId) {
     std::string text;
     for (const CallEvent& event : events) {
@@ -53,6 +54,8 @@ inline std::string History(const std::vector<CallEvent>& events, int callId) {
             text += "Incoming";
         } else if (event.kind == CallEvent::Transfer) {
             text += "Transfer/" + std::to_string(event.code);
+        } else if (event.kind == CallEvent::Room) {
+            text += "Room";
         } else {
             text += std::string(phone_test::StateName(event.state)) + "/" + std::to_string(event.code);
         }
@@ -389,6 +392,26 @@ inline void CheckNoVideo(Phone& phone) {
     phone.engine->SetFrameSink(nullptr);
     const Lines log = phone.registrar.Log();
     CHECK(std::none_of(log.begin(), log.end(), [](const std::string& line) { return line.rfind("inv-in", 0) == 0; }));
+}
+
+// O motor sem sala (o do baresip, e o do PJSIP sem o PJMEDIA_HAS_VIDEO, como o do Android): o RoomAdd não liga (-1),
+// sem ligação e numa ligação só de voz, o Room dá o RoomInfo{} e nenhum OnRoom chega.
+inline void CheckNoRoom(Phone& phone) {
+    CHECK(phone.engine->RoomAdd("2003") == -1);
+    CHECK(phone.engine->Room() == starsonic::RoomInfo());
+
+    const int id = phone.Dial("2002");
+    CHECK(phone.engine->RoomAdd("2003") == -1);
+    CHECK(phone.engine->Room() == starsonic::RoomInfo());
+    CHECK(phone.engine->CallCount() == 1);
+    REQUIRE(phone.engine->Hangup(id));
+    REQUIRE(phone.WaitState(id, CallState::Disconnected));
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    CHECK(phone.listener.Rooms().empty());
+    const Lines log = phone.registrar.Log();
+    CHECK(std::none_of(log.begin(), log.end(),
+                       [](const std::string& line) { return line.rfind("inv-in 2003", 0) == 0; }));
 }
 
 }  // namespace phone_test

@@ -1,7 +1,8 @@
 #pragma once
 // Os tipos portáteis do vídeo (spec da videochamada, 4.2, 6.2 e 7): a qualidade, as escolhas do cartão Vídeo, a ordem
 // dos codecs, os Porteiros, o vídeo de uma ligação, as câmeras, os problemas da câmera, o quadro I420 e quem recebe os
-// quadros (FrameSink). Nada de PJSIP aqui: o núcleo e os testes do desktop usam estes tipos sem o motor.
+// quadros (FrameSink). E a sala de vídeo em grupo (spec do vídeo em grupo): o quadro de um convidado, os convidados e a
+// sala. Nada de PJSIP aqui: o núcleo e os testes do desktop usam estes tipos sem o motor.
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -107,5 +108,30 @@ struct RoomTile {
 };
 
 bool operator==(const RoomTile& a, const RoomTile& b);
+
+// A sala de vídeo em grupo (spec do vídeo em grupo): quem a monta e até kRoomMaxGuests convidados.
+constexpr int kRoomMaxGuests = 5;
+
+// Um convidado da sala, como o motor o avisa (EngineListener::OnRoom) e o devolve (SipEngine::Room).
+struct RoomMember {
+    enum class State { Calling, In, Held };   // chamando; na sala; em espera (ele pôs a ligação em espera)
+    int callId = 0;
+    State state = State::Calling;
+    bool image = false;   // a imagem dele chegando (o remote da ligação)
+    RoomTile tile;        // o quadro dele no mosaico de quem montou (UnitTile das MosaicCells de 1280x720)
+};
+
+// A sala, como o motor a avisa (EngineListener::OnRoom) e a devolve (SipEngine::Room).
+struct RoomInfo {
+    int id = 0;                        // o id da sala; 0: nenhuma
+    std::vector<RoomMember> members;   // os convidados, na ordem em que entraram
+    bool out = false;                  // a nossa voz e a nossa câmera fora da sala
+    bool full = false;                 // 5 convidados, contando os chamados
+    bool ended = false;                // o último evento da sala: members tem quem ficou (agora uma ligação comum)
+                                       // ou nada
+};
+
+bool operator==(const RoomMember& a, const RoomMember& b);
+bool operator==(const RoomInfo& a, const RoomInfo& b);
 
 }  // namespace starsonic
