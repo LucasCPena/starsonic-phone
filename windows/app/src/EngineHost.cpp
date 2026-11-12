@@ -226,6 +226,11 @@ int EngineHost::CallCount() const {
     return engine ? engine->CallCount() : 0;
 }
 
+int EngineHost::RoomAdd(const std::string& number) {
+    SipEngine* engine = Ready();
+    return engine ? engine->RoomAdd(number) : -1;
+}
+
 int EngineHost::SetAccount(const AccountInput& input) {
     SipEngine* engine = Ready();
     return engine ? engine->SetAccount(input) : 0;

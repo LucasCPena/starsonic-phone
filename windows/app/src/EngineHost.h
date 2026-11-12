@@ -77,6 +77,7 @@ public:
     bool Transfer(int callId, const std::string& number) override;
     bool TransferAttended(int callId, int targetCallId) override;
     int CallCount() const override;
+    int RoomAdd(const std::string& number) override;   // (0.4.0) a sala de video: espera o motor, como o MakeCall
 
     // RegistrationPort
     int SetAccount(const AccountInput& input) override;

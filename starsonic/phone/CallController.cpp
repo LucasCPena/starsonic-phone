@@ -60,10 +60,20 @@ bool operator==(const CallView& a, const CallView& b) {
            a.phase == b.phase && a.activeSinceMs == b.activeSinceMs && a.held == b.held && a.video == b.video;
 }
 
+bool operator==(const RoomMemberView& a, const RoomMemberView& b) {
+    return a.id == b.id && a.number == b.number && a.name == b.name && a.state == b.state && a.image == b.image &&
+           a.tile == b.tile;
+}
+
+bool operator==(const RoomView& a, const RoomView& b) {
+    return a.id == b.id && a.members == b.members && a.out == b.out && a.full == b.full;
+}
+
 bool operator==(const CallSnapshot& a, const CallSnapshot& b) {
     return a.top == b.top && a.second == b.second && a.secondKind == b.secondKind && a.muted == b.muted &&
            a.conference == b.conference && a.conferenceSinceMs == b.conferenceSinceMs &&
-           a.consulting == b.consulting && a.colleagueActive == b.colleagueActive && a.endMessage == b.endMessage;
+           a.consulting == b.consulting && a.colleagueActive == b.colleagueActive && a.endMessage == b.endMessage &&
+           a.room == b.room;
 }
 
 bool operator==(const Recent& a, const Recent& b) {
@@ -71,8 +81,17 @@ bool operator==(const Recent& a, const Recent& b) {
            a.durationMs == b.durationMs;
 }
 
+// A sala dentro da linha dela (Call::room): os convidados, cada um com a sua ligação (o Call dele), na ordem em que
+// entraram, e o out e o full do último OnRoom. Só com a trava.
+struct CallController::Room {
+    std::vector<CallPtr> guests;
+    bool out = false;
+    bool full = false;
+};
+
 // Uma das ligações de agora: name é o nome que a central mandou (o dos Recentes), e contact, o do contato
-// com o número dela (procurado uma vez, quando ela começou). Só com a trava.
+// com o número dela (procurado uma vez, quando ela começou). Um convidado da sala também é um Call, dentro da linha
+// dela. Só com a trava.
 struct CallController::Call {
     enum class Phase {
         Dialing,      // feita, chamando (até o outro lado atender)
@@ -114,6 +133,8 @@ struct CallController::Call {
     bool held = false;               // em espera: pela pessoa, ou a outra de duas
     TransferKind transferPending = TransferKind::None;   // a transferência pedida nela, até o resultado
     int transferRequest = 0;         // conta os pedidos de transferência (a recusa na hora desfaz só o dela)
+    std::optional<Room> room;        // a linha da sala: a sala, com os convidados (nada: uma ligação)
+    RoomMember member;               // um convidado: o estado, a imagem e o quadro dele no último OnRoom
 };
 
 CallController::CallController(CallEngine& engine, CallControllerListener& listener, Clock& clock,
@@ -208,6 +229,11 @@ void CallController::OnCallState(int callId, CallState state, int sipCode) {
             maxSeenId_ = std::max(maxSeenId_, callId);   // de outra ligação (ou depois de Sair): fica lembrado
             return;
         }
+        // Um convidado da sala não é uma linha: os eventos dele ficam na sala.
+        if (current == GuestOf(callId)) {
+            OnGuestState(current, state, sipCode);
+            return;
+        }
         if (current->id != callId) Adopt(current, callId, effects);
         if (state == CallState::Confirmed) {
             if (current->activeSince == 0) {
@@ -225,9 +251,14 @@ void CallController::OnCallVideo(int callId, const CallVideo& video) {
     Act([&](Effects&) {
         // Só pelo id: o vídeo de uma ligação nunca vem antes do primeiro estado dela (que já deu o id à feita).
         const auto it = std::find_if(calls_.begin(), calls_.end(), [callId](const CallPtr& c) { return c->id == callId; });
-        if (loggedOut_ || it == calls_.end()) return;
+        if (loggedOut_) return;
         CallVideo shown = video;
         shown.refused = false;
+        if (it == calls_.end()) {
+            // O de um convidado da sala fica com ele (para quando ele volta a ser uma linha), sem o aviso da recusa.
+            if (const CallPtr guest = GuestOf(callId)) guest->video = shown;
+            return;
+        }
         (*it)->video = shown;
         if (video.refused) publications_.push_back([this] { listener_.OnVideoRefused(); });
         Publish();
@@ -282,11 +313,13 @@ bool CallController::Place(const std::string& raw, bool consult, bool video) {
         // Sem ligação, ou com uma só em andamento (a Nova ligação).
         const CallPtr other = calls_.size() == 1 ? calls_.front() : nullptr;
         if (!calls_.empty() && (!other || other->phase != Call::Phase::Active || other->ending)) return;
-        // O Consultar: só com o cliente em andamento e sem uma transferência dele esperando o resultado.
-        if (consult && (!other || other->transferPending != TransferKind::None)) return;
+        // O Consultar: só com o cliente em andamento, sem uma transferência dele esperando o resultado, e fora da sala.
+        if (consult && (!other || other->room || other->transferPending != TransferKind::None)) return;
+        // Com a sala de pé, a feita é a ligação de fora: só com a voz.
+        const bool withVideo = video && !RoomLine();
         ClearEndMessage();
         auto dialed = std::make_shared<Call>(false, number, std::string(), clock_.NowMs(), contact);
-        dialed->videoDialed = video;
+        dialed->videoDialed = withVideo;
         calls_.push_back(dialed);
         active_ = dialed;
         if (other) other->held = true;   // o motor a põe em espera no MakeCall
@@ -297,9 +330,9 @@ bool CallController::Place(const std::string& raw, bool consult, bool video) {
         Publish();
         // Depois da trava: o motor liga, e os eventos da ligação podem chegar antes de o MakeCall voltar. A
         // tela recebe a feita antes (o MakeCall pode demorar, e o Desligar dela já vale: hangupWhenDialed).
-        effects.push_back([this, dialed, number, video] {
+        effects.push_back([this, dialed, number, withVideo] {
             Deliver();
-            const int id = engine_.MakeCall(number, video);
+            const int id = engine_.MakeCall(number, withVideo);
             Act([&](Effects& more) { OnDialed(dialed, id, more); });
         });
         placed = true;
@@ -330,7 +363,8 @@ std::string CallController::ContactNumber(const std::string& number) const {
 void CallController::Answer(bool video) {
     Act([this, video](Effects& effects) {
         const CallPtr ringing = RingingCall();
-        if (ringing) AnswerRinging(ringing, effects, video);
+        // Com a sala de pé, a recebida é a ligação de fora: só com a voz.
+        if (ringing) AnswerRinging(ringing, effects, video && !RoomLine());
     });
 }
 
@@ -368,9 +402,9 @@ void CallController::Hangup(int callId) {
     Act([&](Effects& effects) {
         CallPtr current;
         if (callId == kNoId) {
-            // A feita mais nova (o cartão dela ainda pode estar sem o id do motor).
+            // A feita mais nova (o cartão dela ainda pode estar sem o id do motor; a linha da sala não é uma feita).
             for (const CallPtr& call : calls_) {
-                if (!call->incoming) current = call;
+                if (!call->incoming && !call->room) current = call;
             }
         } else {
             const auto it = std::find_if(calls_.begin(), calls_.end(),
@@ -400,7 +434,7 @@ void CallController::Hold(std::optional<bool> on) {
     Act([&](Effects& effects) {
         if (conference_) return;
         const CallPtr current = Talking();
-        if (!current) return;
+        if (!current || current->room) return;   // a sala em cima não vai para a espera (a volta é o RoomReturn)
         const bool target = on ? *on : !current->held;
         if (target == current->held) return;
         // Com a outra em andamento, a espera da ativa é o Alternar (a outra volta).
@@ -431,7 +465,7 @@ void CallController::Mute(std::optional<bool> on) {
 void CallController::Dtmf(const std::string& digits) {
     Act([&](Effects& effects) {
         const CallPtr current = Talking();
-        if (!current || digits.empty()) return;
+        if (!current || current->room || digits.empty()) return;   // os dígitos não têm para quem ir na sala
         const int id = current->id;
         effects.push_back([this, id, digits] { engine_.SendDtmf(id, digits); });
     });
@@ -443,7 +477,9 @@ bool CallController::Transfer(const std::string& raw) {
     bool asked = false;
     Act([&](Effects& effects) {
         const CallPtr current = Talking();
-        if (!current || client_ || conference_ || current->transferPending != TransferKind::None) return;
+        if (!current || current->room || client_ || conference_ || current->transferPending != TransferKind::None) {
+            return;
+        }
         current->transferPending = TransferKind::Direct;
         const int request = ++current->transferRequest;
         const int id = current->id;
@@ -486,7 +522,7 @@ void CallController::CancelConsult() {
 
 void CallController::Join() {
     Act([this](Effects& effects) {
-        if (conference_ || client_) return;
+        if (conference_ || client_ || RoomLine()) return;   // os convidados da sala já se ouvem
         const CallPtr current = Talking();
         if (!current) return;
         const CallPtr other = OtherThan(current);
@@ -507,7 +543,7 @@ void CallController::Split() {
     Act([this](Effects& effects) {
         CallPtr first;
         CallPtr last;
-        if (Members(first, last)) Separate(first, last, effects);
+        if (!RoomLine() && Members(first, last)) Separate(first, last, effects);
     });
 }
 
@@ -521,7 +557,22 @@ void CallController::OnLogout() {
             call->abandoned = true;
             const int id = call->id;
             if (id != kNoId) effects.push_back([this, id] { engine_.Hangup(id); });
-            End(call, 0, effects, /*quiet=*/true);
+            if (call->room) {
+                // A sala acaba com o Hangup do id dela: os Recentes são dos convidados, sem avisos.
+                for (const CallPtr& guest : call->room->guests) Record(GuestRecent(*guest));
+                EndRoomLine(call, effects);
+            } else {
+                End(call, 0, effects, /*quiet=*/true);
+            }
+        }
+        // O convidado que o RoomAdd ainda chama, fora da sala: sai também (sem o id ainda, quando o RoomAdd voltar).
+        if (pendingGuest_) {
+            const CallPtr guest = pendingGuest_;
+            pendingGuest_ = nullptr;
+            guest->abandoned = true;
+            const int id = guest->id;
+            if (id != kNoId) effects.push_back([this, id] { engine_.Hangup(id); });
+            Record(GuestRecent(*guest));
         }
         Publish();
     });
@@ -616,12 +667,13 @@ void CallController::OnTransferRefusedAtOnce(const CallPtr& call, int request) {
     ShowEndMessage(TransferRefusedText());
 }
 
-// Com a trava: a ligação do evento de callId: a que tem o id, ou a feita sem id (o MakeCall ainda não
-// voltou), se o id é de uma ligação nova; nullptr: de outra ligação.
+// Com a trava: a ligação do evento de callId: a que tem o id, um convidado da sala com ele, ou a feita sem id (o
+// MakeCall ainda não voltou), se o id é de uma ligação nova; nullptr: de outra ligação.
 CallController::CallPtr CallController::OwnerOf(int callId) const {
     for (const CallPtr& call : calls_) {
         if (call->id == callId) return call;
     }
+    if (const CallPtr guest = GuestOf(callId)) return guest;
     if (callId <= maxSeenId_) return nullptr;
     for (const CallPtr& call : calls_) {
         if (!call->incoming && call->id == kNoId) return call;
@@ -668,7 +720,9 @@ void CallController::RejectCall(const CallPtr& call, Effects& effects) {
     effects.push_back([this, id] { engine_.Reject(id); });
 }
 
-// Com a trava: desliga call. A recebida que toca é recusada; a feita sem id é desligada quando o id chegar.
+// Com a trava: desliga call. A recebida que toca é recusada; a feita sem id é desligada quando o id chegar. A linha da
+// sala: o motor desliga todos os convidados (o Hangup do id dela), que saem daqui (o fim deles não dá aviso), também o
+// que o RoomAdd ainda chama.
 void CallController::HangupCall(const CallPtr& call, Effects& effects) {
     if (call->incoming && call->phase == Call::Phase::Ringing) {
         RejectCall(call, effects);
@@ -676,6 +730,10 @@ void CallController::HangupCall(const CallPtr& call, Effects& effects) {
     }
     call->localHangup = true;
     call->ending = true;
+    if (call->room) {
+        for (const CallPtr& guest : call->room->guests) guest->localHangup = true;
+        if (pendingGuest_) pendingGuest_->localHangup = true;
+    }
     const int id = call->id;
     if (id != kNoId) {
         effects.push_back([this, id] { engine_.Hangup(id); });
@@ -940,7 +998,7 @@ void CallController::RunIdleCallbacks() {
 
 // Com a trava: o estado de agora e o toque vão à fila das publicações, se mudaram: a ligação da tela e,
 // com duas, a outra, a consulta e a conferência (só com as duas de pé: com uma saindo, a tela já mostra a
-// outra sozinha).
+// outra sozinha), e a sala, com a linha dela de pé e fora da saída.
 void CallController::Publish() {
     CallSnapshot snapshot;
     const CallPtr main = Shown();
@@ -961,6 +1019,8 @@ void CallController::Publish() {
         }
         snapshot.muted = muted_;
     }
+    const CallPtr line = RoomLine();
+    if (line && !line->ending) snapshot.room = RoomViewOf(*line);
     snapshot.endMessage = endMessage_;
     if (snapshot != published_) {
         published_ = snapshot;
@@ -1027,6 +1087,315 @@ CallView CallController::ViewOf(const Call& call) const {
     view.activeSinceMs = call.activeSince;
     view.held = call.held;
     view.video = call.video;
+    return view;
+}
+
+// A sala de vídeo em grupo (ver o CallController.h): os comandos, o OnRoom do motor e as regras dela, juntos aqui. Os
+// ganchos nos métodos de sempre (o OwnerOf, o OnCallState, o OnCallVideo, o HangupCall, o Publish, o OnLogout e os
+// comandos que não valem com a sala) chamam estas.
+
+bool CallController::RoomAdd(const std::string& raw) {
+    if (IsBlank(raw)) return false;
+    if (registered_ && !registered_()) {
+        Act([this](Effects&) { ShowEndMessage(NoConnectionText()); });
+        return false;
+    }
+    const std::string number = Normalize(raw);
+    if (number.empty()) return false;
+    std::optional<std::string> contact;
+    if (!loggedOut_) contact = contacts_.NameFor(number);   // sem a trava: pode ler o disco
+    bool asked = false;
+    Act([&](Effects& effects) {
+        // Um convidado pendente por vez: é ele quem adota o primeiro id desconhecido de um OnRoom.
+        if (loggedOut_ || pendingGuest_ || !RoomCanGrow()) return;
+        const auto guest = std::make_shared<Call>(false, number, std::string(), clock_.NowMs(), contact);
+        pendingGuest_ = guest;
+        // Depois da trava: o motor liga, e o OnRoom que traz o convidado (e até os eventos da ligação dele) pode chegar
+        // antes de o RoomAdd voltar.
+        effects.push_back([this, guest, number] {
+            const int id = engine_.RoomAdd(number);
+            Act([&](Effects& more) { OnRoomAdded(guest, id, more); });
+        });
+        asked = true;
+    });
+    return asked;
+}
+
+bool CallController::RoomAddContact(const std::string& number) {
+    const std::string dialed = ContactNumber(number);
+    return !dialed.empty() && RoomAdd(dialed);
+}
+
+void CallController::RoomRemove(int callId) {
+    Act([&](Effects& effects) {
+        const CallPtr guest = GuestOf(callId);
+        if (!guest || guest->localHangup) return;
+        guest->localHangup = true;
+        guest->ending = true;   // o fim dele foi pedido: se a sala o devolve como uma linha, ele já está saindo
+        effects.push_back([this, callId] { engine_.Hangup(callId); });
+    });
+}
+
+void CallController::RoomEnd() {
+    Act([this](Effects& effects) {
+        const CallPtr line = RoomLine();
+        if (!line || line->ending) return;
+        HangupCall(line, effects);
+        Publish();
+    });
+}
+
+void CallController::RoomReturn() {
+    Act([this](Effects& effects) {
+        const CallPtr line = RoomLine();
+        // Com a sala fora: em espera aqui (a ligação de fora), ou ainda fora no motor (o out do último OnRoom).
+        if (!line || line->ending || !(line->held || line->room->out)) return;
+        const CallPtr outside = OtherThan(line);
+        if (outside) {
+            SwapCalls(outside, line, effects);
+            return;
+        }
+        line->held = false;
+        active_ = line;
+        Publish();
+        const int id = line->id;
+        effects.push_back([this, id] { engine_.Activate(id); });
+    });
+}
+
+void CallController::OnRoom(const RoomInfo& room) {
+    Act([&](Effects& effects) {
+        // Antes de olhar o loggedOut_, como no OnIncomingCall: os ids da sala e dos convidados ficam lembrados.
+        maxSeenId_ = std::max(maxSeenId_, room.id);
+        for (const RoomMember& member : room.members) maxSeenId_ = std::max(maxSeenId_, member.callId);
+        if (loggedOut_ || room.id == kNoId) return;
+        CallPtr line = RoomLine();
+        const bool born = !line;
+        if (born) {
+            if (room.ended) return;   // o fim de uma sala que não nasceu aqui
+            line = BearRoom(room);
+            if (!line) return;
+        } else if (line->id != room.id) {
+            return;
+        }
+        // Os estados, as imagens e os quadros; o convidado pendente entra com o id dele.
+        for (const RoomMember& member : room.members) {
+            CallPtr guest = GuestOf(member.callId);
+            if (!guest) guest = TakePending(*line, member.callId);
+            if (guest) guest->member = member;
+        }
+        const bool wasOut = line->room->out;
+        line->room->out = room.out;
+        line->room->full = room.full;
+        if (room.ended) {
+            EndRoom(line, room, effects);
+            Publish();
+            PublishRoomEvent(RoomEvent::Ended, 0);
+            return;
+        }
+        Publish();
+        if (born) PublishRoomEvent(RoomEvent::Started, 0);
+        if (room.out != wasOut) PublishRoomEvent(room.out ? RoomEvent::Out : RoomEvent::Back, 0);
+    });
+}
+
+// Com a trava: o RoomAdd do convidado guest voltou com id (-1: não ligou), como o OnDialed. Sem um OnRoom que o tenha
+// trazido, ele adota o id e espera o OnRoom com ele; o id do RoomAdd vale mais que o tomado de um OnRoom antes dele (o
+// de outra ligação, que então sai). O -1 dá o Recente de uma feita e o Failed com 0, sem aviso.
+void CallController::OnRoomAdded(const CallPtr& guest, int id, Effects& effects) {
+    const bool pending = guest == pendingGuest_;
+    if (!pending && GuestOf(guest->id) != guest) {
+        // Ele já acabou: a conta saiu, ou o fim dele chegou antes de o RoomAdd voltar. Se o id tomado não é o do
+        // RoomAdd, a ligação do motor ficou sem dono: sai também.
+        if (id > 0 && (guest->abandoned || guest->id != id)) effects.push_back([this, id] { engine_.Hangup(id); });
+        return;
+    }
+    if (id <= 0) {
+        if (pending) {
+            pendingGuest_ = nullptr;
+        } else {
+            std::vector<CallPtr>& guests = RoomLine()->room->guests;
+            guests.erase(std::remove(guests.begin(), guests.end(), guest), guests.end());
+        }
+        Record(GuestRecent(*guest));
+        Publish();
+        PublishRoomEvent(RoomEvent::Failed, 0);
+        return;
+    }
+    if (guest->id != kNoId && guest->id != id) {
+        const int other = guest->id;
+        effects.push_back([this, other] { engine_.Hangup(other); });
+    }
+    guest->id = id;
+    maxSeenId_ = std::max(maxSeenId_, id);
+    Publish();
+}
+
+// Com a trava: o RoomAdd pode chamar o motor. Sem sala, a ligação de agora é a única, em andamento, fora da espera e da
+// saída, sem consulta, conferência ou transferência esperando o resultado, e com o vídeo ativo; com sala, a linha dela
+// está em cima, fora da espera (você na sala) e sem o full.
+bool CallController::RoomCanGrow() const {
+    if (const CallPtr line = RoomLine()) return line == Shown() && !line->held && !line->room->full;
+    if (calls_.size() != 1) return false;
+    const CallPtr call = calls_.front();
+    return call->phase == Call::Phase::Active && !call->held && !call->ending && !client_ && !conference_ &&
+           call->transferPending == TransferKind::None && call->video.active;
+}
+
+// Com a trava: o nascimento da sala room. A linha cujo id está nos members vira a linha da sala, no mesmo lugar, com o
+// mesmo active_ e a mesma espera, a fase ativa e o activeSince e o startMs dela; o Call dela vai para dentro, como o
+// primeiro convidado. nullptr: nenhuma linha está nos members.
+CallController::CallPtr CallController::BearRoom(const RoomInfo& room) {
+    const auto place = std::find_if(calls_.begin(), calls_.end(), [&room](const CallPtr& call) {
+        return std::any_of(room.members.begin(), room.members.end(),
+                           [&call](const RoomMember& member) { return member.callId == call->id; });
+    });
+    if (place == calls_.end()) return nullptr;
+    const CallPtr first = *place;
+    const auto line = std::make_shared<Call>(false, std::string(), std::string(), first->startMs, std::nullopt);
+    line->id = room.id;
+    line->phase = Call::Phase::Active;
+    line->activeSince = first->activeSince;
+    line->held = first->held;
+    line->room.emplace();
+    line->room->guests.push_back(first);
+    *place = line;
+    if (active_ == first) active_ = line;
+    return line;
+}
+
+// Com a trava: o convidado pendente entra na sala de line com o id de um convidado do OnRoom, se o id é o dele (o
+// RoomAdd já voltou) ou, sem id ainda, se é o primeiro desconhecido (como a feita adota o id do primeiro evento de uma
+// ligação nova). nullptr: nenhum pendente, ou o id não é dele.
+CallController::CallPtr CallController::TakePending(Call& line, int id) {
+    if (!pendingGuest_ || (pendingGuest_->id != kNoId && pendingGuest_->id != id)) return nullptr;
+    const CallPtr guest = pendingGuest_;
+    pendingGuest_ = nullptr;
+    guest->id = id;
+    line.room->guests.push_back(guest);
+    return guest;
+}
+
+// Com a trava: o OnRoom com o ended. Quem ficou volta a ser a linha, no lugar da sala, com a espera dela e a fase pelo
+// activeSince dele (os convidados que nunca atenderam são feitas: a ligação de onde a sala nasceu já tinha atendido); o
+// motor o deixa a ativa só se a sala era a ativa. Sem ninguém, a linha da sala sai (EndRoomLine).
+void CallController::EndRoom(const CallPtr& line, const RoomInfo& room, Effects& effects) {
+    const CallPtr stayed = room.members.size() == 1 ? GuestOf(room.members.front().callId) : nullptr;
+    if (!stayed) {
+        EndRoomLine(line, effects);
+        return;
+    }
+    stayed->held = line->held;
+    stayed->phase = stayed->activeSince > 0 ? Call::Phase::Active : Call::Phase::Dialing;
+    std::replace(calls_.begin(), calls_.end(), line, stayed);
+    if (active_ == line) active_ = stayed;
+    // A sala encerrada daqui (RoomEnd) que o motor acabou sozinho antes do Hangup do id dela: esse Hangup não a acha
+    // mais, e quem ficou seguiria de pé. Ele sai pelo id dele.
+    if (line->ending && !stayed->ending) HangupCall(stayed, effects);
+}
+
+// Com a trava: a linha da sala sai (o fim da sala sem ninguém, ou o Sair), sem Recente próprio e sem o aviso
+// "desligou": o rótulo dela é vazio, e os Recentes são dos convidados. Se ela era a ativa, a outra (se há) passa a ser,
+// e volta sozinha (ResumeNext). O mudo sai com a última, como no End.
+void CallController::EndRoomLine(const CallPtr& line, Effects& effects) {
+    const bool wasActive = line == active_;
+    calls_.erase(std::remove(calls_.begin(), calls_.end(), line), calls_.end());
+    if (wasActive) active_ = calls_.empty() ? nullptr : calls_.front();
+    if (muted_ && calls_.empty()) {
+        muted_ = false;
+        effects.push_back([this] { engine_.SetMute(false); });
+    }
+    if (wasActive && !line->held) ResumeNext(effects);
+}
+
+// Com a trava: um evento da ligação do convidado guest: o Confirmed (a primeira vez) põe o activeSince e dá o Entered;
+// o Disconnected é o fim dele (EndGuest).
+void CallController::OnGuestState(const CallPtr& guest, CallState state, int sipCode) {
+    if (state == CallState::Confirmed && guest->activeSince == 0) {
+        guest->activeSince = clock_.NowMs();
+        guest->phase = Call::Phase::Active;
+        PublishRoomEvent(RoomEvent::Entered, AnsweredGuests());
+    } else if (state == CallState::Disconnected) {
+        EndGuest(guest, sipCode);
+    }
+}
+
+// Com a trava: o convidado guest acabou com o código sipCode e sai da sala, com os Recentes dele. O que nunca atendeu e
+// não foi tirado daqui mostra "<nome ou número>: <motivo>" por 2 s, como o colega da consulta (se o núcleo tem um
+// motivo para o código), e dá o Failed com o código; os outros dão o Left.
+void CallController::EndGuest(const CallPtr& guest, int sipCode) {
+    std::vector<CallPtr>& guests = RoomLine()->room->guests;
+    guests.erase(std::remove(guests.begin(), guests.end(), guest), guests.end());
+    const bool failed = guest->activeSince == 0 && !guest->localHangup;
+    if (failed) {
+        const std::string message = WideToUtf8(CallEndMessage(sipCode));
+        if (!message.empty()) ShowEndMessage(guest->Label() + ": " + message);
+    }
+    Record(GuestRecent(*guest));
+    Publish();
+    if (failed) {
+        PublishRoomEvent(RoomEvent::Failed, sipCode);
+    } else {
+        PublishRoomEvent(RoomEvent::Left, AnsweredGuests());
+    }
+}
+
+// Com a trava: o Recente do convidado guest no fim dele: a feita, ou a recebida de onde a sala nasceu, com a duração
+// desde que os dois lados atenderam (0 sem isso).
+Recent CallController::GuestRecent(const Call& guest) {
+    const int64_t durationMs = guest.activeSince > 0 ? clock_.NowMs() - guest.activeSince : 0;
+    return MakeRecent(guest.number, guest.name, guest.incoming ? Recent::Incoming : Recent::Outgoing, guest.startMs,
+                      durationMs);
+}
+
+// Com a trava: os convidados que atenderam e seguem na sala (o value do Entered e do Left).
+int CallController::AnsweredGuests() const {
+    const CallPtr line = RoomLine();
+    if (!line) return 0;
+    return static_cast<int>(std::count_if(line->room->guests.begin(), line->room->guests.end(),
+                                          [](const CallPtr& guest) { return guest->activeSince > 0; }));
+}
+
+// Com a trava: um aviso da sala vai à fila das publicações.
+void CallController::PublishRoomEvent(RoomEvent event, int value) {
+    publications_.push_back([this, event, value] { listener_.OnRoomEvent(event, value); });
+}
+
+// Com a trava: a linha da sala (nullptr: sem sala).
+CallController::CallPtr CallController::RoomLine() const {
+    for (const CallPtr& call : calls_) {
+        if (call->room) return call;
+    }
+    return nullptr;
+}
+
+// Com a trava: o convidado da sala com o id (nullptr: nenhum).
+CallController::CallPtr CallController::GuestOf(int callId) const {
+    const CallPtr line = RoomLine();
+    if (!line || callId == kNoId) return nullptr;
+    for (const CallPtr& guest : line->room->guests) {
+        if (guest->id == callId) return guest;
+    }
+    return nullptr;
+}
+
+// Com a trava: a sala da linha dela, para a tela: cada convidado com o número, o nome do contato (senão o da central) e
+// o estado, a imagem e o quadro do último OnRoom.
+RoomView CallController::RoomViewOf(const Call& line) const {
+    RoomView view;
+    view.id = line.id;
+    for (const CallPtr& guest : line.room->guests) {
+        RoomMemberView member;
+        member.id = guest->id;
+        member.number = guest->number;
+        member.name = guest->DisplayName();
+        member.state = guest->member.state;
+        member.image = guest->member.image;
+        member.tile = guest->member.tile;
+        view.members.push_back(member);
+    }
+    view.out = line.room->out;
+    view.full = line.room->full;
     return view;
 }
 

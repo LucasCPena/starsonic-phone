@@ -17,7 +17,8 @@
 namespace phone_test {
 
 // O motor falso: anota os pedidos. MakeCall devolve nextCallId (e o próximo sobe), ou -1 com refuse;
-// duringMakeCall roda dentro dele, antes de ele voltar (um evento do motor que chega antes). CallCount
+// duringMakeCall roda dentro dele, antes de ele voltar (um evento do motor que chega antes). RoomAdd faz o
+// mesmo, com refuseRoom e duringRoomAdd (o OnRoom que traz o convidado pode chegar antes de ele voltar). CallCount
 // devolve callCount, que o teste ajusta. Com refuseTransfers, Transfer e TransferAttended anotam o pedido e
 // devolvem false (o motor recusou na hora: nenhum OnTransfer vem). order guarda, na ordem, os pedidos que
 // mexem no som das duas: "join 10 1", "split 1 10", "hold 1 true" e "activate 1".
@@ -26,6 +27,7 @@ public:
     std::vector<std::string> order;
     std::vector<std::string> made;
     std::vector<bool> madeVideo;                 // o video pedido em cada MakeCall (a mesma ordem de made)
+    std::vector<std::string> roomAdds;           // os números de cada RoomAdd
     std::vector<int> answers;
     std::vector<bool> answersVideo;              // o video pedido em cada Answer (a mesma ordem de answers)
     std::vector<std::pair<int, bool>> cameras;   // os SetCamera
@@ -42,8 +44,10 @@ public:
     int callCount = 0;
     int nextCallId = 10;
     bool refuse = false;
+    bool refuseRoom = false;
     bool refuseTransfers = false;
     std::function<void(int)> duringMakeCall;
+    std::function<void(int)> duringRoomAdd;
 
     int MakeCall(const std::string& number, bool video) override {
         made.push_back(number);
@@ -51,6 +55,13 @@ public:
         if (refuse) return -1;
         const int id = nextCallId++;
         if (duringMakeCall) duringMakeCall(id);
+        return id;
+    }
+    int RoomAdd(const std::string& number) override {
+        roomAdds.push_back(number);
+        if (refuseRoom) return -1;
+        const int id = nextCallId++;
+        if (duringRoomAdd) duringRoomAdd(id);
         return id;
     }
     bool Answer(int callId, bool video) override {
@@ -114,8 +125,9 @@ public:
     std::vector<std::string> missed;
     std::vector<starsonic::RingKind> rings;
     int videoRefused = 0;   // quantas vezes o OnVideoRefused foi chamado
+    std::vector<std::pair<starsonic::RoomEvent, int>> roomEvents;   // os avisos da sala, com o value, na ordem
     // Roda dentro de cada aviso, depois de guardá-lo, com o nome dele ("OnSnapshot", "OnRecent",
-    // "OnMissed", "OnRing" ou "OnVideoRefused"): um ouvinte que olha ou chama o controlador de volta.
+    // "OnMissed", "OnRing", "OnVideoRefused" ou "OnRoomEvent"): um ouvinte que olha ou chama o controlador de volta.
     std::function<void(const std::string& what)> during;
 
     void OnSnapshot(const starsonic::CallSnapshot& snapshot) override {
@@ -137,6 +149,10 @@ public:
     void OnVideoRefused() override {
         ++videoRefused;
         if (during) during("OnVideoRefused");
+    }
+    void OnRoomEvent(starsonic::RoomEvent event, int value) override {
+        roomEvents.emplace_back(event, value);
+        if (during) during("OnRoomEvent");
     }
 
     // O último estado publicado (nenhum: o de antes da primeira ligação, vazio).
@@ -228,12 +244,32 @@ inline std::ostream& operator<<(std::ostream& out, const std::optional<CallView>
     return out << *view;
 }
 
+inline std::ostream& operator<<(std::ostream& out, const RoomMemberView& member) {
+    static const char* const kStates[] = {"Calling", "In", "Held"};
+    return out << "{guest " << member.id << ", " << member.number << ", '" << member.name << "', "
+               << kStates[static_cast<int>(member.state)] << (member.image ? ", image" : "") << ", tile "
+               << member.tile.x << " " << member.tile.y << " " << member.tile.width << " " << member.tile.height
+               << "}";
+}
+
+inline std::ostream& operator<<(std::ostream& out, const RoomView& room) {
+    out << "{room " << room.id << (room.out ? ", out" : "") << (room.full ? ", full" : "");
+    for (const RoomMemberView& member : room.members) out << ", " << member;
+    return out << "}";
+}
+
+inline std::ostream& operator<<(std::ostream& out, const std::optional<RoomView>& room) {
+    if (!room) return out << "none";
+    return out << *room;
+}
+
 inline std::ostream& operator<<(std::ostream& out, const CallSnapshot& s) {
     static const char* const kKinds[] = {"None", "Ringing", "Held"};
     out << "{top " << s.top << ", second " << s.second << " (" << kKinds[s.secondKind] << ")"
         << (s.muted ? ", muted" : "");
     if (s.conference) out << ", conference since " << s.conferenceSinceMs;
     if (s.consulting) out << ", consulting" << (s.colleagueActive ? " (colleague active)" : " (client active)");
+    if (s.room) out << ", " << *s.room;
     return out << ", message '" << s.endMessage << "'}";
 }
 
@@ -253,6 +289,11 @@ inline std::ostream& operator<<(std::ostream& out, RingKind kind) {
             break;
     }
     return out << "Stop";
+}
+
+inline std::ostream& operator<<(std::ostream& out, RoomEvent event) {
+    static const char* const kEvents[] = {"Started", "Entered", "Left", "Failed", "Out", "Back", "Ended"};
+    return out << kEvents[static_cast<int>(event)];
 }
 
 }  // namespace starsonic

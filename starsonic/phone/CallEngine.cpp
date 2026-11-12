@@ -32,4 +32,6 @@ bool SipCallEngine::TransferAttended(int callId, int targetCallId) {
 
 int SipCallEngine::CallCount() const { return engine_.CallCount(); }
 
+int SipCallEngine::RoomAdd(const std::string& number) { return engine_.RoomAdd(number); }
+
 }  // namespace starsonic

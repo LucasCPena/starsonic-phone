@@ -31,6 +31,9 @@ public:
     virtual bool Transfer(int callId, const std::string& number) = 0;
     virtual bool TransferAttended(int callId, int targetCallId) = 0;
     virtual int CallCount() const = 0;
+    // A sala de vídeo em grupo: liga para o convidado e o põe na sala (sem sala, ela nasce da ligação de agora). O id
+    // da ligação dele (os eventos dela e os OnRoom trazem o mesmo), ou -1: não ligou.
+    virtual int RoomAdd(const std::string& number) = 0;
 };
 
 // O SipEngine como CallEngine: cada método chama o do mesmo nome. O SipEngine precisa durar mais que
@@ -53,6 +56,7 @@ public:
     bool Transfer(int callId, const std::string& number) override;
     bool TransferAttended(int callId, int targetCallId) override;
     int CallCount() const override;
+    int RoomAdd(const std::string& number) override;
 
 private:
     SipEngine& engine_;
