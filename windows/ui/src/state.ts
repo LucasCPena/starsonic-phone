@@ -157,6 +157,43 @@ export interface CallCard {
   video?: CallVideo;
 }
 
+/** (0.4.0) O estado de um convidado na sala. */
+export type EstadoNaSala = 'chamando' | 'naSala' | 'emEspera';
+
+/** (0.4.0) O quadro do convidado no mosaico do `remoto`, em frações de 0 a 1 da imagem. */
+export interface QuadroDaSala {
+  /** O canto de cima à esquerda. */
+  x: number;
+  y: number;
+  largura: number;
+  altura: number;
+}
+
+/** (0.4.0) Um convidado da sala (não é uma linha da tela). */
+export interface ParticipanteDaSala {
+  /** O id da ligação dele no motor (o do `salaTirar`). */
+  id: number;
+  numero: string;
+  /** Já resolvido, como nos cartões; "" sem nenhum (a interface mostra o número). */
+  nome: string;
+  estado: EstadoNaSala;
+  /** A imagem dele está chegando (sem ela, o quadro dele fica com o fundo). */
+  imagem: boolean;
+  quadro: QuadroDaSala;
+}
+
+/** (0.4.0) A sala de vídeo em grupo (docs/ponte-windows.md, "O ligacao.sala"). */
+export interface SalaDaLigacao {
+  /** O id da linha da sala (`top.id`, ou `second.id` com você fora). */
+  id: number;
+  /** Você está fora da sala (a ligação de fora): a nossa voz e a nossa câmera saíram dela. */
+  fora: boolean;
+  /** 5 convidados, contando os chamados: o `salaAdicionar` não faz nada. */
+  cheia: boolean;
+  /** Na ordem em que entraram; o primeiro é a ligação de onde a sala nasceu. Quem monta não está na lista. */
+  participantes: ParticipanteDaSala[];
+}
+
 export interface CallState {
   top: CallCard;
   second: CallCard | null;
@@ -167,6 +204,11 @@ export interface CallState {
   conferenceSinceMs: number;
   consulting: boolean;
   colleagueActive: boolean;
+  /**
+   * (0.4.0) A sala de pé (em cima ou em espera), ou `null`. Sempre vem do núcleo; o `?` protege o estado montado à mão
+   * nos testes de antes.
+   */
+  sala?: SalaDaLigacao | null;
 }
 
 export interface RecentCall {
@@ -449,7 +491,13 @@ export type Command =
   | { cmd: 'videoViews'; pagina: PaginaDeVideo; vistas: VistaDeVideoNome[] }
   | { cmd: 'videoWindow'; modo: VideoJanela }
   | { cmd: 'h264Retry' }
-  | { cmd: 'noticeHeight'; altura: number };
+  | { cmd: 'noticeHeight'; altura: number }
+  /** (0.4.0; o iPhone recusa) A sala: o Adicionar à sala (`contato`: o número de um contato, com a regra dos contatos,
+   *  como no `dial`), o Tirar da sala (o `id` de um convidado), o Encerrar a sala e o Voltar para a sala. */
+  | { cmd: 'salaAdicionar'; numero: string; contato?: boolean }
+  | { cmd: 'salaTirar'; id: number }
+  | { cmd: 'salaEncerrar' }
+  | { cmd: 'salaVoltar' };
 
 /**
  * Os únicos endereços que o openExternal aceita. O `suporte` (o discador do iPhone) só vale no modo iPhone: no Windows o

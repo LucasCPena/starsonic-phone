@@ -692,8 +692,9 @@ download dos arquivos.
 A videochamada em grupo, só no Windows (spec do vídeo em grupo): quem monta a sala (este app) liga para os convidados,
 e todos se ouvem e se veem. A sala tem até 6 pessoas: quem monta e mais 5 convidados, contando os que ainda são
 chamados. Cada convidado é uma ligação, com o id e os eventos de sempre; a sala é uma linha da tela, com um id próprio
-(do mesmo contador das ligações), que nasce no lugar da ligação de onde ela vem. As telas da sala e a ponte falsa delas
-(`windows/ui/src/fake.ts`) seguem na etapa 3b: até lá, a interface não usa os comandos nem o `ligacao.sala` abaixo.
+(do mesmo contador das ligações), que nasce no lugar da ligação de onde ela vem. A interface desenha a sala
+(`windows/ui/src/sala/`) com estes comandos e o `ligacao.sala`, e a ponte falsa dos testes (`windows/ui/src/fake-sala.ts`)
+os imita.
 
 ### Os comandos da sala
 

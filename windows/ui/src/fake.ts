@@ -27,6 +27,9 @@
 // não tem memória), o `__fake.esvaziar(vista)` a esvazia, o `__fake.memoriaCrua(dados, bytes)` entrega uma memória
 // qualquer, o `__fake.liberadas()` conta as que a página soltou (como no WebView2, uma memória solta fica inacessível) e
 // o `__fake.eventoCru(evento)` põe um evento qualquer no ouvinte das memórias.
+// (0.4.0) A sala de vídeo (src/fake-sala.ts) faz o papel do núcleo na sala: os quatro comandos dela e os de sempre com a
+// sala de pé passam antes por ela, e o `fora` e o `cheia` de toda ligação com sala seguem a ligação (o `acertarSala`).
+import { acertarSala, criarSalaFalsa } from './fake-sala';
 import { AGENDA_DE_EXEMPLO, createScenario, entrarVazio, estadoDoIphone, PLANILHA_DA_EMPRESA, SERVIDORES_DO_PERFIL, type FakeView } from './fake-scenarios';
 import { trimAscii } from './format';
 import { escreverQuadro, esvaziar as esvaziarMemoria, TAMANHO_DA_MEMORIA, type Plano } from './video/memoria';
@@ -225,9 +228,13 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
     if (!ios) deliver({ v: 1, type: 'ring', tipo } satisfies IncomingMessage);
   };
   const toast = (texto: string) => deliver({ v: 1, type: 'toast', texto } satisfies IncomingMessage);
-  // Quando a última ligação acaba, a janela do vídeo volta a `normal` (o núcleo).
+  // Quando a última ligação acaba, a janela do vídeo volta a `normal` (o núcleo). (0.4.0) A sala vai com o `fora` e o
+  // `cheia` da ligação.
   const setCall = (ligacao: CallState | null) =>
-    change({ ligacao, ...(ligacao === null && state.video && state.video.janela !== 'normal' ? { video: { ...state.video, janela: 'normal' as const } } : {}) });
+    change({
+      ligacao: ligacao && acertarSala(ligacao),
+      ...(ligacao === null && state.video && state.video.janela !== 'normal' ? { video: { ...state.video, janela: 'normal' as const } } : {}),
+    });
 
   // (rc.4) A planilha da empresa do C++ de mentira: o link salvo é lido ("lendo") e, um instante depois, a leitura é boa
   // e traz a planilha de exemplo; a que volta depois de o link mudar é descartada. O link vazio tira a lista. Como no
@@ -364,6 +371,8 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
   });
 
   let proximoId = 40;
+  // (0.4.0) A sala de vídeo, com os ids do mesmo contador das ligações.
+  const salaFalsa = criarSalaFalsa({ estado: () => state, mudarLigacao: setCall, toast, toque: ring, novoId: () => ++proximoId });
   /** A segunda ligação feita (Nova ligação ou Consultar): a de agora vai para a espera e a nova chama. */
   const ligarDeNovo = (l: CallState, numero: string, consulta: boolean) => {
     const contato = state.contatos.find((c) => c.numero === numero);
@@ -379,6 +388,7 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
   };
   /** As ligações do C++ de mentira: só o bastante para a tela da ligação seguir os botões. */
   const handleCall = (command: Record<string, unknown>): boolean => {
+    if (salaFalsa.comando(command)) return true;
     const l = state.ligacao;
     switch (command.cmd) {
       case 'answer':

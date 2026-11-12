@@ -5,8 +5,25 @@
 // vêm do servidor do chat (o de teste, pelo `chat=` da URL: fake.ts).
 // (0.3.0) O vídeo: o `principal` vem com o vídeo ligado, como o app de fábrica (o H.264 e o VP8), e os cenários `video`,
 // `video-voz-camera`, `video-tocando`, `video-porteiro`, `video-grande`, `sem-video` e `sem-camera`.
+// (0.4.0) A sala de vídeo (o quadro "Starsonic Phone — sala de vídeo"): a sala de id 30, com os convidados em cima ou com a
+// ligação de fora (`sala`, `sala-estados`, `sala-cheia`, `sala-ligacao-de-fora`, `sala-fora`, `sala-de-volta` e
+// `sala-grande`), e o que um convidado vê (`sala-convidado`). Fora deles, o `ligacao.sala` é `null`, também no iPhone.
+import { arrumacao } from './sala/mosaico';
 import { SEM_VIDEO, VIDEO_DESLIGADO } from './video/estado';
-import type { AdminServer, AgendaContact, AgendaPermission, AppState, CallCard, CallState, CallVideo, CompanyContact, RingKind, Shortcut } from './state';
+import type {
+  AdminServer,
+  AgendaContact,
+  AgendaPermission,
+  AppState,
+  CallCard,
+  CallState,
+  CallVideo,
+  CompanyContact,
+  EstadoNaSala,
+  RingKind,
+  SalaDaLigacao,
+  Shortcut,
+} from './state';
 
 /** A tela em que a interface abre (só na ponte falsa; o app real sempre abre no Teclado). */
 export type FakeView = 'teclado' | 'atalhos' | 'recentes' | 'contatos' | 'chat' | 'configuracoes' | 'sobre';
@@ -113,12 +130,13 @@ export function estadoDoIphone(state: AppState, permissao: AgendaPermission): Ap
     empresa: { link: '', situacao: 'nenhuma', erro: '', atualizadaEm: 0, quantos: 0, vez: 0 },
     audio: { microfones: [], altoFalantes: [], microfone: '', altoFalante: '', toque: '', desconectados: [] },
     recentes: state.recentes.map((r) => ({ ...r, contatoId: '' })),
-    // Só o Windows tem vídeo: o do iPhone é o neutro, e cada cartão da ligação vem sem vídeo.
+    // Só o Windows tem vídeo e a sala: o vídeo do iPhone é o neutro, cada cartão da ligação vem sem vídeo, e nenhuma sala.
     video: structuredClone(VIDEO_DESLIGADO),
     ligacao: state.ligacao && {
       ...state.ligacao,
       top: { ...state.ligacao.top, video: { ...SEM_VIDEO } },
       second: state.ligacao.second && { ...state.ligacao.second, video: { ...SEM_VIDEO } },
+      sala: null,
     },
   };
 }
@@ -237,12 +255,18 @@ function ligacao(top: CallCard, extra: Partial<CallState> = {}): CallState {
     conferenceSinceMs: 0,
     consulting: false,
     colleagueActive: false,
+    sala: null,
     ...extra,
   };
 }
 
 const ANA = { id: 11, number: '2003', name: 'Ana Souza' } as const;
 const CARLOS = { id: 12, number: '2007', name: 'Carlos Lima' } as const;
+// (0.4.0) Os outros convidados da sala e a ligação de fora.
+const BIA = { id: 13, number: '2005', name: 'Bia Ramos' } as const;
+const DAVI = { id: 14, number: '2006', name: 'Davi Nunes' } as const;
+const ELISA = { id: 15, number: '2008', name: 'Elisa Prado' } as const;
+const ROBERTO = { id: 16, number: '2012', name: 'Roberto Lima' } as const;
 
 /** Os cenários da tela da ligação (o canvas: Chamada, Consulta, Conferência e Recebida). */
 function cenarioDeLigacao(nome: string): Scenario | undefined {
@@ -366,6 +390,120 @@ function cenarioDeVideo(nome: string): Scenario | undefined {
   }
 }
 
+/** (0.4.0) O id da linha da sala nos cenários (do mesmo contador das ligações). */
+const ID_DA_SALA = 30;
+
+/**
+ * (0.4.0) A linha da sala, atendida há `haMs` ms: o número e o nome vazios, e o vídeo da sala (o mosaico chegando ao
+ * `remoto` e a nossa câmera chegando aos convidados).
+ */
+function linhaDaSala(haMs: number, extra: Partial<CallCard> = {}): CallCard {
+  return cartao(ID_DA_SALA, '', '', { activeSinceMs: desde(haMs), video: { ...SEM_VIDEO, ativo: true, imagem: true, camera: true }, ...extra });
+}
+
+type Convidado = [pessoa: { id: number; number: string; name: string }, estado: EstadoNaSala, imagem: boolean];
+
+/** (0.4.0) A sala de id 30 com os convidados, na ordem, cada um no quadro dele da arrumação do núcleo. */
+function salaCom(convidados: Convidado[], extra: Partial<Pick<SalaDaLigacao, 'fora' | 'cheia'>> = {}): SalaDaLigacao {
+  const quadros = arrumacao(convidados.length);
+  return {
+    id: ID_DA_SALA,
+    fora: false,
+    cheia: false,
+    participantes: convidados.map(([p, estado, imagem], i) => ({ id: p.id, numero: p.number, nome: p.name, estado, imagem, quadro: quadros[i] })),
+    ...extra,
+  };
+}
+
+/**
+ * (0.4.0) Os cenários da sala, como os quadros Sala, SalaEstados, SalaCheia, LigacaoDeFora, ForaDaSala, Grande e
+ * Convidado: os tempos são os deles. A ligação de fora é o Roberto, só com a voz.
+ */
+function cenarioDaSala(nome: string): Scenario | undefined {
+  const comLigacao = (l: CallState): AppState => ({ ...principal(), ligacao: l });
+  const naSala = (p: Convidado[0]): Convidado => [p, 'naSala', true];
+  const anaECarlos = [naSala(ANA), naSala(CARLOS)];
+  switch (nome) {
+    case 'sala':
+      return { state: comLigacao(ligacao(linhaDaSala(5 * MINUTO + 41 * SEGUNDO), { sala: salaCom(anaECarlos) })) };
+    case 'sala-estados':
+      // Um convidado de cada jeito: com a imagem, ainda chamando, sem vídeo e em espera.
+      return {
+        state: comLigacao(
+          ligacao(linhaDaSala(8 * MINUTO + 20 * SEGUNDO), {
+            sala: salaCom([naSala(ANA), [CARLOS, 'chamando', false], [BIA, 'naSala', false], [DAVI, 'emEspera', false]]),
+          }),
+        ),
+      };
+    case 'sala-cheia':
+      return {
+        state: comLigacao(
+          ligacao(linhaDaSala(12 * MINUTO + 5 * SEGUNDO), { sala: salaCom([ANA, CARLOS, BIA, DAVI, ELISA].map(naSala), { cheia: true }) }),
+        ),
+      };
+    case 'sala-ligacao-de-fora':
+      // O Roberto tocando como a segunda, com o bipe de espera.
+      return {
+        state: comLigacao(
+          ligacao(linhaDaSala(6 * MINUTO + 58 * SEGUNDO), {
+            second: cartao(ROBERTO.id, ROBERTO.number, ROBERTO.name, { incoming: true, phase: 'ringing' }),
+            secondKind: 'ringing',
+            sala: salaCom(anaECarlos),
+          }),
+        ),
+        ring: 'espera',
+      };
+    case 'sala-fora':
+      // O Roberto atendido em cima, e você fora da sala: ela em espera embaixo.
+      return {
+        state: comLigacao(
+          ligacao(cartao(ROBERTO.id, ROBERTO.number, ROBERTO.name, { incoming: true, activeSinceMs: desde(42 * SEGUNDO) }), {
+            second: linhaDaSala(7 * MINUTO + 12 * SEGUNDO, { held: true }),
+            secondKind: 'held',
+            sala: salaCom(anaECarlos, { fora: true }),
+          }),
+        ),
+      };
+    case 'sala-de-volta':
+      // De volta à sala, com o Roberto em espera.
+      return {
+        state: comLigacao(
+          ligacao(linhaDaSala(7 * MINUTO + 30 * SEGUNDO), {
+            second: cartao(ROBERTO.id, ROBERTO.number, ROBERTO.name, { incoming: true, activeSinceMs: desde(MINUTO + 5 * SEGUNDO), held: true }),
+            secondKind: 'held',
+            sala: salaCom(anaECarlos),
+          }),
+        ),
+      };
+    case 'sala-grande': {
+      const state = comLigacao(ligacao(linhaDaSala(9 * MINUTO + 12 * SEGUNDO), { sala: salaCom([ANA, CARLOS, BIA].map(naSala)) }));
+      return { state: { ...state, video: { ...state.video!, janela: 'grande' } } };
+    }
+    case 'sala-convidado': {
+      // O que o convidado vê: a conta da Ana Souza numa videochamada comum com a Recepção, que montou a sala e ligou
+      // para ela (só quem monta tem o `ligacao.sala`).
+      const state = principal();
+      const conta = { ...state.conta!, nome: 'Ana Souza', ramal: '2003' };
+      return {
+        state: {
+          ...state,
+          conta,
+          contas: state.contas.map((c) => (c.id === conta.id ? { ...c, nome: conta.nome, ramal: conta.ramal } : c)),
+          ligacao: ligacao(
+            cartao(11, '2001', 'Recepção', {
+              incoming: true,
+              activeSinceMs: desde(5 * MINUTO + 41 * SEGUNDO),
+              video: { ...SEM_VIDEO, ativo: true, imagem: true, camera: true },
+            }),
+          ),
+        },
+      };
+    }
+    default:
+      return undefined;
+  }
+}
+
 /**
  * (0.2.0) Os cenários do chat, na aba Chat, com a conta em uso só: o computador ligado ao chat (a chave é o parâmetro
  * `chave`: sem ela, ele fica fora, como o C++ sem chave guardada) ou não (`chat-desligado`), e a conta em uso já conectada
@@ -472,7 +610,7 @@ export function createScenario(nome: string): Scenario | undefined {
     case 'empresa-antes-do-estado':
       return { ...comPlanilhaDaEmpresa(), empresaAntesDoEstado: true };
     default:
-      return cenarioDeLigacao(nome) ?? cenarioDeVideo(nome) ?? cenarioDoChat(nome);
+      return cenarioDeLigacao(nome) ?? cenarioDeVideo(nome) ?? cenarioDaSala(nome) ?? cenarioDoChat(nome);
   }
 }
 
@@ -504,6 +642,14 @@ export const SCENARIO_NAMES = [
   'video-grande',
   'sem-video',
   'sem-camera',
+  'sala',
+  'sala-estados',
+  'sala-cheia',
+  'sala-ligacao-de-fora',
+  'sala-fora',
+  'sala-de-volta',
+  'sala-grande',
+  'sala-convidado',
   'chat',
   'chat-desligado',
   'chat-sem-conta',
