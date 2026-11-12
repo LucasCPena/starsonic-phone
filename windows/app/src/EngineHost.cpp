@@ -322,6 +322,10 @@ void EngineHost::OnCameraProblem(CameraProblem problem) {
     if (EngineListener* listener = listener_.load()) listener->OnCameraProblem(problem);
 }
 
+void EngineHost::OnRoom(const RoomInfo& room) {
+    if (EngineListener* listener = listener_.load()) listener->OnRoom(room);
+}
+
 void EngineHost::OnLog(int level, const std::string& line) {
     // Como o DesktopApp::OnLog, sem passar pela fila (o OnLog chega com as travas do motor presas).
     if (log_) log_("motor " + std::to_string(level) + ": " + line);

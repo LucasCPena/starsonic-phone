@@ -118,6 +118,11 @@ CommandPlatform PlatformOf(const Command& command) {
         case CommandKind::NoticeHeight:
         case CommandKind::H264Retry:
         case CommandKind::Camera:
+        // 0.4.0: a sala de video (o motor do iPhone nao tem video).
+        case CommandKind::RoomAdd:
+        case CommandKind::RoomRemove:
+        case CommandKind::RoomEnd:
+        case CommandKind::RoomReturn:
             return CommandPlatform::Windows;
         case CommandKind::ContactsOpened:
         case CommandKind::AllowContacts:
@@ -170,6 +175,28 @@ std::string LogName(const Command& command) {
     std::string name = CommandName(command.kind);
     if (command.kind == CommandKind::SetSetting) name += " " + command.key;
     return name;
+}
+
+// 0.4.0: a linha do diagnostico de um aviso da sala (o OnRoomEvent do controlador): so as contagens e o codigo SIP,
+// nunca um nome ou um numero de telefone.
+std::string RoomEventLine(RoomEvent event, int value) {
+    switch (event) {
+        case RoomEvent::Started:
+            return "sala: comecou";
+        case RoomEvent::Entered:
+            return "sala: entrou (" + std::to_string(value) + " na sala)";
+        case RoomEvent::Left:
+            return "sala: saiu (" + std::to_string(value) + " na sala)";
+        case RoomEvent::Failed:
+            return "sala: falhou (" + std::to_string(value) + ")";
+        case RoomEvent::Out:
+            return "sala: fora";
+        case RoomEvent::Back:
+            return "sala: voltou";
+        case RoomEvent::Ended:
+            break;
+    }
+    return "sala: acabou";
 }
 
 std::optional<SavedAccount> FindAccount(const AccountsStore& store, const std::string& id) {
@@ -376,6 +403,12 @@ public:
     void OnVideoRefused() override {
         DesktopApp& app = app_;
         app.Post([&app] { app.HandleVideoRefused(); });
+    }
+    // 0.4.0: cada aviso da sala vira uma linha do diagnostico (o aviso do convidado que nao entra e o endMessage do
+    // estado, acima).
+    void OnRoomEvent(RoomEvent event, int value) override {
+        DesktopApp& app = app_;
+        app.Post([&app, event, value] { app.Log(RoomEventLine(event, value)); });
     }
 
 private:
@@ -585,6 +618,10 @@ void DesktopApp::OnCallState(int callId, CallState state, int sipCode) {
 
 void DesktopApp::OnCallVideo(int callId, const CallVideo& video) {
     controller_->OnCallVideo(callId, video);
+}
+
+void DesktopApp::OnRoom(const RoomInfo& room) {
+    controller_->OnRoom(room);
 }
 
 void DesktopApp::OnTransfer(int callId, int sipCode) {
@@ -964,6 +1001,24 @@ void DesktopApp::Execute(const Command& command, bool noticePage) {
             } else if (hooks_.noticeHeight) {
                 hooks_.noticeHeight(command.noticeHeight);
             }
+            break;
+        // 0.4.0: a sala de video (so no Windows: PlatformOf), pelo controlador. Os comandos nao deixam linha propria no
+        // diagnostico: as linhas da sala sao as do OnRoomEvent, sem o numero do convidado.
+        case CommandKind::RoomAdd:
+            if (command.contact) {
+                controller_->RoomAddContact(command.number);
+            } else {
+                controller_->RoomAdd(command.number);
+            }
+            break;
+        case CommandKind::RoomRemove:
+            controller_->RoomRemove(command.callId.value_or(0));   // o ParseCommand sempre traz o id
+            break;
+        case CommandKind::RoomEnd:
+            controller_->RoomEnd();
+            break;
+        case CommandKind::RoomReturn:
+            controller_->RoomReturn();
             break;
     }
 }

@@ -85,6 +85,10 @@ enum class CommandKind {
     H264Retry,       // tentar de novo baixar o modulo H.264 depois de uma falha
     Camera,          // a nossa camera na ligacao de cima: ligar ou desligar (o on)
     NoticeHeight,    // a altura do aviso de ligacao recebida (so da pagina do aviso; o noticeHeight)
+    RoomAdd,         // 0.4.0: a sala de video (so no Windows): por o numero na sala (salaAdicionar)
+    RoomRemove,      // tirar o convidado do id da sala (salaTirar)
+    RoomEnd,         // encerrar a sala para todos (salaEncerrar)
+    RoomReturn,      // voltar para a sala, com a ligacao de fora (salaVoltar)
 };
 
 // Um servidor da lista do administrador (adminSet e o estado): o endereco (UTF-8) e a porta (UDP e TCP).
@@ -136,10 +140,12 @@ struct Command {
     std::string password;
     std::string name;
     std::string accountId;
-    // dial, transfer e consult (com contact: o numero de um contato, pela regra dos contatos); saveContact: numero.
+    // dial, transfer, consult e (0.4.0) salaAdicionar (com contact: o numero de um contato, pela regra dos contatos);
+    // saveContact: numero.
     std::string number;
     bool contact = false;
-    // hangup: o id do cartao (ausente: a ligacao ativa; 0: a feita que ainda nao tem id).
+    // hangup: o id do cartao (ausente: a ligacao ativa; 0: a feita que ainda nao tem id). salaTirar (0.4.0): o id do
+    // convidado (sempre presente, de 1 para cima).
     std::optional<int> callId;
     // hold e mute (ausente: troca); setDnd e setAutoAnswer (sempre presente).
     std::optional<bool> on;
@@ -336,7 +342,7 @@ struct BridgeState {
     bool doNotDisturb = false;              // naoPerturbe
     bool autoAnswer = false;                // atenderAutomatico.on
     int autoAnswerSeconds = 3;              // atenderAutomatico.segundos
-    CallSnapshot call;                      // ligacao (null sem ligacao: sem top)
+    CallSnapshot call;                      // ligacao (null sem ligacao: sem top), com a sala (0.4.0) em ligacao.sala
     std::vector<RecentView> recents;        // recentes (a mais nova primeiro)
     int missed = 0;                         // perdidas
     std::vector<ContactView> contacts;      // contatos (por nome)

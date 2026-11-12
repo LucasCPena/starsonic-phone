@@ -80,6 +80,10 @@ const Name kNames[] = {
     {CommandKind::NoticeHeight, "noticeHeight"},
     {CommandKind::H264Retry, "h264Retry"},
     {CommandKind::Camera, "camera"},
+    {CommandKind::RoomAdd, "salaAdicionar"},
+    {CommandKind::RoomRemove, "salaTirar"},
+    {CommandKind::RoomEnd, "salaEncerrar"},
+    {CommandKind::RoomReturn, "salaVoltar"},
 };
 
 // Os limites dos textos do chat (docs/ponte-windows.md, "Os comandos do chat"), em caracteres.
@@ -298,9 +302,39 @@ Out CallJson(const CallView& view) {
     return out;
 }
 
-// O CallSnapshot com os nomes dos campos do C++. Na conferencia o controlador deixa a segunda como Held (com held
-// false): aqui ela sai como "active", e a interface olha o conference antes do secondKind. O endMessage vai como
-// toast (DesktopApp), nao no estado.
+const char* MemberStateName(RoomMember::State state) {
+    switch (state) {
+        case RoomMember::State::In:
+            return "naSala";
+        case RoomMember::State::Held:
+            return "emEspera";
+        case RoomMember::State::Calling:
+            break;
+    }
+    return "chamando";
+}
+
+// 0.4.0: a sala de video em grupo (o RoomView do controlador), com os nomes da ponte: cada convidado com o nome ja
+// resolvido (como nos cartoes) e o quadro dele no mosaico de quem montou, de 0 a 1.
+Out RoomJson(const RoomView& room) {
+    Out members = Out::array();
+    for (const RoomMemberView& member : room.members) {
+        members.push_back(Out{{"id", member.id},
+                              {"numero", member.number},
+                              {"nome", member.name},
+                              {"estado", MemberStateName(member.state)},
+                              {"imagem", member.image},
+                              {"quadro", Out{{"x", member.tile.x},
+                                             {"y", member.tile.y},
+                                             {"largura", member.tile.width},
+                                             {"altura", member.tile.height}}}});
+    }
+    return Out{{"id", room.id}, {"fora", room.out}, {"cheia", room.full}, {"participantes", members}};
+}
+
+// O CallSnapshot com os nomes dos campos do C++ (menos a sala, 0.4.0, com os da ponte). Na conferencia o controlador
+// deixa a segunda como Held (com held false): aqui ela sai como "active", e a interface olha o conference antes do
+// secondKind. O endMessage vai como toast (DesktopApp), nao no estado.
 Out SnapshotJson(const CallSnapshot& call) {
     if (!call.top) return Out();
     Out out;
@@ -322,6 +356,7 @@ Out SnapshotJson(const CallSnapshot& call) {
     out["conferenceSinceMs"] = call.conferenceSinceMs;
     out["consulting"] = call.consulting;
     out["colleagueActive"] = call.colleagueActive;
+    out["sala"] = call.room ? RoomJson(*call.room) : Out();   // null sem sala, como o second
     return out;
 }
 
@@ -448,10 +483,19 @@ std::optional<Command> ParseCommand(const std::string& text, std::string* error)
         case CommandKind::Dial:
         case CommandKind::Transfer:
         case CommandKind::Consult:
+        case CommandKind::RoomAdd:   // 0.4.0: o salaAdicionar, como o dial (sem o video: a sala ja e de video)
             f.Text("numero", &command.number, true);
             f.Flag("contato", &command.contact, false);
             if (command.kind == CommandKind::Dial) f.Flag("video", &command.video, false);   // 0.3.0
             break;
+        // 0.4.0: o salaTirar leva o id do convidado (o id da ligacao dele no motor, de 1 para cima).
+        case CommandKind::RoomRemove: {
+            int64_t id = 0;
+            f.Whole("id", INT32_MAX, &id);
+            if (f.ok() && id < 1) f.Fail("id invalido");
+            command.callId = static_cast<int>(id);
+            break;
+        }
         case CommandKind::Hangup:
             f.Count("id", &command.callId);
             break;
@@ -647,6 +691,8 @@ std::optional<Command> ParseCommand(const std::string& text, std::string* error)
         case CommandKind::ChatKey:
         case CommandKind::ChatUnlink:
         case CommandKind::H264Retry:
+        case CommandKind::RoomEnd:
+        case CommandKind::RoomReturn:
             break;
     }
     if (!f.ok()) return Refuse(error, cmd + ": " + f.error());

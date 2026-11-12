@@ -17,12 +17,12 @@
 //   (o Dial espera o MakeCall, o Hold ate ~2 s), e os efeitos de comandos de threads diferentes nao teriam ordem
 //   entre si. Com uma thread so, os comandos da interface chegam ao motor na ordem em que foram mandados (o
 //   SetAccount, que espera ate ~5 s, tambem roda nela).
-// - Os eventos de ligacao do motor (OnIncomingCall, OnRejectedBusy, OnCallState, OnTransfer, OnCallVideo) vao direto ao
-//   controlador, na thread de eventos do motor (o controlador tem a trava dele). O OnRegistration e o OnBlf vao para
-//   a fila (o OnBlf leva a vez das assinaturas de quando chegou: um aviso de uma assinatura que ja saiu, da conta
-//   anterior ou de um ramal que saiu e voltou a lista, nao vale).
-// - Os avisos do controlador (o estado da ligacao, os Recentes, a perdida e o toque) chegam em qualquer thread (a do
-//   motor, a de comandos ou a do agendador), na ordem dele, e vao para a fila na mesma ordem.
+// - Os eventos de ligacao do motor (OnIncomingCall, OnRejectedBusy, OnCallState, OnTransfer, OnCallVideo, OnRoom) vao
+//   direto ao controlador, na thread de eventos do motor (o controlador tem a trava dele). O OnRegistration e o OnBlf
+//   vao para a fila (o OnBlf leva a vez das assinaturas de quando chegou: um aviso de uma assinatura que ja saiu, da
+//   conta anterior ou de um ramal que saiu e voltou a lista, nao vale).
+// - Os avisos do controlador (o estado da ligacao, os Recentes, a perdida, o toque e os da sala) chegam em qualquer
+//   thread (a do motor, a de comandos ou a do agendador), na ordem dele, e vao para a fila na mesma ordem.
 // - Os callbacks do WhenIdle (a troca de conta e o Entrar esperando o fim da ligacao) rodam na thread do motor, na
 //   do agendador ou na de comandos: so poem a troca na fila (nunca a fazem ali, nem esperam um evento do motor).
 //   Quando a troca roda, confere de novo se ainda nao ha ligacao (uma pode ter chegado no meio) e, se ha, espera o
@@ -319,6 +319,13 @@ struct DesktopHooks {
 //     hooks.cameraBlocked (vazio: false).
 //   - videoViews e videoWindow so repassam ao executavel (os ganchos); o modo da janela volta a normal quando a ultima
 //     ligacao acaba. O diagnostico nunca leva o nome da camera.
+// - 0.4.0: a sala de video em grupo (docs/ponte-windows.md, "A sala de video (0.4.0)"), so no Windows. Os quatro
+//   pedidos vao ao controlador: salaAdicionar (RoomAdd; com o contato, RoomAddContact, pela regra dos contatos),
+//   salaTirar (RoomRemove), salaEncerrar (RoomEnd) e salaVoltar (RoomReturn). O OnRoom vai direto ao controlador, e o
+//   estado leva a sala em ligacao.sala. Cada aviso da sala (o OnRoomEvent) deixa uma linha "sala: ..." no diagnostico,
+//   so com as contagens e o codigo SIP, nunca um nome ou um numero de telefone. O convidado que nao entra mostra o
+//   aviso de 2 s de sempre (o endMessage, como toast). No iPhone, os quatro pedidos sao recusados como os do PC, e o
+//   ligacao.sala e sempre null (o motor do iPhone nunca avisa o OnRoom).
 class DesktopApp : public EngineListener {
 public:
     // O tempo do Entrar (spec do Windows 7.1).
@@ -416,6 +423,8 @@ public:
     void OnCameraProblem(CameraProblem problem) override;
     // 0.3.0: o video de uma ligacao, na thread de eventos do motor: vai direto ao controlador, como o OnCallState.
     void OnCallVideo(int callId, const CallVideo& video) override;
+    // 0.4.0: a sala de video, na thread de eventos do motor: vai direto ao controlador, como o OnCallVideo.
+    void OnRoom(const RoomInfo& room) override;
     void OnLog(int level, const std::string& line) override;
 
 private:

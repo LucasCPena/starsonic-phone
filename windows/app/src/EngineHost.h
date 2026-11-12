@@ -105,6 +105,7 @@ public:
     void OnBlf(const std::string& number, BlfState state) override;
     void OnCallVideo(int callId, const CallVideo& video) override;
     void OnCameraProblem(CameraProblem problem) override;
+    void OnRoom(const RoomInfo& room) override;   // (0.4.0) a sala de video
     void OnLog(int level, const std::string& line) override;
 
 private:

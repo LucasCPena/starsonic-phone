@@ -645,7 +645,8 @@ TEST_CASE("the call serializes with the names of the snapshot and the second of 
                         {"conference", false},
                         {"conferenceSinceMs", 0},
                         {"consulting", false},
-                        {"colleagueActive", false}}));
+                        {"colleagueActive", false},
+                        {"sala", nullptr}}));
 
     state.call.second->phase = CallView::Active;
     state.call.second->held = true;
@@ -927,4 +928,39 @@ TEST_CASE("noticeHeight takes a whole height between 168 and 480") {
     CHECK_FALSE(ParseCommand(R"({"v":1,"cmd":"noticeHeight","altura":481})"));
     CHECK_FALSE(ParseCommand(R"({"v":1,"cmd":"noticeHeight","altura":"222"})"));
     CHECK_FALSE(ParseCommand(R"({"v":1,"cmd":"noticeHeight","altura":222.5})"));
+}
+
+// 0.4.0: a sala de video (docs/ponte-windows.md, "A sala de video (0.4.0)").
+TEST_CASE("the room commands parse") {
+    // salaAdicionar: o numero (obrigatorio) e o contato (opcional; ausente, false), como o dial.
+    Command c = Parsed(R"({"v":1,"cmd":"salaAdicionar","numero":"2004"})");
+    CHECK(c.kind == CommandKind::RoomAdd);
+    CHECK(c.number == "2004");
+    CHECK_FALSE(c.contact);
+    c = Parsed(R"({"v":1,"cmd":"salaAdicionar","numero":"+55 11 98888-7777","contato":true})");
+    CHECK(c.kind == CommandKind::RoomAdd);
+    CHECK(c.number == "+55 11 98888-7777");
+    CHECK(c.contact);
+    CHECK(Refused(R"({"v":1,"cmd":"salaAdicionar"})"));
+    CHECK(Refused(R"({"v":1,"cmd":"salaAdicionar","numero":2004})"));
+    CHECK(Refused(R"({"v":1,"cmd":"salaAdicionar","numero":"2004","contato":"sim"})"));
+
+    // salaTirar: o id do convidado, um inteiro de 1 para cima, obrigatorio.
+    c = Parsed(R"({"v":1,"cmd":"salaTirar","id":31})");
+    CHECK(c.kind == CommandKind::RoomRemove);
+    CHECK(c.callId == 31);
+    CHECK(Refused(R"({"v":1,"cmd":"salaTirar"})"));
+    CHECK(Refused(R"({"v":1,"cmd":"salaTirar","id":0})"));
+    CHECK(Refused(R"({"v":1,"cmd":"salaTirar","id":"31"})"));
+    CHECK(Refused(R"({"v":1,"cmd":"salaTirar","id":-1})"));
+    CHECK(Refused(R"({"v":1,"cmd":"salaTirar","id":1.5})"));
+
+    // salaEncerrar e salaVoltar: sem campos.
+    CHECK(Parsed(R"({"v":1,"cmd":"salaEncerrar"})").kind == CommandKind::RoomEnd);
+    CHECK(Parsed(R"({"v":1,"cmd":"salaVoltar"})").kind == CommandKind::RoomReturn);
+
+    CHECK(std::string(CommandName(CommandKind::RoomAdd)) == "salaAdicionar");
+    CHECK(std::string(CommandName(CommandKind::RoomRemove)) == "salaTirar");
+    CHECK(std::string(CommandName(CommandKind::RoomEnd)) == "salaEncerrar");
+    CHECK(std::string(CommandName(CommandKind::RoomReturn)) == "salaVoltar");
 }
