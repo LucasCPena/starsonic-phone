@@ -37,7 +37,7 @@ Como montar, no Ubuntu 24.04 ou no Debian 12 (amd64), como root, numa máquina d
      cd ../freeswitch
      cp ../modules.conf .
      ./bootstrap.sh -j
-     ./configure --prefix=/opt/starsonic-freeswitch \
+     ./configure --prefix=/opt/starsonic-freeswitch --disable-fhs \
        PKG_CONFIG_PATH=/opt/starsonic-freeswitch/lib/pkgconfig \
        LDFLAGS=-Wl,-rpath,/opt/starsonic-freeswitch/lib
      make && make install

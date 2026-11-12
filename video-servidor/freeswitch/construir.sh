@@ -160,13 +160,15 @@ mkdir -p "$PREFIXO"
 montar_biblioteca sofia-sip --with-glib=no --without-doxygen
 montar_biblioteca spandsp
 
-# 3. O FreeSWITCH, com os módulos do modules.conf. Sem o --enable-optimization, que compila para o
-# processador desta máquina: o pacote tem de rodar em qualquer amd64.
+# 3. O FreeSWITCH, com os módulos do modules.conf. Com o --prefix, o configure espalha as pastas dele
+# pelo prefixo no jeito do FHS (lib/freeswitch/mod, share/freeswitch/fonts, etc/freeswitch...); com o
+# --disable-fhs, elas ficam direto no prefixo (mod/, fonts/, conf/...). Sem o --enable-optimization,
+# que compila para o processador desta máquina: o pacote tem de rodar em qualquer amd64.
 echo "freeswitch: compilando"
 cp "$AQUI/modules.conf" "$TRABALHO/freeswitch/modules.conf"
 cd "$TRABALHO/freeswitch"
 ./bootstrap.sh -j
-./configure --prefix="$PREFIXO" \
+./configure --prefix="$PREFIXO" --disable-fhs \
     PKG_CONFIG_PATH="$PREFIXO/lib/pkgconfig" LDFLAGS="-Wl,-rpath,$PREFIXO/lib"
 make -j"$JOBS"
 make install
