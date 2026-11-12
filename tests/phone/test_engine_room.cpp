@@ -220,6 +220,11 @@ const char kSendsHigh[] = "video: H264 1280x720 30 qps, envio ligado";
 const char kSendsMedium[] = "video: H264 640x480 25 qps, envio ligado";
 const char kSendsRoomMedium[] = "video: H264 640x480 15 qps, envio ligado";
 
+// A linha do motor quando o re-INVITE da qualidade de um convidado deixa de esperar outro re-INVITE dele, e a da PJSIP
+// a cada tentativa que encontra outro em andamento.
+const char kReinviteGaveUp[] = "o re-INVITE da qualidade da sala ficou para a proxima mudanca";
+const char kReinviteBusy[] = "Unable to create re-INVITE";
+
 // As escolhas dos testes da sala, na qualidade dada.
 VideoSettings RoomSettings(VideoQuality quality) {
     VideoSettings settings = RoomSettings();
@@ -1393,26 +1398,39 @@ TEST_CASE("from four guests the room uses the room medium and the guests already
     for (const char* number : {"2002", "2003", "2004", "2005"}) ShowColor(phone, number, kOrange);
     phone.listener.CountLog(kSendsMedium);
     phone.listener.CountLog(kSendsRoomMedium);
+    // Os re-INVITE de cada um dos que já estavam (a lista de codecs deles é a da PJSIP).
+    const std::vector<std::string> already{"2002", "2003", "2004"};
+    const auto reinvites = [&phone](const std::string& number) {
+        return LinesStartingWith(phone, "video-reinv " + number + " ");
+    };
 
     // Com três convidados, o teto da sala não muda a Média escolhida: cada um manda em 640x480, a 25 qps.
     VideoRoom(phone, 2);
     CHECK(WaitUntil([&] { return phone.listener.LogCount(kSendsMedium) >= 3; }, kWaitSeconds));
 
     // O quarto põe a sala na Média da sala (640x480, a 15 qps): ele já nasce nela, e cada um dos que já estavam ganha
-    // um re-INVITE (com a lista de codecs da PJSIP), uma vez, e volta a mandar no stream refeito.
+    // um re-INVITE e volta a mandar no stream refeito. Um só: depois que todos voltaram, nenhum segundo.
     const int g3 = Guest(phone, "2005");
-    for (const char* number : {"2002", "2003", "2004"}) {
-        const std::string reinvite = std::string("video-reinv ") + number + " ";
-        CAPTURE(reinvite);
-        CHECK(WaitUntil([&] { return LinesStartingWith(phone, reinvite) == 1; }, kWaitSeconds));
+    for (const std::string& number : already) {
+        CAPTURE(number);
+        CHECK(WaitUntil([&] { return reinvites(number) == 1; }, kWaitSeconds));
     }
     CHECK(WaitUntil([&] { return phone.listener.LogCount(kSendsRoomMedium) >= 4; }, kWaitSeconds));
     CHECK(NoLogLine(phone, "video-reinv 2005"));
+    for (const std::string& number : already) {
+        CAPTURE(number);
+        CHECK(reinvites(number) == 1);
+    }
 
-    // Ele sai: a sala volta à Média escolhida, e os três que ficam mandam de novo em 640x480, a 25 qps.
+    // Ele sai: a sala volta à Média escolhida, e os três que ficam ganham mais um re-INVITE cada e mandam de novo em
+    // 640x480, a 25 qps.
     const size_t medium = phone.listener.LogCount(kSendsMedium);
     REQUIRE(phone.engine->Hangup(g3));
     CHECK(WaitUntil([&] { return phone.listener.LogCount(kSendsMedium) >= medium + 3; }, kWaitSeconds));
+    for (const std::string& number : already) {
+        CAPTURE(number);
+        CHECK(reinvites(number) == 2);
+    }
 }
 
 TEST_CASE("the chosen quality comes back when the room ends") {
@@ -1442,6 +1460,35 @@ TEST_CASE("the chosen quality comes back when the room ends") {
     CHECK(LinesStartingWith(phone, "video-reinv 2002 ") == 2);
 }
 
+TEST_CASE("a quality re-INVITE blocked by a pending one stops retrying after the renegotiation wait") {
+    Phone phone;
+    INFO(phone.registrar.LogText());
+    INFO(phone.listener.LogTail());
+    phone.engine->SetVideoSettings(RoomSettings(VideoQuality::High));
+    WithoutVideo(phone, {"2003"});
+
+    // A videochamada na Alta. O registrador deixa os re-INVITE sem resposta (como um pacote perdido): o da sala, que
+    // leva a base ao teto de dois convidados, fica em andamento.
+    VideoCall(phone, "2002");
+    REQUIRE(phone.registrar.Control("DROP REINVITE on") == Lines{"OK"});
+    Guest(phone, "2003");
+
+    // Outro alvo (a Baixa, escolhida no meio da sala): o re-INVITE dele para a base encontra o primeiro em andamento e
+    // tenta de novo a cada 200 ms, por 2 s (o tempo do RetryWhileRenegotiating). Aí sai uma linha, e a base fica para a
+    // próxima mudança: nenhuma tentativa depois.
+    phone.listener.CountLog(kReinviteGaveUp);
+    phone.listener.CountLog(kReinviteBusy);
+    const Clock::time_point changed = Clock::now();
+    phone.engine->SetVideoSettings(RoomSettings(VideoQuality::Low));
+    CHECK(WaitUntil([&] { return phone.listener.LogCount(kReinviteGaveUp) >= 1; }, kWaitSeconds));
+    CHECK(Clock::now() - changed >= std::chrono::seconds(2));
+    const size_t busy = phone.listener.LogCount(kReinviteBusy);
+    CHECK(busy > 0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(600));
+    CHECK(phone.listener.LogCount(kReinviteBusy) == busy);
+    CHECK(phone.listener.LogCount(kReinviteGaveUp) == 1);
+}
+
 TEST_CASE("every guest sending gets a keyframe every 3 seconds") {
     Phone phone;
     INFO(phone.registrar.LogText());
@@ -1452,18 +1499,20 @@ TEST_CASE("every guest sending gets a keyframe every 3 seconds") {
     ShowColor(phone, "2004", kTeal);
     VideoRoom(phone, 2);
 
-    // Os quadros-chave do começo do stream do último que entrou (os da PJSIP, um por segundo, por uns 5 s) acabam antes
-    // da contagem. Nos 7 s dela, cada um manda o dele a cada 3 s, cada um no seu prazo: de 2 a 3, ou um a mais (um
-    // pedido que a PJSIP recusou volta 1 s depois). Mais de 4 seria o ritmo de 1 s: a recusa de um adiantando os
-    // outros.
-    std::this_thread::sleep_for(std::chrono::seconds(6));
+    // Os quadros-chave do começo do stream do último que entrou (os da PJSIP: o primeiro quadro e mais 5, um por
+    // segundo, por uns 5,3 s) acabam antes da contagem, que começa 6 s depois do primeiro pacote dele no registrador.
+    // Nos 7 s dela, cada um manda o seu a cada 3 s, no prazo dele: 2 ou 3. Mais seria o ritmo de antes, um temporizador
+    // só para todos, que voltava em 1 s a cada recusa de um (e cada um ficava com um a cada 2 s, uns 4 em 7 s).
+    REQUIRE(phone.registrar.WaitForPacketsOf("2004", 1, kColorSeconds));
+    const Clock::time_point firstPacket = Clock::now();
+    std::this_thread::sleep_until(firstPacket + std::chrono::seconds(6));
     phone.registrar.ResetVideoPackets();
     std::this_thread::sleep_for(std::chrono::seconds(7));
     for (const std::string number : {"2002", "2003", "2004"}) {
         CAPTURE(number);
         const int keyframes = phone.registrar.KeyframesOf(number);
         CHECK(keyframes >= 2);
-        CHECK(keyframes <= 4);
+        CHECK(keyframes <= 3);
     }
 }
 

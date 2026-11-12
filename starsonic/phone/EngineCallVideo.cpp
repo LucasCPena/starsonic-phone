@@ -37,7 +37,7 @@ const unsigned kKeyframeRetryMs = 1000;
 // tempo depois, e não logo: a falha que segue não vira um laço.
 const unsigned kSyncRetryMs = 1000;
 // O re-INVITE da qualidade que encontra outro em andamento na ligação (o PJ_EINVALIDOP) volta numa passada deste tempo
-// depois.
+// depois, até kRenegotiationWaitMs depois do primeiro (ver o ReinviteForQuality).
 const unsigned kReinviteRetryMs = 200;
 
 // O texto de um código do PJSIP, como no EngineCall.cpp.

@@ -445,6 +445,7 @@ bool CallTable::ReinviteForQuality() {
                 calls.emplace_back(slot.callId, slot.pjsuaId);
             } else {
                 slot.stayed = false;   // a que ficou segue como uma ligação comum
+                slot.reinviteBusySince = {};
             }
         }
     }
@@ -458,18 +459,28 @@ bool CallTable::ReinviteForQuality() {
         results.push_back(pjsua_call_reinvite2(call.second, &setting, nullptr));
     }
     bool busy = false;
+    const auto now = std::chrono::steady_clock::now();
     std::lock_guard<std::mutex> lock(mutex_);
     for (size_t index = 0; index < calls.size(); ++index) {
-        // Outro re-INVITE em andamento na ligação: a passada de daqui a pouco tenta de novo.
-        if (results[index] == PJ_EINVALIDOP) {
-            busy = true;
-            continue;
-        }
         Slot* slot = Find(calls[index].first);
         if (!slot) continue;
+        const pj_status_t result = results[index];
+        if (result == PJ_EINVALIDOP) {
+            // Outro re-INVITE em andamento na ligação: a passada de daqui a pouco tenta de novo, até
+            // kRenegotiationWaitMs depois do primeiro que o encontrou (o tempo do RetryWhileRenegotiating). Depois, ela
+            // fica para a próxima mudança do alvo.
+            if (slot->reinviteBusySince == std::chrono::steady_clock::time_point()) slot->reinviteBusySince = now;
+            if (now - slot->reinviteBusySince < std::chrono::milliseconds(kRenegotiationWaitMs)) {
+                busy = true;
+                continue;
+            }
+            Log(2, "o re-INVITE da qualidade da sala ficou para a proxima mudanca: outro re-INVITE nao terminou");
+        } else if (result != PJ_SUCCESS) {
+            Log(2, "o re-INVITE da qualidade da sala: " + StatusText(result));
+        }
         slot->qualitySerial = serial;   // um por mudança do alvo, também o que não saiu
         slot->stayed = false;
-        if (results[index] != PJ_SUCCESS) Log(2, "o re-INVITE da qualidade da sala: " + StatusText(results[index]));
+        slot->reinviteBusySince = {};
     }
     return busy;
 }

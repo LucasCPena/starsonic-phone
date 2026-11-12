@@ -239,8 +239,10 @@ public:
     // As escolhas do vídeo (spec da videochamada, 4.3 e 7), para as próximas ofertas e respostas: os codecs na ordem do
     // CodecOrder (prioridades 255, 254 e 253; os de fora ficam com 0 e a PJSIP nunca os oferece nem aceita), a
     // qualidade (o tamanho, os quadros por segundo e a taxa do codificador de cada codec, e a taxa da conta), o fmtp do
-    // H.264 (profile-level-id=42e01f, packetization-mode=1) e os Porteiros. O Create já aplica as de fábrica, com o
-    // h264Available do EngineConfig. Sem o vídeo (o Android) e no motor do baresip, nada.
+    // H.264 (profile-level-id=42e01f, packetization-mode=1) e os Porteiros. Com a sala de pé, o codificador fica na
+    // qualidade da sala, que nunca passa da escolhida (ver a sala, abaixo do StopCameraTest), e a escolhida nova no
+    // meio dela dá um re-INVITE a cada convidado que já atendeu; a taxa da conta é sempre a da escolhida. O Create já
+    // aplica as de fábrica, com o h264Available do EngineConfig. Sem o vídeo (o Android) e no motor do baresip, nada.
     void SetVideoSettings(const VideoSettings& settings);
 
     // Liga para sip:<número>@<domínio da conta> (number em UTF-8, já sem separadores; ver
@@ -362,13 +364,20 @@ public:
     // convidado (o Hangup dele, o fim do outro lado ou uma recusa) tira o quadro dele, e a sala se arruma; com um
     // convidado só, contando os chamados, ou nenhum, ela acaba: sai o OnRoom com o ended, e quem ficou volta a ser uma
     // ligação comum, com o desejo da câmera da sala, e é a ativa se a sala era a ativa (senão, ela espera sem o nosso
-    // som e sem re-INVITE, até um Activate). A imagem: com dois ou mais convidados que já atenderam (também os em
-    // espera), cada um recebe o mosaico dele, a nossa câmera primeiro e os outros que já atenderam, sem ele (um quadro
-    // sem imagem fica com o fundo); com um só, ele recebe a nossa câmera direto. Um convidado que pôs a ligação em
-    // espera (o Held) fica com o fundo no quadro dele e não recebe o mosaico dele até voltar (a direção negociada não
-    // deixa mandar). O mosaico de quem montou, com todos os convidados (também os chamados) na ordem de entrada, chega
-    // ao SetFrameSink com o id da sala. Sem câmera, os convidados recebem o mosaico do mesmo jeito, com o fundo no
-    // lugar da nossa câmera (a ligação de onde a sala nasce, que só recebia o vídeo, ganha um re-INVITE sendrecv).
+    // som e sem ir para a espera, até um Activate). A imagem: com dois ou mais convidados que já atenderam (também os
+    // em espera), cada um recebe o mosaico dele, a nossa câmera primeiro e os outros que já atenderam, sem ele (um
+    // quadro sem imagem fica com o fundo); com um só, ele recebe a nossa câmera direto. Um convidado que pôs a ligação
+    // em espera (o Held) fica com o fundo no quadro dele e não recebe o mosaico dele até voltar (a direção negociada
+    // não deixa mandar). O mosaico de quem montou, com todos os convidados (também os chamados) na ordem de entrada,
+    // chega ao SetFrameSink com o id da sala. Sem câmera, os convidados recebem o mosaico do mesmo jeito, com o fundo
+    // no lugar da nossa câmera (a ligação de onde a sala nasce, que só recebia o vídeo, ganha um re-INVITE sendrecv).
+    // A qualidade da imagem que cada convidado recebe (o tamanho, os quadros por segundo e a taxa do codificador) segue
+    // o número de convidados, contando os chamados (spec do vídeo em grupo, 7), e nunca passa da escolhida
+    // (SetVideoSettings): com dois ou três, até 640x480, 25 qps e 800 kbit/s; com quatro ou cinco, até 640x480, 15 qps
+    // e 600 kbit/s. A ligação de um convidado novo já nasce nela. Quando ela muda (um convidado entra ou sai, ou a
+    // escolhida muda), cada convidado que já atendeu, com o vídeo, ganha um re-INVITE com o vídeo, um por mudança,
+    // mesmo que o aparelho dele não chegue a ela (nenhum, se outro re-INVITE dele segue em andamento por 2 s). Quando a
+    // sala acaba, quem ficou volta à escolhida com um re-INVITE, também com você fora da sala.
     // Com a sala de pé, cabe uma ligação de fora, só com a voz (OnIncomingCall e MakeCall): atendida ou feita, ela é a
     // ativa e tira você da sala (o out do RoomInfo), sem re-INVITE para os convidados: o nosso som sai deles e a nossa
     // câmera sai dos mosaicos (o fundo no quadro dela), e eles seguem se ouvindo, cada um com o mosaico dele. O
@@ -384,11 +393,12 @@ public:
     // confirmada, com o vídeo negociado, fora da espera, da conferência e de uma transferência: ela é o primeiro
     // convidado, e a sala ganha um id novo, tirado antes do da ligação nova. Com sala, você precisa estar nela (o out
     // falso), ela não pode estar acabando (o Hangup do id dela) e precisa ter menos de kRoomMaxGuests convidados,
-    // contando os chamados. A ligação nova não põe nada em espera. Uma recusa dela (486, ou a da oferta de vídeo
-    // inteira, 488 ou 415) chega pelo Disconnected com o código, e a sala segue (ou acaba, se fica com um só). Devolve
-    // o id da ligação, ou -1: os casos acima, sem o VideoEnabled das escolhas, número vazio, sem conta ou o PJSIP
-    // recusou; com -1, nenhum evento dela chega e a sala não nasce. Os eventos podem chegar antes de RoomAdd voltar.
-    // Sem o vídeo no motor, sempre -1.
+    // contando os chamados. A ligação nova não põe nada em espera e já nasce na qualidade da sala com ela; se a
+    // qualidade muda, quem já atendeu ganha o re-INVITE dela (ver a sala, acima). Uma recusa dela (486, ou a da
+    // oferta de vídeo inteira, 488 ou 415) chega pelo Disconnected com o código, e a sala segue (ou acaba, se fica com
+    // um só). Devolve o id da ligação, ou -1: os casos acima, sem o VideoEnabled das escolhas, número vazio, sem conta
+    // ou o PJSIP recusou; com -1, nenhum evento dela chega e a sala não nasce. Os eventos podem chegar antes de RoomAdd
+    // voltar. Sem o vídeo no motor, sempre -1.
     int RoomAdd(const std::string& number);
 
     // A sala de agora, como o último OnRoom dela; RoomInfo{} sem sala (também depois do OnRoom com o ended). Não espera

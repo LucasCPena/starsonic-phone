@@ -37,9 +37,12 @@
 // cada passada do SyncVideo) em volta do pjsua_call_hangup. Com videoMutex_ presa só se chama o pjsua
 // (pjsua_call_get_info, pjsua_call_set_vid_strm, pjsua_call_reinvite2, pjsua_call_hangup, a prévia e os parâmetros
 // dos codecs, que pegam as travas dele, a de diálogo pelo try-lock do acquire_call), a lista de vídeo da PJSIP e
-// mutex_, por um instante; nenhum callback (que roda com a trava do diálogo) a pede. Os parâmetros de fábrica dos
-// codecs de vídeo só mudam com ela presa (a qualidade, e as prioridades e o fmtp do motor no SetVideoSettings): a PJSIP
-// solta os textos de antes a cada mudança, e uma leitura ao mesmo tempo ficaria com eles soltos.
+// mutex_, por um instante; nenhum callback (que roda com a trava do diálogo) a pede. Ela também põe em fila os nossos
+// escritores dos parâmetros de fábrica dos codecs de vídeo (a qualidade, e as prioridades e o fmtp do motor no
+// SetVideoSettings), cada um com a leitura e a escrita dele: a PJSIP solta os textos do fmtp de antes a cada mudança.
+// As leituras da própria PJSIP (o SDP de uma oferta ou de uma resposta: no makeCall, numa resposta, na espera, numa
+// oferta que chega) não a pedem, e uma mudança no meio de uma delas ainda pode soltar os textos que ela lê (uma janela
+// de microssegundos, que o SetVideoSettings no meio de uma ligação já tinha).
 //
 // A imagem e a câmera (também no EngineCallVideo.cpp): o desenhista nosso (VideoRenderer.h) pergunta à tabela, a cada
 // quadro de uma ligação e com a trava dele presa, se o quadro sai (FrameGate): a pausa da imagem o segura, e o primeiro
@@ -96,7 +99,8 @@
 // o vídeo e com o codificador diferente do alvo, um por mudança (o qualitySerial dela), mesmo que o aparelho não chegue
 // a ele: a pjsua refaz o stream com os parâmetros novos, sem o envio, que a passada seguinte liga de novo (com a linha
 // "video: ..."). O que encontra outro re-INVITE em andamento (o PJ_EINVALIDOP) volta numa passada kReinviteRetryMs
-// depois (o kReinviteTimer). A taxa da conta fica a da escolhida, o teto de todas.
+// depois (o kReinviteTimer), até kRenegotiationWaitMs depois do primeiro que o encontrou (reinviteBusySince); depois,
+// uma linha no log, e a ligação fica para a próxima mudança. A taxa da conta fica a da escolhida, o teto de todas.
 #include <pjsua2.hpp>
 
 #include <chrono>
@@ -333,6 +337,8 @@ private:
         // A qualidade (ver o topo do arquivo).
         int qualitySerial = 0;            // o qualitySerial_ do último re-INVITE dela (ou do alvo em que ela nasceu)
         bool stayed = false;              // a que ficou no fim da sala, até o SyncVideo conferir o codificador dela
+        // O primeiro PJ_EINVALIDOP do re-INVITE dela que ainda tenta de novo (o padrão: nenhum).
+        std::chrono::steady_clock::time_point reinviteBusySince;
     };
 
     // Com mutex_ preso. A vaga de callId (ou de call), ou nullptr.
@@ -454,7 +460,8 @@ private:
     void ApplyQuality();
     // Só no SyncVideo (com videoMutex_ presa, sem mutex_; EngineRoom.cpp): o re-INVITE de cada ligação da sala, ou da
     // que ficou no fim dela, que ainda não o recebeu por esta mudança do alvo e tem o codificador diferente dele. true:
-    // algum encontrou outro re-INVITE em andamento (o PJ_EINVALIDOP), e uma passada daqui a pouco tenta de novo.
+    // algum encontrou outro re-INVITE em andamento (o PJ_EINVALIDOP), e uma passada daqui a pouco tenta de novo; até
+    // kRenegotiationWaitMs depois do primeiro dela, e aí ela fica para a próxima mudança.
     bool ReinviteForQuality();
 
     // Os quadros das ligações que chegam ao desenhista (RemoteFrameGate) e o temporizador do remote.
