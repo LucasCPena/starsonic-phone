@@ -4,7 +4,8 @@
 // sala nos métodos de sempre, a ligação de fora (a que toca, a feita e a atendida, só com a voz, e a volta para a sala)
 // e o convidado que põe a sala em espera. E os mosaicos: o de cada convidado (o eco do registrador devolve o que ele
 // recebe) e o de quem montou (no FrameSink, com o id da sala), a nossa câmera neles e a lista de vídeo que muda no meio
-// da sala. Com o PJSIP sem o vídeo (como o do Android), só o contrato do motor sem sala, o mesmo do motor do baresip
+// da sala. E a qualidade da sala pelo número de convidados (o re-INVITE de quem já está nela) e o quadro-chave de cada
+// convidado. Com o PJSIP sem o vídeo (como o do Android), só o contrato do motor sem sala, o mesmo do motor do baresip
 // (test_engine_baresip.cpp).
 #include "call_fixture.h"
 
@@ -212,6 +213,19 @@ bool HasImage(const RoomInfo& room, int callId) {
 // do envio de uma ligação para desligado (a "video: ...").
 const char kRoomRestart[] = "os ids da sala mudaram na lista de video";
 const char kSendOff[] = "envio desligado";
+
+// A linha "video: ..." do envio que liga (também o que volta num stream refeito por um re-INVITE), no H.264 de cada
+// qualidade dos testes: a Alta, a Média (também o teto de dois ou três convidados) e a Média da sala (quatro ou cinco).
+const char kSendsHigh[] = "video: H264 1280x720 30 qps, envio ligado";
+const char kSendsMedium[] = "video: H264 640x480 25 qps, envio ligado";
+const char kSendsRoomMedium[] = "video: H264 640x480 15 qps, envio ligado";
+
+// As escolhas dos testes da sala, na qualidade dada.
+VideoSettings RoomSettings(VideoQuality quality) {
+    VideoSettings settings = RoomSettings();
+    settings.quality = quality;
+    return settings;
+}
 
 // Os valores de um plano da imagem, para a mensagem de um caso que falha.
 std::string ValuesText(const std::set<int>& values) {
@@ -1370,6 +1384,89 @@ TEST_CASE("a device refresh that moves no room device leaves every send and the 
     CHECK(HostFramesFlow(sink, roomId));
 }
 
+TEST_CASE("from four guests the room uses the room medium and the guests already in are rebuilt") {
+    Phone phone;
+    INFO(phone.registrar.LogText());
+    INFO(phone.listener.RoomsText());
+    INFO(phone.listener.LogTail());
+    phone.engine->SetVideoSettings(RoomSettings(VideoQuality::Medium));
+    for (const char* number : {"2002", "2003", "2004", "2005"}) ShowColor(phone, number, kOrange);
+    phone.listener.CountLog(kSendsMedium);
+    phone.listener.CountLog(kSendsRoomMedium);
+
+    // Com três convidados, o teto da sala não muda a Média escolhida: cada um manda em 640x480, a 25 qps.
+    VideoRoom(phone, 2);
+    CHECK(WaitUntil([&] { return phone.listener.LogCount(kSendsMedium) >= 3; }, kWaitSeconds));
+
+    // O quarto põe a sala na Média da sala (640x480, a 15 qps): ele já nasce nela, e cada um dos que já estavam ganha
+    // um re-INVITE (com a lista de codecs da PJSIP), uma vez, e volta a mandar no stream refeito.
+    const int g3 = Guest(phone, "2005");
+    for (const char* number : {"2002", "2003", "2004"}) {
+        const std::string reinvite = std::string("video-reinv ") + number + " ";
+        CAPTURE(reinvite);
+        CHECK(WaitUntil([&] { return LinesStartingWith(phone, reinvite) == 1; }, kWaitSeconds));
+    }
+    CHECK(WaitUntil([&] { return phone.listener.LogCount(kSendsRoomMedium) >= 4; }, kWaitSeconds));
+    CHECK(NoLogLine(phone, "video-reinv 2005"));
+
+    // Ele sai: a sala volta à Média escolhida, e os três que ficam mandam de novo em 640x480, a 25 qps.
+    const size_t medium = phone.listener.LogCount(kSendsMedium);
+    REQUIRE(phone.engine->Hangup(g3));
+    CHECK(WaitUntil([&] { return phone.listener.LogCount(kSendsMedium) >= medium + 3; }, kWaitSeconds));
+}
+
+TEST_CASE("the chosen quality comes back when the room ends") {
+    Phone phone;
+    INFO(phone.registrar.LogText());
+    INFO(phone.listener.RoomsText());
+    INFO(phone.listener.LogTail());
+    phone.engine->SetVideoSettings(RoomSettings(VideoQuality::High));
+    ShowColor(phone, "2002", kOrange);
+    ShowColor(phone, "2003", kPurple);
+    phone.listener.CountLog(kSendsHigh);
+    phone.listener.CountLog(kSendsMedium);
+
+    // A videochamada na Alta escolhida.
+    VideoCall(phone, "2002");
+    CHECK(WaitUntil([&] { return phone.listener.LogCount(kSendsHigh) >= 1; }, kWaitSeconds));
+
+    // Com a sala, o teto de dois convidados: a base passa a 640x480, a 25 qps, por um re-INVITE, e o convidado já nasce
+    // assim (uma linha de cada um).
+    const int g1 = Guest(phone, "2003");
+    CHECK(WaitUntil([&] { return phone.listener.LogCount(kSendsMedium) >= 2; }, kWaitSeconds));
+    CHECK(LinesStartingWith(phone, "video-reinv 2002 ") == 1);
+
+    // A sala acaba, e a Alta volta para quem ficou: mais um re-INVITE, e a base manda de novo em 1280x720, a 30 qps.
+    REQUIRE(phone.engine->Hangup(g1));
+    CHECK(WaitUntil([&] { return phone.listener.LogCount(kSendsHigh) >= 2; }, kWaitSeconds));
+    CHECK(LinesStartingWith(phone, "video-reinv 2002 ") == 2);
+}
+
+TEST_CASE("every guest sending gets a keyframe every 3 seconds") {
+    Phone phone;
+    INFO(phone.registrar.LogText());
+    INFO(phone.listener.LogTail());
+    phone.engine->SetVideoSettings(RoomSettings());
+    ShowColor(phone, "2002", kOrange);
+    ShowColor(phone, "2003", kPurple);
+    ShowColor(phone, "2004", kTeal);
+    VideoRoom(phone, 2);
+
+    // Os quadros-chave do começo do stream do último que entrou (os da PJSIP, um por segundo, por uns 5 s) acabam antes
+    // da contagem. Nos 7 s dela, cada um manda o dele a cada 3 s, cada um no seu prazo: de 2 a 3, ou um a mais (um
+    // pedido que a PJSIP recusou volta 1 s depois). Mais de 4 seria o ritmo de 1 s: a recusa de um adiantando os
+    // outros.
+    std::this_thread::sleep_for(std::chrono::seconds(6));
+    phone.registrar.ResetVideoPackets();
+    std::this_thread::sleep_for(std::chrono::seconds(7));
+    for (const std::string number : {"2002", "2003", "2004"}) {
+        CAPTURE(number);
+        const int keyframes = phone.registrar.KeyframesOf(number);
+        CHECK(keyframes >= 2);
+        CHECK(keyframes <= 4);
+    }
+}
+
 TEST_CASE("destroying the engine during a room hangs up every guest and no frame arrives after SetFrameSink(nullptr)") {
     TestSink sink;
     Phone phone;
@@ -1410,53 +1507,43 @@ TEST_CASE("the test camera shows up and no room device does") {
 }
 
 TEST_CASE("an image of odd size reaches a guest's mosaic without the bytes after its frame") {
-    Phone phone;   // os dispositivos da sala e o desenhista: o motor os registra
-    // A loja e o desenhista são um só no programa: no fim, a loja volta vazia e sem o tap.
+    Phone phone;   // os dispositivos da sala: o motor os registra
+    // A loja é uma só no programa: no fim, ela volta vazia. Ela recebe o quadro direto, e não pelo tap do desenhista,
+    // que uma passada do motor sem sala desliga.
     struct Restore {
-        ~Restore() {
-            SetRendererTap(nullptr);
-            SetRoomPlan(RoomPlan());
-        }
+        ~Restore() { SetRoomPlan(RoomPlan()); }
     } restore;
-    const int source = 7;   // uma ligação que a tabela não conhece: o portão deixa o quadro sair
+    const int source = 7;
     RoomPlan plan;
     plan.seats[0] = {source};
     plan.live = {source};
     SetRoomPlan(plan);
-    SetRendererTap(RoomFrameStore());
 
-    // Um stream do desenhista em 175x99, como a pjsua cria o de uma ligação, e um quadro no I420 da pjmedia: o croma
-    // com 87 colunas (w>>1) e cada plano dele com Y/4 bytes. Depois do quadro, bytes que não são dele.
+    // Um quadro de 175x99 no I420 da pjmedia, como o desenhista o entrega: o croma com 87 colunas (w>>1), o U logo
+    // depois do Y e o V Y/4 bytes depois do U. Depois do quadro, bytes que não são dele.
     const int width = 175, height = 99;
-    const pjmedia_vid_dev_index renderer = FindDevice("Starsonic", PJMEDIA_DIR_RENDER);
-    REQUIRE(renderer != PJMEDIA_VID_INVALID_DEV);
-    pjmedia_vid_dev_param param;
-    REQUIRE(pjmedia_vid_dev_default_param(nullptr, renderer, &param) == PJ_SUCCESS);
-    pjmedia_format_init_video(&param.fmt, PJMEDIA_FORMAT_I420, width, height, 25, 1);
-    pjmedia_vid_dev_stream* stream = nullptr;
-    REQUIRE(pjmedia_vid_dev_stream_create(&param, nullptr, nullptr, &stream) == PJ_SUCCESS);
-    pjmedia_vid_dev_hwnd window;
-    REQUIRE(pjmedia_vid_dev_stream_get_cap(stream, PJMEDIA_VID_DEV_CAP_OUTPUT_WINDOW, &window) == PJ_SUCCESS);
-    BindRendererStream(window.info.window, source);
-    REQUIRE(pjmedia_vid_dev_stream_start(stream) == PJ_SUCCESS);
     const size_t luma = static_cast<size_t>(width) * height;
     const size_t chroma = luma / 4;
-    std::vector<pj_uint8_t> bytes(luma + 2 * chroma + 64, 0);
-    std::fill_n(bytes.begin(), luma, pj_uint8_t{200});
-    std::fill_n(bytes.begin() + luma, chroma, pj_uint8_t{60});
-    std::fill_n(bytes.begin() + luma + chroma, chroma, pj_uint8_t{200});
-    pjmedia_frame frame;
-    pj_bzero(&frame, sizeof(frame));
-    frame.type = PJMEDIA_FRAME_TYPE_VIDEO;
-    frame.buf = bytes.data();
-    frame.size = luma + 2 * chroma;
-    CHECK(pjmedia_vid_dev_stream_put_frame(stream, &frame) == PJ_SUCCESS);
-    pjmedia_vid_dev_stream_stop(stream);
-    pjmedia_vid_dev_stream_destroy(stream);
+    std::vector<uint8_t> bytes(luma + 2 * chroma + 64, 0);
+    std::fill_n(bytes.begin(), luma, uint8_t{200});
+    std::fill_n(bytes.begin() + luma, chroma, uint8_t{60});
+    std::fill_n(bytes.begin() + luma + chroma, chroma, uint8_t{200});
+    I420Frame frame;
+    frame.width = width;
+    frame.height = height;
+    frame.y = bytes.data();
+    frame.yStride = width;
+    frame.u = bytes.data() + luma;
+    frame.uStride = width >> 1;
+    frame.v = bytes.data() + luma + chroma;
+    frame.vStride = width >> 1;
+    RoomFrameStore()->OnFrame(source, frame);
 
     // O mosaico do lugar 1, em 320x240: no croma, só a cor da imagem e a do fundo, nada dos bytes de depois do quadro.
     const pjmedia_vid_dev_index seat = FindDevice("Starsonic sala 1", PJMEDIA_DIR_CAPTURE);
     REQUIRE(seat != PJMEDIA_VID_INVALID_DEV);
+    pjmedia_vid_dev_param param;
+    pjmedia_vid_dev_stream* stream = nullptr;
     REQUIRE(pjmedia_vid_dev_default_param(nullptr, seat, &param) == PJ_SUCCESS);
     pjmedia_format_init_video(&param.fmt, PJMEDIA_FORMAT_I420, 320, 240, 25, 1);
     REQUIRE(pjmedia_vid_dev_stream_create(&param, nullptr, nullptr, &stream) == PJ_SUCCESS);
@@ -1474,6 +1561,40 @@ TEST_CASE("an image of odd size reaches a guest's mosaic without the bytes after
     INFO("U: " << ValuesText(uValues) << "; V: " << ValuesText(vValues));
     CHECK(uValues == std::set<int>{60, kBackground.u});
     CHECK(vValues == std::set<int>{200, kBackground.v});
+}
+
+TEST_CASE("a room device refuses an odd width or height when it opens and when its format changes") {
+    Phone phone;   // os dispositivos da sala: o motor os registra
+    const pjmedia_vid_dev_index seat = FindDevice("Starsonic sala 1", PJMEDIA_DIR_CAPTURE);
+    REQUIRE(seat != PJMEDIA_VID_INVALID_DEV);
+    pjmedia_vid_dev_param param;
+    pjmedia_vid_dev_stream* stream = nullptr;
+
+    // A montagem escreve o croma em (w+1)/2 x (h+1)/2, e o quadro da pjmedia tem w>>1 x h>>1: num tamanho ímpar, ela
+    // passaria do fim do quadro. A captura não abre assim.
+    for (const auto& size : {std::make_pair(175u, 98u), std::make_pair(176u, 99u)}) {
+        CAPTURE(size.first);
+        CAPTURE(size.second);
+        REQUIRE(pjmedia_vid_dev_default_param(nullptr, seat, &param) == PJ_SUCCESS);
+        pjmedia_format_init_video(&param.fmt, PJMEDIA_FORMAT_I420, size.first, size.second, 25, 1);
+        const pj_status_t opened = pjmedia_vid_dev_stream_create(&param, nullptr, nullptr, &stream);
+        if (opened == PJ_SUCCESS) pjmedia_vid_dev_stream_destroy(stream);
+        CHECK(opened == PJMEDIA_EVID_BADFORMAT);
+    }
+
+    // Aberta num tamanho par, ela recusa a troca para um ímpar e segue no de antes.
+    REQUIRE(pjmedia_vid_dev_default_param(nullptr, seat, &param) == PJ_SUCCESS);
+    pjmedia_format_init_video(&param.fmt, PJMEDIA_FORMAT_I420, 320, 240, 25, 1);
+    REQUIRE(pjmedia_vid_dev_stream_create(&param, nullptr, nullptr, &stream) == PJ_SUCCESS);
+    pjmedia_format format;
+    pjmedia_format_init_video(&format, PJMEDIA_FORMAT_I420, 321, 240, 25, 1);
+    CHECK(pjmedia_vid_dev_stream_set_cap(stream, PJMEDIA_VID_DEV_CAP_FORMAT, &format) == PJMEDIA_EVID_BADFORMAT);
+    pjmedia_format_init_video(&format, PJMEDIA_FORMAT_I420, 320, 241, 25, 1);
+    CHECK(pjmedia_vid_dev_stream_set_cap(stream, PJMEDIA_VID_DEV_CAP_FORMAT, &format) == PJMEDIA_EVID_BADFORMAT);
+    CHECK(pjmedia_vid_dev_stream_get_cap(stream, PJMEDIA_VID_DEV_CAP_FORMAT, &format) == PJ_SUCCESS);
+    CHECK(format.det.vid.size.w == 320);
+    CHECK(format.det.vid.size.h == 240);
+    pjmedia_vid_dev_stream_destroy(stream);
 }
 
 #else

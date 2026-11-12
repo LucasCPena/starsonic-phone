@@ -35,9 +35,11 @@
 // um de cada vez, e nada muda a mídia entre a conferência do envio e o pedido ao pjsua. A API e os callbacks só pedem o
 // temporizador (ScheduleSync); o Hangup e o End da API, que desfazem a mídia em outra thread, seguram videoMutex_ (a de
 // cada passada do SyncVideo) em volta do pjsua_call_hangup. Com videoMutex_ presa só se chama o pjsua
-// (pjsua_call_get_info, pjsua_call_set_vid_strm, pjsua_call_hangup e a prévia, que pegam as travas dele, a de diálogo
-// pelo try-lock do acquire_call), a lista de vídeo da PJSIP e mutex_, por um instante; nenhum callback (que roda com a
-// trava do diálogo) a pede.
+// (pjsua_call_get_info, pjsua_call_set_vid_strm, pjsua_call_reinvite2, pjsua_call_hangup, a prévia e os parâmetros
+// dos codecs, que pegam as travas dele, a de diálogo pelo try-lock do acquire_call), a lista de vídeo da PJSIP e
+// mutex_, por um instante; nenhum callback (que roda com a trava do diálogo) a pede. Os parâmetros de fábrica dos
+// codecs de vídeo só mudam com ela presa (a qualidade, e as prioridades e o fmtp do motor no SetVideoSettings): a PJSIP
+// solta os textos de antes a cada mudança, e uma leitura ao mesmo tempo ficaria com eles soltos.
 //
 // A imagem e a câmera (também no EngineCallVideo.cpp): o desenhista nosso (VideoRenderer.h) pergunta à tabela, a cada
 // quadro de uma ligação e com a trava dele presa, se o quadro sai (FrameGate): a pausa da imagem o segura, e o primeiro
@@ -46,11 +48,12 @@
 // abre e fecha com videoMutex_ presa: o envio de cada ligação no SyncVideo (na thread do PJSIP) e a prévia
 // (SyncPreview, no SyncVideo e no teste da câmera, na thread da API), que roda enquanto o teste está ligado ou alguma
 // ligação manda a imagem; a câmera aberta segue até fechar (o envio que começa usa a da prévia). Os problemas da câmera
-// saem pela fila dos eventos (Problem). Enquanto alguma ligação manda a imagem, o temporizador do quadro-chave
-// (KeyframeTimer, que o SyncVideo marca) pede um quadro-chave ao stream dela a cada 3 s (o SEND_KEYFRAME do pjsua, com
-// videoMutex_ presa, como o envio): o pedido que a PJSIP recusa por um quadro-chave há menos de 1 s (o PJ_ETOOMANY)
-// volta em 1 s, e o recusado por outro motivo (o PJ_EINVALIDOP do envio que acabou de parar) espera os 3 s de sempre;
-// ele para quando nenhuma manda.
+// saem pela fila dos eventos (Problem). Enquanto alguma ligação manda a imagem (a câmera ou um lugar da sala), o
+// temporizador do quadro-chave (KeyframeTimer, que o SyncVideo marca) pede um quadro-chave ao stream de cada uma a cada
+// 3 s, no prazo dela (keyframeAt, que o envio que começa marca), com o SEND_KEYFRAME do pjsua e videoMutex_ presa, como
+// o envio: o pedido que a PJSIP recusa por um quadro-chave há menos de 1 s (o PJ_ETOOMANY) volta em 1 s só para ela,
+// sem adiantar o das outras, e o recusado por outro motivo (o PJ_EINVALIDOP do envio que acabou de parar) espera os
+// 3 s de sempre; ele para quando nenhuma manda.
 //
 // A sala de vídeo em grupo (só com o PJMEDIA_HAS_VIDEO; as funções dela ficam no EngineRoom.cpp, e os ganchos nos
 // métodos de sempre): a tabela tem uma vaga para cada convidado e mais uma. A sala nasce de uma ligação sozinha com o
@@ -83,6 +86,17 @@
 // passada para o envio de cada ligação da sala e a prévia do lugar 0 com os ids de antes, e a seguinte liga tudo de
 // novo com os ids novos. Um passo da sala que falha (a troca da fonte ou o START de um lugar, a prévia do lugar 0) dá
 // uma linha no log por sequência de falhas e volta numa passada kSyncRetryMs depois (o kRetryTimer).
+//
+// A qualidade (o desenho da sala, item 10): os parâmetros de fábrica dos codecs de vídeo (o tamanho, os quadros por
+// segundo e a taxa do codificador dos próximos streams) ficam no alvo (TargetQuality): com a sala de pé, o teto pelo
+// número de convidados, contando os chamados (RoomQuality); sem ela, a escolhida. Ele vai aos codecs quando muda
+// (ApplyQuality, com videoMutex_ presa): na hora, no SetVideoSettings e no RoomAdd (antes do makeCall: o convidado novo
+// nasce nele), e no SyncVideo, que acha as saídas e o fim da sala. Cada mudança sobe o qualitySerial_ uma vez, e o
+// SyncVideo manda um re-INVITE com o vídeo a cada ligação da sala (ou à que ficou, no fim dela: stayed) confirmada, com
+// o vídeo e com o codificador diferente do alvo, um por mudança (o qualitySerial dela), mesmo que o aparelho não chegue
+// a ele: a pjsua refaz o stream com os parâmetros novos, sem o envio, que a passada seguinte liga de novo (com a linha
+// "video: ..."). O que encontra outro re-INVITE em andamento (o PJ_EINVALIDOP) volta numa passada kReinviteRetryMs
+// depois (o kReinviteTimer). A taxa da conta fica a da escolhida, o teto de todas.
 #include <pjsua2.hpp>
 
 #include <chrono>
@@ -188,12 +202,13 @@ private:
 class CallTable : public TimerTarget {
 public:
     // Os ids dos temporizadores da tabela no EngineEndpoint (as contas usam os delas, que começam em 1): o SyncVideo,
-    // o do remote, o do quadro-chave e o da passada que tenta de novo um passo da sala que falhou. Os testes também os
-    // usam (o EngineEndpoint::FailNextSchedule).
+    // o do remote, o do quadro-chave, o da passada que tenta de novo um passo da sala que falhou e o da que tenta de
+    // novo um re-INVITE da qualidade. Os testes também os usam (o EngineEndpoint::FailNextSchedule).
     static constexpr int kCallTableTimer = 0;
     static constexpr int kRemoteTimer = -1;
     static constexpr int kKeyframeTimer = -2;
     static constexpr int kRetryTimer = -3;
+    static constexpr int kReinviteTimer = -4;
 
     CallTable(EventQueue* events, DtmfMethod dtmf);
 
@@ -245,7 +260,10 @@ public:
     // O vídeo (ver SipEngine.h). Sem o vídeo no motor, SetCamera devolve false e Video, o CallVideo{}.
     bool SetCamera(int callId, bool on);
     void SetCameraPaused(bool paused);
-    void SetVideoSettings(const VideoSettings& settings);
+    // As escolhas, e nos codecs, com videoMutex_ presa: primeiro engineCodecs (as prioridades e o fmtp do motor, o
+    // ApplyVideoSettings dele), depois o alvo da qualidade, se mudou (com a sala de pé, os re-INVITE saem no
+    // SyncVideo).
+    void SetVideoSettings(const VideoSettings& settings, const std::function<void()>& engineCodecs);
     CallVideo Video(int callId);
 #if PJMEDIA_HAS_VIDEO
     // As câmeras (ver SipEngine.h), da thread da API. Os ids da câmera escolhida e do desenhista, para a próxima vez
@@ -301,6 +319,7 @@ private:
         bool askingSendRecv = false;      // o re-INVITE sendrecv do SendReceive espera a resposta
         bool remote = false;              // a imagem da outra ponta chegando (ver o topo do arquivo)
         std::chrono::steady_clock::time_point lastFrame;   // o último quadro da outra ponta que saiu
+        std::chrono::steady_clock::time_point keyframeAt;  // mandando a imagem: o próximo pedido de quadro-chave dela
         std::string codec;                // o codec do vídeo negociado ("H264", "VP8" ou "VP9")
         int width = 0;                    // o codificador do vídeo negociado: o tamanho e os quadros por segundo
         int height = 0;
@@ -311,6 +330,9 @@ private:
         int seat = 0;                     // o lugar dele, de 1 a kRoomMaxGuests: o menor livre quando ele entrou
         bool remoteHold = false;          // o áudio em espera do outro lado (REMOTE_HOLD), do último MediaChanged
         int joined = 0;                   // a ordem de entrada na sala (a dos convidados no OnRoom)
+        // A qualidade (ver o topo do arquivo).
+        int qualitySerial = 0;            // o qualitySerial_ do último re-INVITE dela (ou do alvo em que ela nasceu)
+        bool stayed = false;              // a que ficou no fim da sala, até o SyncVideo conferir o codificador dela
     };
 
     // Com mutex_ preso. A vaga de callId (ou de call), ou nullptr.
@@ -425,6 +447,16 @@ private:
     // ela mandar o mosaico dela, esperando a renegociação anterior como o Renegotiate (a recusa vai ao ReofferFailed).
     void SendReceive(int callId);
 
+    // A qualidade (ver o topo do arquivo). Com mutex_ presa (EngineRoom.cpp): o alvo de agora.
+    QualityValues TargetQuality();
+    // Com videoMutex_ presa, sem mutex_ (EngineCallVideo.cpp): o alvo vai aos codecs, se mudou desde o último (cada
+    // mudança sobe o qualitySerial_ uma vez).
+    void ApplyQuality();
+    // Só no SyncVideo (com videoMutex_ presa, sem mutex_; EngineRoom.cpp): o re-INVITE de cada ligação da sala, ou da
+    // que ficou no fim dela, que ainda não o recebeu por esta mudança do alvo e tem o codificador diferente dele. true:
+    // algum encontrou outro re-INVITE em andamento (o PJ_EINVALIDOP), e uma passada daqui a pouco tenta de novo.
+    bool ReinviteForQuality();
+
     // Os quadros das ligações que chegam ao desenhista (RemoteFrameGate) e o temporizador do remote.
     struct FrameGate : RemoteFrameGate {
         CallTable* table = nullptr;
@@ -442,6 +474,10 @@ private:
         CallTable* table = nullptr;
         void OnEngineTimer() override;
     };
+    struct ReinviteTimer : TimerTarget {
+        CallTable* table = nullptr;
+        void OnEngineTimer() override;
+    };
     // Na thread do desenhista, com a trava dele presa: a pausa da imagem segura o quadro, e o primeiro liga o remote. O
     // do mosaico de quem montou (o id da sala) liga o remote da sala, e o de uma sala que acabou não sai.
     bool RemoteFrameArrived(int callId);
@@ -450,11 +486,11 @@ private:
     void CheckRemote();
     // Com mutex_ presa: alguma ligação manda a imagem agora (SendsImage: a câmera, ou o mosaico de um convidado da
     // sala) e o temporizador do quadro-chave não está marcado. true: ele fica marcado, e quem chamou o agenda
-    // (ScheduleKeyframes), sem mutex_ presa.
-    bool KeyframeTimerNeeded();
+    // (ScheduleKeyframes), sem mutex_ presa, daqui a *delayMs: o prazo mais cedo das que mandam (o keyframeAt).
+    bool KeyframeTimerNeeded(unsigned* delayMs);
     // Só no temporizador do quadro-chave (OnEngineTimer), sem trava nenhuma presa; pega a videoMutex_, como o
-    // SyncVideo: pede um quadro-chave ao stream de cada ligação que manda a imagem e marca a próxima vez (mais cedo
-    // quando a PJSIP recusou um pedido); sem nenhuma mandando, o temporizador para.
+    // SyncVideo: pede um quadro-chave ao stream de cada ligação que manda a imagem e cujo prazo chegou, e marca o
+    // próximo prazo dela (mais cedo quando a PJSIP recusou o pedido dela); sem nenhuma mandando, o temporizador para.
     void SendKeyframes();
     // Sem mutex_ presa, com o temporizador do quadro-chave marcado: agenda-o para daqui a delayMs. Se o agendamento
     // falha, desmarca (o próximo SyncVideo marca de novo), em vez de deixar o quadro-chave parado até o fim do motor.
@@ -466,6 +502,8 @@ private:
     // kSyncRetryMs, se ela ainda não está marcada (uma só por vez, por mais passadas que falhem). Se o agendamento
     // falha, desmarca (a próxima passada que falha marca de novo).
     void ScheduleRetry();
+    // O mesmo para um re-INVITE da qualidade que encontrou outro em andamento: a passada daqui a kReinviteRetryMs.
+    void ScheduleReinvite();
     // O aviso de um erro da câmera aberta (o PJMEDIA_EVENT_VID_DEV_ERROR da captura), numa thread da PJSIP.
     static pj_status_t OnMediaEvent(pjmedia_event* event, void* table);
     // Com mutex_ presa. A câmera em uso sumiu: o Disconnected, o desejo da câmera desliga em todas as ligações e o
@@ -520,6 +558,7 @@ private:
     RemoteTimer remoteTimer_;
     KeyframeTimer keyframeTimer_;
     RetryTimer retryTimer_;
+    ReinviteTimer reinviteTimer_;
     // Com mutex_ (a prévia muda também com videoMutex_ presa).
     pjmedia_vid_dev_index camera_ = PJMEDIA_VID_INVALID_DEV;     // a câmera escolhida (sem câmera: inválida)
     pjmedia_vid_dev_index renderer_ = PJMEDIA_VID_INVALID_DEV;   // o desenhista nosso
@@ -532,6 +571,10 @@ private:
     bool remoteCheckPending_ = false;   // o temporizador do remote está marcado
     bool keyframePending_ = false;      // o temporizador do quadro-chave está marcado
     bool retryPending_ = false;         // o temporizador da passada que tenta de novo está marcado
+    bool reinvitePending_ = false;      // ...e o da que tenta de novo um re-INVITE da qualidade
+    // A qualidade (ver o topo do arquivo), com mutex_: o alvo que está nos codecs e quantas vezes ele mudou.
+    QualityValues quality_{};
+    int qualitySerial_ = 0;
     // Os mosaicos da sala (ver o topo do arquivo), com mutex_.
     bool restartRoom_ = false;          // uma releitura mudou um id da sala de pé: o SyncVideo para tudo dela e religa
     bool roomRemote_ = false;           // o mosaico de quem montou chegando: o remote da sala

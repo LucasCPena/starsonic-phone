@@ -3,7 +3,7 @@
 // PJSIP e a loja das imagens, com o plano de cada mosaico.
 //
 // A fábrica "Starsonic sala" (o driver kOurVideoDriver) tem kRoomMaxGuests + 1 dispositivos de captura passivos, só
-// I420 e de qualquer tamanho (o set_cap do FORMAT): o lugar 0, "Starsonic sala", é o mosaico de quem montou, e os
+// I420 e de qualquer tamanho par (o set_cap do FORMAT): o lugar 0, "Starsonic sala", é o mosaico de quem montou, e os
 // lugares 1 a 5, "Starsonic sala 1" a "Starsonic sala 5", o de cada convidado. A ligação de um convidado manda o lugar
 // dele no lugar da câmera (o CHANGE_CAP_DEV e o START_TRANSMIT de sempre); os lugares 1 a 5 têm a prévia nativa (o
 // INPUT_PREVIEW), e a janela deles na pjsua não ganha uma porta do desenhista. A pjsua pede cada quadro na thread do

@@ -30,12 +30,15 @@ const unsigned kRemoteCheckMs = 250;
 const unsigned kKeyframeIntervalMs = 3000;
 // O pedido que a PJSIP recusa (o PJ_ETOOMANY: um quadro-chave há menos de 1 s, como os do começo do stream, que vêm um
 // por segundo) volta depois deste tempo, e não depois de kKeyframeIntervalMs: sem isso, os pedidos que caem no começo
-// do stream deixavam quase 4 s sem quadro-chave depois do último deles. Só uma ligação manda a imagem por vez hoje (a
-// regra das duas ligações pausa as outras), então um reenvio só, para todas, basta.
+// do stream deixavam quase 4 s sem quadro-chave depois do último deles. Cada ligação que manda tem o seu prazo (na
+// sala, todas mandam juntas): a recusada volta sozinha, sem adiantar o quadro-chave das outras.
 const unsigned kKeyframeRetryMs = 1000;
 // Um passo da sala que falhou (a troca da fonte ou o START de um lugar, a prévia do lugar 0) volta numa passada deste
 // tempo depois, e não logo: a falha que segue não vira um laço.
 const unsigned kSyncRetryMs = 1000;
+// O re-INVITE da qualidade que encontra outro em andamento na ligação (o PJ_EINVALIDOP) volta numa passada deste tempo
+// depois.
+const unsigned kReinviteRetryMs = 200;
 
 // O texto de um código do PJSIP, como no EngineCall.cpp.
 std::string StatusText(pj_status_t status) { return pj::Endpoint::instance().utilStrError(status); }
@@ -52,6 +55,38 @@ pjmedia_vid_dev_index CameraNamed(const std::string& name) {
         if (camera.second == name) return camera.first;
     }
     return PJMEDIA_VID_INVALID_DEV;
+}
+
+// A qualidade no codificador de cada codec de vídeo da PJSIP, para os próximos streams (também o que um re-INVITE
+// refaz): o tamanho, os quadros por segundo e a taxa (o avg_bps e o max_bps), sem mexer no fmtp nem na prioridade, que
+// são do ApplyVideoSettings do motor. Com a videoMutex_ presa (ver o topo do EngineCall.h).
+void ApplyCodecQuality(const QualityValues& quality) {
+    pjsua_codec_info codecs[32];
+    unsigned count = PJ_ARRAY_SIZE(codecs);
+    pj_status_t status = pjsua_vid_enum_codecs(codecs, &count);
+    if (status != PJ_SUCCESS) {
+        Log(1, "codecs de video: " + StatusText(status));
+        return;
+    }
+    for (unsigned index = 0; index < count; ++index) {
+        const pj_str_t& id = codecs[index].codec_id;
+        pjmedia_vid_codec_param param;
+        status = pjsua_vid_codec_get_param(&id, &param);
+        if (status == PJ_SUCCESS) {
+            pjmedia_video_format_detail& encoder = param.enc_fmt.det.vid;
+            encoder.size.w = static_cast<unsigned>(quality.width);
+            encoder.size.h = static_cast<unsigned>(quality.height);
+            encoder.fps.num = quality.fps;
+            encoder.fps.denum = 1;
+            encoder.avg_bps = static_cast<pj_uint32_t>(quality.kbps) * 1000u;
+            encoder.max_bps = encoder.avg_bps;
+            status = pjsua_vid_codec_set_param(&id, &param);   // a PJSIP copia os textos do fmtp
+        }
+        if (status != PJ_SUCCESS) {
+            Log(1, "parametros do codec " + std::string(id.ptr, static_cast<size_t>(id.slen)) + ": " +
+                       StatusText(status));
+        }
+    }
 }
 
 // A fonte da imagem da ligação (a câmera ou um lugar da sala): sem mandar, o pjsua só troca o id para o próximo
@@ -75,6 +110,7 @@ struct SendPlan {
     bool seatSending;          // ...e ele é o lugar da sala
     pj_status_t failure;       // o código do START_TRANSMIT da câmera que falhou (ela não abriu), ou PJ_SUCCESS
     pj_status_t seatFailure;   // o código do passo do lugar da sala que falhou (a troca da fonte ou o START)
+    bool started;              // o START_TRANSMIT desta passada saiu: o envio começou, ou voltou num stream refeito
 };
 
 // O passo de uma ligação no SyncVideo (com a videoMutex_ presa, sem a trava da tabela), com a fonte do plano: o lugar
@@ -111,6 +147,7 @@ void ApplySendPlan(SendPlan* plan, const RoomDeviceIds& room, pjmedia_vid_dev_in
     if (status == PJ_SUCCESS) {
         plan->sending = send;
         plan->seatSending = send && plan->seat > 0;
+        plan->started = send;
     } else if (!send) {
         Log(2, "parar o envio da camera: " + StatusText(status));
     } else if (plan->seat > 0) {
@@ -275,6 +312,8 @@ void CallTable::Start(EngineEndpoint* endpoint) {
     endpoint->AddTimerTarget(kKeyframeTimer, &keyframeTimer_);
     retryTimer_.table = this;
     endpoint->AddTimerTarget(kRetryTimer, &retryTimer_);
+    reinviteTimer_.table = this;
+    endpoint->AddTimerTarget(kReinviteTimer, &reinviteTimer_);
     frameGate_.table = this;
     SetRendererGate(&frameGate_);
     // Os erros da câmera aberta chegam ao gerenciador de eventos da PJSIP com a câmera (ou a porta dela) como
@@ -379,9 +418,25 @@ void CallTable::SetCameraPaused(bool paused) {
 #endif
 }
 
-void CallTable::SetVideoSettings(const VideoSettings& settings) {
+void CallTable::SetVideoSettings(const VideoSettings& settings, const std::function<void()>& engineCodecs) {
+#if PJMEDIA_HAS_VIDEO
+    {
+        // Os parâmetros dos codecs só mudam com a videoMutex_ presa (ver o topo do EngineCall.h).
+        std::lock_guard<std::mutex> videoLock(videoMutex_);
+        if (engineCodecs) engineCodecs();
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            settings_ = settings;
+        }
+        // A qualidade na hora; com a sala de pé, os re-INVITE dela saem no SyncVideo.
+        ApplyQuality();
+    }
+    ScheduleSync();
+#else
+    (void)engineCodecs;
     std::lock_guard<std::mutex> lock(mutex_);
     settings_ = settings;
+#endif
 }
 
 CallVideo CallTable::Video(int callId) {
@@ -535,6 +590,10 @@ void CallTable::LogVideo(const Slot& slot) {
 void CallTable::SyncVideo() {
 #if PJMEDIA_HAS_VIDEO
     std::lock_guard<std::mutex> videoLock(videoMutex_);
+    // A qualidade primeiro: o alvo de agora nos codecs (uma saída ou o fim da sala o mudam), e o re-INVITE de quem
+    // ainda não o recebeu por esta mudança.
+    ApplyQuality();
+    const bool reinviteBusy = ReinviteForQuality();
     std::vector<SendPlan> plans;
     pjmedia_vid_dev_index device = PJMEDIA_VID_INVALID_DEV;
     bool restart = false;
@@ -554,7 +613,7 @@ void CallTable::SyncVideo() {
         restartRoom_ = false;
         for (const Slot& slot : slots_) {
             if (slot.callId == 0 || slot.pjsuaId == PJSUA_INVALID_ID) continue;
-            SendPlan plan{slot.callId, slot.pjsuaId, false, 0, false, slot.seatSending, PJ_SUCCESS, PJ_SUCCESS};
+            SendPlan plan{slot.callId, slot.pjsuaId, false, 0, false, slot.seatSending, PJ_SUCCESS, PJ_SUCCESS, false};
             if (!restart && !(restartRoom && (slot.member || slot.seatSending))) {
                 if (SendsSeat(slot)) {
                     plan.send = true;
@@ -576,6 +635,7 @@ void CallTable::SyncVideo() {
     bool retry = false;      // um passo da sala falhou: outra passada daqui a kSyncRetryMs
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        const auto now = std::chrono::steady_clock::now();
         for (const SendPlan& plan : plans) {
             Slot* slot = Find(plan.callId);
             if (!slot) continue;
@@ -594,9 +654,15 @@ void CallTable::SyncVideo() {
             slot->seatFailed = seatFailed;
             if (seatFailed) retry = true;
             slot->seatSending = plan.sending && plan.seatSending;
-            if (slot->sending == plan.sending) continue;
+            // Um stream refeito (um re-INVITE, como o da qualidade, faz a pjsua refazê-lo) volta sem o envio, que esta
+            // passada liga de novo: a linha sai como numa mudança, uma vez por stream.
+            const bool restarted = plan.started && slot->sending;
+            if (slot->sending == plan.sending && !restarted) continue;
             slot->sending = plan.sending;
-            LogVideo(*slot);   // a cada mudança do envio
+            // A imagem que começa a sair já leva quadros-chave (os do começo do stream, ou o da retomada): o pedido
+            // dela vem kKeyframeIntervalMs depois.
+            if (slot->sending) slot->keyframeAt = now + std::chrono::milliseconds(kKeyframeIntervalMs);
+            LogVideo(*slot);   // a cada mudança do envio, e a cada volta dele num stream refeito
         }
     }
     // O mosaico de quem montou segue a sala (na passada da releitura, ele fecha, e a próxima o abre de novo); o que não
@@ -612,18 +678,23 @@ void CallTable::SyncVideo() {
         if (status != PJ_SUCCESS && PreviewFailed(status, reported)) again = true;
     }
     bool keyframes = false;
+    unsigned keyframeDelayMs = 0;
     bool retrying = false;
+    bool reinviting = false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         PublishVideo();
         // A imagem que começa a sair ganha o quadro-chave periódico; o temporizador para sozinho quando nenhuma manda.
-        keyframes = KeyframeTimerNeeded();
-        // Uma passada só marcada para tentar de novo, por mais passadas que falhem até ela.
+        keyframes = KeyframeTimerNeeded(&keyframeDelayMs);
+        // Uma passada só marcada para tentar de novo, por mais passadas que falhem até ela; e outra para o re-INVITE.
         retrying = retry && !retryPending_;
         if (retrying) retryPending_ = true;
+        reinviting = reinviteBusy && !reinvitePending_;
+        if (reinviting) reinvitePending_ = true;
     }
-    if (keyframes) ScheduleKeyframes(kKeyframeIntervalMs);
+    if (keyframes) ScheduleKeyframes(keyframeDelayMs);
     if (retrying) ScheduleRetry();
+    if (reinviting) ScheduleReinvite();
     if (again) ScheduleSync();
 #endif
 }
@@ -808,36 +879,56 @@ void CallTable::RemoteTimer::OnEngineTimer() { table->CheckRemote(); }
 
 void CallTable::KeyframeTimer::OnEngineTimer() { table->SendKeyframes(); }
 
-bool CallTable::KeyframeTimerNeeded() {
+bool CallTable::KeyframeTimerNeeded(unsigned* delayMs) {
     if (keyframePending_ || closed_) return false;
-    keyframePending_ = std::any_of(std::begin(slots_), std::end(slots_),
-                                   [this](const Slot& slot) { return slot.callId != 0 && SendsImage(slot); });
+    const auto now = std::chrono::steady_clock::now();
+    auto next = now + std::chrono::milliseconds(kKeyframeIntervalMs);
+    for (const Slot& slot : slots_) {
+        if (slot.callId == 0 || !SendsImage(slot)) continue;
+        keyframePending_ = true;
+        next = std::min(next, slot.keyframeAt);
+    }
+    *delayMs = next > now ? static_cast<unsigned>(std::chrono::ceil<std::chrono::milliseconds>(next - now).count()) : 0;
     return keyframePending_;
 }
 
 void CallTable::SendKeyframes() {
     // Como no SyncVideo: o fim de uma ligação pela API não desfaz a mídia no meio do pedido ao pjsua.
     std::lock_guard<std::mutex> videoLock(videoMutex_);
-    std::vector<int> sending;   // os ids no pjsua das ligações que mandam a imagem agora
+    std::vector<std::pair<int, int>> due;   // o id e o id no pjsua das ligações que mandam a imagem, no prazo delas
     {
         std::lock_guard<std::mutex> lock(mutex_);
         keyframePending_ = false;
         if (closed_) return;
+        const auto now = std::chrono::steady_clock::now();
         for (const Slot& slot : slots_) {
-            if (slot.callId != 0 && slot.pjsuaId != PJSUA_INVALID_ID && SendsImage(slot)) {
-                sending.push_back(slot.pjsuaId);
+            if (slot.callId != 0 && slot.pjsuaId != PJSUA_INVALID_ID && SendsImage(slot) && slot.keyframeAt <= now) {
+                due.emplace_back(slot.callId, slot.pjsuaId);
             }
         }
-        keyframePending_ = !sending.empty();
     }
-    // Nenhuma linha no diagnóstico (uma a cada 3 s o encheria): nenhuma nossa, e a do pjsua o LogForwarder segura. Um
-    // pedido recusado por um quadro-chave há menos de 1 s (o limite da PJSIP) volta em kKeyframeRetryMs; um recusado
-    // por outro motivo (o envio que acabou de parar) só espera o próximo.
-    bool tooSoon = false;
-    for (const int pjsuaId : sending) {
-        if (pjsua_call_set_vid_strm(pjsuaId, PJSUA_CALL_VID_STRM_SEND_KEYFRAME, nullptr) == PJ_ETOOMANY) tooSoon = true;
+    // Nenhuma linha no diagnóstico (uma a cada 3 s o encheria): nenhuma nossa, e a do pjsua o LogForwarder segura. O
+    // pedido recusado por um quadro-chave há menos de 1 s (o limite da PJSIP) volta em kKeyframeRetryMs, só o dessa
+    // ligação; o recusado por outro motivo (o envio que acabou de parar) espera o prazo de sempre.
+    std::vector<pj_status_t> results;
+    for (const auto& call : due) {
+        results.push_back(pjsua_call_set_vid_strm(call.second, PJSUA_CALL_VID_STRM_SEND_KEYFRAME, nullptr));
     }
-    if (!sending.empty()) ScheduleKeyframes(tooSoon ? kKeyframeRetryMs : kKeyframeIntervalMs);
+    unsigned delayMs = 0;
+    bool schedule = false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto now = std::chrono::steady_clock::now();
+        for (size_t index = 0; index < due.size(); ++index) {
+            Slot* slot = Find(due[index].first);
+            if (!slot) continue;
+            const unsigned waitMs = results[index] == PJ_ETOOMANY ? kKeyframeRetryMs : kKeyframeIntervalMs;
+            slot->keyframeAt = now + std::chrono::milliseconds(waitMs);
+        }
+        // O prazo mais cedo das que mandam; sem nenhuma mandando, o temporizador para.
+        schedule = KeyframeTimerNeeded(&delayMs);
+    }
+    if (schedule) ScheduleKeyframes(delayMs);
 }
 
 void CallTable::ScheduleKeyframes(unsigned delayMs) {
@@ -864,6 +955,36 @@ void CallTable::ScheduleRetry() {
     if (endpoint_ && endpoint_->ScheduleTimer(kRetryTimer, kSyncRetryMs)) return;
     std::lock_guard<std::mutex> lock(mutex_);
     retryPending_ = false;
+}
+
+void CallTable::ReinviteTimer::OnEngineTimer() {
+    {
+        std::lock_guard<std::mutex> lock(table->mutex_);
+        table->reinvitePending_ = false;   // a passada que encontrar outro re-INVITE daqui em diante marca a próxima
+    }
+    table->SyncVideo();
+}
+
+void CallTable::ScheduleReinvite() {
+    if (endpoint_ && endpoint_->ScheduleTimer(kReinviteTimer, kReinviteRetryMs)) return;
+    std::lock_guard<std::mutex> lock(mutex_);
+    reinvitePending_ = false;
+}
+
+void CallTable::ApplyQuality() {
+    QualityValues target{};
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (closed_) return;
+        target = TargetQuality();
+        if (target.width == quality_.width && target.height == quality_.height && target.fps == quality_.fps &&
+            target.kbps == quality_.kbps) {
+            return;
+        }
+        quality_ = target;
+        ++qualitySerial_;   // os re-INVITE desta mudança (ReinviteForQuality), um por ligação
+    }
+    ApplyCodecQuality(target);
 }
 
 bool CallTable::RemoteFrameArrived(int callId) {

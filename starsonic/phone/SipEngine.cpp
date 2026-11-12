@@ -141,8 +141,7 @@ public:
             // câmera fora dos callbacks).
             VideoSettings settings;
             settings.h264Available = config_.h264Available;
-            ApplyVideoSettings(settings);
-            calls_.SetVideoSettings(settings);
+            calls_.SetVideoSettings(settings, [this, &settings] { ApplyVideoSettings(settings); });
             calls_.Start(endpoint_.get());
             calls_.SetVideoDevices(ResolveVideoDevices());
 #endif
@@ -357,13 +356,14 @@ public:
 #if PJMEDIA_HAS_VIDEO
         std::lock_guard<std::mutex> lock(apiMutex_);
         if (!RegisterThread()) return;
-        ApplyVideoSettings(settings);
+        // A taxa da conta é a da escolhida, o teto (a qualidade da sala nunca passa dela).
         const unsigned bandwidth = static_cast<unsigned>(ValuesOf(settings.quality).kbps) * 1000u;
         if (bandwidth != videoBandwidth_) {
             videoBandwidth_ = bandwidth;
             if (account_) account_->SetVideoBandwidth(videoBandwidth_);
         }
-        calls_.SetVideoSettings(settings);
+        // As prioridades e o fmtp daqui, e a qualidade da tabela.
+        calls_.SetVideoSettings(settings, [this, &settings] { ApplyVideoSettings(settings); });
 #else
         (void)settings;
 #endif
@@ -693,11 +693,11 @@ private:
 #if PJMEDIA_HAS_VIDEO
     // As escolhas do vídeo na PJSIP, para as próximas ofertas e respostas: a prioridade de cada codec (255, 254 e 253
     // na ordem do CodecOrder; 0 nos outros, que a PJSIP nunca oferece nem aceita, como o H.264 sem o módulo, que ela
-    // registra mesmo assim), a qualidade no codificador de cada um (o tamanho, os quadros por segundo e a taxa) e o
-    // fmtp do H.264 (Constrained Baseline, nível 3.1, o modo 1 de empacotamento).
+    // registra mesmo assim) e o fmtp do H.264 (Constrained Baseline, nível 3.1, o modo 1 de empacotamento). A qualidade
+    // no codificador de cada um é da tabela (o alvo: a escolhida, ou o teto da sala), que chama esta no
+    // SetVideoSettings dela, com a trava em que os parâmetros dos codecs mudam.
     void ApplyVideoSettings(const VideoSettings& settings) {
         const std::vector<VideoCodec> order = CodecOrder(settings);
-        const QualityValues quality = ValuesOf(settings.quality);
         pjsua_codec_info codecs[32];
         unsigned count = PJ_ARRAY_SIZE(codecs);
         pj_status_t status = pjsua_vid_enum_codecs(codecs, &count);
@@ -715,27 +715,19 @@ private:
             }
             status = pjsua_vid_codec_set_priority(&id, static_cast<pj_uint8_t>(priority));
             if (status != PJ_SUCCESS) Log(1, "prioridade do codec " + name + ": " + endpoint_->utilStrError(status));
+            if (!SameCodecId(codec, "H264")) continue;
             pjmedia_vid_codec_param param;
             status = pjsua_vid_codec_get_param(&id, &param);
             if (status != PJ_SUCCESS) {
                 Log(1, "parametros do codec " + name + ": " + endpoint_->utilStrError(status));
                 continue;
             }
-            pjmedia_video_format_detail& encoder = param.enc_fmt.det.vid;
-            encoder.size.w = static_cast<unsigned>(quality.width);
-            encoder.size.h = static_cast<unsigned>(quality.height);
-            encoder.fps.num = quality.fps;
-            encoder.fps.denum = 1;
-            encoder.avg_bps = static_cast<pj_uint32_t>(quality.kbps) * 1000u;
-            encoder.max_bps = encoder.avg_bps;
-            if (SameCodecId(codec, "H264")) {
-                // Como o fmtp de fábrica da PJSIP (o espaço antes do segundo nome sai no SDP depois do ";").
-                param.dec_fmtp.cnt = 2;
-                param.dec_fmtp.param[0].name = pj_str(const_cast<char*>("profile-level-id"));
-                param.dec_fmtp.param[0].val = pj_str(const_cast<char*>("42e01f"));
-                param.dec_fmtp.param[1].name = pj_str(const_cast<char*>(" packetization-mode"));
-                param.dec_fmtp.param[1].val = pj_str(const_cast<char*>("1"));
-            }
+            // Como o fmtp de fábrica da PJSIP (o espaço antes do segundo nome sai no SDP depois do ";").
+            param.dec_fmtp.cnt = 2;
+            param.dec_fmtp.param[0].name = pj_str(const_cast<char*>("profile-level-id"));
+            param.dec_fmtp.param[0].val = pj_str(const_cast<char*>("42e01f"));
+            param.dec_fmtp.param[1].name = pj_str(const_cast<char*>(" packetization-mode"));
+            param.dec_fmtp.param[1].val = pj_str(const_cast<char*>("1"));
             status = pjsua_vid_codec_set_param(&id, &param);   // a PJSIP copia os textos do fmtp
             if (status != PJ_SUCCESS) Log(1, "parametros do codec " + name + ": " + endpoint_->utilStrError(status));
         }

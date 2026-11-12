@@ -145,10 +145,13 @@ void SeatName(unsigned seat, char* name, size_t size) {
     }
 }
 
-// Um formato que o mosaico monta: o I420, com largura e altura.
-bool IsI420(const pjmedia_format& format) {
+// Um formato que o mosaico monta: o I420, com largura e altura pares. A montagem escreve o croma em (w+1)/2 x (h+1)/2,
+// e o quadro da pjmedia tem w>>1 x h>>1, com o passo w>>1: num tamanho ímpar, ela passaria do fim do quadro.
+bool Composable(const pjmedia_format& format) {
+    const pjmedia_rect_size& size = format.det.vid.size;
     return format.id == PJMEDIA_FORMAT_I420 && format.type == PJMEDIA_TYPE_VIDEO &&
-           format.detail_type == PJMEDIA_FORMAT_DETAIL_VIDEO && format.det.vid.size.w > 0 && format.det.vid.size.h > 0;
+           format.detail_type == PJMEDIA_FORMAT_DETAIL_VIDEO && size.w > 0 && size.h > 0 && size.w % 2 == 0 &&
+           size.h % 2 == 0;
 }
 
 pj_status_t SeatGetParam(pjmedia_vid_dev_stream* stream, pjmedia_vid_dev_param* param) {
@@ -164,13 +167,14 @@ pj_status_t SeatGetCap(pjmedia_vid_dev_stream* stream, pjmedia_vid_dev_cap cap, 
     return PJ_SUCCESS;
 }
 
-// O formato novo (outro tamanho) vale para os próximos quadros. A prévia nativa (a janela de um lugar de convidado) e a
-// janela escondida ou não só são aceitas: não há janela, e o mosaico vai só para o codificador da ligação.
+// O formato novo (outro tamanho, par) vale para os próximos quadros. A prévia nativa (a janela de um lugar de
+// convidado) e a janela escondida ou não só são aceitas: não há janela, e o mosaico vai só para o codificador da
+// ligação.
 pj_status_t SeatSetCap(pjmedia_vid_dev_stream* stream, pjmedia_vid_dev_cap cap, const void* value) {
     switch (cap) {
         case PJMEDIA_VID_DEV_CAP_FORMAT: {
             const pjmedia_format* format = static_cast<const pjmedia_format*>(value);
-            if (!IsI420(*format)) return PJMEDIA_EVID_BADFORMAT;
+            if (!Composable(*format)) return PJMEDIA_EVID_BADFORMAT;
             std::lock_guard<std::mutex> lock(TheStore().mutex);
             pjmedia_format_copy(&SeatOf(stream)->param.fmt, format);
             return PJ_SUCCESS;
@@ -288,7 +292,7 @@ pj_status_t FactoryCreateStream(pjmedia_vid_dev_factory* factory, pjmedia_vid_de
         param->cap_id >= static_cast<pjmedia_vid_dev_index>(kRoomDevices)) {
         return PJ_EINVAL;
     }
-    if (!IsI420(param->fmt)) return PJMEDIA_EVID_BADFORMAT;
+    if (!Composable(param->fmt)) return PJMEDIA_EVID_BADFORMAT;
     pj_pool_t* pool = pj_pool_create(FactoryOf(factory)->poolFactory, "starsonic-sala", 512, 512, nullptr);
     if (!pool) return PJ_ENOMEM;
     SeatStream* seat = PJ_POOL_ZALLOC_T(pool, SeatStream);

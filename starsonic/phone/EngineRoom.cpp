@@ -77,6 +77,15 @@ int CallTable::RoomAdd(pj::Account& account, const std::string& uri) {
         arriving = CurrentRoom();
         Emit(callId, [arriving](EngineListener& listener) { listener.OnRoom(arriving); });
     }
+    {
+        // O alvo da qualidade com ele (ele já conta), antes do makeCall: a ligação dele nasce nele, sem re-INVITE por
+        // esta mudança, e o SyncVideo do fim manda o de quem já estava.
+        std::lock_guard<std::mutex> videoLock(videoMutex_);
+        ApplyQuality();
+        std::lock_guard<std::mutex> lock(mutex_);
+        Slot* slot = Find(callId);
+        if (slot) slot->qualitySerial = qualitySerial_;
+    }
     bool made = true;
     try {
         pj::CallOpParam param(true);
@@ -233,12 +242,15 @@ void CallTable::AnnounceRoom() {
         const bool announce = roomShown_.id == roomId_;
         const bool videoShown = !(roomVideoShown_ == CallVideo());
         // Quem ficou volta a ser uma ligação comum, com o desejo da câmera da sala, e é a ativa se a sala era a ativa.
+        // A qualidade dela volta à escolhida: o SyncVideo ainda confere o codificador dela uma vez
+        // (ReinviteForQuality).
         for (Slot& slot : slots_) {
             if (slot.callId == 0 || !slot.member) continue;
             slot.member = false;
             slot.seat = 0;
             slot.joined = 0;
             slot.wish = roomWish_;
+            slot.stayed = true;
             if (activeId_ == roomId_) activeId_ = slot.callId;
         }
         if (activeId_ == roomId_) activeId_ = 0;
@@ -409,6 +421,57 @@ void CallTable::SendReceive(int callId) {
         return result;
     });
     if (found && status != PJ_SUCCESS) Log(2, "o envio do mosaico da sala: " + StatusText(status));
+}
+
+QualityValues CallTable::TargetQuality() {
+    // A ligação de fora não conta: só os convidados, também os chamados.
+    return roomId_ != 0 ? RoomQuality(settings_.quality, Members()) : ValuesOf(settings_.quality);
+}
+
+bool CallTable::ReinviteForQuality() {
+    std::vector<std::pair<int, int>> calls;   // o id e o id no pjsua de cada uma que recebe o re-INVITE
+    int serial = 0;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (closed_) return false;
+        serial = qualitySerial_;
+        for (Slot& slot : slots_) {
+            if (slot.callId == 0 || !(slot.member || slot.stayed)) continue;
+            // Chamando ou sem o vídeo, nada a refazer: o stream dela nasce com os parâmetros de quando ela atender.
+            const bool encoderOff = slot.width != quality_.width || slot.height != quality_.height ||
+                                    slot.fps != quality_.fps;
+            if (slot.confirmed && slot.videoUp && slot.pjsuaId != PJSUA_INVALID_ID && slot.qualitySerial != serial &&
+                encoderOff) {
+                calls.emplace_back(slot.callId, slot.pjsuaId);
+            } else {
+                slot.stayed = false;   // a que ficou segue como uma ligação comum
+            }
+        }
+    }
+    // O re-INVITE com o vídeo, sem esperar: a pjsua refaz o stream, porque o codificador dos parâmetros de agora é
+    // outro.
+    std::vector<pj_status_t> results;
+    for (const auto& call : calls) {
+        pjsua_call_setting setting;
+        pjsua_call_setting_default(&setting);
+        setting.vid_cnt = 1;
+        results.push_back(pjsua_call_reinvite2(call.second, &setting, nullptr));
+    }
+    bool busy = false;
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (size_t index = 0; index < calls.size(); ++index) {
+        // Outro re-INVITE em andamento na ligação: a passada de daqui a pouco tenta de novo.
+        if (results[index] == PJ_EINVALIDOP) {
+            busy = true;
+            continue;
+        }
+        Slot* slot = Find(calls[index].first);
+        if (!slot) continue;
+        slot->qualitySerial = serial;   // um por mudança do alvo, também o que não saiu
+        slot->stayed = false;
+        if (results[index] != PJ_SUCCESS) Log(2, "o re-INVITE da qualidade da sala: " + StatusText(results[index]));
+    }
+    return busy;
 }
 #endif
 
