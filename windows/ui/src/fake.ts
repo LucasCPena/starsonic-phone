@@ -29,9 +29,10 @@
 // o `__fake.eventoCru(evento)` põe um evento qualquer no ouvinte das memórias.
 // (0.4.0) A sala de vídeo (src/fake-sala.ts) faz o papel do núcleo na sala: os quatro comandos dela e os de sempre com a
 // sala de pé passam antes por ela, e o `fora` e o `cheia` de toda ligação com sala seguem a ligação (o `acertarSala`).
-import { acertarSala, criarSalaFalsa } from './fake-sala';
+import { acertarSala, criarSalaFalsa, RESPONDE_EM_MS, SO_TOCA } from './fake-sala';
 import { AGENDA_DE_EXEMPLO, createScenario, entrarVazio, estadoDoIphone, PLANILHA_DA_EMPRESA, SERVIDORES_DO_PERFIL, type FakeView } from './fake-scenarios';
 import { trimAscii } from './format';
+import { SEM_VIDEO } from './video/estado';
 import { escreverQuadro, esvaziar as esvaziarMemoria, TAMANHO_DA_MEMORIA, type Plano } from './video/memoria';
 import { NENHUMA_CAMERA } from './video/textos';
 import type { SharedBufferEventLike, WebviewLike } from './bridge';
@@ -371,21 +372,40 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
   });
 
   let proximoId = 40;
-  // (0.4.0) A sala de vídeo, com os ids do mesmo contador das ligações.
-  const salaFalsa = criarSalaFalsa({ estado: () => state, mudarLigacao: setCall, toast, toque: ring, novoId: () => ++proximoId });
-  /** A segunda ligação feita (Nova ligação ou Consultar): a de agora vai para a espera e a nova chama. */
+  /**
+   * A segunda ligação feita (Nova ligação ou Consultar, e a ligação de fora da sala): a de agora vai para a espera e a
+   * nova chama, só com a voz. O outro lado atende logo depois, como o convidado da sala (o `180` só toca).
+   */
   const ligarDeNovo = (l: CallState, numero: string, consulta: boolean) => {
     const contato = state.contatos.find((c) => c.numero === numero);
-    const nova: CallCard = { id: ++proximoId, number: numero, name: contato?.nome ?? '', incoming: false, phase: 'dialing', activeSinceMs: 0, held: false };
+    const nova: CallCard = {
+      id: ++proximoId,
+      number: numero,
+      name: contato?.nome ?? '',
+      incoming: false,
+      phase: 'dialing',
+      activeSinceMs: 0,
+      held: false,
+      video: { ...SEM_VIDEO },
+    };
     setCall({ ...l, top: nova, second: { ...l.top, held: true }, secondKind: 'held', consulting: consulta, colleagueActive: consulta });
-    // O outro lado atende logo depois.
+    if (numero === SO_TOCA) return;
     setTimeout(() => {
       const agora = state.ligacao;
       if (agora?.top.id === nova.id && agora.top.phase === 'dialing') {
         setCall({ ...agora, top: { ...agora.top, phase: 'active', activeSinceMs: Date.now() } });
       }
-    }, 1500);
+    }, RESPONDE_EM_MS);
   };
+  // (0.4.0) A sala de vídeo, com os ids do mesmo contador das ligações e a Nova ligação daqui para a ligação de fora.
+  const salaFalsa = criarSalaFalsa({
+    estado: () => state,
+    mudarLigacao: setCall,
+    toast,
+    toque: ring,
+    novoId: () => ++proximoId,
+    novaLigacao: (l, numero) => ligarDeNovo(l, numero, false),
+  });
   /** As ligações do C++ de mentira: só o bastante para a tela da ligação seguir os botões. */
   const handleCall = (command: Record<string, unknown>): boolean => {
     if (salaFalsa.comando(command)) return true;

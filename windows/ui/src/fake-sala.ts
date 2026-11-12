@@ -1,8 +1,9 @@
 // (0.4.0) A sala de vídeo na ponte falsa: o C++ de mentira faz o papel do núcleo na sala, no que a tela vê
 // (docs/ponte-windows.md, "A sala de vídeo (0.4.0)"). O `handleCall` do fake.ts passa cada comando antes por aqui: os
 // quatro da sala e os de sempre com a sala de pé; o `setCall` acerta o `fora` e o `cheia` de cada ligação com sala (o
-// `acertarSala`). Os números do outro lado: o `180` só toca; o `486` dá ocupado em 1,5 s (o convidado sai, com o motivo);
-// os outros atendem em 1,5 s (o convidado entra na sala com a imagem, e a ligação de fora fica só com a voz). No iPhone,
+// `acertarSala`). O outro lado de um convidado: o `180` só toca; o `486` dá ocupado em 1,5 s (o convidado sai, com o
+// motivo); os outros atendem em 1,5 s e entram na sala com a imagem. O que fica sozinho ainda chamando responde do mesmo
+// jeito, como uma feita. A ligação de fora feita com a sala de pé é a Nova ligação do fake.ts, só com a voz. No iPhone,
 // os quatro comandos não fazem nada, e nenhuma sala fica de pé.
 import { trimAscii } from './format';
 import { isIos } from './plataforma';
@@ -18,14 +19,17 @@ export interface DependenciasDaSalaFalsa {
   toast(texto: string): void;
   /** O ring do fake.ts (nenhum toque no iPhone). */
   toque(tipo: RingKind): void;
-  /** O ++proximoId do fake.ts: o id da sala, o de cada convidado e o da ligação de fora. */
+  /** O ++proximoId do fake.ts: o id da sala e o de cada convidado. */
   novoId(): number;
+  /** A Nova ligação do fake.ts (o ligarDeNovo): a de agora vai para a espera, e a nova chama, só com a voz. */
+  novaLigacao(l: CallState, numero: string): void;
 }
 
-const SO_TOCA = '180';
+/** O número que só toca, nas ligações feitas da ponte falsa (a Nova ligação, o Consultar e os convidados da sala). */
+export const SO_TOCA = '180';
 const OCUPADO = '486';
-/** O outro lado atende (ou dá ocupado) depois disto. */
-const RESPONDE_EM_MS = 1_500;
+/** O outro lado de uma ligação feita da ponte falsa atende (ou dá ocupado) depois disto. */
+export const RESPONDE_EM_MS = 1_500;
 /** Até 5 convidados, contando os chamados: com eles, a sala está cheia. */
 const MAXIMO_DE_CONVIDADOS = 5;
 
@@ -67,7 +71,7 @@ function atendidaSoComAVoz(card: CallCard): CallCard {
 
 /**
  * Os comandos da sala e os de sempre com a sala de pé (o hangup, o answer, o swap e o hold, e também o transfer, o dial,
- * o consult, o dtmf, o join e o split, que o núcleo recusa ou muda com a sala); true quando tratou.
+ * o consult, o dtmf, o join, o split e o camera, que o núcleo recusa ou muda com a sala); true quando tratou.
  */
 export function criarSalaFalsa(d: DependenciasDaSalaFalsa): { comando(command: Record<string, unknown>): boolean } {
   /** Quando cada convidado chamado daqui atendeu: o tempo dele, se a sala acaba com ele. */
@@ -98,27 +102,31 @@ export function criarSalaFalsa(d: DependenciasDaSalaFalsa): { comando(command: R
   };
 
   /**
-   * O fim da sala (o Encerrar, o Desligar dela, ou ninguém nela): a ligação de fora, se há, fica sozinha em cima, fora da
-   * espera, e a que ainda toca passa ao toque completo; sem ela, nenhuma ligação.
+   * Só a outra ligação fica (`null`: nenhuma): sozinha em cima, fora da espera e sem a sala, e a que ainda toca passa ao
+   * toque completo. Sem ela, nenhuma ligação.
    */
-  const acabarSala = (sp: SalaDePe) => {
-    const deFora = deForaDe(sp);
-    if (!deFora) {
+  const ficaSo = (l: CallState, outra: CallCard | null) => {
+    if (!outra) {
       d.mudarLigacao(null);
       return;
     }
-    d.mudarLigacao({ ...sp.l, top: { ...deFora, held: false }, second: null, secondKind: 'none', sala: null });
-    if (deFora.phase === 'ringing') d.toque('completo');
+    d.mudarLigacao({ ...l, top: { ...outra, held: false }, second: null, secondKind: 'none', sala: null });
+    if (outra.phase === 'ringing') d.toque('completo');
   };
+
+  /** O fim da sala (o Encerrar, o Desligar dela, ou ninguém nela): a ligação de fora, se há, fica sozinha. */
+  const acabarSala = (sp: SalaDePe) => ficaSo(sp.l, deForaDe(sp));
 
   /**
    * Com um convidado só (contando os chamados), a sala acaba: ele volta a ser a ligação, no lugar da linha da sala (em
-   * cima, ou em espera embaixo), com o id, o número, o nome e a imagem dele e a câmera da sala. O que ainda era chamado
-   * volta como uma feita que chama.
+   * cima, ou em espera embaixo), com o id, o número, o nome e a imagem dele e a câmera da sala, em qualquer estado (o
+   * desejo da câmera da sala passa a ele). O que já atendeu volta com o vídeo ativo, também o que pôs você em espera (a
+   * espera do outro lado não pausa o vídeo aqui); o que ainda era chamado volta como uma feita que chama, ainda sem o
+   * vídeo (ele só vem com o atender). Em espera embaixo, o vídeo fica sem a pausa, como o de toda ligação em espera da
+   * ponte falsa (quem pausa é a tela).
    */
   const comQuemFicou = ({ l, linha, emCima }: SalaDePe, p: ParticipanteDaSala): CallState => {
     const atendeu = p.estado !== 'chamando';
-    const naSala = p.estado === 'naSala';
     const ligacao: CallCard = {
       id: p.id,
       number: p.numero,
@@ -127,7 +135,7 @@ export function criarSalaFalsa(d: DependenciasDaSalaFalsa): { comando(command: R
       phase: atendeu ? 'active' : 'dialing',
       activeSinceMs: atendeu ? (atendidos.get(p.id) ?? linha.activeSinceMs) : 0,
       held: linha.held,
-      video: { ...SEM_VIDEO, ativo: naSala, imagem: p.imagem, camera: naSala && (linha.video?.camera ?? false) },
+      video: { ...SEM_VIDEO, ativo: atendeu, imagem: p.imagem, camera: linha.video?.camera ?? false },
     };
     return emCima ? { ...l, top: ligacao, sala: null } : { ...l, second: ligacao, sala: null };
   };
@@ -141,21 +149,40 @@ export function criarSalaFalsa(d: DependenciasDaSalaFalsa): { comando(command: R
   };
 
   /**
-   * O outro lado do convidado chamado responde: atende (na sala, com a imagem) ou dá ocupado (sai, com o motivo). Já fora
-   * da sala (tirado, ou com ela acabada), nada.
+   * O outro lado do convidado chamado responde: atende (na sala, com a imagem) ou dá ocupado (sai, com o motivo). Se a
+   * sala acabou com ele ainda chamando, ele já é a ligação (em cima, ou em espera embaixo) e responde como uma feita:
+   * atende com o vídeo, ou acaba com o `Ocupado` de uma feita que não completou (sem o nome, que só o convidado e o colega
+   * da consulta levam). Tirado, ou já desligado, nada.
    */
   const responder = (id: number, ocupado: boolean) => {
     const sp = deAgora();
     const p = sp?.sala.participantes.find((x) => x.id === id && x.estado === 'chamando');
-    if (!sp || !p) return;
-    if (ocupado) {
-      sair(sp, id);
-      d.toast(`${nomeNaSala(p)}: Ocupado`);
+    if (sp && p) {
+      if (ocupado) {
+        sair(sp, id);
+        d.toast(`${nomeNaSala(p)}: Ocupado`);
+        return;
+      }
+      atendidos.set(id, Date.now());
+      const participantes = sp.sala.participantes.map((x): ParticipanteDaSala => (x.id === id ? { ...x, estado: 'naSala', imagem: true } : x));
+      d.mudarLigacao({ ...sp.l, sala: { ...sp.sala, participantes } });
       return;
     }
-    atendidos.set(id, Date.now());
-    const participantes = sp.sala.participantes.map((x): ParticipanteDaSala => (x.id === id ? { ...x, estado: 'naSala', imagem: true } : x));
-    d.mudarLigacao({ ...sp.l, sala: { ...sp.sala, participantes } });
+    const l = d.estado().ligacao;
+    const sozinho = l && [l.top, l.second].find((c) => c?.id === id && c.phase === 'dialing');
+    if (!l || !sozinho) return;
+    if (ocupado) {
+      ficaSo(l, l.top.id === id ? l.second : l.top);
+      d.toast('Ocupado');
+      return;
+    }
+    const atendido: CallCard = {
+      ...sozinho,
+      phase: 'active',
+      activeSinceMs: Date.now(),
+      video: { ...(sozinho.video ?? SEM_VIDEO), ativo: true, imagem: true },
+    };
+    d.mudarLigacao(l.top.id === id ? { ...l, top: atendido } : { ...l, second: atendido });
   };
 
   /**
@@ -198,33 +225,6 @@ export function criarSalaFalsa(d: DependenciasDaSalaFalsa): { comando(command: R
     if (numero === SO_TOCA) return;
     const id = convidado.id;
     setTimeout(() => responder(id, numero === OCUPADO), RESPONDE_EM_MS);
-  };
-
-  /**
-   * A Nova ligação com a sala de pé é a ligação de fora, só com a voz: ela vai para cima, e a sala para a espera. O outro
-   * lado atende em 1,5 s, como na Nova ligação de sempre (o `180` só toca).
-   */
-  const ligarParaFora = ({ l }: SalaDePe, command: Record<string, unknown>) => {
-    const numero = trimAscii(String(command.numero ?? ''));
-    if (numero === '') return;
-    const nova: CallCard = {
-      id: d.novoId(),
-      number: numero,
-      name: nomeDoContato(d.estado(), numero),
-      incoming: false,
-      phase: 'dialing',
-      activeSinceMs: 0,
-      held: false,
-      video: { ...SEM_VIDEO },
-    };
-    d.mudarLigacao({ ...l, top: nova, second: { ...l.top, held: true }, secondKind: 'held' });
-    if (numero === SO_TOCA) return;
-    setTimeout(() => {
-      const agora = d.estado().ligacao;
-      if (agora?.top.id === nova.id && agora.top.phase === 'dialing') {
-        d.mudarLigacao({ ...agora, top: { ...agora.top, phase: 'active', activeSinceMs: Date.now() } });
-      }
-    }, RESPONDE_EM_MS);
   };
 
   /**
@@ -273,10 +273,17 @@ export function criarSalaFalsa(d: DependenciasDaSalaFalsa): { comando(command: R
         // A da de fora atendida: a central aceita, e só ela acaba. Com a sala em cima, nada.
         if (!emCima && l.top.phase === 'active') fimDaDeFora(sp, l.top);
         return true;
-      case 'dial':
-        // Só com a sala sozinha (uma ligação de fora por vez).
-        if (emCima && !l.second) ligarParaFora(sp, command);
+      case 'dial': {
+        // A ligação de fora é a Nova ligação de sempre (a sala vai para a espera), só com a sala sozinha em cima: uma
+        // ligação de fora por vez.
+        const numero = trimAscii(String(command.numero ?? ''));
+        if (emCima && !l.second && numero !== '') d.novaLigacao(l, numero);
         return true;
+      }
+      case 'camera':
+        // Com a sala de pé, a câmera é a da sala: com a ligação de fora em cima, o motor recusa o `camera` (o SetCamera
+        // de outro id); com a sala em cima, o de sempre liga ou desliga a câmera dela.
+        return !emCima;
       case 'consult':
       case 'dtmf':
         // Com a sala em cima, nada (os dígitos não têm para quem ir); com a de fora em cima, os de sempre.

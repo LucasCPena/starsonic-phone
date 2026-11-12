@@ -127,6 +127,11 @@ test('Adicionar pessoa shows in a lone video call and in the room on top, and wa
   const casos: Array<[string, AppState, { mostra: boolean; pode: boolean }]> = [
     ['the lone active video call', videochamada, { mostra: true, pode: true }],
     ['the top still calling', comLigacao({ ...l, top: { ...l.top, phase: 'dialing', activeSinceMs: 0 } }), { mostra: true, pode: false }],
+    // Cada regra sozinha, mesmo num estado que o núcleo não manda: atendida sem o tempo, a conferência e a consulta sem a
+    // segunda.
+    ['the top active without its time', comLigacao({ ...l, top: { ...l.top, activeSinceMs: 0 } }), { mostra: true, pode: false }],
+    ['only conference', comLigacao({ ...l, conference: true }), { mostra: true, pode: false }],
+    ['only consulting', comLigacao({ ...l, consulting: true }), { mostra: true, pode: false }],
     ['the top held', comLigacao({ ...l, top: { ...l.top, held: true } }), { mostra: true, pode: false }],
     ['with a second call', comLigacao({ ...l, second: { ...carlos, held: true }, secondKind: 'held' }), { mostra: true, pode: false }],
     [

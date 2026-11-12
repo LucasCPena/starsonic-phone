@@ -140,12 +140,21 @@ test('salaTirar takes the guest out, and with one guest left the room is a call 
   expect(l.top).toMatchObject({ id: 13, number: '2005', name: 'Bia Ramos', phase: 'active', activeSinceMs: linha.activeSinceMs, held: false });
   expect(l.top.video).toMatchObject({ ativo: true, imagem: false, camera: true });
 
-  // Quem fica ainda chamando volta como uma feita que chama.
+  // Quem fica leva a câmera da sala (ligada aqui) em qualquer estado. O Davi, que pôs você em espera, volta atendido, com
+  // o vídeo ativo; o Carlos, ainda chamando, volta como uma feita que chama, sem o vídeo até atender.
+  await abrir(page, 'sala-estados');
+  const tempoDaSala = (await ligacao(page)).top.activeSinceMs;
+  for (const id of [11, 12, 13]) await mandar(page, { cmd: 'salaTirar', id });
+  l = await ligacao(page);
+  expect(l.sala).toBeNull();
+  expect(l.top).toMatchObject({ id: 14, number: '2006', name: 'Davi Nunes', phase: 'active', activeSinceMs: tempoDaSala });
+  expect(l.top.video).toMatchObject({ ativo: true, imagem: false, camera: true });
   await abrir(page, 'sala-estados');
   for (const id of [11, 13, 14]) await mandar(page, { cmd: 'salaTirar', id });
   l = await ligacao(page);
   expect(l.sala).toBeNull();
   expect(l.top).toMatchObject({ id: 12, number: '2007', name: 'Carlos Lima', phase: 'dialing', activeSinceMs: 0 });
+  expect(l.top.video).toMatchObject({ ativo: false, imagem: false, camera: true });
 
   // A Ana fica com a câmera da sala, aqui desligada.
   await abrir(page, 'sala');
@@ -263,6 +272,55 @@ test('a guest who only rings or is busy', async ({ page }) => {
   // O 180 segue chamando depois de 3 s.
   await page.waitForTimeout(Math.max(0, chamados + 3_000 - Date.now()));
   expect((await participantes())[2]).toMatchObject({ id: 41, numero: '180', estado: 'chamando', imagem: false });
+});
+
+test('a guest left alone while still being called answers, ends busy or keeps ringing, like a dial', async ({ page }) => {
+  // Na videochamada com a Ana, o convidado novo ainda chamando e a Ana tirada: ele fica sozinho, como uma feita que chama.
+  const sozinho = async (numero: string) => {
+    await abrir(page, 'video');
+    await mandar(page, { cmd: 'salaAdicionar', numero });
+    await mandar(page, { cmd: 'salaTirar', id: 11 });
+    const l = await ligacao(page);
+    expect(l.sala, numero).toBeNull();
+    expect(l.top, numero).toMatchObject({ id: 42, number: numero, phase: 'dialing', video: { ativo: false, imagem: false, camera: true } });
+    return Date.now();
+  };
+  // Atende em 1,5 s, com o vídeo e a câmera da sala.
+  await sozinho('2007');
+  await expect.poll(async () => (await ligacao(page)).top.phase, { timeout: 3_000 }).toBe('active');
+  let l = await ligacao(page);
+  expect(l.top).toMatchObject({ id: 42, name: 'Carlos Lima', held: false, video: { ativo: true, imagem: true, camera: true } });
+  expect(l.top.activeSinceMs).toBeGreaterThan(0);
+  // O 486 acaba com o motivo de uma feita que não completou.
+  await sozinho('486');
+  await expect.poll(async () => ligacao(page), { timeout: 3_000 }).toBeNull();
+  await expect(page.locator('.toast-box')).toHaveText('Ocupado');
+  // O 180 segue chamando depois de 3 s.
+  const chamado = await sozinho('180');
+  await page.waitForTimeout(Math.max(0, chamado + 3_000 - Date.now()));
+  expect((await ligacao(page)).top).toMatchObject({ id: 42, phase: 'dialing' });
+
+  // Com você fora (a ligação de fora atendida), ele fica no lugar da sala, em espera embaixo, e atende do mesmo jeito.
+  await abrir(page, 'sala-ligacao-de-fora');
+  await mandar(page, { cmd: 'salaAdicionar', numero: '2005' });
+  await mandar(page, { cmd: 'answer' });
+  for (const id of [11, 12]) await mandar(page, { cmd: 'salaTirar', id });
+  l = await ligacao(page);
+  expect(l.sala).toBeNull();
+  expect(l.top).toMatchObject({ id: 16, phase: 'active', held: false });
+  expect(l.second).toMatchObject({ id: 41, number: '2005', phase: 'dialing', held: true });
+  await expect.poll(async () => (await ligacao(page)).second.phase, { timeout: 3_000 }).toBe('active');
+  expect((await ligacao(page)).second).toMatchObject({ id: 41, held: true, video: { ativo: true, imagem: true, camera: true } });
+});
+
+test('camera with you out of the room changes nothing', async ({ page }) => {
+  // Com a sala de pé, a câmera é a da sala: com a ligação de fora em cima, o núcleo recusa o `camera`.
+  await abrir(page, 'sala-fora');
+  const antes = await ligacao(page);
+  for (const on of [true, false]) {
+    await mandar(page, { cmd: 'camera', on });
+    expect(await ligacao(page), String(on)).toEqual(antes);
+  }
 });
 
 test('with the room up, hold, transfer, consult, dtmf, join and split change nothing', async ({ page }) => {
