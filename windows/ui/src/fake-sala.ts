@@ -76,6 +76,8 @@ function atendidaSoComAVoz(card: CallCard): CallCard {
 export function criarSalaFalsa(d: DependenciasDaSalaFalsa): { comando(command: Record<string, unknown>): boolean } {
   /** Quando cada convidado chamado daqui atendeu: o tempo dele, se a sala acaba com ele. */
   const atendidos = new Map<number, number>();
+  /** O desejo da câmera da sala que passou a quem ficou sozinho ainda chamando: a câmera dele quando atender. */
+  const desejos = new Map<number, boolean>();
 
   /** A sala de agora com a linha dela, ou `null`: sem ligação, sem sala ou no iPhone. */
   const deAgora = (): SalaDePe | null => {
@@ -119,11 +121,13 @@ export function criarSalaFalsa(d: DependenciasDaSalaFalsa): { comando(command: R
 
   /**
    * Com um convidado só (contando os chamados), a sala acaba: ele volta a ser a ligação, no lugar da linha da sala (em
-   * cima, ou em espera embaixo), com o id, o número, o nome e a imagem dele e a câmera da sala, em qualquer estado (o
-   * desejo da câmera da sala passa a ele). O que já atendeu volta com o vídeo ativo, também o que pôs você em espera (a
-   * espera do outro lado não pausa o vídeo aqui); o que ainda era chamado volta como uma feita que chama, ainda sem o
-   * vídeo (ele só vem com o atender). Em espera embaixo, o vídeo fica sem a pausa, como o de toda ligação em espera da
-   * ponte falsa (quem pausa é a tela).
+   * cima, ou em espera embaixo), com o id, o número, o nome e a imagem dele. O desejo da câmera da sala passa a ele, e o
+   * `camera` é o que o núcleo publica, a nossa câmera mandando nesta ligação: com ele atendido (`naSala`), a câmera da
+   * sala; ainda chamando, desligada, e com o atender ela vem com o desejo (o ficaSozinho o guarda); pondo você em espera
+   * (`emEspera`), desligada (a ponte falsa não faz o outro lado voltar). O que já atendeu volta com o vídeo ativo, também
+   * o que pôs você em espera (a espera do outro lado não pausa o vídeo aqui); o que ainda era chamado volta como uma feita
+   * que chama, ainda sem o vídeo. Em espera embaixo, nada pausa, como em toda ligação em espera da ponte falsa (quem pausa
+   * é a tela).
    */
   const comQuemFicou = ({ l, linha, emCima }: SalaDePe, p: ParticipanteDaSala): CallState => {
     const atendeu = p.estado !== 'chamando';
@@ -135,24 +139,43 @@ export function criarSalaFalsa(d: DependenciasDaSalaFalsa): { comando(command: R
       phase: atendeu ? 'active' : 'dialing',
       activeSinceMs: atendeu ? (atendidos.get(p.id) ?? linha.activeSinceMs) : 0,
       held: linha.held,
-      video: { ...SEM_VIDEO, ativo: atendeu, imagem: p.imagem, camera: linha.video?.camera ?? false },
+      video: { ...SEM_VIDEO, ativo: atendeu, imagem: p.imagem, camera: p.estado === 'naSala' && (linha.video?.camera ?? false) },
     };
     return emCima ? { ...l, top: ligacao, sala: null } : { ...l, second: ligacao, sala: null };
+  };
+
+  /**
+   * O outro lado de quem é chamado responde em 1,5 s, pelas regras dos números (o `180` só toca). A resposta lê o estado
+   * de novo: a que chega para quem já atendeu, saiu ou desligou não faz nada.
+   */
+  const esperarResposta = (id: number, numero: string) => {
+    if (numero !== SO_TOCA) setTimeout(() => responder(id, numero === OCUPADO), RESPONDE_EM_MS);
+  };
+
+  /**
+   * A sala acaba com um convidado só. O que ainda era chamado guarda o desejo da câmera da sala para quando atender, e o
+   * outro lado dele responde como sempre, também o de quem já chamava quando a página abriu (os cenários).
+   */
+  const ficaSozinho = (sp: SalaDePe, p: ParticipanteDaSala) => {
+    d.mudarLigacao(comQuemFicou(sp, p));
+    if (p.estado !== 'chamando') return;
+    desejos.set(p.id, sp.linha.video?.camera ?? false);
+    esperarResposta(p.id, p.numero);
   };
 
   /** O convidado sai: os outros vão para a arrumação nova, e com um só a sala acaba. */
   const sair = (sp: SalaDePe, id: number) => {
     const ficam = sp.sala.participantes.filter((p) => p.id !== id);
     if (ficam.length >= 2) d.mudarLigacao({ ...sp.l, sala: { ...sp.sala, participantes: arrumados(ficam) } });
-    else if (ficam.length === 1) d.mudarLigacao(comQuemFicou(sp, ficam[0]));
+    else if (ficam.length === 1) ficaSozinho(sp, ficam[0]);
     else acabarSala(sp);
   };
 
   /**
    * O outro lado do convidado chamado responde: atende (na sala, com a imagem) ou dá ocupado (sai, com o motivo). Se a
    * sala acabou com ele ainda chamando, ele já é a ligação (em cima, ou em espera embaixo) e responde como uma feita:
-   * atende com o vídeo, ou acaba com o `Ocupado` de uma feita que não completou (sem o nome, que só o convidado e o colega
-   * da consulta levam). Tirado, ou já desligado, nada.
+   * atende com o vídeo e com a câmera do desejo que a sala deixou, ou acaba com o `Ocupado` de uma feita que não
+   * completou (sem o nome, que só o convidado e o colega da consulta levam). Tirado, ou já desligado, nada.
    */
   const responder = (id: number, ocupado: boolean) => {
     const sp = deAgora();
@@ -170,6 +193,8 @@ export function criarSalaFalsa(d: DependenciasDaSalaFalsa): { comando(command: R
     }
     const l = d.estado().ligacao;
     const sozinho = l && [l.top, l.second].find((c) => c?.id === id && c.phase === 'dialing');
+    const desejo = desejos.get(id) ?? false;
+    desejos.delete(id);
     if (!l || !sozinho) return;
     if (ocupado) {
       ficaSo(l, l.top.id === id ? l.second : l.top);
@@ -180,7 +205,7 @@ export function criarSalaFalsa(d: DependenciasDaSalaFalsa): { comando(command: R
       ...sozinho,
       phase: 'active',
       activeSinceMs: Date.now(),
-      video: { ...(sozinho.video ?? SEM_VIDEO), ativo: true, imagem: true },
+      video: { ...(sozinho.video ?? SEM_VIDEO), ativo: true, imagem: true, camera: desejo },
     };
     d.mudarLigacao(l.top.id === id ? { ...l, top: atendido } : { ...l, second: atendido });
   };
@@ -222,9 +247,7 @@ export function criarSalaFalsa(d: DependenciasDaSalaFalsa): { comando(command: R
       };
       d.mudarLigacao({ ...l, top: linha, sala: { id, fora: false, cheia: false, participantes: arrumados([daLigacao, convidado]) } });
     }
-    if (numero === SO_TOCA) return;
-    const id = convidado.id;
-    setTimeout(() => responder(id, numero === OCUPADO), RESPONDE_EM_MS);
+    esperarResposta(convidado.id, numero);
   };
 
   /**

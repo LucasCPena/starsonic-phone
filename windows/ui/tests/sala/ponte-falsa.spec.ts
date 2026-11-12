@@ -140,21 +140,25 @@ test('salaTirar takes the guest out, and with one guest left the room is a call 
   expect(l.top).toMatchObject({ id: 13, number: '2005', name: 'Bia Ramos', phase: 'active', activeSinceMs: linha.activeSinceMs, held: false });
   expect(l.top.video).toMatchObject({ ativo: true, imagem: false, camera: true });
 
-  // Quem fica leva a câmera da sala (ligada aqui) em qualquer estado. O Davi, que pôs você em espera, volta atendido, com
-  // o vídeo ativo; o Carlos, ainda chamando, volta como uma feita que chama, sem o vídeo até atender.
+  // O desejo da câmera da sala (ligada aqui) passa a quem fica, mas a câmera só manda para quem atendeu, como no núcleo.
+  // O Davi, que pôs você em espera, volta atendido, com o vídeo ativo e sem a câmera.
   await abrir(page, 'sala-estados');
   const tempoDaSala = (await ligacao(page)).top.activeSinceMs;
   for (const id of [11, 12, 13]) await mandar(page, { cmd: 'salaTirar', id });
   l = await ligacao(page);
   expect(l.sala).toBeNull();
   expect(l.top).toMatchObject({ id: 14, number: '2006', name: 'Davi Nunes', phase: 'active', activeSinceMs: tempoDaSala });
-  expect(l.top.video).toMatchObject({ ativo: true, imagem: false, camera: true });
+  expect(l.top.video).toMatchObject({ ativo: true, imagem: false, camera: false });
+  // O Carlos, ainda chamando, volta como uma feita que chama, sem o vídeo e sem a câmera; o outro lado atende como
+  // sempre, e a câmera vem com o desejo.
   await abrir(page, 'sala-estados');
   for (const id of [11, 13, 14]) await mandar(page, { cmd: 'salaTirar', id });
   l = await ligacao(page);
   expect(l.sala).toBeNull();
   expect(l.top).toMatchObject({ id: 12, number: '2007', name: 'Carlos Lima', phase: 'dialing', activeSinceMs: 0 });
-  expect(l.top.video).toMatchObject({ ativo: false, imagem: false, camera: true });
+  expect(l.top.video).toMatchObject({ ativo: false, imagem: false, camera: false });
+  await expect.poll(async () => (await ligacao(page)).top.video.camera, { timeout: 3_000 }).toBe(true);
+  expect((await ligacao(page)).top).toMatchObject({ id: 12, phase: 'active', video: { ativo: true, imagem: true, camera: true } });
 
   // A Ana fica com a câmera da sala, aqui desligada.
   await abrir(page, 'sala');
@@ -282,10 +286,10 @@ test('a guest left alone while still being called answers, ends busy or keeps ri
     await mandar(page, { cmd: 'salaTirar', id: 11 });
     const l = await ligacao(page);
     expect(l.sala, numero).toBeNull();
-    expect(l.top, numero).toMatchObject({ id: 42, number: numero, phase: 'dialing', video: { ativo: false, imagem: false, camera: true } });
+    expect(l.top, numero).toMatchObject({ id: 42, number: numero, phase: 'dialing', video: { ativo: false, imagem: false, camera: false } });
     return Date.now();
   };
-  // Atende em 1,5 s, com o vídeo e a câmera da sala.
+  // Atende em 1,5 s, com o vídeo, e a câmera vem com o desejo da sala (a da videochamada, ligada).
   await sozinho('2007');
   await expect.poll(async () => (await ligacao(page)).top.phase, { timeout: 3_000 }).toBe('active');
   let l = await ligacao(page);
@@ -308,7 +312,7 @@ test('a guest left alone while still being called answers, ends busy or keeps ri
   l = await ligacao(page);
   expect(l.sala).toBeNull();
   expect(l.top).toMatchObject({ id: 16, phase: 'active', held: false });
-  expect(l.second).toMatchObject({ id: 41, number: '2005', phase: 'dialing', held: true });
+  expect(l.second).toMatchObject({ id: 41, number: '2005', phase: 'dialing', held: true, video: { ativo: false, camera: false } });
   await expect.poll(async () => (await ligacao(page)).second.phase, { timeout: 3_000 }).toBe('active');
   expect((await ligacao(page)).second).toMatchObject({ id: 41, held: true, video: { ativo: true, imagem: true, camera: true } });
 });
