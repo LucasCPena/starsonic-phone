@@ -39,8 +39,12 @@ export function EncerrarSala({ sala, send, tocando, onFechar }: Props): VNode {
   fecharRef.current = fechar;
 
   // A ligação de fora que começa a tocar com a pergunta aberta: fecha como o Cancelar, para o cartão dela poder ser atendido.
+  // Só quando ela começa a tocar com a pergunta aberta (de falso a verdadeiro): a pergunta aberta com a ligação já tocando
+  // é de quem escolheu encerrar a sala vendo essa ligação, e fica.
+  const tocavaRef = useRef(tocando);
   useEffect(() => {
-    if (tocando) fecharRef.current();
+    if (tocando && !tocavaRef.current) fecharRef.current();
+    tocavaRef.current = tocando;
   }, [tocando]);
 
   useEffect(() => {

@@ -385,3 +385,20 @@ test('answering the outside call in the big window brings the call screen with t
   await depoisDoQueChegou(page);
   expect(await vezes(page, { cmd: 'videoWindow', modo: 'normal' })).toBe(1);
 });
+
+test('in the big window a question opened while an outside call already rings stays open; Cancelar and Encerrar still work', async ({ page }) => {
+  await abrir(page, 'sala-grande');
+  const roberto = { id: 31, number: '2012', name: 'Roberto Lima', incoming: true, phase: 'ringing', activeSinceMs: 0, held: false, video: { ...SEM_VIDEO } };
+  await mudarEstado(page, (s) => ({ ...s, ligacao: { ...s.ligacao, second: roberto, secondKind: 'ringing' } }));
+  await botao(page, 'Desligar').click();
+  await expect(pergunta(page)).toBeVisible();
+  await page.waitForTimeout(300);
+  await expect(pergunta(page)).toBeVisible();
+  await pergunta(page).getByRole('button', { name: 'Cancelar', exact: true }).click();
+  await expect(pergunta(page)).toHaveCount(0);
+  await botao(page, 'Desligar').click();
+  await pergunta(page).getByRole('button', { name: 'Encerrar', exact: true }).click();
+  await esperarComando(page, { cmd: 'salaEncerrar' });
+  await depoisDoQueChegou(page);
+  expect(await vezes(page, { cmd: 'salaEncerrar' })).toBe(1);
+});

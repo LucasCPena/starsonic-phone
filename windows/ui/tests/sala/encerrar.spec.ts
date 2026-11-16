@@ -175,3 +175,22 @@ test('the question gives way to an outside call that starts ringing: it closes a
   expect(await vezes(page, { cmd: 'salaEncerrar' })).toBe(0);
   expect((await depois(page, antes)).filter((c) => (c as { cmd: string }).cmd !== 'answer')).toEqual([]);
 });
+
+test('a question opened while an outside call already rings stays open; Cancelar and Encerrar still work', async ({ page }) => {
+  await abrir(page, 'sala-ligacao-de-fora');
+  const antes = (await comandos(page)).length;
+  await perguntar(page);
+  await expect(doDialogo(page, 'Cancelar')).toBeFocused();
+  // Ela segue aberta: quem escolheu encerrar a sala viu a ligação que toca.
+  await page.waitForTimeout(300);
+  await expect(pergunta(page)).toBeVisible();
+  await doDialogo(page, 'Cancelar').click();
+  await expect(pergunta(page)).toHaveCount(0);
+  await expect(botao(page, 'Desligar')).toBeFocused();
+  await perguntar(page);
+  await doDialogo(page, 'Encerrar').click();
+  await esperarComando(page, { cmd: 'salaEncerrar' });
+  await depoisDoQueChegou(page);
+  expect(await vezes(page, { cmd: 'salaEncerrar' })).toBe(1);
+  expect((await depois(page, antes)).filter((c) => (c as { cmd: string }).cmd !== 'salaEncerrar')).toEqual([]);
+});

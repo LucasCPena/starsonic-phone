@@ -410,16 +410,32 @@ test('the iPhone fake has no room', async ({ page }) => {
 });
 
 test('a guest who answers without the image goes from Chamando… to Sem vídeo and then to the image, like the core', async ({ page }) => {
-  await abrir(page, 'sala');
+  // O relógio para antes de a página abrir (docs/build-notes.md) e só anda com o `runFor`: nada depende do tempo da máquina.
+  const inicio = Date.now();
+  await page.clock.install({ time: inicio });
+  await page.clock.pauseAt(inicio + 1_000);
+  await page.goto('/index.html?fake=sala');
+  // O estado e o data-pronto vêm com o runFor (a ponte falsa manda as mensagens por um setTimeout).
+  await page.clock.runFor(1_000);
+  await expect(page.locator('body[data-pronto]')).toHaveCount(1);
   // O 183 atende em 1,5 s sem a imagem, e a primeira imagem chega 1,5 s depois (o núcleo põe a `imagem` no primeiro quadro).
   await mandar(page, { cmd: 'salaAdicionar', numero: '183' });
+  await page.clock.runFor(10);
   const quadro = page.getByRole('group', { name: 'Mosaico da sala', exact: true }).getByRole('group', { name: '183', exact: true });
+  const imagem = quadro.getByRole('img', { name: 'Vídeo de 183', exact: true });
+  const ultimo = async () => (await ligacao(page)).sala.participantes.at(-1);
   await expect(quadro.getByText('Chamando…', { exact: true })).toBeVisible();
-  await expect(quadro.getByText('Sem vídeo', { exact: true })).toBeVisible({ timeout: 4_000 });
+  await page.clock.runFor(1_300);
+  await expect(quadro.getByText('Chamando…', { exact: true })).toBeVisible();
+  await page.clock.runFor(200);
+  await expect(quadro.getByText('Sem vídeo', { exact: true })).toBeVisible();
   await expect(quadro.getByText('Chamando…', { exact: true })).toHaveCount(0);
-  await expect(quadro.getByRole('img', { name: 'Vídeo de 183', exact: true })).toHaveCount(0);
-  expect((await ligacao(page)).sala.participantes.at(-1)).toMatchObject({ numero: '183', estado: 'naSala', imagem: false });
-  await expect(quadro.getByRole('img', { name: 'Vídeo de 183', exact: true })).toBeVisible({ timeout: 4_000 });
+  await expect(imagem).toHaveCount(0);
+  expect(await ultimo()).toMatchObject({ numero: '183', estado: 'naSala', imagem: false });
+  await page.clock.runFor(1_200);
+  await expect(quadro.getByText('Sem vídeo', { exact: true })).toBeVisible();
+  await page.clock.runFor(400);
+  await expect(imagem).toBeVisible();
   await expect(quadro.getByText('Sem vídeo', { exact: true })).toHaveCount(0);
-  expect((await ligacao(page)).sala.participantes.at(-1)).toMatchObject({ numero: '183', estado: 'naSala', imagem: true });
+  expect(await ultimo()).toMatchObject({ numero: '183', estado: 'naSala', imagem: true });
 });
