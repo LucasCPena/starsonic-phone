@@ -352,6 +352,42 @@ func TestReunioesNaHora(t *testing.T) {
 	}
 }
 
+// As reuniões da empresa que podem estar acontecendo, que a administração lê antes de bloquear ou apagar a empresa:
+// a marcada que passou do valeAte vem (quem está nela continua); a cancelada, a naHora que acabou e as de outra
+// empresa, não.
+func TestReunioesDaEmpresa(t *testing.T) {
+	b := abrirTeste(t)
+	ctx := context.Background()
+	acme, _ := b.CriarEmpresa(ctx, "ACME Comércio Ltda")
+	outra, _ := b.CriarEmpresa(ctx, "Outra Ltda")
+	ana := pessoaDe(t, b, acme.ID, "2003", "Ana Souza")
+	abel := pessoaDe(t, b, outra.ID, "2003", "Abel")
+
+	passou := marcada(t, b, acme.ID, ana.ID, -3*hora) // o valeAte foi 1 h atrás
+	vale := marcada(t, b, acme.ID, ana.ID, hora)
+	cancelada := marcada(t, b, acme.ID, ana.ID, hora)
+	if _, err := b.CancelarReuniao(ctx, acme.ID, ana.ID, cancelada.Codigo); err != nil {
+		t.Fatal(err)
+	}
+	aberta, _ := b.CriarReuniao(ctx, Reuniao{EmpresaID: acme.ID, Tipo: TipoNaHora, CriouID: ana.ID})
+	acabou, _ := b.CriarReuniao(ctx, Reuniao{EmpresaID: acme.ID, Tipo: TipoNaHora, CriouID: ana.ID})
+	if err := b.AcabarReuniao(ctx, acabou.ID); err != nil {
+		t.Fatal(err)
+	}
+	marcada(t, b, outra.ID, abel.ID, hora)
+	if _, err := b.CriarReuniaoDeTeste(ctx, agora(b)+hora); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := b.ReunioesDaEmpresa(ctx, acme.ID)
+	if err != nil || len(got) != 3 || got[0] != passou || got[1] != vale || got[2] != aberta {
+		t.Fatalf("ReunioesDaEmpresa = %+v, %v; queria a que passou, a que vale e a naHora aberta", got, err)
+	}
+	if got, err := b.ReunioesDaEmpresa(ctx, 9999); err != nil || got == nil || len(got) != 0 {
+		t.Fatalf("sem empresa = %#v, %v", got, err)
+	}
+}
+
 func TestApagarReunioesVelhas(t *testing.T) {
 	b := abrirTeste(t)
 	ctx := context.Background()

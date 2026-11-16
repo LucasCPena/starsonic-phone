@@ -232,6 +232,16 @@ func (b *Banco) AcabarReuniao(ctx context.Context, id int64) error {
 	})
 }
 
+// ReunioesDaEmpresa são as reuniões da empresa que podem estar acontecendo: as que não foram canceladas e, na naHora,
+// não acabaram, da mais antiga para a mais nova. A marcada que passou do valeAte também vem: quem já está nela
+// continua. A administração as lê antes de bloquear as reuniões da empresa ou de apagá-la (o apagar as leva junto),
+// para o gerente encerrar as que estão acontecendo.
+func (b *Banco) ReunioesDaEmpresa(ctx context.Context, empresaID int64) ([]Reuniao, error) {
+	return b.listarReunioes(ctx,
+		`SELECT `+colunasReuniao+` FROM reunioes
+		  WHERE empresa_id = ? AND cancelada_em IS NULL AND acabou_em IS NULL ORDER BY id`, empresaID)
+}
+
 // ReunioesNaHoraAbertas são as reuniões naHora que não acabaram nem foram canceladas, da mais
 // antiga para a mais nova. O gerente as lê ao começar, para acabar as que ficaram abertas.
 func (b *Banco) ReunioesNaHoraAbertas(ctx context.Context) ([]Reuniao, error) {

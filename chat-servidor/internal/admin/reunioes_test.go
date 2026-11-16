@@ -5,12 +5,16 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
+
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/apitest"
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/banco"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/video"
 )
 
@@ -515,6 +519,112 @@ func TestReunioes_SemNomes(t *testing.T) {
 		}
 	}
 	n.tem(t, paginaDaEmpresa, "Ana Souza")
+}
+
+// A empresa que perde as reuniões, pelo Bloquear da página "Reuniões" ou pelo Apagar a empresa, tem as reuniões
+// dela que estão acontecendo encerradas pelo gerente (a revisão final, M3): o agente recebe o encerrar de cada sala,
+// a página de quem é de fora e está numa delas recebe o encerrada, e a reunião de outra empresa continua.
+func TestReunioes_EmpresaPerdeAsReunioes(t *testing.T) {
+	for _, caso := range []struct {
+		nome    string
+		destino string
+		acao    func(n *navegador, e banco.Empresa) *http.Response
+	}{
+		{"o Bloquear", "/admin/reunioes", func(n *navegador, e banco.Empresa) *http.Response {
+			resp, _ := n.acao(fmt.Sprintf("/admin/reunioes/empresas/%d", e.ID), url.Values{"liberar": {"0"}})
+			return resp
+		}},
+		{"o Apagar a empresa", "/admin/", func(n *navegador, e banco.Empresa) *http.Response {
+			resp, _ := n.acao(fmt.Sprintf("/admin/empresas/%d/apagar", e.ID), url.Values{"nome": {e.Nome}})
+			return resp
+		}},
+	} {
+		t.Run(caso.nome, func(t *testing.T) {
+			p := novoPainel(t)
+			if err := p.a.Banco.GuardarLimiteReunioes(t.Context(), 5); err != nil {
+				t.Fatal(err)
+			}
+			acme, outra := p.a.Empresa("ACME Comércio Ltda"), p.a.Empresa("Outra Ltda")
+			p.a.LiberarReunioes(acme.ID)
+			p.a.LiberarReunioes(outra.ID)
+			kAna, ana := p.a.LigarComPessoa(acme, "2001", "Ana Souza")
+			kCarlos, _ := p.a.LigarComPessoa(acme, "2002", "Carlos Lima")
+			kBia, _ := p.a.LigarComPessoa(outra, "2003", "Bia Ramos")
+			// dentro: o colega cria a reunião (pela rota e o corpo dados), entra, e a câmera dele entra.
+			dentro := func(chave, rota string, corpo any) banco.Reuniao {
+				t.Helper()
+				resp := p.a.Pedir(chave, "POST", rota, corpo)
+				esperarAPI(t, resp, http.StatusCreated)
+				codigo := apitest.LerJSON[struct{ Reuniao struct{ Codigo string } }](t, resp).Reuniao.Codigo
+				resp = p.a.Pedir(chave, "POST", "/api/v1/reunioes/"+codigo+"/entrar", nil)
+				esperarAPI(t, resp, http.StatusOK)
+				ac := apitest.LerJSON[struct{ Participante string }](t, resp)
+				r, err := p.a.Banco.ReuniaoPorCodigo(t.Context(), codigo)
+				if err != nil {
+					t.Fatal(err)
+				}
+				p.a.Gerente.EventoDoVideo(video.Evento{Tipo: "entrou", Sala: r.Sala, Participante: ac.Participante})
+				return r
+			}
+			marcada := dentro(kAna, "/api/v1/reunioes", map[string]any{"assunto": "Planejamento",
+				"inicio": p.a.Relogio.Agora().UnixMilli()})
+			naHora := dentro(kCarlos, "/api/v1/reunioes/agora", nil)
+			daOutra := dentro(kBia, "/api/v1/reunioes/agora", nil)
+
+			// A Maria Lima, de fora, entra na marcada pela página.
+			status, bilhete := p.a.AbrirPagina(marcada.Codigo)
+			if status != http.StatusOK {
+				t.Fatalf("abrir deu %d", status)
+			}
+			canal, _, err := p.a.CanalDaPagina(bilhete, p.a.Base)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lerTipo := func(quer string) map[string]any {
+				t.Helper()
+				m := apitest.LerEvento[map[string]any](t, canal)
+				if m["tipo"] != quer {
+					t.Fatalf("a página recebeu %v; queria %q", m, quer)
+				}
+				return m
+			}
+			if err := canal.Write(t.Context(), websocket.MessageText, []byte(`{"tipo":"pedir","nome":"Maria Lima"}`)); err != nil {
+				t.Fatal(err)
+			}
+			lerTipo("aguardando")
+			l, err := p.a.Gerente.Lista(marcada, ana.ID)
+			if err != nil || len(l.Pedidos) != 1 {
+				t.Fatalf("Lista = %+v, %v", l, err)
+			}
+			if err := p.a.Gerente.Aceitar(t.Context(), marcada, ana.ID, l.Pedidos[0].ID); err != nil {
+				t.Fatal(err)
+			}
+			maria, _ := lerTipo("aceito")["participante"].(string)
+			p.a.Gerente.EventoDoVideo(video.Evento{Tipo: "entrou", Sala: marcada.Sala, Participante: maria})
+			if reunioes, pessoas := p.a.Gerente.Resumo(); reunioes != 3 || pessoas != 4 {
+				t.Fatalf("antes: Resumo = %d, %d; queria 3, 4", reunioes, pessoas)
+			}
+
+			esperarIr(t, caso.acao(p.logado(t), acme), caso.destino)
+
+			cmds := p.a.Video.Comandos()
+			slices.Sort(cmds)
+			quer := []string{"encerrar " + marcada.Sala, "encerrar " + naHora.Sala}
+			slices.Sort(quer)
+			if !slices.Equal(cmds, quer) {
+				t.Fatalf("o agente recebeu %q; queria %q", cmds, quer)
+			}
+			lerTipo("encerrada")
+			for _, r := range []banco.Reuniao{marcada, naHora} {
+				if acontecendo, n := p.a.Gerente.Contagem(r.Sala); acontecendo || n != 0 {
+					t.Fatalf("a reunião da ACME continua: %v, %d", acontecendo, n)
+				}
+			}
+			if acontecendo, n := p.a.Gerente.Contagem(daOutra.Sala); !acontecendo || n != 1 {
+				t.Fatalf("a reunião da outra empresa: %v, %d; queria true, 1", acontecendo, n)
+			}
+		})
+	}
 }
 
 func mustPessoa(t *testing.T, p *painel, empresa int64) int64 {

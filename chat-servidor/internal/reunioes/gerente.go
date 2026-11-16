@@ -526,6 +526,24 @@ func (g *Gerente) Cancelada(ctx context.Context, r banco.Reuniao) {
 	g.despachar()
 }
 
+// Bloqueadas fica sabendo que a empresa destas reuniões perdeu as reuniões (a administração as bloqueou, ou apagou a
+// empresa). Cada uma que está na memória (acontecendo, começando ou com gente esperando) acaba como no Cancelada: o
+// agente recebe o encerrar da sala, a página de quem está nela recebe o encerrada, e quem espera recebe o
+// linkInvalido. As reuniões vêm do banco, lidas antes da mudança. Devolve quantas acabaram.
+func (g *Gerente) Bloqueadas(ctx context.Context, rs []banco.Reuniao) int {
+	n := 0
+	for _, r := range rs {
+		g.mu.Lock()
+		_, naMemoria := g.salas[r.Sala]
+		g.mu.Unlock()
+		if naMemoria {
+			g.Cancelada(ctx, r)
+			n++
+		}
+	}
+	return n
+}
+
 // Contagem diz se a reunião está acontecendo (alguém com a câmera nela) e quantas pessoas estão nela, sem a tela.
 func (g *Gerente) Contagem(sala string) (acontecendo bool, pessoas int) {
 	g.mu.Lock()

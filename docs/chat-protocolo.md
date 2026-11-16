@@ -285,7 +285,7 @@ As reuniões com link moram no servidor do chat; o vídeo e o som vão direto pa
   - a naHora: até acabar.
 - **Uma reunião que está acontecendo continua depois do `valeAte`:** quem está nela fica, mas ninguém novo entra.
 - **Cada pessoa tem até 100 reuniões marcadas que ainda valem** (`409 muitasReunioes`).
-- **A empresa precisa ter as reuniões liberadas** na administração. Sem isso, as rotas desta seção respondem `403 semReunioes`, e a página não abre os links dela (`404 naoEncontrado`).
+- **A empresa precisa ter as reuniões liberadas** na administração. Sem isso, as rotas desta seção respondem `403 semReunioes`, e a página não abre os links dela (`404 naoEncontrado`). Quando a administração bloqueia as reuniões da empresa, ou a apaga, as reuniões dela que estão acontecendo acabam: todos saem, como no cancelar.
 - **Quem está na reunião:** é a pessoa cujo computador chamou o `entrar` e cuja ligação com a câmera o servidor de vídeo diz que entrou e ainda não saiu.
 
 **As operações.** Todas levam a chave do computador e precisam da pessoa da vez (`409 pessoa`).
@@ -407,7 +407,7 @@ Do servidor para a página:
 {"tipo": "senha", "senha": "…"}
 {"tipo": "tela", "senha": "…"}
 {"tipo": "tirado"}           // um colega tirou a pessoa da reunião
-{"tipo": "encerrada"}        // um colega encerrou a reunião para todos, ela foi cancelada, ou a reunião acabou no servidor de vídeo
+{"tipo": "encerrada"}        // um colega encerrou a reunião para todos, ela foi cancelada, a empresa perdeu as reuniões, ou a reunião acabou no servidor de vídeo
 {"tipo": "erro", "erro": "invalido" | "limite" | "foraDaReuniao"}
 ```
 - **O `pedir` vale uma vez por canal.** Depois de `cheia`, `esperaCheia`, `servidorCheio` ou `semServidor`, a página pode mandar outro `pedir`.

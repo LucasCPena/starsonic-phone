@@ -428,9 +428,10 @@ func (p *painel) paginaApagar(w http.ResponseWriter, r *http.Request, s sessao) 
 }
 
 // POST /admin/empresas/{id}/apagar: com o nome exato da empresa, apaga tudo dela, no banco e
-// no disco, e os computadores dela recebem o fora. Com outro nome, nada muda. O nome digitado
-// passa pela regra do nome (sem as pontas, cada sequência de espaços vira um espaço) e só
-// então é comparado, exato e com a caixa.
+// no disco, e os computadores dela recebem o fora. As reuniões dela que estão acontecendo,
+// lidas antes (o apagar as leva junto), acabam depois. Com outro nome, nada muda. O nome
+// digitado passa pela regra do nome (sem as pontas, cada sequência de espaços vira um espaço)
+// e só então é comparado, exato e com a caixa.
 func (p *painel) apagarEmpresa(w http.ResponseWriter, r *http.Request, s sessao) {
 	e, ok := p.empresaDoCaminho(w, r, s)
 	if !ok {
@@ -441,11 +442,17 @@ func (p *painel) apagarEmpresa(w http.ResponseWriter, r *http.Request, s sessao)
 			telaApagar{Nome: e.Nome, Endereco: enderecoEmpresa(e.ID), Erro: textoNomeErrado})
 		return
 	}
+	daEmpresa, err := p.banco.ReunioesDaEmpresa(r.Context(), e.ID)
+	if err != nil {
+		p.erroDoBanco(w, r, s, err)
+		return
+	}
 	arquivos, computadores, err := p.banco.ApagarEmpresa(r.Context(), e.ID)
 	if err != nil {
 		p.erroDoBanco(w, r, s, err)
 		return
 	}
+	encerradas := p.encerrarDaEmpresa(r, daEmpresa)
 	p.hub.Fora(computadores)
 	falhas := 0
 	for _, id := range arquivos {
@@ -459,7 +466,7 @@ func (p *painel) apagarEmpresa(w http.ResponseWriter, r *http.Request, s sessao)
 		}
 	}
 	slog.Info("admin: empresa apagada", "usuario", s.Usuario, "empresa", e.ID, "arquivos", len(arquivos),
-		"falhasNoDisco", falhas, "computadores", len(computadores))
+		"falhasNoDisco", falhas, "computadores", len(computadores), "reunioesEncerradas", encerradas)
 	http.Redirect(w, r, "/admin/", http.StatusSeeOther)
 }
 

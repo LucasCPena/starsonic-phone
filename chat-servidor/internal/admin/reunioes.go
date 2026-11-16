@@ -36,7 +36,7 @@ const (
 const (
 	validadeDoTeste = 2 * time.Hour    // a reunião de teste vale por 2 horas
 	esperaNoAr      = 3 * time.Second  // o quanto o "Guardar e testar" espera a conexão dos eventos abrir
-	prazoCancelar   = 10 * time.Second // o encerrar da reunião de teste velha, como o cancelar da API
+	prazoCancelar   = 10 * time.Second // o encerrar das reuniões que acabam aqui, como o cancelar da API
 	desvioDoRelogio = 5 * time.Second  // a partir daqui, o teste avisa do relógio
 	limiteMinimo    = 1                // de reuniões ao mesmo tempo (a regra do banco)
 	limiteMaximo    = 20
@@ -289,7 +289,21 @@ func (p *painel) guardarLimite(w http.ResponseWriter, r *http.Request, s sessao)
 	http.Redirect(w, r, "/admin/reunioes", http.StatusSeeOther)
 }
 
-// POST /admin/reunioes/empresas/{id}: libera (liberar=1) ou bloqueia (liberar=0) as reuniões da empresa.
+// encerrarDaEmpresa acaba, pelo gerente, as reuniões da empresa que perdeu as reuniões (o Bloquear, ou o Apagar a
+// empresa) e que estão na memória: o agente recebe o encerrar de cada sala, e a página de quem está nelas, o
+// encerrada. As reuniões foram lidas do banco antes da mudança. Usa um contexto que não é o do pedido, com o prazo do
+// cancelar da API para todas. Devolve quantas acabaram.
+func (p *painel) encerrarDaEmpresa(r *http.Request, rs []banco.Reuniao) int {
+	if len(rs) == 0 {
+		return 0
+	}
+	ctx, cancelar := context.WithTimeout(context.WithoutCancel(r.Context()), prazoCancelar)
+	defer cancelar()
+	return p.gerente.Bloqueadas(ctx, rs)
+}
+
+// POST /admin/reunioes/empresas/{id}: libera (liberar=1) ou bloqueia (liberar=0) as reuniões da empresa. As
+// reuniões dela que estão acontecendo, lidas antes do bloqueio, acabam depois dele.
 func (p *painel) liberarEmpresa(w http.ResponseWriter, r *http.Request, s sessao) {
 	id, ok := idDe(r, "id")
 	if !ok {
@@ -305,11 +319,21 @@ func (p *painel) liberarEmpresa(w http.ResponseWriter, r *http.Request, s sessao
 		p.erro(w, s, http.StatusBadRequest, "Pedido inválido", "O pedido não diz se é para liberar ou bloquear. Volte e tente de novo.")
 		return
 	}
+	var daEmpresa []banco.Reuniao
+	if !liberar {
+		var err error
+		if daEmpresa, err = p.banco.ReunioesDaEmpresa(r.Context(), id); err != nil {
+			p.erroDoBanco(w, r, s, err)
+			return
+		}
+	}
 	if err := p.banco.LiberarReunioes(r.Context(), id, liberar); err != nil {
 		p.erroDoBanco(w, r, s, err)
 		return
 	}
-	slog.Info("admin: reuniões da empresa", "usuario", s.Usuario, "empresa", id, "liberadas", liberar)
+	encerradas := p.encerrarDaEmpresa(r, daEmpresa)
+	slog.Info("admin: reuniões da empresa", "usuario", s.Usuario, "empresa", id, "liberadas", liberar,
+		"encerradas", encerradas)
 	http.Redirect(w, r, "/admin/reunioes", http.StatusSeeOther)
 }
 
