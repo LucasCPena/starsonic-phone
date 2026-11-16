@@ -196,6 +196,37 @@ func (a *Ambiente) Discar(bilhete, origem string) (*websocket.Conn, *http.Respon
 	return conn, resp, err
 }
 
+// AbrirPagina faz o "abrir" da página (POST /api/v1/pagina/reunioes/{codigo}, sem chave). Devolve o status e, no 200,
+// o bilhete do canal. Não chama o Fatalf, a não ser que o pedido nem saia.
+func (a *Ambiente) AbrirPagina(codigo string) (status int, bilhete string) {
+	a.T.Helper()
+	resp := a.Pedir("", "POST", "/api/v1/pagina/reunioes/"+url.PathEscape(codigo), nil)
+	if resp.StatusCode != http.StatusOK {
+		return resp.StatusCode, ""
+	}
+	return resp.StatusCode, LerJSON[struct {
+		Bilhete string `json:"bilhete"`
+	}](a.T, resp).Bilhete
+}
+
+// CanalDaPagina abre o WebSocket da página (GET /api/v1/pagina/canal) com o bilhete, com o cabeçalho Origin se a
+// origem não for vazia. Sem o 101, o resp traz o status e o começo do corpo. A conexão que abrir fecha no fim do
+// teste. Não chama o Fatalf: pode rodar em outras goroutines.
+func (a *Ambiente) CanalDaPagina(bilhete, origem string) (*websocket.Conn, *http.Response, error) {
+	cab := http.Header{}
+	if origem != "" {
+		cab.Set("Origin", origem)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, resp, err := websocket.Dial(ctx, a.Servidor.URL+"/api/v1/pagina/canal?bilhete="+url.QueryEscape(bilhete),
+		&websocket.DialOptions{HTTPClient: a.Servidor.Client(), HTTPHeader: cab})
+	if conn != nil {
+		a.T.Cleanup(func() { conn.CloseNow() })
+	}
+	return conn, resp, err
+}
+
 // Conectar pede um bilhete e abre o WebSocket do computador da chave. Quando ele volta, o
 // computador já está no hub, com a pessoa da vez: o servidor só responde o 101 depois.
 func (a *Ambiente) Conectar(chave string) *websocket.Conn {

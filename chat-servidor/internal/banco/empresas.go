@@ -78,6 +78,18 @@ func (b *Banco) EmpresaPorCodigo(ctx context.Context, codigo string) (Empresa, e
 	return e, err
 }
 
+// EmpresaPorID acha a empresa pelo id. Sem ela, ErrNaoEncontrado.
+func (b *Banco) EmpresaPorID(ctx context.Context, id int64) (Empresa, error) {
+	var e Empresa
+	err := b.db.QueryRowContext(ctx,
+		`SELECT id, nome, codigo, criada_em, reunioes FROM empresas WHERE id = ?`, id).
+		Scan(&e.ID, &e.Nome, &e.Codigo, &e.CriadaEm, &e.Reunioes)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Empresa{}, ErrNaoEncontrado
+	}
+	return e, err
+}
+
 // TrocarCodigo dá à empresa um código novo; o antigo deixa de valer para ligar computadores.
 // Os computadores já ligados continuam (eles usam a chave). Devolve o código novo. Uma
 // empresa que não existe dá ErrNaoEncontrado.

@@ -148,6 +148,16 @@ func (b *Banco) ReuniaoPorCodigo(ctx context.Context, codigo string) (Reuniao, e
 	return r, err
 }
 
+// ReuniaoPorID acha a reunião pelo id, em qualquer estado, como o ReuniaoPorCodigo: o canal da página guarda no
+// bilhete o id da reunião. Sem ela, ErrNaoEncontrado.
+func (b *Banco) ReuniaoPorID(ctx context.Context, id int64) (Reuniao, error) {
+	r, err := lerReuniao(b.db.QueryRowContext(ctx, `SELECT `+colunasReuniao+` FROM reunioes WHERE id = ?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Reuniao{}, ErrNaoEncontrado
+	}
+	return r, err
+}
+
 // listarReunioes roda a consulta e lê as reuniões dela. A lista nunca é nula.
 func (b *Banco) listarReunioes(ctx context.Context, q string, args ...any) ([]Reuniao, error) {
 	linhas, err := b.db.QueryContext(ctx, q, args...)

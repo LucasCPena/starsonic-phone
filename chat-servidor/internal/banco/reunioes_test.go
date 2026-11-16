@@ -450,3 +450,26 @@ func TestApagarEmpresa_LevaAsReunioes(t *testing.T) {
 		t.Fatalf("a de teste: %+v, %v", got, err)
 	}
 }
+
+func TestReuniaoPorID_EEmpresaPorID(t *testing.T) {
+	b := abrirTeste(t)
+	ctx := context.Background()
+	e, _ := b.CriarEmpresa(ctx, "ACME Comércio Ltda")
+	ana := pessoaDe(t, b, e.ID, "2003", "Ana Souza")
+	r := marcada(t, b, e.ID, ana.ID, hora)
+
+	got, err := b.ReuniaoPorID(ctx, r.ID)
+	if err != nil || got != r {
+		t.Fatalf("ReuniaoPorID = %+v, %v; queria %+v", got, err, r)
+	}
+	if _, err := b.ReuniaoPorID(ctx, r.ID+100); !errors.Is(err, ErrNaoEncontrado) {
+		t.Fatalf("ReuniaoPorID de um id que não existe = %v; queria ErrNaoEncontrado", err)
+	}
+	ge, err := b.EmpresaPorID(ctx, e.ID)
+	if err != nil || ge != e {
+		t.Fatalf("EmpresaPorID = %+v, %v; queria %+v", ge, err, e)
+	}
+	if _, err := b.EmpresaPorID(ctx, e.ID+100); !errors.Is(err, ErrNaoEncontrado) {
+		t.Fatalf("EmpresaPorID de um id que não existe = %v; queria ErrNaoEncontrado", err)
+	}
+}

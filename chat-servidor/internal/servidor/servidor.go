@@ -68,27 +68,30 @@ type Deps struct {
 // Montar monta o servidor: a API em /api/v1/, a página de administração em /admin/, e a raiz
 // que leva para ela. Cada pedido recebe os prazos de leitura e de escrita da sua rota.
 func Montar(d Deps) http.Handler {
-	h, _ := montar(d)
+	h, _, _ := montar(d)
 	return h
 }
 
-// montar também devolve a contagem dos WebSockets abertos: o desligamento espera por eles,
-// porque o http.Server.Shutdown não espera uma conexão sequestrada.
-func montar(d Deps) (http.Handler, *sync.WaitGroup) {
+// montar também devolve a contagem dos WebSockets abertos (os eventos do app e os canais da página): o desligamento
+// espera por eles, porque o http.Server.Shutdown não espera uma conexão sequestrada. E devolve o conjunto dos canais
+// da página, que o desligamento fecha com 1001 (o hub faz isso com os eventos).
+func montar(d Deps) (http.Handler, *sync.WaitGroup, *api.Canais) {
 	mux := http.NewServeMux()
+	canais := api.NovosCanais()
 	mux.Handle("/api/v1/", api.Novo(api.Deps{Banco: d.Banco, Hub: d.Hub, Armazem: d.Armazem, Origens: d.Origens,
-		Gerente: d.Gerente, Base: d.Base}))
+		Gerente: d.Gerente, Base: d.Base, Canais: canais}))
 	mux.Handle("/admin/", registrarAdmin(admin.Novo(admin.Deps{Banco: d.Banco, Hub: d.Hub, Armazem: d.Armazem, Teste: d.Teste})))
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/admin/", http.StatusFound)
 	})
 	sockets := &sync.WaitGroup{}
-	return comPrazos(contarSockets(mux, sockets)), sockets
+	return comPrazos(contarSockets(mux, sockets)), sockets, canais
 }
 
-// ehEventos diz se o pedido é o WebSocket dos eventos (para contá-lo no desligamento).
+// ehEventos diz se o pedido é um WebSocket de longa vida: o dos eventos do app ou o canal da página (para contá-lo
+// no desligamento).
 func ehEventos(r *http.Request) bool {
-	return r.Method == http.MethodGet && r.URL.Path == "/api/v1/eventos"
+	return r.Method == http.MethodGet && (r.URL.Path == "/api/v1/eventos" || r.URL.Path == "/api/v1/pagina/canal")
 }
 
 // comPrazos põe os prazos de leitura e de escrita do pedido antes do manipulador: 5 min em
@@ -363,7 +366,7 @@ func rodar(ctx context.Context, c Config, teste bool, base string, servicos func
 	hub := eventos.NovoHub(eventos.Config{})
 	gerente := reunioes.Novo(reunioes.Deps{Banco: b, Avisos: hub, Relogio: tempo.Real()})
 	ligarVideo(ctx, b, gerente, teste)
-	h, sockets := montar(Deps{Banco: b, Hub: hub, Armazem: a, Origens: c.Origens, Teste: teste, Gerente: gerente, Base: base})
+	h, sockets, canais := montar(Deps{Banco: b, Hub: hub, Armazem: a, Origens: c.Origens, Teste: teste, Gerente: gerente, Base: base})
 
 	// O ctx das tarefas acaba junto com o ctx do servidor, ou seja, quando o desligamento
 	// começa (ou, se um servidor falhar, no defer abaixo). O defer espera as tarefas voltarem;
@@ -392,6 +395,7 @@ func rodar(ctx context.Context, c Config, teste bool, base string, servicos func
 	var servidores sync.WaitGroup
 	for _, s := range lista {
 		s.srv.RegisterOnShutdown(hub.Encerrar)
+		s.srv.RegisterOnShutdown(canais.Encerrar)
 		servidores.Go(func() {
 			if err := s.servir(); !errors.Is(err, http.ErrServerClosed) {
 				falhas <- fmt.Errorf("servidor: %s: %w", s.srv.Addr, err)
@@ -406,7 +410,7 @@ func rodar(ctx context.Context, c Config, teste bool, base string, servicos func
 	}
 
 	// Desliga: Shutdown espera os pedidos em andamento (até 10 s), e o Encerrar fecha os
-	// WebSockets com 1001. Os WebSockets não contam para o Shutdown: espera por eles aqui.
+	// WebSockets (os eventos e os canais da página) com 1001. Os WebSockets não contam para o Shutdown: espera por eles aqui.
 	slog.Info("servidor desligando")
 	limite, cancelar := context.WithTimeout(context.Background(), prazoDesligar)
 	defer cancelar()
@@ -420,6 +424,7 @@ func rodar(ctx context.Context, c Config, teste bool, base string, servicos func
 	}
 	desligando.Wait()
 	hub.Encerrar() // também sem nenhum Shutdown que o chame
+	canais.Encerrar()
 	esperar(limite, sockets)
 	servidores.Wait()
 	return erro

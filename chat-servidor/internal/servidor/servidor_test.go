@@ -913,3 +913,90 @@ func TestServidor_ReunioesSemVideo(t *testing.T) {
 		t.Fatalf("entrar respondeu %d; queria 503 servidorVideo", resp.StatusCode)
 	}
 }
+
+// Os canais da página têm o mesmo desligamento dos eventos do app: o servidor os fecha com 1001 e espera por eles
+// (M-13).
+func TestServidor_FechaOsCanaisDaPagina(t *testing.T) {
+	dados, _ := preparar(t)
+	b, err := banco.Abrir(filepath.Join(dados, banco.NomeArquivo), tempo.Real())
+	if err != nil {
+		t.Fatal(err)
+	}
+	teste, err := b.CriarReuniaoDeTeste(t.Context(), time.Now().Add(time.Hour).UnixMilli())
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Fechar()
+	s := iniciar(t, dados)
+
+	// O abrir da página e o canal, com a origem do chat (no modo de teste, http://<endereço em que ele escuta>).
+	resp := pedir(t, "POST", s.url+"/api/v1/pagina/reunioes/"+teste.Codigo, "", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("abrir respondeu %d", resp.StatusCode)
+	}
+	bilhete := lerCampo(t, resp, "bilhete")
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(s.url, "http")+"/api/v1/pagina/canal?bilhete="+url.QueryEscape(bilhete),
+		&websocket.DialOptions{HTTPHeader: http.Header{"Origin": []string{s.url}}})
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	t.Cleanup(func() { conn.CloseNow() })
+	codigo := make(chan websocket.StatusCode, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		for {
+			if _, _, err := conn.Read(ctx); err != nil {
+				codigo <- websocket.CloseStatus(err)
+				return
+			}
+		}
+	}()
+
+	if d := s.parar(t); d >= 10*time.Second {
+		t.Fatalf("o servidor levou %v para fechar", d)
+	}
+	select {
+	case c := <-codigo:
+		if c != websocket.StatusGoingAway {
+			t.Fatalf("o canal fechou com %d; queria 1001", c)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("o canal da página não recebeu o fechamento")
+	}
+}
+
+// O desligamento espera o canal da página até ele voltar, como espera o WebSocket dos eventos.
+func TestServidor_EsperaOsCanaisDaPagina(t *testing.T) {
+	var n sync.WaitGroup
+	solta := make(chan struct{})
+	dentro := make(chan struct{})
+	h := contarSockets(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(dentro)
+		<-solta
+	}), &n)
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+	go func() {
+		resp, err := http.Get(srv.URL + "/api/v1/pagina/canal?bilhete=x")
+		if err == nil {
+			resp.Body.Close()
+		}
+	}()
+	<-dentro
+	feito := make(chan struct{})
+	go func() { n.Wait(); close(feito) }()
+	select {
+	case <-feito:
+		t.Fatal("o desligamento não espera o canal da página")
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(solta)
+	select {
+	case <-feito:
+	case <-time.After(5 * time.Second):
+		t.Fatal("o canal da página voltou e o grupo não")
+	}
+}

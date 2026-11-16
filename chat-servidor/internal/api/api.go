@@ -33,6 +33,9 @@ type Deps struct {
 	// Base é o começo do link das reuniões, sem a barra do fim: https://chat.exemplo.com.br:8443. O link é
 	// Base + "/r/" + código.
 	Base string
+	// Canais guarda os canais abertos da página, para o desligamento os fechar com 1001 (o servidor chama o
+	// Encerrar). Sem ele, a API usa um só dela, que ninguém encerra.
+	Canais *Canais
 }
 
 type servidor struct {
@@ -44,10 +47,15 @@ type servidor struct {
 	padroes  []string        // as origens, como OriginPatterns do websocket.Accept
 	erradas  *limites.Janela // os códigos errados, por endereço
 	bilhetes *bilhetes
-	gerente  *reunioes.Gerente // nil: as rotas das reuniões não existem
-	base     string            // o começo do link das reuniões, sem a barra do fim
+	// bilhetesPagina são os bilhetes do canal da página: o dono de cada um é o id da reunião.
+	bilhetesPagina *bilhetes
+	// origensPagina são as origens do canal da página: o Base mais as do --origem (sem o padrão do app).
+	origensPagina map[string]bool
+	canais        *Canais           // os canais abertos da página, para o desligamento
+	gerente       *reunioes.Gerente // nil: as rotas das reuniões não existem
+	base          string            // o começo do link das reuniões, sem a barra do fim
 	// aberturas são as tentativas de abrir uma reunião, por endereço: 20 por minuto. Só contam as que não levam a
-	// uma reunião em que a pessoa possa entrar (reunioes.go).
+	// uma reunião em que a pessoa possa entrar (reunioes.go); o abrir da página conta sempre (pagina.go).
 	aberturas *limites.Janela
 
 	mensagensLimite *limites.Janela // as mensagens novas, por computador
@@ -76,15 +84,18 @@ func Novo(d Deps) http.Handler {
 		panic("api.Novo: Deps.Armazem é obrigatório")
 	}
 	s := &servidor{
-		banco:    d.Banco,
-		hub:      d.Hub,
-		avisos:   NovoAvisador(d.Banco, d.Hub),
-		armazem:  d.Armazem,
-		origens:  map[string]bool{},
-		erradas:  limites.Nova(maxErradas, periodoErradas, d.Banco.Relogio()),
-		bilhetes: novosBilhetes(d.Banco.Relogio()),
-		gerente:  d.Gerente,
-		base:     strings.TrimRight(d.Base, "/"),
+		banco:          d.Banco,
+		hub:            d.Hub,
+		avisos:         NovoAvisador(d.Banco, d.Hub),
+		armazem:        d.Armazem,
+		origens:        map[string]bool{},
+		erradas:        limites.Nova(maxErradas, periodoErradas, d.Banco.Relogio()),
+		bilhetes:       novosBilhetes(d.Banco.Relogio(), maxBilhetesPorComputador),
+		bilhetesPagina: novosBilhetes(d.Banco.Relogio(), maxBilhetesPorReuniao),
+		gerente:        d.Gerente,
+		base:           strings.TrimRight(d.Base, "/"),
+		canais:         d.Canais,
+		origensPagina:  map[string]bool{},
 
 		aberturas: limites.Nova(maxAberturas, periodoAberturas, d.Banco.Relogio()),
 
@@ -92,6 +103,16 @@ func Novo(d Deps) http.Handler {
 		arquivosLimite:  limites.Nova(maxArquivosHora, periodoArquivos, d.Banco.Relogio()),
 		geralLimite:     limites.Nova(maxPedidos, periodoPedidos, d.Banco.Relogio()),
 		pessoasEuLimite: limites.Nova(maxPessoasEu, periodoPedidos, d.Banco.Relogio()),
+	}
+	if s.canais == nil {
+		s.canais = NovosCanais()
+	}
+	// As origens da página: a do próprio chat (o Base) e as do --origem, sem o padrão do app.
+	if s.base != "" {
+		s.origensPagina[s.base] = true
+	}
+	for _, o := range d.Origens {
+		s.origensPagina[o] = true
 	}
 	origens := d.Origens
 	if len(origens) == 0 {
@@ -123,6 +144,7 @@ func Novo(d Deps) http.Handler {
 	mux.HandleFunc("GET /api/v1/eventos", s.eventos) // sem a chave: vale o bilhete
 	if s.gerente != nil {
 		s.rotasDasReunioes(mux)
+		s.rotasDaPagina(mux)
 	}
 	// O resto de /api/v1/ (rota que não existe, ou método errado numa rota que existe)
 	// responde 404 naoEncontrado em JSON. Quem não manda uma chave boa leva 401 antes.

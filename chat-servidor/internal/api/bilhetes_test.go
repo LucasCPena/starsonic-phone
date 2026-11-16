@@ -9,7 +9,7 @@ import (
 
 func TestBilhetes_Varre(t *testing.T) {
 	rel := tempo.NovoTeste(time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC))
-	b := novosBilhetes(rel)
+	b := novosBilhetes(rel, maxBilhetesPorComputador)
 	b.novo(1)
 	rel.Avancar(61 * time.Second)
 	b.novo(2)
@@ -23,7 +23,7 @@ func TestBilhetes_Varre(t *testing.T) {
 
 func TestBilhetes_LimitePorComputador(t *testing.T) {
 	rel := tempo.NovoTeste(time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC))
-	b := novosBilhetes(rel)
+	b := novosBilhetes(rel, maxBilhetesPorComputador)
 	var seis []string
 	for i := 0; i < 6; i++ {
 		seis = append(seis, b.novo(1))
