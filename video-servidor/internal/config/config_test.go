@@ -166,3 +166,22 @@ func TestConfig_Ler(t *testing.T) {
 		}
 	})
 }
+
+// O Conferir vale também para uma Config feita à mão, sem o Ler: é o que o gerar usa.
+func TestConfig_Conferir(t *testing.T) {
+	c := Config{
+		Endereco:  "video.exemplo.com.br",
+		Chat:      "chat.exemplo.com.br",
+		Chave:     chaveVetor,
+		SenhaESL:  "Ab12Cd34Ef56Gh78Ij90Kl12Mn34Op56",
+		IPPrivado: "10.0.0.5",
+		IPPublico: "203.0.113.10",
+	}
+	if err := c.Conferir(); err != nil {
+		t.Fatalf("uma Config certa: %v", err)
+	}
+	c.Endereco = "video.exemplo.com.br\nrealm=outro"
+	if err := c.Conferir(); err == nil || !strings.Contains(err.Error(), `"endereco"`) {
+		t.Errorf("um endereco com quebra de linha: %v, want um erro que diz o campo", err)
+	}
+}

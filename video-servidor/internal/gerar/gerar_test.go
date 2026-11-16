@@ -6,6 +6,8 @@ import (
 	"encoding/xml"
 	"fmt"
 	"image/png"
+	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -493,19 +495,14 @@ func TestFreeSWITCH_Codecs(t *testing.T) {
 }
 
 // Todo valor que vai num atributo passa pelo escape do XML: um valor com aspas, <, > e & volta igual.
+// A pasta é o valor livre que sobra depois do Config.Conferir (a senha do ESL só tem letras e números).
 func TestFreeSWITCH_Escape(t *testing.T) {
-	c := configDeTeste()
-	c.SenhaESL = `a"b'c<d>e&f` + strings.Repeat("x", 24)
 	pasta := `/tmp/a&b"c'd<e>f`
-	dados, err := FreeSWITCH(c, pasta, false)
+	dados, err := FreeSWITCH(configDeTeste(), pasta, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	doc := ler(t, dados)
-	esl := configuracao(t, doc, "event_socket.conf").filho(t, "settings", "").parametros()
-	if v := valor(t, esl, "password"); v != c.SenhaESL {
-		t.Errorf("a senha voltou %q, want %q", v, c.SenhaESL)
-	}
 	if v := valor(t, perfil(t, doc, "tls"), "tls-cert-dir"); v != pasta+"/tls" {
 		t.Errorf("o tls-cert-dir voltou %q", v)
 	}
@@ -513,11 +510,88 @@ func TestFreeSWITCH_Escape(t *testing.T) {
 	if v := valor(t, starsonic, "video-no-video-avatar"); v != pasta+"/sem-camera.png" {
 		t.Errorf("o video-no-video-avatar voltou %q", v)
 	}
+
+	// O escape em si, com o que quebraria um atributo.
+	for _, texto := range []string{`a"b'c<d>e&f`, "uma\nquebra\te um tab"} {
+		escapado, err := escaparXML(texto)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var lido struct {
+			V string `xml:"v,attr"`
+		}
+		if err := xml.Unmarshal([]byte(`<a v="`+escapado+`"/>`), &lido); err != nil || lido.V != texto {
+			t.Errorf("%q escapado como %q voltou %q (%v)", texto, escapado, lido.V, err)
+		}
+	}
+}
+
+// O pré-processador do FreeSWITCH lê o arquivo linha por linha antes do XML (o preprocess do
+// src/switch_xml.c): só a declaração da primeira linha tem "<?", que ele joga fora de propósito, e
+// nenhuma linha tem o que ele expande ou trata como comando.
+func TestFreeSWITCH_PreProcessador(t *testing.T) {
+	for _, teste := range []bool{false, true} {
+		dados, err := FreeSWITCH(configDeTeste(), pastaFS, teste)
+		if err != nil {
+			t.Fatal(err)
+		}
+		linhas := strings.Split(string(dados), "\n")
+		if !strings.HasPrefix(linhas[0], "<?xml ") {
+			t.Errorf("teste=%v: a primeira linha é %q, want a declaração <?xml", teste, linhas[0])
+		}
+		for i, l := range linhas {
+			if i > 0 && strings.Contains(l, "<?") {
+				t.Errorf("teste=%v: a linha %d tem <?: %q", teste, i+1, l)
+			}
+			minusculas := strings.ToLower(l)
+			for _, texto := range []string{"$${", "<!--#", "x-pre-process", "<include>", "</include>"} {
+				if strings.Contains(minusculas, texto) {
+					t.Errorf("teste=%v: a linha %d tem %s: %q", teste, i+1, texto, l)
+				}
+			}
+		}
+	}
 }
 
 func TestFreeSWITCH_PastaRelativa(t *testing.T) {
 	if _, err := FreeSWITCH(configDeTeste(), "etc/freeswitch", false); err == nil {
 		t.Error("FreeSWITCH aceitou uma pasta relativa")
+	}
+}
+
+// O gerar confere a Config ele mesmo: uma feita à mão, que não passou pelo config.Ler, não põe um
+// atributo, um $${...} nem uma linha do coturn a mais, e não escreve nada.
+func TestTudo_ConfigQueNaoVale(t *testing.T) {
+	casos := map[string]func(c *config.Config){
+		// O realm do turnserver.conf ganharia uma linha que abre o relay para tudo.
+		"endereco com quebra de linha": func(c *config.Config) { c.Endereco = "video.exemplo.com.br\nallowed-peer-ip=0.0.0.0-255.255.255.255" },
+		"endereco com aspas":           func(c *config.Config) { c.Endereco = `video.exemplo.com.br"` },
+		"senhaEsl com $${}":            func(c *config.Config) { c.SenhaESL = "Ab12Cd34Ef56Gh78Ij90Kl12$${hostname}" },
+		// Um erro, e não o pânico do ChaveCrua.
+		"chave que não vale": func(c *config.Config) { c.Chave = "curta" },
+	}
+	for nome, mudar := range casos {
+		t.Run(nome, func(t *testing.T) {
+			c := configDeTeste()
+			mudar(&c)
+			saida := filepath.Join(t.TempDir(), "etc")
+			for _, teste := range []bool{false, true} {
+				if err := Tudo(c, saida, teste); err == nil {
+					t.Errorf("teste=%v: Tudo aceitou", teste)
+				}
+				if _, err := os.Stat(saida); !os.IsNotExist(err) {
+					t.Errorf("teste=%v: Tudo criou a pasta (%v)", teste, err)
+				}
+			}
+		})
+	}
+}
+
+func TestFreeSWITCH_ConfigQueNaoVale(t *testing.T) {
+	c := configDeTeste()
+	c.Chave = "curta"
+	if _, err := FreeSWITCH(c, pastaFS, false); err == nil {
+		t.Error("FreeSWITCH aceitou uma Config com uma chave que não vale")
 	}
 }
 

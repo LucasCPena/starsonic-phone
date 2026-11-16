@@ -34,7 +34,13 @@ const (
 // Com teste, escreve também o certificado de teste do perfil tls (freeswitch/tls/agent.pem, 0600, e
 // cafile.pem, 0644). Sem teste, nunca: em produção, eles são do certificado.sh. As permissões não
 // dependem da umask. Os donos são do instalador.
+//
+// Antes de criar qualquer pasta, ele confere a Config (o Config.Conferir), também quando ela não veio do
+// config.Ler: uma que não vale dá um erro e não escreve nada.
 func Tudo(c config.Config, saida string, teste bool) error {
+	if err := c.Conferir(); err != nil {
+		return fmt.Errorf("a configuração não vale: %w", err)
+	}
 	saida, err := filepath.Abs(saida)
 	if err != nil {
 		return err

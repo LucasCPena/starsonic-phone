@@ -30,19 +30,7 @@ type Config struct {
 // minimoSenhaESL é o tamanho mínimo da senha do ESL. O instalador sorteia 32 letras e números.
 const minimoSenhaESL = 24
 
-// Ler lê o JSON em caminho, só com os seis campos e todos certos:
-//   - o endereco é um nome no DNS, com letras minúsculas, números, pontos e hífens, pelo menos um ponto
-//     e a última parte que não é só número (a regra do conferir_endereco do instalador do chat);
-//   - o chat é um nome assim ou um IPv4, com a porta quando o chat usa uma, sem https:// nem caminho.
-//     A 443 não vale: o Origin do navegador nunca leva a porta padrão do https, e a OrigemDoChat não
-//     bateria com ele;
-//   - a chave é uma que o senha.LerChave aceita;
-//   - a senhaEsl tem pelo menos 24 caracteres, só letras sem acento e números. O FreeSWITCH lê a
-//     configuração por um pré-processador que expande o $${...} antes do XML, e a senha vai também na
-//     linha do auth do ESL;
-//   - os dois IPs são IPv4.
-//
-// O erro diz o campo, e nunca mostra a chave nem a senha.
+// Ler lê o JSON em caminho, só com os seis campos, e confere os valores (o Conferir).
 func Ler(caminho string) (Config, error) {
 	dados, err := os.ReadFile(caminho)
 	if err != nil {
@@ -59,13 +47,27 @@ func Ler(caminho string) (Config, error) {
 	if _, err := dec.Token(); err != io.EOF {
 		return Config{}, fmt.Errorf("configuração %s: tem coisa depois do objeto JSON", caminho)
 	}
-	if err := c.conferir(); err != nil {
+	if err := c.Conferir(); err != nil {
 		return Config{}, fmt.Errorf("configuração %s: %w", caminho, err)
 	}
 	return c, nil
 }
 
-func (c Config) conferir() error {
+// Conferir diz se os seis campos estão certos:
+//   - o endereco é um nome no DNS, com letras minúsculas, números, pontos e hífens, pelo menos um ponto
+//     e a última parte que não é só número (a regra do conferir_endereco do instalador do chat);
+//   - o chat é um nome assim ou um IPv4, com a porta quando o chat usa uma, sem https:// nem caminho.
+//     A 443 não vale: o Origin do navegador nunca leva a porta padrão do https, e a OrigemDoChat não
+//     bateria com ele;
+//   - a chave é uma que o senha.LerChave aceita;
+//   - a senhaEsl tem pelo menos 24 caracteres, só letras sem acento e números. O FreeSWITCH lê a
+//     configuração por um pré-processador que expande o $${...} antes do XML, e a senha vai também na
+//     linha do auth do ESL;
+//   - os dois IPs são IPv4.
+//
+// Assim, nenhum valor quebra uma linha nem um atributo do que o gerar escreve. O Ler confere, e o gerar
+// confere de novo, para uma Config feita à mão. O erro diz o campo, e nunca mostra a chave nem a senha.
+func (c Config) Conferir() error {
 	if !nomeValido(c.Endereco) {
 		return errors.New(`o "endereco" é o nome do servidor de vídeo no DNS, só com letras minúsculas, números, pontos e hífens, sem https://, porta nem caminho (por exemplo, video.exemplo.com.br)`)
 	}
@@ -92,12 +94,12 @@ func (c Config) OrigemDoChat() string {
 	return "https://" + c.Chat
 }
 
-// ChaveCrua devolve os 32 bytes da chave. Ela só vale para uma Config com uma chave que o
-// senha.LerChave aceita, como a do Ler: com outra, é um erro do programa, e ela entra em pânico.
+// ChaveCrua devolve os 32 bytes da chave. Ela só vale para uma Config conferida (o Conferir): com
+// outra, é um erro do programa, e ela entra em pânico.
 func (c Config) ChaveCrua() []byte {
 	chave, err := senha.LerChave(c.Chave)
 	if err != nil {
-		panic("config: a chave não vale (a Config não veio do Ler): " + err.Error())
+		panic("config: a chave não vale (a Config não foi conferida): " + err.Error())
 	}
 	return chave
 }

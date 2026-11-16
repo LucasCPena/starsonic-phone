@@ -5,8 +5,10 @@
 
   O FreeSWITCH passa o arquivo por um pré-processador, linha por linha, antes de ler o XML (o preprocess do
   src/switch_xml.c): ele expande o $${...}, trata como comando o comentário que começa com "#" e a linha com
-  o texto X-PRE-PROCESS (ou a joga fora), e joga fora a linha que tem "<?". Por isso, nada aqui tem esses
-  textos, e a senha do ESL, o único valor livre, só tem letras e números (o config.Ler confere).
+  o texto X-PRE-PROCESS (ou a joga fora), e joga fora a linha que tem "<?". A declaração <?xml ...?> da
+  primeira linha sai assim de propósito: ela é para os outros leitores de XML, e o FreeSWITCH não precisa
+  dela. Nenhuma outra linha pode ter "<?" nem os outros textos. A senha do ESL, o único valor livre, só tem
+  letras e números: o Config.Conferir confere, no config.Ler e de novo no gerar.FreeSWITCH.
 */ -}}
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Gerado pelo starsonic-video configurar, a partir do config.json do agente. Não edite: o configurar o escreve de novo. -->

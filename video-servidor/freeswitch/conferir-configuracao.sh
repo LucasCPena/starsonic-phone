@@ -108,13 +108,13 @@ done
 echo "conferir: o ESL respondeu"
 
 # 4. Os dois perfis do sofia, numa linha como "tls  profile  sip:mod_sofia@<IP>:5061  RUNNING (0) (TLS)".
-# Um perfil pode levar um instante para subir depois do ESL.
+# Um perfil pode levar um instante para subir depois do ESL, e um fs_cli que falha tenta de novo.
 perfil_no_ar() {
     awk -v perfil="$1" '$1 == perfil && $2 == "profile" && $4 == "RUNNING" { achou = 1 } END { exit !achou }' <<<"$2"
 }
 limite=$((SECONDS + 10))
 while :; do
-    status="$(fs_cli 'sofia status')"
+    status="$(fs_cli 'sofia status')" || status=""
     if perfil_no_ar navegador "$status" && perfil_no_ar tls "$status"; then
         break
     fi
@@ -144,15 +144,23 @@ echo "conferir: o FreeSWITCH desligou"
 # 6. A saída dele. Sem o mapa "all" do console.conf, o mod_console não escreve nada, e a conferência
 # dos erros não veria nada: a linha do último módulo carregado mostra que ele escreveu.
 grep -q 'Successfully Loaded \[mod_opus\]' "$SAIDA_FS" || falhar "o mod_console não escreveu na saída do FreeSWITCH"
-# Só estas seis linhas de erro não contam: o FreeSWITCH as escreve a cada partida com a base interna nova
-# (o -db no /run). Com a base interna, o switch_core_sqldb_start (src/switch_core_sqldb.c) apaga as
-# tabelas channels, calls, interfaces e tasks e as vistas detailed_calls e basic_calls da partida
-# anterior sem conferir se existem, e cada uma que falta sai no nível ERROR, com o "drop ..." na linha
-# seguinte, que não tem nível. Qualquer outra linha [ERR], [CRIT] ou [ALERT] falha.
-ESPERADAS='\[ERR\] switch_core_sqldb\.c:[0-9]+ \[db="core",type="core_db"\] NATIVE SQL ERR \[no such (table: (channels|calls|interfaces|tasks)|view: (detailed_calls|basic_calls))\]$'
-if grep -E '\[(ERR|CRIT|ALERT)\]' "$SAIDA_FS" | grep -Ev "$ESPERADAS" >&2; then
-    falhar "o FreeSWITCH escreveu as linhas de erro acima"
+# Só estas seis linhas de erro não contam, e no máximo seis: o FreeSWITCH as escreve a cada partida com a
+# base interna nova (o -db no /run). Com a base interna, o switch_core_sqldb_start
+# (src/switch_core_sqldb.c) apaga as tabelas channels, calls, interfaces e tasks e as vistas
+# detailed_calls e basic_calls da partida anterior sem conferir se existem, e cada uma que falta sai no
+# nível ERROR, com o "drop ..." na linha seguinte, que não tem nível. A expressão pega a linha inteira,
+# desde a data e a CPU do começo. Qualquer outra linha [ERR], [CRIT] ou [ALERT] falha.
+ESPERADAS='^[0-9-]+ [0-9:.]+ +[0-9.]+% \[ERR\] switch_core_sqldb\.c:[0-9]+ \[db="core",type="core_db"\] NATIVE SQL ERR \[no such (table: (channels|calls|interfaces|tasks)|view: (detailed_calls|basic_calls))\]$'
+# Um grep sai com 0 quando acha, 1 quando não acha e 2 ou mais num erro (uma expressão quebrada, um
+# arquivo que não se lê): o erro não pode passar por "não achou".
+esperadas="$(grep -cE "$ESPERADAS" "$SAIDA_FS")" || [ "$?" -eq 1 ] || falhar "o grep não leu a saída do FreeSWITCH"
+[ "$esperadas" -le 6 ] || falhar "a saída do FreeSWITCH tem $esperadas linhas como as da base interna, e são só seis"
+estados=(0 0)
+grep -E '\[(ERR|CRIT|ALERT)\]' "$SAIDA_FS" | grep -Ev "$ESPERADAS" >&2 || estados=("${PIPESTATUS[@]}")
+if [ "${estados[0]}" -ge 2 ] || [ "${estados[1]}" -ge 2 ]; then
+    falhar "o grep não leu a saída do FreeSWITCH (os dois saíram com ${estados[*]})"
 fi
+[ "${estados[1]}" -eq 1 ] || falhar "o FreeSWITCH escreveu as linhas de erro acima"
 echo "conferir: os avisos do FreeSWITCH:"
 grep -F '[WARNING]' "$SAIDA_FS" || true
 echo "conferir: a configuração está certa"

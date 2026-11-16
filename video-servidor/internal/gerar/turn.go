@@ -29,6 +29,9 @@ type dadosTurn struct {
 
 // Turn devolve o turnserver.conf: o TURN da seção 4 do docs/video-agente.md, que só faz relay para os
 // IPs da própria VM, com o segredo que o chat também tira da chave.
+//
+// Ele espera uma Config conferida (o Config.Conferir), e quem o chama confere antes, como o Tudo: os
+// valores vão para as linhas sem escape, e uma chave que não vale entra em pânico no ChaveCrua.
 func Turn(c config.Config) []byte {
 	var b bytes.Buffer
 	err := turnConf.Execute(&b, dadosTurn{

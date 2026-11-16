@@ -51,11 +51,15 @@ type dadosFreeSWITCH struct {
 }
 
 // FreeSWITCH devolve o freeswitch.xml, um arquivo só, para a pasta pastaFS (a do -conf, com o
-// sem-camera.png e a pasta tls/ dentro), que tem de ser um caminho inteiro.
+// sem-camera.png e a pasta tls/ dentro), que tem de ser um caminho inteiro. Ele confere a Config antes
+// (o Config.Conferir): o escape do XML não segura o $${...} do pré-processador do FreeSWITCH.
 //
 // Com teste, os candidatos ICE de quem liga podem ser da rede local (rfc1918.auto e localnet.auto),
 // como os dos navegadores do teste de ponta a ponta. Em produção, só os da internet (wan.auto).
 func FreeSWITCH(c config.Config, pastaFS string, teste bool) ([]byte, error) {
+	if err := c.Conferir(); err != nil {
+		return nil, fmt.Errorf("a configuração não vale: %w", err)
+	}
 	if !filepath.IsAbs(pastaFS) {
 		return nil, fmt.Errorf("a pasta do FreeSWITCH tem de ser um caminho inteiro: %s", pastaFS)
 	}
