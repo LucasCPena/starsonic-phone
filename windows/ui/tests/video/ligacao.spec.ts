@@ -175,9 +175,9 @@ test('the video call shows the other side big, your image in the corner and Abri
 
 test('the Câmera button turns your camera off and on', async ({ page }) => {
   await abrir(page, 'video');
-  // Os controles de uma ligação com o vídeo ligado, em quatro colunas (com o Chat, da Task 8, cinco).
-  await expect(page.locator('.ctrls > *')).toHaveText(['Mudo', 'Câmera', 'Teclado', 'Áudio', 'Espera', 'Transferir', 'Nova ligação', 'Atalhos']);
-  await expect(page.locator('.ctrls')).toHaveClass(/(^|\s)ctrls-4(\s|$)/);
+  // Os controles de uma videochamada, com o Adicionar pessoa (0.4.0) depois da Câmera, em cinco colunas.
+  await expect(page.locator('.ctrls > *')).toHaveText(['Mudo', 'Câmera', 'Adicionar pessoa', 'Teclado', 'Áudio', 'Espera', 'Transferir', 'Nova ligação', 'Atalhos']);
+  await expect(page.locator('.ctrls')).toHaveClass(/(^|\s)ctrls-5(\s|$)/);
   const c = camera(page);
   await expect(c).toHaveAccessibleName('Desligar a câmera');
   // Acesa com a câmera ligada, sem o aria-pressed: o nome já diz a ação.

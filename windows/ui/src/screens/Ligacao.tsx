@@ -27,8 +27,13 @@
 // ligação (o CartaoDaOutra) também vai ao grande e à tela cheia. (Task 8) Numa ligação com um colega do chat (o `chat`,
 // do main.tsx), o Chat vem depois da Câmera, nos controles de uma ligação: ele abre a conversa com o colega, embaixo da
 // faixa da ligação. Com a segunda tocando, ele espera, como a Nova ligação (a conversa só fica na tela com uma ligação).
-import { createContext, type ComponentChildren, type VNode } from 'preact';
-import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
+// (0.4.0) Numa videochamada (o mostraAdicionar do sala/estado.ts), o Adicionar pessoa vem depois da Câmera, nos controles
+// de uma ligação (o Chat vem depois dele), e espera o que o núcleo pede (o podeAdicionar). Ele abre o painel de adicionar
+// (sala/PainelDeAdicionar.tsx), com "Em videochamada" no alto, enquanto adicionar vale; o Adicionar manda o
+// `salaAdicionar`. Com o painel de adicionar, a sua imagem flutua no canto de baixo, ao lado do Desligar. Os controles
+// (controlesDaLigacao.tsx) e o painel pelo nome (PainelPorNome.tsx) saíram daqui sem mudar, para a sala usar também.
+import type { VNode } from 'preact';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { AtalhosPainel } from '../components/AtalhosPainel';
 import { VistaDeVideo } from '../components/VistaDeVideo';
 import { Menu } from '../components/Menu';
@@ -36,6 +41,7 @@ import { Rediscar } from '../components/Rediscar';
 import { callTimer, contactNumberLine, digitsOnly, firstName, initials, nameOrNumber } from '../format';
 import { isIos, semSegundoClique } from '../plataforma';
 import {
+  IconAdicionarPessoa,
   IconArrowRight,
   IconBolt,
   IconCheck,
@@ -55,12 +61,17 @@ import {
   IconVideo,
   IconVideoOff,
 } from '../icons';
-import { buscaPor, buscar, listaDeContatos, nomeOuNumero, temLetras, type Linha } from '../lista-de-contatos';
+import { listaDeContatos } from '../lista-de-contatos';
+import { mostraAdicionar, podeAdicionar } from '../sala/estado';
+import { PainelDeAdicionar } from '../sala/PainelDeAdicionar';
+import { ADICIONAR_PESSOA, EM_VIDEOCHAMADA } from '../sala/textos';
 import type { AppState, CallCard, CallState, CompanyContact, Contact } from '../state';
 import type { Send } from '../types';
 import { CaixaDoVideo, SuaImagemFlutuante } from '../video/CaixaDoVideo';
 import { cameraDaLigacaoDesativada, imagemDaLigacao, oferecerAtenderComVideo, videoDe, videoDoApp } from '../video/estado';
 import { ATENDER_COM_VIDEO, CAMERA, CHAT, DESLIGAR_A_CAMERA, LIGAR_A_CAMERA, rotuloDoVideo } from '../video/textos';
+import { Avatar, confirmada, Ctrl, NoWindows, RoundAction } from './controlesDaLigacao';
+import { PainelPorNome, type PainelProps } from './PainelPorNome';
 import { statusLine, useNow } from './tempoDaLigacao';
 
 interface Props {
@@ -75,87 +86,14 @@ interface Props {
   chat?: { abrir(): void } | null;
 }
 
-type Painel = 'teclado' | 'transferir' | 'nova' | 'atalhos' | null;
+type Painel = 'teclado' | 'transferir' | 'nova' | 'atalhos' | 'adicionar' | null;
 
 const TECLAS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'];
 const PADRAO = 'Padrão do Windows';
 
-/** Em andamento e confirmada pelo motor (o Alternar, o Juntar e o Concluir só valem entre ligações assim). */
-function confirmada(card: CallCard): boolean {
-  return card.phase === 'active' && card.activeSinceMs > 0;
-}
-
 /** Os últimos dígitos mandados (os que cabem na linha). */
 function ultimos(digitos: string): string {
   return digitos.length > 18 ? `…${digitos.slice(-17)}` : digitos;
-}
-
-function Avatar({ card, large }: { card: CallCard; large?: boolean }) {
-  return (
-    <span class={large ? 'avatar avatar-lg' : 'avatar'} aria-hidden="true">
-      {card.name ? initials(card.name) : <IconPhone size={large ? 'lg' : 'sm'} />}
-    </span>
-  );
-}
-
-interface CtrlProps {
-  /** O rótulo embaixo do círculo (também o nome do botão, sem o `nome`). */
-  label: ComponentChildren;
-  /** (iPhone) O nome do botão, quando o rótulo não diz tudo (o Áudio: "Áudio: <saída>"). */
-  nome?: string;
-  icon: ComponentChildren;
-  onClick(): void;
-  pressed?: boolean;
-  /** (vídeo, etapa 2) Aceso como o pressionado, sem o aria-pressed: a Câmera, cujo nome já diz a ação. */
-  aceso?: boolean;
-  disabled?: boolean;
-  popup?: boolean;
-  expanded?: boolean;
-  ctrlRef?: { current: HTMLButtonElement | null };
-}
-
-/**
- * (rc.6) A tela da ligação no Windows: os botões dela (os controles, o Desligar e os dos painéis de número) ignoram o
- * segundo clique de um clique duplo (o semSegundoClique). No iPhone, não.
- */
-const NoWindows = createContext(false);
-
-function Ctrl({ label, nome, icon, onClick, pressed, aceso, disabled, popup, expanded, ctrlRef }: CtrlProps) {
-  const noWindows = useContext(NoWindows);
-  const classes = ['ctrl', pressed || aceso ? 'ctrl-on' : '', disabled ? 'ctrl-off' : ''].filter(Boolean).join(' ');
-  return (
-    <button
-      ref={ctrlRef}
-      type="button"
-      class={classes}
-      aria-label={nome}
-      aria-pressed={pressed === undefined ? undefined : pressed}
-      aria-haspopup={popup ? 'menu' : undefined}
-      aria-expanded={popup ? expanded === true : undefined}
-      disabled={disabled}
-      onClick={semSegundoClique(noWindows, onClick)}
-    >
-      <span class="ctrl-c">{icon}</span>
-      {label}
-    </button>
-  );
-}
-
-/**
- * Um botão redondo grande com o rótulo fora (Desligar e Recusar em vermelho, Atender em ciano). Quem usa passa o onClick
- * já com o semSegundoClique (no Windows): o núcleo age na primeira que toca, a cada comando, e o segundo clique do
- * Recusar recusaria a segunda ligação, que aparece com o botão no mesmo lugar (e o do Atender a atenderia). O Atender com
- * vídeo (`video`) é o Atender com a borda ciano e a câmera: só ele manda o `video: true`.
- */
-function RoundAction({ label, kind, onClick }: { label: string; kind: 'hang' | 'answer' | 'video'; onClick(e: MouseEvent): void }) {
-  return (
-    <div class="round-action">
-      <button type="button" class={kind === 'hang' ? 'hang' : kind === 'video' ? 'hang answer-video' : 'hang answer'} aria-label={label} onClick={onClick}>
-        {kind === 'video' ? <IconVideo size="lg" /> : <IconPhone size="lg" />}
-      </button>
-      <span aria-hidden="true">{label}</span>
-    </div>
-  );
 }
 
 /** O menu Áudio: o alto-falante e o microfone da ligação (o `setAudio` pelo nome; "" = o padrão do Windows). */
@@ -198,22 +136,6 @@ function AudioMenu({ state, send, anchor, onClose }: { state: AppState; send: Se
   );
 }
 
-/** O que os dois painéis de número (o do iPhone e o do Windows) recebem do Transferir e da Nova ligação. */
-interface PainelProps {
-  titulo: string;
-  rotulo: string;
-  onCancel(): void;
-  /** Um contato escolhido, com o número dele (null: ele só preenche o número; no Windows, o painel mostra quem recebe). */
-  onContact: ((numero: string) => void) | null;
-  /**
-   * Os botões do painel, com o número a mandar ("" sem nenhum: no Windows, um nome sem um contato escolhido não é número)
-   * e `doContato`: ele é o de um contato escolhido, sem mudança depois (vai com o `contato`).
-   */
-  actions(numero: string, doContato: boolean): ComponentChildren;
-  /** O Enter no campo sem uma linha marcada, com o número a mandar (null: nada). */
-  onEnter: ((numero: string) => void) | null;
-}
-
 /** (iPhone) O número do Transferir e da Nova ligação, com as sugestões da agenda (como o Teclado). */
 function NumberPanel({ titulo, rotulo, contatos, onCancel, onContact, actions, onEnter }: PainelProps & { contatos: Contact[] }) {
   const [numero, setNumero] = useState('');
@@ -247,7 +169,7 @@ function NumberPanel({ titulo, rotulo, contatos, onCancel, onContact, actions, o
             onCancel();
           } else if (e.key === 'Enter' && onEnter && numero) {
             e.preventDefault();
-            onEnter(numero);
+            onEnter(numero, daSugestao);
           }
         }}
       />
@@ -275,245 +197,6 @@ function NumberPanel({ titulo, rotulo, contatos, onCancel, onContact, actions, o
       )}
       <div class="call-panel-actions">{actions(numero, daSugestao)}</div>
       <button type="button" class="btn btn-ghost-dark" onClick={onCancel}>
-        Cancelar
-      </button>
-    </div>
-  );
-}
-
-/** A lista do painel do Windows e o título que dá o nome a ela (um painel por vez). */
-const LISTA_DO_PAINEL = 'painel-contatos';
-const TITULO_DO_PAINEL = 'painel-titulo';
-const NENHUM_CONTATO = 'Nenhum contato com esse nome';
-/**
- * A lista do painel vai em pedaços: as PRIMEIRO_PEDACO primeiras linhas logo, e mais um pedaço de PEDACO por tarefa,
- * cada um depois do desenho do anterior (como a agenda grande do iPhone sem o content-visibility, no Agenda.tsx). Com a
- * lista da empresa de 10.000, montar todas as linhas de uma vez travava a tela da ligação perto de 1 s; assim, o painel
- * abre e a busca responde na hora, e a lista inteira chega logo depois. Cada pedaço é montado uma vez e reaproveitado (o
- * Preact pula o mesmo vnode): o desenho de um pedaço novo não passa de novo pelas linhas dos de antes. A busca olha a
- * lista inteira, e uma busca nova é outra lista na tela, do começo e do primeiro pedaço.
- */
-const PRIMEIRO_PEDACO = 100;
-const PEDACO = 200;
-
-/** As linhas em pedaços: o primeiro com PRIMEIRO_PEDACO, os outros com PEDACO. */
-function emPedacos(linhas: Linha[]): Linha[][] {
-  const pedacos: Linha[][] = [];
-  for (let i = 0, n = PRIMEIRO_PEDACO; i < linhas.length; i += n, n = PEDACO) pedacos.push(linhas.slice(i, i + n));
-  return pedacos;
-}
-
-/** O pedaço da linha de índice `i`. */
-function pedacoDa(i: number): number {
-  return i < PRIMEIRO_PEDACO ? 0 : 1 + Math.floor((i - PRIMEIRO_PEDACO) / PEDACO);
-}
-
-/** O id de cada linha da lista na tela (o aria-activedescendant do campo aponta a marcada). */
-const IDS_DAS_LINHAS = new WeakMap<Linha, string>();
-let ultimoId = 0;
-function idDaLinha(l: Linha): string {
-  let id = IDS_DAS_LINHAS.get(l);
-  if (!id) {
-    id = `painel-contato-${++ultimoId}`;
-    IDS_DAS_LINHAS.set(l, id);
-  }
-  return id;
-}
-
-/**
- * Uma linha da lista: as iniciais, o nome (ou o número, num contato sem nome) e embaixo "Contato · <número>" (um meu) ou
- * "Empresa · <número>" (um da lista da empresa). Sem estado: um vnode, não um componente (numa lista de 10.000).
- */
-function linhaDoPainel(l: Linha, marcada: boolean, escolher: (l: Linha) => void): VNode {
-  return (
-    <div
-      key={l.key}
-      id={idDaLinha(l)}
-      role="option"
-      aria-selected={marcada}
-      class="suggest call-suggest"
-      onClick={() => escolher(l)}
-    >
-      <span class="avatar" aria-hidden="true">
-        {initials(l.nome)}
-      </span>
-      <span class="row-main">
-        <span class="row-title">{l.nome || l.numero}</span>
-        <span class="row-sub">{`${l.meu ? 'Contato' : 'Empresa'} · ${l.numero}`}</span>
-      </span>
-    </div>
-  );
-}
-
-/**
- * (rc.6, Windows) O Transferir (com o Consultar) e a Nova ligação pelo nome ou pelo número. O campo aceita letras; embaixo
- * dele, a lista dos meus contatos e dos da lista da empresa (`lista`): com o campo vazio, todos; digitando, os que batem
- * na busca de ligar (a do Teclado: com letras, só o nome; sem elas, os dígitos do número; nunca a observação). Ela fica
- * com o espaço que sobra e rola sozinha. É o padrão da lista com a opção marcada: as setas para baixo e para cima marcam
- * uma linha (o aria-activedescendant do campo), e o Enter nela ou o clique escolhem o contato. Na Nova ligação, o
- * escolhido liga (o `onContact`); no Transferir, o número dele vai para o campo e o painel mostra quem vai receber
- * ("Para: <nome> · <número>"), até o campo mudar. Letras sem um contato escolhido não são número: os botões ficam
- * desligados, e sem nenhum contato que bata aparece "Nenhum contato com esse nome". Só com números, como antes: o número
- * digitado, sem o `contato`. O Esc cancela.
- */
-function PainelPorNome({ titulo, rotulo, lista, onCancel, onContact, actions, onEnter }: PainelProps & { lista: Linha[] }) {
-  const noWindows = useContext(NoWindows);
-  const [texto, setTexto] = useState('');
-  // O contato escolhido (só no Transferir: na Nova ligação, ele liga), até o campo mudar.
-  const [escolhido, setEscolhido] = useState<Linha | null>(null);
-  // A linha marcada pelas setas (a chave dela: numa lista nova, a marca segue o contato).
-  const [marcada, setMarcada] = useState<string | null>(null);
-  const campo = useRef<HTMLInputElement>(null);
-  useEffect(() => campo.current?.focus(), []);
-
-  const achadas = useMemo(() => buscar(lista, buscaPor(texto, { paraLigar: true })), [lista, texto]);
-  const comLetras = temLetras(texto);
-  const mostrarLista = escolhido === null && achadas.length > 0;
-  const nenhum = escolhido === null && comLetras && achadas.length === 0;
-  const indice = mostrarLista && marcada !== null ? achadas.findIndex((l) => l.key === marcada) : -1;
-  // O número que os botões mandam: o do escolhido; com letras sem escolha, nenhum; só números, o digitado.
-  const numero = escolhido ? escolhido.numero : comLetras ? '' : texto;
-
-  const escolher = (l: Linha) => {
-    if (onContact) {
-      onContact(l.numero);
-      return;
-    }
-    setTexto(l.numero);
-    setEscolhido(l);
-    setMarcada(null);
-    campo.current?.focus();
-  };
-  const escolherAgora = useRef(escolher);
-  escolherAgora.current = escolher;
-
-  // A lista na tela, em pedaços (PRIMEIRO_PEDACO). Umas achadas novas (outra busca, outra lista, também a volta ao campo
-  // vazio) são outra lista na tela (a `vez`): do começo, e com o primeiro pedaço; os outros vêm um por tarefa. O pedaço da
-  // linha marcada está sempre nela.
-  const pedacos = useMemo(() => emPedacos(achadas), [achadas]);
-  const vez = useRef({ de: achadas, n: 0 });
-  if (vez.current.de !== achadas) vez.current = { de: achadas, n: vez.current.n + 1 };
-  const [naTela, setNaTela] = useState({ vez: 0, quantos: 1 });
-  const quantos = Math.max(naTela.vez === vez.current.n ? naTela.quantos : 1, indice >= 0 ? pedacoDa(indice) + 1 : 0);
-  useEffect(() => {
-    if (!mostrarLista || quantos >= pedacos.length) return;
-    const desta = vez.current.n;
-    const seguinte = setTimeout(() => setNaTela({ vez: desta, quantos: quantos + 1 }), 0);
-    return () => clearTimeout(seguinte);
-  }, [achadas, quantos, mostrarLista]);
-
-  // A linha de cada contato e cada pedaço, montados uma vez (o clique chama o escolher de agora); o pedaço da marcada, de
-  // novo a cada marca. A lista também: o relógio da ligação redesenha a tela a cada segundo, e ela fica como está.
-  const prontas = useMemo(() => ({ linhas: new WeakMap<Linha, VNode>(), pedacos: new WeakMap<Linha[], VNode>() }), []);
-  const listaNaTela = useMemo(() => {
-    if (!mostrarLista) return null;
-    const aoEscolher = (l: Linha) => escolherAgora.current(l);
-    const linhaDe = (l: Linha): VNode => {
-      if (l.key === marcada) return linhaDoPainel(l, true, aoEscolher);
-      let pronta = prontas.linhas.get(l);
-      if (!pronta) {
-        pronta = linhaDoPainel(l, false, aoEscolher);
-        prontas.linhas.set(l, pronta);
-      }
-      return pronta;
-    };
-    const comMarca = indice >= 0 ? pedacoDa(indice) : -1;
-    // Cada pedaço numa caixa própria (sem papel para o leitor de tela: as linhas são da lista): o navegador põe e pinta
-    // um pedaço novo sem passar de novo pelas linhas dos de antes.
-    const pedacoDe = (p: Linha[], k: number): VNode => {
-      const novo = () => (
-        <div key={k} role="none" class="call-pedaco">
-          {p.map(linhaDe)}
-        </div>
-      );
-      if (k === comMarca) return novo();
-      let pronto = prontas.pedacos.get(p);
-      if (!pronto) {
-        pronto = novo();
-        prontas.pedacos.set(p, pronto);
-      }
-      return pronto;
-    };
-    return (
-      <div key={vez.current.n} class="call-suggestions call-lista" id={LISTA_DO_PAINEL} role="listbox" aria-labelledby={TITULO_DO_PAINEL}>
-        {pedacos.slice(0, quantos).map(pedacoDe)}
-      </div>
-    );
-  }, [pedacos, quantos, marcada, mostrarLista]);
-
-  // A marcada fica à vista na lista, já no desenho dela: também numa lista nova com ela (a planilha relida com o painel
-  // aberto), que volta para o começo.
-  useLayoutEffect(() => {
-    if (indice >= 0) document.getElementById(idDaLinha(achadas[indice]))?.scrollIntoView({ block: 'nearest' });
-  }, [marcada, achadas]);
-
-  // O painel ocupa a parte do meio inteira (o call-panel-nome do app.css): o campo em cima, a lista com o espaço que sobra
-  // e os botões embaixo, parados enquanto a busca muda e depois da escolha.
-  return (
-    <div class="call-panel call-panel-nome">
-      <h2 class="call-panel-title" id={TITULO_DO_PAINEL}>
-        {titulo}
-      </h2>
-      <input
-        ref={campo}
-        class="call-number"
-        type="text"
-        role="combobox"
-        aria-label={rotulo}
-        aria-autocomplete="list"
-        aria-expanded={mostrarLista}
-        aria-controls={mostrarLista ? LISTA_DO_PAINEL : undefined}
-        aria-activedescendant={indice >= 0 ? idDaLinha(achadas[indice]) : undefined}
-        placeholder="Digite o nome ou o número"
-        autocomplete="off"
-        spellcheck={false}
-        value={texto}
-        onInput={(e) => {
-          const valor = nomeOuNumero(e.currentTarget.value);
-          if (valor !== e.currentTarget.value) e.currentTarget.value = valor;
-          setTexto(valor);
-          setEscolhido(null);
-          setMarcada(null);
-        }}
-        onKeyDown={(e) => {
-          if (e.key === 'Escape') {
-            e.preventDefault();
-            onCancel();
-          } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-            if (!mostrarLista) return;
-            e.preventDefault();
-            // Para baixo: a primeira, depois a seguinte, até a última. Para cima: a anterior, e da primeira, nenhuma.
-            const nova = e.key === 'ArrowDown' ? Math.min(indice + 1, achadas.length - 1) : indice - 1;
-            setMarcada(nova >= 0 ? achadas[nova].key : null);
-          } else if (e.key === 'Enter') {
-            if (indice >= 0) {
-              e.preventDefault();
-              escolher(achadas[indice]);
-            } else if (onEnter && numero) {
-              e.preventDefault();
-              onEnter(numero);
-            }
-          }
-        }}
-      />
-      {listaNaTela}
-      {/* Quem vai receber (o escolhido) ou o nada achado, no lugar da lista; sem nenhum dos dois, só a região que o leitor
-          de tela anuncia. */}
-      <p class={escolhido ? 'call-para' : nenhum ? 'call-vazio' : 'sr-only'} role="status">
-        {escolhido ? (
-          <>
-            <span>Para: </span>
-            <b>{escolhido.nome || escolhido.numero}</b>
-            {escolhido.nome && <span>{` · ${escolhido.numero}`}</span>}
-          </>
-        ) : nenhum ? (
-          NENHUM_CONTATO
-        ) : (
-          ''
-        )}
-      </p>
-      <div class="call-panel-actions">{actions(numero, escolhido !== null)}</div>
-      <button type="button" class="btn btn-ghost-dark" onClick={semSegundoClique(noWindows, onCancel)}>
         Cancelar
       </button>
     </div>
@@ -619,7 +302,8 @@ export function Ligacao({ state, ligacao: l, contatos, daEmpresa, send, chat = n
   const ambas = outra !== null && falando && confirmada(outra);
 
   // O painel só vale enquanto o estado deixa (a ligação que cai, a segunda que chega). Os atalhos, só com uma ligação
-  // atendida (nunca com só uma recebida tocando), fora da consulta e da conferência, e com algum atalho.
+  // atendida (nunca com só uma recebida tocando), fora da consulta e da conferência, e com algum atalho. (0.4.0) O de
+  // adicionar, enquanto o Adicionar pessoa vale (a segunda que toca, o vídeo que para e a espera o fecham).
   const temAtalhos = state.atalhos.length > 0;
   const painel: Painel =
     painelPedido === 'teclado' && falando && !tocando && !consulta
@@ -630,7 +314,9 @@ export function Ligacao({ state, ligacao: l, contatos, daEmpresa, send, chat = n
           ? 'nova'
           : painelPedido === 'atalhos' && falando && !tocando && !consulta && !conferencia && temAtalhos
             ? 'atalhos'
-            : null;
+            : painelPedido === 'adicionar' && podeAdicionar(state, l)
+              ? 'adicionar'
+              : null;
 
   const fecharAtalhos = () => {
     setPainel(null);
@@ -731,7 +417,14 @@ export function Ligacao({ state, ligacao: l, contatos, daEmpresa, send, chat = n
       </>
     );
   } else {
-    const eyebrow = tocando ? `Ligação recebida · ${contaNome}` : consulta && l.colleagueActive ? 'Consultando' : 'Em ligação';
+    // (0.4.0) Com o painel de adicionar, o alto dele diz que a ligação é uma videochamada (o quadro Adicionar).
+    const eyebrow = tocando
+      ? `Ligação recebida · ${contaNome}`
+      : consulta && l.colleagueActive
+        ? 'Consultando'
+        : painel === 'adicionar'
+          ? EM_VIDEOCHAMADA
+          : 'Em ligação';
     const dele = (
       <div class={compacto ? 'who who-compact' : 'who'}>
         <span class="eyebrow">{eyebrow}</span>
@@ -822,12 +515,17 @@ export function Ligacao({ state, ligacao: l, contatos, daEmpresa, send, chat = n
   // como a Nova ligação: a conversa da ligação só fica na tela com uma (main.tsx).
   const chatCtrl =
     chat && !ios ? <Ctrl label={CHAT} icon={<IconMessage />} disabled={l.second !== null} onClick={chat.abrir} /> : null;
+  // (0.4.0) O Adicionar pessoa, numa videochamada (o mostraAdicionar; nunca no iPhone): abre o painel de adicionar, e
+  // espera a ligação sozinha, atendida e fora da espera (o podeAdicionar).
+  const adicionarCtrl = mostraAdicionar(state, l) ? (
+    <Ctrl label={ADICIONAR_PESSOA} icon={<IconAdicionarPessoa />} disabled={!podeAdicionar(state, l)} onClick={() => setPainel('adicionar')} />
+  ) : null;
 
   // Os controles: na conferência, Mudo, Teclado e Separar (o motor pausa todo vídeo nela: sem a Câmera); na consulta,
   // Mudo, Câmera, Alternar e Cancelar; com duas, Mudo, Câmera, Teclado, Áudio, Espera, Transferir, Alternar, Juntar e
-  // Atalhos; com uma, Mudo, Câmera, Chat, Teclado, Áudio, Espera, Transferir, Nova ligação e Atalhos. A Câmera só vem com o
-  // vídeo ligado, e o Chat com um colega do chat; (iPhone) sem os dois e sem o Atalhos. O lugar de um que não vem fica
-  // vazio (null), e a tela não remonta os outros quando ele chega.
+  // Atalhos; com uma, Mudo, Câmera, Adicionar pessoa, Chat, Teclado, Áudio, Espera, Transferir, Nova ligação e Atalhos. A
+  // Câmera só vem com o vídeo ligado, o Adicionar pessoa numa videochamada e o Chat com um colega do chat; (iPhone) sem os
+  // três e sem o Atalhos. O lugar de um que não vem fica vazio (null), e a tela não remonta os outros quando ele chega.
   let controles: Array<VNode | null>;
   if (conferencia) {
     controles = [mudo, teclado, <Ctrl label="Separar" icon={<IconSplit />} onClick={() => send({ cmd: 'split' })} />];
@@ -849,6 +547,7 @@ export function Ligacao({ state, ligacao: l, contatos, daEmpresa, send, chat = n
     controles = [
       mudo,
       cameraCtrl,
+      adicionarCtrl,
       chatCtrl,
       teclado,
       audioCtrl,
@@ -931,10 +630,23 @@ export function Ligacao({ state, ligacao: l, contatos, daEmpresa, send, chat = n
     });
   } else if (painel === 'atalhos') {
     meio = <AtalhosPainel atalhos={state.atalhos} ligacao={l} send={send} onClose={fecharAtalhos} onUsed={fecharAtalhos} />;
+  } else if (painel === 'adicionar') {
+    // (0.4.0) O painel de adicionar, com a lista dos meus e dos da empresa, como o Transferir. O número de um contato
+    // escolhido, sem mudança depois, vai com o `contato`.
+    meio = (
+      <PainelDeAdicionar
+        lista={listaDeContatos(contatos, daEmpresa).todas}
+        onAdicionar={(numero, doContato) => {
+          setPainel(null);
+          send({ cmd: 'salaAdicionar', numero, ...(doContato ? { contato: true } : {}) });
+        }}
+        onCancel={() => setPainel(null)}
+      />
+    );
   } else {
     // As colunas seguem quantos controles há. Numa fila só: 3 (a conferência, e a consulta sem a Câmera) e 4 (a consulta
-    // com ela). Em duas filas: 6 em três colunas (uma ligação no iPhone, sem o Atalhos), 7 e 8 em quatro, e 9 em cinco
-    // (duas ligações com a Câmera, ou uma com a Câmera e o Chat).
+    // com ela). Em duas filas: 6 em três colunas (uma ligação no iPhone, sem o Atalhos), 7 e 8 em quatro, e 9 e 10 em
+    // cinco (duas ligações com a Câmera; uma com a Câmera e o Adicionar pessoa ou o Chat, ou com os dois).
     const quantos = controles.filter((c) => c !== null).length;
     const grade = quantos >= 9 ? 'ctrls ctrls-5' : quantos >= 7 || quantos === 4 ? 'ctrls ctrls-4' : 'ctrls';
     meio = <div class={grade}>{controles}</div>;
@@ -982,11 +694,13 @@ export function Ligacao({ state, ligacao: l, contatos, daEmpresa, send, chat = n
   // O painel de número (Transferir, Nova ligação) com um cartão em cima: na janela baixa, o bloco de quem fala sai
   // (app.css), para o painel caber entre o cartão e o Desligar.
   const painelComCartao = temCartao && (painel === 'transferir' || painel === 'nova' || painel === 'atalhos');
+  // (0.4.0) Com o painel de adicionar, a sua imagem flutuante fica no canto de baixo, e quem fala (o alto do painel) não
+  // estreita por ela (o app.css).
   const classes = [
     'call-body',
     painelComCartao ? 'call-painel-cartao' : '',
     comVideo ? 'call-com-video' : '',
-    suaFlutuante ? 'call-sua-imagem' : '',
+    suaFlutuante ? (painel === 'adicionar' ? 'call-sua-embaixo' : 'call-sua-imagem') : '',
   ].filter(Boolean);
   // A sua imagem flutuante fica embaixo do cartão quando ele está em cima (o app.css): ela nunca cobre o Recusar, o
   // Atender e o Desligar dele. O cartão fica sempre na mesma caixa, e a câmera que liga não o remonta.

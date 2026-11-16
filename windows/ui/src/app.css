@@ -426,7 +426,8 @@ button.link { border: 0; background: transparent; padding: 0; font-family: inher
 .call-middle:has(.call-keys, .call-panel) { justify-content: center; }
 .ctrls { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 10px; width: 100%; }
 .ctrls-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px 4px; }
-/* (vídeo, etapa 2) Com 9 controles (uma ligação com a Câmera e o Chat), cinco colunas (Ligacao.tsx). */
+/* (vídeo, etapa 2) Com 9 ou 10 controles (uma ligação com a Câmera e o Chat; 0.4.0: ou com o Adicionar pessoa, ou com os
+   dois), cinco colunas (Ligacao.tsx). */
 .ctrls-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px 6px; }
 .ctrl { display: flex; flex-direction: column; align-items: center; gap: 7px; border: 0; background: transparent; color: #ffffff; font: 600 12px/1.2 var(--font-sans); padding: 0; width: 100%; border-radius: 12px; text-align: center; }
 .ctrl-c { width: 58px; height: 58px; border-radius: 999px; background: rgba(255, 255, 255, 0.07); border: 1px solid rgba(255, 255, 255, 0.14); display: grid; place-items: center; transition: background var(--ease), border-color var(--ease); }
@@ -505,6 +506,8 @@ button.link { border: 0; background: transparent; padding: 0; font-family: inher
   font-size: 14px; line-height: 1.4; color: #ffffff; overflow-wrap: anywhere; }
 .call-para b { font-weight: 800; }
 .call-vazio { margin: 0; text-align: center; font-size: 13.5px; line-height: 1.4; color: #b9c4e6; }
+/* (0.4.0) A ajuda do painel de adicionar (o quadro Adicionar), depois de quem entra na sala. */
+.call-ajuda { margin: 0; font-size: 13px; line-height: 1.5; color: #b9c4e6; }
 /* O painel do Windows ocupa a parte do meio inteira: o campo em cima, a lista com o espaço que sobra e os botões embaixo.
    Com a busca mudando (menos linhas, nada achado, só um número) e depois da escolha, nada se mexe: centrado e da altura
    do que tinha, ele pulava a cada letra, e o segundo clique de um clique duplo numa linha caía no Consultar ou no
@@ -512,6 +515,9 @@ button.link { border: 0; background: transparent; padding: 0; font-family: inher
 .call-panel.call-panel-nome { flex: 1 1 auto; }
 .call-panel-nome > .call-lista { flex-grow: 1; }
 .call-panel-nome > .call-panel-actions { margin-top: auto; }
+/* (0.4.0) O painel de adicionar (o que tem a ajuda): a lista fica da altura das linhas, e a ajuda vem logo depois delas,
+   como no quadro Adicionar; o campo e os botões continuam parados. */
+.call-panel-nome:has(> .call-ajuda) > .call-lista { flex-grow: 0; }
 /* Janela baixa, um cartão em cima (a outra em espera, a segunda que toca) e o painel de número aberto: o bloco de quem
    fala sai, e o painel fica entre o cartão e o Desligar (o cartão e o título do painel dizem a ligação). */
 @media (max-height: 719.5px) {
@@ -675,6 +681,10 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .win.call[data-layout="minimo"] .call-para span { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: pre; }
 .win.call[data-layout="minimo"] .call-para span:first-child { flex: none; }
 .win.call[data-layout="minimo"] .call-para b { flex: 0 1000 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* (0.4.0) No Mínimo, a ajuda do painel de adicionar sai da vista, como o painel do Transferir, que não tem uma: assim o
+   campo, uma linha de contato e os botões cabem entre o alto do painel e o Desligar. O campo continua descrito por ela (o
+   aria-describedby), para o leitor de tela. */
+.win.call[data-layout="minimo"] .call-ajuda { display: none; }
 .win.call[data-layout="minimo"] .call-keys { gap: 6px; grid-auto-rows: minmax(34px, 44px); }
 .win.call[data-layout="minimo"] .btn-complete { height: 46px; }
 .win.call[data-layout="minimo"] .consult-actions { gap: 6px; margin-top: 4px; }
@@ -1285,6 +1295,10 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .call-painel-cartao .call-alto > .sua-flutuante,
 .win.call[data-layout="compacto"] .call-painel-cartao .call-alto > .sua-flutuante,
 .win.call[data-layout="minimo"] .call-painel-cartao .call-alto > .sua-flutuante { top: auto; right: 16px; bottom: 16px; }
+/* (0.4.0) Com o painel de adicionar aberto (o quadro Adicionar não a mostra; a regra da 0.3.0 a deixa à vista), a sua
+   imagem também fica no canto de baixo à direita, a 16 dele, ao lado do Desligar: no canto de cima, ela estreitava o alto
+   do painel, e o "Em videochamada" do quadro não cabia numa linha. Quem fala fica com a largura toda. */
+.call-sua-embaixo > .sua-flutuante { top: auto; bottom: 16px; }
 
 /* A faixa da ligação em cima da conversa que o Chat da ligação abriu (FaixaDaLigacao.tsx; os quadros ConversaNaLigacao e
    ConversaNaLigacaoEscura): navy-950 nos dois temas, com o fio claro em cima; a miniatura de 64×48 (a imagem da outra

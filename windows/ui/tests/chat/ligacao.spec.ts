@@ -157,8 +157,8 @@ test('the Chat button opens the conversation with the colleague under the call s
   const [a, ana] = pessoas;
   await chegaALigacao(page, ligacao('2003', 'Ana Souza', COM_VIDEO));
 
-  // Os controles de uma ligação: o Chat depois da Câmera, em cinco colunas.
-  await expect(page.locator('.ctrls > *')).toHaveText(['Mudo', 'Câmera', 'Chat', 'Teclado', 'Áudio', 'Espera', 'Transferir', 'Nova ligação', 'Atalhos']);
+  // Os controles de uma videochamada: o Chat depois do Adicionar pessoa (0.4.0), em cinco colunas.
+  await expect(page.locator('.ctrls > *')).toHaveText(['Mudo', 'Câmera', 'Adicionar pessoa', 'Chat', 'Teclado', 'Áudio', 'Espera', 'Transferir', 'Nova ligação', 'Atalhos']);
   await expect(page.locator('.ctrls')).toHaveClass(/(^|\s)ctrls-5(\s|$)/);
   await abrirOChat(page);
   await expect(page.getByRole('heading', { name: 'Ana Souza', level: 1 })).toBeVisible();
@@ -595,7 +595,7 @@ test('the call screen with the Chat and the strip fit the three sizes', async ({
     const onde = `${largura}×${altura}`;
     await page.setViewportSize({ width: largura, height: altura });
     await expect(page.locator('.win')).toHaveAttribute('data-layout', layout);
-    // A tela da ligação: os nove controles em cinco colunas, cada botão inteiro na janela, e nada rola.
+    // A tela da ligação: os dez controles em cinco colunas, cada botão inteiro na janela, e nada rola.
     await expect(page.locator('.ctrls'), onde).toHaveClass(/(^|\s)ctrls-5(\s|$)/);
     await dentroDaJanela(page.locator('main.call-body button'), largura, altura, onde);
     await semRolar(page, onde);
