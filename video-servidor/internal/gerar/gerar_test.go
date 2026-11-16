@@ -298,7 +298,7 @@ func TestFreeSWITCH_Perfis(t *testing.T) {
 		"rtp-ip=10.0.0.5", "ext-rtp-ip=203.0.113.10", "ext-sip-ip=203.0.113.10",
 		"context=reunioes", "dialplan=XML", "auth-calls=false", "disable-register=true",
 		"inbound-late-negotiation=true", "rtp-timeout-sec=60", "rtp-hold-timeout-sec=600",
-		"apply-candidate-acl=wan.auto",
+		"enable-timer=false", "apply-candidate-acl=wan.auto",
 	}
 	mesmos(t, "o perfil navegador", perfil(t, doc, "navegador"), append(slices.Clone(comuns),
 		"sip-ip=127.0.0.1", "sip-port=5070", "ws-binding=127.0.0.1:5066",
@@ -445,6 +445,20 @@ func TestFreeSWITCH_TempoSemMidia(t *testing.T) {
 		for _, nome := range []string{"navegador", "tls"} {
 			if v := valor(t, perfil(t, doc, nome), "rtp-timeout-sec"); v != "60" {
 				t.Errorf("teste=%v: o perfil %s tem o rtp-timeout-sec %s, want 60", teste, nome, v)
+			}
+		}
+	}
+}
+
+// O e2e (Task 15): o JsSIP do navegador pede o Session-Expires de 90 s (o mínimo da RFC 4028), e o sofia-sip, com o
+// timer ligado, recusa abaixo dos 120 s dele com o 422, que o JsSIP não tenta de novo: a ligação do navegador não
+// entrava. Os perfis vão sem o timer de sessão; quem some sai pelo tempo sem mídia (a seção 6 do contrato).
+func TestFreeSWITCH_SemTimerDeSessao(t *testing.T) {
+	for _, teste := range []bool{false, true} {
+		doc := documento(t, configDeTeste(), teste)
+		for _, nome := range []string{"navegador", "tls"} {
+			if v := valores(perfil(t, doc, nome), "enable-timer"); !slices.Equal(v, []string{"false"}) {
+				t.Errorf("teste=%v: o perfil %s tem o enable-timer %q, want só false", teste, nome, v)
 			}
 		}
 	}

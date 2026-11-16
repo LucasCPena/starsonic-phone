@@ -181,6 +181,9 @@
             <param name="inbound-late-negotiation" value="true"/>
             <param name="rtp-timeout-sec" value="60"/>
             <param name="rtp-hold-timeout-sec" value="600"/>
+            {{- /* Sem o timer de sessão: com ele, o sofia-sip recusa com o 422 o Session-Expires de 90 s que o
+                   JsSIP pede (o mínimo da RFC 4028), e quem some sai pelo tempo sem mídia. */}}
+            <param name="enable-timer" value="false"/>
             {{- range .ACLs}}
             <param name="apply-candidate-acl" value="{{xml .}}"/>
             {{- end}}
