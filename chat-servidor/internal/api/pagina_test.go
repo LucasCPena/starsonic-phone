@@ -438,7 +438,7 @@ func TestCanal_FecharDesiste(t *testing.T) {
 		}
 	})
 
-	t.Run("a mensagem desistir também", func(t *testing.T) {
+	t.Run("a mensagem desistir também, e o pedir não vale de novo", func(t *testing.T) {
 		c := novaCenaR(t)
 		r := c.marcada(t, c.kAna)
 		carlos := c.colegaNaReuniao(t, r.Codigo)
@@ -449,8 +449,30 @@ func TestCanal_FecharDesiste(t *testing.T) {
 
 		daPagina(t, pagina, map[string]any{"tipo": "desistir"})
 		esperarEvento(t, carlos, "reuniaoPedidoFim")
-		if cod := apitest.Fechamento(t, pagina); cod != websocket.StatusNormalClosure {
-			t.Fatalf("o canal fechou com %d; queria 1000", cod)
+		// O pedir vale uma vez por canal, também depois de uma desistência de verdade.
+		daPagina(t, pagina, map[string]any{"tipo": "pedir", "nome": "Maria Lima"})
+		aPaginaErro(t, pagina, "invalido")
+		semEventoDe(t, carlos, []string{"reuniaoPedido"}, 300*time.Millisecond)
+	})
+
+	t.Run("desistir sem pedido é fora de ordem, e o pedir de depois sai com o canal", func(t *testing.T) {
+		c := novaCenaR(t)
+		r := c.marcada(t, c.kAna)
+		carlos := c.colegaNaReuniao(t, r.Codigo)
+		pagina := c.canal(t, r.Codigo)
+
+		daPagina(t, pagina, map[string]any{"tipo": "desistir"})
+		aPaginaErro(t, pagina, "invalido")
+		daPagina(t, pagina, map[string]any{"tipo": "pedir", "nome": "Maria Lima"})
+		aPaginaTipo(t, pagina, "aguardando")
+		id := pedidoDe(t, carlos, "Maria Lima")
+		pagina.Close(websocket.StatusNormalClosure, "")
+		fim := esperarEvento(t, carlos, "reuniaoPedidoFim")
+		if fim["pedido"] != id {
+			t.Fatalf("reuniaoPedidoFim = %v", fim)
+		}
+		if l := c.lista(t, c.kCarlos, r.Codigo); len(l.Pedidos) != 0 {
+			t.Fatalf("sobrou um pedido: %+v", l.Pedidos)
 		}
 	})
 
@@ -758,7 +780,7 @@ func TestCanal_PingSemResposta(t *testing.T) {
 
 func TestCanal_PingComResposta(t *testing.T) {
 	// O cliente que lê responde ao ping (a biblioteca responde sozinha), e o canal continua.
-	api.AjustarPing(t, 50*time.Millisecond, 500*time.Millisecond)
+	api.AjustarPing(t, 50*time.Millisecond, 2*time.Second)
 	c := novaCenaR(t)
 	r := c.marcada(t, c.kAna)
 	pagina := c.canal(t, r.Codigo)
@@ -786,6 +808,45 @@ func TestCanal_PingComResposta(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("o canal não respondeu")
 	}
+}
+
+// ---------- O canal parado ----------
+
+func TestCanal_SemPedirFecha(t *testing.T) {
+	api.AjustarPedirEspera(t, 400*time.Millisecond)
+
+	t.Run("o canal que só responde ao ping fecha com 1000", func(t *testing.T) {
+		c := novaCenaR(t)
+		r := c.marcada(t, c.kAna)
+		pagina := c.canal(t, r.Codigo)
+		if cod := apitest.Fechamento(t, pagina); cod != websocket.StatusNormalClosure {
+			t.Fatalf("o canal fechou com %d; queria 1000", cod)
+		}
+	})
+
+	t.Run("o canal que mandou o pedir não fecha", func(t *testing.T) {
+		c := novaCenaR(t)
+		r := c.marcada(t, c.kAna)
+		pagina := c.canal(t, r.Codigo)
+		daPagina(t, pagina, map[string]any{"tipo": "pedir", "nome": "Maria Lima"})
+		aPaginaTipo(t, pagina, "naoComecou")
+		lidas := make(chan map[string]any, 1)
+		go func() {
+			_, dados, err := pagina.Read(t.Context())
+			var m map[string]any
+			if err != nil {
+				m = map[string]any{"erro de leitura": err.Error()}
+			} else {
+				json.Unmarshal(dados, &m)
+			}
+			lidas <- m
+		}()
+		time.Sleep(1200 * time.Millisecond) // três vezes o limite
+		daPagina(t, pagina, map[string]any{"tipo": "tela"})
+		if m := <-lidas; m["erro"] != "foraDaReuniao" {
+			t.Fatalf("a página recebeu %v; queria o foraDaReuniao, de um canal aberto", m)
+		}
+	})
 }
 
 // ---------- O log ----------
@@ -837,7 +898,14 @@ func TestPagina_SemNomesNoLog(t *testing.T) {
 	c.a.CanalDaPagina("bilhete-que-nao-vale", c.a.Base)
 	c.a.CanalDaPagina(bilhete, "https://mal.example")
 	pagina.Close(websocket.StatusNormalClosure, "")
-	time.Sleep(200 * time.Millisecond)
+	// O log do pedido do canal sai quando o manipulador volta, e é a linha que o teste quer ver.
+	prazo := time.Now().Add(5 * time.Second)
+	for !strings.Contains(log.String(), "status=101") {
+		if time.Now().After(prazo) {
+			t.Fatalf("o log do fechamento do canal não saiu:\n%s", log.String())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 
 	texto := log.String()
 	if !strings.Contains(texto, "pedido") {

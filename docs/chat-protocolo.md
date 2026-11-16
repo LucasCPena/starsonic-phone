@@ -381,6 +381,7 @@ A página é servida pelo chat em `https://<endereço do chat>/r/<código>`. Que
 - **A origem** tem de ser a do próprio chat (`https://<endereço do chat>`, com a porta quando ele usa uma) ou, no modo de teste, uma das origens do `--origem`. Sem a origem, ou com outra, responde `403 proibido`, e o bilhete continua valendo.
 - **Um bilhete** inválido, vencido ou já usado responde `401 chave`.
 - **O servidor manda um ping a cada 25 segundos.** Sem resposta em 60 segundos, ele fecha.
+- Sem um `pedir` em 2 minutos depois de abrir, o servidor fecha o canal (1000).
 - **Até 20 mensagens por minuto** da página. Passando disso, o servidor responde `{"tipo": "erro", "erro": "limite"}` e ignora a mensagem.
 - **Fechar o canal** enquanto espera retira o pedido. Depois de aceito, fechar o canal não tira ninguém da reunião.
 

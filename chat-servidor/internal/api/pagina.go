@@ -34,9 +34,13 @@ const (
 // O ping do canal, e quanto o servidor espera o pong. Variáveis (em ns) para o teste as encurtar.
 var pingIntervalo, pingEspera atomic.Int64
 
+// pedirEspera é o prazo do primeiro pedir: sem ele, o servidor fecha o canal (1000). Os pongs não contam. Em ns.
+var pedirEspera atomic.Int64
+
 func init() {
 	pingIntervalo.Store(int64(25 * time.Second))
 	pingEspera.Store(int64(60 * time.Second))
+	pedirEspera.Store(int64(2 * time.Minute))
 }
 
 func (s *servidor) rotasDaPagina(mux *http.ServeMux) {
@@ -172,12 +176,15 @@ type canalPagina struct {
 	codigo websocket.StatusCode // o código do fechamento do canalFechando
 	motivo string
 	drenar chan struct{} // fechado no canalFechando
+
+	pediu    chan struct{} // fechado na primeira mensagem pedir
+	pediuUma sync.Once
 }
 
 func novoCanalPagina(conn *websocket.Conn) *canalPagina {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &canalPagina{conn: conn, fila: make(chan []byte, filaDoCanal), ctx: ctx, cancel: cancel,
-		drenar: make(chan struct{})}
+		drenar: make(chan struct{}), pediu: make(chan struct{})}
 }
 
 // Mandar põe a mensagem (um valor, que vira JSON) na fila, sem esperar. Com a fila cheia, derruba a conexão. Depois
@@ -281,6 +288,19 @@ func (c *canalPagina) pingar() {
 	}
 }
 
+// esperarPedir fecha o canal (1000) se nenhum pedir chegar em pedirEspera: um canal parado, que só responde ao ping,
+// não fica aberto para sempre.
+func (c *canalPagina) esperarPedir() {
+	t := time.NewTimer(time.Duration(pedirEspera.Load()))
+	defer t.Stop()
+	select {
+	case <-c.ctx.Done():
+	case <-c.pediu:
+	case <-t.C:
+		c.Fechar()
+	}
+}
+
 // ---------- O manipulador do canal ----------
 
 // GET /api/v1/pagina/canal?bilhete=…: o WebSocket da página. A ordem das conferências: a origem (sem gastar o
@@ -347,6 +367,7 @@ func (s *servidor) servirCanal(c *canalPagina, reuniao banco.Reuniao) {
 	var goroutines sync.WaitGroup
 	goroutines.Go(c.escrever)
 	goroutines.Go(c.pingar)
+	goroutines.Go(c.esperarPedir)
 	defer func() {
 		s.desistir(st)
 		c.derrubar()
@@ -396,6 +417,7 @@ func (s *servidor) mensagemDaPagina(c *canalPagina, st *estadoDaPagina, tipo web
 	}
 	switch m.Tipo {
 	case "pedir":
+		c.pediuUma.Do(func() { close(c.pediu) })
 		if st.pedido != nil {
 			c.Mandar(erroDoCanal("invalido"))
 			return
@@ -407,8 +429,13 @@ func (s *servidor) mensagemDaPagina(c *canalPagina, st *estadoDaPagina, tipo web
 		}
 		st.pedido = p
 	case "desistir":
-		s.desistir(st) // o pedido sai já, sem esperar o aperto de mão do fechamento
-		c.Fechar()
+		// Sem pedido, o desistir é fora de ordem e não muda nada. Com um, o pedido sai já; o canal continua aberto, e
+		// o pedir não vale de novo (vale uma vez por canal). Todo pedido que o gerente registra tem um Desistir.
+		if st.pedido == nil {
+			c.Mandar(erroDoCanal("invalido"))
+			return
+		}
+		s.desistir(st)
 	case "senha":
 		senha, err := s.gerente.NovaSenha(st.pedido)
 		switch {
