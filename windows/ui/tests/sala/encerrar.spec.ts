@@ -91,6 +91,32 @@ test('the question follows the room and closes when it ends', async ({ page }) =
   expect(await vezes(page, { cmd: 'salaEncerrar' })).toBe(0);
 });
 
+test('the focus stays on the screen that remains when the room ends with the question open', async ({ page }) => {
+  // A sala acaba sozinha e a Ana fica como a ligação; depois, a ligação acaba e fica o Teclado. Nos dois, o foco que estava
+  // na pergunta não se perde no `body`: ele vai para um controle da tela que fica.
+  const foco = () =>
+    page.evaluate(() => {
+      const e = document.activeElement;
+      return { corpo: e === document.body || e === null, dentroDoMain: !!e?.closest('main'), dentroDoDialogo: !!e?.closest('dialog') };
+    });
+  await abrir(page, 'sala');
+  const emCima = (await estado(page)).ligacao;
+  await perguntar(page);
+  await expect(doDialogo(page, 'Cancelar')).toBeFocused();
+  const ana = { id: 11, number: '2003', name: 'Ana Souza', incoming: false, phase: 'active', activeSinceMs: emCima.top.activeSinceMs, held: false, video: { ...emCima.top.video } };
+  await mudarEstado(page, (s) => ({ ...s, ligacao: { ...s.ligacao, top: ana, sala: null } }));
+  await expect(page.getByRole('main', { name: 'Ligação', exact: true })).toBeVisible();
+  await expect(pergunta(page)).toHaveCount(0);
+  await expect.poll(foco, 'o foco na ligação que fica').toEqual({ corpo: false, dentroDoMain: true, dentroDoDialogo: false });
+  // O mesmo com o Teclado.
+  await abrir(page, 'sala');
+  await perguntar(page);
+  await mudarEstado(page, (s) => ({ ...s, ligacao: null }));
+  await expect(page.getByRole('textbox', { name: 'Número' })).toBeVisible();
+  await expect(pergunta(page)).toHaveCount(0);
+  await expect.poll(foco, 'o foco no Teclado').toEqual({ corpo: false, dentroDoMain: true, dentroDoDialogo: false });
+});
+
 test('a double click on Encerrar ends the room once and sends nothing else', async ({ page }) => {
   await abrir(page, 'sala');
   await perguntar(page);

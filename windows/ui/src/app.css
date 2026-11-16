@@ -1329,6 +1329,21 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .sala-estado { display: inline-flex; align-items: center; gap: 3px; max-width: 100%; min-width: 0; font: 600 10.5px/1.2 var(--font-sans); color: #b9c4e6;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sala-estado .ic { width: 11px; height: 11px; }
+/* O Tirar da sala: no canto de cima à direita do quadro, escondido (e sem pegar o clique) até o ponteiro estar no quadro ou o foco
+   chegar nele pelo Tab. O contorno ciano de 2px fica por dentro do quadro, num ::after por cima de tudo e sem pegar o clique (o
+   painel opaco do quadro cobriria um box-shadow dele). */
+.sala-tirar { position: absolute; top: 6px; right: 6px; z-index: 2; box-sizing: border-box; height: 24px; padding: 0 9px 0 7px; display: inline-flex;
+  align-items: center; justify-content: center; gap: 4px; border: 1px solid rgba(255, 255, 255, 0.3); border-radius: 999px; background: rgba(7, 11, 24, 0.86);
+  color: #ffffff; font: 700 10.5px/1 var(--font-sans); white-space: nowrap; cursor: pointer; opacity: 0; pointer-events: none; }
+.sala-tirar .ic { width: 11px; height: 11px; flex: none; }
+.sala-quadro:hover .sala-tirar, .sala-quadro:focus-within .sala-tirar { opacity: 1; pointer-events: auto; }
+.sala-quadro::after { content: ""; position: absolute; inset: 0; z-index: 3; box-sizing: border-box; border: 2px solid var(--cyan); pointer-events: none; opacity: 0; }
+.sala-quadro:hover::after, .sala-quadro:focus-within::after { opacity: 1; }
+/* Num quadro estreito, só o ícone (24×24): o texto sai da vista como o .sr-only, e o nome do botão fica. */
+@container (width < 112px) {
+  .sala-tirar { width: 24px; padding: 0; gap: 0; }
+  .sala-tirar-texto { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+}
 .sala-chamando { color: var(--cyan); font-weight: 700; }
 /* Quem fala: "Sala de vídeo" e "3 pessoas · 05:41" (no Mínimo, numa linha só); a conta com o tempo em ciano. */
 .who-video.who-sala .who-sub { font-size: 14px; }
@@ -1353,6 +1368,7 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .win.call[data-layout="compacto"] .sala-estado { font-size: 10px; }
 
 .win.call[data-layout="minimo"] .sala-caixa { border-radius: 14px; }
+.win.call[data-layout="minimo"] .call-sala .video-sua { right: 6px; bottom: 6px; }
 .win.call[data-layout="minimo"] .who-sala .who-linha { font-size: 13px; }
 .win.call[data-layout="minimo"] .who-sala .who-linha-nome { color: #ffffff; font-weight: 800; }
 .win.call[data-layout="minimo"] .who-sala .timer { font-size: inherit; }

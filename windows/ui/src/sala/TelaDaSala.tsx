@@ -136,7 +136,7 @@ export function TelaDaSala({ state, ligacao: l, sala, contatos, daEmpresa, send 
         )}
         <div class="sala-baixo">
           <div class="call-middle">
-            <div class="ctrls ctrls-4">
+            <div class={videoDoApp(state).ligado ? 'ctrls ctrls-4' : 'ctrls'}>
               <Ctrl
                 label={rotulo('Mudo')}
                 nome="Mudo"

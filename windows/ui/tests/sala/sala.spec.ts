@@ -456,10 +456,10 @@ test('the room screen fits the three sizes', async ({ page }) => {
     expect(Math.abs(g.width - (g.height * 16) / 9), `o mosaico não é 16/9 em ${onde}: ${JSON.stringify(g)}`).toBeLessThanOrEqual(1);
     expect(a.height, `a área do vídeo em ${onde}`).toBeGreaterThan(100);
     // O Desligar e os controles: cada um inteiro; a conta numa linha só no Mínimo, com os quatro controles e o Desligar numa fila.
-    const sala = page.getByText(/^(Sala de vídeo · )?3 pessoas · 05:\d\d$/);
+    const sala = page.getByText(/^(Sala de vídeo · )?3 pessoas · 05:4\d$/);
     await expect(sala, onde).toBeVisible();
     if (layout === 'minimo') {
-      await expect(page.getByText(/^Sala de vídeo · 3 pessoas · 05:\d\d$/)).toBeVisible();
+      await expect(page.getByText(/^Sala de vídeo · 3 pessoas · 05:4\d$/)).toBeVisible();
       const linha = await caixa(page.locator('.who-linha'));
       const fonte = await page.locator('.who-linha').evaluate((e) => parseFloat(getComputedStyle(e).fontSize));
       expect(linha.height, `a conta em mais de uma linha em ${onde}`).toBeLessThan(fonte * 1.8);
@@ -470,6 +470,12 @@ test('the room screen fits the three sizes', async ({ page }) => {
       }
       expect(meios).toHaveLength(5);
       expect(Math.max(...meios) - Math.min(...meios), `os controles e o Desligar numa fila em ${onde}: ${meios}`).toBeLessThanOrEqual(1);
+      // A sua imagem a 6 do canto da área do vídeo (por dentro da borda dela), e não os 8 do Mínimo de uma videochamada.
+      const a = await caixa(area(page));
+      const sua = await caixa(suaImagem(page));
+      const borda = await area(page).evaluate((e) => parseFloat(getComputedStyle(e).borderRightWidth));
+      expect(Math.abs(a.x + a.width - borda - (sua.x + sua.width) - 6), `a sua imagem a 6 da direita em ${onde}`).toBeLessThanOrEqual(0.5);
+      expect(Math.abs(a.y + a.height - borda - (sua.y + sua.height) - 6), `a sua imagem a 6 de baixo em ${onde}`).toBeLessThanOrEqual(0.5);
       // Os rótulos fora da vista, e o nome de cada botão fica.
       for (const nome of ['Mudo', 'Desligar a câmera', 'Adicionar pessoa', 'Abrir grande']) await expect(botao(page, nome), nome).toBeVisible();
     } else {

@@ -3,7 +3,8 @@
 // o `salaEncerrar` e não fecha a pergunta: ela some quando a sala acaba (a tela da sala sai, e o diálogo com ela). O
 // Cancelar e o Esc fecham com o close() antes de avisar, para o foco voltar ao Desligar. No Windows, o Encerrar e o
 // Cancelar ignoram o segundo clique de um clique duplo (o NoWindows de quem mostra a pergunta): o segundo clique cairia na
-// tela que fica quando a sala acaba.
+// tela que fica quando a sala acaba. Se a sala acaba sozinha com a pergunta aberta, o foco vai para um controle da tela que
+// fica, e não se perde no `body`.
 import type { VNode } from 'preact';
 import { useContext, useEffect, useRef } from 'preact/hooks';
 import { semSegundoClique } from '../plataforma';
@@ -40,7 +41,14 @@ export function EncerrarSala({ sala, send, onFechar }: Props): VNode {
       fecharRef.current();
     };
     dialogo.addEventListener('cancel', cancelar);
-    return () => dialogo.removeEventListener('cancel', cancelar);
+    return () => {
+      dialogo.removeEventListener('cancel', cancelar);
+      // A sala acabou com a pergunta aberta (a tela saiu, e o diálogo com ela): o foco que estava nele iria para o `body`.
+      // Ele vai para o primeiro controle da tela que fica (a ligação ou o Teclado).
+      if (dialogo.open && dialogo.contains(document.activeElement)) {
+        requestAnimationFrame(() => document.querySelector<HTMLElement>('main :is(input, button, [tabindex]):not([disabled], [tabindex="-1"])')?.focus());
+      }
+    };
   }, []);
 
   return (
