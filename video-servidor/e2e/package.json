@@ -1,0 +1,20 @@
+{
+  "name": "starsonic-reunioes-e2e",
+  "version": "0.1.0",
+  "private": true,
+  "description": "As reuniões com link de ponta a ponta: o FreeSWITCH, o agente de vídeo, o chat e o navegador",
+  "license": "GPL-3.0-only",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p .",
+    "test": "playwright test"
+  },
+  "dependencies": {
+    "jssip": "3.13.8"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1",
+    "@types/node": "22.20.5",
+    "typescript": "5.9.3"
+  }
+}

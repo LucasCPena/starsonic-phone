@@ -4,12 +4,16 @@ on:
   push:
     paths:
       - 'video-servidor/**'
+      - 'chat-servidor/**'
       - 'docs/video-*.md'
+      - 'docs/chat-protocolo.md'
       - '.github/workflows/video*.yml'
   pull_request:
     paths:
       - 'video-servidor/**'
+      - 'chat-servidor/**'
       - 'docs/video-*.md'
+      - 'docs/chat-protocolo.md'
       - '.github/workflows/video*.yml'
   workflow_dispatch:
 
@@ -200,3 +204,66 @@ jobs:
         run: |
           chmod +x agente/starsonic-video
           bash video-servidor/freeswitch/conferir-configuracao.sh agente/starsonic-video "pacote/starsonic-freeswitch-$SISTEMA-amd64.tar.gz"
+
+  # As reuniões de ponta a ponta (video-servidor/e2e): o FreeSWITCH do pacote do Ubuntu 24.04, o agente, o chat e o
+  # Chromium do Playwright com a câmera e o microfone falsos. Sem contêiner: o FreeSWITCH escuta no IP da máquina, e
+  # os navegadores precisam das bibliotecas do sistema.
+  ponta-a-ponta:
+    name: De ponta a ponta
+    needs: [agente, freeswitch]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: starsonic-freeswitch-ubuntu-24.04
+          path: pacote
+      - name: O FreeSWITCH
+        run: |
+          (cd pacote && sha256sum -c starsonic-freeswitch-ubuntu-24.04-amd64.tar.gz.sha256)
+          sudo tar -xzf pacote/starsonic-freeswitch-ubuntu-24.04-amd64.tar.gz -C /
+          sudo apt-get update -q
+          xargs -a /opt/starsonic-freeswitch/pacotes.txt sudo DEBIAN_FRONTEND=noninteractive \
+            apt-get install -y -q --no-install-recommends
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: video-servidor/go.mod
+          cache-dependency-path: chat-servidor/go.sum
+      - name: O chat e o agente
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          (cd chat-servidor && go build -trimpath -o "$RUNNER_TEMP/bin/starsonic-chat" ./cmd/starsonic-chat)
+          (cd video-servidor && go build -trimpath -o "$RUNNER_TEMP/bin/starsonic-video" ./cmd/starsonic-video)
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: video-servidor/e2e/package-lock.json
+      - name: O Playwright
+        working-directory: video-servidor/e2e
+        run: |
+          npm ci
+          npx playwright install chromium --with-deps
+      - name: Testes
+        working-directory: video-servidor/e2e
+        env:
+          STARSONIC_FREESWITCH_DIR: /opt/starsonic-freeswitch
+          STARSONIC_CHAT_BIN: ${{ runner.temp }}/bin/starsonic-chat
+          STARSONIC_VIDEO_BIN: ${{ runner.temp }}/bin/starsonic-video
+        run: npx playwright test
+      # Numa falha: as saídas dos servidores e o relatório. Fica de fora o test-results/privado/ (o config.json, com a
+      # chave e a senha do ESL, a configuração do FreeSWITCH e os dados do chat) e a mídia falsa.
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: ponta-a-ponta
+          path: |
+            video-servidor/e2e/test-results/*.log
+            video-servidor/e2e/test-results/saida/
+            video-servidor/e2e/playwright-report/
+          if-no-files-found: ignore
