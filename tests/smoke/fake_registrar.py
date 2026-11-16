@@ -1814,6 +1814,11 @@ def start_video_server(registrar, host, port):
     return _VideoServer(registrar, host, port).start()
 
 
+# A PORTA do vídeo liga em todos os endereços (o SIP e o controle ficam no --host): o app põe no SDP o endereço da rede do
+# computador, e no Windows um socket ligado ao 127.0.0.1 não manda a esse endereço (WinError 10051).
+VIDEO_HOST = "0.0.0.0"
+
+
 def main(argv):
     parser = argparse.ArgumentParser(description="Registrador SIP falso para testes.")
     parser.add_argument("--host", default="127.0.0.1")
@@ -1831,8 +1836,8 @@ def main(argv):
     start_tcp_server(registrar, args.host, args.port)
     ready = "registrador falso em %s:%d (UDP e TCP)" % (args.host, args.port)
     if args.video_port is not None:
-        start_video_server(registrar, args.host, args.video_port)
-        ready += ", video em %s:%d" % (args.host, args.video_port)
+        start_video_server(registrar, VIDEO_HOST, args.video_port)
+        ready += ", video em %s:%d" % (VIDEO_HOST, args.video_port)
     if args.control_port is not None:
         start_control_server(registrar, args.host, args.control_port)
         ready += ", controle em %s:%d" % (args.host, args.control_port)

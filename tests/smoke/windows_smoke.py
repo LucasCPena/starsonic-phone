@@ -1572,27 +1572,6 @@ def room_guest(page, number):
     return page.get_by_role("group", name=ROOM_MOSAIC, exact=True).get_by_role("group", name=number, exact=True)
 
 
-def loopback_probe():
-    """Um datagrama de um socket ligado ao 127.0.0.1 (como a PORTA do registrador) para o endereço da rede deste computador
-    (como o do app no SDP): chega? O diagnóstico de uma imagem de convidado que não vem. {"endereco", "chegou"|"erro"}."""
-    result = {}
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
-            probe.connect(("10.255.255.255", 9))
-            result["endereco"] = probe.getsockname()[0]
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as receiver, \
-                socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
-            receiver.bind(("0.0.0.0", 0))
-            receiver.settimeout(2)
-            sender.bind(("127.0.0.1", 0))
-            sender.sendto(b"sonda", (result["endereco"], receiver.getsockname()[1]))
-            data, source = receiver.recvfrom(100)
-            result["chegou"] = [data.decode("ascii"), list(source)]
-    except Exception as error:   # noqa: BLE001
-        result["erro"] = "%s: %s" % (type(error).__name__, error)
-    return result
-
-
 def room_video_counts(registrar):
     """O que o registrador viu do vídeo de cada convidado (os datagramas e os quadros-chave que o app mandou a ele) e o
     fim do log dele: o que a fumaça anota quando a imagem de um convidado não chega."""
@@ -1601,7 +1580,6 @@ def room_video_counts(registrar):
         counts[number] = {"datagramas": registrar.command("VIDEO PACKETS " + number),
                           "quadros_chave": registrar.command("VIDEO KEYFRAMES " + number)}
     counts["registrador"] = registrar.events()[-12:]
-    counts["sonda_do_loopback"] = loopback_probe()
     return counts
 
 

@@ -1606,7 +1606,7 @@ class CommandLineTest(unittest.TestCase):
     def test_video_port_counts_the_datagrams_of_the_running_process(self):
         control_port, video_port = self.free_port(), self.free_port()
         port, ready = self.start("--control-port", str(control_port), "--video-port", str(video_port))
-        self.assertEqual(ready, "registrador falso em 127.0.0.1:%d (UDP e TCP), video em 127.0.0.1:%d, controle em "
+        self.assertEqual(ready, "registrador falso em 127.0.0.1:%d (UDP e TCP), video em 0.0.0.0:%d, controle em "
                                 "127.0.0.1:%d" % (port, video_port, control_port))
         where = self.endpoints(port, control_port)
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
@@ -1615,6 +1615,31 @@ class CommandLineTest(unittest.TestCase):
             while control(where, "VIDEO PACKETS") != ["1"]:
                 self.assertLess(time.monotonic(), deadline, "o datagrama nao foi contado")
                 time.sleep(0.02)
+
+    def test_the_video_port_listens_on_every_address_and_the_sip_side_does_not(self):
+        # No Windows, um socket ligado ao 127.0.0.1 não manda ao endereço da rede que o app põe no SDP (WinError 10051).
+        self.assertEqual(fake_registrar.VIDEO_HOST, "0.0.0.0")
+        control_port, video_port = self.free_port(), self.free_port()
+        port, ready = self.start("--control-port", str(control_port), "--video-port", str(video_port))
+        self.assertIn("video em 0.0.0.0:%d" % video_port, ready)
+        self.assertTrue(ready.startswith("registrador falso em 127.0.0.1:%d (UDP e TCP)" % port), ready)
+        self.assertIn("controle em 127.0.0.1:%d" % control_port, ready)
+        # Um socket de outro endereço da máquina (o da rede, se há) alcança a PORTA; o do SIP só atende o 127.0.0.1.
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            try:
+                probe.connect(("192.0.2.1", 9))
+                lan = probe.getsockname()[0]
+            except OSError:
+                lan = None
+        if lan and not lan.startswith("127."):
+            where = self.endpoints(port, control_port)
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                sock.bind((lan, 0))
+                sock.sendto(b"\x80" * 100, (lan, video_port))
+                deadline = time.monotonic() + 5
+                while control(where, "VIDEO PACKETS") != ["1"]:
+                    self.assertLess(time.monotonic(), deadline, "o datagrama ao endereco da rede nao foi contado")
+                    time.sleep(0.02)
 
 
 if __name__ == "__main__":
