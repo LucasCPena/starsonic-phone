@@ -179,8 +179,8 @@
             <param name="auth-calls" value="false"/>
             <param name="disable-register" value="true"/>
             <param name="inbound-late-negotiation" value="true"/>
-            <param name="rtp-timeout-sec" value="60"/>
-            <param name="rtp-hold-timeout-sec" value="600"/>
+            {{- /* O tempo sem mídia é o media_timeout_audio que a discagem põe em cada ligação: sem o rtp-timeout-sec e o
+                   rtp-hold-timeout-sec, que o FreeSWITCH 1.11 dá como obsoletos. */}}
             {{- /* Sem o timer de sessão: com ele, o sofia-sip recusa com o 422 o Session-Expires de 90 s que o
                    JsSIP pede (o mínimo da RFC 4028), e quem some sai pelo tempo sem mídia. */}}
             <param name="enable-timer" value="false"/>

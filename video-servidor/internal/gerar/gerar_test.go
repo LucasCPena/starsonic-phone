@@ -297,8 +297,7 @@ func TestFreeSWITCH_Perfis(t *testing.T) {
 	comuns := []string{
 		"rtp-ip=10.0.0.5", "ext-rtp-ip=203.0.113.10", "ext-sip-ip=203.0.113.10",
 		"context=reunioes", "dialplan=XML", "auth-calls=false", "disable-register=true",
-		"inbound-late-negotiation=true", "rtp-timeout-sec=60", "rtp-hold-timeout-sec=600",
-		"enable-timer=false", "apply-candidate-acl=wan.auto",
+		"inbound-late-negotiation=true", "enable-timer=false", "apply-candidate-acl=wan.auto",
 	}
 	mesmos(t, "o perfil navegador", perfil(t, doc, "navegador"), append(slices.Clone(comuns),
 		"sip-ip=127.0.0.1", "sip-port=5070", "ws-binding=127.0.0.1:5066",
@@ -438,13 +437,17 @@ func TestFreeSWITCH_Camadas(t *testing.T) {
 	}
 }
 
-// Review Focus 2: quem fecha a aba ou perde a rede sai pelos 60 segundos sem mídia.
+// Review Focus 2: quem fecha a aba ou perde a rede sai pelos 60 segundos sem mídia. O tempo é o media_timeout_audio
+// que a discagem põe em cada ligação (TestDiscagem_TempoSemMidia). Os perfis vão sem o rtp-timeout-sec e o
+// rtp-hold-timeout-sec, que o FreeSWITCH 1.11.3 dá como obsoletos: a cada vez que liga, ele avisa de cada um.
 func TestFreeSWITCH_TempoSemMidia(t *testing.T) {
 	for _, teste := range []bool{false, true} {
 		doc := documento(t, configDeTeste(), teste)
 		for _, nome := range []string{"navegador", "tls"} {
-			if v := valor(t, perfil(t, doc, nome), "rtp-timeout-sec"); v != "60" {
-				t.Errorf("teste=%v: o perfil %s tem o rtp-timeout-sec %s, want 60", teste, nome, v)
+			for _, obsoleto := range []string{"rtp-timeout-sec", "rtp-hold-timeout-sec"} {
+				if v := valores(perfil(t, doc, nome), obsoleto); len(v) != 0 {
+					t.Errorf("teste=%v: o perfil %s tem o %s %q, que o FreeSWITCH dá como obsoleto", teste, nome, obsoleto, v)
+				}
 			}
 		}
 	}

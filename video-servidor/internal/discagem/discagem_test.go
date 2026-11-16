@@ -151,7 +151,8 @@ func TestDiscagem_Colega(t *testing.T) {
 		"set starsonic_tela=false",
 		"set video_banner_text=" + quadroBase + "Ana Souza",
 		"set rtp_video_max_bandwidth_in=1000kb",
-		"set media_timeout=60000",
+		"set media_timeout_audio=60000",
+		"set media_hold_timeout_audio=600000",
 		"set jb_av_sync_msec=disabled",
 		"set rtp_secure_media=mandatory:AES_CM_128_HMAC_SHA1_80",
 		"answer ",
@@ -173,7 +174,8 @@ func TestDiscagem_Fora(t *testing.T) {
 		"set starsonic_tela=false",
 		"set video_banner_text=" + quadroBase + "Ana Souza",
 		"set rtp_video_max_bandwidth_in=1000kb",
-		"set media_timeout=60000",
+		"set media_timeout_audio=60000",
+		"set media_hold_timeout_audio=600000",
 		"set jb_av_sync_msec=disabled",
 		"answer ",
 		"conference " + salaTeste + "@starsonic+flags{join-only}",
@@ -193,7 +195,8 @@ func TestDiscagem_Tela(t *testing.T) {
 		"set starsonic_tela=true",
 		"set video_banner_text=" + quadroBase + "Tela de Maria Lima",
 		"set rtp_video_max_bandwidth_in=1000kb",
-		"set media_timeout=60000",
+		"set media_timeout_audio=60000",
+		"set media_hold_timeout_audio=600000",
 		"set jb_av_sync_msec=disabled",
 		"set rtp_secure_media=mandatory:AES_CM_128_HMAC_SHA1_80",
 		"set video_reservation_id=tela",
@@ -205,9 +208,17 @@ func TestDiscagem_Tela(t *testing.T) {
 	}
 }
 
-// O e2e (Task 15): o rtp-timeout-sec do perfil, sozinho, não derruba a ligação de quem fechou a aba. O
-// media_timeout do canal, lido quando a mídia sobe (no answer), derruba: de 60 s sem chegar nada da ligação.
-func TestDiscagem_TempoSemMidia(t *testing.T) {
+// ligacaoDiscada é uma das quatro ligações da discagem e as ações que ela recebe.
+type ligacaoDiscada struct {
+	nome  string
+	acoes []string
+}
+
+// quatroLigacoes são as ações da discagem para as quatro ligações: o colega, quem é de fora e a tela, pelo
+// navegador, e o app, pelo tls.
+func quatroLigacoes(t *testing.T) []ligacaoDiscada {
+	t.Helper()
+	var ligacoes []ligacaoDiscada
 	for _, caso := range []struct {
 		nome, perfil string
 		mudar        func(*senha.Senha)
@@ -222,18 +233,46 @@ func TestDiscagem_TempoSemMidia(t *testing.T) {
 		p.perfil = caso.perfil
 		p.senha = senhaDe(t, caso.mudar)
 		_, d := enviar(t, h, http.MethodPost, p)
-		acoes := acoesDe(t, d)
-		tempo, answer := -1, -1
-		for i, a := range acoes {
+		ligacoes = append(ligacoes, ligacaoDiscada{caso.nome, acoesDe(t, d)})
+	}
+	return ligacoes
+}
+
+// antesDoAnswer confere que, nas quatro ligações, a ação vem antes do answer: o FreeSWITCH lê essas variáveis quando a
+// mídia sobe, no answer.
+func antesDoAnswer(t *testing.T, acao string) {
+	t.Helper()
+	for _, l := range quatroLigacoes(t) {
+		posicao, answer := -1, -1
+		for i, a := range l.acoes {
 			switch a {
-			case "set media_timeout=60000":
-				tempo = i
+			case acao:
+				posicao = i
 			case "answer ":
 				answer = i
 			}
 		}
-		if tempo < 0 || answer < 0 || tempo > answer {
-			t.Errorf("%s: o media_timeout=60000 não vem antes do answer: %q", caso.nome, acoes)
+		if posicao < 0 || answer < 0 || posicao > answer {
+			t.Errorf("%s: o %q não vem antes do answer: %q", l.nome, acao, l.acoes)
+		}
+	}
+}
+
+// Quem fecha a aba sai pelos 60 s sem mídia (a seção 6 do contrato), e é o som que decide: o media_timeout_audio só
+// vale para o caminho do som, e um caminho do vídeo quieto não derruba ninguém. Na espera (o hold), são 10 minutos. O
+// media_timeout e o media_hold_timeout sem o _audio valeriam também para o vídeo (src/switch_core_media.c do
+// FreeSWITCH 1.11.3, check_media_timeout_params), e nenhuma ligação os leva.
+func TestDiscagem_TempoSemMidia(t *testing.T) {
+	antesDoAnswer(t, "set media_timeout_audio=60000")
+	antesDoAnswer(t, "set media_hold_timeout_audio=600000")
+	for _, l := range quatroLigacoes(t) {
+		for _, a := range l.acoes {
+			for _, proibida := range []string{"set media_timeout=", "set media_hold_timeout=", "set media_timeout_video=",
+				"set media_hold_timeout_video=", "set rtp_timeout_sec=", "set rtp_hold_timeout_sec="} {
+				if strings.HasPrefix(a, proibida) {
+					t.Errorf("%s: a ligação leva o %q", l.nome, a)
+				}
+			}
 		}
 	}
 }
@@ -244,34 +283,7 @@ func TestDiscagem_TempoSemMidia(t *testing.T) {
 // pega mais: a ligação para de ler o próprio vídeo e de responder ao ICE dele, e a imagem dela congela para todos.
 // O jb_av_sync_msec=disabled desliga esse acerto, e a thread do vídeo não toca mais no som.
 func TestDiscagem_SemAcertoDoSomComOVideo(t *testing.T) {
-	for _, caso := range []struct {
-		nome, perfil string
-		mudar        func(*senha.Senha)
-	}{
-		{"colega", "navegador", nil},
-		{"fora", "navegador", func(s *senha.Senha) { s.Papel = senha.Fora }},
-		{"tela", "navegador", func(s *senha.Senha) { s.Tela = true }},
-		{"app", "tls", nil},
-	} {
-		h, _ := novo(inicio)
-		p := padrao()
-		p.perfil = caso.perfil
-		p.senha = senhaDe(t, caso.mudar)
-		_, d := enviar(t, h, http.MethodPost, p)
-		acoes := acoesDe(t, d)
-		acerto, answer := -1, -1
-		for i, a := range acoes {
-			switch a {
-			case "set jb_av_sync_msec=disabled":
-				acerto = i
-			case "answer ":
-				answer = i
-			}
-		}
-		if acerto < 0 || answer < 0 || acerto > answer {
-			t.Errorf("%s: o jb_av_sync_msec=disabled não vem antes do answer: %q", caso.nome, acoes)
-		}
-	}
+	antesDoAnswer(t, "set jb_av_sync_msec=disabled")
 }
 
 func TestDiscagem_TelaDeFora(t *testing.T) {

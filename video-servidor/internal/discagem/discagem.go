@@ -177,9 +177,11 @@ func decidir(f map[string][]string, chave []byte, uso *senha.UsoUnico, agora fun
 		{"set", "starsonic_tela=" + boolTexto(s.Tela)},
 		{"set", "video_banner_text=" + estiloQuadro + nome},
 		{"set", "rtp_video_max_bandwidth_in=1000kb"},
-		// O tempo sem mídia da seção 6 (60 s), lido quando a mídia sobe, no answer. O rtp-timeout-sec do perfil,
-		// sozinho, não derruba quem fechou a aba (o e2e mostrou); este derruba a ligação de que não chega nada.
-		{"set", "media_timeout=60000"},
+		// O tempo sem mídia da seção 6, lido quando a mídia sobe, no answer: o som decide. A ligação de cujo som não
+		// chega nada (nem o RTP, nem o RTCP, nem o ICE) por 60 s cai, e, na espera (o hold), por 10 minutos. Sem o
+		// _audio, as duas valeriam também para o caminho do vídeo, e um vídeo quieto derrubaria quem ainda fala.
+		{"set", "media_timeout_audio=60000"},
+		{"set", "media_hold_timeout_audio=600000"},
 		// Sem o acerto do som com o vídeo (o check_jb_sync do FreeSWITCH): a cada 300 quadros, a thread que lê o
 		// vídeo cria o jitter buffer do som com a trava que a thread do som segura enquanto espera o próximo
 		// pacote. Com a máquina ocupada, a do vídeo não a pega mais, para de ler o vídeo e de responder ao ICE
