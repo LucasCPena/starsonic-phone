@@ -438,21 +438,43 @@ func TestCanal_FecharDesiste(t *testing.T) {
 		}
 	})
 
-	t.Run("a mensagem desistir também, e o pedir não vale de novo", func(t *testing.T) {
+	t.Run("a mensagem desistir retira o pedido e fecha o canal com 1000, sem mandar nada", func(t *testing.T) {
 		c := novaCenaR(t)
 		r := c.marcada(t, c.kAna)
 		carlos := c.colegaNaReuniao(t, r.Codigo)
 		pagina := c.canal(t, r.Codigo)
 		daPagina(t, pagina, map[string]any{"tipo": "pedir", "nome": "Maria Lima"})
 		aPaginaTipo(t, pagina, "aguardando")
-		pedidoDe(t, carlos, "Maria Lima")
+		id := pedidoDe(t, carlos, "Maria Lima")
 
 		daPagina(t, pagina, map[string]any{"tipo": "desistir"})
-		esperarEvento(t, carlos, "reuniaoPedidoFim")
-		// O pedir vale uma vez por canal, também depois de uma desistência de verdade.
-		daPagina(t, pagina, map[string]any{"tipo": "pedir", "nome": "Maria Lima"})
+		// Nenhuma mensagem: a primeira coisa que a página vê é o fechamento.
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, dados, err := pagina.Read(ctx); err == nil {
+			t.Fatalf("a página recebeu %s; queria só o fechamento", dados)
+		} else if cod := websocket.CloseStatus(err); cod != websocket.StatusNormalClosure {
+			t.Fatalf("o canal fechou com %d (%v); queria 1000", cod, err)
+		}
+		if fim := esperarEvento(t, carlos, "reuniaoPedidoFim"); fim["pedido"] != id {
+			t.Fatalf("reuniaoPedidoFim = %v", fim)
+		}
+		semEventoDe(t, carlos, []string{"reuniaoPedidoFim"}, 300*time.Millisecond) // um só
+		if l := c.lista(t, c.kCarlos, r.Codigo); len(l.Pedidos) != 0 {
+			t.Fatalf("sobrou um pedido: %+v", l.Pedidos)
+		}
+	})
+
+	t.Run("desistir depois do aceito é fora de ordem, e o canal continua aberto", func(t *testing.T) {
+		c := novaCenaR(t)
+		r := c.marcada(t, c.kAna)
+		carlos := c.colegaNaReuniao(t, r.Codigo)
+		pagina := c.canal(t, r.Codigo)
+		c.aceita(t, r.Codigo, carlos, pagina, "Maria Lima")
+		daPagina(t, pagina, map[string]any{"tipo": "desistir"})
 		aPaginaErro(t, pagina, "invalido")
-		semEventoDe(t, carlos, []string{"reuniaoPedido"}, 300*time.Millisecond)
+		daPagina(t, pagina, map[string]any{"tipo": "senha"})
+		aPaginaTipo(t, pagina, "senha")
 	})
 
 	t.Run("desistir sem pedido é fora de ordem, e o pedir de depois sai com o canal", func(t *testing.T) {

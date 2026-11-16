@@ -136,6 +136,16 @@ func (g *Gerente) Desistir(p *Pedido) {
 	g.despachar()
 }
 
+// Esperando diz se o pedido está na sala de espera (naoComecou ou aguardando): ainda sem resposta, retirada ou fim.
+func (g *Gerente) Esperando(p *Pedido) bool {
+	if p == nil {
+		return false
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return p.fase == esperando
+}
+
 // Aceitar: um colega na reunião aceita o pedido. Vale a primeira resposta que chega: um pedido que já saiu da
 // espera dá ErrJaRespondido. Sem o servidor no ar, ErrSemServidor; com a reunião cheia, ErrCheia; nos dois, o
 // pedido continua esperando. A página recebe o aceito, com a senha de quem é de fora, e os colegas, o

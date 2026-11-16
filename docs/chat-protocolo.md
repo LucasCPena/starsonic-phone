@@ -409,8 +409,8 @@ Do servidor para a página:
 {"tipo": "erro", "erro": "invalido" | "limite" | "foraDaReuniao"}
 ```
 - **O `pedir` vale uma vez por canal.** Depois de `cheia`, `servidorCheio` ou `semServidor`, a página pode mandar outro `pedir`.
-- **Depois de `recusado`, `linkInvalido`, `tirado` ou `encerrada`,** o servidor fecha o canal (código 1000).
-- **Uma mensagem fora de ordem**, como `senha` antes do `aceito` ou com a pessoa já na reunião, `tela` fora da reunião ou um segundo `pedir`, responde `erro`, com `invalido` ou `foraDaReuniao`.
+- **Depois de `recusado`, `linkInvalido`, `tirado` ou `encerrada`, e depois de um `desistir` que retirou o pedido,** o servidor fecha o canal (código 1000); o `desistir` não recebe resposta.
+- **Uma mensagem fora de ordem**, como `senha` antes do `aceito` ou com a pessoa já na reunião, `tela` fora da reunião, um segundo `pedir` ou um `desistir` sem pedido que espere (nenhum, ou já aceito), responde `erro`, com `invalido` ou `foraDaReuniao`.
 - **O `senha`:** até 5 por minuto por participante. Ele é uma entrada nova, com as conferências do `pedir`, e além do `senha` pode responder:
   - `linkInvalido`: a reunião foi cancelada, deixou de valer, ou a naHora acabou. O servidor fecha o canal (código 1000), como depois das outras respostas finais;
   - `cheia`, `semServidor` e, só na reunião de teste, `servidorCheio`: o canal continua aberto, e a página pode mandar outro `senha`, dentro dos 5 por minuto.
