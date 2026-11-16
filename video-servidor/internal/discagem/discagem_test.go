@@ -152,6 +152,7 @@ func TestDiscagem_Colega(t *testing.T) {
 		"set video_banner_text=" + quadroBase + "Ana Souza",
 		"set rtp_video_max_bandwidth_in=1000kb",
 		"set media_timeout=60000",
+		"set jb_av_sync_msec=disabled",
 		"set rtp_secure_media=mandatory:AES_CM_128_HMAC_SHA1_80",
 		"answer ",
 		"conference " + salaTeste + "@starsonic",
@@ -173,6 +174,7 @@ func TestDiscagem_Fora(t *testing.T) {
 		"set video_banner_text=" + quadroBase + "Ana Souza",
 		"set rtp_video_max_bandwidth_in=1000kb",
 		"set media_timeout=60000",
+		"set jb_av_sync_msec=disabled",
 		"answer ",
 		"conference " + salaTeste + "@starsonic+flags{join-only}",
 	}
@@ -192,6 +194,7 @@ func TestDiscagem_Tela(t *testing.T) {
 		"set video_banner_text=" + quadroBase + "Tela de Maria Lima",
 		"set rtp_video_max_bandwidth_in=1000kb",
 		"set media_timeout=60000",
+		"set jb_av_sync_msec=disabled",
 		"set rtp_secure_media=mandatory:AES_CM_128_HMAC_SHA1_80",
 		"set video_reservation_id=tela",
 		"answer ",
@@ -231,6 +234,42 @@ func TestDiscagem_TempoSemMidia(t *testing.T) {
 		}
 		if tempo < 0 || answer < 0 || tempo > answer {
 			t.Errorf("%s: o media_timeout=60000 não vem antes do answer: %q", caso.nome, acoes)
+		}
+	}
+}
+
+// O e2e (Task 15): a cada 300 quadros de vídeo de uma ligação, o FreeSWITCH acerta o som dela com o vídeo
+// (o check_jb_sync), e na primeira vez a thread que lê o vídeo cria o jitter buffer do som com a trava da leitura do
+// som. A thread do som segura essa trava enquanto espera o próximo pacote, e com a máquina ocupada a do vídeo não a
+// pega mais: a ligação para de ler o próprio vídeo e de responder ao ICE dele, e a imagem dela congela para todos.
+// O jb_av_sync_msec=disabled desliga esse acerto, e a thread do vídeo não toca mais no som.
+func TestDiscagem_SemAcertoDoSomComOVideo(t *testing.T) {
+	for _, caso := range []struct {
+		nome, perfil string
+		mudar        func(*senha.Senha)
+	}{
+		{"colega", "navegador", nil},
+		{"fora", "navegador", func(s *senha.Senha) { s.Papel = senha.Fora }},
+		{"tela", "navegador", func(s *senha.Senha) { s.Tela = true }},
+		{"app", "tls", nil},
+	} {
+		h, _ := novo(inicio)
+		p := padrao()
+		p.perfil = caso.perfil
+		p.senha = senhaDe(t, caso.mudar)
+		_, d := enviar(t, h, http.MethodPost, p)
+		acoes := acoesDe(t, d)
+		acerto, answer := -1, -1
+		for i, a := range acoes {
+			switch a {
+			case "set jb_av_sync_msec=disabled":
+				acerto = i
+			case "answer ":
+				answer = i
+			}
+		}
+		if acerto < 0 || answer < 0 || acerto > answer {
+			t.Errorf("%s: o jb_av_sync_msec=disabled não vem antes do answer: %q", caso.nome, acoes)
 		}
 	}
 }

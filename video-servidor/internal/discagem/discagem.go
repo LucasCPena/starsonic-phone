@@ -180,6 +180,11 @@ func decidir(f map[string][]string, chave []byte, uso *senha.UsoUnico, agora fun
 		// O tempo sem mídia da seção 6 (60 s), lido quando a mídia sobe, no answer. O rtp-timeout-sec do perfil,
 		// sozinho, não derruba quem fechou a aba (o e2e mostrou); este derruba a ligação de que não chega nada.
 		{"set", "media_timeout=60000"},
+		// Sem o acerto do som com o vídeo (o check_jb_sync do FreeSWITCH): a cada 300 quadros, a thread que lê o
+		// vídeo cria o jitter buffer do som com a trava que a thread do som segura enquanto espera o próximo
+		// pacote. Com a máquina ocupada, a do vídeo não a pega mais, para de ler o vídeo e de responder ao ICE
+		// dele, e a imagem da pessoa congela (o e2e mostrou).
+		{"set", "jb_av_sync_msec=disabled"},
 	}
 	if campo(campoPerfil) == perfilTLS {
 		acoes = append(acoes, acao{"set", "rtp_secure_media=mandatory:AES_CM_128_HMAC_SHA1_80"})
