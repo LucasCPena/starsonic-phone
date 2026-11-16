@@ -1,0 +1,393 @@
+name: video-release
+
+# Publica uma versão do servidor de vídeo (tag video-v<versão>). Só à mão: Actions → video-release → Run workflow, com a
+# versão (ex.: 0.1.0 ou 0.1.0-rc.1). A release é sempre pre-release e nunca vira a "latest" do GitHub: o canal Estável
+# dos apps lê releases/latest, que tem de continuar 404 (ou a versão do Windows). No fim, o workflow confere isso.
+# A release nasce como rascunho (sem tag), recebe os onze arquivos, e só é publicada quando todos estão listados. Se algo
+# falhar antes disso, sobra só um rascunho, que ninguém consegue baixar: apague-o em Releases e rode de novo.
+# Jobs: o FreeSWITCH (um pacote por sistema, conferido num contêiner limpo), o que testa e monta os arquivos só com
+# leitura (nenhum código do repositório roda com o token de escrita) e, por último, o que, com escrita, só mexe na
+# release.
+# Os jobs do FreeSWITCH são os do video.yml, com a mesma chave de cache, o mesmo script e os mesmos contêineres: uma
+# release feita sobre um commit com o video verde acha o cache pronto. Se mudar aqui, mude no video.yml (e o inverso).
+on:
+  workflow_dispatch:
+    inputs:
+      versao:
+        description: "Versão a publicar (ex.: 0.1.0 ou 0.1.0-rc.1)"
+        required: true
+        type: string
+
+concurrency:
+  group: video-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # A versão e a tag, antes de gastar um build do FreeSWITCH.
+  conferir:
+    name: Conferir a versão
+    runs-on: ubuntu-24.04
+    env:
+      VERSAO: ${{ inputs.versao }}
+    steps:
+      - name: Versão
+        run: |
+          if ! [[ "$VERSAO" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]; then
+            echo "::error title=versao::a versão \"$VERSAO\" não está no formato X.Y.Z ou X.Y.Z-rc.N"
+            exit 1
+          fi
+
+      - name: A tag ainda não existe
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/video-v$VERSAO" > /dev/null 2> "$RUNNER_TEMP/tag.txt"; then
+            echo "::error title=tag::a tag video-v$VERSAO já existe"
+            exit 1
+          elif ! grep -q "HTTP 404" "$RUNNER_TEMP/tag.txt"; then
+            echo "::error title=tag::não consegui ler a tag video-v$VERSAO: $(cat "$RUNNER_TEMP/tag.txt")"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # O instalar.sh baixa de um repositório fixo: a release tem de sair dele.
+      - name: Repositório do instalador
+        run: |
+          repo=$(sed -n 's/^REPOSITORIO="\([^"]*\)"$/\1/p' video-servidor/deploy/instalar.sh)
+          if [ -z "$repo" ] || [ "${repo,,}" != "${GITHUB_REPOSITORY,,}" ]; then
+            echo "::error title=repositorio::o instalar.sh baixa de '$repo', mas a release seria publicada em $GITHUB_REPOSITORY"
+            exit 1
+          fi
+
+  # O FreeSWITCH do servidor de vídeo, montado do código oficial (video-servidor/freeswitch/construir.sh), um pacote
+  # por sistema da VM, cada um no contêiner do sistema dele. Igual ao job freeswitch do video.yml: se mudar aqui,
+  # mude no video.yml.
+  freeswitch:
+    name: FreeSWITCH (${{ matrix.sistema }})
+    needs: conferir
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        sistema: [ubuntu-24.04, debian-12]
+        include:
+          - sistema: ubuntu-24.04
+            imagem: ubuntu:24.04
+          - sistema: debian-12
+            imagem: debian:12
+    container: ${{ matrix.imagem }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      SISTEMA: ${{ matrix.sistema }}
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      # O checkout e a leitura do deps.lock pedem estes três; o contêiner vem sem eles.
+      - name: git, ca-certificates e python3
+        run: |
+          apt-get update -q
+          apt-get install -y -q --no-install-recommends git ca-certificates python3
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      # A chave leva só o que muda os pacotes: a mesma do video.yml.
+      - uses: actions/cache@v4
+        id: cache
+        with:
+          path: work/freeswitch-saida
+          key: freeswitch-${{ matrix.sistema }}-${{ hashFiles('video-servidor/deps.lock', 'video-servidor/freeswitch/construir.sh', 'video-servidor/freeswitch/modules.conf', 'video-servidor/freeswitch/pacotes-de-build.txt', 'video-servidor/freeswitch/LEIA-ME-FONTES.txt', 'video-servidor/freeswitch/patches/**') }}
+      - name: Pacotes do build
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: xargs -a video-servidor/freeswitch/pacotes-de-build.txt apt-get install -y -q --no-install-recommends
+      - name: Build
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: bash video-servidor/freeswitch/construir.sh "$SISTEMA" work/freeswitch-fontes work/freeswitch-saida
+      - uses: actions/upload-artifact@v4
+        with:
+          name: starsonic-freeswitch-${{ matrix.sistema }}
+          path: |
+            work/freeswitch-saida/starsonic-freeswitch-${{ matrix.sistema }}-amd64.tar.gz
+            work/freeswitch-saida/starsonic-freeswitch-${{ matrix.sistema }}-amd64.tar.gz.sha256
+          if-no-files-found: error
+      # As fontes são as mesmas nos dois sistemas.
+      - uses: actions/upload-artifact@v4
+        if: matrix.sistema == 'ubuntu-24.04'
+        with:
+          name: starsonic-freeswitch-fontes
+          path: work/freeswitch-saida/starsonic-freeswitch-fontes.tar.gz
+          if-no-files-found: error
+
+  # Cada pacote num contêiner limpo do sistema dele, como o instalador o usa. Igual ao job freeswitch-conferir do
+  # video.yml: se mudar aqui, mude no video.yml.
+  freeswitch-conferir:
+    name: FreeSWITCH conferido (${{ matrix.sistema }})
+    needs: freeswitch
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        sistema: [ubuntu-24.04, debian-12]
+        include:
+          - sistema: ubuntu-24.04
+            imagem: ubuntu:24.04
+          - sistema: debian-12
+            imagem: debian:12
+    container: ${{ matrix.imagem }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      SISTEMA: ${{ matrix.sistema }}
+    steps:
+      # Sem o git, que o contêiner limpo não tem, o checkout baixa os arquivos pela API do GitHub.
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: starsonic-freeswitch-${{ matrix.sistema }}
+          path: pacote
+      - name: SHA-256
+        working-directory: pacote
+        run: sha256sum -c "starsonic-freeswitch-$SISTEMA-amd64.tar.gz.sha256"
+      - name: Conferir o pacote
+        run: bash video-servidor/freeswitch/conferir-pacote.sh "pacote/starsonic-freeswitch-$SISTEMA-amd64.tar.gz"
+
+  preparar:
+    name: Testar e montar os arquivos
+    needs: conferir
+    runs-on: ubuntu-24.04
+    env:
+      VERSAO: ${{ inputs.versao }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: video-servidor/go.mod
+
+      # Os mesmos testes do video.yml.
+      - name: gofmt
+        working-directory: video-servidor
+        run: |
+          lista=$(gofmt -l .)
+          if [ -n "$lista" ]; then echo "Fora do gofmt:"; echo "$lista"; exit 1; fi
+
+      - name: go vet
+        working-directory: video-servidor
+        run: go vet ./...
+
+      - name: Testes
+        working-directory: video-servidor
+        run: go test -race ./...
+
+      - name: Build (linux/amd64)
+        working-directory: video-servidor
+        env:
+          CGO_ENABLED: '0'
+          GOOS: linux
+          GOARCH: amd64
+        run: |
+          go build -trimpath -ldflags "-X main.versao=$VERSAO" -o starsonic-video-linux-amd64 ./cmd/starsonic-video
+          mostrada=$(./starsonic-video-linux-amd64 versao)
+          if [ "$mostrada" != "$VERSAO" ]; then
+            echo "::error title=build::o programa mostra a versão \"$mostrada\", e não \"$VERSAO\""
+            exit 1
+          fi
+
+      # Os arquivos de deploy que vão na release, conferidos como no video.yml.
+      - name: shellcheck
+        working-directory: video-servidor
+        run: git ls-files -z -- '*.sh' | xargs -0 -r shellcheck
+
+      - name: Teste do instalar.sh
+        working-directory: video-servidor
+        run: bash deploy/instalar-teste.sh
+
+      - name: systemd-analyze
+        working-directory: video-servidor
+        # O verify confere se o ExecStart de cada unidade existe e roda, e a unidade do agente puxa a do FreeSWITCH:
+        # põe o programa onde a instalação o põe, um FreeSWITCH de mentira no lugar do pacote, e os dois usuários.
+        run: |
+          sudo install -m 0755 starsonic-video-linux-amd64 /usr/local/bin/starsonic-video
+          sudo install -D -m 0755 /bin/true /opt/starsonic-freeswitch/bin/freeswitch
+          sudo useradd --system --no-create-home --shell /usr/sbin/nologin starsonic-video
+          sudo useradd --system --no-create-home --shell /usr/sbin/nologin starsonic-freeswitch
+          # O verify sai com 0 até com uma chave errada, e só avisa. Qualquer linha na saída falha.
+          saida=$(systemd-analyze verify deploy/*.service 2>&1) || { echo "$saida"; exit 1; }
+          if [ -n "$saida" ]; then echo "$saida"; exit 1; fi
+
+      # Os arquivos do agente e do deploy, com os nomes que o instalar.sh baixa. Os do FreeSWITCH vêm dos outros jobs.
+      - name: Arquivos da release
+        run: |
+          mkdir dist
+          cp video-servidor/starsonic-video-linux-amd64 dist/
+          (cd dist && sha256sum starsonic-video-linux-amd64 > starsonic-video-linux-amd64.sha256)
+          sed "s/@VERSAO@/$VERSAO/g" video-servidor/deploy/instalar.sh > dist/instalar.sh
+          # Se o marcador mudou de nome, o instalar.sh sairia pedindo --versao: falha aqui.
+          if grep -q '@VERSAO@' dist/instalar.sh; then
+            echo "::error title=instalar::o instalar.sh publicado ainda tem @VERSAO@"
+            exit 1
+          fi
+          if ! grep -qxF "VERSAO=\"$VERSAO\"" dist/instalar.sh; then
+            echo "::error title=instalar::o instalar.sh publicado não tem a linha VERSAO=\"$VERSAO\""
+            exit 1
+          fi
+          cp video-servidor/deploy/starsonic-video.service video-servidor/deploy/starsonic-freeswitch.service \
+            video-servidor/deploy/certificado.sh dist/
+          ls -l dist
+          cat dist/starsonic-video-linux-amd64.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: video-release-arquivos
+          path: dist/
+          if-no-files-found: error
+
+  publicar:
+    name: Publicar a release
+    needs: [preparar, freeswitch, freeswitch-conferir]
+    runs-on: ubuntu-24.04
+    # Só este job escreve no repositório, e nenhum código do repositório roda nele: sem checkout, só gh api e shell.
+    permissions:
+      contents: write
+    env:
+      VERSAO: ${{ inputs.versao }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: video-release-arquivos
+          path: dist
+
+      # Os pacotes do FreeSWITCH e as fontes, os mesmos que o freeswitch-conferir conferiu.
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: starsonic-freeswitch-*
+          merge-multiple: true
+          path: dist
+
+      - name: A tag e o rascunho ainda não existem
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/video-v$VERSAO" > /dev/null 2> "$RUNNER_TEMP/tag.txt"; then
+            echo "::error title=tag::a tag video-v$VERSAO já existe"
+            exit 1
+          elif ! grep -q "HTTP 404" "$RUNNER_TEMP/tag.txt"; then
+            echo "::error title=tag::não consegui ler a tag video-v$VERSAO: $(cat "$RUNNER_TEMP/tag.txt")"
+            exit 1
+          fi
+          rascunhos=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq '.[] | select(.draft) | .tag_name')
+          if printf '%s\n' "$rascunhos" | grep -qxF "video-v$VERSAO"; then
+            echo "::error title=rascunho::já existe um rascunho da video-v$VERSAO, deixado por um run anterior que falhou: apague-o em Releases e rode de novo"
+            exit 1
+          fi
+
+      # Os onze nomes, e só eles, antes de criar qualquer coisa.
+      - name: Conferir os arquivos
+        run: |
+          esperado=$(printf '%s\n' certificado.sh instalar.sh starsonic-freeswitch-debian-12-amd64.tar.gz \
+            starsonic-freeswitch-debian-12-amd64.tar.gz.sha256 starsonic-freeswitch-fontes.tar.gz \
+            starsonic-freeswitch-ubuntu-24.04-amd64.tar.gz starsonic-freeswitch-ubuntu-24.04-amd64.tar.gz.sha256 \
+            starsonic-freeswitch.service starsonic-video-linux-amd64 starsonic-video-linux-amd64.sha256 \
+            starsonic-video.service | sort)
+          lista=$(find dist -type f -printf '%f\n' | sort)
+          if [ "$lista" != "$esperado" ]; then
+            echo "::error title=arquivos::os arquivos montados não são os onze esperados"
+            echo "Esperado:"; echo "$esperado"; echo "Encontrado:"; echo "$lista"
+            exit 1
+          fi
+          if [ "$(find dist -type f | wc -l)" != 11 ] || [ -n "$(find dist -mindepth 2 -type f)" ]; then
+            echo "::error title=arquivos::há arquivo fora da pasta dist ou repetido"
+            exit 1
+          fi
+
+      # 1. Rascunho: ainda sem tag e sem download para ninguém.
+      - name: Criar o rascunho
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          id=$(gh api --method POST "repos/$GITHUB_REPOSITORY/releases" \
+            -f tag_name="video-v$VERSAO" \
+            -f target_commitish="$GITHUB_SHA" \
+            -f name="Starsonic Vídeo $VERSAO" \
+            -f body="Servidor de vídeo das reuniões do Starsonic Phone $VERSAO. Para instalar, siga docs/video-servidor.md." \
+            -F draft=true -F prerelease=true -f make_latest=false \
+            --jq .id)
+          if ! [[ "$id" =~ ^[0-9]+$ ]]; then
+            echo "::error title=rascunho::não consegui criar o rascunho da release"
+            exit 1
+          fi
+          echo "RELEASE_ID=$id" >> "$GITHUB_ENV"
+
+      # 2. Os arquivos.
+      - name: Enviar os arquivos
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for f in dist/*; do
+            nome=$(basename "$f")
+            resposta=$(gh api --method POST "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?name=$nome" \
+              -H "Content-Type: application/octet-stream" --input "$f" --jq .name)
+            if [ "$resposta" != "$nome" ]; then
+              echo "::error title=envio::o envio de $nome respondeu \"$resposta\""
+              exit 1
+            fi
+            echo "enviado: $nome"
+          done
+
+      # 3. Os onze nomes, e só eles, no rascunho.
+      - name: Conferir a lista de arquivos
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          esperado=$(printf '%s\n' certificado.sh instalar.sh starsonic-freeswitch-debian-12-amd64.tar.gz \
+            starsonic-freeswitch-debian-12-amd64.tar.gz.sha256 starsonic-freeswitch-fontes.tar.gz \
+            starsonic-freeswitch-ubuntu-24.04-amd64.tar.gz starsonic-freeswitch-ubuntu-24.04-amd64.tar.gz.sha256 \
+            starsonic-freeswitch.service starsonic-video-linux-amd64 starsonic-video-linux-amd64.sha256 \
+            starsonic-video.service | sort)
+          lista=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --jq '.assets[] | select(.state == "uploaded") | .name' | sort)
+          if [ "$lista" != "$esperado" ]; then
+            echo "::error title=arquivos::a lista de arquivos do rascunho não é a esperada"
+            echo "Esperado:"; echo "$esperado"; echo "Encontrado:"; echo "$lista"
+            exit 1
+          fi
+
+      # 4. Publica: pre-release, e nunca a latest.
+      - name: Publicar
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+            -F draft=false -F prerelease=true -f make_latest=false > /dev/null
+          echo "::notice title=release::a release video-v$VERSAO foi publicada"
+
+      # 5. O canal Estável dos apps lê releases/latest: tem de ser 404 ou a versão estável do Windows (tag v...).
+      - name: O latest não é desta release
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if latest=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name 2> "$RUNNER_TEMP/latest.txt"); then
+            if [[ "$latest" =~ ^v[0-9] ]]; then
+              echo "releases/latest é $latest (Windows)"
+            else
+              echo "::error title=latest::releases/latest deixou de ser 404: o canal Estável do app vai ler esta release"
+              echo "::error title=latest::o latest é $latest. Em Releases, abra a $latest, clique em Edit e marque Set as a pre-release (ou apague a release e a tag)."
+              exit 1
+            fi
+          elif grep -q "HTTP 404" "$RUNNER_TEMP/latest.txt"; then
+            echo "releases/latest continua 404"
+          else
+            echo "::error title=latest::não consegui ler releases/latest: $(cat "$RUNNER_TEMP/latest.txt")"
+            exit 1
+          fi

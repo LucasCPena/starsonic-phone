@@ -71,6 +71,8 @@ jobs:
 
   # O FreeSWITCH do servidor de vídeo, montado do código oficial (video-servidor/freeswitch/construir.sh),
   # um pacote por sistema da VM, cada um no contêiner do sistema dele.
+  # O video-release.yml tem estes dois jobs (freeswitch e freeswitch-conferir) copiados: se mudar aqui, mude no
+  # video-release.yml.
   freeswitch:
     name: FreeSWITCH (${{ matrix.sistema }})
     runs-on: ubuntu-24.04

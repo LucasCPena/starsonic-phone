@@ -484,6 +484,58 @@ A página `Reuniões` do chat mostra o uso do servidor de vídeo no teste: `Uso 
 
 ## 10. Publicar uma versão
 
-Este passo é de quem publica o servidor de vídeo, e não da VM. Você vai fazer tudo pelo site do GitHub, no navegador, como no passo 11 do guia do chat, pelo workflow `video-release`.
+Este passo é de quem publica o servidor de vídeo, e não da VM. Você faz tudo pelo site do GitHub, no navegador, e não precisa de comando para publicar. É o workflow `video-release`.
 
-A publicação do servidor de vídeo fica pronta no fim desta etapa das reuniões, e este passo ganha então o caminho completo e o que conferir depois. Até lá, ainda não existe nenhuma versão `video-v` para instalar.
+1. Abra a página do projeto no GitHub e clique em `Actions`.
+2. Na lista da esquerda, clique em `video-release`.
+3. Clique em `Run workflow`, à direita.
+4. No campo `Versão a publicar`, escreva `0.1.0-rc.1` (só o número, sem o `video-v`). Para uma versão que não é de teste, use `0.1.0`.
+5. Clique no botão verde `Run workflow` e espere.
+
+Na primeira vez, o GitHub monta o FreeSWITCH dos dois sistemas, e isso leva bastante tempo. Nas próximas vezes ele aproveita o que já montou, e leva alguns minutos.
+
+O GitHub testa o programa, confere cada pacote do FreeSWITCH num sistema limpo, monta a versão e só publica no fim, quando todos os arquivos já estão lá. Se algo falhar no meio, nada fica publicado: abra o run, veja a mensagem em vermelho, corrija e rode de novo. Se sobrar um rascunho em `Releases`, apague-o antes de rodar de novo: o workflow para com a mensagem `já existe um rascunho` se ele ainda estiver lá.
+
+### O que conferir depois
+
+1. Em `Releases`, abra `video-v0.1.0-rc.1`. Ela deve ter a etiqueta `Pre-release` e estes onze arquivos (o GitHub mostra ainda duas linhas `Source code`, que ele cria sozinho e você pode ignorar):
+   - `starsonic-video-linux-amd64`
+   - `starsonic-video-linux-amd64.sha256`
+   - `starsonic-freeswitch-ubuntu-24.04-amd64.tar.gz`
+   - `starsonic-freeswitch-ubuntu-24.04-amd64.tar.gz.sha256`
+   - `starsonic-freeswitch-debian-12-amd64.tar.gz`
+   - `starsonic-freeswitch-debian-12-amd64.tar.gz.sha256`
+   - `starsonic-freeswitch-fontes.tar.gz`
+   - `instalar.sh`
+   - `starsonic-video.service`
+   - `starsonic-freeswitch.service`
+   - `certificado.sh`
+2. O SHA-256: o número dentro de cada arquivo `.sha256` tem de ser o do arquivo dele. O `instalar.sh` já confere isso sozinho na instalação (você vê `SHA-256 conferido.`). Para conferir à mão, use a VM (o Windows não tem o `sha256sum`). Na VM, baixe o programa:
+
+```
+curl -fsSLO https://github.com/LucasCPena/starsonic-phone/releases/download/video-v0.1.0-rc.1/starsonic-video-linux-amd64
+```
+
+Baixe o arquivo do SHA-256, na mesma pasta:
+
+```
+curl -fsSLO https://github.com/LucasCPena/starsonic-phone/releases/download/video-v0.1.0-rc.1/starsonic-video-linux-amd64.sha256
+```
+
+E rode:
+
+```
+sha256sum -c starsonic-video-linux-amd64.sha256
+```
+
+Deve aparecer `starsonic-video-linux-amd64: OK`.
+
+3. O endereço `releases/latest` tem de responder 404, ou mostrar uma versão do Windows (uma etiqueta que começa com `v`, como `v1.0.0`), porque o canal Estável dos apps lê esse endereço. Ele não pode mostrar a `video-v…`. Rode:
+
+```
+curl -sI https://api.github.com/repos/LucasCPena/starsonic-phone/releases/latest
+```
+
+A primeira linha deve ter `404`. Se o Windows já tiver uma versão estável, o endereço responde `200`, e isso também está certo, desde que a versão seja a do Windows. O workflow confere isso no último passo e falha se o endereço apontar para outra coisa. Nesse caso, em `Releases`, abra essa release, clique em `Edit` e marque `Set as a pre-release` (ou apague a release e a etiqueta dela). Não instale nada antes disso.
+
+Pronto: agora o passo 2 (instalar) e o passo 5 (atualizar) acham a versão nova.
