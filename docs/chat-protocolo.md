@@ -305,14 +305,14 @@ As reuniões com link moram no servidor do chat; o vídeo e o som vão direto pa
 **Gerar link (a reunião na hora)** — `POST /api/v1/reunioes/agora`.
 - Corpo: `{"ramais": ["2003", "2004"]}`: os colegas que estão na chamada. É opcional, com até 9 ramais.
 - `201`: `{"reuniao": <Reunião>}`, com o `tipo` igual a `naHora`.
-- Os computadores conectados das pessoas ativas da mesma empresa com esses ramais recebem o evento `reuniaoAgora` (seção 11). Um ramal que não é de ninguém é ignorado.
+- Os computadores conectados das pessoas ativas da mesma empresa com esses ramais recebem o evento `reuniaoAgora` (seção 11). Um ramal que não é de ninguém é ignorado, e quem gerou o link não recebe o próprio convite.
 - A naHora acaba quando fica vazia, com o Encerrar para todos, ou 10 minutos depois de criada se ninguém entrou nela.
 
 **Entrar** — `POST /api/v1/reunioes/{codigo}/entrar`.
 - `200`: o Acesso, abaixo, com a `reuniao`.
 - **Um colega da mesma empresa** entra direto. Uma reunião parada começa.
 - **Os erros:**
-  - `404 naoEncontrado`: o código não existe ou a reunião não vale;
+  - `404 naoEncontrado`: o código não existe ou a reunião não vale (cancelada, vencida ou acabada), de qualquer empresa;
   - `403 outraEmpresa`: o link é de outra empresa. O app abre o link no navegador, onde a pessoa passa pela sala de espera;
   - `403 semReunioes`;
   - `409 cheia`: a reunião já tem 10 pessoas;

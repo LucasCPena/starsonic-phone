@@ -829,6 +829,16 @@ func TestEntrar_OutraEmpresa(t *testing.T) {
 		t.Fatal(err)
 	}
 	esperarErro(t, c.entrarEm(c.kAna, teste.Codigo), 403, "outraEmpresa")
+
+	// Um link que não vale dá 404 de qualquer empresa: o app abriria o outraEmpresa no navegador, e o 404 também
+	// não revela que um código morto existiu. A reunião cancelada e a vencida, da outra empresa:
+	cancelada := c.marcada(t, c.kAna)
+	c.a.Pedir(c.kAna, "DELETE", "/api/v1/reunioes/"+cancelada.Codigo, nil)
+	esperarErro(t, c.entrarEm(c.kDavi, cancelada.Codigo), 404, "naoEncontrado")
+	vencida := c.marcada(t, c.kAna)
+	c.a.Relogio.Avancar(48 * time.Hour)
+	esperarErro(t, c.entrarEm(c.kDavi, vencida.Codigo), 404, "naoEncontrado")
+	esperarErro(t, c.entrarEm(c.kDavi, r.Codigo), 404, "naoEncontrado")
 }
 
 func TestEntrar_Erros(t *testing.T) {

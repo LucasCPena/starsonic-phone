@@ -336,8 +336,9 @@ type acessoJSON struct {
 //  1. a janela das tentativas (sem contar): cheia, é 429 tentativas, até com o código certo;
 //  2. a empresa tem as reuniões liberadas (403 semReunioes);
 //  3. o código existe (404);
-//  4. a reunião é da empresa (403 outraEmpresa);
-//  5. o gerente: o link vale (404), o vídeo está no ar (503), a reunião cabe mais uma pessoa (409 cheia) e,
+//  4. o link vale (404, de qualquer empresa);
+//  5. a reunião é da empresa (403 outraEmpresa);
+//  6. o gerente: o link vale (404, de novo, por causa das corridas), o vídeo está no ar (503), a reunião cabe mais uma pessoa (409 cheia) e,
 //     parada, cabe no limite de reuniões ao mesmo tempo (409 servidorCheio).
 //
 // Conta na janela só o que não deu em reunião em que a pessoa pudesse entrar: o 404, o outraEmpresa e o
@@ -370,6 +371,12 @@ func (s *servidor) entrarNaReuniao(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		erroServidor(w, err)
+		return
+	}
+	// Um link que não vale é 404 de qualquer empresa: não revela que o código existiu, e o app não abre no
+	// navegador um outraEmpresa que só mostraria "link inválido". O gerente confere de novo, por causa das corridas.
+	if !reuniao.Vale(s.agoraMs()) {
+		errada(http.StatusNotFound, "naoEncontrado")
 		return
 	}
 	if reuniao.EmpresaID != c.EmpresaID {
