@@ -344,6 +344,41 @@ func TestPedido_AceitarCheia(t *testing.T) {
 	can.conferir(t, "Maria", []string{"aguardando", "aceito"}, false)
 }
 
+// A sala de espera de uma reunião guarda até 50 pedidos (a revisão final, M2). O 51º recebe o ErrEsperaCheia: não
+// espera, não chega aos colegas e o nome não fica na memória. Quando um pedido sai, um novo espera normalmente.
+func TestPedido_EsperaCheia(t *testing.T) {
+	c := novaCena(t)
+	r := c.marcada()
+	c.dentro(r, c.ana)
+	var pedidos []*Pedido
+	for i := range 50 {
+		p, can := c.pedir(r, fmt.Sprintf("Visitante %d", i))
+		can.conferir(t, fmt.Sprintf("o pedido %d", i), []string{"aguardando"}, false)
+		pedidos = append(pedidos, p)
+	}
+	c.avisos.limpar()
+
+	can := &canalFalso{}
+	p, err := c.g.Pedir(c.ctx, r, "Bia Ramos", can)
+	conferirErro(t, "o 51º pedido", err, ErrEsperaCheia)
+	if p != nil {
+		t.Fatal("o 51º pedido voltou um Pedido")
+	}
+	can.conferir(t, "o 51º pedido", nil, false)
+	if n := c.avisos.total(); n != 0 {
+		t.Fatalf("o 51º pedido mandou %d avisos", n)
+	}
+	if slices.Contains(nomesNaMemoria(c.g), "Bia Ramos") {
+		t.Fatal("o nome do 51º pedido ficou na memória")
+	}
+
+	// Um pedido sai (a página fechou), e o novo espera.
+	c.g.Desistir(pedidos[0])
+	_, can = c.pedir(r, "Bia Ramos")
+	can.conferir(t, "Bia", []string{"aguardando"}, false)
+	c.pedidoDe(r, c.ana, "Bia Ramos")
+}
+
 func TestPedido_NomeInvalido(t *testing.T) {
 	c := novaCena(t)
 	r := c.marcada()

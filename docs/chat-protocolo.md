@@ -400,6 +400,7 @@ Do servidor para a página:
 {"tipo": "aceito", "participante": "…", "senha": "…", "turn": {…}, "video": {…}}   // o Acesso, sem a reuniao
 {"tipo": "recusado"}         // um colega recusou, ou 10 minutos sem resposta
 {"tipo": "cheia"}            // a reunião tem 10 pessoas
+{"tipo": "esperaCheia"}      // muita gente esperando para entrar: a sala de espera tem 50 pedidos
 {"tipo": "servidorCheio"}    // o servidor de vídeo está no limite de reuniões ao mesmo tempo
 {"tipo": "semServidor"}      // o servidor de vídeo não respondeu
 {"tipo": "linkInvalido"}     // a reunião foi cancelada, deixou de valer, ou a naHora acabou: na espera, ou em resposta ao senha
@@ -409,7 +410,7 @@ Do servidor para a página:
 {"tipo": "encerrada"}        // um colega encerrou a reunião para todos, ela foi cancelada, ou a reunião acabou no servidor de vídeo
 {"tipo": "erro", "erro": "invalido" | "limite" | "foraDaReuniao"}
 ```
-- **O `pedir` vale uma vez por canal.** Depois de `cheia`, `servidorCheio` ou `semServidor`, a página pode mandar outro `pedir`.
+- **O `pedir` vale uma vez por canal.** Depois de `cheia`, `esperaCheia`, `servidorCheio` ou `semServidor`, a página pode mandar outro `pedir`.
 - **Depois de `recusado`, `linkInvalido`, `tirado` ou `encerrada`, e depois de um `desistir` que retirou o pedido,** o servidor fecha o canal (código 1000); o `desistir` não recebe resposta.
 - **Uma mensagem fora de ordem**, como `senha` antes do `aceito` ou com a pessoa já na reunião, `tela` fora da reunião, um segundo `pedir` ou um `desistir` sem pedido que espere (nenhum, ou já aceito), responde `erro`, com `invalido` ou `foraDaReuniao`.
 - **O `senha`:** até 5 por minuto por participante. Ele é uma entrada nova, com as conferências do `pedir`, e além do `senha` pode responder:
@@ -438,6 +439,7 @@ Do servidor para a página:
 | Tentativas de abrir | 20 por minuto por endereço, contando só as que não levam a uma reunião em que a pessoa possa entrar: o `entrar` do app que dá `404`, `outraEmpresa` ou `semReunioes`, junto com o abrir da página que falha. Passou disso, `429 tentativas`, até com um código certo. O `entrar` e o abrir que dão certo, e o `cheia`, o `servidorCheio` e o `servidorVideo` de um código bom, não contam |
 | A senha de uso único | 30 segundos, uma vez só, no relógio do servidor de vídeo |
 | A espera de quem é de fora | 10 minutos depois de o pedido chegar aos colegas |
+| A sala de espera | 50 pedidos esperando por reunião. O 51º `pedir` recebe `esperaCheia` |
 | A naHora sem ninguém | acaba 10 minutos depois de criada |
 | Reuniões marcadas por pessoa | 100 que ainda valem |
 | As credenciais do TURN | 12 horas |

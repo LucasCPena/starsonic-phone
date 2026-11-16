@@ -15,6 +15,7 @@ import (
 const (
 	esperaPedido   = 10 * time.Minute // a espera depois de o pedido chegar aos colegas
 	novasPorMinuto = 5                // as senhas novas de um participante
+	maxEsperando   = 50               // os pedidos esperando numa reunião
 )
 
 // Canal é a página de quem é de fora: o WebSocket da seção 10. O Mandar e o Fechar não esperam (o gerente os
@@ -60,11 +61,11 @@ type Pedido struct {
 }
 
 // Pedir faz o pedido de quem é de fora, com o nome que a pessoa digitou (a regra do nome de uma pessoa; um nome
-// que não vale dá o *regras.Erro e não chega a ninguém). As conferências são as do EntrarColega, na mesma ordem.
-// Sem um colega na reunião, a página recebe o naoComecou, e o pedido espera sem limite; com um, ela recebe o
-// aguardando, e os colegas, o reuniaoPedido. Na reunião de teste, que não tem sala de espera, a página recebe o
-// aceito na hora, com a senha de colega: a primeira pessoa a começa. Os erros voltam a quem chamou, que os diz à
-// página.
+// que não vale dá o *regras.Erro e não chega a ninguém). As conferências são as do EntrarColega, na mesma ordem, e
+// depois a sala de espera, com até 50 pedidos esperando (ErrEsperaCheia). Sem um colega na reunião, a página recebe
+// o naoComecou, e o pedido espera sem limite de tempo; com um, ela recebe o aguardando, e os colegas, o
+// reuniaoPedido. Na reunião de teste, que não tem sala de espera, a página recebe o aceito na hora, com a senha de
+// colega: a primeira pessoa a começa. Os erros voltam a quem chamou, que os diz à página.
 func (g *Gerente) Pedir(ctx context.Context, r banco.Reuniao, nome string, c Canal) (*Pedido, error) {
 	nome, err := regras.NomePessoa(nome)
 	if err != nil {
@@ -83,6 +84,10 @@ func (g *Gerente) Pedir(ctx context.Context, r banco.Reuniao, nome string, c Can
 	if err := g.conferirEntrada(r, d, limite, agora, true, true); err != nil {
 		g.mu.Unlock()
 		return nil, err
+	}
+	if s := g.salas[r.Sala]; r.Tipo != banco.TipoTeste && s != nil && len(s.pedidos) >= maxEsperando {
+		g.mu.Unlock()
+		return nil, ErrEsperaCheia
 	}
 	s := g.salaDe(r)
 	antes := s.retrato()

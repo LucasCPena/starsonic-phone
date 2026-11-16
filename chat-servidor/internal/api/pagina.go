@@ -473,9 +473,9 @@ func (s *servidor) mensagemDaPagina(c *canalPagina, st *estadoDaPagina, tipo web
 }
 
 // erroDoGerente diz à página o erro de uma entrada (o pedir ou o senha). O nome que não vale é o erro invalido. O
-// linkInvalido é uma resposta final: o canal fecha. O cheia, o servidorCheio e o semServidor deixam o canal aberto,
-// e a página pode tentar de novo. Qualquer outro erro (o banco) é do servidor: o canal fecha com 1011, e o log leva
-// só o tipo do erro, nunca o texto, que podia ter dado da página.
+// linkInvalido é uma resposta final: o canal fecha. O cheia, o esperaCheia, o servidorCheio e o semServidor deixam o
+// canal aberto, e a página pode tentar de novo. Qualquer outro erro (o banco) é do servidor: o canal fecha com 1011, e
+// o log leva só o tipo do erro, nunca o texto, que podia ter dado da página.
 func (s *servidor) erroDoGerente(c *canalPagina, err error) {
 	var campo *regras.Erro
 	switch {
@@ -486,6 +486,8 @@ func (s *servidor) erroDoGerente(c *canalPagina, err error) {
 		c.Fechar()
 	case errors.Is(err, reunioes.ErrCheia):
 		c.Mandar(mensagemSimples{Tipo: "cheia"})
+	case errors.Is(err, reunioes.ErrEsperaCheia):
+		c.Mandar(mensagemSimples{Tipo: "esperaCheia"})
 	case errors.Is(err, reunioes.ErrServidorCheio):
 		c.Mandar(mensagemSimples{Tipo: "servidorCheio"})
 	case errors.Is(err, reunioes.ErrSemServidor):

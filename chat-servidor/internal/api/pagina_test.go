@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -704,6 +705,37 @@ func TestCanal_ForaDeOrdem(t *testing.T) {
 		// Agora o pedir está gasto.
 		daPagina(t, pagina, map[string]any{"tipo": "pedir", "nome": "Maria Lima"})
 		aPaginaErro(t, pagina, "invalido")
+	})
+
+	t.Run("depois de um esperaCheia, um novo pedir vale", func(t *testing.T) {
+		c := novaCenaR(t)
+		r := c.marcada(t, c.kAna)
+		c.entrouNaReuniao(t, c.kCarlos, r.Codigo) // sem o app: os 50 reuniaoPedido não importam aqui
+		var paginas []*websocket.Conn
+		for i := range 50 {
+			pagina := c.canal(t, r.Codigo)
+			daPagina(t, pagina, map[string]any{"tipo": "pedir", "nome": fmt.Sprintf("Visitante %d", i)})
+			aPaginaTipo(t, pagina, "aguardando")
+			paginas = append(paginas, pagina)
+		}
+		pagina := c.canal(t, r.Codigo)
+		daPagina(t, pagina, map[string]any{"tipo": "pedir", "nome": "Maria Lima"})
+		if m := aPagina(t, pagina); len(m) != 1 || m["tipo"] != "esperaCheia" {
+			t.Fatalf("o 51º pedir recebeu %v; queria esperaCheia", m)
+		}
+
+		// Um pedido sai (a página desiste, e o canal dela fecha), e o mesmo canal pede de novo.
+		daPagina(t, paginas[0], map[string]any{"tipo": "desistir"})
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, _, err := paginas[0].Read(ctx); websocket.CloseStatus(err) != websocket.StatusNormalClosure {
+			t.Fatalf("o canal que desistiu: %v; queria o fechamento 1000", err)
+		}
+		daPagina(t, pagina, map[string]any{"tipo": "pedir", "nome": "Maria Lima"})
+		aPaginaTipo(t, pagina, "aguardando")
+		if l := c.lista(t, c.kCarlos, r.Codigo); len(l.Pedidos) != 50 {
+			t.Fatalf("a lista tem %d pedidos; queria 50", len(l.Pedidos))
+		}
 	})
 }
 

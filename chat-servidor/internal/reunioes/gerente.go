@@ -36,6 +36,8 @@ var (
 	ErrLinkInvalido = errors.New("reunioes: o link não vale")
 	// ErrCheia: a reunião já tem 10 pessoas, contando as senhas da câmera emitidas e ainda não usadas.
 	ErrCheia = errors.New("reunioes: a reunião está cheia")
+	// ErrEsperaCheia: a sala de espera da reunião já tem 50 pedidos esperando.
+	ErrEsperaCheia = errors.New("reunioes: a sala de espera está cheia")
 	// ErrServidorCheio: a reunião está parada, e o servidor de vídeo já está no limite de reuniões ao mesmo tempo.
 	ErrServidorCheio = errors.New("reunioes: o servidor de vídeo está no limite de reuniões ao mesmo tempo")
 	// ErrSemServidor: nenhum servidor de vídeo foi ligado, ou ele não está no ar (o agente ou o FreeSWITCH).
