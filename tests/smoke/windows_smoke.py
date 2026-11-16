@@ -1572,17 +1572,40 @@ def room_guest(page, number):
     return page.get_by_role("group", name=ROOM_MOSAIC, exact=True).get_by_role("group", name=number, exact=True)
 
 
-def check_room_colors(page, capturas, h264_installed, record, problems):
+def room_video_counts(registrar):
+    """O que o registrador viu do vídeo de cada convidado (os datagramas e os quadros-chave que o app mandou a ele) e o
+    fim do log dele: o que a fumaça anota quando a imagem de um convidado não chega."""
+    counts = {}
+    for number in ROOM_GUESTS:
+        counts[number] = {"datagramas": registrar.command("VIDEO PACKETS " + number),
+                          "quadros_chave": registrar.command("VIDEO KEYFRAMES " + number)}
+    counts["registrador"] = registrar.events()[-12:]
+    return counts
+
+
+def check_room_colors(page, registrar, capturas, h264_installed, record, problems):
     """Com o H.264 instalado, o meio de cada `Vídeo de <número>` fica perto da cor do convidado (± 8) numa captura."""
     if not h264_installed:
         log("AVISO: sem o H.264 da Cisco, a sala so confere o cabecalho da memoria (as cores ficam de fora)")
         return
+    # O quadro de um convidado só ganha a imagem (o "Vídeo de <número>") quando o primeiro quadro dele chega ao núcleo: até
+    # lá o quadro mostra "Sem vídeo".
+    images = {number: page.get_by_role("img", name="Vídeo de " + number, exact=True) for number in ROOM_COLORS}
+    if not wait_for(lambda: all(image.count() == 1 for image in images.values()), ROOM_WAIT, pump=page.wait_for_timeout):
+        missing = [number for number, image in images.items() if image.count() != 1]
+        page.screenshot(path=str(pathlib.Path(capturas) / "sala-sem-imagem.png"), timeout=20000)
+        record["sem_imagem"] = room_video_counts(registrar)
+        log("sala: sem imagem de %s: %s" % (", ".join(missing), record["sem_imagem"]))
+        problems.append("sala: sem o 'Vídeo de %s' em %d s (o quadro do convidado segue sem imagem): %s"
+                        % (" nem de ".join(missing), ROOM_WAIT, page.get_by_role("group", name=ROOM_MOSAIC, exact=True).inner_text()))
+        return
+    page.wait_for_timeout(1000)   # alguns quadros desenhados na imagem
     path = pathlib.Path(capturas) / "sala-cores.png"
     page.screenshot(path=str(path), timeout=20000)
     scale = None
     seen = {}
     for number, color in ROOM_COLORS.items():
-        box = page.get_by_role("img", name="Vídeo de " + number, exact=True).bounding_box()
+        box = images[number].bounding_box(timeout=10000)
         if box is None:
             problems.append("sala: o 'Vídeo de %s' nao esta na tela" % number)
             continue
@@ -1649,7 +1672,7 @@ def check_room(page, registrar, data_dir, capturas, result, record, problems):
         record["mosaico"] = info
         log("sala: a memoria do remoto: %s" % info)
         problems.extend(room_buffer_problems(info))
-        check_room_colors(page, capturas, h264_installed, record, problems)
+        check_room_colors(page, registrar, capturas, h264_installed, record, problems)
 
         # 5. O Desligar, a pergunta e o Encerrar: o bye-in dos dois convidados.
         byes_before = count_events(registrar.events(), "bye-in")
