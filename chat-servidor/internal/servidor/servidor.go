@@ -25,8 +25,10 @@ import (
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/armazem"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/banco"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/eventos"
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/reunioes"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/tarefas"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/tempo"
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/video"
 )
 
 // ErroModoTeste é o erro do RodarTeste com um endereço que não é local.
@@ -55,6 +57,12 @@ type Deps struct {
 	Armazem *armazem.Armazem
 	Origens []string
 	Teste   bool // o modo de teste é HTTP: os cookies da página vão sem o Secure
+	// Gerente é o das reuniões: o da API e, nas tasks seguintes, o da página e o da administração. Sem ele, as
+	// rotas das reuniões não existem.
+	Gerente *reunioes.Gerente
+	// Base é o começo do link das reuniões, sem a barra do fim: https:// mais o hostPublico em produção, e http://
+	// mais o endereço em que o chat escuta no modo de teste.
+	Base string
 }
 
 // Montar monta o servidor: a API em /api/v1/, a página de administração em /admin/, e a raiz
@@ -68,7 +76,8 @@ func Montar(d Deps) http.Handler {
 // porque o http.Server.Shutdown não espera uma conexão sequestrada.
 func montar(d Deps) (http.Handler, *sync.WaitGroup) {
 	mux := http.NewServeMux()
-	mux.Handle("/api/v1/", api.Novo(api.Deps{Banco: d.Banco, Hub: d.Hub, Armazem: d.Armazem, Origens: d.Origens}))
+	mux.Handle("/api/v1/", api.Novo(api.Deps{Banco: d.Banco, Hub: d.Hub, Armazem: d.Armazem, Origens: d.Origens,
+		Gerente: d.Gerente, Base: d.Base}))
 	mux.Handle("/admin/", registrarAdmin(admin.Novo(admin.Deps{Banco: d.Banco, Hub: d.Hub, Armazem: d.Armazem, Teste: d.Teste})))
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/admin/", http.StatusFound)
@@ -267,7 +276,7 @@ func Rodar(ctx context.Context, c Config) error {
 			l.Close()
 		}
 	}()
-	return rodar(ctx, c, false, func(h http.Handler) []servico {
+	return rodar(ctx, c, false, "https://"+hostPublico(c), func(h http.Handler) []servico {
 		https, http80 := servidoresProducao(c, h)
 		return []servico{
 			{https, func() error { return https.ServeTLS(ls[0], "", "") }},
@@ -306,17 +315,37 @@ func RodarTeste(ctx context.Context, c Config, escutar string) error {
 // saída, também quando o banco não abre.
 func servirTeste(ctx context.Context, c Config, l net.Listener) error {
 	defer l.Close()
-	return rodar(ctx, c, true, func(h http.Handler) []servico {
+	return rodar(ctx, c, true, "http://"+l.Addr().String(), func(h http.Handler) []servico {
 		srv := novoHTTP(l.Addr().String(), h)
 		return []servico{{srv, func() error { return srv.Serve(l) }}}
 	})
 }
 
+// ligarVideo liga o gerente ao servidor de vídeo guardado no banco, se houver um. Um que não vale (o endereço ou a
+// chave) ou que não se lê deixa o gerente sem vídeo: o chat sobe do mesmo jeito, e o entrar das reuniões dá
+// 503 servidorVideo (spec 11.1, item 1). O log leva só um código, nunca o endereço nem a chave.
+func ligarVideo(ctx context.Context, b *banco.Banco, g *reunioes.Gerente, teste bool) {
+	cfg, err := b.ConfigReunioes(ctx)
+	if err != nil {
+		slog.Warn("reunioes: não li o servidor de vídeo guardado", "erro", "banco")
+		return
+	}
+	if cfg.Endereco == "" || cfg.Chave == "" {
+		return
+	}
+	cliente, err := video.NovoCliente(cfg.Endereco, cfg.Chave, teste)
+	if err != nil {
+		slog.Warn("reunioes: o servidor de vídeo guardado não vale", "erro", "invalido")
+		return
+	}
+	g.Ligar(cliente)
+}
+
 // rodar abre o banco e os arquivos, monta o servidor, sobe os servicos e espera o ctx acabar
-// ou um deles falhar. Depois desliga com calma: os servidores (Shutdown, até 10 s) e os
+// ou um deles falhar. base é o começo do link das reuniões. Depois desliga com calma: os servidores (Shutdown, até 10 s) e os
 // WebSockets (1001) e, quando as tarefas também voltaram, o banco, que fecha por último. Um
 // desligamento pelo ctx não é erro.
-func rodar(ctx context.Context, c Config, teste bool, servicos func(http.Handler) []servico) (erro error) {
+func rodar(ctx context.Context, c Config, teste bool, base string, servicos func(http.Handler) []servico) (erro error) {
 	b, err := banco.Abrir(filepath.Join(c.Dados, banco.NomeArquivo), tempo.Real())
 	if err != nil {
 		return err
@@ -332,11 +361,14 @@ func rodar(ctx context.Context, c Config, teste bool, servicos func(http.Handler
 		return err
 	}
 	hub := eventos.NovoHub(eventos.Config{})
-	h, sockets := montar(Deps{Banco: b, Hub: hub, Armazem: a, Origens: c.Origens, Teste: teste})
+	gerente := reunioes.Novo(reunioes.Deps{Banco: b, Avisos: hub, Relogio: tempo.Real()})
+	ligarVideo(ctx, b, gerente, teste)
+	h, sockets := montar(Deps{Banco: b, Hub: hub, Armazem: a, Origens: c.Origens, Teste: teste, Gerente: gerente, Base: base})
 
 	// O ctx das tarefas acaba junto com o ctx do servidor, ou seja, quando o desligamento
 	// começa (ou, se um servidor falhar, no defer abaixo). O defer espera as tarefas voltarem;
-	// ele roda antes do que fecha o banco, que fecha por último.
+	// ele roda antes do que fecha o banco, que fecha por último. O gerente das reuniões roda junto com as
+	// tarefas: o Rodar dele também para o laço dos eventos do servidor de vídeo, quando o ctx acaba.
 	ctxTarefas, pararTarefas := context.WithCancel(ctx)
 	defer pararTarefas()
 	tarefasFeitas := make(chan struct{})
@@ -344,9 +376,15 @@ func rodar(ctx context.Context, c Config, teste bool, servicos func(http.Handler
 		defer close(tarefasFeitas)
 		tarefas.Rodar(ctxTarefas, b, a)
 	}()
+	gerenteFeito := make(chan struct{})
+	go func() {
+		defer close(gerenteFeito)
+		gerente.Rodar(ctxTarefas)
+	}()
 	defer func() {
 		pararTarefas()
 		<-tarefasFeitas
+		<-gerenteFeito
 	}()
 
 	lista := servicos(h)

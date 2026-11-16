@@ -318,7 +318,7 @@ As reuniões com link moram no servidor do chat; o vídeo e o som vão direto pa
   - `409 cheia`: a reunião já tem 10 pessoas;
   - `409 servidorCheio`: a reunião está parada e o servidor de vídeo já está no limite de reuniões ao mesmo tempo;
   - `503 servidorVideo`: o servidor de vídeo não foi configurado ou não respondeu;
-  - `429 tentativas`, com `esperarSegundos`: passou de 20 por minuto deste endereço, contando todo `entrar` e todo abrir da página (seção 10).
+  - `429 tentativas`, com `esperarSegundos`: já são 20 tentativas no último minuto deste endereço (seção 12). O servidor confere isso primeiro, e responde assim até com um código certo. Contam só as tentativas que não levam a uma reunião em que a pessoa possa entrar: o `404 naoEncontrado`, o `403 outraEmpresa` e o `403 semReunioes`, junto com o abrir da página que falha (seção 10). Não contam o `entrar` que dá certo (um escritório atrás de um endereço só entra de uma vez na hora marcada) nem, num código bom, o `409 cheia`, o `409 servidorCheio` e o `503 servidorVideo`.
 
 **O Acesso.**
 ```json
@@ -375,7 +375,7 @@ A página é servida pelo chat em `https://<endereço do chat>/r/<código>`. Que
 - O bilhete vale uma vez, por 30 segundos, e só para o canal desta reunião.
 - **Os erros:**
   - `404 naoEncontrado`: o código não existe, a reunião não vale, foi cancelada, ou a empresa está sem as reuniões liberadas;
-  - `429 tentativas`, com `esperarSegundos`: 20 por minuto por endereço, contando junto com o `entrar` do app.
+  - `429 tentativas`, com `esperarSegundos`: já são 20 tentativas no último minuto deste endereço, contando junto com o `entrar` do app que falha (o `404 naoEncontrado`, o `403 outraEmpresa` e o `403 semReunioes`; seção 9, `entrar`).
 
 **O canal** — `GET /api/v1/pagina/canal?bilhete=<bilhete>`, como WebSocket.
 - **A origem** tem de ser a do próprio chat (`https://<endereço do chat>`, com a porta quando ele usa uma) ou, no modo de teste, uma das origens do `--origem`. Sem a origem, ou com outra, responde `403 proibido`, e o bilhete continua valendo.
@@ -433,7 +433,7 @@ Do servidor para a página:
 |---|---|
 | Pessoas por reunião | 10, sem contar a tela compartilhada |
 | Reuniões ao mesmo tempo | 2 por padrão, de 1 a 20 na administração, em todo o servidor |
-| Tentativas de abrir | 20 por minuto por endereço (o abrir da página e o `entrar` do app) |
+| Tentativas de abrir | 20 por minuto por endereço, contando só as que não levam a uma reunião em que a pessoa possa entrar: o `entrar` do app que dá `404`, `outraEmpresa` ou `semReunioes`, junto com o abrir da página que falha. Passou disso, `429 tentativas`, até com um código certo. O `entrar` que dá certo, e o `cheia`, o `servidorCheio` e o `servidorVideo` de um código bom, não contam |
 | A senha de uso único | 30 segundos, uma vez só, no relógio do servidor de vídeo |
 | A espera de quem é de fora | 10 minutos depois de o pedido chegar aos colegas |
 | A naHora sem ninguém | acaba 10 minutos depois de criada |

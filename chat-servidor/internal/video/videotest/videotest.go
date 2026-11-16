@@ -19,6 +19,7 @@ type Falso struct {
 	noAr     bool
 	estado   video.Estado
 	comandos []string
+	erro     error          // o que o DefinirErro pôs
 	fila     []video.Evento // o que o Mandar pôs e o Acompanhar ainda não entregou
 	aviso    chan struct{}  // acorda o Acompanhar quando chega um evento
 }
@@ -79,9 +80,20 @@ func (f *Falso) Estado(ctx context.Context) (video.Estado, error) {
 	return e, nil
 }
 
+// DefinirErro faz o Tirar e o Encerrar devolverem err, sem anotar comando nenhum, enquanto ele estiver posto
+// (nil o desfaz). É a falha do agente que não é o 404, como o video.ErrSemResposta ou o video.ErrChave.
+func (f *Falso) DefinirErro(err error) {
+	f.mu.Lock()
+	f.erro = err
+	f.mu.Unlock()
+}
+
 func (f *Falso) comando(c string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.erro != nil {
+		return f.erro
+	}
 	if !f.noAr {
 		return video.ErrSemResposta
 	}

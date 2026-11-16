@@ -92,6 +92,18 @@ func TestNomeGrupo(t *testing.T) {
 	})
 }
 
+func TestAssunto(t *testing.T) {
+	rodar(t, Assunto, []caso{
+		{"normal", "Planejamento", "Planejamento", true},
+		{"as pontas saem", "  Planejamento  ", "Planejamento", true},
+		{"120 vale", strings.Repeat("ã", 120), strings.Repeat("ã", 120), true},
+		{"121 não", strings.Repeat("ã", 121), "", false},
+		{"controle", "a\x07b", "", false},
+		{"vazio vale null", "", "", true},
+		{"só espaços vale null", " \t ", "", true},
+	})
+}
+
 func TestTexto(t *testing.T) {
 	rodar(t, Texto, []caso{
 		{"curto", "oi", "oi", true},

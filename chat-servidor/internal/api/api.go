@@ -14,6 +14,7 @@ import (
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/banco"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/eventos"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/limites"
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/reunioes"
 )
 
 // OrigemPadrao é a origem do WebView do app.
@@ -27,6 +28,11 @@ type Deps struct {
 	Hub     *eventos.Hub     // obrigatório, e o mesmo da página de administração: o Fora dela só alcança as conexões deste hub
 	Armazem *armazem.Armazem // obrigatório: os arquivos no disco
 	Origens []string         // as origens do CORS; sem nenhuma, vale OrigemPadrao
+	// Gerente é o das reuniões (Task 11). Sem ele, as rotas das reuniões não existem (404 naoEncontrado).
+	Gerente *reunioes.Gerente
+	// Base é o começo do link das reuniões, sem a barra do fim: https://chat.exemplo.com.br:8443. O link é
+	// Base + "/r/" + código.
+	Base string
 }
 
 type servidor struct {
@@ -38,6 +44,11 @@ type servidor struct {
 	padroes  []string        // as origens, como OriginPatterns do websocket.Accept
 	erradas  *limites.Janela // os códigos errados, por endereço
 	bilhetes *bilhetes
+	gerente  *reunioes.Gerente // nil: as rotas das reuniões não existem
+	base     string            // o começo do link das reuniões, sem a barra do fim
+	// aberturas são as tentativas de abrir uma reunião, por endereço: 20 por minuto. Só contam as que não levam a
+	// uma reunião em que a pessoa possa entrar (reunioes.go).
+	aberturas *limites.Janela
 
 	mensagensLimite *limites.Janela // as mensagens novas, por computador
 	arquivosLimite  *limites.Janela // os bytes de arquivos enviados, por computador
@@ -72,6 +83,10 @@ func Novo(d Deps) http.Handler {
 		origens:  map[string]bool{},
 		erradas:  limites.Nova(maxErradas, periodoErradas, d.Banco.Relogio()),
 		bilhetes: novosBilhetes(d.Banco.Relogio()),
+		gerente:  d.Gerente,
+		base:     strings.TrimRight(d.Base, "/"),
+
+		aberturas: limites.Nova(maxAberturas, periodoAberturas, d.Banco.Relogio()),
 
 		mensagensLimite: limites.Nova(maxMensagens, periodoMensagens, d.Banco.Relogio()),
 		arquivosLimite:  limites.Nova(maxArquivosHora, periodoArquivos, d.Banco.Relogio()),
@@ -106,6 +121,9 @@ func Novo(d Deps) http.Handler {
 	mux.HandleFunc("GET /api/v1/arquivos/{id}/miniatura", s.autenticar(precisaPessoa(s.baixarMiniatura)))
 	mux.HandleFunc("POST /api/v1/eventos/bilhete", s.autenticar(s.novoBilhete))
 	mux.HandleFunc("GET /api/v1/eventos", s.eventos) // sem a chave: vale o bilhete
+	if s.gerente != nil {
+		s.rotasDasReunioes(mux)
+	}
 	// O resto de /api/v1/ (rota que não existe, ou método errado numa rota que existe)
 	// responde 404 naoEncontrado em JSON. Quem não manda uma chave boa leva 401 antes.
 	mux.HandleFunc(prefixo, s.autenticar(func(w http.ResponseWriter, r *http.Request) {

@@ -794,3 +794,122 @@ func TestModoTeste_SemHSTS(t *testing.T) {
 		}
 	}
 }
+
+// chaveDoAgente é uma chave de agente de vídeo que vale (os bytes 0 a 31 em base64 sem preenchimento).
+const chaveDoAgente = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+
+// agenteDeTeste é um servidor de vídeo de mentira: guarda o Authorization de cada conexão dos eventos e deixa a
+// conexão aberta até o teste acabar.
+type agenteDeTeste struct {
+	*httptest.Server
+	mu     sync.Mutex
+	vistos []string // o Authorization de cada GET /agente/v1/eventos
+	chegou chan struct{}
+}
+
+func novoAgenteDeTeste(t *testing.T) *agenteDeTeste {
+	t.Helper()
+	ag := &agenteDeTeste{chegou: make(chan struct{}, 10)}
+	ag.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/agente/v1/eventos" {
+			http.NotFound(w, r)
+			return
+		}
+		ag.mu.Lock()
+		ag.vistos = append(ag.vistos, r.Header.Get("Authorization"))
+		ag.mu.Unlock()
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		select {
+		case ag.chegou <- struct{}{}:
+		default:
+		}
+		<-r.Context().Done()
+	}))
+	t.Cleanup(ag.Close)
+	return ag
+}
+
+// guardarVideo põe no banco do chat o endereço e a chave do agente, como a página de administração faz.
+func guardarVideo(t *testing.T, dados, endereco string) {
+	t.Helper()
+	b, err := banco.Abrir(filepath.Join(dados, banco.NomeArquivo), tempo.Real())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.GuardarServidorVideo(t.Context(), endereco, chaveDoAgente); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Fechar(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// O chat que sobe com o servidor de vídeo guardado liga o gerente a ele: o agente de teste recebe a conexão dos
+// eventos, com o Bearer da chave.
+func TestServidor_ReunioesNoAr(t *testing.T) {
+	dados, _ := preparar(t)
+	ag := novoAgenteDeTeste(t)
+	guardarVideo(t, dados, ag.URL)
+
+	s := iniciar(t, dados)
+	select {
+	case <-ag.chegou:
+	case <-time.After(10 * time.Second):
+		t.Fatal("o agente de teste não recebeu a conexão dos eventos")
+	}
+	ag.mu.Lock()
+	vistos := slices.Clone(ag.vistos)
+	ag.mu.Unlock()
+	if len(vistos) == 0 || vistos[0] != "Bearer "+chaveDoAgente {
+		t.Fatalf("Authorization = %q; queria Bearer com a chave", vistos)
+	}
+
+	// Desligar o chat fecha a conexão com o agente (o laço dos eventos para com o gerente).
+	if d := s.parar(t); d > 12*time.Second {
+		t.Fatalf("o desligamento levou %v", d)
+	}
+}
+
+// Sem o servidor de vídeo guardado, o chat sobe do mesmo jeito, e o entrar das reuniões dá 503 servidorVideo.
+func TestServidor_ReunioesSemVideo(t *testing.T) {
+	dados, codigo := preparar(t)
+	b, err := banco.Abrir(filepath.Join(dados, banco.NomeArquivo), tempo.Real())
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err := b.EmpresaPorCodigo(t.Context(), codigo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.LiberarReunioes(t.Context(), e.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	b.Fechar()
+
+	s := iniciar(t, dados)
+	chave := s.ligar(t, codigo)
+	inicio := time.Now().Add(time.Hour).UnixMilli()
+	resp := pedir(t, "POST", s.url+"/api/v1/reunioes", chave, map[string]any{"inicio": inicio})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("criar respondeu %d", resp.StatusCode)
+	}
+	var corpo struct {
+		Reuniao struct {
+			Codigo string `json:"codigo"`
+			Link   string `json:"link"`
+		} `json:"reuniao"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&corpo); err != nil {
+		t.Fatal(err)
+	}
+	// No modo de teste, o começo do link é http:// mais o endereço em que o chat escuta.
+	if want := s.url + "/r/" + corpo.Reuniao.Codigo; corpo.Reuniao.Link != want {
+		t.Fatalf("link = %q; queria %q", corpo.Reuniao.Link, want)
+	}
+	resp = pedir(t, "POST", s.url+"/api/v1/reunioes/"+corpo.Reuniao.Codigo+"/entrar", chave, nil)
+	if resp.StatusCode != http.StatusServiceUnavailable || lerCampo(t, resp, "erro") != "servidorVideo" {
+		t.Fatalf("entrar respondeu %d; queria 503 servidorVideo", resp.StatusCode)
+	}
+}
