@@ -23,7 +23,6 @@ const (
 
 	estiloQuadro = "{font_scale=0.25,min_font_size=8,max_font_size=20,fg=#FFFFFF,bg=#04060E}"
 
-	maximoCorpo   = 64 << 10
 	maximoNome    = 40
 	nomePadrao    = "Convidado"
 	nomeDaTelaFmt = "Tela de "
@@ -128,7 +127,8 @@ func Nova(chave []byte, uso *senha.UsoUnico, agora func() time.Time) http.Handle
 			http.Error(w, "método não permitido", http.StatusMethodNotAllowed)
 			return
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, maximoCorpo)
+		// O ParseForm já limita o corpo a 10 MB; o MaxBytesReader fica fora porque o govulncheck acusa o
+		// GO-2026-6859 (net/http 1.27.3) por ele.
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "pedido inválido", http.StatusBadRequest)
 			return
