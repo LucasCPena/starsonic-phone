@@ -236,3 +236,59 @@ func TestMostrarChave(t *testing.T) {
 		t.Errorf("sem o arquivo: saída %q e erros %q", saida.String(), erros.String())
 	}
 }
+
+func TestServir_ModoTesteSoLocal(t *testing.T) {
+	for _, escutar := range []string{"0.0.0.0:8095", "192.168.0.5:80", "localhost:8095", "[::]:8095"} {
+		var saida, erros bytes.Buffer
+		codigo := run([]string{"servir", "--teste", "--escutar", escutar}, &saida, &erros)
+		if codigo != 2 {
+			t.Errorf("%q: código %d, want 2", escutar, codigo)
+		}
+		if !strings.Contains(erros.String(), "o modo de teste só escuta em 127.0.0.1 ou [::1]") {
+			t.Errorf("%q: erros %q", escutar, erros.String())
+		}
+		if saida.Len() != 0 {
+			t.Errorf("%q: saída %q", escutar, saida.String())
+		}
+	}
+}
+
+func TestServir_UsoErrado(t *testing.T) {
+	casos := map[string][]string{
+		"escutar sem teste":     {"servir", "--escutar", "127.0.0.1:8095"},
+		"origem sem teste":      {"servir", "--origem", "http://127.0.0.1:8090"},
+		"argumento sobrando":    {"servir", "sobra"},
+		"origem com caminho":    {"servir", "--teste", "--origem", "http://127.0.0.1:8090/x"},
+		"origem sem esquema":    {"servir", "--teste", "--origem", "127.0.0.1:8090"},
+		"flag que não existe":   {"servir", "--inexistente"},
+		"origem com a consulta": {"servir", "--teste", "--origem", "http://127.0.0.1:8090?a=b"},
+	}
+	for nome, args := range casos {
+		var saida, erros bytes.Buffer
+		if codigo := run(args, &saida, &erros); codigo != 2 {
+			t.Errorf("%s: código %d, want 2 (erros %q)", nome, codigo, erros.String())
+		}
+		if saida.Len() != 0 {
+			t.Errorf("%s: saída %q", nome, saida.String())
+		}
+	}
+}
+
+// Um config.json que não vale é um erro de execução (1), e nada sobe.
+func TestServir_ConfigRuim(t *testing.T) {
+	var saida, erros bytes.Buffer
+	if codigo := run([]string{"servir", "--config", filepath.Join(t.TempDir(), "nao-existe.json")}, &saida, &erros); codigo != 1 {
+		t.Errorf("código %d, want 1", codigo)
+	}
+	if !strings.HasPrefix(erros.String(), "Erro: ") {
+		t.Errorf("erros %q", erros.String())
+	}
+}
+
+func TestUso_ListaOServir(t *testing.T) {
+	var saida, erros bytes.Buffer
+	run(nil, &saida, &erros)
+	if !strings.Contains(erros.String(), "servir [--config <arquivo>]") {
+		t.Errorf("o uso não fala do servir: %q", erros.String())
+	}
+}
