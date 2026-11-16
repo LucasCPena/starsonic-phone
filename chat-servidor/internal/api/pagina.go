@@ -57,15 +57,21 @@ type paginaReuniaoJSON struct {
 	Inicio  *int64  `json:"inicio"`
 }
 
-// POST /api/v1/pagina/reunioes/{codigo}: sem chave e sem corpo. Toda tentativa conta na janela das aberturas, as que
-// dão certo também (M-31), e a janela é a mesma do entrar do app. O código que não existe, a reunião que não vale e
-// a empresa sem as reuniões liberadas dão o mesmo 404: a página não aprende qual deles foi.
+// POST /api/v1/pagina/reunioes/{codigo}: sem chave e sem corpo. A janela das aberturas é a mesma do entrar do app, e
+// é conferida primeiro (sem contar): cheia, é 429 tentativas, até com o código certo. Conta nela só o abrir que falha,
+// o 404, como no entrar: o abrir que leva a uma reunião em que a pessoa pode entrar não conta, e a página pode abrir
+// de novo. O código que não existe, a reunião que não vale e a empresa sem as reuniões liberadas dão o mesmo 404: a
+// página não aprende qual deles foi.
 func (s *servidor) abrirPagina(w http.ResponseWriter, r *http.Request) {
-	if ok, esperar := s.aberturas.Usar(limites.Endereco(r), 1); !ok {
+	endereco := limites.Endereco(r)
+	if ok, esperar := s.aberturas.Cabe(endereco, 1); !ok {
 		erroEspera(w, "tentativas", esperar)
 		return
 	}
-	naoEncontrado := func() { escreverErro(w, http.StatusNotFound, "naoEncontrado", nil) }
+	naoEncontrado := func() {
+		s.aberturas.Contar(endereco, 1)
+		escreverErro(w, http.StatusNotFound, "naoEncontrado", nil)
+	}
 	codigo, ok := segredo.NormalizarCodigoReuniao(r.PathValue("codigo"))
 	if !ok {
 		naoEncontrado()

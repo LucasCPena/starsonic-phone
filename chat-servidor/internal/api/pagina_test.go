@@ -226,14 +226,15 @@ func TestAbrir(t *testing.T) {
 	t.Run("o 21º no minuto dá 429, contando junto com o entrar do app", func(t *testing.T) {
 		c := novaCenaR(t)
 		r := c.marcada(t, c.kAna)
-		// Um entrar que dá certo não conta.
+		// Um entrar e um abrir que dão certo não contam.
 		c.entrar(t, c.kCarlos, r.Codigo)
+		if status, _ := c.a.AbrirPagina(r.Codigo); status != http.StatusOK {
+			t.Fatalf("o abrir deu %d", status)
+		}
 		// Do mesmo endereço: 10 abrir da página e 10 entrar do app com um código errado.
 		for i := range 10 {
-			if status, _ := c.a.AbrirPagina(r.Codigo); status != http.StatusOK {
-				t.Fatalf("o abrir %d deu %d", i, status)
-			}
-			esperarErro(t, c.entrarEm(c.kCarlos, codigoQueNaoExiste(i)), 404, "naoEncontrado")
+			esperarErro(t, c.a.Pedir("", "POST", "/api/v1/pagina/reunioes/"+codigoQueNaoExiste(i), nil), 404, "naoEncontrado")
+			esperarErro(t, c.entrarEm(c.kCarlos, codigoQueNaoExiste(10+i)), 404, "naoEncontrado")
 		}
 		e := esperarErro(t, c.a.Pedir("", "POST", "/api/v1/pagina/reunioes/"+r.Codigo, nil), 429, "tentativas")
 		if e.EsperarSegundos < 1 || e.EsperarSegundos > 60 {
@@ -247,11 +248,19 @@ func TestAbrir(t *testing.T) {
 		}
 	})
 
-	t.Run("o abrir que dá certo também conta", func(t *testing.T) {
+	// Conta só o abrir que não leva a uma reunião em que a pessoa possa entrar (seções 9, 10 e 12 do protocolo): a
+	// página pode abrir de novo à vontade, e um escritório atrás de um endereço só abre o link de uma vez.
+	t.Run("o abrir que dá certo não conta", func(t *testing.T) {
 		c := novaCenaR(t)
 		r := c.marcada(t, c.kAna)
-		for range 20 {
-			c.a.AbrirPagina(r.Codigo)
+		for i := range 25 {
+			if status, _ := c.a.AbrirPagina(r.Codigo); status != http.StatusOK {
+				t.Fatalf("o abrir %d deu %d", i, status)
+			}
+		}
+		// E a janela continua com as 20 tentativas erradas inteiras.
+		for i := range 20 {
+			esperarErro(t, c.a.Pedir("", "POST", "/api/v1/pagina/reunioes/"+codigoQueNaoExiste(i), nil), 404, "naoEncontrado")
 		}
 		esperarErro(t, c.a.Pedir("", "POST", "/api/v1/pagina/reunioes/"+r.Codigo, nil), 429, "tentativas")
 	})
