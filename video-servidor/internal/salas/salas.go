@@ -1,6 +1,6 @@
 // Package salas guarda as reuniões que existem no FreeSWITCH: quem está em cada sala, montado pelos eventos das
 // conferências, e manda ao FreeSWITCH o que o agente decide (os layouts, tirar e encerrar). O contrato é a
-// seção 5 do docs/video-agente.md.
+// seção 5 do docs/video-agente.md, e as regras da ligação principal são as da seção 6.
 //
 // Um mutex guarda o estado, e nenhum comando ao FreeSWITCH nem aviso sai com ele preso.
 package salas
@@ -36,7 +36,8 @@ type Aviso struct {
 	Tela         bool
 }
 
-// Participante é uma ligação da sala: a da câmera, com Tela falso, ou a da tela compartilhada.
+// Participante é uma ligação da sala: a principal (a da câmera, que leva o som), com Tela falso, ou a da tela
+// compartilhada.
 type Participante struct {
 	Participante string `json:"participante"`
 	Tela         bool   `json:"tela"`
@@ -145,6 +146,10 @@ func (s *Salas) Evento(ctx context.Context, ev esl.Evento) {
 	}
 }
 
+// entrou põe a ligação na sala e segue as regras da ligação principal (seção 6 do contrato): a tela de quem não tem
+// a principal na sala cai na hora, antes do aviso e de qualquer layout, e não entra no estado; uma principal nova
+// derruba a anterior do mesmo participante. Enquanto um Reconstruir lê o FreeSWITCH, o estado está pela metade, e as
+// regras esperam. Uma tela nova toma sempre o lugar da anterior.
 func (s *Salas) entrou(ctx context.Context, sala string, ev esl.Evento) {
 	uuid := ev["Unique-ID"]
 	participante := ev["variable_starsonic_participante"]
@@ -163,32 +168,53 @@ func (s *Salas) entrou(ctx context.Context, sala string, ev esl.Evento) {
 		s.mu.Unlock()
 		return
 	}
-	var anteriores []string
+	regras := s.reconstruindo == 0
+	var telas, principais []string // as telas da sala, e as principais do participante
 	for u, l := range ligacoes {
-		if l.tela {
-			anteriores = append(anteriores, u)
+		switch {
+		case l.tela:
+			telas = append(telas, u)
+		case l.participante == participante:
+			principais = append(principais, u)
 		}
 	}
-	sort.Strings(anteriores)
+	api := s.api
+	if regras && tela && len(principais) == 0 {
+		s.mu.Unlock()
+		if api != nil {
+			api.API(ctx, "uuid_kill "+uuid)
+		}
+		return
+	}
 	ligacoes[uuid] = ligacao{participante: participante, tela: tela}
 	delete(s.uuidsSaidos[sala], uuid)
-	api := s.api
 	s.mu.Unlock()
 
 	s.avisar(Aviso{Tipo: "entrou", Sala: sala, Participante: participante, Tela: tela})
-	if !tela || api == nil {
+	if api == nil {
 		return
 	}
-	if len(anteriores) == 0 {
+	var derrubar []string
+	switch {
+	case !tela:
+		if regras {
+			derrubar = principais // a principal nova toma o lugar da anterior
+		}
+	case len(telas) == 0:
 		api.API(ctx, "conference "+sala+" vid-layout "+layoutTela)
-		return
+	default:
+		derrubar = telas // uma tela nova toma o lugar da anterior
 	}
-	// Uma tela nova toma o lugar da anterior.
-	for _, u := range anteriores {
+	sort.Strings(derrubar)
+	for _, u := range derrubar {
 		api.API(ctx, "uuid_kill "+u)
 	}
 }
 
+// saiu tira a ligação da sala. O saiu só é avisado quando sai a última ligação daquele tipo (a principal, ou a tela)
+// do participante: a que outra do mesmo participante substituiu sai sem aviso, porque ele continua na sala. Quando sai
+// a última principal, as telas dele caem também (fora de um Reconstruir, como no entrou), e quando sai a última tela
+// da sala, o layout volta à grade.
 func (s *Salas) saiu(ctx context.Context, sala, uuid string) {
 	s.mu.Lock()
 	if s.reconstruindo > 0 {
@@ -203,19 +229,40 @@ func (s *Salas) saiu(ctx context.Context, sala, uuid string) {
 		return
 	}
 	delete(s.salas[sala], uuid)
-	restamTelas := false
-	for _, outra := range s.salas[sala] {
+	restamTelas, restaOutra := false, false
+	var telasDele []string
+	for u, outra := range s.salas[sala] {
 		if outra.tela {
 			restamTelas = true
-			break
+		}
+		if outra.participante != l.participante {
+			continue
+		}
+		if outra.tela == l.tela {
+			restaOutra = true
+		}
+		if outra.tela {
+			telasDele = append(telasDele, u)
 		}
 	}
+	regras := s.reconstruindo == 0
 	api := s.api
 	s.mu.Unlock()
 
-	s.avisar(Aviso{Tipo: "saiu", Sala: sala, Participante: l.participante, Tela: l.tela})
-	if l.tela && !restamTelas && api != nil {
+	if !restaOutra {
+		s.avisar(Aviso{Tipo: "saiu", Sala: sala, Participante: l.participante, Tela: l.tela})
+	}
+	if api == nil {
+		return
+	}
+	if l.tela && !restamTelas {
 		api.API(ctx, "conference "+sala+" vid-layout group "+grupoGrade)
+	}
+	if !l.tela && !restaOutra && regras {
+		sort.Strings(telasDele)
+		for _, u := range telasDele {
+			api.API(ctx, "uuid_kill "+u)
+		}
 	}
 }
 
@@ -359,7 +406,9 @@ func listaDeConferencias(resposta string) ([]conferenciaJSON, error) {
 
 // Reconstruir lê do FreeSWITCH as salas que já existem (o agente reiniciou, ou o ESL acabou de conectar) e as
 // junta ao estado: as ligações que o estado já tem ficam como estão. Não avisa nada, porque quem acompanha manda
-// o estado inteiro depois. Uma ligação que sumiu no meio da leitura, ou que não é nossa (sem o
+// o estado inteiro depois, e não derruba nada: refaz o que acha, também a tela sem a principal e a segunda principal
+// do mesmo participante; as regras da ligação principal são dos eventos, e esperam enquanto ela lê. Uma ligação que
+// sumiu no meio da leitura, ou que não é nossa (sem o
 // starsonic_participante), fica de fora. Se o Esvaziar roda durante a leitura (o ESL caiu), a junção inteira é
 // descartada e o Reconstruir devolve nil: o que foi lido é de antes da queda, e a próxima conexão reconstrói.
 func (s *Salas) Reconstruir(ctx context.Context) error {

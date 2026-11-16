@@ -98,6 +98,7 @@ Tudo vai em HTTPS, na 443 do servidor de vídeo, com `Authorization: Bearer <cha
 - O chat deixa essa conexão sempre aberta e, quando ela cai, conecta de novo. O primeiro evento de cada conexão é um `estado`.
 - Quando o FreeSWITCH cai, o agente manda um `acabou` para cada sala e depois um `estado` vazio. Quando ele volta, o agente lê as salas que existem e manda um `estado`.
 - Um cliente que conecta no meio de uma mudança pode receber o `estado` novo e depois um aviso (`entrou`, `saiu` ou `acabou`) que o `estado` já mostra. O chat trata os avisos como idempotentes.
+- O `saiu` vem quando sai a última ligação daquele tipo do participante na sala, a principal ou a tela. A ligação que outra do mesmo participante substituiu (seção 6) sai sem o `saiu`: ele continua na sala.
 - Um cliente que não lê é desligado, sem atrasar os outros.
 
 **Tirar** — `POST /agente/v1/salas/{sala}/participantes/{participante}/tirar`: `204`. As ligações do participante, a da câmera e a da tela, acabam.
@@ -125,6 +126,12 @@ Tudo vai em HTTPS, na 443 do servidor de vídeo, com `Authorization: Bearer <cha
 - **A imagem que chega ao servidor:** até 1 Mbit/s, pedido no SDP da resposta (`b=AS:1000`). O mosaico que sai é de cerca de 1,5 Mbit/s.
 - **Toda ligação manda som,** também a da tela: o microfone, ou um silêncio gerado quando a pessoa está sem microfone ou com ele desligado. O FreeSWITCH olha o que chega da ligação (o `media_timeout` de 60 segundos, que a discagem põe): uma ligação de que nada chega por 60 segundos, nem o RTP, nem o RTCP, nem as verificações do ICE, cai sozinha, e é assim que sai quem fechou a aba ou perdeu a rede. Um navegador aberto que parou só o som, e continua mandando o RTCP e o ICE, não cai por isso: o FreeSWITCH conta tudo o que chega.
 - **A ligação da tela compartilhada** é uma segunda ligação da mesma pessoa, com a senha de `tela` verdadeiro. Ela manda um silêncio gerado no som e a tela no vídeo, os dois só para mandar. Uma tela nova toma o lugar da anterior: o agente derruba a ligação da tela anterior.
+- **Cada participante tem uma ligação principal na sala:** a da câmera, que leva o som. O agente segue três regras nos eventos do FreeSWITCH:
+  - a ligação da tela de um participante sem a principal na sala cai na hora, antes de qualquer mudança de layout e sem o `entrou`: o quadro grande nunca é dela, e o chat não a vê;
+  - quando a última principal de um participante sai da sala, as telas dele caem com ela;
+  - uma principal nova toma o lugar da anterior do mesmo participante: o agente derruba a anterior.
+
+  A reconstrução, quando o agente reinicia ou o ESL volta, refaz as salas como estão no FreeSWITCH e não derruba nada. Enquanto ela lê, as três regras esperam.
 
 ## 7. A reunião no FreeSWITCH
 - **O nome da conferência** é a `sala`, e o perfil é o `starsonic`:

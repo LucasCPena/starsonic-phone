@@ -43,11 +43,14 @@ func TestMain(m *testing.M) {
 const (
 	salaA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
-	anaID = "a1a1a1a1a1a1a1a1"
-	biaID = "b3b3b3b3b3b3b3b3"
+	anaID    = "a1a1a1a1a1a1a1a1"
+	biaID    = "b3b3b3b3b3b3b3b3"
+	carlosID = "c2c2c2c2c2c2c2c2"
 
-	uuidAna = "00000000-0000-4000-8000-0000000000a1"
-	uuidBia = "00000000-0000-4000-8000-0000000000b1"
+	uuidAna     = "00000000-0000-4000-8000-0000000000a1"
+	uuidBia     = "00000000-0000-4000-8000-0000000000b1"
+	uuidBiaTela = "00000000-0000-4000-8000-0000000000b2"
+	uuidCarlos  = "00000000-0000-4000-8000-0000000000c1"
 
 	senhaESL = "Ab12Cd34Ef56Gh78Ij90Kl12Mn34Op56"
 )
@@ -218,6 +221,13 @@ func entra(sala, uuid, participante string) esl.Evento {
 		"variable_starsonic_participante": participante,
 		"variable_starsonic_tela":         "false",
 	}
+}
+
+// entraTela é o add-member da ligação da tela compartilhada.
+func entraTela(sala, uuid, participante string) esl.Evento {
+	ev := entra(sala, uuid, participante)
+	ev["variable_starsonic_tela"] = "true"
+	return ev
 }
 
 func sai(sala, uuid string) esl.Evento {
@@ -725,6 +735,51 @@ func TestESL_Reconecta(t *testing.T) {
 
 // s0 são as opções do modo de teste, com a origem do chat.
 func s0() opcoes { return opcoes{origens: []string{configDeTeste().OrigemDoChat()}} }
+
+// Quem foi tirado e liga a tela com uma senha da tela que ainda valia (a revisão final, I1): o tirar chega pela API do
+// chat, os eventos pelo ESL, e o que sai para o chat pelos eventos do agente. A ligação da tela cai na hora, o layout
+// não muda, e nenhum entrou sai para o chat (seção 6 do contrato).
+func TestTirar_TelaDeQuemFoiTirado(t *testing.T) {
+	a := prepararAmbiente(t)
+	a.esl.Responder("uuid_kill", "+OK\n")
+	s := iniciar(t, s0())
+	eventos := conectarEventos(t, s.url(), s.c.Chave)
+	eventos.ate(t, ehEstado(true))
+	a.esl.Mandar(entra(salaA, uuidAna, anaID))
+	a.esl.Mandar(entra(salaA, uuidBia, biaID))
+	eventos.ate(t, func(ev map[string]any) bool { return ev["tipo"] == "entrou" && ev["participante"] == biaID })
+
+	// O chat tira a Bia: o agente derruba a câmera dela, e o FreeSWITCH avisa que ela saiu.
+	resp := pedir(t, http.DefaultClient, "POST", s.url()+"/agente/v1/salas/"+salaA+"/participantes/"+biaID+"/tirar", s.c.Chave)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("tirar: %d, want 204", resp.StatusCode)
+	}
+	esperarAte(t, 3*time.Second, "o uuid_kill da câmera da Bia", func() bool {
+		return contar(a.esl.Comandos(), "api uuid_kill "+uuidBia) == 1
+	})
+	a.esl.Mandar(sai(salaA, uuidBia))
+	if ev := eventos.proximo(t); ev["tipo"] != "saiu" || ev["participante"] != biaID {
+		t.Fatalf("depois do tirar, o chat recebeu %v; want o saiu da Bia", ev)
+	}
+
+	// A Bia liga a tela com a senha que ainda valia.
+	a.esl.Mandar(entraTela(salaA, uuidBiaTela, biaID))
+	esperarAte(t, 3*time.Second, "o uuid_kill da tela da Bia", func() bool {
+		return contar(a.esl.Comandos(), "api uuid_kill "+uuidBiaTela) == 1
+	})
+	a.esl.Mandar(sai(salaA, uuidBiaTela))
+	// Os eventos saem na ordem: o próximo que o chat recebe é a entrada do Carlos, e nada da tela da Bia.
+	a.esl.Mandar(entra(salaA, uuidCarlos, carlosID))
+	if ev := eventos.proximo(t); ev["tipo"] != "entrou" || ev["participante"] != carlosID {
+		t.Fatalf("depois da tela da Bia, o chat recebeu %v; want a entrada do Carlos", ev)
+	}
+	for _, c := range a.esl.Comandos() {
+		if strings.Contains(c, "vid-layout") {
+			t.Errorf("o layout mudou: %q", c)
+		}
+	}
+}
 
 // Sem o FreeSWITCH no ar, o agente continua de pé, diz isso nos eventos e tenta de novo, com a espera subindo.
 func TestESL_ForaDoAr(t *testing.T) {

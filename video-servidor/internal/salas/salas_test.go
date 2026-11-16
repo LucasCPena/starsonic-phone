@@ -12,12 +12,14 @@ import (
 	"time"
 
 	"github.com/LucasCPena/starsonic-phone/video-servidor/internal/esl"
+	"github.com/LucasCPena/starsonic-phone/video-servidor/internal/esl/esltest"
 )
 
 // Os nomes são inventados: as salas e os participantes são hexadecimais de teste.
 const (
 	salaA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	salaB = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	salaC = "cccccccccccccccccccccccccccccccc" // só a da barreira dos testes com o ESL falso
 
 	anaID    = "a1a1a1a1a1a1a1a1"
 	carlosID = "c2c2c2c2c2c2c2c2"
@@ -25,11 +27,17 @@ const (
 
 	uuidAnaCamera   = "00000000-0000-4000-8000-0000000000a1"
 	uuidAnaTela     = "00000000-0000-4000-8000-0000000000a2"
+	uuidAnaCamera2  = "00000000-0000-4000-8000-0000000000a3" // a segunda ligação da câmera da Ana
 	uuidCarlosCam   = "00000000-0000-4000-8000-0000000000c1"
 	uuidCarlosTela  = "00000000-0000-4000-8000-0000000000c2"
+	uuidCarlosCam2  = "00000000-0000-4000-8000-0000000000c3"
 	uuidBiaCamera   = "00000000-0000-4000-8000-0000000000b1"
+	uuidBiaTela     = "00000000-0000-4000-8000-0000000000b2"
+	uuidBiaCamera2  = "00000000-0000-4000-8000-0000000000b3"
 	grupoSemTela    = "conference " + salaA + " vid-layout group starsonic-grade"
 	layoutApresenta = "conference " + salaA + " vid-layout starsonic-apresentacao"
+
+	senhaESL = "Ab12Cd34Ef56Gh78Ij90Kl12Mn34Op56"
 )
 
 // apiFalsa guarda os comandos e responde pelo que foi combinado.
@@ -135,6 +143,103 @@ func novo(t *testing.T) (*Salas, *apiFalsa, *avisos) {
 
 func ctx() context.Context { return context.Background() }
 
+// comESL liga as salas a um FreeSWITCH falso (o esltest) pelo cliente do ESL, como o agente faz: os eventos chegam
+// pela conexão, na ordem, e os comandos saem por ela. O FreeSWITCH falso responde +OK aos comandos das salas.
+func comESL(t *testing.T) (*Salas, *esltest.Servidor, *avisos) {
+	t.Helper()
+	fs := esltest.Novo(t, senhaESL)
+	fs.Responder("uuid_kill", "+OK\n")
+	fs.Responder("conference", "+OK\n")
+	c, cancel := context.WithTimeout(ctx(), 10*time.Second)
+	defer cancel()
+	conn, err := esl.Conectar(c, fs.Endereco(), senhaESL)
+	if err != nil {
+		t.Fatalf("Conectar: %v", err)
+	}
+	v := &avisos{}
+	s := Nova(v.Avisar)
+	s.Ligar(conn)
+	passou := make(chan struct{})
+	go func() {
+		defer close(passou)
+		for ev := range conn.Eventos() {
+			s.Evento(ctx(), ev)
+		}
+	}()
+	t.Cleanup(func() {
+		conn.Fechar()
+		<-passou
+	})
+	return s, fs, v
+}
+
+// esperarComando espera o FreeSWITCH falso receber o comando, por até 5 s.
+func esperarComando(t *testing.T, fs *esltest.Servidor, comando string) {
+	t.Helper()
+	fim := time.Now().Add(5 * time.Second)
+	for contarComando(fs.Comandos(), comando) == 0 {
+		if time.Now().After(fim) {
+			t.Fatalf("o comando %q não chegou em 5 s; chegaram %q", comando, fs.Comandos())
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
+func contarComando(comandos []string, quero string) int {
+	n := 0
+	for _, c := range comandos {
+		if c == quero {
+			n++
+		}
+	}
+	return n
+}
+
+// barreira manda o fim da sala C e espera o aviso dele: os eventos chegam na ordem, então, quando ele chega, tudo o
+// que foi mandado antes já foi tratado, com os comandos que pediu.
+func barreira(t *testing.T, fs *esltest.Servidor, v *avisos) {
+	t.Helper()
+	contar := func() int {
+		n := 0
+		for _, a := range v.Lista() {
+			if a.Sala == salaC {
+				n++
+			}
+		}
+		return n
+	}
+	antes := contar()
+	fs.Mandar(acaba(salaC))
+	fim := time.Now().Add(5 * time.Second)
+	for contar() == antes {
+		if time.Now().After(fim) {
+			t.Fatal("a barreira não passou em 5 s")
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
+// semBarreira são os avisos sem os da barreira.
+func semBarreira(lista []Aviso) []Aviso {
+	var saida []Aviso
+	for _, a := range lista {
+		if a.Sala != salaC {
+			saida = append(saida, a)
+		}
+	}
+	return saida
+}
+
+// semLayout confere que o FreeSWITCH falso não recebeu nenhuma mudança de layout da sala A.
+func semLayout(t *testing.T, fs *esltest.Servidor) {
+	t.Helper()
+	for _, c := range fs.Comandos() {
+		if strings.HasPrefix(c, "api conference "+salaA+" vid-layout") {
+			t.Errorf("o layout mudou: %q", c)
+		}
+	}
+}
+
 func TestSalas_EntrouSaiu(t *testing.T) {
 	s, _, v := novo(t)
 	s.Evento(ctx(), entra(salaA, uuidAnaCamera, anaID, false))
@@ -173,8 +278,8 @@ func TestSalas_Estado(t *testing.T) {
 	t.Run("o JSON é o da seção 5 do contrato, em ordem estável", func(t *testing.T) {
 		s, _, _ := novo(t)
 		s.Evento(ctx(), entra(salaB, uuidBiaCamera, biaID, false))
+		s.Evento(ctx(), entra(salaA, uuidCarlosCam, carlosID, false)) // a tela só entra depois da câmera (seção 6)
 		s.Evento(ctx(), entra(salaA, uuidCarlosTela, carlosID, true))
-		s.Evento(ctx(), entra(salaA, uuidCarlosCam, carlosID, false))
 		s.Evento(ctx(), entra(salaA, uuidAnaCamera, anaID, false))
 		b, _ := json.Marshal(s.Estado())
 		want := fmt.Sprintf(`[{"sala":%q,"participantes":[{"participante":%q,"tela":false},{"participante":%q,"tela":false},{"participante":%q,"tela":true}]},{"sala":%q,"participantes":[{"participante":%q,"tela":false}]}]`,
@@ -241,6 +346,111 @@ func TestSalas_Tela_SemFreeSWITCH(t *testing.T) {
 	s.Evento(ctx(), sai(salaA, uuidAnaTela))
 	if got := s.Estado(); len(got) != 1 || len(got[0].Participantes) != 0 {
 		t.Errorf("Estado = %+v", got)
+	}
+}
+
+// A primeira regra da ligação principal (seção 6 do contrato): a tela de quem não tem a ligação principal (a da câmera)
+// na sala cai na hora, antes de qualquer mudança de layout e sem o entrou. O quadro grande nunca é dela, e o chat não
+// a vê: é a tela de alguém que foi tirado e ligou com uma senha da tela que ainda valia.
+func TestSalas_TelaSemAPrincipal(t *testing.T) {
+	s, fs, v := comESL(t)
+	fs.Mandar(entra(salaA, uuidAnaCamera, anaID, false))
+	fs.Mandar(entra(salaA, uuidCarlosTela, carlosID, true)) // o Carlos não tem a câmera na sala
+	esperarComando(t, fs, "api uuid_kill "+uuidCarlosTela)
+	// O FreeSWITCH avisa que ela saiu: isso também não muda nada.
+	fs.Mandar(sai(salaA, uuidCarlosTela))
+	barreira(t, fs, v)
+	semLayout(t, fs)
+	if got, want := semBarreira(v.Lista()), []Aviso{{Tipo: "entrou", Sala: salaA, Participante: anaID}}; !reflect.DeepEqual(got, want) {
+		t.Errorf("avisos = %+v, want %+v", got, want)
+	}
+	if got, want := s.Estado(), []Sala{{Sala: salaA, Participantes: []Participante{{anaID, false}}}}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Estado = %+v, want %+v", got, want)
+	}
+
+	// A tela de quem tem a câmera na sala entra, como sempre.
+	fs.Mandar(entra(salaA, uuidAnaTela, anaID, true))
+	esperarComando(t, fs, "api "+layoutApresenta)
+	if n := contarComando(fs.Comandos(), "api uuid_kill "+uuidAnaTela); n != 0 {
+		t.Errorf("a tela da Ana, com a câmera dela na sala, caiu")
+	}
+}
+
+// A segunda regra: quando a última ligação principal de um participante sai da sala, as telas dele caem com ela (a
+// câmera caiu, ou ele foi tirado), e o layout volta à grade quando a tela sai.
+func TestSalas_TelaSaiComAPrincipal(t *testing.T) {
+	s, fs, v := comESL(t)
+	fs.Mandar(entra(salaA, uuidAnaCamera, anaID, false))
+	fs.Mandar(entra(salaA, uuidCarlosCam, carlosID, false))
+	fs.Mandar(entra(salaA, uuidAnaTela, anaID, true))
+	esperarComando(t, fs, "api "+layoutApresenta)
+
+	// A câmera de outra pessoa sai: a tela da Ana fica.
+	fs.Mandar(sai(salaA, uuidCarlosCam))
+	barreira(t, fs, v)
+	if n := contarComando(fs.Comandos(), "api uuid_kill "+uuidAnaTela); n != 0 {
+		t.Fatalf("a saída do Carlos derrubou a tela da Ana")
+	}
+
+	// A câmera da Ana cai: a tela dela cai junto.
+	fs.Mandar(sai(salaA, uuidAnaCamera))
+	esperarComando(t, fs, "api uuid_kill "+uuidAnaTela)
+	fs.Mandar(sai(salaA, uuidAnaTela))
+	esperarComando(t, fs, "api "+grupoSemTela)
+	barreira(t, fs, v)
+	want := []Aviso{
+		{Tipo: "entrou", Sala: salaA, Participante: anaID},
+		{Tipo: "entrou", Sala: salaA, Participante: carlosID},
+		{Tipo: "entrou", Sala: salaA, Participante: anaID, Tela: true},
+		{Tipo: "saiu", Sala: salaA, Participante: carlosID},
+		{Tipo: "saiu", Sala: salaA, Participante: anaID},
+		{Tipo: "saiu", Sala: salaA, Participante: anaID, Tela: true},
+	}
+	if got := semBarreira(v.Lista()); !reflect.DeepEqual(got, want) {
+		t.Errorf("avisos = %+v\nwant %+v", got, want)
+	}
+	if got := s.Estado(); len(got) != 1 || len(got[0].Participantes) != 0 {
+		t.Errorf("Estado = %+v", got)
+	}
+}
+
+// A terceira regra: uma ligação principal nova do participante toma o lugar da anterior, que o agente derruba. O chat
+// não recebe o saiu da anterior: o participante continua na sala, e a tela dele também. O saiu vem quando sai a última.
+func TestSalas_PrincipalNovaTomaOLugar(t *testing.T) {
+	s, fs, v := comESL(t)
+	fs.Mandar(entra(salaA, uuidAnaCamera, anaID, false))
+	fs.Mandar(entra(salaA, uuidAnaTela, anaID, true))
+	esperarComando(t, fs, "api "+layoutApresenta)
+
+	// Uma segunda senha da câmera da Ana, usada: a ligação anterior cai.
+	fs.Mandar(entra(salaA, uuidAnaCamera2, anaID, false))
+	esperarComando(t, fs, "api uuid_kill "+uuidAnaCamera)
+	fs.Mandar(sai(salaA, uuidAnaCamera))
+	barreira(t, fs, v)
+	if n := contarComando(fs.Comandos(), "api uuid_kill "+uuidAnaTela); n != 0 {
+		t.Fatalf("a troca da câmera derrubou a tela da Ana")
+	}
+	want := []Aviso{
+		{Tipo: "entrou", Sala: salaA, Participante: anaID},
+		{Tipo: "entrou", Sala: salaA, Participante: anaID, Tela: true},
+		{Tipo: "entrou", Sala: salaA, Participante: anaID},
+	}
+	if got := semBarreira(v.Lista()); !reflect.DeepEqual(got, want) {
+		t.Fatalf("avisos = %+v\nwant %+v (sem o saiu da câmera anterior)", got, want)
+	}
+	if got, want := s.Estado(), []Sala{{Sala: salaA, Participantes: []Participante{{anaID, false}, {anaID, true}}}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Estado = %+v, want %+v", got, want)
+	}
+
+	// A última principal sai: o saiu vem, e a tela cai com ela.
+	fs.Mandar(sai(salaA, uuidAnaCamera2))
+	esperarComando(t, fs, "api uuid_kill "+uuidAnaTela)
+	barreira(t, fs, v)
+	if got := semBarreira(v.Lista()); len(got) != 4 || got[3] != (Aviso{Tipo: "saiu", Sala: salaA, Participante: anaID}) {
+		t.Errorf("avisos = %+v; o último devia ser o saiu da câmera da Ana", got)
+	}
+	if n := contarComando(fs.Comandos(), "api uuid_kill "+uuidAnaCamera2); n != 0 {
+		t.Errorf("a câmera nova também caiu")
 	}
 }
 
@@ -509,11 +719,60 @@ func TestSalas_Reconstruir(t *testing.T) {
 	if !vistos["uuid_kill "+uuidAnaCamera] || !vistos["uuid_kill "+uuidAnaTela] {
 		t.Errorf("Tirar mandou %q", got)
 	}
-	// E uma tela nova depois da volta toma o lugar da que já estava.
+	// E uma tela nova depois da volta toma o lugar da que já estava. A do Carlos entra depois da câmera dele: a tela
+	// sem a ligação principal na sala cai (seção 6).
+	s.Evento(ctx(), entra(salaA, uuidCarlosCam, carlosID, false))
 	a.Limpar()
 	s.Evento(ctx(), entra(salaA, uuidCarlosTela, carlosID, true))
 	if got := a.Comandos(); !reflect.DeepEqual(got, []string{"uuid_kill " + uuidAnaTela}) {
 		t.Errorf("tela nova depois da volta: comandos = %q", got)
+	}
+}
+
+// A reconstrução refaz o que acha no FreeSWITCH e não derruba nada: nem a tela de quem não tem a câmera na sala, nem a
+// segunda câmera do mesmo participante. Enquanto ela lê, o estado está pela metade, e as regras da ligação principal
+// esperam: os eventos do meio da leitura também não derrubam ninguém.
+func TestSalas_Reconstruir_NaoDerruba(t *testing.T) {
+	s := Nova(nil)
+	a := novaAPI()
+	a.respostas["conference json_list"] = listaFS(map[string][]string{
+		salaA: {uuidAnaTela, uuidCarlosCam, uuidCarlosCam2},
+	}, []string{salaA})
+	for uuid, p := range map[string][2]string{
+		uuidAnaTela: {anaID, "true"}, uuidCarlosCam: {carlosID, "false"}, uuidCarlosCam2: {carlosID, "false"},
+	} {
+		a.respostas["uuid_getvar "+uuid+" starsonic_participante"] = p[0]
+		a.respostas["uuid_getvar "+uuid+" starsonic_tela"] = p[1]
+	}
+	// No último getvar, com tudo lido e nada juntado, a Bia entra na sala B com a câmera e a tela, troca a câmera por
+	// outra e sai com as duas: fora da reconstrução, a câmera nova derrubaria a anterior e a saída da última derrubaria
+	// a tela.
+	ultimo := "uuid_getvar " + uuidCarlosCam2 + " starsonic_tela"
+	a.durante = func() {
+		if cmds := a.Comandos(); cmds[len(cmds)-1] == ultimo {
+			a.durante = nil
+			s.Evento(ctx(), entra(salaB, uuidBiaCamera, biaID, false))
+			s.Evento(ctx(), entra(salaB, uuidBiaTela, biaID, true))
+			s.Evento(ctx(), entra(salaB, uuidBiaCamera2, biaID, false))
+			s.Evento(ctx(), sai(salaB, uuidBiaCamera))
+			s.Evento(ctx(), sai(salaB, uuidBiaCamera2))
+		}
+	}
+	s.Ligar(a)
+	if err := s.Reconstruir(ctx()); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range a.Comandos() {
+		if strings.HasPrefix(c, "uuid_kill") {
+			t.Errorf("a reconstrução derrubou uma ligação: %q", c)
+		}
+	}
+	want := []Sala{
+		{Sala: salaA, Participantes: []Participante{{anaID, true}, {carlosID, false}, {carlosID, false}}},
+		{Sala: salaB, Participantes: []Participante{{biaID, true}}},
+	}
+	if got := s.Estado(); !reflect.DeepEqual(got, want) {
+		t.Errorf("Estado = %+v\nwant %+v", got, want)
 	}
 }
 
@@ -645,6 +904,11 @@ func TestSalas_ComandosForaDoMutex(t *testing.T) {
 		s.Evento(ctx(), entra(salaA, uuidCarlosTela, carlosID, true))
 		s.Evento(ctx(), sai(salaA, uuidAnaTela))
 		s.Evento(ctx(), sai(salaA, uuidCarlosTela))
+		// As regras da ligação principal (seção 6): a câmera nova derruba a anterior, e a saída da última derruba a tela.
+		s.Evento(ctx(), entra(salaA, uuidAnaTela, anaID, true))
+		s.Evento(ctx(), entra(salaA, uuidAnaCamera2, anaID, false))
+		s.Evento(ctx(), sai(salaA, uuidAnaCamera))
+		s.Evento(ctx(), sai(salaA, uuidAnaCamera2))
 		_ = s.Tirar(ctx(), salaA, anaID)
 		_ = s.Encerrar(ctx(), salaA)
 		a.respostas["conference json_list"] = listaFS(map[string][]string{salaB: {uuidBiaCamera}}, []string{salaB})
