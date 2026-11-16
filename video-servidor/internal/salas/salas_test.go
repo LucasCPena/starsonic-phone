@@ -759,6 +759,22 @@ func TestSalas_Reconstruir_EventosDuranteALeitura(t *testing.T) {
 			t.Errorf("Estado = %+v, want %+v", got, want)
 		}
 	})
+	t.Run("um Esvaziar durante a leitura deixa o estado vazio", func(t *testing.T) {
+		s, a, _ := montaReconstrucao(t)
+		a.durante = func() {
+			cmds := a.Comandos()
+			if cmds[len(cmds)-1] == ultimo {
+				a.durante = nil
+				s.Esvaziar()
+			}
+		}
+		if err := s.Reconstruir(ctx()); err != nil {
+			t.Fatal(err)
+		}
+		if got := s.Estado(); len(got) != 0 {
+			t.Errorf("Estado = %+v, want vazio", got)
+		}
+	})
 	t.Run("o que acabou antes de uma reconstrução nova pode voltar nela", func(t *testing.T) {
 		s, a, _ := montaReconstrucao(t)
 		disparar(a, s, acaba(salaB))

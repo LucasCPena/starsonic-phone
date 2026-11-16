@@ -69,6 +69,7 @@ type Salas struct {
 	// Enquanto um Reconstruir lê o FreeSWITCH, o que um evento tira do estado fica aqui, para a junção não
 	// trazer de volta o que já acabou.
 	reconstruindo int
+	geracao       uint64                     // sobe a cada Esvaziar: uma reconstrução que o viu passar não junta nada
 	uuidsSaidos   map[string]map[string]bool // sala -> uuids que saíram
 	salasAcabadas map[string]bool
 }
@@ -326,11 +327,7 @@ func (s *Salas) Esvaziar() {
 		nomes = append(nomes, nome)
 	}
 	s.salas = map[string]map[string]ligacao{}
-	if s.reconstruindo > 0 {
-		for _, nome := range nomes {
-			s.salasAcabadas[nome] = true
-		}
-	}
+	s.geracao++
 	s.mu.Unlock()
 	sort.Strings(nomes)
 	for _, nome := range nomes {
@@ -363,13 +360,14 @@ func listaDeConferencias(resposta string) ([]conferenciaJSON, error) {
 // Reconstruir lê do FreeSWITCH as salas que já existem (o agente reiniciou, ou o ESL acabou de conectar) e as
 // junta ao estado: as ligações que o estado já tem ficam como estão. Não avisa nada, porque quem acompanha manda
 // o estado inteiro depois. Uma ligação que sumiu no meio da leitura, ou que não é nossa (sem o
-// starsonic_participante), fica de fora.
+// starsonic_participante), fica de fora. Se o Esvaziar roda durante a leitura (o ESL caiu), a junção inteira é
+// descartada e o Reconstruir devolve nil: o que foi lido é de antes da queda, e a próxima conexão reconstrói.
 func (s *Salas) Reconstruir(ctx context.Context) error {
 	api := s.apiAtual()
 	if api == nil {
 		return ErrSemFreeSWITCH
 	}
-	s.comecarReconstrucao()
+	geracao := s.comecarReconstrucao()
 	defer s.terminarReconstrucao()
 	resp, err := api.API(ctx, "conference json_list")
 	if err != nil {
@@ -405,6 +403,9 @@ func (s *Salas) Reconstruir(ctx context.Context) error {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.geracao != geracao {
+		return nil // o Esvaziar passou durante a leitura: o que se leu é de antes da queda
+	}
 	for sala, ligacoes := range achadas {
 		if s.salasAcabadas[sala] {
 			continue
@@ -424,10 +425,11 @@ func (s *Salas) Reconstruir(ctx context.Context) error {
 	return nil
 }
 
-func (s *Salas) comecarReconstrucao() {
+func (s *Salas) comecarReconstrucao() uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.reconstruindo++
+	return s.geracao
 }
 
 // terminarReconstrucao esquece o que acabou durante a leitura, quando a última reconstrução em curso termina.
