@@ -1392,6 +1392,40 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .win.call[data-layout="minimo"] .call-sala .hang { width: 48px; height: 48px; }
 .win.call[data-layout="minimo"] .call-sala .round-action > span { display: none; }
 
+/* (0.4.0) A faixa de fora da sala (a FaixaForaDaSala.tsx; os quadros LigacaoDeFora e ForaDaSala): entre a barra da ligação e a tela,
+   com a miniatura do mosaico (um bloco por convidado, no quadro dele; com imagem, o degradê, e sem ela, o painel escuro), o
+   título numa linha, os nomes (com as reticências) e o tempo da sala (inteiro, em ciano), e o Voltar para a sala. No Mínimo, sem
+   a miniatura e mais apertada: o título pode quebrar a linha. */
+.fora-faixa { flex: none; position: relative; z-index: 1; box-sizing: border-box; display: flex; align-items: center; gap: 12px; padding: 12px 14px;
+  background: linear-gradient(90deg, #0c2671 0%, #0a1a4d 100%); border-bottom: 1px solid rgba(255, 255, 255, 0.1); }
+.fora-miniatura { position: relative; flex: none; width: 64px; height: 36px; border-radius: 8px; background: var(--navy-950); overflow: hidden; }
+.fora-bloco { position: absolute; box-sizing: border-box; background: #0b1226; box-shadow: inset 0 0 0 0.5px var(--navy-950); }
+.fora-bloco-imagem { background: linear-gradient(160deg, #3d5079, #19244a); }
+.fora-textos { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.fora-titulo { font: 800 13.5px/1.25 var(--font-sans); color: #ffffff; white-space: nowrap; }
+.fora-sub { display: flex; min-width: 0; font: 500 12px/1.3 var(--font-sans); color: #b9c4e6; }
+.fora-nomes { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fora-tempo { flex: none; white-space: pre; color: var(--cyan); font-weight: 700; }
+.fora-voltar { flex: none; box-sizing: border-box; height: 34px; padding: 0 14px; border: 0; border-radius: 999px; background: var(--cyan); color: var(--on-cyan);
+  font: 700 13px/1 var(--font-sans); white-space: nowrap; cursor: pointer; transition: background var(--ease); }
+.fora-voltar:hover { background: var(--cyan-d); }
+.win.call[data-layout="compacto"] .fora-faixa { gap: 8px; padding: 10px 12px; }
+.win.call[data-layout="compacto"] .fora-miniatura { width: 48px; height: 27px; border-radius: 6px; }
+.win.call[data-layout="compacto"] .fora-titulo { font-size: 13px; }
+.win.call[data-layout="compacto"] .fora-voltar { padding: 0 12px; font-size: 12.5px; }
+.win.call[data-layout="minimo"] .fora-faixa { gap: 8px; padding: 8px 10px; }
+.win.call[data-layout="minimo"] .fora-miniatura { display: none; }
+.win.call[data-layout="minimo"] .fora-titulo { font-size: 12px; white-space: normal; }
+.win.call[data-layout="minimo"] .fora-sub { font-size: 11px; }
+.win.call[data-layout="minimo"] .fora-voltar { height: 30px; padding: 0 10px; font-size: 12px; }
+/* A sala com a ligação de fora em espera, no Mínimo: os cinco controles (com o Alternar) e o Desligar numa fila só, com os círculos de
+   40, o Desligar de 44 e o espaço 6: 274 dos 276 da largura (com os 44, 48 e 10 de quatro controles, ela daria 318). */
+.win.call[data-layout="minimo"] .sala-baixo-5 { column-gap: 6px; }
+.win.call[data-layout="minimo"] .call-sala .sala-baixo-5 .ctrls { gap: 6px; }
+.win.call[data-layout="minimo"] .call-sala .sala-baixo-5 .ctrl { width: 40px; }
+.win.call[data-layout="minimo"] .call-sala .sala-baixo-5 .ctrl-c { width: 40px; height: 40px; }
+.win.call[data-layout="minimo"] .call-sala .sala-baixo-5 .hang { width: 44px; height: 44px; }
+
 /* O Desligar da sala pergunta antes (o EncerrarSala): um diálogo modal no escuro da marca, com o Encerrar no vermelho em que
    o branco se lê (o #c23b3b, o do :hover do Desligar). O fundo começa embaixo da barra de título (32), e na tela cheia, sem
    barra, desde o alto. */

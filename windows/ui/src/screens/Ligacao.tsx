@@ -32,7 +32,8 @@
 // (sala/PainelDeAdicionar.tsx), com "Em videochamada" no alto, enquanto adicionar vale; o Adicionar manda o
 // `salaAdicionar`; o pedido do painel cai com ele, e não volta sozinho. Com o painel de adicionar, a sua imagem flutua no
 // canto de baixo, ao lado do Desligar. Os controles (controlesDaLigacao.tsx) e o painel pelo nome (PainelPorNome.tsx)
-// saíram daqui sem mudar, para a sala usar também.
+// saíram daqui sem mudar, para a sala usar também. Com a sala embaixo (você na ligação de fora), a outra não é ela: a sala tem a
+// faixa "Você está fora da sala" (sala/FaixaForaDaSala.tsx, no main.tsx), e os controles são os de uma ligação, sem o Chat.
 import type { VNode } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { AtalhosPainel } from '../components/AtalhosPainel';
@@ -63,7 +64,7 @@ import {
   IconVideoOff,
 } from '../icons';
 import { listaDeContatos } from '../lista-de-contatos';
-import { mostraAdicionar, podeAdicionar } from '../sala/estado';
+import { mostraAdicionar, podeAdicionar, salaDe, salaEmbaixo } from '../sala/estado';
 import { PainelDeAdicionar } from '../sala/PainelDeAdicionar';
 import { ADICIONAR_PESSOA, EM_VIDEOCHAMADA } from '../sala/textos';
 import type { AppState, CallCard, CallState, CompanyContact, Contact } from '../state';
@@ -220,7 +221,8 @@ export function CartaoDaOutra({ state, ligacao: l, send, now }: CartaoProps): VN
   const ios = isIos(state);
   const conferencia = l.conference && l.second !== null;
   const segundaTocando = !conferencia && l.secondKind === 'ringing' ? l.second : null;
-  const outra = !conferencia && l.secondKind === 'held' ? l.second : null;
+  // A linha da sala embaixo (você na ligação de fora) é da faixa "Você está fora da sala", não um cartão.
+  const outra = !conferencia && l.secondKind === 'held' && !salaEmbaixo(l, salaDe(state)) ? l.second : null;
   const consulta = l.consulting && outra !== null;
   if (segundaTocando) {
     // Sem o Atender com vídeo: com outra ligação em andamento o vídeo pausa, e ele não cumpriria a promessa.
@@ -260,7 +262,7 @@ export function CartaoDaOutra({ state, ligacao: l, send, now }: CartaoProps): VN
           class="round-sm round-danger round-xs"
           aria-label={`Desligar ${nameOrNumber(outra)}`}
           title={`Desligar ${nameOrNumber(outra)}`}
-          onClick={() => send({ cmd: 'hangup', id: outra.id })}
+          onClick={semSegundoClique(!ios, () => send({ cmd: 'hangup', id: outra.id }))}
         >
           <IconPhone size="sm" class="ic-hang" />
         </button>
@@ -297,7 +299,9 @@ export function Ligacao({ state, ligacao: l, contatos, daEmpresa, send, chat = n
   const conferencia = l.conference && l.second !== null;
   const tocando = top.phase === 'ringing';
   const segundaTocando = !conferencia && l.secondKind === 'ringing' ? l.second : null;
-  const outra = !conferencia && l.secondKind === 'held' ? l.second : null;
+  // (0.4.0) Com a sala embaixo (você na ligação de fora), a outra não é ela: a sala tem a faixa, e os controles são os de uma
+  // ligação.
+  const outra = !conferencia && l.secondKind === 'held' && !salaEmbaixo(l, salaDe(state)) ? l.second : null;
   const consulta = l.consulting && outra !== null;
   const falando = confirmada(top);
   const ambas = outra !== null && falando && confirmada(outra);

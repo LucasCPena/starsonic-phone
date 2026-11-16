@@ -33,7 +33,9 @@
 // agora e só com ela sozinha. Na janela normal, a tela é a barra da ligação, a faixa dela (FaixaDaLigacao.tsx) e a
 // conversa; no grande, o painel da direita. No fim da ligação com a conversa na tela, ela fica (a vista chatConversa,
 // com o Voltar para a aba Chat); sem ela, o Teclado, como sempre. (0.4.0) A sala de vídeo em cima (o `salaDe` e o
-// `salaEmCima`, só no Windows) toma o lugar da tela da ligação na janela normal (sala/TelaDaSala.tsx).
+// `salaEmCima`, só no Windows) toma o lugar da tela da ligação na janela normal (sala/TelaDaSala.tsx). Com você fora dela
+// (a ligação de fora atendida, ou a sala de volta ainda em espera: o `foraDaSala`), a faixa "Você está fora da sala"
+// (sala/FaixaForaDaSala.tsx) fica entre a barra da ligação e a tela; com a sala embaixo, a tela é a de uma ligação, sem o Chat.
 import { render } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { createBridge } from './bridge';
@@ -64,7 +66,8 @@ import { Contatos } from './screens/Contatos';
 import { Entrar } from './screens/Entrar';
 import { Licencas } from './screens/Licencas';
 import { Ligacao } from './screens/Ligacao';
-import { salaDe, salaEmCima } from './sala/estado';
+import { foraDaSala, salaDe, salaEmbaixo, salaEmCima } from './sala/estado';
+import { FaixaForaDaSala } from './sala/FaixaForaDaSala';
 import { TelaDaSala } from './sala/TelaDaSala';
 import { Grande } from './video/Grande';
 import { Recentes } from './screens/Recentes';
@@ -511,10 +514,12 @@ function App() {
     // (0.4.0) A sala de vídeo em cima (só no Windows, de quem montou): a tela dela, no lugar da tela da ligação. O `key` do id
     // da sala: uma sala nova começa com a tela e a pergunta do Desligar novas.
     const sala = salaDe(state);
+    const faixaDeFora = sala && foraDaSala(l, sala) ? <FaixaForaDaSala state={state} ligacao={l} sala={sala} send={send} /> : null;
     if (sala && salaEmCima(l, sala)) {
       return (
         <div class="win call" data-layout={layout} data-plataforma={plataforma}>
           {barraDaLigacao}
+          {faixaDeFora}
           <TelaDaSala key={sala.id} state={state} ligacao={l} sala={sala} contatos={sugestoes} daEmpresa={daEmpresa.contatos} send={send} />
           {toastEl}
         </div>
@@ -523,13 +528,14 @@ function App() {
     return (
       <div class="win call" data-layout={layout} data-plataforma={plataforma}>
         {barraDaLigacao}
+        {faixaDeFora}
         <Ligacao
           state={state}
           ligacao={l}
           contatos={sugestoes}
           daEmpresa={daEmpresa.contatos}
           send={send}
-          chat={colegaDaLigacao && { abrir: abrirOChat }}
+          chat={salaEmbaixo(l, sala) ? null : colegaDaLigacao && { abrir: abrirOChat }}
         />
         {toastEl}
       </div>

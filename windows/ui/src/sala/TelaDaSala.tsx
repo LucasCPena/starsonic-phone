@@ -11,19 +11,19 @@
 import type { VNode } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import { VistaDeVideo } from '../components/VistaDeVideo';
-import { IconAdicionarPessoa, IconExpand, IconMic, IconMicOff, IconVideo, IconVideoOff } from '../icons';
+import { IconAdicionarPessoa, IconExpand, IconMic, IconMicOff, IconSwap, IconVideo, IconVideoOff } from '../icons';
 import { useLayout } from '../layout';
 import { listaDeContatos } from '../lista-de-contatos';
 import { semSegundoClique } from '../plataforma';
 import { CartaoDaOutra } from '../screens/Ligacao';
-import { Ctrl, NoWindows, RoundAction } from '../screens/controlesDaLigacao';
+import { confirmada, Ctrl, NoWindows, RoundAction } from '../screens/controlesDaLigacao';
 import { statusLine, useNow } from '../screens/tempoDaLigacao';
 import type { AppState, CallState, CompanyContact, Contact, SalaDaLigacao } from '../state';
 import type { Send } from '../types';
 import { SuaImagemFlutuante } from '../video/CaixaDoVideo';
 import { videoDe, videoDoApp } from '../video/estado';
 import { ABRIR_GRANDE, CAMERA, DESLIGAR_A_CAMERA, LIGAR_A_CAMERA, SUA_IMAGEM } from '../video/textos';
-import { cameraDaSalaDesativada, pessoasNaSala, podeAdicionar, salaEmbaixo } from './estado';
+import { cameraDaSalaDesativada, pessoasNaSala, podeAdicionar } from './estado';
 import { EncerrarSala } from './EncerrarSala';
 import { MosaicoDaSala } from './MosaicoDaSala';
 import { PainelDeAdicionar } from './PainelDeAdicionar';
@@ -49,7 +49,8 @@ export function TelaDaSala({ state, ligacao: l, sala, contatos, daEmpresa, send 
   // O pedido do painel de adicionar e a pergunta do Desligar. O painel vale enquanto o Adicionar pessoa vale.
   const [pedido, setPedido] = useState(false);
   const [perguntando, setPerguntando] = useState(false);
-  const linha = salaEmbaixo(l, sala) && l.second ? l.second : l.top;
+  // A sala só chega aqui em cima (o main.tsx): a linha dela é a de cima.
+  const linha = l.top;
   const video = videoDe(state, linha);
   const pode = podeAdicionar(state, l);
   const painel = pedido && pode;
@@ -62,6 +63,9 @@ export function TelaDaSala({ state, ligacao: l, sala, contatos, daEmpresa, send 
   const temCartao = !conferencia && l.second !== null && (l.secondKind === 'ringing' || l.secondKind === 'held');
   const tempo = statusLine(linha, now);
   const contaDeGente = pessoas(pessoasNaSala(sala));
+  // O Alternar, com a ligação de fora em espera (atendida): volta a ela, e a faixa "Você está fora da sala" volta.
+  const comAlternar = !conferencia && l.second !== null && l.secondKind === 'held';
+  const alternarDesativado = l.second === null || !confirmada(l.second);
 
   const cartao = temCartao ? (
     <div class="call-alto">
@@ -107,6 +111,9 @@ export function TelaDaSala({ state, ligacao: l, sala, contatos, daEmpresa, send 
       </>
     );
   } else {
+    // As colunas seguem quantos controles há: Mudo, Adicionar pessoa e Abrir grande, e a Câmera e o Alternar quando vêm.
+    const quantos = 3 + (videoDoApp(state).ligado ? 1 : 0) + (comAlternar ? 1 : 0);
+    const grade = quantos >= 5 ? 'ctrls ctrls-5' : quantos === 4 ? 'ctrls ctrls-4' : 'ctrls';
     corpo = (
       <>
         <div class="sala-caixa">
@@ -134,9 +141,9 @@ export function TelaDaSala({ state, ligacao: l, sala, contatos, daEmpresa, send 
             </span>
           </div>
         )}
-        <div class="sala-baixo">
+        <div class={quantos >= 5 ? 'sala-baixo sala-baixo-5' : 'sala-baixo'}>
           <div class="call-middle">
-            <div class={videoDoApp(state).ligado ? 'ctrls ctrls-4' : 'ctrls'}>
+            <div class={grade}>
               <Ctrl
                 label={rotulo('Mudo')}
                 nome="Mudo"
@@ -162,6 +169,9 @@ export function TelaDaSala({ state, ligacao: l, sala, contatos, daEmpresa, send 
                 descritoPor={sala.cheia ? 'sala-cheia' : undefined}
                 onClick={() => setPedido(true)}
               />
+              {comAlternar && (
+                <Ctrl label={rotulo('Alternar')} nome="Alternar" icon={<IconSwap />} disabled={alternarDesativado} onClick={() => send({ cmd: 'swap' })} />
+              )}
               <Ctrl
                 label={rotulo(ABRIR_GRANDE)}
                 nome={ABRIR_GRANDE}
