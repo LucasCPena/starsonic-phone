@@ -1624,22 +1624,29 @@ class CommandLineTest(unittest.TestCase):
         self.assertIn("video em 0.0.0.0:%d" % video_port, ready)
         self.assertTrue(ready.startswith("registrador falso em 127.0.0.1:%d (UDP e TCP)" % port), ready)
         self.assertIn("controle em 127.0.0.1:%d" % control_port, ready)
-        # Um socket de outro endereço da máquina (o da rede, se há) alcança a PORTA; o do SIP só atende o 127.0.0.1.
+        # O 127.0.0.2 é outro endereço da máquina, em todo Linux e Windows (o 127/8 inteiro é a volta): só um bind em
+        # 0.0.0.0 recebe nele. Sem depender de a máquina ter endereço de rede.
+        other = "127.0.0.2"
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
             try:
-                probe.connect(("192.0.2.1", 9))
-                lan = probe.getsockname()[0]
-            except OSError:
-                lan = None
-        if lan and not lan.startswith("127."):
-            where = self.endpoints(port, control_port)
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-                sock.bind((lan, 0))
-                sock.sendto(b"\x80" * 100, (lan, video_port))
-                deadline = time.monotonic() + 5
-                while control(where, "VIDEO PACKETS") != ["1"]:
-                    self.assertLess(time.monotonic(), deadline, "o datagrama ao endereco da rede nao foi contado")
-                    time.sleep(0.02)
+                probe.bind((other, 0))
+            except OSError as error:
+                self.skipTest("o sistema recusa o %s (%s): nao da para provar o bind do video" % (other, error))
+        where = self.endpoints(port, control_port)
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.bind((other, 0))
+            sock.sendto(b"\x80" * 100, (other, video_port))
+            deadline = time.monotonic() + 5
+            while control(where, "VIDEO PACKETS") != ["1"]:
+                self.assertLess(time.monotonic(), deadline, "o datagrama ao %s nao foi contado" % other)
+                time.sleep(0.02)
+        # O lado do SIP fica no --host (127.0.0.1): um pedido ao 127.0.0.2 na porta dele nao tem resposta.
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.bind((other, 0))
+            sock.settimeout(1)
+            sock.sendto(register(), (other, port))
+            with self.assertRaises((socket.timeout, ConnectionResetError), msg="o SIP respondeu no %s" % other):
+                sock.recvfrom(65535)
 
 
 if __name__ == "__main__":

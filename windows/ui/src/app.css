@@ -1646,7 +1646,7 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .grande.grande-com-chat .grande-sua { right: calc(var(--largura-do-chat) + 24px); }
 .win-tela-cheia .grande.grande-com-chat .grande-sua { right: calc(var(--largura-do-chat) + 32px); }
 
-/* (0.4.0) A sala no grande e na tela cheia (os quadros SalaGrande e SalaTelaCheia; Grande.tsx e MosaicoDaSala.tsx). A área do
+/* (0.4.0) A sala no grande e na tela cheia (os quadros Grande e TelaCheia; Grande.tsx e MosaicoDaSala.tsx). A área do
    vídeo é uma caixa de contêiner, como a .sala-caixa da tela da ligação: o mosaico fica no retângulo 16:9 encaixado nela
    (com o painel de adicionar, nos 920 da esquerda), e cada convidado no quadro dele. A etiqueta tem três partes: a sala, as
    pessoas e o tempo. */

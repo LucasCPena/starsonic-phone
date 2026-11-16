@@ -20,11 +20,13 @@ const CONTROLE_QUE_FICA = ['main', '[role="main"]', '.grande'].map((raiz) => `${
 interface Props {
   sala: SalaDaLigacao;
   send: Send;
+  /** Uma ligação de fora começou a tocar: a pergunta dá lugar a ela, como no Cancelar (nada é enviado, o foco volta ao Desligar). */
+  tocando: boolean;
   /** O Cancelar e o Esc: a pergunta fecha, e a sala fica como está. */
   onFechar(): void;
 }
 
-export function EncerrarSala({ sala, send, onFechar }: Props): VNode {
+export function EncerrarSala({ sala, send, tocando, onFechar }: Props): VNode {
   const noWindows = useContext(NoWindows);
   const ref = useRef<HTMLDialogElement>(null);
   // O fechar de agora para o `cancel` do Esc, que o efeito ouve uma vez só.
@@ -35,6 +37,11 @@ export function EncerrarSala({ sala, send, onFechar }: Props): VNode {
     onFechar();
   };
   fecharRef.current = fechar;
+
+  // A ligação de fora que começa a tocar com a pergunta aberta: fecha como o Cancelar, para o cartão dela poder ser atendido.
+  useEffect(() => {
+    if (tocando) fecharRef.current();
+  }, [tocando]);
 
   useEffect(() => {
     const dialogo = ref.current!;

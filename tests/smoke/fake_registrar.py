@@ -1815,7 +1815,9 @@ def start_video_server(registrar, host, port):
 
 
 # A PORTA do vídeo liga em todos os endereços (o SIP e o controle ficam no --host): o app põe no SDP o endereço da rede do
-# computador, e no Windows um socket ligado ao 127.0.0.1 não manda a esse endereço (WinError 10051).
+# computador, e no Windows um socket ligado ao 127.0.0.1 não manda a esse endereço (WinError 10051). O 0.0.0.0 é aceitável
+# aqui: este é um processo só de teste, morto com a fumaça, num runner que é jogado fora; e o `on_video` só conta, guarda um
+# VIDEO_KEPT limitado e só devolve o datagrama (eco) com o VIDEO ECHO ligado.
 VIDEO_HOST = "0.0.0.0"
 
 
@@ -1829,7 +1831,7 @@ def main(argv):
     parser.add_argument("--transport-log")
     parser.add_argument("--control-port", type=int, help="porta TCP (no mesmo --host) dos comandos RING, HANGUP...")
     parser.add_argument("--video-port", type=int,
-                        help="porta UDP (no mesmo --host) do vídeo das respostas e do RINGVIDEO")
+                        help="porta UDP do vídeo das respostas e do RINGVIDEO (liga em 0.0.0.0, não no --host)")
     args = parser.parse_args(argv)
     registrar = Registrar(args.user, args.password, log_path=args.log, transport_log_path=args.transport_log)
     udp = _UdpServer(registrar, args.host, args.port)   # antes dos outros: o que chegar já fica na fila do socket

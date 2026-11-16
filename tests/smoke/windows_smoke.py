@@ -68,6 +68,8 @@ Fumaça (padrão), contra o StarsonicPhone.exe instalado do build de teste (STAR
    Desligar, a pergunta e o Encerrar: o bye-in do 2002 e do 2004 chega ao registrador em até 15 s; o diagnostico.log
    tem as linhas "sala:" (comecou, entrou e acabou) sem nenhum dos números. O resultado vai na chave "sala".
 Os itens 7 a 11 juntam o que falhou e reprovam no fim (um não esconde o outro).
+O item 12 fica à parte: junta os problemas dele (um não esconde o outro) e reprova ao fim dele mesmo, antes dos itens
+seguintes (o app já foi fechado e reaberto neles).
 Na escala de 100%, a área da interface tem 400x720 lógicos (as bordas invisíveis de redimensionar ficam fora dela). A escala de 150% de verdade (outro DPI) não dá para mudar no runner.
 
 Ensaio da atualização (--ensaio): o app já foi aberto pelo instalador (por cima da rc.7, com a variável do CDP no
@@ -1444,6 +1446,8 @@ ROOM_WAIT = 30    # s: a sala montada com os dois convidados
 ROOM_BYE_WAIT = 15   # s: o bye-in de cada convidado
 ROOM_LOG_LINES = ("sala: comecou", "sala: entrou (2 na sala)", "sala: acabou")
 
+# O init script fica instalado até o fim da sessão e guarda uma referência à última memória do `remoto` (`__fumacaSala`):
+# é inofensivo, porque a sessão é curta, a memória é de um buffer pequeno e o runner é jogado fora logo depois.
 # Guarda a memória mais nova do `remoto` que chegar à página (também depois de recarregada: o init script roda a cada
 # carga) e lê o cabeçalho dela (u32 little-endian: a marca no byte 0, o seq no 4, a largura no 12, a altura no 16).
 ROOM_BUFFER_INIT_SCRIPT = """(() => {

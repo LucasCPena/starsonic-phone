@@ -204,7 +204,7 @@ export function TelaDaSala({ state, ligacao: l, sala, contatos, daEmpresa, send 
         {cartao}
         {corpo}
         {suaDoPainel}
-        {perguntando && <EncerrarSala sala={sala} send={send} onFechar={() => setPerguntando(false)} />}
+        {perguntando && <EncerrarSala sala={sala} send={send} tocando={l.secondKind === 'ringing'} onFechar={() => setPerguntando(false)} />}
       </main>
     </NoWindows.Provider>
   );

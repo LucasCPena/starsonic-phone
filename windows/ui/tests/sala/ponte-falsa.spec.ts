@@ -408,3 +408,18 @@ test('the iPhone fake has no room', async ({ page }) => {
     expect(await ligacao(page), comando.cmd).toEqual(antes);
   }
 });
+
+test('a guest who answers without the image goes from Chamando… to Sem vídeo and then to the image, like the core', async ({ page }) => {
+  await abrir(page, 'sala');
+  // O 183 atende em 1,5 s sem a imagem, e a primeira imagem chega 1,5 s depois (o núcleo põe a `imagem` no primeiro quadro).
+  await mandar(page, { cmd: 'salaAdicionar', numero: '183' });
+  const quadro = page.getByRole('group', { name: 'Mosaico da sala', exact: true }).getByRole('group', { name: '183', exact: true });
+  await expect(quadro.getByText('Chamando…', { exact: true })).toBeVisible();
+  await expect(quadro.getByText('Sem vídeo', { exact: true })).toBeVisible({ timeout: 4_000 });
+  await expect(quadro.getByText('Chamando…', { exact: true })).toHaveCount(0);
+  await expect(quadro.getByRole('img', { name: 'Vídeo de 183', exact: true })).toHaveCount(0);
+  expect((await ligacao(page)).sala.participantes.at(-1)).toMatchObject({ numero: '183', estado: 'naSala', imagem: false });
+  await expect(quadro.getByRole('img', { name: 'Vídeo de 183', exact: true })).toBeVisible({ timeout: 4_000 });
+  await expect(quadro.getByText('Sem vídeo', { exact: true })).toHaveCount(0);
+  expect((await ligacao(page)).sala.participantes.at(-1)).toMatchObject({ numero: '183', estado: 'naSala', imagem: true });
+});

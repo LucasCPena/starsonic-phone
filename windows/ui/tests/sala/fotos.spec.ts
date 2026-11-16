@@ -76,7 +76,7 @@ const TELAS: Tela[] = [
     async preparar(page) {
       await abrir(page, 'sala-estados');
       await mosaicoEImagem(page);
-      const tirar = quadroDe(page, 'Ana Souza').getByRole('button', { name: 'Tirar da sala', exact: true });
+      const tirar = quadroDe(page, 'Ana Souza').getByRole('button', { name: 'Tirar da sala: Ana Souza', exact: true });
       await tirar.focus();
       await expect(tirar).toBeFocused();
     },

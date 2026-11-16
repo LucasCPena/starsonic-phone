@@ -13,7 +13,7 @@
 // cai aqui e não vale), e o Esc só vale na tela cheia (o ouvinte sai quando ela sai), fora de um diálogo aberto (a foto
 // grande da conversa fecha com ele, e a tela cheia fica). Os botões ignoram o segundo clique de um clique duplo: o Tela
 // cheia dá lugar ao Sair da tela cheia no mesmo ponto.
-// (0.4.0) Com a sala em cima (o `salaDe` e o `salaEmCima`), o grande mostra a sala (os quadros SalaGrande e SalaTelaCheia): o
+// (0.4.0) Com a sala em cima (o `salaDe` e o `salaEmCima`), o grande mostra a sala (os quadros Grande e TelaCheia): o
 // `main` "Sala de vídeo, grande" (ou "tela cheia"), o mosaico no lugar do vídeo, a etiqueta com a sala, as pessoas e o tempo,
 // e a barra da sala: Mudo, Câmera, Adicionar pessoa, Tela cheia, Diminuir e Desligar (que pergunta antes: o EncerrarSala). O
 // Adicionar pessoa abre o painel à direita (o do chat, de 360), e o mosaico dá lugar a ele. Toda a sala fica no NoWindows: os
@@ -218,7 +218,7 @@ export function Grande({ state, ligacao: l, send, chat = null, contatos = [], da
             <Botao rotulo={DIMINUIR} icone={<IconShrink />} onClick={() => send({ cmd: 'videoWindow', modo: 'normal' })} />
             <Botao rotulo="Desligar" icone={<IconPhone class="ic-hang" />} perigo onClick={() => setPerguntando(true)} />
           </div>
-          {perguntando && <EncerrarSala sala={sala} send={send} onFechar={() => setPerguntando(false)} />}
+          {perguntando && <EncerrarSala sala={sala} send={send} tocando={l.secondKind === 'ringing'} onFechar={() => setPerguntando(false)} />}
         </div>
       </NoWindows.Provider>
     );

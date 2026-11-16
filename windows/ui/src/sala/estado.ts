@@ -20,6 +20,11 @@ export function salaEmbaixo(l: CallState, sala: SalaDaLigacao | null): boolean {
   return sala !== null && l.second?.id === sala.id;
 }
 
+/**
+ * Nota: a faixa segue onde a linha da sala está, não o `sala.fora`. O núcleo pode publicar a sala em cima, sem espera,
+ * com o `fora` ainda verdadeiro por uma ida e volta do motor (`out = activeId_ != roomId_`). Se um dia aparecer um caso
+ * duradouro, a faixa deve seguir também o `sala.fora`.
+ */
 /** Você está fora da sala: ela está embaixo, ou em cima ainda em espera (a ligação de fora acabando). */
 export function foraDaSala(l: CallState, sala: SalaDaLigacao | null): boolean {
   return salaEmbaixo(l, sala) || (salaEmCima(l, sala) && l.top.held);

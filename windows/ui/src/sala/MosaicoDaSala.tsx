@@ -41,10 +41,10 @@ function arrumacaoDe(quantos: number): 'g2' | 'g4' | 'g5' {
  * app.css). No Windows ele ignora o segundo clique de um clique duplo: com a arrumação nova, o segundo clique cairia no
  * Tirar da sala do convidado que tomou o lugar. Num quadro estreito, o texto sai da vista e o nome do botão fica.
  */
-function TirarDaSala({ id, send }: { id: number; send: Send }): VNode {
+function TirarDaSala({ id, nome, send }: { id: number; nome: string; send: Send }): VNode {
   const noWindows = useContext(NoWindows);
   return (
-    <button type="button" class="sala-tirar" onClick={semSegundoClique(noWindows, () => send({ cmd: 'salaTirar', id }))}>
+    <button type="button" class="sala-tirar" aria-label={`${TIRAR_DA_SALA}: ${nome}`} onClick={semSegundoClique(noWindows, () => send({ cmd: 'salaTirar', id }))}>
       <IconClose size="sm" />
       <span class="sala-tirar-texto">{TIRAR_DA_SALA}</span>
     </button>
@@ -65,7 +65,7 @@ function Quadro({ p, send, deBaixo }: { p: ParticipanteDaSala; send: Send; deBai
             {nome}
           </span>
         </div>
-        <TirarDaSala id={p.id} send={send} />
+        <TirarDaSala id={p.id} nome={nome} send={send} />
       </div>
     );
   }
@@ -92,7 +92,7 @@ function Quadro({ p, send, deBaixo }: { p: ParticipanteDaSala; send: Send; deBai
         {nome}
       </span>
       {estado}
-      <TirarDaSala id={p.id} send={send} />
+      <TirarDaSala id={p.id} nome={nome} send={send} />
     </div>
   );
 }

@@ -1,4 +1,4 @@
-// (0.4.0) A sala no grande e na tela cheia (os quadros SalaGrande e SalaTelaCheia), contra a ponte falsa: o `main` com o
+// (0.4.0) A sala no grande e na tela cheia (os quadros Grande e TelaCheia), contra a ponte falsa: o `main` com o
 // mosaico, a etiqueta de três partes e a barra da sala; os nomes dos convidados sobre as imagens (e no alto da imagem na
 // linha de baixo); o painel de adicionar à direita, que o mosaico abre espaço para; a pergunta do Desligar; a sala cheia
 // com o motivo; as medidas da tela cheia; os cliques duplos (no Tirar da sala e nos botões da barra); o foco quando a sala
@@ -233,7 +233,7 @@ test('a double click on Tirar da sala in the big window takes out one guest and 
   await bia.hover();
   // O C++ lento: o segundo clique cai no mesmo ponto, ainda com o quadro (o `.grande-video` embaixo dele).
   await segurarCpp(page);
-  await bia.getByRole('button', { name: 'Tirar da sala', exact: true }).dblclick();
+  await bia.getByRole('button', { name: 'Tirar da sala: Bia Ramos', exact: true }).dblclick();
   await soltarCpp(page);
   await expect.poll(async () => ((await depois(page, antes)) as Array<{ cmd: string }>).filter((c) => c.cmd === 'salaTirar').length).toBe(1);
   await depoisDoQueChegou(page);

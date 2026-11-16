@@ -2,7 +2,8 @@
 // (docs/ponte-windows.md, "A sala de vídeo (0.4.0)"). O `handleCall` do fake.ts passa cada comando antes por aqui: os
 // quatro da sala e os de sempre com a sala de pé; o `setCall` acerta o `fora` e o `cheia` de cada ligação com sala (o
 // `acertarSala`). O outro lado de um convidado: o `180` só toca; o `486` dá ocupado em 1,5 s (o convidado sai, com o
-// motivo); os outros atendem em 1,5 s e entram na sala com a imagem. O que fica sozinho ainda chamando responde do mesmo
+// motivo); o `183` atende em 1,5 s sem a imagem, e a primeira imagem chega 1,5 s depois; os outros atendem em 1,5 s e entram na sala
+// com a imagem. O que fica sozinho ainda chamando responde do mesmo
 // jeito, como uma feita. A ligação de fora feita com a sala de pé é a Nova ligação do fake.ts, só com a voz. No iPhone,
 // os quatro comandos não fazem nada, e nenhuma sala fica de pé.
 import { trimAscii } from './format';
@@ -28,6 +29,14 @@ export interface DependenciasDaSalaFalsa {
 /** O número que só toca, nas ligações feitas da ponte falsa (a Nova ligação, o Consultar e os convidados da sala). */
 export const SO_TOCA = '180';
 const OCUPADO = '486';
+/**
+ * O número que atende sem a imagem, e a primeira imagem dele vem depois (como no núcleo, que põe a `imagem` do membro
+ * quando chega o primeiro quadro, não no atender, EngineRoom.cpp): o quadro vai de "Chamando…" a "Sem vídeo" e à imagem. Os
+ * outros números atendem com a imagem já, como sempre.
+ */
+export const IMAGEM_DEPOIS = '183';
+/** A primeira imagem de quem atendeu (o `IMAGEM_DEPOIS`) chega depois disto, contado do atender. */
+export const PRIMEIRA_IMAGEM_EM_MS = 1_500;
 /** O outro lado de uma ligação feita da ponte falsa atende (ou dá ocupado) depois disto. */
 export const RESPONDE_EM_MS = 1_500;
 /** Até 5 convidados, contando os chamados: com eles, a sala está cheia. */
@@ -171,6 +180,14 @@ export function criarSalaFalsa(d: DependenciasDaSalaFalsa): { comando(command: R
     else acabarSala(sp);
   };
 
+  /** Chega o primeiro quadro do convidado que atendeu sem imagem: ele mostra a imagem. Saiu ou mudou de estado, nada. */
+  const primeiraImagem = (id: number) => {
+    const sp = deAgora();
+    const p = sp?.sala.participantes.find((x) => x.id === id && x.estado === 'naSala' && !x.imagem);
+    if (!sp || !p) return;
+    d.mudarLigacao({ ...sp.l, sala: { ...sp.sala, participantes: sp.sala.participantes.map((x) => (x.id === id ? { ...x, imagem: true } : x)) } });
+  };
+
   /**
    * O outro lado do convidado chamado responde: atende (na sala, com a imagem) ou dá ocupado (sai, com o motivo). Se a
    * sala acabou com ele ainda chamando, ele já é a ligação (em cima, ou em espera embaixo) e responde como uma feita:
@@ -187,8 +204,9 @@ export function criarSalaFalsa(d: DependenciasDaSalaFalsa): { comando(command: R
         return;
       }
       atendidos.set(id, Date.now());
-      const participantes = sp.sala.participantes.map((x): ParticipanteDaSala => (x.id === id ? { ...x, estado: 'naSala', imagem: true } : x));
+      const participantes = sp.sala.participantes.map((x): ParticipanteDaSala => (x.id === id ? { ...x, estado: 'naSala', imagem: p.numero !== IMAGEM_DEPOIS } : x));
       d.mudarLigacao({ ...sp.l, sala: { ...sp.sala, participantes } });
+      if (p.numero === IMAGEM_DEPOIS) setTimeout(() => primeiraImagem(id), PRIMEIRA_IMAGEM_EM_MS);
       return;
     }
     const l = d.estado().ligacao;

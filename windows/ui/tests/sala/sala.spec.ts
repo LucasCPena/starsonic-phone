@@ -20,6 +20,12 @@ const TAMANHOS = [
   [300, 440, 'minimo'],
 ] as const;
 
+/**
+ * Os três tamanhos e o menor do Compacto (layout.ts e app.css: o Compacto vai até 330×540, onde o Mínimo começa; o menor do
+ * Mínimo é o 300×440 da janela, já na lista). A tela da sala cabe também nesse canto.
+ */
+const TAMANHOS_E_BORDAS = [...TAMANHOS, [330, 540, 'compacto']] as const;
+
 const botao = (page: Page, nome: string) => page.getByRole('button', { name: nome, exact: true });
 const adicionarPessoa = (page: Page) => botao(page, 'Adicionar pessoa');
 const campo = (page: Page) => page.getByRole('combobox', { name: 'Adicionar à sala', exact: true });
@@ -440,8 +446,8 @@ test('a guest who does not answer leaves with the reason', async ({ page }) => {
   }
 });
 
-test('the room screen fits the three sizes', async ({ page }) => {
-  for (const [largura, altura, layout] of TAMANHOS) {
+test('the room screen fits the three sizes and the smallest Compacto', async ({ page }) => {
+  for (const [largura, altura, layout] of TAMANHOS_E_BORDAS) {
     const onde = `${largura}×${altura}`;
     await page.setViewportSize({ width: largura, height: altura });
     await abrir(page, 'sala');
@@ -484,8 +490,8 @@ test('the room screen fits the three sizes', async ({ page }) => {
   }
 });
 
-test('the room screen with the outside call card and the add panel fits the three sizes', async ({ page }) => {
-  for (const [largura, altura, layout] of TAMANHOS) {
+test('the room screen with the outside call card and the add panel fits the three sizes and the smallest Compacto', async ({ page }) => {
+  for (const [largura, altura, layout] of TAMANHOS_E_BORDAS) {
     const onde = `${largura}×${altura}`;
     await page.setViewportSize({ width: largura, height: altura });
     await abrir(page, 'sala-de-volta');

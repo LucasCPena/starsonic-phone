@@ -155,3 +155,23 @@ test('the question fits the three sizes, in a red that reads', async ({ page }) 
     await semViolacoesSerias(page);
   }
 });
+
+test('the question gives way to an outside call that starts ringing: it closes as Cancelar, and Atender can be clicked', async ({ page }) => {
+  await abrir(page, 'sala');
+  const antes = (await comandos(page)).length;
+  await perguntar(page);
+  // Uma ligação de fora começa a tocar com a pergunta aberta.
+  const roberto = { id: 31, number: '2012', name: 'Roberto Lima', incoming: true, phase: 'ringing', activeSinceMs: 0, held: false, video: null };
+  await mudarEstado(page, (s) => ({ ...s, ligacao: { ...s.ligacao, second: roberto, secondKind: 'ringing' } }));
+  await expect(pergunta(page)).toHaveCount(0);
+  // O foco voltou ao Desligar, que abriu a pergunta, como no Cancelar.
+  await expect(botao(page, 'Desligar')).toBeFocused();
+  await expect(page.getByRole('main', { name: 'Sala de vídeo', exact: true })).toBeVisible();
+  const alerta = page.locator('[role="alert"]', { hasText: 'Ligação de Roberto Lima' });
+  await expect(alerta.getByRole('button', { name: 'Atender', exact: true })).toBeVisible();
+  await alerta.getByRole('button', { name: 'Atender', exact: true }).click();
+  await esperarComando(page, { cmd: 'answer' });
+  await depoisDoQueChegou(page);
+  expect(await vezes(page, { cmd: 'salaEncerrar' })).toBe(0);
+  expect((await depois(page, antes)).filter((c) => (c as { cmd: string }).cmd !== 'answer')).toEqual([]);
+});

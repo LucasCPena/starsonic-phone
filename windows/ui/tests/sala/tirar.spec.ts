@@ -17,7 +17,7 @@ const TAMANHOS = [
 
 const mosaicoGrupo = (page: Page) => page.getByRole('group', { name: 'Mosaico da sala', exact: true });
 const quadroDe = (page: Page, nome: string) => mosaicoGrupo(page).getByRole('group', { name: nome, exact: true });
-const tirarDe = (page: Page, nome: string) => quadroDe(page, nome).getByRole('button', { name: 'Tirar da sala', exact: true });
+const tirarDe = (page: Page, nome: string) => quadroDe(page, nome).getByRole('button', { name: `Tirar da sala: ${nome}`, exact: true });
 
 async function caixa(alvo: Locator): Promise<Caixa> {
   const b = await alvo.boundingBox();
@@ -236,9 +236,9 @@ test('in a narrow tile Tirar da sala shows only the icon and keeps its name', as
   for (const q of await quadros.all()) {
     const nome = (await q.getAttribute('aria-label'))!;
     const dele = await caixa(q);
-    const tirar = q.getByRole('button', { name: 'Tirar da sala', exact: true });
+    const tirar = q.getByRole('button', { name: `Tirar da sala: ${nome}`, exact: true });
     await tirar.focus();
-    await expect(tirar).toHaveAccessibleName('Tirar da sala');
+    await expect(tirar).toHaveAccessibleName(`Tirar da sala: ${nome}`);
     const texto = tirar.locator('.sala-tirar-texto');
     const t = await caixa(texto);
     const b = await caixa(tirar);
@@ -255,4 +255,16 @@ test('in a narrow tile Tirar da sala shows only the icon and keeps its name', as
     }
   }
   expect(estreitos, 'os quadros estreitos em 300×440').toBeGreaterThanOrEqual(3);
+});
+
+test('each Tirar da sala button names its person and starts with the visible text', async ({ page }) => {
+  await abrir(page, 'sala');
+  const botoes = mosaicoGrupo(page).getByRole('button', { name: /^Tirar da sala/ });
+  await expect(botoes).toHaveCount(2);
+  // Os dois nomes são diferentes, cada um com a sua pessoa, e o texto à vista ("Tirar da sala") abre o nome (WCAG 2.5.3).
+  await expect(botoes.nth(0)).toHaveAccessibleName('Tirar da sala: Ana Souza');
+  await expect(botoes.nth(1)).toHaveAccessibleName('Tirar da sala: Carlos Lima');
+  await expect(botoes.nth(0).getByText('Tirar da sala', { exact: true })).toHaveCount(1);
+  await expect(tirarDe(page, 'Ana Souza')).toHaveCount(1);
+  await expect(tirarDe(page, 'Carlos Lima')).toHaveCount(1);
 });
