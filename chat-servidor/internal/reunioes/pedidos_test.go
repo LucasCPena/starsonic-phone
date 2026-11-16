@@ -1,6 +1,7 @@
 package reunioes
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"maps"
@@ -481,4 +482,69 @@ func TestNovaSenha(t *testing.T) {
 	c.video.DefinirNoAr(false)
 	_, err = c.g.NovaSenha(p)
 	conferirErro(t, "com o FreeSWITCH fora", err, ErrSemServidor)
+
+	t.Run("a ordem vem antes do banco e do servidor", func(t *testing.T) {
+		c := novaCena(t)
+		r := c.marcada()
+		c.dentro(r, c.ana)
+		espera, _ := c.pedir(r, "Bia Ramos")
+		_, aceita, _ := c.aceito(r, c.ana, "Maria Lima")
+		c.g.Ligar(nil)
+		c.b.Fechar() // nenhuma leitura do banco pode esconder a resposta
+		_, err := c.g.NovaSenha(espera)
+		conferirErro(t, "fora de ordem, sem servidor", err, ErrForaDeOrdem)
+		_, err = c.g.NovaSenha(aceita)
+		conferirErro(t, "na ordem, sem servidor", err, ErrSemServidor)
+	})
+	t.Run("quem entra enquanto o banco responde não ganha a senha", func(t *testing.T) {
+		c := novaCena(t)
+		r := c.marcada()
+		c.dentro(r, c.ana)
+		maria, pm, _ := c.aceito(r, c.ana, "Maria Lima")
+		// O banco ocupado (uma conexão só) segura o NovaSenha entre a primeira conferência e a segunda, e a Maria
+		// entra nesse meio. Se ele demorar a chegar ao banco, a primeira já responde o mesmo.
+		ocupado, liberar := make(chan struct{}), make(chan struct{})
+		go c.b.Tx(c.ctx, func(*sql.Tx) error {
+			close(ocupado)
+			<-liberar
+			return nil
+		})
+		<-ocupado
+		resposta := make(chan error, 1)
+		go func() {
+			_, err := c.g.NovaSenha(pm)
+			resposta <- err
+		}()
+		time.Sleep(50 * time.Millisecond)
+		c.entrou(r, maria)
+		close(liberar)
+		conferirErro(t, "a senha de quem entrou no meio", <-resposta, ErrForaDeOrdem)
+	})
+}
+
+func TestTeste_SenhaPendenteFicaNoAcabou(t *testing.T) {
+	// Na reunião de teste, todos entram com a senha de colega, que pode começar a reunião: quem foi aceito e ainda não
+	// entrou fica quando o último sai (o acabou), e entra com a senha que tem.
+	c := novaCena(t)
+	tst := c.deTeste()
+	_, canMaria := c.pedir(tst, "Maria Lima")
+	maria, _ := aceitoDe(t, canMaria)
+	c.entrou(tst, maria)
+	pb, canBia := c.pedir(tst, "Bia Ramos")
+	bia, _ := aceitoDe(t, canBia)
+	c.saiu(tst, maria)
+	c.acabou(tst)
+	canBia.conferir(t, "Bia", []string{"aceito"}, false)
+
+	c.entrou(tst, bia)
+	if ac, n := c.g.Contagem(tst.Sala); !ac || n != 1 {
+		t.Fatalf("Contagem = %v, %d", ac, n)
+	}
+	senha, err := c.g.TelaDeFora(pb)
+	if err != nil {
+		t.Fatalf("a tela da Bia, na reunião: %v", err)
+	}
+	if s := lerSenha(t, senha); s.Participante != bia || s.Nome != "Bia Ramos" || !s.Tela || s.Papel != video.Colega {
+		t.Fatalf("a senha da tela da Bia é %+v", s)
+	}
 }

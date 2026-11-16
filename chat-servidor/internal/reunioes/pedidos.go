@@ -201,22 +201,26 @@ func (g *Gerente) responderPedido(r banco.Reuniao, pessoaID int64, id string, re
 // NovaSenha dá a quem é de fora, aceito e ainda fora da reunião (a senha venceu, ou a ligação caiu), uma senha nova
 // com o mesmo participante, até 5 por minuto (ErrLimite). Antes do aceito, depois do fim do pedido, ou com a pessoa
 // na reunião, ErrForaDeOrdem. É uma entrada nova: valem as conferências do Pedir, e a senha que pode começar a
-// reunião (a de colega, na de teste) cabe no limite.
+// reunião (a de colega, na de teste) cabe no limite. A ordem e as duas primeiras conferências vêm antes de ler o
+// banco, e de novo depois.
 func (g *Gerente) NovaSenha(p *Pedido) (string, error) {
 	if p == nil {
 		return "", ErrForaDeOrdem
 	}
 	agora := g.relogio.Agora()
 	d := g.lerVideo()
+	if err := g.antesDaSenha(p, d, agora); err != nil {
+		return "", err
+	}
 	limite, err := g.limite(g.raiz)
 	if err != nil {
 		return "", err
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	s, part := g.aceitoDe(p)
-	if part == nil || part.naReuniao {
-		return "", ErrForaDeOrdem
+	s, part, err := g.ordemDaSenha(p)
+	if err != nil {
+		return "", err
 	}
 	if err := g.conferirEntrada(s.reuniao, d, limite, agora, !part.temSenha(false), part.papel == video.Colega); err != nil {
 		return "", err
@@ -250,6 +254,28 @@ func (g *Gerente) TelaDeFora(p *Pedido) (string, error) {
 		return "", ErrSemServidor
 	}
 	return emitir(d, s, part, true)
+}
+
+// antesDaSenha faz, antes de ler o limite no banco, a conferência da ordem e as duas primeiras de uma entrada: um
+// senha fora de ordem, ou sem o servidor no ar, nem espera o banco nem fica escondido atrás de um erro dele.
+func (g *Gerente) antesDaSenha(p *Pedido, d doVideo, agora time.Time) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	s, _, err := g.ordemDaSenha(p)
+	if err != nil {
+		return err
+	}
+	return g.conferirAntes(s.reuniao, d, agora)
+}
+
+// ordemDaSenha é a sala e o participante do pedido aceito que ainda está fora da reunião; fora disso,
+// ErrForaDeOrdem. Com g.mu.
+func (g *Gerente) ordemDaSenha(p *Pedido) (*sala, *participante, error) {
+	s, part := g.aceitoDe(p)
+	if part == nil || part.naReuniao {
+		return nil, nil, ErrForaDeOrdem
+	}
+	return s, part, nil
 }
 
 // aceitoDe é a sala e o participante do pedido aceito, enquanto ele está na memória. Com g.mu.

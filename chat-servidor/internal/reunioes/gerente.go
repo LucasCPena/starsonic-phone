@@ -473,7 +473,7 @@ func (g *Gerente) esquecer(s *sala, p *participante, msg string) {
 			g.mandar(ped.canal, mensagem{Tipo: msg})
 			g.fechar(ped.canal)
 		}
-		ped.fase, ped.canal, ped.part = fim, nil, nil
+		ped.fase, ped.canal, ped.part, ped.nome = fim, nil, nil, ""
 	}
 }
 
@@ -577,7 +577,8 @@ const (
 
 // terminar acaba a reunião na memória. Os colegas que estavam nela recebem o reuniaoAcabou, e quem estava nela
 // sai da memória, com o nome; a página de quem é de fora (também a de quem foi aceito e não entrou) recebe o
-// encerrada e fecha. No acabou, o colega com uma senha que ainda não entrou fica: ele pode recomeçar a reunião.
+// encerrada e fecha. No acabou, quem tem o papel de colega e não está na reunião fica, como no comecando: o colega
+// com uma senha que ainda não entrou, ou quem foi aceito na reunião de teste. A senha dele pode recomeçar a reunião.
 // Quem espera volta ao naoComecou, ou recebe o linkInvalido quando a reunião acaba de vez: a cancelada, e a naHora
 // sem um colega entrando. Devolve o id da naHora que acabou, para o banco (0: nenhuma). Com g.mu.
 func (g *Gerente) terminar(s *sala, m motivo, agora time.Time) int64 {
@@ -585,7 +586,7 @@ func (g *Gerente) terminar(s *sala, m motivo, agora time.Time) int64 {
 		g.avisar(s.colegas(), eventoAcabou{Tipo: "reuniaoAcabou", Reuniao: s.reuniao.Codigo})
 	}
 	for _, p := range s.emOrdem() {
-		if m == porAcabou && p.pessoa != 0 && !p.naReuniao && !p.tela {
+		if m == porAcabou && p.papel == video.Colega && !p.naReuniao && !p.tela {
 			continue
 		}
 		g.esquecer(s, p, "encerrada")
@@ -903,11 +904,16 @@ func (g *Gerente) limite(ctx context.Context) (int, error) {
 	return cfg.Limite, err
 }
 
-// antesDoBanco faz as duas primeiras conferências de uma entrada, antes de ler o limite no banco: a reunião vale e
-// o servidor de vídeo está no ar.
+// antesDoBanco faz as duas primeiras conferências de uma entrada, antes de ler o limite no banco.
 func (g *Gerente) antesDoBanco(r banco.Reuniao, d doVideo, agora time.Time) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	return g.conferirAntes(r, d, agora)
+}
+
+// conferirAntes faz as duas primeiras conferências de uma entrada: a reunião vale (ErrLinkInvalido) e o servidor de
+// vídeo está no ar (ErrSemServidor). Com g.mu.
+func (g *Gerente) conferirAntes(r banco.Reuniao, d doVideo, agora time.Time) error {
 	if !r.Vale(agora.UnixMilli()) || g.fechada(r.Sala) {
 		return ErrLinkInvalido
 	}
@@ -917,16 +923,15 @@ func (g *Gerente) antesDoBanco(r banco.Reuniao, d doVideo, agora time.Time) erro
 	return nil
 }
 
-// conferirEntrada faz as conferências de uma entrada nova, na ordem do protocolo: a reunião vale (ErrLinkInvalido),
-// o servidor está no ar (ErrSemServidor), a reunião não está cheia (ErrCheia, quando a entrada é de uma pessoa a
-// mais) e, quando a entrada pode começar a reunião parada, ela cabe no limite (ErrServidorCheio). Com g.mu.
+// conferirEntrada faz as conferências de uma entrada nova, na ordem do protocolo: as duas do conferirAntes, a
+// reunião não está cheia (ErrCheia, quando a entrada é de uma pessoa a mais) e, quando a entrada pode começar a
+// reunião parada, ela cabe no limite (ErrServidorCheio). Com g.mu.
 func (g *Gerente) conferirEntrada(r banco.Reuniao, d doVideo, limite int, agora time.Time, maisUma, comeca bool) error {
+	if err := g.conferirAntes(r, d, agora); err != nil {
+		return err
+	}
 	s := g.salas[r.Sala]
 	switch {
-	case !r.Vale(agora.UnixMilli()) || g.fechada(r.Sala):
-		return ErrLinkInvalido
-	case !g.serve(d):
-		return ErrSemServidor
 	case maisUma && s != nil && s.pessoas() >= maxPessoas:
 		return ErrCheia
 	case comeca && (s == nil || !s.ativa()) && g.ativas() >= limite:

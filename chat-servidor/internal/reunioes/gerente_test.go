@@ -54,9 +54,9 @@ var (
 	registro = &bufferSeguro{}
 
 	segredosMu sync.Mutex
-	// segredos é o que os testes usaram e que nunca pode chegar ao log: os nomes, o código da empresa, os
-	// códigos e as salas das reuniões, os participantes, os pedidos e as senhas. Os ramais ficam de fora: quatro
-	// algarismos aparecem por acaso na hora de cada linha.
+	// segredos é o que os testes usaram e que nunca pode chegar ao log: os nomes, os ramais (o EntrarColega recebe
+	// o da pessoa), o código da empresa, os códigos e as salas das reuniões, os participantes, os pedidos e as
+	// senhas. Para os ramais valerem aqui, o registro não leva a hora, onde quatro algarismos aparecem por acaso.
 	segredos = map[string]bool{}
 	// exigirLog: o TestSemNomesNoLog passou pelas linhas de log do gerente, então no fim o log não pode estar vazio.
 	exigirLog bool
@@ -73,10 +73,19 @@ func anotar(textos ...string) {
 	}
 }
 
+// semHora tira a hora de cada linha do registro.
+func semHora(grupos []string, a slog.Attr) slog.Attr {
+	if a.Key == slog.TimeKey && len(grupos) == 0 {
+		return slog.Attr{}
+	}
+	return a
+}
+
 // TestMain põe o log de todos os testes do pacote no registro e, depois de todos, confere que nele não há nenhum
-// nome, código, sala, participante ou senha (TestSemNomesNoLog).
+// nome, ramal, código, sala, participante ou senha (TestSemNomesNoLog).
 func TestMain(m *testing.M) {
-	slog.SetDefault(slog.New(slog.NewTextHandler(registro, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	slog.SetDefault(slog.New(slog.NewTextHandler(registro, &slog.HandlerOptions{Level: slog.LevelDebug,
+		ReplaceAttr: semHora})))
 	codigo := m.Run()
 	if codigo == 0 {
 		if err := conferirLog(registro.String()); err != nil {
@@ -386,7 +395,7 @@ func (c *cena) colega(ramal, nome string) colega {
 	if err != nil {
 		c.t.Fatal(err)
 	}
-	anotar(nome)
+	anotar(nome, ramal)
 	return colega{p: p, computador: pc.ID}
 }
 
@@ -617,6 +626,13 @@ func nomesNaMemoria(g *Gerente) []string {
 	}
 	sort.Strings(nomes)
 	return nomes
+}
+
+// nomeDoPedido é o nome que o Pedido ainda leva: a página o guarda até o canal fechar, fora da memória do gerente.
+func nomeDoPedido(g *Gerente, p *Pedido) string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return p.nome
 }
 
 // esperar espera ok ficar verdadeiro, por até 5 s (os eventos que o agente falso entrega numa goroutine).
@@ -881,9 +897,12 @@ func TestTirar(t *testing.T) {
 	if got := c.avisos.ultimo(c.ana.computador, "reuniaoParticipantes"); !reflect.DeepEqual(got, quer) {
 		t.Fatalf("a Ana recebeu %v; queria %v", got, quer)
 	}
-	// Quem foi tirada não volta pela senha nova.
+	// Quem foi tirada não volta pela senha nova, e o pedido que a página guarda não leva mais o nome.
 	_, err := c.g.NovaSenha(pm)
 	conferirErro(t, "a senha nova de quem foi tirada", err, ErrForaDeOrdem)
+	if nome := nomeDoPedido(c.g, pm); nome != "" {
+		t.Fatalf("o pedido de quem foi tirada ainda leva o nome %q", nome)
+	}
 
 	// Um participante que não está na reunião: 404.
 	err = c.g.Tirar(c.ctx, r, c.ana.p.ID, maria)
@@ -1474,6 +1493,9 @@ func TestAcabou_EsqueceOsNomes(t *testing.T) {
 	if nomes := nomesNaMemoria(c.g); len(nomes) != 0 {
 		t.Fatalf("depois do acabou, o gerente ainda guarda %q", nomes)
 	}
+	if nome := nomeDoPedido(c.g, pm); nome != "" {
+		t.Fatalf("depois do acabou, o pedido que a página guarda ainda leva o nome %q", nome)
+	}
 	canMaria.conferir(t, "Maria", []string{"aguardando", "aceito", "encerrada"}, true)
 	_, err := c.g.NovaSenha(pm)
 	conferirErro(t, "a senha nova depois do fim", err, ErrForaDeOrdem)
@@ -1563,6 +1585,99 @@ func TestAvisos_DepoisDoMutex(t *testing.T) {
 	}
 }
 
+// videoQueVolta chama o gerente de dentro do Agora, do NoAr, do Tirar e do Encerrar: chamado com o mutex travado, o
+// gerente travaria.
+type videoQueVolta struct {
+	*videotest.Falso
+	g      *Gerente
+	voltas atomic.Int64
+}
+
+func (v *videoQueVolta) voltar() {
+	v.g.Resumo()
+	v.voltas.Add(1)
+}
+
+func (v *videoQueVolta) Agora() time.Time {
+	v.voltar()
+	return v.Falso.Agora()
+}
+
+func (v *videoQueVolta) NoAr() bool {
+	v.voltar()
+	return v.Falso.NoAr()
+}
+
+func (v *videoQueVolta) Tirar(ctx context.Context, sala, participante string) error {
+	v.voltar()
+	return v.Falso.Tirar(ctx, sala, participante)
+}
+
+func (v *videoQueVolta) Encerrar(ctx context.Context, sala string) error {
+	v.voltar()
+	return v.Falso.Encerrar(ctx, sala)
+}
+
+// semTrava roda f com um vigia: se o gerente travar, o teste cai em 5 s, em vez de prender a suíte.
+func semTrava(oque string, f func()) {
+	vigia := time.AfterFunc(5*time.Second, func() {
+		panic("o gerente travou em " + oque + ": uma chamada ao Video com o mutex travado")
+	})
+	defer vigia.Stop()
+	f()
+}
+
+func TestVideo_SemChamadaComOMutex(t *testing.T) {
+	// O gerente chama o servidor de vídeo sempre com o mutex solto: um Video que chama o gerente de volta não o trava.
+	c := novaCena(t)
+	v := &videoQueVolta{Falso: c.video, g: c.g}
+	c.g.Ligar(v)
+	r, n := c.marcada(), c.naHora()
+	var maria string
+	var pm *Pedido
+	semTrava("a entrada de um colega e o entrou", func() { c.dentro(r, c.ana) })
+	semTrava("o pedido e o aceito", func() { maria, pm, _ = c.aceito(r, c.ana, "Maria Lima") })
+	semTrava("a senha nova", func() {
+		if _, err := c.g.NovaSenha(pm); err != nil {
+			t.Fatalf("NovaSenha: %v", err)
+		}
+	})
+	semTrava("as telas", func() {
+		c.entrou(r, maria)
+		if _, err := c.g.Tela(c.ctx, r, c.ana.p.ID); err != nil {
+			t.Fatalf("Tela: %v", err)
+		}
+		if _, err := c.g.TelaDeFora(pm); err != nil {
+			t.Fatalf("TelaDeFora: %v", err)
+		}
+	})
+	semTrava("o Tirar", func() {
+		if err := c.g.Tirar(c.ctx, r, c.ana.p.ID, maria); err != nil {
+			t.Fatalf("Tirar: %v", err)
+		}
+	})
+	semTrava("o Varrer", func() {
+		c.andar(31 * time.Second)
+		c.g.Varrer()
+	})
+	semTrava("o Encerrar", func() {
+		if err := c.g.Encerrar(c.ctx, r, c.ana.p.ID); err != nil {
+			t.Fatalf("Encerrar: %v", err)
+		}
+	})
+	semTrava("o Cancelada", func() {
+		c.dentro(n, c.carlos)
+		c.cancelar(n)
+	})
+	quer := []string{"tirar " + r.Sala + " " + maria, "encerrar " + r.Sala, "encerrar " + n.Sala}
+	if cmds := c.video.Comandos(); !slices.Equal(cmds, quer) {
+		t.Fatalf("o agente recebeu %q; queria %q", cmds, quer)
+	}
+	if v.voltas.Load() == 0 {
+		t.Fatal("o gerente não chamou o Video")
+	}
+}
+
 func TestSemNomesNoLog(t *testing.T) {
 	// O TestMain põe o registro no slog de todo o pacote e, depois de todos os testes, confere que nele não há
 	// nenhum segredo. Aqui: a captura está no lugar, e o gerente passa pelas linhas de log dele com nomes, códigos,
@@ -1603,5 +1718,14 @@ func TestSemNomesNoLog(t *testing.T) {
 	}
 	if err := conferirLog(texto); err != nil {
 		t.Fatal(err)
+	}
+
+	// O ramal também é conferido (o EntrarColega o recebe, dentro da Pessoa). Para isso o registro não leva a hora,
+	// onde quatro algarismos aparecem por acaso.
+	if strings.Contains(texto, "time=") {
+		t.Error("o registro leva a hora de cada linha")
+	}
+	if err := conferirLog("reunioes: teste ramal=" + c.ana.p.Ramal); err == nil || !strings.Contains(err.Error(), c.ana.p.Ramal) {
+		t.Errorf("a conferência não acusa um ramal no log: %v", err)
 	}
 }

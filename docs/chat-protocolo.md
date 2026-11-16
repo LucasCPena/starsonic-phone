@@ -400,19 +400,21 @@ Do servidor para a página:
 {"tipo": "cheia"}            // a reunião tem 10 pessoas
 {"tipo": "servidorCheio"}    // o servidor de vídeo está no limite de reuniões ao mesmo tempo
 {"tipo": "semServidor"}      // o servidor de vídeo não respondeu
-{"tipo": "linkInvalido"}     // durante a espera, a reunião foi cancelada, deixou de valer, ou a naHora acabou
+{"tipo": "linkInvalido"}     // a reunião foi cancelada, deixou de valer, ou a naHora acabou: na espera, ou em resposta ao senha
 {"tipo": "senha", "senha": "…"}
 {"tipo": "tela", "senha": "…"}
 {"tipo": "tirado"}           // um colega tirou a pessoa da reunião
-{"tipo": "encerrada"}        // um colega encerrou a reunião para todos, ou ela foi cancelada
+{"tipo": "encerrada"}        // um colega encerrou a reunião para todos, ela foi cancelada, ou a reunião acabou no servidor de vídeo
 {"tipo": "erro", "erro": "invalido" | "limite" | "foraDaReuniao"}
 ```
 - **O `pedir` vale uma vez por canal.** Depois de `cheia`, `servidorCheio` ou `semServidor`, a página pode mandar outro `pedir`.
 - **Depois de `recusado`, `linkInvalido`, `tirado` ou `encerrada`,** o servidor fecha o canal (código 1000).
-- **Uma mensagem fora de ordem**, como `senha` antes do `aceito`, `tela` fora da reunião ou um segundo `pedir`, responde `erro`, com `invalido` ou `foraDaReuniao`.
-- **O `senha`:** até 5 por minuto por participante.
+- **Uma mensagem fora de ordem**, como `senha` antes do `aceito` ou com a pessoa já na reunião, `tela` fora da reunião ou um segundo `pedir`, responde `erro`, com `invalido` ou `foraDaReuniao`.
+- **O `senha`:** até 5 por minuto por participante. Ele é uma entrada nova, com as conferências do `pedir`, e além do `senha` pode responder:
+  - `linkInvalido`: a reunião foi cancelada, deixou de valer, ou a naHora acabou. O servidor fecha o canal (código 1000), como depois das outras respostas finais;
+  - `cheia`, `semServidor` e, só na reunião de teste, `servidorCheio`: o canal continua aberto, e a página pode mandar outro `senha`, dentro dos 5 por minuto.
 - **Na reunião de teste,** o `pedir` responde `aceito` na hora, sem sala de espera. A primeira pessoa a começa.
-- **Quando a reunião marcada para** (todos saíram) com pedidos esperando, eles voltam a `naoComecou`. Quando ela recomeça, voltam a `aguardando`, com 10 minutos de novo.
+- **Quando o último colega sai da reunião,** mesmo com gente de fora ainda nela, **ou quando a reunião marcada para** (todos saíram), os pedidos que esperam voltam a `naoComecou`. Quando um colega volta a ela, eles voltam a `aguardando`, com 10 minutos de novo.
 
 ## 11. Os eventos das reuniões (no WebSocket do app, seção 7)
 ```json
