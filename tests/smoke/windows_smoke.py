@@ -58,6 +58,15 @@ Fumaça (padrão), contra o StarsonicPhone.exe instalado do build de teste (STAR
    salvar ("Exportar planilha…": "Contatos Starsonic.xlsx" e "Planilha do Excel (*.xlsx)"), e fechadas (o Cancelar) nada
    acontece ("a janela foi cancelada" no diagnostico.log); por fim, o --sair com a janela de importar aberta fecha o app
    (código 0), sem o fechamento forçado. Fica por último: os RING de antes esperam o nome da central.
+12. (0.4.0) a sala de vídeo de verdade, depois do download do H.264: o registrador falso manda a cor de cada convidado
+   (VIDEO SOURCE <número> color, o 2002 e o 2004); pela interface, o Teclado com 2002 e o Ligar com vídeo e, com o Adicionar
+   pessoa ativo, o 2004 e o Adicionar; a sala (o grupo "Mosaico da sala" com os quadros 2002 e 2004, o do 2004 sem o
+   "Chamando…" em até 30 s; captura sala.png); o mosaico no remoto: um ouvinte do sharedbufferreceived (add_init_script) e a
+   página recarregada (o ready faz o executável entregar de novo as memórias) guardam a memória do remoto, e o cabeçalho
+   (a marca, o seq, a largura e a altura) é lido duas vezes, com 1 s entre as duas (1280x720, o seq par, maior que 0 e
+   crescendo); com o H.264 instalado, o meio de cada "Vídeo de <número>" fica perto da cor dele (± 8) numa captura; o
+   Desligar, a pergunta e o Encerrar: o bye-in do 2002 e do 2004 chega ao registrador em até 15 s; o diagnostico.log
+   tem as linhas "sala:" (comecou, entrou e acabou) sem nenhum dos números. O resultado vai na chave "sala".
 Os itens 7 a 11 juntam o que falhou e reprovam no fim (um não esconde o outro).
 Na escala de 100%, a área da interface tem 400x720 lógicos (as bordas invisíveis de redimensionar ficam fora dela). A escala de 150% de verdade (outro DPI) não dá para mudar no runner.
 
@@ -79,11 +88,13 @@ import os
 import pathlib
 import re
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
 import time
 import urllib.request
+import zlib
 
 HERE = pathlib.Path(__file__).resolve().parent
 CDP_PORT = 9333
@@ -934,6 +945,12 @@ def run_smoke(args, result):
                 raise SmokeFailure("; ".join(problems))
             log("OK: os avisos de licenca vieram inteiros, o aviso com video tem 222 de altura e o Atender com video, "
                 "e o H.264 da Cisco foi tratado")
+
+            # 3c. (0.4.0) A sala de vídeo de verdade: dois convidados, o mosaico na memória do remoto e as linhas do log.
+            check_room(page, registrar, data_dir, capturas, result, result.setdefault("sala", {}), problems)
+            if problems:
+                raise SmokeFailure("; ".join(problems))
+            log("OK: a sala de video montou com 2 convidados, o mosaico chegou a memoria do remoto e o Encerrar desligou os dois")
             result["registrador"] = registrar.events()
             browser.close()
             app.quit()
@@ -1410,6 +1427,264 @@ def check_h264_download(data_dir, record, problems):
         log("AVISO: o download do H.264 da Cisco falhou (a Cisco fora do ar nao derruba a fumaca)")
     else:
         problems.append("o diagnostico.log nao tem nenhuma linha 'h264:' em %d s: o download do H.264 nao ligou" % H264_WAIT)
+
+
+# ---- (0.4.0) A sala de vídeo: o mosaico na memória do `remoto`, as cores dos convidados e as linhas `sala:` ----
+
+ROOM_GUESTS = ("2002", "2004")   # a ligação com vídeo e o convidado que o Adicionar chama
+# A cor de cada convidado (Y, U, V: o VIDEO SOURCE aceita de 16 a 235), e o que o mosaico desenha com elas: o 2002 em
+# verde e o 2004 em branco.
+ROOM_COLORS = {"2002": (145, 54, 34), "2004": (235, 128, 128)}
+ROOM_MARK = 0x31565353
+ROOM_WIDTH, ROOM_HEIGHT = 1280, 720
+ROOM_COLOR_TOLERANCE = 8
+ROOM_MOSAIC = "Mosaico da sala"
+ROOM_CALLING = "Chamando…"
+ROOM_WAIT = 30    # s: a sala montada com os dois convidados
+ROOM_BYE_WAIT = 15   # s: o bye-in de cada convidado
+ROOM_LOG_LINES = ("sala: comecou", "sala: entrou (2 na sala)", "sala: acabou")
+
+# Guarda a memória mais nova do `remoto` que chegar à página (também depois de recarregada: o init script roda a cada
+# carga) e lê o cabeçalho dela (u32 little-endian: a marca no byte 0, o seq no 4, a largura no 12, a altura no 16).
+ROOM_BUFFER_INIT_SCRIPT = """(() => {
+  window.__fumacaSala = null;
+  try {
+    window.chrome.webview.addEventListener('sharedbufferreceived', (evento) => {
+      const dados = evento.additionalData;
+      if (dados && dados.vista === 'remoto') window.__fumacaSala = {dados: dados, buffer: evento.getBuffer()};
+    });
+  } catch (erro) {}
+})();"""
+
+ROOM_BUFFER_READ_SCRIPT = """() => {
+  const memoria = window.__fumacaSala;
+  if (!memoria) return null;
+  const d = new DataView(memoria.buffer);
+  return {dados: memoria.dados, bytes: memoria.buffer.byteLength, marca: d.getUint32(0, true), seq: d.getUint32(4, true),
+          largura: d.getUint32(12, true), altura: d.getUint32(16, true)};
+}"""
+
+
+def room_buffer_problems(info):
+    """Os problemas do mosaico na memória do `remoto` (a lista vazia: está certo). `info` é o cabeçalho lido (o
+    additionalData, os bytes, a marca, a largura e a altura) com os dois seq lidos 1 s um do outro em `seqs`, ou None se a
+    memória não chegou."""
+    if info is None:
+        return ["sala: a memoria da vista remoto nao chegou em 15 s"]
+    problems = []
+    dados = info.get("dados")
+    esperado = {"v": 1, "type": "videoBuffer", "vista": "remoto", "bytes": VIDEO_BUFFER_BYTES}
+    if dados != esperado:
+        problems.append("sala: o additionalData da memoria da vista remoto e %s (esperado %s)" % (dados, esperado))
+    size = info.get("bytes")
+    if not isinstance(size, int) or size < VIDEO_BUFFER_BYTES:
+        problems.append("sala: a memoria da vista remoto tem %s bytes (esperado pelo menos %d)" % (size, VIDEO_BUFFER_BYTES))
+    if info.get("marca") != ROOM_MARK:
+        problems.append("sala: a marca do cabecalho e %s (esperado %s)" % (info.get("marca"), hex(ROOM_MARK)))
+    if (info.get("largura"), info.get("altura")) != (ROOM_WIDTH, ROOM_HEIGHT):
+        problems.append("sala: o mosaico e de %sx%s (esperado %dx%d)"
+                        % (info.get("largura"), info.get("altura"), ROOM_WIDTH, ROOM_HEIGHT))
+    seqs = info.get("seqs")
+    if (not isinstance(seqs, (list, tuple)) or len(seqs) != 2
+            or not all(isinstance(value, int) and value > 0 and value % 2 == 0 for value in seqs)):
+        problems.append("sala: os seq do mosaico (%s) nao sao dois numeros pares maiores que 0" % (seqs,))
+    elif seqs[1] <= seqs[0]:
+        problems.append("sala: o seq do mosaico parou em %s (lido de novo 1 s depois: %s)" % (seqs[0], seqs[1]))
+    return problems
+
+
+def room_log_problems(log_text, numbers):
+    """Os problemas das linhas `sala:` do diagnóstico: cada uma das três (começou, entrou com 2 na sala e acabou) tem de
+    estar, e nenhuma linha `sala:` leva um dos `numbers` (o diagnóstico não guarda número de ninguém)."""
+    lines = [line for line in log_text.splitlines() if "sala:" in line]
+    problems = []
+    for wanted in ROOM_LOG_LINES:
+        if not any(wanted in line for line in lines):
+            problems.append("o diagnostico.log nao tem a linha '%s'" % wanted)
+    for line in lines:
+        for number in numbers:
+            if number in line:
+                problems.append("a linha do diagnostico '%s' leva o numero %s" % (line.strip(), number))
+    return problems
+
+
+def i420_to_rgb(y, u, v):
+    """A conversão BT.601 de faixa limitada que a página faz (windows/ui/src/video/desenho.ts)."""
+    c = 1.164 * (y - 16)
+    d, e = u - 128, v - 128
+    clamp = lambda value: min(255, max(0, int(value + 0.5)))   # noqa: E731
+    return (clamp(c + 1.596 * e), clamp(c - 0.392 * d - 0.813 * e), clamp(c + 2.017 * d))
+
+
+def png_pixel(path, x, y):
+    """O (R, G, B) do pixel (x, y) de um PNG de 8 bits sem entrelaçamento (o que o screenshot do Playwright grava), só
+    com a zlib: o Pillow não vai ao runner. Devolve também a largura e a altura: ((R, G, B), largura, altura)."""
+    data = pathlib.Path(path).read_bytes()
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        raise ValueError("nao e um PNG: %s" % path)
+    position, header, idat = 8, None, []
+    while position < len(data):
+        size, kind = struct.unpack(">I4s", data[position:position + 8])
+        body = data[position + 8:position + 8 + size]
+        position += 12 + size
+        if kind == b"IHDR":
+            header = struct.unpack(">IIBBBBB", body)
+        elif kind == b"IDAT":
+            idat.append(body)
+    width, height, depth, color_type, _compression, _filter, interlace = header
+    channels = {2: 3, 6: 4}.get(color_type)
+    if depth != 8 or channels is None or interlace != 0:
+        raise ValueError("PNG nao suportado: profundidade %d, tipo %d, entrelacamento %d" % (depth, color_type, interlace))
+    raw = zlib.decompress(b"".join(idat))
+    stride = width * channels
+    previous = bytearray(stride)
+    for row in range(y + 1):
+        start = row * (stride + 1)
+        kind, line = raw[start], bytearray(raw[start + 1:start + 1 + stride])
+        for i in range(stride):
+            left = line[i - channels] if i >= channels else 0
+            up = previous[i]
+            upper_left = previous[i - channels] if i >= channels else 0
+            if kind == 1:
+                line[i] = (line[i] + left) & 255
+            elif kind == 2:
+                line[i] = (line[i] + up) & 255
+            elif kind == 3:
+                line[i] = (line[i] + ((left + up) >> 1)) & 255
+            elif kind == 4:
+                p = left + up - upper_left
+                pa, pb, pc = abs(p - left), abs(p - up), abs(p - upper_left)
+                line[i] = (line[i] + (left if pa <= pb and pa <= pc else up if pb <= pc else upper_left)) & 255
+        previous = line
+    return (tuple(previous[x * channels:x * channels + 3]), width, height)
+
+
+def read_room_header(page, timeout=15):
+    """O cabeçalho da memória do `remoto` com o seq par (o escritor do executável grava o seq ímpar enquanto escreve), ou
+    None se a memória não chegou."""
+    def read():
+        info = page.evaluate(ROOM_BUFFER_READ_SCRIPT)
+        return info if info and info["seq"] % 2 == 0 and info["seq"] > 0 else None
+    return wait_for(read, timeout, interval=0.05, pump=page.wait_for_timeout) or None
+
+
+def room_guest(page, number):
+    return page.get_by_role("group", name=ROOM_MOSAIC, exact=True).get_by_role("group", name=number, exact=True)
+
+
+def check_room_colors(page, capturas, h264_installed, record, problems):
+    """Com o H.264 instalado, o meio de cada `Vídeo de <número>` fica perto da cor do convidado (± 8) numa captura."""
+    if not h264_installed:
+        log("AVISO: sem o H.264 da Cisco, a sala so confere o cabecalho da memoria (as cores ficam de fora)")
+        return
+    path = pathlib.Path(capturas) / "sala-cores.png"
+    page.screenshot(path=str(path), timeout=20000)
+    scale = None
+    seen = {}
+    for number, color in ROOM_COLORS.items():
+        box = page.get_by_role("img", name="Vídeo de " + number, exact=True).bounding_box()
+        if box is None:
+            problems.append("sala: o 'Vídeo de %s' nao esta na tela" % number)
+            continue
+        centre = (box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+        if scale is None:
+            width = page.evaluate("() => window.innerWidth")
+            scale = png_pixel(path, 0, 0)[1] / float(width)
+        pixel, _, _ = png_pixel(path, int(centre[0] * scale), int(centre[1] * scale))
+        wanted = i420_to_rgb(*color)
+        seen[number] = {"visto": list(pixel), "esperado": list(wanted)}
+        if any(abs(a - b) > ROOM_COLOR_TOLERANCE for a, b in zip(pixel, wanted)):
+            problems.append("sala: o meio do 'Vídeo de %s' e %s (esperado perto de %s)" % (number, pixel, wanted))
+    record["cores"] = seen
+    log("sala: cores no meio dos quadros: %s" % seen)
+
+
+def check_room(page, registrar, data_dir, capturas, result, record, problems):
+    """A sala de vídeo de verdade (item 12 da docstring). No `finally`, as cores voltam ao padrão no registrador."""
+    h264_installed = result.get("video", {}).get("h264") == "instalado"
+    try:
+        # 1. O registrador manda a cor de cada convidado.
+        for number, (y, u, v) in ROOM_COLORS.items():
+            reply = registrar.command("VIDEO SOURCE %s color %d %d %d" % (number, y, u, v))
+            if reply != ["OK"]:
+                problems.append("sala: VIDEO SOURCE %s color %d %d %d: %s" % (number, y, u, v, reply))
+                return
+        page.add_init_script(ROOM_BUFFER_INIT_SCRIPT)
+
+        # 2. A videochamada para o 2002 e o Adicionar pessoa para o 2004, pela interface.
+        page.locator('input[aria-label="Número"]').fill(ROOM_GUESTS[0])
+        page.get_by_role("button", name="Ligar com vídeo", exact=True).click(timeout=20000)
+        add = page.get_by_role("button", name="Adicionar pessoa", exact=True)
+        if not wait_for(lambda: add.count() == 1 and add.is_enabled(), ROOM_WAIT, pump=page.wait_for_timeout):
+            problems.append("sala: o Adicionar pessoa nao ficou ativo em %d s" % ROOM_WAIT)
+            return
+        add.click(timeout=10000)
+        field = page.get_by_role("combobox", name="Adicionar à sala", exact=True)
+        field.fill(ROOM_GUESTS[1], timeout=10000)
+        page.get_by_role("button", name="Adicionar", exact=True).click(timeout=10000)
+
+        # 3. A sala: o mosaico com os dois quadros, o do 2004 sem o "Chamando…".
+        mosaic = page.get_by_role("group", name=ROOM_MOSAIC, exact=True)
+        mosaic.wait_for(timeout=ROOM_WAIT * 1000)
+        for number in ROOM_GUESTS:
+            room_guest(page, number).wait_for(timeout=ROOM_WAIT * 1000)
+        if not wait_for(lambda: room_guest(page, ROOM_GUESTS[1]).get_by_text(ROOM_CALLING, exact=True).count() == 0,
+                        ROOM_WAIT, pump=page.wait_for_timeout):
+            problems.append("sala: o %s continua com o '%s' depois de %d s" % (ROOM_GUESTS[1], ROOM_CALLING, ROOM_WAIT))
+            return
+        log("sala: o mosaico com %s" % " e ".join(ROOM_GUESTS))
+        screenshot(page, capturas, "sala.png", result)
+
+        # 4. O mosaico na memória do remoto: recarrega a página (o ready entrega de novo as memórias, e ela volta à sala).
+        page.reload(timeout=60000)
+        mosaic.wait_for(timeout=ROOM_WAIT * 1000)
+        for number in ROOM_GUESTS:
+            room_guest(page, number).wait_for(timeout=ROOM_WAIT * 1000)
+        first = read_room_header(page)
+        info = None
+        if first is not None:
+            page.wait_for_timeout(1000)
+            second = read_room_header(page)
+            info = dict(first, seqs=[first["seq"], second["seq"] if second else None])
+        record["mosaico"] = info
+        log("sala: a memoria do remoto: %s" % info)
+        problems.extend(room_buffer_problems(info))
+        check_room_colors(page, capturas, h264_installed, record, problems)
+
+        # 5. O Desligar, a pergunta e o Encerrar: o bye-in dos dois convidados.
+        byes_before = count_events(registrar.events(), "bye-in")
+        page.get_by_role("button", name="Desligar", exact=True).click(timeout=10000)
+        page.get_by_role("alertdialog", name="Encerrar a sala para todos?").get_by_role(
+            "button", name="Encerrar", exact=True).click(timeout=10000)
+        for number in ROOM_GUESTS:
+            if not wait_for(lambda: has_event(registrar.events(), "bye-in " + number), ROOM_BYE_WAIT,
+                            pump=page.wait_for_timeout):
+                problems.append("sala: o bye-in do %s nao chegou em %d s" % (number, ROOM_BYE_WAIT))
+        record["byes"] = count_events(registrar.events(), "bye-in") - byes_before
+        page.locator("button.btn-call").wait_for(timeout=20000)
+
+        # 6. O diagnostico.log: as três linhas sala: e nenhum número nelas.
+        wait_for(lambda: not room_log_problems(read_log(data_dir), ROOM_GUESTS), 10, interval=0.5)
+        log_problems = room_log_problems(read_log(data_dir), ROOM_GUESTS)
+        record["log"] = [line for line in read_log(data_dir).splitlines() if "sala:" in line]
+        problems.extend(log_problems)
+    except Exception as error:   # noqa: BLE001
+        problems.append("sala: %s" % error)
+    finally:
+        # 7. Cada cor volta ao padrão, e uma sala que ficou de pé (a fumaça falhou no meio) é desligada.
+        for number in ROOM_COLORS:
+            try:
+                registrar.command("VIDEO SOURCE %s default" % number)
+            except Exception:   # noqa: BLE001
+                pass
+        try:
+            if page.locator("button.btn-call").count() == 0:
+                page.get_by_role("button", name="Desligar", exact=True).click(timeout=3000)
+                page.get_by_role("alertdialog", name="Encerrar a sala para todos?").get_by_role(
+                    "button", name="Encerrar", exact=True).click(timeout=3000)
+                page.locator("button.btn-call").wait_for(timeout=10000)
+        except Exception:   # noqa: BLE001
+            pass
 
 
 def wait_interface_again(data_dir, ready_before, timeout):

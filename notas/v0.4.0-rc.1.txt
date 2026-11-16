@@ -1,0 +1,2 @@
+Sala de vídeo: na videochamada, o Adicionar pessoa chama mais gente, até 6 pessoas com você. Todos se veem e se ouvem; você vê o nome de cada um, tira alguém da sala e atende uma ligação de fora sem derrubar a sala.
+Esta é uma versão de teste.

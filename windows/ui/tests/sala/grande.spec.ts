@@ -187,6 +187,45 @@ test('a double click on Adicionar pessoa and on Diminuir in the big window count
   expect((await depois(page, antes)).filter((c) => (c as { cmd: string }).cmd !== 'videoWindow')).toEqual([]);
 });
 
+test("a double click on Encerrar in the big window ends the room once: the question reads the big window's NoWindows", async ({ page }) => {
+  await abrir(page, 'sala-grande');
+  await botao(page, 'Desligar').click();
+  await expect(pergunta(page)).toBeVisible();
+  const antes = (await comandos(page)).length;
+  // O C++ lento: a pergunta só some quando a sala acaba, e o segundo clique cai no mesmo Encerrar. Só o `NoWindows` que o grande
+  // põe em volta da sala o ignora (o botão da pergunta o lê: sem o Provider, saem dois `salaEncerrar`).
+  await segurarCpp(page);
+  await pergunta(page).getByRole('button', { name: 'Encerrar', exact: true }).dblclick();
+  await expect(pergunta(page)).toBeVisible();
+  await soltarCpp(page);
+  await esperarComando(page, { cmd: 'salaEncerrar' });
+  await depoisDoQueChegou(page);
+  expect(await depois(page, antes)).toEqual([{ v: 1, cmd: 'salaEncerrar' }]);
+});
+
+test('Esc with the add panel open in the full screen closes only the panel', async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await abrir(page, 'sala-grande');
+  await botao(page, 'Tela cheia').click();
+  await esperarComando(page, { cmd: 'videoWindow', modo: 'telaCheia' });
+  await expect(principal(page, 'Sala de vídeo, tela cheia')).toBeVisible();
+  await botao(page, 'Adicionar pessoa').click();
+  await expect(campo(page)).toBeFocused();
+  await depoisDoQueChegou(page);
+  const antes = (await comandos(page)).length;
+
+  await page.keyboard.press('Escape');
+  await expect(painel(page)).toHaveCount(0);
+  await depoisDoQueChegou(page);
+  // A janela segue na tela cheia, e nenhum `videoWindow` (nem outro comando) saiu.
+  await expect(principal(page, 'Sala de vídeo, tela cheia')).toBeVisible();
+  await expect(botao(page, 'Sair da tela cheia')).toBeVisible();
+  expect(await depois(page, antes)).toEqual([]);
+  // O foco volta a um controle da barra, e outro Esc, sem o painel, sai da tela cheia.
+  await page.keyboard.press('Escape');
+  await esperarComando(page, { cmd: 'videoWindow', modo: 'grande' });
+});
+
 test('a double click on Tirar da sala in the big window takes out one guest and keeps the window mode', async ({ page }) => {
   await abrir(page, 'sala-grande');
   const antes = (await comandos(page)).length;
