@@ -97,6 +97,7 @@ Tudo vai em HTTPS, na 443 do servidor de vídeo, com `Authorization: Bearer <cha
 - O `freeswitch` do `estado` diz se o agente está ligado ao FreeSWITCH. Com ele `false` e sem salas, o chat sabe que o vídeo está fora do ar, e não que ninguém tem reunião.
 - O chat deixa essa conexão sempre aberta e, quando ela cai, conecta de novo. O primeiro evento de cada conexão é um `estado`.
 - Quando o FreeSWITCH cai, o agente manda um `acabou` para cada sala e depois um `estado` vazio. Quando ele volta, o agente lê as salas que existem e manda um `estado`.
+- Um cliente que conecta no meio de uma mudança pode receber o `estado` novo e depois um aviso (`entrou`, `saiu` ou `acabou`) que o `estado` já mostra. O chat trata os avisos como idempotentes.
 - Um cliente que não lê é desligado, sem atrasar os outros.
 
 **Tirar** — `POST /agente/v1/salas/{sala}/participantes/{participante}/tirar`: `204`. As ligações do participante, a da câmera e a da tela, acabam.
