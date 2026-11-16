@@ -39,6 +39,7 @@ var (
 	destinoSIP       = "http://127.0.0.1:5066/" // o WebSocket do perfil navegador do FreeSWITCH
 	procDir          = "/proc"
 	intervaloUso     = 60 * time.Second
+	primeiraCPU      = 2 * time.Second  // a segunda leitura do uso, a primeira com a CPU
 	esperaESLMinima  = 2 * time.Second  // a espera depois que o ESL cai
 	esperaESLMaxima  = 10 * time.Second // até onde ela sobe, quando o ESL não volta
 
@@ -308,14 +309,20 @@ func (a *agente) medirUso() {
 	a.uso.Store(&u)
 }
 
-// repetirUso lê o uso a cada intervalo, até o ctx acabar. A CPU de cada leitura é a do intervalo que passou.
+// repetirUso lê o uso a cada intervalo, até o ctx acabar. A CPU de cada leitura é a do tempo desde a leitura
+// anterior. A leitura do começo não tem com que comparar a CPU e dá 0, então uma segunda vem segundos depois
+// (primeiraCPU), sem esperar o primeiro intervalo; os intervalos continuam contados do começo.
 func (a *agente) repetirUso(ctx context.Context) {
+	primeira := time.NewTimer(primeiraCPU)
+	defer primeira.Stop()
 	t := time.NewTicker(intervaloUso)
 	defer t.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-primeira.C:
+			a.medirUso()
 		case <-t.C:
 			a.medirUso()
 		}

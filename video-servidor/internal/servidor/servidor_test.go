@@ -12,6 +12,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"io"
 	"log/slog"
 	"math/big"
@@ -819,6 +820,7 @@ func TestProximaEspera(t *testing.T) {
 func TestUso_UltimaLeitura(t *testing.T) {
 	a := prepararAmbiente(t)
 	trocar(t, &intervaloUso, time.Hour) // só a leitura do começo
+	trocar(t, &primeiraCPU, time.Hour)
 	s := iniciar(t, s0())
 	estado := func() (cpu, memoria float64) {
 		resp := pedir(t, http.DefaultClient, "GET", s.url()+"/agente/v1/estado", s.c.Chave)
@@ -859,6 +861,48 @@ func TestUso_MedeACadaIntervalo(t *testing.T) {
 		json.NewDecoder(resp.Body).Decode(&corpo)
 		return corpo.Uso.Memoria == 75
 	})
+}
+
+// A leitura do começo não tem com que comparar a CPU, e o estado dava a CPU 0 até a leitura do primeiro intervalo, um
+// minuto depois (a revisão final, M9). A segunda leitura vem segundos depois do começo. O /proc de teste conta a CPU
+// sempre andando, com 30% ocupada: o estado dá os 30 logo, com o intervalo de uma hora e sem olhar a máquina.
+func TestUso_PrimeiraCPULogo(t *testing.T) {
+	a := prepararAmbiente(t)
+	trocar(t, &intervaloUso, time.Hour)
+	trocar(t, &primeiraCPU, 50*time.Millisecond)
+	parar, parou := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(parou)
+		ocupado, livre := 100, 900
+		for {
+			select {
+			case <-parar:
+				return
+			case <-time.After(5 * time.Millisecond):
+			}
+			// A cada passo, 10 a mais no total e 3 deles ocupados; o arquivo troca de uma vez (o rename).
+			ocupado, livre = ocupado+3, livre+7
+			novo := filepath.Join(a.proc, "stat.novo")
+			if os.WriteFile(novo, fmt.Appendf(nil, "cpu  %d 0 0 %d 0 0 0 0 0 0\n", ocupado, livre), 0o644) == nil {
+				os.Rename(novo, filepath.Join(a.proc, "stat"))
+			}
+		}
+	}()
+	t.Cleanup(func() {
+		close(parar)
+		<-parou
+	})
+	s := iniciar(t, s0())
+	cpu := func() int {
+		resp := pedir(t, http.DefaultClient, "GET", s.url()+"/agente/v1/estado", s.c.Chave)
+		defer resp.Body.Close()
+		var corpo struct{ Uso struct{ CPU int } }
+		if err := json.NewDecoder(resp.Body).Decode(&corpo); err != nil {
+			t.Fatal(err)
+		}
+		return corpo.Uso.CPU
+	}
+	esperarAte(t, 3*time.Second, "a CPU de 30% no estado, antes do primeiro intervalo", func() bool { return cpu() == 30 })
 }
 
 // gorotinasNossas lista as goroutines que ainda rodam código do agente, fora o dos testes e o do ESL falso.

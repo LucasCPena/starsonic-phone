@@ -83,7 +83,7 @@ Tudo vai em HTTPS, na 443 do servidor de vídeo, com `Authorization: Bearer <cha
  "uso": {"cpu": 34, "memoria": 41}}
 ```
 - Cada ligação aparece uma vez em `participantes`: a da câmera, com `tela` falso, e a da tela, com `tela` verdadeiro.
-- O `uso` vem em porcentagem inteira. A CPU é a do último minuto, e a memória é a de agora.
+- O `uso` vem em porcentagem inteira. A CPU é a do último minuto, e a memória é a de agora. No primeiro minuto do agente, a CPU é a dos seus dois primeiros segundos, e 0 antes deles.
 - O `agora` é o relógio do agente, em milissegundos UTC.
 
 **Os eventos** — `GET /agente/v1/eventos`, como `text/event-stream` (Server-Sent Events). Cada evento é uma linha `data: <JSON>` seguida de uma linha vazia:
