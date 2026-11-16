@@ -136,14 +136,26 @@ func (g *Gerente) Desistir(p *Pedido) {
 	g.despachar()
 }
 
-// Esperando diz se o pedido está na sala de espera (naoComecou ou aguardando): ainda sem resposta, retirada ou fim.
-func (g *Gerente) Esperando(p *Pedido) bool {
+// DesistirEsperando é o desistir da página, sem cruzar com o aceito de um colega: numa trava só, retira o pedido que
+// ainda espera (os colegas que o viam recebem o reuniaoPedidoFim; nada vai à página) e devolve true. Com o pedido
+// nulo, já aceito ou já no fim, devolve false e não muda nada: o aceito, se vier, chega à página.
+func (g *Gerente) DesistirEsperando(p *Pedido) bool {
 	if p == nil {
 		return false
 	}
 	g.mu.Lock()
-	defer g.mu.Unlock()
-	return p.fase == esperando
+	s := g.salas[p.sala]
+	if p.fase != esperando || s == nil || s.pedidos[p.id] != p {
+		g.mu.Unlock()
+		return false
+	}
+	antes := s.retrato()
+	g.responder(s, p, "")
+	g.depois(s, antes)
+	g.limpar(s)
+	g.mu.Unlock()
+	g.despachar()
+	return true
 }
 
 // Aceitar: um colega na reunião aceita o pedido. Vale a primeira resposta que chega: um pedido que já saiu da

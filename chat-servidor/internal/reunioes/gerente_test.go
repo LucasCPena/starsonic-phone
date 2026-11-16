@@ -1729,3 +1729,68 @@ func TestSemNomesNoLog(t *testing.T) {
 		t.Errorf("a conferência não acusa um ramal no log: %v", err)
 	}
 }
+
+// O desistir da página e o aceito de um colega, ao mesmo tempo: um só vence. Se o aceito vence, a página recebe o
+// aceito; se o desistir vence, ela não recebe nada.
+func TestDesistirEsperando_CruzaComOAceito(t *testing.T) {
+	c := novaCena(t)
+	r := c.marcada()
+	carlos := c.carlos
+	c.dentro(r, carlos)
+	var aceitos, retirados int
+	for i := range 8 { // com o Carlos, até 9 pessoas: cabe nas 10
+		nome := fmt.Sprintf("Maria %d", i)
+		p, can := c.pedir(r, nome)
+		id := c.pedidoDe(r, carlos, nome)
+		var errAceitar error
+		var retirou bool
+		var feito sync.WaitGroup
+		largada := make(chan struct{})
+		feito.Add(2)
+		go func() { defer feito.Done(); <-largada; errAceitar = c.g.Aceitar(c.ctx, r, carlos.p.ID, id) }()
+		go func() { defer feito.Done(); <-largada; retirou = c.g.DesistirEsperando(p) }()
+		close(largada)
+		feito.Wait()
+		if (errAceitar == nil) == retirou {
+			t.Fatalf("rodada %d: Aceitar = %v, DesistirEsperando = %v; queria só um vencedor", i, errAceitar, retirou)
+		}
+		if retirou {
+			retirados++
+			if !errors.Is(errAceitar, ErrJaRespondido) {
+				t.Fatalf("rodada %d: o Aceitar que perdeu deu %v; queria ErrJaRespondido", i, errAceitar)
+			}
+			if tipos := can.tipos(); slices.Contains(tipos, "aceito") {
+				t.Fatalf("rodada %d: a página recebeu %q depois de desistir", i, tipos)
+			}
+			continue
+		}
+		aceitos++
+		prazo := time.Now().Add(5 * time.Second)
+		for !slices.Contains(can.tipos(), "aceito") {
+			if time.Now().After(prazo) {
+				t.Fatalf("rodada %d: o aceito venceu e a página não o recebeu: %q", i, can.tipos())
+			}
+			time.Sleep(time.Millisecond)
+		}
+		if c.g.DesistirEsperando(p) {
+			t.Fatalf("rodada %d: DesistirEsperando retirou um pedido já aceito", i)
+		}
+	}
+	t.Logf("aceitos %d, retirados %d", aceitos, retirados)
+}
+
+func TestDesistirEsperando_ForaDeOrdem(t *testing.T) {
+	c := novaCena(t)
+	if c.g.DesistirEsperando(nil) {
+		t.Fatal("DesistirEsperando(nil) deu true")
+	}
+	r := c.marcada()
+	c.dentro(r, c.carlos)
+	p, _ := c.pedir(r, "Maria Lima")
+	if !c.g.DesistirEsperando(p) {
+		t.Fatal("o pedido que espera não foi retirado")
+	}
+	if c.g.DesistirEsperando(p) {
+		t.Fatal("o pedido já retirado foi retirado de novo")
+	}
+}

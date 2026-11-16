@@ -432,11 +432,12 @@ func (s *servidor) mensagemDaPagina(c *canalPagina, st *estadoDaPagina, tipo web
 		// A última palavra da página sobre um pedido que espera: o pedido sai (um Desistir), e o canal fecha com 1000,
 		// sem mandar nada. Sem pedido, ou com ele já aceito (ou respondido), é fora de ordem e nada muda; depois do
 		// aceito a página sai fechando o canal.
-		if !s.gerente.Esperando(st.pedido) {
+		// A retirada e o aceito de um colega não se cruzam: o gerente retira o pedido que espera numa trava só.
+		if !s.gerente.DesistirEsperando(st.pedido) {
 			c.Mandar(erroDoCanal("invalido"))
 			return
 		}
-		s.desistir(st)
+		st.desistiu = true // o pedido já saiu: o Desistir do fim não precisa de outro
 		c.Fechar()
 	case "senha":
 		senha, err := s.gerente.NovaSenha(st.pedido)
