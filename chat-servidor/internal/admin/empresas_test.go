@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/apitest"
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/banco"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/banco/bancotest"
 )
 
@@ -152,9 +153,17 @@ func TestApagarEmpresa(t *testing.T) {
 	outra := p.a.Empresa("Outra Ltda")
 	kAna, kBia := p.a.Ligar(acme.Codigo, "NOTE-ANA"), p.a.Ligar(acme.Codigo, "FIN-01")
 	kAbel := p.a.Ligar(outra.Codigo, "PC-ABEL")
-	p.a.Entrar(kAna, "2003", "Ana Souza")
+	ana := p.a.Entrar(kAna, "2003", "Ana Souza")
 	bia := p.a.Entrar(kBia, "3004", "Beatriz Ramos")
-	p.a.Entrar(kAbel, "2003", "Abel")
+	abel := p.a.Entrar(kAbel, "2003", "Abel")
+	// Uma reunião marcada em cada empresa.
+	for _, d := range []struct{ empresa, pessoa int64 }{{acme.ID, ana.ID}, {outra.ID, abel.ID}} {
+		agora := p.a.Relogio.Agora().UnixMilli()
+		if _, err := p.a.Banco.CriarReuniao(t.Context(), banco.Reuniao{EmpresaID: d.empresa, Tipo: banco.TipoMarcada,
+			CriouID: d.pessoa, Inicio: agora + 3_600_000, ValeAte: agora + 7_200_000}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	// Na ACME, uma conversa com texto e uma foto com miniatura, e um grupo; na outra, um
 	// arquivo numa mensagem.
 	dupla := criarConversa(t, p.a, kAna, map[string]any{"tipo": "dupla", "com": bia.ID})

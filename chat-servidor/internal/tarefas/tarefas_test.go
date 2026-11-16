@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/apitest"
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/banco"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/tempo"
 )
 
@@ -554,5 +555,80 @@ func TestExpirar_FalhaAoMarcar(t *testing.T) {
 	}
 	if !existe(c.caminho(f.ID)) || !existe(c.caminho(f.ID)+".mini") {
 		t.Fatal("o arquivo saiu do disco sem a marca no banco")
+	}
+}
+
+// reuniaoVelha cria uma reunião marcada da Ana que valeu até há idade (relativo ao relógio de
+// teste) e devolve o código dela.
+func (c *cena) reuniaoVelha(ana apitest.Pessoa, empresaID int64, idade time.Duration) string {
+	c.a.T.Helper()
+	ate := c.a.Relogio.Agora().Add(-idade).UnixMilli()
+	r, err := c.a.Banco.CriarReuniao(context.Background(), banco.Reuniao{
+		EmpresaID: empresaID, Tipo: banco.TipoMarcada, CriouID: ana.ID, Inicio: ate - 3_600_000, ValeAte: ate,
+	})
+	if err != nil {
+		c.a.T.Fatalf("CriarReuniao: %v", err)
+	}
+	return r.Codigo
+}
+
+func (c *cena) existeReuniao(codigo string) bool {
+	c.a.T.Helper()
+	return c.a.Contar(`SELECT COUNT(*) FROM reunioes WHERE codigo = ?`, codigo) == 1
+}
+
+func TestLimparReunioes_OsTrintaDias(t *testing.T) {
+	c := novaCena(t)
+	empresa := c.a.Empresa("Outra Ltda")
+	ana := c.a.Entrar(c.a.Ligar(empresa.Codigo, "PC-ANA2"), "2001", "Ana Souza")
+
+	velha := c.reuniaoVelha(ana, empresa.ID, 30*dia+time.Millisecond)
+	noLimite := c.reuniaoVelha(ana, empresa.ID, 30*dia)
+	recente := c.reuniaoVelha(ana, empresa.ID, 29*dia)
+	futura := c.reuniaoVelha(ana, empresa.ID, -dia)
+
+	n, err := LimparReunioes(context.Background(), c.a.Banco)
+	if err != nil || n != 1 {
+		t.Fatalf("LimparReunioes = %d, %v; queria 1, nil", n, err)
+	}
+	if c.existeReuniao(velha) || !c.existeReuniao(noLimite) || !c.existeReuniao(recente) || !c.existeReuniao(futura) {
+		t.Fatal("a limpeza apagou a reunião errada")
+	}
+	// Um milissegundo depois, a que estava no limite sai também.
+	c.a.Relogio.Avancar(time.Millisecond)
+	if n, err := LimparReunioes(context.Background(), c.a.Banco); err != nil || n != 1 || c.existeReuniao(noLimite) {
+		t.Fatalf("1 ms depois: %d, %v, existe=%v", n, err, c.existeReuniao(noLimite))
+	}
+}
+
+func TestRodada_LimpaReunioes(t *testing.T) {
+	c := novaCena(t)
+	empresa := c.a.Empresa("Outra Ltda")
+	ana := c.a.Entrar(c.a.Ligar(empresa.Codigo, "PC-ANA2"), "2001", "Ana Souza")
+	velha := c.reuniaoVelha(ana, empresa.ID, 31*dia)
+	recente := c.reuniaoVelha(ana, empresa.ID, 2*dia)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	feito := make(chan struct{})
+	go func() {
+		Rodar(ctx, c.a.Banco, c.a.Armazem)
+		close(feito)
+	}()
+	espera := time.Now().Add(5 * time.Second)
+	for c.existeReuniao(velha) {
+		if time.Now().After(espera) {
+			t.Fatal("a reunião velha não saiu depois de Rodar começar")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !c.existeReuniao(recente) {
+		t.Fatal("a rodada apagou uma reunião recente")
+	}
+	cancel()
+	select {
+	case <-feito:
+	case <-time.After(time.Second):
+		t.Fatal("Rodar não voltou em 1 s depois do cancel")
 	}
 }

@@ -17,6 +17,7 @@ type Empresa struct {
 	Nome     string
 	Codigo   string
 	CriadaEm int64
+	Reunioes bool // a empresa tem as reuniões com link liberadas (LiberarReunioes)
 }
 
 // ResumoEmpresa é a empresa na página de administração: as pessoas ativas e os bytes dos
@@ -69,8 +70,8 @@ func (b *Banco) CriarEmpresa(ctx context.Context, nome string) (Empresa, error) 
 func (b *Banco) EmpresaPorCodigo(ctx context.Context, codigo string) (Empresa, error) {
 	var e Empresa
 	err := b.db.QueryRowContext(ctx,
-		`SELECT id, nome, codigo, criada_em FROM empresas WHERE codigo = ?`, codigo).
-		Scan(&e.ID, &e.Nome, &e.Codigo, &e.CriadaEm)
+		`SELECT id, nome, codigo, criada_em, reunioes FROM empresas WHERE codigo = ?`, codigo).
+		Scan(&e.ID, &e.Nome, &e.Codigo, &e.CriadaEm, &e.Reunioes)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Empresa{}, ErrNaoEncontrado
 	}
@@ -128,7 +129,7 @@ func (b *Banco) ResumoDaEmpresa(ctx context.Context, id int64) (ResumoEmpresa, e
 // resumosEmpresas monta os resumos; id 0 não filtra.
 func (b *Banco) resumosEmpresas(ctx context.Context, id int64) ([]ResumoEmpresa, error) {
 	linhas, err := b.db.QueryContext(ctx,
-		`SELECT e.id, e.nome, e.codigo, e.criada_em, COALESCE(p.n, 0), COALESCE(a.bytes, 0)
+		`SELECT e.id, e.nome, e.codigo, e.criada_em, e.reunioes, COALESCE(p.n, 0), COALESCE(a.bytes, 0)
 		   FROM empresas e
 		   LEFT JOIN (SELECT empresa_id, COUNT(*) AS n FROM pessoas
 		               WHERE saiu_em IS NULL AND (?1 = 0 OR empresa_id = ?1) GROUP BY empresa_id) p
@@ -144,7 +145,7 @@ func (b *Banco) resumosEmpresas(ctx context.Context, id int64) ([]ResumoEmpresa,
 	lista := []ResumoEmpresa{}
 	for linhas.Next() {
 		var r ResumoEmpresa
-		if err := linhas.Scan(&r.ID, &r.Nome, &r.Codigo, &r.CriadaEm, &r.Pessoas, &r.Bytes); err != nil {
+		if err := linhas.Scan(&r.ID, &r.Nome, &r.Codigo, &r.CriadaEm, &r.Reunioes, &r.Pessoas, &r.Bytes); err != nil {
 			return nil, err
 		}
 		lista = append(lista, r)

@@ -160,6 +160,7 @@ func encherEmpresa(t *testing.T, b *Banco, empresaID int64, prefixo string) (com
 	if _, err := b.MarcarLida(ctx, bia.ID, dupla, 1<<40); err != nil {
 		t.Fatal(err)
 	}
+	marcada(t, b, empresaID, ana.ID, 3_600_000)
 	return []int64{c1.ID, c2.ID, c3.ID}, []string{f1, f2}
 }
 
