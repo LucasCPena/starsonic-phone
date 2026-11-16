@@ -435,6 +435,37 @@ func TestCriar_MuitasReunioes(t *testing.T) {
 	}
 }
 
+// O "Gerar link" tem a sua cota (a revisão final, M4): cada pessoa tem até 10 reuniões na hora abertas, e a 11ª
+// responde 409 muitasReunioes, como a das marcadas. Quando uma acaba (aqui, pelo Encerrar para todos), outra cabe.
+func TestAgora_MuitasReunioes(t *testing.T) {
+	c := novaCenaR(t)
+	agora := func(chave string) *http.Response { return c.a.Pedir(chave, "POST", "/api/v1/reunioes/agora", nil) }
+	var codigos []string
+	for i := range 10 {
+		resp := agora(c.kAna)
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("a naHora %d: status %d", i+1, resp.StatusCode)
+		}
+		codigos = append(codigos, apitest.LerJSON[struct {
+			Reuniao reuniaoResp `json:"reuniao"`
+		}](t, resp).Reuniao.Codigo)
+	}
+	esperarErro(t, agora(c.kAna), 409, "muitasReunioes")
+	if resp := agora(c.kCarlos); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("a outra pessoa tem as suas 10: status %d", resp.StatusCode)
+	}
+
+	// A Ana entra numa delas e a encerra para todos: a naHora acaba, e a 11ª cabe.
+	c.entrouNaReuniao(t, c.kAna, codigos[0])
+	if resp := c.a.Pedir(c.kAna, "POST", "/api/v1/reunioes/"+codigos[0]+"/encerrar", nil); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("encerrar: status %d", resp.StatusCode)
+	}
+	if resp := agora(c.kAna); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("depois de uma acabar: status %d", resp.StatusCode)
+	}
+	esperarErro(t, agora(c.kAna), 409, "muitasReunioes")
+}
+
 func TestCriar_SemReunioes(t *testing.T) {
 	a := apitest.Novo(t)
 	emp := a.Empresa("Sem Reuniões Ltda")

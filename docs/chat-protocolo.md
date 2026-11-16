@@ -285,6 +285,7 @@ As reuniões com link moram no servidor do chat; o vídeo e o som vão direto pa
   - a naHora: até acabar.
 - **Uma reunião que está acontecendo continua depois do `valeAte`:** quem está nela fica, mas ninguém novo entra.
 - **Cada pessoa tem até 100 reuniões marcadas que ainda valem** (`409 muitasReunioes`).
+- **Cada pessoa tem até 10 reuniões na hora abertas** (o "Gerar link"; `409 muitasReunioes`, como nas marcadas). A naHora que acabou ou foi cancelada não conta.
 - **A empresa precisa ter as reuniões liberadas** na administração. Sem isso, as rotas desta seção respondem `403 semReunioes`, e a página não abre os links dela (`404 naoEncontrado`). Quando a administração bloqueia as reuniões da empresa, ou a apaga, as reuniões dela que estão acontecendo acabam: todos saem, como no cancelar.
 - **Quem está na reunião:** é a pessoa cujo computador chamou o `entrar` e cuja ligação com a câmera o servidor de vídeo diz que entrou e ainda não saiu.
 
@@ -442,6 +443,7 @@ Do servidor para a página:
 | A sala de espera | 50 pedidos esperando por reunião. O 51º `pedir` recebe `esperaCheia` |
 | A naHora sem ninguém | acaba 10 minutos depois de criada |
 | Reuniões marcadas por pessoa | 100 que ainda valem |
+| Reuniões na hora por pessoa | 10 abertas |
 | As credenciais do TURN | 12 horas |
 | O `assunto` | 120 caracteres |
 | A reunião guardada | até 30 dias depois do fim da validade: o `valeAte`, o cancelamento ou o fim da naHora |

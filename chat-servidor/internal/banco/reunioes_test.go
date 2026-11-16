@@ -272,6 +272,51 @@ func TestMuitasReunioes(t *testing.T) {
 	marcada(t, b, acme.ID, ana.ID, hora)
 }
 
+// A cota do "Gerar link": até 10 naHora abertas por pessoa. A que acabou e a cancelada não contam, nem as marcadas.
+func TestMuitasReunioes_NaHora(t *testing.T) {
+	b := abrirTeste(t)
+	ctx := context.Background()
+	acme, _ := b.CriarEmpresa(ctx, "ACME Comércio Ltda")
+	ana := pessoaDe(t, b, acme.ID, "2003", "Ana Souza")
+	bia := pessoaDe(t, b, acme.ID, "2004", "Bia Ramos")
+	naHora := func(pessoaID int64) (Reuniao, error) {
+		return b.CriarReuniao(ctx, Reuniao{EmpresaID: acme.ID, Tipo: TipoNaHora, CriouID: pessoaID})
+	}
+
+	marcada(t, b, acme.ID, ana.ID, hora)
+	var abertas []Reuniao
+	for i := range 10 {
+		r, err := naHora(ana.ID)
+		if err != nil {
+			t.Fatalf("a naHora %d: %v", i+1, err)
+		}
+		abertas = append(abertas, r)
+	}
+	if _, err := naHora(ana.ID); !errors.Is(err, ErrMuitasReunioes) {
+		t.Fatalf("a 11ª: %v; queria ErrMuitasReunioes", err)
+	}
+	if _, err := naHora(bia.ID); err != nil {
+		t.Fatalf("a naHora da Bia: %v", err)
+	}
+	marcada(t, b, acme.ID, ana.ID, 2*hora) // a cota da naHora não conta as marcadas, nem o contrário
+	// A que acabou e a cancelada saem da conta.
+	if err := b.AcabarReuniao(ctx, abertas[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := naHora(ana.ID); err != nil {
+		t.Fatalf("depois de uma acabar: %v", err)
+	}
+	if _, err := b.CancelarReuniao(ctx, acme.ID, ana.ID, abertas[1].Codigo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := naHora(ana.ID); err != nil {
+		t.Fatalf("depois de uma ser cancelada: %v", err)
+	}
+	if _, err := naHora(ana.ID); !errors.Is(err, ErrMuitasReunioes) {
+		t.Fatalf("de novo a 11ª: %v; queria ErrMuitasReunioes", err)
+	}
+}
+
 func TestReuniaoDeTeste(t *testing.T) {
 	b := abrirTeste(t)
 	ctx := context.Background()

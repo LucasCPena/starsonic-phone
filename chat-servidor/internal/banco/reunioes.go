@@ -19,11 +19,14 @@ const (
 // maxMarcadas é o máximo de reuniões marcadas que ainda valem por pessoa.
 const maxMarcadas = 100
 
+// maxNaHora é o máximo de reuniões na hora abertas (as que não acabaram nem foram canceladas) por pessoa.
+const maxNaHora = 10
+
 // tentativasCodigo é quantas vezes CriarReuniao sorteia de novo se o código ou a sala já existem.
 const tentativasCodigo = 20
 
-// ErrMuitasReunioes: a pessoa já tem 100 reuniões marcadas que ainda valem.
-var ErrMuitasReunioes = errors.New("banco: a pessoa já tem 100 reuniões marcadas que valem")
+// ErrMuitasReunioes: a pessoa já tem 100 reuniões marcadas que ainda valem, ou 10 na hora abertas.
+var ErrMuitasReunioes = errors.New("banco: a pessoa já tem reuniões demais")
 
 // Os sorteios do código e da sala. São variáveis só para o teste forçar uma repetição.
 var (
@@ -108,24 +111,34 @@ func inserirReuniao(ctx context.Context, tx *sql.Tx, r Reuniao) (Reuniao, error)
 }
 
 // CriarReuniao guarda a reunião, que ganha o Codigo, a Sala e a hora de criação (as que vêm em r
-// são ignoradas). Na marcada, a pessoa (r.CriouID) pode ter até 100 que ainda valem: a 101ª dá
-// ErrMuitasReunioes e nada é guardado. A conferência e a gravação vão na mesma transação.
+// são ignoradas). Na marcada, a pessoa (r.CriouID) pode ter até 100 que ainda valem, e na naHora,
+// até 10 abertas: a 101ª (ou a 11ª) dá ErrMuitasReunioes e nada é guardado. A conferência e a
+// gravação vão na mesma transação.
 func (b *Banco) CriarReuniao(ctx context.Context, r Reuniao) (Reuniao, error) {
 	r.CriadaEm, r.CanceladaEm, r.AcabouEm = b.agoraMs(), 0, 0
 	err := b.Tx(ctx, func(tx *sql.Tx) error {
-		if r.Tipo == TipoMarcada {
-			var n int
-			if err := tx.QueryRowContext(ctx,
+		var n, maximo int
+		var err error
+		switch r.Tipo {
+		case TipoMarcada:
+			maximo = maxMarcadas
+			err = tx.QueryRowContext(ctx,
 				`SELECT COUNT(*) FROM reunioes
 				  WHERE tipo = 'marcada' AND empresa_id = ? AND criou_id = ? AND cancelada_em IS NULL AND vale_ate > ?`,
-				r.EmpresaID, r.CriouID, r.CriadaEm).Scan(&n); err != nil {
-				return err
-			}
-			if n >= maxMarcadas {
-				return ErrMuitasReunioes
-			}
+				r.EmpresaID, r.CriouID, r.CriadaEm).Scan(&n)
+		case TipoNaHora:
+			maximo = maxNaHora
+			err = tx.QueryRowContext(ctx,
+				`SELECT COUNT(*) FROM reunioes
+				  WHERE tipo = 'naHora' AND empresa_id = ? AND criou_id = ? AND cancelada_em IS NULL AND acabou_em IS NULL`,
+				r.EmpresaID, r.CriouID).Scan(&n)
 		}
-		var err error
+		if err != nil {
+			return err
+		}
+		if maximo > 0 && n >= maximo {
+			return ErrMuitasReunioes
+		}
 		r, err = inserirReuniao(ctx, tx, r)
 		return err
 	})
