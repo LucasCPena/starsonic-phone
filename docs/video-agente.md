@@ -71,6 +71,7 @@ Tudo vai em HTTPS, na 443 do servidor de vídeo, com `Authorization: Bearer <cha
 | 400 | `invalido` | A `sala` não tem 32 caracteres hexadecimais minúsculos, ou o `participante` não tem 16. |
 | 401 | `chave` | Sem a chave, ou com outra. |
 | 404 | `naoEncontrado` | A sala ou o participante não estão no FreeSWITCH. |
+| 500 | `interno` | O FreeSWITCH recusou o comando, ou ele falhou de outro jeito. O agente anota só o texto do erro do FreeSWITCH, sem ids. |
 | 503 | `freeswitch` | O agente está sem a ligação com o FreeSWITCH (o ESL). |
 
 **A saúde** — `GET /agente/v1/saude`, sem chave: `200` `{"ok": true}`.
@@ -87,12 +88,13 @@ Tudo vai em HTTPS, na 443 do servidor de vídeo, com `Authorization: Bearer <cha
 
 **Os eventos** — `GET /agente/v1/eventos`, como `text/event-stream` (Server-Sent Events). Cada evento é uma linha `data: <JSON>` seguida de uma linha vazia:
 ```json
-{"tipo": "estado", "agora": 1794495600000, "salas": [ … como no estado … ]}   // o primeiro, e de novo quando o FreeSWITCH cai ou volta
+{"tipo": "estado", "agora": 1794495600000, "freeswitch": true, "salas": [ … como no estado … ]}   // o primeiro, e de novo quando o FreeSWITCH cai ou volta
 {"tipo": "entrou", "sala": "…", "participante": "…", "tela": false}
 {"tipo": "saiu", "sala": "…", "participante": "…", "tela": false}
 {"tipo": "acabou", "sala": "…"}                                               // a reunião acabou no FreeSWITCH
 {"tipo": "relogio", "agora": 1794495625000}                                   // a cada 25 segundos
 ```
+- O `freeswitch` do `estado` diz se o agente está ligado ao FreeSWITCH. Com ele `false` e sem salas, o chat sabe que o vídeo está fora do ar, e não que ninguém tem reunião.
 - O chat deixa essa conexão sempre aberta e, quando ela cai, conecta de novo. O primeiro evento de cada conexão é um `estado`.
 - Quando o FreeSWITCH cai, o agente manda um `acabou` para cada sala e depois um `estado` vazio. Quando ele volta, o agente lê as salas que existem e manda um `estado`.
 - Um cliente que não lê é desligado, sem atrasar os outros.
