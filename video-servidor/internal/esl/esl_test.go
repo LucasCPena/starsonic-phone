@@ -326,3 +326,67 @@ func TestFechar(t *testing.T) {
 		t.Errorf("API depois do Fechar: err = %v, want ErrDesligado", err)
 	}
 }
+
+func TestEnquadramentoHostil(t *testing.T) {
+	// Cada caso é um corpo que o FreeSWITCH nunca mandaria: a conexão cai e quem espera recebe o ErrDesligado.
+	casos := map[string]string{
+		"Content-Length acima do máximo": "Content-Type: api/response\nContent-Length: 99999999999\n\n",
+		"Content-Length não numérico":    "Content-Type: api/response\nContent-Length: muito\n\n",
+		"Content-Length negativo":        "Content-Type: api/response\nContent-Length: -5\n\n",
+	}
+	for nome, bruto := range casos {
+		t.Run(nome, func(t *testing.T) {
+			fs := esltest.Novo(t, senhaTeste)
+			fs.Segurar("preso")
+			c := conectar(t, fs)
+			resultado := make(chan error, 1)
+			go func() {
+				_, err := c.API(ctxTeste(t), "preso")
+				resultado <- err
+			}()
+			esperarComando(t, fs, "api preso")
+			fs.MandarBruto(bruto)
+			select {
+			case err := <-resultado:
+				if !errors.Is(err, esl.ErrDesligado) {
+					t.Errorf("err = %v, want ErrDesligado", err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("a chamada não voltou")
+			}
+			esperarFechar(t, c.Eventos())
+		})
+	}
+	t.Run("um corpo em várias escritas pequenas chega inteiro", func(t *testing.T) {
+		fs := esltest.Novo(t, senhaTeste)
+		fs.Segurar("picado")
+		c := conectar(t, fs)
+		corpo := strings.Repeat("0123456789", 300)
+		resultado := make(chan string, 1)
+		go func() {
+			got, err := c.API(ctxTeste(t), "picado")
+			if err != nil {
+				got = "erro: " + err.Error()
+			}
+			resultado <- got
+		}()
+		esperarComando(t, fs, "api picado")
+		msg := fmt.Sprintf("Content-Type: api/response\nContent-Length: %d\n\n%s", len(corpo), corpo)
+		for i := 0; i < len(msg); i += 7 {
+			fim := i + 7
+			if fim > len(msg) {
+				fim = len(msg)
+			}
+			fs.MandarBruto(msg[i:fim])
+			time.Sleep(50 * time.Microsecond)
+		}
+		select {
+		case got := <-resultado:
+			if got != corpo {
+				t.Errorf("resposta com %d bytes (%.30q), want %d", len(got), got, len(corpo))
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("a chamada não voltou")
+		}
+	})
+}

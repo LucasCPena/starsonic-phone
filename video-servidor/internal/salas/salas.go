@@ -65,6 +65,12 @@ type Salas struct {
 	mu    sync.Mutex
 	api   API
 	salas map[string]map[string]ligacao // sala -> uuid da ligação -> quem é
+
+	// Enquanto um Reconstruir lê o FreeSWITCH, o que um evento tira do estado fica aqui, para a junção não
+	// trazer de volta o que já acabou.
+	reconstruindo int
+	uuidsSaidos   map[string]map[string]bool // sala -> uuids que saíram
+	salasAcabadas map[string]bool
 }
 
 // Nova cria as salas. O avisar recebe cada mudança, fora do mutex; pode ser nil.
@@ -72,7 +78,8 @@ func Nova(avisar func(Aviso)) *Salas {
 	if avisar == nil {
 		avisar = func(Aviso) {}
 	}
-	return &Salas{avisar: avisar, salas: map[string]map[string]ligacao{}}
+	return &Salas{avisar: avisar, salas: map[string]map[string]ligacao{},
+		uuidsSaidos: map[string]map[string]bool{}, salasAcabadas: map[string]bool{}}
 }
 
 // Ligar põe a API do ESL, ou nil quando o ESL cai.
@@ -163,6 +170,7 @@ func (s *Salas) entrou(ctx context.Context, sala string, ev esl.Evento) {
 	}
 	sort.Strings(anteriores)
 	ligacoes[uuid] = ligacao{participante: participante, tela: tela}
+	delete(s.uuidsSaidos[sala], uuid)
 	api := s.api
 	s.mu.Unlock()
 
@@ -182,6 +190,12 @@ func (s *Salas) entrou(ctx context.Context, sala string, ev esl.Evento) {
 
 func (s *Salas) saiu(ctx context.Context, sala, uuid string) {
 	s.mu.Lock()
+	if s.reconstruindo > 0 {
+		if s.uuidsSaidos[sala] == nil {
+			s.uuidsSaidos[sala] = map[string]bool{}
+		}
+		s.uuidsSaidos[sala][uuid] = true
+	}
 	l, ok := s.salas[sala][uuid]
 	if !ok {
 		s.mu.Unlock()
@@ -207,6 +221,9 @@ func (s *Salas) saiu(ctx context.Context, sala, uuid string) {
 func (s *Salas) acabou(sala string) {
 	s.mu.Lock()
 	delete(s.salas, sala)
+	if s.reconstruindo > 0 {
+		s.salasAcabadas[sala] = true
+	}
 	s.mu.Unlock()
 	s.avisar(Aviso{Tipo: "acabou", Sala: sala})
 }
@@ -246,6 +263,12 @@ func erroDoESL(err error) error {
 	return err
 }
 
+// canalJaSumiu diz se o FreeSWITCH respondeu que a ligação não existe mais: ela já saiu, e o que se queria está feito.
+func canalJaSumiu(err error) bool {
+	var e *esl.ErroFS
+	return errors.As(err, &e) && strings.Contains(strings.ToLower(e.Motivo), "no such channel")
+}
+
 // Tirar derruba as ligações do participante na sala, a da câmera e a da tela. O estado muda quando o
 // FreeSWITCH avisa que cada uma saiu.
 func (s *Salas) Tirar(ctx context.Context, sala, participante string) error {
@@ -269,7 +292,7 @@ func (s *Salas) Tirar(ctx context.Context, sala, participante string) error {
 	sort.Strings(uuids)
 	var primeiro error
 	for _, u := range uuids {
-		if _, err := api.API(ctx, "uuid_kill "+u); err != nil && primeiro == nil {
+		if _, err := api.API(ctx, "uuid_kill "+u); err != nil && !canalJaSumiu(err) && primeiro == nil {
 			primeiro = erroDoESL(err)
 		}
 	}
@@ -303,6 +326,11 @@ func (s *Salas) Esvaziar() {
 		nomes = append(nomes, nome)
 	}
 	s.salas = map[string]map[string]ligacao{}
+	if s.reconstruindo > 0 {
+		for _, nome := range nomes {
+			s.salasAcabadas[nome] = true
+		}
+	}
 	s.mu.Unlock()
 	sort.Strings(nomes)
 	for _, nome := range nomes {
@@ -341,6 +369,8 @@ func (s *Salas) Reconstruir(ctx context.Context) error {
 	if api == nil {
 		return ErrSemFreeSWITCH
 	}
+	s.comecarReconstrucao()
+	defer s.terminarReconstrucao()
 	resp, err := api.API(ctx, "conference json_list")
 	if err != nil {
 		return erroDoESL(err)
@@ -376,16 +406,39 @@ func (s *Salas) Reconstruir(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for sala, ligacoes := range achadas {
-		if s.salas[sala] == nil {
-			s.salas[sala] = map[string]ligacao{}
+		if s.salasAcabadas[sala] {
+			continue
 		}
 		for u, l := range ligacoes {
+			if s.uuidsSaidos[sala][u] {
+				continue
+			}
+			if s.salas[sala] == nil {
+				s.salas[sala] = map[string]ligacao{}
+			}
 			if _, ja := s.salas[sala][u]; !ja {
 				s.salas[sala][u] = l
 			}
 		}
 	}
 	return nil
+}
+
+func (s *Salas) comecarReconstrucao() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reconstruindo++
+}
+
+// terminarReconstrucao esquece o que acabou durante a leitura, quando a última reconstrução em curso termina.
+func (s *Salas) terminarReconstrucao() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reconstruindo--
+	if s.reconstruindo == 0 {
+		s.uuidsSaidos = map[string]map[string]bool{}
+		s.salasAcabadas = map[string]bool{}
+	}
 }
 
 // lerLigacao pergunta ao FreeSWITCH quem é a ligação. O erro só volta quando o contexto acaba ou o ESL cai;

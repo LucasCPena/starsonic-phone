@@ -112,6 +112,16 @@ func (s *Servidor) Mandar(ev esl.Evento) {
 	s.MandarJSON(string(corpo))
 }
 
+// MandarBruto escreve os bytes, como estão, em quem já assinou os eventos. Serve a testes de enquadramento.
+func (s *Servidor) MandarBruto(bruto string) {
+	s.mu.Lock()
+	alvo := append([]*ligacao(nil), s.ligacoes...)
+	s.mu.Unlock()
+	for _, l := range alvo {
+		l.escreve(bruto)
+	}
+}
+
 // MandarJSON manda o corpo, como está, como um evento text/event-json.
 func (s *Servidor) MandarJSON(corpo string) {
 	msg := fmt.Sprintf("Content-Type: text/event-json\nContent-Length: %d\n\n%s", len(corpo), corpo)

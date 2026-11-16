@@ -35,6 +35,11 @@ const (
 	maxFila      = 10000   // os eventos esperando um consumidor; passou disso, a conexão cai e o chamador reconecta
 )
 
+// ErroFS é uma resposta -ERR do FreeSWITCH a um comando api. O Motivo é o texto depois do -ERR, sem o comando.
+type ErroFS struct{ Motivo string }
+
+func (e *ErroFS) Error() string { return "esl: erro do FreeSWITCH: " + e.Motivo }
+
 type resposta struct {
 	corpo string
 	err   error
@@ -206,7 +211,7 @@ func (c *Conexao) entregarResposta(corpo string) {
 	}
 	if strings.HasPrefix(corpo, "-ERR") {
 		motivo := strings.TrimSpace(strings.TrimPrefix(corpo, "-ERR"))
-		ch <- resposta{err: fmt.Errorf("esl: erro do FreeSWITCH: %s", motivo)}
+		ch <- resposta{err: &ErroFS{Motivo: motivo}}
 		return
 	}
 	ch <- resposta{corpo: corpo}

@@ -331,10 +331,19 @@ func TestSalas_TirarEncerrar(t *testing.T) {
 			t.Errorf("Encerrar: err = %v", err)
 		}
 	})
-	t.Run("um erro do FreeSWITCH volta ao chamador", func(t *testing.T) {
+	t.Run("um uuid_kill que acha o canal já ido conta como feito", func(t *testing.T) {
 		s, a, _ := novo(t)
 		s.Evento(ctx(), entra(salaA, uuidAnaCamera, anaID, false))
-		a.erros["uuid_kill "+uuidAnaCamera] = errors.New("esl: no such channel")
+		s.Evento(ctx(), entra(salaA, uuidAnaTela, anaID, true))
+		a.erros["uuid_kill "+uuidAnaCamera] = &esl.ErroFS{Motivo: "No such channel!"}
+		if err := s.Tirar(ctx(), salaA, anaID); err != nil {
+			t.Errorf("err = %v, want nil", err)
+		}
+	})
+	t.Run("outro -ERR volta ao chamador", func(t *testing.T) {
+		s, a, _ := novo(t)
+		s.Evento(ctx(), entra(salaA, uuidAnaCamera, anaID, false))
+		a.erros["uuid_kill "+uuidAnaCamera] = &esl.ErroFS{Motivo: "Permission denied"}
 		err := s.Tirar(ctx(), salaA, anaID)
 		if err == nil || errors.Is(err, ErrNaoEncontrado) || errors.Is(err, ErrSemFreeSWITCH) {
 			t.Errorf("err = %v, want o erro do FreeSWITCH", err)
@@ -676,4 +685,91 @@ func TestSalas_Concorrencia(t *testing.T) {
 	if e := s.Estado(); len(e) != 1 || len(e[0].Participantes) != 0 {
 		t.Errorf("Estado = %+v", e)
 	}
+}
+
+// montaReconstrucao prepara um FreeSWITCH com a sala A (Ana e Carlos) e a B (Bia), e devolve as salas e a API.
+func montaReconstrucao(t *testing.T) (*Salas, *apiFalsa, *avisos) {
+	t.Helper()
+	v := &avisos{}
+	s := Nova(v.Avisar)
+	a := novaAPI()
+	a.respostas["conference json_list"] = listaFS(map[string][]string{
+		salaA: {uuidAnaCamera, uuidCarlosCam},
+		salaB: {uuidBiaCamera},
+	}, []string{salaA, salaB})
+	for uuid, p := range map[string]string{uuidAnaCamera: anaID, uuidCarlosCam: carlosID, uuidBiaCamera: biaID} {
+		a.respostas["uuid_getvar "+uuid+" starsonic_participante"] = p
+		a.respostas["uuid_getvar "+uuid+" starsonic_tela"] = "false"
+	}
+	s.Ligar(a)
+	return s, a, v
+}
+
+func TestSalas_Reconstruir_EventosDuranteALeitura(t *testing.T) {
+	// durante roda a cada comando da reconstrução; o evento sai no último getvar, depois de tudo lido.
+	ultimo := "uuid_getvar " + uuidBiaCamera + " starsonic_tela"
+	disparar := func(a *apiFalsa, s *Salas, evento esl.Evento) {
+		a.durante = func() {
+			cmds := a.Comandos()
+			if cmds[len(cmds)-1] == ultimo {
+				a.durante = nil
+				s.Evento(ctx(), evento)
+			}
+		}
+	}
+	t.Run("quem saiu durante a leitura não volta", func(t *testing.T) {
+		s, a, _ := montaReconstrucao(t)
+		disparar(a, s, sai(salaA, uuidCarlosCam))
+		if err := s.Reconstruir(ctx()); err != nil {
+			t.Fatal(err)
+		}
+		want := []Sala{
+			{Sala: salaA, Participantes: []Participante{{anaID, false}}},
+			{Sala: salaB, Participantes: []Participante{{biaID, false}}},
+		}
+		if got := s.Estado(); !reflect.DeepEqual(got, want) {
+			t.Errorf("Estado = %+v, want %+v", got, want)
+		}
+	})
+	t.Run("a sala que acabou durante a leitura não volta, e o acabou vem uma vez", func(t *testing.T) {
+		s, a, v := montaReconstrucao(t)
+		disparar(a, s, acaba(salaB))
+		if err := s.Reconstruir(ctx()); err != nil {
+			t.Fatal(err)
+		}
+		want := []Sala{{Sala: salaA, Participantes: []Participante{{anaID, false}, {carlosID, false}}}}
+		if got := s.Estado(); !reflect.DeepEqual(got, want) {
+			t.Errorf("Estado = %+v, want %+v", got, want)
+		}
+		if got := v.Lista(); !reflect.DeepEqual(got, []Aviso{{Tipo: "acabou", Sala: salaB}}) {
+			t.Errorf("avisos = %+v, want um só acabou", got)
+		}
+	})
+	t.Run("quem entrou durante a leitura fica", func(t *testing.T) {
+		s, a, _ := montaReconstrucao(t)
+		disparar(a, s, entra(salaA, uuidAnaTela, anaID, true))
+		if err := s.Reconstruir(ctx()); err != nil {
+			t.Fatal(err)
+		}
+		want := []Sala{
+			{Sala: salaA, Participantes: []Participante{{anaID, false}, {anaID, true}, {carlosID, false}}},
+			{Sala: salaB, Participantes: []Participante{{biaID, false}}},
+		}
+		if got := s.Estado(); !reflect.DeepEqual(got, want) {
+			t.Errorf("Estado = %+v, want %+v", got, want)
+		}
+	})
+	t.Run("o que acabou antes de uma reconstrução nova pode voltar nela", func(t *testing.T) {
+		s, a, _ := montaReconstrucao(t)
+		disparar(a, s, acaba(salaB))
+		if err := s.Reconstruir(ctx()); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Reconstruir(ctx()); err != nil {
+			t.Fatal(err)
+		}
+		if got := s.Estado(); len(got) != 2 {
+			t.Errorf("Estado = %+v, want as duas salas da segunda leitura", got)
+		}
+	})
 }
