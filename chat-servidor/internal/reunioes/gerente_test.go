@@ -931,6 +931,63 @@ func TestTirar(t *testing.T) {
 	}
 }
 
+// Quem foi tirado não volta por uma senha que ainda vale no agente (a revisão final, I1 e M1): a da tela, ou uma
+// segunda da câmera, pedida antes de entrar. O entrou de um participante que a sala não conhece, numa reunião
+// conhecida, não põe ninguém na lista, e o gerente pede ao agente que o tire.
+func TestTirar_QuemVoltaComOutraSenha(t *testing.T) {
+	for _, caso := range []struct {
+		nome string
+		tela bool // a senha que ela guarda é a da tela; senão, uma segunda da câmera
+	}{
+		{"pela senha da tela", true},
+		{"por uma senha da câmera de antes do tirar", false},
+	} {
+		t.Run(caso.nome, func(t *testing.T) {
+			c := novaCena(t)
+			r := c.marcada()
+			ana := c.dentro(r, c.ana)
+			maria, pm, _ := c.aceito(r, c.ana, "Maria Lima")
+			if !caso.tela {
+				senha, err := c.g.NovaSenha(pm) // as duas senhas da câmera valem no agente por 30 s
+				if err != nil {
+					t.Fatalf("NovaSenha: %v", err)
+				}
+				anotar(senha)
+			}
+			c.entrou(r, maria)
+			if caso.tela {
+				senha, err := c.g.TelaDeFora(pm)
+				if err != nil {
+					t.Fatalf("TelaDeFora: %v", err)
+				}
+				anotar(senha)
+			}
+			if err := c.g.Tirar(c.ctx, r, c.ana.p.ID, maria); err != nil {
+				t.Fatalf("Tirar: %v", err)
+			}
+			c.avisos.limpar()
+
+			// Ela liga de novo, com a senha que guardou.
+			c.evento(video.Evento{Tipo: "entrou", Sala: r.Sala, Participante: maria, Tela: caso.tela})
+
+			tirar := "tirar " + r.Sala + " " + maria
+			if cmds := c.video.Comandos(); !slices.Equal(cmds, []string{tirar, tirar}) {
+				t.Fatalf("o agente recebeu %q; queria o tirar da Ana e o do gerente", cmds)
+			}
+			l, err := c.g.Lista(r, c.ana.p.ID)
+			if err != nil || !reflect.DeepEqual(emJSON(l)["participantes"], lista(pv(ana, "Ana Souza", false, false))) {
+				t.Fatalf("Lista = %+v, %v; queria só a Ana", l, err)
+			}
+			if got := c.avisos.tiposDe(c.ana.computador); len(got) != 0 {
+				t.Fatalf("a Ana recebeu %q; a lista não mudou", got)
+			}
+			if _, n := c.g.Contagem(r.Sala); n != 1 {
+				t.Fatalf("a reunião tem %d pessoas; queria 1", n)
+			}
+		})
+	}
+}
+
 func TestEncerrar(t *testing.T) {
 	t.Run("a marcada para, e o link continua", func(t *testing.T) {
 		c := novaCena(t)
@@ -1316,6 +1373,45 @@ func TestVideo_Reconciliacao(t *testing.T) {
 			t.Fatalf("Lista = %+v, %v", l, err)
 		}
 	})
+	// O tirar de quem entra sem ser conhecido (TestTirar_QuemVoltaComOutraSenha) é só do entrou. O estado depois de um
+	// reinício do chat traz todos sem nome, e eles ficam, também numa reunião que já é conhecida quando ele chega: a
+	// naHora, que o primeiro Varrer lê no banco.
+	t.Run("depois de um reinício, o estado não tira quem ele traz", func(t *testing.T) {
+		c := novaCena(t)
+		n := c.naHora()
+		ana := c.dentro(n, c.ana)
+		maria, _, _ := c.aceito(n, c.ana, "Maria Lima")
+		c.entrou(n, maria)
+		c.reiniciar()
+		c.g.Varrer()
+		c.estado(salaDoEstado(n, ana, maria))
+		ana2 := c.dentro(n, c.ana)
+		if cmds := c.video.Comandos(); len(cmds) != 0 {
+			t.Fatalf("o agente recebeu %q", cmds)
+		}
+		l, err := c.g.Lista(n, c.ana.p.ID)
+		quer := lista(pv(ana, "", false, false), pv(maria, "", false, false), pv(ana2, "Ana Souza", false, false))
+		if err != nil || !reflect.DeepEqual(emJSON(l)["participantes"], quer) {
+			t.Fatalf("Lista = %+v, %v; queria %v", l, err, quer)
+		}
+	})
+	// Numa sala que só o estado trouxe, o chat ainda não conhece a reunião, nem as senhas de antes do reinício: o
+	// Carlos, que recebeu a dele antes, entra depois do estado e fica.
+	t.Run("depois de um reinício, quem entra com uma senha de antes fica", func(t *testing.T) {
+		c := novaCena(t)
+		r := c.marcada()
+		ana := c.dentro(r, c.ana)
+		carlos := c.entrar(r, c.carlos).Participante
+		c.reiniciar()
+		c.estado(salaDoEstado(r, ana))
+		c.entrou(r, carlos)
+		if cmds := c.video.Comandos(); len(cmds) != 0 {
+			t.Fatalf("o agente recebeu %q", cmds)
+		}
+		if _, n := c.g.Contagem(r.Sala); n != 2 {
+			t.Fatalf("a reunião tem %d pessoas; queria 2", n)
+		}
+	})
 }
 
 func TestVideo_FreeSWITCHCaiu(t *testing.T) {
@@ -1656,6 +1752,8 @@ func TestVideo_SemChamadaComOMutex(t *testing.T) {
 			t.Fatalf("Tirar: %v", err)
 		}
 	})
+	// A Maria volta com a senha nova, que ainda vale: o tirar do gerente também vai depois do mutex.
+	semTrava("o entrou de quem foi tirado", func() { c.entrou(r, maria) })
 	semTrava("o Varrer", func() {
 		c.andar(31 * time.Second)
 		c.g.Varrer()
@@ -1669,7 +1767,7 @@ func TestVideo_SemChamadaComOMutex(t *testing.T) {
 		c.dentro(n, c.carlos)
 		c.cancelar(n)
 	})
-	quer := []string{"tirar " + r.Sala + " " + maria, "encerrar " + r.Sala, "encerrar " + n.Sala}
+	quer := []string{"tirar " + r.Sala + " " + maria, "tirar " + r.Sala + " " + maria, "encerrar " + r.Sala, "encerrar " + n.Sala}
 	if cmds := c.video.Comandos(); !slices.Equal(cmds, quer) {
 		t.Fatalf("o agente recebeu %q; queria %q", cmds, quer)
 	}

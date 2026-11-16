@@ -247,7 +247,7 @@ func (g *Gerente) Ligar(v Video) {
 	g.mu.Unlock()
 	go func() {
 		defer close(fim)
-		v.Acompanhar(ctx, func(ev video.Evento) { g.evento(ev, geracao) })
+		v.Acompanhar(ctx, func(ev video.Evento) { g.evento(ctx, ev, geracao) })
 	}()
 }
 
@@ -396,7 +396,8 @@ func (g *Gerente) EntrarColega(ctx context.Context, r banco.Reuniao, p banco.Pes
 
 // Tirar tira o participante da reunião, com a câmera e a tela, pelo servidor de vídeo. Quem pede tem de estar na
 // reunião. O 404 do vídeo vale como feito: ele já tinha saído; outro erro volta, e nada muda. A página de quem é
-// de fora recebe o tirado e fecha, e a senha nova não a deixa voltar.
+// de fora recebe o tirado e fecha, e a senha nova não a deixa voltar. Uma senha que o participante já tinha, e que
+// ainda vale no agente, também não: o entrou dela é o de um participante que a sala não conhece (o ligacao).
 func (g *Gerente) Tirar(ctx context.Context, r banco.Reuniao, pessoaID int64, participante string) error {
 	g.mu.Lock()
 	s := g.salas[r.Sala]

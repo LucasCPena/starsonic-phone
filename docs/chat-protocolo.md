@@ -347,6 +347,7 @@ As reuniões com link moram no servidor do chat; o vídeo e o som vão direto pa
 - **`POST /api/v1/reunioes/{codigo}/tirar`,** com `{"participante": "<id>"}`:
   - responde `204`;
   - o participante sai, com a câmera e com a tela, e a página dele recebe `tirado`;
+  - ele não volta: uma ligação que ele faça depois, com uma senha que ainda valia, também sai, e ele não aparece na lista;
   - um participante que não está na reunião responde `404 naoEncontrado`.
 - **`POST /api/v1/reunioes/{codigo}/encerrar`:**
   - responde `204`;

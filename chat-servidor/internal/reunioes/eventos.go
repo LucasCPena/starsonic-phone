@@ -196,12 +196,14 @@ func (g *Gerente) lerNaHora(agora time.Time) {
 // estado já mostrou não muda nada nem avisa ninguém de novo.
 //   - o estado acerta quem está em cada sala (reconciliar);
 //   - o entrou e o saiu mudam a ligação da câmera, ou a da tela, do participante. O primeiro colega que entra
-//     leva os pedidos aos colegas, e o último que sai os devolve ao naoComecou;
+//     leva os pedidos aos colegas, e o último que sai os devolve ao naoComecou. O entrou de um participante que a
+//     sala não conhece, numa reunião conhecida, não muda nada, e o agente recebe o tirar dele (o ligacao);
 //   - o acabou acaba a reunião na memória: a naHora acaba também no banco, e a marcada para.
-func (g *Gerente) EventoDoVideo(ev video.Evento) { g.evento(ev, 0) }
+func (g *Gerente) EventoDoVideo(ev video.Evento) { g.evento(g.raiz, ev, 0) }
 
-// evento segue o evento. Com a geracao de um laço (não 0), só se o laço é o do servidor ligado agora.
-func (g *Gerente) evento(ev video.Evento, geracao uint64) {
+// evento segue o evento. Com a geracao de um laço (não 0), só se o laço é o do servidor ligado agora. O ctx é o do
+// laço (o Ligar seguinte e o fim do Rodar o cancelam), e vale para o tirar que vai ao agente depois do mutex.
+func (g *Gerente) evento(ctx context.Context, ev video.Evento, geracao uint64) {
 	switch ev.Tipo {
 	case "estado", "entrou", "saiu", "acabou":
 	default:
@@ -218,11 +220,13 @@ func (g *Gerente) evento(ev video.Evento, geracao uint64) {
 		return
 	}
 	var acabar []int64
+	var tirar bool
+	v := g.video
 	switch ev.Tipo {
 	case "estado":
 		acabar = g.reconciliar(ev.Salas, agora, agoraVideo)
 	case "entrou", "saiu":
-		g.ligacao(ev.Sala, ev.Participante, ev.Tela, ev.Tipo == "entrou", agora, agoraVideo)
+		tirar = g.ligacao(ev.Sala, ev.Participante, ev.Tela, ev.Tipo == "entrou", agora, agoraVideo)
 	case "acabou":
 		if s := g.salas[ev.Sala]; s != nil {
 			acabar = append(acabar, g.terminar(s, porAcabou, agora))
@@ -233,6 +237,9 @@ func (g *Gerente) evento(ev video.Evento, geracao uint64) {
 		g.acabarNoBanco(id)
 	}
 	g.despachar()
+	if tirar {
+		g.tirarDesconhecido(ctx, v, ev.Sala, ev.Participante)
+	}
 	if ev.Tipo == "estado" {
 		pessoas := 0
 		for _, s := range ev.Salas {
@@ -248,12 +255,15 @@ func (g *Gerente) evento(ev video.Evento, geracao uint64) {
 }
 
 // ligacao muda a ligação da câmera (ou da tela) do participante: entrou ou saiu. Quem entra sem ser conhecido
-// entra sem nome. Com g.mu.
-func (g *Gerente) ligacao(salaID, id string, tela, entrou bool, agora, agoraVideo time.Time) {
+// entra sem nome (depois de um reinício do chat, com uma senha de antes dele), menos numa reunião conhecida: ali, o
+// participante que a sala não conhece foi tirado, ou saiu e foi esquecido, e ligou com uma senha que ainda valia no
+// agente. Esse não entra na sala, e o ligacao devolve true: quem chamou pede ao agente que o tire, depois do mutex.
+// Com g.mu.
+func (g *Gerente) ligacao(salaID, id string, tela, entrou bool, agora, agoraVideo time.Time) (tirar bool) {
 	s := g.salas[salaID]
 	if s == nil {
 		if !entrou {
-			return
+			return false
 		}
 		s = novaSala(salaID)
 		g.salas[salaID] = s
@@ -262,7 +272,10 @@ func (g *Gerente) ligacao(salaID, id string, tela, entrou bool, agora, agoraVide
 	p := s.participantes[id]
 	if p == nil {
 		if !entrou {
-			return
+			return false
+		}
+		if s.conhecida {
+			return true
 		}
 		p = g.desconhecido(s, id)
 	}
@@ -279,6 +292,19 @@ func (g *Gerente) ligacao(salaID, id string, tela, entrou bool, agora, agoraVide
 	g.ajustarPedidos(s, agora)
 	g.depois(s, antes)
 	g.limpar(s)
+	return false
+}
+
+// tirarDesconhecido pede ao agente que tire o participante que entrou sem ser conhecido numa reunião conhecida (o
+// ligacao). Roda na goroutine dos eventos, sem o mutex, com o ctx do laço. O 404 vale como feito: a ligação já saiu.
+// Outro erro vai ao log só com o código; um ctx que acabou (o Ligar seguinte, ou o fim do Rodar) não vai.
+func (g *Gerente) tirarDesconhecido(ctx context.Context, v Video, sala, participante string) {
+	if v == nil {
+		return
+	}
+	if err := v.Tirar(ctx, sala, participante); err != nil && !errors.Is(err, video.ErrNaoEncontrado) && ctx.Err() == nil {
+		slog.Warn("reunioes: o servidor de vídeo não tirou quem entrou sem ser conhecido", "erro", codigoDoErro(err))
+	}
 }
 
 // reconciliar acerta a memória pelo estado do servidor de vídeo: o primeiro de cada conexão, e o de quando o
