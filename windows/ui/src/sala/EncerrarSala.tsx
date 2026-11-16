@@ -14,6 +14,9 @@ import type { Send } from '../types';
 import { nomesDaSala } from './estado';
 import { ENCERRAR, ENCERRAR_A_SALA, ligacoesVaoDesligar } from './textos';
 
+/** O primeiro controle da tela que fica: o do `main` (a ligação ou o Teclado) ou, no grande, o do `.grande` (a sala tem o `role="main"`). */
+const CONTROLE_QUE_FICA = ['main', '[role="main"]', '.grande'].map((raiz) => `${raiz} :is(input, button, [tabindex]):not([disabled], [tabindex="-1"])`).join(', ');
+
 interface Props {
   sala: SalaDaLigacao;
   send: Send;
@@ -46,7 +49,7 @@ export function EncerrarSala({ sala, send, onFechar }: Props): VNode {
       // A sala acabou com a pergunta aberta (a tela saiu, e o diálogo com ela): o foco que estava nele iria para o `body`.
       // Ele vai para o primeiro controle da tela que fica (a ligação ou o Teclado).
       if (dialogo.open && dialogo.contains(document.activeElement)) {
-        requestAnimationFrame(() => document.querySelector<HTMLElement>('main :is(input, button, [tabindex]):not([disabled], [tabindex="-1"])')?.focus());
+        requestAnimationFrame(() => document.querySelector<HTMLElement>(CONTROLE_QUE_FICA)?.focus());
       }
     };
   }, []);

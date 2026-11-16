@@ -5,7 +5,8 @@
 // transparente: dentro dele fica a imagem do convidado (4:3, encaixada) e o nome dele no canto de baixo à esquerda dela. O
 // de quem chama, está sem vídeo ou em espera é um painel com as iniciais, o nome e o estado. A vista leva o `key` do id da
 // sala: uma sala nova monta uma vista nova, que nunca mostra um quadro da ligação de antes (o contrato da página com as
-// memórias). O `modo` (a tela da ligação, o grande ou a tela cheia) escolhe as medidas no app.css.
+// memórias). O `modo` (a tela da ligação, o grande ou a tela cheia) escolhe as medidas no app.css; no grande e na tela cheia,
+// o nome de quem está na linha de baixo (3 a 5 convidados) fica no canto de cima da imagem, longe da barra de baixo.
 import type { VNode } from 'preact';
 import { useContext } from 'preact/hooks';
 import { VistaDeVideo } from '../components/VistaDeVideo';
@@ -18,6 +19,7 @@ import type { Send } from '../types';
 import { videoDe } from '../video/estado';
 import { rotuloDoVideo } from '../video/textos';
 import { nomeNaSala } from './estado';
+import { naLinhaDeBaixo } from './mosaico';
 import { CHAMANDO, EM_ESPERA_NA_SALA, MOSAICO_DA_SALA, SEM_VIDEO_NA_SALA, TIRAR_DA_SALA } from './textos';
 
 interface Props {
@@ -50,13 +52,13 @@ function TirarDaSala({ id, send }: { id: number; send: Send }): VNode {
 }
 
 /** O quadro de um convidado, em frações do mosaico. */
-function Quadro({ p, send }: { p: ParticipanteDaSala; send: Send }): VNode {
+function Quadro({ p, send, deBaixo }: { p: ParticipanteDaSala; send: Send; deBaixo: boolean }): VNode {
   const nome = nomeNaSala(p);
   const q = p.quadro;
   const posicao = { left: `${q.x * 100}%`, top: `${q.y * 100}%`, width: `${q.largura * 100}%`, height: `${q.altura * 100}%` };
   if (p.estado === 'naSala' && p.imagem) {
     return (
-      <div role="group" aria-label={nome} class="sala-quadro" style={posicao}>
+      <div role="group" aria-label={nome} class={deBaixo ? 'sala-quadro sala-linha-baixo' : 'sala-quadro'} style={posicao}>
         <div class="sala-enc">
           <div role="img" aria-label={rotuloDoVideo(nome)} class="sala-imagem" />
           <span class="sala-nome" aria-hidden="true">
@@ -103,7 +105,7 @@ export function MosaicoDaSala({ state, sala, linha, send, modo }: Props): VNode 
       <VistaDeVideo key={sala.id} vista="remoto" desenhar={video.imagem} rotulo={MOSAICO_DA_SALA} decorativa class="sala-vista" />
       <div role="group" aria-label={MOSAICO_DA_SALA} class={`sala-mosaico sala-${arrumacaoDe(sala.participantes.length)}`} data-modo={modo}>
         {sala.participantes.map((p) => (
-          <Quadro key={p.id} p={p} send={send} />
+          <Quadro key={p.id} p={p} send={send} deBaixo={naLinhaDeBaixo(p.quadro)} />
         ))}
       </div>
     </>

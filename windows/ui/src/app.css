@@ -1646,6 +1646,42 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
 .grande.grande-com-chat .grande-sua { right: calc(var(--largura-do-chat) + 24px); }
 .win-tela-cheia .grande.grande-com-chat .grande-sua { right: calc(var(--largura-do-chat) + 32px); }
 
+/* (0.4.0) A sala no grande e na tela cheia (os quadros SalaGrande e SalaTelaCheia; Grande.tsx e MosaicoDaSala.tsx). A área do
+   vídeo é uma caixa de contêiner, como a .sala-caixa da tela da ligação: o mosaico fica no retângulo 16:9 encaixado nela
+   (com o painel de adicionar, nos 920 da esquerda), e cada convidado no quadro dele. A etiqueta tem três partes: a sala, as
+   pessoas e o tempo. */
+.grande-video-sala { container-type: size; }
+.grande-video-sala > .sala-vista { position: absolute; inset: 0; }
+.grande-etiqueta-sala { gap: 10px; }
+.grande-etiqueta-sala .sala-et-nome { font: 800 15px/1 var(--font-sans); }
+.grande-etiqueta-sala .sala-et-pessoas { font: 600 14px/1 var(--font-sans); color: #b9c4e6; }
+.grande-etiqueta-sala .sala-et-tempo { font: 700 14px/1 var(--font-sans); color: var(--cyan); font-variant-numeric: tabular-nums; }
+.win-tela-cheia .grande-etiqueta-sala { height: 46px; padding: 0 18px; gap: 12px; }
+.win-tela-cheia .grande-etiqueta-sala .sala-et-nome { font-size: 16px; }
+.win-tela-cheia .grande-etiqueta-sala .sala-et-pessoas, .win-tela-cheia .grande-etiqueta-sala .sala-et-tempo { font-size: 15px; }
+/* O painel de adicionar à direita: o do chat do grande (360 de largura), no tema escuro da ligação (as cores do .call). */
+.grande-adicionar { box-sizing: border-box; padding: 20px 22px 22px; }
+/* Os quadros: o nome sobre a imagem, o painel de quem não tem imagem e o Tirar da sala, com as medidas do quadro. */
+.sala-mosaico[data-modo="grande"] .sala-nome { left: 12px; bottom: 12px; max-width: calc(100% - 24px); padding: 5px 12px; font-size: 14px; }
+.sala-mosaico[data-modo="telaCheia"] .sala-nome { left: 16px; bottom: 16px; max-width: calc(100% - 32px); padding: 6px 14px; font-size: 16px; }
+/* A linha de baixo (3 a 5 convidados): o nome no canto de cima à esquerda da imagem, longe da barra de baixo. */
+.sala-mosaico[data-modo="grande"] .sala-linha-baixo .sala-nome { bottom: auto; top: 12px; }
+.sala-mosaico[data-modo="telaCheia"] .sala-linha-baixo .sala-nome { bottom: auto; top: 16px; }
+.sala-mosaico[data-modo="grande"] .sala-painel { gap: 8px; }
+.sala-mosaico[data-modo="grande"] .sala-iniciais { width: 64px; height: 64px; font-size: 22px; }
+.sala-mosaico[data-modo="grande"] .sala-nome-painel { font-size: 16px; }
+.sala-mosaico[data-modo="grande"] .sala-estado { font-size: 14px; gap: 5px; }
+.sala-mosaico[data-modo="grande"] .sala-estado .ic { width: 14px; height: 14px; }
+.sala-mosaico[data-modo="grande"] .sala-tirar { top: 10px; right: 10px; height: 30px; padding: 0 12px 0 10px; font-size: 12.5px; }
+.sala-mosaico[data-modo="grande"] .sala-tirar .ic { width: 13px; height: 13px; }
+.sala-mosaico[data-modo="telaCheia"] .sala-painel { gap: 8px; }
+.sala-mosaico[data-modo="telaCheia"] .sala-iniciais { width: 76px; height: 76px; font-size: 26px; }
+.sala-mosaico[data-modo="telaCheia"] .sala-nome-painel { font-size: 18px; }
+.sala-mosaico[data-modo="telaCheia"] .sala-estado { font-size: 15px; gap: 5px; }
+.sala-mosaico[data-modo="telaCheia"] .sala-estado .ic { width: 14px; height: 14px; }
+.sala-mosaico[data-modo="telaCheia"] .sala-tirar { top: 12px; right: 12px; height: 32px; padding: 0 13px 0 11px; font-size: 13px; }
+.sala-mosaico[data-modo="telaCheia"] .sala-tirar .ic { width: 14px; height: 14px; }
+
 /* O cartão Vídeo da área do administrador (os quadros AdmVideo e AdmVideoEscuro). */
 .seg.seg-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .adm-video-titulo { margin: 0; padding: 12px 0 2px; font-size: 12.5px; font-weight: 700; color: var(--text-strong); }

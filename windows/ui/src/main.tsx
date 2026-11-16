@@ -317,8 +317,13 @@ function App() {
   // (vídeo, etapa 2) O núcleo só volta a janela a `normal` quando a última ligação acaba: se a do vídeo acabou e a que
   // tocava ficou sozinha (ainda tocando), o grande não serve (sem Recusar nem Atender). A página mostra a tela da
   // ligação e pede o `normal` uma vez por ligação que toca.
+  // (0.4.0) O mesmo com a ligação de fora atendida (a sala embaixo): você fica fora dela, só com a voz, e o grande não serve
+  // (um grande escuro, sem o Voltar para a sala). A tela da ligação, com a faixa "Você está fora da sala", aparece na hora, e a
+  // página pede o `normal` uma vez por ligação de fora (o id da de cima).
   const toqueNoGrande = state?.ligacao != null && state.ligacao.top.phase === 'ringing' && state.video != null && videoDoApp(state).janela !== 'normal';
-  const idQueToca = toqueNoGrande ? state!.ligacao!.top.id : null;
+  const foraDaSalaNoGrande =
+    state?.ligacao != null && state.video != null && salaEmbaixo(state.ligacao, salaDe(state)) && videoDoApp(state).janela !== 'normal';
+  const idQueToca = toqueNoGrande || foraDaSalaNoGrande ? state!.ligacao!.top.id : null;
   useEffect(() => {
     if (idQueToca !== null) send({ cmd: 'videoWindow', modo: 'normal' });
   }, [idQueToca, send]);
@@ -470,10 +475,13 @@ function App() {
     // (vídeo, etapa 2) O grande e a tela cheia (só no Windows): o vídeo toma a janela no lugar da tela da ligação. No grande
     // a barra de título é a da ligação, sem as zonas de redimensionar; na tela cheia, nenhuma barra. O Chat abre e fecha a
     // conversa no painel da direita (o Voltar dela também o fecha).
+    // (0.4.0) Com a sala embaixo (a ligação de fora em cima), a janela é a normal, mesmo com a `janela` diferente dela.
+    const sala = salaDe(state);
     const janela = videoDoApp(state).janela;
-    if (janela !== 'normal' && l.top.phase !== 'ringing') {
+    if (janela !== 'normal' && l.top.phase !== 'ringing' && !salaEmbaixo(l, sala)) {
+      // A sala no grande não tem o Chat (dentro da sala só ficam os controles dela).
       const chat =
-        l.second === null && (colegaDaLigacao !== null || daLigacao !== null)
+        sala === null && l.second === null && (colegaDaLigacao !== null || daLigacao !== null)
           ? { aberto: daLigacao !== null, alternar: daLigacao ? fecharOChat : abrirOChat, painel: daLigacao && conversaDaLigacao(daLigacao) }
           : null;
       return (
@@ -484,7 +492,15 @@ function App() {
               status: state.conta ? accountDot(state.conta, true, state.naoPerturbe) : undefined,
               semRedimensionar: true,
             })}
-          <Grande state={state} ligacao={l} send={send} chat={chat} />
+          <Grande
+            key={sala && salaEmCima(l, sala) ? `sala-${sala.id}` : 'ligacao'}
+            state={state}
+            ligacao={l}
+            send={send}
+            chat={chat}
+            contatos={sugestoes}
+            daEmpresa={daEmpresa.contatos}
+          />
           {toastEl}
         </div>
       );
@@ -513,7 +529,6 @@ function App() {
     }
     // (0.4.0) A sala de vídeo em cima (só no Windows, de quem montou): a tela dela, no lugar da tela da ligação. O `key` do id
     // da sala: uma sala nova começa com a tela e a pergunta do Desligar novas.
-    const sala = salaDe(state);
     const faixaDeFora = sala && foraDaSala(l, sala) ? <FaixaForaDaSala state={state} ligacao={l} sala={sala} send={send} /> : null;
     if (sala && salaEmCima(l, sala)) {
       return (
