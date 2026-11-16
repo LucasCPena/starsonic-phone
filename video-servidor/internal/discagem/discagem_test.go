@@ -151,8 +151,8 @@ func TestDiscagem_Colega(t *testing.T) {
 		"set starsonic_tela=false",
 		"set video_banner_text=" + quadroBase + "Ana Souza",
 		"set rtp_video_max_bandwidth_in=1000kb",
-		"set media_timeout_audio=60000",
-		"set media_hold_timeout_audio=600000",
+		"set media_timeout=60000",
+		"set media_hold_timeout=600000",
 		"set jb_av_sync_msec=disabled",
 		"set rtp_secure_media=mandatory:AES_CM_128_HMAC_SHA1_80",
 		"answer ",
@@ -174,8 +174,8 @@ func TestDiscagem_Fora(t *testing.T) {
 		"set starsonic_tela=false",
 		"set video_banner_text=" + quadroBase + "Ana Souza",
 		"set rtp_video_max_bandwidth_in=1000kb",
-		"set media_timeout_audio=60000",
-		"set media_hold_timeout_audio=600000",
+		"set media_timeout=60000",
+		"set media_hold_timeout=600000",
 		"set jb_av_sync_msec=disabled",
 		"answer ",
 		"conference " + salaTeste + "@starsonic+flags{join-only}",
@@ -195,8 +195,8 @@ func TestDiscagem_Tela(t *testing.T) {
 		"set starsonic_tela=true",
 		"set video_banner_text=" + quadroBase + "Tela de Maria Lima",
 		"set rtp_video_max_bandwidth_in=1000kb",
-		"set media_timeout_audio=60000",
-		"set media_hold_timeout_audio=600000",
+		"set media_timeout=60000",
+		"set media_hold_timeout=600000",
 		"set jb_av_sync_msec=disabled",
 		"set rtp_secure_media=mandatory:AES_CM_128_HMAC_SHA1_80",
 		"set video_reservation_id=tela",
@@ -258,17 +258,18 @@ func antesDoAnswer(t *testing.T, acao string) {
 	}
 }
 
-// Quem fecha a aba sai pelos 60 s sem mídia (a seção 6 do contrato), e é o som que decide: o media_timeout_audio só
-// vale para o caminho do som, e um caminho do vídeo quieto não derruba ninguém. Na espera (o hold), são 10 minutos. O
-// media_timeout e o media_hold_timeout sem o _audio valeriam também para o vídeo (src/switch_core_media.c do
-// FreeSWITCH 1.11.3, check_media_timeout_params), e nenhuma ligação os leva.
+// Quem fecha a aba sai pelos 60 s sem mídia (a seção 6 do contrato), nos dois caminhos: o media_timeout e o
+// media_hold_timeout, sem o _audio e o _video, valem para o som e para o vídeo (src/switch_core_media.c do FreeSWITCH
+// 1.11.3, check_media_timeout_params). Na espera (o hold), são 10 minutos. Só com o media_timeout_audio, a ligação de
+// uma aba fechada não caía em 75 s (o e2e mostrou): é o relógio do vídeo que chega ao fim. Nenhuma ligação leva um
+// tempo de um caminho só, que trocaria o dos dois naquele caminho, nem os obsoletos.
 func TestDiscagem_TempoSemMidia(t *testing.T) {
-	antesDoAnswer(t, "set media_timeout_audio=60000")
-	antesDoAnswer(t, "set media_hold_timeout_audio=600000")
+	antesDoAnswer(t, "set media_timeout=60000")
+	antesDoAnswer(t, "set media_hold_timeout=600000")
 	for _, l := range quatroLigacoes(t) {
 		for _, a := range l.acoes {
-			for _, proibida := range []string{"set media_timeout=", "set media_hold_timeout=", "set media_timeout_video=",
-				"set media_hold_timeout_video=", "set rtp_timeout_sec=", "set rtp_hold_timeout_sec="} {
+			for _, proibida := range []string{"set media_timeout_audio=", "set media_hold_timeout_audio=",
+				"set media_timeout_video=", "set media_hold_timeout_video=", "set rtp_timeout_sec=", "set rtp_hold_timeout_sec="} {
 				if strings.HasPrefix(a, proibida) {
 					t.Errorf("%s: a ligação leva o %q", l.nome, a)
 				}

@@ -144,8 +144,8 @@ test.describe.serial('a reunião marcada', () => {
   });
 });
 
-// Review Focus 2: quem fecha a aba ou perde a rede não manda o BYE; a ligação cai pelos 60 s sem nada no som (o
-// media_timeout_audio que a discagem põe), e o mosaico se arruma.
+// Review Focus 2: quem fecha a aba ou perde a rede não manda o BYE; a ligação cai pelos 60 s em que nada chega a ela
+// (o media_timeout que a discagem põe para o som e o vídeo), e o mosaico se arruma.
 test('quem fecha a aba sai da reunião em até 75 segundos', async () => {
   test.setTimeout(180_000);
   const codigo = await novaReuniaoDeTeste();

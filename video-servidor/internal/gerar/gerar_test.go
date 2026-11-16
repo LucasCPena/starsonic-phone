@@ -437,8 +437,8 @@ func TestFreeSWITCH_Camadas(t *testing.T) {
 	}
 }
 
-// Review Focus 2: quem fecha a aba ou perde a rede sai pelos 60 segundos sem mídia. O tempo é o media_timeout_audio
-// que a discagem põe em cada ligação (TestDiscagem_TempoSemMidia). Os perfis vão sem o rtp-timeout-sec e o
+// Review Focus 2: quem fecha a aba ou perde a rede sai pelos 60 segundos sem mídia. O tempo é o media_timeout que a
+// discagem põe em cada ligação (TestDiscagem_TempoSemMidia). Os perfis vão sem o rtp-timeout-sec e o
 // rtp-hold-timeout-sec, que o FreeSWITCH 1.11.3 dá como obsoletos: a cada vez que liga, ele avisa de cada um.
 func TestFreeSWITCH_TempoSemMidia(t *testing.T) {
 	for _, teste := range []bool{false, true} {
