@@ -3,14 +3,20 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/LucasCPena/starsonic-phone/video-servidor/internal/config"
 	"github.com/LucasCPena/starsonic-phone/video-servidor/internal/gerar"
@@ -38,6 +44,9 @@ subcomandos:
   servir --teste --escutar 127.0.0.1:<porta> [--config <arquivo>] [--origem <url>]...
                                        o modo de teste: HTTP, só no 127.0.0.1 ou no [::1]; o /sip
                                        aceita também as origens do --origem
+  reunioes [--config <arquivo>]        escreve quantas reuniões estão acontecendo, perguntando ao
+                                       agente desta máquina; sem resposta, sai com 1
+                                       (o padrão é /etc/starsonic-video/config.json)
 `
 
 // configPadrao é onde o instalador guarda a configuração do agente.
@@ -63,6 +72,8 @@ func run(args []string, saida, erros io.Writer) int {
 		return configurar(args[1:], erros)
 	case "servir":
 		return servir(args[1:], erros)
+	case "reunioes":
+		return reunioes(args[1:], saida, erros)
 	default:
 		fmt.Fprintf(erros, "subcomando desconhecido: %s\n\n%s", args[0], uso)
 		return 2
@@ -181,6 +192,82 @@ func servir(args []string, erros io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// O reunioes pergunta ao agente desta máquina pela 443 do 127.0.0.1, e o certificado do agente é o do endereço, e
+// não o do IP. As duas variáveis são do pacote só para os testes as trocarem: raizesDoAgente nil são as raízes do
+// sistema.
+var (
+	urlEstado      = "https://127.0.0.1/agente/v1/estado"
+	raizesDoAgente *x509.CertPool
+)
+
+// prazoReunioes é quanto o reunioes espera o agente.
+const prazoReunioes = 10 * time.Second
+
+// reunioes escreve quantas reuniões estão acontecendo: o número de salas do estado do agente desta máquina, pedido
+// com a chave do config.json. O instalador pergunta antes de atualizar. Sem resposta do agente, sai com 1 e não
+// escreve nada na saída.
+func reunioes(args []string, saida, erros io.Writer) int {
+	fs := flag.NewFlagSet("reunioes", flag.ContinueOnError)
+	fs.SetOutput(erros)
+	arquivo := fs.String("config", configPadrao, "o config.json do agente")
+	fs.Usage = func() { fmt.Fprint(erros, "uso: starsonic-video reunioes [--config <arquivo>]\n") }
+	if fs.Parse(args) != nil { // o flag já escreveu o erro e o uso
+		return 2
+	}
+	if fs.NArg() != 0 {
+		fs.Usage()
+		return 2
+	}
+	c, err := config.Ler(*arquivo)
+	if err != nil {
+		fmt.Fprintln(erros, "Erro:", err)
+		return 1
+	}
+	ctx, cancelar := context.WithTimeout(context.Background(), prazoReunioes)
+	defer cancelar()
+	n, err := contarReunioes(ctx, clienteDoAgente(c.Endereco, raizesDoAgente), urlEstado, c.Chave)
+	if err != nil {
+		fmt.Fprintln(erros, "Erro:", err)
+		return 1
+	}
+	fmt.Fprintln(saida, n)
+	return 0
+}
+
+// clienteDoAgente é o cliente que fala com o agente desta máquina pelo 127.0.0.1: o certificado é conferido pelo
+// endereço do servidor de vídeo (o ServerName), contra as raízes (nil: as do sistema). Sem proxy.
+func clienteDoAgente(endereco string, raizes *x509.CertPool) *http.Client {
+	return &http.Client{Transport: &http.Transport{
+		Proxy:           nil,
+		TLSClientConfig: &tls.Config{ServerName: endereco, RootCAs: raizes, MinVersion: tls.VersionTLS12},
+	}}
+}
+
+// contarReunioes pede o estado ao agente, com a chave, e devolve o número de salas. A falta de resposta, um status
+// que não é 200 e uma resposta sem a lista das salas são erros. O erro nunca leva a chave.
+func contarReunioes(ctx context.Context, cliente *http.Client, destino, chave string) (int, error) {
+	pedido, err := http.NewRequestWithContext(ctx, http.MethodGet, destino, nil)
+	if err != nil {
+		return 0, err
+	}
+	pedido.Header.Set("Authorization", "Bearer "+chave)
+	resposta, err := cliente.Do(pedido)
+	if err != nil {
+		return 0, fmt.Errorf("o agente não respondeu: %w", err)
+	}
+	defer resposta.Body.Close()
+	if resposta.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("o agente respondeu %s", resposta.Status)
+	}
+	var estado struct {
+		Salas *[]json.RawMessage `json:"salas"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resposta.Body, 1<<20)).Decode(&estado); err != nil || estado.Salas == nil {
+		return 0, errors.New("o agente respondeu, mas sem a lista das reuniões")
+	}
+	return len(*estado.Salas), nil
 }
 
 // normalizarOrigem confere uma origem do --origem (http ou https, com host, sem caminho, consulta, fragmento nem

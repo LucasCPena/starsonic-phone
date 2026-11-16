@@ -1,0 +1,32 @@
+[Unit]
+Description=Starsonic Vídeo, o FreeSWITCH das reuniões
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=starsonic-freeswitch
+Group=starsonic-freeswitch
+# O banco interno, os registros e o resto do que ele escreve ficam no /run, que some quando ele para: nada fica
+# guardado. O console vai para o journal, do nível warning para cima.
+RuntimeDirectory=starsonic-freeswitch
+RuntimeDirectoryMode=0700
+StandardInput=null
+ExecStart=/opt/starsonic-freeswitch/bin/freeswitch -c -nonat -conf /etc/starsonic-video/freeswitch -log /run/starsonic-freeswitch -db /run/starsonic-freeswitch -run /run/starsonic-freeswitch -temp /run/starsonic-freeswitch -certs /etc/starsonic-video/freeswitch/tls
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+TimeoutStopSec=20
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+ReadWritePaths=/run/starsonic-freeswitch
+
+[Install]
+WantedBy=multi-user.target

@@ -2,16 +2,25 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/pem"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/LucasCPena/starsonic-phone/video-servidor/internal/senha"
 )
@@ -290,5 +299,218 @@ func TestUso_ListaOServir(t *testing.T) {
 	run(nil, &saida, &erros)
 	if !strings.Contains(erros.String(), "servir [--config <arquivo>]") {
 		t.Errorf("o uso não fala do servir: %q", erros.String())
+	}
+	if !strings.Contains(erros.String(), "reunioes [--config <arquivo>]") {
+		t.Errorf("o uso não fala do reunioes: %q", erros.String())
+	}
+}
+
+// O estado de um agente com duas reuniões, uma delas com a tela compartilhada: três ligações, duas salas.
+const estadoDuasSalas = `{"versao":"0.1.0","freeswitch":true,"agora":1794495600000,"salas":[` +
+	`{"sala":"0123456789abcdef0123456789abcdef","participantes":[{"participante":"0011223344556677","tela":false},` +
+	`{"participante":"0011223344556677","tela":true}]},` +
+	`{"sala":"fedcba9876543210fedcba9876543210","participantes":[{"participante":"8899aabbccddeeff","tela":false}]}],` +
+	`"uso":{"cpu":34,"memoria":41}}`
+
+// agenteDeTeste faz o papel do agente no estado: com a chave, responde o estado de agora; sem ela, o 401 da
+// seção 5 do docs/video-agente.md. Guarda o Authorization de cada pedido.
+type agenteDeTeste struct {
+	chave  string
+	estado atomic.Pointer[string]
+
+	mu      sync.Mutex
+	pedidos []string
+}
+
+func novoAgenteDeTeste(chave, estado string) *agenteDeTeste {
+	a := &agenteDeTeste{chave: chave}
+	a.responder(estado)
+	return a
+}
+
+// responder troca o corpo das próximas respostas ao estado.
+func (a *agenteDeTeste) responder(corpo string) { a.estado.Store(&corpo) }
+
+func (a *agenteDeTeste) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	a.mu.Lock()
+	a.pedidos = append(a.pedidos, r.Header.Get("Authorization"))
+	a.mu.Unlock()
+	if r.Method != http.MethodGet || r.URL.Path != "/agente/v1/estado" {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if r.Header.Get("Authorization") != "Bearer "+a.chave {
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprint(w, `{"erro":"chave"}`)
+		return
+	}
+	fmt.Fprint(w, *a.estado.Load())
+}
+
+func (a *agenteDeTeste) ultimoPedido() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if len(a.pedidos) == 0 {
+		return ""
+	}
+	return a.pedidos[len(a.pedidos)-1]
+}
+
+func TestContarReunioes(t *testing.T) {
+	chave := senha.NovaChave()
+	agente := novoAgenteDeTeste(chave, estadoDuasSalas)
+	srv := httptest.NewTLSServer(agente)
+	defer srv.Close()
+	url := srv.URL + "/agente/v1/estado"
+	ctx := context.Background()
+
+	t.Run("manda a chave e conta as salas", func(t *testing.T) {
+		n, err := contarReunioes(ctx, srv.Client(), url, chave)
+		if err != nil || n != 2 {
+			t.Fatalf("contarReunioes = %d, %v; want 2, nil", n, err)
+		}
+		if got := agente.ultimoPedido(); got != "Bearer "+chave {
+			t.Errorf("Authorization %q, want o Bearer com a chave", got)
+		}
+	})
+
+	t.Run("nenhuma reunião", func(t *testing.T) {
+		agente.responder(`{"versao":"0.1.0","freeswitch":true,"agora":1794495600000,"salas":[],"uso":{"cpu":0,"memoria":12}}`)
+		defer agente.responder(estadoDuasSalas)
+		if n, err := contarReunioes(ctx, srv.Client(), url, chave); err != nil || n != 0 {
+			t.Errorf("contarReunioes = %d, %v; want 0, nil", n, err)
+		}
+	})
+
+	t.Run("outra chave", func(t *testing.T) {
+		n, err := contarReunioes(ctx, srv.Client(), url, senha.NovaChave())
+		if err == nil || !strings.Contains(err.Error(), "401") {
+			t.Errorf("contarReunioes = %d, %v; want o erro do 401", n, err)
+		}
+	})
+
+	t.Run("uma resposta sem o estado", func(t *testing.T) {
+		defer agente.responder(estadoDuasSalas)
+		for _, corpo := range []string{`{"ok":true}`, `não é JSON`, `{"salas":3}`} {
+			agente.responder(corpo)
+			if n, err := contarReunioes(ctx, srv.Client(), url, chave); err == nil {
+				t.Errorf("%s: contarReunioes = %d, nil; want um erro", corpo, n)
+			}
+		}
+	})
+
+	// O cliente do reunioes confere o certificado pelo endereço do servidor de vídeo (o ServerName), e não pelo
+	// 127.0.0.1 do pedido.
+	t.Run("o certificado é conferido pelo endereço", func(t *testing.T) {
+		raizes := x509.NewCertPool()
+		raizes.AddCert(srv.Certificate())
+		nome := srv.Certificate().DNSNames[0]
+		if n, err := contarReunioes(ctx, clienteDoAgente(nome, raizes), url, chave); err != nil || n != 2 {
+			t.Errorf("com o ServerName %s: contarReunioes = %d, %v; want 2, nil", nome, n, err)
+		}
+		if n, err := contarReunioes(ctx, clienteDoAgente("video.exemplo.com.br", raizes), url, chave); err == nil {
+			t.Errorf("com um certificado de outro nome: contarReunioes = %d, nil; want um erro", n)
+		}
+		if n, err := contarReunioes(ctx, clienteDoAgente(nome, x509.NewCertPool()), url, chave); err == nil {
+			t.Errorf("com um certificado que não é das raízes: contarReunioes = %d, nil; want um erro", n)
+		}
+	})
+
+	t.Run("sem resposta", func(t *testing.T) {
+		srv.Close()
+		if n, err := contarReunioes(ctx, srv.Client(), url, chave); err == nil {
+			t.Errorf("contarReunioes = %d, nil; want um erro", n)
+		}
+	})
+}
+
+// certificadoDe faz um certificado autoassinado para o nome, como o do Let's Encrypt para o endereço, e as raízes
+// que o aceitam.
+func certificadoDe(t *testing.T, nome string) (tls.Certificate, *x509.CertPool) {
+	t.Helper()
+	chave, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	modelo := &x509.Certificate{
+		Subject:               pkix.Name{CommonName: nome},
+		DNSNames:              []string{nome},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, modelo, modelo, &chave.PublicKey, chave)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raizes := x509.NewCertPool()
+	raizes.AddCert(cert)
+	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: chave}, raizes
+}
+
+// O subcomando reunioes, pelo run: pede o estado com a chave e o endereço do config.json e escreve só o número de
+// salas. Sem o agente, sai com 1 e não escreve nada na saída.
+func TestReunioes(t *testing.T) {
+	arquivo, chave := configDeTeste(t)
+	par, raizes := certificadoDe(t, "video.exemplo.com.br")
+	agente := novoAgenteDeTeste(chave, estadoDuasSalas)
+	srv := httptest.NewUnstartedServer(agente)
+	srv.TLS = &tls.Config{Certificates: []tls.Certificate{par}}
+	srv.StartTLS()
+	defer srv.Close()
+
+	urlAntes, raizesAntes := urlEstado, raizesDoAgente
+	urlEstado, raizesDoAgente = srv.URL+"/agente/v1/estado", raizes
+	t.Cleanup(func() { urlEstado, raizesDoAgente = urlAntes, raizesAntes })
+
+	var saida, erros bytes.Buffer
+	if codigo := run([]string{"reunioes", "--config", arquivo}, &saida, &erros); codigo != 0 {
+		t.Fatalf("código %d, want 0 (erros: %q)", codigo, erros.String())
+	}
+	if saida.String() != "2\n" || erros.Len() != 0 {
+		t.Errorf("saída %q e erros %q, want só \"2\\n\"", saida.String(), erros.String())
+	}
+	if got := agente.ultimoPedido(); got != "Bearer "+chave {
+		t.Errorf("Authorization %q, want o Bearer com a chave do config.json", got)
+	}
+
+	casos := []struct {
+		nome   string
+		args   []string
+		codigo int
+	}{
+		{"argumento a mais", []string{"reunioes", "--config", arquivo, "x"}, 2},
+		{"opção desconhecida", []string{"reunioes", "--agora"}, 2},
+		{"config que não existe", []string{"reunioes", "--config", filepath.Join(t.TempDir(), "nada.json")}, 1},
+	}
+	for _, caso := range casos {
+		saida.Reset()
+		erros.Reset()
+		if codigo := run(caso.args, &saida, &erros); codigo != caso.codigo {
+			t.Errorf("%s: código %d, want %d", caso.nome, codigo, caso.codigo)
+		}
+		if saida.Len() != 0 || erros.Len() == 0 {
+			t.Errorf("%s: saída %q e erros %q", caso.nome, saida.String(), erros.String())
+		}
+	}
+
+	srv.Close()
+	saida.Reset()
+	erros.Reset()
+	if codigo := run([]string{"reunioes", "--config", arquivo}, &saida, &erros); codigo != 1 {
+		t.Errorf("sem o agente: código %d, want 1", codigo)
+	}
+	if saida.Len() != 0 || !strings.HasPrefix(erros.String(), "Erro: ") {
+		t.Errorf("sem o agente: saída %q e erros %q", saida.String(), erros.String())
+	}
+	if strings.Contains(erros.String(), chave) {
+		t.Errorf("o erro mostra a chave: %q", erros.String())
 	}
 }
