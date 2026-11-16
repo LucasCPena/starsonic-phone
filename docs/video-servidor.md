@@ -381,6 +381,8 @@ A cada vez que liga, o FreeSWITCH escreve algumas linhas que parecem erro e são
 - `We've become an orphan, no more console for us.`;
 - linhas `[WARNING]` com `rtp-timeout-sec deprecated`, `rtp-hold-timeout-sec deprecated`, `Open of msrp.conf failed`, `Create additional event dispatch thread` ou `MSG Thread`.
 
+Durante as reuniões, as linhas `[WARNING]` com `No audio stun for a long time!` ou `No video stun for a long time!` também são normais: alguém fechou a aba ou perdeu a rede sem sair, e a ligação dele cai sozinha um pouco depois, em até 60 segundos sem nada chegar dela.
+
 Qualquer outra linha com `[ERR]`, `[CRIT]` ou `[ALERT]` merece atenção.
 
 ## 9. Os problemas comuns

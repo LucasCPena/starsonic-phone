@@ -123,7 +123,7 @@ Tudo vai em HTTPS, na 443 do servidor de vídeo, com `Authorization: Bearer <cha
   - `404`: outro usuário que não o `reuniao`;
   - `503`: o agente não respondeu ao FreeSWITCH.
 - **A imagem que chega ao servidor:** até 1 Mbit/s, pedido no SDP da resposta (`b=AS:1000`). O mosaico que sai é de cerca de 1,5 Mbit/s.
-- **Toda ligação manda som,** também a da tela: o microfone, ou um silêncio gerado quando a pessoa está sem microfone ou com ele desligado. O FreeSWITCH olha o som que chega: uma ligação sem RTP de som por 60 segundos cai sozinha, e é assim que sai quem fechou a aba ou perdeu a rede.
+- **Toda ligação manda som,** também a da tela: o microfone, ou um silêncio gerado quando a pessoa está sem microfone ou com ele desligado. O FreeSWITCH olha o que chega da ligação (o `media_timeout` de 60 segundos, que a discagem põe): uma ligação de que nada chega por 60 segundos, nem o RTP, nem o RTCP, nem as verificações do ICE, cai sozinha, e é assim que sai quem fechou a aba ou perdeu a rede. Um navegador aberto que parou só o som, e continua mandando o RTCP e o ICE, não cai por isso: o FreeSWITCH conta tudo o que chega.
 - **A ligação da tela compartilhada** é uma segunda ligação da mesma pessoa, com a senha de `tela` verdadeiro. Ela manda um silêncio gerado no som e a tela no vídeo, os dois só para mandar. Uma tela nova toma o lugar da anterior: o agente derruba a ligação da tela anterior.
 
 ## 7. A reunião no FreeSWITCH

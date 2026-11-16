@@ -151,6 +151,7 @@ func TestDiscagem_Colega(t *testing.T) {
 		"set starsonic_tela=false",
 		"set video_banner_text=" + quadroBase + "Ana Souza",
 		"set rtp_video_max_bandwidth_in=1000kb",
+		"set media_timeout=60000",
 		"set rtp_secure_media=mandatory:AES_CM_128_HMAC_SHA1_80",
 		"answer ",
 		"conference " + salaTeste + "@starsonic",
@@ -171,6 +172,7 @@ func TestDiscagem_Fora(t *testing.T) {
 		"set starsonic_tela=false",
 		"set video_banner_text=" + quadroBase + "Ana Souza",
 		"set rtp_video_max_bandwidth_in=1000kb",
+		"set media_timeout=60000",
 		"answer ",
 		"conference " + salaTeste + "@starsonic+flags{join-only}",
 	}
@@ -189,6 +191,7 @@ func TestDiscagem_Tela(t *testing.T) {
 		"set starsonic_tela=true",
 		"set video_banner_text=" + quadroBase + "Tela de Maria Lima",
 		"set rtp_video_max_bandwidth_in=1000kb",
+		"set media_timeout=60000",
 		"set rtp_secure_media=mandatory:AES_CM_128_HMAC_SHA1_80",
 		"set video_reservation_id=tela",
 		"answer ",
@@ -196,6 +199,39 @@ func TestDiscagem_Tela(t *testing.T) {
 	}
 	if got := acoesDe(t, d); !igual(got, esperado) {
 		t.Fatalf("ações:\n%q\nesperado:\n%q", got, esperado)
+	}
+}
+
+// O e2e (Task 15): o rtp-timeout-sec do perfil, sozinho, não derruba a ligação de quem fechou a aba. O
+// media_timeout do canal, lido quando a mídia sobe (no answer), derruba: de 60 s sem chegar nada da ligação.
+func TestDiscagem_TempoSemMidia(t *testing.T) {
+	for _, caso := range []struct {
+		nome, perfil string
+		mudar        func(*senha.Senha)
+	}{
+		{"colega", "navegador", nil},
+		{"fora", "navegador", func(s *senha.Senha) { s.Papel = senha.Fora }},
+		{"tela", "navegador", func(s *senha.Senha) { s.Tela = true }},
+		{"app", "tls", nil},
+	} {
+		h, _ := novo(inicio)
+		p := padrao()
+		p.perfil = caso.perfil
+		p.senha = senhaDe(t, caso.mudar)
+		_, d := enviar(t, h, http.MethodPost, p)
+		acoes := acoesDe(t, d)
+		tempo, answer := -1, -1
+		for i, a := range acoes {
+			switch a {
+			case "set media_timeout=60000":
+				tempo = i
+			case "answer ":
+				answer = i
+			}
+		}
+		if tempo < 0 || answer < 0 || tempo > answer {
+			t.Errorf("%s: o media_timeout=60000 não vem antes do answer: %q", caso.nome, acoes)
+		}
 	}
 }
 

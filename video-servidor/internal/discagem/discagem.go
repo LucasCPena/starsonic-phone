@@ -177,6 +177,9 @@ func decidir(f map[string][]string, chave []byte, uso *senha.UsoUnico, agora fun
 		{"set", "starsonic_tela=" + boolTexto(s.Tela)},
 		{"set", "video_banner_text=" + estiloQuadro + nome},
 		{"set", "rtp_video_max_bandwidth_in=1000kb"},
+		// O tempo sem mídia da seção 6 (60 s), lido quando a mídia sobe, no answer. O rtp-timeout-sec do perfil,
+		// sozinho, não derruba quem fechou a aba (o e2e mostrou); este derruba a ligação de que não chega nada.
+		{"set", "media_timeout=60000"},
 	}
 	if campo(campoPerfil) == perfilTLS {
 		acoes = append(acoes, acao{"set", "rtp_secure_media=mandatory:AES_CM_128_HMAC_SHA1_80"})
