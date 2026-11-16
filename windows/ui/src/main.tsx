@@ -32,7 +32,8 @@
 // tela da ligação e do grande abre a conversa com ele (a dupla, criada se ainda não existe), só para a ligação de cima de
 // agora e só com ela sozinha. Na janela normal, a tela é a barra da ligação, a faixa dela (FaixaDaLigacao.tsx) e a
 // conversa; no grande, o painel da direita. No fim da ligação com a conversa na tela, ela fica (a vista chatConversa,
-// com o Voltar para a aba Chat); sem ela, o Teclado, como sempre.
+// com o Voltar para a aba Chat); sem ela, o Teclado, como sempre. (0.4.0) A sala de vídeo em cima (o `salaDe` e o
+// `salaEmCima`, só no Windows) toma o lugar da tela da ligação na janela normal (sala/TelaDaSala.tsx).
 import { render } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { createBridge } from './bridge';
@@ -63,6 +64,8 @@ import { Contatos } from './screens/Contatos';
 import { Entrar } from './screens/Entrar';
 import { Licencas } from './screens/Licencas';
 import { Ligacao } from './screens/Ligacao';
+import { salaDe, salaEmCima } from './sala/estado';
+import { TelaDaSala } from './sala/TelaDaSala';
 import { Grande } from './video/Grande';
 import { Recentes } from './screens/Recentes';
 import { Sobre } from './screens/Sobre';
@@ -501,6 +504,18 @@ function App() {
           {barraDaLigacao}
           <FaixaDaLigacao state={state} ligacao={l} send={send} onVoltar={fecharOChat} />
           {conversaDaLigacao(daLigacao)}
+          {toastEl}
+        </div>
+      );
+    }
+    // (0.4.0) A sala de vídeo em cima (só no Windows, de quem montou): a tela dela, no lugar da tela da ligação. O `key` do id
+    // da sala: uma sala nova começa com a tela e a pergunta do Desligar novas.
+    const sala = salaDe(state);
+    if (sala && salaEmCima(l, sala)) {
+      return (
+        <div class="win call" data-layout={layout} data-plataforma={plataforma}>
+          {barraDaLigacao}
+          <TelaDaSala key={sala.id} state={state} ligacao={l} sala={sala} contatos={sugestoes} daEmpresa={daEmpresa.contatos} send={send} />
           {toastEl}
         </div>
       );

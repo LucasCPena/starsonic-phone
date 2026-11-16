@@ -238,6 +238,23 @@ test('the panel closes when adding stops being possible', async ({ page }) => {
   expect(await adicoes(page)).toEqual([]);
 });
 
+test('the panel does not come back by itself when adding becomes possible again', async ({ page }) => {
+  await abrirOPainel(page);
+  // Uma segunda ligação toca: o painel fecha. Ela acaba: o pedido de antes não vale mais, e o painel segue fechado.
+  await mudarEstado(page, comASegundaTocando);
+  await expect(page.getByText('Ligação de Carlos Lima', { exact: true })).toBeVisible();
+  await expect(campo(page)).toHaveCount(0);
+  await mudarEstado(page, (s) => ({ ...s, ligacao: { ...s.ligacao, second: null, secondKind: 'none' } }));
+  await expect(page.getByText('Ligação de Carlos Lima', { exact: true })).toHaveCount(0);
+  await expect(adicionarPessoa(page)).toBeEnabled();
+  await depoisDoQueChegou(page);
+  await expect(campo(page)).toHaveCount(0);
+  await expect(page.locator('.call-panel')).toHaveCount(0);
+  // Pedido de novo, ele abre.
+  await adicionarPessoa(page).click();
+  await expect(campo(page)).toBeFocused();
+});
+
 /** A sua imagem à vista, inteira na janela e sem cobrir o alto do painel, o campo, os botões do painel e o Desligar. */
 async function suaImagemAVista(page: Page, largura: number, altura: number, onde: string): Promise<void> {
   const sua = suaImagem(page);
@@ -259,6 +276,11 @@ async function suaImagemAVista(page: Page, largura: number, altura: number, onde
 test('your image stays in sight with the panel open', async ({ page }) => {
   await abrirOPainel(page);
   await suaImagemAVista(page, 400, 720, '400×720');
+  // No canto de baixo à direita: a 24 de cada borda da tela da ligação, no máximo (o canto de cima estreitava o alto do painel).
+  const corpo = await caixa(page.locator('.call-body'));
+  const sua = await caixa(suaImagem(page));
+  expect(corpo.x + corpo.width - (sua.x + sua.width), 'a sua imagem longe da borda direita').toBeLessThanOrEqual(24);
+  expect(corpo.y + corpo.height - (sua.y + sua.height), 'a sua imagem longe da borda de baixo').toBeLessThanOrEqual(24);
   // Nem a ajuda.
   expect(cobre(await caixa(suaImagem(page)), await caixa(ajuda(page))), 'a sua imagem cobre a ajuda').toBe(false);
 });

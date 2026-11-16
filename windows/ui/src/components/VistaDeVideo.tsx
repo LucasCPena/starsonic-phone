@@ -5,7 +5,8 @@
 // O contrato da página com as memórias: a vista que monta, ou que ganha uma memória nova, só desenha um quadro com o
 // `seq` maior que o da memória naquele instante (o `visto` começa no `seqDe` dela), e o `seq` 0 é vazio (só o fundo). Com
 // o `desenhar` desligado, ela fica com o fundo e não lê. Montada, ela conta como à vista (o `mostrar`, que o `videoViews`
-// leva ao núcleo). O `data-vista`, o `data-memoria` (a memória já chegou) e o `data-desenho` do canvas não mudam nada:
+// leva ao núcleo). (0.4.0) Com o `decorativa`, ela fica fora do leitor de tela (sem o role e sem o nome). O `data-vista`,
+// o `data-memoria` (a memória já chegou) e o `data-desenho` do canvas não mudam nada:
 // mostram aos testes em que pé ela está.
 import type { VNode } from 'preact';
 import { useContext, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
@@ -22,10 +23,12 @@ interface Props {
   rotulo: string;
   /** A sua imagem, como num espelho. */
   espelhar?: boolean;
+  /** (0.4.0) Só o fundo de outra coisa (o mosaico da sala, onde cada convidado tem a imagem dele): fora do leitor de tela. */
+  decorativa?: boolean;
   class?: string;
 }
 
-export function VistaDeVideo({ vista, desenhar, rotulo, espelhar, class: classe }: Props): VNode {
+export function VistaDeVideo({ vista, desenhar, rotulo, espelhar, decorativa, class: classe }: Props): VNode {
   const video = useContext(VideoContexto);
   const [memoria, setMemoria] = useState<ArrayBuffer | null>(() => video?.memoria(vista) ?? null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -121,7 +124,14 @@ export function VistaDeVideo({ vista, desenhar, rotulo, espelhar, class: classe 
   }, [desenhar, memoria]);
 
   return (
-    <div class={classe ? `vista-video ${classe}` : 'vista-video'} role="img" aria-label={rotulo} data-vista={vista} data-memoria={memoria ? '' : undefined}>
+    <div
+      class={classe ? `vista-video ${classe}` : 'vista-video'}
+      role={decorativa ? undefined : 'img'}
+      aria-label={decorativa ? undefined : rotulo}
+      aria-hidden={decorativa ? 'true' : undefined}
+      data-vista={vista}
+      data-memoria={memoria ? '' : undefined}
+    >
       <canvas ref={canvas} style={espelhar ? { transform: 'scaleX(-1)' } : undefined} />
     </div>
   );

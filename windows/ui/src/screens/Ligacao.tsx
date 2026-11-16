@@ -30,8 +30,9 @@
 // (0.4.0) Numa videochamada (o mostraAdicionar do sala/estado.ts), o Adicionar pessoa vem depois da Câmera, nos controles
 // de uma ligação (o Chat vem depois dele), e espera o que o núcleo pede (o podeAdicionar). Ele abre o painel de adicionar
 // (sala/PainelDeAdicionar.tsx), com "Em videochamada" no alto, enquanto adicionar vale; o Adicionar manda o
-// `salaAdicionar`. Com o painel de adicionar, a sua imagem flutua no canto de baixo, ao lado do Desligar. Os controles
-// (controlesDaLigacao.tsx) e o painel pelo nome (PainelPorNome.tsx) saíram daqui sem mudar, para a sala usar também.
+// `salaAdicionar`; o pedido do painel cai com ele, e não volta sozinho. Com o painel de adicionar, a sua imagem flutua no
+// canto de baixo, ao lado do Desligar. Os controles (controlesDaLigacao.tsx) e o painel pelo nome (PainelPorNome.tsx)
+// saíram daqui sem mudar, para a sala usar também.
 import type { VNode } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { AtalhosPainel } from '../components/AtalhosPainel';
@@ -305,6 +306,7 @@ export function Ligacao({ state, ligacao: l, contatos, daEmpresa, send, chat = n
   // atendida (nunca com só uma recebida tocando), fora da consulta e da conferência, e com algum atalho. (0.4.0) O de
   // adicionar, enquanto o Adicionar pessoa vale (a segunda que toca, o vídeo que para e a espera o fecham).
   const temAtalhos = state.atalhos.length > 0;
+  const podeAdicionarAgora = podeAdicionar(state, l);
   const painel: Painel =
     painelPedido === 'teclado' && falando && !tocando && !consulta
       ? 'teclado'
@@ -314,9 +316,15 @@ export function Ligacao({ state, ligacao: l, contatos, daEmpresa, send, chat = n
           ? 'nova'
           : painelPedido === 'atalhos' && falando && !tocando && !consulta && !conferencia && temAtalhos
             ? 'atalhos'
-            : painelPedido === 'adicionar' && podeAdicionar(state, l)
+            : painelPedido === 'adicionar' && podeAdicionarAgora
               ? 'adicionar'
               : null;
+
+  // (0.4.0) O pedido do painel de adicionar vale só enquanto adicionar vale: com o painel fechado pelo estado (a segunda que
+  // toca, o vídeo que para, a espera), o pedido cai, e o painel não volta sozinho quando adicionar voltar a valer.
+  useEffect(() => {
+    if (painelPedido === 'adicionar' && !podeAdicionarAgora) setPainel(null);
+  }, [painelPedido, podeAdicionarAgora]);
 
   const fecharAtalhos = () => {
     setPainel(null);

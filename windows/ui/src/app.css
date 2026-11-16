@@ -1300,6 +1300,98 @@ html.aviso-doc, .aviso-doc body { width: 100%; height: 100%; margin: 0; overflow
    do painel, e o "Em videochamada" do quadro não cabia numa linha. Quem fala fica com a largura toda. */
 .call-sua-embaixo > .sua-flutuante { top: auto; bottom: 16px; }
 
+/* ---------------------------------------------------------------------------------------------------------
+   0.4.0: a sala de vídeo na tela da ligação (TelaDaSala.tsx, MosaicoDaSala.tsx e EncerrarSala.tsx; os quadros Sala,
+   SalaEstados, SalaCheia, SalaCompacto, SalaMinimo e Encerrar). A área do vídeo é uma caixa de contêiner: o mosaico fica no
+   retângulo 16:9 encaixado nela (o mesmo em que o desenho da vista encaixa o 1280×720), e cada convidado no quadro dele,
+   em frações, também um contêiner, com a imagem 4:3 encaixada. */
+.sala-caixa { position: relative; flex: 1 1 0; min-height: 0; width: 100%; container-type: size; overflow: hidden; border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.1); background: var(--video-bg); }
+.sala-caixa > .sala-vista { position: absolute; inset: 0; }
+.sala-mosaico { position: absolute; inset: 0; margin: auto; width: min(100cqw, 177.78cqh); height: min(100cqh, 56.25cqw); }
+.sala-quadro { position: absolute; container-type: size; }
+/* Quem tem a imagem: o quadro é transparente (o mosaico aparece), com a imagem 4:3 no meio e o nome no canto dela. */
+.sala-enc { position: absolute; inset: 0; margin: auto; width: min(100cqw, 133.33cqh); height: min(100cqh, 75cqw); }
+.sala-imagem { position: absolute; inset: 0; }
+.sala-nome { position: absolute; left: 6px; bottom: 6px; max-width: calc(100% - 12px); padding: 3px 8px; border-radius: 999px; background: rgba(7, 11, 24, 0.72);
+  color: #ffffff; font: 700 11px/1.3 var(--font-sans); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* O nome segue como os quadros se arrumam (1 ou 2 convidados, a grade 2×2 de 3 ou 4, e 3 + 2 de 5), não a conta. */
+.sala-g4 .sala-nome { font-size: 10.5px; padding: 2px 7px; }
+.sala-g5 .sala-nome { font-size: 9.5px; padding: 2px 6px; left: 4px; bottom: 4px; }
+/* Quem chama, está sem vídeo ou em espera: um painel no meio do quadro, com as iniciais, o nome e o estado. */
+.sala-painel { box-sizing: border-box; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 0 4px;
+  overflow: hidden; background: #0b1226; border: 1px solid var(--video-bg); }
+.sala-iniciais { flex: none; box-sizing: border-box; width: 34px; height: 34px; border-radius: 999px; background: var(--gradient-brand); color: #ffffff;
+  font: 800 12px/1 var(--font-sans); display: grid; place-items: center; }
+.sala-iniciais-chamando { border: 2px solid rgba(0, 194, 203, 0.7); }
+.sala-iniciais-espera { background: rgba(255, 255, 255, 0.12); color: #b9c4e6; }
+.sala-nome-painel { max-width: 100%; min-width: 0; font: 700 11px/1.2 var(--font-sans); color: #ffffff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sala-estado { display: inline-flex; align-items: center; gap: 3px; max-width: 100%; min-width: 0; font: 600 10.5px/1.2 var(--font-sans); color: #b9c4e6;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sala-estado .ic { width: 11px; height: 11px; }
+.sala-chamando { color: var(--cyan); font-weight: 700; }
+/* Quem fala: "Sala de vídeo" e "3 pessoas · 05:41" (no Mínimo, numa linha só); a conta com o tempo em ciano. */
+.who-video.who-sala .who-sub { font-size: 14px; }
+.who-sala .who-sub, .who-sala .who-sub .timer { white-space: nowrap; }
+.who-video.who-sala .who-sub .timer { font-size: inherit; }
+.sala-baixo { flex: none; display: flex; flex-direction: column; align-items: center; gap: 12px; width: 100%; }
+.sala-cheia { margin: -2px 0 0; font-size: 13px; font-weight: 600; line-height: 1.3; color: #b9c4e6; text-align: center; }
+
+.win.call[data-layout="compacto"] .call-sala { padding: 12px 16px 16px; gap: 10px; }
+.win.call[data-layout="compacto"] .sala-caixa { border-radius: 16px; }
+.win.call[data-layout="compacto"] .call-sala .video-sua { right: 8px; bottom: 8px; border-radius: 9px; }
+.win.call[data-layout="compacto"] .who-video.who-sala .who-name { font-size: 17px; }
+.win.call[data-layout="compacto"] .who-video.who-sala .who-sub { font-size: 13px; }
+.win.call[data-layout="compacto"] .sala-baixo { gap: 10px; }
+.win.call[data-layout="compacto"] .call-sala .hang { width: 56px; height: 56px; }
+.win.call[data-layout="compacto"] .call-sala .round-action { font-size: 11px; }
+.win.call[data-layout="compacto"] .sala-nome { font-size: 10.5px; padding: 2px 7px; left: 5px; bottom: 5px; }
+.win.call[data-layout="compacto"] .sala-g4 .sala-nome { font-size: 10px; padding: 2px 6px; }
+.win.call[data-layout="compacto"] .sala-g5 .sala-nome { font-size: 9.5px; padding: 2px 6px; left: 4px; bottom: 4px; }
+.win.call[data-layout="compacto"] .sala-iniciais { width: 30px; height: 30px; font-size: 11px; }
+.win.call[data-layout="compacto"] .sala-nome-painel { font-size: 10.5px; }
+.win.call[data-layout="compacto"] .sala-estado { font-size: 10px; }
+
+.win.call[data-layout="minimo"] .sala-caixa { border-radius: 14px; }
+.win.call[data-layout="minimo"] .who-sala .who-linha { font-size: 13px; }
+.win.call[data-layout="minimo"] .who-sala .who-linha-nome { color: #ffffff; font-weight: 800; }
+.win.call[data-layout="minimo"] .who-sala .timer { font-size: inherit; }
+.win.call[data-layout="minimo"] .sala-nome { font-size: 10px; padding: 2px 6px; left: 4px; bottom: 4px; }
+.win.call[data-layout="minimo"] .sala-g4 .sala-nome { font-size: 9.5px; padding: 1px 5px; }
+.win.call[data-layout="minimo"] .sala-g5 .sala-nome { font-size: 9px; padding: 1px 5px; left: 3px; bottom: 3px; }
+.win.call[data-layout="minimo"] .sala-iniciais { width: 28px; height: 28px; font-size: 10.5px; }
+.win.call[data-layout="minimo"] .sala-nome-painel { font-size: 10px; }
+.win.call[data-layout="minimo"] .sala-estado { font-size: 9.5px; }
+/* No Mínimo, os quatro controles e o Desligar ficam numa fila só (os rótulos saem da vista, e o nome de cada botão fica), com
+   a sala cheia embaixo dela. */
+.win.call[data-layout="minimo"] .sala-baixo { display: grid; grid-template-columns: auto auto; grid-template-areas: "controles desligar" "cheia cheia";
+  justify-content: center; align-items: center; column-gap: 10px; row-gap: 8px; }
+.win.call[data-layout="minimo"] .sala-baixo > .call-middle { grid-area: controles; width: auto; }
+.win.call[data-layout="minimo"] .sala-baixo > .call-actions { grid-area: desligar; width: auto; margin: 0; }
+.win.call[data-layout="minimo"] .sala-baixo > .sala-cheia { grid-area: cheia; margin: 0; }
+.win.call[data-layout="minimo"] .call-sala .ctrls { display: flex; gap: 10px; width: auto; }
+.win.call[data-layout="minimo"] .call-sala .ctrl { position: relative; width: 44px; }
+.win.call[data-layout="minimo"] .call-sala .ctrl-c { width: 44px; height: 44px; }
+.win.call[data-layout="minimo"] .call-sala .ctrl-rotulo { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.win.call[data-layout="minimo"] .call-sala .hang { width: 48px; height: 48px; }
+.win.call[data-layout="minimo"] .call-sala .round-action > span { display: none; }
+
+/* O Desligar da sala pergunta antes (o EncerrarSala): um diálogo modal no escuro da marca, com o Encerrar no vermelho em que
+   o branco se lê (o #c23b3b, o do :hover do Desligar). O fundo começa embaixo da barra de título (32), e na tela cheia, sem
+   barra, desde o alto. */
+.encerrar { box-sizing: border-box; width: calc(100% - 48px); max-width: 352px; padding: 22px; border-radius: 24px; background: #0f1836; color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.12); box-shadow: 0 40px 100px -30px rgba(7, 11, 24, 0.6); }
+.encerrar::backdrop { top: 32px; background: rgba(4, 6, 14, 0.72); }
+.win-tela-cheia .encerrar::backdrop { top: 0; }
+.encerrar h2 { margin: 0 0 10px; font-size: 19px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.2; color: #ffffff; }
+.encerrar p { margin: 0 0 10px; font-size: 14px; line-height: 1.55; color: #b9c4e6; overflow-wrap: anywhere; }
+.encerrar-botoes { display: flex; gap: 10px; margin-top: 8px; }
+.encerrar-botoes button { flex: 1; min-width: 0; height: 46px; border-radius: 999px; font: 700 15px/1 var(--font-sans); color: #ffffff; transition: background var(--ease), border-color var(--ease); }
+.encerrar-cancelar { background: transparent; border: 1.5px solid rgba(255, 255, 255, 0.28); }
+.encerrar-cancelar:hover { border-color: var(--cyan); }
+.encerrar-ok { background: #c23b3b; border: 0; }
+.encerrar-ok:hover { background: #ad3333; }
+
 /* A faixa da ligação em cima da conversa que o Chat da ligação abriu (FaixaDaLigacao.tsx; os quadros ConversaNaLigacao e
    ConversaNaLigacaoEscura): navy-950 nos dois temas, com o fio claro em cima; a miniatura de 64×48 (a imagem da outra
    ponta com a sua pequena dentro, ou só a sua); "Em ligação · 03:12" (o "Em ligação ·" no cinza-azulado, menor, e o
