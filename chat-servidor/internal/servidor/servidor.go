@@ -57,8 +57,7 @@ type Deps struct {
 	Armazem *armazem.Armazem
 	Origens []string
 	Teste   bool // o modo de teste é HTTP: os cookies da página vão sem o Secure
-	// Gerente é o das reuniões: o da API e, nas tasks seguintes, o da página e o da administração. Sem ele, as
-	// rotas das reuniões não existem.
+	// Gerente é o das reuniões: o da API, o da página e o da administração, que o exige.
 	Gerente *reunioes.Gerente
 	// Base é o começo do link das reuniões, sem a barra do fim: https:// mais o hostPublico em produção, e http://
 	// mais o endereço em que o chat escuta no modo de teste.
@@ -80,7 +79,8 @@ func montar(d Deps) (http.Handler, *sync.WaitGroup, *api.Canais) {
 	canais := api.NovosCanais()
 	mux.Handle("/api/v1/", api.Novo(api.Deps{Banco: d.Banco, Hub: d.Hub, Armazem: d.Armazem, Origens: d.Origens,
 		Gerente: d.Gerente, Base: d.Base, Canais: canais}))
-	mux.Handle("/admin/", registrarAdmin(admin.Novo(admin.Deps{Banco: d.Banco, Hub: d.Hub, Armazem: d.Armazem, Teste: d.Teste})))
+	mux.Handle("/admin/", registrarAdmin(admin.Novo(admin.Deps{Banco: d.Banco, Hub: d.Hub, Armazem: d.Armazem, Teste: d.Teste,
+		Gerente: d.Gerente, Base: d.Base})))
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/admin/", http.StatusFound)
 	})

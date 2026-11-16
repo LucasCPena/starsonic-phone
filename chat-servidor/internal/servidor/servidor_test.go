@@ -26,6 +26,7 @@ import (
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/armazem"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/banco"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/eventos"
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/reunioes"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/tempo"
 )
 
@@ -470,7 +471,11 @@ func depsDeTeste(t *testing.T) Deps {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Deps{Banco: b, Hub: eventos.NovoHub(eventos.Config{}), Armazem: a}
+	hub := eventos.NovoHub(eventos.Config{})
+	// A administração exige o gerente das reuniões (o servidor sempre o passa).
+	g := reunioes.Novo(reunioes.Deps{Banco: b, Avisos: hub, Relogio: tempo.Real()})
+	t.Cleanup(func() { g.Ligar(nil) })
+	return Deps{Banco: b, Hub: hub, Armazem: a, Gerente: g}
 }
 
 func TestHSTS(t *testing.T) {

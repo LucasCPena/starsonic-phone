@@ -17,9 +17,10 @@ import (
 func TestNovo_SemDependencias(t *testing.T) {
 	a := apitest.Novo(t)
 	for nome, d := range map[string]admin.Deps{
-		"Banco":   {Hub: a.Hub, Armazem: a.Armazem},
-		"Hub":     {Banco: a.Banco, Armazem: a.Armazem},
-		"Armazem": {Banco: a.Banco, Hub: a.Hub},
+		"Banco":   {Hub: a.Hub, Armazem: a.Armazem, Gerente: a.Gerente},
+		"Hub":     {Banco: a.Banco, Armazem: a.Armazem, Gerente: a.Gerente},
+		"Armazem": {Banco: a.Banco, Hub: a.Hub, Gerente: a.Gerente},
+		"Gerente": {Banco: a.Banco, Hub: a.Hub, Armazem: a.Armazem},
 	} {
 		func() {
 			defer func() {

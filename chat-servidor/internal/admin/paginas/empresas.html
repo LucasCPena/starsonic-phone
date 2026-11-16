@@ -15,6 +15,14 @@
   </div>
   {{- end}}
 </div>
+<section class="cartao bloco" aria-labelledby="reunioes-titulo">
+  <h2 class="rotulo" id="reunioes-titulo">REUNIÕES</h2>
+  <span class="forte">{{.Reunioes.Agora}}</span>
+  <span class="ajuda">{{.Reunioes.Servidor}}</span>
+  <div class="botoes">
+    <a class="botao botao-secundario" href="/admin/reunioes">Configurar as reuniões</a>
+  </div>
+</section>
 <section class="cartao cartao-tabela" aria-label="Empresas no chat">
   <table class="tabela">
     <thead>

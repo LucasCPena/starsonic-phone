@@ -192,6 +192,8 @@ O servidor de vídeo respondeu: versão <versão>, FreeSWITCH no ar.
 Uso agora: CPU <n>% · memória <n>%.
 ```
 
+   Mais abaixo, no cartão `AGORA`, a linha do servidor deve dizer `Servidor de vídeo: <endereço> · respondendo`. Para testar de novo, sem mudar nada, clique em `Testar o servidor de vídeo`.
+
    Se os relógios das duas VMs estiverem 5 segundos ou mais diferentes, aparece também um aviso, com `adiantado` ou `atrasado`:
 
 ```

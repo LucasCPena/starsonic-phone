@@ -597,3 +597,52 @@ form {
   flex: none;
   margin-top: 8px;
 }
+
+/* A página das reuniões e o cartão "Reuniões" da lista das empresas. */
+.bloco {
+  padding: 20px 22px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.bloco .pilha {
+  width: 100%;
+  max-width: 560px;
+}
+
+.entrada-curta {
+  max-width: 140px;
+}
+
+.tabela-reunioes {
+  min-width: 480px;
+}
+
+.link-teste {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--texto);
+  overflow-wrap: anywhere;
+}
+
+.resultado-ok,
+.resultado-aviso {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.resultado-ok {
+  color: var(--marinho);
+}
+
+.resultado-aviso {
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: var(--fundo);
+  border: 1px solid var(--borda);
+  color: var(--texto);
+}

@@ -28,6 +28,7 @@ import (
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/eventos"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/limites"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/regras"
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/reunioes"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/tempo"
 )
 
@@ -70,6 +71,10 @@ type Deps struct {
 	Hub     *eventos.Hub
 	Armazem *armazem.Armazem
 	Teste   bool // o modo de teste é HTTP: os cookies vão sem o Secure
+	// Gerente é o das reuniões, o mesmo da API: a página "Reuniões" liga nele o servidor de vídeo e lê dele as contagens.
+	Gerente *reunioes.Gerente
+	// Base é o começo do link das reuniões, sem a barra do fim (o mesmo da API): o link da reunião de teste.
+	Base string
 }
 
 type painel struct {
@@ -77,6 +82,8 @@ type painel struct {
 	hub      *eventos.Hub
 	armazem  *armazem.Armazem
 	avisos   *api.Avisador
+	gerente  *reunioes.Gerente
+	base     string
 	entradas *limites.Janela // as entradas, por endereço
 	teste    bool
 	telas    map[string]*template.Template
@@ -93,10 +100,14 @@ func Novo(d Deps) http.Handler {
 	if d.Armazem == nil {
 		panic("admin.Novo: Deps.Armazem é obrigatório")
 	}
+	if d.Gerente == nil {
+		panic("admin.Novo: Deps.Gerente é obrigatório, e tem de ser o mesmo da API")
+	}
 	p := &painel{banco: d.Banco, hub: d.Hub, armazem: d.Armazem, avisos: api.NovoAvisador(d.Banco, d.Hub),
+		gerente: d.Gerente, base: d.Base,
 		entradas: limites.Nova(maxEntradas, periodoEntradas, d.Banco.Relogio()),
 		teste:    d.Teste, telas: map[string]*template.Template{}}
-	for _, nome := range []string{"entrar", "empresas", "nova", "empresa", "apagar", "erro"} {
+	for _, nome := range []string{"entrar", "empresas", "nova", "empresa", "apagar", "reunioes", "erro"} {
 		p.telas[nome] = template.Must(template.ParseFS(paginasFS, "paginas/base.html", "paginas/"+nome+".html"))
 	}
 
@@ -113,6 +124,12 @@ func Novo(d Deps) http.Handler {
 	mux.HandleFunc("POST /admin/empresas/{id}/computadores/{cid}/tirar", p.comSessao(p.tirarComputador))
 	mux.HandleFunc("GET /admin/empresas/{id}/apagar", p.comSessao(p.paginaApagar))
 	mux.HandleFunc("POST /admin/empresas/{id}/apagar", p.comSessao(p.apagarEmpresa))
+	mux.HandleFunc("GET /admin/reunioes", p.comSessao(p.paginaReunioes))
+	mux.HandleFunc("POST /admin/reunioes/servidor", p.comSessao(p.guardarServidor))
+	mux.HandleFunc("POST /admin/reunioes/testar", p.comSessao(p.testarServidor))
+	mux.HandleFunc("POST /admin/reunioes/limite", p.comSessao(p.guardarLimite))
+	mux.HandleFunc("POST /admin/reunioes/empresas/{id}", p.comSessao(p.liberarEmpresa))
+	mux.HandleFunc("POST /admin/reunioes/teste", p.comSessao(p.criarTeste))
 	mux.HandleFunc("GET /admin/estatico/{arquivo}", p.estatico) // sem sessão: a entrada usa
 	// O resto: sem sessão, a entrada; com ela, "não encontrada". Assim, quem não entrou não
 	// descobre nem que rotas existem.
@@ -248,6 +265,7 @@ type linhaEmpresa struct {
 
 type telaEmpresas struct {
 	Numeros  []numero
+	Reunioes cartaoReunioes
 	Empresas []linhaEmpresa
 }
 
@@ -259,6 +277,10 @@ func (p *painel) empresas(w http.ResponseWriter, r *http.Request, s sessao) {
 		return
 	}
 	var t telaEmpresas
+	if t.Reunioes, err = p.cartaoDasReunioes(r.Context()); err != nil {
+		p.erroServidor(w, s, err)
+		return
+	}
 	pessoas, bytes := 0, int64(0)
 	for _, e := range lista {
 		t.Empresas = append(t.Empresas, linhaEmpresa{Nome: e.Nome, Pessoas: e.Pessoas, Espaco: espaco(e.Bytes),
