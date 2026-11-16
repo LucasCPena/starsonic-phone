@@ -82,6 +82,8 @@ O comando não escreve nada quando dá certo. Rode o `timedatectl` de novo depoi
 sudo apt-get install -y systemd-timesyncd
 ```
 
+Aparecem as linhas do apt, e o comando termina sem nenhuma linha que comece com `E:`.
+
 As reuniões funcionam mesmo com os relógios um pouco diferentes, mas o cartão "Reuniões" do chat avisa da diferença (passo 3).
 
 ### Se a VM fica atrás de um roteador (NAT)
@@ -94,16 +96,25 @@ Quando a VM fica na rede interna da empresa, sem um IP público só dela, quem r
 curl -s https://ifconfig.me
 ```
 
+  Aparece só um número, como `203.0.113.10`, com o prompt do terminal logo depois dele, na mesma linha. Esse número é o IP público do roteador.
+
 - No roteador, redirecione para o IP interno da VM **todas as portas da tabela acima, com os mesmos números**: a porta 443 pública vai para a 443 da VM, a 5061 para a 5061, as duas faixas UDP para as mesmas faixas, e assim por diante. Use o redirecionamento de porta comum (NAT, ou port forwarding), que mantém o endereço de quem acessa. Não use um proxy.
 - O servidor de vídeo não tem porta própria, como o chat tem. Se a 443 pública do roteador já é de outro servidor, o servidor de vídeo precisa de outro IP público, só dele.
 - A internet da empresa precisa ter um IP público fixo. Se a operadora usa CGNAT (um IP dividido com outros clientes), não dá para redirecionar porta: peça à operadora um IP público fixo.
-- Quem está na mesma rede da VM só entra numa reunião se o roteador fizer o "NAT loopback", como no guia do chat. Para o vídeo, o DNS interno não basta: a imagem e o som vão sempre para o IP público. Por isso, não crie o nome do servidor de vídeo no DNS interno: a instalação lê o IP público por esse nome.
+- Quem está na mesma rede da VM só entra numa reunião se o roteador fizer o "NAT loopback", como no guia do chat. Para o vídeo, o DNS interno não basta: a imagem e o som vão sempre para o IP público.
+- A instalação lê o IP público pelo nome do servidor de vídeo, no DNS que a VM usa. Se o DNS interno da empresa responde pelo domínio (como no guia do chat), crie nele também o nome do servidor de vídeo, apontando para o **IP público**, e não para o IP interno da VM. Sem o nome, ou com um IP da rede interna, a instalação para.
 
 ## 2. Instalar
 
 Você vai precisar de duas coisas:
 
-- uma versão do servidor de vídeo publicada. Veja o número da última na página de Releases do projeto no GitHub. As versões do servidor de vídeo se chamam `video-v` e o número, e o GitHub as mostra com a etiqueta `Pre-release`: isso é normal, e é a versão certa. Se a versão for `video-v0.1.0`, o `<versão>` é `0.1.0`. Se ainda não existir nenhuma versão `video-v` na página, publique a primeira pelo passo 10;
+- uma versão do servidor de vídeo publicada. Veja o número da última na página de Releases do projeto no GitHub:
+
+```
+https://github.com/LucasCPena/starsonic-phone/releases
+```
+
+  As versões do servidor de vídeo se chamam `video-v` e o número, e o GitHub as mostra com a etiqueta `Pre-release`: isso é normal, e é a versão certa. Se a versão for `video-v0.1.0`, o `<versão>` é `0.1.0`. Se ainda não existir nenhuma versão `video-v` na página, publique a primeira pelo passo 10;
 - o endereço do chat. O chat não precisa estar instalado ainda: basta o nome dele. A instalação o guarda para deixar entrar nas reuniões só a página desse chat.
 
 Baixe o instalador na VM de vídeo:
@@ -283,6 +294,8 @@ Se o agente estiver parado, o instalador não tem a quem perguntar. Ele avisa co
 O agente não respondeu; não dá para saber se há reuniões agora. Seguindo com a atualização.
 ```
 
+**As atualizações do sistema da VM.** Se, numa atualização do sistema (o `sudo apt upgrade`), o apt perguntar o que fazer com o arquivo `/etc/turnserver.conf`, responda `N`, que mantém o arquivo atual (é o padrão: basta apertar Enter). Um `Y` põe de volta a configuração de exemplo do coturn, que não serve para as reuniões, até o próximo `atualizar` (veja "O apt perguntou sobre o /etc/turnserver.conf", no passo 9, para pôr a nossa de volta).
+
 ## 6. Trocar o endereço do chat
 
 O servidor de vídeo só deixa entrar nas reuniões a página do chat que ele conhece. Se o endereço do chat mudar (um nome novo, ou o chat passou a usar uma porta própria, ou deixou de usar), avise o servidor de vídeo. Use o `instalar.sh` que já está na VM de vídeo, de qualquer versão. Se ele não estiver mais lá, baixe-o de novo, como no passo 5.
@@ -291,7 +304,11 @@ O servidor de vídeo só deixa entrar nas reuniões a página do chat que ele co
 sudo bash instalar.sh chat <endereço do chat>
 ```
 
-Você deve ver `Pronto: o servidor de vídeo agora aceita a página de https://<endereço do chat>.`, com o endereço novo. O comando reinicia o agente: faça a troca num horário sem reuniões. Se o agente não ficar de pé com o endereço novo, o comando põe a configuração de antes de volta e avisa.
+Você deve ver `Pronto: o servidor de vídeo agora aceita a página de https://<endereço do chat>.`, com o endereço novo. O comando reinicia o agente: faça a troca num horário sem reuniões. Se o agente não ficar de pé com o endereço novo, ou se o comando parar no meio (por exemplo, a conexão com a VM cai), a configuração de antes volta, e aparece a linha abaixo:
+
+```
+A configuração de antes voltou, e o agente foi reiniciado com ela.
+```
 
 ## 7. O certificado
 
@@ -322,6 +339,8 @@ Para ver quando o certbot confere o certificado de novo:
 ```
 systemctl list-timers certbot.timer
 ```
+
+Deve aparecer uma linha com `certbot.timer` e, na coluna `NEXT`, a data e a hora da próxima conferência.
 
 ## 8. Ver os registros
 
@@ -377,28 +396,49 @@ Logo acima dessa linha, o certbot diz o motivo, em inglês:
 - `Timeout during connect` ou `Connection refused`: o Let's Encrypt não chegou na porta 80 da VM. Abra a porta 80 de entrada na rede da nuvem, no firewall e, se a VM fica atrás de um roteador, no redirecionamento dele (passo 1);
 - `too many failed authorizations` ou `rateLimited`: houve tentativas demais que falharam. O Let's Encrypt aceita no máximo 5 por hora para o mesmo nome. Espere uma hora antes de tentar de novo.
 
-Depois de corrigir, rode o mesmo comando de instalação de novo: ele segue de onde parou. Não insista muitas vezes seguidas: cada tentativa que falha conta no limite. O registro completo do certbot fica em `/var/log/letsencrypt/letsencrypt.log`.
+Depois de corrigir, rode o mesmo comando de instalação de novo: ele segue de onde parou. Não insista muitas vezes seguidas: cada tentativa que falha conta no limite.
+
+O registro completo do certbot mostra mais detalhes. Para ver as últimas 50 linhas dele:
+
+```
+sudo tail -n 50 /var/log/letsencrypt/letsencrypt.log
+```
 
 **O instalador diz que o endereço ainda não aponta para nenhum IP.**
 A linha é `ERRO: o endereço <endereço> ainda não aponta para nenhum IP no DNS. Crie o registro A e espere alguns minutos.` Crie o registro A (passo 1) e espere. O `getent hosts <endereço>` mostra quando ele chegou na VM.
 
 **O instalador diz que o endereço aponta para um IP que não é da internet.**
-O nome aponta, na VM, para um IP da rede interna (como `10.`, `172.16.` a `172.31.` ou `192.168.`) ou para a própria VM (`127.`). O registro A tem de apontar para o IP público. Se o DNS público já está certo, o nome está no arquivo `/etc/hosts` da VM ou num DNS interno: tire-o de lá e rode a instalação de novo.
+O nome aponta, na VM, para um IP da rede interna (como `10.`, `172.16.` a `172.31.` ou `192.168.`) ou para a própria VM (`127.`). O registro A tem de apontar para o IP público. Se o DNS público já está certo, o nome está no arquivo `/etc/hosts` da VM (tire-o de lá) ou num DNS interno da empresa (lá, ele também tem de apontar para o IP público: veja "Se a VM fica atrás de um roteador", no passo 1). Depois, rode a instalação de novo.
 
 **O instalador diz que uma porta está em uso.**
-Acima do `ERRO:`, cada linha mostra uma porta ocupada e, no fim dela, o programa que a usa (por exemplo, `nginx`). Pare esse programa (por exemplo, `sudo systemctl stop nginx`) e rode o instalador de novo. A VM de vídeo é só para as reuniões: não deixe outros programas nela.
+Acima do `ERRO:`, cada linha mostra uma porta ocupada e, no fim dela, o programa que a usa (por exemplo, `nginx`). Pare esse programa e rode o instalador de novo. Para o `nginx`, por exemplo:
+
+```
+sudo systemctl stop nginx
+```
+
+A VM de vídeo é só para as reuniões: não deixe outros programas nela.
 
 **O instalador diz que o servidor de vídeo já está instalado.**
 O `instalar` só roda uma vez. Para trocar de versão, use o `atualizar` (passo 5). Para trocar o endereço do chat, use o `chat` (passo 6). Para ver a chave, use o `mostrar-chave` (passo 2).
 
 **O instalador diz que o servidor de vídeo não ficou de pé.**
-Algum dos três serviços não ligou. Acima do `ERRO:`, o instalador mostra as últimas linhas dos registros, e uma linha com `Erro:` diz o motivo. Para tentar de novo, também quando isso acontece no fim da instalação, use o atualizar, com o mesmo `instalar.sh`:
+Algum dos três serviços não ligou. Acima do `ERRO:`, o instalador mostra as últimas linhas dos registros dos três. Se o problema é o agente, uma linha com `Erro:` diz o motivo. Se é o FreeSWITCH, procure as linhas com `[ERR]` ou `[CRIT]` que não estão entre as normais do passo 8; se é o coturn, as linhas com `ERROR`. Para tentar de novo, também quando isso acontece no fim da instalação, use o atualizar, com o mesmo `instalar.sh`:
 
 ```
 sudo bash instalar.sh atualizar
 ```
 
 Ele refaz a configuração e liga os serviços de novo. Se a instalação parou aqui, ela não chegou a mostrar a chave: quando o atualizar disser `Pronto`, veja a chave com o `mostrar-chave` (passo 2). Se o erro repetir, guarde as linhas do registro e avise quem cuida do servidor de vídeo.
+
+**O apt perguntou sobre o /etc/turnserver.conf.**
+Numa atualização do sistema (o `sudo apt upgrade`), o apt pode perguntar o que fazer com esse arquivo, que é a configuração do coturn. Responda `N`, que mantém o arquivo atual (é o padrão: basta apertar Enter). Se a resposta foi `Y`, o coturn voltou à configuração de exemplo, que não serve para as reuniões e aceita qualquer um, sem senha. Ponha a nossa de volta logo, com o `atualizar`, usando o `instalar.sh` que já está na VM (passo 5):
+
+```
+sudo bash instalar.sh atualizar
+```
+
+Você deve ver `Pronto: o servidor de vídeo agora está na versão <versão>.`, com a mesma versão de antes.
 
 **As portas estão fechadas (o chat diz que o servidor de vídeo não respondeu, ou ninguém vê nem ouve ninguém numa reunião).**
 Confira se os programas estão escutando:

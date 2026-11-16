@@ -147,7 +147,7 @@ ip_publico() {
     falhar "o endereço $1 ainda não aponta para nenhum IP no DNS. Crie o registro A e espere alguns minutos."
   fi
   if ip_reservado "$ip"; then
-    falhar "o endereço $1 aponta para $ip, que não é um IP da internet. O registro A tem de apontar para o IP público da VM (ou o do roteador na frente dela). Se o DNS público já mostra o IP certo, o nome está no /etc/hosts desta VM ou num DNS interno: tire-o de lá e rode de novo."
+    falhar "o endereço $1 aponta para $ip, que não é um IP da internet. O registro A tem de apontar para o IP público da VM (ou o do roteador na frente dela). Se o DNS público já mostra o IP certo, o nome está no /etc/hosts desta VM (tire-o de lá) ou num DNS interno (lá, ele também tem de apontar para o IP público). Depois, rode de novo."
   fi
   echo "$ip"
 }
@@ -166,9 +166,11 @@ ip_privado() {
 # pacote_freeswitch <sistema>: o nome do pacote do FreeSWITCH do sistema, na release.
 pacote_freeswitch() { echo "starsonic-freeswitch-$1-amd64.tar.gz"; }
 
-# baixar <nome> <pasta>: baixa um arquivo da mesma release.
+# baixar <nome> <pasta>: baixa um arquivo da mesma release, só por https, também nos redirecionamentos. Uma
+# transferência parada (menos de 1 KB/s por 60 s) desiste, em vez de prender a instalação.
 baixar() {
-  curl -fsSL --retry 3 --connect-timeout 20 -o "$2/$1" "$BASE/$1" ||
+  curl -fsSL --proto =https --proto-redir =https --retry 3 --connect-timeout 20 --speed-limit 1024 --speed-time 60 \
+    -o "$2/$1" "$BASE/$1" ||
     falhar "não consegui baixar $BASE/$1 . Confira a versão $VERSAO e a internet da máquina."
 }
 
@@ -226,7 +228,7 @@ criar_usuarios() {
 # instalar_programa <pasta>: põe o agente no lugar.
 instalar_programa() {
   install -m 0755 "$1/$ARQUIVO_BINARIO" "$BINARIO.novo"
-  mv -f "$BINARIO.novo" "$BINARIO" # trocar o nome funciona com o programa rodando
+  mv -fT "$BINARIO.novo" "$BINARIO" # trocar o nome funciona com o programa rodando
 }
 
 # instalar_unidades <pasta>: põe as duas unidades do systemd no lugar.
@@ -243,7 +245,7 @@ instalar_unidades() {
 instalar_gancho() {
   install -d -m 0755 "$(dirname "$GANCHO")"
   install -m 0755 "$1/certificado.sh" "$GANCHO.novo"
-  mv -f "$GANCHO.novo" "$GANCHO"
+  mv -fT "$GANCHO.novo" "$GANCHO"
 }
 
 # senha_esl: 32 letras e números sorteados, a senha do ESL do FreeSWITCH. Só letras e números: o FreeSWITCH lê a
@@ -264,7 +266,7 @@ escrever_config() {
   (umask 077 && printf '{"endereco": "%s", "chat": "%s", "chave": "%s", "senhaEsl": "%s", "ipPrivado": "%s", "ipPublico": "%s"}\n' "$@" >"$destino.novo")
   chown "root:$USUARIO" "$destino.novo"
   chmod 0640 "$destino.novo"
-  mv -f "$destino.novo" "$destino"
+  mv -fT "$destino.novo" "$destino"
 }
 
 # ler_campo <campo>: o valor de um campo de texto do config.json que este script gravou.
@@ -275,10 +277,14 @@ ler_campo() {
 # certificados_proprios: os dois pares autoassinados do FreeSWITCH, na pasta tls/ dele, só os que faltam: o
 # dtls-srtp.pem (o DTLS do WebRTC) e o wss.pem. Sem eles, o FreeSWITCH faria um par novo de 4096 bits a cada
 # partida, sem conseguir guardá-lo (a /etc é só de leitura para ele). A chave e o certificado ficam no mesmo arquivo.
+# A pasta tls/ é do usuário do FreeSWITCH: só um arquivo comum conta como um par que já existe, e um link simbólico
+# no lugar dele é trocado por um par novo (o mv -T troca o nome, e não segue o link).
 certificados_proprios() {
   local pasta=$CONFIG_DIR/freeswitch/tls nome preparo
   for nome in dtls-srtp.pem wss.pem; do
-    [ ! -e "$pasta/$nome" ] || continue
+    if [ -f "$pasta/$nome" ] && [ ! -L "$pasta/$nome" ]; then
+      continue
+    fi
     preparo=$(mktemp -d "$CONFIG_DIR/.par.XXXXXX")
     if ! openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj /CN=starsonic-video \
       -keyout "$preparo/chave" -out "$preparo/certificado" >/dev/null 2>&1; then
@@ -288,14 +294,19 @@ certificados_proprios() {
     (umask 077 && cat "$preparo/chave" "$preparo/certificado" >"$preparo/par")
     chown "$USUARIO_FS:$USUARIO_FS" "$preparo/par"
     chmod 0600 "$preparo/par"
-    mv -f "$preparo/par" "$pasta/$nome"
+    if ! mv -fT "$preparo/par" "$pasta/$nome"; then
+      rm -rf "$preparo"
+      falhar "não consegui pôr o $nome no lugar: $pasta/$nome tem de ser um arquivo comum."
+    fi
     rm -rf "$preparo"
   done
 }
 
-# dono <dono:grupo> <modo> <caminho>
+# dono <dono:grupo> <modo> <caminho>: o dono e o modo, sem nunca seguir um link simbólico. Um link no lugar de um
+# arquivo da configuração para a instalação, com o nome dele.
 dono() {
-  chown "$1" "$3"
+  [ ! -L "$3" ] || falhar "$3 é um link simbólico, e não um arquivo comum. A instalação não segue links: apague-o e rode o mesmo comando de novo."
+  chown -h "$1" "$3"
   chmod "$2" "$3"
 }
 
@@ -328,7 +339,7 @@ instalar_turn() {
   (umask 077 && cp "$CONFIG_DIR/turnserver.conf" "$TURN_CONF.novo")
   chown root:turnserver "$TURN_CONF.novo"
   chmod 0640 "$TURN_CONF.novo"
-  mv -f "$TURN_CONF.novo" "$TURN_CONF"
+  mv -fT "$TURN_CONF.novo" "$TURN_CONF"
 }
 
 # configurar_tudo: a configuração do FreeSWITCH e do coturn, escrita de novo pelo configurar a partir do config.json,
@@ -447,9 +458,9 @@ trocar_freeswitch() {
   mapfile -t pacotes < <(ler_pacotes "$FREESWITCH.novo/pacotes.txt")
   instalar_pacotes "${pacotes[@]}"
   if [ -e "$FREESWITCH" ]; then
-    mv "$FREESWITCH" "$FREESWITCH.antigo"
+    mv -T "$FREESWITCH" "$FREESWITCH.antigo"
   fi
-  mv "$FREESWITCH.novo" "$FREESWITCH"
+  mv -T "$FREESWITCH.novo" "$FREESWITCH"
 }
 
 instalar() {
@@ -518,8 +529,18 @@ atualizar() {
   echo "Pronto: o servidor de vídeo agora está na versão $("$BINARIO" versao)."
 }
 
+# voltar_chat: põe de volta o config.json de antes do mudar_chat e reinicia o agente com ele.
+voltar_chat() {
+  if [ -e "$CONFIG_DIR/config.json.antes" ]; then
+    mv -fT "$CONFIG_DIR/config.json.antes" "$CONFIG_DIR/config.json"
+    systemctl restart starsonic-video.service || true
+    echo "A configuração de antes voltou, e o agente foi reiniciado com ela." >&2
+  fi
+}
+
 # mudar_chat <endereço do chat>: troca o endereço do chat no config.json, sem baixar nada, e reinicia o agente. Se
-# o agente não ficar de pé, a configuração de antes volta.
+# o agente não ficar de pé, ou se o comando parar no meio (um erro, um Ctrl+C, a conexão que cai), a configuração
+# de antes volta.
 mudar_chat() {
   local chat=$1 config=$CONFIG_DIR/config.json
   conferir_chat "$chat"
@@ -527,19 +548,21 @@ mudar_chat() {
   conferir_instalado
   grep -q '"chat": *"[^"]*"' "$config" || falhar "não achei o \"chat\" em $config. Nada mudou."
   cp -p "$config" "$config.antes"
+  # Daqui até o fim, qualquer saída antes da hora põe a configuração de antes de volta.
+  trap voltar_chat EXIT
+  trap 'exit 130' INT HUP TERM
   rm -f "$config.novo"
   (umask 077 && sed 's/"chat": *"[^"]*"/"chat": "'"$chat"'"/' "$config" >"$config.novo")
   chown "root:$USUARIO" "$config.novo"
   chmod 0640 "$config.novo"
-  mv -f "$config.novo" "$config"
+  mv -fT "$config.novo" "$config"
   systemctl restart starsonic-video.service || true
   if ! servicos_firmes starsonic-video.service; then
-    mv -f "$config.antes" "$config"
-    systemctl restart starsonic-video.service || true
     journalctl -u starsonic-video -n 20 --no-pager >&2 || true
-    falhar "o agente não ficou de pé com o endereço novo do chat (as últimas linhas do registro estão acima). A configuração de antes voltou."
+    falhar "o agente não ficou de pé com o endereço novo do chat (as últimas linhas do registro estão acima)."
   fi
   rm -f "$config.antes"
+  trap - EXIT INT HUP TERM
   echo "Pronto: o servidor de vídeo agora aceita a página de https://$chat."
 }
 

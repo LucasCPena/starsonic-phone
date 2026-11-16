@@ -121,9 +121,11 @@ conferir_portas() {
   fi
 }
 
-# baixar <nome> <pasta>: baixa um arquivo da mesma release.
+# baixar <nome> <pasta>: baixa um arquivo da mesma release, só por https, também nos redirecionamentos. Uma
+# transferência parada (menos de 1 KB/s por 60 s) desiste, em vez de prender a instalação.
 baixar() {
-  curl -fsSL --retry 3 --connect-timeout 20 -o "$2/$1" "$BASE/$1" ||
+  curl -fsSL --proto =https --proto-redir =https --retry 3 --connect-timeout 20 --speed-limit 1024 --speed-time 60 \
+    -o "$2/$1" "$BASE/$1" ||
     falhar "não consegui baixar $BASE/$1 . Confira a versão $VERSAO e a internet da máquina."
 }
 

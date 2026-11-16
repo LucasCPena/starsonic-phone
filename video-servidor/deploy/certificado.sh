@@ -10,8 +10,9 @@
 # Cada recarga só acontece com o serviço no ar.
 #
 # O certbot roda este script como root, da pasta /etc/letsencrypt/renewal-hooks/deploy/, com o RENEWED_LINEAGE (a
-# pasta live/ do certificado). Todo caminho de destino fica dentro da RAIZ, vazia no servidor: o instalar-teste.sh
-# usa uma pasta de teste.
+# pasta live/ do certificado), depois de cada certificado que ele renova nesta máquina. O script só mexe quando o
+# certificado é o do servidor de vídeo (o endereco do config.json); com outro, não faz nada. Todo caminho fica dentro
+# da RAIZ, vazia no servidor: o instalar-teste.sh usa uma pasta de teste.
 set -euo pipefail
 
 RAIZ=${RAIZ:-}
@@ -23,16 +24,27 @@ falhar() {
 }
 
 [ -n "${RENEWED_LINEAGE:-}" ] || falhar "falta o RENEWED_LINEAGE (a pasta live/ do certificado). Quem roda este script é o certbot, depois de cada certificado novo."
+[ -r "$ETC/config.json" ] || falhar "não achei $ETC/config.json. O servidor de vídeo está instalado? Nada mudou."
+endereco=$(sed -n 's/.*"endereco": *"\([^"]*\)".*/\1/p' "$ETC/config.json")
+[ -n "$endereco" ] || falhar "não achei o endereço do servidor de vídeo em $ETC/config.json. Nada mudou."
+if [ "$RENEWED_LINEAGE" != "$RAIZ/etc/letsencrypt/live/$endereco" ]; then
+  echo "O certificado de $RENEWED_LINEAGE não é o do servidor de vídeo ($endereco): nada mudou."
+  exit 0
+fi
 for arquivo in fullchain.pem privkey.pem chain.pem; do
   [ -r "$RENEWED_LINEAGE/$arquivo" ] || falhar "não achei $RENEWED_LINEAGE/$arquivo. Nada mudou."
 done
+# A pasta tls/ do FreeSWITCH é do usuário dele: o root não segue um link simbólico que esteja nela.
 for pasta in "$ETC/tls" "$ETC/freeswitch/tls"; do
-  [ -d "$pasta" ] || falhar "não achei a pasta $pasta. O servidor de vídeo está instalado? Nada mudou."
+  if [ ! -d "$pasta" ] || [ -L "$pasta" ]; then
+    falhar "não achei a pasta $pasta (ou ela é um link simbólico). O servidor de vídeo está instalado? Nada mudou."
+  fi
 done
 
 # Os arquivos ficam prontos numa pasta só do root, já com o dono e o modo certos, e só então tomam o lugar dos
 # antigos, cada um de uma vez (o mv na mesma partição). Ninguém lê um arquivo pela metade, e uma chave nunca fica
-# aberta a quem não deve, nem por um instante.
+# aberta a quem não deve, nem por um instante. O mv -T troca o próprio nome: um link simbólico no lugar do arquivo é
+# trocado, e não seguido (sem o -T, um link para uma pasta levaria o arquivo para dentro dela).
 umask 077
 PREPARO=$(mktemp -d "$ETC/.certificado.XXXXXX")
 trap 'rm -rf "$PREPARO"' EXIT
@@ -55,10 +67,10 @@ preparar agent.pem starsonic-freeswitch:starsonic-freeswitch 0600 "$L/privkey.pe
 preparar cafile.pem root:root 0644 "$L/chain.pem"
 
 for nome in certificado.pem chave.pem turn-certificado.pem turn-chave.pem; do
-  mv -f "$PREPARO/$nome" "$ETC/tls/$nome"
+  mv -fT "$PREPARO/$nome" "$ETC/tls/$nome"
 done
 for nome in agent.pem cafile.pem; do
-  mv -f "$PREPARO/$nome" "$ETC/freeswitch/tls/$nome"
+  mv -fT "$PREPARO/$nome" "$ETC/freeswitch/tls/$nome"
 done
 
 # As recargas, cada uma só com o serviço no ar. Uma que falha não impede a outra.

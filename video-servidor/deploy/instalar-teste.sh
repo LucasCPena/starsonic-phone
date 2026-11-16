@@ -60,13 +60,18 @@ journalctl() { inesperado journalctl "$@"; }
 systemctl() { inesperado systemctl "$@"; }
 useradd() { inesperado useradd "$@"; }
 
-# O chown de mentira anota "<dono> <caminho>", com o caminho sem a pasta do teste: o teste não roda como root.
+# O chown de mentira anota "<dono> <caminho> [-h]", com o caminho sem a pasta do teste: o teste não roda como root.
 DONOS=$T/donos
 chown() {
-  local dono=$1 caminho
+  local dono caminho opcoes=""
+  while [[ "${1:-}" == -* ]]; do
+    opcoes+=" $1"
+    shift
+  done
+  dono=$1
   shift
   for caminho in "$@"; do
-    echo "$dono ${caminho#"$T"/}" >>"$DONOS"
+    echo "$dono ${caminho#"$T"/}$opcoes" >>"$DONOS"
   done
 }
 # dono_de <caminho sem a pasta do teste>: o último dono pedido para o caminho.
@@ -221,7 +226,7 @@ for par in dtls-srtp.pem wss.pem; do
 done
 confere "wss.pem que já existia não mudou" antigo "$(cat "$fs/tls/wss.pem")"
 confere "dtls-srtp.pem: o certificado é o do starsonic-video" "subject=CN=starsonic-video" \
-  "$(openssl x509 -noout -subject <"$fs/tls/dtls-srtp.pem" 2>&1 | sed 's/ //g')"
+  "$(openssl x509 -noout -subject -in "$fs/tls/dtls-srtp.pem" 2>&1 | sed 's/ //g')"
 confere "dtls-srtp.pem: a chave RSA de 2048 bits, no mesmo arquivo" 2048 \
   "$(openssl pkey -in "$fs/tls/dtls-srtp.pem" -noout -text 2>/dev/null | sed -n 's/.*Private-Key: (\([0-9]*\) bit.*/\1/p')"
 confere "dtls-srtp.pem: a chave é a do certificado" sim "$(
@@ -233,6 +238,57 @@ antes=$(sha256sum "$fs/tls/dtls-srtp.pem")
 certificados_proprios
 confere "o dtls-srtp.pem só é feito uma vez" "$antes" "$(sha256sum "$fs/tls/dtls-srtp.pem")"
 confere "nenhuma pasta de preparo sobrou" "" "$(find "$CONFIG_DIR" -maxdepth 1 -name '.*' -printf '%f\n')"
+confere "o chown dos pares não segue links (-h)" \
+  "starsonic-freeswitch:starsonic-freeswitch etc/starsonic-video/freeswitch/tls/wss.pem -h" \
+  "$(grep ' etc/starsonic-video/freeswitch/tls/wss.pem' "$DONOS" | tail -n 1)"
+
+# --- os links simbólicos na pasta tls/ do FreeSWITCH, que é do usuário dele: trocados, nunca seguidos ---
+# Um link para um arquivo de fora no lugar do dtls-srtp.pem, e um link para uma pasta de fora no lugar do wss.pem.
+# Os dois viram pares novos, e nada fora da pasta muda.
+config_m8=$CONFIG_DIR
+CONFIG_DIR=$T/links/etc/starsonic-video
+fs=$CONFIG_DIR/freeswitch
+fora=$T/links/fora
+mkdir -p "$fs/tls" "$fora/pasta"
+echo alvo >"$fora/arquivo"
+chmod 0644 "$fora/arquivo"
+echo '<document/>' >"$fs/freeswitch.xml"
+echo png >"$fs/sem-camera.png"
+echo turn >"$CONFIG_DIR/turnserver.conf"
+echo '{}' >"$CONFIG_DIR/config.json"
+ln -s "$fora/arquivo" "$fs/tls/dtls-srtp.pem"
+ln -s "$fora/pasta" "$fs/tls/wss.pem"
+: >"$DONOS"
+set +e
+(set -e; certificados_proprios; acertar_donos) >"$T/links/saida" 2>&1
+codigo=$?
+set -e
+confere "os pares e os donos com os links no lugar" "0|" "$codigo|$(cat "$T/links/saida")"
+for par in dtls-srtp.pem wss.pem; do
+  confere "o link $par virou um arquivo comum" sim \
+    "$(if [ -f "$fs/tls/$par" ] && [ ! -L "$fs/tls/$par" ]; then echo sim; else echo não; fi)"
+  # O openssl só lê um arquivo comum: com a entrada numa pasta, ele ficaria esperando para sempre.
+  confere "o $par novo é um par do starsonic-video" "subject=CN=starsonic-video" \
+    "$(if [ -f "$fs/tls/$par" ] && [ ! -L "$fs/tls/$par" ]; then
+      openssl x509 -noout -subject -in "$fs/tls/$par" 2>&1 | sed 's/ //g'
+    else echo "não é um arquivo comum"; fi)"
+  confere "o $par novo 0600" 600 "$(modo "$fs/tls/$par")"
+done
+confere "o arquivo de fora não mudou" "alvo 644" "$(cat "$fora/arquivo") $(modo "$fora/arquivo")"
+confere "nada entrou na pasta de fora" "" "$(find "$fora/pasta" -mindepth 1)"
+confere "nenhum chown fora da pasta" "" "$(grep 'links/fora' "$DONOS" || true)"
+# Um link no lugar de um arquivo que o acertar_donos só acerta (o freeswitch.xml) para a instalação, com o nome dele.
+rm "$fs/freeswitch.xml"
+ln -s "$fora/arquivo" "$fs/freeswitch.xml"
+set +e
+saida=$( (set -e; acertar_donos) 2>&1)
+codigo=$?
+set -e
+confere "um link no lugar do freeswitch.xml para" 1 "$codigo"
+confere "o erro diz o nome do link" sim \
+  "$(if [[ "$saida" == *"$fs/freeswitch.xml é um link simbólico"* ]]; then echo sim; else echo não; fi)"
+confere "o arquivo de fora continua igual" "alvo 644" "$(cat "$fora/arquivo") $(modo "$fora/arquivo")"
+CONFIG_DIR=$config_m8
 
 # --- o turnserver.conf do coturn: o nosso no lugar, e o original guardado uma vez ---
 echo "# o do pacote" >"$TURN_CONF"
@@ -269,17 +325,28 @@ exit 0
 FIM
 chmod +x "$falsos/chown" "$falsos/systemctl"
 
-# cenario_gancho <nome> <serviços ativos> [sem-lineage | sem-chain | reload-falha]: roda o certificado.sh numa
-# raiz nova e escreve "<código de saída>|<recargas pedidas>".
+# cenario_gancho <nome> <serviços ativos> [sem-lineage | sem-chain | reload-falha | outro-certificado | sem-config |
+# links]: roda o certificado.sh numa raiz nova, com o config.json do servidor de vídeo, e escreve "<código de
+# saída>|<recargas pedidas>". Em links, o agent.pem é um link para uma pasta de fora e o cafile.pem, um link para um
+# arquivo de fora.
 cenario_gancho() {
-  local raiz=$T/gancho-$1 jeito=${3:-} lineage codigo=0
-  lineage=$raiz/etc/letsencrypt/live/video.exemplo.com.br
+  local raiz=$T/gancho-$1 jeito=${3:-} nome=video.exemplo.com.br lineage codigo=0
+  if [ "$jeito" = outro-certificado ]; then nome=outro.exemplo.com.br; fi
+  lineage=$raiz/etc/letsencrypt/live/$nome
   mkdir -p "$lineage" "$raiz/etc/starsonic-video/tls" "$raiz/etc/starsonic-video/freeswitch/tls"
   printf 'CERTIFICADO\nINTERMEDIARIO\n' >"$lineage/fullchain.pem"
   printf 'CHAVE\n' >"$lineage/privkey.pem"
   printf 'INTERMEDIARIO\n' >"$lineage/chain.pem"
+  printf '{"endereco": "video.exemplo.com.br", "chat": "chat.exemplo.com.br"}\n' >"$raiz/etc/starsonic-video/config.json"
   if [ "$jeito" = sem-chain ]; then rm "$lineage/chain.pem"; fi
   if [ "$jeito" = sem-lineage ]; then lineage=""; fi
+  if [ "$jeito" = sem-config ]; then rm "$raiz/etc/starsonic-video/config.json"; fi
+  if [ "$jeito" = links ]; then
+    mkdir -p "$raiz/fora/pasta"
+    echo ALVO >"$raiz/fora/arquivo"
+    ln -s "$raiz/fora/pasta" "$raiz/etc/starsonic-video/freeswitch/tls/agent.pem"
+    ln -s "$raiz/fora/arquivo" "$raiz/etc/starsonic-video/freeswitch/tls/cafile.pem"
+  fi
   : >"$raiz/donos"
   : >"$raiz/systemctl"
   local ambiente=(PATH="$falsos:$PATH" RAIZ="$raiz" T_DONOS="$raiz/donos" T_SYSTEMCTL="$raiz/systemctl" T_ATIVOS="$2")
@@ -311,11 +378,26 @@ confere "os arquivos saem também com os serviços parados" CHAVE "$(cat "$T/gan
 confere "gancho só com o coturn no ar" "0|kill --signal=SIGUSR2 --kill-whom=main coturn" "$(cenario_gancho so-coturn coturn)"
 confere "uma recarga que falha não impede a outra" "1|$recargas" "$(cenario_gancho reload-falha 'starsonic-video coturn' reload-falha)"
 confere "sem o RENEWED_LINEAGE, para" "1|" "$(cenario_gancho sem-lineage 'starsonic-video coturn' sem-lineage)"
-confere "sem o RENEWED_LINEAGE, nada é escrito" "" "$(find "$T/gancho-sem-lineage/etc/starsonic-video" -type f)"
+confere "sem o RENEWED_LINEAGE, nada é escrito" "" "$(find "$T/gancho-sem-lineage/etc/starsonic-video" -type f ! -name config.json)"
 confere "sem o RENEWED_LINEAGE, o erro diz o que falta" sim \
   "$(if grep -q RENEWED_LINEAGE "$T/gancho-sem-lineage/saida"; then echo sim; else echo não; fi)"
 confere "um lineage sem o chain.pem para" "1|" "$(cenario_gancho sem-chain 'starsonic-video coturn' sem-chain)"
-confere "um lineage sem o chain.pem não escreve nada" "" "$(find "$T/gancho-sem-chain/etc/starsonic-video" -type f)"
+confere "um lineage sem o chain.pem não escreve nada" "" "$(find "$T/gancho-sem-chain/etc/starsonic-video" -type f ! -name config.json)"
+# Só o certificado do servidor de vídeo: o de outro nome nesta máquina não muda nada nem recarrega ninguém.
+confere "o certificado de outro nome não faz nada" "0|" "$(cenario_gancho outro-certificado 'starsonic-video coturn' outro-certificado)"
+confere "o certificado de outro nome não escreve nada" "" \
+  "$(find "$T/gancho-outro-certificado/etc/starsonic-video" -type f ! -name config.json)"
+confere "sem o config.json, o gancho para" "1|" "$(cenario_gancho sem-config 'starsonic-video coturn' sem-config)"
+confere "sem o config.json, nada é escrito" "" "$(find "$T/gancho-sem-config/etc/starsonic-video" -type f)"
+# Os links na pasta tls/ do FreeSWITCH são trocados, e nada vai para fora dela.
+confere "gancho com links na pasta do FreeSWITCH" "0|$recargas" "$(cenario_gancho links 'starsonic-video coturn' links)"
+l=$T/gancho-links
+confere "o link agent.pem virou o arquivo certo" "sim|$(printf 'CHAVE\nCERTIFICADO\nINTERMEDIARIO')" \
+  "$(if [ -L "$l/etc/starsonic-video/freeswitch/tls/agent.pem" ]; then echo link; else echo sim; fi)|$(cat "$l/etc/starsonic-video/freeswitch/tls/agent.pem")"
+confere "o link cafile.pem virou o arquivo certo" "sim|INTERMEDIARIO" \
+  "$(if [ -L "$l/etc/starsonic-video/freeswitch/tls/cafile.pem" ]; then echo link; else echo sim; fi)|$(cat "$l/etc/starsonic-video/freeswitch/tls/cafile.pem")"
+confere "nada entrou na pasta de fora do gancho" "" "$(find "$l/fora/pasta" -mindepth 1)"
+confere "o arquivo de fora do gancho não mudou" ALVO "$(cat "$l/fora/arquivo")"
 
 # --- a pasta como a instalação a deixa, para o atualizar e o chat ---
 # instalado <pasta>: o programa de mentira, a unidade e o config.json, como depois de uma instalação.
@@ -408,8 +490,29 @@ confere "atualizar sem a instalação para" "1|" "$(
   echo "$codigo|$saida"
 )"
 
-# --- o chat: troca só o endereço do chat, e volta o de antes se o agente não ficar de pé ---
-# cenario_chat <nome> <firme ou cai> <endereço do chat>: "<código>|<config.json no fim>|<saída>|<sobra>".
+# --- o trocar_freeswitch: o pacote novo (com as pastas do construir.sh) ao lado, os pacotes do apt dele e a troca ---
+# "<VERSAO da pasta no lugar>|<VERSAO do .antigo>|<pacotes pedidos ao apt>|<o .novo sobrou?>".
+confere "trocar_freeswitch troca as pastas" "novo|antigo|libum1 libdois2|limpo" "$(
+  t_raiz=$T/trocar
+  FREESWITCH=$t_raiz/opt/starsonic-freeswitch
+  TMP=$t_raiz/tmp
+  t_pacote=$t_raiz/pacote/opt/starsonic-freeswitch
+  mkdir -p "$TMP" "$FREESWITCH/bin" "$t_pacote/bin"
+  echo antigo >"$FREESWITCH/VERSAO"
+  echo novo >"$t_pacote/VERSAO"
+  printf '#!/bin/sh\n' >"$t_pacote/bin/freeswitch"
+  chmod +x "$t_pacote/bin/freeswitch"
+  printf 'libum1\n\nlibdois2\n' >"$t_pacote/pacotes.txt"
+  tar -czf "$t_raiz/pacote.tar.gz" -C "$t_raiz/pacote" opt/starsonic-freeswitch
+  instalar_pacotes() { echo "$*" >"$t_raiz/pacotes"; }
+  trocar_freeswitch "$t_raiz/pacote.tar.gz"
+  if [ -e "$FREESWITCH.novo" ]; then t_sobra=sobrou; else t_sobra=limpo; fi
+  echo "$(cat "$FREESWITCH/VERSAO")|$(cat "$FREESWITCH.antigo/VERSAO")|$(cat "$t_raiz/pacotes")|$t_sobra"
+)"
+
+# --- o chat: troca só o endereço do chat, e volta o de antes se o agente não ficar de pé ou se o comando parar ---
+# cenario_chat <nome> <firme, cai ou interrompido> <endereço do chat>: "<código>|<config.json no fim>|<as duas
+# últimas linhas da saída, com #>|<sobra>|<os restarts>". Em interrompido, a conexão cai (HUP) na espera.
 cenario_chat() {
   local t_nome=$1 t_jeito=$2 t_chat=$3
   (
@@ -417,7 +520,7 @@ cenario_chat() {
     instalado "$t_raiz"
     : >"$t_raiz/systemctl"
     conferir_maquina() { :; }
-    sleep() { :; }
+    sleep() { if [ "$t_jeito" = interrompido ]; then kill -HUP "$BASHPID"; fi; }
     journalctl() { :; }
     systemctl() {
       case "$1" in
@@ -433,7 +536,7 @@ cenario_chat() {
     t_codigo=$?
     set -e
     if [ -e "$CONFIG_DIR/config.json.antes" ] || [ -e "$CONFIG_DIR/config.json.novo" ]; then t_sobra=sobrou; fi
-    echo "$t_codigo|$(cat "$CONFIG_DIR/config.json")|$(tail -n 1 "$t_raiz/saida")|$t_sobra|$(paste -sd ';' "$t_raiz/systemctl")"
+    echo "$t_codigo|$(cat "$CONFIG_DIR/config.json")|$(tail -n 2 "$t_raiz/saida" | paste -sd '#')|$t_sobra|$(paste -sd ';' "$t_raiz/systemctl")"
   )
 }
 config_com() { # config_com <chat>: o config.json do instalado, com esse chat.
@@ -445,9 +548,13 @@ confere "chat: troca o endereço e reinicia o agente" \
 confere "chat: o config.json continua 0640" 640 "$(modo "$T/chat-troca/etc/starsonic-video/config.json")"
 confere "chat: o config.json continua do grupo do agente" root:starsonic-video \
   "$(awk '$2 ~ /config\.json\.novo$/ { d = $1 } END { print d }' "$T/chat-troca/donos")"
+voltou="A configuração de antes voltou, e o agente foi reiniciado com ela."
 confere "chat: o agente não fica de pé, e a configuração de antes volta" \
-  "1|$(config_com chat.exemplo.com.br)|ERRO: o agente não ficou de pé com o endereço novo do chat (as últimas linhas do registro estão acima). A configuração de antes voltou.|limpo|restart starsonic-video.service;restart starsonic-video.service" \
+  "1|$(config_com chat.exemplo.com.br)|ERRO: o agente não ficou de pé com o endereço novo do chat (as últimas linhas do registro estão acima).#$voltou|limpo|restart starsonic-video.service;restart starsonic-video.service" \
   "$(cenario_chat cai cai chat2.exemplo.com.br)"
+confere "chat: a conexão cai no meio, e a configuração de antes volta" \
+  "130|$(config_com chat.exemplo.com.br)|$voltou|limpo|restart starsonic-video.service;restart starsonic-video.service" \
+  "$(cenario_chat interrompido interrompido chat2.exemplo.com.br)"
 confere "chat: um endereço que não serve não muda nada" "1|$(config_com chat.exemplo.com.br)" "$(
   cenario_chat invalido firme https://chat2.exemplo.com.br | cut -d'|' -f1,2
 )"
