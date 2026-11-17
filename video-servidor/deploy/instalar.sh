@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Instala e atualiza o servidor de vídeo das reuniões do Starsonic Phone numa VM Ubuntu 24.04 ou Debian 12 com
-# systemd: o FreeSWITCH (o pacote da release, montado do código oficial), o coturn e o certbot do apt, e o agente
+# Instala e atualiza o servidor de vídeo das reuniões do Starsonic Phone numa VM Ubuntu 24.04, Ubuntu 26.04 ou Debian 12
+# com systemd: o FreeSWITCH (o pacote da release, montado do código oficial), o coturn e o certbot do apt, e o agente
 # starsonic-video.
 #
 #   sudo bash instalar.sh instalar <endereço> --chat <endereço do chat> [--porta N]
@@ -104,26 +104,26 @@ conferir_porta() {
   esac
 }
 
-# sistema_da_maquina <os-release>: ubuntu-24.04 ou debian-12, os dois sistemas que têm um pacote do FreeSWITCH.
-# Outro sistema para com o nome dele.
+# sistema_da_maquina <os-release>: ubuntu-24.04, ubuntu-26.04 ou debian-12, os três sistemas que têm um pacote do
+# FreeSWITCH. Outro sistema para com o nome dele.
 sistema_da_maquina() {
   local arquivo=$1 sistema nome
-  [ -r "$arquivo" ] || falhar "não sei qual é o sistema desta máquina ($arquivo não existe). Precisa ser Ubuntu 24.04 ou Debian 12."
+  [ -r "$arquivo" ] || falhar "não sei qual é o sistema desta máquina ($arquivo não existe). Precisa ser Ubuntu 24.04, Ubuntu 26.04 ou Debian 12."
   # shellcheck source=/dev/null
   sistema=$(. "$arquivo" && echo "${ID:-}-${VERSION_ID:-}")
   case "$sistema" in
-    ubuntu-24.04 | debian-12) echo "$sistema" ;;
+    ubuntu-24.04 | ubuntu-26.04 | debian-12) echo "$sistema" ;;
     *)
       # shellcheck source=/dev/null
       nome=$(. "$arquivo" && echo "${PRETTY_NAME:-${ID:-?} ${VERSION_ID:-}}")
-      falhar "o sistema desta máquina é $nome. Precisa ser Ubuntu 24.04 ou Debian 12."
+      falhar "o sistema desta máquina é $nome. Precisa ser Ubuntu 24.04, Ubuntu 26.04 ou Debian 12."
       ;;
   esac
 }
 
 conferir_maquina() {
   [ "$(id -u)" -eq 0 ] || falhar "rode como administrador: sudo bash instalar.sh ..."
-  [ -d /run/systemd/system ] || falhar "esta máquina não usa o systemd. Precisa de um Ubuntu 24.04 ou Debian 12 comum, com systemd."
+  [ -d /run/systemd/system ] || falhar "esta máquina não usa o systemd. Precisa de um Ubuntu 24.04, Ubuntu 26.04 ou Debian 12 comum, com systemd."
   local item comando pacote
   for item in curl:curl sha256sum:coreutils tar:tar ss:iproute2 ip:iproute2 getent:libc-bin; do
     comando=${item%%:*}

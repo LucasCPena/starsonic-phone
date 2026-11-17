@@ -152,19 +152,30 @@ os_release() { # os_release <nome do arquivo> <linhas>...
 }
 ubuntu24=$(os_release ubuntu-24 'PRETTY_NAME="Ubuntu 24.04.1 LTS"' 'NAME="Ubuntu"' 'VERSION_ID="24.04"' \
   'VERSION="24.04.1 LTS (Noble Numbat)"' 'ID=ubuntu' 'ID_LIKE=debian')
+ubuntu26=$(os_release ubuntu-26 'PRETTY_NAME="Ubuntu 26.04.1 LTS"' 'NAME="Ubuntu"' 'VERSION_ID="26.04"' \
+  'VERSION="26.04.1 LTS (Resolute Raccoon)"' 'ID=ubuntu' 'ID_LIKE=debian')
 debian12=$(os_release debian-12 'PRETTY_NAME="Debian GNU/Linux 12 (bookworm)"' 'NAME="Debian GNU/Linux"' \
   'VERSION_ID="12"' 'VERSION="12 (bookworm)"' 'ID=debian')
 ubuntu22=$(os_release ubuntu-22 'PRETTY_NAME="Ubuntu 22.04.4 LTS"' 'VERSION_ID="22.04"' 'ID=ubuntu' 'ID_LIKE=debian')
+ubuntu2510=$(os_release ubuntu-25.10 'PRETTY_NAME="Ubuntu 25.10"' 'NAME="Ubuntu"' 'VERSION_ID="25.10"' \
+  'VERSION="25.10 (Questing Quokka)"' 'ID=ubuntu' 'ID_LIKE=debian')
 debian13=$(os_release debian-13 'PRETTY_NAME="Debian GNU/Linux 13 (trixie)"' 'VERSION_ID="13"' 'ID=debian')
 fedora=$(os_release fedora 'PRETTY_NAME="Fedora Linux 40 (Server Edition)"' 'VERSION_ID=40' 'ID=fedora')
 confere "sistema Ubuntu 24.04" ubuntu-24.04 "$(sistema_da_maquina "$ubuntu24")"
+confere "sistema Ubuntu 26.04" ubuntu-26.04 "$(sistema_da_maquina "$ubuntu26")"
 confere "sistema Debian 12" debian-12 "$(sistema_da_maquina "$debian12")"
-for f in "$ubuntu22" "$debian13" "$fedora" "$T/nao-existe"; do
+for f in "$ubuntu22" "$ubuntu2510" "$debian13" "$fedora" "$T/nao-existe"; do
   confere "sistema $(basename "$f") para" não "$(aceita sistema_da_maquina "$f")"
 done
 confere "o erro diz o nome do sistema" \
-  "ERRO: o sistema desta máquina é Ubuntu 22.04.4 LTS. Precisa ser Ubuntu 24.04 ou Debian 12." \
+  "ERRO: o sistema desta máquina é Ubuntu 22.04.4 LTS. Precisa ser Ubuntu 24.04, Ubuntu 26.04 ou Debian 12." \
   "$( (sistema_da_maquina "$ubuntu22") 2>&1)"
+confere "o Ubuntu 25.10, entre o 24.04 e o 26.04, para" \
+  "ERRO: o sistema desta máquina é Ubuntu 25.10. Precisa ser Ubuntu 24.04, Ubuntu 26.04 ou Debian 12." \
+  "$( (sistema_da_maquina "$ubuntu2510") 2>&1)"
+confere "sem o os-release, o erro diz os três sistemas" \
+  "ERRO: não sei qual é o sistema desta máquina ($T/nao-existe não existe). Precisa ser Ubuntu 24.04, Ubuntu 26.04 ou Debian 12." \
+  "$( (sistema_da_maquina "$T/nao-existe") 2>&1)"
 
 # --- os dois IPs, com o ip e o getent de mentira ---
 confere "IP privado" 10.0.0.5 "$(
