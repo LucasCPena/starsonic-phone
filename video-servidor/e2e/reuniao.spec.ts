@@ -116,7 +116,7 @@ test.describe.serial('a reunião marcada', () => {
     // A ligação da tela manda o silêncio gerado: o tempo sem mídia (60 s) não a derruba.
     await esperar(70_000);
     expect(await c.telaNoAr()).toBe(true);
-    await a.esperarCores([TELA], [VERDE], 5_000);
+    await a.esperarCores([TELA], [VERDE]); // os 20 s de toda espera do brief
 
     // C para, e a grade volta ao mosaico de 2.
     await c.pararDeCompartilhar();
