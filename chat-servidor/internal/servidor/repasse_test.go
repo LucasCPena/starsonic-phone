@@ -409,3 +409,24 @@ func TestConfig_CertificadoDoVideo(t *testing.T) {
 		}
 	})
 }
+
+// O guia (docs/video-servidor.md, "Confira o repasse") cita estes dois textos: com o repasse ligado e nada na porta 80
+// do vídeo, o 502; com o repasse desligado, o 403 do autocert.
+func TestRepasse_OsTextosDoGuia(t *testing.T) {
+	cv, _ := videoDeMentira(t, func(w http.ResponseWriter, r *http.Request) {})
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, porta, _ := net.SplitHostPort(l.Addr().String())
+	l.Close()
+	portaDoDesafioDoVideo = porta
+	rec := pedirRepasse(manipuladorDe(t, cv), "GET", "video.example.com", "/.well-known/acme-challenge/teste")
+	if rec.Code != http.StatusBadGateway || rec.Body.String() != "Não consegui falar com o servidor de vídeo.\n" {
+		t.Fatalf("ligado: %d %q", rec.Code, rec.Body.String())
+	}
+	rec = pedirRepasse(manipuladorDe(t, nil), "GET", "video.example.com", "/.well-known/acme-challenge/teste")
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), `acme/autocert: host "video.example.com" not configured in HostWhitelist`) {
+		t.Fatalf("desligado: %d %q", rec.Code, rec.Body.String())
+	}
+}
