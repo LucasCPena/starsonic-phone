@@ -8,17 +8,25 @@
 // - o falhou e o terminou dizem que a ligação acabou; o semConexao, que ela ainda existe e desce com o desligar;
 // - o midia diz ligado ou indisponivel de cada aparelho;
 // - o ligar não leva o mic nem a cam: quem roda o efeito os lê do estado (a câmera desligada é a oferta recvonly);
-// - todo abrir tem resposta, o abriu ou o abrirFalhou, também o abrir que sai na reunião para voltar com a chave. Quem
-//   decide a tela é o cérebro: o abriu do voltar (na volta depois da conexão caída, ou no religar) só abre o canal, e
-//   nunca leva à entrada nem pede a mídia;
+// - todo abrir tem resposta, o abriu ou o abrirFalhou, também o abrir que sai na reunião para voltar com a chave, e a
+//   resposta devolve a abertura que o abrir levou. Quem decide a tela é o cérebro: o abriu do voltar (na volta depois
+//   da conexão caída, ou no religar) só abre o canal, e nunca leva à entrada nem pede a mídia;
+// - o rede.js responde a todo abrir, e abre ou fecha todo canal, num tempo limitado. Nas tentativas da volta e do
+//   religar, o prazo delas (PRAZO_VOLTA_MS) é a guarda do cérebro, se ele não responder;
+// - o tempo devolve a chave do esperar como ela veio (a da volta e a do religar levam a vez, como "reconectar:3");
+// - o Compartilhar a tela só vale com o canal aberto: o canal abrindo e o voltando contam como fechados;
 // - nem o estado nem os efeitos vão ao console. O estado leva o acesso do aceito (com as credenciais do TURN), a chave
 //   de volta e, por um instante, a senha que chegou antes da mídia; os efeitos levam o bilhete, as senhas e a chave.
 //
-// A chave de volta (seção 10 do protocolo): o aceito traz o participante e a volta, e o cérebro os guarda. Com o canal
-// fechado depois do aceito, a página abre outro, e a primeira mensagem dele é o {tipo:'voltar', participante, volta}.
-// Até a resposta, o canal está voltando, e ainda não é o da pessoa. O servidor responde {tipo:'voltou', volta}, com a
-// chave nova, e o canal é de novo o da pessoa; ou {tipo:'erro', erro:'invalido'} (a chave não vale mais) ou
-// {tipo:'linkInvalido'} (a reunião acabou), e fecha o canal.
+// A chave de volta (seção 10 do protocolo): o aceito traz o participante e a volta, e o cérebro os guarda. Na reunião,
+// com o canal fechado (o religar, com a ligação no ar; uma tentativa da volta depois da conexão caída; o confirmada de
+// uma ligação que perdeu o canal no caminho), a página abre outro, e a primeira mensagem dele é o
+// {tipo:'voltar', participante, volta}. Fora da reunião (no entrando, ou depois do saiu), ela nunca volta assim: o
+// Entrar de novo sem o canal passa pela espera. Até a resposta, o canal está voltando, e ainda não é o da pessoa. O
+// servidor responde {tipo:'voltou', volta}, com a chave nova, e o canal é de novo o da pessoa; ou responde
+// {tipo:'erro', erro:'invalido'} (a chave não vale mais) ou {tipo:'linkInvalido'} (a reunião deixou de valer), e fecha
+// o canal. Quem já está numa reunião que deixou de valer continua nela: com a ligação no ar, o linkInvalido (e o 404 do
+// abrir) só param o religar.
 
 /** O passo da contagem do 429 ("Tentar de novo em <n> s"), em ms. */
 export const CONTAGEM_MS = 1000;
@@ -33,6 +41,11 @@ export const FIM_SEM_AVISO_MS = 2000;
 export const REABRIR_MS = 3000;
 /** As tentativas de voltar depois da conexão caída: 3, uma por espera. O religar também tenta 3 vezes. */
 export const MAX_RECONECTAR = RECONECTAR_MS.length;
+/**
+ * O prazo de cada tentativa da volta e do religar, em ms: do começo dela até a resposta do servidor (o senha, na volta,
+ * e o voltou, no religar). Sem ela, a tentativa falhou.
+ */
+export const PRAZO_VOLTA_MS = 10000;
 /** As aberturas de novo depois de um 1011, antes do aceito. */
 export const MAX_REABRIR = 3;
 
@@ -43,7 +56,6 @@ const ESPERA = new Set(['pedindo', 'aguardando', 'naoComecou']);
 // Os avisos com o "Tentar de novo".
 const DE_NOVO = new Set(['cheia', 'esperaCheia', 'servidorCheio', 'semServidor', 'tentativas']);
 
-const ABRIR = Object.freeze({ tipo: 'abrir' });
 const FECHAR_CANAL = Object.freeze({ tipo: 'fecharCanal' });
 const PEDIR_MIDIA = Object.freeze({ tipo: 'pedirMidia' });
 const PARAR_MIDIA = Object.freeze({ tipo: 'pararMidia' });
@@ -60,6 +72,21 @@ const pedido = (e) => mandar({ tipo: 'pedir', nome: e.nome.trim() });
 const com = (estado, mudancas, ...efeitos) => ({ estado: { ...estado, ...mudancas }, efeitos });
 const so = (estado, ...efeitos) => ({ estado, efeitos });
 const nada = (estado) => so(estado);
+
+// comAbrir: o com, e o abrir no fim. O abrir leva o número dele, a abertura, que o abriu e o abrirFalhou devolvem: a
+// resposta de um abrir que passou fica de fora.
+function comAbrir(e, mudancas, ...efeitos) {
+  const abertura = e.abertura + 1;
+  return com(e, { ...mudancas, abertura }, ...efeitos, { tipo: 'abrir', abertura });
+}
+
+// A chave de uma espera da volta e do religar leva a vez dela, como "reconectar:3": a de uma vez que passou fica de
+// fora.
+const daVez = (nome, vez) => `${nome}:${vez}`;
+// esperaNova: a espera antes da próxima tentativa, numa vez nova. Devolve a vez e o efeito.
+const esperaNova = (e, nome, ms) => ({ vez: e.vez + 1, espera: esperar(ms, daVez(nome, e.vez + 1)) });
+// O prazo da tentativa, na vez dela.
+const prazoDaVez = (vez) => esperar(PRAZO_VOLTA_MS, daVez('prazo', vez));
 
 /** O estado do começo: a tela carregando, antes do abrir. */
 export function inicial() {
@@ -87,6 +114,8 @@ export function inicial() {
     chave: null, // a chave de volta do último aceito ou voltou, {participante, volta}: nunca num texto
     religando: 0, // a tentativa de religar o canal que caiu na reunião com a ligação no ar, de 0 a 3
     esperandoBilhete: false, // o abrir do voltar saiu, e o abriu ainda não chegou
+    vez: 0, // a vez das esperas e dos prazos da volta e do religar: cada espera nova ganha a sua
+    abertura: 0, // o número do último abrir
   };
 }
 
@@ -95,13 +124,13 @@ export function transicao(estado, evento) {
   let r;
   switch (evento.tipo) {
     case 'comecar':
-      r = estado.tela === 'carregando' ? so(estado, ABRIR) : nada(estado);
+      r = estado.tela === 'carregando' ? comAbrir(estado, {}) : nada(estado);
       break;
     case 'abriu':
-      r = abriu(estado, evento);
+      r = evento.abertura === estado.abertura ? abriu(estado, evento) : nada(estado);
       break;
     case 'abrirFalhou':
-      r = abrirFalhou(estado, evento);
+      r = evento.abertura === estado.abertura ? abrirFalhou(estado, evento) : nada(estado);
       break;
     case 'canalAbriu':
       r = estado.canal === 'abrindo' ? canalAbriu(estado) : nada(estado);
@@ -167,10 +196,11 @@ function abriu(e, { reuniao, bilhete }) {
 }
 
 // O 404 é o link que não vale; o 429 conta até poder tentar de novo; o resto (a rede, o 5xx) é o semServidor. No abrir
-// do voltar, o 404 é a reunião que acabou, e o resto é uma tentativa que falhou, sem o aviso tentativas.
+// do voltar, o 404 é a reunião que deixou de valer, e o resto é uma tentativa que falhou, sem o aviso tentativas.
 function abrirFalhou(e, { status, esperarSegundos }) {
   if (e.esperandoBilhete) {
-    return status === 404 ? terminar(e, 'linkInvalido') : voltarFalhou({ ...e, esperandoBilhete: false });
+    const f = { ...e, esperandoBilhete: false };
+    return status === 404 ? linkInvalidoDoVoltar(f) : voltarFalhou(f);
   }
   if (e.tela !== 'carregando' && !esperaOAbrir(e)) return nada(e);
   if (status === 404) return terminar(e, 'linkInvalido');
@@ -258,7 +288,7 @@ function respostaDoVoltar(e, m) {
     case 'voltou':
       return voltou(e, m.volta);
     case 'linkInvalido':
-      return terminar(e, 'linkInvalido');
+      return linkInvalidoDoVoltar(e);
     case 'erro':
       // O invalido é a chave que não vale mais, e tentar de novo não adianta; outro erro é uma tentativa que falhou.
       return m.erro === 'invalido' ? chaveRecusada(e) : voltarFalhou(e);
@@ -279,9 +309,14 @@ function voltou(e, volta) {
 // canal, e uma queda da ligação, depois, é o saiu.
 function chaveRecusada(e) {
   const f = { ...e, chave: null };
-  if (e.reconectando > 0) return terminar(f, 'saiu');
-  const { mudancas, efeitos } = fecharCanalDoVoltar(f);
-  return com(f, { ...mudancas, religando: 0 }, ...efeitos);
+  return e.reconectando > 0 ? terminar(f, 'saiu') : pararDeReligar(f);
+}
+
+// O linkInvalido do voltar (a resposta, ou o 404 do abrir dele): a reunião deixou de valer, mas quem já está nela
+// continua, mesmo depois do valeAte. Com a ligação no ar, o religar para, a reunião segue sem o canal, e a ligação
+// decide o fim; a chave fica para a volta das duas. Sem a ligação, é o fim.
+function linkInvalidoDoVoltar(e) {
+  return e.principal === 'noAr' ? pararDeReligar(e) : terminar(e, 'linkInvalido');
 }
 
 // A senha da principal chegou: liga, ou a guarda até a mídia chegar.
@@ -322,11 +357,12 @@ function ligacaoPrincipal(e, o, codigo) {
   if (e.principal !== 'noAr') return nada(e);
   if (o === 'semConexao') {
     // A conexão caiu: as duas descem, e a página volta com uma senha nova. Sem o canal, a chave abre outro, e o voltar
-    // do religar em curso vira a primeira tentativa; sem o canal e sem a chave, não há senha.
+    // do religar em curso vira a primeira tentativa, com um prazo só dela; sem o canal e sem a chave, não há senha.
     if (e.canal !== 'aberto' && e.chave === null) return terminar(e, 'saiu');
     const { mudancas, efeitos } = desligarAsDuas(e);
-    const prazo = voltarEmCurso(e) ? [] : [esperar(RECONECTAR_MS[0], 'reconectar')];
-    return com(e, { ...mudancas, reconectando: 1, religando: 0 }, ...efeitos, ...prazo);
+    const { vez, espera } = esperaNova(e, 'reconectar', RECONECTAR_MS[0]);
+    const proxima = voltarEmCurso(e) ? prazoDaVez(vez) : espera;
+    return com(e, { ...mudancas, reconectando: 1, religando: 0, vez }, ...efeitos, proxima);
   }
   // O servidor terminou a ligação (o falhou de uma ligação no ar conta igual, e o mosaico nunca fica parado): um tirado
   // ou um encerrada pode chegar logo depois; sem ele, é o saiu.
@@ -342,8 +378,8 @@ function ligacaoPrincipal(e, o, codigo) {
 function tentativaFalhou(e, ...efeitos) {
   if (e.reconectando >= MAX_RECONECTAR || (e.canal !== 'aberto' && e.chave === null)) return terminar(e, 'saiu');
   const canal = fecharCanalDoVoltar(e);
-  const espera = esperar(RECONECTAR_MS[e.reconectando], 'reconectar');
-  const mudancas = { ...canal.mudancas, principal: 'nenhuma', reconectando: e.reconectando + 1 };
+  const { vez, espera } = esperaNova(e, 'reconectar', RECONECTAR_MS[e.reconectando]);
+  const mudancas = { ...canal.mudancas, principal: 'nenhuma', reconectando: e.reconectando + 1, vez };
   return com(e, mudancas, ...efeitos, ...canal.efeitos, espera);
 }
 
@@ -356,20 +392,43 @@ function voltarFalhou(e) {
 
 // O religar: na reunião, com a ligação no ar, o canal que caiu volta por trás com a chave, sem nada na tela. A primeira
 // tentativa espera 2 segundos.
-const religar = (e, mudancas, ...efeitos) =>
-  com(e, { ...mudancas, religando: 1 }, ...efeitos, esperar(RECONECTAR_MS[0], 'religar'));
+function religar(e, mudancas, ...efeitos) {
+  const { vez, espera } = esperaNova(e, 'religar', RECONECTAR_MS[0]);
+  return com(e, { ...mudancas, religando: 1, vez }, ...efeitos, espera);
+}
 
 // Uma tentativa de religar falhou: a próxima espera mais, e o canal do voltar que ela abriu fecha. Depois da terceira,
 // a reunião segue sem o canal, como antes da chave; uma queda da ligação, depois, ainda volta com ela.
 function religarFalhou(e) {
+  if (e.religando >= MAX_RECONECTAR) return pararDeReligar(e);
   const { mudancas, efeitos } = fecharCanalDoVoltar(e);
-  if (e.religando >= MAX_RECONECTAR) return com(e, { ...mudancas, religando: 0 }, ...efeitos);
-  const espera = esperar(RECONECTAR_MS[e.religando], 'religar');
-  return com(e, { ...mudancas, religando: e.religando + 1 }, ...efeitos, espera);
+  const { vez, espera } = esperaNova(e, 'religar', RECONECTAR_MS[e.religando]);
+  return com(e, { ...mudancas, religando: e.religando + 1, vez }, ...efeitos, espera);
 }
 
-// O voltar começa pelo abrir, que dá o bilhete do canal novo.
-const abrirParaVoltar = (e) => com(e, { esperandoBilhete: true }, ABRIR);
+// O religar para: o canal do voltar fecha, e a reunião segue sem o canal.
+function pararDeReligar(e) {
+  const { mudancas, efeitos } = fecharCanalDoVoltar(e);
+  return com(e, { ...mudancas, religando: 0 }, ...efeitos);
+}
+
+// O voltar começa pelo abrir, que dá o bilhete do canal novo, e o prazo da tentativa começa junto.
+function abrirParaVoltar(e) {
+  const { estado, efeitos } = comAbrir(e, { esperandoBilhete: true });
+  return so(estado, ...efeitos, prazoDaVez(e.vez));
+}
+
+// A tentativa ainda espera o servidor: o voltar em curso (o abrir, o canal e o voltou) ou, na volta, o senha. Depois
+// do senha, quem decide é a ligação.
+const esperaOServidor = (e) => voltarEmCurso(e) || (e.reconectando > 0 && esperaSenha(e));
+
+// O prazo venceu sem a resposta do servidor: a tentativa falhou, como se o canal em que ela esperava caísse, e a página
+// o fecha. Sem o canal (o abrir ainda não respondeu), o abriu que vier fica de fora.
+function prazoVenceu(e) {
+  if (e.canal === 'fechado') return voltarFalhou({ ...e, esperandoBilhete: false });
+  const r = canalFechou(e);
+  return so(r.estado, FECHAR_CANAL, ...r.efeitos);
+}
 
 // O canal do voltar não serve para mais nada quando a tentativa dele para (o voltar só vale como a primeira mensagem do
 // canal): ele fecha, e o próximo abre com outro bilhete.
@@ -401,7 +460,7 @@ function clique(e, botao) {
   switch (botao) {
     case 'pedir':
       if (e.tela !== 'entrada' || !nomeValido(e.nome)) return nada(e);
-      return com(e, { tela: 'pedindo', nomeRecusado: false, reabrindo: 0 }, ABRIR);
+      return comAbrir(e, { tela: 'pedindo', nomeRecusado: false, reabrindo: 0 });
     case 'desistir':
       return desistir(e);
     case 'tentarDeNovo':
@@ -437,7 +496,7 @@ function tentarDeNovo(e) {
   if (e.tela !== 'aviso' || !DE_NOVO.has(e.aviso) || e.esperarSegundos > 0) return nada(e);
   const volta = { aviso: null, reabrindo: 0 };
   if (e.canal !== 'aberto') {
-    return com(e, { ...volta, tela: e.reuniao ? 'pedindo' : 'carregando', aceito: false, acesso: null }, ABRIR);
+    return comAbrir(e, { ...volta, tela: e.reuniao ? 'pedindo' : 'carregando', aceito: false, acesso: null });
   }
   if (!e.aceito) return com(e, { ...volta, tela: 'pedindo' }, pedido(e));
   return com(e, { ...volta, tela: 'entrando', principal: 'pedindo', senhaRepetida: false }, mandar({ tipo: 'senha' }));
@@ -452,7 +511,7 @@ function entrarDeNovo(e) {
     const mudancas = { ...volta, tela: 'entrando', principal: 'pedindo', senhaRepetida: false };
     return com(e, mudancas, PEDIR_MIDIA, mandar({ tipo: 'senha' }));
   }
-  return com(e, { ...volta, tela: 'pedindo', aceito: false, acesso: null, reabrindo: 0 }, PEDIR_MIDIA, ABRIR);
+  return comAbrir(e, { ...volta, tela: 'pedindo', aceito: false, acesso: null, reabrindo: 0 }, PEDIR_MIDIA);
 }
 
 // O Microfone e a Câmera. Na reunião, a ligação troca junto. Antes dela, só o estado muda, e quem roda o ligar lê a
@@ -500,25 +559,33 @@ function midia(e, { mic, cam }) {
   return com(e, { ...mudancas, principal: 'ligando', senhaGuardada: null }, ligar('principal', e.senhaGuardada));
 }
 
-// Os prazos que o esperar marcou. O que chega depois de a página mudar de rumo fica de fora.
+// Os prazos que o esperar marcou. O que chega depois de a página mudar de rumo fica de fora, e a espera da volta e do
+// religar de uma vez que passou também.
 function tempo(e, chave) {
-  switch (chave) {
+  const [nome, vez] = String(chave).split(':');
+  const daVezAtual = Number(vez) === e.vez;
+  switch (nome) {
     case 'contagem': {
       if (e.aviso !== 'tentativas' || e.esperarSegundos === 0) return nada(e);
       const n = e.esperarSegundos - 1;
       return n > 0 ? com(e, { esperarSegundos: n }, esperar(CONTAGEM_MS, 'contagem')) : com(e, { esperarSegundos: 0 });
     }
     case 'reconectar':
-      if (e.tela !== 'reuniao' || e.reconectando === 0 || e.principal !== 'nenhuma' || voltarEmCurso(e)) return nada(e);
-      if (e.canal === 'aberto') return com(e, { principal: 'pedindo' }, mandar({ tipo: 'senha' }));
+      if (!daVezAtual || e.tela !== 'reuniao' || e.reconectando === 0) return nada(e);
+      // Uma espera repetida, com a tentativa em curso, também fica de fora: nunca dois canais.
+      if (e.principal !== 'nenhuma' || voltarEmCurso(e)) return nada(e);
+      if (e.canal === 'aberto') return com(e, { principal: 'pedindo' }, mandar({ tipo: 'senha' }), prazoDaVez(e.vez));
       // Sem o canal, a chave abre outro; sem ela, não há senha: nenhum mandar num canal fechado.
       return e.chave !== null ? abrirParaVoltar(e) : terminar(e, 'saiu');
     case 'religar':
-      return e.religando > 0 && e.canal === 'fechado' && !e.esperandoBilhete ? abrirParaVoltar(e) : nada(e);
+      if (!daVezAtual || e.religando === 0) return nada(e);
+      return e.canal === 'fechado' && !e.esperandoBilhete ? abrirParaVoltar(e) : nada(e);
+    case 'prazo':
+      return daVezAtual && esperaOServidor(e) ? prazoVenceu(e) : nada(e);
     case 'fimSemAviso':
       return e.tela === 'reuniao' && e.principal === 'nenhuma' && e.reconectando === 0 ? terminar(e, 'saiu') : nada(e);
     case 'reabrir':
-      return esperaOAbrir(e) && e.reabrindo > 0 ? so(e, ABRIR) : nada(e);
+      return esperaOAbrir(e) && e.reabrindo > 0 ? comAbrir(e, {}) : nada(e);
     default:
       return nada(e);
   }
