@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -265,6 +266,84 @@ func TestAbrir(t *testing.T) {
 		}
 		esperarErro(t, c.a.Pedir("", "POST", "/api/v1/pagina/reunioes/"+r.Codigo, nil), 429, "tentativas")
 	})
+}
+
+// ---------- O abrir que dá certo: a janela própria (60 por minuto por endereço) ----------
+
+// abrirDe faz o abrir da página, direto no manipulador, de um endereço dado.
+func abrirDe(c *cenaR, remoto, codigo string) *http.Response {
+	req := httptest.NewRequest("POST", "/api/v1/pagina/reunioes/"+codigo, nil)
+	req.RemoteAddr = remoto
+	rec := httptest.NewRecorder()
+	c.a.Servidor.Config.Handler.ServeHTTP(rec, req)
+	return rec.Result()
+}
+
+// sessentaBons faz 60 abrir bons de um código, todos 200.
+func (c *cenaR) sessentaBons(t *testing.T, codigo string) {
+	t.Helper()
+	for i := range 60 {
+		if status, _ := c.a.AbrirPagina(codigo); status != http.StatusOK {
+			t.Fatalf("o abrir %d deu %d; queria 200", i+1, status)
+		}
+	}
+}
+
+func TestAbrirPagina_SessentaBonsPassam(t *testing.T) {
+	c := novaCenaR(t)
+	r := c.marcada(t, c.kAna)
+	c.sessentaBons(t, r.Codigo)
+	e := esperarErro(t, c.a.Pedir("", "POST", "/api/v1/pagina/reunioes/"+r.Codigo, nil), 429, "tentativas")
+	if e.EsperarSegundos < 1 || e.EsperarSegundos > 60 {
+		t.Fatalf("esperarSegundos = %d; queria de 1 a 60", e.EsperarSegundos)
+	}
+	// Passado o minuto, volta.
+	c.a.Relogio.Avancar(61 * time.Second)
+	if status, _ := c.a.AbrirPagina(r.Codigo); status != http.StatusOK {
+		t.Fatalf("passado o minuto, abrir deu %d", status)
+	}
+}
+
+func TestAbrirPagina_OsBonsNaoGastamAsFalhas(t *testing.T) {
+	c := novaCenaR(t)
+	r := c.marcada(t, c.kAna)
+	// 59 bons (a janela dos bons ainda tem lugar): o endereço continua com as 20 falhas inteiras.
+	for i := range 59 {
+		if status, _ := c.a.AbrirPagina(r.Codigo); status != http.StatusOK {
+			t.Fatalf("o abrir %d deu %d", i+1, status)
+		}
+	}
+	for i := range 20 {
+		esperarErro(t, c.a.Pedir("", "POST", "/api/v1/pagina/reunioes/"+codigoQueNaoExiste(i), nil), 404, "naoEncontrado")
+	}
+	esperarErro(t, c.a.Pedir("", "POST", "/api/v1/pagina/reunioes/"+codigoQueNaoExiste(99), nil), 429, "tentativas")
+}
+
+func TestAbrirPagina_AsFalhasNaoGastamOsBons(t *testing.T) {
+	c := novaCenaR(t)
+	r := c.marcada(t, c.kAna)
+	for i := range 19 {
+		esperarErro(t, c.a.Pedir("", "POST", "/api/v1/pagina/reunioes/"+codigoQueNaoExiste(i), nil), 404, "naoEncontrado")
+	}
+	if status, _ := c.a.AbrirPagina(r.Codigo); status != http.StatusOK {
+		t.Fatalf("depois de 19 falhas, o abrir bom deu %d", status)
+	}
+}
+
+func TestAbrirPagina_OutroEndereco(t *testing.T) {
+	c := novaCenaR(t)
+	r := c.marcada(t, c.kAna)
+	for i := range 60 {
+		if resp := abrirDe(c, "198.51.100.1:1000", r.Codigo); resp.StatusCode != http.StatusOK {
+			t.Fatalf("o abrir %d deu %d", i+1, resp.StatusCode)
+		}
+	}
+	if resp := abrirDe(c, "198.51.100.1:1000", r.Codigo); resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("o 61º do mesmo endereço deu %d; queria 429", resp.StatusCode)
+	}
+	if resp := abrirDe(c, "198.51.100.2:1000", r.Codigo); resp.StatusCode != http.StatusOK {
+		t.Fatalf("o 61º de outro endereço deu %d; queria 200", resp.StatusCode)
+	}
 }
 
 // ---------- O canal: a origem e o bilhete ----------
