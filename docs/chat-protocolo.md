@@ -303,12 +303,13 @@ As reuniões com link moram no servidor do chat; o vídeo e o som vão direto pa
 **Cancelar** — `DELETE /api/v1/reunioes/{codigo}`.
 - `204`. Só quem criou cancela (`403 proibido`). Um código de outra empresa, ou que não existe, responde `404 naoEncontrado`.
 - O link para de valer na hora. Se a reunião está acontecendo, o servidor a encerra no servidor de vídeo, e todos saem. Quem espera na página recebe `linkInvalido`.
+- Vale para a marcada e para a naHora: quem gerou o link de uma naHora também a cancela, e ela acaba.
 
 **Gerar link (a reunião na hora)** — `POST /api/v1/reunioes/agora`.
 - Corpo: `{"ramais": ["2003", "2004"]}`: os colegas que estão na chamada. É opcional, com até 9 ramais.
 - `201`: `{"reuniao": <Reunião>}`, com o `tipo` igual a `naHora`.
 - Os computadores conectados das pessoas ativas da mesma empresa com esses ramais recebem o evento `reuniaoAgora` (seção 11). Um ramal que não é de ninguém é ignorado, e quem gerou o link não recebe o próprio convite.
-- A naHora acaba quando fica vazia, com o Encerrar para todos, ou 10 minutos depois de criada se ninguém entrou nela.
+- A naHora acaba quando fica vazia, com o Encerrar para todos, com o Cancelar de quem a gerou, ou 10 minutos depois de criada se ninguém entrou nela.
 
 **Entrar** — `POST /api/v1/reunioes/{codigo}/entrar`.
 - `200`: o Acesso, abaixo, com a `reuniao`.
