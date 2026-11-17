@@ -2,7 +2,7 @@
 // da sala de espera. Transforma o que o navegador dá nos eventos do cérebro, sempre num tempo limitado: o abrir desiste
 // em PRAZO_MS (o abrirFalhou com o status 0), e o canal que não abre nesse prazo fecha (o canalFechou). Depois do
 // fecharCanal, nada mais daquele canal chega ao cérebro. Nada daqui vai ao console: o abrir traz o bilhete, e o canal
-// leva o nome, as senhas e a chave de volta.
+// leva o nome, as senhas e a chave de volta. Por isso, também, o canal que ainda conecta nunca é fechado (o soltar).
 
 const PRAZO_MS = 10000;
 // O código de um canal que caiu sem o fechamento do servidor (o do navegador, quando a conexão falha).
@@ -40,12 +40,15 @@ export function criarRede(aoEvento, codigo) {
     aoEvento(evento);
   }
 
-  // Fecha o canal de agora sem avisar o cérebro: o que ainda vier dele fica de fora.
+  // Fecha o canal de agora sem avisar o cérebro: o que ainda vier dele fica de fora. O que ainda conecta só fecha
+  // quando abrir: fechado conectando, ele faz o Chromium escrever no console a URL dele, com o bilhete.
   function soltar() {
     const ws = canal;
     canal = null;
     clearTimeout(prazoDoCanal);
-    if (ws) ws.close(1000);
+    if (!ws) return;
+    if (ws.readyState === WebSocket.CONNECTING) ws.onopen = () => ws.close(1000);
+    else ws.close(1000);
   }
 
   function abrirCanal(bilhete) {

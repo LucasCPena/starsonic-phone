@@ -26,6 +26,7 @@ export function iniciar(raiz, servicos) {
   const todos = (seletor) => [...raiz.querySelectorAll(seletor)];
 
   const secoes = new Map(todos('[data-tela]').map((s) => [s.dataset.tela, s]));
+  const carregando = um('.carregando');
   const nome = um('#nome');
   const pedir = um('[data-botao="pedir"]');
   const som = um('#som');
@@ -130,6 +131,7 @@ export function iniciar(raiz, servicos) {
   function desenhar(e) {
     const secao = SECAO[e.tela] ?? null;
     for (const [nomeDaSecao, s] of secoes) s.hidden = nomeDaSecao !== secao;
+    carregando.hidden = e.tela !== 'carregando';
     raiz.classList.toggle('na-reuniao', secao === 'reuniao');
 
     if (e.reuniao) desenharCabecalho(e.reuniao);
@@ -169,13 +171,14 @@ export function iniciar(raiz, servicos) {
     um('[data-dica="semCamera"]').hidden = !semCam;
   }
 
-  // O Microfone e a Câmera de todas as telas, e as prévias da câmera.
+  // O Microfone e a Câmera de todas as telas, e as prévias da câmera. A mídia segue a escolha da pessoa; na reunião, a
+  // câmera é da ligação.
   function desenharMidia(e) {
     for (const b of todos('[data-botao="microfone"]')) alternar(b, e.mic);
     for (const b of todos('[data-botao="camera"]')) alternar(b, e.cam);
     const imagem = { ligado: 'ligada', desligado: 'desligada' }[e.cam] ?? 'indisponivel';
     for (const i of todos('[data-imagem]')) i.dataset.imagem = imagem;
-    midia.escolher(e.mic, e.cam);
+    midia.escolher(e.mic, e.cam, e.tela === 'reuniao');
   }
 
   function desenharAvisos(e) {
@@ -227,7 +230,9 @@ export function iniciar(raiz, servicos) {
     despachar({ tipo: 'clique', botao: b.dataset.botao });
   });
   nome.addEventListener('input', () => despachar({ tipo: 'nome', valor: nome.value }));
+  // O Enter no nome é o Pedir para entrar; o que confirma uma composição (o IME) não conta.
   nome.addEventListener('keydown', (ev) => {
+    if (ev.isComposing || ev.keyCode === 229) return;
     if (ev.key === 'Enter' && !pedir.disabled) pedir.click();
   });
 

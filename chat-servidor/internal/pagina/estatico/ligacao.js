@@ -3,8 +3,9 @@
 // dele, com a mesma interface:
 // - criarLigacoes(aoEvento) devolve {ligar, desligar, trocarCamera, trocarMicrofone};
 // - ligar({qual, senha, acesso, fluxo}): o qual é 'principal' ou 'tela'; o acesso, o turn e o video do aceito; o fluxo,
-//   o MediaStream da câmera e do microfone (o do midia.js). A escolha da pessoa vem nele: a faixa que ela desligou tem
-//   o enabled falso, e o aparelho sem acesso não tem faixa (a câmera desligada é a oferta recvonly);
+//   o MediaStream da câmera e do microfone (o do midia.js). A escolha da pessoa vem nele: uma faixa de câmera viva quer
+//   dizer a câmera ligada, e nenhuma, a oferta recvonly; o microfone desligado é a faixa com o enabled falso, e o
+//   aparelho sem acesso não tem faixa. Na reunião, a câmera é da ligação (o trocarCamera);
 // - as respostas voltam pelo aoEvento: {tipo:'ligacao', qual, o, codigo}, com o o confirmada, falhou, terminou ou
 //   semConexao, e {tipo:'cameraTrocada', ok}, a resposta a todo trocarCamera;
 // - depois do desligar de uma ligação, nenhum evento dela chega depois do próximo ligar.

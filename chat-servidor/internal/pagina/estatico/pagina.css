@@ -152,6 +152,15 @@ main {
   width: 100%;
 }
 
+/* O carregando: só o girando, no meio, até o abrir responder. */
+.carregando {
+  flex: 1 0 auto;
+  padding: 48px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 /* Na reunião, a faixa de cima é a dela. */
 .na-reuniao {
   background: var(--reuniao);
@@ -349,6 +358,7 @@ main {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--marinho);
+  overflow-wrap: anywhere;
 }
 
 .traco {
@@ -360,11 +370,14 @@ main {
   background: var(--ciano);
 }
 
+/* O título da reunião vem do assunto: uma palavra comprida (um código, um nome com sublinhado) quebra em qualquer
+   lugar, como o "quando" e a linha da espera. */
 .entrada h1 {
   font-size: 30px;
   line-height: 1.2;
   font-weight: 800;
   text-wrap: balance;
+  overflow-wrap: anywhere;
 }
 
 /* A imagem da câmera, 16:9: o vídeo, ou o aviso de câmera desligada ou sem acesso. */
@@ -533,6 +546,7 @@ main {
   font-size: 14px;
   font-weight: 600;
   color: var(--marinho);
+  overflow-wrap: anywhere;
 }
 
 /* O círculo que gira, com o ícone no meio. */
@@ -706,6 +720,7 @@ main {
   min-width: 0;
   font-size: 15px;
   font-weight: 700;
+  overflow-wrap: anywhere;
 }
 
 .selo-gravado,
@@ -1038,8 +1053,8 @@ main {
     background: var(--branco);
   }
 
-  .botao-desistir,
-  .cartao > .botao-ciano {
+  /* O botão do cartão (o Desistir, o do aviso, o Sair do entrando) fica embaixo, na largura toda. */
+  .cartao > .botao {
     width: 100%;
     min-height: 52px;
     margin-top: auto;
@@ -1141,7 +1156,9 @@ main {
   }
 }
 
-/* O celular deitado: a faixa e os controles mais baixos, e o mosaico cresce. */
+/* O celular deitado: a faixa e os controles mais baixos, e o mosaico cresce. Os controles ficam com 44 px (o mínimo do
+   toque), e não os 52 px de "O visual": sem isso, o mosaico deitado não é maior que o em pé, e o "Gire o celular para
+   ver a reunião maior." não seria verdade. */
 @media (orientation: landscape) and (max-height: 500px) {
   .reuniao-topo {
     padding: 6px 16px;

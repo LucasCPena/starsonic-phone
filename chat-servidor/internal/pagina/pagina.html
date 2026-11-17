@@ -46,6 +46,14 @@
 
 <main id="app">
 
+<!-- O carregando, até o abrir responder: o girando do Entrando, sozinho, desde o começo. -->
+<div class="carregando" aria-hidden="true">
+<div class="girando">
+<span class="gira"></span>
+<svg class="icone icone-28" aria-hidden="true"><use href="#i-camera"></use></svg>
+</div>
+</div>
+
 <!-- A entrada: a imagem da câmera com o Microfone e a Câmera, e o nome com o Pedir para entrar. -->
 <section class="tela tela-clara entrada" data-tela="entrada" hidden>
 <div class="aviso-acesso" role="alert" hidden>
@@ -145,7 +153,7 @@
 </div>
 </div>
 </div>
-<button type="button" class="botao botao-contorno botao-desistir" data-botao="desistir">Desistir</button>
+<button type="button" class="botao botao-contorno" data-botao="desistir">Desistir</button>
 </div>
 </section>
 
@@ -164,7 +172,7 @@
 <svg class="icone icone-18" aria-hidden="true"><use href="#i-pessoa"></use></svg>
 <span>Você vai entrar como <strong data-campo="nome"></strong></span>
 </p>
-<button type="button" class="botao botao-contorno botao-desistir" data-botao="desistir">Desistir</button>
+<button type="button" class="botao botao-contorno" data-botao="desistir">Desistir</button>
 </div>
 </section>
 
@@ -178,6 +186,7 @@
 <div class="cartao-textos">
 <h1 tabindex="-1">Entrando na reunião…</h1>
 </div>
+<button type="button" class="botao botao-contorno" data-botao="sair">Sair</button>
 </div>
 </section>
 

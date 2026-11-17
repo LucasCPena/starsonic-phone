@@ -84,6 +84,65 @@ async function midiaComErro(page: Page, erro: { tudo?: string; video?: string })
 const pedidosDeMidia = (page: Page) =>
   page.evaluate(() => (window as unknown as { pedidosDeMidia: number }).pedidosDeMidia);
 
+interface MidiaFalsa {
+  /** O erro do pedido dos dois juntos. */
+  juntos?: string;
+  /** O erro dos pedidos que levam o som ou a imagem; o teste pode mudar depois, no window.erros. */
+  erros?: { audio?: string; video?: string };
+  /** O que a consulta das permissões dá, ou 'lanca': a consulta lança. */
+  permissoes?: { microphone: PermissionState; camera: PermissionState } | 'lanca';
+}
+
+/**
+ * A câmera e o microfone falsos do Chromium, com o registro de cada pedido (window.pedidos: 'audio+video', 'audio' ou
+ * 'video') e de cada faixa de câmera que eles deram (window.cameras), e os erros e as permissões do teste.
+ */
+async function midiaFalsa(page: Page, opcoes: MidiaFalsa): Promise<void> {
+  await page.addInitScript((opcoes) => {
+    const w = window as unknown as { pedidos: string[]; cameras: MediaStreamTrack[]; erros: Record<string, string> };
+    const original = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    w.pedidos = [];
+    w.cameras = [];
+    w.erros = { ...opcoes.erros };
+    navigator.mediaDevices.getUserMedia = async (c?: MediaStreamConstraints) => {
+      w.pedidos.push([c?.audio && 'audio', c?.video && 'video'].filter(Boolean).join('+'));
+      // Com o window.seguraCamera, o pedido só da câmera espera o window.soltarCamera().
+      const s = window as unknown as { seguraCamera?: boolean; soltarCamera?: () => void };
+      if (s.seguraCamera && c?.video && !c?.audio) {
+        await new Promise<void>((r) => {
+          s.soltarCamera = r;
+        });
+      }
+      if (c?.audio && c?.video && opcoes.juntos) throw new DOMException('o erro do teste', opcoes.juntos);
+      const erro = (c?.video && w.erros.video) || (c?.audio && w.erros.audio);
+      if (erro) throw new DOMException('o erro do teste', erro);
+      const f = await original(c);
+      w.cameras.push(...f.getVideoTracks());
+      return f;
+    };
+    const p = opcoes.permissoes;
+    if (p === 'lanca') {
+      navigator.permissions.query = () => {
+        throw new TypeError('o erro do teste');
+      };
+    } else if (p) {
+      navigator.permissions.query = async (d: PermissionDescriptor) =>
+        ({ state: p[d.name as 'microphone' | 'camera'] }) as unknown as PermissionStatus;
+    }
+  }, opcoes);
+}
+
+const pedidos = (page: Page) => page.evaluate(() => (window as unknown as { pedidos: string[] }).pedidos);
+
+/** As faixas de câmera vivas no fluxo da prévia da entrada. */
+const camerasVivas = (page: Page) =>
+  page
+    .locator('video.previa')
+    .first()
+    .evaluate((v: HTMLVideoElement) =>
+      (v.srcObject as MediaStream | null)?.getVideoTracks().filter((t) => t.readyState === 'live').length ?? 0,
+    );
+
 /**
  * O registro da página, na ordem: cada play() de um elemento de mídia e cada fetch, com o evento que o browser
  * despachava naquela hora (window.event), ou "-" fora de um evento.
@@ -108,6 +167,25 @@ async function registrar(page: Page): Promise<void> {
 }
 
 const registro = (page: Page) => page.evaluate(() => (window as unknown as { registro: string[] }).registro);
+
+/**
+ * Cada close() de um WebSocket da página, com o bilhete e o readyState daquela hora. Vem depois do RedeFalsa.instalar:
+ * o WebSocket da página já é, então, o do page.routeWebSocket.
+ */
+async function gravarFechamentos(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const w = window as unknown as { fechamentos: string[] };
+    w.fechamentos = [];
+    const fechar = WebSocket.prototype.close;
+    WebSocket.prototype.close = function (this: WebSocket, ...args: [number?, string?]) {
+      w.fechamentos.push(`${new URL(this.url).searchParams.get('bilhete')} ${this.readyState}`);
+      return fechar.apply(this, args);
+    };
+  });
+}
+
+const fechamentos = (page: Page) =>
+  page.evaluate(() => (window as unknown as { fechamentos: string[] }).fechamentos);
 const abrires = async (page: Page) =>
   (await registro(page)).filter((l) => l.startsWith(`fetch /api/v1/pagina/reunioes/${CODIGO} `)).length;
 
@@ -124,6 +202,20 @@ test('a entrada mostra o cabeçalho da marcada', async ({ page }) => {
   await abrir(page);
   await expect(page.getByText('Reunião marcada · Hoje, 14:00', { exact: true })).toBeVisible();
   await expect(titulo(page, 'Planejamento de dezembro')).toBeVisible();
+});
+
+test('o carregando mostra só o girando', async ({ page }) => {
+  const rede = await abrir(page, { respostas: ['segurada'] });
+  await expect.poll(() => rede.abrires.length).toBe(1);
+  const girando = page.locator('.carregando');
+  await expect(girando).toBeVisible();
+  await expect(girando).toHaveAttribute('aria-hidden', 'true');
+  await expect(girando).toHaveText('');
+  await expect(page.locator('main [data-tela]:visible')).toHaveCount(0);
+
+  rede.soltarAbrires();
+  await expect(titulo(page, 'Planejamento de dezembro')).toBeVisible();
+  await expect(girando).toBeHidden();
 });
 
 test('o Pedir para entrar só liga com um nome', async ({ page }) => {
@@ -222,6 +314,146 @@ test('a câmera ocupada', async ({ page }) => {
   await expect(titulo(page, 'Planejamento de dezembro')).toBeFocused();
 });
 
+// Depois de um pedido de permissão fechado sem resposta (o NotAllowedError), pedir de novo abriria outro pedido: só
+// vale pedir sozinho o aparelho liberado, ou o que está por perguntar quando o outro foi bloqueado.
+test.describe('o pedido de permissão fechado', () => {
+  const recusado = 'NotAllowedError';
+
+  test('os dois por perguntar: um pedido só', async ({ page }) => {
+    await midiaFalsa(page, { juntos: recusado, permissoes: { microphone: 'prompt', camera: 'prompt' } });
+    await abrir(page);
+    await expect(page.getByText('Sem a permissão, os dois ficam desligados.', { exact: true })).toBeVisible();
+    await expect(botao(page, 'Microfone')).toBeDisabled();
+    await expect(botao(page, 'Câmera')).toBeDisabled();
+    expect(await pedidos(page)).toEqual(['audio+video']);
+  });
+
+  test('a câmera bloqueada: o microfone sozinho', async ({ page }) => {
+    await midiaFalsa(page, { juntos: recusado, permissoes: { microphone: 'prompt', camera: 'denied' } });
+    await abrir(page);
+    await expect(botao(page, 'Câmera')).toBeDisabled();
+    await expect(botao(page, 'Microfone')).toBeEnabled();
+    await expect(page.getByRole('alert').getByText(AVISO_DE_ACESSO, { exact: true })).toBeVisible();
+    expect(await pedidos(page)).toEqual(['audio+video', 'audio']);
+  });
+
+  test('o microfone liberado: só ele sozinho', async ({ page }) => {
+    await midiaFalsa(page, { juntos: recusado, permissoes: { microphone: 'granted', camera: 'prompt' } });
+    await abrir(page);
+    await expect(botao(page, 'Câmera')).toBeDisabled();
+    await expect(botao(page, 'Microfone')).toBeEnabled();
+    await expect(botao(page, 'Microfone')).toHaveAttribute('aria-pressed', 'true');
+    expect(await pedidos(page)).toEqual(['audio+video', 'audio']);
+  });
+
+  test('a consulta das permissões lança: um pedido só', async ({ page }) => {
+    await midiaFalsa(page, { juntos: recusado, permissoes: 'lanca' });
+    await abrir(page);
+    await expect(page.getByText('Sem a permissão, os dois ficam desligados.', { exact: true })).toBeVisible();
+    expect(await pedidos(page)).toEqual(['audio+video']);
+  });
+});
+
+// Fora da reunião, a luz da câmera concorda com a escolha: a câmera desligada para e sai do fluxo.
+test.describe('a câmera desligada fora da reunião', () => {
+  test('desligada, ela para; ligada de novo, ela é pedida sozinha', async ({ page }) => {
+    await midiaFalsa(page, {});
+    await abrir(page);
+    await esperarAMidia(page);
+    const previa = page.locator('video.previa').first();
+    const fluxoDoComeco = await previa.evaluateHandle((v: HTMLVideoElement) => v.srcObject);
+    expect(await camerasVivas(page)).toBe(1);
+
+    await botao(page, 'Câmera').click();
+    await expect.poll(() => camerasVivas(page)).toBe(0);
+    // A faixa da câmera parou (a luz apaga).
+    const primeira = await page.evaluate(
+      () => (window as unknown as { cameras: MediaStreamTrack[] }).cameras[0].readyState,
+    );
+    expect(primeira).toBe('ended');
+
+    await botao(page, 'Câmera').click();
+    await expect.poll(() => camerasVivas(page)).toBe(1);
+    expect(await pedidos(page)).toEqual(['audio+video', 'video']);
+    // As prévias continuam com o mesmo fluxo: a faixa saiu e voltou nele.
+    expect(await previa.evaluate((v: HTMLVideoElement, f) => v.srcObject === f, fluxoDoComeco)).toBe(true);
+  });
+
+  test('a câmera pedida antes de desligada de novo fica de fora', async ({ page }) => {
+    await midiaFalsa(page, {});
+    await abrir(page);
+    await esperarAMidia(page);
+    const camera = botao(page, 'Câmera');
+    await camera.click();
+    await expect.poll(() => camerasVivas(page)).toBe(0);
+    await page.evaluate(() => {
+      (window as unknown as { seguraCamera: boolean }).seguraCamera = true;
+    });
+    await camera.click(); // ligada: o pedido dela espera
+    await expect.poll(() => pedidos(page)).toEqual(['audio+video', 'video']);
+    await camera.click(); // desligada de novo, antes da resposta
+    await camera.click(); // e ligada outra vez: um pedido de cada vez, nenhum novo ainda
+    expect(await pedidos(page)).toEqual(['audio+video', 'video']);
+
+    // A resposta do pedido de antes para e fica de fora; a câmera é pedida de novo, e volta.
+    await page.evaluate(() => {
+      const w = window as unknown as { seguraCamera: boolean; soltarCamera: () => void };
+      w.seguraCamera = false;
+      w.soltarCamera();
+    });
+    await expect.poll(() => camerasVivas(page)).toBe(1);
+    expect(await pedidos(page)).toEqual(['audio+video', 'video', 'video']);
+    const estados = await page.evaluate(() =>
+      (window as unknown as { cameras: MediaStreamTrack[] }).cameras.map((t) => t.readyState),
+    );
+    expect(estados).toEqual(['ended', 'ended', 'live']);
+  });
+
+  test('a câmera que não volta é a que falta', async ({ page }) => {
+    await midiaFalsa(page, {});
+    await abrir(page);
+    await esperarAMidia(page);
+    await botao(page, 'Microfone').click();
+    await botao(page, 'Câmera').click();
+    await expect.poll(() => camerasVivas(page)).toBe(0);
+
+    // Outro programa pegou a câmera: ela não volta, e o aviso de acesso aparece, com o microfone como estava.
+    await page.evaluate(() => {
+      (window as unknown as { erros: Record<string, string> }).erros.video = 'NotReadableError';
+    });
+    await botao(page, 'Câmera').click();
+    await expect(page.getByRole('alert').getByText(AVISO_DE_ACESSO, { exact: true })).toBeVisible();
+    await expect(botao(page, 'Câmera')).toBeDisabled();
+    await expect(page.getByText('O navegador não deixou usar a câmera', { exact: true })).toBeVisible();
+    await expect(botao(page, 'Microfone')).toBeEnabled();
+    await expect(botao(page, 'Microfone')).toHaveAttribute('aria-pressed', 'false');
+    expect(await pedidos(page)).toEqual(['audio+video', 'video']);
+  });
+
+  test('o fluxo novo chega sem a câmera desligada', async ({ page }) => {
+    // Sem microfone: o aviso de acesso aparece, com a câmera funcionando.
+    await midiaFalsa(page, { erros: { audio: 'NotFoundError' } });
+    await abrir(page);
+    await expect(page.getByRole('alert').getByText(AVISO_DE_ACESSO, { exact: true })).toBeVisible();
+    await expect.poll(() => camerasVivas(page)).toBe(1);
+    await botao(page, 'Câmera').click();
+    await expect.poll(() => camerasVivas(page)).toBe(0);
+
+    // O Tentar de novo pede os dois outra vez; a câmera que vem no fluxo novo para, porque a escolha é desligada.
+    await page.getByRole('alert').getByRole('button', { name: 'Tentar de novo', exact: true }).click();
+    await expect
+      .poll(() => pedidos(page))
+      .toEqual(['audio+video', 'audio', 'video', 'audio+video', 'audio', 'video']);
+    await expect
+      .poll(() =>
+        page.evaluate(() => (window as unknown as { cameras: MediaStreamTrack[] }).cameras.map((t) => t.readyState)),
+      )
+      .toEqual(['ended', 'ended']);
+    expect(await camerasVivas(page)).toBe(0);
+    await expect(botao(page, 'Câmera')).toHaveAttribute('aria-pressed', 'false');
+  });
+});
+
 test('o primeiro play nasce no clique', async ({ page }) => {
   await registrar(page);
   await abrir(page);
@@ -230,11 +462,33 @@ test('o primeiro play nasce no clique', async ({ page }) => {
 
   await botao(page, 'Pedir para entrar').click();
 
-  // Dentro do clique (o window.event é ele), o play() do #som vem antes do abrir, o primeiro pedido de rede.
+  // Dentro do clique (o window.event é ele), o play() do #som vem antes do abrir, o primeiro pedido de rede. E é o
+  // primeiro play() da página: antes do clique, nenhum.
   await expect.poll(async () => (await registro(page)).slice(antes, antes + 2)).toEqual([
     'play #som click',
     `fetch /api/v1/pagina/reunioes/${CODIGO} click`,
   ]);
+  expect((await registro(page)).slice(0, antes).filter((l) => l.startsWith('play '))).toEqual([]);
+});
+
+test('o Enter no nome também dá o play antes do pedido', async ({ page }) => {
+  await registrar(page);
+  await abrir(page);
+  const nome = page.getByLabel('Seu nome');
+  await nome.fill('Maria Lima');
+  const antes = (await registro(page)).length;
+
+  // O Enter que confirma uma composição (o IME) não pede nada.
+  await nome.dispatchEvent('keydown', { key: 'Enter', isComposing: true });
+  expect((await registro(page)).slice(antes)).toEqual([]);
+  await expect(titulo(page, 'Planejamento de dezembro')).toBeVisible();
+
+  await nome.press('Enter');
+  await expect.poll(async () => (await registro(page)).slice(antes, antes + 2)).toEqual([
+    'play #som click',
+    `fetch /api/v1/pagina/reunioes/${CODIGO} click`,
+  ]);
+  expect((await registro(page)).slice(0, antes).filter((l) => l.startsWith('play '))).toEqual([]);
 });
 
 test('a espera', async ({ page }) => {
@@ -442,6 +696,22 @@ test('o aceito leva a Entrando', async ({ page }) => {
   await expect(botao(page, 'Tentar de novo')).toBeEnabled();
 });
 
+test('o Sair do Entrando', async ({ page }) => {
+  const rede = await abrir(page);
+  await esperarAMidia(page);
+  await pedirParaEntrar(page);
+  const canal = await rede.canalNumero(1);
+  await expect.poll(() => canal.tipos()).toEqual(['pedir']);
+  canal.mandar(ACEITO);
+  await expect(titulo(page, 'Entrando na reunião…')).toBeVisible();
+
+  // Antes da resposta da ligação, o Sair leva ao saiu; a resposta que viria depois não muda a tela.
+  await botao(page, 'Sair').click();
+  await expect(titulo(page, 'Você saiu da reunião')).toBeVisible();
+  await page.clock.runFor(10);
+  await expect(titulo(page, 'Você saiu da reunião')).toBeVisible();
+});
+
 // As regras do rede.js que o cérebro espera: o canal fechado fica mudo, e tudo responde num tempo limitado.
 test.describe('a rede', () => {
   test('depois do fecharCanal, o canal velho fica mudo', async ({ page }) => {
@@ -488,6 +758,45 @@ test.describe('a rede', () => {
     await expect(titulo(page, 'Aguardando ser aceito…')).toBeVisible();
     await page.clock.runFor(1);
     await expect(semServidor).toBeVisible();
+  });
+
+  // Fechado conectando, o WebSocket faz o Chromium escrever no console a URL dele, com o bilhete.
+  test('o canal que ainda conecta só fecha quando abre', async ({ page }) => {
+    const rede = await preparar(page);
+    await gravarFechamentos(page);
+    await page.goto(`/r/${CODIGO}`);
+    rede.aoPedir = (c) => c.mandar({ tipo: 'aguardando' });
+
+    // O Desistir com o canal abrindo, e um canal novo no lugar dele: o abandonado abre depois, a página o fecha, e
+    // nada dele chega ao cérebro.
+    rede.canaisAbrem = false;
+    await pedirParaEntrar(page);
+    const primeiro = await rede.canalNumero(1);
+    await botao(page, 'Desistir').click();
+    await expect(titulo(page, 'Planejamento de dezembro')).toBeVisible();
+    rede.canaisAbrem = true;
+    await botao(page, 'Pedir para entrar').click();
+    const segundo = await rede.canalNumero(2);
+    await expect.poll(() => segundo.tipos()).toEqual(['pedir']);
+    primeiro.abrir();
+    await expect.poll(() => primeiro.fechadoPelaPagina).toBe(1000);
+    expect(primeiro.recebidas).toEqual([]);
+    await expect(titulo(page, 'Aguardando ser aceito…')).toBeVisible();
+
+    // O prazo de 10 s do canal que não abre: o mesmo semServidor, e o canal fecha quando abrir.
+    await botao(page, 'Desistir').click();
+    rede.canaisAbrem = false;
+    await botao(page, 'Pedir para entrar').click();
+    const terceiro = await rede.canalNumero(3);
+    await page.clock.runFor(10_000);
+    await expect(titulo(page, 'O servidor de reuniões não respondeu')).toBeVisible();
+    terceiro.abrir();
+    await expect.poll(() => terceiro.fechadoPelaPagina).toBe(1000);
+    expect(terceiro.recebidas).toEqual([]);
+    await expect(titulo(page, 'O servidor de reuniões não respondeu')).toBeVisible();
+
+    // Nenhum close() com o canal conectando (0): os três foram com ele aberto (1).
+    expect(await fechamentos(page)).toEqual(['bilhete-2 1', 'bilhete-3 1', 'bilhete-4 1']);
   });
 });
 
@@ -572,6 +881,20 @@ test.describe('a reunião', () => {
     await expect(botao(page, 'Entrar de novo')).toBeEnabled();
   });
 
+  test('na reunião, a câmera é da ligação', async ({ page }) => {
+    await midiaFalsa(page, {});
+    await naReuniao(page);
+    // A Câmera da reunião vai à ligação (o trocarCamera): a mídia não para a câmera nem a pede de novo.
+    await botao(page, 'Câmera').click();
+    await page.clock.runFor(10);
+    await expect(botao(page, 'Câmera')).toHaveAttribute('aria-pressed', 'false');
+    expect(await camerasVivas(page)).toBe(1);
+    await botao(page, 'Câmera').click();
+    await page.clock.runFor(10);
+    await expect(botao(page, 'Câmera')).toHaveAttribute('aria-pressed', 'true');
+    expect(await pedidos(page)).toEqual(['audio+video']);
+  });
+
   test('o Compartilhar a tela só vale com o canal aberto', async ({ page }) => {
     const rede = await naReuniao(page);
     const compartilhar = botao(page, 'Compartilhar a tela');
@@ -582,7 +905,9 @@ test.describe('a reunião', () => {
     await expect(compartilhar).toBeDisabled();
     await page.clock.runFor(2_000);
     const volta = await rede.canalNumero(2);
-    await expect.poll(() => volta.recebidas).toEqual([{ tipo: 'voltar', participante: 'participante-1', volta: 'volta-1' }]);
+    await expect
+      .poll(() => volta.recebidas)
+      .toEqual([{ tipo: 'voltar', participante: 'participante-1', volta: 'volta-1' }]);
     await expect(compartilhar).toBeDisabled(); // o canal está voltando
     volta.mandar({ tipo: 'voltou', volta: 'volta-2' });
     await expect(compartilhar).toBeEnabled();
@@ -620,6 +945,30 @@ test.describe(() => {
     expect(pedir.width).toBeGreaterThan(340);
     // Nada passa da largura da tela.
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  });
+
+  test('o título comprido no celular', async ({ page }) => {
+    // 120 caracteres sem espaço (um código, um nome com sublinhado): ele quebra, e nada passa da largura da tela.
+    const longo = 'PlanejamentoDoAno'.repeat(7) + 'X';
+    expect(longo).toHaveLength(120);
+    const largura = () => page.evaluate(() => document.documentElement.scrollWidth);
+    await page.route('**/r/estatico/ligacao.js', (r) =>
+      r.fulfill({ contentType: 'text/javascript; charset=utf-8', body: LIGACAO_FALSA }),
+    );
+    const rede = await abrir(page, { reuniao: { ...MARCADA, assunto: longo } });
+    await expect(titulo(page, longo)).toBeVisible();
+    expect(await largura()).toBeLessThanOrEqual(390);
+
+    rede.aoPedir = (c) => c.mandar({ tipo: 'aguardando' });
+    await pedirParaEntrar(page);
+    await expect(titulo(page, 'Aguardando ser aceito…')).toBeVisible();
+    expect(await largura()).toBeLessThanOrEqual(390);
+
+    (await rede.canalNumero(1)).mandar(ACEITO);
+    await expect(titulo(page, 'Entrando na reunião…')).toBeVisible();
+    await page.clock.runFor(10);
+    await expect(titulo(page, longo)).toBeVisible();
+    expect(await largura()).toBeLessThanOrEqual(390);
   });
 });
 

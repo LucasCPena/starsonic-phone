@@ -12,8 +12,11 @@ export interface Reuniao {
   inicio: number | null;
 }
 
-/** Uma resposta do abrir: o status e o corpo em JSON, ou nenhuma (o pedido fica sem resposta). */
-export type RespostaDoAbrir = { status: number; corpo: unknown } | 'semResposta';
+/**
+ * Uma resposta do abrir: o status e o corpo em JSON; nenhuma (o pedido fica sem resposta); ou a segurada, o 200 que só
+ * sai no soltarAbrires.
+ */
+export type RespostaDoAbrir = { status: number; corpo: unknown } | 'semResposta' | 'segurada';
 
 export type Mensagem = { tipo: string; [campo: string]: unknown };
 
@@ -23,11 +26,24 @@ export class Canal {
   readonly recebidas: Mensagem[] = [];
   /** O código com que a página fechou o canal (null sem código), ou undefined enquanto ela não o fecha. */
   fechadoPelaPagina: number | null | undefined = undefined;
+  private soltar: (() => void) | null = null;
 
   constructor(
     private readonly ws: WebSocketRoute,
     readonly bilhete: string,
   ) {}
+
+  /** O canal fica conectando até o abrir. */
+  segurar(): Promise<void> {
+    return new Promise((r) => {
+      this.soltar = r;
+    });
+  }
+
+  /** O canal que ficou conectando (com o canaisAbrem falso) abre agora. */
+  abrir(): void {
+    this.soltar?.();
+  }
 
   /** Uma mensagem do servidor para a página. */
   mandar(m: Mensagem): void {
@@ -50,9 +66,10 @@ export class RedeFalsa {
   readonly canais: Canal[] = [];
   /** O que o servidor responde a cada pedir; sem ele, nada. */
   aoPedir: ((canal: Canal) => void) | null = null;
-  /** Falso: os canais novos nunca acabam de abrir (ficam conectando). */
+  /** Falso: os canais novos ficam conectando, até o abrir de cada um. */
   canaisAbrem = true;
   private readonly fila: RespostaDoAbrir[] = [];
+  private readonly segurados: Array<() => void> = [];
 
   private constructor(private readonly reuniao: Reuniao) {}
 
@@ -69,6 +86,11 @@ export class RedeFalsa {
     this.fila.push(...respostas);
   }
 
+  /** Os abrir segurados respondem agora, com o 200. */
+  soltarAbrires(): void {
+    for (const soltar of this.segurados.splice(0)) soltar();
+  }
+
   /** O canal número n (do primeiro, 1), quando a página o abrir. */
   async canalNumero(n: number): Promise<Canal> {
     await expect
@@ -79,11 +101,13 @@ export class RedeFalsa {
 
   private async abrir(route: Route): Promise<void> {
     this.abrires.push(new URL(route.request().url()).pathname);
-    const resposta = this.fila.shift() ?? {
-      status: 200,
-      corpo: { reuniao: this.reuniao, bilhete: `bilhete-${this.abrires.length}` },
-    };
+    const ok = { status: 200, corpo: { reuniao: this.reuniao, bilhete: `bilhete-${this.abrires.length}` } };
+    let resposta = this.fila.shift() ?? ok;
     if (resposta === 'semResposta') return;
+    if (resposta === 'segurada') {
+      await new Promise<void>((r) => this.segurados.push(r));
+      resposta = ok;
+    }
     await route.fulfill({
       status: resposta.status,
       contentType: 'application/json; charset=utf-8',
@@ -103,6 +127,6 @@ export class RedeFalsa {
     ws.onClose((codigo) => {
       canal.fechadoPelaPagina = codigo ?? null;
     });
-    if (!this.canaisAbrem) await new Promise<never>(() => {});
+    if (!this.canaisAbrem) await canal.segurar();
   }
 }
