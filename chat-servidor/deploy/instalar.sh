@@ -4,7 +4,7 @@
 #   sudo bash instalar.sh instalar <endereço> [--porta N]   instala (o endereço é o nome do chat no DNS)
 #   sudo bash instalar.sh atualizar                         troca o programa pela versão deste script
 #   sudo bash instalar.sh porta <N>                         troca a porta pública do HTTPS
-#   sudo bash instalar.sh video <endereço do vídeo> <IP>    liga o repasse da verificação do certificado do
+#   sudo bash instalar.sh video <nome do vídeo> <IP interno da VM de vídeo>  liga o repasse da verificação do certificado do
 #                                                           servidor de vídeo (veja abaixo)
 #
 # Este script vem na release chat-v<versão> do GitHub, com a versão já escrita abaixo. Rodado
@@ -41,7 +41,7 @@ uso() {
 uso: sudo bash instalar.sh instalar <endereço> [--porta N] [--versao X.Y.Z]
      sudo bash instalar.sh atualizar [--versao X.Y.Z]
      sudo bash instalar.sh porta <N>
-     sudo bash instalar.sh video <endereço do vídeo> <IP da VM do vídeo>
+     sudo bash instalar.sh video <nome do vídeo> <IP interno da VM de vídeo>
 FIM
   exit 2
 }
@@ -80,6 +80,28 @@ conferir_ip_privado() {
     fi
   fi
   falhar "o IP \"$ip\" não serve. Use o IP da VM do vídeo na rede interna, com quatro números separados por pontos, que começa com 10, com 172.16 a 172.31 ou com 192.168. Exemplo: 10.0.0.20"
+}
+
+# conferir_nome_do_video <nome>: o nome do servidor de vídeo no DNS (a regra do conferir_endereco), com mensagens
+# que falam do vídeo, e não do chat.
+conferir_nome_do_video() {
+  local nome=$1
+  local exemplo="Exemplo: sudo bash instalar.sh video video.exemplo.com.br 10.0.0.20"
+  if [[ "$nome" =~ ^[0-9]+(\.[0-9]+){3}$ ]]; then
+    falhar "o nome do vídeo \"$nome\" é um número de IP. Parece que os dois valores estão trocados: o primeiro é o nome do servidor de vídeo no DNS, e o segundo é o IP interno da VM de vídeo. $exemplo"
+  fi
+  if ! (conferir_endereco "$nome") 2>/dev/null; then
+    falhar "o nome do vídeo \"$nome\" não serve. O primeiro valor é o nome do servidor de vídeo no DNS, só com letras minúsculas, números, pontos e hífens, sem https:// e sem a porta, e o segundo é o IP interno da VM de vídeo. $exemplo"
+  fi
+}
+
+# conferir_config_simples: o config.json é a linha única que este script grava, e o certificadoDoVideo, se está lá, é
+# lido inteiro. Um arquivo mudado à mão em outro formato seria lido errado: o comando para antes de mudar qualquer coisa.
+conferir_config_simples() {
+  if [ "$(grep -c '' "$CONFIG_DIR/config.json")" -ne 1 ] ||
+    { grep -q '"certificadoDoVideo"' "$CONFIG_DIR/config.json" && { [ -z "$(ler_video endereco)" ] || [ -z "$(ler_video ip)" ]; }; }; then
+    falhar "o $CONFIG_DIR/config.json foi mudado à mão e não está na linha única que este instalador grava. Nada mudou. Faça a troca à mão nesse arquivo."
+  fi
 }
 
 # escrever_config <endereço> <porta> [<endereço do vídeo> <IP do vídeo>]: grava o config.json do serviço. A porta só
@@ -284,6 +306,7 @@ mudar_porta() {
   # O comando grava o arquivo de novo só com o endereço, os dados, a porta e o certificadoDoVideo: um "origens" posto
   # à mão se perderia.
   ! grep -q '"origens"' "$CONFIG_DIR/config.json" || falhar "o $CONFIG_DIR/config.json tem \"origens\", que este comando não mantém. Nada mudou. Troque a porta à mão nesse arquivo."
+  conferir_config_simples
   local endereco video video_ip
   endereco=$(ler_endereco)
   [ -n "$endereco" ] || falhar "não consegui ler o endereço em $CONFIG_DIR/config.json."
@@ -308,13 +331,13 @@ mudar_porta() {
   avisar_roteador "$1"
 }
 
-# mudar_video <endereço do vídeo> <IP da VM do vídeo>: liga o repasse da verificação do certificado do vídeo, numa
+# mudar_video <nome do vídeo> <IP interno da VM de vídeo>: liga o repasse da verificação do certificado do vídeo, numa
 # instalação que já existe, sem baixar nada, e reinicia o serviço. Como o mudar_porta: um programa de antes da 0.2.0
 # não conhece o "certificadoDoVideo" e nada muda; um "origens" no config.json faz o comando recusar; e se o serviço não
 # ficar de pé, ou se o comando parar no meio, a configuração de antes volta. A porta fica como está.
 mudar_video() {
   local video=$1 video_ip=$2
-  conferir_endereco "$video"
+  conferir_nome_do_video "$video"
   conferir_ip_privado "$video_ip"
   conferir_maquina
   [ -e "$CONFIG_DIR/config.json" ] || falhar "o chat não está instalado aqui ($CONFIG_DIR/config.json não existe). Para instalar: sudo bash instalar.sh instalar <endereço>"
@@ -323,6 +346,7 @@ mudar_video() {
   versao=$("$BINARIO" versao)
   versao_ao_menos "$versao" 0.2.0 || falhar "o chat desta VM está na versão $versao, que ainda não repassa o certificado do vídeo. Nada mudou. Atualize primeiro (sudo bash instalar.sh atualizar) e rode este comando de novo."
   ! grep -q '"origens"' "$CONFIG_DIR/config.json" || falhar "o $CONFIG_DIR/config.json tem \"origens\", que este comando não mantém. Nada mudou. Ponha o \"certificadoDoVideo\" à mão nesse arquivo."
+  conferir_config_simples
   local endereco porta
   endereco=$(ler_endereco)
   [ -n "$endereco" ] || falhar "não consegui ler o endereço em $CONFIG_DIR/config.json."

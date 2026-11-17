@@ -76,7 +76,7 @@ done
 inicial='{"endereco": "chat.exemplo.com.br", "dados": "/var/lib/starsonic-chat"}'
 com_8443='{"endereco": "chat.exemplo.com.br", "dados": "/var/lib/starsonic-chat", "porta": 8443}'
 com_origens='{"endereco": "chat.exemplo.com.br", "dados": "/var/lib/starsonic-chat", "origens": ["https://a.exemplo.com.br"]}'
-# cenario_mudar <cenário> <versão do programa> <config.json no começo> <comando:argumento[:argumento]>...: roda os comandos
+# cenario_mudar <cenário> <versão do programa> <config.json no começo> <comando|argumento[|argumento]>...: roda os comandos
 # um depois do outro, na mesma pasta, e para no primeiro que falha. A saída do último vai para $SAIDAS/ultima.
 cenario_mudar() {
   local t_cenario=$1 t_versao=$2 t_comeco=$3
@@ -124,7 +124,7 @@ cenario_mudar() {
     # falha seguiria em frente.
     local t_resultado=ok t_sobra t_status t_comando t_args
     for t_comando in "${t_comandos[@]}"; do
-      IFS=: read -r -a t_args <<<"$t_comando"
+      IFS='|' read -r -a t_args <<<"$t_comando"
       set +e
       (set -e; "${t_args[@]}") >"$SAIDAS/ultima" 2>&1
       t_status=$?
@@ -143,7 +143,7 @@ cenario_mudar() {
 SAIDAS=$(mktemp -d)
 trap 'rm -rf "$CONFIG_DIR" "$SAIDAS"' EXIT
 cenario_porta() { # cenario_porta <cenário> <versão do programa> <porta> <config.json no começo>
-  cenario_mudar "$1" "$2" "$4" "mudar_porta:$3"
+  cenario_mudar "$1" "$2" "$4" "mudar_porta|$3"
 }
 confere "porta: troca" "ok|$com_8443|limpo" "$(cenario_porta normal 0.1.1 8443 "$inicial")"
 confere "porta: volta para a 443" "ok|$inicial|limpo" "$(cenario_porta normal 0.1.1 443 "$com_8443")"
@@ -182,43 +182,69 @@ escrever_config chat.exemplo.com.br 8443
 confere "sem o vídeo, nada é lido" "" "$(ler_video endereco)$(ler_video ip)"
 confere "sem o vídeo, o config é o de antes" "$com_8443" "$(cat "$CONFIG_DIR/config.json")"
 
-confere "video: liga o repasse" "ok|$com_video|limpo" "$(cenario_mudar normal 0.2.0 "$inicial" mudar_video:video.exemplo.com.br:10.0.0.20)"
+confere "video: liga o repasse" "ok|$com_video|limpo" "$(cenario_mudar normal 0.2.0 "$inicial" "mudar_video|video.exemplo.com.br|10.0.0.20")"
 confere "video: um restart só" "restart" "$(cat "$SAIDAS/restarts")"
 confere "video: a mensagem de sucesso" \
   "Pronto: o chat agora repassa ao servidor de vídeo video.exemplo.com.br (a VM 10.0.0.20, pela rede interna) a verificação do certificado dele, que chega na porta 80. O instalador do servidor de vídeo já pode pedir o certificado." \
   "$(cat "$SAIDAS/ultima")"
-confere "video: guarda a porta" "ok|$com_8443_video|limpo" "$(cenario_mudar normal 0.2.0 "$com_8443" mudar_video:video.exemplo.com.br:10.0.0.20)"
+confere "video: guarda a porta" "ok|$com_8443_video|limpo" "$(cenario_mudar normal 0.2.0 "$com_8443" "mudar_video|video.exemplo.com.br|10.0.0.20")"
 confere "video: troca o vídeo que já estava" "ok|$com_video|limpo" \
-  "$(cenario_mudar normal 0.2.0 "${com_video//10.0.0.20/10.9.9.9}" mudar_video:video.exemplo.com.br:10.0.0.20)"
-confere "video: versão 0.2.1 serve" "ok|$com_video|limpo" "$(cenario_mudar normal 0.2.1 "$inicial" mudar_video:video.exemplo.com.br:10.0.0.20)"
-confere "video: programa antigo" "falhou|$inicial|limpo" "$(cenario_mudar normal 0.1.1 "$inicial" mudar_video:video.exemplo.com.br:10.0.0.20)"
-confere "video: com origens, recusa e não muda" "falhou|$com_origens|limpo" "$(cenario_mudar normal 0.2.0 "$com_origens" mudar_video:video.exemplo.com.br:10.0.0.20)"
+  "$(cenario_mudar normal 0.2.0 "${com_video//10.0.0.20/10.9.9.9}" "mudar_video|video.exemplo.com.br|10.0.0.20")"
+confere "video: versão 0.2.1 serve" "ok|$com_video|limpo" "$(cenario_mudar normal 0.2.1 "$inicial" "mudar_video|video.exemplo.com.br|10.0.0.20")"
+confere "video: programa antigo" "falhou|$inicial|limpo" "$(cenario_mudar normal 0.1.1 "$inicial" "mudar_video|video.exemplo.com.br|10.0.0.20")"
+confere "video: com origens, recusa e não muda" "falhou|$com_origens|limpo" "$(cenario_mudar normal 0.2.0 "$com_origens" "mudar_video|video.exemplo.com.br|10.0.0.20")"
 confere "video: com origens, o erro diz o motivo" sim "$(if grep -q 'tem "origens"' "$SAIDAS/ultima"; then echo sim; else echo não; fi)"
 confere "video: com origens, nenhum restart" "" "$(cat "$SAIDAS/restarts")"
-confere "video: o nome do próprio chat" "falhou|$inicial|limpo" "$(cenario_mudar normal 0.2.0 "$inicial" mudar_video:chat.exemplo.com.br:10.0.0.20)"
+confere "video: o nome do próprio chat" "falhou|$inicial|limpo" "$(cenario_mudar normal 0.2.0 "$inicial" "mudar_video|chat.exemplo.com.br|10.0.0.20")"
 confere "video: o nome do próprio chat, nenhum restart" "" "$(cat "$SAIDAS/restarts")"
 for v in https://video.exemplo.com.br video.exemplo.com.br:7443 Video.Exemplo.com.br video 203.0.113.10 video.exemplo.com.br/x; do
-  confere "video: nome [$v] não serve, e nada muda" "falhou|$inicial|limpo" "$(cenario_mudar normal 0.2.0 "$inicial" "mudar_video:$v:10.0.0.20")"
+  confere "video: nome [$v] não serve, e nada muda" "falhou|$inicial|limpo" "$(cenario_mudar normal 0.2.0 "$inicial" "mudar_video|$v|10.0.0.20")"
 done
 for ip in 203.0.113.10 127.0.0.1 10.0.0.300 10.0.20 fd00::20; do
-  confere "video: IP [$ip] não serve, e nada muda" "falhou|$inicial|limpo" "$(cenario_mudar normal 0.2.0 "$inicial" "mudar_video:video.exemplo.com.br:$ip")"
+  confere "video: IP [$ip] não serve, e nada muda" "falhou|$inicial|limpo" "$(cenario_mudar normal 0.2.0 "$inicial" "mudar_video|video.exemplo.com.br|$ip")"
 done
-confere "video: o programa cai, e a configuração de antes volta" "falhou|$inicial|limpo" "$(cenario_mudar cai 0.2.0 "$inicial" mudar_video:video.exemplo.com.br:10.0.0.20)"
+confere "video: o programa cai, e a configuração de antes volta" "falhou|$inicial|limpo" "$(cenario_mudar cai 0.2.0 "$inicial" "mudar_video|video.exemplo.com.br|10.0.0.20")"
 confere "video: o programa cai: o restart da volta também acontece" "restart;restart" "$(cat "$SAIDAS/restarts")"
-confere "video: a corrida com o RestartSec" "falhou|$inicial|limpo" "$(cenario_mudar corrida 0.2.0 "$inicial" mudar_video:video.exemplo.com.br:10.0.0.20)"
-confere "video: o restart falha" "falhou|$inicial|limpo" "$(cenario_mudar restart-falha 0.2.0 "$inicial" mudar_video:video.exemplo.com.br:10.0.0.20)"
-confere "video: a conexão cai no meio" "falhou|$inicial|limpo" "$(cenario_mudar ctrl-c 0.2.0 "$inicial" mudar_video:video.exemplo.com.br:10.0.0.20)"
+confere "video: a corrida com o RestartSec" "falhou|$inicial|limpo" "$(cenario_mudar corrida 0.2.0 "$inicial" "mudar_video|video.exemplo.com.br|10.0.0.20")"
+confere "video: o restart falha" "falhou|$inicial|limpo" "$(cenario_mudar restart-falha 0.2.0 "$inicial" "mudar_video|video.exemplo.com.br|10.0.0.20")"
+confere "video: a conexão cai no meio" "falhou|$inicial|limpo" "$(cenario_mudar ctrl-c 0.2.0 "$inicial" "mudar_video|video.exemplo.com.br|10.0.0.20")"
 confere "video: com a porta, o programa cai, e a configuração de antes volta" "falhou|$com_8443|limpo" \
-  "$(cenario_mudar cai 0.2.0 "$com_8443" mudar_video:video.exemplo.com.br:10.0.0.20)"
+  "$(cenario_mudar cai 0.2.0 "$com_8443" "mudar_video|video.exemplo.com.br|10.0.0.20")"
 confere "video: o rollback diz que voltou" sim "$(if grep -q 'A configuração de antes voltou' "$SAIDAS/ultima"; then echo sim; else echo não; fi)"
 confere "porta e depois video: cada um guarda o outro" "ok|$com_8443_video|limpo" \
-  "$(cenario_mudar normal 0.2.0 "$inicial" mudar_porta:8443 mudar_video:video.exemplo.com.br:10.0.0.20)"
+  "$(cenario_mudar normal 0.2.0 "$inicial" "mudar_porta|8443" "mudar_video|video.exemplo.com.br|10.0.0.20")"
 confere "video e depois porta: cada um guarda o outro" "ok|$com_8443_video|limpo" \
-  "$(cenario_mudar normal 0.2.0 "$inicial" mudar_video:video.exemplo.com.br:10.0.0.20 mudar_porta:8443)"
+  "$(cenario_mudar normal 0.2.0 "$inicial" "mudar_video|video.exemplo.com.br|10.0.0.20" "mudar_porta|8443")"
 confere "video, porta e de volta para a 443: o vídeo fica" "ok|$com_video|limpo" \
-  "$(cenario_mudar normal 0.2.0 "$inicial" mudar_video:video.exemplo.com.br:10.0.0.20 mudar_porta:8443 mudar_porta:443)"
+  "$(cenario_mudar normal 0.2.0 "$inicial" "mudar_video|video.exemplo.com.br|10.0.0.20" "mudar_porta|8443" "mudar_porta|443")"
 confere "porta com o vídeo: o rollback guarda o vídeo" "falhou|$com_video|limpo" \
-  "$(cenario_mudar cai 0.2.0 "$com_video" mudar_porta:8443)"
+  "$(cenario_mudar cai 0.2.0 "$com_video" "mudar_porta|8443")"
+
+# As mensagens do nome do vídeo falam do vídeo, e não do chat (o nome é conferido antes de qualquer outra coisa).
+ex_video="Exemplo: sudo bash instalar.sh video video.exemplo.com.br 10.0.0.20"
+msg_nome='O primeiro valor é o nome do servidor de vídeo no DNS, só com letras minúsculas, números, pontos e hífens, sem https:// e sem a porta, e o segundo é o IP interno da VM de vídeo.'
+for v in Video.Exemplo.com.br video.exemplo.com.br:7443 https://video.exemplo.com.br video video.exemplo.com.br/x ""; do
+  confere "video: a mensagem do nome [$v]" "ERRO: o nome do vídeo \"$v\" não serve. $msg_nome $ex_video" "$( (mudar_video "$v" 10.0.0.20) 2>&1)"
+done
+confere "video: os dois valores trocados" \
+  "ERRO: o nome do vídeo \"10.0.0.20\" é um número de IP. Parece que os dois valores estão trocados: o primeiro é o nome do servidor de vídeo no DNS, e o segundo é o IP interno da VM de vídeo. $ex_video" \
+  "$( (mudar_video 10.0.0.20 video.exemplo.com.br) 2>&1)"
+confere "video: nenhuma mensagem fala do nome do chat" 0 "$( ( (mudar_video Video.Exemplo.com.br 10.0.0.20; mudar_video 10.0.0.20 video.exemplo.com.br) 2>&1 || true) | grep -c 'nome do chat')"
+
+# Um config.json mudado à mão, em outro formato, faz o porta e o video pararem antes de mudar algo.
+# shellcheck disable=SC2034
+{
+a_mao=$'{\n  "endereco": "chat.exemplo.com.br",\n  "dados": "/var/lib/starsonic-chat"\n}'
+objeto_na_linha=$'{"endereco": "chat.exemplo.com.br", "dados": "/var/lib/starsonic-chat", "certificadoDoVideo": {"endereco": "video.exemplo.com.br",\n"ip": "10.0.0.20"}}'
+objeto_sem_ip='{"endereco": "chat.exemplo.com.br", "dados": "/var/lib/starsonic-chat", "certificadoDoVideo": {"endereco": "video.exemplo.com.br"}}'
+}
+for caso in a_mao objeto_na_linha objeto_sem_ip; do
+  for cmd in "mudar_porta|8443" "mudar_video|video2.exemplo.com.br|10.0.0.21"; do
+    confere "$caso: $cmd para, e o config.json fica como estava" "falhou|${!caso}|limpo" "$(cenario_mudar normal 0.2.0 "${!caso}" "$cmd")"
+    confere "$caso: $cmd não reinicia nada" "" "$(cat "$SAIDAS/restarts")"
+    confere "$caso: $cmd diz que foi mudado à mão" sim "$(if grep -q 'foi mudado à mão e não está na linha única que este instalador grava. Nada mudou.' "$SAIDAS/ultima"; then echo sim; else echo não; fi)"
+  done
+done
 
 # O uso: o comando video com os argumentos errados.
 codigo_de() { local c=0; (principal "$@") >/dev/null 2>&1 || c=$?; echo "$c"; }
