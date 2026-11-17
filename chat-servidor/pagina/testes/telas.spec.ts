@@ -454,6 +454,141 @@ test.describe('a câmera desligada fora da reunião', () => {
   });
 });
 
+/**
+ * O aparelho acaba sozinho (desligado da USB, tomado por outro programa): a faixa dele acaba, e o navegador dispara o
+ * ended, o que ele só faz para um fim que a página não causou.
+ */
+const acabarSozinha = (page: Page, tipo: 'audio' | 'video') =>
+  page
+    .locator('video.previa')
+    .first()
+    .evaluate((v: HTMLVideoElement, tipo) => {
+      const [t] = (v.srcObject as MediaStream).getTracks().filter((f) => f.kind === tipo);
+      t.stop();
+      t.dispatchEvent(new Event('ended'));
+    }, tipo);
+
+/** As faixas do fluxo da prévia da entrada, vivas ou não, de um tipo. */
+const faixasNoFluxo = (page: Page, tipo: 'audio' | 'video') =>
+  page
+    .locator('video.previa')
+    .first()
+    .evaluate(
+      (v: HTMLVideoElement, tipo) => (v.srcObject as MediaStream).getTracks().filter((f) => f.kind === tipo).length,
+      tipo,
+    );
+
+test.describe('o aparelho que acaba sozinho', () => {
+  test('a câmera sai do fluxo e passa a faltar', async ({ page }) => {
+    await midiaFalsa(page, {});
+    await abrir(page);
+    await esperarAMidia(page);
+    await botao(page, 'Microfone').click();
+
+    await acabarSozinha(page, 'video');
+    await expect(page.getByRole('alert').getByText(AVISO_DE_ACESSO, { exact: true })).toBeVisible();
+    await expect(botao(page, 'Câmera')).toBeDisabled();
+    await expect(page.getByText('O navegador não deixou usar a câmera', { exact: true })).toBeVisible();
+    expect(await faixasNoFluxo(page, 'video')).toBe(0);
+    // O microfone fica como a pessoa o deixou, e nada é pedido de novo sozinho (o Tentar de novo pede os dois).
+    await expect(botao(page, 'Microfone')).toBeEnabled();
+    await expect(botao(page, 'Microfone')).toHaveAttribute('aria-pressed', 'false');
+    expect(await pedidos(page)).toEqual(['audio+video']);
+  });
+
+  test('o microfone sai do fluxo e passa a faltar', async ({ page }) => {
+    await midiaFalsa(page, {});
+    await abrir(page);
+    await esperarAMidia(page);
+    // A câmera desligada pela pessoa (fora do fluxo) não falta: ela continua só desligada.
+    await botao(page, 'Câmera').click();
+    await expect.poll(() => camerasVivas(page)).toBe(0);
+
+    await acabarSozinha(page, 'audio');
+    await expect(page.getByRole('alert').getByText(AVISO_DE_ACESSO, { exact: true })).toBeVisible();
+    await expect(botao(page, 'Microfone')).toBeDisabled();
+    expect(await faixasNoFluxo(page, 'audio')).toBe(0);
+    await expect(botao(page, 'Câmera')).toBeEnabled();
+    await expect(botao(page, 'Câmera')).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.getByText('A câmera está desligada', { exact: true })).toBeVisible();
+    expect(await pedidos(page)).toEqual(['audio+video']);
+  });
+
+  test('a faixa que a página para não é um aparelho que falta', async ({ page }) => {
+    await midiaFalsa(page, {});
+    await abrir(page);
+    await esperarAMidia(page);
+    // A Câmera desligada para a faixa (o stop da própria página, sem o ended): nada é avisado.
+    await botao(page, 'Câmera').click();
+    await expect.poll(() => camerasVivas(page)).toBe(0);
+    await page.clock.runFor(1000);
+    await expect(page.getByRole('alert')).toBeHidden();
+    await expect(botao(page, 'Câmera')).toBeEnabled();
+    await expect(botao(page, 'Câmera')).toHaveAttribute('aria-pressed', 'false');
+    await expect(botao(page, 'Microfone')).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  test('a câmera que voltou também', async ({ page }) => {
+    await midiaFalsa(page, {});
+    await abrir(page);
+    await esperarAMidia(page);
+    await botao(page, 'Câmera').click();
+    await expect.poll(() => camerasVivas(page)).toBe(0);
+    await botao(page, 'Câmera').click(); // a câmera pedida sozinha volta ao fluxo
+    await expect.poll(() => camerasVivas(page)).toBe(1);
+
+    await acabarSozinha(page, 'video');
+    await expect(page.getByRole('alert').getByText(AVISO_DE_ACESSO, { exact: true })).toBeVisible();
+    await expect(botao(page, 'Câmera')).toBeDisabled();
+    expect(await faixasNoFluxo(page, 'video')).toBe(0);
+    expect(await pedidos(page)).toEqual(['audio+video', 'video']);
+  });
+
+  test('na reunião também', async ({ page }) => {
+    await midiaFalsa(page, {});
+    await naReuniao(page);
+    await acabarSozinha(page, 'video');
+    await expect(botao(page, 'Câmera')).toBeDisabled();
+    expect(await faixasNoFluxo(page, 'video')).toBe(0);
+    await expect(botao(page, 'Microfone')).toBeEnabled();
+    await expect(botao(page, 'Microfone')).toHaveAttribute('aria-pressed', 'true');
+    expect(await pedidos(page)).toEqual(['audio+video']);
+  });
+
+  test('com um pedido em curso, só a resposta dele diz os aparelhos', async ({ page }) => {
+    // Sem microfone: o aviso de acesso aparece, com a câmera funcionando.
+    await midiaFalsa(page, { erros: { audio: 'NotFoundError' } });
+    await abrir(page);
+    await expect(page.getByRole('alert').getByText(AVISO_DE_ACESSO, { exact: true })).toBeVisible();
+    await expect.poll(() => camerasVivas(page)).toBe(1);
+
+    // O Tentar de novo pede os dois outra vez, e o pedido da câmera sozinha dele espera.
+    await page.evaluate(() => {
+      (window as unknown as { seguraCamera: boolean }).seguraCamera = true;
+    });
+    await page.getByRole('alert').getByRole('button', { name: 'Tentar de novo', exact: true }).click();
+    await expect
+      .poll(() => pedidos(page))
+      .toEqual(['audio+video', 'audio', 'video', 'audio+video', 'audio', 'video']);
+
+    // A câmera do fluxo de antes acaba sozinha: ela sai do fluxo, e nada vai ao cérebro antes da resposta do pedido
+    // (um midia agora acabaria a espera da mídia, e uma senha que chegasse ligaria com o fluxo que o pedido vai parar).
+    await acabarSozinha(page, 'video');
+    expect(await faixasNoFluxo(page, 'video')).toBe(0);
+    await expect(botao(page, 'Câmera')).toBeEnabled();
+    await expect(botao(page, 'Câmera')).toHaveAttribute('aria-pressed', 'true');
+
+    await page.evaluate(() => {
+      const w = window as unknown as { seguraCamera: boolean; soltarCamera: () => void };
+      w.seguraCamera = false;
+      w.soltarCamera();
+    });
+    await expect.poll(() => camerasVivas(page)).toBe(1);
+    await expect(botao(page, 'Câmera')).toBeEnabled();
+    await expect(botao(page, 'Câmera')).toHaveAttribute('aria-pressed', 'true');
+  });
+});
+
 test('o primeiro play nasce no clique', async ({ page }) => {
   await registrar(page);
   await abrir(page);
@@ -892,6 +1027,29 @@ test.describe('a reunião', () => {
     await botao(page, 'Câmera').click();
     await page.clock.runFor(10);
     await expect(botao(page, 'Câmera')).toHaveAttribute('aria-pressed', 'true');
+    expect(await pedidos(page)).toEqual(['audio+video']);
+  });
+
+  test('sair da reunião não pede a câmera', async ({ page }) => {
+    await midiaFalsa(page, {});
+    await naReuniao(page);
+    // A Câmera desligada e ligada de novo na reunião vai à ligação, e não à mídia.
+    await botao(page, 'Câmera').click();
+    await page.clock.runFor(10);
+    await botao(page, 'Câmera').click();
+    await page.clock.runFor(10);
+    await expect(botao(page, 'Câmera')).toHaveAttribute('aria-pressed', 'true');
+    // A ligação deixou o fluxo sem câmera viva, com a escolha ligada (a ligação pode trocar a faixa fora dele).
+    await page
+      .locator('video.previa')
+      .first()
+      .evaluate((v: HTMLVideoElement) => {
+        for (const t of (v.srcObject as MediaStream).getVideoTracks()) t.stop();
+      });
+    await botao(page, 'Sair').click();
+    await expect(titulo(page, 'Você saiu da reunião')).toBeVisible();
+    await page.clock.runFor(10);
+    // O desenho do saiu vem antes do pararMidia: ele não pede a câmera de novo.
     expect(await pedidos(page)).toEqual(['audio+video']);
   });
 

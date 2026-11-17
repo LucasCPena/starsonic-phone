@@ -103,7 +103,8 @@ export function iniciar(raiz, servicos) {
         midia.parar();
         break;
       case 'ligar':
-        // O ligar não leva o mic nem a cam: a escolha da pessoa está no fluxo (o enabled das faixas).
+        // O ligar não leva o mic nem a cam: a escolha da pessoa está no fluxo. A câmera ligada é uma faixa de câmera
+        // viva nele (nenhuma é a oferta recvonly), e o microfone desligado é a faixa dele com o enabled falso.
         ligacao.ligar({ qual: efeito.qual, senha: efeito.senha, acesso: estado.acesso, fluxo: midia.fluxo() });
         break;
       case 'desligar':
