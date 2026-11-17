@@ -13,6 +13,7 @@ import { closeSync, existsSync, mkdirSync, openSync, rmSync, writeFileSync } fro
 import { createConnection, createServer } from 'node:net';
 import { networkInterfaces } from 'node:os';
 import { join } from 'node:path';
+import { repetirAte } from './espera';
 import { gerarMidia } from './midia';
 import { AGENTE, CHAT, PAGINA, prepararChat, PRIVADO, RAIZ, REGISTROS, SAIDA, segredosNosRegistros } from './servidores';
 
@@ -72,21 +73,24 @@ interface Servidor {
 
 /** Espera a condição, até prazo ms. Um servidor que sai antes disso é o erro. */
 async function esperarAte(descricao: string, prazo: number, servidores: Servidor[], condicao: () => Promise<boolean>): Promise<void> {
-  const fim = Date.now() + prazo;
-  for (;;) {
-    for (const s of servidores) {
-      if (s.filho.exitCode !== null || s.filho.signalCode !== null) {
-        throw new Error(`o ${s.nome} saiu (${s.filho.exitCode ?? s.filho.signalCode}); veja ${s.registro}`);
+  await repetirAte(
+    prazo,
+    200,
+    async () => {
+      for (const s of servidores) {
+        if (s.filho.exitCode !== null || s.filho.signalCode !== null) {
+          throw new Error(`o ${s.nome} saiu (${s.filho.exitCode ?? s.filho.signalCode}); veja ${s.registro}`);
+        }
       }
-    }
-    try {
-      if (await condicao()) return;
-    } catch {
-      // ainda não responde
-    }
-    if (Date.now() > fim) throw new Error(`${descricao}: nada em ${prazo / 1000} s`);
-    await new Promise((r) => setTimeout(r, 200));
-  }
+      try {
+        return await condicao();
+      } catch {
+        return false; // ainda não responde
+      }
+    },
+    (ok) => ok,
+    () => `${descricao}: nada em ${prazo / 1000} s`,
+  );
 }
 
 /** A porta TCP aceita uma conexão. */

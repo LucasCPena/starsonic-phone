@@ -13,6 +13,7 @@ import {
   type Pessoa,
   type Ponto,
 } from './midia';
+import { repetirAte } from './espera';
 import { anotarSegredos, CHAT, PAGINA } from './servidores';
 
 /** O Acesso de quem entra (seção 9 do protocolo); sem a senha, a ligação vai sem o X-Starsonic-Senha. */
@@ -58,7 +59,6 @@ declare global {
   }
 }
 
-const esperar = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const texto = (x: unknown) => JSON.stringify(x);
 
 /** Um Chromium com a câmera e o microfone de uma pessoa, na página do cliente mínimo. */
@@ -111,16 +111,14 @@ export class Navegador {
 
   /** A primeira mensagem do tipo no canal da página, esperando até prazo ms. */
   async esperarMensagem(tipo: string, prazo = 20_000): Promise<Mensagem> {
-    const fim = Date.now() + prazo;
-    for (;;) {
-      const lista = await this.mensagens();
-      const m = lista.find((x) => x.tipo === tipo);
-      if (m) return m;
-      if (Date.now() > fim) {
-        throw new Error(`${this.pessoa.letra} não recebeu ${tipo} em ${prazo / 1000} s; recebeu ${texto(lista.map((x) => x.tipo))}`);
-      }
-      await esperar(200);
-    }
+    const lista = await repetirAte(
+      prazo,
+      200,
+      () => this.mensagens(),
+      (l) => l.some((x) => x.tipo === tipo),
+      (l) => `${this.pessoa.letra} não recebeu ${tipo} em ${prazo / 1000} s; recebeu ${texto(l.map((x) => x.tipo))}`,
+    );
+    return lista.find((x) => x.tipo === tipo) as Mensagem;
   }
 
   private amostras(pontos: readonly Ponto[]): Promise<Array<Cor | null>> {
@@ -143,67 +141,51 @@ export class Navegador {
 
   /** Espera cada cor num ponto diferente do vídeo recebido, em qualquer ordem, até prazo ms. */
   async esperarCores(pontos: readonly Ponto[], cores: readonly Cor[], prazo = 20_000): Promise<void> {
-    const fim = Date.now() + prazo;
-    for (;;) {
-      const vistas = await this.amostras(pontos);
-      if (combinam(vistas, cores)) return;
-      if (Date.now() > fim) {
-        throw new Error(
-          `no vídeo de ${this.pessoa.letra}, as cores ${texto(cores)} não apareceram nos pontos ${texto(pontos)} ` +
-            `em ${prazo / 1000} s; as últimas vistas: ${texto(vistas)}; o cliente: ${await this.diagnostico()}`,
-        );
-      }
-      await esperar(250);
-    }
+    await repetirAte(
+      prazo,
+      250,
+      () => this.amostras(pontos),
+      (vistas) => combinam(vistas, cores),
+      async (vistas) =>
+        `no vídeo de ${this.pessoa.letra}, as cores ${texto(cores)} não apareceram nos pontos ${texto(pontos)} ` +
+        `em ${prazo / 1000} s; as últimas vistas: ${texto(vistas)}; o cliente: ${await this.diagnostico()}`,
+    );
   }
 
   /** Espera o mosaico de 2: as duas cores nos dois quadros e o fundo escuro em cima deles (o de 4 tem gente ali). */
   async esperarMosaicoDe2(cores: readonly Cor[], prazo = 20_000): Promise<void> {
-    const fim = Date.now() + prazo;
-    for (;;) {
-      const vistas = await this.amostras([...MOSAICO_2, ...FUNDO_DO_MOSAICO_2]);
-      if (combinam(vistas.slice(0, 2), cores) && vistas.slice(2).every(escuro)) return;
-      if (Date.now() > fim) {
-        throw new Error(
-          `o vídeo de ${this.pessoa.letra} não voltou ao mosaico de 2 com ${texto(cores)} em ${prazo / 1000} s; ` +
-            `as últimas vistas (os dois quadros e o fundo): ${texto(vistas)}; o cliente: ${await this.diagnostico()}`,
-        );
-      }
-      await esperar(250);
-    }
+    await repetirAte(
+      prazo,
+      250,
+      () => this.amostras([...MOSAICO_2, ...FUNDO_DO_MOSAICO_2]),
+      (vistas) => combinam(vistas.slice(0, 2), cores) && vistas.slice(2).every(escuro),
+      async (vistas) =>
+        `o vídeo de ${this.pessoa.letra} não voltou ao mosaico de 2 com ${texto(cores)} em ${prazo / 1000} s; ` +
+        `as últimas vistas (os dois quadros e o fundo): ${texto(vistas)}; o cliente: ${await this.diagnostico()}`,
+    );
   }
 
   /** Espera a faixa do nome de cada quadro do mosaico de 2 com o texto claro sobre o fundo escuro. */
   async esperarNomesNoMosaicoDe2(prazo = 20_000): Promise<void> {
-    const fim = Date.now() + prazo;
-    for (;;) {
-      const faixas = await this.page.evaluate(
-        (fs) => fs.map(([x0, y0, x1, y1]) => window.cliente.faixa(x0, y0, x1, y1)),
-        FAIXAS_DO_MOSAICO_2,
-      );
-      if (faixas.every((f) => f !== null && f.claros >= 20 && f.escuros >= f.total / 2)) return;
-      if (Date.now() > fim) {
-        throw new Error(
-          `as faixas dos nomes no vídeo de ${this.pessoa.letra} não têm texto: ${texto(faixas)}; o cliente: ${await this.diagnostico()}`,
-        );
-      }
-      await esperar(250);
-    }
+    await repetirAte(
+      prazo,
+      250,
+      () => this.page.evaluate((fs) => fs.map(([x0, y0, x1, y1]) => window.cliente.faixa(x0, y0, x1, y1)), FAIXAS_DO_MOSAICO_2),
+      (faixas) => faixas.every((f) => f !== null && f.claros >= 20 && f.escuros >= f.total / 2),
+      async (faixas) =>
+        `as faixas dos nomes no vídeo de ${this.pessoa.letra} não têm texto: ${texto(faixas)}; o cliente: ${await this.diagnostico()}`,
+    );
   }
 
   /** Espera a frequência mais forte do som recebido a até 25 Hz de hz. */
   async esperarFrequencia(hz: number, prazo = 20_000): Promise<void> {
-    const fim = Date.now() + prazo;
-    for (;;) {
-      const f = await this.page.evaluate(() => window.cliente.frequencia());
-      if (f !== null && f.db > -80 && Math.abs(f.hz - hz) <= 25) return;
-      if (Date.now() > fim) {
-        throw new Error(
-          `${this.pessoa.letra} não ouviu ${hz} Hz em ${prazo / 1000} s; o último: ${texto(f)}; o cliente: ${await this.diagnostico()}`,
-        );
-      }
-      await esperar(250);
-    }
+    await repetirAte(
+      prazo,
+      250,
+      () => this.page.evaluate(() => window.cliente.frequencia()),
+      (f) => f !== null && f.db > -80 && Math.abs(f.hz - hz) <= 25,
+      async (f) => `${this.pessoa.letra} não ouviu ${hz} Hz em ${prazo / 1000} s; o último: ${texto(f)}; o cliente: ${await this.diagnostico()}`,
+    );
   }
 
   /** A senha da tela compartilhada, pedida pelo canal da página. */

@@ -4,6 +4,7 @@
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { repetirAte } from './espera';
 
 // --- Os endereços e as pastas ----------------------------------------------------------------------------------------
 
@@ -387,16 +388,14 @@ export class EventosDoApp {
   }
 
   /** O primeiro evento que satisfaz a condição, esperando até prazo ms. */
-  async esperar(condicao: (e: any) => boolean, prazo = 20_000): Promise<any> {
-    const fim = Date.now() + prazo;
-    for (;;) {
-      const e = this.recebidos.find(condicao);
-      if (e) return e;
-      if (Date.now() > fim) {
-        throw new Error(`o app não recebeu o evento esperado em ${prazo / 1000} s; recebeu ${JSON.stringify(this.recebidos.map((x) => x.tipo))}`);
-      }
-      await new Promise((r) => setTimeout(r, 200));
-    }
+  esperar(condicao: (e: any) => boolean, prazo = 20_000): Promise<any> {
+    return repetirAte(
+      prazo,
+      200,
+      () => this.recebidos.find(condicao),
+      (e) => e !== undefined,
+      () => `o app não recebeu o evento esperado em ${prazo / 1000} s; recebeu ${JSON.stringify(this.recebidos.map((x) => x.tipo))}`,
+    );
   }
 
   fechar(): void {
