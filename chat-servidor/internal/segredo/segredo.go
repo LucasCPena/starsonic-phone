@@ -122,6 +122,6 @@ func NovoBilhete() string { return base64url32() }
 // NovoIDArquivo gera o id de um arquivo: 16 bytes em hexadecimal.
 func NovoIDArquivo() string { return hex.EncodeToString(aleatorio(16)) }
 
-// NovoToken gera um token da página de administração (o da sessão ou o do CSRF): 32 bytes
-// aleatórios em base64url (43 caracteres).
+// NovoToken gera um token da página de administração (o da sessão ou o do CSRF) ou a chave de volta da página
+// das reuniões: 32 bytes aleatórios em base64url (43 caracteres).
 func NovoToken() string { return base64url32() }

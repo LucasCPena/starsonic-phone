@@ -1230,6 +1230,9 @@ func TestCanal_Voltar(t *testing.T) {
 		pagina := c.canal(t, r.Codigo)
 		m := c.aceita(t, r.Codigo, carlos, pagina, "Maria Lima")
 		part, _ := m["participante"].(string)
+		for i := range 19 {
+			esperarErro(t, c.a.Pedir("", "POST", "/api/v1/pagina/reunioes/"+codigoQueNaoExiste(i), nil), 404, "naoEncontrado")
+		}
 		nova := c.canal(t, r.Codigo) // o bilhete vale a reunião de antes do cancelamento
 		if resp := c.a.Pedir(c.kAna, "DELETE", "/api/v1/reunioes/"+r.Codigo, nil); resp.StatusCode != http.StatusNoContent {
 			t.Fatalf("cancelar respondeu %d", resp.StatusCode)
@@ -1241,6 +1244,8 @@ func TestCanal_Voltar(t *testing.T) {
 			t.Fatalf("a página recebeu %v; queria linkInvalido", got)
 		}
 		esperarFechamento(t, nova)
+		// 19 + 1 = 20: a janela das falhas está cheia, e o abrir chega ao 429 uma falha antes.
+		esperarErro(t, c.a.Pedir("", "POST", "/api/v1/pagina/reunioes/"+r.Codigo, nil), 429, "tentativas")
 	})
 
 	t.Run("fora de ordem: depois do pedir, um segundo voltar, e o pedir depois do voltar", func(t *testing.T) {
@@ -1280,5 +1285,71 @@ func TestCanal_Voltar(t *testing.T) {
 		time.Sleep(600 * time.Millisecond)
 		daPagina(t, nova, map[string]any{"tipo": "senha"})
 		aPaginaTipo(t, nova, "senha")
+	})
+
+	t.Run("o voltar só vale como a primeira mensagem: qualquer mensagem tratada antes o põe fora de ordem", func(t *testing.T) {
+		c := novaCenaR(t)
+		r := c.marcada(t, c.kAna)
+		carlos := c.colegaNaReuniao(t, r.Codigo)
+		pagina := c.canal(t, r.Codigo)
+		m := c.aceita(t, r.Codigo, carlos, pagina, "Maria Lima")
+		part, _ := m["participante"].(string)
+		for _, antes := range []string{`{"tipo":"senha"}`, `{"tipo":"tela"}`, `{"tipo":"desistir"}`, `{"tipo":"nada"}`,
+			`isto não é JSON`, `{"tipo":"voltar","participante":7}`} {
+			conn := c.canal(t, r.Codigo)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			err := conn.Write(ctx, websocket.MessageText, []byte(antes))
+			cancel()
+			if err != nil {
+				t.Fatal(err)
+			}
+			aPagina(t, conn) // o erro da mensagem de antes, seja qual for
+			daPagina(t, conn, map[string]any{"tipo": "voltar", "participante": part, "volta": m["volta"]})
+			aPaginaErro(t, conn, "invalido")
+			// O canal continua aberto, e a chave não foi gasta nem contada: o voltar fora de ordem não chegou ao gerente.
+			daPagina(t, conn, map[string]any{"tipo": "senha"})
+			aPaginaErro(t, conn, "invalido")
+		}
+		nova := c.voltaDoCanal(t, r.Codigo, part, m["volta"])
+		aPaginaTipo(t, nova, "voltou")
+	})
+
+	t.Run("um voltar que falha fecha o canal, e o pedir logo atrás não chega ao gerente", func(t *testing.T) {
+		c := novaCenaR(t)
+		r := c.marcada(t, c.kAna)
+		carlos := c.colegaNaReuniao(t, r.Codigo)
+		conn := c.canal(t, r.Codigo)
+		daPagina(t, conn, map[string]any{"tipo": "voltar", "participante": "0011223344556677", "volta": "x"})
+		daPagina(t, conn, map[string]any{"tipo": "pedir", "nome": "Maria Lima"}) // já no caminho, antes do fechamento
+		daPagina(t, conn, map[string]any{"tipo": "pedir", "nome": "Maria Lima"})
+		aPaginaErro(t, conn, "invalido")
+		esperarFechamento(t, conn)
+		semEventoDe(t, carlos, []string{"reuniaoPedido"}, 500*time.Millisecond)
+		if l := c.lista(t, c.kCarlos, r.Codigo); len(l.Pedidos) != 0 {
+			t.Fatalf("a lista tem %d pedidos; queria nenhum", len(l.Pedidos))
+		}
+	})
+
+	t.Run("o canal velho ainda aberto é fechado pelo servidor, e o tirado chega só ao novo", func(t *testing.T) {
+		c := novaCenaR(t)
+		r := c.marcada(t, c.kAna)
+		carlos := c.colegaNaReuniao(t, r.Codigo)
+		velho := c.canal(t, r.Codigo)
+		m := c.aceita(t, r.Codigo, carlos, velho, "Maria Lima")
+		part, _ := m["participante"].(string)
+		c.entrou(t, r.Codigo, part)
+
+		// A rede caiu sem o servidor ver: o canal velho segue aberto quando o voltar chega.
+		nova := c.voltaDoCanal(t, r.Codigo, part, m["volta"])
+		aPaginaTipo(t, nova, "voltou")
+		esperarFechamento(t, velho) // o servidor fechou o canal velho; o Desistir dele roda depois do voltar
+
+		time.Sleep(200 * time.Millisecond)
+		resp := c.a.Pedir(c.kCarlos, "POST", "/api/v1/reunioes/"+r.Codigo+"/tirar", map[string]string{"participante": part})
+		if resp.StatusCode != http.StatusNoContent {
+			t.Fatalf("tirar respondeu %d", resp.StatusCode)
+		}
+		aPaginaTipo(t, nova, "tirado")
+		esperarFechamento(t, nova)
 	})
 }

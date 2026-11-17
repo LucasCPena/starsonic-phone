@@ -360,7 +360,8 @@ type estadoDaPagina struct {
 	reuniao  banco.Reuniao
 	endereco string           // quem abriu o canal, para a janela das falhas do voltar
 	pedido   *reunioes.Pedido // nil até o pedir ou o voltar darem certo; vale uma vez por canal
-	pediu    bool             // o canal já recebeu um pedir: o voltar só vale como a primeira mensagem
+	tratou   bool             // o canal já tratou alguma mensagem (qualquer uma): o voltar só vale como a primeira
+	acabou   bool             // o voltar falhou: o canal fecha e não trata mais nada
 	desistiu bool             // o Desistir já foi chamado
 }
 
@@ -421,6 +422,11 @@ func erroDoCanal(erro string) mensagemErro { return mensagemErro{Tipo: "erro", E
 
 // mensagemDaPagina trata uma mensagem da página.
 func (s *servidor) mensagemDaPagina(c *canalPagina, st *estadoDaPagina, tipo websocket.MessageType, dados []byte) {
+	if st.acabou {
+		return // o canal de um voltar que falhou está fechando: nada mais chega ao gerente
+	}
+	primeira := !st.tratou
+	st.tratou = true
 	var m struct {
 		Tipo         string `json:"tipo"`
 		Nome         string `json:"nome"`
@@ -434,7 +440,6 @@ func (s *servidor) mensagemDaPagina(c *canalPagina, st *estadoDaPagina, tipo web
 	switch m.Tipo {
 	case "pedir":
 		c.pediuUma.Do(func() { close(c.pediu) })
-		st.pediu = true
 		if st.pedido != nil {
 			c.Mandar(erroDoCanal("invalido"))
 			return
@@ -447,26 +452,27 @@ func (s *servidor) mensagemDaPagina(c *canalPagina, st *estadoDaPagina, tipo web
 		st.pedido = p
 	case "voltar":
 		// A página que perdeu o canal volta ao pedido aceito, com a chave do aceito (ou do voltou anterior), sem a sala
-		// de espera. Só vale como a primeira mensagem do canal: depois de um pedir, de outro voltar, ou de um pedir
-		// depois do voltar, é fora de ordem e o canal fica. O voltou, com a chave nova, o gerente manda na mesma
+		// de espera. Só vale como a primeira mensagem do canal (qualquer mensagem tratada antes, até uma sem sentido,
+		// o põe fora de ordem, e o canal fica); o pedir depois do voltar também é fora de ordem. O voltou, com a chave nova, o gerente manda na mesma
 		// trava que liga o canal, antes de qualquer outra mensagem. Quem falha (chave errada, pessoa esquecida,
 		// reunião que acabou) conta uma falha do endereço, na janela do abrir, e o canal fecha. Nada disso vai ao log.
 		c.pediuUma.Do(func() { close(c.pediu) })
-		if st.pediu || st.pedido != nil {
+		if !primeira || st.pedido != nil {
 			c.Mandar(erroDoCanal("invalido"))
 			return
 		}
-		st.pediu = true
 		p, _, err := s.gerente.Voltar(st.reuniao, m.Participante, m.Volta, c)
 		switch {
 		case err == nil:
 			st.pedido = p
 		case errors.Is(err, reunioes.ErrLinkInvalido):
 			s.aberturas.Contar(st.endereco, 1)
+			st.acabou = true
 			c.Mandar(mensagemSimples{Tipo: "linkInvalido"})
 			c.Fechar()
 		default: // ErrForaDeOrdem: o voltar não tem outro erro
 			s.aberturas.Contar(st.endereco, 1)
+			st.acabou = true
 			c.Mandar(erroDoCanal("invalido"))
 			c.Fechar()
 		}

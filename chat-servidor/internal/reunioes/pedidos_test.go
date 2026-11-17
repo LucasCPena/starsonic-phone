@@ -716,13 +716,15 @@ func TestVoltar_Recusas(t *testing.T) {
 	t.Run("participante desconhecido", func(t *testing.T) {
 		c := novaCena(t)
 		r := c.marcada()
-		c.dentro(r, c.ana)
+		ana := c.dentro(r, c.ana)
 		_, _, can := c.aceito(r, c.ana, "Maria Lima")
 		_, _, err := c.g.Voltar(r, "0011223344556677", voltaDe(t, can), &canalFalso{})
 		conferirErro(t, "desconhecido", err, ErrForaDeOrdem)
-		// O colega que a reunião conhece não tem pedido: a chave dele não existe.
-		_, _, err = c.g.Voltar(r, c.ana.p.Nome, "", &canalFalso{})
-		conferirErro(t, "colega", err, ErrForaDeOrdem)
+		// A colega está na memória, com participante e sem pedido: nem a chave de outra pessoa nem uma vazia valem.
+		_, _, err = c.g.Voltar(r, ana, voltaDe(t, can), &canalFalso{})
+		conferirErro(t, "colega com a chave de outro", err, ErrForaDeOrdem)
+		_, _, err = c.g.Voltar(r, ana, "", &canalFalso{})
+		conferirErro(t, "colega sem chave", err, ErrForaDeOrdem)
 	})
 	t.Run("pedido ainda esperando", func(t *testing.T) {
 		c := novaCena(t)

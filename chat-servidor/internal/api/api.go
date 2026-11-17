@@ -55,7 +55,7 @@ type servidor struct {
 	gerente       *reunioes.Gerente // nil: as rotas das reuniões não existem
 	base          string            // o começo do link das reuniões, sem a barra do fim
 	// aberturas são as tentativas de abrir uma reunião, por endereço: 20 por minuto. Só contam as que não levam a
-	// uma reunião em que a pessoa possa entrar: o entrar do app (reunioes.go) e o abrir da página (pagina.go).
+	// uma reunião em que a pessoa possa entrar: o entrar do app (reunioes.go), o abrir da página e o voltar da página que falha (pagina.go).
 	aberturas *limites.Janela
 	// aberturasBoas são as aberturas da página que deram certo, por endereço: 60 por minuto, uma janela à parte da das
 	// falhas. Sem ela, um endereço com um link bom empurraria os bilhetes das outras páginas para fora da fila da reunião.
