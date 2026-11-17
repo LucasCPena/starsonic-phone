@@ -5,6 +5,12 @@
 // TURN e a chave de volta.
 import { cabecalho, inicial, nomeValido, quando, transicao } from './estado.js';
 
+/** A espera do ligar da principal pela câmera que a pessoa acabou de ligar e que ainda está sendo pedida, em ms. */
+const PRAZO_DA_CAMERA_MS = 3000;
+
+// Os cliques que levam à reunião: o silêncio do midia.js nasce, ou acorda, dentro deles.
+const DE_ENTRAR = new Set(['pedir', 'entrarDeNovo', 'tentarDeNovo']);
+
 // A seção que cada tela do cérebro mostra. O pedindo já é a espera: o pedido saiu, e o Desistir vale nele. O
 // carregando não mostra nenhuma.
 const SECAO = {
@@ -103,11 +109,10 @@ export function iniciar(raiz, servicos) {
         midia.parar();
         break;
       case 'ligar':
-        // O ligar não leva o mic nem a cam: a escolha da pessoa está no fluxo. A câmera ligada é uma faixa de câmera
-        // viva nele (nenhuma é a oferta recvonly), e o microfone desligado é a faixa dele com o enabled falso.
-        ligacao.ligar({ qual: efeito.qual, senha: efeito.senha, acesso: estado.acesso, fluxo: midia.fluxo() });
+        ligar(efeito);
         break;
       case 'desligar':
+        cancelarOLigar(efeito.qual);
         ligacao.desligar(efeito.qual);
         break;
       case 'trocarCamera':
@@ -122,6 +127,47 @@ export function iniciar(raiz, servicos) {
         tituloVisivel()?.focus();
         break;
     }
+  }
+
+  // O ligar não leva o mic nem a cam: a escolha da pessoa está no fluxo. A câmera ligada é uma faixa de câmera viva
+  // nele (nenhuma é o vídeo sem faixa), e o microfone desligado é a faixa dele com o enabled falso. A câmera que a
+  // pessoa acabou de ligar (ou que a conexão caída devolveu) pode ainda estar sendo pedida: a principal a espera, até
+  // PRAZO_DA_CAMERA_MS, para a oferta concordar com o botão, e o desligar dela, nesse meio-tempo, cancela o ligar
+  // (nada dele chega ao cérebro).
+  const adiados = new Map(); // o qual → o ligar que espera a câmera: {vale}
+
+  function ligar({ qual, senha }) {
+    cancelarOLigar(qual);
+    const { acesso } = estado; // o do efeito; o fluxo é o da hora de ligar
+    const comOFluxo = () => ligacao.ligar({ qual, senha, acesso, fluxo: midia.fluxo() });
+    if (qual !== 'principal' || !midia.cameraPedida()) {
+      comOFluxo();
+      return;
+    }
+    const adiado = { vale: true };
+    adiados.set(qual, adiado);
+    const prazo = new Promise((r) => relogio.depois(PRAZO_DA_CAMERA_MS, r));
+    Promise.race([cameraRespondida(), prazo]).then(() => {
+      if (!adiado.vale) return;
+      adiados.delete(qual);
+      try {
+        comOFluxo();
+      } catch {
+        console.error('A página não conseguiu rodar o efeito ligar.'); // só o tipo, como no rodar
+      }
+    });
+  }
+
+  // Até nenhum pedido da câmera correr: o que responde pede outro quando a escolha mudou enquanto ele esperava.
+  async function cameraRespondida() {
+    for (let pedido = midia.cameraPedida(); pedido; pedido = midia.cameraPedida()) await pedido;
+  }
+
+  function cancelarOLigar(qual) {
+    const adiado = adiados.get(qual);
+    if (!adiado) return;
+    adiado.vale = false;
+    adiados.delete(qual);
   }
 
   // ---- O desenho: uma seção só, com o cabeçalho, os botões e os avisos do estado. ----
@@ -172,14 +218,16 @@ export function iniciar(raiz, servicos) {
     um('[data-dica="semCamera"]').hidden = !semCam;
   }
 
-  // O Microfone e a Câmera de todas as telas, e as prévias da câmera. A mídia segue a escolha da pessoa; na reunião, a
-  // câmera é da ligação.
+  // O Microfone e a Câmera de todas as telas, e as prévias da câmera. A mídia segue a escolha da pessoa; com a ligação
+  // no ar (na reunião, sem a conexão caída), a câmera é da ligação. Na conexão caída, a Câmera só muda o estado, e o
+  // midia.js põe a escolha no fluxo, que o ligar da volta lê.
   function desenharMidia(e) {
     for (const b of todos('[data-botao="microfone"]')) alternar(b, e.mic);
     for (const b of todos('[data-botao="camera"]')) alternar(b, e.cam);
     const imagem = { ligado: 'ligada', desligado: 'desligada' }[e.cam] ?? 'indisponivel';
     for (const i of todos('[data-imagem]')) i.dataset.imagem = imagem;
-    midia.escolher(e.mic, e.cam, e.tela === 'reuniao');
+    const reuniao = e.tela !== 'reuniao' ? 'fora' : e.reconectando > 0 ? 'caiu' : 'noAr';
+    midia.escolher(e.mic, e.cam, reuniao);
   }
 
   function desenharAvisos(e) {
@@ -228,6 +276,7 @@ export function iniciar(raiz, servicos) {
     const b = ev.target.closest('button[data-botao]');
     if (!b) return;
     if (b.dataset.botao === 'pedir') tocarOSom();
+    if (DE_ENTRAR.has(b.dataset.botao)) midia.despertar();
     despachar({ tipo: 'clique', botao: b.dataset.botao });
   });
   nome.addEventListener('input', () => despachar({ tipo: 'nome', valor: nome.value }));

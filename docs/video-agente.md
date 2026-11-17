@@ -155,7 +155,7 @@ Tudo vai em HTTPS, na porta do agente (seção 1: a 443, ou a `porta` do config.
   - um nome que fica vazio vira `Convidado`.
 
   A tela leva `Tela de <nome>`.
-- **Quem está sem câmera** (o navegador só recebe o vídeo) ganha o quadro de `#1B2333`, com o nome. As cores do fundo e das faixas são `#04060E`.
+- **Quem está sem câmera** tem o vídeo nos dois sentidos, mas não manda imagem: depois de 5 s sem imagem, o FreeSWITCH põe o quadro de `#1B2333`, com o nome, e a imagem que volta o tira. O navegador que só recebe o vídeo (o `recvonly`) fica sem quadro no mosaico. As cores do fundo e das faixas são `#04060E`.
 - **Os layouts:** as medidas são as do FreeSWITCH, num quadro de 360×360 esticado sobre os 1280×720. O `scale` é a largura, e o `hscale`, a altura (o `hscale` falta quando é igual ao `scale`). Nenhum quadro é o "floor": cada pessoa fica no seu lugar enquanto fala.
 
   | Layout | Para | Os quadros (`x`,`y`,`scale`[,`hscale`]) |

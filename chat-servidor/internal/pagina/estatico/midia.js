@@ -6,27 +6,42 @@
 //
 // A escolha da pessoa:
 // - o microfone desligado é a faixa com o enabled falso, em toda tela;
-// - fora da reunião, a câmera desligada para (a luz apaga) e sai do fluxo, e a câmera que a pessoa liga de novo (do
-//   desligado para o ligado) é pedida sozinha e volta ao mesmo fluxo; nenhum outro desenho a pede. Na reunião, a
-//   câmera é da ligação, e daqui ninguém a para nem a pede.
-// Assim, no ligar, uma faixa de câmera viva no fluxo quer dizer a câmera ligada; nenhuma, a oferta recvonly.
+// - sem a ligação no ar, a câmera desligada para (a luz apaga) e sai do fluxo, e a câmera que a pessoa liga de novo
+//   (do desligado para o ligado) é pedida sozinha e volta ao mesmo fluxo. Com a ligação no ar (na reunião, sem a
+//   conexão caída), a câmera é da ligação, e daqui ninguém a para nem a pede. A conexão que cai a devolve: a escolha
+//   volta a valer no fluxo, e a câmera ligada que falta nele (a que a ligação ainda pedia quando a conexão caiu) é
+//   pedida sozinha. Nenhum outro desenho a pede.
+// Assim, no ligar, uma faixa de câmera viva no fluxo quer dizer a câmera ligada; nenhuma, o vídeo sem faixa.
 //
 // A faixa que acaba sozinha (o aparelho saiu, ou outro programa o tomou: o ended, que o stop() da página não dá) sai
-// do fluxo, e o aparelho dela passa a faltar, em toda tela. Nada é pedido de novo: o Tentar de novo pede os dois.
+// do fluxo, e o aparelho dela passa a faltar, em toda tela; a câmera que a ligação pôs no fluxo é vigiada daqui quando
+// volta a ser do midia.js. Nada é pedido de novo: o Tentar de novo pede os dois.
 //
 // O parar desliga tudo, e vale duas vezes seguidas. O pedido que responde depois de um parar ou de outro pedir (e o da
 // câmera sozinha, também depois de a escolha voltar a desligada) para assim que chega, sem ir ao cérebro.
+//
+// O silêncio gerado é a faixa de som de quem está sem microfone (o desenho, item 6; toda ligação manda som): um
+// oscilador num ganho zero, num MediaStreamAudioDestination. Sem RTP, a ligação cairia pelo tempo sem mídia (60 s); o
+// oscilador dá ao destino o que mandar (o Chromium manda também o de um destino vazio, mas o desenho não conta com
+// isso). O AudioContext dele nasce e acorda nos cliques que levam à reunião (o despertar): fora de um gesto, o
+// navegador o deixa parado (suspended), e um contexto parado não processa o som.
 
 const viva = (faixa) => faixa.readyState === 'live';
 
-/** A mídia da página: pedir, parar, escolher(mic, cam, naReuniao) e fluxo(), o MediaStream de agora (ou null). */
+/**
+ * A mídia da página: pedir, parar, escolher(mic, cam, reuniao), fluxo() (o MediaStream de agora, ou null),
+ * cameraPedida() (a promessa da resposta do pedido da câmera sozinha que ainda corre, ou null) e despertar() (o
+ * silêncio, dentro de um clique). O reuniao do escolher é 'fora' (fora da reunião), 'noAr' (a ligação no ar: a câmera
+ * é dela) ou 'caiu' (a conexão caída, até a volta).
+ */
 export function criarMidia(aoEvento, previas) {
   let fluxo = null;
   let vez = 0; // a vez do último pedir ou parar: o pedido de uma vez que passou fica de fora
   let pedindo = false; // o pedir de agora ainda não respondeu
-  let camera = null; // o pedido da câmera sozinha que ainda não respondeu: {vale}
-  let religada = false; // a câmera que a pessoa ligou de novo, fora da reunião, e que ainda não foi pedida
-  let escolha = { mic: 'ligado', cam: 'ligado', naReuniao: false }; // a do último desenho
+  let camera = null; // o pedido da câmera sozinha que ainda não respondeu: {vale, respondeu}
+  let religada = false; // a câmera ligada que falta no fluxo, sem a ligação no ar, e que ainda não foi pedida
+  let escolha = { mic: 'ligado', cam: 'ligado', reuniao: 'fora' }; // a do último desenho
+  const vigiadas = new WeakSet(); // as faixas com o ended vigiado daqui
 
   function mostrar(novo) {
     if (fluxo && fluxo !== novo) pararFaixas(fluxo);
@@ -40,6 +55,8 @@ export function criarMidia(aoEvento, previas) {
   const comoEstava = (qual) => (escolha[qual] === 'indisponivel' ? 'indisponivel' : 'ligado');
 
   function vigiar(faixa) {
+    if (vigiadas.has(faixa)) return;
+    vigiadas.add(faixa);
     faixa.addEventListener('ended', () => acabou(faixa), { once: true });
   }
 
@@ -63,11 +80,14 @@ export function criarMidia(aoEvento, previas) {
     if (camera) camera.vale = false;
   }
 
-  // Fora da reunião, a câmera segue a escolha: desligada, ela para e sai do fluxo; ligada de novo pela pessoa e sem a
-  // faixa viva, ela é pedida sozinha, um pedido de cada vez.
+  // Sem a ligação no ar, a câmera segue a escolha: desligada, ela para e sai do fluxo; ligada de novo pela pessoa (ou
+  // devolvida pela conexão que caiu) e sem a faixa viva, ela é pedida sozinha, um pedido de cada vez. A câmera que a
+  // ligação pôs no fluxo passa a ser vigiada daqui.
   function acertarACamera() {
-    if (escolha.naReuniao || escolha.cam !== 'ligado') religada = false;
-    if (!fluxo || escolha.naReuniao) return;
+    const daLigacao = escolha.reuniao === 'noAr';
+    if (daLigacao || escolha.cam !== 'ligado') religada = false;
+    if (!fluxo || daLigacao) return;
+    for (const faixa of fluxo.getTracks()) vigiar(faixa);
     if (escolha.cam !== 'ligado') {
       esquecerACamera();
       for (const faixa of fluxo.getVideoTracks()) {
@@ -80,12 +100,17 @@ export function criarMidia(aoEvento, previas) {
     }
   }
 
+  // A promessa respondeu acaba quando o pedido acabou de vez: a câmera já está no fluxo, ou não vem.
   async function pedirACamera() {
-    const pedido = { vale: true };
+    let responder;
+    const respondeu = new Promise((r) => {
+      responder = r;
+    });
+    const pedido = { vale: true, respondeu };
     camera = pedido;
     const nova = await navigator.mediaDevices.getUserMedia({ video: true }).catch(() => null);
     camera = null;
-    const serve = pedido.vale && fluxo !== null && !escolha.naReuniao && escolha.cam === 'ligado';
+    const serve = pedido.vale && fluxo !== null && escolha.reuniao !== 'noAr' && escolha.cam === 'ligado';
     if (nova && serve) {
       for (const faixa of nova.getVideoTracks()) {
         vigiar(faixa);
@@ -99,6 +124,7 @@ export function criarMidia(aoEvento, previas) {
       if (!nova && serve) aoEvento({ tipo: 'midia', mic: comoEstava('mic'), cam: 'indisponivel' });
     }
     acertarACamera(); // a escolha pode ter mudado enquanto ele esperava
+    responder();
   }
 
   return {
@@ -123,20 +149,60 @@ export function criarMidia(aoEvento, previas) {
       esquecerACamera();
       mostrar(null);
     },
-    escolher(mic, cam, naReuniao) {
+    escolher(mic, cam, reuniao) {
       // Só a câmera que vai do desligado ao ligado é pedida: o ligado que vem do indisponivel é o de um fluxo novo, que
-      // a trouxe, e o desenho de outra tela (o fim da reunião, por exemplo) não muda a escolha.
+      // a trouxe, e o desenho de outra tela (o fim da reunião, por exemplo) não muda a escolha. A conexão que cai
+      // devolve a câmera da ligação: a ligada que faltar no fluxo também é pedida.
       if (escolha.cam === 'desligado' && cam === 'ligado') religada = true;
-      escolha = { mic, cam, naReuniao };
+      if (escolha.reuniao === 'noAr' && reuniao === 'caiu' && cam === 'ligado') religada = true;
+      escolha = { mic, cam, reuniao };
       for (const faixa of fluxo?.getAudioTracks() ?? []) faixa.enabled = mic === 'ligado';
       acertarACamera();
     },
     fluxo: () => fluxo,
+    cameraPedida: () => camera?.respondeu ?? null,
+    despertar: despertarOSilencio,
   };
 }
 
 function pararFaixas(f) {
   for (const faixa of f?.getTracks() ?? []) faixa.stop();
+}
+
+// O silêncio é um só na página: o contexto nasce no primeiro despertar, e o gerador, no primeiro pedido da faixa.
+let silencio = null; // {contexto, faixa}
+
+/** Cria ou acorda o contexto do silêncio. Só vale dentro de um clique: fora dele, o navegador o deixa parado. */
+function despertarOSilencio() {
+  try {
+    silencio ??= { contexto: new AudioContext(), faixa: null };
+    silencio.contexto.resume().catch(() => {});
+  } catch {
+    // o navegador sem o WebAudio: as ligações saem sem o silêncio
+  }
+}
+
+/**
+ * Uma cópia da faixa do silêncio, que a ligação para quando acaba, ou null antes do primeiro despertar (ou sem o
+ * WebAudio).
+ */
+export function faixaDoSilencio() {
+  if (!silencio) return null;
+  try {
+    if (!silencio.faixa) {
+      const { contexto } = silencio;
+      const destino = contexto.createMediaStreamDestination();
+      const oscilador = contexto.createOscillator();
+      const mudo = contexto.createGain();
+      mudo.gain.value = 0;
+      oscilador.connect(mudo).connect(destino);
+      oscilador.start();
+      silencio.faixa = destino.stream.getAudioTracks()[0];
+    }
+    return silencio.faixa.clone();
+  } catch {
+    return null;
+  }
 }
 
 async function obter() {

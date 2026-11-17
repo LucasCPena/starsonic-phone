@@ -7,7 +7,7 @@
 // - os eventos de uma ligação depois do desligar dela chegam antes do próximo ligar;
 // - o falhou e o terminou dizem que a ligação acabou; o semConexao, que ela ainda existe e desce com o desligar;
 // - o midia diz ligado ou indisponivel de cada aparelho;
-// - o ligar não leva o mic nem a cam: quem roda o efeito os lê do estado (a câmera desligada é a oferta recvonly);
+// - o ligar não leva o mic nem a cam: quem roda o efeito os lê do estado (a câmera desligada é o vídeo sem faixa);
 // - todo abrir tem resposta, o abriu ou o abrirFalhou, também o abrir que sai na reunião para voltar com a chave, e a
 //   resposta devolve a abertura que o abrir levou. Quem decide a tela é o cérebro: o abriu do voltar (na volta depois
 //   da conexão caída, ou no religar) só abre o canal, e nunca leva à entrada nem pede a mídia;

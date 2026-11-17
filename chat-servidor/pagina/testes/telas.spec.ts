@@ -2,7 +2,7 @@
 // falsa (o abrir e o canal) e o relógio fixo. O relógio fica parado: os prazos da página só andam pelo runFor.
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { CHAT } from '../chat';
-import { CODIGO, RedeFalsa, type Mensagem, type Reuniao, type RespostaDoAbrir } from '../rede-falsa';
+import { CODIGO, RedeFalsa, type Mensagem, type Reuniao, type RespostaDoAbrir, type VideoFalso } from '../rede-falsa';
 
 /** Hoje, 17/11/2026, às 10:00 em São Paulo (o fuso dos testes). */
 const AGORA = new Date('2026-11-17T10:00:00-03:00').getTime();
@@ -822,8 +822,10 @@ test('o aceito leva a Entrando', async ({ page }) => {
   canal.mandar(ACEITO);
   await expect(titulo(page, 'Entrando na reunião…')).toBeVisible();
 
-  // A ligação desta tarefa não liga: a resposta dela (o falhou) sai no próximo passo do relógio.
-  await page.clock.runFor(10);
+  // O servidor de vídeo fecha o WSS na hora: a ligação falhou, sem esperar o prazo de 10 s da conexão.
+  const video = await rede.videoNumero(1);
+  expect(video.url).toBe('wss://video.exemplo.com.br:7443/sip');
+  await video.fechar();
   await expect(titulo(page, 'O servidor de reuniões não respondeu')).toBeVisible();
   await expect(
     page.getByText('Tente de novo daqui a pouco. Se continuar, avise quem mandou o link.', { exact: true }),
@@ -845,6 +847,309 @@ test('o Sair do Entrando', async ({ page }) => {
   await expect(titulo(page, 'Você saiu da reunião')).toBeVisible();
   await page.clock.runFor(10);
   await expect(titulo(page, 'Você saiu da reunião')).toBeVisible();
+});
+
+/** O aceito com o TURN neste computador, numa porta fechada: a ligação que abre o WSS falso não sai para a rede. */
+const ACEITO_SEM_REDE: Mensagem = {
+  ...ACEITO,
+  turn: {
+    urls: ['turn:127.0.0.1:9?transport=udp', 'turns:127.0.0.1:9?transport=tcp'],
+    usuario: 'usuario-1',
+    senha: 'credencial-1',
+  },
+};
+
+/** Cada RTCPeerConnection que a página cria (window.conexoes), com a configuração dele (window.configuracoes). */
+async function registrarConexoes(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const w = window as unknown as { conexoes: RTCPeerConnection[]; configuracoes: unknown[] };
+    w.conexoes = [];
+    w.configuracoes = [];
+    const Original = window.RTCPeerConnection;
+    window.RTCPeerConnection = class extends Original {
+      constructor(...args: unknown[]) {
+        super(...(args as [RTCConfiguration])); // o JsSIP passa também as restrições antigas, como segundo argumento
+        w.conexoes.push(this);
+        w.configuracoes.push(args[0]);
+      }
+    };
+  });
+}
+
+/** A última ligação manda a câmera: o emissor do vídeo dela tem uma faixa viva (sem a câmera, ele vai sem faixa). */
+const cameraNaLigacao = (page: Page) =>
+  page.evaluate(() => {
+    const pc = (window as unknown as { conexoes: RTCPeerConnection[] }).conexoes.at(-1);
+    return pc?.getSenders().some((s) => s.track?.kind === 'video' && s.track.readyState === 'live') ?? false;
+  });
+
+/** Um cabeçalho de uma mensagem SIP, sem o nome. */
+const cabecalhoSip = (mensagem: string, nome: string) =>
+  mensagem
+    .split('\r\n\r\n')[0]
+    .split('\r\n')
+    .find((l) => l.toLowerCase().startsWith(`${nome.toLowerCase()}:`))
+    ?.slice(nome.length + 1)
+    .trim();
+
+/**
+ * O INVITE da página. A coleta dos candidatos tem um prazo, contado do primeiro candidato, e no teste o TURN nunca
+ * responde: depois de a ligação criar a conexão (o WSS abriu), o relógio anda até o INVITE sair.
+ */
+async function inviteDe(page: Page, video: VideoFalso): Promise<string> {
+  const conexoes = () => page.evaluate(() => (window as unknown as { configuracoes: unknown[] }).configuracoes.length);
+  await expect.poll(conexoes).toBeGreaterThan(0);
+  await expect
+    .poll(
+      async () => {
+        await page.clock.runFor(1_000);
+        return video.recebidas.some((m) => m.startsWith('INVITE '));
+      },
+      { message: 'a página não mandou o INVITE', timeout: 20_000 },
+    )
+    .toBe(true);
+  return video.mensagem('INVITE');
+}
+
+/** A direção de cada m= do SDP de uma mensagem SIP, como {audio: 'sendrecv', video: 'recvonly'}. */
+function direcoes(mensagem: string): Record<string, string> {
+  const r: Record<string, string> = {};
+  let tipo = '';
+  for (const linha of mensagem.split('\r\n\r\n').slice(1).join('\r\n\r\n').split(/\r?\n/)) {
+    tipo = /^m=(\w+) /.exec(linha)?.[1] ?? tipo;
+    const direcao = /^a=(sendrecv|sendonly|recvonly|inactive)$/.exec(linha)?.[1];
+    if (direcao && tipo) r[tipo] = direcao;
+  }
+  return r;
+}
+
+test('a ligação leva a senha, o TURN e a câmera', async ({ page }) => {
+  await registrarConexoes(page);
+  const rede = await abrir(page);
+  rede.videosAbrem = true;
+  await esperarAMidia(page);
+  rede.aoPedir = (c) => c.mandar(ACEITO_SEM_REDE);
+  await pedirParaEntrar(page);
+  const video = await rede.videoNumero(1);
+  const invite = await inviteDe(page, video);
+
+  // Um UA só para a ligação, sem registro, com o From e o nome neutros, a senha do aceito e o TURN dele.
+  expect(invite.split('\r\n')[0]).toBe('INVITE sip:reuniao@video.exemplo.com.br SIP/2.0');
+  expect(cabecalhoSip(invite, 'From')).toMatch(/^"pagina" <sip:pagina@video\.exemplo\.com\.br>;tag=/);
+  expect(cabecalhoSip(invite, 'X-Starsonic-Senha')).toBe('senha-1');
+  expect(video.recebidas.filter((m) => m.startsWith('REGISTER '))).toEqual([]);
+  const configuracoes = await page.evaluate(() => (window as unknown as { configuracoes: unknown[] }).configuracoes);
+  expect(configuracoes).toEqual([
+    {
+      iceServers: [
+        {
+          urls: ['turn:127.0.0.1:9?transport=udp', 'turns:127.0.0.1:9?transport=tcp'],
+          username: 'usuario-1',
+          credential: 'credencial-1',
+        },
+      ],
+    },
+  ]);
+  // A câmera e o microfone ligados: os dois mandam e recebem.
+  expect(direcoes(invite)).toEqual({ audio: 'sendrecv', video: 'sendrecv' });
+  expect(await cameraNaLigacao(page)).toBe(true);
+});
+
+test('o WSS do vídeo que não abre desiste em 10 s', async ({ page }) => {
+  const rede = await abrir(page);
+  await esperarAMidia(page);
+  rede.aoPedir = (c) => c.mandar(ACEITO);
+  await pedirParaEntrar(page);
+  await rede.videoNumero(1);
+  await page.clock.runFor(9_999);
+  await expect(titulo(page, 'Entrando na reunião…')).toBeVisible();
+  await page.clock.runFor(1);
+  await expect(titulo(page, 'O servidor de reuniões não respondeu')).toBeVisible();
+});
+
+// O candidato do TURN (o relay) basta: a oferta sai com ele, sem esperar o prazo da coleta. No teste, ele é um evento
+// de mentira da conexão, até a ligação o ouvir.
+test('o candidato do TURN manda o INVITE na hora', async ({ page }) => {
+  await registrarConexoes(page);
+  const rede = await abrir(page);
+  rede.videosAbrem = true;
+  await esperarAMidia(page);
+  rede.aoPedir = (c) => c.mandar(ACEITO_SEM_REDE);
+  await pedirParaEntrar(page);
+  const video = await rede.videoNumero(1);
+  await expect
+    .poll(async () => {
+      await page.evaluate(() => {
+        const pc = (window as unknown as { conexoes: RTCPeerConnection[] }).conexoes.at(-1);
+        const candidate = new RTCIceCandidate({
+          candidate: 'candidate:1 1 udp 41885439 192.0.2.10 49152 typ relay raddr 0.0.0.0 rport 0',
+          sdpMid: '0',
+        });
+        pc?.dispatchEvent(new RTCPeerConnectionIceEvent('icecandidate', { candidate }));
+      });
+      return video.recebidas.some((m) => m.startsWith('INVITE '));
+    })
+    .toBe(true);
+});
+
+// Com o debug do JsSIP ligado no navegador (o localStorage de quem já o usou), o JsSIP escreveria no console as
+// mensagens SIP, com a senha: a página o desliga antes do primeiro UA.
+test('o console não mostra a senha nem o TURN', async ({ page }) => {
+  const doConsole: string[] = [];
+  page.on('console', (m) => doConsole.push(m.text()));
+  await page.addInitScript(() => localStorage.setItem('debug', 'JsSIP:*'));
+  await registrarConexoes(page);
+  const rede = await abrir(page);
+  rede.videosAbrem = true;
+  await esperarAMidia(page);
+  rede.aoPedir = (c) => c.mandar(ACEITO_SEM_REDE);
+  await pedirParaEntrar(page);
+  await inviteDe(page, await rede.videoNumero(1));
+  const segredos = ['senha-1', 'usuario-1', 'credencial-1', 'volta-1'];
+  expect(doConsole.filter((l) => segredos.some((s) => l.includes(s)))).toEqual([]);
+});
+
+// O FreeSWITCH só dá o quadro de quem está sem câmera a quem tem o vídeo nos dois sentidos: o vídeo vai sem a faixa.
+test('a câmera desligada na entrada é o vídeo sem a faixa', async ({ page }) => {
+  await registrarConexoes(page);
+  const rede = await abrir(page);
+  rede.videosAbrem = true;
+  await esperarAMidia(page);
+  await botao(page, 'Câmera').click();
+  await expect.poll(() => camerasVivas(page)).toBe(0);
+  rede.aoPedir = (c) => c.mandar(ACEITO_SEM_REDE);
+  await pedirParaEntrar(page);
+  expect(direcoes(await inviteDe(page, await rede.videoNumero(1)))).toEqual({ audio: 'sendrecv', video: 'sendrecv' });
+  expect(await cameraNaLigacao(page)).toBe(false);
+});
+
+// R14: a câmera ligada de novo logo antes da ligação ainda pode estar sendo pedida no ligar. O ligar a espera (até
+// 3 s), para a oferta concordar com o botão, e o desligar da mesma ligação, nesse meio-tempo, o cancela.
+test.describe('a câmera ligada logo antes da ligação', () => {
+  /** A câmera desligada e ligada de novo, com o pedido dela segurado; depois, o pedir, que o aceito responde. */
+  async function comACameraSegurada(page: Page): Promise<RedeFalsa> {
+    await registrarConexoes(page);
+    await midiaFalsa(page, {});
+    const rede = await abrir(page);
+    rede.videosAbrem = true;
+    await esperarAMidia(page);
+    await botao(page, 'Câmera').click();
+    await expect.poll(() => camerasVivas(page)).toBe(0);
+    await page.evaluate(() => {
+      (window as unknown as { seguraCamera: boolean }).seguraCamera = true;
+    });
+    await botao(page, 'Câmera').click();
+    await expect.poll(() => pedidos(page)).toEqual(['audio+video', 'video']);
+    rede.aoPedir = (c) => c.mandar(ACEITO_SEM_REDE);
+    await pedirParaEntrar(page);
+    await expect(titulo(page, 'Entrando na reunião…')).toBeVisible();
+    return rede;
+  }
+
+  const soltarACamera = (page: Page) =>
+    page.evaluate(() => {
+      const w = window as unknown as { seguraCamera: boolean; soltarCamera: () => void };
+      w.seguraCamera = false;
+      w.soltarCamera();
+    });
+
+  test('o ligar espera a câmera, e a oferta a leva', async ({ page }) => {
+    const rede = await comACameraSegurada(page);
+    await page.clock.runFor(2_999);
+    expect(rede.videos).toHaveLength(0);
+
+    await soltarACamera(page);
+    await inviteDe(page, await rede.videoNumero(1));
+    expect(await cameraNaLigacao(page)).toBe(true);
+  });
+
+  test('o ligar não espera a câmera mais de 3 s', async ({ page }) => {
+    const rede = await comACameraSegurada(page);
+    await page.clock.runFor(3_000);
+    await inviteDe(page, await rede.videoNumero(1));
+    expect(await cameraNaLigacao(page)).toBe(false);
+  });
+
+  test('o desligar cancela o ligar que espera a câmera', async ({ page }) => {
+    const rede = await comACameraSegurada(page);
+    await botao(page, 'Sair').click();
+    await expect(titulo(page, 'Você saiu da reunião')).toBeVisible();
+    await soltarACamera(page);
+    await page.clock.runFor(3_000);
+    expect(rede.videos).toHaveLength(0);
+    await expect(titulo(page, 'Você saiu da reunião')).toBeVisible();
+  });
+});
+
+/**
+ * O registro do som da página: cada AudioContext criado e cada resume(), com o evento que o navegador despachava
+ * naquela hora (window.event), ou "-" fora de um evento (window.som); os contextos ficam em window.contextos.
+ */
+async function registrarOSom(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const w = window as unknown as { som: string[]; contextos: AudioContext[] };
+    w.som = [];
+    w.contextos = [];
+    const evento = () => window.event?.type ?? '-';
+    const Original = window.AudioContext;
+    const acordar = Original.prototype.resume;
+    Original.prototype.resume = function (this: AudioContext) {
+      w.som.push(`resume ${evento()}`);
+      return acordar.call(this);
+    };
+    window.AudioContext = class extends Original {
+      constructor(...args: unknown[]) {
+        super(...(args as [AudioContextOptions]));
+        w.som.push(`novo ${evento()}`);
+        w.contextos.push(this);
+      }
+    };
+  });
+}
+
+const somDaPagina = (page: Page) => page.evaluate(() => (window as unknown as { som: string[] }).som);
+const contextoDoSom = (page: Page) =>
+  page.evaluate(() => (window as unknown as { contextos: AudioContext[] }).contextos.map((c) => c.state));
+// O contexto parado de fora, como o Safari faz com a página que ficou para trás.
+const pararOSom = (page: Page) =>
+  page.evaluate(() => (window as unknown as { contextos: AudioContext[] }).contextos[0].suspend());
+
+// O silêncio de quem está sem microfone vem de um AudioContext, que, fora de um gesto, começa parado: o destino de um
+// contexto parado não manda RTP, e a ligação cairia pelo tempo sem mídia. Ele nasce e acorda nos cliques que levam à
+// reunião, como o primeiro play() do som; antes deles, não existe.
+test.describe('o silêncio nasce no clique', () => {
+  test('no Pedir para entrar e no Entrar de novo', async ({ page }) => {
+    await registrarOSom(page);
+    const rede = await abrir(page);
+    await esperarAMidia(page);
+    rede.aoPedir = (c) => c.mandar(ACEITO);
+    expect(await somDaPagina(page)).toEqual([]);
+
+    await pedirParaEntrar(page);
+    await expect(titulo(page, 'Entrando na reunião…')).toBeVisible();
+    expect(await somDaPagina(page)).toEqual(['novo click', 'resume click']);
+
+    await botao(page, 'Sair').click();
+    await expect(titulo(page, 'Você saiu da reunião')).toBeVisible();
+    await pararOSom(page);
+    await botao(page, 'Entrar de novo').click();
+    await expect(titulo(page, 'Entrando na reunião…')).toBeVisible();
+    expect(await somDaPagina(page)).toEqual(['novo click', 'resume click', 'resume click']);
+    await expect.poll(() => contextoDoSom(page)).toEqual(['running']);
+  });
+
+  test('no Tentar de novo', async ({ page }) => {
+    await registrarOSom(page);
+    const rede = await abrir(page);
+    rede.aoPedir = (c) => c.mandar({ tipo: c.tipos().length === 1 ? 'cheia' : 'aguardando' });
+    await pedirParaEntrar(page);
+    await expect(titulo(page, 'A reunião está cheia')).toBeVisible();
+    await pararOSom(page);
+    await botao(page, 'Tentar de novo').click();
+    await expect(titulo(page, 'Aguardando ser aceito…')).toBeVisible();
+    expect(await somDaPagina(page)).toEqual(['novo click', 'resume click', 'resume click']);
+    await expect.poll(() => contextoDoSom(page)).toEqual(['running']);
+  });
 });
 
 // As regras do rede.js que o cérebro espera: o canal fechado fica mudo, e tudo responde num tempo limitado.
@@ -978,10 +1283,10 @@ export function criarLigacoes(aoEvento) {
   };
 }`;
 
-/** A página na reunião, com a ligação falsa. */
-async function naReuniao(page: Page): Promise<RedeFalsa> {
+/** A página na reunião, com a ligação falsa (ou outra). */
+async function naReuniao(page: Page, ligacao = LIGACAO_FALSA): Promise<RedeFalsa> {
   await page.route('**/r/estatico/ligacao.js', (r) =>
-    r.fulfill({ contentType: 'text/javascript; charset=utf-8', body: LIGACAO_FALSA }),
+    r.fulfill({ contentType: 'text/javascript; charset=utf-8', body: ligacao }),
   );
   const rede = await abrir(page);
   await esperarAMidia(page);
@@ -1070,6 +1375,157 @@ test.describe('a reunião', () => {
     volta.mandar({ tipo: 'voltou', volta: 'volta-2' });
     await expect(compartilhar).toBeEnabled();
     await expect(page.getByRole('heading', { name: 'A conexão caiu. Entrando de novo…' })).toBeHidden();
+  });
+});
+
+// Uma ligação falsa que trata a câmera como a de verdade: a desligada para e sai do fluxo, e a ligada de novo é pedida
+// e entra nele; com o window.cameraPresa, o pedido dela não responde. Cada ligar guarda as câmeras vivas do fluxo
+// daquela hora (window.ligares).
+const LIGACAO_DA_CAMERA = `
+export function criarLigacoes(aoEvento) {
+  window.ligacaoFalsa = aoEvento;
+  window.ligares = [];
+  let fluxo = null;
+  return {
+    ligar({ qual, fluxo: f }) {
+      fluxo = f;
+      window.ligares.push(f ? f.getVideoTracks().filter((t) => t.readyState === 'live').length : 0);
+      setTimeout(() => aoEvento({ tipo: 'ligacao', qual, o: 'confirmada' }), 0);
+    },
+    desligar() {},
+    trocarCamera(ligada) {
+      if (ligada) {
+        if (window.cameraPresa) return;
+        navigator.mediaDevices.getUserMedia({ video: true }).then((f) => {
+          fluxo.addTrack(f.getVideoTracks()[0]);
+          aoEvento({ tipo: 'cameraTrocada', ok: true });
+        });
+        return;
+      }
+      for (const t of fluxo ? fluxo.getVideoTracks() : []) {
+        t.stop();
+        fluxo.removeTrack(t);
+      }
+      setTimeout(() => aoEvento({ tipo: 'cameraTrocada', ok: true }), 0);
+    },
+    trocarMicrofone() {},
+  };
+}`;
+
+// A conexão caída devolve a câmera à página até a volta: a Câmera, que só muda o estado, chega ao fluxo pelo midia.js,
+// e o ligar da volta lê o fluxo (e espera a câmera pedida, como o R14).
+test.describe('a câmera na conexão caída', () => {
+  const caiu = (page: Page) => page.getByRole('heading', { level: 2, name: 'A conexão caiu. Entrando de novo…' });
+  const ligares = (page: Page) => page.evaluate(() => (window as unknown as { ligares: number[] }).ligares);
+  const cameras = (page: Page) =>
+    page.evaluate(() => (window as unknown as { cameras: MediaStreamTrack[] }).cameras.map((t) => t.readyState));
+  const semConexao = { tipo: 'ligacao', qual: 'principal', o: 'semConexao' };
+
+  /** A volta: depois da espera de 2 s, a página pede a senha pelo canal, e ela chega. */
+  async function voltar(page: Page, rede: RedeFalsa): Promise<void> {
+    const canal = await rede.canalNumero(1);
+    const senhas = () => canal.tipos().filter((t) => t === 'senha').length;
+    const antes = senhas();
+    await page.clock.runFor(2_000);
+    await expect.poll(senhas).toBe(antes + 1);
+    canal.mandar({ tipo: 'senha', senha: 'senha-2' });
+  }
+
+  test('desligada, ela para, e a volta sai sem ela', async ({ page }) => {
+    await midiaFalsa(page, {});
+    const rede = await naReuniao(page, LIGACAO_DA_CAMERA);
+    await darNaLigacao(page, semConexao);
+    await expect(caiu(page)).toBeVisible();
+
+    await botao(page, 'Câmera').click();
+    await expect(botao(page, 'Câmera')).toHaveAttribute('aria-pressed', 'false');
+    expect(await cameras(page)).toEqual(['ended']);
+    expect(await camerasVivas(page)).toBe(0);
+
+    await voltar(page, rede);
+    await expect.poll(() => ligares(page)).toEqual([1, 0]);
+    await page.clock.runFor(10);
+    await expect(caiu(page)).toBeHidden();
+    await expect(botao(page, 'Câmera')).toHaveAttribute('aria-pressed', 'false');
+    expect(await pedidos(page)).toEqual(['audio+video']);
+  });
+
+  test('ligada de novo, ela é pedida sozinha, e a volta a espera', async ({ page }) => {
+    await midiaFalsa(page, {});
+    const rede = await naReuniao(page, LIGACAO_DA_CAMERA);
+    await botao(page, 'Câmera').click();
+    await page.clock.runFor(10);
+    await expect(botao(page, 'Câmera')).toHaveAttribute('aria-pressed', 'false');
+    await darNaLigacao(page, semConexao);
+    await expect(caiu(page)).toBeVisible();
+
+    // O pedido só da câmera fica segurado até depois da senha da volta.
+    await page.evaluate(() => {
+      (window as unknown as { seguraCamera: boolean }).seguraCamera = true;
+    });
+    await botao(page, 'Câmera').click();
+    await expect(botao(page, 'Câmera')).toHaveAttribute('aria-pressed', 'true');
+    await expect.poll(() => pedidos(page)).toEqual(['audio+video', 'video']);
+    await voltar(page, rede);
+    await page.clock.runFor(1_000);
+    expect(await ligares(page)).toEqual([1]);
+
+    await page.evaluate(() => (window as unknown as { soltarCamera: () => void }).soltarCamera());
+    await expect.poll(() => ligares(page)).toEqual([1, 1]);
+    await page.clock.runFor(10);
+    await expect(caiu(page)).toBeHidden();
+    expect(await camerasVivas(page)).toBe(1);
+  });
+
+  test('a câmera que a ligação ainda pedia é pedida de novo', async ({ page }) => {
+    await midiaFalsa(page, {});
+    const rede = await naReuniao(page, LIGACAO_DA_CAMERA);
+    await botao(page, 'Câmera').click();
+    await page.clock.runFor(10);
+    await expect(botao(page, 'Câmera')).toHaveAttribute('aria-pressed', 'false');
+    // Ligada de novo, a ligação ainda a pede (o trocarCamera sem resposta) quando a conexão cai.
+    await page.evaluate(() => {
+      (window as unknown as { cameraPresa: boolean }).cameraPresa = true;
+    });
+    await botao(page, 'Câmera').click();
+    await expect(botao(page, 'Câmera')).toHaveAttribute('aria-pressed', 'true');
+    await darNaLigacao(page, semConexao);
+    await expect(caiu(page)).toBeVisible();
+
+    await expect.poll(() => pedidos(page)).toEqual(['audio+video', 'video']);
+    await expect.poll(() => camerasVivas(page)).toBe(1);
+    await voltar(page, rede);
+    await expect.poll(() => ligares(page)).toEqual([1, 1]);
+    await page.clock.runFor(10);
+    await expect(caiu(page)).toBeHidden();
+    await expect(botao(page, 'Câmera')).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  test('a câmera que a ligação pôs no fluxo e que acaba sozinha passa a faltar', async ({ page }) => {
+    await midiaFalsa(page, {});
+    await naReuniao(page, LIGACAO_DA_CAMERA);
+    // Desligada e ligada de novo na reunião: a câmera nova é da ligação, que a pôs no fluxo.
+    await botao(page, 'Câmera').click();
+    await page.clock.runFor(10);
+    await expect(botao(page, 'Câmera')).toHaveAttribute('aria-pressed', 'false');
+    await botao(page, 'Câmera').click();
+    await expect.poll(() => camerasVivas(page)).toBe(1);
+    await expect.poll(() => pedidos(page)).toEqual(['audio+video', 'video']);
+    await darNaLigacao(page, semConexao);
+    await expect(caiu(page)).toBeVisible();
+
+    // Na conexão caída, ela acaba sozinha: sai do fluxo, e a câmera passa a faltar.
+    await page
+      .locator('video.previa')
+      .first()
+      .evaluate((v: HTMLVideoElement) => {
+        const [faixa] = (v.srcObject as MediaStream).getVideoTracks();
+        faixa.stop();
+        faixa.dispatchEvent(new Event('ended'));
+      });
+    await expect(botao(page, 'Câmera')).toBeDisabled();
+    const naPrevia = (v: HTMLVideoElement) => (v.srcObject as MediaStream).getVideoTracks().length;
+    expect(await page.locator('video.previa').first().evaluate(naPrevia)).toBe(0);
   });
 });
 
