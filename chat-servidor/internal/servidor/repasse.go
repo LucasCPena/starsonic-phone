@@ -32,7 +32,7 @@ var tokenDoDesafio = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
 // clienteDoRepasse não segue redirecionamentos e não usa proxy: a VM do vídeo está na rede interna.
 var clienteDoRepasse = &http.Client{
-	Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true},
+	Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true, DisableCompression: true},
 	CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	},
@@ -41,7 +41,8 @@ var clienteDoRepasse = &http.Client{
 // repassarDesafioDoVideo atende ao desafio do nome do vídeo e deixa todo o resto para o proximo. Só repassa um GET ou
 // HEAD para o nome do vídeo (sem a porta, sem diferença de maiúsculas) em /.well-known/acme-challenge/<token>, com o
 // token no padrão. O pedido novo vai a http://<ip>:80 com o Host do vídeo, sem corpo, sem cookie e sem nenhum outro
-// cabeçalho. A resposta volta como texto, com o status do vídeo e no máximo 4096 bytes. Um erro ou o prazo viram 502.
+// cabeçalho (só o Host e o Connection: close do cliente). A resposta volta como texto, com o status do vídeo e no
+// máximo 4096 bytes. Um erro ou o prazo viram 502.
 // O log tem uma linha por pedido repassado, só com o status: nunca o token, o caminho nem o endereço de quem pediu.
 func repassarDesafioDoVideo(cv *CertificadoDoVideo, proximo http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -83,7 +84,7 @@ func buscarDesafio(r *http.Request, cv *CertificadoDoVideo, token string) (int, 
 		return http.StatusBadGateway, []byte(textoRepasseFalha)
 	}
 	pedido.Host = cv.Endereco
-	pedido.Header.Set("User-Agent", "") // sem o User-Agent do Go: nenhum cabeçalho vai além do Host
+	pedido.Header.Set("User-Agent", "") // sem o User-Agent do Go: só o Host (e o Connection: close)
 	resposta, err := clienteDoRepasse.Do(pedido)
 	if err != nil {
 		return http.StatusBadGateway, []byte(textoRepasseFalha)

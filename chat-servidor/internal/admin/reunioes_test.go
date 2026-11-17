@@ -30,7 +30,7 @@ const (
 	tVersao          = "O servidor de vídeo respondeu: versão 0.1.0, FreeSWITCH no ar."
 	tUso             = "Uso agora: CPU 34% · memória 41%."
 	tChaveNaoConfere = "A chave não confere. Copie de novo a chave mostrada na instalação."
-	tSemResposta     = "O servidor de vídeo não respondeu. Confira o endereço e se a porta 443 dele está aberta."
+	tSemResposta     = "O servidor de vídeo não respondeu. Confira o endereço e se a porta dele está aberta (a 443, ou a que vem depois do endereço)."
 	tFSFora          = "O servidor de vídeo respondeu, mas o FreeSWITCH está fora do ar. Veja os registros na VM de vídeo."
 	tEndereco        = "Escreva só o endereço do servidor de vídeo (e a porta, se tiver), sem https://."
 	tChave43         = "A chave tem 43 caracteres. Copie de novo a chave mostrada na instalação."

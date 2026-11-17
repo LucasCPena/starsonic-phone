@@ -134,6 +134,14 @@ func TestRepasse_NaoLevaNadaDoPedido(t *testing.T) {
 			t.Errorf("o cabeçalho %s passou: %q", h, got)
 		}
 	}
+	// O vídeo recebe só o Host (que o Go lê à parte) e o Connection: close do cliente.
+	var chaves []string
+	for k := range v.cabecalhos {
+		chaves = append(chaves, k)
+	}
+	if len(chaves) != 1 || chaves[0] != "Connection" || v.cabecalhos.Get("Connection") != "close" {
+		t.Errorf("cabeçalhos no vídeo: %v; queria só o Connection: close", v.cabecalhos)
+	}
 }
 
 func TestRepasse_HEAD(t *testing.T) {

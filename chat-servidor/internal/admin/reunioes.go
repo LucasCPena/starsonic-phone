@@ -29,7 +29,7 @@ const (
 	textoChave          = "A chave tem 43 caracteres. Copie de novo a chave mostrada na instalação."
 	textoLimite         = "O número de reuniões ao mesmo tempo vai de 1 a 20."
 	textoChaveRecusada  = "A chave não confere. Copie de novo a chave mostrada na instalação."
-	textoSemResposta    = "O servidor de vídeo não respondeu. Confira o endereço e se a porta 443 dele está aberta."
+	textoSemResposta    = "O servidor de vídeo não respondeu. Confira o endereço e se a porta dele está aberta (a 443, ou a que vem depois do endereço)."
 	textoFreeSwitchFora = "O servidor de vídeo respondeu, mas o FreeSWITCH está fora do ar. Veja os registros na VM de vídeo."
 )
 
