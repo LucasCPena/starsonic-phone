@@ -331,6 +331,8 @@ sudo systemctl start starsonic-chat-copia.timer
 sudo rm -f /var/lib/starsonic-chat/chat.db.antigo
 ```
 
+**Se a VM foi refeita e o chat e o servidor de vídeo dividem um IP público só,** o repasse do certificado do vídeo e a linha do `/etc/hosts` não voltam com a cópia, porque não estão no banco. Rode de novo o comando `video` do passo 9 e refaça a linha do `/etc/hosts` (passo 1, parte "Se o chat e o vídeo dividem um IP público só", do guia do servidor de vídeo). Sem isso, a renovação do certificado do vídeo falha dali a algumas semanas.
+
 ### O que fica na pasta `apagados` do destino
 
 A pasta `apagados` do destino é a rede de segurança por 30 dias. Cada noite, o que a cópia troca ou tira do destino vai para uma pasta com a data daquela noite, em vez de sumir:
@@ -388,10 +390,10 @@ A partir da versão 0.2.0, o chat também cuida das reuniões com link. O vídeo
 4. **Se o chat e o servidor de vídeo dividem um IP público só, use o comando `video`.** Nesse caso, as portas 80 e 443 públicas são do chat, e o vídeo usa a porta 7443. O certificado (o cadeado) do vídeo é pedido ao Let's Encrypt, que chega na porta 80 do **chat**. O comando `video` faz o chat levar só essa conferência, pela rede interna, até a VM de vídeo. Ele só é preciso nesse caso, e tem de ser rodado **antes** de instalar o servidor de vídeo. O chat tem de estar na versão 0.2.0 ou mais nova (passo 7). Rode na VM do chat, com o nome do servidor de vídeo e o IP da VM de vídeo na rede interna:
 
 ```
-sudo bash instalar.sh video <endereço do vídeo> <IP interno da VM de vídeo>
+sudo bash instalar.sh video <nome do vídeo> <IP interno da VM de vídeo>
 ```
 
-   O `instalar.sh` é o mesmo do passo 7. O comando reinicia o chat, e quem está no chat volta a conectar em poucos segundos. Você deve ver uma linha que começa com `Pronto: o chat agora repassa ao servidor de vídeo`. A porta do chat, se ele usa uma própria, fica como está, e o comando `porta` (passo 7) também mantém o que o `video` guardou. Se o chat não ficar de pé, a configuração de antes volta sozinha. O comando recusa, sem mudar nada, um chat com `"origens"` no arquivo de configuração. Os passos completos, do roteador ao cartão "Reuniões", estão em "Se o chat e o vídeo dividem um IP público só", no passo 1 do guia do servidor de vídeo (`docs/video-servidor.md`).
+   O `instalar.sh` é o mesmo do passo 7. O comando reinicia o chat, e quem está no chat volta a conectar em poucos segundos. Você deve ver uma linha que começa com `Pronto: o chat agora repassa ao servidor de vídeo`. A porta do chat, se ele usa uma própria, fica como está, e o comando `porta` (passo 7) também mantém o que o `video` guardou. Se o chat não ficar de pé, a configuração de antes volta sozinha. O comando recusa, sem mudar nada, um chat com `"origens"` no arquivo de configuração. Se a VM do chat for refeita, rode o comando de novo (passo 6). Os passos completos, do roteador ao cartão "Reuniões", estão em "Se o chat e o vídeo dividem um IP público só", no passo 1 do guia do servidor de vídeo (`docs/video-servidor.md`).
 
 ## 10. Ver os registros
 
