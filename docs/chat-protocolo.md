@@ -288,6 +288,7 @@ As reuniões com link moram no servidor do chat; o vídeo e o som vão direto pa
 - **Cada pessoa tem até 10 reuniões na hora abertas** (o "Gerar link"; `409 muitasReunioes`, como nas marcadas). A naHora que acabou ou foi cancelada não conta.
 - **A empresa precisa ter as reuniões liberadas** na administração. Sem isso, as rotas desta seção respondem `403 semReunioes`, e a página não abre os links dela (`404 naoEncontrado`). Quando a administração bloqueia as reuniões da empresa, ou a apaga, as reuniões dela que estão acontecendo acabam: todos saem, como no cancelar.
 - **Quem está na reunião:** é a pessoa cujo computador chamou o `entrar` e cuja ligação com a câmera o servidor de vídeo diz que entrou e ainda não saiu.
+- **Depois de o servidor do chat reiniciar,** ninguém conta como "na reunião" até entrar de novo: o chat guarda as reuniões só na memória. A reunião continua no servidor de vídeo, com as ligações de antes, mas para o chat ninguém está nela: as rotas de "Com a pessoa na reunião" respondem `409 foraDaReuniao`, nenhum evento da seção 11 chega, e o pedido de quem é de fora espera como numa reunião que não começou. Quem chama o `entrar` de novo volta a contar, com um participante novo, e vê na lista os que já estavam, sem o nome (abaixo). O que o app faz está na seção 11.
 
 **As operações.** Todas levam a chave do computador e precisam da pessoa da vez (`409 pessoa`).
 
@@ -429,6 +430,7 @@ Do servidor para a página:
 {"tipo": "reuniaoAcabou", "reuniao": "<codigo>"}                           // a reunião parou ou acabou
 ```
 - Os quatro últimos vão só para os computadores que estão na reunião: os que chamaram o `entrar` e cujo participante está nela. O `reuniaoAcabou` vai para os que estavam nela.
+- **Quando a conexão dos eventos volta** (seção 7) e o app está numa reunião, ele pede o `participantes` dela. Um `409 foraDaReuniao` quer dizer que o chat não sabe mais dele (o servidor do chat reiniciou, seção 9): o app sai da ligação e chama o `entrar` de novo, que dá um participante novo.
 - O `reuniaoParticipantes` sai a cada mudança das duas listas.
 - O `reuniaoAgora` vai para os computadores conectados dos colegas convidados.
 
