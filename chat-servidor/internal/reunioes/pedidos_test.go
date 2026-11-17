@@ -2,6 +2,7 @@ package reunioes
 
 import (
 	"database/sql"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"maps"
@@ -72,7 +73,7 @@ func TestPedido_Aceito(t *testing.T) {
 	can.conferir(t, "Maria", []string{"aguardando", "aceito"}, false)
 	// O aceito é o Acesso, sem a reuniao, com a senha de quem é de fora.
 	if chaves := slices.Sorted(maps.Keys(can.mensagens()[1])); !slices.Equal(chaves,
-		[]string{"participante", "senha", "tipo", "turn", "video"}) {
+		[]string{"participante", "senha", "tipo", "turn", "video", "volta"}) {
 		t.Fatalf("o aceito tem %q", chaves)
 	}
 	maria, senha := aceitoDe(t, can)
@@ -219,7 +220,7 @@ func TestPedido_Desistir(t *testing.T) {
 	id := c.pedidoDe(r, c.ana, "Maria Lima")
 	c.avisos.limpar()
 
-	c.g.Desistir(p)
+	c.g.Desistir(p, can)
 	can.conferir(t, "Maria", []string{"aguardando"}, false)
 	evs := c.avisos.de(c.ana.computador)
 	if len(evs) != 2 || !reflect.DeepEqual(evs[0], map[string]any{"tipo": "reuniaoPedidoFim", "reuniao": r.Codigo, "pedido": id}) ||
@@ -235,9 +236,9 @@ func TestPedido_Desistir(t *testing.T) {
 	r2 := c.marcada()
 	p2, can2 := c.pedir(r2, "Bia Ramos")
 	c.avisos.limpar()
-	c.g.Desistir(p2)
-	c.g.Desistir(p2)
-	c.g.Desistir(nil)
+	c.g.Desistir(p2, can2)
+	c.g.Desistir(p2, can2)
+	c.g.Desistir(nil, nil)
 	if n := c.avisos.total(); n != 0 {
 		t.Fatalf("%d avisos", n)
 	}
@@ -252,14 +253,14 @@ func TestPedido_DesistirDepoisDoAceito(t *testing.T) {
 	c := novaCena(t)
 	r := c.marcada()
 	ana := c.dentro(r, c.ana)
-	maria, pm, _ := c.aceito(r, c.ana, "Maria Lima")
+	maria, pm, canM := c.aceito(r, c.ana, "Maria Lima")
 	c.entrou(r, maria)
-	bia, pb, _ := c.aceito(r, c.ana, "Bia Ramos") // aceita, e ainda fora
+	bia, pb, canB := c.aceito(r, c.ana, "Bia Ramos") // aceita, e ainda fora
 	c.avisos.limpar()
 
 	// Fechar a página depois do aceito não tira ninguém.
-	c.g.Desistir(pm)
-	c.g.Desistir(pb)
+	c.g.Desistir(pm, canM)
+	c.g.Desistir(pb, canB)
 	if cmds := c.video.Comandos(); len(cmds) != 0 {
 		t.Fatalf("o agente recebeu %q", cmds)
 	}
@@ -351,10 +352,12 @@ func TestPedido_EsperaCheia(t *testing.T) {
 	r := c.marcada()
 	c.dentro(r, c.ana)
 	var pedidos []*Pedido
+	var canais []*canalFalso
 	for i := range 50 {
 		p, can := c.pedir(r, fmt.Sprintf("Visitante %d", i))
 		can.conferir(t, fmt.Sprintf("o pedido %d", i), []string{"aguardando"}, false)
 		pedidos = append(pedidos, p)
+		canais = append(canais, can)
 	}
 	c.avisos.limpar()
 
@@ -373,7 +376,7 @@ func TestPedido_EsperaCheia(t *testing.T) {
 	}
 
 	// Um pedido sai (a página fechou), e o novo espera.
-	c.g.Desistir(pedidos[0])
+	c.g.Desistir(pedidos[0], canais[0])
 	_, can = c.pedir(r, "Bia Ramos")
 	can.conferir(t, "Bia", []string{"aguardando"}, false)
 	c.pedidoDe(r, c.ana, "Bia Ramos")
@@ -625,5 +628,234 @@ func TestTeste_SenhaPendenteFicaNoAcabou(t *testing.T) {
 	}
 	if s := lerSenha(t, senha); s.Participante != bia || s.Nome != "Bia Ramos" || !s.Tela || s.Papel != video.Colega {
 		t.Fatalf("a senha da tela da Bia é %+v", s)
+	}
+}
+
+// ---------- O Voltar: a chave de volta da página ----------
+
+// voltaDe é a chave de volta do último aceito ou voltou que o canal recebeu.
+func voltaDe(t *testing.T, can *canalFalso) string {
+	t.Helper()
+	for _, m := range slices.Backward(can.mensagens()) {
+		if m["tipo"] == "aceito" || m["tipo"] == "voltou" {
+			v, _ := m["volta"].(string)
+			anotar(v)
+			return v
+		}
+	}
+	t.Fatalf("o canal não recebeu a volta: %q", can.tipos())
+	return ""
+}
+
+func TestVoltar_AceitoTrazAChave(t *testing.T) {
+	c := novaCena(t)
+	r := c.marcada()
+	c.dentro(r, c.ana)
+	_, _, can1 := c.aceito(r, c.ana, "Maria Lima")
+	_, _, can2 := c.aceito(r, c.ana, "Bia Ramos")
+	v1, v2 := voltaDe(t, can1), voltaDe(t, can2)
+	for _, v := range []string{v1, v2} {
+		if b, err := base64.RawURLEncoding.DecodeString(v); err != nil || len(v) != 43 || len(b) != 32 {
+			t.Fatalf("a volta %q não é base64url de 32 bytes, sem preenchimento", v)
+		}
+	}
+	if v1 == v2 {
+		t.Fatal("dois aceitos com a mesma chave")
+	}
+
+	// O aceito imediato da reunião de teste também leva a chave.
+	tst := c.deTeste()
+	_, canT := c.pedir(tst, "Caio Dias")
+	if vt := voltaDe(t, canT); len(vt) != 43 || vt == v1 || vt == v2 {
+		t.Fatalf("a volta do aceito de teste é %q", vt)
+	}
+}
+
+func TestVoltar_ChaveCertaGiraAChave(t *testing.T) {
+	c := novaCena(t)
+	r := c.marcada()
+	c.dentro(r, c.ana)
+	maria, p, can := c.aceito(r, c.ana, "Maria Lima")
+	v1 := voltaDe(t, can)
+
+	novo := &canalFalso{}
+	got, v2, err := c.g.Voltar(r, maria, v1, novo)
+	if err != nil || got != p {
+		t.Fatalf("Voltar = %v, %v; queria o mesmo pedido", got, err)
+	}
+	if len(v2) != 43 || v2 == v1 {
+		t.Fatalf("a chave nova é %q", v2)
+	}
+	if m := novo.mensagens(); len(m) != 1 || m[0]["tipo"] != "voltou" || m[0]["volta"] != v2 {
+		t.Fatalf("o canal novo recebeu %v", m)
+	}
+	// A chave velha deixou de valer; a nova vale.
+	_, _, err = c.g.Voltar(r, maria, v1, &canalFalso{})
+	conferirErro(t, "a chave velha", err, ErrForaDeOrdem)
+	if _, v3, err := c.g.Voltar(r, maria, v2, &canalFalso{}); err != nil || v3 == v2 {
+		t.Fatalf("Voltar com a chave nova = %q, %v", v3, err)
+	}
+}
+
+func TestVoltar_Recusas(t *testing.T) {
+	t.Run("chave errada, vazia ou de outro", func(t *testing.T) {
+		c := novaCena(t)
+		r := c.marcada()
+		c.dentro(r, c.ana)
+		maria, _, can := c.aceito(r, c.ana, "Maria Lima")
+		_, _, canBia := c.aceito(r, c.ana, "Bia Ramos")
+		for _, v := range []string{"", "x", voltaDe(t, can)[1:], voltaDe(t, canBia)} {
+			_, _, err := c.g.Voltar(r, maria, v, &canalFalso{})
+			conferirErro(t, "a chave "+v, err, ErrForaDeOrdem)
+		}
+		// Os erros não gastam a chave.
+		if _, _, err := c.g.Voltar(r, maria, voltaDe(t, can), &canalFalso{}); err != nil {
+			t.Fatalf("Voltar com a chave certa: %v", err)
+		}
+	})
+	t.Run("participante desconhecido", func(t *testing.T) {
+		c := novaCena(t)
+		r := c.marcada()
+		c.dentro(r, c.ana)
+		_, _, can := c.aceito(r, c.ana, "Maria Lima")
+		_, _, err := c.g.Voltar(r, "0011223344556677", voltaDe(t, can), &canalFalso{})
+		conferirErro(t, "desconhecido", err, ErrForaDeOrdem)
+		// O colega que a reunião conhece não tem pedido: a chave dele não existe.
+		_, _, err = c.g.Voltar(r, c.ana.p.Nome, "", &canalFalso{})
+		conferirErro(t, "colega", err, ErrForaDeOrdem)
+	})
+	t.Run("pedido ainda esperando", func(t *testing.T) {
+		c := novaCena(t)
+		r := c.marcada()
+		c.dentro(r, c.ana)
+		_, can := c.pedir(r, "Maria Lima")
+		id := c.pedidoDe(r, c.ana, "Maria Lima")
+		_, _, err := c.g.Voltar(r, id, "", &canalFalso{})
+		conferirErro(t, "esperando", err, ErrForaDeOrdem)
+		can.conferir(t, "Maria", []string{"aguardando"}, false)
+	})
+	t.Run("participante tirado", func(t *testing.T) {
+		c := novaCena(t)
+		r := c.marcada()
+		c.dentro(r, c.ana)
+		maria, _, can := c.aceito(r, c.ana, "Maria Lima")
+		v := voltaDe(t, can)
+		c.entrou(r, maria)
+		if err := c.g.Tirar(c.ctx, r, c.ana.p.ID, maria); err != nil {
+			t.Fatal(err)
+		}
+		_, _, err := c.g.Voltar(r, maria, v, &canalFalso{})
+		conferirErro(t, "tirado", err, ErrForaDeOrdem)
+	})
+	t.Run("participante varrido", func(t *testing.T) {
+		c := novaCena(t)
+		r := c.marcada()
+		c.dentro(r, c.ana)
+		maria, p, can := c.aceito(r, c.ana, "Maria Lima") // aceita e nunca entra: a senha vence
+		v := voltaDe(t, can)
+		c.g.Desistir(p, can) // a página caiu
+		c.andar(time.Hour)
+		c.g.Varrer()
+		_, _, err := c.g.Voltar(r, maria, v, &canalFalso{})
+		conferirErro(t, "varrido", err, ErrForaDeOrdem)
+	})
+	t.Run("a chave de outra sala não vale", func(t *testing.T) {
+		c := novaCena(t)
+		r1, r2 := c.marcada(), c.marcada()
+		c.dentro(r1, c.ana)
+		maria, _, can := c.aceito(r1, c.ana, "Maria Lima")
+		_, _, err := c.g.Voltar(r2, maria, voltaDe(t, can), &canalFalso{})
+		conferirErro(t, "outra sala", err, ErrForaDeOrdem)
+	})
+}
+
+func TestVoltar_ReuniaoAcabada(t *testing.T) {
+	t.Run("cancelada", func(t *testing.T) {
+		c := novaCena(t)
+		r := c.marcada()
+		c.dentro(r, c.ana)
+		maria, _, can := c.aceito(r, c.ana, "Maria Lima")
+		v := voltaDe(t, can)
+		c.cancelar(r)
+		_, _, err := c.g.Voltar(c.recarregar(r), maria, v, &canalFalso{})
+		conferirErro(t, "cancelada", err, ErrLinkInvalido)
+	})
+	t.Run("vencida", func(t *testing.T) {
+		c := novaCena(t)
+		r := c.marcada()
+		c.dentro(r, c.ana)
+		maria, _, can := c.aceito(r, c.ana, "Maria Lima")
+		v := voltaDe(t, can)
+		c.andar(25 * time.Hour)
+		_, _, err := c.g.Voltar(r, maria, v, &canalFalso{})
+		conferirErro(t, "vencida", err, ErrLinkInvalido)
+	})
+	t.Run("naHora que acabou", func(t *testing.T) {
+		c := novaCena(t)
+		r := c.naHora()
+		ana := c.dentro(r, c.ana)
+		maria, _, can := c.aceito(r, c.ana, "Maria Lima")
+		v := voltaDe(t, can)
+		c.entrou(r, maria)
+		c.saiu(r, maria)
+		c.saiu(r, ana)
+		c.acabou(r)
+		_, _, err := c.g.Voltar(c.recarregar(r), maria, v, &canalFalso{})
+		conferirErro(t, "naHora acabada", err, ErrLinkInvalido)
+	})
+}
+
+func TestVoltar_CanalVelho(t *testing.T) {
+	c := novaCena(t)
+	r := c.marcada()
+	c.dentro(r, c.ana)
+	maria, p, velho := c.aceito(r, c.ana, "Maria Lima")
+	c.entrou(r, maria)
+	novo := &canalFalso{}
+	if _, _, err := c.g.Voltar(r, maria, voltaDe(t, velho), novo); err != nil {
+		t.Fatal(err)
+	}
+	// O canal velho ainda estava no pedido (o servidor não viu a queda): foi fechado.
+	velho.conferir(t, "o canal velho", []string{"aguardando", "aceito"}, true)
+
+	// A leitura do canal velho acaba depois, e o Desistir dela não solta o canal novo.
+	c.g.Desistir(p, velho)
+	if err := c.g.Tirar(c.ctx, r, c.ana.p.ID, maria); err != nil {
+		t.Fatal(err)
+	}
+	novo.conferir(t, "o canal novo", []string{"voltou", "tirado"}, true)
+	velho.conferir(t, "o canal velho", []string{"aguardando", "aceito"}, true)
+
+	// O Desistir do canal que ainda é o do pedido o solta, como antes.
+	c2 := novaCena(t)
+	r2 := c2.marcada()
+	c2.dentro(r2, c2.ana)
+	m2, p2, can2 := c2.aceito(r2, c2.ana, "Bia Ramos")
+	c2.entrou(r2, m2)
+	c2.g.Desistir(p2, can2)
+	if err := c2.g.Tirar(c2.ctx, r2, c2.ana.p.ID, m2); err != nil {
+		t.Fatal(err)
+	}
+	can2.conferir(t, "Bia", []string{"aguardando", "aceito"}, false)
+}
+
+func TestVoltar_DepoisDaVoltaAsSenhasFuncionam(t *testing.T) {
+	c := novaCena(t)
+	r := c.marcada()
+	c.dentro(r, c.ana)
+	maria, p, can := c.aceito(r, c.ana, "Maria Lima")
+	c.entrou(r, maria)
+	if _, _, err := c.g.Voltar(r, maria, voltaDe(t, can), &canalFalso{}); err != nil {
+		t.Fatal(err)
+	}
+	senha, err := c.g.NovaSenha(p)
+	if err != nil {
+		t.Fatalf("NovaSenha depois do Voltar: %v", err)
+	}
+	if s := lerSenha(t, senha); s.Participante != maria || s.Papel != video.Fora {
+		t.Fatalf("a senha é %+v", s)
+	}
+	if _, err := c.g.TelaDeFora(p); err != nil {
+		t.Fatalf("TelaDeFora depois do Voltar: %v", err)
 	}
 }

@@ -396,12 +396,14 @@ As mensagens são JSON em texto, sempre com o `tipo`. Da página para o servidor
 {"tipo": "desistir"}
 {"tipo": "senha"}                          // uma senha nova para o mesmo participante, depois do aceito
 {"tipo": "tela"}                           // a senha da tela compartilhada, com a pessoa na reunião
+{"tipo": "voltar", "participante": "…", "volta": "…"}   // só como a primeira mensagem do canal, no lugar do pedir
 ```
 Do servidor para a página:
 ```json
 {"tipo": "naoComecou"}       // nenhum colega está na reunião: o pedido espera ela começar, sem limite de tempo
 {"tipo": "aguardando"}       // o pedido chegou aos colegas na reunião: espera até 10 minutos
-{"tipo": "aceito", "participante": "…", "senha": "…", "turn": {…}, "video": {…}}   // o Acesso, sem a reuniao
+{"tipo": "aceito", "participante": "…", "senha": "…", "turn": {…}, "video": {…}, "volta": "…"}   // o Acesso, sem a reuniao, e a chave de volta
+{"tipo": "voltou", "volta": "…"}   // a resposta ao voltar: o canal é de novo o do participante, com a chave nova
 {"tipo": "recusado"}         // um colega recusou, ou 10 minutos sem resposta
 {"tipo": "cheia"}            // a reunião tem 10 pessoas
 {"tipo": "esperaCheia"}      // muita gente esperando para entrar: a sala de espera tem 50 pedidos
@@ -421,6 +423,11 @@ Do servidor para a página:
 - **O `senha`:** até 5 por minuto por participante. Ele vale também com a pessoa ainda na reunião (a conexão caiu, ou ela saiu e quer voltar): a ligação principal nova toma o lugar da anterior no servidor de vídeo, sem a pessoa sair da reunião (a seção 6 do `docs/video-agente.md`). Ele é uma entrada nova, com as conferências do `pedir`, e além do `senha` pode responder:
   - `linkInvalido`: a reunião foi cancelada, deixou de valer, ou a naHora acabou. O servidor fecha o canal (código 1000), como depois das outras respostas finais;
   - `cheia`, `semServidor` e, só na reunião de teste, `servidorCheio`: o canal continua aberto, e a página pode mandar outro `senha`, dentro dos 5 por minuto.
+- **A chave de volta (`volta`).** A página que perdeu a rede e, com ela, os dois canais (este e o da ligação de vídeo) volta à reunião sem passar pela sala de espera: ela abre outro canal (o abrir dá um bilhete novo), e a primeira mensagem dele, no lugar do `pedir`, é o `voltar`, com o `participante` e a `volta` do último `aceito` ou `voltou`. A chave são 32 bytes aleatórios em base64url, sem preenchimento (43 caracteres); a página a guarda só na memória dela, e o servidor a guarda só na memória dele, com o pedido aceito (nunca no banco, e nunca no log). Todo `aceito` e todo `voltou` traz uma chave nova, e a anterior deixa de valer. Dando certo, o servidor responde `voltou`, com a chave nova, e o canal passa a ser o do participante: o `senha` e o `tela` valem nele, e o `tirado`, o `encerrada` e o `linkInvalido` chegam a ele (o canal antigo, se o servidor ainda o via aberto, é fechado). Para voltar à ligação, a página pede o `senha`, como depois de uma ligação que caiu. O `voltar` não precisa do servidor de vídeo. Ele falha de dois jeitos, e nos dois o servidor fecha o canal (código 1000) e conta uma falha do endereço, na janela das 20 tentativas do abrir (seção 12); o `voltar` que dá certo não conta:
+  - `{"tipo": "erro", "erro": "invalido"}`: participante desconhecido, chave errada, pedido que não está (ou já não está) aceito, ou participante que já saiu da memória do servidor (foi tirado, ou ficou fora da reunião sem senha até o servidor o esquecer);
+  - `{"tipo": "linkInvalido"}`: a reunião foi cancelada, deixou de valer, ou a naHora acabou.
+
+  Um `voltar` depois de um `pedir` no mesmo canal, um segundo `voltar`, ou um `pedir` depois do `voltar` é fora de ordem: `{"tipo": "erro", "erro": "invalido"}`, e o canal continua aberto. O canal que voltou não precisa mandar o `pedir`: o prazo de 2 minutos para o primeiro `pedir` também vale para o `voltar`, que o cumpre.
 - **Na reunião de teste,** o `pedir` responde `aceito` na hora, sem sala de espera. A primeira pessoa a começa.
 - **Quando o último colega sai da reunião,** mesmo com gente de fora ainda nela, **ou quando a reunião marcada para** (todos saíram), os pedidos que esperam voltam a `naoComecou`. Quando um colega volta a ela, eles voltam a `aguardando`, com 10 minutos de novo.
 
@@ -442,7 +449,7 @@ Do servidor para a página:
 |---|---|
 | Pessoas por reunião | 10, sem contar a tela compartilhada |
 | Reuniões ao mesmo tempo | 2 por padrão, de 1 a 20 na administração, em todo o servidor |
-| Tentativas de abrir | 20 por minuto por endereço, contando só as que não levam a uma reunião em que a pessoa possa entrar: o `entrar` do app que dá `404`, `outraEmpresa` ou `semReunioes`, junto com o abrir da página que falha. Passou disso, `429 tentativas`, até com um código certo. O `entrar` e o abrir que dão certo, e o `cheia`, o `servidorCheio` e o `servidorVideo` de um código bom, não contam nessas 20. O abrir da página que dá certo tem a janela dele: 60 por minuto por endereço, e o 61º recebe o mesmo `429 tentativas`. As duas janelas são separadas |
+| Tentativas de abrir | 20 por minuto por endereço, contando só as que não levam a uma reunião em que a pessoa possa entrar: o `entrar` do app que dá `404`, `outraEmpresa` ou `semReunioes`, junto com o abrir da página que falha e o `voltar` da página que falha (seção 10). Passou disso, `429 tentativas`, até com um código certo. O `entrar` e o abrir que dão certo, e o `cheia`, o `servidorCheio` e o `servidorVideo` de um código bom, não contam nessas 20. O abrir da página que dá certo tem a janela dele: 60 por minuto por endereço, e o 61º recebe o mesmo `429 tentativas`. As duas janelas são separadas |
 | A senha de uso único | 30 segundos, uma vez só, no relógio do servidor de vídeo |
 | A espera de quem é de fora | 10 minutos depois de o pedido chegar aos colegas |
 | A sala de espera | 50 pedidos esperando por reunião. O 51º `pedir` recebe `esperaCheia` |

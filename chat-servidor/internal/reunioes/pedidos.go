@@ -2,6 +2,7 @@ package reunioes
 
 import (
 	"context"
+	"crypto/subtle"
 	"slices"
 	"time"
 
@@ -35,6 +36,13 @@ type mensagem struct {
 type mensagemAceito struct {
 	Tipo string `json:"tipo"`
 	Acesso
+	Volta string `json:"volta"` // a chave de volta da página (o Voltar); só dela, o Acesso dos colegas não a leva
+}
+
+// mensagemVoltou é a resposta do Voltar: o canal é de novo o do participante, com a chave nova.
+type mensagemVoltou struct {
+	Tipo  string `json:"tipo"`
+	Volta string `json:"volta"`
 }
 
 type fase int
@@ -58,6 +66,7 @@ type Pedido struct {
 	desde   time.Time // desde quando ele é visível (relógio do chat)
 	seq     uint64
 	part    *participante // depois do aceito
+	volta   string        // a chave de volta da página, só na memória; vazia fora do aceito
 }
 
 // Pedir faz o pedido de quem é de fora, com o nome que a pessoa digitou (a regra do nome de uma pessoa; um nome
@@ -102,8 +111,8 @@ func (g *Gerente) Pedir(ctx context.Context, r banco.Reuniao, nome string, c Can
 			return nil, err
 		}
 		s.respondidos[p.id] = true
-		p.fase, p.part, part.pedido = aceito, part, p
-		g.mandar(c, mensagemAceito{Tipo: "aceito", Acesso: d.acesso(part.id, senha)})
+		p.fase, p.part, part.pedido, p.volta = aceito, part, p, segredo.NovoToken()
+		g.mandar(c, mensagemAceito{Tipo: "aceito", Acesso: d.acesso(part.id, senha), Volta: p.volta})
 	} else {
 		s.pedidos[p.id] = p
 		if s.temColega() {
@@ -119,8 +128,9 @@ func (g *Gerente) Pedir(ctx context.Context, r banco.Reuniao, nome string, c Can
 }
 
 // Desistir: a página fechou, ou a pessoa desistiu. Enquanto espera, o pedido sai, e os colegas que o viam recebem
-// o reuniaoPedidoFim; nada vai à página. Depois do aceito, ninguém sai da reunião: só a página deixa de receber.
-func (g *Gerente) Desistir(p *Pedido) {
+// o reuniaoPedidoFim; nada vai à página. Depois do aceito, ninguém sai da reunião: só a página deixa de receber, e
+// só se o canal que desiste ainda é o do pedido: depois de um Voltar, o canal velho que acaba não solta o novo.
+func (g *Gerente) Desistir(p *Pedido, c Canal) {
 	if p == nil {
 		return
 	}
@@ -135,10 +145,50 @@ func (g *Gerente) Desistir(p *Pedido) {
 			g.limpar(s)
 		}
 	case aceito:
-		p.canal = nil // o Varrer esquece o participante que não está na reunião nem tem senha pendente
+		if p.canal == c {
+			p.canal = nil // o Varrer esquece o participante que não está na reunião nem tem senha pendente
+		}
 	}
 	g.mu.Unlock()
 	g.despachar()
+}
+
+// Voltar devolve a página que perdeu o canal ao pedido aceito do participante, sem a sala de espera: com a chave de
+// volta do último aceito ou voltou (comparada em tempo constante), o canal c passa a ser o do pedido, e o que ele
+// tinha (a rede pode ter caído sem o servidor ver) é fechado. A chave gira: a nova vai ao canal no voltou, antes de qualquer outra
+// mensagem, e a velha deixa de valer. A reunião que não vale mais (cancelada, vencida, ou a naHora que acabou) dá ErrLinkInvalido; qualquer outra
+// recusa (participante desconhecido ou esquecido, pedido que não está aceito, chave errada) dá ErrForaDeOrdem. Não
+// confere o servidor de vídeo: só liga o canal.
+func (g *Gerente) Voltar(r banco.Reuniao, participante, volta string, c Canal) (*Pedido, string, error) {
+	agora := g.relogio.Agora()
+	g.mu.Lock()
+	if !r.Vale(agora.UnixMilli()) || g.fechada(r.Sala) {
+		g.mu.Unlock()
+		return nil, "", ErrLinkInvalido
+	}
+	var p *Pedido
+	if s := g.salas[r.Sala]; s != nil {
+		if part := s.participantes[participante]; part != nil {
+			p = part.pedido
+		}
+	}
+	if p == nil || p.fase != aceito || p.volta == "" || subtle.ConstantTimeCompare([]byte(p.volta), []byte(volta)) != 1 {
+		g.mu.Unlock()
+		return nil, "", ErrForaDeOrdem
+	}
+	if _, part := g.aceitoDe(p); part == nil || part.id != participante {
+		g.mu.Unlock()
+		return nil, "", ErrForaDeOrdem
+	}
+	if p.canal != nil && p.canal != c {
+		g.fechar(p.canal)
+	}
+	p.canal, p.volta = c, segredo.NovoToken()
+	nova := p.volta
+	g.mandar(c, mensagemVoltou{Tipo: "voltou", Volta: nova}) // na mesma trava: nenhum tirado passa na frente
+	g.mu.Unlock()
+	g.despachar()
+	return p, nova, nil
 }
 
 // DesistirEsperando é o desistir da página, sem cruzar com o aceito de um colega: numa trava só, retira o pedido que
@@ -183,8 +233,8 @@ func (g *Gerente) Aceitar(ctx context.Context, r banco.Reuniao, pessoaID int64, 
 			return err
 		}
 		g.tirarDaEspera(s, p)
-		p.fase, p.part, part.pedido = aceito, part, p
-		g.mandar(p.canal, mensagemAceito{Tipo: "aceito", Acesso: d.acesso(part.id, senha)})
+		p.fase, p.part, part.pedido, p.volta = aceito, part, p, segredo.NovoToken()
+		g.mandar(p.canal, mensagemAceito{Tipo: "aceito", Acesso: d.acesso(part.id, senha), Volta: p.volta})
 		return nil
 	})
 }
@@ -383,5 +433,5 @@ func (g *Gerente) responder(s *sala, p *Pedido, msg string) {
 		g.mandar(p.canal, mensagem{Tipo: msg})
 		g.fechar(p.canal)
 	}
-	p.fase, p.canal, p.nome = fim, nil, ""
+	p.fase, p.canal, p.nome, p.volta = fim, nil, "", ""
 }

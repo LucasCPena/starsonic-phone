@@ -1628,7 +1628,7 @@ func (c *canalQueVolta) Mandar(msg any) {
 	c.g.Contagem(c.sala)
 	c.canalFalso.Mandar(msg)
 	if emJSON(msg)["tipo"] == "recusado" {
-		c.g.Desistir(c.pedido.Load())
+		c.g.Desistir(c.pedido.Load(), c)
 	}
 }
 

@@ -223,7 +223,7 @@ func (g *Gerente) esquecer(s *sala, p *participante, msg string) {
 			g.mandar(ped.canal, mensagem{Tipo: msg})
 			g.fechar(ped.canal)
 		}
-		ped.fase, ped.canal, ped.part, ped.nome = fim, nil, nil, ""
+		ped.fase, ped.canal, ped.part, ped.nome, ped.volta = fim, nil, nil, "", ""
 	}
 }
 

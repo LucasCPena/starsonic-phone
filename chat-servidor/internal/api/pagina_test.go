@@ -1047,6 +1047,15 @@ func TestPagina_SemNomesNoLog(t *testing.T) {
 	c.a.CanalDaPagina("bilhete-que-nao-vale", c.a.Base)
 	c.a.CanalDaPagina(bilhete, "https://mal.example")
 	pagina.Close(websocket.StatusNormalClosure, "")
+	// A página volta com a chave (e uma vez com uma chave errada): nem as chaves nem o participante vão ao log.
+	part := aceito["participante"].(string)
+	volta := c.canal(t, r.Codigo)
+	daPagina(t, volta, map[string]any{"tipo": "voltar", "participante": part, "volta": aceito["volta"]})
+	voltou := aPaginaTipo(t, volta, "voltou")
+	errada := c.canal(t, r.Codigo)
+	daPagina(t, errada, map[string]any{"tipo": "voltar", "participante": part, "volta": "chave-errada-que-ninguem-tem"})
+	aPaginaErro(t, errada, "invalido")
+	volta.Close(websocket.StatusNormalClosure, "")
 	// O log do pedido do canal sai quando o manipulador volta, e é a linha que o teste quer ver.
 	prazo := time.Now().Add(5 * time.Second)
 	for !strings.Contains(log.String(), "status=101") {
@@ -1067,10 +1076,209 @@ func TestPagina_SemNomesNoLog(t *testing.T) {
 		"a senha":        aceito["senha"].(string),
 		"a senha nova":   nova["senha"].(string),
 		"o participante": aceito["participante"].(string),
+		"a volta":        aceito["volta"].(string),
+		"a volta nova":   voltou["volta"].(string),
+		"a volta errada": "chave-errada-que-ninguem-tem",
 	}
 	for o, s := range segredos {
 		if strings.Contains(texto, s) {
 			t.Fatalf("o log tem %s (%q):\n%s", o, s, texto)
 		}
 	}
+}
+
+// ---------- A chave de volta ----------
+
+// voltaDoCanal abre um canal novo (novo bilhete) e manda o voltar.
+func (c *cenaR) voltaDoCanal(t *testing.T, codigo, participante string, volta any) *websocket.Conn {
+	t.Helper()
+	conn := c.canal(t, codigo)
+	daPagina(t, conn, map[string]any{"tipo": "voltar", "participante": participante, "volta": volta})
+	return conn
+}
+
+func esperarFechamento(t *testing.T, conn *websocket.Conn) {
+	t.Helper()
+	if cod := apitest.Fechamento(t, conn); cod != websocket.StatusNormalClosure {
+		t.Fatalf("o canal fechou com %d; queria 1000", cod)
+	}
+}
+
+func TestCanal_Voltar(t *testing.T) {
+	t.Run("o aceito traz a chave, e o canal novo volta com ela", func(t *testing.T) {
+		c := novaCenaR(t)
+		r := c.marcada(t, c.kAna)
+		carlos := c.colegaNaReuniao(t, r.Codigo)
+		pagina := c.canal(t, r.Codigo)
+		m := c.aceita(t, r.Codigo, carlos, pagina, "Maria Lima")
+		part, _ := m["participante"].(string)
+		volta, _ := m["volta"].(string)
+		if len(volta) != 43 {
+			t.Fatalf("a volta do aceito é %q; queria 43 caracteres", volta)
+		}
+		c.entrou(t, r.Codigo, part)
+		pagina.Close(websocket.StatusNormalClosure, "")
+
+		nova := c.voltaDoCanal(t, r.Codigo, part, volta)
+		voltou := aPaginaTipo(t, nova, "voltou")
+		v2, _ := voltou["volta"].(string)
+		if len(voltou) != 2 || len(v2) != 43 || v2 == volta {
+			t.Fatalf("voltou = %v; queria uma chave nova de 43 caracteres", voltou)
+		}
+		daPagina(t, nova, map[string]any{"tipo": "senha"})
+		if s := aPaginaTipo(t, nova, "senha"); cargaDaSenha(t, s["senha"].(string))["participante"] != part {
+			t.Fatalf("a senha é de outro participante: %v", s)
+		}
+
+		// A chave velha parou de valer; a nova vale (e gira de novo).
+		velha := c.voltaDoCanal(t, r.Codigo, part, volta)
+		aPaginaErro(t, velha, "invalido")
+		esperarFechamento(t, velha)
+
+		// O Desistir do canal velho, que acaba depois do voltar, não solta o canal novo: o tirado chega a ele.
+		time.Sleep(200 * time.Millisecond)
+		resp := c.a.Pedir(c.kCarlos, "POST", "/api/v1/reunioes/"+r.Codigo+"/tirar", map[string]string{"participante": part})
+		if resp.StatusCode != http.StatusNoContent {
+			t.Fatalf("tirar respondeu %d", resp.StatusCode)
+		}
+		aPaginaTipo(t, nova, "tirado")
+		esperarFechamento(t, nova)
+	})
+
+	t.Run("a tela vale no canal que voltou", func(t *testing.T) {
+		c := novaCenaR(t)
+		r := c.marcada(t, c.kAna)
+		carlos := c.colegaNaReuniao(t, r.Codigo)
+		pagina := c.canal(t, r.Codigo)
+		m := c.aceita(t, r.Codigo, carlos, pagina, "Maria Lima")
+		part, _ := m["participante"].(string)
+		c.entrou(t, r.Codigo, part)
+		pagina.Close(websocket.StatusNormalClosure, "")
+		nova := c.voltaDoCanal(t, r.Codigo, part, m["volta"])
+		aPaginaTipo(t, nova, "voltou")
+		daPagina(t, nova, map[string]any{"tipo": "tela"})
+		aPaginaTipo(t, nova, "tela")
+	})
+
+	t.Run("sem o vídeo no ar o voltar ainda vale", func(t *testing.T) {
+		c := novaCenaR(t)
+		r := c.marcada(t, c.kAna)
+		carlos := c.colegaNaReuniao(t, r.Codigo)
+		pagina := c.canal(t, r.Codigo)
+		m := c.aceita(t, r.Codigo, carlos, pagina, "Maria Lima")
+		c.a.Video.DefinirNoAr(false)
+		nova := c.voltaDoCanal(t, r.Codigo, m["participante"].(string), m["volta"])
+		aPaginaTipo(t, nova, "voltou")
+	})
+
+	t.Run("uma chave errada é invalido, fecha o canal e conta uma falha do endereço", func(t *testing.T) {
+		c := novaCenaR(t)
+		r := c.marcada(t, c.kAna)
+		carlos := c.colegaNaReuniao(t, r.Codigo)
+		pagina := c.canal(t, r.Codigo)
+		m := c.aceita(t, r.Codigo, carlos, pagina, "Maria Lima")
+		part, _ := m["participante"].(string)
+		for i := range 19 {
+			esperarErro(t, c.a.Pedir("", "POST", "/api/v1/pagina/reunioes/"+codigoQueNaoExiste(i), nil), 404, "naoEncontrado")
+		}
+		errada := c.voltaDoCanal(t, r.Codigo, part, "chave-errada")
+		aPaginaErro(t, errada, "invalido")
+		esperarFechamento(t, errada)
+		// 19 + 1 = 20: a janela das falhas está cheia, e o abrir chega ao 429 uma falha antes.
+		esperarErro(t, c.a.Pedir("", "POST", "/api/v1/pagina/reunioes/"+r.Codigo, nil), 429, "tentativas")
+	})
+
+	t.Run("o voltar que dá certo não conta falha", func(t *testing.T) {
+		c := novaCenaR(t)
+		r := c.marcada(t, c.kAna)
+		carlos := c.colegaNaReuniao(t, r.Codigo)
+		pagina := c.canal(t, r.Codigo)
+		m := c.aceita(t, r.Codigo, carlos, pagina, "Maria Lima")
+		part, _ := m["participante"].(string)
+		for i := range 19 {
+			esperarErro(t, c.a.Pedir("", "POST", "/api/v1/pagina/reunioes/"+codigoQueNaoExiste(i), nil), 404, "naoEncontrado")
+		}
+		nova := c.voltaDoCanal(t, r.Codigo, part, m["volta"])
+		aPaginaTipo(t, nova, "voltou")
+		if status, _ := c.a.AbrirPagina(r.Codigo); status != http.StatusOK {
+			t.Fatalf("depois de 19 falhas e um voltar bom, o abrir deu %d", status)
+		}
+	})
+
+	t.Run("participante desconhecido, ou o pedido ainda na espera, é invalido", func(t *testing.T) {
+		c := novaCenaR(t)
+		r := c.marcada(t, c.kAna)
+		carlos := c.colegaNaReuniao(t, r.Codigo)
+		espera := c.canal(t, r.Codigo)
+		daPagina(t, espera, map[string]any{"tipo": "pedir", "nome": "Bia Ramos"})
+		aPaginaTipo(t, espera, "aguardando")
+		id := pedidoDe(t, carlos, "Bia Ramos")
+		for _, part := range []string{"0011223344556677", id, "", "não é hex"} {
+			conn := c.voltaDoCanal(t, r.Codigo, part, "x")
+			aPaginaErro(t, conn, "invalido")
+			esperarFechamento(t, conn)
+		}
+		// O pedido continua esperando.
+		c.aceitar(t, c.kCarlos, r.Codigo, id)
+		aPaginaTipo(t, espera, "aceito")
+	})
+
+	t.Run("a reunião cancelada é linkInvalido, fecha o canal e conta uma falha", func(t *testing.T) {
+		c := novaCenaR(t)
+		r := c.marcada(t, c.kAna)
+		carlos := c.colegaNaReuniao(t, r.Codigo)
+		pagina := c.canal(t, r.Codigo)
+		m := c.aceita(t, r.Codigo, carlos, pagina, "Maria Lima")
+		part, _ := m["participante"].(string)
+		nova := c.canal(t, r.Codigo) // o bilhete vale a reunião de antes do cancelamento
+		if resp := c.a.Pedir(c.kAna, "DELETE", "/api/v1/reunioes/"+r.Codigo, nil); resp.StatusCode != http.StatusNoContent {
+			t.Fatalf("cancelar respondeu %d", resp.StatusCode)
+		}
+		pagina.Close(websocket.StatusNormalClosure, "")
+		daPagina(t, nova, map[string]any{"tipo": "voltar", "participante": part, "volta": m["volta"]})
+		got := aPagina(t, nova)
+		if got["tipo"] != "linkInvalido" || len(got) != 1 {
+			t.Fatalf("a página recebeu %v; queria linkInvalido", got)
+		}
+		esperarFechamento(t, nova)
+	})
+
+	t.Run("fora de ordem: depois do pedir, um segundo voltar, e o pedir depois do voltar", func(t *testing.T) {
+		c := novaCenaR(t)
+		r := c.marcada(t, c.kAna)
+		carlos := c.colegaNaReuniao(t, r.Codigo)
+		pagina := c.canal(t, r.Codigo)
+		m := c.aceita(t, r.Codigo, carlos, pagina, "Maria Lima")
+		part, _ := m["participante"].(string)
+
+		// O voltar depois do pedir, no mesmo canal: invalido, e o canal continua aberto.
+		daPagina(t, pagina, map[string]any{"tipo": "voltar", "participante": part, "volta": m["volta"]})
+		aPaginaErro(t, pagina, "invalido")
+		daPagina(t, pagina, map[string]any{"tipo": "senha"})
+		aPaginaTipo(t, pagina, "senha")
+
+		// A chave não foi gasta pelo voltar fora de ordem.
+		nova := c.voltaDoCanal(t, r.Codigo, part, m["volta"])
+		voltou := aPaginaTipo(t, nova, "voltou")
+		daPagina(t, nova, map[string]any{"tipo": "voltar", "participante": part, "volta": voltou["volta"]})
+		aPaginaErro(t, nova, "invalido")
+		daPagina(t, nova, map[string]any{"tipo": "pedir", "nome": "Maria Lima"})
+		aPaginaErro(t, nova, "invalido")
+		daPagina(t, nova, map[string]any{"tipo": "senha"})
+		aPaginaTipo(t, nova, "senha")
+	})
+
+	t.Run("o canal que voltou não é fechado por esperar o pedir", func(t *testing.T) {
+		api.AjustarPedirEspera(t, 300*time.Millisecond)
+		c := novaCenaR(t)
+		r := c.marcada(t, c.kAna)
+		carlos := c.colegaNaReuniao(t, r.Codigo)
+		pagina := c.canal(t, r.Codigo)
+		m := c.aceita(t, r.Codigo, carlos, pagina, "Maria Lima")
+		nova := c.voltaDoCanal(t, r.Codigo, m["participante"].(string), m["volta"])
+		aPaginaTipo(t, nova, "voltou")
+		time.Sleep(600 * time.Millisecond)
+		daPagina(t, nova, map[string]any{"tipo": "senha"})
+		aPaginaTipo(t, nova, "senha")
+	})
 }

@@ -352,35 +352,38 @@ func (s *servidor) canalDaPagina(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer s.canais.tirar(c)
-	s.servirCanal(c, reuniao)
+	s.servirCanal(c, reuniao, limites.Endereco(r))
 }
 
 // estadoDaPagina é o que a leitura do canal sabe da página: o pedido, depois do pedir.
 type estadoDaPagina struct {
 	reuniao  banco.Reuniao
-	pedido   *reunioes.Pedido // nil até o pedir dar certo; o pedir vale uma vez por canal
+	endereco string           // quem abriu o canal, para a janela das falhas do voltar
+	pedido   *reunioes.Pedido // nil até o pedir ou o voltar darem certo; vale uma vez por canal
+	pediu    bool             // o canal já recebeu um pedir: o voltar só vale como a primeira mensagem
 	desistiu bool             // o Desistir já foi chamado
 }
 
 // desistir chama o Desistir do gerente, uma vez só por canal.
-func (s *servidor) desistir(st *estadoDaPagina) {
+// O canal que desiste vai junto: depois de um voltar, o Desistir do canal velho não solta o canal novo.
+func (s *servidor) desistir(st *estadoDaPagina, c *canalPagina) {
 	if !st.desistiu {
 		st.desistiu = true
-		s.gerente.Desistir(st.pedido) // nil (nenhum pedido) não faz nada
+		s.gerente.Desistir(st.pedido, c) // nil (nenhum pedido) não faz nada
 	}
 }
 
 // servirCanal lê as mensagens da página até o canal acabar. Quem quer que feche o canal (a página, o servidor depois
 // de uma resposta final, a fila cheia, o ping, o desligamento), a leitura volta, e o gerente recebe o Desistir uma vez:
 // ele nunca guarda uma página que foi embora.
-func (s *servidor) servirCanal(c *canalPagina, reuniao banco.Reuniao) {
-	st := &estadoDaPagina{reuniao: reuniao}
+func (s *servidor) servirCanal(c *canalPagina, reuniao banco.Reuniao, endereco string) {
+	st := &estadoDaPagina{reuniao: reuniao, endereco: endereco}
 	var goroutines sync.WaitGroup
 	goroutines.Go(c.escrever)
 	goroutines.Go(c.pingar)
 	goroutines.Go(c.esperarPedir)
 	defer func() {
-		s.desistir(st)
+		s.desistir(st, c)
 		c.derrubar()
 		c.conn.CloseNow()
 		goroutines.Wait()
@@ -419,8 +422,10 @@ func erroDoCanal(erro string) mensagemErro { return mensagemErro{Tipo: "erro", E
 // mensagemDaPagina trata uma mensagem da página.
 func (s *servidor) mensagemDaPagina(c *canalPagina, st *estadoDaPagina, tipo websocket.MessageType, dados []byte) {
 	var m struct {
-		Tipo string `json:"tipo"`
-		Nome string `json:"nome"`
+		Tipo         string `json:"tipo"`
+		Nome         string `json:"nome"`
+		Participante string `json:"participante"`
+		Volta        string `json:"volta"`
 	}
 	if tipo != websocket.MessageText || json.Unmarshal(dados, &m) != nil {
 		c.Mandar(erroDoCanal("invalido"))
@@ -429,6 +434,7 @@ func (s *servidor) mensagemDaPagina(c *canalPagina, st *estadoDaPagina, tipo web
 	switch m.Tipo {
 	case "pedir":
 		c.pediuUma.Do(func() { close(c.pediu) })
+		st.pediu = true
 		if st.pedido != nil {
 			c.Mandar(erroDoCanal("invalido"))
 			return
@@ -439,6 +445,31 @@ func (s *servidor) mensagemDaPagina(c *canalPagina, st *estadoDaPagina, tipo web
 			return
 		}
 		st.pedido = p
+	case "voltar":
+		// A página que perdeu o canal volta ao pedido aceito, com a chave do aceito (ou do voltou anterior), sem a sala
+		// de espera. Só vale como a primeira mensagem do canal: depois de um pedir, de outro voltar, ou de um pedir
+		// depois do voltar, é fora de ordem e o canal fica. O voltou, com a chave nova, o gerente manda na mesma
+		// trava que liga o canal, antes de qualquer outra mensagem. Quem falha (chave errada, pessoa esquecida,
+		// reunião que acabou) conta uma falha do endereço, na janela do abrir, e o canal fecha. Nada disso vai ao log.
+		c.pediuUma.Do(func() { close(c.pediu) })
+		if st.pediu || st.pedido != nil {
+			c.Mandar(erroDoCanal("invalido"))
+			return
+		}
+		st.pediu = true
+		p, _, err := s.gerente.Voltar(st.reuniao, m.Participante, m.Volta, c)
+		switch {
+		case err == nil:
+			st.pedido = p
+		case errors.Is(err, reunioes.ErrLinkInvalido):
+			s.aberturas.Contar(st.endereco, 1)
+			c.Mandar(mensagemSimples{Tipo: "linkInvalido"})
+			c.Fechar()
+		default: // ErrForaDeOrdem: o voltar não tem outro erro
+			s.aberturas.Contar(st.endereco, 1)
+			c.Mandar(erroDoCanal("invalido"))
+			c.Fechar()
+		}
 	case "desistir":
 		// A última palavra da página sobre um pedido que espera: o pedido sai (um Desistir), e o canal fecha com 1000,
 		// sem mandar nada. Sem pedido, ou com ele já aceito (ou respondido), é fora de ordem e nada muda; depois do
