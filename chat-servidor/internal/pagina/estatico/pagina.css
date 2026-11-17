@@ -1,1 +1,1172 @@
-/* Estilos da página da reunião (a Task 6 preenche). */
+/* A página da reunião: o visual do quadro aprovado "Starsonic — reunião no navegador". Tudo vem daqui: o HTML não
+   tem estilo dentro dele, para a CSP valer sem exceção. Acima de 600 px de largura é o PC; abaixo, o celular. */
+
+@font-face {
+  font-family: "Plus Jakarta Sans";
+  src: url("/admin/estatico/PlusJakartaSans-Variable.woff2") format("woff2");
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --fundo: #f5f7fb;
+  --texto: #0a0e1a;
+  --apagado: #5b6478;
+  --marinho: #0c2671;
+  --topo: #070b18;
+  --topo-rotulo: #b9c4e6;
+  --ciano: #00c2cb;
+  --sobre-ciano: #03222a;
+  --borda: #e7eaf2;
+  --borda-forte: #cfd5e3;
+  --erro: #a1251c;
+  --erro-fundo: #fdecea;
+  --erro-texto: #7a1c15;
+  --alerta: #8a4b00;
+  --alerta-fundo: #fff1dc;
+  --azul-fundo: #e6edff;
+  --sair: #c23b3b;
+  --imagem: #1b2333;
+  --reuniao: #0a0e1a;
+  --reuniao-barra: #070b18;
+  --reuniao-linha: #161d33;
+  --reuniao-botao: #1c2540;
+  --reuniao-borda: #2c3757;
+  --branco: #ffffff;
+  --fonte: "Plus Jakarta Sans", system-ui, sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  height: 100%;
+}
+
+body {
+  min-height: 100%;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  font-family: var(--fonte);
+  background: var(--fundo);
+  color: var(--texto);
+}
+
+[hidden] {
+  display: none !important;
+}
+
+:focus-visible {
+  outline: 3px solid var(--ciano);
+  outline-offset: 2px;
+}
+
+/* O título recebe o foco da página, não do teclado: sem o contorno. */
+h1[tabindex="-1"]:focus {
+  outline: none;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+.so-leitor {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.sprite {
+  display: none;
+}
+
+/* Os ícones de traço, do tamanho que o quadro dá a cada um. */
+.icone {
+  flex-shrink: 0;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.icone-14 { width: 14px; height: 14px; }
+.icone-16 { width: 16px; height: 16px; }
+.icone-18 { width: 18px; height: 18px; }
+.icone-20 { width: 20px; height: 20px; }
+.icone-24 { width: 24px; height: 24px; }
+.icone-28 { width: 28px; height: 28px; }
+.icone-30 { width: 30px; height: 30px; }
+.icone-40 { width: 40px; height: 40px; }
+
+/* A faixa de cima, com o logo e o "Reunião". */
+.topo {
+  flex-shrink: 0;
+  background: var(--topo);
+  color: var(--branco);
+}
+
+.topo-dentro {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 14px 24px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+}
+
+.logo {
+  display: block;
+  height: 40px;
+  width: auto;
+}
+
+.topo-rotulo {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--topo-rotulo);
+}
+
+main {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.tela {
+  flex: 1 0 auto;
+  width: 100%;
+}
+
+/* Na reunião, a faixa de cima é a dela. */
+.na-reuniao {
+  background: var(--reuniao);
+}
+
+.na-reuniao .topo {
+  display: none;
+}
+
+/* ---- Os botões: pílulas de 48 px; o ciano é a ação principal. ---- */
+
+.botao {
+  min-height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 12px 22px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.botao:disabled {
+  cursor: default;
+}
+
+.botao-ciano {
+  background: var(--ciano);
+  color: var(--sobre-ciano);
+}
+
+.botao-ciano:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+.botao-ciano:disabled {
+  background: #c9eef0;
+  color: #4a6266;
+}
+
+.botao-contorno {
+  padding: 12px 28px;
+  border-color: var(--marinho);
+  background: var(--branco);
+  color: var(--marinho);
+}
+
+.botao-contorno:hover {
+  background: var(--azul-fundo);
+}
+
+.botao-erro {
+  flex-shrink: 0;
+  min-height: 44px;
+  gap: 8px;
+  padding: 10px 20px;
+  border-color: var(--erro);
+  background: var(--branco);
+  color: var(--erro);
+  font-size: 14.5px;
+}
+
+.botao-erro:hover {
+  background: var(--erro-fundo);
+}
+
+/* O Microfone e a Câmera: branco ligado, vermelho desligado, cinza sem o aparelho. */
+.alternar {
+  border-color: var(--borda-forte);
+  background: var(--branco);
+  color: var(--marinho);
+}
+
+.alternar[aria-pressed="false"] {
+  border-color: var(--erro);
+  background: var(--erro);
+  color: var(--branco);
+}
+
+.alternar:disabled {
+  border-color: #d6dbe6;
+  background: #eef1f6;
+  color: var(--apagado);
+}
+
+.alternar[aria-pressed="true"] .icone-desligado,
+.alternar:not([aria-pressed="true"]) .icone-ligado {
+  display: none;
+}
+
+.alternadores {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+}
+
+/* ---- A entrada ---- */
+
+.entrada {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 48px 24px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 28px;
+}
+
+.entrada:has(.aviso-acesso:not([hidden])) {
+  padding-top: 32px;
+}
+
+/* O aviso de acesso, por cima das duas colunas. */
+.aviso-acesso {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 18px 20px;
+  border-radius: 16px;
+  background: var(--erro-fundo);
+  color: var(--erro-texto);
+}
+
+.aviso-acesso > .icone {
+  margin-top: 2px;
+}
+
+.aviso-acesso-texto {
+  flex: 1 1 420px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.aviso-acesso-texto strong {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.aviso-acesso-texto span {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* Duas colunas: a imagem com os botões, e o título com o formulário, no meio da altura da imagem. */
+.entrada-corpo {
+  display: grid;
+  grid-template-columns: minmax(0, 520fr) minmax(0, 360fr);
+  grid-template-rows: 1fr auto auto 1fr;
+  grid-template-areas:
+    "imagem ."
+    "imagem titulo"
+    "imagem form"
+    "imagem .";
+  column-gap: clamp(24px, 4vw, 48px);
+}
+
+.entrada-titulo {
+  grid-area: titulo;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.entrada-imagem {
+  grid-area: imagem;
+  align-self: center;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.entrada-form {
+  grid-area: form;
+  margin-top: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.sobretitulo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--marinho);
+}
+
+.traco {
+  display: block;
+  flex-shrink: 0;
+  width: 22px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--ciano);
+}
+
+.entrada h1 {
+  font-size: 30px;
+  line-height: 1.2;
+  font-weight: 800;
+  text-wrap: balance;
+}
+
+/* A imagem da câmera, 16:9: o vídeo, ou o aviso de câmera desligada ou sem acesso. */
+.imagem {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 18px;
+  overflow: hidden;
+  background: var(--imagem);
+}
+
+.previa {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.imagem-vazia {
+  position: absolute;
+  inset: 0;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 16px;
+  color: var(--topo-rotulo);
+  font-size: 15px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.imagem[data-imagem="desligada"] .imagem-desligada,
+.imagem[data-imagem="indisponivel"] .imagem-indisponivel {
+  display: flex;
+}
+
+.imagem:not([data-imagem="ligada"]) .previa,
+.imagem[data-imagem="indisponivel"] .imagem-rotulo {
+  visibility: hidden;
+}
+
+.imagem-rotulo {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(7, 11, 24, 0.72);
+  color: var(--branco);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.dica,
+.ajuda {
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--apagado);
+}
+
+.dica {
+  text-align: center;
+}
+
+.campo {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.campo label {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.campo input {
+  height: 50px;
+  padding: 0 16px;
+  border: 1px solid var(--borda-forte);
+  border-radius: 12px;
+  background: var(--branco);
+  color: var(--texto);
+  font-family: inherit;
+  font-size: 16px;
+}
+
+.campo input[aria-invalid="true"] {
+  border-color: var(--erro);
+}
+
+.erro-campo {
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--erro);
+}
+
+.pedir {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.botao-pedir {
+  min-height: 50px;
+  padding: 13px 28px;
+  font-size: 16px;
+}
+
+.gravado {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  color: var(--apagado);
+}
+
+/* ---- A espera, a reunião que não começou, o entrando e os avisos: um cartão no meio da página. ---- */
+
+.espera {
+  padding: 48px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cartao {
+  width: 100%;
+  max-width: 620px;
+  padding: 40px 36px;
+  border: 1px solid var(--borda);
+  border-radius: 22px;
+  background: var(--branco);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  text-align: center;
+}
+
+.cartao-textos {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cartao h1 {
+  font-size: 28px;
+  line-height: 1.2;
+  font-weight: 800;
+  text-wrap: balance;
+}
+
+.cartao-textos p {
+  font-size: 15.5px;
+  line-height: 1.55;
+  color: var(--apagado);
+  text-wrap: pretty;
+}
+
+.cartao-textos .linha-reuniao {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--marinho);
+}
+
+/* O círculo que gira, com o ícone no meio. */
+.girando {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--marinho);
+}
+
+.gira {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 4px solid #dff8f9;
+  border-top-color: var(--ciano);
+  animation: gira 1.4s linear infinite;
+}
+
+@keyframes gira {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.circulo {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.circulo-azul {
+  background: var(--azul-fundo);
+  color: var(--marinho);
+}
+
+.circulo-erro {
+  background: var(--erro-fundo);
+  color: var(--erro);
+}
+
+.circulo-ambar {
+  background: var(--alerta-fundo);
+  color: var(--alerta);
+}
+
+/* Quem espera: a imagem pequena, o nome e os dois botões. */
+.pessoa {
+  width: 100%;
+  padding: 16px;
+  border-radius: 16px;
+  background: var(--fundo);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+}
+
+.pessoa-imagem {
+  position: relative;
+  flex-shrink: 0;
+  width: 160px;
+  aspect-ratio: 16 / 9;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--imagem);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--topo-rotulo);
+}
+
+.pessoa-imagem .previa {
+  position: absolute;
+  inset: 0;
+}
+
+.pessoa-imagem[data-imagem="ligada"] .pessoa-sem-imagem,
+.pessoa-imagem:not([data-imagem="ligada"]) .previa {
+  display: none;
+}
+
+.pessoa-dados {
+  flex: 1 1 200px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  text-align: left;
+}
+
+.pessoa-nome {
+  max-width: 100%;
+  font-size: 16px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.alternadores-pequenos {
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+.alternadores-pequenos .botao {
+  min-height: 44px;
+  gap: 8px;
+  padding: 10px 16px;
+  font-size: 14px;
+}
+
+.como-entra {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 18px;
+  border-radius: 999px;
+  background: var(--fundo);
+  font-size: 14.5px;
+  color: #3a4256;
+  overflow-wrap: anywhere;
+}
+
+.como-entra strong {
+  font-weight: 700;
+  color: var(--texto);
+}
+
+/* ---- A reunião: o fundo escuro, o mosaico 16:9 e os controles numa barra embaixo. ---- */
+
+.tela-reuniao {
+  flex: 1 0 auto;
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--reuniao);
+  color: var(--branco);
+}
+
+.reuniao-topo {
+  flex-shrink: 0;
+  padding: 12px 24px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  background: var(--reuniao-barra);
+  border-bottom: 1px solid var(--reuniao-linha);
+}
+
+.reuniao-topo .logo {
+  height: 32px;
+}
+
+.divisor {
+  display: block;
+  width: 1px;
+  height: 24px;
+  background: var(--reuniao-borda);
+}
+
+.reuniao-topo h1 {
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.selo-gravado,
+.selo-tela {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+}
+
+.selo-gravado {
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--topo-rotulo);
+}
+
+.selo-tela {
+  gap: 8px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: var(--ciano);
+  color: var(--sobre-ciano);
+  font-size: 13.5px;
+  font-weight: 700;
+}
+
+/* O palco: a moldura 16:9 do mosaico, do maior tamanho que cabe, até 1120 px. */
+.palco {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 12px 24px;
+  container-type: size;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.moldura {
+  position: relative;
+  width: min(100cqw, 1120px, 100cqh * 16 / 9);
+  aspect-ratio: 16 / 9;
+}
+
+#mosaico {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 12px;
+  background: var(--reuniao-barra);
+  object-fit: contain;
+}
+
+/* A conexão caída: por cima do mosaico; os controles continuam embaixo. */
+.caiu {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  border-radius: 12px;
+  background: rgba(7, 11, 24, 0.72);
+}
+
+.caiu-cartao {
+  width: 100%;
+  max-width: 420px;
+  padding: 24px;
+  border-radius: 18px;
+  background: var(--branco);
+  color: var(--texto);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+}
+
+.caiu-cartao h2 {
+  font-size: 18px;
+  line-height: 1.3;
+  font-weight: 700;
+  text-wrap: balance;
+}
+
+.caiu-cartao p {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--apagado);
+}
+
+.girando-ambar {
+  width: 44px;
+  height: 44px;
+  color: var(--alerta);
+}
+
+.girando-ambar .gira {
+  border-width: 3px;
+  border-color: var(--alerta-fundo);
+  border-top-color: #c07a12;
+}
+
+.gire {
+  display: none;
+}
+
+.controles {
+  flex-shrink: 0;
+  padding: 14px 24px 18px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+  background: var(--reuniao-barra);
+  border-top: 1px solid var(--reuniao-linha);
+}
+
+.controle {
+  min-height: 52px;
+  border-color: var(--reuniao-borda);
+  background: var(--reuniao-botao);
+  color: var(--branco);
+}
+
+.controle:hover:not(:disabled) {
+  filter: brightness(1.15);
+}
+
+.controle.alternar[aria-pressed="false"] {
+  border-color: var(--sair);
+  background: var(--erro);
+}
+
+.controle:disabled,
+.controle.alternar:disabled {
+  border-color: var(--reuniao-borda);
+  background: var(--reuniao-botao);
+  color: #8b95b3;
+}
+
+.controle-parar {
+  border-color: var(--ciano);
+  background: var(--ciano);
+  color: var(--sobre-ciano);
+}
+
+.controle-sair {
+  padding: 12px 24px;
+  border-color: var(--sair);
+  background: var(--sair);
+}
+
+/* ---- O celular: abaixo de 600 px, uma coluna só. ---- */
+
+@media (max-width: 600px) {
+  .topo-dentro {
+    padding: 12px 20px;
+    gap: 12px;
+  }
+
+  .logo {
+    height: 30px;
+  }
+
+  .topo-rotulo {
+    font-size: 13.5px;
+  }
+
+  .entrada {
+    padding: 22px 20px;
+    justify-content: flex-start;
+    gap: 16px;
+  }
+
+  .entrada:has(.aviso-acesso:not([hidden])) {
+    padding-top: 22px;
+  }
+
+  .aviso-acesso {
+    padding: 16px;
+  }
+
+  .aviso-acesso-texto {
+    flex-basis: 220px;
+  }
+
+  /* O título, a imagem, os botões e o formulário, um embaixo do outro. */
+  .entrada-corpo {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto;
+    grid-template-areas:
+      "titulo"
+      "imagem"
+      "form";
+    row-gap: 16px;
+  }
+
+  .entrada-titulo {
+    gap: 8px;
+  }
+
+  .sobretitulo {
+    gap: 8px;
+    font-size: 12px;
+  }
+
+  .traco {
+    width: 18px;
+  }
+
+  .entrada h1 {
+    font-size: 24px;
+  }
+
+  .entrada-imagem {
+    gap: 16px;
+  }
+
+  .imagem {
+    border-radius: 16px;
+  }
+
+  .imagem-vazia {
+    gap: 8px;
+    font-size: 14px;
+  }
+
+  .imagem-vazia .icone {
+    width: 30px;
+    height: 30px;
+  }
+
+  .imagem-rotulo {
+    left: 10px;
+    bottom: 10px;
+    padding: 4px 10px;
+    font-size: 12.5px;
+  }
+
+  /* Os dois botões lado a lado, do mesmo tamanho. */
+  .entrada .alternadores {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .entrada .alternar {
+    gap: 8px;
+    padding: 10px 12px;
+    font-size: 14.5px;
+  }
+
+  .entrada-form {
+    margin-top: 0;
+    gap: 16px;
+  }
+
+  .campo {
+    gap: 6px;
+  }
+
+  .ajuda,
+  .dica {
+    font-size: 13px;
+    line-height: 1.45;
+  }
+
+  .pedir {
+    align-items: stretch;
+  }
+
+  .botao-pedir {
+    width: 100%;
+    min-height: 52px;
+    padding: 13px 24px;
+  }
+
+  .gravado {
+    justify-content: center;
+    font-size: 13px;
+  }
+
+  /* A espera do celular: sem o cartão, e o Desistir na largura toda, embaixo. */
+  .espera {
+    padding: 40px 24px 28px;
+    align-items: stretch;
+  }
+
+  .cartao {
+    max-width: none;
+    padding: 0;
+    border: 0;
+    background: none;
+  }
+
+  .cartao h1 {
+    font-size: 24px;
+  }
+
+  .cartao-textos p {
+    font-size: 15px;
+  }
+
+  .cartao-textos .linha-reuniao {
+    font-size: 13.5px;
+  }
+
+  .pessoa {
+    flex-wrap: nowrap;
+    align-items: flex-start;
+    gap: 14px;
+    padding: 14px;
+    border: 1px solid var(--borda);
+    background: var(--branco);
+  }
+
+  .pessoa-imagem {
+    width: 112px;
+  }
+
+  .pessoa-nome {
+    font-size: 15.5px;
+  }
+
+  /* Sem o cartão, a pílula do nome fica branca, como a caixa de quem espera. */
+  .como-entra {
+    border: 1px solid var(--borda);
+    background: var(--branco);
+  }
+
+  .botao-desistir,
+  .cartao > .botao-ciano {
+    width: 100%;
+    min-height: 52px;
+    margin-top: auto;
+    font-size: 16px;
+  }
+
+  /* A reunião do celular: o mosaico na largura toda, e os três controles numa grade, com o ícone sobre o rótulo. */
+  .reuniao-topo {
+    flex-wrap: nowrap;
+    padding: 12px 18px;
+    gap: 12px;
+  }
+
+  .reuniao-topo .logo {
+    height: 26px;
+  }
+
+  .divisor,
+  .selo-gravado {
+    display: none;
+  }
+
+  .reuniao-topo h1 {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 14px;
+  }
+
+  .palco {
+    margin: 0 8px;
+  }
+
+  #mosaico,
+  .caiu {
+    border-radius: 8px;
+  }
+
+  /* No celular em pé, a moldura tem 210 px de altura: o cartão da conexão caída encolhe. */
+  .caiu {
+    padding: 8px;
+  }
+
+  .caiu-cartao {
+    gap: 8px;
+    padding: 16px;
+  }
+
+  .caiu-cartao h2 {
+    font-size: 16px;
+  }
+
+  .caiu-cartao p {
+    font-size: 13px;
+  }
+
+  .controles {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    padding: 14px 18px 26px;
+  }
+
+  .controle {
+    min-height: 72px;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px 6px;
+    border-radius: 18px;
+    font-size: 13px;
+  }
+
+  .controle .icone {
+    width: 22px;
+    height: 22px;
+  }
+
+  .controle-compartilhar {
+    display: none;
+  }
+}
+
+/* No celular em pé, o convite para girar, embaixo do mosaico. */
+@media (max-width: 600px) and (orientation: portrait) {
+  .palco {
+    flex: 0 1 auto;
+    margin-top: auto;
+    aspect-ratio: 16 / 9;
+  }
+
+  .gire {
+    margin: 14px 18px auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--topo-rotulo);
+  }
+}
+
+/* O celular deitado: a faixa e os controles mais baixos, e o mosaico cresce. */
+@media (orientation: landscape) and (max-height: 500px) {
+  .reuniao-topo {
+    padding: 6px 16px;
+  }
+
+  .reuniao-topo .logo {
+    height: 24px;
+  }
+
+  .palco {
+    margin: 8px 16px;
+  }
+
+  .controles {
+    padding: 8px 16px;
+    gap: 8px;
+  }
+
+  .controle {
+    min-height: 44px;
+    padding: 8px 18px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gira {
+    animation: none;
+  }
+}

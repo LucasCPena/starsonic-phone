@@ -8,9 +8,13 @@
   "scripts": {
     "montar": "node montar-jssip.mjs",
     "conferir": "node montar-jssip.mjs --conferir",
-    "test": "node --test testes/*.test.mjs"
+    "test": "node --test testes/*.test.mjs",
+    "typecheck": "tsc --noEmit -p ."
   },
   "devDependencies": {
-    "jssip": "3.13.8"
+    "@playwright/test": "1.56.1",
+    "@types/node": "22.20.5",
+    "jssip": "3.13.8",
+    "typescript": "5.9.3"
   }
 }
