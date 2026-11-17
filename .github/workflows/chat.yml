@@ -87,6 +87,8 @@ jobs:
         run: node montar-jssip.mjs --conferir
       - name: Testes
         run: node --test testes/*.test.mjs
+      - name: Os tipos dos testes das telas
+        run: npm run typecheck
       - name: Chromium do Playwright
         run: npx playwright install --with-deps chromium
       - name: Testes das telas (Playwright)
