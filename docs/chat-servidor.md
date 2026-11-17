@@ -6,7 +6,7 @@ Como usar:
 
 - Cada comando fica numa linha só. Copie a linha inteira e cole no terminal da VM.
 - Onde aparece algo entre `<` e `>`, troque pelo seu valor, sem os sinais. Exemplo: `<endereço>` vira `chat.exemplo.com.br`.
-- Depois de cada comando, o guia diz o que você deve ver. Se aparecer outra coisa, vá para o passo 10.
+- Depois de cada comando, o guia diz o que você deve ver. Se aparecer outra coisa, vá para o passo 11.
 - Se o chat usa uma porta própria (o `--porta` do passo 2), todo endereço `https://<endereço>` deste guia leva `:` e a porta depois do nome, por exemplo `https://<endereço>:8443/admin/`.
 
 ## 1. O que a VM precisa
@@ -58,11 +58,11 @@ curl -s https://ifconfig.me
 - Depois da primeira visita, o navegador passa a usar sempre o cadeado para esse nome. Se alguém digitar o nome sem a porta, o navegador vai para a 443, que é do outro servidor, e mostra um erro de segurança que não deixa continuar. Não é defeito: é só escrever o endereço com a porta.
 - A regra da porta 80 tem de ficar **sempre ligada**. É por ela que o Let's Encrypt confere o nome, no primeiro cadeado e em toda renovação, a cada dois meses. Sem ela, o cadeado vence e o chat para de abrir.
 - Algumas empresas bloqueiam, no firewall delas, a saída para portas fora do comum, e nelas o chat não conecta. Um segundo endereço público, só para o chat, evita isso: com ele, o chat fica na 443 normal.
-- O primeiro cadeado precisa de um cuidado: veja "O cadeado não sai e o registro fala em `rateLimited`", no passo 10.
+- O primeiro cadeado precisa de um cuidado: veja "O cadeado não sai e o registro fala em `rateLimited`", no passo 11.
 
 ## 2. Instalar
 
-Veja o número da última versão do chat na página de Releases do projeto no GitHub. As versões do chat se chamam `chat-v` e o número. O GitHub mostra essas versões com a etiqueta `Pre-release`: isso é normal, e é a versão certa. Se a versão for `chat-v0.1.0`, o `<versão>` é `0.1.0`. Se ainda não existir nenhuma versão `chat-v` na página, publique a primeira pelo passo 11 (Publicar uma versão, no fim deste guia).
+Veja o número da última versão do chat na página de Releases do projeto no GitHub. As versões do chat se chamam `chat-v` e o número. O GitHub mostra essas versões com a etiqueta `Pre-release`: isso é normal, e é a versão certa. Se a versão for `chat-v0.1.0`, o `<versão>` é `0.1.0`. Se ainda não existir nenhuma versão `chat-v` na página, publique a primeira pelo passo 12 (Publicar uma versão, no fim deste guia).
 
 Baixe o instalador:
 
@@ -378,7 +378,15 @@ Quando alguém sai da empresa, tire a pessoa do chat **antes** de o ramal dela p
 
 Depois disso, o mesmo ramal entra como uma pessoa nova, sem as conversas antigas. Para tirar só um computador, clique no `×` dele.
 
-## 9. Ver os registros
+## 9. As reuniões com link
+
+A partir da versão 0.2.0, o chat também cuida das reuniões com link. O vídeo e o som delas passam por um servidor de vídeo, numa VM só dele, que tem o guia próprio: `docs/video-servidor.md`.
+
+1. **Ligue o chat ao servidor de vídeo** pelo cartão `REUNIÕES` da lista das empresas, na administração do chat. Siga o passo 3 do guia do servidor de vídeo.
+2. **Deixe a VM do chat alcançar a VM de vídeo na porta 443.** O chat fala com o servidor de vídeo por HTTPS, pelo endereço dele. Se um firewall limita a saída da VM do chat, libere a 443 para a VM de vídeo. Se as duas VMs ficam atrás do mesmo roteador, a do chat chega à de vídeo pelo IP público, e o roteador precisa fazer o "NAT loopback" (passo 1).
+3. **Guarde as cópias de segurança do chat com o mesmo cuidado que a chave do servidor de vídeo.** A chave fica no banco do chat, e a cópia da noite (passo 5) a leva junto: quem tem uma cópia tem a chave.
+
+## 10. Ver os registros
 
 Os registros do chat:
 
@@ -398,10 +406,10 @@ Os registros da cópia da noite:
 sudo journalctl -u starsonic-chat-copia -n 50 --no-pager
 ```
 
-## 10. Os problemas comuns
+## 11. Os problemas comuns
 
 **O certificado não sai (o navegador avisa que o site não é seguro, ou nada abre).**
-O Let's Encrypt precisa achar a VM pelo nome. Rode `getent hosts <endereço>` e veja se o endereço que aparece é o da VM (ou o do roteador, se ela fica atrás de um). Se não for, corrija o registro A no DNS e espere alguns minutos. Depois veja os registros do passo 9: um erro de certificado aparece ali. O servidor tenta de novo sozinho, mas não insista muitas vezes seguidas: o Let's Encrypt limita os pedidos que falham.
+O Let's Encrypt precisa achar a VM pelo nome. Rode `getent hosts <endereço>` e veja se o endereço que aparece é o da VM (ou o do roteador, se ela fica atrás de um). Se não for, corrija o registro A no DNS e espere alguns minutos. Depois veja os registros do passo 10: um erro de certificado aparece ali. O servidor tenta de novo sozinho, mas não insista muitas vezes seguidas: o Let's Encrypt limita os pedidos que falham.
 
 Para ver só as linhas do certificado, rode na VM:
 
@@ -485,7 +493,7 @@ Espere 15 minutos, ou reinicie o serviço (passo 3).
 **O serviço não liga.**
 Rode `sudo journalctl -u starsonic-chat -n 50 --no-pager` e leia as últimas linhas. Uma linha que começa com `Erro:` diz o motivo. A configuração fica em `/etc/starsonic-chat/config.json`.
 
-## 11. Publicar uma versão
+## 12. Publicar uma versão
 
 Este passo é de quem publica o chat, e não da VM. Você faz tudo pelo site do GitHub, no navegador, e não precisa de comando para publicar.
 
