@@ -187,8 +187,11 @@ func gerenciador(c Config) *autocert.Manager {
 // (/.well-known/acme-challenge/) e manda o resto, com o caminho e a query, para o HTTPS de
 // host com 301. host é o Endereco, com a porta pública quando ela não é a 443 (veja
 // hostPublico). O Host do pedido não conta: o destino é sempre o da configuração.
-func redirecionador(m *autocert.Manager, host string) http.Handler {
-	return m.HTTPHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+//
+// Com cv (o "certificadoDoVideo"), o desafio do certificado do nome do vídeo vai primeiro para a VM do
+// vídeo (veja repassarDesafioDoVideo); tudo o mais segue como está.
+func redirecionador(m *autocert.Manager, host string, cv *CertificadoDoVideo) http.Handler {
+	padrao := m.HTTPHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Montado por partes: um alvo como "a:@evil.example/x" não pode mudar o host.
 		destino := url.URL{Scheme: "https", Host: host, Path: r.URL.Path, RawPath: r.URL.RawPath, RawQuery: r.URL.RawQuery}
 		// Sem cache: o destino muda quando a porta pública muda, e um 301 guardado no navegador
@@ -196,6 +199,10 @@ func redirecionador(m *autocert.Manager, host string) http.Handler {
 		w.Header().Set("Cache-Control", "no-store")
 		http.Redirect(w, r, destino.String(), http.StatusMovedPermanently)
 	}))
+	if cv == nil {
+		return padrao
+	}
+	return repassarDesafioDoVideo(cv, padrao)
 }
 
 // hostPublico é o Endereco como se chega nele de fora: sozinho na porta 443 (ou sem porta na
@@ -240,7 +247,7 @@ func servidoresProducao(c Config, h http.Handler) (https, http80 *http.Server) {
 	https = novoHTTP(enderecoHTTPS, producao(h))
 	https.TLSConfig = m.TLSConfig()
 	https.TLSConfig.MinVersion = tls.VersionTLS12
-	http80 = novoHTTP(enderecoHTTP, redirecionador(m, hostPublico(c)))
+	http80 = novoHTTP(enderecoHTTP, redirecionador(m, hostPublico(c), c.CertificadoDoVideo))
 	http80.ReadTimeout = prazoGeral
 	http80.WriteTimeout = prazoGeral
 	return https, http80

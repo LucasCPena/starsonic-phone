@@ -497,7 +497,7 @@ func TestHSTS(t *testing.T) {
 
 func TestHTTPParaHTTPS(t *testing.T) {
 	m := gerenciador(Config{Endereco: "chat.example.com", Dados: t.TempDir()})
-	h := redirecionador(m, "chat.example.com")
+	h := redirecionador(m, "chat.example.com", nil)
 
 	req := httptest.NewRequest("GET", "http://qualquer.example/admin/entrar?x=1&y=a%20b", nil)
 	req.Host = "qualquer.example" // o Host do pedido não conta
@@ -646,7 +646,7 @@ func TestServidoresProducao(t *testing.T) {
 // O destino do redirecionamento é sempre o Endereco, mesmo com um alvo que o Go lê como
 // "esquema:opaco".
 func TestHTTPParaHTTPS_AlvoEsquisito(t *testing.T) {
-	srv := httptest.NewServer(redirecionador(gerenciador(Config{Endereco: "chat.example.com", Dados: t.TempDir()}), "chat.example.com"))
+	srv := httptest.NewServer(redirecionador(gerenciador(Config{Endereco: "chat.example.com", Dados: t.TempDir()}), "chat.example.com", nil))
 	defer srv.Close()
 	conn, err := net.Dial("tcp", strings.TrimPrefix(srv.URL, "http://"))
 	if err != nil {
