@@ -4,6 +4,8 @@
 #   sudo bash instalar.sh instalar <endereço> [--porta N]   instala (o endereço é o nome do chat no DNS)
 #   sudo bash instalar.sh atualizar                         troca o programa pela versão deste script
 #   sudo bash instalar.sh porta <N>                         troca a porta pública do HTTPS
+#   sudo bash instalar.sh video <endereço do vídeo> <IP>    liga o repasse da verificação do certificado do
+#                                                           servidor de vídeo (veja abaixo)
 #
 # Este script vem na release chat-v<versão> do GitHub, com a versão já escrita abaixo. Rodado
 # direto do repositório, ele pede --versao X.Y.Z.
@@ -12,6 +14,10 @@
 # (NAT) e a 443 pública já é de outro servidor, o roteador traduz outra porta pública (por
 # exemplo a 8443) para a 443 da VM. O --porta diz ao chat qual é essa porta, para a 80 levar
 # quem chega para ela.
+#
+# O vídeo: quando o chat e o servidor de vídeo dividem um IP público só, o Let's Encrypt chega ao chat, na porta
+# 80, para verificar o nome do vídeo. O comando video diz ao chat o nome do vídeo e o IP da VM do vídeo na rede
+# interna, e o chat repassa só essa verificação para a porta 80 da VM do vídeo.
 set -euo pipefail
 
 VERSAO="@VERSAO@"
@@ -35,6 +41,7 @@ uso() {
 uso: sudo bash instalar.sh instalar <endereço> [--porta N] [--versao X.Y.Z]
      sudo bash instalar.sh atualizar [--versao X.Y.Z]
      sudo bash instalar.sh porta <N>
+     sudo bash instalar.sh video <endereço do vídeo> <IP da VM do vídeo>
 FIM
   exit 2
 }
@@ -61,20 +68,51 @@ conferir_porta() {
   fi
 }
 
-# escrever_config <endereço> <porta>: grava o config.json do serviço. A porta só entra quando não
-# é a 443.
-escrever_config() {
-  if [ "$2" = 443 ]; then
-    printf '{"endereco": "%s", "dados": "%s"}\n' "$1" "$DADOS" >"$CONFIG_DIR/config.json"
-  else
-    printf '{"endereco": "%s", "dados": "%s", "porta": %s}\n' "$1" "$DADOS" "$2" >"$CONFIG_DIR/config.json"
+# conferir_ip_privado <IP>: um IPv4 da rede interna (10/8, 172.16/12 ou 192.168/16), em quatro números de 0 a 255,
+# sem zero na frente.
+conferir_ip_privado() {
+  local ip=$1 a b c d
+  if [[ "$ip" =~ ^(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})$ ]]; then
+    a=${BASH_REMATCH[1]} b=${BASH_REMATCH[2]} c=${BASH_REMATCH[3]} d=${BASH_REMATCH[4]}
+    if [ "$a" -le 255 ] && [ "$b" -le 255 ] && [ "$c" -le 255 ] && [ "$d" -le 255 ] &&
+      { [ "$a" -eq 10 ] || { [ "$a" -eq 172 ] && [ "$b" -ge 16 ] && [ "$b" -le 31 ]; } || { [ "$a" -eq 192 ] && [ "$b" -eq 168 ]; }; }; then
+      return 0
+    fi
   fi
+  falhar "o IP \"$ip\" não serve. Use o IP da VM do vídeo na rede interna, com quatro números separados por pontos, que começa com 10, com 172.16 a 172.31 ou com 192.168. Exemplo: 10.0.0.20"
+}
+
+# escrever_config <endereço> <porta> [<endereço do vídeo> <IP do vídeo>]: grava o config.json do serviço. A porta só
+# entra quando não é a 443, e o certificadoDoVideo, só quando o endereço do vídeo vem.
+escrever_config() {
+  local porta="" video=""
+  if [ "$2" != 443 ]; then porta=", \"porta\": $2"; fi
+  if [ -n "${3:-}" ]; then video=", \"certificadoDoVideo\": {\"endereco\": \"$3\", \"ip\": \"$4\"}"; fi
+  printf '{"endereco": "%s", "dados": "%s"%s%s}\n' "$1" "$DADOS" "$porta" "$video" >"$CONFIG_DIR/config.json"
   chmod 0644 "$CONFIG_DIR/config.json"
 }
 
-# ler_endereco: o endereço do config.json que este script gravou.
+# sem_video: o config.json sem o objeto do certificadoDoVideo, que também tem um "endereco".
+sem_video() {
+  sed 's/"certificadoDoVideo": *{[^}]*}//' "$CONFIG_DIR/config.json"
+}
+
+# ler_endereco: o endereço do chat no config.json que este script gravou.
 ler_endereco() {
-  sed -n 's/.*"endereco": *"\([^"]*\)".*/\1/p' "$CONFIG_DIR/config.json"
+  sem_video | sed -n 's/.*"endereco": *"\([^"]*\)".*/\1/p'
+}
+
+# ler_porta: a porta pública do config.json que este script gravou, ou a 443 quando ela não está lá.
+ler_porta() {
+  local porta
+  porta=$(sem_video | sed -n 's/.*"porta": *\([0-9][0-9]*\).*/\1/p')
+  echo "${porta:-443}"
+}
+
+# ler_video <endereco ou ip>: um campo do certificadoDoVideo do config.json, ou nada quando ele não está lá.
+ler_video() {
+  sed -n 's/.*"certificadoDoVideo": *\({[^}]*}\).*/\1/p' "$CONFIG_DIR/config.json" |
+    sed -n 's/.*"'"$1"'": *"\([^"]*\)".*/\1/p'
 }
 
 # endereco_publico <endereço> <porta>: como se chega no chat de fora.
@@ -243,19 +281,22 @@ mudar_porta() {
   local versao
   versao=$("$BINARIO" versao)
   versao_ao_menos "$versao" 0.1.1 || falhar "o chat desta VM está na versão $versao, que ainda não conhece a porta. Nada mudou. Atualize primeiro (sudo bash instalar.sh atualizar) e rode este comando de novo."
-  # O comando grava o arquivo de novo só com o endereço, os dados e a porta: um "origens" posto à
-  # mão se perderia.
+  # O comando grava o arquivo de novo só com o endereço, os dados, a porta e o certificadoDoVideo: um "origens" posto
+  # à mão se perderia.
   ! grep -q '"origens"' "$CONFIG_DIR/config.json" || falhar "o $CONFIG_DIR/config.json tem \"origens\", que este comando não mantém. Nada mudou. Troque a porta à mão nesse arquivo."
-  local endereco
+  local endereco video video_ip
   endereco=$(ler_endereco)
   [ -n "$endereco" ] || falhar "não consegui ler o endereço em $CONFIG_DIR/config.json."
   conferir_endereco "$endereco"
+  # O certificadoDoVideo, se o comando video já o pôs, fica como está.
+  video=$(ler_video endereco)
+  video_ip=$(ler_video ip)
 
   cp -p "$CONFIG_DIR/config.json" "$CONFIG_DIR/config.json.antes"
   # Daqui até o fim, qualquer saída antes da hora põe a configuração de antes de volta.
   trap voltar_config EXIT
   trap 'exit 130' INT HUP TERM
-  escrever_config "$endereco" "$1"
+  escrever_config "$endereco" "$1" "$video" "$video_ip"
   systemctl restart starsonic-chat.service || true
   if ! servico_firme; then
     journalctl -u starsonic-chat -n 20 --no-pager >&2 || true
@@ -267,10 +308,47 @@ mudar_porta() {
   avisar_roteador "$1"
 }
 
+# mudar_video <endereço do vídeo> <IP da VM do vídeo>: liga o repasse da verificação do certificado do vídeo, numa
+# instalação que já existe, sem baixar nada, e reinicia o serviço. Como o mudar_porta: um programa de antes da 0.2.0
+# não conhece o "certificadoDoVideo" e nada muda; um "origens" no config.json faz o comando recusar; e se o serviço não
+# ficar de pé, ou se o comando parar no meio, a configuração de antes volta. A porta fica como está.
+mudar_video() {
+  local video=$1 video_ip=$2
+  conferir_endereco "$video"
+  conferir_ip_privado "$video_ip"
+  conferir_maquina
+  [ -e "$CONFIG_DIR/config.json" ] || falhar "o chat não está instalado aqui ($CONFIG_DIR/config.json não existe). Para instalar: sudo bash instalar.sh instalar <endereço>"
+  [ -x "$BINARIO" ] || falhar "o chat não está instalado aqui ($BINARIO não existe)."
+  local versao
+  versao=$("$BINARIO" versao)
+  versao_ao_menos "$versao" 0.2.0 || falhar "o chat desta VM está na versão $versao, que ainda não repassa o certificado do vídeo. Nada mudou. Atualize primeiro (sudo bash instalar.sh atualizar) e rode este comando de novo."
+  ! grep -q '"origens"' "$CONFIG_DIR/config.json" || falhar "o $CONFIG_DIR/config.json tem \"origens\", que este comando não mantém. Nada mudou. Ponha o \"certificadoDoVideo\" à mão nesse arquivo."
+  local endereco porta
+  endereco=$(ler_endereco)
+  [ -n "$endereco" ] || falhar "não consegui ler o endereço em $CONFIG_DIR/config.json."
+  conferir_endereco "$endereco"
+  [ "$video" != "$endereco" ] || falhar "o endereço do vídeo \"$video\" é o do próprio chat. Use o nome do servidor de vídeo, que é outro. Nada mudou."
+  porta=$(ler_porta)
+
+  cp -p "$CONFIG_DIR/config.json" "$CONFIG_DIR/config.json.antes"
+  # Daqui até o fim, qualquer saída antes da hora põe a configuração de antes de volta.
+  trap voltar_config EXIT
+  trap 'exit 130' INT HUP TERM
+  escrever_config "$endereco" "$porta" "$video" "$video_ip"
+  systemctl restart starsonic-chat.service || true
+  if ! servico_firme; then
+    journalctl -u starsonic-chat -n 20 --no-pager >&2 || true
+    falhar "o chat não ficou de pé com o repasse do vídeo (as últimas linhas do registro estão acima)."
+  fi
+  rm -f "$CONFIG_DIR/config.json.antes"
+  trap - EXIT INT HUP TERM
+  echo "Pronto: o chat agora repassa ao servidor de vídeo $video (a VM $video_ip, pela rede interna) a verificação do certificado dele, que chega na porta 80. O instalador do servidor de vídeo já pode pedir o certificado."
+}
+
 # --- o começo ---
 principal() {
   [ "$#" -ge 1 ] || uso
-  local comando=$1 endereco="" porta_nova=""
+  local comando=$1 endereco="" porta_nova="" video="" video_ip=""
   shift
   case "$comando" in
     instalar)
@@ -283,13 +361,19 @@ principal() {
       porta_nova=$1
       shift
       ;;
+    video)
+      [ "$#" -eq 2 ] || uso
+      video=$1
+      video_ip=$2
+      shift 2
+      ;;
     atualizar) ;;
     *) uso ;;
   esac
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --versao)
-        [ "$#" -ge 2 ] || uso
+        if [ "$comando" = video ] || [ "$#" -lt 2 ]; then uso; fi
         VERSAO=$2
         shift 2
         ;;
@@ -307,6 +391,12 @@ principal() {
   # A porta muda sem baixar nada, então não precisa da versão.
   if [ "$comando" = porta ]; then
     mudar_porta "$porta_nova"
+    return
+  fi
+
+  # O repasse do vídeo também muda sem baixar nada.
+  if [ "$comando" = video ]; then
+    mudar_video "$video" "$video_ip"
     return
   fi
 
