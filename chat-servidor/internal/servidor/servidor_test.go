@@ -877,13 +877,14 @@ func TestServidor_ReunioesNoAr(t *testing.T) {
 	}
 }
 
-// Sem o servidor de vídeo guardado, o chat sobe do mesmo jeito, e o entrar das reuniões dá 503 servidorVideo.
-func TestServidor_ReunioesSemVideo(t *testing.T) {
-	dados, codigo := preparar(t)
+// liberarAsReunioes libera no banco do chat as reuniões da empresa do código, como a página de administração faz.
+func liberarAsReunioes(t *testing.T, dados, codigo string) {
+	t.Helper()
 	b, err := banco.Abrir(filepath.Join(dados, banco.NomeArquivo), tempo.Real())
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer b.Fechar()
 	e, err := b.EmpresaPorCodigo(t.Context(), codigo)
 	if err != nil {
 		t.Fatal(err)
@@ -891,7 +892,12 @@ func TestServidor_ReunioesSemVideo(t *testing.T) {
 	if err := b.LiberarReunioes(t.Context(), e.ID, true); err != nil {
 		t.Fatal(err)
 	}
-	b.Fechar()
+}
+
+// Sem o servidor de vídeo guardado, o chat sobe do mesmo jeito, e o entrar das reuniões dá 503 servidorVideo.
+func TestServidor_ReunioesSemVideo(t *testing.T) {
+	dados, codigo := preparar(t)
+	liberarAsReunioes(t, dados, codigo)
 
 	s := iniciar(t, dados)
 	chave := s.ligar(t, codigo)
@@ -916,6 +922,42 @@ func TestServidor_ReunioesSemVideo(t *testing.T) {
 	resp = pedir(t, "POST", s.url+"/api/v1/reunioes/"+corpo.Reuniao.Codigo+"/entrar", chave, nil)
 	if resp.StatusCode != http.StatusServiceUnavailable || lerCampo(t, resp, "erro") != "servidorVideo" {
 		t.Fatalf("entrar respondeu %d; queria 503 servidorVideo", resp.StatusCode)
+	}
+}
+
+// Um servidor de vídeo guardado que o cliente recusa (aqui, um endereço com https://, que a página não guardaria,
+// mas que um banco mexido à mão pode ter) não impede o chat de subir (a revisão da Task 12, Minor 4): o gerente fica
+// sem servidor de vídeo, e as rotas das reuniões que precisam dele respondem 503 servidorVideo.
+func TestServidor_ReunioesComVideoQueNaoVale(t *testing.T) {
+	dados, codigo := preparar(t)
+	liberarAsReunioes(t, dados, codigo)
+	guardarVideo(t, dados, "https://video.exemplo.com.br")
+
+	log := capturar(t)
+	s := iniciar(t, dados)
+	chave := s.ligar(t, codigo)
+	// O caminho é o do endereço recusado, e não o de um servidor que não responde.
+	if !strings.Contains(log.String(), `msg="reunioes: o servidor de vídeo guardado não vale" erro=invalido`) {
+		t.Fatalf("o log não tem o aviso do servidor de vídeo que não vale:\n%s", log.String())
+	}
+	resp := pedir(t, "POST", s.url+"/api/v1/reunioes/agora", chave, nil)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("o gerar link respondeu %d", resp.StatusCode)
+	}
+	var corpo struct {
+		Reuniao struct {
+			Codigo string `json:"codigo"`
+		} `json:"reuniao"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&corpo); err != nil {
+		t.Fatal(err)
+	}
+	resp = pedir(t, "POST", s.url+"/api/v1/reunioes/"+corpo.Reuniao.Codigo+"/entrar", chave, nil)
+	if resp.StatusCode != http.StatusServiceUnavailable || lerCampo(t, resp, "erro") != "servidorVideo" {
+		t.Fatalf("entrar respondeu %d; queria 503 servidorVideo", resp.StatusCode)
+	}
+	if d := s.parar(t); d > 12*time.Second {
+		t.Fatalf("o desligamento levou %v", d)
 	}
 }
 

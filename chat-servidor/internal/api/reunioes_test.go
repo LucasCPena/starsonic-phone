@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"regexp"
 	"slices"
@@ -658,7 +659,9 @@ func (v *videoQueEspera) Encerrar(ctx context.Context, sala string) error {
 }
 
 // Um cliente que desliga no meio do cancelar não corta o encerrar no servidor de vídeo (o contexto dele não é o do
-// pedido), e o banco já cancelou antes: ninguém novo entra enquanto o vídeo encerra.
+// pedido), e o banco já cancelou antes: ninguém novo entra enquanto o vídeo encerra. O teste não sabe quando o
+// http.Server percebe que o cliente foi embora, então o pedido vai direto ao manipulador da API, com um contexto que o
+// teste cancela: o desligar acontece numa hora certa, sem esperar nada.
 func TestCancelar_ClienteQueDesliga(t *testing.T) {
 	c := novaCenaR(t)
 	r := c.marcada(t, c.kAna)
@@ -667,17 +670,13 @@ func TestCancelar_ClienteQueDesliga(t *testing.T) {
 
 	ctx, desligar := context.WithCancel(t.Context())
 	defer desligar()
-	req, err := http.NewRequestWithContext(ctx, "DELETE", c.a.Servidor.URL+"/api/v1/reunioes/"+r.Codigo, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	req := httptest.NewRequestWithContext(ctx, "DELETE", "/api/v1/reunioes/"+r.Codigo, nil)
 	req.Header.Set("Authorization", "Bearer "+c.kAna)
+	resposta := httptest.NewRecorder()
 	feito := make(chan struct{})
 	go func() {
 		defer close(feito)
-		if resp, err := c.a.Servidor.Client().Do(req); err == nil {
-			resp.Body.Close()
-		}
+		c.a.Servidor.Config.Handler.ServeHTTP(resposta, req)
 	}()
 	select {
 	case <-v.chegou:
@@ -687,9 +686,7 @@ func TestCancelar_ClienteQueDesliga(t *testing.T) {
 	// O banco já cancelou: o entrar dá 404, mesmo com o vídeo ainda encerrando.
 	esperarErro(t, c.entrarEm(c.kCarlos, r.Codigo), 404, "naoEncontrado")
 
-	desligar() // o cliente desliga
-	<-feito
-	time.Sleep(300 * time.Millisecond) // o servidor percebe que o cliente foi embora
+	desligar() // o cliente desliga: o contexto do pedido acabou
 	close(v.solto)
 	select {
 	case err := <-v.ctxErr:
@@ -698,6 +695,22 @@ func TestCancelar_ClienteQueDesliga(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("o encerrar não voltou")
+	}
+	prazo := time.Now().Add(5 * time.Second)
+	encerrar := "encerrar " + c.sala(t, r.Codigo)
+	for !slices.Contains(c.a.Video.Comandos(), encerrar) {
+		if time.Now().After(prazo) {
+			t.Fatalf("o agente não recebeu o encerrar em 5 s: %q", c.a.Video.Comandos())
+		}
+		time.Sleep(time.Millisecond)
+	}
+	select {
+	case <-feito:
+	case <-time.After(5 * time.Second):
+		t.Fatal("o cancelar não voltou")
+	}
+	if resposta.Code != http.StatusNoContent {
+		t.Fatalf("o cancelar respondeu %d", resposta.Code)
 	}
 }
 
