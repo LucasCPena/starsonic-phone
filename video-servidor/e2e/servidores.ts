@@ -40,11 +40,12 @@ export function ipDaMaquina(): string {
 
 // --- O que os testes anotam ----------------------------------------------------------------------------------------
 
-// Os códigos, as salas, os participantes e as senhas que passaram pelos testes, para o teste dos registros. Ficam num
-// arquivo da pasta privada: um teste que falha troca o processo do Playwright, e o último teste ainda os vê.
+// Os códigos, as salas, os participantes, as senhas e os bilhetes que passaram pelos testes, para o teste dos
+// registros e a conferência do fim. Ficam num arquivo da pasta privada: um teste que falha troca o processo do
+// Playwright, e o último teste ainda os vê.
 const USADOS = join(PRIVADO, 'usados.jsonl');
 
-type Tipo = 'codigos' | 'salas' | 'participantes' | 'senhas';
+type Tipo = 'codigos' | 'salas' | 'participantes' | 'senhas' | 'bilhetes';
 
 function anotar(tipo: Tipo, valor: string): void {
   appendFileSync(USADOS, `${JSON.stringify({ tipo, valor })}\n`);
@@ -63,8 +64,9 @@ function cargaDe(senha: string): { sala?: unknown; participante?: unknown } | nu
   }
 }
 
-/** Anota o que houver no valor (um Acesso, uma mensagem da página, um evento, uma lista): os códigos das reuniões, as
- * senhas, e a sala e o participante de dentro de cada senha. */
+/** Anota o que houver no valor (um Acesso, uma mensagem da página, um evento, uma lista, uma resposta): os códigos das
+ * reuniões, as senhas, a sala e o participante de dentro de cada senha, e os bilhetes (o da página e o dos eventos do
+ * app). */
 export function anotarSegredos(valor: unknown): void {
   if (Array.isArray(valor)) {
     valor.forEach(anotarSegredos);
@@ -75,6 +77,7 @@ export function anotarSegredos(valor: unknown): void {
     if (typeof v === 'string') {
       if ((campo === 'codigo' || campo === 'reuniao') && CODIGO.test(v)) anotar('codigos', v);
       if (campo === 'participante' && /^[0-9a-f]{16}$/.test(v)) anotar('participantes', v);
+      if (campo === 'bilhete' && v !== '') anotar('bilhetes', v);
       if (campo === 'senha' && v !== '') {
         anotar('senhas', v);
         const carga = cargaDe(v);
@@ -94,6 +97,7 @@ export function segredosUsados(): Record<Tipo, string[]> {
     salas: new Set(),
     participantes: new Set(),
     senhas: new Set(),
+    bilhetes: new Set(),
   };
   if (existsSync(USADOS)) {
     for (const linha of readFileSync(USADOS, 'utf8').split('\n')) {
@@ -107,7 +111,53 @@ export function segredosUsados(): Record<Tipo, string[]> {
     salas: [...usados.salas],
     participantes: [...usados.participantes],
     senhas: [...usados.senhas],
+    bilhetes: [...usados.bilhetes],
   };
+}
+
+/** Os segredos do ambiente, que nunca passam por um teste: a chave do agente e a senha do ESL (do config.json da pasta
+ * privada), a senha da administração do chat e a chave do computador da Ana (o ambiente.ts as põe no process.env). */
+export function segredosDoAmbiente(): Array<[string, string]> {
+  const config = JSON.parse(readFileSync(join(PRIVADO, 'config.json'), 'utf8')) as { chave: string; senhaEsl: string };
+  const segredos: Array<[string, string | undefined]> = [
+    ['a chave do agente', config.chave],
+    ['a senha do ESL', config.senhaEsl],
+    ['a senha da administração', process.env.CHAT_ADMIN_SENHA],
+    ['a chave do computador da Ana', process.env.STARSONIC_E2E_ANA],
+  ];
+  for (const [rotulo, valor] of segredos) {
+    if (!valor) throw new Error(`falta ${rotulo} (o ambiente.ts não rodou)`);
+  }
+  return segredos as Array<[string, string]>;
+}
+
+/** O que os registros têm e não podiam ter: um nome, um código de reunião, uma sala, um participante, uma senha, um
+ * bilhete ou um segredo do ambiente, e qualquer senha de uso único (a carga começa por {"v":1, em base64url), também
+ * as que os testes não viram. Cada achado diz a saída, o que é e a linha, nunca o valor. */
+export function segredosNosRegistros(): string[] {
+  const usados = segredosUsados();
+  const proibidos: Array<[string, string[]]> = [
+    ['um nome', NOMES],
+    ['um código de reunião', usados.codigos],
+    ['uma sala', usados.salas],
+    ['um participante', usados.participantes],
+    ['uma senha', usados.senhas],
+    ['um bilhete', usados.bilhetes],
+    ...segredosDoAmbiente().map(([rotulo, valor]): [string, string[]] => [rotulo, [valor]]),
+  ];
+  const achados: string[] = [];
+  for (const { nome, texto } of registros()) {
+    const linhas = texto.split('\n');
+    for (const [rotulo, valores] of proibidos) {
+      for (const valor of valores) {
+        const n = linhas.findIndex((l) => l.includes(valor));
+        if (n >= 0) achados.push(`a saída do ${nome} tem ${rotulo} na linha ${n + 1}`);
+      }
+    }
+    const senha = linhas.findIndex((l) => l.includes('eyJ2IjoxL'));
+    if (senha >= 0) achados.push(`a saída do ${nome} tem uma senha na linha ${senha + 1}`);
+  }
+  return achados;
 }
 
 /** As saídas do FreeSWITCH, do agente e do chat. */

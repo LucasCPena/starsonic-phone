@@ -1,5 +1,6 @@
 // O globalSetup: sobe o FreeSWITCH do nosso build, o agente de vídeo, o chat e o servidor do cliente mínimo, e prepara
-// o chat (o administrador de teste, o cartão "Reuniões", a empresa ACME e o computador da Ana). A volta desliga tudo.
+// o chat (o administrador de teste, o cartão "Reuniões", a empresa ACME e o computador da Ana). A volta desliga tudo e
+// confere que as saídas dos servidores não têm nenhum segredo.
 //
 // O FreeSWITCH vem do STARSONIC_FREESWITCH_DIR (o padrão é /opt/starsonic-freeswitch, onde o pacote do construir.sh
 // se instala), e os programas, do STARSONIC_VIDEO_BIN e do STARSONIC_CHAT_BIN (o CI compila antes); sem eles, este
@@ -13,7 +14,7 @@ import { createConnection, createServer } from 'node:net';
 import { networkInterfaces } from 'node:os';
 import { join } from 'node:path';
 import { gerarMidia } from './midia';
-import { AGENTE, CHAT, PAGINA, prepararChat, PRIVADO, RAIZ, REGISTROS, SAIDA } from './servidores';
+import { AGENTE, CHAT, PAGINA, prepararChat, PRIVADO, RAIZ, REGISTROS, SAIDA, segredosNosRegistros } from './servidores';
 
 const VIDEO_SERVIDOR = join(RAIZ, '..');
 const CHAT_SERVIDOR = join(RAIZ, '..', '..', 'chat-servidor');
@@ -225,5 +226,11 @@ export default async function ambiente(): Promise<() => Promise<void>> {
     throw e;
   }
   console.log(`ambiente no ar: o FreeSWITCH em ${ip}, as saídas em ${SAIDA}`);
-  return pararTudo;
+  // A volta: desliga tudo e confere as saídas inteiras, com as linhas do desligamento, que o teste dos registros não
+  // vê. Um segredo nelas falha a rodada.
+  return async () => {
+    await pararTudo();
+    const achados = segredosNosRegistros();
+    if (achados.length > 0) throw new Error(`as saídas dos servidores têm o que não podiam ter: ${achados.join('; ')}`);
+  };
 }

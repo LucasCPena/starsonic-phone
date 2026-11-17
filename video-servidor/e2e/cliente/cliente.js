@@ -136,7 +136,8 @@
     });
   }
 
-  /** O abrir, o canal e o pedir (seção 10 do protocolo). Com o aceito, o cliente liga com o Acesso dele. */
+  /** O abrir, o canal e o pedir (seção 10 do protocolo). Com o aceito, o cliente liga com o Acesso dele. Devolve o
+   * bilhete do abrir, que o teste anota para conferir os registros. */
   async function entrarPelaPagina({ chat, codigo, nome }) {
     const r = await fetch(`${chat}/api/v1/pagina/reunioes/${encodeURIComponent(codigo)}`, { method: 'POST' });
     if (r.status !== 200) throw new Error(`o abrir respondeu ${r.status}`);
@@ -155,6 +156,7 @@
       canal.addEventListener('close', () => falha(new Error('o canal da página fechou antes de abrir')), { once: true });
     });
     canal.send(JSON.stringify({ tipo: 'pedir', nome }));
+    return { bilhete };
   }
 
   /** A ligação da câmera, com o wss e a uri do Acesso, o X-Starsonic-Senha (quando o Acesso tem a senha) e a câmera e

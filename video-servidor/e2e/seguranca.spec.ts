@@ -5,7 +5,7 @@ import { randomBytes } from 'node:crypto';
 import { request } from 'node:http';
 import { connect, type TLSSocket } from 'node:tls';
 import { A, B, MOSAICO_1, Navegador, VERMELHO } from './midia';
-import { AGENTE, ipDaMaquina, NOMES, novaReuniaoDeTeste, PAGINA, registros, segredosUsados } from './servidores';
+import { AGENTE, ipDaMaquina, novaReuniaoDeTeste, PAGINA, registros, segredosNosRegistros, segredosUsados } from './servidores';
 
 test('a senha não vale duas vezes nem sem o cabeçalho', async () => {
   const codigo = await novaReuniaoDeTeste();
@@ -217,30 +217,17 @@ test('o WebSocket do navegador recusa outra origem', async () => {
 
 // --- Os registros ---------------------------------------------------------------------------------------------------
 
-// O último: confere as saídas do FreeSWITCH, do agente e do chat depois de todos os outros testes.
-test('os registros não têm nomes, códigos nem senhas', async () => {
+// O último: confere as saídas do FreeSWITCH, do agente e do chat depois de todos os outros testes, com tudo o que eles
+// anotaram e os segredos do ambiente (segredosNosRegistros). O que sai depois dele, no desligamento dos servidores,
+// o fim do ambiente.ts confere de novo.
+test('os registros não têm nomes, códigos, senhas, bilhetes nem chaves', async () => {
   const usados = segredosUsados();
   expect(usados.codigos.length, 'os testes anotaram os códigos das reuniões').toBeGreaterThan(0);
   expect(usados.senhas.length, 'os testes anotaram as senhas').toBeGreaterThan(0);
   expect(usados.salas.length, 'os testes anotaram as salas').toBeGreaterThan(0);
-  const proibidos: Array<[string, string[]]> = [
-    ['um nome', NOMES],
-    ['um código de reunião', usados.codigos],
-    ['uma sala', usados.salas],
-    ['um participante', usados.participantes],
-    ['uma senha', usados.senhas],
-  ];
+  expect(usados.bilhetes.length, 'os testes anotaram os bilhetes').toBeGreaterThan(0);
   for (const { nome, texto } of registros()) {
     expect(texto.length, `a saída do ${nome} não está vazia`).toBeGreaterThan(0);
-    const linhas = texto.split('\n');
-    for (const [rotulo, valores] of proibidos) {
-      for (const valor of valores) {
-        const n = linhas.findIndex((l) => l.includes(valor));
-        expect(n, `a saída do ${nome} tem ${rotulo} na linha ${n + 1}`).toBe(-1);
-      }
-    }
-    // Toda senha de uso único começa pela carga {"v":1, em base64url: nenhuma, nem as que os testes não viram.
-    const senha = linhas.findIndex((l) => l.includes('eyJ2IjoxL'));
-    expect(senha, `a saída do ${nome} tem uma senha na linha ${senha + 1}`).toBe(-1);
   }
+  expect(segredosNosRegistros(), 'o que os registros têm e não podiam ter').toEqual([]);
 });

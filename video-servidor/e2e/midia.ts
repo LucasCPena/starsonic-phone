@@ -184,7 +184,7 @@ export interface Mensagem {
 interface Cliente {
   diagnostico(): unknown;
   estatisticas(): Promise<unknown>;
-  entrarPelaPagina(opcoes: { chat: string; codigo: string; nome: string }): Promise<void>;
+  entrarPelaPagina(opcoes: { chat: string; codigo: string; nome: string }): Promise<{ bilhete: string }>;
   ligar(acesso: AcessoDoNavegador): Promise<void>;
   mensagens(): Mensagem[];
   amostra(fx: number, fy: number): Cor | null;
@@ -239,10 +239,10 @@ export class Navegador {
     }
   }
 
-  /** O abrir, o canal e o pedir; com o aceito, o cliente liga sozinho. */
+  /** O abrir, o canal e o pedir; com o aceito, o cliente liga sozinho. O bilhete do abrir fica anotado. */
   async entrarPelaPagina(codigo: string, nome: string): Promise<void> {
     anotarSegredos({ codigo });
-    await this.page.evaluate((o) => window.cliente.entrarPelaPagina(o), { chat: CHAT, codigo, nome });
+    anotarSegredos(await this.page.evaluate((o) => window.cliente.entrarPelaPagina(o), { chat: CHAT, codigo, nome }));
   }
 
   async ligar(acesso: AcessoDoNavegador): Promise<void> {
