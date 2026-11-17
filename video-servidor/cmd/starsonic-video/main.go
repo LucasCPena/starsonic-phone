@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -39,7 +40,7 @@ subcomandos:
                                        (freeswitch/) e a do coturn (turnserver.conf); com
                                        --teste, a do modo de teste, com um certificado de
                                        teste para o SIP sobre TLS
-  servir [--config <arquivo>]          põe o agente no ar: a 443 com o /sip e a API, a discagem e o ESL
+  servir [--config <arquivo>]          põe o agente no ar: a 443 (ou a "porta" do config.json) com o /sip e a API, a discagem e o ESL
                                        (o padrão é /etc/starsonic-video/config.json)
   servir --teste --escutar 127.0.0.1:<porta> [--config <arquivo>] [--origem <url>]...
                                        o modo de teste: HTTP, só no 127.0.0.1 ou no [::1]; o /sip
@@ -194,13 +195,21 @@ func servir(args []string, erros io.Writer) int {
 	return 0
 }
 
-// O reunioes pergunta ao agente desta máquina pela 443 do 127.0.0.1, e o certificado do agente é o do endereço, e
+// O reunioes pergunta ao agente desta máquina pelo 127.0.0.1, na porta do config.json (a 443 quando ela falta), e o certificado do agente é o do endereço, e
 // não o do IP. As duas variáveis são do pacote só para os testes as trocarem: raizesDoAgente nil são as raízes do
 // sistema.
 var (
-	urlEstado      = "https://127.0.0.1/agente/v1/estado"
+	urlEstado      = "" // vazio: o urlDoEstado, com a porta do config.json
 	raizesDoAgente *x509.CertPool
 )
+
+// urlDoEstado é o endereço do estado do agente desta máquina: a 443 sem porta escrita, ou a "porta" do config.json.
+func urlDoEstado(porta int) string {
+	if porta == 0 || porta == 443 {
+		return "https://127.0.0.1/agente/v1/estado"
+	}
+	return "https://127.0.0.1:" + strconv.Itoa(porta) + "/agente/v1/estado"
+}
 
 // prazoReunioes é quanto o reunioes espera o agente.
 const prazoReunioes = 10 * time.Second
@@ -227,7 +236,11 @@ func reunioes(args []string, saida, erros io.Writer) int {
 	}
 	ctx, cancelar := context.WithTimeout(context.Background(), prazoReunioes)
 	defer cancelar()
-	n, err := contarReunioes(ctx, clienteDoAgente(c.Endereco, raizesDoAgente), urlEstado, c.Chave)
+	destino := urlEstado
+	if destino == "" {
+		destino = urlDoEstado(c.PortaHTTPS())
+	}
+	n, err := contarReunioes(ctx, clienteDoAgente(c.Endereco, raizesDoAgente), destino, c.Chave)
 	if err != nil {
 		fmt.Fprintln(erros, "Erro:", err)
 		return 1

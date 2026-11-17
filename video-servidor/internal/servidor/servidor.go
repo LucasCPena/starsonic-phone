@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -45,10 +46,12 @@ var (
 
 	arquivoCertificado = "/etc/starsonic-video/tls/certificado.pem"
 	arquivoChave       = "/etc/starsonic-video/tls/chave.pem"
+
+	// escutarHTTPS abre a porta principal da produção. É variável para os testes não abrirem a 443.
+	escutarHTTPS = func(endereco string) (net.Listener, error) { return net.Listen("tcp", endereco) }
 )
 
 const (
-	enderecoHTTPS   = ":443"
 	prazoCabecalhos = 10 * time.Second
 	prazoOcioso     = 120 * time.Second
 	prazoDesligar   = 10 * time.Second
@@ -117,7 +120,7 @@ type opcoes struct {
 	recarga   <-chan os.Signal // cada valor é um SIGHUP; nil: não há
 }
 
-// Rodar põe o agente no ar em produção: HTTPS na 443 e a discagem em 127.0.0.1:8091. O certificado vem de
+// Rodar põe o agente no ar em produção: HTTPS na 443 (ou na "porta" do config.json) e a discagem em 127.0.0.1:8091. O certificado vem de
 // /etc/starsonic-video/tls, e o SIGHUP o relê e manda o reloadcert ao FreeSWITCH. Volta quando o ctx acaba (sem
 // erro) ou quando um dos servidores falha.
 func Rodar(ctx context.Context, c config.Config, versao string) error {
@@ -125,9 +128,10 @@ func Rodar(ctx context.Context, c config.Config, versao string) error {
 	if err != nil {
 		return err
 	}
-	l, err := net.Listen("tcp", enderecoHTTPS)
+	endereco := ":" + strconv.Itoa(c.PortaHTTPS()) // a 443, ou a "porta" do config.json
+	l, err := escutarHTTPS(endereco)
 	if err != nil {
-		return fmt.Errorf("servidor: escutar em %s: %w", enderecoHTTPS, err)
+		return fmt.Errorf("servidor: escutar em %s: %w", endereco, err)
 	}
 	hup := make(chan os.Signal, 1)
 	notificarSIGHUP(hup)

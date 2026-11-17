@@ -25,12 +25,36 @@ type Config struct {
 	SenhaESL  string `json:"senhaEsl"`  // a senha do ESL do FreeSWITCH
 	IPPrivado string `json:"ipPrivado"` // o IPv4 da VM na rede dela
 	IPPublico string `json:"ipPublico"` // o IPv4 público da VM, o que o endereço dá no DNS
+	Porta     int    `json:"porta"`     // opcional: a porta do HTTPS do agente; ausente ou 0 é a 443
+}
+
+// portaPadrao é a porta do HTTPS do agente quando o config.json não diz outra.
+const portaPadrao = 443
+
+// portasDoServidor são as portas que o próprio servidor de vídeo usa: a "porta" não pode ser uma delas.
+var portasDoServidor = map[int]bool{3478: true, 5061: true, 5066: true, 5070: true, 5080: true, 5349: true, 8021: true, 8091: true}
+
+// PortaValida diz se n serve de porta do HTTPS do agente: a 443, ou de 1024 a 65535 fora as portas do próprio
+// servidor (3478, 5061, 5066, 5070, 5080, 5349, 8021 e 8091).
+func PortaValida(n int) bool {
+	if n == portaPadrao {
+		return true
+	}
+	return n >= 1024 && n <= 65535 && !portasDoServidor[n]
+}
+
+// PortaHTTPS é a porta do HTTPS do agente: a "porta" do config.json, ou a 443 quando ela falta (0).
+func (c Config) PortaHTTPS() int {
+	if c.Porta == 0 {
+		return portaPadrao
+	}
+	return c.Porta
 }
 
 // minimoSenhaESL é o tamanho mínimo da senha do ESL. O instalador sorteia 32 letras e números.
 const minimoSenhaESL = 24
 
-// Ler lê o JSON em caminho, só com os seis campos, e confere os valores (o Conferir).
+// Ler lê o JSON em caminho, com os seis campos e, se quiser, a porta, e confere os valores (o Conferir).
 func Ler(caminho string) (Config, error) {
 	dados, err := os.ReadFile(caminho)
 	if err != nil {
@@ -53,7 +77,7 @@ func Ler(caminho string) (Config, error) {
 	return c, nil
 }
 
-// Conferir diz se os seis campos estão certos:
+// Conferir diz se os campos estão certos:
 //   - o endereco é um nome no DNS, com letras minúsculas, números, pontos e hífens, pelo menos um ponto
 //     e a última parte que não é só número (a regra do conferir_endereco do instalador do chat);
 //   - o chat é um nome assim ou um IPv4, com a porta quando o chat usa uma, sem https:// nem caminho.
@@ -63,7 +87,8 @@ func Ler(caminho string) (Config, error) {
 //   - a senhaEsl tem pelo menos 24 caracteres, só letras sem acento e números. O FreeSWITCH lê a
 //     configuração por um pré-processador que expande o $${...} antes do XML, e a senha vai também na
 //     linha do auth do ESL;
-//   - os dois IPs são IPv4.
+//   - os dois IPs são IPv4;
+//   - a porta, quando tem, é a 443 ou de 1024 a 65535, fora as portas do próprio servidor.
 //
 // Assim, nenhum valor quebra uma linha nem um atributo do que o gerar escreve. O Ler confere, e o gerar
 // confere de novo, para uma Config feita à mão. O erro diz o campo, e nunca mostra a chave nem a senha.
@@ -85,6 +110,9 @@ func (c Config) Conferir() error {
 	}
 	if !ipv4(c.IPPublico) {
 		return errors.New(`o "ipPublico" é o IPv4 público da VM, como 203.0.113.10`)
+	}
+	if c.Porta != 0 && !PortaValida(c.Porta) {
+		return errors.New(`a "porta" é a do HTTPS do agente: a 443 ou de 1024 a 65535, fora as portas do próprio servidor (3478, 5061, 5066, 5070, 5080, 5349, 8021 e 8091); sem ela, vale a 443`)
 	}
 	return nil
 }

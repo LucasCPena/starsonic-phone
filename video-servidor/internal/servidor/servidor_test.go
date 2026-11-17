@@ -12,6 +12,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -1051,5 +1052,42 @@ func TestLogs_SemSegredos(t *testing.T) {
 	}
 	if !strings.Contains(texto, "rota=") {
 		t.Errorf("o registro dos pedidos sumiu:\n%s", texto)
+	}
+}
+
+// O Rodar escuta na porta do config.json (a 443 quando ela falta). O teste troca o escutarHTTPS: nunca abre a 443.
+func TestRodar_EscutaNaPortaDoConfig(t *testing.T) {
+	pasta := t.TempDir()
+	certificadoDeTeste(t, pasta, 1)
+	certAntes, chaveAntes, escutarAntes := arquivoCertificado, arquivoChave, escutarHTTPS
+	arquivoCertificado, arquivoChave = filepath.Join(pasta, "certificado.pem"), filepath.Join(pasta, "chave.pem")
+	t.Cleanup(func() { arquivoCertificado, arquivoChave, escutarHTTPS = certAntes, chaveAntes, escutarAntes })
+
+	casos := []struct {
+		nome  string
+		porta int
+		want  string
+	}{
+		{"sem porta é a 443", 0, ":443"},
+		{"a 443", 443, ":443"},
+		{"a 7443", 7443, ":7443"},
+	}
+	for _, caso := range casos {
+		t.Run(caso.nome, func(t *testing.T) {
+			var pedido string
+			escutarHTTPS = func(endereco string) (net.Listener, error) {
+				pedido = endereco
+				return nil, errors.New("parou no teste")
+			}
+			c := configDeTeste()
+			c.Porta = caso.porta
+			err := Rodar(context.Background(), c, "0.0.0-teste")
+			if pedido != caso.want {
+				t.Errorf("escutou em %q, want %q", pedido, caso.want)
+			}
+			if err == nil || !strings.Contains(err.Error(), caso.want) {
+				t.Errorf("erro %v, want um erro que diz a porta %s", err, caso.want)
+			}
+		})
 	}
 }

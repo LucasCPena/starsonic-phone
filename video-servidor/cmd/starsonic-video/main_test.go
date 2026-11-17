@@ -514,3 +514,17 @@ func TestReunioes(t *testing.T) {
 		t.Errorf("o erro mostra a chave: %q", erros.String())
 	}
 }
+
+// O reunioes pergunta ao agente na porta do config.json: a 443 quando ela falta, e a "porta" quando tem.
+func TestUrlDoEstado(t *testing.T) {
+	casos := map[int]string{
+		0:    "https://127.0.0.1/agente/v1/estado",
+		443:  "https://127.0.0.1/agente/v1/estado",
+		7443: "https://127.0.0.1:7443/agente/v1/estado",
+	}
+	for porta, want := range casos {
+		if got := urlDoEstado(porta); got != want {
+			t.Errorf("urlDoEstado(%d) = %q, want %q", porta, got, want)
+		}
+	}
+}

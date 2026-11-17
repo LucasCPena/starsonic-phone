@@ -127,7 +127,7 @@ func TestConfig_Ler(t *testing.T) {
 		{"ipPrivado com zero na frente", com(t, `"ipPrivado": "10.0.0.5"`, `"ipPrivado": "10.0.0.05"`), `"ipPrivado"`},
 		{"ipPublico IPv6", com(t, `"ipPublico": "203.0.113.10"`, `"ipPublico": "2001:db8::10"`), `"ipPublico"`},
 		{"ipPublico um nome", com(t, `"ipPublico": "203.0.113.10"`, `"ipPublico": "video.exemplo.com.br"`), `"ipPublico"`},
-		{"uma chave a mais", com(t, `"ipPublico": "203.0.113.10"`, `"ipPublico": "203.0.113.10", "porta": 443`), `"porta"`},
+		{"uma chave a mais", com(t, `"ipPublico": "203.0.113.10"`, `"ipPublico": "203.0.113.10", "portaa": 443`), `"portaa"`},
 	}
 	for _, caso := range recusas {
 		t.Run(caso.nome, func(t *testing.T) {
@@ -184,4 +184,76 @@ func TestConfig_Conferir(t *testing.T) {
 	if err := c.Conferir(); err == nil || !strings.Contains(err.Error(), `"endereco"`) {
 		t.Errorf("um endereco com quebra de linha: %v, want um erro que diz o campo", err)
 	}
+}
+
+// A porta é a única chave opcional: ausente ou 0 é a 443, e valem a 443 e de 1024 a 65535, menos as portas do
+// próprio servidor.
+func TestConfig_Porta(t *testing.T) {
+	comPorta := func(valor string) string {
+		return com(t, `"ipPublico": "203.0.113.10"`, `"ipPublico": "203.0.113.10", "porta": `+valor)
+	}
+	aceitas := map[string]int{
+		"ausente":       0,
+		"zero":          0,
+		"a 443":         443,
+		"a 7443":        7443,
+		"a 1024":        1024,
+		"a 65535":       65535,
+		"a 8443":        8443,
+		"a 5060 (SIP)":  5060,
+		"a 5062":        5062,
+		"a 49152":       49152,
+		"a 16384 (RTP)": 16384,
+	}
+	valores := map[string]string{"ausente": "", "zero": "0", "a 443": "443", "a 7443": "7443", "a 1024": "1024",
+		"a 65535": "65535", "a 8443": "8443", "a 5060 (SIP)": "5060", "a 5062": "5062", "a 49152": "49152", "a 16384 (RTP)": "16384"}
+	for nome, porta := range aceitas {
+		t.Run("aceita "+nome, func(t *testing.T) {
+			conteudo := certo
+			if valores[nome] != "" {
+				conteudo = comPorta(valores[nome])
+			}
+			c, err := Ler(escreverConfig(t, conteudo))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.Porta != porta {
+				t.Errorf("Porta = %d, want %d", c.Porta, porta)
+			}
+			want := porta
+			if want == 0 {
+				want = 443
+			}
+			if got := c.PortaHTTPS(); got != want {
+				t.Errorf("PortaHTTPS = %d, want %d", got, want)
+			}
+		})
+	}
+	recusadas := []string{"1", "80", "442", "444", "1023", "65536", "-1", "70000", `"7443"`, "7443.5",
+		"3478", "5061", "5066", "5070", "5080", "5349", "8021", "8091"}
+	for _, valor := range recusadas {
+		t.Run("recusa "+valor, func(t *testing.T) {
+			_, err := Ler(escreverConfig(t, comPorta(valor)))
+			if err == nil {
+				t.Fatal("Ler aceitou")
+			}
+			if !strings.Contains(err.Error(), `"porta"`) && !strings.Contains(err.Error(), "JSON") {
+				t.Errorf("o erro %q não diz o campo", err)
+			}
+		})
+	}
+	t.Run("o Conferir de uma Config feita à mão", func(t *testing.T) {
+		c, err := Ler(escreverConfig(t, certo))
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.Porta = 1023
+		if err := c.Conferir(); err == nil || !strings.Contains(err.Error(), `"porta"`) {
+			t.Errorf("porta 1023: %v, want um erro que diz o campo", err)
+		}
+		c.Porta = 7443
+		if err := c.Conferir(); err != nil {
+			t.Errorf("porta 7443: %v", err)
+		}
+	})
 }
