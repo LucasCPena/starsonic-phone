@@ -45,14 +45,24 @@ export function iniciar(raiz, servicos) {
     rodando = true;
     try {
       while (fila.length > 0) {
+        const foco = document.activeElement;
         const { estado: novo, efeitos } = transicao(estado, fila.shift());
         estado = novo;
         desenhar(estado);
         for (const efeito of efeitos) rodar(efeito);
+        manterOFoco(foco);
       }
     } finally {
       rodando = false;
     }
+  }
+
+  // O botão com o foco que o desenho escondeu ou desligou (o Tentar de novo do aviso de acesso que deu certo, por
+  // exemplo) leva o foco ao título da tela: sem isso, ele cairia no começo da página.
+  function manterOFoco(foco) {
+    const agora = document.activeElement;
+    if (!foco || foco === document.body || (agora !== foco && agora !== document.body)) return;
+    if (foco.closest('[hidden]') || foco.disabled) tituloVisivel()?.focus();
   }
 
   const rede = servicos.rede(despachar);
@@ -105,7 +115,7 @@ export function iniciar(raiz, servicos) {
         ligacao.trocarMicrofone(efeito.ligado);
         break;
       case 'pararCaptura':
-        break; // a captura da tela nasce no clique do Compartilhar a tela, que esta página ainda não tem
+        break; // a captura da tela (o clique do Compartilhar a tela) ainda não existe: não há o que parar
       case 'focar':
         tituloVisivel()?.focus();
         break;

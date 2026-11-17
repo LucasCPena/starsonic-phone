@@ -745,6 +745,7 @@ main {
 
 .moldura {
   position: relative;
+  width: min(100%, 1120px); /* sem as unidades do container */
   width: min(100cqw, 1120px, 100cqh * 16 / 9);
   aspect-ratio: 16 / 9;
 }
@@ -1072,14 +1073,14 @@ main {
     margin: 0 8px;
   }
 
-  #mosaico,
-  .caiu {
+  #mosaico {
     border-radius: 8px;
   }
 
   /* No celular em pé, a moldura tem 210 px de altura: o cartão da conexão caída encolhe. */
   .caiu {
     padding: 8px;
+    border-radius: 8px;
   }
 
   .caiu-cartao {

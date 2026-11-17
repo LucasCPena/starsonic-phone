@@ -12,11 +12,8 @@ export interface Reuniao {
   inicio: number | null;
 }
 
-/** Uma resposta do abrir: o status e o corpo em JSON. */
-export interface RespostaDoAbrir {
-  status: number;
-  corpo: unknown;
-}
+/** Uma resposta do abrir: o status e o corpo em JSON, ou nenhuma (o pedido fica sem resposta). */
+export type RespostaDoAbrir = { status: number; corpo: unknown } | 'semResposta';
 
 export type Mensagem = { tipo: string; [campo: string]: unknown };
 
@@ -53,6 +50,8 @@ export class RedeFalsa {
   readonly canais: Canal[] = [];
   /** O que o servidor responde a cada pedir; sem ele, nada. */
   aoPedir: ((canal: Canal) => void) | null = null;
+  /** Falso: os canais novos nunca acabam de abrir (ficam conectando). */
+  canaisAbrem = true;
   private readonly fila: RespostaDoAbrir[] = [];
 
   private constructor(private readonly reuniao: Reuniao) {}
@@ -84,6 +83,7 @@ export class RedeFalsa {
       status: 200,
       corpo: { reuniao: this.reuniao, bilhete: `bilhete-${this.abrires.length}` },
     };
+    if (resposta === 'semResposta') return;
     await route.fulfill({
       status: resposta.status,
       contentType: 'application/json; charset=utf-8',
@@ -91,7 +91,8 @@ export class RedeFalsa {
     });
   }
 
-  private canal(ws: WebSocketRoute): void {
+  // O Playwright abre o canal da página quando este manipulador acaba: o que não acaba o deixa conectando.
+  private async canal(ws: WebSocketRoute): Promise<void> {
     const canal = new Canal(ws, new URL(ws.url()).searchParams.get('bilhete') ?? '');
     this.canais.push(canal);
     ws.onMessage((texto) => {
@@ -102,5 +103,6 @@ export class RedeFalsa {
     ws.onClose((codigo) => {
       canal.fechadoPelaPagina = codigo ?? null;
     });
+    if (!this.canaisAbrem) await new Promise<never>(() => {});
   }
 }

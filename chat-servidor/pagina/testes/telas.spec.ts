@@ -218,6 +218,8 @@ test('a câmera ocupada', async ({ page }) => {
   await expect(aviso).toBeHidden();
   await expect(botao(page, 'Câmera')).toBeEnabled();
   await expect(botao(page, 'Câmera')).toHaveAttribute('aria-pressed', 'true');
+  // O botão com o foco sumiu com o aviso: o foco vai ao título.
+  await expect(titulo(page, 'Planejamento de dezembro')).toBeFocused();
 });
 
 test('o primeiro play nasce no clique', async ({ page }) => {
@@ -438,6 +440,154 @@ test('o aceito leva a Entrando', async ({ page }) => {
     page.getByText('Tente de novo daqui a pouco. Se continuar, avise quem mandou o link.', { exact: true }),
   ).toBeVisible();
   await expect(botao(page, 'Tentar de novo')).toBeEnabled();
+});
+
+// As regras do rede.js que o cérebro espera: o canal fechado fica mudo, e tudo responde num tempo limitado.
+test.describe('a rede', () => {
+  test('depois do fecharCanal, o canal velho fica mudo', async ({ page }) => {
+    await registrar(page);
+    const rede = await abrir(page);
+    rede.aoPedir = (c) => c.mandar({ tipo: 'aguardando' });
+    await pedirParaEntrar(page);
+    await expect(titulo(page, 'Aguardando ser aceito…')).toBeVisible();
+    const velho = await rede.canalNumero(1);
+    await botao(page, 'Desistir').click();
+    await expect.poll(() => velho.fechadoPelaPagina).toBe(1000);
+    await botao(page, 'Pedir para entrar').click();
+    const novo = await rede.canalNumero(2);
+    await expect.poll(() => novo.tipos()).toEqual(['pedir']);
+
+    // O fechamento do canal velho chega agora, com o 1011: ouvido, ele abriria de novo 3 s depois.
+    await velho.fechar(1011);
+    await page.clock.runFor(3_000);
+    expect(await abrires(page)).toBe(3);
+    await expect(titulo(page, 'Aguardando ser aceito…')).toBeVisible();
+    // E o canal novo, que abriu, passa do prazo de abrir sem cair.
+    await page.clock.runFor(10_000);
+    await expect(titulo(page, 'Aguardando ser aceito…')).toBeVisible();
+    expect(novo.fechadoPelaPagina).toBeUndefined();
+  });
+
+  test('o abrir sem resposta desiste em 10 s', async ({ page }) => {
+    const rede = await abrir(page, { respostas: ['semResposta'] });
+    await expect.poll(() => rede.abrires.length).toBe(1);
+    const semServidor = titulo(page, 'O servidor de reuniões não respondeu');
+    await page.clock.runFor(9_999);
+    await expect(semServidor).toBeHidden();
+    await page.clock.runFor(1);
+    await expect(semServidor).toBeVisible();
+  });
+
+  test('o canal que não abre fecha em 10 s', async ({ page }) => {
+    const rede = await abrir(page);
+    rede.canaisAbrem = false;
+    await pedirParaEntrar(page);
+    await rede.canalNumero(1);
+    const semServidor = titulo(page, 'O servidor de reuniões não respondeu');
+    await page.clock.runFor(9_999);
+    await expect(titulo(page, 'Aguardando ser aceito…')).toBeVisible();
+    await page.clock.runFor(1);
+    await expect(semServidor).toBeVisible();
+  });
+});
+
+test('a mídia que chega depois do fim para', async ({ page }) => {
+  // O getUserMedia só responde quando o teste solta, e guarda os fluxos que deu.
+  await page.addInitScript(() => {
+    const w = window as unknown as { soltarMidia: () => void; fluxos: MediaStream[] };
+    const original = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    const solta = new Promise<void>((r) => {
+      w.soltarMidia = r;
+    });
+    w.fluxos = [];
+    navigator.mediaDevices.getUserMedia = async (c?: MediaStreamConstraints) => {
+      await solta;
+      const f = await original(c);
+      w.fluxos.push(f);
+      return f;
+    };
+  });
+  const rede = await abrir(page);
+  rede.aoPedir = (c) => c.mandar({ tipo: 'recusado' });
+  await pedirParaEntrar(page);
+  await expect(titulo(page, 'Não foi possível entrar')).toBeVisible();
+
+  // O pedido da câmera e do microfone responde agora, depois do fim: o fluxo para, e a imagem não aparece.
+  await page.evaluate(() => (window as unknown as { soltarMidia: () => void }).soltarMidia());
+  const fluxos = () =>
+    page.evaluate(() =>
+      (window as unknown as { fluxos: MediaStream[] }).fluxos.map((f) => f.getTracks().map((t) => t.readyState)),
+    );
+  await expect.poll(fluxos).toEqual([['ended', 'ended']]);
+  expect(await page.locator('video.previa').first().evaluate((v: HTMLVideoElement) => v.srcObject)).toBeNull();
+});
+
+// Uma ligação falsa no lugar do ligacao.js (que ainda não liga): ela confirma, e o teste dá os eventos dela.
+const LIGACAO_FALSA = `
+export function criarLigacoes(aoEvento) {
+  window.ligacaoFalsa = aoEvento;
+  return {
+    ligar({ qual }) { setTimeout(() => aoEvento({ tipo: 'ligacao', qual, o: 'confirmada' }), 0); },
+    desligar() {},
+    trocarCamera() { setTimeout(() => aoEvento({ tipo: 'cameraTrocada', ok: true }), 0); },
+    trocarMicrofone() {},
+  };
+}`;
+
+/** A página na reunião, com a ligação falsa. */
+async function naReuniao(page: Page): Promise<RedeFalsa> {
+  await page.route('**/r/estatico/ligacao.js', (r) =>
+    r.fulfill({ contentType: 'text/javascript; charset=utf-8', body: LIGACAO_FALSA }),
+  );
+  const rede = await abrir(page);
+  await esperarAMidia(page);
+  rede.aoPedir = (c) => c.mandar(ACEITO);
+  await pedirParaEntrar(page);
+  await expect(titulo(page, 'Entrando na reunião…')).toBeVisible();
+  await page.clock.runFor(10);
+  await expect(page.getByRole('navigation', { name: 'Controles da reunião' })).toBeVisible();
+  return rede;
+}
+
+const darNaLigacao = (page: Page, evento: object) =>
+  page.evaluate((e) => (window as unknown as { ligacaoFalsa: (e: object) => void }).ligacaoFalsa(e), evento);
+
+test.describe('a reunião', () => {
+  test('na conexão caída, o Sair continua valendo', async ({ page }) => {
+    await naReuniao(page);
+    await expect(titulo(page, 'Planejamento de dezembro')).toBeFocused();
+
+    await darNaLigacao(page, { tipo: 'ligacao', qual: 'principal', o: 'semConexao' });
+    await expect(page.getByRole('heading', { level: 2, name: 'A conexão caiu. Entrando de novo…' })).toBeVisible();
+    await expect(
+      page.getByText('Espere um instante: a página volta sozinha para a reunião.', { exact: true }),
+    ).toBeVisible();
+    await expect(page.getByRole('status')).toHaveText('A conexão caiu. Entrando de novo…');
+    await expect(botao(page, 'Compartilhar a tela')).toBeDisabled();
+
+    await expect(botao(page, 'Sair')).toBeEnabled();
+    await botao(page, 'Sair').click();
+    await expect(titulo(page, 'Você saiu da reunião')).toBeVisible();
+    await expect(page.getByText('Para voltar, clique em Entrar de novo.', { exact: true })).toBeVisible();
+    await expect(botao(page, 'Entrar de novo')).toBeEnabled();
+  });
+
+  test('o Compartilhar a tela só vale com o canal aberto', async ({ page }) => {
+    const rede = await naReuniao(page);
+    const compartilhar = botao(page, 'Compartilhar a tela');
+    await expect(compartilhar).toBeEnabled();
+
+    // O canal cai com a ligação no ar: ele volta por trás, com a chave, e nada aparece na tela.
+    await (await rede.canalNumero(1)).fechar(1001);
+    await expect(compartilhar).toBeDisabled();
+    await page.clock.runFor(2_000);
+    const volta = await rede.canalNumero(2);
+    await expect.poll(() => volta.recebidas).toEqual([{ tipo: 'voltar', participante: 'participante-1', volta: 'volta-1' }]);
+    await expect(compartilhar).toBeDisabled(); // o canal está voltando
+    volta.mandar({ tipo: 'voltou', volta: 'volta-2' });
+    await expect(compartilhar).toBeEnabled();
+    await expect(page.getByRole('heading', { name: 'A conexão caiu. Entrando de novo…' })).toBeHidden();
+  });
 });
 
 test.describe(() => {
