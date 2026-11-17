@@ -55,43 +55,60 @@ function portaLivre(host: string, porta: number): Promise<void> {
   });
 }
 
-/** Sobe o programa com a saída (a padrão e a de erros) no arquivo. */
-function subir(comando: string, args: string[], registro: string): ChildProcess {
+interface Servidor {
+  nome: string;
+  filho: ChildProcess;
+  registro: string;
+  erro?: Error; // o 'error' do processo: ele não subiu (o programa não existe, por exemplo)
+}
+
+/** Sobe o programa com a saída (a padrão e a de erros) no arquivo. O 'error' do processo fica no Servidor: a espera
+ * o diz, em vez de ele derrubar o Playwright. */
+function subir(nome: string, comando: string, args: string[], registro: string): Servidor {
   const log = openSync(registro, 'w');
   try {
-    return spawn(comando, args, { stdio: ['ignore', log, log] });
+    const s: Servidor = { nome, registro, filho: spawn(comando, args, { stdio: ['ignore', log, log] }) };
+    s.filho.on('error', (e) => {
+      s.erro = e;
+    });
+    return s;
   } finally {
     closeSync(log);
   }
 }
 
-interface Servidor {
-  nome: string;
-  filho: ChildProcess;
-  registro: string;
-}
-
-/** Espera a condição, até prazo ms. Um servidor que sai antes disso é o erro. */
-async function esperarAte(descricao: string, prazo: number, servidores: Servidor[], condicao: () => Promise<boolean>): Promise<void> {
+/** Espera a condição, até prazo ms. A condição devolve true quando está pronta, ou o que viu (um status, por exemplo),
+ * e um erro dela também é o que viu: passado o prazo, o erro diz a última coisa vista. Um servidor que sai, ou que não
+ * subiu, antes disso é o erro. */
+async function esperarAte(
+  descricao: string,
+  prazo: number,
+  servidores: Servidor[],
+  condicao: () => Promise<true | string>,
+): Promise<void> {
   await repetirAte(
     prazo,
     200,
     async () => {
       for (const s of servidores) {
+        if (s.erro) throw new Error(`o ${s.nome} não subiu: ${s.erro.message}`);
         if (s.filho.exitCode !== null || s.filho.signalCode !== null) {
           throw new Error(`o ${s.nome} saiu (${s.filho.exitCode ?? s.filho.signalCode}); veja ${s.registro}`);
         }
       }
       try {
         return await condicao();
-      } catch {
-        return false; // ainda não responde
+      } catch (e) {
+        return `${(e as Error).message}`; // ainda não responde
       }
     },
-    (ok) => ok,
-    () => `${descricao}: nada em ${prazo / 1000} s`,
+    (visto) => visto === true,
+    (visto) => `${descricao}: nada em ${prazo / 1000} s; o último: ${visto}`,
   );
 }
+
+/** O status do pedido, quando não é o 200: o que a espera viu. */
+const ok200 = (r: Response): true | string => r.status === 200 || `respondeu ${r.status}`;
 
 /** A porta TCP aceita uma conexão. */
 function aceita(host: string, porta: number): Promise<boolean> {
@@ -108,7 +125,7 @@ function aceita(host: string, porta: number): Promise<boolean> {
 /** Para o servidor: o SIGTERM e, se ele não sair em prazo ms, o SIGKILL. */
 async function parar(s: Servidor, prazo: number): Promise<void> {
   const { filho } = s;
-  if (filho.exitCode !== null || filho.signalCode !== null) return;
+  if (filho.exitCode !== null || filho.signalCode !== null || filho.pid === undefined) return; // saiu, ou nem subiu
   const saiu = new Promise<void>((r) => filho.once('exit', () => r()));
   filho.kill('SIGTERM');
   const forca = setTimeout(() => filho.kill('SIGKILL'), prazo);
@@ -148,8 +165,13 @@ export default async function ambiente(): Promise<() => Promise<void>> {
   const video = programa('STARSONIC_VIDEO_BIN', VIDEO_SERVIDOR, './cmd/starsonic-video', 'starsonic-video');
   const chat = programa('STARSONIC_CHAT_BIN', CHAT_SERVIDOR, './cmd/starsonic-chat', 'starsonic-chat');
 
-  // A configuração de teste do agente: o IP da máquina é o privado e o público, e a senha do ESL é sorteada.
-  const chave = spawnSync(video, ['chave'], { encoding: 'utf8' }).stdout.trim();
+  // A configuração de teste do agente: o IP da máquina é o privado e o público, e a senha do ESL é sorteada. O erro
+  // nunca leva a saída do comando, que é a chave.
+  const gerada = spawnSync(video, ['chave'], { encoding: 'utf8' });
+  const chave = gerada.stdout?.trim() ?? '';
+  if (gerada.error || gerada.status !== 0 || !/^[A-Za-z0-9_-]{43}$/.test(chave)) {
+    throw new Error(`o "${video} chave" não deu uma chave (${gerada.error?.message ?? `status ${gerada.status}`}); confira o STARSONIC_VIDEO_BIN`);
+  }
   const config = join(PRIVADO, 'config.json');
   writeFileSync(
     config,
@@ -178,29 +200,28 @@ export default async function ambiente(): Promise<() => Promise<void>> {
     const conf = join(etc, 'freeswitch');
     const run = join(PRIVADO, 'run');
     mkdirSync(run);
-    servidores.push({
-      nome: 'FreeSWITCH',
-      registro: REGISTROS.freeswitch,
-      filho: subir(
+    servidores.push(
+      subir(
+        'FreeSWITCH',
         'stdbuf',
         ['-oL', '-eL', freeswitch, '-c', '-nonat', '-conf', conf, '-log', run, '-db', run, '-run', run, '-temp', run,
           '-certs', join(conf, 'tls')],
         REGISTROS.freeswitch,
       ),
-    });
-    await esperarAte('o FreeSWITCH (o perfil tls na 5061 e o WebSocket do navegador)', 60_000, servidores, async () =>
-      (await aceita(ip, 5061)) && (await aceita('127.0.0.1', 5066)),
     );
-
-    servidores.push({
-      nome: 'agente',
-      registro: REGISTROS.agente,
-      filho: subir(video, ['servir', '--teste', '--escutar', '127.0.0.1:8095', '--config', config, '--origem', PAGINA],
-        REGISTROS.agente),
+    await esperarAte('o FreeSWITCH (o perfil tls na 5061 e o WebSocket do navegador)', 60_000, servidores, async () => {
+      if (!(await aceita(ip, 5061))) return `a ${ip}:5061 não aceita`;
+      return (await aceita('127.0.0.1', 5066)) || 'a 127.0.0.1:5066 não aceita';
     });
+
+    servidores.push(
+      subir('agente', video, ['servir', '--teste', '--escutar', '127.0.0.1:8095', '--config', config, '--origem', PAGINA],
+        REGISTROS.agente),
+    );
     await esperarAte('o agente ligado ao FreeSWITCH', 60_000, servidores, async () => {
       const r = await fetch(`${AGENTE}/agente/v1/estado`, { headers: { authorization: `Bearer ${chave}` } });
-      return r.status === 200 && (await r.json()).freeswitch === true;
+      if (r.status !== 200) return `o estado respondeu ${r.status}`;
+      return (await r.json()).freeswitch === true || 'o estado diz que o FreeSWITCH está fora';
     });
 
     // O chat, com o administrador de teste (uma senha sorteada a cada rodada, que só vai para os testes).
@@ -210,20 +231,16 @@ export default async function ambiente(): Promise<() => Promise<void>> {
     const criar = spawnSync(chat, ['admin-criar', 'teste', '--dados', dados], { input: `${senha}\n${senha}\n`, encoding: 'utf8' });
     if (criar.status !== 0) throw new Error(`o admin-criar falhou: ${criar.stdout}`.replaceAll(senha, '***'));
     process.env.CHAT_ADMIN_SENHA = senha;
-    servidores.push({
-      nome: 'chat',
-      registro: REGISTROS.chat,
-      filho: subir(chat, ['servir', '--teste', '--escutar', '127.0.0.1:4191', '--dados', dados, '--origem', PAGINA],
+    servidores.push(
+      subir('chat', chat, ['servir', '--teste', '--escutar', '127.0.0.1:4191', '--dados', dados, '--origem', PAGINA],
         REGISTROS.chat),
-    });
-    await esperarAte('o chat', 30_000, servidores, async () => (await fetch(`${CHAT}/admin/entrar`)).status === 200);
+    );
+    await esperarAte('o chat', 30_000, servidores, async () => ok200(await fetch(`${CHAT}/admin/entrar`)));
 
-    servidores.push({
-      nome: 'servidor do cliente',
-      registro: REGISTROS.estatico,
-      filho: subir(process.execPath, [join(RAIZ, 'estatico.mjs'), new URL(PAGINA).port], REGISTROS.estatico),
-    });
-    await esperarAte('o servidor do cliente', 30_000, servidores, async () => (await fetch(`${PAGINA}/`)).status === 200);
+    servidores.push(
+      subir('servidor do cliente', process.execPath, [join(RAIZ, 'estatico.mjs'), new URL(PAGINA).port], REGISTROS.estatico),
+    );
+    await esperarAte('o servidor do cliente', 30_000, servidores, async () => ok200(await fetch(`${PAGINA}/`)));
 
     process.env.STARSONIC_E2E_ANA = await prepararChat(chave);
   } catch (e) {

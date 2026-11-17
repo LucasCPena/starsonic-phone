@@ -10,9 +10,11 @@ import { AGENTE, ipDaMaquina, novaReuniaoDeTeste, PAGINA, registros, segredosNos
 
 test('a senha não vale duas vezes nem sem o cabeçalho', async () => {
   const codigo = await novaReuniaoDeTeste();
-  const a = await Navegador.abrir(A);
-  const b = await Navegador.abrir(B);
+  let a: Navegador | undefined;
+  let b: Navegador | undefined;
   try {
+    a = await Navegador.abrir(A);
+    b = await Navegador.abrir(B);
     // Sem o X-Starsonic-Senha: o agente recusa na discagem.
     const agente = new URL(AGENTE);
     await b.ligar({ video: { wss: `ws://${agente.host}/sip`, uri: `sip:reuniao@${agente.hostname}` } });
@@ -25,8 +27,8 @@ test('a senha não vale duas vezes nem sem o cabeçalho', async () => {
     await b.ligar({ senha: aceito.senha, video: aceito.video });
     expect((await b.terminou(20_000))?.codigo).toBe(403);
   } finally {
-    await a.fechar();
-    await b.fechar();
+    await a?.fechar();
+    await b?.fechar();
   }
 });
 

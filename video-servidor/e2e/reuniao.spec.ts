@@ -23,9 +23,11 @@ const esperar = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 test('a reunião de teste mostra as duas câmeras no mosaico e cada um ouve o outro', async () => {
   const codigo = await novaReuniaoDeTeste();
-  const a = await Navegador.abrir(A);
-  const b = await Navegador.abrir(B);
+  let a: Navegador | undefined;
+  let b: Navegador | undefined;
   try {
+    a = await Navegador.abrir(A);
+    b = await Navegador.abrir(B);
     // Na reunião de teste, o pedir responde aceito na hora, e o cliente liga.
     await a.entrarPelaPagina(codigo, 'Carlos Lima');
     await b.entrarPelaPagina(codigo, 'Bia Ramos');
@@ -44,8 +46,8 @@ test('a reunião de teste mostra as duas câmeras no mosaico e cada um ouve o ou
     // claro sobre o fundo escuro, e não uma cor só. Isso prova que a fonte do pacote desenha.
     await a.esperarNomesNoMosaicoDe2();
   } finally {
-    await a.fechar();
-    await b.fechar();
+    await a?.fechar();
+    await b?.fechar();
   }
 });
 
@@ -149,8 +151,13 @@ test.describe.serial('a reunião marcada', () => {
 test('quem fecha a aba sai da reunião em até 75 segundos', async () => {
   test.setTimeout(180_000);
   const codigo = await novaReuniaoDeTeste();
-  const [a, b, c] = [await Navegador.abrir(A), await Navegador.abrir(B), await Navegador.abrir(C)];
+  let a: Navegador | undefined;
+  let b: Navegador | undefined;
+  let c: Navegador | undefined;
   try {
+    a = await Navegador.abrir(A);
+    b = await Navegador.abrir(B);
+    c = await Navegador.abrir(C);
     await a.entrarPelaPagina(codigo, 'Carlos Lima');
     await b.entrarPelaPagina(codigo, 'Bia Ramos');
     await c.entrarPelaPagina(codigo, 'Maria Lima');
@@ -160,9 +167,9 @@ test('quem fecha a aba sai da reunião em até 75 segundos', async () => {
     await c.fecharAba();
     await a.esperarMosaicoDe2([VERMELHO, AZUL], 75_000);
   } finally {
-    await a.fechar();
-    await b.fechar();
-    await c.fechar();
+    await a?.fechar();
+    await b?.fechar();
+    await c?.fechar();
   }
 });
 
@@ -175,8 +182,13 @@ test('quem fecha a aba sai da reunião em até 75 segundos', async () => {
 test('quem para de mandar a mídia, com o WebSocket aberto, sai da reunião em até 75 segundos', async () => {
   test.setTimeout(180_000);
   const codigo = await novaReuniaoDeTeste();
-  const [a, b, c] = [await Navegador.abrir(A), await Navegador.abrir(B), await Navegador.abrir(C)];
+  let a: Navegador | undefined;
+  let b: Navegador | undefined;
+  let c: Navegador | undefined;
   try {
+    a = await Navegador.abrir(A);
+    b = await Navegador.abrir(B);
+    c = await Navegador.abrir(C);
     await a.entrarPelaPagina(codigo, 'Carlos Lima');
     await b.entrarPelaPagina(codigo, 'Bia Ramos');
     await c.entrarPelaPagina(codigo, 'Maria Lima');
@@ -189,8 +201,8 @@ test('quem para de mandar a mídia, com o WebSocket aberto, sai da reunião em a
     const fim = await c.terminou(10_000);
     expect(fim, 'o BYE do FreeSWITCH chegou a C pelo WebSocket aberto').toEqual({ codigo: null, causa: 'Terminated', originador: 'remote' });
   } finally {
-    await a.fechar();
-    await b.fechar();
-    await c.fechar();
+    await a?.fechar();
+    await b?.fechar();
+    await c?.fechar();
   }
 });
