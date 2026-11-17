@@ -146,8 +146,19 @@ test('o aparelho que acaba sozinho na reunião', async () => {
     await maria.entrar(codigo, 'Maria Lima');
     await colega.esperarCores(MOSAICO_2, [VERMELHO, AMARELO]);
 
+    // A câmera desligada e ligada de novo na reunião é a da ligação, que o midia.js não vigia. A cor da Maria de volta
+    // no mosaico da colega diz que a troca acabou.
+    const camera = maria.controles().getByRole('button', { name: 'Câmera', exact: true });
+    await camera.click();
+    await expect(camera).toHaveAttribute('aria-pressed', 'false');
+    await esperarSemCamera(colega, VERMELHO, 10_000);
+    await camera.click();
+    await expect(camera).toHaveAttribute('aria-pressed', 'true');
+    await colega.esperarMosaicoDe2([VERMELHO, AMARELO]);
+
+    // Ela acaba sozinha: a Câmera passa a faltar, e o quadro da Maria é o de quem está sem câmera.
     await maria.acabarSozinha('video');
-    await expect(maria.controles().getByRole('button', { name: 'Câmera', exact: true })).toBeDisabled();
+    await expect(camera).toBeDisabled();
     await esperarSemCamera(colega, VERMELHO, 10_000);
 
     await maria.acabarSozinha('audio');
@@ -173,6 +184,7 @@ test('o celular na reunião', async () => {
     // Os três controles, sem o Compartilhar a tela.
     await expect(maria.controles().getByRole('button')).toHaveText(['Microfone', 'Câmera', 'Sair']);
     await expect(maria.botao('Compartilhar a tela')).toBeHidden();
+    await maria.conferirOConsole();
   } finally {
     await maria?.fechar();
   }

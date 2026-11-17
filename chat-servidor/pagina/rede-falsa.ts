@@ -61,7 +61,7 @@ export class Canal {
   }
 }
 
-/** Um WSS do vídeo que a página abriu (o do JsSIP), visto do lado do servidor, que não responde nada. */
+/** Um WSS do vídeo que a página abriu (o do JsSIP), visto do lado do servidor, que só responde o que o teste manda. */
 export class VideoFalso {
   /** As mensagens SIP que a página mandou, na ordem. */
   readonly recebidas: string[] = [];
@@ -74,6 +74,11 @@ export class VideoFalso {
   /** O servidor fecha a conexão. */
   fechar(): Promise<void> {
     return this.ws.close();
+  }
+
+  /** Uma mensagem SIP do servidor para a página. */
+  mandar(mensagem: string): void {
+    this.ws.send(mensagem);
   }
 
   /** A primeira mensagem SIP da página com o método (INVITE, BYE…), quando ela chegar. */

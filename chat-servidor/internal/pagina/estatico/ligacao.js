@@ -30,8 +30,10 @@
 // Com a ligação no ar, a câmera é dela, e o fluxo continua o mesmo objeto: a câmera desligada para e sai dele na hora,
 // e a ligada de novo entra nele antes de ir à ligação, para o ligar de uma volta ver a câmera como ela está. A troca
 // que acaba depois de a ligação descer fica de fora (a faixa que chega tarde para): na conexão caída, a câmera volta a
-// ser do midia.js, que a acerta com a escolha. O microfone desligado é o mute do JsSIP, que põe o enabled falso e o
-// guarda: sem ele, um re-INVITE do servidor (a espera e a volta dela) acenderia a faixa.
+// ser do midia.js, que a acerta com a escolha. A câmera que chega ao fluxo depois da oferta e antes do confirmada (o
+// pedido mais lento que a espera do ligar) vai na ligação quando ela confirma. O microfone desligado é o mute do
+// JsSIP, que põe o enabled falso e o guarda: sem ele, um re-INVITE do servidor (a espera e a volta dela) acenderia a
+// faixa.
 //
 // A faixa que a principal manda e que acaba sozinha (o aparelho saiu, ou outro programa o tomou): a câmera vai ao
 // caminho da câmera desligada, sem o cameraTrocada, e o silêncio toma o lugar do microfone, para o RTP continuar. O
@@ -168,7 +170,10 @@ export function criarLigacoes(aoEvento) {
           }
         },
         icecandidate: ({ candidate, ready }) => coletar(l, candidate, ready),
-        confirmed: () => avisar(l, 'confirmada'),
+        confirmed: () => {
+          avisar(l, 'confirmada');
+          if (principal) pegarACamera(l);
+        },
         ended: () => avisar(l, 'terminou'),
         failed: ({ message }) => avisar(l, 'falhou', codigoSip(message)),
       },
@@ -238,6 +243,25 @@ export function criarLigacoes(aoEvento) {
       aoEvento({ tipo: 'midia', mic, cam: 'indisponivel' });
     }
     l.fila = l.fila.then(() => apagarACamera(l)).catch(() => {});
+  }
+
+  // A câmera que chegou ao fluxo depois da oferta (o pedido mais lento que a espera do ligar): a ligação confirmada a
+  // leva, vigiada como a dela, sem o cameraTrocada (nenhum trocarCamera espera). A que o emissor recusa para, sai do
+  // fluxo e passa a faltar: o botão nunca mostra uma câmera que não vai.
+  function pegarACamera(l) {
+    const t = transceiver(l, 'video');
+    const camera = l.fluxo?.getVideoTracks().find(viva);
+    if (!l.viva || l.fim || !t || t.sender.track || !camera) return;
+    vigiar(l, camera);
+    l.fila = l.fila
+      .then(() => t.sender.replaceTrack(camera))
+      .catch(() => {
+        if (!l.viva || l.fim) return;
+        camera.stop();
+        l.fluxo.removeTrack(camera);
+        const mic = l.fluxo.getAudioTracks().some(viva) ? 'ligado' : 'indisponivel';
+        aoEvento({ tipo: 'midia', mic, cam: 'indisponivel' });
+      });
   }
 
   // Desligar a câmera: a faixa para e sai do fluxo na hora (a luz apaga, e uma volta já a vê desligada), e o vídeo

@@ -859,13 +859,21 @@ const ACEITO_SEM_REDE: Mensagem = {
   },
 };
 
-/** Cada RTCPeerConnection que a página cria (window.conexoes), com a configuração dele (window.configuracoes). */
+/**
+ * Cada RTCPeerConnection que a página cria (window.conexoes), com a configuração dele (window.configuracoes). A classe
+ * original fica em window.ConexaoDoTeste, para o lado do servidor que o teste faz (o atenderOInvite).
+ */
 async function registrarConexoes(page: Page): Promise<void> {
   await page.addInitScript(() => {
-    const w = window as unknown as { conexoes: RTCPeerConnection[]; configuracoes: unknown[] };
+    const w = window as unknown as {
+      conexoes: RTCPeerConnection[];
+      configuracoes: unknown[];
+      ConexaoDoTeste: typeof RTCPeerConnection;
+    };
     w.conexoes = [];
     w.configuracoes = [];
     const Original = window.RTCPeerConnection;
+    w.ConexaoDoTeste = Original;
     window.RTCPeerConnection = class extends Original {
       constructor(...args: unknown[]) {
         super(...(args as [RTCConfiguration])); // o JsSIP passa também as restrições antigas, como segundo argumento
@@ -909,6 +917,37 @@ async function inviteDe(page: Page, video: VideoFalso): Promise<string> {
     )
     .toBe(true);
   return video.mensagem('INVITE');
+}
+
+/**
+ * O servidor atende o INVITE: o 200 com a resposta de outra conexão da página (a do teste, que só recebe) à oferta
+ * dele. O JsSIP manda o ACK e confirma a ligação, como com o servidor de vídeo.
+ */
+async function atenderOInvite(page: Page, video: VideoFalso, invite: string): Promise<void> {
+  const [cabecalho, ...corpo] = invite.split('\r\n\r\n');
+  const resposta = await page.evaluate(async (oferta) => {
+    const pc = new (window as unknown as { ConexaoDoTeste: typeof RTCPeerConnection }).ConexaoDoTeste();
+    await pc.setRemoteDescription({ type: 'offer', sdp: oferta });
+    await pc.setLocalDescription(await pc.createAnswer());
+    return pc.localDescription?.sdp ?? '';
+  }, corpo.join('\r\n\r\n'));
+  const linhas = cabecalho.split('\r\n').slice(1);
+  const os = (nome: string) => linhas.filter((l) => l.toLowerCase().startsWith(`${nome.toLowerCase()}:`));
+  video.mandar(
+    [
+      'SIP/2.0 200 OK',
+      ...os('Via'),
+      ...os('From'),
+      `${os('To')[0]};tag=servidor-1`,
+      ...os('Call-ID'),
+      ...os('CSeq'),
+      'Contact: <sip:reuniao@video.exemplo.com.br;transport=ws>',
+      'Content-Type: application/sdp',
+      `Content-Length: ${new TextEncoder().encode(resposta).length}`,
+      '',
+      resposta,
+    ].join('\r\n'),
+  );
 }
 
 /** A direção de cada m= do SDP de uma mensagem SIP, como {audio: 'sendrecv', video: 'recvonly'}. */
@@ -1078,6 +1117,51 @@ test.describe('a câmera ligada logo antes da ligação', () => {
     await page.clock.runFor(3_000);
     expect(rede.videos).toHaveLength(0);
     await expect(titulo(page, 'Você saiu da reunião')).toBeVisible();
+  });
+
+  /**
+   * A câmera mais lenta que os 3 s: a oferta sai sem ela, e ela chega ao fluxo (a luz acende) antes de o servidor
+   * atender. Devolve o WSS do vídeo e o INVITE.
+   */
+  async function comACameraDepoisDaOferta(page: Page): Promise<{ video: VideoFalso; invite: string }> {
+    const rede = await comACameraSegurada(page);
+    await page.clock.runFor(3_000);
+    const video = await rede.videoNumero(1);
+    const invite = await inviteDe(page, video);
+    expect(await cameraNaLigacao(page)).toBe(false);
+    await soltarACamera(page);
+    await expect.poll(() => camerasVivas(page)).toBe(1);
+    return { video, invite };
+  }
+
+  const controles = (page: Page) => page.getByRole('navigation', { name: 'Controles da reunião' });
+
+  test('a câmera que chega depois da oferta vai na ligação confirmada', async ({ page }) => {
+    const { video, invite } = await comACameraDepoisDaOferta(page);
+    await atenderOInvite(page, video, invite);
+    await expect(controles(page)).toBeVisible();
+    await expect.poll(() => cameraNaLigacao(page), { message: 'a câmera no emissor do vídeo' }).toBe(true);
+    await expect(botao(page, 'Câmera')).toHaveAttribute('aria-pressed', 'true');
+    await expect(botao(page, 'Câmera')).toBeEnabled();
+  });
+
+  test('a câmera que chega depois da oferta e que a ligação recusa passa a faltar', async ({ page }) => {
+    const { video, invite } = await comACameraDepoisDaOferta(page);
+    // O emissor do vídeo recusa a câmera (o replaceTrack que o navegador não aceita).
+    await page.evaluate(() => {
+      const trocar = RTCRtpSender.prototype.replaceTrack;
+      RTCRtpSender.prototype.replaceTrack = function (this: RTCRtpSender, faixa: MediaStreamTrack | null) {
+        if (faixa?.kind === 'video') return Promise.reject(new DOMException('o erro do teste', 'InvalidStateError'));
+        return trocar.call(this, faixa);
+      };
+    });
+    await atenderOInvite(page, video, invite);
+    await expect(controles(page)).toBeVisible();
+    await expect(botao(page, 'Câmera')).toBeDisabled();
+    expect(await camerasVivas(page)).toBe(0);
+    const naPrevia = (v: HTMLVideoElement) => (v.srcObject as MediaStream).getVideoTracks().length;
+    expect(await page.locator('video.previa').first().evaluate(naPrevia), 'as câmeras no fluxo').toBe(0);
+    expect(await cameraNaLigacao(page)).toBe(false);
   });
 });
 
