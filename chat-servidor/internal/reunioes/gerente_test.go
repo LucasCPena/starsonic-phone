@@ -1958,15 +1958,38 @@ func TestGerente_EstadoComSalaQueAcabou(t *testing.T) {
 	}
 }
 
+// sentinela manda, pelo mesmo laço de eventos do agente, o entrou de uma sala que o chat não conhece nem lembra, e
+// espera o efeito dele. O laço trata os eventos em ordem: quando o efeito aparece, os eventos mandados antes dele
+// já foram tratados.
+func (c *cena) sentinela() {
+	c.t.Helper()
+	r := c.marcada()
+	c.video.Mandar(video.Evento{Tipo: "entrou", Sala: r.Sala, Participante: "5a5a5a5a5a5a5a5a"})
+	esperar(c.t, "o efeito da sentinela", func() bool {
+		ac, p := c.g.Contagem(r.Sala)
+		return ac && p == 1
+	})
+}
+
+// mandar manda os eventos pelo laço do agente, e a sentinela espera que todos tenham sido tratados.
+func (c *cena) mandar(evs ...video.Evento) {
+	c.t.Helper()
+	for _, ev := range evs {
+		c.video.Mandar(ev)
+	}
+	c.sentinela()
+}
+
 func TestGerente_EncerraUmaVezSo(t *testing.T) {
 	c := novaCena(t)
 	n := acabouNaHora(t, c)
 	antes := encerrarDe(c, n.Sala)
-	c.entrou(n, "0011223344556677")
-	c.entrou(n, "8899aabbccddeeff")
-	c.estado(salaDoEstado(n, "0011223344556677"))
-	esperar(t, "o encerrar da sala que acabou", func() bool { return encerrarDe(c, n.Sala) >= antes+1 })
-	time.Sleep(100 * time.Millisecond)
+	c.mandar(
+		video.Evento{Tipo: "entrou", Sala: n.Sala, Participante: "0011223344556677"},
+		video.Evento{Tipo: "entrou", Sala: n.Sala, Participante: "8899aabbccddeeff"},
+		video.Evento{Tipo: "estado", Agora: c.agente.Agora().UnixMilli(), FreeSWITCH: true,
+			Salas: []video.Sala{salaDoEstado(n, "0011223344556677")}},
+	)
 	if got := encerrarDe(c, n.Sala) - antes; got != 1 {
 		t.Fatalf("o agente recebeu %d encerrar da sala, queria 1", got)
 	}
@@ -1975,13 +1998,64 @@ func TestGerente_EncerraUmaVezSo(t *testing.T) {
 func TestGerente_SalaNovaNaoEncerra(t *testing.T) {
 	c := novaCena(t)
 	r := c.marcada()
-	c.entrou(r, "0011223344556677")
-	time.Sleep(50 * time.Millisecond)
+	c.mandar(video.Evento{Tipo: "entrou", Sala: r.Sala, Participante: "0011223344556677"})
 	if cmds := c.video.Comandos(); len(cmds) != 0 {
 		t.Fatalf("o agente recebeu %q", cmds)
 	}
 	if ac, p := c.g.Contagem(r.Sala); !ac || p != 1 {
 		t.Fatalf("Contagem = %v, %d; o caminho de hoje põe a pessoa na sala", ac, p)
+	}
+}
+
+// videoQueFalhaDepois é o agente falso cujo Encerrar anota o comando e devolve err nas primeiras falhas chamadas.
+type videoQueFalhaDepois struct {
+	*videotest.Falso
+	mu     sync.Mutex
+	falhas int
+	err    error
+}
+
+func (v *videoQueFalhaDepois) Encerrar(ctx context.Context, sala string) error {
+	v.Falso.Encerrar(ctx, sala)
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.falhas > 0 {
+		v.falhas--
+		return v.err
+	}
+	return nil
+}
+
+func TestGerente_EncerraDeNovoSeFalhou(t *testing.T) {
+	c := novaCena(t)
+	n := acabouNaHora(t, c)
+	c.g.Ligar(&videoQueFalhaDepois{Falso: c.video, falhas: 1, err: video.ErrSemResposta})
+	antes := encerrarDe(c, n.Sala)
+	entrou := video.Evento{Tipo: "entrou", Sala: n.Sala, Participante: "0011223344556677"}
+	c.mandar(entrou)
+	if got := encerrarDe(c, n.Sala) - antes; got != 1 {
+		t.Fatalf("o primeiro evento deu %d encerrar, queria 1", got)
+	}
+	c.mandar(entrou) // o primeiro falhou: o próximo evento pede de novo, e este dá certo
+	if got := encerrarDe(c, n.Sala) - antes; got != 2 {
+		t.Fatalf("o segundo evento deu %d encerrar no total, queria 2", got)
+	}
+	c.mandar(entrou) // deu certo: não pede mais
+	if got := encerrarDe(c, n.Sala) - antes; got != 2 {
+		t.Fatalf("o terceiro evento deu %d encerrar no total, queria 2", got)
+	}
+}
+
+func TestGerente_NaoEncontradoValeComoFeito(t *testing.T) {
+	c := novaCena(t)
+	n := acabouNaHora(t, c)
+	c.g.Ligar(&videoQueFalhaDepois{Falso: c.video, falhas: 100, err: video.ErrNaoEncontrado})
+	antes := encerrarDe(c, n.Sala)
+	entrou := video.Evento{Tipo: "entrou", Sala: n.Sala, Participante: "0011223344556677"}
+	c.mandar(entrou)
+	c.mandar(entrou)
+	if got := encerrarDe(c, n.Sala) - antes; got != 1 {
+		t.Fatalf("o agente recebeu %d encerrar, queria 1: o 404 vale como feito", got)
 	}
 }
 

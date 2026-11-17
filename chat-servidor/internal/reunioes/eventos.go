@@ -326,7 +326,8 @@ func (g *Gerente) tirarDesconhecido(ctx context.Context, v Video, sala, particip
 }
 
 // pedirEncerrar diz se o chat ainda tem de pedir ao agente o encerrar da sala que acabou e voltou num entrou ou num
-// estado: uma vez por entrada da memória do fim. Com g.mu.
+// estado: uma vez por entrada da memória do fim, até dar certo. Ele marca a entrada; o encerrarAcabadas tira a marca
+// se o pedido falha, e o próximo evento da sala pede de novo. Com g.mu.
 func (g *Gerente) pedirEncerrar(sala string) bool {
 	fim, ok := g.acabadas[sala]
 	if !ok || fim.encerrada {
@@ -339,7 +340,10 @@ func (g *Gerente) pedirEncerrar(sala string) bool {
 
 // encerrarAcabadas pede ao agente o encerrar de cada sala que acabou e voltou (o pedirEncerrar). Roda na goroutine
 // dos eventos, sem o mutex, com um contexto próprio de 10 s por sala (nunca o de um pedido, nem o do laço: o encerrar
-// vale mesmo que o Ligar seguinte chegue). O 404 vale como feito. O registro tem só contagens.
+// vale mesmo que o Ligar seguinte chegue). O 404 vale como feito, e o fim do Rodar não conta como falha: a marca fica.
+// Um outro erro tira a marca da entrada (se ela ainda existe), com g.mu, para o próximo entrou ou estado da sala pedir
+// de novo: sem timer nem laço de nova tentativa, o chat repete só quando o agente mostra a sala outra vez. O
+// registro tem só contagens.
 func (g *Gerente) encerrarAcabadas(v Video, salas []string) {
 	if v == nil || len(salas) == 0 {
 		return
@@ -351,7 +355,18 @@ func (g *Gerente) encerrarAcabadas(v Video, salas []string) {
 		cancelar()
 		if err != nil && !errors.Is(err, video.ErrNaoEncontrado) && g.raiz.Err() == nil {
 			falhas++
+			g.mu.Lock()
+			if fim, ok := g.acabadas[sala]; ok {
+				fim.encerrada = false
+				g.acabadas[sala] = fim
+			}
+			g.mu.Unlock()
 		}
+	}
+	if falhas > 0 {
+		slog.Warn("reunioes: o servidor de vídeo não encerrou a sala que acabou e voltou; ela será pedida de novo no próximo evento",
+			"salas", len(salas), "falhas", falhas)
+		return
 	}
 	slog.Info("reunioes: sala que acabou voltou no servidor de vídeo e foi encerrada", "salas", len(salas),
 		"falhas", falhas)
