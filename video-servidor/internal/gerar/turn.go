@@ -11,9 +11,9 @@ import (
 
 // O modelo do turnserver.conf.
 //
-// O no-cli desliga a CLI (o telnet de administração) no coturn 4.6, o do apt no Ubuntu 24.04 e no
-// Debian 12. O ChangeLog do coturn diz que a 4.10.0 deixou a CLI desligada por padrão ("CLI interface
-// is disabled by default").
+// O no-cli desliga a CLI (o telnet de administração) no coturn 4.6, o do apt no Ubuntu 24.04, no
+// Ubuntu 26.04 e no Debian 12. O ChangeLog do coturn diz que a 4.10.0 deixou a CLI desligada por
+// padrão ("CLI interface is disabled by default").
 //
 //go:embed modelos/turnserver.conf
 var modeloTurn string

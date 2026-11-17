@@ -16,7 +16,7 @@ Como usar:
 | Processador | 2 vCPU |
 | Memória | 2 GB |
 | Disco | 120 GB SSD (20 GB para o sistema e o banco, 100 GB para os arquivos) |
-| Sistema | Ubuntu 24.04 (ou Debian 12), com systemd |
+| Sistema | Ubuntu 24.04 ou 26.04 (ou Debian 12), com systemd |
 | Rede | um endereço público fixo, da VM ou do roteador na frente dela (veja "Se a VM fica atrás de um roteador", no fim deste passo) |
 
 Antes de instalar, deixe três coisas prontas:

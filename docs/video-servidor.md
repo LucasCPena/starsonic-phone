@@ -19,7 +19,7 @@ Como usar:
   - `<versão>` é o número de uma versão, por exemplo `0.1.0`.
 - Depois de cada comando, o guia diz o que você deve ver. Se aparecer outra coisa, vá para o passo 9.
 
-**Onde você está agora.** Você já tem a VM com o Ubuntu 24.04. O passo 1 dá para fazer hoje, menos a parte "Se o chat e o vídeo dividem um IP público só": ela precisa do chat já na versão 0.2.0 e de uma versão do servidor de vídeo publicada. O passo 2 instala a partir de uma versão publicada do servidor de vídeo (as versões se chamam `video-v` e o número). A primeira versão fica pronta no fim desta etapa das reuniões, e quem a publica é você, pelo passo 10. O passo 3 precisa do chat já instalado (pelo guia do chat, `docs/chat-servidor.md`), na versão que traz as reuniões.
+**Onde você está agora.** Você já tem a VM com o Ubuntu 26.04. O passo 1 dá para fazer hoje, menos a parte "Se o chat e o vídeo dividem um IP público só": ela precisa do chat já na versão 0.2.0 e de uma versão do servidor de vídeo publicada. O passo 2 instala a partir de uma versão publicada do servidor de vídeo (as versões se chamam `video-v` e o número). A primeira versão fica pronta no fim desta etapa das reuniões, e quem a publica é você, pelo passo 10. O passo 3 precisa do chat já instalado (pelo guia do chat, `docs/chat-servidor.md`), na versão que traz as reuniões.
 
 ## 1. O que a VM precisa
 
@@ -29,7 +29,7 @@ Como usar:
 | Memória | 8 GB |
 | Disco | 40 GB SSD |
 | Internet | 100 Mbit/s |
-| Sistema | Ubuntu 24.04 (ou Debian 12), com systemd |
+| Sistema | Ubuntu 24.04 ou 26.04 (ou Debian 12), com systemd |
 | Rede | um IP público fixo, da VM ou do roteador na frente dela (veja "Se a VM fica atrás de um roteador", no fim deste passo) |
 
 O IP público precisa ser fixo (na nuvem, um IP reservado ou estático). A instalação guarda esse IP na configuração, e o FreeSWITCH o passa a quem entra numa reunião.
@@ -638,17 +638,19 @@ Este passo é de quem publica o servidor de vídeo, e não da VM. Você faz tudo
 4. No campo `Versão a publicar`, escreva `0.1.0-rc.1` (só o número, sem o `video-v`). Para uma versão que não é de teste, use `0.1.0`.
 5. Clique no botão verde `Run workflow` e espere.
 
-Na primeira vez, o GitHub monta o FreeSWITCH dos dois sistemas, e isso leva bastante tempo. Nas próximas vezes ele aproveita o que já montou, e leva alguns minutos.
+Na primeira vez, o GitHub monta o FreeSWITCH dos três sistemas, e isso leva bastante tempo. Nas próximas vezes ele aproveita o que já montou, e leva alguns minutos.
 
 O GitHub testa o programa, confere cada pacote do FreeSWITCH num sistema limpo, monta a versão e só publica no fim, quando todos os arquivos já estão lá. Se algo falhar no meio, nada fica publicado: abra o run, veja a mensagem em vermelho, corrija e rode de novo. Se sobrar um rascunho em `Releases`, apague-o antes de rodar de novo: o workflow para com a mensagem `já existe um rascunho` se ele ainda estiver lá.
 
 ### O que conferir depois
 
-1. Em `Releases`, abra `video-v0.1.0-rc.1`. Ela deve ter a etiqueta `Pre-release` e estes onze arquivos (o GitHub mostra ainda duas linhas `Source code`, que ele cria sozinho e você pode ignorar):
+1. Em `Releases`, abra `video-v0.1.0-rc.1`. Ela deve ter a etiqueta `Pre-release` e estes treze arquivos (o GitHub mostra ainda duas linhas `Source code`, que ele cria sozinho e você pode ignorar):
    - `starsonic-video-linux-amd64`
    - `starsonic-video-linux-amd64.sha256`
    - `starsonic-freeswitch-ubuntu-24.04-amd64.tar.gz`
    - `starsonic-freeswitch-ubuntu-24.04-amd64.tar.gz.sha256`
+   - `starsonic-freeswitch-ubuntu-26.04-amd64.tar.gz`
+   - `starsonic-freeswitch-ubuntu-26.04-amd64.tar.gz.sha256`
    - `starsonic-freeswitch-debian-12-amd64.tar.gz`
    - `starsonic-freeswitch-debian-12-amd64.tar.gz.sha256`
    - `starsonic-freeswitch-fontes.tar.gz`
