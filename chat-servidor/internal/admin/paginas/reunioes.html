@@ -85,7 +85,7 @@
   {{- with .Teste}}
   <span class="link-teste" id="codigo">{{.Link}}</span>
   <div class="botoes">
-    <button type="button" class="botao botao-primario" id="copiar" hidden>Copiar o link</button>
+    <button type="button" class="botao botao-primario" id="copiar" data-copiado="Link copiado." data-erro="Não deu para copiar. Selecione o link e copie." hidden>Copiar o link</button>
     <span class="ajuda copiado" id="copiado" role="status"></span>
   </div>
   <span class="ajuda">Vale até {{.ValeAte}}</span>

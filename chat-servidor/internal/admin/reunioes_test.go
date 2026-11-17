@@ -452,6 +452,27 @@ func TestReunioes_Teste(t *testing.T) {
 	}
 }
 
+// O copiar.js serve ao código da empresa e ao link da reunião de teste (a revisão da Task 14, Minor 1): o botão pode
+// dar os textos dele (data-copiado e data-erro), e o cartão da reunião de teste diz "Link copiado.". Sem eles, valem os
+// do código, e a página da empresa continua como era. Sem um navegador nos testes, o script é conferido pelo texto.
+func TestReunioes_CopiarOLink(t *testing.T) {
+	p := novoPainel(t)
+	n := p.logado(t)
+	resp, _ := n.acao("/admin/reunioes/teste", nil)
+	esperarIr(t, resp, "/admin/reunioes")
+	_, corpo := n.get("/admin/reunioes")
+	esperarTexto(t, corpo, `id="copiar" data-copiado="Link copiado." data-erro="Não deu para copiar. Selecione o link e copie." hidden>Copiar o link</button>`)
+
+	e := p.a.Empresa("ACME Comércio Ltda")
+	_, corpo = n.get(fmt.Sprintf("/admin/empresas/%d", e.ID))
+	esperarTexto(t, corpo, `id="copiar" hidden>Copiar o código</button>`)
+	esperarSem(t, corpo, "data-copiado", "data-erro")
+
+	_, script := n.get("/admin/estatico/copiar.js")
+	esperarTexto(t, script, `botao.getAttribute("data-copiado") || "Código copiado."`,
+		`botao.getAttribute("data-erro") || "Não deu para copiar. Selecione o código e copie."`)
+}
+
 func TestReunioes_SemNomes(t *testing.T) {
 	p := novoPainel(t)
 	e := p.a.Empresa("ACME Comércio Ltda")
