@@ -1,6 +1,6 @@
-// Package servidor põe o agente de vídeo no ar: a 443 (TLS) com o /sip do navegador e a API do chat, a discagem
-// do FreeSWITCH, a ligação com o ESL (que cai e volta sozinha), a leitura do uso da VM e o certificado, que o
-// SIGHUP relê. O modo de teste faz o mesmo em HTTP, só no 127.0.0.1 ou no [::1].
+// Package servidor põe o agente de vídeo no ar: a 443, ou a "porta" do config.json (TLS), com o /sip do navegador
+// e a API do chat, a discagem do FreeSWITCH, a ligação com o ESL (que cai e volta sozinha), a leitura do uso da VM
+// e o certificado, que o SIGHUP relê. O modo de teste faz o mesmo em HTTP, só no 127.0.0.1 ou no [::1].
 //
 // Nos registros ficam só o que a seção 8 do docs/video-agente.md permite: nunca a chave, a senha do ESL, uma
 // sala, um participante, uma ligação nem nada do caminho de um pedido.
@@ -60,7 +60,7 @@ const (
 	hsts            = "max-age=31536000"
 )
 
-// certificado é o par que a 443 mostra. O GetCertificate lê o par de agora, e o Recarregar o troca sem parar nada.
+// certificado é o par que a porta do agente (a 443, ou a "porta" do config.json) mostra. O GetCertificate lê o par de agora, e o Recarregar o troca sem parar nada.
 type certificado struct {
 	arquivoCert, arquivoChave string
 	atual                     atomic.Pointer[tls.Certificate]
@@ -120,9 +120,9 @@ type opcoes struct {
 	recarga   <-chan os.Signal // cada valor é um SIGHUP; nil: não há
 }
 
-// Rodar põe o agente no ar em produção: HTTPS na 443 (ou na "porta" do config.json) e a discagem em 127.0.0.1:8091. O certificado vem de
-// /etc/starsonic-video/tls, e o SIGHUP o relê e manda o reloadcert ao FreeSWITCH. Volta quando o ctx acaba (sem
-// erro) ou quando um dos servidores falha.
+// Rodar põe o agente no ar em produção: HTTPS na 443 (ou na "porta" do config.json) e a discagem em
+// 127.0.0.1:8091. O certificado vem de /etc/starsonic-video/tls, e o SIGHUP o relê e manda o reloadcert ao
+// FreeSWITCH. Volta quando o ctx acaba (sem erro) ou quando um dos servidores falha.
 func Rodar(ctx context.Context, c config.Config, versao string) error {
 	cert, err := carregarCertificado(arquivoCertificado, arquivoChave)
 	if err != nil {

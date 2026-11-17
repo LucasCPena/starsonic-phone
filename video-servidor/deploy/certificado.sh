@@ -2,7 +2,7 @@
 # O gancho do certbot do servidor de vídeo. Depois de cada certificado novo do Let's Encrypt (o primeiro, pelo
 # instalar.sh, e cada renovação), copia o certificado para os três programas que o usam e recarrega cada um sem
 # derrubar ninguém:
-#   - o agente (a 443): /etc/starsonic-video/tls/certificado.pem e chave.pem. A recarga é o systemctl reload (o
+#   - o agente (a 443, ou a "porta" do config.json): /etc/starsonic-video/tls/certificado.pem e chave.pem. A recarga é o systemctl reload (o
 #     SIGHUP), que relê o certificado e manda ao FreeSWITCH o reloadcert;
 #   - o coturn (a 5349): turn-certificado.pem e turn-chave.pem, e o SIGUSR2;
 #   - o FreeSWITCH (a 5061): freeswitch/tls/agent.pem (a chave e a cadeia) e cafile.pem, que ele relê no reloadcert

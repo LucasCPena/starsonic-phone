@@ -298,13 +298,6 @@ ler_campo() {
   sed -n 's/.*"'"$1"'": *"\([^"]*\)".*/\1/p' "$CONFIG_DIR/config.json"
 }
 
-# ler_porta: a porta do HTTPS do agente no config.json que este script gravou: a "porta", ou a 443 quando ela falta.
-ler_porta() {
-  local porta
-  porta=$(sed -n 's/.*"porta": *\([0-9][0-9]*\).*/\1/p' "$CONFIG_DIR/config.json")
-  echo "${porta:-443}"
-}
-
 # certificados_proprios: os dois pares autoassinados do FreeSWITCH, na pasta tls/ dele, só os que faltam: o
 # dtls-srtp.pem (o DTLS do WebRTC) e o wss.pem. Sem eles, o FreeSWITCH faria um par novo de 4096 bits a cada
 # partida, sem conseguir guardá-lo (a /etc é só de leitura para ele). A chave e o certificado ficam no mesmo arquivo.
@@ -401,7 +394,7 @@ tirar_certificado() {
   if ! certbot certonly --standalone --non-interactive --agree-tos --register-unsafely-without-email \
     --preferred-challenges http -d "$1" >"$TMP/certbot.txt" 2>&1; then
     cat "$TMP/certbot.txt" >&2
-    falhar "o certificado não saiu: confira o DNS e a porta 80 (veja \"O certificado não sai\", no guia). Se o chat e o vídeo dividem um IP público só, o Let's Encrypt chega ao chat, e o chat tem de repassar a verificação: rode o comando video no chat (sudo bash instalar.sh video <nome do vídeo> <IP do vídeo>) e confira que a VM do chat alcança a porta 80 desta VM pela rede interna (veja \"Se o chat e o vídeo dividem um IP público só\", no guia)."
+    falhar "o certificado não saiu: confira o DNS e a porta 80 (veja \"O certificado não sai\", no guia). Se o chat e o vídeo dividem um IP público só, o Let's Encrypt chega ao chat, e o chat tem de repassar a verificação: rode o comando video no chat (sudo bash instalar.sh video <nome do vídeo> <IP interno da VM de vídeo>) e confira que a VM do chat alcança a porta 80 desta VM pela rede interna (veja \"Se o chat e o vídeo dividem um IP público só\", no guia)."
   fi
 }
 
@@ -532,7 +525,8 @@ instalar() {
   echo
   if [ -n "$porta" ] && [ "$porta" != 443 ]; then
     echo "Pronto: o servidor de vídeo $("$BINARIO" versao) está no ar em https://$endereco:$porta/."
-    echo "O endereço do vídeo para o cartão \"Reuniões\" da administração do chat é: $endereco:$porta"
+    echo 'O endereço do vídeo para o cartão "Reuniões" da administração do chat é:'
+    echo "$endereco:$porta"
   else
     echo "Pronto: o servidor de vídeo $("$BINARIO" versao) está no ar em https://$endereco/."
   fi

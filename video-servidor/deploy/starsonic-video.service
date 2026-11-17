@@ -12,7 +12,7 @@ ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5
 
-# Pode abrir a porta 443, e nada mais.
+# Pode abrir a porta 443 (a "porta" do config.json, de 1024 para cima, não precisa disto), e nada mais.
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 

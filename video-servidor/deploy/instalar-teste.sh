@@ -227,14 +227,12 @@ confere "config.json 0640" 640 "$(modo "$CONFIG_DIR/config.json")"
 confere "config.json do grupo do agente, antes de tomar o lugar" root:starsonic-video "$(dono_de etc/starsonic-video/config.json.novo)"
 confere "nenhum config.json.novo sobrou" não "$(if [ -e "$CONFIG_DIR/config.json.novo" ]; then echo sim; else echo não; fi)"
 confere "sem porta, o config.json não tem o campo" não "$(if grep -q porta "$CONFIG_DIR/config.json"; then echo sim; else echo não; fi)"
-confere "sem porta, a porta lida é a 443" 443 "$(ler_porta)"
 escrever_config video.exemplo.com.br chat.exemplo.com.br:8443 "$chave_teste" "$s1" 10.0.0.5 203.0.113.10 7443
 confere "config.json com a porta" \
   "{\"endereco\": \"video.exemplo.com.br\", \"chat\": \"chat.exemplo.com.br:8443\", \"chave\": \"$chave_teste\", \"senhaEsl\": \"$s1\", \"ipPrivado\": \"10.0.0.5\", \"ipPublico\": \"203.0.113.10\", \"porta\": 7443}" \
   "$(cat "$CONFIG_DIR/config.json")"
 confere "config.json com a porta é JSON" sim "$(python3 -I -c 'import json,sys; print("sim" if json.load(open(sys.argv[1]))["porta"] == 7443 else "não")' "$CONFIG_DIR/config.json")"
 confere "config.json com a porta 0640" 640 "$(modo "$CONFIG_DIR/config.json")"
-confere "a porta lida é a 7443" 7443 "$(ler_porta)"
 confere "o campo endereco com a porta" video.exemplo.com.br "$(ler_campo endereco)"
 confere "o campo chat com a porta" chat.exemplo.com.br:8443 "$(ler_campo chat)"
 escrever_config video.exemplo.com.br chat.exemplo.com.br:8443 "$chave_teste" "$s1" 10.0.0.5 203.0.113.10
@@ -604,7 +602,7 @@ confere "instalar com a 443: as mensagens de sempre" \
   "0|443|$(config_instalado 443)|#Pronto: o servidor de vídeo 0.1.0 está no ar em https://video.exemplo.com.br/.##$chave_msg#$chave_teste" \
   "$(cenario_instalar com-443 443)"
 confere "instalar com a 7443: a porta no config.json, no ss e nas mensagens" \
-  "0|7443|$(config_instalado 7443)|#Pronto: o servidor de vídeo 0.1.0 está no ar em https://video.exemplo.com.br:7443/.#O endereço do vídeo para o cartão \"Reuniões\" da administração do chat é: video.exemplo.com.br:7443##$chave_msg#$chave_teste" \
+  "0|7443|$(config_instalado 7443)|#Pronto: o servidor de vídeo 0.1.0 está no ar em https://video.exemplo.com.br:7443/.#O endereço do vídeo para o cartão \"Reuniões\" da administração do chat é:#video.exemplo.com.br:7443##$chave_msg#$chave_teste" \
   "$(cenario_instalar com-7443 7443)"
 cert_falha=$(cenario_instalar cert-falha 7443 certificado-falha)
 confere "o certificado que falha: para com código 1 e diz o caso de um IP só" sim "$(
