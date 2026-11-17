@@ -15,7 +15,18 @@ import { networkInterfaces } from 'node:os';
 import { join } from 'node:path';
 import { repetirAte } from './espera';
 import { gerarMidia } from './midia';
-import { AGENTE, CHAT, PAGINA, prepararChat, PRIVADO, RAIZ, REGISTROS, SAIDA, segredosNosRegistros } from './servidores';
+import {
+  AGENTE,
+  CHAT,
+  ORIGENS_DO_SIP,
+  PAGINA,
+  prepararChat,
+  PRIVADO,
+  RAIZ,
+  REGISTROS,
+  SAIDA,
+  segredosNosRegistros,
+} from './servidores';
 
 const VIDEO_SERVIDOR = join(RAIZ, '..');
 const CHAT_SERVIDOR = join(RAIZ, '..', '..', 'chat-servidor');
@@ -214,8 +225,9 @@ export default async function ambiente(): Promise<() => Promise<void>> {
       return (await aceita('127.0.0.1', 5066)) || 'a 127.0.0.1:5066 não aceita';
     });
 
+    const origens = ORIGENS_DO_SIP.flatMap((o) => ['--origem', o]);
     servidores.push(
-      subir('agente', video, ['servir', '--teste', '--escutar', '127.0.0.1:8095', '--config', config, '--origem', PAGINA],
+      subir('agente', video, ['servir', '--teste', '--escutar', '127.0.0.1:8095', '--config', config, ...origens],
         REGISTROS.agente),
     );
     await esperarAte('o agente ligado ao FreeSWITCH', 60_000, servidores, async () => {

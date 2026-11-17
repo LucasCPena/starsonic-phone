@@ -14,6 +14,10 @@ export const PAGINA = 'http://127.0.0.1:4192';
 export const CHAT = 'http://127.0.0.1:4191';
 export const AGENTE = 'http://127.0.0.1:8095';
 
+/** As origens que o /sip do agente aceita no teste (o --origem): o cliente mínimo e a página da reunião, que o chat
+ * serve em /r/<código>. */
+export const ORIGENS_DO_SIP = [PAGINA, CHAT];
+
 export const RAIZ = fileURLToPath(new URL('./', import.meta.url));
 /** As saídas: os registros dos servidores ficam aqui, e o Playwright usa a subpasta saida/. */
 export const SAIDA = join(RAIZ, 'test-results');
@@ -42,12 +46,12 @@ export function ipDaMaquina(): string {
 
 // --- O que os testes anotam ----------------------------------------------------------------------------------------
 
-// Os códigos, as salas, os participantes, as senhas e os bilhetes que passaram pelos testes, para o teste dos
-// registros e a conferência do fim. Ficam num arquivo da pasta privada: um teste que falha troca o processo do
-// Playwright, e o último teste ainda os vê.
+// Os códigos, as salas, os participantes, as senhas, os bilhetes e as chaves de volta que passaram pelos testes, para o
+// teste dos registros e a conferência do fim. Ficam num arquivo da pasta privada: um teste que falha troca o processo
+// do Playwright, e o último teste ainda os vê.
 const USADOS = join(PRIVADO, 'usados.jsonl');
 
-type Tipo = 'codigos' | 'salas' | 'participantes' | 'senhas' | 'bilhetes';
+type Tipo = 'codigos' | 'salas' | 'participantes' | 'senhas' | 'bilhetes' | 'voltas';
 
 function anotar(tipo: Tipo, valor: string): void {
   appendFileSync(USADOS, `${JSON.stringify({ tipo, valor })}\n`);
@@ -67,8 +71,8 @@ function cargaDe(senha: string): { sala?: unknown; participante?: unknown } | nu
 }
 
 /** Anota o que houver no valor (um Acesso, uma mensagem da página, um evento, uma lista, uma resposta): os códigos das
- * reuniões, as senhas, a sala e o participante de dentro de cada senha, e os bilhetes (o da página e o dos eventos do
- * app). */
+ * reuniões, as senhas, a sala e o participante de dentro de cada senha, os bilhetes (o da página e o dos eventos do
+ * app) e as chaves de volta da página. */
 export function anotarSegredos(valor: unknown): void {
   if (Array.isArray(valor)) {
     valor.forEach(anotarSegredos);
@@ -80,6 +84,7 @@ export function anotarSegredos(valor: unknown): void {
       if ((campo === 'codigo' || campo === 'reuniao') && CODIGO.test(v)) anotar('codigos', v);
       if (campo === 'participante' && /^[0-9a-f]{16}$/.test(v)) anotar('participantes', v);
       if (campo === 'bilhete' && v !== '') anotar('bilhetes', v);
+      if (campo === 'volta' && v !== '') anotar('voltas', v);
       if (campo === 'senha' && v !== '') {
         anotar('senhas', v);
         const carga = cargaDe(v);
@@ -100,6 +105,7 @@ export function segredosUsados(): Record<Tipo, string[]> {
     participantes: new Set(),
     senhas: new Set(),
     bilhetes: new Set(),
+    voltas: new Set(),
   };
   if (existsSync(USADOS)) {
     for (const linha of readFileSync(USADOS, 'utf8').split('\n')) {
@@ -114,6 +120,7 @@ export function segredosUsados(): Record<Tipo, string[]> {
     participantes: [...usados.participantes],
     senhas: [...usados.senhas],
     bilhetes: [...usados.bilhetes],
+    voltas: [...usados.voltas],
   };
 }
 
@@ -134,8 +141,8 @@ export function segredosDoAmbiente(): Array<[string, string]> {
 }
 
 /** O que os registros têm e não podiam ter: um nome, um código de reunião, uma sala, um participante, uma senha, um
- * bilhete ou um segredo do ambiente, e qualquer senha de uso único (a carga começa por {"v":1, em base64url), também
- * as que os testes não viram. Cada achado diz a saída, o que é e a linha, nunca o valor. */
+ * bilhete, uma chave de volta ou um segredo do ambiente, e qualquer senha de uso único (a carga começa por {"v":1, em
+ * base64url), também as que os testes não viram. Cada achado diz a saída, o que é e a linha, nunca o valor. */
 export function segredosNosRegistros(): string[] {
   const usados = segredosUsados();
   const proibidos: Array<[string, string[]]> = [
@@ -145,6 +152,7 @@ export function segredosNosRegistros(): string[] {
     ['um participante', usados.participantes],
     ['uma senha', usados.senhas],
     ['um bilhete', usados.bilhetes],
+    ['uma chave de volta', usados.voltas],
     ...segredosDoAmbiente().map(([rotulo, valor]): [string, string[]] => [rotulo, [valor]]),
   ];
   const achados: string[] = [];
@@ -169,6 +177,26 @@ export function registros(): Array<{ nome: string; texto: string }> {
     { nome: 'agente', texto: readFileSync(REGISTROS.agente, 'utf8') },
     { nome: 'chat', texto: readFileSync(REGISTROS.chat, 'utf8') },
   ];
+}
+
+// --- O agente ------------------------------------------------------------------------------------------------------
+
+interface EstadoDoAgente {
+  salas: Array<{ sala: string; participantes: Array<{ participante: string; tela: boolean }> }>;
+}
+
+/** O estado do agente (seção 5 do docs/video-agente.md), com a chave do config.json da pasta privada. */
+async function estadoDoAgente(): Promise<EstadoDoAgente> {
+  const { chave } = JSON.parse(readFileSync(join(PRIVADO, 'config.json'), 'utf8')) as { chave: string };
+  const r = await fetch(`${AGENTE}/agente/v1/estado`, { headers: { authorization: `Bearer ${chave}` } });
+  if (r.status !== 200) throw new Error(`o estado do agente respondeu ${r.status}`);
+  return (await r.json()) as EstadoDoAgente;
+}
+
+/** Quantas ligações principais (as da câmera) o participante tem nas salas do agente. */
+export async function ligacoesPrincipais(participante: string): Promise<number> {
+  const { salas } = await estadoDoAgente();
+  return salas.flatMap((s) => s.participantes).filter((p) => p.participante === participante && !p.tela).length;
 }
 
 // --- A página de administração do chat -----------------------------------------------------------------------------
@@ -385,6 +413,11 @@ export class EventosDoApp {
       ws.addEventListener('open', () => ok(e), { once: true });
       ws.addEventListener('error', () => falha(new Error('o WebSocket dos eventos do app não abriu')), { once: true });
     });
+  }
+
+  /** Os eventos recebidos até agora que satisfazem a condição. */
+  todos(condicao: (e: any) => boolean): any[] {
+    return this.recebidos.filter(condicao);
   }
 
   /** O primeiro evento que satisfaz a condição, esperando até prazo ms. */
