@@ -124,7 +124,8 @@ export default async function ambiente(): Promise<() => Promise<void>> {
   for (const r of Object.values(REGISTROS)) rmSync(r, { force: true });
   gerarMidia();
 
-  const ip = ipv4DaMaquina();
+  // O STARSONIC_E2E_IP escolhe o IP, numa máquina em que o primeiro IPv4 não serve (uma VPN, por exemplo).
+  const ip = process.env.STARSONIC_E2E_IP || ipv4DaMaquina();
   process.env.STARSONIC_E2E_IP = ip;
   for (const [host, porta] of [
     ['127.0.0.1', Number(new URL(PAGINA).port)], // o cliente

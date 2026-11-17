@@ -31,7 +31,8 @@ export const REGISTROS = {
 /** Os nomes inventados das pessoas do teste. */
 export const NOMES = ['Ana Souza', 'Carlos Lima', 'Maria Lima', 'Bia Ramos'];
 
-/** O IPv4 da máquina que não é de loopback: o do perfil tls do FreeSWITCH. O ambiente.ts o escolhe. */
+/** O IPv4 da máquina que não é de loopback: o do perfil tls do FreeSWITCH. O ambiente.ts o escolhe, ou usa o do
+ * STARSONIC_E2E_IP quando ele vem dado. */
 export function ipDaMaquina(): string {
   const ip = process.env.STARSONIC_E2E_IP;
   if (!ip) throw new Error('falta o STARSONIC_E2E_IP (o ambiente.ts não rodou)');
