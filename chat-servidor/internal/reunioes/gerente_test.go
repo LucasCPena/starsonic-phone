@@ -1892,3 +1892,151 @@ func TestDesistirEsperando_ForaDeOrdem(t *testing.T) {
 		t.Fatal("o pedido já retirado foi retirado de novo")
 	}
 }
+
+// ---------- A sala que acabou não volta ----------
+
+// encerrarDe conta os "encerrar <sala>" que o agente falso recebeu.
+func encerrarDe(c *cena, sala string) int {
+	n := 0
+	for _, cmd := range c.video.Comandos() {
+		if cmd == "encerrar "+sala {
+			n++
+		}
+	}
+	return n
+}
+
+// acabouNaHora devolve uma naHora que a Ana abriu e encerrou: a sala dela fica na memória do fim.
+func acabouNaHora(t *testing.T, c *cena) banco.Reuniao {
+	t.Helper()
+	n := c.naHora()
+	c.dentro(n, c.ana)
+	if err := c.g.Encerrar(c.ctx, n, c.ana.p.ID); err != nil {
+		t.Fatalf("Encerrar: %v", err)
+	}
+	c.avisos.limpar()
+	return n
+}
+
+func TestGerente_EntrouNumaSalaQueAcabou(t *testing.T) {
+	c := novaCena(t)
+	n := acabouNaHora(t, c)
+	antes := encerrarDe(c, n.Sala)
+	c.entrou(n, "0011223344556677")
+	esperar(t, "o encerrar da sala que acabou", func() bool { return encerrarDe(c, n.Sala) == antes+1 })
+	if ac, p := c.g.Contagem(n.Sala); ac || p != 0 {
+		t.Fatalf("a sala voltou: Contagem = %v, %d", ac, p)
+	}
+	if nomes := nomesNaMemoria(c.g); len(nomes) != 0 {
+		t.Fatalf("o gerente guarda %q", nomes)
+	}
+	c.g.mu.Lock()
+	_, tem := c.g.salas[n.Sala]
+	c.g.mu.Unlock()
+	if tem {
+		t.Fatal("o gerente recriou a sala")
+	}
+	if got := c.avisos.total(); got != 0 {
+		t.Fatalf("saíram %d avisos", got)
+	}
+}
+
+func TestGerente_EstadoComSalaQueAcabou(t *testing.T) {
+	c := novaCena(t)
+	n := acabouNaHora(t, c)
+	antes := encerrarDe(c, n.Sala)
+	c.estado(salaDoEstado(n, "0011223344556677"))
+	esperar(t, "o encerrar da sala que acabou", func() bool { return encerrarDe(c, n.Sala) == antes+1 })
+	c.g.mu.Lock()
+	_, tem := c.g.salas[n.Sala]
+	c.g.mu.Unlock()
+	if tem {
+		t.Fatal("o gerente recriou a sala")
+	}
+	if got := c.avisos.total(); got != 0 {
+		t.Fatalf("saíram %d avisos", got)
+	}
+}
+
+func TestGerente_EncerraUmaVezSo(t *testing.T) {
+	c := novaCena(t)
+	n := acabouNaHora(t, c)
+	antes := encerrarDe(c, n.Sala)
+	c.entrou(n, "0011223344556677")
+	c.entrou(n, "8899aabbccddeeff")
+	c.estado(salaDoEstado(n, "0011223344556677"))
+	esperar(t, "o encerrar da sala que acabou", func() bool { return encerrarDe(c, n.Sala) >= antes+1 })
+	time.Sleep(100 * time.Millisecond)
+	if got := encerrarDe(c, n.Sala) - antes; got != 1 {
+		t.Fatalf("o agente recebeu %d encerrar da sala, queria 1", got)
+	}
+}
+
+func TestGerente_SalaNovaNaoEncerra(t *testing.T) {
+	c := novaCena(t)
+	r := c.marcada()
+	c.entrou(r, "0011223344556677")
+	time.Sleep(50 * time.Millisecond)
+	if cmds := c.video.Comandos(); len(cmds) != 0 {
+		t.Fatalf("o agente recebeu %q", cmds)
+	}
+	if ac, p := c.g.Contagem(r.Sala); !ac || p != 1 {
+		t.Fatalf("Contagem = %v, %d; o caminho de hoje põe a pessoa na sala", ac, p)
+	}
+}
+
+// Os jeitos de uma sala acabar de vez (a ruling R2): cada um deixa a sala na memória do fim.
+func TestGerente_TodoFimFicaNaMemoria(t *testing.T) {
+	cada := map[string]func(c *cena) banco.Reuniao{
+		"o Encerrar da naHora": func(c *cena) banco.Reuniao { return acabouNaHora(t, c) },
+		"o Cancelar": func(c *cena) banco.Reuniao {
+			r := c.marcada()
+			c.dentro(r, c.ana)
+			c.cancelar(r)
+			return r
+		},
+		"o fim da naHora que ninguém abriu": func(c *cena) banco.Reuniao {
+			n := c.naHora()
+			c.andar(esperaNaHora + time.Second)
+			c.g.Varrer()
+			return n
+		},
+		"o fim da naHora quando o último sai": func(c *cena) banco.Reuniao {
+			n := c.naHora()
+			a := c.dentro(n, c.ana)
+			c.saiu(n, a)
+			c.g.Varrer()
+			return n
+		},
+		"o Bloquear com a sala na memória": func(c *cena) banco.Reuniao {
+			r := c.marcada()
+			c.dentro(r, c.ana)
+			c.g.Bloqueadas(c.ctx, []banco.Reuniao{r})
+			return r
+		},
+		"o Bloquear com a sala fora da memória": func(c *cena) banco.Reuniao {
+			r := c.marcada()
+			c.g.Bloqueadas(c.ctx, []banco.Reuniao{r})
+			return r
+		},
+	}
+	for nome, fim := range cada {
+		t.Run(nome, func(t *testing.T) {
+			c := novaCena(t)
+			r := fim(c)
+			c.g.mu.Lock()
+			lembra := c.g.fechada(r.Sala)
+			c.g.mu.Unlock()
+			if !lembra {
+				t.Fatal("a sala não ficou na memória do fim")
+			}
+			c.entrou(r, "0011223344556677")
+			c.g.mu.Lock()
+			_, tem := c.g.salas[r.Sala]
+			c.g.mu.Unlock()
+			if tem {
+				t.Fatal("o entrou recriou a sala")
+			}
+		})
+	}
+}

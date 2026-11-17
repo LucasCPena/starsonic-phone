@@ -227,6 +227,11 @@ func (g *Gerente) esquecer(s *sala, p *participante, msg string) {
 	}
 }
 
+// marcarFim põe a sala na memória do fim, com a marca do encerrar de volta limpa. Com g.mu.
+func (g *Gerente) marcarFim(sala string, agora time.Time) {
+	g.acabadas[sala] = fimDaSala{quando: agora}
+}
+
 func (g *Gerente) fechada(sala string) bool {
 	_, ok := g.acabadas[sala]
 	return ok

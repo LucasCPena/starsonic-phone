@@ -28,7 +28,16 @@ const (
 	// memoriaDoFim é quanto tempo a sala de uma reunião que acabou de vez fica recusada na memória: quem leu a
 	// reunião do banco antes do fim não entra nela.
 	memoriaDoFim = 10 * time.Minute
+	// prazoEncerrarAcabada é o prazo do encerrar que o chat pede ao agente da sala que acabou e voltou.
+	prazoEncerrarAcabada = 10 * time.Second
 )
+
+// fimDaSala é a entrada da memória do fim: quando a reunião acabou de vez e se o chat já pediu ao agente o encerrar
+// da sala que voltou (uma vez só por entrada).
+type fimDaSala struct {
+	quando    time.Time
+	encerrada bool
+}
 
 // Os erros do gerente. A API do app e a da página dão a cada um o status e a mensagem do protocolo.
 var (
@@ -142,7 +151,7 @@ type Gerente struct {
 	geracao   uint64 // cresce a cada Ligar: o laço de um servidor anterior não muda mais nada
 	laco      laco
 	salas     map[string]*sala
-	acabadas  map[string]time.Time // as salas das reuniões que acabaram de vez, e quando (relógio do chat)
+	acabadas  map[string]fimDaSala // as salas das reuniões que acabaram de vez, e quando (relógio do chat)
 	leuNaHora time.Time            // quando o Varrer leu as naHora abertas (relógio do chat)
 	seq       uint64               // a ordem de chegada dos participantes e dos pedidos
 	saida     []func()             // os avisos e as mensagens, na ordem do estado, para depois do mutex
@@ -188,7 +197,7 @@ type participante struct {
 func Novo(d Deps) *Gerente {
 	raiz, parar := context.WithCancel(context.Background())
 	return &Gerente{banco: d.Banco, avisos: d.Avisos, relogio: d.Relogio, inicio: d.Relogio.Agora(),
-		raiz: raiz, pararRaiz: parar, salas: map[string]*sala{}, acabadas: map[string]time.Time{}}
+		raiz: raiz, pararRaiz: parar, salas: map[string]*sala{}, acabadas: map[string]fimDaSala{}}
 }
 
 // Rodar chama o Varrer a cada segundo, a primeira vez já, até o ctx acabar. No fim, para o laço dos eventos do
@@ -462,7 +471,7 @@ func (g *Gerente) Encerrar(ctx context.Context, r banco.Reuniao, pessoaID int64)
 		g.conhecer(s, r)
 		acabar = g.terminar(s, porEncerrar, agora)
 	} else if r.Tipo == banco.TipoNaHora {
-		g.acabadas[r.Sala] = agora
+		g.marcarFim(r.Sala, agora)
 		acabar = r.ID
 	}
 	g.mu.Unlock()
@@ -508,7 +517,7 @@ func (g *Gerente) Tela(ctx context.Context, r banco.Reuniao, pessoaID int64) (st
 // acontece assim mesmo.
 func (g *Gerente) Cancelada(ctx context.Context, r banco.Reuniao) {
 	g.mu.Lock()
-	g.acabadas[r.Sala] = g.relogio.Agora()
+	g.marcarFim(r.Sala, g.relogio.Agora())
 	v := g.video
 	g.mu.Unlock()
 	if v != nil {
@@ -535,6 +544,11 @@ func (g *Gerente) Bloqueadas(ctx context.Context, rs []banco.Reuniao) int {
 	for _, r := range rs {
 		g.mu.Lock()
 		_, naMemoria := g.salas[r.Sala]
+		if !naMemoria {
+			// Fora da memória não há o que acabar, mas a sala não volta: uma senha de até 30 s, ou um estado
+			// atrasado, não a recria.
+			g.marcarFim(r.Sala, g.relogio.Agora())
+		}
 		g.mu.Unlock()
 		if naMemoria {
 			g.Cancelada(ctx, r)

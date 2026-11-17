@@ -58,7 +58,7 @@ func (g *Gerente) acabarDeVez(s *sala, agora time.Time) {
 	for _, p := range s.pedidosEmOrdem() {
 		g.responder(s, p, "linkInvalido")
 	}
-	g.acabadas[s.id] = agora
+	g.marcarFim(s.id, agora)
 	if g.salas[s.id] == s {
 		delete(g.salas, s.id)
 	}
@@ -142,8 +142,8 @@ func (g *Gerente) Varrer() {
 		g.depois(s, antes)
 		g.limpar(s)
 	}
-	for sala, quando := range g.acabadas {
-		if agora.Sub(quando) >= memoriaDoFim {
+	for sala, fim := range g.acabadas {
+		if agora.Sub(fim.quando) >= memoriaDoFim {
 			delete(g.acabadas, sala)
 		}
 	}
@@ -221,11 +221,28 @@ func (g *Gerente) evento(ctx context.Context, ev video.Evento, geracao uint64) {
 	}
 	var acabar []int64
 	var tirar bool
+	var encerrar []string
 	v := g.video
 	switch ev.Tipo {
 	case "estado":
-		acabar = g.reconciliar(ev.Salas, agora, agoraVideo)
+		salas := make([]video.Sala, 0, len(ev.Salas))
+		for _, vs := range ev.Salas {
+			if g.fechada(vs.Sala) {
+				if g.pedirEncerrar(vs.Sala) {
+					encerrar = append(encerrar, vs.Sala)
+				}
+				continue
+			}
+			salas = append(salas, vs)
+		}
+		acabar = g.reconciliar(salas, agora, agoraVideo)
 	case "entrou", "saiu":
+		if ev.Tipo == "entrou" && g.fechada(ev.Sala) {
+			if g.pedirEncerrar(ev.Sala) {
+				encerrar = append(encerrar, ev.Sala)
+			}
+			break
+		}
 		tirar = g.ligacao(ev.Sala, ev.Participante, ev.Tela, ev.Tipo == "entrou", agora, agoraVideo)
 	case "acabou":
 		if s := g.salas[ev.Sala]; s != nil {
@@ -240,6 +257,7 @@ func (g *Gerente) evento(ctx context.Context, ev video.Evento, geracao uint64) {
 	if tirar {
 		g.tirarDesconhecido(ctx, v, ev.Sala, ev.Participante)
 	}
+	g.encerrarAcabadas(v, encerrar)
 	if ev.Tipo == "estado" {
 		pessoas := 0
 		for _, s := range ev.Salas {
@@ -305,6 +323,38 @@ func (g *Gerente) tirarDesconhecido(ctx context.Context, v Video, sala, particip
 	if err := v.Tirar(ctx, sala, participante); err != nil && !errors.Is(err, video.ErrNaoEncontrado) && ctx.Err() == nil {
 		slog.Warn("reunioes: o servidor de vídeo não tirou quem entrou sem ser conhecido", "erro", codigoDoErro(err))
 	}
+}
+
+// pedirEncerrar diz se o chat ainda tem de pedir ao agente o encerrar da sala que acabou e voltou num entrou ou num
+// estado: uma vez por entrada da memória do fim. Com g.mu.
+func (g *Gerente) pedirEncerrar(sala string) bool {
+	fim, ok := g.acabadas[sala]
+	if !ok || fim.encerrada {
+		return false
+	}
+	fim.encerrada = true
+	g.acabadas[sala] = fim
+	return true
+}
+
+// encerrarAcabadas pede ao agente o encerrar de cada sala que acabou e voltou (o pedirEncerrar). Roda na goroutine
+// dos eventos, sem o mutex, com um contexto próprio de 10 s por sala (nunca o de um pedido, nem o do laço: o encerrar
+// vale mesmo que o Ligar seguinte chegue). O 404 vale como feito. O registro tem só contagens.
+func (g *Gerente) encerrarAcabadas(v Video, salas []string) {
+	if v == nil || len(salas) == 0 {
+		return
+	}
+	falhas := 0
+	for _, sala := range salas {
+		ctx, cancelar := context.WithTimeout(g.raiz, prazoEncerrarAcabada)
+		err := v.Encerrar(ctx, sala)
+		cancelar()
+		if err != nil && !errors.Is(err, video.ErrNaoEncontrado) && g.raiz.Err() == nil {
+			falhas++
+		}
+	}
+	slog.Info("reunioes: sala que acabou voltou no servidor de vídeo e foi encerrada", "salas", len(salas),
+		"falhas", falhas)
 }
 
 // reconciliar acerta a memória pelo estado do servidor de vídeo: o primeiro de cada conexão, e o de quando o
