@@ -9,7 +9,7 @@
 # dos testes: ele apaga o /opt/starsonic-freeswitch antes de instalar. Nunca rode num servidor.
 #
 # Uso: video-servidor/freeswitch/construir.sh SISTEMA TRABALHO SAIDA
-#   SISTEMA   ubuntu-24.04 ou debian-12: o desta máquina, conferido pelo /etc/os-release
+#   SISTEMA   ubuntu-24.04, ubuntu-26.04 ou debian-12: o desta máquina, conferido pelo /etc/os-release
 #   TRABALHO  onde as fontes são buscadas e compiladas (cada projeto é reaproveitado se já estiver
 #             no commit certo)
 #   SAIDA     onde ficam o starsonic-freeswitch-SISTEMA-amd64.tar.gz, o .sha256 dele e o
@@ -27,9 +27,9 @@ fi
 
 SISTEMA="$1"
 case "$SISTEMA" in
-    ubuntu-24.04 | debian-12) ;;
+    ubuntu-24.04 | ubuntu-26.04 | debian-12) ;;
     *)
-        echo "construir: o sistema $SISTEMA não serve (use ubuntu-24.04 ou debian-12)" >&2
+        echo "construir: o sistema $SISTEMA não serve (use ubuntu-24.04, ubuntu-26.04 ou debian-12)" >&2
         exit 2
         ;;
 esac
@@ -126,9 +126,12 @@ elfs() {
     done
 }
 
-# O pacote do apt que tem uma biblioteca. No Ubuntu 24.04 e no Debian 12 (o /lib é o /usr/lib), o
-# ldd mostra /lib/x86_64-linux-gnu/..., e a maioria dos pacotes registra /usr/lib/x86_64-linux-gnu/...
-# (a libc6 do Debian 12 faz o contrário): o dpkg é perguntado pelo caminho e depois pelo gêmeo dele.
+# O pacote do apt que tem uma biblioteca. Nos três sistemas o /lib é o /usr/lib, e o ldd e o dpkg
+# podem dar caminhos diferentes para o mesmo arquivo. No Ubuntu 24.04 e no Debian 12, o ldd mostra
+# /lib/x86_64-linux-gnu/..., e a maioria dos pacotes registra /usr/lib/x86_64-linux-gnu/... (a libc6
+# do Debian 12 faz o contrário); no Ubuntu 26.04, os dois dizem /usr/lib/x86_64-linux-gnu/..., e só o
+# carregador sai do ldd como /lib64/ld-linux-x86-64.so.2. O dpkg é perguntado pelo caminho e depois
+# pelo gêmeo dele.
 pacote_de() {
     local caminho="$1" gemeo tentativa dono
     case "$caminho" in
@@ -137,7 +140,8 @@ pacote_de() {
     esac
     for tentativa in "$caminho" "$gemeo"; do
         # A linha do dono, como "libssl3t64:amd64: /usr/lib/x86_64-linux-gnu/libssl.so.3". As linhas
-        # "diversion by ..." não dizem o dono: no Ubuntu 24.04, o /lib64/ld-linux-x86-64.so.2 só tem essas.
+        # "diversion by ..." não dizem o dono: no Ubuntu 24.04 e no 26.04, o /lib64/ld-linux-x86-64.so.2
+        # só tem essas.
         dono="$( (dpkg -S "$tentativa" 2>/dev/null || true) | awk -v fim=": $tentativa" '
             !/^diversion by / && substr($0, length($0) - length(fim) + 1) == fim {
                 print substr($0, 1, length($0) - length(fim))
@@ -173,8 +177,15 @@ echo "freeswitch: compilando"
 cp "$AQUI/modules.conf" "$TRABALHO/freeswitch/modules.conf"
 cd "$TRABALHO/freeswitch"
 ./bootstrap.sh -j
+# O CFLAGS do FreeSWITCH, que compila com o -Werror. Nos outros dois sistemas não há: o configure põe
+# o -g -O2 sozinho.
+cflags=()
+case "$SISTEMA" in
+    # A glibc 2.43 do Ubuntu 26.04 faz o strchr e o strstr de um const char * devolverem um const char *.
+    ubuntu-26.04) cflags=(CFLAGS="-g -O2 -Wno-error=discarded-qualifiers") ;;
+esac
 ./configure --prefix="$PREFIXO" --disable-fhs \
-    PKG_CONFIG_PATH="$PREFIXO/lib/pkgconfig" LDFLAGS="-Wl,-rpath,$PREFIXO/lib"
+    PKG_CONFIG_PATH="$PREFIXO/lib/pkgconfig" LDFLAGS="-Wl,-rpath,$PREFIXO/lib" "${cflags[@]}"
 make -j"$JOBS"
 make install
 

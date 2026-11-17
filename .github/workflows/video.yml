@@ -79,10 +79,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        sistema: [ubuntu-24.04, debian-12]
+        sistema: [ubuntu-24.04, ubuntu-26.04, debian-12]
         include:
           - sistema: ubuntu-24.04
             imagem: ubuntu:24.04
+          - sistema: ubuntu-26.04
+            imagem: ubuntu:26.04
           - sistema: debian-12
             imagem: debian:12
     container: ${{ matrix.imagem }}
@@ -121,7 +123,7 @@ jobs:
             work/freeswitch-saida/starsonic-freeswitch-${{ matrix.sistema }}-amd64.tar.gz
             work/freeswitch-saida/starsonic-freeswitch-${{ matrix.sistema }}-amd64.tar.gz.sha256
           if-no-files-found: error
-      # As fontes são as mesmas nos dois sistemas.
+      # As fontes são as mesmas nos três sistemas.
       - uses: actions/upload-artifact@v4
         if: matrix.sistema == 'ubuntu-24.04'
         with:
@@ -137,10 +139,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        sistema: [ubuntu-24.04, debian-12]
+        sistema: [ubuntu-24.04, ubuntu-26.04, debian-12]
         include:
           - sistema: ubuntu-24.04
             imagem: ubuntu:24.04
+          - sistema: ubuntu-26.04
+            imagem: ubuntu:26.04
           - sistema: debian-12
             imagem: debian:12
     container: ${{ matrix.imagem }}
@@ -163,6 +167,12 @@ jobs:
         run: sha256sum -c "starsonic-freeswitch-$SISTEMA-amd64.tar.gz.sha256"
       - name: Conferir o pacote
         run: bash video-servidor/freeswitch/conferir-pacote.sh "pacote/starsonic-freeswitch-$SISTEMA-amd64.tar.gz"
+      # Os outros pacotes da linha do apt do instalar.sh, com os do pacotes.txt já instalados pelo passo de cima: o
+      # apt acha todos neste sistema. O -s só simula.
+      - name: Os pacotes do instalador
+        run: |
+          apt-get update -q
+          apt-get install -s -q certbot coturn ca-certificates openssl
 
   # A configuração que o agente gera (o configurar --teste) num FreeSWITCH de verdade, o pacote de cada
   # sistema num contêiner limpo dele: os dois perfis do sofia no ar e nenhuma linha de erro.
@@ -173,10 +183,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        sistema: [ubuntu-24.04, debian-12]
+        sistema: [ubuntu-24.04, ubuntu-26.04, debian-12]
         include:
           - sistema: ubuntu-24.04
             imagem: ubuntu:24.04
+          - sistema: ubuntu-26.04
+            imagem: ubuntu:26.04
           - sistema: debian-12
             imagem: debian:12
     container: ${{ matrix.imagem }}

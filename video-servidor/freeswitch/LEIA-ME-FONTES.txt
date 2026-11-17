@@ -15,8 +15,8 @@ O que tem aqui:
   modules.conf           os nove módulos do pacote.
   pacotes-de-build.txt   os pacotes do apt do build, um por linha.
 
-Há dois jeitos de montar, os dois no Ubuntu 24.04 ou no Debian 12 (amd64), como root, numa máquina
-de build: o prefixo é o /opt/starsonic-freeswitch. Nunca num servidor em uso.
+Há dois jeitos de montar, os dois no Ubuntu 24.04, no Ubuntu 26.04 ou no Debian 12 (amd64), como
+root, numa máquina de build: o prefixo é o /opt/starsonic-freeswitch. Nunca num servidor em uso.
 
 Primeiro, os pacotes do build (o apt precisa da rede):
      apt-get update
@@ -26,7 +26,7 @@ A. Com o construir.sh, que busca o código pela rede. Ele lê o deps.lock e o mo
    dele e baixa os commits fixados dos repositórios oficiais: as pastas deste pacote não entram.
    Ele apaga o /opt/starsonic-freeswitch, monta os três projetos, tira dali o que o servidor não usa,
    passa o strip, escreve o pacotes.txt e o VERSOES.txt e deixa os dois pacotes em saida/. Nesta
-   pasta, com o sistema da máquina (ubuntu-24.04 ou debian-12):
+   pasta, com o sistema da máquina (ubuntu-24.04, ubuntu-26.04 ou debian-12):
      bash construir.sh ubuntu-24.04 trabalho saida
 
 B. Sem rede, com as pastas deste pacote, à mão, com o /opt/starsonic-freeswitch vazio:
@@ -48,6 +48,10 @@ B. Sem rede, com as pastas deste pacote, à mão, com o /opt/starsonic-freeswitc
           PKG_CONFIG_PATH=/opt/starsonic-freeswitch/lib/pkgconfig \
           LDFLAGS=-Wl,-rpath,/opt/starsonic-freeswitch/lib
         make && make install
+      No Ubuntu 26.04, o configure do FreeSWITCH leva também
+      CFLAGS="-g -O2 -Wno-error=discarded-qualifiers", como no construir.sh: a glibc de lá faz o
+      strchr e o strstr de um const char * devolverem um const char *, e o FreeSWITCH compila com
+      o -Werror.
    Isso deixa o FreeSWITCH em /opt/starsonic-freeswitch. O pacote do sistema tira dali o que o
    servidor não usa e passa o strip: o passo 4 do construir.sh diz o quê.
 
