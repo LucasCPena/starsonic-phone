@@ -76,9 +76,27 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: chat-servidor/pagina/package-lock.json
+      # Os testes das telas compilam o chat e o sobem no modo de teste (o chat.ts).
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: chat-servidor/go.mod
+          cache-dependency-path: chat-servidor/go.sum
       - name: npm ci
         run: npm ci
       - name: O jssip.js é o do pacote
         run: node montar-jssip.mjs --conferir
       - name: Testes
         run: node --test testes/*.test.mjs
+      - name: Chromium do Playwright
+        run: npx playwright install --with-deps chromium
+      - name: Testes das telas (Playwright)
+        run: npx playwright test
+      - name: Publicar o relatório do Playwright
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: relatorio-playwright-pagina
+          path: |
+            chat-servidor/pagina/playwright-report/
+            chat-servidor/pagina/test-results/
+          if-no-files-found: ignore
