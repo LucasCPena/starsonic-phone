@@ -2,14 +2,19 @@
 // efeitos, sem tocar no DOM, na rede ou no relógio; o pagina.js roda os efeitos e devolve os resultados como eventos.
 // Ela nunca muda o estado que recebe: cada passo devolve um objeto novo.
 //
-// O estado leva o acesso do aceito (com as credenciais do TURN) e, por um instante, a senha que chegou antes da mídia;
-// os efeitos levam o bilhete e as senhas. Nenhum texto daqui os leva, e o pagina.js não escreve o estado nem os efeitos
-// no console.
+// O que o cérebro espera de quem roda os efeitos (o pagina.js, o rede.js, o midia.js e o ligacao.js):
+// - depois do fecharCanal, nenhum evento daquele canal, nem o canalFechou;
+// - os eventos de uma ligação depois do desligar dela chegam antes do próximo ligar;
+// - o falhou e o terminou dizem que a ligação acabou; o semConexao, que ela ainda existe e desce com o desligar;
+// - o midia diz ligado ou indisponivel de cada aparelho;
+// - o ligar não leva o mic nem a cam: quem roda o efeito os lê do estado (a câmera desligada é a oferta recvonly);
+// - nem o estado nem os efeitos vão ao console. O estado leva o acesso do aceito (com as credenciais do TURN) e, por um
+//   instante, a senha que chegou antes da mídia; os efeitos levam o bilhete e as senhas.
 
 /** O passo da contagem do 429 ("Tentar de novo em <n> s"), em ms. */
 export const CONTAGEM_MS = 1000;
 /** A espera antes de cada tentativa de voltar à reunião depois da conexão caída, em ms. */
-export const RECONECTAR_MS = [2000, 4000, 8000];
+export const RECONECTAR_MS = Object.freeze([2000, 4000, 8000]);
 /** A espera por um tirado ou um encerrada depois de a ligação terminar sem aviso, antes do saiu, em ms. */
 export const FIM_SEM_AVISO_MS = 2000;
 /** A espera antes de abrir de novo depois do 1011 do canal, em ms. */
@@ -65,6 +70,7 @@ export function inicial() {
     principal: 'nenhuma', // a ligação principal: nenhuma, pedindo (a senha), ligando ou noAr
     esperandoMidia: false, // o pedirMidia saiu, e o midia ainda não chegou
     senhaGuardada: null, // a senha que chegou antes da mídia: o ligar espera as duas
+    trocandoCamera: false, // o trocarCamera da reunião saiu, e o cameraTrocada ainda não chegou
   };
 }
 
@@ -100,13 +106,15 @@ export function transicao(estado, evento) {
       r = midia(estado, evento);
       break;
     case 'ligacao':
-      r = evento.qual === 'tela' ? ligacaoDaTela(estado, evento.o) : ligacaoPrincipal(estado, evento.o, evento.codigo);
+      if (evento.qual === 'principal') r = ligacaoPrincipal(estado, evento.o, evento.codigo);
+      else if (evento.qual === 'tela') r = ligacaoDaTela(estado, evento.o);
+      else r = nada(estado); // só há a principal e a tela
       break;
     case 'telaCapturada':
       r = telaCapturada(estado, evento.ok);
       break;
     case 'cameraTrocada':
-      r = evento.ok ? nada(estado) : com(estado, { cam: contrario(estado.cam) });
+      r = cameraTrocada(estado, evento.ok);
       break;
     case 'tempo':
       r = tempo(estado, evento.chave);
@@ -192,6 +200,8 @@ function mensagem(e, m) {
     case 'esperaCheia':
     case 'servidorCheio':
     case 'semServidor':
+      // Na volta, a recusa do senha é uma tentativa que falhou, como o erro.
+      if (esperaSenha(e) && e.reconectando > 0) return tentativaFalhou(e);
       return naEspera || esperaSenha(e) ? avisar(e, m.tipo) : nada(e);
     case 'erro':
       return erro(e, m.erro);
@@ -206,8 +216,9 @@ function comSenha(e, senha, mudancas = {}) {
   return com(e, { ...mudancas, principal: 'ligando' }, ligar('principal', senha));
 }
 
-// O erro responde ao que a página pediu: a tela, uma senha ou o pedir. O pedir com o nome recusado volta à entrada, e o
-// canal dele fecha: o próximo Pedir abre outro, com um bilhete novo.
+// O erro responde ao que a página pediu: a tela, uma senha ou o pedir. O do senha da volta (o limite de 5 por minuto,
+// por exemplo) é uma tentativa que falhou. O pedir com o nome recusado volta à entrada, e o canal dele fecha: o próximo
+// Pedir abre outro, com um bilhete novo.
 function erro(e, qual) {
   if (e.telaCompartilhada === 'pedindo') return com(e, { telaCompartilhada: 'nenhuma' }, PARAR_CAPTURA);
   if (esperaSenha(e)) return e.reconectando > 0 ? tentativaFalhou(e) : avisar(e, 'semServidor');
@@ -223,12 +234,14 @@ function ligacaoPrincipal(e, o, codigo) {
     if (o === 'confirmada') {
       return com(e, { tela: 'reuniao', principal: 'noAr', reconectando: 0, senhaRepetida: false });
     }
-    if (e.reconectando > 0) return tentativaFalhou(e);
+    // A ligação que perdeu a conexão no meio do ligar ainda existe: ela desce.
+    const desce = o === 'semConexao' ? [desligar('principal')] : [];
+    if (e.reconectando > 0) return tentativaFalhou(e, ...desce);
     // A senha pode ter vencido no caminho: o primeiro 403 pede outra.
     if (o === 'falhou' && codigo === 403 && !e.senhaRepetida && e.canal === 'aberto') {
       return com(e, { principal: 'pedindo', senhaRepetida: true }, mandar({ tipo: 'senha' }));
     }
-    return avisar(e, 'semServidor');
+    return avisar(e, 'semServidor', {}, ...desce);
   }
   if (e.principal !== 'noAr') return nada(e);
   if (o === 'semConexao') {
@@ -237,16 +250,20 @@ function ligacaoPrincipal(e, o, codigo) {
     const { mudancas, efeitos } = desligarAsDuas(e);
     return com(e, { ...mudancas, reconectando: 1 }, ...efeitos, esperar(RECONECTAR_MS[0], 'reconectar'));
   }
-  // O servidor terminou a ligação: um tirado ou um encerrada pode chegar logo depois; sem ele, é o saiu.
-  if (o === 'terminou') return com(e, { principal: 'nenhuma' }, esperar(FIM_SEM_AVISO_MS, 'fimSemAviso'));
+  // O servidor terminou a ligação (o falhou de uma ligação no ar conta igual, e o mosaico nunca fica parado): um tirado
+  // ou um encerrada pode chegar logo depois; sem ele, é o saiu.
+  if (o === 'terminou' || o === 'falhou') {
+    return com(e, { principal: 'nenhuma', trocandoCamera: false }, esperar(FIM_SEM_AVISO_MS, 'fimSemAviso'));
+  }
   return nada(e);
 }
 
-// Uma tentativa de voltar falhou: a próxima espera mais; depois da terceira, a pessoa saiu.
-function tentativaFalhou(e) {
-  if (e.reconectando >= MAX_RECONECTAR) return terminar(e, 'saiu');
+// Uma tentativa de voltar falhou: a próxima espera mais. Depois da terceira, ou sem o canal para pedir a senha, a
+// pessoa saiu (o terminar já desliga as duas).
+function tentativaFalhou(e, ...efeitos) {
+  if (e.reconectando >= MAX_RECONECTAR || e.canal !== 'aberto') return terminar(e, 'saiu');
   const espera = esperar(RECONECTAR_MS[e.reconectando], 'reconectar');
-  return com(e, { principal: 'nenhuma', reconectando: e.reconectando + 1 }, espera);
+  return com(e, { principal: 'nenhuma', reconectando: e.reconectando + 1 }, ...efeitos, espera);
 }
 
 // A ligação da tela compartilhada. A que falhou, terminou ou perdeu a conexão acaba com a captura.
@@ -326,15 +343,24 @@ function entrarDeNovo(e) {
   return com(e, { ...volta, tela: 'pedindo', aceito: false, acesso: null, reabrindo: 0 }, PEDIR_MIDIA, ABRIR);
 }
 
-// O Microfone e a Câmera. Na reunião, a ligação troca junto. Antes dela, só o estado muda, e o ligar leva a escolha.
-// Com a ligação nascendo (ligando), o clique fica de fora: a oferta já saiu com a escolha de antes.
+// O Microfone e a Câmera. Na reunião, a ligação troca junto. Antes dela, só o estado muda, e quem roda o ligar lê a
+// escolha do estado. Com a ligação nascendo (ligando), o clique fica de fora: a oferta já saiu com a escolha de antes.
+// Na reunião, a câmera troca uma vez de cada vez: o cameraTrocada que chegar responde ao clique pendente.
 function trocar(e, qual) {
   if (e[qual] === 'indisponivel' || e.principal === 'ligando') return nada(e);
   const ligado = e[qual] !== 'ligado';
   const mudancas = { [qual]: ligado ? 'ligado' : 'desligado' };
   if (e.principal !== 'noAr') return com(e, mudancas);
-  const troca = qual === 'mic' ? { tipo: 'trocarMicrofone', ligado } : { tipo: 'trocarCamera', ligada: ligado };
-  return com(e, mudancas, troca);
+  if (qual === 'mic') return com(e, mudancas, { tipo: 'trocarMicrofone', ligado });
+  if (e.trocandoCamera) return nada(e);
+  return com(e, { ...mudancas, trocandoCamera: true }, { tipo: 'trocarCamera', ligada: ligado });
+}
+
+// A resposta à troca da câmera na reunião: a que não deu certo volta a câmera ao que era. Sem troca pendente (fora da
+// reunião, ou de uma ligação que já desceu), ela fica de fora.
+function cameraTrocada(e, ok) {
+  if (!e.trocandoCamera) return nada(e);
+  return com(e, ok ? { trocandoCamera: false } : { trocandoCamera: false, cam: contrario(e.cam) });
 }
 
 // O Parar de compartilhar: a ligação da tela desce, e o terminou dela para a captura. Antes da senha, ela para já.
@@ -351,10 +377,12 @@ function pararDeCompartilhar(e) {
 }
 
 // A mídia que o navegador deu: o que falta fica indisponível, e o que a pessoa desligou continua desligado. Com uma
-// senha guardada, o ligar sai agora.
+// senha guardada, o ligar sai agora. Num aviso sem o Tentar de novo (o fim, depois do pararMidia dele), a página não a
+// quer mais: ela para logo, sem mudar a escolha da pessoa.
 const escolha = (atual, veio) => (veio === 'ligado' && atual === 'desligado' ? 'desligado' : veio);
 
 function midia(e, { mic, cam }) {
+  if (e.tela === 'aviso' && !DE_NOVO.has(e.aviso)) return com(e, { esperandoMidia: false }, PARAR_MIDIA);
   const mudancas = { mic: escolha(e.mic, mic), cam: escolha(e.cam, cam), esperandoMidia: false };
   if (e.senhaGuardada === null) return com(e, mudancas);
   return com(e, { ...mudancas, principal: 'ligando', senhaGuardada: null }, ligar('principal', e.senhaGuardada));
@@ -370,6 +398,8 @@ function tempo(e, chave) {
     }
     case 'reconectar':
       if (e.tela !== 'reuniao' || e.reconectando === 0 || e.principal !== 'nenhuma') return nada(e);
+      // Sem o canal, não há senha: nenhum mandar num canal fechado.
+      if (e.canal !== 'aberto') return terminar(e, 'saiu');
       return com(e, { principal: 'pedindo' }, mandar({ tipo: 'senha' }));
     case 'fimSemAviso':
       return e.tela === 'reuniao' && e.principal === 'nenhuma' && e.reconectando === 0 ? terminar(e, 'saiu') : nada(e);
@@ -394,11 +424,12 @@ function terminar(e, aviso) {
   return avisar(e, aviso, mudancas, ...efeitos);
 }
 
-// As duas ligações descem de propósito, e a captura da tela, se houver, para junto.
+// As duas ligações descem de propósito, e a captura da tela, se houver, para junto. A troca da câmera pendente era da
+// ligação que desceu.
 function desligarAsDuas(e) {
   const efeitos = [desligar('principal'), desligar('tela')];
   if (e.telaCompartilhada !== 'nenhuma') efeitos.push(PARAR_CAPTURA);
-  return { mudancas: { principal: 'nenhuma', telaCompartilhada: 'nenhuma' }, efeitos };
+  return { mudancas: { principal: 'nenhuma', telaCompartilhada: 'nenhuma', trocandoCamera: false }, efeitos };
 }
 
 /**

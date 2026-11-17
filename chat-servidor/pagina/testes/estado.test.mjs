@@ -107,6 +107,7 @@ test('o carregar abre', () => {
     principal: 'nenhuma',
     esperandoMidia: false,
     senhaGuardada: null,
+    trocandoCamera: false,
   });
   const r = passo(inicial(), COMECAR);
   assert.equal(r.estado.tela, 'carregando');
@@ -356,6 +357,7 @@ test('entrar de novo com o canal fechado passa pela espera', () => {
 
 test('a conexão que cai entra de novo até 3 vezes', () => {
   assert.deepEqual(RECONECTAR_MS, [2000, 4000, 8000]);
+  assert.ok(Object.isFrozen(RECONECTAR_MS));
   assert.equal(MAX_RECONECTAR, 3);
   // Uma tentativa: o prazo, o senha, e o ligar com a senha nova.
   const tentar = (estado, senha) => {
@@ -393,6 +395,70 @@ test('a conexão que cai entra de novo até 3 vezes', () => {
   assert.deepEqual(r.efeitos, [...DESLIGAR_AS_DUAS, esperar(2000, 'reconectar')]);
 });
 
+test('o canal que cai durante a volta', () => {
+  // As três fases da volta: o prazo antes da tentativa, a espera da senha e o ligar.
+  const noPrazo = () => passo(naReuniao(), ligacao('principal', 'semConexao')).estado;
+  const naSenha = () => passo(noPrazo(), tempo('reconectar')).estado;
+  const noLigar = () => passo(naSenha(), mensagem({ tipo: 'senha', senha: 'senha-r1' })).estado;
+  const SAIU = [...DESLIGAR_AS_DUAS, PARAR_MIDIA, FOCAR];
+  // No prazo e na espera da senha, sem o canal não há como voltar: saiu na hora.
+  for (const fase of [noPrazo(), naSenha()]) {
+    const r = passo(fase, canalFechou(1006));
+    assert.equal(r.estado.aviso, 'saiu');
+    assert.deepEqual(r.efeitos, SAIU);
+  }
+  // No ligar, a tentativa em curso continua, e a confirmada sem o canal ainda é a reunião.
+  const semCanal = passo(noLigar(), canalFechou(1006));
+  assert.equal(semCanal.estado.tela, 'reuniao');
+  assert.equal(semCanal.estado.canal, 'fechado');
+  assert.deepEqual(semCanal.efeitos, []);
+  let r = passo(semCanal.estado, ligacao('principal', 'confirmada'));
+  assert.equal(r.estado.tela, 'reuniao');
+  assert.equal(r.estado.reconectando, 0);
+  assert.deepEqual(r.efeitos, []);
+  // A tentativa que falha sem o canal é o saiu: nenhum senha num canal fechado, nenhuma tela parada sem prazo.
+  for (const o of ['falhou', 'semConexao']) {
+    r = passo(semCanal.estado, ligacao('principal', o));
+    assert.equal(r.estado.tela, 'aviso', o);
+    assert.equal(r.estado.aviso, 'saiu');
+    assert.deepEqual(r.efeitos, SAIU);
+  }
+  // O prazo da volta que achasse o canal fechado também dá o saiu. Os eventos não chegam a esse estado (o canal que cai
+  // no prazo já é o saiu), e a guarda fica.
+  r = passo({ ...noPrazo(), canal: 'fechado' }, tempo('reconectar'));
+  assert.equal(r.estado.aviso, 'saiu');
+  assert.deepEqual(r.efeitos, SAIU);
+});
+
+test('na volta, as recusas do senha são tentativas que falharam', () => {
+  for (const tipo of ['semServidor', 'cheia', 'servidorCheio', 'esperaCheia']) {
+    let r = rodar(naReuniao(), ligacao('principal', 'semConexao'), tempo('reconectar'), mensagem({ tipo }));
+    assert.equal(r.estado.tela, 'reuniao', tipo);
+    assert.equal(r.estado.reconectando, 2);
+    assert.deepEqual(r.efeitos, [esperar(4000, 'reconectar')]);
+    r = rodar(r.estado, tempo('reconectar'), mensagem({ tipo }));
+    assert.equal(r.estado.reconectando, 3);
+    assert.deepEqual(r.efeitos, [esperar(8000, 'reconectar')]);
+    r = rodar(r.estado, tempo('reconectar'), mensagem({ tipo }));
+    assert.equal(r.estado.aviso, 'saiu');
+    assert.deepEqual(r.efeitos, [...DESLIGAR_AS_DUAS, PARAR_MIDIA, FOCAR]);
+  }
+});
+
+test('o semConexao no meio do ligar desliga a principal', () => {
+  const DESLIGAR_A_PRINCIPAL = { tipo: 'desligar', qual: 'principal' };
+  // Ao entrar: a ligação que perdeu a conexão desce, e é o semServidor.
+  let r = passo(entrando(), ligacao('principal', 'semConexao'));
+  assert.equal(r.estado.aviso, 'semServidor');
+  assert.deepEqual(r.efeitos, [DESLIGAR_A_PRINCIPAL, FOCAR]);
+  // Na volta, com o canal aberto: ela desce, e vem a próxima tentativa.
+  const SENHA_R1 = mensagem({ tipo: 'senha', senha: 'senha-r1' });
+  r = rodar(naReuniao(), ligacao('principal', 'semConexao'), tempo('reconectar'), SENHA_R1);
+  r = passo(r.estado, ligacao('principal', 'semConexao'));
+  assert.equal(r.estado.reconectando, 2);
+  assert.deepEqual(r.efeitos, [DESLIGAR_A_PRINCIPAL, esperar(4000, 'reconectar')]);
+});
+
 test('a ligação que termina sem aviso vira saiu', () => {
   assert.equal(FIM_SEM_AVISO_MS, 2000);
   const r = passo(naReuniao(), ligacao('principal', 'terminou'));
@@ -407,6 +473,11 @@ test('a ligação que termina sem aviso vira saiu', () => {
   const e = passo(r.estado, mensagem({ tipo: 'encerrada' })).estado;
   assert.equal(e.aviso, 'encerrada');
   semMudar(e, tempo('fimSemAviso'));
+  // O falhou de uma ligação que já estava no ar conta como o terminou: o mosaico nunca fica parado.
+  const f = passo(naReuniao(), ligacao('principal', 'falhou', 0));
+  assert.equal(f.estado.tela, 'reuniao');
+  assert.deepEqual(f.efeitos, [esperar(2000, 'fimSemAviso')]);
+  assert.equal(passo(f.estado, tempo('fimSemAviso')).estado.aviso, 'saiu');
 });
 
 test('o 1011 antes do aceito abre de novo', () => {
@@ -482,7 +553,7 @@ test('a câmera e o microfone', () => {
   r = passo(naReuniao(), clique('camera'));
   assert.equal(r.estado.cam, 'desligado');
   assert.deepEqual(r.efeitos, [{ tipo: 'trocarCamera', ligada: false }]);
-  r = passo(r.estado, clique('camera'));
+  r = rodar(r.estado, { tipo: 'cameraTrocada', ok: true }, clique('camera'));
   assert.equal(r.estado.cam, 'ligado');
   assert.deepEqual(r.efeitos, [{ tipo: 'trocarCamera', ligada: true }]);
   // A câmera que não ligou volta ao que era.
@@ -494,6 +565,22 @@ test('a câmera e o microfone', () => {
   const semNada = naEntrada('indisponivel', 'indisponivel');
   semMudar(semNada, clique('camera'));
   semMudar(semNada, clique('microfone'));
+});
+
+test('a câmera troca uma vez de cada vez', () => {
+  // Com uma troca pendente na reunião, outro clique na Câmera fica de fora: o cameraTrocada responde ao clique
+  // pendente.
+  const pendente = passo(naReuniao(), clique('camera')).estado;
+  semMudar(pendente, clique('camera'));
+  // O Microfone não espera a câmera.
+  assert.deepEqual(passo(pendente, clique('microfone')).efeitos, [{ tipo: 'trocarMicrofone', ligado: false }]);
+  // A resposta que chega fora da reunião não troca a câmera: depois do Sair, depois da conexão caída (a volta liga com
+  // a escolha do estado), e sem troca pendente.
+  semMudar(passo(pendente, clique('sair')).estado, { tipo: 'cameraTrocada', ok: false });
+  const caiu = passo(pendente, ligacao('principal', 'semConexao')).estado;
+  assert.equal(caiu.cam, 'desligado');
+  semMudar(caiu, { tipo: 'cameraTrocada', ok: false });
+  semMudar(naEntrada(), { tipo: 'cameraTrocada', ok: false });
 });
 
 test('a mídia que chega guarda a escolha da pessoa', () => {
@@ -509,6 +596,33 @@ test('a mídia que chega guarda a escolha da pessoa', () => {
   assert.equal(r.estado.cam, 'indisponivel');
 });
 
+test('a mídia que chega depois do fim para', () => {
+  // O Entrar de novo pede a mídia, e o fim chega antes dela.
+  const entrandoDeNovo = passo(saiu(), clique('entrarDeNovo')).estado;
+  const semCanal = rodar(naReuniao(), canalFechou(1006), clique('sair'), clique('entrarDeNovo')).estado;
+  const fins = [
+    passo(entrandoDeNovo, clique('sair')).estado, // o Sair
+    passo(entrandoDeNovo, mensagem({ tipo: 'linkInvalido' })).estado, // o linkInvalido em resposta ao senha
+    passo(semCanal, { tipo: 'abrirFalhou', status: 404 }).estado, // o 404 do abrir, com o canal fechado
+  ];
+  assert.deepEqual(
+    fins.map((f) => f.aviso),
+    ['saiu', 'linkInvalido', 'linkInvalido'],
+  );
+  // A mídia que a página não quer mais para logo, e não muda a escolha da pessoa.
+  for (const fim of fins) {
+    const r = passo(fim, midia('indisponivel', 'indisponivel'));
+    assert.equal(r.estado.aviso, fim.aviso);
+    assert.equal(r.estado.mic, fim.mic);
+    assert.equal(r.estado.cam, fim.cam);
+    assert.deepEqual(r.efeitos, [PARAR_MIDIA]);
+  }
+  // Num aviso com o Tentar de novo, a mídia fica: o Tentar de novo vai precisar dela.
+  const r = rodar(semCanal, { tipo: 'abrirFalhou', status: 0 }, midia('ligado', 'ligado'));
+  assert.equal(r.estado.aviso, 'semServidor');
+  assert.deepEqual(r.efeitos, []);
+});
+
 test('o canal que cai na espera é o semServidor', () => {
   let r = passo(aguardando(), canalFechou(1006));
   assert.equal(r.estado.tela, 'aviso');
@@ -522,9 +636,9 @@ test('o canal que cai na espera é o semServidor', () => {
 });
 
 test('os erros do canal', () => {
-  // O senha recusado na volta (o servidor ainda conta a pessoa na reunião) é uma tentativa que falhou.
-  const recusado = mensagem({ tipo: 'erro', erro: 'invalido' });
-  let r = rodar(naReuniao(), ligacao('principal', 'semConexao'), tempo('reconectar'), recusado);
+  // O erro que responde ao senha da volta (o limite de 5 por minuto) é uma tentativa que falhou.
+  const limite = mensagem({ tipo: 'erro', erro: 'limite' });
+  let r = rodar(naReuniao(), ligacao('principal', 'semConexao'), tempo('reconectar'), limite);
   assert.equal(r.estado.reconectando, 2);
   assert.deepEqual(r.efeitos, [esperar(4000, 'reconectar')]);
   // O senha recusado ao entrar é o semServidor.
@@ -550,6 +664,12 @@ test('os eventos atrasados não mudam nada', () => {
   semMudar(rodar(aguardando(), canalFechou(1011), clique('desistir')).estado, tempo('reabrir'));
   // O prazo da volta depois do Sair.
   semMudar(rodar(naReuniao(), ligacao('principal', 'semConexao'), clique('sair')).estado, tempo('reconectar'));
+});
+
+test('o qual da ligação é principal ou tela', () => {
+  // Outro qual (um erro de digitação no ligacao.js, por exemplo) fica de fora, em vez de cair na principal.
+  semMudar(naReuniao(), ligacao('outra', 'terminou'));
+  semMudar(entrando(), ligacao('', 'confirmada'));
 });
 
 test('nomeValido', () => {
