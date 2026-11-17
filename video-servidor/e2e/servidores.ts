@@ -303,9 +303,15 @@ export class Computador {
     return { status: r.status, json };
   }
 
-  private async certo(metodo: string, caminho: string, corpo: unknown, esperado: number): Promise<any> {
-    const r = await this.pedir(metodo, caminho, corpo);
-    if (r.status !== esperado) throw new Error(`${metodo} ${caminho} respondeu ${r.status}: ${JSON.stringify(r.json)}`);
+  /** O pedido que tem de responder o status esperado. A rota é o padrão, como os servidores a registram: o {codigo}
+   * dela vira o codigo só no pedido. O erro leva a rota e o erro da resposta, e nunca o código de uma reunião nem o
+   * resto do corpo, que vão para o log público do CI e para o relatório. */
+  private async certo(metodo: string, rota: string, corpo: unknown, esperado: number, codigo = ''): Promise<any> {
+    const r = await this.pedir(metodo, rota.replace('{codigo}', encodeURIComponent(codigo)), corpo);
+    if (r.status !== esperado) {
+      const erro = typeof r.json?.erro === 'string' ? ` (${r.json.erro})` : '';
+      throw new Error(`${metodo} ${rota} respondeu ${r.status}${erro}`);
+    }
     return r.json;
   }
 
@@ -322,27 +328,27 @@ export class Computador {
 
   /** O entrar: o Acesso, com a reuniao. */
   entrar(codigo: string): Promise<any> {
-    return this.certo('POST', `/api/v1/reunioes/${codigo}/entrar`, undefined, 200);
+    return this.certo('POST', '/api/v1/reunioes/{codigo}/entrar', undefined, 200, codigo);
   }
 
   participantes(codigo: string): Promise<Resposta> {
-    return this.pedir('GET', `/api/v1/reunioes/${codigo}/participantes`);
+    return this.pedir('GET', `/api/v1/reunioes/${encodeURIComponent(codigo)}/participantes`);
   }
 
   async aceitar(codigo: string, pedido: string): Promise<void> {
-    await this.certo('POST', `/api/v1/reunioes/${codigo}/aceitar`, { pedido }, 204);
+    await this.certo('POST', '/api/v1/reunioes/{codigo}/aceitar', { pedido }, 204, codigo);
   }
 
   async recusar(codigo: string, pedido: string): Promise<void> {
-    await this.certo('POST', `/api/v1/reunioes/${codigo}/recusar`, { pedido }, 204);
+    await this.certo('POST', '/api/v1/reunioes/{codigo}/recusar', { pedido }, 204, codigo);
   }
 
   async tirar(codigo: string, participante: string): Promise<void> {
-    await this.certo('POST', `/api/v1/reunioes/${codigo}/tirar`, { participante }, 204);
+    await this.certo('POST', '/api/v1/reunioes/{codigo}/tirar', { participante }, 204, codigo);
   }
 
   async encerrar(codigo: string): Promise<void> {
-    await this.certo('POST', `/api/v1/reunioes/${codigo}/encerrar`, undefined, 204);
+    await this.certo('POST', '/api/v1/reunioes/{codigo}/encerrar', undefined, 204, codigo);
   }
 
   /** O WebSocket dos eventos do app (seção 7), pelo bilhete. O WebSocket do Node não manda a Origin. */
