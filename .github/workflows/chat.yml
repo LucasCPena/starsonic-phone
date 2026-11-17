@@ -63,3 +63,22 @@ jobs:
         with:
           name: starsonic-chat-linux-amd64
           path: chat-servidor/starsonic-chat
+
+  pagina:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: chat-servidor/pagina
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: chat-servidor/pagina/package-lock.json
+      - name: npm ci
+        run: npm ci
+      - name: O jssip.js é o do pacote
+        run: node montar-jssip.mjs --conferir
+      - name: Testes
+        run: node --test testes/*.test.mjs

@@ -1,0 +1,16 @@
+{
+  "name": "starsonic-chat-pagina",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Os testes da página da reunião e o montador do JsSIP que ela carrega",
+  "license": "GPL-3.0-only",
+  "type": "module",
+  "scripts": {
+    "montar": "node montar-jssip.mjs",
+    "conferir": "node montar-jssip.mjs --conferir",
+    "test": "node --test testes/*.test.mjs"
+  },
+  "devDependencies": {
+    "jssip": "3.13.8"
+  }
+}

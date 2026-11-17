@@ -9,9 +9,6 @@
     "typecheck": "tsc --noEmit -p .",
     "test": "playwright test"
   },
-  "dependencies": {
-    "jssip": "3.13.8"
-  },
   "devDependencies": {
     "@playwright/test": "1.56.1",
     "@types/node": "22.20.5",
