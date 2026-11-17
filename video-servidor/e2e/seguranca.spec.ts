@@ -4,7 +4,8 @@ import { expect, test } from '@playwright/test';
 import { randomBytes } from 'node:crypto';
 import { request } from 'node:http';
 import { connect, type TLSSocket } from 'node:tls';
-import { A, B, MOSAICO_1, Navegador, VERMELHO } from './midia';
+import { A, B, MOSAICO_1, VERMELHO } from './midia';
+import { Navegador } from './navegador';
 import { AGENTE, ipDaMaquina, novaReuniaoDeTeste, PAGINA, registros, segredosNosRegistros, segredosUsados } from './servidores';
 
 test('a senha não vale duas vezes nem sem o cabeçalho', async () => {

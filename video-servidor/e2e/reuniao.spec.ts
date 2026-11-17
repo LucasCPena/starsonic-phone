@@ -11,12 +11,12 @@ import {
   C,
   MOSAICO_2,
   MOSAICO_4,
-  Navegador,
   QUADROS_PEQUENOS,
   TELA,
   VERDE,
   VERMELHO,
 } from './midia';
+import { Navegador } from './navegador';
 import { ana, novaReuniaoDeTeste, type EventosDoApp } from './servidores';
 
 const esperar = (ms: number) => new Promise((r) => setTimeout(r, ms));
