@@ -59,12 +59,16 @@ type paginaReuniaoJSON struct {
 
 // POST /api/v1/pagina/reunioes/{codigo}: sem chave e sem corpo. A janela das aberturas é a mesma do entrar do app, e
 // é conferida primeiro (sem contar): cheia, é 429 tentativas, até com o código certo. Conta nela só o abrir que falha,
-// o 404, como no entrar: o abrir que leva a uma reunião em que a pessoa pode entrar não conta, e a página pode abrir
-// de novo. O código que não existe, a reunião que não vale e a empresa sem as reuniões liberadas dão o mesmo 404: a
+// o 404, como no entrar. O abrir que dá certo tem a janela própria, aberturasBoas (60 por minuto), também conferida
+// antes do banco e contada só no 200: assim um endereço não empurra os bilhetes dos outros para fora da fila. O código que não existe, a reunião que não vale e a empresa sem as reuniões liberadas dão o mesmo 404: a
 // página não aprende qual deles foi.
 func (s *servidor) abrirPagina(w http.ResponseWriter, r *http.Request) {
 	endereco := limites.Endereco(r)
 	if ok, esperar := s.aberturas.Cabe(endereco, 1); !ok {
+		erroEspera(w, "tentativas", esperar)
+		return
+	}
+	if ok, esperar := s.aberturasBoas.Cabe(endereco, 1); !ok {
 		erroEspera(w, "tentativas", esperar)
 		return
 	}
@@ -110,6 +114,7 @@ func (s *servidor) abrirPagina(w http.ResponseWriter, r *http.Request) {
 		inicio := reuniao.Inicio
 		j.Inicio = &inicio
 	}
+	s.aberturasBoas.Contar(endereco, 1)
 	w.Header().Set("Cache-Control", "no-store")
 	escreverJSON(w, http.StatusOK, map[string]any{"reuniao": j, "bilhete": s.bilhetesPagina.novo(reuniao.ID)})
 }

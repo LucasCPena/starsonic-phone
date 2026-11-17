@@ -23,6 +23,7 @@ import (
 const (
 	maxAberturas     = 20          // tentativas de abrir uma reunião por endereço, por minuto (seção 12)
 	periodoAberturas = time.Minute // o período da janela aberturas
+	maxAbrirBom      = 60          // aberturas da página que deram certo por endereço, por minuto (seção 12)
 	maxRamaisAgora   = 9           // os ramais do "Gerar link"
 	// validadeMaxima é o quanto o valeAte pode passar do inicio.
 	validadeMaxima = 31 * 24 * time.Hour

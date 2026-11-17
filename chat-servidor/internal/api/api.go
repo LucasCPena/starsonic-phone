@@ -57,6 +57,9 @@ type servidor struct {
 	// aberturas são as tentativas de abrir uma reunião, por endereço: 20 por minuto. Só contam as que não levam a
 	// uma reunião em que a pessoa possa entrar: o entrar do app (reunioes.go) e o abrir da página (pagina.go).
 	aberturas *limites.Janela
+	// aberturasBoas são as aberturas da página que deram certo, por endereço: 60 por minuto, uma janela à parte da das
+	// falhas. Sem ela, um endereço com um link bom empurraria os bilhetes das outras páginas para fora da fila da reunião.
+	aberturasBoas *limites.Janela
 
 	mensagensLimite *limites.Janela // as mensagens novas, por computador
 	arquivosLimite  *limites.Janela // os bytes de arquivos enviados, por computador
@@ -97,7 +100,8 @@ func Novo(d Deps) http.Handler {
 		canais:         d.Canais,
 		origensPagina:  map[string]bool{},
 
-		aberturas: limites.Nova(maxAberturas, periodoAberturas, d.Banco.Relogio()),
+		aberturas:     limites.Nova(maxAberturas, periodoAberturas, d.Banco.Relogio()),
+		aberturasBoas: limites.Nova(maxAbrirBom, periodoAberturas, d.Banco.Relogio()),
 
 		mensagensLimite: limites.Nova(maxMensagens, periodoMensagens, d.Banco.Relogio()),
 		arquivosLimite:  limites.Nova(maxArquivosHora, periodoArquivos, d.Banco.Relogio()),
