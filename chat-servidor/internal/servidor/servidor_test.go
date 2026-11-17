@@ -1047,3 +1047,22 @@ func TestServidor_EsperaOsCanaisDaPagina(t *testing.T) {
 		t.Fatal("o canal da página voltou e o grupo não")
 	}
 }
+
+func TestServidor_MontaAPagina(t *testing.T) {
+	d := depsDeTeste(t)
+	d.Base = "https://chat.exemplo.com.br"
+	h := Montar(d)
+	log := capturar(t)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/r/k7q49xwpht", nil))
+	if rec.Code != 200 {
+		t.Fatalf("status %d", rec.Code)
+	}
+	if !strings.Contains(rec.Header().Get("Content-Security-Policy"), "wss://chat.exemplo.com.br") {
+		t.Errorf("CSP sem a origem do canal: %q", rec.Header().Get("Content-Security-Policy"))
+	}
+	if strings.Contains(log.String(), "k7q49xwpht") {
+		t.Errorf("o log leva o código: %s", log.String())
+	}
+}

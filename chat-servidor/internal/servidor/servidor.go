@@ -25,6 +25,7 @@ import (
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/armazem"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/banco"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/eventos"
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/pagina"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/reunioes"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/tarefas"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/tempo"
@@ -81,11 +82,35 @@ func montar(d Deps) (http.Handler, *sync.WaitGroup, *api.Canais) {
 		Gerente: d.Gerente, Base: d.Base, Canais: canais}))
 	mux.Handle("/admin/", registrarAdmin(admin.Novo(admin.Deps{Banco: d.Banco, Hub: d.Hub, Armazem: d.Armazem, Teste: d.Teste,
 		Gerente: d.Gerente, Base: d.Base})))
+	// A página das reuniões não passa pelo registrarAdmin: o código do link vai no caminho e não vai para o log.
+	mux.Handle("/r/", pagina.Novo(pagina.Deps{Video: func() string { return videoDe(d.Gerente) }, OrigemCanal: origemCanal(d.Base)}))
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/admin/", http.StatusFound)
 	})
 	sockets := &sync.WaitGroup{}
 	return comPrazos(contarSockets(mux, sockets)), sockets, canais
+}
+
+// videoDe é o WSS do vídeo de agora; sem gerente ou sem vídeo ligado, "".
+func videoDe(g *reunioes.Gerente) string {
+	if g == nil {
+		return ""
+	}
+	if v := g.Video(); v != nil {
+		return v.WSS()
+	}
+	return ""
+}
+
+// origemCanal troca o esquema do Base pelo do WebSocket: https vira wss, http vira ws.
+func origemCanal(base string) string {
+	if resto, ok := strings.CutPrefix(base, "https://"); ok {
+		return "wss://" + resto
+	}
+	if resto, ok := strings.CutPrefix(base, "http://"); ok {
+		return "ws://" + resto
+	}
+	return ""
 }
 
 // ehEventos diz se o pedido é um WebSocket de longa vida: o dos eventos do app ou o canal da página (para contá-lo
