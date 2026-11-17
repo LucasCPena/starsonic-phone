@@ -3,8 +3,10 @@
 # systemd: o FreeSWITCH (o pacote da release, montado do código oficial), o coturn e o certbot do apt, e o agente
 # starsonic-video.
 #
-#   sudo bash instalar.sh instalar <endereço> --chat <endereço do chat>   instala (o endereço é o nome do
-#                                                                         servidor de vídeo no DNS)
+#   sudo bash instalar.sh instalar <endereço> --chat <endereço do chat> [--porta N]
+#                                                                        instala (o endereço é o nome do
+#                                                                        servidor de vídeo no DNS; a --porta é a do
+#                                                                        HTTPS do agente, a 443 se faltar)
 #   sudo bash instalar.sh atualizar [--agora]                            troca tudo pela versão deste script
 #   sudo bash instalar.sh chat <endereço do chat>                        troca o endereço do chat
 #
@@ -13,6 +15,9 @@
 #
 # O endereço do chat é o da página das reuniões, como o navegador a abre: o nome do chat no DNS, com a porta quando
 # o chat usa uma própria (o --porta da instalação do chat). Só essa página entra nas reuniões.
+#
+# A porta do HTTPS do agente é a 443, ou a --porta quando o chat e o vídeo dividem um IP público só (por exemplo, a
+# 7443). O atualizar mantém a porta que está no config.json. A porta 80 da VM continua livre para o certbot.
 #
 # Uma instalação que parou no meio (o DNS que ainda não apontava, a porta 80 fechada) roda de novo com o mesmo
 # comando: ela refaz o que já tinha feito. Depois que termina, o instalar recusa, e o caminho é o atualizar.
@@ -40,7 +45,7 @@ falhar() {
 
 uso() {
   cat >&2 <<'FIM'
-uso: sudo bash instalar.sh instalar <endereço> --chat <endereço do chat> [--versao X.Y.Z]
+uso: sudo bash instalar.sh instalar <endereço> --chat <endereço do chat> [--porta N] [--versao X.Y.Z]
      sudo bash instalar.sh atualizar [--agora] [--versao X.Y.Z]
      sudo bash instalar.sh chat <endereço do chat>
 FIM
@@ -84,6 +89,21 @@ conferir_chat() {
   fi
 }
 
+# conferir_porta <N>: a porta do HTTPS do agente: a 443, ou de 1024 a 65535 (sem zero na frente) fora as portas do
+# próprio servidor de vídeo (a mesma regra do config.json do agente).
+conferir_porta() {
+  local n=$1
+  if [ "$n" = 443 ]; then return 0; fi
+  if ! [[ "$n" =~ ^[1-9][0-9]{0,4}$ ]] || [ "$n" -lt 1024 ] || [ "$n" -gt 65535 ]; then
+    falhar "a porta \"$n\" não serve. Use a 443, ou um número de 1024 a 65535. Exemplo: 7443"
+  fi
+  case "$n" in
+    3478 | 5061 | 5066 | 5070 | 5080 | 5349 | 8021 | 8091)
+      falhar "a porta $n é uma das que o próprio servidor de vídeo usa. Use a 443, ou outro número de 1024 a 65535. Exemplo: 7443"
+      ;;
+  esac
+}
+
 # sistema_da_maquina <os-release>: ubuntu-24.04 ou debian-12, os dois sistemas que têm um pacote do FreeSWITCH.
 # Outro sistema para com o nome dele.
 sistema_da_maquina() {
@@ -112,16 +132,17 @@ conferir_maquina() {
   done
 }
 
-# conferir_portas: as portas do servidor de vídeo estão livres. As linhas do ss dizem qual programa usa cada uma.
+# conferir_portas [porta]: as portas do servidor de vídeo estão livres: a 80 (do certbot), a do HTTPS do agente (a 443,
+# ou a --porta), a 5061, a 5349 e a UDP 3478. As linhas do ss dizem qual programa usa cada uma.
 conferir_portas() {
-  local ocupadas
+  local porta=${1:-443} ocupadas
   ocupadas=$(
-    ss -H -ltnp '( sport = :80 or sport = :443 or sport = :5061 or sport = :5349 )'
+    ss -H -ltnp "( sport = :80 or sport = :$porta or sport = :5061 or sport = :5349 )"
     ss -H -lunp '( sport = :3478 )'
   )
   if [ -n "$ocupadas" ]; then
     echo "$ocupadas" >&2
-    falhar "as portas TCP 80, 443, 5061 e 5349 e a UDP 3478 têm de estar livres, e alguma está em uso (acima). Pare o programa que usa a porta e rode de novo."
+    falhar "as portas TCP 80, $porta, 5061 e 5349 e a UDP 3478 têm de estar livres, e alguma está em uso (acima). Pare o programa que usa a porta e rode de novo."
   fi
 }
 
@@ -258,12 +279,15 @@ senha_esl() {
   echo "${senha:0:32}"
 }
 
-# escrever_config <endereço> <chat> <chave> <senha do ESL> <IP privado> <IP público>: grava o config.json do agente.
-# Ele leva a chave e a senha: nasce só do root e fica root:starsonic-video, 0640, antes de tomar o lugar do antigo.
+# escrever_config <endereço> <chat> <chave> <senha do ESL> <IP privado> <IP público> [porta]: grava o config.json do
+# agente, com a "porta" só quando ela vem. Ele leva a chave e a senha: nasce só do root e fica root:starsonic-video,
+# 0640, antes de tomar o lugar do antigo.
 escrever_config() {
-  local destino=$CONFIG_DIR/config.json
+  local destino=$CONFIG_DIR/config.json porta=""
+  if [ "$#" -ge 7 ] && [ -n "$7" ]; then porta=", \"porta\": $7"; fi
   rm -f "$destino.novo"
-  (umask 077 && printf '{"endereco": "%s", "chat": "%s", "chave": "%s", "senhaEsl": "%s", "ipPrivado": "%s", "ipPublico": "%s"}\n' "$@" >"$destino.novo")
+  (umask 077 && printf '{"endereco": "%s", "chat": "%s", "chave": "%s", "senhaEsl": "%s", "ipPrivado": "%s", "ipPublico": "%s"%s}\n' \
+    "$1" "$2" "$3" "$4" "$5" "$6" "$porta" >"$destino.novo")
   chown "root:$USUARIO" "$destino.novo"
   chmod 0640 "$destino.novo"
   mv -fT "$destino.novo" "$destino"
@@ -272,6 +296,13 @@ escrever_config() {
 # ler_campo <campo>: o valor de um campo de texto do config.json que este script gravou.
 ler_campo() {
   sed -n 's/.*"'"$1"'": *"\([^"]*\)".*/\1/p' "$CONFIG_DIR/config.json"
+}
+
+# ler_porta: a porta do HTTPS do agente no config.json que este script gravou: a "porta", ou a 443 quando ela falta.
+ler_porta() {
+  local porta
+  porta=$(sed -n 's/.*"porta": *\([0-9][0-9]*\).*/\1/p' "$CONFIG_DIR/config.json")
+  echo "${porta:-443}"
 }
 
 # certificados_proprios: os dois pares autoassinados do FreeSWITCH, na pasta tls/ dele, só os que faltam: o
@@ -352,7 +383,7 @@ configurar_tudo() {
   instalar_turn
 }
 
-# configurar_novo <endereço> <chat> <IP privado> <IP público>: a chave e a senha do ESL novas, o config.json e a
+# configurar_novo <endereço> <chat> <IP privado> <IP público> [porta]: a chave e a senha do ESL novas, o config.json e a
 # configuração dos três programas. Numa instalação que parou no meio e roda de novo, tudo é refeito: a chave só
 # aparece no fim, e ninguém a viu ainda.
 configurar_novo() {
@@ -360,7 +391,7 @@ configurar_novo() {
   mkdir -p "$CONFIG_DIR"
   chave=$("$BINARIO" chave)
   senha=$(senha_esl)
-  escrever_config "$1" "$2" "$chave" "$senha" "$3" "$4"
+  escrever_config "$1" "$2" "$chave" "$senha" "$3" "$4" "${5:-}"
   configurar_tudo
 }
 
@@ -370,7 +401,7 @@ tirar_certificado() {
   if ! certbot certonly --standalone --non-interactive --agree-tos --register-unsafely-without-email \
     --preferred-challenges http -d "$1" >"$TMP/certbot.txt" 2>&1; then
     cat "$TMP/certbot.txt" >&2
-    falhar "o certificado não saiu: confira o DNS e a porta 80 (veja \"O certificado não sai\", no guia)."
+    falhar "o certificado não saiu: confira o DNS e a porta 80 (veja \"O certificado não sai\", no guia). Se o chat e o vídeo dividem um IP público só, o Let's Encrypt chega ao chat, e o chat tem de repassar a verificação: rode o comando video no chat (sudo bash instalar.sh video <nome do vídeo> <IP do vídeo>) e confira que a VM do chat alcança a porta 80 desta VM pela rede interna (veja \"Se o chat e o vídeo dividem um IP público só\", no guia)."
   fi
 }
 
@@ -464,14 +495,14 @@ trocar_freeswitch() {
 }
 
 instalar() {
-  local endereco=$1 chat=$2 sistema ip_pub ip_priv
+  local endereco=$1 chat=$2 porta=${3:-} sistema ip_pub ip_priv
   local -a pacotes
   conferir_maquina
   sistema=$(sistema_da_maquina "$OS_RELEASE")
   if [ -e "$UNIDADES/starsonic-video.service" ]; then
     falhar "o servidor de vídeo já está instalado ($UNIDADES/starsonic-video.service existe). Para trocar de versão: sudo bash instalar.sh atualizar . Para trocar o endereço do chat: sudo bash instalar.sh chat <endereço do chat> . Para ver a chave de novo: sudo starsonic-video mostrar-chave"
   fi
-  conferir_portas
+  conferir_portas "${porta:-443}"
   ip_pub=$(ip_publico "$endereco")
   ip_priv=$(ip_privado)
 
@@ -487,7 +518,7 @@ instalar() {
   instalar_pacotes certbot coturn ca-certificates openssl "${pacotes[@]}"
   criar_usuarios
   instalar_programa "$TMP"
-  configurar_novo "$endereco" "$chat" "$ip_priv" "$ip_pub"
+  configurar_novo "$endereco" "$chat" "$ip_priv" "$ip_pub" "$porta"
 
   echo "Pedindo o certificado ao Let's Encrypt (pela porta 80)..."
   instalar_gancho "$TMP"
@@ -499,7 +530,12 @@ instalar() {
   ligar_servicos
 
   echo
-  echo "Pronto: o servidor de vídeo $("$BINARIO" versao) está no ar em https://$endereco/."
+  if [ -n "$porta" ] && [ "$porta" != 443 ]; then
+    echo "Pronto: o servidor de vídeo $("$BINARIO" versao) está no ar em https://$endereco:$porta/."
+    echo "O endereço do vídeo para o cartão \"Reuniões\" da administração do chat é: $endereco:$porta"
+  else
+    echo "Pronto: o servidor de vídeo $("$BINARIO" versao) está no ar em https://$endereco/."
+  fi
   echo
   echo 'A chave do servidor de vídeo (cole no cartão "Reuniões" da administração do chat):'
   "$BINARIO" mostrar-chave --config "$CONFIG_DIR/config.json"
@@ -569,7 +605,7 @@ mudar_chat() {
 # --- o começo ---
 principal() {
   [ "$#" -ge 1 ] || uso
-  local comando=$1 endereco="" chat="" agora=0
+  local comando=$1 endereco="" chat="" agora=0 porta=""
   shift
   case "$comando" in
     instalar)
@@ -590,6 +626,12 @@ principal() {
       --chat)
         if [ "$comando" != instalar ] || [ "$#" -lt 2 ]; then uso; fi
         chat=$2
+        shift 2
+        ;;
+      --porta)
+        if [ "$comando" != instalar ] || [ "$#" -lt 2 ]; then uso; fi
+        [ -n "$2" ] || falhar "a --porta precisa de um número. Use a 443, ou um número de 1024 a 65535. Exemplo: 7443"
+        porta=$2
         shift 2
         ;;
       --agora)
@@ -617,6 +659,7 @@ principal() {
     [ -n "$chat" ] || uso
     conferir_endereco "$endereco"
     conferir_chat "$chat"
+    if [ -n "$porta" ]; then conferir_porta "$porta"; fi
   fi
 
   case "$VERSAO" in
@@ -629,7 +672,7 @@ principal() {
   trap 'rm -rf "$TMP"' EXIT
 
   if [ "$comando" = instalar ]; then
-    instalar "$endereco" "$chat"
+    instalar "$endereco" "$chat" "$porta"
   else
     atualizar "$agora"
   fi

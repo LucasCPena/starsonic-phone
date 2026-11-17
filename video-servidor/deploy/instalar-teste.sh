@@ -98,6 +98,51 @@ for c in https://chat.exemplo.com.br chat chat.exemplo.com.br/x chat.exemplo.com
   confere "chat [$c]" não "$(aceita conferir_chat "$c")"
 done
 
+# --- a porta do HTTPS do agente: a 443, ou de 1024 a 65535 fora as portas do próprio servidor ---
+for n in 443 1024 7443 8443 65535 5060 5062 49152; do
+  confere "porta $n" sim "$(aceita conferir_porta "$n")"
+done
+# Abaixo da faixa (a 80 é a do certbot), acima dela, zero na frente, não é número, vazia, e cada porta do servidor.
+for n in 1 80 442 444 1023 65536 99999 100000 07443 0 -1 7443.5 7e3 " 7443" abc "" 3478 5061 5066 5070 5080 5349 8021 8091; do
+  confere "porta [$n]" não "$(aceita conferir_porta "$n")"
+done
+confere "o erro da porta que não serve diz a porta" \
+  'ERRO: a porta "1023" não serve. Use a 443, ou um número de 1024 a 65535. Exemplo: 7443' \
+  "$( (conferir_porta 1023) 2>&1)"
+confere "o erro da porta do próprio servidor" \
+  "ERRO: a porta 5061 é uma das que o próprio servidor de vídeo usa. Use a 443, ou outro número de 1024 a 65535. Exemplo: 7443" \
+  "$( (conferir_porta 5061) 2>&1)"
+
+# --- o conferir_portas: o ss confere a porta do agente (a 443, ou a --porta), a 80 do certbot e as outras ---
+# cenario_portas <porta ou vazio> <porta ocupada no TCP ou vazio>: "<código>|<as consultas ao ss, com #>|<saída>".
+cenario_portas() {
+  (
+    t_ocupada=$2
+    t_consultas=$T/ss-consultas-$1-$2
+    : >"$t_consultas"
+    ss() {
+      echo "$*" >>"$t_consultas"
+      if [ "$2" = -ltnp ] && [ -n "$t_ocupada" ]; then echo "LISTEN 0 4096 0.0.0.0:$t_ocupada 0.0.0.0:* users:((\"x\",pid=1,fd=3))"; fi
+      return 0
+    }
+    t_codigo=0
+    if [ -n "$1" ]; then
+      t_saida=$( (conferir_portas "$1") 2>&1) || t_codigo=$?
+    else
+      t_saida=$( (conferir_portas) 2>&1) || t_codigo=$?
+    fi
+    echo "$t_codigo|$(paste -sd '#' "$t_consultas")|$(tail -n 1 <<<"$t_saida")"
+  )
+}
+ss_tcp() { echo "-H -ltnp ( sport = :80 or sport = :$1 or sport = :5061 or sport = :5349 )"; }
+ss_udp="-H -lunp ( sport = :3478 )"
+confere "as portas livres, sem porta: o ss olha a 443" "0|$(ss_tcp 443)#$ss_udp|" "$(cenario_portas '' '')"
+confere "as portas livres, com a 7443: o ss olha a 7443 e não a 443" "0|$(ss_tcp 7443)#$ss_udp|" "$(cenario_portas 7443 '')"
+confere "a 7443 em uso para" "1|$(ss_tcp 7443)#$ss_udp|ERRO: as portas TCP 80, 7443, 5061 e 5349 e a UDP 3478 têm de estar livres, e alguma está em uso (acima). Pare o programa que usa a porta e rode de novo." \
+  "$(cenario_portas 7443 7443)"
+confere "sem porta, a mensagem fala da 443" "1|$(ss_tcp 443)#$ss_udp|ERRO: as portas TCP 80, 443, 5061 e 5349 e a UDP 3478 têm de estar livres, e alguma está em uso (acima). Pare o programa que usa a porta e rode de novo." \
+  "$(cenario_portas '' 443)"
+
 # --- o sistema, com arquivos os-release de mentira ---
 os_release() { # os_release <nome do arquivo> <linhas>...
   local arquivo=$T/$1
@@ -181,6 +226,18 @@ confere "config.json é JSON" sim "$(python3 -I -c 'import json,sys; json.load(o
 confere "config.json 0640" 640 "$(modo "$CONFIG_DIR/config.json")"
 confere "config.json do grupo do agente, antes de tomar o lugar" root:starsonic-video "$(dono_de etc/starsonic-video/config.json.novo)"
 confere "nenhum config.json.novo sobrou" não "$(if [ -e "$CONFIG_DIR/config.json.novo" ]; then echo sim; else echo não; fi)"
+confere "sem porta, o config.json não tem o campo" não "$(if grep -q porta "$CONFIG_DIR/config.json"; then echo sim; else echo não; fi)"
+confere "sem porta, a porta lida é a 443" 443 "$(ler_porta)"
+escrever_config video.exemplo.com.br chat.exemplo.com.br:8443 "$chave_teste" "$s1" 10.0.0.5 203.0.113.10 7443
+confere "config.json com a porta" \
+  "{\"endereco\": \"video.exemplo.com.br\", \"chat\": \"chat.exemplo.com.br:8443\", \"chave\": \"$chave_teste\", \"senhaEsl\": \"$s1\", \"ipPrivado\": \"10.0.0.5\", \"ipPublico\": \"203.0.113.10\", \"porta\": 7443}" \
+  "$(cat "$CONFIG_DIR/config.json")"
+confere "config.json com a porta é JSON" sim "$(python3 -I -c 'import json,sys; print("sim" if json.load(open(sys.argv[1]))["porta"] == 7443 else "não")' "$CONFIG_DIR/config.json")"
+confere "config.json com a porta 0640" 640 "$(modo "$CONFIG_DIR/config.json")"
+confere "a porta lida é a 7443" 7443 "$(ler_porta)"
+confere "o campo endereco com a porta" video.exemplo.com.br "$(ler_campo endereco)"
+confere "o campo chat com a porta" chat.exemplo.com.br:8443 "$(ler_campo chat)"
+escrever_config video.exemplo.com.br chat.exemplo.com.br:8443 "$chave_teste" "$s1" 10.0.0.5 203.0.113.10
 confere "o campo endereco" video.exemplo.com.br "$(ler_campo endereco)"
 confere "o campo chat" chat.exemplo.com.br:8443 "$(ler_campo chat)"
 
@@ -490,6 +547,105 @@ confere "atualizar sem a instalação para" "1|" "$(
   echo "$codigo|$saida"
 )"
 
+# --- o instalar com a --porta: o config.json, o ss, as mensagens e a falha do certificado ---
+# cenario_instalar <nome> <porta ou vazio> [certificado-falha]: "<código>|<porta que o ss recebeu>|<config.json>|<saída>".
+cenario_instalar() {
+  local t_nome=$1 t_porta=$2 t_jeito=${3:-}
+  (
+    t_raiz=$T/instalar-$t_nome
+    instalado "$t_raiz"
+    rm -f "$UNIDADES/starsonic-video.service" "$CONFIG_DIR/config.json"
+    mkdir -p "$FREESWITCH"
+    echo libum1 >"$FREESWITCH/pacotes.txt"
+    cat >"$BINARIO" <<'FIM'
+#!/usr/bin/env bash
+case "$1" in
+  chave) echo AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8 ;;
+  versao) echo 0.1.0 ;;
+  mostrar-chave) echo AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8 ;;
+  *) exit 9 ;;
+esac
+FIM
+    conferir_maquina() { :; }
+    sistema_da_maquina() { echo ubuntu-24.04; }
+    conferir_portas() { echo "${1:-}" >"$t_raiz/porta-do-ss"; }
+    ip_publico() { echo 203.0.113.10; }
+    ip_privado() { echo 10.0.0.5; }
+    baixar_tudo() { :; }
+    tar() { :; }
+    systemctl() { :; }
+    instalar_pacotes() { :; }
+    criar_usuarios() { :; }
+    instalar_programa() { :; }
+    configurar_tudo() { :; }
+    instalar_gancho() { :; }
+    rodar_gancho() { :; }
+    ligar_servicos() { :; }
+    senha_esl() { echo "$s1"; }
+    certbot() { if [ "$t_jeito" = certificado-falha ]; then echo "certbot: falhou"; return 1; fi; }
+    local t_codigo=0
+    set +e
+    (set -e; instalar video.exemplo.com.br chat.exemplo.com.br "$t_porta") >"$t_raiz/saida" 2>&1
+    t_codigo=$?
+    set -e
+    echo "$t_codigo|$(cat "$t_raiz/porta-do-ss" 2>/dev/null)|$(cat "$CONFIG_DIR/config.json" 2>/dev/null)|$(grep -v '^Instalando\|^Pedindo\|^Ligando\|^SHA' "$t_raiz/saida" | paste -sd '#')"
+  )
+}
+config_instalado() { # config_instalado [porta]: o config.json que o instalar escreve com a chave e a senha de teste.
+  local porta=""
+  [ -z "${1:-}" ] || porta=", \"porta\": $1"
+  echo "{\"endereco\": \"video.exemplo.com.br\", \"chat\": \"chat.exemplo.com.br\", \"chave\": \"$chave_teste\", \"senhaEsl\": \"$s1\", \"ipPrivado\": \"10.0.0.5\", \"ipPublico\": \"203.0.113.10\"$porta}"
+}
+chave_msg='A chave do servidor de vídeo (cole no cartão "Reuniões" da administração do chat):'
+confere "instalar sem a porta: a 443, e as mensagens de sempre" \
+  "0|443|$(config_instalado)|#Pronto: o servidor de vídeo 0.1.0 está no ar em https://video.exemplo.com.br/.##$chave_msg#$chave_teste" \
+  "$(cenario_instalar sem-porta '')"
+confere "instalar com a 443: as mensagens de sempre" \
+  "0|443|$(config_instalado 443)|#Pronto: o servidor de vídeo 0.1.0 está no ar em https://video.exemplo.com.br/.##$chave_msg#$chave_teste" \
+  "$(cenario_instalar com-443 443)"
+confere "instalar com a 7443: a porta no config.json, no ss e nas mensagens" \
+  "0|7443|$(config_instalado 7443)|#Pronto: o servidor de vídeo 0.1.0 está no ar em https://video.exemplo.com.br:7443/.#O endereço do vídeo para o cartão \"Reuniões\" da administração do chat é: video.exemplo.com.br:7443##$chave_msg#$chave_teste" \
+  "$(cenario_instalar com-7443 7443)"
+cert_falha=$(cenario_instalar cert-falha 7443 certificado-falha)
+confere "o certificado que falha: para com código 1 e diz o caso de um IP só" sim "$(
+  if [[ "$cert_falha" == 1\|* && "$cert_falha" == *"Se o chat e o vídeo dividem um IP público só"* && "$cert_falha" == *"o comando video no chat"* && "$cert_falha" == *"porta 80 desta VM pela rede interna"* && "$cert_falha" == *'O certificado não sai'* ]]; then echo sim; else echo "não: $cert_falha"; fi
+)"
+
+# --- o atualizar e o chat mantêm a porta do config.json ---
+confere "atualizar mantém a porta do config.json" "$(config_instalado 7443)" "$(
+  t_raiz=$T/atualizar-porta
+  instalado "$t_raiz"
+  escrever_config video.exemplo.com.br chat.exemplo.com.br "$chave_teste" "$s1" 10.0.0.5 203.0.113.10 7443
+  conferir_maquina() { :; }
+  sistema_da_maquina() { echo ubuntu-24.04; }
+  baixar_tudo() { :; }
+  conferir_reunioes() { :; }
+  trocar_freeswitch() { :; }
+  instalar_programa() { :; }
+  instalar_unidades() { :; }
+  instalar_gancho() { :; }
+  configurar_tudo() { :; }
+  rodar_gancho() { :; }
+  systemctl() { :; }
+  reiniciar_servicos() { :; }
+  (atualizar 0) >/dev/null 2>&1
+  cat "$CONFIG_DIR/config.json"
+)"
+confere "o chat mantém a porta do config.json" \
+  "$(config_instalado 7443 | sed 's/"chat": "chat.exemplo.com.br"/"chat": "chat2.exemplo.com.br"/')" "$(
+  cenario_porta_chat() {
+    t_raiz=$T/chat-com-porta
+    instalado "$t_raiz"
+    escrever_config video.exemplo.com.br chat.exemplo.com.br "$chave_teste" "$s1" 10.0.0.5 203.0.113.10 7443
+    conferir_maquina() { :; }
+    sleep() { :; }
+    systemctl() { case "$1" in restart) ;; show) echo 0 ;; is-active) true ;; *) return 9 ;; esac; }
+    (mudar_chat chat2.exemplo.com.br) >/dev/null 2>&1
+    cat "$CONFIG_DIR/config.json"
+  }
+  cenario_porta_chat
+)"
+
 # --- o trocar_freeswitch: o pacote novo (com as pastas do construir.sh) ao lado, os pacotes do apt dele e a troca ---
 # "<VERSAO da pasta no lugar>|<VERSAO do .antigo>|<pacotes pedidos ao apt>|<o .novo sobrou?>".
 confere "trocar_freeswitch troca as pastas" "novo|antigo|libum1 libdois2|limpo" "$(
@@ -592,6 +748,21 @@ confere "atualizar com o --chat" 2 "$(codigo_de atualizar --chat chat.exemplo.co
 confere "chat sem o endereço" 2 "$(codigo_de chat)"
 confere "chat com dois endereços" 2 "$(codigo_de chat chat.exemplo.com.br chat2.exemplo.com.br)"
 confere "chat com o --versao" 2 "$(codigo_de chat chat.exemplo.com.br --versao 0.1.0)"
+confere "instalar com a --porta sem o número" 2 "$(codigo_de instalar video.exemplo.com.br --chat chat.exemplo.com.br --porta)"
+confere "atualizar com a --porta" 2 "$(codigo_de atualizar --porta 7443)"
+confere "chat com a --porta" 2 "$(codigo_de chat chat.exemplo.com.br --porta 7443)"
+confere "instalar com a --porta vazia" 1 "$(codigo_de instalar video.exemplo.com.br --chat chat.exemplo.com.br --porta "")"
+# Uma porta que não serve para antes de qualquer outra coisa (sem root, sem versão, sem rede).
+for n in 80 1023 65536 07443 abc 5061 8091; do
+  confere "instalar com a --porta $n para antes de mudar algo" "1|ERRO: a porta" "$(
+    c=0
+    saida=$( (principal instalar video.exemplo.com.br --chat chat.exemplo.com.br --porta "$n") 2>&1) || c=$?
+    echo "$c|${saida:0:13}"
+  )"
+done
+confere "instalar com a --porta 7443 passa pela conferência e para na versão" \
+  "ERRO: este script não traz a versão (é o do repositório). Rode com --versao X.Y.Z, por exemplo: --versao 0.1.0" \
+  "$( (principal instalar video.exemplo.com.br --chat chat.exemplo.com.br --porta 7443) 2>&1)"
 confere "comando que não existe" 2 "$(codigo_de porta 8443)"
 # Os argumentos certos passam pelo uso e param na versão, que o script do repositório não traz.
 confere "instalar do repositório pede a versão" \
