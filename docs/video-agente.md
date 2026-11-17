@@ -5,8 +5,8 @@ O servidor de vídeo é uma VM com o FreeSWITCH (o mosaico, o som, o SIP e o Web
 ## 1. As portas
 | Porta | Quem escuta | Para quê |
 |---|---|---|
-| TCP 443, em toda a VM | o agente (TLS do Let's Encrypt) | o `/sip` do navegador (seção 6) e a API do chat em `/agente/v1/` (seção 5) |
-| TCP 80, em toda a VM | o certbot, só na hora de tirar ou renovar o certificado | o desafio do Let's Encrypt |
+| TCP 443 (ou a `porta` do config.json), em toda a VM | o agente (TLS do Let's Encrypt) | o `/sip` do navegador (seção 6) e a API do chat em `/agente/v1/` (seção 5) |
+| TCP 80, em toda a VM | o certbot, só na hora de tirar ou renovar o certificado | o desafio do Let's Encrypt (se o chat e o vídeo dividem um IP público só, o chat leva o desafio até esta porta, pela rede interna) |
 | TCP 5061, no IP da VM | o FreeSWITCH (o perfil `tls`) | o SIP sobre TLS do app |
 | UDP 3478, no IP da VM | o coturn | o TURN |
 | TCP 5349, no IP da VM | o coturn | o TURN sobre TLS |
@@ -16,6 +16,8 @@ O servidor de vídeo é uma VM com o FreeSWITCH (o mosaico, o som, o SIP e o Web
 | TCP 127.0.0.1:5070 | o FreeSWITCH (o perfil `navegador`) | o SIP comum do perfil, sem uso de fora |
 | TCP 127.0.0.1:8021 | o FreeSWITCH | o ESL (o `mod_event_socket`), com a senha do ESL |
 | TCP 127.0.0.1:8091 | o agente | a discagem (o `mod_xml_curl`) |
+
+A porta do HTTPS do agente é a 443, ou a `porta` do config.json (opcional, um número inteiro; sem ela, ou com 0, vale a 443). Valem a 443 e os números de 1024 a 65535, menos as portas do próprio servidor de vídeo: 3478, 5061, 5066, 5070, 5080, 5349, 8021 e 8091. Com a `porta`, o endereço do servidor de vídeo que o chat guarda leva a porta (`video.exemplo.com.br:7443`), e o `/sip` e a API do chat usam essa porta. As portas de TURN e de SIP não mudam (o chat as monta sem a porta do HTTPS).
 
 ## 2. A chave
 - São 32 bytes aleatórios, escritos em base64url sem `=` (43 caracteres). O instalador do servidor de vídeo a cria e a mostra no fim. O administrador a cola no cartão "Reuniões" da administração do chat.
@@ -64,7 +66,7 @@ eyJ2IjoxLCJzYWxhIjoiMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWYiLCJwYXJ0aWNpcGFu
 - **O coturn só faz relay para a própria VM:** o `denied-peer-ip` cobre todos os endereços IPv4 e IPv6, e o `allowed-peer-ip` abre só o IP privado e o IP público da VM.
 
 ## 5. A API do agente (para o chat)
-Tudo vai em HTTPS, na 443 do servidor de vídeo, com `Authorization: Bearer <chave>`, menos o `saude`. As respostas são JSON. Um erro vem como `{"erro": "<código>"}`.
+Tudo vai em HTTPS, na porta do agente (seção 1: a 443, ou a `porta` do config.json), com `Authorization: Bearer <chave>`, menos o `saude`. As respostas são JSON. Um erro vem como `{"erro": "<código>"}`.
 
 | Status | `erro` | Quando |
 |---|---|---|
@@ -106,7 +108,7 @@ Tudo vai em HTTPS, na 443 do servidor de vídeo, com `Authorization: Bearer <cha
 **Encerrar** — `POST /agente/v1/salas/{sala}/encerrar`: `204`. Todas as ligações da sala acabam (`conference <sala> hup all`).
 
 ## 6. O SIP
-- **O navegador:** `wss://<endereço do vídeo>/sip`, com o subprotocolo `sip`.
+- **O navegador:** `wss://<endereço do vídeo>/sip`, com o subprotocolo `sip`. O endereço leva a porta do agente quando ela não é a 443, como em `wss://video.exemplo.com.br:7443/sip`.
   - O agente só aceita a origem da página: `https://<endereço do chat>`, com a porta quando o chat usa uma. No modo de teste, aceita também as do `--origem`.
   - São até 30 conexões ao mesmo tempo por endereço IP.
   - O agente leva os bytes, sem mexer, ao WebSocket do FreeSWITCH (`127.0.0.1:5066`).

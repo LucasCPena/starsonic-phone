@@ -383,8 +383,15 @@ Depois disso, o mesmo ramal entra como uma pessoa nova, sem as conversas antigas
 A partir da versão 0.2.0, o chat também cuida das reuniões com link. O vídeo e o som delas passam por um servidor de vídeo, numa VM só dele, que tem o guia próprio: `docs/video-servidor.md`.
 
 1. **Ligue o chat ao servidor de vídeo** pelo cartão `REUNIÕES` da lista das empresas, na administração do chat. Siga o passo 3 do guia do servidor de vídeo.
-2. **Deixe a VM do chat alcançar a VM de vídeo na porta 443.** O chat fala com o servidor de vídeo por HTTPS, pelo endereço dele. Se um firewall limita a saída da VM do chat, libere a 443 para a VM de vídeo. Se as duas VMs ficam atrás do mesmo roteador, a do chat chega à de vídeo pelo IP público, e o roteador precisa fazer o "NAT loopback" (passo 1).
+2. **Deixe a VM do chat alcançar a VM de vídeo na porta 443** (ou na 7443, se o chat e o vídeo dividem um IP público só: veja o item 4). O chat fala com o servidor de vídeo por HTTPS, pelo endereço dele. Se um firewall limita a saída da VM do chat, libere essa porta para a VM de vídeo. Se as duas VMs ficam atrás do mesmo roteador, a do chat chega à de vídeo pelo IP público, e o roteador precisa fazer o "NAT loopback" (passo 1).
 3. **Guarde as cópias de segurança do chat com o mesmo cuidado que a chave do servidor de vídeo.** A chave fica no banco do chat, e a cópia da noite (passo 5) a leva junto: quem tem uma cópia tem a chave.
+4. **Se o chat e o servidor de vídeo dividem um IP público só, use o comando `video`.** Nesse caso, as portas 80 e 443 públicas são do chat, e o vídeo usa a porta 7443. O certificado (o cadeado) do vídeo é pedido ao Let's Encrypt, que chega na porta 80 do **chat**. O comando `video` faz o chat levar só essa conferência, pela rede interna, até a VM de vídeo. Ele só é preciso nesse caso, e tem de ser rodado **antes** de instalar o servidor de vídeo. O chat tem de estar na versão 0.2.0 ou mais nova (passo 7). Rode na VM do chat, com o nome do servidor de vídeo e o IP da VM de vídeo na rede interna:
+
+```
+sudo bash instalar.sh video <endereço do vídeo> <IP interno da VM de vídeo>
+```
+
+   O `instalar.sh` é o mesmo do passo 7. O comando reinicia o chat, e quem está no chat volta a conectar em poucos segundos. Você deve ver uma linha que começa com `Pronto: o chat agora repassa ao servidor de vídeo`. A porta do chat, se ele usa uma própria, fica como está, e o comando `porta` (passo 7) também mantém o que o `video` guardou. Se o chat não ficar de pé, a configuração de antes volta sozinha. O comando recusa, sem mudar nada, um chat com `"origens"` no arquivo de configuração. Os passos completos, do roteador ao cartão "Reuniões", estão em "Se o chat e o vídeo dividem um IP público só", no passo 1 do guia do servidor de vídeo (`docs/video-servidor.md`).
 
 ## 10. Ver os registros
 

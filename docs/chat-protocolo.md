@@ -329,7 +329,7 @@ As reuniões com link moram no servidor do chat; o vídeo e o som vão direto pa
  "senha": "<a senha de uso único: 30 segundos, uma vez só>",
  "turn": {"urls": ["turn:video.exemplo.com.br:3478?transport=udp", "turns:video.exemplo.com.br:5349?transport=tcp"],
           "usuario": "1794538800:0011223344556677", "senha": "lTe50TxrbuhEaWJVPhFLOGOJYRI="},
- "video": {"wss": "wss://video.exemplo.com.br/sip",
+ "video": {"wss": "wss://video.exemplo.com.br/sip",   // com a porta quando o vídeo usa uma: "wss://video.exemplo.com.br:7443/sip"
            "uri": "sip:reuniao@video.exemplo.com.br",
            "sip": "sips:reuniao@video.exemplo.com.br:5061;transport=tls"},
  "reuniao": <Reunião>}
@@ -337,6 +337,7 @@ As reuniões com link moram no servidor do chat; o vídeo e o som vão direto pa
 - O `participante` é um id de 16 caracteres hexadecimais, novo a cada entrada.
 - A `senha` e o `turn` seguem o `docs/video-agente.md`. As credenciais do TURN valem 12 horas.
 - O navegador usa o `wss` e a `uri`, e o app usa o `sip`.
+- O `wss` leva a porta do servidor de vídeo quando ele usa uma que não é a 443 (o endereço que a administração guardou leva a porta, como `video.exemplo.com.br:7443`), por exemplo `wss://video.exemplo.com.br:7443/sip`. O `turn` e o `sip` ficam sem essa porta: o TURN é na 3478 e na 5349, e o SIP, na 5061.
 - Uma senha que venceu antes da ligação (a pessoa demorou) se resolve com outro `entrar`, que dá um participante novo.
 
 **Com a pessoa na reunião.** Estas rotas pedem que a pessoa da vez esteja na reunião (seção 9, "Quem está na reunião"). Se ela não está, respondem `409 foraDaReuniao`. Um código de outra empresa responde `404 naoEncontrado`.

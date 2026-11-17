@@ -53,14 +53,14 @@ Você deve ver uma linha com o IP público da VM (ou o do roteador, se ela fica 
 | Porta | Para quê |
 |---|---|
 | TCP 80 | o certificado (o cadeado) do Let's Encrypt, na instalação e em cada renovação |
-| TCP 443 | o navegador e o chat |
+| TCP 443 | o navegador e o chat (se o chat e o vídeo dividem um IP público só, é a TCP 7443: veja "Se o chat e o vídeo dividem um IP público só", no fim deste passo) |
 | TCP 5061 | o app (as reuniões no Starsonic Phone) |
 | UDP 3478 | o TURN, para quem está numa rede fechada |
 | TCP 5349 | o TURN sobre TLS, para quem está numa rede que bloqueia o UDP |
 | UDP 16384 a 16683 | a imagem e o som das reuniões |
 | UDP 49152 a 49451 | o caminho do TURN |
 
-As outras portas dos programas ficam só dentro da VM: não abra nenhuma além dessas. Na VM, as portas TCP 80, 443, 5061 e 5349 e a UDP 3478 têm de estar livres (a instalação confere).
+As outras portas dos programas ficam só dentro da VM: não abra nenhuma além dessas. Na VM, as portas TCP 80, 443 (ou a 7443, se o chat e o vídeo dividem um IP público só), 5061 e 5349 e a UDP 3478 têm de estar livres (a instalação confere).
 
 **3. A internet da VM.** Uma reunião com 10 pessoas usa cerca de 25 Mbit/s em cada sentido, para baixo e para cima. Com 2 reuniões ao mesmo tempo, o padrão, conte uns 50 Mbit/s. Uma VM no escritório precisa de uma internet boa também na subida; se não tiver, use uma VM na nuvem.
 
@@ -98,11 +98,71 @@ curl -s https://ifconfig.me
 
   Aparece só um número, como `203.0.113.10`, com o prompt do terminal logo depois dele, na mesma linha. Esse número é o IP público do roteador.
 
-- No roteador, redirecione para o IP interno da VM **todas as portas da tabela acima, com os mesmos números**: a porta 443 pública vai para a 443 da VM, a 5061 para a 5061, as duas faixas UDP para as mesmas faixas, e assim por diante. Use o redirecionamento de porta comum (NAT, ou port forwarding), que mantém o endereço de quem acessa. Não use um proxy.
-- O servidor de vídeo não tem porta própria, como o chat tem. Se a 443 pública do roteador já é de outro servidor, o servidor de vídeo precisa de outro IP público, só dele.
+- No roteador, redirecione para o IP interno da VM **todas as portas da tabela acima, com os mesmos números**: a porta 443 pública vai para a 443 da VM (se a 443 pública é do chat, veja "Se o chat e o vídeo dividem um IP público só", logo abaixo), a 5061 para a 5061, as duas faixas UDP para as mesmas faixas, e assim por diante. Use o redirecionamento de porta comum (NAT, ou port forwarding), que mantém o endereço de quem acessa. Não use um proxy.
+- Se a 443 pública do roteador já é de outro servidor, como o chat, o servidor de vídeo usa uma porta própria para o HTTPS, a 7443, e não precisa de outro IP público: veja "Se o chat e o vídeo dividem um IP público só", logo abaixo.
 - A internet da empresa precisa ter um IP público fixo. Se a operadora usa CGNAT (um IP dividido com outros clientes), não dá para redirecionar porta: peça à operadora um IP público fixo.
 - Quem está na mesma rede da VM só entra numa reunião se o roteador fizer o "NAT loopback", como no guia do chat. Para o vídeo, o DNS interno não basta: a imagem e o som vão sempre para o IP público.
 - A instalação lê o IP público pelo nome do servidor de vídeo, no DNS que a VM usa. Se o DNS interno da empresa responde pelo domínio (como no guia do chat), crie nele também o nome do servidor de vídeo, apontando para o **IP público**, e não para o IP interno da VM. Sem o nome, ou com um IP da rede interna, a instalação para.
+
+### Se o chat e o vídeo dividem um IP público só
+
+Este é o caso de uma empresa que tem um IP público só, e nele as portas 80 e 443 já são do chat. O servidor de vídeo então usa a porta **7443** para o HTTPS, no lugar da 443. O certificado (o cadeado) do vídeo continua vindo do Let's Encrypt: o Let's Encrypt bate na porta 80 do **chat**, e o chat leva só essa conferência, pela rede interna, até a VM de vídeo. Siga os passos abaixo nesta ordem.
+
+**Antes de tudo: o chat tem de estar na versão 0.2.0 ou mais nova.** É essa versão que sabe levar a conferência do certificado. Na VM do chat, rode:
+
+```
+starsonic-chat versao
+```
+
+Aparece só a versão. Se for mais velha que 0.2.0, atualize o chat antes, pelo passo 7 do guia do chat (`docs/chat-servidor.md`).
+
+**1. O roteador.** Crie ou confira estas regras de redirecionamento de porta:
+
+- a TCP **7443** pública vai para a TCP **7443** da VM de vídeo, o mesmo número;
+- as outras portas do vídeo, da tabela acima, vão para a VM de vídeo, com os mesmos números: TCP 5061, UDP 3478, TCP 5349, UDP 16384 a 16683 e UDP 49152 a 49451;
+- as portas 80 e 443 públicas **continuam indo para a VM do chat**. Não mude essas duas.
+
+A porta 80 da VM de vídeo não precisa estar aberta para a internet: o Let's Encrypt chega pelo chat. Mas a VM do chat tem de alcançar a VM de vídeo, pela rede interna, nas portas TCP 80 e 7443. Se existe um firewall entre as duas VMs, libere essas duas portas.
+
+**2. O DNS.** Crie o registro A com o nome do servidor de vídeo (o `<endereço>`), apontando para o **mesmo IP público** do chat.
+
+**3. Na VM do chat, antes de instalar o vídeo.** Use o `instalar.sh` do chat, da versão 0.2.0 ou mais nova (o mesmo do passo 7 do guia do chat). Rode, com o nome do servidor de vídeo e o IP da VM de vídeo na rede interna:
+
+```
+sudo bash instalar.sh video <endereço> <IP interno da VM de vídeo>
+```
+
+O comando reinicia o chat, e quem está no chat volta a conectar em poucos segundos. Você deve ver uma linha que começa com `Pronto: o chat agora repassa ao servidor de vídeo` e termina com `O instalador do servidor de vídeo já pode pedir o certificado.` Se o comando disser `ERRO:`, leia a linha: ela diz o que não serve (o nome, o IP ou a versão do chat). Nesse caso, nada muda.
+
+**4. Ainda na VM do chat: o `/etc/hosts`, se o roteador não faz NAT loopback.** O chat fala com o servidor de vídeo pelo nome dele e pela porta 7443. Se o roteador não faz o "NAT loopback" (veja o guia do chat, passo 1), o chat não chega ao IP público de dentro da rede. Então faça o nome do vídeo apontar, só nesta VM, para o IP interno da VM de vídeo:
+
+```
+echo "<IP interno da VM de vídeo> <endereço>" | sudo tee -a /etc/hosts
+```
+
+Confira:
+
+```
+getent hosts <endereço>
+```
+
+Deve aparecer o IP interno da VM de vídeo. Se o roteador faz o NAT loopback, pule este passo. Não faça isto na VM de vídeo: lá, o nome tem de continuar apontando para o IP público (a instalação confere).
+
+**5. Na VM de vídeo, instale com a porta 7443.** Siga o passo 2, mas rode o instalador com o `--porta`:
+
+```
+sudo bash instalar.sh instalar <endereço> --chat <endereço do chat> --porta 7443
+```
+
+No fim, a linha do `Pronto` diz `https://<endereço>:7443/`, e uma linha logo abaixo diz o endereço para o cartão "Reuniões" do chat, com a porta. A chave aparece depois, como no passo 2.
+
+**6. Na página `Reuniões` da administração do chat** (passo 3), no campo `Endereço do servidor de vídeo`, escreva o endereço **com a porta**, como neste modelo:
+
+```
+<endereço>:7443
+```
+
+**O limite.** Quem está numa rede que só deixa sair pela porta 443 (algumas empresas e hotéis) pode não conseguir abrir o vídeo no navegador, porque agora ele usa a porta 7443. Se algum cliente reclamar disso, só um segundo IP público, para o vídeo na porta 443, resolve.
 
 ## 2. Instalar
 
@@ -115,7 +175,7 @@ https://github.com/LucasCPena/starsonic-phone/releases
 ```
 
   As versões do servidor de vídeo se chamam `video-v` e o número, e o GitHub as mostra com a etiqueta `Pre-release`: isso é normal, e é a versão certa. Se a versão for `video-v0.1.0`, o `<versão>` é `0.1.0`. Se ainda não existir nenhuma versão `video-v` na página, publique a primeira pelo passo 10;
-- o endereço do chat. O chat não precisa estar instalado ainda: basta o nome dele. A instalação o guarda para deixar entrar nas reuniões só a página desse chat.
+- o endereço do chat. O chat não precisa estar instalado ainda: basta o nome dele. A instalação o guarda para deixar entrar nas reuniões só a página desse chat. (Se o chat e o vídeo dividem um IP público só, o chat tem de estar instalado e na versão 0.2.0 antes: siga primeiro "Se o chat e o vídeo dividem um IP público só", no passo 1.)
 
 Baixe o instalador na VM de vídeo:
 
@@ -130,6 +190,8 @@ Rode o instalador:
 ```
 sudo bash instalar.sh instalar <endereço> --chat <endereço do chat>
 ```
+
+Se o chat e o vídeo dividem um IP público só, acrescente `--porta 7443` no fim do comando acima, como está no passo 1.
 
 Na primeira vez que usar `sudo`, a VM pode pedir a sua própria senha de entrada na VM. Digite a senha (ela não aparece) e aperte Enter.
 
@@ -146,6 +208,8 @@ Pronto: o servidor de vídeo <versão> está no ar em https://<endereço>/.
 A chave do servidor de vídeo (cole no cartão "Reuniões" da administração do chat):
 ```
 
+Com a `--porta 7443`, a linha do `Pronto` diz `https://<endereço>:7443/`, e vem mais uma linha com o endereço do cartão "Reuniões" do chat, com a porta.
+
 E, na última linha, a **chave**: uma linha só, com 43 letras, números e sinais. Ela é o que deixa o chat falar com o servidor de vídeo. Copie a linha inteira (com três cliques nela, ou arrastando o mouse do começo ao fim), sem espaço antes nem depois. Você vai colá-la no passo 3. Para ver a chave de novo a qualquer hora, rode na VM de vídeo:
 
 ```
@@ -154,7 +218,7 @@ sudo starsonic-video mostrar-chave
 
 Aparece só a chave, numa linha. Não mande a chave por e-mail nem a deixe num lugar aberto: com ela, alguém poderia mandar no servidor de vídeo.
 
-O instalador confere, antes de mexer em qualquer coisa, se o sistema serve, se as portas estão livres, se o nome já tem um IP público no DNS e se os arquivos baixados não foram alterados. Se algo estiver errado, ele para com uma linha que começa com `ERRO:` e diz o quê (veja o passo 9). Se ele parar no meio, por exemplo no certificado, corrija o que a linha diz e rode **o mesmo comando** de novo: ele refaz o que já tinha feito e segue. A exceção é o último passo, o de ligar os serviços: veja "O instalador diz que o servidor de vídeo não ficou de pé", no passo 9.
+O instalador confere, antes de mexer em qualquer coisa, se o sistema serve, se as portas estão livres (a 7443, se você usou o `--porta`), se o nome já tem um IP público no DNS e se os arquivos baixados não foram alterados. Se algo estiver errado, ele para com uma linha que começa com `ERRO:` e diz o quê (veja o passo 9). Se ele parar no meio, por exemplo no certificado, corrija o que a linha diz e rode **o mesmo comando** de novo: ele refaz o que já tinha feito e segue. A exceção é o último passo, o de ligar os serviços: veja "O instalador diz que o servidor de vídeo não ficou de pé", no passo 9.
 
 Confira que os três serviços estão ligados:
 
@@ -182,6 +246,12 @@ https://<endereço do chat>/admin/
 video.exemplo.com.br
 ```
 
+     Se você instalou com o `--porta 7443`, escreva o endereço com a porta, como neste exemplo:
+
+```
+video.exemplo.com.br:7443
+```
+
    - em `Chave do servidor de vídeo`, cole a chave do fim da instalação (passo 2);
    - clique em `Guardar e testar`.
 
@@ -205,7 +275,7 @@ O relógio do servidor de vídeo está <n> s adiantado em relação ao do chat. 
    Se aparecer outra coisa:
    - `A chave tem 43 caracteres. Copie de novo a chave mostrada na instalação.`: faltou um pedaço da chave. Copie a linha inteira de novo (o `mostrar-chave` do passo 2 mostra a chave outra vez);
    - `A chave não confere. Copie de novo a chave mostrada na instalação.`: a chave colada não é a deste servidor de vídeo. Copie de novo pelo `mostrar-chave`;
-   - `O servidor de vídeo não respondeu. Confira o endereço e se a porta 443 dele está aberta.`: veja se o endereço está certo e se a porta 443 está aberta (passo 1). Veja também "As portas estão fechadas", no passo 9;
+   - `O servidor de vídeo não respondeu. Confira o endereço e se a porta 443 dele está aberta.`: veja se o endereço está certo e se a porta 443 (ou a 7443, se você instalou com o `--porta`) está aberta (passo 1). Se o endereço está com a porta, veja também se a VM do chat alcança a VM de vídeo nela (passo 1, "Se o chat e o vídeo dividem um IP público só"). Veja também "As portas estão fechadas", no passo 9;
    - `O servidor de vídeo respondeu, mas o FreeSWITCH está fora do ar. Veja os registros na VM de vídeo.`: o agente está no ar, mas o FreeSWITCH não. Veja os registros dele (passo 8);
    - `Escreva só o endereço do servidor de vídeo (e a porta, se tiver), sem https://.`: tire o `https://` e qualquer `/` do fim.
 
@@ -228,19 +298,25 @@ Faça estas conferências uma vez, logo depois de instalar e de ligar ao chat. R
 curl -s https://<endereço>/agente/v1/saude
 ```
 
+Se você instalou com o `--porta 7443`, o endereço leva a porta:
+
+```
+curl -s https://<endereço>:7443/agente/v1/saude
+```
+
 Você deve ver:
 
 ```
 {"ok":true}
 ```
 
-Isso mostra que o agente está no ar, na porta 443, com o cadeado. Se não aparecer nada, rode o mesmo pedido sem o `-s`, que mostra o erro:
+Isso mostra que o agente está no ar, na porta 443 (ou na 7443), com o cadeado. Se não aparecer nada, rode o mesmo pedido sem o `-s`, que mostra o erro:
 
 ```
 curl https://<endereço>/agente/v1/saude
 ```
 
-Um erro com `certificate` é do certificado (veja "O certificado não sai", no passo 9). Um `Connection refused` ou um `timed out` é a porta 443 fechada ou o agente parado (veja "As portas estão fechadas", no passo 9).
+Um erro com `certificate` é do certificado (veja "O certificado não sai", no passo 9). Um `Connection refused` ou um `timed out` é a porta 443 (ou a 7443) fechada ou o agente parado (veja "As portas estão fechadas", no passo 9). Com o `--porta 7443`, ponha o `:7443` depois do endereço também neste comando.
 
 **O certificado da porta 5061** (a do app). Copie o comando inteiro, também o `</dev/null` do fim: ele faz parte do comando, e não é para trocar.
 
@@ -276,7 +352,7 @@ Trocando o FreeSWITCH, o agente e a configuração...
 Pronto: o servidor de vídeo agora está na versão <versão>.
 ```
 
-A atualização reinicia os três serviços. A chave, o endereço e a ligação com o chat não mudam, e o chat volta a falar com o servidor de vídeo sozinho em poucos segundos.
+A atualização reinicia os três serviços. A chave, o endereço, a porta (a 7443, se você usa o `--porta`) e a ligação com o chat não mudam, e o chat volta a falar com o servidor de vídeo sozinho em poucos segundos.
 
 Reiniciar o FreeSWITCH encerra as reuniões que estão acontecendo. Por isso, antes de trocar qualquer coisa, o instalador pergunta ao agente quantas há. Se houver alguma, ele para e não muda nada:
 
@@ -314,11 +390,13 @@ A configuração de antes voltou, e o agente foi reiniciado com ela.
 
 ## 7. O certificado
 
-O certificado (o cadeado) do servidor de vídeo vem do Let's Encrypt, pelo programa certbot. Os três programas usam o mesmo certificado: o agente na porta 443, o FreeSWITCH na 5061 e o coturn na 5349.
+O certificado (o cadeado) do servidor de vídeo vem do Let's Encrypt, pelo programa certbot. Os três programas usam o mesmo certificado: o agente na porta 443 (ou na 7443, se você usa o `--porta`), o FreeSWITCH na 5061 e o coturn na 5349.
 
 O certificado vale alguns meses (hoje, 90 dias), e o certbot o renova sozinho bem antes de vencer: ele confere duas vezes por dia. Depois de cada renovação, a instalação copia o certificado novo para os três programas e faz cada um passar a usá-lo, sem derrubar ninguém. A renovação chega sozinha aos três: você não precisa fazer nada.
 
 A renovação usa a porta 80, como a primeira vez. Por isso, a porta 80 tem de ficar **sempre aberta** na rede da nuvem e no roteador, mesmo sem nenhum programa escutando nela: o certbot só a usa na hora de renovar. Sem ela, o certificado vence e as reuniões param.
+
+Se o chat e o vídeo dividem um IP público só, a porta 80 pública é do chat, e é ele quem leva a conferência até a porta 80 da VM de vídeo, pela rede interna. Então, nesse caso, o que tem de ficar sempre ligado é o `video` do chat (passo 1) e o caminho da VM do chat até a porta 80 da VM de vídeo. O comando `video` fica guardado no chat: ele continua valendo depois de atualizar o chat.
 
 Para ver o certificado e quantos dias ele ainda vale:
 
@@ -397,8 +475,20 @@ ERRO: o certificado não saiu: confira o DNS e a porta 80 (veja "O certificado n
 Logo acima dessa linha, o certbot diz o motivo, em inglês:
 
 - `DNS problem` ou `NXDOMAIN`: o nome ainda não existe no DNS, ou aponta para outro lugar. Rode `getent hosts <endereço>` e veja se aparece o IP público da VM (ou o do roteador). Se não, corrija o registro A e espere alguns minutos;
-- `Timeout during connect` ou `Connection refused`: o Let's Encrypt não chegou na porta 80 da VM. Abra a porta 80 de entrada na rede da nuvem, no firewall e, se a VM fica atrás de um roteador, no redirecionamento dele (passo 1);
+- `Timeout during connect` ou `Connection refused`: o Let's Encrypt não chegou na porta 80 da VM. Abra a porta 80 de entrada na rede da nuvem, no firewall e, se a VM fica atrás de um roteador, no redirecionamento dele (passo 1). Se o chat e o vídeo dividem um IP público só, veja a próxima lista;
 - `too many failed authorizations` ou `rateLimited`: houve tentativas demais que falharam. O Let's Encrypt aceita no máximo 5 por hora para o mesmo nome. Espere uma hora antes de tentar de novo.
+
+**Se o chat e o vídeo dividem um IP público só,** o Let's Encrypt chega na porta 80 do chat, e não na do vídeo. Confira, nesta ordem:
+
+- a porta 80 pública vai para a VM do **chat** (e não para a de vídeo), e o registro A do vídeo aponta para o mesmo IP público do chat;
+- o chat está na versão 0.2.0 ou mais nova, e o comando `video` foi rodado na VM do chat, com o nome do vídeo e o IP interno certos (passo 1). Para refazer, rode de novo o mesmo comando; ele troca o que estava lá;
+- a VM do chat alcança a porta 80 da VM de vídeo pela rede interna, sem firewall no meio. Na VM do chat, rode, com o IP interno da VM de vídeo, enquanto o instalador do vídeo espera o certificado:
+
+```
+curl -sI http://<IP interno da VM de vídeo>/.well-known/acme-challenge/teste
+```
+
+  Enquanto o certbot espera, a VM de vídeo responde (um `404` é normal, e mostra que chegou). Com `Connection refused` ou sem resposta, o caminho está fechado.
 
 Depois de corrigir, rode o mesmo comando de instalação de novo: ele segue de onde parou. Não insista muitas vezes seguidas: cada tentativa que falha conta no limite.
 
@@ -451,12 +541,18 @@ Confira se os programas estão escutando:
 sudo ss -ltnup
 ```
 
-Devem aparecer linhas com `:443`, `:5061`, `:5349` e `:3478`. Se aparecerem e o servidor de vídeo não responde de fora da VM, a porta está fechada na rede da nuvem, no firewall ou no roteador. Confira cada linha da tabela de portas do passo 1, também as duas faixas UDP: sem elas, as pessoas entram na reunião, mas ninguém vê nem ouve ninguém.
+Devem aparecer linhas com `:443` (ou `:7443`, se você instalou com o `--porta`), `:5061`, `:5349` e `:3478`. Se aparecerem e o servidor de vídeo não responde de fora da VM, a porta está fechada na rede da nuvem, no firewall ou no roteador. Confira cada linha da tabela de portas do passo 1, também as duas faixas UDP: sem elas, as pessoas entram na reunião, mas ninguém vê nem ouve ninguém.
 
 Para saber se a porta 443 chega no agente vinda de fora, abra no celular, só no 4G:
 
 ```
 https://<endereço>/agente/v1/saude
+```
+
+Com o `--porta 7443`, abra o endereço com a porta:
+
+```
+https://<endereço>:7443/agente/v1/saude
 ```
 
 Deve aparecer `{"ok":true}`.
@@ -477,7 +573,7 @@ As reuniões funcionam assim mesmo, mas ligue o horário automático nas duas VM
 Algumas empresas bloqueiam o UDP na saída. As pessoas dessas redes entram pelo TURN sobre TLS, na porta 5349, sozinhas, sem fazer nada. Basta a porta TCP 5349 estar aberta (passo 1).
 
 **Alguém numa rede que só deixa sair pela porta 443.**
-Algumas redes, muito fechadas, só deixam sair pela porta 443. Quem está numa rede assim não entra nas reuniões: o TURN fica na 5349, porque a 443 é a do navegador. Se isso acontecer com algum cliente, avise quem cuida do servidor de vídeo: um segundo IP público, só para o TURN na porta 443, resolve.
+Algumas redes, muito fechadas, só deixam sair pela porta 443. Quem está numa rede assim não entra nas reuniões: o TURN fica na 5349, porque a 443 é a do navegador. Se o chat e o vídeo dividem um IP público só, o navegador também fica de fora, porque o vídeo usa a 7443 (veja o fim do passo 1). Se isso acontecer com algum cliente, avise quem cuida do servidor de vídeo: um segundo IP público, só para o TURN na porta 443, resolve.
 
 **A CPU alta.**
 A página `Reuniões` do chat mostra o uso do servidor de vídeo no teste: `Uso agora: CPU <n>% · memória <n>%.` A CPU é a média do último minuto. Com reuniões acontecendo, se a CPU fica acima de uns 80%, a imagem pode travar. Diminua as `Reuniões ao mesmo tempo` (passo 3), ou dê mais vCPUs à VM e depois aumente o número.
