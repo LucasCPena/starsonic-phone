@@ -635,7 +635,7 @@ func TestCanal_SenhaETela(t *testing.T) {
 	daPagina(t, pagina, map[string]any{"tipo": "tela"})
 	aPaginaErro(t, pagina, "foraDaReuniao")
 
-	// Com a pessoa na reunião, a tela dá a senha da tela, e a senha nova é fora de ordem.
+	// Com a pessoa na reunião, a tela dá a senha da tela, e a senha nova também vale (a ligação caiu, e a página liga de novo).
 	c.entrou(t, r.Codigo, part)
 	daPagina(t, pagina, map[string]any{"tipo": "tela"})
 	tela := aPaginaTipo(t, pagina, "tela")
@@ -647,7 +647,14 @@ func TestCanal_SenhaETela(t *testing.T) {
 		t.Fatalf("carga da senha da tela = %v", carga)
 	}
 	daPagina(t, pagina, map[string]any{"tipo": "senha"})
-	aPaginaErro(t, pagina, "invalido")
+	outra := aPaginaTipo(t, pagina, "senha")
+	senhaOutra, _ := outra["senha"].(string)
+	if len(outra) != 2 || senhaOutra == "" || senhaOutra == nova {
+		t.Fatalf("senha com a pessoa na reunião = %v", outra)
+	}
+	if carga := cargaDaSenha(t, senhaOutra); carga["participante"] != part || carga["tela"] != false {
+		t.Fatalf("carga da senha com a pessoa na reunião = %v", carga)
+	}
 }
 
 func TestCanal_TiradoEEncerrada(t *testing.T) {

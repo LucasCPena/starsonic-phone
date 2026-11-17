@@ -417,8 +417,8 @@ Do servidor para a página:
 - **O `pedir` vale uma vez por canal.** Depois de `cheia`, `esperaCheia`, `servidorCheio` ou `semServidor`, a página pode mandar outro `pedir`.
 - **Depois de `recusado`, `linkInvalido`, `tirado` ou `encerrada`, e depois de um `desistir` que retirou o pedido,** o servidor fecha o canal (código 1000); o `desistir` não recebe resposta.
 - **Um erro inesperado do servidor** (o banco, por exemplo) fecha o canal com o código `1011`, sem mensagem antes. A página pode chamar o abrir de novo depois de alguns segundos.
-- **Uma mensagem fora de ordem**, como `senha` antes do `aceito` ou com a pessoa já na reunião, `tela` fora da reunião, um segundo `pedir` ou um `desistir` sem pedido que espere (nenhum, ou já aceito), responde `erro`, com `invalido` ou `foraDaReuniao`.
-- **O `senha`:** até 5 por minuto por participante. Ele é uma entrada nova, com as conferências do `pedir`, e além do `senha` pode responder:
+- **Uma mensagem fora de ordem**, como `senha` antes do `aceito`, `tela` fora da reunião, um segundo `pedir` ou um `desistir` sem pedido que espere (nenhum, ou já aceito), responde `erro`, com `invalido` ou `foraDaReuniao`.
+- **O `senha`:** até 5 por minuto por participante. Ele vale também com a pessoa ainda na reunião (a conexão caiu, ou ela saiu e quer voltar): a ligação principal nova toma o lugar da anterior no servidor de vídeo, sem a pessoa sair da reunião (a seção 6 do `docs/video-agente.md`). Ele é uma entrada nova, com as conferências do `pedir`, e além do `senha` pode responder:
   - `linkInvalido`: a reunião foi cancelada, deixou de valer, ou a naHora acabou. O servidor fecha o canal (código 1000), como depois das outras respostas finais;
   - `cheia`, `semServidor` e, só na reunião de teste, `servidorCheio`: o canal continua aberto, e a página pode mandar outro `senha`, dentro dos 5 por minuto.
 - **Na reunião de teste,** o `pedir` responde `aceito` na hora, sem sala de espera. A primeira pessoa a começa.

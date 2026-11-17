@@ -505,11 +505,22 @@ func TestNovaSenha(t *testing.T) {
 		t.Fatalf("um minuto depois: %v", err)
 	}
 
-	// Na reunião, não: a senha nova é para quem ainda está fora dela.
+	// Na reunião, também: a ligação caiu e a página quer ligar de novo, antes de o agente dar por perdida a antiga.
+	// O limite de 5 por minuto é o mesmo.
+	c.andar(time.Minute)
 	c.entrou(r, maria)
+	if _, err := c.g.NovaSenha(p); err != nil {
+		t.Fatalf("na reunião: %v", err)
+	}
+	for i := 2; i <= 5; i++ {
+		if _, err := c.g.NovaSenha(p); err != nil {
+			t.Fatalf("a %dª na reunião: %v", i, err)
+		}
+	}
 	_, err = c.g.NovaSenha(p)
-	conferirErro(t, "na reunião", err, ErrForaDeOrdem)
-	// A ligação caiu: pode de novo.
+	conferirErro(t, "a 6ª na reunião", err, ErrLimite)
+	c.andar(time.Minute)
+	// A ligação caiu de vez: pode de novo.
 	c.saiu(r, maria)
 	if _, err := c.g.NovaSenha(p); err != nil {
 		t.Fatalf("depois de sair: %v", err)
@@ -531,7 +542,7 @@ func TestNovaSenha(t *testing.T) {
 		_, err = c.g.NovaSenha(aceita)
 		conferirErro(t, "na ordem, sem servidor", err, ErrSemServidor)
 	})
-	t.Run("quem entra enquanto o banco responde não ganha a senha", func(t *testing.T) {
+	t.Run("quem entra enquanto o banco responde ainda ganha a senha", func(t *testing.T) {
 		c := novaCena(t)
 		r := c.marcada()
 		c.dentro(r, c.ana)
@@ -553,7 +564,40 @@ func TestNovaSenha(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 		c.entrou(r, maria)
 		close(liberar)
-		conferirErro(t, "a senha de quem entrou no meio", <-resposta, ErrForaDeOrdem)
+		if err := <-resposta; err != nil {
+			t.Fatalf("a senha de quem entrou no meio: %v", err)
+		}
+	})
+	t.Run("na reunião cheia, quem está nela ainda ganha a senha", func(t *testing.T) {
+		c := novaCena(t)
+		r := c.marcada()
+		c.dentro(r, c.ana)
+		maria, pm, _ := c.aceito(r, c.ana, "Maria Lima")
+		c.entrou(r, maria)
+		for i := 1; i <= 8; i++ {
+			c.dentro(r, c.colega(fmt.Sprint(2100+i), fmt.Sprintf("Colega %d", i)))
+		}
+		if _, n := c.g.Contagem(r.Sala); n != 10 {
+			t.Fatalf("a reunião tem %d pessoas; queria 10", n)
+		}
+		if _, err := c.g.NovaSenha(pm); err != nil {
+			t.Fatalf("NovaSenha na reunião de 10: %v", err)
+		}
+		if _, n := c.g.Contagem(r.Sala); n != 10 {
+			t.Fatalf("depois da senha, %d pessoas; queria 10", n)
+		}
+	})
+	t.Run("depois do tirar, a senha nova não vale", func(t *testing.T) {
+		c := novaCena(t)
+		r := c.marcada()
+		c.dentro(r, c.ana)
+		maria, pm, _ := c.aceito(r, c.ana, "Maria Lima")
+		c.entrou(r, maria)
+		if err := c.g.Tirar(c.ctx, r, c.ana.p.ID, maria); err != nil {
+			t.Fatal(err)
+		}
+		_, err := c.g.NovaSenha(pm)
+		conferirErro(t, "depois do tirar", err, ErrForaDeOrdem)
 	})
 }
 

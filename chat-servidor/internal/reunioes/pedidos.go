@@ -225,11 +225,13 @@ func (g *Gerente) responderPedido(r banco.Reuniao, pessoaID int64, id string, re
 	return err
 }
 
-// NovaSenha dá a quem é de fora, aceito e ainda fora da reunião (a senha venceu, ou a ligação caiu), uma senha nova
-// com o mesmo participante, até 5 por minuto (ErrLimite). Antes do aceito, depois do fim do pedido, ou com a pessoa
-// na reunião, ErrForaDeOrdem. É uma entrada nova: valem as conferências do Pedir, e a senha que pode começar a
-// reunião (a de colega, na de teste) cabe no limite. A ordem e as duas primeiras conferências vêm antes de ler o
-// banco, e de novo depois.
+// NovaSenha dá a quem é de fora e foi aceito, na reunião ou fora dela (a senha venceu, a ligação caiu, ou a página
+// saiu e quer voltar), uma senha nova com o mesmo participante, até 5 por minuto (ErrLimite). A ligação principal
+// nova toma o lugar da anterior no agente. Antes do aceito, ou depois do fim do pedido, ErrForaDeOrdem. É uma
+// entrada nova: valem as conferências do Pedir, e a senha que pode começar a reunião (a de colega, na de teste) cabe
+// no limite. A pessoa conta uma vez só na lotação: quem já está na reunião, ou já tem uma senha da câmera
+// esperando, não é uma pessoa a mais. A ordem e as duas primeiras conferências vêm antes de ler o banco, e de novo
+// depois.
 func (g *Gerente) NovaSenha(p *Pedido) (string, error) {
 	if p == nil {
 		return "", ErrForaDeOrdem
@@ -249,7 +251,7 @@ func (g *Gerente) NovaSenha(p *Pedido) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := g.conferirEntrada(s.reuniao, d, limite, agora, !part.temSenha(false), part.papel == video.Colega); err != nil {
+	if err := g.conferirEntrada(s.reuniao, d, limite, agora, !part.naReuniao && !part.temSenha(false), part.papel == video.Colega); err != nil {
 		return "", err
 	}
 	part.novas = slices.DeleteFunc(part.novas, func(t time.Time) bool { return !t.After(agora.Add(-time.Minute)) })
@@ -295,11 +297,11 @@ func (g *Gerente) antesDaSenha(p *Pedido, d doVideo, agora time.Time) error {
 	return g.conferirAntes(s.reuniao, d, agora)
 }
 
-// ordemDaSenha é a sala e o participante do pedido aceito que ainda está fora da reunião; fora disso,
-// ErrForaDeOrdem. Com g.mu.
+// ordemDaSenha é a sala e o participante do pedido aceito, na reunião ou fora dela; sem o aceito, ou depois do fim
+// do pedido (a pessoa não é mais a dele), ErrForaDeOrdem. Com g.mu.
 func (g *Gerente) ordemDaSenha(p *Pedido) (*sala, *participante, error) {
 	s, part := g.aceitoDe(p)
-	if part == nil || part.naReuniao {
+	if part == nil {
 		return nil, nil, ErrForaDeOrdem
 	}
 	return s, part, nil
