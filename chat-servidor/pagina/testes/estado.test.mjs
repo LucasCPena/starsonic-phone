@@ -27,6 +27,11 @@ const ACESSO = {
   video: { wss: 'wss://video.exemplo.com.br:7443/sip', uri: 'sip:reuniao@video.exemplo.com.br' },
 };
 const ACEITO = { tipo: 'aceito', participante: 'participante-1', senha: 'senha-1', ...ACESSO };
+// O aceito de hoje traz a chave de volta, e cada voltou traz outra. O ACEITO sem ela mostra a regra de antes da chave.
+const VOLTA_1 = 'volta-1';
+const VOLTA_2 = 'volta-2';
+const VOLTA_3 = 'volta-3';
+const ACEITO_COM_CHAVE = { ...ACEITO, volta: VOLTA_1 };
 
 // Os efeitos.
 const ABRIR = { tipo: 'abrir' };
@@ -44,6 +49,8 @@ const esperar = (ms, chave) => ({ tipo: 'esperar', ms, chave });
 const ligar = (qual, senha) => ({ tipo: 'ligar', qual, senha });
 const PEDIR = mandar({ tipo: 'pedir', nome: 'Maria Lima' });
 const SENHA = mandar({ tipo: 'senha' });
+const abrirCanal = (bilhete) => ({ tipo: 'abrirCanal', bilhete });
+const voltar = (volta) => mandar({ tipo: 'voltar', participante: 'participante-1', volta });
 
 // Os eventos.
 const COMECAR = { tipo: 'comecar' };
@@ -55,6 +62,8 @@ const mensagem = (m) => ({ tipo: 'mensagem', m });
 const midia = (mic, cam) => ({ tipo: 'midia', mic, cam });
 const ligacao = (qual, o, codigo = 0) => ({ tipo: 'ligacao', qual, o, codigo });
 const tempo = (chave) => ({ tipo: 'tempo', chave });
+const voltou = (volta) => mensagem({ tipo: 'voltou', volta });
+const LIMITE = mensagem({ tipo: 'erro', erro: 'limite' });
 
 // congelar congela o estado inteiro antes de cada passo: a transicao nunca muda o estado que recebe, e o módulo, que é
 // estrito, daria erro se tentasse.
@@ -83,9 +92,23 @@ const aguardando = () => rodar(pedindo(), mensagem({ tipo: 'aguardando' })).esta
 const entrando = () => rodar(aguardando(), mensagem(ACEITO)).estado;
 const naReuniao = () => rodar(entrando(), ligacao('principal', 'confirmada')).estado;
 const saiu = () => rodar(naReuniao(), clique('sair')).estado;
+const naReuniaoComChave = () =>
+  rodar(aguardando(), mensagem(ACEITO_COM_CHAVE), ligacao('principal', 'confirmada')).estado;
 
 // Nada muda: o mesmo estado, sem efeitos.
 const semMudar = (estado, evento) => assert.deepEqual(passo(estado, evento), { estado, efeitos: [] });
+
+// seguir dá os passos em ordem, cada um com os efeitos que ele tem de dar, e devolve o último estado. O conferir olha o
+// estado depois de cada passo.
+function seguir(estado, passos, conferir = () => {}) {
+  for (const [evento, efeitos] of passos) {
+    const r = passo(estado, evento);
+    assert.deepEqual(r.efeitos, efeitos, JSON.stringify(evento));
+    conferir(r.estado);
+    estado = r.estado;
+  }
+  return estado;
+}
 
 test('o carregar abre', () => {
   assert.deepEqual(inicial(), {
@@ -108,6 +131,9 @@ test('o carregar abre', () => {
     esperandoMidia: false,
     senhaGuardada: null,
     trocandoCamera: false,
+    chave: null,
+    religando: 0,
+    esperandoBilhete: false,
   });
   const r = passo(inicial(), COMECAR);
   assert.equal(r.estado.tela, 'carregando');
@@ -396,7 +422,8 @@ test('a conexão que cai entra de novo até 3 vezes', () => {
 });
 
 test('o canal que cai durante a volta', () => {
-  // As três fases da volta: o prazo antes da tentativa, a espera da senha e o ligar.
+  // Sem a chave de volta (um aceito sem ela). As três fases da volta: o prazo antes da tentativa, a espera da senha e o
+  // ligar.
   const noPrazo = () => passo(naReuniao(), ligacao('principal', 'semConexao')).estado;
   const naSenha = () => passo(noPrazo(), tempo('reconectar')).estado;
   const noLigar = () => passo(naSenha(), mensagem({ tipo: 'senha', senha: 'senha-r1' })).estado;
@@ -503,6 +530,7 @@ test('o 1011 antes do aceito abre de novo', () => {
 });
 
 test('o canal que cai na reunião não tira ninguém', () => {
+  // Sem a chave de volta (um aceito sem ela), o canal que cai fica fechado.
   let r = passo(naReuniao(), canalFechou(1006));
   assert.equal(r.estado.tela, 'reuniao');
   assert.equal(r.estado.canal, 'fechado');
@@ -512,6 +540,341 @@ test('o canal que cai na reunião não tira ninguém', () => {
   assert.equal(r.estado.tela, 'aviso');
   assert.equal(r.estado.aviso, 'saiu');
   assert.deepEqual(r.efeitos, [...DESLIGAR_AS_DUAS, PARAR_MIDIA, FOCAR]);
+});
+
+test('o canal que cai na reunião volta sozinho', () => {
+  // Só o canal caiu: a ligação segue no ar, e a tela não mostra nada da volta (nem a entrada, nem a conexão caída).
+  const naReuniao = (estado) => {
+    assert.equal(estado.tela, 'reuniao');
+    assert.equal(estado.principal, 'noAr');
+    assert.equal(estado.reconectando, 0);
+  };
+  const caiu = passo(naReuniaoComChave(), canalFechou(1006));
+  assert.equal(caiu.estado.tela, 'reuniao');
+  assert.equal(caiu.estado.canal, 'fechado');
+  assert.deepEqual(caiu.efeitos, [esperar(2000, 'religar')]);
+  const religado = seguir(
+    caiu.estado,
+    [
+      [tempo('religar'), [ABRIR]],
+      [abriu('bilhete-v1'), [abrirCanal('bilhete-v1')]],
+      [CANAL_ABRIU, [voltar(VOLTA_1)]],
+      [voltou(VOLTA_2), []],
+    ],
+    naReuniao,
+  );
+  assert.equal(religado.canal, 'aberto');
+  // A chave nova fica: a próxima volta a leva.
+  seguir(
+    religado,
+    [
+      [canalFechou(1006), [esperar(2000, 'religar')]],
+      [tempo('religar'), [ABRIR]],
+      [abriu('bilhete-v2'), [abrirCanal('bilhete-v2')]],
+      [CANAL_ABRIU, [voltar(VOLTA_2)]],
+    ],
+    naReuniao,
+  );
+  // O canal que cai no meio do ligar volta por trás quando a ligação confirma.
+  const r = rodar(aguardando(), mensagem(ACEITO_COM_CHAVE), canalFechou(1006), ligacao('principal', 'confirmada'));
+  assert.equal(r.estado.tela, 'reuniao');
+  assert.equal(r.estado.canal, 'fechado');
+  assert.deepEqual(r.efeitos, [esperar(2000, 'religar'), FOCAR]);
+});
+
+test('as duas conexões caem e a página volta sozinha', () => {
+  const SEM_CONEXAO = ligacao('principal', 'semConexao');
+  const naTela = (estado) => assert.equal(estado.tela, 'reuniao');
+  // As duas ordens da queda, e a ligação que cai no meio do religar: o abrir dele vira a primeira tentativa.
+  const quedas = {
+    'o canal e depois a ligação': [
+      [canalFechou(1006), [esperar(2000, 'religar')]],
+      [SEM_CONEXAO, [...DESLIGAR_AS_DUAS, esperar(2000, 'reconectar')]],
+      [tempo('religar'), []],
+      [tempo('reconectar'), [ABRIR]],
+    ],
+    'a ligação e depois o canal': [
+      [SEM_CONEXAO, [...DESLIGAR_AS_DUAS, esperar(2000, 'reconectar')]],
+      [canalFechou(1006), []],
+      [tempo('reconectar'), [ABRIR]],
+    ],
+    'a ligação no meio do religar': [
+      [canalFechou(1006), [esperar(2000, 'religar')]],
+      [tempo('religar'), [ABRIR]],
+      [SEM_CONEXAO, DESLIGAR_AS_DUAS],
+    ],
+  };
+  // A volta: outro canal com a chave, a senha nova e a ligação nova, com a tela da conexão caída. Nenhum pedir, nenhuma
+  // entrada e nenhum pedirMidia.
+  const volta = [
+    [abriu('bilhete-v1'), [abrirCanal('bilhete-v1')]],
+    [CANAL_ABRIU, [voltar(VOLTA_1)]],
+    [voltou(VOLTA_2), [SENHA]],
+    [mensagem({ tipo: 'senha', senha: 'senha-r1' }), [ligar('principal', 'senha-r1')]],
+  ];
+  const caida = (estado) => {
+    naTela(estado);
+    assert.equal(estado.reconectando, 1);
+  };
+  for (const [ordem, queda] of Object.entries(quedas)) {
+    const e = seguir(seguir(naReuniaoComChave(), queda, naTela), volta, caida);
+    const r = passo(e, ligacao('principal', 'confirmada'));
+    assert.equal(r.estado.tela, 'reuniao', ordem);
+    assert.equal(r.estado.reconectando, 0);
+    assert.equal(r.estado.canal, 'aberto');
+    assert.deepEqual(r.efeitos, []);
+  }
+  // A ligação que cai com o voltar já mandado: o voltou segue para a senha.
+  const quaseVoltando = [
+    [canalFechou(1006), [esperar(2000, 'religar')]],
+    [tempo('religar'), [ABRIR]],
+    [abriu('bilhete-v1'), [abrirCanal('bilhete-v1')]],
+    [CANAL_ABRIU, [voltar(VOLTA_1)]],
+    [SEM_CONEXAO, DESLIGAR_AS_DUAS],
+  ];
+  seguir(seguir(naReuniaoComChave(), quaseVoltando, naTela), [[voltou(VOLTA_2), [SENHA]]], caida);
+});
+
+test('a volta recusada vai ao saiu', () => {
+  const RECUSADA = mensagem({ tipo: 'erro', erro: 'invalido' });
+  // As duas caíram: a chave que não vale mais não volta, e a pessoa saiu de uma vez. O canal do voltar fecha.
+  const SEM_CONEXAO = ligacao('principal', 'semConexao');
+  const naVolta = [SEM_CONEXAO, canalFechou(1006), tempo('reconectar'), abriu('bilhete-v1'), CANAL_ABRIU];
+  let r = rodar(naReuniaoComChave(), ...naVolta, RECUSADA);
+  assert.equal(r.estado.tela, 'aviso');
+  assert.equal(r.estado.aviso, 'saiu');
+  assert.equal(r.estado.canal, 'fechado');
+  assert.deepEqual(r.efeitos, [...DESLIGAR_AS_DUAS, FECHAR_CANAL, PARAR_MIDIA, FOCAR]);
+  // O Entrar de novo, sem o canal, passa pela espera.
+  r = passo(r.estado, clique('entrarDeNovo'));
+  assert.equal(r.estado.tela, 'pedindo');
+  assert.deepEqual(r.efeitos, [PEDIR_MIDIA, ABRIR, FOCAR]);
+  // Só o canal caiu: o religar para, e a reunião segue sem o canal.
+  r = rodar(naReuniaoComChave(), canalFechou(1006), tempo('religar'), abriu('bilhete-v1'), CANAL_ABRIU, RECUSADA);
+  assert.equal(r.estado.tela, 'reuniao');
+  assert.equal(r.estado.principal, 'noAr');
+  assert.equal(r.estado.canal, 'fechado');
+  assert.deepEqual(r.efeitos, [FECHAR_CANAL]);
+  semMudar(r.estado, tempo('religar'));
+  // Sem uma chave que valha, a queda da ligação depois é o saiu, como antes da chave.
+  r = passo(r.estado, SEM_CONEXAO);
+  assert.equal(r.estado.aviso, 'saiu');
+  assert.deepEqual(r.efeitos, [...DESLIGAR_AS_DUAS, PARAR_MIDIA, FOCAR]);
+});
+
+test('a volta com a reunião acabada', () => {
+  // A volta das duas e o religar, com o abrir já saindo.
+  const abrindo = [
+    rodar(naReuniaoComChave(), ligacao('principal', 'semConexao'), canalFechou(1006), tempo('reconectar')).estado,
+    rodar(naReuniaoComChave(), canalFechou(1006), tempo('religar')).estado,
+  ];
+  for (const antes of abrindo) {
+    // O linkInvalido em resposta ao voltar: as duas ligações descem, o canal do voltar fecha, e a mídia para.
+    let r = rodar(antes, abriu('bilhete-v1'), CANAL_ABRIU, mensagem({ tipo: 'linkInvalido' }));
+    assert.equal(r.estado.tela, 'aviso');
+    assert.equal(r.estado.aviso, 'linkInvalido');
+    assert.equal(r.estado.canal, 'fechado');
+    assert.deepEqual(r.efeitos, [...DESLIGAR_AS_DUAS, FECHAR_CANAL, PARAR_MIDIA, FOCAR]);
+    // O 404 do abrir do voltar faz o mesmo, sem canal para fechar.
+    r = passo(antes, { tipo: 'abrirFalhou', status: 404 });
+    assert.equal(r.estado.aviso, 'linkInvalido');
+    assert.deepEqual(r.efeitos, [...DESLIGAR_AS_DUAS, PARAR_MIDIA, FOCAR]);
+  }
+});
+
+test('as falhas da volta contam tentativas', () => {
+  // As duas caíram, e a primeira tentativa abre outro canal.
+  const primeira = () =>
+    rodar(naReuniaoComChave(), ligacao('principal', 'semConexao'), canalFechou(1006), tempo('reconectar')).estado;
+  // Nenhum aviso (nem o tentativas do 429): a tela é a da conexão caída.
+  const semAviso = (estado) => {
+    assert.equal(estado.tela, 'reuniao');
+    assert.equal(estado.aviso, null);
+    assert.equal(estado.esperarSegundos, 0);
+  };
+  const terceira = seguir(
+    primeira(),
+    [
+      [{ tipo: 'abrirFalhou', status: 0 }, [esperar(4000, 'reconectar')]],
+      [tempo('reconectar'), [ABRIR]],
+      [{ tipo: 'abrirFalhou', status: 429, esperarSegundos: 30 }, [esperar(8000, 'reconectar')]],
+      [tempo('reconectar'), [ABRIR]],
+      [abriu('bilhete-v3'), [abrirCanal('bilhete-v3')]],
+    ],
+    semAviso,
+  );
+  let r = passo(terceira, canalFechou(1006));
+  assert.equal(r.estado.aviso, 'saiu');
+  assert.deepEqual(r.efeitos, [...DESLIGAR_AS_DUAS, PARAR_MIDIA, FOCAR]);
+  // A terceira falha com o canal do voltar aberto (o voltar já saiu) o fecha junto.
+  r = rodar(terceira, CANAL_ABRIU, LIMITE);
+  assert.equal(r.estado.aviso, 'saiu');
+  assert.deepEqual(r.efeitos, [...DESLIGAR_AS_DUAS, FECHAR_CANAL, PARAR_MIDIA, FOCAR]);
+  // Cada falha antes do voltou, na primeira tentativa: a próxima espera 4 segundos e abre outro canal. O canal que já
+  // mandou o voltar fecha.
+  const falhas = [
+    [[{ tipo: 'abrirFalhou', status: 503 }], [esperar(4000, 'reconectar')]],
+    [[abriu('bilhete-v1'), canalFechou(1006)], [esperar(4000, 'reconectar')]],
+    [[abriu('bilhete-v1'), CANAL_ABRIU, canalFechou(1011)], [esperar(4000, 'reconectar')]],
+    [[abriu('bilhete-v1'), CANAL_ABRIU, LIMITE], [FECHAR_CANAL, esperar(4000, 'reconectar')]],
+  ];
+  for (const [eventos, efeitos] of falhas) {
+    r = rodar(primeira(), ...eventos);
+    semAviso(r.estado);
+    assert.equal(r.estado.reconectando, 2);
+    assert.equal(r.estado.canal, 'fechado');
+    assert.deepEqual(r.efeitos, efeitos);
+    assert.deepEqual(passo(r.estado, tempo('reconectar')).efeitos, [ABRIR]);
+  }
+  // Depois do voltou, o canal é o da pessoa: a recusa do senha e a ligação que falha contam, e a próxima tentativa pede
+  // a senha nele, sem abrir outro.
+  const voltou2 = rodar(primeira(), abriu('bilhete-v1'), CANAL_ABRIU, voltou(VOLTA_2)).estado;
+  for (const falha of [
+    [mensagem({ tipo: 'semServidor' })],
+    [mensagem({ tipo: 'senha', senha: 'senha-r1' }), ligacao('principal', 'falhou', 0)],
+  ]) {
+    r = rodar(voltou2, ...falha);
+    assert.equal(r.estado.reconectando, 2);
+    assert.deepEqual(r.efeitos, [esperar(4000, 'reconectar')]);
+    assert.deepEqual(passo(r.estado, tempo('reconectar')).efeitos, [SENHA]);
+  }
+  // O canal que cai com a senha pedida também é uma tentativa, e a próxima abre outro canal.
+  r = passo(voltou2, canalFechou(1006));
+  assert.equal(r.estado.reconectando, 2);
+  assert.deepEqual(r.efeitos, [esperar(4000, 'reconectar')]);
+  assert.deepEqual(passo(r.estado, tempo('reconectar')).efeitos, [ABRIR]);
+});
+
+test('o religar do canal desiste depois de três', () => {
+  // A ligação segue no ar o tempo todo, e a tela não mostra nada.
+  const naReuniao = (estado) => {
+    assert.equal(estado.tela, 'reuniao');
+    assert.equal(estado.aviso, null);
+    assert.equal(estado.principal, 'noAr');
+    assert.equal(estado.reconectando, 0);
+  };
+  const desistiu = seguir(
+    naReuniaoComChave(),
+    [
+      [canalFechou(1006), [esperar(2000, 'religar')]],
+      [tempo('religar'), [ABRIR]],
+      [{ tipo: 'abrirFalhou', status: 429, esperarSegundos: 30 }, [esperar(4000, 'religar')]],
+      [tempo('religar'), [ABRIR]],
+      [abriu('bilhete-v2'), [abrirCanal('bilhete-v2')]],
+      [canalFechou(1006), [esperar(8000, 'religar')]],
+      [tempo('religar'), [ABRIR]],
+      [abriu('bilhete-v3'), [abrirCanal('bilhete-v3')]],
+      [CANAL_ABRIU, [voltar(VOLTA_1)]],
+      // A terceira falha: o canal que já mandou o voltar fecha, e a reunião segue sem ele.
+      [LIMITE, [FECHAR_CANAL]],
+    ],
+    naReuniao,
+  );
+  assert.equal(desistiu.canal, 'fechado');
+  semMudar(desistiu, tempo('religar'));
+  assert.deepEqual(passo(desistiu, { tipo: 'telaCapturada', ok: true }).efeitos, [PARAR_CAPTURA]);
+  // A queda da ligação, depois, é a volta das duas: a chave ainda vale.
+  seguir(desistiu, [
+    [ligacao('principal', 'semConexao'), [...DESLIGAR_AS_DUAS, esperar(2000, 'reconectar')]],
+    [tempo('reconectar'), [ABRIR]],
+    [abriu('bilhete-v4'), [abrirCanal('bilhete-v4')]],
+    [CANAL_ABRIU, [voltar(VOLTA_1)]],
+    [voltou(VOLTA_2), [SENHA]],
+  ]);
+});
+
+test('o compartilhar volta com o canal', () => {
+  const CAPTURADA = { tipo: 'telaCapturada', ok: true };
+  // O pedido da tela que esperava a senha pelo canal que caiu para, e o canal volta por trás.
+  let r = rodar(naReuniaoComChave(), CAPTURADA, canalFechou(1006));
+  assert.equal(r.estado.telaCompartilhada, 'nenhuma');
+  assert.deepEqual(r.efeitos, [PARAR_CAPTURA, esperar(2000, 'religar')]);
+  // Enquanto o canal volta (no prazo, abrindo e esperando o voltou), a captura para.
+  const caiu = r.estado;
+  const abrindo = [tempo('religar'), abriu('bilhete-v1')];
+  for (const eventos of [[], abrindo, [...abrindo, CANAL_ABRIU]]) {
+    assert.deepEqual(passo(rodar(caiu, ...eventos).estado, CAPTURADA).efeitos, [PARAR_CAPTURA]);
+  }
+  // Depois do voltou, o compartilhar pede a senha da tela pelo canal de novo.
+  r = rodar(caiu, tempo('religar'), abriu('bilhete-v1'), CANAL_ABRIU, voltou(VOLTA_2), CAPTURADA);
+  assert.equal(r.estado.telaCompartilhada, 'pedindo');
+  assert.deepEqual(r.efeitos, [mandar({ tipo: 'tela' })]);
+  r = passo(r.estado, mensagem({ tipo: 'tela', senha: 'senha-tela' }));
+  assert.deepEqual(r.efeitos, [ligar('tela', 'senha-tela')]);
+});
+
+test('os eventos velhos da volta não mexem', () => {
+  const noReligar = passo(naReuniaoComChave(), canalFechou(1006)).estado;
+  const naVolta = rodar(naReuniaoComChave(), ligacao('principal', 'semConexao'), canalFechou(1006)).estado;
+  // O abriu sem um abrir que espere: na reunião, e nos prazos do religar e da volta das duas.
+  for (const e of [naReuniaoComChave(), noReligar, naVolta]) semMudar(e, abriu('bilhete-velho'));
+  // O voltou fora de um religar: no canal da pessoa, também depois de o religar voltar. O prazo dele também.
+  const religado = rodar(noReligar, tempo('religar'), abriu('bilhete-v1'), CANAL_ABRIU, voltou(VOLTA_2)).estado;
+  for (const e of [naReuniaoComChave(), religado]) semMudar(e, voltou(VOLTA_3));
+  semMudar(religado, tempo('religar'));
+  // Um prazo atrasado com o voltar em curso não abre outro canal: o do religar (o abrir saindo, o canal abrindo e o
+  // voltar mandado), e o da volta que tomou o voltar do religar.
+  const canalAbrindo = [tempo('religar'), abriu('bilhete-v1')];
+  for (const eventos of [[tempo('religar')], canalAbrindo, [...canalAbrindo, CANAL_ABRIU]]) {
+    const e = rodar(noReligar, ...eventos).estado;
+    semMudar(e, tempo('religar'));
+    semMudar(passo(e, ligacao('principal', 'semConexao')).estado, tempo('reconectar'));
+  }
+  // O prazo do religar depois do Sair.
+  semMudar(passo(noReligar, clique('sair')).estado, tempo('religar'));
+  // A página que desiste da volta fecha o canal do voltar, e o que ainda viesse dele fica de fora. O fim sem aviso da
+  // ligação com o canal do religar abrindo:
+  const abrindo = rodar(noReligar, tempo('religar'), abriu('bilhete-v1'), ligacao('principal', 'terminou')).estado;
+  let r = passo(abrindo, tempo('fimSemAviso'));
+  assert.equal(r.estado.aviso, 'saiu');
+  assert.deepEqual(r.efeitos, [...DESLIGAR_AS_DUAS, FECHAR_CANAL, PARAR_MIDIA, FOCAR]);
+  semMudar(r.estado, CANAL_ABRIU);
+  // o Sair na volta das duas, com o voltar já mandado,
+  r = passo(rodar(naVolta, tempo('reconectar'), abriu('bilhete-v1'), CANAL_ABRIU).estado, clique('sair'));
+  assert.deepEqual(r.efeitos, [...DESLIGAR_AS_DUAS, FECHAR_CANAL, PARAR_MIDIA, FOCAR]);
+  semMudar(r.estado, voltou(VOLTA_2));
+  // e o Sair com o abrir saindo, sem canal para fechar.
+  r = passo(passo(naVolta, tempo('reconectar')).estado, clique('sair'));
+  assert.deepEqual(r.efeitos, [...DESLIGAR_AS_DUAS, PARAR_MIDIA, FOCAR]);
+  semMudar(r.estado, abriu('bilhete-v1'));
+  semMudar(r.estado, { tipo: 'abrirFalhou', status: 0 });
+});
+
+test('a chave não aparece no que a página mostra', () => {
+  // A chave e o participante ficam só no campo da chave, que a página não desenha, e saem só no voltar. O bilhete da
+  // volta, como o do pedido, não fica no estado.
+  const segredos = ['participante-1', VOLTA_1, VOLTA_2];
+  const voltares = [];
+  let r = { estado: aguardando(), efeitos: [] };
+  for (const evento of [
+    mensagem(ACEITO_COM_CHAVE),
+    ligacao('principal', 'confirmada'),
+    canalFechou(1006),
+    tempo('religar'),
+    abriu('bilhete-v1'),
+    CANAL_ABRIU,
+    voltou(VOLTA_2),
+    ligacao('principal', 'semConexao'),
+    canalFechou(1006),
+    tempo('reconectar'),
+    abriu('bilhete-v2'),
+    CANAL_ABRIU,
+    mensagem({ tipo: 'erro', erro: 'invalido' }),
+  ]) {
+    r = passo(r.estado, evento);
+    const { chave, ...mostrado } = r.estado;
+    const outrosEfeitos = r.efeitos.filter((efeito) => efeito.m?.tipo !== 'voltar');
+    voltares.push(...r.efeitos.filter((efeito) => efeito.m?.tipo === 'voltar'));
+    for (const segredo of segredos) {
+      assert.ok(!JSON.stringify([mostrado, outrosEfeitos]).includes(segredo), `${segredo} em ${evento.tipo}`);
+    }
+    assert.ok(!JSON.stringify(r.estado).includes('bilhete-'));
+  }
+  // A chave foi do aceito ao primeiro voltar, e a do voltou ao segundo.
+  assert.deepEqual(voltares, [voltar(VOLTA_1), voltar(VOLTA_2)]);
+  // A chave recusada sai do estado.
+  assert.equal(r.estado.aviso, 'saiu');
+  assert.ok(!JSON.stringify(r.estado).includes(VOLTA_2));
 });
 
 test('a tela do começo ao fim', () => {
