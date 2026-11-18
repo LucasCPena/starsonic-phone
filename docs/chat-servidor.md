@@ -319,7 +319,7 @@ sudo chmod -R go-rwx /var/lib/starsonic-chat/arquivos
 sudo systemctl start starsonic-chat
 ```
 
-   Confira com `systemctl status starsonic-chat` (deve estar `active (running)`) e entre na página de administração.
+   Confira com `systemctl status starsonic-chat` (deve estar `active (running)`) e entre na página de administração. Parar e ligar o chat é como reiniciá-lo, e mexe nas reuniões que estão no ar (veja "Uma reunião no ar quando o chat reinicia", no passo 7): faça tudo isto num horário sem reuniões.
 
 7. Só agora ligue de novo a cópia da noite:
 
@@ -370,7 +370,7 @@ Para mudar a porta do HTTPS de uma instalação que já existe, use o instalador
 sudo bash instalar.sh porta 8443
 ```
 
-Você deve ver `Pronto: o chat agora está em https://<endereço>:8443/`, e uma linha lembrando as duas regras do roteador. Para voltar à porta normal, quando o chat ganhar um endereço público só dele, rode o mesmo comando com `443` no lugar de `8443`.
+Você deve ver `Pronto: o chat agora está em https://<endereço>:8443/`, e uma linha lembrando as duas regras do roteador. Para voltar à porta normal, quando o chat ganhar um endereço público só dele, rode o mesmo comando com `443` no lugar de `8443`. O comando reinicia o chat: como o reinício mexe nas reuniões que estão no ar (veja "Uma reunião no ar quando o chat reinicia", acima), rode-o num horário sem reuniões.
 
 Se o chat da VM ainda for de antes da versão 0.1.1, o comando avisa e não muda nada. Nesse caso, atualize primeiro, como acima, e rode o comando de novo.
 
