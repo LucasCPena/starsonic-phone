@@ -558,6 +558,18 @@ func (g *Gerente) Bloqueadas(ctx context.Context, rs []banco.Reuniao) int {
 	return n
 }
 
+// Liberadas fica sabendo que a empresa destas reuniões ganhou as reuniões de volta (o Liberar da administração): o
+// Bloquear, o único fim que se desfaz, tinha posto as salas delas na memória do fim, e elas saem de lá. A entrada nelas
+// vale de novo na hora, sem esperar os 10 minutos. As reuniões vêm do banco: as abertas da empresa, sem as canceladas
+// e as naHora que acabaram, que continuam lembradas.
+func (g *Gerente) Liberadas(rs []banco.Reuniao) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for _, r := range rs {
+		delete(g.acabadas, r.Sala)
+	}
+}
+
 // Contagem diz se a reunião está acontecendo (alguém com a câmera nela) e quantas pessoas estão nela, sem a tela.
 func (g *Gerente) Contagem(sala string) (acontecendo bool, pessoas int) {
 	g.mu.Lock()

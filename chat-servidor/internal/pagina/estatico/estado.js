@@ -271,6 +271,10 @@ function mensagem(e, m) {
     case 'esperaCheia':
     case 'servidorCheio':
     case 'semServidor':
+      // O semServidor que responde ao tela (o vídeo fora do ar para o chat) para o compartilhar, como o erro.
+      if (m.tipo === 'semServidor' && e.telaCompartilhada === 'pedindo') {
+        return com(e, { telaCompartilhada: 'nenhuma' }, PARAR_CAPTURA);
+      }
       // Na volta, a recusa do senha é uma tentativa que falhou, como o erro.
       if (esperaSenha(e) && e.reconectando > 0) return tentativaFalhou(e);
       return naEspera || esperaSenha(e) ? avisar(e, m.tipo) : nada(e);

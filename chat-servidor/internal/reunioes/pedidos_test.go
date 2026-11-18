@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/banco"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/regras"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/video"
 )
@@ -689,12 +690,124 @@ func TestVoltar_ChaveCertaGiraAChave(t *testing.T) {
 	if m := novo.mensagens(); len(m) != 1 || m[0]["tipo"] != "voltou" || m[0]["volta"] != v2 {
 		t.Fatalf("o canal novo recebeu %v", m)
 	}
-	// A chave velha deixou de valer; a nova vale.
+	// Com a primeira mensagem do canal novo, a chave velha deixa de valer (antes dela, a graça do
+	// TestVoltar_AChaveAnterior); a nova vale.
+	c.g.VoltaConfirmada(p, novo)
 	_, _, err = c.g.Voltar(r, maria, v1, &canalFalso{})
 	conferirErro(t, "a chave velha", err, ErrForaDeOrdem)
 	if _, v3, err := c.g.Voltar(r, maria, v2, &canalFalso{}); err != nil || v3 == v2 {
 		t.Fatalf("Voltar com a chave nova = %q, %v", v3, err)
 	}
+}
+
+// A chave anterior (a que a página mandou no último Voltar aceito) ainda vale por pouco tempo: o voltou pode ter se
+// perdido, e a página só tem ela. Ela deixa de valer com a primeira mensagem do canal que voltou, ou 60 s depois do
+// voltou, o que vier primeiro.
+func TestVoltar_AChaveAnterior(t *testing.T) {
+	// voltou: a Maria, aceita e na reunião, volta uma vez com a chave do aceito. Devolve a cena, a reunião, o
+	// participante, o pedido, a chave do aceito, a do voltou e o canal que voltou.
+	voltou := func(t *testing.T) (*cena, banco.Reuniao, string, *Pedido, string, string, *canalFalso) {
+		t.Helper()
+		c := novaCena(t)
+		r := c.marcada()
+		c.dentro(r, c.ana)
+		maria, p, can := c.aceito(r, c.ana, "Maria Lima")
+		c.entrou(r, maria)
+		v1 := voltaDe(t, can)
+		novo := &canalFalso{}
+		if _, _, err := c.g.Voltar(r, maria, v1, novo); err != nil {
+			t.Fatal(err)
+		}
+		return c, r, maria, p, v1, voltaDe(t, novo), novo
+	}
+
+	t.Run("o voltou perdido: a chave anterior vale de novo, e cada voltar dá outra", func(t *testing.T) {
+		c, r, maria, p, v1, v2, novo := voltou(t)
+		vistas := map[string]bool{v1: true, v2: true}
+		// A página nunca recebeu o voltou: as tentativas dela levam a chave do aceito, e cada uma volta.
+		for i := range 2 {
+			outro := &canalFalso{}
+			got, v, err := c.g.Voltar(r, maria, v1, outro)
+			if err != nil || got != p {
+				t.Fatalf("a tentativa %d com a chave anterior: %v, %v", i+1, got, err)
+			}
+			anotar(v)
+			if len(v) != 43 || vistas[v] {
+				t.Fatalf("a tentativa %d deu a chave %q; queria uma nova", i+1, v)
+			}
+			vistas[v] = true
+			if m := outro.mensagens(); len(m) != 1 || m[0]["tipo"] != "voltou" || m[0]["volta"] != v {
+				t.Fatalf("o canal da tentativa %d recebeu %v", i+1, m)
+			}
+		}
+		// O canal do primeiro voltar era o do pedido: ele fechou.
+		novo.conferir(t, "o canal do primeiro voltar", []string{"voltou"}, true)
+		// A chave que só foi no voltou perdido não vale: a página nunca a teve.
+		_, _, err := c.g.Voltar(r, maria, v2, &canalFalso{})
+		conferirErro(t, "a chave do voltou perdido", err, ErrForaDeOrdem)
+	})
+
+	t.Run("a primeira mensagem do canal que voltou a esquece", func(t *testing.T) {
+		c, r, maria, p, v1, v2, novo := voltou(t)
+		// A mensagem de outro canal (um velho, que o servidor ainda lia) não prova nada sobre a chave nova.
+		c.g.VoltaConfirmada(p, &canalFalso{})
+		outro := &canalFalso{}
+		if _, _, err := c.g.Voltar(r, maria, v1, outro); err != nil {
+			t.Fatalf("a chave anterior, depois da mensagem de outro canal: %v", err)
+		}
+		v3 := voltaDe(t, outro)
+		// O canal que voltou trata o senha (ou o tela): a página tem a chave nova, e a anterior deixa de valer.
+		c.g.VoltaConfirmada(p, outro)
+		for _, v := range []string{v1, v2, ""} {
+			_, _, err := c.g.Voltar(r, maria, v, &canalFalso{})
+			conferirErro(t, "a chave "+v+" depois da primeira mensagem", err, ErrForaDeOrdem)
+		}
+		novo.conferir(t, "o canal do primeiro voltar", []string{"voltou"}, true)
+		if _, _, err := c.g.Voltar(r, maria, v3, &canalFalso{}); err != nil {
+			t.Fatalf("a chave nova: %v", err)
+		}
+	})
+
+	t.Run("60 segundos depois do voltou, ela deixa de valer", func(t *testing.T) {
+		c, r, maria, _, v1, _, _ := voltou(t)
+		c.andar(gracaDaChave - time.Second)
+		dentro := &canalFalso{}
+		if _, _, err := c.g.Voltar(r, maria, v1, dentro); err != nil {
+			t.Fatalf("a chave anterior aos 59 s: %v", err)
+		}
+		// O voltar aceito começa outra graça, de novo com a chave que a página mandou.
+		v3 := voltaDe(t, dentro)
+		c.andar(gracaDaChave)
+		_, _, err := c.g.Voltar(r, maria, v1, &canalFalso{})
+		conferirErro(t, "a chave anterior aos 60 s", err, ErrForaDeOrdem)
+		_, _, err = c.g.Voltar(r, maria, "", &canalFalso{})
+		conferirErro(t, "a chave vazia depois da graça", err, ErrForaDeOrdem)
+		if _, _, err := c.g.Voltar(r, maria, v3, &canalFalso{}); err != nil {
+			t.Fatalf("a chave nova depois da graça: %v", err)
+		}
+		if gracaDaChave != time.Minute {
+			t.Fatalf("a graça é %v; queria 1 minuto", gracaDaChave)
+		}
+	})
+
+	t.Run("uma chave errada continua recusada, e não gasta nada", func(t *testing.T) {
+		// Um voltar certo gira a chave: cada uma das duas que valem é conferida numa cena só dela.
+		for _, depois := range []string{"a anterior", "a nova"} {
+			c, r, maria, _, v1, v2, _ := voltou(t)
+			_, _, canBia := c.aceito(r, c.ana, "Bia Ramos")
+			errada := []byte(v1)
+			errada[0] ^= 1 // o mesmo tamanho, outro byte
+			for _, v := range []string{"", "x", v1[1:], v2[1:], string(errada), voltaDe(t, canBia)} {
+				_, _, err := c.g.Voltar(r, maria, v, &canalFalso{})
+				conferirErro(t, "a chave "+v, err, ErrForaDeOrdem)
+			}
+			// As recusas não esqueceram a anterior nem gastaram a nova.
+			certa := map[string]string{"a anterior": v1, "a nova": v2}[depois]
+			if _, _, err := c.g.Voltar(r, maria, certa, &canalFalso{}); err != nil {
+				t.Fatalf("%s depois das recusas: %v", depois, err)
+			}
+		}
+	})
 }
 
 func TestVoltar_Recusas(t *testing.T) {

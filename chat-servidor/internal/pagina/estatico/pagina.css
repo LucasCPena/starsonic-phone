@@ -1137,6 +1137,13 @@ main {
   }
 }
 
+/* O Compartilhar a tela é só do PC: a tela de toque não o tem, nem com o celular deitado, que passa dos 600 px. */
+@media (pointer: coarse) {
+  .controle-compartilhar {
+    display: none;
+  }
+}
+
 /* No celular em pé, o convite para girar, embaixo do mosaico. */
 @media (max-width: 600px) and (orientation: portrait) {
   .palco {

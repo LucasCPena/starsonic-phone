@@ -54,7 +54,11 @@ func TestBilhetes_LimitePorDono(t *testing.T) {
 	if d, ok := b.usar(outro); !ok || d != 8 {
 		t.Fatalf("o bilhete da outra reunião não vale (%d, %v)", d, ok)
 	}
-	if maxBilhetesPorReuniao != 50 || maxBilhetesPorComputador != 4 {
-		t.Fatalf("os máximos são %d e %d; queria 50 e 4", maxBilhetesPorReuniao, maxBilhetesPorComputador)
+	if maxBilhetesPorReuniao != 100 || maxBilhetesPorComputador != 4 {
+		t.Fatalf("os máximos são %d e %d; queria 100 e 4", maxBilhetesPorReuniao, maxBilhetesPorComputador)
+	}
+	// A janela dos abrir bons de um endereço fica abaixo da fila de uma reunião (o desenho da 1b, item 10).
+	if maxAbrirBom >= maxBilhetesPorReuniao {
+		t.Fatalf("a janela dos bons (%d) não fica abaixo da fila (%d)", maxAbrirBom, maxBilhetesPorReuniao)
 	}
 }

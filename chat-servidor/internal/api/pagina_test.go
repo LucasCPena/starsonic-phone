@@ -346,6 +346,28 @@ func TestAbrirPagina_OutroEndereco(t *testing.T) {
 	}
 }
 
+// A janela dos bons (60 por endereço) fica abaixo da fila de bilhetes de uma reunião (100): um endereço que gasta a
+// janela inteira não empurra para fora o bilhete de outro (o desenho da 1b, item 10).
+func TestAbrirPagina_UmEnderecoNaoEmpurraOsOutros(t *testing.T) {
+	c := novaCenaR(t)
+	r := c.marcada(t, c.kAna)
+	resp := abrirDe(c, "198.51.100.2:1000", r.Codigo)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("o abrir do outro endereço deu %d", resp.StatusCode)
+	}
+	bilhete := apitest.LerJSON[struct {
+		Bilhete string `json:"bilhete"`
+	}](t, resp).Bilhete
+	for i := range 60 {
+		if resp := abrirDe(c, "198.51.100.1:1000", r.Codigo); resp.StatusCode != http.StatusOK {
+			t.Fatalf("o abrir %d deu %d", i+1, resp.StatusCode)
+		}
+	}
+	if _, resp, err := c.a.CanalDaPagina(bilhete, c.a.Base); err != nil {
+		t.Fatalf("o bilhete do outro endereço saiu da fila: %v (status %d)", err, resp.StatusCode)
+	}
+}
+
 // ---------- O canal: a origem e o bilhete ----------
 
 func TestCanal_Origem(t *testing.T) {
@@ -1130,7 +1152,7 @@ func TestCanal_Voltar(t *testing.T) {
 			t.Fatalf("a senha é de outro participante: %v", s)
 		}
 
-		// A chave velha parou de valer; a nova vale (e gira de novo).
+		// Depois do senha, a primeira mensagem do canal novo, a chave velha parou de valer.
 		velha := c.voltaDoCanal(t, r.Codigo, part, volta)
 		aPaginaErro(t, velha, "invalido")
 		esperarFechamento(t, velha)
@@ -1143,6 +1165,37 @@ func TestCanal_Voltar(t *testing.T) {
 		}
 		aPaginaTipo(t, nova, "tirado")
 		esperarFechamento(t, nova)
+	})
+
+	t.Run("a chave anterior vale até a primeira mensagem do canal que voltou", func(t *testing.T) {
+		c := novaCenaR(t)
+		r := c.marcada(t, c.kAna)
+		carlos := c.colegaNaReuniao(t, r.Codigo)
+		pagina := c.canal(t, r.Codigo)
+		m := c.aceita(t, r.Codigo, carlos, pagina, "Maria Lima")
+		part, _ := m["participante"].(string)
+		c.entrou(t, r.Codigo, part)
+		pagina.Close(websocket.StatusNormalClosure, "")
+
+		// O voltou do primeiro voltar se perde (o canal não manda mais nada): a página tenta de novo com a chave do
+		// aceito, e volta, com outra chave.
+		primeiro := c.voltaDoCanal(t, r.Codigo, part, m["volta"])
+		perdida := aPaginaTipo(t, primeiro, "voltou")["volta"]
+		segundo := c.voltaDoCanal(t, r.Codigo, part, m["volta"])
+		v3, _ := aPaginaTipo(t, segundo, "voltou")["volta"].(string)
+		if len(v3) != 43 || v3 == m["volta"] || v3 == perdida {
+			t.Fatalf("o segundo voltar deu a chave %q; queria uma nova", v3)
+		}
+		esperarFechamento(t, primeiro) // era o canal do pedido
+
+		// O senha, a primeira mensagem do canal que voltou, mostra que a página tem a chave nova: a anterior para.
+		daPagina(t, segundo, map[string]any{"tipo": "senha"})
+		aPaginaTipo(t, segundo, "senha")
+		velha := c.voltaDoCanal(t, r.Codigo, part, m["volta"])
+		aPaginaErro(t, velha, "invalido")
+		esperarFechamento(t, velha)
+		nova := c.voltaDoCanal(t, r.Codigo, part, v3)
+		aPaginaTipo(t, nova, "voltou")
 	})
 
 	t.Run("a tela vale no canal que voltou", func(t *testing.T) {

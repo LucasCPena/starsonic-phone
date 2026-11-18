@@ -2114,3 +2114,33 @@ func TestGerente_TodoFimFicaNaMemoria(t *testing.T) {
 		})
 	}
 }
+
+// O Bloquear é o único fim que se desfaz (a revisão final da 1b, M3): o Liberadas tira da memória do fim as salas das
+// reuniões dadas, e a entrada nelas vale de novo na hora. A sala de outra reunião que acabou de vez continua lá.
+func TestGerente_LiberadasSaemDaMemoria(t *testing.T) {
+	for nome, naMemoria := range map[string]bool{"com a sala na memória": true, "com a sala fora da memória": false} {
+		t.Run(nome, func(t *testing.T) {
+			c := novaCena(t)
+			acabada := acabouNaHora(t, c)
+			r := c.marcada()
+			if naMemoria {
+				c.dentro(r, c.ana)
+			}
+			c.g.Bloqueadas(c.ctx, []banco.Reuniao{r})
+			_, err := c.g.EntrarColega(c.ctx, r, c.ana.p, c.ana.computador)
+			conferirErro(t, "a bloqueada", err, ErrLinkInvalido)
+
+			c.g.Liberadas([]banco.Reuniao{r})
+			c.dentro(r, c.ana)
+			if _, can := c.pedir(r, "Maria Lima"); !slices.Equal(can.tipos(), []string{"aguardando"}) {
+				t.Fatalf("o pedir depois do Liberadas deu %q; queria aguardando", can.tipos())
+			}
+			c.g.mu.Lock()
+			lembra := c.g.fechada(acabada.Sala)
+			c.g.mu.Unlock()
+			if !lembra {
+				t.Fatal("o Liberadas tirou da memória do fim a sala de outra reunião")
+			}
+		})
+	}
+}

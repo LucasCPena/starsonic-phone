@@ -362,6 +362,7 @@ type estadoDaPagina struct {
 	endereco string           // quem abriu o canal, para a janela das falhas do voltar
 	pedido   *reunioes.Pedido // nil até o pedir ou o voltar darem certo; vale uma vez por canal
 	tratou   bool             // o canal já tratou alguma mensagem (qualquer uma): o voltar só vale como a primeira
+	voltou   bool             // o voltar deu certo, e o canal ainda não tratou outra mensagem
 	acabou   bool             // o voltar falhou: o canal fecha e não trata mais nada
 	desistiu bool             // o Desistir já foi chamado
 }
@@ -428,6 +429,12 @@ func (s *servidor) mensagemDaPagina(c *canalPagina, st *estadoDaPagina, tipo web
 	}
 	primeira := !st.tratou
 	st.tratou = true
+	if st.voltou {
+		// A primeira mensagem depois do voltou (o senha ou o tela, que a página só manda com ele na mão) mostra que a
+		// página tem a chave nova: a anterior, que ainda valia para o voltou que se perdesse, para de valer.
+		st.voltou = false
+		s.gerente.VoltaConfirmada(st.pedido, c)
+	}
 	var m struct {
 		Tipo         string `json:"tipo"`
 		Nome         string `json:"nome"`
@@ -465,7 +472,7 @@ func (s *servidor) mensagemDaPagina(c *canalPagina, st *estadoDaPagina, tipo web
 		p, _, err := s.gerente.Voltar(st.reuniao, m.Participante, m.Volta, c)
 		switch {
 		case err == nil:
-			st.pedido = p
+			st.pedido, st.voltou = p, true
 		case errors.Is(err, reunioes.ErrLinkInvalido):
 			s.aberturas.Contar(st.endereco, 1)
 			st.acabou = true

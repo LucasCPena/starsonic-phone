@@ -303,7 +303,8 @@ func (p *painel) encerrarDaEmpresa(r *http.Request, rs []banco.Reuniao) int {
 }
 
 // POST /admin/reunioes/empresas/{id}: libera (liberar=1) ou bloqueia (liberar=0) as reuniões da empresa. As
-// reuniões dela que estão acontecendo, lidas antes do bloqueio, acabam depois dele.
+// reuniões abertas dela são lidas antes da mudança. Depois do bloqueio, as que estão acontecendo acabam; depois da
+// liberação, todas saem da memória do fim, onde o bloqueio as pôs, e a entrada nelas vale de novo na hora.
 func (p *painel) liberarEmpresa(w http.ResponseWriter, r *http.Request, s sessao) {
 	id, ok := idDe(r, "id")
 	if !ok {
@@ -319,19 +320,21 @@ func (p *painel) liberarEmpresa(w http.ResponseWriter, r *http.Request, s sessao
 		p.erro(w, s, http.StatusBadRequest, "Pedido inválido", "O pedido não diz se é para liberar ou bloquear. Volte e tente de novo.")
 		return
 	}
-	var daEmpresa []banco.Reuniao
-	if !liberar {
-		var err error
-		if daEmpresa, err = p.banco.ReunioesDaEmpresa(r.Context(), id); err != nil {
-			p.erroDoBanco(w, r, s, err)
-			return
-		}
+	daEmpresa, err := p.banco.ReunioesDaEmpresa(r.Context(), id)
+	if err != nil {
+		p.erroDoBanco(w, r, s, err)
+		return
 	}
 	if err := p.banco.LiberarReunioes(r.Context(), id, liberar); err != nil {
 		p.erroDoBanco(w, r, s, err)
 		return
 	}
-	encerradas := p.encerrarDaEmpresa(r, daEmpresa)
+	encerradas := 0
+	if liberar {
+		p.gerente.Liberadas(daEmpresa)
+	} else {
+		encerradas = p.encerrarDaEmpresa(r, daEmpresa)
+	}
 	slog.Info("admin: reuniões da empresa", "usuario", s.Usuario, "empresa", id, "liberadas", liberar,
 		"encerradas", encerradas)
 	http.Redirect(w, r, "/admin/reunioes", http.StatusSeeOther)

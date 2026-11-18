@@ -508,3 +508,45 @@ test.describe('a saída da reunião para a captura', () => {
     await expect(botao(page, 'Compartilhar a tela')).toBeDisabled();
   });
 });
+
+// A aba que fecha sem o Sair: o pagehide desliga as duas ligações, e o BYE de cada uma sai pelo WSS dela, ainda aberto;
+// o canal fecha. Nada disso passa pelo cérebro: a página está indo embora.
+test.describe('a aba que fecha', () => {
+  const pagehide = (page: Page) =>
+    page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: false })));
+  const pageshow = (page: Page, persisted: boolean) =>
+    page.evaluate((persisted) => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted })), persisted);
+
+  test('o pagehide desliga as duas ligações e fecha o canal', async ({ page }) => {
+    await capturaFalsa(page);
+    const reuniao = await naReuniao(page);
+    const { video, invite } = await compartilhar(page, reuniao, 2);
+    await atenderOInvite(page, video, invite);
+    await expect(selo(page)).toBeVisible();
+
+    await pagehide(page);
+    await reuniao.principal.mensagem('BYE');
+    await video.mensagem('BYE');
+    await expect.poll(() => reuniao.canal.fechadoPelaPagina).toBe(1000);
+    // O terminou que cada desligar dá não chega ao cérebro: a tela fica como estava, sem a espera do fim sem aviso (o
+    // saiu, 2 s depois) e com o selo da tela.
+    await page.clock.runFor(5_000);
+    await expect(controles(page)).toBeVisible();
+    await expect(selo(page)).toBeVisible();
+    expect(reuniao.canal.tipos()).toEqual(['pedir', 'tela']);
+  });
+
+  test('a página que volta do cache do navegador carrega de novo', async ({ page }) => {
+    const { rede } = await naReuniao(page);
+    const antes = rede.abrires.length;
+    // O pageshow de um carregar comum não conta.
+    await pageshow(page, false);
+    await page.clock.runFor(10);
+    await expect(controles(page)).toBeVisible();
+    expect(rede.abrires).toHaveLength(antes);
+    // O da página que volta do cache (o voltar do navegador depois de sair dela): ela carrega de novo, do começo.
+    await pageshow(page, true);
+    await expect(botao(page, 'Pedir para entrar')).toBeVisible();
+    expect(rede.abrires).toHaveLength(antes + 1);
+  });
+});

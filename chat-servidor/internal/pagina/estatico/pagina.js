@@ -45,8 +45,10 @@ export function iniciar(raiz, servicos) {
   let estado = inicial();
   const fila = [];
   let rodando = false;
+  let indoEmbora = false; // o pagehide: a página vai embora, e nada mais chega ao cérebro
 
   function despachar(evento) {
+    if (indoEmbora) return;
     fila.push(evento);
     if (rodando) return; // um evento dado por um efeito entra depois dos efeitos de agora
     rodando = true;
@@ -303,6 +305,20 @@ export function iniciar(raiz, servicos) {
   function tocarOSom() {
     som.play()?.catch(() => {});
   }
+
+  // A aba que fecha sem o Sair (ou a página que sai): as duas ligações descem, e o BYE de cada uma sai pelo WSS dela,
+  // ainda aberto; o canal fecha. Sem isso, os colegas veriam a pessoa até o servidor de vídeo dar pela falta da mídia.
+  // Os efeitos rodam sem o cérebro, e o que os adaptadores derem depois fica de fora: a página está indo embora. A que
+  // volta do cache do navegador (o voltar dele) carrega de novo, do começo.
+  window.addEventListener('pagehide', () => {
+    indoEmbora = true;
+    rodar({ tipo: 'desligar', qual: 'principal' });
+    rodar({ tipo: 'desligar', qual: 'tela' });
+    rodar({ tipo: 'fecharCanal' });
+  });
+  window.addEventListener('pageshow', (ev) => {
+    if (ev.persisted) location.reload();
+  });
 
   desenhar(estado);
   despachar({ tipo: 'comecar' });

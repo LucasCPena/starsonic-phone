@@ -1577,6 +1577,32 @@ test.describe(() => {
   });
 });
 
+// O Compartilhar a tela é só do PC: na tela de toque ele não aparece, nem com o celular deitado, que passa dos 600 px
+// de largura. A janela do PC do mesmo tamanho tem o botão.
+const botoesDaReuniao = (page: Page) =>
+  page.getByRole('navigation', { name: 'Controles da reunião' }).getByRole('button');
+
+test.describe(() => {
+  test.use({ viewport: { width: 844, height: 390 }, isMobile: true, hasTouch: true });
+
+  test('o celular deitado, sem o Compartilhar a tela', async ({ page }) => {
+    await naReuniao(page);
+    expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(true);
+    expect(await page.evaluate(() => typeof navigator.mediaDevices.getDisplayMedia)).toBe('function');
+    await expect(botoesDaReuniao(page)).toHaveText(['Microfone', 'Câmera', 'Sair']);
+    await expect(botao(page, 'Compartilhar a tela')).toBeHidden();
+  });
+});
+
+test.describe(() => {
+  test.use({ viewport: { width: 844, height: 390 } });
+
+  test('a janela do PC do tamanho do celular deitado, com o Compartilhar a tela', async ({ page }) => {
+    await naReuniao(page);
+    await expect(botoesDaReuniao(page)).toHaveText(['Microfone', 'Câmera', 'Compartilhar a tela', 'Sair']);
+  });
+});
+
 test('os cabeçalhos da página', async ({ page }) => {
   const erros: string[] = [];
   page.on('console', (m) => {

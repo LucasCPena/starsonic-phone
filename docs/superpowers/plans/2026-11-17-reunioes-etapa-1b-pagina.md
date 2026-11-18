@@ -207,7 +207,7 @@ Os textos de cada tela, letra por letra, vêm do quadro aprovado e da spec 10.
    - O "Compartilhar a tela" fica desligado.
    - Uma queda da ligação, a partir daí, leva ao aviso `saiu`.
 10. **O limite do abrir que dá certo** (a decisão D54 da 1a). O abrir que dá certo ganha uma janela própria: 60 por minuto por endereço.
-    - Ela fica acima dos 10 de uma reunião e dos recarregamentos deles, e abaixo da fila de 50 bilhetes de uma reunião.
+    - Ela fica acima dos 10 de uma reunião e dos recarregamentos deles, e abaixo da fila de 100 bilhetes de uma reunião.
     - Um endereço não consegue mais empurrar para fora os bilhetes dos outros.
     - O 61º abrir recebe o `429 tentativas` de hoje.
 11. **A sala que acabou não volta** (T11 M6(a) da 1a). Quando chega um `entrou`, ou um `estado`, de uma sala que o gerente lembra como acabada (a memória do fim, de 10 minutos), o gerente não a recria. Ele pede ao agente o `Encerrar` dela, fora do mutex e uma vez só.

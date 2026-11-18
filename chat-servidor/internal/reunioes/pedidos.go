@@ -17,6 +17,9 @@ const (
 	esperaPedido   = 10 * time.Minute // a espera depois de o pedido chegar aos colegas
 	novasPorMinuto = 5                // as senhas novas de um participante
 	maxEsperando   = 50               // os pedidos esperando numa reunião
+	// gracaDaChave é quanto a chave anterior ainda vale depois do voltou, se o canal que voltou não tratar nenhuma
+	// mensagem antes: o voltou pode ter se perdido, e a página só tem ela.
+	gracaDaChave = time.Minute
 )
 
 // Canal é a página de quem é de fora: o WebSocket da seção 10. O Mandar e o Fechar não esperam (o gerente os
@@ -67,6 +70,10 @@ type Pedido struct {
 	seq     uint64
 	part    *participante // depois do aceito
 	volta   string        // a chave de volta da página, só na memória; vazia fora do aceito
+	// anterior é a chave que a página mandou no último Voltar aceito: ela ainda vale até anteriorAte (relógio do chat),
+	// ou até o VoltaConfirmada, para a página cujo voltou se perdeu. Vazia sem ela.
+	anterior    string
+	anteriorAte time.Time
 }
 
 // Pedir faz o pedido de quem é de fora, com o nome que a pessoa digitou (a regra do nome de uma pessoa; um nome
@@ -155,10 +162,12 @@ func (g *Gerente) Desistir(p *Pedido, c Canal) {
 
 // Voltar devolve a página que perdeu o canal ao pedido aceito do participante, sem a sala de espera: com a chave de
 // volta do último aceito ou voltou (comparada em tempo constante), o canal c passa a ser o do pedido, e o que ele
-// tinha (a rede pode ter caído sem o servidor ver) é fechado. A chave gira: a nova vai ao canal no voltou, antes de qualquer outra
-// mensagem, e a velha deixa de valer. A reunião que não vale mais (cancelada, vencida, ou a naHora que acabou) dá ErrLinkInvalido; qualquer outra
-// recusa (participante desconhecido ou esquecido, pedido que não está aceito, chave errada) dá ErrForaDeOrdem. Não
-// confere o servidor de vídeo: só liga o canal.
+// tinha (a rede pode ter caído sem o servidor ver) é fechado. A chave gira: a nova vai ao canal no voltou, antes de
+// qualquer outra mensagem. A que a página mandou fica como a anterior, e ainda vale até o canal c tratar a primeira
+// mensagem depois do voltou (o VoltaConfirmada) ou por gracaDaChave, o que vier primeiro: o voltou pode se perder, e
+// a página tenta de novo com a chave que tem. A reunião que não vale mais (cancelada, vencida, ou a naHora que acabou)
+// dá ErrLinkInvalido; qualquer outra recusa (participante desconhecido ou esquecido, pedido que não está aceito,
+// chave errada) dá ErrForaDeOrdem. Não confere o servidor de vídeo: só liga o canal.
 func (g *Gerente) Voltar(r banco.Reuniao, participante, volta string, c Canal) (*Pedido, string, error) {
 	agora := g.relogio.Agora()
 	g.mu.Lock()
@@ -172,7 +181,7 @@ func (g *Gerente) Voltar(r banco.Reuniao, participante, volta string, c Canal) (
 			p = part.pedido
 		}
 	}
-	if p == nil || p.fase != aceito || p.volta == "" || subtle.ConstantTimeCompare([]byte(p.volta), []byte(volta)) != 1 {
+	if p == nil || p.fase != aceito || !p.chaveVale(volta, agora) {
 		g.mu.Unlock()
 		return nil, "", ErrForaDeOrdem
 	}
@@ -184,11 +193,34 @@ func (g *Gerente) Voltar(r banco.Reuniao, participante, volta string, c Canal) (
 		g.fechar(p.canal)
 	}
 	p.canal, p.volta = c, segredo.NovoToken()
+	p.anterior, p.anteriorAte = volta, agora.Add(gracaDaChave)
 	nova := p.volta
 	g.mandar(c, mensagemVoltou{Tipo: "voltou", Volta: nova}) // na mesma trava: nenhum tirado passa na frente
 	g.mu.Unlock()
 	g.despachar()
 	return p, nova, nil
+}
+
+// chaveVale confere a chave do voltar: a de agora, ou a anterior, antes de anteriorAte. As duas comparações rodam
+// sempre, cada uma em tempo constante. Com g.mu.
+func (p *Pedido) chaveVale(volta string, agora time.Time) bool {
+	atual := subtle.ConstantTimeCompare([]byte(p.volta), []byte(volta)) == 1
+	anterior := subtle.ConstantTimeCompare([]byte(p.anterior), []byte(volta)) == 1
+	return (p.volta != "" && atual) || (p.anterior != "" && anterior && agora.Before(p.anteriorAte))
+}
+
+// VoltaConfirmada fica sabendo que o canal c, o que voltou, tratou a primeira mensagem depois do voltou (o senha ou o
+// tela, que a página só manda depois dele): a página tem a chave nova, e a anterior deixa de valer. A mensagem de um
+// canal que não é mais o do pedido não muda nada.
+func (g *Gerente) VoltaConfirmada(p *Pedido, c Canal) {
+	if p == nil {
+		return
+	}
+	g.mu.Lock()
+	if p.canal == c {
+		p.anterior, p.anteriorAte = "", time.Time{}
+	}
+	g.mu.Unlock()
 }
 
 // DesistirEsperando é o desistir da página, sem cruzar com o aceito de um colega: numa trava só, retira o pedido que
@@ -433,5 +465,5 @@ func (g *Gerente) responder(s *sala, p *Pedido, msg string) {
 		g.mandar(p.canal, mensagem{Tipo: msg})
 		g.fechar(p.canal)
 	}
-	p.fase, p.canal, p.nome, p.volta = fim, nil, "", ""
+	p.fase, p.canal, p.nome, p.volta, p.anterior = fim, nil, "", "", ""
 }

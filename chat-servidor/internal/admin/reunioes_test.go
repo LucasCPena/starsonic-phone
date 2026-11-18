@@ -653,6 +653,72 @@ func TestReunioes_EmpresaPerdeAsReunioes(t *testing.T) {
 	}
 }
 
+// O Liberar desfaz o Bloquear (a revisão final da 1b, M3): o Bloquear põe as reuniões abertas da empresa na memória do
+// fim, e o Liberar as tira de lá. Logo depois do Liberar, o pedir da página e o entrar do app valem de novo, sem
+// esperar os 10 minutos, na reunião que acontecia e na que ninguém tinha aberto.
+func TestReunioes_LiberarDesfazOBloquear(t *testing.T) {
+	p := novoPainel(t)
+	acme := p.a.Empresa("ACME Comércio Ltda")
+	p.a.LiberarReunioes(acme.ID)
+	kAna, _ := p.a.LigarComPessoa(acme, "2001", "Ana Souza")
+	marcada := func() banco.Reuniao {
+		t.Helper()
+		resp := p.a.Pedir(kAna, "POST", "/api/v1/reunioes", map[string]any{"assunto": "Planejamento",
+			"inicio": p.a.Relogio.Agora().UnixMilli()})
+		esperarAPI(t, resp, http.StatusCreated)
+		codigo := apitest.LerJSON[struct{ Reuniao struct{ Codigo string } }](t, resp).Reuniao.Codigo
+		r, err := p.a.Banco.ReuniaoPorCodigo(t.Context(), codigo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	entrar := func(r banco.Reuniao) *http.Response {
+		return p.a.Pedir(kAna, "POST", "/api/v1/reunioes/"+r.Codigo+"/entrar", nil)
+	}
+	// Na que acontece, a Ana entra, e a câmera dela entra; a outra ninguém abriu, e não está na memória do gerente.
+	acontecendo, parada := marcada(), marcada()
+	resp := entrar(acontecendo)
+	esperarAPI(t, resp, http.StatusOK)
+	ana := apitest.LerJSON[struct{ Participante string }](t, resp).Participante
+	p.a.Gerente.EventoDoVideo(video.Evento{Tipo: "entrou", Sala: acontecendo.Sala, Participante: ana})
+
+	n := p.logado(t)
+	alvo := fmt.Sprintf("/admin/reunioes/empresas/%d", acme.ID)
+	resp, _ = n.acao(alvo, url.Values{"liberar": {"0"}})
+	esperarIr(t, resp, "/admin/reunioes")
+	if acontece, _ := p.a.Gerente.Contagem(acontecendo.Sala); acontece {
+		t.Fatal("o Bloquear não encerrou a reunião que acontecia")
+	}
+	resp, _ = n.acao(alvo, url.Values{"liberar": {"1"}})
+	esperarIr(t, resp, "/admin/reunioes")
+
+	for _, caso := range []struct {
+		nome string
+		r    banco.Reuniao
+	}{{"a que acontecia", acontecendo}, {"a que ninguém abriu", parada}} {
+		nome, r := caso.nome, caso.r
+		// O pedir da página espera a reunião começar, e não ouve que o link não vale mais.
+		status, bilhete := p.a.AbrirPagina(r.Codigo)
+		if status != http.StatusOK {
+			t.Fatalf("%s: o abrir deu %d", nome, status)
+		}
+		canal, _, err := p.a.CanalDaPagina(bilhete, p.a.Base)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pedir := []byte(`{"tipo":"pedir","nome":"Maria Lima"}`)
+		if err := canal.Write(t.Context(), websocket.MessageText, pedir); err != nil {
+			t.Fatal(err)
+		}
+		if m := apitest.LerEvento[map[string]any](t, canal); m["tipo"] != "naoComecou" {
+			t.Fatalf("%s: o pedir da página deu %v; queria naoComecou", nome, m)
+		}
+		// O entrar do app também.
+		esperarAPI(t, entrar(r), http.StatusOK)
+	}
+}
+
 func mustPessoa(t *testing.T, p *painel, empresa int64) int64 {
 	t.Helper()
 	return int64(p.a.Contar(`SELECT id FROM pessoas WHERE empresa_id = ? AND nome = 'Ana Souza'`, empresa))

@@ -1095,6 +1095,23 @@ test('a tela do começo ao fim', () => {
   assert.deepEqual(capturada, { estado: semCanal, efeitos: [PARAR_CAPTURA] });
 });
 
+test('o tela respondido com o semServidor para a captura', () => {
+  // Sem o vídeo no ar para o chat, o servidor responde o tela com o semServidor: o compartilhar para, como no erro, e a
+  // reunião continua, com a principal no ar.
+  const pedindoATela = passo(naReuniao(), { tipo: 'telaCapturada', ok: true }).estado;
+  let r = passo(pedindoATela, mensagem({ tipo: 'semServidor' }));
+  assert.equal(r.estado.telaCompartilhada, 'nenhuma');
+  assert.equal(r.estado.tela, 'reuniao');
+  assert.equal(r.estado.principal, 'noAr');
+  assert.deepEqual(r.efeitos, [PARAR_CAPTURA]);
+  // A pessoa pode compartilhar de novo.
+  r = passo(r.estado, { tipo: 'telaCapturada', ok: true });
+  assert.equal(r.estado.telaCompartilhada, 'pedindo');
+  assert.deepEqual(r.efeitos, [mandar({ tipo: 'tela' })]);
+  // Sem o pedido da tela, o semServidor na reunião continua sem efeito.
+  semMudar(naReuniao(), mensagem({ tipo: 'semServidor' }));
+});
+
 test('a câmera e o microfone', () => {
   // Na entrada, o clique só troca o estado.
   let r = passo(naEntrada(), clique('camera'));

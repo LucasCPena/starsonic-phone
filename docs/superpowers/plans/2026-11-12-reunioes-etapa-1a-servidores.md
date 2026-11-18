@@ -1201,7 +1201,7 @@ CREATE TABLE configuracao (chave TEXT PRIMARY KEY, valor TEXT NOT NULL);
 - **Produces:**
   - o `POST /api/v1/pagina/reunioes/{codigo}` e o `GET /api/v1/pagina/canal`, como na seção 10 do protocolo;
   - as origens da página são o `Base` mais as do `--origem`;
-  - os bilhetes da página são uma instância própria do `bilhetes`, com até 50 por reunião (o dono é o id da reunião). Os do app continuam com 4 por computador;
+  - os bilhetes da página são uma instância própria do `bilhetes`, com até 50 por reunião (100 desde a etapa 1b; o dono é o id da reunião). Os do app continuam com 4 por computador;
   - o `apitest` ganha `AbrirPagina(codigo string) (status int, bilhete string)` e `CanalDaPagina(bilhete, origem string) (*websocket.Conn, *http.Response, error)`.
 
 **O canal:**
