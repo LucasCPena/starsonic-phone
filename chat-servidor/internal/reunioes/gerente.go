@@ -174,6 +174,7 @@ type sala struct {
 	participantes map[string]*participante
 	pedidos       map[string]*Pedido // os que esperam
 	respondidos   map[string]bool    // os ids dos pedidos que saíram da espera, para o ErrJaRespondido
+	palco         *video.Palco       // o último palco que valeu (palco.go); nil sem ele
 }
 
 // participante é uma pessoa na reunião, ou com uma senha para entrar nela.
@@ -190,6 +191,7 @@ type participante struct {
 	esquecerEm time.Time   // relógio do vídeo: quem não entrou sai da memória depois disto
 	pedido     *Pedido     // de quem é de fora: o pedido aceito, com a página
 	novas      []time.Time // os NovaSenha do último minuto (relógio do chat)
+	semCamera  bool        // o último aviso da câmera da página: desligada (palco.go)
 	seq        uint64
 }
 

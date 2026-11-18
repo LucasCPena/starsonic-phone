@@ -25,6 +25,7 @@ import (
 const (
 	filaDoCanal       = 32          // as mensagens de um canal esperando a escrita; com a fila cheia, o canal cai
 	maxMensagensCanal = 20          // as mensagens da página por minuto, em cada canal
+	maxCamerasCanal   = 30          // os avisos da câmera por minuto, em cada canal: a janela é à parte das 20
 	periodoCanal      = time.Minute // o período da janela das mensagens da página
 	limiteLeitura     = 4096        // o maior quadro que a página manda; passando disso, o canal fecha (1009)
 	prazoEscrita      = 10 * time.Second
@@ -393,17 +394,34 @@ func (s *servidor) servirCanal(c *canalPagina, reuniao banco.Reuniao, endereco s
 	}()
 
 	limite := limites.Nova(maxMensagensCanal, periodoCanal, s.banco.Relogio())
+	limiteCamera := limites.Nova(maxCamerasCanal, periodoCanal, s.banco.Relogio())
 	for {
 		tipo, dados, err := c.conn.Read(c.ctx)
 		if err != nil {
 			return
 		}
-		if ok, _ := limite.Usar("", 1); !ok {
+		if tipo == websocket.MessageText && tipoDaMensagem(dados) == "camera" {
+			// O aviso da câmera tem a janela dele, e não gasta a das 20. O que passa das 30 é ignorado, sem resposta.
+			if ok, _ := limiteCamera.Usar("", 1); !ok {
+				continue
+			}
+		} else if ok, _ := limite.Usar("", 1); !ok {
 			c.Mandar(erroDoCanal("limite"))
 			continue
 		}
 		s.mensagemDaPagina(c, st, tipo, dados)
 	}
+}
+
+// tipoDaMensagem é o tipo de uma mensagem da página, antes dos limites ("" se não for um JSON com tipo de texto).
+func tipoDaMensagem(dados []byte) string {
+	var m struct {
+		Tipo string `json:"tipo"`
+	}
+	if json.Unmarshal(dados, &m) != nil {
+		return ""
+	}
+	return m.Tipo
 }
 
 type mensagemSimples struct {
@@ -440,6 +458,7 @@ func (s *servidor) mensagemDaPagina(c *canalPagina, st *estadoDaPagina, tipo web
 		Nome         string `json:"nome"`
 		Participante string `json:"participante"`
 		Volta        string `json:"volta"`
+		Ligada       *bool  `json:"ligada"` // o camera: tem de ser um booleano
 	}
 	if tipo != websocket.MessageText || json.Unmarshal(dados, &m) != nil {
 		c.Mandar(erroDoCanal("invalido"))
@@ -495,6 +514,11 @@ func (s *servidor) mensagemDaPagina(c *canalPagina, st *estadoDaPagina, tipo web
 		}
 		st.desistiu = true // o pedido já saiu: o Desistir do fim não precisa de outro
 		c.Fechar()
+	case "camera":
+		// O aviso da câmera nunca tem resposta quando vale: o palco, se mudou, chega às páginas aceitas pelo gerente.
+		if m.Ligada == nil || errors.Is(s.gerente.Camera(st.pedido, *m.Ligada), reunioes.ErrForaDeOrdem) {
+			c.Mandar(erroDoCanal("invalido"))
+		}
 	case "senha":
 		senha, err := s.gerente.NovaSenha(st.pedido)
 		switch {

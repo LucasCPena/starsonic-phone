@@ -27,6 +27,7 @@ const (
 // Quem espera volta ao naoComecou, ou recebe o linkInvalido quando a reunião acaba de vez: a cancelada, e a naHora
 // sem um colega entrando. Devolve o id da naHora que acabou, para o banco (0: nenhuma). Com g.mu.
 func (g *Gerente) terminar(s *sala, m motivo, agora time.Time) int64 {
+	s.palco = nil // a sala que acaba esquece o palco
 	if s.conhecida {
 		g.avisar(s.colegas(), eventoAcabou{Tipo: "reuniaoAcabou", Reuniao: s.reuniao.Codigo})
 	}
@@ -198,14 +199,15 @@ func (g *Gerente) lerNaHora(agora time.Time) {
 //   - o entrou e o saiu mudam a ligação da câmera, ou a da tela, do participante. O primeiro colega que entra
 //     leva os pedidos aos colegas, e o último que sai os devolve ao naoComecou. O entrou de um participante que a
 //     sala não conhece, numa reunião conhecida, não muda nada, e o agente recebe o tirar dele (o ligacao);
-//   - o acabou acaba a reunião na memória: a naHora acaba também no banco, e a marcada para.
+//   - o acabou acaba a reunião na memória: a naHora acaba também no banco, e a marcada para;
+//   - o palco e o palco do estado são guardados e repassados às páginas aceitas (palco.go).
 func (g *Gerente) EventoDoVideo(ev video.Evento) { g.evento(g.raiz, ev, 0) }
 
 // evento segue o evento. Com a geracao de um laço (não 0), só se o laço é o do servidor ligado agora. O ctx é o do
 // laço (o Ligar seguinte e o fim do Rodar o cancelam), e vale para o tirar que vai ao agente depois do mutex.
 func (g *Gerente) evento(ctx context.Context, ev video.Evento, geracao uint64) {
 	switch ev.Tipo {
-	case "estado", "entrou", "saiu", "acabou":
+	case "estado", "entrou", "saiu", "acabou", "palco":
 	default:
 		return // o relogio é do cliente, que mede a diferença dos relógios
 	}
@@ -247,6 +249,11 @@ func (g *Gerente) evento(ctx context.Context, ev video.Evento, geracao uint64) {
 	case "acabou":
 		if s := g.salas[ev.Sala]; s != nil {
 			acabar = append(acabar, g.terminar(s, porAcabou, agora))
+		}
+	case "palco":
+		// Uma sala que o chat não conhece não tem página para receber: o próximo estado traz o palco dela.
+		if s := g.salas[ev.Sala]; s != nil {
+			g.guardarPalco(s, &video.Palco{Largura: ev.Largura, Altura: ev.Altura, Quadros: ev.Quadros})
 		}
 	}
 	g.mu.Unlock()
@@ -384,9 +391,13 @@ func (g *Gerente) reconciliar(salas []video.Sala, agora, agoraVideo time.Time) [
 	}
 	var acabar []int64
 	for _, s := range g.salasEmOrdem() {
-		if !vieram[s.id] && s.alguemDentro() {
-			if id := g.terminar(s, porAcabou, agora); id != 0 {
-				acabar = append(acabar, id)
+		if !vieram[s.id] {
+			if s.alguemDentro() {
+				if id := g.terminar(s, porAcabou, agora); id != 0 {
+					acabar = append(acabar, id)
+				}
+			} else {
+				s.palco = nil // a sala que o agente não mostra não tem palco
 			}
 		}
 	}
@@ -426,6 +437,7 @@ func (g *Gerente) reconciliar(salas []video.Sala, agora, agoraVideo time.Time) [
 			}
 		}
 		g.ajustarPedidos(s, agora)
+		g.guardarPalco(s, vs.Palco) // depois dos participantes: os nomes dos quadros já estão na sala
 		g.depois(s, antes)
 		g.limpar(s)
 	}

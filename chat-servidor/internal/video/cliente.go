@@ -51,10 +51,29 @@ type Participante struct {
 	Tela         bool   `json:"tela"`
 }
 
-// Sala é uma reunião no servidor de vídeo.
+// Quadro é o retângulo de uma ligação dentro do mosaico, em pixels do mosaico: a câmera de um participante, ou a
+// tela dele (Tela verdadeiro).
+type Quadro struct {
+	Participante string `json:"participante"`
+	Tela         bool   `json:"tela"`
+	X            int    `json:"x"`
+	Y            int    `json:"y"`
+	L            int    `json:"l"`
+	A            int    `json:"a"`
+}
+
+// Palco é o tamanho do mosaico de uma sala e o retângulo de cada ligação dentro dele (seção 5 do agente).
+type Palco struct {
+	Largura int      `json:"largura"`
+	Altura  int      `json:"altura"`
+	Quadros []Quadro `json:"quadros"`
+}
+
+// Sala é uma reunião no servidor de vídeo. O Palco é nil quando o agente ainda não mandou o da sala.
 type Sala struct {
 	Sala          string         `json:"sala"`
 	Participantes []Participante `json:"participantes"`
+	Palco         *Palco         `json:"palco"`
 }
 
 // Uso é a CPU (a do último minuto) e a memória (a de agora) da VM, em porcentagem inteira.
@@ -73,16 +92,19 @@ type Estado struct {
 }
 
 // Evento é um evento da conexão dos eventos (seção 5). Cada Tipo usa só os seus campos: o "estado" usa o Agora, o
-// FreeSWITCH e as Salas; o "entrou" e o "saiu", a Sala, o Participante e a Tela; o "acabou", a Sala; o "relogio", o
-// Agora.
+// FreeSWITCH e as Salas; o "entrou" e o "saiu", a Sala, o Participante e a Tela; o "acabou", a Sala; o "palco", a
+// Sala, a Largura, a Altura e os Quadros; o "relogio", o Agora.
 type Evento struct {
-	Tipo         string `json:"tipo"`
-	Sala         string `json:"sala"`
-	Participante string `json:"participante"`
-	Tela         bool   `json:"tela"`
-	Agora        int64  `json:"agora"`
-	FreeSWITCH   bool   `json:"freeswitch"`
-	Salas        []Sala `json:"salas"`
+	Tipo         string   `json:"tipo"`
+	Sala         string   `json:"sala"`
+	Participante string   `json:"participante"`
+	Tela         bool     `json:"tela"`
+	Agora        int64    `json:"agora"`
+	FreeSWITCH   bool     `json:"freeswitch"`
+	Salas        []Sala   `json:"salas"`
+	Largura      int      `json:"largura"`
+	Altura       int      `json:"altura"`
+	Quadros      []Quadro `json:"quadros"`
 }
 
 // ValidarEndereco confere o endereço do servidor de vídeo: um nome com pelo menos um ponto e a porta opcional,

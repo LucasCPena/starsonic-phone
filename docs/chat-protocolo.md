@@ -387,7 +387,7 @@ A página é servida pelo chat em `https://<endereço do chat>/r/<código>`. Que
 - **Um bilhete** inválido, vencido ou já usado responde `401 chave`.
 - **O servidor manda um ping a cada 25 segundos.** Sem resposta em 60 segundos, ele fecha.
 - Sem um `pedir` em 2 minutos depois de abrir, o servidor fecha o canal (1000).
-- **Até 20 mensagens por minuto** da página. Passando disso, o servidor responde `{"tipo": "erro", "erro": "limite"}` e ignora a mensagem.
+- **Até 20 mensagens por minuto** da página, sem contar o `camera`. Passando disso, o servidor responde `{"tipo": "erro", "erro": "limite"}` e ignora a mensagem. O `camera` tem a janela dele, de 30 por minuto por canal (seção 12).
 - **Fechar o canal** enquanto espera retira o pedido. Depois de aceito, fechar o canal não tira ninguém da reunião.
 - **A página abre duas vezes.** Ela chama o abrir ao carregar, para saber qual é a reunião e mostrar a entrada, e de novo ao pedir. O bilhete do segundo abrir é o que abre o canal; o do primeiro não é guardado, e valeria só 30 segundos, muito pouco para a pessoa escrever o nome. Depois de uma queda, a página entra de novo pelo `senha`, que renova só a ligação de vídeo. Se os dois canais caem (este e o da ligação), ela abre outro canal (o abrir dá um bilhete novo) e vai pelo `voltar` primeiro; o `senha` vem depois dele, como a chave de volta explica abaixo.
 
@@ -398,6 +398,7 @@ As mensagens são JSON em texto, sempre com o `tipo`. Da página para o servidor
 {"tipo": "senha"}                          // uma senha nova para o mesmo participante, depois do aceito
 {"tipo": "tela"}                           // a senha da tela compartilhada, com a pessoa na reunião
 {"tipo": "voltar", "participante": "…", "volta": "…"}   // só como a primeira mensagem do canal, no lugar do pedir
+{"tipo": "camera", "ligada": false}        // a câmera da pessoa foi desligada (true: ligada), depois do aceito
 ```
 Do servidor para a página:
 ```json
@@ -413,6 +414,9 @@ Do servidor para a página:
 {"tipo": "linkInvalido"}     // a reunião foi cancelada, deixou de valer, ou a naHora acabou: na espera, em resposta ao senha, ou em resposta ao voltar
 {"tipo": "senha", "senha": "…"}
 {"tipo": "tela", "senha": "…"}
+{"tipo": "palco", "largura": 1920, "altura": 1080,
+ "quadros": [{"quem": "<16 hex>", "nome": "Ana Souza", "voce": false, "tela": false, "semCamera": false,
+              "x": 0, "y": 0, "l": 960, "a": 540}]}   // o palco do mosaico, só depois do aceito
 {"tipo": "tirado"}           // um colega tirou a pessoa da reunião
 {"tipo": "encerrada"}        // um colega encerrou a reunião para todos, ela foi cancelada, a empresa perdeu as reuniões, ou a reunião acabou no servidor de vídeo
 {"tipo": "erro", "erro": "invalido" | "limite" | "foraDaReuniao"}
@@ -430,6 +434,16 @@ Do servidor para a página:
   - `{"tipo": "linkInvalido"}`: a reunião foi cancelada, deixou de valer, ou a naHora acabou.
 
   Um `voltar` depois de qualquer outra mensagem do canal (um `pedir`, um `senha`, um `desistir`, uma mensagem sem sentido), um segundo `voltar`, ou um `pedir` depois do `voltar` é fora de ordem: `{"tipo": "erro", "erro": "invalido"}`, e o canal continua aberto. O canal que voltou não precisa mandar o `pedir`: o prazo de 2 minutos para o primeiro `pedir` também vale para o `voltar`, que o cumpre.
+- **O palco (`palco`).** O servidor de vídeo monta um mosaico só por sala; o palco diz o tamanho dele e onde está cada quadro. O chat recebe o palco do agente (seção 5 do `docs/video-agente.md`, sem nomes), guarda o último que vale de cada sala e o manda à página, com o nome de cada quadro:
+  - `largura` e `altura` são o tamanho do mosaico, em pixels dele; `x`, `y`, `l` e `a` são o retângulo do quadro dentro dele. A página converte para o tamanho em que mostra o vídeo;
+  - `quem` é o participante do quadro, `nome` é o nome dele, ou `""` para quem o chat não conhece (o chat reiniciou depois de a pessoa entrar); `tela` é verdadeiro no quadro da tela compartilhada, que leva o `quem` e o `nome` de quem a compartilha;
+  - `voce` é verdadeiro nos quadros do participante que recebe a mensagem (a câmera e a tela dele);
+  - `semCamera` é o último aviso `camera` daquele participante: verdadeiro com a câmera desligada. Sem aviso, e no quadro da tela, é falso;
+  - `quadros` nunca é `null`: o palco sem ninguém leva `[]`;
+  - o palco chega **logo depois do `aceito`** e **logo depois do `voltou`**, se a sala já tem palco, e de novo **a cada vez que ele muda** ou que o `semCamera` de alguém muda. O palco igual ao anterior não é mandado outra vez;
+  - **o palco só vai à página aceita, com o canal aberto, daquela reunião.** Quem ainda espera, quem foi recusado ou tirado e quem é de outra reunião nunca recebe nada dele, porque ele leva nomes. Os eventos dos apps (seção 11) não mudam;
+  - a reunião que acaba esquece o palco.
+- **O aviso da câmera (`camera`).** A página o manda logo depois do `aceito`, logo depois do `voltou` e a cada vez que a pessoa liga ou desliga a câmera. O `ligada` tem de ser um booleano. Quando vale, **não tem resposta**: o que a página vê é o `palco` com o `semCamera` novo, se a sala tem palco (sem palco, o aviso fica guardado, e o primeiro palco já sai com ele). Antes do `aceito` (ou depois do fim do pedido), ou sem um `ligada` booleano, responde `{"tipo": "erro", "erro": "invalido"}`, e o canal continua aberto. Como as outras mensagens, o `camera` conta como mensagem tratada do canal (o `voltar` só vale como a primeira, e a primeira mensagem depois do `voltou` confirma a chave nova).
 - **Na reunião de teste,** o `pedir` responde `aceito` na hora, sem sala de espera. A primeira pessoa a começa.
 - **Quando o último colega sai da reunião,** mesmo com gente de fora ainda nela, **ou quando a reunião marcada para** (todos saíram), os pedidos que esperam voltam a `naoComecou`. Quando um colega volta a ela, eles voltam a `aguardando`, com 10 minutos de novo.
 
@@ -452,6 +466,8 @@ Do servidor para a página:
 | Pessoas por reunião | 10, sem contar a tela compartilhada |
 | Reuniões ao mesmo tempo | 2 por padrão, de 1 a 20 na administração, em todo o servidor |
 | Tentativas de abrir | 20 por minuto por endereço, contando só as que não levam a uma reunião em que a pessoa possa entrar: o `entrar` do app que dá `404`, `outraEmpresa` ou `semReunioes`, junto com o abrir da página que falha e o `voltar` da página que falha (seção 10). Passou disso, `429 tentativas`, até com um código certo. O `entrar` e o abrir que dão certo, e o `cheia`, o `servidorCheio` e o `servidorVideo` de um código bom, não contam nessas 20. O abrir da página que dá certo tem a janela dele: 60 por minuto por endereço, e o 61º recebe o mesmo `429 tentativas`. As duas janelas são separadas |
+| Mensagens da página | 20 por minuto por canal, sem o `camera`. A 21ª recebe `erro` `limite` e é ignorada |
+| Os avisos da câmera (`camera`) | 30 por minuto por canal, à parte das 20 mensagens: não gastam as 20, e as 20 não os gastam. O 31º é ignorado, sem resposta |
 | A senha de uso único | 30 segundos, uma vez só, no relógio do servidor de vídeo |
 | A espera de quem é de fora | 10 minutos depois de o pedido chegar aos colegas |
 | A sala de espera | 50 pedidos esperando por reunião. O 51º `pedir` recebe `esperaCheia` |

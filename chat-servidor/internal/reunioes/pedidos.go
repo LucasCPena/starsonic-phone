@@ -120,6 +120,7 @@ func (g *Gerente) Pedir(ctx context.Context, r banco.Reuniao, nome string, c Can
 		s.respondidos[p.id] = true
 		p.fase, p.part, part.pedido, p.volta = aceito, part, p, segredo.NovoToken()
 		g.mandar(c, mensagemAceito{Tipo: "aceito", Acesso: d.acesso(part.id, senha), Volta: p.volta})
+		g.mandarPalcoA(s, part)
 	} else {
 		s.pedidos[p.id] = p
 		if s.temColega() {
@@ -185,7 +186,8 @@ func (g *Gerente) Voltar(r banco.Reuniao, participante, volta string, c Canal) (
 		g.mu.Unlock()
 		return nil, "", ErrForaDeOrdem
 	}
-	if _, part := g.aceitoDe(p); part == nil || part.id != participante {
+	s, part := g.aceitoDe(p)
+	if part == nil || part.id != participante {
 		g.mu.Unlock()
 		return nil, "", ErrForaDeOrdem
 	}
@@ -196,6 +198,7 @@ func (g *Gerente) Voltar(r banco.Reuniao, participante, volta string, c Canal) (
 	p.anterior, p.anteriorAte = volta, agora.Add(gracaDaChave)
 	nova := p.volta
 	g.mandar(c, mensagemVoltou{Tipo: "voltou", Volta: nova}) // na mesma trava: nenhum tirado passa na frente
+	g.mandarPalcoA(s, part)
 	g.mu.Unlock()
 	g.despachar()
 	return p, nova, nil
@@ -267,6 +270,7 @@ func (g *Gerente) Aceitar(ctx context.Context, r banco.Reuniao, pessoaID int64, 
 		g.tirarDaEspera(s, p)
 		p.fase, p.part, part.pedido, p.volta = aceito, part, p, segredo.NovoToken()
 		g.mandar(p.canal, mensagemAceito{Tipo: "aceito", Acesso: d.acesso(part.id, senha), Volta: p.volta})
+		g.mandarPalcoA(s, part)
 		return nil
 	})
 }

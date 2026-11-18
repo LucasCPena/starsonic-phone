@@ -1406,3 +1406,153 @@ func TestCanal_Voltar(t *testing.T) {
 		esperarFechamento(t, nova)
 	})
 }
+
+// ---------- O palco e o aviso da câmera ----------
+
+// palcoDe é o agente mandando o palco da reunião, com um quadro só: a câmera do participante, no mosaico inteiro.
+func (c *cenaR) palcoDe(t *testing.T, codigo, participante string) {
+	t.Helper()
+	c.a.Gerente.EventoDoVideo(video.Evento{Tipo: "palco", Sala: c.sala(t, codigo), Largura: 1920, Altura: 1080,
+		Quadros: []video.Quadro{{Participante: participante, L: 1920, A: 1080}}})
+}
+
+// semCamera confere o palco recebido: um quadro só, o do participante, com o semCamera dito.
+func semCamera(t *testing.T, conn *websocket.Conn, participante string, quer bool) {
+	t.Helper()
+	m := aPaginaTipo(t, conn, "palco")
+	q, _ := m["quadros"].([]any)
+	if len(q) != 1 {
+		t.Fatalf("o palco tem %d quadros: %v", len(q), m)
+	}
+	f, _ := q[0].(map[string]any)
+	if f["quem"] != participante || f["nome"] != "Maria Lima" || f["voce"] != true || f["semCamera"] != quer {
+		t.Fatalf("o quadro do palco é %v; queria o da Maria com semCamera %v", f, quer)
+	}
+}
+
+const maxVinte = 20
+
+// aceitaMaria deixa a Maria aceita, com o palco da sala já mandado e recebido. Devolve o canal e o participante.
+func (c *cenaR) aceitaMaria(t *testing.T, codigo string, carlos *websocket.Conn) (*websocket.Conn, string, map[string]any) {
+	t.Helper()
+	pagina := c.canal(t, codigo)
+	m := c.aceita(t, codigo, carlos, pagina, "Maria Lima")
+	part, _ := m["participante"].(string)
+	c.entrou(t, codigo, part)
+	c.palcoDe(t, codigo, part)
+	semCamera(t, pagina, part, false)
+	return pagina, part, m
+}
+
+func TestCanal_Camera(t *testing.T) {
+	c := novaCenaR(t)
+	r := c.marcada(t, c.kAna)
+	carlos := c.colegaNaReuniao(t, r.Codigo)
+	pagina, part, _ := c.aceitaMaria(t, r.Codigo, carlos)
+
+	// O aviso não tem resposta: o que chega é o palco, com o semCamera.
+	daPagina(t, pagina, map[string]any{"tipo": "camera", "ligada": false})
+	semCamera(t, pagina, part, true)
+	daPagina(t, pagina, map[string]any{"tipo": "camera", "ligada": true})
+	semCamera(t, pagina, part, false)
+}
+
+func TestCanal_Camera_AntesDoAceito(t *testing.T) {
+	c := novaCenaR(t)
+	r := c.marcada(t, c.kAna)
+	c.colegaNaReuniao(t, r.Codigo)
+	pagina := c.canal(t, r.Codigo)
+	daPagina(t, pagina, map[string]any{"tipo": "camera", "ligada": false}) // antes do pedir
+	aPaginaErro(t, pagina, "invalido")
+	daPagina(t, pagina, map[string]any{"tipo": "pedir", "nome": "Maria Lima"})
+	aPaginaTipo(t, pagina, "aguardando")
+	daPagina(t, pagina, map[string]any{"tipo": "camera", "ligada": false}) // esperando
+	aPaginaErro(t, pagina, "invalido")
+}
+
+func TestCanal_Camera_QueNaoVale(t *testing.T) {
+	c := novaCenaR(t)
+	r := c.marcada(t, c.kAna)
+	carlos := c.colegaNaReuniao(t, r.Codigo)
+	pagina, _, _ := c.aceitaMaria(t, r.Codigo, carlos)
+	for _, m := range []map[string]any{
+		{"tipo": "camera"},
+		{"tipo": "camera", "ligada": "sim"},
+		{"tipo": "camera", "ligada": 1},
+		{"tipo": "camera", "ligada": nil},
+	} {
+		daPagina(t, pagina, m)
+		aPaginaErro(t, pagina, "invalido")
+	}
+}
+
+func TestCanal_Camera_Limite(t *testing.T) {
+	c := novaCenaR(t)
+	r := c.marcada(t, c.kAna)
+	carlos := c.colegaNaReuniao(t, r.Codigo)
+	pagina, part, _ := c.aceitaMaria(t, r.Codigo, carlos)
+	desligada := true
+	for range 30 {
+		daPagina(t, pagina, map[string]any{"tipo": "camera", "ligada": !desligada})
+		semCamera(t, pagina, part, desligada)
+		desligada = !desligada
+	}
+	// A 31ª não muda nada e não tem resposta: a próxima mensagem que chega é a senha da tela.
+	daPagina(t, pagina, map[string]any{"tipo": "camera", "ligada": !desligada})
+	daPagina(t, pagina, map[string]any{"tipo": "tela"})
+	aPaginaTipo(t, pagina, "tela")
+	// Passado o minuto, o aviso vale de novo, e o palco é o da última mudança que valeu (a 31ª foi ignorada).
+	c.a.Relogio.Avancar(61 * time.Second)
+	daPagina(t, pagina, map[string]any{"tipo": "camera", "ligada": !desligada})
+	semCamera(t, pagina, part, desligada)
+}
+
+func TestCanal_Camera_NaoContaNasVinte(t *testing.T) {
+	c := novaCenaR(t)
+	r := c.marcada(t, c.kAna)
+	carlos := c.colegaNaReuniao(t, r.Codigo)
+	pagina, part, _ := c.aceitaMaria(t, r.Codigo, carlos)
+	desligada := true
+	for range 30 {
+		daPagina(t, pagina, map[string]any{"tipo": "camera", "ligada": !desligada})
+		semCamera(t, pagina, part, desligada)
+		desligada = !desligada
+	}
+	// Os 30 avisos não gastaram as 20 mensagens.
+	daPagina(t, pagina, map[string]any{"tipo": "senha"})
+	if s := aPaginaTipo(t, pagina, "senha"); cargaDaSenha(t, s["senha"].(string))["participante"] != part {
+		t.Fatalf("a senha é de outro participante: %v", s)
+	}
+
+	// E as 20 mensagens não gastam os avisos: outro canal, com a janela das 20 cheia.
+	c2 := novaCenaR(t)
+	r2 := c2.marcada(t, c2.kAna)
+	carlos2 := c2.colegaNaReuniao(t, r2.Codigo)
+	pagina2, part2, _ := c2.aceitaMaria(t, r2.Codigo, carlos2)
+	for range maxVinte - 1 { // o pedir já gastou uma das 20
+		daPagina(t, pagina2, map[string]any{"tipo": "tela"})
+		aPaginaTipo(t, pagina2, "tela")
+	}
+	daPagina(t, pagina2, map[string]any{"tipo": "tela"})
+	aPaginaErro(t, pagina2, "limite") // a janela das 20 está cheia
+	daPagina(t, pagina2, map[string]any{"tipo": "camera", "ligada": false})
+	semCamera(t, pagina2, part2, true)
+}
+
+func TestCanal_Camera_DepoisDoVoltou(t *testing.T) {
+	c := novaCenaR(t)
+	r := c.marcada(t, c.kAna)
+	carlos := c.colegaNaReuniao(t, r.Codigo)
+	pagina, part, m := c.aceitaMaria(t, r.Codigo, carlos)
+	pagina.Close(websocket.StatusNormalClosure, "")
+
+	nova := c.voltaDoCanal(t, r.Codigo, part, m["volta"])
+	aPaginaTipo(t, nova, "voltou")
+	semCamera(t, nova, part, false) // o palco que a sala já tem chega logo depois do voltou
+	// O aviso da câmera é a primeira mensagem depois do voltou: a chave anterior para de valer.
+	daPagina(t, nova, map[string]any{"tipo": "camera", "ligada": false})
+	semCamera(t, nova, part, true)
+	velha := c.voltaDoCanal(t, r.Codigo, part, m["volta"])
+	aPaginaErro(t, velha, "invalido")
+	esperarFechamento(t, velha)
+}

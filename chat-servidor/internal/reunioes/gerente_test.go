@@ -212,18 +212,21 @@ func (a *avisosFalsos) limpar() {
 type canalFalso struct {
 	mu      sync.Mutex
 	msgs    []map[string]any
+	crus    []string // as mesmas mensagens, em JSON, com a ordem dos campos
 	fechado bool
 	tarde   int // mensagens que chegaram depois do Fechar
 }
 
 func (c *canalFalso) Mandar(msg any) {
 	m := emJSON(msg)
+	cru, _ := json.Marshal(msg)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.fechado {
 		c.tarde++
 	}
 	c.msgs = append(c.msgs, m)
+	c.crus = append(c.crus, string(cru))
 }
 
 func (c *canalFalso) Fechar() {
@@ -236,6 +239,16 @@ func (c *canalFalso) mensagens() []map[string]any {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return slices.Clone(c.msgs)
+}
+
+// ultima é a última mensagem, em JSON.
+func (c *canalFalso) ultima() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.crus) == 0 {
+		return ""
+	}
+	return c.crus[len(c.crus)-1]
 }
 
 func (c *canalFalso) tipos() []string {

@@ -677,3 +677,45 @@ func TestFalso_ComandosEEstado(t *testing.T) {
 		t.Fatalf("Tirar fora do ar: %v; queria ErrSemResposta", err)
 	}
 }
+
+func TestAcompanhar_Palco(t *testing.T) {
+	a := novoAgente(t)
+	c := a.cliente(t)
+	a.eventos = func(w http.ResponseWriter, r *http.Request) {
+		sse(w, fmt.Sprintf(`{"tipo":"palco","sala":%q,"largura":1920,"altura":1080,"quadros":[{"participante":%q,"tela":false,"x":0,"y":0,"l":960,"a":540},{"participante":%q,"tela":true,"x":960,"y":0,"l":960,"a":540}]}`,
+			sala, participante, participante))
+		<-r.Context().Done()
+	}
+	evs, _ := acompanhar(t, c)
+	ev := esperar(t, evs)
+	quer := video.Evento{Tipo: "palco", Sala: sala, Largura: 1920, Altura: 1080, Quadros: []video.Quadro{
+		{Participante: participante, X: 0, Y: 0, L: 960, A: 540},
+		{Participante: participante, Tela: true, X: 960, Y: 0, L: 960, A: 540}}}
+	if ev.Tipo != quer.Tipo || ev.Sala != quer.Sala || ev.Largura != quer.Largura || ev.Altura != quer.Altura ||
+		!slices.Equal(ev.Quadros, quer.Quadros) {
+		t.Fatalf("o evento palco lido é %+v; queria %+v", ev, quer)
+	}
+}
+
+func TestEstado_Palco(t *testing.T) {
+	a := novoAgente(t)
+	c := a.cliente(t)
+	a.eventos = func(w http.ResponseWriter, r *http.Request) {
+		sse(w, fmt.Sprintf(`{"tipo":"estado","agora":%d,"freeswitch":true,"salas":[`+
+			`{"sala":%q,"participantes":[],"palco":{"largura":1920,"altura":1080,"quadros":[{"participante":%q,"tela":false,"x":0,"y":0,"l":1920,"a":1080}]}},`+
+			`{"sala":"outra","participantes":[]}]}`, a.agora().UnixMilli(), sala, participante))
+		<-r.Context().Done()
+	}
+	evs, _ := acompanhar(t, c)
+	ev := esperar(t, evs)
+	if ev.Tipo != "estado" || len(ev.Salas) != 2 {
+		t.Fatalf("o estado lido é %+v", ev)
+	}
+	quer := &video.Palco{Largura: 1920, Altura: 1080, Quadros: []video.Quadro{{Participante: participante, L: 1920, A: 1080}}}
+	if p := ev.Salas[0].Palco; p == nil || p.Largura != quer.Largura || p.Altura != quer.Altura || !slices.Equal(p.Quadros, quer.Quadros) {
+		t.Fatalf("o palco da primeira sala é %+v; queria %+v", p, quer)
+	}
+	if ev.Salas[1].Palco != nil {
+		t.Fatalf("a sala sem palco leu o palco %+v", ev.Salas[1].Palco)
+	}
+}
