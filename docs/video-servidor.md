@@ -617,15 +617,15 @@ https://<endereço>:7443/agente/v1/saude
 Deve aparecer `{"ok":true}`.
 
 **A imagem ou o som do outro não chegam na reunião de teste.**
-A página entrou na reunião (o chat e o agente estão bem), mas a imagem e o som não chegam, ou a página mostra `A conexão caiu. Entrando de novo…` sem parar. É quase sempre uma porta fechada para o vídeo. Confira, nesta ordem:
+A página entrou na reunião (o chat e o agente estão bem), mas a imagem e o som não chegam: com as portas da imagem e do som fechadas e sem o TURN, a reunião aparece sem imagem e, depois de uns 30 segundos, a página mostra `Você saiu da reunião`. É quase sempre uma porta fechada para o vídeo. Confira, nesta ordem:
 
 - **A porta do vídeo (a TCP 443, ou a 7443 se o chat e o vídeo dividem um IP público só).** É por ela que a página fala com o servidor de vídeo. Se ela estivesse fechada, a página não entraria na reunião: `O servidor de reuniões não respondeu` (veja a próxima pergunta) é o sinal. Abra o endereço da conferência do passo 4 de outra rede e veja `{"ok":true}`;
 - **As portas da imagem e do som:** a UDP 16384 a 16683, abertas de entrada para qualquer endereço, na rede da nuvem, em qualquer firewall e, se a VM fica atrás de um roteador, no redirecionamento dele (passo 1, item 2). É a causa mais comum de entrar e não ver nem ouvir ninguém;
 - **O TURN** (a UDP 3478, a TCP 5349 e a UDP 49152 a 49451). Quem está numa rede que bloqueia o UDP chega pelo TURN sobre TLS, na 5349. Se o celular no 4G entra, e o PC no escritório não (ou o contrário), o TURN ou o UDP daquela rede é o problema. Veja se o coturn está no ar:
 
-```
-systemctl status coturn
-```
+  ```
+  systemctl status coturn
+  ```
 
   Se ele não estiver `active (running)`, veja os registros dele (passo 8).
 - **O IP público da VM** tem de ser o que está na configuração, e fixo (passo 1). Se o IP mudou, a imagem não chega.
