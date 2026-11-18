@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/LucasCPena/starsonic-phone/video-servidor/internal/mosaico"
 	"github.com/LucasCPena/starsonic-phone/video-servidor/internal/senha"
 )
 
@@ -153,7 +154,7 @@ func decidir(f map[string][]string, chave []byte, uso *senha.UsoUnico, agora fun
 		acoes = append(acoes, acao{"set", "rtp_secure_media=mandatory:AES_CM_128_HMAC_SHA1_80"})
 	}
 	if s.Tela {
-		acoes = append(acoes, acao{"set", "video_reservation_id=tela"})
+		acoes = append(acoes, acao{"set", "video_reservation_id=" + mosaico.ReservaDaTela})
 	}
 	var bandeiras []string
 	if s.Papel == senha.Fora {
