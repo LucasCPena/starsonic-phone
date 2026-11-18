@@ -397,7 +397,7 @@ async function oMosaicoInteiroAparece(page: Page): Promise<void> {
         const video = um('#mosaico') as HTMLVideoElement | null;
         const doPalco = palco ? getComputedStyle(palco) : null;
         const daMoldura = moldura ? getComputedStyle(moldura) : null;
-        return {
+        const antes = {
           caixas: {
             telaReuniao: retangulo('.tela-reuniao'),
             palco: retangulo('.palco'),
@@ -430,6 +430,33 @@ async function oMosaicoInteiroAparece(page: Page): Promise<void> {
             paused: video.paused,
           },
         };
+        // Depois das de cima: o width que o quadros.js deu; a moldura com o estilo calculado de novo; e uma sonda com
+        // as unidades do container, posta na área, e a moldura ao lado dela.
+        const larguraNoStyle = moldura?.style.width ?? null;
+        let molduraDepoisDeRecalcular = null;
+        let sonda = null;
+        let molduraDepoisDaSonda = null;
+        if (palco && moldura) {
+          moldura.style.outlineOffset = '0px';
+          molduraDepoisDeRecalcular = { caixa: retangulo('.moldura'), width: getComputedStyle(moldura).width };
+          const s = document.createElement('div');
+          Object.assign(s.style, {
+            position: 'absolute',
+            left: '0',
+            top: '0',
+            width: '100cqw',
+            height: '100cqh',
+            visibility: 'hidden',
+            pointerEvents: 'none',
+          });
+          palco.append(s);
+          const { x, y, width, height } = s.getBoundingClientRect();
+          sonda = { x, y, width, height };
+          molduraDepoisDaSonda = retangulo('.moldura');
+          s.remove();
+          moldura.style.outlineOffset = '';
+        }
+        return { ...antes, larguraNoStyle, molduraDepoisDeRecalcular, sonda, molduraDepoisDaSonda };
       })
       .catch((e: Error) => ({ semMedidas: e.message }));
     const mensagem = erro instanceof Error ? erro.message : String(erro);
@@ -457,6 +484,92 @@ test('sem palco, o mosaico inteiro depois de 3 s', async ({ page }) => {
   await expect(page.locator('#mosaico')).toBeVisible();
   await expect(moldura(page)).not.toHaveAttribute('aria-hidden');
   await expect(todosOsQuadros(page)).toHaveCount(0);
+});
+
+/**
+ * A moldura do mosaico inteiro tem a caixa que a área dá: o maior 16:9 que cabe nela, até 1120 px de largura, no
+ * centro; o #mosaico, a mesma caixa. Devolve o que limitou a largura.
+ */
+async function conferirAMoldura(page: Page): Promise<'1120' | 'altura' | 'largura'> {
+  const { l, a } = await area(page).evaluate((e) => ({ l: e.clientWidth, a: e.clientHeight }));
+  const largura = Math.floor(Math.min(l, 1120, (a * 16) / 9));
+  const ar = await caixa(area(page));
+  const m = await caixa(moldura(page));
+  const v = await caixa(page.locator('#mosaico'));
+  expect(m.width, 'a largura da moldura').toBe(largura);
+  expect(Math.abs(m.height - (largura * 9) / 16), 'a altura da moldura, em 16:9').toBeLessThanOrEqual(1);
+  expect(Math.abs(m.x + m.width / 2 - (ar.x + ar.width / 2)), 'no centro, na horizontal').toBeLessThanOrEqual(1);
+  expect(Math.abs(m.y + m.height / 2 - (ar.y + ar.height / 2)), 'no centro, na vertical').toBeLessThanOrEqual(1);
+  dentro(m, ar, 'a moldura');
+  for (const k of ['x', 'y', 'width', 'height'] as const) {
+    expect(Math.abs(v[k] - m[k]), `o #mosaico: ${k}`).toBeLessThanOrEqual(1);
+  }
+  return largura === 1120 ? '1120' : largura === l ? 'largura' : 'altura';
+}
+
+/** Sem palco por 3 s: o mosaico inteiro. */
+async function semPalcoAteOMosaico(page: Page): Promise<void> {
+  await mosaico(page, DOIS);
+  await page.clock.runFor(3_000);
+  await expect(area(page)).toHaveAttribute('data-modo', 'mosaico');
+}
+
+const larguraNoStyle = (page: Page) => moldura(page).evaluate((e: HTMLElement) => e.style.width);
+
+test('o mosaico inteiro tem tamanho mesmo quando o CSS não dá nenhum', async ({ page }) => {
+  // O que o Chromium do CI calculou: a largura da moldura em 0. A regra da folha da página passa a dizer isso.
+  await naReuniao(page);
+  const achou = await page.evaluate(() => {
+    for (const folha of document.styleSheets) {
+      for (const r of folha.cssRules) {
+        if (r instanceof CSSStyleRule && r.selectorText === '.moldura') {
+          r.style.width = '0px';
+          return true;
+        }
+      }
+    }
+    return false;
+  });
+  expect(achou).toBe(true);
+  await semPalcoAteOMosaico(page);
+  await expect(async () => expect(await conferirAMoldura(page)).toBe('1120')).toPass();
+});
+
+test('o mosaico inteiro na janela de sempre, na baixa, e de uma para a outra', async ({ page }) => {
+  await naReuniao(page);
+  await semPalcoAteOMosaico(page);
+  await expect(async () => expect(await conferirAMoldura(page)).toBe('1120')).toPass();
+  await page.setViewportSize({ width: 1280, height: 480 });
+  await expect(async () => expect(await conferirAMoldura(page)).toBe('altura')).toPass();
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await expect(async () => expect(await conferirAMoldura(page)).toBe('1120')).toPass();
+});
+
+test('na janela baixa, o mosaico inteiro vai pela altura', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 480 });
+  await naReuniao(page);
+  await semPalcoAteOMosaico(page);
+  await expect(async () => expect(await conferirAMoldura(page)).toBe('altura')).toPass();
+});
+
+test('o mosaico inteiro sai sem deixar a largura', async ({ page }) => {
+  // Um palco do tamanho do vídeo traz os quadros: a moldura volta a ter 1 px, sem a largura do mosaico inteiro.
+  const { canal } = await naReuniao(page);
+  await semPalcoAteOMosaico(page);
+  await expect(async () => expect(await conferirAMoldura(page)).toBe('1120')).toPass();
+  canal.mandar(mensagemDo(DOIS));
+  await expect(quadro(page, camDe(CARLOS))).toHaveAttribute('data-mostra', 'video');
+  expect(await larguraNoStyle(page)).toBe('');
+  const m = await caixa(moldura(page));
+  expect([m.width, m.height]).toEqual([1, 1]);
+  // De novo o mosaico inteiro, e o Sair: nenhuma largura fica.
+  await mosaico(page, { largura: 1280, altura: 720, quadros: emGrade(1280, 720, 2, 1, [carlos, eu]) });
+  await page.clock.runFor(3_000);
+  await expect(area(page)).toHaveAttribute('data-modo', 'mosaico');
+  await expect(async () => expect(await conferirAMoldura(page)).toBe('1120')).toPass();
+  await botao(page, 'Sair').click();
+  await expect(titulo(page, 'Você saiu da reunião')).toBeVisible();
+  expect(await larguraNoStyle(page)).toBe('');
 });
 
 test('duas pessoas', async ({ page }) => {
@@ -848,6 +961,12 @@ test('o tamanho que não confere vira o mosaico inteiro', async ({ page }) => {
 
 test.describe('o celular em pé', () => {
   test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+
+  test('o mosaico inteiro vai pela largura', async ({ page }) => {
+    await naReuniao(page);
+    await semPalcoAteOMosaico(page);
+    await expect(async () => expect(await conferirAMoldura(page)).toBe('largura')).toPass();
+  });
 
   test('a grade, e a tela em cima', async ({ page }) => {
     const QUATRO_OUTROS: Palco = {

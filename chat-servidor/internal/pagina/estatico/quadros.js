@@ -11,6 +11,8 @@ const SVG = 'http://www.w3.org/2000/svg';
 const MAX_PIXELS_POR_PONTO = 2;
 /** O botão de voltar fica a esta distância do canto do quadro grande, em px. */
 const AFASTAR_DO_GRANDE = 14;
+/** A maior largura da moldura do mosaico inteiro, em px (a de antes do palco). */
+const MAIOR_MOSAICO_INTEIRO = 1120;
 
 // Os textos: as etiquetas e os nomes ditos. A tela "minha" é a de quem a compartilha (o voce dela no palco).
 const nomeDe = (q) => (q.nome === '' ? 'Participante' : q.nome);
@@ -173,9 +175,12 @@ export function criarQuadros({ raiz, relogio }) {
     else moldura.setAttribute('aria-hidden', 'true');
     if (modo === 'mosaico') {
       tirarTudo();
+      medirAMoldura();
       devolverOFoco(foco);
       return;
     }
+    // Fora do mosaico inteiro, a largura dele sairia por cima do 1 px da regra que esconde a moldura.
+    moldura.style.width = '';
     const area = { l: raiz.clientWidth, a: raiz.clientHeight };
     arrumado = arrumar({ palco: p, area, emPe, aumentado });
     const doPalco = p?.quadros ?? [];
@@ -202,6 +207,14 @@ export function criarQuadros({ raiz, relogio }) {
     porOGire(arrumado.gire);
     devolverOFoco(foco);
     pintar();
+  }
+
+  // O mosaico inteiro: a moldura com o maior 16:9 que cabe na área, até MAIOR_MOSAICO_INTEIRO; a altura é a do
+  // aspect-ratio. A largura vem da medida da área, e não das unidades do container: um navegador as deixou em zero.
+  function medirAMoldura() {
+    const l = raiz.clientWidth;
+    const a = raiz.clientHeight;
+    moldura.style.width = l > 0 && a > 0 ? `${Math.floor(Math.min(l, MAIOR_MOSAICO_INTEIRO, (a * 16) / 9))}px` : '';
   }
 
   // O foco de antes da arrumação, só quando ele está no palco (o dos controles nunca é tocado): o elemento, o quadro
@@ -480,6 +493,7 @@ export function criarQuadros({ raiz, relogio }) {
     palcoVisto = null;
     aumentado = null;
     tirarTudo();
+    moldura.style.width = '';
   }
 
   return {

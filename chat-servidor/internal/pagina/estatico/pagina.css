@@ -767,11 +767,11 @@ main {
   margin: 8px;
 }
 
-/* O mosaico inteiro (o servidor de vídeo sem o palco): a moldura 16:9, do maior tamanho que cabe, até 1120 px. */
+/* O mosaico inteiro (o servidor de vídeo sem o palco): a moldura 16:9. O quadros.js dá a largura dela, o maior 16:9
+   que cabe na área, até 1120 px; a largura daqui é só a de antes da primeira medida. */
 .moldura {
   position: relative;
-  width: min(100%, 1120px); /* sem as unidades do container */
-  width: min(100cqw, 1120px, 100cqh * 16 / 9);
+  width: min(100%, 1120px);
   aspect-ratio: 16 / 9;
 }
 
