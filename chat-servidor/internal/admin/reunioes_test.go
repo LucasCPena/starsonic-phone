@@ -35,9 +35,9 @@ const (
 	tEndereco        = "Escreva só o endereço do servidor de vídeo (e a porta, se tiver), sem https://."
 	tChave43         = "A chave tem 43 caracteres. Copie de novo a chave mostrada na instalação."
 	tLimite          = "O número de reuniões ao mesmo tempo vai de 1 a 20."
-	// tLinkAindaNaoAbre é a frase do cartão da reunião de teste até a página das reuniões chegar (a revisão final, M6).
-	// A etapa 1b a tira.
-	tLinkAindaNaoAbre = "O link só abre no navegador a partir da próxima versão do chat, a que traz a página das reuniões."
+	// tLinkAindaNaoAbre é a frase que o cartão da reunião de teste teve até a página das reuniões chegar. A etapa 1b a
+	// tirou: o link abre a página, e o cartão não pode mais dizer o contrário.
+	tLinkAindaNaoAbre = "O link só abre no navegador a partir da próxima versão do chat"
 )
 
 // agenteDeVideo é o agente do servidor de vídeo de verdade, num httptest: o estado e os eventos da seção 5.
@@ -149,9 +149,8 @@ func TestReunioes_SemConfig(t *testing.T) {
 		"Reuniões ao mesmo tempo", "O padrão é 2, para a VM de 6 vCPU.", "AGORA", "0 reuniões acontecendo · 0 pessoas",
 		"EMPRESAS", "REUNIÃO DE TESTE", "Criar a reunião de teste",
 		"A chave aparece no fim da instalação do servidor de vídeo. Para ver de novo, rode na VM de vídeo: sudo starsonic-video mostrar-chave",
-		"Abra o link em dois aparelhos, um deles um celular, para conferir a instalação. A reunião de teste não tem sala de espera e vale por 2 horas.",
-		tLinkAindaNaoAbre)
-	esperarSem(t, corpo, "Chave guardada", "Vale até", "Copiar o link")
+		"Abra o link em dois aparelhos, um deles um celular, para conferir a instalação. A reunião de teste não tem sala de espera e vale por 2 horas.")
+	esperarSem(t, corpo, "Chave guardada", "Vale até", "Copiar o link", tLinkAindaNaoAbre)
 
 	resp, corpo = n.get("/admin/")
 	esperarStatus(t, resp, corpo, http.StatusOK)
@@ -425,7 +424,8 @@ func TestReunioes_Teste(t *testing.T) {
 	_, corpo = n.get("/admin/reunioes")
 	// O relógio dos testes é 2026-11-04 12:00 UTC, 09:00 em Brasília: o teste vale até as 11:00.
 	esperarTexto(t, corpo, p.a.Base+"/r/"+velha.Codigo, "Copiar o link", "Vale até 11:00", `id="copiar"`, "/admin/estatico/copiar.js",
-		tLinkAindaNaoAbre)
+		"Abra o link em dois aparelhos, um deles um celular, para conferir a instalação.")
+	esperarSem(t, corpo, tLinkAindaNaoAbre)
 	if status, bilhete := p.a.AbrirPagina(velha.Codigo); status != http.StatusOK || bilhete == "" {
 		t.Fatalf("o abrir do código novo deu %d", status)
 	}

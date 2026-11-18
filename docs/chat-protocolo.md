@@ -380,7 +380,7 @@ A página é servida pelo chat em `https://<endereço do chat>/r/<código>`. Que
 - O bilhete vale uma vez, por 30 segundos, e só para o canal desta reunião.
 - **Os erros:**
   - `404 naoEncontrado`: o código não existe, a reunião não vale, foi cancelada, ou a empresa está sem as reuniões liberadas;
-  - `429 tentativas`, com `esperarSegundos`: já são 20 tentativas que falharam no último minuto deste endereço, o abrir que deu `404 naoEncontrado` contando junto com o `entrar` do app que falha (o `404 naoEncontrado`, o `403 outraEmpresa` e o `403 semReunioes`; seção 9, `entrar`). O servidor confere isso primeiro, e responde assim até com um código certo. O abrir que dá certo não conta nessas 20: a página pode abrir de novo. Ele tem a janela dele, à parte: o mesmo `429 tentativas`, com `esperarSegundos`, também vem quando já são 60 aberturas que deram certo no último minuto deste endereço. As duas janelas são conferidas antes de o servidor ler a reunião, e uma não gasta a outra.
+  - `429 tentativas`, com `esperarSegundos`: já são 20 tentativas que falharam no último minuto deste endereço, o abrir que deu `404 naoEncontrado` contando junto com o `entrar` do app que falha (o `404 naoEncontrado`, o `403 outraEmpresa` e o `403 semReunioes`; seção 9, `entrar`). O servidor confere isso primeiro, e responde assim até com um código certo. O abrir que dá certo não conta nessas 20: a página pode abrir de novo. Ele tem a janela dele, à parte: o mesmo `429 tentativas`, com `esperarSegundos`, também vem quando já são 60 aberturas que deram certo no último minuto deste endereço. As duas janelas são conferidas antes de o servidor ler a reunião, e uma não gasta a outra. Gastas as 60 aberturas boas do último minuto, todo abrir daquele endereço, com um código bom ou ruim, responde `429 tentativas` até a janela andar.
 
 **O canal** — `GET /api/v1/pagina/canal?bilhete=<bilhete>`, como WebSocket.
 - **A origem** tem de ser a do próprio chat (`https://<endereço do chat>`, com a porta quando ele usa uma) ou, no modo de teste, uma das origens do `--origem`. Sem a origem, ou com outra, responde `403 proibido`, e o bilhete continua valendo.
@@ -389,6 +389,7 @@ A página é servida pelo chat em `https://<endereço do chat>/r/<código>`. Que
 - Sem um `pedir` em 2 minutos depois de abrir, o servidor fecha o canal (1000).
 - **Até 20 mensagens por minuto** da página. Passando disso, o servidor responde `{"tipo": "erro", "erro": "limite"}` e ignora a mensagem.
 - **Fechar o canal** enquanto espera retira o pedido. Depois de aceito, fechar o canal não tira ninguém da reunião.
+- **A página abre duas vezes.** Ela chama o abrir ao carregar, para saber qual é a reunião e mostrar a entrada, e de novo ao pedir. O bilhete do segundo abrir é o que abre o canal; o do primeiro não é guardado, e valeria só 30 segundos, muito pouco para a pessoa escrever o nome. Depois de uma queda, a página entra de novo pelo `senha`, que renova só a ligação de vídeo. Se os dois canais caem (este e o da ligação), ela abre outro canal (o abrir dá um bilhete novo) e vai pelo `voltar` primeiro; o `senha` vem depois dele, como a chave de volta explica abaixo.
 
 As mensagens são JSON em texto, sempre com o `tipo`. Da página para o servidor:
 ```json

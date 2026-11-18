@@ -384,6 +384,15 @@ Depois disso, o mesmo ramal entra como uma pessoa nova, sem as conversas antigas
 
 A partir da versão 0.2.0, o chat também cuida das reuniões com link. O vídeo e o som delas passam por um servidor de vídeo, numa VM só dele, que tem o guia próprio: `docs/video-servidor.md`.
 
+**O link da reunião abre a página, no navegador.** O link é `https://<endereço do chat>/r/<código>`, e é o próprio chat que serve a página: quem recebe o link não instala nada e não tem conta. O que a pessoa de fora vê:
+
+- **Uma tela de entrada,** com o tipo da reunião (`Reunião marcada`, `Reunião agora` ou `Reunião de teste`) e o assunto. O navegador pede a câmera e o microfone, e ela escolhe se entra com eles ligados. Escreve o nome e clica em `Pedir para entrar`.
+- **A espera.** O pedido chega aos colegas que estão na reunião, e a pessoa vê `Aguardando ser aceito…`. Sem resposta em 10 minutos, o pedido acaba. Se nenhum colega abriu a reunião ainda, ela vê `A reunião ainda não começou` e espera na página. A reunião de teste não tem sala de espera: a pessoa entra na hora.
+- **A reunião,** com a imagem de todos, o `Microfone`, a `Câmera`, o `Compartilhar a tela` (só em quem tem essa função no navegador: o PC, e não o celular) e o `Sair`. Em cima fica `Nada é gravado`.
+- **Os avisos,** no lugar da reunião: `Este link não vale mais` (cancelada, passou da data ou já acabou), `A reunião está cheia` (10 pessoas), `Muita gente esperando para entrar`, `Você foi tirado da reunião`, `A reunião acabou`, `Muitas tentativas` (o mesmo endereço tentou abrir links demais) e `O servidor de reuniões não respondeu` (o chat não alcançou o servidor de vídeo: veja o passo 11 e o guia do vídeo).
+
+O endereço do chat precisa ser alcançável pelo navegador de quem entra, e o do servidor de vídeo também (a porta 443 dele, ou a 7443). Nada da reunião é gravado: a página mostra `Nada é gravado` o tempo todo.
+
 1. **Ligue o chat ao servidor de vídeo** pelo cartão `REUNIÕES` da lista das empresas, na administração do chat. Siga o passo 3 do guia do servidor de vídeo.
 2. **Deixe a VM do chat alcançar a VM de vídeo na porta 443** (ou na 7443, se o chat e o vídeo dividem um IP público só: veja o item 4). O chat fala com o servidor de vídeo por HTTPS, pelo endereço dele. Se um firewall limita a saída da VM do chat, libere essa porta para a VM de vídeo. Se as duas VMs ficam atrás do mesmo roteador, a do chat chega à de vídeo pelo IP público, e o roteador precisa fazer o "NAT loopback" (passo 1).
 3. **Guarde as cópias de segurança do chat com o mesmo cuidado que a chave do servidor de vídeo.** A chave fica no banco do chat, e a cópia da noite (passo 5) a leva junto: quem tem uma cópia tem a chave.

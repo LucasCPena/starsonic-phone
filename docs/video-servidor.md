@@ -308,7 +308,7 @@ O relógio do servidor de vídeo está <n> s adiantado em relação ao do chat. 
 
 A chave fica guardada no banco do chat, junto com o resto da configuração. Por isso, a cópia de segurança do chat (o passo 5 do guia do chat) também a leva: um chat que volta de uma cópia continua ligado ao mesmo servidor de vídeo, sem colar a chave de novo.
 
-O cartão `REUNIÃO DE TESTE` (com o botão `Criar a reunião de teste`) também já aparece, mas a página da reunião pelo navegador chega na próxima versão do chat. Até lá, o link da reunião de teste ainda não abre uma reunião.
+O cartão `REUNIÃO DE TESTE` (com o botão `Criar a reunião de teste`) cria uma reunião só para conferir a instalação, e o link dela abre a página da reunião no navegador. O passo 4 diz como fazer essa conferência.
 
 ## 4. Conferir a instalação
 
@@ -350,7 +350,17 @@ Entre as linhas, deve aparecer `Verification: OK`. Essa porta é a do app (as re
 
 **O teste do cartão.** Na página `Reuniões` da administração do chat, clique em `Testar o servidor de vídeo`. Você deve ver de novo `O servidor de vídeo respondeu: versão <versão>, FreeSWITCH no ar.`, com o uso de agora.
 
-A reunião de teste pelo navegador chega com a página das reuniões, na próxima versão do chat.
+**A reunião de teste, pelo navegador.** É a conferência que mostra que a imagem e o som chegam de verdade. Faça com dois aparelhos: um PC e um celular. Se puder, ponha o celular na internet do chip (4G ou 5G, com o Wi-Fi desligado), para a reunião passar pela rede de fora, como a de quem entra de casa.
+
+1. Na página `Reuniões` da administração do chat, no cartão `REUNIÃO DE TESTE`, clique em `Criar a reunião de teste`. O cartão mostra o link (`https://<endereço do chat>/r/<código>`), com o botão `Copiar o link` e o `Vale até`, que é 2 horas depois. A reunião de teste não tem sala de espera.
+2. Abra o link no PC. Aparece a tela de entrada, com `Reunião de teste` em cima e o título `Reunião`. O navegador pede a câmera e o microfone: permita. Você vê a sua imagem, os botões `Microfone` e `Câmera`, o campo `Seu nome` e o aviso `Nada é gravado.` Escreva um nome e clique em `Pedir para entrar`. Aparece `Entrando na reunião…` e, em poucos segundos, a reunião: a imagem no meio, a faixa `Nada é gravado` em cima e, embaixo, `Microfone`, `Câmera`, `Compartilhar a tela` e `Sair`.
+3. Abra o mesmo link no celular, com outro nome, e entre do mesmo jeito. O celular não mostra o `Compartilhar a tela`. Com o celular em pé, aparece o aviso `Gire o celular para ver a reunião maior.`
+4. Fale nos dois aparelhos, um de cada vez (use um fone, ou afaste os dois, para não dar eco). Cada um deve ouvir o outro sem tocar em mais nada, e cada um deve ver o quadro do outro com o nome dele. Os dois veem o mosaico com todos.
+5. No PC, clique em `Câmera` para desligar. Em uns 5 segundos, o quadro do PC no celular vira um quadro escuro, só com o nome. Clique de novo, e a imagem volta.
+6. Clique em `Sair`. Aparece `Você saiu da reunião` e o botão `Entrar de novo`.
+
+Se a imagem ou o som do outro aparelho não chegam, veja "A imagem não chega", no passo 9.
+
 
 ## 5. Atualizar
 
@@ -606,6 +616,22 @@ https://<endereço>:7443/agente/v1/saude
 ```
 
 Deve aparecer `{"ok":true}`.
+
+**A imagem ou o som do outro não chegam na reunião de teste.**
+A página entrou na reunião (o chat e o agente estão bem), mas a imagem e o som não chegam, ou a página mostra `A conexão caiu. Entrando de novo…` sem parar. É quase sempre uma porta fechada para o vídeo. Confira, nesta ordem:
+
+- **A porta do vídeo (a TCP 443, ou a 7443 se o chat e o vídeo dividem um IP público só).** É por ela que a página fala com o servidor de vídeo. Se ela estivesse fechada, a página não entraria na reunião: `O servidor de reuniões não respondeu` (veja a próxima pergunta) é o sinal. Abra o endereço da conferência do passo 4 de outra rede e veja `{"ok":true}`;
+- **As portas da imagem e do som:** a UDP 16384 a 16683, abertas de entrada para qualquer endereço, na rede da nuvem, em qualquer firewall e, se a VM fica atrás de um roteador, no redirecionamento dele (passo 1, item 2). É a causa mais comum de entrar e não ver nem ouvir ninguém;
+- **O TURN** (a UDP 3478, a TCP 5349 e a UDP 49152 a 49451). Quem está numa rede que bloqueia o UDP chega pelo TURN sobre TLS, na 5349. Se o celular no 4G entra, e o PC no escritório não (ou o contrário), o TURN ou o UDP daquela rede é o problema. Veja se o coturn está no ar:
+
+```
+systemctl status coturn
+```
+
+  Se ele não estiver `active (running)`, veja os registros dele (passo 8);
+- **O IP público da VM** tem de ser o que está na configuração, e fixo (passo 1). Se o IP mudou, a imagem não chega.
+
+Teste de novo com outra rede (o celular no 4G, por exemplo): se funciona numa e não na outra, o problema está na rede que falhou, e não no servidor.
 
 **O app ou a página dizem "O servidor de reuniões não respondeu".**
 O chat não está conseguindo falar com o servidor de vídeo, ou o FreeSWITCH está fora do ar. O chat continua funcionando normalmente. Na página `Reuniões` da administração do chat, clique em `Testar o servidor de vídeo` e siga o que a mensagem disser (passo 3). Na VM de vídeo, veja se os três serviços estão ligados:
