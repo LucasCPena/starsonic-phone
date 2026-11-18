@@ -4,7 +4,8 @@
 // seção 6, e as do mosaico, as da seção 7.
 //
 // Um mutex guarda o estado, e nenhum comando ao FreeSWITCH nem aviso sai com ele preso. Outro, só do arrumar, faz o
-// mosaico de cada sala mudar um arrumar por vez.
+// mosaico de cada sala mudar um arrumar por vez. O aviso do palco sai com esse outro (o arrumando) preso, de propósito,
+// para os palcos serem avisados na ordem: o "fora do mutex" do Nova vale só para o do estado, o mu.
 package salas
 
 import (
@@ -656,7 +657,7 @@ func (s *Salas) arrumar(ctx context.Context, sala string, tudo, avisar bool) {
 		}
 	}
 	var aviso *mosaico.Palco
-	if !r.layoutRecusado && (m.palco == nil || !mesmoPalco(*m.palco, plano.Palco)) {
+	if !r.layoutRecusado && !r.semSala && (m.palco == nil || !mesmoPalco(*m.palco, plano.Palco)) {
 		m.palco = copiarPalco(plano.Palco)
 		if avisar {
 			aviso = copiarPalco(plano.Palco)
@@ -678,18 +679,25 @@ const (
 // resultadoDoMosaico é o que deu certo dos comandos de um arrumar.
 type resultadoDoMosaico struct {
 	layoutRecusado bool           // o vid-res ou o vid-layout recusado: o resto não foi
+	semSala        bool           // a sala ou a ligação sumiram no meio: o resto não foi, e o palco não sai
 	banda          int            // naoMandado, aceito ou recusado
 	celulas        map[string]int // uuid -> a célula que ficou dita ao FreeSWITCH; 0: a reserva recusada
 }
 
 // mandarAoMosaico manda os comandos, na ordem, e para no vid-res ou no vid-layout recusado. Cada recusa vai ao registro
-// numa linha, só com o nome do comando: a resposta do FreeSWITCH leva nomes de canal.
+// numa linha, só com o nome do comando: a resposta do FreeSWITCH leva nomes de canal. Não é recusa, e não vai ao
+// registro: a sala que acabou no FreeSWITCH, o ESL que caiu e o contexto que acabou (o arrumar para ali, e o acabou, o
+// Esvaziar ou a reconexão vêm depois), nem o vid-res-id de um membro que já saiu (o del-member dele está na fila). O
+// comando que não deu certo deixa o que ele mudaria desconhecido, como numa recusa.
 func mandarAoMosaico(ctx context.Context, api API, sala string, comandos []mosaico.Comando) resultadoDoMosaico {
 	r := resultadoDoMosaico{celulas: map[string]int{}}
 	for _, c := range comandos {
 		resp, err := api.API(ctx, "conference "+sala+" "+c.Texto)
 		ok := err == nil && comandoAceito(resp)
-		if !ok {
+		if !ok && semASala(ctx, sala, err) {
+			r.semSala = true
+		}
+		if !ok && !r.semSala && !(c.Tipo == "celula" && err == nil && membroJaSaiu(resp)) {
 			nome, _, _ := strings.Cut(c.Texto, " ")
 			slog.Warn("o FreeSWITCH recusou um comando do mosaico", "comando", nome)
 		}
@@ -711,9 +719,32 @@ func mandarAoMosaico(ctx context.Context, api API, sala string, comandos []mosai
 				r.banda = aceito
 			}
 		}
+		if r.semSala {
+			return r
+		}
 	}
 	return r
 }
+
+// semASala diz se o comando falhou porque a sala ou a ligação sumiram: o contexto acabou, o ESL caiu, ou o FreeSWITCH
+// respondeu que a conferência não existe mais ("-ERR Conference <sala> not found", do conference_api_main).
+func semASala(ctx context.Context, sala string, err error) bool {
+	if err == nil {
+		return false
+	}
+	if ctx.Err() != nil || errors.Is(err, esl.ErrDesligado) {
+		return true
+	}
+	var e *esl.ErroFS
+	return errors.As(err, &e) && e.Motivo == "Conference "+sala+" not found"
+}
+
+// usoDoVidResID é o que o FreeSWITCH responde ao vid-res-id de um membro que não está na conferência: a linha de uso
+// do comando (o conference_api_dispatch, quando o conference_api_sub_vid_res_id não acha o membro).
+const usoDoVidResID = "vid-res-id <member_id>|all <val>|clear [force]"
+
+// membroJaSaiu diz se a resposta de um vid-res-id é a do membro que já saiu da conferência.
+func membroJaSaiu(resposta string) bool { return strings.TrimSpace(resposta) == usoDoVidResID }
 
 // comandoAceito diz se o FreeSWITCH aceitou o comando: a resposta começa com +OK, e nenhuma linha dela começa com
 // -ERR (o vid-bandwidth sem o mosaico muda a banda dos membros e termina com o -ERR).

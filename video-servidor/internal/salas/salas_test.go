@@ -57,6 +57,9 @@ type apiFalsa struct {
 	respostas map[string]string
 	erros     map[string]error
 	durante   func() // roda a cada comando, fora do mutex da apiFalsa
+	// responder, quando não é nil, responde antes dos mapas: o ok falso deixa o comando para eles. Roda com o
+	// mutex da apiFalsa preso.
+	responder func(comando string) (resp string, err error, ok bool)
 }
 
 func novaAPI() *apiFalsa {
@@ -68,6 +71,11 @@ func (a *apiFalsa) API(ctx context.Context, comando string) (string, error) {
 	a.comandos = append(a.comandos, comando)
 	resp, ok := a.respostas[comando]
 	err := a.erros[comando]
+	if a.responder != nil {
+		if r, e, sim := a.responder(comando); sim {
+			resp, err, ok = r, e, true
+		}
+	}
 	durante := a.durante
 	a.mu.Unlock()
 	if durante != nil {
@@ -256,16 +264,6 @@ func semBarreira(lista []Aviso) []Aviso {
 		}
 	}
 	return saida
-}
-
-// semLayout confere que o FreeSWITCH falso não recebeu nenhuma mudança de layout da sala A.
-func semLayout(t *testing.T, fs *esltest.Servidor) {
-	t.Helper()
-	for _, c := range fs.Comandos() {
-		if strings.HasPrefix(c, "api conference "+salaA+" vid-layout") {
-			t.Errorf("o layout mudou: %q", c)
-		}
-	}
 }
 
 // semPalco são os avisos sem os do palco, para os testes de quem entra e sai.
@@ -1372,12 +1370,12 @@ func TestSalas_ComandoRecusado(t *testing.T) {
 	}
 }
 
-// O vid-res-id sem o +OK (a linha de uso, a de um membro que o FreeSWITCH não conhece): o palco sai assim mesmo, e a
-// entrada seguinte manda a reserva de novo.
+// O vid-res-id sem o +OK (a resposta vazia, a de um membro sem vídeo): o palco sai assim mesmo, e a entrada seguinte
+// manda a reserva de novo.
 func TestSalas_ReservaRecusada(t *testing.T) {
 	s, a, v := novo(t)
 	buf := registro(t)
-	a.respostas[salaACmd+"vid-res-id 1 c1 force"] = "vid-res-id <member_id>|all <val>|clear [force]\n"
+	a.respostas[salaACmd+"vid-res-id 1 c1 force"] = ""
 	s.Evento(ctx(), entra(salaA, uuidAnaCamera, anaID, false))
 	want := []Aviso{{Tipo: "entrou", Sala: salaA, Participante: anaID}, avisoPalco(palco(1920, 1080, c4(anaID, 1)))}
 	if got := v.Lista(); !reflect.DeepEqual(got, want) {
@@ -1602,5 +1600,236 @@ func TestSalas_ApresentadoraSozinhaSai(t *testing.T) {
 	want := []Aviso{{Tipo: "saiu", Sala: salaA, Participante: anaID}, {Tipo: "saiu", Sala: salaA, Participante: anaID, Tela: true}}
 	if got := v.Lista()[antes:]; !reflect.DeepEqual(got, want) {
 		t.Errorf("avisos = %+v, want %+v", got, want)
+	}
+}
+
+// naoAchou é a resposta do FreeSWITCH a um comando de uma conferência que não existe mais (conference_api.c).
+func naoAchou(sala string) error { return &esl.ErroFS{Motivo: "Conference " + sala + " not found"} }
+
+// permutacoes são todas as ordens dos uuids.
+func permutacoes(uuids []string) [][]string {
+	if len(uuids) <= 1 {
+		return [][]string{append([]string(nil), uuids...)}
+	}
+	var saida [][]string
+	for i := range uuids {
+		resto := append(append([]string(nil), uuids[:i]...), uuids[i+1:]...)
+		for _, p := range permutacoes(resto) {
+			saida = append(saida, append([]string{uuids[i]}, p...))
+		}
+	}
+	return saida
+}
+
+// semAvisoDePalco confere que nenhum dos avisos é um palco.
+func semAvisoDePalco(t *testing.T, lista []Aviso) {
+	t.Helper()
+	for _, a := range lista {
+		if a.Tipo == "palco" {
+			t.Errorf("um palco foi avisado com a sala acabando: %+v", a)
+		}
+	}
+}
+
+// rodarComPrazo roda f e falha se ela não termina em 5 s (um arrumar travado).
+func rodarComPrazo(t *testing.T, f func()) {
+	t.Helper()
+	pronto := make(chan struct{})
+	go func() {
+		defer close(pronto)
+		f()
+	}()
+	select {
+	case <-pronto:
+	case <-time.After(5 * time.Second):
+		t.Fatal("as saídas não terminaram: o arrumar travou")
+	}
+}
+
+// I1: a reunião acaba para todos de uma vez (o Encerrar com a tela no ar). A conferência some do FreeSWITCH antes dos
+// del-member, e cada comando do mosaico responde que ela não existe: nada vai ao registro, nenhum palco sai depois, e
+// as saídas terminam, em qualquer ordem.
+func TestSalas_FimDaSalaSemAviso(t *testing.T) {
+	saidas := []string{uuidAnaCamera, uuidCarlosCam, uuidBiaCamera, uuidAnaTela}
+	for _, ordem := range permutacoes(saidas) {
+		var nome []string
+		for _, u := range ordem {
+			nome = append(nome, u[len(u)-2:])
+		}
+		t.Run(strings.Join(nome, ","), func(t *testing.T) {
+			s, a, v := novo(t)
+			s.Evento(ctx(), entra(salaA, uuidAnaCamera, anaID, false))
+			s.Evento(ctx(), entra(salaA, uuidCarlosCam, carlosID, false))
+			s.Evento(ctx(), entra(salaA, uuidBiaCamera, biaID, false))
+			s.Evento(ctx(), entra(salaA, uuidAnaTela, anaID, true))
+			buf := registro(t)
+			a.Limpar()
+			a.responder = func(c string) (string, error, bool) {
+				if strings.HasPrefix(c, salaACmd) {
+					return "", naoAchou(salaA), true
+				}
+				return "", nil, false
+			}
+			antes := len(v.Lista())
+			rodarComPrazo(t, func() {
+				for _, u := range ordem {
+					s.Evento(ctx(), sai(salaA, u))
+				}
+				s.Evento(ctx(), acaba(salaA))
+			})
+			if len(mosaicoDaSalaA(a.Comandos())) == 0 {
+				t.Fatalf("nenhum comando do mosaico foi mandado: %q", a.Comandos())
+			}
+			if log := buf.String(); log != "" {
+				t.Errorf("o registro = %q, want vazio", log)
+			}
+			semAvisoDePalco(t, v.Lista()[antes:])
+			if got := s.Estado(); len(got) != 0 {
+				t.Errorf("o estado = %+v, want vazio", got)
+			}
+		})
+	}
+
+	// A conferência some no meio de um arrumar: o tamanho e o layout passaram antes, a reserva não. Nada vai ao
+	// registro, e o palco não sai.
+	t.Run("no meio do arrumar", func(t *testing.T) {
+		s, a, v := novo(t)
+		s.Evento(ctx(), entra(salaA, uuidAnaCamera, anaID, false))
+		s.Evento(ctx(), entra(salaA, uuidCarlosCam, carlosID, false))
+		s.Evento(ctx(), entra(salaA, uuidBiaCamera, biaID, false))
+		s.Evento(ctx(), entra(salaA, uuidDaviCamera, daviID, false))
+		buf := registro(t)
+		a.Limpar()
+		a.erros[salaACmd+"vid-res-id 5 c5 force"] = naoAchou(salaA)
+		antes := len(v.Lista())
+		s.Evento(ctx(), entra(salaA, uuidMariaCam, mariaID, false))
+		want := []string{salaACmd + "vid-res 1920x1086", salaACmd + "vid-layout starsonic-9", salaACmd + "vid-res-id 5 c5 force"}
+		if got := a.Comandos(); !reflect.DeepEqual(got, want) {
+			t.Errorf("comandos = %q, want %q", got, want)
+		}
+		if log := buf.String(); log != "" {
+			t.Errorf("o registro = %q, want vazio", log)
+		}
+		if got, want := v.Lista()[antes:], []Aviso{{Tipo: "entrou", Sala: salaA, Participante: mariaID}}; !reflect.DeepEqual(got, want) {
+			t.Errorf("avisos = %+v, want só o entrou (sem palco)", got)
+		}
+	})
+}
+
+// O vid-res-id de um membro que já saiu do FreeSWITCH responde a linha de uso (o del-member dele já está na fila): nada
+// vai ao registro. O resto do arrumar segue, e a reserva fica desconhecida, como numa recusa: a mudança seguinte a manda
+// de novo.
+func TestSalas_MembroQueJaSaiu(t *testing.T) {
+	s, a, v := novo(t)
+	entramQuatro(s)
+	buf := registro(t)
+	a.respostas[salaACmd+"vid-res-id 2 c2 force"] = "vid-res-id <member_id>|all <val>|clear [force]"
+	a.Limpar()
+	antes := len(v.Lista())
+	s.arrumar(ctx(), salaA, true, true)
+	want := []string{"vid-res 1920x1080", "vid-layout starsonic-4", "vid-res-id 1 c1 force", "vid-res-id 2 c2 force",
+		"vid-res-id 3 c3 force", "vid-res-id 4 c4 force", "vid-bandwidth 3mb '' 1"}
+	if got := mosaicoDaSalaA(a.Comandos()); !reflect.DeepEqual(got, want) {
+		t.Errorf("comandos = %q\nwant %q", got, want)
+	}
+	if log := buf.String(); log != "" {
+		t.Errorf("o registro = %q, want vazio", log)
+	}
+	if got := v.Lista()[antes:]; len(got) != 0 {
+		t.Errorf("avisos = %+v, want nenhum (o palco não mudou)", got)
+	}
+
+	// A mudança seguinte manda a reserva do Carlos de novo, e o palco sai.
+	delete(a.respostas, salaACmd+"vid-res-id 2 c2 force")
+	a.Limpar()
+	antes = len(v.Lista())
+	s.Evento(ctx(), entra(salaA, uuidMariaCam, mariaID, false))
+	want = []string{"vid-res 1920x1086", "vid-layout starsonic-9", "vid-res-id 2 c2 force", "vid-res-id 5 c5 force"}
+	if got := mosaicoDaSalaA(a.Comandos()); !reflect.DeepEqual(got, want) {
+		t.Errorf("comandos da entrada seguinte = %q\nwant %q", got, want)
+	}
+	p := palco(1920, 1086, c9(anaID, 1), c9(carlosID, 2), c9(biaID, 3), c9(daviID, 4), c9(mariaID, 5))
+	wantAvisos := []Aviso{{Tipo: "entrou", Sala: salaA, Participante: mariaID}, avisoPalco(p)}
+	if got := v.Lista()[antes:]; !reflect.DeepEqual(got, wantAvisos) {
+		t.Errorf("avisos = %+v\nwant %+v", got, wantAvisos)
+	}
+	if log := buf.String(); log != "" {
+		t.Errorf("o registro = %q, want vazio", log)
+	}
+}
+
+// O ESL cai no meio de um arrumar, ou o contexto acaba: a ligação sumiu, não o FreeSWITCH recusou. Nada vai ao
+// registro, o arrumar para ali, e o palco não sai (o Esvaziar ou a reconexão vêm depois).
+func TestSalas_SemLigacaoNoMeio(t *testing.T) {
+	casos := []struct {
+		nome    string
+		comando string // o que responde o erro
+		err     error
+		want    []string
+	}{
+		{"o ESL cai no vid-layout", "vid-layout starsonic-9", esl.ErrDesligado, []string{"vid-res 1920x1086", "vid-layout starsonic-9"}},
+		{"o ESL cai no vid-res-id", "vid-res-id 5 c5 force", esl.ErrDesligado, []string{"vid-res 1920x1086", "vid-layout starsonic-9", "vid-res-id 5 c5 force"}},
+		{"o contexto acaba", "vid-res 1920x1086", context.Canceled, []string{"vid-res 1920x1086"}},
+	}
+	for _, caso := range casos {
+		t.Run(caso.nome, func(t *testing.T) {
+			s, a, v := novo(t)
+			entramQuatro(s)
+			buf := registro(t)
+			c := ctx()
+			if caso.err == context.Canceled {
+				var cancelar context.CancelFunc
+				c, cancelar = context.WithCancel(ctx())
+				cancelar()
+			}
+			a.erros[salaACmd+caso.comando] = caso.err
+			a.Limpar()
+			antes := len(v.Lista())
+			s.Evento(c, entra(salaA, uuidMariaCam, mariaID, false))
+			if got := mosaicoDaSalaA(a.Comandos()); !reflect.DeepEqual(got, caso.want) {
+				t.Errorf("comandos = %q, want %q", got, caso.want)
+			}
+			if log := buf.String(); log != "" {
+				t.Errorf("o registro = %q, want vazio", log)
+			}
+			if got, want := v.Lista()[antes:], []Aviso{{Tipo: "entrou", Sala: salaA, Participante: mariaID}}; !reflect.DeepEqual(got, want) {
+				t.Errorf("avisos = %+v, want só o entrou (sem palco)", got)
+			}
+		})
+	}
+}
+
+// Uma recusa de verdade, com a sala viva, continua no registro, numa linha só com o nome do comando: nem a sala, nem
+// os participantes, nem os membros, nem a resposta do FreeSWITCH.
+func TestSalas_RecusaDeVerdade(t *testing.T) {
+	casos := []struct {
+		nome, comando, texto string
+		err                  error
+	}{
+		{"o vid-res com outro -ERR", "vid-res 1920x1086", "vid-res",
+			&esl.ErroFS{Motivo: "Conference " + salaA + " membro 4 " + daviID + " sofia/x usage <member_id>"}},
+		{"o vid-res-id sem mosaico", "vid-res-id 5 c5 force", "vid-res-id",
+			&esl.ErroFS{Motivo: "conference is not in mixing mode"}},
+		{"o vid-res-id de outra sala que não existe", "vid-res-id 5 c5 force", "vid-res-id",
+			&esl.ErroFS{Motivo: "Conference " + salaB + " not found"}},
+	}
+	for _, caso := range casos {
+		t.Run(caso.nome, func(t *testing.T) {
+			s, a, _ := novo(t)
+			entramQuatro(s)
+			buf := registro(t)
+			a.erros[salaACmd+caso.comando] = caso.err
+			s.Evento(ctx(), entra(salaA, uuidMariaCam, mariaID, false))
+			conferirRegistro(t, buf, "comando="+caso.texto)
+			log := buf.String()
+			if !strings.HasSuffix(strings.TrimSpace(log), "comando="+caso.texto) {
+				t.Errorf("o registro = %q, want a linha do %s", log, caso.texto)
+			}
+			for _, proibido := range []string{caso.err.(*esl.ErroFS).Motivo, salaB, "mixing", "not found"} {
+				if strings.Contains(log, proibido) {
+					t.Errorf("o registro tem %q: %q", proibido, log)
+				}
+			}
+		})
 	}
 }
