@@ -1518,10 +1518,10 @@ func TestCanal_Camera_NaoContaNasVinte(t *testing.T) {
 		semCamera(t, pagina, part, desligada)
 		desligada = !desligada
 	}
-	// Os 30 avisos não gastaram as 20 mensagens. O palco da sala chega antes da resposta do senha.
+	// Os 30 avisos não gastaram as 20 mensagens. O palco da sala chega junto da resposta do senha, com o valor do
+	// último aviso.
 	daPagina(t, pagina, map[string]any{"tipo": "senha"})
-	semCamera(t, pagina, part, !desligada) // o valor do último aviso
-	if s := aPaginaTipo(t, pagina, "senha"); cargaDaSenha(t, s["senha"].(string))["participante"] != part {
+	if s := senhaEPalco(t, pagina, part, !desligada); cargaDaSenha(t, s["senha"].(string))["participante"] != part {
 		t.Fatalf("a senha é de outro participante: %v", s)
 	}
 
@@ -1540,8 +1540,43 @@ func TestCanal_Camera_NaoContaNasVinte(t *testing.T) {
 	semCamera(t, pagina2, part2, true)
 }
 
-func TestCanal_Senha_PalcoAntes(t *testing.T) {
-	// O Entrar de novo de quem saiu: o palco da sala chega antes da resposta do senha, e nada dele chega antes.
+// senhaEPalco lê as duas mensagens que respondem ao senha de quem entra (de novo): o palco da sala e a senha, cada
+// uma uma vez, numa ordem qualquer. Confere o palco (o da Maria, com o semCamera dito) e devolve a senha.
+func senhaEPalco(t *testing.T, conn *websocket.Conn, participante string, quer bool) map[string]any {
+	t.Helper()
+	var senha map[string]any
+	palcos := 0
+	for range 2 {
+		m := aPagina(t, conn)
+		switch m["tipo"] {
+		case "senha":
+			if senha != nil {
+				t.Fatalf("a página recebeu duas senhas: %v", m)
+			}
+			senha = m
+		case "palco":
+			palcos++
+			q, _ := m["quadros"].([]any)
+			if len(q) != 1 {
+				t.Fatalf("o palco tem %d quadros: %v", len(q), m)
+			}
+			f, _ := q[0].(map[string]any)
+			if f["quem"] != participante || f["nome"] != "Maria Lima" || f["voce"] != true || f["semCamera"] != quer {
+				t.Fatalf("o quadro do palco é %v; queria o da Maria com semCamera %v", f, quer)
+			}
+		default:
+			t.Fatalf("a página recebeu %v; queria o palco e a senha", m)
+		}
+	}
+	if senha == nil || palcos != 1 {
+		t.Fatalf("a página recebeu %d palco(s) e a senha %v; queria um de cada", palcos, senha)
+	}
+	return senha
+}
+
+func TestCanal_Senha_ComPalco(t *testing.T) {
+	// O Entrar de novo de quem saiu: o palco da sala chega junto da resposta do senha (antes ou depois dela), e nada
+	// dele chega enquanto a pessoa está fora.
 	c := novaCenaR(t)
 	r := c.marcada(t, c.kAna)
 	carlos := c.colegaNaReuniao(t, r.Codigo)
@@ -1551,8 +1586,7 @@ func TestCanal_Senha_PalcoAntes(t *testing.T) {
 	daPagina(t, pagina, map[string]any{"tipo": "tela"})
 	aPaginaErro(t, pagina, "foraDaReuniao") // a próxima mensagem é a resposta do tela, não um palco
 	daPagina(t, pagina, map[string]any{"tipo": "senha"})
-	semCamera(t, pagina, part, true)
-	aPaginaTipo(t, pagina, "senha")
+	senhaEPalco(t, pagina, part, true)
 }
 
 func TestCanal_Camera_DepoisDoVoltou(t *testing.T) {

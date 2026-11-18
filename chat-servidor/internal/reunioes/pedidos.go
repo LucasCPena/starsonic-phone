@@ -318,8 +318,8 @@ func (g *Gerente) responderPedido(r banco.Reuniao, pessoaID int64, id string, re
 // no limite. A pessoa conta uma vez só na lotação: quem já está na reunião, ou já tem uma senha da câmera
 // esperando, não é uma pessoa a mais. A ordem e as duas primeiras conferências vêm antes de ler o banco, e de novo
 // depois. Com a senha, a página recebe o palco da sala, na mesma trava (ela está entrando, e o palco tem de chegar
-// antes da imagem): o NovaSenha só volta depois de o palco estar no canal, e a resposta do senha, que quem chamou
-// manda, chega depois dele.
+// antes da imagem): ele sai pela fila do gerente, e a resposta do senha, que quem chamou manda, pode chegar antes ou
+// depois dele.
 func (g *Gerente) NovaSenha(p *Pedido) (string, error) {
 	if p == nil {
 		return "", ErrForaDeOrdem
@@ -335,9 +335,8 @@ func (g *Gerente) NovaSenha(p *Pedido) (string, error) {
 	}
 	g.mu.Lock()
 	senha, err := g.novaSenha(p, d, limite, agora)
-	marca := g.ateAqui()
 	g.mu.Unlock()
-	g.despacharAte(marca)
+	g.despachar()
 	return senha, err
 }
 

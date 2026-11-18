@@ -156,9 +156,6 @@ type Gerente struct {
 	seq       uint64               // a ordem de chegada dos participantes e dos pedidos
 	saida     []func()             // os avisos e as mensagens, na ordem do estado, para depois do mutex
 	enviando  bool                 // uma goroutine está mandando a saida
-	noLote    int                  // quantos da saida a goroutine que manda pegou
-	mandados  uint64               // quantos da saida já saíram, desde o Novo
-	saiuLote  *sync.Cond           // avisado a cada lote mandado (com o mu)
 }
 
 // laco é o laço que acompanha os eventos do servidor de vídeo ligado.
@@ -201,10 +198,8 @@ type participante struct {
 // Novo cria o gerente, sem servidor de vídeo.
 func Novo(d Deps) *Gerente {
 	raiz, parar := context.WithCancel(context.Background())
-	g := &Gerente{banco: d.Banco, avisos: d.Avisos, relogio: d.Relogio, inicio: d.Relogio.Agora(),
+	return &Gerente{banco: d.Banco, avisos: d.Avisos, relogio: d.Relogio, inicio: d.Relogio.Agora(),
 		raiz: raiz, pararRaiz: parar, salas: map[string]*sala{}, acabadas: map[string]fimDaSala{}}
-	g.saiuLote = sync.NewCond(&g.mu)
-	return g
 }
 
 // Rodar chama o Varrer a cada segundo, a primeira vez já, até o ctx acabar. No fim, para o laço dos eventos do
@@ -322,32 +317,16 @@ func (g *Gerente) despachar() {
 			return
 		}
 		lote := g.saida
-		g.saida, g.enviando, g.noLote = nil, true, len(lote)
+		g.saida, g.enviando = nil, true
 		g.mu.Unlock()
 		g.enviar(lote)
 	}
 }
 
-// ateAqui é a marca do que já está na saida: o despacharAte com ela volta quando tudo isso saiu. Com g.mu.
-func (g *Gerente) ateAqui() uint64 { return g.mandados + uint64(g.noLote+len(g.saida)) }
-
-// despacharAte é o despachar que só volta quando o que estava na saida na marca já saiu, mesmo que outra goroutine o
-// mande: o que quem chamou manda depois, direto ao canal, chega depois disso. Nunca de dentro de um Mandar.
-func (g *Gerente) despacharAte(marca uint64) {
-	g.despachar()
-	g.mu.Lock()
-	for g.mandados < marca {
-		g.saiuLote.Wait()
-	}
-	g.mu.Unlock()
-}
-
 func (g *Gerente) enviar(lote []func()) {
 	defer func() {
 		g.mu.Lock()
-		g.enviando, g.noLote = false, 0
-		g.mandados += uint64(len(lote))
-		g.saiuLote.Broadcast()
+		g.enviando = false
 		g.mu.Unlock()
 	}()
 	for _, f := range lote {
