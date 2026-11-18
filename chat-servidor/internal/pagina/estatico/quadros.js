@@ -37,6 +37,7 @@ function nomeDito(q, { minha, semCamera }) {
 /** Os quadros da reunião. O relogio é o da página: {agora(), depois(ms, fn)}. */
 export function criarQuadros({ raiz, relogio }) {
   const mosaico = raiz.querySelector('#mosaico');
+  const moldura = raiz.querySelector('.moldura');
   const lugar = raiz.querySelector('.quadros');
   const gire = raiz.querySelector('.gire');
   const voltar = new Map([...raiz.querySelectorAll('[data-voltar]')].map((b) => [b.dataset.voltar, b]));
@@ -57,7 +58,7 @@ export function criarQuadros({ raiz, relogio }) {
   let pedido = null; // o requestVideoFrameCallback (ou o requestAnimationFrame) que espera a próxima imagem
   let alvo = null; // o agora em que o relogio.depois marcado avalia de novo
   let vez = 0; // a vez do depois marcado: o de uma vez que passou fica de fora
-  // Os quadros na tela: chave → {el, q, canvas, video, mostra}; a faixa; e a última arrumação.
+  // Os quadros na tela: chave → {el, q, canvas, video, mostra, solto}; a faixa; e a última arrumação.
   const quadros = new Map();
   let faixa = null;
   let arrumado = null;
@@ -97,13 +98,29 @@ export function criarQuadros({ raiz, relogio }) {
     }
   }
 
+  // A próxima imagem é pedida sempre, mesmo quando esta lança: sem ela, os quadros parariam até a próxima ligação.
   function aoVerAImagem(tamanho) {
     pedido = null;
     if (mem === null) return;
-    if (tamanho !== null) video = tamanho;
-    avaliar();
-    pintar();
-    esperarAImagem();
+    try {
+      if (tamanho !== null) video = tamanho;
+      mostrarOsSoltos();
+      avaliar();
+      pintar();
+    } finally {
+      if (mem !== null) esperarAImagem();
+    }
+  }
+
+  // Quem o sincronizar soltou da espera antes desta imagem passa a mostrar o vídeo com ela. Uma imagem de antes do fim
+  // da espera (o vídeo parado, numa rede ruim) ainda pode ser a de quem estava na célula antes.
+  function mostrarOsSoltos() {
+    for (const quadro of quadros.values()) {
+      if (!quadro.solto) continue;
+      quadro.solto = false;
+      quadro.mostra = 'video';
+      quadro.el.dataset.mostra = 'video';
+    }
   }
 
   // O sincronizar com o palco e a imagem de agora. A tela é arrumada de novo quando o modo, o palco visto ou os que
@@ -151,6 +168,9 @@ export function criarQuadros({ raiz, relogio }) {
     const foco = focoAntes();
     raiz.dataset.modo = modo;
     raiz.toggleAttribute('data-em-pe', emPe);
+    // O mosaico fora da vista fica fora dos leitores de tela: os quadros já dizem quem está nele.
+    if (modo === 'mosaico') moldura.removeAttribute('aria-hidden');
+    else moldura.setAttribute('aria-hidden', 'true');
     if (modo === 'mosaico') {
       tirarTudo();
       devolverOFoco(foco);
@@ -253,13 +273,16 @@ export function criarQuadros({ raiz, relogio }) {
   function porOQuadro(q, mostra, minha) {
     let quadro = quadros.get(q.chave);
     const elemento = q.botao ? 'BUTTON' : 'DIV';
+    let esperava = false; // o quadro trocado leva a espera do que sai
     if (quadro && (quadro.el.tagName !== elemento || quadro.q.tipo !== q.tipo)) {
+      esperava = quadro.mostra === 'espera';
       quadro.el.remove();
       quadros.delete(q.chave);
       quadro = null;
     }
     if (!quadro) {
       quadro = criarOQuadro(q);
+      quadro.solto = esperava;
       quadros.set(q.chave, quadro);
     }
     mudarOQuadro(quadro, q, mostra, minha);
@@ -272,7 +295,7 @@ export function criarQuadros({ raiz, relogio }) {
     el.dataset.quadro = q.chave;
     if (q.botao) el.type = 'button';
     else el.setAttribute('role', 'img');
-    const quadro = { el, q, canvas: null, video: null, mostra: null, nome: null, centro: null };
+    const quadro = { el, q, canvas: null, video: null, mostra: null, solto: false, nome: null, centro: null };
     if (q.tipo === 'voce') {
       quadro.video = document.createElement('video');
       quadro.video.muted = true;
@@ -307,10 +330,15 @@ export function criarQuadros({ raiz, relogio }) {
     return quadro;
   }
 
+  // O quadro que sai da espera continua nela, solto, até a próxima imagem do mosaico (o mostrarOsSoltos): nem o
+  // relógio, nem um desenho do estado, nem a janela que muda de tamanho o pintam com a imagem de antes.
   function mudarOQuadro(quadro, q, mostra, minha) {
     const { el } = quadro;
     quadro.q = q;
     if (el.dataset.papel !== q.papel) el.dataset.papel = q.papel;
+    const solto = mostra === 'video' && (quadro.mostra === 'espera' || quadro.solto);
+    quadro.solto = solto;
+    if (solto) mostra = 'espera';
     if (quadro.mostra !== mostra) {
       quadro.mostra = mostra;
       el.dataset.mostra = mostra;
@@ -389,7 +417,9 @@ export function criarQuadros({ raiz, relogio }) {
       if (canvas.width === 0 || canvas.height === 0) continue;
       const { sx, sy, sl, sa, dx, dy, dl, da } = recortar(q.recorte, { l: canvas.width, a: canvas.height }, q.corte);
       if (dl <= 0 || da <= 0) continue;
+      // Sem contexto (o limite de memória dos canvas do Safari), esse quadro fica sem esta pintura, e os outros não.
       const ctx = canvas.getContext('2d');
+      if (!ctx) continue;
       if (q.corte === 'inteiro') ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(mosaico, sx, sy, sl, sa, dx, dy, dl, da);
     }
@@ -398,7 +428,7 @@ export function criarQuadros({ raiz, relogio }) {
   // O quadro que deixa de mostrar o vídeo fica sem a última imagem: o fundo escuro aparece no lugar dela.
   function limpar({ canvas }) {
     if (!canvas || canvas.width === 0 || canvas.height === 0) return;
-    canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+    canvas.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height);
   }
 
   // ---- Os cliques, o Esc e o foco. ----
@@ -441,7 +471,8 @@ export function criarQuadros({ raiz, relogio }) {
   if (typeof ResizeObserver === 'function') new ResizeObserver(() => arrumarATela()).observe(raiz);
   window.addEventListener('resize', () => arrumarATela());
 
-  // Fora da reunião (a página saiu dela, ou vai embora), nada fica: nem a sincronia, nem os quadros, nem o aumentado.
+  // Fora da reunião (a página saiu dela, ou vai embora), a sincronia para, e os quadros e o aumentado saem. O
+  // ResizeObserver e os ouvintes do resize e do keydown ficam pela vida da página: fora da reunião, eles não fazem nada.
   function sair() {
     naReuniao = false;
     pararASincronia();

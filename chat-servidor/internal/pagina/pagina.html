@@ -310,9 +310,10 @@
 <span>Você está compartilhando a tela</span>
 </p>
 </header>
-<!-- A área dos quadros. O mosaico continua tocando: fora da vista enquanto há quadros, e inteiro sem o palco. -->
+<!-- A área dos quadros. O mosaico continua tocando: fora da vista (e dos leitores de tela) enquanto há quadros, e
+inteiro sem o palco. -->
 <div class="palco">
-<div class="moldura">
+<div class="moldura" aria-hidden="true">
 <video id="mosaico" autoplay playsinline muted></video>
 </div>
 <button type="button" class="voltar" data-voltar="verTodos" hidden>

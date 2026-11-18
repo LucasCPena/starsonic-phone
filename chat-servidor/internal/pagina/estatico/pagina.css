@@ -682,7 +682,8 @@ main {
   color: var(--texto);
 }
 
-/* ---- A reunião: o fundo escuro, o mosaico 16:9 e os controles numa barra embaixo. ---- */
+/* ---- A reunião: o fundo escuro, a área dos quadros (ou o mosaico inteiro, sem o palco) e os controles numa barra
+   embaixo. ---- */
 
 .tela-reuniao {
   flex: 1 0 auto;
@@ -805,11 +806,17 @@ main {
   display: none;
 }
 
-/* ---- O quadro: um por pessoa (e um da tela). O fundo escuro enquanto não há imagem. ---- */
+/* ---- O quadro: um por pessoa (e um da tela). O fundo escuro enquanto não há imagem. O isolation deixa a borda ciano
+   (o ::after) dentro do quadro: sem ele, ela passaria por cima do Você do canto. O toque não pisca, e o toque duplo
+   não seleciona o nome. ---- */
 
 .quadro {
   position: absolute;
+  isolation: isolate;
   overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
   margin: 0;
   padding: 0;
   border: 0;
@@ -908,7 +915,7 @@ button.quadro {
 
 /* O quadro que aumenta: com o mouse em cima ou com o foco do teclado, a borda ciano por dentro e a pílula Aumentar. A
    borda é uma camada por cima da imagem (o canvas cobriria o contorno do próprio botão), e ela é o anel do foco do
-   quadro. */
+   quadro. O mouse em cima só vale com um mouse: na tela de toque, o :hover fica no que está embaixo do último toque. */
 button.quadro:focus-visible {
   outline: none;
 }
@@ -922,10 +929,16 @@ button.quadro::after {
   pointer-events: none;
 }
 
-button.quadro:hover::after,
 button.quadro:focus-visible::after {
   outline: 3px solid var(--ciano);
   outline-offset: -3px;
+}
+
+@media (hover: hover) {
+  button.quadro:hover::after {
+    outline: 3px solid var(--ciano);
+    outline-offset: -3px;
+  }
 }
 
 .pilula {
@@ -949,9 +962,14 @@ button.quadro:focus-visible::after {
   height: 14px;
 }
 
-button.quadro:hover .pilula,
 button.quadro:focus-visible .pilula {
   display: inline-flex;
+}
+
+@media (hover: hover) {
+  button.quadro:hover .pilula {
+    display: inline-flex;
+  }
 }
 
 /* As medidas de cada lugar: o grande e a grade do PC; a faixa; o canto; e o celular em pé. */
@@ -1379,7 +1397,7 @@ button.quadro:focus-visible .pilula {
     font-size: 16px;
   }
 
-  /* A reunião do celular: o mosaico na largura toda, e os três controles numa grade, com o ícone sobre o rótulo. */
+  /* A reunião do celular: o topo mais justo, e os três controles numa grade, com o ícone sobre o rótulo. */
   .reuniao-topo {
     flex-wrap: nowrap;
     padding: 12px 18px;

@@ -58,7 +58,12 @@ export function iniciar(raiz, servicos) {
         const foco = document.activeElement;
         const { estado: novo, efeitos } = transicao(estado, fila.shift());
         estado = novo;
-        desenhar(estado);
+        // O desenho que lança não leva os efeitos do evento (a senha de um voltou, por exemplo).
+        try {
+          desenhar(estado);
+        } catch {
+          console.error('desenhar'); // só a palavra: o estado e o palco levam segredos e nomes
+        }
         for (const efeito of efeitos) rodar(efeito);
         manterOFoco(foco);
       }
@@ -253,7 +258,10 @@ export function iniciar(raiz, servicos) {
     const compartilhando = e.telaCompartilhada !== 'nenhuma';
     um('.selo-tela').hidden = e.telaCompartilhada !== 'noAr';
     um('.selo-gravado').hidden = e.telaCompartilhada === 'noAr';
-    um('.caiu').hidden = !(e.tela === 'reuniao' && e.reconectando > 0);
+    // Embaixo do cartão da conexão caída, os quadros e os botões de voltar ficam fora do teclado; os controles, não.
+    const caiu = e.tela === 'reuniao' && e.reconectando > 0;
+    um('.caiu').hidden = !caiu;
+    for (const el of todos('.palco > .quadros, .palco > .voltar')) el.inert = caiu;
     quadros.desenhar({
       naReuniao: e.tela === 'reuniao',
       noAr: e.principal === 'noAr',

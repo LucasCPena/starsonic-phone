@@ -147,6 +147,8 @@ function mensagemDo(p: Palco): Mensagem {
 
 /** O canvas do mosaico de mentira e a faixa dele, no window da página. */
 type MosaicoFalso = { canvas: HTMLCanvasElement; faixa: CanvasCaptureMediaStreamTrack };
+/** O requestVideoFrameCallback do teste, guardado antes de a página começar (um teste o tira da página). */
+type QuandoMostrar = (video: HTMLVideoElement, fn: VideoFrameRequestCallback) => void;
 
 /**
  * O mosaico de mentira fica com o tamanho e as células do palco (a de fora de qualquer célula, preta), e sai uma imagem
@@ -157,7 +159,7 @@ async function mosaico(page: Page, p: Palco): Promise<void> {
   const celulas = p.quadros.map((q) => ({ x: q.x, y: q.y, l: q.l, a: q.a, cor: CORES[q.cor] }));
   const tamanho = await page.evaluate(
     ({ largura, altura, celulas }) => {
-      const w = window as unknown as { mosaicoFalso?: MosaicoFalso };
+      const w = window as unknown as { mosaicoFalso?: MosaicoFalso; quandoMostrar: QuandoMostrar };
       const video = document.getElementById('mosaico') as HTMLVideoElement;
       if (!w.mosaicoFalso) {
         const canvas = document.createElement('canvas');
@@ -176,7 +178,7 @@ async function mosaico(page: Page, p: Palco): Promise<void> {
         ctx.fillRect(c.x, c.y, c.l, c.a);
       }
       return new Promise<string>((r) => {
-        video.requestVideoFrameCallback((_, m) => r(`${m.width}x${m.height}`));
+        w.quandoMostrar(video, (_, m) => r(`${m.width}x${m.height}`));
         faixa.requestFrame();
       });
     },
@@ -188,13 +190,13 @@ async function mosaico(page: Page, p: Palco): Promise<void> {
 /** Mais uma imagem do mosaico de mentira, igual à última: o canvas só dá outra imagem depois de ser pintado de novo. */
 async function outraImagem(page: Page): Promise<void> {
   await page.evaluate(() => {
-    const w = window as unknown as { mosaicoFalso: MosaicoFalso };
+    const w = window as unknown as { mosaicoFalso: MosaicoFalso; quandoMostrar: QuandoMostrar };
     const { canvas, faixa } = w.mosaicoFalso;
     const ctx = canvas.getContext('2d') as CanvasRenderingContext2D;
     ctx.putImageData(ctx.getImageData(0, 0, 1, 1), 0, 0);
     const video = document.getElementById('mosaico') as HTMLVideoElement;
     return new Promise<void>((r) => {
-      video.requestVideoFrameCallback(() => r());
+      w.quandoMostrar(video, () => r());
       faixa.requestFrame();
     });
   });
@@ -209,14 +211,19 @@ const moldura = (page: Page) => page.locator('.moldura');
 const etiqueta = (page: Page, chave: string) => quadro(page, chave).locator('.etiqueta');
 
 /** A cor do ponto do meio do <canvas> do quadro: o nome da mais perto, 'nenhuma' sem pintura, ou 'outra'. */
-async function corDo(page: Page, chave: string): Promise<string> {
+const corDo = (page: Page, chave: string) => corNoPonto(page, chave, { x: 0.5, y: 0.5 });
+
+/** A cor de um ponto do <canvas> do quadro, em frações da largura e da altura dele, como no corDo. */
+async function corNoPonto(page: Page, chave: string, ponto: { x: number; y: number }): Promise<string> {
   const [r, g, b, alfa] = await quadro(page, chave)
     .locator('canvas')
-    .evaluate((c: HTMLCanvasElement) => {
+    .evaluate((c: HTMLCanvasElement, { x, y }) => {
       if (c.width === 0 || c.height === 0) return [0, 0, 0, 0];
-      const d = (c.getContext('2d') as CanvasRenderingContext2D).getImageData(c.width >> 1, c.height >> 1, 1, 1).data;
+      const px = Math.min(c.width - 1, Math.floor(c.width * x));
+      const py = Math.min(c.height - 1, Math.floor(c.height * y));
+      const d = (c.getContext('2d') as CanvasRenderingContext2D).getImageData(px, py, 1, 1).data;
       return [d[0], d[1], d[2], d[3]];
-    });
+    }, ponto);
   if (alfa === 0) return 'nenhuma';
   for (const [nome, [cr, cg, cb]] of Object.entries(CORES)) {
     if (Math.abs(r - cr) + Math.abs(g - cg) + Math.abs(b - cb) < 90) return nome;
@@ -225,6 +232,17 @@ async function corDo(page: Page, chave: string): Promise<string> {
 }
 
 const mostraDe = (page: Page, chave: string) => quadro(page, chave).getAttribute('data-mostra');
+/** O tamanho do <canvas> do quadro, em pixels, e o do quadro, em px (o que o quadros.js deu a ele). */
+const pixelsDoCanvas = (q: Locator) =>
+  q.locator('canvas').evaluate((c: HTMLCanvasElement) => ({ l: c.width, a: c.height }));
+const tamanhoDoQuadro = (q: Locator, escala = 1) =>
+  q.evaluate(
+    (e: HTMLElement, escala) => ({
+      l: Math.round(parseFloat(e.style.width) * escala),
+      a: Math.round(parseFloat(e.style.height) * escala),
+    }),
+    escala,
+  );
 /** As chaves dos quadros da faixa, de cima para baixo (ou da esquerda para a direita). */
 const daFaixa = (page: Page) =>
   page.evaluate(() =>
@@ -294,7 +312,9 @@ test.beforeEach(async ({ page }) => {
   page.on('console', (m) => mensagensDoConsole.push(`${m.type()} ${m.text()}`));
   page.on('pageerror', (e) => mensagensDoConsole.push(`pageerror ${e.message}`));
   await page.addInitScript(() => {
-    const w = window as unknown as { violacoes: string[] };
+    const w = window as unknown as { violacoes: string[]; quandoMostrar: QuandoMostrar };
+    const pedir = HTMLVideoElement.prototype.requestVideoFrameCallback;
+    w.quandoMostrar = (video, fn) => pedir.call(video, fn);
     w.violacoes = [];
     document.addEventListener('securitypolicyviolation', (e) => {
       w.violacoes.push(`${e.violatedDirective} ${e.blockedURI}`);
@@ -336,11 +356,12 @@ async function naReuniao(page: Page): Promise<NaReuniao> {
   return { rede, canal: await rede.canalNumero(1) };
 }
 
-/** O palco chega, e o mosaico dele também; 600 ms depois, os quadros mostram o vídeo. */
+/** O palco chega, e o mosaico dele também; 600 ms depois, com a imagem seguinte, os quadros mostram o vídeo. */
 async function comOPalco(page: Page, canal: Canal, p: Palco): Promise<void> {
   canal.mandar(mensagemDo(p));
   await mosaico(page, p);
   await page.clock.runFor(600);
+  await outraImagem(page);
   const primeiro = p.quadros.find((q) => !q.voce && !q.semCamera);
   if (!primeiro) return;
   const chave = primeiro.tela ? telaDe(primeiro.pessoa) : camDe(primeiro.pessoa);
@@ -363,12 +384,15 @@ test('sem palco, o mosaico inteiro depois de 3 s', async ({ page }) => {
   // O servidor de vídeo antigo não manda o palco: a moldura do mosaico fica fora da vista, e o mosaico toca.
   await mosaico(page, DOIS);
   expect((await caixa(moldura(page))).width).toBeLessThanOrEqual(1);
+  // Fora da vista, ela fica fora dos leitores de tela também.
+  await expect(moldura(page)).toHaveAttribute('aria-hidden', 'true');
   // A sincronia começou no ligar, até 10 ms antes do fim do naReuniao.
   await page.clock.runFor(2_980);
   expect((await caixa(moldura(page))).width).toBeLessThanOrEqual(1);
   await page.clock.runFor(20);
   await expect.poll(async () => (await caixa(moldura(page))).width).toBeGreaterThan(600);
   await expect(page.locator('#mosaico')).toBeVisible();
+  await expect(moldura(page)).not.toHaveAttribute('aria-hidden');
   await expect(todosOsQuadros(page)).toHaveCount(0);
 });
 
@@ -382,6 +406,9 @@ test('duas pessoas', async ({ page }) => {
   expect(c.width).toBeGreaterThanOrEqual(0.95 * a.width);
   expect(await corDo(page, camDe(CARLOS))).toBe('azul');
   await expect(etiqueta(page, camDe(CARLOS))).toHaveText('Carlos Lima');
+  // Na escala 1, o canvas tem o tamanho do quadro; o mosaico, fora da vista, fica fora dos leitores de tela.
+  expect(await pixelsDoCanvas(carlosQ)).toEqual(await tamanhoDoQuadro(carlosQ));
+  await expect(moldura(page)).toHaveAttribute('aria-hidden', 'true');
   expect(await carlosQ.evaluate((e) => e.tagName)).not.toBe('BUTTON');
   await expect(carlosQ).toHaveAttribute('role', 'img');
   await expect(carlosQ).toHaveAttribute('data-papel', 'grade');
@@ -560,7 +587,11 @@ test('a tela compartilhada', async ({ page }) => {
   await expect(page.getByRole('group', { name: 'As pessoas', exact: true })).toBeVisible();
   expect(await daFaixa(page)).toEqual([camDe(ANA), camDe(CARLOS), camDe(MARIA), 'voce']);
   expect(await corDo(page, camDe(CARLOS))).toBe('azul');
-  // A tela inteira, no centro: o <canvas> do grande tem a proporção do quadro, e a imagem fica em 16:9 dentro dele.
+  // A tela inteira, no centro: o <canvas> do grande tem a proporção do quadro, e a imagem fica em 16:9 dentro dele. A
+  // faixa que sobra (dos lados, ou em cima e embaixo) fica sem imagem.
+  const t = await caixa(tela);
+  const sobra = t.width / t.height > 16 / 9 ? { x: 0.005, y: 0.5 } : { x: 0.5, y: 0.005 };
+  expect(await corNoPonto(page, telaDe(ANA), sobra)).toBe('nenhuma');
   await expect(botao(page, 'Voltar para a tela')).toBeHidden();
   await expect(botao(page, 'Ver todos')).toBeHidden();
 
@@ -671,10 +702,16 @@ test('o palco novo espera o tamanho do vídeo', async ({ page }) => {
   await expect(etiqueta(page, camDe(CARLOS))).toHaveText('Carlos Lima');
   await expect(etiqueta(page, camDe(CARLOS))).toBeVisible();
 
-  // 600 ms depois, e outra imagem: a tela tem o verde, e as pessoas, as cores delas.
+  // 600 ms depois, sem imagem nova, todos continuam na espera: a imagem que o vídeo tem é a de antes do fim dela, e
+  // pode ser de outra pessoa. Com a imagem seguinte, a tela tem o verde, e as pessoas, as cores delas.
   await page.clock.runFor(590);
   await expect(quadro(page, telaDe(ANA))).toHaveAttribute('data-mostra', 'espera');
   await page.clock.runFor(10);
+  for (const chave of [telaDe(ANA), camDe(ANA), camDe(CARLOS), camDe(MARIA)]) {
+    await expect(quadro(page, chave)).toHaveAttribute('data-mostra', 'espera');
+    expect(await corDo(page, chave)).toBe('nenhuma');
+  }
+  await expect(etiqueta(page, camDe(CARLOS))).toHaveText('Carlos Lima');
   await outraImagem(page);
   await expect(quadro(page, telaDe(ANA))).toHaveAttribute('data-mostra', 'video');
   await expect.poll(() => corDo(page, telaDe(ANA))).toBe('verde');
@@ -701,8 +738,25 @@ test('quem acabou de entrar espera 1 s', async ({ page }) => {
   await outraImagem(page);
   await expect(quadro(page, camDe(BIA))).toHaveAttribute('data-mostra', 'espera');
   expect(await corDo(page, camDe(BIA))).toBe('nenhuma');
-  // 1000 ms depois, ela mostra o vídeo (o mosaico de mentira ainda tem o azul nessa célula).
+  // 1000 ms depois, sem imagem nova, ela continua na espera, com o nome: a imagem que o vídeo tem ainda é a de antes.
+  // Nem a janela que muda de tamanho nem um desenho do estado a pintam.
   await page.clock.runFor(10);
+  const aindaEspera = async () => {
+    await expect(quadro(page, camDe(BIA))).toHaveAttribute('data-mostra', 'espera');
+    await expect(etiqueta(page, camDe(BIA))).toHaveText('Bia Ramos');
+    expect(await corDo(page, camDe(BIA))).toBe('nenhuma');
+  };
+  await aindaEspera();
+  await page.setViewportSize({ width: 1200, height: 760 });
+  await expect.poll(async () => (await caixa(area(page))).width).toBeLessThan(1200);
+  await aindaEspera();
+  await botao(page, 'Microfone').click();
+  await page.clock.runFor(10);
+  await expect(botao(page, 'Microfone')).toHaveAttribute('aria-pressed', 'false');
+  await aindaEspera();
+  expect(await corDo(page, camDe(ANA))).toBe('vermelho');
+  // A imagem seguinte: ela mostra o vídeo (o mosaico de mentira ainda tem o azul nessa célula).
+  await outraImagem(page);
   await expect(quadro(page, camDe(BIA))).toHaveAttribute('data-mostra', 'video');
   await expect.poll(() => corDo(page, camDe(BIA))).toBe('azul');
 });
@@ -863,6 +917,206 @@ test('a conexão caída cobre o palco', async ({ page }) => {
   expect(deCima).toBe(true);
 });
 
+const SEM_CONEXAO = { tipo: 'ligacao', qual: 'principal', o: 'semConexao' };
+const cartaoDaQueda = (page: Page) => page.getByRole('heading', { level: 2, name: 'A conexão caiu. Entrando de novo…' });
+
+/** A volta da conexão caída: depois da espera de 2 s, a página pede a senha pelo canal, ela chega, e a ligação sobe. */
+async function voltar(page: Page, canal: Canal): Promise<void> {
+  const senhas = () => canal.tipos().filter((t) => t === 'senha').length;
+  const antes = senhas();
+  await page.clock.runFor(2_000);
+  await expect.poll(senhas).toBe(antes + 1);
+  canal.mandar({ tipo: 'senha', senha: 'senha-2' });
+  await subir(page, () => page.locator('.caiu').isHidden());
+  await expect(cartaoDaQueda(page)).toBeHidden();
+}
+
+/** A ligação falsa confirma num setTimeout, que o relógio parado só roda quando o teste anda com ele: até a condição. */
+async function subir(page: Page, pronto: () => Promise<boolean>): Promise<void> {
+  await expect
+    .poll(async () => {
+      await page.clock.runFor(10);
+      return pronto();
+    })
+    .toBe(true);
+}
+
+/** O que o Tab alcança, a partir do título, numa volta pela página (até o primeiro que se repete). */
+async function oQueOTabAlcanca(page: Page): Promise<string[]> {
+  await titulo(page, 'Planejamento de dezembro').focus();
+  const vistos: string[] = [];
+  for (let i = 0; i < 16; i++) {
+    await page.keyboard.press('Tab');
+    const qual = await page.evaluate(() => {
+      const el = document.activeElement as HTMLElement | null;
+      if (!el || el === document.body) return 'body';
+      return el.dataset.quadro ?? el.dataset.voltar ?? el.dataset.botao ?? el.tagName;
+    });
+    if (vistos.includes(qual)) break;
+    vistos.push(qual);
+  }
+  return vistos;
+}
+
+test('na conexão caída, o teclado não chega aos quadros, e a volta os traz de novo', async ({ page }) => {
+  const { canal } = await naReuniaoCom(page, TRES);
+  await quadro(page, camDe(CARLOS)).click();
+  await expect(botao(page, 'Ver todos')).toBeFocused();
+  await darNaLigacao(page, SEM_CONEXAO);
+  await expect(cartaoDaQueda(page)).toBeVisible();
+  // Embaixo do cartão, nem os quadros nem o Ver todos recebem o Tab; os controles continuam.
+  const naQueda = await oQueOTabAlcanca(page);
+  expect(naQueda).toContain('microfone');
+  expect(naQueda.filter((q) => q.includes(':') || q === 'voce' || q === 'verTodos')).toEqual([]);
+
+  // A volta: a sincronia começa de novo, e o Carlos continua grande, com as cores e os nomes certos.
+  await voltar(page, canal);
+  await outraImagem(page);
+  await page.clock.runFor(600);
+  await outraImagem(page);
+  await expect(quadro(page, camDe(CARLOS))).toHaveAttribute('data-papel', 'grande');
+  for (const [p, cor] of [
+    [ANA, 'vermelho'],
+    [CARLOS, 'azul'],
+    [MARIA, 'amarelo'],
+  ] as const) {
+    await expect(quadro(page, camDe(p))).toHaveAttribute('data-mostra', 'video');
+    await expect.poll(() => corDo(page, camDe(p))).toBe(cor);
+    await expect(etiqueta(page, camDe(p))).toHaveText(p.nome);
+  }
+  const depois = await oQueOTabAlcanca(page);
+  expect(depois).toContain('verTodos');
+  expect(depois).toContain(camDe(ANA));
+});
+
+test('depois do Sair e do Entrar de novo, os quadros voltam sem ninguém aumentado', async ({ page }) => {
+  const { canal } = await naReuniaoCom(page, TRES);
+  await quadro(page, camDe(CARLOS)).click();
+  await expect(quadro(page, camDe(CARLOS))).toHaveAttribute('data-papel', 'grande');
+  await botao(page, 'Sair').click();
+  await expect(titulo(page, 'Você saiu da reunião')).toBeVisible();
+  await expect(todosOsQuadros(page)).toHaveCount(0);
+
+  const senhas = () => canal.tipos().filter((t) => t === 'senha').length;
+  const antes = senhas();
+  await botao(page, 'Entrar de novo').click();
+  await expect.poll(senhas).toBe(antes + 1);
+  canal.mandar({ tipo: 'senha', senha: 'senha-2' });
+  await subir(page, () => page.getByRole('navigation', { name: 'Controles da reunião' }).isVisible());
+  await comOPalco(page, canal, TRES);
+  await expect(page.locator('[data-papel="grande"]')).toHaveCount(0);
+  await expect(botao(page, 'Ver todos')).toBeHidden();
+  for (const [p, cor] of [
+    [ANA, 'vermelho'],
+    [CARLOS, 'azul'],
+    [MARIA, 'amarelo'],
+  ] as const) {
+    await expect(quadro(page, camDe(p))).toHaveAttribute('data-papel', 'grade');
+    await expect(quadro(page, camDe(p))).toHaveAttribute('data-mostra', 'video');
+    await expect.poll(() => corDo(page, camDe(p))).toBe(cor);
+    await expect(etiqueta(page, camDe(p))).toHaveText(p.nome);
+  }
+  await expect(quadro(page, 'voce')).toHaveAttribute('data-papel', 'canto');
+});
+
+/** O próximo getContext do <canvas> do quadro não dá o contexto: ele dá null, ou lança. Só uma vez. */
+const falharOCanvas = (page: Page, chave: string, como: 'null' | 'lanca') =>
+  quadro(page, chave)
+    .locator('canvas')
+    .evaluate((c: HTMLCanvasElement, como) => {
+      const falso = c as unknown as { getContext?: () => null };
+      falso.getContext = () => {
+        delete falso.getContext;
+        if (como === 'lanca') throw new Error('canvas de teste');
+        return null;
+      };
+    }, como);
+
+/** Os canvas dos quadros, apagados: o que aparecer depois foi pintado de novo. */
+const apagarOsQuadros = (page: Page) =>
+  page.evaluate(() => {
+    for (const c of document.querySelectorAll<HTMLCanvasElement>('[data-quadro] canvas')) {
+      (c.getContext('2d') as CanvasRenderingContext2D).clearRect(0, 0, c.width, c.height);
+    }
+  });
+
+test('um quadro que não pinta não para os outros', async ({ page }) => {
+  await naReuniaoCom(page, TRES);
+  const cores = () => Promise.all([ANA, CARLOS, MARIA].map((p) => corDo(page, camDe(p))));
+  // O getContext que dá null (o limite de memória dos canvas do Safari): o Carlos fica sem a pintura dessa imagem, e
+  // os outros a recebem.
+  await apagarOsQuadros(page);
+  await falharOCanvas(page, camDe(CARLOS), 'null');
+  await outraImagem(page);
+  expect(await cores()).toEqual(['vermelho', 'nenhuma', 'amarelo']);
+  await apagarOsQuadros(page);
+  await outraImagem(page);
+  expect(await cores()).toEqual(['vermelho', 'azul', 'amarelo']);
+  // O que lança: as imagens seguintes pintam de novo.
+  await falharOCanvas(page, camDe(CARLOS), 'lanca');
+  await outraImagem(page);
+  await expect.poll(() => mensagensDoConsole.some((m) => m.includes('canvas de teste'))).toBe(true);
+  mensagensDoConsole = mensagensDoConsole.filter((m) => !m.includes('canvas de teste'));
+  await apagarOsQuadros(page);
+  await outraImagem(page);
+  expect(await cores()).toEqual(['vermelho', 'azul', 'amarelo']);
+});
+
+test('o desenho que lança não leva os efeitos do evento', async ({ page }) => {
+  // A conexão caída com um canvas que lança no desenho dela: a volta (o pedido da senha, 2 s depois) sai mesmo assim.
+  const { canal } = await naReuniaoCom(page, TRES);
+  await falharOCanvas(page, camDe(CARLOS), 'lanca');
+  await darNaLigacao(page, SEM_CONEXAO);
+  await expect(cartaoDaQueda(page)).toBeVisible();
+  await voltar(page, canal);
+  expect(mensagensDoConsole.filter((m) => m.startsWith('error'))).toEqual(['error desenhar']);
+  mensagensDoConsole = mensagensDoConsole.filter((m) => m !== 'error desenhar');
+  await outraImagem(page);
+  await page.clock.runFor(600);
+  await outraImagem(page);
+  await expect.poll(() => corDo(page, camDe(CARLOS))).toBe('azul');
+});
+
+test.describe('na escala 3', () => {
+  test.use({ deviceScaleFactor: 3 });
+
+  test('o canvas tem até 2 pixels por ponto', async ({ page }) => {
+    await naReuniaoCom(page, DOIS);
+    const q = quadro(page, camDe(CARLOS));
+    expect(await page.evaluate(() => devicePixelRatio)).toBe(3);
+    expect(await pixelsDoCanvas(q)).toEqual(await tamanhoDoQuadro(q, 2));
+    expect(await corDo(page, camDe(CARLOS))).toBe('azul');
+  });
+});
+
+test.describe('sem o requestVideoFrameCallback', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      const p = HTMLVideoElement.prototype as unknown as Record<string, unknown>;
+      delete p.requestVideoFrameCallback;
+      delete p.cancelVideoFrameCallback;
+    });
+  });
+
+  test('os quadros pintam pelo requestAnimationFrame', async ({ page }) => {
+    const { canal } = await naReuniao(page);
+    expect(await page.evaluate(() => 'requestVideoFrameCallback' in HTMLVideoElement.prototype)).toBe(false);
+    canal.mandar(mensagemDo(TRES));
+    await mosaico(page, TRES);
+    await page.clock.runFor(600);
+    await expect(quadro(page, camDe(CARLOS))).toHaveAttribute('data-mostra', 'espera');
+    await page.clock.runFor(50);
+    for (const [p, cor] of [
+      [ANA, 'vermelho'],
+      [CARLOS, 'azul'],
+      [MARIA, 'amarelo'],
+    ] as const) {
+      await expect(quadro(page, camDe(p))).toHaveAttribute('data-mostra', 'video');
+      expect(await corDo(page, camDe(p))).toBe(cor);
+    }
+  });
+});
+
 test('a borda ciano aparece por cima da imagem', async ({ page }) => {
   // O que se vê de verdade: com o mouse em cima, ou com o foco do teclado, a borda de dentro do quadro é ciano; sem os
   // dois, é a imagem.
@@ -891,8 +1145,65 @@ test('a borda ciano aparece por cima da imagem', async ({ page }) => {
   expect(await bordaDo(page, camDe(ANA))).toEqual(CIANO);
 });
 
+test('a borda ciano fica dentro do quadro, e o Você por cima dela', async ({ page }) => {
+  // Com 2 outros, o Você do canto fica por cima da beira de baixo do Carlos: a borda do Carlos não passa por ele.
+  await naReuniaoCom(page, { largura: 1920, altura: 1080, quadros: emGrade(1920, 1080, 2, 2, [ana, carlos, eu]) });
+  await quadro(page, camDe(CARLOS)).hover();
+  const c = await caixa(quadro(page, camDe(CARLOS)));
+  const v = await caixa(quadro(page, 'voce'));
+  expect(v.y).toBeLessThan(c.y + c.height - 2);
+  expect(v.x).toBeGreaterThan(c.x);
+  const [noVoce] = await coresNaTela(page, [{ x: v.x + v.width / 2, y: c.y + c.height - 2 }]);
+  expect(noVoce).not.toBe('ciano');
+  // Fora do Você, a borda continua por cima da imagem do próprio quadro.
+  expect(await bordaDo(page, camDe(CARLOS)).then((b) => [b[0], b[1]])).toEqual(['ciano', 'ciano']);
+  expect(await coresNaTela(page, [{ x: c.x + (v.x - c.x) / 2, y: c.y + c.height - 2 }])).toEqual(['ciano']);
+});
+
 test.describe('o celular em pé, com o teclado', () => {
   test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+
+  test('o toque não deixa a borda nem a pílula', async ({ page }) => {
+    // Sem mouse, o :hover cai no que fica embaixo do último toque: as regras do mouse em cima só valem com um mouse.
+    await naReuniaoCom(page, TRES);
+    expect(await page.evaluate(() => matchMedia('(hover: hover)').matches)).toBe(false);
+    const regras = await page.evaluate(() => {
+      const achadas: string[] = [];
+      const ler = (lista: CSSRuleList, dentroDe: string) => {
+        for (const r of lista) {
+          if (r instanceof CSSMediaRule) ler(r.cssRules, r.conditionText);
+          else if (r instanceof CSSStyleRule && /quadro:hover/.test(r.selectorText)) {
+            achadas.push(`${dentroDe} ${r.selectorText}`);
+          }
+        }
+      };
+      for (const folha of document.styleSheets) ler(folha.cssRules, '');
+      return achadas;
+    });
+    expect(regras.length).toBeGreaterThanOrEqual(2);
+    for (const r of regras) expect(r).toMatch(/^\(hover: hover\) /);
+    // O toque não pisca e o toque duplo não seleciona o nome.
+    const toque = await quadro(page, camDe(ANA)).evaluate((q) => {
+      const s = getComputedStyle(q);
+      return { selecao: s.userSelect, brilho: s.getPropertyValue('-webkit-tap-highlight-color') };
+    });
+    expect(toque).toEqual({ selecao: 'none', brilho: 'rgba(0, 0, 0, 0)' });
+
+    // O toque no Carlos e no Ver todos: o quadro que fica embaixo do toque não tem a borda nem a pílula.
+    await quadro(page, camDe(CARLOS)).tap();
+    await expect(quadro(page, camDe(CARLOS))).toHaveAttribute('data-papel', 'grande');
+    const ver = await caixa(botao(page, 'Ver todos'));
+    await botao(page, 'Ver todos').tap();
+    await expect(quadro(page, camDe(CARLOS))).toHaveAttribute('data-papel', 'grade');
+    const embaixo = await page.evaluate(
+      ({ x, y }) => (document.elementFromPoint(x, y)?.closest('[data-quadro]') as HTMLElement | null)?.dataset.quadro,
+      { x: ver.x + ver.width / 2, y: ver.y + ver.height / 2 },
+    );
+    expect(embaixo).toBe(camDe(ANA));
+    await expect(quadro(page, camDe(ANA)).locator('.pilula')).toBeHidden();
+    const contorno = await quadro(page, camDe(ANA)).evaluate((b) => getComputedStyle(b, '::after').outlineStyle);
+    expect(contorno).toBe('none');
+  });
 
   test('a borda ciano do foco', async ({ page }) => {
     await naReuniaoCom(page, TRES);
