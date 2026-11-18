@@ -9,14 +9,17 @@ import {
   AZUL,
   B,
   C,
+  MOSAICO_1,
   MOSAICO_2,
   MOSAICO_4,
+  perto,
   QUADROS_PEQUENOS,
   TELA,
   VERDE,
   VERMELHO,
+  type Cor,
 } from './midia';
-import { Navegador } from './navegador';
+import { Navegador, type Fim } from './navegador';
 import { ana, novaReuniaoDeTeste, type EventosDoApp } from './servidores';
 
 const esperar = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -144,6 +147,74 @@ test.describe.serial('a reunião marcada', () => {
     expect(depois.status).toBe(409);
     expect(depois.json.erro).toBe('foraDaReuniao');
   });
+});
+
+// O I1 da 1a, de ponta a ponta: quem a colega tirou ainda tem uma senha da tela, que vale por 30 s, e o servidor de
+// vídeo atende a ligação com ela (a senha confere). Mas a tela de quem não tem a ligação principal na sala cai na hora,
+// antes de qualquer mudança de layout (seção 6 do docs/video-agente.md): o quadro grande nunca é dela.
+test('a tela de quem foi tirado não entra', async () => {
+  const app = ana();
+  const codigo = await app.criarMarcada();
+  const eventos = await app.eventos();
+  let a: Navegador | undefined;
+  let c: Navegador | undefined;
+  try {
+    // A Ana começa a reunião pelo navegador A, e a colega aceita Maria (C, de fora, pelo cliente mínimo).
+    const acesso = await app.entrar(codigo);
+    a = await Navegador.abrir(A);
+    await a.ligar(acesso);
+    await a.esperarCores(MOSAICO_1, [VERMELHO]);
+    c = await Navegador.abrir(C);
+    await c.entrarPelaPagina(codigo, 'Maria Lima');
+    const pedido = await eventos.esperar(
+      (e) => e.tipo === 'reuniaoPedido' && e.reuniao === codigo && e.pedido?.nome === 'Maria Lima',
+    );
+    await app.aceitar(codigo, pedido.pedido.id);
+    await c.esperarMensagem('aceito');
+    await a.esperarCores(MOSAICO_2, [VERMELHO, AMARELO]);
+
+    // Pelo cliente mínimo, Maria pega uma senha da tela. Depois, a colega a tira.
+    const senha = await c.pedirTela();
+    const lista = await app.participantes(codigo);
+    const maria = lista.json.participantes.find((p: { nome: string }) => p.nome === 'Maria Lima');
+    expect(maria, 'a Maria Lima está na lista da Ana').toBeTruthy();
+    await app.tirar(codigo, maria.id);
+    expect(await c.terminou(10_000), 'a ligação da câmera de C terminou').not.toBeNull();
+    await c.esperarMensagem('tirado');
+    await a.esperarCores(MOSAICO_1, [VERMELHO]);
+
+    // C liga a tela com a senha. O ponto do quadro grande da apresentação, no vídeo da colega, é olhado a cada 50 ms,
+    // até 5 s depois do fim da ligação. Sozinha na sala, a colega tem o quadro inteiro, e o ponto é vermelho: ele só
+    // muda se o layout mudar.
+    const vistas: Array<Cor | null> = [];
+    let olhando = true;
+    const olhar = (async () => {
+      while (olhando) {
+        vistas.push(...(await a!.amostras([TELA])));
+        await esperar(50);
+      }
+    })();
+    let fim: Fim | null = null;
+    try {
+      await c.compartilhar(senha).catch(() => {}); // a ligação cai: a confirmação dela pode nem chegar
+      fim = await c.telaTerminou(10_000);
+      await esperar(5_000);
+    } finally {
+      olhando = false;
+      await olhar;
+    }
+    // A senha conferiu (veio o 200, e não o 403), e o servidor de vídeo derrubou a ligação com o BYE.
+    expect(fim, 'como a ligação da tela terminou').toEqual({ codigo: null, causa: 'Terminated', originador: 'remote' });
+    expect(vistas.length, 'as vistas do quadro grande').toBeGreaterThan(40);
+    expect(vistas.filter((v) => perto(v, VERDE)), 'o verde da tela no quadro grande da colega').toEqual([]);
+    // O layout nunca mudou: nem a apresentação, com o quadro grande da tela ainda sem imagem, apareceu.
+    expect(vistas.filter((v) => !perto(v, VERMELHO)), 'as vistas do quadro grande que não são a colega').toEqual([]);
+    await a.esperarCores(MOSAICO_1, [VERMELHO]);
+  } finally {
+    eventos.fechar();
+    await a?.fechar();
+    await c?.fechar();
+  }
 });
 
 // Review Focus 2: quem fecha a aba ou perde a rede não manda o BYE; a ligação cai pelos 60 s em que nada chega a ela

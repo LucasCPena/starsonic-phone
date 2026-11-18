@@ -269,6 +269,13 @@
     return Promise.race([l.terminada, esperar(prazo).then(() => null)]);
   }
 
+  /** Como a última ligação da tela terminou, como no terminou da câmera; null se ela não terminou, ou nem saiu. */
+  function telaTerminou(prazo) {
+    const l = estado.tela;
+    if (!l) return Promise.resolve(null);
+    return Promise.race([l.terminada, esperar(prazo).then(() => null)]);
+  }
+
   /** Desenha o quadro de agora do vídeo recebido no canvas. Sem vídeo ainda, null. */
   function desenhar() {
     const w = video.videoWidth;
@@ -407,5 +414,6 @@
     pararDeMandar,
     sair,
     terminou,
+    telaTerminou,
   };
 })();

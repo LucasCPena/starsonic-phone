@@ -4,7 +4,22 @@
 // mínimo, com o Acesso do entrar do app.
 import { expect, test } from '@playwright/test';
 import { repetirAte } from './espera';
-import { A, AMARELO, AZUL, B, C, combinam, MOSAICO_1, MOSAICO_2, perto, VERMELHO, type Cor } from './midia';
+import {
+  A,
+  AMARELO,
+  AZUL,
+  B,
+  C,
+  combinam,
+  MOSAICO_1,
+  MOSAICO_2,
+  perto,
+  QUADROS_PEQUENOS,
+  TELA,
+  VERDE,
+  VERMELHO,
+  type Cor,
+} from './midia';
 import { Navegador, Pagina } from './navegador';
 import { ana, ligacoesPrincipais, novaReuniaoDeTeste, type Computador, type EventosDoApp } from './servidores';
 
@@ -171,6 +186,127 @@ test('o aparelho que acaba sozinho na reunião', async () => {
   } finally {
     await maria?.fechar();
     await colega?.fechar();
+  }
+});
+
+/**
+ * Antes da página: o getDisplayMedia dá um canvas verde, redesenhado a 15 quadros por segundo, no lugar da tela que a
+ * pessoa escolheria (como a tela do cliente mínimo). O window.oNavegadorParaATela faz o que o "Parar de compartilhar"
+ * do navegador faz: a faixa acaba, e o navegador dispara o ended, que o stop() da página não dispara.
+ */
+function telaVerde(): void {
+  const w = window as unknown as { telasDoTeste: MediaStreamTrack[]; oNavegadorParaATela: () => void };
+  w.telasDoTeste = [];
+  navigator.mediaDevices.getDisplayMedia = async () => {
+    const tela = document.createElement('canvas');
+    tela.width = 640;
+    tela.height = 360;
+    const pincel = tela.getContext('2d') as CanvasRenderingContext2D;
+    const fluxo = tela.captureStream(15);
+    const [faixa] = fluxo.getVideoTracks();
+    const pintar = () => {
+      pincel.fillStyle = 'rgb(30, 180, 60)';
+      pincel.fillRect(0, 0, tela.width, tela.height);
+    };
+    pintar();
+    const repintar = setInterval(() => (faixa.readyState === 'live' ? pintar() : clearInterval(repintar)), 1000 / 15);
+    w.telasDoTeste.push(faixa);
+    return fluxo;
+  };
+  w.oNavegadorParaATela = () => {
+    const faixa = w.telasDoTeste.at(-1);
+    if (!faixa) throw new Error('a página não pediu a tela');
+    faixa.stop();
+    faixa.dispatchEvent(new Event('ended'));
+  };
+}
+
+// A tela compartilhada pela página (o desenho, item 4): o clique no Compartilhar a tela pede a tela (aqui, o canvas
+// verde), e a segunda ligação da Maria a manda, com o silêncio gerado, só para mandar. O FreeSWITCH põe a apresentação
+// (seção 7 do docs/video-agente.md): a tela no quadro grande, e as pessoas nos pequenos; quando ela sai, a grade volta.
+test.describe.serial('a tela compartilhada pela página', () => {
+  let colega: Navegador | undefined;
+  let maria: Pagina | undefined;
+
+  test.afterAll(async () => {
+    await maria?.fechar();
+    await colega?.fechar();
+  });
+
+  const compartilhando = (p: Pagina) => p.page.getByText('Você está compartilhando a tela', { exact: true });
+  /** O estado da faixa de cada tela que a página pediu, na ordem. */
+  const telas = (p: Pagina) =>
+    p.page.evaluate(() =>
+      (window as unknown as { telasDoTeste: MediaStreamTrack[] }).telasDoTeste.map((t) => t.readyState),
+    );
+
+  /** Maria compartilha: o selo aparece, e o quadro grande fica verde, com as duas nos quadros pequenos. */
+  async function compartilhar(m: Pagina, c: Navegador): Promise<void> {
+    await m.botao('Compartilhar a tela').click();
+    await expect(compartilhando(m)).toBeVisible({ timeout: 20_000 });
+    await c.esperarCores([TELA], [VERDE]);
+    await c.esperarCores(QUADROS_PEQUENOS, [VERMELHO, AMARELO]);
+    await m.esperarCores([TELA], [VERDE]);
+  }
+
+  /** A tela saiu: a grade volta ao mosaico de 2, o selo some, a captura parou, e o Compartilhar a tela volta. */
+  async function aGradeVolta(m: Pagina, c: Navegador): Promise<void> {
+    await c.esperarMosaicoDe2([VERMELHO, AMARELO]);
+    await expect(compartilhando(m)).toBeHidden();
+    await expect(m.botao('Compartilhar a tela')).toBeEnabled();
+    await expect.poll(() => telas(m), { message: 'as telas que a página pediu' }).not.toContain('live');
+    await expect(m.controles()).toBeVisible();
+  }
+
+  test('compartilhar a tela pela página', async () => {
+    const codigo = await novaReuniaoDeTeste();
+    colega = await Navegador.abrir(A);
+    await colega.entrarPelaPagina(codigo, 'Carlos Lima');
+    maria = await Pagina.abrir(C);
+    await maria.page.addInitScript(telaVerde);
+    await maria.entrar(codigo, 'Maria Lima');
+    await colega.esperarCores(MOSAICO_2, [VERMELHO, AMARELO]);
+
+    await compartilhar(maria, colega);
+    // A ligação da tela manda o silêncio gerado: o som dela sai (20 ms por pacote dão 50 pacotes por segundo).
+    const antes = await maria.pacotesDeSomMandados();
+    await esperar(2_000);
+    expect(await maria.pacotesDeSomMandados(), 'os pacotes de som da tela em 2 s').toBeGreaterThan(antes + 50);
+
+    await maria.botao('Parar de compartilhar').click();
+    await aGradeVolta(maria, colega);
+    expect(await telas(maria)).toEqual(['ended']);
+    await maria.conferirOConsole();
+  });
+
+  test('a tela que o navegador para', async () => {
+    if (!maria || !colega) throw new Error('o teste anterior não pôs a Maria na reunião');
+    await compartilhar(maria, colega);
+
+    // O "Parar de compartilhar" do navegador faz o mesmo que o da página.
+    await maria.page.evaluate(() => (window as unknown as { oNavegadorParaATela: () => void }).oNavegadorParaATela());
+    await aGradeVolta(maria, colega);
+    expect(await telas(maria)).toEqual(['ended', 'ended']);
+    await maria.conferirOConsole();
+  });
+});
+
+// Onde o navegador não tem a captura da tela, o Compartilhar a tela não existe.
+test('sem captura de tela, sem o botão', async () => {
+  const codigo = await novaReuniaoDeTeste();
+  let maria: Pagina | undefined;
+  try {
+    maria = await Pagina.abrir(C);
+    await maria.page.addInitScript(() => {
+      delete (MediaDevices.prototype as { getDisplayMedia?: unknown }).getDisplayMedia;
+    });
+    await maria.entrar(codigo, 'Maria Lima');
+    await maria.esperarCores(MOSAICO_1, [AMARELO]);
+    await expect(maria.controles().getByRole('button')).toHaveText(['Microfone', 'Câmera', 'Sair']);
+    await expect(maria.botao('Compartilhar a tela')).toBeHidden();
+    await maria.conferirOConsole();
+  } finally {
+    await maria?.fechar();
   }
 });
 

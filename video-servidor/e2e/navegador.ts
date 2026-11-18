@@ -61,6 +61,7 @@ interface Cliente {
   pararDeMandar(): void;
   sair(): Promise<void>;
   terminou(prazo: number): Promise<Fim | null>;
+  telaTerminou(prazo: number): Promise<Fim | null>;
 }
 
 declare global {
@@ -230,6 +231,11 @@ export class Navegador {
   /** Como a ligação da câmera terminou, esperando até prazo ms; null se ela não terminou. */
   terminou(prazo = 10_000): Promise<Fim | null> {
     return this.page.evaluate((p) => window.cliente.terminou(p), prazo);
+  }
+
+  /** Como a última ligação da tela terminou, esperando até prazo ms; null se ela não terminou, ou nem saiu. */
+  telaTerminou(prazo = 10_000): Promise<Fim | null> {
+    return this.page.evaluate((p) => window.cliente.telaTerminou(p), prazo);
   }
 
   /** Sai da reunião (o BYE das ligações) e fecha o navegador: uma ligação esquecida no FreeSWITCH mandaria a mídia
