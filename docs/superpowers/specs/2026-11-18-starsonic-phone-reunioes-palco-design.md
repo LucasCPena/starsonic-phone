@@ -146,7 +146,7 @@ Os componentes estendem o que as telas 1 a 11 já usam, com as cores e as medida
 - **Acessibilidade:**
   - o Quadro e a Tela da faixa são `<button>` de verdade, com o nome dito: `Aumentar a câmera de <nome>`, `Aumentar a tela de <nome>`, e `Aumentar o quadro de <nome>, que está com a câmera desligada`;
   - o Tab passa pelos quadros, o Enter e o Espaço aumentam, e o Esc volta;
-  - o foco do teclado é o anel `cyan` de 3 px, afastado 2 px;
+  - o foco do teclado é o anel `cyan` de 3 px, afastado 2 px. Nos quadros, ele é a borda `cyan` de 3 px por dentro, a mesma do mouse em cima;
   - o botão de voltar tem pelo menos 44 px de altura;
   - o mouse em cima não depende só da cor: a pílula `Aumentar` aparece junto.
 - **A conferir no teste manual:** o corte das laterais no celular em pé, e a largura da faixa num notebook de tela pequena.
