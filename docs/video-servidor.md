@@ -359,8 +359,7 @@ Entre as linhas, deve aparecer `Verification: OK`. Essa porta é a do app (as re
 5. No PC, clique em `Câmera` para desligar. Em uns 5 segundos, o quadro do PC no celular vira um quadro escuro, só com o nome. Clique de novo, e a imagem volta.
 6. Clique em `Sair`. Aparece `Você saiu da reunião` e o botão `Entrar de novo`.
 
-Se a imagem ou o som do outro aparelho não chegam, veja "A imagem não chega", no passo 9.
-
+Se a imagem ou o som do outro aparelho não chegam, veja "A imagem ou o som do outro não chegam na reunião de teste", no passo 9.
 
 ## 5. Atualizar
 
@@ -628,7 +627,7 @@ A página entrou na reunião (o chat e o agente estão bem), mas a imagem e o so
 systemctl status coturn
 ```
 
-  Se ele não estiver `active (running)`, veja os registros dele (passo 8);
+  Se ele não estiver `active (running)`, veja os registros dele (passo 8).
 - **O IP público da VM** tem de ser o que está na configuração, e fixo (passo 1). Se o IP mudou, a imagem não chega.
 
 Teste de novo com outra rede (o celular no 4G, por exemplo): se funciona numa e não na outra, o problema está na rede que falhou, e não no servidor.

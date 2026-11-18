@@ -34,6 +34,7 @@ jobs:
         # toolchain de novo em cada rodada.
         run: |
           versao=$(awk '$1 == "toolchain" { sub(/^go/, "", $2); print $2 }' "$GITHUB_WORKSPACE/chat-servidor/go.mod")
+          [ -n "$versao" ] || { echo "Sem a linha toolchain no chat-servidor/go.mod"; exit 1; }
           echo "versao=$versao" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-go@v5
         with:
@@ -94,6 +95,7 @@ jobs:
         # toolchain de novo em cada rodada.
         run: |
           versao=$(awk '$1 == "toolchain" { sub(/^go/, "", $2); print $2 }' "$GITHUB_WORKSPACE/chat-servidor/go.mod")
+          [ -n "$versao" ] || { echo "Sem a linha toolchain no chat-servidor/go.mod"; exit 1; }
           echo "versao=$versao" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-go@v5
         with:

@@ -83,7 +83,8 @@ func TestPagina_OrigemDoVideoSoQuandoServe(t *testing.T) {
 		}
 	}
 	ruins := []string{
-		"", "video.exemplo.com.br", "https://video.exemplo.com.br/sip", "http://video.exemplo.com.br", "ftp://video.exemplo.com.br",
+		"", "video.exemplo.com.br", "https://video.exemplo.com.br/sip", "http://video.exemplo.com.br",
+		"ftp://video.exemplo.com.br",
 		"wss://", "wss://Video.Exemplo.com.br/sip", "wss://video.exemplo.com.br:/sip", "wss://video.exemplo.com.br:abc/sip",
 		"wss://video.exemplo.com.br:123456/sip", "wss://usuario@video.exemplo.com.br/sip", "wss://[::1]:7443/sip",
 		"wss://video_exemplo.com.br/sip", "wss://video.exemplo.com.br%3Bscript-src/sip", "wss://*.exemplo.com.br/sip",

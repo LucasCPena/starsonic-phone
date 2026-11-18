@@ -31,7 +31,7 @@ function compilar(bin: string): void {
   const semProxy = 'localhost,127.0.0.1'; // o proxy do ambiente não alcança o chat local
   const r = spawnSync('go', ['build', '-o', bin, './cmd/starsonic-chat'], {
     cwd: SERVIDOR,
-    encoding: 'utf8', // a saída do build só aparece quando ele falha: um teste que passa não leva o registro do go build
+    encoding: 'utf8', // a saída do build só aparece quando ele falha: o teste que passa não leva o registro dele
     env: { ...process.env, NO_PROXY: semProxy, no_proxy: semProxy, CGO_ENABLED: '0' },
   });
   if (r.status !== 0) {

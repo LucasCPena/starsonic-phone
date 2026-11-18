@@ -38,6 +38,7 @@ jobs:
         # toolchain de novo em cada rodada.
         run: |
           versao=$(awk '$1 == "toolchain" { sub(/^go/, "", $2); print $2 }' "$GITHUB_WORKSPACE/video-servidor/go.mod")
+          [ -n "$versao" ] || { echo "Sem a linha toolchain no video-servidor/go.mod"; exit 1; }
           echo "versao=$versao" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-go@v5
         with:
@@ -256,9 +257,11 @@ jobs:
       - name: Versão do Go do go.mod
         id: go
         # A linha "toolchain" do go.mod, e não a "go": com a segunda, o setup-go instala o 1.26.0 e o go baixa o
-        # toolchain de novo em cada rodada.
+        # toolchain de novo em cada rodada. O módulo do chat também é compilado com a versão do módulo do vídeo; o
+        # GOTOOLCHAIN=local faz uma divisão futura das versões falhar alto.
         run: |
           versao=$(awk '$1 == "toolchain" { sub(/^go/, "", $2); print $2 }' "$GITHUB_WORKSPACE/video-servidor/go.mod")
+          [ -n "$versao" ] || { echo "Sem a linha toolchain no video-servidor/go.mod"; exit 1; }
           echo "versao=$versao" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-go@v5
         with:
