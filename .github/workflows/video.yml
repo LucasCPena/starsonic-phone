@@ -20,6 +20,10 @@ on:
 permissions:
   contents: read
 
+# O go do runner é o do go.mod, e nunca baixa outro: com um go.mod que pede mais, o job falha em vez de baixar.
+env:
+  GOTOOLCHAIN: local
+
 jobs:
   agente:
     runs-on: ubuntu-24.04
@@ -28,9 +32,16 @@ jobs:
         working-directory: video-servidor
     steps:
       - uses: actions/checkout@v4
+      - name: Versão do Go do go.mod
+        id: go
+        # A linha "toolchain" do go.mod, e não a "go": com a segunda, o setup-go instala o 1.26.0 e o go baixa o
+        # toolchain de novo em cada rodada.
+        run: |
+          versao=$(awk '$1 == "toolchain" { sub(/^go/, "", $2); print $2 }' "$GITHUB_WORKSPACE/video-servidor/go.mod")
+          echo "versao=$versao" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-go@v5
         with:
-          go-version-file: video-servidor/go.mod
+          go-version: ${{ steps.go.outputs.versao }}
       - name: gofmt
         run: |
           lista=$(gofmt -l .)
@@ -242,9 +253,16 @@ jobs:
           sudo apt-get update -q
           xargs -a /opt/starsonic-freeswitch/pacotes.txt sudo DEBIAN_FRONTEND=noninteractive \
             apt-get install -y -q --no-install-recommends
+      - name: Versão do Go do go.mod
+        id: go
+        # A linha "toolchain" do go.mod, e não a "go": com a segunda, o setup-go instala o 1.26.0 e o go baixa o
+        # toolchain de novo em cada rodada.
+        run: |
+          versao=$(awk '$1 == "toolchain" { sub(/^go/, "", $2); print $2 }' "$GITHUB_WORKSPACE/video-servidor/go.mod")
+          echo "versao=$versao" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-go@v5
         with:
-          go-version-file: video-servidor/go.mod
+          go-version: ${{ steps.go.outputs.versao }}
           cache-dependency-path: chat-servidor/go.sum
       - name: O chat e o agente
         env:
