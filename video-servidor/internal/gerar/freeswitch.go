@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/LucasCPena/starsonic-phone/video-servidor/internal/config"
+	"github.com/LucasCPena/starsonic-phone/video-servidor/internal/mosaico"
 )
 
 //go:embed modelos/freeswitch.xml
@@ -44,10 +45,22 @@ type dadosFreeSWITCH struct {
 	PortaESL, PortaSIPNavegador, PortaTLS int
 	WSBinding, URLDiscagem                string
 	PastaTLS, QuadroSemCamera             string
-	ACLs                                  []string // o apply-candidate-acl dos dois perfis
-	LayoutDaReuniao                       string
-	Layouts                               []layout
-	Grupo                                 grupo
+	ACLs                                  []string       // o apply-candidate-acl dos dois perfis
+	Inicial                               mosaico.Layout // o layout com que a conferência começa
+	ImagensPorSegundo                     int
+	Banda                                 string
+	Layouts                               []mosaico.Layout
+}
+
+// layoutInicial é o layout com que a conferência começa, o do perfil: o agente muda o layout, o tamanho e a banda
+// a cada entrada e saída.
+func layoutInicial() mosaico.Layout {
+	for _, l := range mosaico.Layouts() {
+		if l.Nome == mosaico.LayoutInicial {
+			return l
+		}
+	}
+	panic("gerar: o layout inicial não está na tabela do mosaico")
 }
 
 // FreeSWITCH devolve o freeswitch.xml, um arquivo só, para a pasta pastaFS (a do -conf, com o
@@ -82,9 +95,10 @@ func FreeSWITCH(c config.Config, pastaFS string, teste bool) ([]byte, error) {
 		PastaTLS:          filepath.Join(pastaFS, "tls"),
 		QuadroSemCamera:   filepath.Join(pastaFS, "sem-camera.png"),
 		ACLs:              acls,
-		LayoutDaReuniao:   "group:" + grade.Nome,
-		Layouts:           layouts,
-		Grupo:             grade,
+		Inicial:           layoutInicial(),
+		ImagensPorSegundo: mosaico.ImagensPorSegundo,
+		Banda:             mosaico.BandaDaGrade,
+		Layouts:           mosaico.Layouts(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("o modelo do freeswitch.xml: %w", err)
@@ -93,7 +107,7 @@ func FreeSWITCH(c config.Config, pastaFS string, teste bool) ([]byte, error) {
 }
 
 // SemCamera devolve o quadro de quem está sem câmera (o video-no-video-avatar): um PNG de 640×360,
-// todo de #1B2333. O FreeSWITCH escreve o nome por cima, na faixa de baixo.
+// todo de #1B2333, sem texto. O nome de cada pessoa é da página, e não do mosaico.
 func SemCamera() []byte {
 	img := image.NewNRGBA(image.Rect(0, 0, 640, 360))
 	draw.Draw(img, img.Bounds(), image.NewUniform(color.NRGBA{R: 0x1B, G: 0x23, B: 0x33, A: 0xFF}), image.Point{}, draw.Src)

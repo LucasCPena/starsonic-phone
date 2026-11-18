@@ -115,10 +115,10 @@
           <param name="interval" value="20"/>
           <param name="channels" value="1"/>
           <param name="video-mode" value="mux"/>
-          <param name="video-layout-name" value="{{xml .LayoutDaReuniao}}"/>
-          <param name="video-canvas-size" value="1280x720"/>
-          <param name="video-fps" value="15"/>
-          <param name="video-codec-bandwidth" value="1.5mb"/>
+          <param name="video-layout-name" value="{{xml .Inicial.Nome}}"/>
+          <param name="video-canvas-size" value="{{xml .Inicial.Largura}}x{{xml .Inicial.Altura}}"/>
+          <param name="video-fps" value="{{xml .ImagensPorSegundo}}"/>
+          <param name="video-codec-bandwidth" value="{{xml .Banda}}"/>
           <param name="video-canvas-bgcolor" value="#04060E"/>
           <param name="video-letterbox-bgcolor" value="#04060E"/>
           <param name="video-no-video-avatar" value="{{xml .QuadroSemCamera}}"/>
@@ -130,27 +130,21 @@
       </profiles>
     </configuration>
 
-    <!-- Os layouts da seção 7 do docs/video-agente.md: nenhum quadro é o "floor". -->
+    <!-- Os seis layouts da seção 7 do docs/video-agente.md, sem grupo: quem escolhe o layout é o agente. Cada imagem
+         tem a reserva dela (c1 a c12, ou tela), e a ligação só entra na imagem que o agente reservou para ela.
+         Nenhuma imagem é o "floor". -->
     <configuration name="conference_layouts.conf">
       <layout-settings>
         <layouts>
           {{- range .Layouts}}
           <layout name="{{xml .Nome}}">
-            {{- range .Quadros}}
+            {{- range .Imagens}}
             <image x="{{xml .X}}" y="{{xml .Y}}" scale="{{xml .Scale}}"
-              {{- if .HScale}} hscale="{{xml .HScale}}"{{end}}
-              {{- if .Reserva}} reservation_id="{{xml .Reserva}}"{{end}}/>
+              {{- if .HScale}} hscale="{{xml .HScale}}"{{end}} reservation_id="{{xml .Reserva}}"/>
             {{- end}}
           </layout>
           {{- end}}
         </layouts>
-        <groups>
-          <group name="{{xml .Grupo.Nome}}">
-            {{- range .Grupo.Layouts}}
-            <layout>{{xml .}}</layout>
-            {{- end}}
-          </group>
-        </groups>
       </layout-settings>
     </configuration>
 

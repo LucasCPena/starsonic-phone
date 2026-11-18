@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/LucasCPena/starsonic-phone/video-servidor/internal/mosaico"
 	"github.com/LucasCPena/starsonic-phone/video-servidor/internal/salas"
 )
 
@@ -64,6 +65,17 @@ func (a *API) Avisar(av salas.Aviso) {
 			Tipo string `json:"tipo"`
 			Sala string `json:"sala"`
 		}{av.Tipo, av.Sala})
+	case "palco":
+		if av.Palco == nil {
+			return
+		}
+		ev, _ = json.Marshal(struct {
+			Tipo    string           `json:"tipo"`
+			Sala    string           `json:"sala"`
+			Largura int              `json:"largura"`
+			Altura  int              `json:"altura"`
+			Quadros []mosaico.Quadro `json:"quadros"`
+		}{av.Tipo, av.Sala, av.Palco.Largura, av.Palco.Altura, av.Palco.Quadros})
 	default:
 		return
 	}

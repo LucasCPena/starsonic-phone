@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
+	"log/slog"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +16,7 @@ import (
 
 	"github.com/LucasCPena/starsonic-phone/video-servidor/internal/esl"
 	"github.com/LucasCPena/starsonic-phone/video-servidor/internal/esl/esltest"
+	"github.com/LucasCPena/starsonic-phone/video-servidor/internal/mosaico"
 )
 
 // Os nomes são inventados: as salas e os participantes são hexadecimais de teste.
@@ -25,17 +29,23 @@ const (
 	carlosID = "c2c2c2c2c2c2c2c2"
 	biaID    = "b3b3b3b3b3b3b3b3"
 
-	uuidAnaCamera   = "00000000-0000-4000-8000-0000000000a1"
-	uuidAnaTela     = "00000000-0000-4000-8000-0000000000a2"
-	uuidAnaCamera2  = "00000000-0000-4000-8000-0000000000a3" // a segunda ligação da câmera da Ana
-	uuidCarlosCam   = "00000000-0000-4000-8000-0000000000c1"
-	uuidCarlosTela  = "00000000-0000-4000-8000-0000000000c2"
-	uuidCarlosCam2  = "00000000-0000-4000-8000-0000000000c3"
-	uuidBiaCamera   = "00000000-0000-4000-8000-0000000000b1"
-	uuidBiaTela     = "00000000-0000-4000-8000-0000000000b2"
-	uuidBiaCamera2  = "00000000-0000-4000-8000-0000000000b3"
-	grupoSemTela    = "conference " + salaA + " vid-layout group starsonic-grade"
-	layoutApresenta = "conference " + salaA + " vid-layout starsonic-apresentacao"
+	daviID  = "d4d4d4d4d4d4d4d4"
+	mariaID = "e5e5e5e5e5e5e5e5"
+
+	uuidAnaCamera  = "00000000-0000-4000-8000-0000000000a1"
+	uuidAnaTela    = "00000000-0000-4000-8000-0000000000a2"
+	uuidAnaCamera2 = "00000000-0000-4000-8000-0000000000a3" // a segunda ligação da câmera da Ana
+	uuidCarlosCam  = "00000000-0000-4000-8000-0000000000c1"
+	uuidCarlosTela = "00000000-0000-4000-8000-0000000000c2"
+	uuidCarlosCam2 = "00000000-0000-4000-8000-0000000000c3"
+	uuidBiaCamera  = "00000000-0000-4000-8000-0000000000b1"
+	uuidBiaTela    = "00000000-0000-4000-8000-0000000000b2"
+	uuidBiaCamera2 = "00000000-0000-4000-8000-0000000000b3"
+	uuidDaviCamera = "00000000-0000-4000-8000-0000000000d1"
+	uuidMariaCam   = "00000000-0000-4000-8000-0000000000e1"
+
+	// Os comandos do mosaico da sala A, sem o "conference <sala> " da frente.
+	salaACmd = "conference " + salaA + " "
 
 	senhaESL = "Ab12Cd34Ef56Gh78Ij90Kl12Mn34Op56"
 )
@@ -101,6 +111,23 @@ func (v *avisos) Lista() []Aviso {
 	return append([]Aviso(nil), v.lista...)
 }
 
+// membros é o <membro> (o Member-ID do FreeSWITCH) de cada ligação dos testes. As telas têm membros maiores que as
+// câmeras que entraram antes delas, como no FreeSWITCH, que os dá em ordem.
+var membros = map[string]string{
+	uuidAnaCamera: "1", uuidCarlosCam: "2", uuidBiaCamera: "3", uuidDaviCamera: "4", uuidMariaCam: "5",
+	uuidAnaTela: "6", uuidAnaCamera2: "7", uuidCarlosTela: "8", uuidCarlosCam2: "9", uuidBiaTela: "10", uuidBiaCamera2: "11",
+}
+
+// membroDe é o <membro> da ligação: o da tabela, ou um número tirado do uuid, para as ligações sem nome.
+func membroDe(uuid string) string {
+	if m, ok := membros[uuid]; ok {
+		return m
+	}
+	h := fnv.New32a()
+	h.Write([]byte(uuid))
+	return fmt.Sprint(h.Sum32()%1_000_000 + 100)
+}
+
 func entra(sala, uuid, participante string, tela bool) esl.Evento {
 	return esl.Evento{
 		"Event-Name":                      "CUSTOM",
@@ -108,6 +135,7 @@ func entra(sala, uuid, participante string, tela bool) esl.Evento {
 		"Action":                          "add-member",
 		"Conference-Name":                 sala,
 		"Unique-ID":                       uuid,
+		"Member-ID":                       membroDe(uuid),
 		"variable_starsonic_participante": participante,
 		"variable_starsonic_tela":         fmt.Sprint(tela),
 	}
@@ -240,17 +268,100 @@ func semLayout(t *testing.T, fs *esltest.Servidor) {
 	}
 }
 
+// semPalco são os avisos sem os do palco, para os testes de quem entra e sai.
+func semPalco(lista []Aviso) []Aviso {
+	var saida []Aviso
+	for _, a := range lista {
+		if a.Tipo != "palco" {
+			saida = append(saida, a)
+		}
+	}
+	return saida
+}
+
+// semOPalco é o estado sem o palco das salas, para os testes de quem está em cada uma.
+func semOPalco(salas []Sala) []Sala {
+	saida := make([]Sala, len(salas))
+	for i, s := range salas {
+		s.Palco = nil
+		saida[i] = s
+	}
+	return saida
+}
+
+// palco monta um palco; cam e tela, os quadros dele.
+func palco(largura, altura int, quadros ...mosaico.Quadro) *mosaico.Palco {
+	return &mosaico.Palco{Largura: largura, Altura: altura, Quadros: append([]mosaico.Quadro{}, quadros...)}
+}
+
+func cam(participante string, x, y, l, a int) mosaico.Quadro {
+	return mosaico.Quadro{Participante: participante, X: x, Y: y, L: l, A: a}
+}
+
+func tela(participante string, x, y, l, a int) mosaico.Quadro {
+	return mosaico.Quadro{Participante: participante, Tela: true, X: x, Y: y, L: l, A: a}
+}
+
+// Os quadros da grade de 4 (1920×1080), da de 9 (1920×1086) e da apresentação de 2 (1920×1620).
+func c4(p string, celula int) mosaico.Quadro {
+	return cam(p, (celula-1)%2*960, (celula-1)/2*540, 960, 540)
+}
+
+func c9(p string, celula int) mosaico.Quadro {
+	return cam(p, (celula-1)%3*640, (celula-1)/3*362, 640, 362)
+}
+
+func ap2(p string, celula int) mosaico.Quadro { return cam(p, (celula-1)*960, 1080, 960, 540) }
+
+func telaAp2(p string) mosaico.Quadro { return tela(p, 0, 0, 1920, 1080) }
+
+func avisoPalco(p *mosaico.Palco) Aviso { return Aviso{Tipo: "palco", Sala: salaA, Palco: p} }
+
+// mosaicoDaSalaA são os comandos que a sala A recebeu, sem o "conference <sala> " da frente, e sem os outros.
+func mosaicoDaSalaA(comandos []string) []string {
+	var saida []string
+	for _, c := range comandos {
+		c = strings.TrimPrefix(c, "api ")
+		if r, ok := strings.CutPrefix(c, salaACmd); ok {
+			saida = append(saida, r)
+		}
+	}
+	return saida
+}
+
+// registro troca o registro padrão por um que o teste lê.
+func registro(t *testing.T) *strings.Builder {
+	t.Helper()
+	var buf strings.Builder
+	var mu sync.Mutex
+	antes := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(escritorSeguro{&buf, &mu}, nil)))
+	t.Cleanup(func() { slog.SetDefault(antes) })
+	return &buf
+}
+
+type escritorSeguro struct {
+	b  *strings.Builder
+	mu *sync.Mutex
+}
+
+func (e escritorSeguro) Write(p []byte) (int, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.b.Write(p)
+}
+
 func TestSalas_EntrouSaiu(t *testing.T) {
 	s, _, v := novo(t)
 	s.Evento(ctx(), entra(salaA, uuidAnaCamera, anaID, false))
 	s.Evento(ctx(), entra(salaA, uuidCarlosCam, carlosID, false))
 	want := []Sala{{Sala: salaA, Participantes: []Participante{{anaID, false}, {carlosID, false}}}}
-	if got := s.Estado(); !reflect.DeepEqual(got, want) {
+	if got := semOPalco(s.Estado()); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Estado = %+v, want %+v", got, want)
 	}
 	s.Evento(ctx(), sai(salaA, uuidAnaCamera))
 	want = []Sala{{Sala: salaA, Participantes: []Participante{{carlosID, false}}}}
-	if got := s.Estado(); !reflect.DeepEqual(got, want) {
+	if got := semOPalco(s.Estado()); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Estado depois da saída = %+v, want %+v", got, want)
 	}
 	avisosWant := []Aviso{
@@ -258,7 +369,7 @@ func TestSalas_EntrouSaiu(t *testing.T) {
 		{Tipo: "entrou", Sala: salaA, Participante: carlosID},
 		{Tipo: "saiu", Sala: salaA, Participante: anaID},
 	}
-	if got := v.Lista(); !reflect.DeepEqual(got, avisosWant) {
+	if got := semPalco(v.Lista()); !reflect.DeepEqual(got, avisosWant) {
 		t.Errorf("avisos = %+v, want %+v", got, avisosWant)
 	}
 }
@@ -276,7 +387,8 @@ func TestSalas_Estado(t *testing.T) {
 		}
 	})
 	t.Run("o JSON é o da seção 5 do contrato, em ordem estável", func(t *testing.T) {
-		s, _, _ := novo(t)
+		// Sem o FreeSWITCH, nenhuma sala tem palco: o campo falta (o palco tem o teste dele).
+		s := Nova(nil)
 		s.Evento(ctx(), entra(salaB, uuidBiaCamera, biaID, false))
 		s.Evento(ctx(), entra(salaA, uuidCarlosCam, carlosID, false)) // a tela só entra depois da câmera (seção 6)
 		s.Evento(ctx(), entra(salaA, uuidCarlosTela, carlosID, true))
@@ -293,49 +405,87 @@ func TestSalas_Estado(t *testing.T) {
 		s.Evento(ctx(), entra(salaA, uuidAnaCamera, anaID, false))
 		e := s.Estado()
 		e[0].Participantes[0].Participante = "mexido"
+		e[0].Palco.Quadros[0].X = 99
+		e[0].Palco.Largura = 99
 		if got := s.Estado()[0].Participantes[0].Participante; got != anaID {
 			t.Errorf("o Estado mudou por fora: %s", got)
+		}
+		if got := s.Estado()[0].Palco; !reflect.DeepEqual(got, palco(1920, 1080, c4(anaID, 1))) {
+			t.Errorf("o palco mudou por fora: %+v", got)
 		}
 	})
 }
 
+// A tela muda o layout para a apresentação, com o tamanho e a banda dela, e a saída dela volta à grade. O palco sai
+// depois dos comandos, com a tela primeiro.
 func TestSalas_Tela(t *testing.T) {
 	s, a, v := novo(t)
 	s.Evento(ctx(), entra(salaA, uuidAnaCamera, anaID, false))
 	s.Evento(ctx(), entra(salaA, uuidCarlosCam, carlosID, false))
-	if got := a.Comandos(); len(got) != 0 {
-		t.Fatalf("as câmeras mandaram comandos: %q", got)
-	}
 
 	passos := []struct {
 		nome   string
 		evento esl.Evento
 		want   []string
+		palco  *mosaico.Palco
 	}{
-		{"a tela de Ana entra", entra(salaA, uuidAnaTela, anaID, true), []string{layoutApresenta}},
-		{"a tela de Carlos toma o lugar", entra(salaA, uuidCarlosTela, carlosID, true), []string{"uuid_kill " + uuidAnaTela}},
-		{"a de Ana sai", sai(salaA, uuidAnaTela), nil},
-		{"a de Carlos sai", sai(salaA, uuidCarlosTela), []string{grupoSemTela}},
+		{"a tela de Ana entra", entra(salaA, uuidAnaTela, anaID, true),
+			[]string{"vid-res 1920x1620", "vid-layout starsonic-apresentacao-2", "vid-bandwidth 4mb '' 1"},
+			palco(1920, 1620, telaAp2(anaID), ap2(anaID, 1), ap2(carlosID, 2))},
+		{"ela sai", sai(salaA, uuidAnaTela),
+			[]string{"vid-res 1920x1080", "vid-layout starsonic-4", "vid-bandwidth 3mb '' 1"},
+			palco(1920, 1080, c4(anaID, 1), c4(carlosID, 2))},
 	}
 	for _, p := range passos {
 		a.Limpar()
+		antes := len(v.Lista())
 		s.Evento(ctx(), p.evento)
-		if got := a.Comandos(); !reflect.DeepEqual(got, p.want) {
+		if got := mosaicoDaSalaA(a.Comandos()); !reflect.DeepEqual(got, p.want) {
 			t.Errorf("%s: comandos = %q, want %q", p.nome, got, p.want)
 		}
-	}
-	telas := 0
-	for _, av := range v.Lista() {
-		if av.Tela {
-			telas++
+		if got := a.Comandos(); len(got) != len(p.want) {
+			t.Errorf("%s: comandos = %q, want só os do mosaico", p.nome, got)
+		}
+		depois := v.Lista()[antes:]
+		if len(depois) != 2 || depois[0].Tipo == "palco" || !reflect.DeepEqual(depois[1], avisoPalco(p.palco)) {
+			t.Errorf("%s: avisos = %+v, want o da tela e depois o palco %+v", p.nome, depois, p.palco)
 		}
 	}
-	if telas != 4 {
-		t.Errorf("os avisos da tela: %d, want 4 (2 entrou e 2 saiu): %+v", telas, v.Lista())
-	}
-	want := []Sala{{Sala: salaA, Participantes: []Participante{{anaID, false}, {carlosID, false}}}}
+	want := []Sala{{Sala: salaA, Participantes: []Participante{{anaID, false}, {carlosID, false}},
+		Palco: palco(1920, 1080, c4(anaID, 1), c4(carlosID, 2))}}
 	if got := s.Estado(); !reflect.DeepEqual(got, want) {
 		t.Errorf("Estado = %+v, want %+v", got, want)
+	}
+}
+
+// Uma tela nova toma o lugar da anterior: o palco passa a ter a tela nova (a de maior <membro>), e a anterior cai
+// depois dele.
+func TestSalas_TelaNova(t *testing.T) {
+	s, a, v := novo(t)
+	s.Evento(ctx(), entra(salaA, uuidAnaCamera, anaID, false))
+	s.Evento(ctx(), entra(salaA, uuidCarlosCam, carlosID, false))
+	s.Evento(ctx(), entra(salaA, uuidAnaTela, anaID, true))
+	a.Limpar()
+	antes := len(v.Lista())
+	avisosNoKill := -1
+	a.durante = func() {
+		if cmds := a.Comandos(); cmds[len(cmds)-1] == "uuid_kill "+uuidAnaTela {
+			avisosNoKill = len(v.Lista())
+		}
+	}
+	s.Evento(ctx(), entra(salaA, uuidCarlosTela, carlosID, true))
+	if got, want := a.Comandos(), []string{"uuid_kill " + uuidAnaTela}; !reflect.DeepEqual(got, want) {
+		t.Errorf("comandos = %q, want %q", got, want)
+	}
+	want := []Aviso{
+		{Tipo: "entrou", Sala: salaA, Participante: carlosID, Tela: true},
+		avisoPalco(palco(1920, 1620, telaAp2(carlosID), ap2(anaID, 1), ap2(carlosID, 2))),
+	}
+	if got := v.Lista()[antes:]; !reflect.DeepEqual(got, want) {
+		t.Errorf("avisos = %+v\nwant %+v", got, want)
+	}
+	if avisosNoKill != antes+2 {
+		t.Errorf("o uuid_kill da tela da Ana saiu com %d avisos, want %d (depois do palco)", avisosNoKill, antes+2)
 	}
 }
 
@@ -350,27 +500,32 @@ func TestSalas_Tela_SemFreeSWITCH(t *testing.T) {
 }
 
 // A primeira regra da ligação principal (seção 6 do contrato): a tela de quem não tem a ligação principal (a da câmera)
-// na sala cai na hora, antes de qualquer mudança de layout e sem o entrou. O quadro grande nunca é dela, e o chat não
-// a vê: é a tela de alguém que foi tirado e ligou com uma senha da tela que ainda valia.
+// na sala cai na hora, sem o entrou e sem nenhum comando do mosaico. O quadro grande nunca é dela, e o chat não a vê
+// nem no palco: é a tela de alguém que foi tirado e ligou com uma senha da tela que ainda valia.
 func TestSalas_TelaSemAPrincipal(t *testing.T) {
 	s, fs, v := comESL(t)
 	fs.Mandar(entra(salaA, uuidAnaCamera, anaID, false))
+	esperarComando(t, fs, "api "+salaACmd+"vid-res-id 1 c1 force")
+	antes := len(fs.Comandos())
 	fs.Mandar(entra(salaA, uuidCarlosTela, carlosID, true)) // o Carlos não tem a câmera na sala
 	esperarComando(t, fs, "api uuid_kill "+uuidCarlosTela)
 	// O FreeSWITCH avisa que ela saiu: isso também não muda nada.
 	fs.Mandar(sai(salaA, uuidCarlosTela))
 	barreira(t, fs, v)
-	semLayout(t, fs)
-	if got, want := semBarreira(v.Lista()), []Aviso{{Tipo: "entrou", Sala: salaA, Participante: anaID}}; !reflect.DeepEqual(got, want) {
+	if got, want := fs.Comandos()[antes:], []string{"api uuid_kill " + uuidCarlosTela}; !reflect.DeepEqual(got, want) {
+		t.Errorf("comandos = %q, want %q", got, want)
+	}
+	want := []Aviso{{Tipo: "entrou", Sala: salaA, Participante: anaID}, avisoPalco(palco(1920, 1080, c4(anaID, 1)))}
+	if got := semBarreira(v.Lista()); !reflect.DeepEqual(got, want) {
 		t.Errorf("avisos = %+v, want %+v", got, want)
 	}
-	if got, want := s.Estado(), []Sala{{Sala: salaA, Participantes: []Participante{{anaID, false}}}}; !reflect.DeepEqual(got, want) {
+	if got, want := semOPalco(s.Estado()), []Sala{{Sala: salaA, Participantes: []Participante{{anaID, false}}}}; !reflect.DeepEqual(got, want) {
 		t.Errorf("Estado = %+v, want %+v", got, want)
 	}
 
 	// A tela de quem tem a câmera na sala entra, como sempre.
 	fs.Mandar(entra(salaA, uuidAnaTela, anaID, true))
-	esperarComando(t, fs, "api "+layoutApresenta)
+	esperarComando(t, fs, "api "+salaACmd+"vid-layout starsonic-apresentacao-2")
 	if n := contarComando(fs.Comandos(), "api uuid_kill "+uuidAnaTela); n != 0 {
 		t.Errorf("a tela da Ana, com a câmera dela na sala, caiu")
 	}
@@ -383,7 +538,7 @@ func TestSalas_TelaSaiComAPrincipal(t *testing.T) {
 	fs.Mandar(entra(salaA, uuidAnaCamera, anaID, false))
 	fs.Mandar(entra(salaA, uuidCarlosCam, carlosID, false))
 	fs.Mandar(entra(salaA, uuidAnaTela, anaID, true))
-	esperarComando(t, fs, "api "+layoutApresenta)
+	esperarComando(t, fs, "api "+salaACmd+"vid-layout starsonic-apresentacao-2")
 
 	// A câmera de outra pessoa sai: a tela da Ana fica.
 	fs.Mandar(sai(salaA, uuidCarlosCam))
@@ -396,7 +551,6 @@ func TestSalas_TelaSaiComAPrincipal(t *testing.T) {
 	fs.Mandar(sai(salaA, uuidAnaCamera))
 	esperarComando(t, fs, "api uuid_kill "+uuidAnaTela)
 	fs.Mandar(sai(salaA, uuidAnaTela))
-	esperarComando(t, fs, "api "+grupoSemTela)
 	barreira(t, fs, v)
 	want := []Aviso{
 		{Tipo: "entrou", Sala: salaA, Participante: anaID},
@@ -406,7 +560,7 @@ func TestSalas_TelaSaiComAPrincipal(t *testing.T) {
 		{Tipo: "saiu", Sala: salaA, Participante: anaID},
 		{Tipo: "saiu", Sala: salaA, Participante: anaID, Tela: true},
 	}
-	if got := semBarreira(v.Lista()); !reflect.DeepEqual(got, want) {
+	if got := semPalco(semBarreira(v.Lista())); !reflect.DeepEqual(got, want) {
 		t.Errorf("avisos = %+v\nwant %+v", got, want)
 	}
 	if got := s.Estado(); len(got) != 1 || len(got[0].Participantes) != 0 {
@@ -414,31 +568,36 @@ func TestSalas_TelaSaiComAPrincipal(t *testing.T) {
 	}
 }
 
-// A terceira regra: uma ligação principal nova do participante toma o lugar da anterior, que o agente derruba. O chat
-// não recebe o saiu da anterior: o participante continua na sala, e a tela dele também. O saiu vem quando sai a última.
+// A terceira regra: uma ligação principal nova do participante toma o lugar da anterior, que o agente derruba depois de
+// pôr a nova na célula dele. O chat não recebe o saiu da anterior, nem um palco novo: o participante continua na sala,
+// no mesmo lugar, e a tela dele também. O saiu vem quando sai a última.
 func TestSalas_PrincipalNovaTomaOLugar(t *testing.T) {
 	s, fs, v := comESL(t)
 	fs.Mandar(entra(salaA, uuidAnaCamera, anaID, false))
 	fs.Mandar(entra(salaA, uuidAnaTela, anaID, true))
-	esperarComando(t, fs, "api "+layoutApresenta)
+	esperarComando(t, fs, "api "+salaACmd+"vid-layout starsonic-apresentacao-2")
+	barreira(t, fs, v)
+	avisosAntes := len(semBarreira(v.Lista()))
 
 	// Uma segunda senha da câmera da Ana, usada: a ligação anterior cai.
+	antes := len(fs.Comandos())
 	fs.Mandar(entra(salaA, uuidAnaCamera2, anaID, false))
 	esperarComando(t, fs, "api uuid_kill "+uuidAnaCamera)
+	barreira(t, fs, v)
+	if got, want := fs.Comandos()[antes:], []string{"api " + salaACmd + "vid-res-id 7 c1 force", "api uuid_kill " + uuidAnaCamera}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("comandos da câmera nova = %q, want %q", got, want)
+	}
+	antes = len(fs.Comandos())
 	fs.Mandar(sai(salaA, uuidAnaCamera))
 	barreira(t, fs, v)
-	if n := contarComando(fs.Comandos(), "api uuid_kill "+uuidAnaTela); n != 0 {
-		t.Fatalf("a troca da câmera derrubou a tela da Ana")
+	if got := fs.Comandos()[antes:]; len(got) != 0 {
+		t.Fatalf("a saída da câmera anterior mandou %q, want nada", got)
 	}
-	want := []Aviso{
-		{Tipo: "entrou", Sala: salaA, Participante: anaID},
-		{Tipo: "entrou", Sala: salaA, Participante: anaID, Tela: true},
-		{Tipo: "entrou", Sala: salaA, Participante: anaID},
+	want := []Aviso{{Tipo: "entrou", Sala: salaA, Participante: anaID}}
+	if got := semBarreira(v.Lista())[avisosAntes:]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("avisos = %+v\nwant %+v (sem o saiu da câmera anterior, e sem palco novo)", got, want)
 	}
-	if got := semBarreira(v.Lista()); !reflect.DeepEqual(got, want) {
-		t.Fatalf("avisos = %+v\nwant %+v (sem o saiu da câmera anterior)", got, want)
-	}
-	if got, want := s.Estado(), []Sala{{Sala: salaA, Participantes: []Participante{{anaID, false}, {anaID, true}}}}; !reflect.DeepEqual(got, want) {
+	if got, want := semOPalco(s.Estado()), []Sala{{Sala: salaA, Participantes: []Participante{{anaID, false}, {anaID, true}}}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("Estado = %+v, want %+v", got, want)
 	}
 
@@ -446,7 +605,7 @@ func TestSalas_PrincipalNovaTomaOLugar(t *testing.T) {
 	fs.Mandar(sai(salaA, uuidAnaCamera2))
 	esperarComando(t, fs, "api uuid_kill "+uuidAnaTela)
 	barreira(t, fs, v)
-	if got := semBarreira(v.Lista()); len(got) != 4 || got[3] != (Aviso{Tipo: "saiu", Sala: salaA, Participante: anaID}) {
+	if got := semPalco(semBarreira(v.Lista())); len(got) != 4 || got[3] != (Aviso{Tipo: "saiu", Sala: salaA, Participante: anaID}) {
 		t.Errorf("avisos = %+v; o último devia ser o saiu da câmera da Ana", got)
 	}
 	if n := contarComando(fs.Comandos(), "api uuid_kill "+uuidAnaCamera2); n != 0 {
@@ -567,7 +726,7 @@ func TestSalas_Acabou(t *testing.T) {
 	s.Evento(ctx(), entra(salaB, uuidBiaCamera, biaID, false))
 	s.Evento(ctx(), acaba(salaA))
 	want := []Sala{{Sala: salaB, Participantes: []Participante{{biaID, false}}}}
-	if got := s.Estado(); !reflect.DeepEqual(got, want) {
+	if got := semOPalco(s.Estado()); !reflect.DeepEqual(got, want) {
 		t.Errorf("Estado = %+v, want %+v", got, want)
 	}
 	lista := v.Lista()
@@ -624,11 +783,15 @@ func TestSalas_IgnoraOutras(t *testing.T) {
 }
 
 func TestSalas_EntradaRepetida(t *testing.T) {
-	s, _, v := novo(t)
+	s, a, v := novo(t)
 	s.Evento(ctx(), entra(salaA, uuidAnaCamera, anaID, false))
 	s.Evento(ctx(), entra(salaA, uuidAnaCamera, anaID, false))
-	if got := len(v.Lista()); got != 1 {
-		t.Errorf("avisos = %d, want 1", got)
+	want := []Aviso{{Tipo: "entrou", Sala: salaA, Participante: anaID}, avisoPalco(palco(1920, 1080, c4(anaID, 1)))}
+	if got := v.Lista(); !reflect.DeepEqual(got, want) {
+		t.Errorf("avisos = %+v, want %+v", got, want)
+	}
+	if got := a.Comandos(); len(got) != 1 {
+		t.Errorf("comandos = %q, want só a célula da Ana", got)
 	}
 	if n := len(s.Estado()[0].Participantes); n != 1 {
 		t.Errorf("ligações = %d, want 1", n)
@@ -661,8 +824,9 @@ func listaFS(salas map[string][]string, ordem []string) string {
 	var confs []map[string]any
 	for _, nome := range ordem {
 		var membros []map[string]any
-		for i, u := range salas[nome] {
-			membros = append(membros, map[string]any{"id": i + 1, "uuid": u, "caller_id_name": "Ana", "flags": map[string]any{"can_hear": true}})
+		for _, u := range salas[nome] {
+			id, _ := strconv.Atoi(membroDe(u))
+			membros = append(membros, map[string]any{"id": id, "uuid": u, "caller_id_name": "Ana", "flags": map[string]any{"can_hear": true}})
 		}
 		confs = append(confs, map[string]any{"conference_name": nome, "member_count": len(membros), "running": true, "members": membros})
 	}
@@ -676,7 +840,7 @@ func TestSalas_Reconstruir(t *testing.T) {
 	antes.Evento(ctx(), entra(salaA, uuidAnaCamera, anaID, false))
 	antes.Evento(ctx(), entra(salaA, uuidAnaTela, anaID, true))
 	antes.Evento(ctx(), entra(salaB, uuidBiaCamera, biaID, false))
-	want := antes.Estado()
+	want := semOPalco(antes.Estado())
 	if len(want) != 2 {
 		t.Fatalf("o preparo falhou: %+v", want)
 	}
@@ -698,12 +862,21 @@ func TestSalas_Reconstruir(t *testing.T) {
 	if err := s.Reconstruir(ctx()); err != nil {
 		t.Fatal(err)
 	}
-	if got := s.Estado(); !reflect.DeepEqual(got, want) {
+	if got := semOPalco(s.Estado()); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Estado = %+v, want %+v", got, want)
 	}
+	// A leitura, e depois cada sala arrumada, em ordem: a A com a tela, e a B com a grade.
 	cmds := a.Comandos()
-	if cmds[0] != "conference json_list" || len(cmds) != 1+3*2 {
-		t.Errorf("comandos = %q", cmds)
+	if cmds[0] != "conference json_list" || len(cmds) != 1+3*2+4+4 {
+		t.Fatalf("comandos = %q", cmds)
+	}
+	salaBCmd := "conference " + salaB + " "
+	wantArrumar := []string{
+		salaACmd + "vid-res 1920x1620", salaACmd + "vid-layout starsonic-apresentacao-2", salaACmd + "vid-res-id 1 c1 force", salaACmd + "vid-bandwidth 4mb '' 1",
+		salaBCmd + "vid-res 1920x1080", salaBCmd + "vid-layout starsonic-4", salaBCmd + "vid-res-id 3 c1 force", salaBCmd + "vid-bandwidth 3mb '' 1",
+	}
+	if got := cmds[7:]; !reflect.DeepEqual(got, wantArrumar) {
+		t.Errorf("os comandos depois da leitura = %q\nwant %q", got, wantArrumar)
 	}
 
 	// E o Tirar acha os uuids.
@@ -724,7 +897,7 @@ func TestSalas_Reconstruir(t *testing.T) {
 	s.Evento(ctx(), entra(salaA, uuidCarlosCam, carlosID, false))
 	a.Limpar()
 	s.Evento(ctx(), entra(salaA, uuidCarlosTela, carlosID, true))
-	if got := a.Comandos(); !reflect.DeepEqual(got, []string{"uuid_kill " + uuidAnaTela}) {
+	if got := a.Comandos(); !reflect.DeepEqual(got, []string{"uuid_kill " + uuidAnaTela}) { // o mosaico não muda
 		t.Errorf("tela nova depois da volta: comandos = %q", got)
 	}
 }
@@ -771,7 +944,7 @@ func TestSalas_Reconstruir_NaoDerruba(t *testing.T) {
 		{Sala: salaA, Participantes: []Participante{{anaID, true}, {carlosID, false}, {carlosID, false}}},
 		{Sala: salaB, Participantes: []Participante{{biaID, true}}},
 	}
-	if got := s.Estado(); !reflect.DeepEqual(got, want) {
+	if got := semOPalco(s.Estado()); !reflect.DeepEqual(got, want) {
 		t.Errorf("Estado = %+v\nwant %+v", got, want)
 	}
 }
@@ -855,7 +1028,7 @@ func TestSalas_Reconstruir_Erros(t *testing.T) {
 			t.Fatal(err)
 		}
 		want := []Sala{{Sala: salaA, Participantes: []Participante{{anaID, false}}}}
-		if got := s.Estado(); !reflect.DeepEqual(got, want) {
+		if got := semOPalco(s.Estado()); !reflect.DeepEqual(got, want) {
 			t.Errorf("Estado = %+v, want %+v", got, want)
 		}
 	})
@@ -970,20 +1143,26 @@ func montaReconstrucao(t *testing.T) (*Salas, *apiFalsa, *avisos) {
 }
 
 func TestSalas_Reconstruir_EventosDuranteALeitura(t *testing.T) {
-	// durante roda a cada comando da reconstrução; o evento sai no último getvar, depois de tudo lido.
+	// durante roda a cada comando da reconstrução; o evento sai no último getvar, depois de tudo lido. Durante a
+	// leitura, o evento não manda nenhum comando do mosaico: o estado está pela metade.
 	ultimo := "uuid_getvar " + uuidBiaCamera + " starsonic_tela"
-	disparar := func(a *apiFalsa, s *Salas, evento esl.Evento) {
+	disparar := func(t *testing.T, a *apiFalsa, s *Salas, evento esl.Evento) {
 		a.durante = func() {
 			cmds := a.Comandos()
 			if cmds[len(cmds)-1] == ultimo {
 				a.durante = nil
 				s.Evento(ctx(), evento)
+				for _, c := range a.Comandos()[len(cmds):] {
+					if strings.Contains(c, " vid-") {
+						t.Errorf("durante a leitura, o comando do mosaico %q", c)
+					}
+				}
 			}
 		}
 	}
 	t.Run("quem saiu durante a leitura não volta", func(t *testing.T) {
 		s, a, _ := montaReconstrucao(t)
-		disparar(a, s, sai(salaA, uuidCarlosCam))
+		disparar(t, a, s, sai(salaA, uuidCarlosCam))
 		if err := s.Reconstruir(ctx()); err != nil {
 			t.Fatal(err)
 		}
@@ -991,18 +1170,18 @@ func TestSalas_Reconstruir_EventosDuranteALeitura(t *testing.T) {
 			{Sala: salaA, Participantes: []Participante{{anaID, false}}},
 			{Sala: salaB, Participantes: []Participante{{biaID, false}}},
 		}
-		if got := s.Estado(); !reflect.DeepEqual(got, want) {
+		if got := semOPalco(s.Estado()); !reflect.DeepEqual(got, want) {
 			t.Errorf("Estado = %+v, want %+v", got, want)
 		}
 	})
 	t.Run("a sala que acabou durante a leitura não volta, e o acabou vem uma vez", func(t *testing.T) {
 		s, a, v := montaReconstrucao(t)
-		disparar(a, s, acaba(salaB))
+		disparar(t, a, s, acaba(salaB))
 		if err := s.Reconstruir(ctx()); err != nil {
 			t.Fatal(err)
 		}
 		want := []Sala{{Sala: salaA, Participantes: []Participante{{anaID, false}, {carlosID, false}}}}
-		if got := s.Estado(); !reflect.DeepEqual(got, want) {
+		if got := semOPalco(s.Estado()); !reflect.DeepEqual(got, want) {
 			t.Errorf("Estado = %+v, want %+v", got, want)
 		}
 		if got := v.Lista(); !reflect.DeepEqual(got, []Aviso{{Tipo: "acabou", Sala: salaB}}) {
@@ -1011,7 +1190,7 @@ func TestSalas_Reconstruir_EventosDuranteALeitura(t *testing.T) {
 	})
 	t.Run("quem entrou durante a leitura fica", func(t *testing.T) {
 		s, a, _ := montaReconstrucao(t)
-		disparar(a, s, entra(salaA, uuidAnaTela, anaID, true))
+		disparar(t, a, s, entra(salaA, uuidAnaTela, anaID, true))
 		if err := s.Reconstruir(ctx()); err != nil {
 			t.Fatal(err)
 		}
@@ -1019,7 +1198,7 @@ func TestSalas_Reconstruir_EventosDuranteALeitura(t *testing.T) {
 			{Sala: salaA, Participantes: []Participante{{anaID, false}, {anaID, true}, {carlosID, false}}},
 			{Sala: salaB, Participantes: []Participante{{biaID, false}}},
 		}
-		if got := s.Estado(); !reflect.DeepEqual(got, want) {
+		if got := semOPalco(s.Estado()); !reflect.DeepEqual(got, want) {
 			t.Errorf("Estado = %+v, want %+v", got, want)
 		}
 	})
@@ -1041,7 +1220,7 @@ func TestSalas_Reconstruir_EventosDuranteALeitura(t *testing.T) {
 	})
 	t.Run("o que acabou antes de uma reconstrução nova pode voltar nela", func(t *testing.T) {
 		s, a, _ := montaReconstrucao(t)
-		disparar(a, s, acaba(salaB))
+		disparar(t, a, s, acaba(salaB))
 		if err := s.Reconstruir(ctx()); err != nil {
 			t.Fatal(err)
 		}
@@ -1052,4 +1231,316 @@ func TestSalas_Reconstruir_EventosDuranteALeitura(t *testing.T) {
 			t.Errorf("Estado = %+v, want as duas salas da segunda leitura", got)
 		}
 	})
+}
+
+// Cada pessoa ganha a menor célula livre quando entra, e o agente a reserva para ela no FreeSWITCH. O palco sai
+// depois do entrou.
+func TestSalas_Celulas(t *testing.T) {
+	s, a, v := novo(t)
+	s.Evento(ctx(), entra(salaA, uuidAnaCamera, anaID, false))
+	if got, want := a.Comandos(), []string{salaACmd + "vid-res-id 1 c1 force"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("comandos da Ana = %q, want %q", got, want)
+	}
+	want := []Aviso{{Tipo: "entrou", Sala: salaA, Participante: anaID}, avisoPalco(palco(1920, 1080, c4(anaID, 1)))}
+	if got := v.Lista(); !reflect.DeepEqual(got, want) {
+		t.Errorf("avisos da Ana = %+v\nwant %+v", got, want)
+	}
+
+	a.Limpar()
+	s.Evento(ctx(), entra(salaA, uuidCarlosCam, carlosID, false))
+	if got, want := a.Comandos(), []string{salaACmd + "vid-res-id 2 c2 force"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("comandos do Carlos = %q, want %q", got, want)
+	}
+	want = append(want, Aviso{Tipo: "entrou", Sala: salaA, Participante: carlosID},
+		avisoPalco(palco(1920, 1080, c4(anaID, 1), c4(carlosID, 2))))
+	if got := v.Lista(); !reflect.DeepEqual(got, want) {
+		t.Errorf("avisos do Carlos = %+v\nwant %+v", got, want)
+	}
+}
+
+// entramQuatro põe a Ana, o Carlos, a Bia e o Davi na sala A, nessa ordem: as células 1 a 4.
+func entramQuatro(s *Salas) {
+	s.Evento(ctx(), entra(salaA, uuidAnaCamera, anaID, false))
+	s.Evento(ctx(), entra(salaA, uuidCarlosCam, carlosID, false))
+	s.Evento(ctx(), entra(salaA, uuidBiaCamera, biaID, false))
+	s.Evento(ctx(), entra(salaA, uuidDaviCamera, daviID, false))
+}
+
+// A quinta pessoa não cabe na grade de 4: o tamanho e o layout mudam antes da reserva dela.
+func TestSalas_CincoPessoas(t *testing.T) {
+	s, a, v := novo(t)
+	entramQuatro(s)
+	a.Limpar()
+	s.Evento(ctx(), entra(salaA, uuidMariaCam, mariaID, false))
+	want := []string{salaACmd + "vid-res 1920x1086", salaACmd + "vid-layout starsonic-9", salaACmd + "vid-res-id 5 c5 force"}
+	if got := a.Comandos(); !reflect.DeepEqual(got, want) {
+		t.Errorf("comandos = %q, want %q", got, want)
+	}
+	lista := v.Lista()
+	p := palco(1920, 1086, c9(anaID, 1), c9(carlosID, 2), c9(biaID, 3), c9(daviID, 4), c9(mariaID, 5))
+	if got := lista[len(lista)-1]; !reflect.DeepEqual(got, avisoPalco(p)) {
+		t.Errorf("o último aviso = %+v, want o palco %+v", got, p)
+	}
+}
+
+// Quem sai solta a célula: o palco sai sem ele, sem comando nenhum (os outros ficam onde estão), e quem entra depois
+// ganha a célula que vagou.
+func TestSalas_QuemSaiSoltaACelula(t *testing.T) {
+	s, a, v := novo(t)
+	s.Evento(ctx(), entra(salaA, uuidAnaCamera, anaID, false))
+	s.Evento(ctx(), entra(salaA, uuidCarlosCam, carlosID, false))
+	s.Evento(ctx(), entra(salaA, uuidBiaCamera, biaID, false))
+	a.Limpar()
+	antes := len(v.Lista())
+	s.Evento(ctx(), sai(salaA, uuidCarlosCam))
+	if got := a.Comandos(); len(got) != 0 {
+		t.Errorf("a saída do Carlos mandou %q, want nada", got)
+	}
+	want := []Aviso{{Tipo: "saiu", Sala: salaA, Participante: carlosID}, avisoPalco(palco(1920, 1080, c4(anaID, 1), c4(biaID, 3)))}
+	if got := v.Lista()[antes:]; !reflect.DeepEqual(got, want) {
+		t.Errorf("avisos = %+v\nwant %+v", got, want)
+	}
+	s.Evento(ctx(), entra(salaA, uuidDaviCamera, daviID, false))
+	if got, want := a.Comandos(), []string{salaACmd + "vid-res-id 4 c2 force"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("comandos do Davi = %q, want %q", got, want)
+	}
+}
+
+// P5: quando a última ligação sai, a sala não é arrumada: nenhum comando e nenhum palco, só o saiu de hoje. O acabou
+// do FreeSWITCH vem depois.
+func TestSalas_UltimaSaiSemPalco(t *testing.T) {
+	s, a, v := novo(t)
+	s.Evento(ctx(), entra(salaA, uuidAnaCamera, anaID, false))
+	a.Limpar()
+	antes := len(v.Lista())
+	s.Evento(ctx(), sai(salaA, uuidAnaCamera))
+	if got := a.Comandos(); len(got) != 0 {
+		t.Errorf("a saída da última mandou %q, want nada", got)
+	}
+	if got, want := v.Lista()[antes:], []Aviso{{Tipo: "saiu", Sala: salaA, Participante: anaID}}; !reflect.DeepEqual(got, want) {
+		t.Errorf("avisos = %+v, want %+v", got, want)
+	}
+}
+
+// conferirRegistro confere que o registro tem uma linha só, com o nome do comando, e nada da sala, dos participantes,
+// dos membros nem da resposta do FreeSWITCH.
+func conferirRegistro(t *testing.T, buf *strings.Builder, comando string) {
+	t.Helper()
+	log := buf.String()
+	linhas := strings.Split(strings.TrimSpace(log), "\n")
+	if len(linhas) != 1 || !strings.Contains(linhas[0], comando) {
+		t.Errorf("o registro = %q, want uma linha com %s", log, comando)
+	}
+	for _, proibido := range []string{salaA, anaID, carlosID, biaID, daviID, mariaID, "membro", "Bandwidth", "sofia/", "usage", "<member_id>"} {
+		if strings.Contains(log, proibido) {
+			t.Errorf("o registro tem %q: %q", proibido, log)
+		}
+	}
+}
+
+// O vid-layout recusado: o arrumar para ali, sem a reserva e sem o palco, e escreve uma linha no registro, só com o
+// nome do comando. O layout fica desconhecido, e a entrada seguinte manda o tamanho e o layout de novo.
+func TestSalas_ComandoRecusado(t *testing.T) {
+	s, a, v := novo(t)
+	entramQuatro(s)
+	buf := registro(t)
+	a.erros[salaACmd+"vid-layout starsonic-9"] = &esl.ErroFS{Motivo: "Conference " + salaA + " sem o layout"}
+	a.Limpar()
+	antes := len(v.Lista())
+	s.Evento(ctx(), entra(salaA, uuidMariaCam, mariaID, false))
+	if got, want := a.Comandos(), []string{salaACmd + "vid-res 1920x1086", salaACmd + "vid-layout starsonic-9"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("comandos = %q, want %q", got, want)
+	}
+	if got, want := v.Lista()[antes:], []Aviso{{Tipo: "entrou", Sala: salaA, Participante: mariaID}}; !reflect.DeepEqual(got, want) {
+		t.Errorf("avisos = %+v, want só o entrou (sem palco)", got)
+	}
+	conferirRegistro(t, buf, "vid-layout")
+
+	// O FreeSWITCH volta a aceitar: a próxima entrada (a câmera nova da Ana) manda tudo o que faltou.
+	delete(a.erros, salaACmd+"vid-layout starsonic-9")
+	a.Limpar()
+	s.Evento(ctx(), entra(salaA, uuidAnaCamera2, anaID, false))
+	want := []string{salaACmd + "vid-res 1920x1086", salaACmd + "vid-layout starsonic-9", salaACmd + "vid-res-id 5 c5 force",
+		salaACmd + "vid-res-id 7 c1 force", "uuid_kill " + uuidAnaCamera}
+	if got := a.Comandos(); !reflect.DeepEqual(got, want) {
+		t.Errorf("comandos da entrada seguinte = %q\nwant %q", got, want)
+	}
+	lista := v.Lista()
+	p := palco(1920, 1086, c9(anaID, 1), c9(carlosID, 2), c9(biaID, 3), c9(daviID, 4), c9(mariaID, 5))
+	if got := lista[len(lista)-1]; !reflect.DeepEqual(got, avisoPalco(p)) {
+		t.Errorf("o último aviso = %+v, want o palco %+v", got, p)
+	}
+}
+
+// O vid-res-id sem o +OK (a linha de uso, a de um membro que o FreeSWITCH não conhece): o palco sai assim mesmo, e a
+// entrada seguinte manda a reserva de novo.
+func TestSalas_ReservaRecusada(t *testing.T) {
+	s, a, v := novo(t)
+	buf := registro(t)
+	a.respostas[salaACmd+"vid-res-id 1 c1 force"] = "vid-res-id <member_id>|all <val>|clear [force]\n"
+	s.Evento(ctx(), entra(salaA, uuidAnaCamera, anaID, false))
+	want := []Aviso{{Tipo: "entrou", Sala: salaA, Participante: anaID}, avisoPalco(palco(1920, 1080, c4(anaID, 1)))}
+	if got := v.Lista(); !reflect.DeepEqual(got, want) {
+		t.Errorf("avisos = %+v\nwant %+v", got, want)
+	}
+	conferirRegistro(t, buf, "vid-res-id")
+
+	delete(a.respostas, salaACmd+"vid-res-id 1 c1 force")
+	a.Limpar()
+	s.Evento(ctx(), entra(salaA, uuidCarlosCam, carlosID, false))
+	if got, want := a.Comandos(), []string{salaACmd + "vid-res-id 1 c1 force", salaACmd + "vid-res-id 2 c2 force"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("comandos = %q, want %q", got, want)
+	}
+}
+
+// O vid-bandwidth que muda a banda dos membros mas não a do mosaico termina com o -ERR: ele não deu certo. O palco sai
+// (o layout foi aceito), e a mudança seguinte da sala manda a banda de novo.
+func TestSalas_BandaRecusada(t *testing.T) {
+	s, a, v := novo(t)
+	s.Evento(ctx(), entra(salaA, uuidAnaCamera, anaID, false))
+	s.Evento(ctx(), entra(salaA, uuidCarlosCam, carlosID, false))
+	buf := registro(t)
+	a.respostas[salaACmd+"vid-bandwidth 4mb '' 1"] = "+OK Set Bandwidth 4096 kps for member x\n-ERR Bandwidth not set\n"
+	s.Evento(ctx(), entra(salaA, uuidAnaTela, anaID, true))
+	lista := v.Lista()
+	p := palco(1920, 1620, telaAp2(anaID), ap2(anaID, 1), ap2(carlosID, 2))
+	if got := lista[len(lista)-1]; !reflect.DeepEqual(got, avisoPalco(p)) {
+		t.Errorf("o último aviso = %+v, want o palco %+v", got, p)
+	}
+	conferirRegistro(t, buf, "vid-bandwidth")
+
+	delete(a.respostas, salaACmd+"vid-bandwidth 4mb '' 1")
+	a.Limpar()
+	s.Evento(ctx(), entra(salaA, uuidBiaCamera, biaID, false))
+	want := []string{salaACmd + "vid-res 1920x1350", salaACmd + "vid-layout starsonic-apresentacao-4",
+		salaACmd + "vid-res-id 3 c3 force", salaACmd + "vid-bandwidth 4mb '' 1"}
+	if got := a.Comandos(); !reflect.DeepEqual(got, want) {
+		t.Errorf("comandos = %q\nwant %q", got, want)
+	}
+}
+
+// O <membro> vai no vid-res-id: o add-member sem ele, ou com um que não é só de dígitos (de 1 a 10), fica fora da sala,
+// como o de um uuid que não vale.
+func TestSalas_MembroQueNaoVale(t *testing.T) {
+	for _, membro := range []string{"", "1 2", "abc", "-1", "1.5", "12345678901", "1\n2", "০১"} {
+		t.Run(fmt.Sprintf("%q", membro), func(t *testing.T) {
+			s, a, v := novo(t)
+			ev := entra(salaA, uuidAnaCamera, anaID, false)
+			if membro == "" {
+				delete(ev, "Member-ID")
+			} else {
+				ev["Member-ID"] = membro
+			}
+			s.Evento(ctx(), ev)
+			if got := s.Estado(); len(got) != 0 {
+				t.Errorf("Estado = %+v, want vazio", got)
+			}
+			if got := v.Lista(); len(got) != 0 {
+				t.Errorf("avisos = %+v, want nenhum", got)
+			}
+			if got := a.Comandos(); len(got) != 0 {
+				t.Errorf("comandos = %q, want nenhum", got)
+			}
+		})
+	}
+	t.Run("o de dez dígitos vale", func(t *testing.T) {
+		s, a, _ := novo(t)
+		ev := entra(salaA, uuidAnaCamera, anaID, false)
+		ev["Member-ID"] = "1234567890"
+		s.Evento(ctx(), ev)
+		if got, want := a.Comandos(), []string{salaACmd + "vid-res-id 1234567890 c1 force"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("comandos = %q, want %q", got, want)
+		}
+	})
+	t.Run("no json_list, o membro sem id fica de fora", func(t *testing.T) {
+		s := Nova(nil)
+		a := novaAPI()
+		a.respostas["conference json_list"] = `[{"conference_name":"` + salaA + `","members":[` +
+			`{"uuid":"` + uuidAnaCamera + `"},{"id":"1 2","uuid":"` + uuidCarlosCam + `"},{"id":3,"uuid":"` + uuidBiaCamera + `"}]}]`
+		for uuid, p := range map[string]string{uuidAnaCamera: anaID, uuidCarlosCam: carlosID, uuidBiaCamera: biaID} {
+			a.respostas["uuid_getvar "+uuid+" starsonic_participante"] = p
+			a.respostas["uuid_getvar "+uuid+" starsonic_tela"] = "false"
+		}
+		s.Ligar(a)
+		if err := s.Reconstruir(ctx()); err != nil {
+			t.Fatal(err)
+		}
+		want := []Sala{{Sala: salaA, Participantes: []Participante{{biaID, false}}}}
+		if got := semOPalco(s.Estado()); !reflect.DeepEqual(got, want) {
+			t.Errorf("Estado = %+v, want %+v", got, want)
+		}
+	})
+}
+
+// O Estado leva o último palco avisado de cada sala. Nada do mosaico de uma sala sobrevive ao fim dela, nem ao
+// Esvaziar: a sala que começa de novo avisa o palco de novo, mesmo igual ao de antes.
+func TestSalas_Estado_ComOPalco(t *testing.T) {
+	s, _, v := novo(t)
+	s.Evento(ctx(), entra(salaA, uuidAnaCamera, anaID, false))
+	s.Evento(ctx(), entra(salaB, uuidBiaCamera, biaID, false))
+	b, _ := json.Marshal(s.Estado())
+	quadro := func(p string) string {
+		return fmt.Sprintf(`{"largura":1920,"altura":1080,"quadros":[{"participante":%q,"tela":false,"x":0,"y":0,"l":960,"a":540}]}`, p)
+	}
+	want := fmt.Sprintf(`[{"sala":%q,"participantes":[{"participante":%q,"tela":false}],"palco":%s},{"sala":%q,"participantes":[{"participante":%q,"tela":false}],"palco":%s}]`,
+		salaA, anaID, quadro(anaID), salaB, biaID, quadro(biaID))
+	if string(b) != want {
+		t.Errorf("JSON =\n%s\nwant\n%s", b, want)
+	}
+
+	s.Evento(ctx(), acaba(salaA))
+	if got, want := s.Estado(), []Sala{{Sala: salaB, Participantes: []Participante{{biaID, false}}, Palco: palco(1920, 1080, c4(biaID, 1))}}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Estado depois do acabou = %+v, want %+v", got, want)
+	}
+	antes := len(v.Lista())
+	s.Evento(ctx(), entra(salaA, uuidAnaCamera, anaID, false))
+	if got, want := v.Lista()[antes:], []Aviso{{Tipo: "entrou", Sala: salaA, Participante: anaID}, avisoPalco(palco(1920, 1080, c4(anaID, 1)))}; !reflect.DeepEqual(got, want) {
+		t.Errorf("a sala que começou de novo: avisos = %+v\nwant %+v", got, want)
+	}
+
+	s.Esvaziar()
+	if got := s.Estado(); len(got) != 0 {
+		t.Errorf("Estado depois do Esvaziar = %+v, want vazio", got)
+	}
+	antes = len(v.Lista())
+	s.Evento(ctx(), entra(salaA, uuidAnaCamera, anaID, false))
+	if got, want := v.Lista()[antes:], []Aviso{{Tipo: "entrou", Sala: salaA, Participante: anaID}, avisoPalco(palco(1920, 1080, c4(anaID, 1)))}; !reflect.DeepEqual(got, want) {
+		t.Errorf("depois do Esvaziar: avisos = %+v\nwant %+v", got, want)
+	}
+}
+
+// O Reconstruir, depois da leitura, arruma cada sala do começo, com os quatro tipos de comando: as células vão pelo
+// menor <membro> de cada um. Ele não avisa nada, e o Estado leva o palco.
+func TestSalas_Reconstruir_PoeTodosNoLugar(t *testing.T) {
+	v := &avisos{}
+	s := Nova(v.Avisar)
+	a := novaAPI()
+	a.respostas["conference json_list"] = `[{"conference_name":"` + salaA + `","members":[` +
+		`{"id":4,"uuid":"` + uuidAnaCamera + `"},{"id":9,"uuid":"` + uuidCarlosCam + `"},{"id":2,"uuid":"` + uuidBiaCamera + `"}]}]`
+	for uuid, p := range map[string]string{uuidAnaCamera: anaID, uuidCarlosCam: carlosID, uuidBiaCamera: biaID} {
+		a.respostas["uuid_getvar "+uuid+" starsonic_participante"] = p
+		a.respostas["uuid_getvar "+uuid+" starsonic_tela"] = "false"
+	}
+	s.Ligar(a)
+	if err := s.Reconstruir(ctx()); err != nil {
+		t.Fatal(err)
+	}
+	cmds := a.Comandos()
+	if len(cmds) < 7 {
+		t.Fatalf("comandos = %q", cmds)
+	}
+	want := []string{salaACmd + "vid-res 1920x1080", salaACmd + "vid-layout starsonic-4", salaACmd + "vid-res-id 2 c1 force",
+		salaACmd + "vid-res-id 4 c2 force", salaACmd + "vid-res-id 9 c3 force", salaACmd + "vid-bandwidth 3mb '' 1"}
+	if got := cmds[7:]; !reflect.DeepEqual(got, want) {
+		t.Errorf("os comandos depois da leitura = %q\nwant %q", got, want)
+	}
+	if got := v.Lista(); len(got) != 0 {
+		t.Errorf("avisos = %+v, want nenhum", got)
+	}
+	wantEstado := []Sala{{Sala: salaA,
+		Participantes: []Participante{{anaID, false}, {biaID, false}, {carlosID, false}},
+		Palco:         palco(1920, 1080, c4(biaID, 1), c4(anaID, 2), c4(carlosID, 3))}}
+	if got := s.Estado(); !reflect.DeepEqual(got, wantEstado) {
+		t.Errorf("Estado = %+v\nwant %+v", got, wantEstado)
+	}
 }

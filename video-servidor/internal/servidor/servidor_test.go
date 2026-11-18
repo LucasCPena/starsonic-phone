@@ -213,6 +213,9 @@ func esperarAte(t *testing.T, prazo time.Duration, oque string, ok func() bool) 
 
 // ---- o ESL falso e os eventos do agente ----
 
+// membros é o <membro> (o Member-ID) de cada ligação dos testes: o agente o põe no vid-res-id.
+var membros = map[string]string{uuidAna: "1", uuidBia: "2", uuidBiaTela: "3", uuidCarlos: "4"}
+
 func entra(sala, uuid, participante string) esl.Evento {
 	return esl.Evento{
 		"Event-Name":                      "CUSTOM",
@@ -220,6 +223,7 @@ func entra(sala, uuid, participante string) esl.Evento {
 		"Action":                          "add-member",
 		"Conference-Name":                 sala,
 		"Unique-ID":                       uuid,
+		"Member-ID":                       membros[uuid],
 		"variable_starsonic_participante": participante,
 		"variable_starsonic_tela":         "false",
 	}
@@ -750,6 +754,7 @@ func TestTirar_TelaDeQuemFoiTirado(t *testing.T) {
 	a.esl.Mandar(entra(salaA, uuidAna, anaID))
 	a.esl.Mandar(entra(salaA, uuidBia, biaID))
 	eventos.ate(t, func(ev map[string]any) bool { return ev["tipo"] == "entrou" && ev["participante"] == biaID })
+	eventos.ate(t, func(ev map[string]any) bool { return ev["tipo"] == "palco" && len(ev["quadros"].([]any)) == 2 })
 
 	// O chat tira a Bia: o agente derruba a câmera dela, e o FreeSWITCH avisa que ela saiu.
 	resp := pedir(t, http.DefaultClient, "POST", s.url()+"/agente/v1/salas/"+salaA+"/participantes/"+biaID+"/tirar", s.c.Chave)
@@ -763,6 +768,10 @@ func TestTirar_TelaDeQuemFoiTirado(t *testing.T) {
 	a.esl.Mandar(sai(salaA, uuidBia))
 	if ev := eventos.proximo(t); ev["tipo"] != "saiu" || ev["participante"] != biaID {
 		t.Fatalf("depois do tirar, o chat recebeu %v; want o saiu da Bia", ev)
+	}
+	// O palco sem ela: só a colega, no quadro dela.
+	if ev := eventos.proximo(t); ev["tipo"] != "palco" || len(ev["quadros"].([]any)) != 1 {
+		t.Fatalf("depois do saiu, o chat recebeu %v; want o palco só com a colega", ev)
 	}
 
 	// A Bia liga a tela com a senha que ainda valia.

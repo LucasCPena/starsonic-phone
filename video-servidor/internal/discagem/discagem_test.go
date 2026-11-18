@@ -18,9 +18,8 @@ var (
 )
 
 const (
-	salaTeste  = "00112233445566778899aabbccddeeff"
-	partTeste  = "0123456789abcdef"
-	quadroBase = "{font_scale=0.25,min_font_size=8,max_font_size=20,fg=#FFFFFF,bg=#04060E}"
+	salaTeste = "00112233445566778899aabbccddeeff"
+	partTeste = "0123456789abcdef"
 )
 
 // Os tipos que leem a resposta com o encoding/xml.
@@ -149,8 +148,7 @@ func TestDiscagem_Colega(t *testing.T) {
 	esperado := []string{
 		"set starsonic_participante=" + partTeste,
 		"set starsonic_tela=false",
-		"set video_banner_text=" + quadroBase + "Ana Souza",
-		"set rtp_video_max_bandwidth_in=1000kb",
+		"set rtp_video_max_bandwidth_in=1500kb",
 		"set media_timeout=60000",
 		"set media_hold_timeout=600000",
 		"set jb_av_sync_msec=disabled",
@@ -172,8 +170,7 @@ func TestDiscagem_Fora(t *testing.T) {
 	esperado := []string{
 		"set starsonic_participante=" + partTeste,
 		"set starsonic_tela=false",
-		"set video_banner_text=" + quadroBase + "Ana Souza",
-		"set rtp_video_max_bandwidth_in=1000kb",
+		"set rtp_video_max_bandwidth_in=1500kb",
 		"set media_timeout=60000",
 		"set media_hold_timeout=600000",
 		"set jb_av_sync_msec=disabled",
@@ -193,8 +190,7 @@ func TestDiscagem_Tela(t *testing.T) {
 	esperado := []string{
 		"set starsonic_participante=" + partTeste,
 		"set starsonic_tela=true",
-		"set video_banner_text=" + quadroBase + "Tela de Maria Lima",
-		"set rtp_video_max_bandwidth_in=1000kb",
+		"set rtp_video_max_bandwidth_in=2500kb",
 		"set media_timeout=60000",
 		"set media_hold_timeout=600000",
 		"set jb_av_sync_msec=disabled",
@@ -402,45 +398,26 @@ func TestDiscagem_OutraSecao(t *testing.T) {
 	}
 }
 
-func TestDiscagem_NomeLimpo(t *testing.T) {
-	casos := []struct{ entra, sai string }{
-		{"${system(touch /tmp/x)}", "system(touch tmpx)"},
-		{"Ana {Souza}", "Ana Souza"},
-		{`"Bia" <b>Ramos</b>`, "Bia bRamosb"},
-		{"José Ñoño", "José Ñoño"},
-		{"😀 Davi", "Davi"},
-		{strings.Repeat("a", 200), strings.Repeat("a", 40)},
-		{"   ", "Convidado"},
-		{"Maria.  Lima-D'Ávila (2)", "Maria. Lima-D'Ávila (2)"},
-		{"élan", "élan"},
-	}
-	for _, c := range casos {
-		if got := LimparNome(c.entra); got != c.sai {
-			t.Errorf("LimparNome(%q) = %q, esperado %q", c.entra, got, c.sai)
-		}
-	}
-
-	// Nos XMLs, o texto depois do "}" do quadro não tem "$", "{" nem "}".
+// O nome não vai ao FreeSWITCH: o quadro de cada pessoa não leva texto, e o nome é da página (seção 7 do
+// docs/video-agente.md). Nenhuma ação, da câmera ou da tela, leva o nome, nem a parte dele.
+func TestDiscagem_SemNome(t *testing.T) {
 	h, _ := novo(inicio)
-	for i, nome := range []string{"${system(touch /tmp/x)}", "Ana {Souza}", `"Bia" <b>Ramos</b>`, "😀 Davi", "   "} {
-		p := padrao()
-		p.senha = senhaDe(t, func(s *senha.Senha) {
-			s.Nome = nome
-			s.ID = strings.Repeat("0", 31) + string(rune('1'+i))
-		})
-		_, d := enviar(t, h, http.MethodPost, p)
-		achou := false
-		for _, a := range acoesDe(t, d) {
-			if dados, ok := strings.CutPrefix(a, "set video_banner_text="); ok {
-				achou = true
-				_, texto, ok := strings.Cut(dados, "}")
-				if !ok || strings.ContainsAny(texto, "${}") {
-					t.Errorf("o texto do quadro de %q: %q", nome, texto)
+	for i, nome := range []string{"Ana Souza", "Maria Lima", "${system(touch /tmp/x)}", "   "} {
+		for _, tela := range []bool{false, true} {
+			p := padrao()
+			p.senha = senhaDe(t, func(s *senha.Senha) {
+				s.Nome = nome
+				s.Tela = tela
+				s.ID = strings.Repeat("0", 30) + string(rune('a'+i)) + map[bool]string{false: "0", true: "1"}[tela]
+			})
+			_, d := enviar(t, h, http.MethodPost, p)
+			for _, a := range acoesDe(t, d) {
+				for _, parte := range append(strings.Fields(nome), "banner", "Tela de", "Convidado") {
+					if strings.Contains(a, parte) {
+						t.Errorf("a ação %q leva %q (o nome %q, a tela %v)", a, parte, nome, tela)
+					}
 				}
 			}
-		}
-		if !achou {
-			t.Errorf("sem o quadro para %q", nome)
 		}
 	}
 }

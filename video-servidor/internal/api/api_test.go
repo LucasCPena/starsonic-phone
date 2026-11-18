@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/LucasCPena/starsonic-phone/video-servidor/internal/esl"
+	"github.com/LucasCPena/starsonic-phone/video-servidor/internal/mosaico"
 	"github.com/LucasCPena/starsonic-phone/video-servidor/internal/salas"
 	"github.com/LucasCPena/starsonic-phone/video-servidor/internal/uso"
 )
@@ -569,5 +570,67 @@ func TestRegistro_SemIds(t *testing.T) {
 	}
 	if !strings.Contains(log, "Conference") {
 		t.Fatalf("o registro perdeu o texto do erro:\n%s", log)
+	}
+}
+
+// O palco de uma sala vai ao chat como um evento, com o tamanho do mosaico e os quadros, sem nome nenhum.
+func TestAPI_Eventos_Palco(t *testing.T) {
+	a := novaAPI(t, &salasFalsas{}, nil, nil)
+	srv := servidorDe(t, a)
+	c := conectar(t, srv.URL)
+	if ev := c.proximo(t); ev["tipo"] != "estado" {
+		t.Fatalf("o primeiro: %v", ev)
+	}
+	a.Avisar(salas.Aviso{Tipo: "palco", Sala: salaA, Palco: &mosaico.Palco{Largura: 1920, Altura: 1080,
+		Quadros: []mosaico.Quadro{{Participante: partA, X: 0, Y: 0, L: 960, A: 540}}}})
+	linha, err := c.r.ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `data: {"tipo":"palco","sala":"` + salaA + `","largura":1920,"altura":1080,` +
+		`"quadros":[{"participante":"` + partA + `","tela":false,"x":0,"y":0,"l":960,"a":540}]}` + "\n"
+	if linha != want {
+		t.Fatalf("o evento:\n%q\nwant\n%q", linha, want)
+	}
+	if vazia, err := c.r.ReadString('\n'); err != nil || vazia != "\n" {
+		t.Fatalf("depois do palco veio %q (%v)", vazia, err)
+	}
+	// O palco sem os dados não sai: o próximo evento é o acabou.
+	a.Avisar(salas.Aviso{Tipo: "palco", Sala: salaA})
+	a.Avisar(salas.Aviso{Tipo: "acabou", Sala: salaA})
+	if ev := c.proximo(t); ev["tipo"] != "acabou" {
+		t.Fatalf("depois do palco sem dados veio %v; want o acabou", ev)
+	}
+}
+
+// O estado, no GET e no evento, leva o palco de cada sala que tem um; a sala sem palco vai sem o campo.
+func TestAPI_Estado_Palco(t *testing.T) {
+	const salaB = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	s := &salasFalsas{estado: []salas.Sala{
+		{Sala: salaA, Participantes: []salas.Participante{{Participante: partA}},
+			Palco: &mosaico.Palco{Largura: 1920, Altura: 1620, Quadros: []mosaico.Quadro{
+				{Participante: partA, Tela: true, X: 0, Y: 0, L: 1920, A: 1080},
+				{Participante: partA, X: 0, Y: 1080, L: 960, A: 540}}}},
+		{Sala: salaB, Participantes: []salas.Participante{}},
+	}}
+	a := novaAPI(t, s, nil, nil)
+	salasWant := `"salas":[{"sala":"` + salaA + `","participantes":[{"participante":"` + partA + `","tela":false}],` +
+		`"palco":{"largura":1920,"altura":1620,"quadros":[{"participante":"` + partA + `","tela":true,"x":0,"y":0,"l":1920,"a":1080},` +
+		`{"participante":"` + partA + `","tela":false,"x":0,"y":1080,"l":960,"a":540}]}},` +
+		`{"sala":"` + salaB + `","participantes":[]}]`
+
+	w := pedir(a, "GET", "/agente/v1/estado", chaveTeste)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), salasWant) {
+		t.Fatalf("o GET estado: %d\n%s\nwant com\n%s", w.Code, w.Body, salasWant)
+	}
+
+	srv := servidorDe(t, a)
+	c := conectar(t, srv.URL)
+	linha, err := c.r.ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(linha, `data: {"tipo":"estado"`) || !strings.Contains(linha, salasWant) {
+		t.Fatalf("o evento estado:\n%s\nwant com\n%s", linha, salasWant)
 	}
 }

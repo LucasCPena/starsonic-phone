@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/LucasCPena/starsonic-phone/video-servidor/internal/config"
+	"github.com/LucasCPena/starsonic-phone/video-servidor/internal/mosaico"
 )
 
 // A chave do vetor de teste da seção 3 do docs/video-agente.md, e o segredo do TURN que sai dela
@@ -310,13 +311,15 @@ func TestFreeSWITCH_Perfis(t *testing.T) {
 	))
 }
 
-func TestFreeSWITCH_Conferencia(t *testing.T) {
+// O perfil da conferência (a seção 7 do docs/video-agente.md): o mosaico começa no starsonic-4, de 1920×1080, a 25
+// imagens por segundo e 3 Mbit/s. Quem troca o layout, o tamanho e a banda é o agente.
+func TestFreeSWITCH_Perfil(t *testing.T) {
 	doc := documento(t, configDeTeste(), false)
 	starsonic := configuracao(t, doc, "conference.conf").filho(t, "profiles", "").filho(t, "profile", "starsonic").parametros()
 	mesmos(t, "o perfil starsonic", starsonic, []string{
 		"rate=48000", "interval=20", "channels=1",
-		"video-mode=mux", "video-layout-name=group:starsonic-grade", "video-canvas-size=1280x720",
-		"video-fps=15", "video-codec-bandwidth=1.5mb",
+		"video-mode=mux", "video-layout-name=starsonic-4", "video-canvas-size=1920x1080",
+		"video-fps=25", "video-codec-bandwidth=3mb",
 		"video-canvas-bgcolor=#04060E", "video-letterbox-bgcolor=#04060E",
 		"video-no-video-avatar=/etc/starsonic-video/freeswitch/sem-camera.png",
 		"max-members=12", "conference-flags=minimize-video-encoding", "verbose-events=true", "caller-controls=none",
@@ -329,8 +332,7 @@ func TestFreeSWITCH_Conferencia(t *testing.T) {
 	}
 }
 
-// imagem é um quadro de um layout, como o teste o lê: x, y, scale, hscale (igual ao scale quando
-// falta) e reservation_id.
+// imagem é uma imagem de um layout, como o teste a lê: x, y, scale, hscale (0 quando falta) e reservation_id.
 type imagem struct {
 	x, y, scale, hscale int
 	reserva             string
@@ -340,32 +342,9 @@ func (i imagem) String() string {
 	return fmt.Sprintf("(%d,%d,%d,%d %q)", i.x, i.y, i.scale, i.hscale, i.reserva)
 }
 
-// A tabela da seção 7 do docs/video-agente.md.
-func layoutsDoContrato() map[string][]imagem {
-	q := func(x, y, scale int) imagem { return imagem{x, y, scale, scale, ""} }
-	layouts := map[string][]imagem{
-		"starsonic-1": {q(0, 0, 360)},
-		"starsonic-2": {q(0, 90, 180), q(180, 90, 180)},
-		"starsonic-4": {q(0, 0, 180), q(180, 0, 180), q(0, 180, 180), q(180, 180, 180)},
-		"starsonic-6": {q(0, 60, 120), q(120, 60, 120), q(240, 60, 120), q(0, 180, 120), q(120, 180, 120), q(240, 180, 120)},
-		"starsonic-apresentacao": {
-			{0, 0, 300, 300, "tela"},
-			q(300, 0, 60), q(300, 60, 60), q(300, 120, 60), q(300, 180, 60), q(300, 240, 60), q(300, 300, 60),
-			q(60, 300, 60), q(120, 300, 60), q(180, 300, 60), q(240, 300, 60),
-		},
-	}
-	for _, y := range []int{0, 120, 240} { // linha por linha
-		for _, x := range []int{0, 120, 240} {
-			layouts["starsonic-9"] = append(layouts["starsonic-9"], q(x, y, 120))
-		}
-		for _, x := range []int{0, 90, 180, 270} {
-			layouts["starsonic-12"] = append(layouts["starsonic-12"], imagem{x, y, 90, 120, ""})
-		}
-	}
-	return layouts
-}
-
-func TestFreeSWITCH_Camadas(t *testing.T) {
+// Os layouts são os da tabela do mosaico, na ordem, e cada imagem leva a reserva dela: a pessoa só entra na célula
+// que o agente reservou para ela. Nenhuma imagem é o "floor": cada pessoa fica no seu lugar enquanto fala.
+func TestFreeSWITCH_Layouts(t *testing.T) {
 	doc := documento(t, configDeTeste(), false)
 	ajustes := configuracao(t, doc, "conference_layouts.conf").filho(t, "layout-settings", "")
 
@@ -373,67 +352,73 @@ func TestFreeSWITCH_Camadas(t *testing.T) {
 		t.Helper()
 		v, ok := img.atributo(nome)
 		if !ok {
-			return -1
+			return 0
 		}
 		var n int
-		if _, err := fmt.Sscan(v, &n); err != nil || fmt.Sprint(n) != v {
+		if _, err := fmt.Sscan(v, &n); err != nil || fmt.Sprint(n) != v || nome == "hscale" && n == 0 {
 			t.Fatalf("o %s %q não é um número", nome, v)
 		}
 		return n
 	}
 
+	var nomes []string
 	lidos := map[string][]imagem{}
-	reservas := 0
 	for _, layout := range ajustes.filho(t, "layouts", "").filhos("layout") {
 		nome, _ := layout.atributo("name")
-		if _, repetido := lidos[nome]; repetido {
-			t.Errorf("o layout %s aparece duas vezes", nome)
-		}
-		lidos[nome] = []imagem{}
+		nomes = append(nomes, nome)
 		for _, img := range layout.filhos("image") {
 			q := imagem{x: numero(img, "x"), y: numero(img, "y"), scale: numero(img, "scale"), hscale: numero(img, "hscale")}
-			if q.hscale == -1 {
-				q.hscale = q.scale
-			} else if q.hscale == q.scale {
-				t.Errorf("%s: um quadro com o hscale igual ao scale (%d), que devia faltar", nome, q.scale)
+			if _, ok := img.atributo("x"); !ok {
+				t.Errorf("%s: uma imagem sem o x", nome)
 			}
-			q.reserva, _ = img.atributo("reservation_id")
-			if q.reserva != "" {
-				reservas++
+			if _, ok := img.atributo("y"); !ok {
+				t.Errorf("%s: uma imagem sem o y", nome)
+			}
+			var ok bool
+			if q.reserva, ok = img.atributo("reservation_id"); !ok || q.reserva == "" {
+				t.Errorf("%s: uma imagem sem o reservation_id: %v", nome, q)
 			}
 			for _, a := range img.Atributos {
 				switch a.Name.Local {
 				case "x", "y", "scale", "hscale", "reservation_id":
 				default:
-					// Nenhum quadro é o "floor": cada pessoa fica no seu lugar enquanto fala.
-					t.Errorf("%s: um quadro tem o atributo %s=%q", nome, a.Name.Local, a.Value)
+					t.Errorf("%s: uma imagem tem o atributo %s=%q", nome, a.Name.Local, a.Value)
 				}
 			}
 			lidos[nome] = append(lidos[nome], q)
 		}
 	}
 
-	contrato := layoutsDoContrato()
-	if len(lidos) != len(contrato) {
-		t.Errorf("há %d layouts, want %d", len(lidos), len(contrato))
-	}
-	for nome, quadros := range contrato {
-		if !slices.Equal(lidos[nome], quadros) {
-			t.Errorf("o layout %s:\n got %v\nwant %v", nome, lidos[nome], quadros)
+	var want []string
+	for _, l := range mosaico.Layouts() {
+		want = append(want, l.Nome)
+		var imagens []imagem
+		for _, im := range l.Imagens {
+			imagens = append(imagens, imagem{im.X, im.Y, im.Scale, im.HScale, im.Reserva})
+		}
+		if !slices.Equal(lidos[l.Nome], imagens) {
+			t.Errorf("o layout %s:\n got %v\nwant %v", l.Nome, lidos[l.Nome], imagens)
 		}
 	}
-	// O reservation_id tela só na tela da apresentação, que a tabela acima já confere.
-	if reservas != 1 {
-		t.Errorf("há %d quadros com reservation_id, want 1 (a tela da apresentação)", reservas)
+	if !slices.Equal(nomes, want) {
+		t.Errorf("os layouts:\n got %q\nwant %q", nomes, want)
 	}
+}
 
-	var grupo []string
-	for _, l := range ajustes.filho(t, "groups", "").filho(t, "group", "starsonic-grade").filhos("layout") {
-		grupo = append(grupo, l.Texto)
+// Sem o grupo de layouts: o FreeSWITCH não escolhe o layout sozinho, e os de antes não existem mais.
+func TestFreeSWITCH_SemGrupo(t *testing.T) {
+	dados, err := FreeSWITCH(configDeTeste(), pastaFS, false)
+	if err != nil {
+		t.Fatal(err)
 	}
-	seis := []string{"starsonic-1", "starsonic-2", "starsonic-4", "starsonic-6", "starsonic-9", "starsonic-12"}
-	if !slices.Equal(grupo, seis) {
-		t.Errorf("o grupo starsonic-grade:\n got %q\nwant %q", grupo, seis)
+	for _, proibido := range []string{"<groups", "starsonic-grade", `"starsonic-1"`, `"starsonic-2"`, `"starsonic-6"`} {
+		if bytes.Contains(dados, []byte(proibido)) {
+			t.Errorf("o freeswitch.xml tem %s", proibido)
+		}
+	}
+	ajustes := configuracao(t, ler(t, dados), "conference_layouts.conf").filho(t, "layout-settings", "")
+	if g := ajustes.filhos("groups"); len(g) != 0 {
+		t.Errorf("o conference_layouts.conf tem %d <groups>", len(g))
 	}
 }
 

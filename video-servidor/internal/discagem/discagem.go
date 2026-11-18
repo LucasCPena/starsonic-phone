@@ -1,6 +1,6 @@
 // Package discagem responde ao mod_xml_curl do FreeSWITCH: a senha de uso único que vem no INVITE decide
-// quem entra em qual reunião, e como (a seção 7 do docs/video-agente.md). Nada daqui vai a um registro:
-// nem a senha, nem o nome, nem a sala, nem o participante.
+// quem entra em qual reunião, e como (a seção 7 do docs/video-agente.md). O nome que a senha leva não vai ao
+// FreeSWITCH. Nada daqui vai a um registro: nem a senha, nem o nome, nem a sala, nem o participante.
 package discagem
 
 import (
@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/LucasCPena/starsonic-phone/video-servidor/internal/senha"
 )
@@ -21,12 +20,11 @@ const (
 	campoSenha  = "variable_sip_h_X-Starsonic-Senha"
 	campoPerfil = "variable_sofia_profile_name"
 
-	estiloQuadro = "{font_scale=0.25,min_font_size=8,max_font_size=20,fg=#FFFFFF,bg=#04060E}"
+	// A imagem que chega ao servidor, no máximo (o rtp_video_max_bandwidth_in): a da câmera e a da tela.
+	bandaDaCamera = "1500kb"
+	bandaDaTela   = "2500kb"
 
-	maximoCorpo   = 64 << 10
-	maximoNome    = 40
-	nomePadrao    = "Convidado"
-	nomeDaTelaFmt = "Tela de "
+	maximoCorpo = 64 << 10
 )
 
 // Os tipos do documento freeswitch/xml. O encoding/xml escreve os textos, então nada do que vem de uma
@@ -81,43 +79,6 @@ func recusa(codigoETexto string) documento {
 	return extensaoDe("recusa", acao{"respond", codigoETexto})
 }
 
-// LimparNome é a regra da seção 7: ficam só as letras, as marcas de acento, os números, o espaço e os sinais
-// . - ' ( ); os espaços seguidos viram um e as pontas saem; no máximo 40 caracteres; vazio vira "Convidado".
-func LimparNome(nome string) string {
-	var b strings.Builder
-	n := 0
-	espaco := false
-	for _, r := range nome {
-		switch {
-		case r == ' ':
-			espaco = true
-			continue
-		case unicode.IsLetter(r), unicode.IsMark(r), unicode.IsNumber(r),
-			r == '.', r == '-', r == '\'', r == '(', r == ')':
-		default:
-			continue
-		}
-		// um espaço só vale entre dois caracteres que ficam
-		if espaco && n > 0 {
-			if n >= maximoNome {
-				break
-			}
-			b.WriteByte(' ')
-			n++
-		}
-		espaco = false
-		if n >= maximoNome {
-			break
-		}
-		b.WriteRune(r)
-		n++
-	}
-	if limpo := strings.TrimSpace(b.String()); limpo != "" {
-		return limpo
-	}
-	return nomePadrao
-}
-
 // Nova devolve o handler do POST /freeswitch/discagem. Uma senha assinada antes de o agente começar é
 // recusada: a memória do uso único some quando ele reinicia, e a senha ainda valeria.
 func Nova(chave []byte, uso *senha.UsoUnico, agora func() time.Time) http.Handler {
@@ -168,15 +129,14 @@ func decidir(f map[string][]string, chave []byte, uso *senha.UsoUnico, agora fun
 		return proibido
 	}
 
-	nome := LimparNome(s.Nome)
+	banda := bandaDaCamera
 	if s.Tela {
-		nome = nomeDaTelaFmt + nome
+		banda = bandaDaTela
 	}
 	acoes := []acao{
 		{"set", "starsonic_participante=" + s.Participante},
 		{"set", "starsonic_tela=" + boolTexto(s.Tela)},
-		{"set", "video_banner_text=" + estiloQuadro + nome},
-		{"set", "rtp_video_max_bandwidth_in=1000kb"},
+		{"set", "rtp_video_max_bandwidth_in=" + banda},
 		// O tempo sem mídia da seção 6, lido quando a mídia sobe, no answer, para o caminho do som e o do vídeo: a
 		// ligação em que nada chega a um deles (nem o RTP, nem o RTCP, nem o ICE) por 60 s cai, e, na espera (o hold),
 		// por 10 minutos. Só no som (o media_timeout_audio) não basta: a ligação de uma aba fechada não caía em 75 s (o
