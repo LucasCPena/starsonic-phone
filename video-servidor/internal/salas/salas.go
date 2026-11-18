@@ -603,9 +603,24 @@ func (s *Salas) arrumar(ctx context.Context, sala string, tudo, avisar bool) {
 		s.mu.Unlock()
 		return
 	}
+	// A tela de quem não tem a principal na sala fica de fora, como no entrou: ela acabou de cair (a última principal
+	// de quem apresentava saiu), ou vai cair, e o mosaico vai direto para o desenho de quem fica.
+	comPrincipal := map[string]bool{}
+	for _, l := range ligacoes {
+		if !l.tela {
+			comPrincipal[l.participante] = true
+		}
+	}
 	chamadas := make([]mosaico.Chamada, 0, len(ligacoes))
 	for u, l := range ligacoes {
+		if l.tela && !comPrincipal[l.participante] {
+			continue
+		}
 		chamadas = append(chamadas, mosaico.Chamada{UUID: u, Membro: l.membro, Participante: l.participante, Tela: l.tela, Celula: l.celula})
+	}
+	if len(chamadas) == 0 {
+		s.mu.Unlock()
+		return // só a tela de quem já saiu: como a sala sem ligação, não há o que mostrar
 	}
 	antes := m.estado
 	antes.Celulas = make(map[string]int, len(m.estado.Celulas))

@@ -1544,3 +1544,63 @@ func TestSalas_Reconstruir_PoeTodosNoLugar(t *testing.T) {
 		t.Errorf("Estado = %+v\nwant %+v", got, wantEstado)
 	}
 }
+
+// P24: quando a última principal de quem apresenta sai, a tela dela cai, e o mosaico vai direto para a grade de quem
+// ficou: a tela sem a principal fica fora do arrumar, como no entrou. Os comandos saem com o uuid_kill primeiro, como
+// hoje, e depois uma mudança só, com um palco só, sem a Ana e sem a tela. O del-member da tela não muda mais nada.
+func TestSalas_ApresentadorSai(t *testing.T) {
+	s, a, v := novo(t)
+	s.Evento(ctx(), entra(salaA, uuidAnaCamera, anaID, false))
+	s.Evento(ctx(), entra(salaA, uuidCarlosCam, carlosID, false))
+	s.Evento(ctx(), entra(salaA, uuidBiaCamera, biaID, false))
+	s.Evento(ctx(), entra(salaA, uuidAnaTela, anaID, true))
+	lista := v.Lista()
+	ap4 := func(p string, celula int) mosaico.Quadro { return cam(p, (celula-1)*480, 1080, 480, 270) }
+	if got, want := lista[len(lista)-1], avisoPalco(palco(1920, 1350, tela(anaID, 0, 0, 1920, 1080), ap4(anaID, 1), ap4(carlosID, 2), ap4(biaID, 3))); !reflect.DeepEqual(got, want) {
+		t.Fatalf("o preparo: o último aviso = %+v, want %+v", got, want)
+	}
+
+	a.Limpar()
+	antes := len(v.Lista())
+	s.Evento(ctx(), sai(salaA, uuidAnaCamera))
+	want := []string{"uuid_kill " + uuidAnaTela,
+		salaACmd + "vid-res 1920x1080", salaACmd + "vid-layout starsonic-4", salaACmd + "vid-bandwidth 3mb '' 1"}
+	if got := a.Comandos(); !reflect.DeepEqual(got, want) {
+		t.Errorf("comandos = %q\nwant %q", got, want)
+	}
+	wantAvisos := []Aviso{{Tipo: "saiu", Sala: salaA, Participante: anaID},
+		avisoPalco(palco(1920, 1080, c4(carlosID, 2), c4(biaID, 3)))}
+	if got := v.Lista()[antes:]; !reflect.DeepEqual(got, wantAvisos) {
+		t.Errorf("avisos = %+v\nwant %+v", got, wantAvisos)
+	}
+
+	// O FreeSWITCH avisa que a tela saiu: só o saiu dela, sem comando e sem palco.
+	a.Limpar()
+	antes = len(v.Lista())
+	s.Evento(ctx(), sai(salaA, uuidAnaTela))
+	if got := a.Comandos(); len(got) != 0 {
+		t.Errorf("a saída da tela mandou %q, want nada", got)
+	}
+	if got, want := v.Lista()[antes:], []Aviso{{Tipo: "saiu", Sala: salaA, Participante: anaID, Tela: true}}; !reflect.DeepEqual(got, want) {
+		t.Errorf("avisos da saída da tela = %+v, want %+v", got, want)
+	}
+}
+
+// P5 com P24: quem apresentava sozinha sai, e na sala fica só a tela dela, que cai. Sem ninguém para mostrar, a sala não
+// é arrumada: só o uuid_kill da tela, e nenhum palco.
+func TestSalas_ApresentadoraSozinhaSai(t *testing.T) {
+	s, a, v := novo(t)
+	s.Evento(ctx(), entra(salaA, uuidAnaCamera, anaID, false))
+	s.Evento(ctx(), entra(salaA, uuidAnaTela, anaID, true))
+	a.Limpar()
+	antes := len(v.Lista())
+	s.Evento(ctx(), sai(salaA, uuidAnaCamera))
+	s.Evento(ctx(), sai(salaA, uuidAnaTela))
+	if got, want := a.Comandos(), []string{"uuid_kill " + uuidAnaTela}; !reflect.DeepEqual(got, want) {
+		t.Errorf("comandos = %q, want %q", got, want)
+	}
+	want := []Aviso{{Tipo: "saiu", Sala: salaA, Participante: anaID}, {Tipo: "saiu", Sala: salaA, Participante: anaID, Tela: true}}
+	if got := v.Lista()[antes:]; !reflect.DeepEqual(got, want) {
+		t.Errorf("avisos = %+v, want %+v", got, want)
+	}
+}

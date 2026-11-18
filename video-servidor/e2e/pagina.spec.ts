@@ -391,7 +391,15 @@ test.describe.serial('quem é de fora entra pela página', () => {
     await expect(maria.controles()).toBeVisible({ timeout: 30_000 });
     await colega.esperarCores(MOSAICO_2, [VERMELHO, AMARELO]);
     await maria.esperarCores(MOSAICO_2, [VERMELHO, AMARELO]);
-    expect(maria.mensagensRecebidas().slice(recebidas).map((m) => m.tipo)).toEqual(['senha']);
+    // O chat manda o palco a toda página aceita, quando ela volta e quando ele muda: ele não é da sala de espera, e sai
+    // da conta. O resto é só a senha, sem o aguardando e sem o aceito.
+    expect(
+      maria
+        .mensagensRecebidas()
+        .slice(recebidas)
+        .map((m) => m.tipo)
+        .filter((tipo) => tipo !== 'palco'),
+    ).toEqual(['senha']);
     expect(pedidos(), 'os pedidos que chegaram à colega').toBe(antes);
   });
 
@@ -464,7 +472,15 @@ test.describe.serial('quem é de fora entra pela página', () => {
     await maria.esperarCores(MOSAICO_2, [VERMELHO, AMARELO]);
 
     // Ela voltou pelo canal novo, com a chave, e pediu a senha; nenhum pedido chegou à colega.
-    expect(maria.mensagensMandadas().slice(mandadas).map((m) => m.tipo)).toEqual(['voltar', 'senha']);
+    // O aviso da câmera, que a página manda depois do voltou e a cada mudança dela, não é da volta, e sai da conta. O
+    // resto é o voltar e a senha, sem um pedir novo.
+    expect(
+      maria
+        .mensagensMandadas()
+        .slice(mandadas)
+        .map((m) => m.tipo)
+        .filter((tipo) => tipo !== 'camera'),
+    ).toEqual(['voltar', 'senha']);
     expect(pedidos(), 'os pedidos que chegaram à colega').toBe(antes);
     await expect.poll(() => ligacoesPrincipais(maria!.participante()), { timeout: 20_000 }).toBe(1);
     await maria.conferirOConsole();
