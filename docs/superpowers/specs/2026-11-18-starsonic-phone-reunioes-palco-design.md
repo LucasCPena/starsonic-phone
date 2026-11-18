@@ -6,7 +6,7 @@
   2. as telas do quadro, às 10:32;
   3. o funcionamento por dentro, às 10:37.
 
-  A spec escrita foi aprovada às 10:45. No mesmo dia, a leitura do FreeSWITCH e dois testes com ele mostraram que três pontos da seção 6 não funcionavam como escritos. Eles foram corrigidos, sem mudar as telas nem o comportamento aprovados: a seção 13 diz o que mudou e por quê. A correção espera o "sim" do responsável, junto com o plano.
+  A spec escrita foi aprovada às 10:45. No mesmo dia, a leitura do FreeSWITCH e dois testes com ele mostraram que três pontos da seção 6 não funcionavam como escritos. Eles foram corrigidos, sem mudar as telas nem o comportamento aprovados: a seção 13 diz o que mudou e por quê. O responsável aprovou a correção, junto com o plano, às 11:48.
 - **Base:** esta spec completa a de 12/11/2026 (`2026-11-12-starsonic-phone-reunioes-link-design.md`) e muda as partes dela que a seção 8 lista. O resto daquela spec continua valendo.
 - **Versões alvo:**
   - o servidor do chat `0.2.0-rc.4`;
