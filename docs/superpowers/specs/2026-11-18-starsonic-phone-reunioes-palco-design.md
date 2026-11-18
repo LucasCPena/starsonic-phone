@@ -6,7 +6,7 @@
   2. as telas do quadro, às 10:32;
   3. o funcionamento por dentro, às 10:37.
 
-  A spec escrita foi aprovada às 10:45. No mesmo dia, a leitura do FreeSWITCH e dois testes com ele mostraram que três pontos da seção 6 não funcionavam como escritos. Eles foram corrigidos, sem mudar as telas nem o comportamento aprovados: a seção 13 diz o que mudou e por quê. O responsável aprovou a correção, junto com o plano, às 11:48. A revisão final da execução, ainda em 18/11, ajustou mais cinco pontos, também sem mudar as telas: o fim da seção 13 os lista.
+  A spec escrita foi aprovada às 10:45. No mesmo dia, a leitura do FreeSWITCH e dois testes com ele mostraram que três pontos da seção 6 não funcionavam como escritos. Eles foram corrigidos, sem mudar as telas nem o comportamento aprovados: a seção 13 diz o que mudou e por quê. O responsável aprovou a correção, junto com o plano, às 11:48. A revisão final da execução, ainda em 18/11, ajustou mais cinco pontos, também sem mudar as telas: o fim da seção 13 os lista. Depois dela, um teste de esforço achou um defeito do FreeSWITCH na troca de tamanho do mosaico: é o risco 11 da seção 12.
 - **Base:** esta spec completa a de 12/11/2026 (`2026-11-12-starsonic-phone-reunioes-link-design.md`) e muda as partes dela que a seção 8 lista. O resto daquela spec continua valendo.
 - **Versões alvo:**
   - o servidor do chat `0.2.0-rc.4`;
@@ -389,6 +389,11 @@ Uma seção nova no `docs/teste-manual.md`, "O palco da reunião", com o PC e os
 8. **O tamanho como sinal** depende de o navegador dizer o tamanho de cada imagem. Onde ele não diz (sem o `requestVideoFrameCallback`), a página usa o tamanho do elemento de vídeo, que pode atrasar uma imagem. A espera de 0,6 s cobre isso.
 9. **O Você no canto, com 7 a 10 pessoas.** O Você tem tamanho fixo, e os quadros ficam menores com mais gente: ele passa a cobrir de um quarto a 40% do quadro da última pessoa, mais no celular do que no PC. As telas aprovadas mostravam até 5 pessoas. O responsável decide depois do teste manual (18/11, 14:23). A saída é o Você encolher junto com os quadros.
 10. **No celular em pé, com a tela compartilhada e 5 pessoas ou mais,** os quadros das pessoas ficam baixos: o resto da altura é dividido entre eles, sem um mínimo. O roteiro manual tem uma linha para olhar isso.
+11. **O FreeSWITCH pode parar na troca de tamanho do mosaico.** O tamanho muda no começo e no fim de um compartilhamento, e quando o número de pessoas passa de um layout a outro (seção 6.1). Nessa troca, o FreeSWITCH 1.11.3 solta a imagem antiga do mosaico enquanto a parte dele que a codifica ainda pode estar usando essa imagem. Quando as duas coisas coincidem, o processo do FreeSWITCH para: todos caem ao mesmo tempo, em todas as reuniões que estão no servidor. O serviço volta sozinho em 5 s, e as pessoas entram de novo. O que foi medido:
+    - num teste de esforço, com uma troca a cada 0,1 s, ele parou depois de 535 trocas;
+    - nos testes automáticos do dia, com algumas centenas de trocas, ele parou uma vez, no começo de um compartilhamento comum.
+
+    O servidor de vídeo `0.1.0-rc.2` nunca muda o tamanho do mosaico, e não tem esse risco: ele vem com o desenho desta etapa (o tamanho como sinal, seção 6.3). A saída é corrigir o FreeSWITCH, num pacote novo, e provar a correção com o mesmo teste de esforço. O responsável escolheu receber esta versão para testar as telas, e a correção em seguida, antes de qualquer reunião de verdade com ela (18/11, 15:37).
 
 ## 13. O que mudou depois da aprovação (18/11)
 
@@ -420,3 +425,5 @@ A revisão final de tudo, ainda em 18/11, ajustou mais cinco pontos. As telas n�
 | O agente registra todo comando do mosaico que o FreeSWITCH recusa. | No fim de uma reunião com a tela compartilhada, ou com 6 pessoas ou mais, os comandos chegam depois de a sala acabar. O aviso ia ao registro sem haver problema, e os guias dizem que ele é sinal de problema. | O aviso não vai ao registro quando a sala ou a ligação com o FreeSWITCH já acabou, nem quando a pessoa do comando já saiu (seção 10.1). |
 
 Na mesma revisão, as seções 6.1, 6.3, 7 e 12 passaram a dizer duas coisas que já eram verdade: os quadros também ficam escuros por um instante quando o número de pessoas passa de 2 para 3 e de 4 para 5 durante um compartilhamento, e a espera de 1 s vale também para quem muda de célula. A seção 12 ganhou os riscos 9 e 10.
+
+Depois da revisão final, ainda em 18/11, um teste de esforço da troca de tamanho do mosaico (uma troca a cada 0,1 s) fez o FreeSWITCH parar. O defeito é do próprio FreeSWITCH. O desenho desta etapa passou a alcançá-lo, porque agora o mosaico muda de tamanho. A seção 12 ganhou o risco 11, com o que foi medido e com a escolha do responsável.
