@@ -181,8 +181,14 @@ export function registros(): Array<{ nome: string; texto: string }> {
 
 // --- O agente ------------------------------------------------------------------------------------------------------
 
+interface SalaDoAgente {
+  sala: string;
+  participantes: Array<{ participante: string; tela: boolean }>;
+  palco?: { largura: number; altura: number; quadros: unknown[] };
+}
+
 interface EstadoDoAgente {
-  salas: Array<{ sala: string; participantes: Array<{ participante: string; tela: boolean }> }>;
+  salas: SalaDoAgente[];
 }
 
 /** O estado do agente (seção 5 do docs/video-agente.md), com a chave do config.json da pasta privada. */
@@ -191,6 +197,31 @@ async function estadoDoAgente(): Promise<EstadoDoAgente> {
   const r = await fetch(`${AGENTE}/agente/v1/estado`, { headers: { authorization: `Bearer ${chave}` } });
   if (r.status !== 200) throw new Error(`o estado do agente respondeu ${r.status}`);
   return (await r.json()) as EstadoDoAgente;
+}
+
+/** A sala do agente, com as ligações e o último palco dela, ou null quando ela não existe (ou já acabou). */
+export async function salaNoAgente(sala: string): Promise<SalaDoAgente | null> {
+  const { salas } = await estadoDoAgente();
+  return salas.find((s) => s.sala === sala) ?? null;
+}
+
+/** A sala de dentro de uma senha de uso único. */
+export function salaDaSenha(senha: string): string {
+  const sala = cargaDe(senha)?.sala;
+  if (typeof sala !== 'string') throw new Error('a senha não leva uma sala');
+  return sala;
+}
+
+/** O aviso do agente quando o FreeSWITCH recusa um comando do mosaico (salas.go). */
+const AVISO_DO_MOSAICO = 'recusou um comando do mosaico';
+
+/** As linhas do aviso do mosaico na saída do agente até agora: só os comandos (o comando=<palavra>), que não são
+ * segredo. */
+export function avisosDoMosaico(): string[] {
+  return readFileSync(REGISTROS.agente, 'utf8')
+    .split('\n')
+    .filter((l) => l.includes(AVISO_DO_MOSAICO))
+    .map((l) => /comando=\S+/.exec(l)?.[0] ?? '(sem o comando)');
 }
 
 /** Quantas ligações principais (as da câmera) o participante tem nas salas do agente. */

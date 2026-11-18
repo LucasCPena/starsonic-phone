@@ -9,6 +9,7 @@ import {
   AZUL,
   B,
   C,
+  fundo,
   MOSAICO_1,
   MOSAICO_2,
   MOSAICO_4,
@@ -19,8 +20,16 @@ import {
   VERMELHO,
   type Cor,
 } from './midia';
-import { Navegador, type Fim } from './navegador';
-import { ana, novaReuniaoDeTeste, type EventosDoApp } from './servidores';
+import { repetirAte } from './espera';
+import { Navegador, Pagina, telaVerde, type Fim, type Mensagem } from './navegador';
+import {
+  ana,
+  avisosDoMosaico,
+  novaReuniaoDeTeste,
+  salaDaSenha,
+  salaNoAgente,
+  type EventosDoApp,
+} from './servidores';
 
 const esperar = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -199,14 +208,27 @@ test('a tela de quem foi tirado não entra', async () => {
     await c.esperarMensagem('tirado');
     await a.esperarCores(MOSAICO_1, [VERMELHO]);
 
-    // C liga a tela com a senha. A célula da colega e o tamanho do mosaico, no vídeo dela, são olhados a cada 50 ms,
-    // até 5 s depois do fim da ligação: a célula fica vermelha, e o tamanho, 1920×1080.
+    // As outras três células da grade de 4 estão no fundo antes da tela.
+    await repetirAte(
+      20_000,
+      250,
+      () => a!.amostras(MOSAICO_4.slice(1)),
+      (v) => v.every(fundo),
+      (v) => `as outras células do vídeo de A não ficaram no fundo; as últimas: ${JSON.stringify(v)}`,
+    );
+
+    // C liga a tela com a senha. As quatro células e o tamanho do mosaico, no vídeo da colega, são olhados a cada
+    // 50 ms, até 5 s depois do fim da ligação: a célula dela fica vermelha, as outras três no fundo (a imagem da tela
+    // não cai em nenhuma), e o tamanho, 1920×1080.
     const vistas: Array<Cor | null> = [];
+    const outras: Array<Cor | null> = [];
     const tamanhos: string[] = [];
     let olhando = true;
     const olhar = (async () => {
       while (olhando) {
-        vistas.push(...(await a!.amostras(MOSAICO_1)));
+        const [dela, ...resto] = await a!.amostras(MOSAICO_4);
+        vistas.push(dela);
+        outras.push(...resto);
         const t = await a!.tamanho();
         tamanhos.push(`${t.largura}×${t.altura}`);
         await esperar(50);
@@ -227,6 +249,7 @@ test('a tela de quem foi tirado não entra', async () => {
     expect(vistas.filter((v) => perto(v, VERDE)), 'o verde da tela na célula da colega').toEqual([]);
     // O layout nunca mudou: nem a apresentação, com o quadro grande da tela ainda sem imagem, apareceu.
     expect(vistas.filter((v) => !perto(v, VERMELHO)), 'as vistas da célula que não são a colega').toEqual([]);
+    expect(outras.filter((v) => !fundo(v)), 'as vistas das outras três células que não são o fundo').toEqual([]);
     expect(tamanhos.filter((t) => t !== '1920×1080'), 'os tamanhos do mosaico que não são o da grade').toEqual([]);
     await a.esperarCores(MOSAICO_1, [VERMELHO]);
   } finally {
@@ -299,4 +322,95 @@ test('quem para de mandar a mídia, com o WebSocket aberto, sai da reunião em a
     await b?.fechar();
     await c?.fechar();
   }
+});
+
+// O fim da reunião com a tela compartilhada, com o FreeSWITCH de verdade: a sala e as ligações somem enquanto o agente
+// ainda arruma o mosaico (a tela que sai pede outro tamanho e outro layout). O comando que o FreeSWITCH recusa porque a
+// sala ou a ligação já sumiram não é um problema, e o agente não o escreve: nenhuma linha "recusou um comando do
+// mosaico" sai durante o teste.
+test.describe('o aviso do mosaico no fim da reunião', () => {
+  /** A sala de dentro da senha que a página recebeu (a do aceito). */
+  const salaDe = (p: Pagina) => {
+    const m = p.mensagensRecebidas().find((x: Mensagem) => typeof x.senha === 'string');
+    if (!m) throw new Error(`${p.pessoa.letra} não recebeu uma senha`);
+    return salaDaSenha(m.senha);
+  };
+
+  /** Espera a sala acabar no agente e, por mais 3 s, olha a saída dele: nenhum aviso do mosaico desde o começo do
+   * teste (antes é quantos havia nele). */
+  async function semAvisoAteOFim(sala: string, antes: number): Promise<void> {
+    await expect.poll(() => salaNoAgente(sala), { timeout: 20_000, message: 'a sala acabou no agente' }).toBeNull();
+    const fim = Date.now() + 3_000;
+    do {
+      expect(avisosDoMosaico().slice(antes), 'os avisos do mosaico do agente durante o teste').toEqual([]);
+      await esperar(200);
+    } while (Date.now() < fim);
+    expect(avisosDoMosaico().slice(antes), 'os avisos do mosaico do agente durante o teste').toEqual([]);
+  }
+
+  test('a colega encerra a reunião com a tela compartilhada', async () => {
+    const antes = avisosDoMosaico().length;
+    const app = ana();
+    const codigo = await app.criarMarcada();
+    const eventos = await app.eventos();
+    let colega: Navegador | undefined;
+    let maria: Pagina | undefined;
+    try {
+      // A colega começa a reunião pelo cliente mínimo, e aceita Maria, que entra pela página.
+      colega = await Navegador.abrir(A);
+      await colega.ligar(await app.entrar(codigo));
+      await colega.esperarCores(MOSAICO_1, [VERMELHO]);
+      maria = await Pagina.abrir(C);
+      await maria.page.addInitScript(telaVerde);
+      await maria.entrar(codigo, 'Maria Lima');
+      const pedido = await eventos.esperar(
+        (e) => e.tipo === 'reuniaoPedido' && e.reuniao === codigo && e.pedido?.nome === 'Maria Lima',
+      );
+      await app.aceitar(codigo, pedido.pedido.id);
+      await expect(maria.controles()).toBeVisible({ timeout: 30_000 });
+      await colega.esperarCores(MOSAICO_2, [VERMELHO, AMARELO]);
+      const sala = salaDe(maria);
+
+      // Maria compartilha, e a apresentação de 2 chega às duas.
+      await maria.botao('Compartilhar a tela').click();
+      await colega.esperarTamanho(1920, 1620);
+      await maria.esperarTamanho(1920, 1620);
+
+      // A colega encerra para todos: as duas saem, e a sala acaba sem aviso do mosaico.
+      await app.encerrar(codigo);
+      expect(await colega.terminou(10_000), 'a ligação da colega terminou').not.toBeNull();
+      await expect(maria.titulo('A reunião acabou')).toBeVisible({ timeout: 10_000 });
+      await semAvisoAteOFim(sala, antes);
+      await maria.conferirOConsole();
+    } finally {
+      eventos.fechar();
+      await maria?.fechar();
+      await colega?.fechar();
+    }
+  });
+
+  test('a última pessoa sai com a tela dela compartilhada', async () => {
+    const antes = avisosDoMosaico().length;
+    const codigo = await novaReuniaoDeTeste();
+    let maria: Pagina | undefined;
+    try {
+      maria = await Pagina.abrir(C);
+      await maria.page.addInitScript(telaVerde);
+      await maria.entrar(codigo, 'Maria Lima');
+      await expect(maria.controles()).toBeVisible({ timeout: 30_000 });
+      await maria.esperarCores(MOSAICO_1, [AMARELO]);
+      const sala = salaDe(maria);
+
+      await maria.botao('Compartilhar a tela').click();
+      await maria.esperarTamanho(1920, 1620);
+
+      // Ela sai com a tela no ar: as duas ligações dela terminam, e a sala acaba sem aviso do mosaico.
+      await maria.controles().getByRole('button', { name: 'Sair', exact: true }).click();
+      await expect(maria.titulo('Você saiu da reunião')).toBeVisible();
+      await semAvisoAteOFim(sala, antes);
+      await maria.conferirOConsole();
+    } finally {
+      await maria?.fechar();
+    }
+  });
 });

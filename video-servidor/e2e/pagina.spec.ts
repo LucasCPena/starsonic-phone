@@ -21,7 +21,15 @@ import {
   type Cor,
 } from './midia';
 import { Navegador, Pagina, telaVerde } from './navegador';
-import { ana, ligacoesPrincipais, novaReuniaoDeTeste, type Computador, type EventosDoApp } from './servidores';
+import {
+  ana,
+  ligacoesPrincipais,
+  novaReuniaoDeTeste,
+  salaDaSenha,
+  salaNoAgente,
+  type Computador,
+  type EventosDoApp,
+} from './servidores';
 
 const esperar = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -355,26 +363,37 @@ test.describe.serial('quem é de fora entra pela página', () => {
     if (!maria || !colega) throw new Error('o teste anterior não pôs a Maria na reunião');
     const antes = pedidos();
 
-    // O Sair manda o BYE: a ligação dela sai do mosaico da colega.
+    const sala = salaDaSenha(
+      maria.mensagensRecebidas().find((m) => m.tipo === 'aceito')?.senha ?? '',
+    );
+    const tiposDesde = (n: number) =>
+      maria!
+        .mensagensRecebidas()
+        .slice(n)
+        .map((m) => m.tipo);
+
+    // O Sair manda o BYE: a ligação dela sai do mosaico da colega, e o palco da sala, no agente, fica só com a colega.
+    const noSair = maria.mensagensRecebidas().length;
     await maria.controles().getByRole('button', { name: 'Sair', exact: true }).click();
     await expect(maria.titulo('Você saiu da reunião')).toBeVisible();
     await colega.esperarCores(MOSAICO_1, [VERMELHO]);
+    await expect
+      .poll(async () => (await salaNoAgente(sala))?.palco?.quadros.length, { message: 'o palco da sala sem a Maria' })
+      .toBe(1);
+    // Fora da reunião, a página não recebe o palco: nem esse, nem nenhum outro.
+    const fora = tiposDesde(noSair);
+    expect(fora.filter((tipo) => tipo === 'palco'), `os palcos entre o Sair e o Entrar de novo (${fora})`).toEqual([]);
 
-    // O Entrar de novo pede uma senha pelo canal, que ficou aberto, e volta ao mosaico sem a espera.
+    // O Entrar de novo pede uma senha pelo canal, que ficou aberto, e volta ao mosaico sem a espera. Com a resposta da
+    // senha vem o palco da sala, em qualquer ordem; nada da sala de espera (nem o aguardando, nem o aceito).
     const recebidas = maria.mensagensRecebidas().length;
     await maria.botao('Entrar de novo').click();
     await expect(maria.controles()).toBeVisible({ timeout: 30_000 });
     await colega.esperarCores(MOSAICO_2, [VERMELHO, AMARELO]);
     await maria.esperarCores(MOSAICO_2, [VERMELHO, AMARELO]);
-    // O chat manda o palco a toda página aceita, quando ela volta e quando ele muda: ele não é da sala de espera, e sai
-    // da conta. O resto é só a senha, sem o aguardando e sem o aceito.
-    expect(
-      maria
-        .mensagensRecebidas()
-        .slice(recebidas)
-        .map((m) => m.tipo)
-        .filter((tipo) => tipo !== 'palco'),
-    ).toEqual(['senha']);
+    await expect.poll(() => tiposDesde(recebidas), { message: 'o palco depois do Entrar de novo' }).toContain('palco');
+    const depois = tiposDesde(recebidas);
+    expect(depois.filter((tipo) => tipo !== 'palco'), 'o que veio com o palco').toEqual(['senha']);
     expect(pedidos(), 'os pedidos que chegaram à colega').toBe(antes);
   });
 

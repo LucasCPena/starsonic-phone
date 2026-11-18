@@ -6,7 +6,16 @@ import { request } from 'node:http';
 import { connect, type TLSSocket } from 'node:tls';
 import { A, B, MOSAICO_1, VERMELHO } from './midia';
 import { Navegador } from './navegador';
-import { AGENTE, ipDaMaquina, novaReuniaoDeTeste, PAGINA, registros, segredosNosRegistros, segredosUsados } from './servidores';
+import {
+  AGENTE,
+  avisosDoMosaico,
+  ipDaMaquina,
+  novaReuniaoDeTeste,
+  PAGINA,
+  registros,
+  segredosNosRegistros,
+  segredosUsados,
+} from './servidores';
 
 test('a senha não vale duas vezes nem sem o cabeçalho', async () => {
   const codigo = await novaReuniaoDeTeste();
@@ -233,4 +242,7 @@ test('os registros não têm nomes, códigos, senhas, bilhetes nem chaves', asyn
     expect(texto.length, `a saída do ${nome} não está vazia`).toBeGreaterThan(0);
   }
   expect(segredosNosRegistros(), 'o que os registros têm e não podiam ter').toEqual([]);
+  // O agente não escreve o aviso do mosaico pelo comando que o FreeSWITCH recusa porque a sala ou a ligação já sumiram:
+  // em nenhum teste da rodada ele aparece (só os comandos, comando=<palavra>, saem na mensagem).
+  expect(avisosDoMosaico(), 'os avisos "recusou um comando do mosaico" na saída do agente').toEqual([]);
 });
