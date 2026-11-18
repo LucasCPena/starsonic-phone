@@ -14,8 +14,8 @@ import {
   MOSAICO_1,
   MOSAICO_2,
   perto,
-  QUADROS_PEQUENOS,
-  TELA,
+  PESSOAS_2,
+  TELA_2,
   VERDE,
   VERMELHO,
   type Cor,
@@ -222,8 +222,9 @@ function telaVerde(): void {
 }
 
 // A tela compartilhada pela página (o desenho, item 4): o clique no Compartilhar a tela pede a tela (aqui, o canvas
-// verde), e a segunda ligação da Maria a manda, com o silêncio gerado, só para mandar. O FreeSWITCH põe a apresentação
-// (seção 7 do docs/video-agente.md): a tela no quadro grande, e as pessoas nos pequenos; quando ela sai, a grade volta.
+// verde), e a segunda ligação da Maria a manda, com o silêncio gerado, só para mandar. O agente põe a apresentação de 2
+// (seção 7 do docs/video-agente.md), de 1920×1620: a tela em cima, e as duas pessoas embaixo; quando ela sai, a grade
+// de 1920×1080 volta.
 test.describe.serial('a tela compartilhada pela página', () => {
   let colega: Navegador | undefined;
   let maria: Pagina | undefined;
@@ -240,18 +241,22 @@ test.describe.serial('a tela compartilhada pela página', () => {
       (window as unknown as { telasDoTeste: MediaStreamTrack[] }).telasDoTeste.map((t) => t.readyState),
     );
 
-  /** Maria compartilha: o selo aparece, e o quadro grande fica verde, com as duas nos quadros pequenos. */
+  /** Maria compartilha: o selo aparece, e o mosaico é a apresentação de 2, com a tela verde e as duas embaixo. */
   async function compartilhar(m: Pagina, c: Navegador): Promise<void> {
     await m.botao('Compartilhar a tela').click();
     await expect(compartilhando(m)).toBeVisible({ timeout: 20_000 });
-    await c.esperarCores([TELA], [VERDE]);
-    await c.esperarCores(QUADROS_PEQUENOS, [VERMELHO, AMARELO]);
-    await m.esperarCores([TELA], [VERDE]);
+    await c.esperarTamanho(1920, 1620);
+    await c.esperarCores([TELA_2], [VERDE]);
+    await c.esperarCores(PESSOAS_2, [VERMELHO, AMARELO]);
+    await m.esperarTamanho(1920, 1620);
+    await m.esperarCores([TELA_2], [VERDE]);
   }
 
   /** A tela saiu: a grade volta ao mosaico de 2, o selo some, a captura parou, e o Compartilhar a tela volta. */
   async function aGradeVolta(m: Pagina, c: Navegador): Promise<void> {
+    await c.esperarTamanho(1920, 1080);
     await c.esperarMosaicoDe2([VERMELHO, AMARELO]);
+    await m.esperarTamanho(1920, 1080);
     await expect(compartilhando(m)).toBeHidden();
     await expect(m.botao('Compartilhar a tela')).toBeEnabled();
     await expect.poll(() => telas(m), { message: 'as telas que a página pediu' }).not.toContain('live');

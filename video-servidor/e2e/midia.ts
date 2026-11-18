@@ -27,11 +27,13 @@ export const B: Pessoa = { letra: 'B', cor: AZUL, som: 880 };
 export const C: Pessoa = { letra: 'C', cor: AMARELO, som: 660 };
 
 // Os pontos do mosaico, em frações do vídeo recebido (os layouts da seção 7 do docs/video-agente.md, num quadro de
-// 360×360 esticado sobre os 1280×720): o centro de cada quadro.
-export const MOSAICO_1: Ponto[] = [[0.5, 0.5]];
+// 360×360 esticado sobre o mosaico): o centro de cada célula. O agente põe cada pessoa na menor célula livre quando
+// ela entra, e ela fica ali: com 1 a 4 pessoas, a grade de 4 (1920×1080), de cima para baixo e da esquerda para a
+// direita.
+export const MOSAICO_1: Ponto[] = [[0.25, 0.25]];
 export const MOSAICO_2: Ponto[] = [
-  [0.25, 0.5],
-  [0.75, 0.5],
+  [0.25, 0.25],
+  [0.75, 0.25],
 ];
 export const MOSAICO_4: Ponto[] = [
   [0.25, 0.25],
@@ -39,33 +41,25 @@ export const MOSAICO_4: Ponto[] = [
   [0.25, 0.75],
   [0.75, 0.75],
 ];
-// No mosaico de 2, a faixa de cima (y de 0 a 90 do quadro de 360) é o fundo; no de 4, é o meio dos quadros de cima.
+// Com 2 pessoas, a linha de baixo da grade de 4 é o fundo.
 export const FUNDO_DO_MOSAICO_2: Ponto[] = [
-  [0.25, 0.125],
-  [0.75, 0.125],
+  [0.25, 0.75],
+  [0.75, 0.75],
 ];
-// A apresentação: a tela em (0,0,300) e as pessoas nos dez quadros de 60.
-const centro = (x: number, y: number, lado: number): Ponto => [(x + lado / 2) / 360, (y + lado / 2) / 360];
-export const TELA: Ponto = centro(0, 0, 300);
-export const QUADROS_PEQUENOS: Ponto[] = [
-  centro(300, 0, 60),
-  centro(300, 60, 60),
-  centro(300, 120, 60),
-  centro(300, 180, 60),
-  centro(300, 240, 60),
-  centro(300, 300, 60),
-  centro(60, 300, 60),
-  centro(120, 300, 60),
-  centro(180, 300, 60),
-  centro(240, 300, 60),
+// A apresentação de 2 (1920×1620): a tela em cima, em (0,0,360,240), e as duas pessoas embaixo, em (0,240,180,120)
+// e (180,240,180,120).
+export const TELA_2: Ponto = [0.5, 1 / 3];
+export const PESSOAS_2: Ponto[] = [
+  [0.25, 5 / 6],
+  [0.75, 5 / 6],
 ];
-
-// A faixa do nome nos dois quadros do mosaico de 2 (cada um de 640×360, de y 180 a 540 no vídeo de 720): o FreeSWITCH
-// desenha o nome numa faixa de 2 × o tamanho da fonte (de 16 a 40 px) no pé do quadro, com o texto a meia fonte da
-// borda esquerda. O retângulo pega a metade esquerda da faixa, de 28 a 6 px acima do pé.
-export const FAIXAS_DO_MOSAICO_2: Array<[number, number, number, number]> = [
-  [4 / 1280, 512 / 720, 320 / 1280, 534 / 720],
-  [644 / 1280, 512 / 720, 960 / 1280, 534 / 720],
+// A apresentação de 4 (1920×1350): a tela em (0,0,360,288), e as quatro pessoas na linha de baixo, de 90 em 90.
+export const TELA_4: Ponto = [0.5, 0.4];
+export const PESSOAS_4: Ponto[] = [
+  [1 / 8, 0.9],
+  [3 / 8, 0.9],
+  [5 / 8, 0.9],
+  [7 / 8, 0.9],
 ];
 
 /** Uma cor confere com a esperada quando cada canal está a até 60 dela. */
@@ -73,7 +67,9 @@ export function perto(vista: Cor | null, esperada: Cor): boolean {
   return vista !== null && vista.every((c, i) => Math.abs(c - esperada[i]) <= 60);
 }
 
-export const escuro = (c: Cor | null) => c !== null && Math.max(...c) <= 60;
+/** O fundo do mosaico (#04060E): mais escuro que o quadro de quem está sem câmera (#1B2333), que fica na célula
+ * reservada de quem parou de mandar imagem, e que um teste de quem saiu não pode tomar pelo fundo. */
+export const fundo = (c: Cor | null) => c !== null && Math.max(...c) <= 30;
 
 /** Diz se cada cor pode ficar com um ponto diferente, cada um com uma cor que confere. */
 export function combinam(vistas: Array<Cor | null>, cores: readonly Cor[], usados = new Set<number>()): boolean {

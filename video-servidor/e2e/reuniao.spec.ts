@@ -13,8 +13,8 @@ import {
   MOSAICO_2,
   MOSAICO_4,
   perto,
-  QUADROS_PEQUENOS,
-  TELA,
+  PESSOAS_2,
+  TELA_2,
   VERDE,
   VERMELHO,
   type Cor,
@@ -37,7 +37,10 @@ test('a reunião de teste mostra as duas câmeras no mosaico e cada um ouve o ou
     await a.esperarMensagem('aceito');
     await b.esperarMensagem('aceito');
 
-    // Cada um se vê: o mosaico de 2 tem o vermelho e o azul, em qualquer ordem, no vídeo de B e no de A.
+    // Cada um se vê: o mosaico de 2 é a grade de 4, de 1920×1080, com o vermelho e o azul nas duas células de cima,
+    // em qualquer ordem, no vídeo de B e no de A.
+    await b.esperarTamanho(1920, 1080);
+    await a.esperarTamanho(1920, 1080);
     await b.esperarCores(MOSAICO_2, [VERMELHO, AZUL]);
     await a.esperarCores(MOSAICO_2, [VERMELHO, AZUL]);
 
@@ -45,9 +48,15 @@ test('a reunião de teste mostra as duas câmeras no mosaico e cada um ouve o ou
     await b.esperarFrequencia(A.som);
     await a.esperarFrequencia(B.som);
 
-    // O nome no quadro (M-29): a faixa de baixo de cada quadro, onde o FreeSWITCH escreve o nome, tem o texto
-    // claro sobre o fundo escuro, e não uma cor só. Isso prova que a fonte do pacote desenha.
-    await a.esperarNomesNoMosaicoDe2();
+    // O quadro não leva mais o nome: o pé de cada célula tem a cor da câmera, e não a faixa escura do nome. A câmera
+    // de 16:9 enche a célula de 16:9.
+    await a.esperarCores(
+      [
+        [0.25, 0.49],
+        [0.75, 0.49],
+      ],
+      [VERMELHO, AZUL],
+    );
   } finally {
     await a?.fechar();
     await b?.fechar();
@@ -111,18 +120,21 @@ test.describe.serial('a reunião marcada', () => {
     test.setTimeout(180_000);
     if (!a || !c) throw new Error('o teste anterior não pôs A e C na reunião');
 
-    // C pede a senha da tela pelo canal da página e compartilha: a segunda ligação dele.
+    // C pede a senha da tela pelo canal da página e compartilha: a segunda ligação dele. O agente põe a apresentação
+    // de 2, de 1920×1620: a tela em cima, e as duas pessoas embaixo.
     await c.compartilhar(await c.pedirTela());
-    await a.esperarCores([TELA], [VERDE]);
-    await a.esperarCores(QUADROS_PEQUENOS, [VERMELHO, AMARELO]);
+    await a.esperarTamanho(1920, 1620);
+    await a.esperarCores([TELA_2], [VERDE]);
+    await a.esperarCores(PESSOAS_2, [VERMELHO, AMARELO]);
 
     // A ligação da tela manda o silêncio gerado: o tempo sem mídia (60 s) não a derruba.
     await esperar(70_000);
     expect(await c.telaNoAr()).toBe(true);
-    await a.esperarCores([TELA], [VERDE]); // os 20 s de toda espera do brief
+    await a.esperarCores([TELA_2], [VERDE]); // os 20 s de toda espera do brief
 
-    // C para, e a grade volta ao mosaico de 2.
+    // C para, e a grade volta ao mosaico de 2, de 1920×1080.
     await c.pararDeCompartilhar();
+    await a.esperarTamanho(1920, 1080);
     await a.esperarMosaicoDe2([VERMELHO, AMARELO]);
   });
 
@@ -151,14 +163,11 @@ test.describe.serial('a reunião marcada', () => {
 
 // O I1 da 1a, de ponta a ponta: quem a colega tirou ainda tem uma senha da tela, que vale por 30 s, e o servidor de
 // vídeo atende a ligação com ela (a senha confere). Mas a tela de quem não tem a ligação principal na sala cai na hora,
-// antes de qualquer mudança de layout (seção 6 do docs/video-agente.md): o quadro grande nunca é dela.
+// sem nenhum comando do mosaico (seção 6 do docs/video-agente.md): o quadro grande nunca é dela.
 //
-// Uma parte disso é certa, e outra é uma corrida. A ordem do agente é certa: o uuid_kill sai antes do vid-layout da
-// apresentação (salas.go), e a apresentação nunca aparece. Mas a grade conta a ligação da tela quando o FreeSWITCH
-// marca o vídeo dela pronto (o CF_VIDEO_READY: na primeira imagem, ou uns 100 ms depois de a leitura do vídeo começar,
-// mesmo sem imagem), e aí o quadro da colega encolhe. O uuid_kill do agente tem de chegar nessa janela, contada do
-// add-member. Uma falha aqui é o agente perdendo essa corrida: uma quebra de verdade do I1 (a colega vê um quadro a
-// mais), e não um teste instável.
+// O layout só muda por um comando do agente: o FreeSWITCH não tem mais o grupo de layouts com que escolhia um sozinho,
+// e a ligação da tela entra com a reserva "tela", que a grade não tem. Sem o comando, nem o tamanho do mosaico nem a
+// célula da colega mudam enquanto a ligação da tela existe.
 test('a tela de quem foi tirado não entra', async () => {
   const app = ana();
   const codigo = await app.criarMarcada();
@@ -190,14 +199,16 @@ test('a tela de quem foi tirado não entra', async () => {
     await c.esperarMensagem('tirado');
     await a.esperarCores(MOSAICO_1, [VERMELHO]);
 
-    // C liga a tela com a senha. O ponto do quadro grande da apresentação, no vídeo da colega, é olhado a cada 50 ms,
-    // até 5 s depois do fim da ligação. Sozinha na sala, a colega tem o quadro inteiro, e o ponto é vermelho: ele só
-    // muda se o layout mudar (a apresentação, ou a grade que contou a tela: a corrida de cima).
+    // C liga a tela com a senha. A célula da colega e o tamanho do mosaico, no vídeo dela, são olhados a cada 50 ms,
+    // até 5 s depois do fim da ligação: a célula fica vermelha, e o tamanho, 1920×1080.
     const vistas: Array<Cor | null> = [];
+    const tamanhos: string[] = [];
     let olhando = true;
     const olhar = (async () => {
       while (olhando) {
-        vistas.push(...(await a!.amostras([TELA])));
+        vistas.push(...(await a!.amostras(MOSAICO_1)));
+        const t = await a!.tamanho();
+        tamanhos.push(`${t.largura}×${t.altura}`);
         await esperar(50);
       }
     })();
@@ -212,10 +223,11 @@ test('a tela de quem foi tirado não entra', async () => {
     }
     // A senha conferiu (veio o 200, e não o 403), e o servidor de vídeo derrubou a ligação com o BYE.
     expect(fim, 'como a ligação da tela terminou').toEqual({ codigo: null, causa: 'Terminated', originador: 'remote' });
-    expect(vistas.length, 'as vistas do quadro grande').toBeGreaterThan(40);
-    expect(vistas.filter((v) => perto(v, VERDE)), 'o verde da tela no quadro grande da colega').toEqual([]);
+    expect(vistas.length, 'as vistas da célula da colega').toBeGreaterThan(40);
+    expect(vistas.filter((v) => perto(v, VERDE)), 'o verde da tela na célula da colega').toEqual([]);
     // O layout nunca mudou: nem a apresentação, com o quadro grande da tela ainda sem imagem, apareceu.
-    expect(vistas.filter((v) => !perto(v, VERMELHO)), 'as vistas do quadro grande que não são a colega').toEqual([]);
+    expect(vistas.filter((v) => !perto(v, VERMELHO)), 'as vistas da célula que não são a colega').toEqual([]);
+    expect(tamanhos.filter((t) => t !== '1920×1080'), 'os tamanhos do mosaico que não são o da grade').toEqual([]);
     await a.esperarCores(MOSAICO_1, [VERMELHO]);
   } finally {
     eventos.fechar();
@@ -236,8 +248,10 @@ test('quem fecha a aba sai da reunião em até 75 segundos', async () => {
     a = await Navegador.abrir(A);
     b = await Navegador.abrir(B);
     c = await Navegador.abrir(C);
+    // A e B entram antes de C: cada um fica na célula com que entrou, e C, na de baixo, que vaga quando ele sai.
     await a.entrarPelaPagina(codigo, 'Carlos Lima');
     await b.entrarPelaPagina(codigo, 'Bia Ramos');
+    await a.esperarCores(MOSAICO_2, [VERMELHO, AZUL]);
     await c.entrarPelaPagina(codigo, 'Maria Lima');
     await a.esperarCores(MOSAICO_4, [VERMELHO, AZUL, AMARELO]);
 
@@ -267,8 +281,10 @@ test('quem para de mandar a mídia, com o WebSocket aberto, sai da reunião em a
     a = await Navegador.abrir(A);
     b = await Navegador.abrir(B);
     c = await Navegador.abrir(C);
+    // A e B entram antes de C: cada um fica na célula com que entrou, e C, na de baixo, que vaga quando ele sai.
     await a.entrarPelaPagina(codigo, 'Carlos Lima');
     await b.entrarPelaPagina(codigo, 'Bia Ramos');
+    await a.esperarCores(MOSAICO_2, [VERMELHO, AZUL]);
     await c.entrarPelaPagina(codigo, 'Maria Lima');
     await a.esperarCores(MOSAICO_4, [VERMELHO, AZUL, AMARELO]);
 

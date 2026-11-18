@@ -15,8 +15,7 @@ import {
 import {
   argumentosDoChromium,
   combinam,
-  escuro,
-  FAIXAS_DO_MOSAICO_2,
+  fundo,
   FUNDO_DO_MOSAICO_2,
   MOSAICO_2,
   type Cor,
@@ -52,7 +51,6 @@ interface Cliente {
   ligar(acesso: AcessoDoNavegador): Promise<void>;
   mensagens(): Mensagem[];
   amostra(fx: number, fy: number): Cor | null;
-  faixa(x0: number, y0: number, x1: number, y1: number): { claros: number; escuros: number; total: number } | null;
   frequencia(): { hz: number; db: number } | null;
   pedirTela(): Promise<string>;
   compartilhar(senha: string): Promise<void>;
@@ -71,6 +69,39 @@ declare global {
 }
 
 const texto = (x: unknown) => JSON.stringify(x);
+
+/** O tamanho do vídeo recebido, em pontos: o do mosaico que o agente escolheu. 0 por 0 sem vídeo. */
+export interface Tamanho {
+  largura: number;
+  altura: number;
+}
+
+/** No navegador: o tamanho do vídeo do elemento (o videoWidth e o videoHeight). */
+function tamanhoDoVideo(id: string): Tamanho {
+  const video = document.getElementById(id) as HTMLVideoElement | null;
+  return { largura: video?.videoWidth ?? 0, altura: video?.videoHeight ?? 0 };
+}
+
+/** Espera o vídeo recebido com o tamanho, até prazo ms. Depois de uma troca de layout, a imagem do tamanho antigo
+ * ainda chega por um instante: quem confere as cores espera o tamanho antes. */
+async function esperarTamanhoDe(
+  quem: string,
+  tamanho: () => Promise<Tamanho>,
+  diagnostico: () => Promise<string>,
+  largura: number,
+  altura: number,
+  prazo: number,
+): Promise<void> {
+  await repetirAte(
+    prazo,
+    100,
+    tamanho,
+    (t) => t.largura === largura && t.altura === altura,
+    async (t) =>
+      `o vídeo de ${quem} não ficou com ${largura}×${altura} em ${prazo / 1000} s; o último: ${texto(t)}; ` +
+      `${await diagnostico()}`,
+  );
+}
 
 /** Um Chromium com a câmera e o microfone de uma pessoa, na página do cliente mínimo. */
 export class Navegador {
@@ -164,28 +195,34 @@ export class Navegador {
     );
   }
 
-  /** Espera o mosaico de 2: as duas cores nos dois quadros e o fundo escuro em cima deles (o de 4 tem gente ali). */
+  /** Espera o mosaico de 2: as duas cores nas células de cima e o fundo na linha de baixo, sem ninguém (nem o quadro
+   * de quem está sem câmera: a célula de quem saiu fica vazia). */
   async esperarMosaicoDe2(cores: readonly Cor[], prazo = 20_000): Promise<void> {
     await repetirAte(
       prazo,
       250,
       () => this.amostras([...MOSAICO_2, ...FUNDO_DO_MOSAICO_2]),
-      (vistas) => combinam(vistas.slice(0, 2), cores) && vistas.slice(2).every(escuro),
+      (vistas) => combinam(vistas.slice(0, 2), cores) && vistas.slice(2).every(fundo),
       async (vistas) =>
         `o vídeo de ${this.pessoa.letra} não voltou ao mosaico de 2 com ${texto(cores)} em ${prazo / 1000} s; ` +
         `as últimas vistas (os dois quadros e o fundo): ${texto(vistas)}; o cliente: ${await this.diagnostico()}`,
     );
   }
 
-  /** Espera a faixa do nome de cada quadro do mosaico de 2 com o texto claro sobre o fundo escuro. */
-  async esperarNomesNoMosaicoDe2(prazo = 20_000): Promise<void> {
-    await repetirAte(
+  /** O tamanho do vídeo recebido. */
+  tamanho(): Promise<Tamanho> {
+    return this.page.evaluate(tamanhoDoVideo, 'video');
+  }
+
+  /** Espera o vídeo recebido com o tamanho, até prazo ms. */
+  async esperarTamanho(largura: number, altura: number, prazo = 20_000): Promise<void> {
+    await esperarTamanhoDe(
+      this.pessoa.letra,
+      () => this.tamanho(),
+      async () => `o cliente: ${await this.diagnostico()}`,
+      largura,
+      altura,
       prazo,
-      250,
-      () => this.page.evaluate((fs) => fs.map(([x0, y0, x1, y1]) => window.cliente.faixa(x0, y0, x1, y1)), FAIXAS_DO_MOSAICO_2),
-      (faixas) => faixas.every((f) => f !== null && f.claros >= 20 && f.escuros >= f.total / 2),
-      async (faixas) =>
-        `as faixas dos nomes no vídeo de ${this.pessoa.letra} não têm texto: ${texto(faixas)}; o cliente: ${await this.diagnostico()}`,
     );
   }
 
@@ -669,6 +706,23 @@ export class Pagina {
   /** A cor de cada ponto do #mosaico, ou null sem vídeo. */
   amostras(pontos: readonly Ponto[]): Promise<Array<Cor | null>> {
     return this.page.evaluate(coresDoMosaico, pontos);
+  }
+
+  /** O tamanho do vídeo do #mosaico. */
+  tamanho(): Promise<Tamanho> {
+    return this.page.evaluate(tamanhoDoVideo, 'mosaico');
+  }
+
+  /** Espera o vídeo do #mosaico com o tamanho, até prazo ms. */
+  async esperarTamanho(largura: number, altura: number, prazo = 20_000): Promise<void> {
+    await esperarTamanhoDe(
+      this.pessoa.letra,
+      () => this.tamanho(),
+      async () => `a página: ${await this.diagnostico()}`,
+      largura,
+      altura,
+      prazo,
+    );
   }
 
   /** Espera cada cor num ponto diferente do #mosaico, em qualquer ordem, até prazo ms. */

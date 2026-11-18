@@ -305,27 +305,6 @@
     return soma.map((c) => Math.round(c / (d.length / 4)));
   }
 
-  /** Num retângulo (em frações) do vídeo recebido, quantos pixels são claros (os três canais de 150 para cima) e
-   * quantos são escuros (os três de 60 para baixo). */
-  function faixa(x0, y0, x1, y1) {
-    const t = desenhar();
-    if (!t) return null;
-    const ax = Math.round(x0 * t.w);
-    const ay = Math.round(y0 * t.h);
-    const w = Math.max(1, Math.round(x1 * t.w) - ax);
-    const h = Math.max(1, Math.round(y1 * t.h) - ay);
-    const d = pincel.getImageData(ax, ay, w, h).data;
-    let claros = 0;
-    let escuros = 0;
-    for (let i = 0; i < d.length; i += 4) {
-      const menor = Math.min(d[i], d[i + 1], d[i + 2]);
-      const maior = Math.max(d[i], d[i + 1], d[i + 2]);
-      if (menor >= 150) claros++;
-      else if (maior <= 60) escuros++;
-    }
-    return { claros, escuros, total: w * h };
-  }
-
   /** A frequência mais forte do som recebido (de 100 Hz para cima) e o nível dela, em dB. Sem som ainda, null. */
   function frequencia() {
     const a = estado.analisador;
@@ -405,7 +384,6 @@
     ligar,
     mensagens: () => estado.mensagens.slice(),
     amostra,
-    faixa,
     frequencia,
     pedirTela,
     compartilhar,

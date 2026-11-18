@@ -81,10 +81,13 @@ Tudo vai em HTTPS, na porta do agente (seção 1: a 443, ou a `porta` do config.
 **O estado** — `GET /agente/v1/estado`:
 ```json
 {"versao": "0.1.0", "freeswitch": true, "agora": 1794495600000,
- "salas": [{"sala": "<32 hex>", "participantes": [{"participante": "<16 hex>", "tela": false}]}],
+ "salas": [{"sala": "<32 hex>", "participantes": [{"participante": "<16 hex>", "tela": false}],
+            "palco": {"largura": 1920, "altura": 1080,
+                      "quadros": [{"participante": "<16 hex>", "tela": false, "x": 0, "y": 0, "l": 960, "a": 540}]}}],
  "uso": {"cpu": 34, "memoria": 41}}
 ```
 - Cada ligação aparece uma vez em `participantes`: a da câmera, com `tela` falso, e a da tela, com `tela` verdadeiro.
+- O `palco` de cada sala é o último que o agente mandou (veja o evento `palco`, abaixo). A sala que ainda não tem palco vai sem o campo.
 - O `uso` vem em porcentagem inteira. A CPU é a do último minuto, e a memória é a de agora. No primeiro minuto do agente, a CPU é a dos seus dois primeiros segundos, e 0 antes deles.
 - O `agora` é o relógio do agente, em milissegundos UTC.
 
@@ -94,6 +97,8 @@ Tudo vai em HTTPS, na porta do agente (seção 1: a 443, ou a `porta` do config.
 {"tipo": "entrou", "sala": "…", "participante": "…", "tela": false}
 {"tipo": "saiu", "sala": "…", "participante": "…", "tela": false}
 {"tipo": "acabou", "sala": "…"}                                               // a reunião acabou no FreeSWITCH
+{"tipo": "palco", "sala": "<32 hex>", "largura": 1920, "altura": 1080,
+ "quadros": [{"participante": "<16 hex>", "tela": false, "x": 0, "y": 0, "l": 960, "a": 540}]}   // o mosaico mudou
 {"tipo": "relogio", "agora": 1794495625000}                                   // a cada 25 segundos
 ```
 - O `freeswitch` do `estado` diz se o agente está ligado ao FreeSWITCH. Com ele `false` e sem salas, o chat sabe que o vídeo está fora do ar, e não que ninguém tem reunião.
@@ -102,6 +107,11 @@ Tudo vai em HTTPS, na porta do agente (seção 1: a 443, ou a `porta` do config.
 - Um cliente que conecta no meio de uma mudança pode receber o `estado` novo e depois um aviso (`entrou`, `saiu` ou `acabou`) que o `estado` já mostra. O chat trata os avisos como idempotentes.
 - O `saiu` vem quando sai a última ligação daquele tipo do participante na sala, a principal ou a tela. A ligação que outra do mesmo participante substituiu (seção 6) sai sem o `saiu`: ele continua na sala.
 - Um cliente que não lê é desligado, sem atrasar os outros.
+- **O palco** é o desenho do mosaico da sala: o tamanho dele (`largura` e `altura`, em pontos) e o retângulo de cada quadro (`x`, `y`, `l` de largura e `a` de altura, em pontos do mosaico).
+  - Os quadros vão nesta ordem: a tela, se houver (com `tela` verdadeiro), e depois as pessoas, pela célula.
+  - O agente manda o `palco` só quando ele muda, e só depois de o FreeSWITCH aceitar o tamanho e o layout. Numa entrada, o `entrou` vem antes do `palco`.
+  - Ele não leva nomes: só os ids.
+  - Quando a última ligação sai, não vem palco: o `acabou` basta. A reconstrução (o agente reiniciou, ou o ESL voltou) não manda o `palco`: o `estado` que vem depois o leva.
 
 **Tirar** — `POST /agente/v1/salas/{sala}/participantes/{participante}/tirar`: `204`. As ligações do participante, a da câmera e a da tela, acabam.
 
@@ -126,13 +136,13 @@ Tudo vai em HTTPS, na porta do agente (seção 1: a 443, ou a `porta` do config.
   - `403`: sem senha, ou com uma senha que não vale;
   - `404`: outro usuário que não o `reuniao`;
   - `503`: o agente não respondeu ao FreeSWITCH.
-- **A imagem que chega ao servidor:** até 1 Mbit/s, pedido no SDP da resposta (`b=AS:1000`). O mosaico que sai é de cerca de 1,5 Mbit/s.
+- **A imagem que chega ao servidor e o mosaico que sai:** as bandas da seção 7.
 - **Toda ligação manda som,** também a da tela: o microfone, ou um silêncio gerado quando a pessoa está sem microfone ou com ele desligado.
 - **Uma ligação de que nada chega cai sozinha.** O FreeSWITCH olha o que chega no caminho do som e no do vídeo (o `media_timeout` de 60 segundos, que a discagem põe para os dois), e uma ligação em que nada chega a um deles por 60 segundos, nem o RTP, nem o RTCP, nem as verificações do ICE, cai. É assim que sai quem fechou a aba ou perdeu a rede. Um navegador aberto que parou só o som, e continua mandando o RTCP e o ICE, não cai por isso: o FreeSWITCH conta tudo o que chega. O tempo só no caminho do som (o `media_timeout_audio`) não basta: com ele, a ligação de uma aba fechada não caiu em 75 segundos (o e2e mostrou), e é o relógio do caminho do vídeo que chega ao fim. Com a ligação em espera, o prazo é de 10 minutos (o `media_hold_timeout`).
 - **Os perfis não têm o timer de sessão:** uma ligação sai pelo BYE, ou pelo tempo sem mídia de cima.
 - **A ligação da tela compartilhada** é uma segunda ligação da mesma pessoa, com a senha de `tela` verdadeiro. Ela manda um silêncio gerado no som e a tela no vídeo, os dois só para mandar. Uma tela nova toma o lugar da anterior: o agente derruba a ligação da tela anterior.
 - **Cada participante tem uma ligação principal na sala:** a da câmera, que leva o som. O agente segue três regras nos eventos do FreeSWITCH:
-  - a ligação da tela de um participante sem a principal na sala cai na hora, antes de qualquer mudança de layout e sem o `entrou`: o quadro grande nunca é dela, e o chat não a vê;
+  - a ligação da tela de um participante sem a principal na sala cai na hora, sem nenhum comando do mosaico e sem o `entrou`: o quadro grande nunca é dela, e o chat não a vê;
   - quando a última principal de um participante sai da sala, as telas dele caem com ela;
   - uma principal nova toma o lugar da anterior do mesmo participante: o agente derruba a anterior.
 
@@ -140,7 +150,7 @@ Tudo vai em HTTPS, na porta do agente (seção 1: a 443, ou a `porta` do config.
 
 ## 7. A reunião no FreeSWITCH
 - **O nome da conferência** é a `sala`, e o perfil é o `starsonic`:
-  - o vídeo montado no servidor (`video-mode` `mux`), com o quadro de 1280×720 a 15 imagens por segundo, em VP8, com 1,5 Mbit/s (`video-codec-bandwidth` `1.5mb`);
+  - o vídeo montado no servidor (`video-mode` `mux`), em VP8, a 25 imagens por segundo (`video-fps` `25`). A conferência começa no layout `starsonic-4`, com o quadro de 1920×1080 e 3 Mbit/s (`video-layout-name` `starsonic-4`, `video-canvas-size` `1920x1080`, `video-codec-bandwidth` `3mb`); depois, quem muda o layout, o tamanho e a banda é o agente;
   - um codificador para todos que usam o mesmo codec (`minimize-video-encoding`);
   - o som a 48 kHz, em pacotes de 20 ms, mono;
   - até 12 ligações: 10 pessoas e duas telas, por um instante, quando uma tela toma o lugar da outra. O limite das 10 pessoas é do chat;
@@ -149,27 +159,37 @@ Tudo vai em HTTPS, na porta do agente (seção 1: a 443, ou a `porta` do config.
   - o colega entra sem nada a mais;
   - quem é de fora entra com o `join-only`, e não começa uma reunião sozinho;
   - a tela entra com o `mute|deaf`: não é ouvida e não ouve.
-- **O nome no quadro** é o `video_banner_text`: `{font_scale=0.25,min_font_size=8,max_font_size=20,fg=#FFFFFF,bg=#04060E}<nome>`, na faixa de baixo do quadro. O nome passa antes por uma limpeza:
-  - ficam só as letras, as marcas de acento, os números, o espaço e os sinais `.`, `-`, `'`, `(` e `)`;
-  - os espaços seguidos viram um, e as pontas saem;
-  - ficam no máximo 40 caracteres;
-  - um nome que fica vazio vira `Convidado`.
+- **A imagem que chega ao servidor:** até 1500 kbit/s na câmera e 2500 kbit/s na tela (o `rtp_video_max_bandwidth_in` que a discagem põe: `1500kb` e `2500kb`).
+- **O quadro não leva o nome:** o nome de cada pessoa é da página, que o recebe do chat. A discagem não manda nome nenhum ao FreeSWITCH.
+- **Quem está sem câmera** tem o vídeo nos dois sentidos, mas não manda imagem: depois de 5 s sem imagem, o FreeSWITCH põe na célula dela o quadro de `#1B2333`, sem texto, e a imagem que volta o tira. O navegador que só recebe o vídeo (o `recvonly`) fica sem quadro no mosaico. A cor do fundo é `#04060E`.
+- **Os layouts:** as medidas são as do FreeSWITCH, num quadro de 360×360 esticado sobre o mosaico: `(x, y, scale[, hscale])`. O `scale` é a largura, e o `hscale`, a altura (o `hscale` falta quando é igual ao `scale`). Em pontos: `x·L/360`, `y·A/360`, `scale·L/360` e `hscale·A/360`, com `L` e `A` do mosaico. Cada imagem tem um `reservation_id`: `c1` a `c12` para as pessoas, e `tela` para a tela. Nenhuma imagem é o "floor", e não há grupo de layouts: o FreeSWITCH não escolhe o layout sozinho.
 
-  A tela leva `Tela de <nome>`.
-- **Quem está sem câmera** tem o vídeo nos dois sentidos, mas não manda imagem: depois de 5 s sem imagem, o FreeSWITCH põe o quadro de `#1B2333`, com o nome, e a imagem que volta o tira. O navegador que só recebe o vídeo (o `recvonly`) fica sem quadro no mosaico. As cores do fundo e das faixas são `#04060E`.
-- **Os layouts:** as medidas são as do FreeSWITCH, num quadro de 360×360 esticado sobre os 1280×720. O `scale` é a largura, e o `hscale`, a altura (o `hscale` falta quando é igual ao `scale`). Nenhum quadro é o "floor": cada pessoa fica no seu lugar enquanto fala.
+  | Layout | Pessoas | O mosaico | As imagens, na ordem (a reserva de cada uma) |
+  |---|---|---|---|
+  | `starsonic-4` | 1 a 4 | 1920×1080 | `c1` (0,0,180), `c2` (180,0,180), `c3` (0,180,180), `c4` (180,180,180) |
+  | `starsonic-9` | 5 a 9 | 1920×1086 | `c1` a `c9`: (x,y,120), com y em 0, 120 e 240 e, em cada linha, x em 0, 120 e 240 |
+  | `starsonic-12` | 10 a 12 | 1920×810 | `c1` a `c12`: (x,y,90,120), com y em 0, 120 e 240 e, em cada linha, x em 0, 90, 180 e 270 |
+  | `starsonic-apresentacao-2` | a tela e 0 a 2 | 1920×1620 | `tela` (0,0,360,240), `c1` (0,240,180,120), `c2` (180,240,180,120) |
+  | `starsonic-apresentacao-4` | a tela e 3 ou 4 | 1920×1350 | `tela` (0,0,360,288), `c1` a `c4`: (x,288,90,72), com x em 0, 90, 180 e 270 |
+  | `starsonic-apresentacao-12` | a tela e 5 a 12 | 1920×1440 | `tela` (0,0,360,270), `c1` a `c6`: (x,270,60,45), e `c7` a `c12`: (x,315,60,45), com x em 0, 60, 120, 180, 240 e 300 |
 
-  | Layout | Para | Os quadros (`x`,`y`,`scale`[,`hscale`]) |
-  |---|---|---|
-  | `starsonic-1` | 1 pessoa | (0,0,360) |
-  | `starsonic-2` | 2 | (0,90,180), (180,90,180) |
-  | `starsonic-4` | 3 e 4 | (0,0,180), (180,0,180), (0,180,180), (180,180,180) |
-  | `starsonic-6` | 5 e 6 | (0,60,120), (120,60,120), (240,60,120), (0,180,120), (120,180,120), (240,180,120) |
-  | `starsonic-9` | 7 a 9 | os 9 de (x,y,120), com x e y em 0, 120 e 240, linha por linha |
-  | `starsonic-12` | 10 | os 12 de (x,y,90,120), com x em 0, 90, 180 e 270 e y em 0, 120 e 240, linha por linha |
-  | `starsonic-apresentacao` | a tela compartilhada | a tela em (0,0,300), com o `reservation_id` `tela`; as pessoas em (300,0,60), (300,60,60), (300,120,60), (300,180,60), (300,240,60), (300,300,60), (60,300,60), (120,300,60), (180,300,60), (240,300,60) |
+- **As células:**
+  1. Uma célula é de um participante, de `1` a `12`. Ele a ganha quando a primeira ligação de câmera dele entra: a menor célula livre.
+  2. Ele fica com ela enquanto tiver uma ligação de câmera na sala. A ligação nova do mesmo participante recebe a mesma célula, antes de o agente derrubar a anterior.
+  3. O layout é o da tabela, pelo número de participantes com câmera e por haver ou não uma ligação de tela.
+  4. Quem está numa célula maior que o número de células do layout passa para a menor célula livre dele, na ordem das células.
+  5. Vários participantes sem célula ao mesmo tempo (depois da reconstrução) a ganham na ordem do menor `<membro>` de cada um.
+  6. Com duas ligações de tela por um instante (uma tela nova toma o lugar da anterior), a tela do palco é a de maior `<membro>`.
+- **Os comandos do agente,** a cada entrada e saída, todos com `conference <sala> ` na frente, e nesta ordem:
+  1. `vid-res 1920x1086` (só quando o tamanho muda);
+  2. `vid-layout starsonic-9` (só quando o layout muda);
+  3. `vid-res-id <membro> c5 force`, para cada ligação de câmera que ganhou ou mudou de célula. O `<membro>` é o `Member-ID` do `add-member` (o `id` do `conference json_list`): só dígitos, de 1 a 10. O `force` é preciso: sem ele, repetir a mesma reserva a apaga;
+  4. `vid-bandwidth 4mb '' 1` (só quando a banda muda). As aspas vazias e o `1` são precisos: sem o número do mosaico, o comando não muda a banda dele.
 
-  O grupo `starsonic-grade` tem os seis primeiros, nessa ordem, e é o layout da reunião sem tela. Quando a ligação de uma tela entra, o agente põe o `starsonic-apresentacao`. Quando a última tela sai, ele volta ao grupo.
+  A tela não recebe comando: ela entra com a reserva `tela`, que a discagem põe (`video_reservation_id=tela`).
+- **As bandas do mosaico:** `3mb` nos layouts da grade e `4mb` nos da apresentação.
+- **Quando um comando falha.** Um comando deu certo quando a resposta começa com `+OK` e nenhuma linha dela começa com `-ERR`. O que deu certo fica guardado. Com o `vid-res` ou o `vid-layout` recusado, o agente para ali, e nenhum palco sai; com o `vid-res-id` ou o `vid-bandwidth` recusado, ele segue. O que um comando recusado deixaria fica desconhecido, e a próxima entrada ou saída o manda de novo. Cada recusa vai ao registro numa linha, só com o nome do comando.
+- **A reconstrução,** quando o agente reinicia ou o ESL volta, arruma cada sala do começo, com os quatro comandos, depois de ler o que existe. Enquanto ela lê, o agente não manda nenhum comando do mosaico.
 
 ## 8. O que fica guardado e os registros
 - **O servidor de vídeo não guarda nada:**
