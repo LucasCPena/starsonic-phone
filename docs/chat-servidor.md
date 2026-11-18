@@ -129,6 +129,8 @@ Depois de 5 senhas erradas, o usuário trava, e a página mostra `Muitas tentati
 sudo systemctl restart starsonic-chat
 ```
 
+Reiniciar o chat mexe nas reuniões que estão no ar no navegador: quem está nelas continua vendo e ouvindo, mas as páginas passam a mostrar a imagem de todos junta, sem os quadros e sem os nomes, até a pessoa sair e entrar de novo (veja o passo 7). Faça isso num horário sem reuniões.
+
 ## 4. Conferir a instalação
 
 Faça estas conferências uma vez, logo depois de instalar.
@@ -356,7 +358,9 @@ E rode:
 sudo bash instalar.sh atualizar
 ```
 
-Você deve ver `SHA-256 conferido.` e, no fim, `Pronto: o Starsonic Chat agora está na versão <versão>.` O serviço reinicia sozinho, e quem está no chat volta a conectar em poucos segundos. As mensagens e os arquivos não mudam.
+Você deve ver `SHA-256 conferido.` e, no fim, `Pronto: o Starsonic Chat agora está na versão <versão>.` O serviço reinicia sozinho, e quem está no chat volta a conectar em poucos segundos. As mensagens e os arquivos não mudam. As reuniões que estão no ar, no navegador, são outra coisa: veja o que acontece com elas logo abaixo.
+
+**Uma reunião no ar quando o chat reinicia.** Atualizar o chat, ou reiniciá-lo, mexe nas reuniões que estão acontecendo no navegador. As pessoas que estão nelas continuam vendo e ouvindo: a imagem e o som não param. Mas a página de cada uma tenta voltar ao chat por alguns segundos e não consegue, porque o chat novo não conhece essa pessoa. Depois disso, a página de cada uma mostra a imagem de todos junta, sem os quadros e sem os nomes, e o `Compartilhar a tela` deixa de funcionar para ela. Fica assim até a pessoa sair da reunião e entrar de novo (ou recarregar a página). Quem entra depois vê os quadros normalmente, mas com `Participante` no lugar do nome de quem já estava. Por isso, atualize o chat, e reinicie-o, também num horário sem reuniões, como o guia já diz para o servidor de vídeo.
 
 ### Trocar a porta pública
 

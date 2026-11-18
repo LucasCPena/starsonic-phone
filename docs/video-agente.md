@@ -40,7 +40,7 @@ A porta do HTTPS do agente é a 443, ou a `porta` do config.json (opcional, um n
   - `participante`: quem entra, também sorteado pelo chat a cada entrada;
   - `papel`: o colega pode começar a reunião; quem é de fora só entra numa que já começou;
   - `tela`: a ligação da tela compartilhada;
-  - `nome`: o nome que aparece no quadro (seção 7);
+  - `nome`: o nome da pessoa. Ele fica na senha e não pode ser vazio, mas o agente não o escreve mais na imagem (seção 7): quem escreve os nomes é a página, pelo palco;
   - `vence`: em milissegundos UTC, no relógio do servidor de vídeo. O chat mede a diferença dos relógios pelos eventos (seção 5) e põe `vence` = a hora do agente + 30 segundos;
   - `id`: sorteado a cada senha.
 - **O agente aceita a senha quando:**
@@ -177,7 +177,7 @@ Tudo vai em HTTPS, na porta do agente (seção 1: a 443, ou a `porta` do config.
 - **As células:**
   1. Uma célula é de um participante, de `1` a `12`. Ele a ganha quando a primeira ligação de câmera dele entra: a menor célula livre.
   2. Ele fica com ela enquanto tiver uma ligação de câmera na sala. A ligação nova do mesmo participante recebe a mesma célula, antes de o agente derrubar a anterior.
-  3. O layout é o da tabela, pelo número de participantes com câmera e por haver ou não uma ligação de tela.
+  3. O layout é o da tabela, pelo número de participantes com câmera e por haver ou não uma ligação de tela. Uma tela cujo participante não tem ligação de câmera na sala não conta: ela fica fora do layout e do palco (acontece por um instante quando quem apresenta sai, e depois de o agente refazer o seu estado).
   4. Quem está numa célula maior que o número de células do layout passa para a menor célula livre dele, na ordem das células.
   5. Vários participantes sem célula ao mesmo tempo (depois da reconstrução) a ganham na ordem do menor `<membro>` de cada um.
   6. Com duas ligações de tela por um instante (uma tela nova toma o lugar da anterior), a tela do palco é a de maior `<membro>`.
