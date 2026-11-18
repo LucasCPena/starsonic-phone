@@ -48,7 +48,7 @@
 //
 // Nada daqui vai ao console: o INVITE leva a senha, e o acesso, as credenciais do TURN. O debug do JsSIP, que
 // escreveria as mensagens SIP no console, fica desligado desde antes do primeiro UA.
-import { faixaDoSilencio } from './midia.js';
+import { CAMERA, faixaDoSilencio } from './midia.js';
 
 /** O WSS do vídeo que não abre nesse prazo: a ligação falhou, em ms. */
 const PRAZO_CONEXAO_MS = 10000;
@@ -283,11 +283,12 @@ export function criarLigacoes(aoEvento) {
     await t?.sender.replaceTrack(null);
   }
 
-  // Ligar a câmera: um getUserMedia só de vídeo. A faixa nova entra no fluxo, vigiada, antes de ir à ligação: a
-  // conexão que cair no meio deixa a câmera ligada para a volta. A que chega depois de a ligação descer para: a câmera,
-  // então, já é do midia.js. A ligação no ar que recusa a faixa a para, e a câmera volta a desligada (o ok falso).
+  // Ligar a câmera: um getUserMedia só de vídeo, com as restrições da câmera da página (o CAMERA do midia.js). A faixa
+  // nova entra no fluxo, vigiada, antes de ir à ligação: a conexão que cair no meio deixa a câmera ligada para a volta.
+  // A que chega depois de a ligação descer para: a câmera, então, já é do midia.js. A ligação no ar que recusa a faixa
+  // a para, e a câmera volta a desligada (o ok falso).
   async function acenderACamera(l) {
-    const [faixa] = (await navigator.mediaDevices.getUserMedia({ video: true })).getVideoTracks();
+    const [faixa] = (await navigator.mediaDevices.getUserMedia({ video: CAMERA })).getVideoTracks();
     const t = transceiver(l, 'video');
     if (!l.viva || l.fim || !t) {
       faixa.stop();

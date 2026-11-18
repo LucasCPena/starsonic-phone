@@ -38,6 +38,31 @@
 const viva = (faixa) => faixa.readyState === 'live';
 
 /**
+ * A câmera que a página pede (o desenho): 1280×720 a 30, de frente. Tudo ideal: o navegador dá o mais perto que a
+ * câmera tem, e nenhuma câmera fica de fora por não ter esse tamanho. A imagem vai ao mosaico, e o quadro da pessoa
+ * sai nítido. Os pedidos daqui e o da câmera ligada na reunião (o ligacao.js) levam as mesmas.
+ */
+export const CAMERA = Object.freeze({
+  width: Object.freeze({ ideal: 1280 }),
+  height: Object.freeze({ ideal: 720 }),
+  frameRate: Object.freeze({ ideal: 30 }),
+  aspectRatio: Object.freeze({ ideal: 16 / 9 }),
+  facingMode: Object.freeze({ ideal: 'user' }),
+});
+
+// A tela compartilhada (o desenho): até 1920×1080 a 15. O texto de uma tela pede nitidez, e não movimento; o
+// contentHint 'detail' da faixa diz o mesmo ao codificador, que, com pouca banda, tira imagens por segundo antes da
+// nitidez.
+const TELA = Object.freeze({
+  video: Object.freeze({
+    width: Object.freeze({ max: 1920 }),
+    height: Object.freeze({ max: 1080 }),
+    frameRate: Object.freeze({ max: 15 }),
+  }),
+  audio: false,
+});
+
+/**
  * A mídia da página: pedir, parar, escolher(mic, cam, reuniao), fluxo() (o MediaStream de agora, ou null),
  * cameraPedida() (a promessa da resposta do pedido da câmera sozinha que ainda corre, ou null), despertar() (o
  * silêncio, dentro de um clique), e a captura da tela: capturarTela() (dentro do clique), pararCaptura() e captura() (o
@@ -120,7 +145,7 @@ export function criarMidia(aoEvento, previas) {
     });
     const pedido = { vale: true, respondeu };
     camera = pedido;
-    const nova = await navigator.mediaDevices.getUserMedia({ video: true }).catch(() => null);
+    const nova = await navigator.mediaDevices.getUserMedia({ video: CAMERA }).catch(() => null);
     camera = null;
     const serve = pedido.vale && fluxo !== null && escolha.reuniao !== 'noAr' && escolha.cam === 'ligado';
     if (nova && serve) {
@@ -147,7 +172,7 @@ export function criarMidia(aoEvento, previas) {
     pedidoDaTela = pedido;
     let resposta;
     try {
-      resposta = navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      resposta = navigator.mediaDevices.getDisplayMedia(TELA);
     } catch (erro) {
       resposta = Promise.reject(erro);
     }
@@ -177,6 +202,7 @@ export function criarMidia(aoEvento, previas) {
   // A captura nova é a de agora. O ended de uma faixa dela, que só o navegador dá (o stop() da página não o dá), é o
   // Parar de compartilhar, uma vez, enquanto ela for a de agora.
   function capturada(captura) {
+    for (const faixa of captura.getVideoTracks()) faixa.contentHint = 'detail';
     const esta = { fluxo: captura };
     tela = esta;
     let avisou = false;
@@ -277,11 +303,11 @@ async function obter() {
   const aparelhos = navigator.mediaDevices;
   if (!aparelhos?.getUserMedia) return { fluxo: null, mic: 'indisponivel', cam: 'indisponivel' };
   try {
-    return { fluxo: await aparelhos.getUserMedia({ audio: true, video: true }), mic: 'ligado', cam: 'ligado' };
+    return { fluxo: await aparelhos.getUserMedia({ audio: true, video: CAMERA }), mic: 'ligado', cam: 'ligado' };
   } catch (erro) {
     const pedir = erro?.name === 'NotAllowedError' ? await sozinhos() : { som: true, imagem: true };
     const som = pedir.som ? await aparelhos.getUserMedia({ audio: true }).catch(() => null) : null;
-    const imagem = pedir.imagem ? await aparelhos.getUserMedia({ video: true }).catch(() => null) : null;
+    const imagem = pedir.imagem ? await aparelhos.getUserMedia({ video: CAMERA }).catch(() => null) : null;
     const faixas = [...(som?.getTracks() ?? []), ...(imagem?.getTracks() ?? [])];
     return {
       fluxo: faixas.length > 0 ? new MediaStream(faixas) : null,

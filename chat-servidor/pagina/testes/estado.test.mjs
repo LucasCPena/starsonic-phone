@@ -54,6 +54,18 @@ const PEDIR = mandar({ tipo: 'pedir', nome: 'Maria Lima' });
 const SENHA = mandar({ tipo: 'senha' });
 const abrirCanal = (abertura) => ({ tipo: 'abrirCanal', bilhete: `bilhete-${abertura}` });
 const voltar = (volta) => mandar({ tipo: 'voltar', participante: 'participante-1', volta });
+// O aviso da câmera (seção 10 do protocolo): a página diz ao servidor se a câmera dela está ligada.
+const camera = (ligada) => mandar({ tipo: 'camera', ligada });
+
+// O palco do servidor, com um quadro, e o que o cérebro guarda dele (o lerPalco do palco.js: só os campos conhecidos).
+const QUADRO = { quem: '0123456789abcdef', nome: 'Ana Souza', voce: false, tela: false, semCamera: false };
+const PALCO = {
+  tipo: 'palco',
+  largura: 1920,
+  altura: 1080,
+  quadros: [{ ...QUADRO, x: 0, y: 0, l: 960, a: 540, extra: 'fica de fora' }],
+};
+const PALCO_LIDO = { largura: 1920, altura: 1080, quadros: [{ ...QUADRO, x: 0, y: 0, l: 960, a: 540 }] };
 
 // Os eventos. O abriu e o abrirFalhou devolvem a abertura do abrir que eles respondem.
 const COMECAR = { tipo: 'comecar' };
@@ -146,6 +158,7 @@ test('o carregar abre', () => {
     esperandoBilhete: false,
     vez: 0,
     abertura: 0,
+    palco: null,
   });
   const r = passo(inicial(), COMECAR);
   assert.equal(r.estado.tela, 'carregando');
@@ -248,7 +261,7 @@ test('o aceito liga a principal', () => {
     assert.equal(r.estado.tela, 'entrando');
     assert.equal(r.estado.aceito, true);
     assert.deepEqual(r.estado.acesso, ACESSO);
-    assert.deepEqual(r.efeitos, [ligar('principal', 'senha-1'), FOCAR]);
+    assert.deepEqual(r.efeitos, [ligar('principal', 'senha-1'), camera(true), FOCAR]);
   }
 });
 
@@ -388,7 +401,7 @@ test('entrar de novo com o canal fechado passa pela espera', () => {
   // Na reunião de teste, o aceito pode chegar antes da mídia: o ligar espera por ela.
   r = passo(r.estado, mensagem({ ...ACEITO, senha: 'senha-4' }));
   assert.equal(r.estado.tela, 'entrando');
-  assert.deepEqual(r.efeitos, [FOCAR]);
+  assert.deepEqual(r.efeitos, [camera(true), FOCAR]);
   r = passo(r.estado, midia('ligado', 'ligado'));
   assert.deepEqual(r.efeitos, [ligar('principal', 'senha-4')]);
 });
@@ -571,7 +584,7 @@ test('o canal que cai na reunião volta sozinho', () => {
       [tempo('religar:1'), [abrir(3), prazo(1)]],
       [abriu(3), [abrirCanal(3)]],
       [CANAL_ABRIU, [voltar(VOLTA_1)]],
-      [voltou(VOLTA_2), []],
+      [voltou(VOLTA_2), [camera(true)]],
     ],
     segueNaReuniao,
   );
@@ -621,7 +634,7 @@ test('as duas conexões caem e a página volta sozinha', () => {
   const volta = [
     [abriu(3), [abrirCanal(3)]],
     [CANAL_ABRIU, [voltar(VOLTA_1)]],
-    [voltou(VOLTA_2), [SENHA]],
+    [voltou(VOLTA_2), [SENHA, camera(true)]],
     [mensagem({ tipo: 'senha', senha: 'senha-r1' }), [ligar('principal', 'senha-r1')]],
   ];
   // A tela da conexão caída, com a conta da volta; a do religar, que a volta tomou, fica em zero.
@@ -646,7 +659,7 @@ test('as duas conexões caem e a página volta sozinha', () => {
     [CANAL_ABRIU, [voltar(VOLTA_1)]],
     [SEM_CONEXAO, [...DESLIGAR_AS_DUAS, prazo(2)]],
   ];
-  seguir(seguir(naReuniaoComChave(), quaseVoltando, naTela), [[voltou(VOLTA_2), [SENHA]]], caida);
+  seguir(seguir(naReuniaoComChave(), quaseVoltando, naTela), [[voltou(VOLTA_2), [SENHA, camera(true)]]], caida);
 });
 
 test('a volta recusada vai ao saiu', () => {
@@ -903,7 +916,7 @@ test('o religar do canal desiste depois de três', () => {
     [tempo('reconectar:4'), [abrir(6), prazo(4)]],
     [abriu(6), [abrirCanal(6)]],
     [CANAL_ABRIU, [voltar(VOLTA_1)]],
-    [voltou(VOLTA_2), [SENHA]],
+    [voltou(VOLTA_2), [SENHA, camera(true)]],
   ]);
 });
 
@@ -1012,7 +1025,7 @@ test('o voltou no fim sem aviso deixa o tirado chegar', () => {
   assert.deepEqual(r.efeitos, [esperar(2000, 'fimSemAviso')]);
   r = passo(r.estado, voltou(VOLTA_2));
   assert.equal(r.estado.canal, 'aberto');
-  assert.deepEqual(r.efeitos, []);
+  assert.deepEqual(r.efeitos, [camera(true)]);
   r = passo(r.estado, mensagem({ tipo: 'tirado' }));
   assert.equal(r.estado.aviso, 'tirado');
   assert.deepEqual(r.efeitos, [...DESLIGAR_AS_DUAS, PARAR_MIDIA, FOCAR]);
@@ -1025,7 +1038,7 @@ test('o voltou sem a chave nova deixa a página sem chave', () => {
   const voltando = [canalFechou(1006), tempo('religar:1'), abriu(3), CANAL_ABRIU];
   let r = rodar(naReuniaoComChave(), ...voltando, mensagem({ tipo: 'voltou' }));
   assert.equal(r.estado.canal, 'aberto');
-  assert.deepEqual(r.efeitos, []);
+  assert.deepEqual(r.efeitos, [camera(true)]);
   r = passo(r.estado, canalFechou(1006));
   assert.equal(r.estado.canal, 'fechado');
   assert.deepEqual(r.efeitos, []);
@@ -1126,14 +1139,14 @@ test('a câmera e o microfone', () => {
   assert.deepEqual(r.efeitos, [{ tipo: 'trocarMicrofone', ligado: false }]);
   r = passo(naReuniao(), clique('camera'));
   assert.equal(r.estado.cam, 'desligado');
-  assert.deepEqual(r.efeitos, [{ tipo: 'trocarCamera', ligada: false }]);
+  assert.deepEqual(r.efeitos, [{ tipo: 'trocarCamera', ligada: false }, camera(false)]);
   r = rodar(r.estado, { tipo: 'cameraTrocada', ok: true }, clique('camera'));
   assert.equal(r.estado.cam, 'ligado');
-  assert.deepEqual(r.efeitos, [{ tipo: 'trocarCamera', ligada: true }]);
+  assert.deepEqual(r.efeitos, [{ tipo: 'trocarCamera', ligada: true }, camera(true)]);
   // A câmera que não ligou volta ao que era.
   r = passo(r.estado, { tipo: 'cameraTrocada', ok: false });
   assert.equal(r.estado.cam, 'desligado');
-  assert.deepEqual(r.efeitos, []);
+  assert.deepEqual(r.efeitos, [camera(false)]);
   semMudar(r.estado, { tipo: 'cameraTrocada', ok: true });
   // O indisponível não troca.
   const semNada = naEntrada('indisponivel', 'indisponivel');
@@ -1155,6 +1168,145 @@ test('a câmera troca uma vez de cada vez', () => {
   assert.equal(caiu.cam, 'desligado');
   semMudar(caiu, { tipo: 'cameraTrocada', ok: false });
   semMudar(naEntrada(), { tipo: 'cameraTrocada', ok: false });
+});
+
+// O aviso da câmera: com o estado aceito e o canal aberto, a página diz se a câmera está ligada. Ele sai quando o
+// canal passa a ser o da pessoa (o aceito, o voltou) e a cada mudança do ligado; o servidor responde o erro invalido a
+// um aviso antes do aceito.
+test('o aceito manda a câmera', () => {
+  for (const antes of [aguardando(), pedindo()]) {
+    assert.deepEqual(passo(antes, mensagem(ACEITO)).efeitos, [ligar('principal', 'senha-1'), camera(true), FOCAR]);
+  }
+  // Com a Câmera desligada na entrada, ou faltando, ela vai desligada.
+  const desligada = rodar(naEntrada(), clique('camera'), clique('pedir'), abriu(2), CANAL_ABRIU);
+  assert.deepEqual(passo(desligada.estado, mensagem(ACEITO)).efeitos, [
+    ligar('principal', 'senha-1'),
+    camera(false),
+    FOCAR,
+  ]);
+  const faltando = rodar(naEntrada('ligado', 'indisponivel'), clique('pedir'), abriu(2), CANAL_ABRIU);
+  assert.deepEqual(passo(faltando.estado, mensagem(ACEITO)).efeitos, [
+    ligar('principal', 'senha-1'),
+    camera(false),
+    FOCAR,
+  ]);
+  // A senha guardada até a mídia chegar não muda o aviso: ele sai no aceito, e a mídia que chega igual não manda outro.
+  const semMidia = rodar(inicial(), COMECAR, abriu(1), { tipo: 'nome', valor: 'Maria Lima' }, clique('pedir'));
+  const aceito = rodar(semMidia.estado, abriu(2), CANAL_ABRIU, mensagem(ACEITO));
+  assert.deepEqual(aceito.efeitos, [camera(true), FOCAR]);
+  assert.deepEqual(passo(aceito.estado, midia('ligado', 'ligado')).efeitos, [ligar('principal', 'senha-1')]);
+});
+
+test('o voltou manda a câmera de novo', () => {
+  // No religar: o canal novo é o da pessoa quando o voltou chega, e o aviso vai com a câmera daquela hora.
+  const caiu = passo(naReuniaoComChave(), canalFechou(1006)).estado;
+  const voltando = rodar(caiu, tempo('religar:1'), abriu(3), CANAL_ABRIU).estado;
+  assert.deepEqual(passo(voltando, voltou(VOLTA_2)).efeitos, [camera(true)]);
+  const desligouSemCanal = rodar(caiu, clique('camera'), { tipo: 'cameraTrocada', ok: true }).estado;
+  const voltandoDesligada = rodar(desligouSemCanal, tempo('religar:1'), abriu(3), CANAL_ABRIU).estado;
+  assert.deepEqual(passo(voltandoDesligada, voltou(VOLTA_2)).efeitos, [camera(false)]);
+  // Na volta depois das duas conexões caídas, o aviso vai depois do senha.
+  const naVolta = rodar(caiu, SEM_CONEXAO, tempo('reconectar:2'), abriu(3), CANAL_ABRIU).estado;
+  assert.equal(naVolta.canal, 'voltando');
+  assert.deepEqual(passo(naVolta, voltou(VOLTA_2)).efeitos, [SENHA, camera(true)]);
+});
+
+test('a Câmera trocada na reunião manda na hora', () => {
+  let r = passo(naReuniao(), clique('camera'));
+  assert.deepEqual(r.efeitos, [{ tipo: 'trocarCamera', ligada: false }, camera(false)]);
+  // A câmera que não ligou volta ao que era, e o aviso também.
+  r = rodar(r.estado, { tipo: 'cameraTrocada', ok: true }, clique('camera'));
+  assert.deepEqual(r.efeitos, [{ tipo: 'trocarCamera', ligada: true }, camera(true)]);
+  r = passo(r.estado, { tipo: 'cameraTrocada', ok: false });
+  assert.equal(r.estado.cam, 'desligado');
+  assert.deepEqual(r.efeitos, [camera(false)]);
+  // O cameraTrocada que dá certo não muda o ligado: nada vai.
+  r = passo(naReuniao(), clique('camera'));
+  assert.deepEqual(passo(r.estado, { tipo: 'cameraTrocada', ok: true }).efeitos, []);
+  // O Microfone não é a câmera.
+  assert.deepEqual(passo(naReuniao(), clique('microfone')).efeitos, [{ tipo: 'trocarMicrofone', ligado: false }]);
+});
+
+test('a câmera que passa a faltar manda desligada', () => {
+  const r = passo(naReuniao(), midia('ligado', 'indisponivel'));
+  assert.equal(r.estado.cam, 'indisponivel');
+  assert.deepEqual(r.efeitos, [camera(false)]);
+  // A desligada que passa a faltar continua desligada para o servidor: nada vai.
+  const desligada = rodar(naReuniao(), clique('camera'), { tipo: 'cameraTrocada', ok: true }).estado;
+  assert.deepEqual(passo(desligada, midia('ligado', 'indisponivel')).efeitos, []);
+  // O microfone que passa a faltar também não.
+  assert.deepEqual(passo(naReuniao(), midia('indisponivel', 'ligado')).efeitos, []);
+});
+
+test('sem o canal aberto, nada vai', () => {
+  const trocou = [{ tipo: 'trocarCamera', ligada: false }];
+  // O canal fechado (sem a chave, ou à espera do religar), abrindo e voltando.
+  const fechado = passo(naReuniao(), canalFechou(1006)).estado;
+  const caiu = passo(naReuniaoComChave(), canalFechou(1006)).estado;
+  const abrindo = rodar(caiu, tempo('religar:1'), abriu(3)).estado;
+  const voltando = passo(abrindo, CANAL_ABRIU).estado;
+  assert.deepEqual(
+    [fechado, caiu, abrindo, voltando].map((e) => e.canal),
+    ['fechado', 'fechado', 'abrindo', 'voltando'],
+  );
+  for (const e of [fechado, caiu, abrindo, voltando]) assert.deepEqual(passo(e, clique('camera')).efeitos, trocou);
+  // A câmera que passa a faltar sem o canal também não manda.
+  assert.deepEqual(passo(voltando, midia('ligado', 'indisponivel')).efeitos, []);
+});
+
+test('antes do aceito, nada vai', () => {
+  for (const antes of [naEntrada(), pedindo(), aguardando()]) {
+    const r = passo(antes, clique('camera'));
+    assert.equal(r.estado.cam, 'desligado');
+    assert.deepEqual(r.efeitos, []);
+  }
+  assert.deepEqual(passo(aguardando(), midia('ligado', 'indisponivel')).efeitos, []);
+});
+
+test('o palco fica no estado', () => {
+  // O que vale, depois do aceito, fica no estado, só com os campos conhecidos, e não pede nada.
+  let r = passo(entrando(), mensagem(PALCO));
+  assert.deepEqual(r.estado.palco, PALCO_LIDO);
+  assert.deepEqual(r.efeitos, []);
+  r = passo(naReuniao(), mensagem(PALCO));
+  assert.deepEqual(r.estado.palco, PALCO_LIDO);
+  const comPalco = r.estado;
+  // Antes do aceito, ele fica de fora.
+  for (const antes of [pedindo(), aguardando()]) semMudar(antes, mensagem(PALCO));
+  // O que não vale também: fica o anterior, o mesmo objeto.
+  semMudar(comPalco, mensagem({ ...PALCO, largura: 0 }));
+  semMudar(comPalco, mensagem({ ...PALCO, quadros: 'nenhum' }));
+  // Um palco novo toma o lugar do anterior; o sem quadros também vale.
+  const vazio = { tipo: 'palco', largura: 1280, altura: 720, quadros: [] };
+  assert.deepEqual(passo(comPalco, mensagem(vazio)).estado.palco, { largura: 1280, altura: 720, quadros: [] });
+  // O fim da reunião e todo aviso o tiram.
+  for (const fim of [clique('sair'), mensagem({ tipo: 'tirado' }), mensagem({ tipo: 'encerrada' })]) {
+    assert.equal(passo(comPalco, fim).estado.palco, null);
+  }
+  const semServidor = rodar(entrando(), mensagem(PALCO), ligacao('principal', 'falhou'));
+  assert.equal(semServidor.estado.aviso, 'semServidor');
+  assert.equal(semServidor.estado.palco, null);
+  // O aceito seguinte começa sem palco: o do Entrar de novo pela espera, e, por defesa, um aceito com um palco velho
+  // no estado (que os eventos não alcançam: todo caminho até outro aceito passa por um aviso).
+  const deNovo = rodar(comPalco, canalFechou(1006), clique('sair'), clique('entrarDeNovo'), abriu(3), CANAL_ABRIU);
+  assert.equal(passo(deNovo.estado, mensagem(ACEITO)).estado.palco, null);
+  assert.equal(passo({ ...aguardando(), palco: PALCO_LIDO }, mensagem(ACEITO)).estado.palco, null);
+  // A conexão caída não o tira: a página volta para a mesma reunião, e o canal que cai também não.
+  const comChave = passo(naReuniaoComChave(), mensagem(PALCO)).estado;
+  assert.equal(passo(comChave, SEM_CONEXAO).estado.palco, comChave.palco);
+  assert.equal(passo(comChave, canalFechou(1006)).estado.palco, comChave.palco);
+});
+
+test('o erro do servidor não é resposta ao aviso da câmera', () => {
+  // O aviso não espera resposta: um erro limite (o servidor recusa o aviso além de 30 por minuto) com a tela pedindo
+  // a senha continua parando o compartilhar, como hoje, e sem a tela pedindo ele não faz nada.
+  const avisou = passo(naReuniao(), clique('camera'));
+  assert.deepEqual(avisou.efeitos.at(-1), camera(false));
+  semMudar(avisou.estado, LIMITE);
+  const r = rodar(avisou.estado, { tipo: 'telaCapturada', ok: true }, LIMITE);
+  assert.equal(r.estado.telaCompartilhada, 'nenhuma');
+  assert.equal(r.estado.tela, 'reuniao');
+  assert.deepEqual(r.efeitos, [PARAR_CAPTURA]);
 });
 
 test('a mídia que chega guarda a escolha da pessoa', () => {

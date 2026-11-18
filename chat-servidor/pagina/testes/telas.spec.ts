@@ -96,17 +96,25 @@ interface MidiaFalsa {
 
 /**
  * A câmera e o microfone falsos do Chromium, com o registro de cada pedido (window.pedidos: 'audio+video', 'audio' ou
- * 'video') e de cada faixa de câmera que eles deram (window.cameras), e os erros e as permissões do teste.
+ * 'video', e as restrições dele, inteiras, em window.restricoesDeMidia) e de cada faixa de câmera que eles deram
+ * (window.cameras), e os erros e as permissões do teste.
  */
 async function midiaFalsa(page: Page, opcoes: MidiaFalsa): Promise<void> {
   await page.addInitScript((opcoes) => {
-    const w = window as unknown as { pedidos: string[]; cameras: MediaStreamTrack[]; erros: Record<string, string> };
+    const w = window as unknown as {
+      pedidos: string[];
+      restricoesDeMidia: unknown[];
+      cameras: MediaStreamTrack[];
+      erros: Record<string, string>;
+    };
     const original = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
     w.pedidos = [];
+    w.restricoesDeMidia = [];
     w.cameras = [];
     w.erros = { ...opcoes.erros };
     navigator.mediaDevices.getUserMedia = async (c?: MediaStreamConstraints) => {
       w.pedidos.push([c?.audio && 'audio', c?.video && 'video'].filter(Boolean).join('+'));
+      w.restricoesDeMidia.push(c);
       // Com o window.seguraCamera, o pedido só da câmera espera o window.soltarCamera().
       const s = window as unknown as { seguraCamera?: boolean; soltarCamera?: () => void };
       if (s.seguraCamera && c?.video && !c?.audio) {
@@ -134,6 +142,8 @@ async function midiaFalsa(page: Page, opcoes: MidiaFalsa): Promise<void> {
 }
 
 const pedidos = (page: Page) => page.evaluate(() => (window as unknown as { pedidos: string[] }).pedidos);
+const restricoesDeMidia = (page: Page) =>
+  page.evaluate(() => (window as unknown as { restricoesDeMidia: unknown[] }).restricoesDeMidia);
 
 /** As faixas de câmera vivas no fluxo da prévia da entrada. */
 const camerasVivas = (page: Page) =>
@@ -970,6 +980,58 @@ test('a câmera desligada na entrada é o vídeo sem a faixa', async ({ page }) 
   await pedirParaEntrar(page);
   expect(direcoes(await inviteDe(page, await rede.videoNumero(1)))).toEqual({ audio: 'sendrecv', video: 'sendrecv' });
   expect(await cameraNaLigacao(page)).toBe(false);
+});
+
+// A câmera é pedida com 1280×720 a 30 (o desenho): a imagem dela vai ao mosaico, e o quadro da pessoa fica nítido.
+// Todo pedido que leva a câmera leva as mesmas restrições: o da entrada, o da câmera sozinha depois da permissão
+// fechada, o da câmera ligada de novo na entrada, e o da câmera ligada na reunião (o da ligação).
+const CAMERA_PEDIDA = {
+  width: { ideal: 1280 },
+  height: { ideal: 720 },
+  frameRate: { ideal: 30 },
+  aspectRatio: { ideal: 16 / 9 },
+  facingMode: { ideal: 'user' },
+};
+
+test('a câmera é pedida com 1280×720', async ({ page }) => {
+  // O pedido dos dois juntos, fechado, e o microfone bloqueado: a câmera é pedida sozinha.
+  await registrarConexoes(page);
+  await midiaFalsa(page, { juntos: 'NotAllowedError', permissoes: { microphone: 'denied', camera: 'prompt' } });
+  const rede = await abrir(page);
+  rede.videosAbrem = true;
+  await expect.poll(() => camerasVivas(page)).toBe(1);
+  await expect(botao(page, 'Microfone')).toBeDisabled();
+  expect(await restricoesDeMidia(page)).toEqual([{ audio: true, video: CAMERA_PEDIDA }, { video: CAMERA_PEDIDA }]);
+
+  // Desligada e ligada de novo na entrada: pedida sozinha.
+  await botao(page, 'Câmera').click();
+  await expect.poll(() => camerasVivas(page)).toBe(0);
+  await botao(page, 'Câmera').click();
+  await expect.poll(() => camerasVivas(page)).toBe(1);
+  expect(await restricoesDeMidia(page)).toEqual([
+    { audio: true, video: CAMERA_PEDIDA },
+    { video: CAMERA_PEDIDA },
+    { video: CAMERA_PEDIDA },
+  ]);
+
+  // Na reunião, desligada e ligada de novo: a ligação a pede.
+  rede.aoPedir = (c) => c.mandar(ACEITO_SEM_REDE);
+  await pedirParaEntrar(page);
+  const video = await rede.videoNumero(1);
+  await atenderOInvite(page, video, await inviteDe(page, video));
+  await expect(page.getByRole('navigation', { name: 'Controles da reunião' })).toBeVisible();
+  await botao(page, 'Câmera').click();
+  await expect(botao(page, 'Câmera')).toHaveAttribute('aria-pressed', 'false');
+  await expect.poll(() => cameraNaLigacao(page)).toBe(false); // a troca acabou: o próximo clique vale
+  await botao(page, 'Câmera').click();
+  await expect(botao(page, 'Câmera')).toHaveAttribute('aria-pressed', 'true');
+  await expect.poll(() => cameraNaLigacao(page), { message: 'a câmera no emissor do vídeo' }).toBe(true);
+  expect(await restricoesDeMidia(page)).toEqual([
+    { audio: true, video: CAMERA_PEDIDA },
+    { video: CAMERA_PEDIDA },
+    { video: CAMERA_PEDIDA },
+    { video: CAMERA_PEDIDA },
+  ]);
 });
 
 // R14: a câmera ligada de novo logo antes da ligação ainda pode estar sendo pedida no ligar. O ligar a espera (até

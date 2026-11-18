@@ -16,7 +16,8 @@
 // - o tempo devolve a chave do esperar como ela veio (a da volta e a do religar levam a vez, como "reconectar:3");
 // - o Compartilhar a tela só vale com o canal aberto: o canal abrindo e o voltando contam como fechados;
 // - nem o estado nem os efeitos vão ao console. O estado leva o acesso do aceito (com as credenciais do TURN), a chave
-//   de volta e, por um instante, a senha que chegou antes da mídia; os efeitos levam o bilhete, as senhas e a chave.
+//   de volta, o palco (com os nomes) e, por um instante, a senha que chegou antes da mídia; os efeitos levam o bilhete,
+//   as senhas e a chave.
 //
 // A chave de volta (seção 10 do protocolo): o aceito traz o participante e a volta, e o cérebro os guarda. Na reunião,
 // com o canal fechado (o religar, com a ligação no ar; uma tentativa da volta depois da conexão caída; o confirmada de
@@ -27,6 +28,15 @@
 // {tipo:'erro', erro:'invalido'} (a chave não vale mais) ou {tipo:'linkInvalido'} (a reunião deixou de valer), e fecha
 // o canal. Quem já está numa reunião que deixou de valer continua nela: com a ligação no ar, o linkInvalido (e o 404 do
 // abrir) só param o religar.
+//
+// O palco e o aviso da câmera (seção 10 do protocolo). O servidor diz à pessoa aceita onde cada um está no mosaico (a
+// mensagem palco), e o cérebro guarda o último palco que vale, para os quadros; ele sai no aceito e em todo aviso, e
+// fica na conexão caída, que volta para a mesma reunião. A página diz ao servidor se a câmera dela está ligada (o
+// {tipo:'camera', ligada}), para o quadro de quem está sem ela: o aviso sai sempre que o canal passa a ser o da pessoa
+// (o aceito, o voltou) e a cada mudança do ligado, e nunca antes do aceito nem com o canal voltando (o servidor
+// responderia o erro invalido). Ele não espera resposta.
+
+import { lerPalco } from './palco.js';
 
 /** O passo da contagem do 429 ("Tentar de novo em <n> s"), em ms. */
 export const CONTAGEM_MS = 1000;
@@ -116,6 +126,7 @@ export function inicial() {
     esperandoBilhete: false, // o abrir do voltar saiu, e o abriu ainda não chegou
     vez: 0, // a vez das esperas e dos prazos da volta e do religar: cada espera nova ganha a sua
     abertura: 0, // o número do último abrir
+    palco: null, // o último palco que vale, depois do aceito: {largura, altura, quadros}
   };
 }
 
@@ -169,10 +180,20 @@ export function transicao(estado, evento) {
     default:
       r = nada(estado);
   }
+  // O aviso da câmera nasce só aqui, do estado de antes e do de depois: nenhum outro ponto do cérebro o monta.
+  if (avisaACamera(estado, r.estado)) r.efeitos.push(mandar({ tipo: 'camera', ligada: cameraLigada(r.estado) }));
   // A tela nova, ou o aviso novo, leva o foco ao título dela.
   if (r.estado.tela !== estado.tela || r.estado.aviso !== estado.aviso) r.efeitos.push(FOCAR);
   return r;
 }
+
+// O canal é o da pessoa: o aceito chegou nele, ou o voltou. Só ele leva o aviso da câmera.
+const canalDaPessoa = (e) => e.aceito && e.canal === 'aberto';
+// Para o servidor, a câmera desligada, a que falta e a que ainda não chegou são iguais: sem imagem.
+const cameraLigada = (e) => e.cam === 'ligado';
+// O aviso sai quando o canal passa a ser o da pessoa, ou quando o ligado muda com ele aberto.
+const avisaACamera = (antes, depois) =>
+  canalDaPessoa(depois) && (!canalDaPessoa(antes) || cameraLigada(antes) !== cameraLigada(depois));
 
 // O abrir de um pedido (o do clique, o do Tentar de novo, o do Entrar de novo e o do 1011) roda com o canal fechado.
 const esperaOAbrir = (e) => !e.aceito && ESPERA.has(e.tela) && e.canal === 'fechado';
@@ -255,6 +276,7 @@ function mensagem(e, m) {
         acesso: { turn: m.turn, video: m.video },
         chave: chaveDe(m.participante, m.volta),
         senhaRepetida: false,
+        palco: null,
       });
     case 'senha':
       return esperaSenha(e) ? comSenha(e, m.senha) : nada(e);
@@ -280,9 +302,17 @@ function mensagem(e, m) {
       return naEspera || esperaSenha(e) ? avisar(e, m.tipo) : nada(e);
     case 'erro':
       return erro(e, m.erro);
+    case 'palco':
+      return e.aceito ? guardarOPalco(e, m) : nada(e);
     default:
       return nada(e);
   }
+}
+
+// O palco que vale toma o lugar do anterior; o que não vale fica de fora, e o anterior continua (o mesmo objeto).
+function guardarOPalco(e, m) {
+  const palco = lerPalco(m);
+  return palco ? com(e, { palco }) : nada(e);
 }
 
 // A resposta ao voltar, no canal do voltar. O servidor manda o voltou antes de qualquer outra mensagem, e fecha o canal
@@ -596,9 +626,9 @@ function tempo(e, chave) {
 }
 
 // avisar: a tela do aviso. A principal fica sem nada pendente, e a volta e o religar param (o abriu que ainda vier fica
-// de fora); o canal e a mídia ficam, para o Tentar de novo.
+// de fora); o canal e a mídia ficam, para o Tentar de novo. O palco sai: ele era da reunião que acabou.
 function avisar(e, aviso, mudancas = {}, ...efeitos) {
-  const limpo = { principal: 'nenhuma', reconectando: 0, senhaRepetida: false, senhaGuardada: null };
+  const limpo = { principal: 'nenhuma', reconectando: 0, senhaRepetida: false, senhaGuardada: null, palco: null };
   const semVoltar = { religando: 0, esperandoBilhete: false };
   return com(e, { tela: 'aviso', aviso, esperarSegundos: 0, ...limpo, ...semVoltar, ...mudancas }, ...efeitos);
 }

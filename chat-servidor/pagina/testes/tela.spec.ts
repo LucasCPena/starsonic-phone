@@ -234,6 +234,27 @@ const oQueATelaManda = (page: Page, n = 2) =>
     };
   }, n);
 
+// A tela é pedida com até 1920×1080 a 15 (o desenho): o texto de uma tela pede nitidez, e não movimento.
+const TELA_PEDIDA = { video: { width: { max: 1920 }, height: { max: 1080 }, frameRate: { max: 15 } }, audio: false };
+
+test('a tela é pedida com até 1920×1080 a 15', async ({ page }) => {
+  await capturaFalsa(page);
+  const reuniao = await naReuniao(page);
+  await compartilhar(page, reuniao, 2);
+  expect(await restricoes(page)).toEqual([TELA_PEDIDA]);
+});
+
+test('a faixa da tela é marcada como detalhe', async ({ page }) => {
+  // O contentHint 'detail' diz ao codificador que guarde a nitidez (o texto), e não as imagens por segundo.
+  await capturaFalsa(page);
+  const reuniao = await naReuniao(page);
+  await compartilhar(page, reuniao, 2);
+  const dicas = await page.evaluate(() =>
+    (window as unknown as { capturas: MediaStreamTrack[][] }).capturas.map((c) => c.map((t) => t.contentHint)),
+  );
+  expect(dicas).toEqual([['detail', 'detail']]);
+});
+
 test('a captura nasce no clique, com o silêncio acordado', async ({ page }) => {
   await capturaFalsa(page);
   const { canal } = await naReuniao(page);
@@ -250,12 +271,12 @@ test('a captura nasce no clique, com o silêncio acordado', async ({ page }) => 
   await expect
     .poll(async () => (await registro(page)).slice(antes))
     .toEqual(['resume no clique', 'getDisplayMedia no clique']);
-  expect(await restricoes(page)).toEqual([{ video: true, audio: false }]);
+  expect(await restricoes(page)).toEqual([TELA_PEDIDA]);
   await expect
     .poll(() => page.evaluate(() => (window as unknown as { contextos: AudioContext[] }).contextos.map((c) => c.state)))
     .toEqual(['running']);
-  // A captura vai ao cérebro, que pede a senha da tela pelo canal.
-  await expect.poll(() => canal.recebidas.slice(1)).toEqual([{ tipo: 'tela' }]);
+  // A captura vai ao cérebro, que pede a senha da tela pelo canal (depois do aviso da câmera, que saiu no aceito).
+  await expect.poll(() => canal.recebidas.slice(1)).toEqual([{ tipo: 'camera', ligada: true }, { tipo: 'tela' }]);
 });
 
 test('a ligação da tela só manda a captura e o silêncio, com a senha dela', async ({ page }) => {
@@ -360,7 +381,7 @@ test('o Parar de compartilhar vale antes de a tela ficar no ar', async ({ page }
 
   // Antes da senha da tela: a captura para, e a senha que chega depois não liga nada.
   await botao(page, 'Compartilhar a tela').click();
-  await expect.poll(() => reuniao.canal.tipos()).toEqual(['pedir', 'tela']);
+  await expect.poll(() => reuniao.canal.tipos()).toEqual(['pedir', 'camera', 'tela']);
   await botao(page, 'Parar de compartilhar').click();
   await expect.poll(() => capturas(page)).toEqual([['ended', 'ended']]);
   await expect(botao(page, 'Compartilhar a tela')).toBeEnabled();
@@ -387,13 +408,14 @@ test('a escolha da tela cancelada não faz nada', async ({ page }) => {
   await capturaFalsa(page, { recusa: 'NotAllowedError' });
   const { canal } = await naReuniao(page);
 
-  // A recusa é o ok falso, sem aviso: nada no canal, e nenhum erro no console (o afterEach confere).
+  // A recusa é o ok falso, sem aviso: nada no canal além do aviso da câmera do aceito, e nenhum erro no console (o
+  // afterEach confere).
   await botao(page, 'Compartilhar a tela').click();
   await expect.poll(() => restricoes(page)).toHaveLength(1);
   await page.clock.runFor(10);
   await expect(botao(page, 'Compartilhar a tela')).toBeEnabled();
   await expect(botao(page, 'Parar de compartilhar')).toBeHidden();
-  expect(canal.tipos()).toEqual(['pedir']);
+  expect(canal.tipos()).toEqual(['pedir', 'camera']);
   // A pessoa pode escolher de novo.
   await botao(page, 'Compartilhar a tela').click();
   await expect.poll(() => restricoes(page)).toHaveLength(2);
@@ -407,7 +429,7 @@ test('a captura que já chega acabada não serve', async ({ page }) => {
   await page.clock.runFor(10);
   await expect(botao(page, 'Compartilhar a tela')).toBeEnabled();
   await expect(botao(page, 'Parar de compartilhar')).toBeHidden();
-  expect(canal.tipos()).toEqual(['pedir']);
+  expect(canal.tipos()).toEqual(['pedir', 'camera']);
   // A imagem chegou acabada; o som, que ainda estava vivo, a página parou.
   expect(await capturas(page)).toEqual([['ended', 'ended']]);
 });
@@ -420,7 +442,7 @@ test('um pedido da tela de cada vez', async ({ page }) => {
   await expect.poll(() => restricoes(page)).toHaveLength(1);
   await botao(page, 'Compartilhar a tela').click();
   await soltarATela(page);
-  await expect.poll(() => reuniao.canal.tipos()).toEqual(['pedir', 'tela']);
+  await expect.poll(() => reuniao.canal.tipos()).toEqual(['pedir', 'camera', 'tela']);
   expect(await restricoes(page)).toHaveLength(1);
   expect(await capturas(page)).toEqual([['live', 'live']]);
 
@@ -443,7 +465,7 @@ test('a captura que chega depois do fim da reunião para', async ({ page }) => {
   await expect(titulo(page, 'Você foi tirado da reunião')).toBeVisible();
   await soltarATela(page);
   await expect.poll(() => capturas(page)).toEqual([['ended', 'ended']]);
-  expect(canal.tipos()).toEqual(['pedir']);
+  expect(canal.tipos()).toEqual(['pedir', 'camera']);
   await expect(titulo(page, 'Você foi tirado da reunião')).toBeVisible();
 });
 
@@ -451,7 +473,7 @@ test('o servidor que recusa a tela para a captura', async ({ page }) => {
   await capturaFalsa(page);
   const { canal } = await naReuniao(page);
   await botao(page, 'Compartilhar a tela').click();
-  await expect.poll(() => canal.tipos()).toEqual(['pedir', 'tela']);
+  await expect.poll(() => canal.tipos()).toEqual(['pedir', 'camera', 'tela']);
   await expect(botao(page, 'Parar de compartilhar')).toBeVisible();
 
   canal.mandar({ tipo: 'erro', erro: 'foraDaReuniao' });
@@ -533,7 +555,7 @@ test.describe('a aba que fecha', () => {
     await page.clock.runFor(5_000);
     await expect(controles(page)).toBeVisible();
     await expect(selo(page)).toBeVisible();
-    expect(reuniao.canal.tipos()).toEqual(['pedir', 'tela']);
+    expect(reuniao.canal.tipos()).toEqual(['pedir', 'camera', 'tela']);
   });
 
   test('a página que volta do cache do navegador carrega de novo', async ({ page }) => {
