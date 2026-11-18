@@ -20,7 +20,7 @@ import {
   VERMELHO,
   type Cor,
 } from './midia';
-import { Navegador, Pagina } from './navegador';
+import { Navegador, Pagina, telaVerde } from './navegador';
 import { ana, ligacoesPrincipais, novaReuniaoDeTeste, type Computador, type EventosDoApp } from './servidores';
 
 const esperar = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -189,38 +189,6 @@ test('o aparelho que acaba sozinho na reunião', async () => {
   }
 });
 
-/**
- * Antes da página: o getDisplayMedia dá um canvas verde, redesenhado a 15 quadros por segundo, no lugar da tela que a
- * pessoa escolheria (como a tela do cliente mínimo). O window.oNavegadorParaATela faz o que o "Parar de compartilhar"
- * do navegador faz: a faixa acaba, e o navegador dispara o ended, que o stop() da página não dispara.
- */
-function telaVerde(): void {
-  const w = window as unknown as { telasDoTeste: MediaStreamTrack[]; oNavegadorParaATela: () => void };
-  w.telasDoTeste = [];
-  navigator.mediaDevices.getDisplayMedia = async () => {
-    const tela = document.createElement('canvas');
-    tela.width = 640;
-    tela.height = 360;
-    const pincel = tela.getContext('2d') as CanvasRenderingContext2D;
-    const fluxo = tela.captureStream(15);
-    const [faixa] = fluxo.getVideoTracks();
-    const pintar = () => {
-      pincel.fillStyle = 'rgb(30, 180, 60)';
-      pincel.fillRect(0, 0, tela.width, tela.height);
-    };
-    pintar();
-    const repintar = setInterval(() => (faixa.readyState === 'live' ? pintar() : clearInterval(repintar)), 1000 / 15);
-    w.telasDoTeste.push(faixa);
-    return fluxo;
-  };
-  w.oNavegadorParaATela = () => {
-    const faixa = w.telasDoTeste.at(-1);
-    if (!faixa) throw new Error('a página não pediu a tela');
-    faixa.stop();
-    faixa.dispatchEvent(new Event('ended'));
-  };
-}
-
 // A tela compartilhada pela página (o desenho, item 4): o clique no Compartilhar a tela pede a tela (aqui, o canvas
 // verde), e a segunda ligação da Maria a manda, com o silêncio gerado, só para mandar. O agente põe a apresentação de 2
 // (seção 7 do docs/video-agente.md), de 1920×1620: a tela em cima, e as duas pessoas embaixo; quando ela sai, a grade
@@ -250,6 +218,12 @@ test.describe.serial('a tela compartilhada pela página', () => {
     await c.esperarCores(PESSOAS_2, [VERMELHO, AMARELO]);
     await m.esperarTamanho(1920, 1620);
     await m.esperarCores([TELA_2], [VERDE]);
+    // Na página dela, o quadro grande é o da tela dela, com o verde.
+    await m.esperarQuadros(['A sua tela', 'Carlos Lima', 'Você']);
+    await expect(m.quadro('A sua tela')).toHaveAttribute('data-papel', 'grande');
+    await expect
+      .poll(async () => perto(await m.corDoQuadro('A sua tela'), VERDE), { message: 'o verde no quadro A sua tela' })
+      .toBe(true);
   }
 
   /** A tela saiu: a grade volta ao mosaico de 2, o selo some, a captura parou, e o Compartilhar a tela volta. */
@@ -257,6 +231,7 @@ test.describe.serial('a tela compartilhada pela página', () => {
     await c.esperarTamanho(1920, 1080);
     await c.esperarMosaicoDe2([VERMELHO, AMARELO]);
     await m.esperarTamanho(1920, 1080);
+    await m.esperarQuadros(['Carlos Lima', 'Você']);
     await expect(compartilhando(m)).toBeHidden();
     await expect(m.botao('Compartilhar a tela')).toBeEnabled();
     await expect.poll(() => telas(m), { message: 'as telas que a página pediu' }).not.toContain('live');

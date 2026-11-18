@@ -334,6 +334,62 @@ function coresDoMosaico(pontos: ReadonlyArray<readonly [number, number]>): Array
   });
 }
 
+/** No navegador: a cor do meio de cada <canvas> (a média de um quadradinho de 5×5), ou null no canvas sem tamanho ou
+ * sem pintura (o fundo escuro do quadro aparece por ele). */
+function corDoMeio(canvas: HTMLCanvasElement[]): Array<[number, number, number] | null> {
+  return canvas.map((c) => {
+    const pincel = c.getContext('2d', { willReadFrequently: true });
+    if (!pincel || c.width < 5 || c.height < 5) return null;
+    const d = pincel.getImageData((c.width >> 1) - 2, (c.height >> 1) - 2, 5, 5).data;
+    const soma = [0, 0, 0, 0];
+    for (let i = 0; i < d.length; i += 4) for (let k = 0; k < 4; k++) soma[k] += d[i + k];
+    if (soma[3] === 0) return null;
+    const [r, g, b] = soma.map((s) => Math.round(s / (d.length / 4)));
+    return [r, g, b];
+  });
+}
+
+/** No navegador: a etiqueta, o papel e o que mostra cada quadro da página (os atributos do quadros.js). */
+function quadrosNaTela(): Array<{ etiqueta: string; papel: string; mostra: string }> {
+  return [...document.querySelectorAll<HTMLElement>('[data-quadro]')].map((q) => ({
+    etiqueta: q.querySelector('.etiqueta')?.textContent ?? '',
+    papel: q.dataset.papel ?? '',
+    mostra: q.dataset.mostra ?? '',
+  }));
+}
+
+/**
+ * Antes da página: o getDisplayMedia dá um canvas verde, redesenhado a 15 quadros por segundo, no lugar da tela que a
+ * pessoa escolheria (como a tela do cliente mínimo). O window.oNavegadorParaATela faz o que o "Parar de compartilhar"
+ * do navegador faz: a faixa acaba, e o navegador dispara o ended, que o stop() da página não dispara.
+ */
+export function telaVerde(): void {
+  const w = window as unknown as { telasDoTeste: MediaStreamTrack[]; oNavegadorParaATela: () => void };
+  w.telasDoTeste = [];
+  navigator.mediaDevices.getDisplayMedia = async () => {
+    const tela = document.createElement('canvas');
+    tela.width = 640;
+    tela.height = 360;
+    const pincel = tela.getContext('2d') as CanvasRenderingContext2D;
+    const fluxo = tela.captureStream(15);
+    const [faixa] = fluxo.getVideoTracks();
+    const pintar = () => {
+      pincel.fillStyle = 'rgb(30, 180, 60)';
+      pincel.fillRect(0, 0, tela.width, tela.height);
+    };
+    pintar();
+    const repintar = setInterval(() => (faixa.readyState === 'live' ? pintar() : clearInterval(repintar)), 1000 / 15);
+    w.telasDoTeste.push(faixa);
+    return fluxo;
+  };
+  w.oNavegadorParaATela = () => {
+    const faixa = w.telasDoTeste.at(-1);
+    if (!faixa) throw new Error('a página não pediu a tela');
+    faixa.stop();
+    faixa.dispatchEvent(new Event('ended'));
+  };
+}
+
 /** No navegador: a frequência mais forte (de 100 Hz para cima) do som que o #som da página toca, e o nível dela em dB,
  * ou null sem som. O analisador do teste fica na janela e segue a faixa de agora do #som (cada ligação traz a sua). */
 function frequenciaDoSom(): { hz: number; db: number } | null {
@@ -735,6 +791,37 @@ export class Pagina {
       async (vistas) =>
         `no #mosaico de ${this.pessoa.letra}, as cores ${texto(cores)} não apareceram nos pontos ${texto(pontos)} ` +
         `em ${prazo / 1000} s; as últimas vistas: ${texto(vistas)}; a página: ${await this.diagnostico()}`,
+    );
+  }
+
+  /** O quadro com a etiqueta: o nome da pessoa, "Você", "Tela de <nome>" ou "A sua tela". */
+  quadro(nome: string): Locator {
+    return this.page
+      .locator('[data-quadro]')
+      .filter({ has: this.page.locator('.etiqueta').getByText(nome, { exact: true }) });
+  }
+
+  /** A cor do meio do <canvas> do quadro (a média de um quadradinho de 5×5), ou null sem o quadro, sem o canvas ou
+   * sem pintura nele. Dois quadros com a mesma etiqueta são um erro. */
+  async corDoQuadro(nome: string): Promise<Cor | null> {
+    const cores = await this.quadro(nome).locator('canvas').evaluateAll(corDoMeio);
+    if (cores.length > 1) throw new Error(`a página de ${this.pessoa.letra} tem ${cores.length} quadros "${nome}"`);
+    return cores[0] ?? null;
+  }
+
+  /** Espera os quadros da página serem estes, pelas etiquetas, em qualquer ordem, todos mostrando o vídeo (o
+   * data-mostra "video"), até prazo ms. */
+  async esperarQuadros(nomes: readonly string[], prazo = 20_000): Promise<void> {
+    const esperados = [...nomes].sort();
+    await repetirAte(
+      prazo,
+      100,
+      () => this.page.evaluate(quadrosNaTela),
+      (vistos) =>
+        texto(vistos.map((q) => q.etiqueta).sort()) === texto(esperados) && vistos.every((q) => q.mostra === 'video'),
+      async (vistos) =>
+        `os quadros de ${this.pessoa.letra} não ficaram ${texto(esperados)}, todos com o vídeo, em ${prazo / 1000} s; ` +
+        `os últimos: ${texto(vistos)}; a página: ${await this.diagnostico()}`,
     );
   }
 
