@@ -467,7 +467,7 @@ Do servidor para a página:
 | Reuniões ao mesmo tempo | 2 por padrão, de 1 a 20 na administração, em todo o servidor |
 | Tentativas de abrir | 20 por minuto por endereço, contando só as que não levam a uma reunião em que a pessoa possa entrar: o `entrar` do app que dá `404`, `outraEmpresa` ou `semReunioes`, junto com o abrir da página que falha e o `voltar` da página que falha (seção 10). Passou disso, `429 tentativas`, até com um código certo. O `entrar` e o abrir que dão certo, e o `cheia`, o `servidorCheio` e o `servidorVideo` de um código bom, não contam nessas 20. O abrir da página que dá certo tem a janela dele: 60 por minuto por endereço, e o 61º recebe o mesmo `429 tentativas`. As duas janelas são separadas |
 | Mensagens da página | 20 por minuto por canal, sem o `camera`. A 21ª recebe `erro` `limite` e é ignorada |
-| Os avisos da câmera (`camera`) | 30 por minuto por canal, à parte das 20 mensagens: não gastam as 20, e as 20 não os gastam. O 31º é ignorado, sem resposta |
+| Os avisos da câmera (`camera`) | 30 por minuto por canal, à parte das 20 mensagens: não gastam as 20, e as 20 não os gastam. O 31º é ignorado, sem resposta. O `camera` que não vale (sem o `ligada`, ou com ele sem ser verdadeiro ou falso) também conta nos 30 e recebe `erro` `invalido` |
 | A senha de uso único | 30 segundos, uma vez só, no relógio do servidor de vídeo |
 | A espera de quem é de fora | 10 minutos depois de o pedido chegar aos colegas |
 | A sala de espera | 50 pedidos esperando por reunião. O 51º `pedir` recebe `esperaCheia` |

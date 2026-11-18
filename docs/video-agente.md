@@ -199,6 +199,7 @@ Tudo vai em HTTPS, na porta do agente (seção 1: a 443, ou a `porta` do config.
   - o agente guarda só na memória quem está em cada sala, pelos ids.
 - **Os registros:**
   - do agente: só o método, a rota (o padrão, sem ids), o status, o tempo, as contagens e os códigos de erro;
+  - do agente, também: uma linha de aviso, `o FreeSWITCH recusou um comando do mosaico`, quando o FreeSWITCH recusa um comando que muda o mosaico. Ela leva só o nome do comando (`comando=`: `vid-res`, `vid-layout`, `vid-res-id` ou `vid-bandwidth`), porque a resposta do FreeSWITCH leva nomes de canal;
   - do FreeSWITCH: o console no nível `warning`, para o journal, sem arquivo de log;
   - do coturn: o syslog (o journal), a única exceção à regra de baixo, porque ele pode levar o usuário do TURN (`<vence>:<participante>`), que é só um vencimento e o id sorteado do participante, nunca um nome, um número de telefone ou o código de um link;
   - nunca a chave, uma senha, um nome, um número de telefone, o código de um link, uma sala ou um participante.

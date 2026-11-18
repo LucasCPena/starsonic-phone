@@ -354,9 +354,9 @@ Entre as linhas, deve aparecer `Verification: OK`. Essa porta é a do app (as re
 
 1. Na página `Reuniões` da administração do chat, no cartão `REUNIÃO DE TESTE`, clique em `Criar a reunião de teste`. O cartão mostra o link (`https://<endereço do chat>/r/<código>`), com o botão `Copiar o link` e o `Vale até`, que é 2 horas depois. A reunião de teste não tem sala de espera.
 2. Abra o link no PC. Aparece a tela de entrada, com `Reunião de teste` em cima e o título `Reunião`. O navegador pede a câmera e o microfone: permita. Você vê a sua imagem, os botões `Microfone` e `Câmera`, o campo `Seu nome` e o aviso `Nada é gravado.` Escreva um nome e clique em `Pedir para entrar`. Aparece `Entrando na reunião…` e, em poucos segundos, a reunião: a imagem no meio, a faixa `Nada é gravado` em cima e, embaixo, `Microfone`, `Câmera`, `Compartilhar a tela` e `Sair`.
-3. Abra o mesmo link no celular, com outro nome, e entre do mesmo jeito. O celular não mostra o `Compartilhar a tela`. Com o celular em pé, aparece o aviso `Gire o celular para ver a reunião maior.`
-4. Fale nos dois aparelhos, um de cada vez (use um fone, ou afaste os dois, para não dar eco). Cada um deve ouvir o outro sem tocar em mais nada, e cada um deve ver o quadro do outro com o nome dele. Os dois veem o mosaico com todos.
-5. No PC, clique em `Câmera` para desligar. Em uns 5 segundos, o quadro do PC no celular vira um quadro escuro, só com o nome. Clique de novo, e a imagem volta.
+3. Abra o mesmo link no celular, com outro nome, e entre do mesmo jeito. O celular não mostra o `Compartilhar a tela`. Com o celular em pé, não aparece mais o aviso `Gire o celular para ver a reunião maior.`: ele saiu na `0.2.0-rc.4` do chat.
+4. Fale nos dois aparelhos, um de cada vez (use um fone, ou afaste os dois, para não dar eco). Cada um deve ouvir o outro sem tocar em mais nada, e cada um deve ver a outra pessoa ocupando a área da reunião, com o nome dela por cima, e se ver pequeno no canto de baixo, à direita. É o que o chat `0.2.0-rc.4` e o servidor de vídeo `0.1.0-rc.3` fazem juntos; com o servidor de vídeo ainda antigo, a página mostra a imagem de todos numa só.
+5. No PC, clique em `Câmera` para desligar. Na hora, o quadro do PC no celular vira um quadro escuro, só com o nome. Clique de novo, e a imagem volta.
 6. Clique em `Sair`. Aparece `Você saiu da reunião` e o botão `Entrar de novo`.
 
 Se a imagem ou o som do outro aparelho não chegam, veja "A imagem ou o som do outro não chegam na reunião de teste", no passo 9.
@@ -402,6 +402,15 @@ Se o agente estiver parado, o instalador não tem a quem perguntar. Ele avisa co
 ```
 O agente não respondeu; não dá para saber se há reuniões agora. Seguindo com a atualização.
 ```
+
+**A ordem: o chat antes do servidor de vídeo.** A `0.1.0-rc.3` do servidor de vídeo (junto com a `0.2.0-rc.4` do chat) muda o palco da reunião: a página passa a mostrar um quadro para cada pessoa, em vez da imagem de todos numa só. Por isso, atualize nesta ordem:
+
+1. **Primeiro o chat** (`docs/chat-servidor.md`, passo 7). A página nova funciona com o servidor de vídeo antigo: ela mostra o mosaico inteiro, como antes.
+2. **Depois o servidor de vídeo**, com o `atualizar` acima. A página passa aos quadros sozinha.
+
+Na ordem contrária, a página antiga do chat mostraria o mosaico novo cru, sem os nomes das pessoas, até o chat ser atualizado.
+
+Esta é a primeira vez que o servidor de vídeo é atualizado. O `atualizar` gera de novo a configuração do FreeSWITCH (o tamanho do mosaico, os lugares de cada pessoa e o codificador do vídeo) e reinicia os serviços: faça-o num horário sem reuniões, como diz o cartão `AGORA`. Depois, confira com a reunião de teste (passo 4) e com a seção 26 do roteiro (`docs/teste-manual.md`).
 
 **As atualizações do sistema da VM.** Se, numa atualização do sistema (o `sudo apt upgrade`), o apt perguntar o que fazer com o arquivo `/etc/turnserver.conf`, responda `N`, que mantém o arquivo atual (é o padrão: basta apertar Enter). Um `Y` põe de volta a configuração de exemplo do coturn, que não serve para as reuniões, até o próximo `atualizar` (veja "O apt perguntou sobre o /etc/turnserver.conf", no passo 9, para pôr a nossa de volta).
 
@@ -492,7 +501,9 @@ A cada vez que liga, o FreeSWITCH escreve algumas linhas que parecem erro e são
 
 Durante as reuniões, as linhas `[WARNING]` com `No audio stun for a long time!` ou `No video stun for a long time!` também são normais: alguém fechou a aba ou perdeu a rede sem sair, e a ligação dele cai sozinha um pouco depois, em até 60 segundos sem nada chegar dela.
 
-Qualquer outra linha com `[ERR]`, `[CRIT]` ou `[ALERT]` merece atenção.
+Uma linha `[ERR]` com `VPX encode error [8:Invalid parameter:(null)]` também pode aparecer numa troca de formato do mosaico, e não pede ação (veja "Uma linha `VPX encode error` no registro do FreeSWITCH", no passo 9).
+
+Qualquer outra linha com `[ERR]`, `[CRIT]` ou `[ALERT]` merece atenção. No agente, uma linha `o FreeSWITCH recusou um comando do mosaico`, com `comando=` e o nome do comando, também merece (veja "A reunião aparece como uma imagem só", no passo 9).
 
 ## 9. Os problemas comuns
 
@@ -649,6 +660,16 @@ Algumas empresas bloqueiam o UDP na saída. As pessoas dessas redes entram pelo 
 
 **Alguém numa rede que só deixa sair pela porta 443.**
 Algumas redes, muito fechadas, só deixam sair pela porta 443. Quem está numa rede assim não entra nas reuniões: o TURN fica na 5349, porque a 443 é a do navegador. Se o chat e o vídeo dividem um IP público só, o navegador também pode ficar de fora, porque o vídeo usa a 7443 (veja o fim do passo 1). Se isso acontecer com algum cliente, avise quem cuida do servidor de vídeo. Com o vídeo na 443 (o caso normal), um segundo IP público, só para o TURN na porta 443, resolve.
+
+**A reunião aparece como uma imagem só, sem os quadros.**
+Era para cada pessoa ter o seu quadro, e a página mostra a imagem de todos juntos. A página só passa aos quadros quando recebe o palco (onde está cada pessoa na imagem) do servidor de vídeo, e espera uns 3 segundos por ele. Se ele não chega, ela mostra a imagem inteira. Confira, nesta ordem:
+
+- **O servidor de vídeo ainda é o antigo.** Na página `Reuniões` da administração do chat, clique em `Testar o servidor de vídeo`: o cartão diz `O servidor de vídeo respondeu: versão <versão>, FreeSWITCH no ar.` A versão tem de ser a `0.1.0-rc.3` ou mais nova. Se for mais velha, rode o `atualizar` (passo 5);
+- **O chat ainda é o antigo.** A versão do chat tem de ser a `0.2.0-rc.4` ou mais nova: é a que o `atualizar` do chat mostra no `Pronto: o Starsonic Chat agora está na versão <versão>.` (`docs/chat-servidor.md`, passo 7). Com o chat antigo e o servidor de vídeo novo, a imagem de todos aparece sem nenhum nome escrito, porque o servidor de vídeo novo não escreve mais os nomes na imagem: a página nova é que os escreve. Atualize o chat. Quem estava com a página aberta antes continua com a página antiga: peça para recarregar;
+- **O FreeSWITCH recusou um comando do mosaico.** Veja os registros do agente (passo 8). Uma linha `o FreeSWITCH recusou um comando do mosaico`, com `comando=` e o nome do comando (`vid-res`, `vid-layout`, `vid-res-id` ou `vid-bandwidth`), quer dizer que o agente não conseguiu pôr o mosaico no formato novo e, por isso, não mandou o palco. A página mostra os quadros escuros, com os nomes, e depois de 3 segundos a imagem inteira. O agente tenta de novo na próxima vez que alguém entrar ou sair da reunião. Se a linha se repete a cada entrada e saída, guarde as linhas do registro e avise quem cuida do servidor de vídeo.
+
+**Uma linha `VPX encode error` no registro do FreeSWITCH.**
+É uma linha `[ERR]` com `VPX encode error [8:Invalid parameter:(null)]`. Ela pode aparecer numa troca de formato do mosaico: quando alguém começa ou para de compartilhar a tela, e na passagem de 4 para 5 pessoas (e de 9 para 10). Ela custa uma imagem, e não pede ação. Se ela se repetir sem ninguém ter entrado, saído ou compartilhado a tela, guarde as linhas do registro e avise quem cuida do servidor de vídeo.
 
 **A CPU alta.**
 A página `Reuniões` do chat mostra o uso do servidor de vídeo no teste: `Uso agora: CPU <n>% · memória <n>%.` A CPU é a média do último minuto. Com reuniões acontecendo, se a CPU fica acima de uns 80%, a imagem pode travar. Diminua as `Reuniões ao mesmo tempo` (passo 3), ou dê mais vCPUs à VM e depois aumente o número.

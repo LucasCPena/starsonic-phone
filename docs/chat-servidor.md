@@ -388,8 +388,12 @@ A partir da versão 0.2.0, o chat também cuida das reuniões com link. O vídeo
 
 - **Uma tela de entrada,** com o tipo da reunião (`Reunião marcada`, `Reunião agora` ou `Reunião de teste`) e o assunto. O navegador pede a câmera e o microfone, e ela escolhe se entra com eles ligados. Escreve o nome e clica em `Pedir para entrar`.
 - **A espera.** O pedido chega aos colegas que estão na reunião, e a pessoa vê `Aguardando ser aceito…`. Sem resposta em 10 minutos, o pedido acaba. Se nenhum colega abriu a reunião ainda, ela vê `A reunião ainda não começou` e espera na página. A reunião de teste não tem sala de espera: a pessoa entra na hora.
-- **A reunião,** com a imagem de todos, o `Microfone`, a `Câmera`, o `Compartilhar a tela` (só em quem tem essa função no navegador: o PC, e não o celular) e o `Sair`. Em cima fica `Nada é gravado`.
+- **A reunião,** com um quadro para cada pessoa (o palco, logo abaixo), o `Microfone`, a `Câmera`, o `Compartilhar a tela` (só em quem tem essa função no navegador: o PC, e não o celular) e o `Sair`. Em cima fica `Nada é gravado`.
 - **Os avisos,** no lugar da reunião: `Este link não vale mais` (cancelada, passou da data ou já acabou), `A reunião está cheia` (10 pessoas), `Muita gente esperando para entrar`, `Você foi tirado da reunião`, `A reunião acabou`, `Muitas tentativas` (o mesmo endereço tentou abrir links demais) e `O servidor de reuniões não respondeu` (o chat não alcançou o servidor de vídeo: veja o passo 9 do guia do vídeo, `docs/video-servidor.md`).
+
+**O palco da reunião (a partir da `0.2.0-rc.4`).** O servidor de vídeo continua montando uma imagem só com todos, e a página recorta dela um quadro para cada pessoa: os quadros ocupam a tela no PC e no celular, um clique aumenta o quadro de alguém, e a tela compartilhada aparece grande. Quem diz à página onde está cada pessoa na imagem é o chat, com o que recebe do servidor de vídeo, e os nomes nos quadros são escritos pela própria página.
+
+**A ordem de atualizar: o chat primeiro, e depois o servidor de vídeo.** A página nova do chat funciona com o servidor de vídeo antigo e mostra a imagem de todos numa só, como antes. Na ordem contrária, a página antiga mostraria a imagem nova sem os nomes das pessoas. Atualize o chat aqui (passo 7), e o servidor de vídeo depois, num horário sem reuniões (`docs/video-servidor.md`, passo 5).
 
 O endereço do chat precisa ser alcançável pelo navegador de quem entra, e o do servidor de vídeo também (a porta 443 dele, ou a 7443). Nada da reunião é gravado: a página mostra `Nada é gravado` o tempo todo.
 

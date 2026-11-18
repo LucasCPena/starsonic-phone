@@ -5,7 +5,7 @@
 #   - o ldd de algum ELF do /opt/starsonic-freeswitch disser "not found";
 #   - o freeswitch -version não mostrar a versão do video-servidor/deps.lock;
 #   - a pasta mod/ não tiver exatamente os .so dos módulos do modules.conf;
-#   - faltar a fonte do nome no quadro de cada pessoa.
+#   - faltar a fonte do quadro (a reunião não escreve mais o nome no mosaico, mas a fonte continua no pacote).
 #
 # Uso: video-servidor/freeswitch/conferir-pacote.sh PACOTE
 # Roda como root, num contêiner limpo (o job freeswitch-conferir do video.yml) ou numa máquina de
@@ -22,8 +22,9 @@ fi
 
 AQUI="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PREFIXO=/opt/starsonic-freeswitch
-# O quadro de cada pessoa leva o nome dela (o video_banner_text, sem o font_face): o mod_conference
-# desenha com a fonte padrão do FreeSWITCH, a FreeSans.ttf da pasta fonts/ (src/switch_core_video.c).
+# A reunião não escreve mais o nome no mosaico (o agente não põe o video_banner_text: quem escreve os
+# nomes é a página), mas a fonte continua no pacote. A fonte padrão do FreeSWITCH é a FreeSans.ttf da
+# pasta fonts/ (src/switch_core_video.c).
 FONTE="$PREFIXO/fonts/FreeSans.ttf"
 
 falhar() {
