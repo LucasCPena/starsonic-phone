@@ -23,7 +23,7 @@ import {
   type Ponto,
 } from './midia';
 import { repetirAte } from './espera';
-import { anotarSegredos, CHAT, PAGINA, segredosUsados } from './servidores';
+import { anotarSegredos, CHAT, NOMES, PAGINA, segredosUsados } from './servidores';
 
 /** O Acesso de quem entra (seção 9 do protocolo); sem a senha, a ligação vai sem o X-Starsonic-Senha. */
 export interface AcessoDoNavegador {
@@ -805,7 +805,9 @@ export class Pagina {
    * sem pintura nele. Dois quadros com a mesma etiqueta são um erro. */
   async corDoQuadro(nome: string): Promise<Cor | null> {
     const cores = await this.quadro(nome).locator('canvas').evaluateAll(corDoMeio);
-    if (cores.length > 1) throw new Error(`a página de ${this.pessoa.letra} tem ${cores.length} quadros "${nome}"`);
+    if (cores.length > 1) {
+      throw new Error(`a página de ${this.pessoa.letra} tem ${cores.length} <canvas> nos quadros "${nome}"`);
+    }
     return cores[0] ?? null;
   }
 
@@ -848,6 +850,9 @@ export class Pagina {
     const segredos = Object.values(segredosUsados()).flat();
     const comSegredo = this.console.filter((l) => segredos.some((s) => l.includes(s))).length;
     expect(comSegredo, `as linhas do console de ${this.pessoa.letra} com um segredo`).toBe(0);
+    // O palco leva os nomes, e nada dele vai ao console: uma linha com um nome é só contada, como a com um segredo.
+    const comNome = this.console.filter((l) => NOMES.some((n) => l.includes(n))).length;
+    expect(comNome, `as linhas do console de ${this.pessoa.letra} com o nome de uma pessoa`).toBe(0);
     const erros = this.console.filter((l) => /^\[(error|pageerror)\]/.test(l) || /Content.Security.Policy/i.test(l));
     expect(erros, `os erros no console de ${this.pessoa.letra}`).toEqual([]);
   }

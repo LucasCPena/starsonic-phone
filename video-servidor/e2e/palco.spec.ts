@@ -68,14 +68,28 @@ async function esperarPontos(p: Pagina, pontos: readonly Ponto[], esperado: read
   );
 }
 
-/** Olha os pontos do #mosaico da página, a cada 100 ms, até o parar: as leituras de cada ponto, na ordem. */
-function vigiar(p: Pagina, pontos: readonly Ponto[]): { parar: () => Promise<Array<Array<Cor | null>>> } {
-  const leituras: Array<Array<Cor | null>> = pontos.map(() => []);
+/** As leituras de cada ponto, na ordem, e os erros das leituras que falharam. */
+interface Vigia {
+  leituras: Array<Array<Cor | null>>;
+  erros: string[];
+}
+
+/** Olha os pontos do #mosaico da página, a cada 100 ms, até o parar. Uma leitura que falha é um null em cada ponto
+ * (que nunca confere) e um erro anotado: ela não conta como boa, e o parar nunca falha, para não esconder o erro do
+ * teste. */
+function vigiar(p: Pagina, pontos: readonly Ponto[]): { parar: () => Promise<Vigia> } {
+  const vigia: Vigia = { leituras: pontos.map(() => []), erros: [] };
   let olhando = true;
   const olhar = (async () => {
     while (olhando) {
-      const vistas = await p.amostras(pontos);
-      vistas.forEach((v, i) => leituras[i].push(v));
+      let vistas: Array<Cor | null>;
+      try {
+        vistas = await p.amostras(pontos);
+      } catch (e) {
+        vigia.erros.push((e as Error).message);
+        vistas = pontos.map(() => null);
+      }
+      vistas.forEach((v, i) => vigia.leituras[i].push(v));
       await esperar(100);
     }
   })();
@@ -83,13 +97,16 @@ function vigiar(p: Pagina, pontos: readonly Ponto[]): { parar: () => Promise<Arr
     parar: async () => {
       olhando = false;
       await olhar;
-      return leituras;
+      return vigia;
     },
   };
 }
 
-/** As leituras de um ponto que não conferem (as cinco primeiras). */
-const fora = (leituras: Array<Cor | null>, c: Conferencia) => leituras.filter((v) => !confere(v, c)).slice(0, 5);
+/** As leituras do ponto i que não conferem (as cinco primeiras), com os erros das leituras que falharam. */
+function fora(v: Vigia, i: number, c: Conferencia): { fora: Array<Cor | null>; erros: string[] } {
+  return { fora: v.leituras[i].filter((x) => !confere(x, c)).slice(0, 5), erros: v.erros.slice(0, 3) };
+}
+const nada = { fora: [], erros: [] };
 
 /** A caixa do elemento na tela. */
 async function caixa(l: Locator): Promise<{ x: number; y: number; width: number; height: number }> {
@@ -127,6 +144,7 @@ test.describe.serial('as três páginas', () => {
     c = await Pagina.abrir(C, { derrubavel: true });
     // Cada uma entra depois de a anterior estar no palco: a célula de cada uma é a da ordem.
     await entrar(a, codigo, CARLOS);
+    await esperarPontos(a, [C1], [VERMELHO]);
     await entrar(b, codigo, BIA);
     await esperarOsQuadros(a, { [BIA]: AZUL });
     await entrar(c, codigo, MARIA);
@@ -149,7 +167,7 @@ test.describe.serial('as três páginas', () => {
     if (!a || !b || !c) throw new Error('o teste anterior não pôs as três na reunião');
     await esperarPontos(a, [C1, C2, C3], [VERMELHO, AZUL, AMARELO]);
     const vigia = vigiar(a, [C3]);
-    let leituras: Array<Array<Cor | null>> = [];
+    let vistas: Vigia = { leituras: [[]], erros: [] };
     try {
       // B sai: em A, a Maria continua amarela, no quadro e na célula dela; a de B fica vazia.
       await b.controles().getByRole('button', { name: 'Sair', exact: true }).click();
@@ -165,21 +183,29 @@ test.describe.serial('as três páginas', () => {
       await esperarOsQuadros(a, { [BIA]: AZUL, [MARIA]: AMARELO });
       await esperarOsQuadros(b, { [CARLOS]: VERMELHO, [MARIA]: AMARELO });
     } finally {
-      leituras = await vigia.parar();
+      vistas = await vigia.parar();
     }
     // A célula da Maria não mudou em nenhuma leitura.
-    expect(fora(leituras[0], AMARELO), 'as leituras do c3 em A que não são o amarelo').toEqual([]);
-    expect(leituras[0].length, 'as leituras do c3 em A').toBeGreaterThan(20);
-    await a.conferirOConsole();
-    await b.conferirOConsole();
+    expect(fora(vistas, 0, AMARELO), 'as leituras do c3 em A que não são o amarelo').toEqual(nada);
+    expect(vistas.leituras[0].length, 'as leituras do c3 em A').toBeGreaterThan(20);
+    for (const p of [a, b, c]) await p.conferirOConsole();
   });
 
   // Review Focus 2: a ligação nova da mesma pessoa fica com a célula da anterior, e a anterior, quando sai, não a solta.
+  // B sai antes, e o c2 fica livre, abaixo do c3 de C: assim, ficar com a célula e pegar a menor livre dão células
+  // diferentes. O teste derruba só o lado da página do WSS (o agente ainda o vê aberto): a ligação anterior de C fica na
+  // sala até a nova chegar e tomar o lugar dela. A nova nunca pode ir para o c2 (a menor livre) nem para o c4, nem
+  // quando chega nem quando a anterior é derrubada.
   test('quem entra de novo fica no mesmo lugar', async () => {
     if (!a || !b || !c) throw new Error('o teste anterior não pôs as três na reunião');
     await esperarPontos(a, [C1, C2, C3, C4], [VERMELHO, AZUL, AMARELO, 'fundo']);
+    await b.controles().getByRole('button', { name: 'Sair', exact: true }).click();
+    await expect(b.titulo('Você saiu da reunião')).toBeVisible();
+    await esperarPontos(a, [C2], ['fundo']);
+    await a.esperarQuadros([MARIA, 'Você']);
+
     const vigia = vigiar(a, [C1, C2, C4]);
-    let leituras: Array<Array<Cor | null>> = [];
+    let vistas: Vigia = { leituras: [[], [], []], erros: [] };
     try {
       // O WSS do vídeo de C cai, e a página volta sozinha: o c3 volta a ser amarelo.
       await c.derrubarOVideo();
@@ -188,20 +214,20 @@ test.describe.serial('as três páginas', () => {
       await expect(c.controles()).toBeVisible();
       await expect.poll(() => ligacoesPrincipais(c!.participante()), { timeout: 20_000 }).toBe(1);
       await esperarPontos(a, [C3], [AMARELO]);
-      await esperarOsQuadros(a, { [BIA]: AZUL, [MARIA]: AMARELO });
-      // E a página que voltou mostra as outras duas de novo, nos lugares delas.
+      // O palco e a imagem concordam: em A, o quadro da Maria é amarelo.
+      await esperarOsQuadros(a, { [MARIA]: AMARELO });
+      // E a página que voltou mostra o Carlos de novo.
       await c.esperarTamanho(1920, 1080);
-      await esperarOsQuadros(c, { [CARLOS]: VERMELHO, [BIA]: AZUL });
+      await esperarOsQuadros(c, { [CARLOS]: VERMELHO });
     } finally {
-      leituras = await vigia.parar();
+      vistas = await vigia.parar();
     }
-    // O c1 e o c2 não mudaram em nenhuma leitura, e a ligação nova de C nunca foi para o c4.
-    expect(fora(leituras[0], VERMELHO), 'as leituras do c1 em A que não são o vermelho').toEqual([]);
-    expect(fora(leituras[1], AZUL), 'as leituras do c2 em A que não são o azul').toEqual([]);
-    expect(fora(leituras[2], 'fundo'), 'as leituras do c4 em A que não são o fundo').toEqual([]);
-    expect(leituras[0].length, 'as leituras em A').toBeGreaterThan(20);
-    await c.conferirOConsole();
-    await a.conferirOConsole();
+    // Em nenhuma leitura o c1 deixou de ser o vermelho, e a ligação nova de C nunca foi para o c2 nem para o c4.
+    expect(fora(vistas, 0, VERMELHO), 'as leituras do c1 em A que não são o vermelho').toEqual(nada);
+    expect(fora(vistas, 1, 'fundo'), 'as leituras do c2 em A que não são o fundo').toEqual(nada);
+    expect(fora(vistas, 2, 'fundo'), 'as leituras do c4 em A que não são o fundo').toEqual(nada);
+    expect(vistas.leituras[0].length, 'as leituras em A').toBeGreaterThan(20);
+    for (const p of [a, b, c]) await p.conferirOConsole();
   });
 });
 
@@ -351,7 +377,7 @@ test('o celular em pé na reunião de três', async () => {
       expect(q.y + q.height, 'o fundo do quadro').toBeLessThanOrEqual(area.y + area.height + 1);
     }
     expect(baixo.y, 'o de baixo começa depois do de cima').toBeGreaterThanOrEqual(cima.y + cima.height);
-    await c.conferirOConsole();
+    for (const p of [a, b, c]) await p.conferirOConsole();
   } finally {
     await c?.fechar();
     await b?.fechar();
