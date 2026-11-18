@@ -112,6 +112,7 @@ Tudo vai em HTTPS, na porta do agente (seção 1: a 443, ou a `porta` do config.
   - O agente só aceita a origem da página: `https://<endereço do chat>`, com a porta quando o chat usa uma. No modo de teste, aceita também as do `--origem`.
   - São até 30 conexões ao mesmo tempo por endereço IP.
   - O agente leva os bytes, sem mexer, ao WebSocket do FreeSWITCH (`127.0.0.1:5066`).
+  - A página manda o `Via: SIP/2.0/WS`, também pelo `wss`. O FreeSWITCH lê esse WebSocket sem TLS e não responde, nem com o `100 Trying`, a um `Via` com `WSS`.
   - A mídia é WebRTC (DTLS-SRTP), com o Opus e o VP8.
 - **O app (etapa 2):** `sips:reuniao@<endereço do vídeo>:5061;transport=tls`.
   - O SRTP é obrigatório (`AES_CM_128_HMAC_SHA1_80`).

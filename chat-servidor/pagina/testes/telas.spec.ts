@@ -882,6 +882,9 @@ test('a ligação leva a senha, o TURN e a câmera', async ({ page }) => {
   // Um UA só para a ligação, sem registro, com o From e o nome neutros, a senha do aceito e o TURN dele.
   expect(invite.split('\r\n')[0]).toBe('INVITE sip:reuniao@video.exemplo.com.br SIP/2.0');
   expect(cabecalhoSip(invite, 'From')).toMatch(/^"pagina" <sip:pagina@video\.exemplo\.com\.br>;tag=/);
+  // O Via diz WS, também pelo wss: o agente termina o TLS, e o FreeSWITCH 1.11.3, que lê o WebSocket sem TLS, não
+  // responde (nem com o 100 Trying) a um Via WSS.
+  expect(cabecalhoSip(invite, 'Via')).toMatch(/^SIP\/2\.0\/WS [^ ;]+\.invalid;branch=/);
   expect(cabecalhoSip(invite, 'X-Starsonic-Senha')).toBe('senha-1');
   expect(video.recebidas.filter((m) => m.startsWith('REGISTER '))).toEqual([]);
   const configuracoes = await page.evaluate(() => (window as unknown as { configuracoes: unknown[] }).configuracoes);

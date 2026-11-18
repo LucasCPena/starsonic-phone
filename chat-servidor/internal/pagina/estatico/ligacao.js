@@ -129,8 +129,12 @@ export function criarLigacoes(aoEvento) {
       const { JsSIP } = window;
       const destino = JsSIP.URI.parse(acesso.video.uri);
       if (!destino) throw new TypeError('a uri do vídeo não vale');
+      // O Via diz WS, também pelo wss: o agente termina o TLS, e o FreeSWITCH 1.11.3, que lê o WebSocket sem TLS, não
+      // responde (nem com o 100 Trying) a um Via WSS.
+      const socket = new JsSIP.WebSocketInterface(acesso.video.wss);
+      socket.via_transport = 'WS';
       l.ua = new JsSIP.UA({
-        sockets: [new JsSIP.WebSocketInterface(acesso.video.wss)],
+        sockets: [socket],
         uri: `sip:pagina@${destino.host}`,
         display_name: 'pagina',
         register: false,
