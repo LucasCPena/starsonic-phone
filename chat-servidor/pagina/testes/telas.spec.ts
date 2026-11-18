@@ -2,16 +2,17 @@
 // falsa (o abrir e o canal) e o relógio fixo. O relógio fica parado: os prazos da página só andam pelo runFor.
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { CHAT } from '../chat';
+import {
+  AGORA,
+  atenderOInvite,
+  cabecalhoSip,
+  contarOClique,
+  direcoes,
+  inviteDe,
+  MARCADA,
+  registrarConexoes,
+} from '../ligacoes-falsas';
 import { CODIGO, RedeFalsa, type Mensagem, type Reuniao, type RespostaDoAbrir, type VideoFalso } from '../rede-falsa';
-
-/** Hoje, 17/11/2026, às 10:00 em São Paulo (o fuso dos testes). */
-const AGORA = new Date('2026-11-17T10:00:00-03:00').getTime();
-
-const MARCADA: Reuniao = {
-  tipo: 'marcada',
-  assunto: 'Planejamento de dezembro',
-  inicio: new Date('2026-11-17T14:00:00-03:00').getTime(),
-};
 
 /** O aceito, com um Acesso inventado (seção 10 do protocolo). */
 const ACEITO: Mensagem = {
@@ -144,23 +145,24 @@ const camerasVivas = (page: Page) =>
     );
 
 /**
- * O registro da página, na ordem: cada play() de um elemento de mídia e cada fetch, com o evento que o browser
- * despachava naquela hora (window.event), ou "-" fora de um evento.
+ * O registro da página, na ordem: cada play() de um elemento de mídia e cada fetch, com "no clique" quando ele sai
+ * dentro de um manipulador de click da página, antes de qualquer coisa assíncrona, ou "fora do clique" (o contador
+ * do clique, de ligacoes-falsas.ts).
  */
 async function registrar(page: Page): Promise<void> {
+  await contarOClique(page);
   await page.addInitScript(() => {
-    const w = window as unknown as { registro: string[] };
+    const w = window as unknown as { registro: string[]; ondeEstaOClique: () => string };
     w.registro = [];
-    const evento = () => window.event?.type ?? '-';
     const play = HTMLMediaElement.prototype.play;
     HTMLMediaElement.prototype.play = function (this: HTMLMediaElement) {
-      w.registro.push(`play #${this.id} ${evento()}`);
+      w.registro.push(`play #${this.id} ${w.ondeEstaOClique()}`);
       return play.call(this);
     };
     const buscar = window.fetch;
     window.fetch = function (entrada: RequestInfo | URL, init?: RequestInit) {
       const url = entrada instanceof Request ? entrada.url : String(entrada);
-      w.registro.push(`fetch ${new URL(url, location.href).pathname} ${evento()}`);
+      w.registro.push(`fetch ${new URL(url, location.href).pathname} ${w.ondeEstaOClique()}`);
       return buscar.call(window, entrada, init);
     };
   });
@@ -597,11 +599,11 @@ test('o primeiro play nasce no clique', async ({ page }) => {
 
   await botao(page, 'Pedir para entrar').click();
 
-  // Dentro do clique (o window.event é ele), o play() do #som vem antes do abrir, o primeiro pedido de rede. E é o
-  // primeiro play() da página: antes do clique, nenhum.
+  // Dentro do próprio manipulador do clique, antes de qualquer coisa assíncrona, o play() do #som vem antes do abrir, o
+  // primeiro pedido de rede. E é o primeiro play() da página: antes do clique, nenhum.
   await expect.poll(async () => (await registro(page)).slice(antes, antes + 2)).toEqual([
-    'play #som click',
-    `fetch /api/v1/pagina/reunioes/${CODIGO} click`,
+    'play #som no clique',
+    `fetch /api/v1/pagina/reunioes/${CODIGO} no clique`,
   ]);
   expect((await registro(page)).slice(0, antes).filter((l) => l.startsWith('play '))).toEqual([]);
 });
@@ -618,10 +620,11 @@ test('o Enter no nome também dá o play antes do pedido', async ({ page }) => {
   expect((await registro(page)).slice(antes)).toEqual([]);
   await expect(titulo(page, 'Planejamento de dezembro')).toBeVisible();
 
+  // O Enter dá o clique do Pedir para entrar: o play() sai dentro do manipulador dele.
   await nome.press('Enter');
   await expect.poll(async () => (await registro(page)).slice(antes, antes + 2)).toEqual([
-    'play #som click',
-    `fetch /api/v1/pagina/reunioes/${CODIGO} click`,
+    'play #som no clique',
+    `fetch /api/v1/pagina/reunioes/${CODIGO} no clique`,
   ]);
   expect((await registro(page)).slice(0, antes).filter((l) => l.startsWith('play '))).toEqual([]);
 });
@@ -859,108 +862,12 @@ const ACEITO_SEM_REDE: Mensagem = {
   },
 };
 
-/**
- * Cada RTCPeerConnection que a página cria (window.conexoes), com a configuração dele (window.configuracoes). A classe
- * original fica em window.ConexaoDoTeste, para o lado do servidor que o teste faz (o atenderOInvite).
- */
-async function registrarConexoes(page: Page): Promise<void> {
-  await page.addInitScript(() => {
-    const w = window as unknown as {
-      conexoes: RTCPeerConnection[];
-      configuracoes: unknown[];
-      ConexaoDoTeste: typeof RTCPeerConnection;
-    };
-    w.conexoes = [];
-    w.configuracoes = [];
-    const Original = window.RTCPeerConnection;
-    w.ConexaoDoTeste = Original;
-    window.RTCPeerConnection = class extends Original {
-      constructor(...args: unknown[]) {
-        super(...(args as [RTCConfiguration])); // o JsSIP passa também as restrições antigas, como segundo argumento
-        w.conexoes.push(this);
-        w.configuracoes.push(args[0]);
-      }
-    };
-  });
-}
-
 /** A última ligação manda a câmera: o emissor do vídeo dela tem uma faixa viva (sem a câmera, ele vai sem faixa). */
 const cameraNaLigacao = (page: Page) =>
   page.evaluate(() => {
     const pc = (window as unknown as { conexoes: RTCPeerConnection[] }).conexoes.at(-1);
     return pc?.getSenders().some((s) => s.track?.kind === 'video' && s.track.readyState === 'live') ?? false;
   });
-
-/** Um cabeçalho de uma mensagem SIP, sem o nome. */
-const cabecalhoSip = (mensagem: string, nome: string) =>
-  mensagem
-    .split('\r\n\r\n')[0]
-    .split('\r\n')
-    .find((l) => l.toLowerCase().startsWith(`${nome.toLowerCase()}:`))
-    ?.slice(nome.length + 1)
-    .trim();
-
-/**
- * O INVITE da página. A coleta dos candidatos tem um prazo, contado do primeiro candidato, e no teste o TURN nunca
- * responde: depois de a ligação criar a conexão (o WSS abriu), o relógio anda até o INVITE sair.
- */
-async function inviteDe(page: Page, video: VideoFalso): Promise<string> {
-  const conexoes = () => page.evaluate(() => (window as unknown as { configuracoes: unknown[] }).configuracoes.length);
-  await expect.poll(conexoes).toBeGreaterThan(0);
-  await expect
-    .poll(
-      async () => {
-        await page.clock.runFor(1_000);
-        return video.recebidas.some((m) => m.startsWith('INVITE '));
-      },
-      { message: 'a página não mandou o INVITE', timeout: 20_000 },
-    )
-    .toBe(true);
-  return video.mensagem('INVITE');
-}
-
-/**
- * O servidor atende o INVITE: o 200 com a resposta de outra conexão da página (a do teste, que só recebe) à oferta
- * dele. O JsSIP manda o ACK e confirma a ligação, como com o servidor de vídeo.
- */
-async function atenderOInvite(page: Page, video: VideoFalso, invite: string): Promise<void> {
-  const [cabecalho, ...corpo] = invite.split('\r\n\r\n');
-  const resposta = await page.evaluate(async (oferta) => {
-    const pc = new (window as unknown as { ConexaoDoTeste: typeof RTCPeerConnection }).ConexaoDoTeste();
-    await pc.setRemoteDescription({ type: 'offer', sdp: oferta });
-    await pc.setLocalDescription(await pc.createAnswer());
-    return pc.localDescription?.sdp ?? '';
-  }, corpo.join('\r\n\r\n'));
-  const linhas = cabecalho.split('\r\n').slice(1);
-  const os = (nome: string) => linhas.filter((l) => l.toLowerCase().startsWith(`${nome.toLowerCase()}:`));
-  video.mandar(
-    [
-      'SIP/2.0 200 OK',
-      ...os('Via'),
-      ...os('From'),
-      `${os('To')[0]};tag=servidor-1`,
-      ...os('Call-ID'),
-      ...os('CSeq'),
-      'Contact: <sip:reuniao@video.exemplo.com.br;transport=ws>',
-      'Content-Type: application/sdp',
-      `Content-Length: ${new TextEncoder().encode(resposta).length}`,
-      '',
-      resposta,
-    ].join('\r\n'),
-  );
-}
-
-/** A direção de cada m= do SDP de uma mensagem SIP, como {audio: 'sendrecv', video: 'recvonly'}. */
-function direcoes(mensagem: string): Record<string, string> {
-  const r: Record<string, string> = {};
-  let tipo = '';
-  for (const linha of mensagem.split('\r\n\r\n').slice(1).join('\r\n\r\n').split(/\r?\n/)) {
-    tipo = /^m=(\w+) /.exec(linha)?.[1] ?? tipo;
-    const direcao = /^a=(sendrecv|sendonly|recvonly|inactive)$/.exec(linha)?.[1];
-    if (direcao && tipo) r[tipo] = direcao;
-  }
-  return r;
-}
 
 test('a ligação leva a senha, o TURN e a câmera', async ({ page }) => {
   await registrarConexoes(page);

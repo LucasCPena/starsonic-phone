@@ -152,6 +152,13 @@ test.describe.serial('a reunião marcada', () => {
 // O I1 da 1a, de ponta a ponta: quem a colega tirou ainda tem uma senha da tela, que vale por 30 s, e o servidor de
 // vídeo atende a ligação com ela (a senha confere). Mas a tela de quem não tem a ligação principal na sala cai na hora,
 // antes de qualquer mudança de layout (seção 6 do docs/video-agente.md): o quadro grande nunca é dela.
+//
+// Uma parte disso é certa, e outra é uma corrida. A ordem do agente é certa: o uuid_kill sai antes do vid-layout da
+// apresentação (salas.go), e a apresentação nunca aparece. Mas a grade conta a ligação da tela quando o FreeSWITCH
+// marca o vídeo dela pronto (o CF_VIDEO_READY: na primeira imagem, ou uns 100 ms depois de a leitura do vídeo começar,
+// mesmo sem imagem), e aí o quadro da colega encolhe. O uuid_kill do agente tem de chegar nessa janela, contada do
+// add-member. Uma falha aqui é o agente perdendo essa corrida: uma quebra de verdade do I1 (a colega vê um quadro a
+// mais), e não um teste instável.
 test('a tela de quem foi tirado não entra', async () => {
   const app = ana();
   const codigo = await app.criarMarcada();
@@ -185,7 +192,7 @@ test('a tela de quem foi tirado não entra', async () => {
 
     // C liga a tela com a senha. O ponto do quadro grande da apresentação, no vídeo da colega, é olhado a cada 50 ms,
     // até 5 s depois do fim da ligação. Sozinha na sala, a colega tem o quadro inteiro, e o ponto é vermelho: ele só
-    // muda se o layout mudar.
+    // muda se o layout mudar (a apresentação, ou a grade que contou a tela: a corrida de cima).
     const vistas: Array<Cor | null> = [];
     let olhando = true;
     const olhar = (async () => {
