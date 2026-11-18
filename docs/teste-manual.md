@@ -511,6 +511,22 @@ Na ordem contrária, a página antiga mostraria o mosaico novo cru, sem os nomes
 
 A reunião de teste é a da seção 25: na administração do chat, `Reuniões`, cartão `REUNIÃO DE TESTE`, `Criar a reunião de teste`. Guarde o link fora do repositório. Em cada aparelho ou janela, escreva um nome diferente (o nome do aparelho, por exemplo): é pelo nome que você confere o quadro de cada pessoa.
 
+**Um defeito conhecido (do FreeSWITCH, e não das telas que você testa).** Nesta versão, o mosaico muda de tamanho em alguns momentos: quando alguém começa ou para de compartilhar a tela; na passagem de 4 para 5 pessoas e de 9 para 10 (e na volta); e, durante um compartilhamento, de 2 para 3 e de 4 para 5 pessoas (e na volta). Raramente, nessa troca, o FreeSWITCH para: **todos caem da reunião ao mesmo tempo**, em toda reunião que estiver no servidor de vídeo naquele instante. O servidor volta sozinho em 5 segundos. A página mostra `A reunião acabou` ou `Você saiu da reunião` (com o `Entrar de novo`).
+
+Se isso acontecer:
+
+1. Espere uns 10 segundos e entre de novo pelo link (ou pelo `Entrar de novo`, se ele aparecer). Numa reunião marcada, quem é de fora espera um colega entrar de novo.
+2. Anote a hora e o que estava acontecendo (por exemplo, "o PC começou a compartilhar a tela").
+3. Siga com o roteiro, e conte no fim.
+
+Para confirmar que foi isso, na VM do servidor de vídeo, rode:
+
+```
+sudo journalctl -u starsonic-freeswitch -n 50 --no-pager
+```
+
+Ele mostra o serviço terminando e ligando de novo naquele minuto (pode haver linhas `VPX encode error` um pouco antes). O conserto é no próprio FreeSWITCH, com um pacote corrigido, e é a próxima coisa a ser entregue. Até lá, esta versão é para testar as telas: nenhuma reunião de verdade nela.
+
 | # | Passo | Resultado esperado | PC | Celular |
 |---|-------|--------------------|----|---------|
 | 26.1 | O chat já na `0.2.0-rc.4` e o servidor de vídeo ainda na versão de antes. Abra a reunião de teste no PC e no celular (como no 25.2 e no 25.3), entre e espere uns 5 segundos. Fale, ligue e desligue a `Câmera` e o `Microfone`. | Nada quebra: a entrada e a reunião abrem, e os controles (`Microfone`, `Câmera`, `Compartilhar a tela` e `Sair`) funcionam. A página mostra o mosaico inteiro, a imagem de todos numa só, como na `chat-v0.2.0-rc.3` (25.3), e não os quadros: nenhum quadro mostra o `Aumentar`. Depois de a ligação ficar no ar, a página espera até 3 segundos pelos quadros e então mostra o mosaico. Nesses segundos, você se vê grande, como se estivesse sozinho, e só depois aparece a imagem de todos. Imagem e som do outro chegam. | ☐ | ☐ |

@@ -669,7 +669,22 @@ Era para cada pessoa ter o seu quadro, e a página mostra a imagem de todos junt
 - **O FreeSWITCH recusou um comando do mosaico.** Veja os registros do agente (passo 8). Uma linha `o FreeSWITCH recusou um comando do mosaico`, com `comando=` e o nome do comando (`vid-res`, `vid-layout`, `vid-res-id` ou `vid-bandwidth`), quer dizer que o FreeSWITCH não aceitou uma mudança do mosaico. Com o `vid-res` ou o `vid-layout`, o agente não manda o palco novo, e a página mostra os quadros escuros, com os nomes, e depois de 3 segundos a imagem inteira. Com o `vid-res-id` ou o `vid-bandwidth`, o agente segue e manda o palco. O agente tenta de novo na próxima vez que alguém entrar ou sair da reunião. Se a linha se repete a cada entrada e saída, guarde as linhas do registro e avise quem cuida do servidor de vídeo.
 
 **Uma linha `VPX encode error` no registro do FreeSWITCH.**
-É uma linha `[ERR]` com `VPX encode error [8:Invalid parameter:(null)]`. Ela pode aparecer em qualquer troca de formato do mosaico: quando alguém começa ou para de compartilhar a tela, na passagem de 4 para 5 pessoas e de 9 para 10, na volta (de 5 para 4 e de 10 para 9) e quando o número de pessoas muda durante um compartilhamento. Ela custa uma imagem, e não pede ação. Se ela se repetir sem ninguém ter entrado, saído ou compartilhado a tela, guarde as linhas do registro e avise quem cuida do servidor de vídeo.
+É uma linha `[ERR]` com `VPX encode error [8:Invalid parameter:(null)]`. Ela pode aparecer em qualquer troca de formato do mosaico: quando alguém começa ou para de compartilhar a tela, na passagem de 4 para 5 pessoas e de 9 para 10, na volta (de 5 para 4 e de 10 para 9) e quando o número de pessoas muda durante um compartilhamento. Ela custa uma imagem, e não pede ação. Se, nesse mesmo instante, todos caírem da reunião, veja "Todos caíram da reunião ao mesmo tempo", logo abaixo. Se ela se repetir sem ninguém ter entrado, saído ou compartilhado a tela, guarde as linhas do registro e avise quem cuida do servidor de vídeo.
+
+**Todos caíram da reunião ao mesmo tempo.**
+Nesta versão, o mosaico muda de tamanho em alguns momentos: quando alguém começa ou para de compartilhar a tela; na passagem de 4 para 5 pessoas e de 9 para 10 (e na volta); e, durante um compartilhamento, de 2 para 3 e de 4 para 5 pessoas (e na volta). A versão de antes (a `0.1.0-rc.2`) nunca muda o tamanho, e não tem este defeito.
+
+O FreeSWITCH 1.11.3 troca a imagem do mosaico nessa hora, enquanto outra parte dele ainda pode estar usando a antiga. Quando as duas coincidem, o processo do FreeSWITCH para, e todos caem de uma vez, em toda reunião que estiver no servidor naquele instante (o processo é um só para todas as salas). É raro: num teste de esforço, com uma troca de tamanho a cada 0,1 segundo, ele parou depois de 535 trocas; nos testes automáticos do dia (umas centenas de trocas), parou uma vez.
+
+O serviço volta sozinho 5 segundos depois, e o agente avisa o chat de que cada sala acabou. As pessoas entram de novo pelo link: a página mostra `A reunião acabou` ou `Você saiu da reunião`, com o `Entrar de novo`. Numa reunião marcada, quem é de fora espera um colega entrar de novo.
+
+Para confirmar, veja os registros do FreeSWITCH (passo 8):
+
+```
+sudo journalctl -u starsonic-freeswitch -n 50 --no-pager
+```
+
+Eles mostram o serviço terminando e ligando de novo naquele minuto, e pode haver linhas `VPX encode error` um pouco antes. O conserto é no próprio FreeSWITCH: um pacote corrigido dele, que é a próxima coisa a ser entregue. Até lá, esta versão é para testar as telas: não use para uma reunião de verdade.
 
 **A CPU alta.**
 A página `Reuniões` do chat mostra o uso do servidor de vídeo no teste: `Uso agora: CPU <n>% · memória <n>%.` A CPU é a média do último minuto. Com reuniões acontecendo, se a CPU fica acima de uns 80%, a imagem pode travar. Diminua as `Reuniões ao mesmo tempo` (passo 3), ou dê mais vCPUs à VM e depois aumente o número.
