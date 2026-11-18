@@ -964,6 +964,8 @@ test('na conexão caída, o teclado não chega aos quadros, e a volta os traz de
   await expect(botao(page, 'Ver todos')).toBeFocused();
   await darNaLigacao(page, SEM_CONEXAO);
   await expect(cartaoDaQueda(page)).toBeVisible();
+  // O foco que estava no Ver todos, agora embaixo do cartão, vai ao título da reunião, e não ao body.
+  await expect(titulo(page, 'Planejamento de dezembro')).toBeFocused();
   // Embaixo do cartão, nem os quadros nem o Ver todos recebem o Tab; os controles continuam.
   const naQueda = await oQueOTabAlcanca(page);
   expect(naQueda).toContain('microfone');
@@ -987,6 +989,59 @@ test('na conexão caída, o teclado não chega aos quadros, e a volta os traz de
   const depois = await oQueOTabAlcanca(page);
   expect(depois).toContain('verTodos');
   expect(depois).toContain(camDe(ANA));
+});
+
+test('na conexão caída, o foco de um quadro vai ao título', async ({ page }) => {
+  const { canal } = await naReuniaoCom(page, TRES);
+  await quadro(page, camDe(ANA)).focus();
+  await darNaLigacao(page, SEM_CONEXAO);
+  await expect(cartaoDaQueda(page)).toBeVisible();
+  await expect(titulo(page, 'Planejamento de dezembro')).toBeFocused();
+  expect(await page.evaluate(() => document.activeElement === document.body)).toBe(false);
+  await voltar(page, canal);
+  expect(await oQueOTabAlcanca(page)).toContain(camDe(ANA));
+});
+
+test('a página que desiste do canal não mostra ninguém no quadro de outro', async ({ page }) => {
+  // A chave recusada no voltar do religar: a reunião segue, sem o canal e sem o palco. O mosaico, depois, põe outra
+  // pessoa (a cor amarela) na célula que era do Carlos: nenhum quadro com o nome dele a mostra.
+  const { rede, canal } = await naReuniaoCom(page, DOIS);
+  expect(await corDo(page, camDe(CARLOS))).toBe('azul');
+  const nuncaOAmarelo = async () => {
+    const q = page.locator('[data-quadro]', { has: page.locator('.etiqueta', { hasText: 'Carlos Lima' }) });
+    if ((await q.count()) === 0) return;
+    expect(await corDo(page, camDe(CARLOS))).not.toBe('amarelo');
+  };
+  await canal.fechar(1001);
+  await page.clock.runFor(2_000);
+  const volta = await rede.canalNumero(2);
+  await expect.poll(() => volta.tipos()).toEqual(['voltar']);
+  volta.mandar({ tipo: 'erro', erro: 'invalido' });
+  // A reunião continua: os controles, e nenhum aviso.
+  await expect(page.locator('.palco')).not.toHaveAttribute('data-modo', 'quadros');
+  await expect(page.getByRole('navigation', { name: 'Controles da reunião' })).toBeVisible();
+  await expect(titulo(page, 'Planejamento de dezembro')).toBeVisible();
+  // Sem o palco, o Carlos fica no escuro com o nome, ou sai.
+  const carlosQ = quadro(page, camDe(CARLOS));
+  if ((await carlosQ.count()) > 0) await expect(carlosQ).toHaveAttribute('data-mostra', 'espera');
+  await nuncaOAmarelo();
+
+  const outro: Palco = { ...DOIS, quadros: DOIS.quadros.map((q) => (q.pessoa === CARLOS ? { ...q, cor: 'amarelo' } : q)) };
+  await mosaico(page, outro);
+  await nuncaOAmarelo();
+  for (let ms = 0; ms < 2_900; ms += 500) {
+    await page.clock.runFor(500);
+    await outraImagem(page);
+    await nuncaOAmarelo();
+  }
+  // 3000 ms depois de desistir, o mosaico inteiro, sem quadro, e a moldura de volta aos leitores de tela.
+  await page.clock.runFor(100);
+  await outraImagem(page);
+  await expect(page.locator('.palco')).toHaveAttribute('data-modo', 'mosaico');
+  await expect.poll(async () => (await caixa(moldura(page))).width).toBeGreaterThan(600);
+  await expect(todosOsQuadros(page)).toHaveCount(0);
+  await expect(moldura(page)).not.toHaveAttribute('aria-hidden');
+  await expect(page.getByRole('navigation', { name: 'Controles da reunião' })).toBeVisible();
 });
 
 test('depois do Sair e do Entrar de novo, os quadros voltam sem ninguém aumentado', async ({ page }) => {

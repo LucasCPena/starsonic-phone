@@ -72,12 +72,13 @@ export function iniciar(raiz, servicos) {
     }
   }
 
-  // O botão com o foco que o desenho escondeu ou desligou (o Tentar de novo do aviso de acesso que deu certo, por
-  // exemplo) leva o foco ao título da tela: sem isso, ele cairia no começo da página.
+  // O botão com o foco que o desenho escondeu, desligou ou pôs dentro de um inert (o Tentar de novo do aviso de acesso
+  // que deu certo, ou um quadro embaixo do cartão da conexão caída, por exemplo) leva o foco ao título da tela: sem
+  // isso, ele cairia no começo da página.
   function manterOFoco(foco) {
     const agora = document.activeElement;
     if (!foco || foco === document.body || (agora !== foco && agora !== document.body)) return;
-    if (foco.closest('[hidden]') || foco.disabled) tituloVisivel()?.focus();
+    if (foco.closest('[hidden]') || foco.disabled || foco.closest('[inert]')) tituloVisivel()?.focus();
   }
 
   const rede = servicos.rede(despachar);
