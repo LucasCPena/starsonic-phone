@@ -1298,8 +1298,10 @@ test('o palco fica no estado', () => {
 });
 
 test('o erro do servidor não é resposta ao aviso da câmera', () => {
-  // O aviso não espera resposta: um erro limite (o servidor recusa o aviso além de 30 por minuto) com a tela pedindo
-  // a senha continua parando o compartilhar, como hoje, e sem a tela pedindo ele não faz nada.
+  // O aviso da câmera nunca tem resposta, nem além do limite dele (30 por minuto por canal), que o servidor ignora
+  // calado. Um erro que chega depois dele é de outra coisa pendente, como hoje: o erro limite (o limite geral de 20
+  // mensagens por minuto, por exemplo no pedido da tela) com a tela pedindo a senha continua parando o compartilhar, e
+  // sem nada pendente ele não faz nada.
   const avisou = passo(naReuniao(), clique('camera'));
   assert.deepEqual(avisou.efeitos.at(-1), camera(false));
   semMudar(avisou.estado, LIMITE);

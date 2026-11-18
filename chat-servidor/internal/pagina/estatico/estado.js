@@ -189,7 +189,8 @@ export function transicao(estado, evento) {
 
 // O canal é o da pessoa: o aceito chegou nele, ou o voltou. Só ele leva o aviso da câmera.
 const canalDaPessoa = (e) => e.aceito && e.canal === 'aberto';
-// Para o servidor, a câmera desligada, a que falta e a que ainda não chegou são iguais: sem imagem.
+// Para o servidor, a câmera desligada e a que falta são iguais: sem imagem. Antes de a mídia chegar, vale a escolha da
+// pessoa (a ligada do começo), e o midia que chega depois acerta o aviso.
 const cameraLigada = (e) => e.cam === 'ligado';
 // O aviso sai quando o canal passa a ser o da pessoa, ou quando o ligado muda com ele aberto.
 const avisaACamera = (antes, depois) =>
