@@ -374,6 +374,69 @@ async function naReuniaoCom(page: Page, p: Palco): Promise<NaReuniao> {
   return r;
 }
 
+/**
+ * O mosaico inteiro aparece: a moldura passa de 600 px de largura, no tempo de sempre do expect.poll. Quando não passa,
+ * o erro leva as medidas da área naquela hora (as caixas, os estilos que dão o tamanho da moldura e o estado do vídeo),
+ * sem nada do palco.
+ */
+async function oMosaicoInteiroAparece(page: Page): Promise<void> {
+  try {
+    await expect.poll(async () => (await caixa(moldura(page))).width).toBeGreaterThan(600);
+  } catch (erro) {
+    const medidas = await page
+      .evaluate(() => {
+        const um = (seletor: string) => document.querySelector(seletor) as HTMLElement | null;
+        const retangulo = (seletor: string) => {
+          const el = um(seletor);
+          if (!el) return null;
+          const { x, y, width, height } = el.getBoundingClientRect();
+          return { x, y, width, height };
+        };
+        const palco = um('.palco');
+        const moldura = um('.moldura');
+        const video = um('#mosaico') as HTMLVideoElement | null;
+        const doPalco = palco ? getComputedStyle(palco) : null;
+        const daMoldura = moldura ? getComputedStyle(moldura) : null;
+        return {
+          caixas: {
+            telaReuniao: retangulo('.tela-reuniao'),
+            palco: retangulo('.palco'),
+            moldura: retangulo('.moldura'),
+            mosaico: retangulo('#mosaico'),
+          },
+          palcoCliente: palco ? { l: palco.clientWidth, a: palco.clientHeight } : null,
+          estiloDaMoldura: daMoldura && {
+            width: daMoldura.width,
+            height: daMoldura.height,
+            position: daMoldura.position,
+            display: daMoldura.display,
+            aspectRatio: daMoldura.aspectRatio,
+            flex: daMoldura.flex,
+          },
+          estiloDoPalco: doPalco && {
+            display: doPalco.display,
+            height: doPalco.height,
+            containerType: doPalco.containerType,
+            flex: doPalco.flex,
+          },
+          cqh: CSS.supports('width', '1cqh'),
+          modo: palco?.dataset.modo ?? null,
+          emPe: palco?.hasAttribute('data-em-pe') ?? null,
+          janela: `${window.innerWidth}x${window.innerHeight}`,
+          escala: window.devicePixelRatio,
+          video: video && {
+            tamanho: `${video.videoWidth}x${video.videoHeight}`,
+            readyState: video.readyState,
+            paused: video.paused,
+          },
+        };
+      })
+      .catch((e: Error) => ({ semMedidas: e.message }));
+    const mensagem = erro instanceof Error ? erro.message : String(erro);
+    throw new Error(`${mensagem}\nAs medidas da área: ${JSON.stringify(medidas, null, 2)}`);
+  }
+}
+
 const darNaLigacao = (page: Page, evento: object) =>
   page.evaluate((e) => (window as unknown as { ligacaoFalsa: (e: object) => void }).ligacaoFalsa(e), evento);
 
@@ -390,7 +453,7 @@ test('sem palco, o mosaico inteiro depois de 3 s', async ({ page }) => {
   await page.clock.runFor(2_980);
   expect((await caixa(moldura(page))).width).toBeLessThanOrEqual(1);
   await page.clock.runFor(20);
-  await expect.poll(async () => (await caixa(moldura(page))).width).toBeGreaterThan(600);
+  await oMosaicoInteiroAparece(page);
   await expect(page.locator('#mosaico')).toBeVisible();
   await expect(moldura(page)).not.toHaveAttribute('aria-hidden');
   await expect(todosOsQuadros(page)).toHaveCount(0);
@@ -774,7 +837,7 @@ test('o tamanho que não confere vira o mosaico inteiro', async ({ page }) => {
   expect((await caixa(moldura(page))).width).toBeLessThanOrEqual(1);
   // 3000 ms depois, a moldura do mosaico, sem quadro nenhum.
   await page.clock.runFor(10);
-  await expect.poll(async () => (await caixa(moldura(page))).width).toBeGreaterThan(600);
+  await oMosaicoInteiroAparece(page);
   await expect(todosOsQuadros(page)).toHaveCount(0);
   // Um palco desse tamanho traz os quadros de volta.
   canal.mandar(mensagemDo(menor));
@@ -1038,7 +1101,7 @@ test('a página que desiste do canal não mostra ninguém no quadro de outro', a
   await page.clock.runFor(100);
   await outraImagem(page);
   await expect(page.locator('.palco')).toHaveAttribute('data-modo', 'mosaico');
-  await expect.poll(async () => (await caixa(moldura(page))).width).toBeGreaterThan(600);
+  await oMosaicoInteiroAparece(page);
   await expect(todosOsQuadros(page)).toHaveCount(0);
   await expect(moldura(page)).not.toHaveAttribute('aria-hidden');
   await expect(page.getByRole('navigation', { name: 'Controles da reunião' })).toBeVisible();
