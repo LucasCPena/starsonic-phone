@@ -8,16 +8,19 @@ import (
 )
 
 // O palco de uma sala (docs/chat-protocolo.md, seção 10): o tamanho do mosaico e o retângulo de cada pessoa e da tela
-// dentro dele. O agente o manda sem nomes; o chat guarda o último que vale e o repassa às páginas aceitas da reunião,
-// com o nome de cada quadro, o voce e o semCamera. Só vai à página aceita, com o canal aberto, da reunião do palco:
-// quem espera, quem foi recusado ou tirado e quem é de outra reunião nunca recebe nada dele, e os apps não o veem.
+// dentro dele. O agente o manda sem nomes; o chat guarda o último que vale e o repassa às páginas aceitas que estão na
+// reunião, ou entrando, com o nome de cada quadro, o voce e o semCamera. Só vai à página aceita, com o canal aberto, da
+// reunião do palco, de quem está nela (a câmera ou a tela) ou tem uma senha da câmera ainda não usada: quem espera,
+// quem foi recusado ou tirado, quem saiu (a página aberta, para o Entrar de novo), quem deixou a senha vencer sem
+// entrar e quem é de outra reunião nunca recebe nada dele, e os apps não o veem.
 
-// Os limites de um palco que vale.
+// Os limites de um palco que vale. Os mesmos números estão na página, no lerPalco de
+// chat-servidor/internal/pagina/estatico/palco.js: os dois mudam juntos.
 const (
 	minLado     = 16   // a largura e a altura do mosaico, e de cada quadro, no mínimo
 	maxLargura  = 7680 // a largura do mosaico, no máximo
 	maxAltura   = 4320 // a altura do mosaico, no máximo
-	maxQuadros  = 13   // as 10 pessoas, e as telas delas que cabem no mosaico
+	maxQuadros  = 13   // as 12 células do maior layout, mais a tela (um palco nunca tem mais de uma)
 	tamanhoDeId = 16   // os caracteres hexadecimais de um participante
 )
 
@@ -90,19 +93,28 @@ func (g *Gerente) guardarPalco(s *sala, novo *video.Palco) {
 	g.mandarPalco(s)
 }
 
-// paginasAceitas são os participantes de quem é de fora com o pedido aceito e o canal aberto: os únicos a quem o palco
-// vai. Com g.mu.
+// recebePalco diz se o palco vai à página do participante: a de quem é de fora, com o pedido aceito e o canal aberto,
+// que está na reunião (a câmera ou a tela) ou entrando (uma senha da câmera ainda não usada; o aceito traz uma). Quem
+// saiu, quem nunca entrou e deixou a senha vencer, e quem não tem a página, não. É a única regra: todo palco passa por
+// ela. Com g.mu.
+func (p *participante) recebePalco() bool {
+	ped := p.pedido
+	return ped != nil && ped.fase == aceito && ped.canal != nil && (p.naReuniao || p.tela || p.temSenha(false))
+}
+
+// paginasAceitas são os participantes cuja página recebe o palco (recebePalco): as páginas aceitas que estão na
+// reunião, ou entrando. Com g.mu.
 func (s *sala) paginasAceitas() []*participante {
 	var l []*participante
 	for _, p := range s.emOrdem() {
-		if ped := p.pedido; ped != nil && ped.fase == aceito && ped.canal != nil {
+		if p.recebePalco() {
 			l = append(l, p)
 		}
 	}
 	return l
 }
 
-// mandarPalco manda o palco da sala a cada página aceita. Com g.mu.
+// mandarPalco manda o palco da sala a cada página aceita que está na reunião, ou entrando. Com g.mu.
 func (g *Gerente) mandarPalco(s *sala) {
 	if s.palco == nil {
 		return
@@ -112,9 +124,10 @@ func (g *Gerente) mandarPalco(s *sala) {
 	}
 }
 
-// mandarPalcoA manda o palco da sala a uma página, logo depois do aceito ou do voltou. Com g.mu.
+// mandarPalcoA manda o palco da sala a uma página, logo depois do aceito, do voltou ou de uma senha da câmera, se
+// ela recebe o palco (recebePalco). Com g.mu.
 func (g *Gerente) mandarPalcoA(s *sala, p *participante) {
-	if s.palco != nil && p.pedido != nil && p.pedido.fase == aceito && p.pedido.canal != nil {
+	if s.palco != nil && p.recebePalco() {
 		g.mandar(p.pedido.canal, s.mensagemPalco(p))
 	}
 }
@@ -136,9 +149,10 @@ func (s *sala) mensagemPalco(para *participante) mensagemPalco {
 	return m
 }
 
-// Camera é o aviso da página de que a câmera dela foi ligada ou desligada. O palco sai de novo às páginas aceitas
-// quando o aviso muda o que se sabe, e fica guardado se a sala ainda não tem palco. Antes do aceito, ou depois do
-// fim do pedido, ErrForaDeOrdem.
+// Camera é o aviso da página de que a câmera dela foi ligada ou desligada. O valor fica sempre guardado (o próximo
+// palco com o quadro da pessoa o leva); o palco sai de novo às páginas aceitas que estão na reunião, ou entrando, só
+// quando o aviso muda o valor e a pessoa tem um quadro da câmera (não o da tela) no palco de agora da sala: sem ele,
+// o palco seria o mesmo. Antes do aceito, ou depois do fim do pedido, ErrForaDeOrdem.
 func (g *Gerente) Camera(p *Pedido, ligada bool) error {
 	if p == nil {
 		return ErrForaDeOrdem
@@ -151,9 +165,18 @@ func (g *Gerente) Camera(p *Pedido, ligada bool) error {
 	}
 	if part.semCamera == ligada {
 		part.semCamera = !ligada
-		g.mandarPalco(s)
+		if s.temQuadroDaCamera(part.id) {
+			g.mandarPalco(s)
+		}
 	}
 	g.mu.Unlock()
 	g.despachar()
 	return nil
+}
+
+// temQuadroDaCamera diz se o participante tem um quadro da câmera (não o da tela) no palco de agora da sala. Com g.mu.
+func (s *sala) temQuadroDaCamera(id string) bool {
+	return s.palco != nil && slices.ContainsFunc(s.palco.Quadros, func(q video.Quadro) bool {
+		return q.Participante == id && !q.Tela
+	})
 }

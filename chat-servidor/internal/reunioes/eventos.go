@@ -200,7 +200,8 @@ func (g *Gerente) lerNaHora(agora time.Time) {
 //     leva os pedidos aos colegas, e o último que sai os devolve ao naoComecou. O entrou de um participante que a
 //     sala não conhece, numa reunião conhecida, não muda nada, e o agente recebe o tirar dele (o ligacao);
 //   - o acabou acaba a reunião na memória: a naHora acaba também no banco, e a marcada para;
-//   - o palco e o palco do estado são guardados e repassados às páginas aceitas (palco.go).
+//   - o palco e o palco do estado são guardados e repassados às páginas aceitas que estão na reunião, ou entrando
+//     (palco.go).
 func (g *Gerente) EventoDoVideo(ev video.Evento) { g.evento(g.raiz, ev, 0) }
 
 // evento segue o evento. Com a geracao de um laço (não 0), só se o laço é o do servidor ligado agora. O ctx é o do

@@ -1518,8 +1518,9 @@ func TestCanal_Camera_NaoContaNasVinte(t *testing.T) {
 		semCamera(t, pagina, part, desligada)
 		desligada = !desligada
 	}
-	// Os 30 avisos não gastaram as 20 mensagens.
+	// Os 30 avisos não gastaram as 20 mensagens. O palco da sala chega antes da resposta do senha.
 	daPagina(t, pagina, map[string]any{"tipo": "senha"})
+	semCamera(t, pagina, part, !desligada) // o valor do último aviso
 	if s := aPaginaTipo(t, pagina, "senha"); cargaDaSenha(t, s["senha"].(string))["participante"] != part {
 		t.Fatalf("a senha é de outro participante: %v", s)
 	}
@@ -1537,6 +1538,21 @@ func TestCanal_Camera_NaoContaNasVinte(t *testing.T) {
 	aPaginaErro(t, pagina2, "limite") // a janela das 20 está cheia
 	daPagina(t, pagina2, map[string]any{"tipo": "camera", "ligada": false})
 	semCamera(t, pagina2, part2, true)
+}
+
+func TestCanal_Senha_PalcoAntes(t *testing.T) {
+	// O Entrar de novo de quem saiu: o palco da sala chega antes da resposta do senha, e nada dele chega antes.
+	c := novaCenaR(t)
+	r := c.marcada(t, c.kAna)
+	carlos := c.colegaNaReuniao(t, r.Codigo)
+	pagina, part, _ := c.aceitaMaria(t, r.Codigo, carlos)
+	c.a.Gerente.EventoDoVideo(video.Evento{Tipo: "saiu", Sala: c.sala(t, r.Codigo), Participante: part})
+	daPagina(t, pagina, map[string]any{"tipo": "camera", "ligada": false}) // fora da reunião: nada chega
+	daPagina(t, pagina, map[string]any{"tipo": "tela"})
+	aPaginaErro(t, pagina, "foraDaReuniao") // a próxima mensagem é a resposta do tela, não um palco
+	daPagina(t, pagina, map[string]any{"tipo": "senha"})
+	semCamera(t, pagina, part, true)
+	aPaginaTipo(t, pagina, "senha")
 }
 
 func TestCanal_Camera_DepoisDoVoltou(t *testing.T) {

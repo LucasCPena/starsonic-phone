@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/banco"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/video"
@@ -348,5 +349,169 @@ func TestPalco_SemNomesNoLog(t *testing.T) {
 	p.acabou(p.r)
 	if err := conferirLog(registro.String()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// ---------- Quem recebe o palco: as páginas aceitas que estão na reunião, ou entrando ----------
+
+// textoAnaEBia é o palco de 1920x1080 com a Ana e a Bia, como a página de quem não está nele o recebe.
+func (p *cenaPalco) textoAnaEBia() string {
+	return fmt.Sprintf(`{"tipo":"palco","largura":1920,"altura":1080,"quadros":[`+
+		`{"quem":%q,"nome":"Ana Souza","voce":false,"tela":false,"semCamera":false,"x":0,"y":0,"l":960,"a":540},`+
+		`{"quem":%q,"nome":"Bia Ramos","voce":false,"tela":false,"semCamera":false,"x":960,"y":0,"l":960,"a":540}]}`,
+		p.ana, p.bia)
+}
+
+func (p *cenaPalco) anaEBia() {
+	p.palco(1920, 1080, qd(p.ana, false, 0, 0, 960, 540), qd(p.bia, false, 960, 0, 960, 540))
+}
+
+func TestPalco_QuemSaiuNaoRecebe(t *testing.T) {
+	p := novaCenaPalco(t)
+	p.anaEMaria()
+	p.saiu(p.r, p.maria) // a Maria clicou em Sair, e a página dela continua aberta
+	antes := quantosPalcos(p.canM)
+	p.anaEBia()
+	if quantosPalcos(p.canM) != antes {
+		t.Fatal("a página de quem saiu recebeu o palco de quem ficou")
+	}
+	if got, quer := p.canB.ultima(), strings.Replace(p.textoAnaEBia(), `"nome":"Bia Ramos","voce":false`, `"nome":"Bia Ramos","voce":true`, 1); got != quer {
+		t.Fatalf("a Bia, que está na reunião, recebeu\n%s\nqueria\n%s", got, quer)
+	}
+	// O aviso da câmera de quem ficou também não chega a quem saiu.
+	if err := p.g.Camera(p.pb, false); err != nil {
+		t.Fatal(err)
+	}
+	if quantosPalcos(p.canM) != antes {
+		t.Fatal("a página de quem saiu recebeu o palco do aviso da câmera")
+	}
+}
+
+func TestPalco_SenhaDeNovo(t *testing.T) {
+	p := novaCenaPalco(t)
+	p.anaEMaria()
+	p.saiu(p.r, p.maria)
+	p.anaEBia()
+	antes := quantosPalcos(p.canM)
+	// O Entrar de novo: a página pede a senha, e o palco da sala de agora vai a ela na mesma trava.
+	if _, err := p.g.NovaSenha(p.pm); err != nil {
+		t.Fatal(err)
+	}
+	if quantosPalcos(p.canM) != antes+1 {
+		t.Fatalf("a página que pediu a senha recebeu %q; queria um palco", p.canM.tipos())
+	}
+	if got, quer := p.canM.ultima(), p.textoAnaEBia(); got != quer {
+		t.Fatalf("a página que pediu a senha recebeu\n%s\nqueria\n%s", got, quer)
+	}
+	// Entrando (com a senha pendente), ela recebe as mudanças do palco.
+	p.anaEMaria()
+	if got, quer := p.canM.ultima(), p.textoAnaEMaria(true); got != quer {
+		t.Fatalf("a página que está entrando recebeu\n%s\nqueria\n%s", got, quer)
+	}
+}
+
+func TestPalco_SenhaDeNovo_ReuniaoDeTeste(t *testing.T) {
+	c := novaCena(t)
+	r := c.deTeste()
+	_, can := c.pedir(r, "Maria Lima") // a reunião de teste aceita na hora
+	part, _ := aceitoDe(t, can)
+	c.entrou(r, part)
+	ped, can2 := c.pedir(r, "Bia Ramos")
+	bia, _ := aceitoDe(t, can2)
+	c.entrou(r, bia)
+	c.saiu(r, bia)
+	pal := func(quadros ...video.Quadro) {
+		c.evento(video.Evento{Tipo: "palco", Sala: r.Sala, Largura: 1920, Altura: 1080, Quadros: quadros})
+	}
+	pal(qd(part, false, 0, 0, 1920, 1080))
+	if n := quantosPalcos(can2); n != 0 {
+		t.Fatalf("a Bia, que saiu, recebeu %d palco(s)", n)
+	}
+	if _, err := c.g.NovaSenha(ped); err != nil {
+		t.Fatal(err)
+	}
+	quer := fmt.Sprintf(`{"tipo":"palco","largura":1920,"altura":1080,"quadros":[`+
+		`{"quem":%q,"nome":"Maria Lima","voce":false,"tela":false,"semCamera":false,"x":0,"y":0,"l":1920,"a":1080}]}`, part)
+	if got := can2.ultima(); got != quer {
+		t.Fatalf("a Bia, que pediu a senha, recebeu\n%s\nqueria\n%s", got, quer)
+	}
+}
+
+func TestPalco_SenhaQueVenceu(t *testing.T) {
+	p := novaCenaPalco(t)
+	p.anaEMaria()
+	if err := p.g.Aceitar(p.ctx, p.r, p.cena.ana.p.ID, p.pedidoDe(p.r, p.cena.ana, "Davi Rocha")); err != nil {
+		t.Fatal(err)
+	}
+	p.canDa.conferir(t, "Davi, aceito", []string{"aguardando", "aceito", "palco"}, false)
+	// O Davi nunca entrou, e a senha dele venceu: a página continua aberta, e o palco não vai mais a ela.
+	p.andar(duracaoSenha + time.Second)
+	p.g.Varrer()
+	p.anaEBia()
+	p.canDa.conferir(t, "Davi, com a senha vencida", []string{"aguardando", "aceito", "palco"}, false)
+}
+
+func TestPalco_TiradoRecusadoEOutraReuniao(t *testing.T) {
+	p := novaCenaPalco(t)
+	p.anaEMaria()
+	// Outra reunião, com o Carlos e a página do Caio, os dois dentro.
+	r2 := p.cena.marcada()
+	p.cena.dentro(r2, p.cena.carlos)
+	caio, _, canC := p.cena.aceito(r2, p.cena.carlos, "Caio Dias")
+	p.cena.entrou(r2, caio)
+	if err := p.g.Tirar(p.ctx, p.r, p.cena.ana.p.ID, p.maria); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.g.Recusar(p.ctx, p.r, p.cena.ana.p.ID, p.pedidoDe(p.r, p.cena.ana, "Davi Rocha")); err != nil {
+		t.Fatal(err)
+	}
+	antesM := p.canM.tipos()
+	p.anaEBia()
+	if err := p.g.Camera(p.pb, false); err != nil {
+		t.Fatal(err)
+	}
+	p.canM.conferir(t, "Maria, tirada", antesM, true)
+	p.canDa.conferir(t, "Davi, recusado", []string{"aguardando", "recusado"}, true)
+	canC.conferir(t, "Caio, da outra reunião", []string{"aguardando", "aceito"}, false)
+}
+
+func TestPalco_SoComATela(t *testing.T) {
+	p := novaCenaPalco(t)
+	p.entrouTela(p.r, p.maria)
+	p.saiu(p.r, p.maria) // a câmera da Maria saiu; a tela dela continua na reunião
+	antes := quantosPalcos(p.canM)
+	p.palco(1920, 1080, qd(p.maria, true, 0, 0, 1280, 720), qd(p.ana, false, 1280, 0, 640, 360))
+	if quantosPalcos(p.canM) != antes+1 {
+		t.Fatalf("a página que está na reunião só pela tela recebeu %q", p.canM.tipos())
+	}
+}
+
+func TestCamera_SemQuadro(t *testing.T) {
+	p := novaCenaPalco(t)
+	p.anaEBia() // a Maria não tem quadro
+	antesM, antesB := len(p.canM.mensagens()), len(p.canB.mensagens())
+	if err := p.g.Camera(p.pm, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(p.canM.mensagens()) != antesM || len(p.canB.mensagens()) != antesB {
+		t.Fatalf("o aviso de quem não tem quadro mandou o palco: a Maria %q, a Bia %q", p.canM.tipos(), p.canB.tipos())
+	}
+	// O valor fica: o palco com o quadro dela o leva.
+	p.anaEMaria()
+	if got := ultimoPalco(t, p.canB)["quadros"].([]any)[1].(map[string]any)["semCamera"]; got != true {
+		t.Fatalf("o palco com o quadro da Maria saiu com semCamera %v; queria true", got)
+	}
+}
+
+func TestCamera_SoATela(t *testing.T) {
+	p := novaCenaPalco(t)
+	p.entrouTela(p.r, p.maria)
+	p.palco(1920, 1080, qd(p.maria, true, 0, 0, 1280, 720), qd(p.ana, false, 1280, 0, 640, 360))
+	antes := quantosPalcos(p.canB)
+	if err := p.g.Camera(p.pm, false); err != nil { // a Maria só tem o quadro da tela
+		t.Fatal(err)
+	}
+	if quantosPalcos(p.canB) != antes {
+		t.Fatal("o aviso de quem só tem o quadro da tela mandou o palco")
 	}
 }

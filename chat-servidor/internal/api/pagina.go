@@ -515,7 +515,8 @@ func (s *servidor) mensagemDaPagina(c *canalPagina, st *estadoDaPagina, tipo web
 		st.desistiu = true // o pedido já saiu: o Desistir do fim não precisa de outro
 		c.Fechar()
 	case "camera":
-		// O aviso da câmera nunca tem resposta quando vale: o palco, se mudou, chega às páginas aceitas pelo gerente.
+		// O aviso da câmera nunca tem resposta quando vale: o palco, se mudou, chega pelo gerente às páginas aceitas que
+		// estão na reunião, ou entrando.
 		if m.Ligada == nil || errors.Is(s.gerente.Camera(st.pedido, *m.Ligada), reunioes.ErrForaDeOrdem) {
 			c.Mandar(erroDoCanal("invalido"))
 		}
