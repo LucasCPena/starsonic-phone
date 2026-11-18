@@ -511,11 +511,11 @@ Na ordem contrária, a página antiga mostraria o mosaico novo cru, sem os nomes
 
 A reunião de teste é a da seção 25: na administração do chat, `Reuniões`, cartão `REUNIÃO DE TESTE`, `Criar a reunião de teste`. Guarde o link fora do repositório. Em cada aparelho ou janela, escreva um nome diferente (o nome do aparelho, por exemplo): é pelo nome que você confere o quadro de cada pessoa.
 
-**Um defeito conhecido (do FreeSWITCH, e não das telas que você testa).** Nesta versão, o mosaico muda de tamanho em alguns momentos: quando alguém começa ou para de compartilhar a tela; na passagem de 4 para 5 pessoas e de 9 para 10 (e na volta); e, durante um compartilhamento, de 2 para 3 e de 4 para 5 pessoas (e na volta). Raramente, nessa troca, o FreeSWITCH para: **todos caem da reunião ao mesmo tempo**, em toda reunião que estiver no servidor de vídeo naquele instante. O servidor volta sozinho em 5 segundos. A página mostra `A reunião acabou` ou `Você saiu da reunião` (com o `Entrar de novo`).
+**Um defeito conhecido (do FreeSWITCH, e não das telas que você testa).** Nesta versão, o mosaico muda de tamanho em alguns momentos: quando alguém começa ou para de compartilhar a tela; na passagem de 4 para 5 pessoas e de 9 para 10 (e na volta); e, durante um compartilhamento, de 2 para 3 e de 4 para 5 pessoas (e na volta). Numa dessas trocas, o FreeSWITCH pode parar: **todos caem da reunião ao mesmo tempo**, em toda reunião que estiver no servidor de vídeo naquele instante. Em um teste de esforço, com uma troca de tamanho a cada 0,1 segundo, ele parou depois de 535 trocas; nos testes automáticos do dia, com umas centenas de trocas, parou uma vez, no começo de um compartilhamento comum. Ou seja, pode acontecer em qualquer uma dessas trocas. O serviço liga de novo sozinho 5 segundos depois. A página mostra `A reunião acabou`, sem botão (abra o link de novo), ou `Você saiu da reunião`, com o `Entrar de novo`.
 
 Se isso acontecer:
 
-1. Espere uns 10 segundos e entre de novo pelo link (ou pelo `Entrar de novo`, se ele aparecer). Numa reunião marcada, quem é de fora espera um colega entrar de novo.
+1. Espere uns 10 segundos e entre de novo pelo mesmo link da reunião de teste (ou pelo `Entrar de novo`, se ele aparecer).
 2. Anote a hora e o que estava acontecendo (por exemplo, "o PC começou a compartilhar a tela").
 3. Siga com o roteiro, e conte no fim.
 
@@ -525,7 +525,7 @@ Para confirmar que foi isso, na VM do servidor de vídeo, rode:
 sudo journalctl -u starsonic-freeswitch -n 50 --no-pager
 ```
 
-Ele mostra o serviço terminando e ligando de novo naquele minuto (pode haver linhas `VPX encode error` um pouco antes). O conserto é no próprio FreeSWITCH, com um pacote corrigido, e é a próxima coisa a ser entregue. Até lá, esta versão é para testar as telas: nenhuma reunião de verdade nela.
+Se foi há pouco, ele mostra o serviço terminando e ligando de novo (pode haver linhas `VPX encode error` um pouco antes). O conserto é no próprio FreeSWITCH, com um pacote corrigido, e é a próxima coisa a ser entregue. Até lá, esta versão é para testar as telas: nenhuma reunião de verdade nela.
 
 | # | Passo | Resultado esperado | PC | Celular |
 |---|-------|--------------------|----|---------|
