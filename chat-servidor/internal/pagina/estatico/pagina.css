@@ -906,9 +906,24 @@ button.quadro {
   display: none;
 }
 
-/* O quadro que aumenta: com o mouse em cima ou com o foco do teclado, a borda ciano por dentro e a pílula Aumentar. */
-button.quadro:hover,
+/* O quadro que aumenta: com o mouse em cima ou com o foco do teclado, a borda ciano por dentro e a pílula Aumentar. A
+   borda é uma camada por cima da imagem (o canvas cobriria o contorno do próprio botão), e ela é o anel do foco do
+   quadro. */
 button.quadro:focus-visible {
+  outline: none;
+}
+
+button.quadro::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+button.quadro:hover::after,
+button.quadro:focus-visible::after {
   outline: 3px solid var(--ciano);
   outline-offset: -3px;
 }

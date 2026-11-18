@@ -242,6 +242,48 @@ function dentro(de: { x: number; y: number; width: number; height: number }, for
   expect(de.y + de.height, `${onde}: o fundo`).toBeLessThanOrEqual(fora.y + fora.height + 1);
 }
 
+/**
+ * A cor de verdade, na tela, de cada ponto (em px da página): a página é fotografada, e a foto é lida numa página em
+ * branco do mesmo contexto (a da reunião tem o CSP, que não deixa ler a foto). O nome da cor mais perto, ou 'outra'.
+ */
+async function coresNaTela(page: Page, pontos: Array<{ x: number; y: number }>): Promise<string[]> {
+  const foto = (await page.screenshot()).toString('base64');
+  const branca = await page.context().newPage();
+  try {
+    const rgbs = await branca.evaluate(
+      async ({ foto, pontos }) => {
+        const bytes = Uint8Array.from(atob(foto), (c) => c.charCodeAt(0));
+        const imagem = await createImageBitmap(new Blob([bytes], { type: 'image/png' }));
+        const c = new OffscreenCanvas(imagem.width, imagem.height);
+        const ctx = c.getContext('2d') as OffscreenCanvasRenderingContext2D;
+        ctx.drawImage(imagem, 0, 0);
+        return pontos.map(({ x, y }) => [...ctx.getImageData(Math.round(x), Math.round(y), 1, 1).data.slice(0, 3)]);
+      },
+      { foto, pontos },
+    );
+    const nomes: Record<string, readonly number[]> = { ...CORES, ciano: [0, 194, 203] };
+    const distancia = (p: readonly number[], q: readonly number[]) => p.reduce((d, v, i) => d + Math.abs(v - q[i]), 0);
+    return rgbs.map((rgb) => Object.entries(nomes).find(([, cor]) => distancia(rgb, cor) < 60)?.[0] ?? 'outra');
+  } finally {
+    await branca.close();
+  }
+}
+
+/** A cor na tela da borda de dentro do quadro: no meio de cada lado, a 1 px da beira (longe da pílula e da etiqueta) */
+async function bordaDo(page: Page, chave: string): Promise<string[]> {
+  const c = await caixa(quadro(page, chave));
+  const meio = { x: c.x + c.width / 2, y: c.y + c.height / 2 };
+  return coresNaTela(page, [
+    { x: meio.x, y: c.y + 1 },
+    { x: c.x + 1, y: meio.y },
+    { x: meio.x, y: c.y + c.height - 2 },
+    { x: c.x + c.width - 2, y: meio.y },
+  ]);
+}
+
+const CIANO = ['ciano', 'ciano', 'ciano', 'ciano'];
+const longeDosQuadros = (page: Page) => page.mouse.move(640, 20);
+
 // ---- A página na reunião. ----
 
 // Todo teste confere, no fim, que a página não quebrou o CSP e que nada do palco (os nomes) foi ao console.
@@ -468,7 +510,7 @@ test('o teclado e os nomes ditos', async ({ page }) => {
   }
   // Com o foco do teclado, a borda ciano por dentro e a pílula Aumentar.
   const contorno = await botao(page, nomes[3]).evaluate((b) => {
-    const s = getComputedStyle(b);
+    const s = getComputedStyle(b, '::after');
     return `${s.outlineStyle} ${s.outlineWidth} ${s.outlineColor} ${s.outlineOffset}`;
   });
   expect(contorno).toBe('solid 3px rgb(0, 194, 203) -3px');
@@ -819,6 +861,104 @@ test('a conexão caída cobre o palco', async ({ page }) => {
     y: a.y + a.height / 2,
   });
   expect(deCima).toBe(true);
+});
+
+test('a borda ciano aparece por cima da imagem', async ({ page }) => {
+  // O que se vê de verdade: com o mouse em cima, ou com o foco do teclado, a borda de dentro do quadro é ciano; sem os
+  // dois, é a imagem.
+  await naReuniaoCom(page, TRES);
+  await longeDosQuadros(page);
+  expect(await bordaDo(page, camDe(CARLOS))).toEqual(['azul', 'azul', 'azul', 'azul']);
+  await quadro(page, camDe(CARLOS)).hover();
+  expect(await bordaDo(page, camDe(CARLOS))).toEqual(CIANO);
+  await longeDosQuadros(page);
+  expect(await bordaDo(page, camDe(CARLOS))).toEqual(['azul', 'azul', 'azul', 'azul']);
+  // O foco do teclado: o Tab do título vai à Ana, e depois ao Carlos.
+  await expect(titulo(page, 'Planejamento de dezembro')).toBeFocused();
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('Tab');
+  await expect(quadro(page, camDe(CARLOS))).toBeFocused();
+  expect(await bordaDo(page, camDe(CARLOS))).toEqual(CIANO);
+  expect(await bordaDo(page, camDe(ANA))).toEqual(['vermelho', 'vermelho', 'vermelho', 'vermelho']);
+
+  // Na faixa também: o Enter aumenta o Carlos, e o Tab do Ver todos vai à Ana da faixa.
+  await page.keyboard.press('Enter');
+  await expect(botao(page, 'Ver todos')).toBeFocused();
+  await expect.poll(() => corDo(page, camDe(ANA))).toBe('vermelho');
+  expect(await bordaDo(page, camDe(ANA))).toEqual(['vermelho', 'vermelho', 'vermelho', 'vermelho']);
+  await page.keyboard.press('Tab');
+  await expect(quadro(page, camDe(ANA))).toBeFocused();
+  expect(await bordaDo(page, camDe(ANA))).toEqual(CIANO);
+});
+
+test.describe('o celular em pé, com o teclado', () => {
+  test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+
+  test('a borda ciano do foco', async ({ page }) => {
+    await naReuniaoCom(page, TRES);
+    await expect(titulo(page, 'Planejamento de dezembro')).toBeFocused();
+    expect(await bordaDo(page, camDe(ANA))).toEqual(['vermelho', 'vermelho', 'vermelho', 'vermelho']);
+    await page.keyboard.press('Tab');
+    await expect(quadro(page, camDe(ANA))).toBeFocused();
+    expect(await bordaDo(page, camDe(ANA))).toEqual(CIANO);
+  });
+});
+
+test.describe('o foco não se perde quando a tela se arruma', () => {
+  const noBody = (page: Page) => page.evaluate(() => document.activeElement === document.body);
+
+  test('o Ver todos com o foco, e o compartilhamento começa', async ({ page }) => {
+    // O palco da tela é de outro tamanho: ele entra pela imagem do mosaico, e não por um desenho do pagina.js.
+    const { canal } = await naReuniaoCom(page, TRES);
+    await quadro(page, camDe(CARLOS)).click();
+    await expect(botao(page, 'Ver todos')).toBeFocused();
+    canal.mandar(mensagemDo(comTela(ANA)));
+    await outraImagem(page);
+    await expect(botao(page, 'Ver todos')).toBeFocused();
+    await mosaico(page, comTela(ANA));
+    await expect(botao(page, 'Ver todos')).toBeHidden();
+    // O foco vai ao quadro de quem era o grande, que agora é um botão da faixa.
+    await expect(quadro(page, camDe(CARLOS))).toBeFocused();
+    expect(await noBody(page)).toBe(false);
+  });
+
+  test('o Ver todos com o foco, e a pessoa aumentada sai', async ({ page }) => {
+    const { canal } = await naReuniaoCom(page, TRES);
+    await quadro(page, camDe(CARLOS)).click();
+    await expect(botao(page, 'Ver todos')).toBeFocused();
+    canal.mandar(mensagemDo({ ...TRES, quadros: TRES.quadros.filter((q) => q.pessoa !== CARLOS) }));
+    await expect(quadro(page, camDe(CARLOS))).toHaveCount(0);
+    await expect(titulo(page, 'Planejamento de dezembro')).toBeFocused();
+  });
+
+  test('o quadro com o foco, e a pessoa dele sai', async ({ page }) => {
+    const { canal } = await naReuniaoCom(page, QUATRO);
+    await quadro(page, camDe(ANA)).focus();
+    canal.mandar(mensagemDo({ ...QUATRO, quadros: QUATRO.quadros.filter((q) => q.pessoa !== ANA) }));
+    await expect(quadro(page, camDe(ANA))).toHaveCount(0);
+    await expect(titulo(page, 'Planejamento de dezembro')).toBeFocused();
+  });
+
+  test('o quadro com o foco deixa de ser botão', async ({ page }) => {
+    // A grade cai para um outro só: o quadro do Carlos vira uma imagem, e não um botão.
+    const { canal } = await naReuniaoCom(page, TRES);
+    await quadro(page, camDe(CARLOS)).focus();
+    canal.mandar(mensagemDo({ ...TRES, quadros: TRES.quadros.filter((q) => q.pessoa === CARLOS || q.voce) }));
+    await expect(quadro(page, camDe(CARLOS))).toHaveAttribute('role', 'img');
+    await expect(titulo(page, 'Planejamento de dezembro')).toBeFocused();
+  });
+
+  test('o foco nos controles não é tocado', async ({ page }) => {
+    const { canal } = await naReuniaoCom(page, TRES);
+    await botao(page, 'Câmera').focus();
+    await comOPalco(page, canal, comTela(ANA));
+    await expect(quadro(page, telaDe(ANA))).toHaveAttribute('data-papel', 'grande');
+    await expect(botao(page, 'Câmera')).toBeFocused();
+    canal.mandar(mensagemDo(DOIS));
+    await mosaico(page, DOIS);
+    await page.clock.runFor(3_000);
+    await expect(botao(page, 'Câmera')).toBeFocused();
+  });
 });
 
 test('a página não quebra o CSP', async ({ page }) => {

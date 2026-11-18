@@ -40,6 +40,8 @@ export function criarQuadros({ raiz, relogio }) {
   const lugar = raiz.querySelector('.quadros');
   const gire = raiz.querySelector('.gire');
   const voltar = new Map([...raiz.querySelectorAll('[data-voltar]')].map((b) => [b.dataset.voltar, b]));
+  // O título da reunião: o lugar do foco que a arrumação tirou da tela, como no pagina.js.
+  const titulo = raiz.closest('[data-tela]')?.querySelector('h1[tabindex="-1"]') ?? null;
 
   // O que o pagina.js deu no último desenho.
   let naReuniao = false;
@@ -60,7 +62,6 @@ export function criarQuadros({ raiz, relogio }) {
   let faixa = null;
   let arrumado = null;
   let faixasDoVoce = null; // as faixas de câmera vivas que o <video> do Você recebeu
-  let focarDepois = null; // o quadro que tinha o foco e foi trocado (de botão para imagem, ou ao contrário)
 
   // ---- A sincronia: o sincronizar a cada imagem, e o depois que o proximo pede. ----
 
@@ -146,14 +147,16 @@ export function criarQuadros({ raiz, relogio }) {
     if (!naReuniao) return;
     const { modo, palco: p, esperando } = oQueSeVe();
     const emPe = window.innerWidth <= 600 && window.innerHeight > window.innerWidth;
+    // O foco antes de mexer no DOM: o elemento que sai da página o leva junto.
+    const foco = focoAntes();
     raiz.dataset.modo = modo;
     raiz.toggleAttribute('data-em-pe', emPe);
     if (modo === 'mosaico') {
       tirarTudo();
+      devolverOFoco(foco);
       return;
     }
     const area = { l: raiz.clientWidth, a: raiz.clientHeight };
-    const foco = document.activeElement;
     arrumado = arrumar({ palco: p, area, emPe, aumentado });
     const doPalco = p?.quadros ?? [];
     const minhas = new Set(doPalco.filter((q) => q.tela && q.voce).map(chaveDe));
@@ -175,21 +178,32 @@ export function criarQuadros({ raiz, relogio }) {
     }
     ordenar(lugar, faixa ? [...filhos.area, faixa] : filhos.area);
     if (faixa) ordenar(faixa, filhos.faixa);
-    devolverOFoco(foco);
     porOVoltar(arrumado);
     porOGire(arrumado.gire);
+    devolverOFoco(foco);
     pintar();
   }
 
-  // O quadro com o foco que mudou de lugar o perdeu: ele volta. O que foi trocado (de botão para imagem, ou ao
-  // contrário) passa o foco ao novo, se o novo é botão.
+  // O foco de antes da arrumação, só quando ele está no palco (o dos controles nunca é tocado): o elemento, o quadro
+  // dele e quem era o grande.
+  function focoAntes() {
+    const el = document.activeElement;
+    if (!(el instanceof HTMLElement) || !raiz.contains(el)) return null;
+    return { el, chave: el.dataset.quadro ?? null, grande: arrumado?.grande ?? null };
+  }
+
+  // Depois da arrumação, o foco que estava no palco continua num lugar que faz sentido, e nunca no body: o mesmo
+  // elemento, se ele ainda está na tela e é botão (o que só mudou de lugar o perdeu, e volta); senão, o quadro de quem
+  // era o grande, se ele é botão; senão, o quadro da mesma pessoa, se ele é botão; senão, o título da reunião.
   function devolverOFoco(foco) {
-    const trocado = focarDepois === null ? null : quadros.get(focarDepois)?.el;
-    focarDepois = null;
-    if (trocado?.tagName === 'BUTTON') trocado.focus({ preventScroll: true });
-    else if (foco instanceof HTMLElement && foco !== document.activeElement && foco.isConnected) {
-      foco.focus({ preventScroll: true });
-    }
+    if (foco === null) return;
+    const botaoNaTela = (el) => el?.tagName === 'BUTTON' && el.isConnected && !el.disabled && !el.closest('[hidden]');
+    const destino = [
+      foco.el,
+      quadros.get(foco.grande)?.el,
+      quadros.get(foco.chave)?.el,
+    ].find(botaoNaTela) ?? titulo;
+    if (destino && document.activeElement !== destino) destino.focus({ preventScroll: true });
   }
 
   // O Você mostra a câmera própria, pelo cam da página (e não pelo semCamera do palco).
@@ -240,11 +254,9 @@ export function criarQuadros({ raiz, relogio }) {
     let quadro = quadros.get(q.chave);
     const elemento = q.botao ? 'BUTTON' : 'DIV';
     if (quadro && (quadro.el.tagName !== elemento || quadro.q.tipo !== q.tipo)) {
-      const tinhaOFoco = document.activeElement === quadro.el;
       quadro.el.remove();
       quadros.delete(q.chave);
       quadro = null;
-      if (tinhaOFoco) focarDepois = q.chave;
     }
     if (!quadro) {
       quadro = criarOQuadro(q);
