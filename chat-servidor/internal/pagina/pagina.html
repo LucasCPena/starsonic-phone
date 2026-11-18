@@ -35,6 +35,8 @@
 <symbol id="i-compartilhar" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line><polyline points="9 10 12 7 15 10"></polyline><line x1="12" y1="7" x2="12" y2="13"></line></symbol>
 <symbol id="i-parar-tela" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line><line x1="9" y1="7" x2="15" y2="13"></line><line x1="15" y1="7" x2="9" y2="13"></line></symbol>
 <symbol id="i-girar" viewBox="0 0 24 24"><rect x="7" y="2" width="10" height="20" rx="2" transform="rotate(90 12 12)"></rect><line x1="11" y1="18" x2="13" y2="18" transform="rotate(90 12 12)"></line></symbol>
+<symbol id="i-aumentar" viewBox="0 0 24 24"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line></symbol>
+<symbol id="i-grade" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></symbol>
 </svg>
 
 <header class="topo">
@@ -293,7 +295,7 @@
 </div>
 </section>
 
-<!-- A reunião: o mosaico que o servidor monta, e os controles. -->
+<!-- A reunião: um quadro por pessoa, recortado do mosaico que o servidor monta (quadros.js), e os controles. -->
 <section class="tela tela-reuniao" data-tela="reuniao" hidden>
 <header class="reuniao-topo">
 <img class="logo" src="/admin/estatico/logo-negativo.png" alt="Starsonic soluções de voz e dados">
@@ -308,9 +310,24 @@
 <span>Você está compartilhando a tela</span>
 </p>
 </header>
+<!-- A área dos quadros. O mosaico continua tocando: fora da vista enquanto há quadros, e inteiro sem o palco. -->
 <div class="palco">
 <div class="moldura">
 <video id="mosaico" autoplay playsinline muted></video>
+</div>
+<button type="button" class="voltar" data-voltar="verTodos" hidden>
+<svg class="icone icone-16" aria-hidden="true"><use href="#i-grade"></use></svg>
+<span>Ver todos</span>
+</button>
+<button type="button" class="voltar" data-voltar="voltarParaATela" hidden>
+<svg class="icone icone-16" aria-hidden="true"><use href="#i-tela"></use></svg>
+<span>Voltar para a tela</span>
+</button>
+<div class="quadros"></div>
+<p class="gire" hidden>
+<svg class="icone icone-16" aria-hidden="true"><use href="#i-girar"></use></svg>
+<span>Gire o celular para ver a tela maior.</span>
+</p>
 <div class="caiu" hidden>
 <div class="caiu-cartao">
 <div class="girando girando-ambar" aria-hidden="true">
@@ -322,11 +339,6 @@
 </div>
 </div>
 </div>
-</div>
-<p class="gire">
-<svg class="icone icone-16" aria-hidden="true"><use href="#i-girar"></use></svg>
-<span>Gire o celular para ver a reunião maior.</span>
-</p>
 <nav class="controles" aria-label="Controles da reunião">
 <button type="button" class="botao controle alternar" data-botao="microfone" aria-pressed="true">
 <svg class="icone icone-20 icone-ligado" aria-hidden="true"><use href="#i-mic"></use></svg>

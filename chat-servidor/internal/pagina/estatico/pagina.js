@@ -1,9 +1,10 @@
-// A camada da tela da página da reunião. Ela desenha o estado do cérebro (estado.js), transforma os cliques e o nome em
-// eventos, e roda os efeitos com os adaptadores: a rede (rede.js), a mídia (midia.js), as ligações (ligacao.js) e o
-// relógio. Os eventos que um efeito dá entram numa fila e passam pelo cérebro um de cada vez, depois dos efeitos do
-// evento de agora. Nada do estado nem dos efeitos vai ao console: eles levam o bilhete, as senhas, as credenciais do
-// TURN e a chave de volta.
+// A camada da tela da página da reunião. Ela desenha o estado do cérebro (estado.js), com os quadros da reunião
+// (quadros.js), transforma os cliques e o nome em eventos, e roda os efeitos com os adaptadores: a rede (rede.js), a
+// mídia (midia.js), as ligações (ligacao.js) e o relógio. Os eventos que um efeito dá entram numa fila e passam pelo
+// cérebro um de cada vez, depois dos efeitos do evento de agora. Nada do estado nem dos efeitos vai ao console: eles
+// levam o bilhete, as senhas, as credenciais do TURN e a chave de volta.
 import { cabecalho, inicial, nomeValido, quando, transicao } from './estado.js';
+import { criarQuadros } from './quadros.js';
 
 /** A espera do ligar da principal pela câmera que a pessoa acabou de ligar e que ainda está sendo pedida, em ms. */
 const PRAZO_DA_CAMERA_MS = 3000;
@@ -78,6 +79,7 @@ export function iniciar(raiz, servicos) {
   const midia = servicos.midia(despachar);
   const ligacao = servicos.ligacao(despachar);
   const { relogio } = servicos;
+  const quadros = criarQuadros({ raiz: um('.palco'), relogio });
 
   function rodar(efeito) {
     try {
@@ -252,6 +254,13 @@ export function iniciar(raiz, servicos) {
     um('.selo-tela').hidden = e.telaCompartilhada !== 'noAr';
     um('.selo-gravado').hidden = e.telaCompartilhada === 'noAr';
     um('.caiu').hidden = !(e.tela === 'reuniao' && e.reconectando > 0);
+    quadros.desenhar({
+      naReuniao: e.tela === 'reuniao',
+      noAr: e.principal === 'noAr',
+      palco: e.palco,
+      cam: e.cam,
+      fluxo: midia.fluxo(),
+    });
     // O Compartilhar a tela só vale com o canal aberto e a ligação no ar: o canal abrindo e o voltando contam como
     // fechados, e a conexão caída também.
     compartilhar.hidden = !temCaptura || compartilhando;
@@ -312,6 +321,7 @@ export function iniciar(raiz, servicos) {
   // volta do cache do navegador (o voltar dele) carrega de novo, do começo.
   window.addEventListener('pagehide', () => {
     indoEmbora = true;
+    quadros.parar();
     rodar({ tipo: 'desligar', qual: 'principal' });
     rodar({ tipo: 'desligar', qual: 'tela' });
     rodar({ tipo: 'fecharCanal' });

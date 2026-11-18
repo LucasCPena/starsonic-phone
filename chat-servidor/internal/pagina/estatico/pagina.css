@@ -747,8 +747,11 @@ main {
   font-weight: 700;
 }
 
-/* O palco: a moldura 16:9 do mosaico, do maior tamanho que cabe, até 1120 px. */
+/* A área dos quadros: entre a faixa de cima e os controles. O quadros.js põe cada quadro no lugar que o arrumar
+   (palco.js) dá, pelo elemento.style; o tamanho da área é o de dentro dela, sem a margem. No celular em pé (o
+   data-em-pe, que o quadros.js põe com a mesma regra do arrumar), a margem é menor. */
 .palco {
+  position: relative;
   flex: 1 1 auto;
   min-height: 0;
   margin: 12px 24px;
@@ -756,13 +759,32 @@ main {
   display: flex;
   align-items: center;
   justify-content: center;
+  background: var(--reuniao);
 }
 
+.palco[data-em-pe] {
+  margin: 8px;
+}
+
+/* O mosaico inteiro (o servidor de vídeo sem o palco): a moldura 16:9, do maior tamanho que cabe, até 1120 px. */
 .moldura {
   position: relative;
   width: min(100%, 1120px); /* sem as unidades do container */
   width: min(100cqw, 1120px, 100cqh * 16 / 9);
   aspect-ratio: 16 / 9;
+}
+
+/* Com os quadros (e na espera deles), a moldura fica fora da vista: 1 px, cortada e transparente, e sem o
+   display: none, porque o vídeo dela continua dando as imagens que os quadros recortam. */
+.palco:not([data-modo="mosaico"]) > .moldura {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
 }
 
 #mosaico {
@@ -774,9 +796,294 @@ main {
   object-fit: contain;
 }
 
-/* A conexão caída: por cima do mosaico; os controles continuam embaixo. */
+.quadros {
+  position: absolute;
+  inset: 0;
+}
+
+.palco[data-modo="mosaico"] > .quadros {
+  display: none;
+}
+
+/* ---- O quadro: um por pessoa (e um da tela). O fundo escuro enquanto não há imagem. ---- */
+
+.quadro {
+  position: absolute;
+  overflow: hidden;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: var(--imagem);
+  color: var(--branco);
+  font-family: inherit;
+  text-align: left;
+}
+
+button.quadro {
+  cursor: pointer;
+}
+
+.quadro canvas,
+.quadro video {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.quadro:not([data-mostra="video"]) canvas,
+.quadro:not([data-mostra="video"]) video {
+  visibility: hidden;
+}
+
+/* O Você: a câmera própria, espelhada, que preenche o quadro. */
+.quadro video {
+  object-fit: cover;
+  transform: scaleX(-1);
+}
+
+/* A tela compartilhada aparece inteira, no centro de uma área mais escura. */
+.quadro-tela[data-mostra="video"] {
+  background: var(--reuniao-barra);
+}
+
+/* A etiqueta do nome, embaixo, à esquerda, numa linha só, cortada com reticências. */
+.etiqueta {
+  --canto: 12px;
+  position: absolute;
+  left: var(--canto);
+  bottom: var(--canto);
+  max-width: calc(100% - 2 * var(--canto));
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.55);
+  color: var(--branco);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.etiqueta > span,
+.quadro-centro > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quadro-tela .etiqueta {
+  background: rgba(0, 0, 0, 0.72);
+}
+
+.etiqueta .icone {
+  width: 12px;
+  height: 12px;
+}
+
+/* Sem câmera: o nome no centro, e sem a etiqueta de baixo. */
+.quadro-centro {
+  position: absolute;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  color: #dfe5f5;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.quadro[data-mostra="sem-camera"] .quadro-centro {
+  display: flex;
+}
+
+.quadro[data-mostra="sem-camera"] .etiqueta {
+  display: none;
+}
+
+/* O quadro que aumenta: com o mouse em cima ou com o foco do teclado, a borda ciano por dentro e a pílula Aumentar. */
+button.quadro:hover,
+button.quadro:focus-visible {
+  outline: 3px solid var(--ciano);
+  outline-offset: -3px;
+}
+
+.pilula {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: none;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--ciano);
+  color: var(--sobre-ciano);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.pilula .icone {
+  width: 14px;
+  height: 14px;
+}
+
+button.quadro:hover .pilula,
+button.quadro:focus-visible .pilula {
+  display: inline-flex;
+}
+
+/* As medidas de cada lugar: o grande e a grade do PC; a faixa; o canto; e o celular em pé. */
+.quadro[data-papel="grande"] .etiqueta {
+  --canto: 14px;
+  gap: 8px;
+  padding: 5px 11px;
+  font-size: 15px;
+}
+
+.quadro[data-papel="grande"] .etiqueta .icone {
+  width: 16px;
+  height: 16px;
+}
+
+.quadro[data-papel="grande"] .quadro-centro,
+.quadro[data-papel="grade"] .quadro-centro {
+  font-size: 22px;
+}
+
+.quadro[data-papel="faixa"] {
+  border-radius: 10px;
+}
+
+.quadro[data-papel="faixa"] .etiqueta,
+.palco[data-em-pe] .quadro[data-papel="grade"] .etiqueta {
+  --canto: 6px;
+  gap: 5px;
+  padding: 2px 7px;
+  border-radius: 5px;
+  font-size: 12px;
+}
+
+.quadro[data-papel="faixa"] .pilula {
+  top: 6px;
+  right: 6px;
+  gap: 5px;
+  padding: 4px 9px;
+  font-size: 11.5px;
+}
+
+.quadro[data-papel="faixa"] .pilula .icone {
+  width: 12px;
+  height: 12px;
+}
+
+/* O Você flutuante no canto. */
+.quadro[data-papel="canto"] {
+  border: 2px solid var(--reuniao-barra);
+  border-radius: 10px;
+  box-shadow: 0 20px 46px -18px rgba(0, 0, 0, 0.52);
+}
+
+.quadro[data-papel="canto"] .etiqueta {
+  --canto: 8px;
+  padding: 3px 8px;
+  font-size: 12.5px;
+}
+
+.quadro[data-papel="faixa"] .quadro-centro,
+.quadro[data-papel="canto"] .quadro-centro,
+.palco[data-em-pe] .quadro .quadro-centro {
+  font-size: 14px;
+}
+
+.palco[data-em-pe] .quadro {
+  border-radius: 10px;
+}
+
+.palco[data-em-pe] .quadro[data-papel="grande"] .etiqueta {
+  --canto: 10px;
+  gap: 6px;
+  padding: 4px 9px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.palco[data-em-pe] .quadro[data-papel="grande"] .etiqueta .icone {
+  width: 12px;
+  height: 12px;
+}
+
+.palco[data-em-pe] .quadro[data-papel="grade"] .etiqueta {
+  font-size: 11.5px;
+}
+
+.palco[data-em-pe] .quadro[data-papel="canto"] .etiqueta {
+  --canto: 6px;
+  padding: 2px 6px;
+  border-radius: 5px;
+  font-size: 11px;
+}
+
+/* A faixa das outras pessoas: uma coluna à direita no PC, e uma linha embaixo no celular em pé. Ela rola. */
+.faixa {
+  position: absolute;
+  overflow: hidden;
+  scrollbar-width: none;
+}
+
+.faixa[data-eixo="y"] {
+  overflow-y: auto;
+}
+
+.faixa[data-eixo="x"] {
+  overflow-x: auto;
+}
+
+/* O Ver todos e o Voltar para a tela, sobre o quadro grande. */
+.voltar {
+  position: absolute;
+  z-index: 1;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 999px;
+  background: rgba(7, 11, 24, 0.78);
+  color: var(--branco);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.voltar:hover {
+  border-color: var(--branco);
+  text-decoration: underline;
+}
+
+/* O aviso de girar, no celular em pé com a tela compartilhada grande. */
+.gire {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--topo-rotulo);
+}
+
+/* A conexão caída: por cima da área inteira; os controles continuam embaixo. */
 .caiu {
   position: absolute;
+  z-index: 2;
   inset: 0;
   display: flex;
   align-items: center;
@@ -823,10 +1130,6 @@ main {
   border-width: 3px;
   border-color: var(--alerta-fundo);
   border-top-color: #c07a12;
-}
-
-.gire {
-  display: none;
 }
 
 .controles {
@@ -1084,15 +1387,11 @@ main {
     font-size: 14px;
   }
 
-  .palco {
-    margin: 0 8px;
-  }
-
   #mosaico {
     border-radius: 8px;
   }
 
-  /* No celular em pé, a moldura tem 210 px de altura: o cartão da conexão caída encolhe. */
+  /* No celular, a área é menor: o cartão da conexão caída encolhe. */
   .caiu {
     padding: 8px;
     border-radius: 8px;
@@ -1144,28 +1443,9 @@ main {
   }
 }
 
-/* No celular em pé, o convite para girar, embaixo do mosaico. */
-@media (max-width: 600px) and (orientation: portrait) {
-  .palco {
-    flex: 0 1 auto;
-    margin-top: auto;
-    aspect-ratio: 16 / 9;
-  }
-
-  .gire {
-    margin: 14px 18px auto;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    font-size: 13px;
-    color: var(--topo-rotulo);
-  }
-}
-
-/* O celular deitado: a faixa e os controles mais baixos, e o mosaico cresce. Os controles ficam com 44 px (o mínimo do
-   toque), e não os 52 px de "O visual": sem isso, o mosaico deitado não é maior que o em pé, e o "Gire o celular para
-   ver a reunião maior." não seria verdade. */
+/* O celular deitado: a faixa e os controles mais baixos, e a área dos quadros cresce. Os controles ficam com 44 px (o
+   mínimo do toque), e não os 52 px de "O visual": sem isso, a tela deitada não seria maior que a em pé, e o "Gire o
+   celular para ver a tela maior." não seria verdade. */
 @media (orientation: landscape) and (max-height: 500px) {
   .reuniao-topo {
     padding: 6px 16px;
@@ -1173,10 +1453,6 @@ main {
 
   .reuniao-topo .logo {
     height: 24px;
-  }
-
-  .palco {
-    margin: 8px 16px;
   }
 
   .controles {
