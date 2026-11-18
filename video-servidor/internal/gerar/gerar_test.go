@@ -177,7 +177,7 @@ func TestFreeSWITCH_Secoes(t *testing.T) {
 	}
 	// O opus.conf vai vazio: sem ele, o mod_opus escreve um [ERR] ao carregar e fica sem os padrões dele.
 	mesmos(t, "as configurações", configuracoes, []string{"switch.conf", "modules.conf", "console.conf",
-		"event_socket.conf", "xml_curl.conf", "sofia.conf", "conference.conf", "conference_layouts.conf", "opus.conf"})
+		"event_socket.conf", "xml_curl.conf", "sofia.conf", "conference.conf", "conference_layouts.conf", "opus.conf", "vpx.conf"})
 
 	mesmos(t, "switch.conf", configuracao(t, doc, "switch.conf").filho(t, "settings", "").parametros(), []string{
 		"rtp-start-port=16384", "rtp-end-port=16683", "max-sessions=100", "sessions-per-second=20",
@@ -657,5 +657,31 @@ func TestSemCamera(t *testing.T) {
 				t.Fatalf("o pixel (%d,%d) é %02X%02X%02X/%02X, want #1B2333", x, y, r>>8, g>>8, bl>>8, a>>8)
 			}
 		}
+	}
+}
+
+// O codificador do VP8 nunca muda o tamanho da imagem sozinho (o FreeSWITCH 1.11.3 deixa o rc_resize_allowed ligado
+// por padrão): o tamanho do mosaico é como a página sabe o layout. Ele usa até 4 threads. Só o perfil vp8, só os dois
+// parâmetros e o <codecs/> vazio: o resto fica com os padrões do init_vp8.
+func TestFreeSWITCH_VPX(t *testing.T) {
+	doc := documento(t, configDeTeste(), false)
+	vpx := configuracao(t, doc, "vpx.conf")
+	if len(vpx.Filhos) != 1 || vpx.Filhos[0].XMLName.Local != "profiles" {
+		t.Fatalf("o vpx.conf tem %d elementos, want só o <profiles>", len(vpx.Filhos))
+	}
+	perfis := vpx.filho(t, "profiles", "")
+	if len(perfis.Filhos) != 1 {
+		t.Fatalf("o vpx.conf tem %d perfis, want só o vp8", len(perfis.Filhos))
+	}
+	vp8 := perfis.filho(t, "profile", "vp8")
+	if got, want := vp8.parametros(), []string{"rc-resize-allowed=0", "enc-threads=cpu/2/4"}; !slices.Equal(got, want) {
+		t.Errorf("o perfil vp8:\n got %q\nwant %q", got, want)
+	}
+	// O <codecs/> vazio: sem ele, o FreeSWITCH escreve um [ERR] ao carregar ("no codecs in vp8").
+	if codecs := vp8.filho(t, "codecs", ""); len(codecs.Filhos) != 0 {
+		t.Errorf("o <codecs> do perfil vp8 tem %d elementos, want vazio", len(codecs.Filhos))
+	}
+	if len(vp8.Filhos) != 3 {
+		t.Errorf("o perfil vp8 tem %d elementos, want os 2 parâmetros e o <codecs/>", len(vp8.Filhos))
 	}
 }

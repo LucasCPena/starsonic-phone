@@ -150,6 +150,20 @@
 
     <!-- Sem esta seção, o mod_opus escreve um [ERR] ao carregar. Vazia, ele usa os padrões dele. -->
     <configuration name="opus.conf"/>
+
+    <!-- O codificador do VP8 do mosaico (o perfil vp8, que a conferência acha pelo nome do codec): ele nunca muda o
+         tamanho da imagem sozinho, porque o tamanho é como a página sabe o layout, e usa mais de uma thread. O resto
+         fica com os padrões do FreeSWITCH. -->
+    <configuration name="vpx.conf" description="VPX Config">
+      <profiles>
+        <profile name="vp8">
+          <param name="rc-resize-allowed" value="0"/>
+          <param name="enc-threads" value="cpu/2/4"/>
+          <!-- Vazio de propósito: sem ele, o FreeSWITCH escreve um [ERR] ("no codecs in vp8") ao carregar. -->
+          <codecs/>
+        </profile>
+      </profiles>
+    </configuration>
   </section>
 
   <!-- Quando o agente não responde ao mod_xml_curl, vale este dialplan: ninguém entra. -->
