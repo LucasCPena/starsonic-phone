@@ -62,7 +62,7 @@ Você deve ver uma linha com o IP público da VM (ou o do roteador, se ela fica 
 
 As outras portas dos programas ficam só dentro da VM: não abra nenhuma além dessas. Na VM, as portas TCP 80, 443 (ou a 7443, se o chat e o vídeo dividem um IP público só), 5061 e 5349 e a UDP 3478 têm de estar livres (a instalação confere).
 
-**3. A internet da VM.** Uma reunião com 10 pessoas usa cerca de 25 Mbit/s em cada sentido, para baixo e para cima. Com 2 reuniões ao mesmo tempo, o padrão, conte uns 50 Mbit/s. Uma VM no escritório precisa de uma internet boa também na subida; se não tiver, use uma VM na nuvem.
+**3. A internet da VM.** A que pesa é a de **subida**, a que sai da VM: o servidor manda a imagem de todos, num mosaico só, para cada pessoa (3 Mbit/s para cada uma, e 4 Mbit/s enquanto alguém compartilha a tela). Uma reunião com 10 pessoas usa, no máximo (com uma tela compartilhada), uns 40 Mbit/s saindo da VM (uns 30 sem tela compartilhada). A que chega à VM é menor: cada pessoa manda a câmera com até 1,5 Mbit/s, e quem compartilha a tela manda mais até 2,5 Mbit/s, ou seja, uns 18 Mbit/s com as 10 pessoas e a tela. Com 2 reuniões ao mesmo tempo, o padrão, conte uns 80 Mbit/s saindo da VM e uns 36 Mbit/s chegando. Uma VM no escritório precisa de uma internet boa também na subida, que costuma ser a menor das duas; se não tiver, use uma VM na nuvem.
 
 **4. O relógio certo, nas duas VMs** (a do chat e a de vídeo). Rode em cada uma:
 
