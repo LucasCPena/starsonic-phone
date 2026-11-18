@@ -6,7 +6,7 @@
   2. as telas do quadro, às 10:32;
   3. o funcionamento por dentro, às 10:37.
 
-  A spec escrita foi aprovada às 10:45. No mesmo dia, a leitura do FreeSWITCH e dois testes com ele mostraram que três pontos da seção 6 não funcionavam como escritos. Eles foram corrigidos, sem mudar as telas nem o comportamento aprovados: a seção 13 diz o que mudou e por quê. O responsável aprovou a correção, junto com o plano, às 11:48.
+  A spec escrita foi aprovada às 10:45. No mesmo dia, a leitura do FreeSWITCH e dois testes com ele mostraram que três pontos da seção 6 não funcionavam como escritos. Eles foram corrigidos, sem mudar as telas nem o comportamento aprovados: a seção 13 diz o que mudou e por quê. O responsável aprovou a correção, junto com o plano, às 11:48. A revisão final da execução, ainda em 18/11, ajustou mais cinco pontos, também sem mudar as telas: o fim da seção 13 os lista.
 - **Base:** esta spec completa a de 12/11/2026 (`2026-11-12-starsonic-phone-reunioes-link-design.md`) e muda as partes dela que a seção 8 lista. O resto daquela spec continua valendo.
 - **Versões alvo:**
   - o servidor do chat `0.2.0-rc.4`;
@@ -186,7 +186,7 @@ Os componentes estendem o que as telas 1 a 11 já usam, com as cores e as medida
   - O agente também escolhe o layout, pelo número de pessoas (`vid-layout`), e o tamanho do mosaico (`vid-res`).
   - Quando o layout novo tem menos células (alguém saiu, ou a tela entrou), quem está numa célula que ele não tem passa para a menor célula livre.
   - O FreeSWITCH não muda ninguém de lugar por conta própria: a ligação com reserva só entra na célula dela, e a ligação ainda sem reserva não aparece.
-  - Assim, de 1 a 4 pessoas o layout é o mesmo, e de 5 a 9 também. Quem entra ocupa uma célula livre, e quem já estava não muda de lugar. Os outros só mudam de lugar na passagem de 4 para 5 e de 9 para 10 pessoas, na volta, e no começo e no fim de um compartilhamento.
+  - Assim, de 1 a 4 pessoas o layout é o mesmo, e de 5 a 9 também. Quem entra ocupa uma célula livre, e quem já estava não muda de lugar. Os outros só mudam de lugar na passagem de 4 para 5 e de 9 para 10 pessoas, na volta, e no começo e no fim de um compartilhamento. Durante um compartilhamento, também na passagem de 2 para 3 e de 4 para 5 pessoas, e na volta.
 - **O compartilhamento.**
   - Quando a ligação de uma tela entra, o agente troca o tamanho e o layout pelos da apresentação e sobe a banda para 4 Mbit/s (`vid-bandwidth`).
   - Quando a última tela sai, ele volta ao tamanho e ao layout da grade, e aos 3 Mbit/s.
@@ -221,7 +221,7 @@ O "palco" é a descrição do mosaico de agora: o tamanho dele e a célula de ca
 
   - As medidas são em pontos do mosaico.
   - O evento não leva nome nenhum.
-- **O chat repassa o palco** a cada página aceita daquela reunião, pelo canal dela:
+- **O chat repassa o palco** a cada página aceita que está naquela reunião, ou entrando nela, pelo canal dela:
 
   ```json
   {"tipo": "palco", "largura": 1920, "altura": 1080,
@@ -231,7 +231,8 @@ O "palco" é a descrição do mosaico de agora: o tamanho dele e a célula de ca
 
   - O chat põe o `nome`, o `voce` (o quadro é de quem recebe a mensagem) e o `semCamera`.
   - Na tela compartilhada, o `quem` e o `nome` são os de quem compartilha, e o `tela` é verdadeiro.
-  - A página recebe o palco logo depois do `aceito` e do `voltou`, e a cada mudança.
+  - A página recebe o palco logo depois do `aceito`, depois do `voltou` se ela está na reunião, quando pede uma senha da câmera (é o que serve ao `Entrar de novo`), e a cada mudança.
+  - Quem saiu da reunião, ou foi aceito e nunca entrou, deixa de receber. A página dessa pessoa continua com o canal aberto, mas o palco diz quem está na reunião, e isso é só de quem está nela.
 - **A página avisa a câmera dela** ao chat, por uma mensagem nova:
 
   ```json
@@ -240,7 +241,7 @@ O "palco" é a descrição do mosaico de agora: o tamanho dele e a célula de ca
 
   - Ela manda depois do `aceito` e do `voltou`, e a cada vez que a pessoa liga ou desliga a câmera.
   - Antes do `aceito`, a mensagem é fora de ordem (`erro invalido`).
-  - O chat guarda isso por participante, e manda o palco de novo às páginas da reunião.
+  - O chat guarda isso por participante, e manda o palco de novo às páginas da reunião quando essa pessoa tem um quadro nele.
   - São no máximo 30 por minuto por canal. As que passam disso são ignoradas, sem resposta. Elas não contam nas 20 mensagens por minuto do canal (seção 10 do `docs/chat-protocolo.md`).
 
 ### 6.3 A página
@@ -255,11 +256,17 @@ O "palco" é a descrição do mosaico de agora: o tamanho dele e a célula de ca
   - ele devolve o lugar e o tamanho de cada quadro na tela, e o recorte de cada um no mosaico;
   - ele guarda as regras do aumentar e da tela compartilhada (seção 4.2).
 - **Sem o palco** (um servidor de vídeo antigo): se nenhum palco chega em 3 s depois de a ligação ficar no ar, a página mostra o mosaico inteiro, como na rc.3. Quando um palco chega, ela passa aos quadros.
+- **O palco que deixa de valer.** A página esquece o palco, e depois de 3 s mostra o mosaico inteiro, em dois casos:
+  - ela perde o canal de vez e continua na reunião (o chat reiniciou, as três tentativas de voltar falharam, ou o link venceu): ninguém mais atualizaria aquele palco;
+  - chega um palco que ela não consegue ler: é sinal de que o anterior já não vale.
+
+  O mosaico inteiro é sempre verdadeiro. Os quadros voltam quando a pessoa entra de novo.
 - **O palco e o vídeo andam juntos pelo tamanho.** O palco chega logo, e a imagem de um layout novo leva de 0,3 a 0,8 s. Por isso a página só desenha os quadros quando o tamanho da imagem é o do palco:
   - um palco novo do mesmo tamanho vale na hora: alguém entrou ou saiu, e os outros não mudaram de célula;
   - um palco novo de outro tamanho espera, e a página continua com o anterior enquanto o vídeo tem o tamanho dele;
   - quando o tamanho do vídeo muda para o do palco novo, os quadros mostram o fundo escuro com o nome por 0,6 s, e depois o vídeo;
-  - o quadro de quem acabou de entrar mostra o fundo escuro com o nome por 1 s;
+  - o quadro de quem acabou de entrar, ou de quem mudou de célula sem o tamanho mudar, mostra o fundo escuro com o nome por 1 s;
+  - nas duas esperas, o quadro só sai do fundo escuro com uma imagem que chegou depois do fim da espera: se o vídeo travou, ele continua escuro, com o nome, até a imagem andar de novo;
   - se o tamanho do vídeo não é o do palco por 3 s, a página mostra o mosaico inteiro, até chegar um palco do tamanho do vídeo.
 - **O tamanho** é o de cada imagem do vídeo, que o `requestVideoFrameCallback` diz. Sem ele, é o do elemento de vídeo.
 - **Os nomes** são texto da página, por cima do quadro.
@@ -286,7 +293,7 @@ O "palco" é a descrição do mosaico de agora: o tamanho dele e a célula de ca
 | A banda da tela, de quem compartilha para o servidor | até 1 Mbit/s | até 2,5 Mbit/s |
 | A espera do palco antes de mostrar o mosaico inteiro | — | 3 s |
 | A espera dos quadros depois de o tamanho do vídeo mudar | — | 0,6 s |
-| O fundo escuro no quadro de quem acabou de entrar | — | 1 s |
+| O fundo escuro no quadro de quem acabou de entrar ou mudou de célula | — | 1 s |
 | Os avisos da câmera, por canal | — | até 30 por minuto |
 
 As medidas de 18/11, com o FreeSWITCH de verdade, numa máquina de 2 núcleos que também rodava os 3 navegadores do teste. Três pessoas, uma delas com uma câmera de ruído, que é o pior caso para o codificador:
@@ -317,8 +324,8 @@ Por essas medidas, uma reunião de 10 pessoas fica entre 1,5 e 2 núcleos. É um
 
 ## 9. Segurança e privacidade
 
-- O palco só vai para as páginas aceitas na reunião. Antes do `aceito`, a página não recebe nada dele.
-- A página passa a receber o nome das outras pessoas como texto. Esses nomes já apareciam na imagem.
+- O palco só vai para as páginas aceitas que estão na reunião, ou entrando nela. Antes do `aceito`, a página não recebe nada dele, e quem saiu deixa de receber.
+- A página passa a receber o nome das outras pessoas como texto. Esses nomes já apareciam na imagem, e por isso só vão a quem recebe a imagem.
 - O `quem` é o id do participante naquela reunião. Ele não dá acesso a nada: o canal da página não tem pedido nenhum sobre outra pessoa.
 - O evento do agente não leva nomes. Os registros continuam sem nomes, números, códigos de link e chaves.
 - O aviso da câmera é só de aparência. Uma página que mente sobre a própria câmera só muda o desenho do quadro dela.
@@ -332,7 +339,9 @@ Por essas medidas, uma reunião de 10 pessoas fica entre 1,5 e 2 núcleos. É um
 - **O tamanho do vídeo não é o do palco:** os quadros mostram o fundo escuro com o nome e, depois de 3 s, a página mostra o mosaico inteiro (seção 6.3).
 - **A pessoa aumentada sai:** a página volta à grade, ou à tela compartilhada.
 - **A conexão cai:** o cartão "A conexão caiu" continua por cima do palco. Na volta, o palco chega de novo depois do `voltou`.
-- **O FreeSWITCH recusa um comando do mosaico:** o agente não manda o palco novo e registra o erro, sem nomes. A página continua com o palco anterior. Se o tamanho do vídeo já mudou, ela mostra o fundo escuro com os nomes e, depois de 3 s, o mosaico inteiro. O agente manda os comandos de novo na próxima entrada ou saída.
+- **O canal da página cai de vez, com a reunião no ar** (o chat reiniciou, por exemplo): a página continua na reunião, com a imagem e o som. Ela esquece o palco e, depois de 3 s, mostra o mosaico inteiro, até a pessoa entrar de novo (seção 6.3).
+- **Um palco que a página não consegue ler:** ela esquece o anterior e, depois de 3 s, mostra o mosaico inteiro (seção 6.3).
+- **O FreeSWITCH recusa um comando do mosaico:** o agente não manda o palco novo e registra o erro, sem nomes. Ele não registra quando a sala ou a ligação com o FreeSWITCH já acabou, nem quando a pessoa do comando já saiu: no fim de uma reunião isso é esperado. A página continua com o palco anterior. Se o tamanho do vídeo já mudou, ela mostra o fundo escuro com os nomes e, depois de 3 s, o mosaico inteiro. O agente manda os comandos de novo na próxima entrada ou saída.
 
 ### 10.2 Testes automáticos
 
@@ -370,14 +379,16 @@ Uma seção nova no `docs/teste-manual.md`, "O palco da reunião", com o PC e os
 
 ## 12. Riscos
 
-1. **O palco e o vídeo chegam por caminhos diferentes.** A página os junta pelo tamanho da imagem (seção 6.3). Na passagem de 4 para 5 pessoas, de 9 para 10, e no começo e no fim de um compartilhamento, os quadros mostram o fundo escuro por cerca de meio segundo.
+1. **O palco e o vídeo chegam por caminhos diferentes.** A página os junta pelo tamanho da imagem (seção 6.3). Na passagem de 4 para 5 pessoas, de 9 para 10, e no começo e no fim de um compartilhamento, os quadros mostram o fundo escuro por cerca de meio segundo. Durante um compartilhamento, também na passagem de 2 para 3 e de 4 para 5 pessoas.
 2. **A banda dobrou.** Quem está numa rede fraca, como um 4G ruim, pode ver a imagem travar mais do que hoje. A saída, numa etapa seguinte, é um mosaico mais leve para essas pessoas.
 3. **O `vid-res` no começo e no fim do compartilhamento** pode dar uma pausa curta na imagem de todos.
-4. **O agente que reinicia com uma reunião no ar** escolhe as células de novo, pela ordem de entrada. Se alguém tinha saído do meio, as pessoas mudam de célula sem o tamanho do mosaico mudar. A página mostra o fundo escuro com o nome, por 1 s, no quadro de quem mudou de célula. Até o palco novo chegar, por um instante, um quadro pode mostrar a pessoa errada. O agente só reinicia numa atualização, que é para um horário sem reuniões.
+4. **O agente que reinicia com uma reunião no ar** escolhe as células de novo, pela ordem de entrada. Se alguém tinha saído do meio, as pessoas mudam de célula sem o tamanho do mosaico mudar. A página mostra o fundo escuro com o nome, por 1 s, no quadro de quem mudou de célula. Até o palco novo chegar, por um instante, um quadro pode mostrar a pessoa errada. O agente só reinicia numa atualização, que é para um horário sem reuniões. Se o chat se ligar de novo ao agente antes de ele terminar de ler as reuniões do FreeSWITCH, o chat pode encerrar as reuniões que estavam no ar: é assim desde a etapa 1a.
 5. **A conta da CPU** veio de uma medida com 3 pessoas. Se a reunião de 10 pessoas passar de 50% na VM, as saídas são 20 imagens por segundo ou mais núcleos.
 6. **O Safari do iPhone** pode pintar os quadros mais devagar. O teste manual confere, e a saída é pintar em menos imagens por segundo.
 7. **A câmera de um celular em pé** chega estreita, com faixas escuras dos lados, nos quadros de quem está no PC.
 8. **O tamanho como sinal** depende de o navegador dizer o tamanho de cada imagem. Onde ele não diz (sem o `requestVideoFrameCallback`), a página usa o tamanho do elemento de vídeo, que pode atrasar uma imagem. A espera de 0,6 s cobre isso.
+9. **O Você no canto, com 7 a 10 pessoas.** O Você tem tamanho fixo, e os quadros ficam menores com mais gente: ele passa a cobrir de um quarto a 40% do quadro da última pessoa, mais no celular do que no PC. As telas aprovadas mostravam até 5 pessoas. O responsável decide depois do teste manual (18/11, 14:23). A saída é o Você encolher junto com os quadros.
+10. **No celular em pé, com a tela compartilhada e 5 pessoas ou mais,** os quadros das pessoas ficam baixos: o resto da altura é dividido entre eles, sem um mínimo. O roteiro manual tem uma linha para olhar isso.
 
 ## 13. O que mudou depois da aprovação (18/11)
 
@@ -397,3 +408,15 @@ Durante a execução do plano, ainda em 18/11, a revisão da parte 4 levantou ma
 |---|---|---|
 | Nada sobre o codificador do FreeSWITCH. | O VP8 do FreeSWITCH vem de fábrica com a redução automática do tamanho da imagem ligada (`rc_resize_allowed`), e usa um núcleo só. Com a banda apertada, a imagem chegaria menor, a página não reconheceria o tamanho, e os quadros dariam lugar ao mosaico inteiro. Os dois testes não chegaram a provocar isso. | A configuração gerada desliga a redução e deixa o codificador usar mais de um núcleo (seção 6.1). |
 | Depois de o agente reiniciar, um quadro pode mostrar a pessoa errada por menos de 1 s (risco 4). | A página consegue ver que uma pessoa mudou de célula sem o tamanho mudar. | O quadro de quem mudou de célula mostra o fundo escuro com o nome por 1 s, como o de quem acabou de entrar (seção 12, risco 4). |
+
+A revisão final de tudo, ainda em 18/11, ajustou mais cinco pontos. As telas não mudaram:
+
+| O que a spec dizia | O que foi achado | O que passa a valer |
+|---|---|---|
+| O foco do teclado é o anel de 3 px, afastado 2 px, em todo lugar. | Num quadro, o anel afastado ficaria por baixo dos quadros vizinhos. | Nos quadros, o anel é a borda de 3 px por dentro, a mesma do mouse em cima (seção 4.3). No `Ver todos` e no `Voltar para a tela` ele continua afastado. |
+| O chat repassa o palco a cada página aceita. | Quem clica em `Sair` continua com o canal aberto (é o que deixa o `Entrar de novo` sem espera), e continuaria recebendo o nome de quem chega depois. | O palco só vai a quem está na reunião, ou entrando nela (seções 6.2 e 9). |
+| Nada sobre a página que perde o canal de vez. | Ela continuava na reunião com o último palco, que ninguém mais atualizava. Quem entrasse na célula de quem saiu apareceria com o nome do outro. Isso acontece quando o chat reinicia com uma reunião no ar. | A página esquece o palco e mostra o mosaico inteiro, até a pessoa entrar de novo (seções 6.3 e 10.1). O guia do chat passa a dizer que ele também é atualizado num horário sem reuniões. |
+| As esperas de 0,6 s e de 1 s contam só o tempo. | Com o vídeo travado, o fim da espera pintava uma imagem mais velha que a espera: a pessoa anterior da célula, com o nome da nova. | O quadro só sai do fundo escuro com uma imagem que chegou depois do fim da espera (seção 6.3). |
+| O agente registra todo comando do mosaico que o FreeSWITCH recusa. | No fim de uma reunião com a tela compartilhada, ou com 6 pessoas ou mais, os comandos chegam depois de a sala acabar. O aviso ia ao registro sem haver problema, e os guias dizem que ele é sinal de problema. | O aviso não vai ao registro quando a sala ou a ligação com o FreeSWITCH já acabou, nem quando a pessoa do comando já saiu (seção 10.1). |
+
+Na mesma revisão, as seções 6.1, 6.3, 7 e 12 passaram a dizer duas coisas que já eram verdade: os quadros também ficam escuros por um instante quando o número de pessoas passa de 2 para 3 e de 4 para 5 durante um compartilhamento, e a espera de 1 s vale também para quem muda de célula. A seção 12 ganhou os riscos 9 e 10.
