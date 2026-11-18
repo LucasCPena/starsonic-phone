@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"regexp"
 	"strings"
 )
 
@@ -109,13 +110,17 @@ func (p *pagina) csp() string {
 		"connect-src " + connect + "; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
 }
 
-// origemDoWSS devolve esquema://host[:porta] do WSS de agora, ou "".
+// hostDoWSS é o que a origem do vídeo pode ter no CSP: letras minúsculas, números, pontos e hífens, e a porta se tiver.
+var hostDoWSS = regexp.MustCompile(`^[a-z0-9.-]+(:[0-9]{1,5})?$`)
+
+// origemDoWSS devolve esquema://host[:porta] do WSS de agora, ou "". Só ws e wss entram, e só com o host acima: o
+// que sobrar (outro esquema, usuário, colchetes, vírgula, espaço, curinga) deixa o vídeo fora do CSP.
 func origemDoWSS(video func() string) string {
 	if video == nil {
 		return ""
 	}
 	u, err := url.Parse(video())
-	if err != nil || u.Scheme == "" || u.Host == "" {
+	if err != nil || (u.Scheme != "ws" && u.Scheme != "wss") || u.User != nil || !hostDoWSS.MatchString(u.Host) {
 		return ""
 	}
 	return u.Scheme + "://" + u.Host

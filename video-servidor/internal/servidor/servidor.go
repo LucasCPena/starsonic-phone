@@ -60,7 +60,8 @@ const (
 	hsts            = "max-age=31536000"
 )
 
-// certificado é o par que a porta do agente (a 443, ou a "porta" do config.json) mostra. O GetCertificate lê o par de agora, e o Recarregar o troca sem parar nada.
+// certificado é o par que a porta do agente (a 443, ou a "porta" do config.json) mostra. O GetCertificate lê o par de
+// agora, e o Recarregar o troca sem parar nada.
 type certificado struct {
 	arquivoCert, arquivoChave string
 	atual                     atomic.Pointer[tls.Certificate]

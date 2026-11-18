@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Instala e atualiza o servidor de vídeo das reuniões do Starsonic Phone numa VM Ubuntu 24.04, Ubuntu 26.04 ou Debian 12
-# com systemd: o FreeSWITCH (o pacote da release, montado do código oficial), o coturn e o certbot do apt, e o agente
-# starsonic-video.
+# Instala e atualiza o servidor de vídeo das reuniões do Starsonic Phone numa VM Ubuntu 24.04, Ubuntu 26.04 ou
+# Debian 12 com systemd: o FreeSWITCH (o pacote da release, montado do código oficial), o coturn e o certbot do apt,
+# e o agente starsonic-video.
 #
 #   sudo bash instalar.sh instalar <endereço> --chat <endereço do chat> [--porta N]
 #                                                                        instala (o endereço é o nome do

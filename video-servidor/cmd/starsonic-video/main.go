@@ -196,8 +196,8 @@ func servir(args []string, erros io.Writer) int {
 }
 
 // O reunioes pergunta ao agente desta máquina pelo 127.0.0.1, na porta do config.json (a 443 quando ela falta), e
-// o certificado do agente é o do endereço, e não o do IP. As duas variáveis são do pacote só para os testes as trocarem: raizesDoAgente nil são as raízes do
-// sistema.
+// o certificado do agente é o do endereço, e não o do IP. As duas variáveis são do pacote só para os testes as
+// trocarem: raizesDoAgente nil são as raízes do sistema.
 var (
 	urlEstado      = "" // vazio: o urlDoEstado, com a porta do config.json
 	raizesDoAgente *x509.CertPool

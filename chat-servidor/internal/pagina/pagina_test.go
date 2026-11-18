@@ -69,6 +69,37 @@ func TestPagina_Teste(t *testing.T) {
 	}
 }
 
+// A origem do vídeo só entra no CSP quando é ws ou wss, com o host de letras minúsculas, números, pontos e hífens e a
+// porta, se tiver; qualquer outra coisa deixa a origem de fora.
+func TestPagina_OrigemDoVideoSoQuandoServe(t *testing.T) {
+	boas := map[string]string{
+		"wss://video.exemplo.com.br/sip":      "wss://video.exemplo.com.br",
+		"wss://video.exemplo.com.br:7443/sip": "wss://video.exemplo.com.br:7443",
+		"ws://127.0.0.1:9443/sip":             "ws://127.0.0.1:9443",
+	}
+	for video, origem := range boas {
+		if got := origemDoWSS(func() string { return video }); got != origem {
+			t.Errorf("origemDoWSS(%q) = %q, queria %q", video, got, origem)
+		}
+	}
+	ruins := []string{
+		"", "video.exemplo.com.br", "https://video.exemplo.com.br/sip", "http://video.exemplo.com.br", "ftp://video.exemplo.com.br",
+		"wss://", "wss://Video.Exemplo.com.br/sip", "wss://video.exemplo.com.br:/sip", "wss://video.exemplo.com.br:abc/sip",
+		"wss://video.exemplo.com.br:123456/sip", "wss://usuario@video.exemplo.com.br/sip", "wss://[::1]:7443/sip",
+		"wss://video_exemplo.com.br/sip", "wss://video.exemplo.com.br%3Bscript-src/sip", "wss://*.exemplo.com.br/sip",
+		"wss://video.exemplo.com.br,evil.com/sip",
+	}
+	for _, video := range ruins {
+		if got := origemDoWSS(func() string { return video }); got != "" {
+			t.Errorf("origemDoWSS(%q) = %q, queria vazio", video, got)
+		}
+		want := cspBase + "wss://chat.exemplo.com.br" + cspFim
+		if got := pedir(novoPadrao(video), "GET", "/r/k7q49xwpht").Header().Get("Content-Security-Policy"); got != want {
+			t.Errorf("o CSP com o vídeo %q:\n got %q\nwant %q", video, got, want)
+		}
+	}
+}
+
 func TestPagina_Estaticos(t *testing.T) {
 	h := novoPadrao("")
 	casos := map[string]string{

@@ -229,7 +229,7 @@ done
 confere "video: os dois valores trocados" \
   "ERRO: o nome do vídeo \"10.0.0.20\" é um número de IP. Parece que os dois valores estão trocados: o primeiro é o nome do servidor de vídeo no DNS, e o segundo é o IP interno da VM de vídeo. $ex_video" \
   "$( (mudar_video 10.0.0.20 video.exemplo.com.br) 2>&1)"
-confere "video: nenhuma mensagem fala do nome do chat" 0 "$( ( (mudar_video Video.Exemplo.com.br 10.0.0.20; mudar_video 10.0.0.20 video.exemplo.com.br) 2>&1 || true) | grep -c 'nome do chat')"
+confere "video: nenhuma mensagem fala do nome do chat" 0 "$( ( (mudar_video Video.Exemplo.com.br 10.0.0.20) 2>&1 || true) | grep -c 'nome do chat')"
 
 # Um config.json mudado à mão, em outro formato, faz o porta e o video pararem antes de mudar algo.
 # shellcheck disable=SC2034

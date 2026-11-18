@@ -124,7 +124,9 @@ function principal() {
     let atual = null;
     try {
       atual = readFileSync(arquivo);
-    } catch {}
+    } catch (e) {
+      if (e.code !== 'ENOENT') throw e; // só o arquivo que falta é a diferença a dizer; o resto é erro de verdade
+    }
     if (atual && atual.equals(bytes)) continue;
     status = 1;
     if (!atual) {

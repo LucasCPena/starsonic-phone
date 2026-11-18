@@ -4,8 +4,9 @@
 #   sudo bash instalar.sh instalar <endereço> [--porta N]   instala (o endereço é o nome do chat no DNS)
 #   sudo bash instalar.sh atualizar                         troca o programa pela versão deste script
 #   sudo bash instalar.sh porta <N>                         troca a porta pública do HTTPS
-#   sudo bash instalar.sh video <nome do vídeo> <IP interno da VM de vídeo>  liga o repasse da verificação do certificado do
-#                                                           servidor de vídeo (veja abaixo)
+#   sudo bash instalar.sh video <nome do vídeo> <IP interno da VM de vídeo>
+#                                                           liga o repasse da verificação do certificado do servidor
+#                                                           de vídeo (veja abaixo)
 #
 # Este script vem na release chat-v<versão> do GitHub, com a versão já escrita abaixo. Rodado
 # direto do repositório, ele pede --versao X.Y.Z.

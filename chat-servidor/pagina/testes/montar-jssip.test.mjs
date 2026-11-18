@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -48,4 +48,35 @@ test('o --conferir acusa um byte trocado', () => {
   const r = rodar(a, '--conferir');
   assert.equal(r.status, 1);
   assert.match(r.stderr, /difere/);
+});
+
+test('o --conferir diz que o arquivo não existe, e sai com 1', () => {
+  const dir = temporaria();
+  const a = join(dir, 'jssip.js');
+  assert.equal(rodar(a).status, 0);
+  rmSync(a);
+  const r = rodar(a, '--conferir');
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /não existe/);
+});
+
+test('o --conferir acusa a licença que difere', () => {
+  const dir = temporaria();
+  const a = join(dir, 'jssip.js');
+  assert.equal(rodar(a).status, 0);
+  writeFileSync(join(dir, 'jssip-licenca.txt'), 'outra licença\n');
+  const r = rodar(a, '--conferir');
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /jssip-licenca\.txt difere/);
+});
+
+test('o --conferir não engole um erro de leitura que não é arquivo faltando', () => {
+  const dir = temporaria();
+  const a = join(dir, 'jssip.js');
+  assert.equal(rodar(a).status, 0);
+  rmSync(a);
+  mkdirSync(a); // ler uma pasta dá EISDIR, e não ENOENT
+  const r = rodar(a, '--conferir');
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /EISDIR/);
 });
