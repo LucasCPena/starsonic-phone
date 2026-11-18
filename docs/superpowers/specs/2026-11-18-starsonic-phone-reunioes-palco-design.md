@@ -166,6 +166,7 @@ Os componentes estendem o que as telas 1 a 11 já usam, com as cores e as medida
 ### 6.1 O mosaico (o servidor de vídeo)
 
 - **O mosaico** passa a ter 1920 pontos de largura, a 25 imagens por segundo, em VP8, com 3 Mbit/s. O codificador continua um só para todos.
+- **O codificador nunca muda o tamanho da imagem por conta própria.** O VP8 do FreeSWITCH vem com a redução automática do tamanho ligada (`rc-resize-allowed`). A configuração gerada a desliga (`vpx.conf`), porque o tamanho da imagem é o sinal do layout (seção 6.3), e deixa o codificador usar mais de um núcleo (`enc-threads` em `cpu/2/4`).
 - **Cada layout tem um tamanho só dele.** A altura do mosaico muda com o layout. Assim, o tamanho do vídeo que chega diz à página qual é o layout de cada imagem (seção 6.3).
 - **Os layouts da grade.** As células têm a proporção 16:9, e o FreeSWITCH não corta a câmera: uma câmera de outra proporção ganha faixas escuras dentro da célula.
 
@@ -372,7 +373,7 @@ Uma seção nova no `docs/teste-manual.md`, "O palco da reunião", com o PC e os
 1. **O palco e o vídeo chegam por caminhos diferentes.** A página os junta pelo tamanho da imagem (seção 6.3). Na passagem de 4 para 5 pessoas, de 9 para 10, e no começo e no fim de um compartilhamento, os quadros mostram o fundo escuro por cerca de meio segundo.
 2. **A banda dobrou.** Quem está numa rede fraca, como um 4G ruim, pode ver a imagem travar mais do que hoje. A saída, numa etapa seguinte, é um mosaico mais leve para essas pessoas.
 3. **O `vid-res` no começo e no fim do compartilhamento** pode dar uma pausa curta na imagem de todos.
-4. **O agente que reinicia com uma reunião no ar** escolhe as células de novo, pela ordem de entrada. Se alguém tinha saído do meio, as pessoas mudam de célula sem o tamanho do mosaico mudar, e por menos de 1 s um quadro pode mostrar a pessoa errada. O agente só reinicia numa atualização, que é para um horário sem reuniões.
+4. **O agente que reinicia com uma reunião no ar** escolhe as células de novo, pela ordem de entrada. Se alguém tinha saído do meio, as pessoas mudam de célula sem o tamanho do mosaico mudar. A página mostra o fundo escuro com o nome, por 1 s, no quadro de quem mudou de célula. Até o palco novo chegar, por um instante, um quadro pode mostrar a pessoa errada. O agente só reinicia numa atualização, que é para um horário sem reuniões.
 5. **A conta da CPU** veio de uma medida com 3 pessoas. Se a reunião de 10 pessoas passar de 50% na VM, as saídas são 20 imagens por segundo ou mais núcleos.
 6. **O Safari do iPhone** pode pintar os quadros mais devagar. O teste manual confere, e a saída é pintar em menos imagens por segundo.
 7. **A câmera de um celular em pé** chega estreita, com faixas escuras dos lados, nos quadros de quem está no PC.
@@ -389,3 +390,10 @@ A spec foi aprovada às 10:45. Para escrever o plano, o código do FreeSWITCH 1.
 | Dois layouts de apresentação, os dois com 1920×1440: até 3 pessoas com 640×360, e 4 a 10 com 320×180. | Dois layouts do mesmo tamanho não servem ao sinal de cima. | Três layouts de apresentação, com 1920×1620, 1920×1350 e 1920×1440. Com 2 pessoas, a câmera aumentada durante o compartilhamento fica com 960×540, igual a fora dele. |
 | O layout de 5 a 9 pessoas com 1920×1080, e o de 10 com 1920×1080. | Eles teriam o tamanho do layout de 1 a 4. | 1920×1086 de 5 a 9 pessoas, e 1920×810 com 10 (as mesmas 12 células de 480×270, sem as faixas vazias). |
 | A banda muda com o `vid-bandwidth`. | O comando só muda a banda do mosaico quando leva também o número do mosaico. A primeira medida da CPU tinha rodado com 1,5 Mbit/s. | O comando vai com o número do mosaico, e a seção 7 tem as medidas novas. |
+
+Durante a execução do plano, ainda em 18/11, a revisão da parte 4 levantou mais dois pontos. Eles foram corrigidos, também sem mudar as telas nem o comportamento:
+
+| O que a spec dizia | O que foi achado | O que passa a valer |
+|---|---|---|
+| Nada sobre o codificador do FreeSWITCH. | O VP8 do FreeSWITCH vem de fábrica com a redução automática do tamanho da imagem ligada (`rc_resize_allowed`), e usa um núcleo só. Com a banda apertada, a imagem chegaria menor, a página não reconheceria o tamanho, e os quadros dariam lugar ao mosaico inteiro. Os dois testes não chegaram a provocar isso. | A configuração gerada desliga a redução e deixa o codificador usar mais de um núcleo (seção 6.1). |
+| Depois de o agente reiniciar, um quadro pode mostrar a pessoa errada por menos de 1 s (risco 4). | A página consegue ver que uma pessoa mudou de célula sem o tamanho mudar. | O quadro de quem mudou de célula mostra o fundo escuro com o nome por 1 s, como o de quem acabou de entrar (seção 12, risco 4). |
