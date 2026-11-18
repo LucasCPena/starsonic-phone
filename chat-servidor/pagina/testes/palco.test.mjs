@@ -78,6 +78,17 @@ const P9 = congelar({
     cam(VOCE, '', 0, 1080, 640, 360, { voce: true }),
   ],
 });
+// Doze outros e o Você, num mosaico de 1920x1080 (o máximo de quadros: 13).
+const P12 = congelar({
+  largura: 1920,
+  altura: 1080,
+  quadros: [
+    ...Array.from({ length: 12 }, (_, i) =>
+      cam(`c00000000000000${(i + 1).toString(16)}`, `Pessoa ${i + 1}`, (i % 4) * 480, Math.floor(i / 4) * 270, 480, 270),
+    ),
+    cam(VOCE, '', 0, 810, 480, 270, { voce: true }),
+  ],
+});
 // A tela da Ana em cima, e a Ana, o Carlos, a Maria e o Você embaixo, num mosaico de 1920x1620.
 const telaDaAna = cam(ANA, 'Ana Souza', 0, 0, 1920, 1080, { tela: true });
 const PT = congelar({
@@ -201,6 +212,15 @@ test('recortar: o cobrir corta o que sobra da célula, no centro', () => {
   });
 });
 
+test('recortar: o quadro sem tamanho não dá NaN', () => {
+  const vazio = { sx: 2, sy: 2, sl: 956, sa: 536, dx: 0, dy: 0, dl: 0, da: 0 };
+  for (const corte of ['cobrir', 'inteiro']) {
+    assert.deepEqual(recortar({ x: 2, y: 2, l: 956, a: 536 }, { l: 0, a: 0 }, corte), vazio);
+    assert.deepEqual(recortar({ x: 2, y: 2, l: 956, a: 536 }, { l: 100, a: 0 }, corte), vazio);
+    assert.deepEqual(recortar({ x: 2, y: 2, l: 956, a: 536 }, { l: 0, a: 100 }, corte), vazio);
+  }
+});
+
 test('recortar: o inteiro mostra a célula inteira, com faixas no quadro', () => {
   const r = recortar({ x: 0, y: 0, l: 1920, a: 1080 }, { l: 994, a: 608 }, 'inteiro');
   assert.deepEqual({ sx: r.sx, sy: r.sy, sl: r.sl, sa: r.sa, dx: r.dx, dl: r.dl }, {
@@ -320,6 +340,44 @@ test('sincronizar: o palco de outro tamanho que vira o visto só espera os 600 m
   // Aos 1700, a Ana e a Maria não esperam mais: a espera do tamanho já cobriu a troca da imagem.
   s = passo(s.mem, PT, V2, 1700);
   assert.deepEqual(s.r, esperado('quadros', PT, [], null));
+});
+
+test('sincronizar: quem troca de célula num palco do mesmo tamanho espera como quem entrou', () => {
+  let s = passo(sincroniaInicial(0), P4, V, 100);
+  s = passo(s.mem, P4, V, 700);
+  // A Ana e o Carlos trocam de célula: a imagem de cada célula ainda pode ser a do outro.
+  const trocados = congelar({
+    ...P4,
+    quadros: [{ ...ana, x: 960 }, { ...carlos, x: 0 }, maria, roberto, voce],
+  });
+  s = passo(s.mem, trocados, V, 1000);
+  assert.deepEqual(s.r, esperado('quadros', trocados, [`cam:${ANA}`, `cam:${CARLOS}`], 1000));
+  s = passo(s.mem, trocados, V, 1999);
+  assert.deepEqual(s.r, esperado('quadros', trocados, [`cam:${ANA}`, `cam:${CARLOS}`], 1));
+  s = passo(s.mem, trocados, V, 2000);
+  assert.deepEqual(s.r, esperado('quadros', trocados, [], null));
+});
+
+test('sincronizar: um palco do mesmo tamanho em que ninguém mudou de célula não faz ninguém esperar', () => {
+  let s = passo(sincroniaInicial(0), P4, V, 100);
+  s = passo(s.mem, P4, V, 700);
+  s = passo(s.mem, P4_COM_BIA, V, 5000);
+  assert.deepEqual(s.r, esperado('quadros', P4_COM_BIA, [`cam:${BIA}`], 1000));
+  // Outro objeto com as mesmas células: a Bia segue com a espera dela, e ninguém mais entra.
+  const igual = congelar(structuredClone(P4_COM_BIA));
+  s = passo(s.mem, igual, V, 5500);
+  assert.deepEqual(s.r, esperado('quadros', igual, [`cam:${BIA}`], 500));
+  // O nome e o semCamera que mudam, na mesma célula, também não fazem esperar.
+  const renomeados = congelar({
+    ...igual,
+    quadros: igual.quadros.map((q) =>
+      q.quem === ANA ? { ...q, nome: '' } : q.quem === ROBERTO ? { ...q, semCamera: false } : q,
+    ),
+  });
+  s = passo(s.mem, renomeados, V, 5600);
+  assert.deepEqual(s.r, esperado('quadros', renomeados, [`cam:${BIA}`], 400));
+  s = passo(s.mem, renomeados, V, 6000);
+  assert.deepEqual(s.r, esperado('quadros', renomeados, [], null));
 });
 
 test('sincronizar: o palco do mesmo tamanho descarta o de outro tamanho que esperava', () => {
@@ -641,4 +699,38 @@ test('arrumar no celular: a tela com uma câmera aumentada', () => {
   assert.deepEqual(lugar(r, `cam:${ANA}`), em('faixa', true, 134, 0, 128, 72));
   assert.deepEqual(lugar(r, `cam:${MARIA}`), em('faixa', true, 268, 0, 128, 72));
   assert.deepEqual(lugar(r, 'voce'), em('faixa', false, 402, 0, 128, 72));
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// As áreas pequenas demais: 0x0 antes do layout, num contêiner escondido ou no meio do giro.
+
+test('arrumar e recortar: nenhuma área dá número negativo, infinito ou NaN', () => {
+  const bom = (n) => Number.isFinite(n) && n >= 0;
+  const primeiro = (p) => p?.quadros.find((q) => !q.tela && !q.voce);
+  const palcos = { null: null, soOVoce: P_SO_O_VOCE, P1, P2, P3, P4, P4_COM_BIA, P9, P12, PT, PT_SEM_A_MARIA };
+  let casos = 0;
+  for (const area of [{ l: 0, a: 0 }, { l: 10, a: 10 }, { l: 100, a: 50 }]) {
+    for (const [nome, palco] of Object.entries(palcos)) {
+      const outro = primeiro(palco);
+      for (const aumentado of [null, ...(outro ? [chaveDe(outro)] : [])]) {
+        for (const emPe of [false, true]) {
+          const caso = `${area.l}x${area.a} ${nome} ${aumentado ?? '-'} ${emPe ? 'em pé' : 'PC'}`;
+          const r = arrumar({ palco, area, emPe, aumentado });
+          const retangulos = [...r.quadros, ...(r.faixa ? [r.faixa] : []), ...(r.gire ? [r.gire] : [])];
+          for (const q of retangulos) {
+            for (const k of ['x', 'y', 'l', 'a']) {
+              assert.ok(bom(q[k]), `${caso}: ${q.chave ?? 'faixa/gire'}.${k} = ${q[k]}`);
+            }
+          }
+          for (const q of r.quadros) {
+            const c = recortar(q.recorte ?? { x: 0, y: 0, l: 640, a: 480 }, { l: q.l, a: q.a }, q.corte);
+            for (const [k, v] of Object.entries(c)) assert.ok(bom(v), `${caso}: recorte de ${q.chave}.${k} = ${v}`);
+          }
+          casos++;
+        }
+      }
+    }
+  }
+  // 3 áreas; 9 palcos com outros (sem e com aumentado) e 2 sem; as duas orientações.
+  assert.equal(casos, 3 * (9 * 2 + 2) * 2);
 });

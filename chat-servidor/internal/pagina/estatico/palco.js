@@ -84,6 +84,7 @@ export function sincroniaInicial(agora) {
 const mesmoVideo = (v, w) => (v === null || w === null ? v === w : v.l === w.l && v.a === w.a);
 const mesmoTamanho = (video, palco) => video.l === palco.largura && video.a === palco.altura;
 const chavesDe = (palco) => palco.quadros.map(chaveDe);
+const mesmaCelula = (q, r) => q.x === r.x && q.y === r.y && q.l === r.l && q.a === r.a;
 
 /** Junta o palco com o vídeo. O video é {l, a}, ou null sem imagem ainda. */
 export function sincronizar(mem, { palco, video, agora }) {
@@ -106,12 +107,15 @@ export function sincronizar(mem, { palco, video, agora }) {
 
   if (palco !== mem.recebido) {
     if (m.visto && palco.largura === m.visto.largura && palco.altura === m.visto.altura) {
-      // Do mesmo tamanho, ele toma o lugar do visto na hora. Quem não estava no visto entra agora; um palco de outro
-      // tamanho que esperava ficou velho.
-      const antes = new Set(chavesDe(m.visto));
+      // Do mesmo tamanho, ele toma o lugar do visto na hora. Entra agora quem não estava no visto, e também quem mudou
+      // de célula: a imagem do lugar novo ainda pode ser a de outra pessoa. Um palco de outro tamanho que esperava
+      // ficou velho.
+      const antes = new Map(m.visto.quadros.map((q) => [chaveDe(q), q]));
       const entradas = {};
-      for (const chave of chavesDe(palco)) {
-        if (!antes.has(chave)) entradas[chave] = agora;
+      for (const q of palco.quadros) {
+        const chave = chaveDe(q);
+        const anterior = antes.get(chave);
+        if (!anterior || !mesmaCelula(anterior, q)) entradas[chave] = agora;
         else if (chave in m.entradas) entradas[chave] = m.entradas[chave];
       }
       m.visto = palco;
@@ -176,6 +180,9 @@ export function aoMudarOPalco(aumentado, antes, depois) {
 const ESPACO_PC = 8;
 const ESPACO_EM_PE = 6;
 const AFASTAR_DO_GRANDE = 10;
+// Uma área pequena demais (0x0 antes do layout, num contêiner escondido ou no meio do giro) não dá tamanho nem lugar
+// negativo: o que não cabe fica com 0.
+const naoNegativo = (n) => Math.max(0, n);
 const CANTO_PC = 16;
 const CANTO_EM_PE = 10;
 const FAIXA_EM_PE = { l: 128, a: 72 };
@@ -264,6 +271,7 @@ const semGrande = (quadros) => ({ modo: 'grade', grande: null, voltar: null, gir
 
 // caber: o maior quadro que cabe em l×a com a proporção entre 4:3 e 2:1.
 function caber(l, a) {
+  if (l <= 0 || a <= 0) return { l: 0, a: 0 };
   if (l / a > 2) return { l: 2 * a, a };
   if (l / a < 4 / 3) return { l, a: (l * 3) / 4 };
   return { l, a };
@@ -274,12 +282,12 @@ function caber(l, a) {
 function ladoALado(n, c, tamanho, area, espaco) {
   const linhas = Math.ceil(n / c);
   const bloco = linhas * tamanho.a + espaco * (linhas - 1);
-  const y0 = (area.a - bloco) / 2;
+  const y0 = naoNegativo((area.a - bloco) / 2);
   const lugares = [];
   for (let i = 0; i < n; i++) {
     const linha = Math.floor(i / c);
     const naLinha = Math.min(c, n - linha * c);
-    const x0 = (area.l - (naLinha * tamanho.l + espaco * (naLinha - 1))) / 2;
+    const x0 = naoNegativo((area.l - (naLinha * tamanho.l + espaco * (naLinha - 1))) / 2);
     lugares.push({ x: x0 + (i % c) * (tamanho.l + espaco), y: y0 + linha * (tamanho.a + espaco), ...tamanho });
   }
   return lugares;
@@ -302,7 +310,7 @@ function gradePC(outros, voce, area) {
   const lugares = lugaresNaGradePC(outros.length, area);
   const l = Math.min(208, Math.max(96, Math.round(0.17 * area.l)));
   const a = (l * 9) / 16;
-  const canto = { x: area.l - CANTO_PC - l, y: area.a - CANTO_PC - a, l, a };
+  const canto = { x: naoNegativo(area.l - CANTO_PC - l), y: naoNegativo(area.a - CANTO_PC - a), l, a };
   return semGrande([...outros.map((q, i) => posto(q, 'grade', botao, lugares[i])), posto(voce, 'canto', false, canto)]);
 }
 
@@ -310,8 +318,8 @@ function gradePC(outros, voce, area) {
 // linha inteira.
 function emColunas(n, colunas, regiao) {
   const linhas = Math.ceil(n / colunas);
-  const l = (regiao.l - ESPACO_EM_PE * (colunas - 1)) / colunas;
-  const a = (regiao.a - ESPACO_EM_PE * (linhas - 1)) / linhas;
+  const l = naoNegativo((regiao.l - ESPACO_EM_PE * (colunas - 1)) / colunas);
+  const a = naoNegativo((regiao.a - ESPACO_EM_PE * (linhas - 1)) / linhas);
   const lugares = [];
   for (let i = 0; i < n; i++) {
     const y = regiao.y + Math.floor(i / colunas) * (a + ESPACO_EM_PE);
@@ -328,7 +336,7 @@ function gradeEmPe(outros, voce, area) {
   const lugares = emColunas(outros.length, outros.length <= 3 ? 1 : 2, toda);
   const l = outros.length === 1 ? 92 : 84;
   const a = (l * 4) / 3;
-  const canto = { x: area.l - CANTO_EM_PE - l, y: area.a - CANTO_EM_PE - a, l, a };
+  const canto = { x: naoNegativo(area.l - CANTO_EM_PE - l), y: naoNegativo(area.a - CANTO_EM_PE - a), l, a };
   return semGrande([...outros.map((q, i) => posto(q, 'grade', botao, lugares[i])), posto(voce, 'canto', false, canto)]);
 }
 
@@ -338,7 +346,7 @@ function telaEmPe(tela, outros, voce, area) {
   const gire = { x: 0, y: alturaDaTela + ESPACO_EM_PE, l: area.l, a: GIRE };
   const topo = gire.y + GIRE + ESPACO_EM_PE;
   const embaixo = [...outros, voce];
-  const lugares = emColunas(embaixo.length, 2, { x: 0, y: topo, l: area.l, a: area.a - topo });
+  const lugares = emColunas(embaixo.length, 2, { x: 0, y: topo, l: area.l, a: naoNegativo(area.a - topo) });
   return {
     modo: 'grande',
     grande: tela.chave,
@@ -358,11 +366,11 @@ function telaEmPe(tela, outros, voce, area) {
 function comFaixaPC(grande, naFaixa, area) {
   const l = Math.min(228, Math.max(132, Math.round(0.185 * area.l)));
   const a = Math.round((l * 9) / 16);
-  const sobra = { l: area.l - l - AFASTAR_DO_GRANDE, a: area.a };
+  const sobra = { l: naoNegativo(area.l - l - AFASTAR_DO_GRANDE), a: area.a };
   const tamanho = grande.tipo === 'tela' ? sobra : caber(sobra.l, sobra.a);
   const lugar = { x: (sobra.l - tamanho.l) / 2, y: (sobra.a - tamanho.a) / 2, ...tamanho };
   return {
-    faixa: { eixo: 'y', ...retangulo({ x: area.l - l, y: 0, l, a: area.a }) },
+    faixa: { eixo: 'y', ...retangulo({ x: naoNegativo(area.l - l), y: 0, l, a: area.a }) },
     quadros: [
       posto(grande, 'grande', false, lugar),
       ...naFaixa.map((q, i) => posto(q, 'faixa', true, { x: 0, y: i * (a + ESPACO_PC), l, a })),
@@ -373,9 +381,9 @@ function comFaixaPC(grande, naFaixa, area) {
 // comFaixaEmPe: o grande em cima, inteiro, e a faixa embaixo, uma linha de quadros de 128x72.
 function comFaixaEmPe(grande, naFaixa, area) {
   const { l, a } = FAIXA_EM_PE;
-  const alturaDoGrande = area.a - a - ESPACO_EM_PE;
+  const alturaDoGrande = naoNegativo(area.a - a - ESPACO_EM_PE);
   return {
-    faixa: { eixo: 'x', ...retangulo({ x: 0, y: area.a - a, l: area.l, a }) },
+    faixa: { eixo: 'x', ...retangulo({ x: 0, y: naoNegativo(area.a - a), l: area.l, a }) },
     quadros: [
       posto(grande, 'grande', false, { x: 0, y: 0, l: area.l, a: alturaDoGrande }),
       ...naFaixa.map((q, i) => posto(q, 'faixa', true, { x: i * (l + ESPACO_EM_PE), y: 0, l, a })),
@@ -388,24 +396,29 @@ function comFaixaEmPe(grande, naFaixa, area) {
 
 /** O pedaço do mosaico que vai ao quadro, e onde ele cai dentro do quadro. */
 export function recortar(recorte, tamanho, corte) {
+  // Um quadro sem tamanho não mostra nada: a origem é a célula inteira, e o destino, vazio (sem a divisão por 0).
+  if (!(tamanho.l > 0 && tamanho.a > 0)) {
+    return { sx: recorte.x, sy: recorte.y, sl: recorte.l, sa: recorte.a, dx: 0, dy: 0, dl: 0, da: 0 };
+  }
   const escalaL = tamanho.l / recorte.l;
   const escalaA = tamanho.a / recorte.a;
   if (corte === 'inteiro') {
     // A célula inteira, sem cortar nada: o que sobra no quadro fica vazio, no centro.
-    const escala = Math.min(escalaL, escalaA);
-    const dl = recorte.l * escala;
-    const da = recorte.a * escala;
-    const dx = (tamanho.l - dl) / 2;
-    const dy = (tamanho.a - da) / 2;
+    // O lado que manda fica exato (sem o erro da conta de ida e volta), e só o outro sobra.
+    const pelaLargura = escalaL <= escalaA;
+    const dl = pelaLargura ? tamanho.l : recorte.l * escalaA;
+    const da = pelaLargura ? recorte.a * escalaL : tamanho.a;
+    const dx = pelaLargura ? 0 : (tamanho.l - dl) / 2;
+    const dy = pelaLargura ? (tamanho.a - da) / 2 : 0;
     return { sx: recorte.x, sy: recorte.y, sl: recorte.l, sa: recorte.a, dx, dy, dl, da };
   }
   // O cobrir enche o quadro e corta o que sobra da célula, no centro.
-  const escala = Math.max(escalaL, escalaA);
-  const sl = tamanho.l / escala;
-  const sa = tamanho.a / escala;
+  const pelaLargura = escalaL >= escalaA;
+  const sl = pelaLargura ? recorte.l : tamanho.l / escalaA;
+  const sa = pelaLargura ? tamanho.a / escalaL : recorte.a;
   return {
-    sx: recorte.x + (recorte.l - sl) / 2,
-    sy: recorte.y + (recorte.a - sa) / 2,
+    sx: pelaLargura ? recorte.x : recorte.x + (recorte.l - sl) / 2,
+    sy: pelaLargura ? recorte.y + (recorte.a - sa) / 2 : recorte.y,
     sl,
     sa,
     dx: 0,
