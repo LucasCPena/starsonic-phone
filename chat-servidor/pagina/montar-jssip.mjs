@@ -1,21 +1,26 @@
 // Monta o JsSIP da página: chat-servidor/internal/pagina/estatico/jssip.js, e a licença dele ao lado.
 //
 // O pacote do jssip 3.13.8 não traz o dist/jssip.min.js: só o lib/, em CommonJS, que pede o debug, o events e o
-// sdp-transform. Em vez de outra dependência (um empacotador), este arquivo junta num script só os módulos que o
-// lib/JsSIP.js alcança, com um require mínimo: o caminho relativo (com .js, .json ou index.js) e o pacote do
-// node_modules pelo "browser" ou pelo "main" do package.json dele. O script põe o JsSIP em window.JsSIP.
+// sdp-transform (e o debug pede o ms). Em vez de outra dependência (um empacotador), este arquivo junta num script só
+// os módulos que o lib/JsSIP.js alcança, com um require mínimo: o caminho relativo (com .js, .json ou index.js) e o
+// pacote do node_modules pelo "browser" ou pelo "main" do package.json dele. O script põe o JsSIP em window.JsSIP.
 // A ordem dos módulos é a da primeira vez que o require aparece, e nada no resultado depende da data nem do
 // caminho da máquina: dois montadores dão os mesmos bytes.
+//
+// A licença, o jssip-licenca.txt, é a do JsSIP e, depois dela, a de cada pacote que vai junto no script (o arquivo
+// LICENSE dele, ou o license.md), embaixo de uma linha com o nome e a versão. O cabeçalho do script nomeia os pacotes.
 //
 // Uso: node montar-jssip.mjs [--conferir] [--modulos <pasta do node_modules>] [--saida <jssip.js>]
 //   sem argumentos: o node_modules desta pasta, e a saída em ../internal/pagina/estatico/jssip.js;
 //   --conferir: não escreve; sai com 1 e diz a diferença quando o arquivo não é o do pacote.
-import { readFileSync, statSync, writeFileSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const CABECALHO = '// Gerado por chat-servidor/pagina/montar-jssip.mjs a partir do jssip 3.13.8 (MIT). Não edite.';
 const VERSAO = '3.13.8';
+// A linha em cima e embaixo do nome de cada pacote, na licença.
+const TRACO = '-'.repeat(72);
 
 const ehArquivo = (p) => {
   try {
@@ -32,12 +37,29 @@ function arquivoDe(base, pedido) {
   throw new Error(`não achei o módulo ${pedido} (${base})`);
 }
 
-/** O script do JsSIP para o navegador, com o cabeçalho. */
+// O texto da licença de um pacote: o arquivo LICENSE, LICENSE.md ou license.md da pasta dele (o primeiro na ordem, se
+// houver mais de um). Sem nenhum, é erro: o pacote não iria junto sem a licença.
+function licencaDe(pasta, nome) {
+  const [arquivo] = readdirSync(pasta)
+    .filter((a) => /^licen[cs]e(\.(md|txt))?$/i.test(a))
+    .sort();
+  if (!arquivo) throw new Error(`o pacote ${nome} não tem o arquivo da licença`);
+  return readFileSync(join(pasta, arquivo), 'utf8');
+}
+
+/**
+ * O que o montador escreve: o script do JsSIP para o navegador, com o cabeçalho que nomeia os pacotes que vão junto,
+ * e a licença, a do JsSIP seguida da de cada um desses pacotes.
+ */
 export function montarJsSIP(modulos) {
+  const pacotes = new Map(); // o nome → {versao, licenca, pasta}, de cada pacote do node_modules que entra, sem o jssip
   /** O arquivo de entrada de um pacote do node_modules: o "browser" (quando é um texto), ou o "main", ou o index.js. */
   const entradaDoPacote = (nome) => {
     const pasta = join(modulos, nome);
     const pacote = JSON.parse(readFileSync(join(pasta, 'package.json'), 'utf8'));
+    if (nome !== 'jssip' && !pacotes.has(nome)) {
+      pacotes.set(nome, { versao: pacote.version, licenca: pacote.license, pasta });
+    }
     const entrada = typeof pacote.browser === 'string' ? pacote.browser : pacote.main || 'index.js';
     return arquivoDe(resolve(pasta, entrada), nome);
   };
@@ -69,9 +91,17 @@ export function montarJsSIP(modulos) {
       ? `function (module) { module.exports = ${m.codigo.trim()}; }`
       : `function (module, exports, require) {\n${m.codigo}\n}`,
   );
-  return (
+  const junto = [...pacotes].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  const licenca =
+    readFileSync(join(modulos, 'jssip', 'LICENSE.md'), 'utf8') +
+    junto
+      .map(([nome, p]) => `\n${TRACO}\n${nome} ${p.versao}\n${TRACO}\n\n${licencaDe(p.pasta, nome).trim()}\n`)
+      .join('');
+  const jssip =
     [
       CABECALHO,
+      '// Vêm junto os pacotes que o JsSIP pede, cada um com a licença dele no jssip-licenca.txt:',
+      ...junto.map(([nome, p]) => `//   ${nome} ${p.versao} (${p.licenca})`),
       '(function () {',
       `  var definicoes = [${definicoes.join(',\n')}];`,
       `  var mapas = ${JSON.stringify(lista.map((m) => m.mapa))};`,
@@ -88,8 +118,8 @@ export function montarJsSIP(modulos) {
       '  }',
       `  window.JsSIP = carregar(${entrada});`,
       '})();',
-    ].join('\n') + '\n'
-  );
+    ].join('\n') + '\n';
+  return { jssip, licenca };
 }
 
 function argumentos(args) {
@@ -110,10 +140,10 @@ function argumentos(args) {
 
 function principal() {
   const { conferir, modulos, saida } = argumentos(process.argv.slice(2));
-  const licenca = join(dirname(saida), 'jssip-licenca.txt');
+  const { jssip, licenca } = montarJsSIP(modulos);
   const esperado = [
-    [saida, Buffer.from(montarJsSIP(modulos), 'utf8')],
-    [licenca, readFileSync(join(modulos, 'jssip', 'LICENSE.md'))],
+    [saida, Buffer.from(jssip, 'utf8')],
+    [join(dirname(saida), 'jssip-licenca.txt'), Buffer.from(licenca, 'utf8')],
   ];
   if (!conferir) {
     for (const [arquivo, bytes] of esperado) writeFileSync(arquivo, bytes);

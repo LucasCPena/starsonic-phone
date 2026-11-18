@@ -1,4 +1,9 @@
 // Gerado por chat-servidor/pagina/montar-jssip.mjs a partir do jssip 3.13.8 (MIT). Não edite.
+// Vêm junto os pacotes que o JsSIP pede, cada um com a licença dele no jssip-licenca.txt:
+//   debug 4.4.3 (MIT)
+//   events 3.3.0 (MIT)
+//   ms 2.1.3 (MIT)
+//   sdp-transform 2.15.0 (MIT)
 (function () {
   var definicoes = [function (module, exports, require) {
 "use strict";
