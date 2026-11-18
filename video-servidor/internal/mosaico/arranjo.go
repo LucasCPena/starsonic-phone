@@ -133,12 +133,13 @@ func Planejar(antesDe Estado, chamadas []Chamada, tudo bool) Plano {
 	}
 
 	// Os comandos, na ordem de uma troca.
-	desconhecido := antesDe.Layout == "" || antesDe.Banda == ""
+	layoutDesconhecido := antesDe.Layout == ""
+	bandaDesconhecida := antesDe.Banda == ""
 	var comandos []Comando
-	if anterior, ok := porNome(antesDe.Layout); tudo || desconhecido || !ok || anterior.Largura != layout.Largura || anterior.Altura != layout.Altura {
+	if anterior, ok := porNome(antesDe.Layout); tudo || layoutDesconhecido || !ok || anterior.Largura != layout.Largura || anterior.Altura != layout.Altura {
 		comandos = append(comandos, Comando{Tipo: "res", Texto: "vid-res " + strconv.Itoa(layout.Largura) + "x" + strconv.Itoa(layout.Altura)})
 	}
-	if tudo || desconhecido || antesDe.Layout != layout.Nome {
+	if tudo || layoutDesconhecido || antesDe.Layout != layout.Nome {
 		comandos = append(comandos, Comando{Tipo: "layout", Texto: "vid-layout " + layout.Nome})
 	}
 	var cameras []Chamada
@@ -152,7 +153,7 @@ func Planejar(antesDe Estado, chamadas []Chamada, tudo bool) Plano {
 		cel := celulas[c.Participante]
 		comandos = append(comandos, Comando{Tipo: "celula", Texto: "vid-res-id " + c.Membro + " " + Reserva(cel) + " force", UUID: c.UUID, Celula: cel})
 	}
-	if tudo || desconhecido || antesDe.Banda != banda {
+	if tudo || bandaDesconhecida || antesDe.Banda != banda {
 		comandos = append(comandos, Comando{Tipo: "banda", Texto: "vid-bandwidth " + banda + " '' 1"})
 	}
 

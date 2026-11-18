@@ -338,6 +338,18 @@ func TestPlanejar_EstadoDesconhecido(t *testing.T) {
 	igual(t, "desconhecido", textos(p), []string{"vid-res 1920x1080", "vid-layout starsonic-4", "vid-bandwidth 3mb '' 1"})
 }
 
+func TestPlanejar_SoOLayoutDesconhecido(t *testing.T) {
+	estado := Estado{Layout: "", Banda: "3mb", Celulas: map[string]int{ana: 1}}
+	p := Planejar(estado, []Chamada{cam("1", ana, 1)}, false)
+	igual(t, "só o layout", textos(p), []string{"vid-res 1920x1080", "vid-layout starsonic-4"})
+}
+
+func TestPlanejar_SoABandaDesconhecida(t *testing.T) {
+	estado := Estado{Layout: "starsonic-4", Banda: "", Celulas: map[string]int{ana: 1}}
+	p := Planejar(estado, []Chamada{cam("1", ana, 1)}, false)
+	igual(t, "só a banda", textos(p), []string{"vid-bandwidth 3mb '' 1"})
+}
+
 func TestPlanejar_SemMudanca(t *testing.T) {
 	p, chamadas := quatro(t)
 	chamadas = comCelulas(p, chamadas)
