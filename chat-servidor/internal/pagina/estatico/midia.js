@@ -17,22 +17,32 @@
 // do fluxo, e o aparelho dela passa a faltar, em toda tela; a câmera que a ligação pôs no fluxo é vigiada daqui quando
 // volta a ser do midia.js. Nada é pedido de novo: o Tentar de novo pede os dois.
 //
-// O parar desliga tudo, e vale duas vezes seguidas. O pedido que responde depois de um parar ou de outro pedir (e o da
-// câmera sozinha, também depois de a escolha voltar a desligada) para assim que chega, sem ir ao cérebro.
+// O parar desliga a câmera e o microfone (a captura da tela tem o pararCaptura dela), e vale duas vezes seguidas. O
+// pedido que responde depois de um parar ou de outro pedir (e o da câmera sozinha, também depois de a escolha voltar a
+// desligada) para assim que chega, sem ir ao cérebro.
 //
 // O silêncio gerado é a faixa de som de quem está sem microfone (o desenho, item 6; toda ligação manda som): um
 // oscilador num ganho zero, num MediaStreamAudioDestination. Sem RTP, a ligação cairia pelo tempo sem mídia (60 s); o
 // oscilador dá ao destino o que mandar (o Chromium manda também o de um destino vazio, mas o desenho não conta com
-// isso). O AudioContext dele nasce e acorda nos cliques que levam à reunião (o despertar): fora de um gesto, o
-// navegador o deixa parado (suspended), e um contexto parado não processa o som.
+// isso). O AudioContext dele nasce e acorda nos cliques que levam à reunião e no Compartilhar a tela (o despertar):
+// fora de um gesto, o navegador o deixa parado (suspended), e um contexto parado não processa o som.
+//
+// A captura da tela (o desenho, item 4) é a imagem que a ligação da tela manda, com o silêncio. O capturarTela chama o
+// getDisplayMedia, só da imagem, dentro do clique do Compartilhar a tela (o Safari e o Firefox só o deixam dentro do
+// gesto), e a resposta vai ao cérebro como o telaCapturada; a escolha cancelada, ou um erro, é o ok falso, sem aviso.
+// Um pedido de cada vez. A captura nunca entra no fluxo e não é um aparelho: o ended da faixa dela (o "Parar de
+// compartilhar" do próprio navegador) é o clique pararDeCompartilhar, uma vez, e nunca um midia. O pararCaptura para
+// todas as faixas dela e vale duas vezes seguidas; a captura que a página para não avisa nada, e a que responde depois
+// de o cérebro desistir dela para assim que chega.
 
 const viva = (faixa) => faixa.readyState === 'live';
 
 /**
  * A mídia da página: pedir, parar, escolher(mic, cam, reuniao), fluxo() (o MediaStream de agora, ou null),
- * cameraPedida() (a promessa da resposta do pedido da câmera sozinha que ainda corre, ou null) e despertar() (o
- * silêncio, dentro de um clique). O reuniao do escolher é 'fora' (fora da reunião), 'noAr' (a ligação no ar: a câmera
- * é dela) ou 'caiu' (a conexão caída, até a volta).
+ * cameraPedida() (a promessa da resposta do pedido da câmera sozinha que ainda corre, ou null), despertar() (o
+ * silêncio, dentro de um clique), e a captura da tela: capturarTela() (dentro do clique), pararCaptura() e captura() (o
+ * MediaStream dela, ou null). O reuniao do escolher é 'fora' (fora da reunião), 'noAr' (a ligação no ar: a câmera é
+ * dela) ou 'caiu' (a conexão caída, até a volta).
  */
 export function criarMidia(aoEvento, previas) {
   let fluxo = null;
@@ -42,6 +52,8 @@ export function criarMidia(aoEvento, previas) {
   let religada = false; // a câmera ligada que falta no fluxo, sem a ligação no ar, e que ainda não foi pedida
   let escolha = { mic: 'ligado', cam: 'ligado', reuniao: 'fora' }; // a do último desenho
   const vigiadas = new WeakSet(); // as faixas com o ended vigiado daqui
+  let tela = null; // a captura da tela de agora: {fluxo}
+  let pedidoDaTela = null; // o getDisplayMedia que ainda não respondeu: {vale}
 
   function mostrar(novo) {
     if (fluxo && fluxo !== novo) pararFaixas(fluxo);
@@ -127,6 +139,55 @@ export function criarMidia(aoEvento, previas) {
     responder();
   }
 
+  // Dentro do clique: o getDisplayMedia sai antes de tudo o que é assíncrono. Com um pedido ainda aberto (a escolha da
+  // tela na frente da página) ou uma captura de pé, o clique fica de fora.
+  function capturarTela() {
+    if (pedidoDaTela || tela) return;
+    const pedido = { vale: true };
+    pedidoDaTela = pedido;
+    let resposta;
+    try {
+      resposta = navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+    } catch (erro) {
+      resposta = Promise.reject(erro);
+    }
+    const respondeu = () => {
+      if (pedidoDaTela === pedido) pedidoDaTela = null;
+    };
+    Promise.resolve(resposta).then(
+      (captura) => {
+        respondeu();
+        // A que chega depois de o cérebro desistir dela para, sem aviso; a que chega sem imagem viva não serve.
+        const serve = captura?.getVideoTracks().some(viva);
+        if (!pedido.vale || !serve) {
+          pararFaixas(captura);
+          if (pedido.vale) aoEvento({ tipo: 'telaCapturada', ok: false });
+          return;
+        }
+        capturada(captura);
+        aoEvento({ tipo: 'telaCapturada', ok: true });
+      },
+      () => {
+        respondeu();
+        if (pedido.vale) aoEvento({ tipo: 'telaCapturada', ok: false });
+      },
+    );
+  }
+
+  // A captura nova é a de agora. O ended de uma faixa dela, que só o navegador dá (o stop() da página não o dá), é o
+  // Parar de compartilhar, uma vez, enquanto ela for a de agora.
+  function capturada(captura) {
+    const esta = { fluxo: captura };
+    tela = esta;
+    let avisou = false;
+    const oNavegadorParou = () => {
+      if (tela !== esta || avisou) return;
+      avisou = true;
+      aoEvento({ tipo: 'clique', botao: 'pararDeCompartilhar' });
+    };
+    for (const faixa of captura.getTracks()) faixa.addEventListener('ended', oNavegadorParou, { once: true });
+  }
+
   return {
     async pedir() {
       const minha = ++vez;
@@ -162,6 +223,13 @@ export function criarMidia(aoEvento, previas) {
     fluxo: () => fluxo,
     cameraPedida: () => camera?.respondeu ?? null,
     despertar: despertarOSilencio,
+    capturarTela,
+    pararCaptura() {
+      if (pedidoDaTela) pedidoDaTela.vale = false;
+      pararFaixas(tela?.fluxo);
+      tela = null;
+    },
+    captura: () => tela?.fluxo ?? null,
   };
 }
 

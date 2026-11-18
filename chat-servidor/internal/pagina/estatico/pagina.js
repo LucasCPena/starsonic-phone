@@ -122,7 +122,8 @@ export function iniciar(raiz, servicos) {
         ligacao.trocarMicrofone(efeito.ligado);
         break;
       case 'pararCaptura':
-        break; // a captura da tela (o clique do Compartilhar a tela) ainda não existe: não há o que parar
+        midia.pararCaptura();
+        break;
       case 'focar':
         tituloVisivel()?.focus();
         break;
@@ -133,14 +134,18 @@ export function iniciar(raiz, servicos) {
   // nele (nenhuma é o vídeo sem faixa), e o microfone desligado é a faixa dele com o enabled falso. A câmera que a
   // pessoa acabou de ligar (ou que a conexão caída devolveu) pode ainda estar sendo pedida: a principal a espera, até
   // PRAZO_DA_CAMERA_MS, para a oferta concordar com o botão, e o desligar dela, nesse meio-tempo, cancela o ligar
-  // (nada dele chega ao cérebro).
+  // (nada dele chega ao cérebro). A da tela leva a captura da tela, e nunca a câmera nem o microfone.
   const adiados = new Map(); // o qual → o ligar que espera a câmera: {vale}
 
   function ligar({ qual, senha }) {
     cancelarOLigar(qual);
     const { acesso } = estado; // o do efeito; o fluxo é o da hora de ligar
+    if (qual === 'tela') {
+      ligacao.ligar({ qual, senha, acesso, fluxo: midia.captura() });
+      return;
+    }
     const comOFluxo = () => ligacao.ligar({ qual, senha, acesso, fluxo: midia.fluxo() });
-    if (qual !== 'principal' || !midia.cameraPedida()) {
+    if (!midia.cameraPedida()) {
       comOFluxo();
       return;
     }
@@ -278,6 +283,13 @@ export function iniciar(raiz, servicos) {
     if (b.dataset.botao === 'pedir') tocarOSom();
     if (DE_ENTRAR.has(b.dataset.botao)) midia.despertar();
     despachar({ tipo: 'clique', botao: b.dataset.botao });
+  });
+  // O Compartilhar a tela não é um clique do cérebro: a captura nasce nele (o desenho, item 4: o Safari e o Firefox só
+  // a deixam dentro do gesto), e o cérebro recebe a resposta, o telaCapturada. O silêncio da ligação da tela acorda
+  // junto, antes: os dois saem dentro do clique, antes de qualquer coisa assíncrona.
+  compartilhar.addEventListener('click', () => {
+    midia.despertar();
+    midia.capturarTela();
   });
   nome.addEventListener('input', () => despachar({ tipo: 'nome', valor: nome.value }));
   // O Enter no nome é o Pedir para entrar; o que confirma uma composição (o IME) não conta.

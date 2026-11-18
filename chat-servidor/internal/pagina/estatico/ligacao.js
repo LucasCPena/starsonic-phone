@@ -2,22 +2,24 @@
 // (video-servidor/e2e/cliente/cliente.js): cada ligação é um UA do JsSIP só para ela, sem registro, com o From e o nome
 // neutros (pagina, porque o FreeSWITCH escreve o nome do canal nos avisos dele), o cabeçalho X-Starsonic-Senha e o
 // TURN do aceito. A principal manda a câmera e o som e recebe a reunião: o mosaico vai para o #mosaico, e o som para o
-// #som. A da tela só manda.
+// #som. A da tela só manda: a imagem da captura da tela e o silêncio.
 //
 // A interface:
 // - criarLigacoes(aoEvento) devolve {ligar, desligar, trocarCamera, trocarMicrofone};
 // - ligar({qual, senha, acesso, fluxo}): o qual é 'principal' ou 'tela'; o acesso, o turn e o video do aceito; o fluxo,
-//   o MediaStream da câmera e do microfone (o do midia.js). A escolha da pessoa vem nele: uma faixa de câmera viva quer
-//   dizer a câmera ligada, e nenhuma, o vídeo sem faixa (o quadro de quem está sem câmera); o microfone desligado é a
-//   faixa com o enabled falso, e o aparelho sem acesso não tem faixa. Sem microfone, a ligação manda o silêncio do
-//   midia.js;
+//   na principal, o MediaStream da câmera e do microfone (o do midia.js), e na da tela, o da captura da tela (do
+//   midia.js também, que a para). A escolha da pessoa vem no da principal: uma faixa de câmera viva quer dizer a câmera
+//   ligada, e nenhuma, o vídeo sem faixa (o quadro de quem está sem câmera); o microfone desligado é a faixa com o
+//   enabled falso, e o aparelho sem acesso não tem faixa. Sem microfone (a captura não tem som), a ligação manda o
+//   silêncio do midia.js;
 // - as respostas voltam pelo aoEvento: {tipo:'ligacao', qual, o}, com o o confirmada, terminou, semConexao ou falhou
 //   (este com o codigo da resposta SIP, ou 0 sem ela), e {tipo:'cameraTrocada', ok}, a resposta a todo trocarCamera;
-// - depois do desligar de uma ligação, nada dela chega ao cérebro.
+// - o desligar de uma ligação que ainda não tinha acabado dá o terminou dela na hora, antes de qualquer outro ligar (o
+//   Parar de compartilhar espera por ele para parar a captura); depois dele, nada dela chega ao cérebro.
 //
 // Os fins: o falhou e o terminou dizem que a ligação acabou, e o UA para junto. O semConexao diz que o WSS caiu com a
 // ligação confirmada: ela ainda existe, e desce com o desligar (o terminate da sessão, que manda o BYE, e o stop do
-// UA). O WSS que cai antes da ligação confirmada, ou que não abre em PRAZO_CONEXAO_MS, é o falhou.
+// UA), sem outro fim. O WSS que cai antes da ligação confirmada, ou que não abre em PRAZO_CONEXAO_MS, é o falhou.
 //
 // A câmera desligada é o vídeo nos dois sentidos, sem faixa: a página recebe o mosaico e não manda imagem nenhuma. O
 // mod_conference não dá quadro a quem só recebe o vídeo (o recvonly: ele não conta nem como quem tem vídeo nem como
@@ -72,7 +74,8 @@ export function criarLigacoes(aoEvento) {
   const mosaico = document.getElementById('mosaico');
   const som = document.getElementById('som');
 
-  // O evento da ligação: só antes do desligar dela, e um fim só (o falhou, o terminou ou o semConexao).
+  // O evento da ligação: só antes do desligar dela (o terminou do desligar sai dele), e um fim só (o falhou, o terminou
+  // ou o semConexao).
   function avisar(l, o, codigo) {
     if (!l.viva || l.fim) return;
     if (o === 'confirmada') {
@@ -105,7 +108,7 @@ export function criarLigacoes(aoEvento) {
   }
 
   function ligar({ qual, senha, acesso, fluxo }) {
-    desligar(qual); // a anterior, que acabou sozinha, ainda está guardada
+    soltar(qual); // a anterior, que acabou sozinha, ainda está guardada
     const l = {
       qual,
       fluxo,
@@ -299,12 +302,21 @@ export function criarLigacoes(aoEvento) {
     }
   }
 
+  // O desligar acaba a ligação, e a que ainda não tinha acabado dá o terminou ali mesmo, antes de qualquer outro ligar:
+  // o cérebro espera por ele no Parar de compartilhar, para parar a captura. Depois dele, nada dela chega ao cérebro.
   function desligar(qual) {
+    const l = soltar(qual);
+    if (l && !l.fim) aoEvento({ tipo: 'ligacao', qual, o: 'terminou' });
+  }
+
+  // Tira a ligação de agora daquele qual e a encerra sem avisar. Devolve a ligação, ou null sem nenhuma.
+  function soltar(qual) {
     const l = ligacoes.get(qual);
-    if (!l) return;
+    if (!l) return null;
     ligacoes.delete(qual);
     l.viva = false;
     encerrar(l);
+    return l;
   }
 
   // A resposta a uma troca da câmera vai só enquanto a ligação dela não desceu: a de uma que desceu responderia à troca
