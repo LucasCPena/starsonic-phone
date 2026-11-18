@@ -24,7 +24,8 @@
 // A câmera desligada é o vídeo nos dois sentidos, sem faixa: a página recebe o mosaico e não manda imagem nenhuma. O
 // mod_conference não dá quadro a quem só recebe o vídeo (o recvonly: ele não conta nem como quem tem vídeo nem como
 // quem tem o quadro sem câmera), e a pessoa sumiria do mosaico; com o vídeo nos dois sentidos e sem imagem, ele põe,
-// depois de 5 s sem imagem, o quadro de #1B2333 com o nome (o video-no-video-avatar), e a imagem que volta o tira.
+// depois de 5 s sem imagem, o quadro de #1B2333, sem texto (o video-no-video-avatar; o nome é a página que escreve),
+// e a imagem que volta o tira.
 // Assim, a oferta sem câmera tem o vídeo sem faixa, e trocar a câmera na reunião é só trocar a faixa, sem renegociar:
 // desligá-la é o replaceTrack(null) e a faixa parada (a luz apaga); ligá-la, um getUserMedia só de vídeo e o
 // replaceTrack. O RTCP e o ICE continuam no caminho do vídeo, e a ligação não cai pelo tempo sem mídia.

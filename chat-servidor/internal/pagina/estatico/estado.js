@@ -30,11 +30,15 @@
 // abrir) só param o religar.
 //
 // O palco e o aviso da câmera (seção 10 do protocolo). O servidor diz à pessoa aceita onde cada um está no mosaico (a
-// mensagem palco), e o cérebro guarda o último palco que vale, para os quadros; ele sai no aceito e em todo aviso, e
-// fica na conexão caída, que volta para a mesma reunião. A página diz ao servidor se a câmera dela está ligada (o
-// {tipo:'camera', ligada}), para o quadro de quem está sem ela: o aviso sai sempre que o canal passa a ser o da pessoa
-// (o aceito, o voltou) e a cada mudança do ligado, e nunca antes do aceito nem com o canal voltando (o servidor
-// responderia o erro invalido). Ele não espera resposta.
+// mensagem palco), e o cérebro guarda o último palco que vale, para os quadros. Ele só entra depois do aceito, pelo
+// canal aberto, e sai no aceito, em todo aviso, com um palco que não vale (que prova que ele ficou velho) e quando a
+// página desiste do canal: o canal que fecha sem a chave, e o religar que para (a chave recusada, o linkInvalido ou o
+// 404 do abrir do voltar, a terceira tentativa que falha). Ele fica enquanto a página tenta voltar (a conexão caída e o
+// religar, que voltam para a mesma reunião). Um palco que chega com um aviso na tela (o canal continua aberto) fica
+// guardado de novo, de propósito: ele nunca é desenhado fora da reunião, e o próximo aceito o tira. A página diz ao
+// servidor se a câmera dela está ligada (o {tipo:'camera', ligada}), para o quadro de quem está sem ela: o aviso sai
+// sempre que o canal passa a ser o da pessoa (o aceito, o voltou) e a cada mudança do ligado, e nunca antes do aceito
+// nem com o canal voltando (o servidor responderia o erro invalido). Ele não espera resposta.
 
 import { lerPalco } from './palco.js';
 
@@ -259,6 +263,8 @@ function canalFechou(e, codigo) {
   const mudancas = pedindoATela ? { telaCompartilhada: 'nenhuma' } : {};
   const efeitos = pedindoATela ? [PARAR_CAPTURA] : [];
   if (e.principal === 'noAr' && e.chave !== null) return religar(f, mudancas, ...efeitos);
+  // Sem a chave, o canal não volta, e nada mais acerta o palco: ele sai, e os quadros voltam ao mosaico inteiro.
+  if (e.chave === null) return com(f, { ...mudancas, palco: null }, ...efeitos);
   return com(f, mudancas, ...efeitos);
 }
 
@@ -310,10 +316,10 @@ function mensagem(e, m) {
   }
 }
 
-// O palco que vale toma o lugar do anterior; o que não vale fica de fora, e o anterior continua (o mesmo objeto).
+// O palco que vale toma o lugar do anterior. O que não vale fica de fora e leva o anterior junto: ele prova que o
+// anterior ficou velho, e sem palco os quadros voltam ao mosaico inteiro.
 function guardarOPalco(e, m) {
-  const palco = lerPalco(m);
-  return palco ? com(e, { palco }) : nada(e);
+  return com(e, { palco: lerPalco(m) });
 }
 
 // A resposta ao voltar, no canal do voltar. O servidor manda o voltou antes de qualquer outra mensagem, e fecha o canal
@@ -441,10 +447,11 @@ function religarFalhou(e) {
   return com(e, { ...mudancas, religando: e.religando + 1, vez }, ...efeitos, espera);
 }
 
-// O religar para: o canal do voltar fecha, e a reunião segue sem o canal.
+// O religar para: o canal do voltar fecha, e a reunião segue sem o canal. O palco sai junto: sem o canal, nada mais o
+// acerta, e os quadros voltam ao mosaico inteiro.
 function pararDeReligar(e) {
   const { mudancas, efeitos } = fecharCanalDoVoltar(e);
-  return com(e, { ...mudancas, religando: 0 }, ...efeitos);
+  return com(e, { ...mudancas, religando: 0, palco: null }, ...efeitos);
 }
 
 // O voltar começa pelo abrir, que dá o bilhete do canal novo, e o prazo da tentativa começa junto.
@@ -627,7 +634,8 @@ function tempo(e, chave) {
 }
 
 // avisar: a tela do aviso. A principal fica sem nada pendente, e a volta e o religar param (o abriu que ainda vier fica
-// de fora); o canal e a mídia ficam, para o Tentar de novo. O palco sai: ele era da reunião que acabou.
+// de fora); o canal e a mídia ficam, para o Tentar de novo. O palco sai: ele era da reunião que acabou. Um palco que
+// chegue depois, com o aviso na tela e o canal aberto, fica guardado de novo (de propósito), e o próximo aceito o tira.
 function avisar(e, aviso, mudancas = {}, ...efeitos) {
   const limpo = { principal: 'nenhuma', reconectando: 0, senhaRepetida: false, senhaGuardada: null, palco: null };
   const semVoltar = { religando: 0, esperandoBilhete: false };

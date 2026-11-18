@@ -1273,9 +1273,16 @@ test('o palco fica no estado', () => {
   const comPalco = r.estado;
   // Antes do aceito, ele fica de fora.
   for (const antes of [pedindo(), aguardando()]) semMudar(antes, mensagem(PALCO));
-  // O que não vale também: fica o anterior, o mesmo objeto.
-  semMudar(comPalco, mensagem({ ...PALCO, largura: 0 }));
-  semMudar(comPalco, mensagem({ ...PALCO, quadros: 'nenhum' }));
+  // O que não vale também fica de fora, e leva o anterior junto: um palco que não vale prova que o anterior ficou
+  // velho.
+  for (const ruim of [
+    { ...PALCO, largura: 0 },
+    { ...PALCO, quadros: 'nenhum' },
+  ]) {
+    r = passo(comPalco, mensagem(ruim));
+    assert.equal(r.estado.palco, null);
+    assert.deepEqual(r.efeitos, []);
+  }
   // Um palco novo toma o lugar do anterior; o sem quadros também vale.
   const vazio = { tipo: 'palco', largura: 1280, altura: 720, quadros: [] };
   assert.deepEqual(passo(comPalco, mensagem(vazio)).estado.palco, { largura: 1280, altura: 720, quadros: [] });
@@ -1286,15 +1293,85 @@ test('o palco fica no estado', () => {
   const semServidor = rodar(entrando(), mensagem(PALCO), ligacao('principal', 'falhou'));
   assert.equal(semServidor.estado.aviso, 'semServidor');
   assert.equal(semServidor.estado.palco, null);
-  // O aceito seguinte começa sem palco: o do Entrar de novo pela espera, e, por defesa, um aceito com um palco velho
-  // no estado (que os eventos não alcançam: todo caminho até outro aceito passa por um aviso).
+  // O aceito seguinte começa sem palco: o do Entrar de novo pela espera, e o que chega com um palco velho no estado.
+  // Os eventos o alcançam: um palco que chega com um aviso na tela fica guardado (de propósito), e, com a chave, o canal
+  // que cai depois não o tira; o Tentar de novo leva a página à espera com ele.
   const deNovo = rodar(comPalco, canalFechou(1006), clique('sair'), clique('entrarDeNovo'), abriu(3), CANAL_ABRIU);
   assert.equal(passo(deNovo.estado, mensagem(ACEITO)).estado.palco, null);
+  const velho = rodar(
+    aguardando(),
+    mensagem(ACEITO_COM_CHAVE),
+    ligacao('principal', 'falhou'),
+    mensagem(PALCO),
+    canalFechou(1006),
+    clique('tentarDeNovo'),
+    abriu(3),
+    CANAL_ABRIU,
+  ).estado;
+  assert.equal(velho.tela, 'pedindo');
+  assert.equal(velho.aceito, false);
+  assert.deepEqual(velho.palco, PALCO_LIDO);
+  assert.equal(passo(velho, mensagem(ACEITO)).estado.palco, null);
   assert.equal(passo({ ...aguardando(), palco: PALCO_LIDO }, mensagem(ACEITO)).estado.palco, null);
   // A conexão caída não o tira: a página volta para a mesma reunião, e o canal que cai também não.
   const comChave = passo(naReuniaoComChave(), mensagem(PALCO)).estado;
   assert.equal(passo(comChave, SEM_CONEXAO).estado.palco, comChave.palco);
   assert.equal(passo(comChave, canalFechou(1006)).estado.palco, comChave.palco);
+});
+
+test('o palco sai quando a página desiste do canal e fica na reunião', () => {
+  // Sem o canal, nada mais acerta o palco: quem pegasse a célula de quem saiu apareceria com o nome dele. A pessoa
+  // continua na reunião, com a ligação no ar, e os quadros voltam ao mosaico inteiro.
+  const RECUSADA = mensagem({ tipo: 'erro', erro: 'invalido' });
+  const LINK_INVALIDO = mensagem({ tipo: 'linkInvalido' });
+  const comChave = passo(naReuniaoComChave(), mensagem(PALCO)).estado;
+  const semChave = passo(naReuniao(), mensagem(PALCO)).estado;
+  // Enquanto a página tenta voltar, o palco fica: as tentativas costumam levar poucos segundos.
+  const tentando = (estado) => assert.deepEqual(estado.palco, PALCO_LIDO);
+  const noReligar = seguir(
+    comChave,
+    [
+      [canalFechou(1006), [esperar(2000, 'religar:1')]],
+      [tempo('religar:1'), [abrir(3), prazo(1)]],
+    ],
+    tentando,
+  );
+  const voltando = seguir(
+    noReligar,
+    [
+      [abriu(3), [abrirCanal(3)]],
+      [CANAL_ABRIU, [voltar(VOLTA_1)]],
+    ],
+    tentando,
+  );
+  // A terceira tentativa que falha: as duas primeiras ainda guardam o palco.
+  const naTerceira = seguir(
+    noReligar,
+    [
+      [abrirFalhou(3, 503), [esperar(4000, 'religar:2')]],
+      [tempo('religar:2'), [abrir(4), prazo(2)]],
+      [tempo('prazo:2'), [esperar(8000, 'religar:3')]],
+      [tempo('religar:3'), [abrir(5), prazo(3)]],
+    ],
+    tentando,
+  );
+  const desistencias = {
+    'o voltar respondido com o erro invalido': passo(voltando, RECUSADA),
+    'o linkInvalido do voltar': passo(voltando, LINK_INVALIDO),
+    'o 404 do abrir do voltar': passo(noReligar, abrirFalhou(3, 404)),
+    'a terceira tentativa que falha': passo(naTerceira, tempo('prazo:3')),
+    'o canal que fecha sem a chave': passo(semChave, canalFechou(1006)),
+  };
+  for (const [caso, r] of Object.entries(desistencias)) {
+    assert.equal(r.estado.tela, 'reuniao', caso);
+    assert.equal(r.estado.aviso, null, caso);
+    assert.equal(r.estado.principal, 'noAr', caso);
+    assert.equal(r.estado.canal, 'fechado', caso);
+    assert.equal(r.estado.religando, 0, caso);
+    assert.equal(r.estado.palco, null, caso);
+    // Um palco que chega depois, num canal que não é o da pessoa, continua de fora.
+    semMudar(r.estado, mensagem(PALCO));
+  }
 });
 
 test('o erro do servidor não é resposta ao aviso da câmera', () => {

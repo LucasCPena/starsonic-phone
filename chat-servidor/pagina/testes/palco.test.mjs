@@ -235,6 +235,20 @@ test('recortar: o inteiro mostra a célula inteira, com faixas no quadro', () =>
   assert.ok(Math.abs(r.da - 559.13) < 0.01, `da ${r.da}`);
 });
 
+test('recortar: o inteiro num quadro mais largo que a célula deixa as faixas dos lados', () => {
+  const r = recortar({ x: 0, y: 0, l: 1920, a: 1080 }, { l: 1200, a: 400 }, 'inteiro');
+  assert.deepEqual({ sx: r.sx, sy: r.sy, sl: r.sl, sa: r.sa, dy: r.dy, da: r.da }, {
+    sx: 0,
+    sy: 0,
+    sl: 1920,
+    sa: 1080,
+    dy: 0,
+    da: 400,
+  });
+  assert.ok(Math.abs(r.dx - 244.44) < 0.01, `dx ${r.dx}`);
+  assert.ok(Math.abs(r.dl - 711.11) < 0.01, `dl ${r.dl}`);
+});
+
 // ---------------------------------------------------------------------------------------------------------------------
 // O sincronizar. Cada passo confere o resultado sem a memória, e a memória segue para o próximo passo congelada.
 
@@ -419,6 +433,87 @@ test('sincronizar: a memória recebida nunca muda', () => {
   assert.deepEqual(sincronizar(m1, { palco: P4_COM_BIA, video: V2, agora: 5000 }), r2);
 });
 
+test('sincronizar: o mosaico continua com palcos do tamanho errado, e os quadros voltam 600 ms depois do tamanho', () => {
+  let s = passo(sincroniaInicial(0), P4, V, 100);
+  s = passo(s.mem, P4, V, 700);
+  // O vídeo muda de tamanho sem um palco dele: espera, e, 3000 ms depois, o mosaico.
+  s = passo(s.mem, P4, V2, 1000);
+  assert.deepEqual(s.r, esperado('espera', P4, CHAVES_P4, 3000));
+  s = passo(s.mem, P4, V2, 4000);
+  assert.deepEqual(s.r, esperado('mosaico', P4, [], null));
+  // Chegam palcos do tamanho de antes, que não é o do vídeo: eles tomam o lugar do visto, e o mosaico continua.
+  s = passo(s.mem, P4_COM_BIA, V2, 4500);
+  assert.deepEqual(s.r, esperado('mosaico', P4_COM_BIA, [], null));
+  s = passo(s.mem, P4_BIA_NO_LUGAR_DO_ROBERTO, V2, 5000);
+  assert.deepEqual(s.r, esperado('mosaico', P4_BIA_NO_LUGAR_DO_ROBERTO, [], null));
+  // O vídeo volta ao tamanho do palco: 600 ms de espera, e os quadros. A Bia, que mudou de célula aos 5000, já esperou
+  // os 1000 ms dela.
+  s = passo(s.mem, P4_BIA_NO_LUGAR_DO_ROBERTO, V, 6000);
+  assert.deepEqual(s.r, esperado('espera', P4_BIA_NO_LUGAR_DO_ROBERTO, CHAVES_P4.toSpliced(3, 1, `cam:${BIA}`), 600));
+  s = passo(s.mem, P4_BIA_NO_LUGAR_DO_ROBERTO, V, 6599);
+  assert.deepEqual(s.r.modo, 'espera');
+  s = passo(s.mem, P4_BIA_NO_LUGAR_DO_ROBERTO, V, 6600);
+  assert.deepEqual(s.r, esperado('quadros', P4_BIA_NO_LUGAR_DO_ROBERTO, [], null));
+});
+
+// O relógio da página é o do sistema, que pode voltar (um acerto da hora). A espera em curso recomeça no agora da volta,
+// com a duração inteira, em vez de esticar pelo tamanho da volta.
+const VOLTA_DO_RELOGIO = 30000;
+
+test('sincronizar: o relógio que volta recomeça a espera do tamanho (600 ms)', () => {
+  let s = passo(sincroniaInicial(0), P4, V, 100);
+  assert.deepEqual(s.r, esperado('espera', P4, CHAVES_P4, 600));
+  const volta = 400 - VOLTA_DO_RELOGIO;
+  s = passo(s.mem, P4, V, volta);
+  assert.deepEqual(s.r, esperado('espera', P4, CHAVES_P4, 600));
+  s = passo(s.mem, P4, V, volta + 599);
+  assert.deepEqual(s.r, esperado('espera', P4, CHAVES_P4, 1));
+  s = passo(s.mem, P4, V, volta + 600);
+  assert.deepEqual(s.r, esperado('quadros', P4, [], null));
+});
+
+test('sincronizar: o relógio que volta recomeça a espera de quem entrou (1000 ms)', () => {
+  let s = passo(sincroniaInicial(0), P4, V, 100);
+  s = passo(s.mem, P4, V, 700);
+  s = passo(s.mem, P4_COM_BIA, V, 5000);
+  assert.deepEqual(s.r, esperado('quadros', P4_COM_BIA, [`cam:${BIA}`], 1000));
+  // O tamanho do vídeo também recomeça a conta: os 600 ms dele e os 1000 ms da Bia, desde a volta.
+  const volta = 5500 - VOLTA_DO_RELOGIO;
+  s = passo(s.mem, P4_COM_BIA, V, volta);
+  assert.deepEqual(s.r, esperado('espera', P4_COM_BIA, [...CHAVES_P4, `cam:${BIA}`], 600));
+  s = passo(s.mem, P4_COM_BIA, V, volta + 600);
+  assert.deepEqual(s.r, esperado('quadros', P4_COM_BIA, [`cam:${BIA}`], 400));
+  s = passo(s.mem, P4_COM_BIA, V, volta + 999);
+  assert.deepEqual(s.r, esperado('quadros', P4_COM_BIA, [`cam:${BIA}`], 1));
+  s = passo(s.mem, P4_COM_BIA, V, volta + 1000);
+  assert.deepEqual(s.r, esperado('quadros', P4_COM_BIA, [], null));
+});
+
+test('sincronizar: o relógio que volta recomeça o prazo do mosaico (3000 ms)', () => {
+  // Sem palco.
+  let s = passo(sincroniaInicial(0), null, V, 1000);
+  assert.deepEqual(s.r, esperado('espera', null, [], 2000));
+  let volta = 1000 - VOLTA_DO_RELOGIO;
+  s = passo(s.mem, null, V, volta);
+  assert.deepEqual(s.r, esperado('espera', null, [], 3000));
+  s = passo(s.mem, null, V, volta + 2999);
+  assert.deepEqual(s.r, esperado('espera', null, [], 1));
+  s = passo(s.mem, null, V, volta + 3000);
+  assert.deepEqual(s.r, esperado('mosaico', null, [], null));
+  // Com o vídeo de outro tamanho que o palco.
+  s = passo(sincroniaInicial(0), P4, V, 100);
+  s = passo(s.mem, P4, V, 700);
+  s = passo(s.mem, P4, V2, 1000);
+  assert.deepEqual(s.r, esperado('espera', P4, CHAVES_P4, 3000));
+  volta = 2000 - VOLTA_DO_RELOGIO;
+  s = passo(s.mem, P4, V2, volta);
+  assert.deepEqual(s.r, esperado('espera', P4, CHAVES_P4, 3000));
+  s = passo(s.mem, P4, V2, volta + 2999);
+  assert.deepEqual(s.r, esperado('espera', P4, CHAVES_P4, 1));
+  s = passo(s.mem, P4, V2, volta + 3000);
+  assert.deepEqual(s.r, esperado('mosaico', P4, [], null));
+});
+
 // ---------------------------------------------------------------------------------------------------------------------
 // O aoMudarOPalco.
 
@@ -437,6 +532,13 @@ test('aoMudarOPalco', () => {
   assert.equal(aoMudarOPalco(null, P4, P4_COM_BIA), null);
   // Durante o compartilhamento, outro palco com a mesma tela.
   assert.equal(aoMudarOPalco(carlosAumentado, PT, PT_SEM_A_MARIA), carlosAumentado);
+  // A tela troca de dono (a do Carlos no lugar da da Ana): o que é o grande mudou, e ninguém fica aumentado.
+  const telaDoCarlos = congelar({
+    ...PT,
+    quadros: PT.quadros.map((q) => (q.tela ? { ...q, quem: CARLOS, nome: 'Carlos Lima' } : q)),
+  });
+  assert.equal(aoMudarOPalco(`cam:${MARIA}`, PT, telaDoCarlos), null);
+  assert.equal(aoMudarOPalco(carlosAumentado, PT, telaDoCarlos), null);
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -537,6 +639,52 @@ test('arrumar no PC: 9 outros, em três colunas', () => {
   }
   assert.equal(new Set(outros.map((q) => q.x)).size, 3);
   assert.equal(new Set(outros.map((q) => q.y)).size, 3);
+});
+
+test('arrumar no PC: de 5 a 8 outros, e a última linha incompleta no centro', () => {
+  // n outros, cada um numa célula qualquer do mosaico: o arrumar só olha a ordem.
+  const comN = (n) =>
+    congelar({
+      largura: 1920,
+      altura: 1080,
+      quadros: [
+        ...Array.from({ length: n }, (_, i) => cam(`d00000000000000${i + 1}`, `Pessoa ${i + 1}`, 0, 0, 480, 270)),
+        voce,
+      ],
+    });
+  const grade = (n) => {
+    const r = noPC(comN(n));
+    assert.equal(r.modo, 'grade');
+    assert.deepEqual(lugar(r, 'voce'), em('canto', false, 1008, 475, 208, 117));
+    return r.quadros.filter((q) => q.tipo === 'camera').map((q) => [q.x, q.y, q.l, q.a]);
+  };
+  // 5 e 6: três colunas e duas linhas de 405x300; com 5, os dois da última linha no centro.
+  assert.deepEqual(grade(5), [
+    [0, 0, 405, 300],
+    [413, 0, 405, 300],
+    [827, 0, 405, 300],
+    [207, 308, 405, 300],
+    [620, 308, 405, 300],
+  ]);
+  assert.deepEqual(grade(6), [
+    [0, 0, 405, 300],
+    [413, 0, 405, 300],
+    [827, 0, 405, 300],
+    [0, 308, 405, 300],
+    [413, 308, 405, 300],
+    [827, 308, 405, 300],
+  ]);
+  // 7 e 8: três colunas e três linhas de 395x197; com 7, o último no centro, e com 8, os dois.
+  const seis = [
+    [16, 0, 395, 197],
+    [419, 0, 395, 197],
+    [821, 0, 395, 197],
+    [16, 205, 395, 197],
+    [419, 205, 395, 197],
+    [821, 205, 395, 197],
+  ];
+  assert.deepEqual(grade(7), [...seis, [419, 411, 395, 197]]);
+  assert.deepEqual(grade(8), [...seis, [217, 411, 395, 197], [620, 411, 395, 197]]);
 });
 
 test('arrumar no PC: o Carlos aumentado, e as outras pessoas na faixa', () => {

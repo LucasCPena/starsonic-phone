@@ -20,7 +20,9 @@ export const PRAZO_SEM_PALCO_MS = 3000;
 /** O que o recorte de uma câmera tira de cada lado da célula, em pontos do mosaico: a borda do vizinho. */
 export const MARGEM_DO_RECORTE = 2;
 
-// Os limites do palco, os mesmos do chat.
+// Os limites do palco, os mesmos do chat: os do tamanho e o dos quadros estão também em
+// chat-servidor/internal/reunioes/palco.go, e os dois mudam juntos (o nome aqui aceita mais que os 80 que o chat manda).
+// Um palco que passa deles fica de fora e tira o anterior (no estado.js), e a página mostra o mosaico inteiro.
 const LARGURA = [16, 7680];
 const ALTURA = [16, 4320];
 const MAX_QUADROS = 13;
@@ -89,6 +91,15 @@ const mesmaCelula = (q, r) => q.x === r.x && q.y === r.y && q.l === r.l && q.a =
 /** Junta o palco com o vídeo. O video é {l, a}, ou null sem imagem ainda. */
 export function sincronizar(mem, { palco, video, agora }) {
   const m = { ...mem, recebido: palco };
+  // O relógio pode voltar (a hora do sistema acertada para trás): um momento da memória depois do agora desce para o
+  // agora, e a espera dele recomeça com a duração inteira, em vez de esticar pelo tamanho da volta.
+  if (agora < m.videoDesde) m.videoDesde = agora;
+  if (agora < m.semPalcoDesde) m.semPalcoDesde = agora;
+  if (Object.values(m.entradas).some((desde) => agora < desde)) {
+    m.entradas = Object.fromEntries(
+      Object.entries(m.entradas).map(([chave, desde]) => [chave, Math.min(desde, agora)]),
+    );
+  }
   if (!mesmoVideo(video, mem.video)) {
     m.video = video === null ? null : { l: video.l, a: video.a };
     m.videoDesde = agora;
