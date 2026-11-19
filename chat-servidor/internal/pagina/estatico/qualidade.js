@@ -20,11 +20,13 @@ const maior = (valores) => valores.filter(numero).reduce((m, v) => (m === null |
 
 /**
  * O que uma leitura guarda do getStats (um RTCStatsReport, ou qualquer coisa com o forEach dele):
- * { agora, som, video, perdaQueSai, atraso }.
+ * { agora, som, video, sai, atraso }.
  *   agora: o maior timestamp do relatório, em ms;
  *   som: { recebidos, perdidos } do inbound-rtp de áudio, ou null; video: { recebidos, perdidos, imagens } do de vídeo
  *     (as imagens são o framesDecoded, ou null sem ele), ou null; mais de um do mesmo tipo são somados;
- *   perdaQueSai: a maior fractionLost dos remote-inbound-rtp com o timestamp a até 10 s do agora, ou null;
+ *   sai: o que a página manda de cada tipo, { som, video }, cada um com { enviados, perda }: os enviados são os
+ *     packetsSent dos outbound-rtp do tipo, somados, ou null sem eles; a perda é a maior fractionLost dos
+ *     remote-inbound-rtp do tipo com o timestamp a até 10 s do agora, ou null;
  *   atraso: em ms, o currentRoundTripTime do par de endereços em uso; sem ele, o roundTripTime do remote-inbound-rtp
  *     do som com até 10 s; sem os dois, null.
  * Sem relatório, null.
@@ -32,6 +34,7 @@ const maior = (valores) => valores.filter(numero).reduce((m, v) => (m === null |
 export function leitura(relatorio) {
   if (!relatorio || typeof relatorio.forEach !== 'function') return null;
   const chegam = { audio: null, video: null };
+  const mandados = { audio: null, video: null }; // os pacotes que a página mandou de cada tipo
   const voltam = []; // os remote-inbound-rtp
   const pares = [];
   let parDoTransporte = null;
@@ -47,6 +50,8 @@ export function leitura(relatorio) {
       t.perdidos += s.packetsLost;
       if (numero(s.framesDecoded)) t.imagens = (t.imagens ?? 0) + s.framesDecoded;
       chegam[tipo] = t;
+    } else if (s.type === 'outbound-rtp' && (tipo === 'audio' || tipo === 'video')) {
+      if (numero(s.packetsSent)) mandados[tipo] = (mandados[tipo] ?? 0) + s.packetsSent;
     } else if (s.type === 'remote-inbound-rtp') {
       voltam.push({ tipo, quando: s.timestamp, perda: s.fractionLost, atraso: s.roundTripTime });
     } else if (s.type === 'candidate-pair') {
@@ -56,9 +61,19 @@ export function leitura(relatorio) {
     }
   });
 
-  // Os relatórios do servidor que ainda valem.
+  // Os relatórios do servidor que ainda valem, e a perda que eles dizem de cada tipo.
   const novos = voltam.filter((v) => numero(v.quando) && agora - v.quando <= VALIDADE_DO_RELATORIO_MS);
-  const perdaQueSai = maior(novos.map((v) => v.perda).filter((p) => numero(p) && p >= 0));
+  const perdaDe = (qual) =>
+    maior(
+      novos
+        .filter((v) => v.tipo === qual)
+        .map((v) => v.perda)
+        .filter((p) => numero(p) && p >= 0),
+    );
+  const sai = {
+    som: { enviados: mandados.audio, perda: perdaDe('audio') },
+    video: { enviados: mandados.video, perda: perdaDe('video') },
+  };
   // O par em uso: o do transport; sem ele, o que diz selected; sem ele, o nomeado que deu certo.
   const emUso =
     pares.find((p) => parDoTransporte !== null && p.id === parDoTransporte) ??
@@ -69,7 +84,7 @@ export function leitura(relatorio) {
   const segundos = numero(doPar) ? doPar : numero(doSom) ? doSom : null;
 
   const som = chegam.audio ? { recebidos: chegam.audio.recebidos, perdidos: chegam.audio.perdidos } : null;
-  return { agora, som, video: chegam.video, perdaQueSai, atraso: segundos === null ? null : segundos * 1000 };
+  return { agora, som, video: chegam.video, sai, atraso: segundos === null ? null : segundos * 1000 };
 }
 
 // A perda de um tipo entre duas leituras: os perdidos sobre os perdidos mais os recebidos. Os perdidos que diminuem (um
@@ -83,6 +98,16 @@ function perdaDoQueChega(antes, depois) {
   return recebidos + perdidos === 0 ? null : perdidos / (recebidos + perdidos);
 }
 
+// A perda do que sai de um tipo: a que o servidor de vídeo diz, e só quando a página mandou pacotes desse tipo entre as
+// duas leituras. O servidor manda o relatório também do que a página não manda: com a câmera desligada o vídeo vai sem
+// faixa, e o primeiro relatório do FreeSWITCH sobre ele conta um pacote perdido, que de nenhum pacote é 255/256. Sem o
+// contador dos mandados (um navegador que não o dá), a página não sabe se manda, e a perda não conta contra a pessoa.
+function perdaDoQueSai(antes, depois) {
+  // Sem o contador de agora, a comparação já dá falso; sem o de antes, ela daria verdadeiro.
+  const mandou = numero(antes.enviados) && depois.enviados > antes.enviados;
+  return mandou ? depois.perda : null;
+}
+
 // O que chegou de um tipo entre duas leituras: 'chegou', 'nada', ou 'incerto' (o contador andou para trás, e isso não
 // prova que nada chegou). Sem o tipo nas duas leituras, null.
 function chegada(antes, depois) {
@@ -93,7 +118,8 @@ function chegada(antes, depois) {
 
 /**
  * A medida entre duas leituras: { perda, atraso, nadaChegou }. A perda é uma fração, a maior entre a do som que chega,
- * a do vídeo que chega e a que o servidor diz do que sai; ou null. O atraso, em ms, é o da leitura de agora; ou null.
+ * a do vídeo que chega e a que o servidor diz do som e do vídeo que a página manda; ou null. O atraso, em ms, é o da
+ * leitura de agora; ou null.
  * O nadaChegou: nenhum pacote de som novo e nenhuma imagem nova, entre os tipos que as duas leituras têm (sem a conta
  * das imagens, valem os pacotes do vídeo). Sem uma das leituras, null.
  */
@@ -102,7 +128,8 @@ export function medida(antes, depois) {
   const perda = maior([
     perdaDoQueChega(antes.som, depois.som),
     perdaDoQueChega(antes.video, depois.video),
-    depois.perdaQueSai,
+    perdaDoQueSai(antes.sai.som, depois.sai.som),
+    perdaDoQueSai(antes.sai.video, depois.sai.video),
   ]);
   const comImagens = antes.video?.imagens != null && depois.video?.imagens != null;
   const chegadas = [

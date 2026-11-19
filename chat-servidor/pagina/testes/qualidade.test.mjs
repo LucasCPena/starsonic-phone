@@ -22,12 +22,24 @@ import {
 
 /**
  * O relatório de uma leitura. agora: o timestamp dos objetos; som e video: os contadores do inbound-rtp de cada tipo
- * ({recebidos, perdidos, imagens}); sai: os remote-inbound-rtp ({tipo, perda, atraso (em s), ha (ms atrás)}); par: o
- * par de endereços em uso ({atraso (em s), por: 'transport' | 'selected' | 'nominated'}).
+ * ({recebidos, perdidos, imagens}); manda: os pacotes que a página mandou de cada tipo até ali, os packetsSent do
+ * outbound-rtp ({audio, video}); sai: os remote-inbound-rtp ({tipo, perda, atraso (em s), ha (ms atrás)}); par: o par
+ * de endereços em uso ({atraso (em s), por: 'transport' | 'selected' | 'nominated'}).
  */
-function relatorio({ agora = 100_000, som = null, video = null, sai = [], par = null, outros = [] } = {}) {
+function relatorio({
+  agora = 100_000,
+  som = null,
+  video = null,
+  manda = {},
+  sai = [],
+  par = null,
+  outros = [],
+} = {}) {
   const r = new Map();
   const por = (o) => r.set(o.id, o);
+  for (const [tipo, pacotes] of Object.entries(manda)) {
+    por({ id: `out-${tipo}`, type: 'outbound-rtp', kind: tipo, timestamp: agora, packetsSent: pacotes });
+  }
   if (som) {
     por({
       id: 'in-som',
@@ -96,7 +108,10 @@ function relatorio({ agora = 100_000, som = null, video = null, sai = [], par = 
   return r;
 }
 
-const SEM_NADA = { som: null, video: null, perdaQueSai: null, atraso: null };
+// O que sai de um tipo, numa leitura: os pacotes que a página mandou até ali e a perda que o servidor diz deles.
+const vai = (enviados, perda = null) => ({ enviados, perda });
+const NAO_VAI = vai(null);
+const SEM_NADA = { som: null, video: null, sai: { som: NAO_VAI, video: NAO_VAI }, atraso: null };
 
 test('os valores da spec', () => {
   assert.equal(INTERVALO_MS, 2000);
@@ -110,6 +125,7 @@ test('a leitura', () => {
     agora: 100_000,
     som: { recebidos: 5000, perdidos: 12 },
     video: { recebidos: 9000, perdidos: 30, imagens: 2500 },
+    manda: { audio: 5100, video: 800 },
     sai: [
       { tipo: 'audio', perda: 0.01, atraso: 0.21 },
       { tipo: 'video', perda: 0.04, atraso: 0.3 },
@@ -120,19 +136,47 @@ test('a leitura', () => {
     agora: 100_000,
     som: { recebidos: 5000, perdidos: 12 },
     video: { recebidos: 9000, perdidos: 30, imagens: 2500 },
-    perdaQueSai: 0.04,
+    sai: { som: { enviados: 5100, perda: 0.01 }, video: { enviados: 800, perda: 0.04 } },
     atraso: 45,
   });
 });
 
+test('a leitura: o que a página manda de cada tipo', () => {
+  // Os pacotes mandados de cada tipo; mais de um do mesmo tipo são somados (o mediaType é o nome antigo do kind).
+  const r = relatorio({
+    manda: { audio: 500, video: 20 },
+    outros: [{ id: 'out-video-2', type: 'outbound-rtp', mediaType: 'video', timestamp: 100_000, packetsSent: 30 }],
+  });
+  assert.deepEqual(leitura(r).sai, { som: vai(500), video: vai(50) });
+  // A câmera desligada desde o começo: o vídeo vai sem faixa, e o contador dele é zero, e não null.
+  assert.deepEqual(leitura(relatorio({ manda: { audio: 500, video: 0 } })).sai.video, vai(0));
+  // Sem o contador (ou com um que não é número), o tipo fica sem ele.
+  assert.deepEqual(leitura(relatorio({ manda: { audio: undefined, video: Number.NaN } })).sai, {
+    som: NAO_VAI,
+    video: NAO_VAI,
+  });
+  // A perda de cada tipo é a do relatório do servidor daquele tipo: a maior, entre os que ainda valem.
+  const dois = relatorio({
+    sai: [
+      { tipo: 'video', perda: 0.2 },
+      { tipo: 'video', perda: 0.5, ha: 3000 },
+      { tipo: 'audio', perda: 0.01 },
+    ],
+  });
+  assert.deepEqual(leitura(dois).sai, { som: vai(null, 0.01), video: vai(null, 0.5) });
+  // O relatório de um tipo que não é o som nem o vídeo não entra em nenhum.
+  const outroTipo = relatorio({ sai: [{ tipo: 'application', perda: 0.9 }, { tipo: undefined, perda: 0.9 }] });
+  assert.deepEqual(leitura(outroTipo).sai, { som: NAO_VAI, video: NAO_VAI });
+});
+
 test('a leitura: o relatório do servidor com mais de 10 s não conta', () => {
   const com = (ha) =>
-    leitura(relatorio({ sai: [{ tipo: 'video', perda: 0.5, ha }, { tipo: 'audio', perda: 0.01, ha: 0 }] })).perdaQueSai;
-  assert.equal(com(10_000), 0.5);
-  assert.equal(com(10_001), 0.01);
+    leitura(relatorio({ sai: [{ tipo: 'video', perda: 0.5, ha }, { tipo: 'audio', perda: 0.01, ha: 0 }] })).sai;
+  assert.deepEqual(com(10_000), { som: vai(null, 0.01), video: vai(null, 0.5) });
+  assert.deepEqual(com(10_001), { som: vai(null, 0.01), video: NAO_VAI });
   // Todos velhos: não há a perda do que sai. (O agora vem do som, que é de agora.)
   const soVelho = relatorio({ som: { recebidos: 1, perdidos: 0 }, sai: [{ tipo: 'audio', perda: 0.5, ha: 10_001 }] });
-  assert.equal(leitura(soVelho).perdaQueSai, null);
+  assert.equal(leitura(soVelho).sai.som.perda, null);
   // O agora é o maior timestamp do relatório (aqui, o do som), e não o do relógio da página.
   const antigo = relatorio({
     agora: 70_000,
@@ -140,7 +184,7 @@ test('a leitura: o relatório do servidor com mais de 10 s não conta', () => {
     sai: [{ tipo: 'audio', perda: 0.5, ha: 20_000 }],
   });
   assert.equal(leitura(antigo).agora, 70_000);
-  assert.equal(leitura(antigo).perdaQueSai, null);
+  assert.equal(leitura(antigo).sai.som.perda, null);
 });
 
 test('a leitura: o atraso', () => {
@@ -197,14 +241,14 @@ test('a leitura: o que falta e o que não é número', () => {
   assert.equal(leitura(dois).agora, 100_500);
   // A perda que não é número, ou negativa, não entra.
   const semPerda = relatorio({ sai: [{ tipo: 'audio', perda: undefined }, { tipo: 'video', perda: -1 }] });
-  assert.equal(leitura(semPerda).perdaQueSai, null);
+  assert.deepEqual(leitura(semPerda).sai, { som: NAO_VAI, video: NAO_VAI });
   // O que não é de nenhum tipo conhecido não atrapalha.
   const estranhos = relatorio({ outros: [{ id: 'x', type: 'codec', timestamp: 5 }, { id: 'y' }] });
   assert.deepEqual(leitura(estranhos), { agora: 5, ...SEM_NADA });
 });
 
-// Uma leitura já pronta, para os testes da medida.
-const L = (campos = {}) => ({ agora: 0, ...SEM_NADA, ...campos });
+// Uma leitura já pronta, para os testes da medida. O sai leva só o tipo que o teste diz: { som } ou { video }.
+const L = (campos = {}) => ({ agora: 0, ...SEM_NADA, ...campos, sai: { ...SEM_NADA.sai, ...campos.sai } });
 const som = (recebidos, perdidos = 0) => ({ recebidos, perdidos });
 const video = (recebidos, perdidos = 0, imagens = recebidos / 10) => ({ recebidos, perdidos, imagens });
 
@@ -216,15 +260,62 @@ test('a medida: a perda do que chega', () => {
   assert.equal(medida(L({ som: som(1000, 5) }), L({ som: som(1100, 5) })).perda, 0);
   // Vale a maior: o som com 1%, o vídeo com 5% e a que sai com 3%.
   const maior = medida(
-    L({ som: som(0), video: video(0) }),
-    L({ som: som(99, 1), video: video(95, 5), perdaQueSai: 0.03 }),
+    L({ som: som(0), video: video(0), sai: { video: vai(0) } }),
+    L({ som: som(99, 1), video: video(95, 5), sai: { video: vai(250, 0.03) } }),
   );
   assert.equal(maior.perda, 0.05);
-  // A que sai vale sozinha, e quando é a maior.
-  assert.equal(medida(L(), L({ perdaQueSai: 0.03 })).perda, 0.03);
-  assert.equal(medida(L({ som: som(0) }), L({ som: som(99, 1), perdaQueSai: 0.2 })).perda, 0.2);
-  // A que sai é a da leitura de agora, e não a da anterior.
-  assert.equal(medida(L({ perdaQueSai: 0.5 }), L()).perda, null);
+});
+
+test('a medida: a perda do que sai', () => {
+  // A que o servidor diz do som que a página mandou entre as duas leituras: vale sozinha, e quando é a maior.
+  assert.equal(medida(L({ sai: { som: vai(0) } }), L({ sai: { som: vai(100, 0.03) } })).perda, 0.03);
+  const comOSom = medida(
+    L({ som: som(0), sai: { som: vai(1000) } }),
+    L({ som: som(99, 1), sai: { som: vai(1100, 0.2) } }),
+  );
+  assert.equal(comOSom.perda, 0.2);
+  // A maior entre a do som e a do vídeo.
+  const osDois = (somDepois, videoDepois) =>
+    medida(L({ sai: { som: vai(0), video: vai(0) } }), L({ sai: { som: somDepois, video: videoDepois } })).perda;
+  assert.equal(osDois(vai(100, 0.01), vai(250, 0.04)), 0.04);
+  assert.equal(osDois(vai(100, 0.06), vai(250, 0.04)), 0.06);
+  // É a da leitura de agora, e não a da anterior.
+  assert.equal(medida(L({ sai: { som: vai(0, 0.5) } }), L({ sai: { som: vai(100) } })).perda, null);
+});
+
+// O servidor de vídeo manda o relatório de volta também do que a página não manda. Com a câmera desligada, o vídeo vai
+// sem faixa, e o primeiro relatório do FreeSWITCH sobre ele conta um pacote perdido, que de nenhum é 255/256: quem
+// entrava sem câmera via "Conexão ruim" 5 s depois (medido em 19/11, contra o FreeSWITCH de verdade).
+test('a medida: a perda que o servidor diz do que a página não manda não conta', () => {
+  const quaseTudo = 255 / 256;
+  // A câmera desligada desde o começo: nenhum pacote de vídeo mandado, nas duas leituras.
+  const semCamera = medida(
+    L({ som: som(1000), video: video(900), sai: { som: vai(1000), video: vai(0) } }),
+    L({ som: som(1100), video: video(950), sai: { som: vai(1100, 1 / 256), video: vai(0, quaseTudo) } }),
+  );
+  assert.equal(semCamera.perda, 1 / 256);
+  assert.equal(classificar(semCamera), 'boa');
+  // A câmera que parou de mandar: o contador não andou entre as duas leituras, e o relatório dela, que ainda vale,
+  // não conta mais.
+  const parou = medida(L({ sai: { video: vai(500) } }), L({ sai: { video: vai(500, 0.3) } }));
+  assert.equal(parou.perda, null);
+  // Com o som é igual: sem pacote novo mandado, a perda dele não conta.
+  assert.equal(medida(L({ sai: { som: vai(700) } }), L({ sai: { som: vai(700, 0.3) } })).perda, null);
+  // A câmera ligada: os pacotes andam, e a perda conta.
+  const ligada = medida(L({ sai: { video: vai(500) } }), L({ sai: { video: vai(501, quaseTudo) } }));
+  assert.equal(ligada.perda, quaseTudo);
+  assert.equal(classificar(ligada), 'ruim');
+  // Sem o contador dos mandados numa das leituras (um navegador que não o dá), a página não sabe se manda: não conta
+  // contra a pessoa. O contador que andou para trás também não prova que ela manda.
+  assert.equal(medida(L({ sai: { video: vai(null) } }), L({ sai: { video: vai(250, 0.3) } })).perda, null);
+  assert.equal(medida(L({ sai: { video: vai(250) } }), L({ sai: { video: vai(null, 0.3) } })).perda, null);
+  assert.equal(medida(L({ sai: { video: vai(250) } }), L({ sai: { video: vai(10, 0.3) } })).perda, null);
+  // O tipo que não manda não tira a perda do que manda.
+  const soOSom = medida(
+    L({ sai: { som: vai(1000), video: vai(0) } }),
+    L({ sai: { som: vai(1100, 0.1), video: vai(0, quaseTudo) } }),
+  );
+  assert.equal(soOSom.perda, 0.1);
 });
 
 test('a medida: os contadores que não dão número', () => {
@@ -498,6 +589,55 @@ function relatorioQueAnda(b) {
     relatorio({ agora: b.relogio.agora(), som: { recebidos: b.pacotes, perdidos: b.perdidos }, par: { atraso: 0.04 } }),
   );
 }
+
+// O que o FreeSWITCH de verdade mandou a quem entrou com a câmera desligada, medido em 19/11 no teste de ponta a ponta:
+// o primeiro relatório dele sobre o vídeo, que a página não manda, chega 3 s depois da entrada com a perda de 255/256
+// (um pacote perdido de nenhum), e só é trocado por outro, com zero, segundos depois. O do som diz 1/256.
+test('quem entra sem câmera vai do Medindo à Conexão boa, sem passar pela ruim', async () => {
+  const b = bancada();
+  b.proximo = () => {
+    const t = b.relogio.agora();
+    b.pacotes += 100;
+    const sai = [];
+    if (t >= 3000) sai.push({ tipo: 'audio', perda: t < 8000 ? 1 / 256 : 0, ha: (t - 3000) % 5000 });
+    if (t >= 3000 && t < 7000) sai.push({ tipo: 'video', perda: 255 / 256, ha: t - 3000 });
+    if (t >= 7000) sai.push({ tipo: 'video', perda: 0, ha: (t - 7000) % 2000 });
+    return relatorio({
+      agora: 100_000 + t,
+      som: { recebidos: b.pacotes, perdidos: 0 },
+      video: { recebidos: b.pacotes / 2, perdidos: 0, imagens: b.pacotes / 2 },
+      manda: { audio: b.pacotes, video: 0 },
+      sai,
+      par: { atraso: 0.001 },
+    });
+  };
+  b.medidor.medir(true);
+  await assentar();
+  await b.relogio.andar(20_000);
+  assert.equal(b.medidas.length, 10);
+  assert.deepEqual([...new Set(b.medidas.map((m) => m.estado))], ['medindo', 'boa']);
+  assert.deepEqual(
+    b.medidas.filter((m) => m.perda >= LIMITES.perda.instavel),
+    [],
+  );
+  // A mesma entrada com a câmera ligada (o vídeo indo) e o mesmo relatório: aí a perda é do que a pessoa manda.
+  const c = bancada();
+  c.proximo = () => {
+    const t = c.relogio.agora();
+    c.pacotes += 100;
+    return relatorio({
+      agora: 100_000 + t,
+      som: { recebidos: c.pacotes, perdidos: 0 },
+      manda: { audio: c.pacotes, video: c.pacotes * 2 },
+      sai: t >= 3000 ? [{ tipo: 'video', perda: 255 / 256, ha: (t - 3000) % 2000 }] : [],
+      par: { atraso: 0.001 },
+    });
+  };
+  c.medidor.medir(true);
+  await assentar();
+  await c.relogio.andar(20_000);
+  assert.equal(c.medidas.at(-1).estado, 'ruim');
+});
 
 test('o medidor', async () => {
   const b = bancada();
