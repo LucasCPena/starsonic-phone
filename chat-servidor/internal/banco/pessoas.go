@@ -189,8 +189,25 @@ type PessoaComComputadores struct {
 // PessoasDaEmpresa são as pessoas ativas da empresa, em ordem de nome sem acento e sem caixa
 // (no empate, de id), cada uma com os computadores dela. Sem ninguém, a lista vem vazia.
 func (b *Banco) PessoasDaEmpresa(ctx context.Context, empresaID int64) ([]PessoaComComputadores, error) {
+	if empresaID <= 0 { // o 0 da função de dentro é "todas"
+		return []PessoaComComputadores{}, nil
+	}
+	return b.pessoasComComputadores(ctx, empresaID)
+}
+
+// PessoasDeTodas são as pessoas ativas de todas as empresas, cada uma com os computadores dela,
+// como o PessoasDaEmpresa as devolve, e com o EmpresaID de cada uma. A ordem é a do nome sem
+// acento e sem caixa (no empate, a do id), sem separar por empresa. São duas consultas, seja
+// qual for o número de empresas: é o que a primeira página da administração lê a cada 30 s.
+func (b *Banco) PessoasDeTodas(ctx context.Context) ([]PessoaComComputadores, error) {
+	return b.pessoasComComputadores(ctx, 0)
+}
+
+// pessoasComComputadores monta as pessoas com os computadores; empresaID 0 não filtra.
+func (b *Banco) pessoasComComputadores(ctx context.Context, empresaID int64) ([]PessoaComComputadores, error) {
 	linhas, err := b.db.QueryContext(ctx,
-		`SELECT id, ramal, nome FROM pessoas WHERE empresa_id = ? AND saiu_em IS NULL ORDER BY nome_busca, id`,
+		`SELECT id, empresa_id, ramal, nome FROM pessoas
+		  WHERE (?1 = 0 OR empresa_id = ?1) AND saiu_em IS NULL ORDER BY nome_busca, id`,
 		empresaID)
 	if err != nil {
 		return nil, err
@@ -198,8 +215,8 @@ func (b *Banco) PessoasDaEmpresa(ctx context.Context, empresaID int64) ([]Pessoa
 	lista := []PessoaComComputadores{}
 	pos := map[int64]int{}
 	for linhas.Next() {
-		p := PessoaComComputadores{Pessoa: Pessoa{EmpresaID: empresaID}, Computadores: []ComputadorVisto{}}
-		if err := linhas.Scan(&p.ID, &p.Ramal, &p.Nome); err != nil {
+		p := PessoaComComputadores{Computadores: []ComputadorVisto{}}
+		if err := linhas.Scan(&p.ID, &p.EmpresaID, &p.Ramal, &p.Nome); err != nil {
 			linhas.Close()
 			return nil, err
 		}
@@ -215,7 +232,7 @@ func (b *Banco) PessoasDaEmpresa(ctx context.Context, empresaID int64) ([]Pessoa
 	linhas, err = b.db.QueryContext(ctx,
 		`SELECT x.pessoa_id, c.id, c.nome, x.ultima_vez
 		   FROM computador_pessoas x JOIN computadores c ON c.id = x.computador_id
-		  WHERE c.empresa_id = ? AND c.saiu_em IS NULL
+		  WHERE (?1 = 0 OR c.empresa_id = ?1) AND c.saiu_em IS NULL
 		  ORDER BY c.nome, c.id`, empresaID)
 	if err != nil {
 		return nil, err

@@ -3,6 +3,7 @@ package banco
 import (
 	"context"
 	"errors"
+	"reflect"
 	"slices"
 	"testing"
 	"time"
@@ -315,6 +316,65 @@ func TestPessoasDaEmpresa(t *testing.T) {
 	}
 	if l, err := b.PessoasDaEmpresa(ctx, 9999); err != nil || l == nil || len(l) != 0 {
 		t.Fatalf("empresa que não existe = %#v, %v; queria uma lista vazia", l, err)
+	}
+}
+
+// O PessoasDeTodas devolve, de uma vez, o que o PessoasDaEmpresa devolve de cada empresa, com a
+// empresa de cada pessoa.
+func TestPessoasDeTodas(t *testing.T) {
+	b := abrirTeste(t)
+	ctx := context.Background()
+	if l, err := b.PessoasDeTodas(ctx); err != nil || l == nil || len(l) != 0 {
+		t.Fatalf("sem empresa nenhuma = %#v, %v; queria uma lista vazia", l, err)
+	}
+
+	acme, _ := b.CriarEmpresa(ctx, "ACME Comércio Ltda")
+	clinica, _ := b.CriarEmpresa(ctx, "Clínica Vida")
+	if _, err := b.CriarEmpresa(ctx, "Empresa sem ninguém"); err != nil {
+		t.Fatal(err)
+	}
+	noteAna := computadorTeste(t, b, acme.ID, "NOTE-ANA")
+	recepcao := computadorTeste(t, b, acme.ID, "RECEPCAO-02")
+	daClinica := computadorTeste(t, b, clinica.ID, "CONSULTORIO-01")
+	doCarlos := computadorTeste(t, b, clinica.ID, "CONSULTORIO-02")
+	entrarNoMinuto := func(c Computador, ramal, nome string) Pessoa {
+		avancar(b, time.Minute)
+		p, _ := entrar(t, b, c, ramal, nome)
+		return p
+	}
+	entrarNoMinuto(noteAna, "2003", "Ana Souza")
+	entrarNoMinuto(recepcao, "2003", "Ana Souza")  // a Ana tem dois computadores
+	entrarNoMinuto(recepcao, "2001", "Recepção")   // e a recepção é usada pelas duas
+	entrarNoMinuto(daClinica, "2003", "Ana Souza") // o mesmo ramal, em outra empresa: outra pessoa
+	carlos := entrarNoMinuto(doCarlos, "2011", "Carlos Lima")
+	exec(t, b, `UPDATE pessoas SET saiu_em = 1 WHERE id = ?`, carlos.ID) // tirado do chat
+
+	todas, err := b.PessoasDeTodas(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(todas) != 3 {
+		t.Fatalf("PessoasDeTodas devolveu %d pessoas; queria as 3 ativas: %+v", len(todas), todas)
+	}
+	// A ordem é a do nome, sem separar por empresa: as duas Anas e a Recepção.
+	if todas[0].Nome != "Ana Souza" || todas[1].Nome != "Ana Souza" || todas[2].Nome != "Recepção" {
+		t.Fatalf("a ordem = %q, %q, %q", todas[0].Nome, todas[1].Nome, todas[2].Nome)
+	}
+	// As pessoas de cada empresa, na ordem em que vêm, são as do PessoasDaEmpresa.
+	for _, e := range []Empresa{acme, clinica} {
+		daEmpresa := []PessoaComComputadores{}
+		for _, p := range todas {
+			if p.EmpresaID == e.ID {
+				daEmpresa = append(daEmpresa, p)
+			}
+		}
+		quer, err := b.PessoasDaEmpresa(ctx, e.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(quer) == 0 || !reflect.DeepEqual(daEmpresa, quer) {
+			t.Fatalf("%s: PessoasDeTodas = %+v; o PessoasDaEmpresa = %+v", e.Nome, daEmpresa, quer)
+		}
 	}
 }
 
