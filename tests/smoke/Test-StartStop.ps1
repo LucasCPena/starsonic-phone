@@ -1,4 +1,5 @@
-# Teste de fumaca: o app abre, continua vivo por 8 s e fecha com /exit em ate 15 s.
+# Teste de fumaca: o app abre, continua vivo por 8 s, mostra a janela principal com o titulo em ate 30 s e fecha com
+# /exit em ate 15 s.
 # Uso: .\tests\smoke\Test-StartStop.ps1 -AppDir out
 param(
     [string]$AppDir = 'out'
@@ -25,17 +26,28 @@ if ($process.HasExited) {
 }
 Write-Host 'O app continua aberto depois de 8 s.'
 
-$window = Find-WindowByClass -ProcessId $process.Id -ClassName 'Starsonic Phone' -TimeoutSeconds 10
-if (-not $window) {
-    $seen = (Get-TopLevelWindows -ProcessId $process.Id | ForEach-Object { "[$($_.ClassName)] '$($_.Title)'" }) -join ', '
-    Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-    throw "Janela com a classe 'Starsonic Phone' nao encontrada. Janelas do processo: $seen"
+# A janela principal existe antes de ter o titulo: o app cria a janela e so no fim da abertura da o titulo a ela.
+# Numa maquina lenta, na primeira abertura, o titulo ainda esta vazio aos 8 s: foi assim nas maquinas novas do GitHub
+# (a imagem windows-2022 20261116.370), em 19/11/2026. O teste espera o titulo chegar, em vez de le-lo uma vez so, e
+# diz quanto esperou; se ele nao chega, a falha leva as janelas que o processo tinha.
+$titleTimeout = 30
+$holder = @{ Window = $null; Seen = '' }
+$waitStart = Get-Date
+$found = Wait-Until -TimeoutSeconds $titleTimeout -Condition {
+    $all = @(Get-TopLevelWindows -ProcessId $process.Id)
+    $holder.Seen = ($all | ForEach-Object { "[$($_.ClassName)] '$($_.Title)'" }) -join ', '
+    $holder.Window = $all |
+        Where-Object { $_.ClassName -eq 'Starsonic Phone' -and $_.Title.StartsWith('Starsonic Phone') } |
+        Select-Object -First 1
+    return ($null -ne $holder.Window)
 }
-if (-not $window.Title.StartsWith('Starsonic Phone')) {
+if (-not $found) {
     Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-    throw "Titulo da janela principal nao comeca com 'Starsonic Phone': '$($window.Title)'"
+    throw "A janela da classe 'Starsonic Phone' com o titulo comecando por 'Starsonic Phone' nao apareceu em $titleTimeout s. Janelas do processo: $($holder.Seen)"
 }
-Write-Host "Janela principal: [$($window.ClassName)] '$($window.Title)'"
+$window = $holder.Window
+$waited = [math]::Round(((Get-Date) - $waitStart).TotalSeconds, 1)
+Write-Host "Janela principal: [$($window.ClassName)] '$($window.Title)' (o titulo chegou $waited s depois dos 8 s)"
 
 if (-not (Stop-App -Exe $exe -Process $process -TimeoutSeconds 15)) {
     Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
