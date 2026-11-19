@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/ramais"
 )
 
 // transporte faz o aperto de mão do WebSocket na memória e entrega a conexão por um
@@ -474,4 +476,205 @@ func TestEncerrar(t *testing.T) {
 	if n := conectados(h); n != 0 {
 		t.Fatalf("o hub tem %d conexões depois; queria 0", n)
 	}
+}
+
+// Os ditos dos testes do estado do ramal.
+var (
+	ditoErro      = ramais.Dito{Estado: ramais.Erro, Desde: time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)}
+	ditoConectado = ramais.Dito{Estado: ramais.Conectado, Desde: time.Date(2026, 11, 19, 10, 0, 0, 0, time.UTC)}
+)
+
+// ramalDe é o que o Ligados diz do ramal do computador: nil sem o computador ou sem o dito.
+func ramalDe(h *Hub, computadorID int64) *ramais.Dito {
+	return h.Ligados()[computadorID].Ramal
+}
+
+// O Ligados tem o computador do Reservar em diante, com a pessoa da vez, até a conexão fechar.
+func TestLigados(t *testing.T) {
+	h := NovoHub(Config{})
+	if l := h.Ligados(); len(l) != 0 {
+		t.Fatalf("o hub vazio diz %v", l)
+	}
+	cli, srv := par(t, nil)
+	r := h.Reservar(5)
+	if l, ok := h.Ligados()[5]; !ok || l.Pessoa != 0 || l.Ramal != nil {
+		t.Fatalf("depois do Reservar: %+v, %v; queria o computador, sem pessoa e sem ramal", l, ok)
+	}
+	r.DefinirPessoa(7)
+	if l := h.Ligados()[5]; l.Pessoa != 7 {
+		t.Fatalf("depois do DefinirPessoa: a pessoa %d; queria a 7", l.Pessoa)
+	}
+	feito := servir(t, r, srv)
+	if l, ok := h.Ligados()[5]; !ok || l.Pessoa != 7 {
+		t.Fatalf("com o Servir rodando: %+v, %v", l, ok)
+	}
+	if len(h.Ligados()) != 1 {
+		t.Fatalf("o hub diz %v; queria só o computador 5", h.Ligados())
+	}
+	cli.Close(websocket.StatusNormalClosure, "")
+	esperar(t, feito)
+	if l, ok := h.Ligados()[5]; ok {
+		t.Fatalf("depois de a conexão fechar, o hub ainda diz %+v", l)
+	}
+}
+
+// O DefinirRamal guarda o dito na ligação do computador, com a pessoa dele: ele só aparece
+// enquanto essa é a pessoa da vez.
+func TestDefinirRamal(t *testing.T) {
+	h := NovoHub(Config{})
+	if h.DefinirRamal(5, 7, ditoErro) {
+		t.Fatal("sem o computador no hub, o DefinirRamal devolveu true")
+	}
+	if l := h.Ligados(); len(l) != 0 {
+		t.Fatalf("o DefinirRamal sem o computador guardou %v", l)
+	}
+
+	r := h.Reservar(5)
+	// Com a reserva ainda sem pessoa, nem um dito "da pessoa 0" aparece.
+	if !h.DefinirRamal(5, 0, ditoErro) {
+		t.Fatal("com a reserva, o DefinirRamal devolveu false")
+	}
+	if d := ramalDe(h, 5); d != nil {
+		t.Fatalf("sem pessoa da vez, o hub mostra o ramal %+v", *d)
+	}
+
+	r.DefinirPessoa(7)
+	if !h.DefinirRamal(5, 7, ditoErro) {
+		t.Fatal("com a reserva e a pessoa, o DefinirRamal devolveu false")
+	}
+	d := ramalDe(h, 5)
+	if d == nil || *d != ditoErro {
+		t.Fatalf("o hub diz %v; queria %+v", d, ditoErro)
+	}
+	// O que o Ligados devolve é uma cópia.
+	d.Estado = ramais.Conectado
+	if d := ramalDe(h, 5); d == nil || *d != ditoErro {
+		t.Fatalf("mudar o que o Ligados devolveu mudou o hub: %v", d)
+	}
+
+	// Outra pessoa da vez: o dito da 7 não é dela. De volta à 7, ele aparece de novo.
+	h.DefinirPessoa(5, 8)
+	if l := h.Ligados()[5]; l.Pessoa != 8 || l.Ramal != nil {
+		t.Fatalf("com a pessoa 8: %+v; queria a 8, sem ramal", l)
+	}
+	h.DefinirPessoa(5, 7)
+	if d := ramalDe(h, 5); d == nil || *d != ditoErro {
+		t.Fatalf("de volta à pessoa 7: %v; queria %+v", d, ditoErro)
+	}
+
+	// A ligação guarda um dito só: o da 8 toma o lugar do da 7, e só aparece com a 8 na vez.
+	if !h.DefinirRamal(5, 8, ditoConectado) {
+		t.Fatal("o DefinirRamal da pessoa 8 devolveu false")
+	}
+	if d := ramalDe(h, 5); d != nil {
+		t.Fatalf("com a pessoa 7 na vez e o dito da 8: %+v; queria sem ramal", *d)
+	}
+	h.DefinirPessoa(5, 8)
+	if d := ramalDe(h, 5); d == nil || *d != ditoConectado {
+		t.Fatalf("com a pessoa 8 na vez: %v; queria %+v", d, ditoConectado)
+	}
+}
+
+// Uma ligação nova do mesmo computador herda o dito, e a antiga, que fecha depois, não apaga
+// nada.
+func TestRamal_OutraLigacao(t *testing.T) {
+	h := NovoHub(Config{})
+	cliA, srvA := par(t, nil)
+	a := h.Reservar(5)
+	a.DefinirPessoa(7)
+	h.DefinirRamal(5, 7, ditoErro)
+	feitoA := servir(t, a, srvA)
+
+	b := h.Reservar(5) // a A sai do hub e fecha com 4000
+	if l := h.Ligados()[5]; l.Pessoa != 0 || l.Ramal != nil {
+		t.Fatalf("a ligação nova, antes de ter a pessoa: %+v; queria sem pessoa e sem ramal", l)
+	}
+	b.DefinirPessoa(7)
+	_, srvB := par(t, nil)
+	servir(t, b, srvB)
+	if c := fechamento(t, cliA); c != CodigoOutraConexao {
+		t.Fatalf("a antiga fechou com %d; queria 4000", c)
+	}
+	esperar(t, feitoA)
+	if d := ramalDe(h, 5); d == nil || *d != ditoErro {
+		t.Fatalf("depois de a antiga fechar: %v; queria %+v", d, ditoErro)
+	}
+
+	// Com outra pessoa na ligação nova, o dito herdado não aparece.
+	c := h.Reservar(5)
+	c.DefinirPessoa(8)
+	if d := ramalDe(h, 5); d != nil {
+		t.Fatalf("a ligação nova, de outra pessoa, mostra o ramal %+v", *d)
+	}
+}
+
+// Quando a ligação sai do hub sem outra no lugar, o dito vai junto: uma ligação nova do mesmo
+// computador, com a mesma pessoa, começa sem ele.
+func TestRamal_SomeComALigacao(t *testing.T) {
+	// comRamal põe o computador 5 no hub, como a pessoa 7, com o dito.
+	comRamal := func(t *testing.T, h *Hub) *Reserva {
+		t.Helper()
+		r := h.Reservar(5)
+		r.DefinirPessoa(7)
+		if !h.DefinirRamal(5, 7, ditoErro) || ramalDe(h, 5) == nil {
+			t.Fatal("o dito não ficou no hub")
+		}
+		return r
+	}
+	// saiu confere que o computador saiu do hub e que uma ligação nova dele começa sem o dito.
+	saiu := func(t *testing.T, h *Hub) {
+		t.Helper()
+		if l, ok := h.Ligados()[5]; ok {
+			t.Fatalf("o computador ainda está no hub: %+v", l)
+		}
+		if h.DefinirRamal(5, 7, ditoConectado) {
+			t.Fatal("fora do hub, o DefinirRamal devolveu true")
+		}
+		nova := h.Reservar(5)
+		nova.DefinirPessoa(7)
+		if l, ok := h.Ligados()[5]; !ok || l.Pessoa != 7 || l.Ramal != nil {
+			t.Fatalf("a ligação nova: %+v, %v; queria a pessoa 7, sem ramal", l, ok)
+		}
+	}
+
+	t.Run("o cliente fecha", func(t *testing.T) {
+		h := NovoHub(Config{})
+		cli, srv := par(t, nil)
+		feito := servir(t, comRamal(t, h), srv)
+		cli.Close(websocket.StatusNormalClosure, "")
+		esperar(t, feito)
+		saiu(t, h)
+	})
+	t.Run("o Fora", func(t *testing.T) {
+		h := NovoHub(Config{})
+		comRamal(t, h)
+		h.Fora([]int64{5})
+		saiu(t, h)
+	})
+	t.Run("o Desistir", func(t *testing.T) {
+		h := NovoHub(Config{})
+		comRamal(t, h).Desistir()
+		saiu(t, h)
+	})
+	t.Run("a fila cheia", func(t *testing.T) {
+		h := NovoHub(Config{Fila: 2})
+		comRamal(t, h)
+		for i := 1; i <= 3; i++ { // ninguém escreve: o terceiro evento acha a fila cheia (o 4002)
+			h.ParaComputadores([]int64{5}, evento{Tipo: "teste", N: i})
+		}
+		saiu(t, h)
+	})
+	t.Run("o Encerrar", func(t *testing.T) {
+		h := NovoHub(Config{})
+		comRamal(t, h)
+		h.Encerrar()
+		if l := h.Ligados(); len(l) != 0 {
+			t.Fatalf("depois do Encerrar, o hub diz %v", l)
+		}
+		// Depois do Encerrar, uma reserva nova não entra no hub.
+		h.Reservar(5).DefinirPessoa(7)
+		if h.DefinirRamal(5, 7, ditoConectado) || len(h.Ligados()) != 0 {
+			t.Fatalf("depois do Encerrar, o hub aceitou o computador: %v", h.Ligados())
+		}
+	})
 }
