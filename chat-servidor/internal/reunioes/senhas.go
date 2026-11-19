@@ -87,6 +87,9 @@ func emitir(d doVideo, s *sala, p *participante, tela bool) (string, error) {
 	p.pendentes = append(p.pendentes, pendente{vence: vence, tela: tela})
 	if !p.naReuniao {
 		p.esquecerEm = maisTarde(p.esquecerEm, vence.Add(graca))
+		if !tela {
+			p.semEntrar++ // mais uma senha da câmera sem a pessoa entrar (palco.go, entrando)
+		}
 	}
 	return texto, nil
 }

@@ -1,6 +1,11 @@
 package reunioes
 
-import "github.com/LucasCPena/starsonic-phone/chat-servidor/internal/regras"
+import (
+	"slices"
+	"time"
+
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/regras"
+)
 
 // O chat da reunião (docs/chat-protocolo.md, seção 10): a página manda um texto, e o chat o repassa às páginas da
 // mesma reunião, também à de quem escreveu. Quem recebe é quem recebe o palco (recebePalco), e quem pode mandar é quem
@@ -23,11 +28,16 @@ type mensagemDaReuniao struct {
 // o regras.TextoDaReuniao devolve. Quem manda vem primeiro: sem o pedido aceito, ou com a página fora da reunião
 // (recebePalco), o erro é ErrForaDaReuniao, qualquer que seja o texto. O texto que não vale dá o erro do
 // regras.TextoDaReuniao (o regras.ErrTextoGrande ou o *regras.Erro), e ninguém recebe nada.
+//
+// Cada participante repassa até mensagensPorMinuto (20) no minuto; a seguinte dá ErrLimiteDoChat, e ninguém a recebe.
+// A conta é do participante, e não do canal dele: o canal novo de um voltar continua com ela. Só a mensagem repassada
+// conta.
 func (g *Gerente) Mensagem(p *Pedido, id, texto string) error {
 	if p == nil {
 		return ErrForaDaReuniao
 	}
 	limpo, errTexto := regras.TextoDaReuniao(texto) // fora da trava: é só uma conta
+	agora := g.relogio.Agora()
 	g.mu.Lock()
 	s, part := g.aceitoDe(p)
 	if part == nil || !part.recebePalco() {
@@ -38,6 +48,12 @@ func (g *Gerente) Mensagem(p *Pedido, id, texto string) error {
 		g.mu.Unlock()
 		return errTexto
 	}
+	part.falas = slices.DeleteFunc(part.falas, func(t time.Time) bool { return !t.After(agora.Add(-time.Minute)) })
+	if len(part.falas) >= mensagensPorMinuto {
+		g.mu.Unlock()
+		return ErrLimiteDoChat
+	}
+	part.falas = append(part.falas, agora)
 	// O repasse entra na saída na mesma trava que conferiu quem manda e quem recebe: uma página que sai agora não
 	// recebe a mensagem depois de ter saído.
 	for _, d := range s.paginasAceitas() {

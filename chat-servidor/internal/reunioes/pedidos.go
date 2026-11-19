@@ -16,7 +16,14 @@ import (
 const (
 	esperaPedido   = 10 * time.Minute // a espera depois de o pedido chegar aos colegas
 	novasPorMinuto = 5                // as senhas novas de um participante
-	maxEsperando   = 50               // os pedidos esperando numa reunião
+	// senhasParaEntrar é quantas senhas da câmera seguidas, sem a pessoa entrar, ainda valem como "entrando" para o
+	// palco e o chat da reunião (recebePalco): a do aceito ou do Entrar de novo, e as das tentativas de voltar. Quem só
+	// pede senhas, sem nunca entrar, deixa de receber.
+	senhasParaEntrar = 3
+	// mensagensPorMinuto são as mensagens do chat da reunião que um participante manda por minuto. A conta é dele, e
+	// não do canal: um canal novo (o voltar) não a zera.
+	mensagensPorMinuto = 20
+	maxEsperando       = 50 // os pedidos esperando numa reunião
 	// gracaDaChave é quanto a chave anterior ainda vale depois do voltou, se o canal que voltou não tratar nenhuma
 	// mensagem antes: o voltou pode ter se perdido, e a página só tem ela.
 	gracaDaChave = time.Minute

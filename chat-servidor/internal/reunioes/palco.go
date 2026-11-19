@@ -96,10 +96,18 @@ func (g *Gerente) guardarPalco(s *sala, novo *video.Palco) {
 // recebePalco diz se o palco vai à página do participante: a de quem é de fora, com o pedido aceito e o canal aberto,
 // que está na reunião (a câmera ou a tela) ou entrando (uma senha da câmera ainda não usada; o aceito traz uma). Quem
 // saiu, quem nunca entrou e deixou a senha vencer, e quem não tem a página, não. É a única regra: todo palco passa por
-// ela. Com g.mu.
+// ela, e o chat da reunião também (mensagens.go). Com g.mu.
 func (p *participante) recebePalco() bool {
 	ped := p.pedido
-	return ped != nil && ped.fase == aceito && ped.canal != nil && (p.naReuniao || p.tela || p.temSenha(false))
+	return ped != nil && ped.fase == aceito && ped.canal != nil && (p.naReuniao || p.tela || p.entrando())
+}
+
+// entrando: a pessoa tem uma senha da câmera ainda não usada, e é uma das senhasParaEntrar primeiras desde a última
+// vez que ela esteve na reunião (ou desde o aceito). A página de verdade gasta uma no aceito ou no Entrar de novo, e
+// até três nas tentativas de voltar. Sem o limite, quem saiu (ou nunca entrou) e só pede senhas, sem entrar, ficava
+// recebendo o palco e o chat sem aparecer para ninguém: quem está na reunião é só quem a lista mostra.
+func (p *participante) entrando() bool {
+	return p.temSenha(false) && p.semEntrar <= senhasParaEntrar
 }
 
 // paginasAceitas são os participantes cuja página recebe o palco (recebePalco): as páginas aceitas que estão na

@@ -28,13 +28,15 @@ const (
 	// rajada do chat da reunião que os limites deixam (10 páginas com 20 mensagens cada, num minuto), com folga para o
 	// palco: só a página que parou de ler enche a fila.
 	filaDoCanal       = 256
-	maxMensagensCanal = 20          // as mensagens da página por minuto, em cada canal
-	maxCamerasCanal   = 30          // os avisos da câmera por minuto, em cada canal: a janela é à parte das 20
-	maxMensagensChat  = 20          // as mensagens do chat da reunião por minuto, em cada canal: outra janela à parte
-	periodoCanal      = time.Minute // o período da janela das mensagens da página
-	limiteLeitura     = 4096        // o maior quadro que a página manda; passando disso, o canal fecha (1009)
-	prazoEscrita      = 10 * time.Second
-	prazoFechar       = 5 * time.Second // o aperto de mão do fechamento, e a escrita do que sobrou antes dele
+	maxMensagensCanal = 20 // as mensagens da página por minuto, em cada canal
+	maxCamerasCanal   = 30 // os avisos da câmera por minuto, em cada canal: a janela é à parte das 20
+	// As mensagens do chat da reunião por minuto, em cada canal: outra janela à parte, que conta toda mensagem com esse
+	// tipo. O limite de cada pessoa (as 20 que ela repassa por minuto, com um canal ou com vários) é do gerente.
+	maxMensagensChat = 20
+	periodoCanal     = time.Minute // o período da janela das mensagens da página
+	limiteLeitura    = 4096        // o maior quadro que a página manda; passando disso, o canal fecha (1009)
+	prazoEscrita     = 10 * time.Second
+	prazoFechar      = 5 * time.Second // o aperto de mão do fechamento, e a escrita do que sobrou antes dele
 )
 
 // O ping do canal, e quanto o servidor espera o pong. Variáveis (em ns) para o teste as encurtar.
@@ -179,7 +181,7 @@ const (
 	canalDerrubado // a fila encheu, o ping não voltou, ou o canal acabou: nada mais sai
 )
 
-// canalPagina é a página de quem é de fora, para o gerente (o reunioes.Canal): a conexão, uma fila de 32 mensagens e
+// canalPagina é a página de quem é de fora, para o gerente (o reunioes.Canal): a conexão, uma fila de mensagens e
 // uma goroutine que escreve. O Mandar e o Fechar nunca esperam: o gerente os chama de uma fila do servidor inteiro, e
 // uma página parada não pode segurar os avisos das outras (M-7).
 type canalPagina struct {
@@ -591,6 +593,8 @@ func (s *servidor) mensagemDaPagina(c *canalPagina, st *estadoDaPagina, tipo web
 		case err == nil:
 		case errors.Is(err, reunioes.ErrForaDaReuniao):
 			c.Mandar(recusaDoChat(id, "foraDaReuniao"))
+		case errors.Is(err, reunioes.ErrLimiteDoChat): // as 20 do participante, que um canal novo dele não zera
+			c.Mandar(recusaDoChat(id, "limite"))
 		case errors.Is(err, regras.ErrTextoGrande):
 			c.Mandar(recusaDoChat(id, "grande"))
 		default: // o *regras.Erro: o texto vazio, ou com um caractere que não vale

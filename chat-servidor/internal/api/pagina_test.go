@@ -1752,6 +1752,34 @@ func TestCanal_Mensagem_Limite(t *testing.T) {
 	mensagemDeOutro(t, bia, partM, "Maria Lima", "depois do minuto")
 }
 
+// O limite do chat é da pessoa: o canal novo de um voltar não zera a conta. Sem isso, uma página que abre um canal
+// novo a cada 20 mensagens mandava 60 vezes mais.
+func TestCanal_Mensagem_LimiteDepoisDoVoltar(t *testing.T) {
+	c := novaCenaR(t)
+	r := c.marcada(t, c.kAna)
+	carlos := c.colegaNaReuniao(t, r.Codigo)
+	maria, partM, aceito := c.aceitaMaria(t, r.Codigo, carlos)
+	bia, _ := c.outraPagina(t, r.Codigo, carlos, "Bia Ramos")
+	for i := 1; i <= 20; i++ {
+		id, texto := fmt.Sprintf("v%d", i), fmt.Sprintf("antes do voltar %d", i)
+		doChat(t, maria, id, texto)
+		minhaMensagem(t, maria, id, partM, "Maria Lima", texto)
+		mensagemDeOutro(t, bia, partM, "Maria Lima", texto)
+	}
+	// O canal novo da mesma pessoa, no mesmo minuto: ele volta, e recebe o palco da sala.
+	nova := c.voltaDoCanal(t, r.Codigo, partM, aceito["volta"])
+	aPaginaTipo(t, nova, "voltou")
+	aPaginaTipo(t, nova, "palco")
+	doChat(t, nova, "v21", "depois do voltar, no mesmo minuto")
+	recusada(t, nova, "v21", "limite")
+
+	// Passado o minuto, vale de novo. A próxima que a Bia recebe é esta: a recusada não foi repassada.
+	c.a.Relogio.Avancar(61 * time.Second)
+	doChat(t, nova, "v22", "depois do minuto")
+	minhaMensagem(t, nova, "v22", partM, "Maria Lima", "depois do minuto")
+	mensagemDeOutro(t, bia, partM, "Maria Lima", "depois do minuto")
+}
+
 func TestCanal_Mensagem_JanelaAParte(t *testing.T) {
 	// As 20 do chat da reunião não gastam as 20 das outras mensagens, nem os avisos da câmera.
 	c := novaCenaR(t)

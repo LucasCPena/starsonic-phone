@@ -297,3 +297,126 @@ func TestMensagem_SemNadaNoLog(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Quem saiu e só pede senhas, sem nunca entrar, não fica lendo o chat sem ninguém ver: "entrando" vale pelas 3
+// primeiras senhas da câmera seguidas sem entrar. O Entrar de novo gasta uma, e as tentativas de voltar, até três.
+func TestMensagem_QuemSoPedeSenhas(t *testing.T) {
+	p := novaCenaPalco(t)
+	p.saiu(p.r, p.bia)
+	n := 0
+	chega := func() bool {
+		t.Helper()
+		n++
+		antes := quantasMensagens(p.canB)
+		p.mandaMensagem(p.pm, fmt.Sprintf("recadoFantasma%d", n), fmt.Sprintf("A conversa %d de quem está na reunião", n))
+		return quantasMensagens(p.canB) == antes+1
+	}
+	for i := 1; i <= senhasParaEntrar; i++ {
+		if _, err := p.g.NovaSenha(p.pb); err != nil {
+			t.Fatalf("a senha %d: %v", i, err)
+		}
+		if !chega() {
+			t.Fatalf("com a senha %d sem entrar, a Bia não recebeu", i)
+		}
+		p.andar(25 * time.Second)
+	}
+	// A quarta senha seguida sem entrar ainda serve para entrar, mas a página dela não conta mais como entrando.
+	if _, err := p.g.NovaSenha(p.pb); err != nil {
+		t.Fatalf("a quarta senha: %v", err)
+	}
+	if chega() {
+		t.Fatal("quem só pede senhas, sem entrar, continuou recebendo o chat")
+	}
+	p.foraDaReuniao("a Bia, que só pede senhas", p.pb, p.canM, p.canB)
+	// Entrando de verdade, ela recebe de novo, e a conta recomeça: saindo outra vez, a senha seguinte volta a valer.
+	p.entrou(p.r, p.bia)
+	if !chega() {
+		t.Fatal("a Bia, de volta à reunião, não recebeu")
+	}
+	p.saiu(p.r, p.bia)
+	if chega() {
+		t.Fatal("a Bia saiu de novo e recebeu sem senha nenhuma")
+	}
+	p.andar(time.Minute)
+	if _, err := p.g.NovaSenha(p.pb); err != nil {
+		t.Fatal(err)
+	}
+	if !chega() {
+		t.Fatal("depois de entrar de verdade e sair, a senha seguinte não valeu como entrando")
+	}
+}
+
+// Quem foi aceito e nunca entrou: a senha do aceito é a primeira das três.
+func TestMensagem_AceitoQueNuncaEntra(t *testing.T) {
+	p := novaCenaPalco(t)
+	if err := p.g.Aceitar(p.ctx, p.r, p.cena.ana.p.ID, p.pedidoDe(p.r, p.cena.ana, "Davi Rocha")); err != nil {
+		t.Fatal(err)
+	}
+	mustParticipante(t, p.canDa)
+	n := 0
+	chega := func() bool {
+		t.Helper()
+		n++
+		antes := quantasMensagens(p.canDa)
+		p.mandaMensagem(p.pm, fmt.Sprintf("recadoAoAceito%d", n), fmt.Sprintf("A conversa %d que o Davi pode ler", n))
+		return quantasMensagens(p.canDa) == antes+1
+	}
+	if !chega() {
+		t.Fatal("o Davi, com a senha do aceito, não recebeu")
+	}
+	for i := 2; i <= senhasParaEntrar; i++ {
+		p.andar(25 * time.Second)
+		if _, err := p.g.NovaSenha(p.pd); err != nil {
+			t.Fatalf("a senha %d: %v", i, err)
+		}
+		if !chega() {
+			t.Fatalf("com a senha %d sem entrar, o Davi não recebeu", i)
+		}
+	}
+	p.andar(25 * time.Second)
+	if _, err := p.g.NovaSenha(p.pd); err != nil {
+		t.Fatal(err)
+	}
+	if chega() {
+		t.Fatal("quem foi aceito e só pede senhas, sem entrar, continuou recebendo o chat")
+	}
+	p.foraDaReuniao("o Davi, que só pede senhas", p.pd, p.canM, p.canB, p.canDa)
+}
+
+// O limite do chat é de cada pessoa, e não do canal dela: 20 mensagens por minuto por participante. A conta fica com o
+// participante, e um canal novo dele (o voltar) não a zera.
+func TestMensagem_LimiteDoParticipante(t *testing.T) {
+	p := novaCenaPalco(t)
+	for i := 1; i <= mensagensPorMinuto; i++ {
+		p.mandaMensagem(p.pm, fmt.Sprintf("rajadaDaMaria%02d", i), fmt.Sprintf("A mensagem %d da rajada da Maria", i))
+	}
+	antes := quantasMensagens(p.canB)
+	anotar("rajadaDaMaria21", "A mensagem da Maria que passa do limite")
+	err := p.g.Mensagem(p.pm, "rajadaDaMaria21", "A mensagem da Maria que passa do limite")
+	if !errors.Is(err, ErrLimiteDoChat) {
+		t.Fatalf("a 21ª mensagem do minuto deu %v; queria ErrLimiteDoChat", err)
+	}
+	if quantasMensagens(p.canB) != antes || quantasMensagens(p.canM) != mensagensPorMinuto {
+		t.Fatal("a mensagem além do limite foi repassada")
+	}
+	// O limite é de cada um: a Bia manda. E a mensagem que não vale não gasta o dela.
+	for i := 1; i <= mensagensPorMinuto-1; i++ {
+		p.mandaMensagem(p.pb, fmt.Sprintf("rajadaDaBia%02d", i), fmt.Sprintf("A mensagem %d da rajada da Bia", i))
+	}
+	for i := 0; i < 5; i++ {
+		if err := p.g.Mensagem(p.pb, "vaziaDaBia01", "   "); err == nil || errors.Is(err, ErrLimiteDoChat) {
+			t.Fatalf("o texto vazio deu %v; queria o erro do texto", err)
+		}
+	}
+	p.mandaMensagem(p.pb, "rajadaDaBia20", "A vigésima mensagem da Bia ainda cabe")
+	// Quem está fora da reunião continua ouvindo que está fora, com ou sem limite.
+	p.foraDaReuniao("o Davi, que espera", p.pd, p.canM, p.canB)
+	// A janela anda: 59 s depois da rajada ainda não cabe; passado o minuto, cabe de novo.
+	p.andar(59 * time.Second)
+	err = p.g.Mensagem(p.pm, "rajadaDaMaria21", "A mensagem da Maria que passa do limite")
+	if !errors.Is(err, ErrLimiteDoChat) {
+		t.Fatalf("aos 59 s, a mensagem deu %v; queria ErrLimiteDoChat", err)
+	}
+	p.andar(2 * time.Second)
+	p.mandaMensagem(p.pm, "rajadaDaMaria22", "Passado o minuto, a Maria manda de novo")
+}

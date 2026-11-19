@@ -61,6 +61,8 @@ var (
 	ErrParticipanteNaoEncontrado = errors.New("reunioes: o participante não está na reunião")
 	// ErrLimite: mais de 5 senhas novas no minuto para o mesmo participante.
 	ErrLimite = errors.New("reunioes: senhas novas demais neste minuto")
+	// ErrLimiteDoChat: mais de 20 mensagens do chat da reunião no minuto, do mesmo participante.
+	ErrLimiteDoChat = errors.New("reunioes: mensagens demais neste minuto")
 	// ErrForaDeOrdem: o NovaSenha antes do aceito, depois do fim do pedido ou com a pessoa já na reunião. A página
 	// responde erro invalido.
 	ErrForaDeOrdem = errors.New("reunioes: o pedido não espera uma senha nova agora")
@@ -191,6 +193,8 @@ type participante struct {
 	esquecerEm time.Time   // relógio do vídeo: quem não entrou sai da memória depois disto
 	pedido     *Pedido     // de quem é de fora: o pedido aceito, com a página
 	novas      []time.Time // os NovaSenha do último minuto (relógio do chat)
+	semEntrar  int         // as senhas da câmera emitidas desde a última vez que a pessoa esteve na reunião (palco.go)
+	falas      []time.Time // as mensagens do chat da reunião do último minuto (relógio do chat; mensagens.go)
 	semCamera  bool        // o último aviso da câmera da página: desligada (palco.go)
 	seq        uint64
 }

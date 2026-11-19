@@ -515,3 +515,28 @@ func TestCamera_SoATela(t *testing.T) {
 		t.Fatal("o aviso de quem só tem o quadro da tela mandou o palco")
 	}
 }
+
+// Quem só pede senhas, sem nunca entrar, deixa de receber também o palco: é a mesma regra do chat (recebePalco).
+func TestPalco_QuemSoPedeSenhas(t *testing.T) {
+	p := novaCenaPalco(t)
+	p.anaEMaria()
+	p.saiu(p.r, p.maria)
+	for i := 1; i <= senhasParaEntrar; i++ {
+		antes := quantosPalcos(p.canM)
+		if _, err := p.g.NovaSenha(p.pm); err != nil {
+			t.Fatalf("a senha %d: %v", i, err)
+		}
+		if quantosPalcos(p.canM) != antes+1 {
+			t.Fatalf("com a senha %d sem entrar, a página não recebeu o palco: %q", i, p.canM.tipos())
+		}
+		p.andar(25 * time.Second)
+	}
+	antes := quantosPalcos(p.canM)
+	if _, err := p.g.NovaSenha(p.pm); err != nil {
+		t.Fatalf("a quarta senha: %v", err)
+	}
+	p.anaEBia()
+	if quantosPalcos(p.canM) != antes {
+		t.Fatalf("quem só pede senhas, sem entrar, continuou recebendo o palco: %q", p.canM.tipos())
+	}
+}

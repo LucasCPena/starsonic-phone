@@ -144,6 +144,7 @@ func (s *sala) chamadas(p *participante, camera, tela bool) {
 	if camera && !p.naReuniao {
 		p.usouSenha(false)
 		p.esquecerEm = time.Time{}
+		p.semEntrar = 0
 		s.alguemEntrou = true
 	}
 	if tela && !p.tela {
