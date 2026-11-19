@@ -97,8 +97,8 @@ Cada estado tem um desenho e um texto diferentes. A cor nunca diz o estado sozin
   - Se a busca falha, a página avisa desde quando está sem atualizar, e continua tentando a cada 30 s.
   - O aviso é uma faixa presa embaixo da janela: aparece também com a página rolada, e não empurra o conteúdo. Com ele na tela, o que recebe o foco do teclado fica acima dele.
   - Se a sessão da administração venceu (ela dura 12 horas) ou a empresa foi apagada, a página se recarrega: aparece a entrada, ou a página de "não encontrada". A atualização automática não estica a sessão. Com várias abas abertas, todas vão para a entrada, e a entrada vale em qualquer uma delas; quem entrou por uma e manda a entrada de outra vai para a lista.
-  - O estilo, os scripts e o logo da administração levam no endereço uma marca do conteúdo deles (`?v=`, o começo do SHA-256). Depois de uma atualização do chat, o navegador pede os arquivos novos, e uma página que ficou aberta se recarrega inteira quando vê que a página que chegou pede outro estilo ou outro script.
-- **Depois de o chat reiniciar,** todos aparecem offline por cerca de um minuto, às vezes dois, até os apps se ligarem de novo e mandarem o estado, já com o tempo certo: cada app tenta de novo em esperas que crescem até uns 30 s, e a página busca a cada 30 s.
+  - O estilo, os scripts e o logo da administração levam no endereço uma marca do conteúdo deles (`?v=`, o começo do SHA-256). Depois de uma atualização do chat, o navegador pede os arquivos novos, e uma página que ficou aberta se recarrega inteira quando vê que a página que chegou pede outro estilo ou outro script. A página aberta de uma versão anterior à `0.2.0-rc.5` não tem esse script: nessa atualização, quem recarrega é a pessoa.
+- **Depois de o chat reiniciar,** todos podem aparecer offline por até cerca de um minuto, e às vezes um pouco mais, até os apps se ligarem de novo e mandarem o estado, já com o tempo certo: cada app tenta de novo em esperas que crescem (1, 2, 5, 10 e 30 s, cada uma com metade a mais ou a menos), e a página busca a cada 30 s.
 
 ## 5. Fora do escopo
 
@@ -251,7 +251,7 @@ A revisão final da primeira entrega (19/11), feita por um revisor que não part
 20. **O ponteiro em cima de um botão de formulário segura a troca** (seção 4.3). A troca podia mudar as linhas de lugar bem na hora de um clique no `Tirar do chat`, que não tem volta e não pede confirmação.
 21. **A marca do conteúdo no endereço dos arquivos, e a página aberta que se recarrega quando o chat muda de versão** (seção 4.3). Sem a marca, no dia de uma atualização o navegador desenhava as páginas novas com o estilo que tinha guardado, por até um dia.
 22. **A entrada vale em todas as abas** (seção 4.3). Com duas abas abertas quando a sessão vencia, a aba que chegava primeiro à entrada era recusada.
-23. **"Cerca de um minuto, às vezes dois"** no lugar de "alguns segundos", para o tempo em que todos aparecem offline depois de um reinício do chat (seção 4.3). No dia de uma atualização, "alguns segundos" faria o responsável achar que ela derrubou os clientes.
+23. **"Até cerca de um minuto, e às vezes um pouco mais"** no lugar de "alguns segundos", para o tempo em que todos podem aparecer offline depois de um reinício do chat (seção 4.3). No dia de uma atualização, "alguns segundos" faria o responsável achar que ela derrubou os clientes.
 
 ## 14. O que a revisão final anotou e ficou para depois
 
