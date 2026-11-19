@@ -65,6 +65,7 @@ type servidor struct {
 	arquivosLimite  *limites.Janela // os bytes de arquivos enviados, por computador
 	geralLimite     *limites.Janela // todo pedido com chave, por computador (R43)
 	pessoasEuLimite *limites.Janela // o POST /pessoas/eu, por computador, além do geral (R43)
+	ramalLimite     *limites.Janela // o PUT /computadores/eu/ramal, por computador, além do geral
 	// travasConversa segura uma conversa (pelo id, em 64 faixas) enquanto uma mensagem é
 	// gravada e o evento sai: assim os eventos saem na ordem dos ids.
 	travasConversa [64]sync.Mutex
@@ -107,6 +108,7 @@ func Novo(d Deps) http.Handler {
 		arquivosLimite:  limites.Nova(maxArquivosHora, periodoArquivos, d.Banco.Relogio()),
 		geralLimite:     limites.Nova(maxPedidos, periodoPedidos, d.Banco.Relogio()),
 		pessoasEuLimite: limites.Nova(maxPessoasEu, periodoPedidos, d.Banco.Relogio()),
+		ramalLimite:     limites.Nova(maxRamal, periodoPedidos, d.Banco.Relogio()),
 	}
 	if s.canais == nil {
 		s.canais = NovosCanais()
@@ -130,6 +132,8 @@ func Novo(d Deps) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/v1/computadores", s.ligarComputador)
 	mux.HandleFunc("DELETE /api/v1/computadores/eu", s.autenticar(s.desligarComputador))
+	mux.HandleFunc("PUT /api/v1/computadores/eu/ramal",
+		s.proteger(precisaPessoa(s.dizerRamal), s.banco.ComputadorPorChave, s.ramalLimite))
 	mux.HandleFunc("POST /api/v1/pessoas/eu", s.autenticarTroca(s.entrarComoPessoa))
 	mux.HandleFunc("GET /api/v1/pessoas", s.autenticar(precisaPessoa(s.colegas)))
 	mux.HandleFunc("GET /api/v1/conversas", s.autenticar(precisaPessoa(s.conversas)))
