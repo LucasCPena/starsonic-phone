@@ -324,7 +324,7 @@ Por essas medidas, uma reunião de 10 pessoas fica entre 1,5 e 2 núcleos. É um
 
 ## 9. Segurança e privacidade
 
-- O palco só vai para as páginas aceitas que estão na reunião, ou entrando nela. Antes do `aceito`, a página não recebe nada dele, e quem saiu deixa de receber.
+- O palco só vai para as páginas aceitas que estão na reunião, ou entrando nela. Antes do `aceito`, a página não recebe nada dele, e quem saiu deixa de receber. **Desde a `0.2.0-rc.6` do chat (19/11),** "entrando" tem fim: vale nas 3 primeiras senhas da câmera seguidas sem a pessoa entrar. Antes, quem saía e só pedia senhas, sem entrar, continuava recebendo o palco. A regra é a mesma do chat da reunião (a spec `2026-11-19-starsonic-phone-reunioes-chat-e-qualidade-design.md`, seção 7.1).
 - A página passa a receber o nome das outras pessoas como texto. Esses nomes já apareciam na imagem, e por isso só vão a quem recebe a imagem.
 - O `quem` é o id do participante naquela reunião. Ele não dá acesso a nada: o canal da página não tem pedido nenhum sobre outra pessoa.
 - O evento do agente não leva nomes. Os registros continuam sem nomes, números, códigos de link e chaves.

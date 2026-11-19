@@ -1,7 +1,7 @@
 # Starsonic Phone — reuniões com link — o chat da reunião e o sinalizador de qualidade — especificação de design
 
 - **Data:** 19/11/2026
-- **Status:** aprovada em 19/11, às 03:50, com o "Continue" do responsável, e construída no mesmo dia, para sair como a `0.2.0-rc.6` do chat (quem publica a versão é o responsável). O pedido é de 18/11, às 17:48: "colocar o chat na reunião também e sinalizador de qualidade de chamada". Em 18/11, às 17:53, ele disse que o sinalizador é o da reunião no navegador. Em 19/11, às 00:24, ele mandou fazer os dois sem responder às outras perguntas: as escolhas da seção 14 são deste desenho, do plano (`docs/superpowers/plans/2026-11-19-reunioes-chat-e-qualidade.md`) e da construção, para ele corrigir. A construção mudou uma regra da conta do sinalizador: veja a seção 7.4.
+- **Status:** aprovada em 19/11, às 03:50, com o "Continue" do responsável, e construída no mesmo dia, para sair como a `0.2.0-rc.6` do chat (quem publica a versão é o responsável). O pedido é de 18/11, às 17:48: "colocar o chat na reunião também e sinalizador de qualidade de chamada". Em 18/11, às 17:53, ele disse que o sinalizador é o da reunião no navegador. Em 19/11, às 00:24, ele mandou fazer os dois sem responder às outras perguntas: as escolhas da seção 14 são deste desenho, do plano (`docs/superpowers/plans/2026-11-19-reunioes-chat-e-qualidade.md`) e da construção, para ele corrigir. A construção mudou uma regra da conta do sinalizador (seção 7.4). Um revisor de fora leu tudo no fim, e as correções que ele pediu entraram no mesmo dia: elas estão marcadas "Corrigido na revisão final" nas seções 4.2, 7.1 e 7.4, e juntas na seção 14, itens 39 a 47.
 - **Telas:** o quadro "Starsonic — reunião no navegador", telas 20 a 24.
 - **Base:** a spec de 12/11 (`2026-11-12-starsonic-phone-reunioes-link-design.md`), que deixou "o chat dentro da reunião" fora do escopo, e a de 18/11 (o palco). Esta spec traz o chat para dentro e acrescenta o sinalizador. O resto daquelas continua valendo.
 
@@ -50,14 +50,14 @@ O quadro vale para o desenho: as medidas, as cores e os lugares. Os textos de to
   - Quem perde a conexão continua com as que tinha enquanto a página tenta voltar sozinha (o cartão "A conexão caiu. Entrando de novo…"), e depois de voltar. As que foram mandadas enquanto ele estava fora, ele não recebe. Se a página desiste de voltar e mostra "Você saiu da reunião", as mensagens somem, como em qualquer saída.
   - Quando a reunião acaba, somem para todos.
 - **Cada mensagem** mostra o nome de quem mandou, como está no quadro dela, e a hora, no relógio de quem lê. As da própria pessoa ficam à direita, com "Você".
-- **Os endereços:** um trecho que começa com `http://` ou `https://` vira um link, com o endereço inteiro à vista, que abre em outra aba. O resto do texto é sempre texto.
+- **Os endereços:** um trecho que começa com `http://` ou `https://` vira um link, com o endereço inteiro à vista, que abre em outra aba. O resto do texto é sempre texto. O que aparece é o endereço para onde o link leva: um sinal que muda a direção do texto (os de escritas como o árabe e o hebraico) acaba o endereço, e o link é sempre escrito da esquerda para a direita, à parte do resto da frase. (Corrigido na revisão final: com um sinal desses no meio, as letras do endereço apareciam em outra ordem.)
 - **Escrever:** o Enter manda, e o Shift+Enter pula linha, como no chat do app. No celular, o Enter pula linha, e o botão manda.
-- **A mensagem que não foi:** fica marcada "Não enviada", com o motivo em poucas palavras e o `Tentar de novo`.
+- **A mensagem que não foi:** fica marcada "Não enviada", com o motivo em poucas palavras e o `Tentar de novo`. Um leitor de tela ouve esse mesmo texto, uma vez, com o chat aberto ou fechado: quem não vê a tela não pode achar que a mensagem saiu. (Corrigido na revisão final.)
 - **Com o chat fechado:** o botão `Chat` mostra quantas mensagens novas há (até 9, depois "9+"), e um aviso curto aparece por 5 s com o nome e o começo da última. Um leitor de tela ouve "<nome> escreveu: <texto>".
 - **O aviso curto** fica logo acima dos controles, no meio, e não cobre o Você. Só um aparece por vez: um aviso novo toma o lugar do anterior. O aviso de conexão ruim (seção 4.3) usa o mesmo lugar e o mesmo tempo.
-- **No PC,** com a janela a partir de 900 pontos de largura, o chat é um painel ao lado, e os quadros se arrumam no resto. Em janelas mais estreitas e no celular, o chat cobre a área da reunião.
+- **No PC,** com a janela a partir de 900 pontos de largura, o chat é um painel ao lado, e os quadros se arrumam no resto. Em janelas mais estreitas e no celular, o chat cobre a área da reunião. Cobrindo a tela, ele parece outra tela: por isso o Voltar do aparelho (o botão ou o gesto do Android, o gesto do iPhone, o Voltar do navegador) fecha o chat, e a pessoa continua na reunião. (Corrigido na revisão final: antes, o Voltar saía da página, que é sair da reunião.)
 - **O teclado:** abrir o chat leva o foco ao campo de escrever. O Esc fecha o chat quando o foco está nele, e devolve o foco ao botão `Chat`.
-- **Sem o canal com o chat** (ele caiu e a página está ligando de novo, ou ela desistiu de ligar e a reunião segue só com a imagem e o som), o campo fica desligado, com "O chat volta quando a conexão voltar.". As mensagens que a pessoa já tinha continuam à vista.
+- **Sem o canal com o chat** (ele caiu e a página está ligando de novo, ou ela desistiu de ligar e a reunião segue só com a imagem e o som), o campo fica desligado, com "O chat volta quando a conexão voltar.". As mensagens que a pessoa já tinha continuam à vista. Um leitor de tela ouve essa frase quando isso começa com o chat aberto, e quando a pessoa abre o chat assim. Com a conexão da reunião caída, quem fala é o aviso da queda.
 
 ### 4.3 O sinalizador
 
@@ -167,9 +167,10 @@ Dois textos desta lista não estão no quadro, e são escolha deste desenho: o d
 ```
 
 - **Quem recebe** é quem recebe o palco: a página aceita, com o canal aberto, que está na reunião ou entrando nela. É a regra que o servidor já usa para o palco (o `recebePalco`).
+- **Entrando tem fim** (corrigido na revisão final). Entrando é ter uma senha da câmera ainda não usada, e vale nas 3 primeiras senhas seguidas sem a pessoa entrar, a do aceito contando. A página de verdade gasta uma no aceito ou no `Entrar de novo`, e até três nas tentativas de voltar depois de uma queda. Da quarta em diante, a senha ainda serve para entrar, mas a página só volta a receber o palco e o chat quando a câmera dela entra na reunião, e a conta recomeça. Antes, quem saía (ou nunca entrava) podia pedir uma senha a cada 30 s, sem entrar, e continuar lendo o chat e vendo quem estava na reunião sem aparecer para ninguém. A regra é uma só, do palco e do chat: o palco passou a segui-la também.
 - **Quem pode mandar** é quem recebe: a mesma regra, sem outra. Assim, a página que acabou de ser aceita não tem a primeira mensagem recusada por ter mandado um segundo cedo demais. Antes de ser aceita e depois de sair, a resposta é `foraDaReuniao`.
 - **O nome** que vai na mensagem é o do palco para aquele participante.
-- **O limite** é de 20 mensagens por minuto por canal, numa janela só do chat, como a do `camera`: as mensagens do chat não gastam as 20 das outras, e as outras não gastam as do chat.
+- **O limite** é de 20 mensagens por minuto por participante, numa conta só do chat: as mensagens do chat não gastam as 20 das outras, e as outras não gastam as do chat. A conta é da pessoa, e não do canal dela: o canal novo de uma página que volta continua com a mesma conta. O canal tem também a janela dele, de 20 por minuto, como a do `camera`, que conta toda mensagem do chat que chega por ele, também a recusada. (Corrigido na revisão final: a primeira versão tinha só a janela do canal, e uma página que abrisse um canal novo a cada 20 mensagens mandava sem limite.)
 
 ### 7.2 O servidor do chat
 
@@ -180,7 +181,7 @@ Dois textos desta lista não estão no quadro, e são escolha deste desenho: o d
 ### 7.3 A página
 
 - **O cérebro** (`estado.js`) ganha a lista das mensagens da reunião, a conta das não lidas e o estado do painel. Ela esvazia a lista quando a página sai da tela da reunião, por qualquer fim (a pessoa saiu, foi tirada, a reunião acabou, ou a página desistiu de voltar), e não mexe nela enquanto a página tenta voltar ou ligar o canal de novo. Continua uma função pura, com os testes dela.
-- **A tela** (`pagina.js`, `pagina.html`, `pagina.css`) ganha o painel, o botão, o número, o aviso e o sinalizador. Os quadros não mudam: eles já se arrumam pela medida da área, e a área encolhe quando o painel abre.
+- **A tela** (`pagina.js`, `pagina.html`, `pagina.css`) ganha o painel, o botão, o número, o aviso e o sinalizador. Os quadros não mudam: eles já se arrumam pela medida da área, e a área encolhe quando o painel abre. O chat que cobre a tela põe uma entrada no histórico do navegador ao abrir, e a tira ao fechar: é o que faz o Voltar do aparelho fechar o chat. Ao lado dos quadros, ele não mexe no histórico.
 - **O texto de cada mensagem** é escrito como texto, nunca como HTML. Os links são criados um a um, só para trechos que começam com `http://` ou `https://`, com `target="_blank"` e `rel="noopener noreferrer"`.
 - **O sinalizador** é uma peça nova (`qualidade.js`), em duas partes: uma função pura, que recebe as últimas medidas e devolve o estado, e a parte que pede os números ao navegador a cada 2 s, na ligação principal da reunião. Ela para de medir com a aba escondida.
 
@@ -189,9 +190,11 @@ Dois textos desta lista não estão no quadro, e são escolha deste desenho: o d
 A cada 2 s, a página pede os números ao navegador (o `getStats` da ligação principal) e os compara com os da medida anterior:
 
 - **A perda do que chega:** os pacotes perdidos sobre os esperados, desde a medida anterior, no som e no vídeo (o `inbound-rtp`). Vale a maior das duas.
-- **A perda do que sai:** a que o servidor de vídeo informa de volta, no som e no vídeo (o `fractionLost` do `remote-inbound-rtp`). Ela só conta para o que a página mandou: a do som, só se a página mandou pacotes de som desde a medida anterior, e a do vídeo, só se mandou pacotes de vídeo (o `packetsSent` do `outbound-rtp`). Sem esse contador, a página não tem como saber, e a perda não conta contra a pessoa. Um relatório com mais de 10 s também não conta.
+- **A perda do que sai:** a que o servidor de vídeo informa de volta, no som e no vídeo (o `fractionLost` do `remote-inbound-rtp`). Ela só conta para o que a página mandou: a do som, só se a página mandou pacotes de som desde a medida anterior, e a do vídeo, só se mandou pacotes de vídeo (o `packetsSent` do `outbound-rtp`). Sem esse contador, a página não tem como saber, e a perda não conta contra a pessoa. Um relatório com mais de 10 s também não conta. E um relatório só conta quando (as duas regras são da revisão final, logo abaixo):
+  - **chegou depois de a página ser vista mandando** aquele tipo de pacote: o relatório de antes de a câmera ligar fala de um tempo em que não havia nada para perder;
+  - **traz pacotes perdidos novos** desde o relatório anterior do mesmo fluxo (o `packetsLost` do `remote-inbound-rtp` aumentou). Sem pacotes perdidos novos, a perda dele é zero, qualquer que seja o `fractionLost`. O primeiro relatório que a página vê de cada fluxo é só a base dessa comparação. No navegador que não dá o `packetsLost`, vale o `fractionLost`, como antes.
 - **A perda** da medida é a maior entre a do que chega e a do que sai.
-- **O atraso:** o tempo de ida e volta até o servidor de vídeo (o `currentRoundTripTime` do par de endereços em uso; sem ele, o `roundTripTime` do `remote-inbound-rtp` do som).
+- **O atraso:** o tempo de ida e volta até o servidor de vídeo (o `currentRoundTripTime` do par de endereços em uso; sem ele, o `roundTripTime` do `remote-inbound-rtp` do som). O navegador não mede esse tempo a cada leitura: ele guarda a última amostra, que muda a cada 2,5 s, mais ou menos (medido no Chromium). Por isso o atraso que conta, e que o cartão mostra, é **o menor das duas últimas amostras diferentes** (a amostra é reconhecida pelo `responsesReceived` do par, ou pela hora do relatório do som). Com uma amostra só, ainda não há atraso. No navegador que não dá como reconhecer a amostra, cada leitura vale como uma.
 - **Nada chegou:** nenhum pacote de som e nenhuma imagem nova desde a medida anterior.
 
 Esses números foram conferidos em 19/11, no Chromium, contra o FreeSWITCH de verdade:
@@ -199,6 +202,8 @@ Esses números foram conferidos em 19/11, no Chromium, contra o FreeSWITCH de ve
 - O servidor de vídeo manda os relatórios de volta: há `remote-inbound-rtp` para o som e para o vídeo, com a perda e o atraso. E o par de endereços em uso dá o atraso.
 - O mosaico e o som chegam sempre, a 25 imagens e 50 pacotes de som por segundo. Foi assim com duas pessoas com câmera, com uma pessoa sozinha sem câmera e sem microfone, e com duas pessoas sem câmera e sem microfone. Por isso o "nada chegou" não acontece numa reunião parada ou vazia.
 - **Corrigido na construção, em 19/11.** A primeira versão desta seção dizia que, com a câmera desligada, o relatório do vídeo parava de chegar. Não para: o FreeSWITCH manda relatórios também do que a página não manda. Com a câmera desligada, o primeiro relatório do vídeo chega uns 3 s depois da entrada e diz uma perda de 255 em 256; o seguinte, uns 4 s depois, diz zero. Com a conta da primeira versão, quem entrava sem câmera via "Conexão ruim", com "Perda: 100%", por uns 10 s. Por isso a perda do que sai passou a contar só para o que a página manda. O microfone desligado continua mandando 50 pacotes por segundo: a perda do som conta sempre que há som saindo. O teste de ponta a ponta achou o defeito antes de a versão sair, e passou a provar a regra, com todos sem câmera e sem microfone.
+- **Corrigido na revisão final, em 19/11.** O revisor de fora mostrou que a correção acima não bastava, e um teste de ponta a ponta novo confirmou com o FreeSWITCH de verdade: quem entrava sem câmera e a ligava nos primeiros segundos via "Conexão ruim", com "Perda: 100%", 7 s depois de entrar. O relatório dos 255 em 256 continuava sendo o mais novo quando a câmera começava a mandar. Daí a primeira regra: o relatório tem de chegar depois de a página ser vista mandando. Com ela, sobrou um "Conexão instável", com "Perda: 3%". A causa, medida: o FreeSWITCH conta **um** pacote perdido que não existe num fluxo que começa depois do primeiro relatório dele, e o relatório seguinte divide esse pacote pelos poucos que a câmera mandou até ali (7 em 256, com 37 pacotes). O `packetsLost` fica em 1 do primeiro relatório em diante: nenhum pacote novo se perdeu. Daí a segunda regra: a perda de um relatório só conta com pacotes perdidos novos.
+- **O atraso, também da revisão final.** Com uma leitura a cada 2 s e uma amostra a cada 2,5 s, duas leituras seguidas viam a mesma amostra em 1 de cada 5 vezes. Uma resposta lenta sozinha, de 500 ms ou mais, contava como duas medidas ruins: o bastante para o "Conexão ruim" e o aviso. Com o menor das duas últimas amostras, uma resposta lenta não muda nada, e o atraso alto de verdade aparece na amostra seguinte.
 
 O estado de cada medida:
 
@@ -213,7 +218,7 @@ Com um número só (a perda sem o atraso, ou o contrário), a medida é decidida
 
 O estado mostrado não acompanha cada medida, para não piscar:
 
-- **Piora** quando as 2 últimas medidas são piores que o estado mostrado (4 s). Ele passa para a menos ruim das duas.
+- **Piora** quando as 2 últimas medidas são piores que o estado mostrado (4 s). Ele passa para a menos ruim das duas. Só pelo atraso, a piora leva de 5 a 9 s no Chromium: são precisas duas amostras altas seguidas, e depois as duas medidas. Pela perda, continua nos 4 s.
 - **Melhora** quando as 5 últimas medidas são melhores que o estado mostrado (10 s). Ele passa para a pior das cinco. De "ruim", cinco medidas boas levam direto a "boa".
 - **É "Medindo a conexão…"** nas 2 primeiras medidas da ligação, depois de 2 medidas seguidas sem número, e enquanto a conexão está caída.
 - Uma medida sem número não conta para piorar nem para melhorar.
@@ -222,6 +227,8 @@ O estado mostrado não acompanha cada medida, para não piscar:
 
 **A aba escondida:** a página para de medir. Quando a aba volta, a primeira medida serve só de base para a seguinte, e o estado mostrado fica como estava.
 
+**A pausa** (da revisão final). O celular que foi para outro app, ou o navegador que travou, também para de medir sem a aba "esconder". Por isso uma leitura que chega mais de 6 s depois da anterior é tratada como a volta da aba: ela é só a base da seguinte, e o estado mostrado fica como estava. Depois de uma pausa (essa, ou a da aba escondida), as medidas de antes dela não contam mais para piorar nem para melhorar, e os relatórios e as amostras de antes também não. Sem isso, os números acumulados durante a pausa viravam uma medida só, e uma medida ruim de antes somada a uma de depois mostrava "Conexão ruim" a quem acabava de voltar.
+
 Um número que o navegador não dá não conta contra a pessoa.
 
 ## 8. Os valores
@@ -229,23 +236,26 @@ Um número que o navegador não dá não conta contra a pessoa.
 | O quê | Valor |
 |---|---|
 | O tamanho de uma mensagem | de 1 a 1.000 caracteres |
-| O limite de mensagens | 20 por minuto por canal, à parte dos outros |
+| O limite de mensagens | 20 por minuto por participante, e 20 por minuto por canal, à parte dos outros |
+| Entrando sem entrar | as 3 primeiras senhas da câmera seguidas valem para o palco e o chat |
 | As mensagens que a página guarda | as últimas 500 da reunião |
 | O número no botão | até 9, depois "9+" |
 | A largura do painel no PC | 360 pontos, com a janela a partir de 900 |
 | A medida do sinalizador | a cada 2 s |
-| O relatório do servidor de vídeo que ainda vale para a perda do que sai | o dos últimos 10 s, e só do que a página mandou desde a medida anterior |
+| O relatório do servidor de vídeo que ainda vale para a perda do que sai | o dos últimos 10 s, só do que a página mandou desde a medida anterior, chegado depois de ela começar a mandar e com pacotes perdidos novos |
+| O atraso que conta | o menor das 2 últimas amostras diferentes |
+| A pausa do medidor | mais de 6 s entre duas leituras: a leitura seguinte é só a base |
 | O aviso curto (da mensagem nova e da conexão ruim) | 5 s, um por vez |
 | O aviso de conexão ruim | no máximo 1 a cada 2 minutos |
 
 ## 9. Segurança e privacidade
 
 - **O texto nunca vira HTML.** A regra de segurança da página (CSP) continua a mesma, sem script nem estilo dentro da página.
-- **Os links** só nascem de `http://` e `https://`, mostram o endereço inteiro e abrem em outra aba, sem dar à outra página acesso a esta.
-- **Só quem foi aceito e está na reunião, ou entrando nela, manda e recebe.** Quem saiu ou foi tirado não recebe mais nada, como no palco.
+- **Os links** só nascem de `http://` e `https://`, mostram o endereço inteiro e abrem em outra aba, sem dar à outra página acesso a esta. O endereço à vista é o do link: um sinal de direção do texto o acaba, e o link é escrito da esquerda para a direita.
+- **Só quem foi aceito e está na reunião, ou entrando nela, manda e recebe.** Quem saiu ou foi tirado não recebe mais nada, como no palco. Entrando tem fim (seção 7.1): quem só pede senhas, sem entrar, deixa de receber. Quem lê o chat é só quem a lista da reunião mostra, ou quem vai aparecer nela em segundos.
 - **O servidor não guarda mensagem nenhuma,** nem na memória depois de repassar, nem no banco, nem nos registros.
 - **O sinalizador não manda nada** a servidor nenhum.
-- **O limite por canal** segura quem tenta encher o chat. Quem insiste é tirado por um colega, como hoje.
+- **O limite por participante** segura quem tenta encher o chat, com um canal ou com vários. Quem insiste é tirado por um colega, como hoje.
 
 ## 10. Erros e testes
 
@@ -261,11 +271,11 @@ O campo de escrever não deixa passar de 1.000 caracteres: o `grande` do protoco
 
 **Testes automáticos:**
 
-- **O servidor:** quem recebe e quem não recebe (quem saiu, quem foi tirado, quem está na espera, outra reunião); quem acabou de ser aceita e ainda está entrando, que manda e recebe; o `id` e o `voce` só para quem escreveu; o nome do colega e o de quem é de fora; os quatro motivos da recusa; a janela do limite à parte das outras; nada do texto nos registros.
+- **O servidor:** quem recebe e quem não recebe (quem saiu, quem foi tirado, quem está na espera, outra reunião); quem acabou de ser aceita e ainda está entrando, que manda e recebe; o `id` e o `voce` só para quem escreveu; o nome do colega e o de quem é de fora; os quatro motivos da recusa; a janela do limite à parte das outras; o limite do participante, que o canal novo de um voltar não zera; quem só pede senhas, sem entrar, que deixa de receber o chat e o palco na quarta; nada do texto nos registros.
 - **O cérebro da página:** a lista, as não lidas, o painel aberto e fechado, a lista que esvazia ao sair, a que fica quando a conexão cai e volta, a mensagem que não foi.
-- **A tela da página:** o painel no PC e os quadros no espaço que sobra; o celular; o número e o aviso; o texto com sinais de HTML; o link; o foco e o Esc; o leitor de tela.
-- **O sinalizador:** a função pura, com a tabela da seção 7.4, as regras de piorar e melhorar, a medida sem número e a medida com um número só; o critério 6 inteiro, com medidas falsas (a perda de 10% vira "ruim" em até 10 s, e a rede boa de novo vira "boa" em até 20 s); a aba escondida; e a tela, com medidas falsas.
-- **De ponta a ponta:** três pessoas, com o chat, o FreeSWITCH e o agente de verdade: a mensagem chega aos outros; quem saiu não recebe; o sinalizador sai do "Medindo" para "Conexão boa"; e ele continua em "Conexão boa" por 20 s com todos sem câmera e sem microfone.
+- **A tela da página:** o painel no PC e os quadros no espaço que sobra; o celular; o número e o aviso; o texto com sinais de HTML; o link, também com sinais de direção na mensagem; o foco e o Esc; o Voltar do aparelho, que fecha o chat que cobre a tela; o leitor de tela, também para a mensagem que não foi e para o chat sem o canal.
+- **O sinalizador:** a função pura, com a tabela da seção 7.4, as regras de piorar e melhorar, a medida sem número e a medida com um número só; o critério 6 inteiro, com medidas falsas (a perda de 10% vira "ruim" em até 10 s, e a rede boa de novo vira "boa" em até 20 s); a aba escondida e a pausa; o relatório de antes de a página mandar, e o que não traz pacotes perdidos novos; o menor das duas últimas amostras do atraso; e a tela, com medidas falsas.
+- **De ponta a ponta:** três pessoas, com o chat, o FreeSWITCH e o agente de verdade: a mensagem chega aos outros; quem saiu não recebe; o sinalizador sai do "Medindo" para "Conexão boa"; ele continua em "Conexão boa" por 20 s com todos sem câmera e sem microfone; e quem entra sem câmera e a liga 3, 4,5 ou 6 s depois não vê "Conexão instável" nem "Conexão ruim".
 
 **Teste manual:** uma seção nova no `docs/teste-manual.md` (a 29), no PC e no celular, com o Chrome e o Firefox no PC, o Safari do iPhone e o Chrome do Android. Para o sinalizador, o roteiro confere o "Conexão boa" e os dois números no uso normal, e pede um celular que se afasta do Wi-Fi até a imagem falhar. O limitador de rede das ferramentas do navegador não serve: ele não mexe na imagem nem no som da reunião. Por isso a perda de 10% do critério 6 é provada nos testes automáticos, com medidas falsas.
 
@@ -348,3 +358,22 @@ Um revisor que não participou deste desenho o leu como quem vai construir, e fe
 36. **A lista das mensagens é uma parada do teclado,** com o nome "Mensagens" para o leitor de tela: quem só usa o teclado consegue rolar a lista.
 37. **O texto que a pessoa escrevia e não mandou some** quando ela sai da reunião.
 38. **O cartão do sinalizador** abre embaixo do botão e não toma o foco. O Esc e o clique fora o fecham.
+
+**O que a revisão final mudou,** em 19/11. Um revisor de fora, que não participou do desenho nem da construção, leu o desenho, o plano e todo o código no fim. Ele não achou nada grave, e pediu correções. As que entraram, cada uma com um teste que falhava antes dela e passa depois:
+
+39. **O relatório do servidor de vídeo só conta depois de a página começar a mandar, e só com pacotes perdidos novos** (seção 7.4). Quem entrava sem câmera e a ligava logo depois via "Conexão ruim" por alguns segundos. O custo: a perda do que sai começa a contar um relatório mais tarde em cada fluxo (no segundo, e não no primeiro): no vídeo, uns 8 s depois de a ligação começar, ou de uma pausa. A perda do que chega conta desde o começo.
+40. **O atraso que conta é o menor das duas últimas amostras** (seção 7.4). Uma resposta lenta sozinha não é uma conexão ruim. O custo: só pelo atraso, o "Conexão ruim" leva de 5 a 9 s, e não 4; e o atraso do cartão mostra um salto de verdade uma amostra depois.
+41. **Uma leitura que chega mais de 6 s depois da anterior é só a base** (seção 7.4, a pausa). O celular que volta de outro app não vê um "Conexão ruim" que não existe.
+42. **O Voltar do aparelho fecha o chat que cobre a tela** (seções 4.2 e 7.3). Antes, ele saía da página, que é sair da reunião. Uma sobra conhecida: recarregar a página com o chat aberto (ou avançar depois de voltar) deixa a entrada do chat no histórico, e o primeiro Voltar depois disso não faz nada. O seguinte sai da página, como sempre.
+43. **Entrando tem fim:** as 3 primeiras senhas da câmera seguidas sem entrar (seção 7.1), para o chat e para o palco. O custo: quem tentou voltar três vezes sem conseguir e entra pelo `Entrar de novo` recebe os quadros com os nomes logo depois de entrar, e não antes da imagem; e não recebe as mensagens mandadas enquanto a ligação dele sobe.
+44. **O limite das 20 mensagens por minuto é de cada pessoa,** e não só do canal dela (seção 7.1).
+45. **O leitor de tela ouve a mensagem da própria pessoa que não foi,** e o chat sem o canal (seção 4.2).
+46. **Um sinal de direção do texto acaba o endereço do link,** e o link é escrito da esquerda para a direita (seção 4.2).
+47. **O que a revisão apontou e ficou como está nesta versão,** para o responsável decidir:
+    - no celular, com o chat aberto, o painel continua dizendo "Você continua na reunião" enquanto a página tenta voltar de uma queda (até uns 45 s), com o cartão da queda atrás dele (o item 34);
+    - o aviso "Sua conexão está ruim" que aparece atrás do chat aberto, no celular, gasta o um-a-cada-2-minutos sem a pessoa o ver;
+    - "O chat volta quando a conexão voltar." aparece também quando o chat não vai voltar sozinho (a página desistiu de ligar o canal de novo, ou o chat reiniciou): esse caso pede uma frase própria, que é do responsável escolher;
+    - o aviso curto, depois de sumir, guarda na página o nome e o texto da última mensagem, sem mostrar, até o aviso seguinte;
+    - o Esc que cancela uma escrita com teclado de composição (o japonês, o chinês, o coreano) no campo do chat também devolve à grade um quadro aumentado;
+    - colar mais de 1.000 caracteres corta o texto sem avisar, e uma mensagem só com sinais invisíveis é aceita e aparece vazia;
+    - a perda de 10% do critério 6 continua provada com números de mentira nos testes automáticos, e com uma rede ruim de verdade só no roteiro (a linha 29.12).
