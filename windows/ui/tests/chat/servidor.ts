@@ -91,6 +91,34 @@ export async function tirarPessoa(empresaId: number, pessoaId: number): Promise<
   if (r.status !== 303) throw new Error(`tirar a pessoa respondeu ${r.status}`);
 }
 
+/** O texto de um trecho do HTML da administração, com os sinais que o servidor escapa de volta. */
+function textoDoHtml(trecho: string): string {
+  return trecho
+    .replace(/&#39;/g, "'")
+    .replace(/&#34;/g, '"')
+    .replace(/&#43;/g, '+')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+}
+
+/** O estado de uma pessoa na página de administração do chat de teste: o nome do estado e a segunda linha. */
+export async function estadoNaAdministracao(empresaId: number, nome: string): Promise<{ estado: string; detalhe: string }> {
+  await entrarNaAdministracao();
+  const r = await admin('GET', `/admin/empresas/${empresaId}`);
+  if (r.status !== 200) throw new Error(`a página da empresa ${empresaId} respondeu ${r.status}`);
+  // Cada linha da tabela das pessoas: o nome (a célula `forte`) e, na célula do estado, as duas linhas dele.
+  for (const linha of (await r.text()).split('<tr>').slice(1)) {
+    const quem = /<td class="forte">([^<]*)<\/td>/.exec(linha);
+    if (!quem || textoDoHtml(quem[1]) !== nome) continue;
+    const estado = /<span class="estado-nome">([^<]*)<\/span>/.exec(linha);
+    const detalhe = /<span class="estado-detalhe">([^<]*)<\/span>/.exec(linha);
+    if (!estado || !detalhe) break;
+    return { estado: textoDoHtml(estado[1]), detalhe: textoDoHtml(detalhe[1]) };
+  }
+  throw new Error(`a página da empresa ${empresaId} não mostra o estado de ${nome}`);
+}
+
 // --- A API do chat -------------------------------------------------------------------------------------------------
 
 /** Liga um computador à empresa pelo código. Só com códigos certos: os errados contam para o limite de 10 por hora. */
@@ -242,6 +270,21 @@ export class ApiDeTeste {
 
   async desligar(): Promise<void> {
     await this.certo('DELETE', '/api/v1/computadores/eu', undefined, [204]);
+  }
+
+  /**
+   * Abre o canal dos eventos deste computador (o bilhete e o WebSocket) e espera abrir. O chat tem um canal por
+   * computador: o que já estava aberto com a mesma chave (o de uma página, por exemplo) é fechado por ele, com 4000.
+   */
+  async abrirCanal(): Promise<WebSocket> {
+    const { bilhete } = await this.certo('POST', '/api/v1/eventos/bilhete', undefined, [200]);
+    // O WebSocket do Node não manda o cabeçalho Origin, e sem ele o chat aceita o bilhete sozinho.
+    const canal = new WebSocket(`${baseDoChat().replace(/^http/, 'ws')}/api/v1/eventos?bilhete=${encodeURIComponent(bilhete)}`);
+    await new Promise<void>((abriu, falhou) => {
+      canal.onopen = () => abriu();
+      canal.onerror = () => falhou(new Error('o canal dos eventos não abriu'));
+    });
+    return canal;
   }
 }
 

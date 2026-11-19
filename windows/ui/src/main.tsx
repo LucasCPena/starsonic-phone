@@ -213,8 +213,19 @@ function App() {
   const resumoDoChat = state?.chat;
   const contaEmUso = state?.conta ?? null;
   useLayoutEffect(() => {
-    chatCliente.atualizar({ chat: resumoDoChat, conta: contaEmUso && { ramal: contaEmUso.ramal, nome: contaEmUso.nome } });
-  }, [resumoDoChat?.ligado, resumoDoChat?.contaConectada, resumoDoChat?.computador, contaEmUso?.ramal, contaEmUso?.nome]);
+    chatCliente.atualizar({
+      chat: resumoDoChat,
+      conta: contaEmUso && { id: contaEmUso.id, ramal: contaEmUso.ramal, nome: contaEmUso.nome, estado: contaEmUso.status },
+    });
+  }, [
+    resumoDoChat?.ligado,
+    resumoDoChat?.contaConectada,
+    resumoDoChat?.computador,
+    contaEmUso?.id,
+    contaEmUso?.ramal,
+    contaEmUso?.nome,
+    contaEmUso?.status,
+  ]);
 
   // (0.2.0) A conversa das vistas chatConversa, chatMembros e chatPor, quando a lista já a tem. Uma que não está nela
   // com a lista já lida (o aviso de uma conversa que saiu, ou que não existe; o grupo de que a pessoa saiu ou foi tirada,

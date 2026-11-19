@@ -5,6 +5,7 @@
 // dá o progresso), que segue um redirecionamento sozinho e só depois recusa a resposta (ver o enviarComProgresso), e a
 // miniatura e os downloads pelo fetch; nos três, os 20 s contam desde o último pedaço que andou (um arquivo de 25 MB
 // numa rede lenta leva mais que isso, mas nunca 20 s parado).
+import type { EstadoDoRamal } from './ramal';
 import type { Arquivo, Conversa, Membro, Mensagem, Pessoa } from './tipos';
 
 /** As mensagens vêm em páginas de 50 (o máximo do protocolo). */
@@ -61,6 +62,8 @@ export interface ApiChat {
   /** (Task 7) Os bytes do arquivo (o servidor manda todo arquivo como application/octet-stream). */
   baixarArquivo(id: string): Promise<Blob>;
   bilhete(): Promise<string>;
+  /** O PUT /api/v1/computadores/eu/ramal. O 204 resolve; o resto rejeita com o ErroChat. */
+  dizerRamal(estado: EstadoDoRamal, segundos: number): Promise<void>;
 }
 
 /** O ErroChat de uma resposta fora dos 2xx, com o `erro` do corpo (`servidor` sem ele: o corpo de um proxy). */
@@ -304,6 +307,9 @@ export function criarApi(base: string, chave: string): ApiChat {
     },
     async bilhete() {
       return ((await p('POST', '/eventos/bilhete')) as { bilhete: string }).bilhete;
+    },
+    async dizerRamal(estado, segundos) {
+      await p('PUT', '/computadores/eu/ramal', { estado, segundos });
     },
   };
 }

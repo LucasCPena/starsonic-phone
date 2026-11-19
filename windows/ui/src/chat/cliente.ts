@@ -36,11 +36,12 @@
 //   da Task 5.
 import type { Bridge } from '../bridge';
 import { limitCharacters } from '../format';
-import type { ChatSummary } from '../state';
+import type { AccountStatus, ChatSummary } from '../state';
 import { Aberta, type Miniatura } from './aberta';
 import { criarApi, ehChave, ErroChat, ligarComputador, type ApiChat } from './api';
 import { Envios, SEM_PENDENTES, type Pendente } from './envios';
 import { conectarEventos, esperaDaVez, esperaDoLimite } from './eventos';
+import { criarAvisoDoRamal, type AvisoDoRamal } from './ramal';
 import { textoDoAviso, tituloDoAviso } from './formato';
 import { CHAT, computadorNovo } from './textos';
 import type { Conversa, Evento, Membro, Mensagem, Pessoa } from './tipos';
@@ -81,8 +82,11 @@ export interface VistaChat {
 }
 
 interface Conta {
+  id: string;
   ramal: string;
   nome: string;
+  /** O que o núcleo diz do registro do ramal (para o estado do ramal contado ao chat). */
+  estado: AccountStatus;
 }
 
 /** Quem espera um pedido de novo: a espera dele (a parada a acorda) e se ele ainda vale. */
@@ -218,10 +222,13 @@ export class ChatCliente {
    * queda, ou uma que chegou pelos eventos depois dela). A releitura avisa as conversas com uma mais nova e recente.
    */
   private avisoDaVolta: Map<number, number> | null = null;
+  /** O estado do ramal contado ao chat (ramal.ts): ele sabe da conta em uso e de cada abertura e queda do canal. */
+  private readonly avisoDoRamal: AvisoDoRamal;
 
   constructor(o: { bridge: Bridge; base: string }) {
     this.bridge = o.bridge;
     this.base = o.base;
+    this.avisoDoRamal = criarAvisoDoRamal({ agora: () => performance.now(), aleatorio: () => Math.random() });
     o.bridge.subscribe((msg) => {
       if (msg.type === 'chatChave') this.chegouAChave(msg.chave);
       else if (msg.type === 'janela') this.mudouAJanela(msg.frente);
@@ -239,10 +246,11 @@ export class ChatCliente {
     };
   }
 
-  /** O chat do estado da ponte e a conta em uso (o ramal e o nome) mudaram. */
-  atualizar(p: { chat: ChatSummary | undefined; conta: { ramal: string; nome: string } | null }): void {
+  /** O chat do estado da ponte e a conta em uso (o ramal, o nome e o estado do registro) mudaram. */
+  atualizar(p: { chat: ChatSummary | undefined; conta: Conta | null }): void {
     this.resumo = p.chat;
     this.conta = p.conta;
+    this.avisoDoRamal.conta(p.conta && { id: p.conta.id, ramal: p.conta.ramal, estado: p.conta.estado });
     this.reavaliar();
   }
 
@@ -407,6 +415,7 @@ export class ChatCliente {
     this.vez++;
     this.ramalDaVez = null;
     this.api = null;
+    this.avisoDoRamal.canalFechou();
     this.eventos?.parar();
     this.eventos = null;
     this.eventosNoAr = false;
@@ -538,6 +547,10 @@ export class ChatCliente {
         this.mudar({});
         void this.reler(vez, api);
         this.aberta?.conectou();
+        // A cada abertura do canal, o chat ouve como está o ramal (ele esquece quando o canal cai).
+        if (this.ramalDaVez !== null) {
+          this.avisoDoRamal.canalAbriu(this.ramalDaVez, (estado, segundos) => api.dizerRamal(estado, segundos));
+        }
       }),
       caiu: desta(() => {
         // Cada tentativa que não abre também é um `caiu`: a queda começa no primeiro.
@@ -546,6 +559,7 @@ export class ChatCliente {
         this.semEventos = true;
         // Sem os eventos, a aberta pode perder uma mensagem: o `ate` dela para até a volta.
         this.aberta?.caiu();
+        this.avisoDoRamal.canalFechou();
         this.mudar({});
       }),
       fora: desta(() => this.sairDoChat()),

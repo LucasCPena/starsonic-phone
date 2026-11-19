@@ -19,6 +19,7 @@ import { AGENDA_DE_EXEMPLO, createScenario, entrarVazio, estadoDoIphone, PLANILH
 import { trimAscii } from './format';
 import type { WebviewLike } from './bridge';
 import type {
+  AccountStatus,
   AdminServer,
   AdminState,
   AgendaContact,
@@ -70,6 +71,7 @@ function sortContacts(list: Contact[]): Contact[] {
 }
 
 const PERMISSOES: AgendaPermission[] = ['pendente', 'negada', 'concedida'];
+const STATUS_DA_CONTA: AccountStatus[] = ['conectado', 'conectando', 'sem_conexao', 'erro'];
 
 /** `null` para um cenário que não existe (a interface mostra o erro, não um cenário qualquer). */
 export function createFakeWebview(name: string): { webview: WebviewLike; view: FakeView | undefined } | null {
@@ -99,6 +101,9 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
       state.conta = conta;
       state.contas = state.contas.map((c) => (c.id === conta.id ? { ...c, ramal: conta.ramal, nome: conta.nome } : c));
     }
+    // (o estado dos ramais) O `status` da conta em uso desde a abertura: o app que abre com o ramal sem registrar.
+    const status = STATUS_DA_CONTA.find((s) => s === parametros.get('status'));
+    if (state.conta && status) state.conta = { ...state.conta, status };
   }
   // (iPhone) A última lista da agenda (vazia sem a permissão concedida). A que um teste manda pelo `push`, como o núcleo,
   // passa a ser ela: é a que o `contactsOpened` lê de novo.
