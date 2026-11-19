@@ -11,7 +11,7 @@ import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { closeSync, existsSync, mkdirSync, openSync, rmSync, writeFileSync } from 'node:fs';
 import { createConnection, createServer } from 'node:net';
-import { networkInterfaces } from 'node:os';
+import { availableParallelism, networkInterfaces } from 'node:os';
 import { join } from 'node:path';
 import { repetirAte } from './espera';
 import { gerarMidia } from './midia';
@@ -259,7 +259,10 @@ export default async function ambiente(): Promise<() => Promise<void>> {
     await pararTudo();
     throw e;
   }
-  console.log(`ambiente no ar: o FreeSWITCH em ${ip}, as saídas em ${SAIDA}`);
+  // Os processadores da máquina entram na linha porque o esforco.spec.ts depende deles: o FreeSWITCH só usa uma
+  // thread por pessoa, que é onde a troca de tamanho congelava, com mais de 2.
+  const processadores = availableParallelism();
+  console.log(`ambiente no ar: o FreeSWITCH em ${ip}, ${processadores} processadores na máquina, as saídas em ${SAIDA}`);
   // A volta: desliga tudo e confere as saídas inteiras, com as linhas do desligamento, que o teste dos registros não
   // vê. Um segredo nelas falha a rodada.
   return async () => {
