@@ -9,7 +9,7 @@
 import { expect, test, type Page, type Request } from '@playwright/test';
 import { mudarEstado } from '../helpers';
 import { abrirNoChat, esperarOsEventos, pararORelogio } from './abrir';
-import { empresaComPessoas, estadoNaAdministracao } from './servidor';
+import { baseDoChat, empresaComPessoas, estadoNaAdministracao } from './servidor';
 
 // O CSP da página só deixa falar com o endereço do chat de verdade; o servidor de teste fica no 127.0.0.1:4180.
 test.use({ bypassCSP: true });
@@ -135,3 +135,243 @@ for (const caso of ['chat-desligado', 'chat-sem-conta', 'o computador tirado do 
     expect(pedidos).toHaveLength(0);
   });
 }
+
+// --- As mudanças, com a espera de 2 s (tarefa 2) -------------------------------------------------------------------
+
+/**
+ * Abre no chat, espera o canal dos eventos e o pedido da abertura (confirmado pelo chat), e para o relógio da página:
+ * daqui em diante ele só anda pelo runFor.
+ */
+async function abrirComOCanal(page: Page, chave: string, cenario: 'chat' | 'chat-duas-contas' = 'chat'): Promise<Request[]> {
+  const pedidos = pedidosDoRamal(page);
+  await page.clock.install();
+  await abrirNoChat(page, { chave, ...RECEPCAO, cenario });
+  await esperarOsEventos(page);
+  await expect.poll(() => pedidos.length).toBe(1);
+  await confirmado(page, pedidos[0]);
+  await pararORelogio(page);
+  return pedidos;
+}
+
+/**
+ * O chat respondeu 204 ao pedido, e a página já viu a resposta. Antes de o relógio andar muito, é preciso esperar isto:
+ * o prazo de 20 s de um pedido é do relógio da página, e passaria antes de a resposta de verdade chegar.
+ */
+async function confirmado(page: Page, pedido: Request): Promise<void> {
+  expect((await pedido.response())?.status()).toBe(204);
+  await page.evaluate(() => 0);
+}
+
+/** Quantos pedidos do ramal saíram até agora (com uma ida e volta à página antes, para os avisos do navegador chegarem). */
+async function contar(page: Page, pedidos: Request[]): Promise<number> {
+  await page.evaluate(() => 0);
+  return pedidos.length;
+}
+
+/** A outra conta do cenário `chat-duas-contas` passa a ser a conta em uso, com o `status` dado; `comORamal`: o ramal dela. */
+const trocarDeConta =
+  (status: string, comORamal?: string) =>
+  (s: Estado): Estado => {
+    const outra = s.contas.find((c: Estado) => !c.emUso);
+    const ramal = comORamal ?? outra.ramal;
+    return {
+      ...s,
+      conta: { ...s.conta, id: outra.id, nome: outra.nome, ramal, status },
+      contas: s.contas.map((c: Estado) => ({ ...c, emUso: c.id === outra.id, ramal: c.id === outra.id ? ramal : c.ramal })),
+    };
+  };
+
+test('uma mudança espera 2 segundos', async ({ page }) => {
+  const { pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO]);
+  const pedidos = await abrirComOCanal(page, pessoas[0].chave);
+
+  await mudar(page, comOStatus('erro'));
+  // Com 1,9 s (os 5 ms do `mudar` já contam), nenhum pedido novo.
+  await page.clock.runFor(1890);
+  expect(await contar(page, pedidos)).toBe(1);
+  // Com 2 s, um pedido, com o estado novo e os 2 s que ele tem.
+  await page.clock.runFor(120);
+  await expect.poll(() => pedidos.length).toBe(2);
+  expect(corpos(pedidos)[1]).toEqual({ estado: 'erro', segundos: 2 });
+  expect((await pedidos[1].response())?.status()).toBe(204);
+});
+
+test('o ramal que pisca manda só o último valor', async ({ page }) => {
+  const { pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO]);
+  const pedidos = await abrirComOCanal(page, pessoas[0].chave);
+
+  // Cinco estados em 1 s (um a cada 200 ms).
+  for (const status of ['conectando', 'erro', 'conectando', 'sem_conexao', 'erro']) {
+    await mudar(page, comOStatus(status));
+    await page.clock.runFor(195);
+  }
+  // A última mudança foi há 200 ms: com 1,9 s dela, nada; com 2 s, um pedido só, com o último estado.
+  await page.clock.runFor(1690);
+  expect(await contar(page, pedidos)).toBe(1);
+  await page.clock.runFor(120);
+  await expect.poll(() => pedidos.length).toBe(2);
+  // O ramal está sem registrar desde o primeiro dos cinco estados: 0,8 s e mais os 2 s da espera.
+  expect(corpos(pedidos)[1]).toEqual({ estado: 'erro', segundos: 2 });
+  await page.clock.runFor(10_000);
+  expect(await contar(page, pedidos)).toBe(2);
+});
+
+test('o que volta ao valor de antes não manda nada', async ({ page }) => {
+  const { pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO]);
+  const pedidos = await abrirComOCanal(page, pessoas[0].chave);
+
+  await mudar(page, comOStatus('conectando'));
+  await page.clock.runFor(500);
+  await mudar(page, comOStatus('conectado'));
+  await page.clock.runFor(5000);
+  expect(await contar(page, pedidos)).toBe(1);
+});
+
+test('o tempo não zera entre o Conectando e o Erro no cadastro', async ({ page }) => {
+  const { empresaId, pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO]);
+  const pedidos = await abrirComOCanal(page, pessoas[0].chave);
+
+  // O ramal cai e fica tentando registrar por 75 s (o pedido do "conectando" sai aos 2 s).
+  await mudar(page, comOStatus('conectando'));
+  await page.clock.runFor(2095);
+  await expect.poll(() => pedidos.length).toBe(2);
+  await confirmado(page, pedidos[1]);
+  await page.clock.runFor(72_900);
+  // A central recusa o cadastro: o estado muda, e o tempo sem registrar continua contando do começo.
+  await mudar(page, comOStatus('erro'));
+  await page.clock.runFor(2100);
+  await expect.poll(() => pedidos.length).toBe(3);
+  expect(corpos(pedidos).slice(1)).toEqual([
+    { estado: 'conectando', segundos: 2 },
+    { estado: 'erro', segundos: 77 },
+  ]);
+  await expect
+    .poll(() => estadoNaAdministracao(empresaId, RECEPCAO.nome))
+    .toEqual({ estado: 'Sem registro', detalhe: 'há 1 min · o app diz “Erro no cadastro”' });
+});
+
+test('o tempo zera quando o ramal registra, e quando ele cai', async ({ page }) => {
+  const { empresaId, pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO]);
+  const pedidos = await abrirComOCanal(page, pessoas[0].chave);
+
+  await mudar(page, comOStatus('conectando'));
+  await page.clock.runFor(2095);
+  await expect.poll(() => pedidos.length).toBe(2);
+  await confirmado(page, pedidos[1]);
+  await page.clock.runFor(72_900);
+  // O ramal registra, 75 s depois de cair: o tempo recomeça (o pedido leva os 2 s da espera).
+  await mudar(page, comOStatus('conectado'));
+  await page.clock.runFor(2100);
+  await expect.poll(() => pedidos.length).toBe(3);
+  expect(corpos(pedidos)[2]).toEqual({ estado: 'conectado', segundos: 2 });
+  await confirmado(page, pedidos[2]);
+  await expect.poll(() => estadoNaAdministracao(empresaId, RECEPCAO.nome)).toEqual({ estado: 'Online', detalhe: 'há menos de 1 min' });
+  // E cai de novo, 30 s depois: o tempo recomeça outra vez.
+  await page.clock.runFor(30_000);
+  await mudar(page, comOStatus('conectando'));
+  await page.clock.runFor(2100);
+  await expect.poll(() => pedidos.length).toBe(4);
+  expect(corpos(pedidos)[3]).toEqual({ estado: 'conectando', segundos: 2 });
+});
+
+test('a outra conta, com o mesmo ramal', async ({ page }) => {
+  const { pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO]);
+  const pedidos = await abrirComOCanal(page, pessoas[0].chave, 'chat-duas-contas');
+  let canaisNovos = 0;
+  page.on('websocket', () => (canaisNovos += 1));
+
+  // A primeira conta fica sem registrar por 12 s.
+  await mudar(page, comOStatus('erro'));
+  await page.clock.runFor(2095);
+  await expect.poll(() => pedidos.length).toBe(2);
+  await confirmado(page, pedidos[1]);
+  await page.clock.runFor(10_000);
+  // A segunda conta, posta com o mesmo ramal da primeira, passa a ser a conta em uso, também com o ramal sem registrar.
+  // No chat a pessoa é a mesma (o ramal), e o canal dos eventos não abre de novo.
+  await mudar(page, trocarDeConta('erro', RECEPCAO.ramal));
+  await page.clock.runFor(2100);
+  await expect.poll(() => pedidos.length).toBe(3);
+  // O estado que vale é o da conta nova, e o tempo dela começou na troca (os 2 s da espera, e não os 14 da primeira).
+  expect(corpos(pedidos).slice(1)).toEqual([
+    { estado: 'erro', segundos: 2 },
+    { estado: 'erro', segundos: 2 },
+  ]);
+  expect(canaisNovos).toBe(0);
+  await esperarOsEventos(page);
+});
+
+test('a troca para a conta de outro ramal', async ({ page }) => {
+  const { empresaId, pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO]);
+  const pedidos = await abrirComOCanal(page, pessoas[0].chave, 'chat-duas-contas');
+
+  // A Recepção fica registrando por 12 s.
+  await mudar(page, comOStatus('conectando'));
+  await page.clock.runFor(2095);
+  await expect.poll(() => pedidos.length).toBe(2);
+  await confirmado(page, pedidos[1]);
+  await page.clock.runFor(10_000);
+  // A conta em uso passa a ser a Caixa 2 (2015), também registrando. O chat entra como a pessoa nova, o canal abre de
+  // novo, e o pedido da abertura leva o estado dela, com o tempo dela (zero, e não os 12 s da Recepção).
+  await mudar(page, trocarDeConta('conectando'));
+  await expect.poll(() => pedidos.length).toBe(3);
+  expect(corpos(pedidos)[2]).toEqual({ estado: 'conectando', segundos: 0 });
+  await confirmado(page, pedidos[2]);
+  await expect.poll(() => estadoNaAdministracao(empresaId, 'Caixa 2')).toEqual({ estado: 'No chat', detalhe: 'registrando o ramal…' });
+  // O computador conta só para quem está nele agora.
+  expect((await estadoNaAdministracao(empresaId, RECEPCAO.nome)).estado).toBe('Offline');
+  await page.clock.runFor(10_000);
+  expect(await contar(page, pedidos)).toBe(3);
+});
+
+test('um pedido de cada vez', async ({ page }) => {
+  const { pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO]);
+  const pedidos = await abrirComOCanal(page, pessoas[0].chave);
+  // A rota do ramal segura a primeira resposta que passar por ela, até o teste soltar.
+  let soltar!: () => void;
+  const solta = new Promise<void>((f) => (soltar = f));
+  let naRota = 0;
+  await page.route(`${baseDoChat()}${CAMINHO_DO_RAMAL}`, async (rota) => {
+    naRota += 1;
+    if (naRota === 1) await solta;
+    await rota.continue();
+  });
+
+  // A primeira mudança sai aos 2 s, e a resposta dela fica presa.
+  await mudar(page, comOStatus('erro'));
+  await page.clock.runFor(2995);
+  await expect.poll(() => naRota).toBe(1);
+  // A segunda mudança, 3 s depois da primeira: a espera dela passa, e o pedido não sai enquanto o outro está no ar
+  // (o mais velho poderia chegar por último ao chat, e ficar valendo).
+  await mudar(page, comOStatus('conectando'));
+  await page.clock.runFor(3000);
+  expect(await contar(page, pedidos)).toBe(2);
+  expect(naRota).toBe(1);
+  // A resposta chega: o segundo pedido sai, com o valor de agora.
+  soltar();
+  await expect.poll(() => pedidos.length).toBe(3);
+  expect(corpos(pedidos).map((c) => c.estado)).toEqual(['conectado', 'erro', 'conectando']);
+  expect((await pedidos[2].response())?.status()).toBe(204);
+});
+
+test('a abertura no meio da espera', async ({ page }) => {
+  // O fator das esperas da volta do canal em 1: a primeira tentativa é em 1 s.
+  await page.addInitScript(() => {
+    Math.random = () => 0.5;
+  });
+  const { pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO]);
+  const pedidos = await abrirComOCanal(page, pessoas[0].chave);
+
+  await mudar(page, comOStatus('erro'));
+  await page.clock.runFor(995);
+  // Com 1 s da espera de 2 s, o canal cai (o mesmo computador abre outro por fora) e volta 1 s depois.
+  const porFora = await pessoas[0].api.abrirCanal();
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __eventosNoAr?: number }).__eventosNoAr)).toBe(0);
+  await page.clock.runFor(1000);
+  await esperarOsEventos(page);
+  // O pedido da abertura já leva o valor novo, e a espera que estava correndo não manda o mesmo valor de novo.
+  await expect.poll(() => pedidos.length).toBe(2);
+  expect(corpos(pedidos)[1].estado).toBe('erro');
+  await page.clock.runFor(5000);
+  expect(await contar(page, pedidos)).toBe(2);
+  porFora.close();
+});

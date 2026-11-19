@@ -41,6 +41,20 @@ export interface AvisoDoRamal {
 /** O ramal está registrado na central (um lado), ou sem registrar (o outro: conectando, com erro ou sem conexão). */
 const registrado = (c: ContaDoRamal): boolean => c.estado === 'conectado';
 
+/** O que o chat ouve: de qual conta é o ramal, e o estado dele. */
+interface Valor {
+  conta: string;
+  estado: EstadoDoRamal;
+}
+
+const mesmoValor = (a: Valor | null, b: Valor | null): boolean => a === b || (a !== null && b !== null && a.conta === b.conta && a.estado === b.estado);
+
+/** O canal aberto: a pessoa da sessão (o ramal dela) e o pedido dessa sessão. */
+interface Canal {
+  ramal: string;
+  mandar(estado: EstadoDoRamal, segundos: number): Promise<void>;
+}
+
 /** `agora` é um relógio em milissegundos que não anda para trás. */
 export function criarAvisoDoRamal(o: { agora(): number; aleatorio(): number }): AvisoDoRamal {
   let conta: ContaDoRamal | null = null;
@@ -49,31 +63,80 @@ export function criarAvisoDoRamal(o: { agora(): number; aleatorio(): number }): 
    * a conta em uso passa a ser outra. Uma troca entre "conectando", "erro" e "sem conexão" não mexe nele.
    */
   let desde = o.agora();
-  /** O canal aberto: a pessoa da sessão (o ramal dela) e o pedido; null sem ele. */
-  let canal: { ramal: string; mandar(estado: EstadoDoRamal, segundos: number): Promise<void> } | null = null;
+  /** O canal aberto; null sem ele. */
+  let canal: Canal | null = null;
+  /** O último valor que o chat confirmou nesta abertura do canal; null antes do primeiro. */
+  let confirmado: Valor | null = null;
+  /** A espera de uma mudança: ela só vai depois de 2 s sem outra. */
+  let espera: ReturnType<typeof setTimeout> | undefined;
+  /**
+   * Um pedido está no ar: o próximo espera a resposta dele. Vale também de uma abertura do canal para a seguinte: dois
+   * pedidos nunca andam juntos, e o mais velho não chega por último ao chat.
+   */
+  let noAr = false;
 
   /** Os segundos desde o instante, para baixo, dentro do que o protocolo aceita. */
   const segundos = (): number => Math.min(MAX_SEGUNDOS, Math.max(0, Math.floor((o.agora() - desde) / 1000)));
 
-  /** Manda o estado de agora, se o canal está aberto como a pessoa da conta em uso. */
+  /** O valor de agora: o da conta em uso, se o canal está aberto como a pessoa dela; senão, null. */
+  const valorDeAgora = (): Valor | null =>
+    canal && conta && conta.ramal === canal.ramal ? { conta: conta.id, estado: estadoDoRamal(conta.estado) } : null;
+
+  const pararAEspera = (): void => {
+    clearTimeout(espera);
+    espera = undefined;
+  };
+
+  /** Manda o valor de agora, se há o que dizer: só o que o chat ainda não confirmou, e um pedido de cada vez. */
   const mandar = (): void => {
-    if (!canal || !conta || conta.ramal !== canal.ramal) return;
-    // Uma falha não aparece para a pessoa.
-    canal.mandar(estadoDoRamal(conta.estado), segundos()).catch(() => {});
+    const sessao = canal;
+    const valor = valorDeAgora();
+    if (!sessao || !valor || noAr || mesmoValor(valor, confirmado)) return;
+    noAr = true;
+    sessao.mandar(valor.estado, segundos()).then(
+      () => {
+        noAr = false;
+        // A resposta de um canal que já fechou não diz o que o canal de agora sabe.
+        if (canal === sessao) confirmado = valor;
+        // O valor pode ter mudado com o pedido no ar. Com a espera dessa mudança ainda correndo, ela manda no fim.
+        if (espera === undefined) mandar();
+      },
+      () => {
+        // Uma falha não aparece para a pessoa.
+        noAr = false;
+        // O canal é outro: o estado de agora ainda não foi dito nele.
+        if (canal !== sessao) mandar();
+      },
+    );
   };
 
   return {
     conta(c) {
       const antes = conta;
+      const valorDeAntes = valorDeAgora();
       conta = c;
       if (c && (!antes || antes.id !== c.id || registrado(antes) !== registrado(c))) desde = o.agora();
+      // Com o canal aberto, uma mudança da conta ou do estado dela espera 2 s, e outra mudança recomeça a espera: um
+      // ramal que pisca manda só o último valor.
+      if (canal && !mesmoValor(valorDeAntes, valorDeAgora())) {
+        pararAEspera();
+        espera = setTimeout(() => {
+          espera = undefined;
+          mandar();
+        }, ESPERA_DA_MUDANCA_MS);
+      }
     },
     canalAbriu(ramal, pedido) {
       canal = { ramal, mandar: pedido };
+      confirmado = null;
+      // A abertura já diz o valor de agora: a espera que estava correndo não tem mais o que mandar.
+      pararAEspera();
       mandar();
     },
     canalFechou() {
       canal = null;
+      confirmado = null;
+      pararAEspera();
     },
   };
 }
