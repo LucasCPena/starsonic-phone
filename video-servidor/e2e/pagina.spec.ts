@@ -290,7 +290,7 @@ test('sem captura de tela, sem o botão', async () => {
     });
     await maria.entrar(codigo, 'Maria Lima');
     await maria.esperarCores(MOSAICO_1, [AMARELO]);
-    await expect(maria.controles().getByRole('button')).toHaveText(['Microfone', 'Câmera', 'Sair']);
+    await expect(maria.controles().getByRole('button')).toHaveText(['Microfone', 'Câmera', 'Chat', 'Sair']);
     await expect(maria.botao('Compartilhar a tela')).toBeHidden();
     await maria.conferirOConsole();
   } finally {
@@ -305,8 +305,8 @@ test('o celular na reunião', async () => {
     maria = await Pagina.abrir(C, { celular: true });
     await maria.entrar(codigo, 'Maria Lima');
     await maria.esperarCores(MOSAICO_1, [AMARELO]);
-    // Os três controles, sem o Compartilhar a tela.
-    await expect(maria.controles().getByRole('button')).toHaveText(['Microfone', 'Câmera', 'Sair']);
+    // Os quatro controles, sem o Compartilhar a tela.
+    await expect(maria.controles().getByRole('button')).toHaveText(['Microfone', 'Câmera', 'Chat', 'Sair']);
     await expect(maria.botao('Compartilhar a tela')).toBeHidden();
     await maria.conferirOConsole();
   } finally {
