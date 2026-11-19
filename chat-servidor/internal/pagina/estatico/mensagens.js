@@ -25,8 +25,9 @@ export function textoLimpo(s) {
 }
 
 // Um endereço: o http:// ou o https:// e o que vem depois, até um espaço ou um sinal que não cabe num endereço
-// escrito (o <, o > e as aspas).
-const ENDERECO = /https?:\/\/[^\s<>"]+/gi;
+// escrito: o <, o > e as aspas, e os sinais que mudam a direção do texto (as marcas, os que embutem, os que forçam e
+// os que isolam). Com um destes no meio, o endereço que aparece na tela não seria o endereço para onde o link leva.
+const ENDERECO = /https?:\/\/[^\s<>"\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]+/gi;
 // A pontuação que costuma vir colada no fim de um endereço, e que é da frase, não dele.
 const PONTUACAO = new Set(['.', ',', ';', ':', '!', '?', "'", '’', '”', '»']);
 // Os fechamentos: ficam no endereço só quando fecham um par aberto dentro dele (.../Brasil_(país)).

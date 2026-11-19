@@ -54,7 +54,8 @@ const mensagem = (page: Page, n: number) => page.locator(`.mensagem[data-mensage
 const balao = (page: Page, n: number) => mensagem(page, n).locator('.mensagem-texto');
 const tentarDeNovo = (page: Page, n: number) => mensagem(page, n).getByRole('button', { name: 'Tentar de novo' });
 const nenhuma = (page: Page) => page.getByText('Nenhuma mensagem ainda.', { exact: true });
-const semCanal = (page: Page) => page.getByText('O chat volta quando a conexão voltar.', { exact: true });
+// A linha do painel, e não a região dos leitores de tela, que diz o mesmo texto quando o canal cai.
+const semCanal = (page: Page) => page.locator('.painel-sem-canal');
 const controles = (page: Page) => page.getByRole('navigation', { name: 'Controles da reunião' });
 /** O que fica atrás do painel que cobre a tela. */
 const FUNDO = ['.reuniao-topo', '.palco', '.controles'];
@@ -329,6 +330,83 @@ test('o endereço vira um link que abre em outra aba', async ({ page, context })
   await expect(controles(page)).toBeVisible();
 });
 
+// Um sinal que muda a direção do texto, na mensagem, não muda a ordem das letras do endereço: o link é escrito da
+// esquerda para a direita, à parte do resto da frase. O endereço que aparece é o endereço para onde o link leva.
+test('o endereço do link aparece como ele é, com sinais de direção na mensagem', async ({ page }) => {
+  const { canal } = await comOChatAberto(page);
+  const RLO = '‮';
+  canal.mandar(de(CARLOS, `${RLO}veja https://exemplo.com.br/relatorio`));
+  const link = balao(page, 1).getByRole('link');
+  await expect(link).toHaveAttribute('href', 'https://exemplo.com.br/relatorio');
+  await expect(link).toHaveText('https://exemplo.com.br/relatorio');
+  await expect(link).toHaveAttribute('dir', 'ltr');
+  await expect(link).toHaveCSS('direction', 'ltr');
+  await expect(link).toHaveCSS('unicode-bidi', 'isolate');
+  // O sinal dentro do endereço o termina: o que vem depois é texto, fora do link.
+  canal.mandar(de(CARLOS, `https://exemplo.com.br/a${RLO}fdp.exe`));
+  await expect(balao(page, 2).getByRole('link')).toHaveText('https://exemplo.com.br/a');
+  await expect(balao(page, 2).getByRole('link')).toHaveAttribute('href', 'https://exemplo.com.br/a');
+  // O endereço escrito ao contrário, logo depois do sinal, não vira link nenhum.
+  canal.mandar(de(CARLOS, `https://${RLO}rb.moc.olpmexe@outro.example/`));
+  await expect(mensagens(page)).toHaveCount(3);
+  await expect(balao(page, 3).getByRole('link')).toHaveCount(0);
+});
+
+// Quem não vê a tela precisa ouvir que a mensagem dela não foi, e que o chat ficou sem o canal: sem isso, ela acha que
+// a mensagem saiu.
+test('o leitor de tela ouve a mensagem que não foi, e o chat sem o canal', async ({ page }) => {
+  const { canal } = await comOChatAberto(page);
+  await escrever(page, 'Primeira');
+  await expect.poll(() => mandadas(canal)).toHaveLength(1);
+  canal.mandar({ tipo: 'mensagemRecusada', id: 'm1', motivo: 'limite' });
+  await expect(anuncio(page)).toHaveText('Não enviada: muitas mensagens seguidas. Espere um pouco.');
+  // A que fica sem resposta em 10 s.
+  await escrever(page, 'Segunda');
+  await expect(mensagem(page, 2)).toHaveAttribute('data-situacao', 'enviando');
+  await page.clock.runFor(10_000);
+  await expect(anuncio(page)).toHaveText('Não enviada');
+  // Cada uma é dita uma vez: a mensagem de outra pessoa toma o lugar, e um redesenho não repete a falha.
+  canal.mandar(de(CARLOS, 'Bom dia'));
+  await expect(anuncio(page)).toHaveText('Carlos Lima escreveu: Bom dia');
+  await botao(page, 'Microfone').click();
+  await expect(botao(page, 'Microfone')).toHaveAttribute('aria-pressed', 'false');
+  await expect(anuncio(page)).toHaveText('Carlos Lima escreveu: Bom dia');
+  // Com o chat fechado é igual: a mensagem que estava indo quando a pessoa fechou o painel.
+  await escrever(page, 'Terceira');
+  await expect(mensagem(page, 4)).toHaveAttribute('data-situacao', 'enviando');
+  await page.keyboard.press('Escape');
+  await expect(painel(page)).toBeHidden();
+  await page.clock.runFor(10_000);
+  await expect(anuncio(page)).toHaveText('Não enviada');
+  // O canal cai com o chat aberto: o campo desliga, e o leitor de tela ouve por quê.
+  await oChat(page).click();
+  await expect(campo(page)).toBeEnabled();
+  await canal.fechar(1006);
+  await expect(campo(page)).toBeDisabled();
+  await expect(anuncio(page)).toHaveText('O chat volta quando a conexão voltar.');
+});
+
+// Sem o canal, quem abre o chat ouve que ele está parado. Com a conexão caída, quem fala é o aviso da queda.
+test('o leitor de tela ouve o chat sem o canal ao abrir, e a queda da conexão vem primeiro', async ({ page }) => {
+  const { rede, canal } = await naReuniaoCom(page, TRES);
+  await canal.fechar(1006);
+  // Com o chat fechado, nada é dito: a pessoa não está no chat. (A página já tenta religar o canal, por trás.)
+  await page.clock.runFor(2_000);
+  await expect.poll(async () => (await rede.canalNumero(2)).tipos()).toEqual(['voltar']);
+  await expect(anuncio(page)).toHaveText('Planejamento de dezembro');
+  await oChat(page).click();
+  await expect(painel(page)).toBeVisible();
+  await expect(campo(page)).toBeDisabled();
+  await expect(anuncio(page)).toHaveText('O chat volta quando a conexão voltar.');
+  await botao(page, 'Fechar o chat').click();
+  // A ligação cai com o chat aberto e sem o canal: o que se ouve é a queda.
+  await oChat(page).click();
+  await expect(anuncio(page)).toHaveText('O chat volta quando a conexão voltar.');
+  await darNaLigacao(page, SEM_CONEXAO);
+  await expect(cartaoDaQueda(page)).toBeVisible();
+  await expect(anuncio(page)).toHaveText('A conexão caiu. Entrando de novo…');
+});
+
 test('a mensagem recusada pelo limite', async ({ page }) => {
   const { canal } = await comOChatAberto(page);
   await escrever(page, 'Primeira');
@@ -405,6 +483,7 @@ test('sem o canal, o campo fica desligado', async ({ page }) => {
   await expect(campo(page)).toBeDisabled();
   await expect(mandar(page)).toBeDisabled();
   await expect(semCanal(page)).toBeVisible();
+  await expect(semCanal(page)).toHaveText('O chat volta quando a conexão voltar.');
   await expect(tentarDeNovo(page, 2)).toBeDisabled();
   // As mensagens e o que a pessoa escrevia continuam lá, e o foco, que estava no campo, vai ao título do painel.
   await expect(mensagens(page)).toHaveCount(2);
@@ -582,6 +661,32 @@ test('o campo cresce até 120 px e não passa de 1.000 letras', async ({ page })
   expect(valor.length).toBe(1000);
   expect(valor.endsWith('aa12')).toBe(true);
   await expect(campo(page)).toHaveAttribute('maxlength', '1000');
+});
+
+// O chat ao lado dos quadros não é outra tela, e não mexe no histórico do navegador. Cobrindo a janela (a janela
+// estreita), ele ganha a entrada dele, e o Voltar do navegador o fecha.
+test('ao lado, o chat não mexe no histórico; cobrindo a janela, o Voltar o fecha', async ({ page }) => {
+  await comOChatAberto(page);
+  const estadoDoHistorico = () => page.evaluate(() => history.state as unknown);
+  const entradas = await page.evaluate(() => history.length);
+  await expect(painel(page)).toHaveAttribute('data-modo', 'lado');
+  expect(await estadoDoHistorico()).toBeNull();
+  expect(await page.evaluate(() => history.length)).toBe(entradas);
+  // A janela estreita: o painel passa a cobrir, e ganha a entrada. De volta à larga, a entrada sai, e o chat fica.
+  await page.setViewportSize({ width: 800, height: 700 });
+  await expect(painel(page)).toHaveAttribute('data-modo', 'cobre');
+  await expect.poll(estadoDoHistorico).toEqual({ chatDaReuniao: true });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await expect(painel(page)).toHaveAttribute('data-modo', 'lado');
+  await expect.poll(estadoDoHistorico).toBeNull();
+  await expect(painel(page)).toBeVisible();
+  // Estreita de novo, e o Voltar do navegador: o chat fecha, e a reunião continua.
+  await page.setViewportSize({ width: 800, height: 700 });
+  await expect.poll(estadoDoHistorico).toEqual({ chatDaReuniao: true });
+  await page.goBack();
+  await expect(painel(page)).toBeHidden();
+  await expect(controles(page)).toBeVisible();
+  await expect(titulo(page, 'Planejamento de dezembro')).toBeVisible();
 });
 
 test('a janela que cruza os 900', async ({ page }) => {
@@ -950,6 +1055,56 @@ test.describe('no celular', () => {
     for (const s of FUNDO) await expect(page.locator(s)).not.toHaveAttribute('inert');
     await expect(todosOsQuadros(page)).toHaveCount(4);
     await expect(quadro(page, camDe(CARLOS))).toBeVisible();
+  });
+
+  // O Voltar do aparelho (o botão do Android, o gesto do iPhone), com o chat cobrindo a tela, fecha o chat, e a pessoa
+  // continua na reunião. Sem isso ele saía da página: o chat parece outra tela, com uma seta de voltar no alto.
+  test('no celular, o Voltar do aparelho fecha o chat, e a pessoa continua na reunião', async ({ page }) => {
+    const { canal } = await naReuniaoCom(page, TRES);
+    await page.evaluate(() => {
+      (window as unknown as { aMesmaPagina?: boolean }).aMesmaPagina = true;
+    });
+    const estadoDoHistorico = () => page.evaluate(() => history.state as unknown);
+    expect(await estadoDoHistorico()).toBeNull();
+    await oChat(page).tap();
+    await expect(painel(page)).toBeVisible();
+    await expect.poll(estadoDoHistorico).toEqual({ chatDaReuniao: true });
+
+    await page.goBack();
+    // A página é a mesma (não saiu nem recarregou), na reunião, com o chat fechado.
+    expect(await page.evaluate(() => (window as unknown as { aMesmaPagina?: boolean }).aMesmaPagina)).toBe(true);
+    await expect(painel(page)).toBeHidden();
+    await expect(controles(page)).toBeVisible();
+    await expect(todosOsQuadros(page)).toHaveCount(4);
+    for (const s of FUNDO) await expect(page.locator(s)).not.toHaveAttribute('inert');
+    expect(await estadoDoHistorico()).toBeNull();
+
+    // Fechado pela seta do alto, a entrada do chat sai do histórico: o Voltar seguinte não é mais do chat.
+    await oChat(page).tap();
+    await expect.poll(estadoDoHistorico).toEqual({ chatDaReuniao: true });
+    await botao(page, 'Voltar para a reunião').tap();
+    await expect(painel(page)).toBeHidden();
+    await expect.poll(estadoDoHistorico).toBeNull();
+    // Aberto, fechado e aberto de novo de uma vez só, antes de o navegador desfazer a entrada do fechar: o chat fica
+    // aberto, com a entrada dele.
+    await page.evaluate(() => {
+      const chat = document.querySelector('button[data-botao="chat"]') as HTMLButtonElement;
+      chat.click();
+      (document.querySelector('.painel-voltar') as HTMLButtonElement).click();
+      chat.click();
+    });
+    await expect.poll(estadoDoHistorico).toEqual({ chatDaReuniao: true });
+    await expect(painel(page)).toBeVisible();
+    await page.goBack();
+    await expect(painel(page)).toBeHidden();
+    await expect(controles(page)).toBeVisible();
+    await oChat(page).tap();
+    await expect(painel(page)).toBeVisible();
+
+    // A pessoa é tirada com o chat aberto: a tela muda, e a entrada do chat não fica para trás.
+    canal.mandar({ tipo: 'tirado' });
+    await expect(titulo(page, 'Você foi tirado da reunião')).toBeVisible();
+    await expect.poll(estadoDoHistorico).toBeNull();
   });
 
   test('no celular, o Enter pula linha e o botão manda', async ({ page }) => {

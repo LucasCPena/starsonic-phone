@@ -6,7 +6,7 @@
 // levam o bilhete, as senhas, as credenciais do TURN, a chave de volta e as mensagens do chat. As medidas do
 // sinalizador também não vão a lugar nenhum fora da página.
 import { cabecalho, inicial, nomeValido, podeEscrever, quando, transicao } from './estado.js';
-import { contagem as numeroDoBotao, dito, escreveu, nomeDoBotao, numaLinha } from './mensagens.js';
+import { contagem as numeroDoBotao, dito, escreveu, falha, nomeDoBotao, numaLinha } from './mensagens.js';
 import { criarPainel } from './painel.js';
 import { criarQuadros } from './quadros.js';
 import { AVISO_DA_CONEXAO_RUIM, criarMedidor, numerosDoCartao, textosDoSinal } from './qualidade.js';
@@ -323,6 +323,11 @@ export function iniciar(raiz, servicos) {
 
   // O n da última mensagem do chat que a página já viu na tela da reunião: as de outras pessoas depois dela são ditas.
   let ultimaVista = 0;
+  // As mensagens da própria pessoa que não foram (o n de cada uma) e que o leitor de tela já ouviu; e se ele já ouviu
+  // que o chat aberto está sem o canal.
+  let falhasDitas = new Set();
+  let semCanalDito = false;
+  const textoSemCanal = um('.painel-sem-canal').textContent;
 
   // O chat: o botão apertado com o painel aberto, o número das mensagens novas, o painel com as mensagens do cérebro,
   // e o que o leitor de tela ouve.
@@ -344,7 +349,11 @@ export function iniciar(raiz, servicos) {
     });
 
     // O leitor de tela ouve a mensagem mais nova de outra pessoa que ainda não foi dita, com o chat aberto ou fechado.
-    if (!naReuniao) return;
+    if (!naReuniao) {
+      falhasDitas = new Set();
+      semCanalDito = false;
+      return;
+    }
     const { mensagens } = e.chat;
     for (let i = mensagens.length - 1; i >= 0 && mensagens[i].n > ultimaVista; i--) {
       if (mensagens[i].voce) continue;
@@ -352,6 +361,17 @@ export function iniciar(raiz, servicos) {
       break;
     }
     if (mensagens.length > 0) ultimaVista = Math.max(ultimaVista, mensagens[mensagens.length - 1].n);
+    // A mensagem da própria pessoa que não foi: ele ouve o que a tela mostra embaixo dela, uma vez, também com o chat
+    // fechado. Sem isso, quem não vê a tela acha que a mensagem saiu.
+    const falhas = mensagens.filter((m) => m.voce && m.situacao === 'naoEnviada');
+    const nova = falhas.findLast((m) => !falhasDitas.has(m.n));
+    falhasDitas = new Set(falhas.map((m) => m.n));
+    if (nova) dizer(falha(nova.motivo));
+    // O chat aberto sem o canal: o campo está desligado, e ele ouve por quê, uma vez a cada vez que isso começa. Com a
+    // conexão caída, quem fala é o aviso da queda.
+    const parado = chatAberto && !podeEscrever(e) && e.reconectando === 0;
+    if (parado && !semCanalDito) dizer(textoSemCanal);
+    semCanalDito = parado;
   }
 
   // O sinalizador de qualidade: o medidor ligado com a ligação principal no ar, o botão no estado mostrado (o desenho,

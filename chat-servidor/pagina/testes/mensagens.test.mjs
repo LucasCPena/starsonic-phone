@@ -131,6 +131,33 @@ test('o que não vira link', () => {
   }
 });
 
+// Os sinais que mudam a direção do texto (o RLO e os outros) não ficam dentro de um link: com um deles no meio, o
+// endereço que aparece na tela não é o endereço para onde o link leva.
+test('o endereço acaba num sinal de direção do texto', () => {
+  const RLO = '‮';
+  // O endereço escrito ao contrário, depois do sinal: na tela, ele terminaria em "@exemplo.com.br".
+  const aoContrario = `https://${RLO}rb.moc.olpmexe@outro.example/`;
+  assert.deepEqual(partes(aoContrario), [{ texto: aoContrario }]);
+  // No meio do endereço: o link vai até o sinal, e o resto é texto.
+  assert.deepEqual(partes(`veja https://exemplo.com.br/a${RLO}fdp.exe`), [
+    { texto: 'veja ' },
+    { link: 'https://exemplo.com.br/a' },
+    { texto: `${RLO}fdp.exe` },
+  ]);
+  // Todos eles: as marcas, os que embutem, os que forçam e os que isolam.
+  const sinais = ['061C', '200E', '200F', '202A', '202B', '202C', '202D', '202E', '2066', '2067', '2068', '2069'];
+  for (const codigo of sinais) {
+    const sinal = String.fromCodePoint(Number.parseInt(codigo, 16));
+    assert.deepEqual(
+      partes(`https://exemplo.com.br/a${sinal}b`),
+      [{ link: 'https://exemplo.com.br/a' }, { texto: `${sinal}b` }],
+      `U+${codigo}`,
+    );
+  }
+  // As letras de outras línguas continuam valendo num endereço.
+  assert.deepEqual(partes('https://exemplo.com.br/مرحبا/שלום'), [{ link: 'https://exemplo.com.br/مرحبا/שלום' }]);
+});
+
 test('juntar as partes dá o texto de volta', () => {
   for (const texto of [
     '',

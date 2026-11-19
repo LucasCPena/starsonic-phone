@@ -48,7 +48,44 @@ export function criarPainel({ raiz, fundo, toque, aoEscrever, aoReenviar, aoFech
     for (const el of fundo) el.inert = aberto && modo === 'cobre';
     seguirAJanela();
     crescer();
+    acertarOHistorico();
   }
+
+  // Cobrindo a tela, o chat parece outra tela, e o Voltar do aparelho (o botão do Android, o gesto do iPhone) tem de
+  // fechá-lo, e não sair da página, que é sair da reunião. Por isso o chat que cobre a tela ganha uma entrada no
+  // histórico do navegador: o Voltar a desfaz (o popstate), e o painel fecha. Fechado de outro jeito (a seta, o Esc, o
+  // fim da reunião), ou passando para o lado, é o painel que desfaz a entrada dele. Ao lado dos quadros ele não é outra
+  // tela, e não mexe no histórico.
+  let entrada = false; // há uma entrada do chat no histórico
+  let voltando = false; // o painel pediu o history.back(), e o popstate dele ainda não chegou
+
+  function acertarOHistorico() {
+    if (voltando) return; // o popstate acerta de novo quando chegar
+    const cobrindo = aberto && raiz.dataset.modo === 'cobre';
+    if (cobrindo && !entrada) {
+      try {
+        window.history.pushState({ chatDaReuniao: true }, '');
+        entrada = true;
+      } catch {
+        // o navegador que não deixa: o Voltar continua saindo da página, como antes
+      }
+    } else if (!cobrindo && entrada) {
+      entrada = false;
+      voltando = true;
+      window.history.back();
+    }
+  }
+
+  window.addEventListener('popstate', () => {
+    if (voltando) {
+      voltando = false;
+      acertarOHistorico();
+      return;
+    }
+    if (!entrada) return; // um popstate que não é do chat
+    entrada = false;
+    if (aberto) aoFechar();
+  });
 
   // Cobrindo a tela, o painel fica com a parte visível da janela: o teclado da tela não muda a janela, e sim essa
   // parte (o visualViewport), e sem isso o campo ficaria atrás dele. Com a tela aproximada pelos dedos, não: o painel
@@ -79,8 +116,11 @@ export function criarPainel({ raiz, fundo, toque, aoEscrever, aoReenviar, aoFech
 
   // ---- A lista. ----
 
+  // O link mostra o endereço como ele é: escrito da esquerda para a direita, à parte da direção do resto da frase (um
+  // sinal de direção antes dele, na mensagem, não muda a ordem das letras do endereço).
   function link(endereco) {
     const a = document.createElement('a');
+    a.dir = 'ltr';
     a.href = endereco;
     a.target = '_blank';
     a.rel = 'noopener noreferrer';
