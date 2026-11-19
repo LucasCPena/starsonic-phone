@@ -1,5 +1,6 @@
-{{/* Uma empresa (a tela PainelEmpresa do quadro): o código, as pessoas e os computadores, e
-     apagar. A página nunca mostra as conversas. */}}
+{{/* Uma empresa (a tela PainelEmpresa do quadro, com o estado de cada ramal): o código, as pessoas,
+     o estado e os computadores de cada uma, e apagar. A página nunca mostra as conversas. A seção
+     das pessoas é a parte que se atualiza sozinha (data-ao-vivo). */}}
 {{define "scripts"}}<script src="/admin/estatico/copiar.js" defer></script>{{end}}
 
 {{define "conteudo"}}{{with .Pagina -}}
@@ -23,15 +24,18 @@
     <span class="ajuda copiado" id="copiado" role="status"></span>
   </div>
 </section>
-<section class="cartao cartao-tabela" aria-labelledby="pessoas-titulo">
-  <h2 class="rotulo rotulo-tabela" id="pessoas-titulo">PESSOAS NO CHAT</h2>
+<section class="cartao cartao-tabela" aria-labelledby="pessoas-titulo" data-ao-vivo="pessoas">
+  <div class="cabeca-tabela">
+    <h2 class="rotulo" id="pessoas-titulo">PESSOAS NO CHAT</h2>
+    {{template "contas" .Contas}}
+  </div>
   <table class="tabela tabela-pessoas">
     <thead>
       <tr>
         <th scope="col">NOME</th>
         <th scope="col">RAMAL</th>
+        <th scope="col">ESTADO</th>
         <th scope="col">COMPUTADORES</th>
-        <th scope="col">ÚLTIMA VEZ</th>
         <th scope="col"><span class="so-leitor">Tirar</span></th>
       </tr>
     </thead>
@@ -40,18 +44,28 @@
       <tr>
         <td class="forte">{{.Nome}}</td>
         <td>{{.Ramal}}</td>
+        <td class="estado estado-{{.Estado.Classe}}">
+          <div class="estado-dentro">
+            {{- if eq .Estado.Classe "sem-registro"}}{{template "icone-alerta"}}{{else}}<span class="estado-desenho" aria-hidden="true"></span>{{end}}
+            <div class="estado-texto">
+              <span class="estado-nome">{{.Estado.Nome}}</span>
+              <span class="estado-detalhe">{{.Estado.Detalhe}}</span>
+            </div>
+          </div>
+        </td>
         <td class="computadores">
           <div class="chips">
             {{- range .Computadores}}
             <form class="chip" method="post" action="{{.Tirar}}" title="Última vez: {{.UltimaVez}}">
               <input type="hidden" name="csrf" value="{{$.CSRF}}">
+              <span class="pc pc-{{.Classe}}" aria-hidden="true"></span>
               <span>{{.Nome}}</span>
+              <span class="so-leitor">, {{.Estado}}</span>
               <button type="submit" class="chip-tirar" aria-label="Tirar o computador {{.Nome}} do chat">{{template "icone-x"}}</button>
             </form>
             {{- end}}
           </div>
         </td>
-        <td class="suave">{{.UltimaVez}}</td>
         <td class="fim">
           <form method="post" action="{{.Tirar}}">
             <input type="hidden" name="csrf" value="{{$.CSRF}}">
@@ -64,7 +78,14 @@
       {{- end}}
     </tbody>
   </table>
+  <div class="legenda">
+    <span><strong>Online:</strong> o app está aberto e o ramal está registrado na central.</span>
+    <span><strong>Sem registro:</strong> o app está aberto, mas o ramal não registra há 1 minuto ou mais. É o caso para olhar.</span>
+    <span><strong>Offline:</strong> o chat perdeu o computador. O app foi fechado, o PC desligou ou a internet caiu.</span>
+    <span><strong>No chat:</strong> o app acabou de abrir e está registrando o ramal, ou é um app antigo, que ainda não diz como está o ramal.</span>
+  </div>
 </section>
+<p class="nota"><span data-so-com-script hidden>Esta página se atualiza sozinha a cada 30 segundos. </span>Um PC que perde a rede pode levar até 2 minutos para aparecer offline. O celular e os aparelhos de mesa não aparecem aqui.</p>
 <section class="cartao perigo-cartao" aria-labelledby="apagar-titulo">
   <div class="perigo-texto">
     <h2 class="perigo-titulo" id="apagar-titulo">Apagar a empresa</h2>

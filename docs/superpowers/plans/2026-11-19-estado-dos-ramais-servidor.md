@@ -479,7 +479,7 @@ O quadro "Starsonic Phone — telas do chat" tem as duas telas (linha "O estado 
   ```
 - O HTML que a tarefa 7 e os testes procuram:
   - a seção das pessoas inteira (o título, as contas, a tabela e a legenda) leva `data-ao-vivo="pessoas"`;
-  - cada conta é um `<span class="conta conta-online">` (ou `conta-sem-registro`, `conta-no-chat`, `conta-offline`), dentro de um `<div class="contas">`;
+  - cada conta é um `<span class="contagem contagem-online">` (ou `contagem-sem-registro`, `contagem-no-chat`, `contagem-offline`), dentro de um `<div class="contagens">`. O nome não é `conta` porque essa classe já é a de quem entrou, na barra do alto;
   - a célula do estado é `<td class="estado estado-online">` (ou as outras três classes), com o nome num `<span class="estado-nome">` e a segunda linha num `<span class="estado-detalhe">`;
   - cada computador tem, antes do nome, `<span class="pc pc-online" aria-hidden="true">` (ou as outras três) e, depois do nome, o texto do estado num `<span class="so-leitor">`;
   - a coluna `ÚLTIMA VEZ` sai. O `title` de cada computador (`Última vez: …`) continua;
@@ -501,7 +501,7 @@ O quadro "Starsonic Phone — telas do chat" tem as duas telas (linha "O estado 
     | Recepção | o RECEPCAO-02 sem o canal aberto, usado ontem às 18:02 | `Offline`, `última vez ontem, 18:02`; `pc-offline` |
 
     O teste lê cada linha pela célula do nome e confere a classe da célula do estado, o `estado-nome` e o `estado-detalhe`. As contas da página são `1 online`, `1 sem registro`, `2 no chat` e `1 offline`, nessa ordem. A página tem as quatro frases da legenda e a nota da tabela "Os textos", com a primeira frase dentro do `<span data-so-com-script hidden>`.
-  - `TestEmpresa_ContasSemAlerta`: com uma pessoa online e uma offline, a página não tem `conta-sem-registro` nem `conta-no-chat`.
+  - `TestEmpresa_ContasSemAlerta`: com uma pessoa online e uma offline, a página não tem `contagem-sem-registro` nem `contagem-no-chat`.
   - `TestEmpresa_ComputadorCompartilhado`: a Ana e a Recepção usaram o RECEPCAO-02, e a pessoa da vez dele é a Recepção, ligada e `conectado`. A Recepção aparece `Online`; a Ana, `Offline`, com o RECEPCAO-02 em `pc-offline`.
   - `TestEmpresa_DoisComputadores`: a Ana com dois computadores registrados, há 2 h e há 10 min: `Online`, `há 2 h`. Com um registrado e o outro fechado: `Online`.
   - `TestEmpresa_SemComputador`: uma pessoa cujo único computador foi tirado do chat: `Offline`, `sem computador no chat`.
@@ -552,7 +552,7 @@ O quadro "Starsonic Phone — telas do chat" tem as duas telas (linha "O estado 
   - a grade dos números leva `data-ao-vivo="numeros"`; o cartão a mais é um `<div class="numero numero-alerta">`, e só existe com um ramal sem registro ou mais;
   - o cartão das reuniões leva `data-ao-vivo="reunioes"`;
   - o cartão da lista leva `data-ao-vivo="sem-registro"` e existe sempre. Cada linha tem a empresa, o nome, o ramal, o `há …`, o que o app diz e o `Abrir` para a página da empresa;
-  - o cartão da tabela das empresas leva `data-ao-vivo="empresas"`. A coluna `RAMAIS AGORA` tem o mesmo `<div class="contas">` da tarefa 5;
+  - o cartão da tabela das empresas leva `data-ao-vivo="empresas"`. A coluna `RAMAIS AGORA` tem o mesmo `<div class="contagens">` da tarefa 5;
   - a nota nova vem antes da nota dos arquivos, que já existe, com a primeira frase num `<span data-so-com-script hidden>`.
 - A ordem da lista: o que está sem registro há mais tempo vem primeiro. No empate, a ordem do nome da empresa e depois a do nome da pessoa. As 50 primeiras aparecem; o número do cartão e a frase "Mais N…" contam todas.
 - O `empresas` lê o banco com um número fixo de consultas: as do resumo, as duas do `PessoasDeTodas` e as do cartão das reuniões. O `Hub.Ligados()` é chamado uma vez.
@@ -606,7 +606,7 @@ O quadro "Starsonic Phone — telas do chat" tem as duas telas (linha "O estado 
 - Test: `chat-servidor/pagina/testes/admin.spec.ts`
 
 **Interfaces:**
-- Consumes: os `data-ao-vivo` e os `data-so-com-script` das tarefas 5 e 6; a operação da tarefa 3.
+- Consumes: os `data-ao-vivo`, os `data-so-com-script` e as classes das tarefas 5 e 6; a operação da tarefa 3.
 - Produces, no HTML das duas páginas:
   - `<script src="/admin/estatico/atualizar.js" defer></script>`, no bloco `scripts` (na da empresa, junto com o `copiar.js`);
   - o aviso, como primeiro filho do `<main>` de cada uma das duas páginas: `<p class="aviso-parado" id="sem-atualizar" role="status" hidden></p>`.

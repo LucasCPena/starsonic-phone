@@ -320,19 +320,24 @@ func (p *painel) criarEmpresa(w http.ResponseWriter, r *http.Request, s sessao) 
 	http.Redirect(w, r, enderecoEmpresa(e.ID), http.StatusSeeOther)
 }
 
-type linhaComputador struct{ Nome, UltimaVez, Tirar string }
+// linhaComputador é um computador na linha de uma pessoa. Classe e Estado são os da bolinha dele:
+// a classe (online, sem-registro, no-chat ou offline) e o texto para o leitor de tela.
+type linhaComputador struct{ Nome, UltimaVez, Tirar, Classe, Estado string }
 
 type linhaPessoa struct {
-	Nome, Ramal, UltimaVez, Tirar string
-	Computadores                  []linhaComputador
+	Nome, Ramal, Tirar string
+	Estado             estadoNaTela
+	Computadores       []linhaComputador
 }
 
 type telaEmpresa struct {
 	Nome, Codigo, Resumo, Endereco string
+	Contas                         contas
 	Pessoas                        []linhaPessoa
 }
 
-// GET /admin/empresas/{id}: a empresa, com o código, as pessoas e os computadores.
+// GET /admin/empresas/{id}: a empresa, com o código, as pessoas, o estado do ramal de cada uma e
+// os computadores. O estado junta o banco com o que o hub sabe agora (ramais.go).
 func (p *painel) empresa(w http.ResponseWriter, r *http.Request, s sessao) {
 	e, ok := p.empresaDoCaminho(w, r, s)
 	if !ok {
@@ -344,14 +349,16 @@ func (p *painel) empresa(w http.ResponseWriter, r *http.Request, s sessao) {
 		return
 	}
 	agora := p.banco.Relogio().Agora()
-	t := telaEmpresa{Nome: e.Nome, Codigo: e.Codigo, Endereco: enderecoEmpresa(e.ID),
+	vistas := verPessoas(pessoas, p.hub.Ligados(), agora)
+	t := telaEmpresa{Nome: e.Nome, Codigo: e.Codigo, Endereco: enderecoEmpresa(e.ID), Contas: contar(vistas),
 		Resumo: fmt.Sprintf("%d %s · %s de arquivos", e.Pessoas, plural(e.Pessoas, "pessoa", "pessoas"), espaco(e.Bytes))}
-	for _, x := range pessoas {
-		lp := linhaPessoa{Nome: x.Nome, Ramal: x.Ramal, UltimaVez: quando(x.UltimaVez, agora),
-			Tirar: fmt.Sprintf("%s/pessoas/%d/tirar", t.Endereco, x.ID)}
-		for _, c := range x.Computadores {
+	for _, v := range vistas {
+		lp := linhaPessoa{Nome: v.Nome, Ramal: v.Ramal, Estado: naTela(v, agora),
+			Tirar: fmt.Sprintf("%s/pessoas/%d/tirar", t.Endereco, v.ID)}
+		for i, c := range v.Computadores {
+			classe, estado := doPC(v.PCs[i])
 			lp.Computadores = append(lp.Computadores, linhaComputador{Nome: c.Nome, UltimaVez: quando(c.UltimaVez, agora),
-				Tirar: fmt.Sprintf("%s/computadores/%d/tirar", t.Endereco, c.ID)})
+				Tirar: fmt.Sprintf("%s/computadores/%d/tirar", t.Endereco, c.ID), Classe: classe, Estado: estado})
 		}
 		t.Pessoas = append(t.Pessoas, lp)
 	}

@@ -125,23 +125,25 @@ func TestTirarComputador(t *testing.T) {
 	p.a.Entrar(kAbel, "2003", "Abel")
 }
 
-// ultimaVezNaLinha lê, na tabela de pessoas da página da empresa, a ÚLTIMA VEZ da linha da
-// pessoa e o title ("Última vez: …") do primeiro computador dela.
+// ultimaVezNaLinha lê, na tabela de pessoas da página da empresa, a "última vez" da linha da
+// pessoa (a segunda linha do estado de quem está offline, sem o "última vez " da frente) e o
+// title ("Última vez: …") do primeiro computador dela.
 func ultimaVezNaLinha(t *testing.T, corpo, nome string) (ultima, computador string) {
 	t.Helper()
-	m := regexp.MustCompile(`(?s)<td class="forte">` + regexp.QuoteMeta(nome) + `</td>(.*?)<td class="suave">([^<]*)</td>`).
-		FindStringSubmatch(corpo)
-	if m == nil {
-		t.Fatalf("a página não tem a linha de %s:\n%s", nome, corpo)
+	linha := linhaDaPessoa(t, corpo, nome)
+	_, estado, detalhe := estadoNaLinha(t, linha)
+	ultima, ok := strings.CutPrefix(detalhe, "última vez ")
+	if estado != "Offline" || !ok {
+		t.Fatalf("a linha de %s mostra %q, %q; queria Offline, com a última vez:\n%s", nome, estado, detalhe, linha)
 	}
-	c := regexp.MustCompile(`title="Última vez: ([^"]*)"`).FindStringSubmatch(m[1])
+	c := regexp.MustCompile(`title="Última vez: ([^"]*)"`).FindStringSubmatch(linha)
 	if c == nil {
-		t.Fatalf("a linha de %s não tem computador:\n%s", nome, m[0])
+		t.Fatalf("a linha de %s não tem computador:\n%s", nome, linha)
 	}
-	return m[2], c[1]
+	return ultima, c[1]
 }
 
-// TestUltimaVezDaPessoa: a ÚLTIMA VEZ de uma pessoa é a dela nos computadores, não a do
+// TestUltimaVezDaPessoa: a última vez de uma pessoa é a dela nos computadores, não a do
 // computador. A Ana usou a RECEPCAO-02 ontem às 18:02; hoje às 09:40, a Recepção entra nela. A
 // linha da Ana mostra "ontem, 18:02", e a da Recepção, "hoje, 09:40"; o title da RECEPCAO-02,
 // em cada linha, é a vez daquela pessoa nela.

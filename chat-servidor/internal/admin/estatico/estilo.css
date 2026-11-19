@@ -24,6 +24,14 @@
   --branco: #ffffff;
   --erro: #a1251c;
   --erro-fundo: #fdecea;
+  /* O estado dos ramais: o verde do online, o ciano do "no chat", o cinza do offline e o vermelho do "sem registro". */
+  --verde: #22c55e;
+  --ciano-escuro: #00a5ad;
+  --cinza: #8a93a8;
+  --alerta: #b3261e;
+  --alerta-borda: #d64545;
+  --alerta-texto: #8f1d1d;
+  --alerta-fundo: #fff6f6;
   --fonte: "Plus Jakarta Sans", system-ui, sans-serif;
 }
 
@@ -301,7 +309,10 @@ form {
   border: 1px solid var(--borda);
 }
 
+/* O position prende ao cartão os textos só do leitor de tela (.so-leitor, que é absoluto): sem ele, o de uma coluna
+   que está fora da vista, numa tela estreita, alargava a página inteira, e ela rolava para o lado no vazio. */
 .cartao-tabela {
+  position: relative;
   overflow-x: auto;
 }
 
@@ -340,7 +351,7 @@ form {
 }
 
 .tabela-pessoas {
-  min-width: 760px;
+  min-width: 860px;
 }
 
 .tabela-pessoas th {
@@ -353,6 +364,7 @@ form {
   padding-bottom: 14px;
 }
 
+.tabela-pessoas td.estado,
 .tabela-pessoas td.computadores,
 .tabela-pessoas td.fim {
   padding-top: 10px;
@@ -407,6 +419,170 @@ form {
   font-size: 13.5px;
   line-height: 1.6;
   color: var(--suave);
+}
+
+/* O estado dos ramais: as contas de uma empresa, o estado de cada pessoa, a bolinha de cada
+   computador e a legenda. Cada estado tem um desenho e um texto: a cor nunca diz o estado sozinha. */
+.cabeca-tabela {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 18px 22px 8px;
+}
+
+.contagens {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.contagem {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 28px;
+  padding: 0 11px;
+  border-radius: 999px;
+  background: var(--fundo);
+  border: 1px solid var(--borda);
+  font-size: 12.5px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* As contas chamam-se "contagem" aqui porque a classe "conta" já é a de quem entrou, na barra do alto.
+   O desenho de cada uma: uma bolinha cheia (online e no chat), um anel (offline) ou o triângulo
+   do HTML (sem registro). */
+.contagem::before {
+  content: "";
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+}
+
+.contagem-online::before {
+  background: var(--verde);
+}
+
+.contagem-no-chat::before {
+  background: var(--ciano-escuro);
+}
+
+.contagem-offline {
+  background: var(--branco);
+  color: var(--suave);
+}
+
+.contagem-offline::before {
+  border: 2px solid var(--cinza);
+}
+
+.contagem-sem-registro {
+  gap: 6px;
+  background: var(--alerta-fundo);
+  border-color: var(--alerta-borda);
+  color: var(--alerta-texto);
+}
+
+.contagem-sem-registro::before {
+  content: none;
+}
+
+.contagem svg {
+  flex: none;
+}
+
+.estado-dentro {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.estado-desenho {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  margin-top: 5px;
+  border-radius: 999px;
+}
+
+.estado-online .estado-desenho {
+  background: var(--verde);
+  box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.2);
+}
+
+.estado-no-chat .estado-desenho {
+  background: var(--ciano-escuro);
+  box-shadow: 0 0 0 4px rgba(0, 194, 203, 0.18);
+}
+
+.estado-offline .estado-desenho {
+  border: 2px solid var(--cinza);
+}
+
+.estado .icone-alerta {
+  flex: none;
+  margin-top: 1px;
+  color: var(--alerta);
+}
+
+.estado-texto {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.estado-nome {
+  font-weight: 800;
+}
+
+.estado-detalhe {
+  font-size: 12.5px;
+  color: var(--suave);
+}
+
+/* A bolinha de um computador, antes do nome dele: cheia (online, sem registro e no chat) ou só o
+   anel (offline). */
+.pc {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  border: 2px solid var(--cinza);
+}
+
+.pc-online {
+  border-color: var(--verde);
+  background: var(--verde);
+}
+
+.pc-sem-registro {
+  border-color: var(--alerta);
+  background: var(--alerta);
+}
+
+.pc-no-chat {
+  border-color: var(--ciano-escuro);
+  background: var(--ciano-escuro);
+}
+
+.legenda {
+  border-top: 1px solid var(--borda);
+  padding: 16px 22px 18px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 12px 24px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--suave);
+}
+
+.legenda strong {
+  color: var(--texto);
 }
 
 /* O código de entrada. */
@@ -473,7 +649,7 @@ form {
 .chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   height: 28px;
   padding: 0 4px 0 10px;
   border-radius: 999px;

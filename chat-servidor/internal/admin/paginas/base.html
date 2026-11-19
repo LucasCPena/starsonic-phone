@@ -40,3 +40,23 @@
 {{define "icone-seta"}}<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>{{end}}
 
 {{define "icone-x"}}<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>{{end}}
+
+{{/* O triângulo do "sem registro": com a exclamação (o estado da pessoa e o cartão de número) e sem ela (a conta). O
+     tamanho e o traço do primeiro vêm do estilo.css, de onde ele está. */}}
+{{define "icone-alerta"}}<svg class="icone-alerta" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4l9 16H3z"></path><path d="M12 10v4.5M12 17.4v.1"></path></svg>{{end}}
+
+{{define "icone-triangulo"}}<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4l9 16H3z"></path></svg>{{end}}
+
+{{/* As contas de uma empresa: quantas pessoas em cada estado. O "sem registro" e o "no chat" só aparecem quando há. */}}
+{{define "contas" -}}
+<div class="contagens">
+  <span class="contagem contagem-online">{{.Online}} online</span>
+  {{- if .SemRegistro}}
+  <span class="contagem contagem-sem-registro">{{template "icone-triangulo"}}{{.SemRegistro}} sem registro</span>
+  {{- end}}
+  {{- if .NoChat}}
+  <span class="contagem contagem-no-chat">{{.NoChat}} no chat</span>
+  {{- end}}
+  <span class="contagem contagem-offline">{{.Offline}} offline</span>
+</div>
+{{- end}}
