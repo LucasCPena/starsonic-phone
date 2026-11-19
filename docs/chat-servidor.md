@@ -577,7 +577,7 @@ Pronto: agora o passo 2 (instalar) e o passo 7 (atualizar) acham a versão nova.
 
 A partir da versão 0.2.0-rc.5, a administração mostra o estado do ramal de cada pessoa que usa o app do Windows ligado ao chat. Serve para você ver quais ramais estão fora do ar sem esperar o cliente ligar reclamando. Não há nada para instalar nem configurar.
 
-Enquanto o app do Windows de um PC não for atualizado, esse PC aparece só como `No chat` ou `Offline`: é a próxima versão do app que diz ao chat se o ramal está registrado (passo 7).
+O `Online` e o `Sem registro` dependem do app do Windows: é a versão do app seguinte à `0.4.0-rc.1` que diz ao chat se o ramal está registrado. Cada PC passa a mostrar isso quando a pessoa aceita a atualização do app. Um PC em que ninguém aceita continua aparecendo só como `No chat`, com `o app é antigo e não diz o ramal`, ou `Offline`.
 
 **Onde olhar.**
 
