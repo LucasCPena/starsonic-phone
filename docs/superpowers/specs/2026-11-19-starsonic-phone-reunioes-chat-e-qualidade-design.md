@@ -373,7 +373,7 @@ Um revisor que não participou deste desenho o leu como quem vai construir, e fe
     - no celular, com o chat aberto, o painel continua dizendo "Você continua na reunião" enquanto a página tenta voltar de uma queda (até uns 45 s), com o cartão da queda atrás dele (o item 34);
     - o aviso "Sua conexão está ruim" que aparece atrás do chat aberto, no celular, gasta o um-a-cada-2-minutos sem a pessoa o ver;
     - "O chat volta quando a conexão voltar." aparece também quando o chat não vai voltar sozinho (a página desistiu de ligar o canal de novo, ou o chat reiniciou): esse caso pede uma frase própria, que é do responsável escolher;
-    - o aviso curto, depois de sumir, guarda na página o nome e o texto da última mensagem, sem mostrar, até o aviso seguinte;
+    - o aviso curto, depois de sumir, continua guardando na página o nome e o texto da última mensagem, sem mostrar, também depois de a reunião acabar (até outro aviso tomar o lugar, ou a página fechar). Ninguém vê, mas o critério 5 diz que as mensagens somem da página;
     - o Esc que cancela uma escrita com teclado de composição (o japonês, o chinês, o coreano) no campo do chat também devolve à grade um quadro aumentado;
     - colar mais de 1.000 caracteres corta o texto sem avisar, e uma mensagem só com sinais invisíveis é aceita e aparece vazia;
     - a perda de 10% do critério 6 continua provada com números de mentira nos testes automáticos, e com uma rede ruim de verdade só no roteiro (a linha 29.12).
