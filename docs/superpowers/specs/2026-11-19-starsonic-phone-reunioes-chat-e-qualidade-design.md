@@ -1,7 +1,7 @@
 # Starsonic Phone — reuniões com link — o chat da reunião e o sinalizador de qualidade — especificação de design
 
 - **Data:** 19/11/2026
-- **Status:** para o responsável aprovar. O pedido é de 18/11, às 17:48: "colocar o chat na reunião também e sinalizador de qualidade de chamada". Em 18/11, às 17:53, ele disse que o sinalizador é o da reunião no navegador. Em 19/11, às 00:24, ele mandou fazer os dois sem responder às outras perguntas: as escolhas da seção 14 são deste desenho, para ele corrigir.
+- **Status:** aprovada em 19/11, às 03:50, com o "Continue" do responsável, e construída no mesmo dia, para sair como a `0.2.0-rc.6` do chat (quem publica a versão é o responsável). O pedido é de 18/11, às 17:48: "colocar o chat na reunião também e sinalizador de qualidade de chamada". Em 18/11, às 17:53, ele disse que o sinalizador é o da reunião no navegador. Em 19/11, às 00:24, ele mandou fazer os dois sem responder às outras perguntas: as escolhas da seção 14 são deste desenho, do plano (`docs/superpowers/plans/2026-11-19-reunioes-chat-e-qualidade.md`) e da construção, para ele corrigir. A construção mudou uma regra da conta do sinalizador: veja a seção 7.4.
 - **Telas:** o quadro "Starsonic — reunião no navegador", telas 20 a 24.
 - **Base:** a spec de 12/11 (`2026-11-12-starsonic-phone-reunioes-link-design.md`), que deixou "o chat dentro da reunião" fora do escopo, e a de 18/11 (o palco). Esta spec traz o chat para dentro e acrescenta o sinalizador. O resto daquelas continua valendo.
 
@@ -189,7 +189,7 @@ Dois textos desta lista não estão no quadro, e são escolha deste desenho: o d
 A cada 2 s, a página pede os números ao navegador (o `getStats` da ligação principal) e os compara com os da medida anterior:
 
 - **A perda do que chega:** os pacotes perdidos sobre os esperados, desde a medida anterior, no som e no vídeo (o `inbound-rtp`). Vale a maior das duas.
-- **A perda do que sai:** a que o servidor de vídeo informa de volta, no som e no vídeo (o `fractionLost` do `remote-inbound-rtp`). Um relatório com mais de 10 s não conta: com a câmera desligada, o do vídeo para de chegar.
+- **A perda do que sai:** a que o servidor de vídeo informa de volta, no som e no vídeo (o `fractionLost` do `remote-inbound-rtp`). Ela só conta para o que a página mandou: a do som, só se a página mandou pacotes de som desde a medida anterior, e a do vídeo, só se mandou pacotes de vídeo (o `packetsSent` do `outbound-rtp`). Sem esse contador, a página não tem como saber, e a perda não conta contra a pessoa. Um relatório com mais de 10 s também não conta.
 - **A perda** da medida é a maior entre a do que chega e a do que sai.
 - **O atraso:** o tempo de ida e volta até o servidor de vídeo (o `currentRoundTripTime` do par de endereços em uso; sem ele, o `roundTripTime` do `remote-inbound-rtp` do som).
 - **Nada chegou:** nenhum pacote de som e nenhuma imagem nova desde a medida anterior.
@@ -198,6 +198,7 @@ Esses números foram conferidos em 19/11, no Chromium, contra o FreeSWITCH de ve
 
 - O servidor de vídeo manda os relatórios de volta: há `remote-inbound-rtp` para o som e para o vídeo, com a perda e o atraso. E o par de endereços em uso dá o atraso.
 - O mosaico e o som chegam sempre, a 25 imagens e 50 pacotes de som por segundo. Foi assim com duas pessoas com câmera, com uma pessoa sozinha sem câmera e sem microfone, e com duas pessoas sem câmera e sem microfone. Por isso o "nada chegou" não acontece numa reunião parada ou vazia.
+- **Corrigido na construção, em 19/11.** A primeira versão desta seção dizia que, com a câmera desligada, o relatório do vídeo parava de chegar. Não para: o FreeSWITCH manda relatórios também do que a página não manda. Com a câmera desligada, o primeiro relatório do vídeo chega uns 3 s depois da entrada e diz uma perda de 255 em 256; o seguinte, uns 4 s depois, diz zero. Com a conta da primeira versão, quem entrava sem câmera via "Conexão ruim", com "Perda: 100%", por uns 10 s. Por isso a perda do que sai passou a contar só para o que a página manda. O microfone desligado continua mandando 50 pacotes por segundo: a perda do som conta sempre que há som saindo. O teste de ponta a ponta achou o defeito antes de a versão sair, e passou a provar a regra, com todos sem câmera e sem microfone.
 
 O estado de cada medida:
 
@@ -233,7 +234,7 @@ Um número que o navegador não dá não conta contra a pessoa.
 | O número no botão | até 9, depois "9+" |
 | A largura do painel no PC | 360 pontos, com a janela a partir de 900 |
 | A medida do sinalizador | a cada 2 s |
-| O relatório do servidor de vídeo que ainda vale para a perda do que sai | o dos últimos 10 s |
+| O relatório do servidor de vídeo que ainda vale para a perda do que sai | o dos últimos 10 s, e só do que a página mandou desde a medida anterior |
 | O aviso curto (da mensagem nova e da conexão ruim) | 5 s, um por vez |
 | O aviso de conexão ruim | no máximo 1 a cada 2 minutos |
 
@@ -266,11 +267,11 @@ O campo de escrever não deixa passar de 1.000 caracteres: o `grande` do protoco
 - **O sinalizador:** a função pura, com a tabela da seção 7.4, as regras de piorar e melhorar, a medida sem número e a medida com um número só; o critério 6 inteiro, com medidas falsas (a perda de 10% vira "ruim" em até 10 s, e a rede boa de novo vira "boa" em até 20 s); a aba escondida; e a tela, com medidas falsas.
 - **De ponta a ponta:** três pessoas, com o chat, o FreeSWITCH e o agente de verdade: a mensagem chega aos outros; quem saiu não recebe; o sinalizador sai do "Medindo" para "Conexão boa"; e ele continua em "Conexão boa" por 20 s com todos sem câmera e sem microfone.
 
-**Teste manual:** uma seção nova no `docs/teste-manual.md`, no PC e no celular, com o Chrome, o Firefox e o Safari do iPhone. Para o sinalizador, o roteiro confere o "Conexão boa" e os dois números no uso normal, e pede um celular que se afasta do Wi-Fi até a imagem falhar. O limitador de rede das ferramentas do navegador não serve: ele não mexe na imagem nem no som da reunião. Por isso a perda de 10% do critério 6 é provada nos testes automáticos, com medidas falsas.
+**Teste manual:** uma seção nova no `docs/teste-manual.md` (a 29), no PC e no celular, com o Chrome e o Firefox no PC, o Safari do iPhone e o Chrome do Android. Para o sinalizador, o roteiro confere o "Conexão boa" e os dois números no uso normal, e pede um celular que se afasta do Wi-Fi até a imagem falhar. O limitador de rede das ferramentas do navegador não serve: ele não mexe na imagem nem no som da reunião. Por isso a perda de 10% do critério 6 é provada nos testes automáticos, com medidas falsas.
 
 ## 11. Entrega e etapas
 
-É uma versão nova do chat (a página vem dele). O servidor de vídeo não muda. O número da versão sai no plano, pela ordem das entregas: a ordem proposta ao responsável em 19/11 é a correção do FreeSWITCH, depois o estado dos ramais, depois esta.
+É uma versão nova do chat (a página vem dele). O servidor de vídeo não muda. O número da versão sai no plano, pela ordem das entregas: a ordem proposta ao responsável em 19/11 é a correção do FreeSWITCH, depois o estado dos ramais, depois esta. Ficou sendo a `0.2.0-rc.6` do chat.
 
 A ordem das partes, para o plano:
 
@@ -314,3 +315,36 @@ Um revisor que não participou deste desenho o leu como quem vai construir, e fe
 9. **A imagem parada saiu da conta do sinalizador,** e entrou o "nada chegou". Uma imagem que para com o som chegando é, quase sempre, problema do servidor, e não da internet de quem vê.
 10. **Quem pode mandar é quem recebe** (seção 7.1), com uma regra só.
 11. **O estado mostrado melhora direto para o que as cinco últimas medidas dizem,** sem passar um tempo em "instável" no caminho de "ruim" para "boa".
+
+**As escolhas do plano.** O plano (`docs/superpowers/plans/2026-11-19-reunioes-chat-e-qualidade.md`) decidiu o que esta spec não dizia:
+
+12. **A mensagem que ainda está indo** já aparece na lista, com a hora, mais apagada.
+13. **O `Tentar de novo`** manda o texto como uma mensagem nova: ela vai para o fim da lista, com a hora de agora.
+14. **A resposta que chega depois dos 10 s** ainda confirma a mensagem "Não enviada". Se a pessoa já clicou em `Tentar de novo`, a resposta atrasada vira outra mensagem dela na lista: foi o que os outros viram.
+15. **A lista acompanha o fim** quando está a até 80 pontos dele, quando a pessoa manda uma mensagem e quando o painel abre. Quem está lendo as mensagens antigas não é puxado para o fim.
+16. **O painel ao lado é do PC:** a janela de 900 pontos ou mais, com mouse. Numa tela de toque ele cobre a tela, também deitada e no tablet: o teclado da tela tomaria o campo do painel ao lado.
+17. **Na tela de toque, abrir o chat leva o foco ao título do painel,** e não ao campo, como a seção 4.2 dizia: o teclado só sobe quando a pessoa toca no campo. No PC, o foco vai ao campo.
+18. **O Enter pula linha onde o ponteiro é o dedo,** e manda nos outros. Depois do botão de mandar, o foco volta ao campo, para o teclado do celular não descer.
+19. **O campo cresce** com o texto até 120 pontos de altura, e depois rola. Ele não deixa passar de 1.000.
+20. **No link, a pontuação do fim fica de fora:** `. , ; : ! ?`, as aspas e os fechamentos `) ] }` que não fecham um par aberto dentro do endereço.
+21. **O aviso curto sobe para cima do Você** quando a área tem até 760 pontos de largura (o celular, a janela estreita, e a janela média com o chat aberto): ali, no meio, ele cobriria o Você.
+22. **O leitor de tela ouve toda mensagem dos outros,** com o chat aberto ou fechado.
+23. **A mensagem com o `id` que não vale** recebe o erro de sempre do protocolo: não há de qual mensagem dizer. A página nunca manda uma assim.
+24. **"O chat volta quando a conexão voltar."** é uma linha acima do campo, com o campo, o botão de mandar e os `Tentar de novo` desligados.
+25. **O campo mostra "Escreva uma mensagem"** (o texto do quadro). O nome dele, para o leitor de tela, é "Mensagem para todos da reunião" (o da seção 4.4).
+26. **As mensagens que chegam com a página ainda entrando** ficam guardadas e aparecem com a reunião, contando como não lidas.
+27. **O sinalizador sai do "Medindo"** na segunda medida com número: ele mostra a menos ruim das duas.
+28. **Com o cartão do sinalizador aberto, o aviso de conexão ruim não aparece,** e não gasta o um-a-cada-2-minutos: a pessoa já está olhando os detalhes.
+29. **O "nome do colega" da lista de testes** (seção 10) não tem como ser exercitado nesta versão: só a página manda, e quem manda pela página é sempre quem é de fora. Os testes cobrem o nome de quem é de fora, e que os apps dos colegas não recebem nada.
+30. **Na tela de toque, o botão do sinalizador tem 44 pontos de altura,** e no celular deitado o alto da reunião perde o espaço de cima e de baixo, para a área dos quadros não encolher.
+
+**O que a construção decidiu e achou,** em 19/11:
+
+31. **A perda do que sai só conta para o que a página manda** (seção 7.4). O FreeSWITCH manda relatórios também do vídeo de quem está sem câmera, e o primeiro deles diz uma perda quase total. Sem essa regra, quem entrava sem câmera via "Conexão ruim" por uns 10 s. O teste de ponta a ponta achou o defeito antes de a versão sair.
+32. **A página limpa o texto antes de mandar:** a tabulação vira espaço, e os outros sinais de controle saem. O servidor recusa esses sinais, e a tabulação vem em todo texto colado de uma planilha.
+33. **A fila do servidor para cada página** passou de 32 para 256 mensagens: uma rajada dentro dos limites (10 páginas com 20 mensagens por minuto cada) não derruba o canal de ninguém.
+34. **No celular, com o chat aberto,** o cartão "A conexão caiu. Entrando de novo…" e o aviso "Sua conexão está ruim" ficam atrás do chat, que cobre a tela. O leitor de tela diz os dois. Fica assim nesta versão.
+35. **O aviso de conexão ruim sai antes dos 5 s** quando o sinalizador deixa de dizer "ruim". O um-a-cada-2-minutos vale também para quem sai e entra de novo. E o primeiro estado depois do "Medindo", se for "ruim", também avisa.
+36. **A lista das mensagens é uma parada do teclado,** com o nome "Mensagens" para o leitor de tela: quem só usa o teclado consegue rolar a lista.
+37. **O texto que a pessoa escrevia e não mandou some** quando ela sai da reunião.
+38. **O cartão do sinalizador** abre embaixo do botão e não toma o foco. O Esc e o clique fora o fecham.

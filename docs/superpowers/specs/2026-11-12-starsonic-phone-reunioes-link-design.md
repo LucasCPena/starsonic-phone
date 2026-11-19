@@ -112,7 +112,7 @@
 - Gravar a reunião.
 - O app do celular nas reuniões (no celular, só o navegador).
 - Mais de 10 pessoas.
-- O chat dentro da reunião.
+- O chat dentro da reunião, **no app**. Na página do navegador, ele entrou em 19/11, com a `0.2.0-rc.6` do chat (a spec `2026-11-19-starsonic-phone-reunioes-chat-e-qualidade-design.md`). No app, continua fora até a etapa 2.
 - O fundo desfocado, as legendas e o levantar a mão.
 - A ligação com a agenda do Outlook ou do Google.
 - Mandar o link direto pelo chat ou por e-mail: na primeira versão, o link é copiado.

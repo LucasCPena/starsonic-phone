@@ -110,7 +110,7 @@ O celular com um quadro aumentado não tem tela desenhada: o quadro grande fica 
   - Durante o compartilhamento, em pé, a tela fica em cima, na largura toda, com o aviso `Gire o celular para ver a tela maior.`, e as pessoas embaixo.
   - O aviso `Gire o celular para ver a reunião maior.` sai.
   - Deitado, o celular segue as regras do PC.
-- **Os controles** (`Microfone`, `Câmera`, `Compartilhar a tela` e `Sair`) não mudam.
+- **Os controles** (`Microfone`, `Câmera`, `Compartilhar a tela` e `Sair`) não mudam. **Desde a `0.2.0-rc.6` do chat (19/11),** eles ganham o `Chat`, antes do `Sair`, e o alto da tela ganha o sinalizador de qualidade da conexão, ao lado do `Nada é gravado` (a spec `2026-11-19-starsonic-phone-reunioes-chat-e-qualidade-design.md`).
 
 ### 4.3 Os componentes novos do palco
 
