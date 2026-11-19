@@ -1,7 +1,7 @@
 {{/* Uma empresa (a tela PainelEmpresa do quadro, com o estado de cada ramal): o código, as pessoas,
      o estado e os computadores de cada uma, e apagar. A página nunca mostra as conversas. A seção
      das pessoas é a parte que se atualiza sozinha (data-ao-vivo). */}}
-{{define "scripts"}}<script src="/admin/estatico/copiar.js" defer></script><script src="/admin/estatico/atualizar.js" defer></script>{{end}}
+{{define "scripts"}}<script src="{{estatico "copiar.js"}}" defer></script><script src="{{estatico "atualizar.js"}}" defer></script>{{end}}
 
 {{define "conteudo"}}{{with .Pagina -}}
 <p class="aviso-parado" id="sem-atualizar" role="status" hidden></p>

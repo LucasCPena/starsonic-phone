@@ -633,16 +633,43 @@ form {
   gap: 6px;
 }
 
-/* O aviso de que a página está sem se atualizar (o atualizar.js o mostra e o esconde). */
+/* O aviso de que a página está sem se atualizar (o atualizar.js escreve o texto dele). Ele fica preso embaixo da
+   janela, por cima da página: quem rolou uma tabela comprida também o vê, e ele não empurra as linhas (um botão
+   que estava debaixo do ponteiro continua no lugar). Vazio, não tem tamanho, e continua na página para o leitor
+   de tela ouvir o texto quando ele chega. */
 .aviso-parado {
+  position: fixed;
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%);
+  z-index: 10;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: calc(100vw - 32px);
   margin: 0;
-  padding: 12px 16px;
   border-radius: 12px;
   background: var(--erro-fundo);
   color: var(--erro);
   font-size: 14px;
   font-weight: 600;
   line-height: 1.5;
+  box-shadow: 0 14px 30px -12px rgba(11, 22, 48, 0.45);
+}
+
+.aviso-parado:not(:empty) {
+  padding: 12px 16px;
+  border: 1px solid var(--alerta-borda);
+}
+
+/* Com o aviso na tela, o fim da página ganha espaço para o último cartão subir acima dele, e a janela ganha uma
+   folga embaixo (a classe é o atualizar.js que põe): o navegador rola o botão ou o link que recebe o foco do teclado
+   para cima do aviso, e não para trás dele. A folga é a altura do aviso com três linhas, numa janela bem estreita. */
+.aviso-parado:not(:empty) ~ :last-child {
+  margin-bottom: 64px;
+}
+
+.com-aviso {
+  scroll-padding-bottom: 112px;
 }
 
 .legenda {

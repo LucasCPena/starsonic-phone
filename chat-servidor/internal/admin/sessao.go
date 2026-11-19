@@ -129,10 +129,20 @@ func (p *painel) comSessao(f func(http.ResponseWriter, *http.Request, sessao)) h
 
 type telaEntrar struct{ Usuario, Erro string }
 
-// mostrarEntrada mostra a entrada com um token novo da entrada, no cookie e no formulário: o
-// POST da entrada só vale com os dois iguais, e um site de fora não consegue ler nenhum deles.
-func (p *painel) mostrarEntrada(w http.ResponseWriter, status int, usuario, erro string) {
-	t := segredo.NovoToken()
+// mostrarEntrada mostra a entrada com o token dela, no cookie e no formulário: o POST da entrada
+// só vale com os dois iguais, e um site de fora não consegue ler nenhum deles.
+//
+// O token é o do cookie que o navegador já tem, se tem: duas abas na entrada ficam com o mesmo
+// token, e as duas valem (as páginas dos ramais vão sozinhas para a entrada quando a sessão
+// vence, todas as abas de uma vez). Sem o cookie, ou com um que não tem a forma de um token, a
+// entrada tira um novo. Quem entra gasta o token: o cookie dele é apagado.
+func (p *painel) mostrarEntrada(w http.ResponseWriter, r *http.Request, status int, usuario, erro string) {
+	var t string
+	if c, err := r.Cookie(cookieEntrada); err == nil && tokenValido(c.Value) {
+		t = c.Value
+	} else {
+		t = segredo.NovoToken()
+	}
 	http.SetCookie(w, p.cookie(cookieEntrada, t))
 	p.mostrar(w, status, "entrar", tela{Titulo: "Chat · administração · entrar", CSRF: t,
 		Pagina: telaEntrar{Usuario: usuario, Erro: erro}})
@@ -144,14 +154,15 @@ func (p *painel) paginaEntrar(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/admin/", http.StatusSeeOther)
 		return
 	}
-	p.mostrarEntrada(w, http.StatusOK, "", "")
+	p.mostrarEntrada(w, r, http.StatusOK, "", "")
 }
 
 // POST /admin/entrar: confere o usuário e a senha e abre a sessão. Nem o log nem a página
 // dizem se foi o usuário ou a senha; a senha nunca volta na página nem entra no log.
 //
-// A ordem: o CSRF; o limite do endereço (R28), que vem antes de tudo e, passando dele, responde
-// 429 sem ler a trava nem calcular o argon2id; e o ConferirSenha (a trava do nome, uma vaga do
+// A ordem: o CSRF (sem o token certo, quem já tem sessão vai para a lista, e os outros são
+// recusados); o limite do endereço (R28), que vem antes de tudo e, passando dele, responde 429
+// sem ler a trava nem calcular o argon2id; e o ConferirSenha (a trava do nome, uma vaga do
 // argon2id e o hash).
 func (p *painel) entrar(w http.ResponseWriter, r *http.Request) {
 	if !p.lerFormulario(w, r, sessao{}) {
@@ -159,6 +170,13 @@ func (p *painel) entrar(w http.ResponseWriter, r *http.Request) {
 	}
 	c, err := r.Cookie(cookieEntrada)
 	if err != nil || !mesmoToken(r.PostForm.Get("csrf"), c.Value) {
+		// Quem entrou por uma aba ainda vê a entrada nas outras, com o token que a primeira
+		// gastou. Ele já está dentro: vai para a lista, e a senha nem é lida. Um pedido de fora
+		// não traz a sessão (o cookie dela é SameSite=Strict), e continua recusado.
+		if _, ok, _ := p.sessaoDe(r); ok {
+			http.Redirect(w, r, "/admin/", http.StatusSeeOther)
+			return
+		}
 		p.recusar(w, sessao{})
 		return
 	}
@@ -166,7 +184,7 @@ func (p *painel) entrar(w http.ResponseWriter, r *http.Request) {
 	endereco := limites.Endereco(r)
 	if livre, _ := p.entradas.Usar(endereco, 1); !livre {
 		slog.Warn("admin: entrada recusada pelo limite do endereço")
-		p.mostrarEntrada(w, http.StatusTooManyRequests, usuario, textoTrava)
+		p.mostrarEntrada(w, r, http.StatusTooManyRequests, usuario, textoTrava)
 		return
 	}
 	ok, travado, err := p.banco.ConferirSenha(r.Context(), usuario, r.PostForm.Get("senha"))
@@ -182,12 +200,12 @@ func (p *painel) entrar(w http.ResponseWriter, r *http.Request) {
 	}
 	if travado != 0 {
 		slog.Warn("admin: entrada recusada pela trava")
-		p.mostrarEntrada(w, http.StatusTooManyRequests, usuario, textoTrava)
+		p.mostrarEntrada(w, r, http.StatusTooManyRequests, usuario, textoTrava)
 		return
 	}
 	if !ok {
 		slog.Warn("admin: entrada recusada") // sem o usuário: pode ser uma senha digitada no lugar
-		p.mostrarEntrada(w, http.StatusUnauthorized, usuario, textoSenhaErrada)
+		p.mostrarEntrada(w, r, http.StatusUnauthorized, usuario, textoSenhaErrada)
 		return
 	}
 	p.entradas.Devolver(endereco, 1) // a entrada certa não conta, como o código certo na API

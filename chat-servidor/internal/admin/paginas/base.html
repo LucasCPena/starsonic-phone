@@ -7,14 +7,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <title>{{.Titulo}}</title>
-<link rel="stylesheet" href="/admin/estatico/estilo.css">
+<link rel="stylesheet" href="{{estatico "estilo.css"}}">
 {{block "scripts" .}}{{end}}
 </head>
 <body>
 <header class="topo">
   <div class="topo-dentro">
     <div class="marca">
-      <img class="logo" src="/admin/estatico/logo-negativo.png" alt="Starsonic soluções de voz e dados" width="170" height="52">
+      <img class="logo" src="{{estatico "logo-negativo.png"}}" alt="Starsonic soluções de voz e dados" width="170" height="52">
       <span class="marca-nome">Chat · administração</span>
     </div>
     {{- if .Usuario}}
