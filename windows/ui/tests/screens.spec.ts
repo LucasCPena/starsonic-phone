@@ -39,6 +39,16 @@ async function verTextos(page: Page, textos: string[]): Promise<void> {
   }
 }
 
+/**
+ * O formulário do contato dá o foco ao Nome num efeito da montagem, que roda até 35 ms depois de ele aparecer. O fill()
+ * do Playwright age em dois tempos (o foco e a seleção na página; depois a tecla ou o texto, de fora): um fill em outro
+ * campo que comece antes desse efeito perde o foco no meio, e o que ele manda vai para o Nome. Com o Nome já em foco,
+ * o efeito já rodou.
+ */
+async function formularioDoContatoPronto(page: Page): Promise<void> {
+  await expect(page.getByLabel('Nome', { exact: true })).toBeFocused();
+}
+
 async function semViolacoesSerias(page: Page): Promise<void> {
   const resultado = await new AxeBuilder({ page }).analyze();
   const serias = resultado.violations
@@ -376,6 +386,7 @@ for (const tema of ['light', 'dark'] as const) {
       await expect(page.getByRole('button', { name: 'Ligar', exact: true })).toBeVisible();
       await page.getByRole('button', { name: 'Salvar contato' }).click();
       await expect(page.getByRole('heading', { name: 'Novo contato' })).toBeVisible();
+      await formularioDoContatoPronto(page);
       await expect(page.getByLabel('Número')).toHaveValue('3001');
       await page.getByLabel('Nome', { exact: true }).fill('Paula Reis');
       await page.getByRole('button', { name: 'Salvar contato' }).click();
@@ -418,6 +429,7 @@ for (const tema of ['light', 'dark'] as const) {
 
       await page.getByRole('button', { name: 'Novo contato' }).click();
       await expect(page.getByRole('heading', { name: 'Novo contato' })).toBeVisible();
+      await formularioDoContatoPronto(page);
       await verTextos(page, ['Nome', 'Número', 'Observação (opcional)']);
       await semViolacoesSerias(page);
       await capturar(page, 'contato-novo', tema);
@@ -431,6 +443,7 @@ for (const tema of ['light', 'dark'] as const) {
       await page.getByRole('button', { name: 'Mais opções para Carlos Lima' }).click();
       await page.getByRole('menuitem', { name: 'Editar' }).click();
       await expect(page.getByRole('heading', { name: 'Editar contato' })).toBeVisible();
+      await formularioDoContatoPronto(page);
       await expect(page.getByLabel('Número')).toHaveValue('2007');
       await page.getByLabel('Observação (opcional)').fill('');
       await page.getByRole('button', { name: 'Salvar contato' }).click();
