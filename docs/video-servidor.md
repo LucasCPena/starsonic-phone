@@ -418,7 +418,7 @@ A `0.1.0-rc.3` é a primeira atualização do servidor de vídeo. Em toda atuali
 cat /opt/starsonic-freeswitch/VERSOES.txt
 ```
 
-Uma das linhas tem de começar por `patch freeswitch 0001-mod_conference-tamanho-na-thread-do-mosaico.patch`. Sem ela, o FreeSWITCH instalado é o antigo: rode o `atualizar` da `0.1.0-rc.4` de novo. Depois, confira com a seção 27 do roteiro (`docs/teste-manual.md`).
+Duas linhas têm de começar por `patch freeswitch`: a do `0001-mod_conference-tamanho-na-thread-do-mosaico.patch` e a do `0002-mod_conference-banda-com-a-trava-do-mosaico.patch`. Sem elas, o FreeSWITCH instalado é o antigo: rode o `atualizar` da `0.1.0-rc.4` de novo. Depois, confira com a seção 27 do roteiro (`docs/teste-manual.md`).
 
 **As atualizações do sistema da VM.** Se, numa atualização do sistema (o `sudo apt upgrade`), o apt perguntar o que fazer com o arquivo `/etc/turnserver.conf`, responda `N`, que mantém o arquivo atual (é o padrão: basta apertar Enter). Um `Y` põe de volta a configuração de exemplo do coturn, que não serve para as reuniões, até o próximo `atualizar` (veja "O apt perguntou sobre o /etc/turnserver.conf", no passo 9, para pôr a nossa de volta).
 
@@ -686,16 +686,16 @@ Era um defeito do FreeSWITCH na versão `0.1.0-rc.3` do servidor de vídeo, e a 
 cat /opt/starsonic-freeswitch/VERSOES.txt
 ```
 
-Se nenhuma linha começa por `patch freeswitch 0001-mod_conference-tamanho-na-thread-do-mosaico.patch`, o servidor ainda está com o FreeSWITCH antigo: atualize para a `0.1.0-rc.4`, ou para uma versão mais nova (passo 5). O resto desta entrada diz o que era o defeito, e o que fazer enquanto a atualização não vem. Se aconteceu com o FreeSWITCH corrigido, é outro problema: faça o mesmo que está abaixo, e guarde os registros do FreeSWITCH e do agente daquela hora (passo 8).
+Se nenhuma linha começa por `patch freeswitch`, o servidor ainda está com o FreeSWITCH antigo: atualize para a `0.1.0-rc.4`, ou para uma versão mais nova (passo 5). O resto desta entrada diz o que era o defeito, e o que fazer enquanto a atualização não vem. Se aconteceu com o FreeSWITCH corrigido, é outro problema: faça o mesmo que está abaixo, e guarde os registros do FreeSWITCH e do agente daquela hora (passo 8).
 
 Na versão `0.1.0-rc.3`, o mosaico muda de tamanho em alguns momentos: quando alguém começa ou para de compartilhar a tela; na passagem de 4 para 5 pessoas e de 9 para 10 (e na volta); e, durante um compartilhamento, de 2 para 3 e de 4 para 5 pessoas (e na volta). A versão de antes (a `0.1.0-rc.2`) nunca muda o tamanho, e não tem este defeito.
 
 O FreeSWITCH 1.11.3 tem um defeito nessa troca, que aparece de dois jeitos:
 
 - **A imagem congela para todos.** É o que acontece num servidor com mais de 2 processadores. Três partes do FreeSWITCH ficam esperando uma pela outra, enquanto a pessoa cuja imagem estava sendo desenhada naquele instante continuar na reunião. O processo continua de pé, então o serviço não reinicia sozinho, e ninguém vê tela de erro: todos continuam na reunião, com a imagem parada. O comando do agente fica sem resposta, e, enquanto isso, o mosaico de nenhuma reunião do servidor se arruma. Quando aquela pessoa sai da reunião, o FreeSWITCH segue sozinho.
-- **Todos caem de uma vez**, em toda reunião que estiver no servidor naquele instante (o processo é um só para todas as salas). O FreeSWITCH troca a imagem do mosaico enquanto outra parte dele ainda usa a antiga, e o processo para. O serviço liga de novo sozinho 5 segundos depois. Isso foi visto com 2 processadores e com 4.
+- **Todos caem de uma vez**, em toda reunião que estiver no servidor naquele instante (o processo é um só para todas as salas). O FreeSWITCH troca a imagem do mosaico enquanto outra parte dele ainda usa a antiga, e o processo para. O serviço liga de novo sozinho 5 segundos depois. Isso foi visto com 2 processadores.
 
-Nos testes de esforço, com uma troca de tamanho depois da outra: com 4 processadores, a imagem congelou em seis rodadas (a mais rápida depois de 10 trocas, a mais demorada depois de 1.138), e o FreeSWITCH caiu em uma, depois de 613 trocas; com 2, ele caiu depois de 535 trocas numa rodada e aguentou 3.000 em outra. Ou seja, podia acontecer em qualquer uma dessas trocas.
+Nos testes de esforço, com uma troca de tamanho depois da outra: com 4 processadores, a imagem congelou em oito rodadas (a mais rápida depois de 10 trocas, a mais demorada depois de 1.138); com 2, ele caiu depois de 535 trocas numa rodada e aguentou 3.000 em outra. Ou seja, podia acontecer em qualquer uma dessas trocas.
 
 Se a imagem congelou, peça para todos saírem da reunião e entrarem de novo. De fora, não dá para saber qual pessoa segura o FreeSWITCH: por isso, todos. Nos testes de esforço, isso foi medido quatro vezes: ele voltou a funcionar na hora em que a pessoa certa saiu (com o `Sair`), sem reiniciar nada, e uma reunião nova funcionou em seguida. Em três delas foi a primeira pessoa a sair; em uma, a segunda. Se, 2 minutos depois de todos saírem, as reuniões não voltarem ao normal, reinicie o FreeSWITCH. Isso encerra todas as reuniões que estão no servidor:
 
@@ -717,7 +717,7 @@ Se foi há pouco, eles mostram o serviço terminando e ligando de novo sozinho, 
 sudo journalctl -u starsonic-freeswitch -n 500 --no-pager
 ```
 
-A correção é um arquivo da pasta `video-servidor/freeswitch/patches`, que entra no FreeSWITCH quando o pacote é montado: a troca de tamanho passa a ser feita pela parte do FreeSWITCH que desenha o mosaico, como ele já faz com a troca de layout (`docs/superpowers/specs/2026-11-19-starsonic-phone-freeswitch-troca-de-tamanho-design.md`). Um teste de esforço roda a cada mudança do código: mil trocas de tamanho seguidas, com uma pessoa entrando e saindo no meio.
+A correção são dois arquivos da pasta `video-servidor/freeswitch/patches`, que entram no FreeSWITCH quando o pacote é montado (`docs/superpowers/specs/2026-11-19-starsonic-phone-freeswitch-troca-de-tamanho-design.md`). Com o primeiro, a troca de tamanho passa a ser feita pela parte do FreeSWITCH que desenha o mosaico, como ele já faz com a troca de layout. Com o segundo, o comando que o agente manda logo depois de pedir um tamanho (o da banda) espera essa troca acabar, em vez de ler a imagem no meio dela. Dois testes de esforço rodam a cada mudança do código: mil pedidos de troca de tamanho seguidos, com uma pessoa entrando e saindo no meio, e trezentas trocas conferidas uma a uma.
 
 **A CPU alta.**
 A página `Reuniões` do chat mostra o uso do servidor de vídeo no teste: `Uso agora: CPU <n>% · memória <n>%.` A CPU é a média do último minuto. Com reuniões acontecendo, se a CPU fica acima de uns 80%, a imagem pode travar. Diminua as `Reuniões ao mesmo tempo` (passo 3), ou dê mais vCPUs à VM e depois aumente o número.
