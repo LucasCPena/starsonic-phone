@@ -5,6 +5,7 @@
 // estado nem dos efeitos vai ao console: eles levam o bilhete, as senhas, as credenciais do TURN, a chave de volta e
 // as mensagens do chat.
 import { cabecalho, inicial, nomeValido, podeEscrever, quando, transicao } from './estado.js';
+import { contagem as numeroDoBotao, dito, escreveu, nomeDoBotao, numaLinha } from './mensagens.js';
 import { criarPainel } from './painel.js';
 import { criarQuadros } from './quadros.js';
 
@@ -43,7 +44,9 @@ export function iniciar(raiz, servicos) {
   const contagem = um('[data-aviso="tentativas"] [data-botao="tentarDeNovo"]');
   const compartilhar = um('.controle-compartilhar');
   const botaoChat = um('[data-botao="chat"]');
+  const numeroDoChat = botaoChat.querySelector('.contagem');
   const raizDoPainel = um('.painel');
+  const avisoCurto = um('.aviso-curto');
   // O Compartilhar a tela só existe onde o navegador tem a captura da tela.
   const temCaptura = typeof navigator.mediaDevices?.getDisplayMedia === 'function';
 
@@ -297,15 +300,55 @@ export function iniciar(raiz, servicos) {
     compartilhar.hidden = !temCaptura || compartilhando;
     compartilhar.disabled = !(e.canal === 'aberto' && e.reconectando === 0);
     um('[data-botao="pararDeCompartilhar"]').hidden = !compartilhando;
-    // O chat: o botão apertado com o painel aberto, e o painel com as mensagens do cérebro.
-    const chatAberto = e.tela === 'reuniao' && e.chat.aberto;
+    desenharOChat(e);
+  }
+
+  // O n da última mensagem do chat que a página já viu na tela da reunião: as de outras pessoas depois dela são ditas.
+  let ultimaVista = 0;
+
+  // O chat: o botão apertado com o painel aberto, o número das mensagens novas, o painel com as mensagens do cérebro,
+  // o aviso curto, e o que o leitor de tela ouve.
+  function desenharOChat(e) {
+    const naReuniao = e.tela === 'reuniao';
+    const chatAberto = naReuniao && e.chat.aberto;
+    const novas = naReuniao ? e.chat.naoLidas : 0;
     botaoChat.setAttribute('aria-pressed', chatAberto ? 'true' : 'false');
+    // O número é só o desenho (até 9, e 9+); o nome do botão diz o número de verdade.
+    texto(numeroDoChat, numeroDoBotao(novas));
+    numeroDoChat.hidden = novas === 0;
+    if (novas > 0) botaoChat.setAttribute('aria-label', nomeDoBotao(novas));
+    else botaoChat.removeAttribute('aria-label');
     painel.desenhar({
       aberto: chatAberto,
       mensagens: e.chat.mensagens,
       podeEscrever: podeEscrever(e),
-      naReuniao: e.tela === 'reuniao',
+      naReuniao,
     });
+
+    const aviso = naReuniao ? e.avisoCurto : null;
+    avisoCurto.hidden = aviso === null;
+    if (aviso !== null) {
+      avisoCurto.dataset.tipo = aviso.tipo;
+      texto(avisoCurto.querySelector('.aviso-curto-quem'), escreveu(aviso));
+      texto(avisoCurto.querySelector('.aviso-curto-linha'), numaLinha(aviso.texto));
+    }
+
+    // O leitor de tela ouve a mensagem mais nova de outra pessoa que ainda não foi dita, com o chat aberto ou fechado.
+    if (!naReuniao) return;
+    const { mensagens } = e.chat;
+    for (let i = mensagens.length - 1; i >= 0 && mensagens[i].n > ultimaVista; i--) {
+      if (mensagens[i].voce) continue;
+      dizer(dito(mensagens[i]));
+      break;
+    }
+    if (mensagens.length > 0) ultimaVista = Math.max(ultimaVista, mensagens[mensagens.length - 1].n);
+  }
+
+  // Põe o texto na região que os leitores de tela anunciam. O nó de texto é sempre outro: o mesmo texto, dito de novo,
+  // é anunciado de novo.
+  function dizer(oQue) {
+    anuncio.textContent = '';
+    anuncio.append(oQue);
   }
 
   // A mudança de tela (e do aviso) vai para a região que os leitores de tela anunciam, como a conexão caída.

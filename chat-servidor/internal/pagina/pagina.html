@@ -345,6 +345,15 @@ inteiro sem o palco. -->
 <p>Espere um instante: a página volta sozinha para a reunião.</p>
 </div>
 </div>
+<!-- O aviso curto: a mensagem nova com o chat fechado. Ele não é uma região falada: quem diz a mensagem aos leitores
+de tela é a região do fim da página. -->
+<div class="aviso-curto" data-tipo="mensagem" hidden>
+<div class="aviso-curto-texto">
+<p class="aviso-curto-quem"></p>
+<p class="aviso-curto-linha"></p>
+</div>
+<button type="button" class="aviso-curto-botao" data-botao="abrirChat">Abrir o chat</button>
+</div>
 </div>
 <!-- O chat da reunião: ao lado dos quadros no PC, e cobrindo a tela onde o ponteiro é o dedo ou a janela é estreita
 (o data-modo, que o painel.js põe). O texto das mensagens entra pelo painel.js, sempre como texto. O campo e o botão
@@ -404,6 +413,7 @@ ficam num <div>, e não num <form>: a CSP da página tem form-action 'none'. -->
 <button type="button" class="botao controle controle-chat" data-botao="chat" aria-pressed="false">
 <svg class="icone icone-20" aria-hidden="true"><use href="#i-chat"></use></svg>
 <span>Chat</span>
+<span class="contagem" aria-hidden="true" hidden></span>
 </button>
 <button type="button" class="botao controle controle-sair" data-botao="sair">
 <svg class="icone icone-20" aria-hidden="true"><use href="#i-sair"></use></svg>

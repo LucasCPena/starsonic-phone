@@ -1241,6 +1241,90 @@ button.quadro:focus-visible .pilula {
   background: var(--reuniao-apertado);
 }
 
+/* O número das mensagens novas, depois do texto do botão Chat. */
+.contagem {
+  min-width: 22px;
+  height: 22px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--ciano);
+  color: var(--sobre-ciano);
+  font-size: 12.5px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+/* ---- O aviso curto: dentro da área dos quadros, por cima deles, no meio, a 8 px do fundo dela. ---- */
+
+.aviso-curto {
+  position: absolute;
+  z-index: 3;
+  left: 50%;
+  bottom: 8px;
+  transform: translateX(-50%);
+  width: min(440px, 100% - 96px);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 12px 12px 16px;
+  border: 1px solid var(--reuniao-borda);
+  border-radius: 14px;
+  background: var(--reuniao-cartao);
+  box-shadow: 0 24px 50px -20px rgba(0, 0, 0, 0.7);
+}
+
+/* Na área estreita (o celular, a janela estreita, e a janela média com o chat aberto), o aviso no meio cobriria o Você
+   do canto: ele fica 8 px acima dele (o --acima-do-voce, que o quadros.js põe na área). */
+@container (max-width: 760px) {
+  .aviso-curto {
+    bottom: var(--acima-do-voce, 8px);
+    width: min(440px, 100% - 20px);
+  }
+}
+
+.aviso-curto-texto {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Quem escreveu e o texto: uma linha cada, cortada com reticências. */
+.aviso-curto-quem,
+.aviso-curto-linha {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aviso-curto-quem {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--reuniao-claro);
+}
+
+.aviso-curto-linha {
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.aviso-curto-botao {
+  flex: none;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--ciano);
+  color: var(--sobre-ciano);
+  font-family: inherit;
+  font-size: 13.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
 /* ---- O chat da reunião: o painel (painel.js). Ao lado dos quadros no PC (data-modo="lado"), e cobrindo a tela onde o
    ponteiro é o dedo ou a janela tem menos de 900 px (data-modo="cobre"). ---- */
 
@@ -1840,6 +1924,21 @@ button.quadro:focus-visible .pilula {
 
   .controle-compartilhar {
     display: none;
+  }
+
+  /* O número fica no canto do botão Chat, sem mexer no desenho nem no texto dele. */
+  .controle-chat {
+    position: relative;
+  }
+
+  .contagem {
+    position: absolute;
+    top: 8px;
+    right: 14px;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 5px;
+    font-size: 12px;
   }
 }
 

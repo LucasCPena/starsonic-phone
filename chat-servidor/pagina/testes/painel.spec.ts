@@ -58,6 +58,13 @@ const semCanal = (page: Page) => page.getByText('O chat volta quando a conexão 
 const controles = (page: Page) => page.getByRole('navigation', { name: 'Controles da reunião' });
 /** O que fica atrás do painel que cobre a tela. */
 const FUNDO = ['.reuniao-topo', '.palco', '.controles'];
+// O número do botão Chat, o aviso curto e a região que os leitores de tela anunciam.
+const numero = (page: Page) => oChat(page).locator('.contagem');
+const aviso = (page: Page) => page.locator('.aviso-curto');
+const quemEscreveu = (page: Page) => aviso(page).locator('.aviso-curto-quem');
+const linhaDoAviso = (page: Page) => aviso(page).locator('.aviso-curto-linha');
+const abrirOChat = (page: Page) => aviso(page).getByRole('button', { name: 'Abrir o chat', exact: true });
+const anuncio = (page: Page) => page.locator('[data-campo="anuncio"]');
 
 /** O texto do elemento, letra por letra, com as quebras de linha. */
 const letras = (page: Page, n: number) => balao(page, n).evaluate((e) => e.textContent);
@@ -667,6 +674,241 @@ test('a conexão que cai e volta deixa as mensagens', async ({ page }) => {
   await expect(painel(page)).toBeVisible();
 });
 
+// ---- Com o chat fechado: o número no botão, o aviso curto e o leitor de tela. ----
+
+test('com o chat fechado, o número no botão e o aviso curto', async ({ page }) => {
+  const { canal } = await naReuniaoCom(page, TRES);
+  await expect(numero(page)).toBeHidden();
+  await expect(aviso(page)).toBeHidden();
+  await expect(botao(page, 'Chat')).toBeVisible();
+
+  canal.mandar(de(CARLOS, 'Bom dia a todos'));
+  // O botão mostra o 1 e passa a se chamar "Chat, 1 mensagem nova"; o número é só o desenho.
+  await expect(numero(page)).toBeVisible();
+  await expect(numero(page)).toHaveText('1');
+  await expect(numero(page)).toHaveAttribute('aria-hidden', 'true');
+  await expect(botao(page, 'Chat, 1 mensagem nova')).toBeVisible();
+  await expect(oChat(page)).toHaveAttribute('aria-pressed', 'false');
+  const n = await caixa(numero(page));
+  expect([n.width, n.height]).toEqual([22, 22]);
+  await expect(numero(page)).toHaveCSS('background-color', 'rgb(0, 194, 203)');
+  // O aviso: quem escreveu, o texto e o Abrir o chat.
+  await expect(aviso(page)).toBeVisible();
+  await expect(aviso(page)).toHaveAttribute('data-tipo', 'mensagem');
+  await expect(quemEscreveu(page)).toHaveText('Carlos Lima escreveu');
+  await expect(linhaDoAviso(page)).toHaveText('Bom dia a todos');
+  await expect(abrirOChat(page)).toBeVisible();
+  expect((await caixa(abrirOChat(page))).height).toBeGreaterThanOrEqual(44);
+  await expect(anuncio(page)).toHaveText('Carlos Lima escreveu: Bom dia a todos');
+
+  // 5 s depois o aviso some, e o número fica.
+  await page.clock.runFor(4_999);
+  await expect(aviso(page)).toBeVisible();
+  await page.clock.runFor(1);
+  await expect(aviso(page)).toBeHidden();
+  await expect(numero(page)).toHaveText('1');
+  // Sem o nome, quem escreveu é o Participante.
+  canal.mandar({ tipo: 'mensagem', de: BIA.quem, nome: '', voce: false, texto: 'Cheguei' });
+  await expect(quemEscreveu(page)).toHaveText('Participante escreveu');
+  await expect(botao(page, 'Chat, 2 mensagens novas')).toBeVisible();
+  // Com 10 mensagens, o botão mostra 9+ e diz o número de verdade.
+  for (let i = 3; i <= 10; i++) canal.mandar(de(ANA, `Mensagem ${i}`));
+  await expect(numero(page)).toHaveText('9+');
+  await expect(botao(page, 'Chat, 10 mensagens novas')).toBeVisible();
+});
+
+test('um aviso por vez', async ({ page }) => {
+  const { canal } = await naReuniaoCom(page, TRES);
+  canal.mandar(de(CARLOS, 'Primeira'));
+  await expect(linhaDoAviso(page)).toHaveText('Primeira');
+  await page.clock.runFor(3_000);
+  canal.mandar(de(ANA, 'Segunda'));
+  // O aviso novo toma o lugar do anterior, e o tempo dele é o seu: 5 s depois da segunda.
+  await expect(quemEscreveu(page)).toHaveText('Ana Souza escreveu');
+  await expect(linhaDoAviso(page)).toHaveText('Segunda');
+  await expect(aviso(page)).toHaveCount(1);
+  await page.clock.runFor(2_000);
+  await expect(aviso(page)).toBeVisible();
+  await page.clock.runFor(2_999);
+  await expect(aviso(page)).toBeVisible();
+  await page.clock.runFor(1);
+  await expect(aviso(page)).toBeHidden();
+
+  // A rajada: 30 mensagens seguidas, e um aviso só na página, com a última.
+  for (let i = 1; i <= 30; i++) canal.mandar(de(CARLOS, `Mensagem ${i}`));
+  await expect(linhaDoAviso(page)).toHaveText('Mensagem 30');
+  await expect(aviso(page)).toHaveCount(1);
+  await expect(page.locator('.aviso-curto:visible')).toHaveCount(1);
+  await expect(numero(page)).toHaveText('9+');
+  await expect(botao(page, 'Chat, 32 mensagens novas')).toBeVisible();
+});
+
+test('o Abrir o chat do aviso', async ({ page }) => {
+  const { canal } = await naReuniaoCom(page, TRES);
+  canal.mandar(de(CARLOS, 'Oi'));
+  await abrirOChat(page).click();
+  await expect(painel(page)).toBeVisible();
+  await expect(aviso(page)).toBeHidden();
+  await expect(numero(page)).toBeHidden();
+  // Sem mensagem nova, o botão volta a se chamar só Chat.
+  await expect(botao(page, 'Chat')).toHaveAttribute('aria-pressed', 'true');
+  await expect(campo(page)).toBeFocused();
+  await expect(balao(page, 1)).toHaveText('Oi');
+  // Com o chat aberto, a mensagem que chega não conta nem avisa.
+  canal.mandar(de(ANA, 'Bom dia'));
+  await expect(mensagens(page)).toHaveCount(2);
+  await expect(aviso(page)).toBeHidden();
+  await expect(numero(page)).toBeHidden();
+  // Fechado de novo, a contagem recomeça do zero.
+  await page.keyboard.press('Escape');
+  canal.mandar(de(ANA, 'Mais uma'));
+  await expect(numero(page)).toHaveText('1');
+});
+
+test('o aviso fica no meio, logo acima dos controles', async ({ page }) => {
+  const { canal } = await naReuniaoCom(page, TRES);
+  canal.mandar(de(CARLOS, 'Bom dia a todos'));
+  await expect(aviso(page)).toBeVisible();
+  const a = await caixa(area(page));
+  const t = await caixa(aviso(page));
+  // No meio da área dos quadros, a 8 px do fundo dela, com 440 px.
+  expect(Math.abs(t.x + t.width / 2 - (a.x + a.width / 2))).toBeLessThanOrEqual(2);
+  expect(a.y + a.height - (t.y + t.height)).toBeCloseTo(8, 0);
+  expect(t.width).toBe(440);
+  // Por cima dos quadros: o ponto do meio dele é dele.
+  expect(
+    await aviso(page).evaluate((el) => {
+      const c = el.getBoundingClientRect();
+      return el.contains(document.elementFromPoint(c.x + c.width / 2, c.y + c.height / 2));
+    }),
+  ).toBe(true);
+});
+
+/** O aviso de uma mensagem do Carlos, com o palco TRES: dentro da área, sem encostar no Você do canto. */
+async function oAvisoEOVoce(page: Page) {
+  const { canal } = await naReuniaoCom(page, TRES);
+  canal.mandar(de(CARLOS, 'Bom dia a todos, tudo bem com vocês?'));
+  await expect(aviso(page)).toBeVisible();
+  const a = await caixa(area(page));
+  const v = await caixa(page.locator('[data-papel="canto"]'));
+  const t = await caixa(aviso(page));
+  dentro(t, a, 'o aviso');
+  const separados =
+    t.x + t.width <= v.x || v.x + v.width <= t.x || t.y + t.height <= v.y || v.y + v.height <= t.y;
+  expect(separados, `o aviso ${JSON.stringify(t)} e o Você ${JSON.stringify(v)}`).toBe(true);
+  return { a, v, t };
+}
+
+test('o aviso não cobre o Você', async ({ page }) => {
+  // Em 1280×800 a área é larga: o aviso fica no meio, embaixo, e o Você no canto, ao lado dele.
+  const { a, t } = await oAvisoEOVoce(page);
+  expect(a.width).toBe(1232);
+  expect(a.y + a.height - (t.y + t.height)).toBeCloseTo(8, 0);
+});
+
+test.describe('na janela de 1000×700', () => {
+  test.use({ viewport: { width: 1000, height: 700 } });
+
+  test('o aviso não cobre o Você: ainda cabe ao lado', async ({ page }) => {
+    const { a, t } = await oAvisoEOVoce(page);
+    expect(a.width).toBe(952);
+    expect(a.y + a.height - (t.y + t.height)).toBeCloseTo(8, 0);
+  });
+});
+
+test.describe('na janela de 808×700, com a área de 760 px', () => {
+  test.use({ viewport: { width: 808, height: 700 } });
+
+  test('o aviso não cobre o Você: sobe para cima dele', async ({ page }) => {
+    // Com a área de até 760 px, o aviso no meio cobriria o Você: ele sobe para 8 px acima dele.
+    const { a, v, t } = await oAvisoEOVoce(page);
+    expect(a.width).toBe(760);
+    expect(v.y - (t.y + t.height)).toBeCloseTo(8, 0);
+    expect(t.width).toBe(440);
+  });
+});
+
+test.describe('na janela de 809×700, com a área de 761 px', () => {
+  test.use({ viewport: { width: 809, height: 700 } });
+
+  test('o aviso fica embaixo: a área tem mais de 760 px', async ({ page }) => {
+    const { a, t } = await oAvisoEOVoce(page);
+    expect(a.width).toBe(761);
+    expect(a.y + a.height - (t.y + t.height)).toBeCloseTo(8, 0);
+  });
+});
+
+test('o texto do aviso é texto, numa linha', async ({ page }) => {
+  const { canal } = await naReuniaoCom(page, TRES);
+  canal.mandar(de(CARLOS, '<b>oi</b>\nsegunda linha'));
+  await expect(linhaDoAviso(page)).toHaveText('<b>oi</b> segunda linha');
+  expect(await aviso(page).locator('b').count()).toBe(0);
+  // Uma linha: 14 px × 1,4.
+  expect((await caixa(linhaDoAviso(page))).height).toBeCloseTo(19.6, 0);
+  const comUmaLinha = (await caixa(aviso(page))).height;
+
+  // O texto de 1.000 letras é cortado com reticências, sem alargar o aviso nem dobrar a linha.
+  canal.mandar(de(CARLOS, 'k'.repeat(1000)));
+  await expect(linhaDoAviso(page)).toHaveText('k'.repeat(1000));
+  expect(await caixa(aviso(page))).toMatchObject({ width: 440, height: comUmaLinha });
+  expect(
+    await linhaDoAviso(page).evaluate(
+      (l) => l.scrollWidth > l.clientWidth && getComputedStyle(l).textOverflow === 'ellipsis',
+    ),
+  ).toBe(true);
+  // O nome comprido, com sinais de HTML, também: é texto, numa linha, e o botão continua inteiro no aviso.
+  canal.mandar({ tipo: 'mensagem', de: ANA.quem, nome: `<i>${'N'.repeat(70)}</i>`, voce: false, texto: 'x' });
+  await expect(quemEscreveu(page)).toHaveText(`<i>${'N'.repeat(70)}</i> escreveu`);
+  expect(await aviso(page).locator('i').count()).toBe(0);
+  const t = await caixa(aviso(page));
+  expect(t).toMatchObject({ width: 440, height: comUmaLinha });
+  dentro(await caixa(abrirOChat(page)), t, 'o Abrir o chat');
+});
+
+test('o leitor de tela ouve cada mensagem dos outros, também a repetida', async ({ page }) => {
+  const { canal } = await naReuniaoCom(page, TRES);
+  // Cada texto que entra na região que os leitores de tela anunciam.
+  await page.evaluate(() => {
+    const w = window as unknown as { ditos: string[] };
+    w.ditos = [];
+    const regiao = document.querySelector('[data-campo="anuncio"]') as HTMLElement;
+    new MutationObserver((mudancas) => {
+      for (const m of mudancas) for (const no of m.addedNodes) w.ditos.push(no.textContent ?? '');
+    }).observe(regiao, { childList: true });
+  });
+  const ditos = () => page.evaluate(() => (window as unknown as { ditos: string[] }).ditos);
+
+  // Duas mensagens iguais: a região muda duas vezes.
+  canal.mandar(de(CARLOS, 'Oi'));
+  canal.mandar(de(CARLOS, 'Oi'));
+  await expect.poll(ditos).toEqual(['Carlos Lima escreveu: Oi', 'Carlos Lima escreveu: Oi']);
+  // Com o chat aberto, ela também muda, e o texto vai numa linha.
+  await oChat(page).click();
+  await expect(painel(page)).toBeVisible();
+  canal.mandar(de(ANA, 'linha 1\nlinha 2'));
+  await expect.poll(ditos).toEqual([
+    'Carlos Lima escreveu: Oi',
+    'Carlos Lima escreveu: Oi',
+    'Ana Souza escreveu: linha 1 linha 2',
+  ]);
+  // A mensagem da própria pessoa não é dita: nem quando sai, nem quando a resposta chega.
+  await escrever(page, 'A minha');
+  canal.mandar(minha('m4', 'A minha'));
+  await expect(mensagem(page, 4)).toHaveAttribute('data-situacao', 'enviada');
+  expect(await ditos()).toHaveLength(3);
+
+  // Quem fala é a região de sempre; o aviso que aparece não é uma região falada, para a mensagem não ser dita duas
+  // vezes.
+  await expect(anuncio(page)).toHaveAttribute('aria-live', 'polite');
+  expect(
+    await aviso(page).evaluate((el) => [
+      el.getAttribute('role'),
+      el.getAttribute('aria-live'),
+      el.closest('[aria-live], [role="status"], [role="alert"]') === null,
+    ]),
+  ).toEqual([null, null, true]);
+});
+
 // ---- No celular (390×844, com o toque). ----
 
 test.describe('no celular', () => {
@@ -797,6 +1039,39 @@ test.describe('no celular', () => {
     // E o que a parte visível fizer depois não as traz de volta.
     await visivel({ height: 400, offsetTop: 0 }, 'resize');
     expect(await medidasNoStyle()).toEqual(['', '', '']);
+  });
+});
+
+test.describe('no celular, com o chat fechado', () => {
+  test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+
+  test('no celular, o número fica no canto do botão', async ({ page }) => {
+    const { canal } = await naReuniaoCom(page, TRES);
+    const antes = await caixa(oChat(page));
+    canal.mandar(de(CARLOS, 'Oi'));
+    await expect(numero(page)).toHaveText('1');
+    // Dentro do botão, em cima, à direita: a 8 px de cima e a 14 px da direita (e o 1 px da borda), com 20 px.
+    const b = await caixa(oChat(page));
+    const n = await caixa(numero(page));
+    expect(n.y - b.y).toBeCloseTo(9, 0);
+    expect(b.x + b.width - (n.x + n.width)).toBeCloseTo(15, 0);
+    expect([n.width, n.height]).toEqual([20, 20]);
+    // Sem cobrir o texto "Chat" (ele fica no canto do desenho, como no quadro), e sem mudar o tamanho do botão.
+    const p = await caixa(oChat(page).getByText('Chat', { exact: true }));
+    expect(p.x + p.width <= n.x || n.x + n.width <= p.x || p.y + p.height <= n.y || n.y + n.height <= p.y).toBe(true);
+    expect(b).toEqual(antes);
+    await expect(botao(page, 'Chat, 1 mensagem nova')).toBeVisible();
+  });
+
+  test('no celular, o aviso não cobre o Você: fica 8 px acima dele', async ({ page }) => {
+    const { a, v, t } = await oAvisoEOVoce(page);
+    expect(a.width).toBe(374);
+    expect(t.width).toBe(354);
+    expect(v.y - (t.y + t.height)).toBeCloseTo(8, 0);
+    // O toque no Abrir o chat abre o painel, que cobre a tela.
+    await abrirOChat(page).tap();
+    await expect(painel(page)).toHaveAttribute('data-modo', 'cobre');
+    await expect(tituloDoPainel(page)).toBeFocused();
   });
 });
 

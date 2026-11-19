@@ -102,9 +102,19 @@ export function quem(m) {
   return m.nome || 'Participante';
 }
 
+/** O texto numa linha só: as quebras de linha e os espaços seguidos viram um espaço. */
+export function numaLinha(texto) {
+  return texto.replace(/\s+/g, ' ').trim();
+}
+
+/** A primeira linha do aviso curto de uma mensagem de outra pessoa: "<nome> escreveu". */
+export function escreveu(m) {
+  return `${m.nome || 'Participante'} escreveu`;
+}
+
 /** O que o leitor de tela ouve de uma mensagem de outra pessoa: "<nome> escreveu: <o texto, numa linha>". */
 export function dito(m) {
-  return `${m.nome || 'Participante'} escreveu: ${m.texto.replace(/\s+/g, ' ').trim()}`;
+  return `${escreveu(m)}: ${numaLinha(m.texto)}`;
 }
 
 /** O texto da mensagem que não foi, pelo motivo (seção 10 da spec: só o limite tem o motivo escrito). */

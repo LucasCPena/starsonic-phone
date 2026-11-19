@@ -6,9 +6,11 @@ import {
   MAX_TEXTO,
   contagem,
   dito,
+  escreveu,
   falha,
   hora,
   nomeDoBotao,
+  numaLinha,
   partes,
   quem,
   textoLimpo,
@@ -184,6 +186,19 @@ test('o que o leitor de tela ouve', () => {
   assert.equal(dito({ nome: 'Carlos Lima', texto: 'linha 1\nlinha 2' }), 'Carlos Lima escreveu: linha 1 linha 2');
   assert.equal(dito({ nome: '', texto: 'Oi' }), 'Participante escreveu: Oi');
   assert.equal(dito({ nome: 'Carlos Lima', texto: 'a\n\n\nb' }), 'Carlos Lima escreveu: a b');
+});
+
+test('o texto numa linha só, e quem escreveu, para o aviso curto', () => {
+  assert.equal(numaLinha('linha 1\nlinha 2'), 'linha 1 linha 2');
+  assert.equal(numaLinha('  a \n\n\n b  '), 'a b');
+  assert.equal(numaLinha('sem quebra'), 'sem quebra');
+  assert.equal(numaLinha('<b>oi</b>\nsegunda'), '<b>oi</b> segunda');
+  assert.equal(escreveu({ nome: 'Carlos Lima' }), 'Carlos Lima escreveu');
+  assert.equal(escreveu({ nome: '' }), 'Participante escreveu');
+  assert.equal(escreveu({}), 'Participante escreveu');
+  // O que o leitor de tela ouve é as duas coisas juntas.
+  const m = { nome: 'Carlos Lima', texto: 'linha 1\nlinha 2' };
+  assert.equal(dito(m), `${escreveu(m)}: ${numaLinha(m.texto)}`);
 });
 
 test('o texto da mensagem que não foi', () => {

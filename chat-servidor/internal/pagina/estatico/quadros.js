@@ -13,6 +13,8 @@ const MAX_PIXELS_POR_PONTO = 2;
 const AFASTAR_DO_GRANDE = 14;
 /** A maior largura da moldura do mosaico inteiro, em px (a de antes do palco). */
 const MAIOR_MOSAICO_INTEIRO = 1120;
+/** O aviso curto, quando sobe, fica a esta distância acima do Você do canto, em px. */
+const ACIMA_DO_VOCE = 8;
 
 // Os textos: as etiquetas e os nomes ditos. A tela "minha" é a de quem a compartilha (o voce dela no palco).
 const nomeDe = (q) => (q.nome === '' ? 'Participante' : q.nome);
@@ -183,6 +185,10 @@ export function criarQuadros({ raiz, relogio }) {
     moldura.style.width = '';
     const area = { l: raiz.clientWidth, a: raiz.clientHeight };
     arrumado = arrumar({ palco: p, area, emPe, aumentado });
+    // O lugar do aviso curto na área estreita (pagina.css): do fundo da área até um pouco acima do Você do canto.
+    const canto = arrumado.quadros.find((q) => q.papel === 'canto');
+    if (canto) raiz.style.setProperty('--acima-do-voce', `${area.a - canto.y + ACIMA_DO_VOCE}px`);
+    else raiz.style.removeProperty('--acima-do-voce');
     const doPalco = p?.quadros ?? [];
     const minhas = new Set(doPalco.filter((q) => q.tela && q.voce).map(chaveDe));
     const semCamera = new Set(doPalco.filter((q) => q.semCamera).map(chaveDe));
@@ -391,6 +397,7 @@ export function criarQuadros({ raiz, relogio }) {
   function tirarTudo() {
     for (const { el } of quadros.values()) el.remove();
     quadros.clear();
+    raiz.style.removeProperty('--acima-do-voce');
     faixa?.remove();
     faixa = null;
     arrumado = null;
