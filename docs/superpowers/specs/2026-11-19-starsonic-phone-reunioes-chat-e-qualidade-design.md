@@ -241,7 +241,7 @@ Um número que o navegador não dá não conta contra a pessoa.
 
 - **O texto nunca vira HTML.** A regra de segurança da página (CSP) continua a mesma, sem script nem estilo dentro da página.
 - **Os links** só nascem de `http://` e `https://`, mostram o endereço inteiro e abrem em outra aba, sem dar à outra página acesso a esta.
-- **Só quem está na reunião manda e recebe.** Quem saiu ou foi tirado não recebe mais nada, como no palco.
+- **Só quem foi aceito e está na reunião, ou entrando nela, manda e recebe.** Quem saiu ou foi tirado não recebe mais nada, como no palco.
 - **O servidor não guarda mensagem nenhuma,** nem na memória depois de repassar, nem no banco, nem nos registros.
 - **O sinalizador não manda nada** a servidor nenhum.
 - **O limite por canal** segura quem tenta encher o chat. Quem insiste é tirado por um colega, como hoje.
@@ -309,7 +309,7 @@ Ele pediu "o chat na reunião" e o "sinalizador de qualidade", na reunião do na
 7. **Os limites da conta** do sinalizador (seção 7.4).
 8. **O chat da reunião no app fica para a etapa 2.**
 
-Um revisor que não participou deste desenho o leu como quem vai construir, e fez seis perguntas. Nenhuma precisou do responsável: duas foram respondidas medindo o navegador contra o FreeSWITCH de verdade (seção 7.4), uma pelo que a página já faz, e três são escolha deste desenho:
+Um revisor que não participou deste desenho o leu como quem vai construir, e fez seis perguntas. Nenhuma precisou do responsável: duas foram respondidas medindo o navegador contra o FreeSWITCH de verdade (seção 7.4), duas pelo que já existe (os textos do quadro, que entraram na seção 4.4, e o que a página já faz quando a conexão cai), e duas por escolha deste desenho. As escolhas que saíram dali:
 
 9. **A imagem parada saiu da conta do sinalizador,** e entrou o "nada chegou". Uma imagem que para com o som chegando é, quase sempre, problema do servidor, e não da internet de quem vê.
 10. **Quem pode mandar é quem recebe** (seção 7.1), com uma regra só.

@@ -192,7 +192,7 @@ O hub já fecha a ligação de um computador que não responde: ele manda um pin
 ## 11. Entrega e etapas
 
 1. **O servidor do chat e as páginas.** Já mostra "No chat" e "Offline" para os apps de hoje. É uma versão do chat.
-2. **O app do Windows.** A partir dele aparecem o "Online" e o "Sem registro". É uma versão do app, que chega aos PCs pela atualização automática.
+2. **O app do Windows.** A partir dele aparecem o "Online" e o "Sem registro". É uma versão do app, que chega a cada PC quando a pessoa aceita a pergunta de atualização dele. Um PC em que ninguém aceita continua como "No chat".
 
 O guia do chat (`docs/chat-servidor.md`) ganha a explicação dos estados, e o protocolo (`docs/chat-protocolo.md`) ganha a operação e o limite.
 
