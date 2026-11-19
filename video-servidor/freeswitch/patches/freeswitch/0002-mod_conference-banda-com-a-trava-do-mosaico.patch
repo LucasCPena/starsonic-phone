@@ -1,0 +1,66 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Starsonic Phone <starsonic-phone@example.invalid>
+Date: Thu, 19 Nov 2026 00:00:00 +0000
+Subject: [PATCH] mod_conference: o vid-bandwidth pega o tamanho do mosaico com
+ a trava dele
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Com a correção anterior, a thread do mosaico troca a imagem do mosaico
+(canvas->img) no começo de uma volta, com a trava do mosaico: ela solta a
+imagem antiga e põe a nova, e entre uma coisa e outra o ponteiro é nulo.
+
+O conference_api_sub_vid_bandwidth lia canvas->img->d_w e d_h só com a
+trava dos membros. Um vid-bandwidth que chegasse nesse instante lia o
+ponteiro nulo, e o processo caía. É raro (a janela é o tempo de alocar a
+imagem nova), mas o agente manda o vid-bandwidth logo depois do vid-res
+em todo começo e fim de compartilhamento de tela.
+
+Com esta correção, o comando lê o tamanho do mosaico uma vez, com a trava
+do mosaico, e não lê mais canvas->img. O tamanho e a imagem são trocados
+juntos com essa trava, e a imagem tem sempre esse tamanho.
+---
+ .../applications/mod_conference/conference_api.c  | 15 ++++++++++++---
+ 1 file changed, 12 insertions(+), 3 deletions(-)
+
+diff --git a/src/mod/applications/mod_conference/conference_api.c b/src/mod/applications/mod_conference/conference_api.c
+index 6b76cc4..5f60deb 100644
+--- a/src/mod/applications/mod_conference/conference_api.c
++++ b/src/mod/applications/mod_conference/conference_api.c
+@@ -1730,9 +1730,18 @@ switch_status_t conference_api_sub_vid_bandwidth(conference_obj_t *conference, s
+ 		if (conference->canvases[i]) {
+ 			mcu_canvas_t *canvas = conference->canvases[i];
+ 			int j;
++			int canvas_w, canvas_h;
++
++			/* The muxing thread may be giving the canvas a new size right now (conference_video_check_new_res):
++			   holding canvas->mutex, it frees canvas->img and allocates another one, and in between the pointer
++			   is NULL. So the size is taken once, under that mutex, and canvas->img is not read here. */
++			switch_mutex_lock(canvas->mutex);
++			canvas_w = canvas->width;
++			canvas_h = canvas->height;
++			switch_mutex_unlock(canvas->mutex);
+ 
+ 			for (j = 0; j < canvas->write_codecs_count; j++) {
+-				int w = canvas->width, h = canvas->height;
++				int w = canvas_w, h = canvas_h;
+ 				
+ 				if ((zstr(group) || !strcmp(group, switch_str_nil(canvas->write_codecs[j]->video_codec_group)))) {
+ 					switch_core_codec_control(&canvas->write_codecs[j]->codec, SCC_VIDEO_BANDWIDTH,
+@@ -1752,13 +1761,13 @@ switch_status_t conference_api_sub_vid_bandwidth(conference_obj_t *conference, s
+ 
+ 					if (w && h) {
+ 						switch_img_free(&canvas->write_codecs[j]->scaled_img);
+-						if (w != canvas->img->d_w || h != canvas->img->d_h) {
++						if (w != canvas_w || h != canvas_h) {
+ 							canvas->write_codecs[j]->scaled_img = switch_img_alloc(NULL, SWITCH_IMG_FMT_I420, w, h, 16);
+ 						}
+ 					}
+ 
+ 					if (!sdiv && w) {
+-						sdiv = (float)canvas->img->d_w / w;
++						sdiv = (float)canvas_w / w;
+ 					}
+ 
+ 					
