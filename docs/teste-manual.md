@@ -19,6 +19,7 @@ Este roteiro é do app novo do Windows (a partir da `0.1.0`: a interface em WebV
 - Para a seção 22 (0.2.0-rc.1, o chat): o quadro "Starsonic Phone — telas do chat" aberto; os dois PCs, o W10 e o W11, com a 0.2.0-rc.1; três ramais de teste, o **A**, o **B** e o **C** (podem ser os da seção 16), cada um já conectado à central no PC onde vai entrar no chat (uma conta que nunca se conectou à central num PC não entra no chat nele); o usuário e a senha do administrador da página de administração do chat, e a senha da área do administrador do app (a da seção 17), as duas com o responsável, fora do repositório; um PDF, uma foto do celular (um .jpg), um programa pequeno (um .exe, como o instalador do app), o Excel e o PowerPoint.
 - Para a seção 25 (reuniões com link, etapa 1, pelo navegador): o chat da versão com a página das reuniões (`<endereço do chat>`) e o servidor de vídeo ligados, com as reuniões liberadas para uma empresa (o guia `docs/video-servidor.md`, passos 3 e 4); o usuário e a senha do administrador da página de administração do chat, com o responsável, fora do repositório; um **PC** com o Chrome e o Edge, com webcam e microfone; um **Android** com o Chrome; um **iPhone** com o Safari; os dois celulares com internet do chip (4G ou 5G), além do Wi-Fi; mais três ou quatro aparelhos ou janelas para a linha das dez pessoas; e, para a linha da rede fechada, uma rede que só deixa sair pela porta 443 (a de um cliente, por exemplo).
 - Para a seção 26 (o palco da reunião, etapa 1c): o chat na `0.2.0-rc.4` e o servidor de vídeo na `0.1.0-rc.3`, com a ordem de atualizar do começo da seção (a linha 26.1 se faz com o chat já novo e o servidor de vídeo ainda antigo); o quadro "Starsonic — reunião no navegador" (as telas 12 a 19) aberto; os mesmos aparelhos da seção 25 (o PC com o Chrome e o Edge, o Android com o Chrome e o iPhone com o Safari, com webcam e microfone no PC); mais três ou quatro aparelhos ou janelas, para ter de 3 a 10 pessoas; um **segundo PC**, só para ler a tela compartilhada do outro lado; e, no PC que compartilha, um monitor de **1920×1080** e uma planilha (o Excel, por exemplo) com letra de tamanho 11.
+- Para a seção 27 (a correção do FreeSWITCH): o servidor de vídeo na `0.1.0-rc.4` e o chat como está, na `0.2.0-rc.4`; a reunião de teste da seção 25; o PC e o celular; e, para o 27.3, cinco aparelhos ou janelas do navegador ao todo.
 
 Marque cada linha nas colunas W10 e W11. Se algo não sair como o esperado, anote a versão, o PC, o passo e o que apareceu (de preferência com um print) e mande o diagnóstico (Menu → Sobre → Enviar diagnóstico). O log fica em `%APPDATA%\Starsonic Phone\diagnostico.log`; o do instalador, em `%LOCALAPPDATA%\Starsonic Phone\instalador.log`.
 
@@ -511,33 +512,12 @@ Na ordem contrária, a página antiga mostraria o mosaico novo cru, sem os nomes
 
 A reunião de teste é a da seção 25: na administração do chat, `Reuniões`, cartão `REUNIÃO DE TESTE`, `Criar a reunião de teste`. Guarde o link fora do repositório. Em cada aparelho ou janela, escreva um nome diferente (o nome do aparelho, por exemplo): é pelo nome que você confere o quadro de cada pessoa.
 
-**Um defeito conhecido (do FreeSWITCH, e não das telas que você testa).** Nesta versão, o mosaico muda de tamanho em alguns momentos: quando alguém começa ou para de compartilhar a tela; na passagem de 4 para 5 pessoas e de 9 para 10 (e na volta); e, durante um compartilhamento, de 2 para 3 e de 4 para 5 pessoas (e na volta). Numa dessas trocas, o FreeSWITCH pode falhar de dois jeitos:
+**Um defeito conhecido da `0.1.0-rc.3` (do FreeSWITCH, e não das telas que você testa).** Nesta versão do servidor de vídeo, o mosaico muda de tamanho em alguns momentos: quando alguém começa ou para de compartilhar a tela, e em algumas passagens do número de pessoas. Numa dessas trocas, a imagem pode congelar para todos, ou todos podem cair da reunião ao mesmo tempo. A `0.1.0-rc.4` do servidor de vídeo corrige isso (seção 27). Se acontecer com a `0.1.0-rc.3`:
 
-- **A imagem congela para todos.** É o jeito de um servidor com mais de 2 processadores, como o de produção. O FreeSWITCH não cai: ele fica esperando, e a imagem só volta quando as pessoas saem da reunião. Ninguém vê tela de erro: todos continuam na reunião, com a imagem parada. Enquanto isso, o mosaico das outras reuniões do servidor também não se arruma.
-- **Todos caem da reunião ao mesmo tempo**, em toda reunião que estiver no servidor de vídeo naquele instante. Isso foi visto num servidor com 2 processadores. Com mais, não foi visto nos testes, mas não está descartado. O serviço liga de novo sozinho 5 segundos depois. A página mostra `A reunião acabou`, sem botão (abra o link de novo), ou `Você saiu da reunião`, com o `Entrar de novo`.
+- **A imagem congelou para todos:** peça para todos saírem da reunião (o `Sair`, ou fechar a aba) e entrarem de novo pelo mesmo link.
+- **Todos caíram:** espere uns 10 segundos e entre de novo pelo mesmo link (ou pelo `Entrar de novo`, se ele aparecer).
 
-Nos testes de esforço, com uma troca de tamanho a cada 0,1 segundo: com 4 processadores, a imagem congelou depois de 10, de 65 e de 1.138 trocas, em três rodadas; com 2, o FreeSWITCH caiu depois de 535 trocas numa rodada e aguentou 3.000 em outra. Ou seja, pode acontecer em qualquer uma dessas trocas.
-
-Se a imagem congelar para todos:
-
-1. Peça para todos saírem da reunião (o `Sair`, ou fechar a aba) e entrarem de novo pelo mesmo link da reunião de teste. Nos testes de esforço, isso foi medido quatro vezes: o FreeSWITCH voltou a funcionar na hora em que a pessoa certa saiu, sem reiniciar nada. Em três delas foi a primeira pessoa a sair; em uma, a segunda.
-2. Se, 2 minutos depois de todos saírem, a reunião não abrir de novo, reinicie o FreeSWITCH. Na VM do servidor de vídeo, rode:
-
-```
-sudo systemctl restart starsonic-freeswitch
-```
-
-Se todos caírem, espere uns 10 segundos e entre de novo pelo mesmo link (ou pelo `Entrar de novo`, se ele aparecer). Para confirmar que foi isso, na VM do servidor de vídeo, rode:
-
-```
-sudo journalctl -u starsonic-freeswitch -n 50 --no-pager
-```
-
-Se foi há pouco, ele mostra o serviço terminando e ligando de novo sozinho (pode haver linhas `VPX encode error` um pouco antes).
-
-Nos dois casos, anote a hora e o que estava acontecendo (por exemplo, "o PC começou a compartilhar a tela"), siga com o roteiro, e conte no fim.
-
-O conserto é no próprio FreeSWITCH. Ele já foi escrito e provado num pacote de teste (`docs/superpowers/specs/2026-11-19-starsonic-phone-freeswitch-troca-de-tamanho-design.md`), e está previsto para a `0.1.0-rc.4` do servidor de vídeo. Até lá, esta versão é para testar as telas: nenhuma reunião de verdade nela.
+O resto está no guia do servidor de vídeo ("A imagem congelou para todos, ou todos caíram da reunião ao mesmo tempo", no passo 9 do `docs/video-servidor.md`). Anote a hora e o que estava acontecendo, siga com o roteiro, e conte no fim. A `0.1.0-rc.3` é para testar as telas: nenhuma reunião de verdade nela.
 
 | # | Passo | Resultado esperado | PC | Celular |
 |---|-------|--------------------|----|---------|
@@ -564,6 +544,33 @@ sudo systemctl restart starsonic-chat
 ```
 
 **Conhecido:** a câmera de um celular em pé chega estreita, com faixas escuras dos lados, nos quadros de quem está no PC: é o esperado, e não uma falha.
+
+## 27. A correção do FreeSWITCH (servidor de vídeo `0.1.0-rc.4`)
+
+Na `0.1.0-rc.3`, a imagem de uma reunião podia congelar para todos, ou todos podiam cair, quando o mosaico mudava de tamanho (o defeito conhecido da seção 26). A `0.1.0-rc.4` troca o FreeSWITCH por um corrigido (`docs/superpowers/specs/2026-11-19-starsonic-phone-freeswitch-troca-de-tamanho-design.md`). As telas são as mesmas, e o chat não muda: ele fica na `0.2.0-rc.4`.
+
+Atualize só o servidor de vídeo (`docs/video-servidor.md`, passo 5), num horário sem reuniões. A reunião de teste é a da seção 25. Antes de começar o 27.2, rode na VM do servidor de vídeo o segundo comando que está logo abaixo da tabela e guarde as duas linhas que ele mostra: elas servem para o 27.4.
+
+| # | Passo | Resultado esperado | PC | Celular |
+|---|-------|--------------------|----|---------|
+| 27.1 | Depois de atualizar o servidor de vídeo para a `0.1.0-rc.4`, rode na VM dele o primeiro comando que está logo abaixo da tabela. | Uma das linhas começa por `patch freeswitch 0001-mod_conference-tamanho-na-thread-do-mosaico.patch`: o FreeSWITCH instalado é o corrigido. | ☐ | ☐ |
+| 27.2 | Na reunião de teste, com o PC e o celular: no PC, clique em `Compartilhar a tela`, espere a tela aparecer no celular e pare de compartilhar. Repita 10 vezes seguidas. | A imagem nunca congela e ninguém cai. A tela aparece e some a cada vez, e os quadros das pessoas voltam. | ☐ | ☐ |
+| 27.3 | Com 4 aparelhos ou janelas na reunião de teste, entre com um quinto e saia, 5 vezes seguidas. | O mesmo: a passagem de 4 para 5 pessoas também muda o tamanho do mosaico. A imagem nunca congela e ninguém cai. | ☐ | ☐ |
+| 27.4 | No fim, rode de novo na VM do servidor de vídeo o segundo comando que está logo abaixo da tabela. | As duas linhas são iguais às de antes do 27.2: o `NRestarts` não subiu, e a hora do `ActiveEnterTimestamp` não mudou. O FreeSWITCH não reiniciou durante o teste. | ☐ | ☐ |
+
+Para o 27.1, rode na VM do servidor de vídeo:
+
+```
+cat /opt/starsonic-freeswitch/VERSOES.txt
+```
+
+Para o 27.4 (antes do 27.2 e no fim), rode na VM do servidor de vídeo:
+
+```
+sudo systemctl show starsonic-freeswitch -p NRestarts -p ActiveEnterTimestamp
+```
+
+Se a imagem congelar ou alguém cair, anote a hora e o que estava acontecendo, e veja a entrada "A imagem congelou para todos, ou todos caíram da reunião ao mesmo tempo" do guia do servidor de vídeo (passo 9).
 
 ## Onde cada critério de sucesso é verificado
 
@@ -594,4 +601,5 @@ sudo systemctl restart starsonic-chat
 | Reuniões, etapa 1c (spec do palco, §3): quando alguém entra ou sai, as outras pessoas não trocam de lugar na imagem, de 1 a 4 pessoas e de 5 a 9 | o `go test` do `video-servidor` (`TestPlanejar_QuemEntraPegaAMenorLivre`, `TestPlanejar_QuemSaiDoMeioNaoMexeNosOutros`, `TestPlanejar_DeQuatroParaCinco`, `TestPlanejar_DeCincoParaQuatro` e `TestPlanejar_AMesmaPessoaDeNovo`, em `internal/mosaico/arranjo_test.go`; `TestSalas_Celulas`, `TestSalas_CincoPessoas` e `TestSalas_QuemSaiSoltaACelula`, em `internal/salas/salas_test.go`); o de ponta a ponta (`palco.spec.ts`: "quem entra e quem sai não muda os outros de lugar" e "quem entra de novo fica no mesmo lugar": a pessoa que volta, com outra pessoa fora da reunião e uma célula livre abaixo da dela, fica com a mesma célula) | 26.3, 26.8, 26.11 |
 | Reuniões, etapa 1c (spec do palco, §3): uma reunião de 10 pessoas usa menos de 50% da CPU da VM de 6 vCPU | nenhum para a CPU, que só se mede na VM do responsável (spec do palco, seção 7). O `go test` confere o layout de 10 pessoas: `TestPlanejar_Dez` e `TestLayouts_Tabela` (1920×810, 12 células) | 26.8 |
 | Reuniões, etapa 1c (spec do palco, §3): a página nova com um servidor de vídeo antigo mostra o mosaico inteiro, como na `chat-v0.2.0-rc.3` | o `palco.test.mjs` ("sincronizar: sem palco, espera 3000 ms e mostra o mosaico" e "sincronizar: o palco que some volta ao prazo de 3000 ms"); o Playwright da página (`palco.spec.ts`: "sem palco, o mosaico inteiro depois de 3 s" e "o tamanho que não confere vira o mosaico inteiro") | 26.1 |
+| A correção do FreeSWITCH (spec da correção, seção 5): o mosaico muda de tamanho mil vezes seguidas, com uma pessoa entrando e saindo no meio, sem a imagem congelar e sem o FreeSWITCH cair; e o pacote instalado é o corrigido | o `esforco.spec.ts` do `video-servidor/e2e` (de ponta a ponta; no GitHub, com 4 processadores de verdade); o `conferir-pacote.sh`, que recusa um pacote sem as correções de `freeswitch/patches` (o passo "O conferir recusa um pacote sem as correções" do workflow `video`) | 27.1 a 27.4 |
 | Tudo passa nos testes automáticos e neste roteiro | os workflows `build`, `android` e `chat` | todo o roteiro |

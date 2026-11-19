@@ -1,7 +1,7 @@
 # Starsonic Phone — a correção do FreeSWITCH na troca de tamanho do mosaico — desenho curto
 
 - **Data:** 19/11/2026
-- **Status:** para o responsável aprovar. Ele escolheu, em 18/11 às 15:37, receber a `0.1.0-rc.3` do servidor de vídeo para testar as telas, com esta correção em seguida, e deu o "pode seguir" dela em 19/11 às 00:24.
+- **Status:** aprovado e construído em 19/11. O responsável escolheu, em 18/11 às 15:37, receber a `0.1.0-rc.3` do servidor de vídeo para testar as telas, com esta correção em seguida; deu o "pode seguir" dela em 19/11 às 00:24; e, às 03:50, com este desenho e o plano na mão, respondeu "Continue". O plano é o `docs/superpowers/plans/2026-11-19-video-freeswitch-troca-de-tamanho.md`. As seções 4, 5 e 6 dizem o que mudou do desenho para o que foi construído.
 - **Base:** o risco 11 da spec de 18/11 (`2026-11-18-starsonic-phone-reunioes-palco-design.md`). Este desenho resolve aquele risco.
 - **Tamanho:** uma mudança pequena. Um arquivo de correção para o FreeSWITCH, um teste novo, e os guias.
 
@@ -25,7 +25,7 @@ Desde a etapa do palco, o mosaico muda de tamanho: no começo e no fim de um com
 - A thread do comando solta a imagem antiga do mosaico e cria uma nova.
 - A thread do mosaico pode estar, nesse instante, codificando a imagem antiga. Ela usa uma imagem que já foi solta.
 - Às vezes isso só estraga uma imagem, e o registro mostra um `VPX encode error`. Às vezes o processo cai, e o serviço volta 5 segundos depois.
-- A queda só foi vista com 2 processadores. Com 4, os mesmos erros de imagem apareceram, mas a imagem congelou antes de o processo cair.
+- A queda foi vista primeiro com 2 processadores e, depois, também com 4, numa rodada do teste novo (seção 5). Com 4, a imagem congelada é o mais comum.
 
 O que foi lido no código do FreeSWITCH (`src/mod/applications/mod_conference/conference_video.c`, no commit do `video-servidor/deps.lock`):
 
@@ -67,16 +67,18 @@ Se o agente manda o `vid-res` e o `vid-layout` um atrás do outro, como faz hoje
 ## 4. O que muda no repositório
 
 - **`video-servidor/freeswitch/patches/freeswitch/0001-mod_conference-tamanho-na-thread-do-mosaico.patch`:** a correção, no formato do `git format-patch`, contra o commit fixado. O `construir.sh` já aplica o que está nessa pasta, o pacote das fontes já a leva junto (a licença do FreeSWITCH pede o código das mudanças), e o cache do build no GitHub já olha para ela. É o primeiro arquivo da pasta.
-- **`video-servidor/freeswitch/construir.sh`:** o `VERSOES.txt` do pacote passa a ter uma linha para cada correção aplicada (`patch freeswitch 0001-…`, com o SHA-256 do arquivo). Assim dá para ver, num servidor, se o FreeSWITCH instalado é o corrigido. E o build para se a pasta `patches/` tiver uma pasta que não é de nenhum projeto: é o jeito de uma correção ficar de fora sem ninguém ver.
+- **`video-servidor/freeswitch/construir.sh`:** o `VERSOES.txt` do pacote passa a ter uma linha para cada correção aplicada (`patch freeswitch 0001-…`, com o SHA-256 do arquivo). Assim dá para ver, num servidor, se o FreeSWITCH instalado é o corrigido. E o build para se a pasta `patches/` tiver qualquer coisa que não seja `patches/<projeto>/<nome>.patch` (uma pasta com outro nome, um arquivo com outra extensão ou fora do lugar): é o jeito de uma correção ficar de fora sem ninguém ver.
 - **`video-servidor/freeswitch/conferir-pacote.sh`:** falha se as correções do `VERSOES.txt` do pacote não forem exatamente as da pasta `patches/`, pelo nome e pelo SHA-256. Um pacote montado sem a correção não passa, e um passo do GitHub prova essa recusa.
 - **`video-servidor/freeswitch/LEIA-ME-FONTES.txt`:** uma frase dizendo que hoje há uma correção, e para quê.
-- **`video-servidor/e2e/esforco.spec.ts`** e um ajudante pequeno para falar com o FreeSWITCH: um teste novo, que fica para sempre. Duas pessoas na reunião de teste, e 1.000 trocas de tamanho seguidas, uma a cada 0,02 s; no meio delas, uma terceira pessoa entra e sai duas vezes. Ele falha se um comando ficar 5 s sem resposta (e diz em qual troca, e se o FreeSWITCH continua de pé), se uma resposta não for `+OK`, se aparecer um dos dois `VPX encode error` do defeito (o do tamanho e o do formato da imagem), ou se no fim os dois tamanhos não chegarem com as duas câmeras no mosaico. Leva cerca de meio minuto. No GitHub ele roda em 4 processadores, a cada mudança. Sem a correção, nesse ritmo e com 4 processadores, o FreeSWITCH congelou nas três rodadas feitas, antes da troca 500 (seção 5).
-- **Os guias:** o bloco "Um defeito conhecido" do `docs/teste-manual.md` e a entrada "A imagem congelou para todos, ou todos caíram da reunião ao mesmo tempo" do `docs/video-servidor.md` passam a dizer que o defeito foi corrigido na `0.1.0-rc.4`, e o que fazer se algo parecido acontecer mesmo assim. A spec de 18/11 marca o risco 11 como resolvido.
+- **`video-servidor/e2e/esforco.spec.ts`** e um ajudante pequeno para falar com o FreeSWITCH: um teste novo, que fica para sempre. Duas pessoas na reunião de teste, e 1.000 trocas de tamanho seguidas, uma a cada 0,02 s; no meio delas, uma terceira pessoa entra e sai duas vezes. Ele falha se um comando ficar 5 s sem resposta ou derrubar a ligação com o FreeSWITCH (e diz qual dos dois, em qual troca, e se o FreeSWITCH continua de pé), se uma resposta não for `+OK`, se aparecer um dos dois `VPX encode error` do defeito (o do tamanho e o do formato da imagem), se o agente tiver um comando do mosaico recusado, ou se no fim os dois tamanhos não chegarem com as duas câmeras no mosaico. Leva cerca de meio minuto. No GitHub ele roda em 4 processadores, a cada mudança. Sem a correção, com 4 processadores, ele falhou em todas as rodadas feitas (seção 5).
+- **`video-servidor/e2e/ambiente.ts`:** a linha `ambiente no ar`, que cada rodada de ponta a ponta escreve no começo, passa a dizer quantos processadores a máquina tem. O teste de esforço só prova a correção numa máquina com mais de 2, e nada no registro da rodada dizia quantos ela tem.
+- **`.gitattributes`:** a pasta `patches/` fica com os bytes exatos, sem troca de fim de linha: são os bytes que o `git apply` lê e que o SHA-256 do pacote confere.
+- **Os guias:** o bloco "Um defeito conhecido" do `docs/teste-manual.md` e a entrada "A imagem congelou para todos, ou todos caíram da reunião ao mesmo tempo" do `docs/video-servidor.md` passam a dizer que o defeito foi corrigido na `0.1.0-rc.4`, e o que fazer se algo parecido acontecer mesmo assim. O roteiro ganha a seção 27, com quatro linhas para conferir a correção na VM. A spec de 18/11 marca o risco 11 como resolvido.
 - **A versão:** o servidor de vídeo `0.1.0-rc.4`. O chat não muda.
 
 ## 5. As provas
 
-Todas na máquina de desenvolvimento, com o FreeSWITCH de verdade, duas pessoas na reunião de teste e o `vid-res` alternando entre 1920×1620 e 1920×1080. Para o FreeSWITCH usar as threads das pessoas numa máquina de 2 processadores, ele foi enganado para enxergar 4.
+As da máquina de desenvolvimento são com o FreeSWITCH de verdade, duas pessoas na reunião de teste e o `vid-res` alternando entre 1920×1620 e 1920×1080. Para o FreeSWITCH usar as threads das pessoas numa máquina de 2 processadores, ele foi enganado para enxergar 4. As primeiras linhas são as do desenho, com um teste de bancada. As que falam do "teste novo" são do `esforco.spec.ts`, o que ficou no repositório.
 
 | FreeSWITCH | Processadores que ele enxerga | O que foi pedido | O que aconteceu |
 |---|---|---|---|
@@ -91,6 +93,11 @@ Todas na máquina de desenvolvimento, com o FreeSWITCH de verdade, duas pessoas 
 | Corrigido | 4 | 300 trocas, uma a cada 0,02 s, e o retrato das threads no fim | As 300 com `+OK`. O retrato mostra uma thread para cada pessoa rodando: o FreeSWITCH corrigido estava mesmo no caminho de mais de 2 processadores. |
 | Corrigido | 4 | 1.000 trocas, uma a cada 0,02 s, com uma terceira pessoa entrando e saindo duas vezes no meio | As 1.000 com `+OK`. Nenhum erro no registro. O mosaico vivo no fim, com as duas câmeras. |
 | Corrigido | 4 | a suíte inteira de ponta a ponta | Os 33 testes passaram, em 9,8 minutos. O agente não viu o FreeSWITCH cair nem recusar comando. |
+| Original | 4 | o teste novo, em três rodadas | Falhou nas três. Numa, o FreeSWITCH caiu na troca 613: é a queda, vista pela primeira vez com 4 processadores. Nas outras duas, as mil trocas responderam, e o registro ficou com 123 e com 103 erros do codificador. |
+| Corrigido | 4 | o teste novo | Passou, em 26 s. Nenhum erro do codificador no registro. |
+| Corrigido | 2 | o teste novo | Passou, em 28 s. Nenhum erro do codificador no registro. |
+| Corrigido | 4 | a suíte inteira, com o teste novo | Os 34 testes passaram, em 10,1 minutos. |
+| Corrigido | 4, de verdade (as máquinas do GitHub) | os pacotes do Debian 12, do Ubuntu 24.04 e do Ubuntu 26.04 montados do zero com a correção, e a suíte inteira, com o teste novo, em três rodadas | Os três pacotes montaram com a correção, e o `conferir-pacote.sh` achou a correção em cada um e recusou um pacote sem a linha dela. Os 34 testes passaram nas três rodadas, em cerca de 10 minutos cada. Na rodada que já mostra os processadores, o registro diz `4 processadores na máquina`, e o teste novo levou 24 s. |
 
 **A falha que ficou sem explicação no GitHub em 18/11** combina com a imagem congelada. Lá são 4 processadores. Um teste esperou 20 s pelo tamanho novo do mosaico, que não chegou. Na hora da falha, a página tinha recebido 1.658 pacotes de som (33 s de ligação, a 50 por segundo) e só 474 de vídeo. O mosaico manda pelo menos 25 pacotes de vídeo por segundo, também com as câmeras paradas (medido em 19/11). Então o vídeo tinha parado de chegar havia pelo menos 14 s, com o som chegando normalmente. E os testes seguintes passaram: o teste que falha tira as pessoas da reunião, e o FreeSWITCH segue. Aquela rodada não tem o retrato das threads, que seria a prova.
 
@@ -98,7 +105,7 @@ Todas na máquina de desenvolvimento, com o FreeSWITCH de verdade, duas pessoas 
 
 1. **A correção é nossa, e não do FreeSWITCH.** Quando o FreeSWITCH do `deps.lock` mudar de versão, a correção pode não encaixar mais. O `construir.sh` para com erro nesse caso, e o teste de esforço diz se a versão nova ainda precisa dela.
 2. **O tamanho passa a mudar uma imagem depois do comando.** Nenhuma parte do agente ou da página depende do instante. A suíte inteira roda com a correção para conferir.
-3. **O teste na máquina de desenvolvimento enganou o FreeSWITCH** para ele enxergar 4 processadores, com 2 de verdade. A prova em 4 processadores de verdade é o teste de esforço rodando no GitHub, antes de a versão ser publicada.
+3. **O teste na máquina de desenvolvimento enganou o FreeSWITCH** para ele enxergar 4 processadores, com 2 de verdade. **Resolvido em 19/11:** o teste de esforço e a suíte inteira passaram no GitHub, em máquinas de 4 processadores de verdade (a última linha da tabela da seção 5).
 
 ## 7. O que fica para depois
 
@@ -106,7 +113,7 @@ Todas na máquina de desenvolvimento, com o FreeSWITCH de verdade, duas pessoas 
 
 ## 8. A suíte inteira com a correção
 
-A suíte de ponta a ponta inteira rodou na máquina de desenvolvimento com o FreeSWITCH corrigido, enxergando 4 processadores: os 33 testes passaram. No registro do FreeSWITCH ficaram só as linhas que a suíte já aceita: as seis do banco interno dele e um `VPX encode error [8:Invalid parameter:(null)]`, que o guia do vídeo já explica e que não é o erro do defeito (o do defeito fala do tamanho ou do formato da imagem). Nas 13.300 trocas das rodadas de esforço com a correção, nenhum `VPX encode error` apareceu.
+A suíte de ponta a ponta inteira rodou na máquina de desenvolvimento com o FreeSWITCH corrigido, enxergando 4 processadores: os 33 testes passaram. No registro do FreeSWITCH ficaram só as linhas que a suíte já aceita: as seis do banco interno dele e um `VPX encode error [8:Invalid parameter:(null)]`, que o guia do vídeo já explica e que não é o erro do defeito (o do defeito fala do tamanho ou do formato da imagem). Nas 13.300 trocas das rodadas de esforço com a correção, nenhum `VPX encode error` apareceu. Com o teste novo, a suíte tem 34 testes (seção 5).
 
 ## Apêndice: a correção
 
