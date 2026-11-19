@@ -238,6 +238,8 @@ test('os registros não têm nomes, códigos, senhas, bilhetes nem chaves', asyn
   expect(usados.senhas.length, 'os testes anotaram as senhas').toBeGreaterThan(0);
   expect(usados.salas.length, 'os testes anotaram as salas').toBeGreaterThan(0);
   expect(usados.bilhetes.length, 'os testes anotaram os bilhetes').toBeGreaterThan(0);
+  // O chat da reunião (mensagens.spec.ts): os textos das mensagens também são procurados nas três saídas.
+  expect(usados.textos.length, 'os testes anotaram os textos das mensagens do chat da reunião').toBeGreaterThan(0);
   for (const { nome, texto } of registros()) {
     expect(texto.length, `a saída do ${nome} não está vazia`).toBeGreaterThan(0);
   }

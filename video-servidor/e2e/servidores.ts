@@ -34,7 +34,7 @@ export const REGISTROS = {
 };
 
 /** Os nomes inventados das pessoas do teste. */
-export const NOMES = ['Ana Souza', 'Carlos Lima', 'Maria Lima', 'Bia Ramos'];
+export const NOMES = ['Ana Souza', 'Carlos Lima', 'Maria Lima', 'Bia Ramos', 'Roberto Alves'];
 
 /** O IPv4 da máquina que não é de loopback: o do perfil tls do FreeSWITCH. O ambiente.ts o escolhe, ou usa o do
  * STARSONIC_E2E_IP quando ele vem dado. */
@@ -46,12 +46,16 @@ export function ipDaMaquina(): string {
 
 // --- O que os testes anotam ----------------------------------------------------------------------------------------
 
-// Os códigos, as salas, os participantes, as senhas, os bilhetes e as chaves de volta que passaram pelos testes, para o
-// teste dos registros e a conferência do fim. Ficam num arquivo da pasta privada: um teste que falha troca o processo
-// do Playwright, e o último teste ainda os vê.
+// Os códigos, as salas, os participantes, as senhas, os bilhetes, as chaves de volta e os textos das mensagens do chat
+// da reunião que passaram pelos testes, para o teste dos registros e a conferência do fim. Ficam num arquivo da pasta
+// privada: um teste que falha troca o processo do Playwright, e o último teste ainda os vê.
 const USADOS = join(PRIVADO, 'usados.jsonl');
 
-type Tipo = 'codigos' | 'salas' | 'participantes' | 'senhas' | 'bilhetes' | 'voltas';
+type Tipo = 'codigos' | 'salas' | 'participantes' | 'senhas' | 'bilhetes' | 'voltas' | 'textos';
+
+/** O texto de uma mensagem do chat da reunião é anotado com 12 letras ou mais: um texto curto ("Oi") apareceria nas
+ * saídas por acaso. Os testes mandam textos únicos e compridos. */
+const MIN_DO_TEXTO = 12;
 
 function anotar(tipo: Tipo, valor: string): void {
   appendFileSync(USADOS, `${JSON.stringify({ tipo, valor })}\n`);
@@ -72,7 +76,7 @@ function cargaDe(senha: string): { sala?: unknown; participante?: unknown } | nu
 
 /** Anota o que houver no valor (um Acesso, uma mensagem da página, um evento, uma lista, uma resposta): os códigos das
  * reuniões, as senhas, a sala e o participante de dentro de cada senha, os bilhetes (o da página e o dos eventos do
- * app) e as chaves de volta da página. */
+ * app), as chaves de volta da página e os textos das mensagens do chat da reunião (o campo texto). */
 export function anotarSegredos(valor: unknown): void {
   if (Array.isArray(valor)) {
     valor.forEach(anotarSegredos);
@@ -85,6 +89,7 @@ export function anotarSegredos(valor: unknown): void {
       if (campo === 'participante' && /^[0-9a-f]{16}$/.test(v)) anotar('participantes', v);
       if (campo === 'bilhete' && v !== '') anotar('bilhetes', v);
       if (campo === 'volta' && v !== '') anotar('voltas', v);
+      if (campo === 'texto' && [...v].length >= MIN_DO_TEXTO) anotar('textos', v);
       if (campo === 'senha' && v !== '') {
         anotar('senhas', v);
         const carga = cargaDe(v);
@@ -106,6 +111,7 @@ export function segredosUsados(): Record<Tipo, string[]> {
     senhas: new Set(),
     bilhetes: new Set(),
     voltas: new Set(),
+    textos: new Set(),
   };
   if (existsSync(USADOS)) {
     for (const linha of readFileSync(USADOS, 'utf8').split('\n')) {
@@ -121,6 +127,7 @@ export function segredosUsados(): Record<Tipo, string[]> {
     senhas: [...usados.senhas],
     bilhetes: [...usados.bilhetes],
     voltas: [...usados.voltas],
+    textos: [...usados.textos],
   };
 }
 
@@ -149,8 +156,9 @@ export function senhaDoEsl(): string {
 }
 
 /** O que os registros têm e não podiam ter: um nome, um código de reunião, uma sala, um participante, uma senha, um
- * bilhete, uma chave de volta ou um segredo do ambiente, e qualquer senha de uso único (a carga começa por {"v":1, em
- * base64url), também as que os testes não viram. Cada achado diz a saída, o que é e a linha, nunca o valor. */
+ * bilhete, uma chave de volta, o texto de uma mensagem do chat da reunião ou um segredo do ambiente, e qualquer senha
+ * de uso único (a carga começa por {"v":1, em base64url), também as que os testes não viram. Cada achado diz a saída,
+ * o que é e a linha, nunca o valor. */
 export function segredosNosRegistros(): string[] {
   const usados = segredosUsados();
   const proibidos: Array<[string, string[]]> = [
@@ -161,6 +169,7 @@ export function segredosNosRegistros(): string[] {
     ['uma senha', usados.senhas],
     ['um bilhete', usados.bilhetes],
     ['uma chave de volta', usados.voltas],
+    ['o texto de uma mensagem', usados.textos],
     ...segredosDoAmbiente().map(([rotulo, valor]): [string, string[]] => [rotulo, [valor]]),
   ];
   const achados: string[] = [];
