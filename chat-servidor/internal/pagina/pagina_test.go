@@ -107,6 +107,10 @@ func TestPagina_Estaticos(t *testing.T) {
 		"/r/estatico/inicio.js":         "text/javascript; charset=utf-8",
 		"/r/estatico/pagina.css":        "text/css; charset=utf-8",
 		"/r/estatico/jssip-licenca.txt": "text/plain; charset=utf-8",
+		// Os arquivos do chat da reunião: como os outros, nunca vêm do cache (no dia de uma atualização, a página
+		// nova não roda com uma peça velha).
+		"/r/estatico/mensagens.js": "text/javascript; charset=utf-8",
+		"/r/estatico/painel.js":    "text/javascript; charset=utf-8",
 	}
 	for caminho, tipo := range casos {
 		rec := pedir(h, "GET", caminho)

@@ -1654,7 +1654,7 @@ test.describe(() => {
     await naReuniao(page);
     expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(true);
     expect(await page.evaluate(() => typeof navigator.mediaDevices.getDisplayMedia)).toBe('function');
-    await expect(botoesDaReuniao(page)).toHaveText(['Microfone', 'Câmera', 'Sair']);
+    await expect(botoesDaReuniao(page)).toHaveText(['Microfone', 'Câmera', 'Chat', 'Sair']);
     await expect(botao(page, 'Compartilhar a tela')).toBeHidden();
   });
 });
@@ -1664,7 +1664,7 @@ test.describe(() => {
 
   test('a janela do PC do tamanho do celular deitado, com o Compartilhar a tela', async ({ page }) => {
     await naReuniao(page);
-    await expect(botoesDaReuniao(page)).toHaveText(['Microfone', 'Câmera', 'Compartilhar a tela', 'Sair']);
+    await expect(botoesDaReuniao(page)).toHaveText(['Microfone', 'Câmera', 'Compartilhar a tela', 'Chat', 'Sair']);
   });
 });
 

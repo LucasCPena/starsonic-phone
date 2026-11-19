@@ -8,10 +8,18 @@ export const MAX_TEXTO = 1000;
 /** As mensagens que a página guarda: as últimas da reunião. */
 export const MAX_MENSAGENS = 500;
 
-/** O texto sem os espaços das pontas, ou null se ficar vazio, passar de 1.000 pontos de código ou não for texto. */
+// Os caracteres de controle que o servidor recusa numa mensagem (docs/chat-protocolo.md, seção 3): todos, menos a
+// quebra de linha. O tab não está aqui: ele vira um espaço.
+const CONTROLES = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g;
+
+/**
+ * O texto como o servidor o aceita, ou null se ficar vazio, passar de 1.000 pontos de código ou não for texto. As
+ * quebras de linha de outros sistemas viram \n; o tab (de um texto colado de uma planilha) vira um espaço; os outros
+ * caracteres de controle saem; e os espaços das pontas também. Assim, o servidor nunca recusa o que a página manda.
+ */
 export function textoLimpo(s) {
   if (typeof s !== 'string') return null;
-  const t = s.trim();
+  const t = s.replace(/\r\n?/g, '\n').replace(/\t/g, ' ').replace(CONTROLES, '').trim();
   const n = [...t].length;
   return n >= 1 && n <= MAX_TEXTO ? t : null;
 }

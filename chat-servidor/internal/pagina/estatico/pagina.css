@@ -33,6 +33,14 @@
   --reuniao-linha: #161d33;
   --reuniao-botao: #1c2540;
   --reuniao-borda: #2c3757;
+  --reuniao-cartao: #111830;
+  --reuniao-claro: #dfe5f5;
+  --reuniao-apagado: #9aa6c9;
+  --reuniao-meu: #0b5c63;
+  --reuniao-apertado: #0b3d47;
+  --reuniao-link: #7fe3e8;
+  --reuniao-link-sobre: #b3f0f2;
+  --reuniao-falha: #ffb3b3;
   --branco: #ffffff;
   --fonte: "Plus Jakarta Sans", system-ui, sans-serif;
 }
@@ -67,7 +75,8 @@ body {
 }
 
 /* O título recebe o foco da página, não do teclado: sem o contorno. */
-h1[tabindex="-1"]:focus {
+h1[tabindex="-1"]:focus,
+h2[tabindex="-1"]:focus {
   outline: none;
 }
 
@@ -107,10 +116,16 @@ p {
 .icone-16 { width: 16px; height: 16px; }
 .icone-18 { width: 18px; height: 18px; }
 .icone-20 { width: 20px; height: 20px; }
+.icone-22 { width: 22px; height: 22px; }
 .icone-24 { width: 24px; height: 24px; }
 .icone-28 { width: 28px; height: 28px; }
 .icone-30 { width: 30px; height: 30px; }
 .icone-40 { width: 40px; height: 40px; }
+
+/* O traço mais forte dos ícones do painel do chat. */
+.icone-forte {
+  stroke-width: 2.2;
+}
 
 /* A faixa de cima, com o logo e o "Reunião". */
 .topo {
@@ -748,12 +763,21 @@ main {
   font-weight: 700;
 }
 
-/* A área dos quadros: entre a faixa de cima e os controles. O quadros.js põe cada quadro no lugar que o arrumar
-   (palco.js) dá, pelo elemento.style; o tamanho da área é o de dentro dela, sem a margem. No celular em pé (o
-   data-em-pe, que o quadros.js põe com a mesma regra do arrumar), a margem é menor. */
+/* O meio da tela, entre a faixa de cima e os controles: a área dos quadros e, com o chat aberto no PC, o painel dele
+   ao lado. */
+.meio {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
+/* A área dos quadros. O quadros.js põe cada quadro no lugar que o arrumar (palco.js) dá, pelo elemento.style; o
+   tamanho da área é o de dentro dela, sem a margem. No celular em pé (o data-em-pe, que o quadros.js põe com a mesma
+   regra do arrumar), a margem é menor. */
 .palco {
   position: relative;
   flex: 1 1 auto;
+  min-width: 0;
   min-height: 0;
   margin: 12px 24px;
   container-type: size;
@@ -1211,6 +1235,356 @@ button.quadro:focus-visible .pilula {
   background: var(--sair);
 }
 
+/* O Chat aberto: a borda ciano e o fundo mais escuro. */
+.controle-chat[aria-pressed="true"] {
+  border-color: var(--ciano);
+  background: var(--reuniao-apertado);
+}
+
+/* ---- O chat da reunião: o painel (painel.js). Ao lado dos quadros no PC (data-modo="lado"), e cobrindo a tela onde o
+   ponteiro é o dedo ou a janela tem menos de 900 px (data-modo="cobre"). ---- */
+
+.painel {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  color: var(--branco);
+}
+
+/* Ao lado: 360 px, a 12 px da área dos quadros e a 24 px da direita da janela. */
+.painel[data-modo="lado"] {
+  flex: 0 0 360px;
+  margin: 12px 24px 12px 0;
+  overflow: hidden;
+  border: 1px solid var(--reuniao-borda);
+  border-radius: 12px;
+  background: var(--reuniao-cartao);
+}
+
+.meio.com-painel > .palco {
+  margin-right: 12px;
+}
+
+/* Cobrindo: a janela inteira, por cima de tudo. Com o teclado da tela, o painel.js dá a ele a parte visível da janela
+   (o top e o height, pelo elemento.style). */
+.painel[data-modo="cobre"] {
+  position: fixed;
+  z-index: 10;
+  inset: 0;
+  background: var(--reuniao);
+}
+
+.painel-alto {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 12px 12px 16px;
+  border-bottom: 1px solid var(--reuniao-borda);
+}
+
+.painel-titulos {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.painel-titulos h2 {
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.painel-continua {
+  font-size: 12px;
+  color: var(--topo-rotulo);
+}
+
+/* O Fechar o chat e o Voltar para a reunião: só o desenho, com 44 px. */
+.painel-botao {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--topo-rotulo);
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .painel-botao:hover {
+    background: var(--reuniao-botao);
+  }
+}
+
+.painel[data-modo="lado"] .painel-voltar,
+.painel[data-modo="lado"] .painel-continua,
+.painel[data-modo="cobre"] .painel-fechar {
+  display: none;
+}
+
+.painel[data-modo="cobre"] .painel-alto {
+  justify-content: flex-start;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom-color: var(--reuniao-linha);
+  background: var(--reuniao-barra);
+}
+
+.painel[data-modo="cobre"] .painel-voltar {
+  color: var(--branco);
+}
+
+/* A lista: rola para baixo, e nunca para o lado. Ela recebe o foco do teclado, para as setas a rolarem. */
+.painel-lista {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.painel-lista:focus-visible {
+  outline-offset: -3px;
+}
+
+.painel-lista > * {
+  flex-shrink: 0;
+}
+
+.painel-aviso {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--reuniao);
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--topo-rotulo);
+}
+
+.painel-lista > .painel-vazio {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  font-size: 13.5px;
+  color: var(--reuniao-apagado);
+}
+
+.painel-mensagens {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* Uma mensagem: quem escreveu e a hora, e o balão. As dos outros à esquerda, e as da própria pessoa à direita. */
+.mensagem {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.mensagem[data-de="voce"] {
+  align-items: flex-end;
+}
+
+/* A que ainda está indo. */
+.mensagem[data-situacao="enviando"] {
+  opacity: 0.6;
+}
+
+.mensagem-quem {
+  max-width: 100%;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--reuniao-claro);
+  overflow-wrap: anywhere;
+}
+
+.mensagem-hora {
+  font-weight: 500;
+  color: var(--reuniao-apagado);
+}
+
+/* O balão: o texto como foi escrito, com as quebras de linha, quebrando em qualquer ponto para não alargar a lista. */
+.mensagem-texto {
+  max-width: 100%;
+  padding: 9px 12px;
+  border-radius: 4px 12px 12px 12px;
+  background: var(--reuniao-botao);
+  font-size: 14px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.mensagem[data-de="voce"] .mensagem-texto {
+  border-radius: 12px 4px 12px 12px;
+  background: var(--reuniao-meu);
+}
+
+.mensagem-texto a {
+  color: var(--reuniao-link);
+  font-weight: 600;
+  text-decoration: underline;
+}
+
+.mensagem-texto a:hover {
+  color: var(--reuniao-link-sobre);
+}
+
+/* A que não foi: o motivo e o Tentar de novo, embaixo do balão. */
+.mensagem-falha {
+  max-width: 100%;
+  font-size: 12.5px;
+  color: var(--reuniao-falha);
+}
+
+.mensagem[data-de="voce"] .mensagem-falha {
+  text-align: right;
+}
+
+.mensagem-reenviar {
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--reuniao-link);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.mensagem-reenviar:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* O pé: o aviso do chat sem o canal, o campo de escrever e o botão de mandar. */
+.painel-pe {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-top: 1px solid var(--reuniao-borda);
+}
+
+.painel-sem-canal {
+  font-size: 12.5px;
+  color: var(--topo-rotulo);
+}
+
+.painel-escrever {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+/* O campo: uma linha, que o painel.js faz crescer com o texto até 120 px (o data-rola, daí em diante). */
+.painel-campo {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 44px;
+  min-height: 44px;
+  max-height: 120px;
+  resize: none;
+  overflow-y: hidden;
+  padding: 11px 14px;
+  border: 1px solid var(--reuniao-borda);
+  border-radius: 12px;
+  background: var(--reuniao);
+  color: var(--branco);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.painel-campo[data-rola] {
+  overflow-y: auto;
+}
+
+.painel-campo::placeholder {
+  color: var(--reuniao-apagado);
+}
+
+.painel-campo:disabled {
+  opacity: 0.6;
+}
+
+.painel-enviar {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: var(--ciano);
+  color: var(--sobre-ciano);
+  cursor: pointer;
+}
+
+.painel-enviar:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Cobrindo a tela: as medidas do celular. A letra do campo tem 16 px: com menos, o iPhone aproxima a tela. */
+.painel[data-modo="cobre"] .painel-lista {
+  padding: 14px;
+}
+
+.painel[data-modo="cobre"] .painel-aviso {
+  background: var(--reuniao-cartao);
+}
+
+.painel[data-modo="cobre"] .mensagem-texto {
+  max-width: 86%;
+  font-size: 15px;
+}
+
+.painel[data-modo="cobre"] .painel-pe {
+  padding: 10px 12px 22px;
+  border-top-color: var(--reuniao-linha);
+  background: var(--reuniao-barra);
+}
+
+.painel[data-modo="cobre"] .painel-campo {
+  height: 46px;
+  min-height: 46px;
+  border-radius: 14px;
+  font-size: 16px;
+}
+
+.painel[data-modo="cobre"] .painel-enviar {
+  width: 46px;
+  height: 46px;
+}
+
+.painel[data-modo="cobre"] .painel-enviar .icone {
+  width: 20px;
+  height: 20px;
+}
+
 /* ---- O celular: abaixo de 600 px, uma coluna só. ---- */
 
 @media (max-width: 600px) {
@@ -1397,7 +1771,7 @@ button.quadro:focus-visible .pilula {
     font-size: 16px;
   }
 
-  /* A reunião do celular: o topo mais justo, e os três controles numa grade, com o ícone sobre o rótulo. */
+  /* A reunião do celular: o topo mais justo, e os quatro controles numa grade, com o ícone sobre o rótulo. */
   .reuniao-topo {
     flex-wrap: nowrap;
     padding: 12px 18px;
@@ -1445,18 +1819,18 @@ button.quadro:focus-visible .pilula {
 
   .controles {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 10px;
-    padding: 14px 18px 26px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    padding: 14px 12px 26px;
   }
 
   .controle {
     min-height: 72px;
     flex-direction: column;
     gap: 6px;
-    padding: 10px 6px;
+    padding: 10px 2px;
     border-radius: 18px;
-    font-size: 13px;
+    font-size: 12.5px;
   }
 
   .controle .icone {

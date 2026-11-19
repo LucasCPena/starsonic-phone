@@ -1618,6 +1618,16 @@ test('escrever manda a mensagem e a mostra indo', () => {
   assert.deepEqual(s.estado.chat.mensagens.at(-1), minha(2, 'linha 1\nlinha 2', { hora: 6000 }));
 });
 
+test('escrever manda o texto limpo: o tab vira espaço', () => {
+  // O servidor recusaria o tab: o que sai, e o que a lista mostra, é o texto que ele aceita.
+  const r = passo(naReuniao(), escrever('nome\tvalor\u0007', 5000));
+  assert.deepEqual(r.efeitos, [mandarDoChat('m1', 'nome valor'), prazoDaMensagem('m1')]);
+  assert.deepEqual(r.estado.chat.mensagens, [minha(1, 'nome valor', { hora: 5000 })]);
+  // O Tentar de novo manda o mesmo texto limpo.
+  const naoFoi = passo(r.estado, recusada('m1', 'limite')).estado;
+  assert.deepEqual(passo(naoFoi, reenviar(1, 6000)).efeitos, [mandarDoChat('m2', 'nome valor'), prazoDaMensagem('m2')]);
+});
+
 test('o texto vazio e o de mais de 1.000 não saem', () => {
   semMudar(naReuniao(), escrever(''));
   semMudar(naReuniao(), escrever('  \n '));

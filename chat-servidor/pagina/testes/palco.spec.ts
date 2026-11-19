@@ -1,115 +1,61 @@
-// Os quadros da reunião (quadros.js), no Chromium: a página de verdade, servida pelo chat no modo de teste, com a rede
-// falsa, a ligação falsa e o relógio parado. O mosaico de mentira é um <canvas> com uma cor em cada célula, ligado ao
-// #mosaico pelo captureStream(0): cada imagem sai quando o teste pede (o requestFrame() da faixa), e não por um
-// relógio. O palco de mentira é a mensagem palco, mandada pelo canal falso. A cor de um quadro é a do ponto do meio do
-// <canvas> dele. As cores: a Ana vermelha, o Carlos azul, a Maria amarela, e a tela verde.
+// Os quadros da reunião (quadros.js), no Chromium, na reunião de mentira (reuniao-falsa.ts): a página de verdade, com a
+// rede falsa, a ligação falsa, o relógio parado, o mosaico de mentira e o palco mandado pelo canal falso. A cor de um
+// quadro é a do ponto do meio do <canvas> dele. As cores: a Ana vermelha, o Carlos azul, a Maria amarela, e a tela
+// verde.
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { AGORA, MARCADA } from '../ligacoes-falsas';
-import { CODIGO, RedeFalsa, type Canal, type Mensagem } from '../rede-falsa';
+import {
+  ANA,
+  BIA,
+  CARLOS,
+  CORES,
+  DOIS,
+  EU,
+  MARIA,
+  QUATRO,
+  ROBERTO,
+  SEM_CONEXAO,
+  TRES,
+  ana,
+  area,
+  bia,
+  botao,
+  caixa,
+  camDe,
+  carlos,
+  cartaoDaQueda,
+  comOPalco,
+  conferir,
+  darNaLigacao,
+  dentro,
+  doConsole,
+  emGrade,
+  esperadoNoConsole,
+  eu,
+  maria,
+  mensagemDo,
+  mosaico,
+  naReuniao,
+  naReuniaoCom,
+  outraImagem,
+  quadro,
+  subir,
+  telaDe,
+  titulo,
+  todosOsQuadros,
+  vigiar,
+  voltar,
+  type Palco,
+  type Pessoa,
+} from '../reuniao-falsa';
 
-/** O aceito, com um Acesso inventado (seção 10 do protocolo). */
-const ACEITO: Mensagem = {
-  tipo: 'aceito',
-  participante: 'participante-1',
-  senha: 'senha-1',
-  turn: { urls: ['turns:turn.exemplo.com.br:5349'], usuario: 'usuario-1', senha: 'credencial-1' },
-  video: { wss: 'wss://video.exemplo.com.br:7443/sip', uri: 'sip:reuniao@video.exemplo.com.br' },
-  volta: 'volta-1',
-};
+// Todo teste confere, no fim, que a página não quebrou o CSP e que nada do palco (os nomes) foi ao console.
+test.beforeEach(async ({ page }) => {
+  await vigiar(page);
+});
 
-// Uma ligação falsa no lugar do ligacao.js: ela confirma, e o teste dá os eventos dela. Ela não mexe no #mosaico: o
-// mosaico de mentira é do teste.
-const LIGACAO_FALSA = `
-export function criarLigacoes(aoEvento) {
-  window.ligacaoFalsa = aoEvento;
-  return {
-    ligar({ qual }) { setTimeout(() => aoEvento({ tipo: 'ligacao', qual, o: 'confirmada' }), 0); },
-    desligar() {},
-    trocarCamera() { setTimeout(() => aoEvento({ tipo: 'cameraTrocada', ok: true }), 0); },
-    trocarMicrofone() {},
-  };
-}`;
-
-const titulo = (page: Page, nome: string) => page.getByRole('heading', { level: 1, name: nome, exact: true });
-const botao = (page: Page, nome: string) => page.getByRole('button', { name: nome, exact: true });
-
-async function caixa(l: Locator): Promise<{ x: number; y: number; width: number; height: number }> {
-  const c = await l.boundingBox();
-  if (!c) throw new Error('o elemento não está na tela');
-  return c;
-}
-
-// ---- As pessoas, as cores e os palcos. ----
-
-interface Pessoa {
-  quem: string;
-  nome: string;
-}
-
-const ANA: Pessoa = { quem: 'a1a1a1a1a1a1a1a1', nome: 'Ana Souza' };
-const CARLOS: Pessoa = { quem: 'c2c2c2c2c2c2c2c2', nome: 'Carlos Lima' };
-const MARIA: Pessoa = { quem: 'e3e3e3e3e3e3e3e3', nome: 'Maria Lima' };
-const BIA: Pessoa = { quem: 'b4b4b4b4b4b4b4b4', nome: 'Bia Ramos' };
-const ROBERTO: Pessoa = { quem: 'f5f5f5f5f5f5f5f5', nome: 'Roberto Alves' };
-const EU: Pessoa = { quem: '9696969696969696', nome: 'Maria Lima' };
-
-const CORES = {
-  vermelho: [255, 0, 0],
-  azul: [0, 0, 255],
-  amarelo: [255, 255, 0],
-  verde: [0, 255, 0],
-  cinza: [128, 128, 128],
-} as const;
-type Cor = keyof typeof CORES;
-
-const camDe = (p: Pessoa) => `cam:${p.quem}`;
-const telaDe = (p: Pessoa) => `tela:${p.quem}`;
-
-/** Um quadro do palco, com a cor da célula dele no mosaico de mentira. */
-interface Quadro {
-  pessoa: Pessoa;
-  voce?: boolean;
-  tela?: boolean;
-  semCamera?: boolean;
-  cor: Cor;
-  x: number;
-  y: number;
-  l: number;
-  a: number;
-}
-
-interface Palco {
-  largura: number;
-  altura: number;
-  quadros: Quadro[];
-}
-
-type Celula = Omit<Quadro, 'x' | 'y' | 'l' | 'a'>;
-
-/** As células em colunas × linhas, na ordem de leitura, começando no y. */
-function emGrade(largura: number, alturaDaGrade: number, colunas: number, linhas: number, celulas: Celula[], y = 0) {
-  const l = largura / colunas;
-  const a = alturaDaGrade / linhas;
-  return celulas.map((c, i) => ({ ...c, x: (i % colunas) * l, y: y + Math.floor(i / colunas) * a, l, a }));
-}
-
-const ana: Celula = { pessoa: ANA, cor: 'vermelho' };
-const carlos: Celula = { pessoa: CARLOS, cor: 'azul' };
-const maria: Celula = { pessoa: MARIA, cor: 'amarelo' };
-const bia: Celula = { pessoa: BIA, cor: 'cinza' };
-const roberto: Celula = { pessoa: ROBERTO, cor: 'cinza', semCamera: true };
-const eu: Celula = { pessoa: EU, voce: true, cor: 'cinza' };
-
-/** O Carlos e Você, lado a lado. */
-const DOIS: Palco = { largura: 1920, altura: 1080, quadros: emGrade(1920, 1080, 2, 1, [carlos, eu]) };
-/** A Ana, o Carlos, a Maria e Você, em 2×2. */
-const TRES: Palco = { largura: 1920, altura: 1080, quadros: emGrade(1920, 1080, 2, 2, [ana, carlos, maria, eu]) };
-/** A Ana, o Carlos, a Maria, o Roberto sem câmera e Você, em 3×2. */
-const QUATRO: Palco = {
-  largura: 1920,
-  altura: 1080,
-  quadros: emGrade(1920, 1080, 3, 2, [ana, carlos, maria, roberto, eu]),
-};
+test.afterEach(async ({ page }) => {
+  await conferir(page);
+});
 
 /** A tela de quem compartilha em cima, de 1920×1080, e as pessoas numa linha embaixo: o mosaico de 1920×1620. */
 function comTela(dono: Pessoa, voce = false): Palco {
@@ -123,90 +69,8 @@ function comTela(dono: Pessoa, voce = false): Palco {
   };
 }
 
-/** A mensagem palco do canal. */
-function mensagemDo(p: Palco): Mensagem {
-  return {
-    tipo: 'palco',
-    largura: p.largura,
-    altura: p.altura,
-    quadros: p.quadros.map((q) => ({
-      quem: q.pessoa.quem,
-      nome: q.pessoa.nome,
-      voce: q.voce ?? false,
-      tela: q.tela ?? false,
-      semCamera: q.semCamera ?? false,
-      x: q.x,
-      y: q.y,
-      l: q.l,
-      a: q.a,
-    })),
-  };
-}
-
-// ---- O mosaico de mentira. ----
-
-/** O canvas do mosaico de mentira e a faixa dele, no window da página. */
-type MosaicoFalso = { canvas: HTMLCanvasElement; faixa: CanvasCaptureMediaStreamTrack };
-/** O requestVideoFrameCallback do teste, guardado antes de a página começar (um teste o tira da página). */
-type QuandoMostrar = (video: HTMLVideoElement, fn: VideoFrameRequestCallback) => void;
-
-/**
- * O mosaico de mentira fica com o tamanho e as células do palco (a de fora de qualquer célula, preta), e sai uma imagem
- * dele. A promessa acaba quando o #mosaico mostrou essa imagem (o requestVideoFrameCallback dele, com a moldura fora
- * da vista): o quadros.js, que pediu o dele antes, já a viu.
- */
-async function mosaico(page: Page, p: Palco): Promise<void> {
-  const celulas = p.quadros.map((q) => ({ x: q.x, y: q.y, l: q.l, a: q.a, cor: CORES[q.cor] }));
-  const tamanho = await page.evaluate(
-    ({ largura, altura, celulas }) => {
-      const w = window as unknown as { mosaicoFalso?: MosaicoFalso; quandoMostrar: QuandoMostrar };
-      const video = document.getElementById('mosaico') as HTMLVideoElement;
-      if (!w.mosaicoFalso) {
-        const canvas = document.createElement('canvas');
-        const fluxo = canvas.captureStream(0);
-        w.mosaicoFalso = { canvas, faixa: fluxo.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack };
-        video.srcObject = fluxo;
-      }
-      const { canvas, faixa } = w.mosaicoFalso;
-      canvas.width = largura;
-      canvas.height = altura;
-      const ctx = canvas.getContext('2d') as CanvasRenderingContext2D;
-      ctx.fillStyle = 'rgb(0, 0, 0)';
-      ctx.fillRect(0, 0, largura, altura);
-      for (const c of celulas) {
-        ctx.fillStyle = `rgb(${c.cor.join(', ')})`;
-        ctx.fillRect(c.x, c.y, c.l, c.a);
-      }
-      return new Promise<string>((r) => {
-        w.quandoMostrar(video, (_, m) => r(`${m.width}x${m.height}`));
-        faixa.requestFrame();
-      });
-    },
-    { largura: p.largura, altura: p.altura, celulas },
-  );
-  expect(tamanho).toBe(`${p.largura}x${p.altura}`);
-}
-
-/** Mais uma imagem do mosaico de mentira, igual à última: o canvas só dá outra imagem depois de ser pintado de novo. */
-async function outraImagem(page: Page): Promise<void> {
-  await page.evaluate(() => {
-    const w = window as unknown as { mosaicoFalso: MosaicoFalso; quandoMostrar: QuandoMostrar };
-    const { canvas, faixa } = w.mosaicoFalso;
-    const ctx = canvas.getContext('2d') as CanvasRenderingContext2D;
-    ctx.putImageData(ctx.getImageData(0, 0, 1, 1), 0, 0);
-    const video = document.getElementById('mosaico') as HTMLVideoElement;
-    return new Promise<void>((r) => {
-      w.quandoMostrar(video, () => r());
-      faixa.requestFrame();
-    });
-  });
-}
-
 // ---- Os quadros. ----
 
-const quadro = (page: Page, chave: string) => page.locator(`[data-quadro="${chave}"]`);
-const todosOsQuadros = (page: Page) => page.locator('[data-quadro]');
-const area = (page: Page) => page.locator('.palco');
 const moldura = (page: Page) => page.locator('.moldura');
 const etiqueta = (page: Page, chave: string) => quadro(page, chave).locator('.etiqueta');
 
@@ -231,7 +95,6 @@ async function corNoPonto(page: Page, chave: string, ponto: { x: number; y: numb
   return 'outra';
 }
 
-const mostraDe = (page: Page, chave: string) => quadro(page, chave).getAttribute('data-mostra');
 /** O tamanho do <canvas> do quadro, em pixels, e o do quadro, em px (o que o quadros.js deu a ele). */
 const pixelsDoCanvas = (q: Locator) =>
   q.locator('canvas').evaluate((c: HTMLCanvasElement) => ({ l: c.width, a: c.height }));
@@ -251,14 +114,6 @@ const daFaixa = (page: Page) =>
       .sort((p, q) => p.c.y - q.c.y || p.c.x - q.c.x)
       .map((q) => q.chave),
   );
-
-/** Confere que a caixa de dentro está dentro da de fora (com 1 px de folga). */
-function dentro(de: { x: number; y: number; width: number; height: number }, fora: typeof de, onde: string) {
-  expect(de.x, `${onde}: a esquerda`).toBeGreaterThanOrEqual(fora.x - 1);
-  expect(de.y, `${onde}: o topo`).toBeGreaterThanOrEqual(fora.y - 1);
-  expect(de.x + de.width, `${onde}: a direita`).toBeLessThanOrEqual(fora.x + fora.width + 1);
-  expect(de.y + de.height, `${onde}: o fundo`).toBeLessThanOrEqual(fora.y + fora.height + 1);
-}
 
 /**
  * A cor de verdade, na tela, de cada ponto (em px da página): a página é fotografada, e a foto é lida numa página em
@@ -301,78 +156,6 @@ async function bordaDo(page: Page, chave: string): Promise<string[]> {
 
 const CIANO = ['ciano', 'ciano', 'ciano', 'ciano'];
 const longeDosQuadros = (page: Page) => page.mouse.move(640, 20);
-
-// ---- A página na reunião. ----
-
-// Todo teste confere, no fim, que a página não quebrou o CSP e que nada do palco (os nomes) foi ao console.
-let mensagensDoConsole: string[] = [];
-
-test.beforeEach(async ({ page }) => {
-  mensagensDoConsole = [];
-  page.on('console', (m) => mensagensDoConsole.push(`${m.type()} ${m.text()}`));
-  page.on('pageerror', (e) => mensagensDoConsole.push(`pageerror ${e.message}`));
-  await page.addInitScript(() => {
-    const w = window as unknown as { violacoes: string[]; quandoMostrar: QuandoMostrar };
-    const pedir = HTMLVideoElement.prototype.requestVideoFrameCallback;
-    w.quandoMostrar = (video, fn) => pedir.call(video, fn);
-    w.violacoes = [];
-    document.addEventListener('securitypolicyviolation', (e) => {
-      w.violacoes.push(`${e.violatedDirective} ${e.blockedURI}`);
-    });
-  });
-});
-
-test.afterEach(async ({ page }) => {
-  expect(await page.evaluate(() => (window as unknown as { violacoes: string[] }).violacoes)).toEqual([]);
-  const nomes = /Ana|Carlos|Maria|Bia|Roberto|Participante|palco/;
-  expect(mensagensDoConsole.filter((m) => m.startsWith('error') || m.startsWith('pageerror') || nomes.test(m))).toEqual(
-    [],
-  );
-});
-
-interface NaReuniao {
-  rede: RedeFalsa;
-  canal: Canal;
-}
-
-/** A página na reunião, com a ligação falsa, o relógio parado e o canal 1 aberto. */
-async function naReuniao(page: Page): Promise<NaReuniao> {
-  await page.route('**/r/estatico/ligacao.js', (r) =>
-    r.fulfill({ contentType: 'text/javascript; charset=utf-8', body: LIGACAO_FALSA }),
-  );
-  await page.clock.install({ time: AGORA - 1000 });
-  await page.clock.pauseAt(AGORA);
-  const rede = await RedeFalsa.instalar(page, MARCADA);
-  await page.goto(`/r/${CODIGO}`);
-  await expect
-    .poll(() => page.locator('video.previa').first().evaluate((v: HTMLVideoElement) => v.srcObject !== null))
-    .toBe(true);
-  rede.aoPedir = (c) => c.mandar(ACEITO);
-  await page.getByLabel('Seu nome').fill('Maria Lima');
-  await botao(page, 'Pedir para entrar').click();
-  await expect(titulo(page, 'Entrando na reunião…')).toBeVisible();
-  await page.clock.runFor(10);
-  await expect(page.getByRole('navigation', { name: 'Controles da reunião' })).toBeVisible();
-  return { rede, canal: await rede.canalNumero(1) };
-}
-
-/** O palco chega, e o mosaico dele também; 600 ms depois, com a imagem seguinte, os quadros mostram o vídeo. */
-async function comOPalco(page: Page, canal: Canal, p: Palco): Promise<void> {
-  canal.mandar(mensagemDo(p));
-  await mosaico(page, p);
-  await page.clock.runFor(600);
-  await outraImagem(page);
-  const primeiro = p.quadros.find((q) => !q.voce && !q.semCamera);
-  if (!primeiro) return;
-  const chave = primeiro.tela ? telaDe(primeiro.pessoa) : camDe(primeiro.pessoa);
-  await expect.poll(() => mostraDe(page, chave)).toBe('video');
-}
-
-async function naReuniaoCom(page: Page, p: Palco): Promise<NaReuniao> {
-  const r = await naReuniao(page);
-  await comOPalco(page, r.canal, p);
-  return r;
-}
 
 /**
  * O mosaico inteiro aparece: a moldura passa de 600 px de largura, no tempo de sempre do expect.poll. Quando não passa,
@@ -463,9 +246,6 @@ async function oMosaicoInteiroAparece(page: Page): Promise<void> {
     throw new Error(`${mensagem}\nAs medidas da área: ${JSON.stringify(medidas, null, 2)}`);
   }
 }
-
-const darNaLigacao = (page: Page, evento: object) =>
-  page.evaluate((e) => (window as unknown as { ligacaoFalsa: (e: object) => void }).ligacaoFalsa(e), evento);
 
 // ---- Os testes. ----
 
@@ -1099,30 +879,6 @@ test('a conexão caída cobre o palco', async ({ page }) => {
   expect(deCima).toBe(true);
 });
 
-const SEM_CONEXAO = { tipo: 'ligacao', qual: 'principal', o: 'semConexao' };
-const cartaoDaQueda = (page: Page) => page.getByRole('heading', { level: 2, name: 'A conexão caiu. Entrando de novo…' });
-
-/** A volta da conexão caída: depois da espera de 2 s, a página pede a senha pelo canal, ela chega, e a ligação sobe. */
-async function voltar(page: Page, canal: Canal): Promise<void> {
-  const senhas = () => canal.tipos().filter((t) => t === 'senha').length;
-  const antes = senhas();
-  await page.clock.runFor(2_000);
-  await expect.poll(senhas).toBe(antes + 1);
-  canal.mandar({ tipo: 'senha', senha: 'senha-2' });
-  await subir(page, () => page.locator('.caiu').isHidden());
-  await expect(cartaoDaQueda(page)).toBeHidden();
-}
-
-/** A ligação falsa confirma num setTimeout, que o relógio parado só roda quando o teste anda com ele: até a condição. */
-async function subir(page: Page, pronto: () => Promise<boolean>): Promise<void> {
-  await expect
-    .poll(async () => {
-      await page.clock.runFor(10);
-      return pronto();
-    })
-    .toBe(true);
-}
-
 /** O que o Tab alcança, a partir do título, numa volta pela página (até o primeiro que se repete). */
 async function oQueOTabAlcanca(page: Page): Promise<string[]> {
   await titulo(page, 'Planejamento de dezembro').focus();
@@ -1292,8 +1048,8 @@ test('um quadro que não pinta não para os outros', async ({ page }) => {
   // O que lança: as imagens seguintes pintam de novo.
   await falharOCanvas(page, camDe(CARLOS), 'lanca');
   await outraImagem(page);
-  await expect.poll(() => mensagensDoConsole.some((m) => m.includes('canvas de teste'))).toBe(true);
-  mensagensDoConsole = mensagensDoConsole.filter((m) => !m.includes('canvas de teste'));
+  await expect.poll(() => doConsole(page).some((m) => m.includes('canvas de teste'))).toBe(true);
+  esperadoNoConsole(page, (m) => m.includes('canvas de teste'));
   await apagarOsQuadros(page);
   await outraImagem(page);
   expect(await cores()).toEqual(['vermelho', 'azul', 'amarelo']);
@@ -1306,8 +1062,8 @@ test('o desenho que lança não leva os efeitos do evento', async ({ page }) => 
   await darNaLigacao(page, SEM_CONEXAO);
   await expect(cartaoDaQueda(page)).toBeVisible();
   await voltar(page, canal);
-  expect(mensagensDoConsole.filter((m) => m.startsWith('error'))).toEqual(['error desenhar']);
-  mensagensDoConsole = mensagensDoConsole.filter((m) => m !== 'error desenhar');
+  expect(doConsole(page).filter((m) => m.startsWith('error'))).toEqual(['error desenhar']);
+  esperadoNoConsole(page, (m) => m === 'error desenhar');
   await outraImagem(page);
   await page.clock.runFor(600);
   await outraImagem(page);

@@ -33,6 +33,21 @@ test('o texto que vale', () => {
   for (const naoETexto of [undefined, null, 7, {}, ['a']]) assert.equal(textoLimpo(naoETexto), null);
 });
 
+test('o texto sai limpo do que o servidor recusa', () => {
+  // O servidor recusa o caractere de controle que não é a quebra de linha (docs/chat-protocolo.md, seção 3). O tab,
+  // que vem num texto colado de uma planilha, vira um espaço; os outros saem.
+  assert.equal(textoLimpo('nome\tvalor'), 'nome valor');
+  assert.equal(textoLimpo('a\u0000b\u0007c\u001bd\u007fe\u0085f\u009fg'), 'abcdefg');
+  // As quebras de linha ficam, e as de outros sistemas viram a de sempre, como no servidor.
+  assert.equal(textoLimpo('linha 1\r\nlinha 2\rlinha 3\n\nlinha 5'), 'linha 1\nlinha 2\nlinha 3\n\nlinha 5');
+  // O que sobra depois da limpeza é o que conta: para o vazio e para o tamanho.
+  assert.equal(textoLimpo('\t\u0000 \u0085'), null);
+  assert.equal(textoLimpo(`${'a'.repeat(1000)}\u0000`), 'a'.repeat(1000));
+  assert.equal(textoLimpo(`\t${'a'.repeat(1000)}\t`), 'a'.repeat(1000));
+  // O que não é de controle fica como está: as letras de qualquer língua, os emojis e o espaço que não quebra.
+  assert.equal(textoLimpo('ação é 日本 😀 a\u00a0b'), 'ação é 日本 😀 a\u00a0b');
+});
+
 test('os links', () => {
   assert.deepEqual(partes('Bom dia a todos'), [{ texto: 'Bom dia a todos' }]);
   assert.deepEqual(partes('O link é https://exemplo.com.br/relatorio'), [

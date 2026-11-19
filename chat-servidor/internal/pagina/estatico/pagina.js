@@ -1,9 +1,11 @@
 // A camada da tela da página da reunião. Ela desenha o estado do cérebro (estado.js), com os quadros da reunião
-// (quadros.js), transforma os cliques e o nome em eventos, e roda os efeitos com os adaptadores: a rede (rede.js), a
-// mídia (midia.js), as ligações (ligacao.js) e o relógio. Os eventos que um efeito dá entram numa fila e passam pelo
-// cérebro um de cada vez, depois dos efeitos do evento de agora. Nada do estado nem dos efeitos vai ao console: eles
-// levam o bilhete, as senhas, as credenciais do TURN e a chave de volta.
-import { cabecalho, inicial, nomeValido, quando, transicao } from './estado.js';
+// (quadros.js) e o painel do chat (painel.js), transforma os cliques, o nome e as mensagens em eventos, e roda os
+// efeitos com os adaptadores: a rede (rede.js), a mídia (midia.js), as ligações (ligacao.js) e o relógio. Os eventos que
+// um efeito dá entram numa fila e passam pelo cérebro um de cada vez, depois dos efeitos do evento de agora. Nada do
+// estado nem dos efeitos vai ao console: eles levam o bilhete, as senhas, as credenciais do TURN, a chave de volta e
+// as mensagens do chat.
+import { cabecalho, inicial, nomeValido, podeEscrever, quando, transicao } from './estado.js';
+import { criarPainel } from './painel.js';
 import { criarQuadros } from './quadros.js';
 
 /** A espera do ligar da principal pela câmera que a pessoa acabou de ligar e que ainda está sendo pedida, em ms. */
@@ -40,6 +42,8 @@ export function iniciar(raiz, servicos) {
   const anuncio = um('[data-campo="anuncio"]');
   const contagem = um('[data-aviso="tentativas"] [data-botao="tentarDeNovo"]');
   const compartilhar = um('.controle-compartilhar');
+  const botaoChat = um('[data-botao="chat"]');
+  const raizDoPainel = um('.painel');
   // O Compartilhar a tela só existe onde o navegador tem a captura da tela.
   const temCaptura = typeof navigator.mediaDevices?.getDisplayMedia === 'function';
 
@@ -48,9 +52,10 @@ export function iniciar(raiz, servicos) {
   let rodando = false;
   let indoEmbora = false; // o pagehide: a página vai embora, e nada mais chega ao cérebro
 
+  // Todo evento chega ao cérebro com a hora em que nasceu (o agora): é a hora das mensagens do chat.
   function despachar(evento) {
     if (indoEmbora) return;
-    fila.push(evento);
+    fila.push({ ...evento, agora: relogio.agora() });
     if (rodando) return; // um evento dado por um efeito entra depois dos efeitos de agora
     rodando = true;
     try {
@@ -74,11 +79,14 @@ export function iniciar(raiz, servicos) {
 
   // O botão com o foco que o desenho escondeu, desligou ou pôs dentro de um inert (o Tentar de novo do aviso de acesso
   // que deu certo, ou um quadro embaixo do cartão da conexão caída, por exemplo) leva o foco ao título da tela: sem
-  // isso, ele cairia no começo da página.
+  // isso, ele cairia no começo da página. O que estava no painel do chat (o campo que o canal caído desligou), com o
+  // painel ainda aberto, deixa o foco no painel.
   function manterOFoco(foco) {
     const agora = document.activeElement;
     if (!foco || foco === document.body || (agora !== foco && agora !== document.body)) return;
-    if (foco.closest('[hidden]') || foco.disabled || foco.closest('[inert]')) tituloVisivel()?.focus();
+    if (!(foco.closest('[hidden]') || foco.disabled || foco.closest('[inert]'))) return;
+    if (raizDoPainel.contains(foco) && !raizDoPainel.hidden) painel.focar();
+    else tituloVisivel()?.focus();
   }
 
   const rede = servicos.rede(despachar);
@@ -86,6 +94,14 @@ export function iniciar(raiz, servicos) {
   const ligacao = servicos.ligacao(despachar);
   const { relogio } = servicos;
   const quadros = criarQuadros({ raiz: um('.palco'), relogio });
+  const painel = criarPainel({
+    raiz: raizDoPainel,
+    fundo: todos('.reuniao-topo, .palco, .controles'),
+    toque: () => window.matchMedia('(pointer: coarse)').matches,
+    aoEscrever: (texto) => despachar({ tipo: 'escrever', texto }),
+    aoReenviar: (n) => despachar({ tipo: 'reenviar', n }),
+    aoFechar: () => despachar({ tipo: 'clique', botao: 'fecharChat' }),
+  });
 
   function rodar(efeito) {
     try {
@@ -136,6 +152,12 @@ export function iniciar(raiz, servicos) {
         break;
       case 'focar':
         tituloVisivel()?.focus();
+        break;
+      case 'focarOCampo':
+        painel.focar();
+        break;
+      case 'focarOChat':
+        botaoChat.focus();
         break;
     }
   }
@@ -275,6 +297,15 @@ export function iniciar(raiz, servicos) {
     compartilhar.hidden = !temCaptura || compartilhando;
     compartilhar.disabled = !(e.canal === 'aberto' && e.reconectando === 0);
     um('[data-botao="pararDeCompartilhar"]').hidden = !compartilhando;
+    // O chat: o botão apertado com o painel aberto, e o painel com as mensagens do cérebro.
+    const chatAberto = e.tela === 'reuniao' && e.chat.aberto;
+    botaoChat.setAttribute('aria-pressed', chatAberto ? 'true' : 'false');
+    painel.desenhar({
+      aberto: chatAberto,
+      mensagens: e.chat.mensagens,
+      podeEscrever: podeEscrever(e),
+      naReuniao: e.tela === 'reuniao',
+    });
   }
 
   // A mudança de tela (e do aviso) vai para a região que os leitores de tela anunciam, como a conexão caída.
