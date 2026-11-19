@@ -8,8 +8,11 @@ O que tem aqui:
   freeswitch/            o código de cada projeto, sem mudança, no commit fixado (o "git archive"
   sofia-sip/             do commit). O deps.lock diz o repositório oficial, a tag e o commit de
   spandsp/               cada um; o VERSOES.txt do pacote do sistema diz o mesmo.
-  patches/<projeto>/     só quando houver: as nossas mudanças, do "git format-patch" contra o
-                         commit fixado.
+  patches/<projeto>/     as nossas mudanças, do "git format-patch" contra o commit fixado. Hoje há
+                         uma, no FreeSWITCH: a troca de tamanho do mosaico (o vid-res do
+                         mod_conference) passa a ser feita pela thread do mosaico, para a imagem
+                         não congelar e o processo não cair nessa troca. O VERSOES.txt do pacote
+                         do sistema lista cada uma, com o SHA-256 do arquivo.
   deps.lock              as versões.
   construir.sh           o script que montou o pacote.
   modules.conf           os nove módulos do pacote.

@@ -127,7 +127,8 @@ jobs:
           if-no-files-found: error
 
   # Cada pacote num contêiner limpo do sistema dele, como o instalador o usa. Igual ao job freeswitch-conferir do
-  # video.yml: se mudar aqui, mude no video.yml.
+  # video.yml: se mudar aqui, mude no video.yml. Só o último passo de lá não vem para cá ("O conferir recusa um
+  # pacote sem as correções"): ele é um teste do conferir-pacote.sh, e não do pacote.
   freeswitch-conferir:
     name: FreeSWITCH conferido (${{ matrix.sistema }})
     needs: freeswitch

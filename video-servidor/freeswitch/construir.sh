@@ -66,6 +66,58 @@ for key in sys.argv[2:]:
 print(node)' "$LOCK" "$@"
 }
 
+# O que há em patches/ é só patches/<projeto>/<nome>.patch. Outra coisa (uma pasta com outro nome, um
+# arquivo com outra extensão ou fora do lugar) ficaria de fora do build sem ninguém ver.
+conferir_a_pasta_dos_patches() {
+    local caminho relativo nome projeto conhecido
+    local lugar="o lugar das correções é patches/<projeto>/<nome>.patch"
+    [ -d "$AQUI/patches" ] || return 0
+    while IFS= read -r caminho; do
+        relativo="${caminho#"$AQUI/patches/"}"
+        nome="${relativo%%/*}"
+        conhecido=0
+        for projeto in "${PROJETOS[@]}"; do
+            if [ "$nome" = "$projeto" ]; then
+                conhecido=1
+            fi
+        done
+        if [ -d "$caminho" ]; then
+            # Uma pasta: só a de um projeto, direto em patches/.
+            if [ "$conhecido" -ne 1 ]; then
+                echo "construir: a pasta patches/$nome não é de nenhum projeto" >&2
+                exit 1
+            fi
+            if [ "$relativo" != "$nome" ]; then
+                echo "construir: patches/$relativo não é uma correção ($lugar)" >&2
+                exit 1
+            fi
+            continue
+        fi
+        # Um arquivo: só patches/<projeto>/<nome>.patch.
+        case "$relativo" in
+            "$nome"/*/*) conhecido=0 ;;
+            "$nome"/*.patch) ;;
+            *) conhecido=0 ;;
+        esac
+        if [ "$conhecido" -ne 1 ]; then
+            echo "construir: patches/$relativo não é uma correção ($lugar)" >&2
+            exit 1
+        fi
+    done < <(find "$AQUI/patches" -mindepth 1 | sort)
+}
+
+# As linhas das correções para o VERSOES.txt, "patch <projeto> <arquivo> <sha256 do arquivo>": uma para
+# cada patches/<projeto>/*.patch, ordenadas. Sem a pasta, ou sem nenhum .patch, nenhuma linha. O
+# conferir-pacote.sh faz a mesma conta, escrita lá de novo de propósito: se uma mudar e a outra não, o
+# pacote não passa no conferir.
+linhas_das_correcoes() {
+    local patch
+    for patch in "$AQUI"/patches/*/*.patch; do
+        [ -e "$patch" ] || continue
+        echo "patch $(basename "$(dirname "$patch")") $(basename "$patch") $(sha256sum "$patch" | cut -d' ' -f1)"
+    done | sort
+}
+
 # Deixa TRABALHO/<projeto> no commit fixado, com os patches de patches/<projeto>/ por cima.
 preparar_fontes() {
     local projeto="$1" repo commit pasta atual patch
@@ -157,7 +209,9 @@ pacote_de() {
     exit 1
 }
 
-# 1. As fontes, todas antes de compilar: uma falha da rede para o build logo.
+# 1. As fontes, todas antes de compilar: uma falha da rede para o build logo. Antes delas, a pasta
+# patches/: uma correção fora do lugar para o build aqui.
+conferir_a_pasta_dos_patches
 for projeto in "${PROJETOS[@]}"; do
     preparar_fontes "$projeto"
 done
@@ -234,10 +288,17 @@ printf '%s\n' "$PACOTES" >"$PREFIXO/pacotes.txt"
 echo "pacotes.txt:"
 cat "$PREFIXO/pacotes.txt"
 
-# 6. O VERSOES.txt e o pacote do sistema, com o SHA-256.
-for projeto in freeswitch sofia-sip spandsp; do
-    echo "$projeto $(lock_value "$projeto" tag) $(lock_value "$projeto" commit)"
-done >"$PREFIXO/VERSOES.txt"
+# 6. O VERSOES.txt e o pacote do sistema, com o SHA-256. O VERSOES.txt diz o commit de cada projeto e,
+# depois, cada correção de patches/ que foi por cima: é por ele que se vê, num servidor, qual FreeSWITCH
+# está instalado.
+{
+    for projeto in freeswitch sofia-sip spandsp; do
+        echo "$projeto $(lock_value "$projeto" tag) $(lock_value "$projeto" commit)"
+    done
+    linhas_das_correcoes
+} >"$PREFIXO/VERSOES.txt"
+echo "VERSOES.txt:"
+cat "$PREFIXO/VERSOES.txt"
 rm -f "$SAIDA/$PACOTE" "$SAIDA/$PACOTE.sha256"
 tar --sort=name --owner=0 --group=0 --numeric-owner -czf "$SAIDA/$PACOTE" -C / "${PREFIXO#/}"
 (cd "$SAIDA" && sha256sum "$PACOTE" >"$PACOTE.sha256")

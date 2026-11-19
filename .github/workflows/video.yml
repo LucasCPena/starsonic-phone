@@ -185,6 +185,29 @@ jobs:
         run: |
           apt-get update -q
           apt-get install -s -q certbot coturn ca-certificates openssl
+      # O teste do próprio conferir: o mesmo pacote, sem as linhas "patch" do VERSOES.txt, tem de ser recusado. Um
+      # pacote montado sem as correções de freeswitch/patches não pode passar. Só num sistema, por último (ele deixa
+      # no /opt o VERSOES.txt mexido), e só aqui: o video-release.yml não tem este passo.
+      - name: O conferir recusa um pacote sem as correções
+        if: matrix.sistema == 'ubuntu-24.04'
+        run: |
+          set -euo pipefail
+          if ! ls video-servidor/freeswitch/patches/*/*.patch >/dev/null 2>&1; then
+            echo "A pasta patches/ não tem nenhuma correção: nada a provar."
+            exit 0
+          fi
+          mkdir /tmp/sem-as-correcoes
+          tar -xzf "pacote/starsonic-freeswitch-$SISTEMA-amd64.tar.gz" -C /tmp/sem-as-correcoes
+          sed -i '/^patch /d' /tmp/sem-as-correcoes/opt/starsonic-freeswitch/VERSOES.txt
+          tar -czf /tmp/sem-as-correcoes.tar.gz -C /tmp/sem-as-correcoes opt
+          conferir=video-servidor/freeswitch/conferir-pacote.sh
+          if bash "$conferir" /tmp/sem-as-correcoes.tar.gz >/tmp/recusa.txt 2>&1; then
+            tail -20 /tmp/recusa.txt
+            echo "O conferir aceitou um pacote sem as correções." >&2
+            exit 1
+          fi
+          tail -8 /tmp/recusa.txt
+          grep -q 'as correções do pacote não são as da pasta patches/' /tmp/recusa.txt
 
   # A configuração que o agente gera (o configurar --teste) num FreeSWITCH de verdade, o pacote de cada
   # sistema num contêiner limpo dele: os dois perfis do sofia no ar e nenhuma linha de erro.

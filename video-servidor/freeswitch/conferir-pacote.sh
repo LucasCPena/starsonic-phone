@@ -4,6 +4,8 @@
 # pacotes do apt do pacotes.txt dele e falha se
 #   - o ldd de algum ELF do /opt/starsonic-freeswitch disser "not found";
 #   - o freeswitch -version não mostrar a versão do video-servidor/deps.lock;
+#   - as correções do VERSOES.txt dele não forem exatamente as da pasta patches/ ao lado deste script, pelo
+#     nome e pelo SHA-256 de cada arquivo;
 #   - a pasta mod/ não tiver exatamente os .so dos módulos do modules.conf;
 #   - faltar a fonte do quadro (a reunião não escreve mais o nome no mosaico, mas a fonte continua no pacote).
 #
@@ -30,6 +32,29 @@ FONTE="$PREFIXO/fonts/FreeSans.ttf"
 falhar() {
     echo "conferir: $*" >&2
     exit 1
+}
+
+# As linhas "patch <projeto> <arquivo> <sha256>" do VERSOES.txt ($1) são exatamente as dos arquivos
+# <projeto>/*.patch da pasta ($2). É a conta do linhas_das_correcoes do construir.sh, escrita aqui de novo de
+# propósito: se uma mudar e a outra não, esta conferência falha em todo build.
+conferir_correcoes() {
+    local versoes="$1" pasta="$2" patch esperadas achadas
+    esperadas="$(
+        for patch in "$pasta"/*/*.patch; do
+            [ -e "$patch" ] || continue
+            echo "patch $(basename "$(dirname "$patch")") $(basename "$patch") $(sha256sum "$patch" | cut -d' ' -f1)"
+        done | sort
+    )"
+    achadas="$( (grep '^patch ' "$versoes" || true) | sort)"
+    if [ "$achadas" != "$esperadas" ]; then
+        printf 'esperadas:\n%s\nno pacote:\n%s\n' "$esperadas" "$achadas" >&2
+        falhar "as correções do pacote não são as da pasta patches/"
+    fi
+    if [ -z "$esperadas" ]; then
+        echo "conferir: nenhuma correção na pasta patches/, e nenhuma no pacote"
+    else
+        echo "conferir: as correções do pacote são as da pasta patches/ ($(wc -l <<<"$esperadas"))"
+    fi
 }
 
 # 1. O pacote no /, e os pacotes do apt da lista dele, só eles.
@@ -77,7 +102,11 @@ case "$mostrada" in
     *) falhar "o freeswitch -version não mostra a $versao" ;;
 esac
 
-# 4. Os módulos: os .so da pasta mod/ são exatamente os do modules.conf.
+# 4. As correções: as que o pacote diz que leva são as da pasta patches/.
+[ -s "$PREFIXO/VERSOES.txt" ] || falhar "o pacote não tem o VERSOES.txt"
+conferir_correcoes "$PREFIXO/VERSOES.txt" "$AQUI/patches"
+
+# 5. Os módulos: os .so da pasta mod/ são exatamente os do modules.conf.
 [ -d "$PREFIXO/mod" ] || falhar "o pacote não tem a pasta mod/"
 esperados="$(sed 's|.*/||; s|$|.so|' "$AQUI/modules.conf" | sort)"
 achados="$(find "$PREFIXO/mod" -maxdepth 1 -name '*.so' -printf '%f\n' | sort)"
@@ -87,6 +116,6 @@ if [ "$achados" != "$esperados" ]; then
 fi
 echo "conferir: os $(wc -l <<<"$achados") módulos do modules.conf"
 
-# 5. A fonte do quadro.
+# 6. A fonte do quadro.
 [ -s "$FONTE" ] || falhar "o pacote não tem a fonte do nome no quadro ($FONTE)"
 echo "conferir: o pacote está completo"
