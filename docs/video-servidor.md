@@ -501,7 +501,7 @@ A cada vez que liga, o FreeSWITCH escreve algumas linhas que parecem erro e são
 
 Durante as reuniões, as linhas `[WARNING]` com `No audio stun for a long time!` ou `No video stun for a long time!` também são normais: alguém fechou a aba ou perdeu a rede sem sair, e a ligação dele cai sozinha um pouco depois, em até 60 segundos sem nada chegar dela.
 
-Uma linha `[ERR]` com `VPX encode error [8:Invalid parameter:(null)]` também pode aparecer numa troca de formato do mosaico, e não pede ação (veja "Uma linha `VPX encode error` no registro do FreeSWITCH", no passo 9). Se, nesse mesmo instante, todos caíram da reunião, veja "Todos caíram da reunião ao mesmo tempo", no passo 9.
+Uma linha `[ERR]` com `VPX encode error [8:Invalid parameter:(null)]` também pode aparecer numa troca de formato do mosaico, e não pede ação (veja "Uma linha `VPX encode error` no registro do FreeSWITCH", no passo 9). Se, nesse mesmo instante, a imagem congelou para todos ou todos caíram da reunião, veja "A imagem congelou para todos, ou todos caíram da reunião ao mesmo tempo", no passo 9.
 
 Qualquer outra linha com `[ERR]`, `[CRIT]` ou `[ALERT]` merece atenção. No agente, uma linha `o FreeSWITCH recusou um comando do mosaico`, com `comando=` e o nome do comando, também merece (veja "A reunião aparece como uma imagem só", no passo 9).
 
@@ -669,28 +669,39 @@ Era para cada pessoa ter o seu quadro, e a página mostra a imagem de todos junt
 - **O FreeSWITCH recusou um comando do mosaico.** Veja os registros do agente (passo 8). Uma linha `o FreeSWITCH recusou um comando do mosaico`, com `comando=` e o nome do comando (`vid-res`, `vid-layout`, `vid-res-id` ou `vid-bandwidth`), quer dizer que o FreeSWITCH não aceitou uma mudança do mosaico. Com o `vid-res` ou o `vid-layout`, o agente não manda o palco novo, e a página mostra os quadros escuros, com os nomes, e depois de 3 segundos a imagem inteira. Com o `vid-res-id` ou o `vid-bandwidth`, o agente segue e manda o palco. O agente tenta de novo na próxima vez que alguém entrar ou sair da reunião. Se a linha se repete a cada entrada e saída, guarde as linhas do registro e avise quem cuida do servidor de vídeo.
 
 **Uma linha `VPX encode error` no registro do FreeSWITCH.**
-É uma linha `[ERR]` com `VPX encode error [8:Invalid parameter:(null)]`. Ela pode aparecer em qualquer troca de formato do mosaico: quando alguém começa ou para de compartilhar a tela, na passagem de 4 para 5 pessoas e de 9 para 10, na volta (de 5 para 4 e de 10 para 9) e quando o número de pessoas muda durante um compartilhamento. Ela custa uma imagem, e não pede ação. Se, nesse mesmo instante, todos caírem da reunião, veja "Todos caíram da reunião ao mesmo tempo", logo abaixo. Se ela se repetir sem ninguém ter entrado, saído ou compartilhado a tela, guarde as linhas do registro e avise quem cuida do servidor de vídeo.
+É uma linha `[ERR]` com `VPX encode error [8:Invalid parameter:(null)]`. Ela pode aparecer em qualquer troca de formato do mosaico: quando alguém começa ou para de compartilhar a tela, na passagem de 4 para 5 pessoas e de 9 para 10, na volta (de 5 para 4 e de 10 para 9) e quando o número de pessoas muda durante um compartilhamento. Ela custa uma imagem, e não pede ação. Se, nesse mesmo instante, a imagem congelar para todos ou todos caírem da reunião, veja "A imagem congelou para todos, ou todos caíram da reunião ao mesmo tempo", logo abaixo. Se ela se repetir sem ninguém ter entrado, saído ou compartilhado a tela, guarde as linhas do registro e avise quem cuida do servidor de vídeo.
 
-**Todos caíram da reunião ao mesmo tempo.**
+**A imagem congelou para todos, ou todos caíram da reunião ao mesmo tempo.**
 Na versão `0.1.0-rc.3` do servidor de vídeo, o mosaico muda de tamanho em alguns momentos: quando alguém começa ou para de compartilhar a tela; na passagem de 4 para 5 pessoas e de 9 para 10 (e na volta); e, durante um compartilhamento, de 2 para 3 e de 4 para 5 pessoas (e na volta). A versão de antes (a `0.1.0-rc.2`) nunca muda o tamanho, e não tem este defeito.
 
-O FreeSWITCH 1.11.3 troca a imagem do mosaico nessa hora, enquanto outra parte dele ainda pode estar usando a antiga. Quando as duas coincidem, o processo do FreeSWITCH para, e todos caem de uma vez, em toda reunião que estiver no servidor naquele instante (o processo é um só para todas as salas). Num teste de esforço, com uma troca de tamanho a cada 0,1 segundo, ele parou depois de 535 trocas; nos testes automáticos do dia, com umas centenas de trocas, parou uma vez, no começo de um compartilhamento comum. Ou seja, pode acontecer em qualquer uma dessas trocas.
+O FreeSWITCH 1.11.3 tem um defeito nessa troca, que aparece de dois jeitos:
 
-O serviço liga de novo sozinho 5 segundos depois, e o agente avisa o chat de que cada sala acabou. A página mostra `A reunião acabou`, sem botão (abra o link de novo), ou `Você saiu da reunião`, com o `Entrar de novo`. Qual link volta a valer: na `Reunião de teste` e na `Reunião marcada`, as pessoas entram de novo pelo mesmo link (na marcada, quem é de fora espera um colega entrar de novo); a `Reunião agora` acaba junto com a sala, e o link dela não vale mais: gere outro.
+- **A imagem congela para todos.** É o que acontece num servidor com mais de 2 processadores. Três partes do FreeSWITCH ficam esperando uma pela outra, enquanto a pessoa cuja imagem estava sendo desenhada naquele instante continuar na reunião. O processo continua de pé, então o serviço não reinicia sozinho, e ninguém vê tela de erro: todos continuam na reunião, com a imagem parada. O comando do agente fica sem resposta, e, enquanto isso, o mosaico de nenhuma reunião do servidor se arruma. Quando aquela pessoa sai da reunião, o FreeSWITCH segue sozinho.
+- **Todos caem de uma vez**, em toda reunião que estiver no servidor naquele instante (o processo é um só para todas as salas). O FreeSWITCH troca a imagem do mosaico enquanto outra parte dele ainda usa a antiga, e o processo para. O serviço liga de novo sozinho 5 segundos depois. Isso foi visto com 2 processadores. Com mais de 2, a mesma troca insegura existe (os registros mostram os mesmos erros de imagem), mas nas rodadas de esforço a imagem congelou antes de o processo parar.
 
-Para confirmar, veja os registros do FreeSWITCH (passo 8):
+Nos testes de esforço, com uma troca de tamanho a cada 0,1 segundo: com 4 processadores, a imagem congelou depois de 10, de 65 e de 1.138 trocas, em três rodadas; com 2, o FreeSWITCH caiu depois de 535 trocas numa rodada e aguentou 3.000 em outra. Ou seja, pode acontecer em qualquer uma dessas trocas.
+
+Se a imagem congelou, peça para todos saírem da reunião e entrarem de novo. De fora, não dá para saber qual pessoa segura o FreeSWITCH: por isso, todos. Nos testes de esforço, isso foi medido quatro vezes: ele voltou a funcionar na hora em que a pessoa certa saiu (com o `Sair`), sem reiniciar nada, e uma reunião nova funcionou em seguida. Em três delas foi a primeira pessoa a sair; em uma, a segunda. Se, 2 minutos depois de todos saírem, as reuniões não voltarem ao normal, reinicie o FreeSWITCH. Isso encerra todas as reuniões que estão no servidor:
+
+```
+sudo systemctl restart starsonic-freeswitch
+```
+
+Qual link volta a valer depois: na `Reunião de teste` e na `Reunião marcada`, as pessoas entram de novo pelo mesmo link (na marcada, quem é de fora espera um colega entrar de novo); a `Reunião agora` acaba quando fica vazia ou quando o FreeSWITCH sai do ar, e o link dela não vale mais: gere outro. Quando o FreeSWITCH sai do ar (na queda ou no reinício), o agente avisa o chat de que cada sala acabou, e a página mostra `A reunião acabou`, sem botão (abra o link de novo), ou `Você saiu da reunião`, com o `Entrar de novo`.
+
+Para confirmar uma queda, veja os registros do FreeSWITCH (passo 8):
 
 ```
 sudo journalctl -u starsonic-freeswitch -n 50 --no-pager
 ```
 
-Se foi há pouco, eles mostram o serviço terminando e ligando de novo, e pode haver linhas `VPX encode error` um pouco antes. Para uma queda mais antiga, o mesmo comando com mais linhas chega mais longe:
+Se foi há pouco, eles mostram o serviço terminando e ligando de novo sozinho, e pode haver linhas `VPX encode error` um pouco antes. Quando a imagem congela, eles não mostram nada naquela hora: o serviço continuou de pé. Para uma queda mais antiga, o mesmo comando com mais linhas chega mais longe:
 
 ```
 sudo journalctl -u starsonic-freeswitch -n 500 --no-pager
 ```
 
-O conserto é no próprio FreeSWITCH: um pacote corrigido dele, que é a próxima coisa a ser entregue. Até lá, esta versão é para testar as telas: não use para uma reunião de verdade.
+O conserto é no próprio FreeSWITCH. Ele já foi escrito e provado num pacote de teste (`docs/superpowers/specs/2026-11-19-starsonic-phone-freeswitch-troca-de-tamanho-design.md`), e está previsto para a `0.1.0-rc.4` do servidor de vídeo. Até lá, esta versão é para testar as telas: não use para uma reunião de verdade.
 
 **A CPU alta.**
 A página `Reuniões` do chat mostra o uso do servidor de vídeo no teste: `Uso agora: CPU <n>% · memória <n>%.` A CPU é a média do último minuto. Com reuniões acontecendo, se a CPU fica acima de uns 80%, a imagem pode travar. Diminua as `Reuniões ao mesmo tempo` (passo 3), ou dê mais vCPUs à VM e depois aumente o número.

@@ -511,21 +511,33 @@ Na ordem contrária, a página antiga mostraria o mosaico novo cru, sem os nomes
 
 A reunião de teste é a da seção 25: na administração do chat, `Reuniões`, cartão `REUNIÃO DE TESTE`, `Criar a reunião de teste`. Guarde o link fora do repositório. Em cada aparelho ou janela, escreva um nome diferente (o nome do aparelho, por exemplo): é pelo nome que você confere o quadro de cada pessoa.
 
-**Um defeito conhecido (do FreeSWITCH, e não das telas que você testa).** Nesta versão, o mosaico muda de tamanho em alguns momentos: quando alguém começa ou para de compartilhar a tela; na passagem de 4 para 5 pessoas e de 9 para 10 (e na volta); e, durante um compartilhamento, de 2 para 3 e de 4 para 5 pessoas (e na volta). Numa dessas trocas, o FreeSWITCH pode parar: **todos caem da reunião ao mesmo tempo**, em toda reunião que estiver no servidor de vídeo naquele instante. Em um teste de esforço, com uma troca de tamanho a cada 0,1 segundo, ele parou depois de 535 trocas; nos testes automáticos do dia, com umas centenas de trocas, parou uma vez, no começo de um compartilhamento comum. Ou seja, pode acontecer em qualquer uma dessas trocas. O serviço liga de novo sozinho 5 segundos depois. A página mostra `A reunião acabou`, sem botão (abra o link de novo), ou `Você saiu da reunião`, com o `Entrar de novo`.
+**Um defeito conhecido (do FreeSWITCH, e não das telas que você testa).** Nesta versão, o mosaico muda de tamanho em alguns momentos: quando alguém começa ou para de compartilhar a tela; na passagem de 4 para 5 pessoas e de 9 para 10 (e na volta); e, durante um compartilhamento, de 2 para 3 e de 4 para 5 pessoas (e na volta). Numa dessas trocas, o FreeSWITCH pode falhar de dois jeitos:
 
-Se isso acontecer:
+- **A imagem congela para todos.** É o jeito de um servidor com mais de 2 processadores, como o de produção. O FreeSWITCH não cai: ele fica esperando, e a imagem só volta quando as pessoas saem da reunião. Ninguém vê tela de erro: todos continuam na reunião, com a imagem parada. Enquanto isso, o mosaico das outras reuniões do servidor também não se arruma.
+- **Todos caem da reunião ao mesmo tempo**, em toda reunião que estiver no servidor de vídeo naquele instante. Isso foi visto num servidor com 2 processadores. Com mais, não foi visto nos testes, mas não está descartado. O serviço liga de novo sozinho 5 segundos depois. A página mostra `A reunião acabou`, sem botão (abra o link de novo), ou `Você saiu da reunião`, com o `Entrar de novo`.
 
-1. Espere uns 10 segundos e entre de novo pelo mesmo link da reunião de teste (ou pelo `Entrar de novo`, se ele aparecer).
-2. Anote a hora e o que estava acontecendo (por exemplo, "o PC começou a compartilhar a tela").
-3. Siga com o roteiro, e conte no fim.
+Nos testes de esforço, com uma troca de tamanho a cada 0,1 segundo: com 4 processadores, a imagem congelou depois de 10, de 65 e de 1.138 trocas, em três rodadas; com 2, o FreeSWITCH caiu depois de 535 trocas numa rodada e aguentou 3.000 em outra. Ou seja, pode acontecer em qualquer uma dessas trocas.
 
-Para confirmar que foi isso, na VM do servidor de vídeo, rode:
+Se a imagem congelar para todos:
+
+1. Peça para todos saírem da reunião (o `Sair`, ou fechar a aba) e entrarem de novo pelo mesmo link da reunião de teste. Nos testes de esforço, isso foi medido quatro vezes: o FreeSWITCH voltou a funcionar na hora em que a pessoa certa saiu, sem reiniciar nada. Em três delas foi a primeira pessoa a sair; em uma, a segunda.
+2. Se, 2 minutos depois de todos saírem, a reunião não abrir de novo, reinicie o FreeSWITCH. Na VM do servidor de vídeo, rode:
+
+```
+sudo systemctl restart starsonic-freeswitch
+```
+
+Se todos caírem, espere uns 10 segundos e entre de novo pelo mesmo link (ou pelo `Entrar de novo`, se ele aparecer). Para confirmar que foi isso, na VM do servidor de vídeo, rode:
 
 ```
 sudo journalctl -u starsonic-freeswitch -n 50 --no-pager
 ```
 
-Se foi há pouco, ele mostra o serviço terminando e ligando de novo (pode haver linhas `VPX encode error` um pouco antes). O conserto é no próprio FreeSWITCH, com um pacote corrigido, e é a próxima coisa a ser entregue. Até lá, esta versão é para testar as telas: nenhuma reunião de verdade nela.
+Se foi há pouco, ele mostra o serviço terminando e ligando de novo sozinho (pode haver linhas `VPX encode error` um pouco antes).
+
+Nos dois casos, anote a hora e o que estava acontecendo (por exemplo, "o PC começou a compartilhar a tela"), siga com o roteiro, e conte no fim.
+
+O conserto é no próprio FreeSWITCH. Ele já foi escrito e provado num pacote de teste (`docs/superpowers/specs/2026-11-19-starsonic-phone-freeswitch-troca-de-tamanho-design.md`), e está previsto para a `0.1.0-rc.4` do servidor de vídeo. Até lá, esta versão é para testar as telas: nenhuma reunião de verdade nela.
 
 | # | Passo | Resultado esperado | PC | Celular |
 |---|-------|--------------------|----|---------|
