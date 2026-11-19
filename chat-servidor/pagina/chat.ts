@@ -1,7 +1,10 @@
 // O chat de verdade para os testes das telas (o globalSetup): compila o starsonic-chat e o sobe no modo de teste, numa
 // pasta temporária que some no fim. Ele serve a página (/r/<código>, com a CSP), os arquivos dela e a fonte e o logo
-// de /admin/estatico/; o abrir e o canal ficam com a rede falsa de cada teste (rede-falsa.ts).
+// de /admin/estatico/; o abrir e o canal ficam com a rede falsa de cada teste (rede-falsa.ts). Para os testes da página
+// de administração (admin.spec.ts), ele cria o usuário `teste`, com uma senha sorteada a cada rodada, que só vai para
+// os testes (o CHAT_ADMIN_SENHA).
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { closeSync, mkdirSync, mkdtempSync, openSync, rmSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -80,6 +83,10 @@ export default async function chat(): Promise<() => Promise<void>> {
     compilar(bin);
     const dados = join(pasta, 'dados');
     mkdirSync(dados);
+    const senha = randomBytes(18).toString('base64url');
+    const criar = spawnSync(bin, ['admin-criar', 'teste', '--dados', dados], { input: `${senha}\n${senha}\n`, encoding: 'utf8' });
+    if (criar.status !== 0) throw new Error(`o admin-criar falhou: ${criar.stderr}${criar.stdout}`.replaceAll(senha, '***'));
+    process.env.CHAT_ADMIN_SENHA = senha;
     mkdirSync(join(REGISTRO, '..'), { recursive: true });
     const log = openSync(REGISTRO, 'w');
     try {

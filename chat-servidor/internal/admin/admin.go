@@ -3,10 +3,11 @@
 // computadores, e apagar uma empresa. A página nunca mostra as conversas.
 //
 // É HTML feito no servidor (html/template), com as páginas e os estáticos embutidos. Nada é
-// inline: a CSP default-src 'self' vale para tudo, e o único script, o "Copiar o código", é um
-// arquivo. Toda página leva Cache-Control: no-store, porque a página da empresa mostra o
-// código, que é segredo. Só os estáticos (a fonte, o logo, o estilo e o script, sem segredo)
-// ficam um dia no navegador: private, max-age=86400.
+// inline: a CSP default-src 'self' vale para tudo, e os dois scripts são arquivos: o "Copiar o
+// código" e o que busca de novo, a cada 30 s, as duas páginas que mostram o estado dos ramais
+// (a lista das empresas e a de uma empresa). Toda página leva Cache-Control: no-store, porque a
+// página da empresa mostra o código, que é segredo. Só os estáticos (a fonte, o logo, o estilo e
+// os scripts, sem segredo) ficam um dia no navegador: private, max-age=86400.
 package admin
 
 import (

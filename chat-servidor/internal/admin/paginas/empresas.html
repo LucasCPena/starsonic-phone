@@ -1,7 +1,10 @@
 {{/* A lista das empresas (a tela Painel do quadro, com o estado dos ramais): os números, as reuniões, os ramais sem
      registro agora, de todas as empresas, e a tabela das empresas com as contas de cada uma. As partes com data-ao-vivo
      são as que se atualizam sozinhas. */}}
+{{define "scripts"}}<script src="/admin/estatico/atualizar.js" defer></script>{{end}}
+
 {{define "conteudo"}}{{with .Pagina -}}
+<p class="aviso-parado" id="sem-atualizar" role="status" hidden></p>
 <div class="cabeca">
   <div class="cabeca-titulos">
     <span class="sobretitulo"><span class="sobretitulo-traco" aria-hidden="true"></span>CHAT DO STARSONIC PHONE</span>
