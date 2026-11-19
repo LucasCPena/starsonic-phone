@@ -6,7 +6,7 @@
 // O relógio da página é o do Playwright, parado depois de ela abrir. Com ele parado, a ponte falsa só entrega uma
 // mensagem quando o relógio anda (ela usa um setTimeout, como o C++ usa o PostWebMessageAsJson): o `mudar` daqui manda
 // o estado e anda uns milissegundos.
-import { expect, test, type Page, type Request } from '@playwright/test';
+import { expect, test, type Page, type Request, type Route } from '@playwright/test';
 import { mudarEstado } from '../helpers';
 import { abrirNoChat, esperarOsEventos, pararORelogio } from './abrir';
 import { baseDoChat, empresaComPessoas, estadoNaAdministracao } from './servidor';
@@ -374,4 +374,197 @@ test('a abertura no meio da espera', async ({ page }) => {
   await page.clock.runFor(5000);
   expect(await contar(page, pedidos)).toBe(2);
   porFora.close();
+});
+
+// --- As falhas (tarefa 3) -------------------------------------------------------------------------------------------
+
+const ROTA_DO_RAMAL = `${baseDoChat()}${CAMINHO_DO_RAMAL}`;
+const resposta = (status: number, corpo: object) => ({ status, contentType: 'application/json; charset=utf-8', body: JSON.stringify(corpo) });
+
+/** Os erros que a página escreve no console, fora os do próprio navegador para um pedido que falhou. */
+function errosDaPagina(page: Page): string[] {
+  const erros: string[] = [];
+  page.on('console', (m) => {
+    if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) erros.push(m.text());
+  });
+  page.on('pageerror', (e) => erros.push(e.message));
+  return erros;
+}
+
+/** Nada apareceu para a pessoa: nenhum aviso na tela (um toast, uma faixa, um erro), e nenhum erro no console. */
+async function nadaApareceu(page: Page, erros: string[]): Promise<void> {
+  await expect(page.getByRole('status').filter({ hasText: /\S/ })).toHaveCount(0);
+  await expect(page.getByRole('alert').filter({ hasText: /\S/ })).toHaveCount(0);
+  expect(erros).toEqual([]);
+}
+
+/**
+ * Abre com o chat ainda sem começar (a conta não conectou neste computador) e com o relógio parado: o teste põe a rota
+ * do ramal e só então deixa o chat começar (o `comAContaConectada`).
+ */
+async function abrirAntesDoChat(page: Page, chave: string, status = 'conectado'): Promise<Request[]> {
+  const pedidos = pedidosDoRamal(page);
+  await page.clock.install();
+  await abrirNoChat(page, { chave, ...RECEPCAO, cenario: 'chat-sem-conta', extra: { status } });
+  await pararORelogio(page);
+  return pedidos;
+}
+
+/** A resposta do pedido chegou (ou a conexão dele caiu), e a página já viu. */
+async function voltou(page: Page, pedido: Request): Promise<void> {
+  await pedido.response();
+  await page.evaluate(() => 0);
+}
+
+test('o chat antigo: um 404 faz parar', async ({ page }) => {
+  // O fator das esperas da volta do canal em 1: a primeira tentativa é em 1 s.
+  await page.addInitScript(() => {
+    Math.random = () => 0.5;
+  });
+  const erros = errosDaPagina(page);
+  const { pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO]);
+  const pedidos = await abrirAntesDoChat(page, pessoas[0].chave);
+  // Um chat que ainda não tem a operação responde 404.
+  await page.route(ROTA_DO_RAMAL, (rota) => rota.fulfill(resposta(404, { erro: 'naoEncontrado' })));
+
+  await mudar(page, comAContaConectada);
+  await esperarOsEventos(page);
+  await expect.poll(() => pedidos.length).toBe(1);
+  await voltou(page, pedidos[0]);
+  // O ramal muda três vezes, com 5 s entre uma e outra: nenhum pedido novo.
+  for (const status of ['erro', 'conectando', 'conectado']) {
+    await mudar(page, comOStatus(status));
+    await page.clock.runFor(5000);
+  }
+  expect(await contar(page, pedidos)).toBe(1);
+
+  // O canal cai e volta: o app tenta uma vez, e só uma (o chat pode ter sido atualizado enquanto isso).
+  const porFora = await pessoas[0].api.abrirCanal();
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __eventosNoAr?: number }).__eventosNoAr)).toBe(0);
+  await page.clock.runFor(1000);
+  await esperarOsEventos(page);
+  await expect.poll(() => pedidos.length).toBe(2);
+  await voltou(page, pedidos[1]);
+  await page.clock.runFor(60_000);
+  expect(await contar(page, pedidos)).toBe(2);
+  porFora.close();
+  await nadaApareceu(page, erros);
+});
+
+const FALHAS: Array<{ nome: string; falhar(rota: Route): Promise<void> }> = [
+  { nome: 'o 500', falhar: (rota) => rota.fulfill(resposta(500, { erro: 'servidor' })) },
+  { nome: 'o 409 semLigacao', falhar: (rota) => rota.fulfill(resposta(409, { erro: 'semLigacao' })) },
+  { nome: 'a conexão cortada', falhar: (rota) => rota.abort() },
+];
+
+for (const caso of FALHAS) {
+  test(`uma falha tenta de novo: ${caso.nome}`, async ({ page }) => {
+    const erros = errosDaPagina(page);
+    const { empresaId, pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO]);
+    const pedidos = await abrirAntesDoChat(page, pessoas[0].chave);
+    // A rota falha nas duas primeiras vezes, e depois deixa passar.
+    let naRota = 0;
+    await page.route(ROTA_DO_RAMAL, (rota) => {
+      naRota += 1;
+      return naRota <= 2 ? caso.falhar(rota) : rota.continue();
+    });
+
+    await mudar(page, comAContaConectada);
+    await esperarOsEventos(page);
+    await expect.poll(() => pedidos.length).toBe(1);
+    await voltou(page, pedidos[0]);
+    // A primeira espera é de 0,5 a 1,5 s: com 1,5 s, a segunda tentativa saiu.
+    await page.clock.runFor(1500);
+    await expect.poll(() => pedidos.length).toBe(2);
+    await voltou(page, pedidos[1]);
+    // A segunda é de 1 a 3 s: com mais 3 s, sai a terceira, que passa.
+    await page.clock.runFor(3000);
+    await expect.poll(() => pedidos.length).toBe(3);
+    await confirmado(page, pedidos[2]);
+    // E mais nenhuma.
+    await page.clock.runFor(60_000);
+    expect(await contar(page, pedidos)).toBe(3);
+    await expect.poll(() => estadoNaAdministracao(empresaId, RECEPCAO.nome)).toEqual({ estado: 'Online', detalhe: 'há menos de 1 min' });
+    await nadaApareceu(page, erros);
+  });
+}
+
+test('o limite espera o que o chat pede', async ({ page }) => {
+  const erros = errosDaPagina(page);
+  const { pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO]);
+  const pedidos = await abrirAntesDoChat(page, pessoas[0].chave);
+  let naRota = 0;
+  await page.route(ROTA_DO_RAMAL, (rota) => {
+    naRota += 1;
+    return naRota === 1 ? rota.fulfill(resposta(429, { erro: 'limite', esperarSegundos: 7 })) : rota.continue();
+  });
+
+  await mudar(page, comAContaConectada);
+  await esperarOsEventos(page);
+  await expect.poll(() => pedidos.length).toBe(1);
+  await voltou(page, pedidos[0]);
+  // Com 6,9 s, nenhum pedido novo; com 7 s, a segunda tentativa.
+  await page.clock.runFor(6900);
+  expect(await contar(page, pedidos)).toBe(1);
+  await page.clock.runFor(110);
+  await expect.poll(() => pedidos.length).toBe(2);
+  await confirmado(page, pedidos[1]);
+  await nadaApareceu(page, erros);
+});
+
+test('um 429 sem o tempo de espera não vira um laço de pedidos', async ({ page }) => {
+  const erros = errosDaPagina(page);
+  const { pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO]);
+  const pedidos = await abrirAntesDoChat(page, pessoas[0].chave);
+  // Um 429 que não é o do chat (o de um proxy no caminho, por exemplo): sem o `esperarSegundos`.
+  let naRota = 0;
+  await page.route(ROTA_DO_RAMAL, (rota) => {
+    naRota += 1;
+    return naRota <= 2 ? rota.fulfill({ status: 429, contentType: 'text/plain', body: 'Too Many Requests' }) : rota.continue();
+  });
+
+  await mudar(page, comAContaConectada);
+  await esperarOsEventos(page);
+  await expect.poll(() => pedidos.length).toBe(1);
+  await voltou(page, pedidos[0]);
+  // A tentativa seguinte espera como depois de uma falha comum (de 0,5 a 1,5 s), e não vai na mesma hora.
+  await page.clock.runFor(400);
+  expect(await contar(page, pedidos)).toBe(1);
+  await page.clock.runFor(1100);
+  await expect.poll(() => pedidos.length).toBe(2);
+  await voltou(page, pedidos[1]);
+  await page.clock.runFor(3000);
+  await expect.poll(() => pedidos.length).toBe(3);
+  await confirmado(page, pedidos[2]);
+  await nadaApareceu(page, erros);
+});
+
+test('a tentativa leva o valor de agora', async ({ page }) => {
+  const erros = errosDaPagina(page);
+  const { empresaId, pessoas } = await empresaComPessoas(EMPRESA, [RECEPCAO]);
+  // O app abre com o ramal sem registrar.
+  const pedidos = await abrirAntesDoChat(page, pessoas[0].chave, 'erro');
+  let naRota = 0;
+  await page.route(ROTA_DO_RAMAL, (rota) => {
+    naRota += 1;
+    return naRota === 1 ? rota.fulfill(resposta(500, { erro: 'servidor' })) : rota.continue();
+  });
+
+  await mudar(page, comAContaConectada);
+  await esperarOsEventos(page);
+  await expect.poll(() => pedidos.length).toBe(1);
+  expect(corpos(pedidos)[0].estado).toBe('erro');
+  await voltou(page, pedidos[0]);
+  // Antes da segunda tentativa (de 0,5 a 1,5 s depois), o ramal registra: ela leva o estado novo, com o tempo dele.
+  await mudar(page, comOStatus('conectado'));
+  await page.clock.runFor(1500);
+  await expect.poll(() => pedidos.length).toBe(2);
+  expect(corpos(pedidos)[1].estado).toBe('conectado');
+  expect(corpos(pedidos)[1].segundos).toBeLessThanOrEqual(1);
+  await confirmado(page, pedidos[1]);
+  // A espera de 2 s da mudança acaba sem outro pedido: o valor já foi confirmado.
+  await page.clock.runFor(5000);
+  expect(await contar(page, pedidos)).toBe(2);
+  await expect.poll(() => estadoNaAdministracao(empresaId, RECEPCAO.nome)).toEqual({ estado: 'Online', detalhe: 'há menos de 1 min' });
+  await nadaApareceu(page, erros);
 });
