@@ -423,3 +423,41 @@ test('Conexão boa por 20 s com todos sem câmera e sem microfone', async () => 
     for (const p of paginas) await p.fechar();
   }
 });
+
+// O FreeSWITCH manda o relatório também do vídeo de quem entrou sem câmera: o primeiro, uns 3 s depois da entrada, diz
+// 255 de 256 perdidos, e fica sendo o último até o seguinte. Quem liga a câmera nesse meio tempo não pode ver, como
+// perda dela, um relatório de antes de a câmera ligar. Três páginas ligam a câmera 3, 4,5 e 6 s depois de entrar.
+test('quem entra sem câmera e a liga logo depois não vê a conexão ruim', async () => {
+  test.setTimeout(240_000);
+  const codigo = await novaReuniaoDeTeste();
+  const paginas: Pagina[] = [];
+  try {
+    for (const [pessoa, nome, espera] of [
+      [A, 'Carlos Lima', 3_000],
+      [B, 'Bia Ramos', 4_500],
+      [C, 'Maria Lima', 6_000],
+    ] as const) {
+      const p = await Pagina.abrir(pessoa);
+      paginas.push(p);
+      await p.entrar(codigo, nome, { cameraDesligada: true });
+      await expect(p.controles()).toBeVisible({ timeout: 30_000 });
+      await olharOSinal(p);
+      await esperar(espera);
+      await p.botao('Câmera').click();
+      await expect(p.botao('Câmera')).toHaveAttribute('aria-pressed', 'true');
+    }
+    // Por 20 s, o botão de cada uma só mostra o Medindo e a Conexão boa.
+    await esperar(20_000);
+    for (const p of paginas) {
+      const vistos = await vistosNoSinal(p);
+      expect(
+        vistos.filter(([, texto]) => texto !== 'Medindo a conexão…' && texto !== 'Conexão boa'),
+        `os outros estados que o sinalizador de ${p.pessoa.letra} mostrou, com os números da hora`,
+      ).toEqual([]);
+      expect(vistos[vistos.length - 1][1], `o sinalizador de ${p.pessoa.letra}, no fim`).toBe('Conexão boa');
+      await p.conferirOConsole();
+    }
+  } finally {
+    for (const p of paginas) await p.fechar();
+  }
+});

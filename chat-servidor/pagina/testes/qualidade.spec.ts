@@ -269,8 +269,11 @@ test('o cartão de cada estado', async ({ page }) => {
   await conferirOCartao(page, 'boa', 'Perda: 0% · Atraso: 45 ms');
   await mudarARede(page, INSTAVEL, 2);
   await conferirOCartao(page, 'instavel', 'Perda: 4% · Atraso: 210 ms');
-  // Os números mudam a cada medida, arredondados para o inteiro; o que o navegador não dá aparece como "—".
+  // Os números mudam a cada medida, arredondados para o inteiro; o que o navegador não dá aparece como "—". O atraso é
+  // o menor das duas últimas amostras: a amostra nova só aparece sozinha na medida seguinte.
   await mudarARede(page, { perda: 0.04, atraso: 299.6 }, 1);
+  await conferirOCartao(page, 'instavel', 'Perda: 4% · Atraso: 210 ms');
+  await medir(page);
   await conferirOCartao(page, 'instavel', 'Perda: 4% · Atraso: 300 ms');
   await mudarARede(page, { perda: 0.04 }, 1);
   await conferirOCartao(page, 'instavel', 'Perda: 4% · Atraso: —');

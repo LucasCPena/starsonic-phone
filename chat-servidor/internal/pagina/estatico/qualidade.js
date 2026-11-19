@@ -3,11 +3,20 @@
 // estado mostrado, que não acompanha cada medida para não piscar. As contas são funções puras; o medidor, no fim, é quem
 // lê a cada 2 s. Ele mede só a conexão da própria pessoa, não manda nada a servidor nenhum, não escreve nada no
 // console, e não guarda o relatório depois de o ler. No fim do arquivo estão os textos do botão e do cartão.
+//
+// Dois números do navegador são guardados por ele até chegar o seguinte: o relatório que o servidor de vídeo manda de
+// volta (um a cada 4 ou 5 s) e a amostra do atraso (uma a cada 2,5 s, no par de endereços do Chromium). Lidos a cada
+// 2 s, eles não são um número novo a cada leitura. Por isso cada leitura lembra três coisas da anterior: desde quando
+// a página manda cada tipo (um relatório de antes disso não fala do que ela manda), quantos pacotes perdidos o
+// relatório anterior de cada fluxo contava (um relatório sem perdidos novos não diz perda), e as duas últimas amostras
+// do atraso (uma só, lida duas vezes, não são duas).
 
 /** A página mede a cada 2 s. */
 export const INTERVALO_MS = 2000;
-/** O relatório que o servidor de vídeo manda de volta vale por 10 s: com a câmera desligada, o do vídeo para de chegar. */
+/** O relatório que o servidor de vídeo manda de volta vale por 10 s. */
 export const VALIDADE_DO_RELATORIO_MS = 10000;
+/** A leitura que chega mais de 6 s depois da anterior é só a base de novo: a página esteve parada. */
+export const PAUSA_MS = 3 * INTERVALO_MS;
 /** Os limites da conta, num lugar só. A perda é uma fração; o atraso, em ms. */
 export const LIMITES = Object.freeze({
   perda: Object.freeze({ instavel: 0.02, ruim: 0.08 }),
@@ -19,19 +28,35 @@ const numero = (v) => typeof v === 'number' && Number.isFinite(v);
 const maior = (valores) => valores.filter(numero).reduce((m, v) => (m === null || v > m ? v : m), null);
 
 /**
- * O que uma leitura guarda do getStats (um RTCStatsReport, ou qualquer coisa com o forEach dele):
- * { agora, som, video, sai, atraso }.
+ * O que uma leitura guarda do getStats (um RTCStatsReport, ou qualquer coisa com o forEach dele), com o que ela lembra
+ * da leitura anterior (antes; sem ela, a leitura não tem memória):
+ * { agora, som, video, sai, relatos, atraso, amostras }.
  *   agora: o maior timestamp do relatório, em ms;
  *   som: { recebidos, perdidos } do inbound-rtp de áudio, ou null; video: { recebidos, perdidos, imagens } do de vídeo
  *     (as imagens são o framesDecoded, ou null sem ele), ou null; mais de um do mesmo tipo são somados;
- *   sai: o que a página manda de cada tipo, { som, video }, cada um com { enviados, perda }: os enviados são os
- *     packetsSent dos outbound-rtp do tipo, somados, ou null sem eles; a perda é a maior fractionLost dos
- *     remote-inbound-rtp do tipo com o timestamp a até 10 s do agora, ou null;
- *   atraso: em ms, o currentRoundTripTime do par de endereços em uso; sem ele, o roundTripTime do remote-inbound-rtp
- *     do som com até 10 s; sem os dois, null.
+ *   sai: o que a página manda de cada tipo, { som, video }, cada um com { enviados, desde, perda }:
+ *     - os enviados são os packetsSent dos outbound-rtp do tipo, somados, ou null sem eles;
+ *     - o desde é o agora da primeira leitura que viu a página mandar esse tipo sem parar até aqui (os enviados
+ *       andaram desde a leitura anterior); null quando ela não mandou, ou quando a página não tem como saber;
+ *     - a perda é a maior entre as que dizem os remote-inbound-rtp do tipo que chegaram depois do desde e a até 10 s
+ *       do agora; null sem nenhum. O servidor manda o relatório também do que a página não manda, e o relatório que
+ *       chegou antes de ela começar a mandar não fala do que ela manda;
+ *   relatos: de cada remote-inbound-rtp (pelo id dele), o último relatório visto: { quando, perdidos, base, temBase }.
+ *     Os perdidos são o packetsLost (os que o servidor conta desde o começo do fluxo), e a base, os do relatório
+ *     anterior do mesmo fluxo. O relatório diz a fractionLost dele só quando traz perdidos novos (mais que a base);
+ *     sem perdidos novos, a perda dele é zero, e o primeiro relatório visto de um fluxo é só a base (não diz nada).
+ *     O FreeSWITCH conta um pacote perdido que não existe no fluxo que começa depois do primeiro relatório dele, e
+ *     esse pacote aparece na fractionLost dos primeiros relatórios sem nunca aumentar os perdidos. Sem a conta dos
+ *     perdidos (um navegador que não a dá), vale a fractionLost;
+ *   amostras: as duas últimas amostras diferentes do atraso, cada uma { id, valor (em ms) }. A amostra é o
+ *     currentRoundTripTime do par de endereços em uso, e o id dela é a resposta de que ela veio (o responsesReceived
+ *     do par; sem ele, null: a página não sabe, e cada leitura conta como uma amostra); sem o número do par, é o
+ *     roundTripTime do remote-inbound-rtp do som com até 10 s, e o id é o daquele relatório. Sem amostra nenhuma, a
+ *     leitura esquece as de antes;
+ *   atraso: em ms, o menor das duas amostras; com menos de duas, null.
  * Sem relatório, null.
  */
-export function leitura(relatorio) {
+export function leitura(relatorio, antes = null) {
   if (!relatorio || typeof relatorio.forEach !== 'function') return null;
   const chegam = { audio: null, video: null };
   const mandados = { audio: null, video: null }; // os pacotes que a página mandou de cada tipo
@@ -53,7 +78,14 @@ export function leitura(relatorio) {
     } else if (s.type === 'outbound-rtp' && (tipo === 'audio' || tipo === 'video')) {
       if (numero(s.packetsSent)) mandados[tipo] = (mandados[tipo] ?? 0) + s.packetsSent;
     } else if (s.type === 'remote-inbound-rtp') {
-      voltam.push({ tipo, quando: s.timestamp, perda: s.fractionLost, atraso: s.roundTripTime });
+      voltam.push({
+        id: s.id,
+        tipo,
+        quando: s.timestamp,
+        fracao: s.fractionLost,
+        perdidos: s.packetsLost,
+        atraso: s.roundTripTime,
+      });
     } else if (s.type === 'candidate-pair') {
       pares.push(s);
     } else if (s.type === 'transport' && typeof s.selectedCandidatePairId === 'string') {
@@ -61,30 +93,79 @@ export function leitura(relatorio) {
     }
   });
 
-  // Os relatórios do servidor que ainda valem, e a perda que eles dizem de cada tipo.
-  const novos = voltam.filter((v) => numero(v.quando) && agora - v.quando <= VALIDADE_DO_RELATORIO_MS);
-  const perdaDe = (qual) =>
-    maior(
-      novos
-        .filter((v) => v.tipo === qual)
-        .map((v) => v.perda)
-        .filter((p) => numero(p) && p >= 0),
-    );
-  const sai = {
-    som: { enviados: mandados.audio, perda: perdaDe('audio') },
-    video: { enviados: mandados.video, perda: perdaDe('video') },
+  // Cada relatório do servidor com a hora dele, com o que a leitura anterior lembra do mesmo fluxo: a perda que ele
+  // diz, e o que fica guardado para a leitura seguinte.
+  const relatos = {};
+  const julgados = voltam
+    .filter((v) => numero(v.quando))
+    .map((v) => {
+      const guardado = antes?.relatos?.[v.id];
+      const visto =
+        guardado === undefined
+          ? { quando: v.quando, perdidos: v.perdidos, base: undefined, temBase: false }
+          : guardado.quando === v.quando
+            ? guardado
+            : { quando: v.quando, perdidos: v.perdidos, base: guardado.perdidos, temBase: true };
+      relatos[v.id] = visto;
+      return { ...v, perda: perdaDoRelatorio(v, visto) };
+    });
+  // Os que ainda valem.
+  const novos = julgados.filter((v) => agora - v.quando <= VALIDADE_DO_RELATORIO_MS);
+  // O que a página manda de um tipo: desde quando, e a perda que o servidor diz do que ela mandou desde então.
+  const saida = (qual, tipo) => {
+    const enviados = mandados[tipo];
+    const anterior = antes?.sai?.[qual] ?? null;
+    // Sem o contador de agora, a comparação já dá falso; sem o de antes, ela daria verdadeiro.
+    const mandou = anterior !== null && numero(anterior.enviados) && enviados > anterior.enviados;
+    const desde = mandou ? (anterior.desde ?? agora) : null;
+    if (desde === null) return { enviados, desde: null, perda: null };
+    const perdas = novos.filter((v) => v.tipo === tipo && v.quando > desde).map((v) => v.perda);
+    return { enviados, desde, perda: maior(perdas) };
   };
+  const sai = { som: saida('som', 'audio'), video: saida('video', 'video') };
   // O par em uso: o do transport; sem ele, o que diz selected; sem ele, o nomeado que deu certo.
   const emUso =
     pares.find((p) => parDoTransporte !== null && p.id === parDoTransporte) ??
     pares.find((p) => p.selected === true) ??
     pares.find((p) => p.nominated === true && p.state === 'succeeded');
-  const doPar = emUso?.currentRoundTripTime;
-  const doSom = novos.find((v) => v.tipo === 'audio' && numero(v.atraso))?.atraso;
-  const segundos = numero(doPar) ? doPar : numero(doSom) ? doSom : null;
+  const amostras = amostrasCom(antes?.amostras ?? [], amostraDoAtraso(emUso, novos));
+  const atraso = amostras.length === 2 ? Math.min(amostras[0].valor, amostras[1].valor) : null;
 
   const som = chegam.audio ? { recebidos: chegam.audio.recebidos, perdidos: chegam.audio.perdidos } : null;
-  return { agora, som, video: chegam.video, sai, atraso: segundos === null ? null : segundos * 1000 };
+  return { agora, som, video: chegam.video, sai, relatos, atraso, amostras };
+}
+
+// A perda que um relatório do servidor diz, com o que a página lembra do fluxo dele (o visto): a fractionLost, quando
+// ele traz pacotes perdidos novos; zero, quando não traz; e null no primeiro relatório visto do fluxo, que é só a base
+// da conta, ou quando a fração não é um número que valha. Sem a conta dos perdidos, neste relatório ou no anterior,
+// vale a fração.
+function perdaDoRelatorio(v, visto) {
+  if (!numero(v.fracao) || v.fracao < 0) return null;
+  if (!numero(v.perdidos)) return v.fracao;
+  if (!visto.temBase) return null;
+  if (!numero(visto.base)) return v.fracao;
+  return v.perdidos > visto.base ? v.fracao : 0;
+}
+
+// A amostra do atraso de um relatório: a do par de endereços em uso, com a resposta de que ela veio; sem o número do
+// par, a do relatório do som que ainda vale. Sem nenhuma, null.
+function amostraDoAtraso(emUso, novos) {
+  const doPar = emUso?.currentRoundTripTime;
+  if (numero(doPar)) {
+    const respostas = emUso.responsesReceived;
+    return { id: numero(respostas) ? `${emUso.id}:${respostas}` : null, valor: doPar * 1000 };
+  }
+  const doSom = novos.find((v) => v.tipo === 'audio' && numero(v.atraso));
+  return doSom ? { id: `som:${doSom.quando}`, valor: doSom.atraso * 1000 } : null;
+}
+
+// As duas últimas amostras diferentes, com mais uma: a mesma amostra lida de novo (o mesmo id) não entra outra vez. Sem
+// o id, a página não sabe se é a mesma, e ela entra. Sem amostra, as guardadas são esquecidas.
+function amostrasCom(guardadas, nova) {
+  if (nova === null) return [];
+  const ultima = guardadas.at(-1);
+  if (ultima !== undefined && nova.id !== null && nova.id === ultima.id) return guardadas;
+  return [...guardadas, nova].slice(-2);
 }
 
 // A perda de um tipo entre duas leituras: os perdidos sobre os perdidos mais os recebidos. Os perdidos que diminuem (um
@@ -98,16 +179,6 @@ function perdaDoQueChega(antes, depois) {
   return recebidos + perdidos === 0 ? null : perdidos / (recebidos + perdidos);
 }
 
-// A perda do que sai de um tipo: a que o servidor de vídeo diz, e só quando a página mandou pacotes desse tipo entre as
-// duas leituras. O servidor manda o relatório também do que a página não manda: com a câmera desligada o vídeo vai sem
-// faixa, e o primeiro relatório do FreeSWITCH sobre ele conta um pacote perdido, que de nenhum pacote é 255/256. Sem o
-// contador dos mandados (um navegador que não o dá), a página não sabe se manda, e a perda não conta contra a pessoa.
-function perdaDoQueSai(antes, depois) {
-  // Sem o contador de agora, a comparação já dá falso; sem o de antes, ela daria verdadeiro.
-  const mandou = numero(antes.enviados) && depois.enviados > antes.enviados;
-  return mandou ? depois.perda : null;
-}
-
 // O que chegou de um tipo entre duas leituras: 'chegou', 'nada', ou 'incerto' (o contador andou para trás, e isso não
 // prova que nada chegou). Sem o tipo nas duas leituras, null.
 function chegada(antes, depois) {
@@ -118,8 +189,9 @@ function chegada(antes, depois) {
 
 /**
  * A medida entre duas leituras: { perda, atraso, nadaChegou }. A perda é uma fração, a maior entre a do som que chega,
- * a do vídeo que chega e a que o servidor diz do som e do vídeo que a página manda; ou null. O atraso, em ms, é o da
- * leitura de agora; ou null.
+ * a do vídeo que chega e a que a leitura de agora traz do som e do vídeo que a página manda (a que o servidor diz, e só
+ * do que ela manda: com a câmera desligada o vídeo vai sem faixa, e o primeiro relatório do FreeSWITCH sobre ele conta
+ * um pacote perdido, que de nenhum é 255/256); ou null. O atraso, em ms, é o da leitura de agora; ou null.
  * O nadaChegou: nenhum pacote de som novo e nenhuma imagem nova, entre os tipos que as duas leituras têm (sem a conta
  * das imagens, valem os pacotes do vídeo). Sem uma das leituras, null.
  */
@@ -128,8 +200,8 @@ export function medida(antes, depois) {
   const perda = maior([
     perdaDoQueChega(antes.som, depois.som),
     perdaDoQueChega(antes.video, depois.video),
-    perdaDoQueSai(antes.sai.som, depois.sai.som),
-    perdaDoQueSai(antes.sai.video, depois.sai.video),
+    depois.sai.som.perda,
+    depois.sai.video.perda,
   ]);
   const comImagens = antes.video?.imagens != null && depois.video?.imagens != null;
   const chegadas = [
@@ -203,9 +275,13 @@ export function passo(c, classe) {
  * estado mostrado e os números da última medida, a cada medida.
  *
  * Devolve { medir(ligado) }. Ligar começa do zero: uma conta nova, e a primeira leitura na hora (ela é só a base da
- * seguinte). Desligar para: nem a leitura que estava no ar vira medida. Com a aba escondida, o medidor não lê; quando
- * ela volta, a primeira leitura é de novo só a base, e o estado mostrado fica como estava. A leitura que falha não
- * vira medida nem para o medidor.
+ * seguinte). Desligar para: nem a leitura que estava no ar vira medida. A leitura que falha não vira medida nem para o
+ * medidor.
+ *
+ * A pausa: com a aba escondida, o medidor não lê; e a leitura que chega mais de 6 s depois da anterior (a página que o
+ * aparelho parou de uma vez, sem a aba dizer que se escondeu) não mede o tempo parado. Nos dois casos a leitura
+ * seguinte é de novo só a base, sem memória; o estado mostrado fica como estava, e as medidas de antes da pausa não
+ * contam mais para piorar nem para melhorar.
  */
 export function criarMedidor({ ler, relogio, visivel, aoMedir }) {
   let ligado = false;
@@ -215,11 +291,16 @@ export function criarMedidor({ ler, relogio, visivel, aoMedir }) {
   let pedida = 0; // o número da última leitura pedida, e o da última que entrou na conta
   let entrou = 0;
 
+  function pausar() {
+    anterior = null;
+    c = { ...c, ultimas: [], semNumero: 0 };
+  }
+
   function ciclo(daVez) {
     if (daVez !== vez) return;
     relogio.depois(INTERVALO_MS, () => ciclo(daVez));
     if (!visivel()) {
-      anterior = null;
+      pausar();
       return;
     }
     const esta = ++pedida;
@@ -228,9 +309,13 @@ export function criarMedidor({ ler, relogio, visivel, aoMedir }) {
       .then((relatorio) => {
         // A leitura de uma roda que acabou, ou a que chegou depois de uma mais nova, fica de fora.
         if (daVez !== vez || esta < entrou) return;
-        const l = leitura(relatorio);
+        let l = leitura(relatorio, anterior);
         if (l === null) return;
         entrou = esta;
+        if (anterior !== null && numero(l.agora) && numero(anterior.agora) && l.agora - anterior.agora > PAUSA_MS) {
+          pausar();
+          l = leitura(relatorio);
+        }
         const m = medida(anterior, l);
         anterior = l;
         if (m === null) return;
