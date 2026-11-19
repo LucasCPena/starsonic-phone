@@ -3,7 +3,7 @@ name: video-release
 # Publica uma versão do servidor de vídeo (tag video-v<versão>). Só à mão: Actions → video-release → Run workflow, com a
 # versão (ex.: 0.1.0 ou 0.1.0-rc.1). A release é sempre pre-release e nunca vira a "latest" do GitHub: o canal Estável
 # dos apps lê releases/latest, que tem de continuar 404 (ou a versão do Windows). No fim, o workflow confere isso.
-# A release nasce como rascunho (sem tag), recebe os onze arquivos, e só é publicada quando todos estão listados. Se algo
+# A release nasce como rascunho (sem tag), recebe os treze arquivos, e só é publicada quando todos estão listados. Se algo
 # falhar antes disso, sobra só um rascunho, que ninguém consegue baixar: apague-o em Releases e rode de novo.
 # Jobs: o FreeSWITCH (um pacote por sistema, conferido num contêiner limpo), o que testa e monta os arquivos só com
 # leitura (nenhum código do repositório roda com o token de escrita) e, por último, o que, com escrita, só mexe na
@@ -75,10 +75,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        sistema: [ubuntu-24.04, debian-12]
+        sistema: [ubuntu-24.04, ubuntu-26.04, debian-12]
         include:
           - sistema: ubuntu-24.04
             imagem: ubuntu:24.04
+          - sistema: ubuntu-26.04
+            imagem: ubuntu:26.04
           - sistema: debian-12
             imagem: debian:12
     container: ${{ matrix.imagem }}
@@ -116,7 +118,7 @@ jobs:
             work/freeswitch-saida/starsonic-freeswitch-${{ matrix.sistema }}-amd64.tar.gz
             work/freeswitch-saida/starsonic-freeswitch-${{ matrix.sistema }}-amd64.tar.gz.sha256
           if-no-files-found: error
-      # As fontes são as mesmas nos dois sistemas.
+      # As fontes são as mesmas nos três sistemas.
       - uses: actions/upload-artifact@v4
         if: matrix.sistema == 'ubuntu-24.04'
         with:
@@ -125,7 +127,8 @@ jobs:
           if-no-files-found: error
 
   # Cada pacote num contêiner limpo do sistema dele, como o instalador o usa. Igual ao job freeswitch-conferir do
-  # video.yml: se mudar aqui, mude no video.yml.
+  # video.yml: se mudar aqui, mude no video.yml. Só o último passo de lá não vem para cá ("O conferir recusa um
+  # pacote sem as correções"): ele é um teste do conferir-pacote.sh, e não do pacote.
   freeswitch-conferir:
     name: FreeSWITCH conferido (${{ matrix.sistema }})
     needs: freeswitch
@@ -133,10 +136,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        sistema: [ubuntu-24.04, debian-12]
+        sistema: [ubuntu-24.04, ubuntu-26.04, debian-12]
         include:
           - sistema: ubuntu-24.04
             imagem: ubuntu:24.04
+          - sistema: ubuntu-26.04
+            imagem: ubuntu:26.04
           - sistema: debian-12
             imagem: debian:12
     container: ${{ matrix.imagem }}
@@ -159,6 +164,12 @@ jobs:
         run: sha256sum -c "starsonic-freeswitch-$SISTEMA-amd64.tar.gz.sha256"
       - name: Conferir o pacote
         run: bash video-servidor/freeswitch/conferir-pacote.sh "pacote/starsonic-freeswitch-$SISTEMA-amd64.tar.gz"
+      # Os outros pacotes da linha do apt do instalar.sh, com os do pacotes.txt já instalados pelo passo de cima: o
+      # apt acha todos neste sistema. O -s só simula.
+      - name: Os pacotes do instalador
+        run: |
+          apt-get update -q
+          apt-get install -s -q certbot coturn ca-certificates openssl
 
   preparar:
     name: Testar e montar os arquivos
@@ -292,21 +303,22 @@ jobs:
             exit 1
           fi
 
-      # Os onze nomes, e só eles, antes de criar qualquer coisa.
+      # Os treze nomes, e só eles, antes de criar qualquer coisa.
       - name: Conferir os arquivos
         run: |
           esperado=$(printf '%s\n' certificado.sh instalar.sh starsonic-freeswitch-debian-12-amd64.tar.gz \
             starsonic-freeswitch-debian-12-amd64.tar.gz.sha256 starsonic-freeswitch-fontes.tar.gz \
             starsonic-freeswitch-ubuntu-24.04-amd64.tar.gz starsonic-freeswitch-ubuntu-24.04-amd64.tar.gz.sha256 \
+            starsonic-freeswitch-ubuntu-26.04-amd64.tar.gz starsonic-freeswitch-ubuntu-26.04-amd64.tar.gz.sha256 \
             starsonic-freeswitch.service starsonic-video-linux-amd64 starsonic-video-linux-amd64.sha256 \
             starsonic-video.service | sort)
           lista=$(find dist -type f -printf '%f\n' | sort)
           if [ "$lista" != "$esperado" ]; then
-            echo "::error title=arquivos::os arquivos montados não são os onze esperados"
+            echo "::error title=arquivos::os arquivos montados não são os treze esperados"
             echo "Esperado:"; echo "$esperado"; echo "Encontrado:"; echo "$lista"
             exit 1
           fi
-          if [ "$(find dist -type f | wc -l)" != 11 ] || [ -n "$(find dist -mindepth 2 -type f)" ]; then
+          if [ "$(find dist -type f | wc -l)" != 13 ] || [ -n "$(find dist -mindepth 2 -type f)" ]; then
             echo "::error title=arquivos::há arquivo fora da pasta dist ou repetido"
             exit 1
           fi
@@ -345,7 +357,7 @@ jobs:
             echo "enviado: $nome"
           done
 
-      # 3. Os onze nomes, e só eles, no rascunho.
+      # 3. Os treze nomes, e só eles, no rascunho.
       - name: Conferir a lista de arquivos
         env:
           GH_TOKEN: ${{ github.token }}
@@ -353,6 +365,7 @@ jobs:
           esperado=$(printf '%s\n' certificado.sh instalar.sh starsonic-freeswitch-debian-12-amd64.tar.gz \
             starsonic-freeswitch-debian-12-amd64.tar.gz.sha256 starsonic-freeswitch-fontes.tar.gz \
             starsonic-freeswitch-ubuntu-24.04-amd64.tar.gz starsonic-freeswitch-ubuntu-24.04-amd64.tar.gz.sha256 \
+            starsonic-freeswitch-ubuntu-26.04-amd64.tar.gz starsonic-freeswitch-ubuntu-26.04-amd64.tar.gz.sha256 \
             starsonic-freeswitch.service starsonic-video-linux-amd64 starsonic-video-linux-amd64.sha256 \
             starsonic-video.service | sort)
           lista=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --jq '.assets[] | select(.state == "uploaded") | .name' | sort)

@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Reunião — Starsonic</title>
+<link rel="preload" href="/admin/estatico/PlusJakartaSans-Variable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/r/estatico/pagina.css">
+<script src="/r/estatico/jssip.js" defer></script>
+<script src="/r/estatico/inicio.js" type="module"></script>
+</head>
+<body>
+<!-- Os ícones de traço do quadro, desenhados uma vez; cada tela os usa pelo <use>. -->
+<svg class="sprite" aria-hidden="true" focusable="false">
+<symbol id="i-calendario" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></symbol>
+<symbol id="i-mic" viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></symbol>
+<symbol id="i-mic-desligado" viewBox="0 0 24 24"><line x1="1" y1="1" x2="23" y2="23"></line><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"></path><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></symbol>
+<symbol id="i-camera" viewBox="0 0 24 24"><polygon points="23 7 16 12 23 17 23 7"></polygon><rect x="1" y="5" width="15" height="14" rx="2"></rect></symbol>
+<symbol id="i-camera-desligada" viewBox="0 0 24 24"><path d="M16 16v1a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2m5.66 0H14a2 2 0 0 1 2 2v3.34l1 1L23 7v10"></path><line x1="1" y1="1" x2="23" y2="23"></line></symbol>
+<symbol id="i-cadeado" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></symbol>
+<symbol id="i-alerta" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></symbol>
+<symbol id="i-de-novo" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></symbol>
+<symbol id="i-relogio" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></symbol>
+<symbol id="i-pessoa" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></symbol>
+<symbol id="i-recusado" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></symbol>
+<symbol id="i-pessoas" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></symbol>
+<symbol id="i-servidor" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="8" rx="2"></rect><rect x="2" y="14" width="20" height="8" rx="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></symbol>
+<symbol id="i-link-quebrado" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path><line x1="2" y1="2" x2="22" y2="22"></line></symbol>
+<symbol id="i-tirado" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="8.5" cy="7" r="4"></circle><line x1="18" y1="8" x2="23" y2="13"></line><line x1="23" y1="8" x2="18" y2="13"></line></symbol>
+<symbol id="i-acabou" viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></symbol>
+<symbol id="i-sair" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></symbol>
+<symbol id="i-sem-rede" viewBox="0 0 24 24"><line x1="1" y1="1" x2="23" y2="23"></line><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"></path><path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"></path><path d="M10.71 5.05A16 16 0 0 1 22.58 9"></path><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"></path><path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path><line x1="12" y1="20" x2="12.01" y2="20"></line></symbol>
+<symbol id="i-tela" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></symbol>
+<symbol id="i-compartilhar" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line><polyline points="9 10 12 7 15 10"></polyline><line x1="12" y1="7" x2="12" y2="13"></line></symbol>
+<symbol id="i-parar-tela" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line><line x1="9" y1="7" x2="15" y2="13"></line><line x1="15" y1="7" x2="9" y2="13"></line></symbol>
+<symbol id="i-girar" viewBox="0 0 24 24"><rect x="7" y="2" width="10" height="20" rx="2" transform="rotate(90 12 12)"></rect><line x1="11" y1="18" x2="13" y2="18" transform="rotate(90 12 12)"></line></symbol>
+<symbol id="i-aumentar" viewBox="0 0 24 24"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line></symbol>
+<symbol id="i-grade" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></symbol>
+</svg>
+
+<header class="topo">
+<div class="topo-dentro">
+<img class="logo" src="/admin/estatico/logo-negativo.png" alt="Starsonic soluções de voz e dados">
+<span class="topo-rotulo">Reunião</span>
+</div>
+</header>
+
+<main id="app">
+
+<!-- O carregando, até o abrir responder: o girando do Entrando, sozinho, desde o começo. -->
+<div class="carregando" aria-hidden="true">
+<div class="girando">
+<span class="gira"></span>
+<svg class="icone icone-28" aria-hidden="true"><use href="#i-camera"></use></svg>
+</div>
+</div>
+
+<!-- A entrada: a imagem da câmera com o Microfone e a Câmera, e o nome com o Pedir para entrar. -->
+<section class="tela tela-clara entrada" data-tela="entrada" hidden>
+<div class="aviso-acesso" role="alert" hidden>
+<svg class="icone icone-24" aria-hidden="true"><use href="#i-alerta"></use></svg>
+<div class="aviso-acesso-texto">
+<strong>Sem acesso à câmera ou ao microfone: libere no navegador</strong>
+<span>Clique no cadeado ao lado do endereço da página, permita a câmera e o microfone, e depois em Tentar de novo. Você também pode entrar só para ver e ouvir.</span>
+</div>
+<button type="button" class="botao botao-erro" data-botao="tentarMidia">
+<svg class="icone icone-16" aria-hidden="true"><use href="#i-de-novo"></use></svg>
+<span>Tentar de novo</span>
+</button>
+</div>
+<div class="entrada-corpo">
+<div class="entrada-titulo">
+<p class="sobretitulo"><span class="traco" aria-hidden="true"></span><span data-campo="sobretitulo"></span></p>
+<h1 tabindex="-1" data-campo="titulo"></h1>
+</div>
+<div class="entrada-imagem">
+<div class="imagem" data-imagem="ligada">
+<video class="previa" autoplay playsinline muted></video>
+<div class="imagem-vazia imagem-desligada">
+<svg class="icone icone-40" aria-hidden="true"><use href="#i-camera-desligada"></use></svg>
+<span>A câmera está desligada</span>
+</div>
+<div class="imagem-vazia imagem-indisponivel">
+<svg class="icone icone-40" aria-hidden="true"><use href="#i-camera-desligada"></use></svg>
+<span>O navegador não deixou usar a câmera</span>
+</div>
+<span class="imagem-rotulo">A sua imagem</span>
+</div>
+<div class="alternadores">
+<button type="button" class="botao alternar" data-botao="microfone" aria-pressed="true">
+<svg class="icone icone-20 icone-ligado" aria-hidden="true"><use href="#i-mic"></use></svg>
+<svg class="icone icone-20 icone-desligado" aria-hidden="true"><use href="#i-mic-desligado"></use></svg>
+<span>Microfone</span>
+</button>
+<button type="button" class="botao alternar" data-botao="camera" aria-pressed="true">
+<svg class="icone icone-20 icone-ligado" aria-hidden="true"><use href="#i-camera"></use></svg>
+<svg class="icone icone-20 icone-desligado" aria-hidden="true"><use href="#i-camera-desligada"></use></svg>
+<span>Câmera</span>
+</button>
+</div>
+<p class="dica" data-dica="escolha">Você escolhe aqui se entra com a câmera e o microfone ligados.</p>
+<p class="dica" data-dica="semPermissao" hidden>Sem a permissão, os dois ficam desligados.</p>
+</div>
+<div class="entrada-form">
+<div class="campo">
+<label for="nome">Seu nome</label>
+<input id="nome" type="text" autocomplete="name" maxlength="80" aria-describedby="nome-ajuda">
+<p id="nome-ajuda" class="ajuda">O seu nome aparece para quem vai aceitar o pedido, e no seu quadro da reunião.</p>
+<p id="nome-recusado" class="erro-campo" hidden>Confira o seu nome.</p>
+</div>
+<div class="pedir">
+<button type="button" class="botao botao-ciano botao-pedir" data-botao="pedir" disabled>Pedir para entrar</button>
+<p class="ajuda" data-dica="semNome">Digite o seu nome para pedir.</p>
+<p class="ajuda" data-dica="semCamera" hidden>Entrando assim, você vê e ouve a reunião, e o seu quadro mostra só o seu nome.</p>
+</div>
+<p class="gravado">
+<svg class="icone icone-16" aria-hidden="true"><use href="#i-cadeado"></use></svg>
+<span>Nada é gravado.</span>
+</p>
+</div>
+</div>
+</section>
+
+<!-- A espera: o pedido saiu (pedindo) ou chegou aos colegas (aguardando). -->
+<section class="tela tela-clara espera" data-tela="aguardando" hidden>
+<div class="cartao">
+<div class="girando" aria-hidden="true">
+<span class="gira"></span>
+<svg class="icone icone-28" aria-hidden="true"><use href="#i-relogio"></use></svg>
+</div>
+<div class="cartao-textos">
+<h1 tabindex="-1">Aguardando ser aceito…</h1>
+<p>Os colegas que estão na reunião receberam o seu pedido. Se ninguém responder em 10 minutos, o pedido acaba.</p>
+<p class="linha-reuniao" data-campo="linha"></p>
+</div>
+<div class="pessoa">
+<div class="pessoa-imagem" data-imagem="ligada">
+<video class="previa" autoplay playsinline muted></video>
+<svg class="icone icone-24 pessoa-sem-imagem" aria-hidden="true"><use href="#i-camera-desligada"></use></svg>
+</div>
+<div class="pessoa-dados">
+<span class="pessoa-nome" data-campo="nome"></span>
+<div class="alternadores alternadores-pequenos">
+<button type="button" class="botao alternar" data-botao="microfone" aria-pressed="true">
+<svg class="icone icone-18 icone-ligado" aria-hidden="true"><use href="#i-mic"></use></svg>
+<svg class="icone icone-18 icone-desligado" aria-hidden="true"><use href="#i-mic-desligado"></use></svg>
+<span>Microfone</span>
+</button>
+<button type="button" class="botao alternar" data-botao="camera" aria-pressed="true">
+<svg class="icone icone-18 icone-ligado" aria-hidden="true"><use href="#i-camera"></use></svg>
+<svg class="icone icone-18 icone-desligado" aria-hidden="true"><use href="#i-camera-desligada"></use></svg>
+<span>Câmera</span>
+</button>
+</div>
+</div>
+</div>
+<button type="button" class="botao botao-contorno" data-botao="desistir">Desistir</button>
+</div>
+</section>
+
+<!-- A reunião ainda não começou: o pedido espera um colega abri-la. -->
+<section class="tela tela-clara espera" data-tela="naoComecou" hidden>
+<div class="cartao">
+<div class="circulo circulo-azul" aria-hidden="true">
+<svg class="icone icone-30" aria-hidden="true"><use href="#i-calendario"></use></svg>
+</div>
+<div class="cartao-textos">
+<h1 tabindex="-1">A reunião ainda não começou</h1>
+<p>Ela começa quando um colega da empresa a abrir. Aí o seu pedido chega aos colegas, e você espera ser aceito. Pode deixar esta página aberta.</p>
+<p class="linha-reuniao" data-campo="linha"></p>
+</div>
+<p class="como-entra">
+<svg class="icone icone-18" aria-hidden="true"><use href="#i-pessoa"></use></svg>
+<span>Você vai entrar como <strong data-campo="nome"></strong></span>
+</p>
+<button type="button" class="botao botao-contorno" data-botao="desistir">Desistir</button>
+</div>
+</section>
+
+<!-- Entrando: o aceito chegou, e a ligação nasce. -->
+<section class="tela tela-clara espera" data-tela="entrando" hidden>
+<div class="cartao">
+<div class="girando" aria-hidden="true">
+<span class="gira"></span>
+<svg class="icone icone-28" aria-hidden="true"><use href="#i-camera"></use></svg>
+</div>
+<div class="cartao-textos">
+<h1 tabindex="-1">Entrando na reunião…</h1>
+</div>
+<button type="button" class="botao botao-contorno" data-botao="sair">Sair</button>
+</div>
+</section>
+
+<!-- Os avisos: cada um toma a página inteira, no lugar da entrada ou da reunião. -->
+<section class="tela tela-clara espera" data-tela="aviso" hidden>
+<div class="cartao" data-aviso="naoFoiPossivel" hidden>
+<div class="circulo circulo-erro" aria-hidden="true">
+<svg class="icone icone-30" aria-hidden="true"><use href="#i-recusado"></use></svg>
+</div>
+<div class="cartao-textos">
+<h1 tabindex="-1">Não foi possível entrar</h1>
+<p>O seu pedido não foi aceito. Se achar que foi engano, fale com quem mandou o link.</p>
+</div>
+</div>
+<div class="cartao" data-aviso="cheia" hidden>
+<div class="circulo circulo-ambar" aria-hidden="true">
+<svg class="icone icone-30" aria-hidden="true"><use href="#i-pessoas"></use></svg>
+</div>
+<div class="cartao-textos">
+<h1 tabindex="-1">A reunião está cheia</h1>
+<p>Ela já tem 10 pessoas. Tente de novo quando alguém sair.</p>
+</div>
+<button type="button" class="botao botao-ciano" data-botao="tentarDeNovo">Tentar de novo</button>
+</div>
+<div class="cartao" data-aviso="esperaCheia" hidden>
+<div class="circulo circulo-ambar" aria-hidden="true">
+<svg class="icone icone-30" aria-hidden="true"><use href="#i-pessoas"></use></svg>
+</div>
+<div class="cartao-textos">
+<h1 tabindex="-1">Muita gente esperando para entrar</h1>
+<p>A sala de espera está cheia. Tente de novo daqui a pouco.</p>
+</div>
+<button type="button" class="botao botao-ciano" data-botao="tentarDeNovo">Tentar de novo</button>
+</div>
+<div class="cartao" data-aviso="servidorCheio" hidden>
+<div class="circulo circulo-ambar" aria-hidden="true">
+<svg class="icone icone-30" aria-hidden="true"><use href="#i-servidor"></use></svg>
+</div>
+<div class="cartao-textos">
+<h1 tabindex="-1">O servidor de reuniões está cheio agora</h1>
+<p>Há muitas reuniões ao mesmo tempo. Tente de novo daqui a alguns minutos.</p>
+</div>
+<button type="button" class="botao botao-ciano" data-botao="tentarDeNovo">Tentar de novo</button>
+</div>
+<div class="cartao" data-aviso="semServidor" hidden>
+<div class="circulo circulo-erro" aria-hidden="true">
+<svg class="icone icone-30" aria-hidden="true"><use href="#i-servidor"></use></svg>
+</div>
+<div class="cartao-textos">
+<h1 tabindex="-1">O servidor de reuniões não respondeu</h1>
+<p>Tente de novo daqui a pouco. Se continuar, avise quem mandou o link.</p>
+</div>
+<button type="button" class="botao botao-ciano" data-botao="tentarDeNovo">Tentar de novo</button>
+</div>
+<div class="cartao" data-aviso="linkInvalido" hidden>
+<div class="circulo circulo-erro" aria-hidden="true">
+<svg class="icone icone-30" aria-hidden="true"><use href="#i-link-quebrado"></use></svg>
+</div>
+<div class="cartao-textos">
+<h1 tabindex="-1">Este link não vale mais</h1>
+<p>A reunião foi cancelada, passou da data ou já acabou. Peça um link novo a quem convidou você.</p>
+</div>
+</div>
+<div class="cartao" data-aviso="tentativas" hidden>
+<div class="circulo circulo-ambar" aria-hidden="true">
+<svg class="icone icone-30" aria-hidden="true"><use href="#i-relogio"></use></svg>
+</div>
+<div class="cartao-textos">
+<h1 tabindex="-1">Muitas tentativas</h1>
+<p>Este endereço tentou abrir links demais. Espere um pouco para tentar de novo.</p>
+</div>
+<button type="button" class="botao botao-ciano" data-botao="tentarDeNovo">
+<span data-contagem="contando">Tentar de novo em <span data-campo="segundos"></span> s</span>
+<span data-contagem="pronto">Tentar de novo</span>
+</button>
+</div>
+<div class="cartao" data-aviso="tirado" hidden>
+<div class="circulo circulo-azul" aria-hidden="true">
+<svg class="icone icone-30" aria-hidden="true"><use href="#i-tirado"></use></svg>
+</div>
+<div class="cartao-textos">
+<h1 tabindex="-1">Você foi tirado da reunião</h1>
+<p>Um colega da empresa tirou você da reunião.</p>
+</div>
+</div>
+<div class="cartao" data-aviso="encerrada" hidden>
+<div class="circulo circulo-azul" aria-hidden="true">
+<svg class="icone icone-30" aria-hidden="true"><use href="#i-acabou"></use></svg>
+</div>
+<div class="cartao-textos">
+<h1 tabindex="-1">A reunião acabou</h1>
+<p>Um colega encerrou a reunião para todos, ou ela foi cancelada.</p>
+</div>
+</div>
+<div class="cartao" data-aviso="saiu" hidden>
+<div class="circulo circulo-azul" aria-hidden="true">
+<svg class="icone icone-30" aria-hidden="true"><use href="#i-sair"></use></svg>
+</div>
+<div class="cartao-textos">
+<h1 tabindex="-1">Você saiu da reunião</h1>
+<p>Para voltar, clique em Entrar de novo.</p>
+</div>
+<button type="button" class="botao botao-ciano" data-botao="entrarDeNovo">Entrar de novo</button>
+</div>
+</section>
+
+<!-- A reunião: um quadro por pessoa, recortado do mosaico que o servidor monta (quadros.js), e os controles. -->
+<section class="tela tela-reuniao" data-tela="reuniao" hidden>
+<header class="reuniao-topo">
+<img class="logo" src="/admin/estatico/logo-negativo.png" alt="Starsonic soluções de voz e dados">
+<span class="divisor" aria-hidden="true"></span>
+<h1 tabindex="-1" data-campo="titulo"></h1>
+<p class="selo-gravado">
+<svg class="icone icone-14" aria-hidden="true"><use href="#i-cadeado"></use></svg>
+<span>Nada é gravado</span>
+</p>
+<p class="selo-tela" role="status" hidden>
+<svg class="icone icone-16" aria-hidden="true"><use href="#i-tela"></use></svg>
+<span>Você está compartilhando a tela</span>
+</p>
+</header>
+<!-- A área dos quadros. O mosaico continua tocando: fora da vista (e dos leitores de tela) enquanto há quadros, e
+inteiro sem o palco. -->
+<div class="palco">
+<div class="moldura" aria-hidden="true">
+<video id="mosaico" autoplay playsinline muted></video>
+</div>
+<button type="button" class="voltar" data-voltar="verTodos" hidden>
+<svg class="icone icone-16" aria-hidden="true"><use href="#i-grade"></use></svg>
+<span>Ver todos</span>
+</button>
+<button type="button" class="voltar" data-voltar="voltarParaATela" hidden>
+<svg class="icone icone-16" aria-hidden="true"><use href="#i-tela"></use></svg>
+<span>Voltar para a tela</span>
+</button>
+<div class="quadros"></div>
+<p class="gire" hidden>
+<svg class="icone icone-16" aria-hidden="true"><use href="#i-girar"></use></svg>
+<span>Gire o celular para ver a tela maior.</span>
+</p>
+<div class="caiu" hidden>
+<div class="caiu-cartao">
+<div class="girando girando-ambar" aria-hidden="true">
+<span class="gira"></span>
+<svg class="icone icone-20" aria-hidden="true"><use href="#i-sem-rede"></use></svg>
+</div>
+<h2>A conexão caiu. Entrando de novo…</h2>
+<p>Espere um instante: a página volta sozinha para a reunião.</p>
+</div>
+</div>
+</div>
+<nav class="controles" aria-label="Controles da reunião">
+<button type="button" class="botao controle alternar" data-botao="microfone" aria-pressed="true">
+<svg class="icone icone-20 icone-ligado" aria-hidden="true"><use href="#i-mic"></use></svg>
+<svg class="icone icone-20 icone-desligado" aria-hidden="true"><use href="#i-mic-desligado"></use></svg>
+<span>Microfone</span>
+</button>
+<button type="button" class="botao controle alternar" data-botao="camera" aria-pressed="true">
+<svg class="icone icone-20 icone-ligado" aria-hidden="true"><use href="#i-camera"></use></svg>
+<svg class="icone icone-20 icone-desligado" aria-hidden="true"><use href="#i-camera-desligada"></use></svg>
+<span>Câmera</span>
+</button>
+<button type="button" class="botao controle controle-compartilhar" hidden>
+<svg class="icone icone-20" aria-hidden="true"><use href="#i-compartilhar"></use></svg>
+<span>Compartilhar a tela</span>
+</button>
+<button type="button" class="botao controle controle-parar" data-botao="pararDeCompartilhar" hidden>
+<svg class="icone icone-20" aria-hidden="true"><use href="#i-parar-tela"></use></svg>
+<span>Parar de compartilhar</span>
+</button>
+<button type="button" class="botao controle controle-sair" data-botao="sair">
+<svg class="icone icone-20" aria-hidden="true"><use href="#i-sair"></use></svg>
+<span>Sair</span>
+</button>
+</nav>
+<audio id="som" autoplay></audio>
+</section>
+
+</main>
+
+<!-- A região que anuncia a mudança de tela aos leitores de tela. -->
+<p class="so-leitor" role="status" aria-live="polite" data-campo="anuncio"></p>
+</body>
+</html>

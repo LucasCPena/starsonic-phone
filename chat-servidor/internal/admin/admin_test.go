@@ -42,7 +42,7 @@ const cabecalhoEndereco = "X-Teste-Endereco"
 func novoPainel(t *testing.T) *painel {
 	t.Helper()
 	a := apitest.Novo(t)
-	h := admin.Novo(admin.Deps{Banco: a.Banco, Hub: a.Hub, Armazem: a.Armazem, Teste: true})
+	h := admin.Novo(admin.Deps{Banco: a.Banco, Hub: a.Hub, Armazem: a.Armazem, Teste: true, Gerente: a.Gerente, Base: a.Base})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if e := r.Header.Get(cabecalhoEndereco); e != "" {
 			r.RemoteAddr = e

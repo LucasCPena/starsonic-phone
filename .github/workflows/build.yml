@@ -14,6 +14,10 @@ on:
       # os testes da interface usam o servidor do chat.
       - 'docs/chat-*.md'
       - '.github/workflows/chat*.yml'
+      # O servidor de vídeo (o agente e o FreeSWITCH) tem o próprio workflow (video); não compila o Windows.
+      - 'video-servidor/**'
+      - 'docs/video-*.md'
+      - '.github/workflows/video*.yml'
   pull_request:
   workflow_dispatch:   # com versão: build de versão completo (com o código-fonte), sem publicar
     inputs:

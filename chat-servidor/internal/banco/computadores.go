@@ -47,10 +47,10 @@ func (b *Banco) computadorPorChave(ctx context.Context, chaveHash []byte, daPess
 	var e Empresa
 	var pessoa sql.NullInt64
 	err := b.db.QueryRowContext(ctx,
-		`SELECT c.id, c.empresa_id, c.nome, c.pessoa_id, e.id, e.nome, e.codigo, e.criada_em
+		`SELECT c.id, c.empresa_id, c.nome, c.pessoa_id, e.id, e.nome, e.codigo, e.criada_em, e.reunioes
 		   FROM computadores c JOIN empresas e ON e.id = c.empresa_id
 		  WHERE c.chave_hash = ? AND c.saiu_em IS NULL`, chaveHash).
-		Scan(&c.ID, &c.EmpresaID, &c.Nome, &pessoa, &e.ID, &e.Nome, &e.Codigo, &e.CriadaEm)
+		Scan(&c.ID, &c.EmpresaID, &c.Nome, &pessoa, &e.ID, &e.Nome, &e.Codigo, &e.CriadaEm, &e.Reunioes)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Computador{}, Empresa{}, ErrNaoEncontrado
 	}

@@ -63,6 +63,43 @@ func NormalizarCodigo(s string) (string, bool) {
 	return "STAR-" + c[4:8] + "-" + c[8:12], true
 }
 
+// alfabetoReuniao é o alfabeto do código da empresa, em minúsculas.
+const alfabetoReuniao = "abcdefghjkmnpqrstvwxyz23456789"
+
+// tamanhoCodigoReuniao é o número de caracteres do código do link de uma reunião.
+const tamanhoCodigoReuniao = 10
+
+// NovoCodigoReuniao gera o código do link de uma reunião: 10 caracteres de alfabetoReuniao.
+func NovoCodigoReuniao() string {
+	return strings.ToLower(letras(tamanhoCodigoReuniao))
+}
+
+// NormalizarCodigoReuniao passa o código para minúsculas, tira os espaços e confere: tem de ter
+// exatamente 10 caracteres de alfabetoReuniao. Qualquer outro caractere (um hífen, um l, um 0)
+// não vale.
+func NormalizarCodigoReuniao(s string) (string, bool) {
+	var sb strings.Builder
+	for _, r := range strings.ToLower(s) {
+		if r == ' ' || r == '\t' || r == '\n' || r == '\r' {
+			continue
+		}
+		sb.WriteRune(r)
+	}
+	c := sb.String()
+	if len(c) != tamanhoCodigoReuniao {
+		return "", false
+	}
+	for i := 0; i < len(c); i++ {
+		if !strings.ContainsRune(alfabetoReuniao, rune(c[i])) {
+			return "", false
+		}
+	}
+	return c, true
+}
+
+// NovoHex gera n bytes aleatórios em hexadecimal minúsculo (2n caracteres).
+func NovoHex(n int) string { return hex.EncodeToString(aleatorio(n)) }
+
 func base64url32() string {
 	return base64.RawURLEncoding.EncodeToString(aleatorio(32))
 }
@@ -85,6 +122,6 @@ func NovoBilhete() string { return base64url32() }
 // NovoIDArquivo gera o id de um arquivo: 16 bytes em hexadecimal.
 func NovoIDArquivo() string { return hex.EncodeToString(aleatorio(16)) }
 
-// NovoToken gera um token da página de administração (o da sessão ou o do CSRF): 32 bytes
-// aleatórios em base64url (43 caracteres).
+// NovoToken gera um token da página de administração (o da sessão ou o do CSRF) ou a chave de volta da página
+// das reuniões: 32 bytes aleatórios em base64url (43 caracteres).
 func NovoToken() string { return base64url32() }

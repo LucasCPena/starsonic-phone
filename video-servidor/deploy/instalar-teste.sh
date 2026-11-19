@@ -1,0 +1,784 @@
+#!/usr/bin/env bash
+# Testa o instalar.sh e o certificado.sh: as conferências, o config.json, os donos e os modos da configuração,
+# o coturn, o gancho do certificado numa raiz de mentira, a recusa do atualizar com reuniões acontecendo e a
+# troca do endereço do chat. Não instala nada, não usa a rede nem o root.
+# Rode: bash video-servidor/deploy/instalar-teste.sh
+#
+# Os stubs (chown, systemctl, getent, ip, sleep, ...) são chamados pelas funções do instalar.sh, e não
+# daqui: o shellcheck não vê.
+# shellcheck disable=SC2317,SC2329
+set -euo pipefail
+
+aqui=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=./instalar.sh
+# shellcheck disable=SC1091
+. "$aqui/instalar.sh"
+
+falhas=0
+confere() { # confere <nome> <esperado> <recebido>
+  if [ "$2" = "$3" ]; then
+    echo "ok   $1"
+  else
+    echo "ERRO $1: esperava [$2], veio [$3]"
+    falhas=$((falhas + 1))
+  fi
+}
+
+# aceita <função> <valor>: "sim" se a função aceita o valor, "não" se ela para com erro.
+aceita() {
+  if ("$1" "$2") 2>/dev/null; then echo sim; else echo não; fi
+}
+
+# modo <caminho>: as permissões, como 640.
+modo() { stat -c %a "$1"; }
+
+# Tudo o que o teste escreve fica nesta pasta, e todo caminho do instalar.sh aponta para dentro dela: nenhuma
+# função chega ao sistema, nem por engano.
+T=$(mktemp -d)
+trap 'rm -rf "$T"' EXIT
+# Alguns só as funções do instalar.sh leem, e o shellcheck não vê.
+# shellcheck disable=SC2034
+{
+  CONFIG_DIR=$T/etc/starsonic-video
+  BINARIO=$T/usr/local/bin/starsonic-video
+  FREESWITCH=$T/opt/starsonic-freeswitch
+  UNIDADES=$T/etc/systemd/system
+  GANCHO=$T/etc/letsencrypt/renewal-hooks/deploy/starsonic-video
+  LETSENCRYPT=$T/etc/letsencrypt
+  TURN_CONF=$T/etc/turnserver.conf
+  OS_RELEASE=$T/os-release-que-nao-existe
+  TMP=$T/tmp
+}
+mkdir -p "$TMP"
+
+# Estes comandos, chamados sem um cenário que os espere, falham com o nome deles.
+inesperado() { echo "chamada inesperada: $*" >&2; return 99; }
+apt-get() { inesperado apt-get "$@"; }
+certbot() { inesperado certbot "$@"; }
+curl() { inesperado curl "$@"; }
+journalctl() { inesperado journalctl "$@"; }
+systemctl() { inesperado systemctl "$@"; }
+useradd() { inesperado useradd "$@"; }
+
+# O chown de mentira anota "<dono> <caminho> [-h]", com o caminho sem a pasta do teste: o teste não roda como root.
+DONOS=$T/donos
+chown() {
+  local dono caminho opcoes=""
+  while [[ "${1:-}" == -* ]]; do
+    opcoes+=" $1"
+    shift
+  done
+  dono=$1
+  shift
+  for caminho in "$@"; do
+    echo "$dono ${caminho#"$T"/}$opcoes" >>"$DONOS"
+  done
+}
+# dono_de <caminho sem a pasta do teste>: o último dono pedido para o caminho.
+dono_de() { awk -v c="$1" '$2 == c { d = $1 } END { print d }' "$DONOS"; }
+
+# --- o endereço do servidor de vídeo: os casos do conferir_endereco do chat ---
+for e in video.exemplo.com.br video.starcloud-starsonic.com.br a.b 123.exemplo.com.br; do
+  confere "endereço $e" sim "$(aceita conferir_endereco "$e")"
+done
+# Um número de IP, um nome sem ponto, com porta, com https, com maiúsculas, vazio.
+for e in 189.0.2.10 10.0.0.1.2 video video.exemplo.com.br:8443 https://video.exemplo.com.br Video.Exemplo.com.br ""; do
+  confere "endereço [$e]" não "$(aceita conferir_endereco "$e")"
+done
+
+# --- o endereço do chat: um nome, com a porta só quando o chat usa uma própria ---
+for c in chat.exemplo.com.br chat.exemplo.com.br:8443 chat.exemplo.com.br:1 chat.exemplo.com.br:65535; do
+  confere "chat $c" sim "$(aceita conferir_chat "$c")"
+done
+# Com https, sem ponto, com caminho, a 443 (a normal, sem porta), a 80 (a do certificado), portas fora da faixa ou
+# com zero na frente, um IP, maiúsculas, vazio.
+for c in https://chat.exemplo.com.br chat chat.exemplo.com.br/x chat.exemplo.com.br:443 chat.exemplo.com.br:80 \
+  chat.exemplo.com.br:0 chat.exemplo.com.br:65536 chat.exemplo.com.br:08443 chat.exemplo.com.br: \
+  chat.exemplo.com.br:8443:1 189.0.2.10 189.0.2.10:8443 Chat.Exemplo.com.br ""; do
+  confere "chat [$c]" não "$(aceita conferir_chat "$c")"
+done
+
+# --- a porta do HTTPS do agente: a 443, ou de 1024 a 65535 fora as portas do próprio servidor ---
+for n in 443 1024 7443 8443 65535 5060 5062 49152; do
+  confere "porta $n" sim "$(aceita conferir_porta "$n")"
+done
+# Abaixo da faixa (a 80 é a do certbot), acima dela, zero na frente, não é número, vazia, e cada porta do servidor.
+for n in 1 80 442 444 1023 65536 99999 100000 07443 0 -1 7443.5 7e3 " 7443" abc "" 3478 5061 5066 5070 5080 5349 8021 8091; do
+  confere "porta [$n]" não "$(aceita conferir_porta "$n")"
+done
+confere "o erro da porta que não serve diz a porta" \
+  'ERRO: a porta "1023" não serve. Use a 443, ou um número de 1024 a 65535. Exemplo: 7443' \
+  "$( (conferir_porta 1023) 2>&1)"
+confere "o erro da porta do próprio servidor" \
+  "ERRO: a porta 5061 é uma das que o próprio servidor de vídeo usa. Use a 443, ou outro número de 1024 a 65535. Exemplo: 7443" \
+  "$( (conferir_porta 5061) 2>&1)"
+
+# --- o conferir_portas: o ss confere a porta do agente (a 443, ou a --porta), a 80 do certbot e as outras ---
+# cenario_portas <porta ou vazio> <porta ocupada no TCP ou vazio>: "<código>|<as consultas ao ss, com #>|<saída>".
+cenario_portas() {
+  (
+    t_ocupada=$2
+    t_consultas=$T/ss-consultas-$1-$2
+    : >"$t_consultas"
+    ss() {
+      echo "$*" >>"$t_consultas"
+      if [ "$2" = -ltnp ] && [ -n "$t_ocupada" ]; then echo "LISTEN 0 4096 0.0.0.0:$t_ocupada 0.0.0.0:* users:((\"x\",pid=1,fd=3))"; fi
+      return 0
+    }
+    t_codigo=0
+    if [ -n "$1" ]; then
+      t_saida=$( (conferir_portas "$1") 2>&1) || t_codigo=$?
+    else
+      t_saida=$( (conferir_portas) 2>&1) || t_codigo=$?
+    fi
+    echo "$t_codigo|$(paste -sd '#' "$t_consultas")|$(tail -n 1 <<<"$t_saida")"
+  )
+}
+ss_tcp() { echo "-H -ltnp ( sport = :80 or sport = :$1 or sport = :5061 or sport = :5349 )"; }
+ss_udp="-H -lunp ( sport = :3478 )"
+confere "as portas livres, sem porta: o ss olha a 443" "0|$(ss_tcp 443)#$ss_udp|" "$(cenario_portas '' '')"
+confere "as portas livres, com a 7443: o ss olha a 7443 e não a 443" "0|$(ss_tcp 7443)#$ss_udp|" "$(cenario_portas 7443 '')"
+confere "a 7443 em uso para" "1|$(ss_tcp 7443)#$ss_udp|ERRO: as portas TCP 80, 7443, 5061 e 5349 e a UDP 3478 têm de estar livres, e alguma está em uso (acima). Pare o programa que usa a porta e rode de novo." \
+  "$(cenario_portas 7443 7443)"
+confere "sem porta, a mensagem fala da 443" "1|$(ss_tcp 443)#$ss_udp|ERRO: as portas TCP 80, 443, 5061 e 5349 e a UDP 3478 têm de estar livres, e alguma está em uso (acima). Pare o programa que usa a porta e rode de novo." \
+  "$(cenario_portas '' 443)"
+
+# --- o sistema, com arquivos os-release de mentira ---
+os_release() { # os_release <nome do arquivo> <linhas>...
+  local arquivo=$T/$1
+  shift
+  printf '%s\n' "$@" >"$arquivo"
+  echo "$arquivo"
+}
+ubuntu24=$(os_release ubuntu-24 'PRETTY_NAME="Ubuntu 24.04.1 LTS"' 'NAME="Ubuntu"' 'VERSION_ID="24.04"' \
+  'VERSION="24.04.1 LTS (Noble Numbat)"' 'ID=ubuntu' 'ID_LIKE=debian')
+ubuntu26=$(os_release ubuntu-26 'PRETTY_NAME="Ubuntu 26.04.1 LTS"' 'NAME="Ubuntu"' 'VERSION_ID="26.04"' \
+  'VERSION="26.04.1 LTS (Resolute Raccoon)"' 'ID=ubuntu' 'ID_LIKE=debian')
+debian12=$(os_release debian-12 'PRETTY_NAME="Debian GNU/Linux 12 (bookworm)"' 'NAME="Debian GNU/Linux"' \
+  'VERSION_ID="12"' 'VERSION="12 (bookworm)"' 'ID=debian')
+ubuntu22=$(os_release ubuntu-22 'PRETTY_NAME="Ubuntu 22.04.4 LTS"' 'VERSION_ID="22.04"' 'ID=ubuntu' 'ID_LIKE=debian')
+ubuntu2510=$(os_release ubuntu-25.10 'PRETTY_NAME="Ubuntu 25.10"' 'NAME="Ubuntu"' 'VERSION_ID="25.10"' \
+  'VERSION="25.10 (Questing Quokka)"' 'ID=ubuntu' 'ID_LIKE=debian')
+debian13=$(os_release debian-13 'PRETTY_NAME="Debian GNU/Linux 13 (trixie)"' 'VERSION_ID="13"' 'ID=debian')
+fedora=$(os_release fedora 'PRETTY_NAME="Fedora Linux 40 (Server Edition)"' 'VERSION_ID=40' 'ID=fedora')
+confere "sistema Ubuntu 24.04" ubuntu-24.04 "$(sistema_da_maquina "$ubuntu24")"
+confere "sistema Ubuntu 26.04" ubuntu-26.04 "$(sistema_da_maquina "$ubuntu26")"
+confere "sistema Debian 12" debian-12 "$(sistema_da_maquina "$debian12")"
+for f in "$ubuntu22" "$ubuntu2510" "$debian13" "$fedora" "$T/nao-existe"; do
+  confere "sistema $(basename "$f") para" não "$(aceita sistema_da_maquina "$f")"
+done
+confere "o erro diz o nome do sistema" \
+  "ERRO: o sistema desta máquina é Ubuntu 22.04.4 LTS. Precisa ser Ubuntu 24.04, Ubuntu 26.04 ou Debian 12." \
+  "$( (sistema_da_maquina "$ubuntu22") 2>&1)"
+confere "o Ubuntu 25.10, entre o 24.04 e o 26.04, para" \
+  "ERRO: o sistema desta máquina é Ubuntu 25.10. Precisa ser Ubuntu 24.04, Ubuntu 26.04 ou Debian 12." \
+  "$( (sistema_da_maquina "$ubuntu2510") 2>&1)"
+confere "sem o os-release, o erro diz os três sistemas" \
+  "ERRO: não sei qual é o sistema desta máquina ($T/nao-existe não existe). Precisa ser Ubuntu 24.04, Ubuntu 26.04 ou Debian 12." \
+  "$( (sistema_da_maquina "$T/nao-existe") 2>&1)"
+
+# --- os dois IPs, com o ip e o getent de mentira ---
+confere "IP privado" 10.0.0.5 "$(
+  ip() { [ "$*" = "-4 route get 1.1.1.1" ] && printf '1.1.1.1 via 10.0.0.1 dev eth0 src 10.0.0.5 uid 0 \n    cache \n'; }
+  ip_privado
+)"
+confere "IP privado sem rota" não "$(
+  ip() { echo "RTNETLINK answers: Network is unreachable" >&2; return 2; }
+  aceita ip_privado x
+)"
+# O getent responde como o de verdade: uma linha por tipo de socket, o primeiro A antes.
+getent_de_mentira() {
+  [ "$1" = ahostsv4 ] || return 9
+  case "$2" in
+    video.exemplo.com.br) printf '203.0.113.10    STREAM video.exemplo.com.br\n203.0.113.10    DGRAM  \n203.0.113.10    RAW    \n203.0.113.20    STREAM \n' ;;
+    interno.exemplo.com.br) printf '10.0.0.5        STREAM interno.exemplo.com.br\n' ;;
+    hosts.exemplo.com.br) printf '127.0.1.1       STREAM hosts.exemplo.com.br\n' ;;
+    cgnat.exemplo.com.br) printf '100.72.0.9      STREAM cgnat.exemplo.com.br\n' ;;
+    *) return 2 ;;
+  esac
+}
+confere "IP público" 203.0.113.10 "$(
+  getent() { getent_de_mentira "$@"; }
+  ip_publico video.exemplo.com.br
+)"
+confere "sem o registro A" \
+  "ERRO: o endereço nada.exemplo.com.br ainda não aponta para nenhum IP no DNS. Crie o registro A e espere alguns minutos." \
+  "$( (
+    getent() { getent_de_mentira "$@"; }
+    ip_publico nada.exemplo.com.br
+  ) 2>&1)"
+for e in interno hosts cgnat; do
+  confere "IP público que não é da internet ($e)" não "$(
+    getent() { getent_de_mentira "$@"; }
+    aceita ip_publico "$e.exemplo.com.br"
+  )"
+done
+for ip in 10.1.2.3 172.16.0.1 172.31.255.255 192.168.0.10 100.64.0.1 100.127.255.255 127.0.0.1 169.254.169.254 0.0.0.0; do
+  confere "IP $ip é reservado" sim "$(if ip_reservado "$ip"; then echo sim; else echo não; fi)"
+done
+for ip in 203.0.113.10 172.15.255.255 172.32.0.1 100.63.255.255 100.128.0.1 192.169.0.1 8.8.8.8; do
+  confere "IP $ip é da internet" não "$(if ip_reservado "$ip"; then echo sim; else echo não; fi)"
+done
+
+# --- a senha do ESL: 32 letras e números ---
+s1=$(senha_esl)
+s2=$(senha_esl)
+confere "senha do ESL com 32 letras e números" sim "$(if [[ "$s1" =~ ^[A-Za-z0-9]{32}$ ]]; then echo sim; else echo não; fi)"
+confere "duas senhas do ESL diferentes" sim "$(if [ "$s1" != "$s2" ]; then echo sim; else echo não; fi)"
+
+# --- o config.json: os seis campos, root:starsonic-video e 0640 ---
+chave_teste=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8
+mkdir -p "$CONFIG_DIR"
+escrever_config video.exemplo.com.br chat.exemplo.com.br:8443 "$chave_teste" "$s1" 10.0.0.5 203.0.113.10
+confere "config.json" \
+  "{\"endereco\": \"video.exemplo.com.br\", \"chat\": \"chat.exemplo.com.br:8443\", \"chave\": \"$chave_teste\", \"senhaEsl\": \"$s1\", \"ipPrivado\": \"10.0.0.5\", \"ipPublico\": \"203.0.113.10\"}" \
+  "$(cat "$CONFIG_DIR/config.json")"
+confere "config.json é JSON" sim "$(python3 -I -c 'import json,sys; json.load(open(sys.argv[1])); print("sim")' "$CONFIG_DIR/config.json")"
+confere "config.json 0640" 640 "$(modo "$CONFIG_DIR/config.json")"
+confere "config.json do grupo do agente, antes de tomar o lugar" root:starsonic-video "$(dono_de etc/starsonic-video/config.json.novo)"
+confere "nenhum config.json.novo sobrou" não "$(if [ -e "$CONFIG_DIR/config.json.novo" ]; then echo sim; else echo não; fi)"
+confere "sem porta, o config.json não tem o campo" não "$(if grep -q porta "$CONFIG_DIR/config.json"; then echo sim; else echo não; fi)"
+escrever_config video.exemplo.com.br chat.exemplo.com.br:8443 "$chave_teste" "$s1" 10.0.0.5 203.0.113.10 7443
+confere "config.json com a porta" \
+  "{\"endereco\": \"video.exemplo.com.br\", \"chat\": \"chat.exemplo.com.br:8443\", \"chave\": \"$chave_teste\", \"senhaEsl\": \"$s1\", \"ipPrivado\": \"10.0.0.5\", \"ipPublico\": \"203.0.113.10\", \"porta\": 7443}" \
+  "$(cat "$CONFIG_DIR/config.json")"
+confere "config.json com a porta é JSON" sim "$(python3 -I -c 'import json,sys; print("sim" if json.load(open(sys.argv[1]))["porta"] == 7443 else "não")' "$CONFIG_DIR/config.json")"
+confere "config.json com a porta 0640" 640 "$(modo "$CONFIG_DIR/config.json")"
+confere "o campo endereco com a porta" video.exemplo.com.br "$(ler_campo endereco)"
+confere "o campo chat com a porta" chat.exemplo.com.br:8443 "$(ler_campo chat)"
+escrever_config video.exemplo.com.br chat.exemplo.com.br:8443 "$chave_teste" "$s1" 10.0.0.5 203.0.113.10
+confere "o campo endereco" video.exemplo.com.br "$(ler_campo endereco)"
+confere "o campo chat" chat.exemplo.com.br:8443 "$(ler_campo chat)"
+
+# --- os donos e os modos depois do configurar (M-8), e os dois pares do FreeSWITCH ---
+# A pasta como o configurar a deixa: tudo do root, a pasta tls/ do FreeSWITCH com 0750. Os modos de começo são
+# outros, para o teste ver que o acertar_donos os põe.
+fs=$CONFIG_DIR/freeswitch
+mkdir -p "$fs/tls"
+chmod 0700 "$CONFIG_DIR"
+chmod 0750 "$fs" "$fs/tls"
+echo '<document/>' >"$fs/freeswitch.xml"
+chmod 0640 "$fs/freeswitch.xml"
+echo png >"$fs/sem-camera.png"
+chmod 0600 "$fs/sem-camera.png"
+echo turn >"$CONFIG_DIR/turnserver.conf"
+chmod 0640 "$CONFIG_DIR/turnserver.conf"
+chmod 0600 "$CONFIG_DIR/config.json"
+# Um wss.pem que já existe fica como está; o dtls-srtp.pem, que falta, é feito.
+echo antigo >"$fs/tls/wss.pem"
+chmod 0644 "$fs/tls/wss.pem"
+: >"$DONOS"
+certificados_proprios
+acertar_donos
+confere "/etc/starsonic-video 0755" 755 "$(modo "$CONFIG_DIR")"
+confere "/etc/starsonic-video root:root" root:root "$(dono_de etc/starsonic-video)"
+confere "tls/ 0755" 755 "$(modo "$CONFIG_DIR/tls")"
+confere "tls/ root:root" root:root "$(dono_de etc/starsonic-video/tls)"
+confere "config.json 0640 de novo" 640 "$(modo "$CONFIG_DIR/config.json")"
+confere "config.json root:starsonic-video" root:starsonic-video "$(dono_de etc/starsonic-video/config.json)"
+confere "turnserver.conf do configurar 0640" 640 "$(modo "$CONFIG_DIR/turnserver.conf")"
+confere "turnserver.conf do configurar root:root" root:root "$(dono_de etc/starsonic-video/turnserver.conf)"
+confere "freeswitch/ 0750" 750 "$(modo "$fs")"
+confere "freeswitch/ root:starsonic-freeswitch" root:starsonic-freeswitch "$(dono_de etc/starsonic-video/freeswitch)"
+confere "freeswitch.xml 0640" 640 "$(modo "$fs/freeswitch.xml")"
+confere "freeswitch.xml root:starsonic-freeswitch" root:starsonic-freeswitch "$(dono_de etc/starsonic-video/freeswitch/freeswitch.xml)"
+confere "sem-camera.png 0644" 644 "$(modo "$fs/sem-camera.png")"
+confere "sem-camera.png root:root" root:root "$(dono_de etc/starsonic-video/freeswitch/sem-camera.png)"
+confere "freeswitch/tls/ 0700" 700 "$(modo "$fs/tls")"
+confere "freeswitch/tls/ do FreeSWITCH" starsonic-freeswitch:starsonic-freeswitch "$(dono_de etc/starsonic-video/freeswitch/tls)"
+for par in dtls-srtp.pem wss.pem; do
+  confere "$par 0600" 600 "$(modo "$fs/tls/$par")"
+  confere "$par do FreeSWITCH" starsonic-freeswitch:starsonic-freeswitch "$(dono_de "etc/starsonic-video/freeswitch/tls/$par")"
+done
+confere "wss.pem que já existia não mudou" antigo "$(cat "$fs/tls/wss.pem")"
+confere "dtls-srtp.pem: o certificado é o do starsonic-video" "subject=CN=starsonic-video" \
+  "$(openssl x509 -noout -subject -in "$fs/tls/dtls-srtp.pem" 2>&1 | sed 's/ //g')"
+confere "dtls-srtp.pem: a chave RSA de 2048 bits, no mesmo arquivo" 2048 \
+  "$(openssl pkey -in "$fs/tls/dtls-srtp.pem" -noout -text 2>/dev/null | sed -n 's/.*Private-Key: (\([0-9]*\) bit.*/\1/p')"
+confere "dtls-srtp.pem: a chave é a do certificado" sim "$(
+  a=$(openssl pkey -in "$fs/tls/dtls-srtp.pem" -pubout 2>/dev/null)
+  b=$(openssl x509 -in "$fs/tls/dtls-srtp.pem" -noout -pubkey 2>/dev/null)
+  if [ -n "$a" ] && [ "$a" = "$b" ]; then echo sim; else echo não; fi
+)"
+antes=$(sha256sum "$fs/tls/dtls-srtp.pem")
+certificados_proprios
+confere "o dtls-srtp.pem só é feito uma vez" "$antes" "$(sha256sum "$fs/tls/dtls-srtp.pem")"
+confere "nenhuma pasta de preparo sobrou" "" "$(find "$CONFIG_DIR" -maxdepth 1 -name '.*' -printf '%f\n')"
+confere "o chown dos pares não segue links (-h)" \
+  "starsonic-freeswitch:starsonic-freeswitch etc/starsonic-video/freeswitch/tls/wss.pem -h" \
+  "$(grep ' etc/starsonic-video/freeswitch/tls/wss.pem' "$DONOS" | tail -n 1)"
+
+# --- os links simbólicos na pasta tls/ do FreeSWITCH, que é do usuário dele: trocados, nunca seguidos ---
+# Um link para um arquivo de fora no lugar do dtls-srtp.pem, e um link para uma pasta de fora no lugar do wss.pem.
+# Os dois viram pares novos, e nada fora da pasta muda.
+config_m8=$CONFIG_DIR
+CONFIG_DIR=$T/links/etc/starsonic-video
+fs=$CONFIG_DIR/freeswitch
+fora=$T/links/fora
+mkdir -p "$fs/tls" "$fora/pasta"
+echo alvo >"$fora/arquivo"
+chmod 0644 "$fora/arquivo"
+echo '<document/>' >"$fs/freeswitch.xml"
+echo png >"$fs/sem-camera.png"
+echo turn >"$CONFIG_DIR/turnserver.conf"
+echo '{}' >"$CONFIG_DIR/config.json"
+ln -s "$fora/arquivo" "$fs/tls/dtls-srtp.pem"
+ln -s "$fora/pasta" "$fs/tls/wss.pem"
+: >"$DONOS"
+set +e
+(set -e; certificados_proprios; acertar_donos) >"$T/links/saida" 2>&1
+codigo=$?
+set -e
+confere "os pares e os donos com os links no lugar" "0|" "$codigo|$(cat "$T/links/saida")"
+for par in dtls-srtp.pem wss.pem; do
+  confere "o link $par virou um arquivo comum" sim \
+    "$(if [ -f "$fs/tls/$par" ] && [ ! -L "$fs/tls/$par" ]; then echo sim; else echo não; fi)"
+  # O openssl só lê um arquivo comum: com a entrada numa pasta, ele ficaria esperando para sempre.
+  confere "o $par novo é um par do starsonic-video" "subject=CN=starsonic-video" \
+    "$(if [ -f "$fs/tls/$par" ] && [ ! -L "$fs/tls/$par" ]; then
+      openssl x509 -noout -subject -in "$fs/tls/$par" 2>&1 | sed 's/ //g'
+    else echo "não é um arquivo comum"; fi)"
+  confere "o $par novo 0600" 600 "$(modo "$fs/tls/$par")"
+done
+confere "o arquivo de fora não mudou" "alvo 644" "$(cat "$fora/arquivo") $(modo "$fora/arquivo")"
+confere "nada entrou na pasta de fora" "" "$(find "$fora/pasta" -mindepth 1)"
+confere "nenhum chown fora da pasta" "" "$(grep 'links/fora' "$DONOS" || true)"
+# Um link no lugar de um arquivo que o acertar_donos só acerta (o freeswitch.xml) para a instalação, com o nome dele.
+rm "$fs/freeswitch.xml"
+ln -s "$fora/arquivo" "$fs/freeswitch.xml"
+set +e
+saida=$( (set -e; acertar_donos) 2>&1)
+codigo=$?
+set -e
+confere "um link no lugar do freeswitch.xml para" 1 "$codigo"
+confere "o erro diz o nome do link" sim \
+  "$(if [[ "$saida" == *"$fs/freeswitch.xml é um link simbólico"* ]]; then echo sim; else echo não; fi)"
+confere "o arquivo de fora continua igual" "alvo 644" "$(cat "$fora/arquivo") $(modo "$fora/arquivo")"
+CONFIG_DIR=$config_m8
+
+# --- o turnserver.conf do coturn: o nosso no lugar, e o original guardado uma vez ---
+echo "# o do pacote" >"$TURN_CONF"
+echo "# o nosso" >"$CONFIG_DIR/turnserver.conf"
+: >"$DONOS"
+instalar_turn
+confere "turnserver.conf é o nosso" "# o nosso" "$(cat "$TURN_CONF")"
+confere "turnserver.conf 0640" 640 "$(modo "$TURN_CONF")"
+confere "turnserver.conf root:turnserver" root:turnserver "$(dono_de etc/turnserver.conf.novo)"
+confere "o original guardado" "# o do pacote" "$(cat "$TURN_CONF.original")"
+echo "# o nosso, de novo" >"$CONFIG_DIR/turnserver.conf"
+instalar_turn
+confere "o original guardado só uma vez" "# o do pacote" "$(cat "$TURN_CONF.original")"
+confere "turnserver.conf trocado de novo" "# o nosso, de novo" "$(cat "$TURN_CONF")"
+
+# --- o certificado.sh numa RAIZ de mentira, com um lineage de mentira ---
+# O chown e o systemctl de mentira ficam no PATH: o certificado.sh roda como o certbot o roda, noutro processo.
+falsos=$T/falsos
+mkdir -p "$falsos"
+cat >"$falsos/chown" <<'FIM'
+#!/usr/bin/env bash
+dono=$1
+shift
+for caminho in "$@"; do echo "$dono $(basename "$caminho")"; done >>"$T_DONOS"
+FIM
+cat >"$falsos/systemctl" <<'FIM'
+#!/usr/bin/env bash
+if [ "$1" = is-active ]; then
+  case " $T_ATIVOS " in *" ${!#} "*) exit 0 ;; *) exit 3 ;; esac
+fi
+echo "$*" >>"$T_SYSTEMCTL"
+if [ "$1" = reload ] && [ -n "${T_RELOAD_FALHA:-}" ]; then exit 1; fi
+exit 0
+FIM
+chmod +x "$falsos/chown" "$falsos/systemctl"
+
+# cenario_gancho <nome> <serviços ativos> [sem-lineage | sem-chain | reload-falha | outro-certificado | sem-config |
+# links]: roda o certificado.sh numa raiz nova, com o config.json do servidor de vídeo, e escreve "<código de
+# saída>|<recargas pedidas>". Em links, o agent.pem é um link para uma pasta de fora e o cafile.pem, um link para um
+# arquivo de fora.
+cenario_gancho() {
+  local raiz=$T/gancho-$1 jeito=${3:-} nome=video.exemplo.com.br lineage codigo=0
+  if [ "$jeito" = outro-certificado ]; then nome=outro.exemplo.com.br; fi
+  lineage=$raiz/etc/letsencrypt/live/$nome
+  mkdir -p "$lineage" "$raiz/etc/starsonic-video/tls" "$raiz/etc/starsonic-video/freeswitch/tls"
+  printf 'CERTIFICADO\nINTERMEDIARIO\n' >"$lineage/fullchain.pem"
+  printf 'CHAVE\n' >"$lineage/privkey.pem"
+  printf 'INTERMEDIARIO\n' >"$lineage/chain.pem"
+  printf '{"endereco": "video.exemplo.com.br", "chat": "chat.exemplo.com.br"}\n' >"$raiz/etc/starsonic-video/config.json"
+  if [ "$jeito" = sem-chain ]; then rm "$lineage/chain.pem"; fi
+  if [ "$jeito" = sem-lineage ]; then lineage=""; fi
+  if [ "$jeito" = sem-config ]; then rm "$raiz/etc/starsonic-video/config.json"; fi
+  if [ "$jeito" = links ]; then
+    mkdir -p "$raiz/fora/pasta"
+    echo ALVO >"$raiz/fora/arquivo"
+    ln -s "$raiz/fora/pasta" "$raiz/etc/starsonic-video/freeswitch/tls/agent.pem"
+    ln -s "$raiz/fora/arquivo" "$raiz/etc/starsonic-video/freeswitch/tls/cafile.pem"
+  fi
+  : >"$raiz/donos"
+  : >"$raiz/systemctl"
+  local ambiente=(PATH="$falsos:$PATH" RAIZ="$raiz" T_DONOS="$raiz/donos" T_SYSTEMCTL="$raiz/systemctl" T_ATIVOS="$2")
+  if [ -n "$lineage" ]; then ambiente+=(RENEWED_LINEAGE="$lineage"); fi
+  if [ "$jeito" = reload-falha ]; then ambiente+=(T_RELOAD_FALHA=1); fi
+  env -u RENEWED_LINEAGE -u T_RELOAD_FALHA "${ambiente[@]}" bash "$aqui/certificado.sh" >"$raiz/saida" 2>&1 || codigo=$?
+  echo "$codigo|$(paste -sd ';' "$raiz/systemctl")"
+}
+
+recargas="reload starsonic-video;kill --signal=SIGUSR2 --kill-whom=main coturn"
+confere "gancho com os dois serviços no ar" "0|$recargas" "$(cenario_gancho ativos 'starsonic-video coturn')"
+r=$T/gancho-ativos/etc/starsonic-video
+confere "o certificado do agente é o fullchain" "$(printf 'CERTIFICADO\nINTERMEDIARIO')" "$(cat "$r/tls/certificado.pem")"
+confere "a chave do agente é o privkey" CHAVE "$(cat "$r/tls/chave.pem")"
+confere "o certificado do coturn é o fullchain" "$(printf 'CERTIFICADO\nINTERMEDIARIO')" "$(cat "$r/tls/turn-certificado.pem")"
+confere "a chave do coturn é o privkey" CHAVE "$(cat "$r/tls/turn-chave.pem")"
+confere "o agent.pem é o privkey e o fullchain" "$(printf 'CHAVE\nCERTIFICADO\nINTERMEDIARIO')" "$(cat "$r/freeswitch/tls/agent.pem")"
+confere "o cafile.pem é o chain" INTERMEDIARIO "$(cat "$r/freeswitch/tls/cafile.pem")"
+for par in "tls/certificado.pem 644 root:root" "tls/chave.pem 640 root:starsonic-video" \
+  "tls/turn-certificado.pem 640 root:turnserver" "tls/turn-chave.pem 640 root:turnserver" \
+  "freeswitch/tls/agent.pem 600 starsonic-freeswitch:starsonic-freeswitch" "freeswitch/tls/cafile.pem 644 root:root"; do
+  read -r arquivo esperado dono <<<"$par"
+  confere "$arquivo $esperado" "$esperado" "$(modo "$r/$arquivo")"
+  confere "$arquivo $dono" "$dono" "$(awk -v n="$(basename "$arquivo")" '$2 == n { d = $1 } END { print d }' "$T/gancho-ativos/donos")"
+done
+confere "nenhuma pasta de preparo sobrou do gancho" "" "$(find "$r" -maxdepth 1 -name '.*' -printf '%f\n')"
+confere "gancho com os serviços parados não recarrega nada" "0|" "$(cenario_gancho parados '')"
+confere "os arquivos saem também com os serviços parados" CHAVE "$(cat "$T/gancho-parados/etc/starsonic-video/tls/chave.pem")"
+confere "gancho só com o coturn no ar" "0|kill --signal=SIGUSR2 --kill-whom=main coturn" "$(cenario_gancho so-coturn coturn)"
+confere "uma recarga que falha não impede a outra" "1|$recargas" "$(cenario_gancho reload-falha 'starsonic-video coturn' reload-falha)"
+confere "sem o RENEWED_LINEAGE, para" "1|" "$(cenario_gancho sem-lineage 'starsonic-video coturn' sem-lineage)"
+confere "sem o RENEWED_LINEAGE, nada é escrito" "" "$(find "$T/gancho-sem-lineage/etc/starsonic-video" -type f ! -name config.json)"
+confere "sem o RENEWED_LINEAGE, o erro diz o que falta" sim \
+  "$(if grep -q RENEWED_LINEAGE "$T/gancho-sem-lineage/saida"; then echo sim; else echo não; fi)"
+confere "um lineage sem o chain.pem para" "1|" "$(cenario_gancho sem-chain 'starsonic-video coturn' sem-chain)"
+confere "um lineage sem o chain.pem não escreve nada" "" "$(find "$T/gancho-sem-chain/etc/starsonic-video" -type f ! -name config.json)"
+# Só o certificado do servidor de vídeo: o de outro nome nesta máquina não muda nada nem recarrega ninguém.
+confere "o certificado de outro nome não faz nada" "0|" "$(cenario_gancho outro-certificado 'starsonic-video coturn' outro-certificado)"
+confere "o certificado de outro nome não escreve nada" "" \
+  "$(find "$T/gancho-outro-certificado/etc/starsonic-video" -type f ! -name config.json)"
+confere "sem o config.json, o gancho para" "1|" "$(cenario_gancho sem-config 'starsonic-video coturn' sem-config)"
+confere "sem o config.json, nada é escrito" "" "$(find "$T/gancho-sem-config/etc/starsonic-video" -type f)"
+# Os links na pasta tls/ do FreeSWITCH são trocados, e nada vai para fora dela.
+confere "gancho com links na pasta do FreeSWITCH" "0|$recargas" "$(cenario_gancho links 'starsonic-video coturn' links)"
+l=$T/gancho-links
+confere "o link agent.pem virou o arquivo certo" "sim|$(printf 'CHAVE\nCERTIFICADO\nINTERMEDIARIO')" \
+  "$(if [ -L "$l/etc/starsonic-video/freeswitch/tls/agent.pem" ]; then echo link; else echo sim; fi)|$(cat "$l/etc/starsonic-video/freeswitch/tls/agent.pem")"
+confere "o link cafile.pem virou o arquivo certo" "sim|INTERMEDIARIO" \
+  "$(if [ -L "$l/etc/starsonic-video/freeswitch/tls/cafile.pem" ]; then echo link; else echo sim; fi)|$(cat "$l/etc/starsonic-video/freeswitch/tls/cafile.pem")"
+confere "nada entrou na pasta de fora do gancho" "" "$(find "$l/fora/pasta" -mindepth 1)"
+confere "o arquivo de fora do gancho não mudou" ALVO "$(cat "$l/fora/arquivo")"
+
+# --- a pasta como a instalação a deixa, para o atualizar e o chat ---
+# instalado <pasta>: o programa de mentira, a unidade e o config.json, como depois de uma instalação.
+instalado() {
+  local raiz=$1
+  CONFIG_DIR=$raiz/etc/starsonic-video
+  BINARIO=$raiz/usr/local/bin/starsonic-video
+  UNIDADES=$raiz/etc/systemd/system
+  FREESWITCH=$raiz/opt/starsonic-freeswitch
+  TMP=$raiz/tmp
+  mkdir -p "$CONFIG_DIR" "$(dirname "$BINARIO")" "$UNIDADES" "$FREESWITCH" "$TMP"
+  : >"$UNIDADES/starsonic-video.service"
+  # O programa de mentira responde o reunioes com o T_N e o T_CODIGO, como o de verdade: o número na saída, ou
+  # um erro e o código 1.
+  cat >"$BINARIO" <<'FIM'
+#!/usr/bin/env bash
+case "$1" in
+  reunioes)
+    if [ "$T_CODIGO" = 0 ]; then echo "$T_N"; else echo "Erro: o agente não respondeu" >&2; fi
+    exit "$T_CODIGO"
+    ;;
+  versao) echo 0.2.0 ;;
+  *) exit 9 ;;
+esac
+FIM
+  chmod +x "$BINARIO"
+  DONOS=$raiz/donos
+  : >"$DONOS"
+  escrever_config video.exemplo.com.br chat.exemplo.com.br "$chave_teste" "$s1" 10.0.0.5 203.0.113.10
+}
+
+# --- o atualizar com reuniões acontecendo, com o starsonic-video reunioes de mentira ---
+# cenario_atualizar <nome> <reuniões> <código do reunioes> [--agora]: "<código de saída>|<passos>|<saída>". Os
+# nomes que os stubs leem começam com t_, para não esbarrar nos "local" do instalar.sh.
+cenario_atualizar() {
+  local t_nome=$1 t_agora=0
+  [ "${4:-}" != --agora ] || t_agora=1
+  (
+    t_raiz=$T/atualizar-$t_nome
+    instalado "$t_raiz"
+    export T_N=$2 T_CODIGO=$3
+    t_passos=$t_raiz/passos
+    : >"$t_passos"
+    conferir_maquina() { :; }
+    sistema_da_maquina() { echo ubuntu-24.04; }
+    baixar_tudo() { echo baixar >>"$t_passos"; }
+    # Como o de verdade, deixa o FreeSWITCH antigo ao lado, para o atualizar apagar no fim.
+    trocar_freeswitch() {
+      echo trocar_freeswitch >>"$t_passos"
+      mkdir -p "$FREESWITCH.antigo"
+    }
+    instalar_programa() { echo instalar_programa >>"$t_passos"; }
+    instalar_unidades() { echo instalar_unidades >>"$t_passos"; }
+    instalar_gancho() { echo instalar_gancho >>"$t_passos"; }
+    configurar_tudo() { echo configurar_tudo >>"$t_passos"; }
+    rodar_gancho() { echo "rodar_gancho $1" >>"$t_passos"; }
+    systemctl() { echo "systemctl $*" >>"$t_passos"; }
+    reiniciar_servicos() { echo reiniciar_servicos >>"$t_passos"; }
+    local t_codigo=0
+    set +e
+    (set -e; atualizar "$t_agora") >"$t_raiz/saida" 2>&1
+    t_codigo=$?
+    set -e
+    echo "$t_codigo|$(paste -sd ';' "$t_passos")|$(cat "$t_raiz/saida")"
+  )
+}
+recusa="ERRO: Há 1 reunião(ões) acontecendo agora. Atualize quando elas acabarem, ou rode de novo com --agora, que as encerra."
+confere "atualizar com 1 reunião para, e nada muda" "1|baixar|$recusa" "$(cenario_atualizar uma 1 0)"
+tudo="baixar;trocar_freeswitch;instalar_programa;instalar_unidades;instalar_gancho;configurar_tudo"
+tudo+=";rodar_gancho video.exemplo.com.br;systemctl --quiet unmask coturn.service"
+tudo+=";systemctl --quiet enable starsonic-freeswitch.service starsonic-video.service coturn.service;reiniciar_servicos"
+pronto="Trocando o FreeSWITCH, o agente e a configuração...
+Pronto: o servidor de vídeo agora está na versão 0.2.0."
+confere "atualizar com 1 reunião e o --agora segue" "0|$tudo|$pronto" "$(cenario_atualizar agora 1 0 --agora)"
+confere "atualizar sem reunião segue" "0|$tudo|$pronto" "$(cenario_atualizar nenhuma 0 0)"
+aviso="O agente não respondeu; não dá para saber se há reuniões agora. Seguindo com a atualização."
+confere "atualizar sem resposta do agente segue com o aviso" "0|$tudo|$aviso
+$pronto" "$(cenario_atualizar sem-agente '' 1)"
+confere "atualizar apaga o FreeSWITCH antigo no fim" não \
+  "$(if [ -e "$T/atualizar-nenhuma/opt/starsonic-freeswitch.antigo" ]; then echo sim; else echo não; fi)"
+confere "atualizar sem a instalação para" "1|" "$(
+  raiz=$T/atualizar-sem-instalacao
+  instalado "$raiz"
+  rm "$UNIDADES/starsonic-video.service"
+  conferir_maquina() { :; }
+  sistema_da_maquina() { echo ubuntu-24.04; }
+  baixar_tudo() { echo baixar; }
+  codigo=0
+  saida=$( (atualizar 0) 2>/dev/null) || codigo=$?
+  echo "$codigo|$saida"
+)"
+
+# --- o instalar com a --porta: o config.json, o ss, as mensagens e a falha do certificado ---
+# cenario_instalar <nome> <porta ou vazio> [certificado-falha]: "<código>|<porta que o ss recebeu>|<config.json>|<saída>".
+cenario_instalar() {
+  local t_nome=$1 t_porta=$2 t_jeito=${3:-}
+  (
+    t_raiz=$T/instalar-$t_nome
+    instalado "$t_raiz"
+    rm -f "$UNIDADES/starsonic-video.service" "$CONFIG_DIR/config.json"
+    mkdir -p "$FREESWITCH"
+    echo libum1 >"$FREESWITCH/pacotes.txt"
+    cat >"$BINARIO" <<'FIM'
+#!/usr/bin/env bash
+case "$1" in
+  chave) echo AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8 ;;
+  versao) echo 0.1.0 ;;
+  mostrar-chave) echo AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8 ;;
+  *) exit 9 ;;
+esac
+FIM
+    conferir_maquina() { :; }
+    sistema_da_maquina() { echo ubuntu-24.04; }
+    conferir_portas() { echo "${1:-}" >"$t_raiz/porta-do-ss"; }
+    ip_publico() { echo 203.0.113.10; }
+    ip_privado() { echo 10.0.0.5; }
+    baixar_tudo() { :; }
+    tar() { :; }
+    systemctl() { :; }
+    instalar_pacotes() { :; }
+    criar_usuarios() { :; }
+    instalar_programa() { :; }
+    configurar_tudo() { :; }
+    instalar_gancho() { :; }
+    rodar_gancho() { :; }
+    ligar_servicos() { :; }
+    senha_esl() { echo "$s1"; }
+    certbot() { if [ "$t_jeito" = certificado-falha ]; then echo "certbot: falhou"; return 1; fi; }
+    local t_codigo=0
+    set +e
+    (set -e; instalar video.exemplo.com.br chat.exemplo.com.br "$t_porta") >"$t_raiz/saida" 2>&1
+    t_codigo=$?
+    set -e
+    echo "$t_codigo|$(cat "$t_raiz/porta-do-ss" 2>/dev/null)|$(cat "$CONFIG_DIR/config.json" 2>/dev/null)|$(grep -v '^Instalando\|^Pedindo\|^Ligando\|^SHA' "$t_raiz/saida" | paste -sd '#')"
+  )
+}
+config_instalado() { # config_instalado [porta]: o config.json que o instalar escreve com a chave e a senha de teste.
+  local porta=""
+  [ -z "${1:-}" ] || porta=", \"porta\": $1"
+  echo "{\"endereco\": \"video.exemplo.com.br\", \"chat\": \"chat.exemplo.com.br\", \"chave\": \"$chave_teste\", \"senhaEsl\": \"$s1\", \"ipPrivado\": \"10.0.0.5\", \"ipPublico\": \"203.0.113.10\"$porta}"
+}
+chave_msg='A chave do servidor de vídeo (cole no cartão "Reuniões" da administração do chat):'
+confere "instalar sem a porta: a 443, e as mensagens de sempre" \
+  "0|443|$(config_instalado)|#Pronto: o servidor de vídeo 0.1.0 está no ar em https://video.exemplo.com.br/.##$chave_msg#$chave_teste" \
+  "$(cenario_instalar sem-porta '')"
+confere "instalar com a 443: as mensagens de sempre" \
+  "0|443|$(config_instalado 443)|#Pronto: o servidor de vídeo 0.1.0 está no ar em https://video.exemplo.com.br/.##$chave_msg#$chave_teste" \
+  "$(cenario_instalar com-443 443)"
+confere "instalar com a 7443: a porta no config.json, no ss e nas mensagens" \
+  "0|7443|$(config_instalado 7443)|#Pronto: o servidor de vídeo 0.1.0 está no ar em https://video.exemplo.com.br:7443/.#O endereço do vídeo para o cartão \"Reuniões\" da administração do chat é:#video.exemplo.com.br:7443##$chave_msg#$chave_teste" \
+  "$(cenario_instalar com-7443 7443)"
+cert_falha=$(cenario_instalar cert-falha 7443 certificado-falha)
+confere "o certificado que falha: para com código 1 e diz o caso de um IP só" sim "$(
+  if [[ "$cert_falha" == 1\|* && "$cert_falha" == *"Se o chat e o vídeo dividem um IP público só"* && "$cert_falha" == *"o comando video no chat"* && "$cert_falha" == *"porta 80 desta VM pela rede interna"* && "$cert_falha" == *'O certificado não sai'* ]]; then echo sim; else echo "não: $cert_falha"; fi
+)"
+
+# --- o atualizar e o chat mantêm a porta do config.json ---
+confere "atualizar mantém a porta do config.json" "$(config_instalado 7443)" "$(
+  t_raiz=$T/atualizar-porta
+  instalado "$t_raiz"
+  escrever_config video.exemplo.com.br chat.exemplo.com.br "$chave_teste" "$s1" 10.0.0.5 203.0.113.10 7443
+  conferir_maquina() { :; }
+  sistema_da_maquina() { echo ubuntu-24.04; }
+  baixar_tudo() { :; }
+  conferir_reunioes() { :; }
+  trocar_freeswitch() { :; }
+  instalar_programa() { :; }
+  instalar_unidades() { :; }
+  instalar_gancho() { :; }
+  configurar_tudo() { :; }
+  rodar_gancho() { :; }
+  systemctl() { :; }
+  reiniciar_servicos() { :; }
+  (atualizar 0) >/dev/null 2>&1
+  cat "$CONFIG_DIR/config.json"
+)"
+confere "o chat mantém a porta do config.json" \
+  "$(config_instalado 7443 | sed 's/"chat": "chat.exemplo.com.br"/"chat": "chat2.exemplo.com.br"/')" "$(
+  cenario_porta_chat() {
+    t_raiz=$T/chat-com-porta
+    instalado "$t_raiz"
+    escrever_config video.exemplo.com.br chat.exemplo.com.br "$chave_teste" "$s1" 10.0.0.5 203.0.113.10 7443
+    conferir_maquina() { :; }
+    sleep() { :; }
+    systemctl() { case "$1" in restart) ;; show) echo 0 ;; is-active) true ;; *) return 9 ;; esac; }
+    (mudar_chat chat2.exemplo.com.br) >/dev/null 2>&1
+    cat "$CONFIG_DIR/config.json"
+  }
+  cenario_porta_chat
+)"
+
+# --- o trocar_freeswitch: o pacote novo (com as pastas do construir.sh) ao lado, os pacotes do apt dele e a troca ---
+# "<VERSAO da pasta no lugar>|<VERSAO do .antigo>|<pacotes pedidos ao apt>|<o .novo sobrou?>".
+confere "trocar_freeswitch troca as pastas" "novo|antigo|libum1 libdois2|limpo" "$(
+  t_raiz=$T/trocar
+  FREESWITCH=$t_raiz/opt/starsonic-freeswitch
+  TMP=$t_raiz/tmp
+  t_pacote=$t_raiz/pacote/opt/starsonic-freeswitch
+  mkdir -p "$TMP" "$FREESWITCH/bin" "$t_pacote/bin"
+  echo antigo >"$FREESWITCH/VERSAO"
+  echo novo >"$t_pacote/VERSAO"
+  printf '#!/bin/sh\n' >"$t_pacote/bin/freeswitch"
+  chmod +x "$t_pacote/bin/freeswitch"
+  printf 'libum1\n\nlibdois2\n' >"$t_pacote/pacotes.txt"
+  tar -czf "$t_raiz/pacote.tar.gz" -C "$t_raiz/pacote" opt/starsonic-freeswitch
+  instalar_pacotes() { echo "$*" >"$t_raiz/pacotes"; }
+  trocar_freeswitch "$t_raiz/pacote.tar.gz"
+  if [ -e "$FREESWITCH.novo" ]; then t_sobra=sobrou; else t_sobra=limpo; fi
+  echo "$(cat "$FREESWITCH/VERSAO")|$(cat "$FREESWITCH.antigo/VERSAO")|$(cat "$t_raiz/pacotes")|$t_sobra"
+)"
+
+# --- o chat: troca só o endereço do chat, e volta o de antes se o agente não ficar de pé ou se o comando parar ---
+# cenario_chat <nome> <firme, cai ou interrompido> <endereço do chat>: "<código>|<config.json no fim>|<as duas
+# últimas linhas da saída, com #>|<sobra>|<os restarts>". Em interrompido, a conexão cai (HUP) na espera.
+cenario_chat() {
+  local t_nome=$1 t_jeito=$2 t_chat=$3
+  (
+    t_raiz=$T/chat-$t_nome
+    instalado "$t_raiz"
+    : >"$t_raiz/systemctl"
+    conferir_maquina() { :; }
+    sleep() { if [ "$t_jeito" = interrompido ]; then kill -HUP "$BASHPID"; fi; }
+    journalctl() { :; }
+    systemctl() {
+      case "$1" in
+        restart) echo "restart $2" >>"$t_raiz/systemctl" ;;
+        show) echo 0 ;;
+        is-active) [ "$t_jeito" = firme ] ;;
+        *) return 9 ;;
+      esac
+    }
+    local t_codigo=0 t_sobra=limpo
+    set +e
+    (set -e; mudar_chat "$t_chat") >"$t_raiz/saida" 2>&1
+    t_codigo=$?
+    set -e
+    if [ -e "$CONFIG_DIR/config.json.antes" ] || [ -e "$CONFIG_DIR/config.json.novo" ]; then t_sobra=sobrou; fi
+    echo "$t_codigo|$(cat "$CONFIG_DIR/config.json")|$(tail -n 2 "$t_raiz/saida" | paste -sd '#')|$t_sobra|$(paste -sd ';' "$t_raiz/systemctl")"
+  )
+}
+config_com() { # config_com <chat>: o config.json do instalado, com esse chat.
+  echo "{\"endereco\": \"video.exemplo.com.br\", \"chat\": \"$1\", \"chave\": \"$chave_teste\", \"senhaEsl\": \"$s1\", \"ipPrivado\": \"10.0.0.5\", \"ipPublico\": \"203.0.113.10\"}"
+}
+confere "chat: troca o endereço e reinicia o agente" \
+  "0|$(config_com chat2.exemplo.com.br:8443)|Pronto: o servidor de vídeo agora aceita a página de https://chat2.exemplo.com.br:8443.|limpo|restart starsonic-video.service" \
+  "$(cenario_chat troca firme chat2.exemplo.com.br:8443)"
+confere "chat: o config.json continua 0640" 640 "$(modo "$T/chat-troca/etc/starsonic-video/config.json")"
+confere "chat: o config.json continua do grupo do agente" root:starsonic-video \
+  "$(awk '$2 ~ /config\.json\.novo$/ { d = $1 } END { print d }' "$T/chat-troca/donos")"
+voltou="A configuração de antes voltou, e o agente foi reiniciado com ela."
+confere "chat: o agente não fica de pé, e a configuração de antes volta" \
+  "1|$(config_com chat.exemplo.com.br)|ERRO: o agente não ficou de pé com o endereço novo do chat (as últimas linhas do registro estão acima).#$voltou|limpo|restart starsonic-video.service;restart starsonic-video.service" \
+  "$(cenario_chat cai cai chat2.exemplo.com.br)"
+confere "chat: a conexão cai no meio, e a configuração de antes volta" \
+  "130|$(config_com chat.exemplo.com.br)|$voltou|limpo|restart starsonic-video.service;restart starsonic-video.service" \
+  "$(cenario_chat interrompido interrompido chat2.exemplo.com.br)"
+confere "chat: um endereço que não serve não muda nada" "1|$(config_com chat.exemplo.com.br)" "$(
+  cenario_chat invalido firme https://chat2.exemplo.com.br | cut -d'|' -f1,2
+)"
+
+# --- o servicos_firmes: o serviço ficou de pé depois do restart ---
+# cenario_firme <jeito>: firme, caido (não está ativo depois da espera) ou voltou (caiu e voltou na espera: o
+# NRestarts cresceu). O NRestarts é lido depois do restart, que o zera.
+cenario_firme() {
+  (
+    t_jeito=$1
+    t_reinicios=$T/reinicios-$t_jeito
+    echo 0 >"$t_reinicios"
+    sleep() { if [ "$t_jeito" = voltou ]; then echo 1 >"$t_reinicios"; fi; }
+    systemctl() {
+      case "$1" in
+        show) cat "$t_reinicios" ;;
+        is-active) [ "$t_jeito" != caido ] ;;
+        *) return 9 ;;
+      esac
+    }
+    if servicos_firmes starsonic-video starsonic-freeswitch; then echo firme; else echo caiu; fi
+  )
+}
+confere "serviços firmes" firme "$(cenario_firme firme)"
+confere "serviço caído" caiu "$(cenario_firme caido)"
+confere "serviço que caiu e voltou na espera" caiu "$(cenario_firme voltou)"
+
+# --- o uso: os comandos e as opções que não existem ---
+codigo_de() { local c=0; (principal "$@") >/dev/null 2>&1 || c=$?; echo "$c"; }
+confere "sem comando" 2 "$(codigo_de)"
+confere "instalar sem o --chat" 2 "$(codigo_de instalar video.exemplo.com.br)"
+confere "instalar sem o endereço" 2 "$(codigo_de instalar)"
+confere "instalar com o --agora" 2 "$(codigo_de instalar video.exemplo.com.br --chat chat.exemplo.com.br --agora)"
+confere "atualizar com o --chat" 2 "$(codigo_de atualizar --chat chat.exemplo.com.br)"
+confere "chat sem o endereço" 2 "$(codigo_de chat)"
+confere "chat com dois endereços" 2 "$(codigo_de chat chat.exemplo.com.br chat2.exemplo.com.br)"
+confere "chat com o --versao" 2 "$(codigo_de chat chat.exemplo.com.br --versao 0.1.0)"
+confere "instalar com a --porta sem o número" 2 "$(codigo_de instalar video.exemplo.com.br --chat chat.exemplo.com.br --porta)"
+confere "atualizar com a --porta" 2 "$(codigo_de atualizar --porta 7443)"
+confere "chat com a --porta" 2 "$(codigo_de chat chat.exemplo.com.br --porta 7443)"
+confere "instalar com a --porta vazia" 1 "$(codigo_de instalar video.exemplo.com.br --chat chat.exemplo.com.br --porta "")"
+# Uma porta que não serve para antes de qualquer outra coisa (sem root, sem versão, sem rede).
+for n in 80 1023 65536 07443 abc 5061 8091; do
+  confere "instalar com a --porta $n para antes de mudar algo" "1|ERRO: a porta" "$(
+    c=0
+    saida=$( (principal instalar video.exemplo.com.br --chat chat.exemplo.com.br --porta "$n") 2>&1) || c=$?
+    echo "$c|${saida:0:13}"
+  )"
+done
+confere "instalar com a --porta 7443 passa pela conferência e para na versão" \
+  "ERRO: este script não traz a versão (é o do repositório). Rode com --versao X.Y.Z, por exemplo: --versao 0.1.0" \
+  "$( (principal instalar video.exemplo.com.br --chat chat.exemplo.com.br --porta 7443) 2>&1)"
+confere "comando que não existe" 2 "$(codigo_de porta 8443)"
+# Os argumentos certos passam pelo uso e param na versão, que o script do repositório não traz.
+confere "instalar do repositório pede a versão" \
+  "ERRO: este script não traz a versão (é o do repositório). Rode com --versao X.Y.Z, por exemplo: --versao 0.1.0" \
+  "$( (principal instalar video.exemplo.com.br --chat chat.exemplo.com.br) 2>&1)"
+confere "um endereço que não serve para antes da versão" 1 "$(codigo_de instalar https://video.exemplo.com.br --chat chat.exemplo.com.br)"
+confere "uma versão fora do formato" 1 "$(codigo_de atualizar --versao 1.0)"
+
+[ "$falhas" -eq 0 ] || exit 1
+echo "tudo certo"

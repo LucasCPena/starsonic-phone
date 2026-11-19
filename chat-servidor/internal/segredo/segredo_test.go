@@ -87,3 +87,49 @@ func TestNovoToken(t *testing.T) {
 		vistos[s] = true
 	}
 }
+
+func TestCodigoReuniao(t *testing.T) {
+	re := regexp.MustCompile(`^[abcdefghjkmnpqrstvwxyz23456789]{10}$`)
+	vistos := map[string]bool{}
+	for i := 0; i < 1000; i++ {
+		c := NovoCodigoReuniao()
+		if !re.MatchString(c) {
+			t.Fatalf("código fora do formato: %q", c)
+		}
+		if vistos[c] {
+			t.Fatalf("código repetido: %q", c)
+		}
+		vistos[c] = true
+	}
+
+	if c, ok := NormalizarCodigoReuniao(" K7Q4 9XWP HT "); !ok || c != "k7q49xwpht" {
+		t.Fatalf("NormalizarCodigoReuniao = %q, %v; queria k7q49xwpht, true", c, ok)
+	}
+	for _, ruim := range []string{
+		"k7q49xwph",   // 9 caracteres
+		"k7q49xwpht2", // 11 caracteres
+		"k7q49xwphl",  // o l
+		"k7q49xwph0",  // o 0
+		"k7q49xwph1",  // o 1
+		"k7q4-9xwph",  // hífen
+		"",
+	} {
+		if c, ok := NormalizarCodigoReuniao(ruim); ok {
+			t.Errorf("NormalizarCodigoReuniao(%q) = %q, true; queria false", ruim, c)
+		}
+	}
+}
+
+func TestNovoHex(t *testing.T) {
+	re := regexp.MustCompile(`^[0-9a-f]{16}$`)
+	a, b := NovoHex(8), NovoHex(8)
+	if !re.MatchString(a) || !re.MatchString(b) {
+		t.Fatalf("NovoHex(8) = %q e %q; queria 16 caracteres hexadecimais minúsculos", a, b)
+	}
+	if a == b {
+		t.Fatalf("NovoHex(8) repetiu: %q", a)
+	}
+	if got := NovoHex(16); len(got) != 32 {
+		t.Fatalf("NovoHex(16) = %q; queria 32 caracteres", got)
+	}
+}

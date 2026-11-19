@@ -17,9 +17,10 @@ import (
 func TestNovo_SemDependencias(t *testing.T) {
 	a := apitest.Novo(t)
 	for nome, d := range map[string]admin.Deps{
-		"Banco":   {Hub: a.Hub, Armazem: a.Armazem},
-		"Hub":     {Banco: a.Banco, Armazem: a.Armazem},
-		"Armazem": {Banco: a.Banco, Hub: a.Hub},
+		"Banco":   {Hub: a.Hub, Armazem: a.Armazem, Gerente: a.Gerente},
+		"Hub":     {Banco: a.Banco, Armazem: a.Armazem, Gerente: a.Gerente},
+		"Armazem": {Banco: a.Banco, Hub: a.Hub, Gerente: a.Gerente},
+		"Gerente": {Banco: a.Banco, Hub: a.Hub, Armazem: a.Armazem},
 	} {
 		func() {
 			defer func() {
@@ -149,6 +150,49 @@ func TestEstaticos(t *testing.T) {
 	}
 	if resp, corpo := n.get("/admin/estatico/..%2fadmin.go"); resp.StatusCode == http.StatusOK || strings.Contains(corpo, "package admin") {
 		t.Fatalf("..%%2fadmin.go = %d:\n%s", resp.StatusCode, corpo)
+	}
+}
+
+// O script da atualização sozinha é um arquivo da pasta estatico, pedido pelas duas páginas dos
+// ramais (e só por elas), que têm o aviso de "sem atualizar" escondido. A regra de segurança
+// das páginas continua sem exceção.
+func TestEstatico_Atualizar(t *testing.T) {
+	p := novoPainel(t)
+	e := p.a.Empresa("ACME Comércio Ltda")
+	n := p.logado(t)
+	resp, corpo := n.get("/admin/estatico/atualizar.js")
+	if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "text/javascript; charset=utf-8" || corpo == "" {
+		t.Fatalf("atualizar.js = %d, %q, %d bytes", resp.StatusCode, resp.Header.Get("Content-Type"), len(corpo))
+	}
+	conferirCabecalhos(t, "atualizar.js", resp, corpo)
+	// O script não monta HTML com texto dele: o que chega é lido com o DOMParser.
+	for _, s := range []string{"innerHTML", "insertAdjacentHTML", "document.write", "eval("} {
+		if strings.Contains(corpo, s) {
+			t.Errorf("o atualizar.js usa %q", s)
+		}
+	}
+
+	const script = `<script src="/admin/estatico/atualizar.js" defer></script>`
+	const aviso = `<p class="aviso-parado" id="sem-atualizar" role="status" hidden></p>`
+	for _, c := range []string{"/admin/", fmt.Sprintf("/admin/empresas/%d", e.ID)} {
+		resp, corpo := n.get(c)
+		esperarStatus(t, resp, corpo, http.StatusOK)
+		for _, s := range []string{script, aviso} {
+			if strings.Count(corpo, s) != 1 {
+				t.Errorf("GET %s: a página tem %d vezes %q; queria 1", c, strings.Count(corpo, s), s)
+			}
+		}
+		// O aviso é a primeira coisa do conteúdo.
+		if !regexp.MustCompile(`<main class="conteudo">\s*` + regexp.QuoteMeta(aviso)).MatchString(corpo) {
+			t.Errorf("GET %s: o aviso não é o primeiro elemento do conteúdo", c)
+		}
+		conferirCabecalhos(t, "GET "+c, resp, corpo)
+	}
+	// As outras páginas não se atualizam sozinhas.
+	for _, c := range []string{"/admin/reunioes", "/admin/empresas/nova", fmt.Sprintf("/admin/empresas/%d/apagar", e.ID)} {
+		if _, corpo := n.get(c); strings.Contains(corpo, "atualizar.js") || strings.Contains(corpo, "sem-atualizar") {
+			t.Errorf("GET %s: a página pede o atualizar.js ou tem o aviso", c)
+		}
 	}
 }
 

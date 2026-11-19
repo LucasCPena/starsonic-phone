@@ -12,9 +12,10 @@ import (
 	"testing"
 )
 
-// semEmpresa são as únicas tabelas sem dados de empresa: os usuários e as sessões da página de
-// administração, e a sequência dos ids do SQLite (a do AUTOINCREMENT).
-var semEmpresa = []string{"admins", "sessoes_admin", "sqlite_sequence"}
+// semEmpresa são as únicas tabelas sem dados de empresa: a configuração do servidor, os
+// usuários e as sessões da página de administração, e a sequência dos ids do SQLite (a do
+// AUTOINCREMENT).
+var semEmpresa = []string{"admins", "configuracao", "sessoes_admin", "sqlite_sequence"}
 
 // daEmpresa diz, para cada tabela com dados de empresa, como contar as linhas que são da
 // empresa do ?.
@@ -27,6 +28,7 @@ var daEmpresa = map[string]string{
 	"membros":            `SELECT COUNT(*) FROM membros x JOIN conversas c ON c.id = x.conversa_id WHERE c.empresa_id = ?`,
 	"mensagens":          `SELECT COUNT(*) FROM mensagens x JOIN conversas c ON c.id = x.conversa_id WHERE c.empresa_id = ?`,
 	"arquivos":           `SELECT COUNT(*) FROM arquivos WHERE empresa_id = ?`,
+	"reunioes":           `SELECT COUNT(*) FROM reunioes WHERE empresa_id = ?`,
 	"leituras":           `SELECT COUNT(*) FROM leituras x JOIN conversas c ON c.id = x.conversa_id WHERE c.empresa_id = ?`,
 }
 

@@ -25,8 +25,8 @@ func abrirTeste(t *testing.T) *Banco {
 func TestAbrir_Novo(t *testing.T) {
 	b := abrirTeste(t)
 	var v int
-	if err := b.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 1 {
-		t.Fatalf("user_version = %d, %v; queria 1", v, err)
+	if err := b.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 2 {
+		t.Fatalf("user_version = %d, %v; queria 2", v, err)
 	}
 	var modo string
 	if err := b.db.QueryRow("PRAGMA journal_mode").Scan(&modo); err != nil || modo != "wal" {
@@ -47,8 +47,8 @@ func TestAbrir_DeNovo(t *testing.T) {
 			t.Fatalf("Abrir #%d: %v", i+1, err)
 		}
 		var v int
-		if err := b.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 1 {
-			t.Fatalf("user_version = %d, %v; queria 1", v, err)
+		if err := b.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 2 {
+			t.Fatalf("user_version = %d, %v; queria 2", v, err)
 		}
 		if err := b.Fechar(); err != nil {
 			t.Fatalf("Fechar: %v", err)
@@ -239,7 +239,7 @@ func TestMigrar_DuasAberturasJuntas(t *testing.T) {
 		defer bancos[i].Fechar()
 	}
 	var v int
-	if err := bancos[0].db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 1 {
-		t.Fatalf("user_version = %d, %v; queria 1", v, err)
+	if err := bancos[0].db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 2 {
+		t.Fatalf("user_version = %d, %v; queria 2", v, err)
 	}
 }

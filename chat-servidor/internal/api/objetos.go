@@ -1,6 +1,9 @@
 package api
 
-import "github.com/LucasCPena/starsonic-phone/chat-servidor/internal/banco"
+import (
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/banco"
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/reunioes"
+)
 
 // Os objetos JSON da seção 4 do protocolo, definidos uma vez para todas as rotas e
 // eventos. A Pessoa fica em pessoas.go.
@@ -101,5 +104,36 @@ func novaConversaJSON(c banco.ResumoConversa) conversaJSON {
 		u := novaMensagemJSON(*c.Ultima)
 		j.Ultima = &u
 	}
+	return j
+}
+
+// reuniaoJSON é a Reunião da seção 9 do protocolo. O assunto, o inicio e o valeAte são null quando a reunião não
+// os tem (a naHora não tem inicio nem valeAte).
+type reuniaoJSON struct {
+	Codigo      string  `json:"codigo"`
+	Link        string  `json:"link"`
+	Tipo        string  `json:"tipo"`
+	Assunto     *string `json:"assunto"`
+	Inicio      *int64  `json:"inicio"`
+	ValeAte     *int64  `json:"valeAte"`
+	CriouEu     bool    `json:"criouEu"`
+	Acontecendo bool    `json:"acontecendo"`
+	Pessoas     int     `json:"pessoas"`
+}
+
+// novaReuniaoJSON monta a Reunião como a pessoa eu a vê (eu 0 é ninguém: o criouEu fica falso). O acontecendo e o
+// pessoas vêm do gerente, e o link é base + "/r/" + código.
+func novaReuniaoJSON(r banco.Reuniao, base string, eu int64, g *reunioes.Gerente) reuniaoJSON {
+	j := reuniaoJSON{Codigo: r.Codigo, Link: base + "/r/" + r.Codigo, Tipo: r.Tipo,
+		CriouEu: eu != 0 && r.CriouID == eu}
+	if r.Assunto != "" {
+		a := r.Assunto
+		j.Assunto = &a
+	}
+	if r.Tipo == banco.TipoMarcada {
+		inicio, valeAte := r.Inicio, r.ValeAte
+		j.Inicio, j.ValeAte = &inicio, &valeAte
+	}
+	j.Acontecendo, j.Pessoas = g.Contagem(r.Sala)
 	return j
 }

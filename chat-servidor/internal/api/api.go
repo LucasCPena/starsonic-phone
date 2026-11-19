@@ -14,6 +14,7 @@ import (
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/banco"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/eventos"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/limites"
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/reunioes"
 )
 
 // OrigemPadrao é a origem do WebView do app.
@@ -27,6 +28,14 @@ type Deps struct {
 	Hub     *eventos.Hub     // obrigatório, e o mesmo da página de administração: o Fora dela só alcança as conexões deste hub
 	Armazem *armazem.Armazem // obrigatório: os arquivos no disco
 	Origens []string         // as origens do CORS; sem nenhuma, vale OrigemPadrao
+	// Gerente é o das reuniões (Task 11). Sem ele, as rotas das reuniões não existem (404 naoEncontrado).
+	Gerente *reunioes.Gerente
+	// Base é o começo do link das reuniões, sem a barra do fim: https://chat.exemplo.com.br:8443. O link é
+	// Base + "/r/" + código.
+	Base string
+	// Canais guarda os canais abertos da página, para o desligamento os fechar com 1001 (o servidor chama o
+	// Encerrar). Sem ele, a API usa um só dela, que ninguém encerra.
+	Canais *Canais
 }
 
 type servidor struct {
@@ -38,11 +47,25 @@ type servidor struct {
 	padroes  []string        // as origens, como OriginPatterns do websocket.Accept
 	erradas  *limites.Janela // os códigos errados, por endereço
 	bilhetes *bilhetes
+	// bilhetesPagina são os bilhetes do canal da página: o dono de cada um é o id da reunião.
+	bilhetesPagina *bilhetes
+	// origensPagina são as origens do canal da página: o Base mais as do --origem (sem o padrão do app).
+	origensPagina map[string]bool
+	canais        *Canais           // os canais abertos da página, para o desligamento
+	gerente       *reunioes.Gerente // nil: as rotas das reuniões não existem
+	base          string            // o começo do link das reuniões, sem a barra do fim
+	// aberturas são as tentativas de abrir uma reunião, por endereço: 20 por minuto. Só contam as que não levam a
+	// uma reunião em que a pessoa possa entrar: o entrar do app (reunioes.go), o abrir da página e o voltar da página que falha (pagina.go).
+	aberturas *limites.Janela
+	// aberturasBoas são as aberturas da página que deram certo, por endereço: 60 por minuto, uma janela à parte da das
+	// falhas. Sem ela, um endereço com um link bom empurraria os bilhetes das outras páginas para fora da fila da reunião.
+	aberturasBoas *limites.Janela
 
 	mensagensLimite *limites.Janela // as mensagens novas, por computador
 	arquivosLimite  *limites.Janela // os bytes de arquivos enviados, por computador
 	geralLimite     *limites.Janela // todo pedido com chave, por computador (R43)
 	pessoasEuLimite *limites.Janela // o POST /pessoas/eu, por computador, além do geral (R43)
+	ramalLimite     *limites.Janela // o PUT /computadores/eu/ramal, por computador, além do geral
 	// travasConversa segura uma conversa (pelo id, em 64 faixas) enquanto uma mensagem é
 	// gravada e o evento sai: assim os eventos saem na ordem dos ids.
 	travasConversa [64]sync.Mutex
@@ -65,18 +88,37 @@ func Novo(d Deps) http.Handler {
 		panic("api.Novo: Deps.Armazem é obrigatório")
 	}
 	s := &servidor{
-		banco:    d.Banco,
-		hub:      d.Hub,
-		avisos:   NovoAvisador(d.Banco, d.Hub),
-		armazem:  d.Armazem,
-		origens:  map[string]bool{},
-		erradas:  limites.Nova(maxErradas, periodoErradas, d.Banco.Relogio()),
-		bilhetes: novosBilhetes(d.Banco.Relogio()),
+		banco:          d.Banco,
+		hub:            d.Hub,
+		avisos:         NovoAvisador(d.Banco, d.Hub),
+		armazem:        d.Armazem,
+		origens:        map[string]bool{},
+		erradas:        limites.Nova(maxErradas, periodoErradas, d.Banco.Relogio()),
+		bilhetes:       novosBilhetes(d.Banco.Relogio(), maxBilhetesPorComputador),
+		bilhetesPagina: novosBilhetes(d.Banco.Relogio(), maxBilhetesPorReuniao),
+		gerente:        d.Gerente,
+		base:           strings.TrimRight(d.Base, "/"),
+		canais:         d.Canais,
+		origensPagina:  map[string]bool{},
+
+		aberturas:     limites.Nova(maxAberturas, periodoAberturas, d.Banco.Relogio()),
+		aberturasBoas: limites.Nova(maxAbrirBom, periodoAberturas, d.Banco.Relogio()),
 
 		mensagensLimite: limites.Nova(maxMensagens, periodoMensagens, d.Banco.Relogio()),
 		arquivosLimite:  limites.Nova(maxArquivosHora, periodoArquivos, d.Banco.Relogio()),
 		geralLimite:     limites.Nova(maxPedidos, periodoPedidos, d.Banco.Relogio()),
 		pessoasEuLimite: limites.Nova(maxPessoasEu, periodoPedidos, d.Banco.Relogio()),
+		ramalLimite:     limites.Nova(maxRamal, periodoPedidos, d.Banco.Relogio()),
+	}
+	if s.canais == nil {
+		s.canais = NovosCanais()
+	}
+	// As origens da página: a do próprio chat (o Base) e as do --origem, sem o padrão do app.
+	if s.base != "" {
+		s.origensPagina[s.base] = true
+	}
+	for _, o := range d.Origens {
+		s.origensPagina[o] = true
 	}
 	origens := d.Origens
 	if len(origens) == 0 {
@@ -90,6 +132,8 @@ func Novo(d Deps) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/v1/computadores", s.ligarComputador)
 	mux.HandleFunc("DELETE /api/v1/computadores/eu", s.autenticar(s.desligarComputador))
+	mux.HandleFunc("PUT /api/v1/computadores/eu/ramal",
+		s.proteger(precisaPessoa(s.dizerRamal), s.banco.ComputadorPorChave, s.ramalLimite))
 	mux.HandleFunc("POST /api/v1/pessoas/eu", s.autenticarTroca(s.entrarComoPessoa))
 	mux.HandleFunc("GET /api/v1/pessoas", s.autenticar(precisaPessoa(s.colegas)))
 	mux.HandleFunc("GET /api/v1/conversas", s.autenticar(precisaPessoa(s.conversas)))
@@ -106,6 +150,10 @@ func Novo(d Deps) http.Handler {
 	mux.HandleFunc("GET /api/v1/arquivos/{id}/miniatura", s.autenticar(precisaPessoa(s.baixarMiniatura)))
 	mux.HandleFunc("POST /api/v1/eventos/bilhete", s.autenticar(s.novoBilhete))
 	mux.HandleFunc("GET /api/v1/eventos", s.eventos) // sem a chave: vale o bilhete
+	if s.gerente != nil {
+		s.rotasDasReunioes(mux)
+		s.rotasDaPagina(mux)
+	}
 	// O resto de /api/v1/ (rota que não existe, ou método errado numa rota que existe)
 	// responde 404 naoEncontrado em JSON. Quem não manda uma chave boa leva 401 antes.
 	mux.HandleFunc(prefixo, s.autenticar(func(w http.ResponseWriter, r *http.Request) {

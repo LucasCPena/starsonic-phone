@@ -1,0 +1,101 @@
+{{/* As reuniões: o servidor de vídeo, o limite, as empresas e a reunião de teste. A página nunca mostra quem está
+     numa reunião: só as contagens, o uso do servidor e o link da reunião de teste. */}}
+{{define "scripts"}}<script src="/admin/estatico/copiar.js" defer></script>{{end}}
+
+{{define "conteudo"}}{{with .Pagina -}}
+<nav class="caminho" aria-label="Caminho"><a href="/admin/">Empresas</a> <span aria-hidden="true">›</span> Reuniões</nav>
+<h1 class="titulo">Reuniões</h1>
+
+<section class="cartao bloco" aria-labelledby="video-titulo">
+  <h2 class="rotulo" id="video-titulo">SERVIDOR DE VÍDEO</h2>
+  <form method="post" action="/admin/reunioes/servidor" class="pilha">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <label class="rotulo-campo" for="endereco">Endereço do servidor de vídeo</label>
+    <input class="entrada" id="endereco" name="endereco" value="{{.Endereco}}" placeholder="video.exemplo.com.br" maxlength="300" autocomplete="off" spellcheck="false"{{if .ErroServidor}} aria-invalid="true"{{end}}>
+    <label class="rotulo-campo" for="chave">Chave do servidor de vídeo</label>
+    <input class="entrada" type="password" id="chave" name="chave" maxlength="100" autocomplete="off"{{if .TemChave}} placeholder="Chave guardada. Deixe em branco para manter."{{end}} aria-describedby="chave-ajuda">
+    <span class="ajuda" id="chave-ajuda">A chave aparece no fim da instalação do servidor de vídeo. Para ver de novo, rode na VM de vídeo: sudo starsonic-video mostrar-chave</span>
+    {{- if .ErroServidor}}
+    <p class="erro" role="alert">{{.ErroServidor}}</p>
+    {{- end}}
+    <div class="botoes">
+      <button type="submit" class="botao botao-primario">Guardar e testar</button>
+      <button type="submit" class="botao botao-secundario" formaction="/admin/reunioes/testar">Testar o servidor de vídeo</button>
+    </div>
+  </form>
+  {{- range .Resultado}}
+  <p class="{{.Classe}}" role="status">{{.Texto}}</p>
+  {{- end}}
+</section>
+
+<section class="cartao bloco" aria-labelledby="limite-titulo">
+  <h2 class="rotulo" id="limite-titulo">AO MESMO TEMPO</h2>
+  <form method="post" action="/admin/reunioes/limite" class="pilha">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <label class="rotulo-campo" for="limite">Reuniões ao mesmo tempo</label>
+    <input class="entrada entrada-curta" type="number" id="limite" name="limite" value="{{.Limite}}" min="1" max="20" step="1" inputmode="numeric" aria-describedby="limite-ajuda"{{if .ErroLimite}} aria-invalid="true"{{end}}>
+    <span class="ajuda" id="limite-ajuda">O padrão é 2, para a VM de 6 vCPU.</span>
+    {{- if .ErroLimite}}
+    <p class="erro" role="alert">{{.ErroLimite}}</p>
+    {{- end}}
+    <div class="botoes">
+      <button type="submit" class="botao botao-primario">Guardar</button>
+    </div>
+  </form>
+</section>
+
+<section class="cartao bloco" aria-labelledby="agora-titulo">
+  <h2 class="rotulo" id="agora-titulo">AGORA</h2>
+  <span class="forte">{{.Agora}}</span>
+  <span class="ajuda">{{.Servidor}}</span>
+</section>
+
+<section class="cartao cartao-tabela" aria-labelledby="empresas-titulo">
+  <h2 class="rotulo rotulo-tabela" id="empresas-titulo">EMPRESAS</h2>
+  <table class="tabela tabela-reunioes">
+    <thead>
+      <tr>
+        <th scope="col">EMPRESA</th>
+        <th scope="col">REUNIÕES</th>
+        <th scope="col"><span class="so-leitor">Liberar ou bloquear</span></th>
+      </tr>
+    </thead>
+    <tbody>
+      {{- range .Empresas}}
+      <tr>
+        <td class="forte">{{.Nome}}</td>
+        <td>{{if .Liberadas}}Liberadas{{else}}Bloqueadas{{end}}</td>
+        <td class="fim">
+          <form method="post" action="{{.Acao}}">
+            <input type="hidden" name="csrf" value="{{$.CSRF}}">
+            <input type="hidden" name="liberar" value="{{.Liberar}}">
+            <button type="submit" class="botao botao-pequeno" aria-label="{{.Botao}} as reuniões de {{.Nome}}">{{.Botao}}</button>
+          </form>
+        </td>
+      </tr>
+      {{- else}}
+      <tr><td colspan="3" class="vazio">Nenhuma empresa ainda.</td></tr>
+      {{- end}}
+    </tbody>
+  </table>
+</section>
+
+<section class="cartao bloco" aria-labelledby="teste-titulo">
+  <h2 class="rotulo" id="teste-titulo">REUNIÃO DE TESTE</h2>
+  {{- with .Teste}}
+  <span class="link-teste" id="codigo">{{.Link}}</span>
+  <div class="botoes">
+    <button type="button" class="botao botao-primario" id="copiar" data-copiado="Link copiado." data-erro="Não deu para copiar. Selecione o link e copie." hidden>Copiar o link</button>
+    <span class="ajuda copiado" id="copiado" role="status"></span>
+  </div>
+  <span class="ajuda">Vale até {{.ValeAte}}</span>
+  {{- end}}
+  <form method="post" action="/admin/reunioes/teste" class="pilha">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <div class="botoes">
+      <button type="submit" class="botao botao-secundario">Criar a reunião de teste</button>
+    </div>
+  </form>
+  <span class="ajuda">Abra o link em dois aparelhos, um deles um celular, para conferir a instalação. A reunião de teste não tem sala de espera e vale por 2 horas.</span>
+</section>
+{{- end}}{{end}}

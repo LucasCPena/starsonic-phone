@@ -22,7 +22,9 @@ import (
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/armazem"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/banco"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/eventos"
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/reunioes"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/tempo"
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/video/videotest"
 )
 
 // Ambiente é um servidor de teste inteiro.
@@ -36,6 +38,18 @@ type Ambiente struct {
 	Armazem  *armazem.Armazem
 	Arquivos string // a pasta dos arquivos no disco (<Dir>/arquivos)
 	Servidor *httptest.Server
+	Video    *videotest.Falso  // o agente de vídeo falso, ligado ao Gerente e no ar; usa o Relogio
+	Gerente  *reunioes.Gerente // o gerente das reuniões, o mesmo da API
+	Base     string            // o começo do link das reuniões: o endereço do Servidor, em http
+}
+
+// chaveVideo é a chave do agente falso: os bytes 0 a 31, a do vetor do docs/video-agente.md.
+func chaveVideo() []byte {
+	b := make([]byte, 32)
+	for i := range b {
+		b[i] = byte(i)
+	}
+	return b
 }
 
 // Pessoa é a pessoa como a API devolve (seção 4 do protocolo).
@@ -74,13 +88,37 @@ func Novo(t *testing.T) *Ambiente {
 	if err != nil {
 		t.Fatalf("apitest: abrir o armazém: %v", err)
 	}
-	srv := httptest.NewServer(api.Novo(api.Deps{Banco: b, Hub: hub, Armazem: arm}))
+	// O endereço do servidor é conhecido antes de ele começar: o Base é o dele.
+	srv := httptest.NewUnstartedServer(nil)
+	base := "http://" + srv.Listener.Addr().String()
+	falso := videotest.NovoFalso(chaveVideo(), rel.Agora)
+	g := reunioes.Novo(reunioes.Deps{Banco: b, Avisos: hub, Relogio: rel})
+	g.Ligar(falso)
+	srv.Config.Handler = api.Novo(api.Deps{Banco: b, Hub: hub, Armazem: arm, Gerente: g, Base: base})
+	srv.Start()
 	t.Cleanup(func() {
 		srv.Close()
+		g.Ligar(nil) // para o laço dos eventos antes de o banco fechar
 		b.Fechar()
 	})
 	return &Ambiente{T: t, Dir: dir, Caminho: caminho, Banco: b, Relogio: rel, Hub: hub,
-		Armazem: arm, Arquivos: pastaArquivos, Servidor: srv}
+		Armazem: arm, Arquivos: pastaArquivos, Servidor: srv, Video: falso, Gerente: g, Base: base}
+}
+
+// LigarComPessoa liga um computador na empresa e faz ele agir como a pessoa do ramal. Devolve a chave do
+// computador e a pessoa.
+func (a *Ambiente) LigarComPessoa(empresa banco.Empresa, ramal, nome string) (chave string, p Pessoa) {
+	a.T.Helper()
+	chave = a.Ligar(empresa.Codigo, "PC-"+ramal)
+	return chave, a.Entrar(chave, ramal, nome)
+}
+
+// LiberarReunioes libera as reuniões com link na empresa, direto no banco.
+func (a *Ambiente) LiberarReunioes(empresaID int64) {
+	a.T.Helper()
+	if err := a.Banco.LiberarReunioes(a.T.Context(), empresaID, true); err != nil {
+		a.T.Fatalf("apitest: liberar as reuniões: %v", err)
+	}
 }
 
 // Com devolve uma cópia ligada ao t (um subteste, por exemplo), com o mesmo servidor,
@@ -151,6 +189,37 @@ func (a *Ambiente) Discar(bilhete, origem string) (*websocket.Conn, *http.Respon
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	conn, resp, err := websocket.Dial(ctx, a.Servidor.URL+"/api/v1/eventos?bilhete="+url.QueryEscape(bilhete),
+		&websocket.DialOptions{HTTPClient: a.Servidor.Client(), HTTPHeader: cab})
+	if conn != nil {
+		a.T.Cleanup(func() { conn.CloseNow() })
+	}
+	return conn, resp, err
+}
+
+// AbrirPagina faz o "abrir" da página (POST /api/v1/pagina/reunioes/{codigo}, sem chave). Devolve o status e, no 200,
+// o bilhete do canal. Não chama o Fatalf, a não ser que o pedido nem saia.
+func (a *Ambiente) AbrirPagina(codigo string) (status int, bilhete string) {
+	a.T.Helper()
+	resp := a.Pedir("", "POST", "/api/v1/pagina/reunioes/"+url.PathEscape(codigo), nil)
+	if resp.StatusCode != http.StatusOK {
+		return resp.StatusCode, ""
+	}
+	return resp.StatusCode, LerJSON[struct {
+		Bilhete string `json:"bilhete"`
+	}](a.T, resp).Bilhete
+}
+
+// CanalDaPagina abre o WebSocket da página (GET /api/v1/pagina/canal) com o bilhete, com o cabeçalho Origin se a
+// origem não for vazia. Sem o 101, o resp traz o status e o começo do corpo. A conexão que abrir fecha no fim do
+// teste. Não chama o Fatalf: pode rodar em outras goroutines.
+func (a *Ambiente) CanalDaPagina(bilhete, origem string) (*websocket.Conn, *http.Response, error) {
+	cab := http.Header{}
+	if origem != "" {
+		cab.Set("Origin", origem)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, resp, err := websocket.Dial(ctx, a.Servidor.URL+"/api/v1/pagina/canal?bilhete="+url.QueryEscape(bilhete),
 		&websocket.DialOptions{HTTPClient: a.Servidor.Client(), HTTPHeader: cab})
 	if conn != nil {
 		a.T.Cleanup(func() { conn.CloseNow() })

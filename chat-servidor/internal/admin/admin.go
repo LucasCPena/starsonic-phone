@@ -3,10 +3,11 @@
 // computadores, e apagar uma empresa. A página nunca mostra as conversas.
 //
 // É HTML feito no servidor (html/template), com as páginas e os estáticos embutidos. Nada é
-// inline: a CSP default-src 'self' vale para tudo, e o único script, o "Copiar o código", é um
-// arquivo. Toda página leva Cache-Control: no-store, porque a página da empresa mostra o
-// código, que é segredo. Só os estáticos (a fonte, o logo, o estilo e o script, sem segredo)
-// ficam um dia no navegador: private, max-age=86400.
+// inline: a CSP default-src 'self' vale para tudo, e os dois scripts são arquivos: o "Copiar o
+// código" e o que busca de novo, a cada 30 s, as duas páginas que mostram o estado dos ramais
+// (a lista das empresas e a de uma empresa). Toda página leva Cache-Control: no-store, porque a
+// página da empresa mostra o código, que é segredo. Só os estáticos (a fonte, o logo, o estilo e
+// os scripts, sem segredo) ficam um dia no navegador: private, max-age=86400.
 package admin
 
 import (
@@ -28,6 +29,7 @@ import (
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/eventos"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/limites"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/regras"
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/reunioes"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/tempo"
 )
 
@@ -70,6 +72,10 @@ type Deps struct {
 	Hub     *eventos.Hub
 	Armazem *armazem.Armazem
 	Teste   bool // o modo de teste é HTTP: os cookies vão sem o Secure
+	// Gerente é o das reuniões, o mesmo da API: a página "Reuniões" liga nele o servidor de vídeo e lê dele as contagens.
+	Gerente *reunioes.Gerente
+	// Base é o começo do link das reuniões, sem a barra do fim (o mesmo da API): o link da reunião de teste.
+	Base string
 }
 
 type painel struct {
@@ -77,6 +83,8 @@ type painel struct {
 	hub      *eventos.Hub
 	armazem  *armazem.Armazem
 	avisos   *api.Avisador
+	gerente  *reunioes.Gerente
+	base     string
 	entradas *limites.Janela // as entradas, por endereço
 	teste    bool
 	telas    map[string]*template.Template
@@ -93,10 +101,14 @@ func Novo(d Deps) http.Handler {
 	if d.Armazem == nil {
 		panic("admin.Novo: Deps.Armazem é obrigatório")
 	}
+	if d.Gerente == nil {
+		panic("admin.Novo: Deps.Gerente é obrigatório, e tem de ser o mesmo da API")
+	}
 	p := &painel{banco: d.Banco, hub: d.Hub, armazem: d.Armazem, avisos: api.NovoAvisador(d.Banco, d.Hub),
+		gerente: d.Gerente, base: d.Base,
 		entradas: limites.Nova(maxEntradas, periodoEntradas, d.Banco.Relogio()),
 		teste:    d.Teste, telas: map[string]*template.Template{}}
-	for _, nome := range []string{"entrar", "empresas", "nova", "empresa", "apagar", "erro"} {
+	for _, nome := range []string{"entrar", "empresas", "nova", "empresa", "apagar", "reunioes", "erro"} {
 		p.telas[nome] = template.Must(template.ParseFS(paginasFS, "paginas/base.html", "paginas/"+nome+".html"))
 	}
 
@@ -113,6 +125,12 @@ func Novo(d Deps) http.Handler {
 	mux.HandleFunc("POST /admin/empresas/{id}/computadores/{cid}/tirar", p.comSessao(p.tirarComputador))
 	mux.HandleFunc("GET /admin/empresas/{id}/apagar", p.comSessao(p.paginaApagar))
 	mux.HandleFunc("POST /admin/empresas/{id}/apagar", p.comSessao(p.apagarEmpresa))
+	mux.HandleFunc("GET /admin/reunioes", p.comSessao(p.paginaReunioes))
+	mux.HandleFunc("POST /admin/reunioes/servidor", p.comSessao(p.guardarServidor))
+	mux.HandleFunc("POST /admin/reunioes/testar", p.comSessao(p.testarServidor))
+	mux.HandleFunc("POST /admin/reunioes/limite", p.comSessao(p.guardarLimite))
+	mux.HandleFunc("POST /admin/reunioes/empresas/{id}", p.comSessao(p.liberarEmpresa))
+	mux.HandleFunc("POST /admin/reunioes/teste", p.comSessao(p.criarTeste))
 	mux.HandleFunc("GET /admin/estatico/{arquivo}", p.estatico) // sem sessão: a entrada usa
 	// O resto: sem sessão, a entrada; com ela, "não encontrada". Assim, quem não entrou não
 	// descobre nem que rotas existem.
@@ -244,25 +262,47 @@ type numero struct{ Valor, Legenda string }
 type linhaEmpresa struct {
 	Nome, Espaco, Desde, Endereco string
 	Pessoas                       int
+	Contas                        contas // os ramais da empresa agora, por estado
 }
 
 type telaEmpresas struct {
-	Numeros  []numero
-	Empresas []linhaEmpresa
+	Numeros []numero
+	// Alerta é o cartão de número a mais: quantos ramais estão sem registro agora. Com zero, é nil.
+	Alerta      *numero
+	Reunioes    cartaoReunioes
+	SemRegistro cartaoSemRegistro
+	Empresas    []linhaEmpresa
 }
 
-// GET /admin/: a lista das empresas, com os totais.
+// GET /admin/: a lista das empresas, com os totais, as contas dos ramais de cada uma e os ramais
+// que estão sem registro agora, de todas juntas. O banco é lido com um número fixo de consultas
+// (as do resumo, as duas do PessoasDeTodas e as do cartão das reuniões), seja qual for o número
+// de empresas: esta página é buscada de novo a cada 30 s.
 func (p *painel) empresas(w http.ResponseWriter, r *http.Request, s sessao) {
 	lista, err := p.banco.Empresas(r.Context())
 	if err != nil {
 		p.erroServidor(w, s, err)
 		return
 	}
+	todas, err := p.banco.PessoasDeTodas(r.Context())
+	if err != nil {
+		p.erroServidor(w, s, err)
+		return
+	}
 	var t telaEmpresas
+	if t.Reunioes, err = p.cartaoDasReunioes(r.Context()); err != nil {
+		p.erroServidor(w, s, err)
+		return
+	}
+	agora := p.banco.Relogio().Agora()
+	daEmpresa := map[int64][]pessoaVista{}
+	for _, v := range verPessoas(todas, p.hub.Ligados(), agora) {
+		daEmpresa[v.EmpresaID] = append(daEmpresa[v.EmpresaID], v)
+	}
 	pessoas, bytes := 0, int64(0)
 	for _, e := range lista {
 		t.Empresas = append(t.Empresas, linhaEmpresa{Nome: e.Nome, Pessoas: e.Pessoas, Espaco: espaco(e.Bytes),
-			Desde: data(e.CriadaEm), Endereco: enderecoEmpresa(e.ID)})
+			Desde: data(e.CriadaEm), Endereco: enderecoEmpresa(e.ID), Contas: contar(daEmpresa[e.ID])})
 		pessoas += e.Pessoas
 		bytes += e.Bytes
 	}
@@ -270,6 +310,10 @@ func (p *painel) empresas(w http.ResponseWriter, r *http.Request, s sessao) {
 		{strconv.Itoa(len(lista)), plural(len(lista), "empresa no chat", "empresas no chat")},
 		{strconv.Itoa(pessoas), plural(pessoas, "pessoa no chat", "pessoas no chat")},
 		{espaco(bytes), "de arquivos guardados"},
+	}
+	var sem int
+	if t.SemRegistro, sem = semRegistroAgora(lista, daEmpresa, agora); sem > 0 {
+		t.Alerta = &numero{strconv.Itoa(sem), plural(sem, "ramal sem registro agora", "ramais sem registro agora")}
 	}
 	p.mostrarComSessao(w, s, http.StatusOK, "empresas", "empresas", t)
 }
@@ -298,19 +342,24 @@ func (p *painel) criarEmpresa(w http.ResponseWriter, r *http.Request, s sessao) 
 	http.Redirect(w, r, enderecoEmpresa(e.ID), http.StatusSeeOther)
 }
 
-type linhaComputador struct{ Nome, UltimaVez, Tirar string }
+// linhaComputador é um computador na linha de uma pessoa. Classe e Estado são os da bolinha dele:
+// a classe (online, sem-registro, no-chat ou offline) e o texto para o leitor de tela.
+type linhaComputador struct{ Nome, UltimaVez, Tirar, Classe, Estado string }
 
 type linhaPessoa struct {
-	Nome, Ramal, UltimaVez, Tirar string
-	Computadores                  []linhaComputador
+	Nome, Ramal, Tirar string
+	Estado             estadoNaTela
+	Computadores       []linhaComputador
 }
 
 type telaEmpresa struct {
 	Nome, Codigo, Resumo, Endereco string
+	Contas                         contas
 	Pessoas                        []linhaPessoa
 }
 
-// GET /admin/empresas/{id}: a empresa, com o código, as pessoas e os computadores.
+// GET /admin/empresas/{id}: a empresa, com o código, as pessoas, o estado do ramal de cada uma e
+// os computadores. O estado junta o banco com o que o hub sabe agora (ramais.go).
 func (p *painel) empresa(w http.ResponseWriter, r *http.Request, s sessao) {
 	e, ok := p.empresaDoCaminho(w, r, s)
 	if !ok {
@@ -322,14 +371,16 @@ func (p *painel) empresa(w http.ResponseWriter, r *http.Request, s sessao) {
 		return
 	}
 	agora := p.banco.Relogio().Agora()
-	t := telaEmpresa{Nome: e.Nome, Codigo: e.Codigo, Endereco: enderecoEmpresa(e.ID),
+	vistas := verPessoas(pessoas, p.hub.Ligados(), agora)
+	t := telaEmpresa{Nome: e.Nome, Codigo: e.Codigo, Endereco: enderecoEmpresa(e.ID), Contas: contar(vistas),
 		Resumo: fmt.Sprintf("%d %s · %s de arquivos", e.Pessoas, plural(e.Pessoas, "pessoa", "pessoas"), espaco(e.Bytes))}
-	for _, x := range pessoas {
-		lp := linhaPessoa{Nome: x.Nome, Ramal: x.Ramal, UltimaVez: quando(x.UltimaVez, agora),
-			Tirar: fmt.Sprintf("%s/pessoas/%d/tirar", t.Endereco, x.ID)}
-		for _, c := range x.Computadores {
+	for _, v := range vistas {
+		lp := linhaPessoa{Nome: v.Nome, Ramal: v.Ramal, Estado: naTela(v, agora),
+			Tirar: fmt.Sprintf("%s/pessoas/%d/tirar", t.Endereco, v.ID)}
+		for i, c := range v.Computadores {
+			classe, estado := doPC(v.PCs[i])
 			lp.Computadores = append(lp.Computadores, linhaComputador{Nome: c.Nome, UltimaVez: quando(c.UltimaVez, agora),
-				Tirar: fmt.Sprintf("%s/computadores/%d/tirar", t.Endereco, c.ID)})
+				Tirar: fmt.Sprintf("%s/computadores/%d/tirar", t.Endereco, c.ID), Classe: classe, Estado: estado})
 		}
 		t.Pessoas = append(t.Pessoas, lp)
 	}
@@ -406,9 +457,10 @@ func (p *painel) paginaApagar(w http.ResponseWriter, r *http.Request, s sessao) 
 }
 
 // POST /admin/empresas/{id}/apagar: com o nome exato da empresa, apaga tudo dela, no banco e
-// no disco, e os computadores dela recebem o fora. Com outro nome, nada muda. O nome digitado
-// passa pela regra do nome (sem as pontas, cada sequência de espaços vira um espaço) e só
-// então é comparado, exato e com a caixa.
+// no disco, e os computadores dela recebem o fora. As reuniões dela que estão acontecendo,
+// lidas antes (o apagar as leva junto), acabam depois. Com outro nome, nada muda. O nome
+// digitado passa pela regra do nome (sem as pontas, cada sequência de espaços vira um espaço)
+// e só então é comparado, exato e com a caixa.
 func (p *painel) apagarEmpresa(w http.ResponseWriter, r *http.Request, s sessao) {
 	e, ok := p.empresaDoCaminho(w, r, s)
 	if !ok {
@@ -419,11 +471,17 @@ func (p *painel) apagarEmpresa(w http.ResponseWriter, r *http.Request, s sessao)
 			telaApagar{Nome: e.Nome, Endereco: enderecoEmpresa(e.ID), Erro: textoNomeErrado})
 		return
 	}
+	daEmpresa, err := p.banco.ReunioesDaEmpresa(r.Context(), e.ID)
+	if err != nil {
+		p.erroDoBanco(w, r, s, err)
+		return
+	}
 	arquivos, computadores, err := p.banco.ApagarEmpresa(r.Context(), e.ID)
 	if err != nil {
 		p.erroDoBanco(w, r, s, err)
 		return
 	}
+	encerradas := p.encerrarDaEmpresa(r, daEmpresa)
 	p.hub.Fora(computadores)
 	falhas := 0
 	for _, id := range arquivos {
@@ -437,7 +495,7 @@ func (p *painel) apagarEmpresa(w http.ResponseWriter, r *http.Request, s sessao)
 		}
 	}
 	slog.Info("admin: empresa apagada", "usuario", s.Usuario, "empresa", e.ID, "arquivos", len(arquivos),
-		"falhasNoDisco", falhas, "computadores", len(computadores))
+		"falhasNoDisco", falhas, "computadores", len(computadores), "reunioesEncerradas", encerradas)
 	http.Redirect(w, r, "/admin/", http.StatusSeeOther)
 }
 

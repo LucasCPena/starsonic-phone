@@ -19,9 +19,10 @@ import (
 )
 
 const (
-	validade    = 365 * 24 * time.Hour // um arquivo vale por 365 dias
-	semMensagem = 24 * time.Hour       // e um que não entrou numa mensagem, por 24 h
-	horaRodada  = 4                    // a rodada diária é às 04:00 de America/Sao_Paulo
+	validade      = 365 * 24 * time.Hour // um arquivo vale por 365 dias
+	semMensagem   = 24 * time.Hour       // e um que não entrou numa mensagem, por 24 h
+	horaRodada    = 4                    // a rodada diária é às 04:00 de America/Sao_Paulo
+	guardaReuniao = 30 * 24 * time.Hour  // uma reunião fica 30 dias depois do fim da validade
 )
 
 // limiteSemLinha é o máximo de arquivos sem linha no banco que uma rodada apaga. Mais que isso,
@@ -92,6 +93,12 @@ func Expirar(ctx context.Context, b *banco.Banco, a *armazem.Armazem) (expirados
 		erros = append(erros, err)
 	}
 	return expirados, limpos, errors.Join(erros...)
+}
+
+// LimparReunioes apaga as reuniões que acabaram há mais de 30 dias: o valeAte da marcada e da
+// de teste, o cancelamento, e o fim da naHora (banco.ApagarReunioesVelhas). Devolve quantas apagou.
+func LimparReunioes(ctx context.Context, b *banco.Banco) (int, error) {
+	return b.ApagarReunioesVelhas(ctx, b.Relogio().Agora().Add(-guardaReuniao).UnixMilli())
 }
 
 // limparSemMensagem apaga um arquivo que nenhuma mensagem usa: a linha primeiro, num comando
@@ -265,6 +272,14 @@ func Rodar(ctx context.Context, b *banco.Banco, a *armazem.Armazem) {
 			slog.Error("tarefas: a rodada teve erro", "expirados", expirados, "limpos", limpos, "erro", err)
 		} else {
 			slog.Info("tarefas: rodada feita", "expirados", expirados, "limpos", limpos)
+		}
+		// As reuniões velhas saem depois da expiração dos arquivos, mesmo que ela tenha dado erro.
+		if apagadas, err := LimparReunioes(ctx, b); errors.Is(err, context.Canceled) {
+			slog.Info("tarefas: limpeza das reuniões interrompida")
+		} else if err != nil {
+			slog.Error("tarefas: a limpeza das reuniões teve erro", "erro", err)
+		} else {
+			slog.Info("tarefas: reuniões velhas apagadas", "apagadas", apagadas)
 		}
 		agora := b.Relogio().Agora()
 		espera := proximaRodada(agora).Sub(agora)

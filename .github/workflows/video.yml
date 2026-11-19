@@ -1,0 +1,327 @@
+name: video
+
+on:
+  push:
+    paths:
+      - 'video-servidor/**'
+      - 'chat-servidor/**'
+      - 'docs/video-*.md'
+      - 'docs/chat-protocolo.md'
+      - '.github/workflows/video*.yml'
+  pull_request:
+    paths:
+      - 'video-servidor/**'
+      - 'chat-servidor/**'
+      - 'docs/video-*.md'
+      - 'docs/chat-protocolo.md'
+      - '.github/workflows/video*.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# O go do runner é o do go.mod, e nunca baixa outro: com um go.mod que pede mais, o job falha em vez de baixar.
+env:
+  GOTOOLCHAIN: local
+
+jobs:
+  agente:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: video-servidor
+    steps:
+      - uses: actions/checkout@v4
+      - name: Versão do Go do go.mod
+        id: go
+        # A linha "toolchain" do go.mod, e não a "go": com a segunda, o setup-go instala o 1.26.0 e o go baixa o
+        # toolchain de novo em cada rodada.
+        run: |
+          versao=$(awk '$1 == "toolchain" { sub(/^go/, "", $2); print $2 }' "$GITHUB_WORKSPACE/video-servidor/go.mod")
+          [ -n "$versao" ] || { echo "Sem a linha toolchain no video-servidor/go.mod"; exit 1; }
+          echo "versao=$versao" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ steps.go.outputs.versao }}
+      - name: gofmt
+        run: |
+          lista=$(gofmt -l .)
+          if [ -n "$lista" ]; then echo "Fora do gofmt:"; echo "$lista"; exit 1; fi
+      - name: go vet
+        run: go vet ./...
+      - name: Testes
+        run: go test -race ./...
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+      - name: Build (linux/amd64)
+        env:
+          CGO_ENABLED: '0'
+          GOOS: linux
+          GOARCH: amd64
+        run: go build -trimpath -o starsonic-video ./cmd/starsonic-video
+      - name: shellcheck
+        # Todos os scripts do servidor de vídeo, também os que as próximas tarefas criarem.
+        run: git ls-files -z -- '*.sh' | xargs -0 -r shellcheck
+      - name: Teste do instalar.sh
+        run: bash deploy/instalar-teste.sh
+      - name: systemd-analyze
+        # O verify confere se o ExecStart de cada unidade existe e roda, e a unidade do agente puxa a do
+        # FreeSWITCH: põe o programa onde a instalação o põe, um FreeSWITCH de mentira no lugar do pacote, e os
+        # dois usuários.
+        run: |
+          sudo install -m 0755 starsonic-video /usr/local/bin/starsonic-video
+          sudo install -D -m 0755 /bin/true /opt/starsonic-freeswitch/bin/freeswitch
+          sudo useradd --system --no-create-home --shell /usr/sbin/nologin starsonic-video
+          sudo useradd --system --no-create-home --shell /usr/sbin/nologin starsonic-freeswitch
+          # O verify sai com 0 até com uma chave errada, e só avisa. Qualquer linha na saída falha.
+          saida=$(systemd-analyze verify deploy/*.service 2>&1) || { echo "$saida"; exit 1; }
+          if [ -n "$saida" ]; then echo "$saida"; exit 1; fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: starsonic-video-linux-amd64
+          path: video-servidor/starsonic-video
+
+  # O FreeSWITCH do servidor de vídeo, montado do código oficial (video-servidor/freeswitch/construir.sh),
+  # um pacote por sistema da VM, cada um no contêiner do sistema dele.
+  # O video-release.yml tem estes dois jobs (freeswitch e freeswitch-conferir) copiados: se mudar aqui, mude no
+  # video-release.yml.
+  freeswitch:
+    name: FreeSWITCH (${{ matrix.sistema }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        sistema: [ubuntu-24.04, ubuntu-26.04, debian-12]
+        include:
+          - sistema: ubuntu-24.04
+            imagem: ubuntu:24.04
+          - sistema: ubuntu-26.04
+            imagem: ubuntu:26.04
+          - sistema: debian-12
+            imagem: debian:12
+    container: ${{ matrix.imagem }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      SISTEMA: ${{ matrix.sistema }}
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      # O checkout e a leitura do deps.lock pedem estes três; o contêiner vem sem eles.
+      - name: git, ca-certificates e python3
+        run: |
+          apt-get update -q
+          apt-get install -y -q --no-install-recommends git ca-certificates python3
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      # A chave leva só o que muda os pacotes: uma mudança no conferir-pacote.sh (ou nos outros scripts da
+      # pasta) não monta o FreeSWITCH de novo.
+      - uses: actions/cache@v4
+        id: cache
+        with:
+          path: work/freeswitch-saida
+          key: freeswitch-${{ matrix.sistema }}-${{ hashFiles('video-servidor/deps.lock', 'video-servidor/freeswitch/construir.sh', 'video-servidor/freeswitch/modules.conf', 'video-servidor/freeswitch/pacotes-de-build.txt', 'video-servidor/freeswitch/LEIA-ME-FONTES.txt', 'video-servidor/freeswitch/patches/**') }}
+      - name: Pacotes do build
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: xargs -a video-servidor/freeswitch/pacotes-de-build.txt apt-get install -y -q --no-install-recommends
+      - name: Build
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: bash video-servidor/freeswitch/construir.sh "$SISTEMA" work/freeswitch-fontes work/freeswitch-saida
+      - uses: actions/upload-artifact@v4
+        with:
+          name: starsonic-freeswitch-${{ matrix.sistema }}
+          path: |
+            work/freeswitch-saida/starsonic-freeswitch-${{ matrix.sistema }}-amd64.tar.gz
+            work/freeswitch-saida/starsonic-freeswitch-${{ matrix.sistema }}-amd64.tar.gz.sha256
+          if-no-files-found: error
+      # As fontes são as mesmas nos três sistemas.
+      - uses: actions/upload-artifact@v4
+        if: matrix.sistema == 'ubuntu-24.04'
+        with:
+          name: starsonic-freeswitch-fontes
+          path: work/freeswitch-saida/starsonic-freeswitch-fontes.tar.gz
+          if-no-files-found: error
+
+  # Cada pacote num contêiner limpo do sistema dele, como o instalador o usa: só os pacotes do pacotes.txt.
+  freeswitch-conferir:
+    name: FreeSWITCH conferido (${{ matrix.sistema }})
+    needs: freeswitch
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        sistema: [ubuntu-24.04, ubuntu-26.04, debian-12]
+        include:
+          - sistema: ubuntu-24.04
+            imagem: ubuntu:24.04
+          - sistema: ubuntu-26.04
+            imagem: ubuntu:26.04
+          - sistema: debian-12
+            imagem: debian:12
+    container: ${{ matrix.imagem }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      SISTEMA: ${{ matrix.sistema }}
+    steps:
+      # Sem o git, que o contêiner limpo não tem, o checkout baixa os arquivos pela API do GitHub.
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: starsonic-freeswitch-${{ matrix.sistema }}
+          path: pacote
+      - name: SHA-256
+        working-directory: pacote
+        run: sha256sum -c "starsonic-freeswitch-$SISTEMA-amd64.tar.gz.sha256"
+      - name: Conferir o pacote
+        run: bash video-servidor/freeswitch/conferir-pacote.sh "pacote/starsonic-freeswitch-$SISTEMA-amd64.tar.gz"
+      # Os outros pacotes da linha do apt do instalar.sh, com os do pacotes.txt já instalados pelo passo de cima: o
+      # apt acha todos neste sistema. O -s só simula.
+      - name: Os pacotes do instalador
+        run: |
+          apt-get update -q
+          apt-get install -s -q certbot coturn ca-certificates openssl
+      # O teste do próprio conferir: o mesmo pacote, sem as linhas "patch" do VERSOES.txt, tem de ser recusado. Um
+      # pacote montado sem as correções de freeswitch/patches não pode passar. Só num sistema, por último (ele deixa
+      # no /opt o VERSOES.txt mexido), e só aqui: o video-release.yml não tem este passo.
+      - name: O conferir recusa um pacote sem as correções
+        if: matrix.sistema == 'ubuntu-24.04'
+        run: |
+          set -euo pipefail
+          if ! ls video-servidor/freeswitch/patches/*/*.patch >/dev/null 2>&1; then
+            echo "A pasta patches/ não tem nenhuma correção: nada a provar."
+            exit 0
+          fi
+          mkdir /tmp/sem-as-correcoes
+          tar -xzf "pacote/starsonic-freeswitch-$SISTEMA-amd64.tar.gz" -C /tmp/sem-as-correcoes
+          sed -i '/^patch /d' /tmp/sem-as-correcoes/opt/starsonic-freeswitch/VERSOES.txt
+          tar -czf /tmp/sem-as-correcoes.tar.gz -C /tmp/sem-as-correcoes opt
+          conferir=video-servidor/freeswitch/conferir-pacote.sh
+          if bash "$conferir" /tmp/sem-as-correcoes.tar.gz >/tmp/recusa.txt 2>&1; then
+            tail -20 /tmp/recusa.txt
+            echo "O conferir aceitou um pacote sem as correções." >&2
+            exit 1
+          fi
+          tail -8 /tmp/recusa.txt
+          grep -q 'as correções do pacote não são as da pasta patches/' /tmp/recusa.txt
+
+  # A configuração que o agente gera (o configurar --teste) num FreeSWITCH de verdade, o pacote de cada
+  # sistema num contêiner limpo dele: os dois perfis do sofia no ar e nenhuma linha de erro.
+  freeswitch-configuracao:
+    name: Configuração do FreeSWITCH (${{ matrix.sistema }})
+    needs: [agente, freeswitch]
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        sistema: [ubuntu-24.04, ubuntu-26.04, debian-12]
+        include:
+          - sistema: ubuntu-24.04
+            imagem: ubuntu:24.04
+          - sistema: ubuntu-26.04
+            imagem: ubuntu:26.04
+          - sistema: debian-12
+            imagem: debian:12
+    container: ${{ matrix.imagem }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      SISTEMA: ${{ matrix.sistema }}
+    steps:
+      # Sem o git, que o contêiner limpo não tem, o checkout baixa os arquivos pela API do GitHub.
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: starsonic-video-linux-amd64
+          path: agente
+      - uses: actions/download-artifact@v4
+        with:
+          name: starsonic-freeswitch-${{ matrix.sistema }}
+          path: pacote
+      - name: SHA-256
+        working-directory: pacote
+        run: sha256sum -c "starsonic-freeswitch-$SISTEMA-amd64.tar.gz.sha256"
+      # O artefato perde a permissão de execução.
+      - name: Conferir a configuração
+        run: |
+          chmod +x agente/starsonic-video
+          bash video-servidor/freeswitch/conferir-configuracao.sh agente/starsonic-video "pacote/starsonic-freeswitch-$SISTEMA-amd64.tar.gz"
+
+  # As reuniões de ponta a ponta (video-servidor/e2e): o FreeSWITCH do pacote do Ubuntu 24.04, o agente, o chat e o
+  # Chromium do Playwright com a câmera e o microfone falsos. Sem contêiner: o FreeSWITCH escuta no IP da máquina, e
+  # os navegadores precisam das bibliotecas do sistema.
+  ponta-a-ponta:
+    name: De ponta a ponta
+    needs: [agente, freeswitch]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: starsonic-freeswitch-ubuntu-24.04
+          path: pacote
+      - name: O FreeSWITCH
+        run: |
+          (cd pacote && sha256sum -c starsonic-freeswitch-ubuntu-24.04-amd64.tar.gz.sha256)
+          sudo tar -xzf pacote/starsonic-freeswitch-ubuntu-24.04-amd64.tar.gz -C /
+          sudo apt-get update -q
+          xargs -a /opt/starsonic-freeswitch/pacotes.txt sudo DEBIAN_FRONTEND=noninteractive \
+            apt-get install -y -q --no-install-recommends
+      - name: Versão do Go do go.mod
+        id: go
+        # A linha "toolchain" do go.mod, e não a "go": com a segunda, o setup-go instala o 1.26.0 e o go baixa o
+        # toolchain de novo em cada rodada. O módulo do chat também é compilado com a versão do módulo do vídeo; o
+        # GOTOOLCHAIN=local faz uma divisão futura das versões falhar alto.
+        run: |
+          versao=$(awk '$1 == "toolchain" { sub(/^go/, "", $2); print $2 }' "$GITHUB_WORKSPACE/video-servidor/go.mod")
+          [ -n "$versao" ] || { echo "Sem a linha toolchain no video-servidor/go.mod"; exit 1; }
+          echo "versao=$versao" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ steps.go.outputs.versao }}
+          cache-dependency-path: chat-servidor/go.sum
+      - name: O chat e o agente
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          (cd chat-servidor && go build -trimpath -o "$RUNNER_TEMP/bin/starsonic-chat" ./cmd/starsonic-chat)
+          (cd video-servidor && go build -trimpath -o "$RUNNER_TEMP/bin/starsonic-video" ./cmd/starsonic-video)
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: video-servidor/e2e/package-lock.json
+      - name: O Playwright
+        working-directory: video-servidor/e2e
+        run: |
+          npm ci
+          npx playwright install chromium --with-deps
+      - name: Testes
+        working-directory: video-servidor/e2e
+        env:
+          STARSONIC_FREESWITCH_DIR: /opt/starsonic-freeswitch
+          STARSONIC_CHAT_BIN: ${{ runner.temp }}/bin/starsonic-chat
+          STARSONIC_VIDEO_BIN: ${{ runner.temp }}/bin/starsonic-video
+        run: npx playwright test
+      # Numa falha: as saídas dos servidores e o relatório. Fica de fora o test-results/privado/ (o config.json, com a
+      # chave e a senha do ESL, a configuração do FreeSWITCH e os dados do chat) e a mídia falsa.
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: ponta-a-ponta
+          path: |
+            video-servidor/e2e/test-results/*.log
+            video-servidor/e2e/test-results/saida/
+            video-servidor/e2e/playwright-report/
+          if-no-files-found: ignore

@@ -25,8 +25,11 @@ import (
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/armazem"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/banco"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/eventos"
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/pagina"
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/reunioes"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/tarefas"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/tempo"
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/video"
 )
 
 // ErroModoTeste é o erro do RodarTeste com um endereço que não é local.
@@ -55,31 +58,65 @@ type Deps struct {
 	Armazem *armazem.Armazem
 	Origens []string
 	Teste   bool // o modo de teste é HTTP: os cookies da página vão sem o Secure
+	// Gerente é o das reuniões: o da API, o da página e o da administração, que o exige.
+	Gerente *reunioes.Gerente
+	// Base é o começo do link das reuniões, sem a barra do fim: https:// mais o hostPublico em produção, e http://
+	// mais o endereço em que o chat escuta no modo de teste.
+	Base string
 }
 
 // Montar monta o servidor: a API em /api/v1/, a página de administração em /admin/, e a raiz
 // que leva para ela. Cada pedido recebe os prazos de leitura e de escrita da sua rota.
 func Montar(d Deps) http.Handler {
-	h, _ := montar(d)
+	h, _, _ := montar(d)
 	return h
 }
 
-// montar também devolve a contagem dos WebSockets abertos: o desligamento espera por eles,
-// porque o http.Server.Shutdown não espera uma conexão sequestrada.
-func montar(d Deps) (http.Handler, *sync.WaitGroup) {
+// montar também devolve a contagem dos WebSockets abertos (os eventos do app e os canais da página): o desligamento
+// espera por eles, porque o http.Server.Shutdown não espera uma conexão sequestrada. E devolve o conjunto dos canais
+// da página, que o desligamento fecha com 1001 (o hub faz isso com os eventos).
+func montar(d Deps) (http.Handler, *sync.WaitGroup, *api.Canais) {
 	mux := http.NewServeMux()
-	mux.Handle("/api/v1/", api.Novo(api.Deps{Banco: d.Banco, Hub: d.Hub, Armazem: d.Armazem, Origens: d.Origens}))
-	mux.Handle("/admin/", registrarAdmin(admin.Novo(admin.Deps{Banco: d.Banco, Hub: d.Hub, Armazem: d.Armazem, Teste: d.Teste})))
+	canais := api.NovosCanais()
+	mux.Handle("/api/v1/", api.Novo(api.Deps{Banco: d.Banco, Hub: d.Hub, Armazem: d.Armazem, Origens: d.Origens,
+		Gerente: d.Gerente, Base: d.Base, Canais: canais}))
+	mux.Handle("/admin/", registrarAdmin(admin.Novo(admin.Deps{Banco: d.Banco, Hub: d.Hub, Armazem: d.Armazem, Teste: d.Teste,
+		Gerente: d.Gerente, Base: d.Base})))
+	// A página das reuniões não passa pelo registrarAdmin: o código do link vai no caminho e não vai para o log.
+	mux.Handle("/r/", pagina.Novo(pagina.Deps{Video: func() string { return videoDe(d.Gerente) }, OrigemCanal: origemCanal(d.Base)}))
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/admin/", http.StatusFound)
 	})
 	sockets := &sync.WaitGroup{}
-	return comPrazos(contarSockets(mux, sockets)), sockets
+	return comPrazos(contarSockets(mux, sockets)), sockets, canais
 }
 
-// ehEventos diz se o pedido é o WebSocket dos eventos (para contá-lo no desligamento).
+// videoDe é o WSS do vídeo de agora; sem gerente ou sem vídeo ligado, "".
+func videoDe(g *reunioes.Gerente) string {
+	if g == nil {
+		return ""
+	}
+	if v := g.Video(); v != nil {
+		return v.WSS()
+	}
+	return ""
+}
+
+// origemCanal troca o esquema do Base pelo do WebSocket: https vira wss, http vira ws.
+func origemCanal(base string) string {
+	if resto, ok := strings.CutPrefix(base, "https://"); ok {
+		return "wss://" + resto
+	}
+	if resto, ok := strings.CutPrefix(base, "http://"); ok {
+		return "ws://" + resto
+	}
+	return ""
+}
+
+// ehEventos diz se o pedido é um WebSocket de longa vida: o dos eventos do app ou o canal da página (para contá-lo
+// no desligamento).
 func ehEventos(r *http.Request) bool {
-	return r.Method == http.MethodGet && r.URL.Path == "/api/v1/eventos"
+	return r.Method == http.MethodGet && (r.URL.Path == "/api/v1/eventos" || r.URL.Path == "/api/v1/pagina/canal")
 }
 
 // comPrazos põe os prazos de leitura e de escrita do pedido antes do manipulador: 5 min em
@@ -175,8 +212,11 @@ func gerenciador(c Config) *autocert.Manager {
 // (/.well-known/acme-challenge/) e manda o resto, com o caminho e a query, para o HTTPS de
 // host com 301. host é o Endereco, com a porta pública quando ela não é a 443 (veja
 // hostPublico). O Host do pedido não conta: o destino é sempre o da configuração.
-func redirecionador(m *autocert.Manager, host string) http.Handler {
-	return m.HTTPHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+//
+// Com cv (o "certificadoDoVideo"), o desafio do certificado do nome do vídeo vai primeiro para a VM do
+// vídeo (veja repassarDesafioDoVideo); tudo o mais segue como está.
+func redirecionador(m *autocert.Manager, host string, cv *CertificadoDoVideo) http.Handler {
+	padrao := m.HTTPHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Montado por partes: um alvo como "a:@evil.example/x" não pode mudar o host.
 		destino := url.URL{Scheme: "https", Host: host, Path: r.URL.Path, RawPath: r.URL.RawPath, RawQuery: r.URL.RawQuery}
 		// Sem cache: o destino muda quando a porta pública muda, e um 301 guardado no navegador
@@ -184,6 +224,10 @@ func redirecionador(m *autocert.Manager, host string) http.Handler {
 		w.Header().Set("Cache-Control", "no-store")
 		http.Redirect(w, r, destino.String(), http.StatusMovedPermanently)
 	}))
+	if cv == nil {
+		return padrao
+	}
+	return repassarDesafioDoVideo(cv, padrao)
 }
 
 // hostPublico é o Endereco como se chega nele de fora: sozinho na porta 443 (ou sem porta na
@@ -228,7 +272,7 @@ func servidoresProducao(c Config, h http.Handler) (https, http80 *http.Server) {
 	https = novoHTTP(enderecoHTTPS, producao(h))
 	https.TLSConfig = m.TLSConfig()
 	https.TLSConfig.MinVersion = tls.VersionTLS12
-	http80 = novoHTTP(enderecoHTTP, redirecionador(m, hostPublico(c)))
+	http80 = novoHTTP(enderecoHTTP, redirecionador(m, hostPublico(c), c.CertificadoDoVideo))
 	http80.ReadTimeout = prazoGeral
 	http80.WriteTimeout = prazoGeral
 	return https, http80
@@ -267,7 +311,7 @@ func Rodar(ctx context.Context, c Config) error {
 			l.Close()
 		}
 	}()
-	return rodar(ctx, c, false, func(h http.Handler) []servico {
+	return rodar(ctx, c, false, "https://"+hostPublico(c), func(h http.Handler) []servico {
 		https, http80 := servidoresProducao(c, h)
 		return []servico{
 			{https, func() error { return https.ServeTLS(ls[0], "", "") }},
@@ -306,17 +350,37 @@ func RodarTeste(ctx context.Context, c Config, escutar string) error {
 // saída, também quando o banco não abre.
 func servirTeste(ctx context.Context, c Config, l net.Listener) error {
 	defer l.Close()
-	return rodar(ctx, c, true, func(h http.Handler) []servico {
+	return rodar(ctx, c, true, "http://"+l.Addr().String(), func(h http.Handler) []servico {
 		srv := novoHTTP(l.Addr().String(), h)
 		return []servico{{srv, func() error { return srv.Serve(l) }}}
 	})
 }
 
+// ligarVideo liga o gerente ao servidor de vídeo guardado no banco, se houver um. Um que não vale (o endereço ou a
+// chave) ou que não se lê deixa o gerente sem vídeo: o chat sobe do mesmo jeito, e o entrar das reuniões dá
+// 503 servidorVideo (spec 11.1, item 1). O log leva só um código, nunca o endereço nem a chave.
+func ligarVideo(ctx context.Context, b *banco.Banco, g *reunioes.Gerente, teste bool) {
+	cfg, err := b.ConfigReunioes(ctx)
+	if err != nil {
+		slog.Warn("reunioes: não li o servidor de vídeo guardado", "erro", "banco")
+		return
+	}
+	if cfg.Endereco == "" || cfg.Chave == "" {
+		return
+	}
+	cliente, err := video.NovoCliente(cfg.Endereco, cfg.Chave, teste)
+	if err != nil {
+		slog.Warn("reunioes: o servidor de vídeo guardado não vale", "erro", "invalido")
+		return
+	}
+	g.Ligar(cliente)
+}
+
 // rodar abre o banco e os arquivos, monta o servidor, sobe os servicos e espera o ctx acabar
-// ou um deles falhar. Depois desliga com calma: os servidores (Shutdown, até 10 s) e os
+// ou um deles falhar. base é o começo do link das reuniões. Depois desliga com calma: os servidores (Shutdown, até 10 s) e os
 // WebSockets (1001) e, quando as tarefas também voltaram, o banco, que fecha por último. Um
 // desligamento pelo ctx não é erro.
-func rodar(ctx context.Context, c Config, teste bool, servicos func(http.Handler) []servico) (erro error) {
+func rodar(ctx context.Context, c Config, teste bool, base string, servicos func(http.Handler) []servico) (erro error) {
 	b, err := banco.Abrir(filepath.Join(c.Dados, banco.NomeArquivo), tempo.Real())
 	if err != nil {
 		return err
@@ -332,11 +396,14 @@ func rodar(ctx context.Context, c Config, teste bool, servicos func(http.Handler
 		return err
 	}
 	hub := eventos.NovoHub(eventos.Config{})
-	h, sockets := montar(Deps{Banco: b, Hub: hub, Armazem: a, Origens: c.Origens, Teste: teste})
+	gerente := reunioes.Novo(reunioes.Deps{Banco: b, Avisos: hub, Relogio: tempo.Real()})
+	ligarVideo(ctx, b, gerente, teste)
+	h, sockets, canais := montar(Deps{Banco: b, Hub: hub, Armazem: a, Origens: c.Origens, Teste: teste, Gerente: gerente, Base: base})
 
 	// O ctx das tarefas acaba junto com o ctx do servidor, ou seja, quando o desligamento
 	// começa (ou, se um servidor falhar, no defer abaixo). O defer espera as tarefas voltarem;
-	// ele roda antes do que fecha o banco, que fecha por último.
+	// ele roda antes do que fecha o banco, que fecha por último. O gerente das reuniões roda junto com as
+	// tarefas: o Rodar dele também para o laço dos eventos do servidor de vídeo, quando o ctx acaba.
 	ctxTarefas, pararTarefas := context.WithCancel(ctx)
 	defer pararTarefas()
 	tarefasFeitas := make(chan struct{})
@@ -344,9 +411,15 @@ func rodar(ctx context.Context, c Config, teste bool, servicos func(http.Handler
 		defer close(tarefasFeitas)
 		tarefas.Rodar(ctxTarefas, b, a)
 	}()
+	gerenteFeito := make(chan struct{})
+	go func() {
+		defer close(gerenteFeito)
+		gerente.Rodar(ctxTarefas)
+	}()
 	defer func() {
 		pararTarefas()
 		<-tarefasFeitas
+		<-gerenteFeito
 	}()
 
 	lista := servicos(h)
@@ -354,6 +427,7 @@ func rodar(ctx context.Context, c Config, teste bool, servicos func(http.Handler
 	var servidores sync.WaitGroup
 	for _, s := range lista {
 		s.srv.RegisterOnShutdown(hub.Encerrar)
+		s.srv.RegisterOnShutdown(canais.Encerrar)
 		servidores.Go(func() {
 			if err := s.servir(); !errors.Is(err, http.ErrServerClosed) {
 				falhas <- fmt.Errorf("servidor: %s: %w", s.srv.Addr, err)
@@ -368,7 +442,7 @@ func rodar(ctx context.Context, c Config, teste bool, servicos func(http.Handler
 	}
 
 	// Desliga: Shutdown espera os pedidos em andamento (até 10 s), e o Encerrar fecha os
-	// WebSockets com 1001. Os WebSockets não contam para o Shutdown: espera por eles aqui.
+	// WebSockets (os eventos e os canais da página) com 1001. Os WebSockets não contam para o Shutdown: espera por eles aqui.
 	slog.Info("servidor desligando")
 	limite, cancelar := context.WithTimeout(context.Background(), prazoDesligar)
 	defer cancelar()
@@ -382,6 +456,7 @@ func rodar(ctx context.Context, c Config, teste bool, servicos func(http.Handler
 	}
 	desligando.Wait()
 	hub.Encerrar() // também sem nenhum Shutdown que o chame
+	canais.Encerrar()
 	esperar(limite, sockets)
 	servidores.Wait()
 	return erro

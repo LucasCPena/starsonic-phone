@@ -21,10 +21,17 @@ const duracaoBilhete = 30 * time.Second
 // o mais velho dele sai (ruling R11).
 const maxBilhetesPorComputador = 4
 
+// maxBilhetesPorReuniao é quantos bilhetes da página uma reunião tem de uma vez (o dono é o id da reunião). Passando
+// disso, o mais velho dela sai. É mais que o do computador: um escritório abre a mesma reunião de uma vez, atrás do
+// mesmo endereço. E é mais que a janela dos abrir bons de um endereço (os 60 do maxAbrirBom): um endereço só não
+// empurra para fora os bilhetes dos outros.
+const maxBilhetesPorReuniao = 100
+
 // bilhetes guarda os bilhetes do WebSocket na memória, só pelo SHA-256 (ruling R1). Cada um
 // vale uma vez, por 30 s do relógio. Um reinício perde os que esperavam: o app pede outro.
 type bilhetes struct {
 	relogio tempo.Relogio
+	max     int // quantos bilhetes cada dono tem de uma vez
 
 	mu       sync.Mutex
 	porHash  map[string]bilhete // a chave é o SHA-256 do bilhete
@@ -39,11 +46,12 @@ type bilhete struct {
 	vence      time.Time
 }
 
-func novosBilhetes(r tempo.Relogio) *bilhetes {
-	return &bilhetes{relogio: r, porHash: map[string]bilhete{}, porComputador: map[int64][]string{}, varreuEm: r.Agora()}
+// novosBilhetes guarda até max bilhetes por dono: o computador, nos do app, e a reunião, nos da página.
+func novosBilhetes(r tempo.Relogio, max int) *bilhetes {
+	return &bilhetes{relogio: r, max: max, porHash: map[string]bilhete{}, porComputador: map[int64][]string{}, varreuEm: r.Agora()}
 }
 
-// novo cria um bilhete para o computador.
+// novo cria um bilhete para o dono (o computador, ou a reunião).
 func (b *bilhetes) novo(computadorID int64) string {
 	s := segredo.NovoBilhete()
 	agora := b.relogio.Agora()
@@ -53,7 +61,7 @@ func (b *bilhetes) novo(computadorID int64) string {
 	h := string(segredo.Hash(s))
 	b.porHash[h] = bilhete{computador: computadorID, vence: agora.Add(duracaoBilhete)}
 	fila := append(b.porComputador[computadorID], h)
-	for len(fila) > maxBilhetesPorComputador {
+	for len(fila) > b.max {
 		delete(b.porHash, fila[0])
 		fila = fila[1:]
 	}

@@ -1,6 +1,10 @@
 // Package eventos é o hub do WebSocket (seção 7 do protocolo). Cada computador tem uma
 // conexão só, com uma fila e uma goroutine que escreve. Quem manda um evento nunca espera:
 // com a fila cheia, a conexão daquele computador fecha com 4002, e os outros nem percebem.
+//
+// O hub também diz quais computadores estão ligados agora (Ligados) e guarda, na ligação de
+// cada um, o que o app disse do ramal (DefinirRamal): é o que a página de administração mostra.
+// Esse estado mora na conexão, e some com ela.
 package eventos
 
 import (
@@ -11,6 +15,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/ramais"
 )
 
 // Os códigos de fechamento do protocolo.
@@ -48,6 +54,11 @@ type conexao struct {
 	computador int64
 	pessoa     int64       // a pessoa da vez (0: ninguém), com Hub.mu
 	fila       chan []byte // os eventos esperando a escrita
+
+	// O que o app disse do ramal (nil: nada) e a pessoa para quem ele disse, com Hub.mu. O dito
+	// só vale enquanto essa é a pessoa da vez. Ele nunca é mudado no lugar: um dito novo é outro.
+	ramal   *ramais.Dito
+	ramalDe int64
 
 	fechar chan struct{} // fechado quando a conexão tem de fechar
 	umaVez sync.Once
@@ -89,6 +100,9 @@ type Reserva struct {
 // e a conexão anterior dele fecha com 4000. Daqui em diante, um Fora ou um DefinirPessoa
 // do computador vale para a reserva, e os eventos esperam na fila até o Servir. Assim, um
 // Fora que chega enquanto o pedido lê o banco não se perde. Depois, Servir ou Desistir.
+//
+// A conexão nova herda o que o app disse do ramal na anterior (com a pessoa para quem disse):
+// assim, uma reconexão não apaga o estado do ramal até o app dizê-lo de novo.
 func (h *Hub) Reservar(computadorID int64) *Reserva {
 	c := &conexao{
 		computador: computadorID,
@@ -102,6 +116,7 @@ func (h *Hub) Reservar(computadorID int64) *Reserva {
 		return &Reserva{h: h, c: c}
 	}
 	if velha := h.conexoes[computadorID]; velha != nil {
+		c.ramal, c.ramalDe = velha.ramal, velha.ramalDe
 		velha.encerrar(CodigoOutraConexao, "outra conexão", nil)
 	}
 	h.conexoes[computadorID] = c
@@ -246,6 +261,44 @@ func (h *Hub) DefinirPessoa(computadorID, pessoaID int64) {
 		c.pessoa = pessoaID
 	}
 	h.mu.Unlock()
+}
+
+// Ligado é um computador que está no hub agora: com o canal aberto, ou abrindo (do Reservar
+// em diante).
+type Ligado struct {
+	Pessoa int64        // a pessoa da vez (0: ninguém ainda)
+	Ramal  *ramais.Dito // o que o app disse do ramal dessa pessoa; nil: nada
+}
+
+// Ligados devolve os computadores que estão no hub agora. O mapa e os ditos são cópias. O
+// Ramal só vem enquanto a pessoa da vez é a pessoa para quem o app disse o estado.
+func (h *Hub) Ligados() map[int64]Ligado {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	ligados := make(map[int64]Ligado, len(h.conexoes))
+	for id, c := range h.conexoes {
+		l := Ligado{Pessoa: c.pessoa}
+		if c.ramal != nil && c.pessoa != 0 && c.ramalDe == c.pessoa {
+			d := *c.ramal
+			l.Ramal = &d
+		}
+		ligados[id] = l
+	}
+	return ligados
+}
+
+// DefinirRamal guarda, na ligação do computador, o que o app disse do ramal da pessoa. A
+// ligação guarda um dito só: o novo toma o lugar do anterior. Devolve false, sem guardar nada,
+// se o computador não está no hub.
+func (h *Hub) DefinirRamal(computadorID, pessoaID int64, d ramais.Dito) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	c := h.conexoes[computadorID]
+	if c == nil {
+		return false
+	}
+	c.ramal, c.ramalDe = &d, pessoaID
+	return true
 }
 
 // ParaPessoas manda o evento, em JSON, a todo computador conectado cuja pessoa da vez está

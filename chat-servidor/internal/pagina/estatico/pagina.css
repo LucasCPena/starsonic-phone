@@ -1,0 +1,1506 @@
+/* A página da reunião: o visual do quadro aprovado "Starsonic — reunião no navegador". Tudo vem daqui: o HTML não
+   tem estilo dentro dele, para a CSP valer sem exceção. Acima de 600 px de largura é o PC; abaixo, o celular. */
+
+@font-face {
+  font-family: "Plus Jakarta Sans";
+  src: url("/admin/estatico/PlusJakartaSans-Variable.woff2") format("woff2");
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --fundo: #f5f7fb;
+  --texto: #0a0e1a;
+  --apagado: #5b6478;
+  --marinho: #0c2671;
+  --topo: #070b18;
+  --topo-rotulo: #b9c4e6;
+  --ciano: #00c2cb;
+  --sobre-ciano: #03222a;
+  --borda: #e7eaf2;
+  --borda-forte: #cfd5e3;
+  --erro: #a1251c;
+  --erro-fundo: #fdecea;
+  --erro-texto: #7a1c15;
+  --alerta: #8a4b00;
+  --alerta-fundo: #fff1dc;
+  --azul-fundo: #e6edff;
+  --sair: #c23b3b;
+  --imagem: #1b2333;
+  --reuniao: #0a0e1a;
+  --reuniao-barra: #070b18;
+  --reuniao-linha: #161d33;
+  --reuniao-botao: #1c2540;
+  --reuniao-borda: #2c3757;
+  --branco: #ffffff;
+  --fonte: "Plus Jakarta Sans", system-ui, sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  height: 100%;
+}
+
+body {
+  min-height: 100%;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  font-family: var(--fonte);
+  background: var(--fundo);
+  color: var(--texto);
+}
+
+[hidden] {
+  display: none !important;
+}
+
+:focus-visible {
+  outline: 3px solid var(--ciano);
+  outline-offset: 2px;
+}
+
+/* O título recebe o foco da página, não do teclado: sem o contorno. */
+h1[tabindex="-1"]:focus {
+  outline: none;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+.so-leitor {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.sprite {
+  display: none;
+}
+
+/* Os ícones de traço, do tamanho que o quadro dá a cada um. */
+.icone {
+  flex-shrink: 0;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.icone-14 { width: 14px; height: 14px; }
+.icone-16 { width: 16px; height: 16px; }
+.icone-18 { width: 18px; height: 18px; }
+.icone-20 { width: 20px; height: 20px; }
+.icone-24 { width: 24px; height: 24px; }
+.icone-28 { width: 28px; height: 28px; }
+.icone-30 { width: 30px; height: 30px; }
+.icone-40 { width: 40px; height: 40px; }
+
+/* A faixa de cima, com o logo e o "Reunião". */
+.topo {
+  flex-shrink: 0;
+  background: var(--topo);
+  color: var(--branco);
+}
+
+.topo-dentro {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 14px 24px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+}
+
+.logo {
+  display: block;
+  height: 40px;
+  width: auto;
+}
+
+.topo-rotulo {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--topo-rotulo);
+}
+
+main {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.tela {
+  flex: 1 0 auto;
+  width: 100%;
+}
+
+/* O carregando: só o girando, no meio, até o abrir responder. */
+.carregando {
+  flex: 1 0 auto;
+  padding: 48px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Na reunião, a faixa de cima é a dela. */
+.na-reuniao {
+  background: var(--reuniao);
+}
+
+.na-reuniao .topo {
+  display: none;
+}
+
+/* ---- Os botões: pílulas de 48 px; o ciano é a ação principal. ---- */
+
+.botao {
+  min-height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 12px 22px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.botao:disabled {
+  cursor: default;
+}
+
+.botao-ciano {
+  background: var(--ciano);
+  color: var(--sobre-ciano);
+}
+
+.botao-ciano:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+.botao-ciano:disabled {
+  background: #c9eef0;
+  color: #4a6266;
+}
+
+.botao-contorno {
+  padding: 12px 28px;
+  border-color: var(--marinho);
+  background: var(--branco);
+  color: var(--marinho);
+}
+
+.botao-contorno:hover {
+  background: var(--azul-fundo);
+}
+
+.botao-erro {
+  flex-shrink: 0;
+  min-height: 44px;
+  gap: 8px;
+  padding: 10px 20px;
+  border-color: var(--erro);
+  background: var(--branco);
+  color: var(--erro);
+  font-size: 14.5px;
+}
+
+.botao-erro:hover {
+  background: var(--erro-fundo);
+}
+
+/* O Microfone e a Câmera: branco ligado, vermelho desligado, cinza sem o aparelho. */
+.alternar {
+  border-color: var(--borda-forte);
+  background: var(--branco);
+  color: var(--marinho);
+}
+
+.alternar[aria-pressed="false"] {
+  border-color: var(--erro);
+  background: var(--erro);
+  color: var(--branco);
+}
+
+.alternar:disabled {
+  border-color: #d6dbe6;
+  background: #eef1f6;
+  color: var(--apagado);
+}
+
+.alternar[aria-pressed="true"] .icone-desligado,
+.alternar:not([aria-pressed="true"]) .icone-ligado {
+  display: none;
+}
+
+.alternadores {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+}
+
+/* ---- A entrada ---- */
+
+.entrada {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 48px 24px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 28px;
+}
+
+.entrada:has(.aviso-acesso:not([hidden])) {
+  padding-top: 32px;
+}
+
+/* O aviso de acesso, por cima das duas colunas. */
+.aviso-acesso {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 18px 20px;
+  border-radius: 16px;
+  background: var(--erro-fundo);
+  color: var(--erro-texto);
+}
+
+.aviso-acesso > .icone {
+  margin-top: 2px;
+}
+
+.aviso-acesso-texto {
+  flex: 1 1 420px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.aviso-acesso-texto strong {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.aviso-acesso-texto span {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* Duas colunas: a imagem com os botões, e o título com o formulário, no meio da altura da imagem. */
+.entrada-corpo {
+  display: grid;
+  grid-template-columns: minmax(0, 520fr) minmax(0, 360fr);
+  grid-template-rows: 1fr auto auto 1fr;
+  grid-template-areas:
+    "imagem ."
+    "imagem titulo"
+    "imagem form"
+    "imagem .";
+  column-gap: clamp(24px, 4vw, 48px);
+}
+
+.entrada-titulo {
+  grid-area: titulo;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.entrada-imagem {
+  grid-area: imagem;
+  align-self: center;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.entrada-form {
+  grid-area: form;
+  margin-top: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.sobretitulo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--marinho);
+  overflow-wrap: anywhere;
+}
+
+.traco {
+  display: block;
+  flex-shrink: 0;
+  width: 22px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--ciano);
+}
+
+/* O título da reunião vem do assunto: uma palavra comprida (um código, um nome com sublinhado) quebra em qualquer
+   lugar, como o "quando" e a linha da espera. */
+.entrada h1 {
+  font-size: 30px;
+  line-height: 1.2;
+  font-weight: 800;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+}
+
+/* A imagem da câmera, 16:9: o vídeo, ou o aviso de câmera desligada ou sem acesso. */
+.imagem {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 18px;
+  overflow: hidden;
+  background: var(--imagem);
+}
+
+.previa {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.imagem-vazia {
+  position: absolute;
+  inset: 0;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 16px;
+  color: var(--topo-rotulo);
+  font-size: 15px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.imagem[data-imagem="desligada"] .imagem-desligada,
+.imagem[data-imagem="indisponivel"] .imagem-indisponivel {
+  display: flex;
+}
+
+.imagem:not([data-imagem="ligada"]) .previa,
+.imagem[data-imagem="indisponivel"] .imagem-rotulo {
+  visibility: hidden;
+}
+
+.imagem-rotulo {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(7, 11, 24, 0.72);
+  color: var(--branco);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.dica,
+.ajuda {
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--apagado);
+}
+
+.dica {
+  text-align: center;
+}
+
+.campo {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.campo label {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.campo input {
+  height: 50px;
+  padding: 0 16px;
+  border: 1px solid var(--borda-forte);
+  border-radius: 12px;
+  background: var(--branco);
+  color: var(--texto);
+  font-family: inherit;
+  font-size: 16px;
+}
+
+.campo input[aria-invalid="true"] {
+  border-color: var(--erro);
+}
+
+.erro-campo {
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--erro);
+}
+
+.pedir {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.botao-pedir {
+  min-height: 50px;
+  padding: 13px 28px;
+  font-size: 16px;
+}
+
+.gravado {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  color: var(--apagado);
+}
+
+/* ---- A espera, a reunião que não começou, o entrando e os avisos: um cartão no meio da página. ---- */
+
+.espera {
+  padding: 48px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cartao {
+  width: 100%;
+  max-width: 620px;
+  padding: 40px 36px;
+  border: 1px solid var(--borda);
+  border-radius: 22px;
+  background: var(--branco);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  text-align: center;
+}
+
+.cartao-textos {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cartao h1 {
+  font-size: 28px;
+  line-height: 1.2;
+  font-weight: 800;
+  text-wrap: balance;
+}
+
+.cartao-textos p {
+  font-size: 15.5px;
+  line-height: 1.55;
+  color: var(--apagado);
+  text-wrap: pretty;
+}
+
+.cartao-textos .linha-reuniao {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--marinho);
+  overflow-wrap: anywhere;
+}
+
+/* O círculo que gira, com o ícone no meio. */
+.girando {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--marinho);
+}
+
+.gira {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 4px solid #dff8f9;
+  border-top-color: var(--ciano);
+  animation: gira 1.4s linear infinite;
+}
+
+@keyframes gira {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.circulo {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.circulo-azul {
+  background: var(--azul-fundo);
+  color: var(--marinho);
+}
+
+.circulo-erro {
+  background: var(--erro-fundo);
+  color: var(--erro);
+}
+
+.circulo-ambar {
+  background: var(--alerta-fundo);
+  color: var(--alerta);
+}
+
+/* Quem espera: a imagem pequena, o nome e os dois botões. */
+.pessoa {
+  width: 100%;
+  padding: 16px;
+  border-radius: 16px;
+  background: var(--fundo);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+}
+
+.pessoa-imagem {
+  position: relative;
+  flex-shrink: 0;
+  width: 160px;
+  aspect-ratio: 16 / 9;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--imagem);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--topo-rotulo);
+}
+
+.pessoa-imagem .previa {
+  position: absolute;
+  inset: 0;
+}
+
+.pessoa-imagem[data-imagem="ligada"] .pessoa-sem-imagem,
+.pessoa-imagem:not([data-imagem="ligada"]) .previa {
+  display: none;
+}
+
+.pessoa-dados {
+  flex: 1 1 200px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  text-align: left;
+}
+
+.pessoa-nome {
+  max-width: 100%;
+  font-size: 16px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.alternadores-pequenos {
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+.alternadores-pequenos .botao {
+  min-height: 44px;
+  gap: 8px;
+  padding: 10px 16px;
+  font-size: 14px;
+}
+
+.como-entra {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 18px;
+  border-radius: 999px;
+  background: var(--fundo);
+  font-size: 14.5px;
+  color: #3a4256;
+  overflow-wrap: anywhere;
+}
+
+.como-entra strong {
+  font-weight: 700;
+  color: var(--texto);
+}
+
+/* ---- A reunião: o fundo escuro, a área dos quadros (ou o mosaico inteiro, sem o palco) e os controles numa barra
+   embaixo. ---- */
+
+.tela-reuniao {
+  flex: 1 0 auto;
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--reuniao);
+  color: var(--branco);
+}
+
+.reuniao-topo {
+  flex-shrink: 0;
+  padding: 12px 24px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  background: var(--reuniao-barra);
+  border-bottom: 1px solid var(--reuniao-linha);
+}
+
+.reuniao-topo .logo {
+  height: 32px;
+}
+
+.divisor {
+  display: block;
+  width: 1px;
+  height: 24px;
+  background: var(--reuniao-borda);
+}
+
+.reuniao-topo h1 {
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.selo-gravado,
+.selo-tela {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+}
+
+.selo-gravado {
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--topo-rotulo);
+}
+
+.selo-tela {
+  gap: 8px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: var(--ciano);
+  color: var(--sobre-ciano);
+  font-size: 13.5px;
+  font-weight: 700;
+}
+
+/* A área dos quadros: entre a faixa de cima e os controles. O quadros.js põe cada quadro no lugar que o arrumar
+   (palco.js) dá, pelo elemento.style; o tamanho da área é o de dentro dela, sem a margem. No celular em pé (o
+   data-em-pe, que o quadros.js põe com a mesma regra do arrumar), a margem é menor. */
+.palco {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 12px 24px;
+  container-type: size;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--reuniao);
+}
+
+.palco[data-em-pe] {
+  margin: 8px;
+}
+
+/* O mosaico inteiro (o servidor de vídeo sem o palco): a moldura 16:9. O quadros.js dá a largura dela, o maior 16:9
+   que cabe na área, até 1120 px; a largura daqui é só a de antes da primeira medida. */
+.moldura {
+  position: relative;
+  width: min(100%, 1120px);
+  aspect-ratio: 16 / 9;
+}
+
+/* Com os quadros (e na espera deles), a moldura fica fora da vista: 1 px, cortada e transparente, e sem o
+   display: none, porque o vídeo dela continua dando as imagens que os quadros recortam. */
+.palco:not([data-modo="mosaico"]) > .moldura {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+#mosaico {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 12px;
+  background: var(--reuniao-barra);
+  object-fit: contain;
+}
+
+.quadros {
+  position: absolute;
+  inset: 0;
+}
+
+.palco[data-modo="mosaico"] > .quadros {
+  display: none;
+}
+
+/* ---- O quadro: um por pessoa (e um da tela). O fundo escuro enquanto não há imagem. O isolation deixa a borda ciano
+   (o ::after) dentro do quadro: sem ele, ela passaria por cima do Você do canto. O toque não pisca, e o toque duplo
+   não seleciona o nome. ---- */
+
+.quadro {
+  position: absolute;
+  isolation: isolate;
+  overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: var(--imagem);
+  color: var(--branco);
+  font-family: inherit;
+  text-align: left;
+}
+
+button.quadro {
+  cursor: pointer;
+}
+
+.quadro canvas,
+.quadro video {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.quadro:not([data-mostra="video"]) canvas,
+.quadro:not([data-mostra="video"]) video {
+  visibility: hidden;
+}
+
+/* O Você: a câmera própria, espelhada, que preenche o quadro. */
+.quadro video {
+  object-fit: cover;
+  transform: scaleX(-1);
+}
+
+/* A tela compartilhada aparece inteira, no centro de uma área mais escura. */
+.quadro-tela[data-mostra="video"] {
+  background: var(--reuniao-barra);
+}
+
+/* A etiqueta do nome, embaixo, à esquerda, numa linha só, cortada com reticências. */
+.etiqueta {
+  --canto: 12px;
+  position: absolute;
+  left: var(--canto);
+  bottom: var(--canto);
+  max-width: calc(100% - 2 * var(--canto));
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.55);
+  color: var(--branco);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.etiqueta > span,
+.quadro-centro > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quadro-tela .etiqueta {
+  background: rgba(0, 0, 0, 0.72);
+}
+
+.etiqueta .icone {
+  width: 12px;
+  height: 12px;
+}
+
+/* Sem câmera: o nome no centro, e sem a etiqueta de baixo. */
+.quadro-centro {
+  position: absolute;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  color: #dfe5f5;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.quadro[data-mostra="sem-camera"] .quadro-centro {
+  display: flex;
+}
+
+.quadro[data-mostra="sem-camera"] .etiqueta {
+  display: none;
+}
+
+/* O quadro que aumenta: com o mouse em cima ou com o foco do teclado, a borda ciano por dentro e a pílula Aumentar. A
+   borda é uma camada por cima da imagem (o canvas cobriria o contorno do próprio botão), e ela é o anel do foco do
+   quadro. O mouse em cima só vale com um mouse: na tela de toque, o :hover fica no que está embaixo do último toque. */
+button.quadro:focus-visible {
+  outline: none;
+}
+
+button.quadro::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+button.quadro:focus-visible::after {
+  outline: 3px solid var(--ciano);
+  outline-offset: -3px;
+}
+
+@media (hover: hover) {
+  button.quadro:hover::after {
+    outline: 3px solid var(--ciano);
+    outline-offset: -3px;
+  }
+}
+
+.pilula {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: none;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--ciano);
+  color: var(--sobre-ciano);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.pilula .icone {
+  width: 14px;
+  height: 14px;
+}
+
+button.quadro:focus-visible .pilula {
+  display: inline-flex;
+}
+
+@media (hover: hover) {
+  button.quadro:hover .pilula {
+    display: inline-flex;
+  }
+}
+
+/* As medidas de cada lugar: o grande e a grade do PC; a faixa; o canto; e o celular em pé. */
+.quadro[data-papel="grande"] .etiqueta {
+  --canto: 14px;
+  gap: 8px;
+  padding: 5px 11px;
+  font-size: 15px;
+}
+
+.quadro[data-papel="grande"] .etiqueta .icone {
+  width: 16px;
+  height: 16px;
+}
+
+.quadro[data-papel="grande"] .quadro-centro,
+.quadro[data-papel="grade"] .quadro-centro {
+  font-size: 22px;
+}
+
+.quadro[data-papel="faixa"] {
+  border-radius: 10px;
+}
+
+.quadro[data-papel="faixa"] .etiqueta,
+.palco[data-em-pe] .quadro[data-papel="grade"] .etiqueta {
+  --canto: 6px;
+  gap: 5px;
+  padding: 2px 7px;
+  border-radius: 5px;
+  font-size: 12px;
+}
+
+.quadro[data-papel="faixa"] .pilula {
+  top: 6px;
+  right: 6px;
+  gap: 5px;
+  padding: 4px 9px;
+  font-size: 11.5px;
+}
+
+.quadro[data-papel="faixa"] .pilula .icone {
+  width: 12px;
+  height: 12px;
+}
+
+/* O Você flutuante no canto. */
+.quadro[data-papel="canto"] {
+  border: 2px solid var(--reuniao-barra);
+  border-radius: 10px;
+  box-shadow: 0 20px 46px -18px rgba(0, 0, 0, 0.52);
+}
+
+.quadro[data-papel="canto"] .etiqueta {
+  --canto: 8px;
+  padding: 3px 8px;
+  font-size: 12.5px;
+}
+
+.quadro[data-papel="faixa"] .quadro-centro,
+.quadro[data-papel="canto"] .quadro-centro,
+.palco[data-em-pe] .quadro .quadro-centro {
+  font-size: 14px;
+}
+
+.palco[data-em-pe] .quadro {
+  border-radius: 10px;
+}
+
+.palco[data-em-pe] .quadro[data-papel="grande"] .etiqueta {
+  --canto: 10px;
+  gap: 6px;
+  padding: 4px 9px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.palco[data-em-pe] .quadro[data-papel="grande"] .etiqueta .icone {
+  width: 12px;
+  height: 12px;
+}
+
+.palco[data-em-pe] .quadro[data-papel="grade"] .etiqueta {
+  font-size: 11.5px;
+}
+
+.palco[data-em-pe] .quadro[data-papel="canto"] .etiqueta {
+  --canto: 6px;
+  padding: 2px 6px;
+  border-radius: 5px;
+  font-size: 11px;
+}
+
+/* A faixa das outras pessoas: uma coluna à direita no PC, e uma linha embaixo no celular em pé. Ela rola. */
+.faixa {
+  position: absolute;
+  overflow: hidden;
+  scrollbar-width: none;
+}
+
+.faixa[data-eixo="y"] {
+  overflow-y: auto;
+}
+
+.faixa[data-eixo="x"] {
+  overflow-x: auto;
+}
+
+/* O Ver todos e o Voltar para a tela, sobre o quadro grande. */
+.voltar {
+  position: absolute;
+  z-index: 1;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 999px;
+  background: rgba(7, 11, 24, 0.78);
+  color: var(--branco);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.voltar:hover {
+  border-color: var(--branco);
+  text-decoration: underline;
+}
+
+/* O aviso de girar, no celular em pé com a tela compartilhada grande. */
+.gire {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--topo-rotulo);
+}
+
+/* A conexão caída: por cima da área inteira; os controles continuam embaixo. */
+.caiu {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  border-radius: 12px;
+  background: rgba(7, 11, 24, 0.72);
+}
+
+.caiu-cartao {
+  width: 100%;
+  max-width: 420px;
+  padding: 24px;
+  border-radius: 18px;
+  background: var(--branco);
+  color: var(--texto);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+}
+
+.caiu-cartao h2 {
+  font-size: 18px;
+  line-height: 1.3;
+  font-weight: 700;
+  text-wrap: balance;
+}
+
+.caiu-cartao p {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--apagado);
+}
+
+.girando-ambar {
+  width: 44px;
+  height: 44px;
+  color: var(--alerta);
+}
+
+.girando-ambar .gira {
+  border-width: 3px;
+  border-color: var(--alerta-fundo);
+  border-top-color: #c07a12;
+}
+
+.controles {
+  flex-shrink: 0;
+  padding: 14px 24px 18px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+  background: var(--reuniao-barra);
+  border-top: 1px solid var(--reuniao-linha);
+}
+
+.controle {
+  min-height: 52px;
+  border-color: var(--reuniao-borda);
+  background: var(--reuniao-botao);
+  color: var(--branco);
+}
+
+.controle:hover:not(:disabled) {
+  filter: brightness(1.15);
+}
+
+.controle.alternar[aria-pressed="false"] {
+  border-color: var(--sair);
+  background: var(--erro);
+}
+
+.controle:disabled,
+.controle.alternar:disabled {
+  border-color: var(--reuniao-borda);
+  background: var(--reuniao-botao);
+  color: #8b95b3;
+}
+
+.controle-parar {
+  border-color: var(--ciano);
+  background: var(--ciano);
+  color: var(--sobre-ciano);
+}
+
+.controle-sair {
+  padding: 12px 24px;
+  border-color: var(--sair);
+  background: var(--sair);
+}
+
+/* ---- O celular: abaixo de 600 px, uma coluna só. ---- */
+
+@media (max-width: 600px) {
+  .topo-dentro {
+    padding: 12px 20px;
+    gap: 12px;
+  }
+
+  .logo {
+    height: 30px;
+  }
+
+  .topo-rotulo {
+    font-size: 13.5px;
+  }
+
+  .entrada {
+    padding: 22px 20px;
+    justify-content: flex-start;
+    gap: 16px;
+  }
+
+  .entrada:has(.aviso-acesso:not([hidden])) {
+    padding-top: 22px;
+  }
+
+  .aviso-acesso {
+    padding: 16px;
+  }
+
+  .aviso-acesso-texto {
+    flex-basis: 220px;
+  }
+
+  /* O título, a imagem, os botões e o formulário, um embaixo do outro. */
+  .entrada-corpo {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto;
+    grid-template-areas:
+      "titulo"
+      "imagem"
+      "form";
+    row-gap: 16px;
+  }
+
+  .entrada-titulo {
+    gap: 8px;
+  }
+
+  .sobretitulo {
+    gap: 8px;
+    font-size: 12px;
+  }
+
+  .traco {
+    width: 18px;
+  }
+
+  .entrada h1 {
+    font-size: 24px;
+  }
+
+  .entrada-imagem {
+    gap: 16px;
+  }
+
+  .imagem {
+    border-radius: 16px;
+  }
+
+  .imagem-vazia {
+    gap: 8px;
+    font-size: 14px;
+  }
+
+  .imagem-vazia .icone {
+    width: 30px;
+    height: 30px;
+  }
+
+  .imagem-rotulo {
+    left: 10px;
+    bottom: 10px;
+    padding: 4px 10px;
+    font-size: 12.5px;
+  }
+
+  /* Os dois botões lado a lado, do mesmo tamanho. */
+  .entrada .alternadores {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .entrada .alternar {
+    gap: 8px;
+    padding: 10px 12px;
+    font-size: 14.5px;
+  }
+
+  .entrada-form {
+    margin-top: 0;
+    gap: 16px;
+  }
+
+  .campo {
+    gap: 6px;
+  }
+
+  .ajuda,
+  .dica {
+    font-size: 13px;
+    line-height: 1.45;
+  }
+
+  .pedir {
+    align-items: stretch;
+  }
+
+  .botao-pedir {
+    width: 100%;
+    min-height: 52px;
+    padding: 13px 24px;
+  }
+
+  .gravado {
+    justify-content: center;
+    font-size: 13px;
+  }
+
+  /* A espera do celular: sem o cartão, e o Desistir na largura toda, embaixo. */
+  .espera {
+    padding: 40px 24px 28px;
+    align-items: stretch;
+  }
+
+  .cartao {
+    max-width: none;
+    padding: 0;
+    border: 0;
+    background: none;
+  }
+
+  .cartao h1 {
+    font-size: 24px;
+  }
+
+  .cartao-textos p {
+    font-size: 15px;
+  }
+
+  .cartao-textos .linha-reuniao {
+    font-size: 13.5px;
+  }
+
+  .pessoa {
+    flex-wrap: nowrap;
+    align-items: flex-start;
+    gap: 14px;
+    padding: 14px;
+    border: 1px solid var(--borda);
+    background: var(--branco);
+  }
+
+  .pessoa-imagem {
+    width: 112px;
+  }
+
+  .pessoa-nome {
+    font-size: 15.5px;
+  }
+
+  /* Sem o cartão, a pílula do nome fica branca, como a caixa de quem espera. */
+  .como-entra {
+    border: 1px solid var(--borda);
+    background: var(--branco);
+  }
+
+  /* O botão do cartão (o Desistir, o do aviso, o Sair do entrando) fica embaixo, na largura toda. */
+  .cartao > .botao {
+    width: 100%;
+    min-height: 52px;
+    margin-top: auto;
+    font-size: 16px;
+  }
+
+  /* A reunião do celular: o topo mais justo, e os três controles numa grade, com o ícone sobre o rótulo. */
+  .reuniao-topo {
+    flex-wrap: nowrap;
+    padding: 12px 18px;
+    gap: 12px;
+  }
+
+  .reuniao-topo .logo {
+    height: 26px;
+  }
+
+  .divisor,
+  .selo-gravado {
+    display: none;
+  }
+
+  .reuniao-topo h1 {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 14px;
+  }
+
+  #mosaico {
+    border-radius: 8px;
+  }
+
+  /* No celular, a área é menor: o cartão da conexão caída encolhe. */
+  .caiu {
+    padding: 8px;
+    border-radius: 8px;
+  }
+
+  .caiu-cartao {
+    gap: 8px;
+    padding: 16px;
+  }
+
+  .caiu-cartao h2 {
+    font-size: 16px;
+  }
+
+  .caiu-cartao p {
+    font-size: 13px;
+  }
+
+  .controles {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    padding: 14px 18px 26px;
+  }
+
+  .controle {
+    min-height: 72px;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px 6px;
+    border-radius: 18px;
+    font-size: 13px;
+  }
+
+  .controle .icone {
+    width: 22px;
+    height: 22px;
+  }
+
+  .controle-compartilhar {
+    display: none;
+  }
+}
+
+/* O Compartilhar a tela é só do PC: a tela de toque não o tem, nem com o celular deitado, que passa dos 600 px. */
+@media (pointer: coarse) {
+  .controle-compartilhar {
+    display: none;
+  }
+}
+
+/* O celular deitado: a faixa e os controles mais baixos, e a área dos quadros cresce. Os controles ficam com 44 px (o
+   mínimo do toque), e não os 52 px de "O visual": sem isso, a tela deitada não seria maior que a em pé, e o "Gire o
+   celular para ver a tela maior." não seria verdade. */
+@media (orientation: landscape) and (max-height: 500px) {
+  .reuniao-topo {
+    padding: 6px 16px;
+  }
+
+  .reuniao-topo .logo {
+    height: 24px;
+  }
+
+  .controles {
+    padding: 8px 16px;
+    gap: 8px;
+  }
+
+  .controle {
+    min-height: 44px;
+    padding: 8px 18px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gira {
+    animation: none;
+  }
+}

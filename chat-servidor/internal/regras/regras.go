@@ -88,6 +88,15 @@ func NomeComputador(s string) (string, error) { return nome("computador", s, 64)
 // NomeGrupo confere o nome de um grupo (até 60 caracteres).
 func NomeGrupo(s string) (string, error) { return nome("nome", s, 60) }
 
+// Assunto confere o assunto de uma reunião: sem os espaços das pontas, de 1 a 120 caracteres, sem caracteres de
+// controle. Vazio (ou só espaços) vale "": a reunião fica sem assunto (null).
+func Assunto(s string) (string, error) {
+	if strings.TrimSpace(s) == "" {
+		return "", nil
+	}
+	return nome("assunto", s, 120)
+}
+
 // Texto confere o texto de uma mensagem: de 1 a 4.000 pontos de código, não só de espaços;
 // só a quebra de linha vale entre os caracteres de controle. O \r\n e o \r sozinho viram \n
 // antes de conferir, e o texto volta com \n.

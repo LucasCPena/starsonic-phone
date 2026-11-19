@@ -26,13 +26,13 @@ func TestTabelas(t *testing.T) {
 	}
 	defer db.Close()
 
-	// As tabelas da 0001 com dados de empresa, lidas do sqlite_master.
+	// As tabelas das migrações com dados de empresa, lidas do sqlite_master.
 	tabelas, err := bancotest.Tabelas(db)
 	if err != nil {
 		t.Fatal(err)
 	}
 	quer := []string{"arquivos", "computador_pessoas", "computadores", "conversas", "empresas", "leituras",
-		"membros", "mensagens", "pessoas"}
+		"membros", "mensagens", "pessoas", "reunioes"}
 	if !slices.Equal(tabelas, quer) {
 		t.Fatalf("Tabelas = %v; queria %v", tabelas, quer)
 	}

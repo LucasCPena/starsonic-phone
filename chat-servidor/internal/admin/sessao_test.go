@@ -338,7 +338,7 @@ func TestCookie(t *testing.T) {
 		return c.Value != "" && c.HttpOnly && c.SameSite == http.SameSiteStrictMode && c.Path == "/admin" && c.Secure == seguro
 	}
 	for _, teste := range []bool{true, false} {
-		h := admin.Novo(admin.Deps{Banco: a.Banco, Hub: a.Hub, Armazem: a.Armazem, Teste: teste})
+		h := admin.Novo(admin.Deps{Banco: a.Banco, Hub: a.Hub, Armazem: a.Armazem, Teste: teste, Gerente: a.Gerente, Base: a.Base})
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest("GET", "/admin/entrar", nil))
 		entrada := achar(rec.Result().Cookies(), "entrada")

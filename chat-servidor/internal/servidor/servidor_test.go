@@ -26,6 +26,7 @@ import (
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/armazem"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/banco"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/eventos"
+	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/reunioes"
 	"github.com/LucasCPena/starsonic-phone/chat-servidor/internal/tempo"
 )
 
@@ -470,7 +471,11 @@ func depsDeTeste(t *testing.T) Deps {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Deps{Banco: b, Hub: eventos.NovoHub(eventos.Config{}), Armazem: a}
+	hub := eventos.NovoHub(eventos.Config{})
+	// A administração exige o gerente das reuniões (o servidor sempre o passa).
+	g := reunioes.Novo(reunioes.Deps{Banco: b, Avisos: hub, Relogio: tempo.Real()})
+	t.Cleanup(func() { g.Ligar(nil) })
+	return Deps{Banco: b, Hub: hub, Armazem: a, Gerente: g}
 }
 
 func TestHSTS(t *testing.T) {
@@ -492,7 +497,7 @@ func TestHSTS(t *testing.T) {
 
 func TestHTTPParaHTTPS(t *testing.T) {
 	m := gerenciador(Config{Endereco: "chat.example.com", Dados: t.TempDir()})
-	h := redirecionador(m, "chat.example.com")
+	h := redirecionador(m, "chat.example.com", nil)
 
 	req := httptest.NewRequest("GET", "http://qualquer.example/admin/entrar?x=1&y=a%20b", nil)
 	req.Host = "qualquer.example" // o Host do pedido não conta
@@ -641,7 +646,7 @@ func TestServidoresProducao(t *testing.T) {
 // O destino do redirecionamento é sempre o Endereco, mesmo com um alvo que o Go lê como
 // "esquema:opaco".
 func TestHTTPParaHTTPS_AlvoEsquisito(t *testing.T) {
-	srv := httptest.NewServer(redirecionador(gerenciador(Config{Endereco: "chat.example.com", Dados: t.TempDir()}), "chat.example.com"))
+	srv := httptest.NewServer(redirecionador(gerenciador(Config{Endereco: "chat.example.com", Dados: t.TempDir()}), "chat.example.com", nil))
 	defer srv.Close()
 	conn, err := net.Dial("tcp", strings.TrimPrefix(srv.URL, "http://"))
 	if err != nil {
@@ -792,5 +797,272 @@ func TestModoTeste_SemHSTS(t *testing.T) {
 		if got := resp.Header.Get("Strict-Transport-Security"); got != "" {
 			t.Fatalf("%s: o modo de teste mandou Strict-Transport-Security %q", caminho, got)
 		}
+	}
+}
+
+// chaveDoAgente é uma chave de agente de vídeo que vale (os bytes 0 a 31 em base64 sem preenchimento).
+const chaveDoAgente = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+
+// agenteDeTeste é um servidor de vídeo de mentira: guarda o Authorization de cada conexão dos eventos e deixa a
+// conexão aberta até o teste acabar.
+type agenteDeTeste struct {
+	*httptest.Server
+	mu     sync.Mutex
+	vistos []string // o Authorization de cada GET /agente/v1/eventos
+	chegou chan struct{}
+}
+
+func novoAgenteDeTeste(t *testing.T) *agenteDeTeste {
+	t.Helper()
+	ag := &agenteDeTeste{chegou: make(chan struct{}, 10)}
+	ag.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/agente/v1/eventos" {
+			http.NotFound(w, r)
+			return
+		}
+		ag.mu.Lock()
+		ag.vistos = append(ag.vistos, r.Header.Get("Authorization"))
+		ag.mu.Unlock()
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		select {
+		case ag.chegou <- struct{}{}:
+		default:
+		}
+		<-r.Context().Done()
+	}))
+	t.Cleanup(ag.Close)
+	return ag
+}
+
+// guardarVideo põe no banco do chat o endereço e a chave do agente, como a página de administração faz.
+func guardarVideo(t *testing.T, dados, endereco string) {
+	t.Helper()
+	b, err := banco.Abrir(filepath.Join(dados, banco.NomeArquivo), tempo.Real())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.GuardarServidorVideo(t.Context(), endereco, chaveDoAgente); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Fechar(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// O chat que sobe com o servidor de vídeo guardado liga o gerente a ele: o agente de teste recebe a conexão dos
+// eventos, com o Bearer da chave.
+func TestServidor_ReunioesNoAr(t *testing.T) {
+	dados, _ := preparar(t)
+	ag := novoAgenteDeTeste(t)
+	guardarVideo(t, dados, ag.URL)
+
+	s := iniciar(t, dados)
+	select {
+	case <-ag.chegou:
+	case <-time.After(10 * time.Second):
+		t.Fatal("o agente de teste não recebeu a conexão dos eventos")
+	}
+	ag.mu.Lock()
+	vistos := slices.Clone(ag.vistos)
+	ag.mu.Unlock()
+	if len(vistos) == 0 || vistos[0] != "Bearer "+chaveDoAgente {
+		t.Fatalf("Authorization = %q; queria Bearer com a chave", vistos)
+	}
+
+	// Desligar o chat fecha a conexão com o agente (o laço dos eventos para com o gerente).
+	if d := s.parar(t); d > 12*time.Second {
+		t.Fatalf("o desligamento levou %v", d)
+	}
+}
+
+// liberarAsReunioes libera no banco do chat as reuniões da empresa do código, como a página de administração faz.
+func liberarAsReunioes(t *testing.T, dados, codigo string) {
+	t.Helper()
+	b, err := banco.Abrir(filepath.Join(dados, banco.NomeArquivo), tempo.Real())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Fechar()
+	e, err := b.EmpresaPorCodigo(t.Context(), codigo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.LiberarReunioes(t.Context(), e.ID, true); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Sem o servidor de vídeo guardado, o chat sobe do mesmo jeito, e o entrar das reuniões dá 503 servidorVideo.
+func TestServidor_ReunioesSemVideo(t *testing.T) {
+	dados, codigo := preparar(t)
+	liberarAsReunioes(t, dados, codigo)
+
+	s := iniciar(t, dados)
+	chave := s.ligar(t, codigo)
+	inicio := time.Now().Add(time.Hour).UnixMilli()
+	resp := pedir(t, "POST", s.url+"/api/v1/reunioes", chave, map[string]any{"inicio": inicio})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("criar respondeu %d", resp.StatusCode)
+	}
+	var corpo struct {
+		Reuniao struct {
+			Codigo string `json:"codigo"`
+			Link   string `json:"link"`
+		} `json:"reuniao"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&corpo); err != nil {
+		t.Fatal(err)
+	}
+	// No modo de teste, o começo do link é http:// mais o endereço em que o chat escuta.
+	if want := s.url + "/r/" + corpo.Reuniao.Codigo; corpo.Reuniao.Link != want {
+		t.Fatalf("link = %q; queria %q", corpo.Reuniao.Link, want)
+	}
+	resp = pedir(t, "POST", s.url+"/api/v1/reunioes/"+corpo.Reuniao.Codigo+"/entrar", chave, nil)
+	if resp.StatusCode != http.StatusServiceUnavailable || lerCampo(t, resp, "erro") != "servidorVideo" {
+		t.Fatalf("entrar respondeu %d; queria 503 servidorVideo", resp.StatusCode)
+	}
+}
+
+// Um servidor de vídeo guardado que o cliente recusa (aqui, um endereço com https://, que a página não guardaria,
+// mas que um banco mexido à mão pode ter) não impede o chat de subir (a revisão da Task 12, Minor 4): o gerente fica
+// sem servidor de vídeo, e as rotas das reuniões que precisam dele respondem 503 servidorVideo.
+func TestServidor_ReunioesComVideoQueNaoVale(t *testing.T) {
+	dados, codigo := preparar(t)
+	liberarAsReunioes(t, dados, codigo)
+	guardarVideo(t, dados, "https://video.exemplo.com.br")
+
+	log := capturar(t)
+	s := iniciar(t, dados)
+	chave := s.ligar(t, codigo)
+	// O caminho é o do endereço recusado, e não o de um servidor que não responde.
+	if !strings.Contains(log.String(), `msg="reunioes: o servidor de vídeo guardado não vale" erro=invalido`) {
+		t.Fatalf("o log não tem o aviso do servidor de vídeo que não vale:\n%s", log.String())
+	}
+	resp := pedir(t, "POST", s.url+"/api/v1/reunioes/agora", chave, nil)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("o gerar link respondeu %d", resp.StatusCode)
+	}
+	var corpo struct {
+		Reuniao struct {
+			Codigo string `json:"codigo"`
+		} `json:"reuniao"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&corpo); err != nil {
+		t.Fatal(err)
+	}
+	resp = pedir(t, "POST", s.url+"/api/v1/reunioes/"+corpo.Reuniao.Codigo+"/entrar", chave, nil)
+	if resp.StatusCode != http.StatusServiceUnavailable || lerCampo(t, resp, "erro") != "servidorVideo" {
+		t.Fatalf("entrar respondeu %d; queria 503 servidorVideo", resp.StatusCode)
+	}
+	if d := s.parar(t); d > 12*time.Second {
+		t.Fatalf("o desligamento levou %v", d)
+	}
+}
+
+// Os canais da página têm o mesmo desligamento dos eventos do app: o servidor os fecha com 1001 e espera por eles
+// (M-13).
+func TestServidor_FechaOsCanaisDaPagina(t *testing.T) {
+	dados, _ := preparar(t)
+	b, err := banco.Abrir(filepath.Join(dados, banco.NomeArquivo), tempo.Real())
+	if err != nil {
+		t.Fatal(err)
+	}
+	teste, err := b.CriarReuniaoDeTeste(t.Context(), time.Now().Add(time.Hour).UnixMilli())
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Fechar()
+	s := iniciar(t, dados)
+
+	// O abrir da página e o canal, com a origem do chat (no modo de teste, http://<endereço em que ele escuta>).
+	resp := pedir(t, "POST", s.url+"/api/v1/pagina/reunioes/"+teste.Codigo, "", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("abrir respondeu %d", resp.StatusCode)
+	}
+	bilhete := lerCampo(t, resp, "bilhete")
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(s.url, "http")+"/api/v1/pagina/canal?bilhete="+url.QueryEscape(bilhete),
+		&websocket.DialOptions{HTTPHeader: http.Header{"Origin": []string{s.url}}})
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	t.Cleanup(func() { conn.CloseNow() })
+	codigo := make(chan websocket.StatusCode, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		for {
+			if _, _, err := conn.Read(ctx); err != nil {
+				codigo <- websocket.CloseStatus(err)
+				return
+			}
+		}
+	}()
+
+	if d := s.parar(t); d >= 10*time.Second {
+		t.Fatalf("o servidor levou %v para fechar", d)
+	}
+	select {
+	case c := <-codigo:
+		if c != websocket.StatusGoingAway {
+			t.Fatalf("o canal fechou com %d; queria 1001", c)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("o canal da página não recebeu o fechamento")
+	}
+}
+
+// O desligamento espera o canal da página até ele voltar, como espera o WebSocket dos eventos.
+func TestServidor_EsperaOsCanaisDaPagina(t *testing.T) {
+	var n sync.WaitGroup
+	solta := make(chan struct{})
+	dentro := make(chan struct{})
+	h := contarSockets(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(dentro)
+		<-solta
+	}), &n)
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+	go func() {
+		resp, err := http.Get(srv.URL + "/api/v1/pagina/canal?bilhete=x")
+		if err == nil {
+			resp.Body.Close()
+		}
+	}()
+	<-dentro
+	feito := make(chan struct{})
+	go func() { n.Wait(); close(feito) }()
+	select {
+	case <-feito:
+		t.Fatal("o desligamento não espera o canal da página")
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(solta)
+	select {
+	case <-feito:
+	case <-time.After(5 * time.Second):
+		t.Fatal("o canal da página voltou e o grupo não")
+	}
+}
+
+func TestServidor_MontaAPagina(t *testing.T) {
+	d := depsDeTeste(t)
+	d.Base = "https://chat.exemplo.com.br"
+	h := Montar(d)
+	log := capturar(t)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/r/k7q49xwpht", nil))
+	if rec.Code != 200 {
+		t.Fatalf("status %d", rec.Code)
+	}
+	if !strings.Contains(rec.Header().Get("Content-Security-Policy"), "wss://chat.exemplo.com.br") {
+		t.Errorf("CSP sem a origem do canal: %q", rec.Header().Get("Content-Security-Policy"))
+	}
+	if strings.Contains(log.String(), "k7q49xwpht") {
+		t.Errorf("o log leva o código: %s", log.String())
 	}
 }

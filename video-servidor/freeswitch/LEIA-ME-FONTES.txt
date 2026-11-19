@@ -1,0 +1,65 @@
+As fontes do FreeSWITCH do servidor de vídeo do Starsonic Phone
+
+Este pacote tem o código-fonte dos programas do starsonic-freeswitch-<sistema>-amd64.tar.gz, o
+FreeSWITCH das reuniões com link. A licença do FreeSWITCH (MPL 1.1) e a do sofia-sip e do spandsp
+(LGPL 2.1) pedem o código junto com os binários.
+
+O que tem aqui:
+  freeswitch/            o código de cada projeto, sem mudança, no commit fixado (o "git archive"
+  sofia-sip/             do commit). O deps.lock diz o repositório oficial, a tag e o commit de
+  spandsp/               cada um; o VERSOES.txt do pacote do sistema diz o mesmo.
+  patches/<projeto>/     as nossas mudanças, do "git format-patch" contra o commit fixado. Hoje há
+                         duas, no mod_conference do FreeSWITCH. Com a 0001, a troca de tamanho do
+                         mosaico (o vid-res) passa a ser feita pela thread do mosaico, para a
+                         imagem não congelar e o processo não cair nessa troca. Com a 0002, o
+                         vid-bandwidth lê o tamanho do mosaico com a trava dele, e não lê mais a
+                         imagem no meio dessa troca. O VERSOES.txt do pacote do sistema lista
+                         cada uma, com o SHA-256 do arquivo.
+  deps.lock              as versões.
+  construir.sh           o script que montou o pacote.
+  modules.conf           os nove módulos do pacote.
+  pacotes-de-build.txt   os pacotes do apt do build, um por linha.
+
+Há dois jeitos de montar, os dois no Ubuntu 24.04, no Ubuntu 26.04 ou no Debian 12 (amd64), como
+root, numa máquina de build: o prefixo é o /opt/starsonic-freeswitch. Nunca num servidor em uso.
+
+Primeiro, os pacotes do build (o apt precisa da rede):
+     apt-get update
+     xargs -a pacotes-de-build.txt apt-get install -y --no-install-recommends
+
+A. Com o construir.sh, que busca o código pela rede. Ele lê o deps.lock e o modules.conf ao lado
+   dele e baixa os commits fixados dos repositórios oficiais: as pastas deste pacote não entram.
+   Ele apaga o /opt/starsonic-freeswitch, monta os três projetos, tira dali o que o servidor não usa,
+   passa o strip, escreve o pacotes.txt e o VERSOES.txt e deixa os dois pacotes em saida/. Nesta
+   pasta, com o sistema da máquina (ubuntu-24.04, ubuntu-26.04 ou debian-12):
+     bash construir.sh ubuntu-24.04 trabalho saida
+
+B. Sem rede, com as pastas deste pacote, à mão, com o /opt/starsonic-freeswitch vazio:
+   1. Em cada pasta, os patches de patches/<projeto>/, se houver, na ordem dos nomes:
+        git apply ../patches/<projeto>/<arquivo>.patch
+   2. O sofia-sip, o spandsp e o FreeSWITCH, nessa ordem:
+        cd sofia-sip
+        ./bootstrap.sh
+        ./configure --prefix=/opt/starsonic-freeswitch --with-glib=no --without-doxygen
+        make && make install
+        cd ../spandsp
+        ./bootstrap.sh
+        ./configure --prefix=/opt/starsonic-freeswitch
+        make && make install
+        cd ../freeswitch
+        cp ../modules.conf .
+        ./bootstrap.sh -j
+        ./configure --prefix=/opt/starsonic-freeswitch --disable-fhs \
+          PKG_CONFIG_PATH=/opt/starsonic-freeswitch/lib/pkgconfig \
+          LDFLAGS=-Wl,-rpath,/opt/starsonic-freeswitch/lib
+        make && make install
+      No Ubuntu 26.04, o configure do FreeSWITCH leva também
+      CFLAGS="-g -O2 -Wno-error=discarded-qualifiers", como no construir.sh: a glibc de lá faz o
+      strchr e o strstr de um const char * devolverem um const char *, e o FreeSWITCH compila com
+      o -Werror.
+   Isso deixa o FreeSWITCH em /opt/starsonic-freeswitch. O pacote do sistema tira dali o que o
+   servidor não usa e passa o strip: o passo 4 do construir.sh diz o quê.
+
+Para usar uma versão sua do sofia-sip ou do spandsp (LGPL): monte-a com o mesmo prefixo e ponha o
+.so dela no lugar do que está em /opt/starsonic-freeswitch/lib. O FreeSWITCH procura as bibliotecas
+ali (o rpath do build).

@@ -6,7 +6,7 @@ Como usar:
 
 - Cada comando fica numa linha só. Copie a linha inteira e cole no terminal da VM.
 - Onde aparece algo entre `<` e `>`, troque pelo seu valor, sem os sinais. Exemplo: `<endereço>` vira `chat.exemplo.com.br`.
-- Depois de cada comando, o guia diz o que você deve ver. Se aparecer outra coisa, vá para o passo 10.
+- Depois de cada comando, o guia diz o que você deve ver. Se aparecer outra coisa, vá para o passo 11.
 - Se o chat usa uma porta própria (o `--porta` do passo 2), todo endereço `https://<endereço>` deste guia leva `:` e a porta depois do nome, por exemplo `https://<endereço>:8443/admin/`.
 
 ## 1. O que a VM precisa
@@ -16,7 +16,7 @@ Como usar:
 | Processador | 2 vCPU |
 | Memória | 2 GB |
 | Disco | 120 GB SSD (20 GB para o sistema e o banco, 100 GB para os arquivos) |
-| Sistema | Ubuntu 24.04 (ou Debian 12), com systemd |
+| Sistema | Ubuntu 24.04 ou 26.04 (ou Debian 12), com systemd |
 | Rede | um endereço público fixo, da VM ou do roteador na frente dela (veja "Se a VM fica atrás de um roteador", no fim deste passo) |
 
 Antes de instalar, deixe três coisas prontas:
@@ -58,11 +58,11 @@ curl -s https://ifconfig.me
 - Depois da primeira visita, o navegador passa a usar sempre o cadeado para esse nome. Se alguém digitar o nome sem a porta, o navegador vai para a 443, que é do outro servidor, e mostra um erro de segurança que não deixa continuar. Não é defeito: é só escrever o endereço com a porta.
 - A regra da porta 80 tem de ficar **sempre ligada**. É por ela que o Let's Encrypt confere o nome, no primeiro cadeado e em toda renovação, a cada dois meses. Sem ela, o cadeado vence e o chat para de abrir.
 - Algumas empresas bloqueiam, no firewall delas, a saída para portas fora do comum, e nelas o chat não conecta. Um segundo endereço público, só para o chat, evita isso: com ele, o chat fica na 443 normal.
-- O primeiro cadeado precisa de um cuidado: veja "O cadeado não sai e o registro fala em `rateLimited`", no passo 10.
+- O primeiro cadeado precisa de um cuidado: veja "O cadeado não sai e o registro fala em `rateLimited`", no passo 11.
 
 ## 2. Instalar
 
-Veja o número da última versão do chat na página de Releases do projeto no GitHub. As versões do chat se chamam `chat-v` e o número. O GitHub mostra essas versões com a etiqueta `Pre-release`: isso é normal, e é a versão certa. Se a versão for `chat-v0.1.0`, o `<versão>` é `0.1.0`. Se ainda não existir nenhuma versão `chat-v` na página, publique a primeira pelo passo 11 (Publicar uma versão, no fim deste guia).
+Veja o número da última versão do chat na página de Releases do projeto no GitHub. As versões do chat se chamam `chat-v` e o número. O GitHub mostra essas versões com a etiqueta `Pre-release`: isso é normal, e é a versão certa. Se a versão for `chat-v0.1.0`, o `<versão>` é `0.1.0`. Se ainda não existir nenhuma versão `chat-v` na página, publique a primeira pelo passo 12 (Publicar uma versão, no fim deste guia).
 
 Baixe o instalador:
 
@@ -128,6 +128,8 @@ Depois de 5 senhas erradas, o usuário trava, e a página mostra `Muitas tentati
 ```
 sudo systemctl restart starsonic-chat
 ```
+
+Reiniciar o chat mexe nas reuniões que estão no ar no navegador: quem está nelas continua vendo e ouvindo, mas as páginas passam a mostrar a imagem de todos junta, sem os quadros e sem os nomes, até a pessoa sair e entrar de novo (veja o passo 7). Faça isso num horário sem reuniões.
 
 ## 4. Conferir a instalação
 
@@ -317,7 +319,7 @@ sudo chmod -R go-rwx /var/lib/starsonic-chat/arquivos
 sudo systemctl start starsonic-chat
 ```
 
-   Confira com `systemctl status starsonic-chat` (deve estar `active (running)`) e entre na página de administração.
+   Confira com `systemctl status starsonic-chat` (deve estar `active (running)`) e entre na página de administração. Parar e ligar o chat é como reiniciá-lo, e mexe nas reuniões que estão no ar (veja "Uma reunião no ar quando o chat reinicia", no passo 7): faça tudo isto num horário sem reuniões.
 
 7. Só agora ligue de novo a cópia da noite:
 
@@ -330,6 +332,8 @@ sudo systemctl start starsonic-chat-copia.timer
 ```
 sudo rm -f /var/lib/starsonic-chat/chat.db.antigo
 ```
+
+**Se a VM foi refeita e o chat e o servidor de vídeo dividem um IP público só,** o repasse do certificado do vídeo e a linha do `/etc/hosts` não voltam com a cópia, porque não estão no banco. Rode de novo o comando `video` do passo 9 e refaça a linha do `/etc/hosts` (passo 1, parte "Se o chat e o vídeo dividem um IP público só", do guia do servidor de vídeo). Sem isso, a renovação do certificado do vídeo falha dali a algumas semanas.
 
 ### O que fica na pasta `apagados` do destino
 
@@ -354,7 +358,11 @@ E rode:
 sudo bash instalar.sh atualizar
 ```
 
-Você deve ver `SHA-256 conferido.` e, no fim, `Pronto: o Starsonic Chat agora está na versão <versão>.` O serviço reinicia sozinho, e quem está no chat volta a conectar em poucos segundos. As mensagens e os arquivos não mudam.
+Você deve ver `SHA-256 conferido.` e, no fim, `Pronto: o Starsonic Chat agora está na versão <versão>.` O serviço reinicia sozinho, e quem está no chat volta a conectar em poucos segundos. As mensagens e os arquivos não mudam. As reuniões que estão no ar, no navegador, são outra coisa: veja o que acontece com elas logo abaixo.
+
+**Uma reunião no ar quando o chat reinicia.** Atualizar o chat, ou reiniciá-lo, mexe nas reuniões que estão acontecendo no navegador. As pessoas que estão nelas continuam vendo e ouvindo: a imagem e o som não param. Mas a página de cada uma tenta voltar ao chat por alguns segundos e não consegue, porque o chat novo não conhece essa pessoa. Depois disso, a página de cada uma mostra a imagem de todos junta, sem os quadros e sem os nomes, e o `Compartilhar a tela` deixa de funcionar para ela. Fica assim até a pessoa sair da reunião e entrar de novo (ou recarregar a página). Quem é de fora, numa reunião marcada, espera de novo o colega aceitar: a entrada passa outra vez pela sala de espera. Até cada pessoa fazer isso, os outros veem `Participante` no lugar do nome dela. Quem entra depois vê os quadros normalmente, mas com `Participante` no lugar do nome de quem já estava. Por isso, atualize o chat, e reinicie-o, também num horário sem reuniões, como o guia já diz para o servidor de vídeo.
+
+**O estado dos ramais (a partir da `0.2.0-rc.5`).** Com essa versão, a administração passa a mostrar o estado do ramal de cada pessoa: veja o passo 13. Não há nada para configurar. Os apps de hoje ainda não dizem ao chat como está o ramal: com eles, cada pessoa aparece como `No chat` (o app está aberto) ou `Offline`. O `Online` e o `Sem registro` chegam com a próxima versão do app do Windows, em cada PC que aceitar a atualização.
 
 ### Trocar a porta pública
 
@@ -364,7 +372,7 @@ Para mudar a porta do HTTPS de uma instalação que já existe, use o instalador
 sudo bash instalar.sh porta 8443
 ```
 
-Você deve ver `Pronto: o chat agora está em https://<endereço>:8443/`, e uma linha lembrando as duas regras do roteador. Para voltar à porta normal, quando o chat ganhar um endereço público só dele, rode o mesmo comando com `443` no lugar de `8443`.
+Você deve ver `Pronto: o chat agora está em https://<endereço>:8443/`, e uma linha lembrando as duas regras do roteador. Para voltar à porta normal, quando o chat ganhar um endereço público só dele, rode o mesmo comando com `443` no lugar de `8443`. O comando reinicia o chat: como o reinício mexe nas reuniões que estão no ar (veja "Uma reunião no ar quando o chat reinicia", acima), rode-o num horário sem reuniões.
 
 Se o chat da VM ainda for de antes da versão 0.1.1, o comando avisa e não muda nada. Nesse caso, atualize primeiro, como acima, e rode o comando de novo.
 
@@ -378,7 +386,35 @@ Quando alguém sai da empresa, tire a pessoa do chat **antes** de o ramal dela p
 
 Depois disso, o mesmo ramal entra como uma pessoa nova, sem as conversas antigas. Para tirar só um computador, clique no `×` dele.
 
-## 9. Ver os registros
+## 9. As reuniões com link
+
+A partir da versão 0.2.0, o chat também cuida das reuniões com link. O vídeo e o som delas passam por um servidor de vídeo, numa VM só dele, que tem o guia próprio: `docs/video-servidor.md`.
+
+**O link da reunião abre a página, no navegador.** O link é `https://<endereço do chat>/r/<código>`, e é o próprio chat que serve a página: quem recebe o link não instala nada e não tem conta. O que a pessoa de fora vê:
+
+- **Uma tela de entrada,** com o tipo da reunião (`Reunião marcada`, `Reunião agora` ou `Reunião de teste`) e o assunto. O navegador pede a câmera e o microfone, e ela escolhe se entra com eles ligados. Escreve o nome e clica em `Pedir para entrar`.
+- **A espera.** O pedido chega aos colegas que estão na reunião, e a pessoa vê `Aguardando ser aceito…`. Sem resposta em 10 minutos, o pedido acaba. Se nenhum colega abriu a reunião ainda, ela vê `A reunião ainda não começou` e espera na página. A reunião de teste não tem sala de espera: a pessoa entra na hora.
+- **A reunião,** com um quadro para cada pessoa (o palco, logo abaixo), o `Microfone`, a `Câmera`, o `Compartilhar a tela` (só em quem tem essa função no navegador: o PC, e não o celular) e o `Sair`. Em cima fica `Nada é gravado`.
+- **Os avisos,** no lugar da reunião: `Este link não vale mais` (cancelada, passou da data ou já acabou), `A reunião está cheia` (10 pessoas), `Muita gente esperando para entrar`, `Você foi tirado da reunião`, `A reunião acabou`, `Muitas tentativas` (o mesmo endereço tentou abrir links demais) e `O servidor de reuniões não respondeu` (o chat não alcançou o servidor de vídeo: veja o passo 9 do guia do vídeo, `docs/video-servidor.md`).
+
+**O palco da reunião (a partir da `0.2.0-rc.4`).** O servidor de vídeo continua montando uma imagem só com todos, e a página recorta dela um quadro para cada pessoa: os quadros ocupam a tela no PC e no celular, um clique aumenta o quadro de alguém, e a tela compartilhada aparece grande. Quem diz à página onde está cada pessoa na imagem é o chat, com o que recebe do servidor de vídeo, e os nomes nos quadros são escritos pela própria página.
+
+**A ordem de atualizar: o chat primeiro, e depois o servidor de vídeo.** A página nova do chat funciona com o servidor de vídeo antigo e mostra a imagem de todos numa só, como antes. Na ordem contrária, a página antiga mostraria a imagem nova sem os nomes das pessoas. Atualize o chat aqui (passo 7), e o servidor de vídeo depois, num horário sem reuniões (`docs/video-servidor.md`, passo 5).
+
+O endereço do chat precisa ser alcançável pelo navegador de quem entra, e o do servidor de vídeo também (a porta 443 dele, ou a 7443). Nada da reunião é gravado: a página mostra `Nada é gravado` o tempo todo.
+
+1. **Ligue o chat ao servidor de vídeo** pelo cartão `REUNIÕES` da lista das empresas, na administração do chat. Siga o passo 3 do guia do servidor de vídeo.
+2. **Deixe a VM do chat alcançar a VM de vídeo na porta 443** (ou na 7443, se o chat e o vídeo dividem um IP público só: veja o item 4). O chat fala com o servidor de vídeo por HTTPS, pelo endereço dele. Se um firewall limita a saída da VM do chat, libere essa porta para a VM de vídeo. Se as duas VMs ficam atrás do mesmo roteador, a do chat chega à de vídeo pelo IP público, e o roteador precisa fazer o "NAT loopback" (passo 1).
+3. **Guarde as cópias de segurança do chat com o mesmo cuidado que a chave do servidor de vídeo.** A chave fica no banco do chat, e a cópia da noite (passo 5) a leva junto: quem tem uma cópia tem a chave.
+4. **Se o chat e o servidor de vídeo dividem um IP público só, use o comando `video`.** Nesse caso, as portas 80 e 443 públicas são do chat, e o vídeo usa a porta 7443. O certificado (o cadeado) do vídeo é pedido ao Let's Encrypt, que chega na porta 80 do **chat**. O comando `video` faz o chat levar só essa conferência, pela rede interna, até a VM de vídeo. Ele só é preciso nesse caso, e tem de ser rodado **antes** de instalar o servidor de vídeo. O chat tem de estar na versão 0.2.0 ou mais nova (passo 7). Rode na VM do chat, com o nome do servidor de vídeo e o IP da VM de vídeo na rede interna:
+
+```
+sudo bash instalar.sh video <nome do vídeo> <IP interno da VM de vídeo>
+```
+
+   O `instalar.sh` é o mesmo do passo 7. O comando reinicia o chat, e quem está no chat volta a conectar em poucos segundos. Como o reinício mexe nas reuniões que estão no ar (veja "Uma reunião no ar quando o chat reinicia", no passo 7), rode o comando num horário sem reuniões. Você deve ver uma linha que começa com `Pronto: o chat agora repassa ao servidor de vídeo`. A porta do chat, se ele usa uma própria, fica como está, e o comando `porta` (passo 7) também mantém o que o `video` guardou. Se o chat não ficar de pé, a configuração de antes volta sozinha. O comando recusa, sem mudar nada, um chat com `"origens"` no arquivo de configuração. Se a VM do chat for refeita, rode o comando de novo (passo 6). Os passos completos, do roteador ao cartão "Reuniões", estão em "Se o chat e o vídeo dividem um IP público só", no passo 1 do guia do servidor de vídeo (`docs/video-servidor.md`).
+
+## 10. Ver os registros
 
 Os registros do chat:
 
@@ -398,10 +434,10 @@ Os registros da cópia da noite:
 sudo journalctl -u starsonic-chat-copia -n 50 --no-pager
 ```
 
-## 10. Os problemas comuns
+## 11. Os problemas comuns
 
 **O certificado não sai (o navegador avisa que o site não é seguro, ou nada abre).**
-O Let's Encrypt precisa achar a VM pelo nome. Rode `getent hosts <endereço>` e veja se o endereço que aparece é o da VM (ou o do roteador, se ela fica atrás de um). Se não for, corrija o registro A no DNS e espere alguns minutos. Depois veja os registros do passo 9: um erro de certificado aparece ali. O servidor tenta de novo sozinho, mas não insista muitas vezes seguidas: o Let's Encrypt limita os pedidos que falham.
+O Let's Encrypt precisa achar a VM pelo nome. Rode `getent hosts <endereço>` e veja se o endereço que aparece é o da VM (ou o do roteador, se ela fica atrás de um). Se não for, corrija o registro A no DNS e espere alguns minutos. Depois veja os registros do passo 10: um erro de certificado aparece ali. O servidor tenta de novo sozinho, mas não insista muitas vezes seguidas: o Let's Encrypt limita os pedidos que falham.
 
 Para ver só as linhas do certificado, rode na VM:
 
@@ -485,7 +521,7 @@ Espere 15 minutos, ou reinicie o serviço (passo 3).
 **O serviço não liga.**
 Rode `sudo journalctl -u starsonic-chat -n 50 --no-pager` e leia as últimas linhas. Uma linha que começa com `Erro:` diz o motivo. A configuração fica em `/etc/starsonic-chat/config.json`.
 
-## 11. Publicar uma versão
+## 12. Publicar uma versão
 
 Este passo é de quem publica o chat, e não da VM. Você faz tudo pelo site do GitHub, no navegador, e não precisa de comando para publicar.
 
@@ -536,3 +572,43 @@ curl -sI https://api.github.com/repos/LucasCPena/starsonic-phone/releases/latest
 A primeira linha deve ter `404`. Se o Windows já tiver uma versão estável, o endereço responde `200`, e isso também está certo, desde que a versão seja a do Windows. O workflow confere isso no último passo e falha se o endereço apontar para outra coisa. Nesse caso, em `Releases`, abra essa release, clique em `Edit` e marque `Set as a pre-release` (ou apague a release e a etiqueta dela). Não instale nada antes disso.
 
 Pronto: agora o passo 2 (instalar) e o passo 7 (atualizar) acham a versão nova.
+
+## 13. Acompanhar os ramais dos clientes
+
+A partir da versão 0.2.0-rc.5, a administração mostra o estado do ramal de cada pessoa que usa o app do Windows ligado ao chat. Serve para você ver quais ramais estão fora do ar sem esperar o cliente ligar reclamando. Não há nada para instalar nem configurar.
+
+Enquanto o app do Windows de um PC não for atualizado, esse PC aparece só como `No chat` ou `Offline`: é a próxima versão do app que diz ao chat se o ramal está registrado (passo 7).
+
+**Onde olhar.**
+
+1. Abra `https://<endereço>/admin/` e entre.
+2. Na lista das empresas, a coluna `RAMAIS AGORA` mostra as contas de cada empresa: quantos ramais estão online, sem registro, no chat e offline. O `sem registro` e o `no chat` só aparecem quando há alguém nesse estado. As contas somam o número de pessoas da empresa.
+3. O cartão `SEM REGISTRO AGORA`, acima da lista, junta os ramais sem registro de todas as empresas: a empresa, o nome, o ramal, há quanto tempo e o que o app diz (`Conectando…`, `Erro no cadastro` ou `Sem conexão com a central`). O que está assim há mais tempo vem primeiro. O cartão mostra até 50 ramais e diz quantos ficaram de fora. Sem nenhum, ele diz `Nenhum ramal sem registro agora.` Quando há algum, o alto da página ganha também um número com quantos são.
+4. Clique em `Abrir` para ver a empresa. Na página dela, a coluna `ESTADO` mostra o estado de cada pessoa, e cada computador da pessoa tem um desenho com o estado daquele computador.
+
+**Os quatro estados.** Cada um tem um desenho e um nome: a cor nunca diz o estado sozinha.
+
+| Estado | O que quer dizer | A segunda linha |
+|---|---|---|
+| `Online` (bolinha verde) | O app está aberto e o ramal está registrado na central. | Há quanto tempo, como `há 2 h`. |
+| `Sem registro` (triângulo vermelho) | O app está aberto, mas o ramal não registra há 1 minuto ou mais. É o caso para olhar. | Há quanto tempo e o que o app diz, como `há 12 min · o app diz “Conectando…”`. |
+| `No chat` (bolinha ciano) | O app acabou de abrir e está registrando o ramal, ou é um app antigo, que ainda não diz como está o ramal. | `registrando o ramal…` ou `o app é antigo e não diz o ramal`. |
+| `Offline` (anel cinza) | O chat perdeu o computador. O app foi fechado, o PC desligou ou a internet caiu. | A última vez da pessoa no chat, como `última vez ontem, 18:02`. |
+
+**O que entra na conta.**
+
+- Cada pessoa é um ramal. O estado dela vem dos computadores em que ela está agora: com dois computadores, um aberto e registrado e outro fechado, ela aparece `Online`.
+- Um computador que duas pessoas usam conta só para quem está nele agora. Na linha da outra pessoa, ele aparece com o anel cinza.
+- Uma pessoa sem computador nenhum no chat (todos foram tirados) aparece `Offline`, com `sem computador no chat`.
+- O celular e os aparelhos de mesa não aparecem: a página só vê os PCs com o app do Windows ligado ao chat.
+- A página mostra o que o app diz. O chat não fala com a central: se o app travar, ele pode continuar dizendo que o ramal está registrado.
+- Um ramal que registra e cai de novo o tempo todo não chega a ficar 1 minuto sem registrar, e por isso não aparece em vermelho: ele fica trocando entre `Online` e `No chat`.
+
+**A página se atualiza sozinha.**
+
+- Ela busca os dados de novo a cada 30 segundos, sem recarregar e sem mexer na rolagem.
+- Um PC que perde a rede pode levar até 2 minutos para aparecer `Offline`: o chat espera a resposta do computador antes de desistir dele.
+- Logo depois de o chat reiniciar (numa atualização, por exemplo), todos aparecem `Offline` por alguns segundos, até os apps se ligarem de novo.
+- A sessão da administração dura 12 horas. Quando ela vence, a página volta sozinha para a entrada: entre de novo.
+- Se a página não consegue buscar os dados (a sua internet caiu, ou o chat está fora do ar), ela avisa no alto, por exemplo: `Sem atualizar desde as 14:32. A página tenta de novo sozinha.` O aviso some na primeira busca que der certo.
+- Enquanto você está num campo ou num botão da página (andando com o teclado, por exemplo), ela espera, para não tirar você do lugar. Se a espera passar de uma atualização, o aviso é: `Sem atualizar desde as 14:32: a página espera você sair do campo ou do botão em que está.` Clique fora, e ela volta a se atualizar em até 30 segundos.
