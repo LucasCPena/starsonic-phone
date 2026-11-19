@@ -51,6 +51,15 @@
 // subindo), o chat é o vazio, por qualquer fim (a pessoa saiu, foi tirada, a reunião acabou, a página desistiu de
 // voltar); e o aviso curto só existe na tela da reunião. Enquanto a página tenta voltar (a conexão caída, o religar
 // do canal), nada disso muda. O texto e o nome das mensagens não vão ao console, como o resto do estado.
+//
+// O sinalizador de qualidade (qualidade.js). O medidor da tela mede a ligação principal a cada 2 s e dá ao cérebro o
+// estado mostrado (medindo, boa, instavel ou ruim) e os dois números da última medida (o evento qualidade), que o
+// cérebro guarda para o botão e para o cartão. A virada para ruim mostra o aviso curto da conexão, no máximo um a cada
+// AVISO_DA_CONEXAO_MS, e nunca com o cartão aberto (a pessoa já está olhando os detalhes, e o aviso não é gasto). O
+// aviso curto é um só: o da mensagem toma o lugar do da conexão, e o contrário. A mesma regra da tela da reunião vale
+// aqui: fora dela, o cartão fecha; sem a ligação principal no ar (fora da reunião, na conexão caída, ou nos instantes
+// depois de a ligação terminar), o sinalizador volta ao começo, e as medidas que ainda chegarem ficam de fora; e o
+// aviso da conexão ruim só fica enquanto o sinalizador diz ruim.
 
 import { MAX_MENSAGENS, textoLimpo } from './mensagens.js';
 import { lerPalco } from './palco.js';
@@ -79,6 +88,8 @@ export const MAX_REABRIR = 3;
 export const PRAZO_DA_MENSAGEM_MS = 10000;
 /** O tempo do aviso curto na tela (o da mensagem nova e o da conexão ruim), em ms. */
 export const AVISO_CURTO_MS = 5000;
+/** O tempo mínimo entre dois avisos de conexão ruim, em ms: no máximo um a cada 2 minutos. */
+export const AVISO_DA_CONEXAO_MS = 120000;
 
 const MAX_NOME = 80;
 
@@ -94,6 +105,7 @@ const PARAR_CAPTURA = Object.freeze({ tipo: 'pararCaptura' });
 const FOCAR = Object.freeze({ tipo: 'focar' });
 const FOCAR_O_CAMPO = Object.freeze({ tipo: 'focarOCampo' }); // o campo de escrever do chat
 const FOCAR_O_CHAT = Object.freeze({ tipo: 'focarOChat' }); // o botão Chat dos controles
+const FOCAR_O_SINAL = Object.freeze({ tipo: 'focarOSinal' }); // o botão do sinalizador de qualidade
 const mandar = (m) => ({ tipo: 'mandar', m });
 const ligar = (qual, senha) => ({ tipo: 'ligar', qual, senha });
 const desligar = (qual) => ({ tipo: 'desligar', qual });
@@ -103,6 +115,11 @@ const pedido = (e) => mandar({ tipo: 'pedir', nome: e.nome.trim() });
 
 // O chat da reunião sem nada: a lista, as não lidas, o painel fechado e o número da última mensagem.
 const CHAT_VAZIO = Object.freeze({ mensagens: Object.freeze([]), naoLidas: 0, aberto: false, seq: 0 });
+// O sinalizador no começo: medindo, sem número nenhum.
+const QUALIDADE_DO_COMECO = Object.freeze({ estado: 'medindo', perda: null, atraso: null });
+// Os estados que o sinalizador mostra.
+const ESTADOS_DA_QUALIDADE = new Set(['medindo', 'boa', 'instavel', 'ruim']);
+const numero = (v) => typeof v === 'number' && Number.isFinite(v);
 
 // com: o estado com as mudanças, e os efeitos. so: os efeitos, com o mesmo estado.
 const com = (estado, mudancas, ...efeitos) => ({ estado: { ...estado, ...mudancas }, efeitos });
@@ -156,8 +173,13 @@ export function inicial() {
     // O chat da reunião: as mensagens ({n, voce, nome, texto, hora, situacao, id, motivo}), as não lidas, o painel
     // aberto e o seq, o número da última mensagem, que nunca volta a zero.
     chat: CHAT_VAZIO,
-    avisoCurto: null, // o aviso curto na tela: {n, tipo: 'mensagem', nome, texto}
+    avisoCurto: null, // o aviso curto na tela: {n, tipo: 'mensagem', nome, texto} ou {n, tipo: 'conexao'}
     avisos: 0, // o número do último aviso curto: o tempo de um aviso que passou fica de fora
+    // O sinalizador de qualidade: o estado mostrado (medindo, boa, instavel ou ruim) e os números da última medida, a
+    // perda (uma fração) e o atraso (em ms), ou null para o que o navegador não deu.
+    qualidade: QUALIDADE_DO_COMECO,
+    cartao: false, // o cartão do sinalizador, aberto
+    conexaoAvisada: false, // o aviso de conexão ruim já saiu nos últimos 2 minutos
   };
 }
 
@@ -214,10 +236,14 @@ export function transicao(estado, evento) {
     case 'reenviar':
       r = reenviar(estado, evento.n, evento.agora);
       break;
+    case 'qualidade':
+      r = qualidade(estado, evento);
+      break;
     default:
       r = nada(estado);
   }
-  // O chat e o aviso curto são da tela da reunião: a regra fica só aqui, para todo fim, também os que vierem depois.
+  // O chat, o aviso curto e o sinalizador são da tela da reunião: a regra fica só aqui, para todo fim, também os que
+  // vierem depois.
   r.estado = soNaReuniao(r.estado);
   // O aviso da câmera nasce só aqui, do estado de antes e do de depois: nenhum outro ponto do cérebro o monta.
   if (avisaACamera(estado, r.estado)) r.efeitos.push(mandar({ tipo: 'camera', ligada: cameraLigada(r.estado) }));
@@ -243,8 +269,12 @@ export function podeEscrever(estado) {
   return estado.tela === 'reuniao' && canalDaPessoa(estado);
 }
 
+// A ligação principal está no ar, na tela da reunião: é quando o sinalizador mede.
+const medindoALigacao = (e) => e.tela === 'reuniao' && e.principal === 'noAr';
+
 // Fora da reunião, o chat volta ao vazio (com o seq de antes: os ids não se repetem) e o painel fecha; fora da tela
-// da reunião, não há aviso curto. Sem nada a mudar, o estado é o mesmo.
+// da reunião, não há aviso curto, e o cartão do sinalizador fecha. Sem a ligação principal no ar, o sinalizador volta
+// ao começo; e o aviso da conexão ruim só fica enquanto ele diz ruim. Sem nada a mudar, o estado é o mesmo.
 function soNaReuniao(e) {
   let f = e;
   const { chat } = f;
@@ -252,6 +282,12 @@ function soNaReuniao(e) {
     f = { ...f, chat: { ...CHAT_VAZIO, seq: chat.seq } };
   }
   if (f.tela !== 'reuniao' && f.avisoCurto !== null) f = { ...f, avisoCurto: null };
+  if (f.tela !== 'reuniao' && f.cartao) f = { ...f, cartao: false };
+  const q = f.qualidade;
+  if (!medindoALigacao(f) && (q.estado !== 'medindo' || q.perda !== null || q.atraso !== null)) {
+    f = { ...f, qualidade: QUALIDADE_DO_COMECO };
+  }
+  if (f.avisoCurto?.tipo === 'conexao' && f.qualidade.estado !== 'ruim') f = { ...f, avisoCurto: null };
   return f;
 }
 
@@ -475,6 +511,31 @@ function abrirOChat(e) {
   return com(e, { chat: { ...e.chat, aberto: true, naoLidas: 0 }, avisoCurto }, FOCAR_O_CAMPO);
 }
 
+// ---- O sinalizador de qualidade ----
+
+// Uma medida do medidor: o estado mostrado e os números dela. A virada para ruim (de qualquer outro estado, também do
+// medindo) mostra o aviso curto da conexão, que toma o lugar do aviso de uma mensagem. Ele não nasce com o cartão
+// aberto, nem se outro já saiu nos últimos 2 minutos: o tempo que o libera é o conexaoAvisada.
+function qualidade(e, { estado, perda, atraso }) {
+  if (!medindoALigacao(e) || !ESTADOS_DA_QUALIDADE.has(estado)) return nada(e);
+  const nova = { estado, perda: numero(perda) ? perda : null, atraso: numero(atraso) ? atraso : null };
+  const virouRuim = estado === 'ruim' && e.qualidade.estado !== 'ruim';
+  if (!virouRuim || e.cartao || e.conexaoAvisada) return com(e, { qualidade: nova });
+  const aviso = e.avisos + 1;
+  return com(
+    e,
+    { qualidade: nova, avisos: aviso, avisoCurto: { n: aviso, tipo: 'conexao' }, conexaoAvisada: true },
+    esperar(AVISO_CURTO_MS, `avisoCurto:${aviso}`),
+    esperar(AVISO_DA_CONEXAO_MS, 'conexaoAvisada'),
+  );
+}
+
+// O cartão do sinalizador abre: o aviso da conexão, que levava a ele, sai. O de uma mensagem fica.
+function abrirOCartao(e, ...efeitos) {
+  const avisoCurto = e.avisoCurto?.tipo === 'conexao' ? null : e.avisoCurto;
+  return com(e, { cartao: true, avisoCurto }, ...efeitos);
+}
+
 // O palco que vale toma o lugar do anterior. O que não vale fica de fora e leva o anterior junto: ele prova que o
 // anterior ficou velho, e sem palco os quadros voltam ao mosaico inteiro.
 function guardarOPalco(e, m) {
@@ -687,6 +748,16 @@ function clique(e, botao) {
     case 'fecharChat':
       // O fechar do painel (o botão dele e o Esc) devolve o foco ao botão Chat.
       return e.tela === 'reuniao' && e.chat.aberto ? comChat(e, { aberto: false }, FOCAR_O_CHAT) : nada(e);
+    case 'qualidade':
+      // O botão do sinalizador abre e fecha o cartão dele. O foco já está no botão. Fora da tela da reunião o cartão
+      // não fica aberto: quem o fecha é a regra do fim da transicao.
+      return e.cartao ? com(e, { cartao: false }) : abrirOCartao(e);
+    case 'verDetalhes':
+      // O Ver os detalhes do aviso da conexão abre o cartão. O botão some com o aviso: o foco vai ao do sinalizador.
+      return e.tela === 'reuniao' ? abrirOCartao(e, FOCAR_O_SINAL) : nada(e);
+    case 'fecharCartao':
+      // O Esc e o clique fora do sinalizador fecham o cartão, e o foco fica onde está.
+      return e.cartao ? com(e, { cartao: false }) : nada(e);
     default:
       return nada(e);
   }
@@ -801,6 +872,10 @@ function tempo(e, chave) {
     case 'avisoCurto':
       // O tempo de um aviso que já saiu, ou que deu lugar a outro, fica de fora.
       return e.avisoCurto !== null && Number(vez) === e.avisoCurto.n ? com(e, { avisoCurto: null }) : nada(e);
+    case 'conexaoAvisada':
+      // Os 2 minutos do último aviso de conexão ruim passaram, com a pessoa na reunião ou fora dela: a próxima virada
+      // para ruim avisa de novo.
+      return e.conexaoAvisada ? com(e, { conexaoAvisada: false }) : nada(e);
     default:
       return nada(e);
   }

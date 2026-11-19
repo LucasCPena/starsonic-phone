@@ -1,13 +1,15 @@
 // A camada da tela da página da reunião. Ela desenha o estado do cérebro (estado.js), com os quadros da reunião
-// (quadros.js) e o painel do chat (painel.js), transforma os cliques, o nome e as mensagens em eventos, e roda os
-// efeitos com os adaptadores: a rede (rede.js), a mídia (midia.js), as ligações (ligacao.js) e o relógio. Os eventos que
-// um efeito dá entram numa fila e passam pelo cérebro um de cada vez, depois dos efeitos do evento de agora. Nada do
-// estado nem dos efeitos vai ao console: eles levam o bilhete, as senhas, as credenciais do TURN, a chave de volta e
-// as mensagens do chat.
+// (quadros.js), o painel do chat (painel.js) e o sinalizador de qualidade (qualidade.js), transforma os cliques, o
+// nome, as mensagens e as medidas da ligação em eventos, e roda os efeitos com os adaptadores: a rede (rede.js), a
+// mídia (midia.js), as ligações (ligacao.js) e o relógio. Os eventos que um efeito dá entram numa fila e passam pelo
+// cérebro um de cada vez, depois dos efeitos do evento de agora. Nada do estado nem dos efeitos vai ao console: eles
+// levam o bilhete, as senhas, as credenciais do TURN, a chave de volta e as mensagens do chat. As medidas do
+// sinalizador também não vão a lugar nenhum fora da página.
 import { cabecalho, inicial, nomeValido, podeEscrever, quando, transicao } from './estado.js';
 import { contagem as numeroDoBotao, dito, escreveu, nomeDoBotao, numaLinha } from './mensagens.js';
 import { criarPainel } from './painel.js';
 import { criarQuadros } from './quadros.js';
+import { AVISO_DA_CONEXAO_RUIM, criarMedidor, numerosDoCartao, textosDoSinal } from './qualidade.js';
 
 /** A espera do ligar da principal pela câmera que a pessoa acabou de ligar e que ainda está sendo pedida, em ms. */
 const PRAZO_DA_CAMERA_MS = 3000;
@@ -47,6 +49,9 @@ export function iniciar(raiz, servicos) {
   const numeroDoChat = botaoChat.querySelector('.contagem');
   const raizDoPainel = um('.painel');
   const avisoCurto = um('.aviso-curto');
+  const sinal = um('.sinal');
+  const botaoDoSinal = um('.sinal-botao');
+  const cartaoDoSinal = um('.sinal-cartao');
   // O Compartilhar a tela só existe onde o navegador tem a captura da tela.
   const temCaptura = typeof navigator.mediaDevices?.getDisplayMedia === 'function';
 
@@ -105,6 +110,14 @@ export function iniciar(raiz, servicos) {
     aoReenviar: (n) => despachar({ tipo: 'reenviar', n }),
     aoFechar: () => despachar({ tipo: 'clique', botao: 'fecharChat' }),
   });
+  // O sinalizador de qualidade mede a ligação principal (os números dela, do navegador), só com a aba à vista, e cada
+  // medida vai ao cérebro. O desenho o liga e desliga.
+  const medidor = criarMedidor({
+    ler: () => ligacao.numeros(),
+    relogio,
+    visivel: () => document.visibilityState === 'visible',
+    aoMedir: (medida) => despachar({ tipo: 'qualidade', ...medida }),
+  });
 
   function rodar(efeito) {
     try {
@@ -161,6 +174,9 @@ export function iniciar(raiz, servicos) {
         break;
       case 'focarOChat':
         botaoChat.focus();
+        break;
+      case 'focarOSinal':
+        botaoDoSinal.focus();
         break;
     }
   }
@@ -301,13 +317,15 @@ export function iniciar(raiz, servicos) {
     compartilhar.disabled = !(e.canal === 'aberto' && e.reconectando === 0);
     um('[data-botao="pararDeCompartilhar"]').hidden = !compartilhando;
     desenharOChat(e);
+    desenharOSinal(e);
+    desenharOAvisoCurto(e);
   }
 
   // O n da última mensagem do chat que a página já viu na tela da reunião: as de outras pessoas depois dela são ditas.
   let ultimaVista = 0;
 
   // O chat: o botão apertado com o painel aberto, o número das mensagens novas, o painel com as mensagens do cérebro,
-  // o aviso curto, e o que o leitor de tela ouve.
+  // e o que o leitor de tela ouve.
   function desenharOChat(e) {
     const naReuniao = e.tela === 'reuniao';
     const chatAberto = naReuniao && e.chat.aberto;
@@ -325,14 +343,6 @@ export function iniciar(raiz, servicos) {
       naReuniao,
     });
 
-    const aviso = naReuniao ? e.avisoCurto : null;
-    avisoCurto.hidden = aviso === null;
-    if (aviso !== null) {
-      avisoCurto.dataset.tipo = aviso.tipo;
-      texto(avisoCurto.querySelector('.aviso-curto-quem'), escreveu(aviso));
-      texto(avisoCurto.querySelector('.aviso-curto-linha'), numaLinha(aviso.texto));
-    }
-
     // O leitor de tela ouve a mensagem mais nova de outra pessoa que ainda não foi dita, com o chat aberto ou fechado.
     if (!naReuniao) return;
     const { mensagens } = e.chat;
@@ -342,6 +352,56 @@ export function iniciar(raiz, servicos) {
       break;
     }
     if (mensagens.length > 0) ultimaVista = Math.max(ultimaVista, mensagens[mensagens.length - 1].n);
+  }
+
+  // O sinalizador de qualidade: o medidor ligado com a ligação principal no ar, o botão no estado mostrado (o desenho,
+  // o texto e o nome para o leitor de tela) e o cartão dele, com a explicação, as dicas do estado e os números da
+  // última medida.
+  function desenharOSinal(e) {
+    medidor.medir(e.tela === 'reuniao' && e.principal === 'noAr');
+    const { estado } = e.qualidade;
+    const textos = textosDoSinal(estado);
+    const aberto = e.tela === 'reuniao' && e.cartao;
+    botaoDoSinal.dataset.estado = estado;
+    botaoDoSinal.setAttribute('aria-label', textos.nome);
+    botaoDoSinal.setAttribute('aria-expanded', aberto ? 'true' : 'false');
+    texto(botaoDoSinal.querySelector('.sinal-texto'), textos.botao);
+    cartaoDoSinal.hidden = !aberto;
+    cartaoDoSinal.dataset.estado = estado;
+    texto(cartaoDoSinal.querySelector('.sinal-titulo'), textos.titulo);
+    texto(cartaoDoSinal.querySelector('.sinal-explicacao'), textos.explicacao);
+    // As três dicas estão na página, na ordem: cada estado mostra as primeiras.
+    const dicas = cartaoDoSinal.querySelector('.sinal-dicas');
+    dicas.hidden = textos.dicas === 0;
+    for (const [i, dica] of [...dicas.children].entries()) dica.hidden = i >= textos.dicas;
+    const numeros = numerosDoCartao(e.qualidade);
+    const pe = cartaoDoSinal.querySelector('.sinal-numeros');
+    pe.hidden = numeros === null;
+    texto(pe, numeros ?? '');
+  }
+
+  // O n do último aviso de conexão ruim que o leitor de tela ouviu.
+  let conexaoDita = 0;
+
+  // O aviso curto, um por vez: o da mensagem nova (quem escreveu, o texto numa linha e o Abrir o chat) ou o da conexão
+  // que virou ruim (uma linha só e o Ver os detalhes). O da conexão é dito ao leitor de tela, uma vez; as mensagens,
+  // quem diz é o desenho do chat.
+  function desenharOAvisoCurto(e) {
+    const aviso = e.tela === 'reuniao' ? e.avisoCurto : null;
+    avisoCurto.hidden = aviso === null;
+    if (aviso === null) return;
+    const daConexao = aviso.tipo === 'conexao';
+    avisoCurto.dataset.tipo = aviso.tipo;
+    const quem = avisoCurto.querySelector('.aviso-curto-quem');
+    quem.hidden = daConexao;
+    texto(quem, daConexao ? '' : escreveu(aviso));
+    texto(avisoCurto.querySelector('.aviso-curto-linha'), daConexao ? AVISO_DA_CONEXAO_RUIM : numaLinha(aviso.texto));
+    avisoCurto.querySelector('[data-botao="abrirChat"]').hidden = daConexao;
+    avisoCurto.querySelector('[data-botao="verDetalhes"]').hidden = !daConexao;
+    if (daConexao && aviso.n !== conexaoDita) {
+      conexaoDita = aviso.n;
+      dizer(AVISO_DA_CONEXAO_RUIM);
+    }
   }
 
   // Põe o texto na região que os leitores de tela anunciam. O nó de texto é sempre outro: o mesmo texto, dito de novo,
@@ -385,6 +445,27 @@ export function iniciar(raiz, servicos) {
     midia.despertar();
     midia.capturarTela();
   });
+  // O cartão do sinalizador fecha com o Esc, antes de tudo o que o Esc faz na reunião (o chat que fecha, o quadro
+  // aumentado que volta): o ouvinte roda na captura e marca o evento como tratado, e os outros o deixam passar. O
+  // clique fora do sinalizador também fecha o cartão, sem tirar do clique o que ele faz: quem decide é o estado de
+  // antes dele, e por isso o ouvinte também roda na captura.
+  document.addEventListener(
+    'keydown',
+    (ev) => {
+      if (ev.key !== 'Escape' || ev.defaultPrevented || ev.isComposing || ev.keyCode === 229) return;
+      if (!estado.cartao) return;
+      ev.preventDefault();
+      despachar({ tipo: 'clique', botao: 'fecharCartao' });
+    },
+    true,
+  );
+  document.addEventListener(
+    'click',
+    (ev) => {
+      if (estado.cartao && !sinal.contains(ev.target)) despachar({ tipo: 'clique', botao: 'fecharCartao' });
+    },
+    true,
+  );
   nome.addEventListener('input', () => despachar({ tipo: 'nome', valor: nome.value }));
   // O Enter no nome é o Pedir para entrar; o que confirma uma composição (o IME) não conta.
   nome.addEventListener('keydown', (ev) => {

@@ -305,6 +305,26 @@
 <img class="logo" src="/admin/estatico/logo-negativo.png" alt="Starsonic soluções de voz e dados">
 <span class="divisor" aria-hidden="true"></span>
 <h1 tabindex="-1" data-campo="titulo"></h1>
+<div class="topo-direita">
+<!-- O sinalizador de qualidade: como está a conexão de quem vê a tela (qualidade.js). O botão abre o cartão, com a
+explicação do estado, o que fazer e os dois números da última medida. O estado, os textos e os números entram pelo
+pagina.js; as três dicas são sempre estas, e cada estado mostra as primeiras. -->
+<div class="sinal">
+<button type="button" class="sinal-botao" data-botao="qualidade" data-estado="medindo" aria-expanded="false" aria-controls="sinal-cartao" aria-label="Medindo a conexão">
+<svg class="sinal-barras" viewBox="0 0 24 24" aria-hidden="true"><rect class="barra" x="3" y="14" width="4" height="7" rx="1"></rect><rect class="barra" x="10" y="9" width="4" height="12" rx="1"></rect><rect class="barra" x="17" y="4" width="4" height="17" rx="1"></rect></svg>
+<span class="sinal-texto">Medindo a conexão…</span>
+</button>
+<div id="sinal-cartao" class="sinal-cartao" data-estado="medindo" hidden>
+<p class="sinal-titulo"></p>
+<p class="sinal-explicacao"></p>
+<ul class="sinal-dicas" hidden>
+<li>Chegue mais perto do Wi-Fi, ou use o cabo de rede.</li>
+<li>Feche downloads e vídeos em outros programas.</li>
+<li>Se continuar, desligue a câmera: só o som precisa de bem menos internet.</li>
+</ul>
+<p class="sinal-numeros" hidden></p>
+</div>
+</div>
 <p class="selo-gravado">
 <svg class="icone icone-14" aria-hidden="true"><use href="#i-cadeado"></use></svg>
 <span>Nada é gravado</span>
@@ -313,6 +333,7 @@
 <svg class="icone icone-16" aria-hidden="true"><use href="#i-tela"></use></svg>
 <span>Você está compartilhando a tela</span>
 </p>
+</div>
 </header>
 <!-- O meio da tela: a área dos quadros e, ao lado dela, o painel do chat (painel.js). -->
 <div class="meio">
@@ -345,14 +366,16 @@ inteiro sem o palco. -->
 <p>Espere um instante: a página volta sozinha para a reunião.</p>
 </div>
 </div>
-<!-- O aviso curto: a mensagem nova com o chat fechado. Ele não é uma região falada: quem diz a mensagem aos leitores
-de tela é a região do fim da página. -->
+<!-- O aviso curto, um por vez: a mensagem nova com o chat fechado (quem escreveu, o texto e o Abrir o chat), ou a
+conexão que virou ruim (uma linha só e o Ver os detalhes, que abre o cartão do sinalizador). Ele não é uma região
+falada: quem diz a mensagem e a conexão ruim aos leitores de tela é a região do fim da página. -->
 <div class="aviso-curto" data-tipo="mensagem" hidden>
 <div class="aviso-curto-texto">
 <p class="aviso-curto-quem"></p>
 <p class="aviso-curto-linha"></p>
 </div>
 <button type="button" class="aviso-curto-botao" data-botao="abrirChat">Abrir o chat</button>
+<button type="button" class="aviso-curto-botao aviso-curto-detalhes" data-botao="verDetalhes" hidden>Ver os detalhes</button>
 </div>
 </div>
 <!-- O chat da reunião: ao lado dos quadros no PC, e cobrindo a tela onde o ponteiro é o dedo ou a janela é estreita

@@ -2,7 +2,7 @@
 // dos números do navegador (o getStats da ligação principal), a medida entre duas leituras, o estado de cada medida e o
 // estado mostrado, que não acompanha cada medida para não piscar. As contas são funções puras; o medidor, no fim, é quem
 // lê a cada 2 s. Ele mede só a conexão da própria pessoa, não manda nada a servidor nenhum, não escreve nada no
-// console, e não guarda o relatório depois de o ler.
+// console, e não guarda o relatório depois de o ler. No fim do arquivo estão os textos do botão e do cartão.
 
 /** A página mede a cada 2 s. */
 export const INTERVALO_MS = 2000;
@@ -223,4 +223,62 @@ export function criarMedidor({ ler, relogio, visivel, aoMedir }) {
       if (ligado) ciclo(vez);
     },
   };
+}
+
+// ---- Os textos do sinalizador (a seção 4.4 do desenho): o que o botão e o cartão dizem em cada estado. ----
+
+/** O aviso curto da conexão que virou ruim, que o leitor de tela também ouve. */
+export const AVISO_DA_CONEXAO_RUIM = 'Sua conexão está ruim';
+
+// As dicas do cartão são três, sempre na mesma ordem (elas estão na página): cada estado mostra as primeiras.
+const TEXTOS = Object.freeze({
+  boa: Object.freeze({
+    botao: 'Conexão boa',
+    nome: 'Conexão boa. Ver os detalhes',
+    titulo: 'Sua conexão está boa',
+    explicacao: 'A imagem e o som estão chegando bem.',
+    dicas: 0,
+  }),
+  instavel: Object.freeze({
+    botao: 'Conexão instável',
+    nome: 'Conexão instável. Ver os detalhes',
+    titulo: 'Sua conexão está instável',
+    explicacao: 'A imagem ou o som podem falhar de vez em quando.',
+    dicas: 2,
+  }),
+  ruim: Object.freeze({
+    botao: 'Conexão ruim',
+    nome: 'Conexão ruim. Ver os detalhes',
+    titulo: 'Sua conexão está ruim',
+    explicacao: 'Os outros podem não ver ou ouvir você direito, e a imagem deles pode travar para você.',
+    dicas: 3,
+  }),
+  medindo: Object.freeze({
+    botao: 'Medindo a conexão…',
+    nome: 'Medindo a conexão',
+    titulo: 'Medindo a conexão…',
+    explicacao: 'Os números aparecem aqui em alguns segundos.',
+    dicas: 0,
+  }),
+});
+
+/**
+ * Os textos de um estado mostrado: { botao, nome, titulo, explicacao, dicas }. O botao é o texto do botão; o nome, o
+ * que o leitor de tela ouve nele; o titulo e a explicacao são do cartão; as dicas, quantas das três o cartão mostra.
+ * Um estado que não existe mostra o medindo.
+ */
+export function textosDoSinal(estado) {
+  return Object.hasOwn(TEXTOS, estado) ? TEXTOS[estado] : TEXTOS.medindo;
+}
+
+/**
+ * Os números do pé do cartão, como "Perda: 4% · Atraso: 210 ms": a perda (uma fração) e o atraso (em ms) da última
+ * medida, arredondados para o inteiro. O número que o navegador não dá aparece como "—". No medindo, o cartão não tem
+ * números: null.
+ */
+export function numerosDoCartao({ estado, perda, atraso }) {
+  if (estado === 'medindo') return null;
+  const aPerda = numero(perda) ? `${Math.round(perda * 100)}%` : '—';
+  const oAtraso = numero(atraso) ? `${Math.round(atraso)} ms` : '—';
+  return `Perda: ${aPerda} · Atraso: ${oAtraso}`;
 }

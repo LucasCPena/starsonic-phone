@@ -41,6 +41,12 @@
   --reuniao-link: #7fe3e8;
   --reuniao-link-sobre: #b3f0f2;
   --reuniao-falha: #ffb3b3;
+  --reuniao-falha-borda: #ff8a8a;
+  --reuniao-falha-fundo: #2a1016;
+  --reuniao-atencao: #ffd166;
+  --reuniao-atencao-borda: #ffb703;
+  --reuniao-barra-apagada: #3a4466;
+  --reuniao-barra-apagada-na-falha: #4a3040;
   --branco: #ffffff;
   --fonte: "Plus Jakarta Sans", system-ui, sans-serif;
 }
@@ -739,9 +745,18 @@ main {
   overflow-wrap: anywhere;
 }
 
+/* O lado direito do alto: o sinalizador de qualidade e, depois dele, o "Nada é gravado" (ou o selo da tela
+   compartilhada), com 14 px entre os dois. */
+.topo-direita {
+  margin-left: auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+}
+
 .selo-gravado,
 .selo-tela {
-  margin-left: auto;
   display: inline-flex;
   align-items: center;
 }
@@ -761,6 +776,124 @@ main {
   color: var(--sobre-ciano);
   font-size: 13.5px;
   font-weight: 700;
+}
+
+/* ---- O sinalizador de qualidade (qualidade.js): o botão no alto, com as três barras e o texto do estado, e o cartão
+   que ele abre. Cada estado tem um desenho e um texto diferentes, para não depender só da cor. ---- */
+
+.sinal {
+  position: relative;
+  display: flex;
+}
+
+/* As cores de cada estado, no botão e no cartão: a letra (e as barras acesas), a borda, o fundo e as barras apagadas.
+   Sem estado, valem as do medindo. */
+.sinal-botao,
+.sinal-cartao {
+  --sinal-letra: var(--reuniao-apagado);
+  --sinal-borda: var(--reuniao-borda);
+  --sinal-fundo: transparent;
+  --sinal-apagada: var(--reuniao-barra-apagada);
+}
+
+.sinal-botao[data-estado="boa"] {
+  --sinal-letra: var(--topo-rotulo);
+}
+
+.sinal-botao[data-estado="instavel"],
+.sinal-cartao[data-estado="instavel"] {
+  --sinal-letra: var(--reuniao-atencao);
+  --sinal-borda: var(--reuniao-atencao-borda);
+}
+
+.sinal-botao[data-estado="ruim"],
+.sinal-cartao[data-estado="ruim"] {
+  --sinal-letra: var(--reuniao-falha);
+  --sinal-borda: var(--reuniao-falha-borda);
+  --sinal-fundo: var(--reuniao-falha-fundo);
+  --sinal-apagada: var(--reuniao-barra-apagada-na-falha);
+}
+
+.sinal-botao {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border: 1px solid var(--sinal-borda);
+  border-radius: 999px;
+  background: var(--sinal-fundo);
+  color: var(--sinal-letra);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.sinal-botao[data-estado="instavel"],
+.sinal-botao[data-estado="ruim"] {
+  font-weight: 700;
+}
+
+/* As três barras: a boa acende as três; a instável, as duas primeiras; a ruim, só a primeira; o medindo, nenhuma. */
+.sinal-barras {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+
+.barra {
+  fill: var(--sinal-apagada);
+}
+
+.sinal-botao[data-estado="boa"] .barra,
+.sinal-botao[data-estado="instavel"] .barra:nth-child(-n + 2),
+.sinal-botao[data-estado="ruim"] .barra:first-child {
+  fill: var(--sinal-letra);
+}
+
+/* O cartão: embaixo do botão, a 8 px, alinhado à direita dele, por cima da área dos quadros (e do aviso curto e do
+   cartão da conexão caída, que são dela). */
+.sinal-cartao {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 8px);
+  right: 0;
+  width: min(340px, 100vw - 32px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 18px;
+  border: 1px solid var(--sinal-borda);
+  border-radius: 14px;
+  background: var(--reuniao-cartao);
+  color: var(--branco);
+  box-shadow: 0 24px 50px -20px rgba(0, 0, 0, 0.7);
+}
+
+.sinal-titulo {
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.sinal-explicacao,
+.sinal-dicas {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--reuniao-claro);
+}
+
+.sinal-dicas {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sinal-numeros {
+  font-size: 12.5px;
+  color: var(--reuniao-apagado);
 }
 
 /* O meio da tela, entre a faixa de cima e os controles: a área dos quadros e, com o chat aberto no PC, o painel dele
@@ -1325,6 +1458,21 @@ button.quadro:focus-visible .pilula {
   cursor: pointer;
 }
 
+/* O aviso da conexão ruim: a borda da falha, uma linha só de texto, mais forte, e o Ver os detalhes mais discreto. */
+.aviso-curto[data-tipo="conexao"] {
+  border-color: var(--reuniao-falha-borda);
+}
+
+.aviso-curto[data-tipo="conexao"] .aviso-curto-linha {
+  font-weight: 700;
+}
+
+.aviso-curto-detalhes {
+  border: 1px solid var(--reuniao-borda);
+  background: var(--reuniao-botao);
+  color: var(--branco);
+}
+
 /* ---- O chat da reunião: o painel (painel.js). Ao lado dos quadros no PC (data-modo="lado"), e cobrindo a tela onde o
    ponteiro é o dedo ou a janela tem menos de 900 px (data-modo="cobre"). ---- */
 
@@ -1855,11 +2003,55 @@ button.quadro:focus-visible .pilula {
     font-size: 16px;
   }
 
-  /* A reunião do celular: o topo mais justo, e os quatro controles numa grade, com o ícone sobre o rótulo. */
+  /* A reunião do celular: o topo mais justo, e os quatro controles numa grade, com o ícone sobre o rótulo. O topo
+     tem o espaço do botão do sinalizador, de 44 px. */
   .reuniao-topo {
+    position: relative;
     flex-wrap: nowrap;
-    padding: 12px 18px;
+    padding: 6px 8px 6px 18px;
     gap: 12px;
+  }
+
+  /* O sinalizador é só o desenho, de 20 px, num botão de 44×44 px, sem borda e sem fundo, na cor do estado; o texto
+     fica para o leitor de tela. O cartão ocupa a largura da janela, com 8 px de cada lado, a 8 px do botão. */
+  .topo-direita {
+    flex: none;
+  }
+
+  .sinal {
+    position: static;
+  }
+
+  .sinal-botao {
+    width: 44px;
+    height: 44px;
+    min-height: 0;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+
+  .sinal-barras {
+    width: 20px;
+    height: 20px;
+  }
+
+  .sinal-texto {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
+
+  .sinal-cartao {
+    top: calc(100% + 2px);
+    left: 8px;
+    right: 8px;
+    width: auto;
   }
 
   .reuniao-topo .logo {
@@ -1942,10 +2134,15 @@ button.quadro:focus-visible .pilula {
   }
 }
 
-/* O Compartilhar a tela é só do PC: a tela de toque não o tem, nem com o celular deitado, que passa dos 600 px. */
+/* O Compartilhar a tela é só do PC: a tela de toque não o tem, nem com o celular deitado, que passa dos 600 px. Na
+   tela de toque, o botão do sinalizador tem os 44 px do toque. */
 @media (pointer: coarse) {
   .controle-compartilhar {
     display: none;
+  }
+
+  .sinal-botao {
+    min-height: 44px;
   }
 }
 
@@ -1953,8 +2150,10 @@ button.quadro:focus-visible .pilula {
    mínimo do toque), e não os 52 px de "O visual": sem isso, a tela deitada não seria maior que a em pé, e o "Gire o
    celular para ver a tela maior." não seria verdade. */
 @media (orientation: landscape) and (max-height: 500px) {
+  /* Sem espaço em cima e embaixo: a faixa fica com a altura do botão do sinalizador (36 px com o mouse, 44 px com o
+     toque), e a área dos quadros, com o resto. */
   .reuniao-topo {
-    padding: 6px 16px;
+    padding: 0 16px;
   }
 
   .reuniao-topo .logo {

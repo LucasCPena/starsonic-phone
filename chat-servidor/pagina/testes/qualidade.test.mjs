@@ -1,8 +1,10 @@
 // Os testes da conta do sinalizador de qualidade (qualidade.js): a leitura do getStats, a medida entre duas leituras, a
-// tabela dos estados, as regras de piorar e melhorar, e o medidor, com o relatório, o relógio e a aba de mentira.
+// tabela dos estados, as regras de piorar e melhorar, o medidor, com o relatório, o relógio e a aba de mentira, e os
+// textos do botão e do cartão.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
+  AVISO_DA_CONEXAO_RUIM,
   INTERVALO_MS,
   LIMITES,
   VALIDADE_DO_RELATORIO_MS,
@@ -11,7 +13,9 @@ import {
   criarMedidor,
   leitura,
   medida,
+  numerosDoCartao,
   passo,
+  textosDoSinal,
 } from '../../internal/pagina/estatico/qualidade.js';
 
 // ---- O relatório de mentira: um Map com os objetos do getStats, como o RTCStatsReport. ----
@@ -661,4 +665,64 @@ test('o ler que falha', async () => {
   await assentar();
   await c.relogio.andar(6000);
   assert.equal(chamadas, 3);
+});
+
+// ---- Os textos do sinalizador (a seção 4.4 do desenho), letra por letra. ----
+
+test('os textos de cada estado', () => {
+  assert.deepEqual(textosDoSinal('boa'), {
+    botao: 'Conexão boa',
+    nome: 'Conexão boa. Ver os detalhes',
+    titulo: 'Sua conexão está boa',
+    explicacao: 'A imagem e o som estão chegando bem.',
+    dicas: 0,
+  });
+  assert.deepEqual(textosDoSinal('instavel'), {
+    botao: 'Conexão instável',
+    nome: 'Conexão instável. Ver os detalhes',
+    titulo: 'Sua conexão está instável',
+    explicacao: 'A imagem ou o som podem falhar de vez em quando.',
+    dicas: 2,
+  });
+  assert.deepEqual(textosDoSinal('ruim'), {
+    botao: 'Conexão ruim',
+    nome: 'Conexão ruim. Ver os detalhes',
+    titulo: 'Sua conexão está ruim',
+    explicacao: 'Os outros podem não ver ou ouvir você direito, e a imagem deles pode travar para você.',
+    dicas: 3,
+  });
+  // No medindo, o nome para o leitor de tela não tem as reticências nem o "Ver os detalhes".
+  assert.deepEqual(textosDoSinal('medindo'), {
+    botao: 'Medindo a conexão…',
+    nome: 'Medindo a conexão',
+    titulo: 'Medindo a conexão…',
+    explicacao: 'Os números aparecem aqui em alguns segundos.',
+    dicas: 0,
+  });
+  // Um estado que não existe mostra o medindo.
+  assert.deepEqual(textosDoSinal('otima'), textosDoSinal('medindo'));
+  assert.deepEqual(textosDoSinal(undefined), textosDoSinal('medindo'));
+  // Também os nomes que todo objeto tem.
+  assert.deepEqual(textosDoSinal('constructor'), textosDoSinal('medindo'));
+  assert.deepEqual(textosDoSinal('toString'), textosDoSinal('medindo'));
+});
+
+test('o texto do aviso de conexão ruim', () => {
+  assert.equal(AVISO_DA_CONEXAO_RUIM, 'Sua conexão está ruim');
+});
+
+test('os números do cartão', () => {
+  assert.equal(numerosDoCartao({ estado: 'instavel', perda: 0.04, atraso: 210 }), 'Perda: 4% · Atraso: 210 ms');
+  assert.equal(numerosDoCartao({ estado: 'boa', perda: 0, atraso: 45 }), 'Perda: 0% · Atraso: 45 ms');
+  assert.equal(numerosDoCartao({ estado: 'ruim', perda: 1, atraso: 2000 }), 'Perda: 100% · Atraso: 2000 ms');
+  // A perda e o atraso são arredondados para o inteiro.
+  assert.equal(numerosDoCartao({ estado: 'ruim', perda: 0.1249, atraso: 639.6 }), 'Perda: 12% · Atraso: 640 ms');
+  assert.equal(numerosDoCartao({ estado: 'ruim', perda: 0.126, atraso: 0.4 }), 'Perda: 13% · Atraso: 0 ms');
+  // O número que o navegador não dá aparece como "—".
+  assert.equal(numerosDoCartao({ estado: 'instavel', perda: 0.04, atraso: null }), 'Perda: 4% · Atraso: —');
+  assert.equal(numerosDoCartao({ estado: 'instavel', perda: null, atraso: 300 }), 'Perda: — · Atraso: 300 ms');
+  assert.equal(numerosDoCartao({ estado: 'boa', perda: undefined, atraso: Number.NaN }), 'Perda: — · Atraso: —');
+  // No medindo, o cartão não tem números, nem os da primeira medida.
+  assert.equal(numerosDoCartao({ estado: 'medindo', perda: null, atraso: null }), null);
+  assert.equal(numerosDoCartao({ estado: 'medindo', perda: 0, atraso: 45 }), null);
 });

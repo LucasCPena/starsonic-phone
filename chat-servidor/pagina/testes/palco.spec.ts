@@ -480,8 +480,10 @@ test('o clique aumenta, e o Ver todos e o Esc voltam', async ({ page }) => {
 test('o teclado e os nomes ditos', async ({ page }) => {
   await naReuniaoCom(page, QUATRO);
   await expect(titulo(page, 'Planejamento de dezembro')).toBeFocused();
-  // O Tab chega a cada quadro da grade, na ordem; o Você não é botão, e o próximo é o Microfone.
+  // O Tab do título passa pelo sinalizador de qualidade, que está no alto, ao lado dele, e chega a cada quadro da
+  // grade, na ordem; o Você não é botão, e o próximo é o Microfone.
   const nomes = [
+    'Medindo a conexão',
     'Aumentar a câmera de Ana Souza',
     'Aumentar a câmera de Carlos Lima',
     'Aumentar a câmera de Maria Lima',
@@ -492,7 +494,7 @@ test('o teclado e os nomes ditos', async ({ page }) => {
     await expect(botao(page, nome)).toBeFocused();
   }
   // Com o foco do teclado, a borda ciano por dentro e a pílula Aumentar.
-  const contorno = await botao(page, nomes[3]).evaluate((b) => {
+  const contorno = await botao(page, nomes[4]).evaluate((b) => {
     const s = getComputedStyle(b, '::after');
     return `${s.outlineStyle} ${s.outlineWidth} ${s.outlineColor} ${s.outlineOffset}`;
   });
@@ -1120,8 +1122,9 @@ test('a borda ciano aparece por cima da imagem', async ({ page }) => {
   expect(await bordaDo(page, camDe(CARLOS))).toEqual(CIANO);
   await longeDosQuadros(page);
   expect(await bordaDo(page, camDe(CARLOS))).toEqual(['azul', 'azul', 'azul', 'azul']);
-  // O foco do teclado: o Tab do título vai à Ana, e depois ao Carlos.
+  // O foco do teclado: o Tab do título vai ao sinalizador, à Ana, e depois ao Carlos.
   await expect(titulo(page, 'Planejamento de dezembro')).toBeFocused();
+  await page.keyboard.press('Tab');
   await page.keyboard.press('Tab');
   await page.keyboard.press('Tab');
   await expect(quadro(page, camDe(CARLOS))).toBeFocused();
@@ -1202,6 +1205,9 @@ test.describe('o celular em pé, com o teclado', () => {
     await naReuniaoCom(page, TRES);
     await expect(titulo(page, 'Planejamento de dezembro')).toBeFocused();
     expect(await bordaDo(page, camDe(ANA))).toEqual(['vermelho', 'vermelho', 'vermelho', 'vermelho']);
+    // O primeiro Tab é do sinalizador, no alto; o segundo, do primeiro quadro.
+    await page.keyboard.press('Tab');
+    await expect(botao(page, 'Medindo a conexão')).toBeFocused();
     await page.keyboard.press('Tab');
     await expect(quadro(page, camDe(ANA))).toBeFocused();
     expect(await bordaDo(page, camDe(ANA))).toEqual(CIANO);

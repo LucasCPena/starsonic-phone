@@ -5,7 +5,7 @@
 // #som. A da tela só manda: a imagem da captura da tela e o silêncio.
 //
 // A interface:
-// - criarLigacoes(aoEvento) devolve {ligar, desligar, trocarCamera, trocarMicrofone};
+// - criarLigacoes(aoEvento) devolve {ligar, desligar, trocarCamera, trocarMicrofone, numeros};
 // - ligar({qual, senha, acesso, fluxo}): o qual é 'principal' ou 'tela'; o acesso, o turn e o video do aceito; o fluxo,
 //   na principal, o MediaStream da câmera e do microfone (o do midia.js), e na da tela, o da captura da tela (do
 //   midia.js também, que a para). A escolha da pessoa vem no da principal: uma faixa de câmera viva quer dizer a câmera
@@ -15,7 +15,9 @@
 // - as respostas voltam pelo aoEvento: {tipo:'ligacao', qual, o}, com o o confirmada, terminou, semConexao ou falhou
 //   (este com o codigo da resposta SIP, ou 0 sem ela), e {tipo:'cameraTrocada', ok}, a resposta a todo trocarCamera;
 // - o desligar de uma ligação que ainda não tinha acabado dá o terminou dela na hora, antes de qualquer outro ligar (o
-//   Parar de compartilhar espera por ele para parar a captura); depois dele, nada dela chega ao cérebro.
+//   Parar de compartilhar espera por ele para parar a captura); depois dele, nada dela chega ao cérebro;
+// - numeros() devolve a promessa dos números da ligação principal (o getStats da conexão dela, inteiro), ou de null
+//   sem ela. Quem os lê é o sinalizador de qualidade (qualidade.js), e nada deles sai da página.
 //
 // Os fins: o falhou e o terminou dizem que a ligação acabou, e o UA para junto. O semConexao diz que o WSS caiu com a
 // ligação confirmada: ela ainda existe, e desce com o desligar (o terminate da sessão, que manda o BYE, e o stop do
@@ -351,5 +353,12 @@ export function criarLigacoes(aoEvento) {
     else sessao.mute({ audio: true });
   }
 
-  return { ligar, desligar, trocarCamera, trocarMicrofone };
+  // Os números da ligação principal, para o sinalizador de qualidade: o relatório inteiro do navegador (o getStats da
+  // conexão dela). Sem a ligação, ou antes de a conexão dela nascer, a promessa de null.
+  function numeros() {
+    const conexao = ligacoes.get('principal')?.sessao?.connection;
+    return conexao ? conexao.getStats() : Promise.resolve(null);
+  }
+
+  return { ligar, desligar, trocarCamera, trocarMicrofone, numeros };
 }

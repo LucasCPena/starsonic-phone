@@ -914,6 +914,54 @@ test('a ligação leva a senha, o TURN e a câmera', async ({ page }) => {
   expect(await cameraNaLigacao(page)).toBe(true);
 });
 
+// O sinalizador de qualidade lê os números da ligação principal (o numeros() do ligacao.js): o getStats da conexão
+// dela, inteiro. Sem ligação, não há números.
+test('na reunião, a página lê os números da ligação principal a cada 2 s', async ({ page }) => {
+  await registrarConexoes(page);
+  // Cada getStats de uma conexão da página (window.lidas): o número dela, na ordem em que nasceram, e os argumentos.
+  await page.addInitScript(() => {
+    const w = window as unknown as { lidas: string[]; conexoes: RTCPeerConnection[] };
+    w.lidas = [];
+    const original = window.RTCPeerConnection.prototype.getStats;
+    window.RTCPeerConnection.prototype.getStats = function (this: RTCPeerConnection, ...args: unknown[]) {
+      w.lidas.push(`a conexão ${w.conexoes.indexOf(this) + 1}, com ${args.length} argumento(s)`);
+      return original.apply(this, args as []);
+    };
+  });
+  const lidas = () => page.evaluate(() => (window as unknown as { lidas: string[] }).lidas);
+  const rede = await abrir(page);
+  rede.videosAbrem = true;
+  await esperarAMidia(page);
+  // Sem ligação nenhuma, os números são null, e nada é lido.
+  const semLigacao = await page.evaluate(async () => {
+    const endereco = '/r/estatico/ligacao.js';
+    const { criarLigacoes } = await import(endereco);
+    return criarLigacoes(() => {}).numeros();
+  });
+  expect(semLigacao).toBeNull();
+
+  rede.aoPedir = (c) => c.mandar(ACEITO_SEM_REDE);
+  await pedirParaEntrar(page);
+  const video = await rede.videoNumero(1);
+  const invite = await inviteDe(page, video);
+  // Antes de a ligação confirmar (o INVITE levou segundos para sair), a página não lê nada.
+  expect(await lidas()).toEqual([]);
+  await atenderOInvite(page, video, invite);
+  await expect(page.getByRole('navigation', { name: 'Controles da reunião' })).toBeVisible();
+  // Na reunião: a primeira leitura na hora, e depois uma a cada 2 s, na conexão da ligação principal, sem argumento
+  // (o relatório inteiro).
+  await expect.poll(lidas).toEqual(['a conexão 1, com 0 argumento(s)']);
+  await page.clock.runFor(1_999);
+  expect(await lidas()).toHaveLength(1);
+  await page.clock.runFor(1);
+  await expect.poll(lidas).toEqual(['a conexão 1, com 0 argumento(s)', 'a conexão 1, com 0 argumento(s)']);
+  // Depois do Sair, nada mais é lido.
+  await botao(page, 'Sair').click();
+  await expect(titulo(page, 'Você saiu da reunião')).toBeVisible();
+  await page.clock.runFor(10_000);
+  expect(await lidas()).toHaveLength(2);
+});
+
 test('o WSS do vídeo que não abre desiste em 10 s', async ({ page }) => {
   const rede = await abrir(page);
   await esperarAMidia(page);

@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   AVISO_CURTO_MS,
+  AVISO_DA_CONEXAO_MS,
   CONTAGEM_MS,
   FIM_SEM_AVISO_MS,
   MAX_REABRIR,
@@ -165,6 +166,9 @@ test('o carregar abre', () => {
     chat: { mensagens: [], naoLidas: 0, aberto: false, seq: 0 },
     avisoCurto: null,
     avisos: 0,
+    qualidade: { estado: 'medindo', perda: null, atraso: null },
+    cartao: false,
+    conexaoAvisada: false,
   });
   const r = passo(inicial(), COMECAR);
   assert.equal(r.estado.tela, 'carregando');
@@ -1933,4 +1937,281 @@ test('o Entrar de novo começa vazio, e os ids não se repetem', () => {
       [3, 'enviada', 'Bom dia'],
     ],
   );
+});
+
+// ---- O sinalizador de qualidade: a medida, o aviso de conexão ruim e o cartão. ----
+
+const FOCAR_O_SINAL = { tipo: 'focarOSinal' };
+// O sinalizador no começo: medindo, sem número nenhum.
+const NO_COMECO = { estado: 'medindo', perda: null, atraso: null };
+// Uma medida do medidor: o estado mostrado, a perda (uma fração) e o atraso (em ms).
+const medida = (estado, perda = 0, atraso = 45) => ({ tipo: 'qualidade', estado, perda, atraso });
+const avisoDaConexao = (n) => ({ n, tipo: 'conexao' });
+const tempoDaConexao = esperar(120000, 'conexaoAvisada');
+// A volta da conexão caída, com o canal aberto: a espera, a senha nova e a ligação no ar de novo.
+const VOLTA_DA_QUEDA = [
+  tempo('reconectar:1'),
+  mensagem({ tipo: 'senha', senha: 'senha-r1' }),
+  ligacao('principal', 'confirmada'),
+];
+
+test('os valores do sinalizador', () => {
+  assert.equal(AVISO_DA_CONEXAO_MS, 120000);
+});
+
+test('a medida guarda o estado e os números', () => {
+  const antes = naReuniao();
+  const r = passo(antes, medida('boa', 0, 45));
+  assert.deepEqual(r.estado.qualidade, { estado: 'boa', perda: 0, atraso: 45 });
+  assert.deepEqual(r.efeitos, []);
+  // Só a qualidade muda.
+  assert.deepEqual({ ...r.estado, qualidade: antes.qualidade }, antes);
+  // O número que o navegador não dá fica null, e o que não é número também.
+  assert.deepEqual(passo(antes, medida('instavel', 0.04, null)).estado.qualidade, {
+    estado: 'instavel',
+    perda: 0.04,
+    atraso: null,
+  });
+  assert.deepEqual(passo(antes, { tipo: 'qualidade', estado: 'boa', atraso: 45 }).estado.qualidade, {
+    estado: 'boa',
+    perda: null,
+    atraso: 45,
+  });
+  assert.deepEqual(passo(antes, medida('boa', Number.NaN, '45')).estado.qualidade, {
+    estado: 'boa',
+    perda: null,
+    atraso: null,
+  });
+  // A primeira medida ainda mostra o medindo, já com os números.
+  assert.deepEqual(passo(antes, medida('medindo', 0, 45)).estado.qualidade, {
+    estado: 'medindo',
+    perda: 0,
+    atraso: 45,
+  });
+  // Um estado que não existe fica de fora.
+  semMudar(antes, medida('otima'));
+  semMudar(antes, { tipo: 'qualidade' });
+});
+
+test('virar ruim avisa, no máximo uma vez a cada 2 minutos', () => {
+  const boa = passo(naReuniao(), medida('boa')).estado;
+  let r = passo(boa, medida('ruim', 0.12, 640));
+  assert.deepEqual(r.estado.qualidade, { estado: 'ruim', perda: 0.12, atraso: 640 });
+  assert.deepEqual(r.estado.avisoCurto, avisoDaConexao(1));
+  assert.equal(r.estado.avisos, 1);
+  assert.equal(r.estado.conexaoAvisada, true);
+  assert.deepEqual(r.efeitos, [tempoDoAviso(1), tempoDaConexao]);
+  // Outra medida ruim não avisa de novo: o aviso é o mesmo, e os números andam.
+  r = passo(r.estado, medida('ruim', 0.2, 700));
+  assert.deepEqual(r.estado.avisoCurto, avisoDaConexao(1));
+  assert.deepEqual(r.estado.qualidade, { estado: 'ruim', perda: 0.2, atraso: 700 });
+  assert.deepEqual(r.efeitos, []);
+  // Os 5 s do aviso: ele sai, e o um-a-cada-2-minutos continua gasto.
+  r = passo(r.estado, tempo('avisoCurto:1'));
+  assert.equal(r.estado.avisoCurto, null);
+  assert.equal(r.estado.conexaoAvisada, true);
+  // De volta a boa e a ruim dentro dos 2 minutos: nenhum aviso.
+  r = rodar(r.estado, medida('boa'), medida('ruim'));
+  assert.equal(r.estado.qualidade.estado, 'ruim');
+  assert.equal(r.estado.avisoCurto, null);
+  assert.equal(r.estado.avisos, 1);
+  assert.deepEqual(r.efeitos, []);
+  // Passados os 2 minutos, o tempo sozinho não avisa (a conexão já estava ruim): só a próxima virada.
+  r = passo(r.estado, tempo('conexaoAvisada'));
+  assert.equal(r.estado.conexaoAvisada, false);
+  assert.equal(r.estado.avisoCurto, null);
+  assert.deepEqual(r.efeitos, []);
+  r = passo(r.estado, medida('ruim'));
+  assert.equal(r.estado.avisoCurto, null);
+  assert.deepEqual(r.efeitos, []);
+  r = rodar(r.estado, medida('instavel'), medida('ruim'));
+  assert.deepEqual(r.estado.avisoCurto, avisoDaConexao(2));
+  assert.equal(r.estado.conexaoAvisada, true);
+  assert.deepEqual(r.efeitos, [tempoDoAviso(2), tempoDaConexao]);
+  // O tempo dos 2 minutos sem aviso nenhum gasto não muda nada.
+  semMudar(naReuniao(), tempo('conexaoAvisada'));
+});
+
+test('a primeira medida ruim, logo depois do medindo, também avisa', () => {
+  const r = passo(naReuniao(), medida('ruim', 0.3, null));
+  assert.deepEqual(r.estado.avisoCurto, avisoDaConexao(1));
+  assert.deepEqual(r.efeitos, [tempoDoAviso(1), tempoDaConexao]);
+  // As outras viradas não avisam: para boa, para instável e para o medindo.
+  for (const estado of ['boa', 'instavel', 'medindo']) {
+    const s = passo(naReuniao(), medida(estado));
+    assert.equal(s.estado.avisoCurto, null, estado);
+    assert.equal(s.estado.conexaoAvisada, false, estado);
+    assert.deepEqual(s.efeitos, [], estado);
+  }
+});
+
+test('o cartão do sinalizador abre e fecha', () => {
+  // O botão do sinalizador abre e fecha; o foco já está nele.
+  let r = passo(naReuniao(), clique('qualidade'));
+  assert.equal(r.estado.cartao, true);
+  assert.deepEqual(r.efeitos, []);
+  const aberto = r.estado;
+  r = passo(aberto, clique('qualidade'));
+  assert.equal(r.estado.cartao, false);
+  assert.deepEqual(r.efeitos, []);
+  // O Esc e o clique fora (o fecharCartao) fecham, e o foco fica onde está.
+  r = passo(aberto, clique('fecharCartao'));
+  assert.equal(r.estado.cartao, false);
+  assert.deepEqual(r.efeitos, []);
+  semMudar(naReuniao(), clique('fecharCartao'));
+  // Com o cartão aberto, as medidas continuam chegando a ele.
+  assert.deepEqual(passo(aberto, medida('boa', 0, 45)).estado.qualidade, { estado: 'boa', perda: 0, atraso: 45 });
+  assert.equal(passo(aberto, medida('boa', 0, 45)).estado.cartao, true);
+});
+
+test('abrir o cartão tira o aviso da conexão, e o Ver os detalhes leva o foco ao sinalizador', () => {
+  const avisado = passo(naReuniao(), medida('ruim', 0.12, 640)).estado;
+  assert.deepEqual(avisado.avisoCurto, avisoDaConexao(1));
+  let r = passo(avisado, clique('qualidade'));
+  assert.equal(r.estado.cartao, true);
+  assert.equal(r.estado.avisoCurto, null);
+  assert.deepEqual(r.efeitos, []);
+  // O Ver os detalhes do aviso: o botão some com o aviso, e o foco vai ao botão do sinalizador.
+  r = passo(avisado, clique('verDetalhes'));
+  assert.equal(r.estado.cartao, true);
+  assert.equal(r.estado.avisoCurto, null);
+  assert.deepEqual(r.efeitos, [FOCAR_O_SINAL]);
+  // O tempo do aviso que saiu com o cartão não muda mais nada, e o um-a-cada-2-minutos continua gasto.
+  semMudar(r.estado, tempo('avisoCurto:1'));
+  assert.equal(r.estado.conexaoAvisada, true);
+  // O aviso de uma mensagem não é do sinalizador: ele fica.
+  const comMensagem = passo(naReuniao(), doCarlos('Oi')).estado;
+  r = passo(comMensagem, clique('qualidade'));
+  assert.equal(r.estado.cartao, true);
+  assert.deepEqual(r.estado.avisoCurto, { n: 1, tipo: 'mensagem', nome: 'Carlos Lima', texto: 'Oi' });
+});
+
+test('com o cartão aberto, virar ruim não avisa e não gasta o aviso', () => {
+  const aberto = rodar(naReuniao(), medida('boa'), clique('qualidade')).estado;
+  let r = passo(aberto, medida('ruim', 0.12, 640));
+  assert.deepEqual(r.estado.qualidade, { estado: 'ruim', perda: 0.12, atraso: 640 });
+  assert.equal(r.estado.avisoCurto, null);
+  assert.equal(r.estado.avisos, 0);
+  assert.equal(r.estado.conexaoAvisada, false);
+  assert.deepEqual(r.efeitos, []);
+  // Fechar o cartão com a conexão ainda ruim não avisa: o aviso é da virada.
+  r = passo(r.estado, clique('fecharCartao'));
+  assert.equal(r.estado.avisoCurto, null);
+  assert.deepEqual(passo(r.estado, medida('ruim')).efeitos, []);
+  // A próxima virada, com o cartão fechado, avisa: o aviso não tinha sido gasto.
+  r = rodar(r.estado, medida('boa'), medida('ruim'));
+  assert.deepEqual(r.estado.avisoCurto, avisoDaConexao(1));
+  assert.deepEqual(r.efeitos, [tempoDoAviso(1), tempoDaConexao]);
+});
+
+test('o aviso da mensagem toma o lugar do da conexão, e o contrário', () => {
+  // Um só por vez: o da mensagem chega com o da conexão na tela.
+  let r = rodar(naReuniao(), medida('ruim'), doCarlos('Oi'));
+  assert.deepEqual(r.estado.avisoCurto, { n: 2, tipo: 'mensagem', nome: 'Carlos Lima', texto: 'Oi' });
+  assert.deepEqual(r.efeitos, [tempoDoAviso(2)]);
+  // O tempo do aviso da conexão, que deu lugar ao da mensagem, fica de fora.
+  semMudar(r.estado, tempo('avisoCurto:1'));
+  // O contrário: o da conexão chega com o da mensagem na tela. A mensagem continua contando como não lida.
+  r = rodar(naReuniao(), doCarlos('Oi'), medida('ruim'));
+  assert.deepEqual(r.estado.avisoCurto, avisoDaConexao(2));
+  assert.equal(r.estado.chat.naoLidas, 1);
+  assert.deepEqual(r.efeitos, [tempoDoAviso(2), tempoDaConexao]);
+  semMudar(r.estado, tempo('avisoCurto:1'));
+  // Abrir o chat tira o aviso da mensagem, e não o da conexão.
+  r = passo(r.estado, clique('chat'));
+  assert.equal(r.estado.chat.aberto, true);
+  assert.deepEqual(r.estado.avisoCurto, avisoDaConexao(2));
+  // Com o chat aberto, a conexão que vira ruim avisa também.
+  r = rodar(naReuniao(), clique('chat'), medida('ruim'));
+  assert.deepEqual(r.estado.avisoCurto, avisoDaConexao(1));
+});
+
+test('com a conexão caída, o sinalizador mede de novo', () => {
+  // A conexão ruim, com o aviso dela ainda na tela.
+  const ruim = rodar(naReuniao(), medida('boa'), medida('ruim', 0.12, 640)).estado;
+  assert.deepEqual(ruim.avisoCurto, avisoDaConexao(1));
+  let r = passo(ruim, SEM_CONEXAO);
+  assert.equal(r.estado.tela, 'reuniao');
+  assert.deepEqual(r.estado.qualidade, NO_COMECO);
+  // O aviso "Sua conexão está ruim" sai junto: o sinalizador não diz mais ruim, e vale o cartão "A conexão caiu".
+  assert.equal(r.estado.avisoCurto, null);
+  // A medida que chega com a ligação fora do ar não muda nada.
+  semMudar(r.estado, medida('boa'));
+  semMudar(r.estado, medida('ruim'));
+  // Na volta, o sinalizador continua medindo até a medida seguinte.
+  for (const evento of VOLTA_DA_QUEDA) {
+    r = passo(r.estado, evento);
+    assert.deepEqual(r.estado.qualidade, NO_COMECO, evento.tipo);
+  }
+  assert.equal(r.estado.principal, 'noAr');
+  r = passo(r.estado, medida('boa', 0, 45));
+  assert.deepEqual(r.estado.qualidade, { estado: 'boa', perda: 0, atraso: 45 });
+  // O cartão aberto continua aberto na queda e na volta, mostrando o medindo.
+  r = rodar(naReuniao(), medida('boa'), clique('qualidade'), SEM_CONEXAO, ...VOLTA_DA_QUEDA);
+  assert.equal(r.estado.cartao, true);
+  assert.deepEqual(r.estado.qualidade, NO_COMECO);
+  // A ligação que o servidor terminou sem aviso (os 2 s antes do saiu): o sinalizador também volta ao começo.
+  r = rodar(naReuniao(), medida('boa'), ligacao('principal', 'terminou'));
+  assert.equal(r.estado.tela, 'reuniao');
+  assert.deepEqual(r.estado.qualidade, NO_COMECO);
+  // O medindo que já tinha os números da primeira medida os perde também.
+  r = rodar(naReuniao(), medida('medindo', 0, 45), SEM_CONEXAO);
+  assert.deepEqual(r.estado.qualidade, NO_COMECO);
+});
+
+test('o aviso da conexão ruim sai quando o sinalizador deixa de dizer ruim', () => {
+  // Duas medidas sem número levam o medidor de volta ao medindo, em 4 s: antes dos 5 s do aviso.
+  const avisado = passo(naReuniao(), medida('ruim', 0.12, 640)).estado;
+  const r = passo(avisado, medida('medindo', null, null));
+  assert.deepEqual(r.estado.qualidade, NO_COMECO);
+  assert.equal(r.estado.avisoCurto, null);
+  assert.deepEqual(r.efeitos, []);
+  // O aviso da mensagem não depende do sinalizador.
+  const s = rodar(naReuniao(), medida('ruim'), doCarlos('Oi'), medida('medindo', null, null));
+  assert.deepEqual(s.estado.avisoCurto, { n: 2, tipo: 'mensagem', nome: 'Carlos Lima', texto: 'Oi' });
+});
+
+test('fora da tela da reunião, o cartão fecha e o sinalizador volta ao começo', () => {
+  const dentro = rodar(naReuniao(), medida('instavel', 0.04, 210), clique('qualidade')).estado;
+  assert.equal(dentro.cartao, true);
+  const fins = [
+    (e) => passo(e, clique('sair')).estado,
+    (e) => passo(e, mensagem({ tipo: 'tirado' })).estado,
+    (e) => passo(e, mensagem({ tipo: 'encerrada' })).estado,
+    desistirDeVoltar,
+  ];
+  for (const [i, fim] of fins.entries()) {
+    const depois = fim(dentro);
+    assert.equal(depois.tela, 'aviso', `o fim ${i}`);
+    assert.equal(depois.cartao, false, `o fim ${i}`);
+    assert.deepEqual(depois.qualidade, NO_COMECO, `o fim ${i}`);
+  }
+  // Fora da reunião, os cliques do sinalizador e as medidas não fazem nada.
+  for (const estado of [naEntrada(), aguardando(), entrando(), saiu()]) {
+    for (const botao of ['qualidade', 'verDetalhes', 'fecharCartao']) semMudar(estado, clique(botao));
+    semMudar(estado, medida('ruim'));
+  }
+});
+
+test('o um-a-cada-2-minutos vale também para quem sai e entra de novo', () => {
+  const fora = rodar(naReuniao(), medida('ruim'), clique('sair')).estado;
+  assert.equal(fora.avisoCurto, null);
+  assert.equal(fora.conexaoAvisada, true);
+  const deNovo = [
+    clique('entrarDeNovo'),
+    midia('ligado', 'ligado'),
+    mensagem({ tipo: 'senha', senha: 'senha-3' }),
+    ligacao('principal', 'confirmada'),
+  ];
+  // Dentro dos 2 minutos, a virada para ruim da entrada nova não avisa.
+  let r = rodar(fora, ...deNovo, medida('ruim'));
+  assert.equal(r.estado.tela, 'reuniao');
+  assert.equal(r.estado.qualidade.estado, 'ruim');
+  assert.equal(r.estado.avisoCurto, null);
+  // O tempo dos 2 minutos chega com a pessoa fora da reunião, e vale: a entrada seguinte avisa.
+  r = passo(fora, tempo('conexaoAvisada'));
+  assert.equal(r.estado.conexaoAvisada, false);
+  assert.deepEqual(r.efeitos, []);
+  r = rodar(r.estado, ...deNovo, medida('ruim'));
+  assert.deepEqual(r.estado.avisoCurto, avisoDaConexao(2));
 });

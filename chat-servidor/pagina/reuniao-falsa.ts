@@ -2,8 +2,9 @@
 // a rede falsa (rede-falsa.ts), a ligação falsa e o relógio parado. O mosaico de mentira é um <canvas> com uma cor em
 // cada célula, ligado ao #mosaico pelo captureStream(0): cada imagem sai quando o teste pede (o requestFrame() da
 // faixa), e não por um relógio. O palco de mentira é a mensagem palco, mandada pelo canal falso. As cores: a Ana
-// vermelha, o Carlos azul, a Maria amarela, e a tela verde. Os testes dos quadros (palco.spec.ts) e os do chat da
-// reunião (painel.spec.ts) partem daqui.
+// vermelha, o Carlos azul, a Maria amarela, e a tela verde. Os números da ligação também são de mentira (o comARede):
+// o sinalizador de qualidade lê o que o teste diz. Os testes dos quadros (palco.spec.ts), os do chat da reunião
+// (painel.spec.ts) e os do sinalizador (qualidade.spec.ts) partem daqui.
 import { expect, type Locator, type Page } from '@playwright/test';
 import { AGORA, MARCADA } from './ligacoes-falsas';
 import { CODIGO, RedeFalsa, type Canal, type Mensagem } from './rede-falsa';
@@ -19,15 +20,21 @@ export const ACEITO: Mensagem = {
 };
 
 // Uma ligação falsa no lugar do ligacao.js: ela confirma, e o teste dá os eventos dela. Ela não mexe no #mosaico: o
-// mosaico de mentira é do teste.
+// mosaico de mentira é do teste. Os números dela (o getStats de mentira) são os do window.numerosFalsos, que o
+// comARede põe; sem ele, não há números. O window.leituras conta as vezes em que a página os pediu.
 export const LIGACAO_FALSA = `
 export function criarLigacoes(aoEvento) {
   window.ligacaoFalsa = aoEvento;
+  window.leituras = 0;
   return {
     ligar({ qual }) { setTimeout(() => aoEvento({ tipo: 'ligacao', qual, o: 'confirmada' }), 0); },
     desligar() {},
     trocarCamera() { setTimeout(() => aoEvento({ tipo: 'cameraTrocada', ok: true }), 0); },
     trocarMicrofone() {},
+    numeros() {
+      window.leituras += 1;
+      return Promise.resolve(window.numerosFalsos?.() ?? null);
+    },
   };
 }`;
 
@@ -310,6 +317,92 @@ export async function naReuniaoCom(page: Page, p: Palco): Promise<NaReuniao> {
   const r = await naReuniao(page);
   await comOPalco(page, r.canal, p);
   return r;
+}
+
+// ---- A rede de mentira do sinalizador de qualidade. ----
+
+/** A rede que os números de mentira mostram: a perda, uma fração (0.04 são 4%), e o atraso, em ms. */
+export interface RedeDeMentira {
+  perda: number;
+  /** Sem ele, o navegador de mentira não dá o atraso. */
+  atraso?: number;
+}
+
+/**
+ * Os números de mentira da ligação falsa (o window.numerosFalsos, que o numeros() dela devolve): um relatório como o
+ * do getStats, com contadores que andam a cada leitura (100 pacotes de som e 250 de vídeo, com a perda pedida, e 50
+ * imagens) e o atraso pedido no par de endereços em uso. Chamado de novo, muda a perda e o atraso das próximas
+ * leituras.
+ */
+export async function comARede(page: Page, rede: RedeDeMentira): Promise<void> {
+  await page.evaluate((rede) => {
+    const w = window as unknown as {
+      redeFalsa?: { perda: number; atraso: number | null };
+      numerosFalsos?: () => Map<string, object>;
+    };
+    w.redeFalsa = { perda: rede.perda, atraso: rede.atraso ?? null };
+    if (w.numerosFalsos) return;
+    const som = { recebidos: 0, perdidos: 0 };
+    const video = { recebidos: 0, perdidos: 0 };
+    let imagens = 0;
+    const andar = (c: { recebidos: number; perdidos: number }, pacotes: number, perda: number) => {
+      const perdidos = Math.round(pacotes * perda);
+      c.perdidos += perdidos;
+      c.recebidos += pacotes - perdidos;
+    };
+    w.numerosFalsos = () => {
+      const { perda, atraso } = w.redeFalsa ?? { perda: 0, atraso: null };
+      andar(som, 100, perda);
+      andar(video, 250, perda);
+      imagens += 50;
+      const timestamp = Date.now();
+      const par: Record<string, unknown> = { id: 'par', type: 'candidate-pair', timestamp, state: 'succeeded' };
+      if (atraso !== null) par.currentRoundTripTime = atraso / 1000;
+      return new Map<string, object>([
+        [
+          'som',
+          {
+            id: 'som',
+            type: 'inbound-rtp',
+            kind: 'audio',
+            timestamp,
+            packetsReceived: som.recebidos,
+            packetsLost: som.perdidos,
+          },
+        ],
+        [
+          'video',
+          {
+            id: 'video',
+            type: 'inbound-rtp',
+            kind: 'video',
+            timestamp,
+            packetsReceived: video.recebidos,
+            packetsLost: video.perdidos,
+            framesDecoded: imagens,
+          },
+        ],
+        ['transporte', { id: 'transporte', type: 'transport', timestamp, selectedCandidatePairId: 'par' }],
+        ['par', par],
+      ]);
+    };
+  }, rede);
+}
+
+/** Quantas vezes a página pediu os números à ligação falsa. */
+export const leituras = (page: Page) =>
+  page.evaluate(() => (window as unknown as { leituras?: number }).leituras ?? 0);
+
+/**
+ * O relógio anda 2 s de cada vez, e a página pede os números uma vez em cada uma: a medida já passou pelo cérebro
+ * quando a promessa acaba.
+ */
+export async function medir(page: Page, vezes = 1): Promise<void> {
+  for (let i = 0; i < vezes; i++) {
+    const antes = await leituras(page);
+    await page.clock.runFor(2_000);
+    await expect.poll(() => leituras(page), { message: 'uma leitura a cada 2 s' }).toBe(antes + 1);
+  }
 }
 
 // ---- A ligação que cai e volta. ----
