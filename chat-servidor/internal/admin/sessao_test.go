@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -115,6 +116,58 @@ func TestEntrar_SenhaCerta(t *testing.T) {
 	}
 	if c := p.a.Contar(`SELECT COUNT(*) FROM sessoes_admin WHERE token_hash = ? OR csrf = ?`, []byte(token), token); c != 0 {
 		t.Fatal("o token do cookie ficou no banco")
+	}
+}
+
+// Duas abas na entrada, no mesmo navegador: a que abriu primeiro continua valendo. As páginas dos
+// ramais vão sozinhas para a entrada quando a sessão vence, todas as abas de uma vez; se cada
+// visita tirasse um token novo, só a última aba a chegar conseguiria entrar.
+func TestEntrar_DuasAbas(t *testing.T) {
+	p := novoPainel(t)
+	n := p.navegador(t)
+	_, abaA := n.get("/admin/entrar")
+	tokenA := csrfDe(t, abaA)
+	_, abaB := n.get("/admin/entrar")
+	if tokenB := csrfDe(t, abaB); tokenB != tokenA {
+		t.Fatal("a segunda aba ganhou outro token: a primeira seria recusada")
+	}
+	if c := cookieDe(t, n, "entrada"); c != tokenA {
+		t.Fatal("o cookie da entrada não é o token das duas abas")
+	}
+	// A senha errada mostra a entrada de novo, com o mesmo token: a outra aba continua valendo.
+	resp, corpo := n.post("/admin/entrar", url.Values{"usuario": {usuarioTeste}, "senha": {senhaErrada}, "csrf": {tokenA}})
+	esperarStatus(t, resp, corpo, http.StatusUnauthorized)
+	if csrfDe(t, corpo) != tokenA {
+		t.Fatal("depois da senha errada, a entrada veio com outro token")
+	}
+	// A aba que abriu primeiro entra.
+	resp, _ = n.post("/admin/entrar", url.Values{"usuario": {usuarioTeste}, "senha": {senhaTeste}, "csrf": {tokenA}})
+	esperarIr(t, resp, "/admin/")
+	// A outra aba continua mostrando a entrada, com o token que a primeira gastou. Quem preenche e
+	// manda essa entrada já está dentro: vai para a lista, em vez de ser recusado.
+	resp, _ = n.post("/admin/entrar", url.Values{"usuario": {usuarioTeste}, "senha": {senhaTeste}, "csrf": {tokenA}})
+	esperarIr(t, resp, "/admin/")
+	if resp, _ := n.get("/admin/"); resp.StatusCode != http.StatusOK {
+		t.Fatalf("depois da entrada da segunda aba, a lista respondeu %d", resp.StatusCode)
+	}
+
+	// Quem entrou gastou o token: depois de sair, a entrada tira outro.
+	_, corpo = n.get("/admin/")
+	n.csrf = csrfDe(t, corpo)
+	resp, _ = n.acao("/admin/sair", nil)
+	esperarIr(t, resp, "/admin/entrar")
+	_, corpo = n.get("/admin/entrar")
+	if novo := csrfDe(t, corpo); novo == tokenA || !regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`).MatchString(novo) {
+		t.Fatal("depois de entrar e sair, a entrada veio com o token antigo, ou sem um token inteiro")
+	}
+
+	// Um cookie que não tem a forma de um token não é aproveitado.
+	outro := p.navegador(t)
+	u, _ := url.Parse(p.srv.URL + "/admin/")
+	outro.c.Jar.SetCookies(u, []*http.Cookie{{Name: "entrada", Value: "curto", Path: "/admin"}})
+	_, corpo = outro.get("/admin/entrar")
+	if tk := csrfDe(t, corpo); !regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`).MatchString(tk) || cookieDe(t, outro, "entrada") != tk {
+		t.Fatal("a entrada aproveitou um cookie que não é um token")
 	}
 }
 

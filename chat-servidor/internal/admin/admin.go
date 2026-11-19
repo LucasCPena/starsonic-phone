@@ -7,12 +7,16 @@
 // código" e o que busca de novo, a cada 30 s, as duas páginas que mostram o estado dos ramais
 // (a lista das empresas e a de uma empresa). Toda página leva Cache-Control: no-store, porque a
 // página da empresa mostra o código, que é segredo. Só os estáticos (a fonte, o logo, o estilo e
-// os scripts, sem segredo) ficam um dia no navegador: private, max-age=86400.
+// os scripts, sem segredo) ficam um dia no navegador: private, max-age=86400. Por isso as
+// páginas pedem cada um com a versão dele no endereço (?v=…, o começo do SHA-256 do arquivo):
+// depois de uma atualização do chat, o endereço é outro, e o navegador busca o arquivo novo.
 package admin
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"html/template"
@@ -38,6 +42,35 @@ var paginasFS embed.FS
 
 //go:embed estatico/*
 var estaticosFS embed.FS
+
+// versoes é a versão de cada arquivo de estatico/: os 12 primeiros caracteres do SHA-256 dele,
+// em hexadecimal.
+var versoes = func() map[string]string {
+	arquivos, err := estaticosFS.ReadDir("estatico")
+	if err != nil {
+		panic("admin: ler a pasta estatico: " + err.Error())
+	}
+	v := make(map[string]string, len(arquivos))
+	for _, a := range arquivos {
+		dados, err := estaticosFS.ReadFile("estatico/" + a.Name())
+		if err != nil {
+			panic("admin: ler estatico/" + a.Name() + ": " + err.Error())
+		}
+		h := sha256.Sum256(dados)
+		v[a.Name()] = hex.EncodeToString(h[:])[:12]
+	}
+	return v
+}()
+
+// enderecoEstatico é a função "estatico" dos modelos: o endereço de um arquivo de estatico/,
+// com a versão dele. Um nome que não está na pasta é um erro do modelo, e a página não sai.
+func enderecoEstatico(nome string) (string, error) {
+	v, ok := versoes[nome]
+	if !ok {
+		return "", fmt.Errorf("o arquivo %q não está em estatico/", nome)
+	}
+	return "/admin/estatico/" + nome + "?v=" + v, nil
+}
 
 // Os tipos dos estáticos, sem depender da tabela de tipos do sistema.
 var tiposEstaticos = map[string]string{
@@ -109,7 +142,8 @@ func Novo(d Deps) http.Handler {
 		entradas: limites.Nova(maxEntradas, periodoEntradas, d.Banco.Relogio()),
 		teste:    d.Teste, telas: map[string]*template.Template{}}
 	for _, nome := range []string{"entrar", "empresas", "nova", "empresa", "apagar", "reunioes", "erro"} {
-		p.telas[nome] = template.Must(template.ParseFS(paginasFS, "paginas/base.html", "paginas/"+nome+".html"))
+		p.telas[nome] = template.Must(template.New("base.html").Funcs(template.FuncMap{"estatico": enderecoEstatico}).
+			ParseFS(paginasFS, "paginas/base.html", "paginas/"+nome+".html"))
 	}
 
 	mux := http.NewServeMux()
@@ -238,9 +272,10 @@ func (p *painel) empresaDoCaminho(w http.ResponseWriter, r *http.Request, s sess
 	return e, true
 }
 
-// GET /admin/estatico/{arquivo}: a folha de estilo, o script, a fonte, a licença dela e o logo.
+// GET /admin/estatico/{arquivo}: a folha de estilo, os scripts, a fonte, a licença dela e o logo.
 // Só sai o que está embutido na pasta estatico: o embed.FS recusa os caminhos com "..", e o
-// embed não leva os arquivos com ponto na frente.
+// embed não leva os arquivos com ponto na frente. O ?v= do endereço não é lido: ele só faz o
+// navegador pedir de novo quando o arquivo muda.
 func (p *painel) estatico(w http.ResponseWriter, r *http.Request) {
 	nome := r.PathValue("arquivo")
 	tipo, ok := tiposEstaticos[path.Ext(nome)]

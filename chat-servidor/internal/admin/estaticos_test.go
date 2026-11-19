@@ -1,6 +1,8 @@
 package admin_test
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -172,15 +174,16 @@ func TestEstatico_Atualizar(t *testing.T) {
 		}
 	}
 
-	const script = `<script src="/admin/estatico/atualizar.js" defer></script>`
+	script := regexp.MustCompile(`<script src="/admin/estatico/atualizar\.js\?v=[0-9a-f]{12}" defer></script>`)
 	const aviso = `<p class="aviso-parado" id="sem-atualizar" role="status" hidden></p>`
 	for _, c := range []string{"/admin/", fmt.Sprintf("/admin/empresas/%d", e.ID)} {
 		resp, corpo := n.get(c)
 		esperarStatus(t, resp, corpo, http.StatusOK)
-		for _, s := range []string{script, aviso} {
-			if strings.Count(corpo, s) != 1 {
-				t.Errorf("GET %s: a página tem %d vezes %q; queria 1", c, strings.Count(corpo, s), s)
-			}
+		if n := len(script.FindAllString(corpo, -1)); n != 1 {
+			t.Errorf("GET %s: a página pede o atualizar.js %d vezes; queria 1", c, n)
+		}
+		if strings.Count(corpo, aviso) != 1 {
+			t.Errorf("GET %s: a página tem %d vezes %q; queria 1", c, strings.Count(corpo, aviso), aviso)
 		}
 		// O aviso é a primeira coisa do conteúdo.
 		if !regexp.MustCompile(`<main class="conteudo">\s*` + regexp.QuoteMeta(aviso)).MatchString(corpo) {
@@ -192,6 +195,52 @@ func TestEstatico_Atualizar(t *testing.T) {
 	for _, c := range []string{"/admin/reunioes", "/admin/empresas/nova", fmt.Sprintf("/admin/empresas/%d/apagar", e.ID)} {
 		if _, corpo := n.get(c); strings.Contains(corpo, "atualizar.js") || strings.Contains(corpo, "sem-atualizar") {
 			t.Errorf("GET %s: a página pede o atualizar.js ou tem o aviso", c)
+		}
+	}
+}
+
+// Os endereços dos arquivos de estatico/ levam a versão do arquivo, o começo do SHA-256 dele. O
+// navegador guarda cada arquivo por um dia: é o endereço novo que o faz buscar o arquivo novo
+// logo depois de uma atualização do chat, em vez de desenhar a página nova com o estilo velho.
+func TestEstatico_Versao(t *testing.T) {
+	p := novoPainel(t)
+	e := p.a.Empresa("ACME Comércio Ltda")
+	n := p.logado(t)
+	anonimo := p.navegador(t)
+	reEstatico := regexp.MustCompile(`\b(?:src|href)="(/admin/estatico/([^"?]+)(?:\?v=([^"]*))?)"`)
+	vistos := map[string]bool{}
+	conferir := func(nome, corpo string) {
+		t.Helper()
+		achados := reEstatico.FindAllStringSubmatch(corpo, -1)
+		if len(achados) == 0 {
+			t.Fatalf("%s: a página não pede nenhum arquivo de estatico/:\n%s", nome, corpo)
+		}
+		for _, m := range achados {
+			endereco, arquivo, versao := m[1], m[2], m[3]
+			resp, dados := anonimo.get("/admin/estatico/" + arquivo)
+			esperarStatus(t, resp, dados, http.StatusOK)
+			h := sha256.Sum256([]byte(dados))
+			if quer := hex.EncodeToString(h[:])[:12]; versao != quer {
+				t.Errorf("%s: o %s vem com a versão %q; queria %q, o começo do SHA-256 dele", nome, arquivo, versao, quer)
+			}
+			// O endereço com a versão serve o mesmo arquivo, com o mesmo prazo no navegador.
+			resp, comVersao := anonimo.get(endereco)
+			if resp.StatusCode != http.StatusOK || comVersao != dados {
+				t.Errorf("%s: GET %s = %d, %d bytes; queria os %d bytes do arquivo", nome, endereco, resp.StatusCode, len(comVersao), len(dados))
+			}
+			conferirCabecalhos(t, "GET "+endereco, resp, comVersao)
+			vistos[arquivo] = true
+		}
+	}
+	_, corpo := anonimo.get("/admin/entrar")
+	conferir("a entrada", corpo)
+	for _, c := range []string{"/admin/", fmt.Sprintf("/admin/empresas/%d", e.ID), "/admin/reunioes", "/admin/nada"} {
+		_, corpo := n.get(c)
+		conferir("GET "+c, corpo)
+	}
+	for _, arquivo := range []string{"estilo.css", "logo-negativo.png", "copiar.js", "atualizar.js"} {
+		if !vistos[arquivo] {
+			t.Errorf("nenhuma página pediu o %s", arquivo)
 		}
 	}
 }

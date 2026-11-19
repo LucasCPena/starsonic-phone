@@ -588,6 +588,7 @@ Atualize só o chat (`docs/chat-servidor.md`, passo 7), num horário sem reuniõ
 | 28.5 | Tire o cabo de rede do PC (ou desligue o Wi-Fi) e espere. Depois, ligue a rede de novo. | Em até 2 minutos sem a rede, a pessoa passa a `Offline`. Com a rede de volta, ela volta a `No chat`. | ☐ | ☐ |
 | 28.6 | Num PC com duas contas no app, as duas já usadas nesse PC, deixe uma em uso, espere a página mostrá-la `No chat` e troque para a outra conta. | O PC conta só para a pessoa da conta em uso: ela aparece `No chat`. A outra passa a `Offline`, e na linha dela esse PC tem o anel cinza. | ☐ | ☐ |
 | 28.7 | Deixe a página da empresa aberta por mais de 1 minuto e, só então, clique no `Tirar do chat` de uma pessoa de teste. | A pessoa sai da lista, como antes: os botões continuam valendo depois de a página se atualizar sozinha. | ☐ | ☐ |
+| 28.8 | No computador em que a página de administração está aberta, desligue a rede dele (o Wi-Fi, ou o cabo) por 1 minuto. Se a página for comprida, role para cima e para baixo. Depois, ligue a rede de novo. | Em até 1 minuto sem a rede, aparece uma faixa presa embaixo da janela, com `Sem atualizar desde as`, a hora, e `A página tenta de novo sozinha.` Ela continua à vista enquanto você rola, e as linhas não mudam de lugar quando ela aparece. Com a rede de volta, a faixa some em até 30 segundos. | ☐ | ☐ |
 
 ## Onde cada critério de sucesso é verificado
 
