@@ -23,6 +23,7 @@
 #include "EngineEvents.h"
 #include "EngineLog.h"
 #include "PushDataCheck.h"
+#include "RoomVideo.h"
 #include "Text.h"
 #include "Video.h"
 #include "VideoRenderer.h"
@@ -64,6 +65,7 @@ public:
     ~Impl() {
 #if PJMEDIA_HAS_VIDEO
         SetRendererSink(nullptr);   // nenhum quadro ao sink do app daqui em diante
+        SetRendererTap(nullptr);    // nem à loja da sala
 #endif
         // Daqui em diante nenhuma ligação nova e nenhum evento (o destrutor não avisa o listener).
         calls_.Close();
@@ -103,8 +105,12 @@ public:
             ep.logConfig.writer = new LogForwarder(listener_);
             endpoint_->libInit(ep);
 #if PJMEDIA_HAS_VIDEO
-            // O desenhista nosso, com o vídeo da PJSIP já de pé (o libInit), antes de qualquer conta (o
-            // ResolveVideoDevices, no fim, acha o id dele).
+            // Os dispositivos da sala e o desenhista nosso, com o vídeo da PJSIP já de pé (o libInit), antes de
+            // qualquer conta (o ResolveVideoDevices, no fim, acha os ids). A sala vem antes do desenhista: ele segue
+            // logo antes das câmeras que entram depois na lista, como antes da sala, e continua o padrão de saída da
+            // PJSIP.
+            std::string roomError;
+            if (!RegisterRoomDevices(&roomError)) Log(1, "dispositivos da sala recusados: " + roomError);
             std::string rendererError;
             if (RegisterVideoRenderer(&rendererError) == PJMEDIA_VID_INVALID_DEV) {
                 Log(1, "desenhista de video recusado: " + rendererError);
@@ -135,8 +141,7 @@ public:
             // câmera fora dos callbacks).
             VideoSettings settings;
             settings.h264Available = config_.h264Available;
-            ApplyVideoSettings(settings);
-            calls_.SetVideoSettings(settings);
+            calls_.SetVideoSettings(settings, [this, &settings] { ApplyVideoSettings(settings); });
             calls_.Start(endpoint_.get());
             calls_.SetVideoDevices(ResolveVideoDevices());
 #endif
@@ -351,13 +356,14 @@ public:
 #if PJMEDIA_HAS_VIDEO
         std::lock_guard<std::mutex> lock(apiMutex_);
         if (!RegisterThread()) return;
-        ApplyVideoSettings(settings);
+        // A taxa da conta é a da escolhida, o teto (a qualidade da sala nunca passa dela).
         const unsigned bandwidth = static_cast<unsigned>(ValuesOf(settings.quality).kbps) * 1000u;
         if (bandwidth != videoBandwidth_) {
             videoBandwidth_ = bandwidth;
             if (account_) account_->SetVideoBandwidth(videoBandwidth_);
         }
-        calls_.SetVideoSettings(settings);
+        // As prioridades e o fmtp daqui, e a qualidade da tabela.
+        calls_.SetVideoSettings(settings, [this, &settings] { ApplyVideoSettings(settings); });
 #else
         (void)settings;
 #endif
@@ -386,6 +392,26 @@ public:
 #endif
         return RegisterThread() && calls_.Answer(callId, video);
     }
+
+    // A sala só existe com o vídeo: sem ele (o Android), nenhum convidado é chamado.
+    int RoomAdd(const std::string& number) {
+        std::lock_guard<std::mutex> lock(apiMutex_);
+        if (!RegisterThread()) return -1;
+#if PJMEDIA_HAS_VIDEO
+        if (!account_ || number.empty()) {
+            Log(2, account_ ? "convidado da sala recusado: numero vazio" : "convidado da sala recusado: nao ha conta");
+            return -1;
+        }
+        return calls_.RoomAdd(*account_, CallUri(number));
+#else
+        (void)number;
+        Log(2, "convidado da sala recusado: sem video neste motor");
+        return -1;
+#endif
+    }
+
+    // Sem a apiMutex_ e sem o PJSIP, como o CallCount: só a tabela.
+    RoomInfo Room() { return calls_.Room(); }
 
     bool SetCamera(int callId, bool on) {
 #if PJMEDIA_HAS_VIDEO
@@ -667,11 +693,11 @@ private:
 #if PJMEDIA_HAS_VIDEO
     // As escolhas do vídeo na PJSIP, para as próximas ofertas e respostas: a prioridade de cada codec (255, 254 e 253
     // na ordem do CodecOrder; 0 nos outros, que a PJSIP nunca oferece nem aceita, como o H.264 sem o módulo, que ela
-    // registra mesmo assim), a qualidade no codificador de cada um (o tamanho, os quadros por segundo e a taxa) e o
-    // fmtp do H.264 (Constrained Baseline, nível 3.1, o modo 1 de empacotamento).
+    // registra mesmo assim) e o fmtp do H.264 (Constrained Baseline, nível 3.1, o modo 1 de empacotamento). A qualidade
+    // no codificador de cada um é da tabela (o alvo: a escolhida, ou o teto da sala), que chama esta no
+    // SetVideoSettings dela, com a trava em que os parâmetros dos codecs mudam.
     void ApplyVideoSettings(const VideoSettings& settings) {
         const std::vector<VideoCodec> order = CodecOrder(settings);
-        const QualityValues quality = ValuesOf(settings.quality);
         pjsua_codec_info codecs[32];
         unsigned count = PJ_ARRAY_SIZE(codecs);
         pj_status_t status = pjsua_vid_enum_codecs(codecs, &count);
@@ -689,35 +715,27 @@ private:
             }
             status = pjsua_vid_codec_set_priority(&id, static_cast<pj_uint8_t>(priority));
             if (status != PJ_SUCCESS) Log(1, "prioridade do codec " + name + ": " + endpoint_->utilStrError(status));
+            if (!SameCodecId(codec, "H264")) continue;
             pjmedia_vid_codec_param param;
             status = pjsua_vid_codec_get_param(&id, &param);
             if (status != PJ_SUCCESS) {
                 Log(1, "parametros do codec " + name + ": " + endpoint_->utilStrError(status));
                 continue;
             }
-            pjmedia_video_format_detail& encoder = param.enc_fmt.det.vid;
-            encoder.size.w = static_cast<unsigned>(quality.width);
-            encoder.size.h = static_cast<unsigned>(quality.height);
-            encoder.fps.num = quality.fps;
-            encoder.fps.denum = 1;
-            encoder.avg_bps = static_cast<pj_uint32_t>(quality.kbps) * 1000u;
-            encoder.max_bps = encoder.avg_bps;
-            if (SameCodecId(codec, "H264")) {
-                // Como o fmtp de fábrica da PJSIP (o espaço antes do segundo nome sai no SDP depois do ";").
-                param.dec_fmtp.cnt = 2;
-                param.dec_fmtp.param[0].name = pj_str(const_cast<char*>("profile-level-id"));
-                param.dec_fmtp.param[0].val = pj_str(const_cast<char*>("42e01f"));
-                param.dec_fmtp.param[1].name = pj_str(const_cast<char*>(" packetization-mode"));
-                param.dec_fmtp.param[1].val = pj_str(const_cast<char*>("1"));
-            }
+            // Como o fmtp de fábrica da PJSIP (o espaço antes do segundo nome sai no SDP depois do ";").
+            param.dec_fmtp.cnt = 2;
+            param.dec_fmtp.param[0].name = pj_str(const_cast<char*>("profile-level-id"));
+            param.dec_fmtp.param[0].val = pj_str(const_cast<char*>("42e01f"));
+            param.dec_fmtp.param[1].name = pj_str(const_cast<char*>(" packetization-mode"));
+            param.dec_fmtp.param[1].val = pj_str(const_cast<char*>("1"));
             status = pjsua_vid_codec_set_param(&id, &param);   // a PJSIP copia os textos do fmtp
             if (status != PJ_SUCCESS) Log(1, "parametros do codec " + name + ": " + endpoint_->utilStrError(status));
         }
     }
 
     // Os ids de agora do desenhista e da câmera escolhida (pelo nome; vazio ou ausente da lista: a primeira câmera),
-    // que também vão para a conta: as próximas ligações montam o vídeo com eles. Os ids da PJSIP mudam a cada releitura
-    // da lista. Com a apiMutex_ (ou no Create).
+    // que também vão para a conta (com o lugar 1 da sala, sem câmera): as próximas ligações montam o vídeo com eles. Os
+    // ids da PJSIP mudam a cada releitura da lista. Com a apiMutex_ (ou no Create).
     VideoDeviceIds ResolveVideoDevices() {
         VideoDeviceIds ids;
         ids.renderer = FindVideoRenderer();
@@ -731,13 +749,17 @@ private:
         }
         renderDevice_ = ids.renderer;
         cameraDevice_ = ids.camera;
+        firstSeatDevice_ = FindRoomDevices().seats[0];
         if (account_) account_->SetVideoDevices(AccountCamera(), AccountRenderer());
         return ids;
     }
 
-    // A câmera e o desenhista da conta. Sem câmera, o id inválido: a PJSIP não acha câmera nenhuma para a ligação, como
-    // num computador sem câmera (e nenhuma usa: sem câmera, o vídeo só recebe).
-    pjmedia_vid_dev_index AccountCamera() const { return cameraDevice_; }
+    // A câmera e o desenhista da conta. Sem câmera, o lugar 1 da sala: a PJSIP só monta um vídeo que manda (o sendrecv
+    // de um convidado) com uma captura, e o convidado passa ao lugar dele antes de mandar. As ligações comuns seguem só
+    // recebendo sem câmera (a tabela pede o vídeo só para receber).
+    pjmedia_vid_dev_index AccountCamera() const {
+        return cameraDevice_ != PJMEDIA_VID_INVALID_DEV ? cameraDevice_ : firstSeatDevice_;
+    }
     // A ligação guarda o desenhista da conta do começo ao fim e o usa em cada vídeo que monta de novo (a espera, a
     // retomada), sem um jeito de trocá-lo: com o id padrão, que a PJSIP acha de novo a cada vez, a ligação segue com o
     // desenhista nosso depois de uma releitura que mude os ids. Só quando o padrão é o nosso (o único de saída nas
@@ -913,6 +935,7 @@ private:
     // taxa do vídeo das contas, em bit/s (a da qualidade das escolhas).
     pjmedia_vid_dev_index renderDevice_ = PJMEDIA_VID_INVALID_DEV;
     pjmedia_vid_dev_index cameraDevice_ = PJMEDIA_VID_INVALID_DEV;
+    pjmedia_vid_dev_index firstSeatDevice_ = PJMEDIA_VID_INVALID_DEV;   // o lugar 1 da sala (a câmera da conta sem uma)
     std::string wantedCamera_;
     unsigned videoBandwidth_ = static_cast<unsigned>(ValuesOf(VideoQuality::Medium).kbps) * 1000u;
 #endif
@@ -998,6 +1021,10 @@ void SipEngine::RefreshVideoDevices() { impl_->RefreshVideoDevices(); }
 bool SipEngine::StartCameraTest() { return impl_->StartCameraTest(); }
 
 void SipEngine::StopCameraTest() { impl_->StopCameraTest(); }
+
+int SipEngine::RoomAdd(const std::string& number) { return impl_->RoomAdd(number); }
+
+RoomInfo SipEngine::Room() const { return impl_->Room(); }
 
 bool SipEngine::Reject(int callId) { return impl_->Reject(callId); }
 

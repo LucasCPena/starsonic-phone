@@ -1,0 +1,2 @@
+Videochamada: ligue e atenda com vídeo, abra a imagem grande ou em tela cheia, converse pelo chat durante a ligação e veja quem é o porteiro antes de atender. O técnico escolhe os codecs, a qualidade e os porteiros na área do administrador.
+Esta é uma versão de teste.

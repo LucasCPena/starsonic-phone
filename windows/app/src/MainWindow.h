@@ -19,7 +19,8 @@
 // A janela tambem cuida da bandeja (Tray) e do aviso de ligacao recebida (NoticeWindow), lendo o estado que vai para
 // a interface (ShellState): o "fechar" da barra esconde a janela na bandeja (o WebView continua rodando: o toque e
 // dele); com uma ligacao tocando e a janela fora da frente (escondida, minimizada ou atras de outra), o aviso aparece
-// no canto; o Atender do aviso traz a janela para a frente. O logoff ou o desligamento do Windows (WM_ENDSESSION)
+// no canto ((0.3.0-rc.2) com ela na frente, so o do porteiro tocando como a segunda ligacao, com a imagem dele:
+// ShowsNotice); o Atender do aviso traz a janela para a frente. O logoff ou o desligamento do Windows (WM_ENDSESSION)
 // chama callbacks.endSession, que faz o Sair com uma espera curta. (rc.3) O icone da bandeja que muda vai ao
 // diagnostico ("bandeja: <icone>"), e o servidor da conta e se ela esta conectada, ao monitor de rede
 // (callbacks.account). (0.2.0) O chat: o aviso de uma mensagem sai pela bandeja, e o clique nele traz a janela para a
@@ -158,6 +159,8 @@ public:
     SharedMemoryPages& VideoPages() { return videoPages_; }
     // (0.3.0) O modo da janela do video, na thread da janela (o main.cpp chega aqui pelo RunOnWindow).
     void SetVideoMode(VideoMode mode);
+    // (0.3.0) A altura do aviso de ligacao recebida (o gancho noticeHeight), em pixels logicos, na thread da janela.
+    void SetNoticeHeight(int logicalHeight);
 
 private:
     static LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam);

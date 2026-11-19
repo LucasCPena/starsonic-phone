@@ -214,8 +214,23 @@ public:
         return reply.empty() ? -1 : std::stoi(reply[0]);
     }
 
-    // Zera a contagem do VideoPackets e esquece os datagramas guardados (os que o RINGVIDEO com o replay manda).
+    // Zera a contagem do VideoPackets (e as do VideoKeyframes e do VideoReplayed) e esquece os datagramas guardados (os
+    // que o RINGVIDEO com o replay manda).
     void ResetVideoPackets() { Control("VIDEO PACKETS reset"); }
+
+    // Os quadros-chave que chegaram na PORTA do vídeo desde o último ResetVideoPackets (VIDEO KEYFRAMES), um por
+    // quadro: um IDR do H.264 ou um quadro-chave do VP8. -1 se a porta de controle não respondeu.
+    int VideoKeyframes() const {
+        const std::vector<std::string> reply = Control("VIDEO KEYFRAMES");
+        return reply.empty() ? -1 : std::stoi(reply[0]);
+    }
+
+    // Os datagramas que a reprodução do RINGVIDEO com o replay mandou ao telefone desde o último ResetVideoPackets
+    // (VIDEO REPLAYED): a imagem de um porteiro que o registrador ainda manda. -1 se a porta de controle não respondeu.
+    int VideoReplayed() const {
+        const std::vector<std::string> reply = Control("VIDEO REPLAYED");
+        return reply.empty() ? -1 : std::stoi(reply[0]);
+    }
 
     // Espera até `seconds` que o VideoPackets chegue a atLeast.
     bool WaitForVideoPackets(int atLeast, int seconds) const {
@@ -236,6 +251,49 @@ public:
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
         return VideoPackets() == start;
+    }
+
+    // A origem da imagem de um convidado (VIDEO SOURCE <alvo> <origem>): "echo", "none", "color <Y> <U> <V>" ou
+    // "default". Vale para a ligação de agora do alvo (o usuário da Request-URI do INVITE) e para as próximas.
+    void VideoSource(const std::string& alvo, const std::string& source) const {
+        const std::vector<std::string> reply = Control("VIDEO SOURCE " + alvo + " " + source);
+        if (reply != std::vector<std::string>{"OK"}) {
+            throw std::runtime_error("VIDEO SOURCE " + alvo + " " + source + ": " + (reply.empty() ? "sem resposta" : reply[0]));
+        }
+    }
+
+    // Os datagramas com carga que chegaram do endereço de vídeo da ligação do alvo (VIDEO PACKETS <alvo>); -1 se a
+    // porta de controle não respondeu.
+    int PacketsOf(const std::string& alvo) const {
+        const std::vector<std::string> reply = Control("VIDEO PACKETS " + alvo);
+        return reply.empty() ? -1 : std::stoi(reply[0]);
+    }
+
+    // Os quadros-chave que chegaram desse endereço (VIDEO KEYFRAMES <alvo>); -1 se a porta de controle não respondeu.
+    int KeyframesOf(const std::string& alvo) const {
+        const std::vector<std::string> reply = Control("VIDEO KEYFRAMES " + alvo);
+        return reply.empty() ? -1 : std::stoi(reply[0]);
+    }
+
+    // Espera até `seconds` que o PacketsOf(alvo) chegue a atLeast.
+    bool WaitForPacketsOf(const std::string& alvo, int atLeast, int seconds) const {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
+        while (PacketsOf(alvo) < atLeast) {
+            if (std::chrono::steady_clock::now() >= deadline) return false;
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        return true;
+    }
+
+    // O PacketsOf(alvo) não muda durante `seconds`: nada chega do endereço de vídeo desse convidado.
+    bool PacketsStayOf(const std::string& alvo, int seconds) const {
+        const int start = PacketsOf(alvo);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
+        while (std::chrono::steady_clock::now() < deadline) {
+            if (PacketsOf(alvo) != start) return false;
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        return PacketsOf(alvo) == start;
     }
 
     // O último SDP que o telefone mandou (VIDEO SDP), uma linha por linha do SDP.
@@ -322,7 +380,8 @@ inline std::string VideoText(const starsonic::CallVideo& video) {
     std::string text;
     const std::pair<bool, const char*> fields[] = {{video.offered, "offered"}, {video.active, "active"},
                                                    {video.remote, "remote"},   {video.camera, "camera"},
-                                                   {video.early, "early"},     {video.refused, "refused"}};
+                                                   {video.early, "early"},     {video.refused, "refused"},
+                                                   {video.doorphone, "doorphone"}};
     for (const auto& field : fields) {
         if (!field.first) continue;
         if (!text.empty()) text += "+";
@@ -331,11 +390,31 @@ inline std::string VideoText(const starsonic::CallVideo& video) {
     return text.empty() ? "none" : text;
 }
 
-// OnIncomingCall, OnRejectedBusy, OnCallState ou OnTransfer, como chegou.
+// O RoomInfo num texto curto, para as mensagens dos testes: "room <id>[ out][ full][ ended]: <id>=<estado>[+image]
+// @x,y,w,h; ...".
+inline std::string RoomText(const starsonic::RoomInfo& room) {
+    static const char* const kStates[] = {"Calling", "In", "Held"};
+    auto number = [](double value) {
+        std::string text = std::to_string(value);
+        text.erase(text.find_last_not_of('0') + 1);
+        if (!text.empty() && text.back() == '.') text.pop_back();
+        return text;
+    };
+    std::string text = "room " + std::to_string(room.id) + (room.out ? " out" : "") + (room.full ? " full" : "") +
+                       (room.ended ? " ended" : "") + ":";
+    for (const starsonic::RoomMember& member : room.members) {
+        text += " " + std::to_string(member.callId) + "=" + kStates[static_cast<int>(member.state)] +
+                (member.image ? "+image" : "") + "@" + number(member.tile.x) + "," + number(member.tile.y) + "," +
+                number(member.tile.width) + "," + number(member.tile.height) + ";";
+    }
+    return text;
+}
+
+// OnIncomingCall, OnRejectedBusy, OnCallState, OnTransfer ou OnRoom, como chegou.
 struct CallEvent {
-    enum Kind { Incoming, Busy, State, Transfer };
+    enum Kind { Incoming, Busy, State, Transfer, Room };
     Kind kind;
-    int callId;                     // Incoming, State e Transfer
+    int callId;                     // Incoming, State e Transfer; em Room, o id da sala
     std::string user, name;         // Incoming e Busy
     starsonic::CallState state;     // State
     int code;                       // State e Transfer
@@ -394,6 +473,13 @@ public:
     void OnCameraProblem(starsonic::CameraProblem problem) override {
         std::lock_guard<std::mutex> lock(mutex_);
         problems_.push_back(problem);
+        changed_.notify_all();
+    }
+    // Em Rooms() e, na ordem dos eventos de ligação, em Calls() (o tipo Room, com o id da sala).
+    void OnRoom(const starsonic::RoomInfo& room) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        rooms_.push_back(room);
+        calls_.push_back({CallEvent::Room, room.id, "", "", starsonic::CallState::Incoming, 0});
         changed_.notify_all();
     }
     void OnLog(int level, const std::string& line) override {
@@ -522,6 +608,27 @@ public:
         return text;
     }
 
+    // Os OnRoom que chegaram, em ordem.
+    std::vector<starsonic::RoomInfo> Rooms() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return rooms_;
+    }
+
+    // Espera até `seconds` que o último OnRoom satisfaça `condition` (sem nenhum, conta o RoomInfo{}).
+    bool WaitForRoom(std::function<bool(const starsonic::RoomInfo&)> condition, int seconds) {
+        std::unique_lock<std::mutex> lock(mutex_);
+        return changed_.wait_for(lock, std::chrono::seconds(seconds), [&] {
+            return condition(rooms_.empty() ? starsonic::RoomInfo() : rooms_.back());
+        });
+    }
+
+    // Os OnRoom numa linha só, para as mensagens dos testes.
+    std::string RoomsText() const {
+        std::string text;
+        for (const starsonic::RoomInfo& room : Rooms()) text += RoomText(room) + " | ";
+        return text;
+    }
+
     // Os OnCameraProblem que chegaram, em ordem.
     std::vector<starsonic::CameraProblem> CameraProblems() const {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -600,6 +707,8 @@ public:
                 text += "busy(" + event.user + "," + event.name + "); ";
             } else if (event.kind == CallEvent::Transfer) {
                 text += "transfer(" + std::to_string(event.callId) + "," + std::to_string(event.code) + "); ";
+            } else if (event.kind == CallEvent::Room) {
+                text += "room(" + std::to_string(event.callId) + "); ";
             } else {
                 text += "state(" + std::to_string(event.callId) + "," + StateName(event.state) + "," +
                         std::to_string(event.code) + "); ";
@@ -637,6 +746,7 @@ private:
     std::vector<BlfEvent> blfs_;
     std::vector<VideoEvent> videos_;
     std::vector<starsonic::CameraProblem> problems_;
+    std::vector<starsonic::RoomInfo> rooms_;
     std::vector<std::pair<int, std::string>> timeline_;   // Timeline: o id da ligação e o evento, em ordem
     std::function<void(int)> incomingHook_;
     std::deque<std::string> log_;

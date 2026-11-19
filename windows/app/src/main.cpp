@@ -78,7 +78,7 @@
 
 using namespace starsonic;
 
-// (0.3.0) O windows/app/CMakeLists.txt define o STARSONIC_H264_DOWNLOAD (0 ou 1); sem ele, o download fica desligado.
+// (0.3.0) O windows/app/CMakeLists.txt define o STARSONIC_H264_DOWNLOAD (0 ou 1); sem ele, o download fica desligado (o CMakeLists.txt o liga desde a etapa 2).
 #ifndef STARSONIC_H264_DOWNLOAD
 #define STARSONIC_H264_DOWNLOAD 0
 #endif
@@ -442,8 +442,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     config.version = STARSONIC_VERSION;
     config.decrypt = [](const std::wstring& encrypted) { return LegacyDecrypt(encrypted); };
     config.computerName = ComputerName();
-    // (0.3.0) O download do modulo H.264 da Cisco, so com a opcao STARSONIC_H264_DOWNLOAD do build (desligada ate a
-    // etapa 2 do video trazer a chave, o aviso e a licenca da Cisco). Desligado, o nucleo nunca chama o h264Ensure: o
+    // (0.3.0) O download do modulo H.264 da Cisco, so com a opcao STARSONIC_H264_DOWNLOAD do build (ligada na
+    // etapa 2 do video, que trouxe a chave, o aviso e a licenca da Cisco). Desligado, o nucleo nunca chama o h264Ensure: o
     // app nao baixa nem carrega o modulo.
     config.h264Download = STARSONIC_H264_DOWNLOAD != 0;
 #if STARSONIC_TEST_HOOKS
@@ -537,6 +537,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
                                  : mode == "telaCheia" ? VideoMode::Fullscreen
                                                        : VideoMode::Normal;
         window.RunOnWindow([&window, wanted] { window.SetVideoMode(wanted); });
+    };
+    // (0.3.0) A altura do aviso de ligacao recebida, pedida pela pagina do aviso.
+    hooks.noticeHeight = [&window](int height) {
+        window.RunOnWindow([&window, height] { window.SetNoticeHeight(height); });
     };
     // O resize das zonas da interface: so poe na fila da janela (a thread de comandos nunca espera a janela).
     hooks.resize = [&window](const std::string& edge) { window.RunOnWindow([&window, edge] { window.StartResize(edge); }); };
@@ -769,11 +773,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     callbacks.inFront = [&app](bool inFront) { app.SetWindowInFront(inFront); };
     callbacks.openChat = [&app](int64_t conversa) { app.OpenChat(conversa); };
     // (0.3.0) A rota do video: a ligacao de cima, a recebida tocando (a que o aviso mostra) e a janela fora da vista.
-    callbacks.videoRoute = [&routeState, &videoSink](int topCallId, int ringingCallId, bool minimized) {
+    // Fora da vista (minimizada ou na bandeja), o teste da camera tambem para: a pagina nao ve isso (o WebView2 segue
+    // visivel para ela), e o DesktopApp so poe na fila.
+    callbacks.videoRoute = [&routeState, &videoSink, &app](int topCallId, int ringingCallId, bool minimized) {
         routeState.topCallId = topCallId;
         routeState.noticeCallId = ringingCallId;
         routeState.minimized = minimized;
         videoSink.SetRouteState(routeState);
+        app.SetWindowOutOfSight(minimized);
     };
     callbacks.quitRequested = [&app] { app.HandleCommand(kQuitCommand); };
     // O logoff ou o desligamento: o mesmo Sair, esperando pouco (o Windows encerra o processo depois de o

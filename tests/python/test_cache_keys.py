@@ -51,6 +51,24 @@ class CacheKeysTest(unittest.TestCase):
         (self.root / "build" / "config_site.h").write_bytes(b"#define X 2\r\n")
         self.assertNotEqual(changed, self.keys()["deps"])
 
+    def test_the_pjsip_patches_change_the_deps_key(self):
+        # O Build-Deps.ps1 aplica os patches de build/patches/pjproject: um patch novo ou mudado refaz o pjproject.
+        before = self.keys()["deps"]
+        patches = self.root / "build" / "patches" / "pjproject"
+        patches.mkdir(parents=True)
+        (patches / "0001-a.patch").write_bytes(b"--- a/x.c\n+++ b/x.c\n")
+        first = self.keys()["deps"]
+        self.assertNotEqual(before, first)
+        (patches / "0001-a.patch").write_bytes(b"--- a/x.c\n+++ b/y.c\n")
+        changed = self.keys()["deps"]
+        self.assertNotEqual(first, changed)
+        (patches / "0002-b.patch").write_bytes(b"--- a/z.c\n")
+        added = self.keys()["deps"]
+        self.assertNotEqual(changed, added)
+        # Como os outros textos, sem a diferença de fim de linha (o checkout do Windows pode trazer CRLF).
+        (patches / "0002-b.patch").write_bytes(b"--- a/z.c\r\n")
+        self.assertEqual(added, self.keys()["deps"])
+
     def test_line_endings_and_json_layout_do_not_matter(self):
         before = self.keys()["deps"]
         (self.root / "build" / "deps.lock").write_text(json.dumps(self.lock), encoding="utf-8")

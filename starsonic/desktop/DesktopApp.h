@@ -11,18 +11,18 @@
 //   interface. O estado do DesktopApp so e lido e escrito nela, sem trava; post e chamado so dela, uma vez por
 //   mensagem, na ordem.
 // - HandleCommand (na thread da interface) so le o JSON e poe o comando na fila; DialLink, RefreshAudioDevices,
-//   SetAgenda, SetAudioRoute, OpenRecents, SetWindowInFront, OpenChat e Start tambem so poem na fila. Nada disso espera
-//   o motor.
+//   SetAgenda, SetAudioRoute, OpenRecents, SetWindowInFront, SetWindowOutOfSight, OpenChat e Start tambem so poem na
+//   fila. Nada disso espera o motor.
 // - Os comandos de ligacao chamam o controlador na thread de comandos: ele chama o motor na thread de quem chama
 //   (o Dial espera o MakeCall, o Hold ate ~2 s), e os efeitos de comandos de threads diferentes nao teriam ordem
 //   entre si. Com uma thread so, os comandos da interface chegam ao motor na ordem em que foram mandados (o
 //   SetAccount, que espera ate ~5 s, tambem roda nela).
-// - Os eventos de ligacao do motor (OnIncomingCall, OnRejectedBusy, OnCallState, OnTransfer, OnCallVideo) vao direto ao
-//   controlador, na thread de eventos do motor (o controlador tem a trava dele). O OnRegistration e o OnBlf vao para
-//   a fila (o OnBlf leva a vez das assinaturas de quando chegou: um aviso de uma assinatura que ja saiu, da conta
-//   anterior ou de um ramal que saiu e voltou a lista, nao vale).
-// - Os avisos do controlador (o estado da ligacao, os Recentes, a perdida e o toque) chegam em qualquer thread (a do
-//   motor, a de comandos ou a do agendador), na ordem dele, e vao para a fila na mesma ordem.
+// - Os eventos de ligacao do motor (OnIncomingCall, OnRejectedBusy, OnCallState, OnTransfer, OnCallVideo, OnRoom) vao
+//   direto ao controlador, na thread de eventos do motor (o controlador tem a trava dele). O OnRegistration e o OnBlf
+//   vao para a fila (o OnBlf leva a vez das assinaturas de quando chegou: um aviso de uma assinatura que ja saiu, da
+//   conta anterior ou de um ramal que saiu e voltou a lista, nao vale).
+// - Os avisos do controlador (o estado da ligacao, os Recentes, a perdida, o toque e os da sala) chegam em qualquer
+//   thread (a do motor, a de comandos ou a do agendador), na ordem dele, e vao para a fila na mesma ordem.
 // - Os callbacks do WhenIdle (a troca de conta e o Entrar esperando o fim da ligacao) rodam na thread do motor, na
 //   do agendador ou na de comandos: so poem a troca na fila (nunca a fazem ali, nem esperam um evento do motor).
 //   Quando a troca roda, confere de novo se ainda nao ha ligacao (uma pode ter chegado no meio) e, se ha, espera o
@@ -123,9 +123,9 @@ struct DesktopConfig {
     // IPhone: o modo iPhone do docs/ponte-windows.md ("O modo iPhone"; ver o DesktopApp abaixo). Windows: o de sempre.
     Platform platform = Platform::Windows;
     // 0.3.0: o download do modulo H.264 da Cisco liberado neste build (a opcao STARSONIC_H264_DOWNLOAD do
-    // windows/app/CMakeLists.txt). Fica desligado ate a etapa 2 do video, que o liga junto com a chave da pessoa, o
+    // windows/app/CMakeLists.txt). A etapa 2 do video o ligou no app, junto com a chave da pessoa, o
     // aviso "OpenH264 Video Codec provided by Cisco Systems, Inc." e a licenca na tela de Licencas (as condicoes da
-    // licenca do binario). Desligado, o H.264 nao vale: a situacao fica "desligado", o modulo nunca e pedido
+    // licenca do binario). Desligado (o padrao do nucleo), o H.264 nao vale: a situacao fica "desligado", o modulo nunca e pedido
     // (hooks.h264Ensure) e o motor nunca recebe o h264Available.
     bool h264Download = false;
     DesktopPaths paths;
@@ -200,6 +200,8 @@ struct DesktopHooks {
     std::function<void(const std::vector<std::string>& views, bool noticePage)> videoViews;
     // O modo da janela (videoWindow, ou "normal" no fim da ultima ligacao): "normal", "grande" ou "telaCheia".
     std::function<void(const std::string& mode)> videoWindow;
+    // A altura do aviso de ligacao recebida (noticeHeight, so da pagina do aviso), em pixels logicos de 168 a 480.
+    std::function<void(int height)> noticeHeight;
     // Roda o H264Module::Ensure fora da fila de comandos (baixa e confere o modulo) e responde pelo SetH264State
     // (Installed ou Failed). So e chamado com o DesktopConfig::h264Download. Vazio: a situacao fica "baixando".
     std::function<void()> h264Ensure;
@@ -312,10 +314,18 @@ struct DesktopHooks {
 //     se o download, o cartao e a pessoa o ligam e o modulo nao esta instalado, senao o da outra ponta.
 //   - A camera (config.json: camera; "" = a primeira) vai ao motor na abertura e no setVideo; o teste da camera
 //     (cameraTest) e a lista de cameras (relida no RefreshAudioDevices) vao ao estado. O ready da janela principal
-//     (nao o do aviso: HandleCommand com noticePage) desliga o teste ligado. O OnCameraProblem vira um aviso (toast); no
-//     OpenFailed, o texto depende do hooks.cameraBlocked (vazio: false).
+//     (nao o do aviso: HandleCommand com noticePage) desliga o teste ligado, e a janela principal fora da vista
+//     (SetWindowOutOfSight) tambem. O OnCameraProblem vira um aviso (toast); no OpenFailed, o texto depende do
+//     hooks.cameraBlocked (vazio: false).
 //   - videoViews e videoWindow so repassam ao executavel (os ganchos); o modo da janela volta a normal quando a ultima
 //     ligacao acaba. O diagnostico nunca leva o nome da camera.
+// - 0.4.0: a sala de video em grupo (docs/ponte-windows.md, "A sala de video (0.4.0)"), so no Windows. Os quatro
+//   pedidos vao ao controlador: salaAdicionar (RoomAdd; com o contato, RoomAddContact, pela regra dos contatos),
+//   salaTirar (RoomRemove), salaEncerrar (RoomEnd) e salaVoltar (RoomReturn). O OnRoom vai direto ao controlador, e o
+//   estado leva a sala em ligacao.sala. Cada aviso da sala (o OnRoomEvent) deixa uma linha "sala: ..." no diagnostico,
+//   so com as contagens e o codigo SIP, nunca um nome ou um numero de telefone. O convidado que nao entra mostra o
+//   aviso de 2 s de sempre (o endMessage, como toast). No iPhone, os quatro pedidos sao recusados como os do PC, e o
+//   ligacao.sala e sempre null (o motor do iPhone nunca avisa o OnRoom).
 class DesktopApp : public EngineListener {
 public:
     // O tempo do Entrar (spec do Windows 7.1).
@@ -394,6 +404,11 @@ public:
     // 0.3.0: o modulo H.264 terminou de baixar e conferir (Installed) ou falhou (Failed), em qualquer thread: vai para a
     // fila. Com o H.264 desligado (no cartao ou pela pessoa), nada muda. No iPhone, nada. So poe na fila.
     void SetH264State(H264State state);
+    // 0.3.0: a janela principal saiu da vista (minimizada, ou escondida na bandeja: a pagina nao ve, o WebView2 segue
+    // visivel para ela) ou voltou. Fora da vista, o teste da camera ligado para (a luz da camera ficaria acesa sem a
+    // previa a vista), com uma linha no diagnostico, e o estado sai com o video.teste false; a volta nao liga o teste de
+    // novo. Sem o teste ligado (no iPhone ele nunca liga), nada. So poe na fila.
+    void SetWindowOutOfSight(bool outOfSight);
     // A fila de comandos roda o que ja tinha e para; daqui em diante nada mais entra. Nunca de dentro de um gancho.
     void Shutdown();
 
@@ -408,6 +423,8 @@ public:
     void OnCameraProblem(CameraProblem problem) override;
     // 0.3.0: o video de uma ligacao, na thread de eventos do motor: vai direto ao controlador, como o OnCallState.
     void OnCallVideo(int callId, const CallVideo& video) override;
+    // 0.4.0: a sala de video, na thread de eventos do motor: vai direto ao controlador, como o OnCallVideo.
+    void OnRoom(const RoomInfo& room) override;
     void OnLog(int level, const std::string& line) override;
 
 private:

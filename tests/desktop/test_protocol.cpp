@@ -601,7 +601,7 @@ TEST_CASE("the call serializes with the names of the snapshot and the second of 
     top.name = "Ana";
     top.incoming = false;
     top.phase = CallView::Active;
-    top.video.offered = true;   // o bloco video da ligacao: oferece, ativo, imagem, camera, cedo
+    top.video.offered = true;   // o bloco video da ligacao: oferece, ativo, imagem, camera, cedo, porteiro
     top.video.active = true;
     top.video.camera = true;
     top.activeSinceMs = 1761062400000LL;
@@ -626,7 +626,9 @@ TEST_CASE("the call serializes with the names of the snapshot and the second of 
                           {"phase", "active"},
                           {"activeSinceMs", 1761062400000LL},
                           {"held", false},
-                          {"video", {{"oferece", true}, {"ativo", true}, {"imagem", false}, {"camera", true}, {"cedo", false}}}}},
+                          {"video",
+                           {{"oferece", true}, {"ativo", true}, {"imagem", false}, {"camera", true}, {"cedo", false},
+                            {"porteiro", false}}}}},
                         {"second",
                          {{"id", 12},
                           {"number", "2003"},
@@ -635,13 +637,16 @@ TEST_CASE("the call serializes with the names of the snapshot and the second of 
                           {"phase", "ringing"},
                           {"activeSinceMs", 0},
                           {"held", false},
-                          {"video", {{"oferece", false}, {"ativo", false}, {"imagem", false}, {"camera", false}, {"cedo", false}}}}},
+                          {"video",
+                           {{"oferece", false}, {"ativo", false}, {"imagem", false}, {"camera", false}, {"cedo", false},
+                            {"porteiro", false}}}}},
                         {"secondKind", "ringing"},
                         {"muted", true},
                         {"conference", false},
                         {"conferenceSinceMs", 0},
                         {"consulting", false},
-                        {"colleagueActive", false}}));
+                        {"colleagueActive", false},
+                        {"sala", nullptr}}));
 
     state.call.second->phase = CallView::Active;
     state.call.second->held = true;
@@ -904,4 +909,58 @@ TEST_CASE("setVideo, cameraTest, videoViews, videoWindow and h264Retry are read 
     REQUIRE(retry);
     CHECK(retry->kind == CommandKind::H264Retry);
     CHECK(std::string(CommandName(CommandKind::VideoViews)) == "videoViews");
+}
+
+TEST_CASE("noticeHeight takes a whole height between 168 and 480") {
+    const std::optional<Command> ok = ParseCommand(R"({"v":1,"cmd":"noticeHeight","altura":222})");
+    REQUIRE(ok);
+    CHECK(ok->kind == CommandKind::NoticeHeight);
+    CHECK(ok->noticeHeight == 222);
+    CHECK(std::string(CommandName(CommandKind::NoticeHeight)) == "noticeHeight");
+    const std::optional<Command> low = ParseCommand(R"({"v":1,"cmd":"noticeHeight","altura":168})");
+    REQUIRE(low);
+    CHECK(low->noticeHeight == 168);
+    const std::optional<Command> high = ParseCommand(R"({"v":1,"cmd":"noticeHeight","altura":480})");
+    REQUIRE(high);
+    CHECK(high->noticeHeight == 480);
+    CHECK_FALSE(ParseCommand(R"({"v":1,"cmd":"noticeHeight"})"));
+    CHECK_FALSE(ParseCommand(R"({"v":1,"cmd":"noticeHeight","altura":167})"));
+    CHECK_FALSE(ParseCommand(R"({"v":1,"cmd":"noticeHeight","altura":481})"));
+    CHECK_FALSE(ParseCommand(R"({"v":1,"cmd":"noticeHeight","altura":"222"})"));
+    CHECK_FALSE(ParseCommand(R"({"v":1,"cmd":"noticeHeight","altura":222.5})"));
+}
+
+// 0.4.0: a sala de video (docs/ponte-windows.md, "A sala de video (0.4.0)").
+TEST_CASE("the room commands parse") {
+    // salaAdicionar: o numero (obrigatorio) e o contato (opcional; ausente, false), como o dial.
+    Command c = Parsed(R"({"v":1,"cmd":"salaAdicionar","numero":"2004"})");
+    CHECK(c.kind == CommandKind::RoomAdd);
+    CHECK(c.number == "2004");
+    CHECK_FALSE(c.contact);
+    c = Parsed(R"({"v":1,"cmd":"salaAdicionar","numero":"+55 11 98888-7777","contato":true})");
+    CHECK(c.kind == CommandKind::RoomAdd);
+    CHECK(c.number == "+55 11 98888-7777");
+    CHECK(c.contact);
+    CHECK(Refused(R"({"v":1,"cmd":"salaAdicionar"})"));
+    CHECK(Refused(R"({"v":1,"cmd":"salaAdicionar","numero":2004})"));
+    CHECK(Refused(R"({"v":1,"cmd":"salaAdicionar","numero":"2004","contato":"sim"})"));
+
+    // salaTirar: o id do convidado, um inteiro de 1 para cima, obrigatorio.
+    c = Parsed(R"({"v":1,"cmd":"salaTirar","id":31})");
+    CHECK(c.kind == CommandKind::RoomRemove);
+    CHECK(c.callId == 31);
+    CHECK(Refused(R"({"v":1,"cmd":"salaTirar"})"));
+    CHECK(Refused(R"({"v":1,"cmd":"salaTirar","id":0})"));
+    CHECK(Refused(R"({"v":1,"cmd":"salaTirar","id":"31"})"));
+    CHECK(Refused(R"({"v":1,"cmd":"salaTirar","id":-1})"));
+    CHECK(Refused(R"({"v":1,"cmd":"salaTirar","id":1.5})"));
+
+    // salaEncerrar e salaVoltar: sem campos.
+    CHECK(Parsed(R"({"v":1,"cmd":"salaEncerrar"})").kind == CommandKind::RoomEnd);
+    CHECK(Parsed(R"({"v":1,"cmd":"salaVoltar"})").kind == CommandKind::RoomReturn);
+
+    CHECK(std::string(CommandName(CommandKind::RoomAdd)) == "salaAdicionar");
+    CHECK(std::string(CommandName(CommandKind::RoomRemove)) == "salaTirar");
+    CHECK(std::string(CommandName(CommandKind::RoomEnd)) == "salaEncerrar");
+    CHECK(std::string(CommandName(CommandKind::RoomReturn)) == "salaVoltar");
 }

@@ -117,11 +117,24 @@ class EventsTest(unittest.TestCase):
         self.assertEqual(windows_smoke.count_events(self.EVENTS, "bye"), 0)
 
 
+class RegistrarCommandTest(unittest.TestCase):
+    def test_the_registrar_command_carries_the_video_port(self):
+        # Sem a PORTA do vídeo, o RINGVIDEO do aviso com vídeo responde "ERR no-video".
+        command = windows_smoke.registrar_command("python", 5060, 5070, "ua.txt")
+        self.assertEqual(command[command.index("--video-port") + 1], str(windows_smoke.REGISTRAR_VIDEO_PORT))
+        self.assertEqual(windows_smoke.REGISTRAR_VIDEO_PORT, 40002)
+        for flag, value in (("--port", "5060"), ("--control-port", "5070"), ("--log", "ua.txt"), ("--password", "senha-certa")):
+            self.assertEqual(command[command.index(flag) + 1], value)
+        other = windows_smoke.registrar_command("python", 5060, 5070, "ua.txt", video_port=41000)
+        self.assertEqual(other[other.index("--video-port") + 1], "41000")
+
+
 class RegistrarControlTest(unittest.TestCase):
     """O Registrar do teste fala com o fake_registrar.py de verdade (portas livres, sem a 5060)."""
 
     def test_commands_and_the_call_log(self):
-        registrar = windows_smoke.Registrar(free_port(), port=free_port(socket.SOCK_DGRAM))
+        registrar = windows_smoke.Registrar(free_port(), port=free_port(socket.SOCK_DGRAM),
+                                            video_port=free_port(socket.SOCK_DGRAM))
         try:
             self.assertEqual(registrar.command("REGISTERS 2001"), ["0"])
             self.assertEqual(registrar.events(), [])
@@ -131,8 +144,163 @@ class RegistrarControlTest(unittest.TestCase):
         self.assertIsNotNone(registrar.process.poll())
 
 
+class VideoHelpersTest(unittest.TestCase):
+    OK = {"dados": {"v": 1, "type": "videoBuffer", "vista": "local", "bytes": 6220864}, "bytes": 6220864}
+
+    def test_a_right_video_buffer_has_no_problem(self):
+        self.assertEqual(windows_smoke.video_buffer_problems("principal", "local", self.OK), [])
+        bigger = dict(self.OK, bytes=6220864 + 4096)
+        self.assertEqual(windows_smoke.video_buffer_problems("principal", "local", bigger), [])
+
+    def test_a_video_buffer_that_never_came_is_a_problem(self):
+        problems = windows_smoke.video_buffer_problems("aviso", "porteiro", None)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("aviso", problems[0])
+        self.assertIn("porteiro", problems[0])
+
+    def test_a_video_buffer_of_another_view_is_a_problem(self):
+        problems = windows_smoke.video_buffer_problems("principal", "local", dict(self.OK, dados=dict(self.OK["dados"], vista="remoto")))
+        self.assertEqual(len(problems), 1)
+        self.assertIn("remoto", problems[0])
+
+    def test_a_smaller_video_buffer_is_a_problem(self):
+        problems = windows_smoke.video_buffer_problems("principal", "local", dict(self.OK, bytes=6220863))
+        self.assertEqual(len(problems), 1)
+        self.assertIn("6220863", problems[0])
+
+    def test_a_video_buffer_with_wrong_data_is_a_problem(self):
+        wrong = dict(self.OK["dados"], bytes=100)
+        self.assertEqual(len(windows_smoke.video_buffer_problems("principal", "local", dict(self.OK, dados=wrong))), 1)
+        self.assertEqual(len(windows_smoke.video_buffer_problems("principal", "local", dict(self.OK, dados=dict(self.OK["dados"], type="x")))), 1)
+        self.assertEqual(len(windows_smoke.video_buffer_problems("principal", "local", dict(self.OK, dados=None))), 1)
+
+    def test_the_h264_download_result_comes_from_the_log(self):
+        self.assertEqual(windows_smoke.h264_download_result("2026-11-10 h264: instalado 2.6.0\n"), "instalado")
+        self.assertEqual(windows_smoke.h264_download_result("2026-11-10 h264: download falhou (timeout)\n"), "falhou")
+        self.assertIsNone(windows_smoke.h264_download_result("2026-11-10 interface pronta\n"))
+        self.assertIsNone(windows_smoke.h264_download_result(""))
+
+    NOTICES = "OpenH264 2.6.0\n==============\n\ntexto da Cisco\n\nlibvpx 1.16.0\n=============\n\nlibyuv 1678\n===========\n"
+
+    def test_the_whole_license_notices_have_no_problem(self):
+        result = {"ok": True, "status": 200, "texto": self.NOTICES}
+        self.assertEqual(windows_smoke.license_notice_problems(result), [])
+
+    def test_license_notices_that_did_not_load_are_a_problem(self):
+        problems = windows_smoke.license_notice_problems({"ok": False, "status": 404, "texto": "Not Found"})
+        self.assertTrue(problems)
+        self.assertTrue(any("404" in problem for problem in problems), problems)
+        self.assertTrue(windows_smoke.license_notice_problems({"ok": True, "status": 204, "texto": self.NOTICES}))
+
+    def test_license_notices_without_a_part_are_a_problem(self):
+        for part in ("OpenH264 2.6.0", "libvpx 1.16.0", "libyuv 1678"):
+            problems = windows_smoke.license_notice_problems({"ok": True, "status": 200,
+                                                              "texto": self.NOTICES.replace(part, "")})
+            self.assertEqual(len(problems), 1, part)
+            self.assertIn(part, problems[0])
+        # O OpenH264 vem primeiro: o arquivo começa com ele.
+        moved = self.NOTICES.replace("OpenH264 2.6.0\n", "") + "OpenH264 2.6.0\n"
+        self.assertEqual(len(windows_smoke.license_notice_problems({"ok": True, "status": 200, "texto": moved})), 1)
+
+    def test_license_notices_the_page_could_not_read_are_a_problem(self):
+        # O evaluate que falhou (a página fechada, o fetch recusado) chega como None.
+        problems = windows_smoke.license_notice_problems(None)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("licencas-windows.txt", problems[0])
+
+    def test_the_last_h264_line_wins(self):
+        text = "h264: download falhou (rede)\nalgo\nh264: instalado 2.6.0\n"
+        self.assertEqual(windows_smoke.h264_download_result(text), "instalado")
+        self.assertEqual(windows_smoke.h264_download_result("h264: instalado 2.6.0\nh264: download falhou (rede)\n"), "falhou")
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
+class RoomHelpersTest(unittest.TestCase):
+    """(0.4.0) A fumaça da sala: o mosaico no remoto e as linhas sala: do diagnóstico."""
+    OK = {"dados": {"v": 1, "type": "videoBuffer", "vista": "remoto", "bytes": 6220864}, "bytes": 6220864,
+          "marca": 0x31565353, "largura": 1280, "altura": 720, "seqs": [4, 10]}
+
+    def test_the_guests_and_their_colors_fit_the_fake_registrar(self):
+        self.assertEqual(windows_smoke.ROOM_GUESTS, ("2002", "2004"))
+        self.assertEqual(set(windows_smoke.ROOM_COLORS), set(windows_smoke.ROOM_GUESTS))
+        for color in windows_smoke.ROOM_COLORS.values():
+            self.assertEqual(len(color), 3)
+            for value in color:
+                self.assertIn(value, range(16, 236))
+
+    def test_a_right_room_buffer_has_no_problem(self):
+        self.assertEqual(windows_smoke.room_buffer_problems(self.OK), [])
+        self.assertEqual(windows_smoke.room_buffer_problems(dict(self.OK, bytes=6220864 + 4096)), [])
+
+    def test_a_room_buffer_that_never_came_is_a_problem(self):
+        problems = windows_smoke.room_buffer_problems(None)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("remoto", problems[0])
+
+    def test_a_room_buffer_of_another_view_is_a_problem(self):
+        problems = windows_smoke.room_buffer_problems(dict(self.OK, dados=dict(self.OK["dados"], vista="local")))
+        self.assertEqual(len(problems), 1)
+        self.assertIn("local", problems[0])
+
+    def test_a_wrong_mark_is_a_problem(self):
+        problems = windows_smoke.room_buffer_problems(dict(self.OK, marca=0x12345678))
+        self.assertEqual(len(problems), 1)
+        self.assertIn("marca", problems[0])
+
+    def test_a_mosaic_that_is_not_1280_by_720_is_a_problem(self):
+        self.assertEqual(len(windows_smoke.room_buffer_problems(dict(self.OK, largura=640))), 1)
+        self.assertEqual(len(windows_smoke.room_buffer_problems(dict(self.OK, altura=480))), 1)
+
+    def test_a_seq_that_stood_still_or_went_back_is_a_problem(self):
+        for seqs in ([4, 4], [10, 4], [0, 0], [3, 6], [4, 9], [0, 2], [None, 4]):
+            self.assertEqual(len(windows_smoke.room_buffer_problems(dict(self.OK, seqs=seqs))), 1, seqs)
+        self.assertEqual(len(windows_smoke.room_buffer_problems(dict(self.OK, seqs=[4]))), 1)
+
+    def test_a_smaller_room_buffer_is_a_problem(self):
+        self.assertEqual(len(windows_smoke.room_buffer_problems(dict(self.OK, bytes=6220863))), 1)
+
+    def test_the_png_reader_and_the_color_conversion_agree_with_the_page(self):
+        import struct
+        import tempfile
+        import zlib
+
+        def chunk(kind, body):
+            return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
+
+        # 3x2 em RGB com os filtros Sub (1) e Up (2): a linha 0 é o pixel (10,20,30) repetido, a 1 soma 1 em cada canal.
+        row0 = bytes([1, 10, 20, 30, 0, 0, 0, 0, 0, 0])
+        row1 = bytes([2, 1, 1, 1, 1, 1, 1, 1, 1, 1])
+        png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 3, 2, 8, 2, 0, 0, 0))
+               + chunk(b"IDAT", zlib.compress(row0 + row1)) + chunk(b"IEND", b""))
+        with tempfile.TemporaryDirectory() as folder:
+            path = pathlib.Path(folder) / "p.png"
+            path.write_bytes(png)
+            self.assertEqual(windows_smoke.png_pixel(path, 2, 0), ((10, 20, 30), 3, 2))
+            self.assertEqual(windows_smoke.png_pixel(path, 1, 1), ((11, 21, 31), 3, 2))
+        # O Y 235 sem croma é branco; o do 2002 é o VERDE do tests/sala/sala.ts (0, 255, 1).
+        self.assertEqual(windows_smoke.i420_to_rgb(235, 128, 128), (255, 255, 255))
+        self.assertEqual(windows_smoke.i420_to_rgb(*windows_smoke.ROOM_COLORS["2002"]), (0, 255, 1))
+
+    LOG = "x\nsala: comecou\nsala: entrou (2 na sala)\nsala: acabou\ny\n"
+
+    def test_the_three_room_lines_have_no_problem(self):
+        self.assertEqual(windows_smoke.room_log_problems(self.LOG, windows_smoke.ROOM_GUESTS), [])
+
+    def test_a_missing_room_line_is_a_problem(self):
+        for missing in ("sala: comecou\n", "sala: entrou (2 na sala)\n", "sala: acabou\n"):
+            problems = windows_smoke.room_log_problems(self.LOG.replace(missing, ""), windows_smoke.ROOM_GUESTS)
+            self.assertEqual(len(problems), 1, missing)
+            self.assertIn(missing.strip(), problems[0])
+
+    def test_a_room_line_with_a_number_is_a_problem(self):
+        problems = windows_smoke.room_log_problems(self.LOG + "sala: entrou 2004\n", windows_smoke.ROOM_GUESTS)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("2004", problems[0])
+        # Um número fora de uma linha sala: não conta.
+        self.assertEqual(windows_smoke.room_log_problems(self.LOG + "chamada: 2004\n", windows_smoke.ROOM_GUESTS), [])
 
 
 class RecoveryHelpersTest(unittest.TestCase):

@@ -111,7 +111,7 @@ O Entrar (spec do Windows, 7.1 e 11.1):
 | `dial` | `numero` (texto), `contato` (booleano, opcional), (0.3.0) `video` (booleano, opcional) | Liga (o Teclado, os Recentes, os contatos). Sem ligação, ou com uma em andamento (a Nova ligação: a outra vai para a espera). Com `contato: true`, o número de um contato passa antes pela regra dos contatos do perfil (o `+55` sai e o prefixo de saída entra nos números longos). Sem registro, o toast `Sem conexão com o servidor. Tente de novo em instantes.` e nada é discado. (0.3.0) Com `video: true`, a ligação oferece vídeo (a câmera liga junto); sem o campo, vale `false`. O `video` só chega ao motor com `video.ligado` `true`; senão (e no iPhone, sempre) a ligação é só de voz. Ver "O vídeo na ligação". |
 | `answer` | (0.3.0) `video` (booleano, opcional) | Atende a recebida que toca (a outra vai para a espera). (0.3.0) Com `video: true`, aceita o vídeo da oferta (a câmera liga junto); sem o campo, vale `false`, e a ligação é atendida só com a voz. Passa ao motor nas mesmas regras do `dial`. |
 | `reject` | — | Recusa a recebida que toca (ocupado; vai aos Recentes como perdida). |
-| `hangup` | `id` (inteiro ≥ 0, opcional) | O Desligar de um cartão. **A interface manda sempre o `id` do cartão quando ele tem um** (`top.id` ou `second.id` maior que 0); `id: 0` só para o cartão de uma feita que ainda não tem id (o C++ entende `0` como "a feita mais nova"). Sem `id`: a ligação ativa. Na conferência, qualquer id desliga as duas ("Desligar para todos"). |
+| `hangup` | `id` (inteiro ≥ 0, opcional) | O Desligar de um cartão. **A interface manda sempre o `id` do cartão quando ele tem um** (`top.id` ou `second.id` maior que 0); `id: 0` só para o cartão de uma feita que ainda não tem id (o C++ entende `0` como "a feita mais nova"). Sem `id`: a ligação ativa. Na conferência, qualquer id desliga as duas ("Desligar para todos"). (0.4.0) O da sala de vídeo (sem `id` com ela em cima, ou com o `id` dela) é o `salaEncerrar`, e o `id` de um convidado não faz nada (ver "A sala de vídeo (0.4.0)"). |
 | `hold` | `on` (booleano, opcional) | Espera: `true` põe, `false` retoma, sem `on` troca. Com duas em andamento, pôr a ativa em espera é o Alternar. Na conferência, nada. |
 | `mute` | `on` (booleano, opcional) | Mudo do microfone (vale para as duas ligações); sem `on`, troca. |
 | `dtmf` | `digitos` (texto) | Manda os dígitos (`0-9`, `*`, `#`) na ligação ativa. |
@@ -247,6 +247,7 @@ A câmera nunca liga sozinha: só ligam a câmera o `dial` e o `answer` com `vid
 | `cameraTest` | `on` (booleano) | `true`: liga o teste da câmera (`StartCameraTest`), e a imagem vai na vista `local`; `video.teste` segue o resultado (`false` se o motor não abriu a câmera, e então o aviso da câmera vem num toast). `false`: desliga (`StopCameraTest`). Ligar com o teste já ligado não faz nada. O `ready` da janela principal (uma recarga da página, ou o navegador refeito) desliga o teste que estava ligado (`video.teste` `false`, já no estado desse `ready`): sem a página que o ligou, a luz da câmera ficaria acesa sem controle à vista. O `ready` do aviso não mexe nele. Com a tela bloqueada, a câmera do teste fecha e volta sozinha no desbloqueio; o `video.teste` segue `true`. |
 | `videoViews` | `pagina` (`"principal"` \| `"aviso"`), `vistas` (lista de textos) | As vistas de vídeo que a página mostra agora (o gancho `videoViews`, com `pagina == "aviso"`). A página `principal` só tem `remoto` e `local` (o teste da câmera também usa a `local`, porque é a mesma imagem), e a página `aviso`, só `porteiro`. Uma vista que não é da página é ignorada, e a lista vai inteira a cada vez (uma lista vazia tira todas). Outra `pagina` é recusada na leitura, e também mais de 8 vistas ou uma vista com mais de 32 caracteres (`videoViews: vistas invalidas`). |
 | `videoWindow` | `modo` (`"normal"` \| `"grande"` \| `"telaCheia"`) | O modo da janela do vídeo: o `DesktopApp` grava em `video.janela` e chama o gancho `videoWindow`. Outro `modo` é ignorado (linha no diagnóstico). Quando a última ligação acaba, se a `janela` não é `normal`, ela volta a `normal` (o gancho `videoWindow("normal")`). |
+| `noticeHeight` | `altura` (inteiro de 168 a 480) | A altura do aviso de ligação recebida, em pixels lógicos: 222 quando a ligação oferece vídeo (sem outra ligação em andamento: com outra, 168), 430 com a imagem do porteiro. Só vale vindo da página do aviso (o gancho `noticeHeight`); da página principal é só uma linha no diagnóstico (`noticeHeight recusado: pagina principal`). Sem a `altura`, fora do intervalo ou não inteira, é recusado na leitura (`noticeHeight: altura invalida`). Exemplo: `{"v":1,"cmd":"noticeHeight","altura":222}`. Recusado no modo iPhone. |
 | `h264Retry` | — | Tenta de novo baixar o módulo H.264, só depois de uma falha (`video.h264.situacao` `falhou`): vira `baixando` e chama o gancho `h264Ensure`. Em outra situação, é ignorado. |
 
 ```json
@@ -264,11 +265,10 @@ no lugar do segundo quando a privacidade do Windows nega a câmera aos apps da �
 `cameraBlocked`), `O Windows bloqueou a câmera para este app. Libere em Configurações do Windows → Privacidade e
 segurança → Câmera.`. Uma câmera que some ou que não abre de novo também desliga o teste (`video.teste` `false`).
 
-**O download do H.264 fica desligado até a etapa 2.** O app só baixa e carrega o módulo da Cisco no build com a opção
-`STARSONIC_H264_DOWNLOAD` do `windows/app/CMakeLists.txt` (o `DesktopConfig::h264Download` do núcleo), desligada em
-todo build, porque as condições da licença do binário (a chave "H.264 da Cisco" da pessoa, o aviso "OpenH264 Video Codec
-provided by Cisco Systems, Inc." e o texto da licença na tela de Licenças) só chegam na etapa 2, que liga a opção junto
-com elas. Sem a opção, `video.h264.situacao` fica `desligado`, o gancho `h264Ensure` nunca é chamado, o `h264Retry` é
+**A etapa 2 ligou o download do H.264.** O app só baixa e carrega o módulo da Cisco no build com a opção
+`STARSONIC_H264_DOWNLOAD` do `windows/app/CMakeLists.txt` (o `DesktopConfig::h264Download` do núcleo), que a etapa 2
+liga em todo build junto com as condições da licença do binário (a chave "H.264 da Cisco" da pessoa, o aviso "OpenH264
+Video Codec provided by Cisco Systems, Inc." e o texto da licença na tela de Licenças). Sem a opção, `video.h264.situacao` fica `desligado`, o gancho `h264Ensure` nunca é chamado, o `h264Retry` é
 ignorado e o motor nunca recebe o H.264.
 
 #### O vídeo na ligação
@@ -347,7 +347,7 @@ ignorado e o motor nunca recebe o H.264.
            "activeSinceMs":1761062400000,"held":false},
     "second":{"id":12,"number":"2003","name":"","incoming":true,"phase":"ringing","activeSinceMs":0,"held":false},
     "secondKind":"ringing","muted":false,"conference":false,"conferenceSinceMs":0,
-    "consulting":false,"colleagueActive":false},
+    "consulting":false,"colleagueActive":false,"sala":null},
   "recentes":[{"numero":"2005","nome":"Bruno","tipo":"perdida","inicio":1761061000000,"duracao":0,"contatoId":""}],
   "perdidas":1,
   "contatos":[{"id":"c1d2e3f4a5b60718","nome":"Ana Souza","numero":"2002","observacao":"cliente"}],
@@ -445,7 +445,7 @@ ignorado e o motor nunca recebe o H.264.
 | `video.cameraDesconectada` | booleano | `video.camera` não está vazio e não está em `video.cameras`. |
 | `video.teste` | booleano | O teste da câmera está ligado (`cameraTest`). Segue `true` com a tela bloqueada (a câmera dele fecha e volta no desbloqueio); o `ready` da janela principal o desliga. |
 | `video.h264` | objeto | `{cartao, pessoa, situacao}`: o H.264 ligado no cartão do administrador (`cartao`), a chave da pessoa (`pessoa`) e o módulo da Cisco. |
-| `video.h264.situacao` | `"desligado"` \| `"baixando"` \| `"instalado"` \| `"falhou"` | `desligado`: o cartão ou a pessoa desliga o H.264, ou o build não baixa o módulo (a opção `STARSONIC_H264_DOWNLOAD`, desligada até a etapa 2). Na abertura, ou quando o H.264 volta a ser ligado, e se ainda não está instalado, vira `baixando` (o gancho `h264Ensure`); `instalado` ou `falhou` chegam pelo `DesktopApp::SetH264State`. Um `SetH264State` com o H.264 desligado não muda nada. O motor só recebe o H.264 (`h264Available`) com o download liberado, o cartão ligado, a pessoa ligada e a situação `instalado`. |
+| `video.h264.situacao` | `"desligado"` \| `"baixando"` \| `"instalado"` \| `"falhou"` | `desligado`: o cartão ou a pessoa desliga o H.264, ou o build não baixa o módulo (a opção `STARSONIC_H264_DOWNLOAD` desligada; o app a liga desde a etapa 2). Na abertura, ou quando o H.264 volta a ser ligado, e se ainda não está instalado, vira `baixando` (o gancho `h264Ensure`); `instalado` ou `falhou` chegam pelo `DesktopApp::SetH264State`. Um `SetH264State` com o H.264 desligado não muda nada. O motor só recebe o H.264 (`h264Available`) com o download liberado, o cartão ligado, a pessoa ligada e a situação `instalado`. |
 | `video.janela` | `"normal"` \| `"grande"` \| `"telaCheia"` | O modo da janela do vídeo (`videoWindow`); volta a `normal` quando a última ligação acaba. |
 | `chat` | objeto | (0.2.0, só no Windows: o estado do iPhone não tem o campo) O chat deste computador: `{ligado, empresa, computador, contaConectada}` (ver "O chat (0.2.0)"). A chave nunca vem no estado. |
 
@@ -464,6 +464,7 @@ resolvidos. Sempre há `top` (sem ligação, `ligacao` é `null`).
 | `conferenceSinceMs` | inteiro | Quando o Juntar foi pedido (ms desde 1970); 0 fora da conferência. |
 | `consulting` | booleano | A transferência com consulta (as duas de pé). O cliente fica com o selo "Em espera · transferência" e o colega em destaque ("Consultando"). |
 | `colleagueActive` | booleano | Na consulta, o colega é o `top` (senão, o cliente é o `top`). |
+| `sala` | objeto \| `null` | (0.4.0) A sala de vídeo em grupo, em cima ou em espera (ver "A sala de vídeo (0.4.0)"); `null` sem sala. |
 
 Cada cartão (`top`, `second`):
 
@@ -476,11 +477,12 @@ Cada cartão (`top`, `second`):
 | `phase` | `"ringing"` \| `"dialing"` \| `"active"` | Tocando (recebida), chamando (feita) ou em andamento. Uma recebida atendida aqui fica `active` com `activeSinceMs` 0 até o motor confirmar. |
 | `activeSinceMs` | inteiro | Quando os dois lados atenderam (ms desde 1970; 0: ainda não). O tempo da ligação é `Date.now() - activeSinceMs`. |
 | `held` | booleano | Em espera. |
-| `video` | objeto | (0.3.0) O vídeo da ligação: `{oferece, ativo, imagem, camera, cedo}`, os campos `offered`, `active`, `remote`, `camera` e `early` do `CallVideo`, nessa ordem. `oferece`: a recebida oferece vídeo com um codec em comum. `ativo`: o vídeo negociado e a ligação sem pausa. `imagem`: a imagem da outra ponta está chegando. `camera`: a nossa câmera está mandando. `cedo`: o 183 com imagem de um Porteiro, até o atender ou o fim. Tudo `false` numa ligação só de voz. Vem em `top` e em `second`. |
+| `video` | objeto | (0.3.0) O vídeo da ligação: `{oferece, ativo, imagem, camera, cedo, porteiro}`, os campos `offered`, `active`, `remote`, `camera`, `early` e `doorphone` do `CallVideo`, nessa ordem. `oferece`: a recebida oferece vídeo com um codec em comum. `ativo`: o vídeo negociado e a ligação sem pausa. `imagem`: a imagem da outra ponta está chegando. `camera`: a nossa câmera está mandando. `cedo`: o 183 com imagem de um Porteiro, até o atender ou o fim. (0.3.0-rc.2) `porteiro`: a recebida de um número dos Porteiros que oferece vídeo com um codec em comum, do toque ao fim, também depois de atender (o `cedo` acaba no atender). Com outra ligação, a imagem de um Porteiro não pausa (decisão do responsável de 11/11/2026): o `ativo` e o `imagem` seguem, com ele tocando (o aviso a mostra pelo `cedo`) ou atendido (a tela da ligação e o grande a mostram quando ele é a de cima, fora da conferência); a nossa câmera não manda para ele enquanto houver outra ligação (o `camera` fica `false`). A espera, a conferência e a transferência pausam o porteiro como qualquer ligação. Tudo `false` numa ligação só de voz. Vem em `top` e em `second`. |
 
 O aviso de 2 s que o controlador tem (o `endMessage`: `Ocupado`, `Não atendeu`, `<nome ou número> desligou`,
-`<nome ou número>: <motivo>` do colega, `O servidor não aceitou a transferência.`, `Sem conexão com o servidor. Tente
-de novo em instantes.`) não vem no estado: ele chega como um `toast`, uma vez, quando aparece.
+`<nome ou número>: <motivo>` do colega e (0.4.0) do convidado da sala que não entra, `O servidor não aceitou a
+transferência.`, `Sem conexão com o servidor. Tente de novo em instantes.`) não vem no estado: ele chega como um
+`toast`, uma vez, quando aparece.
 
 ## Avisos e toque
 
@@ -685,6 +687,139 @@ download dos arquivos.
 - `Não foi possível baixar o arquivo.`: qualquer outro erro do download (também pelo `Notify`).
 - `Não foi possível ligar este computador ao chat.`: o `chatLink` não gravou.
 
+## A sala de vídeo (0.4.0)
+
+A videochamada em grupo, só no Windows (spec do vídeo em grupo): quem monta a sala (este app) liga para os convidados,
+e todos se ouvem e se veem. A sala tem até 6 pessoas: quem monta e mais 5 convidados, contando os que ainda são
+chamados. Cada convidado é uma ligação, com o id e os eventos de sempre; a sala é uma linha da tela, com um id próprio
+(do mesmo contador das ligações), que nasce no lugar da ligação de onde ela vem. A interface desenha a sala
+(`windows/ui/src/sala/`) com estes comandos e o `ligacao.sala`, e a ponte falsa dos testes (`windows/ui/src/fake-sala.ts`)
+os imita.
+
+### Os comandos da sala
+
+| Comando | Campos | O que faz |
+|---|---|---|
+| `salaAdicionar` | `numero` (texto), `contato` (booleano, opcional) | "Adicionar à sala": o app liga para o número e o põe na sala, onde ele aparece chamando. Sem sala, ela nasce da ligação de agora, que precisa ser a única, em andamento, fora da espera, sem consulta, conferência ou transferência esperando o resultado, e com o vídeo ativo (`top.video.ativo`). Com sala, ela precisa estar em cima, com você nela (`sala.fora` `false`) e sem a `sala.cheia`. Um convidado por vez: outro `salaAdicionar` antes de o primeiro aparecer em `sala.participantes` não faz nada. Com `contato: true`, o número passa antes pela regra dos contatos do perfil, como no `dial`. Sem registro, o toast `Sem conexão com o servidor. Tente de novo em instantes.` e ninguém é chamado, como no `dial`. Fora desses casos, nada acontece (sem toast). |
+| `salaTirar` | `id` (inteiro ≥ 1) | "Tirar da sala": o convidado com esse `id` (o de `sala.participantes`) sai, sem aviso: o app desliga a ligação dele. Sem um convidado com o `id`, ou com ele já saindo, nada. Sem o `id`, com `0`, negativo, com fração ou em texto, o comando é recusado na leitura (linha no diagnóstico). |
+| `salaEncerrar` | — | "Encerrar a sala": o app desliga todos os convidados, sem aviso, e a sala sai da tela na hora (`ligacao.sala` `null`; sem outra ligação, `ligacao` `null`). Vale com a sala em cima ou em espera; sem sala, nada. A interface pergunta antes. Com a ligação de fora em espera, ela fica sozinha na tela e volta sozinha quando a sala acaba, como a outra de duas ligações. |
+| `salaVoltar` | — | "Voltar para a sala": com você fora dela (`sala.fora` `true`, ou a sala em espera), a ligação de fora vai para a espera e a sala volta para cima, com a nossa voz e a nossa câmera de volta nela. A ligação de fora que você fez e ainda chama (o outro lado não atendeu) não vai para a espera: o app a desliga, como no Desligar dela (ela vai aos Recentes como uma feita que não completou, sem toast), e a sala volta para cima do mesmo jeito. Já na sala, nada. |
+
+```json
+{"v":1,"cmd":"salaAdicionar","numero":"2004"}
+{"v":1,"cmd":"salaAdicionar","numero":"+55 11 98888-7777","contato":true}
+{"v":1,"cmd":"salaTirar","id":31}
+{"v":1,"cmd":"salaEncerrar"}
+{"v":1,"cmd":"salaVoltar"}
+```
+
+Os comandos de sempre com a sala:
+
+- **O `hangup` com a sala em cima** (sem `id`, ou com o `id` da sala, também com ela em espera) é o `salaEncerrar`: a
+  interface pergunta antes, como no Encerrar. O `id` de um convidado não faz nada: um convidado não é uma linha (o
+  Tirar da sala é o `salaTirar`).
+- Com a sala em cima, `hold`, `transfer`, `consult` e `dtmf` não fazem nada; com a sala de pé (em cima ou em espera),
+  nem `join` nem `split`. O `camera` com a sala em cima liga ou desliga a nossa câmera para os convidados.
+- **A ligação de fora:** com a sala de pé, cabe uma ligação de fora, só com a voz. A recebida toca como a segunda
+  (`secondKind` `ringing`, o toque `espera`); o `answer` a atende só com a voz (também com `video: true`), e o `dial` é
+  a Nova ligação, também só com a voz. Atendida ou feita, ela fica em cima e tira você da sala: a sala vai para a
+  espera, como o `second` (`secondKind` `held`, `sala.fora` `true`), e os convidados seguem se vendo e se ouvindo, sem
+  você. Quando a de fora acaba, a sala volta sozinha. Uma terceira ligação que chega leva ocupado (486) e vai aos
+  Recentes como perdida, com o aviso de perdida, como hoje.
+
+### O `ligacao.sala`
+
+O campo vem depois do `colleagueActive`: `null` sem sala (como o `second`), e a sala de pé, em cima ou em espera. A
+sala de cima, com um convidado na sala e um chamando:
+
+```json
+"ligacao":{
+  "top":{"id":30,"number":"","name":"","incoming":false,"phase":"active","activeSinceMs":1762873200000,"held":false,
+         "video":{"oferece":false,"ativo":true,"imagem":true,"camera":true,"cedo":false,"porteiro":false}},
+  "second":null,"secondKind":"none","muted":false,"conference":false,"conferenceSinceMs":0,
+  "consulting":false,"colleagueActive":false,
+  "sala":{"id":30,"fora":false,"cheia":false,"participantes":[
+    {"id":11,"numero":"2002","nome":"Ana Souza","estado":"naSala","imagem":true,
+     "quadro":{"x":0,"y":0,"largura":0.5,"altura":1}},
+    {"id":31,"numero":"2004","nome":"","estado":"chamando","imagem":false,
+     "quadro":{"x":0.5,"y":0,"largura":0.5,"altura":1}}]}}
+```
+
+Sem sala, `ligacao.sala` é `null`. Fora da sala, a de cima é a ligação de fora, e a sala é a `second` (`secondKind`
+`held`, `sala.fora` `true`).
+
+**A linha da sala** (o cartão em `top`, ou em `second` com você fora): o `id` da sala, `number` e `name` vazios,
+`incoming` `false`, `phase` `active`, o `activeSinceMs` da ligação de onde ela nasceu (o tempo segue o dela) e o `held`
+da espera. O `video` é o da sala: `ativo` com ela de pé, `imagem` com o mosaico chegando ao `remoto` (abaixo) e `camera`
+com a nossa câmera chegando aos convidados; `oferece`, `cedo` e `porteiro` são `false`. Quando a sala nasce, o cartão da
+ligação sai e o da sala entra no lugar dele, com o mesmo tempo, e a ligação vai para dentro da sala, como o primeiro
+convidado. Os convidados não são linhas: eles vêm só em `sala.participantes`.
+
+| Campo | Tipo | Sentido |
+|---|---|---|
+| `sala.id` | inteiro | O id da sala: o `id` da linha dela (`top.id`, ou `second.id` com você fora). |
+| `sala.fora` | booleano | Você está fora da sala: a nossa voz e a nossa câmera saíram dela (a ligação de fora). Os convidados seguem se vendo e se ouvindo. |
+| `sala.cheia` | booleano | A sala tem 5 convidados, contando os chamados: o `salaAdicionar` não faz nada. |
+| `sala.participantes` | lista | Os convidados, na ordem em que entraram: `{id, numero, nome, estado, imagem, quadro}`. O primeiro é a ligação de onde a sala nasceu. Quem monta a sala não está na lista. |
+| `sala.participantes[].id` | inteiro | O id da ligação do convidado no motor (o do `salaTirar`). |
+| `sala.participantes[].numero` | texto | O número. |
+| `sala.participantes[].nome` | texto | Já resolvido, como nos cartões: o do contato com o número, senão o da lista da empresa, senão o que a central mandou; `""` sem nenhum (a interface mostra o número). |
+| `sala.participantes[].estado` | `"chamando"` \| `"naSala"` \| `"emEspera"` | `chamando`: o app ainda chama; `naSala`: atendeu e está na sala; `emEspera`: ele pôs a ligação em espera (o quadro dele fica com o fundo até ele voltar). |
+| `sala.participantes[].imagem` | booleano | A imagem dele está chegando. Um convidado sem câmera, ou que atendeu sem o vídeo, fica com o fundo no quadro e segue ouvindo e sendo ouvido. |
+| `sala.participantes[].quadro` | objeto | `{x, y, largura, altura}`: o quadro dele no mosaico do `remoto` (abaixo), em frações de 0 a 1 da imagem, com `x` e `y` do canto de cima à esquerda. A interface põe o nome e o estado de cada um sobre o quadro dele. |
+
+### Os avisos, os Recentes e o fim da sala
+
+- **O convidado que não entra** (não atendeu, estava ocupado ou recusou): ele sai da lista, e o toast
+  `<nome ou número>: <motivo>` aparece por 2 s, como o do colega da consulta (por exemplo, `Carlos Lima: Ocupado`). O
+  toast não vem quando o núcleo não tem um motivo para o código, nem quando a ligação nem saiu. O convidado tirado pelo
+  `salaTirar`, ou com o `salaEncerrar`, sai sem aviso.
+- **Os Recentes:** cada convidado entra nos Recentes no fim da ligação dele, como uma feita (o primeiro, como a ligação
+  de onde a sala nasceu), com a duração desde que ele atendeu. A sala não entra.
+- **O fim da sala:** com um convidado só (contando os chamados), a sala acaba. Ele volta a ser uma ligação comum, no
+  lugar da sala, com o `id` dele e o Desligar de sempre, e o `ligacao.sala` volta a `null`. Sem ninguém, a linha da sala
+  sai, e a ligação de fora, se a sala era a de cima, volta sozinha.
+
+### O mosaico no `remoto`
+
+Com a sala em cima, a vista `remoto` mostra o mosaico de quem montou: uma imagem de 1280×720, a 25 quadros por segundo,
+com todos os convidados (também os chamados), cada um no `quadro` dele, e o fundo da página (`#04060e`) onde não há
+imagem. Ele chega na memória do `remoto` (ver "A memória do vídeo") como a imagem de uma ligação, com o id da sala, que
+é o `top.id`: a página o desenha como desenha a ligação de cima. Como em toda troca da ligação de cima, a memória
+esvazia (o `seq` volta a 0) quando a sala nasce (o `top.id` passa do id da ligação para o da sala) e quando ela acaba
+(o `top.id` passa para o de quem ficou, ou para nenhum): o mosaico nunca começa com o último quadro da ligação de antes,
+nem a ligação que fica com o último mosaico. A imagem de cada convidado não vai a nenhuma vista: ela já está no
+mosaico.
+
+### O diagnóstico da sala
+
+Cada aviso da sala deixa uma linha no diagnóstico, exatamente uma destas. Elas nunca levam um nome ou um número de
+telefone: só a contagem e o código SIP.
+
+- `sala: comecou`: a sala nasceu;
+- `sala: entrou (<n> na sala)`: um convidado atendeu; `<n>` são os convidados que atenderam e seguem na sala;
+- `sala: saiu (<n> na sala)`: um convidado saiu (do outro lado, ou tirado daqui pelo `salaTirar` ou pelo `salaEncerrar`,
+  também ainda chamando), com o mesmo `<n>`;
+- `sala: falhou (<codigo>)`: um convidado não entrou, com o código SIP do fim, ou `0` quando a ligação nem saiu;
+- `sala: fora` e `sala: voltou`: você saiu da sala (a ligação de fora) e voltou para ela;
+- `sala: acabou`: a sala acabou, também no `quit` com a sala de pé (cada `sala: comecou` tem a sua `sala: acabou`).
+
+### No iPhone
+
+O motor do iPhone não tem vídeo nem sala: os quatro comandos são recusados como os do PC, com a linha
+`comando recusado no modo iPhone: <nome>` (ver "O modo iPhone"), e o `ligacao.sala` é sempre `null`.
+
+### Para o executável
+
+- O `EngineHost` é o `CallEngine` da sala: o `RoomAdd(numero)` (desde a 0.4.0) vai ao `SipEngine::RoomAdd`, na thread
+  de comandos, esperando o motor ficar pronto, como o `MakeCall`.
+- O `OnRoom` do motor (a sala inteira, a cada mudança) passa do `EngineHost` ao `DesktopApp`, que o entrega direto ao
+  controlador, na thread de eventos do motor, como o `OnCallState` e o `OnCallVideo`.
+- O mosaico de quem montou chega ao sink do vídeo como a imagem de uma ligação (`OnRemoteFrame`), com o id da sala: a
+  rota do vídeo o leva ao `remoto` porque a sala é a de cima (o `ligacao.top.id` do estado), sem nada novo no
+  executável. A imagem de cada convidado chega com o id da ligação dele e não vai a nenhuma vista.
+- Nenhum gancho novo.
+
 ## Para o executável (Tasks 11 e 12)
 
 - O `DesktopApp` roda tudo numa thread de comandos própria; `post` é chamado só nela, uma mensagem por vez, na
@@ -695,12 +830,16 @@ download dos arquivos.
   (0.3.0) Os do aviso vão com `HandleCommand(json, true)`: o `ready` dele não desliga o teste da câmera.
   `HandleCommand` pode ser chamado da thread da janela (ele só lê o JSON e põe na fila).
 - O executável lê o `state` que passa (sem perguntar ao `DesktopApp`): com uma recebida tocando (`top.phase`
-  `ringing`, ou `secondKind` `ringing` fora da conferência) e a janela fora da frente, o aviso aparece. O ícone da
-  bandeja segue a tabela da bolinha (rc.3; vale a primeira que bate, Ruling 17): sem internet (`conta.internet`
-  `false`), conectando, erro, sem conexão ou sem conta → sem conexão; depois a ligação (também tocando) → em
-  ligação; a perdida que a pessoa ainda não viu (`perdidas`) → perdida; o Não perturbe (`naoPerturbe`) → não
-  perturbe; e conectado (`conta.status` `conectado`) → conectado. Ele pisca enquanto toca. O menu da bandeja manda
-  `setDnd` e `quit` como a interface.
+  `ringing`, ou `secondKind` `ringing` fora da conferência) e a janela fora da frente, o aviso aparece. (0.3.0-rc.2)
+  Com a janela na frente, ele aparece só com um Porteiro tocando como a segunda ligação, com a imagem dele chegando
+  antes do atender: o `secondKind` `ringing`, fora da conferência, com a de cima sem tocar, e o `second.video.cedo`
+  `true` (decisão do responsável de 11/11/2026). Ele abre sem tomar o foco da janela; a tela da ligação segue com o
+  cartão da segunda (`Ligação de …`, com Recusar e Atender). Uma segunda comum (ou um porteiro sem a imagem) e uma de
+  cima tocando seguem sem o aviso com a janela na frente. O ícone da bandeja segue a tabela da bolinha (rc.3; vale a
+  primeira que bate, Ruling 17): sem internet (`conta.internet` `false`), conectando, erro, sem conexão ou sem conta →
+  sem conexão; depois a ligação (também tocando) → em ligação; a perdida que a pessoa ainda não viu (`perdidas`) →
+  perdida; o Não perturbe (`naoPerturbe`) → não perturbe; e conectado (`conta.status` `conectado`) → conectado. Ele
+  pisca enquanto toca. O menu da bandeja manda `setDnd` e `quit` como a interface.
 - Os links `tel:`/`sip:`/`callto:` (já lidos: `ParseLinkArgument`) vão a `DesktopApp::DialLink(numero)`, que só
   preenche `teclado` (e escreve `link recebido` no diagnóstico). Com o app aberto, a segunda abertura entrega os
   argumentos à primeira (instância única: o mutex `Local\StarsonicPhone` e `WM_COPYDATA`) e sai com o código 0; o
@@ -787,16 +926,19 @@ download dos arquivos.
   - `DesktopApp::OpenChat(conversa)`: a pessoa clicou no aviso do chat. Só põe na fila; antes do primeiro `ready`, o
     `abrir` espera por ele. Esse `ready` é o de qualquer página, também o do `aviso.html`: isso vale porque o executável
     só abre o aviso depois da primeira mensagem da janela principal, e assim o primeiro `ready` é sempre o dela.
-  - (0.3.0) Os quatro ganchos do vídeo, também chamados na thread de comandos e sem esperar; um vazio não faz nada. O
+  - (0.3.0) Os ganchos do vídeo, também chamados na thread de comandos e sem esperar; um vazio não faz nada. O
     executável os liga nas tarefas do vídeo.
     - `videoViews(vistas, paginaDoAviso)`: as vistas que a página mostra agora (`videoViews`, já sem as que não são da
       página), e se é a página do aviso. O executável troca só as vistas dessa página na rota do vídeo (ver "A memória do
       vídeo").
     - `videoWindow(modo)`: o modo da janela do vídeo (`"normal"`, `"grande"` ou `"telaCheia"`), do `videoWindow` e do fim
       da última ligação.
+    - `noticeHeight(altura)`: a altura do aviso de ligação recebida, em pixels lógicos (de 168 a 480), só do `noticeHeight` da
+      página do aviso. O executável a repassa ao `NoticeWindow::SetHeight`, que refaz o tamanho e o lugar no monitor onde
+      o aviso está (escondido, vale no próximo `Show`).
     - `h264Ensure()`: roda o `H264Module::Ensure` fora da fila de comandos e responde pelo `DesktopApp::SetH264State`
       (`Installed` ou `Failed`, de qualquer thread: só põe na fila). Só é chamado com o `DesktopConfig::h264Download`
-      (a opção `STARSONIC_H264_DOWNLOAD` do build, desligada até a etapa 2). Vazio: a situação fica `baixando`. No
+      (a opção `STARSONIC_H264_DOWNLOAD` do build, ligada na etapa 2). Vazio: a situação fica `baixando`. No
       executável, o `Ensure` roda numa thread própria, na pasta `%LOCALAPPDATA%\Starsonic Phone\codecs` (criada se
       falta), e um pedido no meio de outro é ignorado. Com o `Installed`, o módulo é conferido de novo (`Verify`) e
       carregado pelo caminho completo, e só então a resposta é `Installed`; o módulo que não carrega dá `Failed`,
@@ -812,6 +954,8 @@ download dos arquivos.
     Na ligação, o `EngineHost` é também o `CallEngine` do vídeo (`MakeCall(numero, video)`, `Answer(id, video)` e
     `SetCamera(id, ligada)`) e passa o `OnCallVideo` ao `DesktopApp`, que o entrega direto ao controlador, na thread de
     eventos do motor, como o `OnCallState`.
+- (0.4.0) A sala de vídeo: o `RoomAdd` e o `OnRoom` passam pelo `EngineHost` (ver "Para o executável" em "A sala de
+  vídeo (0.4.0)").
 - Ao fechar: `Shutdown()`, o `Stop()` do agendador, o motor destruído, o `DesktopApp` destruído (detalhes no
   `DesktopApp.h`). Depois de a janela fechar, isso tem 5 s: passou, `fechamento forcado` no diagnóstico e o processo
   sai com o código 0.
@@ -1030,6 +1174,8 @@ Recusados inteiros: nada muda, nenhum gancho é chamado, e o diagnóstico ganha 
 - a atualização: `updateNow` e `updateLater`;
 - (0.3.0) o vídeo: `setVideo`, `cameraTest`, `videoViews`, `videoWindow`, `h264Retry` e `camera`. O `video` do `dial` e do
   `answer` não é recusado: o comando vale, e o `DesktopApp` passa `false` ao motor;
+- (0.4.0) a sala de vídeo: `salaAdicionar`, `salaTirar`, `salaEncerrar` e `salaVoltar`. O `ligacao.sala` do iPhone é
+  sempre `null`;
 - (0.2.0) o chat: `chatKey`, `chatLink`, `chatUnlink`, `chatNotify`, `chatBadge` e `chatDownload`. O estado do iPhone
   não tem o `chat`, e o `DesktopApp::SetWindowInFront` e o `DesktopApp::OpenChat` só deixam uma linha no diagnóstico
   (`janela na frente: recusada no modo iPhone`, `abrir o chat: recusado no modo iPhone`): o `ready` do iPhone nunca leva

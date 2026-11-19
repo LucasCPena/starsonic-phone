@@ -369,7 +369,9 @@ void MainWindow::RefreshNotice() {
         inFront_ = inFront;
         if (callbacks_.inFront) callbacks_.inFront(inFront);
     }
-    if (status_.ringing && !inFront) {
+    // Com a janela na frente, o aviso aparece so com o porteiro tocando como a segunda ligacao (0.3.0-rc.2,
+    // ShowsNotice), sem tomar o foco dela (o NoticeWindow abre com o SWP_NOACTIVATE).
+    if (ShowsNotice(status_, inFront)) {
         notice_.Show(window_);
     } else {
         notice_.Hide();
@@ -466,6 +468,8 @@ bool MainWindow::ApplyModeBox(HMONITOR monitor, UINT dpi) {
     }
     return true;
 }
+
+void MainWindow::SetNoticeHeight(int logicalHeight) { notice_.SetHeight(logicalHeight); }
 
 void MainWindow::SetVideoMode(VideoMode mode) {
     if (!window_ || mode == mode_) return;

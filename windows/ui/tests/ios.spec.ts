@@ -7,6 +7,7 @@ import { expect, test, type Locator } from '@playwright/test';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { createScenario, estadoDoIphone } from '../src/fake-scenarios';
 import { audio, audioFalso, comandos, empurrar, esperarComando, verTextos } from './helpers';
 import { abrirIos, areasDe44, capturarIos, dentroDaAreaSegura, noIphone, semViolacoesSerias, TAMANHOS_IPHONE, tamanhoDe } from './ios-helpers';
 
@@ -535,6 +536,39 @@ test.describe('os avisos de licença sem o arquivo', () => {
     await expect(page.getByRole('alert')).toHaveText('Reinstale o Starsonic Phone.');
     await expect(page.getByRole('heading', { name: 'Avisos de licença', level: 1 })).toBeVisible();
     await semViolacoesSerias(page);
+  });
+});
+
+test.describe('o hospedeiro do iPhone que só conhece o message', () => {
+  test.use(noIphone(TAMANHOS_IPHONE[0]));
+
+  test('the iPhone app starts when the host refuses the buffer event', async ({ page }) => {
+    // (Ruling 19) O hospedeiro do iPhone só promete o `message` (docs/ponte-windows.md, "O modo iPhone"): um que dá erro
+    // no `addEventListener` de outro tipo de evento (o `sharedbufferreceived` das memórias do vídeo) não impede o app de
+    // abrir. No lugar da ponte falsa, um hospedeiro de teste que responde ao `ready` com o estado do cenário do iPhone.
+    const estadoDoCenario = estadoDoIphone(createScenario('principal')!.state, 'concedida');
+    await page.addInitScript((estado) => {
+      const ouvintes: Array<(evento: { data: unknown }) => void> = [];
+      const webview = {
+        postMessage(mensagem: { cmd?: string }) {
+          if (mensagem?.cmd !== 'ready') return;
+          setTimeout(() => {
+            for (const ouvinte of ouvintes) ouvinte({ data: { v: 1, type: 'state', state: estado } });
+          }, 0);
+        },
+        addEventListener(tipo: string, ouvinte: (evento: { data: unknown }) => void) {
+          if (tipo !== 'message') throw new TypeError(`evento desconhecido: ${tipo}`);
+          ouvintes.push(ouvinte);
+        },
+        removeEventListener() {},
+      };
+      Object.defineProperty(window, 'chrome', { value: { webview }, configurable: true, writable: true });
+    }, estadoDoCenario);
+    await page.goto('/index.html');
+    await expect(page.locator('body[data-pronto]')).toHaveCount(1);
+    await expect(page.locator('.win')).toHaveAttribute('data-plataforma', 'ios');
+    await expect(page.getByRole('main', { name: 'Teclado' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Teclado' })).toHaveAttribute('aria-current', 'page');
   });
 });
 

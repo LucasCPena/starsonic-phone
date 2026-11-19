@@ -226,6 +226,11 @@ int EngineHost::CallCount() const {
     return engine ? engine->CallCount() : 0;
 }
 
+int EngineHost::RoomAdd(const std::string& number) {
+    SipEngine* engine = Ready();
+    return engine ? engine->RoomAdd(number) : -1;
+}
+
 int EngineHost::SetAccount(const AccountInput& input) {
     SipEngine* engine = Ready();
     return engine ? engine->SetAccount(input) : 0;
@@ -315,6 +320,10 @@ void EngineHost::OnCallVideo(int callId, const CallVideo& video) {
 
 void EngineHost::OnCameraProblem(CameraProblem problem) {
     if (EngineListener* listener = listener_.load()) listener->OnCameraProblem(problem);
+}
+
+void EngineHost::OnRoom(const RoomInfo& room) {
+    if (EngineListener* listener = listener_.load()) listener->OnRoom(room);
 }
 
 void EngineHost::OnLog(int level, const std::string& line) {

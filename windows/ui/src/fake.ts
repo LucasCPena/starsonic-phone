@@ -15,11 +15,30 @@
 // (chat/endereco.ts). O chatKey responde com a chatChave, o chatLink guarda a chave e liga, o chatUnlink desliga; a
 // conta que registra (a escolhida nas contas, a do Entrar) fica conectada aqui. Depois de cada `ready`, a `janela` vem
 // com `frente: true`. (iPhone) Sem o chat, e os comandos dele são recusados.
+// (0.3.0) O vídeo: o `video` do estado e o `video` de cada cartão seguem os comandos como o núcleo (docs/ponte-windows.md,
+// "Vídeo (0.3.0)" e "O vídeo na ligação"): as escolhas do vídeo, o H.264 que baixa (1 s) e instala, o teste da câmera, o
+// modo da janela, a câmera na ligação e o cartão Vídeo do administrador. O `noticeHeight` só fica no `__comandos`. O
+// `__fake.mandar(comando)` manda o comando como se a página o mandasse (só dos testes da ponte falsa). No iPhone, o vídeo
+// é recusado.
+// (0.3.0) As memórias do vídeo, como o executável ("A memória do vídeo"): a de cada vista da página nasce no primeiro
+// `videoViews` que a mostra (as vistas da outra página são ignoradas) e chega pelo `sharedbufferreceived`, depois. O evento
+// leva a própria memória, sem o structuredClone das mensagens: o quadro que um teste grava depois aparece na página. O
+// `__fake.quadro(vista, largura, altura, y, u, v)` grava um quadro como o escritor do executável (false enquanto a vista
+// não tem memória), o `__fake.esvaziar(vista)` a esvazia, o `__fake.memoriaCrua(dados, bytes)` entrega uma memória
+// qualquer, o `__fake.liberadas()` conta as que a página soltou (como no WebView2, uma memória solta fica inacessível) e
+// o `__fake.eventoCru(evento)` põe um evento qualquer no ouvinte das memórias.
+// (0.4.0) A sala de vídeo (src/fake-sala.ts) faz o papel do núcleo na sala: os quatro comandos dela e os de sempre com a
+// sala de pé passam antes por ela, e o `fora` e o `cheia` de toda ligação com sala seguem a ligação (o `acertarSala`).
+import { acertarSala, criarSalaFalsa, RESPONDE_EM_MS, SO_TOCA } from './fake-sala';
 import { AGENDA_DE_EXEMPLO, createScenario, entrarVazio, estadoDoIphone, PLANILHA_DA_EMPRESA, SERVIDORES_DO_PERFIL, type FakeView } from './fake-scenarios';
 import { trimAscii } from './format';
-import type { WebviewLike } from './bridge';
+import { SEM_VIDEO } from './video/estado';
+import { escreverQuadro, esvaziar as esvaziarMemoria, TAMANHO_DA_MEMORIA, type Plano } from './video/memoria';
+import { NENHUMA_CAMERA } from './video/textos';
+import type { SharedBufferEventLike, WebviewLike } from './bridge';
 import type {
   AccountStatus,
+  AdminAberto,
   AdminServer,
   AdminState,
   AgendaContact,
@@ -30,22 +49,30 @@ import type {
   CallState,
   CompanyContact,
   CompanyList,
+  CodecDeVideo,
   Contact,
   IncomingMessage,
+  QualidadeDeVideo,
   RingKind,
   Shortcut,
   ShortcutAction,
   UpdateChannel,
+  VideoSettings,
+  VistaDeVideoNome,
 } from './state';
 
 /** A senha que a área do administrador da ponte falsa aceita: só de teste (a de verdade nunca fica no repositório). */
 const SENHA_DE_TESTE = 'senha-de-teste';
 const ACOES: ShortcutAction[] = ['ligar', 'transferir', 'consulta', 'teclas'];
+const CODECS: CodecDeVideo[] = ['h264', 'vp8', 'vp9'];
+const QUALIDADES: QualidadeDeVideo[] = ['baixa', 'media', 'alta'];
+const MAXIMO_DE_PORTEIROS = 20;
 const CODIGO_DE_PUXAR = /^(?:[0-9*#+]|\{ramal\})*$/;
 /** (0.2.0) A chave do chat que o chatLink aceita (docs/ponte-windows.md, "Os comandos do chat"). */
 const CHAVE_DO_CHAT = /^[A-Za-z0-9_-]{43}$/;
 
 type Listener = (event: { data: unknown }) => void;
+type OuvinteDeMemoria = (event: SharedBufferEventLike) => void;
 
 export interface FakeHooks {
   push(message: unknown): void;
@@ -53,6 +80,18 @@ export interface FakeHooks {
   /** Segura o que o C++ de mentira manda de volta a um comando (o estado, o aviso e o toque) até o `soltar()`: o C++ lento. */
   segurar(): void;
   soltar(): void;
+  /** (0.3.0) O comando como se a página o mandasse (guardado em `__comandos`); só dos testes da ponte falsa. */
+  mandar(comando: Record<string, unknown>): void;
+  /** (0.3.0) Grava um quadro na memória da vista, como o escritor do executável; `false` enquanto ela não tem memória. */
+  quadro(vista: VistaDeVideoNome, largura: number, altura: number, y: Plano, u: Plano, v: Plano): boolean;
+  /** (0.3.0) Esvazia a memória da vista (o `seq` volta a 0), como o executável quando a ligação dela muda ou acaba. */
+  esvaziar(vista: VistaDeVideoNome): void;
+  /** (0.3.0) Entrega à página uma memória qualquer de `bytes` bytes, com este `additionalData`. */
+  memoriaCrua(dados: unknown, bytes: number): void;
+  /** (0.3.0) Quantas memórias a página soltou (o `releaseBuffer`). */
+  liberadas(): number;
+  /** (0.3.0) Um evento qualquer no ouvinte das memórias, como o de um hospedeiro que manda todo evento a todo ouvinte. */
+  eventoCru(evento: unknown): void;
 }
 
 declare global {
@@ -114,6 +153,21 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
   const listeners = new Set<Listener>();
   const sent: Array<Record<string, unknown>> = [];
   window.__comandos = sent;
+  // (0.3.0) As memórias do vídeo: a de cada vista (do primeiro `videoViews` que a mostra) e quantas a página soltou.
+  const ouvintesDeMemoria = new Set<OuvinteDeMemoria>();
+  const memorias = new Map<VistaDeVideoNome, ArrayBuffer>();
+  let liberadas = 0;
+  /** Assíncrono, como o PostSharedBufferToScript; o evento leva a própria memória (não uma cópia). */
+  const entregarMemoria = (memoria: ArrayBuffer, dados: unknown) => {
+    setTimeout(() => {
+      for (const l of [...ouvintesDeMemoria]) l({ additionalData: structuredClone(dados), getBuffer: () => memoria });
+    }, 0);
+  };
+  /** A memória da vista que a página ainda lê (uma que ela soltou fica sem o conteúdo: o escritor não a alcança mais). */
+  const memoriaDaVista = (vista: VistaDeVideoNome) => {
+    const memoria = memorias.get(vista);
+    return memoria && memoria.byteLength > 0 ? memoria : null;
+  };
 
   // O C++ lento (segurar/soltar): as respostas aos comandos esperam, na ordem; o `push` do teste passa direto.
   let segurando = false;
@@ -153,6 +207,26 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
       segurando = false;
       for (const message of presas.splice(0)) deliver(message);
     },
+    mandar: (comando) => webview.postMessage({ v: 1, ...comando }),
+    quadro(vista, largura, altura, y, u, v) {
+      const memoria = memoriaDaVista(vista);
+      if (!memoria) return false;
+      escreverQuadro(memoria, largura, altura, y, u, v);
+      return true;
+    },
+    esvaziar(vista) {
+      const memoria = memoriaDaVista(vista);
+      if (memoria) esvaziarMemoria(memoria);
+    },
+    memoriaCrua(dados, bytes) {
+      entregarMemoria(new ArrayBuffer(bytes), dados);
+    },
+    liberadas: () => liberadas,
+    eventoCru(evento) {
+      setTimeout(() => {
+        for (const l of [...ouvintesDeMemoria]) l(evento as SharedBufferEventLike);
+      }, 0);
+    },
   };
 
   // (iPhone) Nenhum toque: quem toca é a tela de chamada do iPhone.
@@ -160,7 +234,13 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
     if (!ios) deliver({ v: 1, type: 'ring', tipo } satisfies IncomingMessage);
   };
   const toast = (texto: string) => deliver({ v: 1, type: 'toast', texto } satisfies IncomingMessage);
-  const setCall = (ligacao: CallState | null) => change({ ligacao });
+  // Quando a última ligação acaba, a janela do vídeo volta a `normal` (o núcleo). (0.4.0) A sala vai com o `fora` e o
+  // `cheia` da ligação.
+  const setCall = (ligacao: CallState | null) =>
+    change({
+      ligacao: ligacao && acertarSala(ligacao),
+      ...(ligacao === null && state.video && state.video.janela !== 'normal' ? { video: { ...state.video, janela: 'normal' as const } } : {}),
+    });
 
   // (rc.4) A planilha da empresa do C++ de mentira: o link salvo é lido ("lendo") e, um instante depois, a leitura é boa
   // e traz a planilha de exemplo; a que volta depois de o link mudar é descartada. O link vazio tira a lista. Como no
@@ -192,11 +272,19 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
   // A área do administrador do C++ de mentira: a senha de teste, a espera de 30 s depois de 5 erradas seguidas e o
   // que a área guarda além do que a interface vê com ela fechada (o admin.json).
   let erradas = 0;
-  let guardado: { puxar: boolean; codigoPuxar: string; servidores: AdminServer[]; canal: UpdateChannel } = {
+  // O cartão Vídeo parte dos padrões do app de fábrica (o H.264 e o VP8 ligados, o VP9 desligado, o H.264 primeiro, a
+  // qualidade média, nenhum porteiro), mas com desligado o que o estado do cenário já mostra desligado (o `sem-video`).
+  let guardado: Omit<AdminAberto, 'aberto' | 'naoPerturbe' | 'atenderAuto' | 'blf' | 'puxa'> = {
     puxar: false,
     codigoPuxar: '',
     servidores: structuredClone(SERVIDORES_DO_PERFIL),
     canal: '',
+    videoH264: state.video?.h264.cartao ?? false,
+    videoVp8: state.video?.ligado ?? false,
+    videoVp9: false,
+    videoPrimeiro: 'h264',
+    videoQualidade: 'media',
+    porteiros: [],
   };
   // O clique num atalho tocando puxa a ligação só com o BLF, o puxar e um código ligados (o `admin.puxa` do C++).
   const puxa = (blf: boolean) => blf && guardado.puxar && guardado.codigoPuxar !== '';
@@ -234,33 +322,117 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
     }
     return gravados;
   };
+  // O vídeo do núcleo: o `ligado` é o VP8 ou o VP9 do cartão, ou o H.264 do cartão com a chave da pessoa.
+  const mudarVideo = (mudar: (v: VideoSettings) => VideoSettings) => {
+    if (state.video) change({ video: mudar(state.video) });
+  };
+  const comLigado = (v: VideoSettings): VideoSettings => ({
+    ...v,
+    ligado: guardado.videoVp8 || guardado.videoVp9 || (v.h264.cartao && v.h264.pessoa),
+  });
+  /** O H.264 ligado (o cartão e a pessoa) e ainda não instalado baixa e, 1 s depois, instala. */
+  const baixarH264 = () => {
+    mudarVideo((v) => ({ ...v, h264: { ...v.h264, situacao: 'baixando' } }));
+    setTimeout(() => {
+      if (state.video?.h264.situacao === 'baixando') mudarVideo((v) => ({ ...v, h264: { ...v.h264, situacao: 'instalado' } }));
+    }, 1000);
+  };
+  /** O cartão ou a pessoa desliga o H.264: `desligado`; se voltou e o módulo não está instalado, baixa. */
+  const acertarH264 = (instalavel: boolean) => {
+    const v = state.video;
+    if (!v) return;
+    if (!instalavel) mudarVideo((x) => ({ ...x, h264: { ...x.h264, situacao: 'desligado' } }));
+    else if (v.h264.situacao === 'desligado') baixarH264();
+  };
+  /** A recusa da lista dos Porteiros do núcleo (a quantidade, os dígitos, o tamanho e a repetição), ou a lista gravada. */
+  const porteirosGravados = (lista: unknown): string[] | string => {
+    const itens = Array.isArray(lista) ? lista : [];
+    if (itens.length > MAXIMO_DE_PORTEIROS) return 'No máximo 20 porteiros.';
+    const gravados: string[] = [];
+    for (const item of itens) {
+      const ramal = trimAscii(String(item));
+      if (!/^[0-9]*$/.test(ramal)) return 'Cada porteiro só pode ter dígitos.';
+      if (ramal.length < 1 || ramal.length > 15) return 'Cada porteiro precisa ter de 1 a 15 dígitos.';
+      if (gravados.includes(ramal)) return 'Esse porteiro já está na lista.';
+      gravados.push(ramal);
+    }
+    return gravados;
+  };
+  /**
+   * O cartão da ligação atendida: a câmera só liga com o `video`, e o vídeo da outra ponta segue a oferta. Um porteiro
+   * segue porteiro (o `cedo` acaba no atender), como no motor.
+   */
+  const atendida = (card: CallCard, video: boolean): CallCard => ({
+    ...card,
+    phase: 'active',
+    activeSinceMs: Date.now(),
+    video: {
+      oferece: card.video?.oferece ?? false,
+      ativo: card.video?.oferece ?? false,
+      imagem: card.video?.oferece ?? false,
+      camera: video,
+      cedo: false,
+      porteiro: card.video?.porteiro ?? false,
+    },
+  });
+
   let proximoId = 40;
-  /** A segunda ligação feita (Nova ligação ou Consultar): a de agora vai para a espera e a nova chama. */
+  /**
+   * A segunda ligação feita (Nova ligação ou Consultar, e a ligação de fora da sala): a de agora vai para a espera e a
+   * nova chama, só com a voz. O outro lado atende logo depois, como o convidado da sala (o `180` só toca).
+   */
   const ligarDeNovo = (l: CallState, numero: string, consulta: boolean) => {
     const contato = state.contatos.find((c) => c.numero === numero);
-    const nova: CallCard = { id: ++proximoId, number: numero, name: contato?.nome ?? '', incoming: false, phase: 'dialing', activeSinceMs: 0, held: false };
+    const nova: CallCard = {
+      id: ++proximoId,
+      number: numero,
+      name: contato?.nome ?? '',
+      incoming: false,
+      phase: 'dialing',
+      activeSinceMs: 0,
+      held: false,
+      video: { ...SEM_VIDEO },
+    };
     setCall({ ...l, top: nova, second: { ...l.top, held: true }, secondKind: 'held', consulting: consulta, colleagueActive: consulta });
-    // O outro lado atende logo depois.
+    if (numero === SO_TOCA) return;
     setTimeout(() => {
       const agora = state.ligacao;
       if (agora?.top.id === nova.id && agora.top.phase === 'dialing') {
         setCall({ ...agora, top: { ...agora.top, phase: 'active', activeSinceMs: Date.now() } });
       }
-    }, 1500);
+    }, RESPONDE_EM_MS);
   };
+  // (0.4.0) A sala de vídeo, com os ids do mesmo contador das ligações e a Nova ligação daqui para a ligação de fora.
+  const salaFalsa = criarSalaFalsa({
+    estado: () => state,
+    mudarLigacao: setCall,
+    toast,
+    toque: ring,
+    novoId: () => ++proximoId,
+    novaLigacao: (l, numero) => ligarDeNovo(l, numero, false),
+  });
   /** As ligações do C++ de mentira: só o bastante para a tela da ligação seguir os botões. */
   const handleCall = (command: Record<string, unknown>): boolean => {
+    if (salaFalsa.comando(command)) return true;
     const l = state.ligacao;
     switch (command.cmd) {
       case 'answer':
+        // (0.3.0) Só com o `video: true` a nossa câmera liga; a imagem da outra ponta segue a oferta.
         if (l?.top.phase === 'ringing') {
-          setCall({ ...l, top: { ...l.top, phase: 'active', activeSinceMs: Date.now() } });
+          setCall({ ...l, top: atendida(l.top, command.video === true && !ios) });
           ring('parar');
         } else if (l?.second && l.secondKind === 'ringing') {
-          setCall({ ...l, top: { ...l.second, phase: 'active', activeSinceMs: Date.now() }, second: { ...l.top, held: true }, secondKind: 'held' });
+          setCall({ ...l, top: atendida(l.second, command.video === true && !ios), second: { ...l.top, held: true }, secondKind: 'held' });
           ring('parar');
         }
         return true;
+      case 'camera': {
+        // A câmera da ligação de cima: com o id do motor e fora do toque; sem ligação, nada.
+        if (ios || typeof command.on !== 'boolean' || !l || l.top.id <= 0 || l.top.phase === 'ringing' || !l.top.video) return true;
+        const on = command.on;
+        setCall({ ...l, top: { ...l.top, video: { ...l.top.video, camera: on, ativo: on ? true : l.top.video.ativo } } });
+        return true;
+      }
       case 'reject':
         if (l?.top.phase === 'ringing') {
           setCall(null);
@@ -350,6 +522,8 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
         // (rc.4) A lista da empresa vem depois do estado e do toque (com uma lista desde a abertura: `vez` > 0); no
         // cenário da leitura que acabou com a página abrindo, só antes do primeiro estado.
         if (scenario.empresaAntesDoEstado) empresaNoReady();
+        // (0.3.0) O `ready` da janela principal (não o do aviso) desliga o teste da câmera que estava ligado.
+        if (state.video?.teste && !location.pathname.endsWith('aviso.html')) state = { ...state, video: { ...state.video, teste: false } };
         publish();
         if (scenario.ring) deliver({ v: 1, type: 'ring', tipo: scenario.ring });
         if (!scenario.empresaAntesDoEstado && state.empresa.vez > 0) empresaNoReady();
@@ -372,6 +546,51 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
         if (ios || !state.chat) break;
         chaveDoChat = '';
         change({ chat: { ...state.chat, ligado: false, empresa: '' } });
+        break;
+      case 'setVideo': {
+        // (0.3.0) A câmera escolhida (uma que não está na lista fica gravada, e `cameraDesconectada` liga) e a chave da
+        // pessoa para o H.264 (as outras opções não mudam).
+        const v = state.video;
+        if (ios || !v) break;
+        if (typeof command.camera === 'string') {
+          const camera = command.camera;
+          mudarVideo((x) => ({ ...x, camera, cameraDesconectada: camera !== '' && !x.cameras.includes(camera) }));
+        }
+        if (typeof command.h264 === 'boolean') {
+          const pessoa = command.h264;
+          mudarVideo((x) => comLigado({ ...x, h264: { ...x.h264, pessoa } }));
+          acertarH264(pessoa && v.h264.cartao);
+        }
+        break;
+      }
+      case 'cameraTest':
+        // (0.3.0) Sem câmeras, o motor avisa e o teste fica desligado.
+        if (ios || !state.video || typeof command.on !== 'boolean') break;
+        if (command.on && state.video.cameras.length === 0) toast(NENHUMA_CAMERA);
+        else mudarVideo((v) => ({ ...v, teste: command.on === true }));
+        break;
+      case 'videoWindow':
+        if (ios || !state.video || !['normal', 'grande', 'telaCheia'].includes(String(command.modo))) break;
+        mudarVideo((v) => ({ ...v, janela: command.modo as VideoSettings['janela'] }));
+        break;
+      case 'h264Retry':
+        if (state.video?.h264.situacao === 'falhou') baixarH264();
+        break;
+      case 'videoViews': {
+        // A memória de cada vista da página nasce no primeiro `videoViews` que a mostra; uma vista que não é da página
+        // (a `principal` tem o `remoto` e o `local`, o `aviso`, o `porteiro`) é ignorada.
+        if (ios || !Array.isArray(command.vistas)) break;
+        const daPagina: VistaDeVideoNome[] = command.pagina === 'aviso' ? ['porteiro'] : command.pagina === 'principal' ? ['remoto', 'local'] : [];
+        for (const vista of daPagina) {
+          if (!command.vistas.includes(vista) || memorias.has(vista)) continue;
+          const memoria = new ArrayBuffer(TAMANHO_DA_MEMORIA);
+          memorias.set(vista, memoria);
+          entregarMemoria(memoria, { v: 1, type: 'videoBuffer', vista, bytes: TAMANHO_DA_MEMORIA });
+        }
+        break;
+      }
+      case 'noticeHeight':
+        // A altura do aviso é do executável: as specs só olham o comando.
         break;
       case 'chatNotify':
       case 'chatBadge':
@@ -498,6 +717,15 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
           }
           servidores = gravados;
         }
+        let porteiros = guardado.porteiros;
+        if (command.porteiros !== undefined) {
+          const gravados = porteirosGravados(command.porteiros);
+          if (typeof gravados === 'string') {
+            toast(gravados);
+            break;
+          }
+          porteiros = gravados;
+        }
         const naoPerturbe = typeof command.naoPerturbe === 'boolean' ? command.naoPerturbe : state.admin.naoPerturbe;
         const atenderAuto = typeof command.atenderAuto === 'boolean' ? command.atenderAuto : state.admin.atenderAuto;
         const blf = typeof command.blf === 'boolean' ? command.blf : state.admin.blf;
@@ -506,7 +734,18 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
           codigoPuxar: typeof command.codigoPuxar === 'string' ? command.codigoPuxar.trim() : guardado.codigoPuxar,
           servidores,
           canal: typeof command.canal === 'string' ? (command.canal as UpdateChannel) : guardado.canal,
+          videoH264: typeof command.videoH264 === 'boolean' ? command.videoH264 : guardado.videoH264,
+          videoVp8: typeof command.videoVp8 === 'boolean' ? command.videoVp8 : guardado.videoVp8,
+          videoVp9: typeof command.videoVp9 === 'boolean' ? command.videoVp9 : guardado.videoVp9,
+          // Um codec ou uma qualidade que não existe é ignorado.
+          videoPrimeiro: CODECS.find((c) => c === command.videoPrimeiro) ?? guardado.videoPrimeiro,
+          videoQualidade: QUALIDADES.find((q) => q === command.videoQualidade) ?? guardado.videoQualidade,
+          porteiros,
         };
+        // O cartão decide o `ligado` e a chave `cartao` do H.264.
+        const h264Antes = state.video?.h264.cartao ?? false;
+        mudarVideo((v) => comLigado({ ...v, h264: { ...v.h264, cartao: guardado.videoH264 } }));
+        if (state.video && guardado.videoH264 !== h264Antes) acertarH264(guardado.videoH264 && state.video.h264.pessoa);
         change({
           admin: { aberto: true, naoPerturbe, atenderAuto, blf, puxa: puxa(blf), ...guardado },
           // Escondido, o botão fica desligado na hora (e mostrar de novo não liga de volta).
@@ -608,11 +847,18 @@ export function createFakeWebview(name: string): { webview: WebviewLike; view: F
       sent.push(command);
       handle(command);
     },
-    addEventListener(_type, listener) {
-      listeners.add(listener);
+    addEventListener(type: string, listener: Listener | OuvinteDeMemoria) {
+      if (type === 'sharedbufferreceived') ouvintesDeMemoria.add(listener as OuvinteDeMemoria);
+      else listeners.add(listener as Listener);
     },
-    removeEventListener(_type, listener) {
-      listeners.delete(listener);
+    removeEventListener(type: string, listener: Listener | OuvinteDeMemoria) {
+      if (type === 'sharedbufferreceived') ouvintesDeMemoria.delete(listener as OuvinteDeMemoria);
+      else listeners.delete(listener as Listener);
+    },
+    releaseBuffer(buffer) {
+      liberadas += 1;
+      // Como o WebView2: a memória solta fica "detached" na página, e cada acesso a ela dá um TypeError.
+      structuredClone(buffer, { transfer: [buffer] });
     },
   };
   return { webview, view: scenario.view };

@@ -1,6 +1,7 @@
 # Monta as dependencias nativas do Starsonic Phone em <WorkDir>:
-#   <WorkDir>\pjproject  pjproject no commit fixo, com config_site.h, a libpjproject e o pjsua2 (o motor do app novo),
-#                        com o video (a DirectShow, a libvpx, o OpenH264 pelos cabecalhos da API e a libyuv)
+#   <WorkDir>\pjproject  pjproject no commit fixo, com os patches da Starsonic (build\patches\pjproject), config_site.h,
+#                        a libpjproject e o pjsua2 (o motor do app novo), com o video (a DirectShow, a libvpx, o
+#                        OpenH264 pelos cabecalhos da API e a libyuv)
 #   <WorkDir>\vcpkg      vcpkg no commit fixo, com openssl, opus, bcg729, sqlite3, sqlitecpp, libvpx e bzip2
 #   <WorkDir>\webview2   o SDK do WebView2 (NuGet Microsoft.Web.WebView2, SHA-256 conferido): include\ e
 #                        x86\WebView2LoaderStatic.lib
@@ -19,9 +20,24 @@ $pj = Join-Path $WorkDir 'pjproject'
 $vcpkg = Join-Path $WorkDir 'vcpkg'
 $triplet = $lock.vcpkg.triplet
 
-# 1. pjproject no commit fixo
+# 1. pjproject no commit fixo, com os patches, na ordem dos nomes. O reset devolve os arquivos versionados ao commit
+#    (tira o que uma rodada anterior aplicou na WorkDir reaproveitada): cada patch entra uma vez so.
 Write-Host "== pjproject $($lock.pjproject.tag) ($($lock.pjproject.commit))"
 Get-PinnedRepo -Url $lock.pjproject.repo -Commit $lock.pjproject.commit -Dir $pj
+Invoke-Native git @('-C', $pj, 'reset', '-q', '--hard')
+$patchDir = Join-Path $PSScriptRoot 'patches\pjproject'
+$patches = @()
+if (Test-Path $patchDir) {
+    $patches = @(Get-ChildItem -Path $patchDir -Filter '*.patch' -File | Sort-Object Name)
+}
+foreach ($patch in $patches) {
+    Write-Host "pjproject: aplicando $($patch.Name)"
+    try {
+        Invoke-Native git @('-C', $pj, 'apply', $patch.FullName)
+    } catch {
+        throw "pjproject: o patch $($patch.Name) nao aplica no commit $($lock.pjproject.commit)"
+    }
+}
 
 # 2. config_site.h
 Copy-Item -Path (Join-Path $PSScriptRoot 'config_site.h') -Destination (Join-Path $pj 'pjlib\include\pj\config_site.h') -Force

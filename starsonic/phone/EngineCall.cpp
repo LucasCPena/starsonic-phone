@@ -75,23 +75,47 @@ bool Transmits(pjsua_conf_port_id port, pjsua_conf_port_id sink) {
     return std::find(info.listeners, info.listeners + info.listener_cnt, sink) != info.listeners + info.listener_cnt;
 }
 
-// A porta na ponte do áudio da ligação pjsuaId (PJSUA_INVALID_ID se não há) e, em *usable, se ela
-// pode ficar ligada. Como o MicroSIP: a mídia ativa (ou em espera do outro lado) fala e ouve; em
-// espera daqui ou sem mídia, fica fora do som.
-pjsua_conf_port_id AudioPort(int pjsuaId, bool* usable) {
-    *usable = false;
-    pjsua_call_info info;
-    if (pjsuaId == PJSUA_INVALID_ID || pjsua_call_get_info(pjsuaId, &info) != PJ_SUCCESS) return PJSUA_INVALID_ID;
+// O áudio de uma ligação: o primeiro com uma porta na ponte, com a porta (PJSUA_INVALID_ID se não há) e o estado.
+struct CallAudio {
+    pjsua_conf_port_id port = PJSUA_INVALID_ID;
+    pjsua_call_media_status status = PJSUA_CALL_MEDIA_NONE;
+};
+
+CallAudio AudioOf(const pjsua_call_info& info) {
+    CallAudio audio;
     for (unsigned index = 0; index < info.media_cnt; ++index) {
         const pjsua_call_media_info& media = info.media[index];
         if (media.type != PJMEDIA_TYPE_AUDIO || media.stream.aud.conf_slot == PJSUA_INVALID_ID) continue;
-        *usable = media.status == PJSUA_CALL_MEDIA_ACTIVE || media.status == PJSUA_CALL_MEDIA_REMOTE_HOLD;
-        return media.stream.aud.conf_slot;
+        audio.port = media.stream.aud.conf_slot;
+        audio.status = media.status;
+        break;
     }
-    return PJSUA_INVALID_ID;
+    return audio;
+}
+
+// A porta na ponte do áudio da ligação pjsuaId (PJSUA_INVALID_ID se não há) e, em *usable, se ela
+// pode ficar ligada. Como o MicroSIP: a mídia ativa (ou em espera do outro lado) fala e ouve; em
+// espera daqui ou sem mídia, fica fora do som. Um convidado da sala (member) só com a mídia ativa: em
+// espera do outro lado, a música da central não chega a ninguém.
+pjsua_conf_port_id AudioPort(int pjsuaId, bool member, bool* usable) {
+    *usable = false;
+    pjsua_call_info info;
+    if (pjsuaId == PJSUA_INVALID_ID || pjsua_call_get_info(pjsuaId, &info) != PJ_SUCCESS) return PJSUA_INVALID_ID;
+    const CallAudio audio = AudioOf(info);
+    *usable = audio.status == PJSUA_CALL_MEDIA_ACTIVE || (!member && audio.status == PJSUA_CALL_MEDIA_REMOTE_HOLD);
+    return audio.port;
 }
 
 }  // namespace
+
+pj_status_t RetryWhileRenegotiating(const std::function<pj_status_t()>& attempt) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(kRenegotiationWaitMs);
+    for (;;) {
+        const pj_status_t status = attempt();
+        if (status != PJ_EINVALIDOP || std::chrono::steady_clock::now() >= deadline) return status;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+}
 
 EngineCall::EngineCall(pj::Account& account, int pjsuaId, CallTable* table) : pj::Call(account, pjsuaId), table_(table) {}
 
@@ -152,13 +176,16 @@ void CallTable::Incoming(pj::Account& account, int pjsuaId, bool accepting, cons
     bool busy = false;
     unsigned videoCount = 0;
     int recvOnly = -1;
-    bool doorphone = false;
+    bool sendEarly = false;   // o 183 com o SDP (o early de um Porteiro) no lugar do 180
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        // Toca sem ligação nenhuma ou com uma só, já confirmada (a segunda ligação).
+        // Toca sem ligação nenhuma ou com uma só, já confirmada (a segunda ligação). Com a sala de pé, ela é a outra
+        // linha: toca sem a ligação de fora (a outra, fora da sala), e só com a voz.
         Slot* slot = FreeSlot();
         const Slot* other = slot ? Other(slot) : nullptr;
-        if (accepting && !closed_ && slot && (!other || other->confirmed)) {
+        const bool room = roomId_ != 0;
+        const bool rings = room ? slot && !other : slot && Occupied() < 2 && (!other || other->confirmed);
+        if (accepting && !closed_ && rings) {
             callId = nextId_++;
             slot->call = new EngineCall(account, pjsuaId, this);   // daqui em diante os callbacks vão a ele
             slot->callId = callId;
@@ -169,27 +196,36 @@ void CallTable::Incoming(pj::Account& account, int pjsuaId, bool accepting, cons
             });
 #if PJMEDIA_HAS_VIDEO
             // O vídeo da oferta, logo depois do aviso: com um codec em comum, a resposta o aceita (offered), e um
-            // Porteiro ganha o 183 com o SDP no lugar do 180; sem, o vídeo é recusado (a resposta vai sem ele).
-            if (offer.video) {
+            // Porteiro ganha o 183 com o SDP no lugar do 180; sem, o vídeo é recusado (a resposta vai sem ele). Com a
+            // sala de pé, nada disso: a ligação de fora toca só com a voz (o 180 sem o vídeo, também a de um Porteiro),
+            // sem o offered e sem a recusa.
+            if (offer.video && !room) {
                 slot->offered = CommonCodec(offer.codecs, settings_);
                 slot->videoCount = slot->offered ? 1 : 0;
                 slot->early = slot->offered && IsDoorphone(settings_, party.user);
+                // O Porteiro segue sendo ele depois do atender (o early acaba no Answer): a imagem dele não pausa com a
+                // outra ligação (ReceivePaused).
+                slot->doorphone = slot->early;
                 if (!slot->offered) Refuse(*slot);
-                PublishVideo();
             }
+            // O vídeo da oferta, e o da outra ligação, se há: com a segunda tocando, ela pausa já (o envio, e a imagem
+            // fora a de um Porteiro), também com uma oferta só de voz.
+            PublishVideo();
             slot->ringVideoCount = slot->videoCount;
             // Sem câmera, a resposta aceita o vídeo só para receber.
             slot->ringRecvOnly = slot->videoCount > 0 && camera_ == PJMEDIA_VID_INVALID_DEV ? offer.index : -1;
+            slot->receiveOnly = slot->ringRecvOnly >= 0;
             videoCount = slot->videoCount;
             recvOnly = slot->ringRecvOnly;
-            doorphone = slot->early;
+            sendEarly = slot->early;
 #endif
         } else {
             busy = accepting && !closed_;
         }
     }
     if (callId == 0) {
-        // Duas ligações, ou uma que ainda não foi confirmada: 486. A conta ou o motor saindo: 480.
+        // Duas ligações, uma que ainda não foi confirmada, ou a sala e a ligação de fora: 486. A conta ou o motor
+        // saindo: 480.
         const unsigned code = busy ? PJSIP_SC_BUSY_HERE : PJSIP_SC_TEMPORARILY_UNAVAILABLE;
         Log(3, "ligacao de " + party.user + " recusada (" + std::to_string(code) + ")");
         pjsua_call_hangup(pjsuaId, code, nullptr, nullptr);
@@ -198,6 +234,8 @@ void CallTable::Incoming(pj::Account& account, int pjsuaId, bool accepting, cons
         }
         return;
     }
+    // A outra ligação, se há, para de mandar a câmera (o SyncVideo, no temporizador).
+    ScheduleSync();
     // O 180 vem depois do aviso: o Early que ele provoca chega ao listener depois do OnIncomingCall. Com o vídeo, o
     // número de vídeos da resposta já vai aqui, e o Answer repete o mesmo (o pjsua guarda o primeiro e ignora outro).
     // O 183 do Porteiro leva o SDP (a resposta à oferta), sem mandar nada: a câmera só manda depois do atender, e o
@@ -211,7 +249,7 @@ void CallTable::Incoming(pj::Account& account, int pjsuaId, bool accepting, cons
     (void)recvOnly;
     const pjsua_call_setting* answer = nullptr;
 #endif
-    if (doorphone) {
+    if (sendEarly) {
         const pj_status_t status = pjsua_call_answer2(pjsuaId, answer, PJSIP_SC_PROGRESS, nullptr, nullptr);
         if (status == PJ_SUCCESS) return;
         Log(2, "nao foi possivel mandar o 183 do porteiro: " + StatusText(status));
@@ -227,6 +265,7 @@ void CallTable::Incoming(pj::Account& account, int pjsuaId, bool accepting, cons
 }
 
 void CallTable::StateChanged(EngineCall* call, CallState state, int sipCode) {
+    bool joins = false;   // um convidado confirmado: ele entra na sala, e na mesa de áudio
     {
         std::lock_guard<std::mutex> lock(mutex_);
         Slot* slot = Find(call);
@@ -242,7 +281,10 @@ void CallTable::StateChanged(EngineCall* call, CallState state, int sipCode) {
             slot->askingVideo = false;
             if (!slot->videoUp) Refuse(*slot);
         }
+        joins = state == CallState::Confirmed && slot->member;
+        PublishRoom();   // depois do estado que a mudou
     }
+    if (joins) Route();
     // Confirmada, a câmera pode começar a mandar.
     if (state == CallState::Confirmed) ScheduleSync();
 }
@@ -251,8 +293,15 @@ void CallTable::MediaChanged(EngineCall* call) {
     const int pjsuaId = call->getId();
     int callId = 0;
 #if PJMEDIA_HAS_VIDEO
-    // Com a trava do diálogo (este callback): o stream do vídeo não muda no meio da leitura.
-    VideoMedia media = VideoMediaOf(pjsuaId);
+    // Com a trava do diálogo (este callback): a mídia e o stream do vídeo não mudam no meio da leitura. Uma leitura só
+    // da ligação dá o vídeo dela e a espera do outro lado no áudio (a de um convidado da sala).
+    VideoMedia media;
+    bool remoteHold = false;
+    pjsua_call_info info;
+    if (pjsuaId != PJSUA_INVALID_ID && pjsua_call_get_info(pjsuaId, &info) == PJ_SUCCESS) {
+        media = VideoMediaOf(info);
+        remoteHold = AudioOf(info).status == PJSUA_CALL_MEDIA_REMOTE_HOLD;
+    }
     ReadVideoStream(pjsuaId, &media);
 #endif
     {
@@ -263,6 +312,7 @@ void CallTable::MediaChanged(EngineCall* call) {
         // O id vem do objeto: numa ligação feita, a mídia pode chegar antes de o makeCall voltar.
         slot->pjsuaId = pjsuaId;
 #if PJMEDIA_HAS_VIDEO
+        slot->remoteHold = remoteHold;
         // A negociação diz o vídeo da ligação: as próximas ofertas (a espera, a retomada) levam o mesmo número.
         const bool started = media.up && !slot->videoUp;
         slot->videoUp = media.up;
@@ -285,6 +335,7 @@ void CallTable::MediaChanged(EngineCall* call) {
             slot->askingVideo = false;
             if (!media.up) Refuse(*slot);
         }
+        slot->askingSendRecv = false;   // a resposta ao sendrecv da sala (SendReceive), se ele esperava, chegou
         // A recebida que oferecia vídeo com um nome em comum, respondida por aqui (o 183 do Porteiro ou o 200, antes
         // do Confirmed) sem o vídeo: o fmtp não casou na PJSIP (o perfil do H.264). O vídeo é recusado uma vez, como
         // sem codec em comum, e o 183 deixa de ser o early.
@@ -293,7 +344,7 @@ void CallTable::MediaChanged(EngineCall* call) {
             slot->early = false;
             Refuse(*slot);
         }
-        PublishVideo();
+        PublishVideo();   // e a sala (o convidado em espera do outro lado, a imagem dele)
 #endif
     }
 #if PJMEDIA_HAS_VIDEO
@@ -308,6 +359,7 @@ void CallTable::MediaChanged(EngineCall* call) {
 
 void CallTable::Ended(EngineCall* call, int sipCode) {
     bool found = false;
+    bool roomEnded = false;   // a sala acabou com a saída dele: quem ficou volta às regras de uma ligação comum
     int callId = 0;
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -315,6 +367,7 @@ void CallTable::Ended(EngineCall* call, int sipCode) {
         if (slot) {
             found = true;
             callId = slot->callId;
+            const bool member = slot->member;
             *slot = Slot();
             if (conference_) {
                 // Uma saiu da conferência: a outra vira a ativa, já com o som (a ligação entre as duas
@@ -323,15 +376,22 @@ void CallTable::Ended(EngineCall* call, int sipCode) {
                 const Slot* other = Other(slot);
                 activeId_ = other ? other->callId : 0;
             } else if (activeId_ == callId) {
-                activeId_ = 0;   // a outra não volta sozinha: quem a retoma é o app, pelo Activate
+                // A outra não volta sozinha, nem a sala (o out segue): quem a retoma é o app, pelo Activate.
+                activeId_ = 0;
             }
             Emit(callId, [callId, sipCode](EngineListener& listener) {
                 listener.OnCallState(callId, CallState::Disconnected, sipCode);
             });
+            // A sala sem ele, depois do fim dele: os outros se arrumam, ou ela acaba.
+            PublishRoom();
+            roomEnded = member && roomId_ == 0;
             // A outra pode sair da pausa (a conferência acabou, ou ela ficou sozinha), depois do fim desta.
             PublishVideo();
         }
     }
+    // O fim de uma ligação não muda a mesa das outras, menos o da sala: quem ficou volta às regras de uma ligação comum
+    // (com o som, se a sala era a ativa, também se ainda chamava ou estava em espera do outro lado).
+    if (roomEnded) Route();
 #if PJMEDIA_HAS_VIDEO
     if (found) UnbindRendererCall(callId);   // um quadro atrasado da janela dela não sai mais
 #endif
@@ -382,13 +442,19 @@ int CallTable::Make(pj::Account& account, const std::string& uri, bool video) {
     unsigned videoCount = 0;
     bool refuse = false;
     bool recvOnly = false;
+    bool room = false;   // a sala de pé: a nova é a ligação de fora, só com a voz
     {
         std::lock_guard<std::mutex> lock(mutex_);
         Slot* slot = FreeSlot();
         const Slot* other = slot ? Other(slot) : nullptr;
-        if (closed_ || !slot || (other && !other->confirmed)) {
-            const char* reason = closed_ ? "o motor esta saindo" : !slot ? "ja ha duas ligacoes"
-                                                                          : "a outra ligacao nao foi confirmada";
+        // Até duas ligações, com a outra confirmada. Com a sala de pé, ela é a outra linha: só sem a ligação de fora.
+        room = roomId_ != 0;
+        const bool busy = room ? !slot || other : !slot || Occupied() >= 2 || (other && !other->confirmed);
+        if (closed_ || busy) {
+            const char* reason = closed_ ? "o motor esta saindo"
+                                 : room ? "ja ha uma ligacao fora da sala"
+                                 : !slot || Occupied() >= 2 ? "ja ha duas ligacoes"
+                                 : "a outra ligacao nao foi confirmada";
             Log(2, "ligacao para " + uri + " recusada: " + reason);
             return -1;
         }
@@ -401,22 +467,25 @@ int CallTable::Make(pj::Account& account, const std::string& uri, bool video) {
 #if PJMEDIA_HAS_VIDEO
         // Com o vídeo nas escolhas, a oferta leva um vídeo e o desejo da câmera liga; sem ele, a ligação é só de voz
         // e a recusa sai logo depois do makeCall, atrás do primeiro estado da ligação. Sem câmera, a oferta leva o
-        // vídeo só para receber, e a câmera fica desligada.
-        if (video && VideoEnabled(settings_)) {
+        // vídeo só para receber, e a câmera fica desligada. Com a sala de pé, a ligação de fora é só de voz: o video
+        // não muda nada, e nada é recusado.
+        if (video && VideoEnabled(settings_) && !room) {
             recvOnly = camera_ == PJMEDIA_VID_INVALID_DEV;
             if (recvOnly) Problem(CameraProblem::NoCamera);
             slot->videoCount = 1;
             slot->wish = !recvOnly;
+            slot->receiveOnly = recvOnly;
             slot->askingVideo = true;
         }
-        refuse = video && !VideoEnabled(settings_);
+        refuse = video && !VideoEnabled(settings_) && !room;
         videoCount = slot->videoCount;
 #else
         (void)video;
 #endif
     }
-    // A outra, se há, vai para a espera antes de a nova sair, e fica nela mesmo se a nova não sai.
-    Focus(callId);
+    // A outra, se há, vai para a espera antes de a nova sair, e fica nela mesmo se a nova não sai. Com a sala de pé,
+    // nada vai para a espera: a nova tira você da sala só depois do makeCall (abaixo).
+    if (!room) Focus(callId);
     {
         std::lock_guard<std::mutex> lock(mutex_);
         dialing_ = true;
@@ -439,7 +508,24 @@ int CallTable::Make(pj::Account& account, const std::string& uri, bool video) {
         made = false;
         Log(2, "nao foi possivel ligar para " + uri + ": " + failure.info());
     }
-    bool unused = false;   // o pjsua não chegou a usar o objeto
+    FinishDial(call, callId, made, [&](Slot* slot) {
+        // A que não saiu deixa de ser a ativa: a outra, em espera, não volta sozinha (o Ended faz o mesmo, se ele já
+        // a tirou da tabela).
+        if (!made && activeId_ == callId) activeId_ = 0;
+        // A recusa do vídeo sem o VideoEnabled, depois dos eventos que o makeCall deixou em held (o primeiro estado
+        // da ligação vem antes de qualquer outro evento dela). Sem a ligação, nenhuma.
+        if (made && refuse && slot) Refuse(*slot);
+    });
+    // A ligação de fora que saiu tira você da sala (o out), atrás dos eventos do makeCall e sem re-INVITE para os
+    // convidados; a que não saiu, ou já acabou, deixa você nela.
+    if (made && room) Focus(callId);
+    ScheduleSync();
+    return made ? callId : -1;
+}
+
+void CallTable::FinishDial(EngineCall* call, int callId, bool made, const std::function<void(Slot*)>& settle) {
+    bool unused = false;    // o pjsua não chegou a usar o objeto
+    bool hadRoom = false;   // a sala de pé no fim do makeCall: a mesa dela é refeita abaixo
     {
         std::lock_guard<std::mutex> lock(mutex_);
         dialing_ = false;
@@ -452,18 +538,21 @@ int CallTable::Make(pj::Account& account, const std::string& uri, bool video) {
             if (slot) slot->pjsuaId = call->getId();
         } else if (slot) {   // sem callback de fim: o objeto é nosso para apagar
             *slot = Slot();
-            if (activeId_ == callId) activeId_ = 0;
+            slot = nullptr;
             unused = true;
         }
         // Se o makeCall falhou depois de um callback de fim, Ended já apagou o objeto; os eventos dela
-        // que ficaram em held_ somem com ele: MakeCall devolve -1 sem evento nenhum. Os da outra
-        // ligação seguem.
+        // que ficaram em held_ somem com ele: o -1 sai sem evento nenhum dela. Os das outras
+        // ligações seguem.
         for (HeldEvent& entry : held) {
             if (made || entry.callId != callId) events_->Post(std::move(entry.event));
         }
-        // A recusa do vídeo sem o VideoEnabled, depois dos eventos que o makeCall deixou em held (o primeiro estado
-        // da ligação vem antes de qualquer outro evento dela). Sem a ligação, nenhuma.
-        if (made && refuse && slot) Refuse(*slot);
+        if (settle) settle(slot);
+        // A sala que mudou durante o makeCall (PublishRoom não avisa nada nele), atrás dos eventos dele; se ela acabou,
+        // quem ficou é uma ligação comum, com o vídeo de uma. Sem a sala, nada.
+        hadRoom = roomId_ != 0;
+        PublishRoom();
+        if (hadRoom && roomId_ == 0) PublishVideo();
     }
     if (unused) {
         delete call;
@@ -473,8 +562,7 @@ int CallTable::Make(pj::Account& account, const std::string& uri, bool video) {
         }
         gone_.notify_all();
     }
-    ScheduleSync();
-    return made ? callId : -1;
+    if (hadRoom) Route();
 }
 
 bool CallTable::Answer(int callId, bool video) {
@@ -507,10 +595,12 @@ bool CallTable::Answer(int callId, bool video) {
         std::lock_guard<std::mutex> lock(mutex_);
         Slot* slot = Find(callId);
         if (slot) {
-            // "Atender com vídeo": a câmera manda depois da confirmação; sem câmera, ela fica desligada.
-            const bool noCamera = video && camera_ == PJMEDIA_VID_INVALID_DEV;
+            // "Atender com vídeo": a câmera manda depois da confirmação; sem câmera, ela fica desligada. Com a sala de
+            // pé, a ligação de fora é só de voz: o video não muda nada.
+            const bool wanted = video && roomId_ == 0;
+            const bool noCamera = wanted && camera_ == PJMEDIA_VID_INVALID_DEV;
             if (noCamera) Problem(CameraProblem::NoCamera);
-            slot->wish = video && !noCamera;
+            slot->wish = wanted && !noCamera;
             slot->early = false;
             PublishVideo();
         }
@@ -518,7 +608,9 @@ bool CallTable::Answer(int callId, bool video) {
 #else
     (void)video;
 #endif
-    Focus(callId);   // e o SyncVideo, que liga a câmera depois da confirmação
+    // E o SyncVideo, que liga a câmera depois da confirmação. Com a sala de pé, você sai dela (o out), sem re-INVITE
+    // para os convidados.
+    Focus(callId);
     return true;
 }
 
@@ -529,22 +621,35 @@ bool CallTable::Reject(int callId) {
 }
 
 bool CallTable::Hangup(int callId) {
-    const int pjsuaId = PjsuaId(callId);
-    if (pjsuaId == PJSUA_INVALID_ID) return false;
+    // O id da sala: todos os convidados (ela fecha). Senão, a ligação callId.
+    std::vector<int> pjsuaIds = CloseRoom(callId);
+    if (pjsuaIds.empty()) {
+        const int pjsuaId = PjsuaId(callId);
+        if (pjsuaId == PJSUA_INVALID_ID) return false;
+        pjsuaIds.push_back(pjsuaId);
+    }
     // O fim desfaz a mídia da ligação: nunca no meio de um SyncVideo (ver o topo do arquivo).
     std::lock_guard<std::mutex> videoLock(videoMutex_);
-    return pjsua_call_hangup(pjsuaId, 0, nullptr, nullptr) == PJ_SUCCESS;
+    bool done = true;
+    for (const int pjsuaId : pjsuaIds) {
+        if (pjsua_call_hangup(pjsuaId, 0, nullptr, nullptr) != PJ_SUCCESS) done = false;
+    }
+    return done;
 }
 
 bool CallTable::Activate(int callId) {
     bool resume;
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        // O id da sala de pé é o Voltar para a sala (ela nunca fica em espera); fechando (o Hangup do id dela), ela
+        // não é mais para onde voltar. Um convidado não é uma linha: nenhum é a ativa sozinho.
+        const bool room = callId != 0 && callId == roomId_ && !roomClosing_;
         const Slot* slot = Find(callId);
-        if (!slot || !slot->confirmed) return false;
-        resume = slot->held;
+        if (!room && (!slot || !slot->confirmed || slot->member)) return false;
+        resume = slot && slot->held;
     }
-    Focus(callId);   // na conferência, a desfaz: é o Split(callId, a outra)
+    // Na conferência, a desfaz: é o Split(callId, a outra). Com a sala, a ligação de fora é a outra.
+    Focus(callId);
     const bool done = !resume || Renegotiate(callId, false);
     ScheduleSync();
     return done;
@@ -555,7 +660,7 @@ bool CallTable::SetHold(int callId, bool hold) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         const Slot* slot = Find(callId);
-        if (!slot || !slot->confirmed) return false;
+        if (!slot || !slot->confirmed || slot->member) return false;   // na sala, ninguém fica em espera por aqui
         if (slot->held) return true;
     }
     const bool done = Renegotiate(callId, true);
@@ -645,6 +750,7 @@ bool CallTable::Join(int callId, int otherId) {
         const Slot* slot = Find(callId);
         const Slot* other = Find(otherId);
         if (callId == otherId || !slot || !other || !slot->confirmed || !other->confirmed) return false;
+        if (slot->member || other->member) return false;   // os convidados da sala já se ouvem: nada de conferência
         // Com uma consulta em andamento, primeiro ela termina (concluída ou cancelada).
         if (slot->transferTarget != 0 || other->transferTarget != 0) return false;
         if (conference_) return true;
@@ -681,31 +787,34 @@ bool CallTable::Split(int callId, int otherId) {
 std::vector<int> CallTable::AudioLinks(int callId) {
     std::vector<int> links;
     int pjsuaId;
-    int otherId = 0;
-    int otherPjsuaId = PJSUA_INVALID_ID;
+    std::vector<std::pair<int, int>> others;   // as outras ligações: o id e o id no pjsua
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        const Slot* slot = Find(callId);
+        const Slot* slot = Find(callId);   // o id da sala não é de uma vaga: vazio
         if (!slot) return links;
         pjsuaId = slot->pjsuaId;
-        const Slot* other = Other(slot);
-        if (other) {
-            otherId = other->callId;
-            otherPjsuaId = other->pjsuaId;
+        for (const Slot& other : slots_) {
+            if (&other != slot && other.callId != 0) others.emplace_back(other.callId, other.pjsuaId);
         }
     }
     if (pjsuaId == PJSUA_INVALID_ID) return links;
     const pjsua_conf_port_id port = pjsua_call_get_conf_port(pjsuaId);
     pjsua_conf_port_info info;
     if (port == PJSUA_INVALID_ID || pjsua_conf_get_port_info(port, &info) != PJ_SUCCESS) return links;
-    const pjsua_conf_port_id otherPort =
-        otherPjsuaId == PJSUA_INVALID_ID ? PJSUA_INVALID_ID : pjsua_call_get_conf_port(otherPjsuaId);
+    std::vector<std::pair<pjsua_conf_port_id, int>> ports;   // a porta de cada outra ligação e o id dela
+    for (const auto& other : others) {
+        if (other.second == PJSUA_INVALID_ID) continue;
+        const pjsua_conf_port_id otherPort = pjsua_call_get_conf_port(other.second);
+        if (otherPort != PJSUA_INVALID_ID) ports.emplace_back(otherPort, other.first);
+    }
     for (unsigned index = 0; index < info.listener_cnt; ++index) {
         const pjsua_conf_port_id sink = info.listeners[index];
         if (sink == kSoundDevice) {
             links.push_back(0);
-        } else if (otherPort != PJSUA_INVALID_ID && sink == otherPort) {
-            links.push_back(otherId);
+            continue;
+        }
+        for (const auto& other : ports) {
+            if (sink == other.first) links.push_back(other.second);
         }
     }
     return links;
@@ -713,9 +822,7 @@ std::vector<int> CallTable::AudioLinks(int callId) {
 
 int CallTable::CallCount() {
     std::lock_guard<std::mutex> lock(mutex_);
-    int count = 0;
-    for (const Slot& slot : slots_) count += slot.callId != 0 ? 1 : 0;
-    return count;
+    return Occupied();
 }
 
 bool CallTable::End(int timeoutMs) {
@@ -723,6 +830,7 @@ bool CallTable::End(int timeoutMs) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (alive_ == 0) return true;
+        if (roomId_ != 0) roomClosing_ = true;   // todos saem: ninguém volta a ser uma ligação comum
         for (const Slot& slot : slots_) {
             if (slot.pjsuaId != PJSUA_INVALID_ID) pjsuaIds.push_back(slot.pjsuaId);
         }
@@ -764,8 +872,16 @@ CallTable::Slot* CallTable::FreeSlot() {
 }
 
 CallTable::Slot* CallTable::Other(const Slot* slot) {
-    Slot* other = slot == &slots_[0] ? &slots_[1] : &slots_[0];
-    return other->callId != 0 ? other : nullptr;
+    for (Slot& other : slots_) {
+        if (&other != slot && other.callId != 0 && !other.member) return &other;
+    }
+    return nullptr;
+}
+
+int CallTable::Occupied() {
+    int count = 0;
+    for (const Slot& slot : slots_) count += slot.callId != 0 ? 1 : 0;
+    return count;
 }
 
 int CallTable::PjsuaId(int callId) {
@@ -779,8 +895,9 @@ void CallTable::Focus(int callId) {
     bool holdOther = false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        // O id da sala não tem vaga: a outra, então, é a ligação de fora, se há (Other(nullptr)).
         const Slot* slot = Find(callId);
-        if (!slot) return;
+        if (!slot && (callId == 0 || callId != roomId_)) return;
         activeId_ = callId;
         conference_ = false;
         const Slot* other = Other(slot);
@@ -788,7 +905,7 @@ void CallTable::Focus(int callId) {
             otherId = other->callId;
             holdOther = other->confirmed && !other->held;
         }
-        PublishVideo();   // a outra, se há, pausa o vídeo já
+        PublishVideo();   // a outra, se há, pausa o vídeo já; com a sala, o out dela (o nosso quadro, nos mosaicos)
     }
     // A outra sai do som na hora e callId entra (com a mídia já ativa; senão, quando ela ficar ativa:
     // MediaChanged); a câmera dela para logo (SyncVideo), e a espera dela (re-INVITE) vem em seguida.
@@ -799,35 +916,56 @@ void CallTable::Focus(int callId) {
 
 void CallTable::Route() {
     std::lock_guard<std::mutex> routeLock(routeMutex_);
-    int pjsuaIds[2];
-    bool sound[2];
+    const int kSlots = kRoomMaxGuests + 1;
+    // O que a tabela quer de cada vaga.
+    struct Want {
+        int pjsuaId = PJSUA_INVALID_ID;
+        bool member = false;   // um convidado da sala
+        bool inRoom = false;   // um convidado na sala: confirmado e fora da espera do outro lado
+        bool sound = false;    // com o dispositivo de som
+    };
+    Want wants[kSlots];
     bool conference;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        for (int index = 0; index < 2; ++index) {
+        const bool roomActive = roomId_ != 0 && activeId_ == roomId_;
+        for (int index = 0; index < kSlots; ++index) {
             const Slot& slot = slots_[index];
-            pjsuaIds[index] = slot.pjsuaId;
-            sound[index] = slot.callId != 0 && (conference_ || slot.callId == activeId_);
+            Want& want = wants[index];
+            want.pjsuaId = slot.pjsuaId;
+            want.member = slot.callId != 0 && slot.member;
+            want.inRoom = want.member && slot.confirmed && !slot.remoteHold;
+            want.sound = want.member ? want.inRoom && roomActive
+                                     : slot.callId != 0 && (conference_ || slot.callId == activeId_);
         }
         conference = conference_;
     }
-    pjsua_conf_port_id ports[2];
-    bool usable[2];
-    for (int index = 0; index < 2; ++index) {
-        ports[index] = AudioPort(pjsuaIds[index], &usable[index]);
+    pjsua_conf_port_id ports[kSlots];
+    bool usable[kSlots];
+    for (int index = 0; index < kSlots; ++index) {
+        ports[index] = AudioPort(wants[index].pjsuaId, wants[index].member, &usable[index]);
         if (ports[index] == PJSUA_INVALID_ID) continue;
-        const bool on = sound[index] && usable[index];
+        const bool on = wants[index].sound && usable[index];
         Link(kSoundDevice, ports[index], on);
         Link(ports[index], kSoundDevice, on);
     }
-    if (ports[0] != PJSUA_INVALID_ID && ports[1] != PJSUA_INVALID_ID) {
-        const bool on = conference && usable[0] && usable[1];
-        Link(ports[0], ports[1], on);
-        Link(ports[1], ports[0], on);
+    // Cada par: duas ligações comuns, na conferência; dois convidados, os dois na sala.
+    for (int first = 0; first < kSlots; ++first) {
+        for (int second = first + 1; second < kSlots; ++second) {
+            if (ports[first] == PJSUA_INVALID_ID || ports[second] == PJSUA_INVALID_ID) continue;
+            const Want& a = wants[first];
+            const Want& b = wants[second];
+            const bool together = a.member == b.member && (a.member ? a.inRoom && b.inRoom : conference);
+            const bool on = together && usable[first] && usable[second];
+            Link(ports[first], ports[second], on);
+            Link(ports[second], ports[first], on);
+        }
     }
     // Os pedidos de portas que já não são das ligações saem da conta: a mesa desfaz as ligações de uma
     // porta quando a tira (mídia recriada ou ligação acabada), e o número dela pode voltar noutra.
-    const auto ours = [&ports](int port) { return port == kSoundDevice || port == ports[0] || port == ports[1]; };
+    const auto ours = [&ports](int port) {
+        return port == kSoundDevice || std::find(std::begin(ports), std::end(ports), port) != std::end(ports);
+    };
     for (auto it = linksAsked_.begin(); it != linksAsked_.end();) {
         it = ours(it->first) && ours(it->second) ? std::next(it) : linksAsked_.erase(it);
     }
@@ -849,8 +987,8 @@ void CallTable::Link(int source, int sink, bool on) {
 }
 
 bool CallTable::Renegotiate(int callId, bool hold) {
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(kRenegotiationWaitMs);
-    for (;;) {
+    bool found = true;   // a ligação seguia na tabela, com o id no pjsua, em cada tentativa
+    const pj_status_t status = RetryWhileRenegotiating([&]() -> pj_status_t {
         int pjsuaId = PJSUA_INVALID_ID;
         unsigned videoCount = 0;
         {
@@ -861,31 +999,27 @@ bool CallTable::Renegotiate(int callId, bool hold) {
                 videoCount = slot->videoCount;
             }
         }
-        if (pjsuaId == PJSUA_INVALID_ID) return false;
-        pj_status_t status;
-        if (hold) {
-            status = pjsua_call_set_hold(pjsuaId, nullptr);   // a oferta é a mídia de agora, com o vídeo dela
-        } else {
-            pjsua_call_setting setting;
-            pjsua_call_setting_default(&setting);
-            setting.flag |= PJSUA_CALL_UNHOLD;
-            setting.vid_cnt = videoCount;   // a oferta nova leva o mesmo número de vídeos da ligação
-            status = pjsua_call_reinvite2(pjsuaId, &setting, nullptr);
+        if (pjsuaId == PJSUA_INVALID_ID) {
+            found = false;
+            return PJ_ENOTFOUND;
         }
-        // PJ_EINVALIDOP: o re-INVITE anterior ainda não terminou (o PJSIP só aceita um por vez).
-        if (status != PJ_EINVALIDOP || std::chrono::steady_clock::now() >= deadline) {
-            if (status != PJ_SUCCESS) {
-                Log(2, std::string(hold ? "espera: " : "retomar: ") + StatusText(status));
-                return false;
-            }
-            std::lock_guard<std::mutex> lock(mutex_);
-            Slot* slot = Find(callId);
-            if (slot) slot->held = hold;
-            PublishVideo();   // na espera daqui, o vídeo pausa; fora dela, volta
-            return true;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        if (hold) return pjsua_call_set_hold(pjsuaId, nullptr);   // a oferta é a mídia de agora, com o vídeo dela
+        pjsua_call_setting setting;
+        pjsua_call_setting_default(&setting);
+        setting.flag |= PJSUA_CALL_UNHOLD;
+        setting.vid_cnt = videoCount;   // a oferta nova leva o mesmo número de vídeos da ligação
+        return pjsua_call_reinvite2(pjsuaId, &setting, nullptr);
+    });
+    if (!found) return false;
+    if (status != PJ_SUCCESS) {
+        Log(2, std::string(hold ? "espera: " : "retomar: ") + StatusText(status));
+        return false;
     }
+    std::lock_guard<std::mutex> lock(mutex_);
+    Slot* slot = Find(callId);
+    if (slot) slot->held = hold;
+    PublishVideo();   // na espera daqui, o vídeo pausa; fora dela, volta
+    return true;
 }
 
 void CallTable::Emit(int callId, EventQueue::Event event) {

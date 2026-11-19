@@ -56,7 +56,7 @@ bool DesktopApp::VideoOn() const {
     return VideoEnabled(choices);
 }
 
-// O H.264 que vale: o download do modulo liberado no build (DesktopConfig::h264Download, desligado ate a etapa 2), e
+// O H.264 que vale: o download do modulo liberado no build (DesktopConfig::h264Download, ligado no app desde a etapa 2), e
 // ligado no cartao do administrador e pela pessoa.
 bool DesktopApp::H264Wanted() const {
     return config_.h264Download && admin_.Get().videoH264 && settings_.Get().h264Person;
@@ -160,6 +160,16 @@ void DesktopApp::CameraTest(bool on) {
     }
     port_.StopCameraTest();
     cameraTest_ = false;
+}
+
+// A janela principal fora da vista (minimizada ou na bandeja): a pessoa nao ve mais a previa, e o teste ligado para, como
+// ao sair da tela Configuracoes. O estado sai depois da tarefa (Post), com o video.teste false. A volta nao liga de novo.
+void DesktopApp::SetWindowOutOfSight(bool outOfSight) {
+    Post([this, outOfSight] {
+        if (!outOfSight || !cameraTest_) return;
+        Log("video: o teste da camera parou: janela fora da vista");
+        CameraTest(false);
+    });
 }
 
 // Uma vista que nao e da pagina e ignorada (a "principal" tem remoto e local; o "aviso", o porteiro).

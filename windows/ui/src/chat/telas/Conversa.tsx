@@ -15,11 +15,17 @@
 //   campo (os anexos, com os limites de 10 e de 25 MB: o useAnexos); o Enviar manda os arquivos, na ordem, e o texto
 //   por último. O clique num arquivo pede ao núcleo o download (o chatDownload, com o nome sem as marcas de direção,
 //   R34); o clique numa foto abre a foto grande. Sem o lugar de escrever (quem saiu do chat), nada se anexa.
+// - (vídeo, etapa 2) A conversa que o Chat da ligação abre (o `naLigacao`, embaixo da faixa da ligação ou no painel do
+//   grande): sem o Ligar e o Ligar com vídeo do alto, e o Voltar volta para a ligação. O Ligar e o Ligar com vídeo
+//   ignoram o segundo clique de um clique duplo (o semSegundoClique; o chat só existe no Windows): no fim da ligação, a
+//   conversa fica sem a faixa, e o Ligar sobe para baixo do Desligar dela; o segundo clique do Desligar ligaria de volta.
 // Os nomes e as mensagens vão sempre como texto.
 import { useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { dayGroup } from '../../format';
-import { IconBack, IconPhone, IconSemRede } from '../../icons';
+import { IconBack, IconPhone, IconSemRede, IconVideo } from '../../icons';
+import { semSegundoClique } from '../../plataforma';
 import type { Send } from '../../types';
+import { ligarComVideoPara, VOLTAR_PARA_A_LIGACAO } from '../../video/textos';
 import type { ChatCliente, ConversaAberta, VistaChat } from '../cliente';
 import { useAnexos } from '../componentes/Anexos';
 import { Avatar } from '../componentes/Avatar';
@@ -61,6 +67,10 @@ interface Props {
   conversa: ConversaDaLista;
   cliente: ChatCliente;
   send: Send;
+  /** (vídeo, etapa 2) O "Ligar com vídeo" do cabeçalho, antes do Ligar: só com o vídeo ligado. */
+  video: boolean;
+  /** (vídeo, etapa 2) Aberta pelo Chat da ligação: sem os botões de ligar do alto, e o Voltar volta para a ligação. */
+  naLigacao?: boolean;
   /** (Task 7) O toast das telas do chat (o mesmo da ponte). */
   avisar(texto: string): void;
   onVoltar(): void;
@@ -99,7 +109,7 @@ function itensDa(aberta: ConversaAberta, euId: number, agora: number): Item[] {
   return itens;
 }
 
-export function Conversa({ vista, conversa, cliente, send, avisar, onVoltar, onMembros }: Props) {
+export function Conversa({ vista, conversa, cliente, send, video, naLigacao = false, avisar, onVoltar, onMembros }: Props) {
   const id = conversa.id;
   useLayoutEffect(() => {
     void cliente.abrir(id);
@@ -191,6 +201,9 @@ export function Conversa({ vista, conversa, cliente, send, avisar, onVoltar, onM
 
   const grupo = conversa.tipo === 'grupo';
   const saiu = conversa.tipo === 'dupla' && conversa.com.saiu;
+  // Os botões de ligar do alto: com quem não saiu do chat, e fora da ligação.
+  const ligar = !saiu && !naLigacao;
+  const voltar = naLigacao ? VOLTAR_PARA_A_LIGACAO : VOLTAR_PARA_AS_CONVERSAS;
   // Arrastar para a conversa e colar (Ctrl+V): só com o lugar de escrever, e só o que traz arquivos. Fora daqui (e na
   // conversa com quem saiu), o main.tsx impede o arrastar de arquivos sem pôr nada (R39).
   const receber = saiu
@@ -219,7 +232,7 @@ export function Conversa({ vista, conversa, cliente, send, avisar, onVoltar, onM
   return (
     <div class="conversa" {...receber}>
       <div class="conversa-topo">
-        <button type="button" class="icon-btn" aria-label={VOLTAR_PARA_AS_CONVERSAS} title={VOLTAR_PARA_AS_CONVERSAS} onClick={onVoltar}>
+        <button type="button" class="icon-btn" aria-label={voltar} title={voltar} onClick={onVoltar}>
           <IconBack />
         </button>
         {conversa.tipo === 'grupo' ? (
@@ -246,13 +259,24 @@ export function Conversa({ vista, conversa, cliente, send, avisar, onVoltar, onM
               <h1 class="conversa-nome">{nome}</h1>
               <span class="conversa-sub">{ramalN(conversa.com.ramal)}</span>
             </div>
-            {!saiu && (
+            {ligar && video && (
+              <button
+                type="button"
+                class="conversa-ligar conversa-video"
+                aria-label={ligarComVideoPara(conversa.com.nome, conversa.com.ramal)}
+                title={ligarComVideoPara(conversa.com.nome, conversa.com.ramal)}
+                onClick={semSegundoClique(true, () => send({ cmd: 'dial', numero: conversa.com.ramal, contato: true, video: true }))}
+              >
+                <IconVideo size="sm" />
+              </button>
+            )}
+            {ligar && (
               <button
                 type="button"
                 class="conversa-ligar"
                 aria-label={ligarPara(conversa.com.nome, conversa.com.ramal)}
                 title={ligarPara(conversa.com.nome, conversa.com.ramal)}
-                onClick={() => send({ cmd: 'dial', numero: conversa.com.ramal, contato: true })}
+                onClick={semSegundoClique(true, () => send({ cmd: 'dial', numero: conversa.com.ramal, contato: true }))}
               >
                 <IconPhone size="sm" />
               </button>
